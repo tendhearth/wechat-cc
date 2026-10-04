@@ -1,0 +1,33 @@
+.cc-record-reader{box-sizing:border-box;width:min(800px,calc(100vw - 32px));max-height:calc(100dvh - 32px);margin:auto;padding:0;border:1px solid var(--th-hair);border-radius:var(--th-radius-sheet);background:var(--th-paper);color:var(--th-ink);overflow:auto;font-family:var(--th-font-serif);font-size:var(--th-size-body);line-height:var(--th-lh-body);box-shadow:none}
+.cc-record-reader::backdrop{background:var(--th-scrim)}
+.cc-record-toolbar{display:flex;align-items:center;justify-content:space-between;gap:20px;position:sticky;top:0;padding:12px 24px;border-bottom:1px solid var(--th-hair);background:var(--th-paper);z-index:1;color:var(--th-ink-soft);font-size:var(--th-size-meta)}
+.cc-record-reader button{min-height:40px;padding:8px 14px;border:1px solid var(--th-hair);border-radius:var(--th-radius-nav);background:var(--th-paper);color:var(--th-ink);font:inherit;cursor:pointer}
+.cc-record-reader button.is-primary{background:var(--th-accent);color:var(--th-on-accent);border-color:var(--th-accent)}
+.cc-record-reader button:disabled{opacity:.6;cursor:default}
+.cc-record-reader :is(button,input,textarea,summary):focus-visible{outline:2px solid var(--th-accent);outline-offset:3px}
+.cc-record-content{padding:28px;min-width:0}
+.cc-record-content h2{margin:0 0 12px;font-size:var(--th-size-title);line-height:var(--th-lh-title);font-weight:400;overflow-wrap:anywhere}
+.cc-record-content h3{margin:24px 0 8px;font-size:var(--th-size-item);line-height:var(--th-lh-item);font-weight:400}
+.cc-record-content p{font-size:var(--th-size-body);line-height:var(--th-lh-body);white-space:pre-wrap;overflow-wrap:anywhere;margin:12px 0;color:var(--th-ink)}
+.cc-record-reader .pc-detail{padding:0}
+.cc-record-reader .pc-detail time,.cc-record-reader .atelier-detail-meta,.cc-record-reader .atelier-save-note,.cc-record-reader .pc-detail small{font-size:var(--th-size-meta);line-height:var(--th-lh-meta);color:var(--th-ink-soft)}
+.cc-record-reader .pc-detail h2{margin-top:12px}
+.cc-record-reader .pc-detail-note{font-size:var(--th-size-body)}
+.cc-record-reader .pc-detail img,.cc-record-reader .atelier-detail-image{display:block;width:auto;max-width:100%;height:auto;max-height:52vh;aspect-ratio:auto;object-fit:contain;border-radius:0;margin:24px auto;background:transparent}
+.cc-record-reader .atelier-detail{border:0;border-radius:0;background:transparent;box-shadow:none}
+.cc-record-reader .atelier-story{padding:0;border:0}
+.pc-detail-actions,.atelier-detail-actions{display:flex;flex-wrap:wrap;gap:12px;margin:24px 0 12px}
+.cc-record-reader .atelier-share-open{width:auto;margin:0;font-size:var(--th-size-body)}
+.cc-record-reader .atelier-tech{margin:24px 0;font-size:var(--th-size-meta);color:var(--th-ink-soft)}
+.cc-record-reader .atelier-tech p{font-size:var(--th-size-meta)}
+.cc-record-reader .atelier-share-panel{padding-top:24px;margin-top:24px;border-top:1px solid var(--th-hair)}
+.cc-record-reader [hidden]{display:none!important}
+.atelier-share-head{display:flex;flex-direction:column;gap:8px}
+.atelier-share-head strong{font-size:var(--th-size-item);font-weight:400}
+.atelier-share-head span{color:var(--th-ink-soft);font-size:var(--th-size-meta)}
+.atelier-share-panel>label:not(.atelier-share-toggle){display:flex;flex-direction:column;gap:8px;margin-top:20px;font-size:var(--th-size-meta)}
+.atelier-share-panel :is(input[type=text],textarea){box-sizing:border-box;width:100%;padding:10px 12px;border:1px solid var(--th-hair);border-radius:var(--th-radius-nav);background:var(--th-paper);color:var(--th-ink);font:inherit;font-size:var(--th-size-body);line-height:var(--th-lh-body);resize:vertical}
+.atelier-share-toggle{display:flex;align-items:center;gap:8px;margin-top:20px;font-size:var(--th-size-meta)}
+.atelier-share-actions{display:flex;flex-wrap:wrap;justify-content:flex-end;gap:12px;margin-top:24px}
+.atelier-share-panel.is-done>.atelier-share-head,.atelier-share-panel.is-done>label,.atelier-share-panel.is-done>.atelier-share-actions{display:none}
+@media(max-width:740px){.cc-record-content{padding:20px}.cc-record-toolbar{padding:10px 20px}.cc-record-reader{width:calc(100vw - 24px);max-height:calc(100dvh - 24px)}}

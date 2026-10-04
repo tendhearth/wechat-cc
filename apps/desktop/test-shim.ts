@@ -28,6 +28,7 @@ import { thoughtRoutes } from '../../src/daemon/internal-api/routes-thoughts'
 
 import { spawn } from 'bun'
 import { createWorkbenchProxy } from './workbench-proxy'
+import { createHtmlPreviewHost, htmlPreviewParentCsp } from './html-preview'
 import { join, resolve, relative, isAbsolute } from 'node:path'
 import { guardCliInvoke } from './dev-guard'
 import { makeLiveReload, injectReloadScript } from './dev-reload'
@@ -41,6 +42,7 @@ const STATE_DIR = process.env.WECHAT_STATE_DIR
   ?? join(process.env.HOME ?? '', '.claude', 'channels', 'wechat')
 const SRC = join(import.meta.dir, 'src')
 const PORT = Number(process.env.WECHAT_CC_SHIM_PORT ?? 4174)
+const htmlPreviews = createHtmlPreviewHost()
 
 const dryRun = process.env.WECHAT_CC_DRY_RUN === '1'
 // live 模式默认不跑会改真实状态的 CLI 命令(spec 2026-07-26 §3)。
@@ -271,7 +273,7 @@ if (injectCsp) {
     console.warn('shim: failed to read CSP from tauri.conf.json:', err)
   }
 }
-const CSP_META = cspContent ? `<meta http-equiv="Content-Security-Policy" content="${cspContent}">` : ''
+const CSP_META = cspContent ? `<meta http-equiv="Content-Security-Policy" content="${htmlPreviewParentCsp(cspContent, `http://127.0.0.1:${PORT}`)}">` : ''
 
 /**
  * True when a browser tells us this request came from another site. Absent
@@ -352,6 +354,11 @@ Bun.serve({
   development: true,
   async fetch(req) {
     const url = new URL(req.url)
+
+    // Serve the raw document before static HTML/live-reload injection. This
+    // response owns its CSP and receives no Tauri shim/polyfill scripts.
+    const previewResponse = htmlPreviews.handle(req)
+    if (previewResponse) return previewResponse
 
     const reloadRes = liveReload.handle(url.pathname)
     if (reloadRes) return reloadRes
@@ -484,6 +491,15 @@ Bun.serve({
       }
       const body = (await req.json()) as { command: string; args?: { args?: string[] } & Record<string, unknown> }
       try {
+        if (body.command === 'prepare_workbench_site_preview') {
+          return Response.json({ result: htmlPreviews.prepareSite(body.args?.entry, body.args?.files, url.origin) })
+        }
+        if (body.command === 'prepare_workbench_html_preview') {
+          return Response.json({ result: htmlPreviews.prepare(body.args?.html, url.origin) })
+        }
+        if (body.command === 'release_workbench_html_preview') {
+          return Response.json({ result: htmlPreviews.release(body.args?.id) })
+        }
         // ── Playwright test-control commands ───────────────────────────────
         // These are shim-only commands that Playwright tests POST to seed mock
         // state or configure failure modes. They are NOT forwarded to the CLI.

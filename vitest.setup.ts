@@ -1,26 +1,39 @@
 /**
- * Unit-suite hermeticity against the operator's machine.
- *
- * Bundled-plugin discovery (`bundledPluginsDir()`) falls back to the repo's
- * own `plugins/` dir, so a dev box with e.g. `plugins/wxsearch/.venv`
- * installed makes wxsearch enabled+ready inside EVERY test that calls
- * buildBootstrap — and assertions like `mcpServers == {}` or "no
- * knowledge-orchestration section" only pass on machines without the venv.
- * Point discovery at a fresh empty temp dir by default; tests that exercise
- * bundled discovery (bootstrap.test.ts's wxsearch fixture / empty-dir cases)
- * already set and restore this env themselves, which overrides this default.
- *
- * Same posture as vitest.config.ts's WECHAT_DISABLE_LOG_FILE: tests must
- * never see (or touch) the operator's real install.
+ * Keep live-process plugin discovery off the operator's checkout. Since the
+ * 2026-09-30 resolver fix, an empty env directory correctly falls through;
+ * it cannot serve as a product-level "disable bundled plugins" switch.
+ * Only replace the machine inputs. The real resolver, registry, env fixture
+ * overrides, owner pointers and pure app/repo resolution tests still run.
  */
-import { mkdtempSync } from 'node:fs'
+import { mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { vi } from 'vitest'
+import { afterAll, vi } from 'vitest'
 
-if (!process.env.WECHAT_CC_BUNDLED_PLUGINS_DIR) {
-  process.env.WECHAT_CC_BUNDLED_PLUGINS_DIR = mkdtempSync(join(tmpdir(), 'wcc-test-no-bundled-plugins-'))
-}
+const pluginTestRoot = mkdtempSync(join(tmpdir(), 'wcc-test-plugin-source-'))
+const inheritedBundledEnv = process.env.WECHAT_CC_BUNDLED_PLUGINS_DIR
+// Do not inherit a real install. Tests may set/restore their own fixture env.
+process.env.WECHAT_CC_BUNDLED_PLUGINS_DIR = pluginTestRoot
+
+vi.mock('./src/lib/plugins-source', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('./src/lib/plugins-source')>()
+  return {
+    ...actual,
+    resolveBundledPlugins: (stateDir?: string) => actual.resolveBundledPluginsDir({
+      env: process.env.WECHAT_CC_BUNDLED_PLUGINS_DIR || undefined,
+      stateDir,
+      compiled: false,
+      execPath: join(pluginTestRoot, 'test-runtime'),
+      sourceRepoRoot: pluginTestRoot,
+    }),
+  }
+})
+
+afterAll(() => {
+  if (inheritedBundledEnv === undefined) delete process.env.WECHAT_CC_BUNDLED_PLUGINS_DIR
+  else process.env.WECHAT_CC_BUNDLED_PLUGINS_DIR = inheritedBundledEnv
+  rmSync(pluginTestRoot, { recursive: true, force: true })
+})
 
 /**
  * `vi.waitFor` 的缺省上限跟 `expect.poll` 对齐(见 vitest.config.ts 的 `expect.poll.timeout`)。

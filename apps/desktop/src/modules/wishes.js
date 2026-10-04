@@ -1,258 +1,394 @@
 // @ts-check
+/// <reference lib="dom" />
 /**
- * wishes.js — 觅食台的「📮 心愿」区块。
- *
- * 前身是「派心愿」+「回声」两个折叠子块(anonymous seek/echo forage 链路)。
- * 那条链路被撤下,换成这个更直接的形状:写一句话 → 伙伴先给你看脱敏后的
- * 措辞 → 你点「派」它才真的问「认识的人」(见 people.js) → 回信进「带回来的」
- * (journal.js 的 kind='postcard')。没有匿名觅食网、没有揭晓牵线仪式。
+ * 心愿: write → inspect the server's redacted wording → explicitly 派.
+ * Saved drafts use that same confirmation step. No read or resume sends a wish.
  */
 import { invokeApi } from '../api.js'
 import { escapeHtml, showToast } from '../view.js'
 
-/** 状态字 —— 后端 v/v1/social/wish* 的 status 枚举。 */
 const STATUS_LABEL = /** @type {Record<string, string>} */ ({
   draft: '草稿', open: '等回音', closed: '已关', expired: '过期', cancelled: '作废',
 })
-
 const SEND_FAIL_COPY = /** @type {Record<string, string>} */ ({
-  no_channels: '还没有开着信道的朋友,先配对',
-  too_many_open: '同时最多 3 条',
+  no_channels: '还没有开着信道的朋友，先配对。',
+  too_many_open: '同时最多派出 3 条心愿，请等已有心愿结束后再试。',
+  not_draft: '这条心愿已经处理，请重新读取查看状态。',
+  not_found: '暂时找不到这条心愿，请重新读取查看状态。',
+})
+const INTRO_FAIL_COPY = /** @type {Record<string, string>} */ ({
+  already_requested: '已经在问了。', not_found: '这张明信片过期了。',
 })
 
-const INTRO_REQUEST_FAIL_COPY = /** @type {Record<string, string>} */ ({
-  already_requested: '已经在问了',
-  not_found: '这张明信片过期了',
-})
+let active = false
+let generation = 0
+let readRevision = 0
+let draftRevision = 0
+/** @type {Map<string, any>} */
+const savedDrafts = new Map()
+/** @type {{ id: string, preview: string, sourceText?: string }|null} */
+let currentDraft = null
+/** @type {{ generation: number, draftRevision: number }|null} */
+let creating = null
+/** Keep an already posted mutation single-flight across page visits.
+ * @type {Map<string, object>} */
+const pendingWrites = new Map()
 
-/** @param {any} r */
-function wishGateErrText(r) {
-  if (r?.error === 'gate_failed') {
-    const violations = Array.isArray(r.violations) ? r.violations.join('、') : ''
-    return `这句里有不能说的:${violations}`
-  }
-  if (r?.error === 'checker_unavailable') return '模型这会儿没响应,稍后再试'
-  return `没发出去:${String(r?.error ?? '未知错误')}`
+/** @param {number} epoch */
+function isCurrent(epoch) { return active && generation === epoch }
+/** A generic HTTP 503 or a connection error does not establish this state.
+ * @param {unknown} error */
+function isSocialOff(error) {
+  return (error instanceof Error ? error.message : String(error)) === 'social_not_wired'
 }
 
-/**
- * hop-2 明信片行 —— 「认识的人的朋友」带回来的一条,人还没接进来,先问要不要
- * 让伙伴去牵线。`requested` = 已经点过「想认识 TA」,不能再点第二次。
- * @param {any} pc
- */
+/** @param {any} result */
+function wishGateErrText(result) {
+  if (result?.error === 'gate_failed') {
+    const reasons = Array.isArray(result.violations) ? result.violations.filter((/** @type {unknown} */ v) => typeof v === 'string').join('、') : ''
+    return reasons ? `这句里有不能说的：${reasons}` : '这句里有不能公开的内容，请调整后再试。'
+  }
+  if (result?.error === 'checker_unavailable') return 'CC 暂时没能确认这句的措辞，请稍后再试。'
+  return '暂时没能准备心愿，请再试一次。'
+}
+
+/** @param {any} pc */
 function renderPostcardRow(pc) {
   const via = escapeHtml(String(pc.via_label ?? ''))
   const preview = escapeHtml(String(pc.preview ?? ''))
   const replyId = escapeHtml(String(pc.reply_id ?? ''))
   const action = pc.requested
-    ? `<span class="wsh-pc-requested">已在问</span>`
+    ? '<span class="wsh-pc-requested">已在问</span>'
     : `<button class="wsh-pc-intro" data-wsh-action="intro" data-wsh-reply="${replyId}" type="button">想认识 TA</button>`
-  return `<div class="wsh-pc-row"><span class="wsh-pc-text">「${via} 的朋友」${preview}</span>${action}</div>`
+  return `<div class="wsh-pc-row" data-wsh-reply-row="${replyId}"><span class="wsh-pc-text">「${via} 的朋友」${preview}</span>${action}</div>`
 }
 
-/** @param {any} w */
-function renderWishRow(w) {
-  const label = STATUS_LABEL[w.status] ?? String(w.status ?? '')
-  const sentTo = Number(w.sent_to) || 0
-  const replies = Number(w.replies) || 0
-  const canCancel = w.status === 'open' || w.status === 'draft'
-  const postcards = Array.isArray(w.postcards) ? w.postcards : []
-  return `<div class="wsh-row">
-    <div class="wsh-body">
-      <div class="wsh-text">${escapeHtml(String(w.text ?? ''))}</div>
-      <div class="wsh-meta"><span>${escapeHtml(label)}</span><span class="wsh-dot">·</span><span>派给 ${sentTo} 人 · ${replies} 张回信</span></div>
-      ${postcards.map(renderPostcardRow).join('')}
-    </div>
-    ${canCancel ? `<button class="wsh-cancel" data-wsh-action="cancel" data-wsh-id="${escapeHtml(String(w.id ?? ''))}" type="button">取消</button>` : ''}
-  </div>`
+/** @param {any} wish */
+function renderWishRow(wish) {
+  const id = escapeHtml(String(wish.id ?? ''))
+  const label = STATUS_LABEL[wish.status] ?? '状态未知'
+  const meta = wish.status === 'draft' ? '草稿 · 尚未派出'
+    : `${escapeHtml(label)} · 派给 ${Number(wish.sent_to) || 0} 人 · ${Number(wish.replies) || 0} 张回信`
+  const postcards = Array.isArray(wish.postcards) ? wish.postcards : []
+  const canCancel = wish.status === 'open' || wish.status === 'draft'
+  return `<div class="wsh-row" data-wsh-row-id="${id}">
+    <div class="wsh-body"><div class="wsh-text">${escapeHtml(String(wish.text ?? ''))}</div>
+      <div class="wsh-meta">${meta}</div>${postcards.map(renderPostcardRow).join('')}</div>
+    <div class="wsh-row-actions">
+      ${wish.status === 'draft' ? `<button class="fd-btn" data-wsh-action="resume" data-wsh-id="${id}" type="button">继续确认</button>` : ''}
+      ${canCancel ? `<button class="wsh-cancel" data-wsh-action="cancel" data-wsh-id="${id}" type="button">取消</button>` : ''}
+    </div></div>`
 }
 
-/**
- * @param {{ wishes: Array<any> | null } | null | undefined} data — wishes 为
- *   null = 读不到(社交没开 / daemon 没在跑)。和「派了但没有心愿」不是一回事。
- */
+/** @param {'off'|'error'} state @param {string} subject */
+function readStatusHtml(state, subject) {
+  return state === 'off'
+    ? '<div class="wsh-status" role="status"><p>社交没开，开启后就能让 CC 帮你问认识的人。</p><button type="button" class="fd-btn" data-wsh-action="show-network">查看社交设置</button></div>'
+    : `<div class="wsh-status" role="status"><p>暂时没能读取${escapeHtml(subject)}。</p><button type="button" class="fd-btn" data-wsh-action="retry">重新读取</button></div>`
+}
+
+/** @param {{ wishes: Array<any>|null, state?: 'off'|'error' }|null|undefined} data */
 export function renderWishes(data) {
   const list = document.getElementById('fd-wish-list')
   const count = document.getElementById('fd-wish-count')
   const wishes = data && Array.isArray(data.wishes) ? data.wishes : null
   if (count) count.textContent = wishes ? String(wishes.filter(w => w.status === 'open').length) : ''
   if (!list) return
-  if (wishes == null) {
-    list.innerHTML = '<div class="fd-empty">社交没开 —— 打开后就能让伙伴帮你去问认识的人。</div>'
+  savedDrafts.clear()
+  if (wishes === null) {
+    list.innerHTML = readStatusHtml(data?.state === 'off' ? 'off' : 'error', '心愿')
     return
   }
-  // spec §5 说的是「**开着的**心愿列表」:草稿(还没派)和等回音的。关掉的、
-  // 作废的、过期的都是往事 —— 回信本身在「🎒 带回来的」里,列表不做归档视图。
+  // A successful complete read is authoritative for the current card.
+  // The request may have succeeded while its response was lost or the page
+  // was away. Only an existing draft still supports 派 / 算了; a read error
+  // returns above and keeps the card. Reconciliation never clears input.
+  if (currentDraft && !wishes.some(w => w.id === currentDraft?.id && w.status === 'draft')) renderWishDraft(null)
   const openish = wishes.filter(w => w.status === 'draft' || w.status === 'open')
-  if (openish.length === 0) {
-    list.innerHTML = '<div class="fd-empty">还没有心愿 —— 想问点什么就在上面写一句。</div>'
-    return
-  }
-  list.innerHTML = openish.map(renderWishRow).join('')
+  for (const wish of openish) if (wish.status === 'draft' && typeof wish.id === 'string' && typeof wish.text === 'string') savedDrafts.set(wish.id, wish)
+  list.innerHTML = openish.length ? openish.map(renderWishRow).join('')
+    : '<div class="fd-empty">还没有心愿，想问点什么就在上面写一句。</div>'
+  syncPendingWrites()
 }
 
-/**
- * 撰写草稿卡:成功 preview → 「派」/「算了」;preview 为 null 清空草稿
- * (发出去之后 / 算了之后收起)。
- * @param {{ id?: string, preview?: string } | null} preview
- */
+/** Confirmation always displays the server's redacted wording.
+ * sourceText exists only for a draft created in this renderer; it is used
+ * to clear the input after a successful send only if its text is unchanged.
+ * @param {{ id?: string, preview?: string, sourceText?: string }|null} preview */
 export function renderWishDraft(preview) {
-  const draft = document.getElementById('fd-wish-draft')
-  if (!draft) return
-  if (!preview) { draft.hidden = true; draft.innerHTML = ''; return }
-  draft.hidden = false
-  const id = escapeHtml(String(preview.id ?? ''))
-  draft.innerHTML = `<div class="wsh-draft-text">${escapeHtml(String(preview.preview ?? ''))}</div>` +
-    `<div class="wsh-draft-actions">` +
-    `<button class="fd-btn fd-btn-primary" data-wsh-action="send" data-wsh-id="${id}" type="button">派</button>` +
-    `<button class="fd-btn wsh-btn-discard" data-wsh-action="discard" data-wsh-id="${id}" type="button">算了</button>` +
-    `</div>`
-}
-
-/** @param {any} o */
-function renderOfferRow(o) {
-  const via = escapeHtml(String(o.via_label ?? ''))
-  const hint = escapeHtml(String(o.hint ?? ''))
-  const replyId = escapeHtml(String(o.reply_id ?? ''))
-  return `<div class="wsh-offer-row">
-    <span class="wsh-offer-text">「${via} 的朋友(问「${hint}」)想认识你」</span>
-    <span class="wsh-offer-actions">
-      <button class="fd-btn fd-btn-primary" data-wsh-action="accept" data-wsh-reply="${replyId}" type="button">同意</button>
-      <button class="fd-btn wsh-btn-discard" data-wsh-action="decline" data-wsh-reply="${replyId}" type="button">不了</button>
-    </span>
-  </div>`
-}
-
-/**
- * 「待你点头」区块 —— 别人的伙伴托我的伙伴来问「能不能认识你」。空 → 整块收起,
- * 不占地方(不是每个人天天都有人想认识)。
- * @param {{ offers: Array<any> } | null | undefined} data
- */
-export function renderOffers(data) {
-  const box = document.getElementById('fd-wish-offers')
-  if (!box) return
-  const offers = data && Array.isArray(data.offers) ? data.offers : []
-  if (offers.length === 0) {
-    box.hidden = true
-    box.innerHTML = ''
+  const host = document.getElementById('fd-wish-draft')
+  draftRevision++
+  if (!preview) {
+    currentDraft = null
+    if (host) { host.hidden = true; host.innerHTML = ''; delete host.dataset.wshDraftId }
     return
   }
-  box.hidden = false
-  box.innerHTML = offers.map(renderOfferRow).join('')
+  currentDraft = { id: String(preview.id ?? ''), preview: String(preview.preview ?? ''), ...(preview.sourceText !== undefined ? { sourceText: preview.sourceText } : {}) }
+  if (!host) return
+  host.hidden = false
+  host.dataset.wshDraftId = currentDraft.id
+  const id = escapeHtml(currentDraft.id)
+  host.innerHTML = `<div class="wsh-draft-text">${escapeHtml(currentDraft.preview)}</div>
+    <div class="wsh-draft-actions">
+      <button class="fd-btn fd-btn-primary" data-wsh-action="send" data-wsh-id="${id}" type="button">派</button>
+      <button class="fd-btn wsh-btn-discard" data-wsh-action="discard" data-wsh-id="${id}" type="button">算了</button>
+    </div>`
+  syncPendingWrites()
 }
 
-/**
- * 「社交没开」不是故障。两条路由都是 503 `social_not_wired`(api.js 把响应
- * body 的 error 抛成 message,读不到 body 时退成 `HTTP 503`)—— 这台机器没开
- * 这个功能而已,不该每次刷新都往控制台冒一条红字。别的错(daemon 没在跑、
- * 超时、500)照报。
- * @param {unknown} err
- */
-function isSocialOff(err) {
-  const msg = err instanceof Error ? err.message : String(err)
-  return msg === 'social_not_wired' || msg === 'HTTP 503'
+/** @param {any} offer */
+function renderOfferRow(offer) {
+  const id = escapeHtml(String(offer.reply_id ?? ''))
+  return `<div class="wsh-offer-row" data-wsh-reply-row="${id}">
+    <span class="wsh-offer-text">「${escapeHtml(String(offer.via_label ?? ''))} 的朋友（问「${escapeHtml(String(offer.hint ?? ''))}」）想认识你」</span>
+    <span class="wsh-offer-actions">
+      <button class="fd-btn fd-btn-primary" data-wsh-action="accept" data-wsh-reply="${id}" type="button">同意</button>
+      <button class="fd-btn wsh-btn-discard" data-wsh-action="decline" data-wsh-reply="${id}" type="button">不了</button>
+    </span></div>`
+}
+
+/** @param {{ offers: Array<any>|null, state?: 'off'|'error' }|null|undefined} data */
+export function renderOffers(data) {
+  const host = document.getElementById('fd-wish-offers')
+  if (!host) return
+  if (data?.state === 'error') {
+    host.hidden = false
+    host.innerHTML = readStatusHtml('error', '待你点头的邀请')
+    return
+  }
+  const offers = data && Array.isArray(data.offers) ? data.offers : []
+  host.hidden = offers.length === 0
+  host.innerHTML = offers.map(renderOfferRow).join('')
+  syncPendingWrites()
+}
+
+/** @param {string} path @param {string} field
+ * @returns {Promise<{ items: any[]|null, state?: 'off'|'error' }>} */
+async function readList(path, field) {
+  try {
+    const response = /** @type {Record<string, any>|null|undefined} */ (await invokeApi('GET', path))
+    if (response?.error === 'social_not_wired') return { items: null, state: 'off' }
+    if (!Array.isArray(response?.[field])) return { items: null, state: 'error' }
+    return { items: response[field] }
+  } catch (error) {
+    return { items: null, state: isSocialOff(error) ? 'off' : 'error' }
+  }
 }
 
 export async function refreshWishes() {
-  const [wr, or] = await Promise.all([
-    /** @type {Promise<{wishes?:Array<any>}|null>} */ (Promise.resolve(invokeApi('GET', '/v1/social/wishes')).catch(() => null)),
-    /** @type {Promise<{offers?:Array<any>}|null>} */ (Promise.resolve(invokeApi('GET', '/v1/social/intro/offers')).catch(err => {
-      if (!isSocialOff(err)) console.error('[wishes] 待你点头拉取失败', err)
-      return null
-    })),
+  if (!active) return
+  const epoch = generation
+  const revision = ++readRevision
+  const [wishes, offers] = await Promise.all([
+    readList('/v1/social/wishes', 'wishes'), readList('/v1/social/intro/offers', 'offers'),
   ])
-  renderWishes({ wishes: wr ? (wr.wishes ?? []) : null })
-  renderOffers({ offers: or ? (or.offers ?? []) : [] })
+  if (!isCurrent(epoch) || revision !== readRevision) return
+  renderWishes({ wishes: wishes.items, state: wishes.state })
+  renderOffers({ offers: offers.items, state: offers.state })
 }
 
-/** @param {{ preventDefault(): void }} ev */
-export async function onWishCompose(ev) {
-  ev.preventDefault()
-  const input = /** @type {HTMLInputElement | null} */ (document.getElementById('fd-wish-text'))
-  const text = String(input?.value ?? '').trim()
-  const draft = document.getElementById('fd-wish-draft')
-  if (!text) {
-    if (draft) { draft.hidden = false; draft.innerHTML = '<div class="wsh-draft-err">先写下你想让伙伴帮你打听什么</div>' }
-    return
+/** @param {HTMLElement} host @param {string} message @param {boolean} [readAgain] */
+function showFeedback(host, message, readAgain = false) {
+  let note = host.querySelector(':scope > [data-wsh-feedback]')
+  if (!(note instanceof HTMLElement)) {
+    note = document.createElement('p')
+    note.className = 'wsh-feedback wsh-draft-err'
+    note.setAttribute('data-wsh-feedback', '')
+    note.setAttribute('role', 'status')
+    note.setAttribute('aria-live', 'polite')
+    host.appendChild(note)
   }
+  note.textContent = message
+  if (readAgain) {
+    const retry = document.createElement('button')
+    retry.type = 'button'
+    retry.className = 'fd-btn'
+    retry.dataset.wshAction = 'retry'
+    retry.textContent = '重新读取'
+    note.append(' ', retry)
+  }
+}
+
+/** @param {string} message @param {boolean} [readAgain] */
+function showDraftFeedback(message, readAgain = false) {
+  const host = document.getElementById('fd-wish-draft')
+  if (!host) return
+  host.hidden = false
+  showFeedback(host, message, readAgain)
+}
+
+/** @param {string} key @param {string} message @param {boolean} [readAgain] */
+function showWriteFeedback(key, message, readAgain = false) {
+  if (key.startsWith('wish:') && currentDraft?.id === key.slice(5)) { showDraftFeedback(message, readAgain); return }
+  const attribute = key.startsWith('wish:') ? 'data-wsh-row-id' : 'data-wsh-reply-row'
+  const id = key.slice(key.indexOf(':') + 1)
+  for (const host of document.querySelectorAll(`[${attribute}]`)) {
+    if (host instanceof HTMLElement && host.getAttribute(attribute) === id) showFeedback(host, message, readAgain)
+  }
+}
+
+function syncPendingWrites() {
+  for (const id of ['fd-wish-draft', 'fd-wish-list', 'fd-wish-offers']) {
+    const host = document.getElementById(id)
+    host?.querySelectorAll('button').forEach(button => {
+      const key = button.dataset.wshId ? `wish:${button.dataset.wshId}`
+        : button.dataset.wshReply ? `reply:${button.dataset.wshReply}` : null
+      if (key) button.disabled = pendingWrites.has(key)
+    })
+  }
+}
+
+/** @param {boolean} busy */
+function setComposeBusy(busy) {
+  const button = document.getElementById('fd-wish-submit')
+  if (button instanceof HTMLButtonElement) button.disabled = busy
+  const form = document.getElementById('fd-wish-form')
+  if (form) form.setAttribute('aria-busy', String(busy))
+}
+
+/** @param {{ preventDefault(): void }} event */
+export async function onWishCompose(event) {
+  event.preventDefault()
+  if (!active || creating) return
+  const input = /** @type {HTMLInputElement|null} */ (document.getElementById('fd-wish-text'))
+  const sourceText = input?.value ?? ''
+  const text = sourceText.trim()
+  if (!text) { showDraftFeedback('先写下你想让 CC 帮你打听什么。'); return }
+  const operation = { generation, draftRevision }
+  creating = operation
+  setComposeBusy(true)
   try {
-    const r = /** @type {{ok?:boolean, id?:string, preview?:string, error?:string, violations?:Array<string>}} */ (
+    const result = /** @type {{ ok?: boolean, id?: string, preview?: string, error?: string, violations?: unknown[] }} */ (
       await invokeApi('POST', '/v1/social/wish', { text }))
-    if (r?.ok) {
-      renderWishDraft({ id: r.id, preview: r.preview })
-    } else if (draft) {
-      draft.hidden = false
-      draft.innerHTML = `<div class="wsh-draft-err">${escapeHtml(wishGateErrText(r))}</div>`
+    if (!isCurrent(operation.generation) || creating !== operation) return
+    if (!result?.ok || typeof result.id !== 'string' || !result.id || typeof result.preview !== 'string') {
+      if (draftRevision === operation.draftRevision) showDraftFeedback(wishGateErrText(result))
+      return
     }
-  } catch (err) {
-    if (draft) {
-      draft.hidden = false
-      draft.innerHTML = `<div class="wsh-draft-err">派不出去:${escapeHtml(err instanceof Error ? err.message : String(err))}</div>`
-    }
-  }
-}
-
-/**
- * 委托点击:草稿卡(#fd-wish-draft)的 派/算了,列表(#fd-wish-list)里
- * open/draft 行的 取消,心愿下 hop-2 明信片的 想认识 TA,以及「待你点头」
- * (#fd-wish-offers)的 同意/不了。前三个落在 data-wsh-id 上,后三个(想认识 TA
- * / 同意 / 不了)落在 data-wsh-reply 上 —— 它们操作的是回信而不是心愿本身。
- * @param {any} ev
- */
-export async function onWishAction(ev) {
-  const btn = ev.target?.closest?.('[data-wsh-action]')
-  if (!btn) return
-  const action = btn.getAttribute('data-wsh-action')
-
-  if (action === 'intro' || action === 'accept' || action === 'decline') {
-    const replyId = btn.getAttribute('data-wsh-reply')
-    if (!replyId) return
-    const route = action === 'intro' ? '/v1/social/intro/request'
-      : action === 'accept' ? '/v1/social/intro/accept'
-      : '/v1/social/intro/decline'
-    const r = /** @type {{ok?:boolean, reply_id?:string, reason?:string}|null} */ (
-      await invokeApi('POST', route, { reply_id: replyId }).catch(() => null))
-    if (action === 'intro') {
-      showToast(r?.ok ? '已经托 TA 去问了' : (INTRO_REQUEST_FAIL_COPY[String(r?.reason)] ?? `没问成:${String(r?.reason ?? '未知错误')}`))
-    } else if (action === 'accept') {
-      showToast(r?.ok ? '名片递过去了' : `没弄成:${String(r?.reason ?? '未知错误')}`)
-    } else {
-      showToast(r?.ok ? '回了不了' : `没弄成:${String(r?.reason ?? '未知错误')}`)
-    }
-    await refreshWishes()
-    return
-  }
-
-  const id = btn.getAttribute('data-wsh-id')
-  if (!id) return
-
-  if (action === 'send') {
-    const r = /** @type {{ok?:boolean, sent_to?:number, reason?:string}|null} */ (
-      await invokeApi('POST', '/v1/social/wish/send', { id }).catch(() => null))
-    if (r?.ok) {
-      showToast(`已派给 ${Number(r.sent_to) || 0} 个朋友`)
-      renderWishDraft(null)
+    // Reads started before this successful write can no longer establish
+    // the current list state (including an obsolete disabled/error state).
+    readRevision++
+    // Typing a new sentence or choosing another saved draft while preparing
+    // must not replace the current confirmation. The older draft is saved
+    // server-side and can be resumed from the list after this fresh read.
+    if (input?.value !== sourceText || draftRevision !== operation.draftRevision) {
       await refreshWishes()
-    } else {
-      showToast(SEND_FAIL_COPY[String(r?.reason)] ?? `没派出去:${String(r?.reason ?? '未知错误')}`)
+      return
     }
-    return
-  }
-
-  if (action === 'discard' || action === 'cancel') {
-    const r = /** @type {{ok?:boolean}|null} */ (
-      await invokeApi('POST', '/v1/social/wish/cancel', { id }).catch(() => null))
-    if (action === 'discard') renderWishDraft(null)
-    if (!r?.ok) showToast('没能取消 —— 稍后再试')
-    await refreshWishes()
+    renderWishDraft({ id: result.id, preview: result.preview, sourceText })
+  } catch {
+    if (isCurrent(operation.generation) && creating === operation && draftRevision === operation.draftRevision) showDraftFeedback('暂时没能准备心愿，请再试一次。')
+  } finally {
+    if (creating === operation) {
+      creating = null
+      // The POST remains single-flight across visits. Its late completion
+      // may release this lock but cannot change the new visit's content.
+      if (active) setComposeBusy(false)
+    }
   }
 }
 
-/** 装一次委托监听 + 首次拉取。 */
+/** @param {Event} event */
+export async function onWishAction(event) {
+  if (!active || !(event.target instanceof HTMLElement)) return
+  const button = event.target.closest('[data-wsh-action]')
+  if (!(button instanceof HTMLButtonElement) || button.disabled || !button.isConnected) return
+  const action = button.dataset.wshAction
+  if (action === 'show-network') {
+    const network = document.getElementById('fd-net')
+    const details = network?.querySelector('details')
+    if (details) details.open = true
+    network?.scrollIntoView?.({ block: 'nearest' })
+    return
+  }
+  if (action === 'retry') {
+    const epoch = generation
+    button.disabled = true
+    try { await refreshWishes() }
+    finally { if (isCurrent(epoch) && button.isConnected) button.disabled = false }
+    return
+  }
+  const id = button.dataset.wshId
+  if (action === 'resume') {
+    if (!id || pendingWrites.has(`wish:${id}`)) return
+    const saved = savedDrafts.get(id)
+    if (saved?.status === 'draft') renderWishDraft({ id, preview: saved.text })
+    return
+  }
+  const intro = action === 'intro' || action === 'accept' || action === 'decline'
+  const replyId = button.dataset.wshReply
+  if (intro ? !replyId : !id || (action !== 'send' && action !== 'discard' && action !== 'cancel')) return
+  const key = intro ? `reply:${replyId}` : `wish:${id}`
+  if (pendingWrites.has(key)) return
+  const operation = {}
+  const epoch = generation
+  const panel = !intro && currentDraft?.id === id ? { ...currentDraft, revision: draftRevision } : null
+  pendingWrites.set(key, operation)
+  syncPendingWrites()
+  try {
+    const path = intro ? action === 'intro' ? '/v1/social/intro/request'
+      : action === 'accept' ? '/v1/social/intro/accept' : '/v1/social/intro/decline'
+      : action === 'send' ? '/v1/social/wish/send' : '/v1/social/wish/cancel'
+    const result = /** @type {{ ok?: boolean, reason?: string, sent_to?: number }} */ (
+      await invokeApi('POST', path, intro ? { reply_id: replyId } : { id }))
+    if (!isCurrent(epoch)) return
+    if (!result?.ok) {
+      const message = intro ? INTRO_FAIL_COPY[String(result?.reason)] ?? '暂时没能完成介绍，请再试一次。'
+        : action === 'send' ? SEND_FAIL_COPY[String(result?.reason)] ?? '这次没能派出，请再试一次。'
+        : '这次没能取消，请再试一次。'
+      showWriteFeedback(key, message, result?.reason === 'not_draft' || result?.reason === 'not_found')
+      return
+    }
+    if (intro) showToast(action === 'intro' ? '已经托 TA 去问了' : action === 'accept' ? '名片递过去了' : '回了不了')
+    else {
+      if (action === 'send') showToast(`已派给 ${Number(result.sent_to) || 0} 个朋友`)
+      if (panel && currentDraft?.id === panel.id && draftRevision === panel.revision) {
+        const input = /** @type {HTMLInputElement|null} */ (document.getElementById('fd-wish-text'))
+        if (action === 'send' && panel.sourceText !== undefined && input?.value === panel.sourceText) input.value = ''
+        renderWishDraft(null)
+      }
+    }
+    await refreshWishes()
+  } catch {
+    if (isCurrent(epoch)) showWriteFeedback(key, intro ? '暂时没能完成介绍，请再试一次。'
+      : action === 'send' ? '暂时无法确认是否已派出，请重新读取心愿查看状态。'
+      : '暂时无法确认是否已取消，请重新读取心愿查看状态。', true)
+  } finally {
+    if (pendingWrites.get(key) === operation) pendingWrites.delete(key)
+    // Releasing this entity's lock is safe after re-entry; it cannot clear
+    // cards, inputs, or a newer operation's lock. Content effects above are
+    // guarded by the page generation and confirmation revision.
+    if (active) syncPendingWrites()
+  }
+}
+
+/** main calls this before refreshing the visible 觅食 pane. */
+export function activateWishes() {
+  if (active) return
+  active = true
+  generation++
+  setComposeBusy(creating !== null)
+  syncPendingWrites()
+}
+
+/** main calls this when leaving 觅食 and on pagehide. Keep unsent text/cards. */
+export function deactivateWishes() {
+  active = false
+  generation++
+  readRevision++
+  draftRevision++
+}
+
+/** Wire once. Hidden-pane bootstrap must not reactivate a page left by main. */
 export function initWishes() {
-  document.getElementById('fd-wish-form')?.addEventListener('submit', onWishCompose)
-  document.getElementById('fd-wish-draft')?.addEventListener('click', onWishAction)
-  document.getElementById('fd-wish-list')?.addEventListener('click', onWishAction)
-  document.getElementById('fd-wish-offers')?.addEventListener('click', onWishAction)
-  refreshWishes()
+  const form = document.getElementById('fd-wish-form')
+  if (!form) return
+  if (form.dataset.wshReady !== 'true') {
+    form.dataset.wshReady = 'true'
+    form.addEventListener('submit', event => { onWishCompose(event).catch(() => {}) })
+    for (const id of ['fd-wish-draft', 'fd-wish-list', 'fd-wish-offers']) {
+      document.getElementById(id)?.addEventListener('click', event => { onWishAction(event).catch(() => {}) })
+    }
+  }
+  if (active) refreshWishes().catch(() => {})
 }

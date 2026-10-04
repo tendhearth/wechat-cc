@@ -8,6 +8,9 @@ import {createExecutionCatalogs,createContinuationPreviews,continuationPreviewKe
 import {createWorkbenchThumbnails} from './workbench-thumbnails.js'
 import {createWorkbenchAttachments,attachmentSignature,renderAttachmentComposer,renderMessageAttachments,renderImageArtifacts} from './workbench-attachments.js'
 import { createWorkbenchDraftStore, loadWorkbenchView, saveWorkbenchView, workbenchWindowStorage } from './workbench-window-state.js'
+import {readSiteArchive,SITE_ARTIFACT_MIME} from './site-preview.js'
+import { isHtmlArtifact, artifactDisplayName, readWebPreview, renderArtifactFrame, renderArtifactPanel, paintWorkbenchWithPreview } from './workbench-artifact-preview.js'
+import { renderPdfReader, mountPdfReader } from './pdf-reader.js'
 export { createWorkbenchDraftStore } from './workbench-window-state.js'
 
 import { mountHandoffDialog, mountHandoffRecord, defaultReviewArtifacts } from './workbench-handoff.js'
@@ -46,9 +49,9 @@ function providerLabel(p) {
 /** @typedef {{q:string,archived:'exclude'|'only'|'all'}} TaskQuery */
 /** @typedef {{limit:number,total:number,hasMore:boolean,nextCursor:string|null}} TaskPage */
 /** @typedef {{tasks:Task[],providers:Provider[],defaultProvider:string|null,canWechat:boolean,historyProviders?:string[],page?:TaskPage,projects?:Array<{id:string,name:string,path:string,providerId:string}>,projectProviders?:Record<string,string>}} ListResult */
-/** @typedef {{artifactId:string,html:string}|null} Preview */
+/** @typedef {import('./workbench-artifact-preview.js').ArtifactPreview|null} Preview */
 /** @typedef {{artifactId:string,paths:string[],comment?:string,notice?:string,restartToken?:string}} ReviewReturnOpen */
-/** @typedef {{tasks:Task[],providers:Provider[],defaultProvider:string|null,canWechat:boolean,nativeResume?:NativeResume|null,historyProviders?:string[],selectedId:string|null,loadingId?:string|null,detail:Detail|null,selectedArtifactId:string|null,error:string,detailDisconnected?:boolean,preview:Preview,query?:TaskQuery,page?:TaskPage,projects?:Array<{id:string,name:string,path:string,providerId:string}>,projectProviders?:Record<string,string>,loadingMore?:boolean,newScope?:string,chats?:ChatMatter[],selectedMatterId?:string|null,version?:number,reviews?:ReviewTurn[],reviewsSignature?:string,reviewsError?:boolean,reviewReturnOpen?:ReviewReturnOpen|null}} WorkbenchState */
+/** @typedef {{tasks:Task[],providers:Provider[],defaultProvider:string|null,canWechat:boolean,nativeResume?:NativeResume|null,historyProviders?:string[],selectedId:string|null,loadingId?:string|null,detail:Detail|null,selectedArtifactId:string|null,error:string,detailDisconnected?:boolean,preview:Preview,previewOpen?:boolean,query?:TaskQuery,page?:TaskPage,projects?:Array<{id:string,name:string,path:string,providerId:string}>,projectProviders?:Record<string,string>,loadingMore?:boolean,newScope?:string,chats?:ChatMatter[],selectedMatterId?:string|null,version?:number,reviews?:ReviewTurn[],reviewsSignature?:string,reviewsError?:boolean,reviewReturnOpen?:ReviewReturnOpen|null}} WorkbenchState */
 /** @typedef {import('./workbench-window-state.js').Draft} Draft */
 /** @typedef {{id:string,kind:string,title:string,status:string,updatedAt:number}} ChatMatter */
 /** @typedef {{invokeWorkbenchApi:(method:'GET'|'POST',path:string,body?:Record<string,unknown>)=>Promise<unknown>,invoke?:(command:string,args:Record<string,unknown>)=>Promise<unknown>,pollMs?:number,mountConverse?:(host:HTMLElement)=>void,unmountConverse?:()=>void,confirmUnattended?:()=>Promise<boolean>,onDelegate?:(draft:import('./task-entry.js').Draft)=>Promise<import('./task-entry.js').EntryResult|null>}} WorkbenchDeps */
@@ -203,8 +206,13 @@ export function groupWorkbenchTasks(tasks,projects=[]) {
   })]
 }
 
-/** @param {Task} task @param {Provider[]} providers @param {string|null} selectedId */
-function renderTask(task, providers, selectedId) {
+/** @param {Task} task */
+const needsDecision = task => task.archivedAt == null && ((task.pendingPermissionCount ?? 0) > 0 || (task.pendingQuestionCount ?? 0) > 0)
+/** Stable across sorting, filtering and pagination; paths never become selectors. @param {string} path */
+const projectDisclosureId = path => 'wb-project-fold-' + (Array.from(path, c => c.codePointAt(0)?.toString(16)).join('-') || 'managed')
+
+/** @param {Task} task @param {Provider[]} providers @param {string|null} selectedId @param {string} [projectName] */
+function renderTask(task, providers, selectedId, projectName) {
   const provider = providers.find(item => item.id === task.providerId)?.displayName || task.providerId || '未知执行者'
   const pendingPermissionCount = task.pendingPermissionCount ?? 0
   const pendingQuestionCount = task.pendingQuestionCount ?? 0
@@ -221,7 +229,7 @@ function renderTask(task, providers, selectedId) {
     : pendingQuestionCount > 0 ? `<span class="wb-task-attention" aria-label="${escapeWorkbenchHtml(pendingQuestionCount)} 项问题等你回答">等你回答 · ${escapeWorkbenchHtml(pendingQuestionCount)}</span>` : `<span class="wb-status" data-status="${escapeWorkbenchHtml(statusValue(task))}">${escapeWorkbenchHtml(waitingLabel || (task.importedOnly?'尚未执行':statusLabel(task.status, task.runtime, task.phase)))}</span>`
   return `<button type="button" class="wb-task ${task.id === selectedId ? 'is-selected' : ''}" data-task-id="${escapeWorkbenchHtml(task.id)}" aria-label="${escapeWorkbenchHtml(accessibleLabel)}"${updated ? ` title="${escapeWorkbenchHtml(`${title} · ${updated}`)}"` : ''}>
     <span class="wb-task-title" title="${escapeWorkbenchHtml(title)}">${escapeWorkbenchHtml(title)}</span>
-    <span class="wb-task-meta"><span class="wb-task-provider">${escapeWorkbenchHtml(provider)}</span>${stateHtml}</span>
+    <span class="wb-task-meta"><span class="wb-task-provider">${escapeWorkbenchHtml(projectName || provider)}</span>${stateHtml}</span>
   </button>`
 }
 
@@ -255,7 +263,7 @@ export function renderMessageFor({ detail, helper, handoffs, actionable, lastRep
   </article>`
 }
 
-/** @param {{catalog?:import('./workbench-execution.js').CatalogState,restartPreview?:import('./workbench-execution.js').ContinuationPreviewState,busy?:boolean}} [executionView] @param {WorkbenchState} state @param {import('./workbench-interaction.js').Interactions} [interactions] @param {Draft} [draft] @param {string} [attachmentError] */
+/** @param {{catalog?:import('./workbench-execution.js').CatalogState,restartPreview?:import('./workbench-execution.js').ContinuationPreviewState,busy?:boolean,sidebarDisclosures?:Map<string,boolean>}} [executionView] @param {WorkbenchState} state @param {import('./workbench-interaction.js').Interactions} [interactions] @param {Draft} [draft] @param {string} [attachmentError] */
 export function renderWorkbench(state, interactions, draft, attachmentError='',executionView={}) {
   const tasks = state.tasks ?? []
   const detail = state.detail
@@ -264,14 +272,33 @@ export function renderWorkbench(state, interactions, draft, attachmentError='',e
   const selectedArtifact = detail?.artifacts?.find(a => a.id === state.selectedArtifactId)
   const activeProject=state.projects?.find(project=>state.newScope===`new:${project.path}`)
   const projects=groupWorkbenchTasks(tasks,state.projects).filter(project=>!query.q&&query.archived!=='only'||project.tasks.length||query.archived!=='only'&&project.label.toLowerCase().includes(query.q.toLowerCase()))
-  const taskList = projects.length ? projects.map((project, index) => `<section class="wb-project" aria-labelledby="wb-project-${index}">
-    <header title="${escapeWorkbenchHtml(project.path)}"><h3 id="wb-project-${index}">${escapeWorkbenchHtml(project.label)}</h3>${'workspaceKind' in project && project.workspaceKind==='managed' ? '<button type="button" class="wb-new wb-project-new" data-action="task-entry">＋ 新交办</button>' : `<button type="button" class="wb-new wb-project-new" data-action="new-project-task" data-project-path="${escapeWorkbenchHtml(project.path)}" aria-label="在 ${escapeWorkbenchHtml(project.label)} 新对话">＋ 新对话</button>`}</header>
-    <div>${project.tasks.map(task => renderTask(task, state.providers, state.loadingId ?? state.selectedId)).join('')||'<p class="wb-empty-copy">当前列表没有对话</p>'}</div>
-  </section>`).join('') : `<p class="wb-empty-copy">${listEmptyCopy}</p>`
+  const attentionTasks = tasks.filter(needsDecision)
+  const projectName = (/** @type {Task} */ task) => task.workspaceKind === 'managed' ? '随手交办' : projects.find(p => p.path === task.path)?.label ?? pathParts(task.path).name
+  const attentionList = attentionTasks.length ? `<section class="wb-attention-list" aria-label="等你处理"><header><h3>等你处理</h3><small>${state.page?.hasMore ? '当前列表' : `${attentionTasks.length} 件`}</small></header>${attentionTasks.map(task => renderTask(task, state.providers, state.loadingId ?? state.selectedId, projectName(task))).join('')}</section>` : ''
+  const regularProjects = projects.map(project => ({...project, tasks:project.tasks.filter(task => !needsDecision(task))}))
+  const visibleProjects = regularProjects.filter(project => project.tasks.length || activeProject?.path === project.path)
+  const selectedTask = tasks.find(task => task.id === (state.loadingId ?? state.selectedId)) ?? detail?.task
+  const isSelectedProject = (/** @type {typeof regularProjects[number]} */ project) => activeProject?.path === project.path || !!selectedTask && (selectedTask.workspaceKind === 'managed' ? project.path === '' : project.path === selectedTask.path)
+  const projectPriority = (/** @type {typeof regularProjects[number]} */ project) => isSelectedProject(project) ? 0 : project.tasks.some(task => ['running','queued','cancelling'].includes(statusValue(task))) ? 1 : 2
+  visibleProjects.sort((a,b) => projectPriority(a)-projectPriority(b) || Math.max(0,...b.tasks.map(t=>t.updatedAt))-Math.max(0,...a.tasks.map(t=>t.updatedAt)))
+  const otherProjects = regularProjects.filter(project => !project.tasks.length && activeProject?.path !== project.path)
+  const renderProject = (/** @type {typeof regularProjects[number]} */ project, /** @type {number} */ index) => {
+    const id = projectDisclosureId(project.path)
+    const selected = isSelectedProject(project)
+    const working = project.tasks.some(task => ['running','queued','cancelling'].includes(statusValue(task)))
+    const open = !!query.q || (executionView.sidebarDisclosures?.get(id) ?? (selected || working || index === 0))
+    const create = 'workspaceKind' in project && project.workspaceKind === 'managed'
+      ? '<button type="button" class="wb-new wb-project-new" data-action="task-entry" aria-label="随手交办一件事">＋ 交办</button>'
+      : `<button type="button" class="wb-new wb-project-new" data-action="task-entry" data-project-path="${escapeWorkbenchHtml(project.path)}" aria-label="在 ${escapeWorkbenchHtml(project.label)} 交办">＋ 交办</button>`
+    return `<section class="wb-project"><details id="${id}" data-sidebar-disclosure${open ? ' open' : ''}><summary title="${escapeWorkbenchHtml(project.path)}"><h3>${escapeWorkbenchHtml(project.label)}</h3><small>${project.tasks.length}</small></summary><div class="wb-project-tasks">${project.tasks.map(task => renderTask(task, state.providers, state.loadingId ?? state.selectedId)).join('') || '<p class="wb-empty-copy">在这个项目里交办一件事。</p>'}</div></details>${create}</section>`
+  }
+  const otherId = 'wb-other-projects'
+  const otherList = otherProjects.length ? `<details id="${otherId}" class="wb-other-projects" data-sidebar-disclosure${query.q || executionView.sidebarDisclosures?.get(otherId) ? ' open' : ''}><summary>其他项目 <small>${otherProjects.length}</small></summary><div>${otherProjects.map(project => `<section class="wb-project wb-project-empty"><h3 title="${escapeWorkbenchHtml(project.path)}">${escapeWorkbenchHtml(project.label)}</h3><button type="button" class="wb-new wb-project-new" data-action="task-entry" data-project-path="${escapeWorkbenchHtml(project.path)}" aria-label="在 ${escapeWorkbenchHtml(project.label)} 交办">＋ 交办</button></section>`).join('')}</div></details>` : ''
+  const taskList = visibleProjects.length || otherProjects.length || attentionTasks.length ? attentionList + visibleProjects.map(renderProject).join('') + otherList : `<p class="wb-empty-copy">${listEmptyCopy}</p>`
   // 「一件事」:在桌面露过面的对话(主人跟 CC 说的那条)也在这张列表里,排在任务上面。
   const chats = state.chats ?? []
   const chatList = chats.length ? `<section class="wb-project wb-chats" aria-labelledby="wb-chats"><header><h3 id="wb-chats">对话</h3></header><div>${chats.map(chat => `<button type="button" class="wb-task ${chat.id === state.selectedMatterId ? 'is-selected' : ''}" data-matter-id="${escapeWorkbenchHtml(chat.id)}" aria-label="${escapeWorkbenchHtml(chat.title)}"><span class="wb-task-title">${escapeWorkbenchHtml(chat.title)}</span><span class="wb-task-meta"><span class="wb-task-provider">跟 CC 说</span></span></button>`).join('')}</div></section>` : ''
-  const listControls = `<div class="wb-list-controls"><form id="wb-search-form" class="wb-search"><label class="wb-sr-only" for="wb-search">搜索任务名称、文件夹或任务编号</label><input id="wb-search" name="q" type="search" maxlength="200" placeholder="搜索项目或对话" value="${escapeWorkbenchHtml(query.q)}"><button class="wb-new" type="submit" aria-label="搜索任务">搜索</button></form><div class="wb-list-filters"><button type="button" class="wb-new" data-action="add-project">＋ 添加项目</button><button class="wb-new" type="button" data-action="toggle-archived" aria-pressed="${query.archived === 'only'}">${query.archived === 'only' ? '返回任务' : '已归档'}</button>${state.historyProviders?.length?'<button class="wb-new" type="button" data-action="native-history">已有会话</button>':''}${query.q ? '<button class="wb-new" type="button" data-action="clear-search">清除搜索</button>' : ''}</div>${query.archived === 'only' ? '<p class="wb-archive-label">已归档的任务</p>' : ''}</div>`
+  const listControls = `<div class="wb-list-controls"><form id="wb-search-form" class="wb-search"><label class="wb-sr-only" for="wb-search">搜索任务名称、文件夹或任务编号</label><input id="wb-search" name="q" type="search" maxlength="200" placeholder="搜索项目或对话" value="${escapeWorkbenchHtml(query.q)}"><button class="wb-new" type="submit" aria-label="搜索任务">搜索</button></form><div class="wb-list-filters"><button class="wb-new" type="button" data-action="toggle-archived" aria-pressed="${query.archived === 'only'}">${query.archived === 'only' ? '返回任务' : '已归档'}</button>${query.q ? '<button class="wb-new" type="button" data-action="clear-search">清除搜索</button>' : ''}<details id="wb-list-more" class="wb-list-more" data-sidebar-disclosure${executionView.sidebarDisclosures?.get('wb-list-more') ? ' open' : ''}><summary>更多</summary><div><button type="button" class="wb-new" data-action="add-project">添加项目</button>${state.historyProviders?.length?'<button class="wb-new" type="button" data-action="native-history">导入已有会话</button>':''}</div></details></div>${query.archived === 'only' ? '<p class="wb-archive-label">已归档的任务</p>' : ''}</div>`
   const pagination = state.page?.hasMore ? `<button type="button" class="wb-new wb-load-more" data-action="load-more"${state.loadingMore ? ' disabled' : ''}>${state.loadingMore ? '正在加载…' : '加载更早的任务'}</button>` : ''
   const messageContext = workbenchMessageContext(state)
   const { helper, handoffs } = messageContext
@@ -304,19 +331,21 @@ export function renderWorkbench(state, interactions, draft, attachmentError='',e
   const dialogueHtml = events.length ? renderWorkbenchTimeline(events, { status:detail?.task.status ?? '', runId:detail?.runId, runtime:detail?.runtime, renderMessage, escapeHtml:escapeWorkbenchHtml, formatTime:time })
     : `<p class="wb-empty-copy">${detail?.task.status === 'running' ? `${escapeWorkbenchHtml(helper)} 正在处理，有回复时会按顺序显示在这里。` : detail?.task.status === 'queued' ? queuedCopy : '这项任务还没有对话记录。'}</p>`
   const permissionHtml = permissions.length ? `<section class="wb-permissions" aria-label="等待处理的权限请求"><header><h3>需要你的决定</h3><span>${permissions.length} 项</span></header>${permissions.map(permission => `<article class="wb-permission"><div><span class="wb-permission-tool">${escapeWorkbenchHtml(permission.tool)}</span><p>${escapeWorkbenchHtml(permission.description)}</p><time>${escapeWorkbenchHtml(time(permission.createdAt))}</time></div><div class="wb-permission-actions"><button class="wb-btn" type="button" data-action="deny-permission" data-request-id="${escapeWorkbenchHtml(permission.id)}">拒绝</button><button class="wb-btn wb-btn-primary" type="button" data-action="allow-permission" data-request-id="${escapeWorkbenchHtml(permission.id)}">允许</button></div></article>`).join('')}</section>` : ''
-  const artifacts = detail?.artifacts?.length ? detail.artifacts.map(artifact => `<button type="button" class="wb-artifact ${artifact.id === state.selectedArtifactId ? 'is-selected' : ''}" data-artifact-id="${escapeWorkbenchHtml(artifact.id)}"><span>${escapeWorkbenchHtml(artifact.name)}</span><small>${escapeWorkbenchHtml((artifact.size / 1024).toFixed(1))} KB · ${artifact.approvedAt ? '已确认' : '待确认'}</small></button>`).join('') : ''
-  const previewContent = selectedArtifact && state.preview?.artifactId === selectedArtifact.id ? state.preview.html : '<p class="wb-preview-hint">选择文件，查看保存的成果版本。</p>'
+  const artifacts = detail?.artifacts?.length ? detail.artifacts.map(artifact => `<button type="button" class="wb-artifact ${artifact.id === state.selectedArtifactId ? 'is-selected' : ''}" data-artifact-id="${escapeWorkbenchHtml(artifact.id)}"><span>${escapeWorkbenchHtml(artifactDisplayName(artifact.name))}</span><small>${/\.preview\.json$/i.test(artifact.name) ? '网页预览' : `${escapeWorkbenchHtml((artifact.size / 1024).toFixed(1))} KB · ${artifact.approvedAt ? '已确认' : '待确认'}`}</small></button>`).join('') : ''
+  const artifactPanel = renderArtifactPanel(detail?.artifacts ?? [], state.previewOpen || state.preview ? selectedArtifact : undefined, state.preview)
   // 「改动」在「成果」之前:主人先看这一轮改了什么,再去翻保存下来的成果。
   // 整块面板共用一份预览额度(和「成果」里那份报告同样的 256KiB / 4000 行):
   // 十几轮 × 几十个文件不能各渲各的,不然这一页会被 diff 压垮。
   const reviewBudget = createReviewDiffBudget()
   const reviewHtml = detail ? renderReviewPanel(state.reviews ?? [], { escapeHtml: escapeWorkbenchHtml, formatTime: time, renderDiff: file => renderReviewFileDiff(file, escapeWorkbenchHtml, reviewBudget), budget: reviewBudget, returnOpen: state.reviewReturnOpen ?? null, error: !!state.reviewsError }) : ''
-  const artifactHtml = detail?.artifacts?.length ? `<details id="wb-artifacts" class="wb-disclosure wb-artifacts"><summary><span>成果</span><small>${detail.artifacts.length} 件</small></summary><button type="button" class="wb-new wb-back-dialogue" data-action="back-to-dialogue">返回对话</button><div class="wb-artifact-list">${artifacts}</div><div id="wb-preview" class="wb-preview">${selectedArtifact ? `<p class="wb-preview-name">${escapeWorkbenchHtml(selectedArtifact.name)}</p><div class="wb-preview-content">${previewContent}</div><button type="button" class="wb-btn" data-action="download-artifact">下载</button>${selectedArtifact.approvedAt ? '<p class="wb-approved">已确认此版本</p>' : '<button type="button" class="wb-btn wb-btn-primary" data-action="approve-artifact">确认这份成果</button>'}` : ''}</div></details>` : ''
+  const artifactHtml = detail?.artifacts?.length && !artifactPanel ? `<details id="wb-artifacts" class="wb-disclosure wb-artifacts"><summary><span>成果</span><small>${detail.artifacts.length} 件</small></summary><div class="wb-artifact-list">${artifacts}</div></details>` : ''
   const execution=draft?.execution??detail?.execution??{defaults:/** @type {const} */('provider'),model:null,reasoningEffort:null}
   const executionDisabled=!!executionView.busy||!!(detail&&(detail.task.archivedAt!=null||['running','queued','cancelling'].includes(detail.task.status)))
   const executionControls=renderExecutionControls(execution,executionView.catalog,executionDisabled)
+  const decisionCount = permissions.length + (detail?.questions ?? []).filter(request => request.taskId === detail?.task.id).length
+  const progress = detail ? `<div class="wb-task-progress"><span class="wb-status" data-status="${escapeWorkbenchHtml(statusValue({...detail.task,runtime:detail.runtime ?? detail.task.runtime}))}">${escapeWorkbenchHtml(detail.task.importedOnly ? '尚未执行' : statusLabel(detail.task.status, detail.runtime ?? detail.task.runtime, detail.task.phase))}</span>${decisionCount ? `<button type="button" class="wb-new wb-decision-jump" data-action="show-decisions">${decisionCount} 项等你处理 ↓</button>` : detail.task.phase === 'replied' ? '<span>这一轮已答复，可以继续补充要求</span>' : ''}</div>` : ''
   const chatHeader = !detail && state.selectedMatterId && chats.some(c => c.id === state.selectedMatterId) ? `<header class="wb-task-head"><div><p class="wb-task-context">对话 · 跟 CC 说</p><h2>${escapeWorkbenchHtml(chats.find(c => c.id === state.selectedMatterId)?.title ?? '')}</h2></div></header>` : ''
-  const taskHeader = detail ? `<header class="wb-task-head"><div><p class="wb-task-context">${detail.task.workspaceKind==='managed'?'随手交办':escapeWorkbenchHtml(pathParts(detail.task.path).name)} · ${escapeWorkbenchHtml(helper)}</p><h2 title="${escapeWorkbenchHtml(detail.task.title || '未命名任务')}">${escapeWorkbenchHtml(detail.task.title || '未命名任务')}</h2>${isUnattendedProvider(state.providers.find(p => p.id === detail.task.providerId)) ? '<p class="wb-task-unattended">免审执行者 · 看不到单步,只能停止</p>' : ''}</div><div class="wb-task-head-actions">${detail.artifacts.length ? `<button type="button" class="wb-new" data-action="show-artifacts">成果 · ${detail.artifacts.length}</button>` : ''}<span class="wb-status" data-status="${escapeWorkbenchHtml(statusValue({...detail.task,runtime:detail.runtime ?? detail.task.runtime}))}">${escapeWorkbenchHtml((detail.task.importedOnly?'尚未执行':statusLabel(detail.task.status, detail.runtime ?? detail.task.runtime, detail.task.phase)))}</span><details id="wb-task-info" class="wb-task-info"><summary>任务详情</summary><div class="wb-task-info-body"><dl><div><dt>完整路径</dt><dd class="wb-path">${escapeWorkbenchHtml(detail.task.path)}${detail.task.workspaceKind==='managed'?'<button type="button" class="wb-new" data-action="open-task-folder">打开工作位置</button>':''}</dd></div><div><dt>任务编号</dt><dd><code>${escapeWorkbenchHtml(detail.task.id)}</code></dd></div><div><dt>执行者</dt><dd>${escapeWorkbenchHtml(helper)}</dd></div><div><dt>更新时间</dt><dd>${escapeWorkbenchHtml(time(detail.task.updatedAt))}</dd></div>${detail.source?`<div><dt>原会话</dt><dd>${escapeWorkbenchHtml(detail.source.providerId)} · <code>${escapeWorkbenchHtml(detail.source.nativeId)}</code></dd></div><div><dt>已保存的原记录</dt><dd>${detail.source.selectedMessageCount} 段${detail.source.truncated?' · 部分文字':''}</dd></div>`:''}</dl><section class="wb-task-execution"><h3>下一轮使用</h3>${executionControls}${renderExecutionObservation(detail.lastExecution)}</section>${detail.task.archivedAt != null ? '<div class="wb-task-organization"><button type="button" class="wb-btn" data-action="restore-task">恢复任务</button></div>' : detail.task.canArchive === true ? '<div class="wb-task-organization"><button type="button" class="wb-btn" data-action="archive-task">归档任务</button></div>' : ''}${state.canWechat && detail.task.archivedAt == null ? `<div class="wb-wechat"><span>在微信继续</span><code>任务 ${escapeWorkbenchHtml(detail.task.id)}</code><button type="button" class="wb-btn" data-action="copy-wechat-command">复制</button></div>` : ''}</div></details></div></header>` : ''
+  const taskHeader = detail ? `<header class="wb-task-head"><div><p class="wb-task-context">${detail.task.workspaceKind==='managed'?'随手交办':escapeWorkbenchHtml(state.projects?.find(project => project.path === detail.task.path)?.name ?? pathParts(detail.task.path).name)} · ${escapeWorkbenchHtml(helper)}</p><h2 title="${escapeWorkbenchHtml(detail.task.title || '未命名任务')}">${escapeWorkbenchHtml(detail.task.title || '未命名任务')}</h2>${progress}${isUnattendedProvider(state.providers.find(p => p.id === detail.task.providerId)) ? '<p class="wb-task-unattended">免审执行者 · 看不到单步,只能停止</p>' : ''}</div><div class="wb-task-head-actions">${detail.artifacts.length ? `<button type="button" class="wb-new" data-action="show-artifacts">成果 · ${detail.artifacts.length}</button>` : ''}<details id="wb-task-info" class="wb-task-info"><summary>任务详情</summary><div class="wb-task-info-body"><dl><div><dt>完整路径</dt><dd class="wb-path">${escapeWorkbenchHtml(detail.task.path)}${detail.task.workspaceKind==='managed'?'<button type="button" class="wb-new" data-action="open-task-folder">打开工作位置</button>':''}</dd></div><div><dt>任务编号</dt><dd><code>${escapeWorkbenchHtml(detail.task.id)}</code></dd></div><div><dt>执行者</dt><dd>${escapeWorkbenchHtml(helper)}</dd></div><div><dt>更新时间</dt><dd>${escapeWorkbenchHtml(time(detail.task.updatedAt))}</dd></div>${detail.source?`<div><dt>原会话</dt><dd>${escapeWorkbenchHtml(detail.source.providerId)} · <code>${escapeWorkbenchHtml(detail.source.nativeId)}</code></dd></div><div><dt>已保存的原记录</dt><dd>${detail.source.selectedMessageCount} 段${detail.source.truncated?' · 部分文字':''}</dd></div>`:''}</dl><section class="wb-task-execution"><h3>下一轮使用</h3>${executionControls}${renderExecutionObservation(detail.lastExecution)}</section>${detail.task.archivedAt != null ? '<div class="wb-task-organization"><button type="button" class="wb-btn" data-action="restore-task">恢复任务</button></div>' : detail.task.canArchive === true ? '<div class="wb-task-organization"><button type="button" class="wb-btn" data-action="archive-task">归档任务</button></div>' : ''}${state.canWechat && detail.task.archivedAt == null ? `<div class="wb-wechat"><span>在微信继续</span><code>任务 ${escapeWorkbenchHtml(detail.task.id)}</code><button type="button" class="wb-btn" data-action="copy-wechat-command">复制</button></div>` : ''}</div></details></div></header>` : ''
   const selectedChat = !detail && state.selectedMatterId ? chats.find(c => c.id === state.selectedMatterId) : undefined
   const content = selectedChat ? `
     <div id="wb-converse-host" class="wb-converse-host" data-matter-id="${escapeWorkbenchHtml(selectedChat.id)}"></div>` : detail ? `
@@ -326,8 +355,8 @@ export function renderWorkbench(state, interactions, draft, attachmentError='',e
     ${renderWorkbenchInputs(detail.task.id, detail.inputs ?? [], interactions,!!detail.runtime?.retained)}
     ${detail.task.error ? `<div class="wb-error" role="alert">${escapeWorkbenchHtml(executionErrorMessage(detail.task.error)??detail.task.error)}</div>` : ''}
     ${reviewHtml}
-    ${artifactHtml}` : !state.loadingId && state.projects?.length === 0 && state.newScope !== 'new:add-project' && !draft?.text.trim() ? `
-    <div class="wb-welcome"><p class="wb-kicker">随手交办</p><h1>希望 CC 帮你做什么？</h1><p>直接写下要求、加上材料。CC 会为这件事准备独立文件夹。</p><button type="button" class="wb-btn wb-btn-primary" data-action="task-entry">交给 CC 做</button></div>` : !detail && !state.loadingId && state.projects && !activeProject ? `
+    ${artifactHtml}` : !state.loadingId && state.projects && !activeProject && state.newScope !== 'new:add-project' && !draft?.text.trim() ? `
+    <div class="wb-welcome"><p class="wb-kicker">交办一件事</p><h1>希望 CC 帮你做什么？</h1><p>写下要求、加上材料，再确认工作位置。</p><button type="button" class="wb-btn wb-btn-primary" data-action="task-entry">交给 CC 做</button></div>` : !detail && !state.loadingId && state.projects && !activeProject && (state.newScope === 'new:add-project' || !!draft?.text.trim()) ? `
     <div class="wb-welcome"><p class="wb-kicker">添加项目</p><h1>把同一件工作的对话放在一起</h1><p>选择一次文件夹。之后在项目里新开对话，不用重复设置。</p>
       ${draft?.text ? `<details class="wb-options"><summary>已保留交办要求</summary><p class="wb-field-help">添加项目后，可继续检查要求并开始。</p><p class="wb-handover-preview">${escapeWorkbenchHtml(draft.text)}</p></details>` : ''}
       <form id="wb-project-form" class="wb-create-form">
@@ -351,7 +380,7 @@ export function renderWorkbench(state, interactions, draft, attachmentError='',e
   const chosenContinuation=executionView.restartPreview?(executionView.restartPreview.status==='ready'?executionView.restartPreview.continuation??undefined:{mode:'restart_required'}):detail?.continuation
   const previewError=executionView.restartPreview?.error?`<p class="wb-interaction-error" role="alert">${escapeWorkbenchHtml(executionView.restartPreview.error)} <button type="button" class="wb-new" data-action="retry-continuation-preview">重新读取恢复说明</button></p>`:''
   const controls = detail ? `<div class="wb-controls"><div class="wb-controls-inner">${permissionHtml}${renderWorkbenchQuestions(detail.task.id, detail.questions ?? [], interactions)}${previewError}${renderTaskControls(detail.task.status, chosenContinuation, detail.task.archivedAt,{requiresClose:!!detail.requiresExternalClose,decision:state.nativeResume?.taskId===detail.task.id?state.nativeResume:null},{taskId:detail.task.id,runId:detail.runId,inputMode:detail.inputMode,runtime:detail.runtime,...interactions?.inputState(detail.task.id)},draft,attachmentError)}</div></div>` : ''
-  return `<div class="workbench-shell"><aside class="wb-sidebar"><header><p class="wb-kicker">手头的事</p><button type="button" class="wb-new" data-action="task-entry">＋ 交办</button></header>${listControls}<div class="wb-task-list">${chatList}${taskList}</div>${pagination}</aside><main class="wb-main">${taskHeader || chatHeader}<div class="wb-content"><div class="wb-content-inner">${state.error ? `<div class="wb-error" role="alert">${escapeWorkbenchHtml(state.error)}</div>` : ''}${detail && state.detailDisconnected ? '<div class="wb-error" role="status">任务更新暂时中断，正在重新连接。当前显示的是上次收到的内容。<button type="button" class="wb-btn" data-action="refresh">立即重试</button></div>' : ''}${content}</div></div>${detail ? '<div class="wb-reading-bar" hidden><button type="button" class="wb-btn" data-action="latest-content">有新内容 ↓</button></div>' : ''}${controls}</main></div>`
+  return `<div class="workbench-shell${artifactPanel ? ' has-preview' : ''}"><aside class="wb-sidebar"><header><h2>一起做</h2><button type="button" class="wb-btn wb-btn-primary wb-delegate" data-action="task-entry">交办</button></header>${listControls}<div class="wb-task-list">${taskList}${chatList}</div>${pagination}</aside><main class="wb-main">${taskHeader || chatHeader}<div class="wb-content"><div class="wb-content-inner">${state.error ? `<div class="wb-error" role="alert">${escapeWorkbenchHtml(state.error)}</div>` : ''}${detail && state.detailDisconnected ? '<div class="wb-error" role="status">任务更新暂时中断，正在重新连接。当前显示的是上次收到的内容。<button type="button" class="wb-btn" data-action="refresh">立即重试</button></div>' : ''}${content}</div></div>${detail ? '<div class="wb-reading-bar" hidden><button type="button" class="wb-btn" data-action="latest-content">有新内容 ↓</button></div>' : ''}${controls}</main>${artifactPanel}</div>`
 }
 
 /** @param {{invokeWorkbenchApi:WorkbenchDeps['invokeWorkbenchApi'],render:(state:WorkbenchState)=>void,initialScope?:string|null,initialQuery?:TaskQuery,patchLive?:(changed:WorkbenchEvent[])=>boolean}} deps */
@@ -539,7 +568,7 @@ export function createWorkbenchController(deps) {
     },
     /** @param {string} id */
     // 选中一件对话:右边换成会话面(converse 控件由页面挂进 #wb-converse-host)。
-    selectMatter(/** @type {string} */ id) { detailRequest++; livePoll.stop(); forgetReviews(); desiredId = null; composingNewTask = false; state.selectedMatterId = id; state.selectedId = null; state.loadingId = null; state.detail = null; state.selectedArtifactId = null; paint() },
+    selectMatter(/** @type {string} */ id) { detailRequest++; livePoll.stop(); forgetReviews(); desiredId = null; composingNewTask = false; state.selectedMatterId = id; state.selectedId = null; state.loadingId = null; state.detail = null; state.selectedArtifactId = null; state.previewOpen = false; state.preview = null; paint() },
     /** @param {string} id */
     async selectTask(id) {
       state.selectedMatterId = null
@@ -559,6 +588,7 @@ export function createWorkbenchController(deps) {
         throw error
       }
       if (!alive || request !== detailRequest || desiredId !== id) return
+      if (state.selectedId !== id) { state.previewOpen = false; state.preview = null; state.selectedArtifactId = null }
       state.selectedId = id
       desiredId = null
       state.loadingId = null
@@ -576,7 +606,7 @@ export function createWorkbenchController(deps) {
       if (liveVersioned) livePoll.start(id, state.version)
     },
     /** @param {string} [path] */
-    newTask(path) { detailRequest++; livePoll.stop(); forgetReviews(); desiredId = null; composingNewTask = true; state.selectedMatterId = null; state.newScope = path ? `new:${path}` : 'new'; state.selectedId = null; state.loadingId = null; state.detail = null; state.selectedArtifactId = null; paint() },
+    newTask(path) { detailRequest++; livePoll.stop(); forgetReviews(); desiredId = null; composingNewTask = true; state.selectedMatterId = null; state.newScope = path ? `new:${path}` : 'new'; state.selectedId = null; state.loadingId = null; state.detail = null; state.selectedArtifactId = null; state.previewOpen = false; state.preview = null; paint() },
     destroy() { alive = false; livePoll.stop(); detailRequest++; listRequest++ },
     /** 面板被藏起来时停掉这条长连接,重新露面再接上。 */
     liveActive: () => livePoll.active,
@@ -617,7 +647,16 @@ export function initWorkbenchPage(deps) {
   let navigationGeneration = 0
   /** @type {string|null} */
   let objectUrl = null
+  /** @type {string|null} */
+  let hostedPreviewId = null
+  let pdfHost = /** @type {HTMLElement|null} */ (null)
+  let pdfCleanup = /** @type {(()=>void)|null} */ (null)
+  const releaseHostedPreview = () => {
+    const id = hostedPreviewId; hostedPreviewId = null
+    if (id && deps.invoke) void deps.invoke('release_workbench_html_preview', {id}).catch(() => {})
+  }
   let attachmentPreviewCleanup=/** @type {(()=>void)|null} */(null)
+  let attachmentPreviewRequest = 0
   const initialScope = resumeScope
   let searchDraft = resumeSearch
   let renderedScope = initialScope ?? 'new'
@@ -625,6 +664,9 @@ export function initWorkbenchPage(deps) {
   const interactions = createWorkbenchInteractions({ invokeWorkbenchApi: deps.invokeWorkbenchApi, storage: windowStorage, inputAttempts: pageInputAttempts, changed: () => { if (alive) controller.paint(true) } })
   /** @type {Map<string, Map<string, boolean>>} */
   const disclosures = new Map()
+  /** Sidebar folding belongs to this page, independently of the selected task. @type {Map<string,boolean>} */
+  const sidebarDisclosures = new Map()
+  let renderedSidebarSearch = false
   /** @type {Map<string, number>} */
   const scrollPositions = new Map()
   /** @type {Map<string,{signature:string,following:boolean,unread:boolean}>} */
@@ -643,7 +685,7 @@ export function initWorkbenchPage(deps) {
   /** @type {Map<string,number>} */
   const resultReturnPositions = new Map()
   // 正在看 diff 也算在翻结果:这时候流进来的新行不该把视线拽走。
-  const browsingResults = () => !!root.querySelector('#wb-artifacts[open]') || !!root.querySelector('#wb-review[open]') || !!root.querySelector('[data-timeline-disclosure][open]') || resultReturnPositions.has(renderedScope)
+  const browsingResults = () => !!root.querySelector('.wb-artifact-panel') || !!root.querySelector('#wb-artifacts[open]') || !!root.querySelector('#wb-review[open]') || !!root.querySelector('[data-timeline-disclosure][open]') || resultReturnPositions.has(renderedScope)
   const scopeFor = (/** @type {WorkbenchState} */ state) => state.selectedId ? `task:${state.selectedId}` : state.newScope ?? 'new'
   const readingSignatureFor = (/** @type {WorkbenchState} */ state) => state.detail ? JSON.stringify([state.detail.task.status, state.detail.task.error, state.detail.events, state.detail.artifacts.map(a => [a.id, a.sha256])]) : ''
   const permissionSignatureFor = (/** @type {WorkbenchState} */ state) => JSON.stringify((state.detail?.permissions ?? []).filter(permission => permission.taskId === state.detail?.task.id).map(permission => permission.id).sort())
@@ -738,6 +780,13 @@ export function initWorkbenchPage(deps) {
       ? document.activeElement.closest('summary')?.parentElement?.id
       : null
     const nextScope = scopeFor(state)
+    for (const disclosure of root.querySelectorAll?.('[data-sidebar-disclosure]') ?? []) {
+      if (!renderedSidebarSearch || disclosure.id === 'wb-list-more') sidebarDisclosures.set(disclosure.id, disclosure.hasAttribute('open'))
+    }
+    if (nextScope !== renderedScope) {
+      const selectedPath = state.detail?.task.workspaceKind === 'managed' ? '' : state.detail?.task.path ?? (state.newScope?.startsWith('new:') ? state.newScope.slice(4) : undefined)
+      if (selectedPath !== undefined) sidebarDisclosures.set(projectDisclosureId(selectedPath), true)
+    }
     const hasStoredScroll = scrollPositions.has(nextScope) || renderedScope === nextScope
     const openState = new Map(['wb-artifacts', 'wb-review', 'wb-options', 'wb-task-info', 'wb-restart-context', 'wb-artifact-source','wb-handoffs'].map(id => [id, !!root.querySelector(`#${id}[open]`)]))
     if (root.querySelector('#wb-inputs')) openState.set('wb-inputs', !!root.querySelector('#wb-inputs[open]'))
@@ -766,10 +815,22 @@ export function initWorkbenchPage(deps) {
     if (currentTaskInfoScroll !== undefined) taskInfoScrollPositions.set(renderedScope, currentTaskInfoScroll)
     const nextPermissionSignature = permissionSignatureFor(state)
     const sameScope = renderedScope === scopeFor(state)
+    if (!sameScope) { releaseHostedPreview(); attachmentPreviewRequest++; attachmentPreviewCleanup?.() }
     const questionPanelScroll = root.querySelector('.wb-questions')?.scrollTop ?? 0
     const nextDraft=pageDrafts.get(nextScope),providerId=state.detail?.task.providerId??nextDraft.providerId??state.defaultProvider??'',path=state.detail?.task.path??nextDraft.path
-    root.innerHTML = renderWorkbench(state, interactions,nextDraft,attachments.error(nextScope),{catalog:catalogs.get(providerId||state.defaultProvider||'',path),...(restartPreviewContext()?{restartPreview:recoveryPreviews.get(/** @type {import('./workbench-execution.js').ContinuationContext} */(restartPreviewContext()))}:{}),busy:busy.has(state.detail?`task:${state.detail.task.id}`:'create')})
+    const focusedPreviewAction = document.activeElement?.closest?.('.wb-artifact-panel') ? /** @type {HTMLElement} */ (document.activeElement).dataset.action : null
+    const previousPreview = root.querySelector('#wb-preview')
+    const previewScroll = previousPreview?.scrollTop ?? 0
+    paintWorkbenchWithPreview(root, renderWorkbench(state, interactions,nextDraft,attachments.error(nextScope),{sidebarDisclosures,catalog:catalogs.get(providerId||state.defaultProvider||'',path),...(restartPreviewContext()?{restartPreview:recoveryPreviews.get(/** @type {import('./workbench-execution.js').ContinuationContext} */(restartPreviewContext()))}:{}),busy:busy.has(state.detail?`task:${state.detail.task.id}`:'create')}))
+    const nextPreview = root.querySelector('#wb-preview')
+    if (nextPreview && sameScope) nextPreview.scrollTop = previewScroll
+    const nextPdfHost = /** @type {HTMLElement|null} */ (root.querySelector('#wb-preview .cc-pdf-reader'))
+    if (nextPdfHost !== pdfHost) {
+      pdfCleanup?.(); pdfCleanup = null; pdfHost = nextPdfHost
+      if (nextPdfHost && state.preview?.pdfData) pdfCleanup = mountPdfReader(nextPdfHost, state.preview.pdfData, state.detail?.artifacts.find(a => a.id === state.preview?.artifactId)?.name ?? 'PDF')
+    }
     thumbnails.mount(root)
+    renderedSidebarSearch = !!state.query?.q
     const questionPanel = root.querySelector('.wb-questions')
     if (questionPanel && sameScope) questionPanel.scrollTop = questionPanelScroll
     // 会话面:每次重画都把「跟 CC 说」的控件挂回新的宿主;没选对话就放回原处。
@@ -810,6 +871,7 @@ export function initWorkbenchPage(deps) {
       summary?.focus({ preventScroll: true })
     }
     const nextFocus = focused && sameScope ? input(focused.id) : null
+    if (focusedPreviewAction && sameScope) /** @type {HTMLElement|null} */ (root.querySelector(`.wb-artifact-panel [data-action="${focusedPreviewAction}"]`))?.focus({preventScroll:true})
     if (nextFocus) { nextFocus.focus({ preventScroll: true }); if (focused && focused.start !== null && focused.end !== null && 'setSelectionRange' in nextFocus) nextFocus.setSelectionRange(focused.start, focused.end) }
   } })
   /** @param {unknown} error */
@@ -898,6 +960,15 @@ export function initWorkbenchPage(deps) {
     if (target.dataset.taskId) return openTask(target.dataset.taskId)
     if (target.dataset.matterId) { captureDraft(); navigationGeneration++; artifactRequest++; controller.selectMatter(target.dataset.matterId); return }
     let action = target.dataset.action
+    const reloadLivePreview = action === 'refresh-artifact'
+    if (action === 'show-decisions') {
+      const panel = root.querySelector('.wb-permissions,.wb-questions')
+      panel?.scrollIntoView({block:'nearest'})
+      const control = /** @type {HTMLElement|null|undefined} */ (panel?.querySelector('button:not(:disabled),input:not(:disabled),textarea:not(:disabled)'))
+      control?.scrollIntoView({block:'nearest'})
+      control?.focus({preventScroll:true})
+      return
+    }
     if(action==='choose-attachments'){
       captureDraft();const scope=renderedScope
       const picker=document.createElement('input');picker.type='file';picker.multiple=true
@@ -910,21 +981,26 @@ export function initWorkbenchPage(deps) {
     if((action==='preview-input-attachment'||action==='download-input-attachment'||action==='preview-image-artifact')&&(target.dataset.attachmentId||target.dataset.artifactId)){
       if(target.dataset.thumbnailId)thumbnails.retry(target)
       const taskId=target.dataset.ownerTask,id=target.dataset.attachmentId||target.dataset.artifactId,navigation=navigationGeneration
+      const previewRequest = action === 'download-input-attachment' ? 0 : ++attachmentPreviewRequest
       if(!taskId||!id||controller.getTargetTaskId()!==taskId)return
       try{
         const data=action==='preview-image-artifact'?await (async()=>{const result=/** @type {{name:string,mime:string,size:number,sha256:string,contentBase64:string}} */(await deps.invokeWorkbenchApi('GET',`/v1/workbench/artifact?id=${encodeURIComponent(taskId)}&artifactId=${encodeURIComponent(id)}`));return{attachment:{id,...result},base64:result.contentBase64}})():/** @type {{attachment:import('./workbench-attachments.js').Attachment,base64:string}} */(await deps.invokeWorkbenchApi('GET',`/v1/workbench/attachment?taskId=${encodeURIComponent(taskId)}&id=${encodeURIComponent(id)}`))
-        if(!alive||navigation!==navigationGeneration||controller.state.selectedId!==taskId)return
+        if(!alive||navigation!==navigationGeneration||controller.state.selectedId!==taskId||(previewRequest && previewRequest!==attachmentPreviewRequest))return
         if(data.attachment.id!==id)throw Error('附件版本不匹配，请重新打开。')
         const a=data.attachment,bytes=decodeBase64(data.base64),url=URL.createObjectURL(new Blob([bytes],{type:a.mime}))
         const download=()=>{const link=document.createElement('a');link.href=url;link.download=a.name;link.click()}
         if(action==='download-input-attachment'){download();setTimeout(()=>URL.revokeObjectURL(url),1000);return}
         attachmentPreviewCleanup?.()
         const dialog=document.createElement('dialog');dialog.className='wb-history-dialog wb-input-preview';dialog.setAttribute('aria-label',a.name)
-        const body=a.mime.startsWith('image/')?`<img src="${url}" alt="${escapeWorkbenchHtml(a.name)}">`:a.mime==='application/pdf'?`<iframe src="${url}" title="${escapeWorkbenchHtml(a.name)}"></iframe>`:a.mime.startsWith('text/')||a.mime==='application/json'?`<pre>${escapeWorkbenchHtml(new TextDecoder().decode(bytes))}</pre>`:'<p>下载后可在本机应用中查看。</p>'
+        const body=a.mime.startsWith('image/')?`<img src="${url}" alt="${escapeWorkbenchHtml(a.name)}">`:a.mime==='application/pdf'?renderPdfReader(`attachment:${a.id}`,a.name):a.mime.startsWith('text/')||a.mime==='application/json'?`<pre>${escapeWorkbenchHtml(new TextDecoder().decode(bytes))}</pre>`:'<p>下载后可在本机应用中查看。</p>'
         dialog.innerHTML=`<header><h2>${escapeWorkbenchHtml(a.name)}</h2><button type="button" class="wb-new" data-close-attachment>关闭</button></header><div class="wb-input-preview-body">${body}</div><footer><button type="button" class="wb-btn" data-download-attachment>下载</button></footer>`
-        const cleanup=()=>{URL.revokeObjectURL(url);dialog.remove();if(attachmentPreviewCleanup===cleanup)attachmentPreviewCleanup=null}
-        attachmentPreviewCleanup=cleanup;dialog.addEventListener('close',cleanup,{once:true});dialog.querySelector('[data-close-attachment]')?.addEventListener('click',()=>dialog.close());dialog.querySelector('[data-download-attachment]')?.addEventListener('click',download)
+        let readerCleanup = /** @type {(()=>void)|null} */ (null)
+        let closed = false
+        const cleanup=()=>{if(closed)return;closed=true;readerCleanup?.();URL.revokeObjectURL(url);dialog.remove();if(attachmentPreviewCleanup===cleanup)attachmentPreviewCleanup=null}
+        attachmentPreviewCleanup=cleanup;dialog.addEventListener('close',()=>{attachmentPreviewRequest++;cleanup()},{once:true});dialog.querySelector('[data-close-attachment]')?.addEventListener('click',()=>dialog.close());dialog.querySelector('[data-download-attachment]')?.addEventListener('click',download)
         document.body.append(dialog);dialog.showModal()
+        const reader = /** @type {HTMLElement|null} */ (dialog.querySelector('.cc-pdf-reader'))
+        if (reader) readerCleanup = mountPdfReader(reader,bytes,a.name)
       }catch(error){if(alive&&navigation===navigationGeneration&&controller.state.selectedId===taskId)fail(error)}
       return
     }
@@ -967,7 +1043,40 @@ export function initWorkbenchPage(deps) {
       }
       return
     }
-    if (target.dataset.artifactId) { artifactRequest++; controller.state.selectedArtifactId = target.dataset.artifactId; controller.state.preview = null; controller.paint(); action = 'preview-artifact' }
+    if (action === 'show-artifacts') {
+      const artifacts = controller.state.detail?.artifacts ?? []
+      if (!artifacts.length) return
+      if (!resultReturnPositions.has(renderedScope)) resultReturnPositions.set(renderedScope, root.querySelector('.wb-content')?.scrollTop ?? 0)
+      controller.state.previewOpen = true
+      const id = controller.state.selectedArtifactId ?? artifacts[0]?.id
+      if (!id || controller.state.preview?.artifactId === id) return
+      controller.state.selectedArtifactId = id
+      controller.state.preview = null
+      controller.paint()
+      ;/** @type {HTMLElement|null} */ (root.querySelector('#wb-artifact-choice'))?.focus({preventScroll:true})
+      action = 'preview-artifact'
+    }
+    if (target.dataset.artifactId) {
+      if (!resultReturnPositions.has(renderedScope)) resultReturnPositions.set(renderedScope, root.querySelector('.wb-content')?.scrollTop ?? 0)
+      controller.state.previewOpen = true
+      artifactRequest++; controller.state.selectedArtifactId = target.dataset.artifactId; controller.state.preview = null; controller.paint(); /** @type {HTMLElement|null} */ (root.querySelector('#wb-artifact-choice'))?.focus({preventScroll:true}); action = 'preview-artifact'
+    }
+    if (['artifact-preview-mode', 'artifact-source-mode', 'artifact-width', 'refresh-artifact', 'open-preview-browser'].includes(action ?? '')) {
+      const preview = controller.state.preview
+      if (!preview) return
+      if (action === 'open-preview-browser') {
+        if (!preview.url || preview.kind !== 'web') return
+        try { if (deps.invoke) await deps.invoke('open_url', {url:preview.url}); else window.open(preview.url, '_blank', 'noopener,noreferrer') } catch (error) { fail(error) }
+        return
+      }
+      if (action === 'refresh-artifact') action = 'preview-artifact'
+      if (action !== 'preview-artifact') {
+        if (action === 'artifact-width') preview.narrow = !preview.narrow
+        else preview.mode = action === 'artifact-source-mode' ? 'source' : 'preview'
+        controller.paint()
+        return
+      }
+    }
     if (action === 'latest-content') {
       root.querySelector('#wb-artifacts')?.removeAttribute('open')
       for (const disclosure of root.querySelectorAll?.('[data-timeline-disclosure][open]') ?? []) disclosure.removeAttribute('open')
@@ -986,18 +1095,13 @@ export function initWorkbenchPage(deps) {
       catch(error){if(alive&&navigation===navigationGeneration)fail(error)}
       return
     }
-    if (action === 'show-artifacts') {
-      const details = root.querySelector('#wb-artifacts')
-      const content = root.querySelector('.wb-content')
-      if (!details) return
-      if (!resultReturnPositions.has(renderedScope)) resultReturnPositions.set(renderedScope, content?.scrollTop ?? 0)
-      details.setAttribute('open', '')
-      const summary = /** @type {HTMLElement|null} */ (details.querySelector('summary'))
-      summary?.focus({ preventScroll:true })
-      details.scrollIntoView({ block:'start' })
-      return
-    }
     if (action === 'back-to-dialogue') {
+      artifactRequest++
+      releaseHostedPreview()
+      controller.state.selectedArtifactId = null
+      controller.state.preview = null
+      controller.state.previewOpen = false
+      controller.paint()
       const content = root.querySelector('.wb-content')
       const results = /** @type {HTMLElement|null} */ (root.querySelector('[data-action="show-artifacts"]'))
       results?.focus({ preventScroll:true })
@@ -1023,7 +1127,7 @@ export function initWorkbenchPage(deps) {
     }
     if (action === 'native-history') { captureDraft(); nativeHistoryCleanup?.(); nativeHistoryCleanup=mountHistoryDialog(deps.invokeWorkbenchApi,controller.state.historyProviders??[],async id=>{if(!alive)return;navigationGeneration++;await controller.refresh({force:true});await controller.selectTask(id)}); return }
     if (action === 'refresh') return controller.refresh({ force: true }).catch(fail)
-    if (action === 'task-entry') { captureDraft(); try { await deps.onDelegate?.({text:''}) } catch(error) { if(alive)fail(error) }; return }
+    if (action === 'task-entry') { captureDraft(); try { await deps.onDelegate?.({text:'',...(target.dataset.projectPath ? {projectPath:target.dataset.projectPath} : {})}) } catch(error) { if(alive)fail(error) }; return }
     if (action === 'new-task' || action === 'add-project') { captureDraft(); navigationGeneration++; artifactRequest++; controller.newTask(); if(action==='add-project'){controller.state.newScope='new:add-project';controller.paint(true)}; return }
     if (action === 'new-project-task' && target.dataset.projectPath) {
       captureDraft()
@@ -1071,23 +1175,61 @@ export function initWorkbenchPage(deps) {
     if (action === 'preview-artifact' || action === 'download-artifact') {
       const taskId = controller.state.selectedId
       const requestedArtifactId = artifact.id
-      const request = ++artifactRequest
+      const request = action === 'download-artifact' ? artifactRequest : ++artifactRequest
       const navigation = navigationGeneration
       try {
         const data = /** @type {{name:string,mime:string,contentBase64:string,size:number,sha256:string}} */ (await deps.invokeWorkbenchApi('GET', `/v1/workbench/artifact?id=${encodeURIComponent(taskId ?? '')}&artifactId=${encodeURIComponent(requestedArtifactId)}`))
         if (!alive || request !== artifactRequest || navigation !== navigationGeneration || controller.state.selectedId !== taskId || controller.state.selectedArtifactId !== requestedArtifactId) return
+        const bytes = decodeBase64(data.contentBase64)
+        if (action === 'download-artifact') {
+          const downloadUrl = URL.createObjectURL(new Blob([bytes], {type:data.mime}))
+          const a = document.createElement('a'); a.href = downloadUrl; a.download = data.name; a.click()
+          setTimeout(() => URL.revokeObjectURL(downloadUrl), 60000)
+          return
+        }
+        const text = new TextDecoder().decode(bytes)
+        const webUrl = readWebPreview(data.name, text, window.location?.origin)
+        const htmlFile = isHtmlArtifact(data.name, data.mime)
+        const siteFile = data.mime === SITE_ARTIFACT_MIME
+        releaseHostedPreview()
         if (objectUrl) URL.revokeObjectURL(objectUrl)
-        objectUrl = URL.createObjectURL(new Blob([decodeBase64(data.contentBase64)], { type: data.mime }))
-        if (action === 'download-artifact') { const a = document.createElement('a'); a.href = objectUrl; a.download = data.name; a.click(); return }
-        let html = '<p class="wb-preview-hint">这种文件请下载后在本机应用中查看。</p>'
-        if (data.mime === WORKBENCH_CODE_REVIEW_MIME || data.mime.startsWith('text/') || data.mime === 'application/json') html = renderWorkbenchArtifactText(data.name, data.mime, new TextDecoder().decode(decodeBase64(data.contentBase64)))
-        else if (data.mime.startsWith('image/')) html = `<img src="${objectUrl}" alt="${escapeWorkbenchHtml(data.name)}">`
-        else if (data.mime === 'application/pdf') html = `<iframe src="${objectUrl}" title="${escapeWorkbenchHtml(data.name)}"></iframe>`
-        controller.state.preview = { artifactId: artifact.id, html }
+        objectUrl = URL.createObjectURL(new Blob([bytes], {type:htmlFile ? 'text/html' : data.mime}))
+        /** @type {Preview} */
+        const preview = {artifactId:artifact.id,html:'<p class="wb-preview-hint">这种文件请下载后在本机应用中查看。</p>'}
+        if (webUrl) {
+          // A running page is not owned by this saved artifact. Detect a stopped
+          // service before opening an otherwise blank browser error frame.
+          let available = false
+          try { await fetch(webUrl, {method:'HEAD',mode:'no-cors',credentials:'omit',cache:'no-store',signal:AbortSignal.timeout(5000)}); available = true } catch { /* Visible recovery stays in the reader. */ }
+          if (!alive || request !== artifactRequest || navigation !== navigationGeneration || controller.state.selectedId !== taskId || controller.state.selectedArtifactId !== requestedArtifactId) return
+          Object.assign(preview, {kind:'web',url:webUrl,html:available ? renderArtifactFrame(webUrl,artifactDisplayName(data.name),'web') : '<p class="wb-preview-hint" role="alert">网页服务暂时没有响应。服务启动后可以重新打开，或让 CC 交付可保存的 HTML 成品。</p><button type="button" class="wb-btn" data-action="preview-artifact">重新打开</button>'})
+        }
+        else if (htmlFile || siteFile) {
+          if (!deps.invoke) throw new Error('请在桌面中打开这份网页成果。')
+          const site = siteFile ? readSiteArchive(bytes) : null
+          const url = /** @type {string} */ (await deps.invoke(site ? 'prepare_workbench_site_preview' : 'prepare_workbench_html_preview', site ? {entry:site.entry,files:site.files} : {html:text}))
+          const id = new URL(url).pathname.match(/\/([a-f0-9]{32})\//)?.[1]
+          if (!id) throw new Error('网页预览暂时没能打开。')
+          if (!alive || request !== artifactRequest || navigation !== navigationGeneration || controller.state.selectedId !== taskId || controller.state.selectedArtifactId !== requestedArtifactId) {
+            void deps.invoke('release_workbench_html_preview', {id}).catch(() => {})
+            return
+          }
+          hostedPreviewId = id
+          Object.assign(preview, {kind:'html',url,source:site?.source ?? text,html:renderArtifactFrame(url,artifactDisplayName(data.name),'html')})
+        }
+        else if (data.mime === 'application/pdf' || /\.pdf$/i.test(data.name)) Object.assign(preview, {kind:'pdf',pdfData:bytes,html:renderPdfReader(`artifact:${artifact.id}:${data.sha256}`,data.name)})
+        else if (data.mime.startsWith('image/')) preview.html = `<img src="${objectUrl}" alt="${escapeWorkbenchHtml(data.name)}">`
+        else if (data.mime === WORKBENCH_CODE_REVIEW_MIME || data.mime.startsWith('text/') || data.mime === 'application/json') preview.html = renderWorkbenchArtifactText(data.name,data.mime,text)
+        controller.state.preview = preview
         controller.paint()
+        if (reloadLivePreview && webUrl) {
+          const frame = /** @type {HTMLIFrameElement|null} */ (root.querySelector('#wb-preview-frame'))
+          if (frame) frame.src = webUrl
+        }
       } catch (e) {
         if (!alive || request !== artifactRequest || navigation !== navigationGeneration || controller.state.selectedId !== taskId || controller.state.selectedArtifactId !== requestedArtifactId) return
-        fail(e)
+        controller.state.preview = {artifactId:requestedArtifactId,html:`<p class="wb-preview-hint" role="alert">${escapeWorkbenchHtml(e instanceof Error ? e.message : '成果暂时没能打开。')}</p><button type="button" class="wb-btn" data-action="preview-artifact">重新打开</button>`}
+        controller.paint()
       }
     }
   }
@@ -1282,6 +1424,11 @@ export function initWorkbenchPage(deps) {
   }
   const addFiles=(/** @type {File[]} */ files)=>{captureDraft();const scope=renderedScope;void attachments.add(scope,files)}
   const onChange = (/** @type {Event} */ event) => {
+    if (event.target instanceof Element && event.target.id === 'wb-artifact-choice') {
+      const button = document.createElement('button'); button.dataset.artifactId = /** @type {HTMLSelectElement} */ (event.target).value
+      void onClick(/** @type {MouseEvent} */ (/** @type {unknown} */ ({target:button})))
+      return
+    }
     if(event.target===input('wb-attachment-files')){const picker=/** @type {HTMLInputElement} */(event.target);const files=Array.from(picker.files??[]);picker.value='';addFiles(files);return}
     const executionEdit=event.target===input('wb-provider')||event.target===input('wb-model')||event.target===input('wb-reasoning-effort')
     if(event.target===input('wb-provider')){const model=input('wb-model'),effort=input('wb-reasoning-effort');if(model)model.value='';if(effort)effort.value=''}
@@ -1336,7 +1483,7 @@ export function initWorkbenchPage(deps) {
     resumeSearch = input('wb-search')?.value ?? searchDraft
     if (controller.state.selectedId) resumeScope = `task:${controller.state.selectedId}`
     else if (document.getElementById('wb-create-form')) resumeScope = scopeFor(controller.state)
-    thumbnails.destroy();recoveryPreviews.destroy();catalogs.destroy();root.removeEventListener('toggle',onToggle,true);handoffCleanup?.(); nativeHistoryCleanup?.();attachmentPreviewCleanup?.();root.removeEventListener('paste',onPaste);root.removeEventListener('drop',onDrop);root.removeEventListener('dragover',onDragOver); alive = false; artifactRequest++; controller.destroy(); root.removeEventListener('input', onInput); window.removeEventListener?.('pagehide', saveWindowState); root.removeEventListener('scroll', onScroll, true); root.removeEventListener('change', onChange); root.removeEventListener('click', onClick); root.removeEventListener('submit', onSubmit); if (objectUrl) URL.revokeObjectURL(objectUrl)
+    releaseHostedPreview();pdfCleanup?.();thumbnails.destroy();recoveryPreviews.destroy();catalogs.destroy();root.removeEventListener('toggle',onToggle,true);handoffCleanup?.(); nativeHistoryCleanup?.();attachmentPreviewCleanup?.();root.removeEventListener('paste',onPaste);root.removeEventListener('drop',onDrop);root.removeEventListener('dragover',onDragOver); alive = false; artifactRequest++; controller.destroy(); root.removeEventListener('input', onInput); window.removeEventListener?.('pagehide', saveWindowState); root.removeEventListener('scroll', onScroll, true); root.removeEventListener('change', onChange); root.removeEventListener('click', onClick); root.removeEventListener('submit', onSubmit); if (objectUrl) URL.revokeObjectURL(objectUrl)
   } }
   return controller
 }

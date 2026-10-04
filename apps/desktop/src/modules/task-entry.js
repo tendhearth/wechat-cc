@@ -9,7 +9,7 @@ import {ENTRY_LIMITS,entryContentError,entryFailureKind} from '../shared/task-en
 /** @typedef {import('../../../../src/core/workbench/service').EntryResult} EntryResult */
 /** @typedef {import('../../../../src/core/workbench/task-entry').EntryOptions} EntryOptions */
 /** @typedef {{role:'user'|'cc',text:string,pending?:boolean}} Message */
-/** @typedef {{text:string,visibleMessages?:Message[]}} Draft */
+/** @typedef {{text:string,visibleMessages?:Message[],projectPath?:string}} Draft */
 /** @typedef {{input:EntryInput,signature:string,uncertain:boolean,material:import('./workbench-window-state.js').Draft}} Submission */
 /** @typedef {{sourceText:string,text:string,draftId:string,target:EntryInput['target'],providerId:string,execution:import('./workbench-execution.js').ExecutionChoice,candidates:Message[],selected:number[],pending:Submission|null}} EntryDraft */
 /** @typedef {{invokeWorkbenchApi:(method:'GET'|'POST',path:string,body?:Record<string,unknown>)=>Promise<unknown>,storage?:Pick<Storage,'getItem'|'setItem'|'removeItem'>|null,createAttachments?:typeof createWorkbenchAttachments,onAccepted?:(result:EntryResult)=>void|Promise<void>}} Deps */
@@ -48,16 +48,18 @@ export function createTaskEntry(deps){
     open(draft){
       if(active)return active.promise
       const previous=retained
+      const projectPath=typeof draft.projectPath==='string'&&draft.projectPath?draft.projectPath:null
+      const recovering=!!previous?.pending
       const same=previous?.sourceText===draft.text||!draft.text.trim()
-      const state=/** @type {EntryDraft} */(previous&&(same||previous.pending)?previous:{sourceText:draft.text,text:draft.text,draftId:crypto.randomUUID(),target:{kind:'managed'},providerId:'',execution:auto(),candidates:messages(draft.visibleMessages),selected:[],pending:null})
-      if(previous&&!same&&previous.pending){state.sourceText=draft.text;state.text=draft.text}
+      const state=/** @type {EntryDraft} */(previous&&(same||previous.pending||projectPath)?previous:{sourceText:draft.text,text:draft.text,draftId:crypto.randomUUID(),target:{kind:'managed'},providerId:'',execution:auto(),candidates:messages(draft.visibleMessages),selected:[],pending:null})
+      if(previous&&!same&&previous.pending&&!projectPath){state.sourceText=draft.text;state.text=draft.text}
       const scope=`entry:${state.draftId}`
       let attachmentDraft=drafts.get(scope);attachmentDraft.draftId=state.draftId;drafts.set(scope,attachmentDraft)
       const dialog=document.createElement('dialog');dialog.className='task-entry-dialog';dialog.setAttribute('aria-label','交给 CC 做')
       /** @type {EntryOptions|null} */let options=null
       /** @type {EntryResult|null} */let answer=null
       /** @type {EntryResult|null} */let accepted=null
-      let busy=false,alive=true,error='',notice='',more=false
+      let busy=false,alive=true,error='',notice=projectPath&&recovering?'上一份交办仍需确认，已保留原来的项目和执行设置。请先确认结果，再切换项目。':'',more=false,destinationChosen=false
       /** @type {(result:EntryResult|null)=>void} */let resolve=()=>{}
       const promise=new Promise(/** @param {(result:EntryResult|null)=>void} done */done=>{resolve=done})
       active={dialog,promise}
@@ -68,6 +70,17 @@ export function createTaskEntry(deps){
       if(state.pending)release=attachments.reserve(scope,state.pending.material??drafts.get(scope))
       const project=()=>options?.projects.find(p=>state.target.kind==='project'&&p.id===state.target.projectId)
       const provider=()=>options?.providers.find(p=>p.id===state.providerId)
+      const projectUnavailable=()=>!!options&&state.target.kind==='project'&&!project()
+      /** Only a changed destination resets the project's execution choices.
+       * A missing catalog project stays invalid until the owner chooses a destination.
+       * @param {EntryInput['target']} target @param {string|null|undefined} preferred */
+      function setDestination(target,preferred){
+        const changed=state.target.kind!==target.kind||(target.kind==='project'&&(state.target.kind!=='project'||state.target.projectId!==target.projectId))
+        if(!changed)return
+        state.target=target
+        if(preferred&&options?.providers.some(p=>p.id===preferred))state.providerId=preferred
+        state.execution=auto()
+      }
       const loadModels=()=>{const p=project();if(more&&p&&provider()?.capabilities.features.modelCatalog)void catalogs.load(state.providerId,p.path)}
       /** @param {string} requestId @returns {EntryInput} */
       const input=requestId=>{
@@ -75,22 +88,22 @@ export function createTaskEntry(deps){
         return{requestId,text:state.text,target:structuredClone(state.target),...(state.providerId?{providerId:state.providerId}:{}),execution:{...state.execution},draftId:state.draftId,...(material.attachments?.length?{attachmentIds:material.attachments.map(a=>a.id)}:{}),...(selected.length?{context:{source:'owner-chat',excerpts:selected.map(m=>({role:/** @type {'user'|'assistant'} */(m.role==='cc'?'assistant':'user'),text:m.text}))}}:{})}
       }
       const signature=()=>JSON.stringify([input(''),attachmentSignature(drafts.get(scope).attachments)])
-      const disabled=()=>busy||(!state.pending?.uncertain&&(!options||!provider()?.available||!attachments.ready(scope)||(!state.text.trim()&&!drafts.get(scope).attachments?.length)))
+      const disabled=()=>busy||(!state.pending?.uncertain&&(!options||projectUnavailable()||!provider()?.available||!attachments.ready(scope)||(!state.text.trim()&&!drafts.get(scope).attachments?.length)))
       const reflect=()=>{const button=/** @type {HTMLButtonElement|null} */(dialog.querySelector('[type="submit"]'));if(button)button.disabled=disabled()}
       function render(){
         if(!alive)return
         const focused=/** @type {HTMLInputElement|null} */(document.activeElement),name=focused?.name,selection=focused?.selectionStart
         const material=drafts.get(scope),p=project(),canExecution=provider()?.capabilities.features.executionSettings
-        const visibleError=error||(options&&!provider()?.available?(provider()?.unavailableReason?.message??options.reason?.message??'所选执行者暂不可用，请在更多设置里重新选择。'):'')
+        const visibleError=error||(projectUnavailable()?'所选项目暂不可用，请在更多设置里重新选择。':options&&!provider()?.available?(provider()?.unavailableReason?.message??options.reason?.message??'所选执行者暂不可用，请在更多设置里重新选择。'):'')
         dialog.innerHTML=`<form class="task-entry-form"><header><div><h2>交给 CC 做</h2><p>确认要求和材料后开始；成果会留在这件事里。</p></div><button type="button" data-entry-action="cancel" aria-label="关闭交办预览">×</button></header>
           <div class="task-entry-body"><label for="task-entry-text">要求</label><textarea id="task-entry-text" name="text" rows="5" maxlength="${ENTRY_LIMITS.text}" placeholder="希望 CC 帮你完成什么？">${esc(state.text)}</textarea>
           <section class="task-entry-context" aria-label="主人选择的讨论材料"><div class="task-entry-section-head"><h3>讨论材料 <small>默认不带聊天</small></h3>${state.candidates.length?'<button type="button" data-entry-action="recent">带上最近五轮</button>':''}</div>
           ${state.candidates.length?state.candidates.map((m,i)=>`<label class="task-entry-excerpt"><input type="checkbox" name="excerpt" value="${i}"${state.selected.includes(i)?' checked':''}><span><strong>${m.role==='user'?'我':'CC'}</strong><span>${esc(m.text)}</span></span></label>`).join(''):'<p class="task-entry-hint">没有选择讨论材料，只会交办上面的要求。</p>'}</section>
           ${renderAttachmentComposer(material,attachments.error(scope)).replace('id="wb-attachment-files"','id="task-entry-files"')}
-          <details class="task-entry-more"${more?' open':''}><summary>更多：项目和执行设置</summary><label>放在哪里<select name="project"><option value="managed"${state.target.kind==='managed'?' selected':''}>随手交办 · 自动准备独立文件夹</option>${(options?.projects??[]).map(p=>`<option value="${esc(p.id)}"${state.target.kind==='project'&&state.target.projectId===p.id?' selected':''}>${esc(p.name)} · ${esc(p.path)}</option>`).join('')}</select></label>
+          <details class="task-entry-more"${more?' open':''}><summary>更多：项目和执行设置</summary><label>放在哪里<select name="project">${projectUnavailable()?'<option value="" selected disabled>所选项目暂不可用，请重新选择</option>':''}<option value="managed"${state.target.kind==='managed'?' selected':''}>随手交办 · 自动准备独立文件夹</option>${(options?.projects??[]).map(p=>`<option value="${esc(p.id)}"${state.target.kind==='project'&&state.target.projectId===p.id?' selected':''}>${esc(p.name)} · ${esc(p.path)}</option>`).join('')}</select></label>
           <label>执行者<select name="provider">${(options?.providers??[]).map(p=>`<option value="${esc(p.id)}"${state.providerId===p.id?' selected':''}${p.available?'':' disabled'}>${esc(p.displayName)}${p.available?'':` · ${esc(p.unavailableReason?.message??'暂不可用')}`}</option>`).join('')}</select></label>
           ${canExecution?`<label>默认设置<select name="defaults"><option value="provider"${state.execution.defaults==='provider'?' selected':''}>沿用 CC 设置</option><option value="native"${state.execution.defaults==='native'?' selected':''}>沿用执行者本身设置</option></select></label>${p?renderExecutionControls(state.execution,catalogs.get(state.providerId,p.path)).replaceAll('wb-model','task-entry-model').replaceAll('wb-reasoning-effort','task-entry-effort'):'<p class="task-entry-hint">新事项使用自动模型；选择已有项目后可读取该项目的模型设置。</p>'}`:'<p class="task-entry-hint">这个执行者沿用已连接的设置。</p>'}</details>
-          <p class="task-entry-destination">${state.target.kind==='managed'?'随手交办：CC 会为这件事准备独立文件夹。':`项目：${esc(p?.name??'所选项目暂不可用')}`}</p>
+          <p class="task-entry-destination">${projectPath&&!recovering&&!destinationChosen&&!options?'正在确认所选项目…':state.target.kind==='managed'?'随手交办：CC 会为这件事准备独立文件夹。':`项目：${esc(p?.name??'所选项目暂不可用')}`}</p>
           ${visibleError?`<p class="task-entry-error" role="alert">${esc(visibleError)}</p>`:''}${notice?`<p class="task-entry-notice" role="status">${esc(notice)}</p>`:''}
           ${accepted?'<button type="button" data-entry-action="accepted">查看已交办任务</button>':''}</div>
           <footer><button type="button" data-entry-action="cancel">${state.pending?.uncertain?'暂时关闭，保留待确认请求':'取消'}</button><button type="submit"${disabled()?' disabled':''}>${busy?'正在确认…':state.pending?.uncertain?'确认结果 / 重试原请求':'交给 CC 做'}</button></footer></form>`
@@ -119,7 +132,7 @@ export function createTaskEntry(deps){
         error=''
         let submission=state.pending
         if(!submission||!submission.uncertain&&submission.signature!==signature()){
-          if(disabled()){error=options?.reason?.message??'先连接一个可用的执行者，并等附件上传完成。';render();return}
+          if(disabled()){error=projectUnavailable()?'所选项目暂不可用，请在更多设置里重新选择。':options?.reason?.message??'先连接一个可用的执行者，并等附件上传完成。';render();return}
           const payload=input(crypto.randomUUID()),contentError=entryContentError(payload)
           if(contentError){error=contentError==='invalid_context'?`讨论材料超过 ${ENTRY_LIMITS.context.toLocaleString('en-US')} 字或 ${ENTRY_LIMITS.excerpts} 条，请取消部分摘录。`:'要求和所选讨论材料合计过长，请缩减后再交办。';render();return}
           submission={input:payload,signature:signature(),uncertain:false,material:drafts.get(scope)}
@@ -154,8 +167,11 @@ export function createTaskEntry(deps){
       })
       dialog.addEventListener('change',event=>{
         const field=/** @type {HTMLInputElement} */(event.target),name=field.name
+        // Text already persists on input. Rebuilding on blur removes the button
+        // the owner is about to click (including Cancel and Submit).
+        if(name==='text')return
         if(name==='excerpt'){const index=Number(field.value);if(state.candidates[index])state.selected=field.checked?[...new Set([...state.selected,index])].sort((a,b)=>a-b):state.selected.filter(i=>i!==index)}
-        else if(name==='project'){const p=options?.projects.find(p=>p.id===field.value);if(field.value==='managed')state.target={kind:'managed'};else if(p)state.target={kind:'project',projectId:p.id};else return;const preferred=p?.providerId??options?.defaultProviderId;if(preferred&&options?.providers.some(v=>v.id===preferred&&v.available))state.providerId=preferred;state.execution=auto()}
+        else if(name==='project'){const p=options?.projects.find(p=>p.id===field.value);if(field.value!=='managed'&&!p)return;destinationChosen=true;error='';setDestination(p?{kind:'project',projectId:p.id}:{kind:'managed'},p?.providerId??options?.defaultProviderId)}
         else if(name==='provider'){if(!options?.providers.some(p=>p.id===field.value&&p.available))return;state.providerId=field.value;state.execution=auto()}
         else if(name==='defaults')state.execution={...state.execution,defaults:field.value==='native'?'native':'provider'}
         else if(field.id==='task-entry-model')state.execution={...state.execution,model:field.value||null,reasoningEffort:null}
@@ -185,6 +201,11 @@ export function createTaskEntry(deps){
           if(!Array.isArray(loaded?.projects)||!Array.isArray(loaded?.providers))throw Error('invalid_options')
           if(!alive)return
           options=loaded
+          if(projectPath&&!recovering&&!destinationChosen){
+            const p=loaded.projects.find(p=>p.path===projectPath)
+            setDestination({kind:'project',projectId:p?.id??''},p?.providerId??loaded.defaultProviderId)
+            if(!p)more=true
+          }
           if(!state.providerId)state.providerId=loaded.defaultProviderId??''
           if(loaded.status!=='ready')error=loaded.reason?.message??'请先连接一个可用的执行者。'
         }catch{if(alive)error='暂时无法读取交办选项，要求已保留。关闭后可重新打开。'}

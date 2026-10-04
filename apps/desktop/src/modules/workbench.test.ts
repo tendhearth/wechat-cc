@@ -384,8 +384,8 @@ describe('workbench rendering', () => {
     const artifact = { id: 'a1', taskId: 'TASK', name: 'report.md', mime: 'text/markdown', size: 2, sha256: 'hash', createdAt: 2, approvedAt: null }
     const html = renderWorkbench({ tasks: [], providers: [], defaultProvider: 'codex', canWechat: false, selectedId: 'TASK', selectedArtifactId: 'a1', error: '', preview: { artifactId: 'a1', html: '<pre>safe preview</pre>' }, detail: { task: { id: 'TASK', title: 'Report', path: '/tmp', providerId: 'codex', status: 'completed', createdAt: 1, updatedAt: 2, error: null }, events: [], artifacts: [artifact] } })
     expect(html).toContain('<pre>safe preview</pre>')
-    expect(html).toMatch(/<details[^>]*id="wb-artifacts"[^>]*>/)
-    expect(html).not.toMatch(/<details[^>]*id="wb-artifacts"[^>]* open/)
+    expect(html).toContain('aria-label="成果预览"')
+    expect(html).not.toContain('id="wb-artifacts"')
     expect(html).toContain('data-action="download-artifact"')
     expect(html).toContain('data-action="approve-artifact"')
     expect(html).toMatch(/<header class="wb-task-head">[\s\S]*?data-action="show-artifacts"[\s\S]*?<\/header>/)
@@ -1731,9 +1731,8 @@ describe('workbench mutations', () => {
     content.scrollTop=120
     const click=[...page.listeners.get('click')!][0]!
     await click({target:show})
-    expect(details.hasAttribute('open')).toBe(true)
-    expect(details.scrollIntoView).toHaveBeenCalledWith({block:'start'})
-    expect(summary.focus).toHaveBeenCalledWith({preventScroll:true})
+    expect(controller.state.previewOpen).toBe(true)
+    expect(controller.state.preview?.artifactId).toBe('report')
     const file=new FakeElement();file.dataset.artifactId='report'
     await click({target:file})
     expect(invokeWorkbenchApi).toHaveBeenCalledWith('GET','/v1/workbench/artifact?id=abcd1234&artifactId=report')
@@ -2592,14 +2591,14 @@ it('imported tasks ask for explicit original-tool closure before native continua
 })
 
 describe('一件事:对话也在同一张列表里(2026-09-16)',()=>{
-  it('lists desktop-bound chat matters above the tasks and opens a session pane for the selected one',async()=>{
+  it('keeps desktop-bound chat matters after work tasks and opens their session pane',async()=>{
     const {renderWorkbench}=await import('./workbench.js')
     const task={id:'deadbeef',title:'Task',path:'/work',providerId:'codex',status:'running',createdAt:1,updatedAt:2,error:null}
     const chat={id:'0badcafe',kind:'chat',title:'跟 CC 说',status:'open',updatedAt:3}
     const base={tasks:[task],providers:[{id:'codex',displayName:'Codex'}],defaultProvider:'codex',canWechat:false,selectedArtifactId:null,error:'',preview:null,chats:[chat]}
     const listed=renderWorkbench({...base,selectedId:null,detail:null,selectedMatterId:null})
-    expect(listed).toContain('class="wb-kicker">手头的事<')
-    expect(listed).toMatch(/data-matter-id="0badcafe"[\s\S]*data-task-id="deadbeef"/)
+    expect(listed).toContain('<h2>一起做</h2>')
+    expect(listed).toMatch(/data-task-id="deadbeef"[\s\S]*data-matter-id="0badcafe"/)
     expect(listed).not.toContain('id="wb-converse-host"')
     const opened=renderWorkbench({...base,selectedId:null,detail:null,selectedMatterId:'0badcafe'})
     expect(opened).toContain('id="wb-converse-host"')

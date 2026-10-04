@@ -20,6 +20,7 @@ export const executionSignature=value=>JSON.stringify(value?[value.defaults,valu
 export function executionErrorMessage(error){
  const code=error instanceof Error?error.message:String(error)
  const messages=/** @type {Record<string,string>} */({
+  writer_not_closed:'执行程序还没有确认退出，工作文件夹暂时保留占用。请检查原进程是否已结束；确认退出后再继续。',
   execution_model_unsupported:'当前模型不可用，请重新选择模型，或使用自动。',
   execution_effort_unsupported:'这个模型不支持所选思考强度，请重新选择，或使用自动。',
   execution_model_unknown:'暂时无法确认当前模型，请明确选择一个模型后重试。',

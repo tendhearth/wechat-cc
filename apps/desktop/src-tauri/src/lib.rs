@@ -8,6 +8,7 @@
 // the .app/.exe/.deb bundle and is resolved by tauri-plugin-shell.
 
 pub mod daemon_mode;
+mod html_preview;
 
 #[cfg(test)]
 mod workbench_folder_tests;
@@ -1207,9 +1208,18 @@ async fn open_workbench_folder(task_id: String) -> Result<(), String> {
 /// Open a URL with the system handler. Used for the macOS System Settings
 /// deep link when the daemon reports it cannot read the owner's folders
 /// (TCC). Allow-list the schemes: this is reachable from the webview.
+fn is_local_preview_url(url: &str) -> bool {
+    let Ok(parsed) = tauri::Url::parse(url) else { return false };
+    matches!(parsed.scheme(), "http" | "https")
+        && parsed.username().is_empty()
+        && parsed.password().is_none()
+        && matches!(parsed.host_str(), Some("localhost" | "127.0.0.1" | "[::1]"))
+        && parsed.port().is_some()
+}
+
 #[tauri::command]
 fn open_url(url: String) -> Result<(), String> {
-    let ok = url.starts_with("https://") || url.starts_with("x-apple.systempreferences:");
+    let ok = url.starts_with("https://") || url.starts_with("x-apple.systempreferences:") || is_local_preview_url(&url);
     if !ok {
         return Err(format!("refusing to open url with scheme: {url}"));
     }
@@ -1330,9 +1340,69 @@ async fn pet_permission_resolve(hash: String, decision: String) -> Result<bool, 
     Ok(body.get("ok").and_then(|v| v.as_bool()).unwrap_or(false))
 }
 
+#[tauri::command]
+fn prepare_workbench_html_preview(
+    html: String,
+    webview: tauri::Webview,
+    previews: State<'_, html_preview::HtmlPreviewStore>,
+) -> Result<String, String> {
+    if webview.label() != "main" { return Err("html_preview_main_only".into()); }
+    let id = previews.prepare(html)?;
+    Ok(html_preview::preview_url(&id, cfg!(windows)))
+}
+
+#[tauri::command]
+fn prepare_workbench_site_preview(
+    entry: String,
+    files: Vec<html_preview::SiteFile>,
+    webview: tauri::Webview,
+    previews: State<'_, html_preview::HtmlPreviewStore>,
+) -> Result<String, String> {
+    if webview.label() != "main" { return Err("html_preview_main_only".into()); }
+    let id = previews.prepare_site(entry, files)?;
+    previews.url_for(&id, cfg!(windows))
+}
+
+#[tauri::command]
+fn release_workbench_html_preview(
+    id: String,
+    webview: tauri::Webview,
+    previews: State<'_, html_preview::HtmlPreviewStore>,
+) -> Result<bool, String> {
+    if webview.label() != "main" { return Err("html_preview_main_only".into()); }
+    previews.release(&id)
+}
+
+fn html_preview_response(value: html_preview::PreviewResponse) -> tauri::http::Response<Vec<u8>> {
+    let mut response = tauri::http::Response::builder()
+        .status(value.status)
+        .header("content-type", value.content_type)
+        .header("content-security-policy", value.csp);
+    for (name, header) in html_preview::PREVIEW_HEADERS {
+        if name != "content-type" && name != "content-security-policy" { response = response.header(name, header); }
+    }
+    if value.cors {
+        // Opaque sandbox documents send Origin:null for modules/fonts/fetch.
+        // No credentials are accepted and CSP limits access to this bundle.
+        response = response.header("access-control-allow-origin", "*");
+    }
+    // MIME and CSP sources are generated from validated constants/preview IDs.
+    response.body(value.body).expect("validated preview response")
+}
+
 pub fn run() {
     tauri::Builder::default()
         .manage(PendingNavigate(Mutex::new(None)))
+        .manage(html_preview::HtmlPreviewStore::default())
+        .register_uri_scheme_protocol("cc-preview", |context, request| {
+            if context.webview_label() != "main" {
+                return html_preview_response(html_preview::PreviewResponse::error(403, "Forbidden"));
+            }
+            let previews = context.app_handle().state::<html_preview::HtmlPreviewStore>();
+            html_preview_response(previews.respond(
+                request.method().as_str(), request.uri().path(), request.uri().query().is_some(), cfg!(windows),
+            ))
+        })
         .plugin(tauri_plugin_shell::init())
         .plugin(tauri_plugin_notification::init())
         .plugin(tauri_plugin_updater::Builder::new().build())
@@ -1361,7 +1431,10 @@ pub fn run() {
             customer_review_api,
             workbench_api,
             choose_workbench_folder,
-            open_workbench_folder
+            open_workbench_folder,
+            prepare_workbench_html_preview,
+            prepare_workbench_site_preview,
+            release_workbench_html_preview
         ])
         .build(tauri::generate_context!())
         .expect("error while building wechat-cc desktop")

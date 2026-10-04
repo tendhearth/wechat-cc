@@ -1,4 +1,4 @@
-import { describe, expect, it, vi, beforeEach } from 'vitest'
+import { describe, expect, it, vi, beforeEach, afterEach } from 'vitest'
 
 const showToast = vi.fn()
 const invokeApi = vi.fn()
@@ -17,6 +17,8 @@ const item = (o: Partial<Record<string, unknown>> = {}) => ({
   url: 'https://github.com/continuedev/continue', note: '能改多文件', status: 'new', kind: 'hunt', ...o,
 })
 
+afterEach(() => vi.unstubAllGlobals())
+
 beforeEach(() => {
   els.clear(); els.set('fd-catch', mkEl()); els.set('fd-catch-count', mkEl())
   showToast.mockClear(); invokeApi.mockReset()
@@ -25,18 +27,19 @@ const host = () => els.get('fd-catch')!
 const count = () => els.get('fd-catch-count')!
 
 describe('renderHuntBag', () => {
-  it('渲染标题、原文、链接和四个状态', () => {
+  it('列表渲染内容入口与当前使用状态；操作位于完整详情', () => {
     renderHuntBag({ items: [item()] })
     expect(host().innerHTML).toContain('Continue.dev')
     expect(host().innerHTML).toContain('能改多文件')
-    expect(host().innerHTML).toContain('https://github.com/continuedev/continue')
-    for (const l of ['没试', '跑过', '在用', '不要了']) expect(host().innerHTML).toContain(l)
+    expect(host().innerHTML).toContain('data-hb-action="open"')
+    expect(host().innerHTML).toContain('没试')
+    expect(host().innerHTML).not.toContain('data-hb-action="status"')
     expect(count().textContent).toBe('1 件')
   })
 
-  it('当前状态高亮', () => {
+  it('当前状态作为可读说明', () => {
     renderHuntBag({ items: [item({ status: 'using' })] })
-    expect(host().innerHTML).toMatch(/class="hb-chip on"[^>]*data-hb-status="using"/)
+    expect(host().innerHTML).toContain('推荐 · 在用')
   })
 
   it('没有链接的条目不渲染链接行(而不是渲染一个空链接)', () => {
@@ -48,7 +51,7 @@ describe('renderHuntBag', () => {
     renderHuntBag({ items: null })
     expect(host().innerHTML).toContain('暂时无法读取')
     renderHuntBag({ items: [] })
-    expect(host().innerHTML).toContain('背包还是空的')
+    expect(host().innerHTML).toContain('还没有带回来的内容')
   })
 
   it('丢弃的折叠起来,且不计入件数', () => {
@@ -57,10 +60,10 @@ describe('renderHuntBag', () => {
     expect(host().innerHTML).toContain('不要了的 1 件')
   })
 
-  it('全被丢弃时不显示「背包还是空的」(它们还在,只是折起来了)', () => {
+  it('全被丢弃时不显示「还没有带回来的内容」(它们还在,只是折起来了)', () => {
     renderHuntBag({ items: [item({ status: 'dropped' })] })
-    expect(host().innerHTML).not.toContain('背包还是空的')
-    expect(host().innerHTML).toContain('都处理完了')
+    expect(host().innerHTML).not.toContain('还没有带回来的内容')
+    expect(host().innerHTML).toContain('都已收进')
   })
 })
 
@@ -73,15 +76,15 @@ describe('见闻卡(kind=visit)', () => {
     expect(host().innerHTML).toContain('豆包')
     expect(host().innerHTML).not.toContain('hb-chip')
     expect(host().innerHTML).not.toContain('hb-link')
-    // 但能删
-    expect(host().innerHTML).toContain('data-hb-action="remove"')
-    expect(host().innerHTML).toMatch(/<h3 class="hb-title"><svg[^>]*aria-hidden="true"/)
+    // 阅读入口打开完整内容，删除在详情。
+    expect(host().innerHTML).toContain('data-hb-action="open"')
+    expect(host().innerHTML).not.toContain('data-hb-action="remove"')
   })
 
-  it('有明信片就内联渲染;没有就不留空框', () => {
+  it('见闻不把SVG内联注入列表，完整详情仍可打开图片', () => {
     renderHuntBag({ items: [visit({ image_svg: '<svg xmlns="http://www.w3.org/2000/svg"><circle r="1"/></svg>' })] })
-    expect(host().innerHTML).toContain('hb-postcard')
-    expect(host().innerHTML).toContain('<circle r="1"/>')
+    expect(host().innerHTML).toContain('data-hb-action="open"')
+    expect(host().innerHTML).not.toContain('<circle r="1"/>')
     renderHuntBag({ items: [visit({ image_svg: null })] })
     expect(host().innerHTML).not.toContain('hb-postcard')
   })
@@ -96,7 +99,7 @@ describe('见闻卡(kind=visit)', () => {
   it('没有 kind 的老行(v37 之前写的)当成东西', () => {
     const legacy = item(); delete (legacy as Record<string, unknown>).kind
     renderHuntBag({ items: [legacy] })
-    expect(host().innerHTML).toContain('hb-chip')
+    expect(host().innerHTML).toContain('推荐 · 没试')
     expect(count().textContent).toBe('1 件')
   })
 })
@@ -156,8 +159,7 @@ describe('onHuntBagClick', () => {
   })
 
   it('复制链接;剪贴板不可用时告诉主人手动选中', async () => {
-    // @ts-expect-error 测试桩
-    globalThis.navigator = { clipboard: { writeText: vi.fn().mockRejectedValue(new Error('denied')) } }
+    vi.stubGlobal('navigator', { clipboard: { writeText: vi.fn().mockRejectedValue(new Error('denied')) } })
     await onHuntBagClick(ev({ 'data-hb-action': 'copy', 'data-hb-url': 'https://a.com' }))
     expect(showToast).toHaveBeenCalledWith('复制不了 —— 手动选中那行链接吧')
     expect(invokeApi).not.toHaveBeenCalled()
@@ -175,7 +177,7 @@ describe('markJournalSeen —— 打开觅食台 = 看过了', () => {
 })
 
 describe('明信片卡(kind=postcard)', () => {
-  it('明信片标题使用系统图标,保留原文 emoji;没有状态档、没有链接;计数多一桶', () => {
+  it('明信片标题保留原文，不添加装饰图标；没有使用状态，计数多一桶', () => {
     els.set('fd-catch', mkEl()); els.set('fd-catch-count', mkEl())
     renderHuntBag({ items: [
       item({ id: 'p1', kind: 'postcard', title: '阿一 回了你的心愿 📮', note: '我朋友周末常去 🎉' }),
@@ -183,7 +185,7 @@ describe('明信片卡(kind=postcard)', () => {
     ] })
     const html = els.get('fd-catch')!.innerHTML
     expect(html).toContain('hb-postcard-card')
-    expect(html).toMatch(/<h3 class="hb-title"><svg[^>]*aria-hidden="true"/)
+    expect(html).toContain('data-hb-action="open"')
     expect(html).toContain('阿一 回了你的心愿 📮')
     expect(html).toContain('我朋友周末常去 🎉')
     // 只看明信片自己那张卡有没有状态档 —— 混进来的 hunt 卡本来就该有四个状态按钮(含 tried),不算这里的事。

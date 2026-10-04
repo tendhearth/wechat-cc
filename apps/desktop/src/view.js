@@ -110,6 +110,14 @@ export function escapeHtml(value) {
   }[ch]))
 }
 
+/** All installed executors and an already configured API can satisfy setup. */
+export function hasUsableProvider(report) {
+  return !!(report?.checks?.provider?.ok || ['claude','codex','cursor','gemini'].some(id => report?.checks?.[id]?.ok))
+}
+export function providerReady(report, id) {
+  return !!(report?.checks?.[id]?.ok || (report?.checks?.provider?.provider === id && report.checks.provider.ok))
+}
+
 // ─── dashboard / mode-routing helpers ─────────────────────────────────
 
 // Boot routing: dashboard once everything is set up — provider OK, an
@@ -123,7 +131,6 @@ export function escapeHtml(value) {
 export function initialMode(report) {
   const hasAccount = report.checks.accounts.count > 0
   const serviceInstalled = !!report.checks.service?.installed
-  const hasAnyProvider = !!(report.checks.claude?.ok || report.checks.codex?.ok)
   if (hasAccount && report.checks.provider.ok && serviceInstalled) return { mode: "dashboard" }
   // bun/git only block routing in source mode; in compiled-bundle the
   // sidecar is self-contained, so a user without system bun on their
@@ -133,9 +140,9 @@ export function initialMode(report) {
   if (report.runtime !== "compiled-bundle" && (!report.checks.bun.ok || !report.checks.git.ok)) {
     return { mode: "wizard", step: "doctor" }
   }
-  if (!hasAnyProvider) return { mode: "wizard", step: "doctor" }
-  if (!hasAccount) return { mode: "wizard", step: "wechat" }
-  if (!report.checks.provider.ok) return { mode: "wizard", step: "doctor" }
+  if (!hasUsableProvider(report)) return { mode: "wizard", step: "doctor" }
+  if (!hasAccount) return { mode: "wizard", step: report.checks.provider.ok && !['claude','codex','cursor','gemini'].includes(report.checks.provider.provider) ? 'wechat' : 'provider' }
+  if (!report.checks.provider.ok) return { mode: "wizard", step: "provider" }
   return { mode: "wizard", step: "service" }
 }
 
