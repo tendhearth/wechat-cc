@@ -223,9 +223,10 @@ jobs:
         run: apps/app/native/android-push/test.sh
 
   e2e:
-    # Heavy suite — skip on direct dev pushes; still runs on master pushes and
-    # on every PR (where base is master).
-    if: github.base_ref == 'master' || github.ref == 'refs/heads/master'
+    # 也跑在进 dev 的 PR 上(2026-10-04):#197 把两条 e2e 弄红,因为这一作业只在 base=master 时跑,
+    # 红了两天没人知道,直到下一次发版 PR 才会砸下来。这套只有 27 个文件 / 49 条,代价可接受。
+    # 直接推 dev 仍跳过(PR 那一步已经跑过)。
+    if: github.base_ref == 'master' || github.base_ref == 'dev' || github.ref == 'refs/heads/master'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
