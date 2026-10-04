@@ -19,6 +19,8 @@ import { createProviderRegistry } from '../../core/provider-registry'
 import {makeMwWorkbench} from '../inbound/mw-workbench'
 import type { AppTurn } from '../inbound/build'
 import { scopedReply } from '../inbound/reply-scope'
+import { makeMessagesStore } from '../../lib/messages-store'
+import type { StickerLib } from '../stickers'
 
 // Task 2 HIGH-severity fix (app-conversation-channel spec §3): companionConverse
 // must refuse to start an app turn while a WeChat turn is already in flight on
@@ -84,7 +86,7 @@ describe('companionConverse in-flight guard (buildPipelineDeps)', () => {
     rmSync(stateDir, { recursive: true, force: true })
   })
 
-  function setup(opts: { inFlight: boolean; mode?: Mode; withMarkInboundActivity?: boolean; workbench?: WorkbenchService; appTurn?: Ref<AppTurn> }) {
+  function setup(opts: { inFlight: boolean; mode?: Mode; withMarkInboundActivity?: boolean; workbench?: WorkbenchService; appTurn?: Ref<AppTurn>; stickers?: StickerLib }) {
     // `dispatch` (the LOCKING entry point) must never be called by
     // companionConverse — calling it from inside runExclusive would
     // self-deadlock (see pipeline-deps.ts). Failing loudly here catches a
@@ -176,6 +178,7 @@ describe('companionConverse in-flight guard (buildPipelineDeps)', () => {
         careLedger,
         replySinks,
         workbench: opts.workbench,
+        ...(opts.stickers ? { stickers: opts.stickers } : {}),
       },
       {
         polling: new Ref('polling'),
@@ -196,6 +199,64 @@ describe('companionConverse in-flight guard (buildPipelineDeps)', () => {
     replySinksOpen.mockImplementationOnce(() => ({ close: () => '晚安', extras: () => ({ attachments: [{ kind: 'voice' as const, text: '晚安' }], narration: ['看了下日程'] }) }) as never)
     expect(await companionConverse('睡了')).toEqual({ reply: '晚安', attachments: [{ kind: 'voice', text: '晚安' }], narration: ['看了下日程'] })
     expect(await companionConverse('在吗')).toEqual({ reply: 'reply text' })
+  })
+
+  // 2026-10-04:app 的形状 + 落库。表情标签解析一次(库里那张),桌面回包内联成 data URI;文件给名字 + 路径;
+  // 回复那一行带 extras(手机从消息库拉);只有附件没有文字也写这一行。
+  it('投成 app 形状:本地表情解析成文件并内联图片、联网表情只有 label、文件给名字;回复行落库带 extras', async () => {
+    mkdirSync(join(stateDir, 'stickers'), { recursive: true })
+    writeFileSync(join(stateDir, 'stickers', 'happy1.png'), Buffer.from([0x89, 0x50, 0x4e, 0x47]))
+    const stickers = { resolve: vi.fn(() => join(stateDir, 'stickers', 'happy1.png')), list: () => [{ file: 'happy1.png', tags: ['开心'] }], allTags: () => ['开心'], save: vi.fn() } as unknown as StickerLib
+    const { companionConverse, replySinksOpen } = setup({ inFlight: false, stickers })
+    replySinksOpen.mockImplementationOnce(() => ({
+      close: () => '好了',
+      extras: () => ({
+        attachments: [
+          { kind: 'sticker' as const, ref: { tag: '开心' } },
+          { kind: 'sticker' as const, ref: { mood: '加油', query: 'cheer' } },
+          { kind: 'file' as const, path: '/tmp/x/report.pdf' },
+          { kind: 'voice' as const, text: '晚安' },
+        ],
+        narration: ['  ', '我先看看日程。'],
+      }),
+    }) as never)
+    const r = await companionConverse('帮我看看', 'phone')
+    expect(r).toEqual({
+      reply: '好了',
+      attachments: [
+        { kind: 'sticker', label: '开心', file: 'happy1.png', image: `data:image/png;base64,${Buffer.from([0x89, 0x50, 0x4e, 0x47]).toString('base64')}` },
+        { kind: 'sticker', label: '加油' },
+        { kind: 'file', name: 'report.pdf', path: '/tmp/x/report.pdf' },
+        { kind: 'voice', text: '晚安' },
+      ],
+      narration: ['我先看看日程。'],
+    })
+    await vi.waitFor(async () => {
+      const rows = await makeMessagesStore(db).listRange('owner_chat', { limit: 10 })
+      const out = rows.find(m => m.direction === 'out')
+      expect(out?.text).toBe('好了')
+      // 落库的不带 data URI(只在回包里)。
+      expect(JSON.parse(out!.extras!)).toEqual({
+        attachments: [
+          { kind: 'sticker', label: '开心', file: 'happy1.png' },
+          { kind: 'sticker', label: '加油' },
+          { kind: 'file', name: 'report.pdf', path: '/tmp/x/report.pdf' },
+          { kind: 'voice', text: '晚安' },
+        ],
+        narration: ['我先看看日程。'],
+      })
+    })
+  })
+
+  it('只有附件、没有文字的一轮也写回复行(text 为空,extras 挂在上面)', async () => {
+    const { companionConverse, replySinksOpen } = setup({ inFlight: false })
+    replySinksOpen.mockImplementationOnce(() => ({ close: () => '', extras: () => ({ attachments: [{ kind: 'voice' as const, text: '嗯' }], narration: [] }) }) as never)
+    expect(await companionConverse('在吗', 'desktop')).toEqual({ reply: '', attachments: [{ kind: 'voice', text: '嗯' }] })
+    await vi.waitFor(async () => {
+      const out = (await makeMessagesStore(db).listRange('owner_chat', { limit: 10 })).find(m => m.direction === 'out')
+      expect(out).toMatchObject({ text: '', source: 'desktop' })
+      expect(JSON.parse(out!.extras!).attachments).toEqual([{ kind: 'voice', text: '嗯' }])
+    })
   })
 
   it('answers an explicit owner task query from the workbench without entering the companion session', async () => {

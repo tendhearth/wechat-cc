@@ -48,6 +48,22 @@ launchctl kickstart -k gui/$(id -u)/com.wechat-cc.daemon
 | 第一条就发失败 | `[REPLY_DELIVERY_FAIL] sent=n/m`(不会再调模型) |
 | shadow 的分布 | `[REPLY_SHADOW] … match=same / contains / differs / legacy_empty / shadow_empty` |
 
+## 桌面 / 手机怎么显示(2026-10-04)
+
+app 那一轮(桌面「跟 CC 说」、手机「跟 CC 说」)的接收器收下的是整个 `TurnReply`。显示链:
+
+1. **投影**(`src/daemon/app-reply.ts`,`companionConverse` 里做一次):语音 `{kind:'voice', text}`;表情 `{kind:'sticker', label, file?}` —— 标签当场经表情库 `resolve` 成一张、只记文件名(桌面与手机看到同一张),联网表情(情绪 + 网址 / 搜索词)只有 label,daemon 不替 app 去外网取图;文件 `{kind:'file', name, path}`。旁白去空段、只留最后 20 段、每段 ≤ 4000 字。
+2. **落库**:回复那一行的 `messages.extras`(v72,JSON,可空)。只有附件没文字的一轮也写这一行(text 为空)。旁白不另起行 —— 消息库的其它读者(线索抽取、交接、夜间记忆、搜索)只读 text,不会把旁白当成 CC 说的话。
+3. **桌面**:`POST /v1/companion/converse` 回 `{ok, reply, attachments, narration}`,两个数组总在;本地表情多一个 `image`(data URI,≤ 1 MiB;桌面 CSP 只许 data: / blob: 图)。Rust `agent_converse` 把文件的 `path` 换成进程内一次性 `ref`(至多记 200 个),网页只能拿 ref 调 `reveal_reply_file`(`open -R`,只在访达里显示,不打开)。app 重开之后旧 ref 失效 ⇒ 提示去微信或文件夹里找。
+4. **手机**:`GET /m/api/chat` 的回复消息多两个可选字段 `attachments` / `narration`(协议 `ChatMessage`;认不得的附件逐条丢);文件只给 `name`。语音 `GET /m/api/chat/voice?id=<消息 id>&i=<下标>`:只合成库里那一行第 i 个附件、且必须是语音;一帧装不下 ⇒ 413 `too_large`,没配朗读 ⇒ 422 `no_voice_config`。表情图走已有的 `GET /m/api/sticker/<file>?b64=1`。文件**没有**取文件的路由(有意不开)。
+
+| 现象 | 看哪里 |
+|---|---|
+| 桌面 / 手机没显示附件 | 这一轮的 provider 是不是 daemon(legacy 的附件仍直接发微信);库里 `SELECT extras FROM messages WHERE id LIKE 'app:%:out' ORDER BY ts DESC LIMIT 1` |
+| 表情只显示「表情 · xx」 | 联网表情(正常);或本地表情的文件被删了 / 超过 1 MiB(桌面)/ 取图失败(手机) |
+| 手机点语音说「到电脑上听」 | 413 `too_large`:合成出来的声音装不进中继一帧 |
+| 桌面点「在访达中显示」说找不到 | 文件被挪走(`reply_file_missing`),或 app 重开过(`reply_file_unknown`) |
+
 ## agy(第 2 步,2026-10-03)
 
 agy 是外部 CLI,**只读一份静态的全局 MCP 配置** `~/.gemini/config/mcp_config.json`(条目 `wechat-cc-wechat`,所有 agy 对话共用一枚 trusted 令牌 `agy-static`)。所以它的工具表不是每轮按 provider 传进去的,而是 daemon 开机时写进那个文件的:

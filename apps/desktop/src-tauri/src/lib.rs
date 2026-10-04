@@ -561,8 +561,97 @@ async fn wechat_health_version(
 // exception. Do NOT fall back to tokenFilePath here — that would either
 // 403 (correct but confusing) or, worse, mask a real daemon/version
 // mismatch where operatorTokenFilePath hasn't been written yet.
+// Reply attachments (reply delivery, 2026-10-04): the daemon's converse body
+// carries `attachments` (voice / sticker / file) and `narration`. A file
+// attachment comes with its absolute `path`; that path never crosses into the
+// webview. `webview_converse_reply` swaps it for an opaque, process-local token
+// that only `reveal_reply_file` can turn back into a path — so the webview can
+// only ever reveal a file the daemon itself attached to a reply, never an
+// arbitrary path it makes up (same rule as open_workbench_folder: only an id
+// crosses the boundary). Reveal only (`open -R`): opening an attached file
+// could launch an app or script.
+const REPLY_FILES_MAX: usize = 200;
+
+fn reply_files() -> &'static Mutex<(u64, std::collections::VecDeque<(String, PathBuf)>)> {
+    static FILES: std::sync::OnceLock<Mutex<(u64, std::collections::VecDeque<(String, PathBuf)>)>> = std::sync::OnceLock::new();
+    FILES.get_or_init(|| Mutex::new((0, std::collections::VecDeque::new())))
+}
+
+fn remember_reply_file(path: &str) -> String {
+    let mut guard = reply_files().lock().unwrap_or_else(|e| e.into_inner());
+    guard.0 += 1;
+    let token = format!("rf{}", guard.0);
+    guard.1.push_back((token.clone(), PathBuf::from(path)));
+    while guard.1.len() > REPLY_FILES_MAX {
+        guard.1.pop_front();
+    }
+    token
+}
+
+fn reply_file_path(token: &str) -> Option<PathBuf> {
+    let guard = reply_files().lock().unwrap_or_else(|e| e.into_inner());
+    guard.1.iter().find(|(t, _)| t == token).map(|(_, p)| p.clone())
+}
+
+/// Daemon converse body → what the webview gets: `{ reply, attachments, narration }`
+/// with every file attachment's `path` replaced by a `ref` token.
+fn webview_converse_reply(body: &Value) -> Value {
+    let reply = body.get("reply").and_then(|v| v.as_str()).unwrap_or_default();
+    let narration: Vec<Value> = body
+        .get("narration")
+        .and_then(|v| v.as_array())
+        .map(|a| a.iter().filter(|v| v.is_string()).cloned().collect())
+        .unwrap_or_default();
+    let attachments: Vec<Value> = body
+        .get("attachments")
+        .and_then(|v| v.as_array())
+        .map(|a| {
+            a.iter()
+                .filter_map(|att| {
+                    let mut obj = att.as_object()?.clone();
+                    if obj.get("kind").and_then(|k| k.as_str()) == Some("file") {
+                        let path = obj.remove("path");
+                        if let Some(p) = path.as_ref().and_then(|p| p.as_str()) {
+                            obj.insert("ref".into(), Value::String(remember_reply_file(p)));
+                        }
+                    }
+                    Some(Value::Object(obj))
+                })
+                .collect()
+        })
+        .unwrap_or_default();
+    serde_json::json!({ "reply": reply, "attachments": attachments, "narration": narration })
+}
+
+/// Reveal a file CC attached to a reply in Finder. Only a token minted by
+/// agent_converse is accepted (see REPLY_FILES_MAX above).
 #[tauri::command]
-async fn agent_converse(text: String) -> Result<String, String> {
+fn reveal_reply_file(token: String) -> Result<(), String> {
+    if token.len() > 32 || !token.starts_with("rf") {
+        return Err("invalid_reply_file".into());
+    }
+    let path = reply_file_path(&token).ok_or_else(|| "reply_file_unknown".to_string())?;
+    if !path.is_absolute() || !path.is_file() {
+        return Err("reply_file_missing".into());
+    }
+    #[cfg(target_os = "macos")]
+    {
+        std::process::Command::new("/usr/bin/open")
+            .arg("-R")
+            .arg(&path)
+            .status()
+            .map_err(|_| "reveal_reply_file_failed".to_string())
+            .and_then(|st| if st.success() { Ok(()) } else { Err("reveal_reply_file_failed".into()) })
+    }
+    #[cfg(not(target_os = "macos"))]
+    {
+        let _ = path;
+        Err("reveal_reply_file_unsupported".into())
+    }
+}
+
+#[tauri::command]
+async fn agent_converse(text: String) -> Result<Value, String> {
     use std::time::Duration;
     use tokio::time::timeout;
 
@@ -643,12 +732,7 @@ async fn agent_converse(text: String) -> Result<String, String> {
 
     let ok = body.get("ok").and_then(|v| v.as_bool()).unwrap_or(false);
     if ok {
-        let reply = body
-            .get("reply")
-            .and_then(|v| v.as_str())
-            .unwrap_or_default()
-            .to_string();
-        Ok(reply)
+        Ok(webview_converse_reply(&body))
     } else {
         let err_msg = body
             .get("error")
@@ -1357,6 +1441,7 @@ pub fn run() {
             open_url,
             pet_permission_resolve,
             agent_converse,
+            reveal_reply_file,
             agent_speak,
             agent_transcribe,
             customer_review_api,
@@ -1380,6 +1465,37 @@ pub fn run() {
                 }
             }
         });
+}
+
+#[cfg(test)]
+mod converse_reply_tests {
+    use super::{reply_file_path, webview_converse_reply};
+
+    #[test]
+    fn file_paths_never_reach_the_webview_and_map_back_through_tokens() {
+        let body = serde_json::json!({
+            "ok": true, "reply": "好了", "narration": ["先看看"],
+            "attachments": [
+                { "kind": "voice", "text": "晚安" },
+                { "kind": "file", "name": "r.pdf", "path": "/tmp/r.pdf" },
+                { "kind": "sticker", "label": "开心", "image": "data:image/png;base64,AA==" }
+            ]
+        });
+        let out = webview_converse_reply(&body);
+        assert!(!out.to_string().contains("/tmp/r.pdf"));
+        assert_eq!(out["reply"], "好了");
+        assert_eq!(out["narration"][0], "先看看");
+        assert_eq!(out["attachments"][0]["kind"], "voice");
+        let token = out["attachments"][1]["ref"].as_str().unwrap().to_string();
+        assert_eq!(reply_file_path(&token).unwrap(), std::path::PathBuf::from("/tmp/r.pdf"));
+        assert!(reply_file_path("rf999999").is_none());
+    }
+
+    #[test]
+    fn old_daemon_body_without_extras_still_yields_the_reply_object() {
+        let out = webview_converse_reply(&serde_json::json!({ "ok": true, "reply": "hi" }));
+        assert_eq!(out, serde_json::json!({ "reply": "hi", "attachments": [], "narration": [] }));
+    }
 }
 
 #[cfg(test)]

@@ -787,3 +787,11 @@ it('v71 adds the reply-delivery columns to turn_records (spec 2026-10-03 §4.10)
     expect(cols).toEqual(expect.arrayContaining(['delivery','bubbles','attachments','narration_segments']))
   }finally{db.close()}
 })
+
+it('v72 adds the nullable extras column to messages (app reply attachments + narration)',()=>{
+  const db=openTestDb()
+  try{
+    const cols=(db.query("PRAGMA table_info('messages')").all() as {name:string;notnull:number}[])
+    expect(cols.find(c=>c.name==='extras')).toMatchObject({notnull:0})
+  }finally{db.close()}
+})

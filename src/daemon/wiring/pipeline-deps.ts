@@ -4,7 +4,8 @@
  *
  * Refs are passed in for late-bound polling/guard access from closures.
  */
-import type { TurnAttachment } from '../../core/turn-reply'
+import type { SinkExtras } from '../reply-sinks'
+import { encodeExtras, hasExtras, projectReplyExtras, stickerDataUri, withStickerImages, type AppReplyExtras, type ConverseResult } from '../app-reply'
 import { join } from 'node:path'
 import { recallFromMemory } from '../memory/recall'
 import { randomBytes } from 'node:crypto'
@@ -240,7 +241,7 @@ export interface BuildPipelineDepsResult {
    * registration time (see main.ts's staged startup: internal-api first,
    * then bootstrap, then this wiring pass).
    */
-  companionConverse: (text: string, origin?: 'desktop' | 'phone') => Promise<{ reply: string }>
+  companionConverse: (text: string, origin?: 'desktop' | 'phone') => Promise<import('../app-reply').ConverseResult>
   /**
    * 桌宠 turn 的组装闭包(CC 桌宠 Phase B)。和 companionConverse 挨着造,因为
    * 需要同一批东西:ownerChatId(companion 配置)、resolveOwnerSessionKey +
@@ -658,7 +659,13 @@ export function buildPipelineDeps(opts: PipelineDepsOpts, refs: PipelineDepsRefs
     }}:{}),
     curatedMemory: () => memoryNightly.curatedView(),
     ...(mattersService && opts.matters ? { matters: { list: (f) => mattersService.list(f), detail: (id) => mattersService.detail(id), inputReceipt:mattersService.inputReceipt, say: (id, text, input) => mattersService.say(id, text, 'phone',input), permission:mattersService.permission,answer:mattersService.answer,artifactChunk:mattersService.artifactChunk,handoff:mattersService.handoff,seenOnPhone: (id) => opts.matters!.bind(id, 'phone', 'pwa') } } : {}),
-    ...(phoneOwner && phoneChat ? { chat: { owner: () => phoneOwner.peek(), history: (chatId: string, o: { beforeTs?: string; limit: number }) => messagesStore.listRange(chatId, o), chat: phoneChat } } : {}),
+    ...(phoneOwner && phoneChat ? { chat: {
+      owner: () => phoneOwner.peek(),
+      history: (chatId: string, o: { beforeTs?: string; limit: number }) => messagesStore.listRange(chatId, o),
+      chat: phoneChat,
+      message: (chatId: string, id: string) => messagesStore.get(chatId, id),
+      speak: (text: string) => ilink.voice.synthesizeSpeech(text),
+    } } : {}),
     ...(remoteTunnel ? { remoteInfo: () => remoteTunnel } : {}),
     ...(phonePush ? { push: phonePush } : {}),
     // 「默认大脑」改完自己重启(与远程开关同一条路)。
@@ -1046,13 +1053,20 @@ export function buildPipelineDeps(opts: PipelineDepsOpts, refs: PipelineDepsRefs
   // inbound. The agent's `reply` tool still posts to POST /v1/wechat/reply
   // as normal; the open sink captures it instead of ilink-sending.
   // 「一件事」:桌面 / 手机上跟 CC 说的话和微信里的进同一条消息流(source 记表面),三个入口看到的是同一段对话。落库失败不影响这一轮。
-  const persistAppTurn = (origin: 'desktop' | 'phone', synthetic: InboundMsg, text: string, reply: string | undefined) => {
+  // 回复交付(2026-10-04):附件与旁白跟着回复那一行落库(messages.extras),手机从消息库拉对话时才看得到;
+  // 只有附件、没有文字的一轮也写这一行(text 为空),否则那张表情 / 那段语音就没地方挂。
+  const persistAppTurn = (origin: 'desktop' | 'phone', synthetic: InboundMsg, text: string, reply: string | undefined, extras?: AppReplyExtras | null) => {
     const ts = new Date().toISOString()
     const ownerChatId = synthetic.chatId
     void messagesStore.append({ id: `app:${origin}:${synthetic.createTimeMs}:in`, chatId: ownerChatId, ts, direction: 'in', kind: 'text', text, source: origin }).catch(() => {})
-    if (reply) void messagesStore.append({ id: `app:${origin}:${synthetic.createTimeMs}:out`, chatId: ownerChatId, ts: new Date(Date.now() + 1).toISOString(), direction: 'out', kind: 'text', text: reply, source: origin }).catch(() => {})
+    const encoded = encodeExtras(extras)
+    if (reply || encoded) void messagesStore.append({ id: `app:${origin}:${synthetic.createTimeMs}:out`, chatId: ownerChatId, ts: new Date(Date.now() + 1).toISOString(), direction: 'out', kind: 'text', text: reply ?? '', source: origin, ...(encoded ? { extras: encoded } : {}) }).catch(() => {})
   }
-  const companionConverse = async (text: string, origin: 'desktop' | 'phone' = 'desktop'): Promise<{ reply: string; attachments?: TurnAttachment[]; narration?: string[] }> => {
+  // 本地表情:解析一次(标签 → 表情库里随机一张),落库与桌面回包看到的是同一张。
+  const stickerDir = join(stateDir, 'stickers')
+  const projectExtras = (x: SinkExtras | undefined): AppReplyExtras | null =>
+    x ? projectReplyExtras(x, { stickerFile: tag => opts.stickers?.resolve(tag) ?? null }) : null
+  const companionConverse = async (text: string, origin: 'desktop' | 'phone' = 'desktop'): Promise<ConverseResult> => {
     // self-restart (spec 2026-08-03-daemon-self-restart-on-stale-code,
     // Task 3 review finding #1) — an App /converse turn is real owner
     // activity, but it dispatches straight through the coordinator and
@@ -1138,17 +1152,15 @@ export function buildPipelineDeps(opts: PipelineDepsOpts, refs: PipelineDepsRefs
     // 并且同样用 finally 配对 —— 两条进来的路,同一套 start/stop 语义。
     opts.petSignals?.noteTurnStart(ownerChatId)
     try {
-      const result = await boot.coordinator.submitTurn(synthetic, {
+      const captured = await boot.coordinator.submitTurn(synthetic, {
         within: async (dispatch) => {
           const sink = replySinks.open(ownerChatId)
           try {
             await dispatch()
-            // 回复交付 daemon 模式:附件与旁白随回复交还(桌面 / 手机显示);旧路径没有就不带。
-            const extras = sink.extras?.()
+            // 回复交付 daemon 模式:附件与旁白随回复交还(桌面 / 手机显示);旧路径两样都是空的。
+            const extras = projectExtras(sink.extras?.())
             const reply = sink.close()
-            return extras && (extras.attachments.length > 0 || extras.narration.length > 0)
-              ? { reply, attachments: extras.attachments, narration: extras.narration }
-              : { reply }
+            return { reply, extras }
           } catch (err) {
             sink.close()
             throw err
@@ -1157,8 +1169,14 @@ export function buildPipelineDeps(opts: PipelineDepsOpts, refs: PipelineDepsRefs
       })
       // 「一件事」:桌面 / 手机上跟 CC 说的话和微信里的进同一条消息流(source 记表面),
       // 三个入口看到的是同一段对话。落库失败不影响这一轮。
-      persistAppTurn(origin, synthetic, text, result.reply)
-      return result
+      persistAppTurn(origin, synthetic, text, captured.reply, captured.extras)
+      const x = captured.extras
+      if (!hasExtras(x)) return { reply: captured.reply }
+      return {
+        reply: captured.reply,
+        ...(x.attachments.length ? { attachments: withStickerImages(x.attachments, f => stickerDataUri(stickerDir, f)) } : {}),
+        ...(x.narration.length ? { narration: x.narration } : {}),
+      }
     } finally {
       opts.petSignals?.noteTurnStop(ownerChatId)
     }

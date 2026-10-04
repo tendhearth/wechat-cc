@@ -19,6 +19,24 @@ describe('messages store', () => {
     expect((await s.listRange('c1', { limit: 10 })).length).toBe(1)
   })
 
+  it('extras round-trips on the row that carries it; rows without it have no extras key (v72)', async () => {
+    const s = makeMessagesStore(openTestDb())
+    const extras = JSON.stringify({ attachments: [{ kind: 'voice', text: '晚安' }], narration: ['先看看'] })
+    await s.append({ id: 'out', chatId: 'c1', ts: '2026-06-11T00:01:00Z', direction: 'out', kind: 'text', text: '好了', source: 'phone', extras })
+    await s.append({ id: 'in', chatId: 'c1', ts: '2026-06-11T00:00:00Z', direction: 'in', kind: 'text', text: '帮我看看', source: 'phone' })
+    const rows = await s.listRange('c1', { limit: 10 })
+    expect(rows[1]!.extras).toBe(extras)
+    expect('extras' in rows[0]!).toBe(false)
+  })
+
+  it('get returns one row only within its own chat', async () => {
+    const s = makeMessagesStore(openTestDb())
+    await s.append({ id: 'x', chatId: 'c1', ts: '2026-06-11T00:00:00Z', direction: 'out', kind: 'text', text: 'hi', source: 'desktop' })
+    expect((await s.get('c1', 'x'))?.text).toBe('hi')
+    expect(await s.get('c2', 'x')).toBeNull()
+    expect(await s.get('c1', 'nope')).toBeNull()
+  })
+
   it('listRange pages backwards with beforeTs', async () => {
     const s = makeMessagesStore(openTestDb())
     for (let i = 0; i < 5; i++)

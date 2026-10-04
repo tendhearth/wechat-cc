@@ -191,7 +191,10 @@ const __mockState: {
   //                         本机未连接 (exercisable without a real bot).
   //                         Valid values: 'taken_over' | 'connected' | 'inconclusive'
   connectionProbeState: 'taken_over' | 'connected' | 'inconclusive'
-} = { chats: [], observations: [], milestones: [], sessions: [], daemonAlive: true, installProgress: null, installSimulationStep: 0, conversations: null, presence: { presence: 'ok', activity: { kind: 'idle', label: '', since: null }, news: { unread: 0, latest_kind: null, latest_title: null } }, a2aAgents: [], a2aEvents: [], doctorOverride: null, doctorErrorOnce: false, serviceInvokes: [], healthProbeResult: true, logCalls: [], providerInvokes: [], dialogueMessages: [], dialogueThreads: [], dialoguePassphrase: '1234', dialogueUnlocked: false, connectionProbeState: 'taken_over', phoneCalls: [] }
+  /** 「跟 CC 说」演示:说过的话与「在访达中显示」交出去的 ref(mock.converse-calls 读)。 */
+  converseCalls: string[]
+  revealCalls: string[]
+} = { converseCalls: [], revealCalls: [], chats: [], observations: [], milestones: [], sessions: [], daemonAlive: true, installProgress: null, installSimulationStep: 0, conversations: null, presence: { presence: 'ok', activity: { kind: 'idle', label: '', since: null }, news: { unread: 0, latest_kind: null, latest_title: null } }, a2aAgents: [], a2aEvents: [], doctorOverride: null, doctorErrorOnce: false, serviceInvokes: [], healthProbeResult: true, logCalls: [], providerInvokes: [], dialogueMessages: [], dialogueThreads: [], dialoguePassphrase: '1234', dialogueUnlocked: false, connectionProbeState: 'taken_over', phoneCalls: [] }
 
 // ─── A2A mock credentials ─────────────────────────────────────────────────────
 // The A2A routes (/v1/a2a/*) are served by the SAME Bun.serve instance as the
@@ -498,6 +501,8 @@ Bun.serve({
           __mockState.observations = []
           __mockState.milestones = []
           __mockState.sessions = []
+          __mockState.converseCalls = []
+          __mockState.revealCalls = []
           __mockState.daemonAlive = true
           __mockState.qrScanComplete = undefined
           __mockState.qrScanFails = undefined
@@ -1451,6 +1456,38 @@ Bun.serve({
           // callers, and the path is basename-only under ~/Downloads.
           fs.writeFileSync(target, content)
           return Response.json({ result: target })
+        }
+        // 「跟 CC 说」演示回复(回复交付,2026-10-04):DRY_RUN 下回一个完整的回复对象 ——
+        // 两段过程 + 语音 / 本地表情(data URI,与真 daemon 内联的一样)/ 联网表情(只有情绪)/ 文件(只有
+        // 一次性 ref,路径不进网页,与 lib.rs 一样)。说「只要表情」⇒ 只有附件、没有文字的一轮。
+        if (dryRun && body.command === 'agent_converse') {
+          const said = String((body.args as { text?: string } | undefined)?.text ?? '')
+          __mockState.converseCalls.push(said)
+          const happy = `data:image/png;base64,${require('node:fs').readFileSync(join(ROOT, 'assets', 'starter-stickers', 'cc-ink-v1-happy-light.png')).toString('base64')}`
+          if (said.includes('只要表情')) {
+            return Response.json({ result: { reply: '', attachments: [{ kind: 'sticker', label: '开心', file: 'cc-ink-v1-happy-light.png', image: happy }], narration: [] } })
+          }
+          return Response.json({ result: {
+            reply: `（演示回复）收到:「${said}」。明天上午十点前都空着,我把要点整理成了一份文件。`,
+            narration: ['我先看一下明天的日程。', '再对一下已经设好的提醒,免得撞上。'],
+            attachments: [
+              { kind: 'voice', text: '明天上午十点前都空着。' },
+              { kind: 'sticker', label: '开心', file: 'cc-ink-v1-happy-light.png', image: happy },
+              { kind: 'sticker', label: '加油' },
+              { kind: 'file', name: '明天的安排.md', ref: 'rf1' },
+            ],
+          } })
+        }
+        if (dryRun && body.command === 'agent_speak') {
+          // 很短的一段静音 WAV(与 src/mock.js 同一份),只要能解码播放。
+          return Response.json({ result: { audio_b64: 'UklGRiQAAABXQVZFZm10IBAAAAABAAEAQB8AAEAfAAABAAgAZGF0YQAAAAA=', mime: 'audio/wav' } })
+        }
+        if (dryRun && body.command === 'reveal_reply_file') {
+          __mockState.revealCalls.push(String((body.args as { token?: string } | undefined)?.token ?? ''))
+          return Response.json({ result: null })
+        }
+        if (body.command === 'mock.converse-calls') {
+          return Response.json({ result: { converse: __mockState.converseCalls, reveal: __mockState.revealCalls } })
         }
         if (body.command === 'render_qr_svg') {
           const text = (body.args as { text?: string } | undefined)?.text ?? ''

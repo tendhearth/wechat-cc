@@ -256,3 +256,75 @@ it('excludes errors and system notices from the visible discussion candidates', 
   expect(onDelegate.mock.calls[1]?.[0]).toEqual({text:'这次交办',visibleMessages:[{role:'user',text:'已发送的公开要求'}]})
   expect(els['converse-scroll']!.innerHTML).toContain('暂时无法交给 CC 做')
 })
+
+// 回复交付(2026-10-04):agent_converse 回整个回复对象 —— 过程(灰、默认收起)在上,附件在下。
+const replyObject = {
+  reply: '查好了,明天上午有空。',
+  narration: ['我先看看日程。', '再对一下提醒。'],
+  attachments: [
+    { kind: 'voice', text: '明天上午有空' },
+    { kind: 'sticker', label: '开心', file: 'happy.png', image: 'data:image/png;base64,AA==' },
+    { kind: 'sticker', label: '加油', image: 'https://evil.example/x.png' },
+    { kind: 'file', name: 'plan.pdf', ref: 'rf1' },
+    { kind: 'video', url: 'x' },
+  ],
+}
+
+it('renders the reply object: collapsed 过程 above, voice / sticker / file below; unknown kinds and non-data images dropped', async () => {
+  invoke.mockResolvedValue(replyObject as never)
+  els['converse-input']!.value = '明天有空吗'
+  els['converse-send']!.handlers.click!()
+  await settle()
+  const root = els['converse-scroll']!.node
+  const cc = root.querySelector('.converse-msg-cc')!
+  const process = cc.querySelector('details.converse-process') as unknown as { open: boolean; compareDocumentPosition(o: unknown): number }
+  expect(process.open).toBe(false)
+  expect(cc.querySelector('.converse-process summary')!.textContent).toContain('过程 · 2 段')
+  expect(cc.querySelector('.converse-process summary')!.getAttribute('title')).toContain('没有发到微信')
+  expect([...cc.querySelectorAll('.converse-process-lines li')].map(li => li.textContent)).toEqual(['我先看看日程。', '再对一下提醒。'])
+  // 过程在回复之前,附件在回复之后
+  const bubble = cc.querySelector('.converse-bubble')!, atts = cc.querySelector('.converse-attachments')!
+  expect(process.compareDocumentPosition(bubble) & 4).toBeTruthy()
+  expect(bubble.compareDocumentPosition(atts) & 4).toBeTruthy()
+  expect(cc.querySelector('.converse-att-voice .converse-att-text')!.textContent).toBe('明天上午有空')
+  expect(cc.querySelector('img.converse-att-sticker')!.getAttribute('src')).toBe('data:image/png;base64,AA==')
+  expect(cc.querySelector('.converse-att-sticker-label')!.textContent).toContain('表情 · 加油')
+  expect(root.innerHTML).not.toContain('evil.example')
+  expect(cc.querySelector('.converse-att-file .converse-att-name')!.textContent).toBe('plan.pdf')
+  expect(cc.querySelectorAll('.converse-att, img.converse-att-sticker')).toHaveLength(4)
+
+  // 点语音 ⇒ agent_speak 念那一句;点「在访达中显示」⇒ 只把一次性 ref 交给 Rust
+  vi.stubGlobal('Element', dom.Element)
+  vi.stubGlobal('HTMLElement', dom.HTMLElement)
+  invoke.mockResolvedValue({ audio_b64: '', mime: 'audio/wav' } as never)
+  els['converse-scroll']!.handlers.click!({ target: cc.querySelector('.converse-att-play') })
+  els['converse-scroll']!.handlers.click!({ target: cc.querySelector('.converse-att-reveal') })
+  await settle()
+  expect(invoke).toHaveBeenCalledWith('agent_speak', { text: '明天上午有空' })
+  expect(invoke).toHaveBeenCalledWith('reveal_reply_file', { token: 'rf1' })
+})
+
+it('an attachments-only reply is a CC line (no blank bubble, no "no text" note); narration-only keeps the honest note', async () => {
+  invoke.mockResolvedValueOnce({ reply: '', attachments: [{ kind: 'sticker', label: '晚安', image: 'data:image/png;base64,AA==' }], narration: [] } as never)
+  els['converse-input']!.value = '晚安'
+  els['converse-send']!.handlers.click!()
+  await settle()
+  let html = els['converse-scroll']!.innerHTML
+  expect(html).toContain('converse-att-sticker')
+  expect(html).not.toContain('没有用文字回复')
+  expect(els['converse-scroll']!.node.querySelector('.converse-msg-cc .converse-bubble')).toBeNull()
+
+  invoke.mockResolvedValueOnce({ reply: '', attachments: [], narration: ['想了想,不用回。'] } as never)
+  els['converse-input']!.value = '嗯'
+  els['converse-send']!.handlers.click!()
+  await settle()
+  html = els['converse-scroll']!.innerHTML
+  expect(html).toContain('过程 · 1 段')
+  expect(html).toContain('没有用文字回复')
+})
+
+it('an old string reply normalizes to the same reply object with no extras', async () => {
+  const { normalizeConverseReply } = await import('./converse.js')
+  expect(normalizeConverseReply('hi')).toEqual({ reply: 'hi', attachments: [], narration: [] })
+  expect(normalizeConverseReply(null)).toEqual({ reply: '', attachments: [], narration: [] })
+})

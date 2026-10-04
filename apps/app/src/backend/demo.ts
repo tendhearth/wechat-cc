@@ -1,5 +1,6 @@
 import { PHONE_SAY_MAX_CHARS } from '@wechat-cc/protocol'
 import { labelJoin, type Lang } from '../i18n'
+import { DEMO_STICKER, DEMO_STICKER_FILE, DEMO_VOICE } from './demo-media'
 import { BackendError, type Backend, type Connection, type MatterT, type MatterDetailT, type ApprovalExplanationT, type ChatJobT, type ChatMessageT, type SessionContinueT, type MatterSayResultT } from './types'
 import {
   copy, IDS, CHAT_ID, PERM_ID, QUESTION_ID, RUN_IDS, t, explanation, progress, changesTurn, entryOptions,
@@ -14,7 +15,9 @@ type Entry = { detail: MatterDetailT; stage: Stage; version: number; evs: EvRec[
 const DAY = 86_400_000
 const HOUR = 3_600_000
 /** 主人对话里的一条:key 的在读时按语言出文案;text 是用户自己的字。 */
-type ChatRec = { id: string; role: 'me' | 'cc'; key?: Copy; text?: string; at: number; source: ChatMessageT['source'] }
+type ChatRec = { id: string; role: 'me' | 'cc'; key?: Copy; text?: string; at: number; source: ChatMessageT['source']; narr?: Copy[]; atts?: DemoAtt[] }
+/** 演示回复的附件:文案按语言生成;表情有 file ⇒ 走 sticker() 取图,没有 ⇒ 联网表情只写情绪。 */
+type DemoAtt = { kind: 'voice'; key: Copy } | { kind: 'sticker'; label: Copy; file?: string } | { kind: 'file'; name: string }
 
 /** 演示里 CC 回一句要多久:「在想…」留得够久,主人看得见,模拟器 UI 测试(一次点击 2 秒多)也看得见。 */
 export const DEMO_CHAT_REPLY_MS = 5000
@@ -102,7 +105,7 @@ export function makeDemoBackend(opts: { now?: () => number; setTimeout?: typeof 
     chatMsgs = [
       { id: 'demo-chat-1', role: 'cc', key: 'chatSeed1', at: n - 3 * HOUR, source: 'wechat' },
       { id: 'demo-chat-2', role: 'me', key: 'chatSeed2', at: n - 3 * HOUR + 120_000, source: 'wechat' },
-      { id: 'demo-chat-3', role: 'cc', key: 'chatSeed3', at: n - 2 * HOUR, source: 'desktop' },
+      { id: 'demo-chat-3', role: 'cc', key: 'chatSeed3', at: n - 2 * HOUR, source: 'desktop', atts: [{ kind: 'file', name: 'portfolio-notes.md' }] },
       { id: 'demo-chat-4', role: 'me', key: 'chatSeed4', at: n - HOUR, source: 'phone' },
     ]
     chatPending = null
@@ -110,6 +113,10 @@ export function makeDemoBackend(opts: { now?: () => number; setTimeout?: typeof 
   }
   function seed() { const b = buildSeed(); entries = b.map; order = b.ids; seedChat() }
   const chatText = (m: ChatRec, l: Lang) => (m.key ? t(l, m.key) : m.text ?? '')
+  const chatExtras = (m: ChatRec, l: Lang): Pick<ChatMessageT, 'attachments' | 'narration'> => ({
+    ...(m.narr?.length ? { narration: m.narr.map(k => t(l, k)) } : {}),
+    ...(m.atts?.length ? { attachments: m.atts.map(a => a.kind === 'voice' ? { kind: 'voice' as const, text: t(l, a.key) } : a.kind === 'sticker' ? { kind: 'sticker' as const, label: t(l, a.label), ...(a.file ? { file: a.file } : {}) } : a) } : {}),
+  })
   const titleOf = (e: Entry, l: Lang) => (e.titleKey ? t(l, e.titleKey) : e.detail.matter.title)
   /** 读时按请求的语言出一份拷贝:标题、事件、未处理的种子问题都换成 l。状态(已批准 / 已回答 / 阶段)在 e 里,不因语言变。 */
   function localize(e: Entry, l: Lang): MatterDetailT {
@@ -214,7 +221,7 @@ export function makeDemoBackend(opts: { now?: () => number; setTimeout?: typeof 
       return {
         matterId: CHAT_ID, title: t(l, 'chatTitle'), hasMore: false, nextBefore: null, failed: null,
         pending: chatPending ? { ...chatPending } : null,
-        messages: chatMsgs.map(m => ({ id: m.id, role: m.role, kind: 'text', text: chatText(m, l), truncated: false, at: m.at, source: m.source })),
+        messages: chatMsgs.map(m => ({ id: m.id, role: m.role, kind: 'text', text: chatText(m, l), truncated: false, at: m.at, source: m.source, ...chatExtras(m, l) })),
       }
     },
     async chatSay(text, requestId) {
@@ -230,7 +237,11 @@ export function makeDemoBackend(opts: { now?: () => number; setTimeout?: typeof 
         const ts = now()
         chatMsgs.push(
           { id: `demo-${requestId}-in`, role: 'me', text, at: ts, source: 'phone' },
-          { id: `demo-${requestId}-out`, role: 'cc', key: 'chatDemoReply', at: ts + 1, source: 'phone' },
+          {
+            id: `demo-${requestId}-out`, role: 'cc', key: 'chatDemoReply', at: ts + 1, source: 'phone',
+            narr: ['chatDemoNarr1', 'chatDemoNarr2'],
+            atts: [{ kind: 'voice', key: 'chatDemoVoice' }, { kind: 'sticker', label: 'chatDemoSticker', file: DEMO_STICKER_FILE }, { kind: 'sticker', label: 'chatDemoSticker2' }],
+          },
         )
         job.status = 'replied'; chatPending = null
         const e = entries.get(CHAT_ID)
@@ -238,6 +249,15 @@ export function makeDemoBackend(opts: { now?: () => number; setTimeout?: typeof 
         publish([CHAT_ID])
       })
       return { ...job }
+    },
+    async chatVoice(messageId, index) {
+      const a = chatMsgs.find(m => m.id === messageId)?.atts?.[index]
+      if (!a || a.kind !== 'voice') throw new BackendError('not_found')
+      return { ...DEMO_VOICE }
+    },
+    async sticker(file) {
+      if (file !== DEMO_STICKER_FILE) throw new BackendError('not_found')
+      return { ...DEMO_STICKER }
     },
     async connections() { return demoConnections(lastLang, now()) },
     async sessions(provider, _cursor, q) {
