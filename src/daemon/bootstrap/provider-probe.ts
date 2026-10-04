@@ -203,6 +203,12 @@ export interface ProbeRetrier {
   /** 开机探测失败后登记。同一个 id 重复登记会被忽略(已经在重探了)。 */
   schedule(id: string, firstError: string, attempt: ProbeAttempt): void
   status(): ProbeRetryStatus[]
+  /**
+   * 立刻重探一次(不等计时器)—— CLI 自动升级器刚升完这家时用(#210):新版本可能正好修好了。
+   * 返回:true = 这家此刻已注册(本来就晚注册成功了,或这一次通过);false = 还在重探;
+   * null = 这家不在重探名单里(开机就注册上了 / 根本没装 / 已停)。在飞的那次会等它跑完,不并发起第二个。
+   */
+  reprobeNow(id: string): Promise<boolean | null>
   /** daemon 关停:清掉所有计时器;在飞的那次跑完也不再排下一次。 */
   stop(): void
 }
@@ -218,7 +224,7 @@ export function createProbeRetrier(opts: ProbeRetrierOptions): ProbeRetrier {
     return t
   })
   const clearTimer = opts.clearTimer ?? ((h: unknown) => clearTimeout(h as ReturnType<typeof setTimeout>))
-  const entries = new Map<string, { status: ProbeRetryStatus; timer: unknown; attempt: ProbeAttempt }>()
+  const entries = new Map<string, { status: ProbeRetryStatus; timer: unknown; attempt: ProbeAttempt; inflight?: Promise<void> }>()
   let stopped = false
   const iso = (ms: number) => new Date(ms).toISOString()
   const delayFor = (n: number) => (n < backoff.length ? backoff[n]! : periodicMs)
@@ -231,10 +237,18 @@ export function createProbeRetrier(opts: ProbeRetrierOptions): ProbeRetrier {
     e.timer = setTimer(() => { void run(id) }, d)
   }
 
-  const run = async (id: string) => {
+  const run = (id: string): Promise<void> => {
+    const e = entries.get(id)
+    if (!e || stopped) return Promise.resolve()
+    if (e.inflight) return e.inflight
+    e.inflight = runOnce(id).finally(() => { e.inflight = undefined })
+    return e.inflight
+  }
+
+  const runOnce = async (id: string) => {
     const e = entries.get(id)
     if (!e || stopped) return
-    e.timer = undefined
+    if (e.timer !== undefined) { clearTimer(e.timer); e.timer = undefined }
     e.status.next_attempt_at = null
     e.status.attempts++
     let r: Awaited<ReturnType<ProbeAttempt>>
@@ -274,6 +288,13 @@ export function createProbeRetrier(opts: ProbeRetrierOptions): ProbeRetrier {
     },
     status() {
       return Array.from(entries.values(), e => ({ ...e.status }))
+    },
+    async reprobeNow(id) {
+      const e = entries.get(id)
+      if (!e || stopped) return null
+      if (e.status.state === 'registered') return true
+      await run(id)
+      return (e.status.state as ProbeRetryStatus['state']) === 'registered'   // run() 里会改它;TS 跨 await 收窄错了
     },
     stop() {
       stopped = true

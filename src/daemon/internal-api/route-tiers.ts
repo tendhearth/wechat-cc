@@ -195,6 +195,9 @@ export const ROUTE_MIN_TIER: Record<string, UserTier> = {
   // GET /v1/health)。admin 而非 trusted:允许任何持 file token 的会话
   // 白嫖 daemon 去开一整条真会话,不该比 daemon-control 的其它成员松。
   'POST /v1/selftest/converse': 'admin',
+  // admin —— 换主人电脑上的软件版本(外部 agent CLI 自动升级,2026-10-04);`wechat-cc cli` 用 operator 凭据调。
+  'POST /v1/cli/upgrade': 'admin',
+  'POST /v1/cli/rollback': 'admin',
   // admin — on-demand file locate over the owner's computer (file_locate)
   'GET /v1/locate': 'admin',
   // trusted — 觅食台 inbound toggle. DEMOTED admin→trusted 2026-07-22: the

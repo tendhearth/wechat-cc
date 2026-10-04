@@ -10,7 +10,7 @@ import selfPkg from '../../package.json' with { type: 'json' }
 import { homedir } from 'node:os'
 import { acquireInstanceLock, releaseInstanceLock, isHeartbeatFresh, writeHeartbeat, startHeartbeatTicker, HEARTBEAT_FILE, HEARTBEAT_STALE_MS } from './single-instance'
 import { openDb } from '../lib/db'
-import { LifecycleSet, wireRef } from '../lib/lifecycle'
+import { LifecycleSet, Ref, wireRef } from '../lib/lifecycle'
 import { log } from '../lib/log'
 import { dedupeAccountsByUserId } from '../lib/dedupe-accounts'
 import { loadAccess, AccessConfigCorruptError } from '../lib/access'
@@ -26,6 +26,8 @@ import { providerDisplayName } from './provider-display-names'
 import { loadAllAccounts, makeIlinkAdapter } from './ilink-glue'
 import { registerInternalApi } from './internal-api/lifecycle'
 import { runSelftestConverse } from './selftest'
+import { startCliUpgrade } from './cli-upgrade/start'
+import type { CliUpgrader } from '../core/cli-upgrade/engine'
 import { makeMessagesStore } from '../lib/messages-store'
 import { registerCompanionPush, registerCompanionIntrospect, registerIngest } from './companion/lifecycle'
 import { registerGuard } from './guard/lifecycle'
@@ -176,6 +178,8 @@ export async function bootDaemon(opts: BootDaemonOpts): Promise<DaemonHandle> {
   // Created here so both the internal-api registration and bootstrap below
   // share the one instance.
   const turnRecordStore = makeTurnRecordStore(db)
+  // CLI 自动升级引擎:bootstrap 之后才造,回合记录与工作台的报错触发先拿着这个引用。
+  const cliUpgradeRef = new Ref<CliUpgrader>('cli-upgrade')
   // ConversationStore must be constructed BEFORE the ilink adapter —
   // PR5 Task 21 routes the adapter's setUserName/resolveUserName through
   // it, replacing the deprecated user_names.json store. Both legacy
@@ -449,7 +453,11 @@ export async function bootDaemon(opts: BootDaemonOpts): Promise<DaemonHandle> {
       outboundTaps,
       replyDelivery,
       petSignals,
-      onTurnRecord: (r) => turnRecordStore.append(r),
+      onTurnRecord: (r) => {
+        turnRecordStore.append(r)
+        // CLI 自动升级的报错触发(2026-10-04):错误通道像「CLI 太旧」⇒ 排一次版本检查。
+        if (r.outcome !== 'completed') cliUpgradeRef.current?.onTurnError(r.provider, r.errorCode, r.error)
+      },
       mintSessionToken: internalApi.mintSessionToken,
       invalidateSession: internalApi.invalidateSession,
       internalApi: { baseUrl: internalApi.baseUrl, tokenFilePath: internalApi.tokenFilePath },
@@ -759,6 +767,7 @@ export async function bootDaemon(opts: BootDaemonOpts): Promise<DaemonHandle> {
     // 回报投递队列(v65,task-3,2026-09-23):每轮答复入队一次,sweeper 按到期时间取件送达。
     const reportOutbox = makeReportOutboxStore(db)
     const workbench = wireWorkbench({ db, stateDir, boot, internalApi, matters, reportOutbox, networkGate: guardRt.gate,
+      onTurnError: (providerId, code, message) => { cliUpgradeRef.current?.onTurnError(providerId, code, message) },
       executionConflict:(path,providerId,nativeId)=>boot.sessionManager.hasProjectConflict(path)||
         (!!nativeId&&Object.values(boot.sessionStore.all()).some(s=>s.provider===providerId&&s.session_id===nativeId))||
         legacyClaims.conflicts({owner:'workbench',path,providerId,nativeId})||
@@ -842,6 +851,25 @@ export async function bootDaemon(opts: BootDaemonOpts): Promise<DaemonHandle> {
     }))
     if (memoryNightlyLc) lc.register(memoryNightlyLc)
     internalApi.setMemoryNightly(wired.memoryNightly)
+    // 外部 agent CLI 自动升级(主人 2026-10-04,docs/maintainer/cli-auto-upgrade.md):空闲时用官方升级器升、
+    // 升完立刻自检、不过就退回 + 记坏版本 + 告诉主人一次。可选子系统:坏了只降级。
+    const cliUpgrade = await sup.start('cli-upgrade', () => startCliUpgrade({
+      stateDir, sessionManager: boot.sessionManager, busyLabels: () => boot.busyLabels(), holdBusy: (l) => boot.holdBusy(l),
+      registry: boot.registry, networkGate: guardRt.gate,
+      // 开机探测失败、正在重探的 provider:升完立刻重探一次,注册上再自检(#211)。
+      reprobeProvider: (id) => boot.reprobeProvider?.(id) ?? Promise.resolve(null),
+      mintSessionToken: (tier, key, o) => internalApi.mintSessionToken(tier, key, o),
+      invalidateSession: (key) => internalApi.invalidateSession(key),
+      sendOwner: async (text) => {
+        const owner = resolveAdminChatId(loadAccess(), loadCompanionConfig(stateDir), null)
+        if (!owner) return false
+        const r = await ilink.sendMessage(owner, text) as { error?: string }
+        return !r.error
+      },
+      notifyDesktop: (t, b) => notifyDesktop(t, b),
+      log: (t, l) => log(t, l),
+    }))
+    if (cliUpgrade) { lc.register(cliUpgrade.lifecycle); wireRef(cliUpgradeRef, cliUpgrade.upgrader); internalApi.setCliUpgrade(cliUpgrade.upgrader) }
     // Reminder sweeper (spec 2026-08-20-reminders-port) — multi-user
     // precise-time delivery. Optional subsystem: a broken sweeper degrades,
     // never blocks boot. Store is db-backed so pending reminders survive

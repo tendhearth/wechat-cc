@@ -155,6 +155,24 @@ describe('createProbeRetrier —— 指数退避重探', () => {
     expect(timers.queue.length).toBeLessThanOrEqual(1)
   })
 
+  it('reprobeNow(CLI 升级器升完时用):立刻跑一次、取消已排的计时器;不在名单 ⇒ null;已晚注册 ⇒ true', async () => {
+    const timers = manualTimers()
+    const r = createProbeRetrier({ log: () => {}, setTimer: timers.setTimer, clearTimer: timers.clearTimer })
+    expect(await r.reprobeNow('agy')).toBeNull()
+    const attempt = vi.fn()
+      .mockResolvedValueOnce({ ok: false, reason: '还是超时' })
+      .mockResolvedValueOnce({ ok: true })
+    r.schedule('agy', '开机超时', attempt)
+    expect(timers.queue).toHaveLength(1)
+    expect(await r.reprobeNow('agy')).toBe(false)     // 跑了一次,没过,重新排(只排一个)
+    expect(attempt).toHaveBeenCalledTimes(1)
+    expect(timers.queue).toHaveLength(1)
+    expect(await r.reprobeNow('agy')).toBe(true)      // 新版本好了
+    expect(timers.queue).toHaveLength(0)
+    expect(await r.reprobeNow('agy')).toBe(true)      // 已注册:不再跑
+    expect(attempt).toHaveBeenCalledTimes(2)
+  })
+
   it('同一个 id 重复登记被忽略;stop() 清掉计时器,在飞的那次跑完也不再排', async () => {
     const timers = manualTimers()
     const r = createProbeRetrier({ log: () => {}, setTimer: timers.setTimer, clearTimer: timers.clearTimer })

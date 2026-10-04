@@ -262,6 +262,10 @@ export function makeTokenRegistry(
           // `wechat-cc selftest phone` 用这份 operator 凭据取配对链接 —— 路由 plan 7a 起是 admin 档
           // (铸 admin 链接令牌),共享的 trusted 文件 token 够不着了。桌面不再调它(改走 /v1/phone/link)。
           'GET /v1/settings/link',
+          // `wechat-cc cli upgrade|rollback`(外部 agent CLI 自动升级,2026-10-04):同一份 operator 凭据,
+          // admin 档。桌面不调(状态从 /v1/health 的 cli_upgrade 读)。
+          'POST /v1/cli/upgrade',
+          'POST /v1/cli/rollback',
         ]),
       })
     },

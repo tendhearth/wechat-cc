@@ -445,6 +445,71 @@ Use wechat-cc ci <command> --help for more information about a command.
 "
 `;
 
+exports[`cli.ts --help 快照(逐字节) > cli --help > cli rollback --help 1`] = `
+"退回上一个版本(本机留着的旧版本 / 官方装指定版本),当前版本记为有问题。daemon 需在跑 (cli rollback)
+
+USAGE cli rollback [OPTIONS] <NAME>
+
+ARGUMENTS
+
+  NAME    claude | codex | cursor | agy (Required)
+
+OPTIONS
+
+  --json    JSON 输出
+
+
+"
+`;
+
+exports[`cli.ts --help 快照(逐字节) > cli --help > cli status --help 1`] = `
+"本机外部 agent CLI 的版本、升级器、能否自动退回,以及 daemon 记下的自动升级状态(只读) (cli status)
+
+USAGE cli status [OPTIONS] 
+
+OPTIONS
+
+  --check    现查一次最新版本(官方发布元数据,只读;不装、不写状态)
+   --json    JSON 输出                     
+
+
+"
+`;
+
+exports[`cli.ts --help 快照(逐字节) > cli --help > cli upgrade --help 1`] = `
+"现在就查最新并用官方升级器升级一个 CLI(只在空闲时;升完自检,不过自动退回)。daemon 需在跑 (cli upgrade)
+
+USAGE cli upgrade [OPTIONS] <NAME>
+
+ARGUMENTS
+
+  NAME    claude | codex | cursor | agy (Required)
+
+OPTIONS
+
+  --force    即使已是最新 / 最新是记过的坏版本,也跑一次官方升级器
+   --json    JSON 输出                     
+
+
+"
+`;
+
+exports[`cli.ts --help 快照(逐字节) > cli --help 1`] = `
+"外部 agent CLI(claude / codex / cursor-agent / agy)的版本与自动升级 (wechat-cc cli v1.7.2 (dev))
+
+USAGE wechat-cc cli status|upgrade|rollback
+
+COMMANDS
+
+    status    本机外部 agent CLI 的版本、升级器、能否自动退回,以及 daemon 记下的自动升级状态(只读)
+   upgrade    现在就查最新并用官方升级器升级一个 CLI(只在空闲时;升完自检,不过自动退回)。daemon 需在跑  
+  rollback    退回上一个版本(本机留着的旧版本 / 官方装指定版本),当前版本记为有问题。daemon 需在跑     
+
+Use wechat-cc cli <command> --help for more information about a command.
+
+"
+`;
+
 exports[`cli.ts --help 快照(逐字节) > companion --help > companion introspect --help 1`] = `
 "Fire introspection + CC Atelier tick NOW (instead of waiting for the daily schedule) (companion introspect)
 
@@ -1914,6 +1979,7 @@ More subcommands (each has its own --help):
   wechat-cc access list|remove      Allowlist management — the add path stays in the admin chat flow
   wechat-cc avatar info|set|remove  Avatar metadata + binary (per chat / bot / user key)
   wechat-cc backup create|list|restore  备份/恢复不可再生数据(记忆、事实库、配置)
+  wechat-cc cli status|upgrade|rollback  外部 agent CLI(claude/codex/cursor/agy)版本与自动升级
   wechat-cc connection probe        Inspect this machine's WeChat connection
   wechat-cc conversations list      Per-chat conversation modes (RFC 03)
   wechat-cc dialogue <timeline|threads|search|thread-detail|backfill|lock|unlock>

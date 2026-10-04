@@ -15,10 +15,12 @@ import {removeTempDir} from '../../lib/test-temp'
 
 let root:string,project:string,db:Db,service:WorkbenchService,store:ReturnType<typeof makeWorkbenchStore>
 const selected:AgentExecutionChoice={defaults:'provider',model:'fixture-model',reasoningEffort:'high'}
+let turnErrors:Array<[string,string|undefined,string]>=[]
 function setup(provider:AgentProvider,resume=true){
   const registry=createProviderRegistry()
   for(const id of ['claude','codex'])registry.register(id,provider,{displayName:id,canResume:()=>resume,workbench:MANAGED_NATIVE_CAPABILITIES})
-  store=makeWorkbenchStore(db);service=makeWorkbenchService({store,registry,stateDir:root,ownerChatId:()=>null})
+  turnErrors=[]
+  store=makeWorkbenchStore(db);service=makeWorkbenchService({store,registry,stateDir:root,ownerChatId:()=>null,onTurnError:(p,c,m)=>{turnErrors.push([p,c,m])}})
 }
 function gate(){let resolve!:()=>void;const promise=new Promise<void>(r=>resolve=r);return{promise,resolve}}
 async function settled(id:string){await expect.poll(()=>service.detail(id).task.status).not.toMatch(/^(queued|running|cancelling)$/)}
@@ -169,5 +171,7 @@ it.each(['native-error-event','rpc-rejection'])('preserves one model diagnostic 
   expect(errors).toHaveLength(1)
   expect(errors[0]).toMatchObject({text:expect.stringContaining('当前账号不支持'),diagnostic:raw,errorCode:'execution_model_unsupported'})
   expect(store.events(task.id).filter(e=>e.kind==='error').map(e=>e.text)).toEqual([raw])
+  // CLI 自动升级的报错触发:错误通道(码 + 原文)交出去,两条路一样
+  expect(turnErrors).toEqual([['codex','execution_model_unsupported',raw]])
   expect(detail.execution).toEqual(automatic)
 })

@@ -63,6 +63,7 @@ describe('citty migrated commands', () => {
       'avatar',
       'backup',
       'ci',
+      'cli',
       'companion',
       'connection',
       'conversations',

@@ -94,7 +94,29 @@ export const HealthResponse = z.object({
     last_ok_at: z.string().nullable(),
     last_error: z.string().nullable(),
   }).optional(),
+  // 外部 agent CLI 自动升级(2026-10-04)。老 daemon 没有。
+  cli_upgrade: z.object({
+    enabled: z.boolean(),
+    check_hour: z.number(),
+    active: z.string().nullable(),
+    clis: z.array(z.object({
+      id: z.string(), label: z.string(), auto: z.boolean(),
+      installed: z.string().nullable(), latest: z.string().nullable(), update_available: z.boolean(),
+      accepted: z.string().nullable(),
+      verify: z.enum(['ok', 'failed', 'unverified', 'unknown']), verify_detail: z.string().nullable(),
+      last_check_at: z.string().nullable(), last_check_error: z.string().nullable(), next_check_at: z.string().nullable(),
+      pending: z.string().nullable(),
+      last_upgrade: z.object({
+        from: z.string().nullable(), to: z.string().nullable(), at: z.string(), source: z.string(), result: z.string(), detail: z.string().optional(),
+      }).nullable(),
+      known_bad: z.array(z.string()),
+    })),
+  }).optional(),
 })
+
+// ── POST /v1/cli/upgrade|rollback(外部 agent CLI 自动升级,2026-10-04) ─────────
+export const CliUpgradeRequest = z.object({ name: z.enum(['claude', 'codex', 'cursor', 'agy']), force: z.boolean().optional() })
+export const CliRollbackRequest = z.object({ name: z.enum(['claude', 'codex', 'cursor', 'agy']) })
 
 // ── POST /v1/atelier/share ─────────────────────────────────────────────────
 
@@ -789,6 +811,8 @@ export const REQUEST_SCHEMAS: Record<string, z.ZodTypeAny | undefined> = {
   'POST /v1/plugins/install': PluginInstallRequest,
   'POST /v1/plugins/upgrade': PluginInstallRequest,
   'POST /v1/license/activate': LicenseActivateRequest,
+  'POST /v1/cli/upgrade': CliUpgradeRequest,
+  'POST /v1/cli/rollback': CliRollbackRequest,
 
   // reminders
   'POST /v1/reminders/schedule': ReminderScheduleRequest,

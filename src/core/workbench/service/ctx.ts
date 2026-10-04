@@ -117,6 +117,8 @@ export interface ServiceDeps {
   closeTimeoutMs?: number
   /** 忙碌登记处:派发时持有,结算时释放(self-restart 靠它判空闲)。 */
   holdBusy?: (label: string) => () => void
+  /** 执行者一轮失败时的错误通道(码 + 原文)—— CLI 自动升级的报错触发。 */
+  onTurnError?: (providerId: string, code: string | undefined, message: string) => void
   /** 受管工作目录的根;不传 ⇒ entry 的 managed 目标一律 entry_not_wired。 */
   managedWorkspaceRoot?: string
   /** 网络闸门(2026-10-02):起执行者 / 投补充之前问一次,不安全 ⇒ `network_unprotected`。不传 = 不拦。 */

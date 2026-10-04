@@ -129,6 +129,8 @@ export interface ProviderWiring {
   providerProbes: () => ProbeRetryStatus[]
   /** daemon 关停时清掉重探计时器。 */
   stopProviderProbes: () => void
+  /** 立刻重探一家(CLI 自动升级器升完时用)。语义见 ProbeRetrier.reprobeNow。 */
+  reprobeProvider: (id: string) => Promise<boolean | null>
 }
 
 export async function registerProviders(deps: ProviderDeps): Promise<ProviderWiring> {
@@ -793,5 +795,6 @@ export async function registerProviders(deps: ProviderDeps): Promise<ProviderWir
     providerNotes: () => ({ claude: claudeNote(), ...(codexNote ? { codex: codexNote } : {}) }),
     providerProbes: () => probeRetrier.status(),
     stopProviderProbes: () => probeRetrier.stop(),
+    reprobeProvider: (id) => probeRetrier.reprobeNow(id),
   }
 }
