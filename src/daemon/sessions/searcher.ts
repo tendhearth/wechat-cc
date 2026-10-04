@@ -25,13 +25,22 @@ export interface SearchHit {
   turn_index: number
   snippet: string                  // ~140 chars around raw-line match (detailed mode)
   turn: unknown                    // parsed JSON for the matched line, or null on parse failure
-  session_has_reply_tool: boolean  // computed once per session — gates compact-mode wrap-up suppression
+  /**
+   * 这是不是一个微信会话(computed once per session — gates compact-mode wrap-up suppression)。字段名是历史
+   * 遗留(CLI JSON 输出的一部分,不改名):以前靠「调过 mcp__wechat__reply」认,回复交付迁到 daemon 之后
+   * (spec 2026-10-03 §4.10)新会话里不再有 reply 调用 —— 改认每条入站消息都带的信封 `<wechat chat_id=`
+   * (prompt-format.ts 的 formatInbound)。旧会话两样都有。
+   */
+  session_has_reply_tool: boolean
 }
 
-// Cheap string check — the tool name is always quoted in the JSON
-// serialization, so substring search beats parsing every line just to
-// detect this flag.
-const REPLY_TOOL_MARKER = '"mcp__wechat__reply"'
+// Cheap string checks — substring search beats parsing every line just to
+// detect this flag. The envelope survives JSON serialization as
+// `<wechat chat_id=\"…` (only the quote is escaped), so the prefix matches
+// either way. The reply-tool marker stays for transcripts written before the
+// migration (legacy reply path, tool name always quoted in the JSON).
+const WECHAT_SESSION_MARKERS = ['<wechat chat_id=', '"mcp__wechat__reply"'] as const
+const isWechatSessionLine = (l: string): boolean => WECHAT_SESSION_MARKERS.some(m => l.includes(m))
 
 function toHit(line: string, needle: string, alias: string, sessionId: string, turnIndex: number, sessionHasReplyTool: boolean): SearchHit {
   const idx = line.toLowerCase().indexOf(needle)
@@ -88,7 +97,7 @@ export async function searchAcrossSessions(
     let cached = fileCache.get(path)
     if (!cached) {
       const lines = readFileSync(path, 'utf8').split('\n').filter(l => l.length > 0)
-      cached = { lines, hasReplyTool: lines.some(l => l.includes(REPLY_TOOL_MARKER)) }
+      cached = { lines, hasReplyTool: lines.some(isWechatSessionLine) }
       fileCache.set(path, cached)
     }
     const line = cached.lines[h.turn_index]
@@ -105,7 +114,7 @@ function scanSessions(refs: SessionFileRef[], needle: string, limit: number): Se
   for (const ref of refs) {
     if (!existsSync(ref.path)) continue
     const lines = readFileSync(ref.path, 'utf8').split('\n').filter(l => l.length > 0)
-    const sessionHasReplyTool = lines.some(l => l.includes(REPLY_TOOL_MARKER))
+    const sessionHasReplyTool = lines.some(isWechatSessionLine)
     for (let i = 0; i < lines.length; i++) {
       const line = lines[i]!
       if (!line.toLowerCase().includes(needle)) continue

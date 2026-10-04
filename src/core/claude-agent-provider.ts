@@ -44,6 +44,14 @@ export const CLAUDE_CAPABILITIES: ProviderCapabilities = {
   supportsResume: true,
   defaultPeer: 'codex',
   authFailHint: '⚠ Claude 登录已过期，请在电脑上跑 `claude login` 后再发消息。',
+  // 回复交付第 5 步(2026-10-03,维护者按约定定,主人授权):最后一段非空文字就是回复,之前的段是旁白(不进微信,
+  // 超过 120 秒 daemon 发一句进度)。wechat MCP 是 wechatStdioMcpSpec('claude') + 会话 env(sdkOptionsForProject),
+  // 按这个开关带 WECHAT_REPLY_DELIVERY=daemon ⇒ 没有 reply 族,只有附件工具(+ admin 的 message);会话令牌里有 chat。
+  // SDK 的 result.result 只用来核对分段(见下面 result 分支)。闸门见 docs/reference/reply-once-experiment.md「第 5 步」。
+  // 回滚:agent-config 的 reply_delivery: { claude: 'legacy' } + 重启 daemon(docs/maintainer/reply-delivery.md)。
+  replyDelivery: 'daemon',
+  // 编码型执行者:只取最后一段(spec §4.2 / 修订记录 2026-10-03)。
+  replyText: 'last_segment',
 }
 
 /**
@@ -143,6 +151,11 @@ export interface ClaudeAgentProviderOptions {
    * `currentClaudeModel`. Omitted → strongEval is not offered.
    */
   strongModel?: () => string
+  /**
+   * Test / experiment only: replace the SDK's `query()` (src/core/claude-scripted.ts plays scripted SDK message
+   * streams through it — the reply-once harness can't `vi.mock` a module). Production omits this.
+   */
+  queryImpl?: typeof query
 }
 
 function taskInputPreview(input: Record<string, unknown>): string | null {
@@ -399,8 +412,9 @@ export function createClaudeAgentProvider(opts: ClaudeAgentProviderOptions): Age
   // One-shot eval with no tools, no MCP, no session continuation — shared by
   // cheapEval (haiku-class) and strongEval (the verdict's main model). Both
   // pass an explicit model so the only difference is which model runs.
+  const runQuery = opts.queryImpl ?? query
   const oneShot = async (prompt: string, model: string): Promise<string> => {
-    const q = query({
+    const q = runQuery({
       prompt,
       options: {
         model,
@@ -517,7 +531,7 @@ export function createClaudeAgentProvider(opts: ClaudeAgentProviderOptions): Age
         return workbenchSession
       }
 
-      const q = query({ prompt: sdkQueue.iterable(), options })
+      const q = runQuery({ prompt: sdkQueue.iterable(), options })
       let observedSessionId=spawnOpts.resumeSessionId
 
       let activeEventQueue: AsyncQueue<AgentEvent> | null = null
@@ -529,6 +543,8 @@ export function createClaudeAgentProvider(opts: ClaudeAgentProviderOptions): Age
       // until the turn's `result` arrives, because the HTTP status that
       // separates `network` from `server_error` only rides on the result.
       let pendingApiError: { sdkError: string; text: string } | null = null
+      // 这一轮已经发过带码的 error(没登录哨兵):result 不再补第二个 error,也不带 finalText。
+      let turnErrored = false
       const flushApiError = (aq: AsyncQueue<AgentEvent>, apiErrorStatus?: number | null): void => {
         if (!pendingApiError) return
         const { sdkError, text } = pendingApiError
@@ -586,6 +602,7 @@ export function createClaudeAgentProvider(opts: ClaudeAgentProviderOptions): Age
               if (claudeApiErrorCode(msg.error) !== null) {
                 const text = extractText(content)
                 if (isAuthFail('claude-sentinel', text)) {
+                  turnErrored = true
                   aq.push({ kind: 'error', code: 'auth_failed', message: `claude reports not logged in: ${text.slice(0, 160)}` })
                 } else {
                   pendingApiError = { sdkError: msg.error!, text }
@@ -604,7 +621,7 @@ export function createClaudeAgentProvider(opts: ClaudeAgentProviderOptions): Age
                 for (const [index, block] of blocks.entries()) {
                   if (block?.type === 'text' && block.text) {
                     if (authFailed) {
-                      if (!authReported) aq.push({ kind: 'error', code: 'auth_failed', message: `claude reports not logged in: ${text.slice(0, 160)}` })
+                      if (!authReported) { turnErrored = true; aq.push({ kind: 'error', code: 'auth_failed', message: `claude reports not logged in: ${text.slice(0, 160)}` }) }
                       authReported = true
                     } else {
                       aq.push({ kind: 'text', text: block.text, itemId: `claude:${messageId}:text:${index}`, textMode: 'replace' })
@@ -629,30 +646,34 @@ export function createClaudeAgentProvider(opts: ClaudeAgentProviderOptions): Age
                 }
                 continue
               }
-              // Emit tool_call events for each tool_use block
-              if (Array.isArray(content)) {
-                for (const block of content as Array<{ type?: string; name?: string }>) {
-                  if (block?.type === 'tool_use') {
-                    aq.push(parseToolUseToEvent(block))
-                  }
-                }
-              }
-              // Emit text event for any text content — UNLESS the binary is
-              // surfacing its "not logged in" sentinel as assistant text. In
-              // that case route it as a structured error; coordinator drops
-              // the fallback-reply and emits a controlled user-facing notice.
+              // 对话路径。回复交付第 5 步(2026-10-03):事件**按块的顺序**发 —— 以前同一条消息里先发所有
+              // tool_call、再发拼起来的文字,「我查一下」+ tool_use 的那条消息就把开场算进了工具**之后**的段,
+              // 和下一条消息的结论粘成「最后的话」,旁白跟着交付(spec §4.2 Claude 行 ①)。现在相邻的文字块
+              // 攒成一条 text,遇到 tool_use 先冲出去再发 tool_call。
               const text = extractText(content)
-              if (text) {
-                if (isAuthFail('claude-sentinel', text)) {
-                  aq.push({
-                    kind: 'error',
-                    code: 'auth_failed',
-                    message: `claude reports not logged in: ${text.slice(0, 160)}`,
-                  })
-                } else {
-                  aq.push({ kind: 'text', text })
-                }
+              // 子 agent(Task)的消息带 parent_tool_use_id:那是子 agent 自己的过程,**不是**对主人说的话,
+              // 不进任何一段(spec §5.6「子 agent / 后台任务的文字不混进最后的话」)。它的工具调用照常发(桌宠信号、
+              // [TURN] tools=),Task 本身那次 tool_use 已经是父消息里的分段边界。
+              const subagent = typeof msg.parent_tool_use_id === 'string' && msg.parent_tool_use_id !== ''
+              if (subagent && text.trim()) log('CLAUDE_SUBAGENT_TEXT', `alias=${project.alias} len=${text.length} (not part of the reply)`)
+              // 「没登录」哨兵:binary 把它当助理文字吐出来。整条消息先判(哨兵可能跨块),命中就只发一个带码的
+              // error、不发任何文字 —— coordinator 发受控通知,原文绝不外发。
+              if (!subagent && text && isAuthFail('claude-sentinel', text)) {
+                turnErrored = true
+                aq.push({ kind: 'error', code: 'auth_failed', message: `claude reports not logged in: ${text.slice(0, 160)}` })
+                continue
               }
+              const blocks: AssistantBlock[] = typeof content === 'string' ? [{ type: 'text', text: content }] : Array.isArray(content) ? content : []
+              let pending = ''
+              const flushText = (): void => {
+                if (pending && !subagent) aq.push({ kind: 'text', text: pending })
+                pending = ''
+              }
+              for (const block of blocks) {
+                if (block?.type === 'text') pending += block.text ?? ''
+                else if (block?.type === 'tool_use') { flushText(); aq.push(parseToolUseToEvent(block)) }
+              }
+              flushText()
             } else if (msg.type === 'user' && spawnOpts.workbenchTimeline) {
               const content = msg.message?.content
               if (Array.isArray(content)) for (const block of content) {
@@ -665,19 +686,31 @@ export function createClaudeAgentProvider(opts: ClaudeAgentProviderOptions): Age
                 aq.push(event)
               }
             } else if (msg.type === 'result') {
+              const apiErrored = pendingApiError !== null
               flushApiError(aq, msg.api_error_status)
-              if (msg.subtype && msg.subtype !== 'success') {
+              const failed = !!msg.subtype && msg.subtype !== 'success'
+              if (failed) {
                 const summary = typeof msg.result === 'string'
                   ? msg.result.slice(0, 400)
                   : JSON.stringify(msg).slice(0, 400)
                 log('SESSION_RESULT', `alias=${project.alias} subtype=${msg.subtype} result=${summary}`)
                 aq.push({ kind: 'error', message: `subtype=${msg.subtype}` })
+              } else if (msg.is_error === true && !apiErrored && !turnErrored) {
+                // SDK 说这一轮是失败的(is_error),却没有带 error 标注的助理消息(上面那条路没接住):
+                // result.result 就是错误原文。带码收尾,coordinator 只发通知 —— 一个字都不进回复(#190 红线)。
+                const summary = typeof msg.result === 'string' ? msg.result : ''
+                log('CLAUDE_API_ERROR', `alias=${project.alias} sdk_error=none is_error=true status=${msg.api_error_status ?? 'none'} code=provider_error text=${JSON.stringify(summary.slice(0, 200))}`)
+                aq.push({ kind: 'error', code: 'provider_error', message: summary.trim() ? summary.slice(0, 400) : 'claude result is_error' })
               }
+              // SDK 自己的「最后的话」(result.result = 最后一条助理消息的文字):只在成功轮带,只用于核对
+              // 分段的结果(回复交付第 5 步:交付用分段,见 AgentEvent.result 的注释)。
+              const clean = !failed && msg.is_error !== true && !apiErrored && !turnErrored && typeof msg.result === 'string'
               aq.push({
                 kind: 'result',
                 sessionId: msg.session_id ?? '',
                 numTurns: msg.num_turns ?? 0,
                 durationMs: msg.duration_ms ?? 0,
+                ...(clean ? { finalText: msg.result as string } : {}),
               })
               aq.end()
               activeEventQueue = null
@@ -714,6 +747,7 @@ export function createClaudeAgentProvider(opts: ClaudeAgentProviderOptions): Age
           activities.clear()
           assistantSequence = 0
           pendingApiError = null
+          turnErrored = false
           activeEventQueue = queue
           sdkQueue.push({
             type: 'user',

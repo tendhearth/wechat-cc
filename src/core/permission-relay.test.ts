@@ -66,6 +66,22 @@ describe('makeCanUseTool', () => {
     expect(ask).not.toHaveBeenCalled()
   })
 
+  it('daemon 模式下扇出里拒的是 message(reply 族已经不注册);附件工具不受影响', async () => {
+    const fn = makeCanUseTool({
+      askUser: vi.fn(),
+      resolveTier: () => 'admin',
+      adminChatId: () => 'admin-chat',
+      initiatingChatId: () => 'admin-chat',
+      log: () => {},
+      ...baseMode,
+      mode: () => 'parallel' as const,
+    })
+    const msg = await fn('mcp__wechat__message', { to: 'owner', text: 'hi' }, { signal: new AbortController().signal, toolUseID: 't1' } as any)
+    expect(msg.behavior).toBe('deny')
+    const voice = await fn('mcp__wechat__voice', { text: 'hi' }, { signal: new AbortController().signal, toolUseID: 't2' } as any)
+    expect(voice.behavior).toBe('allow')
+  })
+
   it('solo 不受影响 —— reply 工具照常可用', async () => {
     const fn = makeCanUseTool({
       askUser: vi.fn(),

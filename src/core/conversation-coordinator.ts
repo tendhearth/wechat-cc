@@ -816,6 +816,11 @@ export function createConversationCoordinator(deps: ConversationCoordinatorDeps)
           return
         }
         deliverySettled = true
+        // 核对(回复交付第 5 步):provider 自己也报了「最后的话」(Claude 的 result.result)⇒ 和分段的结果比一下。
+        // 交付永远用分段的结果;对不上只记一行,留给真机看分段规则有没有漏(子 agent 文字、块顺序……)。
+        if (summary.providerFinalText !== undefined && summary.providerFinalText.trim() !== (summary.finalText ?? '').trim()) {
+          deps.log('REPLY_FINAL_CHECK', `chat=${msg.chatId} provider=${providerId} match=differs segments_len=${(summary.finalText ?? '').length} sdk_len=${summary.providerFinalText.length}`)
+        }
         report = await delivery.deliver({ finalText: summary.finalText ?? '', narration: summary.narration ?? [] })
         noteDelivery(providerId, report.delivery)
         return
