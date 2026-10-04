@@ -191,6 +191,21 @@ describe('Codex agent provider', () => {
     expect(guestFake.startThreadCalls[0]!.approvalPolicy).toBe('untrusted')
   })
 
+  it('session spawns never set networkAccessEnabled — only cheapEval threads do (e2e fake keys on it)', async () => {
+    // src/daemon/__e2e__/fake-sdk.ts tells cheapEval's one-shot threads (first-use probe,
+    // moderator, introspect) apart from real session threads by `networkAccessEnabled === false`.
+    // Since #197 both go through runStreamed, so if a session spawn ever set it, the e2e fake
+    // would swallow real turns as probes; if cheapEval stopped setting it, probes would leak into
+    // test scripts and the spawn recorder (the 2026-10 mode-switch / user-tier-codex red).
+    for (const tier of [TIER_PROFILES.admin, TIER_PROFILES.trusted, TIER_PROFILES.guest]) {
+      for (const permissionMode of ['strict', 'dangerously'] as const) {
+        const { provider: p, fake } = provider()
+        await p.spawn({ alias: 'a', path: '/p' }, { tierProfile: tier, permissionMode, chatId: '_test' })
+        expect(fake.startThreadCalls[0]!).not.toHaveProperty('networkAccessEnabled')
+      }
+    }
+  })
+
   it('respects model override (sandboxMode/approvalPolicy now tier-driven, see test above)', async () => {
     const { provider: p, fake } = provider({ model: 'gpt-5-codex' })
     await p.spawn({ alias: 'a', path: '/p' }, { tierProfile: TIER_PROFILES.admin, permissionMode: 'strict', chatId: '_test' })
