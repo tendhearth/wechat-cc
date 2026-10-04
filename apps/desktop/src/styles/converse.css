@@ -36,10 +36,15 @@
 .converse-cc-body { min-width:0; max-width:min(70ch,calc(100% - 74px)); display:flex; flex-direction:column; gap:var(--th-space-s); }
 .converse-cc-body .converse-bubble.cc-readable-markdown { max-width:none; }
 .converse-process { color:var(--th-ink-soft); font-size:var(--th-size-small); line-height:var(--th-lh-small); }
-.converse-process summary { cursor:pointer; width:max-content; max-width:100%; list-style:none; padding:2px 0; }
+.converse-cc-line { display:flex; align-items:flex-end; gap:6px; min-width:0; }
+.converse-cc-line .converse-bubble { min-width:0; }
+.converse-cc-line:hover .voice-replay-btn { opacity:1; }
+.converse-process summary { cursor:pointer; display:inline-flex; align-items:center; gap:6px; width:max-content; max-width:100%; min-height:28px; list-style:none; padding:2px 0; }
 .converse-process summary::-webkit-details-marker { display:none; }
-.converse-process summary::before { content:'›'; display:inline-block; width:1em; transition:transform .15s; }
+/* 展开 / 收起的指示与文字同一层级:同色、同字号的实心三角,收起朝右、展开朝下。 */
+.converse-process summary::before { content:''; flex:none; width:0; height:0; border-style:solid; border-width:5px 0 5px 7px; border-color:transparent transparent transparent currentColor; transition:transform .15s; }
 .converse-process[open] summary::before { transform:rotate(90deg); }
+.converse-process summary:hover { color:var(--th-ink); }
 .converse-process-lines { margin:4px 0 0; padding:0 0 0 14px; border-left:1px solid var(--th-hair); list-style:none; display:flex; flex-direction:column; gap:4px; white-space:pre-wrap; word-break:break-word; }
 .converse-attachments { display:flex; flex-wrap:wrap; align-items:flex-start; gap:var(--th-space-s); }
 .converse-att { display:inline-flex; align-items:center; gap:8px; max-width:100%; min-height:36px; padding:4px 12px; border:1px solid var(--th-hair); border-radius:var(--th-radius-bubble); color:var(--th-ink); font-size:var(--th-size-small); }

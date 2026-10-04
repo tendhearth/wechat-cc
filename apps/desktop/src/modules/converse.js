@@ -181,13 +181,14 @@ function messageHtml(m) {
   const bubble = `<div class="converse-bubble${markdown ? ' cc-readable-markdown wb-markdown' : m.role==='user' ? ' cc-user-bubble' : ''}">${markdown ? renderWorkbenchMarkdown(m.text) : m.role==='user' ? renderWorkbenchUserText(m.text,`converse:${m.id}`) : escapeHtml(m.text)}</div>`
   const extras = m.role === "cc" && ((m.attachments?.length ?? 0) > 0 || (m.narration?.length ?? 0) > 0)
   // 带附件 / 过程的回复:过程在上、回复居中、附件在下,一列排;没有的照旧(样式与测试不动)。
+  // 朗读按钮永远贴着正文最后一行(带附件时放进正文那一行里),不随附件块漂。
   const body = extras
-    ? `<div class="converse-cc-body">${narrationHtml(m)}${m.text.trim() ? bubble : ""}${attachmentsHtml(m)}</div>`
+    ? `<div class="converse-cc-body">${narrationHtml(m)}${m.text.trim() ? `<div class="converse-cc-line">${bubble}${replayBtn}</div>` : ""}${attachmentsHtml(m)}</div>`
     : bubble
   return `<div class="converse-msg ${roleCls}${pendingCls}">
     ${m.role === "cc" ? '<img class="converse-avatar" src="./assets/pet/cc-v1/canonical/lit/front.png" alt="CC" width="32" height="32" />' : ""}
     ${body}
-    ${m.text.trim() ? replayBtn : ""}
+    ${extras || !m.text.trim() ? "" : replayBtn}
   </div>`
 }
 
