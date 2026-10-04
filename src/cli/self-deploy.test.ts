@@ -502,6 +502,22 @@ describe('executeSelfDeploy', () => {
     expect(h.printCalls).toBe(1)
   })
 
+  it('每次 kickstart 之前都先写「计划内重启」纸条(部署 + 回滚),新 daemon 就不在微信里播报', async () => {
+    const h = harness()
+    h.setDaemonHealthyAfterKickstart(2)
+    const marks: Array<{ stateDir: string; reason: string; kickstartsSoFar: number }> = []
+    h.deps.markPlannedRestart = (stateDir, reason) => { marks.push({ stateDir, reason, kickstartsSoFar: h.kickstartCalls }) }
+
+    await executeSelfDeploy(h.plan, h.deps)
+
+    expect(marks.map((m) => m.reason)).toEqual(['self-deploy', 'self-deploy-rollback'])
+    // 纸条落在 kickstart 之前(第 n 次 kickstart 时已有 n 张纸条)。
+    expect(marks.map((m) => m.kickstartsSoFar)).toEqual([0, 1])
+    // 状态目录 = internal-api-info.json 所在目录(daemon 开机读它的地方)。
+    expect(marks.every((m) => m.stateDir === h.plan.infoPath.slice(0, h.plan.infoPath.lastIndexOf('/')))).toBe(true)
+    expect(h.plan.infoPath.endsWith('/internal-api-info.json')).toBe(true)
+  })
+
   it('does not roll back when rollback:false', async () => {
     const h = harness()
     h.plan.rollback = false

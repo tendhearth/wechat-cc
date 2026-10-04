@@ -61,3 +61,31 @@ export function makeWxvaultRefresh(opts: MakeWxvaultRefreshOpts): () => Promise<
     )
   })
 }
+
+/**
+ * 无人值守的刷新只在有「完全磁盘访问」时才去碰微信的容器。
+ *
+ * WHY(2026-10-04):没有 FDA 时,sync.py 读 ~/Library/Containers/com.tencent.xinWeChat
+ * 会触发「"wechat-cc" 想访问其他 App 的数据」框;那一档的「允许」只管当前进程会话,
+ * daemon 每重启一次(两天 39 次)就再弹一次 —— 而这个刷新每 5 分钟、开机第 1 秒都在跑。
+ * 后台任务永远不该把系统框推到主人脸上:没有 FDA 就跳过(照旧读已有的快照),
+ * 在日志 / health 里说清楚。探针本身不弹框(lib/fs-access.ts hasFullDiskAccess)。
+ *
+ * `hasFda` 返回 null(不知道 / 非 macOS)⇒ 照常刷新,不改变别的平台的行为。
+ */
+export function gateRefreshOnFullDiskAccess(
+  refresh: () => Promise<WxvaultRefreshResult>,
+  deps: { hasFda: () => boolean | null; log: (tag: string, line: string) => void; hint: string },
+): () => Promise<WxvaultRefreshResult> {
+  let lastSkipped = false
+  return async () => {
+    if (deps.hasFda() === false) {
+      if (!lastSkipped) deps.log('KNOWLEDGE', `wxvault refresh skipped — no Full Disk Access; won't touch WeChat's container unattended. ${deps.hint}`)
+      lastSkipped = true
+      return { upToDate: null }
+    }
+    if (lastSkipped) deps.log('KNOWLEDGE', 'Full Disk Access present — wxvault refresh resumed')
+    lastSkipped = false
+    return refresh()
+  }
+}

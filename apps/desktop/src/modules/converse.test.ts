@@ -226,6 +226,49 @@ it('loads the shared owner-chat stream on first open so WeChat / phone turns sho
   expect(html.indexOf('在吗')).toBeLessThan(html.indexOf('在呢'))
 })
 
+it('麦克风被系统拒绝时说清楚去哪儿开,而不是「点了没反应」', async () => {
+  vi.resetModules()
+  els['converse-root'] = new El()
+  const { initConversePage } = await import('./converse.js')
+  const denied = Object.assign(new Error('denied'), { name: 'NotAllowedError' })
+  initConversePage({ invoke, media: { getUserMedia: async () => { throw denied }, makeRecorder: () => recorder as any } })
+  els['converse-mic']!.handlers.click!()
+  await settle()
+  const html = els['converse-scroll']!.innerHTML
+  expect(html).toContain('麦克风权限没开')
+  expect(html).toContain('隐私与安全性 › 麦克风')
+  expect(els['converse-recording']!.hidden).toBe(true)
+  expect(els['converse-input']!.hidden).toBe(false)
+  expect(vi.getTimerCount()).toBe(0)
+})
+
+it('系统迟迟不回应麦克风请求 ⇒ 超时后给出指引,不无限转圈;迟到的流会被关掉', async () => {
+  vi.resetModules()
+  els['converse-root'] = new El()
+  const { initConversePage } = await import('./converse.js')
+  let grant!: (s: unknown) => void
+  const lateStop = vi.fn()
+  initConversePage({ invoke, media: { getUserMedia: () => new Promise(r => { grant = r }) as any, makeRecorder: () => recorder as any } })
+  els['converse-mic']!.handlers.click!()
+  await settle()
+  expect(els['converse-recording-label']!.textContent).toBe('等待麦克风权限…')
+  vi.advanceTimersByTime(30_000)
+  await settle()
+  expect(els['converse-scroll']!.innerHTML).toContain('一直没拿到麦克风')
+  expect(els['converse-recording']!.hidden).toBe(true)
+  grant({ getTracks: () => [{ stop: lateStop }] })
+  await settle()
+  expect(lateStop).toHaveBeenCalledOnce()
+})
+
+it('micFailureText 按错误名给出能照做的话', async () => {
+  const { micFailureText } = await import('./converse.js')
+  expect(micFailureText({ name: 'NotFoundError' })).toContain('没找到可用的麦克风')
+  expect(micFailureText({ name: 'NotReadableError' })).toContain('占着')
+  expect(micFailureText({ name: 'MicUnsupported' })).toContain('更新到最新版')
+  expect(micFailureText(new Error('x'))).toContain('隐私与安全性 › 麦克风')
+})
+
 it('keeps the empty state when the registry is unavailable', async () => {
   vi.resetModules()
   els['converse-root'] = new El()
