@@ -265,6 +265,17 @@ export function uninstallService(plan: ServicePlan, opts: ServiceSideEffectOpts 
   if (plan.serviceFile) rmSync(plan.serviceFile, { force: true })
 }
 
+/**
+ * 让 launchd 重新读盘上**已有的**服务定义文件:bootout(没加载也照样往下)+ installCommands,
+ * 不重写文件、不删文件 —— uninstallService 会 rm 掉 plist,installService 会用当前进程的
+ * 环境重新生成一份;`service repair` 只想让它改过的那份生效(service-repair.ts)。
+ */
+export function reloadService(plan: ServicePlan, opts: ServiceSideEffectOpts = {}): void {
+  if (opts.dryRun) return
+  tryRunCommands(plan.uninstallCommands)
+  runCommands(plan.installCommands)
+}
+
 // Probe whether the service unit/plist/scheduled-task this plan targets is
 // currently registered. Decoupled from "is the daemon process alive": a
 // service can be installed but stopped, and a daemon can run outside any

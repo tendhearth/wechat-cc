@@ -99,6 +99,18 @@ describe('detectServiceBinaryPath', () => {
       expect(r).toBe('/Users/u/.local/bin/wechat-cc-cli')
     })
 
+    it('1.7.5 起的新 sidecar 名 tendhearth-cc-cli 也认(路径里带空格)', () => {
+      const r = detectServiceBinaryPath({
+        homeDir: FAKE_HOME,
+        platform: 'darwin',
+        readFile: makeReadFile({
+          [plistPath]: `<plist version="1.0"><dict><key>ProgramArguments</key><array>
+    <string>/Applications/Tendhearth CC.app/Contents/MacOS/tendhearth-cc-cli</string><string>run</string></array></dict></plist>`,
+        }),
+      })
+      expect(r).toBe('/Applications/Tendhearth CC.app/Contents/MacOS/tendhearth-cc-cli')
+    })
+
     it('returns null when first arg is bun (dev mode)', () => {
       const r = detectServiceBinaryPath({
         homeDir: FAKE_HOME,

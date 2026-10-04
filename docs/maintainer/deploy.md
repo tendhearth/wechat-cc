@@ -10,7 +10,9 @@ wechat-cc self deploy            # 缺省:自动挑本机架构的二进制、�
 wechat-cc self deploy --json     # 机器可读
 ```
 
-可用开关(spec §3):`--binary <path>`(源码模式缺省 `apps/desktop/src-tauri/binaries/wechat-cc-cli-<arch>-apple-darwin`,`arm64→aarch64`、`x64→x86_64`;**打包版里必填**)、`--app <path>`(缺省从 LaunchAgent plist 的 `ProgramArguments[0]` 推)、`--no-rollback`、`--no-sign`(见下「签名」)、`--allow-missing-plugins`(插件门红了也放行,记 detail + 日志;给本来就没插件的机器,不必永久 `plugin disable`)、`--health-timeout-ms N`(缺省 60000)、`--json`。
+> 1.7.5 起 macOS 的包叫 `Tendhearth CC.app`,主二进制 `Tendhearth CC`,sidecar `tendhearth-cc-cli`;老安装 / 回滚后还是 `wechat-cc.app` / `wechat_cc_desktop` / `wechat-cc-cli`。下文的 `<sidecar>` 指包里实际那个名字,`self deploy` 自己会挑。改名迁移见 [app-rename-migration.md](app-rename-migration.md)。
+
+可用开关(spec §3):`--binary <path>`(源码模式缺省 `apps/desktop/src-tauri/binaries/tendhearth-cc-cli-<arch>-apple-darwin`,老 checkout 回落 `wechat-cc-cli-…`,`arm64→aarch64`、`x64→x86_64`;**打包版里必填**)、`--app <path>`(缺省从 LaunchAgent plist 的 `ProgramArguments[0]` 推;它指的文件已经不在 ⇒ `launchagent_stale`,先打开一次 app 或跑 `<sidecar> service repair`)、`--no-rollback`、`--no-sign`(见下「签名」)、`--allow-missing-plugins`(插件门红了也放行,记 detail + 日志;给本来就没插件的机器,不必永久 `plugin disable`)、`--health-timeout-ms N`(缺省 60000)、`--json`。
 
 它按顺序做六件事(钥匙串里有 Developer ID 时再多两步,见「签名」):
 
@@ -85,7 +87,7 @@ wechat-cc self deploy --binary /path/to/wechat-cc.app/Contents/MacOS/wechat-cc-c
 
 ## plist 为什么指主二进制而不是 sidecar
 
-LaunchAgent 的 `ProgramArguments[0]` 是 `…/wechat-cc.app/Contents/MacOS/wechat-cc`,参数 `--daemon`,**不是** `wechat-cc-cli`。原因是 macOS 把隐私授权(TCC)记在「责任进程」上:
+LaunchAgent 的 `ProgramArguments[0]` 是 app 主二进制(`…/Tendhearth CC.app/Contents/MacOS/Tendhearth CC`;老包 `…/wechat-cc.app/Contents/MacOS/wechat_cc_desktop`),参数 `--daemon`,**不是** sidecar。app 搬家 / 改名 / 原地更新换了二进制名之后,app 启动时的 `service repair` 会把它改过来并重新加载(见 [app-rename-migration.md](app-rename-migration.md))。原因是 macOS 把隐私授权(TCC)记在「责任进程」上:
 
 - 主二进制在签了名的 bundle 里、带 Info.plist 的用途说明,系统设置里显示成「wechat-cc」;
 - sidecar 是个裸二进制,显示「wechat-cc-cli」、没有说明,而且 ad-hoc 签名每次构建都变 —— 授权跟着失效,换一次 sidecar 就要重新点一次权限框。

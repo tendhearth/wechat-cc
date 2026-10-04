@@ -30,6 +30,8 @@ English: Your personal AI companion, at home on your own computer. Talk to CC, f
 
 原生 app 的显示名、桌面窗口标题、关于页、权限文案、安装页面与商店截图需要按发布批次检查。显示文案可以统一；底层标识迁移应另行设计并验证升级兼容性。
 
+2026-10-04 主人定:macOS 上用户看得到的文件名与进程名也换掉 —— 1.7.5 起 `.app` 叫 `Tendhearth CC.app`,主二进制 `Tendhearth CC`,sidecar `tendhearth-cc-cli`(只限 macOS;bundle id、CLI 命令名 `wechat-cc`、状态目录、LaunchAgent label 不变)。设计、升级证据与真机清单见 [app-rename-migration.md](../maintainer/app-rename-migration.md)。
+
 ## 当前入口与发布状态
 
 - 桌面与微信：继续使用现有入口。

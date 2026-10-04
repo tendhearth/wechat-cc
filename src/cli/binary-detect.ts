@@ -12,8 +12,8 @@
  * null otherwise (dev mode, service missing, or basename mismatch).
  */
 import { posix } from 'node:path'
+import { isSidecarBasename, pathBasename } from '../lib/app-identity'
 
-const BINARY_BASENAMES = new Set(['wechat-cc-cli', 'wechat-cc-cli.exe'])
 
 export interface DetectDeps {
   homeDir: string
@@ -39,8 +39,7 @@ export function detectServiceBinaryPath(deps: DetectDeps): string | null {
 function matchesBinary(absPath: string): boolean {
   // Use posix basename for forward slashes; check raw split for backslashes
   // so we don't need to know which platform produced the path.
-  const tail = absPath.split(/[\\/]/).filter(Boolean).pop() ?? ''
-  return BINARY_BASENAMES.has(tail)
+  return isSidecarBasename(pathBasename(absPath))
 }
 
 function parseSystemdExecStart(deps: DetectDeps): string | null {

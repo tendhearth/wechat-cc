@@ -2154,13 +2154,14 @@ USAGE wechat-cc service [OPTIONS] <ACTION>
 
 ARGUMENTS
 
-  ACTION=<status|install|start|stop|uninstall>    status | install | start | stop | uninstall (Required)
+  ACTION=<status|install|start|stop|uninstall|repair>    status | install | start | stop | uninstall | repair (Required)
 
 OPTIONS
 
                      --json    JSON envelope                                                                           
   --unattended=<unattended>    true | false | yes | no | on | off — persist into agent-config (omit to leave unchanged)
   --auto-start=<auto_start>    true | false | yes | no | on | off — register for boot/login auto-start                 
+                --no-reload    repair: rewrite the LaunchAgent file but do not bootout/bootstrap it                    
 
 
 "

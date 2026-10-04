@@ -30,6 +30,7 @@ import { chmodSync, copyFileSync, existsSync, readFileSync, renameSync, statSync
 import { dirname, resolve } from 'node:path'
 import { readApiInfo } from '../lib/api-info'
 import { dirHasPlugins, readPluginsSourcePointer, writePluginsSourcePointer } from '../lib/plugins-source'
+import { SIDECAR_NAMES } from '../lib/app-identity'
 
 export interface LaunchAgentInfo {
   programArguments: string[]
@@ -148,6 +149,12 @@ export interface PlanSelfDeployInput {
   pluginSourceCandidates?: string[]
   /** `--allow-missing-plugins`. */
   allowMissingPlugins?: boolean
+  /**
+   * 1.7.5 改名迁移:sidecar 在包里可能叫 `tendhearth-cc-cli`(新)或 `wechat-cc-cli`(老包 /
+   * 回滚后),构建产物同理;LaunchAgent 指向的主二进制也可能已经不在了(原地更新换了名字、
+   * app 改名搬家)。给了 exists 就按盘上实际情况挑名字、并在 plist 过期时拒绝;不给 ⇒ 老行为。
+   */
+  exists?: (p: string) => boolean
 }
 
 /**
@@ -188,16 +195,23 @@ export function planSelfDeploy(input: PlanSelfDeployInput): SelfDeployPlan {
       if (!isMacosDir(dir) || (secondArg !== undefined && secondArg.endsWith('.ts'))) {
         throw new Error('launchagent_not_app_bundle')
       }
+      // plist 指向的主二进制已经不在了 ⇒ 往那个目录里换 sidecar、再 kickstart 一个 launchd
+      // 拉不起来的定义,只会把 daemon 打下线。先让 app 自己修 LaunchAgent。
+      if (input.exists && !input.exists(mainBinary)) throw new Error('launchagent_stale')
       macosDir = dir
       stderrPathFromPlist = parsed!.stderrPath
     }
   }
   if (!macosDir) throw new Error('launchagent_not_found')
 
-  const sidecarPath = posixJoin(macosDir, 'wechat-cc-cli')
+  // 包里实际是哪个名字就换哪个(新包 tendhearth-cc-cli / 老包 wechat-cc-cli);都不在 ⇒ 老名字(老行为)。
+  const sidecarName = (input.exists && SIDECAR_NAMES.find(n => input.exists!(posixJoin(macosDir!, n)))) || 'wechat-cc-cli'
+  const sidecarPath = posixJoin(macosDir, sidecarName)
   const archSuffix = input.arch === 'arm64' ? 'aarch64' : input.arch === 'x64' ? 'x86_64' : input.arch
+  // build-sidecar 在 macOS 上 1.7.5 起产出 tendhearth-cc-cli-<triple>;老 checkout 里可能只有旧名。
+  const builtName = (input.exists && SIDECAR_NAMES.find(n => input.exists!(posixJoin(input.repoRoot, 'apps', 'desktop', 'src-tauri', 'binaries', `${n}-${archSuffix}-apple-darwin`)))) || 'wechat-cc-cli'
   const newBinaryPath = input.binary
-    ?? posixJoin(input.repoRoot, 'apps', 'desktop', 'src-tauri', 'binaries', `wechat-cc-cli-${archSuffix}-apple-darwin`)
+    ?? posixJoin(input.repoRoot, 'apps', 'desktop', 'src-tauri', 'binaries', `${builtName}-${archSuffix}-apple-darwin`)
 
   return {
     platform: input.platform,

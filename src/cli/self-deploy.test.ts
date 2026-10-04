@@ -94,6 +94,35 @@ describe('planSelfDeploy', () => {
     expect(plan.rollback).toBe(true)
   })
 
+  // 1.7.5 改名迁移:包名 / 主二进制 / sidecar 都换了名字,路径里还带空格。
+  describe('1.7.5 改名之后(exists 注入盘上实际情况)', () => {
+    const NEW = '/Applications/Tendhearth CC.app/Contents/MacOS'
+    const repoBin = (n: string) => `/Users/nate/wechat-cc-cc-kit/apps/desktop/src-tauri/binaries/${n}-aarch64-apple-darwin`
+
+    it('新包:sidecar 叫 tendhearth-cc-cli,构建产物也挑新名字', () => {
+      const disk = new Set([`${NEW}/Tendhearth CC`, `${NEW}/tendhearth-cc-cli`, repoBin('tendhearth-cc-cli')])
+      const plan = planSelfDeploy({ ...baseInput, arch: 'arm64', plistXml: plistWith([`${NEW}/Tendhearth CC`, '--daemon', 'run']), exists: p => disk.has(p), signingIdentity: { name: 'Developer ID Application: X (T)', hash: 'A'.repeat(40) }, entitlementsPath: '/e.plist' })
+      expect(plan.sidecarPath).toBe(`${NEW}/tendhearth-cc-cli`)
+      expect(plan.newBinaryPath).toBe(repoBin('tendhearth-cc-cli'))
+      expect(plan.signing?.appPath).toBe('/Applications/Tendhearth CC.app')
+    })
+
+    it('老包(或回滚到 1.7.4 后)里只有 wechat-cc-cli ⇒ 换那个名字,不往包里塞第二个 sidecar', () => {
+      const old = '/Applications/wechat-cc.app/Contents/MacOS'
+      const disk = new Set([`${old}/wechat_cc_desktop`, `${old}/wechat-cc-cli`, repoBin('tendhearth-cc-cli')])
+      const plan = planSelfDeploy({ ...baseInput, arch: 'arm64', plistXml: plistWith([`${old}/wechat_cc_desktop`, '--daemon', 'run']), exists: p => disk.has(p) })
+      expect(plan.sidecarPath).toBe(`${old}/wechat-cc-cli`)
+    })
+
+    it('plist 指向的主二进制已经不在(原地更新换了名 / app 改名搬家)⇒ launchagent_stale,不往死目录里部署', () => {
+      const xml = plistWith(['/Applications/wechat-cc.app/Contents/MacOS/wechat_cc_desktop', '--daemon', 'run'])
+      expect(() => planSelfDeploy({ ...baseInput, arch: 'arm64', plistXml: xml, exists: () => false })).toThrow('launchagent_stale')
+      // --app 显式指定时不看 plist
+      const plan = planSelfDeploy({ ...baseInput, arch: 'arm64', plistXml: xml, app: '/Applications/Tendhearth CC.app', exists: p => p === `${NEW}/tendhearth-cc-cli` })
+      expect(plan.sidecarPath).toBe(`${NEW}/tendhearth-cc-cli`)
+    })
+  })
+
   it('x64 defaults to the x86_64-apple-darwin binary name', () => {
     const xml = plistWith(['/Applications/wechat-cc.app/Contents/MacOS/wechat-cc', '--daemon', 'run'])
     const plan = planSelfDeploy({ ...baseInput, arch: 'x64', plistXml: xml })

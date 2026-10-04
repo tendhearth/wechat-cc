@@ -18,6 +18,7 @@
 import { existsSync, statSync } from 'node:fs'
 import { dirname, posix } from 'node:path'
 import { fileURLToPath } from 'node:url'
+import { APP_MAIN_BINARY_NAMES } from './app-identity'
 
 // Internals exposed for tests (real process.argv / process.execPath aren't
 // easy to spoof in vitest, so we factor pure decisions out and let the
@@ -45,9 +46,9 @@ export const __testInternals = {
   resolveCompiledRepoRoot(isCompiled: boolean, execPath: string): string | null {
     return isCompiled ? dirname(execPath) : null
   },
-  /** 主二进制的两个名字:新包 `wechat_cc_desktop`(Cargo 包名),老包 `wechat-cc`。新名字优先。 */
+  /** 主二进制的历代名字(app-identity.APP_MAIN_BINARY_NAMES):`Tendhearth CC` / `wechat_cc_desktop` / `wechat-cc`。新名字优先。 */
   resolveAppMainBinary(macosDir: string, isFile: (p: string) => boolean): string | null {
-    for (const name of ['wechat_cc_desktop', 'wechat-cc']) {
+    for (const name of APP_MAIN_BINARY_NAMES) {
       // posix:只在 macOS 打包模式下有意义;测试在 Windows runner 上也要跑出同样的斜杠。
       const p = posix.join(macosDir, name)
       if (isFile(p)) return p

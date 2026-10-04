@@ -50,6 +50,8 @@ export interface SelfDeployPlanInput {
   /** 签名输入(`resolveSigningInputs` 的结果);部署与回滚带同一份。缺省 ⇒ 不签。 */
   signingIdentity?: DeveloperIdIdentity | null
   entitlementsPath?: string | null
+  /** 盘上实际情况(sidecar 新旧名字 / plist 是否过期,见 PlanSelfDeployInput.exists);缺省 ⇒ 老行为。 */
+  exists?: (p: string) => boolean
 }
 
 /**
@@ -75,6 +77,7 @@ export function selfDeployPlanFor(input: SelfDeployPlanInput): SelfDeployPlan {
     plistXml: input.plistXml,
     signingIdentity: input.signingIdentity ?? null,
     entitlementsPath: input.entitlementsPath ?? null,
+    ...(input.exists ? { exists: input.exists } : {}),
   }
   const plan = planSelfDeploy(base)
   if (input.mode === 'deploy') return plan
@@ -148,6 +151,7 @@ export function defaultPipelineDeps(stateDir: string, config: SelfChangeConfig, 
       plistXml: readPlist(),
       mode,
       ...signing,
+      exists: existsSync,
     })
     return await executeSelfDeploy(plan, deps)
   }
