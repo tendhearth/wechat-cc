@@ -18,7 +18,7 @@ import { assertNotAuthFailed, type CheapEval } from '../../core/agent-provider'
 import type { SessionManager } from '../../core/session-manager'
 import type { HealthRuntime } from '../health'
 import { shouldNoteTurnEnd } from '../pet-signals'
-import { makeSendAssistantText } from './fallback-reply'
+import { makeSendAssistantText, makeSendNotice } from './fallback-reply'
 import { reportLlmTurnOutcome } from './wire-health'
 import type { Bootstrap, BootstrapDeps, BootstrapCtx } from './types'
 import type { ModelOptionsSlice } from './wire-model-options'
@@ -54,7 +54,7 @@ export interface CoordinatorSlice {
 }
 
 export function wireCoordinator(
-  deps: Pick<BootstrapDeps, 'ilink' | 'log' | 'onTurnRecord' | 'petSignals' | 'replySinks' | 'outboundTaps' | 'networkGate'>,
+  deps: Pick<BootstrapDeps, 'ilink' | 'log' | 'onTurnRecord' | 'petSignals' | 'replySinks' | 'outboundTaps' | 'networkGate' | 'replyDelivery'>,
   ctx: Pick<BootstrapCtx, 'db'>,
   parts: {
     health: HealthRuntime
@@ -83,7 +83,9 @@ export function wireCoordinator(
   // Extracted as a named variable so routeA2ANotify can also call it.
   // v0.5.3 — extracted to fallback-reply.ts so the failure paths log
   // [FALLBACK_REPLY_FAIL] / success path logs [FALLBACK_REPLY_SENT].
-  const sendAssistantText = makeSendAssistantText({ sendMessage: deps.ilink.sendMessage, log: deps.log, capture: deps.replySinks?.capture, observe: deps.outboundTaps?.observe })
+  const sendAssistantText = makeSendAssistantText({ sendMessage: deps.ilink.sendMessage, log: deps.log, capture: deps.replySinks?.capture, observe: deps.outboundTaps?.observe, ...(deps.replyDelivery ? { shadow: deps.replyDelivery.observeLegacy } : {}) })
+  // 系统通知分家(回复交付 spec §4.3 末段):同样认 app 接收器,但不进打猎旁听、不进 shadow 比对,日志是 NOTICE_*。
+  const sendNotice = makeSendNotice({ sendMessage: deps.ilink.sendMessage, log: deps.log, capture: deps.replySinks?.capture })
 
   // (turnTimeoutMs is resolved earlier now — see the block just above
   // registerProviders() — so the agy provider's `--print-timeout` can be
@@ -103,7 +105,11 @@ export function wireCoordinator(
     const toolsPart = record.toolCalls?.length
       ? ` tools=${[...new Set(record.toolCalls)].join(',')}`
       : ''
-    deps.log('TURN', `chat=${record.chatId} provider=${record.provider} outcome=${record.outcome} dur=${record.durationMs}ms reply=${record.replyToolCalled} chunks=${record.textChunks}${toolsPart}${record.error ? ` error=${JSON.stringify(record.error.slice(0, 160))}` : ''}`, {
+    // 回复交付(spec §4.10):daemon 模式的轮记「主人收到了什么」(delivery / bubbles),legacy 照旧记 reply=。
+    const replyPart = record.delivery !== undefined
+      ? `delivery=${record.delivery} bubbles=${record.bubbles ?? 0}${record.attachments ? ` attachments=${record.attachments}` : ''}${record.narrationSegments ? ` narration=${record.narrationSegments}` : ''}`
+      : `reply=${record.replyToolCalled}`
+    deps.log('TURN', `chat=${record.chatId} provider=${record.provider} outcome=${record.outcome} dur=${record.durationMs}ms ${replyPart} chunks=${record.textChunks}${toolsPart}${record.error ? ` error=${JSON.stringify(record.error.slice(0, 160))}` : ''}`, {
       event: 'turn_record',
       ...record,
     })
@@ -147,6 +153,14 @@ export function wireCoordinator(
       anomalyNotes.set(providerId, `最近 ${streak} 轮连续走 fallback(有文字、零 reply 工具)—— 像是流格式变了,看 channel.log 的 tools=`)
       if (streak === 3 || streak % 10 === 0) deps.log('PROVIDER_ANOMALY', `provider=${providerId} fallback streak=${streak}: 有文字、零 reply 工具,像是流格式变了(tool_call 解析不出来);见 TURN 行的 tools=`, { event: 'fallback_streak', provider: providerId, streak })
     },
+    // 回复交付 daemon(spec §4.10):取代 FALLBACK 连击 —— 私聊 / app 一轮完成了却什么都没交付(空 / NO_REPLY)
+    // 连着 ≥3 轮,就是「这家执行者在这条路上不正常」的形状,同样记进 /mode 并打 [PROVIDER_ANOMALY]。
+    onEmptyReplyStreak: (providerId, streak) => {
+      if (streak === 0) { anomalyNotes.delete(providerId); return }
+      if (streak < 3) return
+      anomalyNotes.set(providerId, `最近 ${streak} 轮应答连续交付为空(完成了但没有文字 / 写了 NO_REPLY)—— 看 channel.log 的 REPLY / REPLY_SILENT_IN_DM`)
+      if (streak === 3 || streak % 10 === 0) deps.log('PROVIDER_ANOMALY', `provider=${providerId} empty-reply streak=${streak}: 应答轮完成了却什么都没交付;见 REPLY 行`, { event: 'empty_reply_streak', provider: providerId, streak })
+    },
     recentTurns: async (chatId, n) => {
       const rows = await handoffMessages.listRange(chatId, { limit: n })
       return rows.filter(r => r.text.trim().length > 0)
@@ -165,6 +179,8 @@ export function wireCoordinator(
     // main.ts injects a real ilink.sendMessage closure; bootstrap.ts only
     // wires the structural piece.
     sendAssistantText,
+    ...(sendNotice ? { sendNotice } : {}),
+    ...(deps.replyDelivery ? { replyDelivery: deps.replyDelivery } : {}),
     // Task 10 — coordinator resolves per-chat tier on every dispatch.
     // loadAccess() reads access.json with a 5s in-process TTL cache, so
     // this is cheap to call per inbound. Admin/trusted/guest classification

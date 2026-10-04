@@ -15,4 +15,9 @@ describe('conversationView', () => {
   it('超长截断', () => {
     expect(conversationView([ev('text', 'x'.repeat(5000), 1)])[0]!.text).toHaveLength(4001)
   })
+  it('preserves friendly model error and exact raw diagnostic separately', () => {
+    const diagnostic = '  **raw**\r\nHTTP 400 https://account.example\r\n'
+    expect(conversationView([{ kind: 'error', text: '账号暂不能使用这个模型。', createdAt: 1, diagnostic, errorCode: 'execution_model_unsupported' }]))
+      .toEqual([{ kind: 'error', text: '账号暂不能使用这个模型。', at: 1, diagnostic }])
+  })
 })

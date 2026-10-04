@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { mergeSessionPages, sessionRows } from './sessions'
+import { mergeSessionMessages, mergeSessionPages, sessionRows, sessionSearch } from './sessions'
 describe('sessionRows', () => {
   it('meta = 项目名 · 日期;没项目只给日期;没时间给「时间不明」', () => {
     const NOW = new Date(2026, 9, 1, 12).getTime()
@@ -10,6 +10,16 @@ describe('sessionRows', () => {
     ], NOW, 'zh-Hans')
     expect(rows).toEqual([{ key: 'k', title: 'T', meta: 'portfolio · 9月30日', active: true }, { key: 'k2', title: 'U', meta: '时间不明', active: false }, { key: 'k3', title: 'V', meta: '9月30日', active: false }])
   })
+})
+
+it('message paging deduplicates overlap and search validates the raw bound before trimming', () => {
+  const a = { id: 'a', role: 'user' as const, text: '原文', truncated: false }
+  const b = { id: 'b', role: 'assistant' as const, text: '答复', truncated: false }
+  expect(mergeSessionMessages([a], [a, b, b])).toEqual([a, b])
+  expect(sessionSearch('  按钮  ')).toBe('按钮')
+  expect(sessionSearch('x'.repeat(200))).toHaveLength(200)
+  expect(sessionSearch(' '.repeat(201))).toBeNull()
+  expect(sessionSearch('a\0b')).toBeNull()
 })
 
 describe('mergeSessionPages', () => {

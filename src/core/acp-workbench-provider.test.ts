@@ -300,13 +300,45 @@ describe('ACP workbench provider', () => {
     const c = collect(session); await prompted(child, 3); child.finishPrompt('refusal'); await c.done
     expect(c.events.at(-1)).toEqual({ kind: 'error', message: 'acp_stop_refusal' })
   })
+  it('Cursor 的带内报错(最后一整块助理文字 + end_turn)⇒ 带码 error,原文不进逐字流;正文里提到 looping 照常流出', async () => {
+    const { session, child } = await start()
+    const a = collect(session); await prompted(child, 1)
+    child.update({ sessionUpdate: 'agent_message_chunk', content: { type: 'text', text: '改好了一半' } })
+    child.update({ sessionUpdate: 'agent_message_chunk', content: { type: 'text', text: '\n\nError: NonRetriableError: Agent Looping Detected The model got stuck in a repeating response pattern, so this turn was stopped.' } })
+    child.finishPrompt(); await a.done
+    expect(a.events.filter(e => e.kind === 'text').map(e => (e as { text: string }).text)).toEqual(['改好了一半'])
+    expect(a.events.at(-1)).toMatchObject({ kind: 'error', code: 'provider_error', message: expect.stringMatching(/^Error: NonRetriableError: Agent Looping Detected/) })
+    const b = collect(session); await prompted(child, 2)
+    child.update({ sessionUpdate: 'agent_message_chunk', content: { type: 'text', text: '没有发现 Agent Looping Detected,也没有 looping。' } })
+    child.finishPrompt(); await b.done
+    expect(b.events.filter(e => e.kind === 'text').map(e => (e as { text: string }).text)).toEqual(['没有发现 Agent Looping Detected,也没有 looping。'])
+    expect(b.events.at(-1)).toMatchObject({ kind: 'result' })
+  })
   it('surfaces a session/prompt JSON-RPC error as a turn error event', async () => {
     const { session, child } = await start()
     const { events, done } = collect(session)
     await prompted(child)
     child.rejectPrompt({ code: -32603, message: 'model unavailable' })
     await done
-    expect(events.at(-1)).toEqual({ kind: 'error', message: 'model unavailable' })
+    // -32603 没有可用 data:不猜是 key 还是网络 ⇒ provider_error(arch backlog #4 第 2 步)。
+    expect(events.at(-1)).toEqual({ kind: 'error', message: 'model unavailable', code: 'provider_error' })
+  })
+  // arch backlog #4 第 2 步:setup 错误把码挂在抛出物上,message 仍是工作台文案认的稳定串。
+  it('setup errors carry a provider code: -32000 ⇒ auth_failed; -32603 with no telling data ⇒ provider_error; data that names the cause wins', async () => {
+    const provider = createAcpWorkbenchProvider({ command: '/cursor-agent', args: ['acp'], displayName: 'Cursor', rpcTimeoutMs: 200, closeTimeoutMs: 250 })
+    const cases: Array<[Record<string, unknown>, string]> = [
+      [{ code: -32000, message: 'Authentication required', data: { message: "Authentication required. Please run 'agent login' first" } }, 'auth_failed'],
+      [{ code: -32603, message: 'Internal error', data: { message: 'Failed to initialize session services' } }, 'provider_error'],
+      [{ code: -32603, message: 'Internal error' }, 'provider_error'],
+      [{ code: -32603, message: 'Internal error', data: { message: 'Failed to reach the Cursor API' } }, 'network'],
+      [{ code: -32603, message: 'Internal error', data: { message: 'The provided API key is invalid.' } }, 'auth_rejected'],
+    ]
+    for (const [i, [error, code]] of cases.entries()) {
+      const p = provider.spawn({ alias: 'a', path: '/project' }, context())
+      await expect.poll(() => children.length).toBe(i + 1); children[i]!.newResult = { error }
+      const err = await p.catch(e => e)
+      expect((err as { providerErrorCode?: string }).providerErrorCode, JSON.stringify(error)).toBe(code)
+    }
   })
   it('appends a captured stderr tail to acp_session_failed, but leaves acp_auth_required a bare code', async () => {
     const provider = createAcpWorkbenchProvider({ command: '/cursor-agent', args: ['acp'], displayName: 'Cursor', rpcTimeoutMs: 200, closeTimeoutMs: 250 })

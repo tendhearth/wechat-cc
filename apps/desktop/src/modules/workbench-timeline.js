@@ -96,8 +96,9 @@ export function renderWorkbenchOperation(event, options) {
   const extra = output + detail + agents + parent
   const extraHtml = extra ? issue ? `<div class="wb-operation-detail">${extra}</div>`
     : `<details id="${disclosureId('activity', event)}" class="wb-operation-detail" data-timeline-disclosure><summary>${output ? '查看子助手回复' : '查看详情'}</summary>${extra}</details>` : ''
+  const diagnostic=event.kind==='error'&&event.errorCode==='execution_model_unsupported'&&event.diagnostic?`<details id="${disclosureId('error-source',event)}" class="wb-error-diagnostic" data-timeline-disclosure><summary>查看原始错误</summary><pre><code>${escape(event.diagnostic)}</code></pre></details>`:''
   return `<article class="wb-operation" id="${workbenchTimelineEventId(event)}" data-timeline-anchor data-kind="${escape(event.kind)}" data-activity-type="${escape(type)}"${activity ? ` data-status="${escape(activity.status)}"` : ''}${issue ? ` role="${event.kind === 'error' || activity?.status === 'failed' ? 'alert' : 'status'}"` : ''}>
-    <div class="wb-operation-line"><span class="wb-operation-type">${icon(event.kind === 'error' ? 'alert-02' : typeIcons[type], { size:13 })}<span class="wb-sr-only">${escape(event.kind === 'error' ? '错误' : typeLabels[type])}</span></span><span class="wb-operation-label">${escape(label)}</span>${activity ? `<span class="wb-operation-status">${escape(statusLabels[activity.status])}</span>` : ''}<time>${escape(formatTime(event.createdAt))}</time></div>${extraHtml}
+    <div class="wb-operation-line"><span class="wb-operation-type">${icon(event.kind === 'error' ? 'alert-02' : typeIcons[type], { size:13 })}<span class="wb-sr-only">${escape(event.kind === 'error' ? '错误' : typeLabels[type])}</span></span><span class="wb-operation-label">${escape(label)}</span>${activity ? `<span class="wb-operation-status">${escape(statusLabels[activity.status])}</span>` : ''}<time>${escape(formatTime(event.createdAt))}</time></div>${extraHtml}${diagnostic}
   </article>`
 }
 

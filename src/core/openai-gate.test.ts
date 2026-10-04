@@ -30,7 +30,7 @@ describe('gateTool', () => {
     expect(
       gateTool({
         toolName: 'Bash',
-        input: { command: 'rm -rf /' },
+        input: { command: 'rm -rf ./__openai_gate_test_sentinel__' }, // 只做分类;字面量也不写真破坏性命令
         tierProfile: admin,
         permissionMode: 'strict',
       }),
@@ -41,7 +41,7 @@ describe('gateTool', () => {
     expect(
       gateTool({
         toolName: 'Bash',
-        input: { command: 'rm -rf /' },
+        input: { command: 'rm -rf ./__openai_gate_test_sentinel__' }, // 只做分类;字面量也不写真破坏性命令
         tierProfile: admin,
         permissionMode: 'dangerously',
       }),

@@ -1124,4 +1124,25 @@ describe('SessionManager network gate (2026-10-02)', () => {
     expect(spawn).toHaveBeenCalledTimes(1)
     await mgr.shutdown()
   })
+
+  it('守护 v2: classified per session (provider + pinned model) — Cursor auto spawns/dispatches while unsafe, Cursor+GPT does not; shutdownProtected keeps the unprotected one', async () => {
+    const check = vi.fn(async () => ({ safe: false, source: 'bx' as const, detail: 'bx 未保护' }))
+    const onDispatch = vi.fn()
+    const spawn = vi.fn(async () => makeFakeSession({ events: [{ kind: 'result', sessionId: '_', numTurns: 1, durationMs: 0 }], onDispatch }))
+    const registry = createProviderRegistry()
+    // provider 报自己实际的目标:cursor + 这次钉的模型(评审 #193)。
+    const callTarget = (_k: string, ctx?: { model?: string }) => ({ provider: 'cursor', model: ctx?.model ?? null })
+    registry.register('cursor' as never, { spawn, callTarget } as unknown as AgentProvider, { displayName: 'Cursor', canResume: () => false })
+    const mgr = new SessionManager({ maxConcurrent: 4, idleEvictMs: 60_000, registry, networkGate: { check } })
+    const base = { alias: 'a', path: '/a', providerId: 'cursor' as never, tierProfile: TIER_PROFILES.admin, permissionMode: 'strict' as const }
+    const h = await mgr.acquire({ ...base, chatId: 'c-auto', model: 'auto' })
+    for await (const _ of h.dispatch('x')) { /* drain */ }
+    expect(onDispatch).toHaveBeenCalledTimes(1)
+    expect(check).not.toHaveBeenCalled()
+    await expect(mgr.acquire({ ...base, chatId: 'c-gpt', model: 'gpt-5' })).rejects.toMatchObject({ code: 'network_unprotected' })
+    expect(mgr.list()).toEqual([expect.objectContaining({ chatId: 'c-auto', model: 'auto' })])
+    expect(await mgr.shutdownProtected()).toBe(0)
+    expect(mgr.list()).toHaveLength(1)
+    await mgr.shutdown()
+  })
 })

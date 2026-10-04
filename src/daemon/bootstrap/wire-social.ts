@@ -273,7 +273,8 @@ export async function wireSocial(deps: SocialDeps): Promise<SocialWiring> {
         holdBusy: deps.holdBusy,
         sendEnvelope: (c, e) => correspondent.sendEnvelope(c, e),
         // 闸门超时用 provider 自己的预算,别再写死 12s(见上面那条 BOOT 日志)。
-        gate: (text) => gateOutbound(text, { policy: socialPolicy, cheapEval: socialCheapEval, timeoutMs: socialGateTimeoutMs }),
+        // 每次现取:钉死的 provider 晚注册(开机探测失败后退避重探,2026-10-04)后预算跟着它走。
+        gate: (text) => gateOutbound(text, { policy: socialPolicy, cheapEval: socialCheapEval, timeoutMs: registry.getCheapEvalBudgetMs() }),
         // 判官只读话题(social-judge.ts 的 JudgeInput)—— 心愿没有 city,
         // 就只递 topic。
         judge: (topic) => socialJudge({ topic }),

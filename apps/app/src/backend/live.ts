@@ -21,6 +21,7 @@ import {
   type ApprovalExplanationT, type Backend, type Connection, type DeviceRowT, type EntryOptionsT,
   type MatterDetailT, type MatterT, type PhoneChangesTurnT, type ProgressSummaryT, type Unsubscribe,
   type ChatPageT, type ChatJobT, type ConnectionsT, type NativeSessionRowT, type NativeSessionPageT, type SessionContinueT,
+  type MatterSayResultT, type MatterInputT,
 } from './types'
 
 type Topic = Parameters<Backend['subscribe']>[0]
@@ -205,6 +206,14 @@ export function makeLiveBackend(d: LiveDeps): Backend {
     async matter(id) {
       return strip(await call<{ ok: true } & MatterDetailT>('GET /m/api/matter', `/m/api/matter?${idq(id)}`))
     },
+    async matterInputReceipt(id, requestId) {
+      try {
+        return (await call<{ ok: true; input: MatterInputT }>('GET /m/api/matter/input-receipt', `/m/api/matter/input-receipt?${idq(id)}&requestId=${encodeURIComponent(requestId)}`)).input
+      } catch (e) {
+        if (e instanceof BackendError && e.code === 'not_found') return null
+        throw e
+      }
+    },
     async insight(id, lang) {
       const r = await call<{ explanations: Record<string, ApprovalExplanationT>; progress: ProgressSummaryT | null }>(
         'GET /m/api/matter/insight', `/m/api/matter/insight?${idq(id)}&lang=${encodeURIComponent(lang)}`)
@@ -224,14 +233,16 @@ export function makeLiveBackend(d: LiveDeps): Backend {
     async connections() {
       return strip(await call<{ ok: true } & ConnectionsT>('GET /m/api/connections', '/m/api/connections'))
     },
-    async sessions(provider, cursor) {
+    async sessions(provider, cursor, q) {
+      if (q !== undefined && (q.length > 200 || q.includes('\0'))) throw new BackendError('invalid')
       const r = await call<{ items: NativeSessionRowT[]; nextCursor: string | null }>(
-        'GET /m/api/sessions', `/m/api/sessions?provider=${provider}${cursor ? `&cursor=${encodeURIComponent(cursor)}` : ''}`)
+        'GET /m/api/sessions', `/m/api/sessions?provider=${provider}${cursor ? `&cursor=${encodeURIComponent(cursor)}` : ''}${q ? `&q=${encodeURIComponent(q.trim())}` : ''}`)
       return { items: r.items, nextCursor: r.nextCursor }
     },
-    async session(key, cursor) {
+    async session(key, cursor, window) {
+      if (window === 'recent' && cursor !== undefined) throw new BackendError('invalid')
       return strip(await call<{ ok: true } & NativeSessionPageT>(
-        'GET /m/api/session', `/m/api/session?key=${encodeURIComponent(key)}${cursor ? `&cursor=${encodeURIComponent(cursor)}` : ''}`))
+        'GET /m/api/session', `/m/api/session?key=${encodeURIComponent(key)}${cursor ? `&cursor=${encodeURIComponent(cursor)}` : ''}${window ? `&window=${window}` : ''}`))
     },
     async continuePreview(key) {
       return strip(await call<{ ok: true } & SessionContinueT>('GET /m/api/session/continue', `/m/api/session/continue?key=${encodeURIComponent(key)}`))
@@ -253,9 +264,10 @@ export function makeLiveBackend(d: LiveDeps): Backend {
       if (p.answers !== null && JSON.stringify(p.answers).length > PHONE_ANSWER_MAX_JSON) throw new BackendError('invalid')
       await call('POST /m/api/matter/answer', '/m/api/matter/answer', { body: { id: p.id, runId: p.runId, requestId: p.requestId, answers: p.answers } })
     },
-    async say(id, text, requestId) {
+    async say(id, text, requestId, options) {
       if (text.length > PHONE_SAY_MAX_CHARS) throw new BackendError('invalid')
-      await call('POST /m/api/matter/say', '/m/api/matter/say', { body: { id, text, requestId }, retry: true })
+      // A reconnect checks the durable receipt. Only an explicit user retry replays the POST.
+      return (await call<{ ok: true; result: MatterSayResultT }>('POST /m/api/matter/say', '/m/api/matter/say', { body: { id, text, requestId, ...(options?.runId ? { runId: options.runId } : {}) }, retry: false })).result
     },
     async entryOptions() {
       return strip(await call<{ ok: true } & EntryOptionsT>('GET /m/api/entry/options', '/m/api/entry/options'))

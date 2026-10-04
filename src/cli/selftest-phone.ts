@@ -59,6 +59,8 @@ export const PHONE_SELFTEST_EXIT = { ok: 0, failed: 1, noDaemon: 2 } as const
 const DEFAULT_PHONE_TIMEOUT_MS = 90_000
 const FETCH_TIMEOUT_MS = 15_000
 const POLL_INTERVAL_MS = 200
+const TASK_CLOSE_TIMEOUT_MS = 20_000
+const TERMINAL_TASK_STATUSES = new Set(['completed', 'failed', 'cancelled', 'interrupted'])
 const SYNTHETIC_APNS_TOKEN = '0'.repeat(64)
 const MINIMAL_TASK_TEXT = '这是 wechat-cc 手机自检的最小工作台任务：不要使用任何工具，直接回复一句「已收到」然后结束。'
 
@@ -66,12 +68,12 @@ const MINIMAL_TASK_TEXT = '这是 wechat-cc 手机自检的最小工作台任务
 
 interface HttpResult { ok: boolean; status: number; json: any }
 
-async function jsonCall(deps: PhoneSelftestDeps, url: string, bearer: string | null, method: string, body?: unknown): Promise<HttpResult> {
+async function jsonCall(deps: PhoneSelftestDeps, url: string, bearer: string | null, method: string, body?: unknown, timeoutMs = FETCH_TIMEOUT_MS): Promise<HttpResult> {
   try {
     const res = await deps.fetch(url, {
       method,
       headers: { ...(bearer ? { authorization: `Bearer ${bearer}` } : {}), 'content-type': 'application/json' },
-      signal: AbortSignal.timeout(FETCH_TIMEOUT_MS),
+      signal: AbortSignal.timeout(Math.max(1, Math.min(FETCH_TIMEOUT_MS, timeoutMs))),
       ...(body !== undefined ? { body: JSON.stringify(body) } : {}),
     })
     let json: any = null
@@ -256,8 +258,42 @@ export async function runPhoneSelftest(
   let lanBase: string | undefined
   let taskId: string | undefined
   let scratchPath: string | undefined
+  let taskTerminal = false
+  let taskClosed = false
+  let cancelAttempted = false
   let revoked = false
   const agentEvents: AgentsEvent[] = []
+
+  // Only the id returned by this run's create call may be cancelled. A
+  // retained session's reply is not a terminal task, and a cancel ACK or
+  // disappearing feed row alone is not proof that its scratch is idle.
+  // canArchive also confirms that the server has released the runtime
+  // and has no uncertain writer; terminal status can precede that release.
+  const cancelTask = async (until: number): Promise<boolean> => {
+    if (cancelAttempted || !taskId || deps.now() >= until) return false
+    cancelAttempted = true
+    const res = await jsonCall(deps, `${api.baseUrl}/v1/workbench/cancel`, api.operatorToken, 'POST', { id: taskId }, until - deps.now())
+    rec.push('task_cancel_requested', res.ok, res.ok ? taskId : httpErrorDetail(res))
+    return res.ok
+  }
+  const waitForTaskClosed = async (until: number): Promise<boolean> => {
+    while (deps.now() < until) {
+      const res = await jsonCall(deps, `${api.baseUrl}/v1/workbench/task?id=${encodeURIComponent(taskId!)}`, api.operatorToken, 'GET', undefined, until - deps.now())
+      const task = res.json?.task
+      if (!res.ok || task?.id !== taskId || typeof task?.status !== 'string') {
+        rec.push('task_detail', false, res.ok ? 'invalid task detail' : httpErrorDetail(res))
+        return false
+      }
+      taskTerminal = TERMINAL_TASK_STATUSES.has(task.status)
+      if (taskTerminal && task.canArchive === true && !hasTask(agentEvents.at(-1), taskId!)) return true
+      if (!taskTerminal && task.status === 'running' && task.phase === 'replied' && !cancelAttempted) {
+        if (!await cancelTask(until)) return false
+      }
+      const remaining = until - deps.now()
+      if (remaining > 0) await deps.sleep(Math.min(POLL_INTERVAL_MS, remaining))
+    }
+    return false
+  }
 
   try {
     // ── link URL + relay address ─────────────────────────────────────
@@ -364,20 +400,39 @@ export async function runPhoneSelftest(
     rec.push('agents_task_seen', seen, seen ? undefined : 'timeout waiting for the task in the agents feed')
     if (!seen) stop()
 
-    const done = await waitUntil(deps, deadline, () => !hasTask(agentEvents.at(-1), taskId!))
-    rec.push('agents_task_terminal', done, done ? undefined : 'timeout waiting for the task to leave the agents feed')
+    taskClosed = await waitForTaskClosed(deadline)
+    rec.push('agents_task_terminal', taskClosed, taskClosed ? undefined : 'could not confirm archive eligibility and removal from the agents feed')
 
     const ordered = agentsEventOrderOk(agentEvents)
     rec.push('agents_event_order', ordered, ordered ? undefined : 'out-of-order agents event (seq did not increase within an epoch)')
   } catch (err) {
     if (!(err instanceof PhoneSelftestStop)) rec.push('internal_error', false, err instanceof Error ? err.message : String(err))
   } finally {
-    if (unsubscribe) { try { unsubscribe() } catch { /* best-effort */ } }
     if (taskId) {
-      const archiveRes = await jsonCall(deps, `${api.baseUrl}/v1/workbench/archive`, api.operatorToken, 'POST', { id: taskId, archived: true })
-      rec.push('archived', archiveRes.ok, archiveRes.ok ? undefined : httpErrorDetail(archiveRes))
+      // Cleanup gets its own bounded budget even when the original check
+      // timed out. Keep the subscription alive until both views agree.
+      const closeDeadline = deps.now() + TASK_CLOSE_TIMEOUT_MS
+      if (!taskClosed) {
+        try {
+          if (!taskTerminal && !cancelAttempted) await cancelTask(closeDeadline)
+          taskClosed = await waitForTaskClosed(closeDeadline)
+        } catch (err) {
+          rec.push('task_cleanup', false, err instanceof Error ? err.message : String(err))
+        }
+      }
+      rec.push('task_closed', taskClosed, taskClosed ? undefined : 'task closure was not confirmed; scratch preserved')
+      if (taskClosed) {
+        const remaining = closeDeadline - deps.now()
+        if (remaining <= 0) {
+          rec.push('archived', false, 'task cleanup deadline exhausted; scratch preserved')
+        } else {
+          const archiveRes = await jsonCall(deps, `${api.baseUrl}/v1/workbench/archive`, api.operatorToken, 'POST', { id: taskId, archived: true }, remaining)
+          rec.push('archived', archiveRes.ok, archiveRes.ok ? undefined : `${httpErrorDetail(archiveRes)}; scratch preserved`)
+          if (archiveRes.ok && scratchPath) { try { deps.fs.rm(scratchPath) } catch { /* best-effort */ } }
+        }
+      }
     }
-    if (scratchPath) { try { deps.fs.rm(scratchPath) } catch { /* best-effort */ } }
+    if (unsubscribe) { try { unsubscribe() } catch { /* best-effort */ } }
 
     if (deviceToken && lanBase) {
       // The relay-based probe (above) may have failed to establish a

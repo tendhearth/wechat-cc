@@ -15,12 +15,27 @@ import { directoryIdentity } from './directory-identity'
 import type { ServiceCtx } from './ctx'
 import type { Active } from './state'
 import type { InputMaterials } from './types'
+import { decideCall } from '../../../lib/network-gate'
+import { liveRunTarget } from './call-target'
 
 const INPUT_UNCONFIRMED='未确认执行者收到，请检查当前对话后再决定是否重发。'
 
 export function makeInputsDomain(ctx:ServiceCtx) {
   const { store, state } = ctx
   const act=()=>ctx.actions.deref('inputs')
+  /** Read one durable receipt without loading a timeline or touching its task. */
+  function inputReceipt(id:string,requestId:string):LiveInput|null {
+    if(!/^[a-f0-9]{8}$/.test(id))throw Error('invalid_matter_id')
+    const key=normalizeInputRequestId(requestId),owner=ctx.deps.ownerChatId()
+    if(!owner)return null
+    let task:ReturnType<typeof store.get>
+    try{task=store.get(id)}catch(error){if(error instanceof Error&&error.message==='not_found')return null;throw error}
+    // Matter/task are one-to-one. Check ownership and linkage before looking up
+    // a globally unique request UUID, then reject any cross-task receipt.
+    if(task.ownerChatId!==owner||store.taskMatterId(id)!==id)return null
+    const input=store.liveInputs.get(key)
+    return input?.id===key&&input.taskId===id?input:null
+  }
   function holdInputs(id:string,error:string){
     state.autoContinueBlocked.add(id)
     try{
@@ -111,8 +126,9 @@ export function makeInputsDomain(ctx:ServiceCtx) {
     const running=state.runsByTask.get(id)
     if(!running||running.identity!==input.runId||running.cancelled||running.finishing||running.uncertain)throw Error('input_stale')
     if(running.delivering)throw Error('input_delivery_busy')
-    // 网络闸门(2026-10-02):补充一投进去执行者就会调模型 —— 不安全就不投。
-    if(ctx.deps.networkGate&&!(await ctx.deps.networkGate.check()).safe)throw Error('network_unprotected')
+    // 网络闸门(守护 v2):补充一投进去执行者就会调模型 —— 按**这条在用的会话实际连到的目标**判
+    // (评审 #193:不是任务记录的模型、也不是此刻的配置);需要保护且不安全才不投。
+    if(ctx.deps.networkGate&&!(await decideCall(ctx.deps.networkGate,liveRunTarget(running,ctx.deps.registry.get(running.task.providerId)?.provider))).allowed)throw Error('network_unprotected')
     if(store.liveInputs.count(id)>=10)throw Error('input_limit')
     act().requireInput(running.task.providerId,attachments,running.execution)
     // 一句补充就是一下互动:先把自动收工的计时取消掉,免得话在路上会话被关了。这一下要在
@@ -190,6 +206,6 @@ export function makeInputsDomain(ctx:ServiceCtx) {
     act().settleAfterDecision(running)
   }
 
-  return { holdInputs,hasUndeliveredInput,drainInputs,settleRuntimeInput, submitInput,withdrawInput,resolveAnswer,resolvePermission }
+  return { inputReceipt,holdInputs,hasUndeliveredInput,drainInputs,settleRuntimeInput, submitInput,withdrawInput,resolveAnswer,resolvePermission }
 }
 export type InputsDomain = ReturnType<typeof makeInputsDomain>

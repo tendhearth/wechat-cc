@@ -18,6 +18,8 @@ import { readMobileSource, MOBILE_PAGE_OUT, CCP_PLACEHOLDER } from './sources'
 
 export const PROTOCOL_ENTRY = new URL('../../packages/protocol/src/browser.ts', import.meta.url)
 export const PROTOCOL_JS_OUT = new URL('./src/protocol-generated.js', import.meta.url)
+export const MARKDOWN_ENTRY = new URL('../../packages/markdown/src/browser.ts', import.meta.url)
+export const MARKDOWN_JS_OUT = new URL('./src/markdown-generated.js', import.meta.url)
 export const PSET_SHELL_SRC = new URL('../../relay/pset.src.html', import.meta.url)
 export const PSET_SHELL_OUT = new URL('../../relay/pset.html', import.meta.url)
 
@@ -41,6 +43,23 @@ export async function buildProtocolJs(): Promise<string> {
   return text.endsWith('\n') ? text : `${text}\n`
 }
 
+/** Keep the HTML parser from closing or entering an escaped state in the inline script. */
+export function escapeInlineMarkdownScript(source: string): string {
+  return source.replace(/<\/script/gi, close => '<\\/' + close.slice(2)).replace(/<!--/g, '\\x3c!--')
+}
+
+/** The same safe renderer as the desktop, bundled for the self-contained classic phone page. */
+export async function buildMarkdownJs(): Promise<string> {
+  const result = await Bun.build({
+    entrypoints: [fileURLToPath(MARKDOWN_ENTRY)],
+    format: 'iife',
+    minify: true,
+  })
+  if (!result.success) throw new Error(`buildMarkdownJs: ${result.logs.map(l => String(l.message)).join('; ')}`)
+  const text = escapeInlineMarkdownScript(await result.outputs[0]!.text())
+  return text.endsWith('\n') ? text : `${text}\n`
+}
+
 /**
  * relay/pset.src.html 的占位注释(CCP_PLACEHOLDER,跟 transport.js 顶部那行
  * 是同一个标记,定义在 sources.ts)换成协议 IIFE 源码 —— 纯字符串操作,不用
@@ -60,6 +79,10 @@ export function assembleRelayShell(srcHtml: string, protocolJs: string): string 
 }
 
 async function main() {
+  const markdownJs = await buildMarkdownJs()
+  writeFileSync(MARKDOWN_JS_OUT, markdownJs)
+  console.log(`wrote ${MARKDOWN_JS_OUT.pathname}`)
+
   const protocolJs = await buildProtocolJs()
   writeFileSync(PROTOCOL_JS_OUT, protocolJs)
   console.log(`wrote ${PROTOCOL_JS_OUT.pathname}`)

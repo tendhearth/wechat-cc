@@ -414,6 +414,7 @@ describe('success path', () => {
     // with fetch calls and with `sleep()` — deterministically, no reliance
     // on a real clock or extra polling iterations.
     let agentsCb: ((data: unknown, meta: { epoch: string; seq: number }) => void) | undefined
+    let taskStatus = 'running'
     let seq = 0
     const emitAgents = (tasks: Array<{ id: string; title: string; phase: string }>) => {
       seq += 1
@@ -433,6 +434,7 @@ describe('success path', () => {
         return jsonResponse(202, { task: { id: 'task-1', status: 'queued', phase: 'queued' } })
       }
       if (u.pathname === '/v1/workbench/archive') return jsonResponse(200, { task: { id: 'task-1', archivedAt: 1 } })
+      if (u.pathname === '/v1/workbench/task') return jsonResponse(200, { task: { id: 'task-1', status: taskStatus, phase: 'working', canArchive: taskStatus === 'completed' } })
       if (u.pathname === '/set/api/apply') return jsonResponse(200, { ok: true })
       throw new Error(`unexpected fetch: ${u.pathname}`)
     }) as unknown as typeof fetch
@@ -444,7 +446,7 @@ describe('success path', () => {
       // wait for it — deliver it on the very first `sleep()` call, which is
       // exactly the point `waitUntil`'s poll loop is blocked at, waiting
       // for the task to disappear.
-      sleep: async () => { emitAgents([]) },
+      sleep: async () => { taskStatus = 'completed'; emitAgents([]) },
       connect: (url, token) => {
         expect(url).toBe('wss://relay.example.com/tunnel/phone?id=daemon-1')
         if (token === 'link-tok') {
@@ -487,6 +489,7 @@ describe('success path', () => {
     const report = await runPhoneSelftest(deps, { executor: 'claude', timeoutMs: 5000 })
     expect(report.ok).toBe(true)
     expect(report.taskId).toBe('task-1')
+    expect(fetchCalls.some((c) => c.path === '/v1/workbench/cancel')).toBe(false)
     for (const name of ['link_url', 'remote_enabled', 'paired', 'device_v2', 'device_id', 'agents_subscribed', 'task_created', 'agents_task_seen', 'agents_task_terminal', 'agents_event_order', 'archived', 'revoked', 'revoked_auth_failed']) {
       const c = report.checks.find((x) => x.name === name)
       expect(c, `missing/failing check ${name}: ${JSON.stringify(c)}`).toBeTruthy()
@@ -713,6 +716,7 @@ function makeHarness(opts: { linkUrl: string }): Harness {
   const deviceRoutes: Record<string, unknown> = {}
   const connectedUrls: string[] = []
   let agentsCb: ((data: unknown, meta: { epoch: string; seq: number }) => void) | undefined
+  let taskStatus = 'running'
   let seq = 0
   const emitAgents = (tasks: Array<{ id: string; title: string; phase: string }>) => {
     seq += 1
@@ -728,13 +732,14 @@ function makeHarness(opts: { linkUrl: string }): Harness {
       return jsonResponse(202, { task: { id: 'task-1' } })
     }
     if (u.pathname === '/v1/workbench/archive') return jsonResponse(200, { task: { id: 'task-1' } })
+    if (u.pathname === '/v1/workbench/task') return jsonResponse(200, { task: { id: 'task-1', status: taskStatus, phase: 'working', canArchive: taskStatus === 'completed' } })
     if (u.pathname === '/set/api/apply') return jsonResponse(200, { ok: true })
     throw new Error(`unexpected fetch: ${key}`)
   }) as unknown as typeof fetch
   let deviceClients = 0
   const deps = baseDeps({
     fetch: fetchImpl,
-    sleep: async () => { emitAgents([]) },
+    sleep: async () => { taskStatus = 'completed'; emitAgents([]) },
     connect: (url, token) => {
       connectedUrls.push(url)
       if (token === 'link-tok') {
@@ -765,6 +770,350 @@ function makeHarness(opts: { linkUrl: string }): Harness {
 
 const V2_LINK = 'https://relay.tendhearth.com/pset/#id=rabcdefghijklmnopqrstuvwxyz&t=link-tok&p=%2Fset&lan=192.168.1.2:8080'
 const V1_LINK = 'https://cc.tendhearth.com/pset/#id=tdeadbeef&t=link-tok&p=%2Fset&lan=192.168.1.2:8080'
+
+/** Independently drive HTTP task state and relay feed state. Neither a
+ * successful cancel response nor a missing relay row ends a real task. */
+function lifecycleHarness() {
+  const state = {
+    now: 1000, status: 'running', phase: 'working', visible: true, canArchive: false as boolean | undefined,
+    cancelStatus: 202, archiveStatus: 200, readCount: 0, unsubscribed: false, publishCreatedTask: true,
+    detailError: undefined as Error | undefined,
+    cancelError: undefined as Error | undefined,
+    archiveError: undefined as Error | undefined,
+    detailId: 'own-task',
+  }
+  const calls: RecordedCall[] = []
+  const timeline: string[] = []
+  const dirs = new Set<string>()
+  let cb: ((data: unknown, meta: { epoch: string; seq: number }) => void) | undefined
+  let seq = 0
+  const emit = (visible: boolean) => {
+    state.visible = visible
+    const tasks = [{ id: 'somebody-elses-task', phase: 'working' }]
+    if (visible) tasks.push({ id: 'own-task', phase: state.phase })
+    cb?.({ tasks }, { epoch: 'lifecycle', seq: ++seq })
+  }
+  const hooks = {
+    onRead: () => {},
+    onSleep: () => { state.status = 'completed'; state.canArchive = true; emit(false) },
+  }
+  let deviceConnections = 0
+  const deps = baseDeps({
+    now: () => state.now,
+    sleep: async (ms) => { state.now += ms; hooks.onSleep() },
+    fs: {
+      mkdir: (p) => { dirs.add(p); timeline.push('mkdir') },
+      rm: (p) => { dirs.delete(p); timeline.push('rm') },
+    },
+    fetch: (async (url: string | URL, init?: RequestInit) => {
+      const u = new URL(String(url))
+      const body = init?.body ? JSON.parse(String(init.body)) : undefined
+      calls.push({ method: init?.method ?? 'GET', path: u.pathname, body })
+      if (u.pathname === '/v1/settings/link') return jsonResponse(200, { url: REMOTE_LINK_URL })
+      if (u.pathname === '/v1/workbench/create') { emit(state.publishCreatedTask); return jsonResponse(202, { task: { id: 'own-task' } }) }
+      if (u.pathname === '/v1/workbench/task') {
+        expect(u.searchParams.get('id')).toBe('own-task')
+        expect(init?.signal).toBeInstanceOf(AbortSignal)
+        state.readCount++
+        hooks.onRead()
+        if (state.detailError) throw state.detailError
+        timeline.push(`read:${state.status}:${state.visible}:${state.canArchive}`)
+        return jsonResponse(200, { task: { id: state.detailId, status: state.status, phase: state.phase, canArchive: state.canArchive } })
+      }
+      if (u.pathname === '/v1/workbench/cancel') {
+        expect(body).toEqual({ id: 'own-task' })
+        timeline.push('cancel')
+        if (state.cancelError) throw state.cancelError
+        return jsonResponse(state.cancelStatus, { ok: state.cancelStatus < 300 })
+      }
+      if (u.pathname === '/v1/workbench/archive') {
+        timeline.push('archive')
+        if (state.archiveError) throw state.archiveError
+        return jsonResponse(state.archiveStatus, { task: { id: 'own-task' }, error: state.archiveStatus === 409 ? 'task still active' : undefined })
+      }
+      if (u.pathname === '/set/api/apply') { timeline.push('revoke'); return jsonResponse(200, { ok: true }) }
+      throw new Error(`unexpected fetch ${u.pathname}`)
+    }) as unknown as typeof fetch,
+    connect: (_url, token) => {
+      if (token === 'link-tok') return fakeClient({ onRequest: () => makeResponse(200, { ok: true, device_token: 'device-tok' }) }).client
+      if (++deviceConnections > 1) return fakeClient({ onRequest: () => { throw new Error('auth_failed') } }).client
+      return {
+        version: () => 2,
+        request: async () => makeResponse(200, { remote: { devices: [{ id: 'own-device', current: true }] } }),
+        subscribe: (_topic, listener) => {
+          cb = listener
+          emit(false)
+          return () => { state.unsubscribed = true; cb = undefined; timeline.push('unsubscribe') }
+        },
+        close: () => {},
+      }
+    },
+  })
+  return { deps, state, calls, dirs, timeline, hooks, emit }
+}
+
+function assertDeviceRevoked(report: PhoneSelftestReport) {
+  expect(report.checks.find((c) => c.name === 'revoked')?.ok).toBe(true)
+  expect(report.checks.find((c) => c.name === 'revoked_auth_failed')?.ok).toBe(true)
+  assertNoTokenLeak(report)
+}
+
+describe('phone task closure and scratch safety', () => {
+  it('closes its retained reply, waits through cancelling and feed lag, then archives before removing scratch', async () => {
+    const h = lifecycleHarness()
+    h.state.phase = 'replied'
+    let sleeps = 0
+    h.hooks.onSleep = () => {
+      if (++sleeps === 1) { h.state.status = 'cancelling'; h.emit(false) }
+      else if (sleeps === 2) { h.state.status = 'completed'; h.state.canArchive = true; h.emit(true) }
+      else h.emit(false)
+    }
+    const r = await runPhoneSelftest(h.deps, { executor: 'claude', timeoutMs: 1000 })
+    expect(r.ok).toBe(true)
+    expect(h.calls.filter((c) => c.path === '/v1/workbench/cancel')).toHaveLength(1)
+    expect(h.timeline).toContain('read:cancelling:false:false')
+    expect(h.timeline).toContain('read:completed:true:true')
+    expect(h.timeline.indexOf('archive')).toBeGreaterThan(h.timeline.indexOf('read:completed:false:true'))
+    expect(h.timeline.indexOf('rm')).toBeGreaterThan(h.timeline.indexOf('archive'))
+    expect(h.timeline.indexOf('unsubscribe')).toBeGreaterThan(h.timeline.indexOf('read:completed:false:true'))
+    expect(h.dirs.size).toBe(0)
+    assertDeviceRevoked(r)
+  })
+
+  it('does not cancel an already terminal task and waits for the relay to remove it', async () => {
+    const h = lifecycleHarness()
+    h.state.status = 'completed'
+    h.state.canArchive = true
+    const r = await runPhoneSelftest(h.deps, { executor: 'claude', timeoutMs: 1000 })
+    expect(r.ok).toBe(true)
+    expect(h.timeline).toContain('read:completed:true:true')
+    expect(h.timeline).toContain('read:completed:false:true')
+    expect(h.timeline).not.toContain('cancel')
+    assertDeviceRevoked(r)
+  })
+
+  it.each([false, undefined])('preserves terminal scratch after feed removal when canArchive is %s', async (canArchive) => {
+    const h = lifecycleHarness()
+    h.state.status = 'interrupted'
+    h.state.phase = 'interrupted'
+    h.state.canArchive = canArchive
+    h.hooks.onSleep = () => h.emit(false)
+    const r = await runPhoneSelftest(h.deps, { executor: 'claude', timeoutMs: 200 })
+    expect(r.ok).toBe(false)
+    expect(r.durationMs).toBe(20_200)
+    expect(r.checks.find((c) => c.name === 'agents_task_terminal')?.ok).toBe(false)
+    expect(r.checks.find((c) => c.name === 'task_closed')?.ok).toBe(false)
+    expect(h.timeline).toContain(`read:interrupted:false:${canArchive}`)
+    expect(h.timeline).not.toContain('cancel')
+    expect(h.timeline).not.toContain('archive')
+    expect(h.timeline).not.toContain('rm')
+    expect(h.dirs.size).toBe(1)
+    assertDeviceRevoked(r)
+  })
+
+  it('waits for late writer closure after terminal status and feed removal before archiving', async () => {
+    const h = lifecycleHarness()
+    h.state.status = 'interrupted'
+    h.state.phase = 'interrupted'
+    let sleeps = 0
+    h.hooks.onSleep = () => {
+      expect(h.timeline).not.toContain('archive')
+      expect(h.timeline).not.toContain('rm')
+      if (++sleeps === 2) h.state.canArchive = true
+      h.emit(false)
+    }
+    const r = await runPhoneSelftest(h.deps, { executor: 'claude', timeoutMs: 1000 })
+    expect(r.ok).toBe(true)
+    expect(h.timeline).toContain('read:interrupted:false:false')
+    expect(h.timeline).toContain('read:interrupted:false:true')
+    expect(h.timeline.indexOf('archive')).toBeGreaterThan(h.timeline.indexOf('read:interrupted:false:true'))
+    expect(h.timeline.indexOf('rm')).toBeGreaterThan(h.timeline.indexOf('archive'))
+    expect(h.timeline).not.toContain('cancel')
+    expect(h.dirs.size).toBe(0)
+    assertDeviceRevoked(r)
+  })
+
+  it('uses a fresh cleanup budget after the original timeout without changing the failed result', async () => {
+    const h = lifecycleHarness()
+    h.hooks.onSleep = () => {
+      if (h.timeline.includes('cancel')) { h.state.status = 'cancelled'; h.state.canArchive = true; h.emit(false) }
+    }
+    const r = await runPhoneSelftest(h.deps, { executor: 'claude', timeoutMs: 200 })
+    expect(r.ok).toBe(false)
+    expect(r.checks.find((c) => c.name === 'agents_task_terminal')?.ok).toBe(false)
+    expect(r.checks.find((c) => c.name === 'task_closed')?.ok).toBe(true)
+    expect(r.checks.find((c) => c.name === 'archived')?.ok).toBe(true)
+    expect(h.dirs.size).toBe(0)
+    expect(r.durationMs).toBe(400)
+    assertDeviceRevoked(r)
+  })
+
+  it('a cancel ACK and disappearing feed do not permit removal while the task stays active', async () => {
+    const h = lifecycleHarness()
+    h.hooks.onSleep = () => h.emit(false)
+    const r = await runPhoneSelftest(h.deps, { executor: 'claude', timeoutMs: 200 })
+    expect(r.ok).toBe(false)
+    expect(r.durationMs).toBe(20_200)
+    expect(h.dirs.size).toBe(1)
+    expect(h.timeline).not.toContain('archive')
+    expect(h.timeline).not.toContain('rm')
+    expect(h.calls.filter((c) => c.path === '/v1/workbench/cancel')).toHaveLength(1)
+    assertDeviceRevoked(r)
+  })
+
+  it('keeps the original arrival timeout and scratch when cleanup cannot confirm the unseen task has ended', async () => {
+    const h = lifecycleHarness()
+    h.state.publishCreatedTask = false
+    h.hooks.onSleep = () => {}
+    const r = await runPhoneSelftest(h.deps, { executor: 'claude', timeoutMs: 200 })
+    expect(r.ok).toBe(false)
+    expect(r.checks.find((c) => c.name === 'agents_task_seen')?.ok).toBe(false)
+    expect(r.durationMs).toBe(20_200)
+    expect(h.timeline).toContain('cancel')
+    expect(h.timeline).not.toContain('archive')
+    expect(h.dirs.size).toBe(1)
+    assertDeviceRevoked(r)
+  })
+
+  it('aborts a pending task read at the remaining deadline and still safely cleans up without hiding the error', async () => {
+    const h = lifecycleHarness()
+    const scriptedFetch = h.deps.fetch
+    let firstRead = true
+    let readAborted = false
+    h.deps.fetch = (async (url: string | URL, init?: RequestInit) => {
+      if (new URL(String(url)).pathname === '/v1/workbench/task' && firstRead) {
+        firstRead = false
+        await new Promise<void>((_resolve, reject) => {
+          const abort = () => {
+            readAborted = true
+            h.state.now += 25
+            reject(new Error('task read aborted'))
+          }
+          if (init?.signal?.aborted) abort()
+          else init?.signal?.addEventListener('abort', abort, { once: true })
+        })
+      }
+      return scriptedFetch(url, init)
+    }) as unknown as typeof fetch
+    const r = await runPhoneSelftest(h.deps, { executor: 'claude', timeoutMs: 25 })
+    expect(readAborted).toBe(true)
+    expect(r.ok).toBe(false)
+    expect(r.checks.find((c) => c.name === 'task_detail')?.ok).toBe(false)
+    expect(r.checks.find((c) => c.name === 'task_closed')?.ok).toBe(true)
+    expect(h.dirs.size).toBe(0)
+    assertDeviceRevoked(r)
+  }, 1000)
+
+  it('gives archive only the remaining cleanup budget and preserves scratch when that request aborts', async () => {
+    const h = lifecycleHarness()
+    h.hooks.onSleep = () => {}
+    h.hooks.onRead = () => {
+      if (h.state.readCount === 2) {
+        h.state.now += 19_975
+        h.state.status = 'completed'
+        h.state.canArchive = true
+        h.emit(false)
+      }
+    }
+    const scriptedFetch = h.deps.fetch
+    let archiveAborted = false
+    h.deps.fetch = (async (url: string | URL, init?: RequestInit) => {
+      if (new URL(String(url)).pathname === '/v1/workbench/archive') {
+        await new Promise<void>((_resolve, reject) => {
+          const abort = () => {
+            archiveAborted = true
+            h.state.now += 25
+            reject(new Error('archive aborted'))
+          }
+          if (init?.signal?.aborted) abort()
+          else init?.signal?.addEventListener('abort', abort, { once: true })
+        })
+      }
+      return scriptedFetch(url, init)
+    }) as unknown as typeof fetch
+    const r = await runPhoneSelftest(h.deps, { executor: 'claude', timeoutMs: 200 })
+    expect(archiveAborted).toBe(true)
+    expect(r.durationMs).toBe(20_200)
+    expect(r.checks.find((c) => c.name === 'task_closed')?.ok).toBe(true)
+    expect(r.checks.find((c) => c.name === 'archived')?.ok).toBe(false)
+    expect(h.dirs.size).toBe(1)
+    expect(h.timeline).not.toContain('rm')
+    assertDeviceRevoked(r)
+  }, 1000)
+
+  it('does not send archive or remove scratch when task closure consumes the entire cleanup budget', async () => {
+    const h = lifecycleHarness()
+    h.hooks.onSleep = () => {}
+    h.hooks.onRead = () => {
+      if (h.state.readCount === 2) {
+        h.state.now += 20_000
+        h.state.status = 'completed'
+        h.state.canArchive = true
+        h.emit(false)
+      }
+    }
+    const r = await runPhoneSelftest(h.deps, { executor: 'claude', timeoutMs: 200 })
+    expect(r.durationMs).toBe(20_200)
+    expect(r.checks.find((c) => c.name === 'task_closed')?.ok).toBe(true)
+    expect(r.checks.find((c) => c.name === 'archived')).toMatchObject({ ok: false, detail: expect.stringContaining('deadline exhausted') })
+    expect(h.timeline).not.toContain('archive')
+    expect(h.timeline).not.toContain('rm')
+    expect(h.dirs.size).toBe(1)
+    assertDeviceRevoked(r)
+  })
+
+  it('retains scratch when task reads fail, but still requests its own cancellation and revokes the device', async () => {
+    const h = lifecycleHarness()
+    h.state.detailError = tokenLeakingError('op-token')
+    const r = await runPhoneSelftest(h.deps, { executor: 'claude', timeoutMs: 200 })
+    expect(r.ok).toBe(false)
+    expect(h.timeline).toContain('cancel')
+    expect(h.timeline).not.toContain('archive')
+    expect(h.dirs.size).toBe(1)
+    expect(r.checks.find((c) => c.name === 'task_detail')?.ok).toBe(false)
+    assertDeviceRevoked(r)
+  })
+
+  it.each(['rejected', 'thrown', 'stuck'] as const)('retains scratch after cancellation is %s without blocking device revocation', async (failure) => {
+    const h = lifecycleHarness()
+    h.state.phase = 'replied'
+    if (failure === 'rejected') h.state.cancelStatus = 500
+    if (failure === 'thrown') h.state.cancelError = tokenLeakingError('op-token')
+    h.hooks.onSleep = () => { if (failure === 'stuck') h.state.status = 'cancelling' }
+    const r = await runPhoneSelftest(h.deps, { executor: 'claude', timeoutMs: 200 })
+    expect(r.ok).toBe(false)
+    expect(h.dirs.size).toBe(1)
+    expect(h.timeline).not.toContain('archive')
+    expect(h.timeline).not.toContain('rm')
+    expect(r.durationMs).toBeLessThanOrEqual(20_200)
+    assertDeviceRevoked(r)
+  })
+
+  it.each(['conflict', 'thrown'] as const)('preserves closed scratch when archive is %s', async (failure) => {
+    const h = lifecycleHarness()
+    if (failure === 'conflict') h.state.archiveStatus = 409
+    else h.state.archiveError = tokenLeakingError('op-token')
+    const r = await runPhoneSelftest(h.deps, { executor: 'claude', timeoutMs: 1000 })
+    expect(r.ok).toBe(false)
+    expect(r.checks.find((c) => c.name === 'task_closed')?.ok).toBe(true)
+    expect(r.checks.find((c) => c.name === 'archived')?.ok).toBe(false)
+    expect(h.dirs.size).toBe(1)
+    expect(h.timeline).not.toContain('rm')
+    assertDeviceRevoked(r)
+  })
+
+  it('never treats an unrelated terminal task detail as proof that this scratch is idle', async () => {
+    const h = lifecycleHarness()
+    h.state.status = 'completed'
+    h.state.canArchive = true
+    h.state.detailId = 'somebody-elses-task'
+    const r = await runPhoneSelftest(h.deps, { executor: 'claude', timeoutMs: 200 })
+    expect(r.ok).toBe(false)
+    expect(h.dirs.size).toBe(1)
+    expect(h.timeline).not.toContain('archive')
+    assertDeviceRevoked(r)
+  })
+})
 
 describe('selftest phone --relay v2', () => {
   it('r… id link ⇒ connects /v2/phone, healthz, registers fake APNs token, Apple accepting the JWT is PASS', async () => {

@@ -41,8 +41,20 @@ describe('runStatus("status")', () => {
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     vi.mocked(fs.readdirSync).mockReturnValue([] as any)
 
+    // 不注入 ⇒ 走真的 defaultProviderProbes:读 internal-api-info.json(这里读出 '[]' ⇒ 没有端口)⇒ 不知道。
     const out = await captureLog(() => runStatus('status'))
     expect(out.some(l => l.includes('running') && l.includes(String(process.pid)))).toBe(true)
+    expect(out.some(l => l.startsWith('providers:') && l.includes('不知道'))).toBe(true)
+  })
+
+  it('running daemon with a provider whose boot probe failed ⇒ prints "探测失败,重试中" (2026-10-04)', async () => {
+    vi.mocked(fs.existsSync).mockImplementation((p) => String(p).endsWith('server.pid'))
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    vi.mocked(fs.readFileSync).mockImplementation((p: any) => String(p).endsWith('server.pid') ? String(process.pid) : '[]')
+    const out = await captureLog(() => runStatus('status', {
+      providerProbes: async () => [{ id: 'agy', state: 'retrying', attempts: 3, last_error: '超时 — 5012ms 内没退出', first_failed_at: '2026-10-04T03:14:38.250Z', next_attempt_at: '2026-10-04T03:14:58.000Z', registered_at: null }],
+    }))
+    expect(out.some(l => l.includes('agy 探测失败,重试中') && l.includes('已重探 3 次'))).toBe(true)
   })
 
   it('handles stale pid file gracefully (no crash)', async () => {

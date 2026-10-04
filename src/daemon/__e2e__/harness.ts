@@ -104,6 +104,8 @@ export interface TestDaemonOpts {
     dangerouslySkipPermissions?: boolean
     autoStart?: boolean
     closeStopsDaemon?: boolean
+    /** 回复交付的运行时回滚开关(agent-config `reply_delivery`,见 docs/maintainer/reply-delivery.md)。 */
+    reply_delivery?: Record<string, 'legacy' | 'shadow' | 'daemon'>
   }
   /**
    * Pre-known users (chatId → name). Populates user_names.json so onboarding
@@ -179,6 +181,7 @@ export async function startTestDaemon(opts: TestDaemonOpts = {}): Promise<Daemon
       dangerouslySkipPermissions: opts.agentConfig.dangerouslySkipPermissions ?? false,
       autoStart: opts.agentConfig.autoStart ?? false,
       closeStopsDaemon: opts.agentConfig.closeStopsDaemon ?? false,
+      ...(opts.agentConfig.reply_delivery ? { reply_delivery: opts.agentConfig.reply_delivery } : {}),
     }
     writeFileSync(join(stateDir, 'agent-config.json'), JSON.stringify(cfg, null, 2))
   }

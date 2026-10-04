@@ -2,6 +2,17 @@
 import { defineCommand } from 'citty'
 import { STATE_DIR } from '../../lib/config'
 import { GuardStatusOutput, GuardEnableOutput, GuardDisableOutput } from '../schema'
+
+type SuspendedTaskRow = { task_id: string; title: string; provider: string; since: string }
+/**
+ * 被网络守护冻住的任务(主人 2026-10-03)和开机探测失败、正在重探的 provider(2026-10-04)
+ * 只有在跑的 daemon 知道:问它的 /v1/health(本机回环,不出门)。daemon 没在跑 / 读不出 ⇒ null
+ * (不是 0 —— 不知道就别说没有)。
+ */
+function suspendedTasksFrom(health: Record<string, unknown> | null): SuspendedTaskRow[] | null {
+  const g = health?.guard as { suspended_tasks?: SuspendedTaskRow[] } | undefined
+  return Array.isArray(g?.suspended_tasks) ? g!.suspended_tasks! : null
+}
 const guardStatusCmd = defineCommand({
   meta: { name: 'status', description: "Live one-shot check — bx protection (if installed) or external IP + reachability" },
   args: {
@@ -13,12 +24,23 @@ const guardStatusCmd = defineCommand({
     // operator debugging — `wechat-cc guard status --json` from
     // any terminal returns the current external IP + reachability.
     const { loadGuardConfig } = await import('../../daemon/guard/store')
-    const { fetchPublicIp, probeReachable, findBx, readBxStatus } = await import('../../daemon/guard/probe')
+    const { fetchPublicIp, probeReachable, findBx, readBxStatus, classifyConfiguredForCli } = await import('../../daemon/guard/probe')
     const cfg = loadGuardConfig(STATE_DIR)
     const ipRes = await fetchPublicIp({ url: cfg.ipify_url })
-    // 装了 bx 且守护开着:以 bx 为准(本机 socket,只读,不发流量),不再探 google。
-    // 守护关着时不碰 bx —— 和 daemon 一样,开关关了就什么都不判。
-    const bxPath = cfg.enabled ? findBx() : null
+    // 装了 bx 且守护开着:只认 bx(本机 socket,只读,不发流量),不再探 google。guard.json
+    // signal_source='probe' ⇒ 装着 bx 也走探测。守护关着时不碰 bx —— 开关关了就什么都不判。
+    const bxPath = cfg.enabled && cfg.signal_source !== 'probe' ? findBx() : null
+    // 守护 v2:按调用判 —— 列出已配置 provider 各自要不要保护(只读配置,不发流量)。
+    const providers = classifyConfiguredForCli(STATE_DIR)
+    const protectedInUse = providers.some(p => p.protected)
+    const { fetchDaemonHealth, providerProbesFrom, formatProviderProbes } = await import('../daemon-health')
+    const health = await fetchDaemonHealth(STATE_DIR)
+    const suspendedTasks = suspendedTasksFrom(health)
+    const providerProbes = providerProbesFrom(health)
+    const suspendedOut = {
+      ...(suspendedTasks ? { suspended: suspendedTasks.length, suspended_tasks: suspendedTasks } : {}),
+      ...(providerProbes ? { provider_probes: providerProbes } : {}),
+    }
     let out
     if (bxPath) {
       const v = await readBxStatus(bxPath)
@@ -26,6 +48,7 @@ const guardStatusCmd = defineCommand({
         enabled: cfg.enabled, ip: ipRes.ip, reachable: v.safe, probe_url: cfg.probe_url,
         ip_error: ipRes.error ?? null, probe_error: v.safe ? null : v.detail, probe_ms: null,
         source: 'bx' as const, safe: v.safe, detail: v.detail, bx_path: bxPath,
+        signal_source: cfg.signal_source, protected_in_use: protectedInUse, providers, ...suspendedOut,
       }
     } else {
       const probeRes = await probeReachable(cfg.probe_url)
@@ -35,6 +58,7 @@ const guardStatusCmd = defineCommand({
         source: 'probe' as const, safe: probeRes.reachable,
         detail: probeRes.reachable ? '探测可达' : `探测失败${probeRes.error ? `(${probeRes.error})` : ''}`,
         bx_path: null,
+        signal_source: cfg.signal_source, protected_in_use: protectedInUse, providers, ...suspendedOut,
       }
     }
     if (args.json) console.log(JSON.stringify(GuardStatusOutput.parse(out), null, 2))
@@ -43,10 +67,24 @@ const guardStatusCmd = defineCommand({
       console.log(`ip:      ${out.ip ?? '?'}${out.ip_error ? ` (${out.ip_error})` : ''}`)
       if (out.source === 'bx') {
         console.log(`bx:      ${out.safe ? 'protected' : 'NOT PROTECTED'} — ${out.detail} (${bxPath})`)
-        if (!out.safe) console.log('         CC 会暂停所有模型调用;想查是否已漏过,跑 `bx leakcheck`。')
+        if (!out.safe) console.log('         用到需要保护的接口(Claude 等)的调用会暂停;想查是否已漏过,跑 `bx leakcheck`。')
       } else {
-        console.log(`probe:   ${out.reachable ? 'reachable' : 'UNREACHABLE'} (${cfg.probe_url})${out.probe_error ? ` — ${out.probe_error}` : ''}`)
+        console.log(`probe:   ${out.reachable ? 'reachable' : 'UNREACHABLE'} (${cfg.probe_url})${out.probe_error ? ` — ${out.probe_error}` : ''}${cfg.signal_source === 'probe' ? ' [guard.json signal_source=probe]' : ''}`)
       }
+      console.log('calls:   (按调用判:只有需要保护的调用会在网络未受保护时暂停)')
+      for (const p of providers) {
+        console.log(`  ${p.protected ? '需要保护  ' : '不需要保护'}  ${p.id}${p.model ? ` · ${p.model}` : ''}${p.host ? ` → ${p.host}` : ''} — ${p.reason}`)
+      }
+      if (!protectedInUse) console.log('  当前没有用到需要保护的接口')
+      // 暂停在跑的任务(2026-10-03):probe 来源连续两次不安全 ⇒ 冻住,恢复后自动继续;到顶(max_suspend_minutes)停下。
+      if (suspendedTasks === null) console.log('paused:  (daemon 没在跑或读不出,不知道有没有被暂停的任务)')
+      else if (!suspendedTasks.length) console.log('paused:  没有被暂停的任务')
+      else {
+        console.log(`paused:  ${suspendedTasks.length} 个任务已暂停(网络未受保护),恢复后自动继续;超过 ${cfg.max_suspend_minutes} 分钟没恢复就停下`)
+        for (const t of suspendedTasks) console.log(`  ${t.task_id}  ${t.provider}  ${t.title}  (从 ${t.since})`)
+      }
+      // 开机 `--version` 探测失败、正在退避重探的 provider(2026-10-04):还没注册时它的调用不会发生。
+      for (const line of formatProviderProbes(providerProbes)) console.log(line)
     }
   },
 })

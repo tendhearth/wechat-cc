@@ -15,6 +15,7 @@
         "fflate": "0.8.3",
         "marked": "^18.0.0",
         "qrcode-terminal": "^0.12.0",
+        "smol-toml": "^1.9.0",
         "yaml": "^2.9.0",
         "zod": "^4.0.0",
       },
@@ -37,6 +38,7 @@
       "version": "1.0.0",
       "dependencies": {
         "@wechat-cc/design-tokens": "workspace:*",
+        "@wechat-cc/markdown": "workspace:*",
         "@wechat-cc/protocol": "workspace:*",
         "expo": "~57.0.26",
         "expo-camera": "~57.0.6",
@@ -92,6 +94,13 @@
     "packages/design-tokens": {
       "name": "@wechat-cc/design-tokens",
       "version": "0.0.1",
+    },
+    "packages/markdown": {
+      "name": "@wechat-cc/markdown",
+      "version": "0.0.1",
+      "dependencies": {
+        "marked": "^18.0.0",
+      },
     },
     "packages/protocol": {
       "name": "@wechat-cc/protocol",
@@ -830,6 +839,8 @@
     "@wechat-cc/app": ["@wechat-cc/app@workspace:apps/app"],
 
     "@wechat-cc/design-tokens": ["@wechat-cc/design-tokens@workspace:packages/design-tokens"],
+
+    "@wechat-cc/markdown": ["@wechat-cc/markdown@workspace:packages/markdown"],
 
     "@wechat-cc/protocol": ["@wechat-cc/protocol@workspace:packages/protocol"],
 
@@ -1688,6 +1699,8 @@
     "sisteransi": ["sisteransi@1.0.5", "", {}, "sha512-bLGGlR1QxBcynn2d5YmDX4MGjlZvy2MRBDRNHLJ8VI6l6+9FUiyTFNJ0IveOSP0bcXgVDPRcfGqA0pjaqUpfVg=="],
 
     "slugify": ["slugify@1.6.9", "", {}, "sha512-vZ7rfeehZui7wQs438JXBckYLkIIdfHOXsaVEUMyS5fHo1483l1bMdo0EDSWYclY0yZKFOipDy4KHuKs6ssvdg=="],
+
+    "smol-toml": ["smol-toml@1.9.0", "", {}, "sha512-hpd+HLON7HdZXqYchMM/+LaTTbdK0AU3NngIJ4KVyWbY9bfQqdL9cD+4yf6dUoU2Ap4VsU0JkQi6FxAI1B2mXQ=="],
 
     "source-map": ["source-map@0.5.7", "", {}, "sha512-LbrmJOMUSdEVxIKvdcJzQC+nQhe8FUZQTXQy6+I75skNgn3OoQ0DZA8YnFa7gp8tqtL3KPf1kmo0R5DoApeSGQ=="],
 

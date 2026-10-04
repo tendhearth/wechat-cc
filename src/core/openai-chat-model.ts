@@ -7,6 +7,7 @@ import {
 } from 'ai'
 import { createOpenAICompatible } from '@ai-sdk/openai-compatible'
 import { makeThinkFilter } from './think-tags'
+import { makeTimeoutFetch, openaiFetchTimeoutsFromEnv, type FetchLike, type FetchTimeouts } from '../lib/timeout-fetch'
 
 // Opaque re-export: the rest of the provider treats ChatMessage as a black box
 // it only ever appends. Keeps AI SDK's ModelMessage type from leaking outward.
@@ -179,11 +180,14 @@ export function createChatModelFromLanguageModel(model: LanguageModel, opts: { e
 /** generate()(后台一次性评估)的输出上限;聊天回合不设(交给上游默认)。 */
 export const DEFAULT_EVAL_MAX_OUTPUT_TOKENS = 4000
 
-export function createAiSdkChatModel(opts: { baseURL: string; apiKey: string; model: string; evalMaxOutputTokens?: number }): ChatModelClient {
+export function createAiSdkChatModel(opts: { baseURL: string; apiKey: string; model: string; evalMaxOutputTokens?: number; timeouts?: FetchTimeouts; fetch?: FetchLike }): ChatModelClient {
   const provider = createOpenAICompatible({
     name: 'wechat-openai',
     baseURL: opts.baseURL,
     apiKey: opts.apiKey,
+    // 边界超时(arch backlog #4 第 2 步,§4.4):AI SDK 自己没有请求超时 —— 黑洞地址
+    // 会一直挂到 600s 回合看门狗。连不上 / 流停住 ⇒ 带 `network` 码的错误。
+    fetch: makeTimeoutFetch(opts.timeouts ?? openaiFetchTimeoutsFromEnv(), opts.fetch) as typeof fetch,
   })
   return createChatModelFromLanguageModel(provider.chatModel(opts.model), { evalMaxOutputTokens: opts.evalMaxOutputTokens })
 }

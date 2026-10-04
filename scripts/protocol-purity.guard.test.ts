@@ -16,6 +16,7 @@ import { readFileSync, readdirSync, mkdtempSync, writeFileSync, rmSync } from 'n
 import { join, dirname } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { tmpdir } from 'node:os'
+import ts from 'typescript'
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..')
 const PROTOCOL_SRC = join(ROOT, 'packages', 'protocol', 'src')
@@ -35,10 +36,8 @@ const FORBIDDEN_RULES: Array<{ name: string; pattern: RegExp }> = [
   { name: 'require(', pattern: /\brequire\s*\(/ },
   { name: 'Buffer', pattern: /\bBuffer\b/ },
   { name: 'crypto.subtle', pattern: /crypto\.subtle\b/ },
-  { name: 'window', pattern: /\bwindow\b/ },
-  { name: 'document', pattern: /\bdocument\b/ },
-  { name: 'localStorage', pattern: /\blocalStorage\b/ },
 ]
+const BROWSER_GLOBALS = new Set(['window', 'document', 'localStorage'])
 
 /** 递归列出一个目录下所有 `.ts` 文件(不含 `.test.ts`),相对路径。 */
 function listSourceFiles(dir: string, base = dir): string[] {
@@ -57,7 +56,8 @@ function listSourceFiles(dir: string, base = dir): string[] {
 function scanForViolations(files: string[]): Violation[] {
   const violations: Violation[] = []
   for (const file of files) {
-    const lines = readFileSync(file, 'utf8').split('\n')
+    const source = readFileSync(file, 'utf8')
+    const lines = source.split('\n')
     lines.forEach((line, idx) => {
       for (const rule of FORBIDDEN_RULES) {
         if (rule.pattern.test(line)) {
@@ -65,6 +65,18 @@ function scanForViolations(files: string[]): Violation[] {
         }
       }
     })
+    // A wire field named `window` is data, not a dependency on the browser.
+    // Inspect syntax so property values, shorthand and globalThis.window still fail.
+    const syntax = ts.createSourceFile(file, source, ts.ScriptTarget.Latest, true)
+    const visit = (node: ts.Node) => {
+      if (ts.isIdentifier(node) && BROWSER_GLOBALS.has(node.text)) {
+        const parent = node.parent
+        const dataKey = (ts.isPropertyAssignment(parent) || ts.isPropertySignature(parent)) && parent.name === node
+        if (!dataKey) violations.push({ file, rule: node.text, line: syntax.getLineAndCharacterOfPosition(node.getStart(syntax)).line + 1 })
+      }
+      ts.forEachChild(node, visit)
+    }
+    visit(syntax)
   }
   return violations
 }
@@ -102,7 +114,19 @@ describe('packages/protocol 纯净守卫', () => {
       ].join('\n')
       writeFileSync(join(dir, 'bad.ts'), fixture, 'utf8')
       const violations = scanForViolations(listSourceFiles(dir))
-      expect(violations.map(v => v.rule).sort()).toEqual(FORBIDDEN_RULES.map(r => r.name).sort())
+      expect(violations.map(v => v.rule).sort()).toEqual([...FORBIDDEN_RULES.map(r => r.name), ...BROWSER_GLOBALS].sort())
+    } finally {
+      rmSync(dir, { recursive: true, force: true })
+    }
+  })
+
+  it('accepts wire field names while still rejecting browser globals in their values', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'protocol-purity-field-'))
+    try {
+      writeFileSync(join(dir, 'data.ts'), "const schema = { window: 'recent', document: 'label' }; type Page = { window?: 'start' }; const text = 'localStorage'")
+      expect(scanForViolations(listSourceFiles(dir))).toEqual([])
+      writeFileSync(join(dir, 'data.ts'), 'const bad = { value: window, document, storage: globalThis.localStorage }')
+      expect(scanForViolations(listSourceFiles(dir)).map(v => v.rule)).toEqual(['window', 'document', 'localStorage'])
     } finally {
       rmSync(dir, { recursive: true, force: true })
     }

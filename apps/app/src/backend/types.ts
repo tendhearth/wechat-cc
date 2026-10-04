@@ -1,7 +1,7 @@
 import type { z } from 'zod'
 import type {
   Matter, MatterDetail, ApprovalExplanation, ProgressSummary, PhoneChangesTurn, EntryOptions, DeviceRowT, PushPlatformT,
-  ChatPage, ChatJob, ChatMessage, Connections, NativeSessionRow, NativeSessionPage, SessionContinueT,
+  ChatPage, ChatJob, ChatMessage, Connections, NativeSessionRow, NativeSessionPage, SessionContinueT, MatterSayResult,
 } from '@wechat-cc/protocol'
 import type { Lang } from '../i18n'
 
@@ -19,6 +19,8 @@ export type ChatMessageT = z.infer<typeof ChatMessage>
 export type ConnectionsT = z.infer<typeof Connections>
 export type NativeSessionRowT = z.infer<typeof NativeSessionRow>
 export type NativeSessionPageT = z.infer<typeof NativeSessionPage>
+export type MatterInputT = MatterDetailT['inputs'][number]
+export type MatterSayResultT = z.infer<typeof MatterSayResult>
 export type { HomeTopicT, ApprovalItemT, AgentsTopicT, MatterTopicT, DeviceRowT } from '@wechat-cc/protocol'
 
 export type ConnState = 'connecting' | 'online' | 'offline' | 'revoked'
@@ -28,6 +30,7 @@ export type Connection = { state: ConnState; lastSyncedAt: number | null; epoch:
 export type BackendCode = 'stale' | 'busy' | 'offline' | 'revoked' | 'timeout' | 'not_found' | 'invalid' | 'unavailable' | 'unknown'
   | 'session_busy' | 'folder_busy' | 'provider_missing' | 'folder_missing' | 'quota' | 'session_changed' | 'session_empty' | 'session_managed'
   | 'handoff_changed'
+  | 'input_stale' | 'input_conflict'
 export type Unsubscribe = () => void
 
 export interface Backend {
@@ -42,8 +45,10 @@ export interface Backend {
   decide(p: { id: string; runId: string; requestId: string; decision: 'allow' | 'deny' }): Promise<void>
   /** answers 形状与 daemon validateUserInputAnswers 一致:每题一个 string[](单选 1 个;多选 1–8 个、不重复;每条 ≤ 4000 字)。null = 不回答。 */
   answer(p: { id: string; runId: string; requestId: string; answers: Record<string, string[]> | null }): Promise<void>
-  /** requestId:同一份草稿、同样的正文重发用同一个(daemon 对工作台任务按它去重),正文改了才换。 */
-  say(id: string, text: string, requestId: string): Promise<void>
+  /** 工作台补充携带首次提交的 runId;重发时 requestId / runId / text 保持同一份快照。缺省仍兼容聊天与首次接续。 */
+  say(id: string, text: string, requestId: string, options?: { runId?: string }): Promise<MatterSayResultT>
+  /** A single exact receipt, independent of the bounded matter detail. Missing/old server stays unconfirmed. */
+  matterInputReceipt(id: string, requestId: string): Promise<MatterInputT | null>
   entryOptions(lang: Lang): Promise<EntryOptionsT>
   /** requestId:同一份草稿、同样的正文重发用同一个(daemon 据此去重、超时后查回执)。projectId 缺省 ⇒ 由 CC 安排(managed)。 */
   create(p: { requestId: string; text: string; projectId?: string; providerId?: string }): Promise<{ matterId: string }>
@@ -61,9 +66,9 @@ export interface Backend {
   /** CC 的连接快照(手机版,没有 detail)。 */
   connections(): Promise<ConnectionsT>
   /** 电脑上的原生会话(只读);cursor = 上一页的 nextCursor。 */
-  sessions(provider: 'claude' | 'codex', cursor?: string): Promise<{ items: NativeSessionRowT[]; nextCursor: string | null }>
+  sessions(provider: 'claude' | 'codex', cursor?: string, q?: string): Promise<{ items: NativeSessionRowT[]; nextCursor: string | null }>
   /** 一个原生会话的一页消息;读不了 ⇒ BackendError('not_found')。 */
-  session(key: string, cursor?: string): Promise<NativeSessionPageT>
+  session(key: string, cursor?: string, window?: 'recent' | 'start'): Promise<NativeSessionPageT>
   /** 这个电脑上的会话能不能在手机上接着做(不缓存,每次问电脑)。读不了 ⇒ BackendError('not_found')。 */
   continuePreview(key: string): Promise<SessionContinueT>
   /** 接成一件事并返回它的 matterId;幂等。拒绝 ⇒ session_busy / folder_busy / provider_missing / folder_missing / quota / session_changed / session_empty / session_managed。 */

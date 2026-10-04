@@ -79,13 +79,19 @@ export const MatterTaskView = z.object({
 export const MatterEvent = z.object({
   kind: z.string(), text: z.string(), createdAt: z.number(),
   source: z.string().optional(), attachments: z.array(Attachment).optional(),
+  errorCode: z.literal('execution_model_unsupported').optional(), diagnostic: z.string().optional(),
 })
 
 export const MatterInput = z.object({
   id: z.string(), taskId: z.string(), runId: z.string(), text: z.string(),
   status: z.enum(['pending', 'sending', 'delivered', 'held', 'withdrawn']),
   attachments: z.array(Attachment).optional(),
+  /** Single-receipt reads preserve the durable delivery reason; older backends omit it. */
+  error: z.string().nullable().optional(),
 })
+
+export const MatterInputReceiptResult = z.object({ ok: z.literal(true), input: MatterInput })
+export type MatterInputReceiptResultT = z.infer<typeof MatterInputReceiptResult>
 
 export const MatterPermission = z.object({
   id: z.string(), taskId: z.string(), tool: z.string(), description: z.string(), createdAt: z.number(),
@@ -313,7 +319,7 @@ const PhoneStateSuccess = z.object({
 
 // ── 每条路由的响应形状(与 mobileMatterError 的 say 结果联合体）──────────
 
-const MatterSayResult = z.union([
+export const MatterSayResult = z.union([
   z.object({ kind: z.literal('task'), task: MatterTaskView, input: MatterInput.optional() }),
   z.object({ kind: z.literal('chat'), reply: z.string() }),
 ])
@@ -352,7 +358,7 @@ export type ConnectionsT = z.infer<typeof Connections>
 // ── 电脑上的原生会话(只读,spec 2026-10-01):key 是 base64url{providerId,nativeId},不给 cwd / nativeId ──
 export const NativeSessionRow = z.object({ key: z.string(), provider: z.enum(['claude', 'codex']), title: z.string(), project: z.string().nullable(), updatedAt: z.number().nullable(), active: z.boolean() })
 export const NativeSessionMessage = z.object({ id: z.string(), role: z.enum(['user', 'assistant']), text: z.string(), truncated: z.boolean() })
-export const NativeSessionPage = z.object({ session: NativeSessionRow, messages: z.array(NativeSessionMessage), nextCursor: z.string().nullable(), managed: z.boolean() })
+export const NativeSessionPage = z.object({ session: NativeSessionRow, messages: z.array(NativeSessionMessage), nextCursor: z.string().nullable(), managed: z.boolean(), window: z.enum(['recent', 'start']).optional() })
 export type NativeSessionRowT = z.infer<typeof NativeSessionRow>
 export type NativeSessionPageT = z.infer<typeof NativeSessionPage>
 
@@ -390,6 +396,7 @@ export const PHONE_API_SCHEMAS: Readonly<Record<string, z.ZodTypeAny>> = {
   ]),
   'GET /m/api/matter/changes': z.union([z.object({ ok: z.literal(true), turn: PhoneChangesTurn.nullable() }), PhoneErrorResponse]),
   'GET /m/api/matter': z.union([z.object({ ok: z.literal(true) }).extend(MatterDetail.shape), PhoneErrorResponse]),
+  'GET /m/api/matter/input-receipt': z.union([MatterInputReceiptResult, PhoneErrorResponse]),
   'POST /m/api/matter/say': z.union([z.object({ ok: z.literal(true), result: MatterSayResult }), PhoneErrorResponse]),
   'GET /m/api/chat': z.union([z.object({ ok: z.literal(true) }).extend(ChatPage.shape), PhoneErrorResponse]),
   'POST /m/api/chat/say': z.union([z.object({ ok: z.literal(true), matterId: z.string(), job: ChatJob }), PhoneErrorResponse]),

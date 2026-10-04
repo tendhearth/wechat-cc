@@ -30,6 +30,13 @@ describe('latestCCLine', () => {
     expect(latestCCLine([{ role: 'cc', text: '…', pending: true }] as any)).toBeNull()
     expect(latestCCLine([{ role: 'user', text: 'hi' }] as any)).toBeNull()
   })
+  it('首页摘要保留内容但去掉格式与链接路径，不改原始聊天', () => {
+    const source = {role:'cc',text:'## 完成\n\n**文档好了**，请看[说明](/Users/private/project/docs/readme.md)。\n\n命令是 `bun run test`。',at:123}
+    const original = {...source}
+    expect(latestCCLine([source])).toEqual({text:'完成\n\n文档好了，请看说明。\n\n命令是 bun run test。',at:123})
+    expect(source).toEqual(original)
+    expect(latestCCLine([{role:'cc',text:'---'}])).toBeNull()
+  })
 })
 describe('ccBubblePreview', () => {
   it('短回复完整展示,多句回复摘出完整第一句', () => {

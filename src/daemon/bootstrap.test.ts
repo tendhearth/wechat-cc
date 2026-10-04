@@ -665,11 +665,13 @@ describe('bootstrap', () => {
     // Prompt assembly now lives in the single provider-agnostic buildInstructions
     // thunk (SessionManager calls it per spawn). The big things the v0.x prompt
     // missed — verify they're now in.
+    // 回复交付第 5 步(2026-10-03)起 claude 是 daemon ⇒ 拿的是 final_text 版提示词:broadcast 并进 message(to=…),
+    // 圆桌说明不再提 <chatroom_round>;下面表情 / 气泡几条断言同理换成 sticker(tag) /「像发微信那样」。
     const prompt = b.buildInstructions('claude', TIER_PROFILES.admin, '_test')
     expect(prompt).toContain('delegate_codex')
     expect(prompt).toContain('share_page')
-    expect(prompt).toContain('broadcast')
-    expect(prompt).toContain('chatroom_round')
+    expect(prompt).toContain("to='owner'")
+    expect(prompt).toContain('直接用纯文本作答')
     // Admin tier → the self-heal section is present; the codex peer gets a
     // claude-peer prompt without the delegate_codex tool name.
     expect(prompt).toContain('自我诊断')
@@ -747,10 +749,10 @@ describe('bootstrap', () => {
       stickerTagsFor: (chatId: string) => (chatId === 'owner-chat' ? ['happy', 'sad'] : []),
     })
     const stickerPrompt = b.buildInstructions('claude', TIER_PROFILES.admin, 'owner-chat')
-    expect(stickerPrompt).toContain('send_sticker')
+    expect(stickerPrompt).toContain('`sticker(tag)`')
     expect(stickerPrompt).toContain('happy')
     const noStickerPrompt = b.buildInstructions('claude', TIER_PROFILES.admin, 'guest-chat')
-    expect(noStickerPrompt).not.toContain('send_sticker')
+    expect(noStickerPrompt).not.toContain('`sticker(tag)`')
   })
 
   it('buildInstructions includes the persona section (but not cultivation) when personaFor returns content with cultivate:false (persona design §2)', async () => {
@@ -1030,16 +1032,16 @@ describe('bootstrap', () => {
     const emptyLibPrompt = b.buildInstructions('claude', TIER_PROFILES.admin, 'empty-lib-chat')
     expect(emptyLibPrompt).toContain('你还没有表情包')
     expect(emptyLibPrompt).toContain('save_sticker')
-    expect(emptyLibPrompt).not.toContain('send_sticker')
+    expect(emptyLibPrompt).not.toContain('`sticker(tag)`')
 
     const prefOffPrompt = b.buildInstructions('claude', TIER_PROFILES.admin, 'pref-off-chat')
     expect(prefOffPrompt).not.toContain('你还没有表情包')
     expect(prefOffPrompt).not.toContain('save_sticker')
-    expect(prefOffPrompt).not.toContain('send_sticker')
+    expect(prefOffPrompt).not.toContain('`sticker(tag)`')
 
     const nonEmptyPrompt = b.buildInstructions('claude', TIER_PROFILES.admin, 'stocked-chat')
     expect(nonEmptyPrompt).not.toContain('你还没有表情包')
-    expect(nonEmptyPrompt).toContain('send_sticker')
+    expect(nonEmptyPrompt).toContain('`sticker(tag)`')
   })
 
   it('buildInstructions hides the sticker cold-start unlock variant for GUEST-tier chats even when stickerTagsFor returns [] (empty library), since guests cannot call save_sticker (memory_write denied) — mirrors the careEnabled tier gate (fix round 2)', async () => {
@@ -1076,7 +1078,7 @@ describe('bootstrap', () => {
       stickerTagsFor: () => ['happy'],
     })
     const guestPrompt = b.buildInstructions('claude', TIER_PROFILES.guest, 'owner-chat')
-    expect(guestPrompt).toContain('send_sticker')
+    expect(guestPrompt).toContain('`sticker(tag)`')
     expect(guestPrompt).toContain('happy')
   })
 
@@ -1094,7 +1096,7 @@ describe('bootstrap', () => {
     const prompt = withoutDep.buildInstructions('claude', TIER_PROFILES.admin, 'any-chat')
     expect(prompt).not.toContain('你还没有表情包')
     expect(prompt).not.toContain('save_sticker')
-    expect(prompt).not.toContain('send_sticker')
+    expect(prompt).not.toContain('`sticker(tag)`')
   })
 
   it('buildInstructions includes the companion-offer section when companionOfferFor returns true (owner-onboarding design §C1)', async () => {
@@ -1234,9 +1236,9 @@ describe('bootstrap', () => {
       bubbleRepliesFor: (chatId: string) => chatId === 'split-on-chat',
     })
     const prompt = b.buildInstructions('claude', TIER_PROFILES.admin, 'split-on-chat')
-    expect(prompt).toContain('气泡式回复')
+    expect(prompt).toContain('像发微信那样')
     const otherPrompt = b.buildInstructions('claude', TIER_PROFILES.admin, 'other-chat')
-    expect(otherPrompt).not.toContain('气泡式回复')
+    expect(otherPrompt).not.toContain('像发微信那样')
   })
 
   it('buildInstructions omits the bubble-replies section when bubbleRepliesFor returns false, and is byte-identical to the thunk being absent entirely', async () => {
@@ -1256,7 +1258,7 @@ describe('bootstrap', () => {
     const bAbsent = await buildBootstrap({ ...depsBase, supervisor: new SubsystemSupervisor(() => {}) })
     const promptFalse = bFalse.buildInstructions('claude', TIER_PROFILES.admin, 'any-chat')
     const promptAbsent = bAbsent.buildInstructions('claude', TIER_PROFILES.admin, 'any-chat')
-    expect(promptFalse).not.toContain('气泡式回复')
+    expect(promptFalse).not.toContain('像发微信那样')
     expect(promptFalse).toBe(promptAbsent)
   })
 
@@ -1273,7 +1275,7 @@ describe('bootstrap', () => {
       bubbleRepliesFor: () => true,
     })
     const guestPrompt = b.buildInstructions('claude', TIER_PROFILES.guest, 'guest-chat')
-    expect(guestPrompt).toContain('气泡式回复')
+    expect(guestPrompt).toContain('像发微信那样')
   })
 
   // ── Per-session canUseTool (concurrent-dispatch tier hazard) ─────────

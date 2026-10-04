@@ -900,7 +900,7 @@ describe('workbench mutations', () => {
     field.value='Keep my request'
     const form=new FakeElement();form.tagName='FORM';form.dataset.action='continue'
     await [...page.listeners.get('submit')!][0]!({target:form,preventDefault(){}})
-    expect(controller.state.error).toContain('重新选择模型');expect(controller.state.error).not.toContain('execution_model_unsupported')
+    expect(controller.state.error).toContain('为这件事选择可用的模型');expect(controller.state.error).toContain('自动会沿用原设置');expect(controller.state.error).not.toContain('execution_model_unsupported')
     expect(field.value).toBe('Keep my request')
     module.stopWorkbenchPolling()
   })

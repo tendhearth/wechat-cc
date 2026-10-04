@@ -169,3 +169,17 @@ it('bounds public stream output even when an endpoint ignores its output token r
   expect(events.some(e=>e.kind==='text')).toBe(false)
   expect(events.at(-1)).toMatchObject({kind:'error',code:'api_task_output_limit'})
 })
+
+// arch backlog #4 第 2 步:请求本身失败时 message 仍是稳定任务码,code 换成边界分好的 provider 码,
+// 工作台据它说老实的原因(以前只有一句笼统的「API 请求失败」)。
+it.each([
+  [Object.assign(new Error('Invalid Authentication'),{statusCode:401}),'auth_rejected'],
+  [Object.assign(new Error('Unable to connect. Is the computer able to access the url?'),{code:'ConnectionRefused'}),'network'],
+  [Object.assign(new Error('Too Many Requests'),{statusCode:429}),'rate_limited'],
+  [new Error('mystery'),'api_task_request_failed'],
+] as const)('a failed request carries the provider code (%s)',async(failure,code)=>{
+  const model:APIModel={stream(){return{deltas:(async function*(){throw failure})(),finished:new Promise(()=>{})}}}
+  const s=await provider(model).spawn({alias:`workbench:${taskId}`,path:project},ctx())
+  const events=await collect(s.dispatch('go'));await s.close()
+  expect(events.at(-1)).toMatchObject({kind:'error',message:'api_task_request_failed',code})
+})

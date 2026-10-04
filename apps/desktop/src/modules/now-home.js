@@ -1,5 +1,6 @@
 // @ts-check
 // now-home.js — 「此刻」页的纯函数(spec 2026-10-01 §6.3)。无 DOM。
+import { markdownPlainText } from './workbench-markdown.js'
 
 /** @param {number} hour */
 export function greetingFor(hour) {
@@ -26,7 +27,9 @@ export function nowStatusLine(daemon, presence) {
 export function latestCCLine(messages) {
   for (let i = messages.length - 1; i >= 0; i--) {
     const m = /** @type {{role:string,text:string,at?:number,pending?:boolean,source?:string}} */ (messages[i])
-    if (m.role === 'cc' && !m.pending && m.source !== 'workbench' && m.text.trim() !== '') return { text: m.text.trim(), at: typeof m.at === 'number' ? m.at : null }
+    if (m.role !== 'cc' || m.pending || m.source === 'workbench') continue
+    const text = markdownPlainText(m.text)
+    if (text) return { text, at: typeof m.at === 'number' ? m.at : null }
   }
   return null
 }

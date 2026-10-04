@@ -11,6 +11,8 @@ import { tmpdir } from 'node:os'
 import { makeCursorStreamParser } from './cursor-cli-stream'
 import { drainCappedStderr } from './agy-agent-provider'
 import { spawn } from '../lib/runtime/process'
+import { cursorPrintErrorCode } from './cursor-errors'
+import { errorWithProviderCode } from '../lib/provider-error-code'
 
 export interface CursorSpawnHandle {
   stdout: AsyncIterable<Uint8Array | string>
@@ -95,10 +97,14 @@ export async function cursorOneShotEval(spawnFn: CursorSpawnFn, model: string, p
     }
   }
   const code = await proc.exited
-  if (errMsg) throw new Error(errMsg)
+  // 边界产码(arch backlog #4 第 2 步):cursor-agent print 模式自己的几句固定输出 ——
+  // `The provided API key is invalid` ⇒ auth_rejected、`Failed to reach the Cursor API` ⇒ network、
+  // `Upgrade your plan to continue` ⇒ quota、`Authentication required` ⇒ auth_failed(cursor-errors)。
+  if (errMsg) throw errorWithProviderCode(errMsg, cursorPrintErrorCode(errMsg))
   if (code !== 0 && !sawResult) {
     const stderrText = await proc.stderr()
-    throw new Error(`cursor-agent exited ${code}: ${stderrText.slice(0, 300)}`)
+    const message = `cursor-agent exited ${code}: ${stderrText.slice(0, 300)}`
+    throw errorWithProviderCode(message, cursorPrintErrorCode(stderrText))
   }
   return texts.join('')
 }

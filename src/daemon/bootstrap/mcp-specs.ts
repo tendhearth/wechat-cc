@@ -21,6 +21,7 @@ import type { ProviderId } from '../../core/conversation'
 import { isCompiledBundle } from '../../lib/runtime-info'
 import { mergeEnvIntoMcpServers, CORE_MCP_SERVER_NAMES } from '../../core/agent-provider'
 import type { McpStdioSpec } from '../../core/mcp-stdio-spec'
+import { replyDeliveryFor } from '../../core/capability-matrix'
 
 export type { McpStdioSpec } from '../../core/mcp-stdio-spec'
 
@@ -68,6 +69,9 @@ export function wechatStdioMcpSpec(
       WECHAT_INTERNAL_API: internalApi.baseUrl,
       WECHAT_INTERNAL_TOKEN_FILE: internalApi.tokenFilePath,
       ...(participantTag ? { WECHAT_PARTICIPANT_TAG: participantTag } : {}),
+      // 回复交付(spec 2026-10-03 §5):这家 provider 走 daemon 交付 ⇒ wechat MCP 不注册 reply 族工具,
+      // 只给附件工具(+ admin 的 message)。按 provider 的开关来,翻一家就是改一处能力表。
+      ...(participantTag && replyDeliveryFor(participantTag) === 'daemon' ? { WECHAT_REPLY_DELIVERY: 'daemon' } : {}),
     },
   }
 }
@@ -113,4 +117,32 @@ export function buildOpenaiMcpSpecs(
     ...parts.pluginMcp,
   }
   return mergeEnvIntoMcpServers(raw, sessionEnv, CORE_MCP_SERVER_NAMES)
+}
+
+/**
+ * Per-server startup budget for the openai provider's MCP children. Core
+ * servers answer in ~0.3s and plugins normally in 0.1–6s (wxvault, cold);
+ * a server not up by then is treated as down for THIS session.
+ */
+export const OPENAI_MCP_STARTUP_TIMEOUT_MS = 20_000
+
+/**
+ * How the openai provider's per-spawn bridge treats a server that won't
+ * start: core wechat/delegate are required (no reply tool ⇒ no session),
+ * third-party plugins are optional — the session comes up without that
+ * plugin's tools and the skip is logged, the same way the Claude SDK treats a
+ * failed MCP server. 2026-10-03: wxvault took >60s to answer `initialize`
+ * inside the daemon and EVERY openai spawn (owner chat and selftest) threw
+ * `MCP error -32001: Request timed out`, while claude merely lost wxvault.
+ */
+export function openaiMcpBridgeOptions(log: (tag: string, line: string) => void): {
+  isOptional: (serverName: string) => boolean
+  startupTimeoutMs: number
+  onSkip: (serverName: string, reason: string) => void
+} {
+  return {
+    isOptional: (name) => !CORE_MCP_SERVER_NAMES.has(name),
+    startupTimeoutMs: OPENAI_MCP_STARTUP_TIMEOUT_MS,
+    onSkip: (name, reason) => log('MCP', `openai session: plugin "${name}" unavailable, continuing without its tools — ${reason}`),
+  }
 }

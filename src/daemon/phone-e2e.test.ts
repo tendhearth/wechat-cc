@@ -6,10 +6,11 @@
  * 线上只剩两只假 socket:daemon↔中继、手机↔中继,都是同步转发的内存管道。
  */
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
+import { randomUUID } from 'node:crypto'
 import { mkdirSync, mkdtempSync, realpathSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { makeProtocolClient, type ProtocolClient, type ProtocolSocket } from '@wechat-cc/protocol'
+import { makeProtocolClient, MatterInputReceiptResult, type ProtocolClient, type ProtocolSocket } from '@wechat-cc/protocol'
 import { openDb, type Db } from '../lib/db'
 import { removeTempDir } from '../lib/test-temp'
 import { createProviderRegistry } from '../core/provider-registry'
@@ -62,7 +63,7 @@ beforeEach(async () => {
     }
   } }, { displayName: 'Claude', canResume: () => true, workbench: MANAGED_NATIVE_CAPABILITIES })
   workbench = makeWorkbenchService({ store, registry, stateDir: root, managedWorkspaceRoot: managedRoot, ownerChatId: () => 'owner', defaultProvider: 'claude', matters, retainedIdleCloseMs: 0, handoffGraceMs: 0 })
-  const service = makeMattersService({ store: matters, workbench })
+  const service = makeMattersService({ store: matters, workbench, ownerChatId: () => 'owner' })
   mkdirSync(join(root, 'stickers'))
   writeFileSync(join(root, 'stickers', 'wave.png'), PNG)
   panel = makeSettingsPanel({
@@ -183,6 +184,28 @@ const utf8 = new TextEncoder()
 const pause = (ms: number) => new Promise(r => setTimeout(r, ms))
 
 describe('手机协议 v2 进程内端到端', () => {
+  it.each([false,true])('reads one persistent input through encrypted v1 fallback=%s after the detail window and frame limit',async stripV=>{
+    const {client,line}=phone({stripV}),task=createTask('receipt-'+(stripV?'v1':'v2'))
+    await expect.poll(()=>workbench.detail(task.id).runId).toBeTruthy()
+    const runId=workbench.detail(task.id).runId!,requestId=randomUUID(),text='原始要求\r\n  保留空格'
+    const accepted=await client.request({method:'POST',path:'/m/api/matter/say',body:JSON.stringify({id:task.id,runId,requestId,text})})
+    expect(accepted.status).toBe(200)
+    expect(accepted.json<{result:{input:{status:string}}}>().result.input.status).toBe('pending')
+    for(let i=0;i<55;i++){
+      const id=randomUUID();store.liveInputs.add({id,taskId:task.id,runId,text:'后来的补充 '+i});store.liveInputs.set(id,'delivered')
+    }
+    expect(workbench.detail(task.id).inputs.some(input=>input.id===requestId)).toBe(false)
+    for(let i=0;i<4;i++)store.addEvent(task.id,'text','很长的完整内容'.repeat(6_000))
+    const oversized=await client.request({method:'GET',path:'/m/api/matter?id='+task.id})
+    expect(oversized.status).toBe(413);expect(oversized.json()).toEqual({ok:false,error:'detail_too_large'})
+    const result=await client.request({method:'GET',path:'/m/api/matter/input-receipt?id='+task.id+'&requestId='+requestId})
+    expect(client.version()).toBe(stripV?1:2);expect(result.status).toBe(200)
+    expect(MatterInputReceiptResult.parse(result.json())).toEqual({ok:true,input:{id:requestId,taskId:task.id,runId,text,status:'pending',error:null}})
+    expect(line.sent.every(frame=>Buffer.byteLength(frame)<512*1024)).toBe(true)
+    expect(handled.filter(item=>item==='POST /m/api/matter/say')).toHaveLength(1)
+    expect(store.liveInputs.get(requestId)).toMatchObject({taskId:task.id,runId,text,status:'pending',error:null})
+  })
+
   it('请求 / 响应:JSON 带响应头,二进制正文原样往返,base64 请求正文 + 自带请求头交给面板', async () => {
     const { client } = phone()
     const home = await client.request({ method: 'GET', path: '/m/api/home?limit=1' })
@@ -214,7 +237,8 @@ describe('手机协议 v2 进程内端到端', () => {
     const phaseOf = (id: string) => (got.at(-1)!.data.tasks as Array<{ id: string; phase: string }>).find(t => t.id === id)?.phase
     await expect.poll(() => [phaseOf(a.id), phaseOf(b.id)]).toEqual(['working', 'queued'])
     expect(got.at(-1)!.data).toMatchObject({ running: 1, waiting: 1 })
-    expect(got.at(-1)!.data.tasks.map((t: { title: string }) => t.title)).toEqual(['shared#a', 'shared#b'])
+    // 两次创建可能落在同一毫秒，此时快照按随机任务 ID 排序；这里只核对成员，阶段由上面的 ID 断言核对。
+    expect(got.at(-1)!.data.tasks.map((t: { title: string }) => t.title).sort()).toEqual(['shared#a', 'shared#b'])
 
     await release(a)
     await expect.poll(() => phaseOf(b.id)).toBe('working')

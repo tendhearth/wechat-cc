@@ -1,4 +1,6 @@
 // @ts-check
+import {patchLiveRow} from './workbench-live-dom.js'
+export {clearLiveTimelinePatches,hasLiveTimelineInteraction} from './workbench-live-dom.js'
 
 /** 工作台实时流的纯函数(spec §8):事件合并、结构签名、live 组增量补丁、长轮询循环。
  * 这里不碰 document / window —— 补丁只用调用方递进来的节点,便于在没有 DOM 的测试里验证。 */
@@ -51,7 +53,7 @@ export function structuralSignature(detail) {
 }
 
 /** @typedef {{eventId:(event:WorkbenchEvent)=>string,message:(event:WorkbenchEvent)=>string,operation:(event:WorkbenchEvent)=>string}} PatchRenderers */
-/** @typedef {{patched:number,appended:number,missing:number}} PatchResult */
+/** @typedef {{patched:number,appended:number,missing:number,deferred?:number}} PatchResult */
 
 const isMessage = (/** @type {WorkbenchEvent} */ event) => event.kind === 'user' || event.kind === 'text'
 /** 整页渲染会把这些行提到组外(workbench-timeline.js 的 visibleIssue):补丁塞不回正确的位置。 */
@@ -74,22 +76,22 @@ function liveOperationList(root) {
  * 调用方退回整页重画。
  * @param {{querySelector:(selector:string)=>any}} root @param {WorkbenchEvent[]} changed @param {PatchRenderers} render @returns {PatchResult} */
 export function patchLiveTimeline(root, changed, render) {
-  let patched = 0, appended = 0, missing = 0
+  let patched = 0, appended = 0, missing = 0, deferred = 0
   for (const event of changed ?? []) {
     if (hoisted(event)) { missing++; continue }
     const html = isMessage(event) ? render.message(event) : render.operation(event)
     const existing = root.querySelector(`#${render.eventId(event)}`)
     if (existing) {
       if (existing.querySelector?.('[data-timeline-disclosure][open], details[open]')) { missing++; continue }
-      existing.outerHTML = html
-      patched++
+      if(existing.ownerDocument){if(patchLiveRow(root,existing,html))patched++;else deferred++}
+      else {existing.outerHTML = html;patched++}
       continue
     }
     // 每条都重新找一次:上一条刚追加的消息会把 live 组从末尾挤走。
     const host = isMessage(event) ? root.querySelector('.wb-dialogue') : liveOperationList(root)
     if (host) { host.insertAdjacentHTML('beforeend', html); appended++ } else missing++
   }
-  return { patched, appended, missing }
+  return { patched, appended, missing, ...(deferred?{deferred}:{}) }
 }
 
 /** @typedef {{fetchDetail:(id:string,since:number,waitMs:number)=>Promise<any>,onDetail:(detail:any)=>void,onError?:(error:unknown)=>void,waitMs?:number,backoff?:number[]}} LongPollOptions */

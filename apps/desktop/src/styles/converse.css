@@ -1,6 +1,8 @@
 /* 「跟 CC 说」:CC 的话无底,我的话 rail 底;输入是一条胶囊,只有发送用 accent。零字面色值,无阴影。 */
 .converse-page { display: flex; flex-direction: column; flex: 1; min-height: 0; background: var(--th-paper); color: var(--th-ink); }
 .converse-scroll { flex: 1; min-height: 0; overflow-y: auto; display: flex; flex-direction: column; gap: var(--th-space-xl); padding: 28px max(24px, calc((100% - 780px) / 2)); }
+.converse-latest { align-self:center; flex:none; padding:8px 12px; border:0; background:transparent; color:var(--th-accent); font:inherit; font-size:var(--th-size-small); cursor:pointer; }
+.converse-latest[hidden] { display:none; }
 .converse-scroll .empty-state { padding: 40px; text-align: center; color: var(--th-ink-soft); font-size: var(--th-size-small); }
 
 .converse-empty { flex: 1; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 6px; min-height: 320px; padding: 20px 0; text-align: center; }
@@ -16,7 +18,9 @@
 .converse-msg-user { justify-content: flex-end; }
 .converse-msg-cc { justify-content: flex-start; }
 .converse-avatar { width: 32px; height: 32px; object-fit: contain; align-self: flex-start; margin-top: 8px; flex: none; }
-.converse-bubble { max-width: 85%; padding: 4px 0; font-size: var(--th-size-bubble); line-height: var(--th-lh-bubble); white-space: pre-wrap; word-break: break-word; }
+.converse-bubble { min-width:0; max-width: 85%; padding: 4px 0; font-size: var(--th-size-bubble); line-height: var(--th-lh-bubble); white-space: pre-wrap; word-break: break-word; }
+.converse-msg-cc .converse-bubble.cc-readable-markdown { max-width:min(70ch,calc(100% - 74px)); }
+.converse-msg-user .converse-bubble.cc-user-bubble { max-width:min(70ch,85%); white-space:normal; }
 .converse-msg-cc .converse-bubble { background: transparent; color: var(--th-ink); }
 .converse-msg-user .converse-bubble { padding: 12px 16px; border-radius: var(--th-radius-bubble); background: var(--th-rail); color: var(--th-ink); }
 .converse-msg-cc.is-pending .converse-bubble { color: var(--th-ink-soft); }

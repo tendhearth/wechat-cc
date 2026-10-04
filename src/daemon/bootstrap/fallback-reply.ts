@@ -52,6 +52,12 @@ export interface FallbackReplyDeps {
    * 「这次打猎没记上」,而且没有任何迹象。
    */
   observe?: (chatId: string, text: string) => void
+  /**
+   * 回复交付 shadow(spec 2026-10-03 §5.1 第 3 项):legacy 出口实际发出的每一条都交一份给
+   * reply-delivery 的 observeLegacy,和「按新路会发什么」比。放在接收器截流**之前** —— app 这一轮
+   * 被截走的回复也是 legacy 交付的结果。没开 shadow 轮时是一次 Map 查找。
+   */
+  shadow?: (chatId: string, text: string) => void
 }
 
 export type SendAssistantText = (chatId: string, text: string) => Promise<void>
@@ -60,6 +66,7 @@ export function makeSendAssistantText(deps: FallbackReplyDeps): SendAssistantTex
   if (!deps.sendMessage) return undefined
   const send = deps.sendMessage
   return async (chatId, text) => {
+    deps.shadow?.(chatId, text)
     if (deps.capture?.(chatId, text)) return
     deps.observe?.(chatId, text)
     let result: SendMessageResult
@@ -75,5 +82,31 @@ export function makeSendAssistantText(deps: FallbackReplyDeps): SendAssistantTex
       return
     }
     deps.log('FALLBACK_REPLY_SENT', `chat=${chatId} msgId=${result.msgId}`)
+  }
+}
+
+/**
+ * 系统通知(认证失败 / 超时 / 守护拒绝 / spawn 失败 / 本轮出错……)的出口 —— 回复交付 spec §4.3 末段
+ * 「系统通知分家」:和 agent 的话分开记(NOTICE_SENT / NOTICE_FAIL,不是 FALLBACK_REPLY_*),
+ * 不进打猎旁听(一句「登录过期」不是战利品),也不进 shadow 比对。app 接收器照样接 —— 通知在
+ * app 里也要看得见。
+ */
+export function makeSendNotice(deps: FallbackReplyDeps): SendAssistantText | undefined {
+  if (!deps.sendMessage) return undefined
+  const send = deps.sendMessage
+  return async (chatId, text) => {
+    if (deps.capture?.(chatId, text)) return
+    let result: SendMessageResult
+    try {
+      result = await send(chatId, text)
+    } catch (err) {
+      deps.log('NOTICE_FAIL', `chat=${chatId} threw: ${err instanceof Error ? err.message : String(err)}`)
+      throw err
+    }
+    if (result.error) {
+      deps.log('NOTICE_FAIL', `chat=${chatId} error=${result.error}`)
+      return
+    }
+    deps.log('NOTICE_SENT', `chat=${chatId} msgId=${result.msgId}`)
   }
 }

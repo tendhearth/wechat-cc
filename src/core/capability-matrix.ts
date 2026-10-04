@@ -22,6 +22,7 @@
  */
 // src/core/capability-matrix.ts
 
+import type { ReplyDeliveryMode, ReplyTextStrategy } from './turn-reply'
 import type { Mode, ProviderId } from './conversation'
 import type { ProviderCapabilities, PermissionMode } from './agent-provider'
 import { CLAUDE_CAPABILITIES } from './claude-agent-provider'
@@ -126,6 +127,30 @@ export function capabilitiesFor(provider: ProviderId): ProviderCapabilities {
     throw new Error(`capability-matrix: no ProviderCapabilities registered for provider=${provider}`)
   }
   return cap
+}
+
+/**
+ * 回复交付开关(回复交付 spec §5.0):这家执行者这一轮走 legacy(reply 工具说话)、shadow(照旧 +
+ * 影子记账)还是 daemon(最后的话就是回复)。协调器 / 伙伴推送 / app 轮 / 提示词 / 工具表都按**当轮
+ * provider** 的这个值走。没声明或没注册能力表 ⇒ legacy(今天的路,fail safe)。
+ */
+export function replyDeliveryFor(provider: ProviderId): ReplyDeliveryMode {
+  return replyDeliveryOverrides?.[provider] ?? CAPABILITIES_BY_PROVIDER[provider]?.replyDelivery ?? 'legacy'
+}
+
+/**
+ * 运行时回滚开关(agent-config `reply_delivery`,2026-10-03):按 provider 覆盖上面的能力表默认值。
+ * daemon 开机时由 bootstrap 装一次(daemon/bootstrap/reply-delivery-config.ts),在任何 MCP spec / 提示词 /
+ * 协调器读开关之前 —— 所以全 daemon 看到的是同一个值。传 undefined 清掉。
+ */
+let replyDeliveryOverrides: Partial<Record<string, ReplyDeliveryMode>> | undefined
+export function setReplyDeliveryOverrides(overrides: Partial<Record<string, ReplyDeliveryMode>> | undefined): void {
+  replyDeliveryOverrides = overrides && Object.keys(overrides).length > 0 ? { ...overrides } : undefined
+}
+
+/** 这家执行者哪些文字算回复;没声明 ⇒ last_segment(spec 的原规则)。 */
+export function replyTextStrategyFor(provider: ProviderId): ReplyTextStrategy {
+  return CAPABILITIES_BY_PROVIDER[provider]?.replyText ?? 'last_segment'
 }
 
 /**

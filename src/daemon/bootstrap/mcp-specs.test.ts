@@ -1,6 +1,7 @@
 import { describe, it, expect, vi, afterEach } from 'vitest'
 import { wechatStdioMcpSpec, delegateStdioMcpSpec, buildOpenaiMcpSpecs } from './mcp-specs'
 import * as runtimeInfo from '../../lib/runtime-info'
+import * as capabilityMatrix from '../../core/capability-matrix'
 
 const deps = {
   baseUrl: 'http://127.0.0.1:54321',
@@ -33,6 +34,18 @@ describe('wechatStdioMcpSpec', () => {
   it('omits participantTag from env when not provided', () => {
     const spec = wechatStdioMcpSpec(deps)
     expect(spec.env!.WECHAT_PARTICIPANT_TAG).toBeUndefined()
+  })
+
+  // 回复交付(spec 2026-10-03):replyDelivery = daemon 的 provider,它的 wechat MCP 不注册 reply 族工具。
+  it('provider 的 replyDelivery 是 daemon ⇒ env 带 WECHAT_REPLY_DELIVERY=daemon', () => {
+    vi.spyOn(capabilityMatrix, 'replyDeliveryFor').mockImplementation((p) => p === 'openai' ? 'daemon' : 'legacy')
+    expect(wechatStdioMcpSpec(deps, 'openai').env!.WECHAT_REPLY_DELIVERY).toBe('daemon')
+    expect(wechatStdioMcpSpec(deps, 'claude').env!.WECHAT_REPLY_DELIVERY).toBeUndefined()
+  })
+
+  it('shadow / legacy ⇒ 不带(照旧注册 reply 工具)', () => {
+    vi.spyOn(capabilityMatrix, 'replyDeliveryFor').mockReturnValue('shadow')
+    expect(wechatStdioMcpSpec(deps, 'openai').env!.WECHAT_REPLY_DELIVERY).toBeUndefined()
   })
 
   it('always sets WECHAT_INTERNAL_API + WECHAT_INTERNAL_TOKEN_FILE', () => {

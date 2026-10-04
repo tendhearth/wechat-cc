@@ -30,7 +30,7 @@ interface Options {
   nativeHistory?:Partial<Record<NativeHistoryProvider,NativeHistoryReader>>
   mintSessionToken?: (sessionKey: string) => string
   revokeSessionToken?: (sessionKey: string) => void
-  holdBusy?: (label: string) => () => void
+  holdBusy?: (label: string) => () => void; onTurnError?: ServiceCtx['deps']['onTurnError']   // 后者:错误通道 → CLI 自动升级的报错触发(见 ctx.ts)
   timeoutMs?: number
   closeTimeoutMs?: number
   permissionTimeoutMs?: number
@@ -74,7 +74,7 @@ export function makeWorkbenchService(opts: Options) {
   const bumped = (id: string) => { try { touched(id, store.bump(id)) } catch { /* 信号丢了只是多等一轮 */ } }
   const state=makeRuntimeState()
   const actions=new Ref<ServiceActions>('workbench-actions')
-  const ctx:ServiceCtx={store,stateDir:opts.stateDir,state,hub:{touched,bumped,dispose:()=>changes.dispose()},deps:{ownerChatId:opts.ownerChatId,registry:opts.registry,...(opts.usage?{usage:opts.usage}:{}),...(opts.permissionTimeoutMs!==undefined?{permissionTimeoutMs:opts.permissionTimeoutMs}:{}),...(opts.unattendedAck?{unattendedAck:opts.unattendedAck}:{}),...(opts.nativeHistory?{nativeHistory:opts.nativeHistory}:{}),...(opts.registeredProjects?{registeredProjects:opts.registeredProjects}:{}),...(opts.defaultProvider!==undefined?{defaultProvider:opts.defaultProvider}:{}),...(opts.executionConflict?{executionConflict:opts.executionConflict}:{}),...(opts.reports?{reports:opts.reports}:{}),...(opts.recollect?{recollect:opts.recollect}:{}),...(opts.revokeSessionToken?{revokeSessionToken:opts.revokeSessionToken}:{}),...(opts.retainedIdleCloseMs!==undefined?{retainedIdleCloseMs:opts.retainedIdleCloseMs}:{}),...(opts.handoffGraceMs!==undefined?{handoffGraceMs:opts.handoffGraceMs}:{}),...(opts.matters?{matters:opts.matters}:{}),...(opts.mintSessionToken?{mintSessionToken:opts.mintSessionToken}:{}),...(opts.timeoutMs!==undefined?{timeoutMs:opts.timeoutMs}:{}),...(opts.closeTimeoutMs!==undefined?{closeTimeoutMs:opts.closeTimeoutMs}:{}),...(opts.holdBusy?{holdBusy:opts.holdBusy}:{}),...(opts.managedWorkspaceRoot!==undefined?{managedWorkspaceRoot:opts.managedWorkspaceRoot}:{}),...(opts.networkGate?{networkGate:opts.networkGate}:{})},ensureAccepting,...(opts.log?{log:opts.log}:{}),now:Date.now,actions}
+  const ctx:ServiceCtx={store,stateDir:opts.stateDir,state,hub:{touched,bumped,dispose:()=>changes.dispose()},deps:{ownerChatId:opts.ownerChatId,registry:opts.registry,...(opts.usage?{usage:opts.usage}:{}),...(opts.permissionTimeoutMs!==undefined?{permissionTimeoutMs:opts.permissionTimeoutMs}:{}),...(opts.unattendedAck?{unattendedAck:opts.unattendedAck}:{}),...(opts.nativeHistory?{nativeHistory:opts.nativeHistory}:{}),...(opts.registeredProjects?{registeredProjects:opts.registeredProjects}:{}),...(opts.defaultProvider!==undefined?{defaultProvider:opts.defaultProvider}:{}),...(opts.executionConflict?{executionConflict:opts.executionConflict}:{}),...(opts.reports?{reports:opts.reports}:{}),...(opts.recollect?{recollect:opts.recollect}:{}),...(opts.revokeSessionToken?{revokeSessionToken:opts.revokeSessionToken}:{}),...(opts.retainedIdleCloseMs!==undefined?{retainedIdleCloseMs:opts.retainedIdleCloseMs}:{}),...(opts.handoffGraceMs!==undefined?{handoffGraceMs:opts.handoffGraceMs}:{}),...(opts.matters?{matters:opts.matters}:{}),...(opts.mintSessionToken?{mintSessionToken:opts.mintSessionToken}:{}),...(opts.timeoutMs!==undefined?{timeoutMs:opts.timeoutMs}:{}),...(opts.closeTimeoutMs!==undefined?{closeTimeoutMs:opts.closeTimeoutMs}:{}),...(opts.holdBusy?{holdBusy:opts.holdBusy}:{}),...(opts.onTurnError?{onTurnError:opts.onTurnError}:{}),...(opts.managedWorkspaceRoot!==undefined?{managedWorkspaceRoot:opts.managedWorkspaceRoot}:{}),...(opts.networkGate?{networkGate:opts.networkGate}:{})},ensureAccepting,...(opts.log?{log:opts.log}:{}),now:Date.now,actions}
   const review=makeReviewDomain(ctx)
   const attachmentsDomain=makeAttachmentsDomain(ctx)
   const {continuationAttachmentScope,selectAttachments,combinedAttachments,handoffAttachments}=attachmentsDomain
@@ -82,7 +82,7 @@ export function makeWorkbenchService(opts: Options) {
   const {fallbackExecutor}=quotaDomain
   const admissionDomain=makeAdmissionDomain(ctx)
   const {provider,requireInput,canResume,continuation,taskVersion}=admissionDomain
-  const viewDomain=makeViewDomain(ctx)
+  const viewDomain=makeViewDomain(ctx,{quotaHandoff:id=>quotaHandoffDomain.quotaHandoff(id)})
   const {held,runtimeSnapshot,inputMode,isReplied,taskView}=viewDomain
   const nativeDomain=makeNativeDomain(ctx)
   const inputsDomain=makeInputsDomain(ctx)
@@ -90,7 +90,7 @@ export function makeWorkbenchService(opts: Options) {
   const lifecycleDomain=makeLifecycleDomain(ctx)
   const {cancelIdleClose,settleAfterDecision}=lifecycleDomain
   const noticesDomain=makeNoticesDomain(ctx)
-  const {stageFinishedNotice,publishFinishedNotices}=noticesDomain
+  const {stageFinishedNotice,publishFinishedNotices,enqueueNotice}=noticesDomain
   const artifactsDomain=makeArtifactsDomain(ctx)
   const {collect,collectTurnArtifacts,captureCodeChanges}=artifactsDomain
   const executeDomain=makeExecuteDomain(ctx,{admission:admissionDomain,attachments:attachmentsDomain,quota:quotaDomain,view:viewDomain,native:nativeDomain,inputs:inputsDomain,lifecycle:lifecycleDomain,notices:noticesDomain,artifacts:artifactsDomain})
@@ -125,7 +125,7 @@ export function makeWorkbenchService(opts: Options) {
     attention:viewDomain.attention,
     resolveAnswer:inputsDomain.resolveAnswer,
     withdrawInput:inputsDomain.withdrawInput,
-    submitInput:inputsDomain.submitInput,
+    submitInput:inputsDomain.submitInput,inputReceipt:inputsDomain.inputReceipt,
     ...nativeDomain.api,
     addProject:viewDomain.addProject,
     list:viewDomain.list,
@@ -142,7 +142,7 @@ export function makeWorkbenchService(opts: Options) {
     readAttachment:attachmentsDomain.readAttachment,
     discardAttachment:attachmentsDomain.discardAttachment,
     setArchived:lifecycleDomain.setArchived,
-    cancel:lifecycleDomain.cancel,pauseForNetwork:lifecycleDomain.pauseForNetwork,
+    cancel:lifecycleDomain.cancel,suspendForNetwork:lifecycleDomain.suspendForNetwork,resumeFromNetwork:lifecycleDomain.resumeFromNetwork,stopSuspendedForNetwork:lifecycleDomain.stopSuspendedForNetwork,networkSuspended:lifecycleDomain.networkSuspended,
     artifact:artifactsDomain.artifact,
     approve:artifactsDomain.approve,
     /** 这个任务的所有变更快照,新→旧,每个文件附上当前标记。坏的那一轮单独 unavailable,不牵连别轮。 */
@@ -164,7 +164,7 @@ export function makeWorkbenchService(opts: Options) {
       },
     },
   }
-  actions.set({submitInput:(id,input,policy)=>service.submitInput(id,input,policy),continueTask:(id,text,options,policy)=>service.continueTask(id,text,options,policy),isReplied,fallbackExecutor,artifact:(id,artifactId)=>service.artifact(id,artifactId),quotaExhausted:quotaDomain.quotaExhausted,continuation,provider,requireInput,canResume,taskVersion,selectAttachments,combinedAttachments,handoffAttachments,taskView,matterSync:executeDomain.matterSync,start:executeDomain.start,continuationAttachmentScope,inputMode,armIdleClose:lifecycleDomain.armIdleClose,cancelIdleClose,settleAfterDecision,execute:executeDomain.execute,hasUndeliveredInput,holdInputs,collect,collectTurnArtifacts,captureCodeChanges,runtimeSnapshot,held,stageFinishedNotice,publishFinishedNotices})
+  actions.set({submitInput:(id,input,policy)=>service.submitInput(id,input,policy),continueTask:(id,text,options,policy)=>service.continueTask(id,text,options,policy),isReplied,fallbackExecutor,artifact:(id,artifactId)=>service.artifact(id,artifactId),quotaExhausted:quotaDomain.quotaExhausted,continuation,provider,requireInput,canResume,taskVersion,selectAttachments,combinedAttachments,handoffAttachments,taskView,matterSync:executeDomain.matterSync,start:executeDomain.start,continuationAttachmentScope,inputMode,armIdleClose:lifecycleDomain.armIdleClose,cancelIdleClose,settleAfterDecision,execute:executeDomain.execute,hasUndeliveredInput,holdInputs,collect,collectTurnArtifacts,captureCodeChanges,runtimeSnapshot,held,stageFinishedNotice,publishFinishedNotices,enqueueNotice})
   const wechatControl=makeWechatWorkbenchControl({store,ownerChatId:opts.ownerChatId,actions:service})
   return service
 }

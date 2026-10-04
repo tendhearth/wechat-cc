@@ -16,7 +16,7 @@ import { assembleMobilePage } from '../../apps/mobile/assemble'
 import { readMobileSource } from '../../apps/mobile/sources'
 
 const IDS = ['m-list', 'm-detail', 'm-back', 'm-title', 'm-notice', 'm-controls', 'm-permissions',
-  'm-questions', 'm-events', 'm-artifacts', 'm-artifact-preview', 'm-inputs', 'm-say-box', 'm-say', 'm-send', 'm-conn']
+  'm-questions', 'm-events', 'm-artifacts', 'm-artifact-preview', 'm-inputs', 'm-say-box', 'm-say', 'm-send', 'm-conn', 'm-task-status']
 
 type Handler = (ev: unknown) => void
 interface FakeEl {
@@ -87,12 +87,12 @@ function harness(source = MOBILE_WORKBENCH_JS) {
     return Promise.resolve(response)
   }
 
-  const boot = new Function('document', 'window', 'localStorage', 'REMOTE', 'api', 'esc', 'URL', 'ago', source)
+  const boot = new Function('document', 'window', 'localStorage', 'REMOTE', 'api', 'esc', 'URL', 'ago', readMobileSource('markdown.js')+'\n'+source)
   boot(doc, win, {
     getItem: (k: string) => store.get(k) ?? null,
     setItem: (k: string, v: string) => { store.set(k, v) },
     removeItem: (k: string) => { store.delete(k) },
-  }, { relay: 'https://relay.example', id: 'phone1' }, api, (s: string) => String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;').replace(/'/g,'&#39;'), { revokeObjectURL() {} }, () => '刚刚')
+  }, { relay: 'https://relay.example', id: 'phone1' }, api, (s: string) => String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;').replace(/'/g,'&#39;'), class extends URL { static revokeObjectURL() {} }, () => '刚刚')
 
   return {
     els, doc, calls, navButton, docHandlers, winHandlers,
@@ -329,7 +329,7 @@ describe('手机交办页面接线', () => {
       const body=path.endsWith('/options')?{ok:true,status:'ready',defaultProviderId:'codex',projects:[],providers:[{id:'codex',displayName:'Codex',available:true}]}:{ok:false,error:'not_found'}
       return{status:path.includes('create-receipt')?404:200,json:async()=>body}
     }
-    const env={document:{hidden:false,visibilityState:'visible',getElementById:get,createElement:(tag:string)=>get('created-'+tag),querySelector:(selector:string)=>get(selector),querySelectorAll:()=>[],addEventListener(){}},window:{addEventListener(){}},REMOTE:{id:'fixture'},T:'test-token',location:{host:'test',replace(){}},localStorage:{getItem:(key:string)=>saved.get(key)??null,setItem:(key:string,value:string)=>saved.set(key,value),removeItem:(key:string)=>saved.delete(key)},api,esc:String,toast(){},setTimeout,clearTimeout,setInterval,crypto,openMatter:vi.fn(),openYou(){},mUuid:()=>crypto.randomUUID()}
+    const env={document:{hidden:false,visibilityState:'visible',getElementById:get,createElement:(tag:string)=>get('created-'+tag),querySelector:(selector:string)=>get(selector),querySelectorAll:()=>[],addEventListener(){}},window:{addEventListener(){}},REMOTE:{id:'fixture'},T:'test-token',location:{host:'test',replace(){}},localStorage:{getItem:(key:string)=>saved.get(key)??null,setItem:(key:string,value:string)=>saved.set(key,value),removeItem:(key:string)=>saved.delete(key)},api,esc:String,toast(){},setTimeout,clearTimeout,setInterval,crypto,openMatter:vi.fn(),openYou(){},ccMobilePane:vi.fn(),mUuid:()=>crypto.randomUUID()}
     new Function(...Object.keys(env),`var mCurrent=null,mSeq=0;\n${readMobileSource('attachments.js')}\n${readMobileSource('entry.js')}\n${readMobileSource('presence.js')}\n${readMobileSource('home.js')}`)(...Object.values(env))
     await vi.advanceTimersByTimeAsync(0)
     expect(calls.filter(c=>c.path.includes('create-receipt'))).toEqual([{path:'/m/api/matter/create-receipt?requestId='+requestId,method:'GET'}])
@@ -338,6 +338,7 @@ describe('手机交办页面接线', () => {
     expect(get('entry-text').focus).not.toHaveBeenCalled()
     get('home-entry').fire('click');await vi.advanceTimersByTimeAsync(0)
     expect(get('entry-text').focus).toHaveBeenCalledOnce()
+    expect(env.ccMobilePane).toHaveBeenCalledWith('today')
     expect(calls.filter(c=>c.method==='POST')).toEqual([])
     expect(env.openMatter).not.toHaveBeenCalled()
   })

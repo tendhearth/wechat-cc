@@ -1,8 +1,8 @@
-import { useLocalSearchParams, useRouter } from 'expo-router'
-import { useEffect, useRef, useState } from 'react'
+import { useFocusEffect, useLocalSearchParams, useRouter } from 'expo-router'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import { Modal, Pressable, ScrollView, View } from 'react-native'
 import { SafeAreaView } from 'react-native-safe-area-context'
-import type { NativeSessionPageT, SessionContinueT } from '../../backend/types'
+import { BackendError, type Backend, type NativeSessionPageT, type SessionContinueT } from '../../backend/types'
 import { t } from '../../i18n'
 import { useLang } from '../../i18n/useLang'
 import { useBackendCtx } from '../../state/BackendProvider'
@@ -10,19 +10,23 @@ import { useConnection, useSubmit } from '../../state/hooks'
 import { Button } from '../../ui/Button'
 import { ConnectionNotice } from '../../ui/ConnectionNotice'
 import { Dot } from '../../ui/Dot'
+import { MessageText } from '../../ui/Markdown'
 import { radius, space } from '../../ui/tokens'
 import { TopBar } from '../../ui/TopBar'
 import { Txt } from '../../ui/Txt'
 import { useTheme } from '../../ui/useTheme'
 import { canSubmit } from '../../view/connection'
-import { CONTINUE_RECHECK, continueBlock, continueConfirmLabel, continueErrorDot, continueErrorText, continueSheetLines } from '../../view/continue'
+import { CONTINUE_RECHECK, continueBlock, continueConfirmLabel, continueErrorDot, continueErrorText, continueSheetLines, providerName } from '../../view/continue'
 import { adoptStep, previewTracker } from '../../view/continue-flow'
+import { mergeSessionMessages } from '../../view/sessions'
 
 type Msg = NativeSessionPageT['messages'][number]
 type Cont = SessionContinueT | 'loading' | 'failed'
+type ReadingContext = { key: string; window: 'recent' | 'start'; backend: Backend }
+const sameReading = (a: ReadingContext | null, b: ReadingContext) => !!a && a.key === b.key && a.window === b.window && a.backend === b.backend
 
 // 读一个电脑上的会话 + 在手机上接着做(spec 2026-10-01-tendhearth-continue-sessions §4.4)。
-// 消息:首页进来就拉,「继续读取」按 nextCursor 追加。底部:先问电脑能不能接(不缓存),问到之前什么都不画。
+// 默认近期20条;从头查看时按 nextCursor 追加。预览在焦点/重连时复核,继续提交仍需主人停止确认。
 export default function SessionReader() {
   const { c } = useTheme()
   const lang = useLang()
@@ -32,6 +36,9 @@ export default function SessionReader() {
   const { backend } = useBackendCtx()
   const { key: raw } = useLocalSearchParams<{ key: string }>()
   const key = decodeURIComponent(String(raw ?? ''))
+  const [selection, setSelection] = useState<{ key: string; window: 'recent' | 'start' }>({ key, window: 'recent' })
+  const window = selection.key === key ? selection.window : 'recent'
+  const [confirmedWindow, setConfirmedWindow] = useState<NativeSessionPageT['window']>(undefined)
   const [title, setTitle] = useState('')
   const [rowProvider, setRowProvider] = useState<string | null>(null)
   const [msgs, setMsgs] = useState<Msg[]>([])
@@ -45,52 +52,70 @@ export default function SessionReader() {
   const [cont, setCont] = useState<Cont>('loading')
   const [sheet, setSheet] = useState(false)
   const [sending, setSending] = useState(false)
+  const sendingRef = useRef(false)
   const [failure, setFailure] = useState<{ text: string; dot: 'bad' | 'warn' | 'unknown' } | null>(null)
   // 正在重问预览(点开确认卡 / 重连之后):问到之前确认按钮不能点,免得按着旧的「能接」提交(Q1)
   const [checking, setChecking] = useState(false)
-  const [tracker] = useState(() => previewTracker(setChecking))
+  const checkingRef = useRef(false)
+  const [tracker] = useState(() => previewTracker(value => { checkingRef.current = value; setChecking(value) }))
   // POST 回来时页面还是不是那个会话(Q3):换了 key 就不跳
   const keyRef = useRef(key)
   keyRef.current = key
+  const contextRef = useRef({ key, window, backend })
+  contextRef.current = { key, window, backend }
+  const loadedContext = useRef<ReadingContext | null>(null)
+  const focused = useRef(false)
   const online = canSubmit(conn)
 
-  const load = async (cursor?: string) => {
-    if (cursor && busyRef.current) return
+  const load = useCallback(async (cursor?: string) => {
+    if (cursor && (busyRef.current || window !== 'start')) return
     const my = ++req.current
-    if (cursor) { busyRef.current = true; setBusy(true) }
+    busyRef.current = true; setBusy(true)
+    if (!cursor && !sameReading(loadedContext.current, { key, window, backend })) { setState('loading'); setConfirmedWindow(undefined) }
     try {
-      const p = await backend.session(key, cursor)
-      if (my !== req.current) return
+      const p = await backend.session(key, cursor, window)
+      if (my !== req.current || contextRef.current.key !== key || contextRef.current.window !== window || contextRef.current.backend !== backend) return
+      if (p.session.key !== key) throw new BackendError('unknown')
+      loadedContext.current = { key, window, backend }
       setTitle(p.session.title)
       setRowProvider(p.session.provider)
-      setMsgs(m => (cursor ? [...m, ...p.messages] : p.messages))
-      setNext(p.nextCursor)
+      setMsgs(m => mergeSessionMessages(cursor ? m : [], p.messages))
+      setNext(window === 'start' ? p.nextCursor : null)
+      setConfirmedWindow(p.window)
       setState('ok'); setMoreFailed(false)
     } catch (e) {
-      if (my !== req.current) return
+      if (my !== req.current || !sameReading({ key, window, backend }, contextRef.current)) return
       const code = typeof e === 'object' && e !== null ? (e as { code?: unknown }).code : undefined
       if (cursor) setMoreFailed(true)
       else setState(code === 'not_found' ? 'missing' : 'slow')
-    } finally { if (cursor && my === req.current) { busyRef.current = false; setBusy(false) } }
-  }
+    } finally { if (my === req.current) { busyRef.current = false; setBusy(false) } }
+  }, [key, window, backend])
   /** 问电脑这条能不能接。重连(epoch 前进)、点开确认卡、状态类失败之后都重问。返回问到的(过期的 / 问不到 ⇒ null)。 */
-  const check = async (): Promise<SessionContinueT | null> => {
+  const check = useCallback(async (): Promise<SessionContinueT | null> => {
     const r = await tracker.run(() => backend.continuePreview(key))
-    if (!r.current) return null
+    if (!r.current || keyRef.current !== key || contextRef.current.backend !== backend) return null
     if (r.ok) { setCont(r.value); return r.value }
     setCont('failed'); return null
-  }
-  useEffect(() => {
+  }, [tracker, backend, key])
+  useFocusEffect(useCallback(() => {
+    focused.current = true
     busyRef.current = false; setBusy(false)
-    setTitle(''); setRowProvider(null); setMsgs([]); setNext(null); setMoreFailed(false); setState('loading')
     setCont('loading'); setSheet(false); setFailure(null)
-    void load()
-    return () => { req.current++ }
-  }, [key]) // eslint-disable-line react-hooks/exhaustive-deps
-  useEffect(() => {
+    // 阅读区属于这一次成功读取的上下文。普通回页只核验续聊,不替换多页/展开原文。
+    // 首次读取在 blur 中作废时还没有成功上下文,下一次 focus 会再读。
+    if (!sameReading(loadedContext.current, { key, window, backend })) {
+      setTitle(''); setRowProvider(null); setMsgs([]); setNext(null); setConfirmedWindow(undefined); setMoreFailed(false); setState('loading')
+      void load()
+    }
     void check()
-    return () => tracker.cancel()
-  }, [key, conn.epoch]) // eslint-disable-line react-hooks/exhaustive-deps
+    return () => { focused.current = false; req.current++; tracker.cancel() }
+  }, [key, window, backend, load, check, tracker]))
+  const lastEpoch = useRef(conn.epoch)
+  useEffect(() => {
+    if (lastEpoch.current === conn.epoch) return
+    lastEpoch.current = conn.epoch
+    if (focused.current) void check()
+  }, [conn.epoch, check])
 
   // 执行者的名字只来自电脑(预览 / 会话行),从不假定是 Claude(裁决 R5);都还没有 ⇒ null,失败句说「这个执行者」。
   const provider = typeof cont === 'object' ? cont.provider : rowProvider
@@ -100,13 +125,17 @@ export default function SessionReader() {
   /** 「接着做」与「打开这件事」都走同一个幂等 POST;daemon 回成功之前页面上不出现任何「在跑」。
    *  redirected:这一次是「已经接过了 ⇒ 打开」绕过来的,再说接过了就不再绕(Q2)。 */
   const adopt = async (then: (matterId: string) => void, redirected = false) => {
-    if (sending) return
+    if (sendingRef.current || checkingRef.current || !online) return
     const myKey = key
+    const myBackend = backend
+    sendingRef.current = true
     setSending(true); setFailure(null)
     const box: { id: string | null } = { id: null }
     const r = await submit(`continue:${myKey}`, async () => { box.id = (await backend.continueSession(myKey)).matterId })
+    sendingRef.current = false
+    if (contextRef.current.backend !== myBackend) return
     setSending(false)
-    const step = adoptStep(r, box.id, { keyStillCurrent: keyRef.current === myKey, redirected })
+    const step = adoptStep(r, box.id, { keyStillCurrent: focused.current && keyRef.current === myKey, redirected })
     if (step.kind === 'stay') return
     if (step.kind === 'navigate') { then(step.matterId); return }
     let code = 'session_managed'
@@ -127,7 +156,9 @@ export default function SessionReader() {
   })
   const openThen = (id: string) => { setSheet(false); router.push(`/matter/${encodeURIComponent(id)}`) }
   const openExisting = (): Promise<void> => adopt(openThen)
-  const openSheet = () => { setFailure(null); setSheet(true); void check() }
+  const openSheet = () => { if (checkingRef.current) return; setFailure(null); setSheet(true); void check() }
+  const recheck = () => { if (!checkingRef.current) { setFailure(null); void check() } }
+  const chooseWindow = (nextWindow: 'recent' | 'start') => { setSelection({ key, window: nextWindow }) }
 
   const failureRow = (testID: string) => failure ? (
     <View style={{ flexDirection: 'row', alignItems: 'center', gap: space.s }}>
@@ -140,15 +171,23 @@ export default function SessionReader() {
     <SafeAreaView edges={['top', 'bottom']} style={{ flex: 1, backgroundColor: c.paper }}>
       <TopBar title={title || t(lang, 'sessions.title')} onBack={() => (router.canGoBack() ? router.back() : router.replace('/sessions'))} onAvatar={() => router.push('/settings')} />
       <View style={{ paddingHorizontal: space.xl }}><ConnectionNotice /></View>
+      <View style={{ paddingHorizontal: space.xl, paddingBottom: space.m, gap: space.s }}>
+        {confirmedWindow === 'recent' ? <Txt testID="session-window" role="meta" tone="inkSoft">{t(lang, 'sessions.recent')}</Txt> : window === 'start' && state === 'ok' ? <Txt testID="session-window" role="meta" tone="inkSoft">{t(lang, 'sessions.start')}</Txt> : null}
+        <Button kind="secondary" testID={window === 'recent' ? 'session-view-start' : 'session-view-recent'} label={t(lang, window === 'recent' ? 'sessions.viewStart' : 'sessions.viewRecent')} onPress={() => chooseWindow(window === 'recent' ? 'start' : 'recent')} />
+        {sameReading(loadedContext.current, { key, window, backend }) ? <Pressable testID="session-refresh" accessibilityRole="button" accessibilityLabel={t(lang, 'sessions.refreshRecords')} accessibilityState={{ disabled: !online || busy, busy }} disabled={!online || busy} onPress={() => void load()} style={{ alignSelf: 'flex-start', minHeight: 36, justifyContent: 'center' }}>
+          <Txt role="small" style={{ textDecorationLine: 'underline' }}>{t(lang, 'sessions.refreshRecords')}</Txt>
+        </Pressable> : null}
+      </View>
       <ScrollView contentContainerStyle={{ paddingHorizontal: space.xl, paddingBottom: space.xl, gap: space.m }}>
         {state === 'loading' ? <Txt role="bubble" tone="inkSoft">{t(lang, 'sessions.loading')}</Txt> : null}
         {state === 'missing' ? <Txt testID="sessions-unsupported" role="bubble" tone="inkSoft">{t(lang, 'sessions.unsupported')}</Txt> : null}
         {state === 'slow' ? (
           <View style={{ gap: space.m }}>
-            <Txt testID="sessions-slow" role="bubble" tone="inkSoft">{t(lang, 'sessions.slow')}</Txt>
+            <Txt testID="sessions-slow" role="bubble" tone="inkSoft">{t(lang, window === 'recent' ? 'sessions.recentUnavailable' : 'sessions.slow')}</Txt>
             <Button kind="secondary" testID="session-retry" label={t(lang, 'common.retry')} onPress={() => void load()} />
           </View>
         ) : null}
+        {state === 'ok' && window === 'recent' && confirmedWindow !== 'recent' ? <Txt testID="session-window-unconfirmed" role="meta" tone="inkSoft">{t(lang, 'sessions.recentUnavailable')}</Txt> : null}
         {msgs.map((m, i) => {
           const mine = m.role === 'user'
           return (
@@ -158,7 +197,8 @@ export default function SessionReader() {
               style={{ alignSelf: mine ? 'flex-end' : 'flex-start', maxWidth: '85%', backgroundColor: c.paper, borderColor: c.hair, borderWidth: 1, paddingHorizontal: space.l, paddingVertical: space.m, gap: space.xs,
                 borderTopLeftRadius: radius.bubble, borderTopRightRadius: radius.bubble, borderBottomLeftRadius: mine ? radius.bubble : 4, borderBottomRightRadius: mine ? 4 : radius.bubble }}
             >
-              <Txt selectable role="body" content="user">{m.text}</Txt>
+              <Txt role="caption" tone="inkSoft">{mine ? t(lang, 'chat.me') : rowProvider ? providerName(rowProvider, lang) : t(lang, 'cc.label')}</Txt>
+              <MessageText role={mine ? 'user' : 'assistant'} text={m.text} />
               {m.truncated ? <Txt role="caption" tone="inkSoft">{t(lang, 'chat.truncated')}</Txt> : null}
             </View>
           )
@@ -174,13 +214,13 @@ export default function SessionReader() {
       {block.kind === 'none' ? null : (
         <View style={{ paddingHorizontal: space.xl, paddingBottom: space.m, gap: space.s }}>
           {block.kind === 'continue' ? (
-            <Button kind="primary" testID="session-continue" label={block.label} onPress={openSheet} disabled={!online} />
+            <Button kind="primary" testID="session-continue" label={block.label} onPress={openSheet} disabled={!online || checking} />
           ) : block.kind === 'open' ? (
-            <Button kind="primary" testID="session-open" label={block.label} onPress={() => void openExisting()} disabled={!online} busy={sending} />
+            <Button kind="primary" testID="session-open" label={block.label} onPress={() => void openExisting()} disabled={!online || checking} busy={sending} />
           ) : (
             <>
               <Txt testID="session-continue-note" role="meta" tone="inkSoft">{block.text}</Txt>
-              {block.retry ? <Button kind="secondary" testID="session-continue-retry" label={t(lang, 'common.retry')} onPress={() => void check()} /> : null}
+              {block.retry ? <Button kind="secondary" testID="session-continue-retry" label={t(lang, 'continue.recheck')} onPress={recheck} disabled={!online} busy={checking} /> : null}
             </>
           )}
           {sheet || (block.kind === 'note' && failure?.text === block.text) ? null : failureRow('session-continue-error')}
@@ -201,12 +241,13 @@ export default function SessionReader() {
             // 点开时重问,发现别处刚接过:直接给「打开这件事」
             <>
               {failureRow('continue-error')}
-              <Button kind="primary" testID="continue-open" label={block.label} onPress={() => void openExisting()} disabled={!online} busy={sending} />
+              <Button kind="primary" testID="continue-open" label={block.label} onPress={() => void openExisting()} disabled={!online || checking} busy={sending} />
             </>
           ) : block.kind === 'note' ? (
             // 点开时重问,电脑那边变了(开始跑了 / 额度用完了):只说为什么,收起主按钮
             <>
               <Txt testID="continue-sheet-note" role="bubble" tone="inkSoft">{block.text}</Txt>
+              {block.retry ? <Button kind="secondary" testID="continue-sheet-recheck" label={t(lang, 'continue.recheck')} onPress={recheck} disabled={!online} busy={checking} /> : null}
               {failure?.text === block.text ? null : failureRow('continue-error')}
             </>
           ) : null}

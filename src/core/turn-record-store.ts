@@ -54,10 +54,14 @@ interface Row {
   text_chunks: number
   error: string | null
   tool_calls: string | null
+  delivery: string | null
+  bubbles: number | null
+  attachments: number | null
+  narration_segments: number | null
 }
 
 const SELECT_COLS =
-  'id, chat_id, provider, alias, mode, started_at, ended_at, duration_ms, outcome, reply_tool_called, text_chunks, error, tool_calls'
+  'id, chat_id, provider, alias, mode, started_at, ended_at, duration_ms, outcome, reply_tool_called, text_chunks, error, tool_calls, delivery, bubbles, attachments, narration_segments'
 
 function parseToolCalls(raw: string | null): string[] {
   if (!raw) return []
@@ -83,13 +87,18 @@ function toRecord(r: Row): StoredTurnRecord {
     ...(r.error != null ? { error: r.error } : {}),
     // 老行(v35 之前)没有这一列 —— 空数组表示「不知道」,不是「没调工具」。
     toolCalls: parseToolCalls(r.tool_calls),
+    // v71 之前 / legacy 的轮没有这几列(NULL = 不知道,不是「什么都没发」)。
+    ...(r.delivery != null ? { delivery: r.delivery as NonNullable<TurnRecord['delivery']> } : {}),
+    ...(r.bubbles != null ? { bubbles: r.bubbles } : {}),
+    ...(r.attachments != null ? { attachments: r.attachments } : {}),
+    ...(r.narration_segments != null ? { narrationSegments: r.narration_segments } : {}),
   }
 }
 
 export function makeTurnRecordStore(db: Db): TurnRecordStore {
-  const stmtAppend = db.query<unknown, [string, string, string, string, string, string, number, number, number, string, number, number, string | null, string | null]>(
-    `INSERT INTO turn_records(id, ts, chat_id, provider, alias, mode, started_at, ended_at, duration_ms, outcome, reply_tool_called, text_chunks, error, tool_calls)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+  const stmtAppend = db.query<unknown, [string, string, string, string, string, string, number, number, number, string, number, number, string | null, string | null, string | null, number | null, number | null, number | null]>(
+    `INSERT INTO turn_records(id, ts, chat_id, provider, alias, mode, started_at, ended_at, duration_ms, outcome, reply_tool_called, text_chunks, error, tool_calls, delivery, bubbles, attachments, narration_segments)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
   )
   // Keep only the newest N rows for the just-appended chat. ended_at then
   // rowid as the tiebreak mirrors the read ordering, so a prune never drops a
@@ -127,6 +136,7 @@ export function makeTurnRecordStore(db: Db): TurnRecordStore {
           record.replyToolCalled ? 1 : 0, record.textChunks, error,
           // 只存名字。参数里是搜索词/文件路径/消息正文,不进库。
           record.toolCalls?.length ? JSON.stringify([...new Set(record.toolCalls)]) : null,
+          record.delivery ?? null, record.bubbles ?? null, record.attachments ?? null, record.narrationSegments ?? null,
         )
         stmtPrune.run(record.chatId, record.chatId, TURN_RECORDS_MAX_PER_CHAT)
       })()

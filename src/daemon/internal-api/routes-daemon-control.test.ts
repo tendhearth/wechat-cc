@@ -211,3 +211,39 @@ describe('POST /v1/selftest/converse', () => {
     expect(selftestConverse).toHaveBeenCalledTimes(1)
   })
 })
+
+describe('POST /v1/cli/upgrade|rollback + /v1/health cli_upgrade(外部 CLI 自动升级,2026-10-04)', () => {
+  const status = { enabled: true, check_hour: 4, active: null, clis: [{ id: 'codex', label: 'Codex', installed: '0.160.0' }] }
+  const fakeUpgrader = () => ({
+    check: vi.fn(async () => ({})),
+    upgrade: vi.fn(async () => ({ ok: true, result: 'upgraded', from: '0.153.4', to: '0.160.0' })),
+    rollback: vi.fn(async () => ({ ok: true, result: 'rolled_back', from: '0.160.0', to: '0.153.4' })),
+    status: vi.fn(() => status),
+  })
+
+  it('503 until main wires the engine; 400 on an unknown CLI name', async () => {
+    expect((await routesWith({})['POST /v1/cli/upgrade']!(new URLSearchParams(), { name: 'codex' })).status).toBe(503)
+    const r = routesWith({ cliUpgrade: fakeUpgrader() })
+    expect((await r['POST /v1/cli/upgrade']!(new URLSearchParams(), { name: 'openai' })).status).toBe(400)
+    expect((await r['POST /v1/cli/rollback']!(new URLSearchParams(), { name: 'bogus' })).status).toBe(400)
+  })
+
+  it('manual upgrade checks latest first, then upgrades with source=manual; rollback delegates', async () => {
+    const u = fakeUpgrader()
+    const r = routesWith({ cliUpgrade: u })
+    const res = await r['POST /v1/cli/upgrade']!(new URLSearchParams(), { name: 'codex', force: true })
+    expect(res.status).toBe(200)
+    expect(u.check).toHaveBeenCalledWith('codex', 'manual')
+    expect(u.upgrade).toHaveBeenCalledWith('codex', { source: 'manual', force: true })
+    expect(res.body).toMatchObject({ outcome: { result: 'upgraded' }, status: { id: 'codex' } })
+    const rb = await r['POST /v1/cli/rollback']!(new URLSearchParams(), { name: 'codex' })
+    expect(rb.body).toMatchObject({ outcome: { result: 'rolled_back' } })
+  })
+
+  it('/v1/health carries the cli_upgrade block when wired, nothing when not', async () => {
+    const withIt = await routesWith({ daemonPid: 1, stateDir: '/nonexistent', cliUpgrade: fakeUpgrader() })['GET /v1/health']!(new URLSearchParams(), undefined)
+    expect((withIt.body as { cli_upgrade?: unknown }).cli_upgrade).toEqual(status)
+    const without = await routesWith({ daemonPid: 1, stateDir: '/nonexistent' })['GET /v1/health']!(new URLSearchParams(), undefined)
+    expect((without.body as { cli_upgrade?: unknown }).cli_upgrade).toBeUndefined()
+  })
+})

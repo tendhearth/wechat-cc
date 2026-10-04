@@ -28,6 +28,13 @@ export const CONNECT_FAILURE_SOURCE = [
   'connection ?refused',
   'failed to connect',
   'socket hang up',
+  // Bun —— openai 兼容那条路真机采到的(provider-error-shapes §4.6)
+  'socket connection was closed',
+  // Go(agy / Antigravity CLI)—— 真机日志:`dial tcp: lookup …: no such host`、
+  // `Post "https://…": EOF`(对端在 TLS/HTTP 之前掐断)。EOF 只认 Go 的
+  // `<url>": EOF` 形状,不认正文里随便出现的 EOF。
+  'no such host',
+  '": EOF\\b',
 ].join('|')
 
 const CONNECT_RE = new RegExp(CONNECT_FAILURE_SOURCE, 'i')

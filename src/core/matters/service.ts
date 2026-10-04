@@ -15,12 +15,12 @@ import {sayTextHash,type SayReceipts} from './say-receipts'
  * task → 工作台续接;chat → 现有的 app 对话通道(只对主人的 chat)。
  */
 export interface MatterTaskView {id:string;title:string;status:string;phase?:string;providerId:string;path:string;error:string|null;updatedAt:number;archivedAt?:number|null}
-export interface MatterEvent {kind:string;text:string;createdAt:number;source?:string;attachments?:Attachment[]}
-export type MatterInput=Pick<LiveInput,'id'|'taskId'|'runId'|'text'|'status'|'attachments'>
+export interface MatterEvent {kind:string;text:string;createdAt:number;source?:string;attachments?:Attachment[];errorCode?:'execution_model_unsupported';diagnostic?:string}
+export type MatterInput=Pick<LiveInput,'id'|'taskId'|'runId'|'text'|'status'|'attachments'>&Partial<Pick<LiveInput,'error'>>
 // 只投影显示材料所需的五个字段；不能把内部存储路径、owner 或草稿身份带到手机。
 const publicMaterials=(attachments?:readonly Attachment[])=>attachments?.length?{attachments:attachments.map(({id,name,mime,size,sha256})=>({id,name,mime,size,sha256}))}:{}
 const publicInput=({id,taskId,runId,text,status,attachments}:MatterInput):MatterInput=>({id,taskId,runId,text,status,...publicMaterials(attachments)})
-const publicEvent=({kind,text,createdAt,source,attachments}:MatterEvent):MatterEvent=>({kind,text,createdAt,...(source!==undefined?{source}:{}),...publicMaterials(attachments)})
+const publicEvent=({kind,text,createdAt,source,attachments,errorCode,diagnostic}:MatterEvent):MatterEvent=>({kind,text,createdAt,...(source!==undefined?{source}:{}),...publicMaterials(attachments),...(kind==='error'&&errorCode==='execution_model_unsupported'?{errorCode,...(typeof diagnostic==='string'?{diagnostic}:{} )}:{})})
 export interface MatterTaskControls {
   runId?:string;inputMode?:'steer'|'send'|'queue'
   permissions:PendingWorkbenchPermission[];questions:PendingUserInput[];artifacts:Artifact[];inputs:MatterInput[]
@@ -40,12 +40,15 @@ export const MATTER_ARTIFACT_CHUNK_BYTES=128*1024
 export interface MatterArtifactChunk {taskId:string;artifactId:string;name:string;mime:string;size:number;sha256:string;offset:number;nextOffset:number;contentBase64:string}
 export interface MattersServiceDeps {
   store:MatterStore
+  /** Trusted owner resolver for narrow phone receipt reads; no identity comes from the request. */
+  ownerChatId?:()=>string|null
   workbench?:{
     detail(id:string):{task:MatterTaskView;events:MatterEvent[]}&Partial<MatterTaskControls>&{requiresExternalClose?:boolean;continuation?:{mode:string}}
     /** 手机说第一句给「导入了、还没发过第一句」的任务(spec D5);没接 ⇒ 手机也走 continueTask(409)。 */
     continueImported?(id:string,text:string,options:{inputRequestId?:string}&MatterMaterials,attachmentPolicy?:'owner'):Promise<MatterTaskView>
     continueTask(id:string,text:string,options?:{inputRequestId?:string}&MatterMaterials,attachmentPolicy?:'owner'):MatterTaskView
     submitInput?(id:string,input:{runId:string;requestId:string;text:string}&MatterMaterials,attachmentPolicy?:'owner'):Promise<LiveInput>
+    inputReceipt?(id:string,requestId:string):LiveInput|null
     resolvePermission?(id:string,requestId:string,decision:PermissionDecision):void
     resolveAnswer?(id:string,requestId:string,answers:unknown):void
     artifact?(id:string,artifactId:string):{name:string;mime:string;size:number;sha256:string;contentBase64:string}
@@ -63,6 +66,8 @@ export interface MattersServiceDeps {
 export interface MattersService {
   list(filter?:ListMatters):Matter[]
   detail(id:string):Promise<MatterDetail>
+  /** One durable workbench input, including its delivery reason; never loads or mutates the detail. */
+  inputReceipt(id:string,requestId:string):MatterInput|null
   /** 主人那条对话(没有就建),并记下是从哪个表面看的;没配主人 → null。 */
   ownerChat(surface:'desktop'|'phone'):Promise<MatterDetail|null>
   say(id:string,text:string,surface?:'desktop'|'phone',input?:MatterSayInput):Promise<{kind:'task';task:MatterTaskView;input?:MatterInput}|{kind:'chat';reply:string}>
@@ -100,6 +105,16 @@ export function makeMattersService(deps:MattersServiceDeps):MattersService {
   }
   return {
     list:filter=>deps.store.list(filter),
+    inputReceipt(id,requestId){
+      if(!ID.test(id))throw Error('invalid_matter_id')
+      const key=normalizeInputRequestId(requestId),matter=deps.store.get(id)
+      const owner=(deps.ownerChatId??deps.chat?.ownerChatId)?.()??null
+      if(!matter||matter.kind!=='task'||!owner||matter.ownerChatId!==owner)return null
+      if(!deps.workbench?.inputReceipt)throw Error('workbench_not_wired')
+      const input=deps.workbench.inputReceipt(id,key)
+      if(!input||input.id!==key||input.taskId!==id)return null
+      return {...publicInput(input),error:input.error}
+    },
     async detail(id){
       const matter=require(id)
       let task:MatterTaskView|null=null,events:MatterEvent[]=[]

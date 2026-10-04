@@ -26,14 +26,17 @@
 | ↑ 实时事件流 / 逐文件 diff 审阅 / 免审执行者 | 同上 | `superpowers/specs/2026-09-17-{workbench-live-stream,workbench-diff-review,unattended-executors}-design.md` |
 | ACP(Cursor 走 `cursor-agent acp`) | [cc-workbench.md](cc-workbench.md#免审执行者与-acp) | `superpowers/specs/2026-09-17-acp-evaluation.md`(定案)+ `2026-09-17-acp-cursor-executor-design.md` + `2026-09-18-acp-cursor-chat-design.md` |
 | 工作台文件锚定层的威胁模型(防什么 / 不防什么 / 从锚点开整条链) | [reference/workbench-file-guard.md](reference/workbench-file-guard.md) | 评审 #3 owner 定案(2026-10-01),见 roadmap 修订记录 |
-| 网络守护(bx 优先;网络未受保护时暂停所有模型调用、拦在哪、刻意不拦什么、怎么验) | [reference/network-guard.md](reference/network-guard.md) | 主人拍板(2026-10-02),见 roadmap 修订记录 |
+| 网络守护(守护 v2 按调用判:哪些调用需要保护、guard.json 覆盖、bx / 探测信号、拦在哪、刻意不拦什么、怎么验) | [reference/network-guard.md](reference/network-guard.md) | 主人拍板(2026-10-02 两次,第二次收窄),见 roadmap 修订记录 |
 | 内部 API 鉴权(tier / token / routeAllow / 登记几处) | [reference/internal-api-auth.md](reference/internal-api-auth.md) | `superpowers/specs/2026-06-21-internal-api-tier-authz-design.md` |
 | 发版(tag → 三平台构建 → Publish → R2 更新源) | [maintainer/release.md](maintainer/release.md) | — |
 | 自维护(部署 / 自检 / CI 闸门) | [maintainer/](maintainer/README.md) | `superpowers/specs/2026-09-18-{self-maintenance,ci-triage}-design.md` |
 | 自改流水线(`self change`) | [maintainer/self-change.md](maintainer/self-change.md) | `superpowers/specs/2026-09-18-self-change-pipeline-design.md` |
+| 外部 agent CLI 自动升级(claude / codex / cursor-agent / agy:官方升级器、升级后自检、自动退回、坏版本、`wechat-cc cli`) | [maintainer/cli-auto-upgrade.md](maintainer/cli-auto-upgrade.md) | 主人拍板(2026-10-04),见 roadmap 修订记录 |
 | 「一件事」matter 原语与任务入口 | [工作台现状](cc-workbench.md) | `superpowers/specs/2026-09-13-cc-unified-task-entry.md` 那一批(09-12/09-13)；[陪伴交办与手机验收记录](superpowers/reports/2026-09-22-cc-companion-task-entry.md)；[统一交办开发分支验证](superpowers/plans/2026-09-26-task-entry-validation.md) |
 | 原生手机（Expo） | [roadmap.md](roadmap.md);[app 怎么跑与硬要求](../apps/app/README.md) | spec `superpowers/specs/2026-09-30-tendhearth-app-v1-design.md` + 计划 `superpowers/plans/2026-09-30-tendhearth-app-backend.md` + 计划 `superpowers/plans/2026-09-30-tendhearth-app-skeleton.md` + 计划 `superpowers/plans/2026-09-30-tendhearth-app-live.md` + 计划 `superpowers/plans/2026-09-30-tendhearth-app-push.md` + spec `superpowers/specs/2026-10-01-tendhearth-app-chat-design.md` + 计划 `superpowers/plans/2026-10-01-tendhearth-app-chat.md` + 设计稿 `design/tendhearth-app-v1/` |
 | 两端设计统一 | [roadmap.md](roadmap.md) | spec `superpowers/specs/2026-10-01-tendhearth-design-unify-design.md` + 计划 `superpowers/plans/2026-10-01-tendhearth-design-unify.md`;验收截图与对稿记录在仓库外 `~/Documents/tendhearth/cc-screens-2026-10-01-design/` |
+| 三端阅读与核心旅程优化 | [实施与验收清单](superpowers/specs/2026-10-02-core-experience-optimization.md) | 竞品一手依据、设计约束、真实回执、已有会话阅读与交付边界 |
+| 重启恢复、额度接手与模型失败 | [本轮对照与验收](superpowers/specs/2026-10-03-recovery-and-competitor-comparison.md) | 固定竞品源码依据、SecureStore 提交日志、单回执读取与两端确认流程 |
 | 手机配对 | [roadmap.md](roadmap.md);[中继 §9 通用链接](maintainer/relay.md) | spec `superpowers/specs/2026-10-01-tendhearth-pairing-ux-design.md` + 计划 `superpowers/plans/2026-10-01-tendhearth-pairing-ux.md` |
 | 原生会话续接 | [roadmap.md](roadmap.md) | spec `superpowers/specs/2026-10-01-tendhearth-continue-sessions-design.md` + 计划 `superpowers/plans/2026-10-01-tendhearth-continue-sessions.md` |
 | 交办后的回报(形状已定,细节未完) | — | `superpowers/specs/2026-09-23-delegation-report-design.md` |
@@ -50,13 +53,15 @@
 | 官方中继 v2(Cloudflare Workers + 推送) | [maintainer/relay.md](maintainer/relay.md) | `superpowers/specs/2026-09-30-relay-cloudflare-push-design.md` + `superpowers/plans/2026-09-30-relay-cloudflare-push.md` |
 | 手机版 | [任务衔接现状](cc-workbench.md)；[手机页源码与规矩](../apps/mobile/README.md) | `superpowers/specs/2026-09-06-mobile-home-feed-design.md`；[手机任务验证记录](superpowers/reports/2026-09-22-cc-companion-task-entry.md) |
 | provider(agy / cursor / openai 兼容 / 去重) | [reference/model-management.md](reference/model-management.md) | `superpowers/specs/2026-08-17-{agy-provider,provider-runtime-dedup}-design.md` |
-| provider 失败的真实形状 / 各判定处怎么判(错误通道结构化 #4 第 1 步) | [reference/provider-error-shapes.md](reference/provider-error-shapes.md);样本 `src/daemon/diagnostics/__fixtures__/provider-errors/` | 第 2 步(边界产码)提议在该文档 §5 |
+| provider 失败的真实形状 / 各家边界产什么码、下游怎么读(错误通道结构化 #4) | [reference/provider-error-shapes.md](reference/provider-error-shapes.md);样本 `src/daemon/diagnostics/__fixtures__/provider-errors/`;码闭集 `src/lib/provider-error-code.ts` | 第 2 步 2026-10-02 做完:§6(Claude 会话)、§7(其余各家 + 边界超时 + 下游);§5 是当初的提议 |
 | 可靠性(降级启动 / 自动重启 / 忙登记处) | — | `superpowers/specs/2026-08-17-subsystem-degraded-boot-design.md` + `2026-08-11-daemon-busy-registry-design.md` + `2026-08-03-daemon-self-restart-on-stale-code-design.md` |
 | 画像依据、来源改正与过时处理 | [`cc-memory-evidence.md`](cc-memory-evidence.md) | `src/lib/memory-synthesis.ts` + `src/daemon/internal-api/routes-memory-review.ts` |
 | 知识与记忆(图 / 人物事实 / hearth 联邦) | — | `superpowers/specs/2026-08-12-knowledge-{graph,facts-person}-inproc-design.md` + `2026-08-13-hearth-*` |
 | 引导与访客 | [reference/access-control.md](reference/access-control.md) | `superpowers/specs/2026-08-18-{owner-onboarding,guest-path}-design.md` |
 | 提醒 | — | `superpowers/specs/2026-08-20-reminders-port-design.md` |
 | 外发健康 | — | `superpowers/specs/2026-08-22-outbound-health-design.md` |
+| 回复交付(一轮最后的话就是回复、daemon 统一分条 / 节奏 / 三端送达、`NO_REPLY`、附件、`message` 工具;设计已定 2026-10-03,§6 八条按推荐定) | — | `superpowers/specs/2026-10-03-reply-delivery-design.md` |
+| openai 兼容后端「发完话还在发」:实验 harness、各候选对照表(#196 已关,harness 留作回复交付迁移的验收工具) | [reference/reply-once-experiment.md](reference/reply-once-experiment.md) | 实验结论(2026-10-02),见 roadmap 修订记录 |
 | 功能全表 / 权限模式 / 微信命令 / 运行时目录 / 访问控制 / A2A / 常见问题 | [reference/](reference/) 下同名文件 | — |
 | 插件(含内置插件来源:不随包、`plugin source` 登记、按内置默认开) | [plugins.md](plugins.md);部署侧 [maintainer/deploy.md「内置插件」](maintainer/deploy.md) | `src/lib/plugins-source.ts` + `src/daemon/plugins/health.ts` |
 | 桌面安装器 | [installer/desktop-installer.md](installer/desktop-installer.md) | — |
@@ -92,6 +97,7 @@
 ## 修订记录
 
 - 2026-10-02:新增 `reference/network-guard.md`(网络守护:bx 优先、全入口拦截、威胁模型与验证),入主题表与 reference 目录说明。
+- 2026-10-02:`reference/network-guard.md` 改写为守护 v2(按调用判;主人收窄的决定原样记录)。
 - 2026-10-01:新增 `reference/workbench-file-guard.md`(工作台文件锚定层威胁模型),入主题表与 reference 目录说明。
 - 2026-09-27 v2:计数去数字;09-24/25/26 五份 spec/report 入表;四个「README 对应章节」改成具体 reference 文件(README 09-22 已搬空);新增鉴权 / 发版 / 模型管理三份现状文档;research/handoffs 改标现行;STT 口径改「已通」。
 - 2026-09-22 v1:首份索引。此前 300+ 份 plan/spec 无索引,找一件事只能按日期猜文件名;老的 `docs/plans` / `docs/specs` 与现行的 `docs/superpowers/*` 两套并存且没有任何地方说明哪套还活着。

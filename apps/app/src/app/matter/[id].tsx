@@ -2,14 +2,20 @@ import { useEffect, useRef, useState } from 'react'
 import { Redirect, useLocalSearchParams, useRouter } from 'expo-router'
 import { Modal, Pressable, ScrollView, View } from 'react-native'
 import { SafeAreaView } from 'react-native-safe-area-context'
+import type { MatterInputT } from '../../backend/types'
 import { t } from '../../i18n'
 import { useLang } from '../../i18n/useLang'
 import { useBackendCtx } from '../../state/BackendProvider'
 import { useConnection, useQuery, useSubmit, useTopic } from '../../state/hooks'
+import { getDraft, setDraft } from '../../state/drafts'
+import { useMatterInputs } from '../../state/useMatterInputs'
+import type { InputSnapshot } from '../../state/matter-inputs'
 import { ConnectionNotice } from '../../ui/ConnectionNotice'
 import { Button } from '../../ui/Button'
 import { Card } from '../../ui/Card'
 import { Dot } from '../../ui/Dot'
+import { MessageText } from '../../ui/Markdown'
+import { InputReceipts } from '../../ui/InputReceipts'
 import { SayBar } from '../../ui/SayBar'
 import { Sheet } from '../../ui/Sheet'
 import { StatusPill } from '../../ui/StatusPill'
@@ -24,6 +30,9 @@ import { canSubmit } from '../../view/connection'
 import { HANDOFF_RECHECK, handoffBlock, handoffErrorDot, handoffErrorText, handoffSheetLines } from '../../view/handoff'
 import { uuid } from '../../net/uuid'
 import { progressView } from '../../view/progress'
+import { inputRows } from '../../view/matter-input'
+
+const NO_INPUTS: readonly MatterInputT[] = []
 
 // 进展页:状态标签在「CC 的进展」概括之上;概括没到时用骨架占位;下面是这件事的真对话。
 // 主人自己那条聊天(只认它,Ruling 9)改道去 /chat;访客的聊天照常显示。
@@ -36,6 +45,8 @@ export default function Matter() {
   const id = Array.isArray(params.id) ? params.id[0] : params.id
   // 打开就拉新:有缓存也重拉详情与概括(旧缓存先摆着,拿到新的再换)。
   const detail = useQuery(`matter:${id}`, l => backend.matter(id, l), { refreshOnMount: true })
+  const localInputs = useMatterInputs(id, detail.data?.inputs ?? NO_INPUTS)
+  const inputReceipts = inputRows(detail.data?.inputs ?? NO_INPUTS, localInputs)
   const insight = useQuery(`insight:${id}`, l => backend.insight(id, l), { refreshOnMount: true })
   const changes = useQuery(`changes:${id}`, () => backend.changes(id))
   const isChat = detail.data?.matter.kind === 'chat'
@@ -51,10 +62,12 @@ export default function Matter() {
   const [sheet, setSheet] = useState(false)
   const [sending, setSending] = useState(false)
   const [failure, setFailure] = useState<{ text: string; dot: 'bad' | 'warn' | 'unknown' } | null>(null)
+  const [inputNotice, setInputNotice] = useState<string | null>(null)
+  const [openErrors, setOpenErrors] = useState<ReadonlySet<number>>(() => new Set())
   const handoffReq = useRef('')
   const idRef = useRef(id)
   idRef.current = id
-  useEffect(() => { setSheet(false); setFailure(null) }, [id])
+  useEffect(() => { setSheet(false); setFailure(null); setInputNotice(null); setOpenErrors(new Set()) }, [id])
   const { refresh: refreshDetail } = detail
   const { refresh: refreshInsight } = insight
   const { refresh: refreshChanges } = changes
@@ -110,6 +123,12 @@ export default function Matter() {
     setFailure({ text: handoffErrorText(code, lang), dot: handoffErrorDot(code) })
     if (HANDOFF_RECHECK.has(code)) void refreshDetail()
   }
+  const restoreInput = (row: InputSnapshot) => {
+    const draft = getDraft(id)
+    if (draft.trim() && draft !== row.rawText) { setInputNotice(t(lang, 'input.draftProtected')); return }
+    setDraft(id, row.rawText)
+    router.push(`/compose?matter=${encodeURIComponent(id)}`)
+  }
   const failureRow = failure ? (
     <View style={{ flexDirection: 'row', alignItems: 'center', gap: space.s }}>
       <Dot kind={failure.dot} size={8} />
@@ -124,6 +143,7 @@ export default function Matter() {
         <Txt role="small" tone="inkSoft">{t(lang, 'progress.breadcrumb')}</Txt>
         <Txt role="title" content="user" accessibilityRole="header">{v.title}</Txt>
         <View testID="progress-status"><StatusPill status={v.status} /></View>
+        {d.task?.error === 'execution_model_unsupported' ? <Txt testID="progress-model-guidance" role="meta" tone="inkSoft">{t(lang, 'progress.modelUnavailable')}</Txt> : null}
         {d.nativeStart ? (
           // 接过来、还没发第一句的电脑会话(spec D12):第一句会怎样 + 先让原来那个停下;发过第一句就没有了
           <View testID="progress-native-start" style={{ gap: space.xs }}>
@@ -171,19 +191,30 @@ export default function Matter() {
             ) : e.kind === 'error' ? (
               <View key={i} style={{ flexDirection: 'row', gap: space.s, alignItems: 'flex-start' }}>
                 <View style={{ paddingTop: space.s }}><Dot kind="warn" size={8} /></View>
-                <Txt role="meta" tone="inkSoft" content="user" style={{ flex: 1 }}>{e.text}</Txt>
+                <View style={{ flex: 1, gap: space.s }}>
+                  <Txt role="meta" tone="inkSoft" content="user">{e.text}</Txt>
+                  {e.diagnostic ? <>
+                    <Pressable testID={`progress-error-raw-toggle-${i}`} accessibilityRole="button" accessibilityState={{ expanded: openErrors.has(i) }} accessibilityLabel={t(lang, 'progress.rawError')} onPress={() => setOpenErrors(prev => { const next = new Set(prev); if (next.has(i)) next.delete(i); else next.add(i); return next })} style={{ minHeight: 36, justifyContent: 'center' }}>
+                      <Txt role="small" tone="inkSoft" style={{ textDecorationLine: 'underline' }}>{t(lang, 'progress.rawError')}</Txt>
+                    </Pressable>
+                    {openErrors.has(i) ? <Txt testID={`progress-error-raw-${i}`} role="code" tone="inkSoft" content="user" selectable>{e.diagnostic}</Txt> : null}
+                  </> : null}
+                </View>
               </View>
             ) : (
               <View key={i} style={{ alignItems: e.kind === 'me' ? 'flex-end' : 'flex-start' }}>
-                {/* 卡里不再套底色块:「我」靠右、CC 靠左,只靠位置区分 */}
-                <View accessible accessibilityLabel={`${e.kind === 'me' ? t(lang, 'chat.me') : t(lang, 'cc.label')}: ${e.text}`} style={{ maxWidth: '88%' }}>
-                  <Txt selectable role="bubble" content="user" style={{ textAlign: e.kind === 'me' ? 'right' : 'left' }}>{e.text}</Txt>
+                {/* 「我」靠右、CC 靠左;说话人独立一行,原文按钮和链接各自可访问 */}
+                <View style={{ maxWidth: '88%', gap: space.xs }}>
+                  <Txt role="caption" tone="inkSoft" style={{ textAlign: e.kind === 'me' ? 'right' : 'left' }}>{t(lang, e.kind === 'me' ? 'chat.me' : 'cc.label')}</Txt>
+                  <MessageText role={e.kind === 'me' ? 'user' : 'assistant'} text={e.text} typeRole="bubble" userAlign="right" />
                 </View>
               </View>
             ),
           )}
         </Card>
 
+        {inputReceipts.length ? <InputReceipts rows={inputReceipts} onRestore={restoreInput} /> : null}
+        {inputNotice ? <Txt role="meta" tone="inkSoft" accessibilityLiveRegion="polite">{inputNotice}</Txt> : null}
         {v.pendingCount > 0 ? (
           <Button kind="primary" testID="progress-view-approval" label={t(lang, 'progress.viewApproval')} onPress={() => router.push(`/approval/${encodeURIComponent(d.task?.id ?? id)}`)} />
         ) : null}

@@ -37,6 +37,7 @@
     "spike:atelier-renderer": "bun scripts/atelier-renderer-spike.ts",
     "smoke:atelier-sidecar": "bun scripts/atelier-sidecar-smoke.ts",
     "build:mobile": "bun apps/mobile/build.ts",
+    "build:markdown": "bun packages/markdown/build.ts",
     "e2e:device": "bun scripts/device-e2e.ts",
     "typecheck": "tsc --noEmit && tsc --noEmit -p apps/mobile && tsc --noEmit -p apps/relay && tsc --noEmit -p apps/app",
     "build:map": "bun scripts/build-map.ts",
@@ -53,6 +54,7 @@
     "fflate": "0.8.3",
     "marked": "^18.0.0",
     "qrcode-terminal": "^0.12.0",
+    "smol-toml": "^1.9.0",
     "yaml": "^2.9.0",
     "zod": "^4.0.0"
   },

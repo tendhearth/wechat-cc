@@ -9,6 +9,7 @@ import { useConnection } from '../state/hooks'
 import { useChat, type ChatSendOutcome } from '../state/useChat'
 import { ConnectionNotice } from '../ui/ConnectionNotice'
 import { Dot } from '../ui/Dot'
+import { MessageText } from '../ui/Markdown'
 import { TextField } from '../ui/TextField'
 import { radius, space } from '../ui/tokens'
 import { TopBar } from '../ui/TopBar'
@@ -164,17 +165,15 @@ function ChatBubble({ b, lang, canRetry, onRetry, onDismiss }: { b: Bubble; lang
     <View style={{ alignItems: me ? 'flex-end' : 'flex-start', gap: space.xs }}>
       <View
         testID={me ? 'chat-bubble-me' : 'chat-bubble-cc'}
-        accessible
-        accessibilityLabel={`${me ? t(lang, 'chat.me') : t(lang, 'cc.label')}: ${b.text}${b.truncated ? ` ${t(lang, 'chat.truncated')}` : ''}`}
         style={{
-          maxWidth: '85%', paddingHorizontal: space.l, paddingVertical: space.m, ...bubbleShape(me),
+          maxWidth: '85%', paddingHorizontal: space.l, paddingVertical: space.m, gap: space.xs, ...bubbleShape(me),
           backgroundColor: c.paper, borderWidth: 1, borderColor: c.hair,
           opacity: b.state === 'failed' ? 0.8 : 1,
         }}
       >
-        <Txt selectable role="body" content="user">
-          {b.text}{b.truncated ? t(lang, 'chat.truncated') : ''}
-        </Txt>
+        <Txt role="caption" tone="inkSoft">{t(lang, me ? 'chat.me' : 'cc.label')}</Txt>
+        <MessageText role={me ? 'user' : 'assistant'} text={b.text} />
+        {b.truncated ? <Txt role="caption" tone="inkSoft">{t(lang, 'chat.truncated')}</Txt> : null}
       </View>
       <Txt role="caption" tone="inkSoft">{from} · {hhmm(b.at)}</Txt>
       {b.state === 'failed' && b.failedKind ? (

@@ -2,8 +2,13 @@ import { useFonts } from 'expo-font'
 import { DefaultTheme, Stack, ThemeProvider } from 'expo-router'
 import { StatusBar } from 'expo-status-bar'
 import { View } from 'react-native'
+import { Button } from '../ui/Button'
+import { Txt } from '../ui/Txt'
+import { space } from '../ui/tokens'
+import { t } from '../i18n'
 import { SafeAreaProvider } from 'react-native-safe-area-context'
 import { credentials } from '../net/secure-store'
+import { inputJournal } from '../net/input-journal-native'
 import { pushForget } from '../push/native'
 import { PushProvider } from '../push/PushProvider'
 import { PushRouter } from '../push/PushRouter'
@@ -19,7 +24,7 @@ import { fontGate } from '../ui/type'
 export default function RootLayout() {
   return (
     <SafeAreaProvider>
-      <SessionProvider store={credentials} push={pushForget}>
+      <SessionProvider store={credentials} push={pushForget} inputs={inputJournal}>
         <Themed />
       </SessionProvider>
     </SafeAreaProvider>
@@ -32,9 +37,9 @@ function Themed() {
   const [loaded, error] = useFonts(FONT_FILES)
   const c = palette
   const theme = { ...DefaultTheme, colors: { ...DefaultTheme.colors, background: c.paper, card: c.paper, text: c.ink, border: c.hair, primary: c.accent } }
-  if (!session.ready || fontGate(loaded, error) === 'wait') return <View style={{ flex: 1, backgroundColor: c.paper }} />
+  if (!session.ready || fontGate(loaded, error) === 'wait') return <View style={{ flex: 1, backgroundColor: c.paper, justifyContent: 'center', padding: space.xl, gap: space.l }}>{session.loadError && fontGate(loaded, error) !== 'wait' ? <><Txt role="bubble" tone="inkSoft">{t(lang, 'pair.sessionReadFailed')}</Txt><Button kind="secondary" testID="session-load-retry" label={t(lang, 'input.recoveryRetry')} onPress={session.retryLoad} /></> : null}</View>
   return (
-    <BackendProvider lang={lang} pairing={session.pairing} onRevoked={session.dropStoredPairing} onStale={session.forgetStale}>
+    <BackendProvider lang={lang} pairing={session.pairing} inputScope={session.inputScope} pairingEpoch={session.pairingEpoch} pairingTransition={session.pairingTransition} onRevoked={session.dropStoredPairing} onStale={session.forgetStale}>
       <PushProvider>
         <ThemeProvider value={theme}>
           <StatusBar style="dark" />

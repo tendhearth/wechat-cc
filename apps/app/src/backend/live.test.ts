@@ -105,6 +105,19 @@ describe('LiveBackend 读', () => {
 })
 
 describe('LiveBackend 提交', () => {
+  it('运行中补充带固定 runId,返回执行者的真实回执,旧聊天三参数调用仍兼容', async () => {
+    const input = { id: SAY_REQ, taskId: ID, runId: RUN, text: '**补充**', status: 'pending' }
+    const { b, reqs } = harness({ 'POST /m/api/matter/say': ({ body }) => body.runId ? ok({ ok: true, result: { kind: 'task', task: WB_TASK, input } }) : ok({ ok: true, result: { kind: 'chat', reply: 'reply' } }) })
+    expect(await b.say(ID, '**补充**', SAY_REQ, { runId: RUN })).toMatchObject({ kind: 'task', task: { id: ID, status: 'queued' }, input })
+    expect(reqs[0]).toMatchObject({ body: { id: ID, runId: RUN, text: '**补充**', requestId: SAY_REQ }, retry: false })
+    expect(reqs[0]!.body).not.toHaveProperty('mode')
+    expect(await b.say(ID, 'hi', SAY_REQ2)).toEqual({ kind: 'chat', reply: 'reply' })
+    expect(reqs[1]!.body).not.toHaveProperty('runId')
+  })
+  it.each(['input_stale', 'input_conflict'])('补充 %s 不是普通 busy,页面能如实区分', async code => {
+    const { b } = harness({ 'POST /m/api/matter/say': ok({ ok: false, error: code }, 409) })
+    await expect(b.say(ID, 'go', SAY_REQ, { runId: RUN })).rejects.toMatchObject({ code })
+  })
   it('批准:正文形状对、不自动重试;已被处理 ⇒ stale', async () => {
     let n = 0
     const { b, reqs } = harness({ 'POST /m/api/matter/permission': () => (n++ === 0 ? ok({ ok: true }) : ok({ ok: false, error: 'permission_stale' }, 409)) })
@@ -124,7 +137,7 @@ describe('LiveBackend 提交', () => {
     const { b, reqs } = harness({ 'POST /m/api/matter/say': ok({ ok: true, result: { kind: 'chat', reply: 'ok' } }) })
     await b.say(ID, 'hi', SAY_REQ)
     await b.say(ID, 'hi', SAY_REQ)
-    expect(reqs[0]).toMatchObject({ body: { id: ID, text: 'hi', requestId: SAY_REQ }, retry: true })
+    expect(reqs[0]).toMatchObject({ body: { id: ID, text: 'hi', requestId: SAY_REQ }, retry: false })
     expect(reqs[1]?.body.requestId).toBe(SAY_REQ)
     await expect(b.say(ID, 'x'.repeat(20_001), SAY_REQ)).rejects.toMatchObject({ code: 'invalid' })
     expect(reqs).toHaveLength(2)
@@ -382,6 +395,28 @@ describe('推送登记 / 测试通知', () => {
 })
 
 describe('跟 CC 说 / 连接 / 原生会话', () => {
+  it('会话搜索q编码并贯穿追加页;窗口参数与旧调用保持独立', async () => {
+    const row = { key: 'a/b', provider: 'codex', title: '按钮', project: 'p', updatedAt: 1, active: false }
+    const { b, reqs } = harness({
+      'GET /m/api/sessions': ok({ ok: true, items: [row], nextCursor: null }),
+      'GET /m/api/session': ({ path }) => ok({ ok: true, session: row, messages: [], nextCursor: null, managed: false, ...(path.includes('window=') ? { window: path.includes('recent') ? 'recent' : 'start' } : {}) }),
+    })
+    await b.sessions('codex', 'page 2', ' 按钮 & view ')
+    expect(reqs.at(-1)!.path).toBe('/m/api/sessions?provider=codex&cursor=page%202&q=%E6%8C%89%E9%92%AE%20%26%20view')
+    expect((await b.session('a/b', undefined, 'recent')).window).toBe('recent')
+    expect(reqs.at(-1)!.path).toBe('/m/api/session?key=a%2Fb&window=recent')
+    expect((await b.session('a/b', 'next', 'start')).window).toBe('start')
+    expect(reqs.at(-1)!.path).toBe('/m/api/session?key=a%2Fb&cursor=next&window=start')
+    expect((await b.session('a/b')).window).toBeUndefined()
+    expect(reqs.at(-1)!.path).toBe('/m/api/session?key=a%2Fb')
+  })
+  it('搜索超过200字或包含NUL、近期窗口带cursor,在手机侧拦下且不发请求', async () => {
+    const { b, reqs } = harness()
+    await expect(b.sessions('claude', undefined, 'x'.repeat(201))).rejects.toMatchObject({ code: 'invalid' })
+    await expect(b.sessions('claude', undefined, 'a\0b')).rejects.toMatchObject({ code: 'invalid' })
+    await expect(b.session('k', 'page', 'recent')).rejects.toMatchObject({ code: 'invalid' })
+    expect(reqs).toHaveLength(0)
+  })
   const PAGE = { ok: true, matterId: 'c0ffee01', title: '聊天', messages: [], hasMore: false, nextBefore: null, pending: null, failed: null }
   it('chat:before / limit 拼进查询串;返回过 schema、去掉 ok', async () => {
     const { b, reqs } = harness({ 'GET /m/api/chat': ok(PAGE) })
@@ -447,5 +482,26 @@ describe('跟 CC 说 / 连接 / 原生会话', () => {
     expect(await b.handoff({ id: 'cafebabe', requestId: REQ, providerId: 'codex' })).toEqual({ matterId: 'deadbeef' })
     expect(reqs.at(-1)).toMatchObject({ key: 'POST /m/api/matter/handoff', path: '/m/api/matter/handoff', body: { id: 'cafebabe', requestId: REQ, providerId: 'codex' }, retry: true })
     await expect(b.handoff({ id: 'cafebabe', requestId: REQ, providerId: 'gemini' })).rejects.toMatchObject({ code: 'handoff_changed' })
+  })
+})
+
+describe('durable single input receipt', () => {
+  it('queries the exact task/request with GET only, retaining optional reason and old-server missing semantics', async () => {
+    const input = { id: SAY_REQ, taskId: ID, runId: RUN, text: '保留原文', status: 'held', error: 'process_closed' }
+    const found = harness({ 'GET /m/api/matter/input-receipt': ok({ ok: true, input }) })
+    expect(await found.b.matterInputReceipt(ID, SAY_REQ)).toEqual(input)
+    expect(found.reqs).toEqual([expect.objectContaining({ key: 'GET /m/api/matter/input-receipt', path: `/m/api/matter/input-receipt?id=${ID}&requestId=${SAY_REQ}`, body: undefined })])
+    for (const error of ['not_found', 'unsupported']) {
+      const missing = harness({ 'GET /m/api/matter/input-receipt': ok({ ok: false, error }, 404) })
+      expect(await missing.b.matterInputReceipt(ID, SAY_REQ)).toBeNull()
+      expect(missing.reqs.every(r => r.key.startsWith('GET '))).toBe(true)
+    }
+  })
+  it('a malformed receipt is never confirmation; revoke still closes the backend', async () => {
+    const malformed = harness({ 'GET /m/api/matter/input-receipt': ok({ ok: true, input: { id: SAY_REQ } }) })
+    await expect(malformed.b.matterInputReceipt(ID, SAY_REQ)).rejects.toMatchObject({ code: 'unknown' })
+    const revoked = harness({ 'GET /m/api/matter/input-receipt': ok({ ok: false, error: 'unauthorized' }, 401) })
+    await expect(revoked.b.matterInputReceipt(ID, SAY_REQ)).rejects.toMatchObject({ code: 'revoked' })
+    expect(revoked.b.connection().state).toBe('revoked')
   })
 })

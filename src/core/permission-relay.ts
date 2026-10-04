@@ -79,8 +79,10 @@ export function makeCanUseTool(deps: PermissionRelayDeps): CanUseTool {
     // reply 工具一走,协调器就**看不到那位说了什么**,收口只能拿到半场,
     // 比不收口更糟。代价:参与者不能在 /both 里直接发图(纯文本会照常前缀
     // 转发);/chat 早就接受了同一个代价。
+    // 回复交付 daemon 模式(spec 2026-10-03 §4.9):reply 族不注册了,扇出里要拒的只剩显式的 `message`
+    // (往别处发)—— 同一个理由:协调器看不到那句话,前缀 / 收口都管不到它。
     const fanOut = deps.mode() === 'chatroom' || deps.mode() === 'parallel'
-    if (fanOut && isReplyToolName(toolName)) {
+    if (fanOut && (isReplyToolName(toolName) || toolName === 'mcp__wechat__message')) {
       deps.log('PERMISSION', `deny-fanout-reply: mode=${deps.mode()} tool=${toolName}`)
       return {
         behavior: 'deny',

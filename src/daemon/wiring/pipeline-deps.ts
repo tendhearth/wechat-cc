@@ -4,6 +4,7 @@
  *
  * Refs are passed in for late-bound polling/guard access from closures.
  */
+import type { TurnAttachment } from '../../core/turn-reply'
 import { join } from 'node:path'
 import { recallFromMemory } from '../memory/recall'
 import { randomBytes } from 'node:crypto'
@@ -71,7 +72,6 @@ import { findOnPath } from '../../lib/util'
 import { isCompiledBundle } from '../../lib/runtime-info'
 import type { A2AAgentRecord } from '../../lib/agent-config'
 import { materializeAttachments } from '../media'
-import { loadGuardConfig } from '../guard/store'
 import { makeFireMilestonesFor, makeRecordInbound, makeMaybeWriteWelcomeObservation } from './side-effects'
 import { makeMessagesStore } from '../../lib/messages-store'
 import { makeMemoryLlmOps, resolveCheapEval } from '../memory-llm-ops'
@@ -369,7 +369,6 @@ export function buildPipelineDeps(opts: PipelineDepsOpts, refs: PipelineDepsRefs
       const o = nightlyOwner()
       return o ? resolveCheapEval({ getMode: (c) => boot.coordinator.getMode(c), registry: boot.registry }, o) : boot.registry.getCheapEval()
     },
-    ...(opts.guardRuntime ? { networkSafe: async () => (await opts.guardRuntime!.gate.check()).safe } : {}),
     ownerRecentlyActive: async () => {
       const o = nightlyOwner()
       if (!o) return false
@@ -588,6 +587,7 @@ export function buildPipelineDeps(opts: PipelineDepsOpts, refs: PipelineDepsRefs
   // 「一件事」读写面:工作台续接 + 对主人 chat 的 app 通道;手机页与内部 API 共用这一个实例。
   const mattersService = opts.matters ? makeMattersService({
     store: opts.matters,
+    ownerChatId,
     ...(opts.workbench ? { workbench: opts.workbench } : {}),
     // companionConverse 在下面才定义;这里只是捕获引用,真正调用发生在请求到来时。
     chat: {
@@ -625,7 +625,7 @@ export function buildPipelineDeps(opts: PipelineDepsOpts, refs: PipelineDepsRefs
     ...(opts.workbench ? { workbench: opts.workbench } : {}),
   }))
   // 原生会话读:单飞 + 短缓存(裁定 8),10 s 预算超了也不会堆积后台扫描。
-  const phoneSessions = opts.workbench ? cacheSessions({ list: (p, i) => opts.workbench!.listNativeHistory(p, i), read: (k, i) => opts.workbench!.readNativeHistory(k, i) }) : null
+  const phoneSessions = opts.workbench ? cacheSessions({ list: (p, i) => opts.workbench!.listNativeHistory(p, i), read: (k, i) => opts.workbench!.readNativeHistory(k, i), readRecent: (k, i) => opts.workbench!.readRecentNativeHistory(k, i) }) : null
   const settingsPanel = makeSettingsPanel({
     connections,
     ...(phoneSessions ? { sessions: phoneSessions } : {}),
@@ -657,7 +657,7 @@ export function buildPipelineDeps(opts: PipelineDepsOpts, refs: PipelineDepsRefs
       entryReceipt:(requestId:string)=>opts.workbench!.entryReceipt(requestId,{ownerKey:ownerChatId()??'',surface:'phone'}),
     }}:{}),
     curatedMemory: () => memoryNightly.curatedView(),
-    ...(mattersService && opts.matters ? { matters: { list: (f) => mattersService.list(f), detail: (id) => mattersService.detail(id), say: (id, text, input) => mattersService.say(id, text, 'phone',input), permission:mattersService.permission,answer:mattersService.answer,artifactChunk:mattersService.artifactChunk,handoff:mattersService.handoff,seenOnPhone: (id) => opts.matters!.bind(id, 'phone', 'pwa') } } : {}),
+    ...(mattersService && opts.matters ? { matters: { list: (f) => mattersService.list(f), detail: (id) => mattersService.detail(id), inputReceipt:mattersService.inputReceipt, say: (id, text, input) => mattersService.say(id, text, 'phone',input), permission:mattersService.permission,answer:mattersService.answer,artifactChunk:mattersService.artifactChunk,handoff:mattersService.handoff,seenOnPhone: (id) => opts.matters!.bind(id, 'phone', 'pwa') } } : {}),
     ...(phoneOwner && phoneChat ? { chat: { owner: () => phoneOwner.peek(), history: (chatId: string, o: { beforeTs?: string; limit: number }) => messagesStore.listRange(chatId, o), chat: phoneChat } } : {}),
     ...(remoteTunnel ? { remoteInfo: () => remoteTunnel } : {}),
     ...(phonePush ? { push: phonePush } : {}),
@@ -933,14 +933,6 @@ export function buildPipelineDeps(opts: PipelineDepsOpts, refs: PipelineDepsRefs
       log,
     },
     ...(opts.cliReply ? { cliReply: { handle: (t: string, c: string) => opts.cliReply!.handle(t, c), log } } : {}),
-    guard: {
-      guardEnabled: () => loadGuardConfig(stateDir).enabled,
-      guardState: () => refs.guard.current?.current() ?? { reachable: true, ip: null },
-      // 网络闸门(2026-10-02):给了就以它为准(bx 优先、读不出就拦)。
-      ...(opts.guardRuntime ? { gate: opts.guardRuntime.gate } : {}),
-      sendMessage: (c, t) => ilink.sendMessage(c, t).then(r => r as { msgId: string }),
-      log,
-    },
     attachments: { materializeAttachments, inboxDir, log },
     transcribeVoice: {
       // ilink.voice.transcribe loads STT config internally and throws
@@ -1060,7 +1052,7 @@ export function buildPipelineDeps(opts: PipelineDepsOpts, refs: PipelineDepsRefs
     void messagesStore.append({ id: `app:${origin}:${synthetic.createTimeMs}:in`, chatId: ownerChatId, ts, direction: 'in', kind: 'text', text, source: origin }).catch(() => {})
     if (reply) void messagesStore.append({ id: `app:${origin}:${synthetic.createTimeMs}:out`, chatId: ownerChatId, ts: new Date(Date.now() + 1).toISOString(), direction: 'out', kind: 'text', text: reply, source: origin }).catch(() => {})
   }
-  const companionConverse = async (text: string, origin: 'desktop' | 'phone' = 'desktop'): Promise<{ reply: string }> => {
+  const companionConverse = async (text: string, origin: 'desktop' | 'phone' = 'desktop'): Promise<{ reply: string; attachments?: TurnAttachment[]; narration?: string[] }> => {
     // self-restart (spec 2026-08-03-daemon-self-restart-on-stale-code,
     // Task 3 review finding #1) — an App /converse turn is real owner
     // activity, but it dispatches straight through the coordinator and
@@ -1151,7 +1143,12 @@ export function buildPipelineDeps(opts: PipelineDepsOpts, refs: PipelineDepsRefs
           const sink = replySinks.open(ownerChatId)
           try {
             await dispatch()
-            return { reply: sink.close() }
+            // 回复交付 daemon 模式:附件与旁白随回复交还(桌面 / 手机显示);旧路径没有就不带。
+            const extras = sink.extras?.()
+            const reply = sink.close()
+            return extras && (extras.attachments.length > 0 || extras.narration.length > 0)
+              ? { reply, attachments: extras.attachments, narration: extras.narration }
+              : { reply }
           } catch (err) {
             sink.close()
             throw err

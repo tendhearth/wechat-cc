@@ -1,7 +1,7 @@
 import type { ProviderId, SessionStore } from './session-store'
 import type { AgentEvent, AgentSession } from './agent-provider'
-import { assertNetworkSafe, type NetworkGate } from '../lib/network-gate'
-import type { ProviderRegistry } from './provider-registry'
+import { assertCallAllowed, classifyWith, sessionCallTarget, type CallTarget, type NetworkGate } from '../lib/network-gate'
+import { providerCallTarget, type ProviderRegistry } from './provider-registry'
 import { tierNameFromProfile, sessionAuthEnv, type TierProfile, type UserTier } from './user-tier'
 import type { PermissionMode } from './capability-matrix'
 import {pathsConflict} from './workbench/scheduler'
@@ -62,9 +62,11 @@ export interface SessionManagerOptions {
    */
   currentModelFor?: (providerId: ProviderId) => string | undefined
   /**
-   * 网络闸门(2026-10-02)。spawn 与每次 dispatch 之前都问一次;不安全就抛
-   * NetworkUnprotectedError,不起子进程、不发请求。这是所有对话类调用的兜底
-   * (协调器在更前面已经拦过并给了用户一句话)。缺省 = 不拦(测试 / 嵌入)。
+   * 网络闸门(守护 v2)。spawn 与每次 dispatch 之前按**这条会话实际连到的目标**分类(评审 #193:
+   * spawn 那一刻定下的端点 + 模型,不是此刻的配置;会话报不出来 ⇒ 按需要保护):
+   * 需要保护且不安全才抛 NetworkUnprotectedError,不起子进程、不发请求;不需要保护的
+   * 照常。这是所有对话类调用的兜底(协调器在更前面已经拦过并给了用户一句话)。
+   * 缺省 = 不拦(测试 / 嵌入)。
    */
   networkGate?: NetworkGate
 }
@@ -113,6 +115,13 @@ export interface SessionHandle {
   readonly alias: string
   readonly path: string
   readonly providerId: ProviderId
+  /** spawn 时钉的模型;undefined = provider 默认。 */
+  readonly model?: string
+  /**
+   * 这条会话每一轮真正连到哪里(评审 #193 P1-1):会话自己报的,或 spawn 那一刻 provider 报的。
+   * 守护按它判,不按此刻的配置判。可选只是为了让测试里的假 handle 少写一行。
+   */
+  callTarget?(): CallTarget
   lastUsedAt: number
   dispatch(text: string): AsyncIterable<AgentEvent>
   /**
@@ -200,10 +209,12 @@ export class SessionManager {
   }
 
   private async spawn(req: AcquireRequest): Promise<SessionHandle> {
-    await assertNetworkSafe(this.opts.networkGate)
+    const model = req.model ?? this.opts.currentModelFor?.(req.providerId)
     const entry = this.opts.registry.get(req.providerId)
     if (!entry) throw new Error(`unknown provider: ${req.providerId} (registered: ${this.opts.registry.list().join(', ')})`)
     const { provider, opts: regOpts } = entry
+    // 评审 #193:问 provider 这次 spawn 实际会连到哪里(构造时的端点 + 这次的模型),不按配置猜。
+    await assertCallAllowed(this.opts.networkGate, providerCallTarget(provider, req.providerId, 'spawn', model !== undefined ? { model } : {}))
 
     // Check for a recent session_id to resume — cut cold-start latency.
     const ttl = this.opts.resumeTTLMs ?? 7 * 24 * 60 * 60_000
@@ -242,8 +253,9 @@ export class SessionManager {
     // Model first, then the prompt: the prompt states the model so the agent
     // can answer「你是哪个模型」truthfully instead of guessing (or calling an
     // admin-only tool a trusted user can't reach).
-    const model = req.model ?? this.opts.currentModelFor?.(req.providerId)
     const appendInstructions = this.opts.buildInstructions?.(req.providerId, req.tierProfile, req.chatId, model)
+    // spawn 这一刻 provider 报的会话目标:会话自己不报时,之后每一轮都按它判(配置后来再改也不跟)。
+    const spawnTarget = providerCallTarget(provider, req.providerId, 'session', model !== undefined ? { model } : {})
     let session: AgentSession
     try {
       session = await provider.spawn(project, {
@@ -268,10 +280,13 @@ export class SessionManager {
     const sessionStore = this.opts.sessionStore
     const k = sessionKey({ alias: req.alias, providerId: req.providerId, chatId: req.chatId })
     const inFlight = this.inFlight,checkExecution=()=>this.checkExecution(req),networkGate=this.opts.networkGate
+    const effectiveTarget = (): CallTarget => typeof session.callTarget === 'function' ? sessionCallTarget(session, req.providerId) : spawnTarget
     const handle: SessionHandle = {
       alias: req.alias,
       path: req.path,
       providerId: req.providerId,
+      ...(model !== undefined ? { model } : {}),
+      callTarget: effectiveTarget,
       lastUsedAt: Date.now(),
       dispatch(text: string): AsyncIterable<AgentEvent> {
         checkExecution()
@@ -284,8 +299,8 @@ export class SessionManager {
         return {
           async *[Symbol.asyncIterator]() {
             checkExecution()
-            // 先过网络闸门再碰 provider:session.dispatch 本身可能就立刻发请求。
-            await assertNetworkSafe(networkGate)
+            // 先过网络闸门再碰 provider:session.dispatch 本身可能就立刻发请求。按这条会话实际的目标判。
+            await assertCallAllowed(networkGate, effectiveTarget())
             const inner = session.dispatch(text)
             inFlight.set(k, (inFlight.get(k) ?? 0) + 1)
             try {
@@ -401,7 +416,31 @@ export class SessionManager {
       providerId: s.handle.providerId,
       chatId: s.chatId,
       lastUsedAt: s.handle.lastUsedAt,
+      ...(s.handle.model !== undefined ? { model: s.handle.model } : {}),
     }))
+  }
+
+  /**
+   * 这一轮对话会连到哪里(评审 #193 P1-1,协调器的预判用):有在用的会话 ⇒ 它实际的目标;
+   * 没有 ⇒ provider 按这次会用的模型报的目标(新会话就是按这份参数起的)。
+   */
+  effectiveTarget(k: InFlightKey, model?: string): CallTarget {
+    const live = this.sessions.get(sessionKey(k))
+    if (live?.handle.callTarget) return live.handle.callTarget()
+    const m = model ?? this.opts.currentModelFor?.(k.providerId)
+    return providerCallTarget(this.opts.registry.get(k.providerId)?.provider, k.providerId, 'session', m !== undefined ? { model: m } : {})
+  }
+
+  /**
+   * 守护 v2:网络翻到不安全时只关**需要保护**的对话会话(按这条会话实际连到的目标分类),
+   * 不需要保护的(国内 / 自建 / Cursor auto)照常留着。返回关了几个。
+   */
+  async shutdownProtected(): Promise<number> {
+    const gate = this.opts.networkGate
+    const entries = Array.from(this.sessions.values())
+      .filter(s => classifyWith(gate, s.handle.callTarget ? s.handle.callTarget() : sessionCallTarget(null, s.handle.providerId)).protected)
+    await Promise.all(entries.map(s => this.release({ alias: s.handle.alias, providerId: s.handle.providerId, chatId: s.chatId })))
+    return entries.length
   }
 
   async shutdown(): Promise<void> {

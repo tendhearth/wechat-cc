@@ -32,22 +32,24 @@ const Pairing = z.object({
 const PrefsSchema = z.object({ lang: z.enum(['en', 'zh-Hans']).nullable() })
 
 export function makeCredentialStore(ss: SecureStoreLike, opts: Record<string, unknown> = {}): CredentialStore {
+  let tail: Promise<unknown> = Promise.resolve()
+  const serial = <T,>(fn: () => Promise<T>): Promise<T> => { const next = tail.then(fn, fn); tail = next.catch(() => {}); return next }
   async function read(key: string): Promise<unknown> {
     const raw = await ss.getItemAsync(key, opts)
     if (raw === null) return undefined
     try { return JSON.parse(raw) } catch { return null }
   }
   return {
-    async load() {
+    load: () => serial(async () => {
       const v = await read(PAIRING_KEY)
       if (v === undefined) return null
       const p = Pairing.safeParse(v)
       if (p.success) return p.data
       await ss.deleteItemAsync(PAIRING_KEY, opts)
       return null
-    },
-    save: r => ss.setItemAsync(PAIRING_KEY, JSON.stringify(r), opts),
-    clear: () => ss.deleteItemAsync(PAIRING_KEY, opts),
+    }),
+    save: r => serial(() => ss.setItemAsync(PAIRING_KEY, JSON.stringify(r), opts)),
+    clear: () => serial(() => ss.deleteItemAsync(PAIRING_KEY, opts)),
     async loadPrefs() {
       const p = PrefsSchema.safeParse(await read(PREFS_KEY))
       return p.success ? p.data : { lang: null }

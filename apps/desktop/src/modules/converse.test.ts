@@ -1,9 +1,19 @@
 import { beforeEach, afterEach, expect, it, vi } from 'vitest'
+import {Window} from 'happy-dom'
+let dom:Window
 
 class El {
+  node=dom.document.createElement('div')
   dataset: Record<string, string> = {}
-  value = ''; innerHTML = ''; textContent = ''; hidden = false; disabled = false
-  scrollTop = 0; scrollHeight = 0
+  value = ''; textContent = ''; hidden = false; disabled = false
+  scrollTop = 0; scrollHeight = 0; clientHeight=0
+  get innerHTML(){return this.node.innerHTML}
+  set innerHTML(value:string){this.node.innerHTML=value}
+  get ownerDocument(){return this.node.ownerDocument}
+  get firstElementChild(){return this.node.firstElementChild}
+  replaceChildren(){this.node.replaceChildren()}
+  insertBefore(node:any,before:any){return this.node.insertBefore(node,before)}
+  contains(node:any){return this.node.contains(node)}
   classList = { toggle: vi.fn() }
   handlers: Record<string, Function> = {}
   setAttribute() {}
@@ -24,7 +34,8 @@ const settle = async () => { for (let i = 0; i < 15; i++) await Promise.resolve(
 beforeEach(async () => {
   vi.resetModules()
   vi.useFakeTimers()
-  els = Object.fromEntries(['root', 'scroll', 'input', 'send', 'delegate', 'voice-toggle', 'mic', 'cancel-recording', 'recording', 'recording-label', 'recording-time', 'recording-hint'].map(id => [`converse-${id}`, new El()]))
+  dom=new Window()
+  els = Object.fromEntries(['root', 'scroll', 'latest', 'input', 'send', 'delegate', 'voice-toggle', 'mic', 'cancel-recording', 'recording', 'recording-label', 'recording-time', 'recording-hint'].map(id => [`converse-${id}`, new El()]))
   vi.stubGlobal('window', {})
   vi.stubGlobal('localStorage', { getItem: () => null, setItem() {} })
   vi.stubGlobal('document', { getElementById: (id: string) => els[id] })
@@ -48,7 +59,7 @@ beforeEach(async () => {
   const { initConversePage } = await import('./converse.js')
   initConversePage({ invoke, onDelegate, media: { getUserMedia: async () => ({ getTracks: () => [{ stop: stopTrack }] }) as any, makeRecorder: () => recorder as any } })
 })
-afterEach(() => { vi.useRealTimers(); vi.unstubAllGlobals() })
+afterEach(async() => { vi.useRealTimers(); vi.unstubAllGlobals(); await dom.happyDOM.abort() })
 
 it('offers only visible public messages and clears its unchanged source draft after acceptance', async () => {
   els['converse-input']!.value = '私人聊天内容'
@@ -70,6 +81,52 @@ it('offers only visible public messages and clears its unchanged source draft af
   expect(invoke.mock.calls.filter(([cmd]) => cmd === 'agent_converse')).toHaveLength(1)
   expect(els['converse-input']!.value).toBe('')
   expect(els['converse-scroll']!.innerHTML).toContain('私人聊天内容')
+})
+
+it('renders both sides as Markdown while preserving original user source and discussion payload', async () => {
+  const userText = '**原样要求**\n\n    保留缩进'
+  const replyText = '## 完成\n\n**已整理**\n\n- 一项\n- 另一项\n\n```js\nconst value = 1\n```\n\n| 项目 | 状态 |\n| --- | --- |\n| 文档 | 好了 |'
+  invoke.mockResolvedValue(replyText)
+  els['converse-input']!.value = userText
+  els['converse-send']!.handlers.click!()
+  await settle()
+  const html = els['converse-scroll']!.innerHTML
+  const document=new Window().document;document.body.innerHTML=html
+  const user=document.querySelector('.converse-msg-user')!
+  expect(user.querySelector('.cc-readable-markdown strong')?.textContent).toBe('原样要求')
+  const source=user.querySelector('details')!;source.open=true
+  expect(source.querySelector('pre code')?.textContent).toBe(userText)
+  expect(invoke).toHaveBeenCalledWith('agent_converse',{text:userText})
+  expect(html).toContain('cc-readable-markdown wb-markdown')
+  expect(html).toContain('<h2>完成</h2>')
+  expect(html).toContain('<strong>已整理</strong>')
+  expect(html).toContain('<ul>')
+  expect(html).toContain('<pre><code class="language-js">const value = 1')
+  expect(html).toContain('<table>')
+  els['converse-input']!.value = '按这段讨论继续'
+  els['converse-delegate']!.handlers.click!()
+  await settle()
+  expect(onDelegate).toHaveBeenCalledWith({text:'按这段讨论继续',visibleMessages:[{role:'user',text:userText},{role:'cc',text:replyText}]})
+})
+
+it('keeps unsafe assistant content inert and leaves error and system lines as plain text', async () => {
+  invoke.mockResolvedValue('<script>alert(1)</script>\n\n[坏链接](javascript:alert(1))\n\n![外部图片](https://example.test/image.png)\n\n[本地文档](/Users/private/doc.md)')
+  els['converse-input']!.value = '检查这段回复'
+  els['converse-send']!.handlers.click!()
+  await settle()
+  const html = els['converse-scroll']!.innerHTML
+  expect(html).toContain('&lt;script&gt;')
+  expect(html).not.toContain('<script>')
+  expect(html).not.toContain('href="javascript:')
+  expect(html).not.toContain('https://example.test/image.png')
+  expect(html).not.toContain('/Users/private/doc.md')
+  invoke.mockRejectedValue(Error('**原样错误** <script>'))
+  els['converse-input']!.value = '再次检查'
+  els['converse-send']!.handlers.click!()
+  await settle()
+  const error=els['converse-scroll']!.node.querySelector('.converse-error-line')!
+  expect(error.textContent).toBe('**原样错误** <script>')
+  expect(error.querySelector('strong,script')).toBeNull()
 })
 
 it.each(['cancel', 'failure'])('keeps the chat draft when delegation ends with %s', async result => {

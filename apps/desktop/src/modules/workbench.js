@@ -14,20 +14,24 @@ import { renderPdfReader, mountPdfReader } from './pdf-reader.js'
 export { createWorkbenchDraftStore } from './workbench-window-state.js'
 
 import { mountHandoffDialog, mountHandoffRecord, defaultReviewArtifacts } from './workbench-handoff.js'
+import {createQuotaHandoffAttempts,mountQuotaHandoffDialog,renderQuotaHandoff} from './workbench-quota-handoff.js'
 import { mountHistoryDialog } from './workbench-history.js'
 import { isAckRequiredError, isUnattendedProvider, mountUnattendedDialog, unattendedLabelSuffix } from './workbench-unattended.js'
-import { Marked } from '../vendor/marked.js'
+import { escapeWorkbenchHtml, renderWorkbenchMarkdown, renderWorkbenchUserText } from './workbench-markdown.js'
+export { escapeWorkbenchHtml, renderWorkbenchMarkdown } from './workbench-markdown.js'
 import { WORKBENCH_CODE_REVIEW_MIME, createReviewDiffBudget, renderReviewFileDiff, renderWorkbenchCodeReview } from './workbench-code-review.js'
 import { renderReviewPanel, reviewsSignature } from './workbench-review-panel.js'
 /** @typedef {import('../../../../src/core/workbench/review').ReviewTurn} ReviewTurn */
 import { createWorkbenchInteractions, captureWorkbenchQuestionDrafts, syncWorkbenchQuestionChoice, renderWorkbenchQuestions, renderWorkbenchInputs } from './workbench-interaction.js'
 import { renderWorkbenchTimeline, workbenchTimelineEventId, renderWorkbenchOperation, captureWorkbenchTimelineAnchor, restoreWorkbenchTimelineAnchor } from './workbench-timeline.js'
-import { mergeEvents, structuralSignature, patchLiveTimeline, createLongPoll } from './workbench-live.js'
+import { mergeEvents, structuralSignature, patchLiveTimeline, createLongPoll, clearLiveTimelinePatches, hasLiveTimelineInteraction } from './workbench-live.js'
+import {permissionControlId,capturePermissionFocus,restorePermissionFocus} from './workbench-permission-focus.js'
+import {captureTimelineReading,restoreTimelineReading} from './workbench-reading-dom.js'
 
 /** @typedef {{taskId:string,title:string,reason:'same_path'|'nested_path'|'writer_not_closed',holderWriting?:boolean,closeInMs?:number|null}} WaitingFor */
-/** @typedef {{id:string,title:string,path:string,workspaceKind?:'managed'|'project',providerId:string,status:string,createdAt:number,updatedAt:number,error:string|null,phase?:string,archivedAt?:number|null,canArchive?:boolean,pendingPermissionCount?:number,pendingQuestionCount?:number,waitingFor?:WaitingFor|null,importedOnly?:boolean,runtime?:RuntimeSnapshot}} Task */
+/** @typedef {{id:string,title:string,path:string,workspaceKind?:'managed'|'project',providerId:string,status:string,createdAt:number,updatedAt:number,error:string|null,phase?:string,archivedAt?:number|null,canArchive?:boolean,pendingPermissionCount?:number,pendingQuestionCount?:number,waitingFor?:WaitingFor|null,importedOnly?:boolean,runtime?:RuntimeSnapshot,networkSuspended?:{since:number}|null}} Task */
 /** @typedef {{id:string,type:'command'|'read'|'edit'|'search'|'tool'|'agent',status:'running'|'completed'|'failed'|'cancelled'|'interrupted',label:string,detail?:string,output?:string,parentId?:string,agentIds?:string[]}} WorkbenchActivity */
-/** @typedef {{id:string,taskId:string,kind:'user'|'text'|'tool_call'|'system'|'error',text:string,createdAt:number,attachments?:import('./workbench-attachments.js').Attachment[],sourceId?:string|null,runId?:string,activity?:WorkbenchActivity}} WorkbenchEvent */
+/** @typedef {{id:string,taskId:string,kind:'user'|'text'|'tool_call'|'system'|'error',text:string,createdAt:number,attachments?:import('./workbench-attachments.js').Attachment[],sourceId?:string|null,runId?:string,activity?:WorkbenchActivity,errorCode?:'execution_model_unsupported',diagnostic?:string}} WorkbenchEvent */
 /** @typedef {{id:string,taskId:string,name:string,mime:string,size:number,sha256:string,createdAt:number,approvedAt:number|null}} Artifact */
 /** @typedef {{id:string,taskId:string,tool:string,description:string,createdAt:number}} Permission */
 /** @typedef {{id:string,displayName:string,capabilities?:{attachments?:boolean,execution?:boolean,resume?:boolean,permissions?:string},quota?:{kind:'quota'|'rate_limit',resetAt?:number}|null,usage?:{windows:Array<{name:string,usedPercent:number}>}|null}} Provider */
@@ -45,7 +49,7 @@ function providerLabel(p) {
 /** @typedef {import('../../../../src/core/workbench/native-adoption').NativeSource} NativeSource */
 /** @typedef {import('../../../../src/core/workbench/native-adoption').NativeResumeDecision} NativeResume */
 /** @typedef {import('../../../../src/core/workbench/handoff').HandoffView} Handoff */
-/** @typedef {{execution?:ExecutionChoice,lastExecution?:import('./workbench-execution.js').RunExecution|null,attachments?:import('./workbench-attachments.js').Attachment[],handoffs?:Handoff[],requiresExternalClose?:boolean,source?:NativeSource,task:Task,events:WorkbenchEvent[],artifacts:Artifact[],permissions?:Permission[],continuation?:Continuation,runId?:string,inputMode?:'steer'|'send'|'queue',runtime?:RuntimeSnapshot,questions?:import('./workbench-interaction.js').QuestionRequest[],inputs?:import('./workbench-interaction.js').LiveInput[],version?:number}} Detail */
+/** @typedef {{quotaHandoff?:import('./workbench-quota-handoff.js').Offer|null,execution?:ExecutionChoice,lastExecution?:import('./workbench-execution.js').RunExecution|null,attachments?:import('./workbench-attachments.js').Attachment[],handoffs?:Handoff[],requiresExternalClose?:boolean,source?:NativeSource,task:Task,events:WorkbenchEvent[],artifacts:Artifact[],permissions?:Permission[],continuation?:Continuation,runId?:string,inputMode?:'steer'|'send'|'queue',runtime?:RuntimeSnapshot,questions?:import('./workbench-interaction.js').QuestionRequest[],inputs?:import('./workbench-interaction.js').LiveInput[],version?:number}} Detail */
 /** @typedef {{q:string,archived:'exclude'|'only'|'all'}} TaskQuery */
 /** @typedef {{limit:number,total:number,hasMore:boolean,nextCursor:string|null}} TaskPage */
 /** @typedef {{tasks:Task[],providers:Provider[],defaultProvider:string|null,canWechat:boolean,historyProviders?:string[],page?:TaskPage,projects?:Array<{id:string,name:string,path:string,providerId:string}>,projectProviders?:Record<string,string>}} ListResult */
@@ -80,34 +84,9 @@ const emptyDraft = () => ({ path: '', text: '', title: '', providerId: '', follo
 const appendHandoverText = (existing, incoming) => !incoming ? existing : existing.trim() ? `${existing}\n\n—— 从聊天交办 ——\n${incoming}` : incoming
 
 const pageDrafts = createWorkbenchDraftStore(windowStorage)
+const quotaHandoffAttempts=createQuotaHandoffAttempts(windowStorage)
 /** @type {Map<string,import('./workbench-interaction.js').InputAttempt>} */
 const pageInputAttempts = new Map()
-
-/** @param {unknown} value */
-export function escapeWorkbenchHtml(value) {
-  return String(value ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c] ?? c)
-}
-
-/** @type {import('marked').RendererObject} */
-const workbenchRenderer = {
-  html({ text }) { return escapeWorkbenchHtml(text) },
-  link({ href, title, tokens }) {
-    const label = this.parser.parseInline(tokens)
-    try {
-      const url = new URL(href)
-      if (url.protocol !== 'http:' && url.protocol !== 'https:') return label
-      return `<a href="${escapeWorkbenchHtml(url.href)}"${title ? ` title="${escapeWorkbenchHtml(title)}"` : ''} target="_blank" rel="noopener noreferrer">${label}</a>`
-    } catch { return label }
-  },
-  image({ text }) { return `<span class="wb-markdown-image">${escapeWorkbenchHtml(text || '图片')}</span>` },
-}
-
-const workbenchMarkdown = new Marked({ gfm: true, breaks: true, renderer: workbenchRenderer })
-
-/** @param {string} value */
-export function renderWorkbenchMarkdown(value) {
-  return /** @type {string} */ (workbenchMarkdown.parse(String(value ?? '')))
-}
 
 /** @param {string} name @param {string} mime @param {string} text */
 export function renderWorkbenchArtifactText(name, mime, text) {
@@ -124,15 +103,15 @@ function time(value) {
   return Number.isFinite(value) ? new Intl.DateTimeFormat('zh-CN', { month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit' }).format(new Date(value)) : ''
 }
 
-/** @param {string} status @param {RuntimeSnapshot} [runtime] @param {string} [phase] */
-function statusLabel(status, runtime, phase) {
-  const observed = workbenchRuntimePresentation(status, runtime, phase)
+/** @param {string} status @param {RuntimeSnapshot} [runtime] @param {string} [phase] @param {{since:number}|null} [networkSuspended] */
+function statusLabel(status, runtime, phase, networkSuspended) {
+  const observed = workbenchRuntimePresentation(status, runtime, phase, networkSuspended)
   if (observed) return observed.label
   return ({ queued: '等待中', running: '进行中', cancelling: '正在停止', completed: '已完成', failed: '未完成', cancelled: '已停止', interrupted: '已中断' })[status] ?? status
 }
 
 /** @param {Task} task */
-function statusValue(task) { return task.importedOnly ? 'imported' : workbenchRuntimePresentation(task.status, task.runtime, task.phase)?.status ?? task.status }
+function statusValue(task) { return task.importedOnly ? 'imported' : workbenchRuntimePresentation(task.status, task.runtime, task.phase, task.networkSuspended)?.status ?? task.status }
 
 /** @param {string} status @param {Continuation} [continuation] @param {number|null} [archivedAt] @param {{requiresClose:boolean,decision?:NativeResume|null}} [native] @param {{taskId:string,runId?:string,inputMode?:'steer'|'send'|'queue',runtime?:RuntimeSnapshot,busy?:boolean,error?:string}} [live] */
 function renderTaskControlsBase(status, continuation, archivedAt,native,live) {
@@ -223,10 +202,10 @@ function renderTask(task, providers, selectedId, projectName) {
   const waiting = task.waitingFor?.reason === 'writer_not_closed'
     ? `，等待执行程序退出确认，阻塞任务「${task.waitingFor.title}」`
     : task.waitingFor ? `，等待「${task.waitingFor.title}」` : ''
-  const accessibleLabel = `${title}，${provider}，${(task.importedOnly?'尚未执行':statusLabel(task.status, task.runtime, task.phase))}${attention}${waiting}${updated ? `，更新于 ${updated}` : ''}`
+  const accessibleLabel = `${title}，${provider}，${(task.importedOnly?'尚未执行':statusLabel(task.status, task.runtime, task.phase, task.networkSuspended))}${attention}${waiting}${updated ? `，更新于 ${updated}` : ''}`
   const stateHtml = pendingPermissionCount > 0
-    ? `<span class="wb-task-attention" data-status="${escapeWorkbenchHtml(statusValue(task))}" aria-label="${escapeWorkbenchHtml((task.importedOnly?'尚未执行':statusLabel(task.status, task.runtime, task.phase)))}，${escapeWorkbenchHtml(pendingPermissionCount)} 项权限请求等你确认">等你确认 · ${escapeWorkbenchHtml(pendingPermissionCount)}</span>`
-    : pendingQuestionCount > 0 ? `<span class="wb-task-attention" aria-label="${escapeWorkbenchHtml(pendingQuestionCount)} 项问题等你回答">等你回答 · ${escapeWorkbenchHtml(pendingQuestionCount)}</span>` : `<span class="wb-status" data-status="${escapeWorkbenchHtml(statusValue(task))}">${escapeWorkbenchHtml(waitingLabel || (task.importedOnly?'尚未执行':statusLabel(task.status, task.runtime, task.phase)))}</span>`
+    ? `<span class="wb-task-attention" data-status="${escapeWorkbenchHtml(statusValue(task))}" aria-label="${escapeWorkbenchHtml((task.importedOnly?'尚未执行':statusLabel(task.status, task.runtime, task.phase, task.networkSuspended)))}，${escapeWorkbenchHtml(pendingPermissionCount)} 项权限请求等你确认">等你确认 · ${escapeWorkbenchHtml(pendingPermissionCount)}</span>`
+    : pendingQuestionCount > 0 ? `<span class="wb-task-attention" aria-label="${escapeWorkbenchHtml(pendingQuestionCount)} 项问题等你回答">等你回答 · ${escapeWorkbenchHtml(pendingQuestionCount)}</span>` : `<span class="wb-status" data-status="${escapeWorkbenchHtml(statusValue(task))}">${escapeWorkbenchHtml(waitingLabel || (task.importedOnly?'尚未执行':statusLabel(task.status, task.runtime, task.phase, task.networkSuspended)))}</span>`
   return `<button type="button" class="wb-task ${task.id === selectedId ? 'is-selected' : ''}" data-task-id="${escapeWorkbenchHtml(task.id)}" aria-label="${escapeWorkbenchHtml(accessibleLabel)}"${updated ? ` title="${escapeWorkbenchHtml(`${title} · ${updated}`)}"` : ''}>
     <span class="wb-task-title" title="${escapeWorkbenchHtml(title)}">${escapeWorkbenchHtml(title)}</span>
     <span class="wb-task-meta"><span class="wb-task-provider">${escapeWorkbenchHtml(projectName || provider)}</span>${stateHtml}</span>
@@ -254,16 +233,21 @@ export function workbenchMessageContext(state) {
 
 /** @param {MessageContext} context @returns {(event:WorkbenchEvent)=>string} */
 export function renderMessageFor({ detail, helper, handoffs, actionable, lastReply, otherProvider, origin }) {
-  return event => `<article class="wb-message" id="${workbenchTimelineEventId(event)}" data-timeline-anchor data-kind="${escapeWorkbenchHtml(event.kind)}">
+  return event => {
+    const handoff=handoffs.find(h=>h.requestEventId===Number(event.id))
+    const text=handoff?.request??event.text
+    const body=event.kind==='user'?renderWorkbenchUserText(text,`task:${event.taskId}:${event.id}`):event.kind==='text'?renderWorkbenchMarkdown(text):escapeWorkbenchHtml(text)
+    return `<article class="wb-message" id="${workbenchTimelineEventId(event)}" data-timeline-anchor data-kind="${escapeWorkbenchHtml(event.kind)}">
     <header><span>${event.kind === 'user' ? '你' : `<span class="wb-provider-badge">${escapeWorkbenchHtml(helper)}</span>`}</span><time>${escapeWorkbenchHtml((event.sourceId?'原会话记录':time(event.createdAt)))}</time></header>
-    ${handoffs.some(h=>h.requestEventId===Number(event.id))?`<div class="wb-message-body"><p>${escapeWorkbenchHtml(handoffs.find(h=>h.requestEventId===Number(event.id))?.request)}</p><button class="wb-new" data-action="handoff-record" data-handoff-id="${escapeWorkbenchHtml(handoffs.find(h=>h.requestEventId===Number(event.id))?.id)}">查看随附的交接内容</button></div>`:event.kind === 'text' ? `<div class="wb-message-body wb-markdown">${renderWorkbenchMarkdown(event.text)}</div>` : `<p class="wb-message-body">${escapeWorkbenchHtml(event.text)}</p>`}
+    <div class="wb-message-body${event.kind==='text'?' wb-markdown':''}">${body}${handoff?`<button class="wb-new" data-action="handoff-record" data-handoff-id="${escapeWorkbenchHtml(handoff.id)}">查看随附的交接内容</button>`:''}</div>
     ${renderMessageAttachments(detail?.task.id??'',event.attachments)}
     ${event.kind==='text'&&detail?renderImageArtifacts(detail.task.id,(detail.artifacts??[]).filter(a=>detail.events.filter(message=>message.kind==='text'&&message.createdAt<=a.createdAt).at(-1)?.id===event.id)):''}
     ${actionable&&event.kind==='text'&&(origin||(event===lastReply&&otherProvider))?`<button type="button" class="wb-new wb-handoff-action" data-action="${origin?'handoff-revision':'handoff-review'}" data-event-id="${event.id}">${origin?'选择意见，交回原任务':`交给 ${escapeWorkbenchHtml(otherProvider?.displayName)} 检查`}</button>`:''}
   </article>`
+  }
 }
 
-/** @param {{catalog?:import('./workbench-execution.js').CatalogState,restartPreview?:import('./workbench-execution.js').ContinuationPreviewState,busy?:boolean,sidebarDisclosures?:Map<string,boolean>}} [executionView] @param {WorkbenchState} state @param {import('./workbench-interaction.js').Interactions} [interactions] @param {Draft} [draft] @param {string} [attachmentError] */
+/** @param {{quotaAttempt?:import('./workbench-quota-handoff.js').Attempt|null,catalog?:import('./workbench-execution.js').CatalogState,restartPreview?:import('./workbench-execution.js').ContinuationPreviewState,busy?:boolean,sidebarDisclosures?:Map<string,boolean>}} [executionView] @param {WorkbenchState} state @param {import('./workbench-interaction.js').Interactions} [interactions] @param {Draft} [draft] @param {string} [attachmentError] */
 export function renderWorkbench(state, interactions, draft, attachmentError='',executionView={}) {
   const tasks = state.tasks ?? []
   const detail = state.detail
@@ -330,22 +314,23 @@ export function renderWorkbench(state, interactions, draft, attachmentError='',e
   }).join('')}</details>`:''
   const dialogueHtml = events.length ? renderWorkbenchTimeline(events, { status:detail?.task.status ?? '', runId:detail?.runId, runtime:detail?.runtime, renderMessage, escapeHtml:escapeWorkbenchHtml, formatTime:time })
     : `<p class="wb-empty-copy">${detail?.task.status === 'running' ? `${escapeWorkbenchHtml(helper)} 正在处理，有回复时会按顺序显示在这里。` : detail?.task.status === 'queued' ? queuedCopy : '这项任务还没有对话记录。'}</p>`
-  const permissionHtml = permissions.length ? `<section class="wb-permissions" aria-label="等待处理的权限请求"><header><h3>需要你的决定</h3><span>${permissions.length} 项</span></header>${permissions.map(permission => `<article class="wb-permission"><div><span class="wb-permission-tool">${escapeWorkbenchHtml(permission.tool)}</span><p>${escapeWorkbenchHtml(permission.description)}</p><time>${escapeWorkbenchHtml(time(permission.createdAt))}</time></div><div class="wb-permission-actions"><button class="wb-btn" type="button" data-action="deny-permission" data-request-id="${escapeWorkbenchHtml(permission.id)}">拒绝</button><button class="wb-btn wb-btn-primary" type="button" data-action="allow-permission" data-request-id="${escapeWorkbenchHtml(permission.id)}">允许</button></div></article>`).join('')}</section>` : ''
+  const permissionHtml = permissions.length ? `<section class="wb-permissions" aria-label="等待处理的权限请求"><header><h3>需要你的决定</h3><span>${permissions.length} 项</span></header>${permissions.map(permission => `<article class="wb-permission"><div><span class="wb-permission-tool">${escapeWorkbenchHtml(permission.tool)}</span><p>${escapeWorkbenchHtml(permission.description)}</p><time>${escapeWorkbenchHtml(time(permission.createdAt))}</time></div><div class="wb-permission-actions">${['deny-permission','allow-permission'].map(action=>`<button id="${permissionControlId(permission.taskId,permission.id,action)}" class="wb-btn${action==='allow-permission'?' wb-btn-primary':''}" type="button" data-action="${action}" data-owner-task="${escapeWorkbenchHtml(permission.taskId)}" data-request-id="${escapeWorkbenchHtml(permission.id)}">${action==='allow-permission'?'允许':'拒绝'}</button>`).join('')}</div></article>`).join('')}</section>` : ''
   const artifacts = detail?.artifacts?.length ? detail.artifacts.map(artifact => `<button type="button" class="wb-artifact ${artifact.id === state.selectedArtifactId ? 'is-selected' : ''}" data-artifact-id="${escapeWorkbenchHtml(artifact.id)}"><span>${escapeWorkbenchHtml(artifactDisplayName(artifact.name))}</span><small>${/\.preview\.json$/i.test(artifact.name) ? '网页预览' : `${escapeWorkbenchHtml((artifact.size / 1024).toFixed(1))} KB · ${artifact.approvedAt ? '已确认' : '待确认'}`}</small></button>`).join('') : ''
-  const artifactPanel = renderArtifactPanel(detail?.artifacts ?? [], state.previewOpen || state.preview ? selectedArtifact : undefined, state.preview)
+  const artifactPanel = renderArtifactPanel(detail?.artifacts ?? [], state.previewOpen || (state.preview && state.previewOpen !== false) ? selectedArtifact : undefined, state.preview)
   // 「改动」在「成果」之前:主人先看这一轮改了什么,再去翻保存下来的成果。
   // 整块面板共用一份预览额度(和「成果」里那份报告同样的 256KiB / 4000 行):
   // 十几轮 × 几十个文件不能各渲各的,不然这一页会被 diff 压垮。
   const reviewBudget = createReviewDiffBudget()
   const reviewHtml = detail ? renderReviewPanel(state.reviews ?? [], { escapeHtml: escapeWorkbenchHtml, formatTime: time, renderDiff: file => renderReviewFileDiff(file, escapeWorkbenchHtml, reviewBudget), budget: reviewBudget, returnOpen: state.reviewReturnOpen ?? null, error: !!state.reviewsError }) : ''
-  const artifactHtml = detail?.artifacts?.length && !artifactPanel ? `<details id="wb-artifacts" class="wb-disclosure wb-artifacts"><summary><span>成果</span><small>${detail.artifacts.length} 件</small></summary><div class="wb-artifact-list">${artifacts}</div></details>` : ''
+  const artifactHtml = detail?.artifacts?.length && !artifactPanel ? `<details id="wb-artifacts" class="wb-disclosure wb-artifacts"><summary><span>成果</span><small>${detail.artifacts.length} 件</small></summary><div class="wb-artifact-list">${artifacts}</div><button type="button" class="wb-new" data-action="back-to-dialogue">回到对话</button></details>` : ''
   const execution=draft?.execution??detail?.execution??{defaults:/** @type {const} */('provider'),model:null,reasoningEffort:null}
   const executionDisabled=!!executionView.busy||!!(detail&&(detail.task.archivedAt!=null||['running','queued','cancelling'].includes(detail.task.status)))
   const executionControls=renderExecutionControls(execution,executionView.catalog,executionDisabled)
   const decisionCount = permissions.length + (detail?.questions ?? []).filter(request => request.taskId === detail?.task.id).length
-  const progress = detail ? `<div class="wb-task-progress"><span class="wb-status" data-status="${escapeWorkbenchHtml(statusValue({...detail.task,runtime:detail.runtime ?? detail.task.runtime}))}">${escapeWorkbenchHtml(detail.task.importedOnly ? '尚未执行' : statusLabel(detail.task.status, detail.runtime ?? detail.task.runtime, detail.task.phase))}</span>${decisionCount ? `<button type="button" class="wb-new wb-decision-jump" data-action="show-decisions">${decisionCount} 项等你处理 ↓</button>` : detail.task.phase === 'replied' ? '<span>这一轮已答复，可以继续补充要求</span>' : ''}</div>` : ''
+  const progress = detail ? `<div class="wb-task-progress"><span class="wb-status" data-status="${escapeWorkbenchHtml(statusValue({...detail.task,runtime:detail.runtime ?? detail.task.runtime}))}">${escapeWorkbenchHtml(detail.task.importedOnly ? '尚未执行' : statusLabel(detail.task.status, detail.runtime ?? detail.task.runtime, detail.task.phase, detail.task.networkSuspended))}</span>${decisionCount ? `<button type="button" class="wb-new wb-decision-jump" data-action="show-decisions">${decisionCount} 项等你处理 ↓</button>` : detail.task.phase === 'replied' ? '<span>这一轮已答复，可以继续补充要求</span>' : ''}</div>` : ''
   const chatHeader = !detail && state.selectedMatterId && chats.some(c => c.id === state.selectedMatterId) ? `<header class="wb-task-head"><div><p class="wb-task-context">对话 · 跟 CC 说</p><h2>${escapeWorkbenchHtml(chats.find(c => c.id === state.selectedMatterId)?.title ?? '')}</h2></div></header>` : ''
   const taskHeader = detail ? `<header class="wb-task-head"><div><p class="wb-task-context">${detail.task.workspaceKind==='managed'?'随手交办':escapeWorkbenchHtml(state.projects?.find(project => project.path === detail.task.path)?.name ?? pathParts(detail.task.path).name)} · ${escapeWorkbenchHtml(helper)}</p><h2 title="${escapeWorkbenchHtml(detail.task.title || '未命名任务')}">${escapeWorkbenchHtml(detail.task.title || '未命名任务')}</h2>${progress}${isUnattendedProvider(state.providers.find(p => p.id === detail.task.providerId)) ? '<p class="wb-task-unattended">免审执行者 · 看不到单步,只能停止</p>' : ''}</div><div class="wb-task-head-actions">${detail.artifacts.length ? `<button type="button" class="wb-new" data-action="show-artifacts">成果 · ${detail.artifacts.length}</button>` : ''}<details id="wb-task-info" class="wb-task-info"><summary>任务详情</summary><div class="wb-task-info-body"><dl><div><dt>完整路径</dt><dd class="wb-path">${escapeWorkbenchHtml(detail.task.path)}${detail.task.workspaceKind==='managed'?'<button type="button" class="wb-new" data-action="open-task-folder">打开工作位置</button>':''}</dd></div><div><dt>任务编号</dt><dd><code>${escapeWorkbenchHtml(detail.task.id)}</code></dd></div><div><dt>执行者</dt><dd>${escapeWorkbenchHtml(helper)}</dd></div><div><dt>更新时间</dt><dd>${escapeWorkbenchHtml(time(detail.task.updatedAt))}</dd></div>${detail.source?`<div><dt>原会话</dt><dd>${escapeWorkbenchHtml(detail.source.providerId)} · <code>${escapeWorkbenchHtml(detail.source.nativeId)}</code></dd></div><div><dt>已保存的原记录</dt><dd>${detail.source.selectedMessageCount} 段${detail.source.truncated?' · 部分文字':''}</dd></div>`:''}</dl><section class="wb-task-execution"><h3>下一轮使用</h3>${executionControls}${renderExecutionObservation(detail.lastExecution)}</section>${detail.task.archivedAt != null ? '<div class="wb-task-organization"><button type="button" class="wb-btn" data-action="restore-task">恢复任务</button></div>' : detail.task.canArchive === true ? '<div class="wb-task-organization"><button type="button" class="wb-btn" data-action="archive-task">归档任务</button></div>' : ''}${state.canWechat && detail.task.archivedAt == null ? `<div class="wb-wechat"><span>在微信继续</span><code>任务 ${escapeWorkbenchHtml(detail.task.id)}</code><button type="button" class="wb-btn" data-action="copy-wechat-command">复制</button></div>` : ''}</div></details></div></header>` : ''
+  const modelErrorInTimeline=detail?.task.error==='execution_model_unsupported'&&detail.events.filter(event=>event.kind==='error').at(-1)?.errorCode==='execution_model_unsupported'
   const selectedChat = !detail && state.selectedMatterId ? chats.find(c => c.id === state.selectedMatterId) : undefined
   const content = selectedChat ? `
     <div id="wb-converse-host" class="wb-converse-host" data-matter-id="${escapeWorkbenchHtml(selectedChat.id)}"></div>` : detail ? `
@@ -353,7 +338,8 @@ export function renderWorkbench(state, interactions, draft, attachmentError='',e
     <section class="wb-dialogue" aria-live="polite">${dialogueHtml}</section>
     ${queuedGuidance}
     ${renderWorkbenchInputs(detail.task.id, detail.inputs ?? [], interactions,!!detail.runtime?.retained)}
-    ${detail.task.error ? `<div class="wb-error" role="alert">${escapeWorkbenchHtml(executionErrorMessage(detail.task.error)??detail.task.error)}</div>` : ''}
+    ${renderQuotaHandoff(detail,state.providers,executionView.quotaAttempt)}
+    ${detail.task.error&&(!detail.quotaHandoff||!['provider_quota_exhausted','provider_rate_limited'].includes(detail.task.error)) ? `<div class="wb-error" role="alert">${modelErrorInTimeline?'':escapeWorkbenchHtml(executionErrorMessage(detail.task.error)??detail.task.error)}${detail.task.error==='execution_model_unsupported'&&!executionDisabled?'<button type="button" class="wb-new" data-action="choose-task-model">为这件事选择模型</button>':''}</div>` : ''}
     ${reviewHtml}
     ${artifactHtml}` : !state.loadingId && state.projects && !activeProject && state.newScope !== 'new:add-project' && !draft?.text.trim() ? `
     <div class="wb-welcome"><p class="wb-kicker">交办一件事</p><h1>希望 CC 帮你做什么？</h1><p>写下要求、加上材料，再确认工作位置。</p><button type="button" class="wb-btn wb-btn-primary" data-action="task-entry">交给 CC 做</button></div>` : !detail && !state.loadingId && state.projects && !activeProject && (state.newScope === 'new:add-project' || !!draft?.text.trim()) ? `
@@ -642,6 +628,7 @@ export function initWorkbenchPage(deps) {
   const busy = new Set()
   let alive = true
   let handoffCleanup = /** @type {(()=>void)|null} */ (null)
+  let quotaHandoffCleanup=/** @type {(()=>void)|null} */(null)
   let nativeHistoryCleanup = /** @type {(()=>void)|null} */ (null)
   let artifactRequest = 0
   let navigationGeneration = 0
@@ -685,7 +672,7 @@ export function initWorkbenchPage(deps) {
   /** @type {Map<string,number>} */
   const resultReturnPositions = new Map()
   // 正在看 diff 也算在翻结果:这时候流进来的新行不该把视线拽走。
-  const browsingResults = () => !!root.querySelector('.wb-artifact-panel') || !!root.querySelector('#wb-artifacts[open]') || !!root.querySelector('#wb-review[open]') || !!root.querySelector('[data-timeline-disclosure][open]') || resultReturnPositions.has(renderedScope)
+  const browsingResults = () => !!root.querySelector('.wb-artifact-panel') || !!root.querySelector('#wb-artifacts[open]') || !!root.querySelector('#wb-review[open]') || !!root.querySelector('[data-timeline-disclosure][open]') || resultReturnPositions.has(renderedScope) || hasLiveTimelineInteraction(root)
   const scopeFor = (/** @type {WorkbenchState} */ state) => state.selectedId ? `task:${state.selectedId}` : state.newScope ?? 'new'
   const readingSignatureFor = (/** @type {WorkbenchState} */ state) => state.detail ? JSON.stringify([state.detail.task.status, state.detail.task.error, state.detail.events, state.detail.artifacts.map(a => [a.id, a.sha256])]) : ''
   const permissionSignatureFor = (/** @type {WorkbenchState} */ state) => JSON.stringify((state.detail?.permissions ?? []).filter(permission => permission.taskId === state.detail?.task.id).map(permission => permission.id).sort())
@@ -750,7 +737,7 @@ export function initWorkbenchPage(deps) {
     if (current) {
       current.signature = readingSignatureFor(controller.state)
       current.following = following
-      current.unread = following ? false : current.unread || result.patched + result.appended > 0
+      current.unread = following ? false : current.unread || result.patched + result.appended + (result.deferred??0) > 0
     }
     if (following && content) content.scrollTop = content.scrollHeight
     thumbnails.mount(root)
@@ -770,6 +757,7 @@ export function initWorkbenchPage(deps) {
         if (renderedScope === taskScope && field?.value === acknowledged) field.value = ''
       }
     }
+    const permissionFocus=capturePermissionFocus(root)
     const activeField = document.activeElement instanceof Element && root.contains(document.activeElement) && 'value' in document.activeElement
       ? /** @type {HTMLInputElement|HTMLTextAreaElement|HTMLSelectElement} */ (document.activeElement)
       : null
@@ -792,6 +780,7 @@ export function initWorkbenchPage(deps) {
     if (root.querySelector('#wb-inputs')) openState.set('wb-inputs', !!root.querySelector('#wb-inputs[open]'))
     for (const disclosure of root.querySelectorAll?.('[data-review-disclosure]') ?? []) openState.set(disclosure.id, disclosure.hasAttribute('open'))
     for (const disclosure of root.querySelectorAll?.('[data-timeline-disclosure]') ?? []) openState.set(disclosure.id, disclosure.hasAttribute('open'))
+    for (const disclosure of root.querySelectorAll?.('[data-user-source]') ?? []) openState.set(disclosure.id, disclosure.hasAttribute('open'))
     disclosures.set(renderedScope, openState)
     const oldContent = root.querySelector('.wb-content')
     const contentScroll = oldContent?.scrollTop ?? 0
@@ -816,12 +805,13 @@ export function initWorkbenchPage(deps) {
     const nextPermissionSignature = permissionSignatureFor(state)
     const sameScope = renderedScope === scopeFor(state)
     if (!sameScope) { releaseHostedPreview(); attachmentPreviewRequest++; attachmentPreviewCleanup?.() }
+    const timelineReading = sameScope ? captureTimelineReading(root) : null
     const questionPanelScroll = root.querySelector('.wb-questions')?.scrollTop ?? 0
     const nextDraft=pageDrafts.get(nextScope),providerId=state.detail?.task.providerId??nextDraft.providerId??state.defaultProvider??'',path=state.detail?.task.path??nextDraft.path
     const focusedPreviewAction = document.activeElement?.closest?.('.wb-artifact-panel') ? /** @type {HTMLElement} */ (document.activeElement).dataset.action : null
     const previousPreview = root.querySelector('#wb-preview')
     const previewScroll = previousPreview?.scrollTop ?? 0
-    paintWorkbenchWithPreview(root, renderWorkbench(state, interactions,nextDraft,attachments.error(nextScope),{sidebarDisclosures,catalog:catalogs.get(providerId||state.defaultProvider||'',path),...(restartPreviewContext()?{restartPreview:recoveryPreviews.get(/** @type {import('./workbench-execution.js').ContinuationContext} */(restartPreviewContext()))}:{}),busy:busy.has(state.detail?`task:${state.detail.task.id}`:'create')}))
+    paintWorkbenchWithPreview(root, renderWorkbench(state, interactions,nextDraft,attachments.error(nextScope),{quotaAttempt:quotaHandoffAttempts.get(state.detail?.task.id??''),sidebarDisclosures,catalog:catalogs.get(providerId||state.defaultProvider||'',path),...(restartPreviewContext()?{restartPreview:recoveryPreviews.get(/** @type {import('./workbench-execution.js').ContinuationContext} */(restartPreviewContext()))}:{}),busy:busy.has(state.detail?`task:${state.detail.task.id}`:'create')}))
     const nextPreview = root.querySelector('#wb-preview')
     if (nextPreview && sameScope) nextPreview.scrollTop = previewScroll
     const nextPdfHost = /** @type {HTMLElement|null} */ (root.querySelector('#wb-preview .cc-pdf-reader'))
@@ -840,6 +830,7 @@ export function initWorkbenchPage(deps) {
     const search = input('wb-search'); if (search) search.value = searchDraft
     const sidebar = root.querySelector('.wb-sidebar'); if (sidebar) sidebar.scrollTop = sidebarScroll
     for (const [id, open] of disclosures.get(scopeFor(state)) ?? []) root.querySelector(`#${id}`)?.toggleAttribute('open', open)
+    restoreTimelineReading(root,timelineReading)
     const content = root.querySelector('.wb-content')
     if (content) {
       const follow = nextScope.startsWith('task:') && nextReading.following && (newActivity || !sameScope)
@@ -871,8 +862,9 @@ export function initWorkbenchPage(deps) {
       summary?.focus({ preventScroll: true })
     }
     const nextFocus = focused && sameScope ? input(focused.id) : null
-    if (focusedPreviewAction && sameScope) /** @type {HTMLElement|null} */ (root.querySelector(`.wb-artifact-panel [data-action="${focusedPreviewAction}"]`))?.focus({preventScroll:true})
-    if (nextFocus) { nextFocus.focus({ preventScroll: true }); if (focused && focused.start !== null && focused.end !== null && 'setSelectionRange' in nextFocus) nextFocus.setSelectionRange(focused.start, focused.end) }
+    if(permissionFocus&&sameScope)restorePermissionFocus(root,permissionFocus)
+    else if (focusedPreviewAction && sameScope) /** @type {HTMLElement|null} */ (root.querySelector(`.wb-artifact-panel [data-action="${focusedPreviewAction}"]`))?.focus({preventScroll:true})
+    else if (nextFocus) { nextFocus.focus({ preventScroll: true }); if (focused && focused.start !== null && focused.end !== null && 'setSelectionRange' in nextFocus) nextFocus.setSelectionRange(focused.start, focused.end) }
   } })
   /** @param {unknown} error */
   const recoveryCode = (/** @type {unknown} */ error) => String(error).match(/\brestart_confirmation_(required|stale)\b/)?.[1]
@@ -935,7 +927,7 @@ export function initWorkbenchPage(deps) {
   }
   const openTask = async (/** @type {string} */ id) => {
     if (!alive || !id) return
-    captureDraft(); artifactRequest++
+    captureDraft();quotaHandoffCleanup?.();quotaHandoffCleanup=null; artifactRequest++
     const navigation = ++navigationGeneration
     try { await controller.selectTask(id) }
     catch (error) { if (alive && navigation === navigationGeneration) fail(error) }
@@ -955,6 +947,9 @@ export function initWorkbenchPage(deps) {
   }
   /** @param {Event} event */
   const onClick = async event => {
+    // Capture before the summary's default toggle, including keyboard activation.
+    const summary=event.target instanceof Element?event.target.closest('#wb-artifacts > summary'):null
+    if(summary&&!summary.parentElement?.hasAttribute('open')&&!resultReturnPositions.has(renderedScope))resultReturnPositions.set(renderedScope,root.querySelector('.wb-content')?.scrollTop??0)
     const target = event.target instanceof Element ? event.target.closest('button') : null
     if (!target) return
     if (target.dataset.taskId) return openTask(target.dataset.taskId)
@@ -977,6 +972,7 @@ export function initWorkbenchPage(deps) {
     }
     if(action==='retry-continuation-preview'){const context=restartPreviewContext();if(context)void recoveryPreviews.load(context,true);return}
     if(action==='retry-execution-models'){loadExecutionCatalog(true);return}
+    if(action==='choose-task-model'){const info=root.querySelector('#wb-task-info');if(info instanceof HTMLDetailsElement){info.open=true;loadExecutionCatalog();const model=root.querySelector('#wb-model');if(model instanceof HTMLElement)model.focus()}return}
     if(action==='remove-attachment'&&target.dataset.attachmentId){captureDraft();attachments.remove(renderedScope,target.dataset.attachmentId);if(controller.state.selectedId)interactions.editInputDraft(controller.state.selectedId,input('wb-followup-text')?.value??'',pageDrafts.get(renderedScope).attachments,pageDrafts.get(renderedScope).execution);return}
     if((action==='preview-input-attachment'||action==='download-input-attachment'||action==='preview-image-artifact')&&(target.dataset.attachmentId||target.dataset.artifactId)){
       if(target.dataset.thumbnailId)thumbnails.retry(target)
@@ -1049,7 +1045,13 @@ export function initWorkbenchPage(deps) {
       if (!resultReturnPositions.has(renderedScope)) resultReturnPositions.set(renderedScope, root.querySelector('.wb-content')?.scrollTop ?? 0)
       controller.state.previewOpen = true
       const id = controller.state.selectedArtifactId ?? artifacts[0]?.id
-      if (!id || controller.state.preview?.artifactId === id) return
+      if (!id) return
+      const cached = controller.state.preview?.artifactId === id ? controller.state.preview : null
+      if (cached && cached.kind !== 'web' && (cached.kind !== 'html' || hostedPreviewId)) {
+        controller.paint();
+        /** @type {HTMLElement|null} */ (root.querySelector('#wb-artifact-choice'))?.focus({preventScroll:true})
+        return
+      }
       controller.state.selectedArtifactId = id
       controller.state.preview = null
       controller.paint()
@@ -1078,6 +1080,10 @@ export function initWorkbenchPage(deps) {
       }
     }
     if (action === 'latest-content') {
+      artifactRequest++
+      releaseHostedPreview()
+      controller.state.previewOpen = false
+      controller.paint(true)
       root.querySelector('#wb-artifacts')?.removeAttribute('open')
       for (const disclosure of root.querySelectorAll?.('[data-timeline-disclosure][open]') ?? []) disclosure.removeAttribute('open')
       resultReturnPositions.delete(renderedScope)
@@ -1098,16 +1104,26 @@ export function initWorkbenchPage(deps) {
     if (action === 'back-to-dialogue') {
       artifactRequest++
       releaseHostedPreview()
-      controller.state.selectedArtifactId = null
-      controller.state.preview = null
       controller.state.previewOpen = false
       controller.paint()
       const content = root.querySelector('.wb-content')
+      const returnPosition=resultReturnPositions.get(renderedScope)
+      root.querySelector('#wb-artifacts')?.removeAttribute('open')
       const results = /** @type {HTMLElement|null} */ (root.querySelector('[data-action="show-artifacts"]'))
       results?.focus({ preventScroll:true })
-      if (content) content.scrollTop = resultReturnPositions.get(renderedScope) ?? 0
+      if (content) content.scrollTop = returnPosition ?? 0
       resultReturnPositions.delete(renderedScope)
+      if(content)scrollPositions.set(renderedScope,content.scrollTop)
+      const current=reading.get(renderedScope)
+      if(current){current.following=atEnd(content)&&!browsingResults();if(current.following)current.unread=false}
+      showReadingNotice()
       return
+    }
+    if(action==='quota-handoff-open'&&target.dataset.quotaTask)return openTask(target.dataset.quotaTask)
+    if(action==='quota-handoff'){
+      const detail=controller.state.detail;if(!detail||(!detail.quotaHandoff&&!quotaHandoffAttempts.get(detail.task.id)))return
+      captureDraft();quotaHandoffCleanup?.();const navigation=navigationGeneration,sourceId=detail.task.id
+      quotaHandoffCleanup=mountQuotaHandoffDialog({invoke:deps.invokeWorkbenchApi,source:detail.task,initial:detail.quotaHandoff??null,providers:controller.state.providers,attempts:quotaHandoffAttempts,current:()=>alive&&navigation===navigationGeneration&&controller.state.selectedId===sourceId,opened:async id=>{if(alive&&navigation===navigationGeneration&&controller.state.selectedId===sourceId)await openTask(id)}});return
     }
     if(action==='handoff-record'&&controller.state.selectedId&&target.dataset.handoffId){
       captureDraft();handoffCleanup?.();handoffCleanup=mountHandoffRecord(deps.invokeWorkbenchApi,controller.state.selectedId,target.dataset.handoffId);return
@@ -1410,7 +1426,7 @@ export function initWorkbenchPage(deps) {
     if (event.target !== content || !content) return
     scrollPositions.set(renderedScope, content.scrollTop)
     const current = reading.get(renderedScope)
-    if (current && atEnd(content) && !browsingResults()) { current.unread = false; showReadingNotice() }
+    if(current){current.following=atEnd(content)&&!browsingResults();if(current.following){current.unread=false;showReadingNotice()}}
   }
   root.addEventListener('scroll', onScroll, true)
   const saveWindowState = () => {
@@ -1441,13 +1457,17 @@ export function initWorkbenchPage(deps) {
   const onPaste=(/** @type {ClipboardEvent} */ event)=>{if(!inComposer(event))return;const files=Array.from(event.clipboardData?.files??[]);if(files.length){event.preventDefault();addFiles(files)}}
   const onDrop=(/** @type {DragEvent} */ event)=>{if(!inComposer(event))return;event.preventDefault();addFiles(Array.from(event.dataTransfer?.files??[]))}
   const onDragOver=(/** @type {DragEvent} */ event)=>{if(inComposer(event)&&Array.from(event.dataTransfer?.types??[]).includes('Files'))event.preventDefault()}
-  const onToggle=(/** @type {Event} */event)=>{if(event.target instanceof Element&&['wb-options','wb-task-info'].includes(event.target.id))loadExecutionCatalog()}
+  const onToggle=(/** @type {Event} */event)=>{
+    if(!(event.target instanceof Element)||!root.contains(event.target))return
+    if(['wb-options','wb-task-info'].includes(event.target.id))loadExecutionCatalog()
+    if(event.target.id==='wb-artifacts'&&!event.target.hasAttribute('open'))resultReturnPositions.delete(renderedScope)
+  }
   root.addEventListener('toggle',onToggle,true)
   root.addEventListener('paste',onPaste);root.addEventListener('drop',onDrop);root.addEventListener('dragover',onDragOver)
   root.addEventListener('input', onInput)
   window.addEventListener?.('pagehide', saveWindowState)
   root.addEventListener('change', onChange)
-  root.addEventListener('click', onClick)
+  root.addEventListener('click', onClick, true)
   root.addEventListener('submit', onSubmit)
   controller.refresh().catch(fail)
   const timer = setInterval(() => {
@@ -1483,7 +1503,7 @@ export function initWorkbenchPage(deps) {
     resumeSearch = input('wb-search')?.value ?? searchDraft
     if (controller.state.selectedId) resumeScope = `task:${controller.state.selectedId}`
     else if (document.getElementById('wb-create-form')) resumeScope = scopeFor(controller.state)
-    releaseHostedPreview();pdfCleanup?.();thumbnails.destroy();recoveryPreviews.destroy();catalogs.destroy();root.removeEventListener('toggle',onToggle,true);handoffCleanup?.(); nativeHistoryCleanup?.();attachmentPreviewCleanup?.();root.removeEventListener('paste',onPaste);root.removeEventListener('drop',onDrop);root.removeEventListener('dragover',onDragOver); alive = false; artifactRequest++; controller.destroy(); root.removeEventListener('input', onInput); window.removeEventListener?.('pagehide', saveWindowState); root.removeEventListener('scroll', onScroll, true); root.removeEventListener('change', onChange); root.removeEventListener('click', onClick); root.removeEventListener('submit', onSubmit); if (objectUrl) URL.revokeObjectURL(objectUrl)
+    releaseHostedPreview();pdfCleanup?.();clearLiveTimelinePatches(root);thumbnails.destroy();recoveryPreviews.destroy();catalogs.destroy();root.removeEventListener('toggle',onToggle,true);handoffCleanup?.();quotaHandoffCleanup?.(); nativeHistoryCleanup?.();attachmentPreviewCleanup?.();root.removeEventListener('paste',onPaste);root.removeEventListener('drop',onDrop);root.removeEventListener('dragover',onDragOver); alive = false; artifactRequest++; controller.destroy(); root.removeEventListener('input', onInput); window.removeEventListener?.('pagehide', saveWindowState); root.removeEventListener('scroll', onScroll, true); root.removeEventListener('change', onChange); root.removeEventListener('click', onClick, true); root.removeEventListener('submit', onSubmit); if (objectUrl) URL.revokeObjectURL(objectUrl)
   } }
   return controller
 }

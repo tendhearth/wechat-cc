@@ -72,8 +72,8 @@ function ago(iso) {
 function readCache() { try { var s = localStorage.getItem(HOME_KEY); return s ? JSON.parse(s) : null } catch (e) { return null } }
 function writeCache(s) { try { localStorage.setItem(HOME_KEY, JSON.stringify(s)) } catch (e) {} }
 function evHtml(e) {
-  var h = '<div class="card ev"><div class="k">' + (KIND_ICON[e.kind] || "•") + '</div><div class="tx"><b>' + esc(e.title) + '</b>'
-  if (e.note) h += '<p>' + esc(e.note) + '</p>'
+  var h = '<div class="card ev"><div class="k">' + (KIND_ICON[e.kind] || "•") + '</div><div class="tx"><b>' + esc(CCM.markdownPlainText(e.title)) + '</b>'
+  if (e.note) h += '<p>' + esc(CCM.markdownPlainText(e.note)) + '</p>'
   // M3:esc() 只挡得住 HTML 特殊字符,挡不住 javascript: 这种协议头 —— href
   // 的安全性只靠三个文件外的 hunt-catch.ts URL_RE(只收 http(s)://)撑着,
   // 这里再本地兜一道,只在确实是 http(s) 链接时才输出 <a>。
@@ -157,7 +157,7 @@ function markMemoriesSeen(){
   if(homeState&&document.visibilityState==='visible'&&document.getElementById('p-memory').classList.contains('on')&&!document.getElementById('banner').textContent)
     api('/m/api/seen',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({until:homeState.synced_at})}).catch(function(){})
 }
-document.querySelector('nav button[data-p="memory"]').addEventListener('click',markMemoriesSeen)
+document.getElementById('memory-open').addEventListener('click',markMemoriesSeen)
 setInterval(function(){if(!document.hidden&&document.getElementById('p-today').classList.contains('on'))loadHome()},15000)
 document.getElementById("feed").addEventListener("click", function(ev) {
   var b = /** @type {HTMLButtonElement} */ (/** @type {Element} */ (ev.target).closest("button.more"))

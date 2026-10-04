@@ -22,11 +22,11 @@ describe('continueBlock:会话读页底部那一块', () => {
     ['folder_missing', '电脑上找不到这个会话的文件夹了'],
     ['quota', '这个执行者的额度已用完。等额度恢复后再试。'],
     ['empty', '这个会话里没有能带过来的内容'],
-  ] as const)('%s ⇒ 一行灰字、没有按钮', (state, text) => {
-    expect(continueBlock(P({ state, mode: null }), 'zh-Hans')).toEqual({ kind: 'note', text, retry: false })
+  ] as const)('%s ⇒ 一行灰字、可在本页重新检查', (state, text) => {
+    expect(continueBlock(P({ state, mode: null }), 'zh-Hans')).toEqual({ kind: 'note', text, retry: true })
   })
   it('没装执行者:名字取自预览(Codex 就说 Codex)', () => {
-    expect(continueBlock(P({ state: 'provider_missing', provider: 'codex', mode: null }), 'en')).toEqual({ kind: 'note', text: 'Codex isn’t installed on your computer', retry: false })
+    expect(continueBlock(P({ state: 'provider_missing', provider: 'codex', mode: null }), 'en')).toEqual({ kind: 'note', text: 'Codex isn’t installed on your computer', retry: true })
   })
 })
 

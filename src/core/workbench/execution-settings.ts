@@ -4,10 +4,28 @@ import type {AgentExecutionChoice,AgentExecutionObservation} from '../agent-prov
 export const PROVIDER_EXECUTION_CHOICE:Readonly<AgentExecutionChoice>={defaults:'provider',model:null,reasoningEffort:null}
 export const NATIVE_EXECUTION_CHOICE:Readonly<AgentExecutionChoice>={defaults:'native',model:null,reasoningEffort:null}
 
+/**
+ * provider 边界的结构化码(lib/provider-error-code)→ 任务的稳定错误码(task.error)。
+ * 认证失效只在原始错误码说不出更具体的话时才用通用的 provider_auth_expired —— 比如 Cursor
+ * 的 `acp_auth_required` 已经有「跑一次 cursor-agent login」那句,不盖掉它。
+ */
+export function taskErrorForProviderCode(code:string|undefined,raw:string):string|undefined{
+  switch(code){
+    case 'quota':return 'provider_quota_exhausted'
+    case 'rate_limited':return 'provider_rate_limited'
+    case 'auth_rejected':return 'provider_auth_rejected'
+    case 'auth_failed':return executionFailureMessage(raw)!==raw?raw:'provider_auth_expired'
+    case 'network':return 'provider_network'
+    case 'server_error':return 'provider_server_error'
+    case 'invalid_request':return executionFailureMessage(raw)!==raw?raw:'provider_invalid_request'
+    default:return undefined
+  }
+}
+
 /** Keep task.error as the diagnostic code; the conversation also reaches phone users. */
 export function executionFailureMessage(code:string):string {
   const messages:Record<string,string>={
-    execution_model_unsupported:'当前模型不可用，请重新选择模型，或使用自动。',
+    execution_model_unsupported:'当前模型不可用。请为这件事选择可用的模型后继续；自动会沿用原设置。',
     execution_effort_unsupported:'这个模型不支持所选思考强度，请重新选择，或使用自动。',
     execution_model_unknown:'暂时无法确认当前模型，请明确选择一个模型后重试。',
     execution_image_unsupported:'所选模型不接收图片，请更换支持图片的模型，或移除图片。',
@@ -30,7 +48,13 @@ export function executionFailureMessage(code:string):string {
     api_task_private_scope:'所选文件夹与任务服务的私有状态目录重叠，无法安全开始。请选择具体的项目文件夹。',
     provider_quota_exhausted:'这家执行者的额度已用完，这一轮没有开始或没有完成。等额度恢复，或把这件事交给另一位执行者继续。',
     provider_rate_limited:'这家执行者暂时限流，这一轮没有完成。稍等几分钟再继续。',
-    network_unprotected:'网络未受保护(bx 未连上或 VPN 探测失败),CC 先暂停，这一轮没有开始。恢复后再继续。',
+    // 下面五条由 provider 边界产的结构化码而来(arch backlog #4 第 2 步),不再读错误原文猜。
+    provider_auth_expired:'这家执行者的登录已失效，这一轮没有完成。请在电脑上重新登录它，再继续。',
+    provider_auth_rejected:'这家执行者的服务拒绝了账号或密钥（API 返回 401/403），这一轮没有完成。请检查账号或密钥后再继续。',
+    provider_network:'连不上这家执行者的服务（网络问题），这一轮没有完成。网络恢复后再继续。',
+    provider_server_error:'这家执行者的服务端出错了（5xx），这一轮没有完成。通常过一会儿会恢复，稍后再继续。',
+    provider_invalid_request:'这家执行者拒绝了这次请求（请求不合法，比如内容太长或模型不可用），这一轮没有完成。请调整后再继续。',
+    network_unprotected:'网络未受保护(bx 未连上或 VPN 探测失败),这个执行者用到需要保护的接口，这一步先暂停，这一轮没有开始。恢复后再继续。',
     api_task_scope_invalid:'无法确认 API 任务的项目范围，任务没有开始。请重新打开项目后再试。',
     api_task_busy:'这个 API 会话正在处理另一轮，请等待当前轮结束。',
     api_task_closed:'这个 API 会话已经关闭，请从任务页面重新继续。',

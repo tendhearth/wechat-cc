@@ -94,6 +94,11 @@ export interface WireMainOpts {
    * 透传进 buildTickBodies。
    */
   outboundTaps?: { tap(chatId: string): { close(): string[] } }
+  /**
+   * 回复交付(spec 2026-10-03):main.ts 里那**同一个** runtime。经 `...opts` 透传进 buildTickBodies ——
+   * 当轮 provider 走 daemon 时,伙伴推送的最后的话经它送达。缺省 ⇒ 推送照旧只认 reply 工具。
+   */
+  replyDelivery?: import('../../core/turn-reply').ReplyDeliveryPort
   // 三条用途:tick-bodies 用 recordHunt(打猎入库)与 list/summary(日程判断
   // 要看包袱里堆了什么),pipeline-deps 用 list(微信「背包」命令)。这里给
   // 全,下游各取所需 —— main.ts 传的是完整 Journal。

@@ -12,12 +12,12 @@ const kind = (e: unknown): string => {
   return e instanceof Error ? e.name : 'unknown'
 }
 
-/** 配对与偏好各读各的:偏好读失败不连累配对(否则已配对的手机会悄悄跑成演示);配对读失败 ⇒ 当没配对。 */
-export async function loadSession(store: CredentialStore, log: Log = devLog): Promise<{ pairing: PairingRecord | null; lang: Lang | null }> {
+/** 配对与偏好各读各的:偏好失败不连累配对;配对读取失败保留未知状态,等待重读。 */
+export async function loadSession(store: CredentialStore, log: Log = devLog): Promise<{ pairing: PairingRecord | null; lang: Lang | null; pairingReadFailed?: true }> {
   const [p, prefs] = await Promise.allSettled([store.load(), store.loadPrefs()])
   if (p.status === 'rejected') log(`pairing load failed (${kind(p.reason)})`)
   if (prefs.status === 'rejected') log(`prefs load failed (${kind(prefs.reason)})`)
-  return { pairing: p.status === 'fulfilled' ? p.value : null, lang: prefs.status === 'fulfilled' ? prefs.value.lang : null }
+  return { pairing: p.status === 'fulfilled' ? p.value : null, lang: prefs.status === 'fulfilled' ? prefs.value.lang : null, ...(p.status === 'rejected' ? { pairingReadFailed: true as const } : {}) }
 }
 
 /** 不等结果的钥匙串写:失败只记一行,不留未处理的拒绝。 */

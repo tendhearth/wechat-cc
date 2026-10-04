@@ -21,6 +21,8 @@ import { classifyToolUse } from './user-tier'
 import type { McpStdioSpec } from './mcp-stdio-spec'
 import { childEnvFor } from './mcp-stdio-spec'
 import { makeTurnEmitter } from './turn-emitter'
+import { openaiErrorCode } from './openai-error-code'
+import { withProviderCode } from '../lib/provider-error-code'
 
 /** RFC 05 Phase 2 capability declaration. We OWN the loop → per-tool gating is
  *  realisable (perToolCallback). No SDK sandbox (enforcement is the tool gate,
@@ -218,7 +220,10 @@ export async function* runDispatchLoop(args: DispatchLoopArgs): AsyncIterable<Ag
     // trailing (e.g. generateContent threw), roll it back so the next dispatch
     // doesn't push a second consecutive user turn → API 400.
     if ((args.history.at(-1) as any)?.role === 'user') args.history.pop()
-    yield em.error(err)
+    // 同一套 HTTP 边界分类(arch backlog #4 第 2 步):GoogleGenAI 的 ApiError 带 `status`;
+    // 无效 key 是 400 + API_KEY_INVALID(§4.5)⇒ auth_rejected。分不出 ⇒ 旧回退。
+    const code = openaiErrorCode(err)
+    yield code ? em.error(err, { code }) : em.error(err)
   }
 }
 
@@ -359,6 +364,8 @@ export function createGeminiAgentProvider(opts: GeminiAgentProviderOptions): Age
   const newSessionId = () => `gemini-${Date.now()}-${++uuidCounter}`
 
   return {
+    // 守护(评审 #193 P1-1):API key 直连 Google;模型和 spawn / cheapEval 用的是同一份。
+    callTarget: (kind) => ({ provider: 'gemini', model: kind === 'cheapEval' ? opts.cheapModel ?? opts.model : opts.model }),
     async spawn(_project: AgentProject, ctx: SpawnContext): Promise<AgentSession> {
       const conn = await opts.mcpConnect(ctx.mcpEnv)
       let functionDeclarations: GeminiFunctionDeclaration[]
@@ -421,11 +428,15 @@ export function createGeminiAgentProvider(opts: GeminiAgentProviderOptions): Age
     /** CLI 子进程一档,与 codex 同量级。 */
     cheapEvalBudgetMs: 20_000,
     async cheapEval(prompt: string): Promise<string> {
-      const resp = await opts.genai.models.generateContent({
-        model: opts.cheapModel ?? opts.model,
-        contents: [{ role: 'user', parts: [{ text: prompt }] }],
-      })
-      return resp.text ?? ''
+      try {
+        const resp = await opts.genai.models.generateContent({
+          model: opts.cheapModel ?? opts.model,
+          contents: [{ role: 'user', parts: [{ text: prompt }] }],
+        })
+        return resp.text ?? ''
+      } catch (err) {
+        throw withProviderCode(err, openaiErrorCode(err))
+      }
     },
   }
 }

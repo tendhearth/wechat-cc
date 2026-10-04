@@ -19,7 +19,7 @@ export function registerWorkbenchApi(
     const connection={baseURL,apiKey,model}
     const configHash=apiTaskConnectionHash(connection)
     mkdirSync(stateDir,{recursive:true,mode:0o700})
-    const provider=createApiTaskProvider({sessions:makeApiSessionStore(db),model:createApiModel(connection),configHash,configuredModel:model,privateStateDir:stateDir})
+    const provider=createApiTaskProvider({sessions:makeApiSessionStore(db),model:createApiModel(connection),configHash,configuredModel:model,baseURL,privateStateDir:stateDir})
     registry.register('openai',provider,{displayName:`API · ${model}（文档与成果）`,canResume:provider.canResume,workbench:MANAGED_API_CAPABILITIES,validateWorkbenchInput:validateApiTaskInput})
     return true
   }catch{return false}

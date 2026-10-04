@@ -27,6 +27,7 @@ export interface InternalApiLifecycle extends Lifecycle {
   setConnections(fn: NonNullable<InternalApiDeps['connections']>): void
   setPhoneConnect(p: NonNullable<InternalApiDeps['phoneConnect']>): void
   setMemoryNightly(r: { runNow(): Promise<unknown> }): void
+  setCliUpgrade(u: import('../../core/cli-upgrade/engine').CliUpgrader): void
   mintSessionToken(tier: import('../../core/user-tier').UserTier, sessionKey: string, opts?: import('./token-registry').MintTokenOpts): string
   invalidateSession(sessionKey: string): void
   panelTokens: import('./token-registry').PanelTokens
@@ -79,6 +80,7 @@ export async function registerInternalApi(deps: InternalApiDeps): Promise<Intern
     setConnections: (fn) => api.setConnections(fn),
     setPhoneConnect: (p) => api.setPhoneConnect(p),
     setMemoryNightly: (r) => api.setMemoryNightly(r),
+    setCliUpgrade: (u) => api.setCliUpgrade(u),
     mintSessionToken: (tier, sessionKey, opts) => api.mintSessionToken(tier, sessionKey, opts),
     invalidateSession: (sessionKey) => api.invalidateSession(sessionKey),
     panelTokens: api.panelTokens,

@@ -2,6 +2,8 @@ import type { TierProfile } from './user-tier'
 import type { PermissionMode } from './permission-mode'
 import type { ProviderId } from './conversation'
 import { isAuthFail } from './auth-fail'
+import type { CallTarget } from '../lib/call-classifier'
+import { makeTurnTextCollector } from './turn-reply'
 
 // Re-export so existing imports `import type { PermissionMode } from
 // './agent-provider'` keep working.
@@ -71,10 +73,21 @@ export interface AgentActivity {
 }
 
 export type AgentEvent =
-  | { kind: 'text'; text: string; itemId?: string; textMode?: 'append' | 'replace' }
+  /**
+   * `ownSegment`:这条文字是一条**独立的**助理消息,自成一段(回复交付「最后的话」的分段,core/turn-reply.ts)——
+   * 哪怕和上一条之间没有 tool_call。Codex 的 agent_message 就是这样:一轮里的每条都是完整消息,spec §4.2 的定义是
+   * 「turn.completed 之前最后一条 agent_message」。不设 ⇒ 同一段里的多条文字用空行拼(Claude 一条消息的多个文字块)。
+   */
+  | { kind: 'text'; text: string; itemId?: string; textMode?: 'append' | 'replace'; ownSegment?: true }
   | { kind: 'tool_call'; server?: string; tool: string; activity?: AgentActivity }
   | { kind: 'init'; sessionId: string }
-  | { kind: 'result'; sessionId: string; numTurns: number; durationMs: number }
+  /**
+   * `finalText`:provider 自己对「这一轮最后的话」的定义(Claude Agent SDK 的 `result.result`)。只在这一轮
+   * **成功**(没有 SDK 错误标注、`is_error` 不为真)时才带 —— 出错轮的 `result.result` 就是错误原文(#190)。
+   * 只用来**核对**分段算出来的最后的话(collectTurn → TurnSummary.providerFinalText,协调器记
+   * `[REPLY_FINAL_CHECK]`),交付永远用分段的结果(回复交付第 5 步定案,spec 修订记录)。
+   */
+  | { kind: 'result'; sessionId: string; numTurns: number; durationMs: number; finalText?: string }
   /** `code`:provider 边界产的结构化码 —— lib/provider-error-code 的闭集(另有
    *  collectTurn 自己的 `turn_timeout`)。下游有码就只看码;`message` 只给人/日志看,
    *  **永远不当回复发出去**。 */
@@ -135,7 +148,40 @@ export interface AgentSession {
    */
   cancel?(): Promise<void>
   close(): Promise<void>
+  /**
+   * 守护(评审 #193 P1-1):这条会话每一轮**真正**连到哪里 —— 起来那一刻定下的端点 + 模型
+   * (Claude 子进程拿到的 ANTHROPIC_BASE_URL、openai-compatible 的 base URL、cursor-agent 报上来的
+   * 当前模型……),不是此刻配置里写的。null / 未实现 ⇒ 拿不准 ⇒ 网络闸门按需要保护(fail closed)。
+   */
+  callTarget?(): CallTarget | null
+  /**
+   * 网络守护「暂停在跑的任务」(主人 2026-10-03):冻住 / 放开这条会话的整棵进程树,连同会话
+   * 自己的计时器。只有在沙盒里验证过「冻住期间流被掐断、放开后能自己重试接上」的执行者才实现它;
+   * 没实现 ⇒ 守护退回原来的停法。见 docs/reference/network-guard.md「暂停在跑的任务」。
+   */
+  suspension?: AgentSessionSuspension
 }
+
+export interface AgentSessionSuspension {
+  /** SIGSTOP 整棵进程树 + 暂停会话自己的计时器。false = 做不到(进程没了 / 平台不支持),调用方改用停。 */
+  suspend(): boolean
+  /** SIGCONT + 计时器接着走。幂等。 */
+  resume(): void
+  /**
+   * 冻住期间要停(主人取消 / 暂停到顶 / daemon 关):直接 SIGKILL 冻住的树,**不先放开**
+   * (放开那一下它就会接着用不受保护的网络)。之后的 close() 不能再指望进程配合收尾。
+   */
+  terminate(): void
+}
+
+/** `AgentProvider.callTarget` 问的是哪一种调用。 */
+export type CallTargetKind =
+  /** 起会话本身。缺省 = 'session'(多数执行者起会话就定下了端点和模型)。ACP 起会话不发模型请求,报 purpose:'setup'。 */
+  | 'spawn'
+  /** 按这份 SpawnContext 起出来的会话,每一轮会连到哪里(还没起来时的预测)。 */
+  | 'session'
+  | 'cheapEval'
+  | 'strongEval'
 
 /**
  * One-shot LLM eval used for routing / observation / decision flows that
@@ -339,6 +385,18 @@ export interface ProviderCapabilities {
    *  这条说的是"provider 自带的工具(Cursor 自己的读写/执行)有没有一道按 tier 收紧的门"。
    *  缺省(未声明)= true:老 provider 的工具面要么走 daemon 的权限桥,要么由 SDK 的 sandbox 收着。 */
   guestSafe?: boolean
+  /**
+   * 回复交付开关(spec 2026-10-03-reply-delivery §5.0)。缺省 = 'legacy':走 reply 工具 + FALLBACK_REPLY。
+   * 'shadow':照旧,但每轮算一次新路会发什么,记 [REPLY_SHADOW];'daemon':最后的话就是回复。
+   * 读它用 capability-matrix 的 `replyDeliveryFor`。迁移按 openai → agy → Cursor → Codex → Claude 一家一家翻。
+   */
+  replyDelivery?: import('./turn-reply').ReplyDeliveryMode
+  /**
+   * 哪些文字算回复(2026-10-03 修订):'last_segment'(缺省,编码型执行者 —— Claude Code / Codex / Cursor,
+   * 之前的段是长任务旁白)或 'all_segments'(聊天型模型 —— openai 兼容、agy:本轮所有文字段按顺序都交付)。
+   * 读它用 capability-matrix 的 `replyTextStrategyFor`。
+   */
+  replyText?: import('./turn-reply').ReplyTextStrategy
 }
 
 export interface AgentProvider {
@@ -386,6 +444,12 @@ export interface AgentProvider {
    * Missing → caller falls back to cheapEval.
    */
   strongEval?: CheapEval
+  /**
+   * 守护(评审 #193 P1-1):这一次调用会**真正**连到哪里 —— 用的是和 spawn / cheapEval 自己完全
+   * 同一份已解析的参数(构造时定下的 base URL、构造时的默认模型、ctx 里钉的模型……),不读此刻的配置。
+   * 网络闸门就按它判。null / 未实现 ⇒ 拿不准 ⇒ 按需要保护(fail closed)。
+   */
+  callTarget?(kind: CallTargetKind, ctx?: Partial<SpawnContext>): CallTarget | null
 }
 
 /**
@@ -489,6 +553,16 @@ export interface TurnSummary {
    *  'auth_rejected' / 'network') — lets the coordinator branch on failure
    *  category without string-matching the message. */
   errorCode?: string
+  /**
+   * 「最后的话」(回复交付 spec §4.1,core/turn-reply.ts):以 tool_call 为界分段,最后一段非空文字。
+   * 只有 outcome === 'completed' 的轮才可以交付它;error 事件的文案从不进来。可选只是为了让手写的
+   * TurnSummary(测试、spawn 失败路径)不必补;collectTurn 总是填。
+   */
+  finalText?: string
+  /** 最后的话之前的各段文字(旁白)。 */
+  narration?: string[]
+  /** result 事件带的 provider 自己的「最后的话」(只有 Claude 的成功轮有),只用于核对,不交付。 */
+  providerFinalText?: string
 }
 
 /** Sentinel error code stamped on a TurnSummary when the per-turn watchdog
@@ -527,8 +601,12 @@ export async function collectTurn(events: AsyncIterable<AgentEvent>, opts?: Coll
   let error: string | undefined
   let errorCode: string | undefined
   const toolCalls: string[] = []
+  const segments = makeTurnTextCollector()
+  let providerFinalText: string | undefined
+  const extra = (): Pick<TurnSummary, 'providerFinalText'> => (providerFinalText !== undefined ? { providerFinalText } : {})
 
   const apply = (ev: AgentEvent): void => {
+    segments.push(ev)
     if (ev.kind === 'text') {
       // **空的不是一条消息。** 这里是所有路径的共用收口:solo 会为每个
       // chunk 发一次(空的注定失败)、chatroom/parallel 会 join,而
@@ -540,6 +618,7 @@ export async function collectTurn(events: AsyncIterable<AgentEvent>, opts?: Coll
       if (isReplyToolCall(ev)) replyToolCalled = true
     } else if (ev.kind === 'result') {
       result = { sessionId: ev.sessionId, numTurns: ev.numTurns, durationMs: ev.durationMs }
+      if (typeof ev.finalText === 'string') providerFinalText = ev.finalText
     } else if (ev.kind === 'error') {
       error = ev.message
       if (ev.code) errorCode = ev.code
@@ -554,7 +633,7 @@ export async function collectTurn(events: AsyncIterable<AgentEvent>, opts?: Coll
   const timeoutMs = opts?.timeoutMs
   if (!timeoutMs || timeoutMs <= 0) {
     for await (const ev of events) { observe(ev); apply(ev) }
-    return { assistantText: texts, replyToolCalled, toolCalls, result, error, errorCode }
+    return { assistantText: texts, replyToolCalled, toolCalls, result, error, errorCode, ...segments.parts(), ...extra() }
   }
 
   // Watchdog path: race each `next()` against an idle timer that resets per
@@ -583,6 +662,7 @@ export async function collectTurn(events: AsyncIterable<AgentEvent>, opts?: Coll
           result,
           error: `turn timed out after ${timeoutMs}ms with no activity`,
           errorCode: TURN_TIMEOUT_CODE,
+          ...segments.parts(),
         }
       }
       if (step.done) break
@@ -592,5 +672,5 @@ export async function collectTurn(events: AsyncIterable<AgentEvent>, opts?: Coll
   } finally {
     if (timer) clearTimeout(timer)
   }
-  return { assistantText: texts, replyToolCalled, toolCalls, result, error, errorCode }
+  return { assistantText: texts, replyToolCalled, toolCalls, result, error, errorCode, ...segments.parts(), ...extra() }
 }

@@ -165,6 +165,11 @@ export interface InternalApiDeps {
    */
   outboundTaps?: { observe(chatId: string, text: string): void }
   /**
+   * 回复交付(spec 2026-10-03-reply-delivery)。第 0 步只用 `observeLegacy`:reply 路由把每一条
+   * legacy 回复交给 shadow 轮比对;attach / message 路由(第 1 步)也挂在这上面。
+   */
+  replyDelivery?: import('../reply-delivery').ReplyDeliveryRuntime
+  /**
    * 伙伴日志读写(GET/POST /v1/journal*)。缺失 ⇒ 路由 503,桌面端显示
    * 「这个 daemon 还没有战利品记录」而不是空清单 —— 空清单会被读成
    * 「CC 什么都没打到」。
@@ -210,7 +215,7 @@ export interface InternalApiDeps {
    * chat isn't configured yet (route maps to 503); any other rejection maps
    * to 500.
    */
-  companionConverse?: (text: string) => Promise<{ reply: string }>
+  companionConverse?: (text: string) => Promise<{ reply: string; attachments?: import('../../core/turn-reply').TurnAttachment[]; narration?: string[] }>
   /**
    * CC 桌宠的「在做什么」(spec 2026-09-05-cc-desktop-pet §5.1)。整段推导 +
    * 输入采集在 wiring/pipeline-deps.ts 的闭包里(主人 chatId、会话在飞、
@@ -487,6 +492,8 @@ export interface InternalApiDeps {
   settingsLink?: () => Promise<string | null>
   /** 每晚记忆整理运行时(pipeline-deps 造,main.ts 通过 setMemoryNightly 接进来)。 */
   memoryNightly?: { runNow(): Promise<unknown> }
+  /** 外部 agent CLI 自动升级引擎(main.ts 通过 setCliUpgrade 接进来;没接 ⇒ /v1/cli/* 回 503)。 */
+  cliUpgrade?: import('../../core/cli-upgrade/engine').CliUpgrader
   /**
    * Resolves the default admin chat_id (access.json's single admin) when a
    * memory route's request body omits `chat_id`. Wired eagerly in main.ts
@@ -522,6 +529,8 @@ export interface InternalApiDeps {
    * (src/daemon/plugins/health.ts)。null ⇒ bootstrap 还没接线完;
    * undefined ⇒ 字段不输出(老 daemon / minimal-deps 测试路径)。
    */
+  /** 开机探测失败、正在退避重探的外部 CLI provider(2026-10-04)。GET /v1/health.provider_probes。 */
+  providerProbes?: () => import('../bootstrap/provider-probe').ProbeRetryStatus[]
   plugins?: () => import('../plugins/health').PluginsHealth | null
   /** Passive outbound link health from ilink-glue (spec 2026-08-22-outbound-health). */
   outbound?: () => import('../ilink/outbound-health').OutboundHealth
@@ -610,6 +619,7 @@ export interface InternalApi {
   setConnections(fn: () => import('../connections').ConnectionsSnapshot): void
   setPhoneConnect(p: PhoneConnectDep): void
   setMemoryNightly(r: { runNow(): Promise<unknown> }): void
+  setCliUpgrade(u: import('../../core/cli-upgrade/engine').CliUpgrader): void
   /**
    * Late-bind the conversation controller (coordinator.setMode) after
    * bootstrap has constructed the coordinator. /v1/conversation/set-mode
@@ -712,7 +722,18 @@ export interface InternalApi {
 export type RouteHandler = (
   query: URLSearchParams,
   body: unknown,
-  caller?: { tier: UserTier; origin: import('./token-registry').TokenOrigin; chatId?: string },
+  caller?: {
+    tier: UserTier
+    origin: import('./token-registry').TokenOrigin
+    chatId?: string
+    /**
+     * 共享令牌(`agy-static`)在 daemon 交付模式下绑定到的那一轮的聊天(回复交付第 2 步):令牌里读不出 chat,
+     * daemon 按「这家 provider 此刻正在跑的那一轮」认。`sharedTurn` 说明绑定结果(bound / none / ambiguous)。
+     * 只有附件路由与发送类的 chat 范围门用它;`chatId` 照旧是令牌里读出来的(agy-static 永远没有)。
+     */
+    turnChatId?: string
+    sharedTurn?: 'bound' | 'none' | 'ambiguous'
+  },
 ) => Promise<{ status: number; body: unknown }> | { status: number; body: unknown }
 
 export type RouteTable = Record<string, RouteHandler | undefined>
@@ -721,7 +742,10 @@ export function errMsg(err: unknown): string {
   return err instanceof Error ? err.message : String(err)
 }
 
-/** /v1/health 的 guard 块。source=off ⇒ 守护关着(不拦);safe=false ⇒ 模型调用全部暂停。 */
+/**
+ * /v1/health 的 guard 块(守护 v2)。source=off ⇒ 守护关着(不拦)。safe 只是**信号**:
+ * safe=false 时只有需要保护的调用暂停 —— `paused` 才说「此刻有需要保护的接口在用、被停了」。
+ */
 export interface GuardHealth {
   enabled: boolean
   source: 'bx' | 'probe' | 'off'
@@ -729,4 +753,16 @@ export interface GuardHealth {
   detail: string
   ip: string | null
   checked_at: string | null
+  /** guard.json 的信号来源设置:auto(装了 bx 只认 bx)/ probe(强制用探测)。 */
+  signal_source?: 'auto' | 'probe'
+  /** 已配置 / 在用的 provider 里有没有需要保护的。 */
+  protected_in_use?: boolean
+  /** = enabled && !safe && protected_in_use:有需要保护的调用此刻被暂停。 */
+  paused?: boolean
+  /** 已配置 / 在用的 provider 各自的分类。 */
+  providers?: Array<{ id: string; model: string | null; host: string | null; protected: boolean; kind: string; label: string; reason: string }>
+  /** 此刻被网络守护冻住(暂停)的任务数(主人 2026-10-03:probe 来源连续两次不安全 ⇒ 暂停,不停)。 */
+  suspended?: number
+  /** 被冻住的任务。 */
+  suspended_tasks?: Array<{ task_id: string; title: string; provider: string; since: string }>
 }

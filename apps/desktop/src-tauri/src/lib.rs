@@ -1013,6 +1013,7 @@ fn workbench_request_allowed(method: &str, path: &str) -> bool {
             | ("POST", "/v1/workbench/import")
             | ("POST", "/v1/workbench/prepare-resume")
             | ("POST", "/v1/workbench/prepare-continuation")
+            | ("POST", "/v1/workbench/quota-handoff")
             | ("POST", "/v1/workbench/handoff-preview")
             | ("POST", "/v1/workbench/handoff")
             | ("GET", "/v1/workbench/handoff")
@@ -1569,6 +1570,7 @@ mod workbench_proxy_tests {
             ("POST", "/v1/workbench/import"),
             ("POST", "/v1/workbench/prepare-resume"),
             ("POST", "/v1/workbench/prepare-continuation"),
+            ("POST", "/v1/workbench/quota-handoff"),
             ("POST", "/v1/workbench/handoff-preview"),
             ("POST", "/v1/workbench/handoff"),
             ("GET", "/v1/workbench/handoff"),

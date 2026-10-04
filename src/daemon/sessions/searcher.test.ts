@@ -72,6 +72,27 @@ describe('searchAcrossSessions', () => {
     )
   })
 
+  // 回复交付迁到 daemon 之后(spec 2026-10-03 §4.10):新会话里没有 reply 调用,话是最后一段文字 —— 靠入站信封认微信会话。
+  it('post-migration WeChat session (inbound envelope, final-text reply, no reply tool) still counts as a WeChat session', async () => {
+    await withFakeHome(
+      (projects) => {
+        const userTurn = JSON.stringify({ type: 'user', message: { role: 'user', content: [{ type: 'text', text: '<wechat chat_id="o9x@im.wechat" user="GSR" user_id="o9x@im.wechat" account="a" msg_type="text" ts="2026-10-03T10:00:00+08:00">\n迁移后的问题\n</wechat>' }] } })
+        const textTurn = JSON.stringify({ type: 'assistant', message: { role: 'assistant', content: [{ type: 'text', text: '这是最后的话。' }] } })
+        writeFileSync(join(projects, 'sid-C.jsonl'), userTurn + '\n' + textTurn + '\n')
+        writeFileSync(join(stateDir, 'sessions.json'), JSON.stringify({
+          version: 1, sessions: { migrated: { session_id: 'sid-C', last_used_at: '2026-10-03T00:00:00Z' } },
+        }))
+      },
+      async (home) => {
+        for (const q of ['迁移后的问题', '迁移']) { // FTS 路径与 <3 字的扫描路径
+          const hits = await searchAcrossSessions(q, { stateDir, home, db })
+          expect(hits.length, q).toBeGreaterThan(0)
+          expect(hits.every(h => h.session_has_reply_tool), q).toBe(true)
+        }
+      },
+    )
+  })
+
   it('returns session_has_reply_tool=false when no reply tool is used', async () => {
     await withFakeHome(
       (projects) => {

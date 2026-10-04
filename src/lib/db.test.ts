@@ -779,3 +779,11 @@ it('v70 creates the chat-matter say receipts table empty (phone requestId dedupe
   const db=openTestDb()
   try{expect(db.query('SELECT * FROM matter_say_receipts').all()).toEqual([])}finally{db.close()}
 })
+
+it('v71 adds the reply-delivery columns to turn_records (spec 2026-10-03 §4.10)',()=>{
+  const db=openTestDb()
+  try{
+    const cols=(db.query("PRAGMA table_info('turn_records')").all() as {name:string}[]).map(c=>c.name)
+    expect(cols).toEqual(expect.arrayContaining(['delivery','bubbles','attachments','narration_segments']))
+  }finally{db.close()}
+})

@@ -68,6 +68,14 @@ describe('WeChat task control through the shared service',()=>{
     expect(await control('owner',`任务 ${task.id}`)).toContain('正在停止')
     expect(await control('owner',`任务 ${task.id}`)).not.toContain('会话保留中')
   })
+  it('a run frozen by the network guard reads 已暂停(网络未受保护) in list and detail (2026-10-03)',async()=>{
+    setup({async spawn(){return{async *dispatch(){yield result},async close(){}}}})
+    const task=store.create({title:'冻住的任务',path:project,providerId:'claude',ownerChatId:'owner'})
+    store.update(task.id,'running')
+    const control=makeWechatWorkbenchControl({store,ownerChatId:()=>owner,actions:{...service,detail:id=>{const d=service.detail(id);return{...d,task:{...d.task,networkSuspended:{since:1}}}}}})
+    expect(await control('owner','任务')).toContain('已暂停(网络未受保护)')
+    expect(await control('owner',`任务 ${task.id}`)).toContain('已暂停(网络未受保护)，恢复后自动继续')
+  })
   it('does not promise a new round for a retained queue-only runtime',async()=>{
     setup({async spawn(){return{async *dispatch(){yield result},async close(){}}}})
     const task=store.create({title:'后台会话',path:project,providerId:'claude',ownerChatId:'owner'})

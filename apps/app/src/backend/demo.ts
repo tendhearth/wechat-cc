@@ -1,6 +1,6 @@
 import { PHONE_SAY_MAX_CHARS } from '@wechat-cc/protocol'
 import { labelJoin, type Lang } from '../i18n'
-import { BackendError, type Backend, type Connection, type MatterT, type MatterDetailT, type ApprovalExplanationT, type ChatJobT, type ChatMessageT, type SessionContinueT } from './types'
+import { BackendError, type Backend, type Connection, type MatterT, type MatterDetailT, type ApprovalExplanationT, type ChatJobT, type ChatMessageT, type SessionContinueT, type MatterSayResultT } from './types'
 import {
   copy, IDS, CHAT_ID, PERM_ID, QUESTION_ID, RUN_IDS, t, explanation, progress, changesTurn, entryOptions,
   demoConnections, demoSessions, demoSessionMessages, demoSessionTitleKey, DEMO_SESSION_MESSAGES, type Stage,
@@ -29,7 +29,7 @@ export function makeDemoBackend(opts: { now?: () => number; setTimeout?: typeof 
   let epoch = 0 // reset() 之后让旧定时器失效
   let seq = 0
   let createdBy = new Map<string, string>()
-  let saidBy = new Set<string>()
+  let saidBy = new Map<string, MatterSayResultT>()
   let deviceLabel = ''
   // 接着做(演示):会话 key → 接成的那件事
   let adopted = new Map<string, string>()
@@ -114,6 +114,7 @@ export function makeDemoBackend(opts: { now?: () => number; setTimeout?: typeof 
   /** 读时按请求的语言出一份拷贝:标题、事件、未处理的种子问题都换成 l。状态(已批准 / 已回答 / 阶段)在 e 里,不因语言变。 */
   function localize(e: Entry, l: Lang): MatterDetailT {
     const d = structuredClone(e.detail)
+    d.inputs.reverse() // match daemon's recent receipt list (newest first)
     d.events = e.evs.map(r => ({ kind: r.kind, createdAt: r.createdAt, text: r.key ? t(l, r.key) + (r.extra ?? '') : (r.text ?? '') }))
     const title = titleOf(e, l)
     d.matter.title = title
@@ -200,6 +201,7 @@ export function makeDemoBackend(opts: { now?: () => number; setTimeout?: typeof 
     },
     async matters(l) { noteLang(l); return list().map(e => localize(e, l).matter).sort((a, b) => b.updatedAt - a.updatedAt) },
     async matter(id, l) { noteLang(l); return localize(get(id), l) },
+    async matterInputReceipt(id, requestId) { return get(id).detail.inputs.find(row => row.id === requestId) ?? null },
     async insight(id, l) {
       noteLang(l)
       const e = get(id)
@@ -238,11 +240,17 @@ export function makeDemoBackend(opts: { now?: () => number; setTimeout?: typeof 
       return { ...job }
     },
     async connections() { return demoConnections(lastLang, now()) },
-    async sessions(provider) { return { items: demoSessions(lastLang, now(), provider), nextCursor: null } },
-    async session(key) {
+    async sessions(provider, _cursor, q) {
+      if (q !== undefined && (q.length > 200 || q.includes('\0'))) throw new BackendError('invalid')
+      const needle = q?.trim().toLowerCase() ?? ''
+      return { items: demoSessions(lastLang, now(), provider).filter(row => !needle || `${row.title}\n${row.project ?? ''}`.toLowerCase().includes(needle)), nextCursor: null }
+    },
+    async session(key, cursor, window = 'start') {
+      if (window === 'recent' && cursor !== undefined) throw new BackendError('invalid')
       const row = demoSessions(lastLang, now()).find(r => r.key === key)
       if (!row) throw new BackendError('not_found')
-      return { session: row, managed: adopted.has(key), nextCursor: null, messages: demoSessionMessages(lastLang) }
+      const messages = demoSessionMessages(lastLang)
+      return { session: row, managed: adopted.has(key), window, nextCursor: null, messages: window === 'recent' ? messages.slice(-20) : messages }
     },
     async continuePreview(key) {
       const row = sessionRow(key), matterId = adopted.get(key) ?? null
@@ -320,18 +328,32 @@ export function makeDemoBackend(opts: { now?: () => number; setTimeout?: typeof 
       ev(e, 'tool_call', 'evAnswered', text); e.stage = 'answered'; touch(e, { phase: 'working' }); publish([id])
       later(2000, () => { e.stage = 'replied'; touch(e, { phase: 'replied', status: 'replied' }); publish([id]) })
     },
-    async say(id, text, requestId) {
+    async say(id, text, requestId, options) {
       const e = get(id)
       // 与 daemon 一致:同一个 requestId 重发 ⇒ 当作已收到,不重复记。
-      if (saidBy.has(requestId)) return
-      saidBy.add(requestId)
+      const prior = saidBy.get(requestId)
+      if (prior) {
+        if (prior.kind === 'task' && prior.input && (prior.input.taskId !== id || prior.input.text !== text || options?.runId && prior.input.runId !== options.runId)) throw new BackendError('input_conflict')
+        return prior
+      }
+      if (options?.runId && options.runId !== e.detail.runId) throw new BackendError('input_stale')
       evText(e, 'user', text)
       // 接过来的那件事:第一句一发,「第一句会怎样」的说明就该消失,执行者开始跑(与 daemon 一致);回话后这一轮结束
       const started = !!e.detail.nativeStart
       if (started) { const { nativeStart: _sent, ...rest } = e.detail; e.detail = rest; touch(e, { phase: 'working' }) }
       else touch(e, {})
+      const result: MatterSayResultT = e.detail.task ? {
+        kind: 'task', task: e.detail.task,
+        input: { id: requestId, taskId: id, runId: options?.runId ?? e.detail.runId ?? `run-${id}`, text, status: e.detail.inputMode === 'queue' ? 'pending' : 'sending' },
+      } : { kind: 'chat', reply: t(lastLang, 'ccReply') }
+      if (result.kind === 'task' && result.input) e.detail = { ...e.detail, inputs: [...e.detail.inputs, result.input] }
+      saidBy.set(requestId, result)
       publish([id])
-      later(2000, () => { ev(e, 'text', 'ccReply'); touch(e, started ? { phase: 'replied' } : {}); publish([id]) })
+      later(2000, () => {
+        if (result.kind === 'task' && result.input) result.input.status = 'delivered'
+        ev(e, 'text', 'ccReply'); touch(e, started ? { phase: 'replied' } : {}); publish([id])
+      })
+      return result
     },
     async entryOptions(l) { noteLang(l); return entryOptions(l) },
     async create({ requestId, text, projectId }) {
@@ -363,6 +385,6 @@ export function makeDemoBackend(opts: { now?: () => number; setTimeout?: typeof 
     async unpair() {},
     setActive() {},
     dispose() {},
-    reset() { epoch++; seq = 0; createdBy = new Map(); saidBy = new Set(); adopted = new Map(); handedBy = new Map(); deviceLabel = ''; seed(); publish([...order]) },
+    reset() { epoch++; seq = 0; createdBy = new Map(); saidBy = new Map(); adopted = new Map(); handedBy = new Map(); deviceLabel = ''; seed(); publish([...order]) },
   }
 }

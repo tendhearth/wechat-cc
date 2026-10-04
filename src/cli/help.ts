@@ -167,6 +167,7 @@ More subcommands (each has its own --help):
   wechat-cc access list|remove      Allowlist management — the add path stays in the admin chat flow
   wechat-cc avatar info|set|remove  Avatar metadata + binary (per chat / bot / user key)
   wechat-cc backup create|list|restore  备份/恢复不可再生数据(记忆、事实库、配置)
+  wechat-cc cli status|upgrade|rollback  外部 agent CLI(claude/codex/cursor/agy)版本与自动升级
   wechat-cc connection probe        Inspect this machine's WeChat connection
   wechat-cc conversations list      Per-chat conversation modes (RFC 03)
   wechat-cc dialogue <timeline|threads|search|thread-detail|backfill|lock|unlock>

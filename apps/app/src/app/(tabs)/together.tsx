@@ -7,9 +7,12 @@ import { useLang } from '../../i18n/useLang'
 import { useBackendCtx } from '../../state/BackendProvider'
 import { useConnection, useQuery } from '../../state/hooks'
 import { useWork } from '../../state/useWork'
+import { useAllMatterInputs, useInputRecovery } from '../../state/useMatterInputs'
+import { inputNeedsChecking } from '../../state/matter-inputs'
 import { CCFigure } from '../../ui/CCFigure'
 import { ccPresence } from '../../view/presence'
 import { ConnectionNotice } from '../../ui/ConnectionNotice'
+import { LinkRow } from '../../ui/Rows'
 import { SayBar } from '../../ui/SayBar'
 import { StatusPill } from '../../ui/StatusPill'
 import { space } from '../../ui/tokens'
@@ -28,6 +31,8 @@ export default function Together() {
   const { approvals, agents, matters } = useWork()
   const rows = togetherView(matters, approvals, agents)
   const { backend } = useBackendCtx()
+  const saved = useAllMatterInputs().filter(inputNeedsChecking).length
+  const recovery = useInputRecovery()
   const chat = useQuery('chat:latest', () => backend.chat({}))
   const { refresh: refreshChat } = chat
   useFocusEffect(useCallback(() => { void refreshChat() }, [refreshChat]))
@@ -69,7 +74,7 @@ export default function Together() {
         data={rows}
         keyExtractor={(r) => r.id}
         contentContainerStyle={{ paddingHorizontal: space.xl, paddingBottom: space.xl, flexGrow: 1 }}
-        ListHeaderComponent={pinned}
+        ListHeaderComponent={<>{pinned}<LinkRow testID="together-sessions" label={t(lang, 'sessions.title')} onPress={() => router.push('/sessions')} />{saved || recovery.phase !== 'ready' ? <LinkRow testID="together-saved-inputs" label={`${t(lang, 'input.savedTitle')}${saved ? ` · ${saved}` : ''}`} onPress={() => router.push('/inputs')} /> : null}</>}
         ListEmptyComponent={
           <View style={{ flex: 1, justifyContent: 'center', paddingVertical: space.xxl }}>
             <Txt testID="together-empty" role="bubble" tone="inkSoft" style={{ textAlign: 'center' }}>

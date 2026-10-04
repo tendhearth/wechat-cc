@@ -192,7 +192,7 @@
                 <div class="toggle-row">
                   <div>
                     <div class="lab">网络守护</div>
-                    <div class="sub">装了 bx 就看 bx 是否在保护；没装每 30 秒查公网 IP、变了探一次 google.com。网络未受保护时 CC 暂停所有模型调用，微信、手机、桌面会收到同一句提示。<span id="screen-guard-status-line" class="guard-status-line">—</span></div>
+                    <div class="sub">装了 bx 就只看 bx 是否在保护；没装每 30 秒查公网 IP、变了探一次 google.com。网络未受保护时，只暂停用到 Claude 等需要保护接口的调用；国内模型、自建网关照常，命令和权限回复也照常。<span id="screen-guard-status-line" class="guard-status-line">—</span></div>
                   </div>
                   <button class="toggle" id="screen-guard-toggle" data-toggle aria-pressed="false"></button>
                 </div>
@@ -293,7 +293,7 @@
               <span id="dash-fs-access-text"></span>
               <button id="dash-fs-access-open" class="btn" type="button">打开系统设置</button>
             </div>
-            <!-- 网络守护(2026-10-02):bx 保护中 / 网络未受保护时 CC 暂停所有模型调用。守护关着就不显示。 -->
+            <!-- 网络守护(守护 v2,按调用判):bx 保护中 / 网络未受保护时暂停需要保护的调用 / 没用到需要保护的接口。守护关着就不显示。 -->
             <p id="dash-guard-line" class="guard-status-line dash-guard-line" role="status" hidden></p>
             <h2>当前连接中的用户</h2>
             <div id="accounts-current" class="current-user-card"></div>
@@ -351,7 +351,7 @@
           <div class="toggle-row">
             <div>
               <div class="lab">网络守护</div>
-              <div class="sub">装了 bx 就看 bx 是否在保护；没装每 30 秒探活。网络未受保护时 CC 暂停所有模型调用。<span id="guard-status-line" class="guard-status-line">—</span></div>
+              <div class="sub">装了 bx 就只看 bx 是否在保护；没装每 30 秒探活。网络未受保护时，只暂停用到 Claude 等需要保护接口的调用。<span id="guard-status-line" class="guard-status-line">—</span></div>
             </div>
             <button class="toggle" id="guard-toggle" type="button" data-toggle aria-pressed="false" aria-label="网络守护" aria-describedby="guard-toggle-feedback"></button><span class="setting-feedback" id="guard-toggle-feedback" role="status"></span>
           </div>

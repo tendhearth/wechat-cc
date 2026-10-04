@@ -1,0 +1,148 @@
+/**
+ * 守护 v2:把「provider id + 可能缺省的模型」补成一次调用**真正连到的地方**,好让分类器判。
+ *
+ *   claude → ANTHROPIC_BASE_URL(daemon.env 或 ~/.claude/settings.json 灌进来的;没设 = 官方)
+ *   codex  → codex 自己的配置层(CODEX_HOME/config.toml 的 model_provider / base_url;lib/codex-target.ts)。
+ *            codex 0.153 不认 OPENAI_BASE_URL,所以**不看**它;拿不准 ⇒ unresolved ⇒ 需要保护
+ *   openai → agent-config.openaiBaseUrl(openai-compatible:DeepSeek / Kimi / 自建网关都走它)
+ *   cursor → 没给模型就用 agent-config.cursorModel,再没有就是 auto
+ *   agy / gemini → 官方(Google)
+ *
+ * 只读配置,从不打印密钥:这里只碰 base URL 和模型名。
+ *
+ * 评审 #193 P1-1:**真正出发的调用不再走这里补**。执行者 / 会话自己报实际目标(AgentProvider.callTarget
+ * / AgentSession.callTarget,带 exact),配置后来改了它们也不跟;报不出来的是 unresolved ⇒ 按需要保护。
+ * 这里的按配置推只剩给「还没有执行者可问」的地方用:CLI 的 `guard status`、语音 / 终端会话这类外部出口。
+ */
+import { existsSync, readFileSync } from 'node:fs'
+import { homedir } from 'node:os'
+import { join } from 'node:path'
+import { loadAgentConfig, modelForProvider, type AgentConfig } from '../../lib/agent-config'
+import { classifyCall, type CallTarget } from '../../lib/call-classifier'
+import { codexCallTarget, type ResolveCodexTargetOptions } from '../../lib/codex-target'
+import { findOnPath } from '../../lib/util'
+import { loadGuardConfig } from './store'
+
+export interface ProviderInUse {
+  id: string
+  model?: string | null
+  baseUrl?: string | null
+  /** configured = 已注册 provider 的配置模型;session = 某个在用会话钉的模型。 */
+  via?: 'configured' | 'session'
+  /** 评审 #193 P1-1:provider / 会话自己报的实际目标;有就按它判,不按此刻的配置补。 */
+  target?: CallTarget
+}
+
+export function makeResolveTarget(
+  agentConfig: () => AgentConfig | null,
+  env: NodeJS.ProcessEnv = process.env,
+  codexOpts: Omit<ResolveCodexTargetOptions, 'env'> = {},
+): (t: CallTarget) => CallTarget {
+  return (t) => {
+    // 评审 #193 P1-1:执行者报出来的实际目标(exact)/ 拿不准的(unresolved)一律不拿此刻的配置去补 ——
+    // 配置后来改了,在用的会话不会跟着改。只有「还没起来、按配置推」的目标(health / guard status)才补。
+    if (t.exact || t.unresolved) return t
+    // 2026-10-03:codex 按它自己的配置层判(codex 0.153 不认 OPENAI_BASE_URL);拿不准 ⇒ unresolved。
+    if (t.provider === 'codex' && (t.baseUrl === undefined || t.baseUrl === null)) {
+      return { ...codexCallTarget({ model: t.model ?? null }, { ...codexOpts, env }), ...(t.purpose ? { purpose: t.purpose } : {}) }
+    }
+    let cfg: AgentConfig | null = null
+    try { cfg = agentConfig() } catch { cfg = null }
+    const out: CallTarget = { ...t }
+    if (out.baseUrl === undefined || out.baseUrl === null) {
+      if (t.provider === 'claude') out.baseUrl = env.ANTHROPIC_BASE_URL || null
+      else if (t.provider === 'openai') out.baseUrl = cfg?.openaiBaseUrl || null
+    }
+    if (t.provider === 'cursor' && (out.model === undefined || out.model === null || out.model === '') && t.purpose !== 'catalog') {
+      out.model = cfg?.cursorModel || 'auto'
+    }
+    return out
+  }
+}
+
+/** 已注册 provider 各自配置的模型(health / guard status 用)。 */
+export function configuredProviders(cfg: AgentConfig | null, registered: readonly string[]): ProviderInUse[] {
+  return registered.map(id => ({ id, model: cfg ? (modelForProvider(cfg, id) ?? null) : null, via: 'configured' as const }))
+}
+
+/**
+ * CLI 进程拿不到 daemon 的 process.env:按 daemon 同样的来源补出判端点要用的几个变量(只读名字和值里的
+ * URL / 路径,不碰密钥)。真实环境变量优先,其次 daemon.env,再次 ~/.claude/settings.json 的 env。
+ * Codex 只看 CODEX_HOME(定位它的 config.toml)和 CODEX_OSS_*(内置 ollama / lmstudio);不看 OPENAI_BASE_URL。
+ */
+export function guardEnvFor(stateDir: string, base: NodeJS.ProcessEnv = process.env): NodeJS.ProcessEnv {
+  const keys = ['ANTHROPIC_BASE_URL', 'CODEX_HOME', 'CODEX_OSS_BASE_URL', 'CODEX_OSS_PORT', 'HOME'] as const
+  const out: NodeJS.ProcessEnv = {}
+  for (const k of keys) if (base[k]) out[k] = base[k]
+  const fromFile = (path: string, pick: (raw: string) => Record<string, unknown>) => {
+    try {
+      if (!existsSync(path)) return
+      const vals = pick(readFileSync(path, 'utf8'))
+      for (const k of keys) if (!out[k] && typeof vals[k] === 'string' && vals[k]) out[k] = vals[k] as string
+    } catch { /* 读不出来就当没设 */ }
+  }
+  fromFile(join(stateDir, 'daemon.env'), (raw) => {
+    const r: Record<string, string> = {}
+    for (const line of raw.split(/\r?\n/)) {
+      const m = /^\s*(?:export\s+)?([A-Z0-9_]+)\s*=\s*(.*)\s*$/.exec(line)
+      if (m) r[m[1]!] = m[2]!.replace(/^(['"])(.*)\1$/, '$2')
+    }
+    return r
+  })
+  fromFile(join(homedir(), '.claude', 'settings.json'), (raw) => {
+    const env = (JSON.parse(raw) as { env?: Record<string, unknown> }).env
+    return env && typeof env === 'object' ? env : {}
+  })
+  return out
+}
+
+/**
+ * 已注册 provider + 在用会话,按 (id, 实际目标) 去重。评审 #193 P1-1:`targetOf` 给了就用
+ * provider 自己报的目标(它注册那一刻定下的端点 / 模型),会话带了 `target` 就用会话实际的;
+ * 都没有才退回按配置推(CLI 的 guard status 只能这样)。
+ */
+export function providersInUse(
+  cfg: AgentConfig | null,
+  registered: readonly string[],
+  sessions: ReadonlyArray<{ id: string; model: string | null; target?: CallTarget }>,
+  targetOf?: (id: string) => CallTarget | null,
+): ProviderInUse[] {
+  const out = configuredProviders(cfg, registered).map(p => {
+    const t = targetOf?.(p.id) ?? null
+    return t ? { ...p, model: t.model ?? p.model ?? null, target: t } : p
+  })
+  const keyOf = (p: { id: string; model?: string | null; target?: CallTarget }) => `${p.id}\u0000${p.target?.model ?? p.model ?? ''}\u0000${p.target?.baseUrl ?? ''}\u0000${p.target?.unresolved ? 'u' : ''}`
+  const seen = new Set(out.map(keyOf))
+  for (const s of sessions) {
+    if (!s.model && !s.target) continue
+    const p: ProviderInUse = { id: s.id, model: s.target?.model ?? s.model, via: 'session', ...(s.target ? { target: s.target } : {}) }
+    const k = keyOf(p)
+    if (seen.has(k)) continue
+    seen.add(k)
+    out.push(p)
+  }
+  return out
+}
+
+/**
+ * `wechat-cc guard status` 用:CLI 进程不知道 daemon 实际注册了谁,按配置推一份(claude / codex
+ * 总在;cursor 看 cursor-agent / CURSOR_API_KEY;openai 要 base URL + 模型;agy 看二进制;gemini 看模型),
+ * 每家按 daemon 同一套规则分类。只读配置,不发任何流量。
+ */
+export function classifyConfiguredForCli(stateDir: string, opts: { onPath?: (bin: string) => string | null } = {}): Array<{ id: string; model: string | null; host: string | null; protected: boolean; kind: string; label: string; reason: string }> {
+  let cfg: AgentConfig | null = null
+  try { cfg = loadAgentConfig(stateDir) } catch { cfg = null }
+  const onPath = opts.onPath ?? findOnPath
+  const env = guardEnvFor(stateDir)
+  const registered = ['claude', 'codex']
+  if (cfg?.cursorAgentBin || onPath('cursor-agent') || process.env.CURSOR_API_KEY) registered.push('cursor')
+  if (cfg?.openaiBaseUrl && cfg.openaiModel) registered.push('openai')
+  if (cfg?.agyBin || onPath('agy')) registered.push('agy')
+  if (cfg?.geminiModel) registered.push('gemini')
+  const g = loadGuardConfig(stateDir)
+  const resolve = makeResolveTarget(() => cfg, env)
+  return configuredProviders(cfg, registered).map(p => {
+    const c = classifyCall(resolve({ provider: p.id, model: p.model ?? null, purpose: 'turn' }), { protect: g.protect, trust: g.trust, protectCustomGateways: g.protect_custom_gateways })
+    return { id: p.id, model: p.model ?? null, host: c.host, protected: c.protected, kind: c.kind, label: c.label, reason: c.reason }
+  })
+}

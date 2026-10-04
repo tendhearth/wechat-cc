@@ -66,6 +66,17 @@ describe('演示后端', () => {
       expect((await b.matter('e5f6a7b8', 'en')).events.length).toBe(2)
     } finally { vi.useRealTimers() }
   })
+  it('演示会话按标题/项目过滤,读取明确反映recent/start并限制近期20条', async () => {
+    const b = makeDemoBackend()
+    const all = await b.sessions('claude')
+    const row = all.items[0]!
+    expect((await b.sessions('claude', undefined, row.title)).items.map(item => item.key)).toContain(row.key)
+    expect((await b.sessions('claude', undefined, 'definitely-no-match')).items).toEqual([])
+    const recent = await b.session(row.key, undefined, 'recent')
+    expect(recent.window).toBe('recent'); expect(recent.nextCursor).toBeNull(); expect(recent.messages.length).toBeLessThanOrEqual(20)
+    expect((await b.session(row.key)).window).toBe('start')
+    await expect(b.sessions('claude', undefined, 'x'.repeat(201))).rejects.toMatchObject({ code: 'invalid' })
+  })
   it('交办 ⇒ 新事项正在整理,稍后回复', async () => {
     vi.useFakeTimers()
     try {

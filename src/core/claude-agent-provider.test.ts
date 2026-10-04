@@ -235,7 +235,31 @@ describe('claude-agent-provider', () => {
     await session.close()
   })
 
-  it('keeps normal chat tool-first combined text and ignores tool-result lifecycle', async () => {
+  // 回复交付第 5 步:result.result 只在成功轮作为 finalText 带出来(只用于核对);子 agent 的文字不发 text。
+  it('result carries finalText only on a clean turn; subagent text is never a text event', async () => {
+    const provider = createClaudeAgentProvider({ sdkOptionsForProject: () => ({}) })
+    const session = await provider.spawn({ alias: 'foo', path: '/tmp' }, { tierProfile: TIER_PROFILES.admin, permissionMode: 'strict', chatId: '_test' })
+    const p1 = drain(session.dispatch('one'))
+    emitSdk({ type: 'assistant', message: { content: [{ type: 'tool_use', id: 'task-1', name: 'Task', input: {} }] } })
+    emitSdk({ type: 'assistant', parent_tool_use_id: 'task-1', message: { content: [{ type: 'text', text: 'SUBAGENT_NOTES' }, { type: 'tool_use', id: 'g1', name: 'Grep', input: {} }] } })
+    emitSdk({ type: 'assistant', message: { content: [{ type: 'text', text: 'Final answer' }] } })
+    emitSdk({ type: 'result', subtype: 'success', session_id: 's', num_turns: 2, duration_ms: 1, is_error: false, result: 'Final answer' })
+    const e1 = await p1
+    expect(JSON.stringify(e1)).not.toContain('SUBAGENT_NOTES')
+    expect(e1.filter(e => e.kind === 'text')).toEqual([{ kind: 'text', text: 'Final answer' }])
+    expect(e1[e1.length - 1]).toMatchObject({ kind: 'result', finalText: 'Final answer' })
+    // is_error 的 result:result.result 是错误原文 —— 不带 finalText,补一个带码的 error。
+    const p2 = drain(session.dispatch('two'))
+    emitSdk({ type: 'result', subtype: 'success', session_id: 's', num_turns: 1, duration_ms: 1, is_error: true, result: 'API Error: 500 boom' })
+    const e2 = await p2
+    expect(e2.find(e => e.kind === 'error')).toMatchObject({ code: 'provider_error' })
+    expect(e2[e2.length - 1]).not.toHaveProperty('finalText')
+    await session.close()
+  })
+
+  // 回复交付第 5 步(2026-10-03):以前这里钉的是「先发 tool_call、再发拼起来的文字」(BeforeAfter)—— 那正是
+  // spec §4.2 要修的顺序:开场「Before」被算进工具之后的段。现在按块的顺序发,工具前后各是一段。
+  it('emits chat events in block order (text before a tool_use is its own segment) and ignores tool-result lifecycle', async () => {
     const provider = createClaudeAgentProvider({ sdkOptionsForProject: () => ({}) })
     const session = await provider.spawn({ alias: 'foo', path: '/tmp' }, { tierProfile: TIER_PROFILES.admin, permissionMode: 'strict', chatId: '_test' })
     const eventsPromise = drain(session.dispatch('inspect'))
@@ -244,7 +268,7 @@ describe('claude-agent-provider', () => {
     ] } })
     emitSdk({ type: 'user', message: { content: [{ type: 'tool_result', tool_use_id: 'read-1', content: 'done' }] } })
     finishSdkTurn()
-    expect((await eventsPromise).slice(0, -1)).toEqual([{ kind: 'tool_call', tool: 'Read' }, { kind: 'text', text: 'BeforeAfter' }])
+    expect((await eventsPromise).slice(0, -1)).toEqual([{ kind: 'text', text: 'Before' }, { kind: 'tool_call', tool: 'Read' }, { kind: 'text', text: 'After' }])
     await session.close()
   })
 
@@ -935,6 +959,33 @@ describe('claude-agent-provider', () => {
     const textEvents = events.filter(e => e.kind === 'text')
     expect(textEvents).toEqual([{ kind: 'text', text: 'fresh' }])
     stderrSpy.mockRestore()
+    await session.close()
+  })
+})
+
+// 评审 #193 P1-1:Claude Code 子进程在 spawn 那一刻拿到 ANTHROPIC_BASE_URL;之后 daemon 的环境再怎么变,
+// 这条会话还连着原来那个端点。守护必须按 spawn 时捕获的那一个判。
+describe('Claude call target is captured at spawn (review #193 P1)', () => {
+  const project = { alias: 'a', path: '/tmp' }
+  const context = { tierProfile: TIER_PROFILES.trusted, permissionMode: 'strict' as const, chatId: 'c' }
+  it('session keeps the ANTHROPIC_BASE_URL (and model) it was spawned with', async () => {
+    const saved = process.env.ANTHROPIC_BASE_URL
+    try {
+      delete process.env.ANTHROPIC_BASE_URL   // spawn 时:官方端点
+      const provider = createClaudeAgentProvider({ sdkOptionsForProject: () => ({ model: 'claude-x' }) })
+      const session = await provider.spawn(project, context)
+      process.env.ANTHROPIC_BASE_URL = 'https://gw.example.com'   // 之后 daemon 环境变了
+      expect(session.callTarget?.()).toEqual({ provider: 'claude', model: 'claude-x', baseUrl: null })
+      expect(provider.callTarget?.('session', {})).toMatchObject({ provider: 'claude', baseUrl: 'https://gw.example.com' })
+      await session.close()
+    } finally {
+      if (saved === undefined) delete process.env.ANTHROPIC_BASE_URL; else process.env.ANTHROPIC_BASE_URL = saved
+    }
+  })
+  it('an explicit options.env (workbench) is what the subprocess gets — that is the captured endpoint', async () => {
+    const provider = createClaudeAgentProvider({ sdkOptionsForProject: () => ({ model: 'claude-x', env: { ANTHROPIC_BASE_URL: 'http://127.0.0.1:8080' } }) })
+    const session = await provider.spawn(project, context)
+    expect(session.callTarget?.()).toEqual({ provider: 'claude', model: 'claude-x', baseUrl: 'http://127.0.0.1:8080' })
     await session.close()
   })
 })
