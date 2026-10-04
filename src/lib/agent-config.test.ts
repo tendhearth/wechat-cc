@@ -985,3 +985,31 @@ describe('agent-config reply_delivery(回复交付的运行时回滚开关,2026-
     } finally { rmSync(dir, { recursive: true, force: true }) }
   })
 })
+
+describe('agent-config cli_auto_upgrade(外部 CLI 自动升级,2026-10-04)', () => {
+  it('合法整块原样保留;save → load 不丢', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'agent-config-'))
+    try {
+      const v = { enabled: true, check_hour: 3, per_cli: { agy: { enabled: false } } }
+      writeFileSync(join(dir, 'agent-config.json'), JSON.stringify({ cli_auto_upgrade: v }))
+      expect(loadAgentConfig(dir).cli_auto_upgrade).toEqual(v)
+      saveAgentConfig(dir, loadAgentConfig(dir))
+      expect(loadAgentConfig(dir).cli_auto_upgrade).toEqual(v)
+    } finally { rmSync(dir, { recursive: true, force: true }) }
+  })
+
+  it('有坏项 ⇒ 至少保住 enabled(关掉的开关不能因为一处笔误又被打开)', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'agent-config-'))
+    try {
+      writeFileSync(join(dir, 'agent-config.json'), JSON.stringify({ cli_auto_upgrade: { enabled: false, check_hour: 99 } }))
+      expect(loadAgentConfig(dir).cli_auto_upgrade).toEqual({ enabled: false })
+    } finally { rmSync(dir, { recursive: true, force: true }) }
+  })
+
+  it('没写 ⇒ 没有这个字段(缺省 = 开,由 core/cli-upgrade/config 补)', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'agent-config-'))
+    try {
+      expect(loadAgentConfig(dir).cli_auto_upgrade).toBeUndefined()
+    } finally { rmSync(dir, { recursive: true, force: true }) }
+  })
+})

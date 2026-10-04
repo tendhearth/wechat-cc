@@ -481,6 +481,9 @@ export function createInternalApi(deps: InternalApiDeps): InternalApi {
     setMemoryNightly(r) {
       deps.memoryNightly = r
     },
+    setCliUpgrade(u) {
+      deps.cliUpgrade = u
+    },
     mintSessionToken,
     invalidateSession(sessionKey: string) {
       registry.invalidateSession(sessionKey)

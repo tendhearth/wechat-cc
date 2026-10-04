@@ -294,6 +294,7 @@ export function makeExecuteDomain(ctx:ServiceCtx, domains:ExecuteDomains) {
         const quotaKind=providerCode?(providerCode==='quota'?'quota':providerCode==='rate_limited'?'rate_limit':null):!summary.errorCode&&summary.error?classifyProviderError(summary.error):null
         const error=modelRejected?'execution_model_unsupported':networkRefused?'network_unprotected':taskErrorForProviderCode(providerCode,raw)??(quotaKind==='quota'?'provider_quota_exhausted':quotaKind==='rate_limit'?'provider_rate_limited':raw)
         if(quotaKind)quota.note(task.providerId,summary.error!,providerCode)
+        if(summary.error&&!networkRefused)try{ctx.deps.onTurnError?.(task.providerId,summary.errorCode,summary.error)}catch{/* 只是个提示,不影响收尾 */}
         finalStatus='failed'; finalError=error
         const coded=error!==raw&&!!summary.error
         if(!modelRejected&&!networkRefused)store.addEvent(task.id,'error',error==='background_runtime_ended'?'后台执行会话意外结束；对话已保留，请检查后再继续。':coded?`${executionFailureMessage(error)}\n原文：${summary.error!.trim().slice(0,200)}`:executionFailureMessage(error))
@@ -303,6 +304,7 @@ export function makeExecuteDomain(ctx:ServiceCtx, domains:ExecuteDomains) {
       const thrown=isNetworkUnprotectedError(error)?'network_unprotected':error instanceof CodexExecutionError?error.code:error instanceof Error?error.message:'task_failed'
       const message=thrown==='network_unprotected'||error instanceof CodexExecutionError?thrown:taskErrorForProviderCode(providerErrorCodeOf(error),thrown)??thrown
       finalStatus=running.cancelled ? 'cancelled' : 'failed'; finalError=running.cancelled ? null : message
+      if(!running.cancelled&&thrown!=='network_unprotected')try{ctx.deps.onTurnError?.(task.providerId,error instanceof CodexExecutionError?error.code:providerErrorCodeOf(error),error instanceof Error?error.message:String(error))}catch{/* 只是个提示 */}
       if (!running.cancelled) { store.addEvent(task.id,'error',error instanceof CodexExecutionError?error.message:message==='restart_confirmation_required' ? RECOVERY_MESSAGE : executionFailureMessage(message)); ctx.hub.touched(task.id) }
     } finally {
       cancelIdleClose(running)

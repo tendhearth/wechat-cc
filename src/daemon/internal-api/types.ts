@@ -492,6 +492,8 @@ export interface InternalApiDeps {
   settingsLink?: () => Promise<string | null>
   /** 每晚记忆整理运行时(pipeline-deps 造,main.ts 通过 setMemoryNightly 接进来)。 */
   memoryNightly?: { runNow(): Promise<unknown> }
+  /** 外部 agent CLI 自动升级引擎(main.ts 通过 setCliUpgrade 接进来;没接 ⇒ /v1/cli/* 回 503)。 */
+  cliUpgrade?: import('../../core/cli-upgrade/engine').CliUpgrader
   /**
    * Resolves the default admin chat_id (access.json's single admin) when a
    * memory route's request body omits `chat_id`. Wired eagerly in main.ts
@@ -615,6 +617,7 @@ export interface InternalApi {
   setConnections(fn: () => import('../connections').ConnectionsSnapshot): void
   setPhoneConnect(p: PhoneConnectDep): void
   setMemoryNightly(r: { runNow(): Promise<unknown> }): void
+  setCliUpgrade(u: import('../../core/cli-upgrade/engine').CliUpgrader): void
   /**
    * Late-bind the conversation controller (coordinator.setMode) after
    * bootstrap has constructed the coordinator. /v1/conversation/set-mode

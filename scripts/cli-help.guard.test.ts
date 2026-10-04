@@ -66,6 +66,8 @@ describe('只读命令真的跑(动态 import 路径)', () => {
     ['status', '--json'], ['doctor', '--json'], ['provider', 'show', '--json'],
     ['access', 'list', '--json'], ['license', 'status', '--json'], ['backup', 'list', '--json'],
     ['setup-status', '--json'],
+    // 只跑各 CLI 的 `--version`(只读);不带 --check,不出门。
+    ['cli', 'status', '--json'],
     // 不放 `guard status`:它真的探公网 IP(fetchPublicIp / probeReachable),单测套件不上网。
   ]
   for (const args of READ_ONLY) {
