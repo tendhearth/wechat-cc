@@ -1,3 +1,4 @@
+import { existsSync } from 'node:fs'
 import { createHash, randomBytes, randomUUID } from 'node:crypto'
 import { basename, join } from 'node:path'
 import type {StoredHandoff,HandoffView} from './handoff-record'
@@ -235,6 +236,15 @@ export function makeWorkbenchStore(db: Db) {
           addEvent(id, 'system', status === 'queued'
             ? '服务重启时任务仍在等待，未自动派发。原请求已保留，请补充要求后手动继续。'
             : `服务重启，任务已中断，未自动重跑。已保存的成果版本仍可查看；中断前尚未收集的文件保留在 ${join(path,'.cc-workbench',id)}。请先确认原执行程序已退出并检查该文件夹，再补充要求继续。`)
+        }
+        // 「没确认退出」(writer_not_closed)要等退出证据才解除。文件夹本身已经不在了,就没有东西可保护了 ——
+        // 这就是证据:解除标记、留一句说明,这件事才能归档 / 续上。文件夹还在的照旧不动(那条防线不变)。
+        // 2026-10-05 主人截图:自检临时目录早删了,标记却卡了三天,一起做里永远挂着一条红字。
+        const stale=db.query<{id:string;path:string},[]>("SELECT id,path FROM workbench_tasks WHERE error='writer_not_closed'").all()
+        for (const { id,path } of stale) {
+          if (existsSync(path)) continue
+          db.query("UPDATE workbench_tasks SET error=NULL,updated_at=? WHERE id=? AND error='writer_not_closed'").run(Date.now(),id)
+          addEvent(id,'system','执行程序当时没有确认退出；它的工作文件夹已经不在了，这条占用随之解除。')
         }
       })()
     },
