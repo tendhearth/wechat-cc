@@ -100,6 +100,8 @@ export function makeWorkbenchStore(db: Db) {
   return {
     addProject,
     projects:()=>db.query<WorkbenchProject,[]>(PROJECT_SELECT+' ORDER BY created_at,id').all().map(projectName),
+    /** 还有没归档任务的文件夹 —— 这些项目即使文件夹没了也要留在列表里(任务行挂在它下面)。 */
+    activeTaskPaths:()=>new Set(db.query<{path:string},[]>('SELECT DISTINCT path FROM workbench_tasks WHERE archived_at IS NULL').all().map(r=>r.path)),
     atomic:<T>(operation:()=>T,immediate=false):T=>{const transaction=db.transaction(operation);return immediate?transaction.immediate():transaction()},
     attachments:makeTaskAttachmentStore(db),
     uploadRequestExists:(id:string)=>!!db.query('SELECT id FROM workbench_attachment_uploads WHERE id=?').get(id),
