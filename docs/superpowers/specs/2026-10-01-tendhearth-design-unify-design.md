@@ -184,7 +184,7 @@
 - 桌面品牌字(侧栏与引导)保留 TH Serif 4;代码继续使用 Geist Mono。
 - 验证使用独立工作区内的既有样式检查、Bun / Node 测试、类型与模块边界检查,并用 dry-run 演示数据核对宽、窄窗口。安装包需重新构建,共享安装与部署仍由指定整合者串行完成。
 
-本批交接:开发负责人 Codex(当前对话);工作区 `/Users/nategu_mac_company/.codex/worktrees/cc-desktop-typography/wechat-cc`;分支 `codex/desktop-typography`;起点 `dev` 的 `c122defa17aa9c104d38274cbabcb700f6d4929d`。整合者待指定;未合入、未安装、未部署或推送 `dev`。
+本批交接:开发负责人 Codex(当前对话);工作区 `/Users/nategu_mac_company/.codex/worktrees/cc-desktop-typography/wechat-cc`;分支 `codex/desktop-typography`;起点 `dev` 的 `c122defa17aa9c104d38274cbabcb700f6d4929d`。主人指定交付方式为推送功能分支并向 `dev` 开 PR,由主人审查、完成 CI 与真机自检后合并;Codex 不直接推送或合并 `dev`。原生 1.7.4 候选包已从 `852ba27d` 构建,未安装或部署。
 
 验证(2026-10-04):`bun run test --maxWorkers=4` 11699 通过 / 14 跳过;`npm run test:node -- --maxWorkers=4` 10009 通过 / 18 跳过;`bun run typecheck` 通过;`bun run depcheck` 0 错误 / 21 警告;独立 dry-run 的 `design-shots.spec.ts` 宽、窄、离线 3 项通过。首次同时跑全套与出图时,两个子进程用例失败且字体资产测试触发页面热刷新;分开复测与最终全套均通过。浏览器确认导航和「生活与工具」为 14px / 21px、回复与输入框为 16px / 25.6px,中文实际字体为 PingFang SC;品牌字仍用 TH Serif 4。共享网页生成物仅多出尚未使用的无衬线变量。独立代码复核无剩余问题。
 
@@ -193,3 +193,5 @@
 阅读与样式收口验证(同日):最终 Bun 全套 11699 通过 / 14 跳过、Node 全套 10009 通过 / 18 跳过、类型检查通过、模块边界 0 错误 / 21 既有警告。回忆、觅食、待办与对话的既有浏览器交互检查 42 项通过,包含宽窄窗口及完整阅读面板。独立渲染检查确认英文回复为 Anthropic Serif 的 TextRegular / TextMedium / TextRegularItalic,用户消息为 Anthropic Sans TextRegular,中文仍为 PingFang SC,代码为 Geist Mono;工作台任务正文使用 Serif / 16px / 1.8,历史阅读为 Serif / 16px / 1.6,用户 Markdown 为 Sans。默认未聚焦 composer 为 hair 边框,正文强调无底色;回忆标题为 22px / 1.3 / 400,伴随窗口已加载 Sans 与等宽字体依赖。模拟缺少本机 Claude 字体时英文阅读回退 TH Serif 4,中文仍为苹方。共享网页生成物的三处差异仅多出未使用的 reading 变量。独立代码与截图复核无剩余问题。首次 Bun 全套仅真实 Git 远端更新检查超时;该项单独复测 4.11s 通过,随后全套重跑通过,未改测试或超时。原生新 app 尚未构建安装,当前安装版仍为旧样式。
 
 基线同步(同日):本地 `dev=c122defa` 与 `origin/dev=2e9a29fb` 已分叉(共同祖先 `cdd822c0`,左右独有 3 / 11 个提交)。字体分支合并远端 1.7.4 更新,保留本地已确认的文件预览/阅读功能。Rust 冲突同时保留预览 commands 与新的 macOS 显示名菜单;聊天类型同时保留阅读来源、附件和过程;伴随窗口同时保留新显示名及共享字体依赖。独立复核无剩余问题。合并源码重新通过 Bun 11773 / 跳过14、Node 10066 / 跳过18、类型检查、模块边界0错误 / 21既有警告、44项浏览器交互和字体渲染检查。候选版本为1.7.4;共享安装与部署仍待指定整合者。
+
+PR 交付补验(同日):文件预览浏览器测试12项通过,覆盖HTML隔离与交互、PDF画布/选字/页码/缩放/原文件下载、完整网站相对资源及服务恢复;`cargo test --release html_preview` 18项通过。宽窄字体验收截图及来源记录入 `apps/desktop/art/cc-typography/`。源码验证提交为 `852ba27d`,此后仅补交付说明与截图;合并、CI和真机自检由主人负责。
