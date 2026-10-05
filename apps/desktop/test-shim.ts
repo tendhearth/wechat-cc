@@ -1454,9 +1454,13 @@ Bun.serve({
           // ("name (1).ext" …; 2026-10-05, same as the real app). save_file carries base64 bytes.
           // DRY_RUN (Playwright / mutations blocked) only reports the path it would use, so test
           // runs don't leave files in the developer's real Downloads folder.
-          const args = body.args as unknown as { filename?: string; content?: string; data_b64?: string }
+          // Tauri command arguments use camelCase unless rename_all is explicit.
+          const args = body.args as unknown as { filename?: string; content?: string; dataB64?: string }
           const filename = args?.filename ?? ''
-          const bytes = body.command === 'save_file' ? Buffer.from(args?.data_b64 ?? '', 'base64') : Buffer.from(args?.content ?? '')
+          if (body.command === 'save_file' && typeof args?.dataB64 !== 'string') {
+            return Response.json({ error: 'invalid args for command save_file: missing required key dataB64' })
+          }
+          const bytes = body.command === 'save_file' ? Buffer.from(args.dataB64!, 'base64') : Buffer.from(args?.content ?? '')
           const home = process.env.HOME ?? ''
           if (!home) return Response.json({ error: 'HOME unset' })
           const fs = await import('node:fs')

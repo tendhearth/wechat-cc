@@ -9,8 +9,8 @@ function captureSaves(page: import('@playwright/test').Page) {
   page.on('request', req => {
     const body = req.postData() ?? ''
     if (!body.includes('"save_file"')) return
-    const args = JSON.parse(body).args as { filename: string; data_b64: string }
-    saves.push({ filename: args.filename, bytes: Buffer.from(args.data_b64, 'base64') })
+    const args = JSON.parse(body).args as { filename: string; dataB64?: string }
+    saves.push({ filename: args.filename, bytes: Buffer.from(args.dataB64 ?? '', 'base64') })
   })
   return saves
 }
@@ -192,6 +192,51 @@ test('PDF paints real pages, supports text selection, page and zoom, preserves r
   await expect.poll(()=>reader.locator('.cc-pdf-page').evaluate(el=>el.clientWidth<=el.parentElement!.clientWidth)).toBe(true)
   expect(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth)).toBe(true)
   await expect(reader.locator('.cc-pdf-text')).toContainText('Garden design report')
+})
+
+test('failed native artifact downloads preserve the interactive preview and can be retried',async({page,shim,shimUrl})=>{
+  await setup(page,shim,shimUrl)
+  await page.getByRole('button',{name:'成果 · 4',exact:true}).click()
+  const frame=page.frameLocator('#wb-preview-frame')
+  await frame.locator('#counter').click()
+  let reject=true
+  await page.route('**/__invoke',async route=>{
+    if(route.request().postDataJSON().command==='save_file'&&reject){
+      reject=false
+      await route.fulfill({json:{error:'disk full'}})
+    }else await route.fallback()
+  })
+  await page.getByRole('button',{name:'下载',exact:true}).click()
+  await expect(page.locator('#app-toast')).toContainText('下载失败')
+  await expect(frame.locator('#counter')).toHaveText('浇水 · 1')
+  const saves=captureSaves(page)
+  await page.getByRole('button',{name:'下载',exact:true}).click()
+  await expect.poll(()=>saves.length).toBe(1)
+  expect(saves[0]!.bytes.toString()).toBe(html)
+  await expect(page.locator('#app-toast')).toContainText('已保存到')
+  await expect(frame.locator('#counter')).toHaveText('浇水 · 1')
+})
+
+test('failed native attachment downloads show the error inside the dialog and preserve PDF reading',async({page,shim,shimUrl})=>{
+  await setup(page,shim,shimUrl,true)
+  await page.locator('[data-action=preview-input-attachment][data-attachment-id=input-pdf]').click()
+  const dialog=page.getByRole('dialog',{name:'参考.pdf',exact:true})
+  await expect(dialog.locator('.cc-pdf-text')).toContainText('Garden design report')
+  await dialog.getByRole('button',{name:'下一页',exact:true}).click()
+  await expect(dialog.locator('.cc-pdf-text')).toContainText('Planting notes')
+  let reject=true
+  await page.route('**/__invoke',async route=>{
+    if(route.request().postDataJSON().command==='save_file'&&reject){
+      reject=false
+      await route.fulfill({json:{error:'disk full'}})
+    }else await route.fallback()
+  })
+  await dialog.getByRole('button',{name:'下载',exact:true}).click()
+  await expect(dialog.getByRole('status')).toContainText('下载失败')
+  await expect(dialog.locator('.cc-pdf-text')).toContainText('Planting notes')
+  await dialog.getByRole('button',{name:'下载',exact:true}).click()
+  await expect(dialog.getByRole('status')).toContainText('已保存到')
+  await expect(dialog.locator('.cc-pdf-text')).toContainText('Planting notes')
 })
 
 test('unreadable PDFs keep a visible error and the download action',async({page,shim,shimUrl})=>{

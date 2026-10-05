@@ -14,7 +14,7 @@ export async function saveFile(deps, filename, mime, bytes) {
   if (deps.invoke && /** @type {any} */ (window).__TAURI__?.core?.invoke) {
     let binary = ''
     for (let i = 0; i < bytes.length; i += 0x8000) binary += String.fromCharCode(...bytes.subarray(i, i + 0x8000))
-    return String(await deps.invoke('save_file', { filename, data_b64: btoa(binary) }))
+    return String(await deps.invoke('save_file', { filename, dataB64: btoa(binary) }))
   }
   const url = URL.createObjectURL(new Blob([/** @type {BlobPart} */ (bytes)], { type: mime }))
   const a = document.createElement('a'); a.href = url; a.download = filename; document.body.append(a); a.click(); a.remove()
