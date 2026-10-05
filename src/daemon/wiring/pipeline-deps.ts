@@ -5,14 +5,14 @@
  * Refs are passed in for late-bound polling/guard access from closures.
  */
 import type { SinkExtras } from '../reply-sinks'
-import { encodeExtras, hasExtras, projectReplyExtras, stickerDataUri, withStickerImages, type AppReplyExtras, type ConverseResult } from '../app-reply'
+import { encodeExtras, hasExtras, projectReplyExtras, stickerDataUri, withStickerImages, type AppReplyExtras, type ConverseResult, CONVERSE_IMAGE_LIMITS, type ConverseImage } from '../app-reply'
 import { join } from 'node:path'
 import { recallFromMemory } from '../memory/recall'
 import { randomBytes } from 'node:crypto'
 import { spawn } from 'node:child_process'
 import { dirname } from 'node:path'
 import { fileURLToPath } from 'node:url'
-import { existsSync } from 'node:fs'
+import { existsSync, mkdirSync, writeFileSync } from 'node:fs'
 import type { Ref } from '../../lib/lifecycle'
 import type { IlinkAdapter } from '../ilink-glue'
 import type { Bootstrap } from '../bootstrap'
@@ -241,7 +241,7 @@ export interface BuildPipelineDepsResult {
    * registration time (see main.ts's staged startup: internal-api first,
    * then bootstrap, then this wiring pass).
    */
-  companionConverse: (text: string, origin?: 'desktop' | 'phone') => Promise<import('../app-reply').ConverseResult>
+  companionConverse: (text: string, origin?: 'desktop' | 'phone', images?: import('../app-reply').ConverseImage[]) => Promise<import('../app-reply').ConverseResult>
   /**
    * 桌宠 turn 的组装闭包(CC 桌宠 Phase B)。和 companionConverse 挨着造,因为
    * 需要同一批东西:ownerChatId(companion 配置)、resolveOwnerSessionKey +
@@ -1057,7 +1057,7 @@ export function buildPipelineDeps(opts: PipelineDepsOpts, refs: PipelineDepsRefs
   const persistAppTurn = (origin: 'desktop' | 'phone', synthetic: InboundMsg, text: string, reply: string | undefined, extras?: AppReplyExtras | null) => {
     const ts = new Date().toISOString()
     const ownerChatId = synthetic.chatId
-    void messagesStore.append({ id: `app:${origin}:${synthetic.createTimeMs}:in`, chatId: ownerChatId, ts, direction: 'in', kind: 'text', text, source: origin }).catch(() => {})
+    void messagesStore.append({ id: `app:${origin}:${synthetic.createTimeMs}:in`, chatId: ownerChatId, ts, direction: 'in', kind: 'text', text: synthetic.attachments?.length ? [text.trim(), `[图片 ×${synthetic.attachments.length}]`].filter(Boolean).join('\n') : text, source: origin }).catch(() => {})
     const encoded = encodeExtras(extras)
     if (reply || encoded) void messagesStore.append({ id: `app:${origin}:${synthetic.createTimeMs}:out`, chatId: ownerChatId, ts: new Date(Date.now() + 1).toISOString(), direction: 'out', kind: 'text', text: reply ?? '', source: origin, ...(encoded ? { extras: encoded } : {}) }).catch(() => {})
   }
@@ -1065,7 +1065,7 @@ export function buildPipelineDeps(opts: PipelineDepsOpts, refs: PipelineDepsRefs
   const stickerDir = join(stateDir, 'stickers')
   const projectExtras = (x: SinkExtras | undefined): AppReplyExtras | null =>
     x ? projectReplyExtras(x, { stickerFile: tag => opts.stickers?.resolve(tag) ?? null }) : null
-  const companionConverse = async (text: string, origin: 'desktop' | 'phone' = 'desktop'): Promise<ConverseResult> => {
+  const companionConverse = async (text: string, origin: 'desktop' | 'phone' = 'desktop', images?: ConverseImage[]): Promise<ConverseResult> => {
     // self-restart (spec 2026-08-03-daemon-self-restart-on-stale-code,
     // Task 3 review finding #1) — an App /converse turn is real owner
     // activity, but it dispatches straight through the coordinator and
@@ -1125,13 +1125,27 @@ export function buildPipelineDeps(opts: PipelineDepsOpts, refs: PipelineDepsRefs
     // sink is closed. D3: submitTurn owns the lock/policy + the dispatch; the
     // app path just supplies the capture logic to run within the locked turn
     // (no more hand-rolled runExclusive/dispatchInner + the deadlock footgun).
+    // 桌面拖进 / 粘进来的图(2026-10-05):和微信收到的图一样落到 inbox,当附件交给 CC(它用读文件工具看)。
+    // 文件名带来源与时刻,权限 0600;inbox 的清理照微信那一套走。
+    const createTimeMs = Date.now()
+    const imagePaths: string[] = []
+    if (images?.length) {
+      const inbox = join(stateDir, 'inbox')
+      mkdirSync(inbox, { recursive: true })
+      images.forEach((img, i) => {
+        const path = join(inbox, `app-${origin}-${createTimeMs}-${i + 1}.${CONVERSE_IMAGE_LIMITS.mimes[img.mime] ?? 'img'}`)
+        writeFileSync(path, img.bytes, { mode: 0o600 })
+        imagePaths.push(path)
+      })
+    }
     const synthetic: InboundMsg = {
       chatId: ownerChatId,
       userId: ownerChatId,
       text,
-      msgType: 'text',
-      createTimeMs: Date.now(),
+      msgType: imagePaths.length && !text.trim() ? 'image' : 'text',
+      createTimeMs,
       accountId: ilink.resolveAccountId(ownerChatId),
+      ...(imagePaths.length ? { attachments: imagePaths.map(path => ({ kind: 'image' as const, path })) } : {}),
     }
     // 第四步(d):App 说的话也先过 route + consume 这张表(与微信同一份消费者实例)。消费者的
     // 回话在回复作用域里被截住交还给 App;没人吃 ⇒ 下面照常进对话。没接 appTurn(测试 /

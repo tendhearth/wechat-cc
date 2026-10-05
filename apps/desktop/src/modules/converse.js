@@ -22,7 +22,7 @@ import { paintConversation, syncConversationLatest, showConversationLatest, conv
  * @typedef {{ getUserMedia: (c: MediaStreamConstraints) => Promise<MediaStream>, makeRecorder: (s: MediaStream) => MediaRecorder }} MediaDeps
  * @typedef {{ invoke: (cmd: string, args: Record<string, unknown>) => Promise<unknown>, media?: MediaDeps, invokeWorkbenchApi?: (method: 'GET'|'POST', path: string, body?: Record<string, unknown>) => Promise<unknown>, onDelegate?: (draft: import('./task-entry.js').Draft) => Promise<import('./task-entry.js').EntryResult|null>, onSend?: () => void }} Deps
  * @typedef {{ kind: 'voice', text: string } | { kind: 'sticker', label: string, file?: string, image?: string } | { kind: 'file', name: string, ref?: string }} ReplyAttachment
- * @typedef {{ id: number, role: 'user'|'cc'|'error'|'system', text: string, pending?: boolean, at?: number, source?: string, attachments?: ReplyAttachment[], narration?: string[] }} ConverseMsg
+ * @typedef {{ id: number, role: 'user'|'cc'|'error'|'system', text: string, pending?: boolean, at?: number, source?: string, attachments?: ReplyAttachment[], narration?: string[], images?: string[] }} ConverseMsg
  */
 
 // ── module state ───────────────────────────────────────────────────────
@@ -34,6 +34,13 @@ let messages = []
 let nextId = 1
 let sending = false
 let delegating = false
+// 此刻里拖进 / 粘进来、还没发出去的图(2026-10-05)。url 是本页的 blob 预览,发出去时只带 mime + base64。
+/** @type {{ id: number, mime: string, data_b64: string, url: string, name: string }[]} */
+let pendingImages = []
+let nextImageId = 1
+const IMAGE_MIMES = ["image/png", "image/jpeg", "image/webp", "image/gif", "image/heic"]
+const IMAGE_MAX = 4
+const IMAGE_MAX_BYTES = 10 * 1024 * 1024
 // 「此刻」页的气泡要显示 CC 最近一句真话:订阅者每次渲染都拿到当前消息表。
 /** @type {Set<(msgs: ConverseMsg[]) => void>} */
 const listeners = new Set()
@@ -65,7 +72,9 @@ function renderSkeleton(root, deps) {
     <div id="converse-scroll" class="converse-scroll"></div>
     <button id="converse-latest" class="converse-latest" type="button" hidden>有新回复 · 回到最新</button>
     <div class="converse-compose">
-      <textarea id="converse-input" class="converse-textarea" aria-label="消息" placeholder="跟 CC 说点什么…" rows="2"></textarea>
+      <div id="converse-images" class="converse-images" aria-label="要一起发的图片" hidden></div>
+      <p id="converse-image-note" class="converse-image-note" role="status" hidden></p>
+      <textarea id="converse-input" class="converse-textarea" aria-label="消息" placeholder="跟 CC 说点什么…可以拖进或粘贴截图" rows="2"></textarea>
       <div id="converse-recording" class="converse-recording" hidden>
         <button id="converse-cancel-recording" type="button">取消</button>
         <span class="converse-recording-dot" aria-hidden="true"></span>
@@ -179,6 +188,10 @@ function messageHtml(m) {
     : ""
   const markdown = m.role === "cc" && !m.pending
   const bubble = `<div class="converse-bubble${markdown ? ' cc-readable-markdown wb-markdown' : m.role==='user' ? ' cc-user-bubble' : ''}">${markdown ? renderWorkbenchMarkdown(m.text) : m.role==='user' ? renderWorkbenchUserText(m.text,`converse:${m.id}`) : escapeHtml(m.text)}</div>`
+  // 主人发的图:缩略图跟在自己那条气泡上(只是本页的预览,刷新后历史里是「[图片 ×N]」)。
+  const userImages = m.role === "user" && m.images?.length
+    ? `<div class="converse-user-images">${m.images.map(src => `<img src="${escapeHtml(src)}" alt="你发的图片" />`).join("")}</div>`
+    : ""
   const extras = m.role === "cc" && ((m.attachments?.length ?? 0) > 0 || (m.narration?.length ?? 0) > 0)
   // 带附件 / 过程的回复:过程在上、回复居中、附件在下,一列排;没有的照旧(样式与测试不动)。
   // 朗读按钮永远贴着正文最后一行(带附件时放进正文那一行里),不随附件块漂。
@@ -187,7 +200,7 @@ function messageHtml(m) {
     : bubble
   return `<div class="converse-msg ${roleCls}${pendingCls}">
     ${m.role === "cc" ? '<img class="converse-avatar" src="./assets/pet/cc-v1/canonical/lit/front.png" alt="CC" width="32" height="32" />' : ""}
-    ${body}
+    ${userImages ? `<div class="converse-user-body">${userImages}${m.text.trim() ? body : ""}</div>` : body}
     ${extras || !m.text.trim() ? "" : replayBtn}
   </div>`
 }
@@ -491,10 +504,13 @@ async function sendMessage(deps) {
   const sendBtn = /** @type {HTMLButtonElement|null} */ (document.getElementById("converse-send"))
   if (!input || !sendBtn) return
   const text = input.value.trim()
-  if (!text) return
+  const images = pendingImages
+  if (!text && !images.length) return
   deps.onSend?.()
 
-  messages.push({ id: nextId++, role: "user", text, at: Date.now() })
+  messages.push({ id: nextId++, role: "user", text, at: Date.now(), ...(images.length ? { images: images.map(i => i.url) } : {}) })
+  pendingImages = []
+  renderPendingImages()
   const pendingId = nextId++
   messages.push({ id: pendingId, role: "cc", text: "…", pending: true })
   sending = true
@@ -517,7 +533,7 @@ async function sendMessage(deps) {
   }, Number(delay)))
 
   try {
-    const res = normalizeConverseReply(await deps.invoke("agent_converse", { text }))
+    const res = normalizeConverseReply(await deps.invoke("agent_converse", images.length ? { text, images: images.map(({ mime, data_b64 }) => ({ mime, data_b64 })) } : { text }))
     pendingTimers.forEach(clearTimeout)
     messages = messages.filter(m => m.id !== pendingId)
     const replyText = res.reply
@@ -542,6 +558,8 @@ async function sendMessage(deps) {
   } catch (err) {
     pendingTimers.forEach(clearTimeout)
     messages = messages.filter(m => m.id !== pendingId)
+    // 没发出去:图放回输入框上方,和文字一样不丢,直接再点发送就行。
+    if (images.length && !pendingImages.length) { pendingImages = images; renderPendingImages() }
     const raw = formatInvokeError(err)
     const friendly = /session_busy/.test(raw)
       ? "CC 正在忙（可能在回微信），稍等再试"
@@ -559,6 +577,48 @@ async function sendMessage(deps) {
     const focused=document.activeElement
     if((!focused || focused===input || focused===document.body) && (!scroll || !conversationInteractionActive(scroll)))input.focus()
   }
+}
+
+// ── images (2026-10-05) ────────────────────────────────────────────────
+
+/** @param {string} text */
+function imageNote(text) {
+  const note = document.getElementById("converse-image-note")
+  if (!note) return
+  note.textContent = text
+  note.hidden = !text
+}
+
+function renderPendingImages() {
+  const host = document.getElementById("converse-images")
+  if (!host) return
+  host.hidden = pendingImages.length === 0
+  host.innerHTML = pendingImages.map(img => `<span class="converse-image-chip"><img src="${escapeHtml(img.url)}" alt="${escapeHtml(img.name)}" /><button type="button" data-remove-image="${img.id}" aria-label="移除这张图片">×</button></span>`).join("")
+}
+
+/** 读进来的文件里挑图片,超过张数 / 大小 / 格式的说一句,不悄悄丢。
+ * @param {FileList|File[]|null|undefined} files @returns {Promise<boolean>} 有没有收下至少一张 */
+export async function addImages(files) {
+  const list = Array.from(files ?? [])
+  if (!list.length) return false
+  let skipped = ""
+  let added = 0
+  for (const file of list) {
+    if (!IMAGE_MIMES.includes(file.type)) { skipped = "只支持 PNG、JPEG、WebP、GIF、HEIC 图片"; continue }
+    if (file.size > IMAGE_MAX_BYTES) { skipped = "单张图片不能超过 10MB"; continue }
+    if (pendingImages.length >= IMAGE_MAX) { skipped = `一次最多 ${IMAGE_MAX} 张`; break }
+    const data_b64 = await new Promise((resolve, reject) => {
+      const reader = new FileReader()
+      reader.onload = () => resolve(String(reader.result).replace(/^data:[^,]*,/, ""))
+      reader.onerror = () => reject(reader.error)
+      reader.readAsDataURL(file)
+    })
+    pendingImages.push({ id: nextImageId++, mime: file.type, data_b64: String(data_b64), url: URL.createObjectURL(file), name: file.name || "截图" })
+    added++
+  }
+  imageNote(skipped)
+  renderPendingImages()
+  return added > 0
 }
 
 // ── event wiring ───────────────────────────────────────────────────────
@@ -609,6 +669,37 @@ function wireEvents(root, deps) {
       ev.preventDefault()
       sendMessage(deps).catch(err => console.error("converse send failed", err))
     }
+  })
+
+  // 截图:粘贴(⌘V)或拖进对话区都收;只拦图片,文字照常粘。
+  input?.addEventListener("paste", (ev) => {
+    const files = /** @type {ClipboardEvent} */ (ev).clipboardData?.files
+    if (!files?.length || ![...files].some(f => f.type.startsWith("image/"))) return
+    ev.preventDefault()
+    void addImages(files).then(() => input.focus())
+  })
+  root.addEventListener("dragover", (ev) => {
+    const types = /** @type {DragEvent} */ (ev).dataTransfer?.types
+    if (types && [...types].includes("Files")) { ev.preventDefault(); root.classList.add("is-dragover") }
+  })
+  root.addEventListener("dragleave", (ev) => { if (ev.target === root) root.classList.remove("is-dragover") })
+  root.addEventListener("drop", (ev) => {
+    const files = /** @type {DragEvent} */ (ev).dataTransfer?.files
+    root.classList.remove("is-dragover")
+    if (!files?.length) return
+    ev.preventDefault()
+    void addImages(files).then(added => { if (added) input?.focus() })
+  })
+  root.querySelector("#converse-images")?.addEventListener("click", (ev) => {
+    const btn = /** @type {HTMLElement} */ (ev.target).closest("[data-remove-image]")
+    if (!(btn instanceof HTMLElement)) return
+    const id = Number(btn.dataset.removeImage)
+    const gone = pendingImages.find(i => i.id === id)
+    if (gone) URL.revokeObjectURL(gone.url)
+    pendingImages = pendingImages.filter(i => i.id !== id)
+    imageNote("")
+    renderPendingImages()
+    input?.focus()
   })
 
   root.querySelector("#converse-voice-toggle")?.addEventListener("click", () => {
