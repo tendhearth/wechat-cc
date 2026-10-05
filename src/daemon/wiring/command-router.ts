@@ -36,7 +36,7 @@ export interface CommandRouterDeps {
   appendAllowFrom: (chatId: string) => void
   /** CC-voice outbound to the owner's own chat. Absent ⇒ outcomes are silent
    *  (same optional posture as the pre-extraction closure). */
-  sendAssistantText?: (chatId: string, text: string) => void | Promise<void>
+  sendAssistantText?: (chatId: string, text: string) => unknown
   /** 串门 / 派 / 取消 — present only when social is wired; undefined ⇒ those
    *  blocks inert (the message falls through to a normal turn). */
   social?: {
