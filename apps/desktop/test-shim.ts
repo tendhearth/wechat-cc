@@ -1449,29 +1449,32 @@ Bun.serve({
             try { (await import('node:fs')).unlinkSync(tmp) } catch {}
           }
         }
-        if (body.command === 'save_text_file') {
-          // Mirrors lib.rs's save_text_file — write to $HOME/Downloads/<basename>.
-          const args = body.args as unknown as { filename?: string; content?: string }
+        if (body.command === 'save_text_file' || body.command === 'save_file') {
+          // Mirrors lib.rs's write_download — $HOME/Downloads/<basename>, never overwriting
+          // ("name (1).ext" …; 2026-10-05, same as the real app). save_file carries base64 bytes.
+          // DRY_RUN (Playwright / mutations blocked) only reports the path it would use, so test
+          // runs don't leave files in the developer's real Downloads folder.
+          const args = body.args as unknown as { filename?: string; content?: string; data_b64?: string }
           const filename = args?.filename ?? ''
-          const content = args?.content ?? ''
+          const bytes = body.command === 'save_file' ? Buffer.from(args?.data_b64 ?? '', 'base64') : Buffer.from(args?.content ?? '')
           const home = process.env.HOME ?? ''
           if (!home) return Response.json({ error: 'HOME unset' })
           const fs = await import('node:fs')
           const downloads = join(home, 'Downloads')
-          fs.mkdirSync(downloads, { recursive: true })
           const basename = filename.split(/[\\/]/).pop() || ''
           if (!basename || basename === '.' || basename === '..') {
             return Response.json({ error: `illegal filename: ${filename}` })
           }
-          const target = join(downloads, basename)
-          // Overwrites, exactly like lib.rs — export filenames are stable
-          // (`dialogue-<name>.md`), so refusing to overwrite would make the
-          // SECOND export fail in dev while succeeding in the real app. That
-          // divergence is the thing this merged dev server exists to remove.
-          // The write is safe because /__invoke already refuses cross-site
-          // callers, and the path is basename-only under ~/Downloads.
-          fs.writeFileSync(target, content)
-          return Response.json({ result: target })
+          const dot = basename.lastIndexOf('.')
+          const stem = dot > 0 ? basename.slice(0, dot) : basename, ext = dot > 0 ? basename.slice(dot) : ''
+          if (dryRun) return Response.json({ result: join(downloads, basename) })
+          fs.mkdirSync(downloads, { recursive: true })
+          for (let n = 0; n < 1000; n++) {
+            const target = join(downloads, n === 0 ? basename : `${stem} (${n})${ext}`)
+            try { fs.writeFileSync(target, bytes, { flag: 'wx' }); return Response.json({ result: target }) }
+            catch (err) { if ((err as NodeJS.ErrnoException).code !== 'EEXIST') return Response.json({ error: String(err) }) }
+          }
+          return Response.json({ error: `too many files named ${basename} in Downloads` })
         }
         // 「跟 CC 说」演示回复(回复交付,2026-10-04):DRY_RUN 下回一个完整的回复对象 ——
         // 两段过程 + 语音 / 本地表情(data URI,与真 daemon 内联的一样)/ 联网表情(只有情绪)/ 文件(只有

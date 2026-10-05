@@ -12,6 +12,7 @@
  * apply" note rather than pretending it's live.
  */
 
+import { showToast } from '../view.js'
 import { invokeApi } from '../api.js'
 import { icon } from './icons.js'
 
@@ -125,7 +126,7 @@ async function onCardAction(e) {
     await refresh()
   } catch (err) {
     target.disabled = false
-    alert(`切换失败：${err instanceof Error ? err.message : String(err)}`)
+    showToast(`切换失败：${err instanceof Error ? err.message : String(err)}`)
   }
 }
 
@@ -147,7 +148,7 @@ function syncStatusHtml(status) {
  */
 async function runSync(name, btn) {
   const invoke = cliInvoke
-  if (!invoke) { alert('此操作需在桌面 App 内进行'); return }
+  if (!invoke) { showToast('此操作需在桌面 App 内进行'); return }
   btn.disabled = true
   const orig = btn.textContent
   btn.textContent = '同步中…'
@@ -172,7 +173,7 @@ async function runSync(name, btn) {
  */
 async function runSetup(name, btn) {
   const invoke = cliInvoke   // capture (non-null) so closures don't re-widen to null
-  if (!invoke) { alert('此操作需在桌面 App 内进行'); return }
+  if (!invoke) { showToast('此操作需在桌面 App 内进行'); return }
   btn.disabled = true
   const orig = btn.textContent
   btn.textContent = '进行中…'
@@ -261,11 +262,11 @@ async function onMarketAction(e) {
         ? `已更新 ${name} ${r.from ?? ''}→${r.to ?? ''} — 重启 daemon 生效`
         : `已安装 ${name} v${r.version ?? ''} — 默认停用，去上面「启用」并完成 setup 后重启 daemon`)
     } else {
-      alert(`${verb}失败：${r?.error ?? 'unknown'}`)
+      showToast(`${verb}失败：${r?.error ?? 'unknown'}`)
     }
     await refresh()
   } catch (err) {
-    alert(`${verb}失败：${err instanceof Error ? err.message : String(err)}`)
+    showToast(`${verb}失败：${err instanceof Error ? err.message : String(err)}`)
     await refresh()
   }
 }

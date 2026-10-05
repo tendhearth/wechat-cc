@@ -1,4 +1,4 @@
-import { showToast } from "../view.js"
+import { showToast, armConfirm } from "../view.js"
 // @ts-check
 /// <reference lib="dom" />
 /**
@@ -440,7 +440,7 @@ async function onCardAction(e) {
   if (!action || !id) return
   if (action === 'pause' || action === 'remove') {
     if (agentMutations.has(id)) return
-    if (action === 'remove' && !confirm(`断开和「${id}」的连接？之后可以随时重新配对。`)) return
+    if (action === 'remove' && !armConfirm(target, '再点一次，确认断开')) return
     const card = target.closest('.a2a-agent-card')
     const wasPaused = card?.classList.contains('paused')
     const operation = { generation: pageGeneration }
