@@ -22,7 +22,8 @@ function renderPresenceHome(s,stale) {
   homeFocus=stale?null:work.focus
   var focus=work.focus
   slot.replaceChildren()
-  if(focus&&/^[a-f0-9]{8}$/.test(focus.id)){
+  // 此刻只放要你管的:等你决定、带回了成果。正在做的事住在「一起做」(2026-10-05),这里不重复。
+  if(focus&&focus.kind!=='working'&&/^[a-f0-9]{8}$/.test(focus.id)){
     var b=document.createElement('button');b.type='button';b.className='home-action';b.disabled=stale
     var labels={decision:['有件事等你决定','打开并决定'],result:['带回了成果','查看成果'],working:['一起做的事','查看进展']}
     var label=labels[focus.kind]||labels.working
@@ -42,7 +43,6 @@ function renderPresenceHome(s,stale) {
   document.getElementById('home-context').textContent=stale?'这是上次留下的画面，当前活动尚未确认。':s.presence&&s.presence.presence==='ok'?'你可以在这里陪它一会儿。':'有些连接状态还需要确认。'
 }
 document.getElementById('home-entry').addEventListener('click',function(){void openEntry()})
-document.getElementById('home-work').addEventListener('click',function(){mobilePane('matters')})
 var homeCharacter = document.querySelector(".home-character")
 homeCharacter.addEventListener("click", function(){ openYou() })
 homeCharacter.addEventListener("keydown", function(/** @type {KeyboardEvent} */ ev){ if (ev.key === "Enter" || ev.key === " ") { ev.preventDefault(); openYou() } })

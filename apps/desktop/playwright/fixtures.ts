@@ -89,6 +89,9 @@ export { expect }
  * 它收起 —— 直接点被折叠的按钮会一直等 visible 到超时。先展开再点,和用户的手一样。
  */
 export async function clickNav(page: import('@playwright/test').Page, pane: string): Promise<void> {
+  // 窄窗口的「一起做」把主导航收起(2026-10-05 起宽窗口不收):和用户一样先点左上角叫出来。
+  const toggle = page.locator('#workbench-nav-toggle')
+  if (await toggle.isVisible() && (await toggle.getAttribute('aria-expanded')) !== 'true') await toggle.click()
   await page.locator('details.cc-life-nav-more').evaluateAll(els => { for (const el of els) el.setAttribute('open', '') })
   await page.locator(`button.dash-nav-link[data-pane="${pane}"]`).click()
 }

@@ -58,7 +58,7 @@ import { createTaskEntry } from "./modules/task-entry.js"
 import { refreshPostcardAlbum } from "./modules/postcard-album.js"
 import { initWorkbenchPage, stopWorkbenchPolling, openWorkbenchTask, getActiveWorkbenchTaskId } from "./modules/workbench.js"
 import { createWorkbenchNavigation, isCurrentWorkbenchPane } from "./modules/workbench-navigation.js"
-import { mountWorkbenchAttention } from "./modules/workbench-attention.js"
+import { createWorkbenchAttentionPoller } from "./modules/workbench-attention.js"
 
 const state = {
   setup: /** @type {SetupQrJson | null} */ (null),
@@ -84,7 +84,7 @@ const dashRail = /** @type {HTMLElement|null} */ (document.getElementById('dash-
 const workbenchNavToggle = /** @type {HTMLElement|null} */ (document.getElementById('workbench-nav-toggle'))
 const workbenchNavScrim = /** @type {HTMLElement|null} */ (document.getElementById('workbench-nav-scrim'))
 const workbenchNavigation = dashWindow && dashRail && workbenchNavToggle && workbenchNavScrim
-  ? createWorkbenchNavigation({ shell: dashWindow, rail: dashRail, toggle: workbenchNavToggle, scrim: workbenchNavScrim })
+  ? createWorkbenchNavigation({ shell: dashWindow, rail: dashRail, toggle: workbenchNavToggle, scrim: workbenchNavScrim, wideQuery: window.matchMedia?.('(min-width: 1180px)') ?? null })
   : null
 
 // window.__TAURI__ is injected by the Tauri runtime and not part of the
@@ -195,23 +195,23 @@ async function loadLifeCategory(category) {
 
 const conversationsPoller = createConversationsPoller({ invoke, intervalMs: 10000 })
 
-/** @type {ReturnType<typeof mountWorkbenchAttention>|null} */
+// 等你的事:全局只读一份(GET /v1/workbench/attention)。列表只在「此刻」(N 件事等你)与一起做的「等你处理」;
+// 别的页面只在主导航「此刻」旁边写个数 —— 不再有顶部横条(2026-10-05,同一件事只出现一次)。
+/** @type {ReturnType<typeof createWorkbenchAttentionPoller>|null} */
 let workbenchAttention = null
+const nowCount = document.getElementById('now-count')
 function startWorkbenchAttention() {
-  const host = document.getElementById('workbench-attention')
-  if (!host || workbenchAttention) return
-  workbenchAttention = mountWorkbenchAttention({
-    host, invokeWorkbenchApi, invoke,
-    onChange: snapshot => { careSheet.setAttention(snapshot); nowPage?.setAttention(snapshot) },
+  if (workbenchAttention) return
+  workbenchAttention = createWorkbenchAttentionPoller({
+    invokeWorkbenchApi, invoke,
+    onChange: snapshot => {
+      careSheet.setAttention(snapshot); nowPage?.setAttention(snapshot)
+      if (nowCount) nowCount.textContent = !snapshot.stale && snapshot.tasks.length ? String(snapshot.tasks.length) : ''
+    },
     getContext: () => ({
       taskId: state.mode === 'dashboard' ? getActiveWorkbenchTaskId() : null,
       focused: document.visibilityState === 'visible' && document.hasFocus(),
     }),
-    openTask: id => {
-      if (state.mode !== 'dashboard') setMode('dashboard')
-      switchPane('workbench')
-      return openWorkbenchTask(id)
-    },
   })
   void workbenchAttention.start()
 }
@@ -221,23 +221,6 @@ window.addEventListener('pageshow', event => { if (event.persisted) startWorkben
 // Bag passed to module functions instead of imported singletons. Keeps each
 // module testable in isolation (any conformant deps object → run the module
 // in a JSDOM/happy-dom harness).
-// 「一件事」:工作台里选中对话时,把「跟 CC 说」的控件整个搬进会话面(DOM 搬家,状态与监听都不丢);
-// 离开时搬回「此刻」页原位。控件只有一份,所以两个页面永远不会各画一个。
-let converseHome = /** @type {{parent:HTMLElement,next:Node|null}|null} */ (null)
-function mountConverse(/** @type {HTMLElement} */ host) {
-  const root = converseRootEl()
-  if (!root) return
-  if (!converseHome && root.parentElement) converseHome = { parent: root.parentElement, next: root.nextSibling }
-  if (root.parentElement !== host) host.appendChild(root)
-  initConversePage(deps, { focus: true })
-}
-function unmountConverse() {
-  const root = converseRootEl()
-  if (!root || !converseHome || root.parentElement === converseHome.parent) return
-  converseHome.parent.insertBefore(root, converseHome.next && converseHome.next.parentNode === converseHome.parent ? converseHome.next : null)
-}
-let converseRootRef = /** @type {HTMLElement|null} */ (null)
-function converseRootEl() { return (converseRootRef ??= document.getElementById("converse-root")) }
 
 const openAcceptedEntry = async (/** @type {import('./modules/task-entry.js').EntryResult} */ result) => {
   switchPane('workbench')
@@ -249,8 +232,6 @@ const deps = {
   invoke,
   invokeApi,
   invokeWorkbenchApi,
-  mountConverse,
-  unmountConverse,
   onSend: () => { if (document.querySelector('.cc-now-pane #converse-root')) nowPage?.setMode('chat') },
   onDelegate: async (/** @type {import('./modules/task-entry.js').Draft} */ draft) => {
     const result = await taskEntry.open(draft)
@@ -666,7 +647,6 @@ function switchPane(name) {
     initWorkbenchPage(deps)
   } else {
     stopWorkbenchPolling()
-    unmountConverse()
   }
   if (name === "sessions") {
     activateDialogueWorkspace()

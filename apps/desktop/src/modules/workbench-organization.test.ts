@@ -122,7 +122,7 @@ describe('workbench task organization', () => {
     Object.assign(controller.state, list([task('A')], 'next'), { query: { q: '<folder>', archived: 'only' } })
     const html = renderWorkbench(controller.state)
     expect(html).toContain('id="wb-search-form"')
-    expect(html).toContain('placeholder="搜索项目或对话"')
+    expect(html).toContain('placeholder="搜索任务或项目"')
     expect(html).toContain('maxlength="200"')
     expect(html).toContain('value="&lt;folder&gt;"')
     expect(html).toContain('返回任务')

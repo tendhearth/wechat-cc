@@ -14,7 +14,7 @@ document.getElementById("pairbtn").addEventListener("click", function() {
   }).catch(function(){ toast("没配上,网络不通") })
 })
 function ccSelectMobilePane(name) {
-  var main=name==='memory'||name==='sessions'?'matters':name
+  var main=name==='memory'?'today':name==='sessions'?'matters':name
   document.querySelectorAll('nav button[data-p]').forEach(function(/** @type {HTMLButtonElement} */ button){button.classList.toggle('on',button.dataset.p===main)})
   document.querySelectorAll('.pane').forEach(function(pane){pane.classList.toggle('on',pane.id==='p-'+name)})
   document.dispatchEvent(new CustomEvent('cc:pane',{detail:{pane:name}}))
@@ -33,5 +33,5 @@ document.querySelectorAll("nav button[data-p]").forEach(function(/** @type {HTML
   })
 })
 document.getElementById('memory-open').addEventListener('click',function(){ccMobilePane('memory')})
-document.getElementById('memory-back').addEventListener('click',function(){ccMobilePane('matters')})
+document.getElementById('memory-back').addEventListener('click',function(){ccMobilePane('today')})
 document.getElementById("nav-set").addEventListener("click", function(){ ccNav("/set") })

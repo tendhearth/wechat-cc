@@ -17,7 +17,6 @@
     <link rel="stylesheet" href="./styles/workbench.css" />
     <link rel="stylesheet" href="./styles/pdf-reader.css" />
     <link rel="stylesheet" href="./styles/task-entry.css" />
-    <link rel="stylesheet" href="./styles/workbench-attention.css" />
     <link rel="stylesheet" href="./styles/record-reader.css" />
     <link rel="stylesheet" href="./styles/todos.css" />
     <link rel="stylesheet" href="./styles/forage.css" />
@@ -25,7 +24,6 @@
   <body data-pane="overview">
 
     <div id="dev-banner" class="dev-banner" hidden></div>
-    <div id="workbench-attention" class="workbench-attention" role="region" aria-label="一起做待处理" hidden></div>
 
     <!-- Narrow transparent drag handles for the hidden-titlebar window.
          They sit just inside the native resize edge, so dragging the blank
@@ -389,7 +387,7 @@
           <p class="dash-wordmark">tendhearth</p>
 
           <nav class="dash-nav" aria-label="主导航">
-            <button class="dash-nav-link active" data-pane="overview">此刻</button>
+            <button class="dash-nav-link active" data-pane="overview">此刻<span class="count" id="now-count"></span></button>
             <button class="dash-nav-link" data-pane="workbench">一起做</button>
             <button class="dash-nav-link" data-pane="recollections">回忆</button>
           </nav>
