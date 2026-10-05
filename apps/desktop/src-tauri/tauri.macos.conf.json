@@ -1,7 +1,9 @@
 {
+  "productName": "Tendhearth CC",
+  "mainBinaryName": "Tendhearth CC",
   "bundle": {
     "externalBin": [
-      "binaries/wechat-cc-cli",
+      "binaries/tendhearth-cc-cli",
       "binaries/sd-cli",
       "binaries/cc-jobspawn"
     ]

@@ -10,7 +10,8 @@
  *     bun scripts/publish-update.ts --from-dir ./assets --version 1.6.6 --no-github
  *
  * 做三件事:
- *  1. 收集 updater 产物(macOS: wechat-cc.app.tar.gz + .sig;Windows: setup.exe + .sig)
+ *  1. 收集 updater 产物(macOS: Tendhearth CC.app.tar.gz + .sig,1.7.4 及以前叫 wechat-cc.app.tar.gz;
+ *     Windows: setup.exe + .sig)
  *  2. 合并生成 latest.json(其它平台的旧条目只在**同版本**时保留)
  *  3. 上传到 Cloudflare R2(REST API,token 读 CF_API_TOKEN 环境变量,
  *     否则读 macOS 钥匙串,再否则读 ~/Desktop/cloudflare_key.txt)。token
@@ -29,7 +30,7 @@ import { homedir } from 'node:os'
 import { spawnSync } from 'node:child_process'
 import { join } from 'node:path'
 import { readdirSync } from 'node:fs'
-import { collectPlatformsFromDir, mergePlatforms, unsignedUpdaterArtifacts, type PlatformArtifact } from './publish-update.platforms'
+import { collectPlatformsFromDir, localMacUpdaterTarball, macProductName, mergePlatforms, unsignedUpdaterArtifacts, type PlatformArtifact } from './publish-update.platforms'
 
 const ROOT = join(import.meta.dir, '..')
 const DESKTOP = join(ROOT, 'apps', 'desktop')
@@ -45,7 +46,9 @@ const hosting: Hosting = existsSync(HOSTING_PATH)
   ? JSON.parse(readFileSync(HOSTING_PATH, 'utf8'))
   : { bucket: 'wechat-cc-updates', baseUrl: 'https://dl.tendhearth.com/wechat-cc', keyPrefix: 'wechat-cc' }
 
-const conf = JSON.parse(readFileSync(join(DESKTOP, 'src-tauri', 'tauri.conf.json'), 'utf8')) as { version: string }
+const conf = JSON.parse(readFileSync(join(DESKTOP, 'src-tauri', 'tauri.conf.json'), 'utf8')) as { version: string; productName?: string }
+const macConfPath = join(DESKTOP, 'src-tauri', 'tauri.macos.conf.json')
+const macConf = existsSync(macConfPath) ? JSON.parse(readFileSync(macConfPath, 'utf8')) as { productName?: string } : null
 // CI 从 release tag 拿版本(--version),本地从 tauri.conf.json 拿。
 const version = (arg('--version') ?? conf.version).replace(/^v/, '')
 
@@ -64,7 +67,7 @@ if (fromDir) {
   // 而发布日志看起来一切正常。desktop-v1.6.6 第一次出包正是这样。
   for (const u of unsigned) console.error(`⚠️  ${u} 没有配套的 .sig,不进自动更新(该平台用户收不到这一版)`)
   if (targets.length === 0) {
-    console.error(`${fromDir} 里没有可发布的 updater 产物(需要 wechat-cc.app.tar.gz 或 wechat-cc_${version}_x64-setup.exe,各带 .sig)`)
+    console.error(`${fromDir} 里没有可发布的 updater 产物(需要 Tendhearth CC.app.tar.gz / Tendhearth.CC.app.tar.gz / wechat-cc.app.tar.gz 或 wechat-cc_${version}_x64-setup.exe,各带 .sig)`)
     process.exit(1)
   }
   console.log(`将发布 ${targets.length} 个平台:${targets.map(t => t.platformKey).join(', ')}`)
@@ -75,7 +78,7 @@ if (fromDir) {
   const artifactOverride = arg('--artifact')
   const artifactPath = artifactOverride
     ?? (process.platform === 'darwin'
-      ? join(DESKTOP, 'src-tauri', 'target', 'release', 'bundle', 'macos', 'wechat-cc.app.tar.gz')
+      ? localMacUpdaterTarball(join(DESKTOP, 'src-tauri', 'target', 'release', 'bundle', 'macos'))
       // Windows NSIS: <name>_<version>_x64-setup.exe(.sig)
       : join(DESKTOP, 'src-tauri', 'target', 'release', 'bundle', 'nsis', `wechat-cc_${version}_x64-setup.exe`))
   const sigPath = `${artifactPath}.sig`
@@ -239,8 +242,10 @@ if (!process.argv.includes('--no-github')) {
   const tag = `desktop-v${version}`
   const isMac = targets[0]!.platformKey.startsWith('darwin')
   // mac 给 dmg(新用户友好);win 的 setup.exe 既是 updater 产物也是安装包。
+  // dmg 文件名跟 macOS 的 productName 走(1.7.5 起 `Tendhearth CC_<ver>_aarch64.dmg`);上传标签保持
+  // 不带空格的老形状 —— 下载页按 /\.dmg$/ 挑,不认名字。
   const asset = isMac
-    ? join(DESKTOP, 'src-tauri/target/release/bundle/dmg', `wechat-cc_${version}_aarch64.dmg`)
+    ? join(DESKTOP, 'src-tauri/target/release/bundle/dmg', `${macProductName(conf, macConf)}_${version}_aarch64.dmg`)
     : targets[0]!.artifactPath
   const assetLabel = isMac ? `wechat-cc_${version}_aarch64.dmg` : `wechat-cc_${version}_windows-x64-setup.exe`
   if (!existsSync(asset)) {

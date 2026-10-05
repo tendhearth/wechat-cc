@@ -1,6 +1,7 @@
 import { readFileSync, writeFileSync, unlinkSync } from 'node:fs'
 import { platform } from 'node:os'
 import { spawnSync } from 'node:child_process'
+import { isSidecarBasename } from '../lib/app-identity'
 
 export type LockResult = { ok: true } | { ok: false; reason: string; pid: number }
 
@@ -155,7 +156,7 @@ function matchDarwinComm(pid: number): boolean {
     const full = r.stdout.trim()
     if (!full) return false
     const basename = full.split('/').pop() ?? full
-    return basename === 'bun' || basename === 'wechat-cc-cli' || basename === 'node'
+    return basename === 'bun' || isSidecarBasename(basename) || basename === 'node'
   } catch {
     return false
   }
@@ -168,7 +169,8 @@ function matchLinuxComm(pid: number): boolean {
     // (compiled binary), or `node` (vitest runner during tests). Anything
     // else (sshd, bash, chrome, the user's just-booted login shell that
     // happened to grab pid 2553 again) means PID reuse → not our daemon.
-    return comm === 'bun' || comm === 'wechat-cc-cli' || comm === 'node'
+    // comm 最多 15 字节:`tendhearth-cc-cli`(17)在 Linux 上会被截断 —— 但 Linux 照旧用 `wechat-cc-cli`。
+    return comm === 'bun' || isSidecarBasename(comm) || comm === 'node'
   } catch {
     // /proc entry vanished between exists check and read — process died.
     return false
@@ -190,7 +192,7 @@ function matchWindowsImage(pid: number): boolean {
     const m = head.match(/^"([^"]+)"/)
     if (!m) return false
     const image = m[1]!.toLowerCase()
-    return image === 'bun.exe' || image === 'wechat-cc-cli.exe' || image === 'node.exe'
+    return image === 'bun.exe' || isSidecarBasename(image) || image === 'node.exe'
   } catch {
     return false
   }

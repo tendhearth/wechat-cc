@@ -32,7 +32,8 @@ export interface KillResult {
 // to signal a daemon launched from the deb-installed binary on either
 // Linux (cmdline `/usr/bin/wechat-cc-cli run --dangerously`) or Windows
 // (tasklist image `wechat-cc-cli.exe`).
-const DAEMON_CMDLINE_RE = /(?:cli\.ts(?!\.))|(?:src[/\\]daemon[/\\]main\.ts)|(?:wechat-cc-cli(?:\.exe)?)/
+// 1.7.5 起 macOS 的 sidecar 叫 `tendhearth-cc-cli`(src/lib/app-identity.ts);两代都认。
+const DAEMON_CMDLINE_RE = /(?:cli\.ts(?!\.))|(?:src[/\\]daemon[/\\]main\.ts)|(?:(?:wechat|tendhearth)-cc-cli(?:\.exe)?)/
 
 export async function killDaemonByPid(deps: KillDeps, pid: number): Promise<KillResult> {
   if (!Number.isFinite(pid) || pid <= 0) {

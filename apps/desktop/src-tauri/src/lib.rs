@@ -7,6 +7,7 @@
 // wechat-cc source tree, and no PATH lookup — the sidecar lives inside
 // the .app/.exe/.deb bundle and is resolved by tauri-plugin-shell.
 
+pub mod bundle_migrate;
 pub mod daemon_mode;
 mod html_preview;
 
@@ -281,9 +282,13 @@ async fn run_sidecar(app: &AppHandle, args: Vec<String>) -> Result<String, Strin
         return run_dev_bun(&root, args).await;
     }
 
+    // tauri.macos.conf.json renames the macOS sidecar (externalBin) to
+    // `tendhearth-cc-cli` — the name Activity Monitor shows. Other platforms keep
+    // `wechat-cc-cli` (Windows scheduled task / systemd unit point at it).
+    let sidecar_name = if cfg!(target_os = "macos") { bundle_migrate::SIDECAR_NAMES[0] } else { bundle_migrate::SIDECAR_NAMES[1] };
     let sidecar = app
         .shell()
-        .sidecar("wechat-cc-cli")
+        .sidecar(sidecar_name)
         .map_err(|err| format!("failed to resolve wechat-cc-cli sidecar: {err}"))?;
 
     // Point the sidecar at the bundled plugins dir (see bundled_plugins_dir).

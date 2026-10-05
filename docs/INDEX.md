@@ -29,6 +29,7 @@
 | 网络守护(守护 v2 按调用判:哪些调用需要保护、guard.json 覆盖、bx / 探测信号、拦在哪、刻意不拦什么、怎么验) | [reference/network-guard.md](reference/network-guard.md) | 主人拍板(2026-10-02 两次,第二次收窄),见 roadmap 修订记录 |
 | 内部 API 鉴权(tier / token / routeAllow / 登记几处) | [reference/internal-api-auth.md](reference/internal-api-auth.md) | `superpowers/specs/2026-06-21-internal-api-tier-authz-design.md` |
 | 发版(tag → 三平台构建 → Publish → R2 更新源) | [maintainer/release.md](maintainer/release.md) | — |
+| macOS 改名迁移(`Tendhearth CC.app`、进程名、LaunchAgent 自修、1.7.4→1.7.5 真机清单) | [maintainer/app-rename-migration.md](maintainer/app-rename-migration.md) | 主人拍板(2026-10-04) |
 | 自维护(部署 / 自检 / CI 闸门) | [maintainer/](maintainer/README.md) | `superpowers/specs/2026-09-18-{self-maintenance,ci-triage}-design.md` |
 | 自改流水线(`self change`) | [maintainer/self-change.md](maintainer/self-change.md) | `superpowers/specs/2026-09-18-self-change-pipeline-design.md` |
 | 外部 agent CLI 自动升级(claude / codex / cursor-agent / agy:官方升级器、升级后自检、自动退回、坏版本、`wechat-cc cli`) | [maintainer/cli-auto-upgrade.md](maintainer/cli-auto-upgrade.md) | 主人拍板(2026-10-04),见 roadmap 修订记录 |

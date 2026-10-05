@@ -29,7 +29,10 @@ mod macos {
     struct Sandbox(PathBuf);
     impl Sandbox {
         fn new() -> Self {
-            let path = std::env::temp_dir().join(format!("cc-open-folder-{}-{}", std::process::id(), std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_nanos()));
+            // 并行测试同一纳秒(macOS 时钟粒度粗)会撞名 ⇒ 加进程内计数器。
+            static SEQ: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+            let seq = SEQ.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+            let path = std::env::temp_dir().join(format!("cc-open-folder-{}-{}-{}", std::process::id(), std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_nanos(), seq));
             std::fs::create_dir(&path).unwrap();
             Self(path.canonicalize().unwrap())
         }

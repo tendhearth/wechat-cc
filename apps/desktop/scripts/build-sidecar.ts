@@ -12,6 +12,7 @@ import './vendor-site'
  */
 import { chmodSync, copyFileSync, existsSync, mkdirSync } from 'node:fs'
 import { dirname, join, resolve } from 'node:path'
+import { sidecarNameFor } from '../../../src/lib/app-identity'
 
 type Target = { bunTarget: string; rustTriple: string; extension?: string }
 
@@ -30,10 +31,12 @@ if (!target) {
 }
 
 const root = resolve(import.meta.dir, '../../..')
+// 1.7.5 起 macOS 的 sidecar 叫 `tendhearth-cc-cli`(活动监视器里看得到的名字,
+// 见 src/lib/app-identity.ts 与 tauri.macos.conf.json 的 externalBin);别的平台照旧。
 const output = join(
   root,
   'apps/desktop/src-tauri/binaries',
-  `wechat-cc-cli-${target.rustTriple}${target.extension ?? ''}`,
+  `${sidecarNameFor(process.platform)}-${target.rustTriple}${target.extension ?? ''}`,
 )
 
 mkdirSync(dirname(output), { recursive: true })

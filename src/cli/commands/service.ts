@@ -1,15 +1,19 @@
 // 从 cli.ts 逐字搬出(2026-09-27 cli 拆分,spec 2026-09-27-cli-split-design);行为、参数、文案不变。
 import { defineCommand } from 'citty'
 import { join } from 'node:path'
-import { writeFileSync, mkdirSync, rmSync } from 'node:fs'
+import { writeFileSync, mkdirSync, rmSync, readFileSync, existsSync, renameSync, chmodSync } from 'node:fs'
+import { dirname } from 'node:path'
+import { homedir, userInfo } from 'node:os'
 import { SOURCE_REPO_ROOT } from '../repo-root'
 import { STATE_DIR } from '../../lib/config'
 import { loadAgentConfig, saveAgentConfig } from '../../lib/agent-config'
 import { appMainBinaryPath, compiledBinaryPath, compiledRepoRoot } from '../../lib/runtime-info'
 import { defaultDoctorDeps, serviceStatus } from '../doctor'
-import { buildServicePlan, installService, startService, stopService, uninstallService } from '../service-manager'
+import { buildServicePlan, installService, reloadService, startService, stopService, uninstallService } from '../service-manager'
 import { parseBoolValue } from '../flags'
-import { ServiceStatusOutput, ServiceInstallOutput, ServiceStartOutput, ServiceStopOutput, ServiceUninstallOutput } from '../schema'
+import { ServiceStatusOutput, ServiceInstallOutput, ServiceStartOutput, ServiceStopOutput, ServiceUninstallOutput, ServiceRepairOutput } from '../schema'
+import { runServiceRepair } from '../service-repair'
+import { claudeSettingsPath, codexHooksPath, hookCommandLine, hookStatus, installHooks } from '../hook'
 export const serviceCmd = defineCommand({
   meta: {
     name: 'service',
@@ -19,8 +23,8 @@ export const serviceCmd = defineCommand({
     action: {
       type: 'positional',
       required: true,
-      description: 'status | install | start | stop | uninstall',
-      valueHint: 'status|install|start|stop|uninstall',
+      description: 'status | install | start | stop | uninstall | repair',
+      valueHint: 'status|install|start|stop|uninstall|repair',
     },
     json: { type: 'boolean', description: 'JSON envelope' },
     // Tri-state strings (parseBoolValue inside run): true / false / undefined.
@@ -28,9 +32,10 @@ export const serviceCmd = defineCommand({
     // and service install treats omission as "leave existing config alone".
     unattended: { type: 'string', description: 'true | false | yes | no | on | off — persist into agent-config (omit to leave unchanged)' },
     'auto-start': { type: 'string', description: 'true | false | yes | no | on | off — register for boot/login auto-start' },
+    'no-reload': { type: 'boolean', description: 'repair: rewrite the LaunchAgent file but do not bootout/bootstrap it' },
   },
   async run({ args }) {
-    const validActions = ['status', 'install', 'start', 'stop', 'uninstall'] as const
+    const validActions = ['status', 'install', 'start', 'stop', 'uninstall', 'repair'] as const
     type ServiceAction = typeof validActions[number]
     const action = args.action as ServiceAction
     if (!validActions.includes(action)) {
@@ -78,6 +83,53 @@ export const serviceCmd = defineCommand({
     // exercise real cli.ts without touching ~/Library/LaunchAgents/launchd.
     const dryRun = process.env.WECHAT_CC_DRY_RUN === '1'
     const sideOpts = { dryRun }
+    if (action === 'repair') {
+      // app 换了位置 / 换了二进制名(1.7.5 改名迁移)之后,把 LaunchAgent / 终端 hook /
+      // 转发脚本改到自己身上。判定与边界见 service-repair.ts / app-relocation.ts。
+      const home = homedir()
+      const self = { mainBinary: appBinaryPath ?? null, sidecar: binaryPath ?? null }
+      const readFile = (p: string): string | null => { try { return readFileSync(p, 'utf8') } catch { return null } }
+      const result = runServiceRepair({
+        platform: process.platform,
+        self,
+        plistPath: plan.serviceFile ?? '',
+        forwarderPath: join(home, '.local', 'bin', 'wechat-cc'),
+        hookFiles: [
+          { source: 'claude', file: claudeSettingsPath(home) },
+          { source: 'codex', file: codexHooksPath(home, process.env) },
+        ],
+        readFile,
+        exists: existsSync,
+        writeFileAtomic: (p, content, mode) => {
+          mkdirSync(dirname(p), { recursive: true })
+          const tmp = `${p}.tmp-${process.pid}`
+          writeFileSync(tmp, content)
+          if (mode !== undefined) chmodSync(tmp, mode)
+          renameSync(tmp, p)
+        },
+        hookStatus,
+        installHook: (file, source, sidecar) => { installHooks(file, source, hookCommandLine({ execPath: sidecar, compiled: true, cliEntry: '', source })) },
+        reloadLaunchAgent: () => {
+          // launchctl 的 gui/<uid> 域只有一个:HOME 被改过(测试 / 临时目录演练)时,bootout 照样会
+          // 打到这个用户**真的** com.wechat-cc.daemon 上 —— 2026-10-04 写这段时就这样把主人的 daemon
+          // 换成了临时目录里的构建。HOME 跟账户的真家目录对不上 ⇒ 只改文件,绝不碰 launchd。
+          if (homedir() !== userInfo().homedir) return 'HOME is overridden — refusing to touch the real launchd domain'
+          try { reloadService(plan, { dryRun }); return null } catch (e) { return e instanceof Error ? e.message : String(e) }
+        },
+        dryRun,
+        // citty/mri 把 `--no-reload` 变成 `reload:false`(声明的 'no-reload' 键是 undefined)——
+        // 与 self deploy 的 `--no-rollback` 同一个坑,两种拼法都认。
+        reload: !((args as Record<string, unknown>)['no-reload'] === true || (args as Record<string, unknown>).reload === false),
+      })
+      if (json) console.log(JSON.stringify(ServiceRepairOutput.parse({ ok: true, action: 'repair', dryRun, ...result }), null, 2))
+      else {
+        const la = result.launchAgent
+        console.log(la.action === 'rewrite' ? `LaunchAgent: ${la.from} → ${la.to}${la.reloaded ? ' (reloaded)' : ''}${la.reloadError ? ` (reload failed: ${la.reloadError})` : ''}` : `LaunchAgent: ${la.reason}`)
+        for (const h of result.hooks) console.log(`hook ${h.source}: ${h.from} → ${h.to}`)
+        console.log(`forwarder ${result.forwarder.path}: ${result.forwarder.action}`)
+      }
+      return
+    }
     if (action === 'install') {
       // Idempotent: best-effort tear down any previous install so we can
       // re-write the plist (e.g. unattended toggle changed). Swallow errors

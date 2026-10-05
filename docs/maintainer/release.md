@@ -27,7 +27,7 @@
 - `wechat-cc update` **不读** `v*` tag,它比的是 `origin/<branch>`(`src/cli/update.ts`);`v*` tag 唯一的作用是被镜像成 `desktop-v*`。
 - Windows 只在 CI 编译;签名与发布固定在 Mac / CI(Win32 给环境变量赋空串等于删除,tauri 签名步骤会挂死等密码)。
 - `.sig` 是 minisign 签名、平台无关;曾被发版脚本的双层过滤丢掉过(2026-09-03,已修)。
-- 产物名与平台映射在 `scripts/publish-update.platforms.ts`,守卫 `scripts/release-pipeline.guard.test.ts`。
+- 产物名与平台映射在 `scripts/publish-update.platforms.ts`,守卫 `scripts/release-pipeline.guard.test.ts`。1.7.5 起 macOS 的 updater 包叫 `Tendhearth CC.app.tar.gz`(GitHub release 上空格变点:`Tendhearth.CC.app.tar.gz`),dmg 叫 `Tendhearth CC_<ver>_aarch64.dmg`;R2 对象名与 latest.json 形状不变,老客户端照常更新 —— 它们把新包原地装进 `wechat-cc.app`,app 首次启动再自己改名。见 [app-rename-migration.md](app-rename-migration.md)。Windows / Linux 产物名不变。
 - 发版 workflow 的 bun 版本与 CI 一样钉死(2026-09-27 起,`scripts/ci-workflow.guard.test.ts`);别改回 `latest`。
 - **Cloudflare R2 令牌会过期。** 2026-09-27 发 1.7.0 时 `release-signing` 环境的 `CF_API_TOKEN` 与本机钥匙串 `wechat-cc-r2` 都已失效(`/user/tokens/verify` 401),`publish-update` 作业「降级为本地暂存」还报绿,GitHub Release 发了、`latest.json` 还停在 1.6.5。现在 CI 带 `--strict`,再失效会直接红。换令牌:Cloudflare 后台 → API Tokens → 建一枚带 `Account · Workers R2 Storage · Edit` + `Account · Account Settings · Read` 的令牌 → 本机 `security add-generic-password -a "$USER" -s wechat-cc-r2 -w '<token>' -U` → `gh secret set CF_API_TOKEN --env release-signing` → Actions 里 `Publish Update Channel` → Run workflow 填 `desktop-vX.Y.Z` 补发。探令牌是否还活着:任何真实调用(`GET /accounts`)返回 success 即可,别只看 verify。
 - **公证变量空串会触发公证**(2026-09-27):macOS 上环境变量设成空串不等于没设,tauri-bundler 看到 `APPLE_TEAM_ID` 就去公证。三个公证变量只在证书 import 成功后写进 `$GITHUB_ENV`。

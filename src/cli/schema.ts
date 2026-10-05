@@ -268,6 +268,27 @@ export const ServiceUninstallOutput = z.discriminatedUnion('ok', [
 ])
 export type ServiceUninstallOutputT = z.infer<typeof ServiceUninstallOutput>
 
+// wechat-cc service repair --json(app 换位置 / 换二进制名之后的自修,service-repair.ts)
+export const ServiceRepairOutput = z.discriminatedUnion('ok', [
+  z.object({
+    ok: z.literal(true),
+    action: z.literal('repair'),
+    dryRun: z.boolean(),
+    launchAgent: z.object({
+      action: z.enum(['none', 'rewrite']),
+      reason: z.string(),
+      from: z.string().optional(),
+      to: z.string().optional(),
+      reloaded: z.boolean(),
+      reloadError: z.string().optional(),
+    }),
+    hooks: z.array(z.object({ source: z.enum(['claude', 'codex']), from: z.string(), to: z.string() })),
+    forwarder: z.object({ path: z.string(), action: z.enum(['write', 'ok', 'foreign', 'skipped']) }),
+  }),
+  z.object({ ok: z.literal(false), error: z.string() }),
+])
+export type ServiceRepairOutputT = z.infer<typeof ServiceRepairOutput>
+
 // ── wechat-cc install-progress --json ────────────────────────────────────────
 // Reads install-progress.json from STATE_DIR (written by the service install
 // onProgress hook). Returns {} when no install is in flight — that empty-object
