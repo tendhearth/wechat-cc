@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
-import { mkdtempSync, rmSync, writeFileSync, mkdirSync } from 'node:fs'
+import { mkdtempSync, rmSync, writeFileSync, mkdirSync, readFileSync, statSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { buildPipelineDeps, resolveOwnerSessionKey } from './pipeline-deps'
@@ -339,6 +339,39 @@ describe('companionConverse in-flight guard (buildPipelineDeps)', () => {
   // a rejected turn is still the owner typing at the app. If it drifted below
   // this reject, a burst of 409s during a busy WeChat turn would leave
   // quietFor() reading Infinity and free the idle check to restart mid-use.
+  // 2026-10-05:此刻里拖进 / 粘进来的截图 —— 落到 inbox(0600),当图片附件交给 CC;只有图也行;历史里记「[图片 ×N]」。
+  it('desktop images land in the inbox and reach CC as image attachments', async () => {
+    const { companionConverse, dispatchInner } = setup({ inFlight: false })
+    const png = new Uint8Array([0x89, 0x50, 0x4e, 0x47, 1, 2, 3])
+    await companionConverse('', 'desktop', [{ mime: 'image/png', bytes: png }, { mime: 'image/jpeg', bytes: new Uint8Array([0xff, 0xd8, 0xff]) }])
+    const msg = dispatchInner.mock.calls.at(-1)![0] as InboundMsg
+    expect(msg.msgType).toBe('image')
+    expect(msg.attachments?.map(a => a.kind)).toEqual(['image', 'image'])
+    const [first, second] = msg.attachments!
+    expect(first!.path.startsWith(join(stateDir, 'inbox'))).toBe(true)
+    expect(first!.path.endsWith('.png')).toBe(true)
+    expect(second!.path.endsWith('.jpg')).toBe(true)
+    expect(new Uint8Array(readFileSync(first!.path))).toEqual(png)
+    if (process.platform !== 'win32') expect(statSync(first!.path).mode & 0o777).toBe(0o600)
+    await vi.waitFor(async () => {
+      const rows = await makeMessagesStore(db).listRange('owner_chat', { limit: 10 })
+      expect(rows.find(m => m.direction === 'in')?.text).toBe('[图片 ×2]')
+    })
+  })
+
+  it('text with an image keeps msgType text and records both in history', async () => {
+    const { companionConverse, dispatchInner } = setup({ inFlight: false })
+    await companionConverse('看这个报错', 'desktop', [{ mime: 'image/png', bytes: new Uint8Array([1]) }])
+    const msg = dispatchInner.mock.calls.at(-1)![0] as InboundMsg
+    expect(msg.msgType).toBe('text')
+    expect(msg.text).toBe('看这个报错')
+    expect(msg.attachments).toHaveLength(1)
+    await vi.waitFor(async () => {
+      const rows = await makeMessagesStore(db).listRange('owner_chat', { limit: 10 })
+      expect(rows.find(m => m.direction === 'in')?.text).toBe('看这个报错\n[图片 ×1]')
+    })
+  })
+
   it('marks inbound activity even when the turn is rejected as busy', async () => {
     const { companionConverse, markInboundActivity } = setup({ inFlight: true })
     await expect(companionConverse('how are you')).rejects.toThrow()

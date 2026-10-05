@@ -1468,7 +1468,7 @@ describe('internal-api', () => {
       expect(resp.status).toBe(200)
       // 附件与旁白总在(没有就是空数组):桌面不用分新旧形状(2026-10-04)。
       expect(await resp.json()).toEqual({ ok: true, reply: 'hey', attachments: [], narration: [] })
-      expect(companionConverse).toHaveBeenCalledWith('how are you')
+      expect(companionConverse).toHaveBeenCalledWith('how are you', 'desktop', undefined)
     })
 
     it('reply object: attachments (voice / sticker / file) and narration pass through in order', async () => {
