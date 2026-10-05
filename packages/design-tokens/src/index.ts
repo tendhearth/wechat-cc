@@ -49,6 +49,10 @@ export function renderTokensCss(): string {
   for (const [k, v] of Object.entries(radius)) lines.push(`  --th-radius-${k}: ${v}px;`)
   for (const [k, v] of Object.entries(space)) lines.push(`  --th-space-${k}: ${v}px;`)
   lines.push(
+    // 桌面英文优先引用本机 Anthropic Sans;缺失时回退系统,中文保留本地 CJK 回退。
+    '  --th-font-sans: "CC Anthropic Sans", -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei", "Noto Sans CJK SC", "Source Han Sans SC", "Helvetica Neue", Arial, sans-serif;',
+    // 阅读正文的英文衬线与中文无衬线分工;本机缺少 Claude Serif 时用已打包的拉丁衬线。
+    `  --th-font-reading: "CC Anthropic Serif", "${fontFamily.serifLatin}", var(--th-font-sans);`,
     // 打包的 Noto Serif SC 只有常用字(spec §9-5);子集外的字由浏览器逐字落到后面的系统衬线:macOS 宋体、Linux / 装了 Noto 的 Windows 思源宋体、Windows 宋体。
     `  --th-font-serif: "${fontFamily.serifLatin}", "${fontFamily.serifCJK}", "Songti SC", "STSong", "Noto Serif CJK SC", "Source Han Serif SC", "SimSun", Georgia, serif;`,
     `  --th-font-mono: "${fontFamily.mono}", ui-monospace, "SF Mono", Menlo, monospace;`,

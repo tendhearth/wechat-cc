@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { greetingFor, ccPresence, nowStatusLine, latestCCLine, waitingRows, waitingHeader } from './now-home.js'
+import { greetingFor, ccPresence, nowStatusLine, latestCCLine, ccBubblePreview, waitingRows, waitingHeader } from './now-home.js'
 
 describe('greetingFor', () => {
   it('三档,与手机同一套钟点', () => {
@@ -16,6 +16,11 @@ describe('ccPresence', () => {
   it('拉不到 / 还没拉 ⇒ 不在身边', () => { expect(ccPresence(p('down'))).toBe('away'); expect(ccPresence(null)).toBe('away') })
 })
 describe('latestCCLine', () => {
+  it('工作台通知留在完整记录里,不替代首页的 CC 原话', () => {
+    expect(latestCCLine([{ role: 'cc', text: '在呢。', at: 1 }, { role: 'cc', text: '任务完成', at: 2, source: 'workbench' }]))
+      .toEqual({ text: '在呢。', at: 1 })
+    expect(latestCCLine([{ role: 'cc', text: '任务完成', source: 'workbench' }])).toBeNull()
+  })
   it('最近一条 CC 的、非占位、非空的话', () => {
     expect(latestCCLine([{ role: 'cc', text: '早', at: 1 }, { role: 'user', text: '在吗', at: 2 }, { role: 'cc', text: '…', pending: true }, { role: 'cc', text: '行程好了', at: 3 }, { role: 'error', text: '失败' }] as any))
       .toEqual({ text: '行程好了', at: 3 })
@@ -31,6 +36,26 @@ describe('latestCCLine', () => {
     expect(latestCCLine([source])).toEqual({text:'完成\n\n文档好了，请看说明。\n\n命令是 bun run test。',at:123})
     expect(source).toEqual(original)
     expect(latestCCLine([{role:'cc',text:'---'}])).toBeNull()
+  })
+})
+describe('ccBubblePreview', () => {
+  it('短回复完整展示,多句回复摘出完整第一句', () => {
+    expect(ccBubblePreview('在呢。')).toEqual({ text: '在呢。', shortened: false })
+    expect(ccBubblePreview('行程整理好了，你看看？\n\n有两个备选方案。')).toEqual({ text: '行程整理好了，你看看？', shortened: true })
+  })
+  it('跳过引子,把列表原话与 Markdown 整理成能读的一句', () => {
+    expect(ccBubblePreview('已同步，最新两条如下：\n\n1. **周五去上海。**\n2. 周日回来。'))
+      .toEqual({ text: '周五去上海。', shortened: true })
+    expect(ccBubblePreview('The trip is ready. There are two options.')).toEqual({ text: 'The trip is ready.', shortened: true })
+  })
+  it('超长无标点回复有长度上限,短的无标点回复不凭空添内容', () => {
+    expect(ccBubblePreview('收到')).toEqual({ text: '收到', shortened: false })
+    expect(ccBubblePreview('很'.repeat(200))).toEqual({ text: `${'很'.repeat(120)}…`, shortened: true })
+  })
+  it('图片和代码预览不留下图片标记或围栏语言名', () => {
+    expect(ccBubblePreview('![结果](artifact.png)')).toEqual({ text: '结果', shortened: false })
+    expect(ccBubblePreview('![](artifact.png)').text).toBe('图片')
+    expect(ccBubblePreview('```ts\nconst ready = true\n```')).toEqual({ text: 'const ready = true', shortened: false })
   })
 })
 describe('waitingRows', () => {

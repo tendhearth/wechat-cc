@@ -51,6 +51,7 @@
     "@openai/codex-sdk": "0.144.4",
     "@wechat-cc/protocol": "workspace:*",
     "ai": "^5",
+    "fflate": "0.8.3",
     "marked": "^18.0.0",
     "qrcode-terminal": "^0.12.0",
     "smol-toml": "^1.9.0",

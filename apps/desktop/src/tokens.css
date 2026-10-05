@@ -60,6 +60,8 @@
   --th-space-l: 16px;
   --th-space-xl: 24px;
   --th-space-xxl: 36px;
+  --th-font-sans: "CC Anthropic Sans", -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei", "Noto Sans CJK SC", "Source Han Sans SC", "Helvetica Neue", Arial, sans-serif;
+  --th-font-reading: "CC Anthropic Serif", "TH Serif 4", var(--th-font-sans);
   --th-font-serif: "TH Serif 4", "Noto Serif SC", "Songti SC", "STSong", "Noto Serif CJK SC", "Source Han Serif SC", "SimSun", Georgia, serif;
   --th-font-mono: "Geist Mono", ui-monospace, "SF Mono", Menlo, monospace;
   color-scheme: light;

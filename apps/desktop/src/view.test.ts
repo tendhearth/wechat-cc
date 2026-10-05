@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest'
 import {
   doctorRows, pollAdvance, daemonStatusLine, escapeHtml,
   initialMode, afterScanTarget, dashboardHero, accountRows, formatRelativeTime,
+  hasUsableProvider, providerReady,
   updateProbeLine, updateApplyLine, restartButtonState, deleteAccountConfirmCopy,
   UPDATE_REASON_COPY, modeBadge, conversationRows, diagnose, guardLine,
 } from './view.js'
@@ -286,6 +287,18 @@ describe('deleteAccountConfirmCopy', () => {
 })
 
 describe('initialMode', () => {
+  it('recognizes Cursor and Gemini as available providers without installed Claude or Codex',()=>{
+    for(const provider of ['cursor','gemini']){
+      const r=fakeReport({runtime:'compiled-bundle',checks:{claude:{ok:false},codex:{ok:false},[provider]:{ok:true},provider:{ok:true,provider},accounts:{count:0}}})
+      expect(initialMode(r)).toEqual({mode:'wizard',step:'provider'})
+    }
+  })
+  it('keeps a configured API service usable when CLI agents are absent',()=>{
+    const r=fakeReport({runtime:'compiled-bundle',checks:{claude:{ok:false},codex:{ok:false},provider:{ok:true,provider:'openai'},accounts:{count:0}}})
+    expect(hasUsableProvider(r)).toBe(true)
+    expect(providerReady(r,'openai')).toBe(true)
+    expect(initialMode(r)).toEqual({mode:'wizard',step:'wechat'})
+  })
   it('routes to dashboard when an account is bound and provider is ok', () => {
     expect(initialMode(fakeReport({ checks: { accounts: { ok: true, count: 1, items: [] } } })))
       .toEqual({ mode: 'dashboard' })
@@ -294,9 +307,9 @@ describe('initialMode', () => {
     expect(initialMode(fakeReport({ checks: { bun: { ok: false, path: null } } })))
       .toEqual({ mode: 'wizard', step: 'doctor' })
   })
-  it('continues to WeChat if selected provider is missing but another provider is available', () => {
+  it('offers AI choice if selected provider is missing but another provider is available', () => {
     expect(initialMode(fakeReport({ checks: { provider: { ok: false, provider: 'claude', binaryPath: null } } })))
-      .toEqual({ mode: 'wizard', step: 'wechat' })
+      .toEqual({ mode: 'wizard', step: 'provider' })
   })
   it('parks at doctor step if no agent provider is installed', () => {
     expect(initialMode(fakeReport({
@@ -307,9 +320,9 @@ describe('initialMode', () => {
       },
     }))).toEqual({ mode: 'wizard', step: 'doctor' })
   })
-  it('parks at wechat step if no accounts yet', () => {
+  it('offers AI choice if no accounts yet', () => {
     expect(initialMode(fakeReport()))
-      .toEqual({ mode: 'wizard', step: 'wechat' })
+      .toEqual({ mode: 'wizard', step: 'provider' })
   })
 
   it('parks at service step when account is bound but service install never ran', () => {
@@ -335,14 +348,14 @@ describe('initialMode', () => {
     expect(initialMode(fakeReport({
       runtime: 'compiled-bundle',
       checks: { bun: { ok: false, path: null } },
-    }))).toEqual({ mode: 'wizard', step: 'wechat' })
+    }))).toEqual({ mode: 'wizard', step: 'provider' })
   })
 
   it('compiled-bundle: git missing does NOT park at doctor', () => {
     expect(initialMode(fakeReport({
       runtime: 'compiled-bundle',
       checks: { git: { ok: false, path: null } },
-    }))).toEqual({ mode: 'wizard', step: 'wechat' })
+    }))).toEqual({ mode: 'wizard', step: 'provider' })
   })
 })
 

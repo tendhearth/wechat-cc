@@ -161,7 +161,7 @@ export function wireSettingsDrawer(opts) {
     const target = /** @type {HTMLElement | null} */ (e.target instanceof HTMLElement ? e.target : null)
     if (!target) return
     if (drawer.contains(target)) return
-    if (target.closest("#settings-open")) return
+    if (target.closest("#settings-open, #provider-menu")) return
     closeSettingsDrawer()
   })
 
