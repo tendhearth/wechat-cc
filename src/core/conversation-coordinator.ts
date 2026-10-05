@@ -181,13 +181,13 @@ export interface ConversationCoordinatorDeps {
    * 这个钩子把「静默」变「可见」:bootstrap 记进 /mode 并打 [PROVIDER_ANOMALY]。
    */
   onFallbackStreak?: (providerId: ProviderId, streak: number) => void
-  sendAssistantText?: (chatId: string, text: string) => Promise<void>
+  sendAssistantText?: (chatId: string, text: string) => Promise<unknown>
   /**
    * 系统通知(认证失败 / 超时 / 守护拒绝 / spawn 失败 / 本轮出错 / provider 不可用……,spec §4.3 末段
    * 「系统通知分家」)。和 agent 的话分开:日志里是 NOTICE 而不是 FALLBACK_REPLY,也不进打猎旁听。
    * app 接收器照样接(通知在 app 里也要看得见)。缺省 ⇒ 退回 sendAssistantText(老嵌入 / 测试不变)。
    */
-  sendNotice?: (chatId: string, text: string) => Promise<void>
+  sendNotice?: (chatId: string, text: string) => Promise<unknown>
   /**
    * 回复交付端口(daemon/reply-delivery.ts)。shadow / daemon 模式的 provider 才用到;缺省 ⇒ 一律按
    * legacy 走(没有端口就不可能交付)。
@@ -405,7 +405,7 @@ export function createConversationCoordinator(deps: ConversationCoordinatorDeps)
     deps.onEmptyReplyStreak?.(providerId, prev + 1)
   }
   /** 系统通知走 sendNotice(没接就退回 sendAssistantText)—— 与 agent 的话分家(spec §4.3)。 */
-  const notice = (chatId: string, text: string): Promise<void> | undefined =>
+  const notice = (chatId: string, text: string): Promise<unknown> | undefined =>
     (deps.sendNotice ?? deps.sendAssistantText)?.(chatId, text)
   /** 这一轮这家 provider 的交付模式。没有端口 ⇒ 只能 legacy。 */
   const deliveryModeFor = (providerId: ProviderId): ReplyDeliveryMode =>

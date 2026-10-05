@@ -10,7 +10,7 @@ const ev = (over: Partial<CliEvent> = {}): CliEvent => ({
 })
 
 function harness(opts: {
-  sendResult?: boolean; sendThrows?: boolean; idle?: number | null; desktop?: boolean; sharePage?: boolean; localMachine?: string
+  sendResult?: 'sent' | 'rejected' | 'no_target'; sendThrows?: boolean; idle?: number | null; desktop?: boolean; sharePage?: boolean; localMachine?: string
 } = {}) {
   const sent: string[] = []
   const desktop: { title: string; body: string }[] = []
@@ -18,7 +18,7 @@ function harness(opts: {
   const send = vi.fn(async (text: string) => {
     if (opts.sendThrows) throw new Error('ilink down')
     sent.push(text)
-    return opts.sendResult ?? true
+    return opts.sendResult ?? 'sent'
   })
   const hub = makeCliEventHub({
     send,
@@ -95,11 +95,17 @@ describe('CliEventHub 压 / 撤 / 清(spec 2026-09-09-cli-hook-push §5)', () =>
     expect(sent).toEqual([])
   })
 
-  it('send 返回 false → 记日志、不抛;send 抛错 → 记日志、不抛、不重试', async () => {
-    const a = harness({ sendResult: false })
+  it('没有主人 chat → dropped;微信拒了 → not delivered(不能记成 sent);send 抛错 → 记日志、不抛、不重试', async () => {
+    const a = harness({ sendResult: 'no_target' })
     a.hub.ingest(ev())
     await settle()
     expect(a.logs.some(l => l.startsWith('CLI_PUSH') && l.includes('dropped'))).toBe(true)
+
+    const r = harness({ sendResult: 'rejected' })
+    r.hub.ingest(ev())
+    await settle()
+    expect(r.logs.some(l => l.startsWith('CLI_PUSH') && l.includes('not delivered'))).toBe(true)
+    expect(r.logs.some(l => l.startsWith('CLI_PUSH sent'))).toBe(false)
 
     const b = harness({ sendThrows: true })
     b.hub.ingest(ev())

@@ -667,9 +667,8 @@ export async function bootDaemon(opts: BootDaemonOpts): Promise<DaemonHandle> {
     const cliEvents = makeCliEventHub({
       send: async (text) => {
         const owner = resolveAdminChatId(loadAccess(), loadCompanionConfig(stateDir), null)
-        if (!owner || !boot.sendAssistantText) return false
-        await boot.sendAssistantText(owner, text)
-        return true
+        if (!owner || !boot.sendAssistantText) return 'no_target'
+        return await boot.sendAssistantText(owner, text) ? 'sent' : 'rejected'
       },
       projectName: makeProjectNamer(() => ilink.projects.list()),
       log: (t, l) => log(t, l),

@@ -21,7 +21,8 @@ describe('makeSendAssistantText (FALLBACK_REPLY diagnostic logger)', () => {
     const sendMessage = vi.fn(async () => ({ msgId: 'err:1730', error: 'ilink/sendmessage errcode=-14: session expired' }))
     const wrapper = makeSendAssistantText({ sendMessage, log })
     expect(wrapper).toBeDefined()
-    await wrapper!('o9cq...@im.wechat', '回复正文')
+    // 服务端拒了 ⇒ 告诉调用方「没送到」(CLI 推送据此不记 sent)
+    expect(await wrapper!('o9cq...@im.wechat', '回复正文')).toBe(false)
 
     expect(sendMessage).toHaveBeenCalledWith('o9cq...@im.wechat', '回复正文')
     const failCalls = log.mock.calls.filter(([tag]) => tag === 'FALLBACK_REPLY_FAIL')
@@ -37,7 +38,7 @@ describe('makeSendAssistantText (FALLBACK_REPLY diagnostic logger)', () => {
     const log = vi.fn()
     const sendMessage = vi.fn(async () => ({ msgId: 'sent:1730' }))
     const wrapper = makeSendAssistantText({ sendMessage, log })
-    await wrapper!('o9cq...@im.wechat', '回复正文')
+    expect(await wrapper!('o9cq...@im.wechat', '回复正文')).toBe(true)
 
     const sentCalls = log.mock.calls.filter(([tag]) => tag === 'FALLBACK_REPLY_SENT')
     expect(sentCalls.length).toBe(1)

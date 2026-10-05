@@ -105,5 +105,5 @@ export function hasFullDiskAccess(opts: { home?: string; platform?: NodeJS.Platf
 /** 没有 FDA 时给主人的一句话(health / doctor / 日志共用)。 */
 export const FDA_MISSING_HINT =
   '微信聊天记录的后台同步暂停了:系统没给 Tendhearth CC「完全磁盘访问」(或者那个勾是旧签名时勾的,对现在的版本不算数)。' +
-  '去 系统设置 › 隐私与安全性 › 完全磁盘访问,把 Tendhearth CC 先用「−」删掉、再用「+」重新加入 /Applications/wechat-cc.app 并打开,然后重启 daemon。' +
+  '去 系统设置 › 隐私与安全性 › 完全磁盘访问,把 Tendhearth CC 先用「−」删掉、再用「+」从「应用程序」里重新加入 Tendhearth CC 并打开,然后重启 Tendhearth CC。' +
   '只需做一次;之后不会再弹「想访问其他 App 的数据」。'
