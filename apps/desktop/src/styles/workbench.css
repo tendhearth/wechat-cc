@@ -56,6 +56,9 @@
 .wb-attention-list .wb-task { margin-bottom:3px; }
 .wb-project>header { display:flex; align-items:center; justify-content:space-between; gap:6px; padding:0 4px 6px 10px; }
 .wb-project>.wb-project-new { position:absolute; top:5px; right:1px; padding:2px 5px; font-size:12px; line-height:20px; }
+/* 每个项目一个「＋ 交办」常驻会排成一列噪音(2026-10-05):只在指到 / 键盘落到这个项目时出现;顶上的「交办」一直在。 */
+.wb-project>.wb-project-new { opacity:0; transition:opacity .12s; }
+.wb-project:hover>.wb-project-new, .wb-project:focus-within>.wb-project-new { opacity:1; }
 .wb-project h3 { margin:0; overflow:hidden; color:var(--wb-secondary); font-size:13px; line-height:1.5; font-weight:500; text-overflow:ellipsis; white-space:nowrap; }
 .wb-project>div { display:grid; gap:2px; }
 .wb-task { min-width:0; width:100%; border:1px solid transparent; border-radius:7px; padding:9px 10px; background:transparent; color:inherit; text-align:left; cursor:pointer; }

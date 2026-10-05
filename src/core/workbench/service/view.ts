@@ -4,6 +4,7 @@
  * 唯一的文字改动:waitingFor 里的 quiet(holder) 写成 isReplied(holder)——quiet 本来就是 isReplied 的别名(service.ts 仍保留给 lifecycle 用)。
  * 跨域三处走 ctx.actions:addProject 的 provider(admission)、list 的 quotaExhausted(quota)、detail 的 continuation(admission)。
  */
+import { existsSync } from 'node:fs'
 import { canonicalProject } from '../artifacts'
 import { readableExecutionEvent } from '../codex-execution-error'
 import { isWorkbenchExecutorCapabilities, isWorkbenchProviderId } from '../executor-capabilities'
@@ -103,7 +104,10 @@ export function makeViewDomain(ctx:ServiceCtx, queries?:{quotaHandoff(id:string)
   function list(query:WorkbenchListQuery={}) {
     const providers=ctx.deps.registry.list().flatMap(id=>{const p=ctx.deps.registry.get(id);return isWorkbenchProviderId(id)&&p&&isWorkbenchExecutorCapabilities(p.opts.workbench)?[{id,displayName:p.opts.displayName,capabilities:structuredClone(p.opts.workbench),quota:ctx.actions.deref('view').quotaExhausted(id),usage:ctx.deps.usage?.(id)??null}]:[]})
     const result=store.listPage(query)
-    const projects=store.projects()
+    // 文件夹已经不在、名下也没有没归档的任务 ⇒ 不再列出(2026-10-05):这种项目点进去什么也做不了,
+    // 自检 / 临时目录留下的空壳会把「其他项目」撑到几十个。行不删,文件夹回来了就又出现。
+    const active=store.activeTaskPaths()
+    const projects=store.projects().filter(project=>active.has(project.path)||existsSync(project.path))
     const projectProviders=Object.fromEntries(projects.map(project=>[project.path,store.projectProvider(project.path)??project.providerId]))
     return {projects,tasks:result.tasks.map(task => taskView(task,true)),page:result.page,projectProviders,providers,historyProviders:Object.keys(ctx.deps.nativeHistory??{}),defaultProvider:providers.find(p=>p.id===ctx.deps.defaultProvider)?.id ?? providers[0]?.id ?? null,canWechat:!!ctx.deps.ownerChatId(),unattendedAcknowledgedAt:ctx.deps.unattendedAck?.get()??null}
   }
