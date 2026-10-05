@@ -221,7 +221,7 @@ describe('unified phone entry and material continuation',()=>{
       return route.fulfill({status:503,json:{ok:false,error:'simulated_lost_reply'}})
     })
     await page.route('http://localhost/m/api/matter/create-receipt?**',route=>route.fulfill({status:accepted?200:404,json:accepted||{ok:false,error:'not_found'}}))
-    await page.goto('http://localhost/m');await page.locator('#home-entry').click();await page.locator('#entry-text').fill('从手机直接开始')
+    await page.goto('http://localhost/m');await page.locator('nav [data-p="matters"]').click();await page.locator('#home-entry').click();await page.locator('#entry-text').fill('从手机直接开始')
     await page.locator('#entry-submit').click();await expect.poll(()=>creations).toBe(1)
     await expect.poll(()=>page.locator('#entry-submit').textContent()).toBe('确认是否收到')
     expect(await page.locator('#entry-text').inputValue()).toBe('从手机直接开始')
@@ -254,7 +254,7 @@ describe('unified phone entry and material continuation',()=>{
       const input={id:body.requestId,taskId:TASK,runId:RUN,text:body.text,attachments,status:'delivered'};detail.inputs=[input]
       return route.fulfill({json:{ok:true,result:{kind:'task',task:{id:TASK},input}}})
     })
-    await page.goto('http://localhost/m');await page.locator('#home-entry').click()
+    await page.goto('http://localhost/m');await page.locator('nav [data-p="matters"]').click();await page.locator('#home-entry').click()
     await page.locator('#entry-attachments input[data-pa-files]').setInputFiles({name:'public-cc.png',mimeType:'image/png',buffer:image})
     await expect.poll(()=>materials.size).toBe(1);await page.locator('#entry-submit').click()
     await expect.poll(()=>page.locator('#m-events').textContent()).toContain('public-cc.png')
