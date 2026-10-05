@@ -27,6 +27,8 @@ import { renderWorkbenchTimeline, workbenchTimelineEventId, renderWorkbenchOpera
 import { mergeEvents, structuralSignature, patchLiveTimeline, createLongPoll, clearLiveTimelinePatches, hasLiveTimelineInteraction } from './workbench-live.js'
 import {permissionControlId,capturePermissionFocus,restorePermissionFocus} from './workbench-permission-focus.js'
 import {captureTimelineReading,restoreTimelineReading} from './workbench-reading-dom.js'
+import { saveFile } from './save-file.js'
+import { showToast } from '../view.js'
 
 /** @typedef {{taskId:string,title:string,reason:'same_path'|'nested_path'|'writer_not_closed',holderWriting?:boolean,closeInMs?:number|null}} WaitingFor */
 /** @typedef {{id:string,title:string,path:string,workspaceKind?:'managed'|'project',providerId:string,status:string,createdAt:number,updatedAt:number,error:string|null,phase?:string,archivedAt?:number|null,canArchive?:boolean,pendingPermissionCount?:number,pendingQuestionCount?:number,waitingFor?:WaitingFor|null,importedOnly?:boolean,runtime?:RuntimeSnapshot,networkSuspended?:{since:number}|null}} Task */
@@ -964,7 +966,7 @@ export function initWorkbenchPage(deps) {
         if(!alive||navigation!==navigationGeneration||controller.state.selectedId!==taskId||(previewRequest && previewRequest!==attachmentPreviewRequest))return
         if(data.attachment.id!==id)throw Error('附件版本不匹配，请重新打开。')
         const a=data.attachment,bytes=decodeBase64(data.base64),url=URL.createObjectURL(new Blob([bytes],{type:a.mime}))
-        const download=()=>{const link=document.createElement('a');link.href=url;link.download=a.name;link.click()}
+        const download=()=>{void saveFile(deps,a.name,a.mime,bytes).then(path=>{if(path)showToast(`已保存到「下载」：${path.split(/[\\/]/).pop()}`)}).catch(fail)}
         if(action==='download-input-attachment'){download();setTimeout(()=>URL.revokeObjectURL(url),1000);return}
         attachmentPreviewCleanup?.()
         const dialog=document.createElement('dialog');dialog.className='wb-history-dialog wb-input-preview';dialog.setAttribute('aria-label',a.name)
@@ -1178,9 +1180,8 @@ export function initWorkbenchPage(deps) {
         if (!alive || request !== artifactRequest || navigation !== navigationGeneration || controller.state.selectedId !== taskId || controller.state.selectedArtifactId !== requestedArtifactId) return
         const bytes = decodeBase64(data.contentBase64)
         if (action === 'download-artifact') {
-          const downloadUrl = URL.createObjectURL(new Blob([bytes], {type:data.mime}))
-          const a = document.createElement('a'); a.href = downloadUrl; a.download = data.name; a.click()
-          setTimeout(() => URL.revokeObjectURL(downloadUrl), 60000)
+          const path = await saveFile(deps, data.name, data.mime, bytes)
+          if (path) showToast(`已保存到「下载」：${path.split(/[\\/]/).pop()}`)
           return
         }
         const text = new TextDecoder().decode(bytes)

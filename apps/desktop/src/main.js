@@ -59,6 +59,7 @@ import { refreshPostcardAlbum } from "./modules/postcard-album.js"
 import { initWorkbenchPage, stopWorkbenchPolling, openWorkbenchTask, getActiveWorkbenchTaskId } from "./modules/workbench.js"
 import { createWorkbenchNavigation, isCurrentWorkbenchPane } from "./modules/workbench-navigation.js"
 import { createWorkbenchAttentionPoller } from "./modules/workbench-attention.js"
+import { installExternalLinks } from "./modules/external-links.js"
 
 const state = {
   setup: /** @type {SetupQrJson | null} */ (null),
@@ -217,6 +218,8 @@ function startWorkbenchAttention() {
 }
 window.addEventListener('pagehide', () => { workbenchAttention?.destroy(); workbenchAttention = null })
 window.addEventListener('pageshow', event => { if (event.persisted) startWorkbenchAttention() })
+
+installExternalLinks({ invoke: mock ? null : invoke, onError: err => showToast(`打不开链接:${formatInvokeError(err)}`) })
 
 // Bag passed to module functions instead of imported singletons. Keeps each
 // module testable in isolation (any conformant deps object → run the module
@@ -1228,7 +1231,7 @@ function wireEvents() {
       await invoke("open_companion_window", {})
     } catch (err) {
       console.error("open companion window failed:", err)
-      alert(`无法打开桌面陪伴：${formatInvokeError(err)}`)
+      showToast(`无法打开桌面陪伴：${formatInvokeError(err)}`)
     } finally {
       companionDesktopStart.disabled = false
     }

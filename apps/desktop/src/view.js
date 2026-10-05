@@ -648,7 +648,29 @@ export function updateApplyLine(result) {
 }
 
 
-/** 轻量提示条 — 替代原生 alert()(突兀且措辞偏技术)。 @param {string} msg */
+/**
+ * 按钮上的「再点一次确认」—— 替代原生 confirm()。桌面 app 的 webview(wry / WKWebView)没实现 JS 对话框:
+ * confirm() 直接返回 false、alert() 什么也不显示,浏览器里测得过、真 app 里静默失灵(2026-10-05 检查)。
+ * 第一下:按钮换成 prompt 文字、3 秒内再点才算数,返回 false;第二下返回 true 并还原。
+ * @param {HTMLElement|null|undefined} btn @param {string} prompt @returns {boolean}
+ */
+export function armConfirm(btn, prompt) {
+  if (!btn) return false
+  const el = /** @type {HTMLElement & { _armed?: ReturnType<typeof setTimeout>, _label?: string }} */ (btn)
+  if (el._armed) {
+    clearTimeout(el._armed); el._armed = undefined
+    if (el._label !== undefined) el.textContent = el._label
+    el.classList.remove("is-armed")
+    return true
+  }
+  el._label = el.textContent ?? ""
+  el.textContent = prompt
+  el.classList.add("is-armed")
+  el._armed = setTimeout(() => { el._armed = undefined; if (el._label !== undefined) el.textContent = el._label; el.classList.remove("is-armed") }, 3000)
+  return false
+}
+
+/** 轻量提示条 — 替代原生 alert()(突兀且措辞偏技术;而且桌面 webview 里 alert() 根本不显示,见 armConfirm)。 @param {string} msg */
 export function showToast(msg) {
   let el = document.getElementById("app-toast")
   if (!el) {
