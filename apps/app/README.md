@@ -201,18 +201,14 @@ CI:`app · native push vectors`(`.github/workflows/ci.yml`,仅 `apps/app/native/
 - `th-push-27`(iOS 27.0):验证 with-ios-scene 之后 iOS 27 能启动(之前启动即崩),Maestro 5/5。
 - Maestro 前 `xcrun simctl keychain <udid> reset`;`export JAVA_HOME=/opt/homebrew/opt/openjdk@21`。
 
-### 没验过的 / 主人要做的
+### 当前验收与发布边界
 
 - **安卓在这台 Mac 上没验过**:没有 Android SDK / adb。Kotlin 服务只有 JVM 单测(`test.sh`),编译进 APK 与运行都要等 EAS 构建 + 真机或模拟器。
-- **主人清单**:
-  1. Apple:`com.tendhearth.app` 开 Push Notifications 能力;建 App ID `com.tendhearth.app.notify`(或让 EAS 自动建);建 APNs 认证密钥(.p8),按 `docs/maintainer/relay.md` 第 4 节把 `APNS_KEY_P8` / `APNS_KEY_ID` / `APNS_TEAM_ID=9Y6JAPDP7A` / `APNS_TOPIC=com.tendhearth.app` 设进 Worker;App Store Connect 建 app 记录(API 建不了,手动)。
-  2. Firebase:建项目、加安卓应用 `com.tendhearth.app`,`google-services.json` 本地放 `apps/app/` 并在 EAS 建文件型变量 `GOOGLE_SERVICES_JSON`;服务账号 JSON 设进 Worker 的 `FCM_SERVICE_ACCOUNT`。
-  3. 中继上线:按 `docs/maintainer/relay.md` 第 8 节,daemon 的 `agent-config.json` 设 `relay_v2_url` 并重启。
-  4. EAS:`cd apps/app && eas init`(提交 projectId)、`eas build --profile development --platform ios`(真机开发构建)、TestFlight 用 `--profile production` + `eas submit`、Google Play 开发者账号后安卓 `--profile production`。
-  5. 一台安卓手机或模拟器。
-  6. 真机验收(两个平台各一遍):配对 → 通知权限框 → 设置里「已开启」→「发一条测试通知」→ 电脑上交办要批准的事 → 前台 / 后台 / 进程被杀三种都收到并点开进批准页(含**已配对的冷启动点通知**)→ 允许 → 做完收到「做完了」;**锁屏上看解密后的文字**;**扩展真的在循环里**(模拟器的 `simctl push` 不经过扩展);**经系统设置拒绝再打开权限的往返**;电脑上撤销这台手机后再触发 ⇒ 只显示「CC 有新动态」。
-     - 2026-10-01 起其中这些已由 `bun run e2e:device` 全自动覆盖(iOS):配对(系统链接进确认卡)、后台收到**扩展解密后**的横幅并点开进批准页、允许、电脑上撤销 ⇒「不再配对」。仍要人:锁屏上的文字、进程被杀后点通知冷启动、系统设置拒绝再打开权限的往返、撤销后再触发只显示占位。
-- 计划 3 遗留、仍开着:配对链接令牌 10 分钟内可重复使用(被拍下的二维码 10 分钟内能配第二台手机)。(对微信聊天那件事的「说一句」不按 `requestId` 去重的欠账已在 2026-10-01 收掉:daemon 回执表 `matter_say_receipts`,同 id 同文重发拿回原来的回复、不说第二遍,同 id 异文 ⇒ 409 `input_conflict`,手机区分为需核对的请求冲突。)
+- **iPhone staging 已有真机记录**：2026-10-01 / 10-02 的 `bun run e2e:device` 通过配对(经深链，不经相机)、同码重用被拒、聊天、后台扩展解密后的 APNs 横幅与点开批准、撤销、收尾；当时 staging 已配 APNs、本机 daemon 已设 `relay_v2_url`。该记录对应当时的验收构建，后续补充持久恢复、附件和普通发布包需各自验收，不能据此宣称主人真手机已经更新。
+- **仍需人手的 iOS 验收**：系统相机扫码 / 通用链接、锁屏解密后的文字、进程被杀后点通知冷启动、系统设置拒绝再打开通知权限、撤销后再触发只显示中性占位、加密备份恢复，以及下节聊天 / 会话续接清单。物理 iPhone 的补充日志跨进程恢复仍未实测。
+- **TestFlight 发布条件**：按[中继手册](../../docs/maintainer/relay.md#8-上线前后必读--go-live-notes)经 `relay-production` 环境批准部署 production Worker，配置生产 APNs 并核对健康，再将 daemon 的 `relay_v2_url` 切到生产，打开 `RELAY_WATCH`。staging 的成功不代替生产验收。EAS 仍需 `eas init` 提交 projectId，再 `eas build --profile production --platform ios` 与 `eas submit`；App Store Connect 记录和商店提交另办。
+- **安卓 / 商店后置**：安卓需要 Firebase 项目、`google-services.json` / `FCM_SERVICE_ACCOUNT`、App Links 签名指纹、SDK / 设备与实际 APK 验收；Google Play 账号与生产构建另办。凭据步骤见[中继手册](../../docs/maintainer/relay.md)。
+- **旧欠账已关闭**：#165 配对码只配一台，成功配对即作废，重复码已有真机自动化断言；微信聊天那件事的说一句已按 `requestId` 去重(2026-10-01，`matter_say_receipts`，同 id 同文返回原回执，异文返回 `input_conflict`)。相机权限 en / zh-Hans 文案已由 #158 补齐。
 
 ## 硬要求(改界面前先对一遍)
 
@@ -228,7 +224,7 @@ CI:`app · native push vectors`(`.github/workflows/ci.yml`,仅 `apps/app/native/
 
 ## 跟 CC 说话计划(2026-10-01)的状态与真机验收
 
-状态：手机聊天已通过 #162 合入 dev，设计统一已通过 #163 合入。两端暖纸、衬线、单一强调色、无深色模式；CC 明暗来自真实连接 / 在场信号，见[设计统一 spec](../../docs/superpowers/specs/2026-10-01-tendhearth-design-unify-design.md)。配对体验 #165、手机续接会话 #166 和发送拒绝文案 #167 已合入；以下主人真机验收仍待完成。
+状态：手机聊天已通过 #162 合入 dev，设计统一已通过 #163 合入。10-01 的设计统一采用暖纸、衬线、单一强调色、无深色模式；桌面字体后续已随 1.7.5 更新，手机继续沿用原生色板与打包字体。CC 明暗来自真实连接 / 在场信号，见[设计统一 spec](../../docs/superpowers/specs/2026-10-01-tendhearth-design-unify-design.md)。配对体验 #165、手机续接会话 #166 和发送拒绝文案 #167 已合入；已记录的 iPhone 自动化覆盖上节配对、聊天和推送批准闭环；以下更完整的主人体验验收仍待补齐。
 
 延后的次要项摘要见 `docs/roadmap.md`。主人真机验收(iOS;安卓有设备再补):
 

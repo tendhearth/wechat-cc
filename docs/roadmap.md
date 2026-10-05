@@ -1,6 +1,6 @@
 # Tendhearth CC 现行 roadmap
 
-> v1 · 2026-09-22 · **这份只说「往哪走 / 卡在哪」。**
+> 2026-10-05 状态核对 · **这份只说「往哪走 / 卡在哪」。**
 > 「定了什么 / 为什么这样定」在 [全景导图](全景导图.md);「某件事的文档在哪」在 [文档索引](INDEX.md);
 > `docs/rfc/02-post-v1.1-roadmap.md` 是 2026-04 的历史版本(v1.2 时代),已被本文取代。
 
@@ -12,37 +12,33 @@
 
 | 事实 | 怎么看(别写死数字,每次改这页先跑) |
 |---|---|
-| 最近一次**公开**发版 | `gh release list --limit 1`(2026-10-02:`desktop-v1.7.2`,master `7c07de44`;1.7.1 起 macOS 包都是 Developer ID 签名 + 公证) |
-| 自动更新源 | `curl -s https://dl.tendhearth.com/wechat-cc/latest.json \| grep version`(2026-10-02:1.7.2,与 GitHub 一致) |
+| 最近一次**公开**发版 | `gh release list --limit 1`(2026-10-05:`desktop-v1.7.5`;[发版说明](releases/desktop-v1.7.5.md);1.7.1 起 macOS 包都是 Developer ID 签名 + 公证) |
+| 自动更新源 | `curl -s https://dl.tendhearth.com/wechat-cc/latest.json \| grep version`(2026-10-05:1.7.5,与 GitHub 一致) |
 | `dev` 领先 master | `git rev-list --count origin/master..origin/dev`(簿记合并之后是真实差值) |
 
 1.7.0 是发版链 09-03 改造后第一次真跑,一路踩到五个「加进去后没在真 tag 上跑过」的坑,全部修在 dev 并有守卫/手册条目:dev→master 簿记合并(#121)、e2e 作业装浏览器(#122)、sd.cpp 子模块(#119)、公证变量空串(#123)、R2 令牌失效还报绿(#125)。**发版从此全自动**:合 PR、打 tag、两道 `release-signing` 审批(助手用主人 gh 凭据经 API)、Publish、核对更新源,主人不用点;细则 [maintainer/release.md](maintainer/release.md)。
 
-版本号已统一(2026-09-22):此前四处各说各话(发版认 `tauri.conf.json` 的 1.6.6、`--version` 报根 `package.json` 的 0.6.4、`apps/desktop/package.json` 写 0.5.18、ACP 的 clientInfo 还硬编码 `'0.6.4'`),现在四处 + `Cargo.toml` 都是 **1.7.0**,由 `scripts/version-consistency.guard.test.ts` 钉住;`--version` 同时带构建的 git 短 sha(`1.7.0 (a1b2c3d)`),否则 `self deploy` 的健康门打出来的数字两次发版之间永远一样、看不出新构建起没起来。发版说明:`docs/releases/desktop-v1.7.0.md`。
+版本号已统一(2026-09-22):此前四处各说各话(发版认 `tauri.conf.json` 的 1.6.6、`--version` 报根 `package.json` 的 0.6.4、`apps/desktop/package.json` 写 0.5.18、ACP 的 clientInfo 还硬编码 `'0.6.4'`),此后四处 + `Cargo.toml` 随发版保持同号(当前 **1.7.5**),由 `scripts/version-consistency.guard.test.ts` 钉住;`--version` 同时带构建的 git 短 sha(`1.7.0 (a1b2c3d)`),否则 `self deploy` 的健康门打出来的数字两次发版之间永远一样、看不出新构建起没起来。发版说明:`docs/releases/desktop-v1.7.0.md`。
 
 **⇒ 发版节奏的教训:三周不发、发版链改了不真跑,代价是一天修五个坑。** 之后每合一批就发一版 patch。
 
-## 命名统一的后续交付
+## 命名统一的交付与验收
 
-本批统一 README、维护入口、手机说明与全景导图。后续桌面与手机批次应按[产品命名规范](reference/product-naming.md)检查应用显示名、窗口标题、关于页、权限说明和商店素材，统一为 **Tendhearth CC**；对话仍称 **CC**。这项文案验收纳入各端原有交付，不新增底层标识迁移，不阻塞正在进行的手机功能开发。
+产品命名口径为 **Tendhearth CC**，对话称 **CC**；后续界面与商店素材继续按[产品命名规范](reference/product-naming.md)核对。技术兼容标识按该规范保留。
 
-**桌面显示名(1.7.4,2026-10-04 主人定)**:只改显示层 —— 程序坞 / 菜单栏 / 关于 / 窗口标题 / 通知发送者 / 权限弹框与权限列表都显示 Tendhearth CC(`lproj/*.lproj/InfoPlist.strings` 本地化显示名 + `LSHasLocalizedDisplayName`;关于面板在 `src-tauri/src/lib.rs` 换名),LaunchAgent 加 `AssociatedBundleIdentifiers` 让「登录项」显示 app 名和图标;`productName` / bundle id / Label 不动,`apps/desktop/src/display-name.test.ts` 钉住。理由是信任:用户在系统里突然看到 `wechat-cc` 会对不上品牌。
+- **1.7.4 已发**：桌面程序坞、菜单、关于、窗口、通知和权限说明统一显示名，LaunchAgent 增加 `AssociatedBundleIdentifiers`。这批只动显示层。
+- **1.7.5 已发**：macOS 安装包、主进程和 sidecar 改名为 `Tendhearth CC.app` / `Tendhearth CC` / `tendhearth-cc-cli`；老安装原地更新后首次启动改名，修复 LaunchAgent、终端 hook 与稳定 CLI 入口。R2 对象名、bundle ID、状态目录、LaunchAgent label 与 `wechat-cc` 命令保留；Windows / Linux 安装标识保留。实现、回滚与升级边界见[改名迁移手册](maintainer/app-rename-migration.md)，发布内容见[1.7.5 发版说明](releases/desktop-v1.7.5.md)。
 
-**已定未做:底层名字迁移(1.7.5)** —— 下列只能靠改标识才能改掉,归一次迁移,要设计升级兼容与回滚:
-- `.app` 文件名 `wechat-cc.app` → `Tendhearth CC.app`(= `productName`):牵动 LaunchAgent 里写死的 app 主二进制路径、`self deploy` 找包与原地换 sidecar、更新器产物名(`wechat-cc_<v>_*.app.tar.gz` / `latest.json`)、老用户 /Applications 里旧包的去留;
-- dmg 卷名 / 挂载窗口标题 / dmg 文件名(tauri-bundler 用 `productName` 作 `--volname`,`bundle.macOS.dmg` 没有卷名配置;事后改卷名会作废 dmg 的签名与公证);
-- 活动监视器里的进程名(主二进制 `wechat_cc_desktop`、sidecar `wechat-cc-cli`):改名同时改路径和 LaunchAgent;
-- 老安装的 LaunchAgent 要重装(`wechat-cc service install`)才带上 `AssociatedBundleIdentifiers`,1.7.4 不自动改写 plist(改写 = bootout + 重启 daemon);
-- Windows / Linux 的开始菜单、快捷方式、安装器名同样跟 `productName`。
+公开发版不代表升级清单每项已在主人机器核销：1.7.4 → 1.7.5 的系统授权、固定入口、终端 hook 与下一次更新仍按[真机清单](maintainer/app-rename-migration.md#首次真实更新-174--175-的真机验证清单主人的-mac)逐项核对。
 
-## 当前主线与验收顺序(2026-10-02 更新)
+## 当前主线与验收顺序(2026-10-05 核对)
 
-**10-02 进展**:中继 v2 staging(`relay-staging.tendhearth.com`)上线并配好 APNs,本机 daemon 已切过去;真 iPhone 全自动验收 `bun run e2e:device`(XCUITest,见 [apps/app](../apps/app/README.md))配对 / 重复码 / 聊天 / 真推送批准 / 撤销 / 收尾全绿,第 2 条的主体已由它覆盖。下一步:要出 TestFlight 时上中继生产(主人在 `relay-production` 环境批准一次)+ 开 `RELAY_WATCH`;商店与安卓按主人 10-01 的话往后放。
+**已记录的 iPhone 闭环(10-01 / 10-02)**:中继 v2 staging(`relay-staging.tendhearth.com`)上线并配好 APNs,本机 daemon 已切过去;真 iPhone 全自动验收 `bun run e2e:device`(XCUITest,见 [apps/app](../apps/app/README.md))配对 / 重复码 / 聊天 / 真推送批准 / 撤销 / 收尾通过。该记录证明当时的 daemon、staging 中继与验收构建；后续原生改动和普通发布包另验。下一步:要出 TestFlight 时上中继生产(主人在 `relay-production` 环境批准一次)+ 开 `RELAY_WATCH`;商店与安卓按主人 10-01 的话往后放。
 
 
 1. **收口当前手机主线。** 协议、中继、Expo 骨架、真连接、原生通知、手机聊天与设计统一已按各批次进入 dev；#165 配对体验与 #166 手机续接原生会话也已合入 dev，#167 补充了发送拒绝的诚实提示。实现状态与验收边界见下一节和 [apps/app](../apps/app/README.md)。未合入的工作不作为 dev 的已交付能力。
 2. **完成用户能实际走通的验收。** 真机配对 → 与 CC 聊天 / 交办 → 查看进展 → 点真实通知 → 在上下文中批准 → 电脑实际执行；覆盖断网、撤销与重复提交。模拟器、进程内端到端和解密向量分别证明各自范围，不代替这条闭环。
-3. **再按原有发布流程交付。** 凭据、中继上线、双平台真机和商店提交各自有完成条件；既有桌面真机欠账继续保留。Widget / Live Activities 与跨宿主 agent 协调另按设计和验收排期。
+3. **再按原有发布流程交付。** TestFlight 先完成生产中继、APNs 配置与 `RELAY_WATCH`，再构建提交；商店与安卓后置。既有桌面真机欠账继续保留，Widget / Live Activities 与跨宿主 agent 协调另排。
 
 前一轮已收口：#117、1.7.0 / 1.7.1 发版、Codex 第一批 #129、大文件拆分、设备令牌归入 token-registry。旧的「等第一批 / 拆分后再做」顺序不再是当前主线。
 
@@ -61,20 +57,17 @@
 - **陪伴与任务衔接、手机版** —— 此刻可把要求带入项目草稿，点 CC 查看正在照看的事；手机首屏保留 feed，任务详情支持权限处理、问题回答、同任务补充和成果查看。浏览器与加密通道检查通过，真人手机和 Tauri 验收待补，见[验证记录](superpowers/reports/2026-09-22-cc-companion-task-entry.md)。
 - **每晚整理长期记忆(B 看得见)** 已上线（`docs/superpowers/specs/2026-09-25-memory-nightly-design.md`）—— 下一步 A:手机上逐条标不对 / 过时 / 删掉；C:第二天偶尔说一句我注意到…;09-26 界面改版:手机「CC 眼中的你」、微信信件排版、一条一件事;10-01 治「同日失忆」:CC 白天写进 profile.md 的新行由后台抄进「今天的草稿」(`today-draft.md`,600 字封顶)随 memory.md 进每次对话、每晚整理读入后清掉;桌面「重新整理」(重算 `_overview.md` 项目地图)改名「更新项目地图」,不再和微信「整理记忆」撞名
 
-## 手机主线的逐批进展(1.7.0 发布之后)
+## 手机主线：已实现与仍待验收
 
-以下保留各批次的实现与欠账。文中的分支名和「当批下一份计划」是历史交接，不表示所有条目仍在等待开发；当前路线以前面的主线、最近合并及各端 README 为准。
+各批次计划保留设计和实施依据；这里合并重复进展，只列当前状态。原生工程在 [apps/app](../apps/app/README.md)，浏览器/PWA 在 [apps/mobile](../apps/mobile/README.md)。
 
-- **手机 app 子项目 1(协议包 + 实时通道)已完成**(2026-09-29,`packages/protocol/README.md`;设计 `docs/superpowers/specs/2026-09-29-phone-protocol-v2-design.md`)—— 子项目 2(中继升级成对外服务 + 推送发送,`apps/relay`,`docs/maintainer/relay.md`):代码完成,等上线(凭据 / 付费计划 / 域名);其后子项目 3 已按下列批次进入 dev，不能再把 Expo app 记为尚未开工。
-- **手机 app 子项目 3(TendHearth app v1)后端补全:代码完成,单测/自检绿,真机待验**(2026-09-30,`app-v1` 分支;设计 `docs/superpowers/specs/2026-09-30-tendhearth-app-v1-design.md`,计划 `docs/superpowers/plans/2026-09-30-tendhearth-app-backend.md`)—— 批准说明 / 进展概括(`/m/api/matter/insight`,便宜模型 + 原文回退)、改动路由(`/m/api/matter/changes`)、推送定位与时间窗、子项目 1 三个遗留;接线在 `src/daemon/wiring/pipeline-deps.ts`。**当批下一份计划（已继续交付，见后续条目） = app 骨架与演示模式**(设计稿 `docs/design/tendhearth-app-v1/`)。
-- **手机 app 子项目 3:app 骨架 + 演示模式完成**(2026-09-30,`app-skeleton` 分支;`apps/app/README.md`,计划 `docs/superpowers/plans/2026-09-30-tendhearth-app-skeleton.md`)—— Expo 原生工程 `apps/app`:此刻 / 一起做 / 进展 / 批准(模型说明时原始命令直接可见)/ 问答 / 交办 / 配对说明 / 设置,界面只认 `Backend` 接口,数据来自演示后端;iOS 模拟器(iPhone 17 Pro,iOS 26.5,development build)上 Maestro 三个演示流程(approve / compose / demo-walkthrough)通过。Android 与真机未跑。**当批下一份计划（已继续交付，见后续条目） = 真连接与配对**。
-- **手机 app 子项目 3:真连接与配对完成**(2026-09-30,`app-live` 分支;计划 `docs/superpowers/plans/2026-09-30-tendhearth-app-live.md`,`apps/app/README.md`「真连接的规矩」)—— LiveBackend + 扫码配对 + 设备管理(含新增 daemon 操作 `unpair_self`);进程内端到端(`src/daemon/phone-app-live-e2e.test.ts`)+ 单测覆盖,Maestro 演示流程与无效链接流程通过;**真机配对待主人验收**。**当批下一份计划（已继续交付，见后续条目） = 原生通知**。已知取舍与欠账:(1)局域网直连(LAN-first)推迟——daemon 局域网口没有 v2 订阅;(2)离线缓存只在内存,冷启动离线 ⇒ 空列表 + 「暂时连不上」;(3)当批配对链接可重复使用的限制已由 #165 单次码取代;~~(4)相机权限文案目前只有英文,等计划 4 补 en + zh-Hans 语言文件~~(#158 已补 `locales/en.json` + `zh-Hans.json`,`plugins/app-config.test.ts` 钉住;`expo config --type introspect` 核对过);(5)提交的去重:交办与说一句按草稿给稳定的 `requestId`(同一份草稿、同样正文重发用同一个,正文改了才换)——交办 daemon 按它去重、超时后查回执;说一句对**工作台任务** daemon 按它去重(工作台输入回执,端到端测试钉住),对**微信聊天那件事** daemon 不看 `requestId`,「不确定」后重发仍可能说两遍(欠账);批准 / 回答本来就带被批准那一条的 id,重发只会得到「已处理」;进后台 / 撤销时还在飞的提交报「不确定」(撤销则报撤销),不再说「没送到」;(6)中继上线需 `agent-config.json` 的 `relay_v2_url`,未设时走老中继(`t…` id);(7)正式图标由 Codex 出稿后替换 `apps/app/assets/images/*`。**主人真机验收清单**:真 iPhone 扫桌面「手机上用」的码配对 → 此刻 / 进展 / 批准 / 交办各走一遍 → 电脑上撤销这台手机 ⇒ 显示「这台手机已不再配对」→ 关掉电脑 ⇒ 显示上次同步时间 → 设置里解除配对;配对过程中 iOS 左滑返回已锁定,也请试一下。安卓等有设备再补。
-- **手机 app 子项目 3:真连接与配对完成**(2026-09-30,`app-live` 分支;计划 `docs/superpowers/plans/2026-09-30-tendhearth-app-live.md`,`apps/app/README.md`「真连接的规矩」)—— LiveBackend + 扫码配对 + 设备管理(含新增 daemon 操作 `unpair_self`);进程内端到端(`src/daemon/phone-app-live-e2e.test.ts`)+ 单测覆盖,Maestro 演示流程与无效链接流程通过;**真机配对待主人验收**。**当批下一份计划（已继续交付，见后续条目） = 原生通知**。已知取舍与欠账:(1)局域网直连(LAN-first)推迟——daemon 局域网口没有 v2 订阅;(2)离线缓存只在内存,冷启动离线 ⇒ 空列表 + 「暂时连不上」;(3)当批配对链接可重复使用的限制已由 #165 单次码取代;(4)相机权限文案目前只有英文,等计划 4 补 en + zh-Hans 语言文件;(5)提交的去重:交办与说一句按草稿给稳定的 `requestId`(同一份草稿、同样正文重发用同一个,正文改了才换)——交办 daemon 按它去重、超时后查回执;说一句对**工作台任务** daemon 按它去重(工作台输入回执,端到端测试钉住),对**微信聊天那件事**也按它去重了(2026-10-01,`say-dedupe`:回执表 `matter_say_receipts`(v70),同 id 同文重发拿回原来的回复、在跑就跟上同一轮,同 id 异文 ⇒ `input_conflict`,失败不留回执;端到端测试钉住);批准 / 回答本来就带被批准那一条的 id,重发只会得到「已处理」;进后台 / 撤销时还在飞的提交报「不确定」(撤销则报撤销),不再说「没送到」;(6)中继上线需 `agent-config.json` 的 `relay_v2_url`,未设时走老中继(`t…` id);(7)正式图标由 Codex 出稿后替换 `apps/app/assets/images/*`。**主人真机验收清单**:真 iPhone 扫桌面「手机上用」的码配对 → 此刻 / 进展 / 批准 / 交办各走一遍 → 电脑上撤销这台手机 ⇒ 显示「这台手机已不再配对」→ 关掉电脑 ⇒ 显示上次同步时间 → 设置里解除配对;配对过程中 iOS 左滑返回已锁定,也请试一下。安卓等有设备再补。
-- **手机 app 子项目 3:原生通知完成**(2026-09-30,`app-push` 分支;计划 `docs/superpowers/plans/2026-09-30-tendhearth-app-push.md`,`apps/app/README.md`「推送(原生通知)」)—— 推送登记、iOS 通知服务扩展、安卓消息服务、点通知路由;Swift / Kotlin 跑协议包向量(CI `app · native push vectors`);iOS 27 启动崩溃已用 `with-ios-scene` 修掉;模拟器 simctl 验证见 apps/app/README(`simctl push` 不经过扩展,扩展在循环里是真机项)。**真投递待主人**:APNs 密钥 / Firebase / 中继上线(`relay_v2_url`)/ EAS 构建 / 安卓设备(本机没有 Android SDK,安卓未验)/ 两平台真机验收,清单见 README。计划 3 遗留仍开(微信聊天那件事的说一句不去重;配对码 10 分钟可复用已由 #165 修掉)。**当批下一份计划（已继续交付，见后续条目） = 补齐页面**。
-- **手机 app:跟 CC 说话 + 真历史 + CC 的连接 + 原生会话完成**(2026-10-01,`app-chat` 分支,状态:#162 已合 dev、单测 / Maestro 绿,待主人真机;计划 `docs/superpowers/plans/2026-10-01-tendhearth-app-chat.md`,spec `docs/superpowers/specs/2026-10-01-tendhearth-app-chat-design.md`)—— 手机的主动作改为**跟 CC 说**:`/m/api/chat*` 走 companion 路径,收下即回、回复靠主题唤醒,一次一句、10 分钟超时,「可能没送到」气泡可重试 / 忽略(同 requestId,daemon 去重);主人对话置顶、访客聊天永不上手机;交办改为显式选项。连接卡语义:未知永不绿、知识库陈旧按最近同步、微信记录日期按 wxvault 解密时间;电脑上的 Claude Code / Codex 会话只读。**手机聊天 #162 与设计统一 #163 均已合入 dev**；配对体验 #165 与手机续接会话 #166 也已合入；真机验收仍保留。**主人真机验收**:从手机跟 CC 说一句(回复用到 wxvault)→ 往上翻旧对话 → 未确认气泡重试 → 连接卡各值 → 会话列表 → 输入框在真机聚焦。**延后的次要项**:说一句失败重试不比较正文;重试与别的 pending 并存、被挤出的早期重试项缺测试;matterActivity 的 dispose / 取消订阅未接 shutdown;主人聊天很久不动会掉出 200 窗口(app 经 `/m/api/chat` 钉住,无影响);`since` 时钟回拨未夹;`default_chat_id` 非 admin 时静默禁用手机聊天(应记一次日志);分页同时间戳漏项(实测 0 例);连接快照按引用返回、`generatedAt` 最多旧 10 秒、`budgetMs` 占位;会话 done-map 无软上限、会话 not-found 映射 503;演示 `chat()` 不返回 not_found / 不分页、live `chat()` 丢 `limit:0`;输入中发送成功会清掉新键入的文字、早先丢失的一句渲染在新问答之后、已加载旧页时新消息 >30 条会有缝、60 秒内同样的短句被误判已落地、`chat.yaml` 里 "2 秒" 过期注释。
-- **设计统一(plan 6)**:两端同一套 token、衬线、无深色、CC 明暗来自真实信号 —— 截图与对稿记录在 `~/Documents/tendhearth/cc-screens-2026-10-01-design/`(README 列了跟稿差异);待主人定的六条 2026-10-01 已全部拍板并实施(spec §9:inkSoft `#70665d`、浮窗桌宠够得着 = Light、鱼缸画布退休 +「浮到桌面」改普通按钮、桌面「N 件事等你」写问题原文(attention 带 `first`)、字体子集化、离线红 / 连接中灰);桌面出图用例 `WECHAT_CC_DESIGN_SHOTS=<目录> bun x playwright test design-shots`(apps/desktop);spec `docs/superpowers/specs/2026-10-01-tendhearth-design-unify-design.md`。
-- **手机 app:跟 CC 说话 + 真历史 + CC 的连接 + 原生会话完成**(2026-10-01,`app-chat` 分支,状态:#162 已合 dev、单测 / Maestro 绿,待主人真机;计划 `docs/superpowers/plans/2026-10-01-tendhearth-app-chat.md`,spec `docs/superpowers/specs/2026-10-01-tendhearth-app-chat-design.md`)—— 手机的主动作改为**跟 CC 说**:`/m/api/chat*` 走 companion 路径,收下即回、回复靠主题唤醒,一次一句、10 分钟超时,「可能没送到」气泡可重试 / 忽略(同 requestId,daemon 去重);主人对话置顶、访客聊天永不上手机;交办改为显式选项。连接卡语义:未知永不绿、知识库陈旧按最近同步、微信记录日期按 wxvault 解密时间;电脑上的 Claude Code / Codex 会话只读。**手机聊天 #162 与设计统一 #163 均已合入 dev**；配对体验 #165 与手机续接会话 #166 也已合入；真机验收仍保留。**主人真机验收**:从手机跟 CC 说一句(回复用到 wxvault)→ 往上翻旧对话 → 未确认气泡重试 → 连接卡各值 → 会话列表 → 输入框在真机聚焦。**延后的次要项**:~~说一句失败重试不比较正文~~;~~重试与别的 pending 并存、被挤出的早期重试项缺测试~~;~~matterActivity 的 dispose / 取消订阅未接 shutdown~~;主人聊天很久不动会掉出 200 窗口(app 经 `/m/api/chat` 钉住,无影响);~~`since` 时钟回拨未夹~~;~~`default_chat_id` 非 admin 时静默禁用手机聊天(应记一次日志)~~;分页同时间戳漏项(实测 0 例);连接快照按引用返回、`generatedAt` 最多旧 10 秒、`budgetMs` 占位;~~会话 done-map 无软上限~~、会话 not-found 映射 503;演示 `chat()` 不返回 not_found / 不分页、~~live `chat()` 丢 `limit:0`~~;~~输入中发送成功会清掉新键入的文字~~、早先丢失的一句渲染在新问答之后、已加载旧页时新消息 >30 条会有缝、60 秒内同样的短句被误判已落地、~~`chat.yaml` 里 "2 秒" 过期注释~~。**2026-10-01 清掉划线的九项**(`app-chat-minors`):同一 requestId 换正文 ⇒ 409 `input_conflict`;`wireMatterActivity` 的 stop 登记进 shutdown;节流的 `since` 夹到 ≥0;原生会话结果表软上限 64;`limit:0` 原样带给 daemon(判 400);发送成功只去掉发出去的那段前缀;`chat.yaml` 注释改成 5 秒;`default_chat_id` 那条日志与 daemon 端挤出用例其实 #162 已做 / 已有,本次只补了 app 回执的挤出用例。
-- **设计统一(plan 6)**:两端同一套 token、衬线、无深色、CC 明暗来自真实信号 —— 截图与对稿记录在 `~/Documents/tendhearth/cc-screens-2026-10-01-design/`(README 列了跟稿差异与待主人定的六条);桌面出图用例 `WECHAT_CC_DESIGN_SHOTS=<目录> bun x playwright test design-shots`(apps/desktop);spec `docs/superpowers/specs/2026-10-01-tendhearth-design-unify-design.md`。
+- **协议与中继**：手机协议 v2 / `packages/protocol` 已完成；官方中继 v2 与推送发送已实现，staging 已上线、配好 APNs，本机 daemon 已设 `relay_v2_url`。生产上线步骤见[中继手册](maintainer/relay.md#8-上线前后必读--go-live-notes)。
+- **原生 app 后端、骨架、真连接与通知**：批准说明、进展概括、改动路由、Expo 演示后端、LiveBackend、设备管理、iOS 通知服务扩展与安卓消息服务已进入 dev。单测、进程内端到端、模拟器与 Swift / Kotlin 向量各覆盖自己的范围；iPhone 真实配对与 APNs 批准闭环已有上节记录，安卓尚未验。实施依据见 [app 后端](superpowers/plans/2026-09-30-tendhearth-app-backend.md)、[骨架](superpowers/plans/2026-09-30-tendhearth-app-skeleton.md)、[真连接](superpowers/plans/2026-09-30-tendhearth-app-live.md)、[通知](superpowers/plans/2026-09-30-tendhearth-app-push.md)。
+- **手机聊天与两端设计**：#162 聊天、#163 设计统一、#165 配对体验、#166 会话续接、#167 发送拒绝提示已合入 dev。主动作是跟 CC 说，交办为显式选项；连接卡未知不显示绿，原生会话可读和续接。10-01 的两端设计决定与对稿记录见[设计 spec](superpowers/specs/2026-10-01-tendhearth-design-unify-design.md)；桌面字体后续已随 1.7.5 更新。聊天、连接卡、wxvault、旧历史、键盘和会话续接的完整真机清单见 [app README](../apps/app/README.md#跟-cc-说话计划2026-10-01的状态与真机验收)。
+- **已收掉的旧欠账**：微信聊天那件事的说一句已按 `requestId` 去重(`matter_say_receipts`，同 id 同文重发取原回执，异文返回 `input_conflict`)；#165 配对码只配一台；#158 相机权限有 en / zh-Hans 两份。10-01 还收掉聊天九项延后缺口：正文冲突检查、被挤出回执用例、shutdown 取消订阅、时钟回拨夹值、非 admin 配置日志、会话结果表上限、`limit:0` 传递、发送成功保留新稿、Maestro 注释；细节保留在本文修订记录。
+- **现有取舍**：原生 app 只走中继，LAN-first 推迟；普通未提交草稿与离线列表缓存只在内存，持久恢复只覆盖已保存的补充提交，见 [app README](../apps/app/README.md)。
+- **聊天次要缺口仍保留**：同时间戳分页；连接快照的引用、最多旧 10 秒的 `generatedAt` 与占位 `budgetMs`；原生会话 not-found 映射 503；演示后端不返回 not-found / 不分页；早期丢失消息的排列、已载入旧页后新增超过 30 条的缝隙、60 秒内同样短句的落地判断。它们与后面的真机验收、生产发布分开记录。
+
 - **配对体验(plan 7a)**(2026-10-01,`pairing-ux` 分支):一个码只配一台(配上即作废、设备令牌不能再铸)、桌面「手机扫码改设置」改名「连接手机」并按需打开远程隧道(中继没开通就直说)、引导页最后一步直接给码、出码时桌面与手机确认卡显示同一个核对码(由 daemon id 派生、配对前就有,标识哪台电脑;6 位 `XXX-XXX`,人眼核对不是认证)、确认卡在会换掉现有配对时明说、中继发 AASA / assetlinks、app 声明关联域名 / App Links 且链接只到确认卡(iOS 模拟器开发 scheme 已验锚点保留)、恢复回来的配对先核对、重新配对退旧位(旧电脑离线时旧位留到主人在桌面设备列表移除,占 20 台名额)。`GET /v1/settings/link` 已由 trusted 升 admin。spec `docs/superpowers/specs/2026-10-01-tendhearth-pairing-ux-design.md`。7b 见下一条。
 - **手机接着做电脑上的会话(plan 7b)**(2026-10-01,`continue-sessions` 分支):手机「电脑上的会话」读页一个「接着做」→ 确认卡(在哪台电脑、用 Claude Code / Codex、哪个文件夹、会用额度;接原会话还是带记录新开从不让人选,两者在核心里互斥;卡即「原程序已关闭」声明,因为普通终端里的 Claude Code CC 看不见)→ 成为「一起做」的一件事、进去输入框已聚焦,第一句在 daemon 里一次完成 prepare + continue(决定令牌不出 daemon,按 requestId 幂等)。接过的 ⇒「打开这件事」(幂等 POST,桌面早先导入、没有 matter 行的顺手补上);看得见在跑 ⇒ 灰字,绝不劫持。新路由 `GET|POST /m/api/session/continue`;桌面不改。spec `docs/superpowers/specs/2026-10-01-tendhearth-continue-sessions-design.md`。主人事项:
   - 真机各验一条 Claude Code / Codex(Maestro 演示流 `apps/app/.maestro/continue-session.yaml` 只覆盖演示模式)。
@@ -96,7 +89,7 @@
 
 ## 欠的真机账(发版前该销掉)
 
-这三周的东西**单测和 selftest 绿 ≠ 用户能用**,以下都没在真机上走过:
+以下只列尚待补齐的验收或已完成的对照记录。**单测和 selftest 通过不代替对应的用户旅程**；10-01 / 10-02 的 iPhone 自动化范围已单列，后续原生版本不能沿用旧记录宣称全验完。
 
 - ~~桌面同一个文件夹连开两件事,看等待行说的话对不对(一个文件夹一个活会话)。~~ 2026-09-28 真机核对通过:第二件 `waitingFor={reason:same_path, holderWriting:true}`、第一件独占在写(workbench service 拆分 PR 9 合入后,脚本见 PR 10 计划)。
 - **手机真机(2026-10-02)**:`bun run e2e:device` 全自动覆盖配对(经深链,不经相机)、重复码、聊天、真 APNs 推送批准、撤销、收尾。仍需人手:系统相机扫码、锁屏通知文字、杀掉 app 后点通知、设置里关 / 开通知权限、iOS 备份恢复、安卓(下面 7a 清单的 3 / 5 / 7)。
@@ -107,8 +100,8 @@
 - 社交层两台真机重新配对后的 wish / postcard 信道。
 - `@码 resume` 与「脑手转发」全链(CLI hook)。
 - 配对体验真机(计划 7a Task 12 Step 3),其中 iOS 备份恢复与安卓指纹是主人的:
-  1. ~~部署中继 Worker~~ staging 已部署(10-01),AASA 200 `application/json` 已核;`ANDROID_CERT_SHA256` 等安卓时再设。原文:部署中继 Worker(`docs/maintainer/relay.md` §9),设 `ANDROID_CERT_SHA256`;`curl -sI https://relay-staging.tendhearth.com/.well-known/apple-app-site-association` ⇒ 200 `application/json`。
-  2. ~~本机 `relay_v2_url`~~ 已设为 staging(10-01)。原文:本机 `relay_v2_url` 必须已设,桌面「连接手机」才出二维码;没设时应显示「手机连接服务还没开通」。
+  1. staging Worker 与 AASA 已部署核对(10-01，200 `application/json`)；生产 Worker 按[中继手册](maintainer/relay.md)另验，`ANDROID_CERT_SHA256` 等安卓时再设。
+  2. 本机 `relay_v2_url` 已设为 staging(10-01)；未开通的安装应显示「手机连接服务还没开通」。
   3. iPhone 系统相机扫码(通用链接)⇒ 直进确认卡(主机名对、有核对码)⇒「连接」⇒ 回此刻、CC 变 Light、桌面弹层变「已连上」。
   4. (e2e:device 已自动化)同一个码再扫 ⇒「这个码已经用过或过期了…」。
   5. 安卓 App Link(设了指纹后);没设时打开网页壳属预期。
@@ -118,7 +111,7 @@
 
 ## 已定未做(按价值排)
 
-- **发版节奏本身要有纪律** —— 三周不发版是这轮最大的结构性问题,不是某个功能的问题。
+- **持续执行发版节奏** —— 09-27 后已恢复公开 patch 发版，当前到 1.7.5；每批整合、验收后按[发版手册](maintainer/release.md)交付。09 月积压三周的教训保留在上文，不能再当作当前停发状态。
 - 安卓凭据恢复走 Google Block Store(配对体验 7a 之后)。
 - ~~iCloud 钥匙串同步(`kSecAttrSynchronizable`)~~ ⟨2026-10-01 主人定:不同步。换机重扫一次码,守住「一个码只配一台」⟩
 - ~~**e2e 只在 master 相关的分支跑**~~ 口径过时:09-18 起 dev 推送动了 `apps/desktop/**` 就跑 desktop-e2e(`changes` 作业);只剩重型 `e2e` 作业按 base_ref 限 master,这是有意的成本取舍。
@@ -128,7 +121,7 @@
 - **错误通道结构化**(arch backlog #4)—— 2026-10-01 主人定开工,两条红线不变(Claude 只在双哨兵上报「登录过期」;agy 歧义句按瞬时)。第 1 步「采真实形状」2026-10-02 完成([reference/provider-error-shapes.md](reference/provider-error-shapes.md),56 条样本钉成 fixture);**第 2 步「边界产码」2026-10-02 做完**:第一片 Claude 会话(#190),余下部分(主人当天批准)codex / openai 兼容(含工作台 API 与 gemini)/ cursor(ACP + print)/ agy / Claude 一次性评估与工作台运行时都在边界产 `lib/provider-error-code.ts` 的码,下游(health 通知、cheapEval 冷却、桌面「测试连接」、微信回话、工作台任务失败)只读码;codex 与 openai 兼容有了边界超时,断网不再沉默。剩下的:真机跑一段确认码覆盖够了,再删文本回退(`AUTH_FAIL_SDK_ERROR` 宽集、`looksLikeAuthFailure`);Cursor ACP 上 `-32603` 的假 key / 死代理有意不区分;要不要压 Claude 的默认重试(假 key 约 90s 才出错)另议。见该文档 §7。
 - ~~**纯 JS 的锚定文件访问**(评审 #3)—— 去 ffi 之后没有 `openat`,逐级 lstat 是多个时刻的观察;两条路(写清威胁模型 + 目录替换回归测试,或 macOS/Linux 恢复原生 openat),安全边界取舍等 owner。~~ **2026-10-01 owner 选 (a)**:保留纯 JS,威胁模型写进 [reference/workbench-file-guard.md](reference/workbench-file-guard.md)(防失误与项目内路径把戏,不防并发换目录的恶意本机进程),`anchored-fs.threat-model.test.ts` 钉住;顺手修了附件落盘从深层路径开文件、`mkdirAnchored` 逐级只 lstat 叶子两个洞。
 - **动态 provider 注册** —— 等 openai-compatible 这条路被外部集成者真用起来、暴露出覆盖不了的需求再做。
-- **Widget / Live Activities** —— 仍属于后续体验。早期「PWA 验证 + Apple $99 才开原生」路线已被 Expo 路线取代；原生通知实现已有单独批次，待真实投递验收，不能与 Widget 一起记为未开发。
+- **Widget / Live Activities** —— 仍属于后续体验。早期「PWA 验证 + Apple $99 才开原生」路线已被 Expo 路线取代；原生通知已实现且 iPhone staging APNs 有真实投递记录；普通发布包与安卓另验，不能与 Widget 一起记为未开发。
 - **STT(语音入站)** —— 已通(2026-09-27 口径):网关形态,`stt-config.json` 指定 whisper 网关(`src/daemon/stt/*`),接在入站链 `mw-transcribe-voice`;未配置即关。出站语音也已通(VoxCPM2)。缺的是本地 STT 与首次配置引导。
 - ~~**Developer ID 证书**~~ **2026-09-28 到手**(Nate Gu & Co LLC,Team 9Y6JAPDP7A):CI 签名 + 公证已通,1.7.1 是第一版签名包;本机 `self deploy` 也用它重签(#143/#144/#146)。**证书 2027-02-01 到期**,到期前在 Apple Developer 后台续一张、更新 `release-signing` 的 `APPLE_CERTIFICATE`(Team ID 不变,TCC 授权不掉)。
 - **Windows 拿不到 Codex 工作台**(2026-09-27 口径,三份文档同此)—— 文件层已通(`anchored-fs.ts` 纯 JS,有 win32 分支)、进程树清理 `jobspawn` 已落地(codex-config / model-catalog 两条路);但 Codex 执行者本身在 win32 仍显式拒绝(`codex-app-server.ts`「尚未验证任务进程树清理」),原生历史 win32 不支持(`codex-history-rpc.ts`),Claude 保留会话的 win32 真机验收也欠。要做的是:拿掉那道拒绝前先在 Windows 真机验一遍进程树清理。
@@ -142,9 +135,12 @@
 
 ## 修订记录
 
+以下是各批当时的证据与取舍，当前默认值和下一步以上文及权威手册为准。
+
+- 2026-10-05:同步 GitHub / updater 1.7.5、macOS 改名已发布状态；合并重复手机进展，移出已修欠账，分开既有 iPhone 自动化、待补真机项与 TestFlight 生产条件。
 - 2026-10-05:1.7.5 发版(版本号 + `docs/releases/desktop-v1.7.5.md`):macOS 改名 Tendhearth CC.app + 进程名、桌面字体、产物预览。
 - 2026-10-04:1.7.4 发版(版本号 + `docs/releases/desktop-v1.7.4.md`):桌面显示名 Tendhearth CC、重启通知按证据、后台不再触发「访问其他 App 数据」、桌面麦克风权限。
-- 2026-10-04:桌面显示名改为 Tendhearth CC(1.7.4,只动显示层,见「命名统一的后续交付」);`.app` 改名、dmg 卷名、进程名记为 1.7.5 迁移。
+- 2026-10-04:桌面显示名改为 Tendhearth CC(1.7.4,只动显示层,见「命名统一的交付与验收」);`.app` 改名、dmg 卷名、进程名记为 1.7.5 迁移。
 
 - 2026-10-04:1.7.3 发版(版本号 + `docs/releases/desktop-v1.7.3.md`):回复交付五家全 daemon、网络守护 v2 + 暂停、报错结构化、CLI 自动升级、send-route 收紧、app 显示附件与过程。
 - 2026-10-04:桌面与手机显示整个回复对象(附件 + 过程)。五家都走 daemon 交付之后,app 那一轮的接收器早就收到了语音 / 表情 / 文件与旁白,但两个 app 都只画文字。现在:daemon 新 `src/daemon/app-reply.ts` 把附件投成 app 形状(语音 `{text}`;表情 `{label, file?}` —— 本地表情解析一次、记下表情库文件名,联网表情只写情绪,daemon 不替 app 去外网取图;文件 `{name, path}`),随回复那一行落库(迁移 v72 `messages.extras`,可空 JSON;放在回复行上而不是另起几行,线索抽取 / 交接 / 夜间记忆这些读者不会把旁白读成 CC 说的话;只有附件没有文字的一轮也写这一行)。`POST /v1/companion/converse` 回包里 `attachments` / `narration` 总在(没有就空数组),本地表情多带一张 data URI(桌面 CSP 只许 data: 图);手机 `GET /m/api/chat` 的消息多两个**可选**字段(老 daemon 不带;认不得的附件逐条丢,不让整页失败),文件只给名字、路径不出 daemon;新路由 `GET /m/api/chat/voice?id=&i=` 只合成库里那一行真有的那段语音(不是任意文字的 TTS 口子),一帧装不下 ⇒ 413 `too_large`;表情图走已有的 `/m/api/sticker/<file>?b64=1`,文件不开新的取文件路由。桌面:Rust `agent_converse` 回整个对象,文件路径换成进程内一次性 ref(`reveal_reply_file` 只认它,只在访达里显示、不打开 —— 打开附件可能直接运行程序);过程是灰色、默认收起的「过程 · N 段」,悬停说明没发到微信;语音点了经 `agent_speak` 念。手机:过程同样默认收起、展开先说一句「没有发到微信」;语音点了才向电脑要声音(新依赖 `expo-audio` + `expo-file-system`,**要重新 `expo run:ios` 出 development build**);表情从电脑表情库取图,取不到退回写情绪的小条;文件只显示名字 +「在电脑上」。演示后端 / shim / `mock.js` 的演示回复都带了过程与附件;新 Maestro 流程 `.maestro/chat-extras.yaml`(本次没在模拟器上跑)。欠:真机 —— Tauri 包里点「在访达中显示」、手机 development build 上真放一段语音(含静音键)、中继上一段长语音的 413 提示。见 `maintainer/reply-delivery.md`「桌面 / 手机怎么显示」。

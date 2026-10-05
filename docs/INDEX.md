@@ -1,6 +1,6 @@
 # Tendhearth CC 文档索引 · 去哪找什么
 
-> v1 · 2026-09-22 · **这份只回答「某件事的文档在哪、哪一份还可信」。**
+> 2026-10-05 状态核对 · **这份只回答「某件事的文档在哪、哪一份还可信」。**
 > 「定了什么 / 为什么」在 [全景导图](全景导图.md);「往哪走 / 卡在哪」在 [roadmap](roadmap.md)。
 > `docs/` 下有 300+ 份计划与设计,按日期命名。**不要按日期猜文件名——从这份索引进。**
 
@@ -62,7 +62,7 @@
 | 引导与访客 | [reference/access-control.md](reference/access-control.md) | `superpowers/specs/2026-08-18-{owner-onboarding,guest-path}-design.md` |
 | 提醒 | — | `superpowers/specs/2026-08-20-reminders-port-design.md` |
 | 外发健康 | — | `superpowers/specs/2026-08-22-outbound-health-design.md` |
-| 回复交付(一轮最后的话就是回复、daemon 统一分条 / 节奏 / 三端送达、`NO_REPLY`、附件、`message` 工具;设计已定 2026-10-03,§6 八条按推荐定) | — | `superpowers/specs/2026-10-03-reply-delivery-design.md` |
+| 回复交付(五家迁移序列已默认 daemon，随 1.7.3 交付；gemini 也已迁移；观察期与 legacy 删除仍待收尾) | [开关、回滚与排查](maintainer/reply-delivery.md) | `superpowers/specs/2026-10-03-reply-delivery-design.md`；[实验与逐家闸门](reference/reply-once-experiment.md) |
 | openai 兼容后端「发完话还在发」:实验 harness、各候选对照表(#196 已关,harness 留作回复交付迁移的验收工具) | [reference/reply-once-experiment.md](reference/reply-once-experiment.md) | 实验结论(2026-10-02),见 roadmap 修订记录 |
 | 功能全表 / 权限模式 / 微信命令 / 运行时目录 / 访问控制 / A2A / 常见问题 | [reference/](reference/) 下同名文件 | — |
 | 插件(含内置插件来源:不随包、`plugin source` 登记、按内置默认开) | [plugins.md](plugins.md);部署侧 [maintainer/deploy.md「内置插件」](maintainer/deploy.md) | `src/lib/plugins-source.ts` + `src/daemon/plugins/health.ts` |
@@ -98,6 +98,7 @@
 
 ## 修订记录
 
+- 2026-10-05:回复交付从「设计已定」改为现行手册入口，标明默认 daemon 已交付与观察期收尾边界。
 - 2026-10-02:新增 `reference/network-guard.md`(网络守护:bx 优先、全入口拦截、威胁模型与验证),入主题表与 reference 目录说明。
 - 2026-10-02:`reference/network-guard.md` 改写为守护 v2(按调用判;主人收窄的决定原样记录)。
 - 2026-10-01:新增 `reference/workbench-file-guard.md`(工作台文件锚定层威胁模型),入主题表与 reference 目录说明。
