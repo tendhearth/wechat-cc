@@ -2,6 +2,15 @@
 
 2026-09-30：对外产品名统一为 **Tendhearth CC**，角色与日常称呼为 **CC**。本次是产品文案统一，不是安装、存储或发布标识迁移。
 
+## 在 Tendhearth 家族里的位置
+
+2026-10-05 定：**Tendhearth 是一个宇宙**，以后会互相联动的产品住在里面：Tendhearth CC，以及动物 App leni（小羊）、rici（刺猬）、melu（狐狸）、ranu（浣熊），都由 Nate Gu & Co. 出品。CC 是宇宙里的管理员，不是动物，照看各家、会去各家串门。跨 App 联动是以后的事，先把 CC 做好。
+
+- 大小写：Tendhearth、Tendhearth CC 是专名，首字母大写（与 1.7.4 / 1.7.5 的桌面显示名和 macOS 改名一致）；动物 App 一律小写；域名和标识用小写 `tendhearth`。
+- 原生手机 App 的显示名也应是「Tendhearth CC」（目前 `apps/app/locales/*.json` 仍是「Tendhearth」，按发布批次统一）。商店名「Tendhearth CC · 个人 AI」/「Tendhearth CC · Personal AI」。
+- 对外联系统一用 `developer@nateguco.com`；隐私和支持页计划放在 `cc.tendhearth.com/privacy`、`/support`（尚未上线）。`tendhearth.com` 根域名留作宇宙首页。
+- 家族规范全文：`~/Documents/Project Nategu/docs/tendhearth-family.md`（本机路径，不在本仓库）。
+
 ## 怎么称呼
 
 | 场景 | 名称 |
