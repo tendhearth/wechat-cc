@@ -27,6 +27,8 @@ import { renderWorkbenchTimeline, workbenchTimelineEventId, renderWorkbenchOpera
 import { mergeEvents, structuralSignature, patchLiveTimeline, createLongPoll, clearLiveTimelinePatches, hasLiveTimelineInteraction } from './workbench-live.js'
 import {permissionControlId,capturePermissionFocus,restorePermissionFocus} from './workbench-permission-focus.js'
 import {captureTimelineReading,restoreTimelineReading} from './workbench-reading-dom.js'
+import { saveFile } from './save-file.js'
+import { showToast } from '../view.js'
 
 /** @typedef {{taskId:string,title:string,reason:'same_path'|'nested_path'|'writer_not_closed',holderWriting?:boolean,closeInMs?:number|null}} WaitingFor */
 /** @typedef {{id:string,title:string,path:string,workspaceKind?:'managed'|'project',providerId:string,status:string,createdAt:number,updatedAt:number,error:string|null,phase?:string,archivedAt?:number|null,canArchive?:boolean,pendingPermissionCount?:number,pendingQuestionCount?:number,waitingFor?:WaitingFor|null,importedOnly?:boolean,runtime?:RuntimeSnapshot,networkSuspended?:{since:number}|null}} Task */
@@ -865,6 +867,26 @@ export function initWorkbenchPage(deps) {
           : ['HTTP 404','workbench_endpoint_missing'].includes(message) ? '当前运行的后台还没有提供这个接口，请更新后台后重试。' : message === 'workbench_read_only_preview' ? '当前预览只允许查看任务，请使用已启用执行的桌面端。' : message === 'workbench_connection_unavailable' ? '暂时连不上任务服务，请检查后台是否运行。' : message
     controller.paint()
   }
+  /** @param {string} filename @param {string} mime @param {Uint8Array} bytes
+   * @param {Element|null} button @param {Element|null} [status] */
+  const saveDownload = async (filename, mime, bytes, button, status = null) => {
+    if (button instanceof HTMLButtonElement && button.disabled) return
+    if (button instanceof HTMLButtonElement) button.disabled = true
+    if (status) status.textContent = ''
+    const report = (/** @type {string} */ message) => {
+      if (!alive) return
+      if (status?.isConnected) status.textContent = message
+      else showToast(message)
+    }
+    try {
+      const path = await saveFile(deps, filename, mime, bytes)
+      if (path) report(`已保存到「下载」：${path.split(/[\\/]/).pop()}`)
+    } catch {
+      report('下载失败，请重试。')
+    } finally {
+      if (button instanceof HTMLButtonElement) button.disabled = false
+    }
+  }
   const confirmUnattended = deps.confirmUnattended ?? (() => mountUnattendedDialog())
   /** 第一次把事交给免审执行者时后台回 428。当面确认一次,登记下来,再把同一份请求
    * 原样重发;主人说「先不用」就到此为止,不当成出错。
@@ -964,16 +986,16 @@ export function initWorkbenchPage(deps) {
         if(!alive||navigation!==navigationGeneration||controller.state.selectedId!==taskId||(previewRequest && previewRequest!==attachmentPreviewRequest))return
         if(data.attachment.id!==id)throw Error('附件版本不匹配，请重新打开。')
         const a=data.attachment,bytes=decodeBase64(data.base64),url=URL.createObjectURL(new Blob([bytes],{type:a.mime}))
-        const download=()=>{const link=document.createElement('a');link.href=url;link.download=a.name;link.click()}
-        if(action==='download-input-attachment'){download();setTimeout(()=>URL.revokeObjectURL(url),1000);return}
+        const download=(/** @type {Element|null} */ button,/** @type {Element|null} */ status=null)=>saveDownload(a.name,a.mime,bytes,button,status)
+        if(action==='download-input-attachment'){await download(target);setTimeout(()=>URL.revokeObjectURL(url),1000);return}
         attachmentPreviewCleanup?.()
         const dialog=document.createElement('dialog');dialog.className='wb-history-dialog wb-input-preview';dialog.setAttribute('aria-label',a.name)
         const body=a.mime.startsWith('image/')?`<img src="${url}" alt="${escapeWorkbenchHtml(a.name)}">`:a.mime==='application/pdf'?renderPdfReader(`attachment:${a.id}`,a.name):a.mime.startsWith('text/')||a.mime==='application/json'?`<pre>${escapeWorkbenchHtml(new TextDecoder().decode(bytes))}</pre>`:'<p>下载后可在本机应用中查看。</p>'
-        dialog.innerHTML=`<header><h2>${escapeWorkbenchHtml(a.name)}</h2><button type="button" class="wb-new" data-close-attachment>关闭</button></header><div class="wb-input-preview-body">${body}</div><footer><button type="button" class="wb-btn" data-download-attachment>下载</button></footer>`
+        dialog.innerHTML=`<header><h2>${escapeWorkbenchHtml(a.name)}</h2><button type="button" class="wb-new" data-close-attachment>关闭</button></header><div class="wb-input-preview-body">${body}</div><footer><button type="button" class="wb-btn" data-download-attachment>下载</button><span role="status" aria-live="polite" data-download-status></span></footer>`
         let readerCleanup = /** @type {(()=>void)|null} */ (null)
         let closed = false
         const cleanup=()=>{if(closed)return;closed=true;readerCleanup?.();URL.revokeObjectURL(url);dialog.remove();if(attachmentPreviewCleanup===cleanup)attachmentPreviewCleanup=null}
-        attachmentPreviewCleanup=cleanup;dialog.addEventListener('close',()=>{attachmentPreviewRequest++;cleanup()},{once:true});dialog.querySelector('[data-close-attachment]')?.addEventListener('click',()=>dialog.close());dialog.querySelector('[data-download-attachment]')?.addEventListener('click',download)
+        attachmentPreviewCleanup=cleanup;dialog.addEventListener('close',()=>{attachmentPreviewRequest++;cleanup()},{once:true});dialog.querySelector('[data-close-attachment]')?.addEventListener('click',()=>dialog.close());const downloadButton=dialog.querySelector('[data-download-attachment]');downloadButton?.addEventListener('click',()=>{void download(downloadButton,dialog.querySelector('[data-download-status]'))})
         document.body.append(dialog);dialog.showModal()
         const reader = /** @type {HTMLElement|null} */ (dialog.querySelector('.cc-pdf-reader'))
         if (reader) readerCleanup = mountPdfReader(reader,bytes,a.name)
@@ -1178,9 +1200,7 @@ export function initWorkbenchPage(deps) {
         if (!alive || request !== artifactRequest || navigation !== navigationGeneration || controller.state.selectedId !== taskId || controller.state.selectedArtifactId !== requestedArtifactId) return
         const bytes = decodeBase64(data.contentBase64)
         if (action === 'download-artifact') {
-          const downloadUrl = URL.createObjectURL(new Blob([bytes], {type:data.mime}))
-          const a = document.createElement('a'); a.href = downloadUrl; a.download = data.name; a.click()
-          setTimeout(() => URL.revokeObjectURL(downloadUrl), 60000)
+          await saveDownload(data.name, data.mime, bytes, target)
           return
         }
         const text = new TextDecoder().decode(bytes)
@@ -1224,6 +1244,7 @@ export function initWorkbenchPage(deps) {
         }
       } catch (e) {
         if (!alive || request !== artifactRequest || navigation !== navigationGeneration || controller.state.selectedId !== taskId || controller.state.selectedArtifactId !== requestedArtifactId) return
+        if (action === 'download-artifact') { showToast('下载失败，请重试。'); return }
         controller.state.preview = {artifactId:requestedArtifactId,html:`<p class="wb-preview-hint" role="alert">${escapeWorkbenchHtml(e instanceof Error ? e.message : '成果暂时没能打开。')}</p><button type="button" class="wb-btn" data-action="preview-artifact">重新打开</button>`}
         controller.paint()
       }

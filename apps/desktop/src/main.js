@@ -59,6 +59,7 @@ import { refreshPostcardAlbum } from "./modules/postcard-album.js"
 import { initWorkbenchPage, stopWorkbenchPolling, openWorkbenchTask, getActiveWorkbenchTaskId } from "./modules/workbench.js"
 import { createWorkbenchNavigation, isCurrentWorkbenchPane } from "./modules/workbench-navigation.js"
 import { createWorkbenchAttentionPoller } from "./modules/workbench-attention.js"
+import { installExternalLinks } from "./modules/external-links.js"
 
 const state = {
   setup: /** @type {SetupQrJson | null} */ (null),
@@ -217,6 +218,8 @@ function startWorkbenchAttention() {
 }
 window.addEventListener('pagehide', () => { workbenchAttention?.destroy(); workbenchAttention = null })
 window.addEventListener('pageshow', event => { if (event.persisted) startWorkbenchAttention() })
+
+installExternalLinks({ invoke: mock ? null : invoke, onError: err => showToast(`打不开链接:${formatInvokeError(err)}`) })
 
 // 文件拖放(2026-10-05):窗口不再由 Tauri 截走拖进来的文件(dragDropEnabled:false),网页自己接。
 // 落在「此刻」任何地方的图 ⇒ 进对话的待发图片;各页面自己接住的(工作台附件、对话框)它们先处理;
@@ -1239,7 +1242,7 @@ function wireEvents() {
       await invoke("open_companion_window", {})
     } catch (err) {
       console.error("open companion window failed:", err)
-      alert(`无法打开桌面陪伴：${formatInvokeError(err)}`)
+      showToast(`无法打开桌面陪伴：${formatInvokeError(err)}`)
     } finally {
       companionDesktopStart.disabled = false
     }
