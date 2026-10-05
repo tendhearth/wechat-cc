@@ -186,4 +186,31 @@ describe('workbench global navigation', () => {
     expect(scrim.hidden).toBe(false)
     expect(toggle.focus).toHaveBeenCalledWith({preventScroll:true})
   })
+
+  it('keeps the rail in place on wide windows and folds it only when the window is narrow (2026-10-05)', async () => {
+    const { createWorkbenchNavigation }=await import('./workbench-navigation.js')
+    const documentTarget=new FakeElement()
+    const shell=new FakeElement(),rail=new FakeElement(),toggle=new FakeElement(),scrim=new FakeElement()
+    const wideQuery=Object.assign(new FakeElement(),{matches:true})
+    const navigation=createWorkbenchNavigation({shell:shell as any,rail:rail as any,toggle:toggle as any,scrim:scrim as any,documentTarget:documentTarget as any,wideQuery:wideQuery as any})
+
+    navigation.setWorkbenchActive(true)
+    expect(shell.classList.contains('is-workbench-focused')).toBe(false)
+    expect(rail.inert).toBe(false)
+    expect(scrim.hidden).toBe(true)
+    expect(toggle.focus).not.toHaveBeenCalled()
+
+    wideQuery.matches=false; wideQuery.dispatch('change')
+    expect(shell.classList.contains('is-workbench-focused')).toBe(true)
+    expect(rail.inert).toBe(true)
+    toggle.dispatch('click')
+    expect(shell.classList.contains('is-workbench-nav-open')).toBe(true)
+
+    wideQuery.matches=true; wideQuery.dispatch('change')
+    expect(shell.classList.contains('is-workbench-focused')).toBe(false)
+    expect(shell.classList.contains('is-workbench-nav-open')).toBe(false)
+    expect(rail.inert).toBe(false)
+    navigation.destroy()
+    expect(wideQuery.listeners.get('change')?.size ?? 0).toBe(0)
+  })
 })

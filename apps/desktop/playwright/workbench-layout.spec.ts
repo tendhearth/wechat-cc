@@ -104,3 +104,35 @@ test('workbench stays readable at a narrow desktop width with no horizontal over
   const screenshotDir = process.env.WECHAT_CC_DESIGN_SHOTS
   if(screenshotDir) { await page.waitForTimeout(700); await page.screenshot({path:join(screenshotDir,'workbench-narrow.png')}) }
 })
+
+test('一起做 sits under the global nav: wide keeps the rail, narrow folds it behind the wordmark',async({page,shimUrl,shim})=>{
+  await page.setViewportSize({width:1440,height:900})
+  await setup(page,shimUrl,shim)
+  await expect(page.locator('#dash-global-rail')).toBeVisible()
+  await expect(page.locator('button.dash-nav-link[data-pane="workbench"]')).toHaveClass(/active/)
+  await expect(page.locator('#workbench-nav-toggle')).toBeHidden()
+  await expect(page.locator('.wb-chats')).toHaveCount(0)
+  await page.setViewportSize({width:1000,height:900})
+  await expect(page.locator('#workbench-nav-toggle')).toBeVisible()
+  await expect(page.locator('#dash-global-rail')).toHaveAttribute('aria-hidden','true')
+  await page.locator('#workbench-nav-toggle').click()
+  await expect(page.locator('button.dash-nav-link[data-pane="overview"]')).toBeVisible()
+  await page.setViewportSize({width:1440,height:900})
+  await expect(page.locator('#workbench-nav-toggle')).toBeHidden()
+  await expect(page.locator('#dash-global-rail')).not.toHaveAttribute('aria-hidden','true')
+})
+
+test('the waiting count lives next to 此刻 in the rail, not in a banner',async({page,shimUrl,shim})=>{
+  await shim.invoke('demo.seed',{chat_id:'test_chat',daemonAlive:true})
+  await page.route('**/v1/workbench/attention',route=>route.fulfill({json:{tasks:[
+    {id:'deadbeef',title:'完善作品集在手机上的排版',providerId:'claude',pendingPermissionCount:1,pendingQuestionCount:0,attentionKey:JSON.stringify(['permission-1']),first:{kind:'permission',text:'Bash: bun run test'}},
+    {id:'cafefeed',title:'整理访谈主题与引用',providerId:'codex',pendingPermissionCount:0,pendingQuestionCount:1,attentionKey:JSON.stringify(['question-1']),first:{kind:'question',text:'要保留原话吗？'}},
+  ]}}))
+  await page.goto(shimUrl)
+  await page.waitForFunction(()=>document.documentElement.dataset.mode && document.documentElement.dataset.mode!=='loading')
+  await page.evaluate(()=>{document.documentElement.dataset.mode='dashboard'})
+  await expect(page.locator('#now-count')).toHaveText('2')
+  await expect(page.locator('#workbench-attention')).toHaveCount(0)
+  await clickNav(page,'recollections')
+  await expect(page.locator('#now-count')).toHaveText('2')
+})

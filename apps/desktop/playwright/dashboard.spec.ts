@@ -485,8 +485,6 @@ test('此刻 home → chat via the CC, draft survives a workbench round-trip, on
   await expect(pane).toHaveAttribute('data-now', 'chat')
   await expect(page.locator('#converse-scroll')).toBeVisible()
   await clickNav(page, 'workbench')
-  // 「一起做」里全局侧栏收起,和用户一样先点左上角的 CC 打开主导航再回「此刻」。
-  await page.locator('#workbench-nav-toggle').click()
   await clickNav(page, 'overview')
   await expect(pane).toHaveAttribute('data-now', 'chat')
   await expect(page.locator('#converse-input')).toHaveValue('草稿不丢')

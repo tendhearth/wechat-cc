@@ -646,7 +646,7 @@ describe('workbench mutations', () => {
     finally {module.stopWorkbenchPolling()}
   })
 
-  it('preserves the project executor when chat metadata paints before provider options load', async () => {
+  it('preserves the project executor when a paint lands before provider options load', async () => {
     const { page, fields } = installDraftPage(true)
     const values = new Map<string, string>(), storage = { getItem: (key: string) => values.get(key) ?? null, setItem: (key: string, value: string) => { values.set(key, value) }, removeItem: (key: string) => { values.delete(key) } }
     root.window = { sessionStorage: storage }
@@ -660,7 +660,8 @@ describe('workbench mutations', () => {
     const module = await import('./workbench.js')
     const controller = module.initWorkbenchPage({ invokeWorkbenchApi: api, pollMs: 60_000 })!
     try {
-      await vi.waitFor(() => expect(page.innerHTML).toContain('id="wb-provider"'))
+      controller.paint(true)
+      expect(page.innerHTML).toContain('id="wb-provider"')
       expect(fields['wb-provider']!.value).toBe('')
       controller.paint(true)
       expect(createWorkbenchDraftStore(storage).get('new:/work/B').providerId).toBe('claude')
@@ -2590,20 +2591,15 @@ it('imported tasks ask for explicit original-tool closure before native continua
  expect(confirmed).toContain('原程序已关闭，继续');expect(confirmed).toContain('data-native-token="'+decision.token+'"');expect(confirmed).not.toContain('已检测到退出')
 })
 
-describe('一件事:对话也在同一张列表里(2026-09-16)',()=>{
-  it('keeps desktop-bound chat matters after work tasks and opens their session pane',async()=>{
+describe('一起做只放交给 CC 的事(2026-10-05)',()=>{
+  it('does not list or open the conversation with CC — that lives on 此刻',async()=>{
     const {renderWorkbench}=await import('./workbench.js')
     const task={id:'deadbeef',title:'Task',path:'/work',providerId:'codex',status:'running',createdAt:1,updatedAt:2,error:null}
-    const chat={id:'0badcafe',kind:'chat',title:'跟 CC 说',status:'open',updatedAt:3}
-    const base={tasks:[task],providers:[{id:'codex',displayName:'Codex'}],defaultProvider:'codex',canWechat:false,selectedArtifactId:null,error:'',preview:null,chats:[chat]}
-    const listed=renderWorkbench({...base,selectedId:null,detail:null,selectedMatterId:null})
-    expect(listed).toContain('<h2>一起做</h2>')
-    expect(listed).toMatch(/data-task-id="deadbeef"[\s\S]*data-matter-id="0badcafe"/)
-    expect(listed).not.toContain('id="wb-converse-host"')
-    const opened=renderWorkbench({...base,selectedId:null,detail:null,selectedMatterId:'0badcafe'})
-    expect(opened).toContain('id="wb-converse-host"')
-    expect(opened).toMatch(/class="wb-task is-selected" data-matter-id="0badcafe"/)
-    expect(opened).not.toContain('id="wb-create-form"')
+    const listed=renderWorkbench({tasks:[task],providers:[{id:'codex',displayName:'Codex'}],defaultProvider:'codex',canWechat:false,selectedArtifactId:null,error:'',preview:null,selectedId:null,detail:null})
+    expect(listed).toContain('data-task-id="deadbeef"')
+    expect(listed).not.toContain('data-matter-id')
+    expect(listed).not.toContain('wb-converse-host')
+    expect(listed).not.toContain('跟 CC 说')
   })
 })
 

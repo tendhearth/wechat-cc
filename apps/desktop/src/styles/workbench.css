@@ -469,3 +469,5 @@
 .wb-error > button { display: block; margin-top: 10px; }
 .wb-quota-handoff { margin: 16px 0; padding: 16px; border: 1px solid var(--th-hair); border-radius: 12px; background: var(--th-ground); }
 .wb-quota-handoff p { margin: 0 0 10px; line-height: 1.65; }
+/* 窗口够宽时主导航一直在(2026-10-05):叫出主导航的按钮那一行只在窄窗口收起主导航时出现。 */
+.dash-window:not(.is-workbench-focused) .workbench-pane>.cc-life-topline{display:none}

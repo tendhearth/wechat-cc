@@ -55,7 +55,7 @@
   {{>presence.html}}
 </div>
 <div class="pane" id="p-memory">
-  <button id="memory-back" class="sessions-text-action" type="button">← 一起做</button>
+  <button id="memory-back" class="sessions-text-action" type="button">← 此刻</button>
   <div class="grp">回忆</div>
   <div id="feed"></div>
   <details class="memory-pocket"><summary>待办、画像与表情</summary>
@@ -81,7 +81,10 @@
   <div id="you-body" aria-live="polite"></div>
 </div>
 <div class="pane" id="p-matters">
-  <div class="together-links"><button id="sessions-open" type="button">电脑上的会话 ↗</button><button id="memory-open" type="button">回忆 ↗</button></div>
+  <!-- 一起做 = 交给 CC 的事(2026-10-05):交办在这里;回忆是 CC 的生活,住在「此刻」。 -->
+  <button id="home-entry" class="home-action" type="button"><strong>交给 CC 做</strong><span>写要求、加材料 ↗</span></button>
+  <div id="entry-root"></div>
+  <div class="together-links"><button id="sessions-open" type="button">电脑上的会话 ↗</button></div>
   <!-- 连接提示:平时不在,连续两次联系不上 daemon 才浮出来,恢复后自己消失。
        放在列表与详情之外,两边共用同一行。 -->
   <div id="m-conn" role="status" aria-live="polite" hidden></div>
