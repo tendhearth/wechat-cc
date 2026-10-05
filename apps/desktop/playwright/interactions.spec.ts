@@ -168,18 +168,20 @@ test('drawer toggle: aria-pressed flips on click', async ({ page, shimUrl, shim 
 // 回滚之前采到了乐观态,是竞速。
 //
 // 拆成两条,各自测各自该测的:
-test('drawer toggle: .on class toggles on click(纯 UI 开关,不落盘)', async ({ page, shimUrl, shim }) => {
+test('drawer toggle: .on class toggles on click(写入成功的开关)', async ({ page, shimUrl, shim }) => {
   await shim.invoke('demo.seed', { chat_id: 'test_chat' })
   await bootIntoDashboard(page, shimUrl)
   await page.locator('#settings-open').click()
-  // memory-embryo-toggle 只写本地状态(main.js 的 setMemoryEmbryoEnabled),
-  // 不打后端 —— 开关机制本身该用它来测,不该绑在一次网络写上。它初始为 on。
-  const toggle = page.locator('#memory-embryo-toggle')
-  await expect(toggle).toHaveClass(/\bon\b/)
+  // 原先用 #memory-embryo-toggle(纯本地开关);2026-10-03 UI 评审把「实验」
+  // 整段藏起来了(无效开关),藏起来的按钮点不到。改用 autostart:shim 在
+  // DRY_RUN 下把 `provider set` 当成功写入,开关机制照样测得到、不会回滚。
+  await expect(page.locator('#memory-embryo-toggle')).toBeHidden()
+  const toggle = page.locator('#autostart-toggle')
+  const wasOn = /\bon\b/.test((await toggle.getAttribute('class')) ?? '')
   await toggle.click()
-  await expect(toggle).not.toHaveClass(/\bon\b/)
+  await expect(toggle).toHaveClass(wasOn ? /^(?!.*\bon\b)/ : /\bon\b/)
   await toggle.click()
-  await expect(toggle).toHaveClass(/\bon\b/)
+  await expect(toggle).toHaveClass(wasOn ? /\bon\b/ : /^(?!.*\bon\b)/)
 })
 
 test('drawer toggle: 持久化失败时回滚,不静默撒谎(v1.6.4 契约)', async ({ page, shimUrl, shim }) => {
