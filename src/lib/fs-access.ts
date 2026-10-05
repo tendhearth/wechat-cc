@@ -13,7 +13,7 @@
  * 责任进程有 Info.plist 用途说明,见 apps/desktop/src-tauri/Info.plist)——
  * 所以这个探针也是引导页「授权文件访问」按钮背后的动作。
  */
-import { readdirSync } from 'node:fs'
+import { closeSync, openSync, readdirSync } from 'node:fs'
 import { homedir } from 'node:os'
 import { join } from 'node:path'
 
@@ -68,5 +68,42 @@ export function probeFsAccess(opts: { home?: string; platform?: NodeJS.Platform;
 export function describeFsAccess(r: FsAccessReport): string {
   const denied = r.folders.filter(f => f.state === 'denied').map(f => FOLDERS[f.folder])
   if (denied.length === 0) return '文件访问正常'
-  return `系统没给 wechat-cc 读「${denied.join('」「')}」的权限 —— 去 系统设置 › 隐私与安全性 › 完全磁盘访问 勾上 wechat-cc,然后重启 daemon`
+  return `系统没给 Tendhearth CC 读「${denied.join('」「')}」的权限 —— 去 系统设置 › 隐私与安全性 › 完全磁盘访问 勾上 Tendhearth CC,然后重启 daemon`
 }
+
+/**
+ * 完全磁盘访问(FDA)探针 —— **不会弹框**。
+ *
+ * WHY(2026-10-04 真机):主人两天里被弹了 18 次「"wechat-cc" 想访问其他 App 的数据」
+ * (kTCCServiceSystemPolicyAppData)。统一日志里的证据链:
+ *   - 访问者是 daemon 每 5 分钟(以及开机第 1 秒)跑的 wxvault `sync.py --changed-only`
+ *     (Xcode 的 python3,责任进程记在 com.tendhearth.wechat-cc 头上),读的是微信的
+ *     容器 ~/Library/Containers/com.tencent.xinWeChat/。
+ *   - tccd 先查 FDA:「Failed to match existing code requirement for subject
+ *     com.tendhearth.wechat-cc and service kTCCServiceSystemPolicyAllFiles」——
+ *     系统设置里那个 FDA 勾是 09-28 换 Developer ID 签名**之前**(ad-hoc,cdhash 当指定
+ *     要求)勾的,对现在的签名不算数。
+ *   - 于是落到「访问其他 App 的数据」这一档,它的「允许」是**按进程会话**记的
+ *     (「Session scoped auth is invalid for client」):daemon 一重启就作废,再弹。
+ *
+ * 所以后台(无人值守)碰别的 App 的容器之前,先用这个探针问一句「有没有 FDA」:
+ * 打开 TCC 自己的数据库只受 FDA 管,没有 FDA 时是**静默**的 EPERM,不弹任何框
+ * (macOS 上探测 FDA 的通用做法;真机上 sqlite3 打开它被拒时 tccd 没有 PROMPTING)。
+ * 没有 FDA ⇒ 后台不去碰,改在 health / doctor 里告诉主人去重新勾一次。
+ *
+ * 返回 null:非 macOS,或者结果说明不了问题(文件不在等)—— 调用方当「不知道」处理。
+ */
+export function hasFullDiskAccess(opts: { home?: string; platform?: NodeJS.Platform; open?: (p: string) => void } = {}): boolean | null {
+  const platform = opts.platform ?? process.platform
+  if (platform !== 'darwin') return null
+  const path = join(opts.home ?? homedir(), 'Library', 'Application Support', 'com.apple.TCC', 'TCC.db')
+  const open = opts.open ?? ((p: string) => { closeSync(openSync(p, 'r')) })
+  try { open(path); return true }
+  catch (err) { return classifyFsError(err) === 'denied' ? false : null }
+}
+
+/** 没有 FDA 时给主人的一句话(health / doctor / 日志共用)。 */
+export const FDA_MISSING_HINT =
+  '微信聊天记录的后台同步暂停了:系统没给 Tendhearth CC「完全磁盘访问」(或者那个勾是旧签名时勾的,对现在的版本不算数)。' +
+  '去 系统设置 › 隐私与安全性 › 完全磁盘访问,把 Tendhearth CC 先用「−」删掉、再用「+」重新加入 /Applications/wechat-cc.app 并打开,然后重启 daemon。' +
+  '只需做一次;之后不会再弹「想访问其他 App 的数据」。'

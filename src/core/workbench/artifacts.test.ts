@@ -59,13 +59,13 @@ it('old artifact versions do not consume the per-turn 100-new-version budget', (
   collectArtifacts(store as never, 'deadbeef', project, root)
   expect(added.map(a => a.name)).toContain('100.txt')
 })
-it('collects source code as inert text and saves generated snapshots immutably', async () => {
+it('collects code as inert text and HTML with its format, preserving immutable snapshots', async () => {
  const {saveArtifactSnapshot,readArtifactSnapshot}=await import('./artifacts')
  const output=join(root,'project/.cc-workbench/task');mkdirSync(output,{recursive:true})
  for(const name of ['a.ts','b.py','page.html','change.diff'])writeFileSync(join(output,name),'<script>never execute</script>')
  const records:any[]=[];const store={artifacts:()=>records,addArtifact:(a:any)=>{records.push(a);return a}}
  collectArtifacts(store as never,'task',join(root,'project'),root)
- expect(records).toHaveLength(4);expect(records.every(a=>a.mime==='text/plain')).toBe(true)
+ expect(records).toHaveLength(4);expect(records.find(a=>a.name==='page.html').mime).toBe('text/html');expect(records.filter(a=>a.name!=='page.html').every(a=>a.mime==='text/plain')).toBe(true)
  saveArtifactSnapshot(store as never,'task',{name:'代码变更.json',mime:'application/vnd.cc.workbench-review+json',bytes:Buffer.from('{"version":1}')},root)
  const generated=records.at(-1)
  expect(readArtifactSnapshot(generated.storagePath,root,generated.sha256).toString()).toBe('{"version":1}')

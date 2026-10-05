@@ -8,7 +8,7 @@
 
 命名已统一为 **Tendhearth CC**，角色称呼为 **CC**；技术兼容边界见[产品命名规范](reference/product-naming.md)。手机端的实现、真机验收和商店发布是不同交付状态，以 [apps/app](../apps/app/README.md) 及各批验证记录为准。
 
-## 现状:最新公开版本 1.7.3
+## 现状:最新公开版本 1.7.4
 
 | 事实 | 怎么看(别写死数字,每次改这页先跑) |
 |---|---|
@@ -25,6 +25,15 @@
 ## 命名统一的后续交付
 
 本批统一 README、维护入口、手机说明与全景导图。后续桌面与手机批次应按[产品命名规范](reference/product-naming.md)检查应用显示名、窗口标题、关于页、权限说明和商店素材，统一为 **Tendhearth CC**；对话仍称 **CC**。这项文案验收纳入各端原有交付，不新增底层标识迁移，不阻塞正在进行的手机功能开发。
+
+**桌面显示名(1.7.4,2026-10-04 主人定)**:只改显示层 —— 程序坞 / 菜单栏 / 关于 / 窗口标题 / 通知发送者 / 权限弹框与权限列表都显示 Tendhearth CC(`lproj/*.lproj/InfoPlist.strings` 本地化显示名 + `LSHasLocalizedDisplayName`;关于面板在 `src-tauri/src/lib.rs` 换名),LaunchAgent 加 `AssociatedBundleIdentifiers` 让「登录项」显示 app 名和图标;`productName` / bundle id / Label 不动,`apps/desktop/src/display-name.test.ts` 钉住。理由是信任:用户在系统里突然看到 `wechat-cc` 会对不上品牌。
+
+**已定未做:底层名字迁移(1.7.5)** —— 下列只能靠改标识才能改掉,归一次迁移,要设计升级兼容与回滚:
+- `.app` 文件名 `wechat-cc.app` → `Tendhearth CC.app`(= `productName`):牵动 LaunchAgent 里写死的 app 主二进制路径、`self deploy` 找包与原地换 sidecar、更新器产物名(`wechat-cc_<v>_*.app.tar.gz` / `latest.json`)、老用户 /Applications 里旧包的去留;
+- dmg 卷名 / 挂载窗口标题 / dmg 文件名(tauri-bundler 用 `productName` 作 `--volname`,`bundle.macOS.dmg` 没有卷名配置;事后改卷名会作废 dmg 的签名与公证);
+- 活动监视器里的进程名(主二进制 `wechat_cc_desktop`、sidecar `wechat-cc-cli`):改名同时改路径和 LaunchAgent;
+- 老安装的 LaunchAgent 要重装(`wechat-cc service install`)才带上 `AssociatedBundleIdentifiers`,1.7.4 不自动改写 plist(改写 = bootout + 重启 daemon);
+- Windows / Linux 的开始菜单、快捷方式、安装器名同样跟 `productName`。
 
 ## 当前主线与验收顺序(2026-10-02 更新)
 
@@ -132,6 +141,9 @@
 - **升 bun 1.4** —— 独立一件事,它动到 `bun:sqlite` 的迁移行为,别当顺手活。
 
 ## 修订记录
+
+- 2026-10-04:1.7.4 发版(版本号 + `docs/releases/desktop-v1.7.4.md`):桌面显示名 Tendhearth CC、重启通知按证据、后台不再触发「访问其他 App 数据」、桌面麦克风权限。
+- 2026-10-04:桌面显示名改为 Tendhearth CC(1.7.4,只动显示层,见「命名统一的后续交付」);`.app` 改名、dmg 卷名、进程名记为 1.7.5 迁移。
 
 - 2026-10-04:1.7.3 发版(版本号 + `docs/releases/desktop-v1.7.3.md`):回复交付五家全 daemon、网络守护 v2 + 暂停、报错结构化、CLI 自动升级、send-route 收紧、app 显示附件与过程。
 - 2026-10-04:桌面与手机显示整个回复对象(附件 + 过程)。五家都走 daemon 交付之后,app 那一轮的接收器早就收到了语音 / 表情 / 文件与旁白,但两个 app 都只画文字。现在:daemon 新 `src/daemon/app-reply.ts` 把附件投成 app 形状(语音 `{text}`;表情 `{label, file?}` —— 本地表情解析一次、记下表情库文件名,联网表情只写情绪,daemon 不替 app 去外网取图;文件 `{name, path}`),随回复那一行落库(迁移 v72 `messages.extras`,可空 JSON;放在回复行上而不是另起几行,线索抽取 / 交接 / 夜间记忆这些读者不会把旁白读成 CC 说的话;只有附件没有文字的一轮也写这一行)。`POST /v1/companion/converse` 回包里 `attachments` / `narration` 总在(没有就空数组),本地表情多带一张 data URI(桌面 CSP 只许 data: 图);手机 `GET /m/api/chat` 的消息多两个**可选**字段(老 daemon 不带;认不得的附件逐条丢,不让整页失败),文件只给名字、路径不出 daemon;新路由 `GET /m/api/chat/voice?id=&i=` 只合成库里那一行真有的那段语音(不是任意文字的 TTS 口子),一帧装不下 ⇒ 413 `too_large`;表情图走已有的 `/m/api/sticker/<file>?b64=1`,文件不开新的取文件路由。桌面:Rust `agent_converse` 回整个对象,文件路径换成进程内一次性 ref(`reveal_reply_file` 只认它,只在访达里显示、不打开 —— 打开附件可能直接运行程序);过程是灰色、默认收起的「过程 · N 段」,悬停说明没发到微信;语音点了经 `agent_speak` 念。手机:过程同样默认收起、展开先说一句「没有发到微信」;语音点了才向电脑要声音(新依赖 `expo-audio` + `expo-file-system`,**要重新 `expo run:ios` 出 development build**);表情从电脑表情库取图,取不到退回写情绪的小条;文件只显示名字 +「在电脑上」。演示后端 / shim / `mock.js` 的演示回复都带了过程与附件;新 Maestro 流程 `.maestro/chat-extras.yaml`(本次没在模拟器上跑)。欠:真机 —— Tauri 包里点「在访达中显示」、手机 development build 上真放一段语音(含静音键)、中继上一段长语音的 413 提示。见 `maintainer/reply-delivery.md`「桌面 / 手机怎么显示」。

@@ -9,7 +9,7 @@
 //   (#dash-rail-dot/text) is not ours: main.js renders it from nowStatusLine.
 // Subscribes to: doctorPoller (renders env list on each successful poll)
 
-import { doctorRows, daemonStatusLine, escapeHtml } from "../view.js"
+import { doctorRows, daemonStatusLine, escapeHtml, hasUsableProvider } from "../view.js"
 import { icon } from "./icons.js"
 
 const STEP_ORDER = ["doctor", "provider", "wechat", "service"]
@@ -39,8 +39,8 @@ export function renderDoctorWizard(report) {
   const claudeMeta = document.getElementById("claude-meta")
   const codexMeta = document.getElementById("codex-meta")
   const cursorMeta = document.getElementById("cursor-meta")
-  if (claudeMeta) claudeMeta.textContent = report.checks.claude.ok ? report.checks.claude.path : "未检测到"
-  if (codexMeta) codexMeta.textContent = report.checks.codex.ok ? report.checks.codex.path : "未检测到"
+  if (claudeMeta) claudeMeta.textContent = report.checks.claude.ok ? '已就绪' : "未检测到"
+  if (codexMeta) codexMeta.textContent = report.checks.codex.ok ? '已就绪' : "未检测到"
   // Cursor's probe shape differs ({ apiKeySet, sdkInstalled } vs { ok, path }).
   // Surface the more useful missing-piece on the wizard card.
   if (cursorMeta) {
@@ -50,18 +50,20 @@ export function renderDoctorWizard(report) {
       : !c?.sdkInstalled ? "缺少 @cursor/sdk"
       : "未检测到"
   }
+  const geminiMeta = document.getElementById('gemini-meta')
+  if (geminiMeta) geminiMeta.textContent = report.checks.gemini?.ok ? '已就绪' : '尚未连接'
   renderDoctorHeadline(report)
   renderProviderStatus("claude", report.checks.claude)
   renderProviderStatus("codex", report.checks.codex)
   updateFooterStatus(report.checks.daemon)
 }
 
-/** 第一步的标题与说明跟「当前状态」两行同一个信号:Claude 或 Codex 任一已链接就算就绪。 */
+/** The same readiness signal drives startup, the headline and the next action. */
 export function doctorHeadline(report) {
-  const ready = !!(report?.checks?.claude?.ok || report?.checks?.codex?.ok)
+  const ready = hasUsableProvider(report)
   return ready
-    ? { ready, title: "已经能见面了", note: "Claude Code 或 Codex 已就绪，可以继续。" }
-    : { ready, title: "还差一步就能见面了", note: "还没检测到 Claude Code 或 Codex，安装任意一个就能继续。" }
+    ? { ready, title: "已经能见面了", note: "已检测到可用的 AI，可以继续连接微信。" }
+    : { ready, title: "还差一步就能见面了", note: "先连接一个可用的 AI，再继续。" }
 }
 
 function renderDoctorHeadline(report) {
@@ -70,6 +72,9 @@ function renderDoctorHeadline(report) {
   const note = document.getElementById("doctor-note")
   if (title) title.textContent = h.title
   if (note) note.textContent = h.note
+  const next = document.getElementById('continue-provider'), recheck = document.getElementById('recheck-env')
+  if (next) next.hidden = !h.ready
+  if (recheck) recheck.classList.toggle('launch-primary-btn', !h.ready)
   const illus = document.querySelector("#screen-doctor .launch-illus")
   if (illus) { illus.classList.toggle("launch-illus-missing", !h.ready); illus.classList.toggle("launch-illus-ready", h.ready) }
 }
@@ -123,7 +128,9 @@ export function refreshEnterDashboardButton(report) {
   const alive = !!report?.checks?.daemon?.alive || restarting
   btn.disabled = !alive
   if (alive) btn.removeAttribute("title")
-  else btn.title = "daemon 还没启动 · 先点「安装并启动」"
+  else btn.title = "CC 还没启动，请先点「安装并启动」。"
+  const hint = document.getElementById('service-enter-hint')
+  if (hint) { hint.hidden = alive; hint.textContent = 'CC 启动后就能进入。这里会自动检查，也可以手动重新检查。' }
 }
 
 // Imperative step navigator. Caller (main.js) wires the .steps buttons

@@ -2,7 +2,7 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import { mkdtempSync, readFileSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { buildServicePlan, installService } from './service-manager'
+import { buildServicePlan, installService, DESKTOP_APP_BUNDLE_ID } from './service-manager'
 import { validatePowerShellScript } from './powershell-validator'
 import { SUPERVISED_ENV } from '../core/supervised-env'
 
@@ -149,6 +149,18 @@ describe('service-manager', () => {
       bunPath: '/home/alice/.bun/bin/bun',
     })
     expect(plan.fileContent).toContain('cli.ts run --dangerously')
+  })
+
+  it('macOS plist 归属到桌面 app(登录项显示 Tendhearth CC),Label 不变', () => {
+    const tauriConf = JSON.parse(readFileSync(join(__dirname, '../../apps/desktop/src-tauri/tauri.conf.json'), 'utf8'))
+    expect(DESKTOP_APP_BUNDLE_ID).toBe(tauriConf.identifier)
+    const plan = buildServicePlan({
+      platform: 'darwin', homeDir: '/Users/alice', cwd: '/Users/alice/.wechat-cc', bunPath: '/opt/homebrew/bin/bun',
+    })
+    expect(plan.fileContent).toContain('<key>Label</key><string>com.wechat-cc.daemon</string>')
+    expect(plan.fileContent).toMatch(
+      /<key>AssociatedBundleIdentifiers<\/key><array><string>com\.tendhearth\.wechat-cc<\/string><\/array>/,
+    )
   })
 
   it('macOS plist defaults to RunAtLoad=true (autoStart default true) + KeepAlive always true', () => {

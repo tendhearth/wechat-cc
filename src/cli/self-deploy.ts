@@ -25,6 +25,7 @@
  * 重建 / 换 sidecar 都不变 —— 这才是权限不再间歇掉的根因修法。没身份 / 没
  * entitlements 文件 ⇒ `plan.signing` 为 null,一切照旧(build-sidecar 的 ad-hoc)。
  */
+import { markPlannedRestart } from '../lib/restart-markers'
 import { spawnSync as nodeSpawnSync } from 'node:child_process'
 import { chmodSync, copyFileSync, existsSync, readFileSync, renameSync, statSync, unlinkSync } from 'node:fs'
 import { dirname, resolve } from 'node:path'
@@ -337,6 +338,8 @@ export interface SelfDeployDeps {
   now: () => number
   sleep: (ms: number) => Promise<void>
   log: (line: string) => void
+  /** kickstart 之前写 planned-restart 纸条(lib/restart-markers)。缺省 ⇒ 不写(测试)。 */
+  markPlannedRestart?: (stateDir: string, reason: string) => void
 }
 
 export interface SelfDeployStep {
@@ -496,7 +499,7 @@ export async function executeSelfDeploy(plan: SelfDeployPlan, deps: SelfDeployDe
   // NEW binary already on disk, so every failure from here rolls back
   // (unless the caller opted out).
   const kickstartAt = deps.now()
-  const restart = kickstart(deps, plan.serviceTarget)
+  const restart = kickstart(deps, plan, 'self-deploy')
   steps.push(restart)
   let health: SelfDeployStep | null = null
   let pluginsStep: SelfDeployStep | null = null
@@ -594,8 +597,13 @@ function sealApp(signing: SelfDeploySigning, deps: SelfDeployDeps): SelfDeploySt
   return { name: 'seal', ok: true }
 }
 
-function kickstart(deps: SelfDeployDeps, serviceTarget: string): SelfDeployStep {
-  const r = deps.spawnSync('launchctl', ['kickstart', '-k', serviceTarget], { windowsHide: true })
+function kickstart(deps: SelfDeployDeps, plan: SelfDeployPlan, reason: string): SelfDeployStep {
+  // 先留「计划内重启」纸条再 kickstart:部署/回滚是维护者故意的,新 daemon
+  // 开机读到它就不在微信里播报(daemon/notify-startup.ts)。状态目录就是
+  // internal-api-info.json 所在的目录。用 node 的 dirname 而不是 posixDirname:
+  // 后者只认 '/',遇到 win32 的反斜杠路径会退化成 '/',纸条就写错了地方(CI windows 抓到)。
+  deps.markPlannedRestart?.(dirname(plan.infoPath), reason)
+  const r = deps.spawnSync('launchctl', ['kickstart', '-k', plan.serviceTarget], { windowsHide: true })
   if (r.status !== 0) return { name: 'restart', ok: false, detail: `launchctl kickstart exited ${r.status ?? 'null'}: ${r.stderr.trim()}` }
   return { name: 'restart', ok: true }
 }
@@ -736,7 +744,7 @@ async function performRollback(plan: SelfDeployPlan, deps: SelfDeployDeps, expec
   if (plan.signing) steps.push({ ...sealApp(plan.signing, deps), name: 'rollback_seal' })
 
   const kickstartAt = deps.now()
-  const restart = kickstart(deps, plan.serviceTarget)
+  const restart = kickstart(deps, plan, 'self-deploy-rollback')
   steps.push({ ...restart, name: 'rollback_restart' })
   if (!restart.ok) return { steps, rolledBack: true, healthy: false }
 
@@ -793,6 +801,7 @@ export function defaultSelfDeployDeps(): SelfDeployDeps {
     now: () => Date.now(),
     sleep: (ms) => new Promise((resolve) => setTimeout(resolve, ms)),
     log: (line) => console.error(`[self deploy] ${line}`),
+    markPlannedRestart: (stateDir, reason) => markPlannedRestart(stateDir, reason),
   }
 }
 

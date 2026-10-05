@@ -23,7 +23,7 @@ for(const width of [1000,390])test(`keeps core workbench interactions at ${width
  await page.route('http://workbench-core.test/**',async route=>{
   const path=new URL(route.request().url()).pathname
   if(path==='/'){await route.fulfill({contentType:'text/html',body:fixture});return}
-  try{const body=await readFile(source+path);await route.fulfill({body,contentType:path.endsWith('.js')?'text/javascript':path.endsWith('.css')?'text/css':'application/octet-stream'})}
+  try{const body=await readFile(source+path);await route.fulfill({body,contentType:/\.m?js$/.test(path)?'text/javascript':path.endsWith('.css')?'text/css':'application/octet-stream'})}
   catch{await route.fulfill({status:404,body:'missing fixture asset'})}
  })
  await page.goto('http://workbench-core.test')
@@ -70,11 +70,11 @@ for(const width of [1000,390])test(`keeps core workbench interactions at ${width
 
  // Returning closes the disclosure, restores reading, and retains the existing preview cache.
  await page.evaluate(()=>{
-  const qa=(window as any).qa;qa.preview={artifactId:'file',html:'<pre>合成成果预览缓存</pre>'};qa.controller.state.preview=qa.preview;qa.controller.state.selectedArtifactId='file';qa.controller.paint(true)
+  const qa=(window as any).qa;qa.preview={artifactId:'file',html:'<pre>合成成果预览缓存</pre>'};qa.controller.state.preview=qa.preview;qa.controller.state.selectedArtifactId='file';qa.controller.state.previewOpen=false;qa.controller.paint(true)
   const pane=document.querySelector('.wb-content')!;pane.scrollTop=180;qa.returnPosition=pane.scrollTop
   document.querySelector<HTMLButtonElement>('[data-action="show-artifacts"]')!.click()
  })
- await expect(page.locator('#wb-artifacts')).toHaveAttribute('open','')
+ await expect(page.locator('.wb-artifact-panel')).toBeVisible()
  await page.locator('[data-action="back-to-dialogue"]').click()
  expect(await page.locator('#wb-artifacts').getAttribute('open')).toBeNull()
  const returned=await page.evaluate(()=>{const qa=(window as any).qa;return{position:document.querySelector('.wb-content')!.scrollTop,expected:qa.returnPosition,selected:qa.controller.state.selectedArtifactId,cached:qa.controller.state.preview===qa.preview}})
@@ -84,7 +84,7 @@ for(const width of [1000,390])test(`keeps core workbench interactions at ${width
  await page.locator('[data-action="back-to-dialogue"]').click()
  expect(await page.evaluate(()=>document.querySelector('.wb-content')!.scrollTop)).toBe(returned.expected)
  // Closing the summary manually must also release result browsing.
- await page.evaluate(()=>document.querySelector<HTMLButtonElement>('[data-action="show-artifacts"]')!.click())
+ await page.evaluate(()=>document.querySelector<HTMLElement>('#wb-artifacts > summary')!.click())
  await page.evaluate(()=>document.querySelector<HTMLElement>('#wb-artifacts > summary')!.click())
  await expect(page.locator('#wb-artifacts')).not.toHaveAttribute('open','')
  await page.evaluate(()=>{const pane=document.querySelector('.wb-content')!;(window as any).qa.returnedPane=pane;pane.scrollTop=pane.scrollHeight;pane.dispatchEvent(new Event('scroll'))})
@@ -93,5 +93,13 @@ for(const width of [1000,390])test(`keeps core workbench interactions at ${width
  expect(await page.evaluate(()=>document.querySelector('.wb-content')===(window as any).qa.returnedPane)).toBe(true)
  await expect(page.locator('.wb-reading-bar')).toBeHidden()
  await page.screenshot({path:testInfo.outputPath(`returned-following-${width}.png`)})
+ await page.evaluate(()=>{const qa=(window as any).qa;qa.controller.state.preview=qa.preview;qa.controller.state.previewOpen=true;qa.controller.paint(true)})
+ await expect(page.locator('.wb-artifact-panel')).toBeVisible()
+ await page.evaluate(async()=>{await (window as any).qa.push('在成果打开时到达的新内容')})
+ await page.evaluate(()=>document.querySelector<HTMLButtonElement>('[data-action="latest-content"]')!.click())
+ await expect(page.locator('.wb-artifact-panel')).toHaveCount(0)
+ await page.evaluate(async()=>{await (window as any).qa.push('回到对话后继续到达的内容\n\n'+Array.from({length:12},(_,i)=>'继续跟随 '+i).join('\n\n'))})
+ expect(await page.evaluate(()=>{const p=document.querySelector('.wb-content')!;return p.scrollHeight-p.clientHeight-p.scrollTop})).toBeLessThanOrEqual(1)
+ await expect(page.locator('.wb-reading-bar')).toBeHidden()
  await page.evaluate(()=>(window as any).qa.stop())
 })

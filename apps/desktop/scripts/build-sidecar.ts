@@ -1,4 +1,6 @@
 import '../../../scripts/build-cc-starter-pack'
+import './vendor-pdf'
+import './vendor-site'
 /**
  * Compile the CLI that Tauri bundles as its production sidecar.
  *

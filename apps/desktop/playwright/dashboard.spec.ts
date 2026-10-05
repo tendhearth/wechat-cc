@@ -199,7 +199,7 @@ test('a2a add modal opens + closes via ✕ button (regression for fix 5ddeb72)',
   await page.locator('.cc-life-nav-more > summary').click()
   await page.locator('button.dash-nav-link[data-pane="a2a-agents"]').click()
   // Open the modal
-  await page.locator('#a2a-add-btn').click()
+  await clickRevealed(page, '#a2a-add-btn')
   await expect(page.locator('dialog#a2a-add-modal[open]')).toBeVisible()
   // Close via the ✕ — this was missing pre-5ddeb72 and the modal had no escape hatch
   await page.locator('#a2a-add-modal-close').click()
@@ -330,6 +330,17 @@ test.describe('single-surface reconnect flow', () => {
 // ── Provider-switch dropdown ─────────────────────────────────────────────────
 
 test.describe('provider-switch dropdown', () => {
+  test('connecting another AI service keeps its settings form visible',async({page,shimUrl,shim})=>{
+    await shim.invoke('demo.seed',{chat_id:'test_chat'})
+    await bootIntoDashboard(page,shimUrl)
+    await page.locator('#settings-open').click()
+    await expect(page.locator('#settings-drawer')).toHaveClass(/is-open/)
+    await expect(page.locator('#accounts-current .provider-switch')).toBeVisible()
+    await page.locator('#accounts-current .provider-switch').click()
+    await page.locator('#provider-menu [data-action="connect-ai"]').click()
+    await expect(page.locator('#settings-drawer')).toHaveClass(/is-open/)
+    await expect(page.locator('#brain-health')).toBeVisible()
+  })
   test('click .provider-switch shows menu with 3 options; clicking codex records provider-set + restart chain', async ({ page, shimUrl, shim }) => {
     // Seed with claude as the active provider (default in shim doctor output)
     await shim.invoke('demo.seed', { chat_id: 'test_chat' })
@@ -482,6 +493,27 @@ test('此刻 home → chat via the CC, draft survives a workbench round-trip, on
   await expect(page.locator('#converse-root')).toHaveCount(1)
   await page.locator('#now-back').click()
   await expect(pane).toHaveAttribute('data-now', 'home')
+})
+
+test('首页摘出完整原话,点气泡读完整回复,空输入框没有滚动条', async ({ page, shimUrl, shim }) => {
+  await shim.invoke('demo.seed', { chat_id: 'test_chat' })
+  const reply = '备选安排如下：\n\n1. 周五去上海，周日回来。\n2. 也可以把行程往后挪一周。'
+  await page.route('**/v1/matter/owner-chat', route => route.fulfill({ json: { events: [
+    { kind: 'text', text: reply, createdAt: Date.now() - 1000 },
+    { kind: 'text', text: '任务完成：已修改 3 个文件', createdAt: Date.now(), source: 'workbench' },
+  ] } }))
+  await bootIntoDashboard(page, shimUrl)
+  await expect(page.locator('.now-bubble-text')).toHaveText('周五去上海，周日回来。')
+  await expect(page.locator('.now-bubble-more')).toBeVisible()
+  const metrics = await page.locator('#converse-input').evaluate(el => ({ client: el.clientHeight, scroll: el.scrollHeight }))
+  expect(metrics.scroll).toBeLessThanOrEqual(metrics.client)
+  await page.locator('#converse-input').fill('保留这句草稿')
+  await page.locator('#now-cc-bubble').click()
+  await expect(page.locator('#converse-scroll')).toContainText('备选安排如下：')
+  await expect(page.locator('#converse-scroll ol li')).toHaveText(['周五去上海，周日回来。','也可以把行程往后挪一周。'])
+  await expect(page.locator('#converse-scroll')).toContainText('任务完成：已修改 3 个文件')
+  await expect(page.locator('#converse-input')).toHaveValue('保留这句草稿')
+  await expect(page.locator('#converse-input')).toBeFocused()
 })
 
 test('CC goes dark when the daemon cannot be reached', async ({ page, shimUrl, shim }) => {

@@ -3,7 +3,7 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>Tendhearth</title>
+    <title>Tendhearth CC</title>
     <link rel="icon" href="./wechat-cc-logo.png" />
     <link rel="stylesheet" href="./tokens.css" />
     <link rel="stylesheet" href="./fonts.css" />
@@ -15,8 +15,12 @@
     <link rel="stylesheet" href="./styles/converse.css" />
     <link rel="stylesheet" href="./cc-now.css" />
     <link rel="stylesheet" href="./styles/workbench.css" />
+    <link rel="stylesheet" href="./styles/pdf-reader.css" />
     <link rel="stylesheet" href="./styles/task-entry.css" />
     <link rel="stylesheet" href="./styles/workbench-attention.css" />
+    <link rel="stylesheet" href="./styles/record-reader.css" />
+    <link rel="stylesheet" href="./styles/todos.css" />
+    <link rel="stylesheet" href="./styles/forage.css" />
   </head>
   <body data-pane="overview">
 
@@ -59,7 +63,7 @@
                   </span>
                 </div>
                 <h2 id="doctor-headline">还差一步就能见面了</h2>
-                <p id="doctor-note">还没检测到 Claude Code 或 Codex，安装任意一个就能继续。</p>
+                <p id="doctor-note">先连接一个可用的 AI，再继续。</p>
               </div>
               <div class="launch-panel">
                 <div class="launch-panel-title">
@@ -78,7 +82,8 @@
                     <a class="provider-install-btn" id="codex-install-link" href="https://github.com/openai/codex#installation" target="_blank" rel="noopener">去安装 <span>›</span></a>
                   </div>
                 </div>
-                <button id="recheck-env" class="launch-primary-btn">重新检测</button>
+                <button id="continue-provider" class="launch-primary-btn" hidden>继续</button>
+                <button id="recheck-env" class="btn ghost">重新检测</button>
                 <details class="launch-details">
                   <summary>查看完整诊断</summary>
                   <div id="checks" class="env-list"></div>
@@ -90,41 +95,43 @@
           <!-- 02 Agent -->
           <section id="screen-provider" class="screen">
             <div class="card">
-              <div class="card-h">选谁当你的 AI</div>
+              <h2 class="card-h">选择 AI</h2>
               <div class="agent-grid">
                 <button class="agent" data-provider="claude">
                   <div class="head">
-                    <div class="logo logo-img"><img src="./wechat-cc-logo.png" alt="" /></div>
                     <div class="name">Claude Code</div>
-                    <span class="recommend">推荐</span>
                     <span class="pick"></span>
                   </div>
-                  <div class="desc">深度思考、长上下文、复杂任务首选。</div>
+                  <div class="desc">使用这台电脑上的 Claude Code。</div>
                   <div class="path" id="claude-meta">检测中</div>
                 </button>
                 <button class="agent" data-provider="codex">
                   <div class="head">
-                    <div class="logo logo-img"><img src="./wechat-cc-logo.png" alt="" /></div>
                     <div class="name">Codex</div>
                     <span class="pick"></span>
                   </div>
-                  <div class="desc">快速迭代、自动化场景。</div>
+                  <div class="desc">使用这台电脑上的 Codex。</div>
                   <div class="path" id="codex-meta">检测中</div>
                 </button>
                 <button class="agent" data-provider="cursor">
                   <div class="head">
-                    <div class="logo logo-img"><img src="./wechat-cc-logo.png" alt="" /></div>
                     <div class="name">Cursor</div>
                     <span class="pick"></span>
                   </div>
-                  <div class="desc">Composer 模型，需要 API key + SDK 包。</div>
+                  <div class="desc">使用已连接的 Cursor 服务。</div>
                   <div class="path" id="cursor-meta">检测中</div>
+                </button>
+                <button class="agent" data-provider="gemini">
+                  <div class="head"><div class="name">Gemini</div><span class="pick"></span></div>
+                  <div class="desc">使用已连接的 Gemini 服务。</div>
+                  <div class="path" id="gemini-meta">检测中</div>
                 </button>
               </div>
             </div>
             <div class="wz-foot" style="border:0; padding: 4px 0 0;">
-              <div class="left">模型由各自 CLI 自管。</div>
+              <div class="left"><p id="provider-state" role="status"></p><p id="provider-error" role="alert"></p></div>
               <div class="right">
+                <button id="provider-back" class="btn ghost">返回检查</button>
                 <button id="continue-wechat" class="btn primary">继续</button>
               </div>
             </div>
@@ -132,33 +139,22 @@
 
           <!-- 03 微信 -->
           <section id="screen-wechat" class="screen">
-            <div class="launch-grid">
-              <div class="launch-hero">
-                <div class="launch-illus launch-illus-ready" aria-hidden="true">
-                  <span class="cc-page-art cc-page-art-onboarding">
-                    <img class="cc-page-background" src="./assets/home-cc-aquarium-base.png" alt="" />
-                    <span class="cc-page-ground"></span>
-                    <img class="cc-page-character cc-page-light" src="./assets/pet/cc-v1/canonical/lit/front.png" alt="" />
-                  </span>
-                </div>
-                <h2>环境检测成功</h2>
-                <p>一切准备就绪，开启你的体验之旅吧！</p>
-              </div>
+            <div class="wechat-connect">
               <div class="qr-login-card">
-                <h3>微信二维码登录</h3>
+                <h2>连接微信</h2>
                 <div id="qr-box" class="qr-box">正在生成</div>
-                <p id="qr-title">使用微信扫描二维码，激活应用</p>
+                <p id="qr-title" role="status">正在准备二维码</p>
                 <div class="poll" id="qr-poll" hidden>
-                  <span class="pip"></span>
                   <span id="qr-message">等你扫码中…</span>
                 </div>
                 <div class="qr-ttl" id="qr-ttl">—</div>
                 <div class="qr-actions">
+                  <button id="wechat-back" class="btn ghost">返回选择</button>
                   <button id="qr-refresh" class="btn ghost">刷新二维码</button>
                   <button id="continue-service" class="btn primary" disabled>继续</button>
                 </div>
-                <button id="qr-raw-toggle" class="qr-raw-toggle" type="button">技术详情</button>
-                <pre id="qr-raw"></pre>
+                <button id="qr-raw-toggle" class="qr-raw-toggle" type="button" aria-expanded="false" aria-controls="qr-raw">技术详情</button>
+                <pre id="qr-raw" hidden></pre>
               </div>
             </div>
           </section>
@@ -174,6 +170,7 @@
                     <span class="ic" data-hg-icon="play" data-hg-size="16"></span>
                     安装并启动
                   </button>
+                  <button id="service-recheck" class="btn ghost">重新检查</button>
                 </div>
 
                 <div class="toggle-row">
@@ -230,9 +227,10 @@
             <div class="wz-foot" style="border:0; padding: 4px 0 0;">
               <div class="left"></div>
               <div class="right">
-                <button id="enter-dashboard" class="btn primary">进入控制台</button>
+                <button id="enter-dashboard" class="btn primary">开始使用</button>
               </div>
             </div>
+            <p id="service-enter-hint" class="service-enter-hint" hidden></p>
           </section>
 
         </div>
@@ -358,7 +356,7 @@
             <button class="toggle" id="guard-toggle" type="button" data-toggle aria-pressed="false" aria-label="网络守护" aria-describedby="guard-toggle-feedback"></button><span class="setting-feedback" id="guard-toggle-feedback" role="status"></span>
           </div>
         </section>
-        <section class="drawer-section">
+        <section class="drawer-section" hidden>
           <h3>实验</h3>
           <div class="toggle-row">
             <div>
@@ -426,18 +424,18 @@
             <section class="now-hero">
               <h1 id="now-greeting" class="now-greeting">晚上好</h1>
               <div class="now-cc-col">
-                <button id="now-cc-bubble" class="now-bubble" type="button" hidden aria-label="CC 最近说的话，点开进对话"><span class="now-bubble-text"></span><small class="now-bubble-time"></small></button>
                 <button id="now-cc" class="now-figure" type="button" aria-label="跟 CC 说">
                   <img class="now-cc-light" src="./assets/pet/cc-v1/canonical/lit/front.png" alt="" />
                   <img class="now-cc-dark" src="./assets/pet/cc-v1/canonical/unlit/front.png" alt="" />
                 </button>
+                <button id="now-cc-bubble" class="now-bubble" type="button" hidden aria-label="CC 最近说的话，点开进对话"><span class="now-bubble-text"></span><span class="now-bubble-meta"><small class="now-bubble-time"></small><span class="now-bubble-more" hidden>查看完整回复 ›</span></span></button>
               </div>
             </section>
+            <div id="converse-root" class="converse-page"></div>
             <section id="now-waiting" class="now-waiting" aria-labelledby="now-waiting-title" hidden>
               <h2 id="now-waiting-title"></h2>
               <ul id="now-waiting-list"></ul>
             </section>
-            <div id="converse-root" class="converse-page"></div>
           </article>
 
           <!-- Hidden shim: keeps the IDs that JS modules
@@ -459,28 +457,28 @@
           </div>
 
           <article class="dash-pane cc-recollections" data-pane="recollections" hidden>
-            <header><span class="cc-life-kicker">回忆</span><h1>留下来的小事。</h1><p>画过的画、寄来的明信片，还有当时的想法。</p></header>
+            <header><h1>回忆</h1><p>画过的画、寄来的明信片，还有当时的想法。</p></header>
             <nav class="cc-memory-tabs" aria-label="回忆分类">
               <button type="button" data-life-category="postcards" aria-pressed="true">明信片</button>
               <button type="button" data-life-category="paintings" aria-pressed="false">画作</button>
               <button type="button" data-life-category="thoughts" aria-pressed="false">日记与想法</button>
               <button type="button" data-life-category="stories" aria-pressed="false">串门见闻</button>
-              <button type="button" data-life-pane="memory">关于你 ↗</button>
             </nav>
             <section id="cc-memory-postcards">
                 <section class="fd-section" aria-labelledby="postcard-album-title">
-                  <div class="fd-sec-head"><h2 id="postcard-album-title">明信片册</h2><span class="fd-hint">CC 寄来的图和话，一起收好</span></div>
+                  <h2 id="postcard-album-title" class="sr-only">明信片册</h2>
                   <div id="postcard-album"></div>
                 </section>
             </section>
             <section id="cc-memory-records" hidden></section>
-            <footer><button type="button" data-life-pane="atelier">去 CC 的画室 →</button><button type="button" data-life-pane="a2a-agents">去觅食 →</button></footer>
+            <footer><button type="button" data-life-pane="atelier">去 CC 的画室 →</button><button type="button" data-life-pane="a2a-agents">去觅食 →</button><button type="button" data-life-pane="memory">关于你 ↗</button></footer>
           </article>
 
           <!-- ── pane: atelier ─────────────────────────────────────── -->
           <article class="dash-pane atelier-pane" data-pane="atelier" hidden>
             <div class="atelier-pane-head">
-              <div><h1>CC 画室</h1><p>只保存在这台 Mac。媒材和画风由 CC 按当下状态自由选择。</p></div>
+              <div><h1>CC 画室</h1><p>画过的画和创作手记。打开一幅，可以慢慢看，也可以保存下来。</p></div>
+              <button type="button" id="atelier-refresh">刷新</button>
             </div>
             <div id="atelier-model-status" class="atelier-model-status" role="status" hidden></div>
             <div id="atelier-gallery" class="atelier-gallery atelier-gallery-page" aria-live="polite">
@@ -652,9 +650,9 @@
           <!-- ── pane: a2a-agents → 觅食台 (forager's desk) ─────────────── -->
           <article class="dash-pane" data-pane="a2a-agents" hidden>
             <div class="topbar">
-              <span class="crumb">觅食台</span>
+              <span class="crumb">觅食</span>
               <div class="actions">
-                <button id="a2a-add-btn" class="btn"><span class="ic" data-hg-icon="add-01" data-hg-size="16"></span> 连一位朋友的 CC</button>
+                <button id="fd-connect-btn" class="btn" type="button">和朋友配对</button>
               </div>
             </div>
 
@@ -662,38 +660,36 @@
               <div class="fd-wrap">
                 <!-- HERO = living foraging state -->
                 <header class="fd-hero">
-                  <div class="fd-eyebrow">觅食台 · 你家 CC 的秘密交易台</div>
-                  <h1 class="fd-h1">你的 CC 正在替你，悄悄地找。</h1>
+                  <p class="fd-intro">CC 带回的推荐、见闻和朋友的来信。</p>
                   <div class="fd-status" id="fd-hero-status">
-                    <span class="fd-status-icon" data-hg-icon="user-group" data-hg-size="24" aria-hidden="true"></span>
                     <span class="fd-status-line">加载中…</span>
                   </div>
                   <div class="fd-social-note" id="fd-social-note" hidden></div>
                 </header>
 
-                <div class="fd-wave" aria-hidden="true"><svg viewBox="0 0 920 12" preserveAspectRatio="none"><path d="M0 6 Q 23 0 46 6 T 92 6 T 138 6 T 184 6 T 230 6 T 276 6 T 322 6 T 368 6 T 414 6 T 460 6 T 506 6 T 552 6 T 598 6 T 644 6 T 690 6 T 736 6 T 782 6 T 828 6 T 874 6 T 920 6" stroke="currentColor" stroke-width="2" fill="none"/></svg></div>
 
                 <!-- 架构重构 §2.4:觅食台收成两块 —— 带回来的(journal)+ 认识的人(relationships)。
                      心愿(wishes.js)替掉了原来「派心愿 / 回声」两个折叠子块 —— 输入 → 预览 → 派,
                      没有匿名觅食网、没有揭晓牵线仪式。信箱仍折叠留着;所有 id 不变(模块测试 + e2e 依赖)。 -->
 
-                <p class="cc-life-redirect">寄回的图和话已经收进回忆。<button type="button" data-life-pane="recollections" data-life-start="postcards">打开明信片册 →</button></p>
 
                 <!-- <span class="ic" data-hg-icon="archive"></span> 带回来的 -->
                 <section class="fd-section">
-                  <div class="fd-sec-head"><h2><span class="ic" data-hg-icon="archive"></span> 带回来的</h2><span class="fd-count" id="fd-catch-count"></span><span class="fd-hint">上网找的东西 · 串门听来的见闻 · 明信片</span></div>
+                  <div class="fd-sec-head"><h2>带回来的</h2><span class="fd-count" id="fd-catch-count"></span></div>
                   <div class="hb-list" id="fd-catch"></div>
                 </section>
 
                 <!-- <span class="ic" data-hg-icon="user-group"></span> 认识的人 -->
                 <section class="fd-section">
-                  <div class="fd-sec-head"><h2><span class="ic" data-hg-icon="user-group"></span> 认识的人</h2><span class="fd-count" id="fd-people-count"></span><span class="fd-hint">朋友的伙伴 · 邻居 · 来找过我的人</span></div>
+                  <div class="fd-sec-head"><h2>认识的人</h2><span class="fd-count" id="fd-people-count"></span></div>
                   <div class="fd-people" id="fd-people"></div>
                 </section>
 
                 <!-- <span class="ic" data-hg-icon="mail-01"></span> 心愿：伙伴替你去问认识的人,回信在「带回来的」里 -->
                 <section class="fd-section" id="fd-wish">
-                  <div class="fd-sec-head"><h2><span class="ic" data-hg-icon="mail-01"></span> 心愿</h2><span class="fd-count" id="fd-wish-count"></span><span class="fd-hint">伙伴替你去问认识的人 · 回信在「带回来的」里</span></div>
+                  <div class="fd-sec-head"><h2>心愿</h2><span class="fd-count" id="fd-wish-count"></span></div>
+                  <p class="fd-section-note">让 CC 帮你打听一件事，先看确认后的措辞再派出。回信会留在「带回来的」里。</p>
+                  <label class="fd-field-label" for="fd-wish-text">想打听什么</label>
                   <form class="wsh-compose" id="fd-wish-form">
                     <input id="fd-wish-text" type="text" maxlength="140" placeholder="想让伙伴帮你打听什么？" autocomplete="off">
                     <button id="fd-wish-submit" type="submit">先看看怎么问</button>
@@ -710,7 +706,7 @@
                     <div class="fd-net-body">
                       <!-- ✉️ 笔友信箱 -->
                       <div class="fd-sub">
-                        <div class="fd-sec-head"><h2><span class="ic" data-hg-icon="mail-01" aria-hidden="true"></span>笔友信箱</h2><span class="fd-count" id="fd-mailbox-count"></span><span class="fd-hint">只有你们俩看得到 · 中间人碰不到内容</span></div>
+                        <div class="fd-sec-head"><h2>笔友信箱</h2><span class="fd-count" id="fd-mailbox-count"></span><span class="fd-hint">只有你们俩看得到 · 中间人碰不到内容</span></div>
                         <div class="fd-mailbox" id="fd-mailbox"></div>
                       </div>
                     </div>
@@ -720,7 +716,7 @@
                 <!-- ③ 你的觅食网（折叠底座）— agent-management folded here -->
                 <section class="fd-net" id="fd-net">
                   <details>
-                    <summary id="fd-net-summary">你的觅食网<span class="fd-net-sub" id="fd-peers-count">连着 0 位朋友的 CC</span>
+                    <summary id="fd-net-summary">你的觅食网<span class="fd-net-sub" id="fd-peers-count">正在读取</span>
                       <span class="fd-peers" id="fd-peers"></span>
                       <span class="fd-chev">›</span></summary>
                     <div class="fd-net-body">
@@ -730,13 +726,13 @@
                       </div>
                       <div class="fd-pair-panel" id="fd-pair-panel" hidden></div>
                       <div class="fd-net-row fd-net-row-pair-accept">
-                        <input class="fd-pair-input" id="fd-pair-code" inputmode="numeric" maxlength="6" placeholder="输入朋友的 6 位码" autocomplete="off">
+                        <label class="fd-pair-label" for="fd-pair-code">朋友的配对码<input class="fd-pair-input" id="fd-pair-code" inputmode="numeric" maxlength="6" placeholder="6 位数字" autocomplete="off"></label>
                         <button class="fd-btn" id="fd-pair-accept" type="button">配对</button>
                       </div>
                       <div class="fd-inbound-note" id="fd-pair-note" hidden></div>
                       <div class="fd-net-row">
                         <div class="fd-txt"><div class="fd-t">让朋友的 CC 能找到我</div><div class="fd-s">开着，别人的心愿才能传到你这、也才有来有往</div></div>
-                        <div class="fd-toggle" id="fd-inbound-toggle" role="switch" aria-checked="false" tabindex="0"></div>
+                        <button type="button" class="fd-toggle" id="fd-inbound-toggle" role="switch" aria-label="让朋友的 CC 能找到我" aria-checked="false"></button>
                       </div>
                       <div class="fd-inbound-note" id="fd-inbound-note" hidden></div>
                       <div class="fd-net-row fd-net-row-peers">
@@ -749,7 +745,7 @@
                           <ul id="a2a-agents-list" class="a2a-agents-list"></ul>
                         </div>
                       </div>
-                      <div class="fd-depth-note"><span class="fd-pill">现在：第 1 度</span>你的 CC 目前只问直接好友的 CC。<b>第 2、3 度觅食</b>（朋友的朋友的 CC）即将开放 —— 到时这些心愿会自己走得更远。</div>
+                      <details class="fd-manual-connect"><summary>手动连接</summary><p>对方已有连接地址时，也可以手动接入。</p><button id="a2a-add-btn" class="btn" type="button">输入连接地址</button></details>
                     </div>
                   </details>
                 </section>

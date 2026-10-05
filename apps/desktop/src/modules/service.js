@@ -16,7 +16,7 @@
 //
 // Owns: #service-summary, #service-plan, #service-install,
 //       #post-stop-alert, #post-stop-pid, #post-stop-kill,
-//       #unattended-toggle, #autostart-toggle, #service-plan-toggle
+//       #service-plan-toggle
 // Wizard no longer has its own stop button — daily start/stop is the
 // dashboard's job; wizard is for first-install and reconfiguration only.
 // Crash-respawn (KeepAlive / Restart=always) is unconditional in v0.4+; the
@@ -113,6 +113,7 @@ function startProgressPolling(deps, setBtnLabel, appendPlan) {
     if (cancelled) return
     try {
       const p = /** @type {InstallProgress | null} */ (await deps.invoke("wechat_cli_json", { args: ["install-progress", "--json"] }).catch(() => null))
+      if (cancelled) return
       if (p && typeof p.step === 'number' && typeof p.total === 'number') {
         const ageMs = typeof p.ts === 'number' ? Date.now() - p.ts : 0
         if (ageMs >= 0 && ageMs < PROGRESS_STALE_MS) {
@@ -161,8 +162,8 @@ async function serviceActionInner(deps, state, action, planEl, summaryEl, alertE
       summary.textContent = `先装 ${hardReds.join("、")} — daemon 起来后无法工作。复制上方命令即可。`
       return
     }
-    state.unattended = isToggleOn("unattended-toggle")
-    state.autoStart = isToggleOn("autostart-toggle")
+    // Wizard and settings toggles update state; the hidden drawer may be stale.
+    // Use the current choices without re-reading DOM controls.
     // Pre-install guard: if a daemon is currently running OUTSIDE any
     // installed service (foreground source-mode bun, e.g. PID 691574 from
     // before the GUI was installed), wedge it. Otherwise systemd will
@@ -244,19 +245,13 @@ async function serviceActionInner(deps, state, action, planEl, summaryEl, alertE
         planEl.scrollTop = planEl.scrollHeight
       }
     } else if (post?.checks.service?.installed) {
-      summary.textContent = "服务已安装但 daemon 未运行（systemctl 可能正在重试，30s 后再看）。"
+      summary.textContent = "后台已安装，正在等待启动。页面会自动检查，也可以点击「重新检查」。"
       if (planEl && action === "install") {
         planEl.textContent += `[${nowStamp()}] ⚠ 服务已注册但 daemon 未起来 — 可能 systemctl/launchd/schtasks 在重试，30s 后查 service status\n`
         planEl.scrollTop = planEl.scrollHeight
       }
     }
   }
-}
-
-/** @param {string} id */
-function isToggleOn(id) {
-  const el = document.getElementById(id)
-  return !!el && el.classList.contains("on")
 }
 
 // Walk the doctor checks; return human-friendly names of any failed

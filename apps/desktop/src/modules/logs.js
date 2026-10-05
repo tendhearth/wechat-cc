@@ -119,7 +119,8 @@ export async function loadLogsPane(deps) {
   const select = document.getElementById("logs-tail-select")
   const tail = Number.parseInt(select?.value || "50", 10) || 50
   const body = document.getElementById("logs-body")
-  body.innerHTML = `<p class="empty-state">加载中…</p>`
+  if (!body) { logsState.busy = false; return }
+  if (!logsState.lastResult) body.innerHTML = `<p class="empty-state">加载中…</p>`
   let result
   try {
     // Route through wechat_cli_json_via_file: 200/500-line tails produce
@@ -131,21 +132,24 @@ export async function loadLogsPane(deps) {
     result = await deps.invoke("wechat_cli_json_via_file", { args: ["logs", "--tail", String(tail), "--json"] })
   } catch (err) {
     logsState.busy = false
-    body.innerHTML = `<p class="empty-state">读取失败：${escapeHtml(deps.formatInvokeError(err))}</p>`
+    const message = `读取失败：${deps.formatInvokeError(err)}`
+    if (!logsState.lastResult) body.innerHTML = `<p class="empty-state">${escapeHtml(message)}</p>`
+    else { const meta = document.getElementById('logs-meta'); if (meta) meta.textContent = `${message} · 保留上次记录` }
     return
   }
   logsState.busy = false
   if (!result.ok) {
-    body.innerHTML = `<p class="empty-state">读取失败：${escapeHtml(result.error || "unknown")}</p>`
+    const message = `读取失败：${result.error || '暂时没能读取'}`
+    if (!logsState.lastResult) body.innerHTML = `<p class="empty-state">${escapeHtml(message)}</p>`
+    else { const meta = document.getElementById('logs-meta'); if (meta) meta.textContent = `${message} · 保留上次记录` }
     return
   }
+  // Check immediately before painting: the user may have scrolled while the read was pending.
+  const following = !logsState.lastResult || body.scrollHeight - body.clientHeight - body.scrollTop <= 48
+  const scrollTop = body.scrollTop
   logsState.lastResult = result
-  const shown = paintLogs(result)
-  // Scroll to bottom — user expects to see the most recent entry without
-  // reaching for the scrollbar. Skip if user scrolled up manually within
-  // the last refresh (we don't track that yet; revisit if it gets noisy).
-  body.scrollTop = body.scrollHeight
-  const meta = document.getElementById("logs-meta")
+  paintLogs(result)
+  body.scrollTop = following ? body.scrollHeight : scrollTop
 
   const navCount = document.getElementById("logs-count")
   if (navCount) navCount.textContent = result.entries.length > 0 ? String(result.entries.length) : ""

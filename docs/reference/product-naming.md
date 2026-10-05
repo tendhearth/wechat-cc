@@ -30,6 +30,15 @@ English: Your personal AI companion, at home on your own computer. Talk to CC, f
 
 原生 app 的显示名、桌面窗口标题、关于页、权限文案、安装页面与商店截图需要按发布批次检查。显示文案可以统一；底层标识迁移应另行设计并验证升级兼容性。
 
+### 桌面 macOS 显示名(1.7.4 起)
+
+- 显示名来自 `apps/desktop/src-tauri/lproj/{en,zh-Hans}.lproj/InfoPlist.strings` 的 `CFBundleDisplayName` / `CFBundleName`,`Info.plist` 设 `LSHasLocalizedDisplayName`。基础名仍由 tauri 按 `productName` 生成为 `wechat-cc` —— 它必须与 `.app` 文件名一致,Finder / 程序坞才会用本地化名。
+- 关于面板的名字在 `src-tauri/src/lib.rs` 的 `app_menu` 里换(tauri 默认菜单用 `productName`)。
+- LaunchAgent 带 `AssociatedBundleIdentifiers`(= bundle id),登录项里显示 app 名与图标;`Label` 是技术标识,不改。
+- 1.7.4 不改:`productName`、bundle id、主二进制名、sidecar 名、LaunchAgent Label、dmg 卷名。其中 macOS 的 `productName`、主二进制名、sidecar 名在 1.7.5 改(见下一段);bundle id 与 LaunchAgent Label 永远不改。它们的迁移见 [roadmap](../roadmap.md)「命名统一的后续交付」。守卫:`apps/desktop/src/display-name.test.ts`。
+
+### macOS 文件名与进程名(1.7.5 起)
+
 2026-10-04 主人定:macOS 上用户看得到的文件名与进程名也换掉 —— 1.7.5 起 `.app` 叫 `Tendhearth CC.app`,主二进制 `Tendhearth CC`,sidecar `tendhearth-cc-cli`(只限 macOS;bundle id、CLI 命令名 `wechat-cc`、状态目录、LaunchAgent label 不变)。设计、升级证据与真机清单见 [app-rename-migration.md](../maintainer/app-rename-migration.md)。
 
 ## 当前入口与发布状态

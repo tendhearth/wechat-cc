@@ -40,9 +40,9 @@ describe('desktop design style', () => {
     expect(html.indexOf('tokens.css')).toBeGreaterThan(-1)
     expect(html.indexOf('tokens.css')).toBeLessThan(html.indexOf('styles.css'))
   })
-  it('body text is serif', () => {
+  it('body text uses system sans', () => {
     const css = readFileSync(join(ROOT, 'styles.css'), 'utf8')
-    expect(css).toMatch(/--sans:\s*var\(--th-font-serif\)/)
+    expect(css).toMatch(/--sans:\s*var\(--th-font-sans\)/)
     expect(css).not.toMatch(/font-family:\s*"Geist"/)
   })
   it('workbench status chips are dot + text (no tinted chip backgrounds)', () => {

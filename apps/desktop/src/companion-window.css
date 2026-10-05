@@ -1,7 +1,7 @@
 :root { color-scheme: light; --ink: #5a422f; }
 * { box-sizing: border-box; }
 html, body { width: 100%; height: 100%; margin: 0; background: transparent; overflow: hidden; }
-body { color: var(--ink); font-family: -apple-system, BlinkMacSystemFont, "PingFang SC", system-ui, sans-serif; }
+body { color: var(--ink); font-family: var(--th-font-sans); }
 button { font: inherit; }
 /* [hidden] 必须赢过任何带 display 的类(.pet-card-host 是 flex)—— 同 styles.css 的那条,
    否则空卡片会一直占着一行画在 CC 底下。 */
@@ -44,7 +44,7 @@ button { font: inherit; }
 .pet-card { display: flex; flex-direction: column; min-height: 0; }
 .pet-card-title { margin: 0 0 6px; font-weight: 500; }
 .pet-card-count { opacity: .6; margin-left: 4px; }
-.pet-card-prompt { flex: 1 1 auto; min-height: 0; margin: 0 0 6px; overflow: auto; padding: 6px; border-radius: 6px; background: #f3efe7; font: 11px/1.4 ui-monospace, Menlo, monospace; white-space: pre-wrap; word-break: break-all; }
+.pet-card-prompt { flex: 1 1 auto; min-height: 0; margin: 0 0 6px; overflow: auto; padding: 6px; border-radius: 6px; background: #f3efe7; font: 11px/1.4 var(--th-font-mono); white-space: pre-wrap; word-break: break-all; }
 .pet-card-actions { display: flex; gap: 6px; }
 .pet-card-actions button { flex: 1; padding: 5px 0; border: 0; border-radius: 8px; cursor: pointer; }
 .pet-card-allow { background: #d9773b; color: #fff; }

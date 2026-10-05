@@ -227,7 +227,7 @@ export function renderDialogueMessage(m, ctx) {
 
 /** Bot display label — provider-aware. @param {Message} m */
 function botLabel(m) {
-  return m.provider ? `wechat-cc · ${m.provider}` : "wechat-cc"
+  return m.provider ? `CC · ${m.provider}` : "CC"
 }
 
 /** HH:MM for a message ts; a timeline without times isn't a timeline.

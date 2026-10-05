@@ -1,4 +1,14 @@
-/* 本地衬线字体(spec 2026-10-01 §3)。西文交给 TH Serif 4(Source Serif 4 的子集,按 OFL 保留字体名改名),中文交给 Noto Serif SC(只带 Regular,裁决 D1:层级靠字号和留白);Geist Mono 只给代码。授权见 fonts/OFL.txt。不走任何 CDN。 */
+/* 界面与阅读正文分别引用本机已安装的 Claude Sans / Serif(§10);不打包或下载该字体。
+   未安装时由 --th-font-sans 回退系统无衬线;中文由系统 CJK 字体逐字回退。
+   TH Serif 4 用于品牌字和英文阅读回退,Geist Mono 给代码。打包字体的授权见 fonts/OFL.txt。 */
+@font-face { font-family: "CC Anthropic Sans"; font-style: normal; font-weight: 400 500; font-display: swap;
+  src: local("AnthropicSansVariable-TextLight"), local("Anthropic Sans Text Light"); font-feature-settings: "dlig" 0; }
+@font-face { font-family: "CC Anthropic Sans"; font-style: italic; font-weight: 400 500; font-display: swap;
+  src: local("AnthropicSansVariable-TextLightItalic"), local("Anthropic Sans Text Light Italic"); font-feature-settings: "dlig" 0; }
+@font-face { font-family: "CC Anthropic Serif"; font-style: normal; font-weight: 400 500; font-display: swap;
+  src: local("AnthropicSerifVariable-TextLight"), local("Anthropic Serif Text Light"); }
+@font-face { font-family: "CC Anthropic Serif"; font-style: italic; font-weight: 400 500; font-display: swap;
+  src: local("AnthropicSerifVariable-TextLightItalic"), local("Anthropic Serif Text Light Italic"); }
 @font-face { font-family: "TH Serif 4"; font-weight: 400; font-display: swap; src: url("./fonts/th-serif-4-400.woff2") format("woff2");
   unicode-range: U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC, U+0304, U+0308, U+0329, U+2000-206F, U+20AC, U+2122, U+2190-21FF, U+2212, U+2215; }
 @font-face { font-family: "TH Serif 4"; font-weight: 500; font-display: swap; src: url("./fonts/th-serif-4-500.woff2") format("woff2");

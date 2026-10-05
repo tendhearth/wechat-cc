@@ -15,7 +15,7 @@
 //   page typically boots into wizard mode, but the dashboard <main> is always in
 //   the DOM and CSS toggles visibility via [data-mode="dashboard"].
 
-import { test, expect, clickNav } from './fixtures'
+import { test, expect, clickNav, clickRevealed } from './fixtures'
 
 // Helper: navigate to shimUrl, wait for boot, force dashboard mode, click the
 // A2A pane nav button, then wait for the list to settle (not "加载中…").
@@ -67,7 +67,7 @@ test('Add Agent flow: paste URL → preview → install → see in list', async 
   await gotoA2APane(page, shimUrl)
 
   // Open the Add Agent modal
-  await page.locator('#a2a-add-btn').click()
+  await clickRevealed(page, '#a2a-add-btn')
   await page.locator('#a2a-add-modal').waitFor({ state: 'visible' })
 
   // The form should be visible; preview and success should be hidden
@@ -349,7 +349,7 @@ test('Test button reports failure for unknown_agent', async ({ page, shimUrl, sh
 test('Add modal: ✕ button closes the modal', async ({ page, shimUrl, shim }) => {
   await shim.invoke('a2a.reset')
   await gotoA2APane(page, shimUrl)
-  await page.locator('#a2a-add-btn').click()
+  await clickRevealed(page, '#a2a-add-btn')
   await expect(page.locator('dialog#a2a-add-modal[open]')).toBeVisible()
   await page.locator('#a2a-add-modal-close').click()
   await expect(page.locator('dialog#a2a-add-modal[open]')).toHaveCount(0)
@@ -358,7 +358,7 @@ test('Add modal: ✕ button closes the modal', async ({ page, shimUrl, shim }) =
 test('Add modal: ESC closes (native <dialog> showModal behavior)', async ({ page, shimUrl, shim }) => {
   await shim.invoke('a2a.reset')
   await gotoA2APane(page, shimUrl)
-  await page.locator('#a2a-add-btn').click()
+  await clickRevealed(page, '#a2a-add-btn')
   await expect(page.locator('dialog#a2a-add-modal[open]')).toBeVisible()
   await page.keyboard.press('Escape')
   await expect(page.locator('dialog#a2a-add-modal[open]')).toHaveCount(0)
@@ -367,7 +367,7 @@ test('Add modal: ESC closes (native <dialog> showModal behavior)', async ({ page
 test('Add modal: clicking backdrop closes the modal', async ({ page, shimUrl, shim }) => {
   await shim.invoke('a2a.reset')
   await gotoA2APane(page, shimUrl)
-  await page.locator('#a2a-add-btn').click()
+  await clickRevealed(page, '#a2a-add-btn')
   const dialog = page.locator('dialog#a2a-add-modal')
   await expect(dialog).toBeVisible()
   // Click outside the modal content (the dialog backdrop region).

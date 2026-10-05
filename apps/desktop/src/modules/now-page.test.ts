@@ -5,7 +5,7 @@ import { mountNowPage } from './now-page.js'
 function dom() {
   document.body.innerHTML = `<article class="cc-now-pane" data-now="home" data-cc="away">
     <button id="now-back" hidden></button><h1 id="now-greeting"></h1>
-    <button id="now-cc-bubble" hidden><span class="now-bubble-text"></span><small class="now-bubble-time"></small></button>
+    <button id="now-cc-bubble" hidden><span class="now-bubble-text"></span><small class="now-bubble-time"></small><span class="now-bubble-more" hidden></span></button>
     <button id="now-cc"></button>
     <section id="now-waiting" hidden><h2 id="now-waiting-title"></h2><ul id="now-waiting-list"></ul></section>
     <div id="converse-root"></div></article>`
@@ -75,6 +75,15 @@ describe('mountNowPage', () => {
     expect(document.querySelector('.now-bubble-time')!.textContent).toBe('9月30日 08:05')
     page.setLatestLine({ text: '早', at: null })
     expect(document.querySelector('.now-bubble-time')!.textContent).toBe('')
+  })
+  it('完整阅读入口只在预览省略内容时出现', () => {
+    const root = dom(); const page = mountNowPage({ root, presencePoller: poller(), onOpenTask: vi.fn() })
+    page.setLatestLine({ text: '整理好了。\n\n这是第二段。', at: null })
+    expect(document.querySelector('.now-bubble-text')!.textContent).toBe('整理好了。')
+    expect((document.querySelector('.now-bubble-more') as HTMLElement).hidden).toBe(false)
+    expect(document.getElementById('now-cc-bubble')!.getAttribute('aria-label')).toContain('查看完整回复')
+    page.setLatestLine({ text: '在呢。', at: null })
+    expect((document.querySelector('.now-bubble-more') as HTMLElement).hidden).toBe(true)
   })
   it('greeting follows the clock: recomputed on presence ticks and on mode change', () => {
     const root = dom(); const pp = poller(); let h = 9
