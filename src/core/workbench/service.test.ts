@@ -54,6 +54,16 @@ describe('persistent workbench', () => {
     expect(service.list().tasks).toEqual([]);expect(spawned).toBe(0)
     expect(()=>service.addProject({path:join(root,'missing'),providerId:'codex'})).toThrow('invalid_path')
   })
+  it('stops listing a project whose folder is gone and has no unarchived task, and lists it again when the folder returns (2026-10-05)',()=>{
+    setup({spawn:()=>{throw Error('must not execute')}})
+    const scratch=join(root,'scratch');mkdirSync(scratch)
+    const added=service.addProject({path:scratch,name:'临时',providerId:'codex'})
+    expect(service.list().projects.map(p=>p.id)).toContain(added.id)
+    removeTempDir(scratch)
+    expect(service.list().projects.map(p=>p.id)).not.toContain(added.id)
+    mkdirSync(scratch)
+    expect(service.list().projects.map(p=>p.id)).toContain(added.id)
+  })
   it('records bounded native capability notices only for their current uncancelled run',async()=>{
     const contexts:SpawnContext[]=[],turns:Array<{resolve:()=>void}>=[]
     setup({async spawn(_p,ctx){const turn=deferred();contexts.push(ctx);turns.push(turn);return{async *dispatch(){yield {kind:'init',sessionId:'session-one'};await turn.promise;yield result},async close(){turn.resolve()}}}})
