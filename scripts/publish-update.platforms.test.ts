@@ -66,9 +66,11 @@ describe('1.7.5 改名:macOS updater 包换了文件名,latest.json 的形状不
   })
 
   it('本机单平台发布:先找新名字,回落老名字', () => {
-    expect(localMacUpdaterTarball('/b', p => p === '/b/wechat-cc.app.tar.gz')).toBe('/b/wechat-cc.app.tar.gz')
-    expect(localMacUpdaterTarball('/b', () => true)).toBe('/b/Tendhearth CC.app.tar.gz')
-    expect(localMacUpdaterTarball('/b', () => false)).toBe('/b/Tendhearth CC.app.tar.gz')
+    // 路径用 join 拼,跟实现一样按平台分隔符(Windows CI 上是反斜杠)。
+    const oldTar = join('/b', 'wechat-cc.app.tar.gz'), newTar = join('/b', 'Tendhearth CC.app.tar.gz')
+    expect(localMacUpdaterTarball('/b', p => p === oldTar)).toBe(oldTar)
+    expect(localMacUpdaterTarball('/b', () => true)).toBe(newTar)
+    expect(localMacUpdaterTarball('/b', () => false)).toBe(newTar)
   })
 
   it('dmg 名跟 macOS 的 productName(tauri.macos.conf.json 覆盖基础配置)', () => {
