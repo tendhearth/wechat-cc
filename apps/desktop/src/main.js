@@ -35,7 +35,7 @@ import { rerenderLogs, loadLogsPane, startLogsAutoRefresh, stopLogsAutoRefresh }
 import { initDialoguePage, stopDialogueAutoRefresh } from "./modules/dialogue-page.js"
 import { initTodosPage, deactivateTodosPage } from "./modules/todos.js"
 import { startAppUpdateChecks } from "./modules/app-update.js"
-import { initConversePage, subscribeConverse, setConverseMode } from "./modules/converse.js"
+import { initConversePage, subscribeConverse, setConverseMode, addImages as addConverseImages } from "./modules/converse.js"
 import { mountNowPage } from "./modules/now-page.js"
 import { mountNowConnections } from "./modules/now-connections.js"
 import { latestCCLine, nowStatusLine } from "./modules/now-home.js"
@@ -220,6 +220,17 @@ window.addEventListener('pagehide', () => { workbenchAttention?.destroy(); workb
 window.addEventListener('pageshow', event => { if (event.persisted) startWorkbenchAttention() })
 
 installExternalLinks({ invoke: mock ? null : invoke, onError: err => showToast(`打不开链接:${formatInvokeError(err)}`) })
+
+// 文件拖放(2026-10-05):窗口不再由 Tauri 截走拖进来的文件(dragDropEnabled:false),网页自己接。
+// 落在「此刻」任何地方的图 ⇒ 进对话的待发图片;各页面自己接住的(工作台附件、对话框)它们先处理;
+// 剩下没人要的一律拦掉 —— 不然 webview 会直接「打开」那个文件,把整个 app 换成一张图。
+window.addEventListener('dragover', ev => { if (ev.dataTransfer?.types?.includes('Files')) ev.preventDefault() })
+window.addEventListener('drop', ev => {
+  if (ev.defaultPrevented) return
+  ev.preventDefault()
+  const pane = /** @type {HTMLElement|null} */ (document.querySelector('.dash-pane[data-pane]:not([hidden])'))
+  if (pane?.dataset.pane === 'overview' && ev.dataTransfer?.files?.length) void addConverseImages(ev.dataTransfer.files)
+})
 
 // Bag passed to module functions instead of imported singletons. Keeps each
 // module testable in isolation (any conformant deps object → run the module

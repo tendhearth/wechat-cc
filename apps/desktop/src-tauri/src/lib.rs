@@ -685,7 +685,9 @@ fn reveal_reply_file(token: String) -> Result<(), String> {
 }
 
 #[tauri::command]
-async fn agent_converse(text: String) -> Result<Value, String> {
+// `images`:此刻里拖进 / 粘进来的图(2026-10-05),原样 `[{ mime, data_b64 }]` 交给 daemon,
+// 张数 / 大小 / 格式在 daemon 的路由里校验(网页层也先挡一道,免得白传)。
+async fn agent_converse(text: String, images: Option<Vec<Value>>) -> Result<Value, String> {
     use std::time::Duration;
     use tokio::time::timeout;
 
@@ -736,7 +738,11 @@ async fn agent_converse(text: String) -> Result<Value, String> {
     // reqwest's `json` feature is not enabled in this crate (see Cargo.toml —
     // default-features = false, only "rustls-tls"), so serialize the body by
     // hand rather than pull in a new feature flag.
-    let payload = serde_json::to_string(&serde_json::json!({ "text": text }))
+    let body = match images {
+        Some(list) if !list.is_empty() => serde_json::json!({ "text": text, "images": list }),
+        _ => serde_json::json!({ "text": text }),
+    };
+    let payload = serde_json::to_string(&body)
         .map_err(|e| format!("failed to serialize request body: {e}"))?;
 
     let result = timeout(duration, async {

@@ -109,6 +109,11 @@ export type ConverseAttachment =
   | Exclude<AppAttachment, { kind: 'sticker' }>
   | { kind: 'sticker'; label: string; file?: string; image?: string }
 
+/** 桌面「此刻」里拖进 / 粘进来的图(2026-10-05):路由已校验并解码,companionConverse 落到 inbox 当附件交给 CC。 */
+export interface ConverseImage { mime: string; bytes: Uint8Array }
+/** 一次最多几张、每张多大、认哪些格式 —— 路由与测试共用。 */
+export const CONVERSE_IMAGE_LIMITS = { count: 4, bytes: 10 * 1024 * 1024, mimes: { 'image/png': 'png', 'image/jpeg': 'jpg', 'image/webp': 'webp', 'image/gif': 'gif', 'image/heic': 'heic' } as Record<string, string> }
+
 export interface ConverseResult { reply: string; attachments?: ConverseAttachment[]; narration?: string[] }
 
 /** 内联进桌面回包的表情图至多这么大;再大就只显示 label。 */
