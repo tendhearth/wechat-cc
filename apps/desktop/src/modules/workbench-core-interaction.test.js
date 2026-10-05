@@ -137,14 +137,14 @@ describe('workbench page interaction through actual controls',()=>{
  })
  it('returns from artifacts to the original location, closes the results, preserves the preview and follows new content again',async()=>{
   const f=await pageFixture(),preview={artifactId:'file',html:'<pre>cached preview</pre>'}
-  f.controller.state.selectedArtifactId='file';f.controller.state.preview=preview;f.controller.paint(true);f.geometry()
+  f.controller.state.selectedArtifactId='file';f.controller.state.preview=preview;f.controller.state.previewOpen=false;f.controller.paint(true);f.geometry()
   f.content().scrollTop=317;f.content().dispatchEvent(new Event('scroll'))
   f.root.querySelector('[data-action="show-artifacts"]').click()
-  expect(f.root.querySelector('#wb-artifacts').open).toBe(true)
+  expect(f.root.querySelector('.wb-artifact-panel')).not.toBeNull()
   f.content().scrollTop=900;f.root.querySelector('[data-action="back-to-dialogue"]').click()
   expect(f.root.querySelector('#wb-artifacts').open).toBe(false);expect(f.content().scrollTop).toBe(317)
   expect(f.controller.state.selectedArtifactId).toBe('file');expect(f.controller.state.preview).toBe(preview)
-  f.content().scrollTop=900;f.content().dispatchEvent(new Event('scroll'))
+  f.geometry();f.content().scrollTop=900;f.content().dispatchEvent(new Event('scroll'))
   await f.push([event('初始回复\n\n继续流入')])
   expect(f.content().scrollTop).toBe(1000);expect(f.root.querySelector('.wb-reading-bar').hidden).toBe(true)
   expect(f.root.textContent).toContain('继续流入')
@@ -154,5 +154,17 @@ describe('workbench page interaction through actual controls',()=>{
   f.root.querySelector('#wb-artifacts > summary').click();expect(f.root.querySelector('#wb-artifacts').open).toBe(true)
   f.content().scrollTop=700;f.root.querySelector('[data-action="back-to-dialogue"]').click()
   expect(f.content().scrollTop).toBe(285);expect(f.root.querySelector('#wb-artifacts').open).toBe(false)
+ })
+ it('returns from an open preview to latest content and keeps following later replies',async()=>{
+  vi.spyOn(HTMLElement.prototype,'clientHeight','get').mockReturnValue(100)
+  vi.spyOn(HTMLElement.prototype,'scrollHeight','get').mockReturnValue(1000)
+  const f=await pageFixture(),preview={artifactId:'file',html:'<pre>cached preview</pre>'}
+  f.controller.state.selectedArtifactId='file';f.controller.state.preview=preview;f.controller.state.previewOpen=true
+  f.controller.paint(true);f.geometry();f.content().scrollTop=300;f.content().dispatchEvent(new Event('scroll'))
+  await f.push([event('初始回复\n\n第二条内容')])
+  f.root.querySelector('[data-action="latest-content"]').click();f.geometry()
+  expect(f.root.querySelector('.wb-artifact-panel')).toBeNull()
+  await f.push([event('初始回复\n\n第二条内容\n\n之后仍继续跟随')])
+  expect(f.content().scrollTop).toBe(1000);expect(f.root.querySelector('.wb-reading-bar').hidden).toBe(true)
  })
 })

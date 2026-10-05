@@ -27,6 +27,11 @@ function makeDeps(opts: {
 }
 
 describe('killDaemonByPid', () => {
+  it('认 1.7.5 起 macOS 的新 sidecar 名 tendhearth-cc-cli', async () => {
+    const { deps } = makeDeps({ cmdline: '/Applications/Tendhearth CC.app/Contents/MacOS/tendhearth-cc-cli run --dangerously', diesAfter: 0 })
+    const r = await killDaemonByPid(deps, 4242)
+    expect(r.killed).toBe(true)
+  })
   it('rejects invalid pids', async () => {
     const { deps } = makeDeps({})
     expect((await killDaemonByPid(deps, 0)).killed).toBe(false)

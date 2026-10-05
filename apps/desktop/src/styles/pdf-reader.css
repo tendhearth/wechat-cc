@@ -1,0 +1,24 @@
+.cc-pdf-reader { display:flex; flex-direction:column; height:100%; min-height:320px; color:var(--th-ink); font:var(--th-size-body)/var(--th-lh-body) var(--th-font-sans); }
+.cc-pdf-tools { display:flex; align-items:center; flex-wrap:wrap; gap:8px 16px; padding:8px 0 12px; flex-shrink:0; }
+.cc-pdf-tools[hidden], .cc-pdf-password[hidden], .cc-pdf-page[hidden] { display:none; }
+.cc-pdf-tools form, .cc-pdf-tools label { display:flex; align-items:center; gap:6px; margin:0; }
+.cc-pdf-reader button, .cc-pdf-reader select, .cc-pdf-reader input { font:inherit; color:inherit; }
+.cc-pdf-reader button { background:none; border:0; padding:4px 0; cursor:pointer; }
+.cc-pdf-reader button:disabled { opacity:.4; cursor:default; }
+.cc-pdf-reader input, .cc-pdf-reader select { border:1px solid var(--th-hair); border-radius:var(--th-radius-nav); padding:4px 6px; background:var(--th-paper); }
+.cc-pdf-tools input { width:52px; }
+.cc-pdf-tools { font-size:var(--th-size-meta); }
+.cc-pdf-status { margin:0 0 12px; color:var(--th-ink-soft); font-size:var(--th-size-meta); }
+.cc-pdf-status:empty { display:none; }
+.cc-pdf-password { display:flex; flex-wrap:wrap; align-items:center; gap:12px; margin-bottom:16px; }
+.cc-pdf-password input { max-width:180px; }
+.cc-pdf-viewport { flex:1; min-height:0; overflow:auto; padding:12px; background:var(--th-ground); }
+.cc-pdf-page { position:relative; margin:0 auto; background:white; }
+.cc-pdf-page canvas { display:block; }
+/* PDF.js TextLayer positioning, scoped to the reader; see vendor/pdfjs/LICENSE. */
+.cc-pdf-text { position:absolute; inset:0; overflow:clip; line-height:1; letter-spacing:normal; word-spacing:normal; text-align:initial; -webkit-text-size-adjust:none; text-size-adjust:none; forced-color-adjust:none; transform-origin:0 0; caret-color:CanvasText; z-index:1; --min-font-size:1; --text-scale-factor:calc(var(--total-scale-factor) * var(--min-font-size)); --min-font-size-inv:calc(1 / var(--min-font-size)); }
+.cc-pdf-text :is(span,br) { color:transparent; position:absolute; white-space:pre; cursor:text; transform-origin:0 0; -webkit-user-select:text; user-select:text; }
+.cc-pdf-text > :not(.markedContent), .cc-pdf-text .markedContent span:not(.markedContent) { z-index:1; --font-height:0; font-size:calc(var(--text-scale-factor) * var(--font-height)); --scale-x:1; --rotate:0deg; transform:rotate(var(--rotate)) scaleX(var(--scale-x)) scale(var(--min-font-size-inv)); }
+.cc-pdf-text .markedContent { display:contents; }
+.wb-input-preview .cc-pdf-reader { height:min(68vh,720px); }
+.cc-pdf-text ::selection { background:rgba(79,107,79,.3); }

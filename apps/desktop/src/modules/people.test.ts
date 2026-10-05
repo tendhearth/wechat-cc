@@ -10,7 +10,7 @@ const mkEl = () => ({ innerHTML: '', textContent: '', addEventListener: () => {}
 // @ts-expect-error minimal DOM stub
 globalThis.document = { getElementById: (id: string) => els.get(id) ?? null }
 
-const { renderPeople, familiarityLine, canVisit, visitTarget, onPeopleClick } = await import('./people.js')
+const { renderPeople, refreshPeople, deactivatePeople, familiarityLine, canVisit, visitTarget, onPeopleClick } = await import('./people.js')
 
 const rel = (o: Partial<Record<string, unknown>> = {}) => ({
   id: 'neighbor:ayou', kind: 'neighbor', label: '邻居「阿柚」', channel: null,
@@ -70,4 +70,39 @@ describe('onPeopleClick', () => {
     await onPeopleClick({ target: { closest: () => btn({ 'data-pp-action': 'visit', 'data-pp-target': 'ayou' }) } })
     expect(showToast).toHaveBeenCalledWith('社交还没开')
   })
+})
+
+describe('联系人读取的恢复和生命周期',()=>{
+ it('旧重试读取不覆盖后来的联系人渲染',async()=>{
+  let finish!:(value:unknown)=>void
+  invokeApi.mockImplementationOnce(()=>new Promise(r=>{finish=r}));const stale=refreshPeople()
+  renderPeople({relationships:[rel({label:'已读到的新朋友'})]})
+  finish({relationships:[rel({label:'旧朋友'})]});await stale
+  expect(host().innerHTML).toContain('已读到的新朋友');expect(host().innerHTML).not.toContain('旧朋友')
+ })
+ it('離頁使旧读取与串门回执失效，不能给新页面冒成功提示',async()=>{
+  let finish!:(value:unknown)=>void
+  invokeApi.mockImplementationOnce(()=>new Promise(r=>{finish=r}))
+  const target={disabled:false,getAttribute:(k:string)=>k==='data-pp-target'?'ayou':'visit'}
+  const request=onPeopleClick({target:{closest:()=>target}});deactivatePeople()
+  finish({ok:true});await request
+  expect(target.disabled).toBe(false);expect(showToast).not.toHaveBeenCalled()
+ })
+ it('失败给原地重试入口，明确未开启才给启用动作',()=>{
+  renderPeople({relationships:null} as never)
+  expect(host().innerHTML).toContain('data-pp-action="retry"');expect(host().innerHTML).not.toContain('data-action="social-enable"')
+  renderPeople({relationships:null,error:'social_not_wired'} as never)
+  expect(host().innerHTML).toContain('data-action="social-enable"')
+ })
+ it('上次聊到的完整文字不依赖单行省略显示',()=>{
+  renderPeople({relationships:[rel({familiarity:{visits:1,lastAt:null,note:'第一行\n第二行完整文字'}})]})
+  expect(host().innerHTML).toContain('第二行完整文字')
+ })
+ it('串门请求没有返回时，同一目标不能从另一个入口重复发起',async()=>{
+  let finish!:(value:unknown)=>void
+  invokeApi.mockImplementationOnce(()=>new Promise(r=>{finish=r}))
+  const make=()=>({disabled:false,getAttribute:(k:string)=>k==='data-pp-target'?'ayou':'visit'})
+  const first=onPeopleClick({target:{closest:()=>make()}});await onPeopleClick({target:{closest:()=>make()}})
+  expect(invokeApi).toHaveBeenCalledTimes(1);finish({ok:true});await first
+ })
 })

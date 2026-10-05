@@ -92,6 +92,7 @@ const selfDeployCmd = defineCommand({
         // 插件来源登记(2026-09-30):只在源码模式下有 checkout 可登记;打包版保留已有指针。
         pluginSourceCandidates: compiled ? [] : pluginSourceCandidates(repoRoot, deps.spawnSync),
         allowMissingPlugins: (args as Record<string, unknown>)['allow-missing-plugins'] === true || (args as Record<string, unknown>).allowMissingPlugins === true,
+        exists: existsSync,
       })
     } catch (err) {
       const error = err instanceof Error ? err.message : String(err)
@@ -100,8 +101,10 @@ const selfDeployCmd = defineCommand({
       // short-circuits the normal path) — keep both paths agreeing on exit 2.
       const exitCode = error === 'self_deploy_unsupported_platform' ? 2 : 1
       const message = error === 'launchagent_not_app_bundle'
-        ? 'installed LaunchAgent does not point at an app bundle (looks like a dev-mode/source-checkout plist) — pass --app <path-to-wechat-cc.app> to target it explicitly'
-        : error
+        ? 'installed LaunchAgent does not point at an app bundle (looks like a dev-mode/source-checkout plist) — pass --app <path-to-.app> (e.g. "/Applications/Tendhearth CC.app") to target it explicitly'
+        : error === 'launchagent_stale'
+          ? 'installed LaunchAgent points at an app binary that no longer exists (the app was updated/renamed/moved) — open the app once (it repairs the LaunchAgent) or run `<app>/Contents/MacOS/tendhearth-cc-cli service repair`, then retry; or pass --app'
+          : error
       if (json) console.log(JSON.stringify({ ok: false, exitCode, error, message }, null, 2))
       else console.error(`self deploy: ${message}`)
       process.exit(exitCode)

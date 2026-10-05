@@ -98,8 +98,13 @@ describe('resolveAppMainBinary', () => {
   it('老包:wechat-cc', () => {
     expect(__testInternals.resolveAppMainBinary(macos, p => p === `${macos}/wechat-cc`)).toBe(`${macos}/wechat-cc`)
   })
-  it('两个都在 ⇒ 取新名字;都没有 ⇒ null', () => {
-    expect(__testInternals.resolveAppMainBinary(macos, () => true)).toBe(`${macos}/wechat_cc_desktop`)
+  it('1.7.5 起:Tendhearth CC(带空格,别在任何地方按空格切)', () => {
+    const m = '/Applications/Tendhearth CC.app/Contents/MacOS'
+    expect(__testInternals.resolveAppMainBinary(m, p => p === `${m}/Tendhearth CC`)).toBe(`${m}/Tendhearth CC`)
+  })
+  it('都在 ⇒ 取最新的名字;都没有 ⇒ null', () => {
+    expect(__testInternals.resolveAppMainBinary(macos, () => true)).toBe(`${macos}/Tendhearth CC`)
+    expect(__testInternals.resolveAppMainBinary(macos, p => !p.endsWith('/Tendhearth CC'))).toBe(`${macos}/wechat_cc_desktop`)
     expect(__testInternals.resolveAppMainBinary(macos, () => false)).toBeNull()
   })
 })

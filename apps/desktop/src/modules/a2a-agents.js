@@ -11,15 +11,60 @@ import { showToast } from "../view.js"
  */
 
 import { invokeApi } from '../api.js'
-import { initHuntBag, renderHuntBag } from './journal.js'
-import { initPeople, renderPeople } from './people.js'
+import { initHuntBag, refreshHuntBag } from './journal.js'
+import { initPeople, refreshPeople } from './people.js'
 import { initWishes, refreshWishes } from './wishes.js'
-import { icon } from './icons.js'
 
 // ── module-level state ────────────────────────────────────────────────────
 /** @type {Record<string, unknown> | null} */
 let previewedCard = null
 let previewedUrl = ''
+
+// A page visit owns its reads and UI writes. Drafts survive visits; requests do not.
+let active = true
+let pageGeneration = 0
+let refreshGeneration = 0
+/** @type {HTMLElement | null} */
+let initializedList = null
+// Keep mutations single-flight even if their page or dialog closes.
+const agentMutations = new Map()
+let inboundOperation = null
+let inboundAvailable = true
+let socialEnableOperation = null
+let activityRevision = 0
+let testSession = null
+const testSending = new Map()
+let addSession = null
+let previewOperation = null
+const addInstalling = new Map()
+
+/** @param {number} generation */
+function isPageCurrent(generation) { return active && pageGeneration === generation }
+
+export function deactivateA2AAgentsTab() {
+  active = false
+  pageGeneration++
+  refreshGeneration++
+  closeMailThread()
+  deactivatePairing()
+  closeActivityDrawer()
+  closeTestModal()
+  closeAddModal(false)
+}
+
+/** Only these explicit server responses mean social has not been wired. */
+function isSocialUnwired(error) { return error === 'social_not_wired' || error === 'penpal_not_wired' }
+function readErrorText(err) { return err instanceof Error ? err.message : String(err) }
+function renderReadError(what, action = 'forage-retry') {
+  return `<div class="fd-empty" role="status">${escapeHtml(what)}暂时读不到。<button class="btn ghost" data-action="${action}" type="button">重试</button></div>`
+}
+async function onForageRetry(e) {
+  const target = e.target?.closest?.('[data-action="forage-retry"], [data-action="mailbox-retry"]')
+  if (!target || target.disabled || !active) return
+  target.disabled = true
+  try { await refresh() } finally { if (target.isConnected) target.disabled = false }
+}
+
 
 // ── public API ────────────────────────────────────────────────────────────
 
@@ -49,20 +94,26 @@ function renderSocialOffState(what) {
  * 连接,那是用户该自己挑时机的事;替他决定不合适。
  */
 async function onSocialEnableClick(btn) {
-  if (!btn || btn.disabled) return
+  if (!btn || btn.disabled || !active || socialEnableOperation) return
+  const operation = { generation: pageGeneration }
+  socialEnableOperation = operation
   btn.disabled = true
   const original = btn.textContent
   btn.textContent = '启用中…'
   try {
     const r = /** @type {{enabled?:boolean, restart_required?:boolean}} */ (
       await invokeApi('POST', '/v1/social/enable', { enabled: true }))
+    if (!isPageCurrent(operation.generation)) return
     if (!r || r.enabled !== true) throw new Error('启用未生效')
     btn.textContent = '已启用'
     showToast(r.restart_required ? '社交已启用 —— 重启守护进程后生效' : '社交已启用')
   } catch (err) {
+    if (!isPageCurrent(operation.generation)) return
     btn.disabled = false
     btn.textContent = original
-    showToast(`启用失败:${err instanceof Error ? err.message : String(err)}`)
+    showToast(`启用失败:${readErrorText(err)}`)
+  } finally {
+    if (socialEnableOperation === operation) socialEnableOperation = null
   }
 }
 
@@ -70,10 +121,11 @@ export async function initA2AAgentsTab() {
   const list = document.getElementById('a2a-agents-list')
   if (!list) return
 
-  // Load initial list.
-  await refresh().catch(err => {
-    if (list) list.innerHTML = `<li class="empty">加载失败：${escapeHtml(String(err?.message ?? err))}</li>`
-  })
+  const pane = document.querySelector?.('.dash-pane[data-pane="a2a-agents"]')
+  if (!pane || !pane.hidden) await refresh()
+  else deactivateA2AAgentsTab()
+  if (initializedList === list) return
+  initializedList = list
 
   // Wire all event handlers ONCE.
   document.getElementById('a2a-add-btn')?.addEventListener('click', openAddModal)
@@ -85,7 +137,7 @@ export async function initA2AAgentsTab() {
   // content area). HTML <dialog> doesn't close on backdrop click by
   // default — event target === the dialog itself only when the click
   // landed on the backdrop (not on any descendant); use that as the
-  // signal. ESC is handled natively by showModal().
+  // signal. Esc uses the same owner-invalidating close handlers below.
   document.getElementById('a2a-add-modal-close')?.addEventListener('click', closeAddModal)
   document.getElementById('a2a-add-modal')?.addEventListener('click', (e) => {
     if (e.target instanceof HTMLDialogElement) closeAddModal()
@@ -94,10 +146,7 @@ export async function initA2AAgentsTab() {
   document.getElementById('a2a-test-modal')?.addEventListener('click', (e) => {
     if (e.target instanceof HTMLDialogElement) closeTestModal()
   })
-  document.getElementById('a2a-activity-close')?.addEventListener('click', () => {
-    const drawer = document.getElementById('a2a-activity-drawer')
-    if (drawer) drawer.hidden = true
-  })
+  document.getElementById('a2a-activity-close')?.addEventListener('click', closeActivityDrawer)
   document.getElementById('a2a-test-inbound')?.addEventListener('click', () => runTest(false))
   document.getElementById('a2a-test-outbound')?.addEventListener('click', () => runTest(true))
   document.getElementById('a2a-test-close')?.addEventListener('click', closeTestModal)
@@ -105,11 +154,28 @@ export async function initA2AAgentsTab() {
   // refresh — duplicating would multiply calls per click).
   list.addEventListener('click', onCardAction)
 
+  document.getElementById('fd-hero-status')?.addEventListener('click', onForageRetry)
+  document.getElementById('fd-inbound-note')?.addEventListener('click', onForageRetry)
+  document.getElementById('fd-mailbox-count')?.addEventListener('click', onForageRetry)
+  document.getElementById('fd-connect-btn')?.addEventListener('click', () => {
+    const details = document.querySelector?.('#fd-net > details')
+    if (details) details.open = true
+    document.getElementById('fd-pair-start')?.focus()
+  })
+  for (const [id, close] of [['a2a-add-modal', closeAddModal], ['a2a-test-modal', closeTestModal]]) {
+    const modal = document.getElementById(id)
+    modal?.addEventListener('cancel', event => { event.preventDefault(); close() })
+    modal?.addEventListener('close', () => {
+      // The browser may deliver an old close event after the dialog reopened.
+      if (modal instanceof HTMLDialogElement && !modal.open) {
+        if (id === 'a2a-add-modal') invalidateAddSession()
+        else testSession = null
+      }
+    })
+  }
+  document.getElementById('a2a-add-preview')?.addEventListener('input', syncInstallButton)
   // 觅食台 — inbound toggle, pairing.
   document.getElementById('fd-inbound-toggle')?.addEventListener('click', onInboundToggle)
-  document.getElementById('fd-inbound-toggle')?.addEventListener('keydown', (e) => {
-    if (e instanceof KeyboardEvent && (e.key === 'Enter' || e.key === ' ')) { e.preventDefault(); onInboundToggle() }
-  })
   document.getElementById('fd-pair-start')?.addEventListener('click', onPairStart)
   document.getElementById('fd-pair-accept')?.addEventListener('click', onPairAccept)
   document.getElementById('fd-mailbox')?.addEventListener('click', onMailboxAction)
@@ -119,38 +185,39 @@ export async function initA2AAgentsTab() {
 }
 
 export async function refresh() {
-  const [listResp, inbound, mailResp, huntResp, peopleResp] = await Promise.all([
-    /** @type {Promise<{agents?:Array<any>}|null>}   */ (invokeApi('GET', '/v1/a2a/list').catch(() => null)),
-    /** @type {Promise<any>}                          */ (invokeApi('GET', '/v1/social/inbound').catch(() => null)),
-    /** @type {Promise<{channels?:Array<any>}|null>} */ (invokeApi('GET', '/v1/penpal/channels').catch(() => null)),
-    /** @type {Promise<{items?:Array<any>}|null>}    */ (invokeApi('GET', '/v1/journal').catch(() => null)),
-    /** @type {Promise<{relationships?:Array<any>}|null>} */ (invokeApi('GET', '/v1/social/relationships').catch(() => null)),
-  ])
-
-  // keep the server-status banner (best-effort, as before)
-  const banner = document.getElementById('a2a-server-banner')
-  if (banner) {
-    const info = /** @type {Record<string, any>} */ (await invokeApi('GET', '/v1/a2a/info').catch(() => null))
-    renderServerBanner(info, banner)
+  active = true
+  const generation = pageGeneration
+  const request = ++refreshGeneration
+  const read = async (path, key) => {
+    try {
+      const data = await invokeApi('GET', path)
+      if (!data || (key && !Array.isArray(data[key]))) throw new Error('返回内容不完整')
+      if (path === '/v1/social/inbound' && typeof data.enabled !== 'boolean') throw new Error('返回内容不完整')
+      return { data, error: '' }
+    } catch (err) { return { data: null, error: readErrorText(err) } }
   }
-
+  const [list, inbound, mail, info] = await Promise.all([
+    read('/v1/a2a/list', 'agents'), read('/v1/social/inbound', ''),
+    read('/v1/penpal/channels', 'channels'), read('/v1/a2a/info', ''),
+    refreshHuntBag(), refreshPeople(),
+  ])
+  if (!isPageCurrent(generation) || request !== refreshGeneration) return
+  const banner = document.getElementById('a2a-server-banner')
+  if (banner) renderServerBanner(info.data, banner)
   renderForageDesk({
-    agents: listResp ? (listResp.agents ?? []) : null,
-    inbound,
-    mailbox: mailResp ? (mailResp.channels ?? []) : null,
+    agents: list.data?.agents ?? null, agentsError: list.error,
+    inbound: inbound.data, inboundError: inbound.error,
+    mailbox: mail.data?.channels ?? null, mailboxError: mail.error,
   })
-  // 背包自己渲染 —— 打猎和社交觅食是两条独立的链路,社交没启用时背包
-  // 照样有东西(它不依赖任何 peer)。
-  renderHuntBag({ items: huntResp ? (huntResp.items ?? []) : null })
-  renderPeople({ relationships: peopleResp ? (peopleResp.relationships ?? []) : null })
-  // 心愿自己拉自己的:回信是**别人**什么时候回就什么时候到,不刷这一块的话,
-  // 「几张回信」会一直停在派出去那一刻的 0。
   await refreshWishes()
-  // 折叠区的小字:几封未读 —— 让折着的东西不至于被忘掉
+  if (!isPageCurrent(generation) || request !== refreshGeneration) return
   const sub = document.getElementById('fd-tools-sub')
   if (sub) {
-    const unread = (mailResp ? (mailResp.channels ?? []) : []).reduce(/** @param {number} a @param {any} c */ (a, c) => a + (Number(c.unread) || 0), 0)
-    sub.textContent = unread ? `${unread} 封未读` : ''
+    if (mail.error) sub.textContent = isSocialUnwired(mail.error) ? '' : '信箱暂时读不到'
+    else {
+      const unread = mail.data.channels.reduce((a, c) => a + (Number(c.unread) || 0), 0)
+      sub.textContent = unread ? `${unread} 封未读` : ''
+    }
   }
 }
 
@@ -211,6 +278,7 @@ function renderAgents(agents, list) {
         <button class="btn danger" data-action="remove" data-id="${escapeHtml(a.id)}">断开</button>
       </div>
     `
+    if (agentMutations.has(String(a.id))) li.querySelectorAll('button').forEach(button => { button.disabled = true })
     list.appendChild(li)
   }
 }
@@ -238,70 +306,73 @@ export function peerReach(a) {
 }
 
 export function renderForageDesk(data) {
-  const agents = Array.isArray(data.agents) ? data.agents : []
-  // mailbox 是这里仅剩的、依赖「社交」总开关的数据源(seek/echo 链路已撤下)——
-  // 用它的 null 与否当「社交功能是否启用」的信号。
-  const socialWired = data.mailbox != null
-
-  // ── hero status ──────────────────────────────────────────────────────
+  const agents = Array.isArray(data.agents) ? data.agents : null
+  const unwired = isSocialUnwired(data.mailboxError) || isSocialUnwired(data.inboundError)
   const status = document.getElementById('fd-hero-status')
   if (status) {
-    const n = agents.length
-    status.innerHTML =
-      icon('user-group', { size: 24, className: 'fd-status-icon' }) +
-      `<span class="fd-status-line"><span>连着 <b>${n} 位</b>朋友的 CC</span></span>`
+    status.innerHTML = agents
+      ? `<span class="fd-status-line"><span>连着 <b>${agents.length} 位</b>朋友的 CC</span></span>`
+      : renderReadError('朋友列表')
   }
   const note = document.getElementById('fd-social-note')
   if (note) {
-    if (socialWired) { note.hidden = true; note.textContent = '' }
-    else { note.hidden = false; note.textContent = '社交功能尚未开启。展开下方「你的觅食网」，开启「让朋友的 CC 能找到我」，再重新连接 CC。' }
+    note.hidden = !unwired
+    note.textContent = unwired ? '社交功能尚未开启。展开下方「你的觅食网」，开启「让朋友的 CC 能找到我」，再重新连接 CC。' : ''
   }
 
-  // ── ✉️ mailbox ───────────────────────────────────────────────────────
-  // 有线程展开时跳过整块重建:回信输入框里可能有未寄出的草稿,而 refresh()
-  // 会被许多无关操作触发(暂停 agent/揭晓/配对轮询…)。收起后的下一次
-  // refresh 正常重建对齐服务端。
+  // Reading and replying keep their DOM owner, even when other sections retry.
   const mailbox = document.getElementById('fd-mailbox')
   const mbCount = document.getElementById('fd-mailbox-count')
-  const chans = Array.isArray(data.mailbox) ? data.mailbox : []
-  const mailThreadOpen = !!(openMailThreadEl && !openMailThreadEl.hidden)
+  const chans = Array.isArray(data.mailbox) ? data.mailbox : null
+  const mailThreadOpen = !!(openMailThreadEl && !openMailThreadEl.hidden && openMailThreadEl.isConnected !== false)
   if (mailbox && !mailThreadOpen) {
-    openMailThreadEl = null   // 整块重建换掉了旧节点,清引用防 stale
+    openMailThreadEl = null
+    openMailThread = null
+    if (chans == null) mailbox.innerHTML = isSocialUnwired(data.mailboxError)
+      ? renderSocialOffState('笔友信箱还没开 —— ') : renderReadError('信箱', 'mailbox-retry')
+    else if (chans.length === 0) mailbox.innerHTML = '<div class="fd-empty">还没有笔友 —— 和朋友配对后，就能在这里通信了。</div>'
+    else mailbox.innerHTML = chans.map(c => renderMailChannel(c)).join('')
   }
-  if (mailbox && !mailThreadOpen) {
-    if (data.mailbox == null) {
-      mailbox.innerHTML = renderSocialOffState('笔友信箱还没开 —— ')
-    } else if (chans.length === 0) {
-      mailbox.innerHTML = `<div class="fd-empty">还没有笔友 —— 等一张明信片揭晓牵线后，就能在这里通信了。</div>`
-    } else {
-      mailbox.innerHTML = chans.map(c => renderMailChannel(c)).join('')
+  if (mbCount) {
+    if (chans == null && !isSocialUnwired(data.mailboxError)) mbCount.innerHTML = '信箱暂时读不到 <button class="btn ghost" data-action="mailbox-retry" type="button">重试</button>'
+    else if (!mailThreadOpen) {
+      const unread = (chans ?? []).reduce((sum, c) => sum + (Number(c.unread) || 0), 0)
+      mbCount.textContent = unread ? `${unread} 封未读` : ''
     }
   }
-  if (mbCount && !mailThreadOpen) {
-    const totalUnread = chans.reduce((s, c) => s + (Number(c.unread) || 0), 0)
-    mbCount.textContent = totalUnread ? `${totalUnread} 封未读` : ''
-  }
 
-  // ── ③ net: inbound toggle + peers summary + agent cards ──────────────
   const toggle = document.getElementById('fd-inbound-toggle')
+  const inboundNote = document.getElementById('fd-inbound-note')
   if (toggle) {
-    const on = !!(data.inbound && data.inbound.enabled)
+    const on = data.inbound?.enabled === true
+    inboundAvailable = data.inbound != null
+    toggle.disabled = !inboundAvailable || !!inboundOperation
     toggle.classList.toggle('fd-on', on)
     toggle.setAttribute('aria-checked', on ? 'true' : 'false')
+    if (inboundNote && data.inbound == null && !isSocialUnwired(data.inboundError)) {
+      inboundNote.hidden = false
+      inboundNote.innerHTML = renderReadError('连接设置')
+      inboundNote.dataset.readError = 'true'
+    } else if (inboundNote?.dataset.readError) {
+      inboundNote.hidden = true
+      inboundNote.textContent = ''
+      delete inboundNote.dataset.readError
+    }
   }
   const peers = document.getElementById('fd-peers')
   const peersCount = document.getElementById('fd-peers-count')
   if (peers) {
-    const shown = agents.slice(0, 4)
+    const shown = (agents ?? []).slice(0, 4)
     let html = shown.map(a => `<span class="fd-peer">${escapeHtml(lastGlyph(a.name || a.id))}</span>`).join('')
-    if (agents.length > 4) html += `<span class="fd-peer">+${agents.length - 4}</span>`
+    if (agents && agents.length > 4) html += `<span class="fd-peer">+${agents.length - 4}</span>`
     peers.innerHTML = html
   }
-  if (peersCount) peersCount.textContent = `连着 ${agents.length} 位朋友的 CC`
-
-  // preserved agent-management surface
+  if (peersCount) peersCount.textContent = agents ? `连着 ${agents.length} 位朋友的 CC` : '朋友列表暂时读不到'
   const list = document.getElementById('a2a-agents-list')
-  if (list) renderAgents(agents, list)
+  if (list) {
+    if (agents) renderAgents(agents, list)
+    else list.innerHTML = `<li class="empty">${renderReadError('朋友列表')}</li>`
+  }
 }
 
 /** @param {string} iso */
@@ -327,28 +398,31 @@ function lastGlyph(s) { const g = Array.from(String(s || '?')); return g[g.lengt
 function renderMailChannel(c) {
   const unread = Number(c.unread) || 0
   return `<div class="fd-mail-chan" data-chan-id="${escapeHtml(c.id)}">` +
-    `<div class="fd-mail-head" data-action="mail-toggle" data-id="${escapeHtml(c.id)}">` +
+    `<button type="button" class="fd-mail-head" aria-expanded="false" data-action="mail-toggle" data-id="${escapeHtml(c.id)}">` +
     `<span class="fd-mail-peer">${escapeHtml(c.peer_label || '笔友')}</span>` +
     (c.title ? `<span class="fd-mail-title">「${escapeHtml(c.title)}」</span>` : '') +
     (unread ? `<span class="fd-mail-unread">${unread}</span>` : '') +
     (c.last_preview ? `<span class="fd-mail-preview">${escapeHtml(c.last_preview)}</span>` : '') +
-    `</div>` +
+    `</button>` +
     `<div class="fd-mail-thread" hidden></div>` +
     `</div>`
 }
 
 /** @param {Array<any>} letters — 路由返回 newest-first;渲染 reverse 成正序。
  *  @param {string} channelId */
-function renderMailThread(letters, channelId) {
-  const bubbles = letters.slice().reverse().map(l =>
+function renderMailBubbles(letters) {
+  return letters.slice().reverse().map(l =>
     `<div class="fd-mail-bubble ${l.direction === 'out' ? 'fd-out' : 'fd-in'}">` +
     `<div class="fd-mail-text">${escapeHtml(l.plaintext ?? '')}</div>` +
     `<div class="fd-mail-time">${escapeHtml(fdRelTime(l.created_at))}</div>` +
     `</div>`).join('')
-  return `<div class="fd-mail-bubbles">${bubbles || '<div class="fd-empty">还没有信 —— 写下第一封吧。</div>'}</div>` +
+}
+function renderMailThread(letters, channelId, draft = '') {
+  const bubbles = renderMailBubbles(letters ?? [])
+  return `<div class="fd-mail-bubbles">${bubbles || (letters ? '<div class="fd-empty">还没有信 —— 写下第一封吧。</div>' : '<div class="fd-empty">正在读信…</div>')}</div>` +
     `<div class="fd-mail-replyrow">` +
-    `<input class="fd-mail-input" placeholder="写封信…" maxlength="2000">` +
-    `<button class="fd-btn fd-btn-primary" data-action="mail-send" data-id="${escapeHtml(channelId)}">寄出</button>` +
+    `<label class="fd-mail-replylabel"><span>回信</span><input class="fd-mail-input" placeholder="写封信…" maxlength="2000" value="${escapeHtml(draft)}"></label>` +
+    `<button type="button" class="fd-btn fd-btn-primary" data-action="mail-send" data-id="${escapeHtml(channelId)}">寄出</button>` +
     `</div>` +
     `<div class="fd-mail-note" hidden></div>`
 }
@@ -357,46 +431,82 @@ function renderMailThread(letters, channelId) {
 
 /** @param {MouseEvent} e */
 async function onCardAction(e) {
-  const target = e.target
-  if (!(target instanceof HTMLButtonElement)) return
+  const target = e.target?.closest?.('button[data-action]')
+  if (!(target instanceof HTMLButtonElement) || target.disabled || !active) return
   const action = target.dataset.action
-  // 社交总开关不针对某个 peer,所以没有 data-id —— 必须在下面那个
-  // "没有 id 就返回" 的守卫之前处理掉。
   if (action === 'social-enable') { await onSocialEnableClick(target); return }
+  if (action === 'forage-retry') { await onForageRetry(e); return }
   const id = target.dataset.id
   if (!action || !id) return
-
-  if (action === 'pause') {
+  if (action === 'pause' || action === 'remove') {
+    if (agentMutations.has(id)) return
+    if (action === 'remove' && !confirm(`断开和「${id}」的连接？之后可以随时重新配对。`)) return
     const card = target.closest('.a2a-agent-card')
     const wasPaused = card?.classList.contains('paused')
+    const operation = { generation: pageGeneration }
+    agentMutations.set(id, operation)
+    card?.querySelectorAll('button').forEach(button => { button.disabled = true })
     try {
-      await invokeApi('POST', '/v1/a2a/pause', { id, paused: !wasPaused })
-      await refresh()
+      await invokeApi('POST', `/v1/a2a/${action}`, action === 'pause' ? { id, paused: !wasPaused } : { id })
+      if (isPageCurrent(operation.generation)) await refresh()
     } catch (err) {
-      showToast(`${wasPaused ? '恢复' : '暂停'}失败：${err instanceof Error ? err.message : String(err)}`)
-    }
-  } else if (action === 'remove') {
-    if (!confirm(`断开和「${id}」的连接？之后可以随时重新配对。`)) return
-    try {
-      await invokeApi('POST', '/v1/a2a/remove', { id })
-      await refresh()
-    } catch (err) {
-      showToast(`断开失败：${err instanceof Error ? err.message : String(err)}`)
+      if (isPageCurrent(operation.generation)) showToast(`${action === 'remove' ? '断开' : wasPaused ? '恢复' : '暂停'}失败：${readErrorText(err)}`)
+    } finally {
+      if (agentMutations.get(id) === operation) {
+        agentMutations.delete(id)
+        if (active) {
+          document.querySelectorAll('.a2a-agent-card').forEach(currentCard => {
+            if (currentCard instanceof HTMLElement && currentCard.dataset.id === id) currentCard.querySelectorAll('button').forEach(button => { button.disabled = false })
+          })
+        }
+      }
     }
   } else if (action === 'activity') {
-    await openActivityDrawer(id).catch(err =>
-      showToast(`往来记录打不开：${err instanceof Error ? err.message : String(err)}`)
-    )
+    await openActivityDrawer(id)
   } else if (action === 'test') {
-    await openTestModal(id).catch(err =>
-      showToast(`打不开测试窗口：${err instanceof Error ? err.message : String(err)}`)
-    )
+    await openTestModal(id)
   }
 }
 
 // ✉️ 信箱 — 展开看信(即读即清未读) + 回信。同时只展开一个线程。
 /** @type {any} */
 let openMailThreadEl = null
+/** @type {{id:string, card:any, thread:any, generation:number, read:number, reading:boolean}|null} */
+let openMailThread = null
+/** @type {Map<string, {draft:string, revision:number, letters:Array<any>|null}>} */
+const mailThreads = new Map()
+/** @type {Map<string, object>} */
+const mailSending = new Map()
+function mailState(id) {
+  if (!mailThreads.has(id)) mailThreads.set(id, { draft: '', revision: 0, letters: null })
+  return mailThreads.get(id)
+}
+function updateMailDraft(id, draft) {
+  const state = mailState(id)
+  if (state.draft !== draft) { state.draft = draft; state.revision++ }
+}
+function saveMailDraft(owner) {
+  if (!owner) return
+  const input = owner.card.querySelector('.fd-mail-input')
+  if (input) updateMailDraft(owner.id, String(input.value ?? ''))
+}
+function closeMailThread() {
+  saveMailDraft(openMailThread)
+  openMailThread?.card.querySelector('.fd-mail-head')?.setAttribute('aria-expanded', 'false')
+  if (openMailThreadEl) openMailThreadEl.hidden = true
+  openMailThreadEl = null
+  openMailThread = null
+}
+function isCurrentMail(owner) {
+  return !!owner && openMailThread === owner && isPageCurrent(owner.generation)
+    && owner.thread.isConnected !== false && !owner.thread.hidden
+}
+function setMailSending(id) {
+  if (openMailThread?.id !== id || !isCurrentMail(openMailThread)) return
+  const button = openMailThread.card.querySelector('[data-action="mail-send"]')
+  if (button) button.disabled = mailSending.has(id)
+}
+
 
 const MAIL_FAIL_COPY = /** @type {Record<string, string>} */ ({
   channel_not_open: '这条信道还没打开 —— 双方都揭晓后才能通信',
@@ -416,30 +526,68 @@ async function onMailboxAction(e) {
     target = target.closest('[data-action]')
     if (!target || !target.dataset) return
   }
-  if (target.dataset.action === 'mail-toggle') return openMailThread(target)
+  if (!active) return
+  if (target.dataset.action === 'forage-retry' || target.dataset.action === 'mailbox-retry') return onForageRetry(e)
+  if (target.dataset.action === 'social-enable') return onSocialEnableClick(target)
+  if (target.dataset.action === 'mail-toggle') return showMailThread(target)
+  if (target.dataset.action === 'mail-retry' && openMailThread?.id === target.dataset.id) return readMailThread(openMailThread)
   if (target.dataset.action === 'mail-send') return sendMailReply(target)
 }
 
 /** @param {any} target */
-async function openMailThread(target) {
-  const card = typeof target.closest === 'function' ? target.closest('.fd-mail-chan') : null
-  const thread = card ? card.querySelector('.fd-mail-thread') : null
+async function showMailThread(target) {
+  const card = target.closest?.('.fd-mail-chan')
+  const thread = card?.querySelector('.fd-mail-thread')
   const id = target.dataset.id
   if (!card || !thread || !id) return
-  if (!thread.hidden) { thread.hidden = true; thread.innerHTML = ''; openMailThreadEl = null; return }
-  if (openMailThreadEl && openMailThreadEl !== thread) { openMailThreadEl.hidden = true; openMailThreadEl.innerHTML = '' }
+  if (!thread.hidden) { closeMailThread(); thread.hidden = true; return }
+  closeMailThread()
+  const state = mailState(id)
+  const owner = { id, card, thread, generation: pageGeneration, read: 0, reading: false }
+  openMailThread = owner
   openMailThreadEl = thread
+  target.setAttribute('aria-expanded', 'true')
   thread.hidden = false
-  thread.innerHTML = '<div class="fd-empty">加载中…</div>'
+  thread.innerHTML = renderMailThread(state.letters, id, state.draft)
+  const input = card.querySelector('.fd-mail-input')
+  input?.addEventListener('input', () => {
+    if (isCurrentMail(owner)) updateMailDraft(id, String(input.value ?? ''))
+  })
+  setMailSending(id)
+  await readMailThread(owner)
+}
+
+async function readMailThread(owner) {
+  if (!isCurrentMail(owner)) return
+  const request = ++owner.read
+  owner.reading = true
+  const note = owner.card.querySelector('.fd-mail-note')
+  if (note) { note.hidden = false; note.textContent = '正在读信…' }
   try {
-    const r = /** @type {{letters?:Array<any>}} */ (await invokeApi('GET', `/v1/penpal/letters?channel_id=${encodeURIComponent(id)}`))
-    thread.innerHTML = renderMailThread(r?.letters ?? [], id)
-    // 展开即读:后端清 + 本地摘角标(fire-and-forget,失败不打断看信)。
-    invokeApi('POST', '/v1/penpal/letters/read', { channel_id: id }).catch(() => {})
-    const badge = card.querySelector('.fd-mail-unread')
-    if (badge && typeof badge.remove === 'function') badge.remove()
+    const r = await invokeApi('GET', `/v1/penpal/letters?channel_id=${encodeURIComponent(owner.id)}`)
+    if (!isCurrentMail(owner) || request !== owner.read) return
+    if (!Array.isArray(r?.letters)) throw new Error('返回内容不完整')
+    mailState(owner.id).letters = r.letters
+    const bubbles = owner.card.querySelector('.fd-mail-bubbles')
+    if (bubbles) bubbles.innerHTML = renderMailBubbles(r.letters) || '<div class="fd-empty">还没有信 —— 写下第一封吧。</div>'
+    if (note) { note.hidden = true; note.textContent = '' }
+    invokeApi('POST', '/v1/penpal/letters/read', { channel_id: owner.id }).catch(() => {})
+    owner.card.querySelector('.fd-mail-unread')?.remove()
   } catch (err) {
-    thread.innerHTML = `<div class="fd-empty">看信失败：${escapeHtml(err instanceof Error ? err.message : String(err))}</div>`
+    if (!isCurrentMail(owner) || request !== owner.read) return
+    if (mailState(owner.id).letters == null) {
+      const bubbles = owner.card.querySelector('.fd-mail-bubbles')
+      if (bubbles) bubbles.innerHTML = '<div class="fd-empty">信件暂时读不到</div>'
+    }
+    if (note) {
+      note.hidden = false
+      const error = readErrorText(err)
+      note.innerHTML = isSocialUnwired(error)
+        ? renderSocialOffState('笔友功能尚未开启 —— ')
+        : `看信失败：${escapeHtml(error)} <button class="btn ghost" data-action="mail-retry" data-id="${escapeHtml(owner.id)}" type="button">重试</button>`
+    }
+  } finally {
+    if (owner.read === request) owner.reading = false
   }
 }
 
@@ -452,91 +600,107 @@ const mailRetry = Object.create(null)
 /** @param {any} target */
 async function sendMailReply(target) {
   const id = target.dataset.id
-  const card = typeof target.closest === 'function' ? target.closest('.fd-mail-chan') : null
-  if (!id || !card) return
+  const card = target.closest?.('.fd-mail-chan')
+  if (!id || !card || target.disabled || mailSending.has(id)) return
+  const owner = openMailThread
+  if (!isCurrentMail(owner) || owner.card !== card || owner.id !== id) return
   const input = card.querySelector('.fd-mail-input')
   const note = card.querySelector('.fd-mail-note')
-  const text = String(input?.value ?? '').trim()
+  const submitted = String(input?.value ?? '')
+  const text = submitted.trim()
   if (!text) { if (note) { note.hidden = false; note.textContent = '先写点什么' } return }
-  const pending = mailRetry[id]
-  if (pending && pending.text === text) return resendMailReply(target, id, pending, card)
-  delete mailRetry[id]   // 文本改了 ⇒ 当新信寄;旧的落库行维持现状
+  const current = () => isCurrentMail(owner)
+  const pending = mailRetry[id]?.text === text ? mailRetry[id] : null
+  if (!pending) delete mailRetry[id]
+  const operation = {}
+  mailSending.set(id, operation)
+  updateMailDraft(id, submitted)
+  const submittedRevision = mailState(id).revision
   target.disabled = true
   try {
-    const r = /** @type {{ok?:boolean, error?:string, letter_id?:string}} */ (
-      await invokeApi('POST', '/v1/penpal/letters', { channel_id: id, text }))
+    const r = pending
+      ? await invokeApi('POST', '/v1/penpal/letters/resend', { letter_id: pending.letterId })
+      : await invokeApi('POST', '/v1/penpal/letters', { channel_id: id, text })
     if (r?.ok) {
+      delete mailRetry[id]
+      // Reconcile only the draft represented by this submission. A later edit,
+      // including deleting and retyping the same text, belongs to the user.
+      const state = mailState(id)
+      if (openMailThread?.id === id && isCurrentMail(openMailThread)) saveMailDraft(openMailThread)
+      if (state.draft === submitted && state.revision === submittedRevision) {
+        state.draft = ''
+        state.revision++
+        const currentInput = openMailThread?.id === id && isCurrentMail(openMailThread)
+          ? openMailThread.card.querySelector('.fd-mail-input') : null
+        if (currentInput && String(currentInput.value ?? '') === submitted) currentInput.value = ''
+      }
+      if (!current()) return
+      const reading = owner.reading
+      // A GET dispatched before this POST may not yet contain the sent letter.
+      owner.read++
+      owner.reading = false
       const bubbles = card.querySelector('.fd-mail-bubbles')
       if (bubbles) bubbles.innerHTML += `<div class="fd-mail-bubble fd-out"><div class="fd-mail-text">${escapeHtml(text)}</div><div class="fd-mail-time">刚刚</div></div>`
-      if (input) input.value = ''
+      if (bubbles) bubbles.querySelector?.('.fd-empty')?.remove()
+      state.letters = [{ direction: 'out', plaintext: text, created_at: new Date().toISOString() }, ...(state.letters ?? [])]
       if (note) { note.hidden = true; note.textContent = '' }
-    } else if (r?.error === 'send_failed' && typeof r?.letter_id === 'string') {
-      mailRetry[id] = { letterId: r.letter_id, text }
-      if (note) { note.hidden = false; note.textContent = '寄出失败 —— 对方的 CC 暂时联系不上，再点一次「寄出」会重试同一封' }
+      if (reading) void readMailThread(owner)
     } else {
-      if (note) { note.hidden = false; note.textContent = MAIL_FAIL_COPY[String(r?.error)] ?? `寄出失败：${String(r?.error ?? '未知错误')}` }
+      if (r?.error === 'send_failed' && typeof r?.letter_id === 'string') mailRetry[id] = { letterId: r.letter_id, text }
+      else if (pending && r?.error !== 'send_failed') delete mailRetry[id]
+      if (!current()) return
+      if (note) {
+        note.hidden = false
+        note.textContent = r?.error === 'send_failed' && (pending || mailRetry[id])
+          ? '寄出失败 —— 对方的 CC 暂时联系不上，再点一次「寄出」会重试同一封'
+          : MAIL_FAIL_COPY[String(r?.error)] ?? `寄出失败：${String(r?.error ?? '未知错误')}`
+      }
     }
   } catch (err) {
-    const msg = err instanceof Error ? err.message : String(err)
-    if (note) { note.hidden = false; note.textContent = msg === 'penpal_not_wired' ? `笔友功能未启用 —— ${SOCIAL_OFF_HINT}到「觅食网」区块可以启用。` : `寄出失败：${msg}` }
-  } finally {
-    target.disabled = false
-  }
-}
-
-/** 重投同一封(见 mailRetry 注释)。成功才乐观追加气泡 —— 原发失败时没追加过。
- *  气泡/清空用 pending.text(重投的真实内容),不能等 await 回来再读输入框:
- *  在途中用户可能改了字,重读会把没寄过的内容画进线程、还吞掉新草稿。
- *  @param {any} target  @param {string} channelId
- *  @param {{ letterId: string, text: string }} pending  @param {any} card */
-async function resendMailReply(target, channelId, pending, card) {
-  const input = card.querySelector('.fd-mail-input')
-  const note = card.querySelector('.fd-mail-note')
-  target.disabled = true
-  try {
-    const r = /** @type {{ok?:boolean, error?:string}} */ (
-      await invokeApi('POST', '/v1/penpal/letters/resend', { letter_id: pending.letterId }))
-    if (r?.ok) {
-      delete mailRetry[channelId]
-      const bubbles = card.querySelector('.fd-mail-bubbles')
-      if (bubbles) bubbles.innerHTML += `<div class="fd-mail-bubble fd-out"><div class="fd-mail-text">${escapeHtml(pending.text)}</div><div class="fd-mail-time">刚刚</div></div>`
-      // 只有输入框仍是这封信的内容才清空 —— 在途中打的新草稿不动。
-      if (input && String(input.value ?? '').trim() === pending.text) input.value = ''
-      if (note) { note.hidden = true; note.textContent = '' }
-    } else if (r?.error === 'send_failed') {
-      // 落库行还在,登记保留 —— 下次点击继续重投同一封。
-      if (note) { note.hidden = false; note.textContent = '还是没寄出去 —— 稍后再点一次「寄出」重试同一封' }
-    } else {
-      // channel_not_open / unknown_letter 等:重投救不了,放弃登记走人话文案。
-      delete mailRetry[channelId]
-      if (note) { note.hidden = false; note.textContent = MAIL_FAIL_COPY[String(r?.error)] ?? `寄出失败：${String(r?.error ?? '未知错误')}` }
+    if (!current()) return
+    if (note) {
+      note.hidden = false
+      const error = readErrorText(err)
+      note.textContent = isSocialUnwired(error) ? `笔友功能未启用 —— ${SOCIAL_OFF_HINT}到「觅食网」区块可以启用。` : `寄出失败：${error}`
     }
-  } catch (err) {
-    if (note) { note.hidden = false; note.textContent = `寄出失败：${err instanceof Error ? err.message : String(err)}` }
   } finally {
-    target.disabled = false
+    if (mailSending.get(id) === operation) {
+      mailSending.delete(id)
+      if (current()) target.disabled = false
+      setMailSending(id)
+    }
   }
 }
 
 async function onInboundToggle() {
   const toggle = document.getElementById('fd-inbound-toggle')
   const note = document.getElementById('fd-inbound-note')
-  if (!toggle) return
+  if (!toggle || toggle.disabled || !active || inboundOperation) return
+  const operation = { generation: pageGeneration }
+  inboundOperation = operation
+  toggle.disabled = true
   const next = !toggle.classList.contains('fd-on')
   try {
-    const r = /** @type {{enabled?:boolean, restart_required?:boolean, error?:string}} */ (
-      await invokeApi('POST', '/v1/social/inbound', { enabled: next }))
-    const enabled = !!r?.enabled
+    const r = await invokeApi('POST', '/v1/social/inbound', { enabled: next })
+    if (!isPageCurrent(operation.generation) || inboundOperation !== operation) return
+    if (typeof r?.enabled !== 'boolean') throw new Error('返回内容不完整')
+    const enabled = r.enabled
     toggle.classList.toggle('fd-on', enabled)
     toggle.setAttribute('aria-checked', enabled ? 'true' : 'false')
     if (note) {
       note.hidden = false
-      note.textContent = r?.restart_required
+      note.textContent = r.restart_required
         ? (enabled ? '已开启 —— 需重启守护进程后，别人的心愿才能真正传到你这。' : '已关闭 —— 需重启守护进程后生效。')
         : (enabled ? '已开启。' : '已关闭。')
     }
   } catch (err) {
-    if (note) { note.hidden = false; note.textContent = `切换失败：${err instanceof Error ? err.message : String(err)}` }
+    if (isPageCurrent(operation.generation) && note) { note.hidden = false; note.textContent = `切换失败：${readErrorText(err)}` }
+  } finally {
+    if (inboundOperation === operation) {
+      inboundOperation = null
+      const currentToggle = document.getElementById('fd-inbound-toggle')
+      if (active && currentToggle) currentToggle.disabled = !inboundAvailable
+    }
   }
 }
 
@@ -547,6 +711,12 @@ async function onInboundToggle() {
 let pairCountdownTimer = null
 /** @type {ReturnType<typeof setInterval> | null} */
 let pairPollTimer = null
+let pairGeneration = 0
+/** @typedef {{ kind: 'start'|'accept', generation: number, pageGeneration: number, button: HTMLButtonElement|null, label: string|null }} PairOperation */
+/** @type {PairOperation|null} */
+let pairOperation = null
+/** @type {{ generation: number, pageGeneration: number }|null} */
+let pairPollRequest = null
 
 const PAIR_FAIL_COPY = /** @type {Record<string, string>} */ ({
   expired_or_wrong: '码不对或已过期 —— 让朋友重新生成一个试试',
@@ -573,60 +743,112 @@ function showPairNote(note, text, state = 'error') {
 }
 
 function stopPairTimers() {
-  if (pairCountdownTimer) { clearInterval(pairCountdownTimer); pairCountdownTimer = null }
-  if (pairPollTimer) { clearInterval(pairPollTimer); pairPollTimer = null }
+  // Clearing intervals cannot cancel an already dispatched read.
+  pairGeneration++
+  pairPollRequest = null
+  if (pairCountdownTimer !== null) { clearInterval(pairCountdownTimer); pairCountdownTimer = null }
+  if (pairPollTimer !== null) { clearInterval(pairPollTimer); pairPollTimer = null }
+}
+
+function hidePairPanel() {
+  const panel = document.getElementById('fd-pair-panel')
+  if (panel) { panel.hidden = true; panel.innerHTML = '' }
+}
+
+function releasePairOperation() {
+  const operation = pairOperation
+  pairOperation = null
+  if (operation?.button) {
+    operation.button.disabled = false
+    operation.button.textContent = operation.label
+  }
+}
+
+function deactivatePairing() {
+  stopPairTimers()
+  releasePairOperation()
+  hidePairPanel()
+  const note = document.getElementById('fd-pair-note')
+  if (note) { note.hidden = true; note.textContent = '' }
+}
+
+/** @param {number} generation @param {number} currentPageGeneration */
+function isPairCurrent(generation, currentPageGeneration) {
+  return isPageCurrent(currentPageGeneration) && pairGeneration === generation
+}
+
+/** @param {PairOperation} operation */
+function isPairOperationCurrent(operation) {
+  return pairOperation === operation && isPairCurrent(operation.generation, operation.pageGeneration)
+}
+
+/** @param {'start'|'accept'} kind @param {HTMLButtonElement|null} button */
+function beginPairOperation(kind, button) {
+  if (!active || pairOperation?.kind === kind) return null
+  // Switching between generating and accepting abandons the old UI result.
+  stopPairTimers()
+  releasePairOperation()
+  hidePairPanel()
+  const operation = { kind, generation: pairGeneration, pageGeneration, button, label: button?.textContent ?? null }
+  pairOperation = operation
+  if (button) { button.disabled = true; if (kind === 'accept') button.textContent = '配对中…' }
+  const note = document.getElementById('fd-pair-note')
+  if (note) { note.hidden = true; note.textContent = '' }
+  return operation
 }
 
 async function onPairStart() {
   const note = document.getElementById('fd-pair-note')
   const btn = /** @type {HTMLButtonElement | null} */ (document.getElementById('fd-pair-start'))
-  stopPairTimers()
-  if (note) { note.hidden = true; note.textContent = '' }
-  if (btn) btn.disabled = true
+  const operation = beginPairOperation('start', btn)
+  if (!operation) return
   try {
-    // 先快照现有 agent id,轮询时用差集判断新边落地。
-    // 快照失败(before === null)要 fail-closed:直接中止,不然轮询会把任何已有
-    // 老友都当成刚配对成功的新边(误判)。`{agents:[]}` 才是真正的“确实没有朋友”。
+    // A failed snapshot cannot safely distinguish a new friend from an old one.
     const before = /** @type {{agents?:Array<any>}|null} */ (await invokeApi('GET', '/v1/a2a/list').catch(() => null))
-    if (before === null) {
+    if (!isPairOperationCurrent(operation)) return
+    if (!Array.isArray(before?.agents)) {
       showPairNote(note, '暂时读不到现有朋友列表，稍后再试')
       return
     }
-    const knownIds = new Set((before.agents ?? []).map(a => String(a.id)))
+    const knownIds = new Set(before.agents.map(a => String(a.id)))
     const r = /** @type {{ok?:boolean, code?:string, expiresAt?:number, reason?:string}} */ (
       await invokeApi('POST', '/v1/pair/start'))
+    if (!isPairOperationCurrent(operation)) return
     if (!r?.ok) {
       showPairNote(note, PAIR_FAIL_COPY[String(r?.reason)] ?? `配对失败：${String(r?.reason ?? '未知错误')}`)
       return
     }
-    renderPairPanel(String(r.code ?? ''), Number(r.expiresAt) || 0)
-    pairCountdownTimer = setInterval(() => updatePairCountdown(Number(r.expiresAt) || 0), 1000)
-    pairPollTimer = setInterval(() => { checkPairLanded(knownIds).catch(() => {}) }, 15_000)
+    const expiresAt = Number(r.expiresAt) || 0
+    renderPairPanel(String(r.code ?? ''), expiresAt, operation.generation, operation.pageGeneration)
+    // Rendering an already expired code invalidates this operation too.
+    if (!isPairOperationCurrent(operation)) return
+    pairCountdownTimer = setInterval(() => updatePairCountdown(expiresAt, operation.generation, operation.pageGeneration), 1000)
+    pairPollTimer = setInterval(() => { checkPairLanded(knownIds, operation.generation, operation.pageGeneration).catch(() => {}) }, 15_000)
   } catch (err) {
-    showPairNote(note, pairErrText(err))
+    if (isPairOperationCurrent(operation)) showPairNote(note, pairErrText(err))
   } finally {
-    if (btn) btn.disabled = false
+    if (pairOperation === operation) releasePairOperation()
   }
 }
 
-/** @param {string} code  @param {number} expiresAt */
-function renderPairPanel(code, expiresAt) {
+/** @param {string} code @param {number} expiresAt @param {number} generation @param {number} currentPageGeneration */
+function renderPairPanel(code, expiresAt, generation, currentPageGeneration) {
   const panel = document.getElementById('fd-pair-panel')
   if (!panel) return
   panel.hidden = false
   panel.innerHTML = `<div class="fd-pair-code">${escapeHtml(code)}</div>` +
-    `<div class="fd-pair-cap">念给朋友 —— 对方在他的觅食台输入，或运行 <code>wechat-cc pair ${escapeHtml(code)}</code></div>` +
+    `<div class="fd-pair-cap">把这六位码给朋友，对方在觅食页输入就能连接。</div>` +
     `<div class="fd-pair-count" id="fd-pair-countdown"></div>`
-  updatePairCountdown(expiresAt)
+  updatePairCountdown(expiresAt, generation, currentPageGeneration)
 }
 
-/** @param {number} expiresAt */
-function updatePairCountdown(expiresAt) {
+/** @param {number} expiresAt @param {number} generation @param {number} currentPageGeneration */
+function updatePairCountdown(expiresAt, generation, currentPageGeneration) {
+  if (!isPairCurrent(generation, currentPageGeneration)) return
   const left = Math.floor((expiresAt - Date.now()) / 1000)
   if (left <= 0) {
     stopPairTimers()
-    const panel = document.getElementById('fd-pair-panel')
-    if (panel) { panel.hidden = true; panel.innerHTML = '' }
+    hidePairPanel()
     const note = document.getElementById('fd-pair-note')
     showPairNote(note, '配对码已过期 —— 需要时再生成一个。')
     return
@@ -638,49 +860,60 @@ function updatePairCountdown(expiresAt) {
 /**
  * 轮询判定:agent 列表出现快照之外的新 id ⇒ 对方接受了码,配对完成。
  * @param {Set<string>} knownIds
+ * @param {number} [generation]
+ * @param {number} [currentPageGeneration]
  */
-async function checkPairLanded(knownIds) {
-  const r = /** @type {{agents?:Array<any>}|null} */ (await invokeApi('GET', '/v1/a2a/list').catch(() => null))
-  const fresh = (r?.agents ?? []).find(a => !knownIds.has(String(a.id)))
-  if (!fresh) return
-  stopPairTimers()
-  const panel = document.getElementById('fd-pair-panel')
-  if (panel) { panel.hidden = true; panel.innerHTML = '' }
-  const note = document.getElementById('fd-pair-note')
-  showPairNote(note, `配对成功：已和 ${fresh.name || fresh.id} 成为邻居`, 'success')
-  refresh().catch(() => {})
+async function checkPairLanded(knownIds, generation = pairGeneration, currentPageGeneration = pageGeneration) {
+  if (!isPairCurrent(generation, currentPageGeneration)) return
+  if (pairPollRequest?.generation === generation && pairPollRequest.pageGeneration === currentPageGeneration) return
+  const request = { generation, pageGeneration: currentPageGeneration }
+  pairPollRequest = request
+  try {
+    const r = /** @type {{agents?:Array<any>}|null} */ (await invokeApi('GET', '/v1/a2a/list').catch(() => null))
+    if (pairPollRequest !== request || !isPairCurrent(generation, currentPageGeneration)) return
+    const fresh = (r?.agents ?? []).find(a => !knownIds.has(String(a.id)))
+    if (!fresh) return
+    stopPairTimers()
+    hidePairPanel()
+    const note = document.getElementById('fd-pair-note')
+    showPairNote(note, `配对成功：已和 ${fresh.name || fresh.id} 成为邻居`, 'success')
+    refresh().catch(() => {})
+  } finally {
+    // A previous poll cannot unlock a newer generation's pending read.
+    if (pairPollRequest === request) pairPollRequest = null
+  }
 }
 
 async function onPairAccept() {
+  if (!active || pairOperation?.kind === 'accept') return
   const input = /** @type {HTMLInputElement | null} */ (document.getElementById('fd-pair-code'))
   const note = document.getElementById('fd-pair-note')
   const btn = /** @type {HTMLButtonElement | null} */ (document.getElementById('fd-pair-accept'))
-  const code = String(input?.value ?? '').trim()
+  const submittedValue = String(input?.value ?? '')
+  const code = submittedValue.trim()
   if (!/^\d{6}$/.test(code)) {
     showPairNote(note, '配对码是 6 位数字')
     return
   }
-  if (btn) { btn.disabled = true; btn.textContent = '配对中…' }
+  const operation = beginPairOperation('accept', btn)
+  if (!operation) return
   try {
     const r = /** @type {{ok?:boolean, peer?:{self_id?:string, name?:string}, reason?:string}} */ (
       await invokeApi('POST', '/v1/pair/accept', { code }))
+    if (!isPairOperationCurrent(operation)) return
     if (r?.ok) {
-      // 接受方也可能有一份自己发起的、还在倒计时/轮询的配对码——接受成功后
-      // 那份 stale 状态必须清掉,否则过期定时器事后会用“配对码已过期”盖掉这条
-      // 成功提示,轮询定时器还可能重复触发一次“配对成功”消息。
       stopPairTimers()
-      const panel = document.getElementById('fd-pair-panel')
-      if (panel) { panel.hidden = true; panel.innerHTML = '' }
+      hidePairPanel()
       showPairNote(note, `配对成功：已和 ${r.peer?.name ?? r.peer?.self_id ?? '对方'} 成为邻居`, 'success')
-      if (input) input.value = ''
+      if (input && input.value === submittedValue) input.value = ''
       refresh().catch(() => {})
     } else {
       showPairNote(note, PAIR_FAIL_COPY[String(r?.reason)] ?? `配对失败：${String(r?.reason ?? '未知错误')}`)
     }
   } catch (err) {
-    showPairNote(note, pairErrText(err))
+    if (isPairOperationCurrent(operation)) showPairNote(note, pairErrText(err))
   } finally {
-    if (btn) { btn.disabled = false; btn.textContent = '配对' }
+    if (pairOperation === operation) releasePairOperation()
   }
 }
 
@@ -704,58 +937,77 @@ let testAgentId = ''
 
 /** @param {string} id */
 async function openTestModal(id) {
-  testAgentId = id
+  if (!active) return
   const modal = document.getElementById('a2a-test-modal')
   if (!(modal instanceof HTMLDialogElement)) return
+  testSession = { id, generation: pageGeneration }
   const title = document.getElementById('a2a-test-title')
   if (title) title.textContent = `测试连通 · ${id}`
-  const textInput = /** @type {HTMLInputElement | null} */ (document.getElementById('a2a-test-text'))
+  const textInput = document.getElementById('a2a-test-text')
   if (textInput) textInput.value = `test from ${id} via wechat-cc`
   const result = document.getElementById('a2a-test-result')
   if (result) { result.textContent = ''; result.className = 'a2a-test-result' }
-  modal.showModal()
+  if (!modal.open) modal.showModal()
+  syncTestButtons()
+}
+function isTestCurrent(session) {
+  const modal = document.getElementById('a2a-test-modal')
+  return !!session && testSession === session && isPageCurrent(session.generation)
+    && modal instanceof HTMLDialogElement && modal.open
+}
+function syncTestButtons() {
+  if (!isTestCurrent(testSession)) return
+  for (const id of ['a2a-test-inbound', 'a2a-test-outbound']) {
+    const button = document.getElementById(id)
+    if (button) button.disabled = testSending.has(testSession.id)
+  }
 }
 
 /** @param {boolean} outbound */
 async function runTest(outbound) {
-  const textInput = /** @type {HTMLInputElement | null} */ (document.getElementById('a2a-test-text'))
+  const session = testSession
+  if (!isTestCurrent(session) || testSending.has(session.id)) return
+  const textInput = document.getElementById('a2a-test-text')
   const result = document.getElementById('a2a-test-result')
   if (!result) return
-  const text = textInput?.value || `test from ${testAgentId} via wechat-cc`
+  const text = textInput?.value || `test from ${session.id} via wechat-cc`
+  const operation = {}
+  testSending.set(session.id, operation)
+  syncTestButtons()
   result.textContent = 'sending…'
   result.className = 'a2a-test-result pending'
   try {
-    const r = /** @type {Record<string, any>} */ (await invokeApi('POST', '/v1/a2a/test', {
-      agent_id: testAgentId, text, outbound,
-    }))
+    const r = await invokeApi('POST', '/v1/a2a/test', { agent_id: session.id, text, outbound })
+    if (!isTestCurrent(session)) return
     if (r?.ok) {
       const dir = r.direction === 'in' ? 'inbound' : 'outbound'
       const status = r.http_status ? ` (HTTP ${r.http_status})` : ''
-      result.textContent = `${dir} delivered${status}` +
-        (r.direction === 'in'
-          ? ` — check your WeChat chat for [A2A:${testAgentId}] ${text}`
-          : '')
+      result.textContent = `${dir} delivered${status}` + (r.direction === 'in' ? ` — check your WeChat chat for [A2A:${session.id}] ${text}` : '')
       result.className = 'a2a-test-result ok'
     } else {
-      const errMsg = r?.error ?? 'unknown error'
       const status = r?.http_status ? ` (HTTP ${r.http_status})` : ''
-      result.textContent = `${r?.direction ?? 'test'} failed: ${errMsg}${status}`
+      result.textContent = `${r?.direction ?? 'test'} failed: ${r?.error ?? 'unknown error'}${status}`
       result.className = 'a2a-test-result fail'
     }
+    if (isTestCurrent(session)) refresh().catch(() => {})
   } catch (err) {
-    result.textContent = `request failed: ${err instanceof Error ? err.message : String(err)}`
+    if (!isTestCurrent(session)) return
+    result.textContent = `request failed: ${readErrorText(err)}`
     result.className = 'a2a-test-result fail'
+  } finally {
+    if (testSending.get(session.id) === operation) testSending.delete(session.id)
+    syncTestButtons()
   }
-  // Refresh the agent list (counts may have updated from this test).
-  refresh().catch(() => {})
 }
 
 function closeTestModal() {
+  testSession = null
   const modal = document.getElementById('a2a-test-modal')
-  if (modal instanceof HTMLDialogElement) modal.close()
+  if (modal instanceof HTMLDialogElement && modal.open) modal.close()
 }
 
 function openAddModal() {
+  if (!active) return
   const modal = document.getElementById('a2a-add-modal')
   if (!(modal instanceof HTMLDialogElement)) return
   const preview = /** @type {HTMLElement | null} */ (modal.querySelector('#a2a-add-preview'))
@@ -764,20 +1016,48 @@ function openAddModal() {
   if (preview) preview.hidden = true
   if (success) success.hidden = true
   if (form) { form.hidden = false; form.reset() }
-  previewedCard = null
-  previewedUrl = ''
-  modal.showModal()
+  invalidateAddSession()
+  addSession = { generation: pageGeneration }
+  const submit = form?.querySelector('button[type="submit"]')
+  if (submit) { submit.disabled = false; submit.textContent = '看看是谁 →' }
+  syncInstallButton()
+  if (!modal.open) modal.showModal()
 }
 
-function closeAddModal() {
+function invalidateAddSession() {
+  addSession = null
+  previewOperation = null
+  previewedCard = null
+  previewedUrl = ''
+}
+function isAddCurrent(session) {
   const modal = document.getElementById('a2a-add-modal')
-  if (modal instanceof HTMLDialogElement) modal.close()
-  refresh().catch(err => console.error('a2a refresh after modal close failed', err))
+  return !!session && addSession === session && isPageCurrent(session.generation)
+    && modal instanceof HTMLDialogElement && modal.open
+}
+function syncInstallButton() {
+  const preview = document.getElementById('a2a-add-preview')
+  const id = preview?.querySelector('input[name="id"]')?.value?.trim() ?? ''
+  const button = document.getElementById('a2a-install-confirm')
+  if (button) {
+    button.disabled = addInstalling.has(id)
+    button.textContent = button.disabled ? '连接中…' : '连上'
+  }
+}
+function closeAddModal(refreshList = true) {
+  invalidateAddSession()
+  const modal = document.getElementById('a2a-add-modal')
+  if (modal instanceof HTMLDialogElement && modal.open) modal.close()
+  if (refreshList && active) refresh().catch(() => {})
 }
 
 /** @param {SubmitEvent} e */
 async function onPreviewSubmit(e) {
   e.preventDefault()
+  const session = addSession
+  if (!isAddCurrent(session) || previewOperation) return
+  const operation = { session }
+  previewOperation = operation
   const form = /** @type {HTMLFormElement} */ (e.target)
   const urlInput = /** @type {HTMLInputElement} */ (form.elements.namedItem('url'))
   const url = urlInput.value
@@ -785,6 +1065,7 @@ async function onPreviewSubmit(e) {
   if (submitBtn) { submitBtn.disabled = true; submitBtn.textContent = '找它中…' }
   try {
     const resp = /** @type {Record<string, any>} */ (await invokeApi('POST', '/v1/a2a/preview', { url }))
+    if (!isAddCurrent(session) || previewOperation !== operation) return
     if (resp && 'error' in resp) { showToast(String(resp.error)); return }
     previewedCard = resp
     previewedUrl = url
@@ -811,36 +1092,49 @@ async function onPreviewSubmit(e) {
       const idInput = /** @type {HTMLInputElement | null} */ (preview.querySelector('input[name="id"]'))
       if (idInput) idInput.value = slugify(String(resp.name ?? ''))
     }
+    syncInstallButton()
   } catch (err) {
-    showToast(`没找到对方的 CC：${err instanceof Error ? err.message : String(err)}`)
+    if (isAddCurrent(session)) showToast(`没找到对方的 CC：${readErrorText(err)}`)
   } finally {
-    if (submitBtn) { submitBtn.disabled = false; submitBtn.textContent = '看看是谁 →' }
+    if (previewOperation === operation) {
+      previewOperation = null
+      if (isAddCurrent(session) && submitBtn) { submitBtn.disabled = false; submitBtn.textContent = '看看是谁 →' }
+    }
   }
 }
 
 async function onInstallConfirm() {
+  const session = addSession
+  if (!isAddCurrent(session)) return
   const preview = /** @type {HTMLElement | null} */ (document.getElementById('a2a-add-preview'))
-  if (!preview || !previewedCard) return
+  if (!preview || preview.hidden || !previewedCard) return
   const idInput = /** @type {HTMLInputElement | null} */ (preview.querySelector('input[name="id"]'))
   const keyInput = /** @type {HTMLInputElement | null} */ (preview.querySelector('input[name="outbound_key"]'))
   const id = idInput?.value?.trim() ?? ''
   const outboundKey = keyInput?.value?.trim() ?? ''
   if (!id) { showToast('先给它起个短名（英文或数字）。'); return }
 
+  if (addInstalling.has(id)) return
+  const operation = {}
+  addInstalling.set(id, operation)
+  const card = previewedCard
+  const url = previewedUrl
   const confirmBtn = document.getElementById('a2a-install-confirm')
   if (confirmBtn instanceof HTMLButtonElement) { confirmBtn.disabled = true; confirmBtn.textContent = '连接中…' }
   try {
     const r = /** @type {Record<string, any>} */ (await invokeApi('POST', '/v1/a2a/install', {
       id,
-      name: /** @type {any} */ (previewedCard).name,
-      url: previewedUrl,
+      name: /** @type {any} */ (card).name,
+      url,
       outbound_api_key: outboundKey,
     }))
+    if (!isAddCurrent(session)) return
     if (!r || !r.ok) {
       showToast(String(r?.error ?? 'install failed'))
       return
     }
     const info = /** @type {Record<string, any>} */ (await invokeApi('GET', '/v1/a2a/info').catch(() => null))
+    if (!isAddCurrent(session)) return
     preview.hidden = true
     const success = /** @type {HTMLElement | null} */ (document.getElementById('a2a-add-success'))
     if (success) success.hidden = false
@@ -854,14 +1148,18 @@ async function onInstallConfirm() {
         `  -d '{"agent_id":"${id}","text":"hello"}'`
     }
   } catch (err) {
-    showToast(`没连上：${err instanceof Error ? err.message : String(err)}`)
+    if (isAddCurrent(session)) showToast(`没连上：${readErrorText(err)}`)
   } finally {
-    if (confirmBtn instanceof HTMLButtonElement) { confirmBtn.disabled = false; confirmBtn.textContent = '连上' }
+    if (addInstalling.get(id) === operation) addInstalling.delete(id)
+    if (isAddCurrent(addSession)) syncInstallButton()
   }
 }
 
 /** @param {string} id */
 async function openActivityDrawer(id) {
+  if (!active) return
+  const generation = pageGeneration
+  const revision = ++activityRevision
   const drawer = /** @type {HTMLElement | null} */ (document.getElementById('a2a-activity-drawer'))
   const titleEl = document.getElementById('a2a-activity-title')
   if (!drawer || !titleEl) return
@@ -870,10 +1168,15 @@ async function openActivityDrawer(id) {
   if (ul) ul.innerHTML = '<li class="empty">加载中…</li>'
   drawer.hidden = false
 
-  const r = /** @type {{ events?: Array<any> }} */ (
-    await invokeApi('GET', `/v1/a2a/activity?agent_id=${encodeURIComponent(id)}&limit=50`)
-  )
-  if (!ul) return
+  let r
+  try {
+    r = await invokeApi('GET', `/v1/a2a/activity?agent_id=${encodeURIComponent(id)}&limit=50`)
+    if (!Array.isArray(r?.events)) throw new Error('返回内容不完整')
+  } catch (err) {
+    if (isPageCurrent(generation) && activityRevision === revision && !drawer.hidden && ul) ul.innerHTML = `<li class="empty">往来记录暂时读不到：${escapeHtml(readErrorText(err))}</li>`
+    return
+  }
+  if (!isPageCurrent(generation) || activityRevision !== revision || drawer.hidden || !ul) return
   ul.innerHTML = ''
   const events = r?.events ?? []
   if (events.length === 0) {
@@ -888,6 +1191,12 @@ async function openActivityDrawer(id) {
       ul.appendChild(li)
     }
   }
+}
+
+function closeActivityDrawer() {
+  activityRevision++
+  const drawer = document.getElementById('a2a-activity-drawer')
+  if (drawer) drawer.hidden = true
 }
 
 // ── utilities ─────────────────────────────────────────────────────────────

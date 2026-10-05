@@ -22,7 +22,7 @@ import { paintConversation, syncConversationLatest, showConversationLatest, conv
  * @typedef {{ getUserMedia: (c: MediaStreamConstraints) => Promise<MediaStream>, makeRecorder: (s: MediaStream) => MediaRecorder }} MediaDeps
  * @typedef {{ invoke: (cmd: string, args: Record<string, unknown>) => Promise<unknown>, media?: MediaDeps, invokeWorkbenchApi?: (method: 'GET'|'POST', path: string, body?: Record<string, unknown>) => Promise<unknown>, onDelegate?: (draft: import('./task-entry.js').Draft) => Promise<import('./task-entry.js').EntryResult|null>, onSend?: () => void }} Deps
  * @typedef {{ kind: 'voice', text: string } | { kind: 'sticker', label: string, file?: string, image?: string } | { kind: 'file', name: string, ref?: string }} ReplyAttachment
- * @typedef {{ id: number, role: 'user'|'cc'|'error'|'system', text: string, pending?: boolean, at?: number, attachments?: ReplyAttachment[], narration?: string[] }} ConverseMsg
+ * @typedef {{ id: number, role: 'user'|'cc'|'error'|'system', text: string, pending?: boolean, at?: number, source?: string, attachments?: ReplyAttachment[], narration?: string[] }} ConverseMsg
  */
 
 // ── module state ───────────────────────────────────────────────────────
@@ -451,10 +451,10 @@ function emptyStateHtml() {
 async function loadSharedHistory(deps) {
   if (!deps.invokeWorkbenchApi || messages.length) return
   try {
-    const detail = /** @type {{events?:Array<{kind:string,text:string,createdAt:number}>}|null} */ (await deps.invokeWorkbenchApi("GET", "/v1/matter/owner-chat"))
+    const detail = /** @type {{events?:Array<{kind:string,text:string,createdAt:number,source?:string}>}|null} */ (await deps.invokeWorkbenchApi("GET", "/v1/matter/owner-chat"))
     const events = (detail?.events ?? []).filter(e => e.kind === "user" || e.kind === "text")
     if (!events.length || messages.length) return
-    for (const e of events) messages.push({ id: nextId++, role: e.kind === "user" ? "user" : "cc", text: e.text, at: e.createdAt })
+    for (const e of events) messages.push({ id: nextId++, role: e.kind === "user" ? "user" : "cc", text: e.text, at: e.createdAt, source: e.source })
     renderMessages()
   } catch { /* 没有登记处或读不到:桌面照旧从空白开始 */ }
 }

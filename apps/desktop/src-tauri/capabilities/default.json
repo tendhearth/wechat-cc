@@ -18,6 +18,11 @@
           "name": "binaries/wechat-cc-cli",
           "sidecar": true,
           "args": true
+        },
+        {
+          "name": "binaries/tendhearth-cc-cli",
+          "sidecar": true,
+          "args": true
         }
       ]
     },

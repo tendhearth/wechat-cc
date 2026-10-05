@@ -10,7 +10,8 @@ describe('postcard presentation',()=>{
   expect(s).toContain('去朋友家')
   expect(s).toContain('2026')
   expect(s).toContain('data:image/svg+xml')
-  expect(s).toContain('aria-pressed="false"')
+  expect(s).toContain('class="pc-read"')
+  expect(s).not.toContain('data-pc-action="favorite"')
   expect(s).toContain('查看明信片')
  })
  it('exports a self-contained document and never interprets narration as HTML',()=>{
@@ -84,17 +85,17 @@ it('restores a postcard re-favorited while its detail remains open',async()=>{
  let click:any,detailClick:any
  const host={innerHTML:'',querySelectorAll:()=>[],querySelector:()=>null,addEventListener:(_n:string,f:any)=>{click=f}}
  const button={textContent:'',setAttribute:()=>{},disabled:false}
- const dialog={className:'',innerHTML:'',setAttribute:()=>{},addEventListener:(n:string,f:any)=>{if(n==='click')detailClick=f},showModal:()=>{},querySelector:()=>button}
+ const dialog={className:'',innerHTML:'',setAttribute:()=>{},addEventListener:(n:string,f:any)=>{if(n==='click')detailClick=f},showModal:()=>{},close:()=>{},remove:()=>{},querySelector:()=>button}
  vi.stubGlobal('document',{createElement:()=>dialog,body:{append:()=>{}}})
  try {
   const call=vi.fn().mockResolvedValueOnce({items:[{...card,favorite:1}],total:1}).mockResolvedValue({ok:true})
   createPostcardAlbum(host,{call,toast:vi.fn()})
   await click({target:{closest:()=>({dataset:{pcAction:'collected'}})}})
   await click({target:{closest:()=>({dataset:{pcAction:'open',pcId:'v1'}})}})
-  const target={...button,closest:()=>({dataset:{pcAction:'favorite'}})}
+  const target={...button,closest:(selector:string)=>selector==='[data-record-close]'?null:({dataset:{pcAction:'favorite'}})}
   await detailClick({target})
   expect(host.innerHTML).not.toContain('猫睡得很香')
   await detailClick({target})
   expect(host.innerHTML).toContain('猫睡得很香')
- } finally {vi.unstubAllGlobals()}
+ } finally { const {closeRecordReader}=await import('./record-reader.js');closeRecordReader({restoreFocus:false});vi.unstubAllGlobals()}
 })

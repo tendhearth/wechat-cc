@@ -23,15 +23,33 @@ export function nowStatusLine(daemon, presence) {
   return { cls: /** @type {'ok'} */ ('ok'), text: 'CC 在家 · 运行中' }
 }
 
-/** @param {Array<{role:string,text:string,at?:number,pending?:boolean}>} messages */
+/** @param {Array<{role:string,text:string,at?:number,pending?:boolean,source?:string}>} messages */
 export function latestCCLine(messages) {
   for (let i = messages.length - 1; i >= 0; i--) {
-    const m = /** @type {{role:string,text:string,at?:number,pending?:boolean}} */ (messages[i])
-    if (m.role !== 'cc' || m.pending) continue
+    const m = /** @type {{role:string,text:string,at?:number,pending?:boolean,source?:string}} */ (messages[i])
+    if (m.role !== 'cc' || m.pending || m.source === 'workbench') continue
     const text = markdownPlainText(m.text)
     if (text) return { text, at: typeof m.at === 'number' ? m.at : null }
   }
   return null
+}
+
+// 首页只摘一句原话。跳过「如下:」一类引子,不让空行和 Markdown 把气泡占满;
+// 完整记录仍在原对话里,摘录有省略时明确给出阅读入口。
+/** @param {string} text */
+export function ccBubblePreview(text) {
+  const paragraphs = text.trim().split(/\n+/).filter(p => !/^\s*(?:```|~~~)/.test(p)).map(p => p
+    .replace(/^\s*(?:#{1,6}\s+|>\s*|[-*+]\s+|\d+[.)、]\s*)/, '')
+    .replace(/!\[([^\]]*)\]\([^)]*\)/g, (_, alt) => alt.trim() || '图片')
+    .replace(/\[([^\]]+)\]\([^)]*\)/g, '$1')
+    .replace(/\*\*|__|`/g, '')
+    .replace(/\s+/g, ' ').trim()).filter(Boolean)
+  const full = paragraphs.join(' ') || text.trim()
+  const paragraph = paragraphs.find(p => !/[:：]$/.test(p)) ?? full
+  const sentence = paragraph.match(/^.*?[。！？!?][”’」』"']*|^.*?\.(?=\s|$)/u)?.[0]
+  const excerpt = sentence && sentence.length <= 120 ? sentence : paragraph
+  const preview = excerpt.length <= 120 ? excerpt : `${Array.from(excerpt).slice(0, 120).join('')}…`
+  return { text: preview, shortened: preview !== full }
 }
 
 // 每行像手机那样写问题 / 权限本身(GET /v1/workbench/attention 的 first,daemon 已压成一行并截断;

@@ -1,0 +1,47 @@
+{
+  "actualModule": true,
+  "allPassed": true,
+  "capabilities": {
+    "ReadableStreamAsyncIterator": false
+  },
+  "cases": [
+    {
+      "darkPixels": 18471,
+      "height": 954,
+      "mode": "actual-module",
+      "rendered": true,
+      "selectionText": "Native PDF smoke",
+      "text": "Native PDF smoke",
+      "textSpans": 1,
+      "whitePixels": 1345993,
+      "width": 1432,
+      "canvasPngPath": "/tmp/cc-preview-native-pdfjs-smoke-project/integration-pdf-actual-module.png"
+    }
+  ],
+  "engine": "Tauri 2.10.3 / native macOS WKWebView",
+  "fetches": [],
+  "hiddenNativeRafFired": false,
+  "hiddenWindow": true,
+  "logs": [],
+  "mainCsp": "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob: asset: http://asset.localhost https://asset.localhost; font-src 'self' data:; connect-src 'self' ipc: http://ipc.localhost https://ipc.localhost http://127.0.0.1:* http://localhost:* https://127.0.0.1:* https://localhost:*; object-src 'none'; base-uri 'self'; frame-src blob: cc-preview: http://cc-preview.localhost http://127.0.0.1:* http://localhost:* https://127.0.0.1:* https://localhost:*",
+  "nativePassed": true,
+  "parentOrigin": "tauri://localhost",
+  "parentUrl": "tauri://localhost",
+  "readerPage": "1",
+  "readerReady": true,
+  "readerStatus": "",
+  "readerStatusRole": "status",
+  "reason": "actual reader became ready",
+  "testSchedulingShim": "Hidden WK pauses native requestAnimationFrame; temporary harness schedules it through setTimeout, keeping actual reader source unchanged",
+  "violations": [],
+  "workerAttempts": [
+    {
+      "constructed": true,
+      "options": {
+        "type": "module"
+      },
+      "url": "tauri://localhost/vendor/pdfjs/pdf.worker.mjs"
+    }
+  ],
+  "xhrs": []
+}

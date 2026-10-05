@@ -12,4 +12,7 @@ describe('doctorHeadline', () => {
       expect(h.title + h.note).not.toMatch(/还没检测到|还差一步/)
     }
   })
+  it('recognizes an already configured API service or Cursor without requiring Claude or Codex',()=>{
+    for(const checks of [{provider:{ok:true,provider:'openai'}},{cursor:{ok:true}},{gemini:{ok:true}}])expect(doctorHeadline({checks}).ready).toBe(true)
+  })
 })

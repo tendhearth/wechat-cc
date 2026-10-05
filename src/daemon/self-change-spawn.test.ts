@@ -27,6 +27,17 @@ describe('resolveSelfCli', () => {
     expect(r).toEqual({ cmd: join('/Applications/wechat-cc.app/Contents/MacOS', 'wechat-cc-cli'), args: [] })
   })
 
+  it('1.7.5 起 macOS sidecar 改名 tendhearth-cc-cli:跟着 execPath 的名字走,不写死旧名', () => {
+    const r = resolveSelfCli({
+      compiled: true,
+      execPath: '/Applications/Tendhearth CC.app/Contents/MacOS/tendhearth-cc-cli',
+      repoRoot: '/irrelevant',
+      bunPath: null,
+      exists: p => p.endsWith('tendhearth-cc-cli'),
+    })
+    expect(r).toEqual({ cmd: join('/Applications/Tendhearth CC.app/Contents/MacOS', 'tendhearth-cc-cli'), args: [] })
+  })
+
   it('源码模式但 cli.ts 不在 ⇒ self_cli_not_found', () => {
     expect(resolveSelfCli({
       compiled: false, execPath: '/x', repoRoot: '/repo', bunPath: '/bun', exists: () => false,

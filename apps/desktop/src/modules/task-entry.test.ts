@@ -317,3 +317,127 @@ it('keeps requirements after a definitively expired request and allocates a new 
   expect(drafts).toHaveLength(2);expect(drafts[1]?.requestId).not.toBe(drafts[0]?.requestId)
   expect(drafts[1]?.text).toBe('保留这份要求');await pending
 })
+
+
+it('preselects a project by its path, inherits its executor, and submits only the catalog ID', async () => {
+  const {createTaskEntry} = await import('./task-entry.js')
+  const entry = createTaskEntry({storage, invokeWorkbenchApi: api(async (_method, path) => {
+    if (path === '/v1/workbench/entry-options') return {...options(), providers: [...options().providers, {id: 'claude', displayName: 'Claude', available: true, capabilities}], projects: [{...options().projects[0], providerId: 'claude'}]}
+  })})
+  const pending = entry.open({text: '在当前项目处理', projectPath: '/projects/example'}); await settle()
+  expect(dialog.innerHTML).toContain('项目：同名项目')
+  expect(JSON.parse(storage.getItem('cc.task-entry.window.v1')!)).toMatchObject({target: {kind: 'project', projectId: 'p-0123456789abcdef0123'}, providerId: 'claude'})
+  dialog.submit(); await settle(); await pending
+  expect(drafts[0]).toMatchObject({target: {kind: 'project', projectId: 'p-0123456789abcdef0123'}, providerId: 'claude'})
+  expect(drafts[0]).not.toHaveProperty('projectPath')
+  expect(drafts[0]).not.toHaveProperty('path')
+})
+
+it('retains edited requirements, attachments, and execution when reopening the same project', async () => {
+  const {createTaskEntry} = await import('./task-entry.js')
+  const {createWorkbenchAttachments} = await import('./workbench-attachments.js')
+  let attachments!: ReturnType<typeof createWorkbenchAttachments>
+  const entry = createTaskEntry({storage, createAttachments: deps => (attachments = createWorkbenchAttachments({...deps, encode: async () => 'aGVsbG8='})), invokeWorkbenchApi: api(async (_method, path, body) => {
+    if (path === '/v1/workbench/attachment') return {attachment: {id: body!.id, name: body!.name, mime: body!.mime, size: 5, sha256: 'a'.repeat(64)}}
+  })})
+  const first = entry.open({text: '原稿', projectPath: '/projects/example'}); await settle()
+  dialog.edit('text', '编辑后保留'); dialog.choose('defaults', 'native')
+  dialog.event('change', {id: 'task-entry-model', value: 'selected-model'})
+  const state = JSON.parse(storage.getItem('cc.task-entry.window.v1')!)
+  await attachments.add(`entry:${state.draftId}`, [new File(['hello'], 'notes.txt', {type: 'text/plain'})]); await settle()
+  dialog.click('cancel'); await first
+  const second = entry.open({text: '', projectPath: '/projects/example'}); await settle()
+  dialog.choose('project', 'p-0123456789abcdef0123')
+  expect(dialog.innerHTML).toContain('编辑后保留')
+  expect(dialog.innerHTML).toContain('notes.txt')
+  expect(JSON.parse(storage.getItem('cc.task-entry.window.v1')!)).toMatchObject({draftId: state.draftId, execution: {defaults: 'native', model: 'selected-model', reasoningEffort: null}})
+  dialog.submit(); await settle(); await second
+  expect(drafts[0]).toMatchObject({text: '编辑后保留', draftId: state.draftId, execution: {defaults: 'native', model: 'selected-model', reasoningEffort: null}})
+  expect(drafts[0]?.attachmentIds).toHaveLength(1)
+})
+
+it('keeps requirements and materials when changing the hinted project but resets execution for the new destination', async () => {
+  const {createTaskEntry} = await import('./task-entry.js')
+  const {createWorkbenchAttachments} = await import('./workbench-attachments.js')
+  let attachments!: ReturnType<typeof createWorkbenchAttachments>
+  const entry = createTaskEntry({storage, createAttachments: deps => (attachments = createWorkbenchAttachments({...deps, encode: async () => 'aGVsbG8='})), invokeWorkbenchApi: api(async (_method, path, body) => {
+    if (path === '/v1/workbench/entry-options') return {...options(), providers: [...options().providers, {id: 'claude', displayName: 'Claude', available: true, capabilities}], projects: [...options().projects, {id: 'p-11111111111111111111', name: '第二项目', path: '/projects/second', providerId: 'claude'}]}
+    if (path === '/v1/workbench/attachment') return {attachment: {id: body!.id, name: body!.name, mime: body!.mime, size: 5, sha256: 'b'.repeat(64)}}
+  })})
+  const first = entry.open({text: '原稿', projectPath: '/projects/example'}); await settle()
+  dialog.edit('text', '已有要求'); dialog.choose('defaults', 'native')
+  dialog.event('change', {id: 'task-entry-model', value: 'old-project-model'})
+  const state = JSON.parse(storage.getItem('cc.task-entry.window.v1')!)
+  await attachments.add(`entry:${state.draftId}`, [new File(['hello'], 'notes.txt', {type: 'text/plain'})]); await settle()
+  dialog.click('cancel'); await first
+  const second = entry.open({text: '不同来源文本', projectPath: '/projects/second'}); await settle()
+  expect(dialog.innerHTML).toContain('已有要求')
+  expect(dialog.innerHTML).toContain('notes.txt')
+  expect(dialog.innerHTML).toContain('项目：第二项目')
+  expect(JSON.parse(storage.getItem('cc.task-entry.window.v1')!)).toMatchObject({draftId: state.draftId, providerId: 'claude', execution: {defaults: 'provider', model: null, reasoningEffort: null}})
+  dialog.submit(); await settle(); await second
+  expect(drafts[0]).toMatchObject({text: '已有要求', draftId: state.draftId, target: {kind: 'project', projectId: 'p-11111111111111111111'}, providerId: 'claude'})
+  expect(drafts[0]?.attachmentIds).toHaveLength(1)
+})
+
+it('blocks a missing hinted project until the owner explicitly chooses another destination', async () => {
+  const {createTaskEntry} = await import('./task-entry.js')
+  const entry = createTaskEntry({storage, invokeWorkbenchApi: api()})
+  const pending = entry.open({text: '保留要求', projectPath: '/projects/missing'}); await settle()
+  expect(dialog.innerHTML).toContain('所选项目暂不可用，请在更多设置里重新选择。')
+  expect(dialog.innerHTML).toContain('<option value="" selected disabled>')
+  expect(dialog.innerHTML).toContain('type="submit" disabled')
+  dialog.submit(); await settle(); expect(drafts).toHaveLength(0)
+  dialog.choose('project', 'managed'); dialog.submit(); await settle(); await pending
+  expect(drafts[0]).toMatchObject({text: '保留要求', target: {kind: 'managed'}})
+})
+
+it('keeps the explicitly chosen destination when project options finish loading later', async () => {
+  const {createTaskEntry} = await import('./task-entry.js')
+  let finish!: (value: unknown) => void
+  const entry = createTaskEntry({storage, invokeWorkbenchApi: api(async (_method, path) => {
+    if (path === '/v1/workbench/entry-options') return await new Promise(resolve => {finish = resolve})
+  })})
+  const pending = entry.open({text: '手动选择优先', projectPath: '/projects/example'}); await settle()
+  dialog.choose('project', 'managed')
+  finish(options()); await settle()
+  expect(JSON.parse(storage.getItem('cc.task-entry.window.v1')!).target).toEqual({kind: 'managed'})
+  dialog.submit(); await settle(); await pending
+  expect(drafts[0]?.target).toEqual({kind: 'managed'})
+})
+
+it.each(['offline', 'invalid_text'])('does not redirect a pending %s request when opening from another project', async failure => {
+  const {createTaskEntry} = await import('./task-entry.js')
+  const entry = createTaskEntry({storage, invokeWorkbenchApi: api(async (_method, path, body) => {
+    if (path === '/v1/workbench/create-entry') {
+      drafts.push(structuredClone(body!))
+      if (drafts.length === 1) throw Error(failure)
+      return result(body!.requestId)
+    }
+  })})
+  const first = entry.open({text: '待确认的原稿', projectPath: '/projects/example'}); await settle()
+  dialog.choose('defaults', 'native'); dialog.event('change', {id: 'task-entry-model', value: 'original-model'})
+  dialog.submit(); await settle(); dialog.click('cancel'); await first
+  const frozen = JSON.parse(storage.getItem('cc.task-entry.window.v1')!).pending.input
+  const second = entry.open({text: '不能覆盖待确认要求', projectPath: '/projects/missing'}); await settle()
+  const restored = JSON.parse(storage.getItem('cc.task-entry.window.v1')!)
+  expect(restored).toMatchObject({text: '待确认的原稿', target: frozen.target, providerId: frozen.providerId, execution: frozen.execution})
+  expect(restored.pending.input).toEqual(frozen)
+  expect(dialog.innerHTML).toContain('上一份交办仍需确认')
+  expect(dialog.innerHTML).not.toContain('所选项目暂不可用，请在更多设置里重新选择。')
+  dialog.submit(); await settle(); await second
+  expect(drafts[1]).toEqual(drafts[0])
+})
+
+it('requires an explicit executor change when the hinted project executor is unavailable', async () => {
+  const {createTaskEntry} = await import('./task-entry.js')
+  const entry = createTaskEntry({storage, invokeWorkbenchApi: api(async (_method, path) => {
+    if (path === '/v1/workbench/entry-options') return {...options(), providers: [...options().providers, {id: 'claude', displayName: 'Claude', available: false, unavailableReason: {code: 'quota_exhausted', message: 'Claude 额度暂不可用'}, capabilities}], projects: [{...options().projects[0], providerId: 'claude'}]}
+  })})
+  const pending = entry.open({text: '沿用项目执行者', projectPath: '/projects/example'}); await settle()
+  expect(dialog.innerHTML).toContain('Claude 额度暂不可用')
+  expect(JSON.parse(storage.getItem('cc.task-entry.window.v1')!).providerId).toBe('claude')
+  dialog.submit(); await settle(); expect(drafts).toHaveLength(0)
+  dialog.choose('provider', 'codex'); dialog.submit(); await settle(); await pending
+  expect(drafts[0]?.providerId).toBe('codex')
+})

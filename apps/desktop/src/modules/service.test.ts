@@ -1,5 +1,5 @@
-import { describe, it, expect, vi } from "vitest"
-import { silentInstallAndStart } from "./service.js"
+import { describe, it, expect, vi, afterEach } from "vitest"
+import { serviceAction, silentInstallAndStart } from "./service.js"
 
 describe("silentInstallAndStart", () => {
   it("returns ok=true when install + start + alive all succeed", async () => {
@@ -54,4 +54,67 @@ describe("silentInstallAndStart", () => {
     vi.useRealTimers()
     expect(result).toMatchObject({ ok: false, stage: "alive" })
   })
+})
+
+describe("serviceAction install choices", () => {
+  afterEach(() => vi.unstubAllGlobals())
+
+  it.each([
+    { unattended: false, autoStart: true, drawerUnattended: true, drawerAutoStart: false, expected: ["service", "install", "--json", "--unattended", "false", "--auto-start", "true"] },
+    { unattended: true, autoStart: false, drawerUnattended: false, drawerAutoStart: true, expected: ["service", "install", "--json", "--unattended", "true", "--auto-start", "false"] },
+  ])("installs the current choices (unattended=$unattended, autoStart=$autoStart) despite stale hidden drawer toggles", async ({ unattended, autoStart, drawerUnattended, drawerAutoStart, expected }) => {
+    const summary = { textContent: "" }
+    const drawerToggles = new Map([
+      ["unattended-toggle", drawerUnattended],
+      ["autostart-toggle", drawerAutoStart],
+    ])
+    vi.stubGlobal("document", {
+      getElementById(id: string) {
+        if (id === "service-summary") return summary
+        if (drawerToggles.has(id)) {
+          return { hidden: true, classList: { contains: (name: string) => name === "on" && drawerToggles.get(id) } }
+        }
+        return null
+      },
+    })
+    const calls: string[][] = []
+    const invoke = async (_cmd: string, { args }: { args: string[] }) => {
+      calls.push(args)
+      if (args[0] === "install-progress") return null
+      if (args[0] === "service" && args[1] === "status") return { alive: false, installed: false, pid: null }
+      if (args[0] === "service" && args[1] === "install") return { ok: true, kind: "launchagent", dryRun: false }
+      throw new Error(`Unexpected command: ${args.join(" ")}`)
+    }
+    const readyReport = { checks: { daemon: { alive: true, pid: 4242 }, service: { installed: true } } }
+    const state = { unattended, autoStart }
+    await serviceAction({
+      invoke,
+      formatInvokeError: String,
+      doctorPoller: {
+        current: { checks: { provider: { ok: true } } },
+        waitForCondition: async () => readyReport,
+        refresh: async () => readyReport,
+      },
+    }, state, "install")
+
+    expect(calls.find(args => args[0] === "service" && args[1] === "install")).toEqual(expected)
+    expect(state).toEqual({ unattended, autoStart })
+  })
+})
+
+
+describe('finished installation progress',()=>{
+ afterEach(()=>vi.unstubAllGlobals())
+ it('does not let a late progress response replace the finished button',async()=>{
+  const button={innerHTML:'安装并启动',disabled:false},summary={textContent:''}
+  vi.stubGlobal('document',{getElementById:(id:string)=>id==='service-install'?button:id==='service-summary'?summary:null})
+  let resolve!:(value:unknown)=>void
+  const progress=new Promise(r=>{resolve=r})
+  const ready={checks:{provider:{ok:true},daemon:{alive:true,pid:4242},service:{installed:true}}}
+  const invoke=async(_cmd:string,{args}:{args:string[]})=>args[0]==='install-progress'?progress:args[1]==='status'?{alive:false,installed:false}:{ok:true,kind:'launchagent',dryRun:false}
+  await serviceAction({invoke,formatInvokeError:String,doctorPoller:{current:ready,refresh:async()=>ready,waitForCondition:async()=>ready}},{unattended:false,autoStart:false},'install')
+  resolve({step:2,total:5,label:'注册后台服务',ts:Date.now()})
+  for(let i=0;i<5;i++)await Promise.resolve()
+  expect(button).toEqual({innerHTML:'安装并启动',disabled:false})
+ })
 })

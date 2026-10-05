@@ -28,17 +28,16 @@ use std::env;
 use std::path::{Path, PathBuf};
 use std::process::{self, Command};
 
-/// Sidecar lives next to the main binary inside `Contents/MacOS/`.
+/// Sidecar lives next to the main binary inside `Contents/MacOS/`. macOS ships it
+/// as `tendhearth-cc-cli` since 1.7.5 (bundle_migrate::SIDECAR_NAMES); older
+/// bundles (and a rollback to one) still have `wechat-cc-cli`.
 fn sidecar_path() -> Result<PathBuf, String> {
     let exe = env::current_exe().map_err(|e| format!("current_exe: {e}"))?;
     let dir = exe
         .parent()
         .ok_or_else(|| "current_exe has no parent dir".to_string())?;
-    let candidate = dir.join("wechat-cc-cli");
-    if candidate.is_file() {
-        return Ok(candidate);
-    }
-    Err(format!("sidecar not found at {}", candidate.display()))
+    crate::bundle_migrate::find_sidecar(dir)
+        .ok_or_else(|| format!("sidecar not found in {}", dir.display()))
 }
 
 /// Manifest every plugin dir carries (src/lib/plugins-source.ts MANIFEST_FILE).
@@ -72,7 +71,7 @@ pub(crate) fn find_plugins_in_resources(resources: &Path) -> Option<PathBuf> {
 /// Mirrors `bundled_plugins_dir` in lib.rs without needing an AppHandle.
 fn bundled_plugins_dir() -> Option<PathBuf> {
     let exe = env::current_exe().ok()?;
-    // …/wechat-cc.app/Contents/MacOS/wechat-cc → …/Contents/Resources
+    // …/Tendhearth CC.app/Contents/MacOS/Tendhearth CC → …/Contents/Resources
     let contents = exe.parent()?.parent()?;
     find_plugins_in_resources(&contents.join("Resources"))
 }

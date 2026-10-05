@@ -13,7 +13,26 @@
  */
 import { invokeApi } from '../api.js'
 import { escapeHtml, showToast } from '../view.js'
-import { icon } from './icons.js'
+import { createRecordReader, isVisibleRecordTarget } from './record-reader.js'
+
+/** @type {Map<string, any>} */
+let records = new Map()
+/** @type {any} */
+let selectedRecord = null
+let readGeneration = 0
+let pageGeneration = 0
+let pageActive = true
+const pendingSources = new Set()
+const reader = createRecordReader({
+  onClose() { selectedRecord = null },
+  focusFallback(opener) {
+    const buttons = [...(document.getElementById('fd-catch')?.querySelectorAll('[data-hb-action="open"]') ?? [])]
+    return [buttons.find(el => el.getAttribute('data-hb-id') === opener?.getAttribute('data-hb-id')),
+      document.querySelector('#fd-catch [data-hb-action="retry"]'), ...buttons,
+      document.querySelector('.hb-dropped>summary'), document.getElementById('fd-connect-btn')]
+      .find(el => el && isVisibleRecordTarget(el)) ?? null
+  },
+})
 
 /** 推荐理由段的开头(与 src/core/hunt-catch.ts 的 REASON_RE 同一张词表)。 */
 const REASON_RE = /^[*#\s]*(?:为什么你会感兴趣|推荐理由|为什么推荐|对你有什么用|适合你|怎么用)[*\s]*[:：\s]/
@@ -109,96 +128,103 @@ export function splitByStatus(items) {
   return { kept, dropped }
 }
 
-/**
- * 见闻卡(kind='visit'):串门回来讲的那段话。没有链接,也没有「试过没有」——
- * 一段见闻不是一件要处理的东西。只留日期和删除。
- * 明信片(image_svg)内联渲染 —— 和记忆页的小像同一做法:daemon 存之前已经
- * 过了 safeSvg,这里不再过滤(也没有 DOM 之外的净化器可用)。
- * @param {any} it
- */
-function renderVisitCard(it) {
-  return `<article class="hb-card hb-visit" aria-label="串门见闻" data-hb-id="${escapeHtml(it.id)}">
-    <div class="hb-head">
-      <h3 class="hb-title">${icon('user-group', { size: 18, className: 'hb-kind-icon' })} ${escapeHtml(it.title || '串门')}</h3>
-      <span class="hb-day">${escapeHtml(dayLabel(it.ts))}</span>
-    </div>
-    ${it.image_svg ? `<div class="hb-postcard">${it.image_svg}</div>` : ''}
-    <p class="hb-note">${escapeHtml(it.note || '')}</p>
-    <div class="hb-foot hb-foot-visit">
-      <button class="hb-del" data-hb-action="remove" data-hb-id="${escapeHtml(it.id)}" type="button" title="从背包里删掉">×</button>
-    </div>
-  </article>`
+/** @param {any} it */
+function recordTitle(it) { return String(it.title || '').replace(/[*#`]/g, '').trim() || '带回来的内容' }
+/** @param {any} it */
+function recordKind(it) { return it.kind === 'visit' ? '见闻' : it.kind === 'postcard' ? '明信片' : '推荐' }
+/** @param {any} it */
+function recordPicture(it) {
+  // SVG stays in an image document, never as executable nodes in the app.
+  return it.image_svg ? '<img class="hb-postcard" src="' + escapeHtml('data:image/svg+xml;charset=utf-8,' + encodeURIComponent(it.image_svg)) + '" alt="' + escapeHtml(recordTitle(it)) + '">' : ''
 }
-
-/**
- * 明信片卡(kind='postcard'):别人的伙伴回了你的心愿。没有链接,也没有状态档。
- * @param {any} it
- */
-function renderPostcardCard(it) {
-  return `<article class="hb-card hb-postcard-card" aria-label="明信片" data-hb-id="${escapeHtml(it.id)}">
-    <div class="hb-head">
-      <h3 class="hb-title">${icon('mail-01', { size: 18, className: 'hb-kind-icon' })} ${escapeHtml(it.title || '明信片')}</h3>
-      <span class="hb-day">${escapeHtml(dayLabel(it.ts))}</span>
-    </div>
-    <p class="hb-note">${escapeHtml(it.note || '')}</p>
-    <div class="hb-foot hb-foot-visit">
-      <button class="hb-del" data-hb-action="remove" data-hb-id="${escapeHtml(it.id)}" type="button" title="从背包里删掉">×</button>
-    </div>
-  </article>`
-}
-
 /** @param {any} it */
 function renderCard(it) {
-  if (it.kind === 'visit') return renderVisitCard(it)
-  if (it.kind === 'postcard') return renderPostcardCard(it)
-  const url = safeUrl(it.url)
-  const ids = escapeHtml(JSON.stringify(it.sourceIds || [it.id]))
-  const title = String(it.title || '').replace(/[*#`]/g, '').trim() || '(无标题)'
-  const chips = STATUSES.map(s =>
-    `<button class="hb-chip${it.status === s.key ? ' on' : ''}" data-hb-action="status"`
-    + ` data-hb-id="${escapeHtml(it.id)}" data-hb-ids="${ids}" data-hb-status="${s.key}" type="button">${s.label}</button>`).join('')
-  // note 里已经包含链接原文;单独再列一次链接是为了能点、能复制。
-  return `<article class="hb-card" data-hb-id="${escapeHtml(it.id)}">
-    <div class="hb-head">
-      <h3 class="hb-title">${escapeHtml(title)}</h3>
-      <span class="hb-day">${escapeHtml(dayLabel(it.ts))}</span>
-    </div>
-    <p class="hb-note">${escapeHtml(it.note || '')}</p>
-    ${url ? `<div class="hb-link">
-      <a href="${escapeHtml(url)}" target="_blank" rel="noopener">${escapeHtml(url)}</a>
-      <button class="hb-copy" data-hb-action="copy" data-hb-url="${escapeHtml(url)}" type="button">复制</button>
-    </div>` : ''}
-    <div class="hb-foot">
-      <div class="hb-chips">${chips}</div>
-      <button class="hb-del" data-hb-action="remove" data-hb-id="${escapeHtml(it.id)}" data-hb-ids="${ids}" type="button" title="从背包里删掉">×</button>
-    </div>
-  </article>`
+  const kind = it.kind === 'visit' ? ' hb-visit' : it.kind === 'postcard' ? ' hb-postcard-card' : ''
+  const status = it.kind === 'visit' || it.kind === 'postcard' ? '' : ' · ' + statusLabel(it.status)
+  return '<article class="hb-card' + kind + '" data-hb-id="' + escapeHtml(it.id) + '">'
+    + '<button class="hb-read" type="button" data-hb-action="open" data-hb-id="' + escapeHtml(it.id) + '" data-hb-ids="' + escapeHtml(JSON.stringify(it.sourceIds || [it.id])) + '">'
+    + '<span class="hb-head"><span class="hb-title">' + escapeHtml(recordTitle(it)) + '</span><span class="hb-day">' + escapeHtml(dayLabel(it.ts)) + '</span></span>'
+    + '<span class="hb-note">' + escapeHtml(it.note || '') + '</span>'
+    + '<span class="hb-meta">' + escapeHtml(recordKind(it) + status) + '</span></button></article>'
+}
+/** @param {any} it */
+function detailMarkup(it) {
+  const url = safeUrl(it.url), ids = escapeHtml(JSON.stringify(it.sourceIds || [it.id]))
+  const attrs = ' data-hb-id="' + escapeHtml(it.id) + '" data-hb-ids="' + ids + '"'
+  const statuses = it.kind === 'visit' || it.kind === 'postcard' ? '' : '<div class="hb-chips" role="group" aria-label="使用状态">'
+    + STATUSES.map(state => '<button class="hb-chip' + (it.status === state.key ? ' on' : '') + '" type="button" data-hb-action="status"' + attrs + ' data-hb-status="' + state.key + '" aria-pressed="' + (it.status === state.key) + '">' + state.label + '</button>').join('') + '</div>'
+  return '<article class="hb-detail"><h2>' + escapeHtml(recordTitle(it)) + '</h2><p class="hb-meta">' + escapeHtml(recordKind(it) + ' · ' + dayLabel(it.ts)) + '</p>'
+    + recordPicture(it) + '<p>' + escapeHtml(it.note || '') + '</p>'
+    + (url ? '<p class="hb-detail-link"><a href="' + escapeHtml(url) + '" target="_blank" rel="noopener noreferrer">打开链接 →</a></p>' : '')
+    + '<details class="hb-detail-more"><summary>更多</summary>' + statuses
+    + '<div class="hb-detail-actions">' + (url ? '<button class="hb-copy" type="button" data-hb-action="copy" data-hb-url="' + escapeHtml(url) + '">复制链接</button>' : '')
+    + '<button class="hb-del" type="button" data-hb-action="remove"' + attrs + '>删除这条记录</button></div></details></article>'
+}
+function syncReadingState() {
+  const dialog = reader.element
+  if (!dialog || !selectedRecord) return
+  const fresh = records.get(String(selectedRecord.id))
+  if (fresh) selectedRecord = fresh
+  const busy = (selectedRecord.sourceIds || [selectedRecord.id]).some((/** @type {string} */ id) => pendingSources.has(id))
+  dialog.querySelectorAll('[data-hb-action="status"],[data-hb-action="remove"]').forEach(button => {
+    if (button instanceof HTMLButtonElement) button.disabled = busy
+    const status = button.getAttribute('data-hb-status')
+    if (status) { button.setAttribute('aria-pressed', String(status === selectedRecord.status)); button.classList.toggle('on', status === selectedRecord.status) }
+  })
+}
+/** @param {any} record @param {any} trigger */
+function openRecord(record, trigger) {
+  reader.open({label:recordKind(record),html:detailMarkup(record),trigger,onAction:onHuntBagClick})
+  selectedRecord = record
+  syncReadingState()
+}
+
+/** @param {string|null} message */
+function showReadFeedback(message) {
+  const detail = reader.element?.querySelector('.hb-detail')
+  if (!detail) return
+  detail.querySelector('.hb-detail-feedback')?.remove()
+  if (!message) return
+  const note = document.createElement('div')
+  note.className = 'hb-detail-feedback'
+  note.setAttribute('role', 'status')
+  const text = document.createElement('p')
+  text.textContent = message
+  const retry = document.createElement('button')
+  retry.type = 'button'
+  retry.dataset.hbAction = 'retry'
+  retry.textContent = '重新读取'
+  note.append(text, retry)
+  detail.append(note)
 }
 
 /**
- * @param {{ items: Array<any> | null }} data — items 为 null = 读不到
+ * @param {{ items: Array<any> | null, error?:string|null }} data — items 为 null = 读不到
  *   (daemon 没跑 / 路由未接)。**这和「打了但空手」不是一回事**,所以
  *   文案必须不同 —— 把读取失败显示成空清单,等于告诉主人 CC 什么都没找到。
  */
 export function renderHuntBag(data) {
+  readGeneration++
   const host = document.getElementById('fd-catch')
   const count = document.getElementById('fd-catch-count')
   if (!host) return
 
   if (data.items == null) {
     if (count) count.textContent = ''
-    host.innerHTML = '<div class="fd-empty">暂时无法读取带回来的内容，请到首页检查连接后重试。</div>'
+    host.innerHTML = '<div class="fd-empty" role="status"><p>暂时无法读取带回来的内容。</p><button type="button" data-hb-action="retry">重试</button></div>'
     return
   }
-  const { kept, dropped } = splitByStatus(groupRecommendations(data.items))
+  const grouped = groupRecommendations(data.items)
+  records = new Map(grouped.map(it => [String(it.id), it]))
+  const { kept, dropped } = splitByStatus(grouped)
   if (count) count.textContent = countLabel(kept)
 
   if (kept.length === 0 && dropped.length === 0) {
-    host.innerHTML = '<div class="fd-empty">背包还是空的 —— CC 每天会上网替你找一两样东西、也会去朋友家串门，带回来的都记在这儿。</div>'
+    host.innerHTML = '<div class="fd-empty">还没有带回来的内容。CC 留下的推荐、见闻和明信片会出现在这里。</div>'
     return
   }
   host.innerHTML =
-    (kept.length ? kept.map(renderCard).join('') : '<div class="fd-empty">背包里的都处理完了。</div>')
+    (kept.length ? kept.map(renderCard).join('') : '<div class="fd-empty">带回来的都已收进「不要了」。</div>')
     + (dropped.length
       ? `<details class="hb-dropped"><summary>不要了的 ${dropped.length} 件</summary>${dropped.map(renderCard).join('')}</details>`
       : '')
@@ -217,9 +243,15 @@ export async function markJournalSeen() {
 }
 
 export async function refreshHuntBag() {
+  const ticket = ++readGeneration
   const resp = /** @type {{items?:Array<any>}|null} */ (
     await invokeApi('GET', '/v1/journal').catch(() => null))
-  renderHuntBag({ items: resp ? (resp.items ?? []) : null })
+  if (ticket !== readGeneration) return false
+  const items = Array.isArray(resp?.items) ? resp.items : null
+  renderHuntBag({ items })
+  syncReadingState()
+  showReadFeedback(items ? null : '暂时无法重新读取。已确认的操作保留，可以稍后重试。')
+  return items !== null
 }
 
 /**
@@ -228,9 +260,15 @@ export async function refreshHuntBag() {
  */
 export async function onHuntBagClick(ev) {
   const btn = ev.target?.closest?.('[data-hb-action]')
-  if (!btn) return
+  if (!btn || btn.disabled) return
   const action = btn.getAttribute('data-hb-action')
 
+  if (action === 'retry') { await refreshHuntBag(); return }
+  if (action === 'open') {
+    const record = records.get(btn.getAttribute('data-hb-id'))
+    if (record) openRecord(record, btn)
+    return
+  }
   if (action === 'copy') {
     const url = btn.getAttribute('data-hb-url') ?? ''
     try { await navigator.clipboard.writeText(url); showToast('链接已复制') }
@@ -247,32 +285,57 @@ export async function onHuntBagClick(ev) {
     const g = JSON.parse(btn.getAttribute('data-hb-ids') || 'null')
     if (Array.isArray(g) && g.length > 0 && g.every(x => typeof x === 'string')) ids = g
   } catch { /* 单条 */ }
+  let transportFailed = false
   /** @param {string} path @param {(id: string) => Record<string, unknown>} body */
   const each = async (path, body) => {
-    const rs = await Promise.all(ids.map(x => invokeApi('POST', path, body(x)).catch(() => null)))
+    const rs = await Promise.all(ids.map(x => invokeApi('POST', path, body(x)).catch(() => { transportFailed = true; return null })))
     return rs.map(r => !!(/** @type {{ok?:boolean}|null} */ (r))?.ok)
   }
   // ok:false = 这条已经不在了(另一个窗口删过)。**不能装作成功** ——
   // 界面会显示一个改不动的状态,主人只会觉得点了没反应。
   const report = (/** @type {boolean[]} */ oks) => {
     if (oks.every(Boolean)) return
-    showToast(oks.some(Boolean) ? '有一部分没改成 —— 刷新后看看' : '这条已经不在背包里了')
+    showToast(oks.some(Boolean) ? '有一部分没改成 —— 刷新后看看' : transportFailed ? '暂时没能更新这条记录，请重试。' : '这条已经不在背包里了')
   }
 
-  if (action === 'status') {
-    const status = btn.getAttribute('data-hb-status')
-    report(await each('/v1/journal/status', x => ({ id: x, status })))
-    await refreshHuntBag()
-    return
-  }
-
-  if (action === 'remove') {
-    report(await each('/v1/journal/remove', x => ({ id: x })))
-    await refreshHuntBag()
+  if (action !== 'status' && action !== 'remove') return
+  if (ids.some(id => pendingSources.has(id))) return
+  ids.forEach(id => pendingSources.add(id))
+  const owner = pageGeneration
+  syncReadingState()
+  btn.disabled = true
+  try {
+    const oks = action === 'status'
+      ? await each('/v1/journal/status', id => ({ id, status: btn.getAttribute('data-hb-status') }))
+      : await each('/v1/journal/remove', id => ({ id }))
+    if (owner === pageGeneration) report(oks)
+    if (owner === pageGeneration && action === 'status' && oks.every(Boolean)) {
+      const fresh = records.get(id)
+      if (fresh) records.set(id, { ...fresh, status: btn.getAttribute('data-hb-status') })
+      syncReadingState()
+    }
+    if (pageActive) await refreshHuntBag()
+    if (pageActive && owner === pageGeneration && action === 'remove' && oks.every(Boolean) && selectedRecord?.id === id) reader.close()
+  } finally {
+    ids.forEach(id => pendingSources.delete(id))
+    btn.disabled = false
+    syncReadingState()
   }
 }
 
 /** 装一次委托监听。 */
 export function initHuntBag() {
-  document.getElementById('fd-catch')?.addEventListener('click', onHuntBagClick)
+  const host = document.getElementById('fd-catch')
+  if (!host || host.dataset?.readingBound === 'true') return
+  if (host.dataset) host.dataset.readingBound = 'true'
+  host.addEventListener('click', onHuntBagClick)
 }
+
+export function deactivateHuntBag() {
+  readGeneration++
+  pageGeneration++
+  pageActive = false
+  reader.close({restoreFocus:false})
+}
+
+export function activateHuntBag() { pageActive = true }

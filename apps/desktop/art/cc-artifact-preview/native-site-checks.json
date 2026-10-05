@@ -1,0 +1,167 @@
+{
+  "allPassed": true,
+  "checks": {
+    "binaryImageDisplays": true,
+    "externalConnectBlocked": true,
+    "externalModuleRuns": true,
+    "fontLoaded": true,
+    "inlineScriptWorks": true,
+    "interactionWorks": true,
+    "jsonFetchWorks": true,
+    "mainInlineBlocked": true,
+    "nestedNavigationWorks": true,
+    "opaqueMessageOrigin": true,
+    "parentDomBlocked": true,
+    "relativeCssWorks": true,
+    "relativeModuleImportWorks": true,
+    "releaseWorks": true,
+    "siblingConnectBlocked": true,
+    "siblingScriptBlocked": true,
+    "tauriApiAbsent": true
+  },
+  "engine": "Tauri 2.10.3 / native macOS WKWebView",
+  "evidence": {
+    "child": {
+      "backgroundColor": "rgb(1, 2, 3)",
+      "clickCount": 2,
+      "externalFetchBlocked": true,
+      "externalFetchError": "TypeError: Load failed",
+      "fontLoaded": true,
+      "imageHeight": 1,
+      "imageWidth": 1,
+      "importedValue": 42,
+      "inlineRan": true,
+      "jsonVersion": "saved-v1",
+      "moduleRan": true,
+      "parentDomBlocked": true,
+      "siblingFetchBlocked": true,
+      "siblingFetchError": "TypeError: Load failed",
+      "siblingImportBlocked": true,
+      "siblingImportError": "TypeError: Importing a module script failed.",
+      "tauriAbsent": true,
+      "tauriInternalsAbsent": true,
+      "violations": [
+        {
+          "blockedURI": "http://127.0.0.1:49216/sentinel",
+          "effectiveDirective": "connect-src"
+        },
+        {
+          "blockedURI": "cc-preview://localhost/18db3432059f40200000000000000001/data.json",
+          "effectiveDirective": "connect-src"
+        },
+        {
+          "blockedURI": "cc-preview://localhost/18db3432059f40200000000000000001/code.mjs",
+          "effectiveDirective": "script-src-elem"
+        }
+      ]
+    },
+    "childMessageOrigin": "null",
+    "errors": [],
+    "navigation": {
+      "navigationRan": true,
+      "parentDomBlocked": true,
+      "path": "/18db343205d540580000000000000002/pages/%E4%B8%8B%E4%B8%80%E9%A1%B5.html"
+    },
+    "navigationMessageOrigin": "null",
+    "parentInlineRan": false,
+    "parentOrigin": "tauri://localhost",
+    "parentViolations": [
+      {
+        "blockedURI": "inline",
+        "effectiveDirective": "script-src-elem"
+      }
+    ],
+    "released": true,
+    "siblingId": "18db3432059f40200000000000000001",
+    "urls": [
+      "cc-preview://localhost/18db343205d540580000000000000002/pages/%E9%A6%96%E9%A1%B5%20%E7%A9%BA%E6%A0%BC.html"
+    ]
+  },
+  "hiddenWindow": true,
+  "mainCsp": "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob: asset: http://asset.localhost https://asset.localhost; font-src 'self' data:; connect-src 'self' ipc: http://ipc.localhost https://ipc.localhost http://127.0.0.1:* http://localhost:* https://127.0.0.1:* https://localhost:*; object-src 'none'; base-uri 'self'; frame-src blob: cc-preview: http://cc-preview.localhost http://127.0.0.1:* http://localhost:* https://127.0.0.1:* https://localhost:*",
+  "nativePassed": true,
+  "requests": [
+    {
+      "contentType": "text/html; charset=utf-8",
+      "cors": true,
+      "csp": "default-src 'none'; script-src 'unsafe-inline' cc-preview://localhost/18db343205d540580000000000000002/; style-src 'unsafe-inline' cc-preview://localhost/18db343205d540580000000000000002/; img-src data: blob: cc-preview://localhost/18db343205d540580000000000000002/; font-src data: cc-preview://localhost/18db343205d540580000000000000002/; connect-src cc-preview://localhost/18db343205d540580000000000000002/; object-src 'none'; frame-src 'none'; base-uri 'none'; form-action 'none'; sandbox allow-scripts",
+      "method": "GET",
+      "origin": null,
+      "status": 200,
+      "uri": "cc-preview://localhost/18db343205d540580000000000000002/pages/%E9%A6%96%E9%A1%B5%20%E7%A9%BA%E6%A0%BC.html"
+    },
+    {
+      "contentType": "text/css; charset=utf-8",
+      "cors": true,
+      "csp": "default-src 'none'; script-src 'unsafe-inline' cc-preview://localhost/18db343205d540580000000000000002/; style-src 'unsafe-inline' cc-preview://localhost/18db343205d540580000000000000002/; img-src data: blob: cc-preview://localhost/18db343205d540580000000000000002/; font-src data: cc-preview://localhost/18db343205d540580000000000000002/; connect-src cc-preview://localhost/18db343205d540580000000000000002/; object-src 'none'; frame-src 'none'; base-uri 'none'; form-action 'none'; sandbox allow-scripts",
+      "method": "GET",
+      "origin": null,
+      "status": 200,
+      "uri": "cc-preview://localhost/18db343205d540580000000000000002/assets/site.css?v=css"
+    },
+    {
+      "contentType": "image/png",
+      "cors": true,
+      "csp": "default-src 'none'; script-src 'unsafe-inline' cc-preview://localhost/18db343205d540580000000000000002/; style-src 'unsafe-inline' cc-preview://localhost/18db343205d540580000000000000002/; img-src data: blob: cc-preview://localhost/18db343205d540580000000000000002/; font-src data: cc-preview://localhost/18db343205d540580000000000000002/; connect-src cc-preview://localhost/18db343205d540580000000000000002/; object-src 'none'; frame-src 'none'; base-uri 'none'; form-action 'none'; sandbox allow-scripts",
+      "method": "GET",
+      "origin": null,
+      "status": 200,
+      "uri": "cc-preview://localhost/18db343205d540580000000000000002/assets/pixel.png?v=image"
+    },
+    {
+      "contentType": "text/javascript; charset=utf-8",
+      "cors": true,
+      "csp": "default-src 'none'; script-src 'unsafe-inline' cc-preview://localhost/18db343205d540580000000000000002/; style-src 'unsafe-inline' cc-preview://localhost/18db343205d540580000000000000002/; img-src data: blob: cc-preview://localhost/18db343205d540580000000000000002/; font-src data: cc-preview://localhost/18db343205d540580000000000000002/; connect-src cc-preview://localhost/18db343205d540580000000000000002/; object-src 'none'; frame-src 'none'; base-uri 'none'; form-action 'none'; sandbox allow-scripts",
+      "method": "GET",
+      "origin": "null",
+      "status": 200,
+      "uri": "cc-preview://localhost/18db343205d540580000000000000002/assets/app.mjs?v=main"
+    },
+    {
+      "contentType": "text/javascript; charset=utf-8",
+      "cors": true,
+      "csp": "default-src 'none'; script-src 'unsafe-inline' cc-preview://localhost/18db343205d540580000000000000002/; style-src 'unsafe-inline' cc-preview://localhost/18db343205d540580000000000000002/; img-src data: blob: cc-preview://localhost/18db343205d540580000000000000002/; font-src data: cc-preview://localhost/18db343205d540580000000000000002/; connect-src cc-preview://localhost/18db343205d540580000000000000002/; object-src 'none'; frame-src 'none'; base-uri 'none'; form-action 'none'; sandbox allow-scripts",
+      "method": "GET",
+      "origin": "null",
+      "status": 200,
+      "uri": "cc-preview://localhost/18db343205d540580000000000000002/assets/util.mjs?v=import"
+    },
+    {
+      "contentType": "font/ttf",
+      "cors": true,
+      "csp": "default-src 'none'; script-src 'unsafe-inline' cc-preview://localhost/18db343205d540580000000000000002/; style-src 'unsafe-inline' cc-preview://localhost/18db343205d540580000000000000002/; img-src data: blob: cc-preview://localhost/18db343205d540580000000000000002/; font-src data: cc-preview://localhost/18db343205d540580000000000000002/; connect-src cc-preview://localhost/18db343205d540580000000000000002/; object-src 'none'; frame-src 'none'; base-uri 'none'; form-action 'none'; sandbox allow-scripts",
+      "method": "GET",
+      "origin": null,
+      "status": 200,
+      "uri": "cc-preview://localhost/18db343205d540580000000000000002/assets/smoke.ttf?v=font"
+    },
+    {
+      "contentType": "application/json; charset=utf-8",
+      "cors": true,
+      "csp": "default-src 'none'; script-src 'unsafe-inline' cc-preview://localhost/18db343205d540580000000000000002/; style-src 'unsafe-inline' cc-preview://localhost/18db343205d540580000000000000002/; img-src data: blob: cc-preview://localhost/18db343205d540580000000000000002/; font-src data: cc-preview://localhost/18db343205d540580000000000000002/; connect-src cc-preview://localhost/18db343205d540580000000000000002/; object-src 'none'; frame-src 'none'; base-uri 'none'; form-action 'none'; sandbox allow-scripts",
+      "method": "GET",
+      "origin": "null",
+      "status": 200,
+      "uri": "cc-preview://localhost/18db343205d540580000000000000002/data/info.json?v=data"
+    },
+    {
+      "contentType": "text/html; charset=utf-8",
+      "cors": true,
+      "csp": "default-src 'none'; script-src 'unsafe-inline' cc-preview://localhost/18db343205d540580000000000000002/; style-src 'unsafe-inline' cc-preview://localhost/18db343205d540580000000000000002/; img-src data: blob: cc-preview://localhost/18db343205d540580000000000000002/; font-src data: cc-preview://localhost/18db343205d540580000000000000002/; connect-src cc-preview://localhost/18db343205d540580000000000000002/; object-src 'none'; frame-src 'none'; base-uri 'none'; form-action 'none'; sandbox allow-scripts",
+      "method": "GET",
+      "origin": null,
+      "status": 200,
+      "uri": "cc-preview://localhost/18db343205d540580000000000000002/pages/%E4%B8%8B%E4%B8%80%E9%A1%B5.html?v=navigation"
+    }
+  ],
+  "sentinelRequests": 0,
+  "sourceProof": {
+    "modulePath": "/Users/nategu_mac_company/Documents/tendhearth/wechat-cc/apps/desktop/src-tauri/src/html_preview.rs",
+    "moduleSha256": "960bd528cfa41ace6c115030624a937e0ea3512bb938293010cabec37d5f54c7",
+    "adapterSha256": "ee73c60587f603a8cf78646dcb550e58dbf41e721f1be0d34c4fadd8ec08dd4b",
+    "mainCsp": "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob: asset: http://asset.localhost https://asset.localhost; font-src 'self' data:; connect-src 'self' ipc: http://ipc.localhost https://ipc.localhost http://127.0.0.1:* http://localhost:* https://127.0.0.1:* https://localhost:*; object-src 'none'; base-uri 'self'; frame-src blob: cc-preview: http://cc-preview.localhost http://127.0.0.1:* http://localhost:* https://127.0.0.1:* https://localhost:*",
+    "testedSnapshot": "/tmp/cc-static-site-native/integrated-html-preview.rs",
+    "moduleStillMatchesRoot": true,
+    "moduleTests": "Root reported integrated cargo 18/18 green; our original isolated harness 18/18 green."
+  }
+}

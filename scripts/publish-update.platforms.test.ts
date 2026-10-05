@@ -2,7 +2,7 @@ import { describe, it, expect } from 'vitest'
 import { mkdtempSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { collectPlatformsFromDir, mergePlatforms, unsignedUpdaterArtifacts } from './publish-update.platforms'
+import { collectPlatformsFromDir, localMacUpdaterTarball, macProductName, mergePlatforms, unsignedUpdaterArtifacts } from './publish-update.platforms'
 
 const dir = (files: string[]): string => {
   const d = mkdtempSync(join(tmpdir(), 'pub-'))
@@ -40,6 +40,42 @@ describe('collectPlatformsFromDir —— 让 CI 一次发全平台', () => {
   it('dmg/msi/deb 不进自动更新(它们是给新用户手动装的)', () => {
     const d = dir(['wechat-cc_1.6.6_aarch64.dmg', 'wechat-cc_1.6.6_amd64.deb', 'wechat-cc_1.6.6_x64_en-US.msi'])
     expect(collectPlatformsFromDir(d, '1.6.6')).toEqual([])
+  })
+})
+
+describe('1.7.5 改名:macOS updater 包换了文件名,latest.json 的形状不变(老客户端只认 url)', () => {
+  it('本地构建的 `Tendhearth CC.app.tar.gz` → darwin-aarch64,R2 对象名还是 wechat-cc_<ver>_darwin-aarch64.app.tar.gz', () => {
+    const d = dir(['Tendhearth CC.app.tar.gz', 'Tendhearth CC.app.tar.gz.sig'])
+    const got = collectPlatformsFromDir(d, '1.7.5')
+    expect(got.map(p => [p.platformKey, p.artifactName])).toEqual([['darwin-aarch64', 'wechat-cc_1.7.5_darwin-aarch64.app.tar.gz']])
+    expect(got[0]!.artifactPath.endsWith('Tendhearth CC.app.tar.gz')).toBe(true)
+  })
+
+  it('GitHub Release 把空格换成点:CI 下载回来的 `Tendhearth.CC.app.tar.gz` 也认', () => {
+    const d = dir(['Tendhearth.CC.app.tar.gz', 'Tendhearth.CC.app.tar.gz.sig', 'wechat-cc_1.7.5_x64-setup.exe', 'wechat-cc_1.7.5_x64-setup.exe.sig'])
+    expect(collectPlatformsFromDir(d, '1.7.5').map(p => p.platformKey)).toEqual(['darwin-aarch64', 'windows-x86_64'])
+  })
+
+  it('新旧两个名字同时在 ⇒ 拒绝(混了两次构建,挑哪个都可能把旧包发出去)', () => {
+    const d = dir(['Tendhearth CC.app.tar.gz', 'Tendhearth CC.app.tar.gz.sig', 'wechat-cc.app.tar.gz', 'wechat-cc.app.tar.gz.sig'])
+    expect(() => collectPlatformsFromDir(d, '1.7.5')).toThrow(/ambiguous/)
+  })
+
+  it('新名字的包缺 .sig 照样点名', () => {
+    expect(unsignedUpdaterArtifacts('/x', ['Tendhearth CC.app.tar.gz'])).toEqual(['Tendhearth CC.app.tar.gz'])
+  })
+
+  it('本机单平台发布:先找新名字,回落老名字', () => {
+    // 路径用 join 拼,跟实现一样按平台分隔符(Windows CI 上是反斜杠)。
+    const oldTar = join('/b', 'wechat-cc.app.tar.gz'), newTar = join('/b', 'Tendhearth CC.app.tar.gz')
+    expect(localMacUpdaterTarball('/b', p => p === oldTar)).toBe(oldTar)
+    expect(localMacUpdaterTarball('/b', () => true)).toBe(newTar)
+    expect(localMacUpdaterTarball('/b', () => false)).toBe(newTar)
+  })
+
+  it('dmg 名跟 macOS 的 productName(tauri.macos.conf.json 覆盖基础配置)', () => {
+    expect(macProductName({ productName: 'wechat-cc' }, { productName: 'Tendhearth CC' })).toBe('Tendhearth CC')
+    expect(macProductName({ productName: 'wechat-cc' }, null)).toBe('wechat-cc')
   })
 })
 

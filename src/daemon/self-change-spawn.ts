@@ -13,7 +13,7 @@
  * 读坏了当没有(一条烂记录不该让「自改 状态」整个瘫掉)。
  */
 import { readdirSync, readFileSync } from 'node:fs'
-import { dirname, join } from 'node:path'
+import { basename, dirname, join } from 'node:path'
 import type { spawn as SpawnFn } from 'node:child_process'
 import { workbenchSubprocessEnv } from '../core/workbench/subprocess-env'
 
@@ -42,8 +42,9 @@ export function resolveSelfCli(input: {
   exists: (p: string) => boolean
 }): SelfCliResolution {
   if (input.compiled) {
-    // 打包版:sidecar 自己就是 wechat-cc-cli,和它并排的那个才是要再起一份的目标。
-    const binary = join(dirname(input.execPath), 'wechat-cc-cli')
+    // 打包版:sidecar 自己就是那个命令行(`tendhearth-cc-cli`,老包 `wechat-cc-cli`)。
+    // 用 execPath 自己的名字而不是写死:1.7.5 起 macOS 换了名,写死旧名 ⇒ self_cli_not_found。
+    const binary = join(dirname(input.execPath), basename(input.execPath))
     if (!input.exists(binary)) return { error: 'self_cli_not_found' }
     return { cmd: binary, args: [] }
   }

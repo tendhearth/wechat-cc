@@ -16,7 +16,7 @@
 
 import { invoke as ipcInvoke, formatInvokeError } from "./ipc.js"
 import { invokeApi, invokeWorkbenchApi } from "./api.js"
-import { initialMode, restartButtonState, afterScanTarget , showToast, guardLine } from "./view.js"
+import { initialMode, restartButtonState, afterScanTarget , showToast, guardLine, hasUsableProvider, providerReady } from "./view.js"
 import { createDoctorPoller } from "./doctor-poller.js"
 import { createPresencePoller } from "./presence-poller.js"
 import { createConversationsPoller } from "./conversations-poller.js"
@@ -25,7 +25,7 @@ import {
   refreshEnterDashboardButton,
   showStep as wizardShowStep,
 } from "./modules/wizard.js"
-import { refreshQr } from "./modules/qr.js"
+import { refreshQr, stopQr } from "./modules/qr.js"
 import { mountPhoneConnect, mountOnboardPhone } from "./modules/phone-connect.js"
 import { serviceAction, forceKillDaemon } from "./modules/service.js"
 import { renderDashboard, renderRestartButton, setPending, setLastProbe, restartDaemon, stopDaemon, handleAccountRowClick, toggleProviderMenu, toggleUserProviderMenu, closeProviderMenu, checkIncidentsOnPoll, checkFsAccessOnPoll, checkGuardOnPoll, checkBrainHealthOnPoll, loadBrainHealth, runTroubleshoot, runBrainDial, closeTroubleshoot, renderNoBrain, openBrainSetup, saveBrainKey } from "./modules/dashboard.js"
@@ -33,14 +33,16 @@ import { renderConversations } from "./modules/conversations.js"
 import { loadMemoryPane, wireMemoryButtons, loadMemoryTopZone, loadMemoryDecisions, archiveObservation, synthesizeMemory, generateMemoryProfile, loadProjectMemory, isMemoryEmbryoEnabled, setMemoryEmbryoEnabled, renderMemoryProfileOverview, jumpToMemorySource } from "./modules/memory.js"
 import { rerenderLogs, loadLogsPane, startLogsAutoRefresh, stopLogsAutoRefresh } from "./modules/logs.js"
 import { initDialoguePage, stopDialogueAutoRefresh } from "./modules/dialogue-page.js"
-import { initTodosPage } from "./modules/todos.js"
+import { initTodosPage, deactivateTodosPage } from "./modules/todos.js"
 import { startAppUpdateChecks } from "./modules/app-update.js"
 import { initConversePage, subscribeConverse, setConverseMode } from "./modules/converse.js"
 import { mountNowPage } from "./modules/now-page.js"
 import { mountNowConnections } from "./modules/now-connections.js"
 import { latestCCLine, nowStatusLine } from "./modules/now-home.js"
-import { initA2AAgentsTab, refresh as refreshA2AAgents } from "./modules/a2a-agents.js"
-import { markJournalSeen } from "./modules/journal.js"
+import { initA2AAgentsTab, refresh as refreshA2AAgents, deactivateA2AAgentsTab } from "./modules/a2a-agents.js"
+import { markJournalSeen, activateHuntBag, deactivateHuntBag } from "./modules/journal.js"
+import { deactivatePeople } from "./modules/people.js"
+import { activateWishes, deactivateWishes } from "./modules/wishes.js"
 import { initPluginsTab, refresh as refreshPlugins } from "./modules/plugins.js"
 import { initLicense, refreshLicense } from "./modules/license.js"
 import { loadUpdateProbe, applyUpdate } from "./modules/update.js"
@@ -48,7 +50,8 @@ import { wireSettingsDrawer, openSettingsDrawer } from "./modules/settings-drawe
 import { mountHugeicons } from "./modules/icons.js"
 import { pingHealth, fetchDaemonVersion } from "./health-probe.js"
 import { refreshWxvaultOnAppStart } from "./modules/wxvault-refresh.js"
-import { loadAtelierGallery } from "./modules/atelier-gallery.js"
+import { loadAtelierGallery, deactivateAtelierGallery } from "./modules/atelier-gallery.js"
+import {closeRecordReader} from './modules/record-reader.js'
 import { createLifeArchive } from "./modules/cc-life.js"
 import { mountCareSheet } from "./modules/cc-care.js"
 import { createTaskEntry } from "./modules/task-entry.js"
@@ -174,6 +177,7 @@ const nowConnections = nowConnectionsHost ? mountNowConnections({ host: nowConne
 }
 subscribeConverse(msgs => nowPage?.setLatestLine(latestCCLine(msgs)))
 window.addEventListener('pagehide', () => careSheet.close())
+window.addEventListener('pagehide',()=>{closeRecordReader({restoreFocus:false});deactivateAtelierGallery();deactivateTodosPage();deactivateHuntBag();deactivatePeople();deactivateWishes();deactivateA2AAgentsTab()})
 const memoryRecordsHost = document.getElementById("cc-memory-records")
 const lifeArchive = memoryRecordsHost ? createLifeArchive(memoryRecordsHost, { call: invokeApi }) : null
 let lifeCategory = "postcards"
@@ -301,10 +305,9 @@ const deps = {
   },
   routeToProviderSettings: () => {
     openSettingsDrawer()
-    // Scroll to the wizard provider step if we can; otherwise the drawer
-    // at least puts the user in the right ballpark.
+    renderNoBrain(deps, true)
     setTimeout(() => {
-      document.getElementById("screen-provider")?.scrollIntoView?.({ behavior: "smooth" })
+      document.getElementById("brain-health")?.scrollIntoView?.({ block: "nearest" })
     }, 150)
   },
   // Health probe — pings /v1/health via the wechat_health_ping Tauri command.
@@ -375,9 +378,12 @@ async function refreshGuardStatus() {
 }
 
 // ─── mode router ──────────────────────────────────────────────────────
+let wizardNavigation = 0
 
 /** @param {string} mode */
 function setMode(mode) {
+  wizardNavigation++
+  if (mode !== 'wizard') stopQr(state)
   state.mode = mode
   document.documentElement.dataset.mode = mode
   syncOnboardPhone()
@@ -394,7 +400,8 @@ function setMode(mode) {
     // while the owner is parked on a non-overview pane, not just on
     // dashboard entry.
   } else {
-    doctorPoller.stop()
+    if (mode === 'wizard' && state.currentStep === 'service') doctorPoller.start()
+    else doctorPoller.stop()
     conversationsPoller.stop()
   }
 }
@@ -408,26 +415,24 @@ function syncOnboardPhone(report = doctorPoller.current) {
 
 /** @param {string} name */
 function showStep(name) {
+  wizardNavigation++
+  const entering = name !== state.currentStep || !state.setup
+  if (name !== 'wechat') stopQr(state)
   wizardShowStep(state, name)
   syncOnboardPhone()
   // Service step has the guard toggle — refresh status when entering so
   // the line shows current IP + reachability without waiting for a click.
-  if (name === "service") refreshGuardStatus()
-  if (name === "wechat" && !state.setup && !state.qrTimer) {
-    refreshQr({ invoke, mock }, state).catch(err => {
-      console.error("qr refresh failed", err)
-      const titleEl = document.getElementById("qr-title")
-      const box = document.getElementById("qr-box")
-      if (titleEl) titleEl.textContent = "二维码生成失败，请刷新重试。"
-      if (box) box.textContent = formatInvokeError(err)
-    })
-  }
+  if (name === 'service') { doctorPoller.start(); refreshGuardStatus() }
+  else if (state.mode !== 'dashboard') doctorPoller.stop()
+  if (name === 'provider') syncProviderPicker()
+  if (name === 'wechat' && entering) void refreshQr({invoke,mock},state)
 }
 
 // ─── doctor subscribers ──────────────────────────────────────────────
 
 function wireDoctorSubscribers() {
   doctorPoller.subscribe(renderDoctorWizard)
+  doctorPoller.subscribe(syncProviderPicker)
   doctorPoller.subscribe(report => syncOnboardPhone(report))
   doctorPoller.subscribe(refreshEnterDashboardButton)
   doctorPoller.subscribe(report => { lastDaemon = report.checks.daemon; renderRail() })
@@ -496,7 +501,6 @@ function renderDashboardIfActive(report) {
   if (state.mode !== "dashboard") return
   const displayReport = dashboardDisplayReport(report)
   renderDashboard(displayReport)
-  if (!document.querySelector('.dash-pane[data-pane="atelier"]')?.hasAttribute("hidden")) loadAtelierGallery({ invokeApi }).catch(() => {})
 }
 
 /** @param {any} report */
@@ -514,19 +518,45 @@ function applyProviderUI(provider) {
     const el = /** @type {HTMLElement} */ (btn)
     el.classList.toggle("selected", el.dataset.provider === provider)
   })
+  syncProviderPicker()
+}
+
+let providerSaving = false
+/** @param {any} [report] */
+function syncProviderPicker(report = doctorPoller.current) {
+  for (const card of document.querySelectorAll('.agent[data-provider]')) {
+    const button = /** @type {HTMLButtonElement} */ (card)
+    button.disabled = providerSaving || !providerReady(report,button.dataset.provider)
+    button.setAttribute('aria-pressed', String(button.dataset.provider === state.selectedProvider))
+  }
+  const next = /** @type {HTMLButtonElement|null} */ (document.getElementById('continue-wechat'))
+  const ready = providerReady(report,state.selectedProvider)
+  if (next) next.disabled = providerSaving || !ready
+  const note = document.getElementById('provider-state')
+  if (note) note.textContent = providerSaving ? '正在保存选择…' : ready ? '可以继续。之后也能在设置中更换。' : '选择一个已就绪的 AI，再继续。'
 }
 
 /** @param {string} provider */
 async function commitProvider(provider) {
-  applyProviderUI(provider)
+  if (providerSaving) return false
+  const error = document.getElementById('provider-error')
+  if (error) error.textContent = ''
+  providerSaving = true; syncProviderPicker()
   const args = ["provider", "set", provider, "--unattended", state.unattended ? "true" : "false"]
-  await invoke("wechat_cli_text", { args })
-  if (state.mode === "dashboard") doctorPoller.refresh()
+  try {
+    await invoke("wechat_cli_text", { args })
+    applyProviderUI(provider)
+    if (state.mode === 'dashboard') void doctorPoller.refresh()
+    return true
+  } catch {
+    if (error) error.textContent = '这次没能保存选择，原来的 AI 仍然保留。请重试。'
+    return false
+  } finally { providerSaving = false; syncProviderPicker() }
 }
 
 /** @param {any} report */
 function hasAnyProvider(report) {
-  return !!(report?.checks?.claude?.ok || report?.checks?.codex?.ok || report?.checks?.cursor?.ok)
+  return hasUsableProvider(report)
 }
 
 /** @param {any} report */
@@ -535,15 +565,15 @@ async function ensureUsableProviderSelected(report) {
   const fallback = report?.checks?.claude?.ok ? "claude"
     : report?.checks?.codex?.ok ? "codex"
     : report?.checks?.cursor?.ok ? "cursor"
+    : report?.checks?.gemini?.ok ? "gemini"
     : null
   if (!fallback) return false
-  await commitProvider(fallback)
-  return true
+  return await commitProvider(fallback)
 }
 
 async function loadAgentConfig() {
   const config = /** @type {ProviderConfig} */ (await invoke("wechat_cli_json", { args: ["provider", "show", "--json"] }))
-  const provider = config.provider === "codex" ? "codex" : "claude"
+  const provider = config.provider || 'claude'
   state.unattended = config.dangerouslySkipPermissions !== false
   state.autoStart = config.autoStart === true
   // closeStopsDaemon: optional field, default false. Task 10 adds it.
@@ -577,6 +607,17 @@ function switchPane(name) {
   // 连接浮层只在原地看一眼:任何一次导航都把它收起。
   document.querySelector(".cc-home-details")?.removeAttribute("open")
   const currentPane = /** @type {HTMLElement|null} */ (document.querySelector('.dash-pane[data-pane]:not([hidden])'))
+  if(name!=='todos')deactivateTodosPage()
+  if(currentPane?.dataset.pane!==name){
+    closeRecordReader({restoreFocus:false})
+    deactivateAtelierGallery()
+    if(currentPane?.dataset.pane==='a2a-agents'){
+      deactivateHuntBag()
+      deactivatePeople()
+      deactivateWishes()
+      deactivateA2AAgentsTab()
+    }
+  }
   if (isCurrentWorkbenchPane(name, currentPane)) {
     workbenchNavigation?.setWorkbenchActive(true)
     return
@@ -641,6 +682,8 @@ function switchPane(name) {
     initConversePage(deps, { focus: focusConversation })
   }
   if (name === "a2a-agents") {
+    activateHuntBag()
+    activateWishes()
     refreshA2AAgents().catch(err => console.error("a2a-agents refresh failed", err))
     // 打开觅食台 = 看过了:推水位,再立刻刷一次桌宠状态让包袱消失。
     markJournalSeen().then(() => presencePoller.refresh()).catch(() => {})
@@ -805,13 +848,19 @@ function wireEvents() {
     else showStep("service")
   })
   document.getElementById("recheck-env")?.addEventListener("click", async () => {
+    const navigation = wizardNavigation
+    const current = () => navigation === wizardNavigation && state.mode === "wizard" && state.currentStep === "doctor"
     const report = await doctorPoller.refresh()
-    if (!report) return
+    if (!report || !current()) return
     await ensureUsableProviderSelected(report)
+    if (!current()) return
     const latest = doctorPoller.current ?? report
-    if (hasAnyProvider(latest)) showStep("wechat")
+    if (hasAnyProvider(latest)) showStep("provider")
   })
   document.getElementById("qr-refresh")?.addEventListener("click", () => refreshQr({ invoke, mock }, state))
+  document.getElementById('wechat-back')?.addEventListener('click',()=>showStep('provider'))
+  document.getElementById('provider-back')?.addEventListener('click',()=>showStep('doctor'))
+  document.getElementById('service-recheck')?.addEventListener('click',()=>doctorPoller.refresh())
   document.getElementById("service-install")?.addEventListener("click", () => serviceAction(deps, state, "install"))
   document.getElementById("post-stop-kill")?.addEventListener("click", () => forceKillDaemon(deps))
   document.getElementById("enter-dashboard")?.addEventListener("click", () => setMode("dashboard"))
@@ -892,7 +941,8 @@ function wireEvents() {
   })
 
   document.getElementById("qr-raw-toggle")?.addEventListener("click", () => {
-    document.getElementById("qr-raw")?.classList.toggle("show")
+    const raw = document.getElementById('qr-raw')
+    if (raw) { const open = raw.classList.toggle('show'); raw.hidden = !open; document.getElementById('qr-raw-toggle')?.setAttribute('aria-expanded',String(open)) }
   })
 
   document.getElementById("dash-refresh")?.addEventListener("click", (e) =>
