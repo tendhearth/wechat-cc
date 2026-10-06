@@ -1166,6 +1166,8 @@ fn workbench_request_allowed(method: &str, path: &str) -> bool {
             | ("GET", "/v1/matters")
             | ("GET", "/v1/matter")
             | ("GET", "/v1/matter/owner-chat")
+            // 此刻里搜主人那条对话(2026-10-06)
+            | ("GET", "/v1/matter/owner-chat/search")
             | ("POST", "/v1/matter/say")
             // 「CC 的连接」(2026-10-01):此刻右上角的连接浮层,只读。
             | ("GET", "/v1/connections")

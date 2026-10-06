@@ -60,7 +60,7 @@ export interface MattersServiceDeps {
     handOff?(id:string,input:{requestId:string;providerId:string}):{taskId:string;created:boolean}
   }
   /** 对主人的 chat 说话(app 对话通道),surface 记这句是从哪个表面来的;recent 读该 chat 的消息流(微信 / 桌面 / 手机三处进同一条)。 */
-  chat?:{ownerChatId():string|null;say(text:string,surface?:'desktop'|'phone'):Promise<{reply:string}>;recent?(chatId:string,limit:number):Promise<MatterEvent[]>}
+  chat?:{ownerChatId():string|null;say(text:string,surface?:'desktop'|'phone'):Promise<{reply:string}>;recent?(chatId:string,limit:number):Promise<MatterEvent[]>;search?(chatId:string,query:string,limit:number):Promise<(MatterEvent&{id:string})[]>}
   /** 聊天那件事「说一句」的 requestId 回执(v70);没接 ⇒ 不去重(老行为)。 */
   sayReceipts?:SayReceipts
   now?:()=>number
@@ -78,6 +78,8 @@ export interface MattersService {
   /** 手机上停下正在跑的这一轮(2026-10-06)。runId 必须是手机看到的那一轮;已经换了一轮 / 没在跑 ⇒ input_stale。 */
   stop(id:string,runId:string):Promise<void>
   artifactChunk(id:string,input:MatterArtifactInput):MatterArtifactChunk
+  /** 在主人那条对话里搜(2026-10-06,对标 Orca 会话历史搜索):新的在前;没配主人 ⇒ null。 */
+  searchOwnerChat(query:string,limit?:number):Promise<{hits:(MatterEvent&{id:string})[]}|null>
   /** 额度用完 ⇒ 交给确认卡上那位继续(同一文件夹新开一件);从手机来的,新那件记手机露面。 */
   handoff(id:string,input:{requestId:string;providerId:string},surface?:'desktop'|'phone'):Promise<{matterId:string;created:boolean}>
 }
@@ -246,6 +248,13 @@ export function makeMattersService(deps:MattersServiceDeps):MattersService {
       current(id,runId,requestId,'questions')
       if(!deps.workbench?.resolveAnswer)throw Error('workbench_not_wired')
       deps.workbench.resolveAnswer(id,requestId,answers)
+    },
+    async searchOwnerChat(query,limit=30){
+      const q=query.trim()
+      if(!q||q.length>200)throw Error('invalid_query')
+      const chatId=deps.chat?.ownerChatId()
+      if(!chatId||!deps.chat?.search)return null
+      return {hits:await deps.chat.search(chatId,q,Math.max(1,Math.min(50,Math.trunc(limit))))}
     },
     artifactChunk(id,input){
       const d=taskDetail(id),artifact=d.artifacts?.find(a=>a.taskId===id&&a.id===input.artifactId)

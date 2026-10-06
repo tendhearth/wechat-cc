@@ -110,3 +110,17 @@
 .converse-file-chip span { overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
 .converse-image-chip.converse-file-chip { height:auto; }
 .converse-user-images .converse-file-chip { padding-right:10px; }
+
+/* 搜对话(2026-10-06):只在对话态出现;结果盖在对话上方,关闭就回到原来的位置。 */
+.converse-search-bar { display:flex; justify-content:flex-end; }
+.converse-search-open { border:0; background:transparent; color:var(--th-ink-soft); font:inherit; font-size:13px; cursor:pointer; padding:4px 0; }
+.converse-search-open:hover { color:var(--th-ink); }
+.converse-search { display:flex; gap:8px; width:100%; }
+.converse-search input { flex:1; min-width:0; padding:8px 12px; border:1px solid var(--th-hair); border-radius:8px; background:var(--th-paper); color:var(--th-ink); font:inherit; }
+.converse-search button { border:1px solid var(--th-hair); border-radius:8px; background:var(--th-paper); color:var(--th-ink); font:inherit; padding:0 12px; cursor:pointer; }
+.converse-search-results { max-height:50vh; overflow:auto; border-bottom:1px solid var(--th-hair); padding:8px 0 12px; }
+.converse-search-note { margin:4px 0 8px; color:var(--th-ink-soft); font-size:13px; }
+.converse-search-list { list-style:none; margin:0; padding:0; display:flex; flex-direction:column; gap:12px; }
+.converse-search-meta { color:var(--th-ink-soft); font-size:12px; margin-bottom:2px; }
+.converse-search-text { white-space:pre-wrap; overflow-wrap:anywhere; }
+.converse-search-text mark { background:var(--th-hair); color:inherit; border-radius:2px; padding:0 1px; }

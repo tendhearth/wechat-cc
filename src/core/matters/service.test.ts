@@ -67,6 +67,19 @@ describe('ownerChat (三个入口看同一段对话)',()=>{
   })
 })
 
+describe('matters service — search the owner chat (2026-10-06)',()=>{
+  it('searches only the owner chat, newest first as the store returns them, clamps limit, and refuses empty / huge queries',async()=>{
+    const search=vi.fn(async(_c:string,_q:string,_l:number)=>[{id:'m2',kind:'text' as const,text:'报告写好了',createdAt:2,source:'wechat'}])
+    const service=makeMattersService({store,chat:{ownerChatId:()=>'owner-chat',say:async()=>({reply:''}),search}})
+    expect(await service.searchOwnerChat(' 报告 ',500)).toEqual({hits:[{id:'m2',kind:'text',text:'报告写好了',createdAt:2,source:'wechat'}]})
+    expect(search).toHaveBeenCalledWith('owner-chat','报告',50)
+    await expect(service.searchOwnerChat('  ')).rejects.toThrow('invalid_query')
+    await expect(service.searchOwnerChat('x'.repeat(201))).rejects.toThrow('invalid_query')
+    const none=makeMattersService({store,chat:{ownerChatId:()=>null,say:async()=>({reply:''}),search}})
+    expect(await none.searchOwnerChat('报告')).toBeNull()
+  })
+})
+
 describe('matters service — stop from the phone (2026-10-06)',()=>{
   it('cancels only the run the phone saw; a changed or missing run is input_stale',async()=>{
     store.create({id:'deadbeef',kind:'task',title:'整理周报',projectPath:'/work',ownerChatId:'owner'})
