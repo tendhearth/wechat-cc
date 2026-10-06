@@ -258,7 +258,7 @@ const CuratedItem = z.object({
   id: z.string().nullable(), text: z.string(), display: z.string(), due: z.string().nullable(),
   due_label: z.string().nullable(), person: z.object({ name: z.string(), rel: z.string() }).nullable(), changed: z.boolean(),
 })
-const MemorySuccess = z.object({
+export const MemorySuccess = z.object({
   ok: z.literal(true), updated_at: z.string().nullable(), when_label: z.string().nullable(),
   mood: z.enum(['changed', 'steady', 'first']), failures: z.number(), changes: z.array(ViewChange),
   sections: z.array(z.object({ name: MemorySection, items: z.array(CuratedItem) })),
