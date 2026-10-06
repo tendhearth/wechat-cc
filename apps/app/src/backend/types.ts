@@ -58,7 +58,7 @@ export interface Backend {
   /** 一件事的成果按块读(GET /m/api/matter/artifact,每块 128 KiB);sha256 对不上 ⇒ 电脑上那份已经换了。 */
   artifactChunk(p: { id: string; artifactId: string; sha256: string; offset: number }): Promise<{ offset: number; nextOffset: number; size: number; contentBase64: string }>
   /** 工作台补充携带首次提交的 runId;重发时 requestId / runId / text 保持同一份快照。缺省仍兼容聊天与首次接续。 */
-  say(id: string, text: string, requestId: string, options?: { runId?: string }): Promise<MatterSayResultT>
+  say(id: string, text: string, requestId: string, options?: { runId?: string } & Partial<PhoneMaterials>): Promise<MatterSayResultT>
   /** A single exact receipt, independent of the bounded matter detail. Missing/old server stays unconfirmed. */
   matterInputReceipt(id: string, requestId: string): Promise<MatterInputT | null>
   entryOptions(lang: Lang): Promise<EntryOptionsT>
