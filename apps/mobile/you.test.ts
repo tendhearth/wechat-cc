@@ -38,7 +38,8 @@ describe('CC 眼中的你', () => {
     expect(h).toContain('>明天<')
     expect(h).toContain('>猪大哥<')
     expect(h).toContain('you-new')
-    expect(h).toContain('不对的地方,直接跟我说。')
+    expect(h).toContain('哪条不对,点它告诉我;也可以直接跟我说。')
+    expect(h).toContain('data-mem-id="a"')
   })
   it('steady and failing states', () => {
     const { youHtml } = load(async () => ({ json: async () => ({}) }))
@@ -83,5 +84,23 @@ describe('CC 眼中的你', () => {
     void loadYou()
     expect(els['you-body']!.innerHTML).toContain('这是我眼中的你。')
     expect(els['you-body']!.innerHTML).not.toContain('看看我记得什么')
+  })
+
+  it('tap an entry ⇒ three choices; pick one ⇒ POST exactly id + verdict, then reload (2026-10-06)', async () => {
+    const view = { ok: true, ...base, mood: 'steady', changes: [], sections: [{ name: '偏好', items: [{ id: 'abc123', text: '回复直接', display: '回复直接', due: null, due_label: null, person: null, changed: false }] }] }
+    const calls: Array<{ path: string; opts?: { method?: string; body?: string } }> = []
+    const api = vi.fn(async (path: string, opts?: { method?: string; body?: string }) => { calls.push({ path, opts }); return { json: async () => (path.includes('correct') ? { ok: true } : view) } })
+    const y = load(api as never)
+    await y.loadYou()
+    const body = y.els['you-body']!
+    const click = (body.addEventListener as unknown as { mock: { calls: [string, (e: unknown) => void][] } }).mock.calls.find(c => c[0] === 'click')![1]
+    const target = (attrs: Record<string, string>) => ({ closest: (sel: string) => { const k = sel.slice(1, -1); return k in attrs ? { getAttribute: (n: string) => attrs[n] ?? null } : null } })
+    click({ target: target({ 'data-mem-id': 'abc123' }) })
+    expect(body.innerHTML).toContain('data-fix="wrong"')
+    click({ target: target({ 'data-fix': 'wrong' }) })
+    await vi.waitFor(() => expect(calls.some(c => c.path === '/m/api/memory/correct')).toBe(true))
+    const post = calls.find(c => c.path === '/m/api/memory/correct')!
+    expect(post.opts?.method).toBe('POST')
+    expect(JSON.parse(post.opts!.body!)).toEqual({ id: 'abc123', verdict: 'wrong' })
   })
 })

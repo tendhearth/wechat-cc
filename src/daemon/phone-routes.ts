@@ -22,6 +22,8 @@ export const PHONE_ROUTES: ReadonlySet<string> = new Set([
   'GET /m/api/art/blink',
   'GET /m/api/art/presence',
   'GET /m/api/memory',
+  // 「CC 记得你」逐条纠错(2026-10-06)
+  'POST /m/api/memory/correct',
   'GET /m/api/home',
   'GET /m/api/feed',
   'POST /m/api/seen',

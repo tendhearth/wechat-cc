@@ -21,7 +21,7 @@ import {
   type ApprovalExplanationT, type Backend, type Connection, type DeviceRowT, type EntryOptionsT,
   type MatterDetailT, type MatterT, type PhoneChangesTurnT, type ProgressSummaryT, type Unsubscribe,
   type ChatPageT, type ChatJobT, type ConnectionsT, type NativeSessionRowT, type NativeSessionPageT, type SessionContinueT,
-  type MatterSayResultT, type MatterInputT, type UploadStateT, type EntryModelCatalogT, type ChatSearchHitT,
+  type MatterSayResultT, type MatterInputT, type UploadStateT, type EntryModelCatalogT, type MemoryViewT, type ChatSearchHitT,
 } from './types'
 
 type Topic = Parameters<Backend['subscribe']>[0]
@@ -235,6 +235,12 @@ export function makeLiveBackend(d: LiveDeps): Backend {
       const query = q.trim()
       if (!query || query.length > 200) throw new BackendError('invalid')
       return (await call<{ hits: ChatSearchHitT[] }>('GET /m/api/chat/search', `/m/api/chat/search?q=${encodeURIComponent(query)}`)).hits
+    },
+    async memory() {
+      return strip(await call<{ ok: true } & MemoryViewT>('GET /m/api/memory', '/m/api/memory'))
+    },
+    async correctMemory(id, verdict) {
+      await call('POST /m/api/memory/correct', '/m/api/memory/correct', { body: { id, verdict } })
     },
     async uploadChunk(p) {
       // 不自动重发:同一块重传由上传循环先问进度再续(uploadStatus),不在协议层盲重试。

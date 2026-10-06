@@ -263,7 +263,7 @@ const CuratedItem = z.object({
   id: z.string().nullable(), text: z.string(), display: z.string(), due: z.string().nullable(),
   due_label: z.string().nullable(), person: z.object({ name: z.string(), rel: z.string() }).nullable(), changed: z.boolean(),
 })
-const MemorySuccess = z.object({
+export const MemorySuccess = z.object({
   ok: z.literal(true), updated_at: z.string().nullable(), when_label: z.string().nullable(),
   mood: z.enum(['changed', 'steady', 'first']), failures: z.number(), changes: z.array(ViewChange),
   sections: z.array(z.object({ name: MemorySection, items: z.array(CuratedItem) })),
@@ -425,6 +425,7 @@ export const PHONE_API_SCHEMAS: Readonly<Record<string, z.ZodTypeAny>> = {
   'GET /m/api/art/blink': z.object({ ok: z.literal(true), mime: z.literal('image/png'), half: z.string(), closed: z.string() }),
   'GET /m/api/art/presence': z.object({ ok: z.literal(true), mime: z.literal('image/png'), unlit: z.string(), lit: z.string() }),
   'GET /m/api/memory': z.union([MemorySuccess, PhoneErrorResponse]),
+  'POST /m/api/memory/correct': z.union([z.object({ ok: z.literal(true) }), PhoneErrorResponse]),
   'GET /m/api/home': z.union([HomeSuccess, PhoneErrorResponse]),
   'GET /m/api/feed': z.union([FeedSuccess, PhoneErrorResponse]),
   'POST /m/api/seen': z.union([z.object({ ok: z.literal(true), seen_until: z.string() }), PhoneErrorResponse]),

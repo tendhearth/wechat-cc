@@ -861,4 +861,24 @@ describe('phone curated memory', () => {
       expect(r).toEqual({ ok: true, ...view })
     } finally { await p.stop() }
   })
+  it('memory correct (2026-10-06): token-gated; exactly id + verdict; unknown entry ⇒ 404', async () => {
+    const correctMemory = vi.fn(async (id: string) => { if (id === 'dead') throw new Error('memory_entry_not_found'); return { text: 'x' } })
+    const p = makeSettingsPanel({
+      stateDir: mkdtempSync(join(tmpdir(), 'sp-memc-')), ownerChatId: () => null,
+      chatPrefs: { get: () => ({}), set: (_id, patch) => patch },
+      getUserName: () => null, setUserName: async () => {}, log: () => {},
+      correctMemory,
+    })
+    const { port } = await p.start(0)
+    try {
+      const base = `http://127.0.0.1:${port}`, tok = p.issueToken()
+      const post = (body: unknown, t: string | null = tok) => fetch(`${base}/m/api/memory/correct${t ? `?t=${t}` : ''}`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body) })
+      expect((await post({ id: 'b1', verdict: 'wrong' }, null)).status).toBe(401)
+      expect((await post({ id: 'b1', verdict: 'wrong' })).status).toBe(200)
+      expect(correctMemory).toHaveBeenCalledWith('b1', 'wrong')
+      for (const b of [{ id: 'b1' }, { id: 'b1', verdict: 'nope' }, { id: '../x', verdict: 'delete' }, { id: 'b1', verdict: 'delete', extra: 1 }]) expect((await post(b)).status).toBe(400)
+      expect((await post({ id: 'dead', verdict: 'delete' })).status).toBe(404)
+      expect(correctMemory).toHaveBeenCalledTimes(2)
+    } finally { await p.stop() }
+  })
 })
