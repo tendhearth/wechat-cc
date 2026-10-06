@@ -104,3 +104,9 @@
 .converse-user-body { display:flex; flex-direction:column; align-items:flex-end; gap:6px; max-width:100%; }
 .converse-user-images { display:flex; flex-wrap:wrap; justify-content:flex-end; gap:6px; }
 .converse-user-images img { max-width:220px; max-height:220px; border:1px solid var(--th-hair); border-radius:10px; object-fit:contain; background:var(--th-paper); }
+
+/* 文档(2026-10-06):名字一块,不画缩略图。 */
+.converse-file-chip { display:inline-flex; align-items:center; gap:6px; max-width:220px; padding:6px 26px 6px 10px; border:1px solid var(--th-hair); border-radius:8px; background:var(--th-paper); color:var(--th-ink); font-size:12px; }
+.converse-file-chip span { overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+.converse-image-chip.converse-file-chip { height:auto; }
+.converse-user-images .converse-file-chip { padding-right:10px; }

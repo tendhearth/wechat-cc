@@ -48,7 +48,7 @@ test('drop and paste screenshots into 此刻, remove one, send the rest with the
   await expect(page.locator('#converse-images .converse-image-chip')).toHaveCount(2)
 
   // 不支持的格式:说一句,不进列表
-  await dispatchFiles(page, '#converse-input', 'drop', [{ name: 'notes.txt', type: 'text/plain', b64: btoa('hi') }])
+  await dispatchFiles(page, '#converse-input', 'drop', [{ name: 'archive.zip', type: 'application/zip', b64: btoa('hi') }])
   await expect(page.locator('#converse-image-note')).toContainText('只支持')
   await expect(page.locator('#converse-images .converse-image-chip')).toHaveCount(2)
 
@@ -62,7 +62,7 @@ test('drop and paste screenshots into 此刻, remove one, send the rest with the
   await expect.poll(() => sent.length).toBeGreaterThan(0)
   const args = (sent.at(-1) as { args?: { text?: string; images?: Array<{ mime: string; data_b64: string }> } }).args
   expect(args?.text).toBe('帮我看看这张截图')
-  expect(args?.images).toEqual([{ mime: 'image/png', data_b64: PNG }])
+  expect(args?.images).toEqual([{ mime: 'image/png', data_b64: PNG, name: 'shot-2.png' }])
 })
 
 test('an image alone (no text) can be sent', async ({ page, shimUrl }) => {
@@ -70,4 +70,18 @@ test('an image alone (no text) can be sent', async ({ page, shimUrl }) => {
   await dispatchFiles(page, '#converse-input', 'paste', [{ name: 'only.png', type: 'image/png', b64: PNG }])
   await page.locator('#converse-send').click()
   await expect(page.locator('.converse-msg-user .converse-user-images img')).toHaveCount(1)
+})
+
+test('documents can be dropped too: a PDF shows as a named chip and is sent with its name (2026-10-06)', async ({ page, shimUrl }) => {
+  await openNow(page, shimUrl)
+  const sent: unknown[] = []
+  page.on('request', req => { const body = req.postData(); if (body && body.includes('"agent_converse"')) sent.push(JSON.parse(body)) })
+  await dispatchFiles(page, '#converse-input', 'drop', [{ name: '季度报告.pdf', type: 'application/pdf', b64: btoa('%PDF-1.4') }, { name: 'notes.md', type: '', b64: btoa('# hi') }])
+  await expect(page.locator('#converse-images .converse-file-chip')).toHaveCount(2)
+  await expect(page.locator('#converse-images')).toContainText('季度报告.pdf')
+  await page.locator('#converse-send').click()
+  await expect(page.locator('.converse-msg-user .converse-file-chip')).toHaveCount(2)
+  await expect.poll(() => sent.length).toBeGreaterThan(0)
+  const args = (sent.at(-1) as { args?: { images?: Array<{ mime: string; name: string }> } }).args
+  expect(args?.images?.map(i => [i.mime, i.name])).toEqual([['application/pdf', '季度报告.pdf'], ['text/markdown', 'notes.md']])
 })

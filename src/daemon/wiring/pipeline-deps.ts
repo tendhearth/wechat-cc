@@ -5,7 +5,7 @@
  * Refs are passed in for late-bound polling/guard access from closures.
  */
 import type { SinkExtras } from '../reply-sinks'
-import { encodeExtras, hasExtras, projectReplyExtras, stickerDataUri, withStickerImages, type AppReplyExtras, type ConverseResult, CONVERSE_IMAGE_LIMITS, type ConverseImage } from '../app-reply'
+import { encodeExtras, hasExtras, projectReplyExtras, stickerDataUri, withStickerImages, type AppReplyExtras, type ConverseResult, CONVERSE_IMAGE_LIMITS, converseFileStem, isConverseImageMime, type ConverseImage } from '../app-reply'
 import { join } from 'node:path'
 import { recallFromMemory } from '../memory/recall'
 import { randomBytes } from 'node:crypto'
@@ -1056,10 +1056,15 @@ export function buildPipelineDeps(opts: PipelineDepsOpts, refs: PipelineDepsRefs
   // 「一件事」:桌面 / 手机上跟 CC 说的话和微信里的进同一条消息流(source 记表面),三个入口看到的是同一段对话。落库失败不影响这一轮。
   // 回复交付(2026-10-04):附件与旁白跟着回复那一行落库(messages.extras),手机从消息库拉对话时才看得到;
   // 只有附件、没有文字的一轮也写这一行(text 为空),否则那张表情 / 那段语音就没地方挂。
+  /** 带附件的那句在历史里记成什么样:「原文\n[图片 ×N]」(手机按它认落地,一字不能改),有文件再加「[文件 ×M]」。 */
+  const attachmentRecordText = (text: string, atts: NonNullable<InboundMsg['attachments']>) => {
+    const images = atts.filter(a => a.kind === 'image').length, files = atts.length - images
+    return [text.trim(), images ? `[图片 ×${images}]` : '', files ? `[文件 ×${files}]` : ''].filter(Boolean).join('\n')
+  }
   const persistAppTurn = (origin: 'desktop' | 'phone', synthetic: InboundMsg, text: string, reply: string | undefined, extras?: AppReplyExtras | null) => {
     const ts = new Date().toISOString()
     const ownerChatId = synthetic.chatId
-    void messagesStore.append({ id: `app:${origin}:${synthetic.createTimeMs}:in`, chatId: ownerChatId, ts, direction: 'in', kind: 'text', text: synthetic.attachments?.length ? [text.trim(), `[图片 ×${synthetic.attachments.length}]`].filter(Boolean).join('\n') : text, source: origin }).catch(() => {})
+    void messagesStore.append({ id: `app:${origin}:${synthetic.createTimeMs}:in`, chatId: ownerChatId, ts, direction: 'in', kind: 'text', text: synthetic.attachments?.length ? attachmentRecordText(text, synthetic.attachments) : text, source: origin }).catch(() => {})
     const encoded = encodeExtras(extras)
     if (reply || encoded) void messagesStore.append({ id: `app:${origin}:${synthetic.createTimeMs}:out`, chatId: ownerChatId, ts: new Date(Date.now() + 1).toISOString(), direction: 'out', kind: 'text', text: reply ?? '', source: origin, ...(encoded ? { extras: encoded } : {}) }).catch(() => {})
   }
@@ -1135,7 +1140,8 @@ export function buildPipelineDeps(opts: PipelineDepsOpts, refs: PipelineDepsRefs
       const inbox = join(stateDir, 'inbox')
       mkdirSync(inbox, { recursive: true })
       images.forEach((img, i) => {
-        const path = join(inbox, `app-${origin}-${createTimeMs}-${i + 1}.${CONVERSE_IMAGE_LIMITS.mimes[img.mime] ?? 'img'}`)
+        const stem = isConverseImageMime(img.mime) ? '' : converseFileStem(img.name)
+        const path = join(inbox, `app-${origin}-${createTimeMs}-${i + 1}${stem ? `-${stem}` : ''}.${CONVERSE_IMAGE_LIMITS.mimes[img.mime] ?? 'bin'}`)
         writeFileSync(path, img.bytes, { mode: 0o600 })
         imagePaths.push(path)
       })
@@ -1144,10 +1150,10 @@ export function buildPipelineDeps(opts: PipelineDepsOpts, refs: PipelineDepsRefs
       chatId: ownerChatId,
       userId: ownerChatId,
       text,
-      msgType: imagePaths.length && !text.trim() ? 'image' : 'text',
+      msgType: imagePaths.length && !text.trim() ? (images!.every(i => isConverseImageMime(i.mime)) ? 'image' : 'file') : 'text',
       createTimeMs,
       accountId: ilink.resolveAccountId(ownerChatId),
-      ...(imagePaths.length ? { attachments: imagePaths.map(path => ({ kind: 'image' as const, path })) } : {}),
+      ...(imagePaths.length ? { attachments: imagePaths.map((path, i) => ({ kind: isConverseImageMime(images![i]!.mime) ? 'image' as const : 'file' as const, path })) } : {}),
     }
     // 第四步(d):App 说的话也先过 route + consume 这张表(与微信同一份消费者实例)。消费者的
     // 回话在回复作用域里被截住交还给 App;没人吃 ⇒ 下面照常进对话。没接 appTurn(测试 /
