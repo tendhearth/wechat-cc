@@ -277,6 +277,11 @@ export function makeLiveBackend(d: LiveDeps): Backend {
     async decide(p) {
       await call('POST /m/api/matter/permission', '/m/api/matter/permission', { body: { id: p.id, runId: p.runId, requestId: p.requestId, decision: p.decision } })
     },
+    async artifactChunk(p) {
+      const r = strip(await call<{ ok: true; offset: number; nextOffset: number; size: number; contentBase64: string }>('GET /m/api/matter/artifact',
+        `/m/api/matter/artifact?id=${encodeURIComponent(p.id)}&artifactId=${encodeURIComponent(p.artifactId)}&sha256=${encodeURIComponent(p.sha256)}&offset=${p.offset}`))
+      return { offset: r.offset, nextOffset: r.nextOffset, size: r.size, contentBase64: r.contentBase64 }
+    },
     async stop(p) {
       await call('POST /m/api/matter/stop', '/m/api/matter/stop', { body: { id: p.id, runId: p.runId } })
     },

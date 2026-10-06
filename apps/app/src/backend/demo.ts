@@ -334,6 +334,15 @@ export function makeDemoBackend(opts: { now?: () => number; setTimeout?: typeof 
         ev(e, 'tool_call', 'evDenied'); e.stage = 'denied'; touch(e, { phase: 'replied', status: 'replied' }); publish([id])
       }
     },
+    async artifactChunk({ id, artifactId, offset }) {
+      // 演示:每件事的成果就是一小段说明文字(与 demo 详情里列出的成果同名)。
+      const a = entries.get(id)?.detail.artifacts.find(x => x.id === artifactId)
+      if (!a) throw new BackendError('not_found')
+      const bytes = new TextEncoder().encode(t(lastLang, 'artifactBody'))
+      const end = Math.min(bytes.length, offset + 128 * 1024)
+      let s = ''; for (const b of bytes.subarray(offset, end)) s += String.fromCharCode(b)
+      return { offset, nextOffset: end, size: bytes.length, contentBase64: btoa(s) }
+    },
     async stop({ id, runId }) {
       const e = entries.get(id)
       if (!e || e.detail.runId !== runId) throw new BackendError('input_stale')
