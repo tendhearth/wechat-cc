@@ -55,7 +55,7 @@ export interface Backend {
   /** 停下正在跑的这一轮(POST /m/api/matter/stop,2026-10-06)。runId = 手机看到的那一轮;已经换了一轮 ⇒ BackendError('input_stale')。 */
   stop(p: { id: string; runId: string }): Promise<void>
   /** 工作台补充携带首次提交的 runId;重发时 requestId / runId / text 保持同一份快照。缺省仍兼容聊天与首次接续。 */
-  say(id: string, text: string, requestId: string, options?: { runId?: string }): Promise<MatterSayResultT>
+  say(id: string, text: string, requestId: string, options?: { runId?: string } & Partial<PhoneMaterials>): Promise<MatterSayResultT>
   /** A single exact receipt, independent of the bounded matter detail. Missing/old server stays unconfirmed. */
   matterInputReceipt(id: string, requestId: string): Promise<MatterInputT | null>
   entryOptions(lang: Lang): Promise<EntryOptionsT>

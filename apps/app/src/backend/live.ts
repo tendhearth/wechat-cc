@@ -287,7 +287,7 @@ export function makeLiveBackend(d: LiveDeps): Backend {
     async say(id, text, requestId, options) {
       if (text.length > PHONE_SAY_MAX_CHARS) throw new BackendError('invalid')
       // A reconnect checks the durable receipt. Only an explicit user retry replays the POST.
-      return (await call<{ ok: true; result: MatterSayResultT }>('POST /m/api/matter/say', '/m/api/matter/say', { body: { id, text, requestId, ...(options?.runId ? { runId: options.runId } : {}) }, retry: false })).result
+      return (await call<{ ok: true; result: MatterSayResultT }>('POST /m/api/matter/say', '/m/api/matter/say', { body: { id, text, requestId, ...(options?.runId ? { runId: options.runId } : {}), ...(options?.attachmentIds?.length && options.draftId ? { draftId: options.draftId, attachmentIds: options.attachmentIds } : {}) }, retry: false })).result
     },
     async entryOptions() {
       return strip(await call<{ ok: true } & EntryOptionsT>('GET /m/api/entry/options', '/m/api/entry/options'))

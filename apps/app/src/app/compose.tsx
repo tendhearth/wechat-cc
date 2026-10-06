@@ -114,7 +114,9 @@ export default function Compose() {
     sending.current = true; setBusy(true); setOutcome(null); setInputNotice(null)
     let snapshot: InputSnapshot
     try {
-      snapshot = await matterInputState.prepare(matter!, rawText, runId, retry, backend.mode === 'live')
+      // 补一句带的图(2026-10-06):新的一句才带当前选的图;重发沿用记录里那一组(图已经在电脑上了)
+      const materials = !retry && images.length ? { draftId: materialDraftId(matter!), attachmentIds: images.map(i => i.id) } : undefined
+      snapshot = await matterInputState.prepare(matter!, rawText, runId, retry, backend.mode === 'live', materials)
     } catch (e) {
       sending.current = false
       if (atGen === pairingGen()) {
@@ -125,7 +127,14 @@ export default function Compose() {
     }
     if (atGen !== pairingGen() || journalGen !== matterInputState.generation() || !canSubmit(backend.connection())) { sending.current = false; setBusy(false); return }
     const r = await submit(`compose:${snapshot.taskId}`, async () => {
-      const result = await backend.say(snapshot.taskId, snapshot.text, snapshot.requestId, snapshot.runId ? { runId: snapshot.runId } : undefined)
+      const withImages = snapshot.attachmentIds?.length && snapshot.draftId ? { draftId: snapshot.draftId, attachmentIds: snapshot.attachmentIds } : undefined
+      // 这一屏里还拿着图的就先传(断点续传;传完的不再传);只剩记录、图已不在手里的,直接按 id 引用
+      if (withImages) {
+        const local = images.filter(i => withImages.attachmentIds.includes(i.id))
+        if (local.length) await uploadImages(backend, withImages.draftId, local, bytesToBase64)
+      }
+      const opts = { ...(snapshot.runId ? { runId: snapshot.runId } : {}), ...(withImages ?? {}) }
+      const result = await backend.say(snapshot.taskId, snapshot.text, snapshot.requestId, Object.keys(opts).length ? opts : undefined)
       if (result.kind !== 'task' || result.task.id !== snapshot.taskId) throw new BackendError('unknown')
       if (result.input && !matchesMatterInput(snapshot, result.input)) throw new BackendError('input_conflict')
       // A subscription/GET may already have a newer receipt while this POST waited.
@@ -137,6 +146,7 @@ export default function Compose() {
     sending.current = false
     if (atGen !== pairingGen() || journalGen !== matterInputState.generation() || draftKeyRef.current !== snapshot.taskId) return
     setBusy(false)
+    if (r === 'ok' && snapshot.attachmentIds?.length) { setImages(cur => cur.filter(i => !snapshot.attachmentIds!.includes(i.id))); setImageNote(null) }
     if (r !== 'ok') {
       // 重连查询若已核实真正回执,较晚的传输错误不能把它降成“不确定”。
       const current = matterInputs(snapshot.taskId).find(row => row.requestId === snapshot.requestId)
@@ -229,7 +239,7 @@ export default function Compose() {
               style={{ minHeight: 140, textAlignVertical: 'top' }}
             />
           </Card>
-          {matter ? null : (
+          {(
             <View style={{ gap: space.s }}>
               <ImageTray testID="compose-images" images={images} lang={lang} onRemove={id => { setImages(cur => cur.filter(i => i.id !== id)); setImageNote(null) }} />
               {imageNote ? <Txt testID="compose-image-note" role="meta" tone="inkSoft">{imageNote}</Txt> : null}

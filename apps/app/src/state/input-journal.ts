@@ -13,6 +13,8 @@ export const InputSnapshotSchema = z.object({
   status: z.enum(['pending', 'sending', 'delivered', 'held', 'withdrawn', 'submitting', 'accepted', 'uncertain', 'failed', 'refused']),
   error: z.string().max(64).optional(), draftHandled: z.boolean().optional(),
   draftOwner: z.string().min(1).max(256).optional(), draftRevision: z.number().int().nonnegative().optional(),
+  // 补一句带的图(2026-10-06):材料草稿 id + 已传到电脑的材料 id;老记录没有这两项,照常读。
+  draftId: z.string().min(1).max(64).optional(), attachmentIds: z.array(z.string().min(1).max(64)).max(4).optional(),
 })
 export type StoredInput = z.infer<typeof InputSnapshotSchema>
 const Payload = z.object({ v: z.literal(1), rows: z.array(InputSnapshotSchema).max(INPUT_JOURNAL_MAX_ROWS) })
@@ -20,7 +22,7 @@ const INDEX_MAX_BYTES = 32 * 1024
 const INDEX_MAX_CHUNKS = Math.ceil(INDEX_MAX_BYTES / (INPUT_JOURNAL_CHUNK_BYTES - 3))
 const BODY_MAX_BYTES = 256 * 1024
 const BODY_MAX_CHUNKS = Math.ceil(BODY_MAX_BYTES / (INPUT_JOURNAL_CHUNK_BYTES - 3))
-const Body = InputSnapshotSchema.pick({ taskId: true, requestId: true, runId: true, text: true, rawText: true, draftOwner: true, draftRevision: true })
+const Body = InputSnapshotSchema.pick({ taskId: true, requestId: true, runId: true, text: true, rawText: true, draftOwner: true, draftRevision: true, draftId: true, attachmentIds: true })
 const Ref = z.object({ slot: z.number().int().min(0).max(INPUT_JOURNAL_MAX_ROWS - 1), bank: z.union([z.literal(0), z.literal(1)]),
   chunks: z.number().int().min(1).max(BODY_MAX_CHUNKS), bytes: z.number().int().min(1).max(BODY_MAX_BYTES), sha256: z.string().regex(/^[a-f0-9]{64}$/) })
 const IndexRow = Ref.extend({ status: InputSnapshotSchema.shape.status, error: InputSnapshotSchema.shape.error, draftHandled: InputSnapshotSchema.shape.draftHandled })
