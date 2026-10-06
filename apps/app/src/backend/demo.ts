@@ -42,6 +42,8 @@ export function makeDemoBackend(opts: { now?: () => number; setTimeout?: typeof 
   let chatMsgs: ChatRec[] = []
   let chatPending: ChatJobT | null = null
   const uploads = new Map<string, UploadStateT>()
+  // 演示用的几条记忆(只在内存里;纠错会真的拿掉)
+  const demoMemory = [{ id: 'a1b2c3', text: '回复喜欢直接，先说结论' }, { id: 'd4e5f6', text: '周末不安排工作会议' }]
   let chatJobs = new Map<string, ChatJobT>()
   const subs = new Map<Topic, Set<(d: any) => void>>()
 
@@ -402,6 +404,15 @@ export function makeDemoBackend(opts: { now?: () => number; setTimeout?: typeof 
     },
     async entryOptions(l) { noteLang(l); return entryOptions(l) },
     // 演示:材料只记在内存里,按 offset 续传的规矩与 daemon 一样(每块 128 KiB)。
+    async memory() {
+      return { updated_at: new Date(now() - 6 * 3600_000).toISOString(), when_label: lastLang === 'en' ? 'early this morning' : '今天凌晨', mood: 'steady' as const, failures: 0, changes: [],
+        sections: demoMemory.length ? [{ name: '偏好' as const, items: demoMemory.map(m => ({ id: m.id, text: m.text, display: m.text, due: null, due_label: null, person: null, changed: false })) }] : [] }
+    },
+    async correctMemory(id) {
+      const i = demoMemory.findIndex(m => m.id === id)
+      if (i < 0) throw new BackendError('not_found')
+      demoMemory.splice(i, 1)
+    },
     async uploadChunk(p) {
       const cur = uploads.get(p.id) ?? { id: p.id, draftId: p.draftId, size: p.size, nextOffset: 0, status: 'uploading' as const }
       if (cur.draftId !== p.draftId || cur.size !== p.size || p.offset !== cur.nextOffset) throw new BackendError('invalid_attachment')

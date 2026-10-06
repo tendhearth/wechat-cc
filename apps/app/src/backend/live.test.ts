@@ -470,6 +470,15 @@ describe('跟 CC 说 / 连接 / 原生会话', () => {
     await b.create({ requestId: SAY_REQ, text: '看图', draftId: D, attachmentIds: [A] })
     expect(reqs.at(-1)).toMatchObject({ body: { requestId: SAY_REQ, text: '看图', draftId: D, attachmentIds: [A] } })
   })
+  it('CC 记得你(2026-10-06):读记忆、逐条纠错走对应路由;不在了 ⇒ not_found', async () => {
+    const VIEW = { ok: true, updated_at: null, when_label: null, mood: 'steady', failures: 0, changes: [], sections: [] }
+    const { b, reqs } = harness({ 'GET /m/api/memory': ok(VIEW), 'POST /m/api/memory/correct': ok({ ok: true }) })
+    expect((await b.memory()).mood).toBe('steady')
+    await b.correctMemory('abc123', 'outdated')
+    expect(reqs.at(-1)).toMatchObject({ body: { id: 'abc123', verdict: 'outdated' } })
+    const gone = harness({ 'POST /m/api/memory/correct': ok({ ok: false, error: 'not_found' }, 404) })
+    await expect(gone.b.correctMemory('abc123', 'wrong')).rejects.toMatchObject({ code: 'not_found' })
+  })
   it('connections / sessions / session 走对应路由', async () => {
     const CONN = { ok: true, generatedAt: 1, sources: [{ id: 'wxvault', kind: 'plugin', name: 'wxvault', state: 'ready', latestAt: null, syncedAt: null }], computers: [], recent: [], outputs: [] }
     const ROW = { key: 'k', provider: 'codex', title: 't', project: 'p', updatedAt: 1, active: false }

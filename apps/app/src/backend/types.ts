@@ -1,7 +1,7 @@
 import type { z } from 'zod'
 import type {
   Matter, MatterDetail, ApprovalExplanation, ProgressSummary, PhoneChangesTurn, EntryOptions, DeviceRowT, PushPlatformT,
-  ChatPage, ChatJob, ChatMessage, ChatAttachment, ChatSearchHit, Connections, NativeSessionRow, NativeSessionPage, SessionContinueT, MatterSayResult,
+  ChatPage, ChatJob, ChatMessage, ChatAttachment, MemorySuccess, ChatSearchHit, Connections, NativeSessionRow, NativeSessionPage, SessionContinueT, MatterSayResult,
 } from '@wechat-cc/protocol'
 import type { Lang } from '../i18n'
 
@@ -17,6 +17,8 @@ export type ChatPageT = z.infer<typeof ChatPage>
 export type ChatJobT = z.infer<typeof ChatJob>
 export type ChatMessageT = z.infer<typeof ChatMessage>
 export type ChatAttachmentT = z.infer<typeof ChatAttachment>
+export type MemoryViewT = Omit<z.infer<typeof MemorySuccess>, 'ok'>
+export type MemoryVerdict = 'wrong' | 'outdated' | 'delete'
 export type ChatSearchHitT = z.infer<typeof ChatSearchHit>
 /** 一句话 / 一件新事带的材料:同一个草稿 id 下先传好的几份(2026-10-06)。 */
 export type PhoneMaterials = { draftId: string; attachmentIds: string[] }
@@ -81,6 +83,10 @@ export interface Backend {
   /** 收下即回;回复经 matter/<matterId> 主题唤醒后再 chat() 拉。上一句还在等 ⇒ BackendError('busy')。
    *  requestId:只在上次失败 / 不确定时重发同一个;已知回复过的绝不重发(daemon 的去重表 50 条 / 1 小时就过期)。 */
   chatSay(text: string, requestId: string, materials?: PhoneMaterials): Promise<ChatJobT>
+  /** CC 记得你(GET /m/api/memory):每晚整理出来的那份记忆。 */
+  memory(): Promise<MemoryViewT>
+  /** 逐条纠错(POST /m/api/memory/correct,2026-10-06):立刻拿掉,CC 记下这次纠正、当晚整理不写回。不在了 ⇒ BackendError('not_found')。 */
+  correctMemory(id: string, verdict: MemoryVerdict): Promise<void>
   /** 在主人那条对话里搜(GET /m/api/chat/search,2026-10-06):新的在前,最多 30 条、每条最多 600 字。 */
   chatSearch(q: string): Promise<ChatSearchHitT[]>
   /** 回复里第 index 个附件(必须是语音)按需合成的声音(GET /m/api/chat/voice)。太长 ⇒ BackendError('too_large');电脑没设朗读 ⇒ 'no_voice'。 */
