@@ -5,7 +5,7 @@ import type {MattersService,MatterSayInput} from '../core/matters/service'
 import {entryErrorStatus,parseEntryInput,type EntryInput,type EntryOptions} from '../core/workbench/task-entry'
 import type {NativeContinuePreview} from '../core/workbench/native-adoption'
 
-export type MobileMatterActions=Partial<Pick<MattersService,'permission'|'answer'|'artifactChunk'|'handoff'|'inputReceipt'>>
+export type MobileMatterActions=Partial<Pick<MattersService,'permission'|'answer'|'artifactChunk'|'handoff'|'inputReceipt'|'stop'>>
 export interface MobileEntryActions {
   entryOptions():EntryOptions
   createEntry(input:EntryInput):EntryResult
@@ -99,6 +99,18 @@ export async function mobileWorkbenchRoute(actions:MobileMatterActions|undefined
       if(!object(b)||Object.keys(b).some(k=>!['id','requestId','providerId'].includes(k))||typeof b.id!=='string'||!ID.test(b.id)||typeof b.requestId!=='string'||!UUID.test(b.requestId)||typeof b.providerId!=='string'||!/^[a-z][a-z0-9._-]{0,63}$/.test(b.providerId))throw Error('invalid_request')
       if(!actions?.handoff)throw Error('workbench_not_wired')
       return json({ok:true,...await actions.handoff(b.id,{requestId:b.requestId,providerId:b.providerId},'phone')})
+    }catch(error){return mobileMatterError(error)}
+  }
+  // 停下正在跑的这一轮(2026-10-06):正文恰好 id + runId;runId 必须是手机看到的那一轮。
+  if(url.pathname==='/m/api/matter/stop'){
+    if(req.method!=='POST')return json({ok:false,error:'method_not_allowed'},405)
+    try{
+      let b:unknown
+      try{b=await req.json()}catch{throw Error('invalid_request')}
+      if(!object(b)||Object.keys(b).some(k=>k!=='id'&&k!=='runId')||typeof b.id!=='string'||!ID.test(b.id)||typeof b.runId!=='string'||!UUID.test(b.runId))throw Error('invalid_request')
+      if(!actions?.stop)throw Error('workbench_not_wired')
+      await actions.stop(b.id,b.runId.toLowerCase())
+      return json({ok:true})
     }catch(error){return mobileMatterError(error)}
   }
   const operation=url.pathname==='/m/api/matter/permission'?'permission':url.pathname==='/m/api/matter/answer'?'answer':url.pathname==='/m/api/matter/artifact'?'artifact':null

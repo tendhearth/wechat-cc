@@ -334,6 +334,11 @@ export function makeDemoBackend(opts: { now?: () => number; setTimeout?: typeof 
         ev(e, 'tool_call', 'evDenied'); e.stage = 'denied'; touch(e, { phase: 'replied', status: 'replied' }); publish([id])
       }
     },
+    async stop({ id, runId }) {
+      const e = entries.get(id)
+      if (!e || e.detail.runId !== runId) throw new BackendError('input_stale')
+      ev(e, 'text', 'stopped'); e.stage = 'replied'; touch(e, { phase: 'cancelled', status: 'replied' }); delete e.detail.runId; publish([id])
+    },
     async answer({ id, requestId, answers }) {
       const e = get(id)
       const req = e.detail.questions.find(q => q.id === requestId)

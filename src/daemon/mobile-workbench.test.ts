@@ -163,3 +163,25 @@ describe('手机「接着做」路由(/m/api/session/continue)',()=>{
     }
   })
 })
+
+describe('phone stop (2026-10-06)',()=>{
+  const RUN='33333333-3333-4333-8333-333333333333'
+  const post=(body:unknown)=>{const url=new URL('http://phone.test/m/api/matter/stop');return mobileWorkbenchRoute({stop},url,new Request(url,{method:'POST',body:JSON.stringify(body)}))}
+  const stop=vi.fn(async(_id:string,_runId:string)=>{})
+  it('stops exactly the run the phone saw',async()=>{
+    const r=await post({id:'deadbeef',runId:RUN.toUpperCase()})
+    expect(r?.status).toBe(200)
+    expect(stop).toHaveBeenCalledWith('deadbeef',RUN)
+  })
+  it('rejects malformed or extra fields before touching the task',async()=>{
+    stop.mockClear()
+    for(const b of [{id:'deadbeef'},{id:'x',runId:RUN},{id:'deadbeef',runId:'nope'},{id:'deadbeef',runId:RUN,force:true}])expect((await post(b))?.status).toBe(400)
+    expect(stop).not.toHaveBeenCalled()
+  })
+  it('a run that already changed is reported, not stopped',async()=>{
+    const url=new URL('http://phone.test/m/api/matter/stop')
+    const r=await mobileWorkbenchRoute({stop:async()=>{throw Error('input_stale')}},url,new Request(url,{method:'POST',body:JSON.stringify({id:'deadbeef',runId:RUN})}))
+    expect(await r!.json()).toEqual({ok:false,error:'input_stale'})
+    expect(r!.status).toBe(409)
+  })
+})
