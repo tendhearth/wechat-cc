@@ -1,7 +1,7 @@
 import { PHONE_SAY_MAX_CHARS } from '@wechat-cc/protocol'
 import { labelJoin, type Lang } from '../i18n'
 import { DEMO_STICKER, DEMO_STICKER_FILE, DEMO_VOICE } from './demo-media'
-import { BackendError, type Backend, type Connection, type MatterT, type MatterDetailT, type ApprovalExplanationT, type ChatJobT, type ChatMessageT, type SessionContinueT, type MatterSayResultT } from './types'
+import { BackendError, type Backend, type Connection, type MatterT, type MatterDetailT, type ApprovalExplanationT, type ChatJobT, type ChatMessageT, type SessionContinueT, type MatterSayResultT, type UploadStateT } from './types'
 import {
   copy, IDS, CHAT_ID, PERM_ID, QUESTION_ID, RUN_IDS, t, explanation, progress, changesTurn, entryOptions,
   demoConnections, demoSessions, demoSessionMessages, demoSessionTitleKey, DEMO_SESSION_MESSAGES, type Stage,
@@ -41,6 +41,7 @@ export function makeDemoBackend(opts: { now?: () => number; setTimeout?: typeof 
   // 主人那条对话(与 daemon 一致:说一句收下即回,回复落地后经 matter/<CHAT_ID> 主题唤醒)
   let chatMsgs: ChatRec[] = []
   let chatPending: ChatJobT | null = null
+  const uploads = new Map<string, UploadStateT>()
   let chatJobs = new Map<string, ChatJobT>()
   const subs = new Map<Topic, Set<(d: any) => void>>()
 
@@ -224,11 +225,14 @@ export function makeDemoBackend(opts: { now?: () => number; setTimeout?: typeof 
         messages: chatMsgs.map(m => ({ id: m.id, role: m.role, kind: 'text', text: chatText(m, l), truncated: false, at: m.at, source: m.source, ...chatExtras(m, l) })),
       }
     },
-    async chatSay(text, requestId) {
-      // 与 daemon 一致:同一 requestId ⇒ 回原来那张回执,不说两遍;上一句还在等 ⇒ busy。
+    async chatSay(text, requestId, materials) {
+      // 与 daemon 一致:同一 requestId ⇒ 回原来那张回执,不说两遍;上一句还在等 ⇒ busy。有图时文字可空。
       const seen = chatJobs.get(requestId)
       if (seen) return { ...seen }
-      if (!text.trim() || text.length > PHONE_SAY_MAX_CHARS) throw new BackendError('invalid')
+      const images = materials?.attachmentIds.filter(id => uploads.get(id)?.status === 'ready').length ?? 0
+      if ((materials?.attachmentIds.length ?? 0) !== images) throw new BackendError('invalid_attachment')
+      if ((!text.trim() && !images) || text.length > PHONE_SAY_MAX_CHARS) throw new BackendError('invalid')
+      if (images) text = [text.trim(), `[图片 ×${images}]`].filter(Boolean).join('\n')
       if (chatPending) throw new BackendError('busy')
       const job: ChatJobT = { requestId, text, status: 'pending', since: now() }
       chatJobs.set(requestId, job); chatPending = job
@@ -381,6 +385,22 @@ export function makeDemoBackend(opts: { now?: () => number; setTimeout?: typeof 
       return result
     },
     async entryOptions(l) { noteLang(l); return entryOptions(l) },
+    // 演示:材料只记在内存里,按 offset 续传的规矩与 daemon 一样(每块 128 KiB)。
+    async uploadChunk(p) {
+      const cur = uploads.get(p.id) ?? { id: p.id, draftId: p.draftId, size: p.size, nextOffset: 0, status: 'uploading' as const }
+      if (cur.draftId !== p.draftId || cur.size !== p.size || p.offset !== cur.nextOffset) throw new BackendError('invalid_attachment')
+      const n = Math.floor((p.contentBase64.length * 3) / 4) - (p.contentBase64.endsWith('==') ? 2 : p.contentBase64.endsWith('=') ? 1 : 0)
+      const nextOffset = cur.nextOffset + n
+      const next = { ...cur, nextOffset, status: nextOffset >= p.size ? 'ready' as const : 'uploading' as const }
+      uploads.set(p.id, next)
+      return { ...next }
+    },
+    async uploadStatus(id, draftId) {
+      const cur = uploads.get(id)
+      if (!cur || cur.draftId !== draftId) throw new BackendError('not_found')
+      return { ...cur }
+    },
+    async discardUpload(id) { uploads.delete(id) },
     async create({ requestId, text, projectId }) {
       const dup = createdBy.get(requestId)
       if (dup) return { matterId: dup }

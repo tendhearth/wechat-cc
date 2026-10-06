@@ -5,7 +5,10 @@ import { SafeAreaView } from 'react-native-safe-area-context'
 import { BackendError, type MatterInputT } from '../backend/types'
 import { t } from '../i18n'
 import { useLang } from '../i18n/useLang'
-import { deleteDraft, getDraft, pairingGen, requestIdFor, setDraft } from '../state/drafts'
+import { deleteDraft, getDraft, materialDraftId, pairingGen, requestIdFor, setDraft } from '../state/drafts'
+import { AddImageButton, ImageTray } from '../ui/ImageTray'
+import { bytesToBase64, uploadImages, type PickedImage } from '../state/image-upload'
+import { PHONE_CHAT_MAX_IMAGES as MAX_IMAGES } from '@wechat-cc/protocol'
 import { useConnection, useQuery, useSubmit, useTopic } from '../state/hooks'
 import { useBackendCtx } from '../state/BackendProvider'
 import { consumeMatterInputDraft, matchesMatterInput, matterInputState, matterInputs, updateMatterInput, type InputSnapshot } from '../state/matter-inputs'
@@ -37,6 +40,17 @@ export default function Compose() {
   const router = useRouter()
   const conn = useConnection()
   const submit = useSubmit()
+  // 新交办带的图(2026-10-06;补充一句暂不带图)。只在这一屏里,交出去才清。
+  const [images, setImages] = useState<PickedImage[]>([])
+  const [imageNote, setImageNote] = useState<string | null>(null)
+  const addImages = async () => {
+    // 用到才加载:相册与哈希是原生模块,不进页面的静态依赖(测试与首屏都不需要它)
+    const { pickImages } = await import('../net/image-pick')
+    const r = await pickImages(MAX_IMAGES - images.length)
+    if (!r) return
+    setImages(cur => [...cur, ...r.images].slice(0, MAX_IMAGES))
+    setImageNote(r.skipped === 'too_large' ? t(lang, 'images.tooLarge') : r.skipped === 'unsupported' ? t(lang, 'images.unsupported') : null)
+  }
   const { backend } = useBackendCtx()
   const session = useSession()
   const recovery = useInputRecovery()
@@ -151,9 +165,13 @@ export default function Compose() {
     let newId: string | null = null
     const r = await submit(`compose:${draftKey}`, async () => {
       // 同一份草稿、同样正文重发(「不确定」之后再点)⇒ 同一个 requestId,daemon 去重,不会说两遍。
-      const requestId = requestIdFor(draftKey, body)
+      const materials = !matter && images.length ? { draftId: materialDraftId(draftKey), attachmentIds: images.map(i => i.id) } : undefined
+      const requestId = requestIdFor(draftKey, materials ? `${body}\u0000${materials.attachmentIds.join(',')}` : body)
       if (matter) await backend.say(matter, body, requestId)
-      else newId = (await backend.create({ requestId, text: body, projectId: project?.id, providerId: provider?.id })).matterId
+      else {
+        if (materials) await uploadImages(backend, materials.draftId, images, bytesToBase64)
+        newId = (await backend.create({ requestId, text: body, projectId: project?.id, providerId: provider?.id, ...(materials ?? {}) })).matterId
+      }
     })
     sending.current = false
     if (atGen !== pairingGen() || draftKeyRef.current !== myKey) return
@@ -162,6 +180,7 @@ export default function Compose() {
       setOutcome('busy')
     } else if (r === 'ok') {
       if (getDraft(myKey) === rawText) { deleteDraft(myKey); textRef.current = ''; setTextState('') }
+      setImages([]); setImageNote(null)
       if (matter) router.back()
       else router.replace(`/matter/${encodeURIComponent(newId ?? '')}`)
     } else {
@@ -210,6 +229,13 @@ export default function Compose() {
               style={{ minHeight: 140, textAlignVertical: 'top' }}
             />
           </Card>
+          {matter ? null : (
+            <View style={{ gap: space.s }}>
+              <ImageTray testID="compose-images" images={images} lang={lang} onRemove={id => { setImages(cur => cur.filter(i => i.id !== id)); setImageNote(null) }} />
+              {imageNote ? <Txt testID="compose-image-note" role="meta" tone="inkSoft">{imageNote}</Txt> : null}
+              <AddImageButton testID="compose-add-image" lang={lang} disabled={busy || images.length >= MAX_IMAGES} onPress={() => { void addImages() }} />
+            </View>
+          )}
           {matter ? null : (
             <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', gap: space.m }}>
               <Txt role="meta" tone="inkSoft" numberOfLines={2} style={{ flex: 1 }}>

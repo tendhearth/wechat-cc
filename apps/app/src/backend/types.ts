@@ -17,6 +17,10 @@ export type ChatPageT = z.infer<typeof ChatPage>
 export type ChatJobT = z.infer<typeof ChatJob>
 export type ChatMessageT = z.infer<typeof ChatMessage>
 export type ChatAttachmentT = z.infer<typeof ChatAttachment>
+/** 一句话 / 一件新事带的材料:同一个草稿 id 下先传好的几份(2026-10-06)。 */
+export type PhoneMaterials = { draftId: string; attachmentIds: string[] }
+export type UploadChunkInput = { id: string; draftId: string; name: string; mime: string; size: number; sha256: string; offset: number; contentBase64: string }
+export type UploadStateT = { id: string; draftId: string; size: number; nextOffset: number; status: 'uploading' | 'ready' }
 export type ConnectionsT = z.infer<typeof Connections>
 export type NativeSessionRowT = z.infer<typeof NativeSessionRow>
 export type NativeSessionPageT = z.infer<typeof NativeSessionPage>
@@ -33,6 +37,7 @@ export type BackendCode = 'stale' | 'busy' | 'offline' | 'revoked' | 'timeout' |
   | 'handoff_changed'
   | 'input_stale' | 'input_conflict'
   | 'too_large' | 'no_voice'
+  | 'images_gone' | 'images_unsupported'
 export type Unsubscribe = () => void
 
 export interface Backend {
@@ -55,7 +60,13 @@ export interface Backend {
   matterInputReceipt(id: string, requestId: string): Promise<MatterInputT | null>
   entryOptions(lang: Lang): Promise<EntryOptionsT>
   /** requestId:同一份草稿、同样的正文重发用同一个(daemon 据此去重、超时后查回执)。projectId 缺省 ⇒ 由 CC 安排(managed)。 */
-  create(p: { requestId: string; text: string; projectId?: string; providerId?: string }): Promise<{ matterId: string }>
+  create(p: { requestId: string; text: string; projectId?: string; providerId?: string } & Partial<PhoneMaterials>): Promise<{ matterId: string }>
+  /** 材料分块上传(POST /m/api/attachment/chunk,2026-10-06 起手机 app 也用):每块 128 KiB、按 offset 续传;最后一块后 status=ready。 */
+  uploadChunk(p: UploadChunkInput): Promise<UploadStateT>
+  /** 续传前问一次进度(GET /m/api/attachment/upload)。 */
+  uploadStatus(id: string, draftId: string): Promise<UploadStateT>
+  /** 不要了(POST /m/api/attachment/discard)。 */
+  discardUpload(id: string, draftId: string): Promise<void>
   devices(): Promise<DeviceRowT[]>
   renameDevice(label: string): Promise<void>
   /** 登记本机的 APNs / FCM token(POST /m/api/push/register)。daemon 没接推送(还没上 v2 中继)⇒ BackendError('unavailable')。 */
@@ -66,7 +77,7 @@ export interface Backend {
   chat(p: { before?: string; limit?: number }): Promise<ChatPageT>
   /** 收下即回;回复经 matter/<matterId> 主题唤醒后再 chat() 拉。上一句还在等 ⇒ BackendError('busy')。
    *  requestId:只在上次失败 / 不确定时重发同一个;已知回复过的绝不重发(daemon 的去重表 50 条 / 1 小时就过期)。 */
-  chatSay(text: string, requestId: string): Promise<ChatJobT>
+  chatSay(text: string, requestId: string, materials?: PhoneMaterials): Promise<ChatJobT>
   /** 回复里第 index 个附件(必须是语音)按需合成的声音(GET /m/api/chat/voice)。太长 ⇒ BackendError('too_large');电脑没设朗读 ⇒ 'no_voice'。 */
   chatVoice(messageId: string, index: number): Promise<{ mime: string; data: string }>
   /** 表情库里的一张图(GET /m/api/sticker/<file>?b64=1)。不在库里 ⇒ BackendError('not_found')。 */

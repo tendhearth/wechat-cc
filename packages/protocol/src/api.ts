@@ -30,6 +30,8 @@ export const PhoneErrorResponse = z.object({ ok: z.literal(false), error: z.stri
 export const PhonePlainError = z.object({ error: z.string() })
 /** 手机「说一句」正文上限(settings-panel.ts 的 POST /m/api/matter/say)。app 在手机上就拦。 */
 export const PHONE_SAY_MAX_CHARS = 20_000
+/** 手机「跟 CC 说」一句最多带几张图(2026-10-06;与桌面此刻同一个上限)。 */
+export const PHONE_CHAT_MAX_IMAGES = 4
 /** 回答问题:answers 的 JSON 序列化长度上限(mobile-workbench.ts 的 POST /m/api/matter/answer)。app 在手机上就拦。 */
 export const PHONE_ANSWER_MAX_JSON = 20_000
 

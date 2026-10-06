@@ -35,8 +35,9 @@ describe('phone style guard', () => {
     expect(NOT_YET_MIGRATED.size, 'NOT_YET_MIGRATED 只许变小').toBeLessThanOrEqual(NOT_YET_MIGRATED_CAP)
   })
   it('every screen is migrated', () => { expect([...NOT_YET_MIGRATED]).toEqual([]) })
-  it('no buttons for unshipped features (image attach / mic)', () => {
-    for (const f of TSX) expect(readFileSync(f, 'utf8'), rel(f)).not.toMatch(/compose-add-image|compose-image-note|testID="[^"]*mic[^"]*"/)
+  // 发图 2026-10-06 已上线(跟 CC 说 / 新交办),不再拦;麦克风还没有。
+  it('no buttons for unshipped features (mic)', () => {
+    for (const f of TSX) expect(readFileSync(f, 'utf8'), rel(f)).not.toMatch(/testID="[^"]*mic[^"]*"/)
   })
   it('selected state is restrained (no rail colour block behind a chosen row / tab)', () => {
     for (const f of TSX) expect(readFileSync(f, 'utf8').match(/on \? c\.rail|focused \? c\.rail|selected \? c\.rail/g) ?? [], rel(f)).toEqual([])
