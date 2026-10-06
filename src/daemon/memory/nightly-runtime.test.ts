@@ -172,3 +172,27 @@ describe('rich view + WeChat letter', () => {
     expect(text).toContain('【承诺】')
   })
 })
+
+describe('owner corrections, step A (2026-10-06)', () => {
+  it('removes the entry now, records a line in profile.md so the nightly tidy does not write it back, archives "outdated"', async () => {
+    const rt = makeMemoryNightlyRuntime(deps())
+    await rt.runNow()
+    const id = rt.curatedView().sections.flatMap(s => s.items)[0]!.id!
+    expect(id).toMatch(/^[a-f0-9]+$/)
+    await rt.correct(id, 'outdated')
+    expect(rt.curatedView().sections.flatMap(s => s.items).map(i => i.id)).not.toContain(id)
+    const { readFileSync } = await import('node:fs')
+    const profile = readFileSync(join(root, 'profile.md'), 'utf8')
+    expect(profile).toContain('主人说这条已经过时,整理时不要再写回:[承诺] 周五前给 X 回话')
+    expect(readFileSync(join(stateDir, 'memory-archive', OWNER, 'memory-expired.md'), 'utf8')).toContain('(owner_outdated)')
+    await expect(rt.correct(id, 'wrong')).rejects.toThrow('memory_entry_not_found')
+  })
+  it('no memory yet ⇒ memory_not_found; corrections run on the same queue as the nightly run', async () => {
+    const rt = makeMemoryNightlyRuntime(deps())
+    await expect(rt.correct('abcd', 'delete')).rejects.toThrow('memory_not_found')
+    const run = rt.runNow()
+    const corr = run.then(() => rt.curatedView().sections.flatMap(s => s.items)[0]!.id!).then(id => rt.correct(id, 'delete'))
+    await Promise.all([run, corr])
+    expect(rt.curatedView().sections.flatMap(s => s.items)).toEqual([])
+  })
+})
