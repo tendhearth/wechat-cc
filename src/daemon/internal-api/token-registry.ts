@@ -230,6 +230,7 @@ export function makeTokenRegistry(
           'POST /v1/workbench/approve',
           'POST /v1/workbench/permission',
           'POST /v1/workbench/archive',
+          'POST /v1/workbench/writer-exited',
           'POST /v1/workbench/unattended-ack',
           'GET /v1/workbench/review',
           'POST /v1/workbench/review-mark',

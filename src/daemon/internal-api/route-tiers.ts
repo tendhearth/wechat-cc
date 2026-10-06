@@ -52,6 +52,7 @@ export const ROUTE_MIN_TIER: Record<string, UserTier> = {
   'POST /v1/workbench/approve': 'admin',
   'POST /v1/workbench/permission': 'admin',
   'POST /v1/workbench/archive': 'admin',
+  'POST /v1/workbench/writer-exited': 'admin',
   'POST /v1/workbench/unattended-ack': 'admin',
   'GET /v1/workbench/review': 'admin',
   'POST /v1/workbench/review-mark': 'admin',

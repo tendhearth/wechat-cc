@@ -27,6 +27,10 @@ export interface Task {
 export interface WorkbenchProject { id:string; path:string; name:string; providerId:string; createdAt:number }
 const PROJECT_SELECT='SELECT id,path,name,provider_id AS providerId,created_at AS createdAt FROM workbench_projects'
 const projectName=(project:WorkbenchProject):WorkbenchProject=>({...project,name:project.name||basename(project.path)||project.path})
+function parseGroups(raw:string|null):number[]|null {
+  if(!raw)return null
+  try { const v:unknown=JSON.parse(raw); return Array.isArray(v)&&v.length&&v.every(g=>Number.isInteger(g)&&g>1)?v as number[]:null } catch { return null }
+}
 export interface StoredTask extends Task { ownerChatId: string | null; sessionId: string | null }
 export interface TaskEvent { id: number; taskId: string; kind: 'user' | 'text' | 'tool_call' | 'system' | 'error'; text: string; createdAt: number; sourceId?:string|null; runId?:string; activity?:AgentActivity; attachments?:import('./attachments').Attachment[]; errorCode?:'execution_model_unsupported'; diagnostic?:string }
 export interface Artifact { id: string; taskId: string; name: string; mime: string; size: number; sha256: string; createdAt: number; approvedAt: number | null }
@@ -210,7 +214,16 @@ export function makeWorkbenchStore(db: Db) {
       return get(id)
     },
     clearWriterError(id:string) {
-      db.query("UPDATE workbench_tasks SET error=NULL WHERE id=? AND error='writer_not_closed'").run(id)
+      db.query("UPDATE workbench_tasks SET error=NULL,writer_groups=NULL WHERE id=? AND error='writer_not_closed'").run(id)
+    },
+    /** 关不掉的执行程序的进程组(v73,2026-10-06):退出证据从这里查,见 lifecycle 的 writer 守望。 */
+    setWriterGroups(id:string,groups:readonly number[]) {
+      db.query('UPDATE workbench_tasks SET writer_groups=? WHERE id=?').run(groups.length?JSON.stringify(groups):null,id)
+    },
+    /** 所有还挂着「没确认退出」的任务;groups=null ⇒ 旧记录 / 执行者没交出进程组,没有证据可查。 */
+    writerHolds():Array<{id:string;title:string;path:string;groups:number[]|null}> {
+      return db.query<{id:string;title:string;path:string;groups:string|null},[]>("SELECT id,title,path,writer_groups AS groups FROM workbench_tasks WHERE error='writer_not_closed'").all()
+        .map(row=>({id:row.id,title:row.title,path:row.path,groups:parseGroups(row.groups)}))
     },
     create(input: { title: string; path: string; providerId: string; ownerChatId: string | null;workspaceKind?:'project'|'managed';registerProject?:boolean }): StoredTask {
       let id: string
@@ -243,7 +256,7 @@ export function makeWorkbenchStore(db: Db) {
         const stale=db.query<{id:string;path:string},[]>("SELECT id,path FROM workbench_tasks WHERE error='writer_not_closed'").all()
         for (const { id,path } of stale) {
           if (existsSync(path)) continue
-          db.query("UPDATE workbench_tasks SET error=NULL,updated_at=? WHERE id=? AND error='writer_not_closed'").run(Date.now(),id)
+          db.query("UPDATE workbench_tasks SET error=NULL,writer_groups=NULL,updated_at=? WHERE id=? AND error='writer_not_closed'").run(Date.now(),id)
           addEvent(id,'system','执行程序当时没有确认退出；它的工作文件夹已经不在了，这条占用随之解除。')
         }
       })()

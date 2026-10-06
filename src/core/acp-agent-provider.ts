@@ -371,6 +371,7 @@ export function createAcpProvider(options: AcpProviderOptions): AgentProvider {
       if (options.notice !== null) context.reportNotice?.(options.notice ?? acpNotice(options.displayName))
 
       return {
+        processGroups: () => (child.pid ? [child.pid] : []),
         ...(targetProvider ? { callTarget: () => (currentModel ? { provider: targetProvider, model: currentModel } : null) } : {}),
         dispatch(text, attachments) {
           if (attachments?.length && options.attachments !== 'prompt') throw new Error('acp_attachments_unsupported')

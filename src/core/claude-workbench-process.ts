@@ -35,6 +35,8 @@ export function ownClaudeWorkbenchProcess(stderr: Options['stderr']) {
   return {
     freeze(): boolean { return !closing && !terminated && !!child?.pid && !exited && freezer.freeze() },
     thaw(): void { if (!terminated) freezer.thaw() },
+    /** 起过的全部进程组(含子进程自己 setsid 出去的,见 prepareClose 的扫描)。 */
+    groups(): number[] { return [...groups] },
     terminate(): void { terminated = true; freezer.kill() },
     spawn(options: SpawnOptions) {
       if (closing || child) throw new Error('claude_runtime_closed_or_duplicate_spawn')

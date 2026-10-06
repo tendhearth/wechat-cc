@@ -70,6 +70,7 @@ function mappedError(err: unknown,entry=false): ReturnType<RouteHandler> {
   if (code === 'native_history_unavailable') return {status:503,body:{error:code}}
   // 打回改走 submitInput 之后这条路由也能吐它:存不下补充是「这会儿没法办」,不是 500(终审 M7)。
   if (code === 'input_storage_unavailable') return {status:503,body:{error:code}}
+  if (code === 'writer_alive' || code === 'invalid_state') return { status: 409, body: { error: code } }
   if (code === 'matter_not_found') return { status: 404, body: { error: code } }
   if (code === 'not_found') return { status: 404, body: { error: code } }
   if (code === 'unavailable_provider') return { status: 422, body: { error: code } }
@@ -310,6 +311,15 @@ export function workbenchRoutes(deps: InternalApiDeps): RouteTable {
       if(!TASK_ID.test(id) || typeof archived!=='boolean')return invalid()
       if(!deps.workbench)return {status:503,body:{error:'workbench_not_wired'}}
       try {return {status:200,body:{task:await deps.workbench.setArchived(id,archived)}}}
+      catch(err){return mappedError(err)}
+    },
+
+    // 「没确认退出」的旧记录:主人确认执行程序已经结束(2026-10-06)。进程组还活着 ⇒ 409 writer_alive。
+    'POST /v1/workbench/writer-exited': async (_query,body) => {
+      const value=objectBody(body),id=typeof value?.id==='string' ? value.id : ''
+      if(!TASK_ID.test(id))return invalid()
+      if(!deps.workbench)return {status:503,body:{error:'workbench_not_wired'}}
+      try {return {status:200,body:{task:await deps.workbench.confirmWriterExited(id)}}}
       catch(err){return mappedError(err)}
     },
 

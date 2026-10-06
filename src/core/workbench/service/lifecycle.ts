@@ -12,6 +12,7 @@ import type { Active } from './state'
 import type { WorkbenchTaskView } from './types'
 import type { ServiceCtx } from './ctx'
 import { liveRunTarget } from './call-target'
+import { groupAlive as isGroupAlive, writerGroupsOf } from './writer-exit'
 import type { CallTarget } from '../../../lib/network-gate'
 
 /** 桌面 / 手机 / 微信同一句状态(主人 2026-10-03)。 */
@@ -191,14 +192,84 @@ export function makeLifecycleDomain(ctx:ServiceCtx) {
     // 这条 run 的占用在结算时本该还回去(execute 的 finally),但它没能确认退出 —— 重新挂回去,
     // 之后到来的同文件夹任务按 writer_not_closed 等待,直到 confirmLateClose。
     state.reservations.set(running.identity,running)
+    // 退出证据(2026-10-06):把它的进程组落库 —— close() 迟到成功是一种证据,组全没了是另一种,
+    // 而且 daemon 重启后还能查。交不出进程组(还没起来 / 执行者没实现)⇒ 只能等主人确认。
+    const groups=writerGroupsOf(running)
+    if (groups.length) { try { store.setWriterGroups(running.taskId,groups) } catch { /* the in-memory hold still protects this process */ } }
+    watchWriters()
   }
+  /** 有退出证据 = 记过进程组、而且一个都不在了。没记过 ⇒ 没有证据,返回 false。 */
+  const groupAlive=(group:number)=>isGroupAlive(ctx,group)
+  const writerGone=(groups:readonly number[])=>groups.length>0&&!groups.some(groupAlive)
+  /** 本进程里正在补做迟到收尾的 run(守望每一拍都可能看到它,别重复收集)。 */
+  const confirming=new Set<Active>()
+  /**
+   * 重启后(service 建起来时调一次):库里挂着「没确认退出」的任务逐条核对。组都没了 ⇒ 解除并留一句;
+   * 还在 ⇒ 重新占住那个文件夹(没有 Active,用一条只读的占用),守望到它退出为止;没记进程组的旧记录不动 ——
+   * 重启前它们本来也不再挡新任务,突然挡住反而会卡住主人;任务页给「我确认它已经结束」。
+   */
+  function adoptWriters() {
+    let holds:ReturnType<typeof store.writerHolds>
+    try { holds=store.writerHolds() } catch { return }
+    for (const hold of holds) {
+      if (!hold.groups) continue
+      if (writerGone(hold.groups)) { releaseWriter(hold.id,'重启后核对：当时没确认退出的执行程序已经不在了，这条占用随之解除。'); continue }
+      state.writerOrphans.set(hold.id,{identity:`writer/${hold.id}`,taskId:hold.id,title:hold.title,path:hold.path,order:-1,state:'uncertain',groups:hold.groups})
+    }
+    watchWriters()
+  }
+  function releaseWriter(id:string,note:string) {
+    state.writerOrphans.delete(id)
+    try { store.clearWriterError(id); store.addEvent(id,'system',note); ctx.hub.touched(id) } catch { /* next check retries */ }
+  }
+  /** 守望:有要等退出证据的(重启前留下的,或本进程里关不掉的)就每隔一会儿查一次进程组,没有就停。 */
+  function watchWriters() {
+    const pending=state.writerOrphans.size>0||[...state.reservations.values()].some(r=>r.uncertain&&writerGroupsOf(r).length>0)
+    if (!pending||state.stopping) { if (state.writerWatch) { clearInterval(state.writerWatch); state.writerWatch=undefined }; return }
+    if (state.writerWatch) return
+    state.writerWatch=setInterval(checkWriters,ctx.deps.writerWatchMs ?? 15_000)
+    state.writerWatch.unref?.()
+  }
+  function checkWriters() {
+    let released=false
+    for (const [id,orphan] of [...state.writerOrphans]) {
+      if (writerGone(orphan.groups)) { releaseWriter(id,'执行程序已经退出，这条占用随之解除。'); released=true }
+    }
+    for (const running of [...state.reservations.values()]) {
+      if (running.uncertain && !confirming.has(running) && writerGone(writerGroupsOf(running))) {
+        confirming.add(running)
+        void confirmLateClose(running,true).then(() => { try { store.addEvent(running.taskId,'system','执行程序已经退出，这条占用随之解除。'); ctx.hub.touched(running.taskId) } catch { /* status already cleared */ } })
+          .finally(() => confirming.delete(running))
+      }
+    }
+    if (released) pump()
+    watchWriters()
+  }
+  /**
+   * 主人确认「它已经结束了」(2026-10-06):只在**没有**相反证据时接受 —— 记过的进程组还有活着的,
+   * 就拒绝(writer_alive),让主人先去结束它;这是那道防线的本意,不能一句话就放开。
+   */
+  async function confirmWriterExited(id:string):Promise<WorkbenchTaskView> {
+    const task=store.get(id)
+    if (task.error!=='writer_not_closed') throw new Error('invalid_state')
+    const running=state.runsByTask.get(id)
+    const live=running?.uncertain?running:undefined
+    if (running && !live) throw new Error('workbench_busy')
+    const groups=state.writerOrphans.get(id)?.groups ?? (live?writerGroupsOf(live):undefined) ?? store.writerHolds().find(h=>h.id===id)?.groups ?? []
+    if (groups.some(groupAlive)) throw new Error('writer_alive')
+    if (live) await confirmLateClose(live,false)
+    releaseWriter(id,'主人确认执行程序已经结束，这条占用解除。')
+    pump()
+    return act().taskView(publicTask(store.get(id)))
+  }
+
   function pump() {
     if (state.stopping) return
     const launch:Active[]=[]
     for (const running of state.queue) {
       if (running.state !== 'queued') continue
       const earlier=state.queue.filter(item => item.order < running.order && item.state === 'queued')
-      const blocker=findPathBlocker(running,[...act().held(),...earlier])
+      const blocker=findPathBlocker(running,[...act().held(),...state.writerOrphans.values(),...earlier])
       if (blocker) {
         // 「有人来等这个文件夹了」的唯一入口:挡路的那条会话若已经安静,就按短让位重排它的
         // 自动收工(armIdleClose 自己判安静,不安静就什么都不做)。
@@ -344,6 +415,7 @@ export function makeLifecycleDomain(ctx:ServiceCtx) {
   function shutdown():Promise<void> {
     if (state.shutdownPromise) return state.shutdownPromise
     state.stopping=true
+    if (state.writerWatch) { clearInterval(state.writerWatch); state.writerWatch=undefined }
     state.shutdownPromise=(async () => {
       const snapshot=[...state.runsByTask.values()]
       for (const running of snapshot) {
@@ -364,6 +436,6 @@ export function makeLifecycleDomain(ctx:ServiceCtx) {
     return state.shutdownPromise
   }
 
-  return { revokeCredentials,quiet,handoffGraceMs,retainedIdleMs,armIdleClose,cancelIdleClose,closeForIdle,reportOnce,recollectOnce,settleQuiet,settleAfterDecision,releaseReservation,confirmLateClose,markUncertain,pump,cancelRun,suspendForNetwork,resumeFromNetwork,stopSuspendedForNetwork,networkSuspended, setArchived,cancel,shutdown }
+  return { adoptWriters,confirmWriterExited,revokeCredentials,quiet,handoffGraceMs,retainedIdleMs,armIdleClose,cancelIdleClose,closeForIdle,reportOnce,recollectOnce,settleQuiet,settleAfterDecision,releaseReservation,confirmLateClose,markUncertain,pump,cancelRun,suspendForNetwork,resumeFromNetwork,stopSuspendedForNetwork,networkSuspended, setArchived,cancel,shutdown }
 }
 export type LifecycleDomain = ReturnType<typeof makeLifecycleDomain>
