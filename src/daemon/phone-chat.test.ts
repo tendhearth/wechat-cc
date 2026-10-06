@@ -224,3 +224,54 @@ describe('makePhoneChat', () => {
     } finally { vi.useRealTimers() }
   })
 })
+
+describe('makePhoneChat — 带图的一句(2026-10-06)', () => {
+  const D = '11111111-1111-4111-8111-111111111111', A = '22222222-2222-4222-8222-222222222222', B = '33333333-3333-4333-8333-333333333333'
+  const png = { mime: 'image/png', bytes: new Uint8Array([137, 80, 78, 71]) }
+  function imgRig(take = vi.fn(() => [png])) {
+    const calls: Array<{ text: string; images?: unknown[]; reject: (e: Error) => void; resolve: (r: { reply: string }) => void }> = []
+    const chat = makePhoneChat({
+      converse: (text, images) => new Promise((resolve, reject) => calls.push({ text, ...(images ? { images } : {}), resolve, reject })),
+      takeImages: take,
+      ownerMatterId: () => 'c0ffee01',
+      now: () => 1000,
+    })
+    return { chat, calls, take }
+  }
+
+  it('取一次图,和文字一起交给 converse;只有图、没有字也收', async () => {
+    const r = imgRig()
+    r.chat.say(RID(1), '', { draftId: D, attachmentIds: [A] })
+    await tick()
+    expect(r.take).toHaveBeenCalledWith({ draftId: D, attachmentIds: [A] })
+    expect(r.calls[0]).toMatchObject({ text: '', images: [png] })
+  })
+
+  it('失败后同一 requestId 重试:沿用上次取到的图,不再取第二次(暂存已经删了)', async () => {
+    const r = imgRig()
+    r.chat.say(RID(1), '看这张', { draftId: D, attachmentIds: [A] })
+    await tick(); r.calls[0]!.reject(new Error('x')); await tick()
+    r.chat.say(RID(1), '看这张', { draftId: D, attachmentIds: [A] })
+    await tick()
+    expect(r.take).toHaveBeenCalledTimes(1)
+    expect(r.calls[1]).toMatchObject({ text: '看这张', images: [png] })
+  })
+
+  it('同一 requestId 换了图 ⇒ input_conflict;忙 / 没主人时不取图', () => {
+    const r = imgRig()
+    r.chat.say(RID(1), '看', { draftId: D, attachmentIds: [A] })
+    expect(() => r.chat.say(RID(1), '看', { draftId: D, attachmentIds: [B] })).toThrow('input_conflict')
+    expect(() => r.chat.say(RID(2), '另一句', { draftId: D, attachmentIds: [B] })).toThrow('chat_busy')
+    expect(r.take).toHaveBeenCalledTimes(1)
+    const none = makePhoneChat({ converse: async () => ({ reply: '' }), takeImages: r.take, ownerMatterId: () => null })
+    expect(() => none.say(RID(3), '', { draftId: D, attachmentIds: [A] })).toThrow('no_owner_chat')
+    expect(r.take).toHaveBeenCalledTimes(1)
+  })
+
+  it('取图失败(过期 / 不是这位主人的)⇒ 原样抛出,这一句不收、不占 pending', () => {
+    const r = imgRig(vi.fn(() => { throw new Error('attachment_scope') }))
+    expect(() => r.chat.say(RID(1), '看', { draftId: D, attachmentIds: [A] })).toThrow('attachment_scope')
+    expect(r.chat.state().pending).toBeNull()
+    expect(r.chat.say(RID(2), '纯文字').status).toBe('pending')
+  })
+})

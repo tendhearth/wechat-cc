@@ -64,7 +64,7 @@ describe('mobileChatRoute', () => {
     const d = deps()
     const ok = await call(d, post({ requestId: RID, text: 'hi' }))
     expect(ok.status).toBe(200)
-    expect(d.chat.say).toHaveBeenCalledWith(RID, 'hi')
+    expect(d.chat.say).toHaveBeenCalledWith(RID, 'hi', undefined)
     PHONE_API_SCHEMAS['POST /m/api/chat/say']!.parse(ok.body)
     expect(ok.body.matterId).toBe('c0ffee01')
     expect(ok.body.job).not.toHaveProperty('matterId')
@@ -75,6 +75,23 @@ describe('mobileChatRoute', () => {
     expect(conflict.status).toBe(409)
     expect(conflict.body.error).toBe('input_conflict')
     expect((await call(d, new Request('http://x/m/api/chat/say'))).status).toBe(405)
+  })
+  it('say 带图(2026-10-06):draftId + attachmentIds 传下去;有图时文字可空;坏引用 400;取图失败 409 invalid_attachment', async () => {
+    const D = '11111111-1111-4111-8111-111111111111', A = '22222222-2222-4222-8222-22222222222A'
+    const d = deps()
+    expect((await call(d, post({ requestId: RID, text: '', draftId: D, attachmentIds: [A] }))).status).toBe(200)
+    expect(d.chat.say).toHaveBeenCalledWith(RID, '', { draftId: D, attachmentIds: [A.toLowerCase()] })
+    for (const b of [
+      { requestId: RID, text: '', draftId: D, attachmentIds: [] },
+      { requestId: RID, text: 'hi', attachmentIds: [A] },
+      { requestId: RID, text: 'hi', draftId: D },
+      { requestId: RID, text: 'hi', draftId: 'x', attachmentIds: [A] },
+      { requestId: RID, text: 'hi', draftId: D, attachmentIds: ['nope'] },
+      { requestId: RID, text: 'hi', draftId: D, attachmentIds: [A, A] },
+      { requestId: RID, text: 'hi', draftId: D, attachmentIds: Array.from({ length: 5 }, (_, i) => `22222222-2222-4222-8222-00000000000${i}`) },
+    ]) expect((await call(d, post(b))).status, JSON.stringify(b)).toBe(400)
+    const gone = await call(deps({ chat: { ...deps().chat, say: () => { throw new Error('attachment_scope') } } }), post({ requestId: RID, text: 'hi', draftId: D, attachmentIds: [A] }))
+    expect(gone).toEqual({ status: 409, body: { ok: false, error: 'invalid_attachment' } })
   })
   it('say:没主人 404;没接 503;内部意外 ⇒ 503 unavailable(Ruling 7,不是 500)', async () => {
     const noOwner = deps({ chat: { ...deps().chat, say: () => { throw new Error('no_owner_chat') } } })

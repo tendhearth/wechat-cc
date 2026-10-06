@@ -208,3 +208,25 @@ it('does not enable phone legacy text continuation before a current owner is con
   const task=store.create({title:'legacy',path:project,providerId:'claude',ownerChatId:null})
   expect(()=>service.continueTask(task.id,'next',undefined,'owner')).toThrow('invalid_entry_owner')
 })
+
+it('hands a phone-uploaded image to chat once, owner-checked, and clears its staging (2026-10-06)',()=>{
+  setup({async spawn(){return{async *dispatch(){yield result},async close(){}}}},true,'owner')
+  const png=Buffer.concat([Buffer.from([137,80,78,71,13,10,26,10,0,0,0,13]),Buffer.from('IHDR'),Buffer.alloc(200*1024,7)])
+  const id=randomUUID(),draftId=randomUUID(),context={ownerKey:'owner',surface:'phone' as const}
+  const metadata={id,draftId,name:'shot.png',mime:'image/png',size:png.length,sha256:createHash('sha256').update(png).digest('hex')}
+  service.uploadAttachmentChunk({...metadata,offset:0,contentBase64:png.subarray(0,128*1024).toString('base64')},context)
+  service.uploadAttachmentChunk({...metadata,offset:128*1024,contentBase64:png.subarray(128*1024).toString('base64')},context)
+  expect(()=>service.takeChatImages({draftId,attachmentIds:[id]},{ownerKey:'someone-else',surface:'phone'})).toThrow('attachment_scope')
+  const images=service.takeChatImages({draftId,attachmentIds:[id]},context)
+  expect(images).toHaveLength(1)
+  expect(images[0]!.mime).toBe('image/png')
+  expect(Buffer.from(images[0]!.bytes).equals(png)).toBe(true)
+  expect(db.query('SELECT * FROM workbench_attachments WHERE id=?').all(id)).toEqual([])
+  expect(()=>service.takeChatImages({draftId,attachmentIds:[id]},context)).toThrow()
+})
+
+it('refuses non-image materials for chat',()=>{
+  setup({async spawn(){return{async *dispatch(){yield result},async close(){}}}},true,'owner')
+  const own=upload('notes.txt','hello')
+  expect(()=>service.takeChatImages({draftId:own.draftId,attachmentIds:own.attachmentIds},{ownerKey:'owner',surface:'phone'})).toThrow('invalid_attachment')
+})

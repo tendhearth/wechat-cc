@@ -443,6 +443,33 @@ describe('跟 CC 说 / 连接 / 原生会话', () => {
     const down = harness({ 'POST /m/api/chat/say': ok({ ok: false, error: 'unavailable' }, 503) })
     await expect(down.b.chatSay('hi', SAY_REQ2)).rejects.toMatchObject({ code: 'unavailable' })
   })
+  it('chatSay 带图(2026-10-06):draftId + attachmentIds 进正文;电脑上图不在了 ⇒ images_gone;老电脑 ⇒ images_unsupported', async () => {
+    const D = '11111111-1111-4111-8111-111111111111', A = '22222222-2222-4222-8222-222222222222'
+    const { b, reqs } = harness({ 'POST /m/api/chat/say': ok({ ok: true, matterId: 'c0ffee01', job: { requestId: SAY_REQ, text: '', status: 'pending', since: 1 } }, 202) })
+    await b.chatSay('', SAY_REQ, { draftId: D, attachmentIds: [A] })
+    expect(reqs.at(-1)).toMatchObject({ body: { requestId: SAY_REQ, text: '', draftId: D, attachmentIds: [A] } })
+    const gone = harness({ 'POST /m/api/chat/say': ok({ ok: false, error: 'invalid_attachment' }, 409) })
+    await expect(gone.b.chatSay('', SAY_REQ, { draftId: D, attachmentIds: [A] })).rejects.toMatchObject({ code: 'images_gone' })
+    const old = harness({ 'POST /m/api/chat/say': ok({ ok: false, error: 'images_not_supported' }, 409) })
+    await expect(old.b.chatSay('', SAY_REQ, { draftId: D, attachmentIds: [A] })).rejects.toMatchObject({ code: 'images_unsupported' })
+  })
+  it('材料分块上传 / 查进度 / 丢弃 走对应路由;交办带上 draftId + attachmentIds', async () => {
+    const D = '11111111-1111-4111-8111-111111111111', A = '22222222-2222-4222-8222-222222222222'
+    const state = { id: A, draftId: D, taskId: null, size: 3, sha256: 'a'.repeat(64), nextOffset: 3, status: 'ready' }
+    const { b, reqs } = harness({
+      'POST /m/api/attachment/chunk': ok({ ok: true, ...state }),
+      'GET /m/api/attachment/upload': ok({ ok: true, ...state }),
+      'POST /m/api/attachment/discard': ok({ ok: true }),
+      'POST /m/api/matter/create': ok({ ok: true, receipt: RECEIPT, task: WB_TASK }, 202),
+    })
+    expect((await b.uploadChunk({ id: A, draftId: D, name: 'a.png', mime: 'image/png', size: 3, sha256: 'a'.repeat(64), offset: 0, contentBase64: 'AAAA' })).status).toBe('ready')
+    expect((await b.uploadStatus(A, D)).nextOffset).toBe(3)
+    expect(reqs.at(-1)!.path).toBe(`/m/api/attachment/upload?id=${A}&draftId=${D}`)
+    await b.discardUpload(A, D)
+    expect(reqs.at(-1)).toMatchObject({ body: { id: A, draftId: D } })
+    await b.create({ requestId: SAY_REQ, text: '看图', draftId: D, attachmentIds: [A] })
+    expect(reqs.at(-1)).toMatchObject({ body: { requestId: SAY_REQ, text: '看图', draftId: D, attachmentIds: [A] } })
+  })
   it('connections / sessions / session 走对应路由', async () => {
     const CONN = { ok: true, generatedAt: 1, sources: [{ id: 'wxvault', kind: 'plugin', name: 'wxvault', state: 'ready', latestAt: null, syncedAt: null }], computers: [], recent: [], outputs: [] }
     const ROW = { key: 'k', provider: 'codex', title: 't', project: 'p', updatedAt: 1, active: false }

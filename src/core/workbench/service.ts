@@ -138,7 +138,7 @@ export function makeWorkbenchService(opts: Options) {
     uploadAttachment:attachmentsDomain.uploadAttachment,
     uploadAttachmentChunk:attachmentsDomain.uploadAttachmentChunk,
     attachmentUploadStatus:attachmentsDomain.attachmentUploadStatus,
-    discardAttachmentUpload:attachmentsDomain.discardAttachmentUpload,
+    discardAttachmentUpload:attachmentsDomain.discardAttachmentUpload,takeChatImages:attachmentsDomain.takeChatImages,
     readAttachment:attachmentsDomain.readAttachment,
     discardAttachment:attachmentsDomain.discardAttachment,
     setArchived:lifecycleDomain.setArchived,

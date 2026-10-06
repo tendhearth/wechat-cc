@@ -21,6 +21,9 @@ const SPECIFIC: ReadonlyMap<string, BackendCode> = new Map<string, BackendCode>(
   ['quota_handoff_not_needed', 'handoff_changed'], ['quota_handoff_changed', 'handoff_changed'], ['quota_handoff_unavailable', 'handoff_changed'],
   // 回复里的语音附件(GET /m/api/chat/voice,2026-10-04):装不进中继一帧 / 电脑没设朗读,各有一句话。
   ['too_large', 'too_large'], ['no_voice_config', 'no_voice'],
+  // 带图的一句 / 新事(2026-10-06):电脑上那几份暂存不在了(过期 / 已被用掉 / 不是这台手机传的)⇒ 请重新选图;
+  // 电脑太旧、对话还不收图 ⇒ 说清楚要先更新电脑。必须在 `invalid_` 前缀规则之前判。
+  ['invalid_attachment', 'images_gone'], ['images_not_supported', 'images_unsupported'],
 ])
 const errOf = (body: unknown): string | null => {
   if (typeof body !== 'object' || body === null) return null
