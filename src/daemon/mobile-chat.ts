@@ -4,6 +4,41 @@ import type { MatterStore } from '../core/matters/store'
 import type { ChatJob, PhoneChat } from './phone-chat'
 import { framedTooLarge } from './mobile-matter-response'
 import { parseExtras, phoneExtrasFields } from './app-reply'
+import { createHash } from 'node:crypto'
+import { closeSync, fstatSync, lstatSync, openSync, readSync } from 'node:fs'
+
+/** CC 回复里的文件在手机上读(2026-10-06):每块 128 KiB,整份 ≤ 20MB;只读普通文件,不跟符号链接。 */
+export const CHAT_FILE_CHUNK_BYTES = 128 * 1024
+export const CHAT_FILE_MAX_BYTES = 20 * 1024 * 1024
+const MIME_BY_EXT: Record<string, string> = { pdf: 'application/pdf', png: 'image/png', jpg: 'image/jpeg', jpeg: 'image/jpeg', gif: 'image/gif', webp: 'image/webp',
+  md: 'text/markdown', txt: 'text/plain', csv: 'text/csv', json: 'application/json', html: 'text/html', htm: 'text/html',
+  docx: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document', xlsx: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+  pptx: 'application/vnd.openxmlformats-officedocument.presentationml.presentation', zip: 'application/zip' }
+const mimeOf = (name: string) => MIME_BY_EXT[(/\.([A-Za-z0-9]+)$/.exec(name)?.[1] ?? '').toLowerCase()] ?? 'application/octet-stream'
+/** 整份读出来再切(≤20MB):sha256 让手机核对拼起来的是同一份;读的时候文件被换了 ⇒ 长度 / 哈希对不上,手机会报「刚换了」。
+ *  一份文件分很多块来读:按「路径 + 大小 + 修改时间」缓存最近一份,60 秒内同一份不重读不重算(换了文件自然失效)。 */
+let fileCache: { key: string; at: number; bytes: Buffer; sha256: string } | null = null
+function readChatFile(path: string, now = Date.now()): { bytes: Buffer; sha256: string } {
+  const st = lstatSync(path)
+  if (!st.isFile()) throw new Error('not_a_file')
+  if (st.size > CHAT_FILE_MAX_BYTES) throw new Error('too_large')
+  const key = `${path}\u0000${st.size}\u0000${st.mtimeMs}`
+  if (fileCache && fileCache.key === key && now - fileCache.at < 60_000) return fileCache
+  const bytes = readWholeFile(path)
+  fileCache = { key, at: now, bytes, sha256: createHash('sha256').update(bytes).digest('hex') }
+  return fileCache
+}
+function readWholeFile(path: string): Buffer {
+  const fd = openSync(path, 'r')
+  try {
+    const size = fstatSync(fd).size
+    if (size > CHAT_FILE_MAX_BYTES) throw new Error('too_large')
+    const buf = Buffer.alloc(size)
+    let at = 0
+    while (at < size) { const n = readSync(fd, buf, at, size - at, at); if (!n) break; at += n }
+    return buf.subarray(0, at)
+  } finally { closeSync(fd) }
+}
 
 /**
  * mobile-chat.ts — 手机「跟 CC 说」的两条路由(spec 2026-10-01 §3)。路由字面量被
@@ -134,6 +169,30 @@ export async function mobileChatRoute(deps: MobileChatDeps | undefined, url: URL
     try { rows = await deps.search(owner.chatId, q.trim(), 30) } catch { return err('unavailable', 503) }
     const hits = rows.map(r => ({ id: r.id, role: r.direction === 'in' ? 'me' : 'cc', text: r.text.length > 600 ? r.text.slice(0, 600) : r.text, truncated: r.text.length > 600, at: Date.parse(r.ts), source: r.source ?? null }))
     return json({ ok: true, hits })
+  }
+  // CC 回复里的文件(2026-10-06):按消息 id + 第几个附件定位(手机不给路径),必须是这条主人对话里 CC 发的那一行。
+  if (url.pathname === '/m/api/chat/file') {
+    if (req.method !== 'GET') return err('method_not_allowed', 405)
+    if (!deps?.message) return err('chat_not_wired', 503)
+    const id = url.searchParams.get('id'), rawIdx = url.searchParams.get('i'), rawOffset = url.searchParams.get('offset') ?? '0'
+    if (!id || id.length > 200 || rawIdx === null || !/^\d{1,2}$/.test(rawIdx) || !/^\d{1,9}$/.test(rawOffset)) return err('invalid', 400)
+    let owner: ReturnType<MobileChatDeps['owner']>
+    try { owner = deps.owner() } catch { return err('unavailable', 503) }
+    if (!owner) return err('no_owner_chat', 404)
+    let row: MessageRecord | null
+    try { row = await deps.message(owner.chatId, id) } catch { return err('unavailable', 503) }
+    const att = row && row.direction === 'out' ? parseExtras(row.extras)?.attachments[Number(rawIdx)] : undefined
+    if (!att || att.kind !== 'file') return err('not_found', 404)
+    let file: { bytes: Buffer; sha256: string }
+    try { file = readChatFile(att.path) } catch (e) {
+      const m = e instanceof Error ? e.message : ''
+      return m === 'too_large' ? err('too_large', 413) : err('not_found', 404)
+    }
+    const { bytes, sha256 } = file
+    const offset = Number(rawOffset)
+    if (offset > bytes.length) return err('invalid', 400)
+    const end = Math.min(bytes.length, offset + CHAT_FILE_CHUNK_BYTES)
+    return json({ ok: true, name: att.name, mime: mimeOf(att.name), size: bytes.length, sha256, offset, nextOffset: end, contentBase64: bytes.subarray(offset, end).toString('base64') })
   }
   if (url.pathname === '/m/api/chat/voice') {
     if (req.method !== 'GET') return err('method_not_allowed', 405)
