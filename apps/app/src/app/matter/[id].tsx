@@ -5,6 +5,7 @@ import { SafeAreaView } from 'react-native-safe-area-context'
 import type { MatterInputT } from '../../backend/types'
 import { t } from '../../i18n'
 import { useLang } from '../../i18n/useLang'
+import { Artifacts } from '../../ui/Artifacts'
 import { useBackendCtx } from '../../state/BackendProvider'
 import { useConnection, useQuery, useSubmit, useTopic } from '../../state/hooks'
 import { getDraft, setDraft } from '../../state/drafts'
@@ -237,6 +238,8 @@ export default function Matter() {
         {v.pendingCount > 0 ? (
           <Button kind="primary" testID="progress-view-approval" label={t(lang, 'progress.viewApproval')} onPress={() => router.push(`/approval/${encodeURIComponent(d.task?.id ?? id)}`)} />
         ) : null}
+
+        {d.artifacts.length ? <Artifacts matterId={id} artifacts={d.artifacts} backend={backend} lang={lang} online={online} /> : null}
 
         <Sheet testID="progress-changes" title={t(lang, 'progress.viewChangesN', { n: v.changedFiles })}>
             {files.length === 0 ? <Txt role="meta" tone="inkSoft">{t(lang, 'progress.noChanges')}</Txt> : null}
