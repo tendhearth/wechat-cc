@@ -20,3 +20,9 @@
 .you-new{display:inline-block;width:6px;height:6px;border-radius:50%;background:var(--dot);margin-left:6px;vertical-align:middle}
 .you-foot{text-align:center;color:var(--soft);font-size:12px;margin-top:26px;font-family:var(--hand)}
 @media(prefers-reduced-motion:reduce){.you-cc,.you-halo{animation:none}}
+
+/* 逐条纠错(2026-10-06):点一条出三个选择;不上色块,只用细线和留白。 */
+[data-mem-id]{cursor:pointer}
+.you-fix{display:flex;flex-wrap:wrap;gap:8px;margin:6px 0 12px}
+.you-fix button{font:inherit;font-size:13px;min-height:36px;padding:6px 12px;border:1px solid var(--line);border-radius:var(--r-s);background:var(--card);color:var(--ink)}
+.you-fix .you-fix-cancel{color:var(--soft)}
