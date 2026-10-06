@@ -21,7 +21,7 @@ import {
   type ApprovalExplanationT, type Backend, type Connection, type DeviceRowT, type EntryOptionsT,
   type MatterDetailT, type MatterT, type PhoneChangesTurnT, type ProgressSummaryT, type Unsubscribe,
   type ChatPageT, type ChatJobT, type ConnectionsT, type NativeSessionRowT, type NativeSessionPageT, type SessionContinueT,
-  type MatterSayResultT, type MatterInputT,
+  type MatterSayResultT, type MatterInputT, type UploadStateT,
 } from './types'
 
 type Topic = Parameters<Backend['subscribe']>[0]
@@ -226,9 +226,20 @@ export function makeLiveBackend(d: LiveDeps): Backend {
       const q = [p.before ? `before=${encodeURIComponent(p.before)}` : '', p.limit !== undefined ? `limit=${p.limit}` : ''].filter(Boolean).join('&')
       return strip(await call<{ ok: true } & ChatPageT>('GET /m/api/chat', `/m/api/chat${q ? '?' + q : ''}`))
     },
-    async chatSay(text, requestId) {
+    async chatSay(text, requestId, materials) {
       if (text.length > PHONE_SAY_MAX_CHARS) throw new BackendError('invalid')
-      return (await call<{ job: ChatJobT }>('POST /m/api/chat/say', '/m/api/chat/say', { body: { requestId, text }, retry: true })).job
+      const body = materials?.attachmentIds.length ? { requestId, text, draftId: materials.draftId, attachmentIds: materials.attachmentIds } : { requestId, text }
+      return (await call<{ job: ChatJobT }>('POST /m/api/chat/say', '/m/api/chat/say', { body, retry: true })).job
+    },
+    async uploadChunk(p) {
+      // 不自动重发:同一块重传由上传循环先问进度再续(uploadStatus),不在协议层盲重试。
+      return strip(await call<{ ok: true } & UploadStateT>('POST /m/api/attachment/chunk', '/m/api/attachment/chunk', { body: p }))
+    },
+    async uploadStatus(id, draftId) {
+      return strip(await call<{ ok: true } & UploadStateT>('GET /m/api/attachment/upload', `/m/api/attachment/upload?id=${encodeURIComponent(id)}&draftId=${encodeURIComponent(draftId)}`))
+    },
+    async discardUpload(id, draftId) {
+      await call('POST /m/api/attachment/discard', '/m/api/attachment/discard', { body: { id, draftId } })
     },
     async chatVoice(messageId, index) {
       return strip(await call<{ ok: true; mime: string; data: string }>('GET /m/api/chat/voice', `/m/api/chat/voice?id=${encodeURIComponent(messageId)}&i=${index}`))
@@ -283,6 +294,7 @@ export function makeLiveBackend(d: LiveDeps): Backend {
         requestId: p.requestId, text: p.text,
         target: p.projectId ? { kind: 'project', projectId: p.projectId } : { kind: 'managed' },
         ...(p.providerId ? { providerId: p.providerId } : {}),
+        ...(p.attachmentIds?.length && p.draftId ? { draftId: p.draftId, attachmentIds: p.attachmentIds } : {}),
       }
       try {
         const r = await call<{ receipt: { matterId: string } }>('POST /m/api/matter/create', '/m/api/matter/create', { body, retry: true })

@@ -1,4 +1,4 @@
-import { CHAT_PAGE_MAX, CHAT_TEXT_MAX, PHONE_SAY_MAX_CHARS } from '@wechat-cc/protocol'
+import { CHAT_PAGE_MAX, CHAT_TEXT_MAX, PHONE_CHAT_MAX_IMAGES, PHONE_SAY_MAX_CHARS } from '@wechat-cc/protocol'
 import type { MessageRecord } from '../lib/messages-store'
 import type { MatterStore } from '../core/matters/store'
 import type { ChatJob, PhoneChat } from './phone-chat'
@@ -148,17 +148,24 @@ export async function mobileChatRoute(deps: MobileChatDeps | undefined, url: URL
     try { body = await req.json() } catch { return err('bad_json', 400) }
     if (!body || typeof body !== 'object' || Array.isArray(body)) return err('invalid', 400)
     const b = body as Record<string, unknown>
-    // 白名单:只认 requestId、text。
-    if (Object.keys(b).some(k => k !== 'requestId' && k !== 'text')) return err('invalid', 400)
-    if (typeof b.requestId !== 'string' || !UUID.test(b.requestId) || typeof b.text !== 'string' || !b.text.trim() || b.text.length > PHONE_SAY_MAX_CHARS) return err('invalid', 400)
+    // 白名单:requestId、text,以及带图时的 draftId + attachmentIds(2026-10-06,最多 4 张;有图时文字可空)。
+    if (Object.keys(b).some(k => !['requestId', 'text', 'draftId', 'attachmentIds'].includes(k))) return err('invalid', 400)
+    const ids = b.attachmentIds
+    const hasImages = Array.isArray(ids) && ids.length > 0
+    if (ids !== undefined && (!Array.isArray(ids) || ids.length > PHONE_CHAT_MAX_IMAGES || ids.some(id => typeof id !== 'string' || !UUID.test(id)) || new Set(ids).size !== ids.length)) return err('invalid_attachment', 400)
+    if (hasImages !== (typeof b.draftId === 'string') || (b.draftId !== undefined && (typeof b.draftId !== 'string' || !UUID.test(b.draftId)))) return err('invalid_attachment', 400)
+    if (typeof b.requestId !== 'string' || !UUID.test(b.requestId) || typeof b.text !== 'string' || (!b.text.trim() && !hasImages) || b.text.length > PHONE_SAY_MAX_CHARS) return err('invalid', 400)
     try {
-      const job = deps.chat.say(b.requestId, b.text)
+      const job = deps.chat.say(b.requestId, b.text, hasImages ? { draftId: (b.draftId as string).toLowerCase(), attachmentIds: (ids as string[]).map(id => id.toLowerCase()) } : undefined)
       return json({ ok: true, matterId: job.matterId, job: wireJob(job) })
     } catch (e) {
       const m = e instanceof Error ? e.message : ''
       if (m === 'chat_busy') return err('chat_busy', 409)
       if (m === 'input_conflict') return err('input_conflict', 409)
       if (m === 'no_owner_chat') return err('no_owner_chat', 404)
+      // 图:不存在 / 过期 / 不是这位主人的 / 不是图片 ⇒ 让手机重新传;还没接 ⇒ 老 daemon 一样的「不支持」。
+      if (['invalid_attachment', 'attachment_scope', 'not_found', 'attachment_changed', 'invalid_attachment_size', 'invalid_entry_owner'].includes(m)) return err('invalid_attachment', 409)
+      if (m === 'images_not_wired') return err('images_not_supported', 409)
       // Ruling 7:内部意外按「暂时不可用」回 503(手机映射成 unavailable),不是 500。
       return err('unavailable', 503)
     }

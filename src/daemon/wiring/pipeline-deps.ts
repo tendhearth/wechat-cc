@@ -608,7 +608,9 @@ export function buildPipelineDeps(opts: PipelineDepsOpts, refs: PipelineDepsRefs
   // isInFlight 前置拒 + coordinator.submitTurn 持每 chat 锁),手机一句不会和微信一轮在主人会话上并跑。
   // companionConverse 在下面才定义;这里只捕获引用,调用发生在请求到来时(与 mattersService 同一姿势)。
   const phoneChat = phoneOwner ? makePhoneChat({
-    converse: text => companionConverse(text, 'phone'),
+    converse: (text, images) => companionConverse(text, 'phone', images),
+    // 手机带的图:材料暂存里按主人取(与交办同一套校验),读完即删,图落到对话 inbox(2026-10-06)。
+    ...(opts.workbench ? { takeImages: (m: { draftId: string; attachmentIds: string[] }) => opts.workbench!.takeChatImages(m, { ownerKey: ownerChatId() ?? '', surface: 'phone' }) } : {}),
     ownerMatterId: () => phoneOwner.ensure(),
     onSettled: id => { matterActivity?.note(id); phoneEvents?.poke() },
     log: (tag, line) => log(tag, line),
