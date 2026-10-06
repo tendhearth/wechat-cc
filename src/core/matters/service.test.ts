@@ -77,5 +77,20 @@ describe('matters service — search the owner chat (2026-10-06)',()=>{
     await expect(service.searchOwnerChat('x'.repeat(201))).rejects.toThrow('invalid_query')
     const none=makeMattersService({store,chat:{ownerChatId:()=>null,say:async()=>({reply:''}),search}})
     expect(await none.searchOwnerChat('报告')).toBeNull()
+
+describe('matters service — stop from the phone (2026-10-06)',()=>{
+  it('cancels only the run the phone saw; a changed or missing run is input_stale',async()=>{
+    store.create({id:'deadbeef',kind:'task',title:'整理周报',projectPath:'/work',ownerChatId:'owner'})
+    let runId:string|undefined='run-1'
+    const cancel=vi.fn(async()=>({}))
+    const workbench={detail:vi.fn(()=>({task:TASK,events:[],...(runId?{runId}:{})})),continueTask:vi.fn(),cancel}
+    const service=makeMattersService({store,workbench:workbench as never})
+    await service.stop('deadbeef','run-1')
+    expect(cancel).toHaveBeenCalledWith('deadbeef','run-1')
+    runId='run-2'
+    await expect(service.stop('deadbeef','run-1')).rejects.toThrow('input_stale')
+    runId=undefined
+    await expect(service.stop('deadbeef','run-2')).rejects.toThrow('input_stale')
+    expect(cancel).toHaveBeenCalledTimes(1)
   })
 })

@@ -208,7 +208,30 @@ function mRenderHandoff(d) {
       html+='</div>'
     }
   }
+  // 停下这一轮(2026-10-06):只在有一轮排队 / 在干活时出现;点一下先变「再点一次」,3 秒内再点才停,只停这一轮(runId)。
+  if(d.matter.kind==='task'&&d.runId&&d.task&&(d.task.phase==='queued'||d.task.phase==='working')){
+    var armed=mStopArmed&&mStopArmed.task===d.matter.id&&mStopArmed.run===d.runId
+    html+='<button type="button" class="more" data-stop="1" data-task="'+esc(d.matter.id)+'" data-run="'+esc(d.runId)+'">'+(armed?'再点一次，确认停止':'停止这一轮')+'</button>'
+  }
   if(root.innerHTML!==html)root.innerHTML=html
+}
+var mStopArmed=null,mStopTimer=null
+async function mStop(task,run) {
+  var key=task+':stop'
+  if(task!==mCurrent||!mDetail||mDetail.runId!==run||!mDetailFresh||mOffline||mBusy[key])return
+  if(!mStopArmed||mStopArmed.task!==task||mStopArmed.run!==run){
+    mStopArmed={task:task,run:run};clearTimeout(mStopTimer)
+    mStopTimer=setTimeout(function(){mStopArmed=null;if(mDetail)mRenderHandoff(mDetail)},3000)
+    return mRenderHandoff(mDetail)
+  }
+  mStopArmed=null;clearTimeout(mStopTimer);mBusy[key]=true;mNotice('正在停下这一轮…')
+  try{
+    // 一次只走一条通道,不自动重发(与额度交接同一个发法)
+    var r=await mHandoffSend('/m/api/matter/stop',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({id:task,runId:run})})
+    var b=await r.json().catch(function(){return null})
+    mNotice(b&&b.ok?'已经请电脑停下这一轮。':b&&b.error==='input_stale'?'这一轮已经结束或换了一轮，刷新看看现在的样子。':'没停成，稍后再试。')
+  }catch(e){mNotice('没停成，稍后再试。')}
+  finally{delete mBusy[key];clearTimeout(mPoll);mSchedule()}
 }
 function mHandoffVisible(id,epoch) { return mCurrent===id&&mHandoffViewEpoch===epoch&&mActive&&!document.hidden&&!mOffline }
 /** A POST selects one transport once. A lost LAN reply must never send it again through the tunnel. */
@@ -255,7 +278,7 @@ async function mHandoff(action,shown) {
     mNotice(message)
   }finally{delete mBusy[key];if(mHandoffVisible(id,epoch)){mSetButtons();mSchedule()}}
 }
-document.getElementById('m-task-status').addEventListener('click',function(ev){var b=/** @type {HTMLElement} */ (/** @type {Element} */ (ev.target).closest('[data-handoff]'));if(b&&b.dataset.task===mCurrent)return mHandoff(b.dataset.handoff,b.dataset.handoffOffer)})
+document.getElementById('m-task-status').addEventListener('click',function(ev){var s=/** @type {HTMLElement} */ (/** @type {Element} */ (ev.target).closest('[data-stop]'));if(s&&s.dataset.stop&&s.dataset.task===mCurrent)return mStop(s.dataset.task,s.dataset.run);var b=/** @type {HTMLElement} */ (/** @type {Element} */ (ev.target).closest('[data-handoff]'));if(b&&b.dataset.task===mCurrent)return mHandoff(b.dataset.handoff,b.dataset.handoffOffer)})
 /** A compact, non-control identity for keeping source sections open during polling. */
 function mEventSourceKey(event) {
   var signature=JSON.stringify([event.createdAt,event.source||'',event.text]),hash=2166136261

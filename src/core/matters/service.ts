@@ -50,6 +50,8 @@ export interface MattersServiceDeps {
     submitInput?(id:string,input:{runId:string;requestId:string;text:string}&MatterMaterials,attachmentPolicy?:'owner'):Promise<LiveInput>
     inputReceipt?(id:string,requestId:string):LiveInput|null
     resolvePermission?(id:string,requestId:string,decision:PermissionDecision):void
+    /** 停下这一轮(与桌面「停止」同一个 cancel;expectedRunId 不对 ⇒ 不停,免得停掉后来的那一轮)。 */
+    cancel?(id:string,expectedRunId?:string):Promise<unknown>
     resolveAnswer?(id:string,requestId:string,answers:unknown):void
     artifact?(id:string,artifactId:string):{name:string;mime:string;size:number;sha256:string;contentBase64:string}
     /** 额度用完时这件事能不能交给另一位;null = 不用打扰。没接 ⇒ 详情里没有这一块。 */
@@ -73,6 +75,8 @@ export interface MattersService {
   say(id:string,text:string,surface?:'desktop'|'phone',input?:MatterSayInput):Promise<{kind:'task';task:MatterTaskView;input?:MatterInput}|{kind:'chat';reply:string}>
   permission(id:string,runId:string,requestId:string,decision:PermissionDecision):void
   answer(id:string,runId:string,requestId:string,answers:unknown):void
+  /** 手机上停下正在跑的这一轮(2026-10-06)。runId 必须是手机看到的那一轮;已经换了一轮 / 没在跑 ⇒ input_stale。 */
+  stop(id:string,runId:string):Promise<void>
   artifactChunk(id:string,input:MatterArtifactInput):MatterArtifactChunk
   /** 在主人那条对话里搜(2026-10-06,对标 Orca 会话历史搜索):新的在前;没配主人 ⇒ null。 */
   searchOwnerChat(query:string,limit?:number):Promise<{hits:(MatterEvent&{id:string})[]}|null>
@@ -233,6 +237,12 @@ export function makeMattersService(deps:MattersServiceDeps):MattersService {
       current(id,runId,requestId,'permissions')
       if(!deps.workbench?.resolvePermission)throw Error('workbench_not_wired')
       deps.workbench.resolvePermission(id,requestId,decision)
+    },
+    async stop(id,runId){
+      const detail=taskDetail(id)
+      if(!runId||detail.runId!==runId)throw Error('input_stale')
+      if(!deps.workbench?.cancel)throw Error('workbench_not_wired')
+      await deps.workbench.cancel(id,runId)
     },
     answer(id,runId,requestId,answers){
       current(id,runId,requestId,'questions')
