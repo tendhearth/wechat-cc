@@ -25,6 +25,8 @@ export interface MobileChatDeps {
   chat: PhoneChat
   /** 主人对话里的一行(必须属于这个 chat);语音路由用它找那段要念的话。 */
   message?(chatId: string, id: string): Promise<MessageRecord | null>
+  /** 在主人对话里搜(2026-10-06);新的在前。没接 ⇒ 搜索路由 503。 */
+  search?(chatId: string, query: string, limit: number): Promise<MessageRecord[]>
   /** 合成语音(与桌面 agent_speak 同一个 synthesizeSpeech)。没接 ⇒ 语音路由 503。 */
   speak?(text: string): Promise<{ audio: Buffer; mime: string }>
 }
@@ -118,6 +120,20 @@ export async function mobileChatRoute(deps: MobileChatDeps | undefined, url: URL
       body = build()
     }
     return new Response(body, { status: 200, headers: { 'content-type': 'application/json; charset=utf-8', 'cache-control': 'no-store' } })
+  }
+  // 搜主人那条对话(2026-10-06,对标 Orca 会话历史搜索):q 1–200 字;最多 30 条、每条截到 600 字(一帧装得下)。
+  if (url.pathname === '/m/api/chat/search') {
+    if (req.method !== 'GET') return err('method_not_allowed', 405)
+    if (!deps?.search) return err('chat_not_wired', 503)
+    const q = url.searchParams.get('q') ?? ''
+    if (url.searchParams.getAll('q').length !== 1 || !q.trim() || q.length > 200) return err('invalid', 400)
+    let owner: ReturnType<MobileChatDeps['owner']>
+    try { owner = deps.owner() } catch { return err('unavailable', 503) }
+    if (!owner) return err('no_owner_chat', 404)
+    let rows: MessageRecord[]
+    try { rows = await deps.search(owner.chatId, q.trim(), 30) } catch { return err('unavailable', 503) }
+    const hits = rows.map(r => ({ id: r.id, role: r.direction === 'in' ? 'me' : 'cc', text: r.text.length > 600 ? r.text.slice(0, 600) : r.text, truncated: r.text.length > 600, at: Date.parse(r.ts), source: r.source ?? null }))
+    return json({ ok: true, hits })
   }
   if (url.pathname === '/m/api/chat/voice') {
     if (req.method !== 'GET') return err('method_not_allowed', 405)

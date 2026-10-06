@@ -1,7 +1,7 @@
 import type { z } from 'zod'
 import type {
   Matter, MatterDetail, ApprovalExplanation, ProgressSummary, PhoneChangesTurn, EntryOptions, DeviceRowT, PushPlatformT,
-  ChatPage, ChatJob, ChatMessage, ChatAttachment, EntryModelCatalog, Connections, NativeSessionRow, NativeSessionPage, SessionContinueT, MatterSayResult,
+  ChatPage, ChatJob, ChatMessage, ChatAttachment, EntryModelCatalog, ChatSearchHit, Connections, NativeSessionRow, NativeSessionPage, SessionContinueT, MatterSayResult,
 } from '@wechat-cc/protocol'
 import type { Lang } from '../i18n'
 
@@ -20,6 +20,7 @@ export type ChatAttachmentT = z.infer<typeof ChatAttachment>
 export type EntryModelCatalogT = z.infer<typeof EntryModelCatalog>
 /** 交办时指定的模型 / 思考强度;不给 ⇒ 用执行者自己的默认。 */
 export type EntryExecution = { model?: string; reasoningEffort?: string }
+export type ChatSearchHitT = z.infer<typeof ChatSearchHit>
 /** 一句话 / 一件新事带的材料:同一个草稿 id 下先传好的几份(2026-10-06)。 */
 export type PhoneMaterials = { draftId: string; attachmentIds: string[] }
 export type UploadChunkInput = { id: string; draftId: string; name: string; mime: string; size: number; sha256: string; offset: number; contentBase64: string }
@@ -60,7 +61,7 @@ export interface Backend {
   /** 一件事的成果按块读(GET /m/api/matter/artifact,每块 128 KiB);sha256 对不上 ⇒ 电脑上那份已经换了。 */
   artifactChunk(p: { id: string; artifactId: string; sha256: string; offset: number }): Promise<{ offset: number; nextOffset: number; size: number; contentBase64: string }>
   /** 工作台补充携带首次提交的 runId;重发时 requestId / runId / text 保持同一份快照。缺省仍兼容聊天与首次接续。 */
-  say(id: string, text: string, requestId: string, options?: { runId?: string }): Promise<MatterSayResultT>
+  say(id: string, text: string, requestId: string, options?: { runId?: string } & Partial<PhoneMaterials>): Promise<MatterSayResultT>
   /** A single exact receipt, independent of the bounded matter detail. Missing/old server stays unconfirmed. */
   matterInputReceipt(id: string, requestId: string): Promise<MatterInputT | null>
   entryOptions(lang: Lang): Promise<EntryOptionsT>
@@ -85,6 +86,8 @@ export interface Backend {
   /** 收下即回;回复经 matter/<matterId> 主题唤醒后再 chat() 拉。上一句还在等 ⇒ BackendError('busy')。
    *  requestId:只在上次失败 / 不确定时重发同一个;已知回复过的绝不重发(daemon 的去重表 50 条 / 1 小时就过期)。 */
   chatSay(text: string, requestId: string, materials?: PhoneMaterials): Promise<ChatJobT>
+  /** 在主人那条对话里搜(GET /m/api/chat/search,2026-10-06):新的在前,最多 30 条、每条最多 600 字。 */
+  chatSearch(q: string): Promise<ChatSearchHitT[]>
   /** 回复里第 index 个附件(必须是语音)按需合成的声音(GET /m/api/chat/voice)。太长 ⇒ BackendError('too_large');电脑没设朗读 ⇒ 'no_voice'。 */
   chatVoice(messageId: string, index: number): Promise<{ mime: string; data: string }>
   /** 表情库里的一张图(GET /m/api/sticker/<file>?b64=1)。不在库里 ⇒ BackendError('not_found')。 */

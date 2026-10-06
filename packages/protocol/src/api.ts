@@ -352,6 +352,8 @@ export const CHAT_TEXT_MAX = 4000
  *   联网表情没有 `file`,只显示 label —— daemon 不替 app 去外网取图。
  * - file:只给名字。文件在电脑上;手机没有取文件的路由(不为它新开一条)。
  */
+/** 搜主人对话的一条结果(GET /m/api/chat/search,2026-10-06)。 */
+export const ChatSearchHit = z.object({ id: z.string(), role: z.enum(['me', 'cc']), text: z.string(), truncated: z.boolean(), at: z.number(), source: z.string().nullable() })
 export const ChatAttachment = z.discriminatedUnion('kind', [
   z.object({ kind: z.literal('voice'), text: z.string() }),
   z.object({ kind: z.literal('sticker'), label: z.string(), file: z.string().optional() }),
@@ -436,6 +438,7 @@ export const PHONE_API_SCHEMAS: Readonly<Record<string, z.ZodTypeAny>> = {
   'GET /m/api/matter/input-receipt': z.union([MatterInputReceiptResult, PhoneErrorResponse]),
   'POST /m/api/matter/say': z.union([z.object({ ok: z.literal(true), result: MatterSayResult }), PhoneErrorResponse]),
   'GET /m/api/chat': z.union([z.object({ ok: z.literal(true) }).extend(ChatPage.shape), PhoneErrorResponse]),
+  'GET /m/api/chat/search': z.union([z.object({ ok: z.literal(true), hits: z.array(ChatSearchHit) }), PhoneErrorResponse]),
   'POST /m/api/chat/say': z.union([z.object({ ok: z.literal(true), matterId: z.string(), job: ChatJob }), PhoneErrorResponse]),
   'GET /m/api/chat/voice': z.union([z.object({ ok: z.literal(true) }).extend(ChatVoice.shape), PhoneErrorResponse]),
   'GET /m/api/connections': z.union([z.object({ ok: z.literal(true) }).extend(Connections.shape), PhoneErrorResponse]),

@@ -34,6 +34,8 @@ export const PHONE_ROUTES: ReadonlySet<string> = new Set([
   // 跟 CC 说(spec 2026-10-01,mobile-chat.ts):主人对话一页 + 收下即回的说一句
   'GET /m/api/chat',
   'POST /m/api/chat/say',
+  // 搜主人那条对话(2026-10-06)
+  'GET /m/api/chat/search',
   // 回复里的语音附件按需合成(2026-10-04):只念库里那一行真有的那段
   'GET /m/api/chat/voice',
   // CC 的连接(spec 2026-10-01,mobile-reads.ts),去掉 detail

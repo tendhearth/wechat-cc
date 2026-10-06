@@ -26,6 +26,7 @@ export const ROUTE_MIN_TIER: Record<string, UserTier> = {
   'GET /v1/matters': 'admin',
   'GET /v1/matter': 'admin',
   'GET /v1/matter/owner-chat': 'admin',
+  'GET /v1/matter/owner-chat/search': 'admin',
   'POST /v1/matter/say': 'admin',
   // 「CC 的连接」:带插件目录与原因,只给 admin。
   'GET /v1/connections': 'admin',

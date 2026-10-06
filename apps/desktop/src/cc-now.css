@@ -75,6 +75,8 @@
 
 /* home:对话记录收起,composer 只露输入框 + 发送 */
 .dashboard .cc-now-pane[data-now="home"] { align-items: center; gap: var(--th-space-xl); padding-top: clamp(76px, 12vh, 120px); }
+.cc-now-pane[data-now="home"] .converse-search-bar,
+.cc-now-pane[data-now="home"] #converse-search-results,
 .cc-now-pane[data-now="home"] #converse-scroll,
 .cc-now-pane[data-now="home"] .converse-toolbar > :not(#converse-send) { display: none; }
 .cc-now-pane[data-now="home"] #converse-root { flex: none; width: 100%; max-width: 680px; }
