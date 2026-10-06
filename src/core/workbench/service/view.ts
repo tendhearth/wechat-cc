@@ -9,6 +9,7 @@ import { canonicalProject } from '../artifacts'
 import { readableExecutionEvent } from '../codex-execution-error'
 import { isWorkbenchExecutorCapabilities, isWorkbenchProviderId } from '../executor-capabilities'
 import { makeProjectCatalog } from '../project-catalog'
+import { writerAlive } from './writer-exit'
 import { findPathBlocker } from '../scheduler'
 import { TERMINAL_TASK_STATUSES, type Task, type WorkbenchListQuery } from '../store'
 import type { AgentRuntimeSnapshot } from '../../agent-provider'
@@ -40,7 +41,7 @@ export function makeViewDomain(ctx:ServiceCtx, queries?:{quotaHandoff(id:string)
   function waitingFor(running:Active):TaskWaitingFor|null {
     if (running.state !== 'queued') return null
     const earlier=state.queue.filter(item => item.order < running.order && item.state === 'queued')
-    const blocked=findPathBlocker(running,[...held(),...earlier])
+    const blocked=findPathBlocker(running,[...held(),...state.writerOrphans.values(),...earlier])
     if (!blocked) return null
     const holder=state.runsByTask.get(blocked.taskId)
     // 找不到持有者是不该发生的时序缝隙;宁可继续说「还在写」,也不能凭空报一个假的倒计时。
@@ -77,6 +78,8 @@ export function makeViewDomain(ctx:ServiceCtx, queries?:{quotaHandoff(id:string)
       ...(runtime?{runtime}:{}),
       ...(!running&&TERMINAL_TASK_STATUSES.includes(task.status)&&store.source(task.id)?.firstDispatchedAt===null?{importedOnly:true}:{}),
       canArchive:TERMINAL_TASK_STATUSES.includes(task.status) && !running && task.error!=='writer_not_closed',
+      // 「没确认退出」:进程组还活着 ⇒ 'alive'(先结束它);没有相反证据 ⇒ 'unconfirmed'(主人可以确认已经结束)。
+      ...(task.error==='writer_not_closed'?{writerExit:writerAlive(ctx,task.id)?'alive' as const:'unconfirmed' as const}:{}),
       waitingFor:running ? waitingFor(running) : null,
       // 网络守护冻住了这条 run(2026-10-03):桌面 / 手机显示「已暂停(网络未受保护)」。
       ...(running?.networkSuspended ? { networkSuspended:{since:running.networkSuspended.since} } : {}),

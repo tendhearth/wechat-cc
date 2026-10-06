@@ -1150,6 +1150,7 @@ fn workbench_request_allowed(method: &str, path: &str) -> bool {
             | ("POST", "/v1/workbench/approve")
             | ("POST", "/v1/workbench/permission")
             | ("POST", "/v1/workbench/archive")
+            | ("POST", "/v1/workbench/writer-exited")
             | ("POST", "/v1/workbench/unattended-ack")
             | ("GET", "/v1/workbench/review")
             | ("POST", "/v1/workbench/review-mark")
@@ -1823,6 +1824,7 @@ mod workbench_proxy_tests {
             ("POST", "/v1/workbench/approve"),
             ("POST", "/v1/workbench/permission"),
             ("POST", "/v1/workbench/archive"),
+            ("POST", "/v1/workbench/writer-exited"),
             ("POST", "/v1/workbench/unattended-ack"),
             ("GET", "/v1/workbench/review?id=A1B2C3D4"),
             ("POST", "/v1/workbench/review-mark"),

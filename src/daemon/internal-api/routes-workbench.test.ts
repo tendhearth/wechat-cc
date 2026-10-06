@@ -598,6 +598,19 @@ describe('Workbench internal HTTP API', () => {
     for(const body of [{id:'deadbeef'},{id:'bad',archived:true},{id:'deadbeef',archived:'true'}])expect((await request('/v1/workbench/archive',{method:'POST',body:JSON.stringify(body)})).status).toBe(400)
   })
 
+  it('lets the desktop owner confirm a stuck writer exited; a live writer is a 409, agents are denied',async()=>{
+    const workbench=service(),{request,operatorToken,trustedToken}=await start(workbench)
+    const confirm=vi.fn(async(id:string)=>{ if(id==='cafebabe')throw new Error('writer_alive'); return {id,canArchive:true} })
+    ;(workbench as unknown as {confirmWriterExited:typeof confirm}).confirmWriterExited=confirm
+    expect((await request('/v1/workbench/writer-exited',{method:'POST',body:JSON.stringify({id:'deadbeef'})},trustedToken)).status).toBe(403)
+    expect(confirm).not.toHaveBeenCalled()
+    const ok=await request('/v1/workbench/writer-exited',{method:'POST',body:JSON.stringify({id:'deadbeef'})},operatorToken)
+    expect(ok.status).toBe(200);expect(await ok.json()).toMatchObject({task:{id:'deadbeef',canArchive:true}})
+    const alive=await request('/v1/workbench/writer-exited',{method:'POST',body:JSON.stringify({id:'cafebabe'})},operatorToken)
+    expect(alive.status).toBe(409);expect(await alive.json()).toEqual({error:'writer_alive'})
+    expect((await request('/v1/workbench/writer-exited',{method:'POST',body:JSON.stringify({id:'bad'})},operatorToken)).status).toBe(400)
+  })
+
   it('acknowledges an unattended executor only for the desktop operator credential',async()=>{
     const workbench=service(),{request,operatorToken,trustedToken}=await start(workbench)
     expect(minTierFor('POST /v1/workbench/unattended-ack')).toBe('admin')

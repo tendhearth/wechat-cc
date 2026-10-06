@@ -30,7 +30,7 @@ interface Options {
   nativeHistory?:Partial<Record<NativeHistoryProvider,NativeHistoryReader>>
   mintSessionToken?: (sessionKey: string) => string
   revokeSessionToken?: (sessionKey: string) => void
-  holdBusy?: (label: string) => () => void; onTurnError?: ServiceCtx['deps']['onTurnError']   // 后者:错误通道 → CLI 自动升级的报错触发(见 ctx.ts)
+  holdBusy?: (label: string) => () => void; onTurnError?: ServiceCtx['deps']['onTurnError']; writerGroupAlive?: ServiceCtx['deps']['writerGroupAlive']; writerWatchMs?: number   // onTurnError:错误通道 → CLI 自动升级的报错触发(见 ctx.ts)
   timeoutMs?: number
   closeTimeoutMs?: number
   permissionTimeoutMs?: number
@@ -74,7 +74,7 @@ export function makeWorkbenchService(opts: Options) {
   const bumped = (id: string) => { try { touched(id, store.bump(id)) } catch { /* 信号丢了只是多等一轮 */ } }
   const state=makeRuntimeState()
   const actions=new Ref<ServiceActions>('workbench-actions')
-  const ctx:ServiceCtx={store,stateDir:opts.stateDir,state,hub:{touched,bumped,dispose:()=>changes.dispose()},deps:{ownerChatId:opts.ownerChatId,registry:opts.registry,...(opts.usage?{usage:opts.usage}:{}),...(opts.permissionTimeoutMs!==undefined?{permissionTimeoutMs:opts.permissionTimeoutMs}:{}),...(opts.unattendedAck?{unattendedAck:opts.unattendedAck}:{}),...(opts.nativeHistory?{nativeHistory:opts.nativeHistory}:{}),...(opts.registeredProjects?{registeredProjects:opts.registeredProjects}:{}),...(opts.defaultProvider!==undefined?{defaultProvider:opts.defaultProvider}:{}),...(opts.executionConflict?{executionConflict:opts.executionConflict}:{}),...(opts.reports?{reports:opts.reports}:{}),...(opts.recollect?{recollect:opts.recollect}:{}),...(opts.revokeSessionToken?{revokeSessionToken:opts.revokeSessionToken}:{}),...(opts.retainedIdleCloseMs!==undefined?{retainedIdleCloseMs:opts.retainedIdleCloseMs}:{}),...(opts.handoffGraceMs!==undefined?{handoffGraceMs:opts.handoffGraceMs}:{}),...(opts.matters?{matters:opts.matters}:{}),...(opts.mintSessionToken?{mintSessionToken:opts.mintSessionToken}:{}),...(opts.timeoutMs!==undefined?{timeoutMs:opts.timeoutMs}:{}),...(opts.closeTimeoutMs!==undefined?{closeTimeoutMs:opts.closeTimeoutMs}:{}),...(opts.holdBusy?{holdBusy:opts.holdBusy}:{}),...(opts.onTurnError?{onTurnError:opts.onTurnError}:{}),...(opts.managedWorkspaceRoot!==undefined?{managedWorkspaceRoot:opts.managedWorkspaceRoot}:{}),...(opts.networkGate?{networkGate:opts.networkGate}:{})},ensureAccepting,...(opts.log?{log:opts.log}:{}),now:Date.now,actions}
+  const ctx:ServiceCtx={store,stateDir:opts.stateDir,state,hub:{touched,bumped,dispose:()=>changes.dispose()},deps:{ownerChatId:opts.ownerChatId,registry:opts.registry,...(opts.usage?{usage:opts.usage}:{}),...(opts.permissionTimeoutMs!==undefined?{permissionTimeoutMs:opts.permissionTimeoutMs}:{}),...(opts.unattendedAck?{unattendedAck:opts.unattendedAck}:{}),...(opts.nativeHistory?{nativeHistory:opts.nativeHistory}:{}),...(opts.registeredProjects?{registeredProjects:opts.registeredProjects}:{}),...(opts.defaultProvider!==undefined?{defaultProvider:opts.defaultProvider}:{}),...(opts.executionConflict?{executionConflict:opts.executionConflict}:{}),...(opts.reports?{reports:opts.reports}:{}),...(opts.recollect?{recollect:opts.recollect}:{}),...(opts.revokeSessionToken?{revokeSessionToken:opts.revokeSessionToken}:{}),...(opts.retainedIdleCloseMs!==undefined?{retainedIdleCloseMs:opts.retainedIdleCloseMs}:{}),...(opts.handoffGraceMs!==undefined?{handoffGraceMs:opts.handoffGraceMs}:{}),...(opts.matters?{matters:opts.matters}:{}),...(opts.mintSessionToken?{mintSessionToken:opts.mintSessionToken}:{}),...(opts.timeoutMs!==undefined?{timeoutMs:opts.timeoutMs}:{}),...(opts.closeTimeoutMs!==undefined?{closeTimeoutMs:opts.closeTimeoutMs}:{}),...(opts.holdBusy?{holdBusy:opts.holdBusy}:{}),...(opts.onTurnError?{onTurnError:opts.onTurnError}:{}),...(opts.writerGroupAlive?{writerGroupAlive:opts.writerGroupAlive}:{}),...(opts.writerWatchMs!==undefined?{writerWatchMs:opts.writerWatchMs}:{}),...(opts.managedWorkspaceRoot!==undefined?{managedWorkspaceRoot:opts.managedWorkspaceRoot}:{}),...(opts.networkGate?{networkGate:opts.networkGate}:{})},ensureAccepting,...(opts.log?{log:opts.log}:{}),now:Date.now,actions}
   const review=makeReviewDomain(ctx)
   const attachmentsDomain=makeAttachmentsDomain(ctx)
   const {continuationAttachmentScope,selectAttachments,combinedAttachments,handoffAttachments}=attachmentsDomain
@@ -96,7 +96,7 @@ export function makeWorkbenchService(opts: Options) {
   const executeDomain=makeExecuteDomain(ctx,{admission:admissionDomain,attachments:attachmentsDomain,quota:quotaDomain,view:viewDomain,native:nativeDomain,inputs:inputsDomain,lifecycle:lifecycleDomain,notices:noticesDomain,artifacts:artifactsDomain})
   const entryDomain=makeEntryDomain(ctx,{execute:executeDomain,view:viewDomain,admission:admissionDomain,quota:quotaDomain}),quotaHandoffDomain=makeQuotaHandoffDomain(ctx,{execute:executeDomain,quota:quotaDomain})
   store.recover()
-  store.liveInputs.recover()
+  store.liveInputs.recover();lifecycleDomain.adoptWriters()
 
   function ensureAccepting() {
     if (state.stopping) throw new Error('workbench_stopping')
@@ -141,7 +141,7 @@ export function makeWorkbenchService(opts: Options) {
     discardAttachmentUpload:attachmentsDomain.discardAttachmentUpload,takeChatImages:attachmentsDomain.takeChatImages,
     readAttachment:attachmentsDomain.readAttachment,
     discardAttachment:attachmentsDomain.discardAttachment,
-    setArchived:lifecycleDomain.setArchived,
+    setArchived:lifecycleDomain.setArchived,confirmWriterExited:lifecycleDomain.confirmWriterExited,
     cancel:lifecycleDomain.cancel,suspendForNetwork:lifecycleDomain.suspendForNetwork,resumeFromNetwork:lifecycleDomain.resumeFromNetwork,stopSuspendedForNetwork:lifecycleDomain.stopSuspendedForNetwork,networkSuspended:lifecycleDomain.networkSuspended,
     artifact:artifactsDomain.artifact,
     approve:artifactsDomain.approve,

@@ -28,10 +28,20 @@ import { mergeEvents, structuralSignature, patchLiveTimeline, createLongPoll, cl
 import {permissionControlId,capturePermissionFocus,restorePermissionFocus} from './workbench-permission-focus.js'
 import {captureTimelineReading,restoreTimelineReading} from './workbench-reading-dom.js'
 import { saveFile } from './save-file.js'
-import { showToast } from '../view.js'
+import { armConfirm, showToast } from '../view.js'
 
+/**
+ * 「没确认退出」的下一步(2026-10-06):进程组还在 ⇒ 说清要先结束它(结束后会自动解除);
+ * 没有相反证据(旧记录 / 执行者没交出进程组)⇒ 给「我确认它已经结束」。
+ * @param {{error:string|null,writerExit?:'alive'|'unconfirmed'}} task
+ */
+function writerExitHtml(task) {
+  if (task.error !== 'writer_not_closed') return ''
+  if (task.writerExit === 'alive') return '<p class="wb-error-note">执行程序还在运行。结束它之后，这条占用会自动解除。</p>'
+  return '<button type="button" class="wb-new" data-action="confirm-writer-exited">我确认它已经结束</button>'
+}
 /** @typedef {{taskId:string,title:string,reason:'same_path'|'nested_path'|'writer_not_closed',holderWriting?:boolean,closeInMs?:number|null}} WaitingFor */
-/** @typedef {{id:string,title:string,path:string,workspaceKind?:'managed'|'project',providerId:string,status:string,createdAt:number,updatedAt:number,error:string|null,phase?:string,archivedAt?:number|null,canArchive?:boolean,pendingPermissionCount?:number,pendingQuestionCount?:number,waitingFor?:WaitingFor|null,importedOnly?:boolean,runtime?:RuntimeSnapshot,networkSuspended?:{since:number}|null}} Task */
+/** @typedef {{id:string,title:string,path:string,workspaceKind?:'managed'|'project',providerId:string,status:string,createdAt:number,updatedAt:number,error:string|null,writerExit?:'alive'|'unconfirmed',phase?:string,archivedAt?:number|null,canArchive?:boolean,pendingPermissionCount?:number,pendingQuestionCount?:number,waitingFor?:WaitingFor|null,importedOnly?:boolean,runtime?:RuntimeSnapshot,networkSuspended?:{since:number}|null}} Task */
 /** @typedef {{id:string,type:'command'|'read'|'edit'|'search'|'tool'|'agent',status:'running'|'completed'|'failed'|'cancelled'|'interrupted',label:string,detail?:string,output?:string,parentId?:string,agentIds?:string[]}} WorkbenchActivity */
 /** @typedef {{id:string,taskId:string,kind:'user'|'text'|'tool_call'|'system'|'error',text:string,createdAt:number,attachments?:import('./workbench-attachments.js').Attachment[],sourceId?:string|null,runId?:string,activity?:WorkbenchActivity,errorCode?:'execution_model_unsupported',diagnostic?:string}} WorkbenchEvent */
 /** @typedef {{id:string,taskId:string,name:string,mime:string,size:number,sha256:string,createdAt:number,approvedAt:number|null}} Artifact */
@@ -335,7 +345,7 @@ export function renderWorkbench(state, interactions, draft, attachmentError='',e
     ${queuedGuidance}
     ${renderWorkbenchInputs(detail.task.id, detail.inputs ?? [], interactions,!!detail.runtime?.retained)}
     ${renderQuotaHandoff(detail,state.providers,executionView.quotaAttempt)}
-    ${detail.task.error&&(!detail.quotaHandoff||!['provider_quota_exhausted','provider_rate_limited'].includes(detail.task.error)) ? `<div class="wb-error" role="alert">${modelErrorInTimeline?'':escapeWorkbenchHtml(executionErrorMessage(detail.task.error)??detail.task.error)}${detail.task.error==='execution_model_unsupported'&&!executionDisabled?'<button type="button" class="wb-new" data-action="choose-task-model">为这件事选择模型</button>':''}</div>` : ''}
+    ${detail.task.error&&(!detail.quotaHandoff||!['provider_quota_exhausted','provider_rate_limited'].includes(detail.task.error)) ? `<div class="wb-error" role="alert">${modelErrorInTimeline?'':escapeWorkbenchHtml(executionErrorMessage(detail.task.error)??detail.task.error)}${detail.task.error==='execution_model_unsupported'&&!executionDisabled?'<button type="button" class="wb-new" data-action="choose-task-model">为这件事选择模型</button>':''}${writerExitHtml(detail.task)}</div>` : ''}
     ${reviewHtml}
     ${artifactHtml}` : !state.loadingId && state.projects && !activeProject && state.newScope !== 'new:add-project' && !draft?.text.trim() ? `
     <div class="wb-welcome"><p class="wb-kicker">交办一件事</p><h1>希望 CC 帮你做什么？</h1><p>写下要求、加上材料，再确认工作位置。</p><button type="button" class="wb-btn wb-btn-primary" data-action="task-entry">交给 CC 做</button></div>` : !detail && !state.loadingId && state.projects && !activeProject && (state.newScope === 'new:add-project' || !!draft?.text.trim()) ? `
@@ -660,7 +670,7 @@ export function initWorkbenchPage(deps) {
   // 正在看 diff 也算在翻结果:这时候流进来的新行不该把视线拽走。
   const browsingResults = () => !!root.querySelector('.wb-artifact-panel') || !!root.querySelector('#wb-artifacts[open]') || !!root.querySelector('#wb-review[open]') || !!root.querySelector('[data-timeline-disclosure][open]') || resultReturnPositions.has(renderedScope) || hasLiveTimelineInteraction(root)
   const scopeFor = (/** @type {WorkbenchState} */ state) => state.selectedId ? `task:${state.selectedId}` : state.newScope ?? 'new'
-  const readingSignatureFor = (/** @type {WorkbenchState} */ state) => state.detail ? JSON.stringify([state.detail.task.status, state.detail.task.error, state.detail.events, state.detail.artifacts.map(a => [a.id, a.sha256])]) : ''
+  const readingSignatureFor = (/** @type {WorkbenchState} */ state) => state.detail ? JSON.stringify([state.detail.task.status, state.detail.task.error, state.detail.task.writerExit ?? null, state.detail.events, state.detail.artifacts.map(a => [a.id, a.sha256])]) : ''
   const permissionSignatureFor = (/** @type {WorkbenchState} */ state) => JSON.stringify((state.detail?.permissions ?? []).filter(permission => permission.taskId === state.detail?.task.id).map(permission => permission.id).sort())
   const captureDraft = () => {
     captureWorkbenchQuestionDrafts(root, interactions)
@@ -1182,6 +1192,11 @@ export function initWorkbenchPage(deps) {
     if (action === 'cancel') {
       const holderId = target.dataset.cancelTaskId
       return mutate('POST', '/v1/workbench/cancel', { id: holderId || controller.state.selectedId, ...(!holderId && typeof controller.state.detail?.runId === 'string' && controller.state.detail.runId ? { expectedRunId: controller.state.detail.runId } : {}) })
+    }
+    // 「没确认退出」的旧记录(2026-10-06):没有相反证据时主人可以确认它已经结束;点两下才算。
+    if (action === 'confirm-writer-exited' && controller.state.detail?.task.writerExit === 'unconfirmed') {
+      if (!armConfirm(target, '再点一次：确认它已经结束')) return
+      return mutate('POST', '/v1/workbench/writer-exited', { id: controller.state.selectedId })
     }
     if (action === 'archive-task' && controller.state.detail?.task.canArchive === true) return mutate('POST', '/v1/workbench/archive', { id: controller.state.selectedId, archived: true })
     if (action === 'restore-task' && controller.state.detail?.task.archivedAt != null) return mutate('POST', '/v1/workbench/archive', { id: controller.state.selectedId, archived: false })
