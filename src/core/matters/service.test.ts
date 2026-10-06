@@ -77,6 +77,8 @@ describe('matters service — search the owner chat (2026-10-06)',()=>{
     await expect(service.searchOwnerChat('x'.repeat(201))).rejects.toThrow('invalid_query')
     const none=makeMattersService({store,chat:{ownerChatId:()=>null,say:async()=>({reply:''}),search}})
     expect(await none.searchOwnerChat('报告')).toBeNull()
+  })
+})
 
 describe('matters service — stop from the phone (2026-10-06)',()=>{
   it('cancels only the run the phone saw; a changed or missing run is input_stale',async()=>{
