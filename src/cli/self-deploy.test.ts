@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, it } from 'vitest'
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, statSync, utimesSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, statSync, utimesSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
-import { join } from 'node:path'
+import { dirname, join } from 'node:path'
 import {
   defaultSelfDeployDeps,
   detectDeveloperIdIdentity,
@@ -510,6 +510,41 @@ describe('executeSelfDeploy', () => {
     if (process.platform !== 'win32') expect(statSync(h.plan.sidecarPath).ino).not.toBe(originalIno)
     expect(result.steps.map((s) => s.name)).toEqual(['preflight', 'stage', 'backup', 'swap', 'restart', 'health'])
     expect(result.steps.every((s) => s.ok)).toBe(true)
+  })
+
+  it('installs the onnxruntime libraries next to the sidecar (signed, fresh inode, before the app seal); a missing build is skipped', async () => {
+    const h = harness()
+    h.enableSigning()
+    const frameworks = join(h.dir, 'frameworks'); mkdirSync(frameworks)
+    const macos = dirname(h.plan.sidecarPath)
+    writeFileSync(join(frameworks, 'binding-aarch64'), 'BINDING')
+    h.plan.companions = [
+      { from: join(frameworks, 'binding-aarch64'), to: join(macos, 'libonnxruntime_binding.dylib') },
+      { from: join(frameworks, 'missing-aarch64'), to: join(macos, 'libonnxruntime.1.24.3.dylib') },
+    ]
+    const result = await executeSelfDeploy(h.plan, h.deps)
+    expect(result.ok).toBe(true)
+    expect(readFileSync(join(macos, 'libonnxruntime_binding.dylib'), 'utf8')).toBe('BINDING')
+    expect(existsSync(join(macos, 'libonnxruntime.1.24.3.dylib'))).toBe(false)
+    expect(result.steps.find(s => s.name === 'native')).toMatchObject({ ok: true, detail: 'libonnxruntime_binding.dylib' })
+    const targets = h.codesignCalls.map(c => c.args.at(-1))
+    const libSign = h.codesignCalls.find(c => c.args.at(-1) === join(macos, 'libonnxruntime_binding.dylib.new'))!
+    expect(libSign.args).toEqual(expect.arrayContaining(['--options', 'runtime', '--timestamp']))
+    expect(targets.indexOf(join(macos, 'libonnxruntime_binding.dylib.new'))).toBeLessThan(targets.lastIndexOf(h.plan.signing!.appPath))
+  })
+
+  it('a library that fails to sign does not block the deploy', async () => {
+    const h = harness()
+    const frameworks = join(h.dir, 'frameworks'); mkdirSync(frameworks)
+    const macos = dirname(h.plan.sidecarPath)
+    writeFileSync(join(frameworks, 'b'), 'BINDING')
+    h.plan.companions = [{ from: join(frameworks, 'b'), to: join(macos, 'libonnxruntime_binding.dylib') }]
+    h.failCodesign('sidecar')
+    const result = await executeSelfDeploy(h.plan, h.deps)
+    expect(result.ok).toBe(true)
+    expect(result.steps.find(s => s.name === 'native')?.detail).toMatch(/^partial: libonnxruntime_binding\.dylib: codesign exited 1/)
+    expect(existsSync(join(macos, 'libonnxruntime_binding.dylib'))).toBe(false)
+    expect(existsSync(join(macos, 'libonnxruntime_binding.dylib.new'))).toBe(false)
   })
 
   it('rolls back when health never passes on the new binary, and reports diagnostics', async () => {

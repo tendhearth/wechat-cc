@@ -140,7 +140,32 @@ const selftestPhoneCmd = defineCommand({
   },
 })
 
+// 知识库向量化自检(2026-10-06):在**本进程**里跑 JS 向量化一次(不需要 daemon)。打包版的 sidecar 靠它确认
+// onnxruntime 能从 .app 的 Frameworks 载入(apps/desktop/scripts/sidecar-native.ts);失败的原因原样打印。
+const selftestEmbedCmd = defineCommand({
+  meta: { name: 'embed', description: '知识库向量化自检:本进程跑一次 JS 向量化(不需要 daemon;打包版核对 onnxruntime 载入)' },
+  args: {
+    model: { type: 'string', description: '模型 id(缺省 bge-small-zh-v1.5)' },
+    json: { type: 'boolean', description: 'JSON 输出' },
+  },
+  async run({ args }) {
+    const { makeJsEmbedder } = await import('../../core/knowledge/js-embedder')
+    const model = typeof args.model === 'string' && args.model ? args.model : 'bge-small-zh-v1.5'
+    const started = Date.now()
+    try {
+      const [vector] = await makeJsEmbedder({ model_id: model }).embed(['你好，CC'])
+      const report = { ok: !!vector?.length, model, dims: vector?.length ?? 0, ms: Date.now() - started }
+      console.log(args.json ? JSON.stringify(report) : `embed ${report.ok ? 'PASS' : 'FAIL'}  ${model}  ${report.dims} 维  ${report.ms}ms`)
+      process.exit(report.ok ? 0 : 1)
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err)
+      console.log(args.json ? JSON.stringify({ ok: false, model, error: message }) : `embed FAIL  ${model}  ${message}`)
+      process.exit(1)
+    }
+  },
+})
+
 export const selftestCmd = defineCommand({
   meta: { name: 'selftest', description: '自维护:真机闭环自检(daemon 需在跑);见 docs/maintainer/verify.md' },
-  subCommands: { workbench: selftestWorkbenchCmd, chat: selftestChatCmd, phone: selftestPhoneCmd },
+  subCommands: { workbench: selftestWorkbenchCmd, chat: selftestChatCmd, phone: selftestPhoneCmd, embed: selftestEmbedCmd },
 })

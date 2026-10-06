@@ -5,7 +5,9 @@
     "externalBin": [
       "binaries/tendhearth-cc-cli",
       "binaries/sd-cli",
-      "binaries/cc-jobspawn"
+      "binaries/cc-jobspawn",
+      "frameworks/libonnxruntime_binding.dylib",
+      "frameworks/libonnxruntime.1.24.3.dylib"
     ]
   }
 }

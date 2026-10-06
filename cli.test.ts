@@ -111,7 +111,7 @@ describe('citty migrated commands', () => {
   it('exposes the self / selftest subcommand surface', () => {
     const subs = cittyRoot.subCommands as Record<string, { subCommands?: Record<string, unknown> }>
     expect(Object.keys(subs.self?.subCommands ?? {}).sort()).toEqual(['change', 'deploy'])
-    expect(Object.keys(subs.selftest?.subCommands ?? {}).sort()).toEqual(['chat', 'phone', 'workbench'])
+    expect(Object.keys(subs.selftest?.subCommands ?? {}).sort()).toEqual(['chat', 'embed', 'phone', 'workbench'])
   })
 
   // CI 信号面(spec 2026-09-18-ci-triage)——`ci triage` 是手册与 AGENTS.md 里
