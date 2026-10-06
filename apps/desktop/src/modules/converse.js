@@ -81,6 +81,14 @@ let recordingTimer = null
 /** @param {HTMLElement} root @param {Deps} deps */
 function renderSkeleton(root, deps) {
   root.innerHTML = `
+    <div class="converse-search-bar">
+      <button id="converse-search-open" class="converse-search-open" type="button"${deps.invokeWorkbenchApi ? "" : " hidden"}>搜索对话</button>
+      <form id="converse-search" class="converse-search" role="search" hidden>
+        <input id="converse-search-input" type="search" maxlength="200" placeholder="搜索和 CC 的对话(微信、电脑、手机说的都在)" aria-label="搜索和 CC 的对话" />
+        <button id="converse-search-close" type="button">关闭</button>
+      </form>
+    </div>
+    <div id="converse-search-results" class="converse-search-results" role="region" aria-label="搜索结果" aria-live="polite" hidden></div>
     <div id="converse-scroll" class="converse-scroll"></div>
     <button id="converse-latest" class="converse-latest" type="button" hidden>有新回复 · 回到最新</button>
     <div class="converse-compose">
@@ -665,8 +673,60 @@ async function delegateDraft(deps) {
   }
 }
 
+// ── search (2026-10-06,对标 Orca 会话历史搜索) ─────────────────────────
+
+const SOURCE_LABEL = /** @type {Record<string,string>} */ ({ wechat: "微信", desktop: "电脑", phone: "手机", live: "", app: "电脑" })
+/** @param {string} text @param {string} q */
+function highlight(text, q) {
+  const safe = escapeHtml(text.length > 600 ? text.slice(0, 600) + "…" : text)
+  const needle = escapeHtml(q)
+  return needle ? safe.split(needle).join(`<mark>${needle}</mark>`) : safe
+}
+/** @param {number} ms */
+function hitTime(ms) {
+  const d = new Date(ms), pad = (/** @type {number} */ n) => String(n).padStart(2, "0")
+  return `${d.getMonth() + 1}/${d.getDate()} ${pad(d.getHours())}:${pad(d.getMinutes())}`
+}
+let searchSeq = 0
+/** @param {Deps} deps @param {string} q */
+async function runSearch(deps, q) {
+  const host = document.getElementById("converse-search-results")
+  if (!host || !deps.invokeWorkbenchApi) return
+  const query = q.trim()
+  if (!query) { host.hidden = true; host.innerHTML = ""; return }
+  const seq = ++searchSeq
+  host.hidden = false
+  host.innerHTML = '<p class="converse-search-note">正在搜…</p>'
+  try {
+    const r = /** @type {{hits?:Array<{kind:string,text:string,createdAt:number,source?:string}>}} */ (await deps.invokeWorkbenchApi("GET", `/v1/matter/owner-chat/search?q=${encodeURIComponent(query)}&limit=30`))
+    if (seq !== searchSeq) return
+    const hits = r?.hits ?? []
+    host.innerHTML = hits.length
+      ? `<p class="converse-search-note">找到 ${hits.length} 条${hits.length >= 30 ? "(只显示最近 30 条)" : ""}</p><ol class="converse-search-list">${hits.map(h => `<li><div class="converse-search-meta">${h.kind === "user" ? "你" : "CC"} · ${hitTime(h.createdAt)}${h.source && SOURCE_LABEL[h.source] ? ` · ${SOURCE_LABEL[h.source]}` : ""}</div><div class="converse-search-text">${highlight(h.text, query)}</div></li>`).join("")}</ol>`
+      : '<p class="converse-search-note">没有找到。换个词试试。</p>'
+  } catch {
+    if (seq === searchSeq) host.innerHTML = '<p class="converse-search-note">暂时搜不了,稍后再试。</p>'
+  }
+}
+/** @param {boolean} open */
+function setSearchOpen(open) {
+  const form = document.getElementById("converse-search"), btn = document.getElementById("converse-search-open"), host = document.getElementById("converse-search-results")
+  if (form) form.hidden = !open
+  if (btn) btn.hidden = open
+  if (!open && host) { host.hidden = true; host.innerHTML = "" }
+  if (open) /** @type {HTMLInputElement|null} */ (document.getElementById("converse-search-input"))?.focus()
+}
+
 /** @param {HTMLElement} root @param {Deps} deps */
 function wireEvents(root, deps) {
+  root.querySelector("#converse-search-open")?.addEventListener("click", () => setSearchOpen(true))
+  root.querySelector("#converse-search-close")?.addEventListener("click", () => setSearchOpen(false))
+  root.querySelector("#converse-search")?.addEventListener("submit", ev => {
+    ev.preventDefault()
+    void runSearch(deps, /** @type {HTMLInputElement|null} */ (document.getElementById("converse-search-input"))?.value ?? "")
+  })
+  root.querySelector("#converse-search-input")?.addEventListener("keydown", ev => { if (/** @type {KeyboardEvent} */ (ev).key === "Escape") setSearchOpen(false) })
+
   const scroll=root.querySelector("#converse-scroll")
   const latest=/** @type {HTMLButtonElement|null} */(root.querySelector("#converse-latest"))
   if(scroll instanceof HTMLElement){

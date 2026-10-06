@@ -21,7 +21,7 @@ import {
   type ApprovalExplanationT, type Backend, type Connection, type DeviceRowT, type EntryOptionsT,
   type MatterDetailT, type MatterT, type PhoneChangesTurnT, type ProgressSummaryT, type Unsubscribe,
   type ChatPageT, type ChatJobT, type ConnectionsT, type NativeSessionRowT, type NativeSessionPageT, type SessionContinueT,
-  type MatterSayResultT, type MatterInputT, type UploadStateT,
+  type MatterSayResultT, type MatterInputT, type UploadStateT, type ChatSearchHitT,
 } from './types'
 
 type Topic = Parameters<Backend['subscribe']>[0]
@@ -230,6 +230,11 @@ export function makeLiveBackend(d: LiveDeps): Backend {
       if (text.length > PHONE_SAY_MAX_CHARS) throw new BackendError('invalid')
       const body = materials?.attachmentIds.length ? { requestId, text, draftId: materials.draftId, attachmentIds: materials.attachmentIds } : { requestId, text }
       return (await call<{ job: ChatJobT }>('POST /m/api/chat/say', '/m/api/chat/say', { body, retry: true })).job
+    },
+    async chatSearch(q) {
+      const query = q.trim()
+      if (!query || query.length > 200) throw new BackendError('invalid')
+      return (await call<{ hits: ChatSearchHitT[] }>('GET /m/api/chat/search', `/m/api/chat/search?q=${encodeURIComponent(query)}`)).hits
     },
     async uploadChunk(p) {
       // 不自动重发:同一块重传由上传循环先问进度再续(uploadStatus),不在协议层盲重试。

@@ -179,3 +179,24 @@ describe('makePhoneChatId(Task 4:default_chat_id 不是主人 ⇒ 手机对话�
     expect(logs).toEqual([])
   })
 })
+
+describe('GET /m/api/chat/search (2026-10-06)', () => {
+  it('searches the owner chat, trims long hits for one frame, and passes the schema', async () => {
+    const long = 'x'.repeat(700)
+    const search = vi.fn(async () => [rec(1, { text: long }), rec(2, { text: '季度报告' })])
+    const r = await call(deps({ search }), get('/search?q=%20%E5%AD%A3%E5%BA%A6%20'))
+    expect(search).toHaveBeenCalledWith('wx', '季度', 30)
+    expect(r.status).toBe(200)
+    expect(r.body.hits[0]).toMatchObject({ id: 'm1', role: 'cc', truncated: true })
+    expect(r.body.hits[0].text).toHaveLength(600)
+    expect(r.body.hits[1]).toMatchObject({ role: 'me', text: '季度报告', truncated: false })
+    PHONE_API_SCHEMAS['GET /m/api/chat/search']!.parse(r.body)
+  })
+  it('empty / huge / repeated q ⇒ 400; no owner ⇒ 404; not wired ⇒ 503', async () => {
+    const search = vi.fn(async () => [])
+    for (const q of ['', '?q=', '?q=%20', `?q=${'x'.repeat(201)}`, '?q=a&q=b']) expect((await call(deps({ search }), get('/search' + q))).status).toBe(400)
+    expect((await call(deps({ search, owner: () => null }), get('/search?q=a'))).status).toBe(404)
+    expect((await call(deps(), get('/search?q=a'))).status).toBe(503)
+    expect(search).not.toHaveBeenCalled()
+  })
+})

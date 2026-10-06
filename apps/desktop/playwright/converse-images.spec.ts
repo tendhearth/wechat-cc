@@ -85,3 +85,27 @@ test('documents can be dropped too: a PDF shows as a named chip and is sent with
   const args = (sent.at(-1) as { args?: { images?: Array<{ mime: string; name: string }> } }).args
   expect(args?.images?.map(i => [i.mime, i.name])).toEqual([['application/pdf', '季度报告.pdf'], ['text/markdown', 'notes.md']])
 })
+
+test('search the conversation from 此刻: results show who, when, where, with the words highlighted (2026-10-06)', async ({ page, shimUrl }) => {
+  const asked: string[] = []
+  await page.route('**/v1/matter/owner-chat/search**', route => {
+    asked.push(new URL(route.request().url()).searchParams.get('q') ?? '')
+    return route.fulfill({ json: { hits: [
+      { id: 'm2', kind: 'text', text: '季度报告写好了，放在桌面。', createdAt: Date.UTC(2026, 9, 3, 2, 5), source: 'wechat' },
+      { id: 'm1', kind: 'user', text: '帮我写季度报告', createdAt: Date.UTC(2026, 9, 3, 1, 0), source: 'phone' },
+    ] } })
+  })
+  await openNow(page, shimUrl)
+  await page.locator('#now-cc').click()
+  await page.locator('#converse-search-open').click()
+  await page.locator('#converse-search-input').fill('季度报告')
+  await page.locator('#converse-search-input').press('Enter')
+  await expect(page.locator('.converse-search-list li')).toHaveCount(2)
+  await expect(page.locator('.converse-search-list mark').first()).toHaveText('季度报告')
+  await expect(page.locator('.converse-search-meta').first()).toContainText('CC')
+  await expect(page.locator('.converse-search-meta').first()).toContainText('微信')
+  await expect(page.locator('.converse-search-meta').nth(1)).toContainText('手机')
+  expect(asked).toEqual(['季度报告'])
+  await page.locator('#converse-search-close').click()
+  await expect(page.locator('#converse-search-results')).toBeHidden()
+})
