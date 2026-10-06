@@ -8,6 +8,8 @@ import type {NativeContinuePreview} from '../core/workbench/native-adoption'
 export type MobileMatterActions=Partial<Pick<MattersService,'permission'|'answer'|'artifactChunk'|'handoff'|'inputReceipt'|'stop'>>
 export interface MobileEntryActions {
   entryOptions():EntryOptions
+  /** 交办时可选的模型(2026-10-06):手机只给执行者 id 与项目目录 id,路径在电脑上解析。没接 ⇒ 手机不显示模型选择。 */
+  entryModels?(input:{providerId:string;projectId?:string}):Promise<unknown>
   createEntry(input:EntryInput):EntryResult
   entryReceipt(requestId:string):EntryResult|null
 }
@@ -74,6 +76,15 @@ export async function mobileWorkbenchRoute(actions:MobileMatterActions|undefined
     }catch(error){return mobileMatterError(error)}
   }
 
+  if(url.pathname==='/m/api/entry/models'){
+    if(req.method!=='GET')return json({ok:false,error:'method_not_allowed'},405)
+    try{
+      const q=url.searchParams,providerId=q.get('providerId'),projectId=q.get('projectId')
+      if(q.getAll('providerId').length!==1||q.getAll('projectId').length>1||[...q.keys()].some(k=>!['providerId','projectId','t','d','_via'].includes(k))||!providerId||!/^[a-z][a-z0-9._-]{0,63}$/.test(providerId)||(projectId!==null&&!/^p-[A-Za-z0-9_-]{1,64}$/.test(projectId)))throw Error('invalid_request')
+      if(!entry?.entryModels)throw Error('entry_not_wired')
+      return json({ok:true,catalog:await entry.entryModels({providerId,...(projectId?{projectId}:{})})})
+    }catch(error){return mobileMatterError(error)}
+  }
   const entryOperation=url.pathname==='/m/api/entry/options'?'options':url.pathname==='/m/api/matter/create'?'create':url.pathname==='/m/api/matter/create-receipt'?'receipt':null
   if(entryOperation){
     if(req.method!==(entryOperation==='create'?'POST':'GET'))return json({ok:false,error:'method_not_allowed'},405)

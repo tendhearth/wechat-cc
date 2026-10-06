@@ -4,6 +4,7 @@
  * 跨域依赖用已建好的域对象显式注入(同 execute.ts):createTask 来自 execute,projects / taskView 来自 view,
  * requireInput / requireEntryInput 来自 admission,quota 来自 quota。
  */
+import { mkdirSync } from 'node:fs'
 import { randomUUID } from 'node:crypto'
 import { readdirAnchored } from '../anchored-fs'
 import { canonicalProject } from '../artifacts'
@@ -28,7 +29,7 @@ export function makeEntryDomain(ctx:ServiceCtx, domains:EntryDomains) {
   const { store } = ctx
   const {createTask}=domains.execute
   const {taskView,projects}=domains.view
-  const {requireInput,requireEntryInput}=domains.admission
+  const {requireInput,requireEntryInput,modelCatalog}=domains.admission
   const {quota}=domains.quota
   let managedWorkspaces:ManagedWorkspaces|undefined
   const managed=()=>{
@@ -130,6 +131,17 @@ export function makeEntryDomain(ctx:ServiceCtx, domains:EntryDomains) {
     }
   }
 
-  return { managed,requireEntryOwner,entryResult, entryOptions,entryReceipt,createEntry }
+  /** 交办时可选的模型(2026-10-06,对标 Paseo / Orca 手机上选模型):按目录 id 找项目文件夹;由 CC 安排(managed)的问受管根目录。
+   *  手机不给路径,只给项目 id —— 路径只在电脑上解析。 */
+  async function entryModels(input:{providerId:string;projectId?:string},context:EntryContext){
+    requireEntryOwner(context)
+    const project=input.projectId?projects().find(p=>p.id===input.projectId):null
+    if(input.projectId&&!project)throw Error('project_stale')
+    const path=project?.path??ctx.deps.managedWorkspaceRoot
+    if(!path)throw Error('entry_not_wired')
+    if(!project)mkdirSync(path,{recursive:true,mode:0o700})
+    return modelCatalog(input.providerId,path)
+  }
+  return { managed,requireEntryOwner,entryResult, entryOptions,entryReceipt,createEntry,entryModels }
 }
 export type EntryDomain = ReturnType<typeof makeEntryDomain>

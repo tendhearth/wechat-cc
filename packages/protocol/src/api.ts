@@ -167,6 +167,11 @@ export const WorkbenchExecutorCapabilities = z.object({
   }),
 })
 
+/** 交办时可选的模型(GET /m/api/entry/models,2026-10-06;agent-provider.ts 的 AgentModelCatalog)。 */
+export const EntryModelCatalog = z.object({
+  models: z.array(z.object({ id: z.string(), displayName: z.string(), description: z.string().optional(), reasoningEfforts: z.array(z.string()), defaultReasoningEffort: z.string().optional() }).passthrough()),
+  defaultModel: z.string().optional(), source: z.string(),
+})
 export const EntryOptions = z.object({
   status: z.enum(['ready', 'needs_connection']),
   reason: Reason.optional(),
@@ -447,6 +452,7 @@ export const PHONE_API_SCHEMAS: Readonly<Record<string, z.ZodTypeAny>> = {
   'POST /m/api/attachment/chunk': z.union([z.object({ ok: z.literal(true) }).extend(UploadState.shape), PhoneErrorResponse]),
   'GET /m/api/attachment/upload': z.union([z.object({ ok: z.literal(true) }).extend(UploadState.shape), PhoneErrorResponse]),
   'POST /m/api/attachment/discard': z.union([z.object({ ok: z.literal(true) }), PhoneErrorResponse]),
+  'GET /m/api/entry/models': z.union([z.object({ ok: z.literal(true), catalog: EntryModelCatalog }), PhoneErrorResponse]),
   'GET /m/api/entry/options': z.union([z.object({ ok: z.literal(true) }).extend(EntryOptions.shape), PhoneErrorResponse]),
   'POST /m/api/matter/create': z.union([z.object({ ok: z.literal(true) }).extend(EntryResult.shape), PhoneErrorResponse]),
   'GET /m/api/matter/create-receipt': z.union([z.object({ ok: z.literal(true) }).extend(EntryResult.shape), PhoneErrorResponse]),

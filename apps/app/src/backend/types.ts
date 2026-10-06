@@ -1,7 +1,7 @@
 import type { z } from 'zod'
 import type {
   Matter, MatterDetail, ApprovalExplanation, ProgressSummary, PhoneChangesTurn, EntryOptions, DeviceRowT, PushPlatformT,
-  ChatPage, ChatJob, ChatMessage, ChatAttachment, MemorySuccess, ChatSearchHit, Connections, NativeSessionRow, NativeSessionPage, SessionContinueT, MatterSayResult,
+  ChatPage, ChatJob, ChatMessage, ChatAttachment, EntryModelCatalog, MemorySuccess, ChatSearchHit, Connections, NativeSessionRow, NativeSessionPage, SessionContinueT, MatterSayResult,
 } from '@wechat-cc/protocol'
 import type { Lang } from '../i18n'
 
@@ -17,6 +17,9 @@ export type ChatPageT = z.infer<typeof ChatPage>
 export type ChatJobT = z.infer<typeof ChatJob>
 export type ChatMessageT = z.infer<typeof ChatMessage>
 export type ChatAttachmentT = z.infer<typeof ChatAttachment>
+export type EntryModelCatalogT = z.infer<typeof EntryModelCatalog>
+/** 交办时指定的模型 / 思考强度;不给 ⇒ 用执行者自己的默认。 */
+export type EntryExecution = { model?: string; reasoningEffort?: string }
 export type MemoryViewT = Omit<z.infer<typeof MemorySuccess>, 'ok'>
 export type MemoryVerdict = 'wrong' | 'outdated' | 'delete'
 export type ChatSearchHitT = z.infer<typeof ChatSearchHit>
@@ -65,7 +68,9 @@ export interface Backend {
   matterInputReceipt(id: string, requestId: string): Promise<MatterInputT | null>
   entryOptions(lang: Lang): Promise<EntryOptionsT>
   /** requestId:同一份草稿、同样的正文重发用同一个(daemon 据此去重、超时后查回执)。projectId 缺省 ⇒ 由 CC 安排(managed)。 */
-  create(p: { requestId: string; text: string; projectId?: string; providerId?: string } & Partial<PhoneMaterials>): Promise<{ matterId: string }>
+  create(p: { requestId: string; text: string; projectId?: string; providerId?: string; execution?: EntryExecution } & Partial<PhoneMaterials>): Promise<{ matterId: string }>
+  /** 交办时可选的模型(GET /m/api/entry/models,2026-10-06);执行者不带模型目录 ⇒ BackendError。 */
+  entryModels(providerId: string, projectId?: string): Promise<EntryModelCatalogT>
   /** 材料分块上传(POST /m/api/attachment/chunk,2026-10-06 起手机 app 也用):每块 128 KiB、按 offset 续传;最后一块后 status=ready。 */
   uploadChunk(p: UploadChunkInput): Promise<UploadStateT>
   /** 续传前问一次进度(GET /m/api/attachment/upload)。 */

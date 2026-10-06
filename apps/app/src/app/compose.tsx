@@ -3,7 +3,7 @@ import { useEffect, useRef, useState } from 'react'
 import { KeyboardAvoidingView, Modal, Platform, Pressable, ScrollView, View } from 'react-native'
 import { SafeAreaView } from 'react-native-safe-area-context'
 import { BackendError, type MatterInputT } from '../backend/types'
-import { t } from '../i18n'
+import { t, type Lang } from '../i18n'
 import { useLang } from '../i18n/useLang'
 import { deleteDraft, getDraft, materialDraftId, pairingGen, requestIdFor, setDraft } from '../state/drafts'
 import { AddImageButton, ImageTray } from '../ui/ImageTray'
@@ -70,6 +70,10 @@ export default function Compose() {
   const [inputNotice, setInputNotice] = useState<string | null>(null)
   const [projectId, setProjectId] = useState<string | null>(null)
   const [providerId, setProviderId] = useState<string | null>(null)
+  // 交办时选模型 / 思考强度(2026-10-06,对标 Paseo / Orca);null = 用执行者自己的默认。换执行者 / 项目就回到默认。
+  const [modelId, setModelId] = useState<string | null>(null)
+  const [effort, setEffort] = useState<string | null>(null)
+  useEffect(() => { setModelId(null); setEffort(null) }, [providerId, projectId])
   const sending = useRef(false)
   const options = useQuery('entryOptions', l => backend.entryOptions(l), { enabled: !matter })
   // 说的是一件事:读它的详情(与进展页共用缓存)—— 接过来还没发第一句的,顶上说清第一句会怎样;失败句要知道执行者叫什么
@@ -102,6 +106,10 @@ export default function Compose() {
   const opt = options.data
   const project = opt?.projects.find((p) => p.id === projectId) ?? opt?.projects[0]
   const provider = providerId ? opt?.providers.find((p) => p.id === providerId) : null
+  const canPickModel = !matter && !!provider?.capabilities.features.modelCatalog
+  const models = useQuery(`entryModels:${provider?.id ?? ''}:${project?.id ?? ''}`, () => backend.entryModels(provider!.id, project?.id), { enabled: adjust && canPickModel })
+  const model = modelId ? models.data?.models.find(m => m.id === modelId) : undefined
+  const execution = model ? { model: model.id, ...(effort ? { reasoningEffort: effort } : {}) } : undefined
 
   // 不在线(连接中 / 离线 / 撤销)⇒ 草稿照写,「交给 CC」锁住,ConnectionNotice 说明原因。
   const online = canSubmit(conn) && recovery.phase === 'ready' && (backend.mode !== 'live' || !!recovery.scope && recovery.scope === session.inputScope)
@@ -176,11 +184,12 @@ export default function Compose() {
     const r = await submit(`compose:${draftKey}`, async () => {
       // 同一份草稿、同样正文重发(「不确定」之后再点)⇒ 同一个 requestId,daemon 去重,不会说两遍。
       const materials = !matter && images.length ? { draftId: materialDraftId(draftKey), attachmentIds: images.map(i => i.id) } : undefined
-      const requestId = requestIdFor(draftKey, materials ? `${body}\u0000${materials.attachmentIds.join(',')}` : body)
+      // 换了图或模型就是新的一件:requestId 跟着正文、图、模型一起定
+      const requestId = requestIdFor(draftKey, [body, materials?.attachmentIds.join(',') ?? '', execution ? JSON.stringify(execution) : ''].join('\u0000'))
       if (matter) await backend.say(matter, body, requestId)
       else {
         if (materials) await uploadImages(backend, materials.draftId, images, bytesToBase64)
-        newId = (await backend.create({ requestId, text: body, projectId: project?.id, providerId: provider?.id, ...(materials ?? {}) })).matterId
+        newId = (await backend.create({ requestId, text: body, projectId: project?.id, providerId: provider?.id, ...(materials ?? {}), ...(execution ? { execution } : {}) })).matterId
       }
     })
     sending.current = false
@@ -249,7 +258,7 @@ export default function Compose() {
           {matter ? null : (
             <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', gap: space.m }}>
               <Txt role="meta" tone="inkSoft" numberOfLines={2} style={{ flex: 1 }}>
-                {t(lang, 'compose.usingContext')}{project?.name ?? '…'} · {provider?.displayName ?? t(lang, 'compose.ccArranges')}
+                {t(lang, 'compose.usingContext')}{project?.name ?? '…'} · {provider?.displayName ?? t(lang, 'compose.ccArranges')}{model ? ` · ${model.displayName}${effort ? ` · ${effortLabel(effort, lang)}` : ''}` : ''}
               </Txt>
               <Pressable accessibilityRole="button" testID="compose-adjust" onPress={() => setAdjust(true)} style={{ minHeight: 44, justifyContent: 'center' }} disabled={!opt}>
                 <Txt role="meta" tone="accent">{t(lang, 'compose.adjust')}</Txt>
@@ -292,9 +301,31 @@ export default function Compose() {
           <Txt role="meta" tone="inkSoft" style={{ marginTop: space.m }}>{t(lang, 'compose.executor')}</Txt>
           <ChoiceRow label={t(lang, 'compose.ccArranges')} on={!provider} onPress={() => setProviderId(null)} />
           {opt?.providers.filter((p) => p.available).map((p) => <ChoiceRow key={p.id} label={p.displayName} on={p.id === provider?.id} onPress={() => setProviderId(p.id)} />)}
+          {canPickModel ? (
+            <>
+              <Txt role="meta" tone="inkSoft" style={{ marginTop: space.m }}>{t(lang, 'compose.model')}</Txt>
+              {models.loading && !models.data ? <Txt testID="compose-models-loading" role="meta" tone="inkSoft">{t(lang, 'progress.loading')}</Txt> : null}
+              {models.error && !models.data ? <Txt testID="compose-models-failed" role="meta" tone="inkSoft">{t(lang, 'compose.modelsUnavailable')}</Txt> : null}
+              {models.data ? <ChoiceRow label={t(lang, 'compose.modelDefault')} on={!modelId} onPress={() => { setModelId(null); setEffort(null) }} /> : null}
+              {models.data?.models.map(m => <ChoiceRow key={m.id} label={m.displayName} on={m.id === modelId} onPress={() => { setModelId(m.id); setEffort(null) }} />)}
+              {model && model.reasoningEfforts.length > 1 ? (
+                <>
+                  <Txt role="meta" tone="inkSoft" style={{ marginTop: space.m }}>{t(lang, 'compose.effort')}</Txt>
+                  <ChoiceRow label={t(lang, 'compose.modelDefault')} on={!effort} onPress={() => setEffort(null)} />
+                  {model.reasoningEfforts.map(e => <ChoiceRow key={e} label={effortLabel(e, lang)} on={e === effort} onPress={() => setEffort(e)} />)}
+                </>
+              ) : null}
+            </>
+          ) : null}
           <View style={{ marginTop: space.m }}><Button kind="secondary" label={t(lang, 'compose.done')} onPress={() => setAdjust(false)} /></View>
         </View>
       </Modal>
     </SafeAreaView>
   )
+}
+
+/** 思考强度的说法:常见几档翻成人话,认不出的原样给。 */
+function effortLabel(e: string, lang: Lang): string {
+  const known = ['minimal', 'low', 'medium', 'high', 'xhigh'] as const
+  return (known as readonly string[]).includes(e) ? t(lang, `compose.effort.${e as typeof known[number]}`) : e
 }

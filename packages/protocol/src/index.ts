@@ -19,7 +19,7 @@ export type {
 export type { ProtocolSocket, ClientOpts, ClientStatus, ProtocolClient, ProtocolRequest, ProtocolResponse, EventMeta } from './client'
 export { makeProtocolClient } from './client'
 export {
-  PhoneErrorResponse, PhonePlainError, DeviceRow, PHONE_SAY_MAX_CHARS, MemorySuccess, ChatSearchHit, PHONE_CHAT_MAX_IMAGES, PHONE_ANSWER_MAX_JSON, PHONE_HTML_ROUTES, PHONE_API_SCHEMAS,
+  PhoneErrorResponse, PhonePlainError, DeviceRow, PHONE_SAY_MAX_CHARS, EntryModelCatalog, MemorySuccess, ChatSearchHit, PHONE_CHAT_MAX_IMAGES, PHONE_ANSWER_MAX_JSON, PHONE_HTML_ROUTES, PHONE_API_SCHEMAS,
   Attachment, Matter, MatterBinding, MatterSession, MatterTaskView, MatterEvent, MatterInput, MatterInputReceiptResult,
   ApprovalExplanation, ProgressSummary, MatterPermission, MatterQuestion, MatterArtifact, MatterDetail, MatterSayResult,
   ProjectCatalogEntry, EntryOptions, WorkbenchExecutorCapabilities, WorkbenchTaskView, EntryReceipt, EntryResult,
