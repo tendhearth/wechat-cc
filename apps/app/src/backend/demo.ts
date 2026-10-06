@@ -393,6 +393,14 @@ export function makeDemoBackend(opts: { now?: () => number; setTimeout?: typeof 
       })
       return result
     },
+    async entryModels(providerId) {
+      // 演示:只有 Codex 带模型目录(与真机一样,不是每个执行者都能选模型)
+      if (providerId !== 'codex') throw new BackendError('unavailable')
+      return { source: 'native', defaultModel: 'gpt-5.6', models: [
+        { id: 'gpt-5.6', displayName: 'GPT-5.6', reasoningEfforts: ['low', 'medium', 'high'], defaultReasoningEffort: 'medium' },
+        { id: 'gpt-5.6-mini', displayName: 'GPT-5.6 mini', reasoningEfforts: ['low', 'medium'] },
+      ] }
+    },
     async entryOptions(l) { noteLang(l); return entryOptions(l) },
     // 演示:材料只记在内存里,按 offset 续传的规矩与 daemon 一样(每块 128 KiB)。
     async uploadChunk(p) {

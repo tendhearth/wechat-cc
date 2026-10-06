@@ -21,7 +21,7 @@ import {
   type ApprovalExplanationT, type Backend, type Connection, type DeviceRowT, type EntryOptionsT,
   type MatterDetailT, type MatterT, type PhoneChangesTurnT, type ProgressSummaryT, type Unsubscribe,
   type ChatPageT, type ChatJobT, type ConnectionsT, type NativeSessionRowT, type NativeSessionPageT, type SessionContinueT,
-  type MatterSayResultT, type MatterInputT, type UploadStateT,
+  type MatterSayResultT, type MatterInputT, type UploadStateT, type EntryModelCatalogT,
 } from './types'
 
 type Topic = Parameters<Backend['subscribe']>[0]
@@ -294,6 +294,9 @@ export function makeLiveBackend(d: LiveDeps): Backend {
       // A reconnect checks the durable receipt. Only an explicit user retry replays the POST.
       return (await call<{ ok: true; result: MatterSayResultT }>('POST /m/api/matter/say', '/m/api/matter/say', { body: { id, text, requestId, ...(options?.runId ? { runId: options.runId } : {}) }, retry: false })).result
     },
+    async entryModels(providerId, projectId) {
+      return (await call<{ catalog: EntryModelCatalogT }>('GET /m/api/entry/models', `/m/api/entry/models?providerId=${encodeURIComponent(providerId)}${projectId ? `&projectId=${encodeURIComponent(projectId)}` : ''}`)).catalog
+    },
     async entryOptions() {
       return strip(await call<{ ok: true } & EntryOptionsT>('GET /m/api/entry/options', '/m/api/entry/options'))
     },
@@ -303,6 +306,7 @@ export function makeLiveBackend(d: LiveDeps): Backend {
         target: p.projectId ? { kind: 'project', projectId: p.projectId } : { kind: 'managed' },
         ...(p.providerId ? { providerId: p.providerId } : {}),
         ...(p.attachmentIds?.length && p.draftId ? { draftId: p.draftId, attachmentIds: p.attachmentIds } : {}),
+        ...(p.execution && (p.execution.model || p.execution.reasoningEffort) ? { execution: { ...(p.execution.model ? { model: p.execution.model } : {}), ...(p.execution.reasoningEffort ? { reasoningEffort: p.execution.reasoningEffort } : {}) } } : {}),
       }
       try {
         const r = await call<{ receipt: { matterId: string } }>('POST /m/api/matter/create', '/m/api/matter/create', { body, retry: true })

@@ -47,6 +47,8 @@ export const PHONE_ROUTES: ReadonlySet<string> = new Set([
   'POST /m/api/todo',
   'GET /m/api/sticker/',
   // 交办与材料(mobile-workbench.ts,#129)
+  // 交办时可选的模型(2026-10-06)
+  'GET /m/api/entry/models',
   'POST /m/api/attachment/chunk',
   'GET /m/api/attachment/upload',
   'POST /m/api/attachment/discard',

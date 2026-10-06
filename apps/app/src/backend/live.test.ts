@@ -470,6 +470,19 @@ describe('跟 CC 说 / 连接 / 原生会话', () => {
     await b.create({ requestId: SAY_REQ, text: '看图', draftId: D, attachmentIds: [A] })
     expect(reqs.at(-1)).toMatchObject({ body: { requestId: SAY_REQ, text: '看图', draftId: D, attachmentIds: [A] } })
   })
+  it('交办选模型(2026-10-06):entryModels 只带执行者与项目目录 id;create 带 execution', async () => {
+    const CAT = { source: 'native', defaultModel: 'gpt-5.6', models: [{ id: 'gpt-5.6', displayName: 'GPT-5.6', reasoningEfforts: ['low', 'high'] }] }
+    const { b, reqs } = harness({
+      'GET /m/api/entry/models': ok({ ok: true, catalog: CAT }),
+      'POST /m/api/matter/create': ok({ ok: true, receipt: RECEIPT, task: WB_TASK }, 202),
+    })
+    expect((await b.entryModels('codex', 'p-0123456789abcdef0123')).models[0]!.id).toBe('gpt-5.6')
+    expect(reqs.at(-1)!.path).toBe('/m/api/entry/models?providerId=codex&projectId=p-0123456789abcdef0123')
+    await b.create({ requestId: SAY_REQ, text: '整理一下', providerId: 'codex', execution: { model: 'gpt-5.6', reasoningEffort: 'high' } })
+    expect(reqs.at(-1)).toMatchObject({ body: { execution: { model: 'gpt-5.6', reasoningEffort: 'high' } } })
+    await b.create({ requestId: SAY_REQ, text: '整理一下', execution: {} })
+    expect(reqs.at(-1)!.body).not.toHaveProperty('execution')
+  })
   it('connections / sessions / session 走对应路由', async () => {
     const CONN = { ok: true, generatedAt: 1, sources: [{ id: 'wxvault', kind: 'plugin', name: 'wxvault', state: 'ready', latestAt: null, syncedAt: null }], computers: [], recent: [], outputs: [] }
     const ROW = { key: 'k', provider: 'codex', title: 't', project: 'p', updatedAt: 1, active: false }
