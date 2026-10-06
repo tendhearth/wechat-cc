@@ -359,6 +359,21 @@ describe('companionConverse in-flight guard (buildPipelineDeps)', () => {
     })
   })
 
+  it('documents become file attachments named after the original, and history says [文件 ×N] (2026-10-06)', async () => {
+    const { companionConverse, dispatchInner } = setup({ inFlight: false })
+    await companionConverse('', 'desktop', [{ mime: 'application/pdf', bytes: new Uint8Array([37, 80, 68, 70]), name: '季度 报告/../x.pdf' }, { mime: 'image/png', bytes: new Uint8Array([1]) }])
+    const msg = dispatchInner.mock.calls.at(-1)![0] as InboundMsg
+    expect(msg.msgType).toBe('file')
+    expect(msg.attachments?.map(a => a.kind)).toEqual(['file', 'image'])
+    expect(msg.attachments![0]!.path.endsWith('.pdf')).toBe(true)
+    expect(msg.attachments![0]!.path.startsWith(join(stateDir, 'inbox'))).toBe(true)
+    expect(msg.attachments![0]!.path).not.toContain('..')
+    await vi.waitFor(async () => {
+      const rows = await makeMessagesStore(db).listRange('owner_chat', { limit: 10 })
+      expect(rows.find(m => m.direction === 'in')?.text).toBe('[图片 ×1]\n[文件 ×1]')
+    })
+  })
+
   it('text with an image keeps msgType text and records both in history', async () => {
     const { companionConverse, dispatchInner } = setup({ inFlight: false })
     await companionConverse('看这个报错', 'desktop', [{ mime: 'image/png', bytes: new Uint8Array([1]) }])
