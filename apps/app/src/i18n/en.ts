@@ -282,6 +282,7 @@ const en = {
   'chat.placeholder': 'Say something…',
   'chat.send': 'Send',
   'chat.handoff': 'Hand a task to CC',
+  'chat.fileOpen': 'Open file {name}',
   'memory.title': 'What CC remembers',
   'memory.first': "I'll tidy my memory for the first time tonight.",
   'memory.changed': 'I learned a bit more about you last night.',

@@ -96,6 +96,8 @@ export interface Backend {
   chatSearch(q: string): Promise<ChatSearchHitT[]>
   /** 回复里第 index 个附件(必须是语音)按需合成的声音(GET /m/api/chat/voice)。太长 ⇒ BackendError('too_large');电脑没设朗读 ⇒ 'no_voice'。 */
   chatVoice(messageId: string, index: number): Promise<{ mime: string; data: string }>
+  /** 回复里第 index 个附件(必须是文件)按块读(GET /m/api/chat/file,2026-10-06);不在了 ⇒ not_found,太大 ⇒ too_large。 */
+  chatFileChunk(p: { messageId: string; index: number; offset: number }): Promise<{ name: string; mime: string; size: number; sha256: string; offset: number; nextOffset: number; contentBase64: string }>
   /** 表情库里的一张图(GET /m/api/sticker/<file>?b64=1)。不在库里 ⇒ BackendError('not_found')。 */
   sticker(file: string): Promise<{ mime: string; data: string }>
   /** CC 的连接快照(手机版,没有 detail)。 */

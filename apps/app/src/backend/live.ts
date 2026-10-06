@@ -252,6 +252,10 @@ export function makeLiveBackend(d: LiveDeps): Backend {
     async discardUpload(id, draftId) {
       await call('POST /m/api/attachment/discard', '/m/api/attachment/discard', { body: { id, draftId } })
     },
+    async chatFileChunk(p) {
+      return strip(await call<{ ok: true; name: string; mime: string; size: number; sha256: string; offset: number; nextOffset: number; contentBase64: string }>('GET /m/api/chat/file',
+        `/m/api/chat/file?id=${encodeURIComponent(p.messageId)}&i=${p.index}&offset=${p.offset}`))
+    },
     async chatVoice(messageId, index) {
       return strip(await call<{ ok: true; mime: string; data: string }>('GET /m/api/chat/voice', `/m/api/chat/voice?id=${encodeURIComponent(messageId)}&i=${index}`))
     },
