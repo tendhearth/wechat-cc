@@ -441,6 +441,7 @@ export const PHONE_API_SCHEMAS: Readonly<Record<string, z.ZodTypeAny>> = {
   'GET /m/api/chat': z.union([z.object({ ok: z.literal(true) }).extend(ChatPage.shape), PhoneErrorResponse]),
   'GET /m/api/chat/search': z.union([z.object({ ok: z.literal(true), hits: z.array(ChatSearchHit) }), PhoneErrorResponse]),
   'POST /m/api/chat/say': z.union([z.object({ ok: z.literal(true), matterId: z.string(), job: ChatJob }), PhoneErrorResponse]),
+  'GET /m/api/chat/file': z.union([z.object({ ok: z.literal(true), name: z.string(), mime: z.string(), size: z.number(), sha256: z.string(), offset: z.number(), nextOffset: z.number(), contentBase64: z.string() }), PhoneErrorResponse]),
   'GET /m/api/chat/voice': z.union([z.object({ ok: z.literal(true) }).extend(ChatVoice.shape), PhoneErrorResponse]),
   'GET /m/api/connections': z.union([z.object({ ok: z.literal(true) }).extend(Connections.shape), PhoneErrorResponse]),
   'GET /m/api/sessions': z.union([z.object({ ok: z.literal(true), items: z.array(NativeSessionRow), nextCursor: z.string().nullable() }), PhoneErrorResponse]),

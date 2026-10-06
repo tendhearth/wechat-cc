@@ -200,3 +200,33 @@ describe('GET /m/api/chat/search (2026-10-06)', () => {
     expect(search).not.toHaveBeenCalled()
   })
 })
+
+describe('GET /m/api/chat/file (2026-10-06)', () => {
+  it('serves a file CC attached to its own reply, in 128 KiB chunks with a whole-file sha256; never a path from the phone', async () => {
+    const { mkdtempSync, writeFileSync, symlinkSync } = await import('node:fs')
+    const { tmpdir } = await import('node:os')
+    const { join } = await import('node:path')
+    const { createHash } = await import('node:crypto')
+    const dir = mkdtempSync(join(tmpdir(), 'chat-file-'))
+    const bytes = Buffer.alloc(200 * 1024, 7); const path = join(dir, '报告.pdf'); writeFileSync(path, bytes)
+    const link = join(dir, 'link.pdf'); symlinkSync(path, link)
+    const extras = (p: string) => JSON.stringify({ attachments: [{ kind: 'voice', text: 'x' }, { kind: 'file', name: '报告.pdf', path: p }], narration: [] })
+    const rows: Record<string, MessageRecord> = {
+      out: rec(1, { id: 'out', direction: 'out', extras: extras(path) } as never),
+      mine: rec(2, { id: 'mine', direction: 'in', extras: extras(path) } as never),
+      linked: rec(3, { id: 'linked', direction: 'out', extras: extras(link) } as never),
+    }
+    const d = deps({ message: async (_c: string, id: string) => rows[id] ?? null })
+    const first = await call(d, get('/file?id=out&i=1'))
+    expect(first.status).toBe(200)
+    expect(first.body).toMatchObject({ name: '报告.pdf', mime: 'application/pdf', size: bytes.length, offset: 0, nextOffset: 128 * 1024, sha256: createHash('sha256').update(bytes).digest('hex') })
+    PHONE_API_SCHEMAS['GET /m/api/chat/file']!.parse(first.body)
+    const second = await call(d, get(`/file?id=out&i=1&offset=${128 * 1024}`))
+    expect(second.body.nextOffset).toBe(bytes.length)
+    expect(Buffer.from(first.body.contentBase64 + '', 'base64').length + Buffer.from(second.body.contentBase64, 'base64').length).toBe(bytes.length)
+    expect((await call(d, get('/file?id=out&i=0'))).status).toBe(404)      // 第 0 个是语音,不是文件
+    expect((await call(d, get('/file?id=mine&i=1'))).status).toBe(404)     // 不是 CC 发的那一行
+    expect((await call(d, get('/file?id=linked&i=1'))).status).toBe(404)   // 符号链接不跟
+    for (const q of ['/file?id=out', '/file?id=out&i=x', '/file?id=out&i=1&offset=-1', `/file?id=out&i=1&offset=${bytes.length + 1}`]) expect((await call(d, get(q))).status).toBe(400)
+  })
+})

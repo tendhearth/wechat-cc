@@ -263,6 +263,10 @@ export function makeDemoBackend(opts: { now?: () => number; setTimeout?: typeof 
       return chatMsgs.filter(m => chatText(m, l).includes(query)).reverse().slice(0, 30)
         .map(m => ({ id: m.id, role: m.role === 'me' ? 'me' as const : 'cc' as const, text: chatText(m, l), truncated: false, at: m.at, source: m.source ?? null }))
     },
+    async chatFileChunk() {
+      // 演示里的文件只是一个名字(放在电脑上的那份不存在)
+      throw new BackendError('not_found')
+    },
     async chatVoice(messageId, index) {
       const a = chatMsgs.find(m => m.id === messageId)?.atts?.[index]
       if (!a || a.kind !== 'voice') throw new BackendError('not_found')

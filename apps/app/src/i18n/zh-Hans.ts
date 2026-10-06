@@ -284,6 +284,7 @@ const zh: Record<keyof typeof en, string> = {
   'chat.placeholder': '说点什么…',
   'chat.send': '发送',
   'chat.handoff': '交给 CC 去做一件事',
+  'chat.fileOpen': '打开文件 {name}',
   'memory.title': 'CC 记得你',
   'memory.first': '今晚我会第一次整理。',
   'memory.changed': '昨晚又认识了你一点。',

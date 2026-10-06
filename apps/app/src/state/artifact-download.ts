@@ -37,3 +37,28 @@ export async function downloadArtifact(
 export function humanSize(n: number): string {
   return n < 1024 ? `${n} B` : n < 1024 * 1024 ? `${(n / 1024).toFixed(0)} KB` : `${(n / 1024 / 1024).toFixed(1)} MB`
 }
+
+/**
+ * CC 回复里的一个文件(GET /m/api/chat/file,2026-10-06):大小与 sha256 由第一块告诉我们,读完整份核对。
+ * 中途那份换了(大小 / 哈希变了)⇒ 'stale';超过上限 ⇒ 'too_large'(电脑那边也会 413)。
+ */
+export async function downloadReplyFile(
+  backend: Pick<Backend, 'chatFileChunk'>, messageId: string, index: number, sha256Hex: (bytes: Uint8Array) => Promise<string>,
+): Promise<Uint8Array> {
+  let offset = 0, out: Uint8Array | null = null, size = 0, sha = ''
+  for (;;) {
+    const c = await backend.chatFileChunk({ messageId, index, offset })
+    if (!out) {
+      if (c.size > ARTIFACT_MAX_BYTES) throw new BackendError('too_large')
+      out = new Uint8Array(c.size); size = c.size; sha = c.sha256
+    }
+    const bytes = base64ToBytes(c.contentBase64)
+    if (c.size !== size || c.sha256 !== sha || c.offset !== offset || c.nextOffset !== offset + bytes.length || c.nextOffset > size) throw new BackendError('stale')
+    out.set(bytes, offset)
+    offset = c.nextOffset
+    if (offset >= size) break
+    if (!bytes.length) throw new BackendError('stale')
+  }
+  if ((await sha256Hex(out)) !== sha) throw new BackendError('stale')
+  return out
+}
