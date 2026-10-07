@@ -475,3 +475,7 @@
 .wb-quota-handoff p { margin: 0 0 10px; line-height: 1.65; }
 /* 窗口够宽时主导航一直在(2026-10-05):叫出主导航的按钮那一行只在窄窗口收起主导航时出现。 */
 .dash-window:not(.is-workbench-focused) .workbench-pane>.cc-life-topline{display:none}
+/* 独立工作区(2026-10-07) */
+.wb-worktree-badge { margin-left: 6px; padding: 0 5px; border: 1px solid var(--th-hair); border-radius: 4px; font-size: 11px; color: var(--th-ink-soft); }
+.wb-worktree { margin: 6px 0 0; font-size: var(--th-size-small, 13px); color: var(--th-ink-soft); display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
+.wb-worktree code { font-size: 12px; }
