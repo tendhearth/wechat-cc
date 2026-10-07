@@ -97,3 +97,27 @@ describe('mountNowConnections', () => {
     await again
   })
 })
+
+describe('capabilities (2026-10-06)', () => {
+  it('needs_you leads the headline; actions only on problem rows; stale greys them', async () => {
+    const { connectionsView } = await import('./now-connections.js')
+    const s = { generatedAt: 1, sources: [{ id: 'k', kind: 'knowledge', name: 'k', state: 'ready', latestAt: null, syncedAt: null }], computers: [{ id: 'home', label: 'Mac', online: true, since: null, version: null }], recent: [], outputs: [],
+      capabilities: [
+        { id: 'disk', name: '完全磁盘访问', state: 'needs_you', code: 'disk.denied', reason: '没有完全磁盘访问', action: { label: '打开系统设置', where: 'settings', url: 'x-apple.systempreferences:x' } },
+        { id: 'knowledge', name: '知识库', state: 'fallback', code: 'knowledge.fell_back', reason: '退回了 Python' },
+        { id: 'brain', name: '大脑', state: 'ok', code: 'brain.ok', reason: '在用 Claude。', action: { label: 'x', where: 'settings' } },
+      ] } as never
+    const v = connectionsView(s)
+    expect(v.headline).toEqual({ dot: 'bad', text: '1 件事要你处理' })
+    expect(v.capabilities.map((c: { dot: string }) => c.dot)).toEqual(['bad', 'warn', 'ok'])
+    expect(v.capabilities[0]!.action).toMatchObject({ url: 'x-apple.systempreferences:x' })
+    expect(v.capabilities[2]!.action).toBeNull()
+    expect(connectionsView(s, { stale: true }).capabilities.every((c: { dot: string }) => c.dot === 'unknown')).toBe(true)
+  })
+  it('fallback only ⇒ yellow headline; old daemon without capabilities unchanged', async () => {
+    const { connectionsView } = await import('./now-connections.js')
+    const base = { generatedAt: 1, sources: [], computers: [{ id: 'home', label: 'Mac', online: true, since: null, version: null }], recent: [], outputs: [] }
+    expect(connectionsView({ ...base, capabilities: [{ id: 'memory', name: '记忆整理', state: 'fallback', code: 'memory.failing', reason: 'x' }] } as never).headline).toEqual({ dot: 'warn', text: '1 项在凑合着用' })
+    expect(connectionsView(base as never).capabilities).toEqual([])
+  })
+})

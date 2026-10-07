@@ -20,6 +20,10 @@ export function nowStatusLine(daemon, presence) {
   if (!daemon || !presence) return { cls: /** @type {'unknown'} */ ('unknown'), text: '正在连接…' }
   if (!daemon.alive) return { cls: /** @type {'bad'} */ ('bad'), text: 'CC 没在运行' }
   if (ccPresence(presence) === 'away') return { cls: /** @type {'bad'} */ ('bad'), text: 'CC 不在身边' }
+  // 2026-10-06:以前 offline(微信发不出去)/ degraded(可选子系统没起来)也报绿「运行中」—— 在家,但不全好。
+  // 点这一行打开「CC 现在怎么样」看是哪一项。
+  if (presence.presence === 'offline') return { cls: /** @type {'warn'} */ ('warn'), text: 'CC 在家 · 微信发不出去' }
+  if (presence.presence === 'degraded') return { cls: /** @type {'warn'} */ ('warn'), text: 'CC 在家 · 有功能没起来' }
   return { cls: /** @type {'ok'} */ ('ok'), text: 'CC 在家 · 运行中' }
 }
 
