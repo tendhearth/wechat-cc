@@ -90,11 +90,12 @@ export function makeEntryDomain(ctx:ServiceCtx, domains:EntryDomains) {
       const execution=normalizeExecutionChoice(input.execution,PROVIDER_EXECUTION_CHOICE)
       requireEntryInput(providerId,materialSnapshot,execution,text)
       const isolated=input.target.kind==='project'&&input.target.isolation==='worktree'
-      // 独立工作区(2026-10-07):不是 git 仓库就当场拒绝,不留一条半截的预约。
+      // 独立工作区(2026-10-07):不是 git 仓库就当场拒绝,不留一条半截的预约。路径留空到建好工作区再定:
+      // 预约时算出的路径和建好后的真实路径在 Windows 上写法可能不同(8.3 短名 / 长名),先写死会被当成冲突。
       if(isolated&&!repoRootOf(project!.path))throw Error('worktree_not_git')
       const workspaceId=input.target.kind==='managed'||isolated?randomUUID():null
       record=store.entryRequests.reserve({ownerKey:context.ownerKey,requestId:input.requestId,canonicalRequestHash:hash,target:input.target,
-        workspaceId,resolvedPath:input.target.kind==='managed'?managed().resolvePath(workspaceId!):isolated?worktreePlan(workspaceId!,project!).taskPath:project?.path??null,directoryIdentity:project&&!isolated?directoryIdentity(project.path):null,
+        workspaceId,resolvedPath:input.target.kind==='managed'?managed().resolvePath(workspaceId!):isolated?null:project?.path??null,directoryIdentity:project&&!isolated?directoryIdentity(project.path):null,
         providerId,execution,materialSnapshot})
      }
       // Another connection may have accepted between the initial read and reserve.
