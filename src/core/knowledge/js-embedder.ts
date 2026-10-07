@@ -21,10 +21,14 @@
  *    a dependency on a community conversion — recorded rather than hidden.
  *
  *  - `load()` can fail and that must be survivable. In the packaged desktop
- *    app the sidecar is a `bun build --compile` single file, and
- *    onnxruntime's native binding cannot be dlopen'd from there (its
- *    `libonnxruntime.dylib` is not extracted alongside it). Callers get a
- *    rejected promise and are expected to fall back, not crash.
+ *    app the sidecar is a `bun build --compile` single file; left alone, bun
+ *    embeds onnxruntime's native binding and extracts it to $TMPDIR without
+ *    its `libonnxruntime.dylib`, so dlopen fails. Since 2026-10-06 the macOS
+ *    build loads the binding from next to the executable instead (the .app
+ *    ships both files in Contents/MacOS — apps/desktop/scripts/sidecar-native.ts),
+ *    and `wechat-cc selftest embed` checks it. An install missing those files
+ *    (older .app, other platforms) still fails here: callers get a rejected
+ *    promise and are expected to fall back, not crash.
  */
 
 import { homedir } from 'node:os'
@@ -134,9 +138,9 @@ export function makeJsEmbedder(opts: MakeJsEmbedderOpts): EmbedderService {
 /**
  * Run `primary`, and on its first failure switch permanently to `fallback`.
  *
- * Exists for one concrete case: selecting the JS runtime inside the packaged
- * desktop sidecar, where onnxruntime's native binding cannot be dlopen'd from
- * a compiled single file. Without this, choosing 'js' there would take the
+ * Exists for one concrete case: selecting the JS runtime inside a packaged
+ * desktop sidecar whose .app lacks the onnxruntime files next to it (older
+ * installs, non-macOS builds — see the module docstring). Without this, choosing 'js' there would take the
  * whole knowledge face down instead of quietly using the runtime that does
  * work. The switch is permanent rather than per-call because the failure it
  * guards is structural (no native binding) — retrying it on every embed would
