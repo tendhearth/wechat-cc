@@ -963,6 +963,9 @@ export function initWorkbenchPage(deps) {
     // Capture before the summary's default toggle, including keyboard activation.
     const summary=event.target instanceof Element?event.target.closest('#wb-artifacts > summary'):null
     if(summary&&!summary.parentElement?.hasAttribute('open')&&!resultReturnPositions.has(renderedScope))resultReturnPositions.set(renderedScope,root.querySelector('.wb-content')?.scrollTop??0)
+    // 收起也在点的这一刻放掉(2026-10-06):toggle 是异步的,连点两下还会被合并成一个、甚至在下一次滚动之后才到,
+    // 只靠它放掉的话,收起后紧接着的那次滚动仍算「在翻成果」⇒ 停在底部也不跟新回复。
+    else if(summary&&summary.parentElement?.hasAttribute('open'))resultReturnPositions.delete(renderedScope)
     const target = event.target instanceof Element ? event.target.closest('button') : null
     if (!target) return
     if (target.dataset.taskId) return openTask(target.dataset.taskId)
@@ -1491,6 +1494,10 @@ export function initWorkbenchPage(deps) {
     if(!(event.target instanceof Element)||!root.contains(event.target))return
     if(['wb-options','wb-task-info'].includes(event.target.id))loadExecutionCatalog()
     if(event.target.id==='wb-artifacts'&&!event.target.hasAttribute('open'))resultReturnPositions.delete(renderedScope)
+    // 「在不在跟随最新」取决于有没有在翻成果 / 改动(browsingResults 看这些展开状态),而 toggle 是异步到的:
+    // 收起之前若先来了一次滚动,当时算出的是「不跟随」,收起后没人重算 ⇒ 停在底部也不再跟新回复(2026-10-06)。
+    const content=root.querySelector('.wb-content'),current=reading.get(renderedScope)
+    if(current&&content){current.following=atEnd(content)&&!browsingResults();if(current.following){current.unread=false;showReadingNotice()}}
   }
   root.addEventListener('toggle',onToggle,true)
   root.addEventListener('paste',onPaste);root.addEventListener('drop',onDrop);root.addEventListener('dragover',onDragOver)
