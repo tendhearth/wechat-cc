@@ -92,7 +92,12 @@ export function makeViewDomain(ctx:ServiceCtx, queries?:{quotaHandoff(id:string)
       if(!permissions.length&&!questions.length)return[]
       return[{id:run.taskId,title:run.title,providerId:run.task.providerId,pendingPermissionCount:permissions.length,pendingQuestionCount:questions.length,first:firstPending(permissions,questions),attentionKey:JSON.stringify([...permissions,...questions].map(q=>q.id).sort())}]
     })
-    return{tasks}
+    // 回复 / 停下的系统通知(2026-10-06):桌面拿前后两次的 phase 比,「在做 → 回复了 / 停下了」才弹。
+    // 只给 id 与 phase —— 标题、内容不跟着进系统通知(同上面的待处理那条规矩)。在跑的 + 十分钟内动过的、没归档的。
+    const recent=Date.now()-10*60_000
+    const progress=store.list().filter(task=>task.archivedAt===null&&(state.runsByTask.has(task.id)||task.updatedAt>=recent))
+      .map(task=>({id:task.id,phase:phaseOf(task,state.runsByTask.get(task.id))}))
+    return{tasks,progress}
   }
   function projects(){
     const ownerChatId=ctx.deps.ownerChatId();if(!ownerChatId)return[]

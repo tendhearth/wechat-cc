@@ -155,4 +155,34 @@ describe('global workbench attention polling', () => {
     expect(invoke).not.toHaveBeenCalled()
     expect(vi.getTimerCount()).toBe(0)
   })
+
+  it('notifies once when a task goes from working to replied or stopped while the window is in the background (2026-10-06)', async () => {
+    const { createWorkbenchAttentionPoller } = await import('./workbench-attention.js')
+    let progress: Array<{ id: string; phase: string }> = [{ id: 'A', phase: 'working' }, { id: 'B', phase: 'working' }, { id: 'C', phase: 'working' }]
+    let focused = false
+    const invoke = vi.fn(async () => {})
+    const attention = createWorkbenchAttentionPoller({ invokeWorkbenchApi: async () => ({ tasks: [], progress }), invoke, onChange: vi.fn(), getContext: () => ({ taskId: null, focused }) })
+    await attention.refresh()
+    expect(invoke).not.toHaveBeenCalled()                       // 第一次只是记下现状
+    progress = [{ id: 'A', phase: 'replied' }, { id: 'B', phase: 'cancelled' }, { id: 'C', phase: 'working' }]
+    await attention.refresh(); await Promise.resolve(); await Promise.resolve()
+    expect(invoke).toHaveBeenCalledTimes(1)
+    expect(invoke).toHaveBeenLastCalledWith('notify_user', { title: '一起做有回复了', body: '有一件事回复了。打开 CC 查看。' })
+    progress = [{ id: 'A', phase: 'replied' }, { id: 'C', phase: 'interrupted' }]
+    await attention.refresh(); await Promise.resolve(); await Promise.resolve()
+    expect(invoke).toHaveBeenLastCalledWith('notify_user', { title: '一起做有任务停下了', body: '打开 CC 看看发生了什么。' })
+    // 窗口在前面:不弹
+    progress = [{ id: 'D', phase: 'working' }]; await attention.refresh()
+    focused = true; progress = [{ id: 'D', phase: 'replied' }]
+    await attention.refresh(); await Promise.resolve(); await Promise.resolve()
+    expect(invoke).toHaveBeenCalledTimes(2)
+    attention.destroy()
+  })
+
+  it('an older daemon without progress never notifies about replies', async () => {
+    const { progressTransitions, parseProgress } = await import('./workbench-attention.js')
+    expect(parseProgress({ tasks: [] })).toBeNull()
+    expect(progressTransitions(null, new Map([['A', 'replied']]))).toEqual({ replied: [], stopped: [] })
+    expect(progressTransitions(new Map([['A', 'queued']]), new Map([['A', 'replied']]))).toEqual({ replied: [], stopped: [] })
+  })
 })
