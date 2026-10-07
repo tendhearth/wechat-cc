@@ -104,7 +104,10 @@ export function makeViewDomain(ctx:ServiceCtx, queries?:{quotaHandoff(id:string)
   function projects(){
     const ownerChatId=ctx.deps.ownerChatId();if(!ownerChatId)return[]
     const providers=ctx.deps.registry.list().filter(id=>isWorkbenchProviderId(id)&&isWorkbenchExecutorCapabilities(ctx.deps.registry.get(id)?.opts.workbench))
-    return makeProjectCatalog({ownerChatId,registered:ctx.deps.registeredProjects?.()??[],known:store.ownedProjects(ownerChatId,providers),providers,defaultProvider:ctx.deps.defaultProvider})
+    // 主人在桌面「添加项目」加的那些也算(2026-10-07):以前只有配置里登记的 + 有过任务的才进交办选项,
+    // 新加的项目在第一件事之前选不到 —— 「在独立工作区里做」只对项目有效,于是也开不了。
+    const added=store.projects().map(project=>({path:project.path,providerId:project.providerId}))
+    return makeProjectCatalog({ownerChatId,registered:ctx.deps.registeredProjects?.()??[],known:[...store.ownedProjects(ownerChatId,providers),...added],providers,defaultProvider:ctx.deps.defaultProvider})
   }
   function addProject(input:{path:string;name?:string;providerId:string}) {
     if(typeof input.path!=='string'||input.path.length>4096||typeof input.providerId!=='string'||(input.name!==undefined&&(typeof input.name!=='string'||!input.name.trim()||input.name.length>100)))throw Error('invalid_request')

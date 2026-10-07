@@ -335,3 +335,13 @@ it('WeChat 「任务 新建 <项目> 独立」 (2026-10-07): runs in a worktree,
   expect(store.projects().some(p=>p.path===task.path)).toBe(false)
   await settle(first.taskId)
 })
+
+it('a project added on the desktop is offered for hand-off before it has any task (2026-10-07)',async()=>{
+  const extra=join(area,'added');mkdirSync(extra)
+  expect(service.projects().some(p=>p.path===realpathSync(extra))).toBe(false)
+  service.addProject({path:extra,providerId:'claude'})
+  const offered=service.entryOptions(context).projects.find(p=>p.path===realpathSync(extra))
+  expect(offered).toMatchObject({providerId:'claude'})
+  const done=service.createEntry(input({target:{kind:'project',projectId:offered!.id}}),context)
+  await settle(done.receipt.taskId)
+})
