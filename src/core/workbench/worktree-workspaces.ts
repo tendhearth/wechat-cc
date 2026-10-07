@@ -39,8 +39,15 @@ export function git(cwd: string, args: string[]): string {
 export function repoRootOf(projectPath: string): string | null {
   try {
     const top = git(projectPath, ['rev-parse', '--show-toplevel'])
-    return top ? realpathSync(top) : null
+    return top ? real(top) : null
   } catch { return null }
+}
+/**
+ * 同一个目录的唯一写法:git 在 Windows 上回 `C:/…` 正斜杠 + 长名,临时目录可能是 8.3 短名(`RUNNER~1`)——
+ * 不归一的话 relative() 会算出 `..`,把一个好好的子目录当成越界(2026-10-07 Windows CI 抓到)。
+ */
+function real(path: string): string {
+  try { return realpathSync.native(path) } catch { return realpathSync(path) }
 }
 
 const ID = /^[a-f0-9]{8}$/
@@ -49,10 +56,11 @@ const PROJECT_ID = /^p-[a-f0-9]{20}$/
 /** 算位置,不碰盘。projectId / id 都按格式校验,拼不出越界的路径。 */
 export function planWorktree(input: { stateDir: string; projectId: string; projectPath: string; repoRoot: string; id: string }): WorktreePlan {
   if (!PROJECT_ID.test(input.projectId) || !ID.test(input.id)) throw new Error('invalid_worktree')
-  const rel = relative(input.repoRoot, input.projectPath)
+  const repoRoot = real(input.repoRoot), projectPath = real(input.projectPath)
+  const rel = relative(repoRoot, projectPath)
   if (rel.startsWith('..') || isAbsolute(rel)) throw new Error('invalid_worktree')
   const root = join(input.stateDir, 'worktrees', input.projectId, input.id)
-  return { root, branch: `${BRANCH_PREFIX}${input.id}`, taskPath: rel ? join(root, rel) : root, repoRoot: input.repoRoot, projectPath: input.projectPath }
+  return { root, branch: `${BRANCH_PREFIX}${input.id}`, taskPath: rel ? join(root, rel) : root, repoRoot, projectPath: input.projectPath }
 }
 
 /**
@@ -71,7 +79,7 @@ export function ensureWorktree(plan: WorktreePlan): string {
     git(plan.repoRoot, ['worktree', 'add', '-b', plan.branch, plan.root, 'HEAD'])
   }
   if (!existsSync(plan.taskPath)) throw new Error('worktree_project_missing')
-  return realpathSync(plan.taskPath)
+  return real(plan.taskPath)
 }
 
 /** 工作区里有没有没提交的改动(含未跟踪的文件)。 */

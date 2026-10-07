@@ -286,15 +286,16 @@ it('isolated worktree tasks (2026-10-07): run in parallel on one project, stay o
   const one=service.createEntry(input({target:{kind:'project',projectId,isolation:'worktree'}}),context)
   const two=service.createEntry(input({target:{kind:'project',projectId,isolation:'worktree'}}),context)
   const [a,b]=[service.detail(one.receipt.taskId).task,service.detail(two.receipt.taskId).task]
-  expect(a.path).not.toBe(b.path);expect(a.path.startsWith(join(stateDir,'worktrees'))).toBe(true)
+  // Windows:任务目录是长名真实路径,临时目录可能是 8.3 短名 —— 两边都用 native 真实路径比
+  const wtRoot=realpathSync.native(stateDir)
+  expect(a.path).not.toBe(b.path);expect(a.path.startsWith(join(wtRoot,'worktrees'))).toBe(true)
   expect(a.waitingFor).toBeNull();expect(b.waitingFor).toBeNull()
   expect(a.worktree).toMatchObject({branch:expect.stringMatching(/^cc\/[a-f0-9]{8}$/),projectPath:project,removed:false})
   expect(readFileSync(join(a.path,'a.txt'),'utf8')).toBe('one\n')
   gate.resolve();await settle(one.receipt.taskId);await settle(two.receipt.taskId)
   // 不登记成项目
-  const wtRoot=join(stateDir,'worktrees')
-  expect(store.projects().some(p=>p.path.startsWith(wtRoot))).toBe(false);expect(store.ownedProjects('owner').some(p=>p.path.startsWith(wtRoot))).toBe(false)
-  expect(service.projects().some(p=>p.path.startsWith(wtRoot))).toBe(false)
+  expect(store.projects().some(p=>p.path.startsWith(join(wtRoot,'worktrees')))).toBe(false);expect(store.ownedProjects('owner').some(p=>p.path.startsWith(join(wtRoot,'worktrees')))).toBe(false)
+  expect(service.projects().some(p=>p.path.startsWith(join(wtRoot,'worktrees')))).toBe(false)
   // 提交到分支;项目本身不动
   const commit=service.worktreeAction(one.receipt.taskId,'commit')
   const {mergeHint}=await import('./worktree-workspaces')

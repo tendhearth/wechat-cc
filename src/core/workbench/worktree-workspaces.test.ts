@@ -10,7 +10,7 @@ const dirs: string[] = []
 afterEach(() => { for (const d of dirs.splice(0)) removeTempDir(d) })
 const PID = 'p-0123456789abcdef0123'
 function repo() {
-  const root = realpathSync(mkdtempSync(join(tmpdir(), 'cc-wt-'))); dirs.push(root)
+  const root = realpathSync.native(mkdtempSync(join(tmpdir(), 'cc-wt-'))); dirs.push(root)
   const project = join(root, 'repo'), state = join(root, 'state')
   mkdirSync(join(project, 'pkg', 'app'), { recursive: true }); mkdirSync(state)
   const g = (...a: string[]) => execFileSync('git', a, { cwd: project, stdio: 'pipe' })
@@ -48,7 +48,7 @@ describe('worktree workspaces (2026-10-07)', () => {
     const sub = join(project, 'pkg', 'app')
     const plan = planWorktree({ stateDir: state, projectId: PID, projectPath: sub, repoRoot: repoRootOf(sub)!, id: '00ff00ff' })
     const path = ensureWorktree(plan)
-    expect(path).toBe(realpathSync(join(plan.root, 'pkg', 'app')))
+    expect(path).toBe(realpathSync.native(join(plan.root, 'pkg', 'app')))
     expect(readFileSync(join(path, 'b.txt'), 'utf8')).toBe('b\n')
   })
   it('refuses an existing branch name, a foreign directory, bad ids, and non-git folders', () => {
@@ -61,7 +61,7 @@ describe('worktree workspaces (2026-10-07)', () => {
     expect(() => ensureWorktree(foreign)).toThrow('worktree_conflict')
     expect(() => planWorktree({ stateDir: state, projectId: '../x', projectPath: project, repoRoot, id: 'abcd1234' })).toThrow('invalid_worktree')
     expect(() => planWorktree({ stateDir: state, projectId: PID, projectPath: project, repoRoot, id: '../../x' })).toThrow('invalid_worktree')
-    const plain = realpathSync(mkdtempSync(join(tmpdir(), 'cc-plain-'))); dirs.push(plain)
+    const plain = realpathSync.native(mkdtempSync(join(tmpdir(), 'cc-plain-'))); dirs.push(plain)
     expect(repoRootOf(plain)).toBeNull()
   })
   it('merge hint quotes paths with spaces', () => {
