@@ -11,9 +11,9 @@ describe('connectionsTrust', () => {
 })
 describe('muteDots', () => {
   it('所有圆点压成 unknown,文字不动', () => {
-    const v = { headline: { dot: 'ok' as const, key: 'k' }, sources: [{ dot: 'ok' as const, label: 'a' }, { dot: 'bad' as const, label: 'b' }], computers: [{ dot: 'ok' as const, label: 'c' }] }
+    const v = { headline: { dot: 'ok' as const, key: 'k' }, capabilities: [{ dot: 'bad' as const, label: 'x' }], sources: [{ dot: 'ok' as const, label: 'a' }, { dot: 'bad' as const, label: 'b' }], computers: [{ dot: 'ok' as const, label: 'c' }] }
     const m = muteDots(v)
-    expect([m.headline.dot, ...m.sources.map(x => x.dot), ...m.computers.map(x => x.dot)]).toEqual(['unknown', 'unknown', 'unknown', 'unknown'])
+    expect([m.headline.dot, ...m.capabilities.map(x => x.dot), ...m.sources.map(x => x.dot), ...m.computers.map(x => x.dot)]).toEqual(['unknown', 'unknown', 'unknown', 'unknown', 'unknown'])
     expect(m.sources[1]!.label).toBe('b')
   })
 })

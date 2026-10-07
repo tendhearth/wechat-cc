@@ -31,6 +31,9 @@ import type { ChatPrefsStore } from '../chat-prefs'
 import type { CareLedger } from '../companion/care-ledger'
 import type { ReplySinks } from '../reply-sinks'
 import { loadCompanionConfig } from '../companion/config'
+import { buildCapabilities } from '../capabilities'
+import { hasFullDiskAccess } from '../../lib/fs-access'
+import { readNightlyState } from '../memory/nightly'
 import { readPlanLogDays } from '../companion/plan-memory'
 import { readJournalSeen, writeJournalSeen } from '../../core/journal-seen'
 import { resolveAdminChatId } from '../companion/resolve-admin'
@@ -151,6 +154,8 @@ export interface PipelineDepsOpts {
   workbench?: import('../../core/workbench/service').WorkbenchService
   /** 网络守护运行时(2026-10-02):微信入站闸门 + 每晚整理记忆的跳过判据。 */
   guardRuntime?: import('../guard/runtime').GuardRuntime
+  /** 可选子系统的开机状态(SubsystemSupervisor.statuses;「CC 现在怎么样」用)。 */
+  subsystems?: () => Array<{ name: string; state: 'ok' | 'degraded' | 'off'; error?: string }>
   /** 内部 API 的 token-registry 窄接口,给手机设置面板登记链接 / 设备令牌(梳理第 6 步)。 */
   panelTokens?: import('../internal-api/token-registry').PanelTokens
   matters?: import('../../core/matters/store').MatterStore
@@ -626,6 +631,28 @@ export function buildPipelineDeps(opts: PipelineDepsOpts, refs: PipelineDepsRefs
     computer: () => ({ label: hostname().replace(/\.local$/, ''), since: startedAt, version: APP_VERSION }),
     detailLimit: 3,
     ...(opts.workbench ? { workbench: opts.workbench } : {}),
+    // 「CC 现在怎么样」(2026-10-06):现有信号拼成四态能力表(capabilities.ts);任何一路读不到就当没有,不让整张卡挂掉。
+    capabilities: () => {
+      const cfg = loadAgentConfig(stateDir) as { provider?: string; knowledge_enabled?: boolean }
+      const provider = cfg.provider ?? 'claude'
+      const probe = (boot.providerProbes?.() ?? []).find(p => p.id === provider)
+      const outbound = ilink.outboundHealth()
+      const guard = opts.guardRuntime?.health()
+      const fda = process.platform === 'darwin' ? hasFullDiskAccess() : null
+      const nightly = readNightlyState(stateDir)
+      let devices = 0
+      try { devices = settingsPanel.phoneDevices().length } catch { /* 读不到就当没配对 */ }
+      return buildCapabilities({
+        wechat: { outbound: outbound.state, expired: ilink.sessionState.listExpired().length, lastError: outbound.lastError ?? null },
+        brain: { provider, name: boot.registry.get(provider)?.opts.displayName ?? provider, registered: boot.registry.has(provider), retrying: probe?.state === 'retrying', lastError: probe?.last_error ?? null },
+        guard: guard?.enabled ? { safe: guard.safe, paused: !!guard.paused, detail: guard.detail ?? null } : null,
+        fullDiskAccess: fda === null ? null : { granted: fda, settingsUrl: 'x-apple.systempreferences:com.apple.preference.security?Privacy_AllFiles' },
+        knowledge: cfg.knowledge_enabled === true ? { built: !!boot.knowledge, embed: boot.knowledge?.embedStatus?.() ?? (boot.knowledge?.embedder ? 'python' : 'none') } : null,
+        memory: loadCompanionConfig(stateDir).memory_nightly_enabled ? { failures: nightly.failures, firstRunDone: nightly.firstRunDone } : null,
+        phone: { relay: relayV2Configured(stateDir), devices },
+        subsystems: opts.subsystems?.() ?? [],
+      })
+    },
   }))
   // 原生会话读:单飞 + 短缓存(裁定 8),10 s 预算超了也不会堆积后台扫描。
   const phoneSessions = opts.workbench ? cacheSessions({ list: (p, i) => opts.workbench!.listNativeHistory(p, i), read: (k, i) => opts.workbench!.readNativeHistory(k, i), readRecent: (k, i) => opts.workbench!.readRecentNativeHistory(k, i) }) : null

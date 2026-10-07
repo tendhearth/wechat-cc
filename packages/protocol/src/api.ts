@@ -391,6 +391,12 @@ export const Connections = z.object({
   computers: z.array(z.object({ id: z.string(), label: z.string(), online: z.boolean(), since: z.number().nullable(), version: z.string().nullable() })),
   recent: z.array(z.object({ matterId: z.string(), title: z.string(), phase: z.string(), at: z.number() })),
   outputs: z.array(z.object({ matterId: z.string(), name: z.string(), mime: z.string(), at: z.number() })),
+  // 「CC 现在怎么样」(2026-10-06):各项能力四态 + 原因码 + 人话 + 至多一个动作。可选:老 daemon 不带。
+  capabilities: z.array(z.object({
+    id: z.string(), name: z.string(), state: z.enum(['ok', 'fallback', 'needs_you', 'off']),
+    code: z.string(), params: z.record(z.string(), z.union([z.string(), z.number()])).optional(), reason: z.string(),
+    action: z.object({ label: z.string(), where: z.enum(['desktop', 'settings', 'wechat']), url: z.string().optional() }).optional(),
+  })).optional(),
 })
 export type ConnectionsT = z.infer<typeof Connections>
 
