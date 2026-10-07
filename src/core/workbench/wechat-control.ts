@@ -10,6 +10,7 @@ import type {ProjectCatalogEntry} from './project-catalog'
 import {validateUserInputAnswers,type PendingUserInput} from './user-input'
 import {resultCommandHelp,resultToken,wechatResultPage} from './wechat-results'
 import {isWorkbenchProviderId} from './executor-capabilities'
+import type {ReviewTurn} from './review'
 
 export interface WechatMessageIdentity {accountId:string;userId:string;msgId?:string;createTimeMs:number}
 export type WechatWorkbenchReply=string|{kind:'artifact_delivered';receiptId:string}
@@ -25,6 +26,8 @@ interface Actions {
   submitInput(id:string,input:{runId:string;requestId:string;text:string}):Promise<LiveInput>
   resolvePermission(id:string,requestId:string,decision:PermissionDecision):void
   resolveAnswer(id:string,requestId:string,answers:unknown):void
+  /** 变更快照(新→旧);没接就没有「改动」这条命令。 */
+  reviewList?(id:string):ReviewTurn[]
 }
 const UUID='[a-f0-9]{8}-[a-f0-9]{4}-[1-5][a-f0-9]{3}-[89ab][a-f0-9]{3}-[a-f0-9]{12}'
 const requestCommand=new RegExp(`^(权限|问题|允许|拒绝|回答)\\s+(${UUID})(?:\\s+([\\s\\S]+))?$`,'i')
@@ -42,7 +45,7 @@ const REQUEST_MAX=6000
 const unavailable='没有找到这个任务，请在桌面工作台核对编号。'
 const stale='这条请求已失效或不属于这个任务。请重新查询任务，使用当前请求编号。'
 const stopUnconfirmed='这条停止请求已记录，但尚未确认执行结果。请查询任务状态；如需停止当前轮次，请发送一条新的停止消息。'
-const usage=(id='<任务编号>')=>`用法：\n项目：任务 项目\n新建：任务 新建 <项目编号> <要求>\n查看：任务 ${id}\n补充：任务 ${id} 补充 <要求>\n停止：任务 ${id} 停止\n处理待办时，请复制任务消息中的完整请求编号。`
+const usage=(id='<任务编号>')=>`用法：\n项目：任务 项目\n新建：任务 新建 <项目编号> <要求>\n查看：任务 ${id}\n补充：任务 ${id} 补充 <要求>\n改动：任务 ${id} 改动\n停止：任务 ${id} 停止\n处理待办时，请复制任务消息中的完整请求编号。`
 const clip=(value:string,max:number)=>value.length>max?value.slice(0,max)+'…':value
 const singleLine=(value:string,max=100)=>clip(value.replace(/[\r\n]+/g,' '),max)
 export const isWechatTaskCommand=(text:string)=>/^(?:任务|\/task)(?:\s|$)/i.test(text.trim())
@@ -168,6 +171,31 @@ function failure(error:unknown,id:string){
   return '暂时无法处理，请在桌面工作台查看任务状态。'
 }
 
+const KIND_LABEL:Record<string,string>={added:'新建',deleted:'删除',modified:'修改',not_reviewed:'未展开'}
+/** diff 里的增删行数(只数 hunk 正文,不数 @@ 头)。 */
+function lineCounts(diff:string|undefined):string {
+  if(!diff)return ''
+  let plus=0,minus=0
+  for(const line of diff.split('\n')){if(line.startsWith('+'))plus++;else if(line.startsWith('-'))minus++}
+  return `（+${plus} −${minus}）`
+}
+/**
+ * 「任务 <编号> 改动」(2026-10-06,diff 审阅欠的微信那半):最近一轮改了哪些文件、各增删几行。只读 ——
+ * 接受 / 打回 / 撤销要看 diff,留在桌面「改动」面板;路径过长截断,最多列 12 个。
+ */
+function changesReply(id:string,turns:ReviewTurn[]|null):string {
+  if(!turns)return '这里看不了改动，请在桌面工作台的「改动」面板查看。'
+  const latest=turns.find(t=>t.status!=='unavailable')
+  if(!latest)return turns.length?`任务 ${id}：改动记录读不出来，请在桌面工作台查看。`:`任务 ${id}：还没有改动记录（不是 Git 项目，或还没跑完一轮）。`
+  if(!latest.files.length)return `任务 ${id}：最近一轮没有改动文件。`
+  const shown=latest.files.slice(0,12).map(f=>`• ${KIND_LABEL[f.kind]??f.kind} ${singleLine(f.path,120)}${lineCounts(f.diff)}`)
+  const lines=[`任务 ${id} · 最近一轮改了 ${latest.files.length} 个文件${turns.length>1?`（共 ${turns.length} 轮）`:''}：`,...shown]
+  if(latest.files.length>12)lines.push(`还有 ${latest.files.length-12} 个。`)
+  if(latest.status==='partial')lines.push('这一轮有文件没能完整检查，以桌面为准。')
+  lines.push('逐个看 diff、接受、打回或撤销：桌面工作台「改动」面板。')
+  return lines.join('\n')
+}
+
 export function makeWechatWorkbenchControl(opts:{store:WorkbenchStore;ownerChatId:()=>string|null;actions:Actions}){
   return async(chatId:string,text:string,identity?:WechatMessageIdentity):Promise<WechatWorkbenchReply|null>=>{
     if(!isWechatTaskCommand(text))return null
@@ -243,6 +271,7 @@ export function makeWechatWorkbenchControl(opts:{store:WorkbenchStore;ownerChatI
         if(delivery.status==='blocked')return '文件未发送，账号绑定或成果校验已失效。请在桌面查看这项任务。'
         return '文件暂未发送，保存的成果版本未变。请稍后重新发送获取命令。'
       }
+      if(suffix==='改动')return changesReply(id,opts.actions.reviewList?.(id)??null)
       if(/^正文(?:\s|$)/.test(suffix)){
         const page=/^正文\s+(r[1-9]\d*-[a-f0-9]{12})\s+([1-9]\d*)$/i.exec(suffix)
         if(!page)return resultCommandHelp(id)
@@ -281,7 +310,7 @@ export function makeWechatWorkbenchControl(opts:{store:WorkbenchStore;ownerChatI
         opts.actions.resolveAnswer(id,requestId,phoneAnswers(request,answer))
         return `任务 ${id}：已提交回答。`
       }
-      if(/^(权限|问题|允许|拒绝|回答|停止|结果|状态|待办|提醒我|静音|正文|文件)(?:\s|$)/.test(suffix))return usage(id)
+      if(/^(权限|问题|允许|拒绝|回答|停止|结果|状态|待办|提醒我|静音|正文|文件|改动)(?:\s|$)/.test(suffix))return usage(id)
       const supplement=suffix.replace(/^(?:补充|继续)(?:\s+|$)/,'').trim()
       if(!supplement)return usage(id)
       const prior=opts.store.liveInputs.get(requestId)

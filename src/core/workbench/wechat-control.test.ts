@@ -121,6 +121,27 @@ describe('WeChat task control through the shared service',()=>{
     expect(reply).not.toContain('已答复，会话还开着')
     expect(reply).not.toContain('自己让开')
   })
+  it('任务 <编号> 改动 lists the latest round of changed files with line counts (2026-10-06)',async()=>{
+    setup({async spawn(){return{async *dispatch(){yield result},async close(){}}}})
+    const task=create();await settled(task.id)
+    const turn=(files:Array<{path:string;kind:'added'|'deleted'|'modified'|'not_reviewed';diff?:string}>,status:'complete'|'partial'|'unavailable'='complete')=>({artifactId:'a',sha256:'s',name:'n',createdAt:1,status,headBefore:null,headAfter:null,preexistingPaths:[],notes:[],files:files.map(f=>({preexisting:false,...f}))})
+    let turns:ReturnType<typeof turn>[]=[]
+    const control=makeWechatWorkbenchControl({store,ownerChatId:()=>owner,actions:{...service,reviewList:()=>turns}})
+    expect(await control('owner',`任务 ${task.id} 改动`,identity)).toContain('还没有改动记录')
+    turns=[turn([{path:'src/a.ts',kind:'modified',diff:'@@ -1,2 +1,3 @@\n a\n-b\n+B\n+c\n'},{path:'new.md',kind:'added',diff:'@@ -0,0 +1 @@\n+hi\n'},{path:'big.bin',kind:'not_reviewed'}],'partial'),turn([],'complete')]
+    const reply=await control('owner',`任务 ${task.id} 改动`,identity) as string
+    expect(reply).toContain('最近一轮改了 3 个文件（共 2 轮）')
+    expect(reply).toContain('• 修改 src/a.ts（+2 −1）')
+    expect(reply).toContain('• 新建 new.md（+1 −0）')
+    expect(reply).toContain('• 未展开 big.bin')
+    expect(reply).toContain('没能完整检查')
+    turns=[turn(Array.from({length:15},(_,i)=>({path:`f${i}.ts`,kind:'modified' as const,diff:'@@ -1 +1 @@\n-x\n+y\n'})))]
+    expect(await control('owner',`任务 ${task.id} 改动`,identity)).toContain('还有 3 个。')
+    const noReview=makeWechatWorkbenchControl({store,ownerChatId:()=>owner,actions:{...service,reviewList:undefined}})
+    expect(await noReview('owner',`任务 ${task.id} 改动`,identity)).toContain('桌面工作台的「改动」面板')
+    expect(await control('owner',`任务 ${task.id} 改动 a.ts`,identity)).toContain('用法')
+  })
+
   it('lists only the current owner original tasks and keeps ordinary conversation out of the workbench',async()=>{
     setup({async spawn(){return{async *dispatch(){yield result},async close(){}}}})
     const mine=store.create({title:'我的报告',path:project,providerId:'claude',ownerChatId:'owner'})
