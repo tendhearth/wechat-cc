@@ -1,7 +1,7 @@
 import { PHONE_SAY_MAX_CHARS } from '@wechat-cc/protocol'
 import { labelJoin, type Lang } from '../i18n'
 import { DEMO_STICKER, DEMO_STICKER_FILE, DEMO_VOICE } from './demo-media'
-import { BackendError, type Backend, type Connection, type MatterT, type MatterDetailT, type ApprovalExplanationT, type ChatJobT, type ChatMessageT, type SessionContinueT, type MatterSayResultT, type UploadStateT } from './types'
+import { BackendError, type Backend, type Connection, type MatterT, type MatterDetailT, type ApprovalExplanationT, type ChatJobT, type ChatMessageT, type SessionContinueT, type MatterSayResultT, type UploadStateT, type ChatModelViewT } from './types'
 import {
   copy, IDS, CHAT_ID, PERM_ID, QUESTION_ID, RUN_IDS, t, explanation, progress, changesTurn, entryOptions,
   demoConnections, demoSessions, demoSessionMessages, demoSessionTitleKey, DEMO_SESSION_MESSAGES, type Stage,
@@ -42,6 +42,8 @@ export function makeDemoBackend(opts: { now?: () => number; setTimeout?: typeof 
   let chatMsgs: ChatRec[] = []
   let chatPending: ChatJobT | null = null
   const uploads = new Map<string, UploadStateT>()
+  // 演示:主人对话的后端 / 模型
+  let demoChatModel: ChatModelViewT = { mode: 'solo', provider: 'claude', model: null, globalModel: 'claude-opus-5-5', providers: [{ id: 'claude', name: 'Claude' }, { id: 'codex', name: 'Codex' }, { id: 'openai', name: 'API' }] }
   // 演示用的几条记忆(只在内存里;纠错会真的拿掉)
   const demoMemory = [{ id: 'a1b2c3', text: '回复喜欢直接，先说结论' }, { id: 'd4e5f6', text: '周末不安排工作会议' }]
   let chatJobs = new Map<string, ChatJobT>()
@@ -262,6 +264,12 @@ export function makeDemoBackend(opts: { now?: () => number; setTimeout?: typeof 
       const l = lastLang
       return chatMsgs.filter(m => chatText(m, l).includes(query)).reverse().slice(0, 30)
         .map(m => ({ id: m.id, role: m.role === 'me' ? 'me' as const : 'cc' as const, text: chatText(m, l), truncated: false, at: m.at, source: m.source ?? null }))
+    },
+    async chatModel() { return { ...demoChatModel } },
+    async setChatModel(provider, model) {
+      if (!demoChatModel.providers.some(p => p.id === provider)) throw new BackendError('unknown_provider')
+      demoChatModel = { ...demoChatModel, provider, model, globalModel: provider === 'claude' ? 'claude-opus-5-5' : null }
+      return { ...demoChatModel }
     },
     async chatFileChunk() {
       // 演示里的文件只是一个名字(放在电脑上的那份不存在)

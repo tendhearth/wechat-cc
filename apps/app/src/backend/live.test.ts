@@ -483,6 +483,15 @@ describe('跟 CC 说 / 连接 / 原生会话', () => {
     await b.create({ requestId: SAY_REQ, text: '整理一下', execution: {} })
     expect(reqs.at(-1)!.body).not.toHaveProperty('execution')
   })
+  it('这条对话用谁(2026-10-06):读与钉走 /m/api/chat/model,model=null 原样带上(跟随全局)', async () => {
+    const VIEW = { ok: true, mode: 'solo', provider: 'claude', model: null, globalModel: 'claude-opus-5-5', providers: [{ id: 'claude', name: 'Claude' }] }
+    const { b, reqs } = harness({ 'GET /m/api/chat/model': ok(VIEW), 'POST /m/api/chat/model': ok({ ...VIEW, provider: 'openai', model: 'DeepSeek' }) })
+    expect((await b.chatModel()).globalModel).toBe('claude-opus-5-5')
+    expect((await b.setChatModel('openai', 'DeepSeek')).model).toBe('DeepSeek')
+    expect(reqs.at(-1)).toMatchObject({ body: { provider: 'openai', model: 'DeepSeek' } })
+    await b.setChatModel('claude', null)
+    expect(reqs.at(-1)!.body).toEqual({ provider: 'claude', model: null })
+  })
   it('CC 记得你(2026-10-06):读记忆、逐条纠错走对应路由;不在了 ⇒ not_found', async () => {
     const VIEW = { ok: true, updated_at: null, when_label: null, mood: 'steady', failures: 0, changes: [], sections: [] }
     const { b, reqs } = harness({ 'GET /m/api/memory': ok(VIEW), 'POST /m/api/memory/correct': ok({ ok: true }) })

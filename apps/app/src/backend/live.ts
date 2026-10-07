@@ -21,7 +21,7 @@ import {
   type ApprovalExplanationT, type Backend, type Connection, type DeviceRowT, type EntryOptionsT,
   type MatterDetailT, type MatterT, type PhoneChangesTurnT, type ProgressSummaryT, type Unsubscribe,
   type ChatPageT, type ChatJobT, type ConnectionsT, type NativeSessionRowT, type NativeSessionPageT, type SessionContinueT,
-  type MatterSayResultT, type MatterInputT, type UploadStateT, type EntryModelCatalogT, type MemoryViewT, type ChatSearchHitT,
+  type MatterSayResultT, type MatterInputT, type UploadStateT, type EntryModelCatalogT, type MemoryViewT, type ChatModelViewT, type ChatSearchHitT,
 } from './types'
 
 type Topic = Parameters<Backend['subscribe']>[0]
@@ -252,6 +252,8 @@ export function makeLiveBackend(d: LiveDeps): Backend {
     async discardUpload(id, draftId) {
       await call('POST /m/api/attachment/discard', '/m/api/attachment/discard', { body: { id, draftId } })
     },
+    async chatModel() { return strip(await call<{ ok: true } & ChatModelViewT>('GET /m/api/chat/model', '/m/api/chat/model')) },
+    async setChatModel(provider, model) { return strip(await call<{ ok: true } & ChatModelViewT>('POST /m/api/chat/model', '/m/api/chat/model', { body: { provider, model } })) },
     async chatFileChunk(p) {
       return strip(await call<{ ok: true; name: string; mime: string; size: number; sha256: string; offset: number; nextOffset: number; contentBase64: string }>('GET /m/api/chat/file',
         `/m/api/chat/file?id=${encodeURIComponent(p.messageId)}&i=${p.index}&offset=${p.offset}`))
