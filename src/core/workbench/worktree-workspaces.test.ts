@@ -1,0 +1,71 @@
+import { afterEach, describe, expect, it } from 'vitest'
+import { execFileSync } from 'node:child_process'
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, writeFileSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
+import { removeTempDir } from '../../lib/test-temp'
+import { commitWorktree, ensureWorktree, git, mergeHint, planWorktree, removeWorktree, repoRootOf, worktreeDirty } from './worktree-workspaces'
+
+const dirs: string[] = []
+afterEach(() => { for (const d of dirs.splice(0)) removeTempDir(d) })
+const PID = 'p-0123456789abcdef0123'
+function repo() {
+  const root = realpathSync(mkdtempSync(join(tmpdir(), 'cc-wt-'))); dirs.push(root)
+  const project = join(root, 'repo'), state = join(root, 'state')
+  mkdirSync(join(project, 'pkg', 'app'), { recursive: true }); mkdirSync(state)
+  const g = (...a: string[]) => execFileSync('git', a, { cwd: project, stdio: 'pipe' })
+  g('init', '-q', '-b', 'main'); g('config', 'user.email', 't@t'); g('config', 'user.name', 't')
+  writeFileSync(join(project, 'a.txt'), 'one\n'); writeFileSync(join(project, 'pkg', 'app', 'b.txt'), 'b\n')
+  g('add', '-A'); g('commit', '-q', '-m', 'init')
+  return { project, state }
+}
+
+describe('worktree workspaces (2026-10-07)', () => {
+  it('plans, creates idempotently from HEAD (uncommitted changes stay behind), commits, and removes', () => {
+    const { project, state } = repo()
+    writeFileSync(join(project, 'a.txt'), 'uncommitted\n')
+    const repoRoot = repoRootOf(project)!
+    expect(repoRoot).toBe(project)
+    const plan = planWorktree({ stateDir: state, projectId: PID, projectPath: project, repoRoot, id: 'abcd1234' })
+    expect(plan).toMatchObject({ branch: 'cc/abcd1234', root: join(state, 'worktrees', PID, 'abcd1234') })
+    const path = ensureWorktree(plan)
+    expect(readFileSync(join(path, 'a.txt'), 'utf8')).toBe('one\n')
+    expect(ensureWorktree(plan)).toBe(path)
+    expect(worktreeDirty(plan.root)).toBe(false)
+    expect(commitWorktree(plan.root, 'nothing').committed).toBe(false)
+    writeFileSync(join(path, 'new.txt'), 'hi\n')
+    expect(() => removeWorktree(repoRoot, plan.root)).toThrow('worktree_dirty')
+    const c = commitWorktree(plan.root, '整理周报')
+    expect(c.committed).toBe(true)
+    expect(git(project, ['log', '-1', '--format=%s', 'cc/abcd1234'])).toBe('整理周报')
+    expect(git(project, ['rev-parse', '--abbrev-ref', 'HEAD'])).toBe('main')
+    removeWorktree(repoRoot, plan.root)
+    expect(existsSync(plan.root)).toBe(false)
+    expect(git(project, ['rev-parse', '--verify', 'cc/abcd1234'])).toBe(c.sha)
+  })
+  it('a project inside a monorepo runs in the same relative folder of the worktree', () => {
+    const { project, state } = repo()
+    const sub = join(project, 'pkg', 'app')
+    const plan = planWorktree({ stateDir: state, projectId: PID, projectPath: sub, repoRoot: repoRootOf(sub)!, id: '00ff00ff' })
+    const path = ensureWorktree(plan)
+    expect(path).toBe(realpathSync(join(plan.root, 'pkg', 'app')))
+    expect(readFileSync(join(path, 'b.txt'), 'utf8')).toBe('b\n')
+  })
+  it('refuses an existing branch name, a foreign directory, bad ids, and non-git folders', () => {
+    const { project, state } = repo()
+    execFileSync('git', ['branch', 'cc/deadbeef'], { cwd: project })
+    const repoRoot = repoRootOf(project)!
+    expect(() => ensureWorktree(planWorktree({ stateDir: state, projectId: PID, projectPath: project, repoRoot, id: 'deadbeef' }))).toThrow('worktree_branch_exists')
+    const foreign = planWorktree({ stateDir: state, projectId: PID, projectPath: project, repoRoot, id: '11112222' })
+    mkdirSync(foreign.root, { recursive: true })
+    expect(() => ensureWorktree(foreign)).toThrow('worktree_conflict')
+    expect(() => planWorktree({ stateDir: state, projectId: '../x', projectPath: project, repoRoot, id: 'abcd1234' })).toThrow('invalid_worktree')
+    expect(() => planWorktree({ stateDir: state, projectId: PID, projectPath: project, repoRoot, id: '../../x' })).toThrow('invalid_worktree')
+    const plain = realpathSync(mkdtempSync(join(tmpdir(), 'cc-plain-'))); dirs.push(plain)
+    expect(repoRootOf(plain)).toBeNull()
+  })
+  it('merge hint quotes paths with spaces', () => {
+    expect(mergeHint('/Users/a/My Project', 'cc/abcd1234')).toBe("cd '/Users/a/My Project' && git merge cc/abcd1234")
+    expect(mergeHint('/Users/a/p', 'cc/abcd1234')).toBe('cd /Users/a/p && git merge cc/abcd1234')
+  })
+})

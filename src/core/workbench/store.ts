@@ -170,10 +170,10 @@ export function makeWorkbenchStore(db: Db) {
     list: () => db.query<StoredTask, []>(`${TASK_SELECT} ORDER BY updated_at DESC,rowid DESC LIMIT 200`).all().map(publicTask),
     listOwned:(ownerChatId:string,limit=8)=>db.query<StoredTask,[string,number]>(`${TASK_SELECT} WHERE owner_chat_id=? AND archived_at IS NULL ORDER BY updated_at DESC,id DESC LIMIT ?`).all(ownerChatId,Math.max(1,Math.min(20,limit))).map(publicTask),
     ownedProjects(ownerChatId:string,providers?:readonly string[]):Array<{path:string;providerId:string}> {
-      const rows=db.query<{path:string;providerId:string},[string]>("SELECT path,provider_id AS providerId FROM workbench_tasks WHERE owner_chat_id=? AND workspace_kind='project' ORDER BY updated_at DESC,id DESC").all(ownerChatId)
+      const rows=db.query<{path:string;providerId:string},[string]>("SELECT path,provider_id AS providerId FROM workbench_tasks WHERE owner_chat_id=? AND workspace_kind='project' AND id NOT IN (SELECT task_id FROM workbench_worktrees) ORDER BY updated_at DESC,id DESC").all(ownerChatId)
       const accepted=[...new Set(providers??[])]
       const available=accepted.length
-        ? db.query<{path:string;providerId:string},string[]>(`SELECT path,provider_id AS providerId FROM workbench_tasks WHERE owner_chat_id=? AND workspace_kind='project' AND provider_id IN (${accepted.map(()=>'?').join(',')}) ORDER BY updated_at DESC,id DESC`).all(ownerChatId,...accepted)
+        ? db.query<{path:string;providerId:string},string[]>(`SELECT path,provider_id AS providerId FROM workbench_tasks WHERE owner_chat_id=? AND workspace_kind='project' AND id NOT IN (SELECT task_id FROM workbench_worktrees) AND provider_id IN (${accepted.map(()=>'?').join(',')}) ORDER BY updated_at DESC,id DESC`).all(ownerChatId,...accepted)
         : []
       const preferred=new Map<string,string>()
       for(const row of available)if(!preferred.has(row.path))preferred.set(row.path,row.providerId)
@@ -215,6 +215,16 @@ export function makeWorkbenchStore(db: Db) {
     },
     clearWriterError(id:string) {
       db.query("UPDATE workbench_tasks SET error=NULL,writer_groups=NULL WHERE id=? AND error='writer_not_closed'").run(id)
+    },
+    /** 独立工作区(v74,2026-10-07):这件事在哪个 worktree、源项目、分支;removedAt 非空 = 目录已删(分支保留)。 */
+    worktrees: {
+      record(input:{taskId:string;projectPath:string;repoRoot:string;root:string;branch:string}) {
+        db.query('INSERT OR IGNORE INTO workbench_worktrees(task_id,project_path,repo_root,root,branch,created_at) VALUES(?,?,?,?,?,?)').run(input.taskId,input.projectPath,input.repoRoot,input.root,input.branch,Date.now())
+      },
+      get(taskId:string):{taskId:string;projectPath:string;repoRoot:string;root:string;branch:string;createdAt:number;removedAt:number|null}|null {
+        return db.query<{taskId:string;projectPath:string;repoRoot:string;root:string;branch:string;createdAt:number;removedAt:number|null},[string]>('SELECT task_id AS taskId,project_path AS projectPath,repo_root AS repoRoot,root,branch,created_at AS createdAt,removed_at AS removedAt FROM workbench_worktrees WHERE task_id=?').get(taskId)??null
+      },
+      markRemoved(taskId:string) { db.query('UPDATE workbench_worktrees SET removed_at=COALESCE(removed_at,?) WHERE task_id=?').run(Date.now(),taskId) },
     },
     /** 关不掉的执行程序的进程组(v73,2026-10-06):退出证据从这里查,见 lifecycle 的 writer 守望。 */
     setWriterGroups(id:string,groups:readonly number[]) {

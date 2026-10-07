@@ -270,3 +270,50 @@ it('persists the physical managed allocation path before any directory is create
   expect(reservation.directoryIdentity).toBeNull()
   expect(existsSync(reservation.resolvedPath!)).toBe(false)
 })
+
+it('isolated worktree tasks (2026-10-07): run in parallel on one project, stay out of the project list, commit to their branch, and clean up',async()=>{
+  const {execFileSync}=await import('node:child_process'),{readFileSync}=await import('node:fs')
+  const g=(...a:string[])=>execFileSync('git',a,{cwd:project,stdio:'pipe'}).toString().trim()
+  g('init','-q','-b','main');g('config','user.email','t@t');g('config','user.name','t')
+  writeFileSync(join(project,'a.txt'),'one\n');g('add','-A');g('commit','-q','-m','init')
+  // 两个独立工作区的任务开在同一个项目:路径不同,谁也不等谁
+  const gate=Promise.withResolvers<void>()
+  const registry=createProviderRegistry()
+  registry.register('claude',{async spawn(p){spawnCount++;return{async *dispatch(){await gate.promise;writeFileSync(join(p.path,'out.txt'),'done\n');yield{kind:'text' as const,text:'完成'};yield{kind:'result' as const,sessionId:'native',numTurns:1,durationMs:1}},async close(){}}}},{displayName:'claude',canResume:()=>true,workbench:MANAGED_NATIVE_CAPABILITIES})
+  await service.shutdown();store=makeWorkbenchStore(db)
+  service=makeWorkbenchService({store,registry,stateDir,managedWorkspaceRoot:join(area,'Tasks'),ownerChatId:()=>owner,defaultProvider:'claude',registeredProjects:()=>[{alias:'project',path:project}],matters:makeMatterStore(db),changes:makeTaskChangeHub(),mintSessionToken:()=>'t'})
+  const projectId=service.projects()[0]!.id
+  const one=service.createEntry(input({target:{kind:'project',projectId,isolation:'worktree'}}),context)
+  const two=service.createEntry(input({target:{kind:'project',projectId,isolation:'worktree'}}),context)
+  const [a,b]=[service.detail(one.receipt.taskId).task,service.detail(two.receipt.taskId).task]
+  expect(a.path).not.toBe(b.path);expect(a.path.startsWith(join(stateDir,'worktrees'))).toBe(true)
+  expect(a.waitingFor).toBeNull();expect(b.waitingFor).toBeNull()
+  expect(a.worktree).toMatchObject({branch:expect.stringMatching(/^cc\/[a-f0-9]{8}$/),projectPath:project,removed:false})
+  expect(readFileSync(join(a.path,'a.txt'),'utf8')).toBe('one\n')
+  gate.resolve();await settle(one.receipt.taskId);await settle(two.receipt.taskId)
+  // 不登记成项目
+  const wtRoot=join(stateDir,'worktrees')
+  expect(store.projects().some(p=>p.path.startsWith(wtRoot))).toBe(false);expect(store.ownedProjects('owner').some(p=>p.path.startsWith(wtRoot))).toBe(false)
+  expect(service.projects().some(p=>p.path.startsWith(wtRoot))).toBe(false)
+  // 提交到分支;项目本身不动
+  const commit=service.worktreeAction(one.receipt.taskId,'commit')
+  const {mergeHint}=await import('./worktree-workspaces')
+  expect(commit).toMatchObject({committed:true,mergeHint:mergeHint(project,a.worktree!.branch)})
+  expect(g('log','-1','--format=%s',a.worktree!.branch)).toBe(a.title)
+  expect(existsSync(join(project,'out.txt'))).toBe(false)
+  // 有没提交的改动 ⇒ 不删;提交后删 ⇒ 目录没了、分支还在
+  expect(()=>service.worktreeAction(two.receipt.taskId,'remove')).toThrow('worktree_dirty')
+  service.worktreeAction(one.receipt.taskId,'remove')
+  expect(existsSync(a.path)).toBe(false);expect(service.detail(one.receipt.taskId).task.worktree?.removed).toBe(true)
+  expect(g('rev-parse','--verify',a.worktree!.branch)).toBe(commit.sha)
+  expect(()=>service.worktreeAction(one.receipt.taskId,'commit')).toThrow('worktree_removed')
+})
+
+it('an isolated task on a non-git project is refused before anything is reserved; a plain task is not a worktree',async()=>{
+  const projectId=service.projects()[0]!.id
+  expect(()=>service.createEntry(input({target:{kind:'project',projectId,isolation:'worktree'}}),context)).toThrow('worktree_not_git')
+  expect(db.query<{n:number},[]>('SELECT count(*) AS n FROM workbench_entry_requests').get()!.n).toBe(0)
+  const plain=service.createEntry(input({target:{kind:'project',projectId}}),context)
+  expect(()=>service.worktreeAction(plain.receipt.taskId,'commit')).toThrow('not_worktree')
+  expect(()=>service.createEntry(input({target:{kind:'managed',isolation:'worktree'} as never}),context)).toThrow('invalid_target')
+})
