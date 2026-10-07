@@ -359,3 +359,56 @@ describe('returnReviewFiles · 保留会话(评审 2026-09-21 #7)', () => {
     await vi.waitFor(() => expect(service.detail(id).task.status).toBe('completed'))
   })
 })
+
+describe('revertReviewFile (2026-10-06)', () => {
+  // 真 git 生成的快照:baseline → 改盘 → finishGitReview,和工作台存下来的完全同一种。
+  async function realReview(change: (project: string) => void, setupFiles: (project: string) => void) {
+    const { execFileSync } = await import('node:child_process')
+    const { captureGitBaseline, finishGitReview } = await import('./git-review')
+    const fixture = setup()
+    execFileSync('git', ['init', '-q'], { cwd: fixture.project })
+    setupFiles(fixture.project)
+    const task = await completedTask(fixture.service, fixture.project)
+    const baseline = await captureGitBaseline(fixture.project)
+    change(fixture.project)
+    const snapshot = await finishGitReview(baseline)
+    const artifactId = plant(fixture.store, task.id, fixture.stateDir, '代码变更-真.json', serializeGitReview(snapshot!))
+    return { ...fixture, id: task.id, artifactId }
+  }
+  it('restores a modified file byte for byte (keeping its mode), deletes an added one, re-creates a deleted one, and logs each', async () => {
+    const { readFileSync, writeFileSync, unlinkSync, existsSync, statSync, chmodSync, mkdirSync: mk } = await import('node:fs')
+    const { service, project, id, artifactId } = await realReview(p => {
+      writeFileSync(join(p, 'src', 'a.ts'), 'export const a = 2\nexport const b = 3\n')
+      writeFileSync(join(p, 'src', 'new.ts'), 'brand new\n')
+      unlinkSync(join(p, 'gone.md'))
+    }, p => {
+      mk(join(p, 'src')); writeFileSync(join(p, 'src', 'a.ts'), 'export const a = 1\n'); chmodSync(join(p, 'src', 'a.ts'), 0o755)
+      writeFileSync(join(p, 'gone.md'), '# 再见\n没有换行结尾')
+    })
+    expect(service.revertReviewFile(id, { artifactId, path: 'src/a.ts' })).toEqual({ path: 'src/a.ts', restored: 'content' })
+    expect(readFileSync(join(project, 'src', 'a.ts'), 'utf8')).toBe('export const a = 1\n')
+    if (process.platform !== 'win32') expect(statSync(join(project, 'src', 'a.ts')).mode & 0o777).toBe(0o755)
+    expect(service.revertReviewFile(id, { artifactId, path: 'src/new.ts' })).toEqual({ path: 'src/new.ts', restored: 'removed' })
+    expect(existsSync(join(project, 'src', 'new.ts'))).toBe(false)
+    service.revertReviewFile(id, { artifactId, path: 'gone.md' })
+    expect(readFileSync(join(project, 'gone.md'), 'utf8')).toBe('# 再见\n没有换行结尾')
+    expect(service.detail(id).events.filter(e => e.text.startsWith('已撤销')).length).toBe(3)
+    // 已经撤销过:现在的内容不再是快照里「改完」的那份 ⇒ 拒绝,不重复写
+    expect(() => service.revertReviewFile(id, { artifactId, path: 'src/a.ts' })).toThrow('review_file_changed')
+  })
+  it('refuses when the file changed after the snapshot, and when a session still holds the folder', async () => {
+    const { writeFileSync, readFileSync, mkdirSync: mk } = await import('node:fs')
+    const { service, store, project, id, artifactId } = await realReview(p => { writeFileSync(join(p, 'x.txt'), 'two\n') }, p => { writeFileSync(join(p, 'x.txt'), 'one\n'); mk(join(p, 'd')) })
+    writeFileSync(join(project, 'x.txt'), 'three\n')
+    expect(() => service.revertReviewFile(id, { artifactId, path: 'x.txt' })).toThrow('review_file_changed')
+    expect(readFileSync(join(project, 'x.txt'), 'utf8')).toBe('three\n')
+    writeFileSync(join(project, 'x.txt'), 'two\n')
+    // 「没确认退出」的那种也算占着:执行程序可能还在写
+    store.update(id, 'interrupted', 'writer_not_closed')
+    expect(() => service.revertReviewFile(id, { artifactId, path: 'x.txt' })).toThrow('workbench_busy')
+    store.clearWriterError(id)
+    expect(() => service.revertReviewFile(id, { artifactId, path: 'nope.txt' })).toThrow('invalid_review_reference')
+    service.revertReviewFile(id, { artifactId, path: 'x.txt' })
+    expect(readFileSync(join(project, 'x.txt'), 'utf8')).toBe('one\n')
+  })
+})

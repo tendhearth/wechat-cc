@@ -1017,6 +1017,20 @@ export function initWorkbenchPage(deps) {
     if (action === 'review-accept' && controller.state.selectedId && target.dataset.artifactId && target.dataset.path) {
       return mutate('POST', '/v1/workbench/review-mark', { id: controller.state.selectedId, artifactId: target.dataset.artifactId, path: target.dataset.path, mark: 'accepted' })
     }
+    // 逐文件撤销(2026-10-06):点两下才算;被拒的原因说成人话(daemon 那边全是拒绝条件,没有「尽量」)。
+    if (action === 'review-revert' && controller.state.selectedId && target.dataset.artifactId && target.dataset.path) {
+      if (!armConfirm(target, '再点一次：恢复成这一轮开始前')) return
+      return mutate('POST', '/v1/workbench/review-revert', { id: controller.state.selectedId, artifactId: target.dataset.artifactId, path: target.dataset.path }, e => {
+        const code = String(e instanceof Error ? e.message : e).match(/\b(workbench_busy|review_file_changed|review_revert_unavailable)\b/)?.[1]
+        if (!code) return false
+        fail(new Error({
+          workbench_busy: '这个文件夹还有会话占着，先收工再撤销。',
+          review_file_changed: '这个文件之后又被改过，不能直接撤销。',
+          review_revert_unavailable: '这个文件没法自动恢复（内容太大、不是文本，或只改了权限），请手动处理。',
+        }[code]))
+        return true
+      })
+    }
     if (action === 'review-return' && target.dataset.artifactId && target.dataset.path) {
       captureDraft()
       const artifactId = target.dataset.artifactId, path = target.dataset.path
