@@ -123,3 +123,20 @@ describe('classifyFailure — provider 码优先(arch backlog #4 第 2 步)', ()
     expect(classifyFailure(errorWithProviderCode('connection refused', undefined)).kind).toBe('network')
   })
 })
+
+describe('noteFallback (2026-10-06)', () => {
+  it('records each text-fallback shape once an hour, digits masked', async () => {
+    const { noteFallback } = await import('./classify')
+    const lines: string[] = []
+    const sink = (l: string) => lines.push(l)
+    noteFallback('network', 'connect ECONNREFUSED 127.0.0.1:4317', 1_000, sink)
+    noteFallback('network', 'connect ECONNREFUSED 127.0.0.1:5999', 2_000, sink)   // 同形状 ⇒ 不重复
+    noteFallback('llm_auth', 'HTTP 401 unauthorized', 3_000, sink)
+    noteFallback('network', 'connect ECONNREFUSED 127.0.0.1:4317', 3_700_000, sink)  // 一小时后再记
+    expect(lines).toEqual([
+      'no provider code → network: connect ECONNREFUSED #.#.#.#:#',
+      'no provider code → llm_auth: HTTP # unauthorized',
+      'no provider code → network: connect ECONNREFUSED #.#.#.#:#',
+    ])
+  })
+})
