@@ -65,7 +65,7 @@ import { makeForwardBudget } from '../../core/forward-budget'
 import type { InboundMsg } from '../../core/prompt-format'
 import { makeOnboardingHandler } from '../onboarding'
 import { botName, botNameFromModeFallback } from '../bot-name'
-import { loadAgentConfig, saveAgentConfig } from '../../lib/agent-config'
+import { loadAgentConfig, modelForProvider, saveAgentConfig } from '../../lib/agent-config'
 import { writeConfigKey } from '../config-surface'
 import { makeOpenaiModels } from '../openai-models'
 import { hasLlmKey } from '../llm-keys'
@@ -670,6 +670,20 @@ export function buildPipelineDeps(opts: PipelineDepsOpts, refs: PipelineDepsRefs
       message: (chatId: string, id: string) => messagesStore.get(chatId, id),
       search: (chatId: string, query: string, limit: number) => messagesStore.search(chatId, query, limit),
       speak: (text: string) => ilink.voice.synthesizeSpeech(text),
+      // 与微信 `/api <模型>` 同一处:Mode.solo 按对话钉,下一句生效(同后端换模型时协调器自己释放旧会话)。
+      model: {
+        current: (chatId: string) => {
+          const mode = boot.coordinator.getMode(chatId), cfg = loadAgentConfig(stateDir)
+          const provider = mode.kind === 'solo' ? mode.provider : cfg.provider
+          return {
+            mode: mode.kind, provider,
+            model: mode.kind === 'solo' ? mode.model ?? null : null,
+            globalModel: modelForProvider(cfg, provider) ?? null,
+            providers: boot.registry.list().map(id => ({ id, name: boot.registry.get(id)?.opts.displayName ?? id })),
+          }
+        },
+        set: (chatId: string, provider: string, model: string | null) => boot.coordinator.setMode(chatId, { kind: 'solo', provider, ...(model ? { model } : {}) }),
+      },
     } } : {}),
     ...(remoteTunnel ? { remoteInfo: () => remoteTunnel } : {}),
     ...(phonePush ? { push: phonePush } : {}),

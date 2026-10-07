@@ -1,7 +1,7 @@
 import type { z } from 'zod'
 import type {
   Matter, MatterDetail, ApprovalExplanation, ProgressSummary, PhoneChangesTurn, EntryOptions, DeviceRowT, PushPlatformT,
-  ChatPage, ChatJob, ChatMessage, ChatAttachment, EntryModelCatalog, MemorySuccess, ChatSearchHit, Connections, NativeSessionRow, NativeSessionPage, SessionContinueT, MatterSayResult,
+  ChatPage, ChatJob, ChatMessage, ChatAttachment, EntryModelCatalog, ChatModelView, MemorySuccess, ChatSearchHit, Connections, NativeSessionRow, NativeSessionPage, SessionContinueT, MatterSayResult,
 } from '@wechat-cc/protocol'
 import type { Lang } from '../i18n'
 
@@ -21,6 +21,8 @@ export type EntryModelCatalogT = z.infer<typeof EntryModelCatalog>
 /** 交办时指定的模型 / 思考强度;不给 ⇒ 用执行者自己的默认。 */
 export type EntryExecution = { model?: string; reasoningEffort?: string }
 export type MemoryViewT = Omit<z.infer<typeof MemorySuccess>, 'ok'>
+/** 主人对话用哪个后端 / 模型(2026-10-06);model=null ⇒ 用这个后端的全局设置 globalModel。 */
+export type ChatModelViewT = Omit<z.infer<typeof ChatModelView>, 'ok'>
 export type MemoryVerdict = 'wrong' | 'outdated' | 'delete'
 export type ChatSearchHitT = z.infer<typeof ChatSearchHit>
 /** 一句话 / 一件新事带的材料:同一个草稿 id 下先传好的几份(2026-10-06)。 */
@@ -97,6 +99,10 @@ export interface Backend {
   /** 回复里第 index 个附件(必须是语音)按需合成的声音(GET /m/api/chat/voice)。太长 ⇒ BackendError('too_large');电脑没设朗读 ⇒ 'no_voice'。 */
   chatVoice(messageId: string, index: number): Promise<{ mime: string; data: string }>
   /** 回复里第 index 个附件(必须是文件)按块读(GET /m/api/chat/file,2026-10-06);不在了 ⇒ not_found,太大 ⇒ too_large。 */
+  /** 主人对话的后端 / 模型(GET /m/api/chat/model)。 */
+  chatModel(): Promise<ChatModelViewT>
+  /** 钉这条对话的后端 / 模型(只影响主人这条对话,下一句生效);model=null ⇒ 用全局设置。 */
+  setChatModel(provider: string, model: string | null): Promise<ChatModelViewT>
   chatFileChunk(p: { messageId: string; index: number; offset: number }): Promise<{ name: string; mime: string; size: number; sha256: string; offset: number; nextOffset: number; contentBase64: string }>
   /** 表情库里的一张图(GET /m/api/sticker/<file>?b64=1)。不在库里 ⇒ BackendError('not_found')。 */
   sticker(file: string): Promise<{ mime: string; data: string }>

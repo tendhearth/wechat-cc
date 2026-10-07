@@ -230,3 +230,39 @@ describe('GET /m/api/chat/file (2026-10-06)', () => {
     for (const q of ['/file?id=out', '/file?id=out&i=x', '/file?id=out&i=1&offset=-1', `/file?id=out&i=1&offset=${bytes.length + 1}`]) expect((await call(d, get(q))).status).toBe(400)
   })
 })
+
+describe('/m/api/chat/model (2026-10-06)', () => {
+  const postModel = (body: unknown) => new Request('http://x/m/api/chat/model', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body) })
+  function modelDeps() {
+    let pin: { provider: string; model: string | null } | null = null
+    const calls: Array<[string, string, string | null]> = []
+    const d = deps({ model: {
+      current: () => ({ mode: 'solo', provider: pin?.provider ?? 'claude', model: pin?.model ?? null, globalModel: 'claude-opus-5-5', providers: [{ id: 'claude', name: 'Claude' }, { id: 'openai', name: 'API' }] }),
+      set: (chatId, provider, model) => { calls.push([chatId, provider, model]); pin = { provider, model } },
+    } })
+    return { d, calls }
+  }
+  it('reads the owner chat model and pins provider + model for that chat only', async () => {
+    const { d, calls } = modelDeps()
+    const read = await call(d, get('/model'))
+    expect(read.status).toBe(200)
+    PHONE_API_SCHEMAS['GET /m/api/chat/model']!.parse(read.body)
+    expect(read.body).toMatchObject({ provider: 'claude', model: null, globalModel: 'claude-opus-5-5' })
+    const set = await call(d, postModel({ provider: 'openai', model: 'DeepSeek-V4' }))
+    expect(set.status).toBe(200)
+    expect(set.body).toMatchObject({ provider: 'openai', model: 'DeepSeek-V4' })
+    PHONE_API_SCHEMAS['POST /m/api/chat/model']!.parse(set.body)
+    expect(calls.at(-1)![1]).toBe('openai')
+    await call(d, postModel({ provider: 'claude', model: null }))
+    expect(calls.at(-1)!.slice(1)).toEqual(['claude', null])
+    expect((await call(d, postModel({ provider: 'claude', model: 'claude-opus-5-5[1m]' }))).status).toBe(200)
+  })
+  it('rejects unknown providers, bad model names and extra fields; 503 when not wired', async () => {
+    const { d, calls } = modelDeps()
+    expect((await call(d, postModel({ provider: 'nope' }))).body).toMatchObject({ error: 'unknown_provider' })
+    for (const body of [{ provider: 'claude', model: 'has space' }, { provider: 'claude', model: '' }, { provider: 'claude', model: 'x'.repeat(121) }, { provider: 'claude', extra: 1 }, { model: 'm1' }])
+      expect((await call(d, postModel(body))).status).toBe(400)
+    expect(calls).toEqual([])
+    expect((await call(deps(), get('/model'))).status).toBe(503)
+  })
+})

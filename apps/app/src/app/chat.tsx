@@ -5,7 +5,8 @@ import { SafeAreaView } from 'react-native-safe-area-context'
 import { t, type Lang } from '../i18n'
 import { useLang } from '../i18n/useLang'
 import { getDraft, setDraft } from '../state/drafts'
-import { useConnection } from '../state/hooks'
+import { useBackendCtx } from '../state/BackendProvider'
+import { useConnection, useQuery } from '../state/hooks'
 import { useChat, type ChatSendOutcome } from '../state/useChat'
 import { ConnectionNotice } from '../ui/ConnectionNotice'
 import { Dot } from '../ui/Dot'
@@ -36,6 +37,7 @@ export default function Chat() {
   const conn = useConnection()
   const online = canSubmit(conn)
   const chat = useChat()
+  const { backend } = useBackendCtx()
   const [text, setTextState] = useState(() => getDraft('chat'))
   // 发送是异步的:成功回来时比的是「现在」输入框里的字,不是点发送时闭包里的那份
   const textRef = useRef(text)
@@ -78,6 +80,8 @@ export default function Chat() {
   const canSend = online && (!!text.trim() || images.length > 0) && !sending
   const retry = (b: Bubble) => { if (b.requestId) void run(() => chat.retry(b.requestId!, b.text), null) }
 
+  // 这条对话现在用谁(2026-10-06):一眼看见,点进去换。
+  const chatModel = useQuery('chatModel', () => backend.chatModel(), { refreshOnMount: true })
   const data = [...chat.bubbles].reverse()
   const loadFailed = !chat.page && chat.error !== undefined && !chat.noOwner
 
@@ -141,6 +145,10 @@ export default function Chat() {
               <Txt role="meta">{t(lang, 'chat.handoff')} ›</Txt>
             </Pressable>
             <AddImageButton testID="chat-add-image" lang={lang} disabled={sending || images.length >= CHAT_MAX_IMAGES} onPress={() => { void addImages() }} />
+            <Pressable testID="chat-model-open" accessibilityRole="button" accessibilityLabel={t(lang, 'chatModel.title')} onPress={() => router.push('/chat-model')} hitSlop={6}
+              style={({ pressed }) => ({ alignSelf: 'flex-start', minHeight: 36, justifyContent: 'center', paddingHorizontal: space.m, borderRadius: radius.control, borderWidth: 1, borderColor: c.hair, opacity: pressed ? 0.7 : 1 })}>
+              <Txt role="meta" numberOfLines={1}>{chatModelLabel(chatModel.data) ?? t(lang, 'chatModel.open')}</Txt>
+            </Pressable>
             <Pressable testID="chat-search-open" accessibilityRole="button" accessibilityLabel={t(lang, 'chatSearch.title')} onPress={() => router.push('/chat-search')} hitSlop={6}
               style={({ pressed }) => ({ alignSelf: 'flex-start', minHeight: 36, justifyContent: 'center', paddingHorizontal: space.m, borderRadius: radius.control, borderWidth: 1, borderColor: c.hair, opacity: pressed ? 0.7 : 1 })}>
               <Txt role="meta">{t(lang, 'chatSearch.open')}</Txt>
@@ -260,4 +268,12 @@ function Thinking({ lang }: { lang: Lang }) {
       </Animated.View>
     </View>
   )
+}
+
+/** 「Claude · claude-opus-5-5」:钉了的模型优先,没钉看全局;读不到 ⇒ null(按钮显示「模型」)。 */
+function chatModelLabel(v: { provider: string; model: string | null; globalModel: string | null; providers: Array<{ id: string; name: string }> } | undefined): string | null {
+  if (!v) return null
+  const name = v.providers.find(p => p.id === v.provider)?.name ?? v.provider
+  const model = v.model ?? v.globalModel
+  return model ? `${name} · ${model}` : name
 }

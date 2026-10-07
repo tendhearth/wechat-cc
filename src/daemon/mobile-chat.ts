@@ -64,7 +64,24 @@ export interface MobileChatDeps {
   search?(chatId: string, query: string, limit: number): Promise<MessageRecord[]>
   /** 合成语音(与桌面 agent_speak 同一个 synthesizeSpeech)。没接 ⇒ 语音路由 503。 */
   speak?(text: string): Promise<{ audio: Buffer; mime: string }>
+  /** 主人对话用哪个后端 / 模型(2026-10-06,与微信 `/api <模型>` 同一处:按对话钉 Mode.solo)。没接 ⇒ 503。 */
+  model?: {
+    current(chatId: string): ChatModelView
+    set(chatId: string, provider: string, model: string | null): void
+  }
 }
+
+export interface ChatModelView {
+  /** 'solo' 才有单一的 provider / model;多人模式(parallel / chatroom …)照实报,切换会改回 solo。 */
+  mode: string
+  provider: string
+  /** 这个对话钉的模型;null = 用这个后端的全局设置(globalModel)。 */
+  model: string | null
+  globalModel: string | null
+  providers: Array<{ id: string; name: string }>
+}
+/** 模型名:字母数字与 . _ / : - [ ](claude 的 `[1m]`),1–120 字,不能有空格。 */
+const MODEL_ID = /^[A-Za-z0-9._/:[\]-]{1,120}$/
 
 /** 主人 chat matter 的两种取法:peek 只读(GET 用),ensure 建 / 找并登记手机露面(说一句用)。 */
 export function makePhoneOwner(d: {
@@ -157,6 +174,28 @@ export async function mobileChatRoute(deps: MobileChatDeps | undefined, url: URL
     return new Response(body, { status: 200, headers: { 'content-type': 'application/json; charset=utf-8', 'cache-control': 'no-store' } })
   }
   // 搜主人那条对话(2026-10-06,对标 Orca 会话历史搜索):q 1–200 字;最多 30 条、每条截到 600 字(一帧装得下)。
+  // 这条对话用哪个后端 / 模型(2026-10-06,对标 Paseo / Orca 手机上换模型):读 + 钉(只影响主人这条对话,下一句生效)。
+  if (url.pathname === '/m/api/chat/model') {
+    if (!deps?.model) return err('model_not_wired', 503)
+    let owner: ReturnType<MobileChatDeps['owner']>
+    try { owner = deps.owner() } catch { return err('unavailable', 503) }
+    if (!owner) return err('no_owner_chat', 404)
+    if (req.method === 'GET') {
+      try { return json({ ok: true, ...deps.model.current(owner.chatId) }) } catch { return err('unavailable', 503) }
+    }
+    if (req.method !== 'POST') return err('method_not_allowed', 405)
+    let body: unknown
+    try { body = await req.json() } catch { return err('bad_json', 400) }
+    if (!body || typeof body !== 'object' || Array.isArray(body)) return err('invalid', 400)
+    const b = body as Record<string, unknown>
+    if (Object.keys(b).some(k => k !== 'provider' && k !== 'model')) return err('invalid', 400)
+    if (typeof b.provider !== 'string' || (b.model !== null && b.model !== undefined && (typeof b.model !== 'string' || !MODEL_ID.test(b.model)))) return err('invalid', 400)
+    let view: ChatModelView
+    try { view = deps.model.current(owner.chatId) } catch { return err('unavailable', 503) }
+    if (!view.providers.some(p => p.id === b.provider)) return err('unknown_provider', 400)
+    try { deps.model.set(owner.chatId, b.provider, typeof b.model === 'string' ? b.model : null) } catch { return err('unavailable', 503) }
+    return json({ ok: true, ...deps.model.current(owner.chatId) })
+  }
   if (url.pathname === '/m/api/chat/search') {
     if (req.method !== 'GET') return err('method_not_allowed', 405)
     if (!deps?.search) return err('chat_not_wired', 503)

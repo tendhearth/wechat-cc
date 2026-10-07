@@ -42,6 +42,9 @@ export const PHONE_ROUTES: ReadonlySet<string> = new Set([
   'GET /m/api/chat/voice',
   // CC 回复里的文件按块读(2026-10-06)
   'GET /m/api/chat/file',
+  // 主人对话用哪个后端 / 模型:读与钉(2026-10-06)
+  'GET /m/api/chat/model',
+  'POST /m/api/chat/model',
   // CC 的连接(spec 2026-10-01,mobile-reads.ts),去掉 detail
   'GET /m/api/connections',
   // 电脑上的原生会话(只读,spec 2026-10-01),项目只给目录名
