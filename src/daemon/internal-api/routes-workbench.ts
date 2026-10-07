@@ -70,7 +70,8 @@ function mappedError(err: unknown,entry=false): ReturnType<RouteHandler> {
   if (code === 'native_history_unavailable') return {status:503,body:{error:code}}
   // 打回改走 submitInput 之后这条路由也能吐它:存不下补充是「这会儿没法办」,不是 500(终审 M7)。
   if (code === 'input_storage_unavailable') return {status:503,body:{error:code}}
-  if (code === 'writer_alive' || code === 'invalid_state') return { status: 409, body: { error: code } }
+  if (code === 'writer_alive' || code === 'invalid_state' || code === 'review_file_changed') return { status: 409, body: { error: code } }
+  if (code === 'review_revert_unavailable') return { status: 422, body: { error: code } }
   if (code === 'matter_not_found') return { status: 404, body: { error: code } }
   if (code === 'not_found') return { status: 404, body: { error: code } }
   if (code === 'unavailable_provider') return { status: 422, body: { error: code } }
@@ -415,6 +416,18 @@ export function workbenchRoutes(deps: InternalApiDeps): RouteTable {
       } catch (err) {
         return mappedError(err)
       }
+    },
+
+    // 逐文件撤销(2026-10-06):恢复成这一轮开始前的内容。文件夹还被占着 ⇒ 409 workbench_busy;之后又改过 ⇒ 409 review_file_changed。
+    'POST /v1/workbench/review-revert': async (_query, body) => {
+      const value = objectBody(body)
+      const id = typeof value?.id === 'string' ? value.id : ''
+      const artifactId = typeof value?.artifactId === 'string' ? value.artifactId : ''
+      const path = value?.path
+      if (!TASK_ID.test(id) || !ARTIFACT_ID.test(artifactId) || typeof path !== 'string' || !path || path.length > 4096 || Object.keys(value ?? {}).some(k => !['id', 'artifactId', 'path'].includes(k))) return invalid()
+      if (!deps.workbench) return { status: 503, body: { error: 'workbench_not_wired' } }
+      try { return { status: 200, body: { reverted: deps.workbench.revertReviewFile(id, { artifactId, path }) } } }
+      catch (err) { return mappedError(err) }
     },
 
     'POST /v1/workbench/review-return': async (_query, body) => {

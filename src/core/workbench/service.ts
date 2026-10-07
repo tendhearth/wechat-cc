@@ -148,7 +148,7 @@ export function makeWorkbenchService(opts: Options) {
     /** 这个任务的所有变更快照,新→旧,每个文件附上当前标记。坏的那一轮单独 unavailable,不牵连别轮。 */
     reviewList:review.reviewList,
     markReviewFile:review.markReviewFile,
-    returnReviewFiles:review.returnReviewFiles,
+    returnReviewFiles:review.returnReviewFiles,revertReviewFile:review.revertReviewFile,
     resolvePermission:inputsDomain.resolvePermission,
     async handleWechat(chatId:string,text:string,identity?:WechatMessageIdentity):Promise<WechatWorkbenchReply|null>{return wechatControl(chatId,text,identity)},
     shutdown:lifecycleDomain.shutdown,

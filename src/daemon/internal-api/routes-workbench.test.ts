@@ -611,6 +611,24 @@ describe('Workbench internal HTTP API', () => {
     expect((await request('/v1/workbench/writer-exited',{method:'POST',body:JSON.stringify({id:'bad'})},operatorToken)).status).toBe(400)
   })
 
+  it('reverts one reviewed file for the desktop owner; changed file is 409, unrecoverable is 422, agents are denied (2026-10-06)',async()=>{
+    const workbench=service(),{request,operatorToken,trustedToken}=await start(workbench)
+    const revert=vi.fn((_id:string,input:{artifactId:string;path:string})=>{
+      if(input.path==='changed.ts')throw new Error('review_file_changed')
+      if(input.path==='bin.dat')throw new Error('review_revert_unavailable')
+      return {path:input.path,restored:'content'}
+    })
+    ;(workbench as unknown as {revertReviewFile:typeof revert}).revertReviewFile=revert
+    const body=(path:string,extra={})=>({method:'POST',body:JSON.stringify({id:'deadbeef',artifactId:'11111111-1111-4111-8111-111111111111',path,...extra})})
+    expect((await request('/v1/workbench/review-revert',body('a.ts'),trustedToken)).status).toBe(403)
+    expect(revert).not.toHaveBeenCalled()
+    const ok=await request('/v1/workbench/review-revert',body('src/a.ts'),operatorToken)
+    expect(ok.status).toBe(200);expect(await ok.json()).toEqual({reverted:{path:'src/a.ts',restored:'content'}})
+    expect((await request('/v1/workbench/review-revert',body('changed.ts'),operatorToken)).status).toBe(409)
+    expect((await request('/v1/workbench/review-revert',body('bin.dat'),operatorToken)).status).toBe(422)
+    for(const bad of [body(''),body('a.ts',{extra:1}),{method:'POST',body:JSON.stringify({id:'bad',artifactId:'x',path:'a'})}])expect((await request('/v1/workbench/review-revert',bad,operatorToken)).status).toBe(400)
+  })
+
   it('acknowledges an unattended executor only for the desktop operator credential',async()=>{
     const workbench=service(),{request,operatorToken,trustedToken}=await start(workbench)
     expect(minTierFor('POST /v1/workbench/unattended-ack')).toBe('admin')
