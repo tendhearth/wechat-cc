@@ -441,3 +441,17 @@ it('requires an explicit executor change when the hinted project executor is una
   dialog.choose('provider', 'codex'); dialog.submit(); await settle(); await pending
   expect(drafts[0]?.providerId).toBe('codex')
 })
+
+it('the independent-workspace checkbox (2026-10-07) only appears for a project and puts isolation on the target', async () => {
+  const {createTaskEntry} = await import('./task-entry.js')
+  const entry = createTaskEntry({invokeWorkbenchApi: api(), storage})
+  const pending = entry.open({text: '并行做一件事'}); await settle()
+  expect(dialog.innerHTML).not.toContain('name="isolation"')
+  dialog.choose('project', 'p-0123456789abcdef0123')
+  expect(dialog.innerHTML).toContain('name="isolation"')
+  dialog.event('change', {name: 'isolation', checked: true})
+  dialog.event('change', {name: 'isolation', checked: false})
+  dialog.event('change', {name: 'isolation', checked: true})
+  dialog.submit(); await settle(); await pending
+  expect(drafts.at(-1)).toMatchObject({target: {kind: 'project', projectId: 'p-0123456789abcdef0123', isolation: 'worktree'}})
+})

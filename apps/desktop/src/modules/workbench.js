@@ -41,7 +41,17 @@ function writerExitHtml(task) {
   return '<button type="button" class="wb-new" data-action="confirm-writer-exited">我确认它已经结束</button>'
 }
 /** @typedef {{taskId:string,title:string,reason:'same_path'|'nested_path'|'writer_not_closed',holderWriting?:boolean,closeInMs?:number|null}} WaitingFor */
-/** @typedef {{id:string,title:string,path:string,workspaceKind?:'managed'|'project',providerId:string,status:string,createdAt:number,updatedAt:number,error:string|null,writerExit?:'alive'|'unconfirmed',phase?:string,archivedAt?:number|null,canArchive?:boolean,pendingPermissionCount?:number,pendingQuestionCount?:number,waitingFor?:WaitingFor|null,importedOnly?:boolean,runtime?:RuntimeSnapshot,networkSuspended?:{since:number}|null}} Task */
+/**
+ * 独立工作区那一行(2026-10-07):分支名 + 「提交到分支」「删除工作区」。合并留给主人,提交后时间线里有一行合并命令。
+ * @param {{worktree?:{branch:string,projectPath:string,removed:boolean}}} task
+ */
+function worktreeHtml(task) {
+  const wt = task.worktree
+  if (!wt) return ''
+  if (wt.removed) return `<p class="wb-worktree">在分支 <code>${escapeWorkbenchHtml(wt.branch)}</code> 上做过，工作区已删除（分支还在项目里）。</p>`
+  return `<p class="wb-worktree">在独立分支 <code>${escapeWorkbenchHtml(wt.branch)}</code> 上做，不影响项目目录本身。<button type="button" class="wb-new" data-action="worktree-commit">提交到分支</button><button type="button" class="wb-new" data-action="worktree-remove">删除工作区</button></p>`
+}
+/** @typedef {{id:string,title:string,path:string,workspaceKind?:'managed'|'project',providerId:string,status:string,createdAt:number,updatedAt:number,error:string|null,writerExit?:'alive'|'unconfirmed',worktree?:{branch:string,projectPath:string,removed:boolean},phase?:string,archivedAt?:number|null,canArchive?:boolean,pendingPermissionCount?:number,pendingQuestionCount?:number,waitingFor?:WaitingFor|null,importedOnly?:boolean,runtime?:RuntimeSnapshot,networkSuspended?:{since:number}|null}} Task */
 /** @typedef {{id:string,type:'command'|'read'|'edit'|'search'|'tool'|'agent',status:'running'|'completed'|'failed'|'cancelled'|'interrupted',label:string,detail?:string,output?:string,parentId?:string,agentIds?:string[]}} WorkbenchActivity */
 /** @typedef {{id:string,taskId:string,kind:'user'|'text'|'tool_call'|'system'|'error',text:string,createdAt:number,attachments?:import('./workbench-attachments.js').Attachment[],sourceId?:string|null,runId?:string,activity?:WorkbenchActivity,errorCode?:'execution_model_unsupported',diagnostic?:string}} WorkbenchEvent */
 /** @typedef {{id:string,taskId:string,name:string,mime:string,size:number,sha256:string,createdAt:number,approvedAt:number|null}} Artifact */
@@ -181,13 +191,16 @@ function pathParts(path) {
   return { name: parts.at(-1) || clean || '未命名项目', parent: clean.slice(0, Math.max(0, clean.length - (parts.at(-1)?.length ?? 0))).replace(/[\\/]+$/, '') || '/' }
 }
 
+/** 侧栏按哪个项目归组:独立工作区的任务归到源项目(2026-10-07),其余按自己的目录。 @param {Task} task */
+export const projectPathOf = task => task.worktree?.projectPath ?? task.path
+
 /** @param {Task[]} tasks @param {Array<{name:string,path:string}>} [projects] */
 export function groupWorkbenchTasks(tasks,projects=[]) {
   /** @type {Map<string,Task[]>} */
   const grouped = new Map(projects.map(project=>[project.path,/** @type {Task[]} */([])]))
   const names=new Map(projects.map(project=>[project.path,project.name]))
   const managed = tasks.filter(task => task.workspaceKind === 'managed')
-  for (const task of tasks) if (task.workspaceKind !== 'managed') grouped.set(task.path, [...(grouped.get(task.path) ?? []), task])
+  for (const task of tasks) if (task.workspaceKind !== 'managed') grouped.set(projectPathOf(task), [...(grouped.get(projectPathOf(task)) ?? []), task])
   const nameCounts = new Map()
   for (const path of grouped.keys()) { const name = names.get(path)||pathParts(path).name; nameCounts.set(name, (nameCounts.get(name) ?? 0) + 1) }
   return [...(managed.length ? [{path:'',label:'随手交办',workspaceKind:/** @type {const} */('managed'),tasks:managed}] : []), ...[...grouped].map(([path, projectTasks]) => {
@@ -218,7 +231,7 @@ function renderTask(task, providers, selectedId, projectName) {
     ? `<span class="wb-task-attention" data-status="${escapeWorkbenchHtml(statusValue(task))}" aria-label="${escapeWorkbenchHtml((task.importedOnly?'尚未执行':statusLabel(task.status, task.runtime, task.phase, task.networkSuspended)))}，${escapeWorkbenchHtml(pendingPermissionCount)} 项权限请求等你确认">等你确认 · ${escapeWorkbenchHtml(pendingPermissionCount)}</span>`
     : pendingQuestionCount > 0 ? `<span class="wb-task-attention" aria-label="${escapeWorkbenchHtml(pendingQuestionCount)} 项问题等你回答">等你回答 · ${escapeWorkbenchHtml(pendingQuestionCount)}</span>` : `<span class="wb-status" data-status="${escapeWorkbenchHtml(statusValue(task))}">${escapeWorkbenchHtml(waitingLabel || (task.importedOnly?'尚未执行':statusLabel(task.status, task.runtime, task.phase, task.networkSuspended)))}</span>`
   return `<button type="button" class="wb-task ${task.id === selectedId ? 'is-selected' : ''}" data-task-id="${escapeWorkbenchHtml(task.id)}" aria-label="${escapeWorkbenchHtml(accessibleLabel)}"${updated ? ` title="${escapeWorkbenchHtml(`${title} · ${updated}`)}"` : ''}>
-    <span class="wb-task-title" title="${escapeWorkbenchHtml(title)}">${escapeWorkbenchHtml(title)}</span>
+    <span class="wb-task-title" title="${escapeWorkbenchHtml(title)}">${escapeWorkbenchHtml(title)}${task.worktree && !task.worktree.removed ? `<span class="wb-worktree-badge" title="${escapeWorkbenchHtml(task.worktree.branch)}">独立分支</span>` : ''}</span>
     <span class="wb-task-meta"><span class="wb-task-provider">${escapeWorkbenchHtml(projectName || provider)}</span>${stateHtml}</span>
   </button>`
 }
@@ -268,12 +281,12 @@ export function renderWorkbench(state, interactions, draft, attachmentError='',e
   const activeProject=state.projects?.find(project=>state.newScope===`new:${project.path}`)
   const projects=groupWorkbenchTasks(tasks,state.projects).filter(project=>!query.q&&query.archived!=='only'||project.tasks.length||query.archived!=='only'&&project.label.toLowerCase().includes(query.q.toLowerCase()))
   const attentionTasks = tasks.filter(needsDecision)
-  const projectName = (/** @type {Task} */ task) => task.workspaceKind === 'managed' ? '随手交办' : projects.find(p => p.path === task.path)?.label ?? pathParts(task.path).name
+  const projectName = (/** @type {Task} */ task) => task.workspaceKind === 'managed' ? '随手交办' : projects.find(p => p.path === projectPathOf(task))?.label ?? pathParts(projectPathOf(task)).name
   const attentionList = attentionTasks.length ? `<section class="wb-attention-list" aria-label="等你处理"><header><h3>等你处理</h3><small>${state.page?.hasMore ? '当前列表' : `${attentionTasks.length} 件`}</small></header>${attentionTasks.map(task => renderTask(task, state.providers, state.loadingId ?? state.selectedId, projectName(task))).join('')}</section>` : ''
   const regularProjects = projects.map(project => ({...project, tasks:project.tasks.filter(task => !needsDecision(task))}))
   const visibleProjects = regularProjects.filter(project => project.tasks.length || activeProject?.path === project.path)
   const selectedTask = tasks.find(task => task.id === (state.loadingId ?? state.selectedId)) ?? detail?.task
-  const isSelectedProject = (/** @type {typeof regularProjects[number]} */ project) => activeProject?.path === project.path || !!selectedTask && (selectedTask.workspaceKind === 'managed' ? project.path === '' : project.path === selectedTask.path)
+  const isSelectedProject = (/** @type {typeof regularProjects[number]} */ project) => activeProject?.path === project.path || !!selectedTask && (selectedTask.workspaceKind === 'managed' ? project.path === '' : project.path === projectPathOf(selectedTask))
   const projectPriority = (/** @type {typeof regularProjects[number]} */ project) => isSelectedProject(project) ? 0 : project.tasks.some(task => ['running','queued','cancelling'].includes(statusValue(task))) ? 1 : 2
   visibleProjects.sort((a,b) => projectPriority(a)-projectPriority(b) || Math.max(0,...b.tasks.map(t=>t.updatedAt))-Math.max(0,...a.tasks.map(t=>t.updatedAt)))
   const otherProjects = regularProjects.filter(project => !project.tasks.length && activeProject?.path !== project.path)
@@ -337,7 +350,7 @@ export function renderWorkbench(state, interactions, draft, attachmentError='',e
   const executionControls=renderExecutionControls(execution,executionView.catalog,executionDisabled)
   const decisionCount = permissions.length + (detail?.questions ?? []).filter(request => request.taskId === detail?.task.id).length
   const progress = detail ? `<div class="wb-task-progress"><span class="wb-status" data-status="${escapeWorkbenchHtml(statusValue({...detail.task,runtime:detail.runtime ?? detail.task.runtime}))}">${escapeWorkbenchHtml(detail.task.importedOnly ? '尚未执行' : statusLabel(detail.task.status, detail.runtime ?? detail.task.runtime, detail.task.phase, detail.task.networkSuspended))}</span>${decisionCount ? `<button type="button" class="wb-new wb-decision-jump" data-action="show-decisions">${decisionCount} 项等你处理 ↓</button>` : detail.task.phase === 'replied' ? '<span>这一轮已答复，可以继续补充要求</span>' : ''}</div>` : ''
-  const taskHeader = detail ? `<header class="wb-task-head"><div><p class="wb-task-context">${detail.task.workspaceKind==='managed'?'随手交办':escapeWorkbenchHtml(state.projects?.find(project => project.path === detail.task.path)?.name ?? pathParts(detail.task.path).name)} · ${escapeWorkbenchHtml(helper)}</p><h2 title="${escapeWorkbenchHtml(detail.task.title || '未命名任务')}">${escapeWorkbenchHtml(detail.task.title || '未命名任务')}</h2>${progress}${isUnattendedProvider(state.providers.find(p => p.id === detail.task.providerId)) ? '<p class="wb-task-unattended">免审执行者 · 看不到单步,只能停止</p>' : ''}</div><div class="wb-task-head-actions">${detail.artifacts.length ? `<button type="button" class="wb-new" data-action="show-artifacts">成果 · ${detail.artifacts.length}</button>` : ''}<details id="wb-task-info" class="wb-task-info"><summary>任务详情</summary><div class="wb-task-info-body"><dl><div><dt>完整路径</dt><dd class="wb-path">${escapeWorkbenchHtml(detail.task.path)}${detail.task.workspaceKind==='managed'?'<button type="button" class="wb-new" data-action="open-task-folder">打开工作位置</button>':''}</dd></div><div><dt>任务编号</dt><dd><code>${escapeWorkbenchHtml(detail.task.id)}</code></dd></div><div><dt>执行者</dt><dd>${escapeWorkbenchHtml(helper)}</dd></div><div><dt>更新时间</dt><dd>${escapeWorkbenchHtml(time(detail.task.updatedAt))}</dd></div>${detail.source?`<div><dt>原会话</dt><dd>${escapeWorkbenchHtml(detail.source.providerId)} · <code>${escapeWorkbenchHtml(detail.source.nativeId)}</code></dd></div><div><dt>已保存的原记录</dt><dd>${detail.source.selectedMessageCount} 段${detail.source.truncated?' · 部分文字':''}</dd></div>`:''}</dl><section class="wb-task-execution"><h3>下一轮使用</h3>${executionControls}${renderExecutionObservation(detail.lastExecution)}</section>${detail.task.archivedAt != null ? '<div class="wb-task-organization"><button type="button" class="wb-btn" data-action="restore-task">恢复任务</button></div>' : detail.task.canArchive === true ? '<div class="wb-task-organization"><button type="button" class="wb-btn" data-action="archive-task">归档任务</button></div>' : ''}${state.canWechat && detail.task.archivedAt == null ? `<div class="wb-wechat"><span>在微信继续</span><code>任务 ${escapeWorkbenchHtml(detail.task.id)}</code><button type="button" class="wb-btn" data-action="copy-wechat-command">复制</button></div>` : ''}</div></details></div></header>` : ''
+  const taskHeader = detail ? `<header class="wb-task-head"><div><p class="wb-task-context">${detail.task.workspaceKind==='managed'?'随手交办':escapeWorkbenchHtml(state.projects?.find(project => project.path === projectPathOf(detail.task))?.name ?? pathParts(projectPathOf(detail.task)).name)} · ${escapeWorkbenchHtml(helper)}</p><h2 title="${escapeWorkbenchHtml(detail.task.title || '未命名任务')}">${escapeWorkbenchHtml(detail.task.title || '未命名任务')}</h2>${worktreeHtml(detail.task)}${progress}${isUnattendedProvider(state.providers.find(p => p.id === detail.task.providerId)) ? '<p class="wb-task-unattended">免审执行者 · 看不到单步,只能停止</p>' : ''}</div><div class="wb-task-head-actions">${detail.artifacts.length ? `<button type="button" class="wb-new" data-action="show-artifacts">成果 · ${detail.artifacts.length}</button>` : ''}<details id="wb-task-info" class="wb-task-info"><summary>任务详情</summary><div class="wb-task-info-body"><dl><div><dt>完整路径</dt><dd class="wb-path">${escapeWorkbenchHtml(detail.task.path)}${detail.task.workspaceKind==='managed'?'<button type="button" class="wb-new" data-action="open-task-folder">打开工作位置</button>':''}</dd></div><div><dt>任务编号</dt><dd><code>${escapeWorkbenchHtml(detail.task.id)}</code></dd></div><div><dt>执行者</dt><dd>${escapeWorkbenchHtml(helper)}</dd></div><div><dt>更新时间</dt><dd>${escapeWorkbenchHtml(time(detail.task.updatedAt))}</dd></div>${detail.source?`<div><dt>原会话</dt><dd>${escapeWorkbenchHtml(detail.source.providerId)} · <code>${escapeWorkbenchHtml(detail.source.nativeId)}</code></dd></div><div><dt>已保存的原记录</dt><dd>${detail.source.selectedMessageCount} 段${detail.source.truncated?' · 部分文字':''}</dd></div>`:''}</dl><section class="wb-task-execution"><h3>下一轮使用</h3>${executionControls}${renderExecutionObservation(detail.lastExecution)}</section>${detail.task.archivedAt != null ? '<div class="wb-task-organization"><button type="button" class="wb-btn" data-action="restore-task">恢复任务</button></div>' : detail.task.canArchive === true ? '<div class="wb-task-organization"><button type="button" class="wb-btn" data-action="archive-task">归档任务</button></div>' : ''}${state.canWechat && detail.task.archivedAt == null ? `<div class="wb-wechat"><span>在微信继续</span><code>任务 ${escapeWorkbenchHtml(detail.task.id)}</code><button type="button" class="wb-btn" data-action="copy-wechat-command">复制</button></div>` : ''}</div></details></div></header>` : ''
   const modelErrorInTimeline=detail?.task.error==='execution_model_unsupported'&&detail.events.filter(event=>event.kind==='error').at(-1)?.errorCode==='execution_model_unsupported'
   const content = detail ? `
     ${related}
@@ -1019,6 +1032,16 @@ export function initWorkbenchPage(deps) {
     // 「点成果就预览」那条分支之前认领,否则一点接受就跳去预览了。
     if (action === 'review-accept' && controller.state.selectedId && target.dataset.artifactId && target.dataset.path) {
       return mutate('POST', '/v1/workbench/review-mark', { id: controller.state.selectedId, artifactId: target.dataset.artifactId, path: target.dataset.path, mark: 'accepted' })
+    }
+    // 独立工作区(2026-10-07):提交到分支 / 删除工作区(删除点两下才算)。
+    if ((action === 'worktree-commit' || action === 'worktree-remove') && controller.state.selectedId && controller.state.detail?.task.worktree && !controller.state.detail.task.worktree.removed) {
+      if (action === 'worktree-remove' && !armConfirm(target, '再点一次：删除工作区（分支保留）')) return
+      return mutate('POST', '/v1/workbench/worktree', { id: controller.state.selectedId, action: action === 'worktree-commit' ? 'commit' : 'remove' }, e => {
+        const code = String(e instanceof Error ? e.message : e).match(/\b(workbench_busy|worktree_dirty|worktree_removed|worktree_git_failed|not_worktree)\b/)?.[1]
+        if (!code) return false
+        fail(new Error(code === 'workbench_busy' ? '这个工作区还有会话占着，先收工再操作。' : executionErrorMessage(code) ?? code))
+        return true
+      })
     }
     // 逐文件撤销(2026-10-06):点两下才算;被拒的原因说成人话(daemon 那边全是拒绝条件,没有「尽量」)。
     if (action === 'review-revert' && controller.state.selectedId && target.dataset.artifactId && target.dataset.path) {

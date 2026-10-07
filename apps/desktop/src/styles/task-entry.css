@@ -33,3 +33,6 @@
 .task-entry-form button[type=submit] { background:var(--th-accent); color:var(--th-on-accent); border-color:var(--th-accent); }
 .task-entry-body .wb-compose-attachments { margin-top:16px; }
 @media(max-width:520px) { .task-entry-dialog { width:calc(100vw - 16px); max-height:calc(100dvh - 16px); border-radius:12px; }.task-entry-form { max-height:calc(100dvh - 18px); }.task-entry-form>header,.task-entry-form>footer,.task-entry-body { padding:16px; }.task-entry-form>footer { gap:8px; }.task-entry-form>footer button { min-height:42px; }.task-entry-section-head { align-items:start; } }
+/* 独立工作区勾选(2026-10-07) */
+.task-entry-isolate { display:flex; gap:6px; align-items:baseline; flex-wrap:wrap; font-size:13px; }
+.task-entry-isolate small { flex-basis:100%; color:var(--th-ink-soft); font-size:12px; padding-left:20px; }

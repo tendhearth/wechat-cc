@@ -22,6 +22,12 @@ export function executionErrorMessage(error){
  const messages=/** @type {Record<string,string>} */({
   writer_not_closed:'执行程序还没有确认退出，工作文件夹暂时保留占用。请检查原进程是否已结束；确认退出后再继续。',
   writer_alive:'执行程序还在运行，请先结束它；结束后占用会自动解除。',
+  worktree_not_git:'这个项目不是 Git 仓库，开不了独立工作区。取消勾选后可以照常交办。',
+  worktree_dirty:'独立工作区里还有没提交的改动，先「提交到分支」再删除。',
+  worktree_removed:'独立工作区已经删除了，分支还在项目里。',
+  not_worktree:'这件事不在独立工作区里。',
+  worktree_git_failed:'git 操作没成功，请在终端里看看这个项目的状态。',
+  worktree_branch_exists:'同名分支已经存在，没有覆盖。请重新交办一次。',
   execution_model_unsupported:'当前模型不可用。请为这件事选择可用的模型后继续；自动会沿用原设置。',
   execution_effort_unsupported:'这个模型不支持所选思考强度，请重新选择，或使用自动。',
   execution_model_unknown:'暂时无法确认当前模型，请明确选择一个模型后重试。',

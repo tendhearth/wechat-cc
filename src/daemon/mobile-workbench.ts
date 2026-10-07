@@ -30,6 +30,10 @@ export function mobileMatterError(error:unknown):Response {
   if(['attachment_storage_limit','attachment_limit','upload_limit','upload_unfinished_limit','invalid_attachment_size'].includes(code))return json({ok:false,error:code},413)
   if(['upload_conflict','upload_changed','upload_offset','attachment_in_use'].includes(code))return json({ok:false,error:code},409)
   if(code==='invalid_entry_owner')return json({ok:false,error:code},403)
+  // 独立工作区(2026-10-07):项目不是 Git 仓库 / 同名分支或目录已占 / git 自己失败。
+  if(code==='worktree_not_git')return json({ok:false,error:code},422)
+  if(['worktree_branch_exists','worktree_conflict'].includes(code))return json({ok:false,error:code},409)
+  if(code==='worktree_git_failed')return json({ok:false,error:code},502)
   if(['creation_conflict','managed_workspace_changed','attachment_scope','attachment_conflict'].includes(code))return json({ok:false,error:code},409)
   if(['entry_not_wired','managed_workspace_unavailable','invalid_managed_workspace','workbench_stopping','unavailable_provider','provider_quota_exhausted','quota_handoff_unavailable','network_unprotected'].includes(code))return json({ok:false,error:code},503)
   if(['permission_stale','question_stale','input_stale','input_conflict','input_delivery_busy','workbench_busy','reply_sink_busy','workbench_archived','artifact_changed','restart_confirmation_required','restart_confirmation_stale','external_close_confirmation_required','external_close_confirmation_stale','native_session_busy','native_folder_busy','native_history_changed','quota_handoff_not_needed','quota_handoff_changed'].includes(code))return json({ok:false,error:code},409)
