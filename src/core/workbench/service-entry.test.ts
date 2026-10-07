@@ -330,7 +330,7 @@ it('WeChat 「任务 新建 <项目> 独立」 (2026-10-07): runs in a worktree,
   const first=service.createWechat(wechat(rid)),again=service.createWechat(wechat(rid))
   expect(again.taskId).toBe(first.taskId)
   const task=service.detail(first.taskId).task
-  expect(task.path.startsWith(join(stateDir,'worktrees'))).toBe(true)
+  expect(task.path.startsWith(join(realpathSync.native(stateDir),'worktrees'))).toBe(true)
   expect(task.worktree).toMatchObject({projectPath:project,removed:false})
   expect(store.projects().some(p=>p.path===task.path)).toBe(false)
   await settle(first.taskId)
