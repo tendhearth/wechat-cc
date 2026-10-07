@@ -318,3 +318,20 @@ it('an isolated task on a non-git project is refused before anything is reserved
   expect(()=>service.worktreeAction(plain.receipt.taskId,'commit')).toThrow('not_worktree')
   expect(()=>service.createEntry(input({target:{kind:'managed',isolation:'worktree'} as never}),context)).toThrow('invalid_target')
 })
+
+it('WeChat 「任务 新建 <项目> 独立」 (2026-10-07): runs in a worktree, a retry of the same message is the same task, non-git refused',async()=>{
+  const {execFileSync}=await import('node:child_process')
+  const projectId=service.projects()[0]!.id
+  const wechat=(requestId:string)=>({ownerChatId:'owner',accountId:'acc',requestId,commandHash:'a'.repeat(64),projectId,text:'并行整理',isolation:true})
+  const rid=randomUUID()
+  expect(()=>service.createWechat(wechat(rid))).toThrow('worktree_not_git')
+  const g=(...a:string[])=>execFileSync('git',a,{cwd:project,stdio:'pipe'}).toString().trim()
+  g('init','-q','-b','main');g('config','user.email','t@t');g('config','user.name','t');writeFileSync(join(project,'a.txt'),'x\n');g('add','-A');g('commit','-q','-m','i')
+  const first=service.createWechat(wechat(rid)),again=service.createWechat(wechat(rid))
+  expect(again.taskId).toBe(first.taskId)
+  const task=service.detail(first.taskId).task
+  expect(task.path.startsWith(join(stateDir,'worktrees'))).toBe(true)
+  expect(task.worktree).toMatchObject({projectPath:project,removed:false})
+  expect(store.projects().some(p=>p.path===task.path)).toBe(false)
+  await settle(first.taskId)
+})

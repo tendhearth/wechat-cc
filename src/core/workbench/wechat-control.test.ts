@@ -392,3 +392,17 @@ describe('WeChat task control through the shared service',()=>{
     expect(store.events(task.id)).toEqual(before)
   })
 })
+
+describe('任务 新建 <项目> 独立 <要求> (2026-10-07)',()=>{
+  it('passes isolation through; plain 新建 does not',async()=>{
+    setup({async spawn(){return{async *dispatch(){yield result},async close(){}}}})
+    const calls:unknown[]=[]
+    const projectId='p-0123456789abcdef0123'
+    const control=makeWechatWorkbenchControl({store,ownerChatId:()=>owner,actions:{...service,projects:()=>[{id:projectId,name:'project',path:project,providerId:'claude'} as never],createWechat:(i:unknown)=>{calls.push(i);throw new Error('project_stale')}}})
+    await control('owner',`任务 新建 ${projectId} 独立 并行整理周报`,identity)
+    await control('owner',`任务 新建 ${projectId} 整理周报`,{...identity,msgId:'two'})
+    expect(calls[0]).toMatchObject({projectId,isolation:true,text:'并行整理周报'})
+    expect(calls[1]).toMatchObject({projectId,text:'整理周报'});expect(calls[1]).not.toHaveProperty('isolation')
+    expect(await control('owner','任务',identity)).not.toBe('')
+  })
+})
