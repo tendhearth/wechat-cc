@@ -236,6 +236,7 @@ export function makeTokenRegistry(
           'POST /v1/workbench/review-mark',
           'POST /v1/workbench/review-return',
           'POST /v1/workbench/review-revert',
+          'POST /v1/workbench/worktree',
       'POST /v1/workbench/import',
       'POST /v1/workbench/prepare-resume',
       'POST /v1/workbench/prepare-continuation',

@@ -48,7 +48,7 @@ interface Options {
 }
 import { makeRuntimeState } from './service/state'
 import { Ref } from '../../lib/lifecycle'
-import { makeReviewDomain } from './service/review'
+import { makeReviewDomain } from './service/review'; import { makeWorktreeDomain } from './service/worktree'
 import { makeAttachmentsDomain } from './service/attachments'
 import { makeQuotaDomain } from './service/quota'
 import { makeNoticesDomain } from './service/notices'
@@ -75,7 +75,7 @@ export function makeWorkbenchService(opts: Options) {
   const state=makeRuntimeState()
   const actions=new Ref<ServiceActions>('workbench-actions')
   const ctx:ServiceCtx={store,stateDir:opts.stateDir,state,hub:{touched,bumped,dispose:()=>changes.dispose()},deps:{ownerChatId:opts.ownerChatId,registry:opts.registry,...(opts.usage?{usage:opts.usage}:{}),...(opts.permissionTimeoutMs!==undefined?{permissionTimeoutMs:opts.permissionTimeoutMs}:{}),...(opts.unattendedAck?{unattendedAck:opts.unattendedAck}:{}),...(opts.nativeHistory?{nativeHistory:opts.nativeHistory}:{}),...(opts.registeredProjects?{registeredProjects:opts.registeredProjects}:{}),...(opts.defaultProvider!==undefined?{defaultProvider:opts.defaultProvider}:{}),...(opts.executionConflict?{executionConflict:opts.executionConflict}:{}),...(opts.reports?{reports:opts.reports}:{}),...(opts.recollect?{recollect:opts.recollect}:{}),...(opts.revokeSessionToken?{revokeSessionToken:opts.revokeSessionToken}:{}),...(opts.retainedIdleCloseMs!==undefined?{retainedIdleCloseMs:opts.retainedIdleCloseMs}:{}),...(opts.handoffGraceMs!==undefined?{handoffGraceMs:opts.handoffGraceMs}:{}),...(opts.matters?{matters:opts.matters}:{}),...(opts.mintSessionToken?{mintSessionToken:opts.mintSessionToken}:{}),...(opts.timeoutMs!==undefined?{timeoutMs:opts.timeoutMs}:{}),...(opts.closeTimeoutMs!==undefined?{closeTimeoutMs:opts.closeTimeoutMs}:{}),...(opts.holdBusy?{holdBusy:opts.holdBusy}:{}),...(opts.onTurnError?{onTurnError:opts.onTurnError}:{}),...(opts.writerGroupAlive?{writerGroupAlive:opts.writerGroupAlive}:{}),...(opts.writerWatchMs!==undefined?{writerWatchMs:opts.writerWatchMs}:{}),...(opts.managedWorkspaceRoot!==undefined?{managedWorkspaceRoot:opts.managedWorkspaceRoot}:{}),...(opts.networkGate?{networkGate:opts.networkGate}:{})},ensureAccepting,...(opts.log?{log:opts.log}:{}),now:Date.now,actions}
-  const review=makeReviewDomain(ctx)
+  const review=makeReviewDomain(ctx);const worktreeDomain=makeWorktreeDomain(ctx)
   const attachmentsDomain=makeAttachmentsDomain(ctx)
   const {continuationAttachmentScope,selectAttachments,combinedAttachments,handoffAttachments}=attachmentsDomain
   const quotaDomain=makeQuotaDomain(ctx)
@@ -148,7 +148,7 @@ export function makeWorkbenchService(opts: Options) {
     /** 这个任务的所有变更快照,新→旧,每个文件附上当前标记。坏的那一轮单独 unavailable,不牵连别轮。 */
     reviewList:review.reviewList,
     markReviewFile:review.markReviewFile,
-    returnReviewFiles:review.returnReviewFiles,revertReviewFile:review.revertReviewFile,
+    returnReviewFiles:review.returnReviewFiles,revertReviewFile:review.revertReviewFile,worktreeAction:worktreeDomain.worktreeAction,
     resolvePermission:inputsDomain.resolvePermission,
     async handleWechat(chatId:string,text:string,identity?:WechatMessageIdentity):Promise<WechatWorkbenchReply|null>{return wechatControl(chatId,text,identity)},
     shutdown:lifecycleDomain.shutdown,

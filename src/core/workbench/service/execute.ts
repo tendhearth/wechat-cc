@@ -481,7 +481,7 @@ export function makeExecuteDomain(ctx:ServiceCtx, domains:ExecuteDomains) {
     try{return ctx.deps.matters.ensureChat(ownerChatId).id}
     catch(err){ctx.log?.('MATTER_ORIGIN',`ensureChat failed for ${ownerChatId}: ${err instanceof Error?err.message:err} — origin left null, task still created`);return null}
   }
-  function createTask(input:CreateTask,onAccepted?:(task:StoredTask,runId:string)=>void,origin?:{matterId:string|null;messageId:string|null},entry?:{context:EntryContext;workspaceKind:'managed'|'project';fromChat:boolean;materials:Attachment[];beforeCreate:()=>void;verifyDirectory:(path:string,identity:string)=>void}):WorkbenchTaskView {
+  function createTask(input:CreateTask,onAccepted?:(task:StoredTask,runId:string)=>void,origin?:{matterId:string|null;messageId:string|null},entry?:{context:EntryContext;workspaceKind:'managed'|'project';registerProject?:boolean;fromChat:boolean;materials:Attachment[];beforeCreate:()=>void;verifyDirectory:(path:string,identity:string)=>void}):WorkbenchTaskView {
     ctx.ensureAccepting()
     const execution=normalizeExecutionChoice(input.execution,PROVIDER_EXECUTION_CHOICE)
     const attachments=entry?entry.materials:selectAttachments(input)
@@ -494,7 +494,7 @@ export function makeExecuteDomain(ctx:ServiceCtx, domains:ExecuteDomains) {
     let activate:()=>void=()=>{}
     const accepted=store.atomic(()=>{
       entry?.beforeCreate()
-      const task=store.create({title:input.title?.trim()??(text.slice(0,40)||attachments[0]!.name.slice(0,40)),path,providerId:input.providerId,ownerChatId:entry?.context.ownerKey??ctx.deps.ownerChatId(),workspaceKind:entry?.workspaceKind,registerProject:entry?.workspaceKind!=='managed'})
+      const task=store.create({title:input.title?.trim()??(text.slice(0,40)||attachments[0]!.name.slice(0,40)),path,providerId:input.providerId,ownerChatId:entry?.context.ownerKey??ctx.deps.ownerChatId(),workspaceKind:entry?.workspaceKind,registerProject:entry?.registerProject??entry?.workspaceKind!=='managed'})
       if(entry){
         const m=ctx.deps.matters;if(!m)throw Error('entry_not_wired')
         const chat=entry.fromChat?m.ensureChat(entry.context.ownerKey):null
