@@ -3,7 +3,7 @@ import {execFileSync} from 'node:child_process'
 import {randomUUID} from 'node:crypto'
 import * as fs from 'node:fs'
 import {tmpdir} from 'node:os'
-import {join} from 'node:path'
+import {basename,dirname,join} from 'node:path'
 import {openDb,type Db} from '../../lib/db'
 import {createRestoreManager,type RestoreReview} from './restore-manager'
 import {RESTORE_SCHEMA_SQL} from './restore-store'
@@ -11,7 +11,7 @@ import {directoryId,verifyDirectoryAfterWrite} from './restore-snapshots'
 
 // Model only the OS syscall differences/failures. Git, file contents, identity
 // observations and the on-disk SQLite journal stay real.
-const boundary=vi.hoisted(()=>({windows:false,denyFileFlush:false,afterStat:null as null|((path:string)=>void)}))
+const boundary=vi.hoisted(()=>({windows:false,denyFileFlush:false,denyTemporaryCreateIn:'',beforeCreateDenial:null as null|(()=>void),afterStat:null as null|((path:string)=>void)}))
 vi.mock('node:os',async importOriginal=>{
   const actual=await importOriginal<typeof import('node:os')>()
   return {...actual,platform:()=>boundary.windows?'win32':actual.platform()}
@@ -21,6 +21,11 @@ vi.mock('node:fs',async importOriginal=>{
   return {...actual,
     openSync:((...args:Parameters<typeof actual.openSync>)=>{
       if(boundary.windows&&actual.existsSync(args[0])&&actual.lstatSync(args[0]).isDirectory())throw Object.assign(Error('directory_open_denied'),{code:'EPERM'})
+      const path=String(args[0]),flags=args[1]
+      if(boundary.denyTemporaryCreateIn&&dirname(path)===boundary.denyTemporaryCreateIn&&/^\.cc-workbench-restore-[0-9a-f-]{36}\.tmp$/.test(basename(path))&&typeof flags==='number'&&(flags&actual.constants.O_CREAT)!==0){
+        boundary.beforeCreateDenial?.()
+        throw Object.assign(Error('temporary_create_denied'),{code:'EACCES'})
+      }
       return actual.openSync(...args)
     }),
     fsyncSync:(fd:number)=>{
@@ -47,12 +52,12 @@ const begin=()=>manager.begin({workspaceId:'workspace',taskId:'task',runId:rando
 const request=(review:RestoreReview)=>({workspaceId:'workspace',taskId:'task',artifactId:'artifact',path:'file.txt',changeId:review.files[0]!.changeId,requestId:randomUUID()})
 async function changed(){const run=await begin();fs.writeFileSync(join(project,'file.txt'),'after');await manager.close(run.restoreRunId);manager.bindArtifact(run.restoreRunId,'artifact','a'.repeat(64));return manager.list('workspace')[0]!}
 beforeEach(()=>{
-  boundary.windows=false;boundary.denyFileFlush=false;boundary.afterStat=null
+  boundary.windows=false;boundary.denyFileFlush=false;boundary.denyTemporaryCreateIn='';boundary.beforeCreateDenial=null;boundary.afterStat=null
   root=fs.realpathSync(fs.mkdtempSync(join(tmpdir(),'cc-restore-durability-')));project=join(root,'work');blobRoot=join(root,'private');fs.mkdirSync(project)
   git('init','-q');git('config','user.name','Fixture');git('config','user.email','fixture@example.invalid');fs.writeFileSync(join(project,'file.txt'),'before');git('add','.');git('commit','-qm','base')
   db=openDb({path:join(root,'state.sqlite')});db.exec(RESTORE_SCHEMA_SQL);manager=make()
 })
-afterEach(()=>{boundary.windows=false;boundary.denyFileFlush=false;boundary.afterStat=null;db.close();fs.rmSync(root,{recursive:true,force:true})})
+afterEach(()=>{boundary.windows=false;boundary.denyFileFlush=false;boundary.denyTemporaryCreateIn='';boundary.beforeCreateDenial=null;boundary.afterStat=null;db.close();fs.rmSync(root,{recursive:true,force:true})})
 
 describe('restore platform durability boundaries',()=>{
   it('completes restore when Windows cannot open or flush directories',async()=>{
@@ -88,6 +93,32 @@ describe('restore platform durability boundaries',()=>{
     expect(manager.blocked('workspace')).toBe(true)
     expect((await manager.revert(input)).state).toBe('needs_recovery')
     expect(fs.readFileSync(join(project,'file.txt'),'utf8')).toBe('after')
+  })
+  it('persists prepared before denied temporary creation and recovers the same operation after SQLite reopen',async()=>{
+    boundary.windows=true
+    const review=await changed(),input=request(review),entries=fs.readdirSync(project).sort()
+    let preparedAtDenial: {state:string;requestId:string;effectReady?:boolean}|undefined
+    boundary.denyTemporaryCreateIn=project
+    boundary.beforeCreateDenial=()=>{
+      const row=db.query<{state:string;data:string},[string]>('SELECT state,data FROM workbench_restore_operations WHERE request_id=?').get(input.requestId)
+      if(row){const operation=JSON.parse(row.data);preparedAtDenial={state:row.state,requestId:operation.receipt.requestId,effectReady:operation.effectReady}}
+    }
+    await expect(manager.revert(input)).rejects.toThrow('filesystem_EACCES')
+    expect(preparedAtDenial).toEqual({state:'prepared',requestId:input.requestId,effectReady:undefined})
+    expect(fs.readFileSync(join(project,'file.txt'),'utf8')).toBe('after')
+    expect(fs.readdirSync(project).sort()).toEqual(entries)
+    const receipt=await manager.revert(input)
+    expect(receipt).toMatchObject({state:'needs_recovery',reason:'filesystem_EACCES'})
+    expect(manager.blocked('workspace')).toBe(true)
+    await expect(begin()).rejects.toThrow('workspace_blocked')
+    boundary.denyTemporaryCreateIn='';boundary.beforeCreateDenial=null
+    db.close();db=openDb({path:join(root,'state.sqlite')});manager=make()
+    expect(manager.blocked('workspace')).toBe(true)
+    await manager.recover('workspace')
+    expect(await manager.revert(input)).toMatchObject({operationId:receipt.operationId,requestId:input.requestId,state:'reverted'})
+    expect(manager.blocked('workspace')).toBe(false)
+    expect(fs.readFileSync(join(project,'file.txt'),'utf8')).toBe('before')
+    expect(fs.readdirSync(project).sort()).toEqual(entries)
   })
   it('recovers the same operation after effect then receipt failure and SQLite reopen on Windows',async()=>{
     boundary.windows=true
