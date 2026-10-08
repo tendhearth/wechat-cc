@@ -42,14 +42,15 @@ function writerExitHtml(task) {
 }
 /** @typedef {{taskId:string,title:string,reason:'same_path'|'nested_path'|'writer_not_closed',holderWriting?:boolean,closeInMs?:number|null}} WaitingFor */
 /**
- * 独立工作区那一行(2026-10-07):分支名 + 「提交到分支」「删除工作区」。合并留给主人,提交后时间线里有一行合并命令。
- * @param {{worktree?:{branch:string,projectPath:string,removed:boolean}}} task
+ * 独立工作区那一行(2026-10-07):分支名 + 「提交到分支」「合回项目」(10-08,只快进;别的情况留给主人,时间线里有合并命令)「删除工作区」。
+ * @param {{worktree?:{branch:string,projectPath:string,removed:boolean,merged?:boolean}}} task
  */
 function worktreeHtml(task) {
   const wt = task.worktree
   if (!wt) return ''
   if (wt.removed) return `<p class="wb-worktree">在分支 <code>${escapeWorkbenchHtml(wt.branch)}</code> 上做过，工作区已删除（分支还在项目里）。</p>`
-  return `<p class="wb-worktree">在独立分支 <code>${escapeWorkbenchHtml(wt.branch)}</code> 上做，不影响项目目录本身。<button type="button" class="wb-new" data-action="worktree-commit">提交到分支</button><button type="button" class="wb-new" data-action="worktree-remove">删除工作区</button></p>`
+  const status = wt.merged ? '，已合回项目' : '，不影响项目目录本身'
+  return `<p class="wb-worktree">在独立分支 <code>${escapeWorkbenchHtml(wt.branch)}</code> 上做${status}。<button type="button" class="wb-new" data-action="worktree-commit">提交到分支</button><button type="button" class="wb-new" data-action="worktree-merge" title="只做快进合并；项目有没提交的改动或已经往前走时不动">合回项目</button><button type="button" class="wb-new" data-action="worktree-remove">删除工作区</button></p>`
 }
 /** @typedef {{id:string,title:string,path:string,workspaceKind?:'managed'|'project',providerId:string,status:string,createdAt:number,updatedAt:number,error:string|null,writerExit?:'alive'|'unconfirmed',worktree?:{branch:string,projectPath:string,removed:boolean},phase?:string,archivedAt?:number|null,canArchive?:boolean,pendingPermissionCount?:number,pendingQuestionCount?:number,waitingFor?:WaitingFor|null,importedOnly?:boolean,runtime?:RuntimeSnapshot,networkSuspended?:{since:number}|null}} Task */
 /** @typedef {{id:string,type:'command'|'read'|'edit'|'search'|'tool'|'agent',status:'running'|'completed'|'failed'|'cancelled'|'interrupted',label:string,detail?:string,output?:string,parentId?:string,agentIds?:string[]}} WorkbenchActivity */
@@ -1033,11 +1034,12 @@ export function initWorkbenchPage(deps) {
     if (action === 'review-accept' && controller.state.selectedId && target.dataset.artifactId && target.dataset.path) {
       return mutate('POST', '/v1/workbench/review-mark', { id: controller.state.selectedId, artifactId: target.dataset.artifactId, path: target.dataset.path, mark: 'accepted' })
     }
-    // 独立工作区(2026-10-07):提交到分支 / 删除工作区(删除点两下才算)。
-    if ((action === 'worktree-commit' || action === 'worktree-remove') && controller.state.selectedId && controller.state.detail?.task.worktree && !controller.state.detail.task.worktree.removed) {
+    // 独立工作区(2026-10-07):提交到分支 / 合回项目(10-08,只快进)/ 删除工作区(合回、删除都点两下才算)。
+    if ((action === 'worktree-commit' || action === 'worktree-merge' || action === 'worktree-remove') && controller.state.selectedId && controller.state.detail?.task.worktree && !controller.state.detail.task.worktree.removed) {
       if (action === 'worktree-remove' && !armConfirm(target, '再点一次：删除工作区（分支保留）')) return
-      return mutate('POST', '/v1/workbench/worktree', { id: controller.state.selectedId, action: action === 'worktree-commit' ? 'commit' : 'remove' }, e => {
-        const code = String(e instanceof Error ? e.message : e).match(/\b(workbench_busy|worktree_dirty|worktree_removed|worktree_git_failed|not_worktree)\b/)?.[1]
+      if (action === 'worktree-merge' && !armConfirm(target, '再点一次：快进合并到项目当前分支')) return
+      return mutate('POST', '/v1/workbench/worktree', { id: controller.state.selectedId, action: action.slice('worktree-'.length) }, e => {
+        const code = String(e instanceof Error ? e.message : e).match(/\b(workbench_busy|worktree_dirty|worktree_removed|worktree_git_failed|not_worktree|worktree_uncommitted|project_dirty|project_detached|worktree_not_ff|project_busy)\b/)?.[1]
         if (!code) return false
         fail(new Error(code === 'workbench_busy' ? '这个工作区还有会话占着，先收工再操作。' : executionErrorMessage(code) ?? code))
         return true

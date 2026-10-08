@@ -110,6 +110,25 @@ export function removeWorktree(repoRoot: string, root: string): void {
   }
 }
 
+/**
+ * 合回项目(2026-10-08):只做快进,别的情况一律拒绝、交给主人 —— 合并冲突和项目里没提交的改动都是主人的判断。
+ *   工作区还有没提交的 ⇒ `worktree_uncommitted`;项目目录有已跟踪文件没提交 ⇒ `project_dirty`;
+ *   项目不在任何分支上 ⇒ `project_detached`;项目已经往前走、快进不了 ⇒ `worktree_not_ff`。
+ * 分支早已在项目里(主人自己合过 / 没改动)⇒ `{merged:false}`,也算合进去了。返回项目当前分支名。
+ */
+export function mergeWorktree(repoRoot: string, root: string, branch: string): { merged: boolean; into: string } {
+  if (worktreeDirty(root)) throw new Error('worktree_uncommitted')
+  if (git(repoRoot, ['status', '--porcelain', '--untracked-files=no']).length > 0) throw new Error('project_dirty')
+  let into = ''
+  try { into = git(repoRoot, ['symbolic-ref', '-q', '--short', 'HEAD']) } catch { /* 下面拒绝 */ }
+  if (!into) throw new Error('project_detached')
+  const ancestor = (a: string, b: string) => { try { git(repoRoot, ['merge-base', '--is-ancestor', a, b]); return true } catch { return false } }
+  if (ancestor(`refs/heads/${branch}`, 'HEAD')) return { merged: false, into }
+  if (!ancestor('HEAD', `refs/heads/${branch}`)) throw new Error('worktree_not_ff')
+  git(repoRoot, ['merge', '--ff-only', '--no-edit', `refs/heads/${branch}`])
+  return { merged: true, into }
+}
+
 /** 合并提示:主人自己在项目里跑。路径里有空格 / 引号时也安全地拼出来。 */
 export function mergeHint(projectPath: string, branch: string): string {
   const quote = (s: string) => (/^[A-Za-z0-9._/@:-]+$/.test(s) ? s : `'${s.replace(/'/g, `'\\''`)}'`)

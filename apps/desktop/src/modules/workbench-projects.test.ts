@@ -49,7 +49,9 @@ it('independent-workspace tasks (2026-10-07) are grouped under their source proj
  expect(html).not.toContain('abcd1234</h3>')
  const detail={task:wt,events:[],artifacts:[],permissions:[],questions:[],inputs:[],handoffs:[],wechatNotifications:{enabled:false,notices:[]}}
  const page=renderWorkbench({...state,tasks:[wt],selectedId:'wt1',detail} as never)
- expect(page).toContain('data-action="worktree-commit"');expect(page).toContain('data-action="worktree-remove"');expect(page).toContain('cc/abcd1234')
+ expect(page).toContain('data-action="worktree-commit"');expect(page).toContain('data-action="worktree-remove"');expect(page).toContain('data-action="worktree-merge"');expect(page).not.toContain('已合回项目');expect(page).toContain('cc/abcd1234')
+ const merged=renderWorkbench({...state,tasks:[wt],selectedId:'wt1',detail:{...detail,task:{...wt,worktree:{...wt.worktree,merged:true}}}} as never)
+ expect(merged).toContain('已合回项目')
  const removed=renderWorkbench({...state,tasks:[{...wt,worktree:{...wt.worktree,removed:true}}],selectedId:'wt1',detail:{...detail,task:{...wt,worktree:{...wt.worktree,removed:true}}}} as never)
  expect(removed).not.toContain('data-action="worktree-commit"');expect(removed).toContain('工作区已删除')
 })

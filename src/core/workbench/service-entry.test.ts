@@ -302,6 +302,9 @@ it('isolated worktree tasks (2026-10-07): run in parallel on one project, stay o
   expect(commit).toMatchObject({committed:true,mergeHint:mergeHint(project,a.worktree!.branch)})
   expect(g('log','-1','--format=%s',a.worktree!.branch)).toBe(a.title)
   expect(existsSync(join(project,'out.txt'))).toBe(false)
+  // 合回项目(10-08):快进进 main,任务页记「已合回」
+  expect(service.worktreeAction(one.receipt.taskId,'merge')).toMatchObject({merged:true,into:'main'})
+  expect(readFileSync(join(project,'out.txt'),'utf8')).toBe('done\n');expect(service.detail(one.receipt.taskId).task.worktree?.merged).toBe(true)
   // 有没提交的改动 ⇒ 不删;提交后删 ⇒ 目录没了、分支还在
   expect(()=>service.worktreeAction(two.receipt.taskId,'remove')).toThrow('worktree_dirty')
   service.worktreeAction(one.receipt.taskId,'remove')

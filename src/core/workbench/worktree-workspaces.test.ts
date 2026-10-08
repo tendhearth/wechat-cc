@@ -4,7 +4,7 @@ import { existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, writeFi
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { removeTempDir } from '../../lib/test-temp'
-import { commitWorktree, ensureWorktree, git, mergeHint, planWorktree, removeWorktree, repoRootOf, worktreeDirty } from './worktree-workspaces'
+import { commitWorktree, ensureWorktree, git, mergeHint, mergeWorktree, planWorktree, removeWorktree, repoRootOf, worktreeDirty } from './worktree-workspaces'
 
 const dirs: string[] = []
 afterEach(() => { for (const d of dirs.splice(0)) removeTempDir(d) })
@@ -63,6 +63,33 @@ describe('worktree workspaces (2026-10-07)', () => {
     expect(() => planWorktree({ stateDir: state, projectId: PID, projectPath: project, repoRoot, id: '../../x' })).toThrow('invalid_worktree')
     const plain = realpathSync.native(mkdtempSync(join(tmpdir(), 'cc-plain-'))); dirs.push(plain)
     expect(repoRootOf(plain)).toBeNull()
+  })
+  it('merges back only by fast-forward (2026-10-08); everything else is left to the owner', () => {
+    const { project, state } = repo()
+    const repoRoot = repoRootOf(project)!
+    const plan = planWorktree({ stateDir: state, projectId: PID, projectPath: project, repoRoot, id: 'aaaa0001' })
+    const path = ensureWorktree(plan)
+    writeFileSync(join(path, 'new.txt'), 'hi\n')
+    expect(() => mergeWorktree(repoRoot, plan.root, plan.branch)).toThrow('worktree_uncommitted')
+    const c = commitWorktree(plan.root, 'add new')
+    // 项目里已跟踪文件有没提交的改动 ⇒ 不动(未跟踪的不算)
+    writeFileSync(join(project, 'a.txt'), 'local edit\n')
+    expect(() => mergeWorktree(repoRoot, plan.root, plan.branch)).toThrow('project_dirty')
+    execFileSync('git', ['checkout', '--', 'a.txt'], { cwd: project })
+    writeFileSync(join(project, 'scratch.txt'), 'untracked\n')
+    expect(mergeWorktree(repoRoot, plan.root, plan.branch)).toEqual({ merged: true, into: 'main' })
+    expect(git(project, ['rev-parse', 'HEAD'])).toBe(c.sha)
+    expect(readFileSync(join(project, 'new.txt'), 'utf8')).toBe('hi\n')
+    // 再点一次:已经在里面了
+    expect(mergeWorktree(repoRoot, plan.root, plan.branch)).toEqual({ merged: false, into: 'main' })
+    // 项目往前走了 ⇒ 快进不了
+    const other = planWorktree({ stateDir: state, projectId: PID, projectPath: project, repoRoot, id: 'aaaa0002' })
+    writeFileSync(join(ensureWorktree(other), 'x.txt'), 'x\n'); commitWorktree(other.root, 'x')
+    writeFileSync(join(project, 'main.txt'), 'm\n'); execFileSync('git', ['add', 'main.txt'], { cwd: project }); execFileSync('git', ['commit', '-q', '-m', 'main moved'], { cwd: project })
+    expect(() => mergeWorktree(repoRoot, other.root, other.branch)).toThrow('worktree_not_ff')
+    // 项目不在分支上 ⇒ 不动
+    execFileSync('git', ['checkout', '-q', '--detach'], { cwd: project })
+    expect(() => mergeWorktree(repoRoot, other.root, other.branch)).toThrow('project_detached')
   })
   it('merge hint quotes paths with spaces', () => {
     expect(mergeHint('/Users/a/My Project', 'cc/abcd1234')).toBe("cd '/Users/a/My Project' && git merge cc/abcd1234")
