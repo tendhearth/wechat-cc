@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { addAcpAgent, formatAcpAgents, removeAcpAgent } from './acp-agents'
+import { addAcpAgent, detectGeminiAuthMethod, formatAcpAgents, removeAcpAgent } from './acp-agents'
 
 const onPath = (cmd: string) => (cmd === 'gemini' ? '/usr/local/bin/gemini' : null)
 
@@ -26,5 +26,13 @@ describe('cli acp (2026-10-07)', () => {
     const text = formatAcpAgents(agents, onPath)
     expect(text).toContain('ghost-cli  (找不到命令,不会登记)')
     expect(text).toContain('gemini-cli  Gemini CLI  gemini --acp  (已装)')
+  })
+  it('presets read the local login method; explicit --auth-method wins; bad settings are ignored', () => {
+    expect(addAcpAgent([], { id: 'gemini-cli' }, onPath, () => 'oauth-personal')).toMatchObject({ ok: true, agent: { auth_method: 'oauth-personal' } })
+    expect(addAcpAgent([], { id: 'gemini-cli', authMethod: 'gemini-api-key' }, onPath, () => 'oauth-personal')).toMatchObject({ ok: true, agent: { auth_method: 'gemini-api-key' } })
+    expect(detectGeminiAuthMethod(() => JSON.stringify({ security: { auth: { selectedType: 'oauth-personal' } } }))).toBe('oauth-personal')
+    expect(detectGeminiAuthMethod(() => JSON.stringify({ selectedAuthType: 'vertex-ai' }))).toBe('vertex-ai')
+    expect(detectGeminiAuthMethod(() => '{oops')).toBeNull()
+    expect(detectGeminiAuthMethod(() => null)).toBeNull()
   })
 })

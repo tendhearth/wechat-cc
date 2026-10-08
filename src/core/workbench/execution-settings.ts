@@ -62,6 +62,7 @@ export function executionFailureMessage(code:string):string {
   const ACP_SESSION = 'Cursor 的 ACP 会话无法建立或中断，请确认 cursor-agent 是支持 acp 子命令的版本后重试。'
   const acp: Array<[string, string]> = [
     ['acp_auth_required', 'Cursor 登录态失效，请在电脑上跑一次 cursor-agent login 后再试。'],
+    ['acp_agent_auth_required', '这个执行者还没登录。先在终端里登录它一次（比如直接运行一次 gemini），或用 wechat-cc cli acp add 时加 --auth-method 指定登录方式。'],
     ['acp_resume_unsupported', '这个版本的 Cursor 不支持接着原会话，请带记录重新开始。'],
     ['acp_protocol_version_unsupported', ACP_SESSION], ['acp_session_failed', ACP_SESSION], ['acp_process_exited', ACP_SESSION],
     ['acp_process_start_failed', ACP_SESSION], ['acp_invalid_protocol_message', ACP_SESSION], ['acp_line_too_long', ACP_SESSION], ['acp_protocol_write_failed', ACP_SESSION],

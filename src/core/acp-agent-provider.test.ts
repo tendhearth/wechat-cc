@@ -29,6 +29,8 @@ class FakeProcess extends EventEmitter {
   // null ⇒ never auto-reply (used to model "the request is still in flight when the process dies").
   configResult: Record<string, unknown> | { error: Rpc['error'] } | null = { configOptions: [] }
   promptAuto = true
+  // ACP 登录(2026-10-07):requireAuth ⇒ 没 authenticate 过的 session/new 一律 -32000。
+  requireAuth = false; authedWith: string | null = null
   // 死掉 / 哑掉的进程不再往 stdout 写:setup 阶段的测试要让 initialize 一直挂着,
   // 也要保证 exit() 之后那些已排好队的 setTimeout 回复不会往已 end 的流里写(write-after-end 会抛)。
   silent = false
@@ -48,7 +50,8 @@ class FakeProcess extends EventEmitter {
         // A macrotask guarantees it runs after all pending microtasks (poll's continuation, the
         // test's synchronous mutation) have drained.
         if (message.method === 'initialize') setTimeout(() => this.send({ id: message.id, result: this.initializeResult }), 0)
-        if (message.method === 'session/new') setTimeout(() => this.send('error' in this.newResult ? { id: message.id, error: this.newResult.error } : { id: message.id, result: this.newResult }), 0)
+        if (message.method === 'authenticate') setTimeout(() => { this.authedWith = message.params.methodId; this.send({ id: message.id, result: {} }) }, 0)
+        if (message.method === 'session/new') setTimeout(() => this.send(this.requireAuth && !this.authedWith ? { id: message.id, error: { code: -32000, message: 'Authentication required' } } : 'error' in this.newResult ? { id: message.id, error: this.newResult.error } : { id: message.id, result: this.newResult }), 0)
         if (message.method === 'session/load') setTimeout(() => { this.notify('session/update', { sessionId: message.params.sessionId, update: { sessionUpdate: 'user_message_chunk', content: { type: 'text', text: 'old' } } }); this.notify('session/update', { sessionId: message.params.sessionId, update: { sessionUpdate: 'agent_message_chunk', content: { type: 'text', text: 'replayed' } } }); this.send('error' in this.loadResult ? { id: message.id, error: this.loadResult.error } : { id: message.id, result: this.loadResult }) }, 0)
         if (message.method === 'session/set_config_option' && this.configResult !== null) setTimeout(() => this.send('error' in this.configResult! ? { id: message.id, error: this.configResult.error } : { id: message.id, result: this.configResult }), 0)
         if (message.method === 'session/cancel') queueMicrotask(() => { const prompt = this.sent.findLast(m => m.method === 'session/prompt'); if (prompt) this.send({ id: prompt.id, result: { stopReason: 'cancelled' } }) })
@@ -405,5 +408,22 @@ describe('ACP provider — reports the model the session actually runs (review #
     expect(quiet.session.callTarget?.()).toBeNull()
     const anonymous = await start({}, c => { c.newResult = { sessionId: 'sess-2', configOptions: modelOption('default[]') } })
     expect(anonymous.session.callTarget).toBeUndefined()
+  })
+
+  describe('ACP authenticate (2026-10-07, custom executors)', () => {
+    it('declares the configured auth method before session/new when the agent lists it', async () => {
+      const { child } = await start({}, c => { c.requireAuth = true; c.initializeResult = { protocolVersion: 1, agentCapabilities: { loadSession: true }, authMethods: [{ id: 'oauth-personal', name: 'Google' }, { id: 'gemini-api-key', name: 'Key' }] } }, { authMethod: 'oauth-personal', authErrorCode: 'acp_agent_auth_required' })
+      const methods = child.sent.map(m => m.method)
+      expect(methods.indexOf('authenticate')).toBeGreaterThan(methods.indexOf('initialize'))
+      expect(methods.indexOf('authenticate')).toBeLessThan(methods.indexOf('session/new'))
+      expect(child.authedWith).toBe('oauth-personal')
+    })
+    it('a method the agent does not list is not sent; the auth failure uses the custom code, not the Cursor one', async () => {
+      const spawning = createAcpProvider({ command: '/gemini', args: ['--acp'], displayName: 'Gemini CLI', rpcTimeoutMs: 200, closeTimeoutMs: 250, permissions: 'mode', text: 'messages', authMethod: 'nope', authErrorCode: 'acp_agent_auth_required' }).spawn({ alias: 'a', path: '/tmp' } as never, context())
+      await expect.poll(() => children.length).toBe(1)
+      children[0]!.requireAuth = true; children[0]!.initializeResult = { protocolVersion: 1, authMethods: [{ id: 'oauth-personal' }] }
+      await expect(spawning).rejects.toThrow('acp_agent_auth_required')
+      expect(children[0]!.sent.some(m => m.method === 'authenticate')).toBe(false)
+    })
   })
 })

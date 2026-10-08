@@ -44,6 +44,13 @@ export interface AcpProviderBaseOptions {
    * currentValue),而不是我们想钉的那个。不给 ⇒ 不报 ⇒ 闸门按需要保护。
    */
   targetProvider?: string
+  /**
+   * ACP 登录方式(2026-10-07,自定义执行者):给了且 agent 的 initialize 列出了它 ⇒ 开会话前先 `authenticate {methodId}`。
+   * Gemini CLI 之类即使本机已登录,ACP 面也要客户端先声明用哪种方式,不然 session/new 一律 -32000。
+   */
+  authMethod?: string
+  /** 认证失败时抛哪个码:缺省 acp_auth_required(桌面文案写的是 Cursor 怎么登录);自定义执行者用 acp_agent_auth_required。 */
+  authErrorCode?: string
 }
 
 /** ACP session/new|load 应答里 agent 自报的当前模型:configOptions 里的 model 项,退而求其次 models.currentModelId。 */
@@ -301,7 +308,7 @@ export function createAcpProvider(options: AcpProviderOptions): AgentProvider {
       const setupError = (error: unknown): Error => {
         // acp_auth_required stays a bare code — the login-hint copy upstream is keyed on this
         // exact string, and stderr for an auth failure is rarely more informative than the code.
-        if (error instanceof AcpRequestError && (error.code === -32000 || isAuthFail('sdk-error', error.message))) return withProviderCode(new Error('acp_auth_required'), 'auth_failed') as Error
+        if (error instanceof AcpRequestError && (error.code === -32000 || isAuthFail('sdk-error', error.message))) return withProviderCode(new Error(options.authErrorCode ?? 'acp_auth_required'), 'auth_failed') as Error
         // -32603 Internal error:假 key 与死代理在这一面逐字相同 —— data 没说清就是 provider_error,不猜。
         if (error instanceof AcpRequestError) return withProviderCode(withTail(`acp_session_failed: ${error.message}`), acpErrorCode(error)) as Error
         // 进程在 setup 途中死掉(老版本没有 acp 子命令、spawn 失败)⇒ 挂起的 RPC 被 fatal 的 dispose
@@ -314,6 +321,10 @@ export function createAcpProvider(options: AcpProviderOptions): AgentProvider {
         if (!object(initialized) || initialized.protocolVersion !== 1) throw new Error('acp_protocol_version_unsupported')
         const loadSession = object(initialized.agentCapabilities) && initialized.agentCapabilities.loadSession === true
         imageOk = acpImageCapable(initialized)
+        // 配了登录方式、agent 也认 ⇒ 先声明(只这一次,失败按认证失败报)。agent 没列这个方式 ⇒ 不调,让 session/new 自己说。
+        if (options.authMethod && Array.isArray(initialized.authMethods) && initialized.authMethods.some((m: unknown) => object(m) && m.id === options.authMethod)) {
+          await connection.request('authenticate', { methodId: options.authMethod })
+        }
         const mcpServers = options.mcpServers?.(context) ?? []
         const openNew = async () => {
           const created = await connection.request('session/new', { cwd: project.path, mcpServers })
