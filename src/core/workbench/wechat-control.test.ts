@@ -1,4 +1,4 @@
-import {afterEach,beforeEach,describe,expect,it} from 'vitest'
+import {afterEach,beforeEach,describe,expect,it,vi} from 'vitest'
 import {mkdtempSync,mkdirSync,realpathSync} from 'node:fs'
 import {createHash} from 'node:crypto'
 import {makeWechatWorkbenchControl,wechatTaskMessageKey} from './wechat-control'
@@ -140,6 +140,26 @@ describe('WeChat task control through the shared service',()=>{
     const noReview=makeWechatWorkbenchControl({store,ownerChatId:()=>owner,actions:{...service,reviewList:undefined}})
     expect(await noReview('owner',`任务 ${task.id} 改动`,identity)).toContain('桌面工作台的「改动」面板')
     expect(await control('owner',`任务 ${task.id} 改动 a.ts`,identity)).toContain('用法')
+  })
+
+  it('任务 <编号> 提交 / 合回 / 删除工作区 (2026-10-08) go to worktreeAction instead of being sent to the executor as a supplement',async()=>{
+    setup({async spawn(){return{async *dispatch(){yield result},async close(){}}}})
+    const task=create();await settled(task.id)
+    const act=vi.fn((_id:string,action:string)=>{
+      if(action==='merge')throw new Error('worktree_not_ff')
+      return action==='commit'?{branch:'cc/abcd1234',committed:true,sha:'0123456789'}:{branch:'cc/abcd1234',removed:true}
+    })
+    const control=makeWechatWorkbenchControl({store,ownerChatId:()=>owner,actions:{...service,worktreeAction:act}})
+    const before=service.detail(task.id).events.length
+    expect(await control('owner',`任务 ${task.id} 提交`,identity)).toContain('已提交到分支 cc/abcd1234（0123456）')
+    expect(await control('owner',`任务 ${task.id} 合回`,identity)).toContain('不能直接快进')
+    expect(await control('owner',`任务 ${task.id} 删除工作区`,identity)).toContain('分支 cc/abcd1234 保留')
+    expect(act.mock.calls.map(c=>c[1])).toEqual(['commit','merge','remove'])
+    // 一条都没当成补充发给执行者
+    expect(service.detail(task.id).events.length).toBe(before)
+    expect(await control('owner',`任务 ${task.id} 提交 一下`,identity)).toContain('用法')
+    const plain=makeWechatWorkbenchControl({store,ownerChatId:()=>owner,actions:{...service,worktreeAction:()=>{throw new Error('not_worktree')}}})
+    expect(await plain('owner',`任务 ${task.id} 合回`,identity)).toContain('不在独立工作区里')
   })
 
   it('lists only the current owner original tasks and keeps ordinary conversation out of the workbench',async()=>{
@@ -405,4 +425,39 @@ describe('任务 新建 <项目> 独立 <要求> (2026-10-07)',()=>{
     expect(calls[1]).toMatchObject({projectId,text:'整理周报'});expect(calls[1]).not.toHaveProperty('isolation')
     expect(await control('owner','任务',identity)).not.toBe('')
   })
+})
+
+
+it.each(['提交','合回','删除工作区'] as const)('awaits asynchronous %s result before announcing success',async verb=>{
+ setup({async spawn(){return{async *dispatch(){yield result},async close(){}}}})
+ const task=store.create({title:'async action',path:project,providerId:'claude',ownerChatId:'owner'})
+ const pending=gate()
+ const action=async()=>{await pending.promise;return{branch:'cc/async',committed:true,sha:'0123456789',merged:true,into:'main',removed:true}}
+ const control=makeWechatWorkbenchControl({store,ownerChatId:()=>owner,actions:{...service,worktreeAction:action}})
+ let completed=false
+ const reply=control('owner',`任务 ${task.id} ${verb}`).then(value=>{completed=true;return value})
+ await Promise.resolve();await Promise.resolve();expect(completed).toBe(false)
+ pending.resolve()
+ expect(await reply).toContain(verb==='提交'?'已提交到分支 cc/async':verb==='合回'?'已合进项目的 main':'分支 cc/async 保留')
+ expect(service.detail(task.id).events).toEqual([])
+})
+
+it.each(['合回','删除工作区'] as const)('an asynchronous %s refusal cannot be described as completed',async verb=>{
+ setup({async spawn(){return{async *dispatch(){yield result},async close(){}}}})
+ const task=store.create({title:'async refusal',path:project,providerId:'claude',ownerChatId:'owner'})
+ const action=async()=>{await Promise.resolve();throw Error('worktree_dirty')}
+ // Observe rejection here too so the old synchronous adapter cannot create an unhandled test rejection.
+ const observed=()=>{const promise=action();void promise.catch(()=>{});return promise}
+ const control=makeWechatWorkbenchControl({store,ownerChatId:()=>owner,actions:{...service,worktreeAction:observed}})
+ const reply=await control('owner',`任务 ${task.id} ${verb}`)
+ expect(reply).toContain('没提交的改动');expect(reply).not.toContain(verb==='合回'?'已合进':'已删除')
+ expect(service.detail(task.id).events).toEqual([])
+})
+
+it.each(['合回','删除工作区'] as const)('requires an explicit success flag for %s',async verb=>{
+ setup({async spawn(){return{async *dispatch(){yield result},async close(){}}}})
+ const task=store.create({title:'no receipt',path:project,providerId:'claude',ownerChatId:'owner'})
+ const control=makeWechatWorkbenchControl({store,ownerChatId:()=>owner,actions:{...service,worktreeAction:async()=>({branch:'cc/no-result'})}})
+ const reply=await control('owner',`任务 ${task.id} ${verb}`)
+ expect(reply).toContain('尚未确认');expect(reply).not.toContain(verb==='合回'?'已合进':'已删除')
 })

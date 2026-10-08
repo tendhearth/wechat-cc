@@ -251,8 +251,10 @@ export function makeEntryDomain(ctx:ServiceCtx, domains:EntryDomains) {
       onAccepted:(task,runId)=>{
         if(store.creationReceipts.get(id))throw Error('creation_conflict')
         store.wechatNotifications.watch(task.id,input.ownerChatId,input.accountId,true)
+        const workspace=store.gitWorkspaceForTask(task.id)
+        const workspaceHint=workspace?`\n\n在独立分支 ${workspace.branch} 上做。\n提交：任务 ${task.id} 提交\n查看改动或导出补丁：请在桌面工作台操作。`:''
         store.creationReceipts.add({id,accountId:input.accountId,ownerChatId:input.ownerChatId,commandHash:input.commandHash,projectId:input.projectId,path:task.path,providerId:task.providerId,taskId:task.id,runId,
-          reply:`已接下这件事 · ${task.id}\n${task.providerId} · ${task.path}\n\n${task.title}\n\n完成或需要你处理时，会在这里提醒。\n查看：任务 ${task.id}\n补充：任务 ${task.id} 补充 <要求>\n关闭提醒：任务 ${task.id} 静音`})
+          reply:`已接下这件事 · ${task.id}\n${task.providerId} · ${task.path}\n\n${task.title}${workspaceHint}\n\n完成或需要你处理时，会在这里提醒。\n查看：任务 ${task.id}\n补充：任务 ${task.id} 补充 <要求>\n关闭提醒：任务 ${task.id} 静音`})
       }})
     const receipt=store.creationReceipts.get(id)
     if(!receipt||receipt.ownerChatId!==input.ownerChatId||receipt.accountId!==input.accountId||receipt.commandHash!==input.commandHash)throw Error('creation_conflict')
