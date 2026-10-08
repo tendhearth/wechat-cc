@@ -43,12 +43,12 @@
 - 记录包含设计中的来源、Git/common-dir、子目录、baseCommit、任务分支、worktreeRoot、executionPath、身份及分配状态；完整公开类型由实现者交付供后续任务消费。
 
 **步骤：**
-- [ ] 用真实临时 Git 仓库写测试：同一源项目两个 UUID 产生不同目录/分支，执行目录可改文件而源文件、源分支与 index 不变；同 UUID 请求重试同目录。
-- [ ] 观察失败；实现异步安全 Git runner 和预留/分配/核对，不 `-B`、fetch、stash、force remove 或同步堵塞 daemon。
-- [ ] 测试并实现脏树、无 HEAD、子模块、rebase、分支冲突、陌生目录、身份变更、超时、config 回调拒绝和创建后回执中断恢复。
-- [ ] 测试项目子目录的 executionPath，hooks/fsmonitor/filter 不执行，继承 `GIT_*` 不劫持目标。
-- [ ] 导出行为测试：修改、删除、已提交/暂存与未跟踪新增均在补丁；应用补丁到另一个干净 fixture 后内容相同。真实 index/HEAD/refs 和源文件不变，内部目录不出现。超限/不一致拒绝部分输出。
-- [ ] Bun 与 Node 跑本节测试；类型检查并报告基线或未整合接口造成的失败。提交并写报告，精确列出导出接口。
+- [x] 用真实临时 Git 仓库写测试：同一源项目两个 UUID 产生不同目录/分支，执行目录可改文件而源文件、源分支与 index 不变；同 UUID 请求重试同目录。
+- [x] 观察失败；实现异步安全 Git runner 和预留/分配/核对，不 `-B`、fetch、stash、force remove 或同步堵塞 daemon。
+- [x] 测试并实现脏树、无 HEAD、子模块、rebase、分支冲突、陌生目录、身份变更、超时、config 回调拒绝和创建后回执中断恢复。
+- [x] 测试项目子目录的 executionPath，hooks/fsmonitor/filter 不执行，继承 `GIT_*` 不劫持目标。
+- [x] 导出行为测试：修改、删除、已提交/暂存与未跟踪新增均在补丁；应用补丁到另一个干净 fixture 后内容相同。真实 index/HEAD/refs 和源文件不变，内部目录不出现。超限/不一致拒绝部分输出。
+- [x] Bun 与 Node 跑本节测试；类型检查并报告基线或未整合接口造成的失败。提交并写报告，精确列出导出接口。
 
 ### Task 2: 私有恢复快照、版本与撤回 journal
 
@@ -70,13 +70,13 @@
 - `RestoreReview` 至少返回 `restoreRunId/taskId/artifactId/generation/startedAt/finishedAt/status/files` 及可存成现有 GitReview JSON 的 `review`。文件资格 DTO：`{changeId, state:'available'|'blocked'|'reverted'|'needs_recovery'|'resolved_keep_current', reason?, operationId?, observedFingerprint?}`。
 
 **步骤：**
-- [ ] 用真实临时文件和 SQLite 写恢复测试，观察失败；保存不可变 before/after 原始字节、覆盖清单、路径身份链、HEAD/index、generation。
-- [ ] 修改、新增和删除 exact bytes 测试：CRLF/BOM、空文件、mode；before=absent 有明确证据。ignored→unignored、缺覆盖、超限、非 UTF-8、链接/junction/硬链接均拒绝或资格不可用。
-- [ ] 用真实 Git 状态读取 fixture 覆盖 HEAD/index/staged 变化、旧 changeId/generation、另一 task/artifact、路径目录换成另一真实目录。所有拒绝后文件哈希不变。
-- [ ] session 生命周期模拟只驱动真实 manager：retained 不 close 无恢复点，uncertain 不允许撤回；begin 新 writer 使旧恢复计划失效。
-- [ ] 先存 journal，再文件效果；测试重复 requestId、异内容请求、blob 损坏、磁盘故障、效果后回执前中断。prepared/applying/needs_recovery 持久阻挡 begin/replay；恢复重新核对版本/身份/退出/Git。
-- [ ] 人工保留现场只写回执并解除可解除的阻挡，观察指纹过期零写入拒绝，根身份失效不解锁执行。
-- [ ] Bun/Node 模块测试与类型检查，提交并写接口/测试报告。测试注入仅为依赖边界，不在生产增加专用故障开关。
+- [x] 用真实临时文件和 SQLite 写恢复测试，观察失败；保存不可变 before/after 原始字节、覆盖清单、路径身份链、HEAD/index、generation。
+- [x] 修改、新增和删除 exact bytes 测试：CRLF/BOM、空文件、mode；before=absent 有明确证据。ignored→unignored、缺覆盖、超限、非 UTF-8、链接/junction/硬链接均拒绝或资格不可用。
+- [x] 用真实 Git 状态读取 fixture 覆盖 HEAD/index/staged 变化、旧 changeId/generation、另一 task/artifact、路径目录换成另一真实目录。所有拒绝后文件哈希不变。
+- [x] session 生命周期模拟只驱动真实 manager：retained 不 close 无恢复点，uncertain 不允许撤回；begin 新 writer 使旧恢复计划失效。
+- [x] 先存 journal，再文件效果；测试重复 requestId、异内容请求、blob 损坏、磁盘故障、效果后回执前中断。prepared/applying/needs_recovery 持久阻挡 begin/replay；恢复重新核对版本/身份/退出/Git。
+- [x] 人工保留现场只写回执并解除可解除的阻挡，观察指纹过期零写入拒绝，根身份失效不解锁执行。
+- [x] Bun/Node 模块测试与类型检查，提交并写接口/测试报告。测试注入仅为依赖边界，不在生产增加专用故障开关。
 
 ### Task 3: 桌面与跨端客户端的执行位置和撤回交互
 
@@ -95,13 +95,13 @@
 - resolve 只代表保留当前现场，reverted 才代表已撤回。导出返回 `{artifact}`，复用已有成果下载。
 
 **步骤：**
-- [ ] 客户端测试证明位置字段真的提交、原请求重试不换编号，旧任务和非 Git 显示兼容；观察失败再加最小 UI。
-- [ ] Git 项目位置用已有表单样式提供「独立副本 / 原目录」，只保留交办一个主要动作；错误保留正文与附件。
-- [ ] 任务按来源项目分组，说明在副本做，可打开执行目录及导出；归档说明副本保留。
-- [ ] 恢复审阅明确整段会话范围，普通回合没有撤回按钮；writer 未关闭先用现有结束会话动作。确认文件影响后提交稳定 requestId。
-- [ ] 模块/Playwright 验证成功、版本冲突、needs_recovery、resolve 过期、迟到响应、不切走别的任务、不丢阅读/草稿；只有真实 success receipt 显示已撤回。
-- [ ] 手机/PWA/原生 Backend 传递同一位置策略并显示失败原因；不宣称手机已有逐文件撤回面板。
-- [ ] 跑客户端目标测试与独立 desktop fixture，提交并写报告。
+- [x] 客户端测试证明位置字段真的提交、原请求重试不换编号，旧任务和非 Git 显示兼容；观察失败再加最小 UI。
+- [x] Git 项目位置用已有表单样式提供「独立副本 / 原目录」，只保留交办一个主要动作；错误保留正文与附件。
+- [x] 任务按来源项目分组，说明在副本做，可打开执行目录及导出；归档说明副本保留。
+- [x] 恢复审阅明确整段会话范围，普通回合没有撤回按钮；writer 未关闭先用现有结束会话动作。确认文件影响后提交稳定 requestId。
+- [x] 模块/Playwright 验证成功、版本冲突、needs_recovery、resolve 过期、迟到响应、不切走别的任务、不丢阅读/草稿；只有真实 success receipt 显示已撤回。
+- [x] 手机/PWA/原生 Backend 传递同一位置策略并显示失败原因；不宣称手机已有逐文件撤回面板。
+- [x] 跑客户端目标测试与独立 desktop fixture，提交并写报告。
 
 ### Task 4: 持久任务绑定、异步创建与来源项目投影
 
@@ -116,13 +116,13 @@
 - 生产 `validateConfiguration` 将 source 和 execution 分开解析，不安全/无法重现的项目配置返回明确隔离准入错误，不静默漏工具。
 
 **步骤：**
-- [ ] 创建行为测试 red：同项目两个新有编号 entry 产生不同 path、相同 sourcePath；同编号重试同 task/workspace，异内容冲突。
-- [ ] 追加 Task 1/2 等价 DDL 与 task FK 迁移，更新维护手册要求的三处迁移测试，既有 task 为 NULL 不迁移。
-- [ ] 接入 prepare→verify→短事务 accepted；来源项目注册/搜索/provider 偏好/matter 使用 sourcePath，不注册每棵副本。
-- [ ] 复核、修订、额度接手传播 workspaceId 与实际 path；native history 不迁移。测试用户原有未提交副本改动保留在复核里。
-- [ ] 更新所有服务/HTTP/mobile/微信/selftest 调用点和协议 validators，保留未知结果时的原编号；旧无编号协议不虚报去重。
-- [ ] 配置准入测试覆盖 ignored settings、按 source cwd 授权、相对/绝对 MCP 路径、模型设置遗漏；原目录明确选择仍可用。
-- [ ] 目标 suite Bun/Node、typecheck、depcheck；提交并报告，根整合者 cherry-pick 后复验。
+- [x] 创建行为测试 red：同项目两个新有编号 entry 产生不同 path、相同 sourcePath；同编号重试同 task/workspace，异内容冲突。
+- [x] 追加 Task 1/2 等价 DDL 与 task FK 迁移，更新维护手册要求的三处迁移测试，既有 task 为 NULL 不迁移。
+- [x] 接入 prepare→verify→短事务 accepted；来源项目注册/搜索/provider 偏好/matter 使用 sourcePath，不注册每棵副本。
+- [x] 复核、修订、额度接手传播 workspaceId 与实际 path；native history 不迁移。测试用户原有未提交副本改动保留在复核里。
+- [x] 更新所有服务/HTTP/mobile/微信/selftest 调用点和协议 validators，保留未知结果时的原编号；旧无编号协议不虚报去重。
+- [x] 配置准入测试覆盖 ignored settings、按 source cwd 授权、相对/绝对 MCP 路径、模型设置遗漏；原目录明确选择仍可用。
+- [x] 目标 suite Bun/Node、typecheck、depcheck；提交并报告，根整合者 cherry-pick 后复验。
 
 ### Task 5: 关闭证明、持久操作占用、恢复审阅与管理员路由
 
@@ -138,13 +138,13 @@
 - workspace-export 在所有相关 writer closed 的窗口内调用 Task 1 导出并保存普通补丁成果。
 
 **步骤：**
-- [ ] 实际 WorkbenchService/SQLite/临时 Git fixture 红测试：retained 回复不能撤回，明确 close 后形成恢复快照；restore review diff 覆盖整段 session，不伪称最后回合。
-- [ ] writer before/close hooks 与持久恢复记录接线；任务取消但未确认退出仍 blocked，晚到退出能正确结算。
-- [ ] 扩展占用与启动恢复协调，测试撤回/continue/input/start/pump 竞争，以及同副本接手 writer 和 daemon 重启未决 journal。
-- [ ] 接 route 严格验证归属、requestId、artifact/path/changeId 和 resolve 观察指纹；未知或缺恢复版本的旧成果零写入拒绝。
-- [ ] 完整补丁导出经过同一闭锁窗口，公开成果注册与 receipt/seq 正确；包含 untracked，排除原始材料。
-- [ ] UI成功/失败契约与前端实现一致，成功撤回下一次续接明示当前文件事实。
-- [ ] 跑相关 full service、router、token/Tauri proxy 与客户端测试；提交并报告。
+- [x] 实际 WorkbenchService/SQLite/临时 Git fixture 红测试：retained 回复不能撤回，明确 close 后形成恢复快照；restore review diff 覆盖整段 session，不伪称最后回合。
+- [x] writer before/close hooks 与持久恢复记录接线；任务取消但未确认退出仍 blocked，晚到退出能正确结算。
+- [x] 扩展占用与启动恢复协调，测试撤回/continue/input/start/pump 竞争，以及同副本接手 writer 和 daemon 重启未决 journal。
+- [x] 接 route 严格验证归属、requestId、artifact/path/changeId 和 resolve 观察指纹；未知或缺恢复版本的旧成果零写入拒绝。
+- [x] 完整补丁导出经过同一闭锁窗口，公开成果注册与 receipt/seq 正确；包含 untracked，排除原始材料。
+- [x] UI成功/失败契约与前端实现一致，成功撤回下一次续接明示当前文件事实。
+- [x] 跑相关 full service、router、token/Tauri proxy 与客户端测试；提交并报告。
 
 ### Task 6: 整合验收、文档与交付
 
