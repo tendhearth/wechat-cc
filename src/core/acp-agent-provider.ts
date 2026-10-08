@@ -308,7 +308,12 @@ export function createAcpProvider(options: AcpProviderOptions): AgentProvider {
       const setupError = (error: unknown): Error => {
         // acp_auth_required stays a bare code — the login-hint copy upstream is keyed on this
         // exact string, and stderr for an auth failure is rarely more informative than the code.
-        if (error instanceof AcpRequestError && (error.code === -32000 || isAuthFail('sdk-error', error.message))) return withProviderCode(new Error(options.authErrorCode ?? 'acp_auth_required'), 'auth_failed') as Error
+        // 自定义执行者:把 agent 自己说的原因带上(10-07 真机:Gemini CLI 说「个人 Google 登录已停用,请迁到 Antigravity」,
+        // 被我们一句笼统的「还没登录」盖掉了)。Cursor 照旧是裸码,桌面那句 cursor-agent login 的提示靠它。
+        if (error instanceof AcpRequestError && (error.code === -32000 || isAuthFail('sdk-error', error.message))) {
+          const reason = options.authErrorCode ? error.message.replace(CONTROL_CHARS, ' ').trim().slice(0, 300) : ''
+          return withProviderCode(new Error(reason ? `${options.authErrorCode}: ${reason}` : (options.authErrorCode ?? 'acp_auth_required')), 'auth_failed') as Error
+        }
         // -32603 Internal error:假 key 与死代理在这一面逐字相同 —— data 没说清就是 provider_error,不猜。
         if (error instanceof AcpRequestError) return withProviderCode(withTail(`acp_session_failed: ${error.message}`), acpErrorCode(error)) as Error
         // 进程在 setup 途中死掉(老版本没有 acp 子命令、spawn 失败)⇒ 挂起的 RPC 被 fatal 的 dispose

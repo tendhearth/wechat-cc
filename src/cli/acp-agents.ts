@@ -32,7 +32,7 @@ export function formatAcpAgents(agents: readonly Agent[], findOnPath: (cmd: stri
   const lines = agents.length
     ? agents.map(a => `${a.id}  ${a.name}  ${[a.command, ...(a.args ?? [])].join(' ')}${a.command.startsWith('/') || findOnPath(a.command) ? '' : '  (找不到命令,不会登记)'}`)
     : ['还没有自定义 ACP 执行者。']
-  const presets = Object.entries(ACP_PRESETS).map(([id, p]) => `  ${id}  ${p.name}  ${[p.bin, ...p.args].join(' ')}${findOnPath(p.bin) ? '  (已装)' : ''}`)
+  const presets = Object.entries(ACP_PRESETS).map(([id, p]) => `  ${id}  ${p.name}  ${[p.bin, ...p.args].join(' ')}${findOnPath(p.bin) ? '  (已装)' : ''}${p.note ? `\n      ${p.note}` : ''}`)
   return [...lines, '', '预设(wechat-cc cli acp add <预设>):', ...presets, '', '改完要重启 daemon 才生效:wechat-cc service stop && wechat-cc service start'].join('\n')
 }
 export type { AcpCustomAgent }
