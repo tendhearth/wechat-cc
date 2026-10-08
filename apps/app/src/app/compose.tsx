@@ -54,22 +54,25 @@ export default function Compose() {
   const { backend } = useBackendCtx()
   const session = useSession()
   const recovery = useInputRecovery()
-  const params = useLocalSearchParams<{ matter?: string; focus?: string }>()
+  const params = useLocalSearchParams<{ matter?: string; focus?: string; fork?: string; project?: string; exclude?: string }>()
   const matter = one(params.matter) || undefined
+  // 「另做一份」(2026-10-08):从一件独立工作区的事进来 —— 同一个项目、独立工作区、换一位执行者;草稿单独存,不盖掉「新的一件」的草稿
+  const fork = matter ? undefined : one(params.fork) || undefined
+  const excludeProvider = one(params.exclude) || null
   // 从「接着做」进来:输入框直接聚焦,主人接着打字(spec §4.4)
   const focus = one(params.focus) === '1'
-  const draftKey = matter ?? 'new'
+  const draftKey = matter ?? (fork ? `fork:${fork}` : 'new')
   const [text, setTextState] = useState(() => getDraft(draftKey))
   const textRef = useRef(text)
   const draftKeyRef = useRef(draftKey)
   draftKeyRef.current = draftKey
   const setText = (v: string) => { textRef.current = v; setDraft(draftKey, v); setTextState(v) }
-  const [adjust, setAdjust] = useState(false)
+  const [adjust, setAdjust] = useState(!!fork)
   const [busy, setBusy] = useState(false)
   const [outcome, setOutcome] = useState<null | ComposeOutcome>(null)
   const [inputNotice, setInputNotice] = useState<string | null>(null)
-  const [projectId, setProjectId] = useState<string | null>(null)
-  const [isolated, setIsolated] = useState(false)
+  const [projectId, setProjectId] = useState<string | null>(() => (fork && one(params.project)) || null)
+  const [isolated, setIsolated] = useState(!!fork)
   const [providerId, setProviderId] = useState<string | null>(null)
   // 交办时选模型 / 思考强度(2026-10-06,对标 Paseo / Orca);null = 用执行者自己的默认。换执行者 / 项目就回到默认。
   const [modelId, setModelId] = useState<string | null>(null)
@@ -105,6 +108,12 @@ export default function Compose() {
   const inputHint = matterInputHint(detail.data, lang)
   const nativeStart = matter ? detail.data?.nativeStart : undefined
   const opt = options.data
+  // 另做一份:默认挑一位不是原来那位的可用执行者(主人可以再换)
+  useEffect(() => {
+    if (!fork || providerId || !opt) return
+    const other = opt.providers.find(p => p.available && p.id !== excludeProvider)
+    if (other) setProviderId(other.id)
+  }, [fork, providerId, opt, excludeProvider])
   const project = opt?.projects.find((p) => p.id === projectId) ?? opt?.projects[0]
   const provider = providerId ? opt?.providers.find((p) => p.id === providerId) : null
   const canPickModel = !matter && !!provider?.capabilities.features.modelCatalog

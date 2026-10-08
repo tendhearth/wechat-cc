@@ -138,6 +138,13 @@ export default function Matter() {
     else setWtNote(t(lang, r === 'busy' || err === 'busy' ? (action === 'remove' ? 'progress.wtBusyRemove' : 'progress.wtBusyCommit') : 'progress.wtFailed'))
     void refreshDetail()
   }
+  // 另做一份(2026-10-08):同样的要求、同一个项目、独立工作区,交给另一位执行者;最初那句要求在最近的记录里就带上,不在就留给主人写
+  const forkToAnother = (projectId: string, from: string) => {
+    const key = `fork:${id}`
+    const first = d.events.find(e => e.kind === 'user')?.text
+    if (first && !getDraft(key).trim()) setDraft(key, first)
+    router.push(`/compose?fork=${encodeURIComponent(id)}&project=${encodeURIComponent(projectId)}&exclude=${encodeURIComponent(from)}`)
+  }
   const openHandoff = () => { handoffReq.current = uuid(); setFailure(null); setSheet(true) }
   const confirmHandoff = async () => {
     const h = d.quotaHandoff
@@ -262,6 +269,7 @@ export default function Matter() {
                 <Button kind="secondary" testID="progress-wt-commit" label={t(lang, 'progress.wtCommit')} onPress={() => void worktreeAct('commit')} disabled={!online} busy={wtBusy} />
                 <Button kind="secondary" testID="progress-wt-merge" label={t(lang, wtArmed === 'merge' ? 'progress.wtMergeConfirm' : 'progress.wtMerge')} onPress={() => void worktreeAct('merge')} disabled={!online || wtBusy} />
                 <Button kind="secondary" testID="progress-wt-remove" label={t(lang, wtArmed === 'remove' ? 'progress.wtRemoveConfirm' : 'progress.wtRemove')} onPress={() => void worktreeAct('remove')} disabled={!online || wtBusy} />
+                {d.task.worktree.projectId ? <Button kind="secondary" testID="progress-wt-fork" label={t(lang, 'progress.wtFork')} onPress={() => forkToAnother(d.task!.worktree!.projectId!, d.task!.providerId)} /> : null}
               </View>
             ) : null}
             {wtNote ? <Txt testID="progress-wt-note" role="meta" tone="inkSoft" accessibilityLiveRegion="polite">{wtNote}</Txt> : null}

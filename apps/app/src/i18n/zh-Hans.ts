@@ -57,6 +57,7 @@ const zh: Record<keyof typeof en, string> = {
   'progress.wtRemoveConfirm': '再点一次：删除工作区（分支保留）',
   'progress.wtCommitted': '已提交到分支。可以「合回项目」，或回到电脑上自己合并。',
   'progress.wtMerge': '合回项目',
+  'progress.wtFork': '交给另一位另做一份',
   'progress.wtMergeConfirm': '再点一次：快进合并到项目',
   'progress.wtMerged': '已合回项目。',
   'progress.wtOnMerged': '在独立分支 {branch} 上做，已合回项目。',

@@ -55,6 +55,7 @@ const en = {
   'progress.wtRemoveConfirm': 'Tap again to remove (branch kept)',
   'progress.wtCommitted': 'Committed to the branch. Merge it back here, or on your computer.',
   'progress.wtMerge': 'Merge into project',
+  'progress.wtFork': 'Have another helper try it',
   'progress.wtMergeConfirm': 'Tap again to fast-forward the project',
   'progress.wtMerged': 'Merged into the project.',
   'progress.wtOnMerged': 'Worked on separate branch {branch}; merged into the project.',
