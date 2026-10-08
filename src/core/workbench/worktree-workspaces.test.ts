@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it } from 'vitest'
 import { execFileSync } from 'node:child_process'
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, symlinkSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { removeTempDir } from '../../lib/test-temp'
@@ -117,6 +117,21 @@ describe('worktree workspaces (2026-10-07)', () => {
     const bare = repo()
     writeFileSync(join(bare.project, '.gitignore'), '.env\n'); writeFileSync(join(bare.project, '.env'), 'K\n')
     expect(copyIncludedFiles(bare.project, bare.state)).toBe(0)
+  })
+  it('a destination parent that is a symlink out of the worktree is never written through (2026-10-08 review)', () => {
+    const { project, state } = repo()
+    const outside = realpathSync.native(mkdtempSync(join(tmpdir(), 'cc-outside-'))); dirs.push(outside)
+    const g = (...a: string[]) => execFileSync('git', a, { cwd: project, stdio: 'pipe' })
+    writeFileSync(join(project, '.gitignore'), '*.secret\n'); writeFileSync(join(project, '.worktreeinclude'), '*.secret\n')
+    g('add', '.gitignore', '.worktreeinclude'); g('commit', '-q', '-m', 'inc')
+    writeFileSync(join(project, 'top.secret'), 's\n'); mkdirSync(join(project, 'cfg')); writeFileSync(join(project, 'cfg', 'a.secret'), 'a\n')
+    const repoRoot = repoRootOf(project)!
+    const plan = planWorktree({ stateDir: state, projectId: PID, projectPath: project, repoRoot, id: 'cccc0001' })
+    execFileSync('git', ['worktree', 'add', '-q', '-b', plan.branch, plan.root, 'HEAD'], { cwd: project })
+    try { symlinkSync(outside, join(plan.root, 'cfg')) } catch { return } // Windows 没权限建链接 ⇒ 跳过
+    expect(copyIncludedFiles(repoRoot, plan.root)).toBe(1)
+    expect(existsSync(join(plan.root, 'top.secret'))).toBe(true)
+    expect(existsSync(join(outside, 'a.secret'))).toBe(false)
   })
   it('merge hint quotes paths with spaces', () => {
     expect(mergeHint('/Users/a/My Project', 'cc/abcd1234')).toBe("cd '/Users/a/My Project' && git merge cc/abcd1234")

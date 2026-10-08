@@ -127,10 +127,11 @@ export default function Matter() {
     if (wtBusy) return
     if (action !== 'commit' && wtArmed !== action) { setWtArmed(action); setWtNote(null); return }
     setWtArmed(null); setWtBusy(true); setWtNote(null)
-    const r = await submit(`worktree:${id}:${action}`, async () => { await backend.worktree({ id, action }) })
+    let mergedNow = true
+    const r = await submit(`worktree:${id}:${action}`, async () => { mergedNow = (await backend.worktree({ id, action })).merged !== false })
     setWtBusy(false)
     const err = r === 'ok' || r === 'busy' ? null : r.error
-    if (r === 'ok') setWtNote(t(lang, action === 'commit' ? 'progress.wtCommitted' : action === 'merge' ? 'progress.wtMerged' : 'progress.wtRemoved'))
+    if (r === 'ok') setWtNote(t(lang, action === 'commit' ? 'progress.wtCommitted' : action === 'merge' ? (mergedNow ? 'progress.wtMerged' : 'progress.wtNothingToMerge') : 'progress.wtRemoved'))
     else if (err === 'worktree_dirty') setWtNote(t(lang, 'progress.wtDirty'))
     else if (err === 'worktree_uncommitted') setWtNote(t(lang, 'progress.wtUncommitted'))
     else if (err === 'merge_manual') setWtNote(t(lang, 'progress.wtMergeManual'))
