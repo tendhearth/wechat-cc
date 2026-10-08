@@ -82,3 +82,20 @@ it('sourcePath takes priority over legacy projection and workspace detail retain
  expect(removed).not.toContain('data-action="worktree-commit"');expect(removed).not.toContain('data-action="worktree-remove"')
  expect(removed).toContain('工作区已删除（分支还在项目里）')
 })
+
+it('archive tidy hint is legacy-only even when a UUID workspace has the compatibility worktree projection',()=>{
+ const task={id:'arch',path:'/copy/arch',title:'归档',providerId:'codex',status:'completed',createdAt:1,updatedAt:2,error:null,canArchive:true,worktree:{branch:'cc/arch',projectPath:'/work/site',removed:false}}
+ const workspace={id:'uuid-workspace',mode:'isolated' as const,sourcePath:'/work/site',executionPath:task.path,branch:'codex/cc-task-uuid',baseCommit:'a'.repeat(40)}
+ const page=(detail:unknown)=>renderWorkbench({...state,selectedId:task.id,detail} as never)
+ const base={task,events:[],artifacts:[]}
+ expect(page(base)).toContain('独立工作区没有没提交的改动时会一起删掉')
+ for(const detail of [{...base,workspace},{...base,task:{...task,workspace}},{...base,task:{...task,sourcePath:'/work/site'}}]){
+  expect(page(detail)).toContain('data-action="archive-task"')
+  expect(page(detail)).not.toContain('独立工作区没有没提交的改动时会一起删掉')
+ }
+ for(const taskPatch of [{writerExit:'unconfirmed'},{writerExit:'alive'},{error:'writer_not_closed'}]){
+  const html=page({...base,task:{...task,...taskPatch}})
+  expect(html).not.toContain('data-action="archive-task"')
+  expect(html).not.toContain('独立工作区没有没提交的改动时会一起删掉')
+ }
+})

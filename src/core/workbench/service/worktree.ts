@@ -69,35 +69,55 @@ export function makeWorktreeDomain(ctx: ServiceCtx) {
       return {branch:w.branch,committed,sha,mergeHint:hint}
     })
   }
-  return {
+  // Historical worktrees keep a synchronous action path. Archive cleanup must never
+  // enter the asynchronous UUID workspace adapter or leave an unobserved Promise.
+  function legacyAction(id: string, action: Action): Result {
+    const { task, wt } = target(id, action)
+    ctx.recovery?.gate(task.path)
+    if (action === 'commit') {
+      const result = commitWorktree(wt.root, task.title)
+      const hint = mergeHint(wt.projectPath, wt.branch)
+      store.addEvent(id, 'system', result.committed ? `已提交到分支 ${wt.branch}（${result.sha.slice(0, 7)}）。合并到项目：${hint}` : `分支 ${wt.branch} 上没有新的改动要提交。`)
+      ctx.hub.touched(id)
+      return { branch: wt.branch, committed: result.committed, sha: result.sha, mergeHint: hint }
+    }
+    if (action === 'merge') {
+      ctx.recovery?.gate(wt.projectPath);ctx.recovery?.gate(wt.repoRoot)
+      const result = mergeWorktree(wt.repoRoot, wt.root, wt.branch)
+      store.worktrees.markMerged(id)
+      store.addEvent(id, 'system', result.merged ? `分支 ${wt.branch} 已快进合并到项目的 ${result.into}。` : `分支 ${wt.branch} 的内容已经在项目的 ${result.into} 里了。`)
+      ctx.hub.touched(id)
+      return { branch: wt.branch, merged: true, into: result.into }
+    }
+    removeWorktree(wt.repoRoot, wt.root)
+    store.worktrees.markRemoved(id)
+    store.addEvent(id, 'system', `独立工作区已删除，分支 ${wt.branch} 保留在项目里。`)
+    ctx.hub.touched(id)
+    return { branch: wt.branch, removed: true }
+  }
+  const domain = {
     worktreeAction(id: string, action: Action): Result|Promise<Result> {
       if (action !== 'commit' && action !== 'remove' && action !== 'merge') throw new Error('invalid_request')
       if(store.gitWorkspaceForTask(id)){
         if(action==='merge')throw Error('invalid_request')
         return boundAction(id,action)
       }
-      const { task, wt } = target(id, action)
-      ctx.recovery?.gate(task.path)
-      if (action === 'commit') {
-        const result = commitWorktree(wt.root, task.title)
-        const hint = mergeHint(wt.projectPath, wt.branch)
-        store.addEvent(id, 'system', result.committed ? `已提交到分支 ${wt.branch}（${result.sha.slice(0, 7)}）。合并到项目：${hint}` : `分支 ${wt.branch} 上没有新的改动要提交。`)
+      return legacyAction(id,action)
+    },
+    /**
+     * 仅旧登记工作区归档时顺手收拾(2026-10-08,历史设计稿第 6 条):工作区干净 ⇒ 删目录(提交过的都在分支上,分支保留);
+     * 有没提交的改动 / 会话还开着 / git 出错 ⇒ 留着,时间线说一句,不拦归档 —— 宁可多占盘也不丢东西。
+     */
+    tidyOnArchive(id: string): void {
+      const wt = store.worktrees.get(id)
+      if (!wt || wt.removedAt !== null || store.gitWorkspaceForTask(id)) return
+      try { legacyAction(id, 'remove') }
+      catch (error) {
+        const code = error instanceof Error ? error.message : ''
+        store.addEvent(id, 'system', code === 'worktree_dirty' ? `已归档。独立工作区里还有没提交的改动，先保留着；需要时恢复任务再提交或删除。` : `已归档。独立工作区暂时删不掉（${code === 'workbench_busy' ? '会话还开着' : '出了点问题'}），先保留着；需要时恢复任务再删除。`)
         ctx.hub.touched(id)
-        return { branch: wt.branch, committed: result.committed, sha: result.sha, mergeHint: hint }
       }
-      if (action === 'merge') {
-        ctx.recovery?.gate(wt.projectPath);ctx.recovery?.gate(wt.repoRoot)
-        const result = mergeWorktree(wt.repoRoot, wt.root, wt.branch)
-        store.worktrees.markMerged(id)
-        store.addEvent(id, 'system', result.merged ? `分支 ${wt.branch} 已快进合并到项目的 ${result.into}。` : `分支 ${wt.branch} 的内容已经在项目的 ${result.into} 里了。`)
-        ctx.hub.touched(id)
-        return { branch: wt.branch, merged: true, into: result.into }
-      }
-      removeWorktree(wt.repoRoot, wt.root)
-      store.worktrees.markRemoved(id)
-      store.addEvent(id, 'system', `独立工作区已删除，分支 ${wt.branch} 保留在项目里。`)
-      ctx.hub.touched(id)
-      return { branch: wt.branch, removed: true }
     },
   }
+  return domain
 }

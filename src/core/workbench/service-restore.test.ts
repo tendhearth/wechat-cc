@@ -1,7 +1,7 @@
 import {afterEach,beforeEach,expect,it} from 'vitest'
 import {randomUUID} from 'node:crypto'
 import {execFileSync} from 'node:child_process'
-import {mkdirSync,mkdtempSync,realpathSync,writeFileSync,readFileSync} from 'node:fs'
+import {mkdirSync,mkdtempSync,realpathSync,writeFileSync,readFileSync,existsSync} from 'node:fs'
 import {tmpdir} from 'node:os'
 import {join} from 'node:path'
 import {openDb,type Db} from '../../lib/db'
@@ -385,4 +385,28 @@ it('replays an exact revert after explicit clean removal but rejects new effects
  await expect(service.revertReviewFile(task.id,{...input,requestId:randomUUID()})).rejects.toThrow('worktree_removed')
  expect(store.events(task.id)).toEqual(events);expect(store.restores.operation(receipt.operationId)).toEqual(op)
  expect(service.detail(task.id).task.worktree!.removed).toBe(true)
+})
+
+it('archives UUID workspaces without cleanup and retains closed restore bytes and full patch export',async()=>{
+ const sourceBefore={head:git('rev-parse','HEAD'),index:readFileSync(join(source,'.git','index')),status:git('status','--porcelain')}
+ const {task,review,input}=await closed(),workspace=store.gitWorkspaceForTask(task.id)!
+ expect(review.restore?.scope).toBe('closed_session')
+ expect(review.files.find(f=>f.path==='file.txt')?.revert?.state).toBe('available')
+ const runs=store.restores.allRuns(),snapshot=store.restores.run(runs[0]!.restoreRunId)
+ const archived=service.setArchived(task.id,true)
+ expect(archived).not.toBeInstanceOf(Promise);expect(archived.archivedAt).not.toBeNull()
+ expect(archived.workspace?.removed).not.toBe(true);expect(existsSync(task.path)).toBe(true)
+ expect(store.gitWorkspaces.get(workspace.id)).toEqual(workspace)
+ expect(store.restores.run(runs[0]!.restoreRunId)).toEqual(snapshot)
+ expect(service.reviewList(task.id).find(r=>r.artifactId===review.artifactId)?.files.find(f=>f.path==='file.txt')?.revert?.state).toBe('available')
+ expect((await service.revertReviewFile(task.id,input)).state).toBe('reverted')
+ expect(readFileSync(join(task.path,'file.txt'),'utf8')).toBe('original\n')
+ // A clean UUID copy stays available through restore/unarchive/rearchive too.
+ service.setArchived(task.id,false);expect(service.setArchived(task.id,true).workspace?.removed).not.toBe(true)
+ writeFileSync(join(task.path,'file.txt'),'export after archive\n');writeFileSync(join(task.path,'new.txt'),'untracked\n')
+ const artifact=await service.exportWorkspace(task.id),bytes=Buffer.from(service.artifact(task.id,artifact.id).contentBase64,'base64')
+ const applied=join(area,'archive-applied');execFileSync('git',['clone','-q','--no-local',source,applied]);execFileSync('git',['-C',applied,'apply','-'],{input:bytes})
+ expect(readFileSync(join(applied,'file.txt'),'utf8')).toBe('export after archive\n');expect(readFileSync(join(applied,'new.txt'),'utf8')).toBe('untracked\n')
+ expect({head:git('rev-parse','HEAD'),index:readFileSync(join(source,'.git','index')),status:git('status','--porcelain')}).toEqual(sourceBefore)
+ expect(existsSync(task.path)).toBe(true);expect(store.worktrees.get(task.id)).toBeNull()
 })
