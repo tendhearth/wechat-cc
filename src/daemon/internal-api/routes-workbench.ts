@@ -71,6 +71,11 @@ function mappedError(err: unknown,entry=false): ReturnType<RouteHandler> {
   // 打回改走 submitInput 之后这条路由也能吐它:存不下补充是「这会儿没法办」,不是 500(终审 M7)。
   if (code === 'input_storage_unavailable') return {status:503,body:{error:code}}
   if (code === 'writer_alive' || code === 'invalid_state' || code === 'review_file_changed') return { status: 409, body: { error: code } }
+  if (['git_workspace_binding_required','writer_not_closed','workspace_blocked','workspace_identity_changed','directory_identity_changed','stale_change','git_state_changed','file_changed','request_conflict','observation_changed','operation_not_resolvable','operation_identity_changed'].includes(code))return {status:409,body:{error:code}}
+  if (['restore_not_found','operation_not_found'].includes(code))return {status:404,body:{error:code}}
+  if (['snapshot_unavailable','parent_unavailable','blob_unavailable','blob_corrupt','blob_invalid','blob_identity_changed','binary_file','sensitive_path','file_size_limit','snapshot_size_limit','snapshot_deadline'].includes(code))return {status:422,body:{error:code}}
+  if(code==='legacy_file_identity')return {status:422,body:{error:code}}
+  if (code.startsWith('filesystem_')||code==='git_failed')return {status:503,body:{error:code.startsWith('filesystem_')?'restore_storage_unavailable':code}}
   if (code === 'review_revert_unavailable') return { status: 422, body: { error: code } }
   if (code === 'worktree_dirty' || code === 'worktree_removed' || code === 'worktree_conflict' || code === 'worktree_branch_exists') return { status: 409, body: { error: code } }
   if (code === 'not_worktree' || code === 'worktree_not_git') return { status: 422, body: { error: code } }
@@ -428,19 +433,29 @@ export function workbenchRoutes(deps: InternalApiDeps): RouteTable {
       const id = typeof value?.id === 'string' ? value.id : '', action = value?.action
       if (!TASK_ID.test(id) || (action !== 'commit' && action !== 'remove') || Object.keys(value ?? {}).some(k => k !== 'id' && k !== 'action')) return invalid()
       if (!deps.workbench) return { status: 503, body: { error: 'workbench_not_wired' } }
-      try { return { status: 200, body: { worktree: deps.workbench.worktreeAction(id, action) } } }
+      try { return { status: 200, body: { worktree: await deps.workbench.worktreeAction(id, action) } } }
       catch (err) { return mappedError(err) }
     },
 
     'POST /v1/workbench/review-revert': async (_query, body) => {
-      const value = objectBody(body)
-      const id = typeof value?.id === 'string' ? value.id : ''
-      const artifactId = typeof value?.artifactId === 'string' ? value.artifactId : ''
-      const path = value?.path
-      if (!TASK_ID.test(id) || !ARTIFACT_ID.test(artifactId) || typeof path !== 'string' || !path || path.length > 4096 || Object.keys(value ?? {}).some(k => !['id', 'artifactId', 'path'].includes(k))) return invalid()
-      if (!deps.workbench) return { status: 503, body: { error: 'workbench_not_wired' } }
-      try { return { status: 200, body: { reverted: deps.workbench.revertReviewFile(id, { artifactId, path }) } } }
-      catch (err) { return mappedError(err) }
+      const value=objectBody(body),id=value?.id,artifactId=value?.artifactId,path=value?.path,changeId=value?.changeId,requestId=value?.requestId
+      if(typeof id!=='string'||!TASK_ID.test(id)||typeof artifactId!=='string'||!REQUEST_ID.test(artifactId)||typeof path!=='string'||!path||path.length>4096||Object.keys(value??{}).some(k=>!['id','artifactId','path','changeId','requestId'].includes(k)))return invalid()
+      if(changeId===undefined&&requestId===undefined)return {status:422,body:{error:'review_revert_unavailable'}}
+      if(typeof changeId!=='string'||!REQUEST_ID.test(changeId)||typeof requestId!=='string'||!REQUEST_ID.test(requestId))return invalid()
+      if(!deps.workbench)return {status:503,body:{error:'workbench_not_wired'}}
+      try{return {status:200,body:{operation:await deps.workbench.revertReviewFile(id,{artifactId,path,changeId,requestId})}}}catch(err){return mappedError(err)}
+    },
+    'POST /v1/workbench/review-revert-resolve': async (_query, body) => {
+      const value=objectBody(body),id=value?.id,operationId=value?.operationId,observedFingerprint=value?.observedFingerprint
+      if(typeof id!=='string'||!TASK_ID.test(id)||typeof operationId!=='string'||!REQUEST_ID.test(operationId)||typeof observedFingerprint!=='string'||!SHA256.test(observedFingerprint)||Object.keys(value??{}).some(k=>!['id','operationId','observedFingerprint'].includes(k)))return invalid()
+      if(!deps.workbench)return {status:503,body:{error:'workbench_not_wired'}}
+      try{return {status:200,body:{operation:await deps.workbench.resolveReviewRevert(id,{operationId,observedFingerprint})}}}catch(err){return mappedError(err)}
+    },
+    'POST /v1/workbench/workspace-export': async (_query, body) => {
+      const value=objectBody(body),id=value?.id
+      if(typeof id!=='string'||!TASK_ID.test(id)||Object.keys(value??{}).some(k=>k!=='id'))return invalid()
+      if(!deps.workbench)return {status:503,body:{error:'workbench_not_wired'}}
+      try{return {status:200,body:{artifact:await deps.workbench.exportWorkspace(id)}}}catch(err){return mappedError(err)}
     },
 
     'POST /v1/workbench/review-return': async (_query, body) => {

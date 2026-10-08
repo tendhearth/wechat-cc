@@ -75,6 +75,7 @@ export function makeQuotaHandoffDomain(ctx: ServiceCtx, domains: QuotaHandoffDom
       const done = handed(taskId)
       if (done) return { taskId: done.taskId, created: false }
       ctx.ensureAccepting()
+      ctx.recovery?.admit(task.path,task.gitWorkspaceId);ctx.recovery?.gate(task.path)
       if (state.runsByTask.has(taskId)) throw Error('workbench_busy')
       if (!quota.exhausted(task.providerId)) throw Error('quota_handoff_not_needed')
       const to = fallbackExecutor(task.providerId)

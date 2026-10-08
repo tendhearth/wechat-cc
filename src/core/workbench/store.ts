@@ -1,3 +1,5 @@
+import {createRestoreManager} from './restore-manager'
+import {createRestoreStore} from './restore-store'
 import {createGitWorkspaceStore} from './git-workspace-store'
 import {createGitWorkspaces} from './git-workspaces'
 import { existsSync } from 'node:fs'
@@ -113,6 +115,9 @@ export function makeWorkbenchStore(db: Db) {
   return {
     addProject,
     gitWorkspaces,
+    restores:createRestoreStore(db),
+    pendingInputPaths:()=>db.query<{path:string},[]>("SELECT DISTINCT t.path FROM workbench_tasks t JOIN workbench_live_inputs i ON i.task_id=t.id WHERE i.status IN ('pending','sending')").all().map(row=>row.path),
+    restoreManager:(options:Omit<Parameters<typeof createRestoreManager>[0],'db'>)=>createRestoreManager({...options,db}),
     gitWorkspaceForTask:(taskId:string)=>{const row=db.query<{id:string|null},[string]>('SELECT git_workspace_id AS id FROM workbench_tasks WHERE id=?').get(taskId);return row?.id?gitWorkspaces.get(row.id):null},
     gitWorkspaceManager:(options:Omit<Parameters<typeof createGitWorkspaces>[0],'db'>)=>createGitWorkspaces({...options,db}),
     sourcePath,
@@ -266,12 +271,13 @@ export function makeWorkbenchStore(db: Db) {
       })()
     },
     session(id: string, sessionId: string | null) { db.transaction(()=>{db.query('UPDATE workbench_tasks SET session_id=? WHERE id=?').run(sessionId,id);bump(id)})() },
-    recover() {
+    runningWriters:()=>db.query<{id:string;path:string;status:TaskStatus;gitWorkspaceId:string|null},[]>("SELECT id,path,status,git_workspace_id AS gitWorkspaceId FROM workbench_tasks WHERE status IN ('running','cancelling')").all(),
+    recover(preserveWriterHold:(path:string)=>boolean=()=>false) {
       const rows = db.query<{ id: string; path: string; status: TaskStatus }, []>("SELECT id,path,status FROM workbench_tasks WHERE status IN ('queued','running','cancelling')").all()
       db.transaction(() => {
         for (const { id,path,status } of rows) {
           finishRunActivities(id,null,'interrupted')
-          db.query("UPDATE workbench_tasks SET status='interrupted',error='daemon_restarted',updated_at=? WHERE id=?").run(Date.now(),id)
+          db.query("UPDATE workbench_tasks SET status='interrupted',error=CASE WHEN error='writer_not_closed' AND ? THEN error ELSE 'daemon_restarted' END,updated_at=? WHERE id=?").run(preserveWriterHold(path)?1:0,Date.now(),id)
           addEvent(id, 'system', status === 'queued'
             ? '服务重启时任务仍在等待，未自动派发。原请求已保留，请补充要求后手动继续。'
             : `服务重启，任务已中断，未自动重跑。已保存的成果版本仍可查看；中断前尚未收集的文件保留在 ${join(path,'.cc-workbench',id)}。请先确认原执行程序已退出并检查该文件夹，再补充要求继续。`)
@@ -281,7 +287,7 @@ export function makeWorkbenchStore(db: Db) {
         // 2026-10-05 主人截图:自检临时目录早删了,标记却卡了三天,一起做里永远挂着一条红字。
         const stale=db.query<{id:string;path:string},[]>("SELECT id,path FROM workbench_tasks WHERE error='writer_not_closed'").all()
         for (const { id,path } of stale) {
-          if (existsSync(path)) continue
+          if (existsSync(path)||preserveWriterHold(path)) continue
           db.query("UPDATE workbench_tasks SET error=NULL,writer_groups=NULL,updated_at=? WHERE id=? AND error='writer_not_closed'").run(Date.now(),id)
           addEvent(id,'system','执行程序当时没有确认退出；它的工作文件夹已经不在了，这条占用随之解除。')
         }

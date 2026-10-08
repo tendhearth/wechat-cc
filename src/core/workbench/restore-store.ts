@@ -26,7 +26,7 @@ export type RestoreOperationState='prepared'|'applying'|'reverted'|'conflict'|'n
 export interface RestoreRun {restoreRunId:string;workspaceId:string;taskId:string;runId:string;generation:number;startedAt:number;finishedAt:number|null;status:RestoreState}
 export interface RestoreOperation {operationId:string;workspaceId:string;taskId:string;artifactId:string;path:string;changeId:string;requestId:string;state:RestoreOperationState;reason?:string;observedFingerprint?:string}
 export interface StoredChange {path:string;changeId:string;before:FileVersion;after:FileVersion;reason?:string}
-export interface StoredRun extends RestoreRun {path:string;directoryIdentity:string;blobRootIdentity:string;before?:Snapshot;after?:Snapshot;artifactId:string|null;artifactSha256:string|null;changes:StoredChange[];error?:string}
+export interface StoredRun extends RestoreRun {path:string;directoryIdentity:string;blobRootIdentity:string;before?:Snapshot;after?:Snapshot;artifactId:string|null;artifactSha256:string|null;changes:StoredChange[];error?:string;writerGroups?:number[];closeProof?:{kind:'session_close'|'spawn_rejected'|'groups_gone'|'administrator';at:number;groups:number[]}}
 export interface StoredOperation {receipt:RestoreOperation;inputHash:string;restoreRunId:string;generation:number;chain:Identity[];temporaryPath?:string;temporaryIdentity?:string;effectReady?:boolean}
 export interface Workspace {workspaceId:string;path:string;directoryIdentity:string;generation:number;invalid:number}
 const pending="('prepared','applying','needs_recovery')"
@@ -38,6 +38,7 @@ export function createRestoreStore(db:Db){
   const operation=(id:string)=>parse<StoredOperation>(db.query<{data:string},[string]>('SELECT data FROM workbench_restore_operations WHERE operation_id=?').get(id))
   const operations=(id:string)=>db.query<{data:string},[string]>('SELECT data FROM workbench_restore_operations WHERE workspace_id=?').all(id).map(r=>JSON.parse(r.data) as StoredOperation)
   return {workspace,runs,run,operation,operations,
+    allRuns:()=>db.query<{data:string},[]>('SELECT data FROM workbench_restore_runs').all().map(r=>JSON.parse(r.data) as StoredRun),
     atomic:<T>(fn:()=>T)=>db.transaction(fn).immediate(),
     pending:(id:string)=>!!db.query(`SELECT 1 FROM workbench_restore_operations WHERE workspace_id=? AND state IN ${pending} LIMIT 1`).get(id),
     findRequest:(id:string,requestId:string)=>parse<StoredOperation>(db.query<{data:string},[string,string]>('SELECT data FROM workbench_restore_operations WHERE workspace_id=? AND request_id=?').get(id,requestId)),

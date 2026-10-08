@@ -12,7 +12,7 @@ import type { Active } from './state'
 import type { WorkbenchTaskView } from './types'
 import type { ServiceCtx } from './ctx'
 import { liveRunTarget } from './call-target'
-import { groupAlive as isGroupAlive, writerGroupsOf } from './writer-exit'
+import { groupAlive as isGroupAlive, writerGroupsOf,knownWriterGroups } from './writer-exit'
 import type { CallTarget } from '../../../lib/network-gate'
 
 /** 桌面 / 手机 / 微信同一句状态(主人 2026-10-03)。 */
@@ -178,8 +178,9 @@ export function makeLifecycleDomain(ctx:ServiceCtx) {
     try { release?.() } catch { /* busy registry releases are best effort and idempotent */ }
     if (!state.stopping) pump()
   }
-  async function confirmLateClose(running:Active,capture:boolean) {
+  async function confirmLateClose(running:Active,capture:boolean,kind:'session_close'|'groups_gone'|'spawn_rejected'='session_close') {
     if (!running.uncertain) return
+    await ctx.recovery?.close(running,kind)
     if (capture) await act().collect(running)
     try { store.clearWriterError(running.taskId) } catch { /* keep the persistent guard if storage is unavailable */ }
     running.uncertain=false
@@ -189,6 +190,7 @@ export function makeLifecycleDomain(ctx:ServiceCtx) {
   function markUncertain(running:Active) {
     running.uncertain=true
     running.state='uncertain'
+    try{ctx.recovery?.mark(running,'uncertain')}catch{/* the existing durable active record and in-memory hold remain blocking */}
     // 这条 run 的占用在结算时本该还回去(execute 的 finally),但它没能确认退出 —— 重新挂回去,
     // 之后到来的同文件夹任务按 writer_not_closed 等待,直到 confirmLateClose。
     state.reservations.set(running.identity,running)
@@ -212,11 +214,12 @@ export function makeLifecycleDomain(ctx:ServiceCtx) {
     let holds:ReturnType<typeof store.writerHolds>
     try { holds=store.writerHolds() } catch { return }
     for (const hold of holds) {
+      if (state.writerOrphans.has(hold.id)) continue
       if (!hold.groups) continue
-      if (writerGone(hold.groups)) { releaseWriter(hold.id,'重启后核对：当时没确认退出的执行程序已经不在了，这条占用随之解除。'); continue }
+      if(writerGone(hold.groups)){releaseWriter(hold.id,'重启后核对：当时没确认退出的执行程序已经不在了，这条占用随之解除。');continue}
       state.writerOrphans.set(hold.id,{identity:`writer/${hold.id}`,taskId:hold.id,title:hold.title,path:hold.path,order:-1,state:'uncertain',groups:hold.groups})
     }
-    watchWriters()
+    checkWriters()
   }
   function releaseWriter(id:string,note:string) {
     state.writerOrphans.delete(id)
@@ -230,19 +233,21 @@ export function makeLifecycleDomain(ctx:ServiceCtx) {
     state.writerWatch=setInterval(checkWriters,ctx.deps.writerWatchMs ?? 15_000)
     state.writerWatch.unref?.()
   }
+  const orphanConfirming=new Set<string>()
   function checkWriters() {
-    let released=false
     for (const [id,orphan] of [...state.writerOrphans]) {
-      if (writerGone(orphan.groups)) { releaseWriter(id,'执行程序已经退出，这条占用随之解除。'); released=true }
-    }
-    for (const running of [...state.reservations.values()]) {
-      if (running.uncertain && !confirming.has(running) && writerGone(writerGroupsOf(running))) {
-        confirming.add(running)
-        void confirmLateClose(running,true).then(() => { try { store.addEvent(running.taskId,'system','执行程序已经退出，这条占用随之解除。'); ctx.hub.touched(running.taskId) } catch { /* status already cleared */ } })
-          .finally(() => confirming.delete(running))
+      if (writerGone(orphan.groups)&&!orphanConfirming.has(id)) {
+        orphanConfirming.add(id)
+        void (ctx.recovery?.confirmOrphan(id,'groups_gone')??Promise.resolve()).then(()=>{releaseWriter(id,'执行程序已经退出，这条占用随之解除。');pump()}).catch(()=>{}).finally(()=>orphanConfirming.delete(id))
       }
     }
-    if (released) pump()
+    for (const running of [...state.reservations.values()]) {
+      if (running.uncertain && !confirming.has(running) && writerGone(knownWriterGroups(ctx,running.taskId))) {
+        confirming.add(running)
+        void confirmLateClose(running,true,'groups_gone').then(() => { try { store.addEvent(running.taskId,'system','执行程序已经退出，这条占用随之解除。'); ctx.hub.touched(running.taskId) } catch { /* status already cleared */ } })
+          .catch(()=>{/* leave the reservation and durable record in place */}).finally(() => confirming.delete(running))
+      }
+    }
     watchWriters()
   }
   /**
@@ -255,9 +260,10 @@ export function makeLifecycleDomain(ctx:ServiceCtx) {
     const running=state.runsByTask.get(id)
     const live=running?.uncertain?running:undefined
     if (running && !live) throw new Error('workbench_busy')
-    const groups=state.writerOrphans.get(id)?.groups ?? (live?writerGroupsOf(live):undefined) ?? store.writerHolds().find(h=>h.id===id)?.groups ?? []
+    const groups=knownWriterGroups(ctx,id).length?knownWriterGroups(ctx,id):store.writerHolds().find(h=>h.id===id)?.groups??[]
     if (groups.some(groupAlive)) throw new Error('writer_alive')
-    if (live) await confirmLateClose(live,false)
+    if (live) { await ctx.recovery?.close(live,'administrator');await confirmLateClose(live,false) }
+    else await ctx.recovery?.confirmOrphan(id,'administrator')
     releaseWriter(id,'主人确认执行程序已经结束，这条占用解除。')
     pump()
     return act().taskView(publicTask(store.get(id)))
@@ -269,7 +275,8 @@ export function makeLifecycleDomain(ctx:ServiceCtx) {
     for (const running of state.queue) {
       if (running.state !== 'queued') continue
       const earlier=state.queue.filter(item => item.order < running.order && item.state === 'queued')
-      const blocker=findPathBlocker(running,[...act().held(),...state.writerOrphans.values(),...earlier])
+      try{ctx.recovery?.gate(running.path,running)}catch{continue}
+      const blocker=findPathBlocker(running,[...act().held(),...state.writerOrphans.values(),...state.mutations.values(),...earlier])
       if (blocker) {
         // 「有人来等这个文件夹了」的唯一入口:挡路的那条会话若已经安静,就按短让位重排它的
         // 自动收工(armIdleClose 自己判安静,不安静就什么都不做)。
