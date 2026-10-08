@@ -311,6 +311,14 @@ it('isolated worktree tasks (2026-10-07): run in parallel on one project, stay o
   expect(existsSync(a.path)).toBe(false);expect(service.detail(one.receipt.taskId).task.worktree?.removed).toBe(true)
   expect(g('rev-parse','--verify',a.worktree!.branch)).toBe(commit.sha)
   expect(()=>service.worktreeAction(one.receipt.taskId,'commit')).toThrow('worktree_removed')
+  // 归档时顺手收拾(10-08):有没提交的改动 ⇒ 留着并说一句;提交后再归档 ⇒ 工作区删掉、分支还在
+  service.setArchived(two.receipt.taskId,true)
+  expect(service.detail(two.receipt.taskId).task.worktree?.removed).toBe(false);expect(existsSync(b.path)).toBe(true)
+  expect(service.detail(two.receipt.taskId).events.at(-1)?.text).toContain('还有没提交的改动，先保留着')
+  service.setArchived(two.receipt.taskId,false);service.worktreeAction(two.receipt.taskId,'commit')
+  service.setArchived(two.receipt.taskId,true)
+  expect(service.detail(two.receipt.taskId).task.worktree?.removed).toBe(true);expect(existsSync(b.path)).toBe(false)
+  expect(g('rev-parse','--verify',b.worktree!.branch)).toMatch(/^[0-9a-f]{40}$/)
 })
 
 it('an isolated task on a non-git project is refused before anything is reserved; a plain task is not a worktree',async()=>{
