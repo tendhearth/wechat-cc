@@ -314,13 +314,15 @@ describe('Workbench internal HTTP API', () => {
   })
   it('bounds chunked uploads without trusting a content length and keeps the API usable',async()=>{
     const uploadAttachment=vi.fn(),{port,adminToken,request}=await start(service({uploadAttachment}))
-    const result=await new Promise<{status:number;body:string;connection:string|undefined}>((resolve,reject)=>{
+    const result=await new Promise<{status:number;body:string;connection:string|undefined}|'reset'>((resolve,reject)=>{
       let stopped=false,sent=0
       const req=httpRequest({host:'127.0.0.1',port,path:'/v1/workbench/attachment',method:'POST',headers:{authorization:`Bearer ${adminToken}`,'content-type':'application/json','transfer-encoding':'chunked'}},res=>{
         stopped=true
         let body='';res.setEncoding('utf8');res.on('data',chunk=>{body+=chunk});res.on('end',()=>{req.destroy();resolve({status:res.statusCode!,body,connection:res.headers.connection})});res.on('error',error=>{req.destroy();reject(error)})
       })
-      req.on('error',error=>{stopped=true;req.destroy();reject(error)})
+      // 服务器回 413 后立刻断开:客户端下一次写可能先撞上 EPIPE / ECONNRESET、来不及读到回应(node 下常见)——
+      // 那同样是「服务器拒收了」,不算失败;下面照样核对没存东西、API 还能用。
+      req.on('error',error=>{stopped=true;req.destroy();const code=(error as NodeJS.ErrnoException).code;if(code==='EPIPE'||code==='ECONNRESET')resolve('reset');else reject(error)})
       const chunk=Buffer.alloc(64*1024,32)
       // Respect backpressure and let the early 413 stop the upload before queuing more data.
       const send=()=>{
@@ -332,9 +334,11 @@ describe('Workbench internal HTTP API', () => {
       }
       send()
     })
-    expect(result.status).toBe(413)
-    expect(result.connection).toBe('close')
-    expect(JSON.parse(result.body)).toEqual({error:'request_body_too_large'})
+    if(result!=='reset'){
+      expect(result.status).toBe(413)
+      expect(result.connection).toBe('close')
+      expect(JSON.parse(result.body)).toEqual({error:'request_body_too_large'})
+    }
     expect(uploadAttachment).not.toHaveBeenCalled()
     const following=await request('/v1/workbench')
     expect({status:following.status,body:await following.text()}).toEqual({status:200,body:JSON.stringify({tasks:[TASK],providers:[{id:'codex',displayName:'Codex'}],defaultProvider:'codex',canWechat:true})})
