@@ -57,6 +57,10 @@ it('independent-workspace tasks (2026-10-07) are grouped under their source proj
  const detail={task:wt,events:[],artifacts:[],permissions:[],questions:[],inputs:[],handoffs:[],wechatNotifications:{enabled:false,notices:[]}}
  const page=renderWorkbench({...state,tasks:[wt],selectedId:'wt1',detail} as never)
  expect(page).toContain('data-action="worktree-commit"');expect(page).toContain('data-action="worktree-remove"');expect(page).toContain('data-action="worktree-merge"');expect(page).not.toContain('已合回项目');expect(page).toContain('cc/abcd1234')
+ // 另做一份(10-08):列出别的执行者,不列自己
+ const forkPage=renderWorkbench({...state,providers:[{id:'claude',displayName:'Claude'},{id:'codex',displayName:'Codex'}],tasks:[wt],selectedId:'wt1',detail} as never)
+ expect(forkPage).toContain('data-action="worktree-fork"');expect(forkPage).toMatch(/id="wb-fork-provider"[^>]*>(?:(?!<\/select>).)*Claude/s);expect(forkPage).not.toMatch(/<option value="codex"/)
+ expect(renderWorkbench({...state,providers:[{id:(wt as {providerId:string}).providerId,displayName:'Only'}],tasks:[wt],selectedId:'wt1',detail} as never)).not.toContain('worktree-fork')
  const merged=renderWorkbench({...state,tasks:[wt],selectedId:'wt1',detail:{...detail,task:{...wt,worktree:{...wt.worktree,merged:true}}}} as never)
  expect(merged).toContain('已合回项目')
  const removed=renderWorkbench({...state,tasks:[{...wt,worktree:{...wt.worktree,removed:true}}],selectedId:'wt1',detail:{...detail,task:{...wt,worktree:{...wt.worktree,removed:true}}}} as never)

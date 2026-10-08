@@ -22,6 +22,7 @@ export { escapeWorkbenchHtml, renderWorkbenchMarkdown } from './workbench-markdo
 import { WORKBENCH_CODE_REVIEW_MIME, createReviewDiffBudget, renderReviewFileDiff, renderWorkbenchCodeReview } from './workbench-code-review.js'
 import {entryRejectionMessage,entryFailureKind} from '../shared/task-entry-contract.js'
 import {createWorkbenchCreateAttempts} from './workbench-create-attempts.js'
+import {createWorkbenchForkAttempts} from './workbench-fork-attempts.js'
 import {mountRestoreConfirmation} from './workbench-restore-confirm.js'
 import {createRestoreActions} from './workbench-restore.js'
 import { renderReviewPanel, reviewsSignature } from './workbench-review-panel.js'
@@ -55,17 +56,24 @@ function reviewWriterBlocked(detail) {
 /** @typedef {{taskId:string,title:string,reason:'same_path'|'nested_path'|'writer_not_closed',holderWriting?:boolean,closeInMs?:number|null}} WaitingFor */
 /**
  * 独立工作区的显式动作；旧工作区保留「合回项目」，新副本本批提供提交与删除。
- * @param {{worktree?:{branch:string,projectPath:string,removed:boolean,removedAt?:number|null,merged?:boolean}}} task
+ * @param {{providerId:string,worktree?:{branch:string,projectPath:string,removed:boolean,removedAt?:number|null,merged?:boolean}}} task
  * @param {Workspace} [workspace]
+ * @param {Provider[]} [providers]
  */
-function worktreeHtml(task, workspace) {
+function worktreeHtml(task, workspace, providers = []) {
   const wt = workspace?.mode === 'isolated' ? workspace : task.worktree
   if (!wt) return ''
   if (wt.removed || 'removedAt' in wt && wt.removedAt != null) return `<p class="wb-worktree">在分支 <code>${escapeWorkbenchHtml(wt.branch)}</code> 上做过，工作区已删除（分支还在项目里）。</p>`
   const legacy = workspace?.mode !== 'isolated'
   const status = legacy && 'merged' in wt && wt.merged ? '，已合回项目' : ''
   const merge = legacy ? '<button type="button" class="wb-new" data-action="worktree-merge" title="只做快进合并；项目有没提交的改动或已经往前走时不动">合回项目</button>' : ''
-  return `<p class="wb-worktree">在独立分支 <code>${escapeWorkbenchHtml(wt.branch)}</code> 上做${status}。<button type="button" class="wb-new" data-action="worktree-commit">提交到分支</button>${merge}<button type="button" class="wb-new" data-action="worktree-remove">删除工作区</button></p>`
+  return `<p class="wb-worktree">在独立分支 <code>${escapeWorkbenchHtml(wt.branch)}</code> 上做${status}。<button type="button" class="wb-new" data-action="worktree-commit">提交到分支</button>${merge}<button type="button" class="wb-new" data-action="worktree-remove">删除工作区</button></p>${forkHtml(task, providers)}`
+}
+/** @param {{providerId:string}} task @param {Provider[]} providers */
+function forkHtml(task, providers) {
+  const others = providers.filter(p => p.id !== task.providerId && p.capabilities?.execution !== false)
+  if (!others.length) return ''
+  return `<p class="wb-worktree wb-fork"><label>同样的要求也交给 <select id="wb-fork-provider" aria-label="另一位执行者">${others.map(p => `<option value="${escapeWorkbenchHtml(p.id)}">${escapeWorkbenchHtml(p.displayName)}</option>`).join('')}</select></label><button type="button" class="wb-new" data-action="worktree-fork">另做一份</button><small>仅复制最初的文字要求；图片和附件请通过「交给 CC 做」补充。</small></p>`
 }
 /** @typedef {{id:string,title:string,path:string,sourcePath?:string,workspaceKind?:'managed'|'project',providerId:string,status:string,createdAt:number,updatedAt:number,error:string|null,writerExit?:'alive'|'unconfirmed',worktree?:{branch:string,projectPath:string,removed:boolean,removedAt?:number|null},phase?:string,archivedAt?:number|null,canArchive?:boolean,pendingPermissionCount?:number,pendingQuestionCount?:number,waitingFor?:WaitingFor|null,importedOnly?:boolean,runtime?:RuntimeSnapshot,networkSuspended?:{since:number}|null}} Task */
 /** @typedef {{id:string,type:'command'|'read'|'edit'|'search'|'tool'|'agent',status:'running'|'completed'|'failed'|'cancelled'|'interrupted',label:string,detail?:string,output?:string,parentId?:string,agentIds?:string[]}} WorkbenchActivity */
@@ -288,7 +296,7 @@ export function renderMessageFor({ detail, helper, handoffs, actionable, lastRep
   }
 }
 
-/** @param {{quotaAttempt?:import('./workbench-quota-handoff.js').Attempt|null,catalog?:import('./workbench-execution.js').CatalogState,restartPreview?:import('./workbench-execution.js').ContinuationPreviewState,busy?:boolean,sidebarDisclosures?:Map<string,boolean>}} [executionView] @param {WorkbenchState} state @param {import('./workbench-interaction.js').Interactions} [interactions] @param {Draft} [draft] @param {string} [attachmentError] */
+/** @param {{quotaAttempt?:import('./workbench-quota-handoff.js').Attempt|null,catalog?:import('./workbench-execution.js').CatalogState,restartPreview?:import('./workbench-execution.js').ContinuationPreviewState,busy?:boolean,forkProvider?:string,sidebarDisclosures?:Map<string,boolean>}} [executionView] @param {WorkbenchState} state @param {import('./workbench-interaction.js').Interactions} [interactions] @param {Draft} [draft] @param {string} [attachmentError] */
 export function renderWorkbench(state, interactions, draft, attachmentError='',executionView={}) {
   const tasks = state.tasks ?? []
   const detail = state.detail
@@ -367,7 +375,7 @@ export function renderWorkbench(state, interactions, draft, attachmentError='',e
   const executionControls=renderExecutionControls(execution,executionView.catalog,executionDisabled)
   const decisionCount = permissions.length + (detail?.questions ?? []).filter(request => request.taskId === detail?.task.id).length
   const progress = detail ? `<div class="wb-task-progress"><span class="wb-status" data-status="${escapeWorkbenchHtml(statusValue({...detail.task,runtime:detail.runtime ?? detail.task.runtime}))}">${escapeWorkbenchHtml(detail.task.importedOnly ? '尚未执行' : statusLabel(detail.task.status, detail.runtime ?? detail.task.runtime, detail.task.phase, detail.task.networkSuspended))}</span>${decisionCount ? `<button type="button" class="wb-new wb-decision-jump" data-action="show-decisions">${decisionCount} 项等你处理 ↓</button>` : detail.task.phase === 'replied' ? '<span>这一轮已答复，可以继续补充要求</span>' : ''}</div>` : ''
-  const taskHeader = detail ? `<header class="wb-task-head"><div><p class="wb-task-context">${detail.task.workspaceKind==='managed'?'随手交办':escapeWorkbenchHtml(state.projects?.find(project => project.path === projectPathOf(detail.task))?.name ?? pathParts(projectPathOf(detail.task)).name)} · ${escapeWorkbenchHtml(helper)}</p><h2 title="${escapeWorkbenchHtml(detail.task.title || '未命名任务')}">${escapeWorkbenchHtml(detail.task.title || '未命名任务')}</h2>${detail.workspace?.mode==='isolated'?'<p class="wb-field-help">在独立副本里做 · 归档会保留副本</p>':''}${worktreeHtml(detail.task,detail.workspace)}${progress}${isUnattendedProvider(state.providers.find(p => p.id === detail.task.providerId)) ? '<p class="wb-task-unattended">免审执行者 · 看不到单步,只能停止</p>' : ''}</div><div class="wb-task-head-actions">${detail.artifacts.length ? `<button type="button" class="wb-new" data-action="show-artifacts">成果 · ${detail.artifacts.length}</button>` : ''}<details id="wb-task-info" class="wb-task-info"><summary>任务详情</summary><div class="wb-task-info-body"><dl><div><dt>完整路径</dt><dd class="wb-path">${escapeWorkbenchHtml(detail.task.path)}${detail.task.workspaceKind==='managed'||detail.workspace||detail.task.worktree?'<button type="button" class="wb-new" data-action="open-task-folder">打开工作位置</button>':''}</dd></div>${detail.workspace?`<div><dt>执行方式</dt><dd>独立副本</dd></div><div><dt>工作副本编号</dt><dd><code>${escapeWorkbenchHtml(detail.workspace.id)}</code></dd></div><div><dt>执行位置</dt><dd class="wb-path">${escapeWorkbenchHtml(detail.workspace.executionPath)}</dd></div><div><dt>来源项目</dt><dd class="wb-path">${escapeWorkbenchHtml(detail.workspace.sourcePath)}</dd></div><div><dt>副本分支</dt><dd><code>${escapeWorkbenchHtml(detail.workspace.branch)}</code></dd></div><div><dt>固定版本</dt><dd><code>${escapeWorkbenchHtml(detail.workspace.baseCommit)}</code></dd></div><div><dt>带回成果</dt><dd><button type="button" class="wb-new" data-action="workspace-export">导出完整补丁</button><small>包含当前副本的改动。下载后可自行应用到原项目。</small></dd></div>`:detail.task.worktree?`<div><dt>来源项目</dt><dd class="wb-path">${escapeWorkbenchHtml(detail.task.worktree.projectPath)}</dd></div><div><dt>副本分支</dt><dd><code>${escapeWorkbenchHtml(detail.task.worktree.branch)}</code></dd></div>`:''}<div><dt>任务编号</dt><dd><code>${escapeWorkbenchHtml(detail.task.id)}</code></dd></div><div><dt>执行者</dt><dd>${escapeWorkbenchHtml(helper)}</dd></div><div><dt>更新时间</dt><dd>${escapeWorkbenchHtml(time(detail.task.updatedAt))}</dd></div>${detail.source?`<div><dt>原会话</dt><dd>${escapeWorkbenchHtml(detail.source.providerId)} · <code>${escapeWorkbenchHtml(detail.source.nativeId)}</code></dd></div><div><dt>已保存的原记录</dt><dd>${detail.source.selectedMessageCount} 段${detail.source.truncated?' · 部分文字':''}</dd></div>`:''}</dl><section class="wb-task-execution"><h3>下一轮使用</h3>${executionControls}${renderExecutionObservation(detail.lastExecution)}</section>${detail.task.archivedAt != null ? '<div class="wb-task-organization"><button type="button" class="wb-btn" data-action="restore-task">恢复任务</button></div>' : detail.task.canArchive === true ? '<div class="wb-task-organization"><button type="button" class="wb-btn" data-action="archive-task">归档任务</button></div>' : ''}${state.canWechat && detail.task.archivedAt == null ? `<div class="wb-wechat"><span>在微信继续</span><code>任务 ${escapeWorkbenchHtml(detail.task.id)}</code><button type="button" class="wb-btn" data-action="copy-wechat-command">复制</button></div>` : ''}</div></details></div></header>` : ''
+  const taskHeader = detail ? `<header class="wb-task-head"><div><p class="wb-task-context">${detail.task.workspaceKind==='managed'?'随手交办':escapeWorkbenchHtml(state.projects?.find(project => project.path === projectPathOf(detail.task))?.name ?? pathParts(projectPathOf(detail.task)).name)} · ${escapeWorkbenchHtml(helper)}</p><h2 title="${escapeWorkbenchHtml(detail.task.title || '未命名任务')}">${escapeWorkbenchHtml(detail.task.title || '未命名任务')}</h2>${detail.workspace?.mode==='isolated'?'<p class="wb-field-help">在独立副本里做 · 归档会保留副本</p>':''}${worktreeHtml(detail.task,detail.workspace,executionView.forkProvider&&!state.providers.some(p=>p.id===executionView.forkProvider)?[...state.providers,{id:executionView.forkProvider,displayName:executionView.forkProvider+'（原交办）'}]:state.providers)}${progress}${isUnattendedProvider(state.providers.find(p => p.id === detail.task.providerId)) ? '<p class="wb-task-unattended">免审执行者 · 看不到单步,只能停止</p>' : ''}</div><div class="wb-task-head-actions">${detail.artifacts.length ? `<button type="button" class="wb-new" data-action="show-artifacts">成果 · ${detail.artifacts.length}</button>` : ''}<details id="wb-task-info" class="wb-task-info"><summary>任务详情</summary><div class="wb-task-info-body"><dl><div><dt>完整路径</dt><dd class="wb-path">${escapeWorkbenchHtml(detail.task.path)}${detail.task.workspaceKind==='managed'||detail.workspace||detail.task.worktree?'<button type="button" class="wb-new" data-action="open-task-folder">打开工作位置</button>':''}</dd></div>${detail.workspace?`<div><dt>执行方式</dt><dd>独立副本</dd></div><div><dt>工作副本编号</dt><dd><code>${escapeWorkbenchHtml(detail.workspace.id)}</code></dd></div><div><dt>执行位置</dt><dd class="wb-path">${escapeWorkbenchHtml(detail.workspace.executionPath)}</dd></div><div><dt>来源项目</dt><dd class="wb-path">${escapeWorkbenchHtml(detail.workspace.sourcePath)}</dd></div><div><dt>副本分支</dt><dd><code>${escapeWorkbenchHtml(detail.workspace.branch)}</code></dd></div><div><dt>固定版本</dt><dd><code>${escapeWorkbenchHtml(detail.workspace.baseCommit)}</code></dd></div><div><dt>带回成果</dt><dd><button type="button" class="wb-new" data-action="workspace-export">导出完整补丁</button><small>包含当前副本的改动。下载后可自行应用到原项目。</small></dd></div>`:detail.task.worktree?`<div><dt>来源项目</dt><dd class="wb-path">${escapeWorkbenchHtml(detail.task.worktree.projectPath)}</dd></div><div><dt>副本分支</dt><dd><code>${escapeWorkbenchHtml(detail.task.worktree.branch)}</code></dd></div>`:''}<div><dt>任务编号</dt><dd><code>${escapeWorkbenchHtml(detail.task.id)}</code></dd></div><div><dt>执行者</dt><dd>${escapeWorkbenchHtml(helper)}</dd></div><div><dt>更新时间</dt><dd>${escapeWorkbenchHtml(time(detail.task.updatedAt))}</dd></div>${detail.source?`<div><dt>原会话</dt><dd>${escapeWorkbenchHtml(detail.source.providerId)} · <code>${escapeWorkbenchHtml(detail.source.nativeId)}</code></dd></div><div><dt>已保存的原记录</dt><dd>${detail.source.selectedMessageCount} 段${detail.source.truncated?' · 部分文字':''}</dd></div>`:''}</dl><section class="wb-task-execution"><h3>下一轮使用</h3>${executionControls}${renderExecutionObservation(detail.lastExecution)}</section>${detail.task.archivedAt != null ? '<div class="wb-task-organization"><button type="button" class="wb-btn" data-action="restore-task">恢复任务</button></div>' : detail.task.canArchive === true ? '<div class="wb-task-organization"><button type="button" class="wb-btn" data-action="archive-task">归档任务</button></div>' : ''}${state.canWechat && detail.task.archivedAt == null ? `<div class="wb-wechat"><span>在微信继续</span><code>任务 ${escapeWorkbenchHtml(detail.task.id)}</code><button type="button" class="wb-btn" data-action="copy-wechat-command">复制</button></div>` : ''}</div></details></div></header>` : ''
   const modelErrorInTimeline=detail?.task.error==='execution_model_unsupported'&&detail.events.filter(event=>event.kind==='error').at(-1)?.errorCode==='execution_model_unsupported'
   const content = detail ? `
     ${related}
@@ -652,12 +660,14 @@ export function initWorkbenchPage(deps) {
   if (!root) return
   /** @type {Set<string>} */
   const busy = new Set()
+  let forking = false
   let alive = true
   let handoffCleanup = /** @type {(()=>void)|null} */ (null)
   let quotaHandoffCleanup=/** @type {(()=>void)|null} */(null)
   let nativeHistoryCleanup = /** @type {(()=>void)|null} */ (null)
   let artifactRequest = 0
   let navigationGeneration = 0
+  let draftRevision = 0
   /** @type {string|null} */
   let objectUrl = null
   /** @type {string|null} */
@@ -837,7 +847,16 @@ export function initWorkbenchPage(deps) {
     const focusedPreviewAction = document.activeElement?.closest?.('.wb-artifact-panel') ? /** @type {HTMLElement} */ (document.activeElement).dataset.action : null
     const previousPreview = root.querySelector('#wb-preview')
     const previewScroll = previousPreview?.scrollTop ?? 0
-    paintWorkbenchWithPreview(root, renderWorkbench(state, interactions,nextDraft,attachments.error(nextScope),{quotaAttempt:quotaHandoffAttempts.get(state.detail?.task.id??''),sidebarDisclosures,catalog:catalogs.get(providerId||state.defaultProvider||'',path),...(restartPreviewContext()?{restartPreview:recoveryPreviews.get(/** @type {import('./workbench-execution.js').ContinuationContext} */(restartPreviewContext()))}:{}),busy:busy.has(state.detail?`task:${state.detail.task.id}`:'create')}))
+    paintWorkbenchWithPreview(root, renderWorkbench(state, interactions,nextDraft,attachments.error(nextScope),{forkProvider:forkAttempts.provider(state.detail?.task.id??''),quotaAttempt:quotaHandoffAttempts.get(state.detail?.task.id??''),sidebarDisclosures,catalog:catalogs.get(providerId||state.defaultProvider||'',path),...(restartPreviewContext()?{restartPreview:recoveryPreviews.get(/** @type {import('./workbench-execution.js').ContinuationContext} */(restartPreviewContext()))}:{}),busy:busy.has(state.detail?`task:${state.detail.task.id}`:'create')}))
+    const forkPicker=/** @type {HTMLSelectElement|null} */(root.querySelector('#wb-fork-provider'))
+    const forkButton=/** @type {HTMLButtonElement|null} */(root.querySelector('[data-action="worktree-fork"]'))
+    if(forkPicker&&forkButton&&state.detail){
+      const chosen=forkAttempts.provider(state.detail.task.id)
+      if(chosen){if(![...forkPicker.options].some(o=>o.value===chosen)){const option=document.createElement('option');option.value=chosen;option.textContent=chosen+'（原交办）';forkPicker.append(option)}forkPicker.value=chosen}
+      const attempt=forkAttempts.get(state.detail.task.id,forkPicker.value)
+      forkButton.textContent=attempt?.taskId?'查看另一份':attempt?.uncertain?'核对并重试':'另做一份'
+      forkButton.disabled=forking
+    }
     const nextPreview = root.querySelector('#wb-preview')
     if (nextPreview && sameScope) nextPreview.scrollTop = previewScroll
     const nextPdfHost = /** @type {HTMLElement|null} */ (root.querySelector('#wb-preview .cc-pdf-reader'))
@@ -928,6 +947,7 @@ export function initWorkbenchPage(deps) {
       if (button instanceof HTMLButtonElement) button.disabled = false
     }
   }
+  const forkAttempts=createWorkbenchForkAttempts({storage:windowStorage,invoke:deps.invokeWorkbenchApi})
   const createAttempts=createWorkbenchCreateAttempts({storage:windowStorage,invoke:deps.invokeWorkbenchApi})
   /** @type {ReturnType<typeof mountRestoreConfirmation>|null} */let restoreConfirmation=null
   const restoreActions=createRestoreActions({storage:windowStorage,invoke:deps.invokeWorkbenchApi})
@@ -1094,6 +1114,35 @@ export function initWorkbenchPage(deps) {
     if (action === 'review-accept' && controller.state.selectedId && target.dataset.artifactId && target.dataset.path) {
       return mutate('POST', '/v1/workbench/review-mark', { id: controller.state.selectedId, artifactId: target.dataset.artifactId, path: target.dataset.path, mark: 'accepted' })
     }
+    // Keep the original numbered request until its receipt is confirmed.
+    if (action === 'worktree-fork' && controller.state.detail && !forking) {
+      const detail=controller.state.detail,task=detail.task,navigation=navigationGeneration,revision=draftRevision
+      const wt=detail.workspace?.mode==='isolated'?detail.workspace:task.worktree
+      if(!wt||wt.removed||('removedAt' in wt&&wt.removedAt!=null))return
+      const providerId=/** @type {HTMLSelectElement|null} */(root.querySelector('#wb-fork-provider'))?.value??''
+      const previous=forkAttempts.get(task.id,providerId)
+      const first=detail.events.find(event=>event.kind==='user')
+      const project=controller.state.projects?.find(p=>p.path===(detail.workspace?.sourcePath??projectPathOf(task)))
+      if(!previous?.uncertain&&!previous?.taskId){
+        if(!providerId||providerId===task.providerId||!controller.state.providers.some(p=>p.id===providerId&&p.capabilities?.execution!==false))return fail(new Error('请重新选择可用的执行者。'))
+        if(!project||!first?.text.trim())return fail(new Error(!project?'找不到这件事的源项目，请在交办里重新选择项目。':'找不到这件事最初的要求，请用「交给 CC 做」重新交办。'))
+        if(first.attachments?.length)return fail(new Error('最初的要求含图片或附件。请通过「交给 CC 做」重新交办并补充材料。'))
+      }
+      forking=true;target.setAttribute('disabled','')
+      try{
+        const created=await forkAttempts.send(task.id,providerId,{text:first?.text??'',title:task.title,providerId,executionMode:'isolated',target:{kind:'project',projectId:project?.id??'',isolation:'worktree'}})
+        if(!alive||navigation!==navigationGeneration||revision!==draftRevision||controller.getTargetTaskId()!==task.id)return
+        await controller.refresh({force:true})
+        if(alive&&navigation===navigationGeneration&&revision===draftRevision&&controller.getTargetTaskId()===task.id)await openTask(created)
+      }catch(error){
+        if(alive&&navigation===navigationGeneration&&controller.getTargetTaskId()===task.id){
+          const code=String(error instanceof Error?error.message:error)
+          const pending=forkAttempts.get(task.id,providerId)
+          fail(pending?.uncertain?new Error('尚未确认另做一份的结果。点「核对并重试」会继续核对原交办，不会新派任务。'):new Error(executionErrorMessage(code)??entryRejectionMessage(code)))
+        }
+      }finally{forking=false;if(alive)controller.paint(true)}
+      return
+    }
     // 合回项目只沿用旧工作区入口；新副本不在本批新增合回动作。
     if ((action === 'worktree-commit' || action === 'worktree-merge' || action === 'worktree-remove') && controller.state.selectedId && controller.state.detail && (controller.state.detail.workspace?.mode==='isolated' ? action !== 'worktree-merge' && !controller.state.detail.workspace.removed : controller.state.detail.task.worktree && !controller.state.detail.task.worktree.removed && controller.state.detail.task.worktree.removedAt==null)) {
       if (action === 'worktree-remove' && !armConfirm(target, '再点一次：删除工作区（分支保留）')) return
@@ -1243,7 +1292,7 @@ export function initWorkbenchPage(deps) {
     }
     if (action === 'native-history') { captureDraft(); nativeHistoryCleanup?.(); nativeHistoryCleanup=mountHistoryDialog(deps.invokeWorkbenchApi,controller.state.historyProviders??[],async id=>{if(!alive)return;navigationGeneration++;await controller.refresh({force:true});await controller.selectTask(id)}); return }
     if (action === 'refresh') return controller.refresh({ force: true }).catch(fail)
-    if (action === 'task-entry') { captureDraft(); try { await deps.onDelegate?.({text:'',...(target.dataset.projectPath ? {projectPath:target.dataset.projectPath} : {})}) } catch(error) { if(alive)fail(error) }; return }
+    if (action === 'task-entry') { captureDraft(); navigationGeneration++; try { await deps.onDelegate?.({text:'',...(target.dataset.projectPath ? {projectPath:target.dataset.projectPath} : {})}) } catch(error) { if(alive)fail(error) }; return }
     if (action === 'new-task' || action === 'add-project') { captureDraft(); navigationGeneration++; artifactRequest++; controller.newTask(); if(action==='add-project'){controller.state.newScope='new:add-project';controller.paint(true)}; return }
     if (action === 'new-project-task' && target.dataset.projectPath) {
       captureDraft()
@@ -1538,12 +1587,14 @@ export function initWorkbenchPage(deps) {
     saveWorkbenchView(windowStorage,{scope:renderedScope,query:controller.state.query ?? {q:'',archived:'exclude'},search:input('wb-search')?.value ?? searchDraft})
   }
   const onInput = (/** @type {Event} */ event) => {
+    draftRevision++
     if (event.target instanceof Element && ['INPUT', 'TEXTAREA'].includes(event.target.tagName)) syncWorkbenchQuestionChoice(/** @type {HTMLInputElement|HTMLTextAreaElement} */ (event.target))
     if (event.target === input('wb-followup-text') && controller.state.selectedId) interactions.editInputDraft(controller.state.selectedId, input('wb-followup-text')?.value ?? '',pageDrafts.get(renderedScope).attachments,pageDrafts.get(renderedScope).execution)
     saveWindowState()
   }
   const addFiles=(/** @type {File[]} */ files)=>{captureDraft();const scope=renderedScope;void attachments.add(scope,files)}
   const onChange = (/** @type {Event} */ event) => {
+    if(event.target instanceof Element&&event.target.id==='wb-fork-provider'&&controller.state.detail){draftRevision++;forkAttempts.choose(controller.state.detail.task.id,/** @type {HTMLSelectElement} */(event.target).value);controller.paint(true);return}
     if (event.target instanceof Element && event.target.id === 'wb-artifact-choice') {
       const button = document.createElement('button'); button.dataset.artifactId = /** @type {HTMLSelectElement} */ (event.target).value
       void onClick(/** @type {MouseEvent} */ (/** @type {unknown} */ ({target:button})))
