@@ -19,6 +19,7 @@ export interface RestoreManagerOptions {
  /** Synchronous same-database event/seq writes only; thrown errors roll the entire receipt transaction back. */
  onOperationCommitted?:(operation:Readonly<RestoreOperation>)=>void
 }
+export interface ResolveKeepCurrent {workspaceId:string;taskId:string;operationId:string;observedFingerprint:string}
 export interface BeginRestore {workspaceId:string;taskId:string;runId:string;path:string;directoryIdentity:string}
 export interface RevertFile {workspaceId:string;taskId:string;artifactId:string;path:string;changeId:string;requestId:string}
 const terminal=(state:string)=>state==='reverted'||state==='resolved_keep_current'||state==='conflict'
@@ -36,6 +37,22 @@ export function createRestoreManager(options:RestoreManagerOptions){
   if(!prior)return null
   if(prior.inputHash!==hash)throw Error('request_conflict')
   return terminal(prior.receipt.state)?{...prior.receipt}:null
+ }
+ function resolveOperation(input:ResolveKeepCurrent){
+  if(!input.workspaceId||!input.taskId||!input.operationId||!/^[a-f0-9]{64}$/.test(input.observedFingerprint))throw Error('invalid_restore_request')
+  const op=store.operation(input.operationId)
+  if(!op||op.receipt.workspaceId!==input.workspaceId||op.receipt.taskId!==input.taskId)throw Error('operation_not_found')
+  const run=store.run(op.restoreRunId)
+  if(!run||run.workspaceId!==input.workspaceId||run.taskId!==input.taskId||run.artifactId!==op.receipt.artifactId||run.generation!==op.generation||!run.changes.some(c=>c.path===op.receipt.path&&c.changeId===op.receipt.changeId))throw Error('operation_identity_changed')
+  return op
+ }
+ function lookupResolveKeepCurrent(input:ResolveKeepCurrent):RestoreOperation|null{
+  const op=resolveOperation(input)
+  if(op.receipt.state!=='resolved_keep_current')return null
+  // Older terminal rows discarded the accepted observation; never infer it from today's files.
+  if(!op.acceptedResolutionFingerprint)throw Error('operation_not_resolvable')
+  if(op.acceptedResolutionFingerprint!==input.observedFingerprint)throw Error('observation_changed')
+  return {...op.receipt}
  }
  const blocked=(workspaceId:string)=>!!store.workspace(workspaceId)?.invalid||store.pending(workspaceId)||store.runs(workspaceId).some(r=>r.status!=='closed')
  function checkRoot(run:StoredRun){const w=store.workspace(run.workspaceId);if(!w||w.invalid||w.path!==run.path||w.directoryIdentity!==run.directoryIdentity)throw Error('workspace_identity_changed');try{if(directoryId(run.path)!==run.directoryIdentity)throw Error('directory_identity_changed')}catch(e){w.invalid=1;store.putWorkspace(w);throw e}}
@@ -57,8 +74,8 @@ export function createRestoreManager(options:RestoreManagerOptions){
   }
  }
  function needsRecovery(op:StoredOperation,run:StoredRun,error:unknown){op.receipt.state='needs_recovery';op.receipt.reason=errorReason(error);op.receipt.observedFingerprint=observedFingerprint(run,op.receipt.path);try{checkRoot(run)}catch{const w=store.workspace(run.workspaceId);if(w){w.invalid=1;store.putWorkspace(w)}}store.putOperation(op)}
- function finish(op:StoredOperation,state:'reverted'|'resolved_keep_current'){
-  return store.atomic(()=>{op.receipt.state=state;delete op.receipt.reason;delete op.receipt.observedFingerprint;store.putOperation(op);store.setPathVersion(op.receipt.workspaceId,op.receipt.path,randomUUID());options.onOperationCommitted?.({...op.receipt});return {...op.receipt}})
+ function finish(op:StoredOperation,state:'reverted'|'resolved_keep_current',acceptedResolutionFingerprint?:string){
+  return store.atomic(()=>{if(acceptedResolutionFingerprint)op.acceptedResolutionFingerprint=acceptedResolutionFingerprint;op.receipt.state=state;delete op.receipt.reason;delete op.receipt.observedFingerprint;store.putOperation(op);store.setPathVersion(op.receipt.workspaceId,op.receipt.path,randomUUID());options.onOperationCommitted?.({...op.receipt});return {...op.receipt}})
  }
  function review(run:StoredRun):RestoreReview{
   const operations=new Map(store.operations(run.workspaceId).map(o=>[o.receipt.changeId,o])),workspace=store.workspace(run.workspaceId),isBlocked=blocked(run.workspaceId),files:RestoreFile[]=run.changes.map(change=>{
@@ -103,7 +120,7 @@ export function createRestoreManager(options:RestoreManagerOptions){
   return finish(op,'reverted')
  }
  const manager={
-  lookupRevert,
+  lookupRevert,lookupResolveKeepCurrent,
   async begin(input:BeginRestore):Promise<RestoreRun>{
    if(!input.workspaceId||!input.taskId||!input.runId||!input.directoryIdentity||!input.path||resolve(input.path)!==input.path)throw Error('invalid_restore_begin')
    await assertWriterClosed(input.workspaceId)
@@ -160,14 +177,17 @@ export function createRestoreManager(options:RestoreManagerOptions){
     }catch(e){needsRecovery(op,run,e)}
    }
   })},
-  async resolveKeepCurrent(input:{workspaceId:string;taskId:string;operationId:string;observedFingerprint:string}):Promise<RestoreOperation>{return withMutation(input.workspaceId,async()=>{
-   const op=store.operation(input.operationId);if(!op||op.receipt.workspaceId!==input.workspaceId||op.receipt.taskId!==input.taskId)throw Error('operation_not_found');if(op.receipt.state==='resolved_keep_current')return {...op.receipt};if(op.receipt.state!=='needs_recovery')throw Error('operation_not_resolvable')
+  async resolveKeepCurrent(input:ResolveKeepCurrent):Promise<RestoreOperation>{
+   const prior=lookupResolveKeepCurrent(input);if(prior)return prior
+   return withMutation(input.workspaceId,async()=>{
+   const replay=lookupResolveKeepCurrent(input);if(replay)return replay
+   const op=resolveOperation(input);if(op.receipt.state!=='needs_recovery')throw Error('operation_not_resolvable')
    await assertWriterClosed(input.workspaceId);const run=requireRun(op.restoreRunId)
    if(!input.observedFingerprint||op.receipt.observedFingerprint!==input.observedFingerprint||observedFingerprint(run,op.receipt.path)!==input.observedFingerprint)throw Error('observation_changed')
    if(store.workspace(run.workspaceId)?.generation!==op.generation||store.pathVersion(run.workspaceId,op.receipt.path)!==op.receipt.changeId)throw Error('stale_change')
    // Root invalidity remains durable even when the user resolves this operation's receipt.
    try{checkRoot(run)}catch{const w=store.workspace(run.workspaceId);if(w){w.invalid=1;store.putWorkspace(w)}}
-   return finish(op,'resolved_keep_current')
+   return finish(op,'resolved_keep_current',input.observedFingerprint)
   })},
  }
  return manager

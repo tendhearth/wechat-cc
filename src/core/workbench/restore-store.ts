@@ -27,7 +27,7 @@ export interface RestoreRun {restoreRunId:string;workspaceId:string;taskId:strin
 export interface RestoreOperation {operationId:string;workspaceId:string;taskId:string;artifactId:string;path:string;changeId:string;requestId:string;state:RestoreOperationState;reason?:string;observedFingerprint?:string}
 export interface StoredChange {path:string;changeId:string;before:FileVersion;after:FileVersion;reason?:string}
 export interface StoredRun extends RestoreRun {path:string;directoryIdentity:string;blobRootIdentity:string;before?:Snapshot;after?:Snapshot;artifactId:string|null;artifactSha256:string|null;changes:StoredChange[];error?:string;writerGroups?:number[];closeProof?:{kind:'session_close'|'spawn_rejected'|'groups_gone'|'administrator';at:number;groups:number[]}}
-export interface StoredOperation {receipt:RestoreOperation;inputHash:string;restoreRunId:string;generation:number;chain:Identity[];temporaryPath?:string;temporaryIdentity?:string;effectReady?:boolean}
+export interface StoredOperation {receipt:RestoreOperation;inputHash:string;restoreRunId:string;generation:number;chain:Identity[];temporaryPath?:string;temporaryIdentity?:string;effectReady?:boolean;acceptedResolutionFingerprint?:string}
 export interface Workspace {workspaceId:string;path:string;directoryIdentity:string;generation:number;invalid:number}
 const pending="('prepared','applying','needs_recovery')"
 export function createRestoreStore(db:Db){

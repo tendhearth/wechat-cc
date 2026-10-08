@@ -13,8 +13,8 @@ import {writerGroupsOf,groupAlive} from './writer-exit'
 export function makeRecoveryDomain(ctx:ServiceCtx):RecoveryDomain{
  const {store,state}=ctx,restores=store.restores
  const git=()=>store.gitWorkspaceManager({root:join(ctx.deps.managedWorkspaceRoot??join(ctx.stateDir,'..','Tasks'),'GitWorkspaces'),stateDir:ctx.stateDir})
- function workspace(id:string){const w=store.gitWorkspaces.get(id);if(!w)throw Error('restore_not_found');if(w.removedAt)throw Error('worktree_removed');return w}
- function owned(taskId:string){const task=store.get(taskId),w=task.gitWorkspaceId?workspace(task.gitWorkspaceId):null;if(!w)throw Error('review_revert_unavailable');if(task.ownerChatId!==ctx.deps.ownerChatId()||w.ownerKey!==task.ownerChatId||w.executionPath!==task.path)throw Error('restore_not_found');return {task,w}}
+ function workspace(id:string,receiptOnly=false){const w=store.gitWorkspaces.get(id);if(!w)throw Error('restore_not_found');if(w.removedAt&&!receiptOnly)throw Error('worktree_removed');return w}
+ function owned(taskId:string,receiptOnly=false){const task=store.get(taskId),w=task.gitWorkspaceId?workspace(task.gitWorkspaceId,receiptOnly):null;if(!w)throw Error('review_revert_unavailable');if(task.ownerChatId!==ctx.deps.ownerChatId()||w.ownerKey!==task.ownerChatId||w.executionPath!==task.path)throw Error('restore_not_found');return {task,w}}
  const holders=()=>[...state.reservations.values(),...state.writerOrphans.values(),...state.queue]
  function assertClosed(id:string,allowed?:PathReservation,runId?:string,quietCommit=false){
   const w=workspace(id)

@@ -69,3 +69,18 @@ describe('private restore lifecycle and exact file effects',()=>{
   it('uses execution-relative Git paths when the task is a repository subdirectory',async()=>{const repository=project;mkdirSync(join(project,'sub'));writeFileSync(join(project,'sub/file.txt'),'child before');git('add','.');git('commit','-qm','child');project=join(project,'sub');const review=await closed(()=>writeFileSync(join(project,'file.txt'),'child after'));expect(review.files.map(f=>f.path)).toEqual(['file.txt']);expect((await manager.revert(request(review))).state).toBe('reverted');expect(readFileSync(join(project,'file.txt'),'utf8')).toBe('child before');expect(readFileSync(join(repository,'file.txt'),'utf8')).toBe('before\r\n')})
 
 })
+
+it('keeps nonterminal resolve behind writer checks while allowing only exact terminal replay',async()=>{
+ const review=await closed(()=>writeFileSync(join(project,'file.txt'),'after')),input=request(review)
+ db.exec("CREATE TRIGGER resolve_probe_fault BEFORE UPDATE ON workbench_restore_operations WHEN NEW.state='reverted' BEGIN SELECT RAISE(ABORT,'receipt_failed'); END")
+ await expect(manager.revert(input)).rejects.toThrow();db.exec('DROP TRIGGER resolve_probe_fault')
+ const operation=await manager.revert(input),resolution={workspaceId:'workspace',taskId:'task',operationId:operation.operationId,observedFingerprint:operation.observedFingerprint!}
+ writer=true
+ expect(manager.lookupResolveKeepCurrent(resolution)).toBeNull()
+ await expect(manager.resolveKeepCurrent(resolution)).rejects.toThrow('writer_open')
+ writer=false;const receipt=await manager.resolveKeepCurrent(resolution)
+ writer=true;writeFileSync(join(project,'file.txt'),'later external')
+ expect(await manager.resolveKeepCurrent(resolution)).toEqual(receipt)
+ await expect(manager.resolveKeepCurrent({...resolution,observedFingerprint:'0'.repeat(64)})).rejects.toThrow('observation_changed')
+ expect(readFileSync(join(project,'file.txt'),'utf8')).toBe('later external')
+})

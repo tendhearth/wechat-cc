@@ -309,3 +309,80 @@ it('rejects merge for a new managed workspace without changing source, events, o
  expect(git('rev-parse','HEAD')).toBe(head);expect(store.events(task.id)).toHaveLength(events);expect(store.worktrees.get(task.id)).toBeNull()
  expect(service.detail(task.id).task.worktree).toMatchObject({merged:false,removed:false})
 })
+
+async function pendingCurrent(){
+ const {task,input}=await closed(),workspace=store.gitWorkspaceForTask(task.id)!
+ db.exec("CREATE TRIGGER resolve_event_fault BEFORE INSERT ON workbench_events WHEN NEW.kind='system' BEGIN SELECT RAISE(ABORT,'resolve_event_fault'); END")
+ await expect(service.revertReviewFile(task.id,input)).rejects.toThrow()
+ db.exec('DROP TRIGGER resolve_event_fault')
+ const operation=store.restores.findRequest(workspace.id,input.requestId)!.receipt
+ const resolution={operationId:operation.operationId,observedFingerprint:operation.observedFingerprint!}
+ return {task,resolution,operation}
+}
+async function resolvedCurrent(){
+ const {task,resolution}=await pendingCurrent()
+ const receipt=await service.resolveReviewRevert(task.id,resolution)
+ expect(receipt.state).toBe('resolved_keep_current')
+ return {task,resolution,receipt}
+}
+it('replays the exact resolve receipt after restart and a later writer without file or event effects',async()=>{
+ const {task,resolution,receipt}=await resolvedCurrent()
+ await service.shutdown();service=setupService()
+ service.continueTask(task.id,'later writer');await expect.poll(()=>runtimes.length).toBe(2)
+ writeFileSync(join(task.path,'file.txt'),'later writer bytes\n')
+ const events=store.events(task.id),operation=store.restores.operation(resolution.operationId),version=store.restores.pathVersion(receipt.workspaceId,receipt.path)
+ expect(await service.resolveReviewRevert(task.id,resolution)).toEqual(receipt)
+ expect(readFileSync(join(task.path,'file.txt'),'utf8')).toBe('later writer bytes\n')
+ expect(store.events(task.id)).toEqual(events);expect(store.restores.operation(resolution.operationId)).toEqual(operation);expect(store.restores.pathVersion(receipt.workspaceId,receipt.path)).toBe(version)
+})
+it('rejects a changed resolve observation even when the operation is already resolved',async()=>{
+ const {task,resolution}=await resolvedCurrent(),operation=store.restores.operation(resolution.operationId),events=store.events(task.id),bytes=readFileSync(join(task.path,'file.txt'))
+ await expect(service.resolveReviewRevert(task.id,{...resolution,observedFingerprint:'0'.repeat(64)})).rejects.toThrow('observation_changed')
+ expect(store.restores.operation(resolution.operationId)).toEqual(operation);expect(store.events(task.id)).toEqual(events);expect(readFileSync(join(task.path,'file.txt'))).toEqual(bytes)
+})
+
+
+it('fails closed for old resolved receipts without accepted observation proof',async()=>{
+ const {task,resolution}=await resolvedCurrent(),op=store.restores.operation(resolution.operationId)!
+ delete op.acceptedResolutionFingerprint;store.restores.putOperation(op)
+ const events=store.events(task.id),bytes=readFileSync(join(task.path,'file.txt'))
+ await expect(service.resolveReviewRevert(task.id,resolution)).rejects.toThrow('operation_not_resolvable')
+ expect(store.restores.operation(resolution.operationId)).toEqual(op);expect(store.events(task.id)).toEqual(events);expect(readFileSync(join(task.path,'file.txt'))).toEqual(bytes)
+})
+it('validates task and manifest association before replaying a resolved receipt',async()=>{
+ const {task,resolution,receipt}=await resolvedCurrent(),op=store.restores.operation(resolution.operationId)!
+ const other=store.create({title:'Other',path:task.path,providerId:'claude',ownerChatId:'owner',gitWorkspaceId:task.workspace!.id})
+ await expect(service.resolveReviewRevert(other.id,resolution)).rejects.toThrow('operation_not_found')
+ const run=store.restores.run(op.restoreRunId)!;run.artifactId='another-artifact';store.restores.putRun(run)
+ await expect(service.resolveReviewRevert(task.id,resolution)).rejects.toThrow('operation_identity_changed')
+ expect(store.restores.operation(resolution.operationId)!.receipt).toEqual(receipt)
+})
+it('commits accepted resolve proof atomically with receipt, path version, events and sequence',async()=>{
+ const {task,resolution,operation}=await pendingCurrent(),saved=store.restores.operation(resolution.operationId)!,events=store.events(task.id),seq=store.version(task.id),version=store.restores.pathVersion(operation.workspaceId,operation.path)
+ db.exec("CREATE TRIGGER resolve_commit_fault BEFORE INSERT ON workbench_events WHEN NEW.kind='system' BEGIN SELECT RAISE(ABORT,'resolve_commit_fault'); END")
+ await expect(service.resolveReviewRevert(task.id,resolution)).rejects.toThrow()
+ expect(store.restores.operation(resolution.operationId)).toEqual(saved);expect(store.events(task.id)).toEqual(events);expect(store.version(task.id)).toBe(seq);expect(store.restores.pathVersion(operation.workspaceId,operation.path)).toBe(version)
+ db.exec('DROP TRIGGER resolve_commit_fault')
+ await service.resolveReviewRevert(task.id,resolution)
+ expect(store.restores.operation(resolution.operationId)).toMatchObject({acceptedResolutionFingerprint:resolution.observedFingerprint,receipt:{state:'resolved_keep_current'}})
+ expect(store.restores.pathVersion(operation.workspaceId,operation.path)).not.toBe(version)
+})
+
+it('replays a resolved receipt after clean workspace removal using only saved ownership and proof',async()=>{
+ const {task,resolution,receipt}=await resolvedCurrent()
+ await service.worktreeAction(task.id,'remove')
+ const events=store.events(task.id),op=store.restores.operation(resolution.operationId)
+ expect(await service.resolveReviewRevert(task.id,resolution)).toEqual(receipt)
+ expect(store.events(task.id)).toEqual(events);expect(store.restores.operation(resolution.operationId)).toEqual(op)
+})
+
+it('replays an exact revert after explicit clean removal but rejects new effects and changed retry parameters',async()=>{
+ const {task,input}=await closed(),receipt=await service.revertReviewFile(task.id,input)
+ await service.worktreeAction(task.id,'remove')
+ const events=store.events(task.id),op=store.restores.operation(receipt.operationId)
+ expect(await service.revertReviewFile(task.id,input)).toEqual(receipt)
+ await expect(service.revertReviewFile(task.id,{...input,path:'another.txt'})).rejects.toThrow('request_conflict')
+ await expect(service.revertReviewFile(task.id,{...input,requestId:randomUUID()})).rejects.toThrow('worktree_removed')
+ expect(store.events(task.id)).toEqual(events);expect(store.restores.operation(receipt.operationId)).toEqual(op)
+ expect(service.detail(task.id).task.worktree!.removed).toBe(true)
+})
