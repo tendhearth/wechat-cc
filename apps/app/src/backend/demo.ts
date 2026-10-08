@@ -364,6 +364,10 @@ export function makeDemoBackend(opts: { now?: () => number; setTimeout?: typeof 
       let s = ''; for (const b of bytes.subarray(offset, end)) s += String.fromCharCode(b)
       return { offset, nextOffset: end, size: bytes.length, contentBase64: btoa(s) }
     },
+    async worktree({ action }) {
+      // 演示里没有真的 git 工作区:说一句结果就好
+      return action === 'commit' ? { branch: 'cc/demo1234', committed: true } : { branch: 'cc/demo1234', removed: true }
+    },
     async stop({ id, runId }) {
       const e = entries.get(id)
       if (!e || e.detail.runId !== runId) throw new BackendError('input_stale')

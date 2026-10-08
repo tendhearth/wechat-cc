@@ -67,6 +67,8 @@ export const PHONE_ROUTES: ReadonlySet<string> = new Set([
   'POST /m/api/matter/permission',
   // 手机上停下正在跑的这一轮(2026-10-06)
   'POST /m/api/matter/stop',
+  // 独立工作区:提交到分支 / 删除工作区(2026-10-07)
+  'POST /m/api/matter/worktree',
   'POST /m/api/matter/answer',
   'GET /m/api/matter/artifact',
   // 额度用完 ⇒ 交给另一位执行者继续(spec 2026-10-01-tendhearth-continue-sessions §7-3,mobile-workbench.ts)

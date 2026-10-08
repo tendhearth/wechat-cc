@@ -13,7 +13,7 @@ const UNAVAILABLE = new Set(['push_not_wired', 'chat_not_wired', 'connections_no
 const SPECIFIC: ReadonlyMap<string, BackendCode> = new Map<string, BackendCode>([
   ['input_stale', 'input_stale'], ['input_conflict', 'input_conflict'],
   ['native_session_busy', 'session_busy'], ['native_folder_busy', 'folder_busy'],
-  ['unavailable_provider', 'provider_missing'], ['invalid_path', 'folder_missing'], ['provider_quota_exhausted', 'quota'], ['worktree_not_git', 'worktree_not_git'],
+  ['unavailable_provider', 'provider_missing'], ['invalid_path', 'folder_missing'], ['provider_quota_exhausted', 'quota'], ['worktree_not_git', 'worktree_not_git'], ['worktree_dirty', 'worktree_dirty'],
   ['native_history_changed', 'session_changed'], ['native_history_empty', 'session_empty'], ['native_session_already_managed', 'session_managed'],
   // 第一句(continueImported)时:记录在确认之后又变了(终端里的 Claude Code 还在写)/ 原会话已经不能直接接上 ⇒ 都按「会话刚变」说(final fix I1)
   ['external_close_confirmation_stale', 'session_changed'], ['restart_confirmation_required', 'session_changed'],

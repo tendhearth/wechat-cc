@@ -96,3 +96,15 @@ describe('matters service — stop from the phone (2026-10-06)',()=>{
     expect(cancel).toHaveBeenCalledTimes(1)
   })
 })
+
+describe('worktree on the phone (2026-10-07)',()=>{
+  it('detail carries only branch + removed (never the source path); worktree() passes through',async()=>{
+    store.create({id:'deadbeef',kind:'task',title:'并行',projectPath:'/work',ownerChatId:'owner'})
+    const task={...TASK,worktree:{branch:'cc/abcd1234',projectPath:'/Users/me/secret',removed:false}}
+    const worktreeAction=vi.fn(()=>({branch:'cc/abcd1234',committed:true,sha:'s',mergeHint:'cd /Users/me/secret && git merge cc/abcd1234'}))
+    const service=makeMattersService({store,workbench:{detail:()=>({task,events:[]}),continueTask:vi.fn(),worktreeAction} as never})
+    expect((await service.detail('deadbeef')).task?.worktree).toEqual({branch:'cc/abcd1234',removed:false})
+    expect(service.worktree('deadbeef','commit')).toEqual({branch:'cc/abcd1234',committed:true})
+    expect(worktreeAction).toHaveBeenCalledWith('deadbeef','commit')
+  })
+})
