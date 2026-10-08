@@ -28,3 +28,14 @@ it('rejects receipts bound to a different workspace or resolve file identity',as
  expect((await actions.revert(selection,'another-workspace')).state).toBe('uncertain')
  expect((await actions.resolve({id:selection.id,operationId:'op',observedFingerprint:'fp'},{artifactId:selection.artifactId,path:selection.path,changeId:selection.changeId})).state).toBe('failed')
 })
+it('replays a keep-current receipt after a lost revert reply without another request identity',async()=>{
+ const storage=memory(),sent=[]
+ const first=createRestoreActions({storage,invoke:async(_m,_p,b)=>{sent.push(b);throw Error('timeout')}})
+ expect((await first.revert(selection,'ws')).state).toBe('uncertain')
+ const second=createRestoreActions({storage,invoke:async(_m,_p,b)=>{sent.push(b);return{operation:operation(b,'resolved_keep_current')}}})
+ const receipt=await second.revert(selection,'ws')
+ expect(receipt.state).toBe('resolved_keep_current');expect(receipt.operation.state).toBe('resolved_keep_current');expect(receipt.error).toBeUndefined()
+ expect(sent[1]).toEqual(sent[0]);expect(await second.revert(selection,'ws')).toBe(receipt);expect(sent).toHaveLength(2)
+ const mismatch=createRestoreActions({storage:memory(),invoke:async(_m,_p,b)=>({operation:{...operation(b,'resolved_keep_current'),workspaceId:'different'}})})
+ expect((await mismatch.revert(selection,'ws')).state).toBe('uncertain')
+})
