@@ -121,3 +121,8 @@ export function makeRuntimeState(): WorkbenchRuntimeState {
     writerOrphans: new Map(), mutations: new Map(), writerWatch: undefined,
   }
 }
+
+/** Shared admission guard reads the current shutdown state at the point of use. */
+export function assertAccepting(state:Pick<WorkbenchRuntimeState,'stopping'>):void {
+  if(state.stopping)throw new Error('workbench_stopping')
+}

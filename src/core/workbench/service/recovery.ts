@@ -122,6 +122,20 @@ export function makeRecoveryDomain(ctx:ServiceCtx):RecoveryDomain{
    try{await publicManager.recover(id);for(const r of restores.runs(id))ctx.hub.touched(r.taskId)}catch{/* durable barrier remains */}
   }
  }
+ // Establish every restart writer barrier before accepting public calls or recovering journals.
+ function initializeWriters(adoptLegacyWriters:()=>void){
+  captureWriters()
+  store.recover(registeredConflict)
+  store.liveInputs.recover()
+  adopt()
+  adoptLegacyWriters()
+ }
+ // Called after actions are wired; shutdown must drain this same recovery settlement.
+ function startRecovery(){
+  const pending=recover()
+  state.collections.add(pending)
+  void pending.then(()=>state.collections.delete(pending),()=>state.collections.delete(pending))
+ }
  function facts(taskId:string){const w=store.gitWorkspaceForTask(taskId);if(!w)return '';const ops=restores.operations(w.id).filter(o=>o.receipt.state==='reverted'||o.receipt.state==='resolved_keep_current');return ops.length?'文件现场已在执行会话之间更新，请重新读取这些路径，不要沿用此前内容：\n'+ops.map(o=>JSON.stringify({path:o.receipt.path,state:o.receipt.state,operationId:o.receipt.operationId})).join('\n'):''}
- return {manager:publicManager,owned,git,admit,captureWriters,registeredConflict,gate,begin,remember,mark,close,confirmOrphan,adopt,recover,facts,withMutation,withCommit,blockReason}
+ return {manager:publicManager,owned,git,admit,initializeWriters,startRecovery,gate,begin,remember,mark,close,confirmOrphan,facts,withMutation,withCommit,blockReason}
 }
