@@ -493,11 +493,11 @@ export function makeExecuteDomain(ctx:ServiceCtx, domains:ExecuteDomains) {
     const accepted=store.atomic(()=>{
       entry?.beforeCreate()
       const task=store.create({title:input.title?.trim()??(text.slice(0,40)||attachments[0]!.name.slice(0,40)),path,providerId:input.providerId,ownerChatId:entry?.context.ownerKey??ctx.deps.ownerChatId(),gitWorkspaceId:entry?.gitWorkspaceId??input.gitWorkspaceId,projectPath:input.projectPath,workspaceKind:entry?.workspaceKind,registerProject:input.registerProject??entry?.registerProject??entry?.workspaceKind!=='managed'})
-      if(entry&&entry.context.surface!=='wechat'){
+      if(entry&&(entry.context.surface!=='wechat'||ctx.deps.matters)){
         const m=ctx.deps.matters;if(!m)throw Error('entry_not_wired')
         const chat=entry.fromChat?m.ensureChat(entry.context.ownerKey):null
         if(chat&&chat.ownerChatId!==entry.context.ownerKey)throw Error('invalid_entry_owner')
-        m.create({id:task.id,kind:'task',title:task.title,projectPath:input.projectPath??store.sourcePath(task),ownerChatId:entry.context.ownerKey,originMatterId:chat?.id??null,originMessageId:null})
+        m.create({id:task.id,kind:'task',title:task.title,projectPath:input.projectPath??store.sourcePath(task),ownerChatId:entry.context.ownerKey,originMatterId:entry.context.surface==='wechat'?origin?.matterId??null:chat?.id??null,originMessageId:entry.context.surface==='wechat'?origin?.messageId??null:null})
         m.linkTask(task.id)
         if(store.taskMatterId(task.id)!==task.id)throw Error('entry_matter_link_failed')
         m.bind(task.id,entry.context.surface,entry.context.ownerKey)
