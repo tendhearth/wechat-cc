@@ -19,16 +19,20 @@ export interface WorktreePlan { root: string; branch: string; taskPath: string; 
 const BRANCH_PREFIX = 'cc/'
 const TIMEOUT_MS = 30_000
 
-function gitEnv(): NodeJS.ProcessEnv {
+/**
+ * ownerConfig:在主人自己的项目目录里动(合回项目)时读系统配置 —— Windows 的 git 默认在系统配置里开 core.autocrlf,
+ * 不读的话主人用 CRLF 检出的文件全被当成「改过」,快进写进去的文件换行也和主人检出的不一致(2026-10-08 Windows CI 抓到)。
+ */
+function gitEnv(ownerConfig = false): NodeJS.ProcessEnv {
   const env: NodeJS.ProcessEnv = { ...process.env }
   for (const key of Object.keys(env)) if (key.startsWith('GIT_')) delete env[key]
-  return { ...env, LC_ALL: 'C', GIT_TERMINAL_PROMPT: '0', GIT_CONFIG_NOSYSTEM: '1', GIT_OPTIONAL_LOCKS: '0' }
+  return { ...env, LC_ALL: 'C', GIT_TERMINAL_PROMPT: '0', ...(ownerConfig ? {} : { GIT_CONFIG_NOSYSTEM: '1' }), GIT_OPTIONAL_LOCKS: '0' }
 }
 const SAFE = ['-c', 'core.hooksPath=/dev/null', '-c', 'core.fsmonitor=false']
 /** 跑一条 git;非零退出抛 `worktree_git_failed`(stderr 头几行带上,只给日志)。 */
-export function git(cwd: string, args: string[]): string {
+export function git(cwd: string, args: string[], opts: { ownerConfig?: boolean } = {}): string {
   try {
-    return execFileSync('git', [...SAFE, ...args], { cwd, env: gitEnv(), encoding: 'utf8', timeout: TIMEOUT_MS, stdio: ['ignore', 'pipe', 'pipe'] }).trim()
+    return execFileSync('git', [...SAFE, ...args], { cwd, env: gitEnv(opts.ownerConfig), encoding: 'utf8', timeout: TIMEOUT_MS, stdio: ['ignore', 'pipe', 'pipe'] }).trim()
   } catch (error) {
     const stderr = String((error as { stderr?: unknown }).stderr ?? '').trim().split('\n').slice(0, 3).join(' | ')
     throw Object.assign(new Error('worktree_git_failed'), { detail: stderr })
@@ -118,14 +122,15 @@ export function removeWorktree(repoRoot: string, root: string): void {
  */
 export function mergeWorktree(repoRoot: string, root: string, branch: string): { merged: boolean; into: string } {
   if (worktreeDirty(root)) throw new Error('worktree_uncommitted')
-  if (git(repoRoot, ['status', '--porcelain', '--untracked-files=no']).length > 0) throw new Error('project_dirty')
+  const owner = { ownerConfig: true }
+  if (git(repoRoot, ['status', '--porcelain', '--untracked-files=no'], owner).length > 0) throw new Error('project_dirty')
   let into = ''
-  try { into = git(repoRoot, ['symbolic-ref', '-q', '--short', 'HEAD']) } catch { /* 下面拒绝 */ }
+  try { into = git(repoRoot, ['symbolic-ref', '-q', '--short', 'HEAD'], owner) } catch { /* 下面拒绝 */ }
   if (!into) throw new Error('project_detached')
-  const ancestor = (a: string, b: string) => { try { git(repoRoot, ['merge-base', '--is-ancestor', a, b]); return true } catch { return false } }
+  const ancestor = (a: string, b: string) => { try { git(repoRoot, ['merge-base', '--is-ancestor', a, b], owner); return true } catch { return false } }
   if (ancestor(`refs/heads/${branch}`, 'HEAD')) return { merged: false, into }
   if (!ancestor('HEAD', `refs/heads/${branch}`)) throw new Error('worktree_not_ff')
-  git(repoRoot, ['merge', '--ff-only', '--no-edit', `refs/heads/${branch}`])
+  git(repoRoot, ['merge', '--ff-only', '--no-edit', `refs/heads/${branch}`], owner)
   return { merged: true, into }
 }
 
