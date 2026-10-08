@@ -543,6 +543,8 @@ export function makeExecuteDomain(ctx:ServiceCtx, domains:ExecuteDomains) {
     const execution=normalizeExecutionChoice(options?.execution,store.execution.choice(id))
     if(store.source(id)?.firstDispatchedAt===null)throw new Error('external_close_confirmation_required')
     if(task.archivedAt!==null)throw new Error('workbench_archived')
+    // 独立工作区已删(手动或归档时收拾):目录不在了,别让执行者对着空位置跑(2026-10-08 评审)
+    if(store.worktrees.get(id)?.removedAt!=null)throw new Error('worktree_removed')
     provider(task.providerId)
     if (canonicalProject(task.path)!==task.path) throw new Error('invalid_path')
     const request=checkedText(text,attachments),acceptedDirectoryIdentity=directoryIdentity(task.path)

@@ -108,6 +108,8 @@ describe('worktree on the phone (2026-10-07)',()=>{
     expect(worktreeAction).toHaveBeenCalledWith('deadbeef','commit')
     worktreeAction.mockReturnValueOnce({branch:'cc/abcd1234',merged:true,into:'main'} as never)
     expect(service.worktree('deadbeef','merge')).toEqual({branch:'cc/abcd1234',merged:true})
+    worktreeAction.mockReturnValueOnce({branch:'cc/abcd1234',merged:false,into:'main'} as never)
+    expect(service.worktree('deadbeef','merge')).toEqual({branch:'cc/abcd1234',merged:false})
     task.worktree={...task.worktree,merged:true} as never
     expect((await service.detail('deadbeef')).task?.worktree).toEqual({branch:'cc/abcd1234',removed:false,merged:true})
     // 另做一份(10-08):源项目只给编号
@@ -144,4 +146,16 @@ it('missing source project never substitutes the execution folder project',async
  const task={...TASK,path:'/copies/project',sourcePath:'/missing',worktree:{branch:'cc/abcd1234',removed:false,projectPath:'/copies/project'}}
  const service=makeMattersService({store,workbench:{detail:()=>({task,events:[]}),continueTask:()=>task,projects:()=>[{id:'wrong-execution',path:'/copies/project'}]}})
  expect((await service.detail('deadbeef')).task?.worktree?.projectId).toBeUndefined()
+})
+
+it('preserves an explicit no-merge result only after an asynchronous worktree receipt settles',async()=>{
+ store.create({id:'deadbeef',kind:'task',title:'legacy result',projectPath:'/work',ownerChatId:'owner'})
+ let finish!:(value:{branch:string;merged:boolean;into:string})=>void
+ const deferred=new Promise<{branch:string;merged:boolean;into:string}>(resolve=>{finish=resolve})
+ const service=makeMattersService({store,workbench:{detail:()=>({task:TASK,events:[]}),continueTask:vi.fn(),worktreeAction:()=>deferred} as never})
+ let settled=false
+ const pending=Promise.resolve(service.worktree('deadbeef','merge')).then(value=>{settled=true;return value})
+ await Promise.resolve();expect(settled).toBe(false)
+ finish({branch:'cc/legacy',merged:false,into:'main'})
+ expect(await pending).toEqual({branch:'cc/legacy',merged:false})
 })

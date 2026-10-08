@@ -58,6 +58,7 @@ const en = {
   'progress.wtFork': 'Have another helper try it',
   'progress.wtMergeConfirm': 'Tap again to fast-forward the project',
   'progress.wtMerged': 'Merged into the project.',
+  'progress.wtNothingToMerge': 'Nothing on the branch the project doesn\'t already have. Commit to the branch first.',
   'progress.wtOnMerged': 'Worked on separate branch {branch}; merged into the project.',
   'progress.wtUncommitted': 'There are uncommitted changes. Commit to the branch first.',
   'progress.wtMergeManual': "Can't fast-forward (the project has uncommitted changes or moved ahead). Merge it on your computer.",

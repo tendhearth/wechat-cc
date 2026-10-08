@@ -165,6 +165,7 @@ async function worktreeReply(id:string,verb:'提交'|'合回'|'删除工作区',
   try{
     const r=await act(id,verb==='提交'?'commit':verb==='合回'?'merge':'remove')
     if(verb==='提交')return r.committed?`任务 ${id}：已提交到分支 ${r.branch}（${(r.sha??'').slice(0,7)}）。\n${isolated?'查看改动或导出补丁：请在桌面工作台操作。':`合回项目：任务 ${id} 合回`}`:`任务 ${id}：分支 ${r.branch} 上没有新的改动要提交。`
+    if(verb==='合回'&&r.merged===false)return `任务 ${id}：分支 ${r.branch} 上没有项目里还没有的提交，不用合。没提交的改动要先发「任务 ${id} 提交」。`
     if((verb==='合回'&&r.merged!==true)||(verb==='删除工作区'&&r.removed!==true))return `任务 ${id}：${verb}结果尚未确认，请在桌面工作台核对。`
     if(verb==='合回')return `任务 ${id}：分支 ${r.branch} 已合进项目的 ${r.into??'当前分支'}。\n不再需要工作区：任务 ${id} 删除工作区`
     return `任务 ${id}：独立工作区已删除，分支 ${r.branch} 保留在项目里。`
@@ -182,6 +183,7 @@ function failure(error:unknown,id:string){
   if(code==='subscription_conflict')return '提醒绑定的账号已变化，没有把旧提醒转发到新账号。请在原聊天关闭提醒后重新设置。'
   if(code==='permission_stale'||code==='question_stale')return stale
   if(code==='invalid_answer'||error instanceof SyntaxError)return '答案格式或选项不正确，尚未提交。请按问题中的示例回答。'
+  if(code==='worktree_removed')return '这件事的独立工作区已经删除了（分支还在项目里），没法接着做。请重新交办一件。'
   if(code==='workbench_archived')return '这项任务已归档。请在桌面工作台恢复任务后再继续。'
   if(code==='restart_confirmation_required'||code==='restart_confirmation_stale')return '原执行会话暂时无法恢复。请打开桌面工作台，查看恢复选项并确认是否带此前记录重新开始。'
   if(code==='external_close_confirmation_required')return '请先在桌面工作台确认原执行程序已关闭，再继续这项任务。'

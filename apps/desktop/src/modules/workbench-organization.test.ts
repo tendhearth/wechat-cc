@@ -141,6 +141,9 @@ describe('workbench task organization', () => {
     controller.state.detail = detail(task('A', { canArchive: false, error: 'writer_not_closed' }))
     expect(renderWorkbench(controller.state)).not.toContain('data-action="archive-task"')
     controller.state.detail.task.canArchive = true
+    // A conflicting backend eligibility flag cannot override an unconfirmed writer.
+    expect(renderWorkbench(controller.state)).not.toContain('data-action="archive-task"')
+    controller.state.detail.task.error = null
     const eligible = renderWorkbench(controller.state)
     expect(eligible).toMatch(/class="wb-task-info-body"[\s\S]*data-action="archive-task"/)
     controller.state.detail.task.archivedAt = 5

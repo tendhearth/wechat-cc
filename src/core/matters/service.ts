@@ -252,7 +252,7 @@ export function makeMattersService(deps:MattersServiceDeps):MattersService {
       require(id)
       if(!deps.workbench?.worktreeAction)throw Error('workbench_not_wired')
       const r=deps.workbench.worktreeAction(id,action)
-      const project=(value:Awaited<typeof r>)=>({branch:value.branch,...(value.committed!==undefined?{committed:value.committed}:{}),...(value.removed?{removed:true}:{}),...(value.merged?{merged:true}:{})})
+      const project=(value:Awaited<typeof r>)=>({branch:value.branch,...(value.committed!==undefined?{committed:value.committed}:{}),...(value.removed?{removed:true}:{}),...(value.merged!==undefined?{merged:value.merged}:{})})
       return r instanceof Promise?r.then(project):project(r)
     },
     async stop(id,runId){
