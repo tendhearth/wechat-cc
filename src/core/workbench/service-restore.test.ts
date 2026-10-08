@@ -89,7 +89,8 @@ it('exports complete committed/staged/unstaged/untracked changes as an applicabl
  expect(artifact).not.toHaveProperty('storagePath')
  const bytes=Buffer.from(service.artifact(task.id,artifact.id).contentBase64,'base64')
  expect(bytes.toString()).toContain('new.txt')
- const applied=join(area,'applied');execFileSync('git',['clone','-q','--no-local',source,applied]);execFileSync('git',['-C',applied,'apply','-'],{input:bytes})
+ // Persist the byte fixture's LF policy through both checkout and the later apply.
+ const applied=join(area,'applied');execFileSync('git',['clone','-q','--no-local','--config','core.autocrlf=false',source,applied]);execFileSync('git',['-C',applied,'apply','-'],{input:bytes})
  expect(readFileSync(join(applied,'file.txt'),'utf8')).toBe('working\n');expect(readFileSync(join(applied,'new.txt'),'utf8')).toBe('untracked\n');expect(readFileSync(join(applied,'staged.txt'),'utf8')).toBe('staged\n')
  expect({index:run('ls-files','--stage'),refs:run('show-ref'),source:git('status','--porcelain')}).toEqual(before)
 })
@@ -405,7 +406,7 @@ it('archives UUID workspaces without cleanup and retains closed restore bytes an
  service.setArchived(task.id,false);expect(service.setArchived(task.id,true).workspace?.removed).not.toBe(true)
  writeFileSync(join(task.path,'file.txt'),'export after archive\n');writeFileSync(join(task.path,'new.txt'),'untracked\n')
  const artifact=await service.exportWorkspace(task.id),bytes=Buffer.from(service.artifact(task.id,artifact.id).contentBase64,'base64')
- const applied=join(area,'archive-applied');execFileSync('git',['clone','-q','--no-local',source,applied]);execFileSync('git',['-C',applied,'apply','-'],{input:bytes})
+ const applied=join(area,'archive-applied');execFileSync('git',['clone','-q','--no-local','--config','core.autocrlf=false',source,applied]);execFileSync('git',['-C',applied,'apply','-'],{input:bytes})
  expect(readFileSync(join(applied,'file.txt'),'utf8')).toBe('export after archive\n');expect(readFileSync(join(applied,'new.txt'),'utf8')).toBe('untracked\n')
  expect({head:git('rev-parse','HEAD'),index:readFileSync(join(source,'.git','index')),status:git('status','--porcelain')}).toEqual(sourceBefore)
  expect(existsSync(task.path)).toBe(true);expect(store.worktrees.get(task.id)).toBeNull()

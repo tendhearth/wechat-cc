@@ -34,7 +34,8 @@ function setup(defaultProvider='claude',ids=['claude','codex']){
     registeredProjects:()=>[{alias:'project',path:project}],matters:makeMatterStore(db),changes:hub,mintSessionToken:()=>{mintCount++;return'test-token'}})
 }
 beforeEach(()=>{
-  area=realpathSync(mkdtempSync(join(tmpdir(),'cc-entry-service-')));stateDir=join(area,'state');project=join(area,'project');mkdirSync(stateDir);mkdirSync(project);mkdirSync(join(area,'home'))
+  // The identity guard requires native physical paths, including Windows temp 8.3 aliases.
+  area=realpathSync.native(mkdtempSync(join(tmpdir(),'cc-entry-service-')));stateDir=join(area,'state');project=join(area,'project');mkdirSync(stateDir);mkdirSync(project);mkdirSync(join(area,'home'))
   db=openDb({path:join(stateDir,'state.db')});owner='owner';spawnCount=0;mintCount=0;seen=[];setup()
 })
 afterEach(async()=>{vi.restoreAllMocks();await service?.shutdown();db.close();removeTempDir(area)})

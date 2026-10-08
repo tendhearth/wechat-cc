@@ -23,7 +23,8 @@ function setup(defaultProvider='claude'){
  return makeWorkbenchService({store,registry,changes,stateDir:join(area,'state'),managedWorkspaceRoot:join(area,'Tasks'),ownerChatId:()=> 'owner',defaultProvider,registeredProjects:()=>[{alias:'Source',path:source}],matters:makeMatterStore(db),mintSessionToken:()=>{minted++;return 'fixture-token'},isolatedConfiguration:{environment:{HOME:join(area,'home')},systemDirectories:[]}})
 }
 beforeEach(()=>{
- area=realpathSync(mkdtempSync(join(tmpdir(),'cc-wechat-acceptance-')));source=join(area,'source')
+ // Use the same physical path form as the workspace identity guard on Windows.
+ area=realpathSync.native(mkdtempSync(join(tmpdir(),'cc-wechat-acceptance-')));source=join(area,'source')
  for(const path of [source,join(area,'state'),join(area,'home')])mkdirSync(path)
  git('init','-q');git('config','user.name','Fixture');git('config','user.email','fixture@example.invalid');writeFileSync(join(source,'file.txt'),'original\n');git('add','.');git('commit','-qm','initial')
  db=openDb({path:join(area,'state','state.db')});store=makeWorkbenchStore(db);dispatched=[];minted=0;published=0;service=setup()
