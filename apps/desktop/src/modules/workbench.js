@@ -44,6 +44,14 @@ function writerExitHtml(task) {
   if (task.writerExit === 'alive') return '<p class="wb-error-note">执行程序还在运行。结束它之后，这条占用会自动解除。</p>'
   return '<button type="button" class="wb-new" data-action="confirm-writer-exited">我确认它已经结束</button>'
 }
+/** All file mutation entry points use the same evidence that a writer is still open.
+ * @param {Detail|null|undefined} detail */
+function reviewWriterBlocked(detail) {
+  return !detail || ['running','queued','cancelling'].includes(detail.task.status)
+    || !!(detail.runtime ?? detail.task.runtime)?.retained || !!detail.requiresExternalClose
+    || detail.task.error === 'writer_not_closed'
+    || detail.task.writerExit === 'alive' || detail.task.writerExit === 'unconfirmed'
+}
 /** @typedef {{taskId:string,title:string,reason:'same_path'|'nested_path'|'writer_not_closed',holderWriting?:boolean,closeInMs?:number|null}} WaitingFor */
 /**
  * 独立工作区那一行(2026-10-07):分支名 + 「提交到分支」「删除工作区」。合并留给主人,提交后时间线里有一行合并命令。
@@ -349,7 +357,7 @@ export function renderWorkbench(state, interactions, draft, attachmentError='',e
   // 整块面板共用一份预览额度(和「成果」里那份报告同样的 256KiB / 4000 行):
   // 十几轮 × 几十个文件不能各渲各的,不然这一页会被 diff 压垮。
   const reviewBudget = createReviewDiffBudget()
-  const reviewHtml = detail ? renderReviewPanel(state.reviews ?? [], { escapeHtml: escapeWorkbenchHtml, formatTime: time, renderDiff: file => renderReviewFileDiff(file, escapeWorkbenchHtml, reviewBudget), budget: reviewBudget, writerOpen:!!detail.runtime?.retained||['running','queued','cancelling'].includes(detail.task.status)||!!detail.requiresExternalClose, returnOpen: state.reviewReturnOpen ?? null, error: !!state.reviewsError }) : ''
+  const reviewHtml = detail ? renderReviewPanel(state.reviews ?? [], { escapeHtml: escapeWorkbenchHtml, formatTime: time, renderDiff: file => renderReviewFileDiff(file, escapeWorkbenchHtml, reviewBudget), budget: reviewBudget, writerOpen:reviewWriterBlocked(detail), returnOpen: state.reviewReturnOpen ?? null, error: !!state.reviewsError }) : ''
   const artifactHtml = detail?.artifacts?.length && !artifactPanel ? `<details id="wb-artifacts" class="wb-disclosure wb-artifacts"><summary><span>成果</span><small>${detail.artifacts.length} 件</small></summary><div class="wb-artifact-list">${artifacts}</div><button type="button" class="wb-new" data-action="back-to-dialogue">回到对话</button></details>` : ''
   const execution=draft?.execution??detail?.execution??{defaults:/** @type {const} */('provider'),model:null,reasoningEffort:null}
   const executionDisabled=!!executionView.busy||!!(detail&&(detail.task.archivedAt!=null||['running','queued','cancelling'].includes(detail.task.status)))
@@ -1049,12 +1057,12 @@ export function initWorkbenchPage(deps) {
       const navigation=navigationGeneration
       const turn=controller.state.reviews?.find(r=>r.artifactId===target.dataset.artifactId)
       const file=turn?.files.find(f=>f.path===target.dataset.path&&f.revert?.changeId===target.dataset.changeId)
-      if(['running','queued','cancelling'].includes(detail.task.status)||detail.runtime?.retained||detail.requiresExternalClose)return
+      if(reviewWriterBlocked(detail))return
       const recoveryTurn=controller.state.reviews?.find(r=>r.restore?.scope==='closed_session'&&r.files.some(f=>f.revert?.state==='needs_recovery'&&f.revert.operationId===target.dataset.operationId&&f.revert.observedFingerprint===target.dataset.observedFingerprint)),recoveryFile=recoveryTurn?.files.find(f=>f.revert?.operationId===target.dataset.operationId)
       if(action==='review-revert-resolve'&&(!recoveryTurn||!recoveryFile))return
       if(action==='review-revert'&&(!turn?.restore||turn.restore.scope!=='closed_session'||!file||file.revert?.state!=='available'))return
       restoreConfirmation?.close();restoreConfirmation=mountRestoreConfirmation({keepCurrent:action==='review-revert-resolve',path:file?.path,kind:file?.kind,startedAt:turn?.restore?time(turn.restore.startedAt):'',finishedAt:turn?.restore?time(turn.restore.finishedAt):''})
-      if(!await restoreConfirmation.result||!alive||navigation!==navigationGeneration||controller.state.selectedId!==id||['running','queued','cancelling'].includes(controller.state.detail?.task.status??'')||controller.state.detail?.runtime?.retained||controller.state.detail?.requiresExternalClose)return
+      if(!await restoreConfirmation.result||!alive||navigation!==navigationGeneration||controller.state.selectedId!==id||reviewWriterBlocked(controller.state.detail))return
       restoreConfirmation=null
       captureDraft();busy.add(`task:${id}`)
       try{

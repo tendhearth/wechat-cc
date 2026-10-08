@@ -11,7 +11,7 @@ const tasks=[task('aabbccdd','任务 A',10),task('11223344','任务 B',1)]
 const workspace=t=>({id:'ws-'+t.id,mode:'isolated',sourcePath:t.sourcePath,executionPath:t.path,branch:'codex/cc-task-'+t.id,baseCommit:'a'.repeat(40)})
 const artifact={id:'restore',taskId:'aabbccdd',name:'restore.json',mime:'application/json',size:1,sha256:'a'.repeat(64),createdAt:1,approvedAt:null}
 let reviews=[{artifactId:'restore',sha256:'a'.repeat(64),name:'restore.json',createdAt:90,status:'complete',headBefore:null,headAfter:null,preexistingPaths:[],notes:[],restore:{runId:'run',scope:'closed_session',startedAt:10,finishedAt:90},files:[{path:'a.txt',kind:'modified',preexisting:false,diff:'@@ -1 +1 @@\\n-old\\n+new',revert:{changeId:'change',state:'available'}}]}]
-const qa={calls:[],outcome:'reverted',stale:false,late:false,release:null}
+const qa={tasks,calls:[],outcome:'reverted',stale:false,late:false,release:null}
 const invoke=async(method,path,body)=>{
  qa.calls.push({method,path,body})
  if(path==='/v1/workbench')return{tasks,providers:[{id:'codex',displayName:'Codex'}],projects:[{id:'p',name:'来源项目',path:'/fixture/project',providerId:'codex'}],defaultProvider:'codex',canWechat:false}
@@ -105,3 +105,45 @@ test('file impact confirmation can be cancelled without creating a mutation',asy
  expect(await page.evaluate(()=>(window as any).qa.calls.filter((c:any)=>c.path==='/v1/workbench/review-revert').length)).toBe(0)
  await expect(page.locator('[data-action="review-revert"]')).toBeVisible()
 })
+
+// An interrupted terminal task can still own an unclosed writer.
+for(const writerExit of ['alive','unconfirmed'] as const) {
+ for(const action of ['review-revert','review-revert-resolve'] as const) {
+  const prepare = async(page:any) => {
+   if(action==='review-revert-resolve') {
+    await page.evaluate(()=>{(window as any).qa.outcome='needs_recovery'})
+    await page.locator('[data-action="review-revert"]').click()
+    await page.locator('[data-restore-confirm="accept"]').click()
+    await expect(page.locator('[data-action="review-revert-resolve"]')).toBeVisible()
+   }
+  }
+  test(`writer ${writerExit} suppresses ${action} and preserves exit guidance`,async({page})=>{
+   await prepare(page)
+   await page.evaluate(async state=>{const q=(window as any).qa;Object.assign(q.tasks[0],{status:'interrupted',error:'writer_not_closed',writerExit:state});await q.controller.refresh({force:true})},writerExit)
+   await expect(page.locator(`[data-action="${action}"]`)).toHaveCount(0)
+   if(writerExit==='unconfirmed')await expect(page.locator('[data-action="confirm-writer-exited"]')).toBeVisible()
+   else await expect(page.locator('.wb-error-note')).toContainText('执行程序还在运行')
+  })
+  test(`stale ${action} cannot open confirmation while writer is ${writerExit}`,async({page})=>{
+   await prepare(page)
+   // New detail has arrived; the earlier review controls are still painted.
+   await page.evaluate(state=>{Object.assign((window as any).qa.controller.state.detail.task,{status:'interrupted',error:'writer_not_closed',writerExit:state})},writerExit)
+   await page.locator(`[data-action="${action}"]`).click()
+   await expect(page.getByRole('dialog')).toHaveCount(0)
+   // Native dialog close dispatches on a later animation frame; drain it before checking writes.
+   await page.evaluate(()=>new Promise<void>(resolve=>requestAnimationFrame(()=>requestAnimationFrame(()=>resolve()))))
+   expect(await page.evaluate(a=>(window as any).qa.calls.filter((c:any)=>c.path==='/v1/workbench/'+a).length,action)).toBe(0)
+  })
+  test(`confirmation cannot submit ${action} after writer becomes ${writerExit}`,async({page})=>{
+   await prepare(page)
+   await page.locator(`[data-action="${action}"]`).click()
+   await expect(page.getByRole('dialog')).toBeVisible()
+   await page.evaluate(state=>{Object.assign((window as any).qa.controller.state.detail.task,{status:'interrupted',error:'writer_not_closed',writerExit:state})},writerExit)
+   await page.locator('[data-restore-confirm="accept"]').click()
+   await expect(page.getByRole('dialog')).toHaveCount(0)
+   // Native dialog close dispatches on a later animation frame; drain it before checking writes.
+   await page.evaluate(()=>new Promise<void>(resolve=>requestAnimationFrame(()=>requestAnimationFrame(()=>resolve()))))
+   expect(await page.evaluate(a=>(window as any).qa.calls.filter((c:any)=>c.path==='/v1/workbench/'+a).length,action)).toBe(0)
+  })
+ }
+}

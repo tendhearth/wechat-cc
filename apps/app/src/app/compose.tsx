@@ -5,7 +5,7 @@ import { SafeAreaView } from 'react-native-safe-area-context'
 import { BackendError, type MatterInputT } from '../backend/types'
 import { t, type Lang } from '../i18n'
 import { useLang } from '../i18n/useLang'
-import { deleteDraft, getDraft, getEntrySettings, setEntrySettings, getDraftImages, setDraftImages, pairingGen, requestIdFor, setDraft, materialDraftId } from '../state/drafts'
+import { deleteDraft, getDraft, getEntrySettings, setEntrySettings, getDraftImages, setDraftImages, pairingGen, creationInputFor, requestIdFor, setDraft, materialDraftId } from '../state/drafts'
 import { AddImageButton, ImageTray } from '../ui/ImageTray'
 import { bytesToBase64, uploadImages, type PickedImage } from '../state/image-upload'
 import { PHONE_CHAT_MAX_IMAGES as MAX_IMAGES } from '@wechat-cc/protocol'
@@ -191,11 +191,15 @@ export default function Compose() {
     const r = await submit(`compose:${draftKey}`, async () => {
       // 同一份草稿、同样正文重发(「不确定」之后再点)⇒ 同一个 requestId,daemon 去重,不会说两遍。
       const materials = !matter && images.length ? { draftId: materialDraftId(draftKey), attachmentIds: images.map(i => i.id) } : undefined
-      const requestId = requestIdFor(draftKey, matter ? body : JSON.stringify([body, project?.id ?? null, provider?.id ?? null, executionMode, materials?.attachmentIds ?? [], execution ?? null]))
-      if (matter) await backend.say(matter, body, requestId)
+      if (matter) await backend.say(matter, body, requestIdFor(draftKey, body))
       else {
-        if (materials) await uploadImages(backend, materials.draftId, images, bytesToBase64)
-        try { newId = (await backend.create({ requestId, text: body, projectId: project?.id, providerId: provider?.id, ...(project ? { executionMode } : {}), ...(materials ?? {}), ...(execution ? { execution } : {}) })).matterId }
+        // Raw selections describe user intent; mutable option defaults never replace an unknown attempt.
+        const input = creationInputFor(draftKey, JSON.stringify([body, projectId, providerId, executionMode, materials?.attachmentIds ?? [], execution ?? null]), {
+          text: body, projectId: project?.id, providerId: provider?.id,
+          ...(project ? { executionMode } : {}), ...(materials ?? {}), ...(execution ? { execution } : {}),
+        })
+        if (input.draftId && input.attachmentIds?.length) await uploadImages(backend, input.draftId, images.filter(image=>input.attachmentIds!.includes(image.id)), bytesToBase64)
+        try { newId = (await backend.create(input)).matterId }
         catch (error) { if (atGen === pairingGen() && draftKeyRef.current === myKey && error instanceof BackendError && error.reason) setInputNotice(composeCreationReason(error.reason, lang)); throw error }
       }
     })

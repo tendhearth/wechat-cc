@@ -7,7 +7,7 @@ import { PHONE_API_SCHEMAS, type ClientOpts, type ProtocolClient, type ProtocolR
 import { makeLiveBackend } from '../backend/live'
 import { DETAIL, ID, OPTIONS, RUN, WB_TASK, RECEIPT } from '../backend/fixtures'
 import type { Backend, MatterInputT } from '../backend/types'
-import { clearDrafts, getDraft, setDraft } from '../state/drafts'
+import { clearDrafts, getDraft, setDraft, setEntrySettings } from '../state/drafts'
 import { makeStore, type Store } from '../state/store'
 import { watchConnection } from '../state/wiring'
 import { makeInputJournal } from './input-journal'
@@ -420,8 +420,30 @@ it('native model and selected image payload survive an uncertain creation remoun
  const first=h.requests.find(r=>r.path==='/m/api/matter/create')!
  expect(first.body).toMatchObject({executionMode:'auto',execution:{model:'test-model',reasoningEffort:'high'},attachmentIds:['22222222-2222-4222-8222-222222222222']})
  await act(()=>ui.root.unmount());roots.splice(roots.indexOf(ui.root),1)
+ h.store.revalidateAll();h.setOptions({...OPTIONS,projects:[],providers:[]})
  const reopened=await mount();await reopened.click('compose-send')
  const posts=h.requests.filter(r=>r.path==='/m/api/matter/create')
  expect(posts).toHaveLength(2);expect(posts[1]!.body).toEqual(first.body)
  expect(getDraft('new')).toBe('带图和模型')
+})
+
+// Mutable entry options must not change an already-submitted creation attempt.
+it.each(['default-project', 'missing-project', 'missing-provider', 'default-provider'] as const)('uncertain creation freezes the full input across %s refresh and remount', async drift => {
+ const h=harness();host.params={};h.setCreate(()=>new Error('timeout'))
+ if(drift==='missing-project')setEntrySettings('new',{projectId:OPTIONS.projects[0]!.id,providerId:null,executionMode:'auto'})
+ if(drift==='missing-provider')setEntrySettings('new',{projectId:null,providerId:'claude',executionMode:'auto'})
+ const ui=await mount();await ui.type('原项目要求');await ui.click('compose-send')
+ const before=h.requests.find(r=>r.path==='/m/api/matter/create')!.body
+ expect(before).toMatchObject({text:'原项目要求',target:{kind:'project',projectId:'p-0123456789abcdef0123'},executionMode:'auto'})
+ await act(()=>ui.root.unmount());roots.splice(roots.indexOf(ui.root),1)
+ h.store.revalidateAll()
+ h.setOptions({...OPTIONS,defaultProviderId:'codex',providers:drift==='missing-provider'?[]:OPTIONS.providers,projects:['default-project','missing-project'].includes(drift)?[{...OPTIONS.projects[0]!,id:'p-1111111111111111111',name:'New default',path:'/another'},...(drift==='missing-project'?[]:OPTIONS.projects)]:OPTIONS.projects})
+ const reopened=await mount();await reopened.click('compose-send')
+ const posts=h.requests.filter(r=>r.path==='/m/api/matter/create')
+ expect(posts).toHaveLength(2);expect(posts[1]!.body).toEqual(before)
+ // An intentional edit, including retyping the same body, is a new attempt.
+ await reopened.type('改过的要求');await reopened.type('原项目要求');await reopened.click('compose-send')
+ const edited=h.requests.filter(r=>r.path==='/m/api/matter/create').at(-1)!.body
+ expect(edited.requestId).not.toBe(before.requestId)
+ expect(edited.target.projectId).toBe(['default-project','missing-project'].includes(drift)?'p-1111111111111111111':'p-0123456789abcdef0123')
 })
