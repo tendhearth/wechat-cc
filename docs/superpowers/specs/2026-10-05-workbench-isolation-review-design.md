@@ -118,7 +118,7 @@ CRLF、BOM、空文件和执行位均按原始版本保存。删除文件的父�
 
 「已答复」不等于执行者退出。用户先通过已有动作结束后台会话；撤回接口不会偷偷停止任务、丢弃补充或杀掉其他接手任务。
 
-撤回只在持久运行记录证明 writer `closed` 时开放。记录 `active / closing / closed / uncertain` 与确认关闭证据；重启后内存没有 Active 不能当退出证明。正在运行、保留会话、后台子任务、等待退出、网络暂停和未投递的补充都阻止撤回。
+撤回只在持久运行记录证明 writer `closed` 时开放。记录 `active / closing / closed / uncertain` 与确认关闭证据；重启后内存没有 Active 不能当退出证明。正在运行、保留会话、后台子任务、等待退出、网络暂停和仍可自动投递的补充（`pending / sending`）都阻止撤回。`held` 是停止自动投递、留给主人查看并决定是否重发的记录；它本身不否定已经确认的关闭证明，不会自动重发。主动重发仍须经过新 writer 生命周期、generation 和占用核验。
 
 scheduler 扩展为运行占用或短时文件 mutation 占用。撤回在同路径与父子路径冲突检查下原子取得 mutation reservation；期间 start、continue、submitInput、另一撤回和回收不能进入该目录。共享副本的复核/接手任务必须一起纳入检查。
 
