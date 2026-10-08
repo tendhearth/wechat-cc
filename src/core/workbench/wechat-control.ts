@@ -1,3 +1,4 @@
+import {validBaseBranch} from './worktree-workspaces'
 import {createHash,randomUUID} from 'node:crypto'
 import type {WorkbenchStore,Task} from './store'
 import type {LiveInput} from './live-inputs'
@@ -47,7 +48,7 @@ const REQUEST_MAX=6000
 const unavailable='没有找到这个任务，请在桌面工作台核对编号。'
 const stale='这条请求已失效或不属于这个任务。请重新查询任务，使用当前请求编号。'
 const stopUnconfirmed='这条停止请求已记录，但尚未确认执行结果。请查询任务状态；如需停止当前轮次，请发送一条新的停止消息。'
-const usage=(id='<任务编号>')=>`用法：\n项目：任务 项目\n新建：任务 新建 <项目编号> <要求>\n并行：任务 新建 <项目编号> 独立 <要求>\n查看：任务 ${id}\n补充：任务 ${id} 补充 <要求>\n改动：任务 ${id} 改动\n独立工作区：任务 ${id} 提交 / 合回 / 删除工作区 / 重开工作区\n停止：任务 ${id} 停止\n处理待办时，请复制任务消息中的完整请求编号。`
+const usage=(id='<任务编号>')=>`用法：\n项目：任务 项目\n新建：任务 新建 <项目编号> <要求>\n并行：任务 新建 <项目编号> 独立 <要求>（从某个分支开始：独立@<分支>）\n查看：任务 ${id}\n补充：任务 ${id} 补充 <要求>\n改动：任务 ${id} 改动\n独立工作区：任务 ${id} 提交 / 合回 / 删除工作区 / 重开工作区\n停止：任务 ${id} 停止\n处理待办时，请复制任务消息中的完整请求编号。`
 const clip=(value:string,max:number)=>value.length>max?value.slice(0,max)+'…':value
 const singleLine=(value:string,max=100)=>clip(value.replace(/[\r\n]+/g,' '),max)
 export const isWechatTaskCommand=(text:string)=>/^(?:任务|\/task)(?:\s|$)/i.test(text.trim())
@@ -183,6 +184,8 @@ function failure(error:unknown,id:string){
   if(code==='subscription_conflict')return '提醒绑定的账号已变化，没有把旧提醒转发到新账号。请在原聊天关闭提醒后重新设置。'
   if(code==='permission_stale'||code==='question_stale')return stale
   if(code==='invalid_answer'||error instanceof SyntaxError)return '答案格式或选项不正确，尚未提交。请按问题中的示例回答。'
+  if(code==='worktree_base_missing')return '项目里没有这个分支，没有开始工作。请核对分支名（本地分支），或去掉 @<分支> 从最新提交开始。'
+  if(code==='worktree_not_git')return '这个项目不是 Git 仓库，开不了独立工作区。去掉「独立」就能照常交办。'
   if(code==='worktree_removed')return `这件事的独立工作区已经删除了（分支还在项目里）。要接着做，先发「任务 ${id} 重开工作区」。`
   if(code==='workbench_archived')return '这项任务已归档。请在桌面工作台恢复任务后再继续。'
   if(code==='restart_confirmation_required'||code==='restart_confirmation_stale')return '原执行会话暂时无法恢复。请打开桌面工作台，查看恢复选项并确认是否带此前记录重新开始。'
@@ -249,19 +252,22 @@ export function makeWechatWorkbenchControl(opts:{store:WorkbenchStore;ownerChatI
     if(/^新建(?:\s|$)/.test(command)){
       if(!identity?.accountId?.trim())return failure(Error('invalid_wechat_identity'),'')
       // 「任务 新建 <项目> 独立 <要求>」:在这个项目的独立工作区里做(2026-10-07),可以和别的任务同时进行。
-      const isolated=/^新建\s+p-[a-f0-9]{20}\s+独立\s+\S/i.test(command)
-      const match=(isolated?/^新建\s+(p-[a-f0-9]{20})\s+独立\s+([\s\S]+)$/i:/^新建\s+(p-[a-f0-9]{20})\s+([\s\S]+)$/i).exec(command)
+      // 「独立@<分支>」(10-08):独立工作区从这个本地分支开始
+      const isolated=/^新建\s+p-[a-f0-9]{20}\s+独立(?:@\S+)?\s+\S/i.test(command)
+      const match=(isolated?/^新建\s+(p-[a-f0-9]{20})\s+独立(?:@(\S+))?\s+([\s\S]+)$/i:/^新建\s+(p-[a-f0-9]{20})\s+()([\s\S]+)$/i).exec(command)
       if(!match)return usage()
+      const base=isolated&&match[2]?match[2]:undefined,body=match[3]!
+      if(base!==undefined&&!validBaseBranch(base))return usage()
       // @ makes an executor choice unambiguous; "用 Python 处理数据" remains ordinary input.
-      const explicit=/^用\s+@(\S+)(?:\s+|$)([\s\S]*)$/i.exec(match[2]!)
-      if(/^用\s+@/i.test(match[2]!)&&(!explicit||!isWorkbenchProviderId(explicit[1]!.toLowerCase())))return usage()
-      const choice=explicit??/^用\s+(claude|codex)(?:\s+|$)([\s\S]*)$/i.exec(match[2]!)
+      const explicit=/^用\s+@(\S+)(?:\s+|$)([\s\S]*)$/i.exec(body)
+      if(/^用\s+@/i.test(body)&&(!explicit||!isWorkbenchProviderId(explicit[1]!.toLowerCase())))return usage()
+      const choice=explicit??/^用\s+(claude|codex)(?:\s+|$)([\s\S]*)$/i.exec(body)
       // 终审第 5 项:origin_message_id 声明(db.ts:1350)的是 messages.id,
       // 不是平台原始 msgId——那条入站真正的 messages.id 是
       // wechatTaskMessageKey(v'workbench:'+requestId),不是 identity.msgId。
       // 今天只写不读,不坏事,但留着就是给第一个写 join 的人埋雷。
       const originMessageId=wechatTaskMessageKey({...identity,chatId,text})
-      try{return opts.actions.createWechat({ownerChatId:chatId,accountId:identity.accountId,requestId:inputId(chatId,'',text,identity),commandHash:createHash('sha256').update(text).digest('hex'),projectId:match[1]!.toLowerCase(),...(isolated?{isolation:true}:{}),...(choice?{providerId:choice[1]!.toLowerCase()}:{}),...(originMessageId?{originMessageId}:{}),text:choice?choice[2]!:match[2]!}).reply}
+      try{return opts.actions.createWechat({ownerChatId:chatId,accountId:identity.accountId,requestId:inputId(chatId,'',text,identity),commandHash:createHash('sha256').update(text).digest('hex'),projectId:match[1]!.toLowerCase(),...(isolated?{isolation:true}:{}),...(base!==undefined?{base}:{}),...(choice?{providerId:choice[1]!.toLowerCase()}:{}),...(originMessageId?{originMessageId}:{}),text:choice?choice[2]!:body}).reply}
       catch(error){return failure(error,'')}
     }
     if(!command||command==='列表'){

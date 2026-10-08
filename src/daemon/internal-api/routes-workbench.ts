@@ -74,7 +74,7 @@ function mappedError(err: unknown,entry=false): ReturnType<RouteHandler> {
   if (code === 'review_revert_unavailable') return { status: 422, body: { error: code } }
   if (code === 'worktree_dirty' || code === 'worktree_removed' || code === 'worktree_conflict' || code === 'worktree_branch_exists') return { status: 409, body: { error: code } }
   if (['worktree_uncommitted', 'project_dirty', 'project_detached', 'worktree_not_ff', 'project_busy', 'worktree_branch_missing', 'worktree_open'].includes(code)) return { status: 409, body: { error: code } }
-  if (code === 'not_worktree' || code === 'worktree_not_git') return { status: 422, body: { error: code } }
+  if (code === 'not_worktree' || code === 'worktree_not_git' || code === 'worktree_base_missing') return { status: 422, body: { error: code } }
   if (code === 'worktree_git_failed') return { status: 502, body: { error: code } }
   if (code === 'matter_not_found') return { status: 404, body: { error: code } }
   if (code === 'not_found') return { status: 404, body: { error: code } }

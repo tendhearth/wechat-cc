@@ -323,7 +323,7 @@ export function makeLiveBackend(d: LiveDeps): Backend {
     async create(p) {
       const body = {
         requestId: p.requestId, text: p.text,
-        target: p.projectId ? { kind: 'project', projectId: p.projectId, ...(p.isolation ? { isolation: 'worktree' } : {}) } : { kind: 'managed' },
+        target: p.projectId ? { kind: 'project', projectId: p.projectId, ...(p.isolation ? { isolation: 'worktree', ...(p.base ? { base: p.base } : {}) } : {}) } : { kind: 'managed' },
         ...(p.providerId ? { providerId: p.providerId } : {}),
         ...(p.attachmentIds?.length && p.draftId ? { draftId: p.draftId, attachmentIds: p.attachmentIds } : {}),
         ...(p.execution && (p.execution.model || p.execution.reasoningEffort) ? { execution: { ...(p.execution.model ? { model: p.execution.model } : {}), ...(p.execution.reasoningEffort ? { reasoningEffort: p.execution.reasoningEffort } : {}) } } : {}),

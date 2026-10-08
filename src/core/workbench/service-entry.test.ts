@@ -283,6 +283,10 @@ it('isolated worktree tasks (2026-10-07): run in parallel on one project, stay o
   await service.shutdown();store=makeWorkbenchStore(db)
   service=makeWorkbenchService({store,registry,stateDir,managedWorkspaceRoot:join(area,'Tasks'),ownerChatId:()=>owner,defaultProvider:'claude',registeredProjects:()=>[{alias:'project',path:project}],matters:makeMatterStore(db),changes:makeTaskChangeHub(),mintSessionToken:()=>'t'})
   const projectId=service.projects()[0]!.id
+  // 从分支开始(10-08):分支不在 ⇒ 预约前就拒,不留半截预约
+  const before=db.query<{n:number},[]>('SELECT count(*) AS n FROM workbench_entry_requests').get()!.n
+  expect(()=>service.createEntry(input({target:{kind:'project',projectId,isolation:'worktree',base:'nope'}}),context)).toThrow('worktree_base_missing')
+  expect(db.query<{n:number},[]>('SELECT count(*) AS n FROM workbench_entry_requests').get()!.n).toBe(before)
   const one=service.createEntry(input({target:{kind:'project',projectId,isolation:'worktree'}}),context)
   const two=service.createEntry(input({target:{kind:'project',projectId,isolation:'worktree'}}),context)
   const [a,b]=[service.detail(one.receipt.taskId).task,service.detail(two.receipt.taskId).task]

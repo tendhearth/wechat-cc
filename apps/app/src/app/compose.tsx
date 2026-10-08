@@ -73,6 +73,10 @@ export default function Compose() {
   const [inputNotice, setInputNotice] = useState<string | null>(null)
   const [projectId, setProjectId] = useState<string | null>(() => (fork && one(params.project)) || null)
   const [isolated, setIsolated] = useState(!!fork)
+  // 从哪个分支开始(10-08):留空 = 最新提交;格式和 daemon 同一条(字母数字开头,只含 ._/-,不含 ..)
+  const [base, setBase] = useState('')
+  const baseName = base.trim()
+  const baseInvalid = !!baseName && (!/^[A-Za-z0-9][A-Za-z0-9._/-]{0,199}$/.test(baseName) || baseName.includes('..') || baseName.includes('//') || /(\/|\.lock|\.)$/.test(baseName))
   const [providerId, setProviderId] = useState<string | null>(null)
   // 交办时选模型 / 思考强度(2026-10-06,对标 Paseo / Orca);null = 用执行者自己的默认。换执行者 / 项目就回到默认。
   const [modelId, setModelId] = useState<string | null>(null)
@@ -195,11 +199,11 @@ export default function Compose() {
       // 同一份草稿、同样正文重发(「不确定」之后再点)⇒ 同一个 requestId,daemon 去重,不会说两遍。
       const materials = !matter && images.length ? { draftId: materialDraftId(draftKey), attachmentIds: images.map(i => i.id) } : undefined
       // 换了图或模型就是新的一件:requestId 跟着正文、图、模型一起定
-      const requestId = requestIdFor(draftKey, [body, materials?.attachmentIds.join(',') ?? '', execution ? JSON.stringify(execution) : '', project && isolated ? 'worktree' : ''].join('\u0000'))
+      const requestId = requestIdFor(draftKey, [body, materials?.attachmentIds.join(',') ?? '', execution ? JSON.stringify(execution) : '', project && isolated ? `worktree:${baseName}` : ''].join('\u0000'))
       if (matter) await backend.say(matter, body, requestId)
       else {
         if (materials) await uploadImages(backend, materials.draftId, images, bytesToBase64)
-        newId = (await backend.create({ requestId, text: body, projectId: project?.id, ...(project && isolated ? { isolation: true } : {}), providerId: provider?.id, ...(materials ?? {}), ...(execution ? { execution } : {}) })).matterId
+        newId = (await backend.create({ requestId, text: body, projectId: project?.id, ...(project && isolated ? { isolation: true, ...(baseName ? { base: baseName } : {}) } : {}), providerId: provider?.id, ...(materials ?? {}), ...(execution ? { execution } : {}) })).matterId
       }
     })
     sending.current = false
@@ -275,7 +279,7 @@ export default function Compose() {
               </Pressable>
             </View>
           )}
-          <Button kind="primary" testID="compose-send" label={t(lang, isTask ? 'input.send' : 'compose.send')} onPress={send} disabled={!text.trim() || !online || (!firstSendReady && !retryDraft)} busy={busy} />
+          <Button kind="primary" testID="compose-send" label={t(lang, isTask ? 'input.send' : 'compose.send')} onPress={send} disabled={!text.trim() || !online || (!firstSendReady && !retryDraft) || (!matter && !!project && isolated && baseInvalid)} busy={busy} />
           <ConnectionNotice />
           {recovery.phase !== 'ready' ? <View style={{ gap: space.s }}>
             <Txt testID="input-recovery-state" role="meta" tone="inkSoft" accessibilityLiveRegion="polite">{t(lang, recovery.phase === 'loading' ? 'input.recovering' : 'input.recoveryFailed')}</Txt>
@@ -310,6 +314,14 @@ export default function Compose() {
           {opt?.projects.map((p) => <ChoiceRow key={p.id} label={p.name} content="user" on={p.id === project?.id} onPress={() => setProjectId(p.id)} />)}
           {project ? <ChoiceRow testID="compose-isolation" label={t(lang, 'compose.isolation')} on={isolated} onPress={() => setIsolated(v => !v)} /> : null}
           {project && isolated ? <Txt role="caption" tone="inkSoft">{t(lang, 'compose.isolationHint')}</Txt> : null}
+          {project && isolated ? (
+            <View style={{ gap: space.xs }}>
+              <Txt role="caption" tone="inkSoft">{t(lang, 'compose.base')}</Txt>
+              <TextField testID="compose-base" value={base} onChangeText={setBase} placeholder={t(lang, 'compose.basePlaceholder')} autoCapitalize="none" autoCorrect={false} maxLength={200}
+                style={{ paddingVertical: space.s, borderBottomWidth: 1, borderBottomColor: baseInvalid ? c.bad : c.hair }} />
+              {baseInvalid ? <Txt role="caption" tone="bad">{t(lang, 'compose.baseInvalid')}</Txt> : null}
+            </View>
+          ) : null}
           <Txt role="meta" tone="inkSoft" style={{ marginTop: space.m }}>{t(lang, 'compose.executor')}</Txt>
           <ChoiceRow label={t(lang, 'compose.ccArranges')} on={!provider} onPress={() => setProviderId(null)} />
           {opt?.providers.filter((p) => p.available).map((p) => <ChoiceRow key={p.id} label={p.displayName} on={p.id === provider?.id} onPress={() => setProviderId(p.id)} />)}

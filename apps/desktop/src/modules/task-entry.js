@@ -106,7 +106,7 @@ export function createTaskEntry(deps){
           <label>执行者<select name="provider">${(options?.providers??[]).map(p=>`<option value="${esc(p.id)}"${state.providerId===p.id?' selected':''}${p.available?'':' disabled'}>${esc(p.displayName)}${p.available?'':` · ${esc(p.unavailableReason?.message??'暂不可用')}`}</option>`).join('')}</select></label>
           ${canExecution?`<label>默认设置<select name="defaults"><option value="provider"${state.execution.defaults==='provider'?' selected':''}>沿用 CC 设置</option><option value="native"${state.execution.defaults==='native'?' selected':''}>沿用执行者本身设置</option></select></label>${p?renderExecutionControls(state.execution,catalogs.get(state.providerId,p.path)).replaceAll('wb-model','task-entry-model').replaceAll('wb-reasoning-effort','task-entry-effort'):'<p class="task-entry-hint">新事项使用自动模型；选择已有项目后可读取该项目的模型设置。</p>'}`:'<p class="task-entry-hint">这个执行者沿用已连接的设置。</p>'}</details>
           <p class="task-entry-destination">${projectPath&&!recovering&&!destinationChosen&&!options?'正在确认所选项目…':state.target.kind==='managed'?'随手交办：CC 会为这件事准备独立文件夹。':`项目：${esc(p?.name??'所选项目暂不可用')}`}</p>
-          ${state.target.kind==='project'&&p?`<label class="task-entry-isolate"><input type="checkbox" name="isolation"${state.target.isolation==='worktree'?' checked':''}> 在独立工作区里做 <small>同一个项目可以同时做几件，互不排队。从最新提交开始，不带你还没提交的改动；项目需要是 Git 仓库。.env 这类不进 Git 的文件，列在项目根的 .worktreeinclude 里就会一起带上。</small></label>`:''}
+          ${state.target.kind==='project'&&p?`<label class="task-entry-isolate"><input type="checkbox" name="isolation"${state.target.isolation==='worktree'?' checked':''}> 在独立工作区里做 <small>同一个项目可以同时做几件，互不排队。从最新提交开始，不带你还没提交的改动；项目需要是 Git 仓库。.env 这类不进 Git 的文件，列在项目根的 .worktreeinclude 里就会一起带上。</small></label>${state.target.isolation==='worktree'?`<label class="task-entry-base">从分支开始 <span class="task-entry-hint">可选</span><input name="base" maxlength="200" autocomplete="off" spellcheck="false" placeholder="留空 = 最新提交；或写本地分支名，如 feature/login" value="${esc(state.target.base??'')}"></label>`:''}`:''}
           ${visibleError?`<p class="task-entry-error" role="alert">${esc(visibleError)}</p>`:''}${notice?`<p class="task-entry-notice" role="status">${esc(notice)}</p>`:''}
           ${accepted?'<button type="button" data-entry-action="accepted">查看已交办任务</button>':''}</div>
           <footer><button type="button" data-entry-action="cancel">${state.pending?.uncertain?'暂时关闭，保留待确认请求':'取消'}</button><button type="submit"${disabled()?' disabled':''}>${busy?'正在确认…':state.pending?.uncertain?'确认结果 / 重试原请求':'交给 CC 做'}</button></footer></form>`
@@ -137,6 +137,9 @@ export function createTaskEntry(deps){
         let submission=state.pending
         if(!submission||!submission.uncertain&&submission.signature!==signature()){
           if(disabled()){error=projectUnavailable()?'所选项目暂不可用，请在更多设置里重新选择。':options?.reason?.message??'先连接一个可用的执行者，并等附件上传完成。';render();return}
+          // 分支名只收安全子集(与 daemon validBaseBranch 同一条):字母数字开头,只含 ._/-,不含 ..
+          const base=state.target.kind==='project'?state.target.base:undefined
+          if(base&&(!/^[A-Za-z0-9][A-Za-z0-9._/-]{0,199}$/.test(base)||base.includes('..')||base.includes('//')||/(\/|\.lock|\.)$/.test(base))){error='分支名格式不对：只能用字母、数字和 . _ / -，例如 feature/login。';render();return}
           const payload=input(crypto.randomUUID()),contentError=entryContentError(payload)
           if(contentError){error=contentError==='invalid_context'?`讨论材料超过 ${ENTRY_LIMITS.context.toLocaleString('en-US')} 字或 ${ENTRY_LIMITS.excerpts} 条，请取消部分摘录。`:'要求和所选讨论材料合计过长，请缩减后再交办。';render();return}
           submission={input:payload,signature:signature(),uncertain:false,material:drafts.get(scope)}
@@ -177,7 +180,9 @@ export function createTaskEntry(deps){
         if(name==='excerpt'){const index=Number(field.value);if(state.candidates[index])state.selected=field.checked?[...new Set([...state.selected,index])].sort((a,b)=>a-b):state.selected.filter(i=>i!==index)}
         else if(name==='project'){const p=options?.projects.find(p=>p.id===field.value);if(field.value!=='managed'&&!p)return;destinationChosen=true;error='';setDestination(p?{kind:'project',projectId:p.id}:{kind:'managed'},p?.providerId??options?.defaultProviderId)}
         // 独立工作区(2026-10-07):只对项目有效;换项目时 setDestination 换了新对象,自然取消勾选。
-        else if(name==='isolation'&&state.target.kind==='project'){const {isolation:_,...rest}=state.target;state.target=field.checked?{...rest,isolation:'worktree'}:rest}
+        else if(name==='isolation'&&state.target.kind==='project'){const {isolation:_,base:__,...rest}=state.target;state.target=field.checked?{...rest,isolation:'worktree'}:rest}
+        // 从哪个分支开始(10-08):留空 = 最新提交;名字格式不对时 daemon 拒(invalid_target),这里只去掉首尾空白
+        else if(name==='base'&&state.target.kind==='project'&&state.target.isolation==='worktree'){const {base:_,...rest}=state.target,value=field.value.trim();state.target=value?{...rest,base:value}:rest;persist(state);return}
         else if(name==='provider'){if(!options?.providers.some(p=>p.id===field.value&&p.available))return;state.providerId=field.value;state.execution=auto()}
         else if(name==='defaults')state.execution={...state.execution,defaults:field.value==='native'?'native':'provider'}
         else if(field.id==='task-entry-model')state.execution={...state.execution,model:field.value||null,reasoningEffort:null}

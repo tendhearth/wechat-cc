@@ -117,6 +117,15 @@ describe('parseEntryInput', () => {
     },
   )
 
+  it('accepts a start branch only together with an isolated worktree and only as a safe local name (2026-10-08)', () => {
+    const projectId = 'p-0123456789abcdef0123'
+    expect(parseEntryInput({...valid, target: {kind: 'project', projectId, isolation: 'worktree', base: 'feature/login'}}).target)
+      .toEqual({kind: 'project', projectId, isolation: 'worktree', base: 'feature/login'})
+    for (const target of [{kind: 'project', projectId, base: 'main'}, {kind: 'managed', base: 'main'}, {kind: 'project', projectId, isolation: 'worktree', base: '--upload-pack=x'},
+      {kind: 'project', projectId, isolation: 'worktree', base: '../x'}, {kind: 'project', projectId, isolation: 'worktree', base: 7}])
+      expect(() => parseEntryInput({...valid, target})).toThrow('invalid_target')
+  })
+
   it('validates provider identifiers without selecting a provider', () => {
     expect(parseEntryInput({...valid, providerId: 'api-model.one_2'}).providerId).toBe('api-model.one_2')
     for (const providerId of ['', 'Claude', 'a/b', 'a b', 'a'.repeat(65), null]) {
