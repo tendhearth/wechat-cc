@@ -106,6 +106,7 @@ export function createTaskEntry(deps){
           <label>执行者<select name="provider">${(options?.providers??[]).map(p=>`<option value="${esc(p.id)}"${state.providerId===p.id?' selected':''}${p.available?'':' disabled'}>${esc(p.displayName)}${p.available?'':` · ${esc(p.unavailableReason?.message??'暂不可用')}`}</option>`).join('')}</select></label>
           ${canExecution?`<label>默认设置<select name="defaults"><option value="provider"${state.execution.defaults==='provider'?' selected':''}>沿用 CC 设置</option><option value="native"${state.execution.defaults==='native'?' selected':''}>沿用执行者本身设置</option></select></label>${p?renderExecutionControls(state.execution,catalogs.get(state.providerId,p.path)).replaceAll('wb-model','task-entry-model').replaceAll('wb-reasoning-effort','task-entry-effort'):'<p class="task-entry-hint">新事项使用自动模型；选择已有项目后可读取该项目的模型设置。</p>'}`:'<p class="task-entry-hint">这个执行者沿用已连接的设置。</p>'}</details>
           <p class="task-entry-destination">${projectPath&&!recovering&&!destinationChosen&&!options?'正在确认所选项目…':state.target.kind==='managed'?'随手交办：CC 会为这件事准备独立文件夹。':`项目：${esc(p?.name??'所选项目暂不可用')}`}</p>
+          ${state.target.kind==='project'&&p?`<label class="task-entry-isolate"><input type="checkbox" name="isolation"${state.target.isolation==='worktree'?' checked':''}> 在独立工作区里做 <small>同一个项目可以同时做几件，互不排队。从最新提交开始，不带你还没提交的改动；项目需要是 Git 仓库。</small></label>`:''}
           ${visibleError?`<p class="task-entry-error" role="alert">${esc(visibleError)}</p>`:''}${notice?`<p class="task-entry-notice" role="status">${esc(notice)}</p>`:''}
           ${accepted?'<button type="button" data-entry-action="accepted">查看已交办任务</button>':''}</div>
           <footer><button type="button" data-entry-action="cancel">${state.pending?.uncertain?'暂时关闭，保留待确认请求':'取消'}</button><button type="submit"${disabled()?' disabled':''}>${busy?'正在确认…':state.pending?.uncertain?'确认结果 / 重试原请求':'交给 CC 做'}</button></footer></form>`
@@ -175,6 +176,8 @@ export function createTaskEntry(deps){
         if(name==='text')return
         if(name==='excerpt'){const index=Number(field.value);if(state.candidates[index])state.selected=field.checked?[...new Set([...state.selected,index])].sort((a,b)=>a-b):state.selected.filter(i=>i!==index)}
         else if(name==='project'){const p=options?.projects.find(p=>p.id===field.value);if(field.value!=='managed'&&!p)return;destinationChosen=true;error='';setDestination(p?{kind:'project',projectId:p.id}:{kind:'managed'},p?.providerId??options?.defaultProviderId)}
+        // 独立工作区(2026-10-07):只对项目有效;换项目时 setDestination 换了新对象,自然取消勾选。
+        else if(name==='isolation'&&state.target.kind==='project'){const {isolation:_,...rest}=state.target;state.target=field.checked?{...rest,isolation:'worktree'}:rest}
         else if(name==='provider'){if(!options?.providers.some(p=>p.id===field.value&&p.available))return;state.providerId=field.value;state.execution=auto()}
         else if(name==='defaults')state.execution={...state.execution,defaults:field.value==='native'?'native':'provider'}
         else if(field.id==='task-entry-model')state.execution={...state.execution,model:field.value||null,reasoningEffort:null}

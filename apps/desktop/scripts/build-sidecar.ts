@@ -13,6 +13,7 @@ import './vendor-site'
 import { chmodSync, copyFileSync, existsSync, mkdirSync } from 'node:fs'
 import { dirname, join, resolve } from 'node:path'
 import { sidecarNameFor } from '../../../src/lib/app-identity'
+import { sidecarNativePlugin, stageOrtFrameworks } from './sidecar-native'
 
 type Target = { bunTarget: string; rustTriple: string; extension?: string }
 
@@ -53,20 +54,22 @@ const buildSha = (() => {
   } catch { return 'unknown' }
 })()
 
-const args = [
-  process.execPath,
-  'build',
-  '--compile',
-  `--target=${target.bunTarget}`,
-  `--define`, `__BUILD_SHA__=${JSON.stringify(buildSha)}`,
-  ...(process.platform === 'win32' ? ['--windows-hide-console'] : []),
-  join(root, 'cli.ts'),
-  '--outfile',
-  output,
-]
-const compiled = Bun.spawn({ cmd: args, stdout: 'inherit', stderr: 'inherit' })
-if (await compiled.exited !== 0) {
+// 用 Bun.build 而不是 CLI:要插件(见 sidecar-native.ts —— onnxruntime 从 sidecar 旁边载入、sharp 换空壳)。
+const compiled = await Bun.build({
+  entrypoints: [join(root, 'cli.ts')],
+  compile: { target: target.bunTarget as Bun.Build.CompileTarget, outfile: output, ...(process.platform === 'win32' ? { windows: { hideConsole: true } } : {}) },
+  define: { __BUILD_SHA__: JSON.stringify(buildSha) },
+  plugins: [sidecarNativePlugin(process.platform)],
+})
+if (!compiled.success) {
+  for (const log of compiled.logs) console.error(log)
   throw new Error('failed to compile the desktop CLI sidecar')
+}
+if (process.platform === 'darwin') {
+  for (const file of stageOrtFrameworks(root, process.arch, target.rustTriple)) {
+    // 同 sidecar:Tauri 打包前先给一个 ad-hoc 签名,最终签名在 Tauri 那一步。
+    await Bun.spawn({ cmd: ['codesign', '--force', '--sign', '-', file], stdout: 'ignore', stderr: 'inherit' }).exited
+  }
 }
 
 if (process.platform === 'win32') {

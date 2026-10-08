@@ -9,6 +9,7 @@ import { canonicalProject } from '../artifacts'
 import { readableExecutionEvent } from '../codex-execution-error'
 import { isWorkbenchExecutorCapabilities, isWorkbenchProviderId } from '../executor-capabilities'
 import { makeProjectCatalog } from '../project-catalog'
+import { writerAlive } from './writer-exit'
 import { findPathBlocker } from '../scheduler'
 import { TERMINAL_TASK_STATUSES, type Task, type WorkbenchListQuery } from '../store'
 import type { AgentRuntimeSnapshot } from '../../agent-provider'
@@ -40,7 +41,7 @@ export function makeViewDomain(ctx:ServiceCtx, queries?:{quotaHandoff(id:string)
   function waitingFor(running:Active):TaskWaitingFor|null {
     if (running.state !== 'queued') return null
     const earlier=state.queue.filter(item => item.order < running.order && item.state === 'queued')
-    const blocked=findPathBlocker(running,[...held(),...earlier])
+    const blocked=findPathBlocker(running,[...held(),...state.writerOrphans.values(),...earlier])
     if (!blocked) return null
     const holder=state.runsByTask.get(blocked.taskId)
     // 找不到持有者是不该发生的时序缝隙;宁可继续说「还在写」,也不能凭空报一个假的倒计时。
@@ -77,6 +78,10 @@ export function makeViewDomain(ctx:ServiceCtx, queries?:{quotaHandoff(id:string)
       ...(runtime?{runtime}:{}),
       ...(!running&&TERMINAL_TASK_STATUSES.includes(task.status)&&store.source(task.id)?.firstDispatchedAt===null?{importedOnly:true}:{}),
       canArchive:TERMINAL_TASK_STATUSES.includes(task.status) && !running && task.error!=='writer_not_closed',
+      // 独立工作区(2026-10-07):分支、源项目、目录删了没;桌面按源项目归组、给「提交到分支」。
+      ...(()=>{const wt=store.worktrees.get(task.id);return wt?{worktree:{branch:wt.branch,projectPath:wt.projectPath,removed:wt.removedAt!==null}}:{}})(),
+      // 「没确认退出」:进程组还活着 ⇒ 'alive'(先结束它);没有相反证据 ⇒ 'unconfirmed'(主人可以确认已经结束)。
+      ...(task.error==='writer_not_closed'?{writerExit:writerAlive(ctx,task.id)?'alive' as const:'unconfirmed' as const}:{}),
       waitingFor:running ? waitingFor(running) : null,
       // 网络守护冻住了这条 run(2026-10-03):桌面 / 手机显示「已暂停(网络未受保护)」。
       ...(running?.networkSuspended ? { networkSuspended:{since:running.networkSuspended.since} } : {}),
@@ -89,12 +94,20 @@ export function makeViewDomain(ctx:ServiceCtx, queries?:{quotaHandoff(id:string)
       if(!permissions.length&&!questions.length)return[]
       return[{id:run.taskId,title:run.title,providerId:run.task.providerId,pendingPermissionCount:permissions.length,pendingQuestionCount:questions.length,first:firstPending(permissions,questions),attentionKey:JSON.stringify([...permissions,...questions].map(q=>q.id).sort())}]
     })
-    return{tasks}
+    // 回复 / 停下的系统通知(2026-10-06):桌面拿前后两次的 phase 比,「在做 → 回复了 / 停下了」才弹。
+    // 只给 id 与 phase —— 标题、内容不跟着进系统通知(同上面的待处理那条规矩)。在跑的 + 十分钟内动过的、没归档的。
+    const recent=Date.now()-10*60_000
+    const progress=store.list().filter(task=>task.archivedAt===null&&(state.runsByTask.has(task.id)||task.updatedAt>=recent))
+      .map(task=>({id:task.id,phase:phaseOf(task,state.runsByTask.get(task.id))}))
+    return{tasks,progress}
   }
   function projects(){
     const ownerChatId=ctx.deps.ownerChatId();if(!ownerChatId)return[]
     const providers=ctx.deps.registry.list().filter(id=>isWorkbenchProviderId(id)&&isWorkbenchExecutorCapabilities(ctx.deps.registry.get(id)?.opts.workbench))
-    return makeProjectCatalog({ownerChatId,registered:ctx.deps.registeredProjects?.()??[],known:store.ownedProjects(ownerChatId,providers),providers,defaultProvider:ctx.deps.defaultProvider})
+    // 主人在桌面「添加项目」加的那些也算(2026-10-07):以前只有配置里登记的 + 有过任务的才进交办选项,
+    // 新加的项目在第一件事之前选不到 —— 「在独立工作区里做」只对项目有效,于是也开不了。
+    const added=store.projects().map(project=>({path:project.path,providerId:project.providerId}))
+    return makeProjectCatalog({ownerChatId,registered:ctx.deps.registeredProjects?.()??[],known:[...store.ownedProjects(ownerChatId,providers),...added],providers,defaultProvider:ctx.deps.defaultProvider})
   }
   function addProject(input:{path:string;name?:string;providerId:string}) {
     if(typeof input.path!=='string'||input.path.length>4096||typeof input.providerId!=='string'||(input.name!==undefined&&(typeof input.name!=='string'||!input.name.trim()||input.name.length>100)))throw Error('invalid_request')

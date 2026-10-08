@@ -1492,6 +1492,38 @@ export const migrations: Migration[] = [
     if (!cols.has('extras')) db.exec(`ALTER TABLE messages ADD COLUMN extras TEXT;`)
   },
 
+  // v73 — 工作台「没确认退出」(writer_not_closed)记下执行程序的进程组(workbench_tasks.writer_groups,JSON 数组)。
+  //
+  // WHY:关不掉的执行程序可能还在写那个文件夹,所以占用要等退出证据才解除。以前证据只能来自本进程里的
+  // close() 迟到成功;daemon 一重启,证据永远等不到 —— 记录卡住、归档不了,而新任务其实已经不受保护了
+  // (占用只在内存里)。记下进程组,重启后能逐个查:都没了 = 退出证据;还在 = 重新挂回占用。
+  // NULL = 旧记录 / 执行者交不出进程组,只能由主人确认。守表同 v71。
+  (db) => {
+    const has = db
+      .query<{ cnt: number }, []>("SELECT COUNT(*) AS cnt FROM sqlite_master WHERE type='table' AND name='workbench_tasks'")
+      .get()
+    if (!has || has.cnt === 0) return
+    const cols = new Set(db.query<{ name: string }, []>("PRAGMA table_info('workbench_tasks')").all().map(c => c.name))
+    if (!cols.has('writer_groups')) db.exec(`ALTER TABLE workbench_tasks ADD COLUMN writer_groups TEXT;`)
+  },
+
+  // v74 — 独立工作区(2026-10-07):一件事在 `<stateDir>/worktrees/...` 的 git worktree 里做,分支 cc/<8 位>。
+  //
+  // WHY 另起一张表而不是往 workbench_tasks 加列:任务本身照旧是「项目」任务(路径就是工作区里的目录),
+  // 占用 / 快照 / 续接一行不改;这张表只回答「这件事是不是独立工作区、源项目在哪、分支叫什么、目录删了没」。
+  // removed_at 非空 = 工作区目录已删(分支保留)。
+  (db) => {
+    db.exec(`CREATE TABLE IF NOT EXISTS workbench_worktrees (
+      task_id TEXT PRIMARY KEY,
+      project_path TEXT NOT NULL,
+      repo_root TEXT NOT NULL,
+      root TEXT NOT NULL,
+      branch TEXT NOT NULL,
+      created_at INTEGER NOT NULL,
+      removed_at INTEGER
+    );`)
+  },
+
 ]
 
 /**

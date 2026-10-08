@@ -47,3 +47,15 @@ describe('progressView', () => {
     expect(progressView(detail(), { progress: null }, null).summaryState).toBe('none')
   })
 })
+
+describe('canStop — 手机上的「停止这一轮」(2026-10-06)', () => {
+  it('only while a run is queued or working', async () => {
+    const { canStop } = await import('./progress')
+    const task = (phase: string) => ({ id: 'deadbeef', title: 't', status: 'running', phase } as never)
+    expect(canStop({ runId: 'r1', task: task('working') })).toBe(true)
+    expect(canStop({ runId: 'r1', task: task('queued') })).toBe(true)
+    expect(canStop({ runId: 'r1', task: task('replied') })).toBe(false)
+    expect(canStop({ task: task('working') })).toBe(false)
+    expect(canStop({ runId: 'r1', task: undefined } as never)).toBe(false)
+  })
+})

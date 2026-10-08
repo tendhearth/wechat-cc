@@ -121,13 +121,15 @@ export function wireKnowledge(
             env: embedEnv,
           })
         : undefined
+      // 实际在用的那条路(2026-10-06,「CC 现在怎么样」要分清「正常」和「退回 Python」)。
+      let embedActive: 'js' | 'python' | 'js_fell_back' | 'none' = embedRuntime === 'js' ? 'js' : pythonEmbedder ? 'python' : 'none'
       const embedder = embedRuntime === 'js'
         ? withEmbedderFallback(
             makeJsEmbedder({ model_id: knowledgeEmbedModelId }),
             pythonEmbedder,
-            err => ctx.log('KNOWLEDGE',
+            err => (embedActive = 'js_fell_back', ctx.log('KNOWLEDGE',
               `embed runtime 'js' unavailable (${err instanceof Error ? err.message : String(err)}) — `
-              + `falling back to the python subprocess for the rest of this run`),
+              + `falling back to the python subprocess for the rest of this run`)),
           )
         : pythonEmbedder
 
@@ -208,6 +210,7 @@ export function wireKnowledge(
         store: knowledgeStore,
         search: semanticSearch,
         ...(embedder ? { embedder, embedQuery: (t: string) => embedder.embed([t]).then(v => v[0]!) } : {}),
+        embedStatus: () => embedActive,
         // Knowledge Graph inproc (Task 5) — unconditional (unlike embedder
         // above): graph rebuild (graph-build.ts's rebuildGraphFromSource, run
         // every cycle above) needs no embed script, so the query accessor is

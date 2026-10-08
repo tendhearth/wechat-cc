@@ -4,7 +4,8 @@
  * 跨域依赖用「已建好的域对象显式注入」(domains),工厂顶部解构成与 service.ts 同名的局部量,函数体只做机械替换(opts.x → ctx.deps.x、touched → ctx.hub.touched 等);
  * 真正需要晚绑定的只有 lifecycle.pump → ctx.actions.execute(那头由 lifecycle 走 Ref)。
  */
-import { randomUUID } from 'node:crypto'
+import { ensureWorktree, planWorktree, repoRootOf } from '../worktree-workspaces'
+import { createHash, randomUUID } from 'node:crypto'
 import type { AgentEvent, AgentSession, AgentExecutionChoice } from '../../agent-provider'
 import type { MatterStore } from '../../matters/store'
 import { classifyProviderError } from '../../provider-quota'
@@ -481,7 +482,7 @@ export function makeExecuteDomain(ctx:ServiceCtx, domains:ExecuteDomains) {
     try{return ctx.deps.matters.ensureChat(ownerChatId).id}
     catch(err){ctx.log?.('MATTER_ORIGIN',`ensureChat failed for ${ownerChatId}: ${err instanceof Error?err.message:err} — origin left null, task still created`);return null}
   }
-  function createTask(input:CreateTask,onAccepted?:(task:StoredTask,runId:string)=>void,origin?:{matterId:string|null;messageId:string|null},entry?:{context:EntryContext;workspaceKind:'managed'|'project';fromChat:boolean;materials:Attachment[];beforeCreate:()=>void;verifyDirectory:(path:string,identity:string)=>void}):WorkbenchTaskView {
+  function createTask(input:CreateTask,onAccepted?:(task:StoredTask,runId:string)=>void,origin?:{matterId:string|null;messageId:string|null},entry?:{context:EntryContext;workspaceKind:'managed'|'project';registerProject?:boolean;fromChat:boolean;materials:Attachment[];beforeCreate:()=>void;verifyDirectory:(path:string,identity:string)=>void}):WorkbenchTaskView {
     ctx.ensureAccepting()
     const execution=normalizeExecutionChoice(input.execution,PROVIDER_EXECUTION_CHOICE)
     const attachments=entry?entry.materials:selectAttachments(input)
@@ -494,7 +495,7 @@ export function makeExecuteDomain(ctx:ServiceCtx, domains:ExecuteDomains) {
     let activate:()=>void=()=>{}
     const accepted=store.atomic(()=>{
       entry?.beforeCreate()
-      const task=store.create({title:input.title?.trim()??(text.slice(0,40)||attachments[0]!.name.slice(0,40)),path,providerId:input.providerId,ownerChatId:entry?.context.ownerKey??ctx.deps.ownerChatId(),workspaceKind:entry?.workspaceKind,registerProject:entry?.workspaceKind!=='managed'})
+      const task=store.create({title:input.title?.trim()??(text.slice(0,40)||attachments[0]!.name.slice(0,40)),path,providerId:input.providerId,ownerChatId:entry?.context.ownerKey??ctx.deps.ownerChatId(),workspaceKind:entry?.workspaceKind,registerProject:input.registerProject??entry?.registerProject??entry?.workspaceKind!=='managed'})
       if(entry){
         const m=ctx.deps.matters;if(!m)throw Error('entry_not_wired')
         const chat=entry.fromChat?m.ensureChat(entry.context.ownerKey):null
@@ -528,8 +529,16 @@ export function makeExecuteDomain(ctx:ServiceCtx, domains:ExecuteDomains) {
     if(!project)throw Error('project_stale')
     const providerId=input.providerId??project.providerId
     if(!providerId)throw Error('unavailable_provider')
+    // 独立工作区:编号从请求编号派生,重试 ⇒ 同一个工作区同一个分支(建好了没接下也不会多建一个)。
+    const tree=input.isolation?(()=>{
+      const repoRoot=repoRootOf(project.path)
+      if(!repoRoot)throw Error('worktree_not_git')
+      const plan=planWorktree({stateDir:ctx.stateDir,projectId:project.id,projectPath:project.path,repoRoot,id:createHash('sha256').update(id).digest('hex').slice(0,8)})
+      return {plan,path:ensureWorktree(plan)}
+    })():null
     let receipt!:CreationReceipt
-    createTask({path:project.path,providerId,text:input.text},(task,runId)=>{
+    createTask({path:tree?.path??project.path,providerId,text:input.text,...(tree?{registerProject:false}:{})},(task,runId)=>{
+      if(tree)store.worktrees.record({taskId:task.id,projectPath:tree.plan.projectPath,repoRoot:tree.plan.repoRoot,root:tree.plan.root,branch:tree.plan.branch})
       store.wechatNotifications.watch(task.id,input.ownerChatId,input.accountId,true)
       receipt=store.creationReceipts.add({id,accountId:input.accountId,ownerChatId:input.ownerChatId,commandHash:input.commandHash,projectId:input.projectId,path:task.path,providerId:task.providerId,taskId:task.id,runId,
         reply:`已接下这件事 · ${task.id}\n${task.providerId} · ${task.path}\n\n${task.title}\n\n完成或需要你处理时，会在这里提醒。\n查看：任务 ${task.id}\n补充：任务 ${task.id} 补充 <要求>\n关闭提醒：任务 ${task.id} 静音`,

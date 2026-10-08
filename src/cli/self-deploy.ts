@@ -28,7 +28,7 @@
 import { markPlannedRestart } from '../lib/restart-markers'
 import { spawnSync as nodeSpawnSync } from 'node:child_process'
 import { chmodSync, copyFileSync, existsSync, readFileSync, renameSync, statSync, unlinkSync } from 'node:fs'
-import { dirname, resolve } from 'node:path'
+import { basename, dirname, resolve } from 'node:path'
 import { readApiInfo } from '../lib/api-info'
 import { dirHasPlugins, readPluginsSourcePointer, writePluginsSourcePointer } from '../lib/plugins-source'
 import { SIDECAR_NAMES } from '../lib/app-identity'
@@ -93,6 +93,11 @@ export interface SelfDeployPlan {
   rollback: boolean
   /** null ⇒ 不重签(照旧 ad-hoc)。见文件头「签名」。 */
   signing: SelfDeploySigning | null
+  /**
+   * 跟 sidecar 一起装到 MacOS/ 的原生库(2026-10-06:onnxruntime,见 apps/desktop/scripts/sidecar-native.ts)。
+   * from 不存在 ⇒ 跳过(老 checkout / 别的平台)。可选:老计划没有这一项。
+   */
+  companions?: Array<{ from: string; to: string }>
   /**
    * 内置插件来源登记(2026-09-30)。安装包按设计不带插件(1747de09),打包版 daemon
    * 只能靠状态目录里的来源指针找到主人的插件;部署时顺手把源码 checkout 里真有插件
@@ -230,8 +235,15 @@ export function planSelfDeploy(input: PlanSelfDeployInput): SelfDeployPlan {
       : null,
     pluginsSource: { stateDir: input.stateDir, candidates: input.pluginSourceCandidates ?? [] },
     allowMissingPlugins: input.allowMissingPlugins ?? false,
+    companions: SIDECAR_COMPANIONS.map(name => ({
+      from: posixJoin(posixDirname(posixDirname(newBinaryPath)), 'frameworks', `${name}-${archSuffix}-apple-darwin`),
+      to: posixJoin(macosDir!, name),
+    })),
   }
 }
+
+/** build-sidecar 产出、要和 sidecar 并排放的原生库(名字与 sidecar-native.ts 的 ORT_FRAMEWORK_FILES 一致)。 */
+const SIDECAR_COMPANIONS = ['libonnxruntime_binding.dylib', 'libonnxruntime.1.24.3.dylib'] as const
 
 export interface DeveloperIdIdentity {
   name: string
@@ -422,6 +434,10 @@ export async function executeSelfDeploy(plan: SelfDeployPlan, deps: SelfDeployDe
     steps.push(signed)
   }
 
+  // 2c. native — sidecar 旁边的原生库(onnxruntime)。只加不减、老 sidecar 不认它们,所以不进回滚;
+  // 装不上也不拦部署(知识库向量化会自己退回 Python),只记一笔。从 .prev 回滚时不动。
+  if (!deployingFromBackup && plan.companions?.length) steps.push(installCompanions(plan, deps))
+
   // 3. backup — <sidecar> → <sidecar>.prev, overwriting whatever backup was
   // already there. Exactly one generation of rollback is kept on purpose.
   //
@@ -585,6 +601,30 @@ function signSidecar(plan: SelfDeployPlan, deps: SelfDeployDeps): SelfDeployStep
   const probe = deps.spawnSync(plan.tmpPath, ['--version'], { timeoutMs: 5000, windowsHide: true })
   if (probe.status !== 0) return { name: 'sign', ok: false, detail: `signed binary fails --version (exit ${probe.status ?? 'null'}): ${(probe.stderr || probe.stdout).trim()}` }
   return { name: 'sign', ok: true, detail: identity }
+}
+
+/** 每个库:拷到 `<目标>.new` → 签名(有身份 ⇒ Developer ID + runtime;没有 ⇒ ad-hoc)→ rename(新 inode,同 sidecar)。 */
+function installCompanions(plan: SelfDeployPlan, deps: SelfDeployDeps): SelfDeployStep {
+  const installed: string[] = [], problems: string[] = []
+  for (const { from, to } of plan.companions ?? []) {
+    if (!deps.fs.exists(from)) continue
+    const tmp = `${to}.new`
+    try {
+      deps.fs.copyFile(from, tmp)
+      const r = deps.spawnSync('codesign', plan.signing
+        ? ['--force', '--sign', plan.signing.identityHash, '--options', 'runtime', '--timestamp', tmp]
+        : ['--force', '--sign', '-', tmp], { timeoutMs: CODESIGN_TIMEOUT_MS, windowsHide: true })
+      if (r.status !== 0) throw new Error(`codesign exited ${r.status ?? 'null'}: ${(r.stderr || r.stdout).trim()}`)
+      deps.fs.rename(tmp, to)
+      installed.push(basename(to))
+    } catch (err) {
+      try { deps.fs.unlink(tmp) } catch { /* best-effort */ }
+      try { deps.fs.unlink(`${tmp}.cstemp`) } catch { /* best-effort */ }
+      problems.push(`${basename(to)}: ${errMsg(err)}`)
+    }
+  }
+  if (problems.length) deps.log(`native libraries not installed (knowledge embedding falls back): ${problems.join('; ')}`)
+  return { name: 'native', ok: true, detail: problems.length ? `partial: ${problems.join('; ')}` : installed.length ? installed.join(', ') : 'none built' }
 }
 
 /** Re-sign the .app bundle (main binary + resource seal). No `--deep`: nested binaries carry their own signatures. */

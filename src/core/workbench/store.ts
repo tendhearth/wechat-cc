@@ -27,6 +27,10 @@ export interface Task {
 export interface WorkbenchProject { id:string; path:string; name:string; providerId:string; createdAt:number }
 const PROJECT_SELECT='SELECT id,path,name,provider_id AS providerId,created_at AS createdAt FROM workbench_projects'
 const projectName=(project:WorkbenchProject):WorkbenchProject=>({...project,name:project.name||basename(project.path)||project.path})
+function parseGroups(raw:string|null):number[]|null {
+  if(!raw)return null
+  try { const v:unknown=JSON.parse(raw); return Array.isArray(v)&&v.length&&v.every(g=>Number.isInteger(g)&&g>1)?v as number[]:null } catch { return null }
+}
 export interface StoredTask extends Task { ownerChatId: string | null; sessionId: string | null }
 export interface TaskEvent { id: number; taskId: string; kind: 'user' | 'text' | 'tool_call' | 'system' | 'error'; text: string; createdAt: number; sourceId?:string|null; runId?:string; activity?:AgentActivity; attachments?:import('./attachments').Attachment[]; errorCode?:'execution_model_unsupported'; diagnostic?:string }
 export interface Artifact { id: string; taskId: string; name: string; mime: string; size: number; sha256: string; createdAt: number; approvedAt: number | null }
@@ -166,10 +170,10 @@ export function makeWorkbenchStore(db: Db) {
     list: () => db.query<StoredTask, []>(`${TASK_SELECT} ORDER BY updated_at DESC,rowid DESC LIMIT 200`).all().map(publicTask),
     listOwned:(ownerChatId:string,limit=8)=>db.query<StoredTask,[string,number]>(`${TASK_SELECT} WHERE owner_chat_id=? AND archived_at IS NULL ORDER BY updated_at DESC,id DESC LIMIT ?`).all(ownerChatId,Math.max(1,Math.min(20,limit))).map(publicTask),
     ownedProjects(ownerChatId:string,providers?:readonly string[]):Array<{path:string;providerId:string}> {
-      const rows=db.query<{path:string;providerId:string},[string]>("SELECT path,provider_id AS providerId FROM workbench_tasks WHERE owner_chat_id=? AND workspace_kind='project' ORDER BY updated_at DESC,id DESC").all(ownerChatId)
+      const rows=db.query<{path:string;providerId:string},[string]>("SELECT path,provider_id AS providerId FROM workbench_tasks WHERE owner_chat_id=? AND workspace_kind='project' AND id NOT IN (SELECT task_id FROM workbench_worktrees) ORDER BY updated_at DESC,id DESC").all(ownerChatId)
       const accepted=[...new Set(providers??[])]
       const available=accepted.length
-        ? db.query<{path:string;providerId:string},string[]>(`SELECT path,provider_id AS providerId FROM workbench_tasks WHERE owner_chat_id=? AND workspace_kind='project' AND provider_id IN (${accepted.map(()=>'?').join(',')}) ORDER BY updated_at DESC,id DESC`).all(ownerChatId,...accepted)
+        ? db.query<{path:string;providerId:string},string[]>(`SELECT path,provider_id AS providerId FROM workbench_tasks WHERE owner_chat_id=? AND workspace_kind='project' AND id NOT IN (SELECT task_id FROM workbench_worktrees) AND provider_id IN (${accepted.map(()=>'?').join(',')}) ORDER BY updated_at DESC,id DESC`).all(ownerChatId,...accepted)
         : []
       const preferred=new Map<string,string>()
       for(const row of available)if(!preferred.has(row.path))preferred.set(row.path,row.providerId)
@@ -210,7 +214,26 @@ export function makeWorkbenchStore(db: Db) {
       return get(id)
     },
     clearWriterError(id:string) {
-      db.query("UPDATE workbench_tasks SET error=NULL WHERE id=? AND error='writer_not_closed'").run(id)
+      db.query("UPDATE workbench_tasks SET error=NULL,writer_groups=NULL WHERE id=? AND error='writer_not_closed'").run(id)
+    },
+    /** 独立工作区(v74,2026-10-07):这件事在哪个 worktree、源项目、分支;removedAt 非空 = 目录已删(分支保留)。 */
+    worktrees: {
+      record(input:{taskId:string;projectPath:string;repoRoot:string;root:string;branch:string}) {
+        db.query('INSERT OR IGNORE INTO workbench_worktrees(task_id,project_path,repo_root,root,branch,created_at) VALUES(?,?,?,?,?,?)').run(input.taskId,input.projectPath,input.repoRoot,input.root,input.branch,Date.now())
+      },
+      get(taskId:string):{taskId:string;projectPath:string;repoRoot:string;root:string;branch:string;createdAt:number;removedAt:number|null}|null {
+        return db.query<{taskId:string;projectPath:string;repoRoot:string;root:string;branch:string;createdAt:number;removedAt:number|null},[string]>('SELECT task_id AS taskId,project_path AS projectPath,repo_root AS repoRoot,root,branch,created_at AS createdAt,removed_at AS removedAt FROM workbench_worktrees WHERE task_id=?').get(taskId)??null
+      },
+      markRemoved(taskId:string) { db.query('UPDATE workbench_worktrees SET removed_at=COALESCE(removed_at,?) WHERE task_id=?').run(Date.now(),taskId) },
+    },
+    /** 关不掉的执行程序的进程组(v73,2026-10-06):退出证据从这里查,见 lifecycle 的 writer 守望。 */
+    setWriterGroups(id:string,groups:readonly number[]) {
+      db.query('UPDATE workbench_tasks SET writer_groups=? WHERE id=?').run(groups.length?JSON.stringify(groups):null,id)
+    },
+    /** 所有还挂着「没确认退出」的任务;groups=null ⇒ 旧记录 / 执行者没交出进程组,没有证据可查。 */
+    writerHolds():Array<{id:string;title:string;path:string;groups:number[]|null}> {
+      return db.query<{id:string;title:string;path:string;groups:string|null},[]>("SELECT id,title,path,writer_groups AS groups FROM workbench_tasks WHERE error='writer_not_closed'").all()
+        .map(row=>({id:row.id,title:row.title,path:row.path,groups:parseGroups(row.groups)}))
     },
     create(input: { title: string; path: string; providerId: string; ownerChatId: string | null;workspaceKind?:'project'|'managed';registerProject?:boolean }): StoredTask {
       let id: string
@@ -243,7 +266,7 @@ export function makeWorkbenchStore(db: Db) {
         const stale=db.query<{id:string;path:string},[]>("SELECT id,path FROM workbench_tasks WHERE error='writer_not_closed'").all()
         for (const { id,path } of stale) {
           if (existsSync(path)) continue
-          db.query("UPDATE workbench_tasks SET error=NULL,updated_at=? WHERE id=? AND error='writer_not_closed'").run(Date.now(),id)
+          db.query("UPDATE workbench_tasks SET error=NULL,writer_groups=NULL,updated_at=? WHERE id=? AND error='writer_not_closed'").run(Date.now(),id)
           addEvent(id,'system','执行程序当时没有确认退出；它的工作文件夹已经不在了，这条占用随之解除。')
         }
       })()

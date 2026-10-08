@@ -303,6 +303,13 @@ export function makeTaskAttachmentStore(db:Db) {
       }).immediate()
     },
     select:(ids:unknown,taskId?:string,draftId?:string,scope?:AttachmentScope):Attachment[]=>selected(ids,taskId,draftId,scope).map(publicAttachment),
+    /** 手机「跟 CC 说」带的图(2026-10-06):还没归到任何任务、同一草稿、属于这位主人,只认图片;读出来的字节先过一遍
+     *  sha256 / 文件身份校验(与交办同一个 snapshot),调用方随后照常 discard 这几条暂存。 */
+    readUnboundImages(ids:unknown,draftId:string,stateDir:string,scope:AttachmentScope):Array<{attachment:Attachment;bytes:Buffer}>{
+      const rows=selected(ids,undefined,draftId,scope)
+      if(rows.some(row=>row.taskId!==null||!IMAGE_MIMES.has(row.mime)))throw Error('invalid_attachment')
+      return rows.map(row=>({attachment:publicAttachment(row),bytes:snapshot(row,stateDir)}))
+    },
     verify(ids:unknown,taskId:string|undefined,draftId:string|undefined,stateDir:string,scope?:AttachmentScope):Attachment[]{
       return selected(ids,taskId,draftId,scope).map(row=>{snapshot(row,stateDir);return publicAttachment(row)})
     },

@@ -598,6 +598,54 @@ describe('Workbench internal HTTP API', () => {
     for(const body of [{id:'deadbeef'},{id:'bad',archived:true},{id:'deadbeef',archived:'true'}])expect((await request('/v1/workbench/archive',{method:'POST',body:JSON.stringify(body)})).status).toBe(400)
   })
 
+  it('lets the desktop owner confirm a stuck writer exited; a live writer is a 409, agents are denied',async()=>{
+    const workbench=service(),{request,operatorToken,trustedToken}=await start(workbench)
+    const confirm=vi.fn(async(id:string)=>{ if(id==='cafebabe')throw new Error('writer_alive'); return {id,canArchive:true} })
+    ;(workbench as unknown as {confirmWriterExited:typeof confirm}).confirmWriterExited=confirm
+    expect((await request('/v1/workbench/writer-exited',{method:'POST',body:JSON.stringify({id:'deadbeef'})},trustedToken)).status).toBe(403)
+    expect(confirm).not.toHaveBeenCalled()
+    const ok=await request('/v1/workbench/writer-exited',{method:'POST',body:JSON.stringify({id:'deadbeef'})},operatorToken)
+    expect(ok.status).toBe(200);expect(await ok.json()).toMatchObject({task:{id:'deadbeef',canArchive:true}})
+    const alive=await request('/v1/workbench/writer-exited',{method:'POST',body:JSON.stringify({id:'cafebabe'})},operatorToken)
+    expect(alive.status).toBe(409);expect(await alive.json()).toEqual({error:'writer_alive'})
+    expect((await request('/v1/workbench/writer-exited',{method:'POST',body:JSON.stringify({id:'bad'})},operatorToken)).status).toBe(400)
+  })
+
+  it('reverts one reviewed file for the desktop owner; changed file is 409, unrecoverable is 422, agents are denied (2026-10-06)',async()=>{
+    const workbench=service(),{request,operatorToken,trustedToken}=await start(workbench)
+    const revert=vi.fn((_id:string,input:{artifactId:string;path:string})=>{
+      if(input.path==='changed.ts')throw new Error('review_file_changed')
+      if(input.path==='bin.dat')throw new Error('review_revert_unavailable')
+      return {path:input.path,restored:'content'}
+    })
+    ;(workbench as unknown as {revertReviewFile:typeof revert}).revertReviewFile=revert
+    const body=(path:string,extra={})=>({method:'POST',body:JSON.stringify({id:'deadbeef',artifactId:'11111111-1111-4111-8111-111111111111',path,...extra})})
+    expect((await request('/v1/workbench/review-revert',body('a.ts'),trustedToken)).status).toBe(403)
+    expect(revert).not.toHaveBeenCalled()
+    const ok=await request('/v1/workbench/review-revert',body('src/a.ts'),operatorToken)
+    expect(ok.status).toBe(200);expect(await ok.json()).toEqual({reverted:{path:'src/a.ts',restored:'content'}})
+    expect((await request('/v1/workbench/review-revert',body('changed.ts'),operatorToken)).status).toBe(409)
+    expect((await request('/v1/workbench/review-revert',body('bin.dat'),operatorToken)).status).toBe(422)
+    for(const bad of [body(''),body('a.ts',{extra:1}),{method:'POST',body:JSON.stringify({id:'bad',artifactId:'x',path:'a'})}])expect((await request('/v1/workbench/review-revert',bad,operatorToken)).status).toBe(400)
+  })
+
+  it('worktree commit/remove for the desktop owner; dirty is 409, plain task 422, agents denied (2026-10-07)',async()=>{
+    const workbench=service(),{request,operatorToken,trustedToken}=await start(workbench)
+    const act=vi.fn((id:string,action:string)=>{
+      if(id==='cafebabe')throw new Error('worktree_dirty')
+      if(id==='0badf00d')throw new Error('not_worktree')
+      return action==='commit'?{branch:'cc/abcd1234',committed:true,sha:'s',mergeHint:'cd /p && git merge cc/abcd1234'}:{branch:'cc/abcd1234',removed:true}
+    })
+    ;(workbench as unknown as {worktreeAction:typeof act}).worktreeAction=act
+    const body=(id:string,action:string,extra={})=>({method:'POST',body:JSON.stringify({id,action,...extra})})
+    expect((await request('/v1/workbench/worktree',body('deadbeef','commit'),trustedToken)).status).toBe(403)
+    const ok=await request('/v1/workbench/worktree',body('deadbeef','commit'),operatorToken)
+    expect(ok.status).toBe(200);expect(await ok.json()).toMatchObject({worktree:{committed:true,mergeHint:expect.stringContaining('git merge')}})
+    expect((await request('/v1/workbench/worktree',body('cafebabe','remove'),operatorToken)).status).toBe(409)
+    expect((await request('/v1/workbench/worktree',body('0badf00d','commit'),operatorToken)).status).toBe(422)
+    for(const bad of [body('deadbeef','merge'),body('bad','commit'),body('deadbeef','commit',{x:1})])expect((await request('/v1/workbench/worktree',bad,operatorToken)).status).toBe(400)
+  })
+
   it('acknowledges an unattended executor only for the desktop operator credential',async()=>{
     const workbench=service(),{request,operatorToken,trustedToken}=await start(workbench)
     expect(minTierFor('POST /v1/workbench/unattended-ack')).toBe('admin')

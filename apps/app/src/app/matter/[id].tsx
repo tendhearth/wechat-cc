@@ -5,6 +5,7 @@ import { SafeAreaView } from 'react-native-safe-area-context'
 import type { MatterInputT } from '../../backend/types'
 import { t } from '../../i18n'
 import { useLang } from '../../i18n/useLang'
+import { Artifacts } from '../../ui/Artifacts'
 import { useBackendCtx } from '../../state/BackendProvider'
 import { useConnection, useQuery, useSubmit, useTopic } from '../../state/hooks'
 import { getDraft, setDraft } from '../../state/drafts'
@@ -29,7 +30,7 @@ import { nativeStartLines, providerName } from '../../view/continue'
 import { canSubmit } from '../../view/connection'
 import { HANDOFF_RECHECK, handoffBlock, handoffErrorDot, handoffErrorText, handoffSheetLines } from '../../view/handoff'
 import { uuid } from '../../net/uuid'
-import { progressView } from '../../view/progress'
+import { progressView, canStop } from '../../view/progress'
 import { inputRows } from '../../view/matter-input'
 
 const NO_INPUTS: readonly MatterInputT[] = []
@@ -64,10 +65,15 @@ export default function Matter() {
   const [failure, setFailure] = useState<{ text: string; dot: 'bad' | 'warn' | 'unknown' } | null>(null)
   const [inputNotice, setInputNotice] = useState<string | null>(null)
   const [openErrors, setOpenErrors] = useState<ReadonlySet<number>>(() => new Set())
+  // 停下这一轮(2026-10-06):点一下先「再点一次」(3 秒内),免得手滑停掉在跑的活;只停手机看到的那一轮(runId)。
+  const [stopArmed, setStopArmed] = useState(false)
+  const [stopping, setStopping] = useState(false)
+  const [stopNote, setStopNote] = useState<string | null>(null)
+  useEffect(() => { if (!stopArmed) return; const tm = setTimeout(() => setStopArmed(false), 3000); return () => clearTimeout(tm) }, [stopArmed])
   const handoffReq = useRef('')
   const idRef = useRef(id)
   idRef.current = id
-  useEffect(() => { setSheet(false); setFailure(null); setInputNotice(null); setOpenErrors(new Set()) }, [id])
+  useEffect(() => { setSheet(false); setFailure(null); setInputNotice(null); setOpenErrors(new Set()); setStopArmed(false); setStopNote(null) }, [id])
   const { refresh: refreshDetail } = detail
   const { refresh: refreshInsight } = insight
   const { refresh: refreshChanges } = changes
@@ -103,6 +109,16 @@ export default function Matter() {
   const conv = conversationView(d.events)
   const hb = handoffBlock(d.quotaHandoff, lang, Date.now())
   const online = canSubmit(conn)
+  const stop = async () => {
+    const runId = d.runId
+    if (!runId || stopping) return
+    if (!stopArmed) { setStopArmed(true); setStopNote(null); return }
+    setStopArmed(false); setStopping(true)
+    const r = await submit(`stop:${id}`, () => backend.stop({ id, runId }))
+    setStopping(false)
+    if (r !== 'ok') setStopNote(t(lang, r !== 'busy' && r.error === 'input_stale' ? 'progress.stopStale' : 'progress.stopFailed'))
+    void refreshDetail()
+  }
   const openHandoff = () => { handoffReq.current = uuid(); setFailure(null); setSheet(true) }
   const confirmHandoff = async () => {
     const h = d.quotaHandoff
@@ -215,9 +231,15 @@ export default function Matter() {
 
         {inputReceipts.length ? <InputReceipts rows={inputReceipts} onRestore={restoreInput} /> : null}
         {inputNotice ? <Txt role="meta" tone="inkSoft" accessibilityLiveRegion="polite">{inputNotice}</Txt> : null}
+        {canStop(d) ? (
+          <Button kind="secondary" testID="progress-stop" label={t(lang, stopArmed ? 'progress.stopConfirm' : 'progress.stop')} onPress={() => void stop()} disabled={!online} busy={stopping} />
+        ) : null}
+        {stopNote ? <Txt testID="progress-stop-note" role="meta" tone="inkSoft" accessibilityLiveRegion="polite">{stopNote}</Txt> : null}
         {v.pendingCount > 0 ? (
           <Button kind="primary" testID="progress-view-approval" label={t(lang, 'progress.viewApproval')} onPress={() => router.push(`/approval/${encodeURIComponent(d.task?.id ?? id)}`)} />
         ) : null}
+
+        {d.artifacts.length ? <Artifacts matterId={id} artifacts={d.artifacts} backend={backend} lang={lang} online={online} /> : null}
 
         <Sheet testID="progress-changes" title={t(lang, 'progress.viewChangesN', { n: v.changedFiles })}>
             {files.length === 0 ? <Txt role="meta" tone="inkSoft">{t(lang, 'progress.noChanges')}</Txt> : null}

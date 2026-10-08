@@ -11,6 +11,10 @@ export function pickLang(tags: readonly string[]): Lang {
   return first !== undefined && first.toLowerCase().startsWith('zh') ? 'zh-Hans' : 'en'
 }
 
+/** 这个键在词表里有没有(给 daemon 送来的原因码这类「可能是新码」的键用)。 */
+export function hasMessage(lang: Lang, key: string): key is MessageKey {
+  return typeof (tables[lang] as Record<string, unknown>)[key] === 'string'
+}
 export function t(lang: Lang, key: MessageKey, vars?: Record<string, string | number>): string {
   const s = tables[lang][key]
   return vars ? s.replace(/\{(\w+)\}/g, (m, k: string) => (k in vars ? String(vars[k]) : m)) : s

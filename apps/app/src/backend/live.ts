@@ -21,7 +21,7 @@ import {
   type ApprovalExplanationT, type Backend, type Connection, type DeviceRowT, type EntryOptionsT,
   type MatterDetailT, type MatterT, type PhoneChangesTurnT, type ProgressSummaryT, type Unsubscribe,
   type ChatPageT, type ChatJobT, type ConnectionsT, type NativeSessionRowT, type NativeSessionPageT, type SessionContinueT,
-  type MatterSayResultT, type MatterInputT,
+  type MatterSayResultT, type MatterInputT, type UploadStateT, type EntryModelCatalogT, type MemoryViewT, type ChatModelViewT, type ChatSearchHitT,
 } from './types'
 
 type Topic = Parameters<Backend['subscribe']>[0]
@@ -226,9 +226,37 @@ export function makeLiveBackend(d: LiveDeps): Backend {
       const q = [p.before ? `before=${encodeURIComponent(p.before)}` : '', p.limit !== undefined ? `limit=${p.limit}` : ''].filter(Boolean).join('&')
       return strip(await call<{ ok: true } & ChatPageT>('GET /m/api/chat', `/m/api/chat${q ? '?' + q : ''}`))
     },
-    async chatSay(text, requestId) {
+    async chatSay(text, requestId, materials) {
       if (text.length > PHONE_SAY_MAX_CHARS) throw new BackendError('invalid')
-      return (await call<{ job: ChatJobT }>('POST /m/api/chat/say', '/m/api/chat/say', { body: { requestId, text }, retry: true })).job
+      const body = materials?.attachmentIds.length ? { requestId, text, draftId: materials.draftId, attachmentIds: materials.attachmentIds } : { requestId, text }
+      return (await call<{ job: ChatJobT }>('POST /m/api/chat/say', '/m/api/chat/say', { body, retry: true })).job
+    },
+    async chatSearch(q) {
+      const query = q.trim()
+      if (!query || query.length > 200) throw new BackendError('invalid')
+      return (await call<{ hits: ChatSearchHitT[] }>('GET /m/api/chat/search', `/m/api/chat/search?q=${encodeURIComponent(query)}`)).hits
+    },
+    async memory() {
+      return strip(await call<{ ok: true } & MemoryViewT>('GET /m/api/memory', '/m/api/memory'))
+    },
+    async correctMemory(id, verdict) {
+      await call('POST /m/api/memory/correct', '/m/api/memory/correct', { body: { id, verdict } })
+    },
+    async uploadChunk(p) {
+      // 不自动重发:同一块重传由上传循环先问进度再续(uploadStatus),不在协议层盲重试。
+      return strip(await call<{ ok: true } & UploadStateT>('POST /m/api/attachment/chunk', '/m/api/attachment/chunk', { body: p }))
+    },
+    async uploadStatus(id, draftId) {
+      return strip(await call<{ ok: true } & UploadStateT>('GET /m/api/attachment/upload', `/m/api/attachment/upload?id=${encodeURIComponent(id)}&draftId=${encodeURIComponent(draftId)}`))
+    },
+    async discardUpload(id, draftId) {
+      await call('POST /m/api/attachment/discard', '/m/api/attachment/discard', { body: { id, draftId } })
+    },
+    async chatModel() { return strip(await call<{ ok: true } & ChatModelViewT>('GET /m/api/chat/model', '/m/api/chat/model')) },
+    async setChatModel(provider, model) { return strip(await call<{ ok: true } & ChatModelViewT>('POST /m/api/chat/model', '/m/api/chat/model', { body: { provider, model } })) },
+    async chatFileChunk(p) {
+      return strip(await call<{ ok: true; name: string; mime: string; size: number; sha256: string; offset: number; nextOffset: number; contentBase64: string }>('GET /m/api/chat/file',
+        `/m/api/chat/file?id=${encodeURIComponent(p.messageId)}&i=${p.index}&offset=${p.offset}`))
     },
     async chatVoice(messageId, index) {
       return strip(await call<{ ok: true; mime: string; data: string }>('GET /m/api/chat/voice', `/m/api/chat/voice?id=${encodeURIComponent(messageId)}&i=${index}`))
@@ -266,6 +294,14 @@ export function makeLiveBackend(d: LiveDeps): Backend {
     async decide(p) {
       await call('POST /m/api/matter/permission', '/m/api/matter/permission', { body: { id: p.id, runId: p.runId, requestId: p.requestId, decision: p.decision } })
     },
+    async artifactChunk(p) {
+      const r = strip(await call<{ ok: true; offset: number; nextOffset: number; size: number; contentBase64: string }>('GET /m/api/matter/artifact',
+        `/m/api/matter/artifact?id=${encodeURIComponent(p.id)}&artifactId=${encodeURIComponent(p.artifactId)}&sha256=${encodeURIComponent(p.sha256)}&offset=${p.offset}`))
+      return { offset: r.offset, nextOffset: r.nextOffset, size: r.size, contentBase64: r.contentBase64 }
+    },
+    async stop(p) {
+      await call('POST /m/api/matter/stop', '/m/api/matter/stop', { body: { id: p.id, runId: p.runId } })
+    },
     async answer(p) {
       if (p.answers !== null && JSON.stringify(p.answers).length > PHONE_ANSWER_MAX_JSON) throw new BackendError('invalid')
       await call('POST /m/api/matter/answer', '/m/api/matter/answer', { body: { id: p.id, runId: p.runId, requestId: p.requestId, answers: p.answers } })
@@ -273,7 +309,10 @@ export function makeLiveBackend(d: LiveDeps): Backend {
     async say(id, text, requestId, options) {
       if (text.length > PHONE_SAY_MAX_CHARS) throw new BackendError('invalid')
       // A reconnect checks the durable receipt. Only an explicit user retry replays the POST.
-      return (await call<{ ok: true; result: MatterSayResultT }>('POST /m/api/matter/say', '/m/api/matter/say', { body: { id, text, requestId, ...(options?.runId ? { runId: options.runId } : {}) }, retry: false })).result
+      return (await call<{ ok: true; result: MatterSayResultT }>('POST /m/api/matter/say', '/m/api/matter/say', { body: { id, text, requestId, ...(options?.runId ? { runId: options.runId } : {}), ...(options?.attachmentIds?.length && options.draftId ? { draftId: options.draftId, attachmentIds: options.attachmentIds } : {}) }, retry: false })).result
+    },
+    async entryModels(providerId, projectId) {
+      return (await call<{ catalog: EntryModelCatalogT }>('GET /m/api/entry/models', `/m/api/entry/models?providerId=${encodeURIComponent(providerId)}${projectId ? `&projectId=${encodeURIComponent(projectId)}` : ''}`)).catalog
     },
     async entryOptions() {
       return strip(await call<{ ok: true } & EntryOptionsT>('GET /m/api/entry/options', '/m/api/entry/options'))
@@ -281,8 +320,10 @@ export function makeLiveBackend(d: LiveDeps): Backend {
     async create(p) {
       const body = {
         requestId: p.requestId, text: p.text,
-        target: p.projectId ? { kind: 'project', projectId: p.projectId } : { kind: 'managed' },
+        target: p.projectId ? { kind: 'project', projectId: p.projectId, ...(p.isolation ? { isolation: 'worktree' } : {}) } : { kind: 'managed' },
         ...(p.providerId ? { providerId: p.providerId } : {}),
+        ...(p.attachmentIds?.length && p.draftId ? { draftId: p.draftId, attachmentIds: p.attachmentIds } : {}),
+        ...(p.execution && (p.execution.model || p.execution.reasoningEffort) ? { execution: { ...(p.execution.model ? { model: p.execution.model } : {}), ...(p.execution.reasoningEffort ? { reasoningEffort: p.execution.reasoningEffort } : {}) } } : {}),
       }
       try {
         const r = await call<{ receipt: { matterId: string } }>('POST /m/api/matter/create', '/m/api/matter/create', { body, retry: true })
