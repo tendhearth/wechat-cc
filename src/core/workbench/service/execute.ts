@@ -126,6 +126,7 @@ export function makeExecuteDomain(ctx:ServiceCtx, domains:ExecuteDomains) {
       }
       const directory=outputDirectory(running.path,task.id)
       const instructions=[
+        ctx.recovery?.facts(task.id)??'',
         `你是 CC 的工作助手。当前任务编号 ${task.id}，任务：${task.title}。`,
         `本任务工作目录：${running.path}。成果目录：${directory}。`,
         '只根据当前任务、选定文件夹和本任务历史工作，不读取个人陪伴记忆或其他任务。',
@@ -158,6 +159,8 @@ export function makeExecuteDomain(ctx:ServiceCtx, domains:ExecuteDomains) {
       if (running.cancelled) revokeCredentials(running)
       store.update(task.id,running.cancelled ? 'cancelling' : 'running');ctx.hub.touched(task.id)
       if (running.cancelled) { finalStatus='cancelled'; return }
+      await ctx.recovery?.begin(running)
+      if(running.cancelled){finalStatus='cancelled';return}
       spawning=entry.provider.spawn({alias:`workbench:${task.id}`,path:running.path},{
         workbenchTimeline:true,
         workbenchLifecycle:true,
@@ -187,7 +190,7 @@ export function makeExecuteDomain(ctx:ServiceCtx, domains:ExecuteDomains) {
           new Promise<never>((_resolve,reject) => { spawnTimer=setTimeout(() => reject(new Error('session_start_timeout')),ctx.deps.timeoutMs ?? 60_000) }),
         ])
         if (!session) { finalStatus='cancelled'; return }
-        running.session=session; accepted=true
+        running.session=session; accepted=true;ctx.recovery?.remember(running)
       } finally {
         if (spawnTimer) clearTimeout(spawnTimer)
         if (!accepted && spawning && !spawnRejected) {
@@ -195,7 +198,7 @@ export function makeExecuteDomain(ctx:ServiceCtx, domains:ExecuteDomains) {
           void spawning.then(async session => {
             try { await session.close() } catch { return }
             await confirmLateClose(running,false)
-          },() => confirmLateClose(running,false))
+          },() => confirmLateClose(running,false,'spawn_rejected')).catch(()=>{/* late settlement failure retains the durable writer barrier */})
         }
       }
       if (running.cancelled) { finalStatus='cancelled'; return }
@@ -315,13 +318,17 @@ export function makeExecuteDomain(ctx:ServiceCtx, domains:ExecuteDomains) {
       let closeTimer:ReturnType<typeof setTimeout>|undefined
       if (running.session) {
         try {
+          try{ctx.recovery?.mark(running,'closing')}catch{/* still ask the writer to exit; failed persistence prevents release below */}
           closePromise=Promise.resolve(running.session.close())
           await Promise.race([closePromise,new Promise<never>((_resolve,reject) => { closeTimer=setTimeout(() => reject(new Error('close_timeout')),ctx.deps.closeTimeoutMs ?? 3000) })])
         } catch {
           markUncertain(running); finalStatus='interrupted'; finalError='writer_not_closed'
           try { store.addEvent(task.id,'system','执行程序未确认退出，此文件夹内的新任务将等待。请检查后台进程或重启服务。');ctx.hub.touched(task.id) } catch { /* final status write below may still succeed */ }
-          if (closePromise) void closePromise.then(() => confirmLateClose(running,true),() => {})
+          if (closePromise) void closePromise.then(() => confirmLateClose(running,true),() => {}).catch(()=>{/* late settlement failure retains the writer barrier */})
         } finally { if (closeTimer) clearTimeout(closeTimer) }
+      }
+      if (!running.uncertain) {
+        try { await ctx.recovery?.close(running,running.session?'session_close':'spawn_rejected') } catch { markUncertain(running) }
       }
       if (!running.uncertain) await collect(running)
       revokeCredentials(running)
@@ -408,6 +415,8 @@ export function makeExecuteDomain(ctx:ServiceCtx, domains:ExecuteDomains) {
 
 
   function start(task:StoredTask,text:string,acceptedDirectoryIdentity:string,acceptedContinuation:AcceptedContinuation={mode:'new'},nativeResume?:AcceptedNativeResume,handoffArtifacts?:ArtifactSelection[],handoffId?:string,queuedInputId?:string,attachments:Attachment[]=[],draftId?:string,executionChoice?:AgentExecutionChoice,acceptance?:{persist:(runId:string)=>void;activate:(fn:()=>void)=>void;scope?:{ownerKey:string}},attachmentPolicy?:'owner'):WorkbenchTaskView {
+    ctx.recovery?.admit(task.path,task.gitWorkspaceId)
+    ctx.recovery?.gate(task.path)
     if (runsByTask.has(task.id)) throw new Error('workbench_busy')
     if(ctx.deps.executionConflict?.(task.path,task.providerId,task.sessionId))throw new Error('native_session_busy')
     if([...runsByTask.values()].some(run=>task.sessionId&&run.task.providerId===task.providerId&&run.task.sessionId===task.sessionId))throw new Error('native_session_busy')
@@ -487,6 +496,7 @@ export function makeExecuteDomain(ctx:ServiceCtx, domains:ExecuteDomains) {
     requireInput(input.providerId,attachments,execution)
     if(input.title!==undefined&&(typeof input.title!=='string'||!input.title.trim()||input.title.length>120))throw Error('invalid_title')
     const path=canonicalProject(input.path),acceptedDirectoryIdentity=directoryIdentity(path)
+    ctx.recovery?.admit(path,entry?.gitWorkspaceId??input.gitWorkspaceId)
     entry?.verifyDirectory(path,acceptedDirectoryIdentity)
     if(ctx.deps.executionConflict?.(path,input.providerId,null))throw Error('native_session_busy')
     let activate:()=>void=()=>{}
@@ -529,6 +539,7 @@ export function makeExecuteDomain(ctx:ServiceCtx, domains:ExecuteDomains) {
     }
     if (runsByTask.has(id)) throw new Error('workbench_busy')
     const task=store.get(id)
+    ctx.recovery?.admit(task.path,task.gitWorkspaceId);ctx.recovery?.gate(task.path)
     const execution=normalizeExecutionChoice(options?.execution,store.execution.choice(id))
     if(store.source(id)?.firstDispatchedAt===null)throw new Error('external_close_confirmation_required')
     if(task.archivedAt!==null)throw new Error('workbench_archived')

@@ -58,6 +58,8 @@ export const ROUTE_MIN_TIER: Record<string, UserTier> = {
   'POST /v1/workbench/review-mark': 'admin',
   'POST /v1/workbench/review-return': 'admin',
   'POST /v1/workbench/review-revert': 'admin',
+      'POST /v1/workbench/review-revert-resolve': 'admin',
+      'POST /v1/workbench/workspace-export': 'admin',
   'POST /v1/workbench/worktree': 'admin',
   'POST /v1/workbench/import': 'admin',
   'POST /v1/workbench/prepare-resume': 'admin',

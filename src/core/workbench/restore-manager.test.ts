@@ -19,7 +19,7 @@ beforeEach(()=>{root=realpathSync(mkdtempSync(join(tmpdir(),'cc-restore-')));pro
 afterEach(()=>{db.close();rmSync(root,{recursive:true,force:true})})
 const begin=()=>manager.begin({workspaceId:'workspace',taskId:'task',runId:randomUUID(),path:project,directoryIdentity:identity(project)})
 async function closed(change:()=>void){const run=await begin();change();manager.markClosing(run.restoreRunId);const review=await manager.close(run.restoreRunId);manager.bindArtifact(run.restoreRunId,'artifact','a'.repeat(64));return manager.list('workspace').find(r=>r.restoreRunId===review.restoreRunId)!}
-function request(review:RestoreReview,path='file.txt'){return {workspaceId:'workspace',taskId:'task',artifactId:review.artifactId!,path,changeId:review.files.find(f=>f.path===path)!.changeId,requestId:randomUUID()}}
+function request(review:RestoreReview,path='file.txt'){const change=review.files.find(f=>f.path===path);if(!change)throw Error(JSON.stringify({phase:'request_before_revert',path,status:review.status,qualification:review.review.status,notes:review.review.notes,files:review.files,run:db.query<{data:string},[string]>('SELECT data FROM workbench_restore_runs WHERE restore_run_id=?').get(review.restoreRunId)}));return {workspaceId:'workspace',taskId:'task',artifactId:review.artifactId!,path,changeId:change.changeId,requestId:randomUUID()}}
 
 describe('private restore lifecycle and exact file effects',()=>{
   it('keeps before through retained activity and only exposes a restore after confirmed close',async()=>{const run=await begin();writeFileSync(join(project,'file.txt'),'round one');expect(manager.list('workspace')[0]!.files).toEqual([]);writer=true;manager.markClosing(run.restoreRunId);await expect(manager.close(run.restoreRunId)).rejects.toThrow('writer_open');manager.markUncertain(run.restoreRunId);expect(manager.blocked('workspace')).toBe(true);writer=false;writeFileSync(join(project,'file.txt'),'round two');await manager.close(run.restoreRunId);manager.bindArtifact(run.restoreRunId,'artifact','a'.repeat(64));const result=await manager.revert(request(manager.list('workspace')[0]!));expect(result.state).toBe('reverted');expect(readFileSync(join(project,'file.txt'),'utf8')).toBe('before\r\n')})
@@ -68,4 +68,19 @@ describe('private restore lifecycle and exact file effects',()=>{
 
   it('uses execution-relative Git paths when the task is a repository subdirectory',async()=>{const repository=project;mkdirSync(join(project,'sub'));writeFileSync(join(project,'sub/file.txt'),'child before');git('add','.');git('commit','-qm','child');project=join(project,'sub');const review=await closed(()=>writeFileSync(join(project,'file.txt'),'child after'));expect(review.files.map(f=>f.path)).toEqual(['file.txt']);expect((await manager.revert(request(review))).state).toBe('reverted');expect(readFileSync(join(project,'file.txt'),'utf8')).toBe('child before');expect(readFileSync(join(repository,'file.txt'),'utf8')).toBe('before\r\n')})
 
+})
+
+it('keeps nonterminal resolve behind writer checks while allowing only exact terminal replay',async()=>{
+ const review=await closed(()=>writeFileSync(join(project,'file.txt'),'after')),input=request(review)
+ db.exec("CREATE TRIGGER resolve_probe_fault BEFORE UPDATE ON workbench_restore_operations WHEN NEW.state='reverted' BEGIN SELECT RAISE(ABORT,'receipt_failed'); END")
+ await expect(manager.revert(input)).rejects.toThrow();db.exec('DROP TRIGGER resolve_probe_fault')
+ const operation=await manager.revert(input),resolution={workspaceId:'workspace',taskId:'task',operationId:operation.operationId,observedFingerprint:operation.observedFingerprint!}
+ writer=true
+ expect(manager.lookupResolveKeepCurrent(resolution)).toBeNull()
+ await expect(manager.resolveKeepCurrent(resolution)).rejects.toThrow('writer_open')
+ writer=false;const receipt=await manager.resolveKeepCurrent(resolution)
+ writer=true;writeFileSync(join(project,'file.txt'),'later external')
+ expect(await manager.resolveKeepCurrent(resolution)).toEqual(receipt)
+ await expect(manager.resolveKeepCurrent({...resolution,observedFingerprint:'0'.repeat(64)})).rejects.toThrow('observation_changed')
+ expect(readFileSync(join(project,'file.txt'),'utf8')).toBe('later external')
 })

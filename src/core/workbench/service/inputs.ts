@@ -125,6 +125,7 @@ export function makeInputsDomain(ctx:ServiceCtx) {
     if(prior){if(prior.taskId!==id||prior.runId!==input.runId||prior.text!==text||!sameAttachments(prior.attachments,attachments))throw Error('input_conflict');return prior}
     const running=state.runsByTask.get(id)
     if(!running||running.identity!==input.runId||running.cancelled||running.finishing||running.uncertain)throw Error('input_stale')
+    ctx.recovery?.admit(running.path,running.task.gitWorkspaceId);ctx.recovery?.gate(running.path,running)
     if(running.delivering)throw Error('input_delivery_busy')
     // 网络闸门(守护 v2):补充一投进去执行者就会调模型 —— 按**这条在用的会话实际连到的目标**判
     // (评审 #193:不是任务记录的模型、也不是此刻的配置);需要保护且不安全才不投。
@@ -149,6 +150,7 @@ export function makeInputsDomain(ctx:ServiceCtx) {
       // (BASE 靠 `acquireTurnLease` 里的 `alive()` 挡这一下,那个函数这一轮删掉了。)
       if(state.runsByTask.get(id)!==running||running.cancelled||running.finishing||running.uncertain)throw Error('input_stale')
     }
+    ctx.recovery?.admit(running.path,running.task.gitWorkspaceId);ctx.recovery?.gate(running.path,running)
     let saved:LiveInput
     try{
       saved=store.atomic(()=>{
@@ -168,6 +170,7 @@ export function makeInputsDomain(ctx:ServiceCtx) {
       ;(running.runtimeInputs??=new Map()).set(saved.id,saved)
       try{
         if(canonicalProject(running.path)!==running.path||directoryIdentity(running.path)!==running.directoryIdentity)throw Error('invalid_path')
+        ctx.recovery?.admit(running.path,running.task.gitWorkspaceId);ctx.recovery?.gate(running.path,running)
         const material=store.attachments.prepare(id,attachments,running.path,ctx.stateDir)
         running.interactionAt=Date.now()
         // 主人续接 = 新一轮的可靠起点(评审修复轮 1):这个同步点不依赖快照观察,
@@ -188,6 +191,7 @@ export function makeInputsDomain(ctx:ServiceCtx) {
     try{
       if(canonicalProject(running.path)!==running.path||directoryIdentity(running.path)!==running.directoryIdentity)throw Error('invalid_path')
       const material=store.attachments.prepare(id,attachments,running.path,ctx.stateDir)
+      ctx.recovery?.admit(running.path,running.task.gitWorkspaceId);ctx.recovery?.gate(running.path,running)
       await running.session.steer(text,material)
       running.interactionAt=Date.now()
       store.liveInputs.set(saved.id,'delivered');ctx.hub.bumped(id)

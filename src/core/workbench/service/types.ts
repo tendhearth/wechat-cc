@@ -27,3 +27,25 @@ export type QuotaHandoffView =
   | { state: 'offer'; from: string; to: string; kind: QuotaKind; resetAt: number }
   | { state: 'none'; from: string; kind: QuotaKind; resetAt: number }
   | { state: 'handed'; from: string; to: string; matterId: string }
+
+/** Recovery coordination contract: ctx depends on types, never on a domain factory. */
+export interface RecoveryDomain {
+  manager:ReturnType<typeof import('../restore-manager').createRestoreManager>
+  owned(taskId:string,receiptOnly?:boolean):{task:import('../store').StoredTask;w:import('../git-workspace-store').GitWorkspaceRecord}
+  git():ReturnType<typeof import('../git-workspaces').createGitWorkspaces>
+  blockReason(workspaceId:string):string|undefined
+  admit(path:string,gitWorkspaceId?:string|null):void
+  captureWriters():void
+  registeredConflict(path:string):boolean
+  gate(path:string,own?:import('./state').Active):void
+  begin(running:import('./state').Active):Promise<void>
+  remember(running:import('./state').Active):void
+  mark(running:import('./state').Active,status:'closing'|'uncertain'):void
+  close(running:import('./state').Active,kind?:'session_close'|'spawn_rejected'|'groups_gone'|'administrator'):Promise<void>
+  confirmOrphan(taskId:string,kind:'groups_gone'|'administrator'):Promise<void>
+  adopt():void
+  recover():Promise<void>
+  facts(taskId:string):string
+  withMutation<T>(workspaceId:string,operation:()=>Promise<T>):Promise<T>
+  withCommit<T>(taskId:string,operation:()=>Promise<T>):Promise<T>
+}

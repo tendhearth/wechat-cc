@@ -375,42 +375,18 @@ describe('revertReviewFile (2026-10-06)', () => {
     const artifactId = plant(fixture.store, task.id, fixture.stateDir, '代码变更-真.json', serializeGitReview(snapshot!))
     return { ...fixture, id: task.id, artifactId }
   }
-  it('restores a modified file byte for byte (keeping its mode), deletes an added one, re-creates a deleted one, and logs each', async () => {
-    const { readFileSync, writeFileSync, unlinkSync, existsSync, statSync, chmodSync, mkdirSync: mk } = await import('node:fs')
-    const { service, project, id, artifactId } = await realReview(p => {
-      writeFileSync(join(p, 'src', 'a.ts'), 'export const a = 2\nexport const b = 3\n')
-      writeFileSync(join(p, 'src', 'new.ts'), 'brand new\n')
-      unlinkSync(join(p, 'gone.md'))
-    }, p => {
-      mk(join(p, 'src')); writeFileSync(join(p, 'src', 'a.ts'), 'export const a = 1\n'); chmodSync(join(p, 'src', 'a.ts'), 0o755)
-      writeFileSync(join(p, 'gone.md'), '# 再见\n没有换行结尾')
-    })
-    expect(service.revertReviewFile(id, { artifactId, path: 'src/a.ts' })).toEqual({ path: 'src/a.ts', restored: 'content' })
-    expect(readFileSync(join(project, 'src', 'a.ts'), 'utf8')).toBe('export const a = 1\n')
-    if (process.platform !== 'win32') expect(statSync(join(project, 'src', 'a.ts')).mode & 0o777).toBe(0o755)
-    expect(service.revertReviewFile(id, { artifactId, path: 'src/new.ts' })).toEqual({ path: 'src/new.ts', restored: 'removed' })
-    expect(existsSync(join(project, 'src', 'new.ts'))).toBe(false)
-    service.revertReviewFile(id, { artifactId, path: 'gone.md' })
-    expect(readFileSync(join(project, 'gone.md'), 'utf8')).toBe('# 再见\n没有换行结尾')
-    expect(service.detail(id).events.filter(e => e.text.startsWith('已撤销')).length).toBe(3)
-    // 已经撤销过:现在的内容不再是快照里「改完」的那份 ⇒ 拒绝,不重复写
-    expect(() => service.revertReviewFile(id, { artifactId, path: 'src/a.ts' })).toThrow('review_file_changed')
+  it('rejects historical three-field restores without changing modified, added or deleted files', async () => {
+    const {readFileSync,writeFileSync,unlinkSync,existsSync,mkdirSync:mk}=await import('node:fs')
+    const {service,project,id,artifactId}=await realReview(p=>{
+      writeFileSync(join(p,'src','a.ts'),'changed\n');writeFileSync(join(p,'src','new.ts'),'new\n');unlinkSync(join(p,'gone.md'))
+    },p=>{mk(join(p,'src'));writeFileSync(join(p,'src','a.ts'),'original\n');writeFileSync(join(p,'gone.md'),'deleted\n')})
+    for(const path of ['src/a.ts','src/new.ts','gone.md'])await expect(service.revertReviewFile(id,{artifactId,path})).rejects.toThrow('review_revert_unavailable')
+    expect(readFileSync(join(project,'src','a.ts'),'utf8')).toBe('changed\n')
+    expect(readFileSync(join(project,'src','new.ts'),'utf8')).toBe('new\n')
+    expect(existsSync(join(project,'gone.md'))).toBe(false)
+    expect(service.detail(id).events.some(e=>e.text.includes('workspace_restore'))).toBe(false)
   })
-  it('refuses when the file changed after the snapshot, and when a session still holds the folder', async () => {
-    const { writeFileSync, readFileSync, mkdirSync: mk } = await import('node:fs')
-    const { service, store, project, id, artifactId } = await realReview(p => { writeFileSync(join(p, 'x.txt'), 'two\n') }, p => { writeFileSync(join(p, 'x.txt'), 'one\n'); mk(join(p, 'd')) })
-    writeFileSync(join(project, 'x.txt'), 'three\n')
-    expect(() => service.revertReviewFile(id, { artifactId, path: 'x.txt' })).toThrow('review_file_changed')
-    expect(readFileSync(join(project, 'x.txt'), 'utf8')).toBe('three\n')
-    writeFileSync(join(project, 'x.txt'), 'two\n')
-    // 「没确认退出」的那种也算占着:执行程序可能还在写
-    store.update(id, 'interrupted', 'writer_not_closed')
-    expect(() => service.revertReviewFile(id, { artifactId, path: 'x.txt' })).toThrow('workbench_busy')
-    store.clearWriterError(id)
-    expect(() => service.revertReviewFile(id, { artifactId, path: 'nope.txt' })).toThrow('invalid_review_reference')
-    service.revertReviewFile(id, { artifactId, path: 'x.txt' })
-    expect(readFileSync(join(project, 'x.txt'), 'utf8')).toBe('one\n')
-  })
+
 })
 
 describe('独立工作区:自己保留的会话安静着时可以提交(2026-10-07 真机核对)', () => {

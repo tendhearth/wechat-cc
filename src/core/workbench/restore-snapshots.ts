@@ -1,7 +1,7 @@
 import {execFile} from 'node:child_process'
 import {promisify} from 'node:util'
 import {createHash} from 'node:crypto'
-import {type Stats,constants,closeSync,fstatSync,fsyncSync,lstatSync,mkdirSync,openSync,readFileSync,readdirSync,readSync,realpathSync,writeSync} from 'node:fs'
+import {type BigIntStats,constants,closeSync,fstatSync,fsyncSync,lstatSync,mkdirSync,openSync,readFileSync,readdirSync,readSync,realpathSync,writeSync} from 'node:fs'
 import {dirname,isAbsolute,join,relative,resolve,sep} from 'node:path'
 import {platform} from 'node:os'
 
@@ -13,7 +13,8 @@ export interface Snapshot {git:GitState;staged:string[];rootIdentity:string;entr
 export const restoreError=(e:unknown)=>{const err=e as NodeJS.ErrnoException;return err.code?`filesystem_${err.code}`:e instanceof Error&&/^[a-z][a-z0-9_]*$/.test(e.message)?e.message:'snapshot_unavailable'}
 export const digest=(data:Buffer|string)=>createHash('sha256').update(data).digest('hex')
 export function directoryId(path:string){const s=lstatSync(path,{bigint:true});if(!s.isDirectory()||s.isSymbolicLink())throw Error('directory_identity_changed');return `${s.dev}:${s.ino}`}
-const leafId=(s:Stats)=>`${s.dev}:${s.ino}`
+export const leafId=(s:BigIntStats)=>`fs2:${s.dev}:${s.ino}`
+export const exactLeafIdentity=(identity:string)=>/^fs2:[0-9]+:[0-9]+$/.test(identity)
 export function safeRelative(path:string){return !!path&&!isAbsolute(path)&&!path.includes('\\')&&!/[\x00-\x1f:]/.test(path)&&path.split('/').every(p=>!!p&&p!=='.'&&p!=='..'&&!/[. ]$/.test(p)&&! /^(con|prn|aux|nul|com[0-9]|lpt[0-9])(?:\.|$)/i.test(p)&&p!=='.git'&&!p.startsWith('.cc-workbench')&&!p.startsWith('.cc-restore-'))}
 export function sensitive(path:string){return path.split('/').some(p=>(p.startsWith('.')&&!['.gitignore','.gitattributes','.editorconfig'].includes(p))||/^(id_(rsa|dsa|ecdsa|ed25519)|credentials(?:\..*)?|private[-_]key(?:\..*)?)$/i.test(p)||/\.(pem|p12|pfx|key)$/i.test(p))}
 type NameCache=Map<string,Set<string>>
@@ -27,19 +28,20 @@ export function parentChain(root:string,path:string,cache?:NameCache):Identity[]
 export function checkChain(root:string,chain:Identity[]){for(const entry of chain)if(directoryId(join(root,entry.path))!==entry.id)throw Error('directory_identity_changed')}
 export function observe(root:string,path:string,maxBytes:number=RESTORE_LIMITS.fileBytes,cache?:NameCache):FileVersion {
   const chain=parentChain(root,path,cache),target=join(root,path)
-  let st:Stats
-  try{st=lstatSync(target)}catch(e){if((e as NodeJS.ErrnoException).code==='ENOENT')return {kind:'absent',chain};throw e}
+  let st:BigIntStats
+  try{st=lstatSync(target,{bigint:true})}catch(e){if((e as NodeJS.ErrnoException).code==='ENOENT')return {kind:'absent',chain};throw e}
   exactName(dirname(target),path.split('/').at(-1)!,cache);
-  if(!st.isFile()||st.isSymbolicLink()||st.nlink!==1)throw Error('unsupported_file_type')
-  if(st.size>maxBytes)throw Error('file_limit')
+  if(!st.isFile()||st.isSymbolicLink()||st.nlink!==1n)throw Error('unsupported_file_type')
+  if(st.size>BigInt(maxBytes))throw Error('file_limit')
   // A leaf may become a FIFO after lstat; open must not block before fstat can reject it.
   const fd=openSync(target,constants.O_RDONLY|constants.O_NOFOLLOW|constants.O_NONBLOCK)
   try{
-    const before=fstatSync(fd);if(leafId(before)!==leafId(st)||before.nlink!==1||!before.isFile())throw Error('file_identity_changed')
-    const bytes=Buffer.alloc(before.size);let offset=0;while(offset<bytes.length){const n=readSync(fd,bytes,offset,bytes.length-offset,offset);if(!n)throw Error('file_changed');offset+=n}
-    const after=fstatSync(fd);if(after.size!==before.size||after.mtimeMs!==before.mtimeMs||after.ctimeMs!==before.ctimeMs||after.nlink!==1)throw Error('file_changed')
-    if(leafId(lstatSync(target))!==leafId(before))throw Error('file_identity_changed');checkChain(root,chain)
-    return {kind:'file',blobSha:digest(bytes),size:bytes.length,mode:before.mode&0o777,identity:leafId(before),chain}
+    const before=fstatSync(fd,{bigint:true});if(leafId(before)!==leafId(st)||before.nlink!==1n||!before.isFile())throw Error('file_identity_changed')
+    if(before.size>BigInt(maxBytes))throw Error('file_limit')
+    const bytes=Buffer.alloc(Number(before.size));let offset=0;while(offset<bytes.length){const n=readSync(fd,bytes,offset,bytes.length-offset,offset);if(!n)throw Error('file_changed');offset+=n}
+    const after=fstatSync(fd,{bigint:true});if(after.size!==before.size||after.mtimeNs!==before.mtimeNs||after.ctimeNs!==before.ctimeNs||after.nlink!==1n)throw Error('file_changed')
+    if(leafId(lstatSync(target,{bigint:true}))!==leafId(before))throw Error('file_identity_changed');checkChain(root,chain)
+    return {kind:'file',blobSha:digest(bytes),size:bytes.length,mode:Number(before.mode&0o777n),identity:leafId(before),chain}
   }finally{closeSync(fd)}
 }
 export function readVersion(root:string,path:string,version:FileVersion){if(version.kind!=='file')throw Error('missing_raw_version');const fd=openSync(join(root,path),constants.O_RDONLY|constants.O_NOFOLLOW|constants.O_NONBLOCK);try{const st=fstatSync(fd);if(!st.isFile()||st.nlink!==1)throw Error('file_changed');const bytes=readFileSync(fd);if(digest(bytes)!==version.blobSha||fstatSync(fd).nlink!==1)throw Error('file_changed');checkChain(root,version.chain);return bytes}finally{closeSync(fd)}}

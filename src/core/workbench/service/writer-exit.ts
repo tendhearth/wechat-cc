@@ -19,6 +19,7 @@ export function knownWriterGroups(ctx:ServiceCtx,taskId:string):number[] {
   const orphan=ctx.state.writerOrphans.get(taskId)
   if (orphan) return orphan.groups
   const running=ctx.state.runsByTask.get(taskId)
-  return running?.uncertain ? writerGroupsOf(running) : []
+  const saved=running?.restoreRunId?ctx.store.restores.run(running.restoreRunId)?.writerGroups??[]:[]
+  return running?.uncertain ? [...new Set([...saved,...writerGroupsOf(running)])] : []
 }
 export const writerAlive=(ctx:ServiceCtx,taskId:string)=>knownWriterGroups(ctx,taskId).some(g=>groupAlive(ctx,g))
