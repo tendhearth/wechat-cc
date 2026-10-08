@@ -77,7 +77,8 @@ export const MatterTaskView = z.object({
   providerId: z.string(), path: z.string(), error: z.string().nullable(), updatedAt: z.number(),
   archivedAt: z.number().nullable().optional(),
   // 独立工作区(2026-10-07):分支名 + 工作区删了没;手机据此给「提交到分支 / 删除工作区」。
-  worktree: z.object({ branch: z.string(), removed: z.boolean(), merged: z.boolean().optional() }).optional(),
+  // projectId(10-08):源项目编号,手机「另做一份」交到同一个项目;不给路径。
+  worktree: z.object({ branch: z.string(), removed: z.boolean(), merged: z.boolean().optional(), projectId: z.string().optional() }).optional(),
 })
 
 export const MatterEvent = z.object({

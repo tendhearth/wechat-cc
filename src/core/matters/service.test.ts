@@ -110,5 +110,9 @@ describe('worktree on the phone (2026-10-07)',()=>{
     expect(service.worktree('deadbeef','merge')).toEqual({branch:'cc/abcd1234',merged:true})
     task.worktree={...task.worktree,merged:true} as never
     expect((await service.detail('deadbeef')).task?.worktree).toEqual({branch:'cc/abcd1234',removed:false,merged:true})
+    // 另做一份(10-08):源项目只给编号
+    const withProjects=makeMattersService({store,workbench:{detail:()=>({task,events:[]}),continueTask:vi.fn(),worktreeAction,projects:()=>[{id:'p-1',path:'/Users/me/secret'}]} as never})
+    const shown=(await withProjects.detail('deadbeef')).task?.worktree
+    expect(shown).toEqual({branch:'cc/abcd1234',removed:false,merged:true,projectId:'p-1'});expect(JSON.stringify(shown)).not.toContain('/Users/me')
   })
 })

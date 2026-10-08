@@ -14,7 +14,7 @@ import {sayTextHash,type SayReceipts} from './say-receipts'
  * (工作台任务从 workbench 详情取),这里不复制数据。`say` 按 kind 路由:
  * task → 工作台续接;chat → 现有的 app 对话通道(只对主人的 chat)。
  */
-export interface MatterTaskView {id:string;title:string;status:string;phase?:string;providerId:string;path:string;error:string|null;updatedAt:number;archivedAt?:number|null;worktree?:{branch:string;removed:boolean;merged?:boolean}}
+export interface MatterTaskView {id:string;title:string;status:string;phase?:string;providerId:string;path:string;error:string|null;updatedAt:number;archivedAt?:number|null;worktree?:{branch:string;removed:boolean;merged?:boolean;projectId?:string}}
 export interface MatterEvent {kind:string;text:string;createdAt:number;source?:string;attachments?:Attachment[];errorCode?:'execution_model_unsupported';diagnostic?:string}
 export type MatterInput=Pick<LiveInput,'id'|'taskId'|'runId'|'text'|'status'|'attachments'>&Partial<Pick<LiveInput,'error'>>
 // 只投影显示材料所需的五个字段；不能把内部存储路径、owner 或草稿身份带到手机。
@@ -53,6 +53,8 @@ export interface MattersServiceDeps {
     /** 停下这一轮(与桌面「停止」同一个 cancel;expectedRunId 不对 ⇒ 不停,免得停掉后来的那一轮)。 */
     cancel?(id:string,expectedRunId?:string):Promise<unknown>
     /** 独立工作区:提交到分支 / 删除工作区(2026-10-07,手机也能做)。没接 ⇒ 手机没有这两个按钮。 */
+    /** 手机「另做一份」要源项目编号(只给编号,不给路径);没接 ⇒ 手机没有这个按钮。 */
+    projects?():ReadonlyArray<{id:string;path:string}>
     worktreeAction?(id:string,action:'commit'|'remove'|'merge'):{branch:string;committed?:boolean;removed?:boolean;merged?:boolean;into?:string}
     resolveAnswer?(id:string,requestId:string,answers:unknown):void
     artifact?(id:string,artifactId:string):{name:string;mime:string;size:number;sha256:string;contentBase64:string}
@@ -137,7 +139,7 @@ export function makeMattersService(deps:MattersServiceDeps):MattersService {
       }
       if(matter.kind==='task'&&deps.workbench){
         try{
-          const d=taskDetail(matter.id);const wt=(d.task as {worktree?:{branch:string;removed:boolean;merged?:boolean}}).worktree;task={...d.task,...(wt?{worktree:{branch:wt.branch,removed:wt.removed,...(wt.merged?{merged:true}:{})}}:{})};events=d.events.slice(-50).map(publicEvent)
+          const d=taskDetail(matter.id);const wt=(d.task as {worktree?:{branch:string;projectPath?:string;removed:boolean;merged?:boolean}}).worktree;const projectId=wt?.projectPath?deps.workbench.projects?.().find(p=>p.path===wt.projectPath)?.id:undefined;task={...d.task,...(wt?{worktree:{branch:wt.branch,removed:wt.removed,...(wt.merged?{merged:true}:{}),...(projectId?{projectId}:{})}}:{})};events=d.events.slice(-50).map(publicEvent)
           controls={...(d.runId?{runId:d.runId}:{}),...(d.inputMode?{inputMode:d.inputMode}:{}),
             permissions:(d.permissions??[]).filter(p=>p.taskId===id).map(({id,taskId,tool,description,createdAt})=>({id,taskId,tool,description,createdAt})),
             questions:(d.questions??[]).filter(q=>q.taskId===id).map(({id,taskId,createdAt,questions})=>({id,taskId,createdAt,questions:questions.map(({id,header,question,options,multiSelect,allowOther})=>({id,header,question,options:options.map(({label,description})=>({label,description})),multiSelect,allowOther}))})),
