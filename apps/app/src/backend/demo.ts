@@ -366,7 +366,7 @@ export function makeDemoBackend(opts: { now?: () => number; setTimeout?: typeof 
     },
     async worktree({ action }) {
       // 演示里没有真的 git 工作区:说一句结果就好
-      return action === 'commit' ? { branch: 'cc/demo1234', committed: true } : action === 'merge' ? { branch: 'cc/demo1234', merged: true } : { branch: 'cc/demo1234', removed: true }
+      return action === 'commit' ? { branch: 'cc/demo1234', committed: true } : action === 'merge' ? { branch: 'cc/demo1234', merged: true } : action === 'reopen' ? { branch: 'cc/demo1234', reopened: true } : { branch: 'cc/demo1234', removed: true }
     },
     async stop({ id, runId }) {
       const e = entries.get(id)

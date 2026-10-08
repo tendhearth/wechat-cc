@@ -399,6 +399,17 @@ it('preserves explicit commit/remove for historical v74 worktrees',async()=>{
   expect(service.detail(second.id).task.archivedAt).toBeNull();expect(service.detail(second.id).events).toHaveLength(events)
   expect(existsSync(b.path)).toBe(true);expect(store.worktrees.get(second.id)?.removedAt).toBeNull()
   db.exec('DROP TRIGGER archive_fault');writeFileSync(join(b.path,'out.txt'),'dirty after committed archive fixture\n')
+  // 重新打开(10-08):从保留的分支检出回原位置,又能接着做
+  expect(()=>service.worktreeAction(two.receipt.taskId,'reopen')).toThrow('worktree_open')
+  store.update(first.id,'interrupted','writer_not_closed')
+  const blockedEvents=store.events(first.id).length
+  expect(()=>service.worktreeAction(first.id,'reopen')).toThrow('workbench_busy')
+  expect(existsSync(a.path)).toBe(false);expect(store.events(first.id)).toHaveLength(blockedEvents)
+  store.update(first.id,'completed')
+  expect(service.worktreeAction(one.receipt.taskId,'reopen')).toMatchObject({reopened:true})
+  expect(service.detail(one.receipt.taskId).task.worktree?.removed).toBe(false);expect(readFileSync(join(a.path,'more.txt'),'utf8')).toBe('more\n')
+  service.continueTask(one.receipt.taskId,'再改一下');await settle(one.receipt.taskId)
+  service.worktreeAction(one.receipt.taskId,'commit');service.worktreeAction(one.receipt.taskId,'remove')
   // 归档时顺手收拾(10-08):有没提交的改动 ⇒ 留着并说一句;提交后再归档 ⇒ 工作区删掉、分支还在
   service.setArchived(two.receipt.taskId,true)
   expect(service.detail(two.receipt.taskId).task.worktree?.removed).toBe(false);expect(existsSync(b.path)).toBe(true)

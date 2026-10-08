@@ -171,6 +171,19 @@ export function mergeWorktree(repoRoot: string, root: string, branch: string): {
   return { merged: true, into }
 }
 
+/**
+ * 重新打开(2026-10-08):工作区删了、分支还在 ⇒ 在原来的位置从这个分支重新检出,任务可以接着做。
+ * 目录已经在 ⇒ `worktree_conflict`;分支没了(主人删过)⇒ `worktree_branch_missing`。照常带上 .worktreeinclude 的文件。
+ */
+export function reopenWorktree(repoRoot: string, root: string, branch: string): void {
+  if (existsSync(root)) throw new Error('worktree_conflict')
+  try { git(repoRoot, ['rev-parse', '--verify', '--quiet', `refs/heads/${branch}`]) } catch { throw new Error('worktree_branch_missing') }
+  git(repoRoot, ['worktree', 'prune'])
+  mkdirSync(dirname(root), { recursive: true, mode: 0o700 })
+  git(repoRoot, ['worktree', 'add', root, branch])
+  copyIncludedFiles(repoRoot, root)
+}
+
 /** 合并提示:主人自己在项目里跑。路径里有空格 / 引号时也安全地拼出来。 */
 export function mergeHint(projectPath: string, branch: string): string {
   const quote = (s: string) => (/^[A-Za-z0-9._/@:-]+$/.test(s) ? s : `'${s.replace(/'/g, `'\\''`)}'`)

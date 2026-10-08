@@ -697,10 +697,12 @@ describe('Workbench internal HTTP API', () => {
 
   it('worktree commit/remove for the desktop owner; dirty is 409, plain task 422, agents denied (2026-10-07)',async()=>{
     const workbench=service(),{request,operatorToken,trustedToken}=await start(workbench)
-    const act=vi.fn((id:string,action:string)=>{
+    const act=vi.fn(async(id:string,action:string)=>{
       if(id==='cafebabe')throw new Error('worktree_dirty')
       if(id==='0badf00d')throw new Error('not_worktree')
       if(id==='feedface')throw new Error('worktree_not_ff')
+      await Promise.resolve()
+      if(action==='reopen')return {branch:'cc/abcd1234',reopened:true}
       return action==='commit'?{branch:'cc/abcd1234',committed:true,sha:'s',mergeHint:'cd /p && git merge cc/abcd1234'}:{branch:'cc/abcd1234',removed:true}
     })
     ;(workbench as unknown as {worktreeAction:typeof act}).worktreeAction=act
@@ -708,6 +710,8 @@ describe('Workbench internal HTTP API', () => {
     expect((await request('/v1/workbench/worktree',body('deadbeef','commit'),trustedToken)).status).toBe(403)
     const ok=await request('/v1/workbench/worktree',body('deadbeef','commit'),operatorToken)
     expect(ok.status).toBe(200);expect(await ok.json()).toMatchObject({worktree:{committed:true,mergeHint:expect.stringContaining('git merge')}})
+    const reopened=await request('/v1/workbench/worktree',body('deadbeef','reopen'),operatorToken)
+    expect(reopened.status).toBe(200);expect(await reopened.json()).toEqual({worktree:{branch:'cc/abcd1234',reopened:true}})
     expect((await request('/v1/workbench/worktree',body('cafebabe','remove'),operatorToken)).status).toBe(409)
     expect((await request('/v1/workbench/worktree',body('0badf00d','commit'),operatorToken)).status).toBe(422)
     // 合回项目(10-08):快进不了 409,主人自己合

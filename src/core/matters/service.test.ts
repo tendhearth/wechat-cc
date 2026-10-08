@@ -159,3 +159,9 @@ it('preserves an explicit no-merge result only after an asynchronous worktree re
  finish({branch:'cc/legacy',merged:false,into:'main'})
  expect(await pending).toEqual({branch:'cc/legacy',merged:false})
 })
+
+it.each([true,false])('preserves an asynchronous reopened=%s flag without private fields',async reopened=>{
+ store.create({id:'deadbeef',kind:'task',title:'reopen',projectPath:'/work',ownerChatId:'owner'})
+ const service=makeMattersService({store,workbench:{detail:()=>({task:TASK,events:[]}),continueTask:vi.fn(),worktreeAction:async()=>({branch:'cc/old',reopened,mergeHint:'/private'})} as never})
+ expect(await service.worktree('deadbeef','reopen')).toEqual({branch:'cc/old',reopened})
+})

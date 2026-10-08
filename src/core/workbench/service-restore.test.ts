@@ -410,3 +410,20 @@ it('archives UUID workspaces without cleanup and retains closed restore bytes an
  expect({head:git('rev-parse','HEAD'),index:readFileSync(join(source,'.git','index')),status:git('status','--porcelain')}).toEqual(sourceBefore)
  expect(existsSync(task.path)).toBe(true);expect(store.worktrees.get(task.id)).toBeNull()
 })
+
+it('rejects reopening a removed UUID workspace without changing binding, closed restore or accepted receipt',async()=>{
+ const {task,input}=await closed(),workspace=store.gitWorkspaceForTask(task.id)!
+ const reverted=await service.revertReviewFile(task.id,input);await service.worktreeAction(task.id,'remove')
+ const receipt=service.entryReceipt(workspace.requestId,{ownerKey:'owner',surface:'desktop'}),runs=store.restores.allRuns()
+ const before={workspace:store.gitWorkspaces.get(workspace.id),task:store.get(task.id),events:store.events(task.id),head:git('rev-parse','HEAD'),index:readFileSync(join(source,'.git','index')),refs:git('show-ref')}
+ expect(()=>service.worktreeAction(task.id,'reopen' as never)).toThrow('invalid_request')
+ const {workbenchRoutes}=await import('../../daemon/internal-api/routes-workbench')
+ const routes=workbenchRoutes({workbench:service,resolveAdminChatId:()=> 'owner'} as never)
+ expect(await routes['POST /v1/workbench/worktree']!(new URLSearchParams(),{id:task.id,action:'reopen'})).toMatchObject({status:400,body:{error:'invalid_request'}})
+ const reply=await service.handleWechat('owner',`任务 ${task.id} 重开工作区`)
+ expect(reply).toContain('不支持重开');expect(reply).not.toContain('可以接着做了')
+ expect(await service.revertReviewFile(task.id,input)).toEqual(reverted)
+ expect(existsSync(task.path)).toBe(false)
+ expect({workspace:store.gitWorkspaces.get(workspace.id),task:store.get(task.id),events:store.events(task.id),head:git('rev-parse','HEAD'),index:readFileSync(join(source,'.git','index')),refs:git('show-ref')}).toEqual(before)
+ expect(store.restores.allRuns()).toEqual(runs);expect(service.entryReceipt(workspace.requestId,{ownerKey:'owner',surface:'desktop'})).toEqual(receipt)
+})

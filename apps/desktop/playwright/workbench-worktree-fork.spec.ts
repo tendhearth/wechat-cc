@@ -9,11 +9,12 @@ const task=(id,title,providerId='codex')=>({id,title,providerId,path:'/copies/'+
 const wt=task('aaaa1111','整理首页'),fork=task('bbbb2222','整理首页','claude'),other=task('cccc3333','另一件事')
 let tasks=[wt,other]
 const q={calls:[],mode:'success',receipt:false,release:null,attachments:false,workspace:false,mismatch:false,uploadDeferred:false,uploadRelease:null}
-const detail=t=>({task:t,version:1,events:[{id:'1',taskId:t.id,kind:'user',text:'把首页的标题改短',createdAt:1,...(q.attachments?{attachments:[{id:'image',name:'reference.png',mime:'image/png',size:10}]}:{})}],artifacts:[],permissions:[],...(q.workspace?{workspace:{id:'ws',mode:'isolated',sourcePath:'/work/site',executionPath:t.path,branch:'codex/cc-task-fixture',baseCommit:'a'.repeat(40)}}:{})})
+const detail=t=>({task:t,version:1,events:[{id:'1',taskId:t.id,kind:'user',text:'把首页的标题改短',createdAt:1,...(q.attachments?{attachments:[{id:'image',name:'reference.png',mime:'image/png',size:10}]}:{})}],artifacts:[],permissions:[],...(q.workspace?{workspace:{id:'ws',mode:'isolated',sourcePath:'/work/site',executionPath:t.path,branch:'codex/cc-task-fixture',baseCommit:'a'.repeat(40),removed:!!t.worktree?.removed}}:{})})
 const accepted=id=>({receipt:{requestId:q.mismatch?'ffffffff-ffff-ffff-ffff-ffffffffffff':id,taskId:fork.id,matterId:fork.id,runId:'r',acceptedAt:1},task:fork})
 const invoke=async(method,path,body)=>{
  q.calls.push({method,path,body:body&&structuredClone(body)})
  if(path==='/v1/workbench/attachment'){if(q.uploadDeferred)await new Promise(r=>{q.uploadRelease=r});return{attachment:{id:body.id,name:body.name,mime:body.mime,size:atob(body.base64).length,sha256:'a'.repeat(64)}}}
+ if(path==='/v1/workbench/worktree'){if(body.action==='reopen'){wt.worktree.removed=false;return{worktree:{branch:wt.worktree.branch,reopened:true}}}throw Error('invalid_request')}
  if(path==='/v1/workbench/create-entry'){if(q.mode==='unknown')throw Error('network_offline');if(q.mode==='rejected')throw Error('invalid_text');if(q.mode==='deferred')await new Promise(r=>{q.release=r});tasks=[fork,wt,other];return accepted(body.requestId)}
  if(path.startsWith('/v1/workbench/entry-receipt?')){if(!q.receipt)throw Error('network_offline');tasks=[fork,wt,other];return accepted(new URL('http://x'+path).searchParams.get('requestId'))}
  if(path.startsWith('/v1/workbench/task?')){if(path.includes('since='))return new Promise(()=>{});return detail(tasks.find(t=>t.id===new URL('http://x'+path).searchParams.get('id')))}
@@ -164,4 +165,18 @@ test('archive hint distinguishes historical worktrees from UUID copies and keeps
  await expect(page.locator('.wb-task-head')).toContainText('归档会保留副本')
  await page.evaluate(async()=>{const q=(window as any).qa;Object.assign(q.controller.state.tasks[0],{error:'writer_not_closed',writerExit:'unconfirmed'});await q.controller.refresh({force:true})})
  await expect(page.locator('[data-action="archive-task"]')).toHaveCount(0)
+})
+
+test('reopens a historical removed worktree through production transport but never exposes or posts UUID reopen',async({page})=>{
+ await page.evaluate(async()=>{const q=(window as any).qa;q.controller.state.tasks[0].worktree.removed=true;await q.controller.refresh({force:true})})
+ await expect(page.locator('[data-action="worktree-reopen"]')).toBeVisible()
+ await page.locator('[data-action="worktree-reopen"]').click()
+ await expect(page.locator('[data-action="worktree-commit"]')).toBeVisible()
+ expect(await page.evaluate(()=>(window as any).qa.calls.filter((c:any)=>c.path==='/v1/workbench/worktree').map((c:any)=>c.body))).toEqual([{id:'aaaa1111',action:'reopen'}])
+ await page.evaluate(async()=>{const q=(window as any).qa;q.workspace=true;q.controller.state.tasks[0].worktree.removed=true;await q.controller.refresh({force:true})})
+ await expect(page.locator('.wb-task-head')).toContainText('工作区已删除')
+ await expect(page.locator('[data-action="worktree-reopen"]')).toHaveCount(0)
+ await page.evaluate(()=>{const button=document.createElement('button');button.dataset.action='worktree-reopen';document.getElementById('workbench-root')!.append(button);button.click();button.remove()})
+ await page.evaluate(()=>new Promise<void>(resolve=>requestAnimationFrame(()=>requestAnimationFrame(()=>resolve()))))
+ expect(await page.evaluate(()=>(window as any).qa.calls.filter((c:any)=>c.path==='/v1/workbench/worktree'))).toHaveLength(1)
 })
