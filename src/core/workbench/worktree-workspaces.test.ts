@@ -4,7 +4,7 @@ import { existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, symlink
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { removeTempDir } from '../../lib/test-temp'
-import { commitWorktree, copyIncludedFiles, ensureWorktree, git, mergeHint, mergeWorktree, planWorktree, removeWorktree, repoRootOf, worktreeDirty } from './worktree-workspaces'
+import { commitWorktree, copyIncludedFiles, ensureWorktree, git, mergeHint, mergeWorktree, planWorktree, removeWorktree, reopenWorktree, repoRootOf, worktreeDirty } from './worktree-workspaces'
 
 const dirs: string[] = []
 afterEach(() => { for (const d of dirs.splice(0)) removeTempDir(d) })
@@ -132,6 +132,20 @@ describe('worktree workspaces (2026-10-07)', () => {
     expect(copyIncludedFiles(repoRoot, plan.root)).toBe(1)
     expect(existsSync(join(plan.root, 'top.secret'))).toBe(true)
     expect(existsSync(join(outside, 'a.secret'))).toBe(false)
+  })
+  it('reopens a removed worktree from its kept branch at the same place (2026-10-08)', () => {
+    const { project, state } = repo()
+    const repoRoot = repoRootOf(project)!
+    const plan = planWorktree({ stateDir: state, projectId: PID, projectPath: project, repoRoot, id: 'dddd0001' })
+    const path = ensureWorktree(plan)
+    writeFileSync(join(path, 'work.txt'), 'w\n'); commitWorktree(plan.root, 'work')
+    removeWorktree(repoRoot, plan.root)
+    reopenWorktree(repoRoot, plan.root, plan.branch)
+    expect(readFileSync(join(plan.root, 'work.txt'), 'utf8')).toBe('w\n')
+    expect(git(plan.root, ['rev-parse', '--abbrev-ref', 'HEAD'])).toBe(plan.branch)
+    expect(() => reopenWorktree(repoRoot, plan.root, plan.branch)).toThrow('worktree_conflict')
+    removeWorktree(repoRoot, plan.root); execFileSync('git', ['branch', '-D', plan.branch], { cwd: project, stdio: 'pipe' })
+    expect(() => reopenWorktree(repoRoot, plan.root, plan.branch)).toThrow('worktree_branch_missing')
   })
   it('merge hint quotes paths with spaces', () => {
     expect(mergeHint('/Users/a/My Project', 'cc/abcd1234')).toBe("cd '/Users/a/My Project' && git merge cc/abcd1234")

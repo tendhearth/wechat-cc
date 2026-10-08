@@ -154,7 +154,8 @@ describe('WeChat task control through the shared service',()=>{
     expect(await control('owner',`任务 ${task.id} 提交`,identity)).toContain('已提交到分支 cc/abcd1234（0123456）')
     expect(await control('owner',`任务 ${task.id} 合回`,identity)).toContain('不能直接快进')
     expect(await control('owner',`任务 ${task.id} 删除工作区`,identity)).toContain('分支 cc/abcd1234 保留')
-    expect(act.mock.calls.map(c=>c[1])).toEqual(['commit','merge','remove'])
+    expect(await control('owner',`任务 ${task.id} 重开工作区`,identity)).toContain('重新打开独立工作区')
+    expect(act.mock.calls.map(c=>c[1])).toEqual(['commit','merge','remove','reopen'])
     // 一条都没当成补充发给执行者
     expect(service.detail(task.id).events.length).toBe(before)
     expect(await control('owner',`任务 ${task.id} 提交 一下`,identity)).toContain('用法')

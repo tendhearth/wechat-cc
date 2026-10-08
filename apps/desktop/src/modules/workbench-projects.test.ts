@@ -57,5 +57,5 @@ it('independent-workspace tasks (2026-10-07) are grouped under their source proj
  const merged=renderWorkbench({...state,tasks:[wt],selectedId:'wt1',detail:{...detail,task:{...wt,worktree:{...wt.worktree,merged:true}}}} as never)
  expect(merged).toContain('已合回项目')
  const removed=renderWorkbench({...state,tasks:[{...wt,worktree:{...wt.worktree,removed:true}}],selectedId:'wt1',detail:{...detail,task:{...wt,worktree:{...wt.worktree,removed:true}}}} as never)
- expect(removed).not.toContain('data-action="worktree-commit"');expect(removed).toContain('工作区已删除')
+ expect(removed).not.toContain('data-action="worktree-commit"');expect(removed).toContain('工作区已删除');expect(removed).toContain('data-action="worktree-reopen"')
 })

@@ -3,10 +3,11 @@
  * 都要求没有会话占着这个目录(执行者随时可能再写),和逐文件撤销同一道门;合回还要求源项目目录没被别的任务占着。
  */
 import { pathsConflict } from '../scheduler'
-import { commitWorktree, mergeHint, mergeWorktree, removeWorktree } from '../worktree-workspaces'
+import { existsSync } from 'node:fs'
+import { commitWorktree, mergeHint, mergeWorktree, removeWorktree, reopenWorktree } from '../worktree-workspaces'
 import type { ServiceCtx } from './ctx'
 
-type Action = 'commit' | 'remove' | 'merge'
+type Action = 'commit' | 'remove' | 'merge' | 'reopen'
 
 export function makeWorktreeDomain(ctx: ServiceCtx) {
   const { store, state } = ctx
@@ -14,7 +15,7 @@ export function makeWorktreeDomain(ctx: ServiceCtx) {
    * 提交只是给文件拍快照(之后又写的,最坏是没进这次提交,不会弄坏东西)⇒ 这件事自己保留的会话已经答复、安静着,
    * 就不必先收工(真机核对 10-07:答复后会话保留 10 分钟,那段时间点「提交到分支」一律被拒)。删工作区要删目录,仍要先收工。
    */
-  function target(id: string, action: Action) {
+  function target(id: string, action: Exclude<Action, 'reopen'>) {
     const task = store.get(id)
     const wt = store.worktrees.get(id)
     if (!wt) throw new Error('not_worktree')
@@ -33,9 +34,22 @@ export function makeWorktreeDomain(ctx: ServiceCtx) {
     return { task, wt }
   }
   const domain = {
-    worktreeAction(id: string, action: Action): { branch: string; committed?: boolean; sha?: string; mergeHint?: string; removed?: boolean; merged?: boolean; into?: string } {
-      if (action !== 'commit' && action !== 'remove' && action !== 'merge') throw new Error('invalid_request')
-      const { task, wt } = target(id, action)
+    worktreeAction(id: string, action: Action): { branch: string; committed?: boolean; sha?: string; mergeHint?: string; removed?: boolean; merged?: boolean; into?: string; reopened?: boolean } {
+      if (action !== 'commit' && action !== 'remove' && action !== 'merge' && action !== 'reopen') throw new Error('invalid_request')
+      // 重新打开(10-08):删掉的工作区从保留的分支重新检出到原位置,任务路径不变,可以接着做
+      if (action === 'reopen') {
+        const task = store.get(id), wt = store.worktrees.get(id)
+        if (!wt) throw new Error('not_worktree')
+        if (wt.removedAt === null) throw new Error('worktree_open')
+        if (task.archivedAt !== null) throw new Error('workbench_archived')
+        reopenWorktree(wt.repoRoot, wt.root, wt.branch)
+        if (!existsSync(task.path)) throw new Error('worktree_project_missing')
+        store.worktrees.markReopened(id)
+        store.addEvent(id, 'system', `已从分支 ${wt.branch} 重新打开独立工作区，可以接着做了。`)
+        ctx.hub.touched(id)
+        return { branch: wt.branch, reopened: true }
+      }
+      const { task, wt } = target(id, action as Exclude<Action, 'reopen'>)
       if (action === 'commit') {
         const result = commitWorktree(wt.root, task.title)
         const hint = mergeHint(wt.projectPath, wt.branch)

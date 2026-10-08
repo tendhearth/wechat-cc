@@ -32,7 +32,7 @@ export function mobileMatterError(error:unknown):Response {
   if(code==='invalid_entry_owner')return json({ok:false,error:code},403)
   // 独立工作区(2026-10-07):项目不是 Git 仓库 / 同名分支或目录已占 / git 自己失败。
   if(code==='worktree_not_git')return json({ok:false,error:code},422)
-  if(['worktree_branch_exists','worktree_conflict','worktree_dirty','worktree_removed','worktree_uncommitted','project_dirty','project_detached','worktree_not_ff','project_busy'].includes(code))return json({ok:false,error:code},409)
+  if(['worktree_branch_exists','worktree_conflict','worktree_dirty','worktree_removed','worktree_uncommitted','project_dirty','project_detached','worktree_not_ff','project_busy','worktree_branch_missing','worktree_open'].includes(code))return json({ok:false,error:code},409)
   if(code==='not_worktree')return json({ok:false,error:code},422)
   if(code==='worktree_git_failed')return json({ok:false,error:code},502)
   if(['creation_conflict','managed_workspace_changed','attachment_scope','attachment_conflict'].includes(code))return json({ok:false,error:code},409)
@@ -123,7 +123,7 @@ export async function mobileWorkbenchRoute(actions:MobileMatterActions|undefined
     try{
       let b:unknown
       try{b=await req.json()}catch{throw Error('invalid_request')}
-      if(!object(b)||Object.keys(b).some(k=>k!=='id'&&k!=='action')||typeof b.id!=='string'||!ID.test(b.id)||(b.action!=='commit'&&b.action!=='remove'&&b.action!=='merge'))throw Error('invalid_request')
+      if(!object(b)||Object.keys(b).some(k=>k!=='id'&&k!=='action')||typeof b.id!=='string'||!ID.test(b.id)||(b.action!=='commit'&&b.action!=='remove'&&b.action!=='merge'&&b.action!=='reopen'))throw Error('invalid_request')
       if(!actions?.worktree)throw Error('workbench_not_wired')
       return json({ok:true,...actions.worktree(b.id,b.action)})
     }catch(error){return mobileMatterError(error)}
