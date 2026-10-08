@@ -8,17 +8,17 @@
 - [六项实施计划](../superpowers/plans/2026-10-05-workbench-isolation-review.md)
 - [维护者入口](../maintainer/README.md)及根目录 AGENTS.md
 
-上批桌面与跨平台收口已通过 [PR 230](https://github.com/tendhearth/wechat-cc/pull/230) 进入 dev，本批开发产品基线为 `b2ef0c71`。10 月 5 日验收的本机桌面和后台也是该版本。Claude 与 Qwen3.8 的真实工作台图片、续接及聊天工具测试通过；Cursor 当时被供应商额度限制挡住。这些历史证据不代替本批隔离和撤回的验收，合入前需重新核对远端 dev。
+上批桌面与跨平台收口已通过 [PR 230](https://github.com/tendhearth/wechat-cc/pull/230) 进入 dev，本批最初产品基线为 `b2ef0c71`。10 月 8 日整合树已对齐 dev `b92b46cd`，保留后来加入的工作区、执行者退出、自定义 ACP、模型及图片功能。本批 [PR 262](https://github.com/tendhearth/wechat-cc/pull/262) 仍是草稿，尚未部署。10 月 5 日的 Claude 与 Qwen3.8 真执行者证据不代替本批验收；Cursor 当时受额度限制，合入前还需重新核对远端 dev 和本机版本。
 
 ## 第一优先级 完成当前批准的一批
 
 | 任务 | 当前状态 | 接手后的完成条件 |
 | --- | --- | --- |
-| Git 副本分配与补丁底层 | 实现 `7fc58ea8` 已提交，原目标测试各 35 项通过；10 月 8 日修复独立审阅的两个问题 | 确认独立目录、分支、幂等分配及完整导出；源文件、源分支和真实 index 不变 |
-| 私有恢复快照与撤回日志 | 实现 `7a843db6` 已提交，原目标测试各 40 项通过；10 月 8 日修复特殊文件阻塞问题 | 确认精确字节、存在性、路径身份、版本和崩溃恢复，不把未知状态当可撤回 |
-| 桌面和手机执行位置及桌面撤回交互 | 现有修改和 5 项浏览器流程测试保留，尚未提交；待收尾和独立审阅 | 对接真实服务；只有匹配请求的 reverted 回执显示已撤回，保留现场不冒充撤回 |
-| 原生执行配置准入 | 原修改保留；10 月 8 日 Bun 和 Node 各 39 项及类型检查通过，正在补两项 schema 边界 | 搬到副本后模型、端点、工具授权和路径必须能可靠重现；不能证明就明确拒绝 |
-| 任务创建与来源项目绑定 | 待上述模块审阅后串行实施，计划 Task 4 | 有编号入口异步分配且重试只产生一件任务；列表按来源项目归组，执行仍在副本；复核和额度接手继承副本 |
+| Git 副本分配与补丁底层 | 模块及修复已独立审阅并整合；路径和并发预留修复 `b72adf50` 的 Bun/Node 各 52 项通过 | 继续核对实际 Windows；完整导出及源文件、源分支和真实 index 不变纳入整体验收 |
+| 私有恢复快照与撤回日志 | 模块及 FIFO 修复已独立审阅并整合，目标 Bun/Node 各 45 项通过；Windows 目录处理修复中 | 精确字节、存在性、身份、版本和 daemon 崩溃恢复；不能把未知状态当可撤回 |
+| 桌面和手机执行位置及桌面撤回交互 | `cf98c031` 两项复审通过并整合；原生各 119 项、桌面/PWA 各 284 项、实际浏览器 17 项通过 | 对接真实服务；未知创建冻结完整请求，未确认退出不开放撤回；只有匹配的 reverted 回执表示已撤回 |
+| 原生执行配置准入 | `7323695c` 修复已独立复审并整合；各 111 项及 10 个实际分配样例通过 | 保守核对规则、配置、授权及路径等价；无法证明就拒绝，4096 项扫描上限需说明 |
+| 任务创建与来源项目绑定 | 实现 `2770d2b9`，各 880 项目标测试通过；独立审阅发现微信 matter 写失败仍接受，修复中 | 微信有 MatterStore 时与其他入口同事务接受，失败零派发；保留旧回执及无 MatterStore 兼容，再定向复审 |
 | 会话关闭证明及撤回和导出服务 | 待 Task 4 后串行实施，计划 Task 5 | writer 确认退出后冻结整段会话；未决日志阻挡新写入；管理员路由、权限登记和成果全部接齐 |
 | 整体验收与交付 | 待整合，计划 Task 6 | 全套 Bun、Node、类型和模块边界、桌面和 Rust 检查；准确提交的 CI；dev、本机安装和真实执行者闭环 |
 
@@ -35,8 +35,10 @@
 | `cc-isolation-restore` | `codex/cc-isolation-restore` | 恢复模块，已提交；修改仍交原负责人 |
 | `cc-isolation-ui` | `codex/cc-isolation-ui` | apps 内客户端、桌面代理与原生白名单 |
 | `cc-isolation-config` | `codex/cc-isolation-config` | 新配置准入 helper 和测试 |
-| `cc-isolation-module-review` | `codex/cc-isolation-module-review` | 独立模块审阅，当前审阅版本 `641f635f` |
-| `cc-isolation-core` | `codex/cc-isolation-core` | 已准备，Task 4 后端实现尚未派发 |
+| `cc-isolation-module-review` | `codex/cc-isolation-module-review` | Task 4 独立审阅，当前 `35c03044`，待修复复审 |
+| `cc-isolation-core` | `codex/cc-isolation-core` | Task 4 后端；当前修复微信接受事务，Task 5 尚未开始 |
+| `cc-isolation-dev-audit` | `codex/cc-isolation-ui-final-review` | 已转为 UI 独立复审，`cf98c031` 通过 |
+| `cc-isolation-windows-ci` | `codex/cc-isolation-windows-ci` | 根据真实 Windows CI 修复配置权限夹具及目录处理 |
 
 不要另派一位重复写这些树。根树 `.superpowers/sdd/2026-10-05-workbench-isolation-review/` 保存最新进度、接口裁决和模块报告；各实现树也有自己的交接报告。它们是本机工作记录，接手时结合 Git 实际状态核对。报告专用提交不作为产品代码合入。
 
@@ -57,9 +59,9 @@
 
 ## 待整合时处理的检查结果
 
-独立审阅版本 `641f635f` 的 75 项模块测试在 Bun 和 Node 都通过，但另有三个真实复现，10 月 8 日开始修复：Git 缺少对象时会隐式从 promisor remote 取内容并运行 uploadpack；ready 请求重试在异步配置检查后缺少目录重新核验；私有 blob 被换成 FIFO 时打开文件会阻塞。修复要补真实回归及定向复审，不能用原测试全绿略过。
+原独立审阅的三个真实问题已修复并定向复审通过：Git 缺少对象时隐式 lazy fetch、ready 重试配置等待后的身份核验、私有 blob 被替换为 FIFO 后阻塞。Git runner 要求支持禁用 lazy fetch 的 Git 版本，低于 2.45 明确拒绝。
 
-Git 模块首次全套 Bun 为 11,854 项通过；后续全套的两个既有真实子进程测试失败，单独复跑 32 项通过。保留原红，不据此宣称最终版本全绿，整合后串行重验并定位再现问题。
+草稿 PR 首轮准确版本 `13ae30ad` 的 Mac、Linux、Node 及后端端到端检查通过；Windows 为 3 个文件、41 项失败。Git 路径比较修复已独立通过并推送新轮；配置权限夹具和恢复目录处理仍在修复。最终整合版本要重新跑全套，不能用早期模块或 CI 绿代替。五万项真实覆盖测试已有独立时间预算，保持完整扫描和拒绝断言。
 
 UI 分支的新增路由需要 Task 5 补 daemon 和 token 白名单后才能通过路由守卫。手机生成页由整合者按现有构建流程重建，不能忽略生成物与源码不一致。原生确认框已改为应用对话框，还要在实际安装包验收。
 
