@@ -349,7 +349,7 @@ it('preserves explicit commit/remove for historical v74 worktrees',async()=>{
   }
   const first=await make(),second=await make(),a=service.detail(first.id).task,one={receipt:{taskId:first.id}},two={receipt:{taskId:second.id}}
   // 提交到分支;项目本身不动
-  const commit=service.worktreeAction(one.receipt.taskId,'commit')
+  const commit=await service.worktreeAction(one.receipt.taskId,'commit')
   const {mergeHint}=await import('./worktree-workspaces')
   expect(commit).toMatchObject({committed:true,mergeHint:mergeHint(project,a.worktree!.branch)})
   expect(g('log','-1','--format=%s',a.worktree!.branch)).toBe(a.title)

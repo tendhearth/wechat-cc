@@ -3,7 +3,7 @@ import {randomUUID} from 'node:crypto'
 import {execFileSync} from 'node:child_process'
 import {mkdirSync,mkdtempSync,realpathSync,writeFileSync,readFileSync,rmSync} from 'node:fs'
 import {tmpdir} from 'node:os'
-import {join} from 'node:path'
+import {join,basename} from 'node:path'
 import {openDb,type Db} from '../../lib/db'
 import {removeTempDir} from '../../lib/test-temp'
 import {createProviderRegistry} from '../provider-registry'
@@ -16,7 +16,7 @@ let spawned:string[]
 const context={ownerKey:'owner',surface:'desktop' as const}
 const git=(...args:string[])=>execFileSync('git',['-C',source,...args],{encoding:'utf8'}).trim()
 beforeEach(()=>{
- area=realpathSync(mkdtempSync(join(tmpdir(),'cc-service-isolation-')));source=join(area,'source');mkdirSync(source);mkdirSync(join(area,'state'));mkdirSync(join(area,'home'))
+ area=(realpathSync.native??realpathSync)(mkdtempSync(join(tmpdir(),'cc-service-isolation-')));source=join(area,'source');mkdirSync(source);mkdirSync(join(area,'state'));mkdirSync(join(area,'home'))
  git('init','-q');git('config','user.name','Fixture');git('config','user.email','fixture@example.invalid');writeFileSync(join(source,'file.txt'),'original\n');mkdirSync(join(source,'child'));writeFileSync(join(source,'child','child.txt'),'child\n');git('add','.');git('commit','-qm','initial')
  db=openDb({path:join(area,'state','state.db')});store=makeWorkbenchStore(db);spawned=[]
  const registry=createProviderRegistry();for(const providerId of ['claude','codex'])registry.register(providerId,{async spawn(opts){spawned.push(opts.path);return{async *dispatch(){yield{kind:'result' as const,sessionId:randomUUID(),numTurns:1,durationMs:1}},async close(){}}}},{displayName:'Claude',canResume:()=>true,workbench:MANAGED_NATIVE_CAPABILITIES})
@@ -45,7 +45,7 @@ it('replays across surfaces and legacy keyed creation without reallocation, reje
 })
 it('keeps subdirectory scope and existing synchronous original-directory creation',async()=>{
  const first=await service.createEntry({...request(),target:{kind:'project',projectId:service.projects().find(p=>p.path===join(source,'child'))!.id}},context)
- expect(first.task.sourcePath).toBe(join(source,'child'));expect(first.task.path.endsWith('/child')).toBe(true)
+ expect(first.task.sourcePath).toBe(join(source,'child'));expect(basename(first.task.path)).toBe('child')
  const legacy=service.create({path:source,providerId:'claude',text:'legacy'})
  expect(legacy.path).toBe(source);expect(legacy).not.toHaveProperty('sourcePath');expect(legacy).not.toHaveProperty('workspace')
 })

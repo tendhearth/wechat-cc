@@ -75,7 +75,7 @@ export function makeViewDomain(ctx:ServiceCtx, queries?:{quotaHandoff(id:string)
     const workspace=store.gitWorkspaceForTask(task.id)
     return {
       ...task,
-      ...(workspace?{sourcePath:workspace.sourcePath,workspace:{id:workspace.id,mode:'isolated' as const,sourcePath:workspace.sourcePath,executionPath:workspace.executionPath,branch:workspace.branch,baseCommit:workspace.baseCommit},worktree:{projectPath:workspace.sourcePath,branch:workspace.branch,removed:false,merged:false}}:{}),
+      ...(workspace?{sourcePath:workspace.sourcePath,workspace:{id:workspace.id,mode:'isolated' as const,sourcePath:workspace.sourcePath,executionPath:workspace.executionPath,branch:workspace.branch,baseCommit:workspace.baseCommit,...(workspace.removedAt?{removed:true}:{})},worktree:{projectPath:workspace.sourcePath,branch:workspace.branch,removed:!!workspace.removedAt,merged:false}}:{}),
       phase:phaseOf(task,running),
       ...(runtime?{runtime}:{}),
       ...(!running&&TERMINAL_TASK_STATUSES.includes(task.status)&&store.source(task.id)?.firstDispatchedAt===null?{importedOnly:true}:{}),

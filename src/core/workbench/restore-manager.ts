@@ -2,9 +2,9 @@ import {randomUUID} from 'node:crypto'
 import {closeSync,constants,fchmodSync,fstatSync,fsyncSync,linkSync,lstatSync,openSync,readFileSync,renameSync,unlinkSync,writeSync} from 'node:fs'
 import {dirname,join,resolve} from 'node:path'
 import type {Db} from '../../lib/db'
-import type {GitReview,ReviewFile} from './git-review'
+import type {GitReview,ReviewFile} from './git-review-types'
 import {createRestoreStore,type RestoreOperation,type RestoreRun,type StoredChange,type StoredOperation,type StoredRun} from './restore-store'
-import {captureSnapshot,checkChain,digest,directoryId,gitInventory,initializeBlobs,verifyBlobRoot,loadBlob,observe,parentChain,safeRelative,sameContent,restoreError,verifyDirectoryAfterWrite,versionAt,type FileVersion,type GitState} from './restore-snapshots'
+import {captureSnapshot,leafId,exactLeafIdentity,checkChain,digest,directoryId,gitInventory,initializeBlobs,verifyBlobRoot,loadBlob,observe,parentChain,safeRelative,sameContent,restoreError,verifyDirectoryAfterWrite,versionAt,type FileVersion,type GitState} from './restore-snapshots'
 export type {RestoreOperation,RestoreRun} from './restore-store'
 export interface RestoreFile {path:string;changeId:string;state:'available'|'blocked'|'reverted'|'needs_recovery'|'resolved_keep_current';reason?:string;operationId?:string;observedFingerprint?:string}
 export interface RestoreReview extends RestoreRun {artifactId:string|null;files:RestoreFile[];review:GitReview}
@@ -27,9 +27,19 @@ export function createRestoreManager(options:RestoreManagerOptions){
  const {db,blobRoot,readGitState,withMutation,assertWriterClosed}=options,store=createRestoreStore(db)
  if(!readGitState||!withMutation||!assertWriterClosed)throw Error('restore_gates_required')
  const requireRun=(id:string)=>{const r=store.run(id);if(!r)throw Error('restore_not_found');return r}
+ function requestHash(input:RevertFile){
+  if(!safeRelative(input.path)||!input.requestId||!input.taskId||!input.artifactId||!input.changeId)throw Error('invalid_restore_request')
+  return digest(JSON.stringify([input.workspaceId,input.taskId,input.artifactId,input.path,input.changeId,input.requestId]))
+ }
+ function lookupRevert(input:RevertFile):RestoreOperation|null{
+  const hash=requestHash(input),prior=store.findRequest(input.workspaceId,input.requestId)
+  if(!prior)return null
+  if(prior.inputHash!==hash)throw Error('request_conflict')
+  return terminal(prior.receipt.state)?{...prior.receipt}:null
+ }
  const blocked=(workspaceId:string)=>!!store.workspace(workspaceId)?.invalid||store.pending(workspaceId)||store.runs(workspaceId).some(r=>r.status!=='closed')
  function checkRoot(run:StoredRun){const w=store.workspace(run.workspaceId);if(!w||w.invalid||w.path!==run.path||w.directoryIdentity!==run.directoryIdentity)throw Error('workspace_identity_changed');try{if(directoryId(run.path)!==run.directoryIdentity)throw Error('directory_identity_changed')}catch(e){w.invalid=1;store.putWorkspace(w);throw e}}
- function checkVersion(run:StoredRun,change:StoredChange){checkRoot(run);if(store.workspace(run.workspaceId)!.generation!==run.generation||store.pathVersion(run.workspaceId,change.path)!==change.changeId)throw Error('stale_change');if(run.status!=='closed'||!run.before||!run.after)throw Error('writer_not_closed');if(change.reason||change.before.kind==='unknown'||change.after.kind==='unknown')throw Error(change.reason??'snapshot_unavailable')}
+ function checkVersion(run:StoredRun,change:StoredChange){checkRoot(run);if([change.before,change.after].some(v=>v.kind==='file'&&!exactLeafIdentity(v.identity)))throw Error('legacy_file_identity');if(store.workspace(run.workspaceId)!.generation!==run.generation||store.pathVersion(run.workspaceId,change.path)!==change.changeId)throw Error('stale_change');if(run.status!=='closed'||!run.before||!run.after)throw Error('writer_not_closed');if(change.reason||change.before.kind==='unknown'||change.after.kind==='unknown')throw Error(change.reason??'snapshot_unavailable')}
  async function checkGit(run:StoredRun,change:StoredChange){
   const before=run.before!,after=run.after!,current=await readGitState(run.path),path=change.path
   if(before.git.head!==after.git.head||current.head!==before.git.head||(before.git.index[path]??null)!==(after.git.index[path]??null)||(current.index[path]??null)!==(before.git.index[path]??null)||before.staged.includes(path)||after.staged.includes(path)||(await gitInventory(run.path)).staged.includes(path))throw Error('git_state_changed')
@@ -54,7 +64,7 @@ export function createRestoreManager(options:RestoreManagerOptions){
   const operations=new Map(store.operations(run.workspaceId).map(o=>[o.receipt.changeId,o])),workspace=store.workspace(run.workspaceId),isBlocked=blocked(run.workspaceId),files:RestoreFile[]=run.changes.map(change=>{
    const op=operations.get(change.changeId),state=op?.receipt.state
    if(state==='reverted'||state==='resolved_keep_current'||state==='needs_recovery')return {path:change.path,changeId:change.changeId,state,operationId:op!.receipt.operationId,...(op!.receipt.reason?{reason:op!.receipt.reason}:{}),...(op!.receipt.observedFingerprint?{observedFingerprint:op!.receipt.observedFingerprint}:{})}
-   let reason=change.reason
+   let reason=change.reason??([change.before,change.after].some(v=>v.kind==='file'&&!exactLeafIdentity(v.identity))?'legacy_file_identity':undefined)
    if(workspace?.generation!==run.generation)reason='stale_change'
    if(run.status!=='closed')reason='writer_not_closed'
    if(isBlocked)reason='workspace_blocked'
@@ -80,10 +90,10 @@ export function createRestoreManager(options:RestoreManagerOptions){
    const bytes=loadBlob(blobRoot,change.before.blobSha,run.blobRootIdentity),temporaryPath=join(dirname(change.path),`.cc-workbench-restore-${op.receipt.operationId}.tmp`)
    if(op.temporaryPath&&op.temporaryPath!==temporaryPath)throw Error('temporary_identity_changed')
    let existing=false
-   if(op.temporaryPath){try{const st=lstatSync(join(run.path,temporaryPath));existing=true;if(!op.temporaryIdentity||`${st.dev}:${st.ino}`!==op.temporaryIdentity||!st.isFile()||st.isSymbolicLink()||st.nlink!==1||st.size!==bytes.length||(st.mode&0o777)!==change.before.mode)throw Error('temporary_identity_changed');const saved=readFileSync(join(run.path,temporaryPath));if(digest(saved)!==change.before.blobSha)throw Error('temporary_content_changed')}catch(e){if((e as NodeJS.ErrnoException).code!=='ENOENT')throw e;if(op.temporaryIdentity)throw Error('temporary_missing')}}
+   if(op.temporaryPath){try{const st=lstatSync(join(run.path,temporaryPath),{bigint:true});existing=true;if(!op.temporaryIdentity||leafId(st)!==op.temporaryIdentity||!st.isFile()||st.isSymbolicLink()||st.nlink!==1n||st.size!==BigInt(bytes.length)||Number(st.mode&0o777n)!==change.before.mode)throw Error('temporary_identity_changed');const saved=readFileSync(join(run.path,temporaryPath));if(digest(saved)!==change.before.blobSha)throw Error('temporary_content_changed')}catch(e){if((e as NodeJS.ErrnoException).code!=='ENOENT')throw e;if(op.temporaryIdentity)throw Error('temporary_missing')}}
    if(!existing){op.temporaryPath=temporaryPath;store.putOperation(op)
     const fd=openSync(join(run.path,temporaryPath),constants.O_WRONLY|constants.O_CREAT|constants.O_EXCL|constants.O_NOFOLLOW,0o600)
-    try{let offset=0;while(offset<bytes.length)offset+=writeSync(fd,bytes,offset,bytes.length-offset);fchmodSync(fd,change.before.mode);fsyncSync(fd);const s=fstatSync(fd);op.temporaryIdentity=`${s.dev}:${s.ino}`}finally{closeSync(fd)}
+    try{let offset=0;while(offset<bytes.length)offset+=writeSync(fd,bytes,offset,bytes.length-offset);fchmodSync(fd,change.before.mode);fsyncSync(fd);const s=fstatSync(fd,{bigint:true});if(!s.isFile()||s.nlink!==1n)throw Error('temporary_identity_changed');op.temporaryIdentity=leafId(s)}finally{closeSync(fd)}
    }
    verifyDirectoryAfterWrite(dirname(target));op.effectReady=true;op.receipt.state='applying';store.putOperation(op);checkAfter(run,change);checkChain(run.path,op.chain)
    if(change.after.kind==='absent'){linkSync(join(run.path,temporaryPath),target);unlinkSync(join(run.path,temporaryPath))}else renameSync(join(run.path,temporaryPath),target)
@@ -93,6 +103,7 @@ export function createRestoreManager(options:RestoreManagerOptions){
   return finish(op,'reverted')
  }
  const manager={
+  lookupRevert,
   async begin(input:BeginRestore):Promise<RestoreRun>{
    if(!input.workspaceId||!input.taskId||!input.runId||!input.directoryIdentity||!input.path||resolve(input.path)!==input.path)throw Error('invalid_restore_begin')
    await assertWriterClosed(input.workspaceId)
@@ -125,8 +136,7 @@ export function createRestoreManager(options:RestoreManagerOptions){
   bindArtifact(id:string,artifactId:string,artifactSha256:string){const run=requireRun(id);if(run.status!=='closed'||!artifactId||!/^[a-f0-9]{64}$/.test(artifactSha256))throw Error('invalid_restore_artifact');if(run.artifactId&&(run.artifactId!==artifactId||run.artifactSha256!==artifactSha256))throw Error('artifact_conflict');run.artifactId=artifactId;run.artifactSha256=artifactSha256;store.putRun(run)},
   list:(workspaceId:string)=>store.runs(workspaceId).map(review),blocked,
   async revert(input:RevertFile):Promise<RestoreOperation>{
-   if(!safeRelative(input.path)||!input.requestId||!input.taskId||!input.artifactId||!input.changeId)throw Error('invalid_restore_request')
-   const inputHash=digest(JSON.stringify([input.workspaceId,input.taskId,input.artifactId,input.path,input.changeId,input.requestId]))
+   const inputHash=requestHash(input)
    return withMutation(input.workspaceId,async()=>{
     const previous=store.findRequest(input.workspaceId,input.requestId);if(previous){if(previous.inputHash!==inputHash)throw Error('request_conflict');return {...previous.receipt}}
     if(blocked(input.workspaceId))throw Error('workspace_blocked');await assertWriterClosed(input.workspaceId)

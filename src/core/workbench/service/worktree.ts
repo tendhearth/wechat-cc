@@ -2,6 +2,8 @@
  * 独立工作区的动作(2026-10-07):提交到分支、删工作区目录;10-08 加「合回项目」(只快进,别的交给主人,给一行可复制的命令)。
  * 都要求没有会话占着这个目录(执行者随时可能再写),和逐文件撤销同一道门;合回还要求源项目目录没被别的任务占着。
  */
+import {existsSync} from 'node:fs'
+import {createGitRunner} from '../git-runner'
 import { pathsConflict } from '../scheduler'
 import { commitWorktree, mergeHint, mergeWorktree, removeWorktree } from '../worktree-workspaces'
 import type { ServiceCtx } from './ctx'
@@ -20,22 +22,62 @@ export function makeWorktreeDomain(ctx: ServiceCtx) {
     if (!wt) throw new Error('not_worktree')
     if (wt.removedAt !== null) throw new Error('worktree_removed')
     if (task.error === 'writer_not_closed') throw new Error('workbench_busy')
-    for (const holder of [...state.reservations.values(), ...state.writerOrphans.values()]) {
+    for (const holder of [...state.reservations.values(), ...state.writerOrphans.values(), ...state.mutations.values()]) {
       if (!pathsConflict(holder.path, task.path)) continue
       const own = state.runsByTask.get(id)
       const quietOwn = action !== 'remove' && own !== undefined && holder === own && !own.finishing && !own.uncertain && ctx.actions.deref('worktree').isReplied(own)
       if (!quietOwn) throw new Error('workbench_busy')
     }
     // 合回会改项目目录里的文件:那里有别的任务在跑(或关不掉的执行程序)⇒ 不动。
-    if (action === 'merge') for (const holder of [...state.reservations.values(), ...state.writerOrphans.values()]) {
+    if (action === 'merge') for (const holder of [...state.reservations.values(), ...state.writerOrphans.values(), ...state.mutations.values()]) {
       if (pathsConflict(holder.path, wt.projectPath) || pathsConflict(holder.path, wt.repoRoot)) throw new Error('project_busy')
     }
     return { task, wt }
   }
+  type Result={branch:string;committed?:boolean;sha?:string;mergeHint?:string;removed?:boolean;merged?:boolean;into?:string}
+  async function boundAction(id:string,action:'commit'|'remove'):Promise<Result>{
+    const recovery=ctx.recovery!,{task,w}=recovery.owned(id)
+    recovery.gate(task.path)
+    const reservation=<T>(fn:()=>Promise<T>)=>action==='commit'?recovery.withCommit(id,fn):recovery.withMutation(w.id,fn)
+    return reservation(async()=>{
+      if(action==='remove'&&recovery.manager.blocked(w.id))throw Error('workspace_blocked')
+      await recovery.git().verify(w)
+      const git=createGitRunner(),read=async(path:string,args:string[])=>(await git.run(path,args)).toString('utf8').trim()
+      if(action==='remove'){
+        if(await read(w.worktreeRoot,['status','--porcelain','--untracked-files=all']))throw Error('worktree_dirty')
+        await recovery.git().verify(w)
+        await git.run(w.gitRoot,['worktree','remove','--',w.worktreeRoot])
+        if(existsSync(w.worktreeRoot))throw Error('git_workspace_needs_recovery')
+        store.atomic(()=>{store.gitWorkspaces.update({...w,removedAt:ctx.now()});store.addEvent(id,'system',`Workspace removed; branch retained: ${w.branch}`)})
+        ctx.hub.touched(id);return {branch:w.branch,removed:true}
+      }
+      const quiet=()=>{const own=state.runsByTask.get(id);if(own&&(own.finishing||own.uncertain||!ctx.actions.deref('workspace-commit').isReplied(own)))throw Error('writer_not_closed')}
+      quiet()
+      const files=(await git.run(w.executionPath,['ls-files','--cached','--others','--exclude-standard','-z','--','.'])).toString('utf8').split('\0').filter(p=>p&&!p.split('/').some(part=>/^\.cc-workbench/i.test(part)))
+      if(files.length>50000)throw Error('git_output_limit')
+      let committed=false
+      if(files.length){
+        quiet()
+        await git.run(w.executionPath,['add','-A','--',...files])
+        if(await read(w.executionPath,['diff','--cached','--name-only','--',...files])){
+          quiet()
+          await git.run(w.executionPath,['-c','user.name=Tendhearth CC','-c','user.email=cc@localhost','-c','commit.gpgsign=false','commit','--no-verify','--only','-m',task.title.slice(0,200)||'Workspace changes','--',...files]);committed=true
+        }
+      }
+      const sha=await read(w.executionPath,['rev-parse','HEAD']),hint=mergeHint(w.sourcePath,w.branch)
+      store.addEvent(id,'system',`Workspace commit: ${sha}`);ctx.hub.touched(id)
+      return {branch:w.branch,committed,sha,mergeHint:hint}
+    })
+  }
   return {
-    worktreeAction(id: string, action: Action): { branch: string; committed?: boolean; sha?: string; mergeHint?: string; removed?: boolean; merged?: boolean; into?: string } {
+    worktreeAction(id: string, action: Action): Result|Promise<Result> {
       if (action !== 'commit' && action !== 'remove' && action !== 'merge') throw new Error('invalid_request')
+      if(store.gitWorkspaceForTask(id)){
+        if(action==='merge')throw Error('invalid_request')
+        return boundAction(id,action)
+      }
       const { task, wt } = target(id, action)
+      ctx.recovery?.gate(task.path)
       if (action === 'commit') {
         const result = commitWorktree(wt.root, task.title)
         const hint = mergeHint(wt.projectPath, wt.branch)
@@ -44,6 +86,7 @@ export function makeWorktreeDomain(ctx: ServiceCtx) {
         return { branch: wt.branch, committed: result.committed, sha: result.sha, mergeHint: hint }
       }
       if (action === 'merge') {
+        ctx.recovery?.gate(wt.projectPath);ctx.recovery?.gate(wt.repoRoot)
         const result = mergeWorktree(wt.repoRoot, wt.root, wt.branch)
         store.worktrees.markMerged(id)
         store.addEvent(id, 'system', result.merged ? `分支 ${wt.branch} 已快进合并到项目的 ${result.into}。` : `分支 ${wt.branch} 的内容已经在项目的 ${result.into} 里了。`)

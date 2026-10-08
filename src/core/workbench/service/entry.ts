@@ -134,6 +134,7 @@ export function makeEntryDomain(ctx:ServiceCtx, domains:EntryDomains) {
       const isolated=!!sourcePath&&(rawMode==='isolated'||(target.kind==='project'&&target.isolation==='worktree')||(rawMode==='auto'&&gitSource(sourcePath)))
       if(isolated&&!gitSource(sourcePath!))throw Error('git_workspace_source_unsupported')
       if(!sourcePath&&rawMode==='isolated')throw Error('git_workspace_source_unsupported')
+      if(sourcePath&&!isolated)ctx.recovery?.admit(sourcePath)
       const isManaged=!sourcePath&&target.kind==='managed'
       const workspaceId=isManaged||isolated?randomUUID():null
       record=store.entryRequests.reserve({ownerKey:context.ownerKey,requestId:input.requestId,canonicalRequestHash:hash,target:input.target,

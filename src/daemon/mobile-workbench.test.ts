@@ -218,9 +218,15 @@ describe('phone worktree actions (2026-10-07)',()=>{
     const fn=vi.fn(()=>({branch:'x'}))
     for(const b of [{id:'deadbeef'},{id:'x',action:'commit'},{id:'deadbeef',action:'rebase'},{id:'deadbeef',action:'commit',force:1}])expect((await post(fn,b))?.status).toBe(400)
     expect(fn).not.toHaveBeenCalled()
-    for(const [code,status] of [['worktree_dirty',409],['worktree_removed',409],['not_worktree',422],['workbench_busy',409],['worktree_not_ff',409],['project_dirty',409],['worktree_uncommitted',409],['project_busy',409]] as const){
+    for(const [code,status] of [['writer_not_closed',409],['workspace_blocked',409],['git_workspace_binding_required',409],['worktree_dirty',409],['worktree_removed',409],['not_worktree',422],['workbench_busy',409],['worktree_not_ff',409],['project_dirty',409],['worktree_uncommitted',409],['project_busy',409]] as const){
       const r=await post(()=>{throw Error(code)},{id:'deadbeef',action:'remove'})
       expect(r!.status,code).toBe(status);expect(await r!.json()).toEqual({ok:false,error:code})
     }
   })
+})
+
+it('waits for an asynchronous managed worktree action and returns its completed result',async()=>{
+ const url=new URL('http://phone.test/m/api/matter/worktree')
+ const result=await mobileWorkbenchRoute({worktree:async()=>({branch:'cc/new',committed:true})} as never,url,new Request(url,{method:'POST',body:JSON.stringify({id:'deadbeef',action:'commit'})}))
+ expect(await result!.json()).toEqual({ok:true,branch:'cc/new',committed:true})
 })

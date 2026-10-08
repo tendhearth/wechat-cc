@@ -148,7 +148,7 @@ export function canonicalEntryHashV2(input: EntryInput, legacyPath?: string): st
 /** Admission codes shared by HTTP and phone, including native workspace failures. */
 export function entryErrorStatus(code:string):number|undefined {
  if(['git_workspace_source_unsupported','configuration_not_reproducible','git_workspace_configuration_rejected'].includes(code))return 422
- if(['git_workspace_changed','git_workspace_conflict','git_workspace_needs_recovery','git_workspace_configuration_changed'].includes(code))return 409
+ if(['git_workspace_binding_required','git_workspace_changed','git_workspace_conflict','git_workspace_needs_recovery','git_workspace_configuration_changed'].includes(code))return 409
  if(['git_timeout','git_unavailable','git_output_limit'].includes(code))return 503
  if(code==='invalid_execution_mode')return 400
  return sharedEntryErrorStatus(code)

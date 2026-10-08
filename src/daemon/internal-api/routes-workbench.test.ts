@@ -668,22 +668,31 @@ describe('Workbench internal HTTP API', () => {
     expect((await request('/v1/workbench/writer-exited',{method:'POST',body:JSON.stringify({id:'bad'})},operatorToken)).status).toBe(400)
   })
 
-  it('reverts one reviewed file for the desktop owner; changed file is 409, unrecoverable is 422, agents are denied (2026-10-06)',async()=>{
+  it('requires restore proof and owner authorization, awaits the exact operation receipt',async()=>{
     const workbench=service(),{request,operatorToken,trustedToken}=await start(workbench)
-    const revert=vi.fn((_id:string,input:{artifactId:string;path:string})=>{
-      if(input.path==='changed.ts')throw new Error('review_file_changed')
-      if(input.path==='bin.dat')throw new Error('review_revert_unavailable')
-      return {path:input.path,restored:'content'}
-    })
-    ;(workbench as unknown as {revertReviewFile:typeof revert}).revertReviewFile=revert
-    const body=(path:string,extra={})=>({method:'POST',body:JSON.stringify({id:'deadbeef',artifactId:'11111111-1111-4111-8111-111111111111',path,...extra})})
-    expect((await request('/v1/workbench/review-revert',body('a.ts'),trustedToken)).status).toBe(403)
-    expect(revert).not.toHaveBeenCalled()
-    const ok=await request('/v1/workbench/review-revert',body('src/a.ts'),operatorToken)
-    expect(ok.status).toBe(200);expect(await ok.json()).toEqual({reverted:{path:'src/a.ts',restored:'content'}})
-    expect((await request('/v1/workbench/review-revert',body('changed.ts'),operatorToken)).status).toBe(409)
-    expect((await request('/v1/workbench/review-revert',body('bin.dat'),operatorToken)).status).toBe(422)
-    for(const bad of [body(''),body('a.ts',{extra:1}),{method:'POST',body:JSON.stringify({id:'bad',artifactId:'x',path:'a'})}])expect((await request('/v1/workbench/review-revert',bad,operatorToken)).status).toBe(400)
+    const operation={operationId:'33333333-3333-4333-8333-333333333333',workspaceId:'44444444-4444-4444-8444-444444444444',taskId:'deadbeef',artifactId:'11111111-1111-4111-8111-111111111111',path:'src/a.ts',changeId:'22222222-2222-4222-8222-222222222222',requestId:'55555555-5555-4555-8555-555555555555',state:'reverted'}
+    Object.assign(workbench,{revertReviewFile:async(_id:string,input:{path:string})=>{if(input.path==='changed.ts')throw Error('file_changed');return operation}})
+    const body=(extra={})=>({method:'POST',body:JSON.stringify({id:'deadbeef',artifactId:operation.artifactId,path:'src/a.ts',changeId:operation.changeId,requestId:operation.requestId,...extra})})
+    expect((await request('/v1/workbench/review-revert',body(),trustedToken)).status).toBe(403)
+    const ok=await request('/v1/workbench/review-revert',body(),operatorToken)
+    expect(ok.status).toBe(200);expect(await ok.json()).toEqual({operation})
+    expect((await request('/v1/workbench/review-revert',body({path:'changed.ts'}),operatorToken)).status).toBe(409)
+    expect((await request('/v1/workbench/review-revert',body({changeId:undefined,requestId:undefined}),operatorToken)).status).toBe(422)
+    for(const extra of [{path:''},{extra:1},{changeId:'bad'},{requestId:'bad'},{id:'bad'}])expect((await request('/v1/workbench/review-revert',body(extra),operatorToken)).status).toBe(400)
+  })
+  it('registers owner-only resolve and export routes with strict payloads and public response envelopes',async()=>{
+    const workbench=service(),{request,operatorToken,trustedToken}=await start(workbench)
+    Object.assign(workbench,{resolveReviewRevert:async()=>({state:'resolved_keep_current'}),exportWorkspace:async()=>({id:'artifact'})})
+    for(const [route,payload,key,want] of [
+      ['review-revert-resolve',{id:'deadbeef',operationId:'33333333-3333-4333-8333-333333333333',observedFingerprint:'a'.repeat(64)},'operation',{state:'resolved_keep_current'}],
+      ['workspace-export',{id:'deadbeef'},'artifact',{id:'artifact'}],
+    ] as const){
+      const body=(extra={})=>({method:'POST',body:JSON.stringify({...payload,...extra})})
+      expect((await request('/v1/workbench/'+route,body(),trustedToken)).status).toBe(403)
+      const response=await request('/v1/workbench/'+route,body(),operatorToken)
+      expect(response.status).toBe(200);expect(await response.json()).toEqual({[key]:want})
+      expect((await request('/v1/workbench/'+route,body({extra:1}),operatorToken)).status).toBe(400)
+    }
   })
 
   it('worktree commit/remove for the desktop owner; dirty is 409, plain task 422, agents denied (2026-10-07)',async()=>{

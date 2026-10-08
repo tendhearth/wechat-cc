@@ -130,6 +130,7 @@ export interface ServiceDeps {
   networkGate?: NetworkGate
 }
 export interface ServiceCtx {
+  recovery?: import('./types').RecoveryDomain
   store: WorkbenchStore
   stateDir: string
   state: WorkbenchRuntimeState

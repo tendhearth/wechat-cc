@@ -1,6 +1,6 @@
 import type {SqlDatabase} from '../../lib/runtime/sqlite'
 export interface GitWorkspacePrepareInput {workspaceId:string;ownerKey:string;requestId:string;canonicalRequestHash:string;sourcePath:string;providerId:string}
-export interface GitWorkspaceRecord extends GitWorkspacePrepareInput {id:string;sourceIdentity:string;gitRoot:string;gitRootIdentity:string;gitDir:string;gitDirIdentity:string;commonDir:string;commonDirIdentity:string;projectSubpath:string;baseCommit:string;sourceBranch:string|null;branch:string;worktreeRoot:string;executionPath:string;directoryIdentity:string|null;executionIdentity:string|null;worktreeGitDir:string|null;worktreeGitDirIdentity:string|null;rootIdentity:string|null;sourceGitState:GitState;sourceStatus:string;configurationFingerprint:string|null;status:'reserved'|'provisioning'|'ready'|'failed'|'needs_recovery';failureReason:string|null;createdAt:number;updatedAt:number}
+export interface GitWorkspaceRecord extends GitWorkspacePrepareInput {removedAt?:number;id:string;sourceIdentity:string;gitRoot:string;gitRootIdentity:string;gitDir:string;gitDirIdentity:string;commonDir:string;commonDirIdentity:string;projectSubpath:string;baseCommit:string;sourceBranch:string|null;branch:string;worktreeRoot:string;executionPath:string;directoryIdentity:string|null;executionIdentity:string|null;worktreeGitDir:string|null;worktreeGitDirIdentity:string|null;rootIdentity:string|null;sourceGitState:GitState;sourceStatus:string;configurationFingerprint:string|null;status:'reserved'|'provisioning'|'ready'|'failed'|'needs_recovery';failureReason:string|null;createdAt:number;updatedAt:number}
 export interface GitState {head:string;index:Record<string,string>}
 
 /** Task database migration copies this DDL; core never runs main-library migrations. */
@@ -19,6 +19,7 @@ export function createGitWorkspaceStore(db:SqlDatabase) {
   const get=(id:string):GitWorkspaceRecord|null=>{const row=db.query<Row,[string]>('SELECT record_json FROM workbench_git_workspaces WHERE id=?').get(id);return row?JSON.parse(row.record_json) as GitWorkspaceRecord:null}
   return {
     get,
+    list:()=>db.query<Row,[]>('SELECT record_json FROM workbench_git_workspaces').all().map(row=>JSON.parse(row.record_json) as GitWorkspaceRecord),
     reserve(record:GitWorkspaceRecord):GitWorkspaceRecord {
       return db.transaction(()=>{
         const prior=get(record.id)

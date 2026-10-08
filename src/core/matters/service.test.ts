@@ -112,3 +112,10 @@ describe('worktree on the phone (2026-10-07)',()=>{
     expect((await service.detail('deadbeef')).task?.worktree).toEqual({branch:'cc/abcd1234',removed:false,merged:true})
   })
 })
+
+it('projects a completed asynchronous managed worktree result without exposing private fields',async()=>{
+ store.create({id:'deadbeef',kind:'task',title:'managed',projectPath:'/work',ownerChatId:'owner'})
+ const worktreeAction=async()=>({branch:'cc/new',committed:true,sha:'private',mergeHint:'/private'})
+ const service=makeMattersService({store,workbench:{detail:()=>({task:TASK,events:[]}),continueTask:vi.fn(),worktreeAction} as never})
+ expect(await service.worktree('deadbeef','commit')).toEqual({branch:'cc/new',committed:true})
+})
