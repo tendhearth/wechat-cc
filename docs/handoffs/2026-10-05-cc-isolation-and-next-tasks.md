@@ -8,7 +8,7 @@
 - [六项实施计划](../superpowers/plans/2026-10-05-workbench-isolation-review.md)
 - [维护者入口](../maintainer/README.md)及根目录 AGENTS.md
 
-上批桌面与跨平台收口已通过 [PR 230](https://github.com/tendhearth/wechat-cc/pull/230) 进入 dev，本批最初产品基线为 `b2ef0c71`。10 月 8 日整合树已对齐 dev `14821dd5`，保留后来加入的工作区、执行者退出、自定义 ACP、模型、图片及旧工作区合回功能；旧 `.worktreeinclude` helper 保留，新默认副本不使用它。本批 [PR 262](https://github.com/tendhearth/wechat-cc/pull/262) 仍是草稿，尚未部署。10 月 5 日的 Claude 与 Qwen3.8 真执行者证据不代替本批验收；Cursor 当时受额度限制，合入前还需重新核对远端 dev 和本机版本。
+上批桌面与跨平台收口已通过 [PR 230](https://github.com/tendhearth/wechat-cc/pull/230) 进入 dev，本批最初产品基线为 `b2ef0c71`。10 月 8 日整合树已对齐 dev `3917836d`，保留后来加入的工作区、执行者退出、自定义 ACP、模型、图片及旧工作区合回功能；旧 `.worktreeinclude` helper 保留，新默认副本不使用它。桌面「另做一份」的断线回执与晚回复保护已独立复审通过；最新 dev `1be63c31` 的手机同类入口正在适配，尚未整合。本批 [PR 262](https://github.com/tendhearth/wechat-cc/pull/262) 仍是草稿，尚未部署。10 月 5 日的 Claude 与 Qwen3.8 真执行者证据不代替本批验收；Cursor 当时受额度限制，合入前还需重新核对远端 dev 和本机版本。
 
 ## 第一优先级 完成当前批准的一批
 
@@ -16,7 +16,7 @@
 | --- | --- | --- |
 | Git 副本分配与补丁底层 | 模块及修复已独立审阅并整合；路径和并发预留修复 `b72adf50` 的 Bun/Node 各 52 项通过 | 继续核对实际 Windows；完整导出及源文件、源分支和真实 index 不变纳入整体验收 |
 | 私有恢复快照与撤回日志 | 模块、FIFO 及 Windows 目录处理修复均已独立审阅并整合；恢复和配置目标各 141 项通过 | 精确字节、存在性、身份、版本和 daemon 崩溃恢复；POSIX 保留目录同步，Windows 核验目录身份，文件同步和日志不能省略 |
-| 桌面和手机执行位置及桌面撤回交互 | `cf98c031` 两项复审通过并整合；原生各 119 项、桌面/PWA 各 284 项、实际浏览器 17 项通过 | 对接真实服务；未知创建冻结完整请求，未确认退出不开放撤回；只有匹配的 reverted 回执表示已撤回 |
+| 桌面和手机执行位置及桌面撤回交互 | `cf98c031` 两项复审通过并整合；桌面后续入口修复 `b2fb00ec` 独立复审通过，各 184 项与实际浏览器 32 项通过；手机最新入口适配中 | 对接真实服务；未知创建冻结完整请求，附件草稿变动阻止晚回执切页；手机 fork 草稿与新事项分开，失效项目不换目录；只有匹配的 reverted 回执表示已撤回 |
 | 原生执行配置准入 | `7323695c` 修复已独立复审并整合；各 111 项及 10 个实际分配样例通过 | 保守核对规则、配置、授权及路径等价；无法证明就拒绝，4096 项扫描上限需说明 |
 | 任务创建与来源项目绑定 | `2770d2b9` 与微信事务修复 `0c667d65` 已独立复审通过并整合；复审各 232 项和 10 个独立探针通过 | 最终版本重验各入口；保留旧回执及无 MatterStore 兼容，失败不接受或派发 |
 | 会话关闭证明及撤回和导出服务 | 候选 `f7726aba`、回执修复 `90ae470c` 和启动域整理 `2574d576` 均完成，独立整支与增量审阅通过，无未决 P1/P2 | 管理员路由、权限登记和成果已接齐；继续准确提交的 CI 与真执行者验收 |
@@ -33,10 +33,10 @@
 | `cc-closeout-integrate` | `codex/workbench-isolation-review` | 根整合、计划、交接、最终验收及部署 |
 | `cc-isolation-workspaces` | `codex/cc-isolation-workspaces` | Git 模块，已提交；修改仍交原负责人 |
 | `cc-isolation-restore` | `codex/cc-isolation-restore` | 恢复模块，已提交；修改仍交原负责人 |
-| `cc-isolation-ui` | `codex/cc-isolation-ui` | apps 内客户端、桌面代理与原生白名单 |
+| `cc-isolation-ui` | `codex/cc-isolation-fork-adapt` | 桌面最新入口已复审完成；现仅准备 ignored 真执行者专项验收脚本，不操作生产环境 |
 | `cc-isolation-config` | `codex/cc-isolation-config` | 新配置准入 helper 和测试 |
 | `cc-isolation-module-review` | `codex/cc-isolation-http-acceptance` | HTTP 修复已复审通过；现移交为 Task 6 实际 HTTP 验收 |
-| `cc-isolation-core` | `codex/cc-isolation-core` | Task 4 与微信事务修复完成并复审通过 |
+| `cc-isolation-core` | `codex/cc-isolation-phone-fork` | 原 Task 4 已完成；现明确移交为最新 dev 手机入口兼容适配工作区 |
 | `cc-isolation-dev-audit` | `codex/cc-isolation-final-review` | Task 5 与最终整支接线独立审阅 |
 | `cc-isolation-windows-ci` | `codex/cc-http-upload-review` | Windows 修复已提交；现移交为 HTTP 修复的独立复审树 |
 | `cc-isolation-lifecycle` | `codex/cc-isolation-lifecycle` | Task 5 服务生命周期、关闭证明、恢复路由及动作 |
@@ -71,6 +71,10 @@
 新增路由、daemon 和 token 白名单已接齐并通过全套路由守卫。手机生成页由整合者按现有构建流程重建，最终源码没有未提交的生成物差异。原生确认框已改为应用对话框，还要在实际安装包验收。
 
 首轮全套检查发现主 service 超出 171 行限制，已将恢复初始化移入现有域，保留启动顺序和限制，复审与全套重新通过。两次早期 Bun 快照夹具在构造撤回请求前缺目标文件的原因仍未知，未执行文件写入；已增强完整诊断并保留原红，不能称已定位或登记成 flake。最终顺序目标及根全套未复现。
+
+桌面后续入口的增量复审发现附件添加或移除没有更新草稿版本，导致晚回复切走仍在编辑的来源任务。`b2fb00ec` 已用附件模块现有变动回调修复；五个实际浏览器失败回归转绿，独立复审的原三个探针也通过。初始附件不会随「另做一份」自动复制，该入口会明确拒绝带初始附件的要求，不能把它当作完整材料克隆。
+
+发布的 `5f201dfc` 因同时到来的 dev 桌面改动尚未触发 CI，triage 返回 NORUN；这不是测试通过或测试失败。桌面修复已整合到 `a9e36bc1`，仍须合入手机最新入口后，针对准确最终提交检查 CI。
 
 源码和本地自动检查通过仍不等于生产功能交付。准确提交的 CI、dev 整合、完整本机安装及真实执行者验收仍待完成；公开 master、商店和新版本发布不在这批范围。
 
