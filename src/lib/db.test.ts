@@ -3,7 +3,7 @@ import { openSqlite } from './runtime/sqlite'
 import { migrations, openTestDb, openDb, renameMigrated, runMigrations, withLockRetry } from './db'
 import type { Db } from './db'
 import { existsSync, mkdtempSync, writeFileSync } from 'node:fs'
-import { tmpdir } from 'node:os'
+import { availableParallelism, cpus, tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { execFile } from 'node:child_process'
 import { promisify } from 'node:util'
@@ -638,28 +638,47 @@ describe('旧社交表退役(spec 2026-09-04-wish-postcard §3)', () => {
 })
 
 
-// 跑完整条迁移阶梯,CI 慢机上实测 7.5s,默认 5s 会假红。
-it('upgrades a real v46 database retaining task history, native identity and approved artifacts',{timeout:30_000},()=>{
+it('upgrades a real v46 database retaining task history, native identity and approved artifacts',{timeout:30_000},({onTestFailed})=>{
+  // Static, bounded phase labels only; no database paths or fixture contents in failure output.
+  const cpu=()=>{try{return typeof process.cpuUsage==='function'?process.cpuUsage():undefined}catch{return undefined}}
+  const number=(read:()=>number)=>{try{const value=read();return Number.isFinite(value)?value:undefined}catch{return undefined}}
+  const workerId=(value:string|undefined)=>value&&/^\d{1,10}$/.test(value)?Number(value):undefined
+  let phase='create-directory',started=performance.now(),cpuStarted=cpu()
+  const timings:Array<{phase:string,ms:number,cpuMs?:number}>=[]
+  const sample=()=>{const usage=cpu();return {phase,ms:Math.round(performance.now()-started),cpuMs:usage&&cpuStarted?Math.round((usage.user+usage.system-cpuStarted.user-cpuStarted.system)/1000):undefined}}
+  const mark=(next:string)=>{try{if(timings.length<16)timings.push(sample());phase=next;started=performance.now();cpuStarted=cpu()}catch{/* Diagnostics must not change the test result. */}}
+  onTestFailed(()=>{try{console.error('[v46-upgrade phases]',JSON.stringify({timings,current:sample(),runtime:{pid:process.pid,poolId:workerId(process.env.VITEST_POOL_ID),workerId:workerId(process.env.VITEST_WORKER_ID),availableParallelism:number(()=>availableParallelism()),cpuCount:number(()=>cpus().length),bun:process.versions.bun,node:process.versions.node}}))}catch{/* Diagnostics must not replace the original failure. */}})
   const dir=mkdtempSync(join(tmpdir(),'workbench-v46-')),path=join(dir,'state.db')
   try {
+    mark('open-v46-fixture')
     const prior=openSqlite(path)
     prior.exec('PRAGMA foreign_keys=ON')
-    for(const migration of migrations.slice(0,46))migration(prior)
-    prior.exec('PRAGMA user_version=46')
-    prior.query('INSERT INTO workbench_tasks(id,title,path,provider_id,owner_chat_id,session_id,status,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?,?)').run('deadbeef','old task','/missing/project','codex','owner','native-session','completed',1,2)
-    prior.query('INSERT INTO workbench_events(task_id,kind,text,created_at) VALUES(?,?,?,?)').run('deadbeef','user','old request',3)
-    prior.query('INSERT INTO workbench_artifacts(id,task_id,name,mime,size,sha256,storage_path,created_at,approved_at) VALUES(?,?,?,?,?,?,?,?,?)').run('artifact-id','deadbeef','report.md','text/plain',7,'a'.repeat(64),'/immutable/file',4,5)
+    mark('seed-v46-fixture')
+    // Construct the historical disk fixture in one commit instead of committing each
+    // schema statement. The upgrade below still uses the actual production runner.
+    prior.transaction(()=>{
+      for(const migration of migrations.slice(0,46))migration(prior)
+      prior.exec('PRAGMA user_version=46')
+      prior.query('INSERT INTO workbench_tasks(id,title,path,provider_id,owner_chat_id,session_id,status,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?,?)').run('deadbeef','old task','/missing/project','codex','owner','native-session','completed',1,2)
+      prior.query('INSERT INTO workbench_events(task_id,kind,text,created_at) VALUES(?,?,?,?)').run('deadbeef','user','old request',3)
+      prior.query('INSERT INTO workbench_artifacts(id,task_id,name,mime,size,sha256,storage_path,created_at,approved_at) VALUES(?,?,?,?,?,?,?,?,?)').run('artifact-id','deadbeef','report.md','text/plain',7,'a'.repeat(64),'/immutable/file',4,5)
+    })()
+    mark('read-legacy-state')
     const oldTask=prior.query('SELECT * FROM workbench_tasks').get(),oldEvents=prior.query('SELECT * FROM workbench_events').all(),oldArtifacts=prior.query('SELECT * FROM workbench_artifacts').all()
+    expect(prior.query('PRAGMA user_version').get()).toEqual({user_version:46})
+    mark('close-v46-fixture')
     prior.close()
     for(let i=0;i<2;i++) {
+      mark(i===0?'production-upgrade':'production-reopen')
       const upgraded=openDb({path})
       try {
+        mark(i===0?'verify-upgrade':'verify-reopen')
         expect(upgraded.query('SELECT * FROM workbench_tasks').get()).toEqual({...oldTask as object,archived_at:null,matter_id:(oldTask as {id:string}).id,execution_choice_json:'{"defaults":"provider","model":null,"reasoningEffort":null}',seq:0,workspace_kind:'project',writer_groups:null,git_workspace_id:null})
         expect(upgraded.query('SELECT * FROM workbench_events').all()).toEqual(oldEvents.map(row=>({...row as object,source_id:null,run_id:null,event_key:null,activity_json:null,attachments_json:'[]',seq:0})))
         expect(upgraded.query('SELECT * FROM workbench_artifacts').all()).toEqual(oldArtifacts)
-      } finally {upgraded.close()}
+      } finally {mark(i===0?'close-upgrade':'close-reopen');upgraded.close()}
     }
-  } finally {removeTempDir(dir)}
+  } finally {mark('cleanup');removeTempDir(dir);mark('finished')}
 })
 
 

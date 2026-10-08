@@ -2,7 +2,7 @@ import {afterEach,beforeEach,expect,it} from 'vitest'
 import {randomUUID} from 'node:crypto'
 import {execFileSync} from 'node:child_process'
 import {mkdirSync,mkdtempSync,realpathSync,writeFileSync,readFileSync,existsSync} from 'node:fs'
-import {tmpdir} from 'node:os'
+import {availableParallelism,cpus,tmpdir} from 'node:os'
 import {join} from 'node:path'
 import {openDb,type Db} from '../../lib/db'
 import {removeTempDir} from '../../lib/test-temp'
@@ -32,17 +32,36 @@ class TurnRuntime {
 }
 
 let area:string,source:string,db:Db,service:WorkbenchService,store:ReturnType<typeof makeWorkbenchStore>,runtimes:TurnRuntime[],setupService:()=>WorkbenchService,groupsAlive:boolean
+// Failure-only diagnostics. Calls below use static labels and retain at most 32
+// transitions; never include task IDs, filesystem paths, SQL or file contents.
+let markPhase:(next:string)=>void
+function phaseTiming(){
+ const cpu=()=>{try{return typeof process.cpuUsage==='function'?process.cpuUsage():undefined}catch{return undefined}}
+ const number=(read:()=>number)=>{try{const value=read();return Number.isFinite(value)?value:undefined}catch{return undefined}}
+ const workerId=(value:string|undefined)=>value&&/^\d{1,10}$/.test(value)?Number(value):undefined
+ let phase='fixture-directories',started=performance.now(),cpuStarted=cpu()
+ const timings:Array<{phase:string,ms:number,cpuMs?:number}>=[]
+ const sample=()=>{const usage=cpu();return {phase,ms:Math.round(performance.now()-started),cpuMs:usage&&cpuStarted?Math.round((usage.user+usage.system-cpuStarted.user-cpuStarted.system)/1000):undefined}}
+ return {
+  mark(next:string){try{if(timings.length<32)timings.push(sample());phase=next;started=performance.now();cpuStarted=cpu()}catch{/* Diagnostics must not change the test result. */}},
+  failure(){try{console.error('[service-restore phases]',JSON.stringify({timings,current:sample(),runtime:{pid:process.pid,poolId:workerId(process.env.VITEST_POOL_ID),workerId:workerId(process.env.VITEST_WORKER_ID),availableParallelism:number(()=>availableParallelism()),cpuCount:number(()=>cpus().length),bun:process.versions.bun,node:process.versions.node}}))}catch{/* Diagnostics must not replace the original failure. */}},
+ }
+}
 const git=(...args:string[])=>execFileSync('git',['-C',source,...args],{encoding:'utf8'}).trim()
-beforeEach(()=>{
+beforeEach(({onTestFailed})=>{
+ const timing=phaseTiming();markPhase=next=>timing.mark(next);onTestFailed(()=>timing.failure())
  area=(realpathSync.native??realpathSync)(mkdtempSync(join(tmpdir(),'cc-restore-service-')));source=join(area,'source');mkdirSync(source);mkdirSync(join(area,'state'));mkdirSync(join(area,'home'))
+ markPhase('fixture-git')
  git('init','-q');git('config','user.name','Fixture');git('config','user.email','fixture@example.invalid');writeFileSync(join(source,'file.txt'),'original\n');git('add','.');git('commit','-qm','initial')
+ markPhase('fixture-database')
  db=openDb({path:join(area,'state','state.db')});store=makeWorkbenchStore(db);runtimes=[];groupsAlive=false
  const registry=createProviderRegistry();for(const providerId of ['claude','codex'])registry.register(providerId,{async spawn(_opts,context){const runtime=new TurnRuntime(context);runtimes.push(runtime);return runtime.session}},{displayName:'Claude',canResume:()=>true,workbench:MANAGED_NATIVE_CAPABILITIES})
  setupService=()=>makeWorkbenchService({store,registry,stateDir:join(area,'state'),managedWorkspaceRoot:join(area,'Tasks'),ownerChatId:()=> 'owner',defaultProvider:'claude',registeredProjects:()=>[{alias:'Source',path:source}],matters:makeMatterStore(db),retainedIdleCloseMs:600000,closeTimeoutMs:30,writerWatchMs:20,writerGroupAlive:()=>groupsAlive,isolatedConfiguration:{environment:{HOME:join(area,'home')},systemDirectories:[]}})
  service=setupService()
+ markPhase('test-body')
 })
-afterEach(async()=>{await service?.shutdown();db?.close();removeTempDir(area)})
-async function create(){const r=await service.createEntry({requestId:randomUUID(),text:'Do the work',target:{kind:'project',projectId:service.projects()[0]!.id}},{ownerKey:'owner',surface:'desktop'});await expect.poll(()=>service.detail(r.task.id).events.some(e=>e.kind==='text')).toBe(true);return r.task}
+afterEach(async()=>{markPhase('cleanup-shutdown');await service?.shutdown();markPhase('cleanup-database-close');db?.close();markPhase('cleanup-directory');removeTempDir(area);markPhase('finished')})
+async function create(){markPhase('create-entry');const r=await service.createEntry({requestId:randomUUID(),text:'Do the work',target:{kind:'project',projectId:service.projects()[0]!.id}},{ownerKey:'owner',surface:'desktop'});markPhase('wait-entry-text');await expect.poll(()=>service.detail(r.task.id).events.some(e=>e.kind==='text')).toBe(true);markPhase('entry-ready');return r.task}
 it('captures one full retained writer before spawning, closes only after exit, and restores original bytes',async()=>{
  const task=await create()
  const rows=()=>db.query<{data:string},[]>('SELECT data FROM workbench_restore_runs').all().map(r=>JSON.parse(r.data))
@@ -65,7 +84,7 @@ it('captures one full retained writer before spawning, closes only after exit, a
  const result=await service.revertReviewFile(task.id,{artifactId:review.artifactId,path:file.path,changeId:file.revert.changeId,requestId:randomUUID()} as never)
  expect(result).toMatchObject({state:'reverted'});expect(readFileSync(join(task.path,'file.txt'),'utf8')).toBe('original\n');expect(readFileSync(join(source,'file.txt'),'utf8')).toBe('original\n')
 })
-const closed=async()=>{const task=await create();writeFileSync(join(task.path,'file.txt'),'changed\n');runtimes.at(-1)!.finishTurn();await expect.poll(()=>service.detail(task.id).task.phase).toBe('replied');await service.cancel(task.id);await expect.poll(()=>service.detail(task.id).task.status).toBe('completed');const review=service.reviewList(task.id).find(r=>r.restore)!;return{task,review,input:{artifactId:review.artifactId,path:'file.txt',changeId:review.files.find(f=>f.path==='file.txt')!.revert!.changeId,requestId:randomUUID()}}}
+const closed=async()=>{const task=await create();markPhase('writer-change');writeFileSync(join(task.path,'file.txt'),'changed\n');runtimes.at(-1)!.finishTurn();markPhase('wait-reply');await expect.poll(()=>service.detail(task.id).task.phase).toBe('replied');markPhase('cancel-writer');await service.cancel(task.id);markPhase('wait-closed');await expect.poll(()=>service.detail(task.id).task.status).toBe('completed');markPhase('read-closed-review');const review=service.reviewList(task.id).find(r=>r.restore)!;return{task,review,input:{artifactId:review.artifactId,path:'file.txt',changeId:review.files.find(f=>f.path==='file.txt')!.revert!.changeId,requestId:randomUUID()}}}
 it('rejects legacy revert with zero effects and replays a receipt after a later writer while putting restore facts in its prompt',async()=>{
  const {task,review,input}=await closed()
  await expect(service.revertReviewFile(task.id,{artifactId:review.artifactId,path:'file.txt'})).rejects.toThrow('review_revert_unavailable')
@@ -250,14 +269,20 @@ it('blocks native handoff acceptance before creating a successor while a restore
 })
 
 it('anchors a repository-subdirectory restore to the execution identity and never widens its scope',async()=>{
+ markPhase('seed-child-project')
  const child=join(source,'child');mkdirSync(child);writeFileSync(join(child,'inside.txt'),'inside original\n');git('add','.');git('commit','-qm','child')
+ markPhase('create-child-task')
  const task=await service.create({requestId:randomUUID(),path:child,providerId:'claude',text:'scoped work'})
+ markPhase('wait-child-text')
  await expect.poll(()=>service.detail(task.id).events.some(e=>e.kind==='text')).toBe(true)
+ markPhase('change-child-and-wait-reply')
  writeFileSync(join(task.path,'inside.txt'),'inside changed\n');runtimes[0]!.finishTurn();await expect.poll(()=>service.detail(task.id).task.phase).toBe('replied')
- await service.cancel(task.id);await expect.poll(()=>service.detail(task.id).task.status).toBe('completed')
+ markPhase('cancel-child-writer');await service.cancel(task.id);markPhase('wait-child-closed');await expect.poll(()=>service.detail(task.id).task.status).toBe('completed')
+ markPhase('verify-child-review-scope')
  const review=service.reviewList(task.id).find(r=>r.restore)!,file=review.files.find(f=>f.path==='inside.txt')!
  expect(review.files.some(f=>f.path==='file.txt'||f.path.startsWith('../'))).toBe(false)
- await service.revertReviewFile(task.id,{artifactId:review.artifactId,path:file.path,changeId:file.revert!.changeId,requestId:randomUUID()})
+ markPhase('revert-child-file');await service.revertReviewFile(task.id,{artifactId:review.artifactId,path:file.path,changeId:file.revert!.changeId,requestId:randomUUID()})
+ markPhase('verify-child-and-parent-bytes')
  expect(readFileSync(join(task.path,'inside.txt'),'utf8')).toBe('inside original\n');expect(readFileSync(join(source,'file.txt'),'utf8')).toBe('original\n')
 })
 
@@ -313,8 +338,11 @@ it('rejects merge for a new managed workspace without changing source, events, o
 
 async function pendingCurrent(){
  const {task,input}=await closed(),workspace=store.gitWorkspaceForTask(task.id)!
+ markPhase('seed-pending-fault')
  db.exec("CREATE TRIGGER resolve_event_fault BEFORE INSERT ON workbench_events WHEN NEW.kind='system' BEGIN SELECT RAISE(ABORT,'resolve_event_fault'); END")
+ markPhase('revert-uncommitted-receipt')
  await expect(service.revertReviewFile(task.id,input)).rejects.toThrow()
+ markPhase('read-pending-operation')
  db.exec('DROP TRIGGER resolve_event_fault')
  const operation=store.restores.findRequest(workspace.id,input.requestId)!.receipt
  const resolution={operationId:operation.operationId,observedFingerprint:operation.observedFingerprint!}
@@ -322,17 +350,20 @@ async function pendingCurrent(){
 }
 async function resolvedCurrent(){
  const {task,resolution}=await pendingCurrent()
+ markPhase('resolve-current')
  const receipt=await service.resolveReviewRevert(task.id,resolution)
  expect(receipt.state).toBe('resolved_keep_current')
  return {task,resolution,receipt}
 }
 it('replays the exact resolve receipt after restart and a later writer without file or event effects',async()=>{
  const {task,resolution,receipt}=await resolvedCurrent()
- await service.shutdown();service=setupService()
- service.continueTask(task.id,'later writer');await expect.poll(()=>runtimes.length).toBe(2)
+ markPhase('restart-shutdown');await service.shutdown();markPhase('restart-service');service=setupService()
+ markPhase('continue-later-writer');service.continueTask(task.id,'later writer');markPhase('wait-later-writer');await expect.poll(()=>runtimes.length).toBe(2)
+ markPhase('write-later-writer-bytes')
  writeFileSync(join(task.path,'file.txt'),'later writer bytes\n')
  const events=store.events(task.id),operation=store.restores.operation(resolution.operationId),version=store.restores.pathVersion(receipt.workspaceId,receipt.path)
- expect(await service.resolveReviewRevert(task.id,resolution)).toEqual(receipt)
+ markPhase('replay-resolve-receipt');expect(await service.resolveReviewRevert(task.id,resolution)).toEqual(receipt)
+ markPhase('verify-replay-no-effects')
  expect(readFileSync(join(task.path,'file.txt'),'utf8')).toBe('later writer bytes\n')
  expect(store.events(task.id)).toEqual(events);expect(store.restores.operation(resolution.operationId)).toEqual(operation);expect(store.restores.pathVersion(receipt.workspaceId,receipt.path)).toBe(version)
 })
