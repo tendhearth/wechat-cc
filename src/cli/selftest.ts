@@ -403,6 +403,7 @@ export async function runWorkbenchSelftest(
     ? '\nCodex 权限自检：上述删除命令必须通过 exec_command 的 sandbox_permissions="require_escalated" 发起一次原生审批（说明仅删除自检文件），不要先在沙箱内执行。这里只验证这条命令的审批往返，不申请永久权限。'
     : '')
   const createRes = await apiCall(deps, api, 'POST', '/v1/workbench/create', {
+    requestId: randomUUID(), executionMode: 'project',
     path: scratchPath,
     providerId: opts.executor,
     title: 'selftest',

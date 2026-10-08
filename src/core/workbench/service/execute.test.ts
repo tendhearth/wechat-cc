@@ -19,6 +19,7 @@ import { makeInputsDomain } from './inputs'
 import { makeLifecycleDomain } from './lifecycle'
 import { makeNoticesDomain } from './notices'
 import { makeArtifactsDomain } from './artifacts'
+import {makeEntryDomain} from './entry'
 import { makeExecuteDomain } from './execute'
 import type { ServiceActions, ServiceCtx } from './ctx'
 
@@ -54,7 +55,8 @@ function setup(over: { executionConflict?: NonNullable<ServiceCtx['deps']['execu
   actions.set({ submitInput: inputs.submitInput, continueTask: execute.continueTask, isReplied: view.isReplied, fallbackExecutor: quota.fallbackExecutor, artifact: artifacts.artifact, quotaExhausted: quota.quotaExhausted, continuation: admission.continuation, provider: admission.provider, requireInput: admission.requireInput, canResume: admission.canResume, taskVersion: admission.taskVersion, selectAttachments: attachments.selectAttachments, combinedAttachments: attachments.combinedAttachments, handoffAttachments: attachments.handoffAttachments, taskView: view.taskView, matterSync: execute.matterSync, start: execute.start, continuationAttachmentScope: attachments.continuationAttachmentScope, inputMode: view.inputMode, armIdleClose: lifecycle.armIdleClose, cancelIdleClose: lifecycle.cancelIdleClose, settleAfterDecision: lifecycle.settleAfterDecision, execute: execute.execute, hasUndeliveredInput: inputs.hasUndeliveredInput, holdInputs: inputs.holdInputs, collect: artifacts.collect, collectTurnArtifacts: artifacts.collectTurnArtifacts, captureCodeChanges: artifacts.captureCodeChanges, runtimeSnapshot: view.runtimeSnapshot, held: view.held, stageFinishedNotice: notices.stageFinishedNotice, publishFinishedNotices: notices.publishFinishedNotices })
   shutdowns.push(lifecycle.shutdown)
   const settled = async (id: string) => { await vi.waitFor(() => expect(store.get(id).status).not.toMatch(/^(queued|running|cancelling)$/), { timeout: 5000 }) }
-  return { store, state, execute, view, project, settled }
+  const entry=makeEntryDomain(ctx,{execute,view,admission,quota})
+  return { store, state, execute, entry, view, project, settled }
 }
 
 describe('makeExecuteDomain · 创建与派发', () => {
@@ -122,12 +124,12 @@ describe('makeExecuteDomain · 续接', () => {
 })
 
 describe('makeExecuteDomain · 微信创建与出生地', () => {
-  it('createWechat:身份不符 ⇒ invalid_wechat_identity;hash 畸形 ⇒ invalid_request;项目不存在 ⇒ project_stale', () => {
-    const { execute } = setup()
-    const input = { ownerChatId: 'owner', accountId: 'acct', requestId: REQ, commandHash: 'a'.repeat(64), projectId: 'nope', text: '做' }
-    expect(() => execute.createWechat({ ...input, ownerChatId: 'x' })).toThrow('invalid_wechat_identity')
-    expect(() => execute.createWechat({ ...input, commandHash: 'zz' })).toThrow('invalid_request')
-    expect(() => execute.createWechat(input)).toThrow('project_stale')
+  it('createWechat:身份不符 ⇒ invalid_wechat_identity;hash 畸形 ⇒ invalid_request;项目不存在 ⇒ project_stale', async () => {
+    const { entry } = setup()
+    const input = { ownerChatId: 'owner', accountId: 'acct', requestId: REQ, commandHash: 'a'.repeat(64), projectId: 'p-'+'a'.repeat(20), text: '做' }
+    await expect(entry.createWechat({ ...input, ownerChatId: 'x' })).rejects.toThrow('invalid_wechat_identity')
+    await expect(entry.createWechat({ ...input, commandHash: 'zz' })).rejects.toThrow('invalid_request')
+    await expect(entry.createWechat(input)).rejects.toThrow('project_stale')
   })
   it('safeOriginMatterId:没接 matters ⇒ null', () => {
     expect(setup().execute.safeOriginMatterId('owner')).toBeNull()

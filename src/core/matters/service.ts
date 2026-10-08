@@ -57,7 +57,7 @@ export interface MattersServiceDeps {
     /** 额度用完时这件事能不能交给另一位;null = 不用打扰。没接 ⇒ 详情里没有这一块。 */
     quotaHandoff?(id:string):MatterQuotaHandoff|null
     /** 交出去(按 requestId 幂等、一件事只交一次);回新那件的任务 id。 */
-    handOff?(id:string,input:{requestId:string;providerId:string}):{taskId:string;created:boolean}
+    handOff?(id:string,input:{requestId:string;providerId:string}):{taskId:string;created:boolean}|Promise<{taskId:string;created:boolean}>
   }
   /** 对主人的 chat 说话(app 对话通道),surface 记这句是从哪个表面来的;recent 读该 chat 的消息流(微信 / 桌面 / 手机三处进同一条)。 */
   chat?:{ownerChatId():string|null;say(text:string,surface?:'desktop'|'phone'):Promise<{reply:string}>;recent?(chatId:string,limit:number):Promise<MatterEvent[]>;search?(chatId:string,query:string,limit:number):Promise<(MatterEvent&{id:string})[]>}
@@ -227,7 +227,7 @@ export function makeMattersService(deps:MattersServiceDeps):MattersService {
       if(require(id).kind!=='task')throw Error('matter_task_required')
       const requestId=normalizeInputRequestId(input.requestId)
       if(!deps.workbench?.handOff)throw Error('workbench_not_wired')
-      const r=deps.workbench.handOff(id,{requestId,providerId:input.providerId})
+      const r=await deps.workbench.handOff(id,{requestId,providerId:input.providerId})
       const matterId=deps.store.get(r.taskId)?.id??r.taskId
       if(surface==='phone'){try{deps.store.bind(matterId,'phone','pwa')}catch{/* 只是露面登记 */}}
       return {matterId,created:r.created}

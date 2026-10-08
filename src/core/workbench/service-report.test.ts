@@ -64,8 +64,8 @@ function makeService(reports?:ReportSink){
     registeredProjects:()=>[{alias:'project',path:project}],log:(tag,line)=>logs.push([tag,line]),reports})
   return runtime
 }
-function createTaskFromChat(projectId:string){
-  return service.createWechat({ownerChatId:'chat-1',accountId:'acct-1',requestId:randomUUID(),commandHash:createHash('sha256').update('改首页').digest('hex'),originMessageId:'msg-7',projectId,providerId:'claude',text:'改首页'})
+async function createTaskFromChat(projectId:string){
+  return (await service.createWechat({ownerChatId:'chat-1',accountId:'acct-1',requestId:randomUUID(),commandHash:createHash('sha256').update('改首页').digest('hex'),originMessageId:'msg-7',projectId,providerId:'claude',text:'改首页'}))
 }
 
 beforeEach(()=>{
@@ -77,7 +77,7 @@ afterEach(async()=>{await service?.shutdown();db.close();removeTempDir(area)})
 it('答复静下来那一拍,调用 reports.enqueue(taskId)',async()=>{
   const runtime=makeService(makeSink())
   const projectId=service.projects()[0]!.id
-  const receipt=createTaskFromChat(projectId)
+  const receipt=await createTaskFromChat(projectId)
   await expect.poll(()=>matters.sessions(receipt.taskId)).not.toHaveLength(0)
   runtime.finishTurn()
   await expect.poll(()=>matters.get(receipt.taskId)?.status).toBe('replied')
@@ -89,7 +89,7 @@ it('答复静下来那一拍,调用 reports.enqueue(taskId)',async()=>{
 it('reports.enqueue 抛错只落日志,不进 matterSync,不影响答复状态',async()=>{
   const runtime=makeService(makeSink(new Error('outbox_write_failed')))
   const projectId=service.projects()[0]!.id
-  const receipt=createTaskFromChat(projectId)
+  const receipt=await createTaskFromChat(projectId)
   await expect.poll(()=>matters.sessions(receipt.taskId)).not.toHaveLength(0)
   runtime.finishTurn()
   await expect.poll(()=>matters.get(receipt.taskId)?.status).toBe('replied')
@@ -115,7 +115,7 @@ it('主人续接开新一轮:连续两轮各报一条(即便两轮之间快照�
   // 会让这条用例红在 `expect(enqueued.length).toBe(2)`(停在 1)。
   const runtime=makeService(makeSink())
   const projectId=service.projects()[0]!.id
-  const receipt=createTaskFromChat(projectId)
+  const receipt=await createTaskFromChat(projectId)
   await expect.poll(()=>matters.sessions(receipt.taskId)).not.toHaveLength(0)
   runtime.finishTurn()
   await expect.poll(()=>matters.get(receipt.taskId)?.status).toBe('replied')
@@ -144,7 +144,7 @@ it('同一轮里自己抖两次(quiet↔busy,没有 submitInput):outbox 只留�
   const countingSink:ReportSink={enqueue(matterId,turn){enqueueCalls++;realSink.enqueue(matterId,turn)}}
   const runtime=makeService(countingSink)
   const projectId=service.projects()[0]!.id
-  const receipt=createTaskFromChat(projectId)
+  const receipt=await createTaskFromChat(projectId)
   await expect.poll(()=>matters.sessions(receipt.taskId)).not.toHaveLength(0)
   runtime.finishTurn()
   await expect.poll(()=>enqueueCalls).toBe(1)
@@ -173,7 +173,7 @@ it('非 retained 的执行者永不经过 replied(isReplied 要求 snapshot.reta
   service=makeWorkbenchService({store:makeWorkbenchStore(db),registry,stateDir:area,ownerChatId:()=>'chat-1',matters,
     registeredProjects:()=>[{alias:'project',path:project}],log:(tag,line)=>logs.push([tag,line]),reports:makeSink()})
   const projectId=service.projects()[0]!.id
-  const receipt=createTaskFromChat(projectId)
+  const receipt=await createTaskFromChat(projectId)
   await expect.poll(()=>matters.get(receipt.taskId)?.status).toBe('done')
   expect(enqueued).toEqual([receipt.taskId])
 })
@@ -206,7 +206,7 @@ it('非 retained 执行者(微信交办、有出生地)completed:stageFinishedNo
   service=makeWorkbenchService({store:wbStore,registry,stateDir:area,ownerChatId:()=>'chat-1',matters,
     registeredProjects:()=>[{alias:'project',path:project}],log:(tag,line)=>logs.push([tag,line]),reports:makeSink()})
   const projectId=service.projects()[0]!.id
-  const receipt=createTaskFromChat(projectId)
+  const receipt=await createTaskFromChat(projectId)
   await expect.poll(()=>matters.get(receipt.taskId)?.status).toBe('done')
   expect(enqueued).toEqual([receipt.taskId]) // 回报确实入队了(有出生地)
   const notices=wbStore.wechatNotifications.list(receipt.taskId)
@@ -236,7 +236,7 @@ it('retained 执行者:settleQuiet 已经报过这一轮,idle 自动收工变 co
     registeredProjects:()=>[{alias:'project',path:project}],log:(tag,line)=>logs.push([tag,line]),reports:makeSink(),
     retainedIdleCloseMs:()=>300})
   const projectId=service.projects()[0]!.id
-  const receipt=createTaskFromChat(projectId)
+  const receipt=await createTaskFromChat(projectId)
   await expect.poll(()=>matters.sessions(receipt.taskId)).not.toHaveLength(0)
   runtime.finishTurn()
   // 不去 poll `replied` 这个**瞬态** —— 它只活到 retainedIdleCloseMs 到点为止,
@@ -305,7 +305,7 @@ it('非 retained 的执行者以 failed 终态收尾时不入队(评审修复轮
   service=makeWorkbenchService({store:makeWorkbenchStore(db),registry,stateDir:area,ownerChatId:()=>'chat-1',matters,
     registeredProjects:()=>[{alias:'project',path:project}],log:(tag,line)=>logs.push([tag,line]),reports:makeSink()})
   const projectId=service.projects()[0]!.id
-  const receipt=createTaskFromChat(projectId)
+  const receipt=await createTaskFromChat(projectId)
   await expect.poll(()=>service.detail(receipt.taskId).task.status).toBe('failed')
   await expect.poll(()=>matters.get(receipt.taskId)?.status).toBe('done') // matter 侧照样落到 done(失败也是终态)
   expect(enqueued).toEqual([]) // 但不该被当成「已答复」报给主人
@@ -314,7 +314,7 @@ it('非 retained 的执行者以 failed 终态收尾时不入队(评审修复轮
 it('没有 opts.reports 时(老接线),什么都不做,不报错',async()=>{
   const runtime=makeService(undefined)
   const projectId=service.projects()[0]!.id
-  const receipt=createTaskFromChat(projectId)
+  const receipt=await createTaskFromChat(projectId)
   await expect.poll(()=>matters.sessions(receipt.taskId)).not.toHaveLength(0)
   runtime.finishTurn()
   await expect.poll(()=>matters.get(receipt.taskId)?.status).toBe('replied')
@@ -358,7 +358,7 @@ it('willReport 探测时 matters.get 抛错(终审后修复第二轮 Important�
   service=makeWorkbenchService({store:wbStore,registry,stateDir:area,ownerChatId:()=>'chat-1',matters:throwingGet,
     registeredProjects:()=>[{alias:'project',path:project}],log:(tag,line)=>logs.push([tag,line]),reports:makeSink()})
   const projectId=service.projects()[0]!.id
-  const receipt=createTaskFromChat(projectId)
+  const receipt=await createTaskFromChat(projectId)
   // 任务终态照常推进——不再卡在 running(复审变异复现的正是"卡住"这个症状)。
   await expect.poll(()=>service.detail(receipt.taskId).task.status).toBe('completed')
   // 通知默认不压:matters.get 抛错时 willReport 必须默认为 false。

@@ -17,7 +17,7 @@ export type WechatWorkbenchReply=string|{kind:'artifact_delivered';receiptId:str
 type Detail=ReturnType<WorkbenchStore['detail']>&{runId?:string;runtime?:AgentRuntimeSnapshot;inputMode?:'steer'|'send'|'queue';inputs:LiveInput[];permissions:PendingWorkbenchPermission[];questions:PendingUserInput[];wechatNotifications?:{enabled:boolean;notices:Array<{status:string}>};task:Task&{waitingFor?:TaskWaitingFor|null;networkSuspended?:{since:number}}}
 interface Actions {
   projects():ProjectCatalogEntry[]
-  createWechat(input:CreateWechatTask):CreationReceipt
+  createWechat(input:CreateWechatTask):Promise<CreationReceipt>|CreationReceipt
   setWechatWatch(id:string,accountId:string,enabled:boolean):unknown
   deliverWechatArtifact?(input:SendWechatArtifact):Promise<ArtifactDeliveryReceipt>
   detail(id:string):Detail
@@ -158,6 +158,10 @@ function failure(error:unknown,id:string){
   if(code==='input_conflict')return '这条消息的内容与已记录的补充不一致，未再次发送。请重新查询任务。'
   if(code==='control_conflict')return '这条消息的内容与已记录的操作不一致，未再次执行。请重新查询任务。'
   if(code==='creation_conflict')return '这条消息的内容与已记录的新建要求不一致，未再次创建。请发送一条新消息。'
+  if(code==='git_workspace_source_unsupported')return '这个项目目前无法创建独立副本，没有开始工作。请在桌面查看项目状态，或明确选择原目录。'
+  if(['configuration_not_reproducible','git_workspace_configuration_rejected'].includes(code))return '项目配置暂时无法在独立副本中安全使用，没有开始工作。请在桌面查看说明，或明确选择原目录。'
+  if(['git_workspace_changed','git_workspace_conflict','git_workspace_needs_recovery','git_workspace_configuration_changed'].includes(code))return '准备副本时发现项目或配置已变化，没有开始工作。请在桌面核对原请求和副本状态。'
+  if(['git_timeout','git_unavailable','git_output_limit'].includes(code))return '副本准备暂时未能完成。请保留这条要求，并在桌面核对创建结果。'
   if(code==='project_stale')return '这个项目编号已失效或目录已变化，没有开始工作。请发送「任务 项目」重新选择。'
   if(code==='workbench_attachments_unsupported')return '这个执行者暂不支持工作任务附件，没有开始工作。请移除附件，或改用支持附件的执行者。'
   if(code==='workbench_execution_unsupported')return '这个执行者暂不支持所选执行设置，没有开始工作。请改为自动设置，或选择其他执行者。'
@@ -228,7 +232,7 @@ export function makeWechatWorkbenchControl(opts:{store:WorkbenchStore;ownerChatI
       // wechatTaskMessageKey(v'workbench:'+requestId),不是 identity.msgId。
       // 今天只写不读,不坏事,但留着就是给第一个写 join 的人埋雷。
       const originMessageId=wechatTaskMessageKey({...identity,chatId,text})
-      try{return opts.actions.createWechat({ownerChatId:chatId,accountId:identity.accountId,requestId:inputId(chatId,'',text,identity),commandHash:createHash('sha256').update(text).digest('hex'),projectId:match[1]!.toLowerCase(),...(isolated?{isolation:true}:{}),...(choice?{providerId:choice[1]!.toLowerCase()}:{}),...(originMessageId?{originMessageId}:{}),text:choice?choice[2]!:match[2]!}).reply}
+      try{return (await opts.actions.createWechat({ownerChatId:chatId,accountId:identity.accountId,requestId:inputId(chatId,'',text,identity),commandHash:createHash('sha256').update(text).digest('hex'),projectId:match[1]!.toLowerCase(),...(isolated?{isolation:true}:{}),...(choice?{providerId:choice[1]!.toLowerCase()}:{}),...(originMessageId?{originMessageId}:{}),text:choice?choice[2]!:match[2]!})).reply}
       catch(error){return failure(error,'')}
     }
     if(!command||command==='列表'){

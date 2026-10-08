@@ -8,7 +8,7 @@ import type { ProviderRegistry } from '../../provider-registry'
 import type { WorkbenchExecutorCapabilities } from '../executor-capabilities'
 
 export interface InputMaterials {attachmentIds?:string[];draftId?:string;execution?:unknown}
-export interface CreateTask extends InputMaterials { title?: string; path: string; providerId: string; text: string; /** false ⇒ 不登记成项目(独立工作区的目录)。 */ registerProject?: boolean }
+export interface CreateTask extends InputMaterials { title?: string; path: string; providerId: string; text: string; requestId?:string; executionMode?:import('../task-entry').ExecutionMode; /** false ⇒ 不登记成项目(独立工作区的目录)。 */ registerProject?: boolean }
 /**
  * 主人眼里的进度,两家执行者一致。持久化的 status 记的是这条 run 的生命周期
  * (Claude 会话保留时它永远是 running,Codex 自行收尾后是 completed),而主人要问的

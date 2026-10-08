@@ -10,7 +10,7 @@ export interface MobileEntryActions {
   entryOptions():EntryOptions
   /** 交办时可选的模型(2026-10-06):手机只给执行者 id 与项目目录 id,路径在电脑上解析。没接 ⇒ 手机不显示模型选择。 */
   entryModels?(input:{providerId:string;projectId?:string}):Promise<unknown>
-  createEntry(input:EntryInput):EntryResult
+  createEntry(input:EntryInput):EntryResult|Promise<EntryResult>
   entryReceipt(requestId:string):EntryResult|null
 }
 export interface MobileUploadActions {chunk(input:UploadChunk):UploadState;status(input:{id:string;draftId:string}):UploadState;discard(input:{id:string;draftId:string}):void}
@@ -97,7 +97,7 @@ export async function mobileWorkbenchRoute(actions:MobileMatterActions|undefined
       if(entryOperation==='options')return json({ok:true,...entry.entryOptions()})
       if(entryOperation==='create'){
         let body:unknown;try{body=await req.json()}catch{throw Error('invalid_entry')}
-        return json({ok:true,...entry.createEntry(parseEntryInput(body))},202)
+        return json({ok:true,...await entry.createEntry(parseEntryInput(body))},202)
       }
       const requestId=url.searchParams.get('requestId')
       if(!requestId||!UUID.test(requestId)||url.searchParams.getAll('requestId').length!==1)throw Error('invalid_request_id')

@@ -1,3 +1,5 @@
+import {createGitWorkspaceStore} from './git-workspace-store'
+import {createGitWorkspaces} from './git-workspaces'
 import { existsSync } from 'node:fs'
 import { createHash, randomBytes, randomUUID } from 'node:crypto'
 import { basename, join } from 'node:path'
@@ -22,6 +24,8 @@ export type TaskStatus = 'queued' | 'running' | 'cancelling' | 'completed' | 'fa
 export interface Task {
   id: string; title: string; path: string; providerId: string; status: TaskStatus
   workspaceKind: 'project' | 'managed'
+  sourcePath?:string
+  workspace?:{id:string;mode:'isolated';sourcePath:string;executionPath:string;branch:string;baseCommit:string;removed?:boolean}
   createdAt: number; updatedAt: number; error: string | null; archivedAt: number | null
 }
 export interface WorkbenchProject { id:string; path:string; name:string; providerId:string; createdAt:number }
@@ -31,15 +35,15 @@ function parseGroups(raw:string|null):number[]|null {
   if(!raw)return null
   try { const v:unknown=JSON.parse(raw); return Array.isArray(v)&&v.length&&v.every(g=>Number.isInteger(g)&&g>1)?v as number[]:null } catch { return null }
 }
-export interface StoredTask extends Task { ownerChatId: string | null; sessionId: string | null }
+export interface StoredTask extends Task { gitWorkspaceId: string | null; ownerChatId: string | null; sessionId: string | null }
 export interface TaskEvent { id: number; taskId: string; kind: 'user' | 'text' | 'tool_call' | 'system' | 'error'; text: string; createdAt: number; sourceId?:string|null; runId?:string; activity?:AgentActivity; attachments?:import('./attachments').Attachment[]; errorCode?:'execution_model_unsupported'; diagnostic?:string }
 export interface Artifact { id: string; taskId: string; name: string; mime: string; size: number; sha256: string; createdAt: number; approvedAt: number | null }
 export interface StoredArtifact extends Artifact { storagePath: string }
-const TASK_SELECT = 'SELECT id,title,path,provider_id AS providerId,owner_chat_id AS ownerChatId,session_id AS sessionId,status,error,created_at AS createdAt,updated_at AS updatedAt,archived_at AS archivedAt,workspace_kind AS workspaceKind FROM workbench_tasks'
+const TASK_SELECT = 'SELECT id,title,path,provider_id AS providerId,owner_chat_id AS ownerChatId,session_id AS sessionId,status,error,created_at AS createdAt,updated_at AS updatedAt,archived_at AS archivedAt,workspace_kind AS workspaceKind,git_workspace_id AS gitWorkspaceId FROM workbench_tasks'
 const HANDOFF_SELECT='SELECT id,source_task_id AS sourceTaskId,target_task_id AS targetTaskId,purpose,request,packet_sha256 AS packetSha256,artifact_refs_json AS artifactRefsJson,quote_json AS quoteJson,created_at AS createdAt,request_event_id AS requestEventId,source_native_id AS sourceNativeId,target_native_id AS targetNativeId,packet_json AS packetJson,token_hash AS tokenHash FROM workbench_handoffs'
 const SOURCE_SELECT='SELECT id,task_id AS taskId,provider_id AS providerId,native_id AS nativeId,cwd,imported_at AS importedAt,first_dispatched_at AS firstDispatchedAt,snapshot_sha256 AS snapshotSha256,observed_fingerprint AS observedFingerprint,selected_message_count AS selectedMessageCount,truncated,snapshot_json AS snapshotJson,pages_json AS pagesJson FROM workbench_sources'
 const ART_SELECT = 'SELECT id,task_id AS taskId,name,mime,size,sha256,storage_path AS storagePath,created_at AS createdAt,approved_at AS approvedAt FROM workbench_artifacts'
-export function publicTask({ ownerChatId: _owner, sessionId: _session, ...task }: StoredTask): Task { return task }
+export function publicTask({ ownerChatId: _owner, sessionId: _session, gitWorkspaceId: _workspace, ...task }: StoredTask): Task { return task }
 export function publicArtifact({ storagePath: _path, ...artifact }: StoredArtifact): Artifact { return artifact }
 
 export interface WorkbenchListQuery {
@@ -73,7 +77,11 @@ function listFilters(query:WorkbenchListQuery) {
   return {q,archived,limit,filterHash,cursor}
 }
 
+const SOURCE_PATH = "COALESCE((SELECT json_extract(record_json,'$.sourcePath') FROM workbench_git_workspaces WHERE id=workbench_tasks.git_workspace_id),(SELECT project_path FROM workbench_worktrees WHERE task_id=workbench_tasks.id),path)"
 export function makeWorkbenchStore(db: Db) {
+  const gitWorkspaces=createGitWorkspaceStore(db)
+  const sourcePath=(task:Pick<StoredTask,'id'|'path'|'gitWorkspaceId'>)=>task.gitWorkspaceId?gitWorkspaces.get(task.gitWorkspaceId)?.sourcePath??task.path:db.query<{path:string},[string]>('SELECT project_path AS path FROM workbench_worktrees WHERE task_id=?').get(task.id)?.path??task.path
+
   const addProject=(input:{path:string;name?:string;providerId:string}):WorkbenchProject=>{
     db.query('INSERT OR IGNORE INTO workbench_projects(id,path,name,provider_id,created_at) VALUES(?,?,?,?,?)').run('p-'+randomUUID(),input.path,input.name?.trim()||basename(input.path)||input.path,input.providerId,Date.now())
     return projectName(db.query<WorkbenchProject,[string]>(PROJECT_SELECT+' WHERE path=?').get(input.path)!)
@@ -104,9 +112,14 @@ export function makeWorkbenchStore(db: Db) {
   })
   return {
     addProject,
+    gitWorkspaces,
+    gitWorkspaceForTask:(taskId:string)=>{const row=db.query<{id:string|null},[string]>('SELECT git_workspace_id AS id FROM workbench_tasks WHERE id=?').get(taskId);return row?.id?gitWorkspaces.get(row.id):null},
+    gitWorkspaceManager:(options:Omit<Parameters<typeof createGitWorkspaces>[0],'db'>)=>createGitWorkspaces({...options,db}),
+    sourcePath,
+
     projects:()=>db.query<WorkbenchProject,[]>(PROJECT_SELECT+' ORDER BY created_at,id').all().map(projectName),
     /** 还有没归档任务的文件夹 —— 这些项目即使文件夹没了也要留在列表里(任务行挂在它下面)。 */
-    activeTaskPaths:()=>new Set(db.query<{path:string},[]>('SELECT DISTINCT path FROM workbench_tasks WHERE archived_at IS NULL').all().map(r=>r.path)),
+    activeTaskPaths:()=>new Set(db.query<{path:string},[]>(`SELECT DISTINCT ${SOURCE_PATH} AS path FROM workbench_tasks WHERE archived_at IS NULL`).all().map(r=>r.path)),
     atomic:<T>(operation:()=>T,immediate=false):T=>{const transaction=db.transaction(operation);return immediate?transaction.immediate():transaction()},
     attachments:makeTaskAttachmentStore(db),
     uploadRequestExists:(id:string)=>!!db.query('SELECT id FROM workbench_attachment_uploads WHERE id=?').get(id),
@@ -146,7 +159,8 @@ export function makeWorkbenchStore(db: Db) {
     createHandoff(input:Omit<StoredHandoff,'targetTaskId'|'createdAt'|'targetNativeId'|'requestEventId'> & {targetTaskId:string|null;targetProviderId:string;path:string;title:string;ownerChatId:string|null}) {
       return db.transaction(()=>{
         const old=this.handoffByToken(input.tokenHash);if(old)return old
-        const task=input.targetTaskId?get(input.targetTaskId):this.create({title:input.title,path:input.path,providerId:input.targetProviderId,ownerChatId:input.ownerChatId})
+        const task=input.targetTaskId?get(input.targetTaskId):this.create({title:input.title,path:input.path,providerId:input.targetProviderId,ownerChatId:input.ownerChatId,gitWorkspaceId:get(input.sourceTaskId).gitWorkspaceId,projectPath:sourcePath(get(input.sourceTaskId))})
+        if(!input.targetTaskId){const tree=this.worktrees.get(input.sourceTaskId);if(tree)this.worktrees.record({...tree,taskId:task.id})}
         if(!input.targetTaskId)this.update(task.id,'interrupted')
         db.query('INSERT INTO workbench_handoffs(id,source_task_id,target_task_id,purpose,request,packet_sha256,artifact_refs_json,quote_json,created_at,source_native_id,target_native_id,packet_json,token_hash) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)').run(input.id,input.sourceTaskId,task.id,input.purpose,input.request,input.packetSha256,input.artifactRefsJson,input.quoteJson,Date.now(),input.sourceNativeId,null,input.packetJson,input.tokenHash)
         return this.handoffRecord(task.id,input.id)
@@ -166,14 +180,14 @@ export function makeWorkbenchStore(db: Db) {
         return{task:get(task.id),source:publicSource(source(task.id)!),created:true}
       })()
     },
-    projectProvider: (path:string) => db.query<{providerId:string},[string]>('SELECT provider_id AS providerId FROM workbench_tasks WHERE path=? ORDER BY updated_at DESC,id DESC LIMIT 1').get(path)?.providerId ?? null,
+    projectProvider: (path:string) => db.query<{providerId:string},[string]>(`SELECT provider_id AS providerId FROM workbench_tasks WHERE ${SOURCE_PATH}=? ORDER BY updated_at DESC,id DESC LIMIT 1`).get(path)?.providerId ?? null,
     list: () => db.query<StoredTask, []>(`${TASK_SELECT} ORDER BY updated_at DESC,rowid DESC LIMIT 200`).all().map(publicTask),
     listOwned:(ownerChatId:string,limit=8)=>db.query<StoredTask,[string,number]>(`${TASK_SELECT} WHERE owner_chat_id=? AND archived_at IS NULL ORDER BY updated_at DESC,id DESC LIMIT ?`).all(ownerChatId,Math.max(1,Math.min(20,limit))).map(publicTask),
     ownedProjects(ownerChatId:string,providers?:readonly string[]):Array<{path:string;providerId:string}> {
-      const rows=db.query<{path:string;providerId:string},[string]>("SELECT path,provider_id AS providerId FROM workbench_tasks WHERE owner_chat_id=? AND workspace_kind='project' AND id NOT IN (SELECT task_id FROM workbench_worktrees) ORDER BY updated_at DESC,id DESC").all(ownerChatId)
+      const rows=db.query<{path:string;providerId:string},[string]>(`SELECT ${SOURCE_PATH} AS path,provider_id AS providerId FROM workbench_tasks WHERE owner_chat_id=? AND workspace_kind='project' ORDER BY updated_at DESC,id DESC`).all(ownerChatId)
       const accepted=[...new Set(providers??[])]
       const available=accepted.length
-        ? db.query<{path:string;providerId:string},string[]>(`SELECT path,provider_id AS providerId FROM workbench_tasks WHERE owner_chat_id=? AND workspace_kind='project' AND id NOT IN (SELECT task_id FROM workbench_worktrees) AND provider_id IN (${accepted.map(()=>'?').join(',')}) ORDER BY updated_at DESC,id DESC`).all(ownerChatId,...accepted)
+        ? db.query<{path:string;providerId:string},string[]>(`SELECT ${SOURCE_PATH} AS path,provider_id AS providerId FROM workbench_tasks WHERE owner_chat_id=? AND workspace_kind='project' AND provider_id IN (${accepted.map(()=>'?').join(',')}) ORDER BY updated_at DESC,id DESC`).all(ownerChatId,...accepted)
         : []
       const preferred=new Map<string,string>()
       for(const row of available)if(!preferred.has(row.path))preferred.set(row.path,row.providerId)
@@ -187,8 +201,8 @@ export function makeWorkbenchStore(db: Db) {
       if(archived!=='all')where.push(archived==='only' ? 'archived_at IS NOT NULL' : 'archived_at IS NULL')
       if(q) {
         const pattern='%'+q.replace(/[\\%_]/g,char=>'\\'+char)+'%'
-        where.push("(title LIKE ? ESCAPE '\\' OR path LIKE ? ESCAPE '\\' OR id LIKE ? ESCAPE '\\' OR path IN (SELECT path FROM workbench_projects WHERE name LIKE ? ESCAPE '\\'))")
-        args.push(pattern,pattern,pattern,pattern)
+        where.push(`(title LIKE ? ESCAPE '\\' OR path LIKE ? ESCAPE '\\' OR id LIKE ? ESCAPE '\\' OR ${SOURCE_PATH} LIKE ? ESCAPE '\\' OR ${SOURCE_PATH} IN (SELECT path FROM workbench_projects WHERE name LIKE ? ESCAPE '\\'))`)
+        args.push(pattern,pattern,pattern,pattern,pattern)
       }
       const filter=where.length ? ' WHERE '+where.join(' AND ') : ''
       return db.transaction(()=>{
@@ -235,12 +249,14 @@ export function makeWorkbenchStore(db: Db) {
       return db.query<{id:string;title:string;path:string;groups:string|null},[]>("SELECT id,title,path,writer_groups AS groups FROM workbench_tasks WHERE error='writer_not_closed'").all()
         .map(row=>({id:row.id,title:row.title,path:row.path,groups:parseGroups(row.groups)}))
     },
-    create(input: { title: string; path: string; providerId: string; ownerChatId: string | null;workspaceKind?:'project'|'managed';registerProject?:boolean }): StoredTask {
+    create(input: { title: string; path: string; providerId: string; ownerChatId: string | null;workspaceKind?:'project'|'managed';registerProject?:boolean;gitWorkspaceId?:string|null;projectPath?:string }): StoredTask {
       let id: string
       do { id = randomBytes(4).toString('hex') } while (db.query('SELECT 1 FROM workbench_tasks WHERE id=?').get(id))
       const now = Date.now()
-      if(input.registerProject!==false)addProject(input)
-      db.query('INSERT INTO workbench_tasks(id,title,path,provider_id,owner_chat_id,status,created_at,updated_at,workspace_kind) VALUES(?,?,?,?,?,?,?,?,?)').run(id,input.title,input.path,input.providerId,input.ownerChatId,'queued',now,now,input.workspaceKind??'project')
+      const workspace=input.gitWorkspaceId?gitWorkspaces.get(input.gitWorkspaceId):null
+      if(input.gitWorkspaceId&&(!workspace||workspace.status!=='ready'||workspace.executionPath!==input.path))throw Error('git_workspace_changed')
+      if(input.registerProject!==false)addProject({...input,path:workspace?.sourcePath??input.projectPath??input.path})
+      db.query('INSERT INTO workbench_tasks(id,title,path,provider_id,owner_chat_id,status,created_at,updated_at,workspace_kind,git_workspace_id) VALUES(?,?,?,?,?,?,?,?,?,?)').run(id,input.title,input.path,input.providerId,input.ownerChatId,'queued',now,now,input.workspaceKind??'project',input.gitWorkspaceId??null)
       return get(id)
     },
     update(id: string, status: TaskStatus, error: string | null = null) {

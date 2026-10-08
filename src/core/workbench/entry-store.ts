@@ -8,6 +8,7 @@ export interface EntryReservation {
   ownerKey:string;requestId:string;canonicalRequestHash:string
   target:EntryTarget;workspaceId:string|null;resolvedPath:string|null;directoryIdentity:string|null
   providerId:string;execution:AgentExecutionChoice;materialSnapshot:Attachment[]
+  receiptDomain?:{kind:'wechat';accountId:string;commandHash:string};hashVersion?:2;sourcePath?:string|null;resolvedMode?:'project'|'isolated';legacyPath?:string
 }
 export interface EntryAccepted {
   taskId:string;matterId:string;runId:string;acceptedAt:number;resolvedPath:string;directoryIdentity:string
@@ -50,7 +51,7 @@ export function createEntryStore(db:Db) {
           return prior
         }
         if(!nonempty(input.ownerKey)||!nonempty(input.requestId)||!/^[a-f0-9]{64}$/.test(input.canonicalRequestHash)||!nonempty(input.providerId))throw Error('invalid_entry_reservation')
-        const frozen=JSON.stringify({target:input.target,providerId:input.providerId,execution:input.execution,materialSnapshot:input.materialSnapshot})
+        const frozen=JSON.stringify({target:input.target,providerId:input.providerId,execution:input.execution,materialSnapshot:input.materialSnapshot,...(input.hashVersion?{hashVersion:input.hashVersion,...(input.receiptDomain?{receiptDomain:input.receiptDomain}:{}),sourcePath:input.sourcePath,resolvedMode:input.resolvedMode,...(input.legacyPath?{legacyPath:input.legacyPath}:{})}:{})})
         db.query(`INSERT INTO workbench_entry_requests
           (owner_key,request_id,canonical_request_hash,frozen_json,phase,workspace_id,resolved_path,directory_identity,created_at)
           VALUES(?,?,?,?,'reserved',?,?,?,?)`).run(input.ownerKey,input.requestId,input.canonicalRequestHash,frozen,input.workspaceId,input.resolvedPath,input.directoryIdentity,Date.now())

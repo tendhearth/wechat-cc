@@ -1524,6 +1524,42 @@ export const migrations: Migration[] = [
     );`)
   },
 
+  // v75 — fixed-base Git workspace ownership and private restoration journal.
+  (db) => {
+    db.exec(`CREATE TABLE IF NOT EXISTS workbench_git_workspaces (
+  id TEXT PRIMARY KEY,
+  owner_key TEXT NOT NULL,
+  request_id TEXT NOT NULL,
+  canonical_request_hash TEXT NOT NULL,
+  status TEXT NOT NULL CHECK(status IN ('reserved','provisioning','ready','failed','needs_recovery')),
+  record_json TEXT NOT NULL,
+  UNIQUE(owner_key,request_id)
+);
+
+CREATE TABLE IF NOT EXISTS workbench_restore_workspaces (
+ workspace_id TEXT PRIMARY KEY, path TEXT NOT NULL, directory_identity TEXT NOT NULL,
+ generation INTEGER NOT NULL, invalid INTEGER NOT NULL DEFAULT 0
+);
+CREATE TABLE IF NOT EXISTS workbench_restore_runs (
+ restore_run_id TEXT PRIMARY KEY, workspace_id TEXT NOT NULL, task_id TEXT NOT NULL,
+ generation INTEGER NOT NULL, status TEXT NOT NULL, artifact_id TEXT UNIQUE, data TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS workbench_restore_runs_workspace ON workbench_restore_runs(workspace_id);
+CREATE TABLE IF NOT EXISTS workbench_restore_paths (
+ workspace_id TEXT NOT NULL, path TEXT NOT NULL, change_id TEXT NOT NULL,
+ PRIMARY KEY(workspace_id,path)
+);
+CREATE TABLE IF NOT EXISTS workbench_restore_operations (
+ operation_id TEXT PRIMARY KEY, workspace_id TEXT NOT NULL, request_id TEXT NOT NULL,
+ state TEXT NOT NULL, data TEXT NOT NULL, UNIQUE(workspace_id,request_id)
+);
+CREATE INDEX IF NOT EXISTS workbench_restore_operations_workspace ON workbench_restore_operations(workspace_id,state);
+
+`)
+    const cols=db.query<{name:string},[]>('PRAGMA table_info(workbench_tasks)').all()
+    if(!cols.some(c=>c.name==='git_workspace_id'))db.exec('ALTER TABLE workbench_tasks ADD COLUMN git_workspace_id TEXT REFERENCES workbench_git_workspaces(id)')
+    db.exec('CREATE INDEX IF NOT EXISTS workbench_tasks_git_workspace ON workbench_tasks(git_workspace_id)')
+  },
 ]
 
 /**

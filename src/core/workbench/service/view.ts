@@ -72,8 +72,10 @@ export function makeViewDomain(ctx:ServiceCtx, queries?:{quotaHandoff(id:string)
   function taskView(task:Task, includePermissions=false):WorkbenchTaskView {
     const running=state.runsByTask.get(task.id)
     const runtime=runtimeSnapshot(running)
+    const workspace=store.gitWorkspaceForTask(task.id)
     return {
       ...task,
+      ...(workspace?{sourcePath:workspace.sourcePath,workspace:{id:workspace.id,mode:'isolated' as const,sourcePath:workspace.sourcePath,executionPath:workspace.executionPath,branch:workspace.branch,baseCommit:workspace.baseCommit},worktree:{projectPath:workspace.sourcePath,branch:workspace.branch,removed:false}}:{}),
       phase:phaseOf(task,running),
       ...(runtime?{runtime}:{}),
       ...(!running&&TERMINAL_TASK_STATUSES.includes(task.status)&&store.source(task.id)?.firstDispatchedAt===null?{importedOnly:true}:{}),

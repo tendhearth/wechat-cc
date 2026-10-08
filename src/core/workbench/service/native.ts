@@ -18,6 +18,7 @@ import { publicTask, TERMINAL_TASK_STATUSES, type StoredTask } from '../store'
 import { normalizeInputRequestId } from '../live-inputs'
 import { checkedText } from './checked-text'
 import { directoryIdentity } from './directory-identity'
+import { validateWorkspaceProvider } from './workspace-configuration'
 import type { ServiceCtx } from './ctx'
 import type { AcceptedContinuation } from './state'
 import type { InputMaterials, WorkbenchTaskView } from './types'
@@ -145,8 +146,16 @@ export function makeNativeDomain(ctx:ServiceCtx) {
       }
     }
     act().requireInput(p.targetProviderId,act().combinedAttachments(checkedHandoffAttachments,accepted.mode==='restart'?accepted.preview.attachments:[]),p.targetExecution??PROVIDER_EXECUTION_CHOICE,accepted.mode==='resume')
+    try{await validateWorkspaceProvider(ctx,source,p.targetProviderId)}catch(error){
+      const winner=store.handoffByToken(hash)
+      if(winner)return{task:act().taskView(publicTask(store.get(winner.targetTaskId))),handoffId:winner.id,sourceTaskId:winner.sourceTaskId}
+      throw error
+    }
+    const raced=store.handoffByToken(hash)
+    if(raced)return{task:act().taskView(publicTask(store.get(raced.targetTaskId))),handoffId:raced.id,sourceTaskId:raced.sourceTaskId}
+    assertCurrent()
     const packetJson=JSON.stringify({context:p.context,request:p.request,artifacts:p.artifacts,attachments:p.attachments??[],quote:p.quote,truncated:p.truncated,continuation:accepted,execution:p.targetExecution})
-    const record=store.createHandoff({id:randomUUID(),sourceTaskId:source.id,targetTaskId:target?.id??null,targetProviderId:p.targetProviderId,path:source.path,title:`检查 · ${source.title}`.slice(0,120),ownerChatId:source.ownerChatId,purpose:p.purpose,request:p.request,packetSha256:snapshotHash(packetJson),packetJson,artifactRefsJson:JSON.stringify(p.artifacts),quoteJson:p.quote?JSON.stringify(p.quote):null,sourceNativeId:source.sessionId,tokenHash:hash})
+    const record=store.atomic(()=>{const record=store.createHandoff({id:randomUUID(),sourceTaskId:source.id,targetTaskId:target?.id??null,targetProviderId:p.targetProviderId,path:source.path,title:`检查 · ${source.title}`.slice(0,120),ownerChatId:source.ownerChatId,purpose:p.purpose,request:p.request,packetSha256:snapshotHash(packetJson),packetJson,artifactRefsJson:JSON.stringify(p.artifacts),quoteJson:p.quote?JSON.stringify(p.quote):null,sourceNativeId:source.sessionId,tokenHash:hash});if(ctx.deps.matters)ensureTaskMatter(store.get(record.targetTaskId));return record})
     state.handoffDecisions.delete(input.token)
     if(native)state.nativeDecisions.delete(native.token)
     let task:WorkbenchTaskView
@@ -371,7 +380,7 @@ export function makeNativeDomain(ctx:ServiceCtx) {
     // 三步同一事务;且只有 create 看「已有」—— linkTask / bind 都幂等,每次都跑:哪一步中途失败,下次再点都能补齐。
     // 状态与 execute 的终态登记一致:完成 / 失败 / 取消 ⇒ done;interrupted 与仍在跑的 ⇒ open。
     store.atomic(()=>{
-      if(!m.get(task.id))m.create({id:task.id,kind:'task',title:task.title,projectPath:task.path,ownerChatId:task.ownerChatId??null,status:task.status==='completed'||task.status==='failed'||task.status==='cancelled'?'done':'open'})
+      if(!m.get(task.id))m.create({id:task.id,kind:'task',title:task.title,projectPath:store.sourcePath(task),ownerChatId:task.ownerChatId??null,status:task.status==='completed'||task.status==='failed'||task.status==='cancelled'?'done':'open'})
       m.linkTask(task.id)
       if(task.ownerChatId)m.bind(task.id,'wechat',task.ownerChatId)
     })

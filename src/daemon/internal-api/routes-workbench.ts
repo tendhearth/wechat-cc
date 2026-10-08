@@ -97,7 +97,7 @@ export function workbenchRoutes(deps: InternalApiDeps): RouteTable {
       try{
         const input=parseEntryInput(body)
         if(!deps.workbench)return{status:503,body:{error:'workbench_not_wired'}}
-        return{status:202,body:deps.workbench.createEntry(input,entryContext())}
+        return{status:202,body:await deps.workbench.createEntry(input,entryContext())}
       }catch(error){return mappedError(error,true)}
     },
     'GET /v1/workbench/entry-receipt':async query=>{
@@ -203,7 +203,7 @@ export function workbenchRoutes(deps: InternalApiDeps): RouteTable {
       const value=objectBody(body)
       if(query.size||!value||Object.keys(value).some(key=>!['id','requestId','providerId'].includes(key))||typeof value.id!=='string'||!TASK_ID.test(value.id)||typeof value.requestId!=='string'||!REQUEST_ID.test(value.requestId)||!isWorkbenchProviderId(value.providerId))return invalid()
       if(!deps.workbench)return{status:503,body:{error:'workbench_not_wired'}}
-      try{return{status:202,body:deps.workbench.handOff(value.id,{requestId:value.requestId,providerId:value.providerId})}}catch(error){return mappedError(error)}
+      try{return{status:202,body:await deps.workbench.handOff(value.id,{requestId:value.requestId,providerId:value.providerId})}}catch(error){return mappedError(error)}
     },
     'POST /v1/workbench/handoff-preview':async(_query,body)=>{
       if(!deps.workbench)return{status:503,body:{error:'workbench_not_wired'}}
@@ -279,7 +279,7 @@ export function workbenchRoutes(deps: InternalApiDeps): RouteTable {
           !files || !path || !isAbsolute(path) || !isWorkbenchProviderId(providerId) || (!text&&!files.attachmentIds?.length) || text.length > 20_000) return invalid()
       if (!deps.workbench) return { status: 503, body: { error: 'workbench_not_wired' } }
       try {
-        const task = await deps.workbench.create({ ...(title ? { title } : {}), path, providerId, text,...files,...execution(value) })
+        const task = await deps.workbench.create({ ...(title ? { title } : {}), path, providerId, text,...files,...execution(value),...(value.requestId!==undefined?{requestId:value.requestId as string}:{}),...(value.executionMode!==undefined?{executionMode:value.executionMode as import('../../core/workbench/task-entry').ExecutionMode}:{}) })
         return { status: 202, body: { task } }
       } catch (err) {
         return mappedError(err)

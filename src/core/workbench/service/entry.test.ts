@@ -51,19 +51,19 @@ function setup(over: { defaultProvider?: string; managedRoot?: string } = {}) {
 }
 
 describe('makeEntryDomain · 守门', () => {
-  it('managed():没配受管根目录 ⇒ entry_not_wired;配了 ⇒ 能拿到', () => {
+  it('managed():没配受管根目录 ⇒ entry_not_wired;配了 ⇒ 能拿到', async () => {
     expect(() => setup().entry.managed()).toThrow('entry_not_wired')
     const { entry, root } = setup({ managedRoot: join(root_of(), 'managed') })
     void root; expect(entry.managed()).toBeTruthy()
   })
-  it('requireEntryOwner:没 ownerKey / 不是主人 / surface 不对 ⇒ invalid_entry_owner;对的 ⇒ 过', () => {
+  it('requireEntryOwner:没 ownerKey / 不是主人 / surface 不对 ⇒ invalid_entry_owner;对的 ⇒ 过', async () => {
     const { entry } = setup()
     expect(() => entry.requireEntryOwner({ ownerKey: '', surface: 'desktop' })).toThrow('invalid_entry_owner')
     expect(() => entry.requireEntryOwner({ ownerKey: 'someone', surface: 'desktop' })).toThrow('invalid_entry_owner')
     expect(() => entry.requireEntryOwner({ ownerKey: 'owner', surface: 'watch' as never })).toThrow('invalid_entry_owner')
     expect(() => entry.requireEntryOwner(OWNER)).not.toThrow()
   })
-  it('entryReceipt:没记录 ⇒ null;不是主人 ⇒ invalid_entry_owner', () => {
+  it('entryReceipt:没记录 ⇒ null;不是主人 ⇒ invalid_entry_owner', async () => {
     const { entry } = setup()
     expect(entry.entryReceipt(REQ, OWNER)).toBeNull()
     expect(() => entry.entryReceipt(REQ, { ownerKey: 'x', surface: 'phone' })).toThrow('invalid_entry_owner')
@@ -71,19 +71,19 @@ describe('makeEntryDomain · 守门', () => {
 })
 
 describe('makeEntryDomain · 选项与创建', () => {
-  it('entryOptions:不是主人 ⇒ needs_connection + invalid_entry_owner;是主人 ⇒ 列出可用执行者,默认执行者只在配了且可用时才有', () => {
+  it('entryOptions:不是主人 ⇒ needs_connection + invalid_entry_owner;是主人 ⇒ 列出可用执行者,默认执行者只在配了且可用时才有', async () => {
     const { entry } = setup()
     expect(entry.entryOptions({ ownerKey: 'x', surface: 'phone' })).toMatchObject({ status: 'needs_connection', reason: { code: 'invalid_entry_owner' }, providers: [] })
     const o = entry.entryOptions(OWNER)
     expect(o.providers.map(p => p.id)).toEqual(['claude']); expect(o.providers[0]).toMatchObject({ available: true }); expect(o.defaultProviderId).toBeNull(); expect(o.status).toBe('needs_connection')
     expect(setup({ defaultProvider: 'claude' }).entry.entryOptions(OWNER)).toMatchObject({ status: 'ready', defaultProviderId: 'claude' })
   })
-  it('createEntry:没接 matters ⇒ entry_not_wired;同 requestId 但内容 hash 不同 ⇒ creation_conflict', () => {
+  it('createEntry:没接 matters ⇒ entry_not_wired;同 requestId 但内容 hash 不同 ⇒ creation_conflict', async () => {
     const { entry, store } = setup()
     const input = { requestId: REQ, text: '做点事', target: { kind: 'managed' as const } }
-    expect(() => entry.createEntry(input, OWNER)).toThrow('entry_not_wired')
+    await expect(entry.createEntry(input, OWNER)).rejects.toThrow('entry_not_wired')
     store.entryRequests.reserve({ ownerKey: 'owner', requestId: REQ, canonicalRequestHash: 'f'.repeat(64), target: { kind: 'managed' }, workspaceId: null, resolvedPath: null, directoryIdentity: null, providerId: 'claude', execution: PROVIDER_EXECUTION_CHOICE, materialSnapshot: [] })
-    expect(() => entry.createEntry(input, OWNER)).toThrow('creation_conflict')
+    await expect(entry.createEntry(input, OWNER)).rejects.toThrow('creation_conflict')
   })
 })
 

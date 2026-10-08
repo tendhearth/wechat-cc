@@ -4,7 +4,6 @@
  * 跨域依赖用「已建好的域对象显式注入」(domains),工厂顶部解构成与 service.ts 同名的局部量,函数体只做机械替换(opts.x → ctx.deps.x、touched → ctx.hub.touched 等);
  * 真正需要晚绑定的只有 lifecycle.pump → ctx.actions.execute(那头由 lifecycle 走 Ref)。
  */
-import { ensureWorktree, planWorktree, repoRootOf } from '../worktree-workspaces'
 import { createHash, randomUUID } from 'node:crypto'
 import type { AgentEvent, AgentSession, AgentExecutionChoice } from '../../agent-provider'
 import type { MatterStore } from '../../matters/store'
@@ -15,7 +14,6 @@ import { liveRunTarget } from './call-target'
 import { TIER_PROFILES, sessionAuthEnv } from '../../user-tier'
 import { canonicalProject, outputDirectory } from '../artifacts'
 import type { Attachment } from '../attachments'
-import type { CreationReceipt } from '../creation-receipts'
 import { makeDeltaCoalescer } from '../delta-coalescer'
 import { CodexExecutionError } from '../codex-execution-error'
 import { executionFailureMessage, normalizeExecutionChoice, PROVIDER_EXECUTION_CHOICE, sameExecutionChoice, taskErrorForProviderCode } from '../execution-settings'
@@ -29,7 +27,6 @@ import { makeRunPermissions, WORKBENCH_PERMISSION_TIMEOUT_MS } from '../permissi
 import { publicTask, type StoredTask, type TaskStatus } from '../store'
 import type { EntryContext } from '../task-entry'
 import { makeRunUserInput } from '../user-input'
-import type { CreateWechatTask } from '../wechat-types'
 import { checkedText } from './checked-text'
 import { directoryIdentity } from './directory-identity'
 import type { ServiceCtx } from './ctx'
@@ -482,7 +479,7 @@ export function makeExecuteDomain(ctx:ServiceCtx, domains:ExecuteDomains) {
     try{return ctx.deps.matters.ensureChat(ownerChatId).id}
     catch(err){ctx.log?.('MATTER_ORIGIN',`ensureChat failed for ${ownerChatId}: ${err instanceof Error?err.message:err} — origin left null, task still created`);return null}
   }
-  function createTask(input:CreateTask,onAccepted?:(task:StoredTask,runId:string)=>void,origin?:{matterId:string|null;messageId:string|null},entry?:{context:EntryContext;workspaceKind:'managed'|'project';registerProject?:boolean;fromChat:boolean;materials:Attachment[];beforeCreate:()=>void;verifyDirectory:(path:string,identity:string)=>void}):WorkbenchTaskView {
+  function createTask(input:CreateTask & {gitWorkspaceId?:string|null;projectPath?:string},onAccepted?:(task:StoredTask,runId:string)=>void,origin?:{matterId:string|null;messageId:string|null},entry?:{context:EntryContext;workspaceKind:'managed'|'project';registerProject?:boolean;gitWorkspaceId?:string;fromChat:boolean;materials:Attachment[];beforeCreate:()=>void;verifyDirectory:(path:string,identity:string)=>void}):WorkbenchTaskView {
     ctx.ensureAccepting()
     const execution=normalizeExecutionChoice(input.execution,PROVIDER_EXECUTION_CHOICE)
     const attachments=entry?entry.materials:selectAttachments(input)
@@ -495,16 +492,16 @@ export function makeExecuteDomain(ctx:ServiceCtx, domains:ExecuteDomains) {
     let activate:()=>void=()=>{}
     const accepted=store.atomic(()=>{
       entry?.beforeCreate()
-      const task=store.create({title:input.title?.trim()??(text.slice(0,40)||attachments[0]!.name.slice(0,40)),path,providerId:input.providerId,ownerChatId:entry?.context.ownerKey??ctx.deps.ownerChatId(),workspaceKind:entry?.workspaceKind,registerProject:input.registerProject??entry?.registerProject??entry?.workspaceKind!=='managed'})
-      if(entry){
+      const task=store.create({title:input.title?.trim()??(text.slice(0,40)||attachments[0]!.name.slice(0,40)),path,providerId:input.providerId,ownerChatId:entry?.context.ownerKey??ctx.deps.ownerChatId(),gitWorkspaceId:entry?.gitWorkspaceId??input.gitWorkspaceId,projectPath:input.projectPath,workspaceKind:entry?.workspaceKind,registerProject:input.registerProject??entry?.registerProject??entry?.workspaceKind!=='managed'})
+      if(entry&&entry.context.surface!=='wechat'){
         const m=ctx.deps.matters;if(!m)throw Error('entry_not_wired')
         const chat=entry.fromChat?m.ensureChat(entry.context.ownerKey):null
         if(chat&&chat.ownerChatId!==entry.context.ownerKey)throw Error('invalid_entry_owner')
-        m.create({id:task.id,kind:'task',title:task.title,projectPath:path,ownerChatId:entry.context.ownerKey,originMatterId:chat?.id??null,originMessageId:null})
+        m.create({id:task.id,kind:'task',title:task.title,projectPath:input.projectPath??store.sourcePath(task),ownerChatId:entry.context.ownerKey,originMatterId:chat?.id??null,originMessageId:null})
         m.linkTask(task.id)
         if(store.taskMatterId(task.id)!==task.id)throw Error('entry_matter_link_failed')
         m.bind(task.id,entry.context.surface,entry.context.ownerKey)
-      }else matterSync(m=>{m.create({id:task.id,kind:'task',title:task.title,projectPath:path,ownerChatId:task.ownerChatId??null,originMatterId:origin?.matterId??null,originMessageId:origin?.messageId??null});m.linkTask(task.id);if(task.ownerChatId)m.bind(task.id,'wechat',task.ownerChatId)})
+      }else matterSync(m=>{m.create({id:task.id,kind:'task',title:task.title,projectPath:input.projectPath??store.sourcePath(task),ownerChatId:task.ownerChatId??null,originMatterId:origin?.matterId??null,originMessageId:origin?.messageId??null});m.linkTask(task.id);if(task.ownerChatId)m.bind(task.id,'wechat',task.ownerChatId)})
       return start(task,text,acceptedDirectoryIdentity,undefined,undefined,undefined,undefined,undefined,attachments,input.draftId,execution,{
         persist:runId=>onAccepted?.(task,runId),activate:fn=>{activate=fn},scope:entry?.context,
       })
@@ -513,41 +510,6 @@ export function makeExecuteDomain(ctx:ServiceCtx, domains:ExecuteDomains) {
     activate()
     return accepted
   }
-  function createWechat(input:CreateWechatTask):CreationReceipt {
-    ctx.ensureAccepting()
-    if(!input.ownerChatId||ctx.deps.ownerChatId()!==input.ownerChatId||!input.accountId?.trim())throw Error('invalid_wechat_identity')
-    const id=normalizeInputRequestId(input.requestId)
-    if(!/^[a-f0-9]{64}$/.test(input.commandHash))throw Error('invalid_request')
-    // Replay accepted identity before consulting configuration or a directory that may have moved.
-    const prior=store.creationReceipts.get(id)
-    if(prior){
-      if(prior.ownerChatId!==input.ownerChatId||prior.accountId!==input.accountId||prior.commandHash!==input.commandHash)throw Error('creation_conflict')
-      if(store.get(prior.taskId).ownerChatId!==input.ownerChatId)throw Error('invalid_wechat_identity')
-      return prior
-    }
-    const project=projects().find(project=>project.id===input.projectId)
-    if(!project)throw Error('project_stale')
-    const providerId=input.providerId??project.providerId
-    if(!providerId)throw Error('unavailable_provider')
-    // 独立工作区:编号从请求编号派生,重试 ⇒ 同一个工作区同一个分支(建好了没接下也不会多建一个)。
-    const tree=input.isolation?(()=>{
-      const repoRoot=repoRootOf(project.path)
-      if(!repoRoot)throw Error('worktree_not_git')
-      const plan=planWorktree({stateDir:ctx.stateDir,projectId:project.id,projectPath:project.path,repoRoot,id:createHash('sha256').update(id).digest('hex').slice(0,8)})
-      return {plan,path:ensureWorktree(plan)}
-    })():null
-    let receipt!:CreationReceipt
-    createTask({path:tree?.path??project.path,providerId,text:input.text,...(tree?{registerProject:false}:{})},(task,runId)=>{
-      if(tree)store.worktrees.record({taskId:task.id,projectPath:tree.plan.projectPath,repoRoot:tree.plan.repoRoot,root:tree.plan.root,branch:tree.plan.branch})
-      store.wechatNotifications.watch(task.id,input.ownerChatId,input.accountId,true)
-      receipt=store.creationReceipts.add({id,accountId:input.accountId,ownerChatId:input.ownerChatId,commandHash:input.commandHash,projectId:input.projectId,path:task.path,providerId:task.providerId,taskId:task.id,runId,
-        reply:`已接下这件事 · ${task.id}\n${task.providerId} · ${task.path}\n\n${task.title}\n\n完成或需要你处理时，会在这里提醒。\n查看：任务 ${task.id}\n补充：任务 ${task.id} 补充 <要求>\n关闭提醒：任务 ${task.id} 静音`,
-      })
-    },{matterId:safeOriginMatterId(input.ownerChatId),messageId:input.originMessageId??null})
-    return receipt
-  }
-  // 不标 async:内部 wechatControl(见文件末尾)按同步 Actions 接口拿它,标了 async 会把
-  // 返回类型变成 Promise 而破坏那个结构化类型;外部调用方(HTTP 长轮询、测试)照样能 await 一个普通值。
   function create(input:CreateTask):WorkbenchTaskView {
     return createTask(input)
   }
@@ -588,6 +550,6 @@ export function makeExecuteDomain(ctx:ServiceCtx, domains:ExecuteDomains) {
     }
   }
 
-  return { execute,start,matterSync,safeOriginMatterId,createTask, create,continueTask,createWechat }
+  return { execute,start,matterSync,safeOriginMatterId,createTask, create,continueTask }
 }
 export type ExecuteDomain = ReturnType<typeof makeExecuteDomain>

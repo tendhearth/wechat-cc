@@ -33,7 +33,7 @@ afterEach(async()=>{await service?.shutdown();db.close();removeTempDir(area)})
 
 it('从微信交办的事记住出生地;桌面亲手派的不记',async()=>{
   const projectId=service.projects()[0]!.id
-  const receipt=service.createWechat({ownerChatId:'chat-1',accountId:'acct-1',requestId:randomUUID(),commandHash:createHash('sha256').update('改首页').digest('hex'),originMessageId:'msg-7',projectId,providerId:'claude',text:'改首页'})
+  const receipt=(await service.createWechat({ownerChatId:'chat-1',accountId:'acct-1',requestId:randomUUID(),commandHash:createHash('sha256').update('改首页').digest('hex'),originMessageId:'msg-7',projectId,providerId:'claude',text:'改首页'}))
   const chat=matters.ensureChat('chat-1')
   expect(matters.get(receipt.taskId)).toMatchObject({originMatterId:chat.id,originMessageId:'msg-7'})
 
@@ -45,7 +45,7 @@ it('从微信交办的事记住出生地;桌面亲手派的不记',async()=>{
 
 it('没有 msgId 时不拦创建,origin message 存 null',async()=>{
   const projectId=service.projects()[0]!.id
-  const receipt=service.createWechat({ownerChatId:'chat-1',accountId:'acct-1',requestId:randomUUID(),commandHash:createHash('sha256').update('无锚点').digest('hex'),projectId,providerId:'claude',text:'无锚点'})
+  const receipt=(await service.createWechat({ownerChatId:'chat-1',accountId:'acct-1',requestId:randomUUID(),commandHash:createHash('sha256').update('无锚点').digest('hex'),projectId,providerId:'claude',text:'无锚点'}))
   const chat=matters.ensureChat('chat-1')
   expect(matters.get(receipt.taskId)).toMatchObject({originMatterId:chat.id,originMessageId:null})
 })
@@ -70,7 +70,7 @@ it('ensureChat 抛错时不拦建任务、origin 记 null,但留下能区分"出
   const service2=makeWorkbenchService({store:makeWorkbenchStore(db),registry,stateDir:area,ownerChatId:()=>'chat-1',matters:broken,registeredProjects:()=>[{alias:'project',path:project}],log:(tag,line)=>brokenLogs.push([tag,line])})
   try{
     const projectId=service2.projects()[0]!.id
-    const receipt=service2.createWechat({ownerChatId:'chat-1',accountId:'acct-1',requestId:randomUUID(),commandHash:createHash('sha256').update('抛错也要建').digest('hex'),originMessageId:'msg-err',projectId,providerId:'claude',text:'抛错也要建'})
+    const receipt=(await service2.createWechat({ownerChatId:'chat-1',accountId:'acct-1',requestId:randomUUID(),commandHash:createHash('sha256').update('抛错也要建').digest('hex'),originMessageId:'msg-err',projectId,providerId:'claude',text:'抛错也要建'}))
     // 任务照建、有回执 —— 出生地算不出来绝不阻塞交办。
     expect(receipt.taskId).toBeTruthy()
     // originMatterId 是 null,和"桌面亲手派的"字面上一样,但这不是设计里"没有出生地"的那种 null——

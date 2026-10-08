@@ -60,8 +60,8 @@ function makeService(recollect?:RecollectSink){
     registeredProjects:()=>[{alias:'project',path:project}],recollect,log:(tag,line)=>logs.push([tag,line])})
   return runtime
 }
-function createTaskFromChat(projectId:string){
-  return service.createWechat({ownerChatId:'chat-1',accountId:'acct-1',requestId:randomUUID(),commandHash:createHash('sha256').update('改首页').digest('hex'),originMessageId:'msg-7',projectId,providerId:'claude',text:'改首页'})
+async function createTaskFromChat(projectId:string){
+  return (await service.createWechat({ownerChatId:'chat-1',accountId:'acct-1',requestId:randomUUID(),commandHash:createHash('sha256').update('改首页').digest('hex'),originMessageId:'msg-7',projectId,providerId:'claude',text:'改首页'}))
 }
 async function settle(id:string){await expect.poll(()=>service.detail(id).task.status).not.toMatch(/^(queued|running|cancelling)$/)}
 function deferred<T=void>(){let resolve!:(value:T|PromiseLike<T>)=>void;let reject!:(error?:unknown)=>void;const promise=new Promise<T>((res,rej)=>{resolve=res;reject=rej});return{promise,resolve,reject}}
@@ -75,7 +75,7 @@ afterEach(async()=>{await service?.shutdown();db.close();removeTempDir(area)})
 it('settleQuiet 安静下来(答复完)——不触发 recollect,只走到 replied',async()=>{
   const runtime=makeService(makeSink())
   const projectId=service.projects()[0]!.id
-  const receipt=createTaskFromChat(projectId)
+  const receipt=await createTaskFromChat(projectId)
   await expect.poll(()=>matters.sessions(receipt.taskId)).not.toHaveLength(0)
   runtime.finishTurn()
   await expect.poll(()=>matters.get(receipt.taskId)?.status).toBe('replied')
@@ -85,7 +85,7 @@ it('settleQuiet 安静下来(答复完)——不触发 recollect,只走到 repli
 it('多轮续接之后,只在最终收尾(cancel→completed)时触发一次,带着累计的 turnSeq',async()=>{
   const runtime=makeService(makeSink())
   const projectId=service.projects()[0]!.id
-  const receipt=createTaskFromChat(projectId)
+  const receipt=await createTaskFromChat(projectId)
   await expect.poll(()=>matters.sessions(receipt.taskId)).not.toHaveLength(0)
   runtime.finishTurn()
   await expect.poll(()=>matters.get(receipt.taskId)?.status).toBe('replied')
@@ -108,7 +108,7 @@ it('多轮续接之后,只在最终收尾(cancel→completed)时触发一次,带
 it('没有 opts.recollect 时(老接线),终态收尾也什么都不做,不报错',async()=>{
   const runtime=makeService(undefined)
   const projectId=service.projects()[0]!.id
-  const receipt=createTaskFromChat(projectId)
+  const receipt=await createTaskFromChat(projectId)
   await expect.poll(()=>matters.sessions(receipt.taskId)).not.toHaveLength(0)
   runtime.finishTurn()
   await expect.poll(()=>matters.get(receipt.taskId)?.status).toBe('replied')
@@ -130,7 +130,7 @@ it('没有 opts.recollect 时(老接线),终态收尾也什么都不做,不报�
 it('recollect.maybeTrigger 抛错:留痕(MATTER_RECOLLECT),不打断终态收尾——matter 照样到 done',async()=>{
   const runtime=makeService(makeSink(new Error('recollect_boom')))
   const projectId=service.projects()[0]!.id
-  const receipt=createTaskFromChat(projectId)
+  const receipt=await createTaskFromChat(projectId)
   await expect.poll(()=>matters.sessions(receipt.taskId)).not.toHaveLength(0)
   runtime.finishTurn()
   await expect.poll(()=>matters.get(receipt.taskId)?.status).toBe('replied')
@@ -169,7 +169,7 @@ it('runtimeSnapshot 的 retained:false 分支(settleQuiet 挡住的那一半):co
   service=makeWorkbenchService({store:makeWorkbenchStore(db),registry,stateDir:area,ownerChatId:()=>'chat-1',matters,
     registeredProjects:()=>[{alias:'project',path:project}],recollect:makeSink(),log:(tag,line)=>logs.push([tag,line])})
   const projectId=service.projects()[0]!.id
-  const receipt=createTaskFromChat(projectId)
+  const receipt=await createTaskFromChat(projectId)
   await expect.poll(()=>matters.get(receipt.taskId)?.status).toBe('done')
   expect(triggered).toEqual([[receipt.taskId,0]])
 })
@@ -190,7 +190,7 @@ it('同一分支以 failed 终态收尾:也触发 recollect(不再继承 complet
   service=makeWorkbenchService({store:makeWorkbenchStore(db),registry,stateDir:area,ownerChatId:()=>'chat-1',matters,
     registeredProjects:()=>[{alias:'project',path:project}],recollect:makeSink(),log:(tag,line)=>logs.push([tag,line])})
   const projectId=service.projects()[0]!.id
-  const receipt=createTaskFromChat(projectId)
+  const receipt=await createTaskFromChat(projectId)
   await expect.poll(()=>service.detail(receipt.taskId).task.status).toBe('failed')
   await expect.poll(()=>matters.get(receipt.taskId)?.status).toBe('done')
   expect(triggered).toEqual([[receipt.taskId,0]]) // 旧行为(继承 completed 门)下这里会是 []
@@ -217,7 +217,7 @@ it('interrupted(写手没确认退出,close 超时):recollectOnce 确实没被�
   service=makeWorkbenchService({store:makeWorkbenchStore(db),registry,stateDir:area,ownerChatId:()=>'chat-1',matters,
     registeredProjects:()=>[{alias:'project',path:project}],recollect:makeSink(),log:(tag,line)=>logs.push([tag,line]),closeTimeoutMs:5})
   const projectId=service.projects()[0]!.id
-  const receipt=createTaskFromChat(projectId)
+  const receipt=await createTaskFromChat(projectId)
   await settle(receipt.taskId)
   expect(service.detail(receipt.taskId).task.status).toBe('interrupted')
   expect(triggered).toEqual([])
@@ -246,7 +246,7 @@ it('interrupted(写手确认退出后)可以被继续,真正收尾时 recollectO
   service=makeWorkbenchService({store:makeWorkbenchStore(db),registry,stateDir:area,ownerChatId:()=>'chat-1',matters,
     registeredProjects:()=>[{alias:'project',path:project}],recollect:makeSink(),log:(tag,line)=>logs.push([tag,line]),closeTimeoutMs:5})
   const projectId=service.projects()[0]!.id
-  const receipt=createTaskFromChat(projectId)
+  const receipt=await createTaskFromChat(projectId)
   await settle(receipt.taskId)
   expect(service.detail(receipt.taskId).task.status).toBe('interrupted')
   expect(triggered).toEqual([]) // 第一次:close 超时,没有触发

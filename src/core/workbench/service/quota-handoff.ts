@@ -13,6 +13,7 @@ import { quotaTakeoverText, QUOTA_TAKEOVER_DEFAULT_REQUEST } from '../quota-take
 import type { ServiceCtx } from './ctx'
 import type { ExecuteDomain } from './execute'
 import type { QuotaDomain } from './quota'
+import { validateWorkspaceProvider } from './workspace-configuration'
 
 export type { QuotaHandoffView } from './types'
 import type { QuotaHandoffView } from './types'
@@ -55,33 +56,53 @@ export function makeQuotaHandoffDomain(ctx: ServiceCtx, domains: QuotaHandoffDom
    * 交出去。providerId = 确认卡上写的那位:与此刻的接手人不一致就不交(quota_handoff_changed),手机重读再问。
    * 同一 requestId 重发 / 已经交出去过 ⇒ 回那一件(created:false),不建第二件。
    */
-  function handOff(taskId: string, input: { requestId: string; providerId: string }): { taskId: string; created: boolean } {
+  async function handOff(taskId: string, input: { requestId: string; providerId: string }): Promise<{ taskId: string; created: boolean }> {
     if (typeof taskId !== 'string' || !TASK_ID.test(taskId)) throw Error('invalid_request')
     const requestId = normalizeInputRequestId(input.requestId)
     if (!isWorkbenchProviderId(input.providerId)) throw Error('invalid_provider')
     const key = keyOf(taskId)
-    const prior = store.creationReceipts.get(requestId)
-    if (prior) {
-      if (prior.accountId !== RECEIPT_ACCOUNT || prior.projectId !== key) throw Error('creation_conflict')
-      return { taskId: prior.taskId, created: false }
+    const inspect = () => {
+      const prior = store.creationReceipts.get(requestId)
+      if (prior) {
+        if (prior.accountId !== RECEIPT_ACCOUNT || prior.projectId !== key) throw Error('creation_conflict')
+        return { taskId: prior.taskId, created: false }
+      }
+      // requestId 与其它幂等表共用一个命名空间(同 notices / wechat-control 的做法)。
+      if (store.liveInputs.get(requestId) || store.controlReceipts.get(requestId)) throw Error('creation_conflict')
+      let task
+      try { task = owned(taskId) } catch { throw Error('matter_not_found') }
+      if (!task) throw Error('invalid_entry_owner')
+      const done = handed(taskId)
+      if (done) return { taskId: done.taskId, created: false }
+      ctx.ensureAccepting()
+      if (state.runsByTask.has(taskId)) throw Error('workbench_busy')
+      if (!quota.exhausted(task.providerId)) throw Error('quota_handoff_not_needed')
+      const to = fallbackExecutor(task.providerId)
+      if (!to) throw Error('quota_handoff_unavailable')
+      if (to !== input.providerId) throw Error('quota_handoff_changed')
+      return { source: task, to }
     }
-    // requestId 与其它幂等表共用一个命名空间(同 notices / wechat-control 的做法)。
-    if (store.liveInputs.get(requestId) || store.controlReceipts.get(requestId)) throw Error('creation_conflict')
-    let task
-    try { task = owned(taskId) } catch { throw Error('matter_not_found') }
-    if (!task) throw Error('invalid_entry_owner')
-    const done = handed(taskId)
-    if (done) return { taskId: done.taskId, created: false }
-    ctx.ensureAccepting()
-    if (state.runsByTask.has(taskId)) throw Error('workbench_busy')
-    if (!quota.exhausted(task.providerId)) throw Error('quota_handoff_not_needed')
-    const to = fallbackExecutor(task.providerId)
-    if (!to) throw Error('quota_handoff_unavailable')
-    if (to !== input.providerId) throw Error('quota_handoff_changed')
-    const source = task
+    const initial = inspect()
+    if (initial.taskId !== undefined) return { taskId: initial.taskId, created: initial.created }
+    const version = ctx.actions.deref('quota-handoff').taskVersion(initial.source)
+    try { await validateWorkspaceProvider(ctx, initial.source, initial.to) }
+    catch (error) {
+      // The accepted successor can already be creating its output directories.
+      const winner = store.creationReceipts.get(requestId)
+      if (winner?.accountId === RECEIPT_ACCOUNT && winner.projectId === key) return { taskId: winner.taskId, created: false }
+      const done = handed(taskId)
+      if (done) return { taskId: done.taskId, created: false }
+      throw error
+    }
+    // Re-read after asynchronous admission: a competing acceptance wins, or all mutable gates run again.
+    const checked = inspect()
+    if (checked.taskId !== undefined) return { taskId: checked.taskId, created: checked.created }
+    const { source, to } = checked
+    if (ctx.actions.deref('quota-handoff').taskVersion(source) !== version) throw Error('quota_handoff_changed')
     const made = createTask(
-      { path: source.path, providerId: to, text: quotaTakeoverText(source.providerId, source.title, QUOTA_TAKEOVER_DEFAULT_REQUEST), title: source.title.slice(0, 120) },
+      { path: source.path, gitWorkspaceId:source.gitWorkspaceId,projectPath:store.sourcePath(source), providerId: to, text: quotaTakeoverText(source.providerId, source.title, QUOTA_TAKEOVER_DEFAULT_REQUEST), title: source.title.slice(0, 120) },
       (next, runId) => {
+        const tree=store.worktrees.get(source.id);if(tree)store.worktrees.record({...tree,taskId:next.id})
         store.creationReceipts.add({ id: requestId, accountId: RECEIPT_ACCOUNT, ownerChatId: source.ownerChatId!, commandHash: createHash('sha256').update(key).digest('hex'), projectId: key, path: next.path, providerId: to, taskId: next.id, runId, reply: '' })
       },
       { matterId: store.taskMatterId(source.id), messageId: null },
