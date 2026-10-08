@@ -79,7 +79,7 @@ describe('worktree workspaces (2026-10-07)', () => {
     writeFileSync(join(project, 'scratch.txt'), 'untracked\n')
     expect(mergeWorktree(repoRoot, plan.root, plan.branch)).toEqual({ merged: true, into: 'main' })
     expect(git(project, ['rev-parse', 'HEAD'])).toBe(c.sha)
-    expect(readFileSync(join(project, 'new.txt'), 'utf8')).toBe('hi\n')
+    expect(readFileSync(join(project, 'new.txt'), 'utf8').replace(/\r\n/g, '\n')).toBe('hi\n') // Windows:按主人的 autocrlf 检出
     // 再点一次:已经在里面了
     expect(mergeWorktree(repoRoot, plan.root, plan.branch)).toEqual({ merged: false, into: 'main' })
     // 项目往前走了 ⇒ 快进不了
