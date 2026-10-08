@@ -541,7 +541,7 @@ export function makeExecuteDomain(ctx:ServiceCtx, domains:ExecuteDomains) {
       if(tree)store.worktrees.record({taskId:task.id,projectPath:tree.plan.projectPath,repoRoot:tree.plan.repoRoot,root:tree.plan.root,branch:tree.plan.branch})
       store.wechatNotifications.watch(task.id,input.ownerChatId,input.accountId,true)
       receipt=store.creationReceipts.add({id,accountId:input.accountId,ownerChatId:input.ownerChatId,commandHash:input.commandHash,projectId:input.projectId,path:task.path,providerId:task.providerId,taskId:task.id,runId,
-        reply:`已接下这件事 · ${task.id}\n${task.providerId} · ${task.path}\n\n${task.title}\n\n完成或需要你处理时，会在这里提醒。\n查看：任务 ${task.id}\n补充：任务 ${task.id} 补充 <要求>\n关闭提醒：任务 ${task.id} 静音`,
+        reply:`已接下这件事 · ${task.id}\n${task.providerId} · ${task.path}\n\n${task.title}\n\n完成或需要你处理时，会在这里提醒。\n查看：任务 ${task.id}\n补充：任务 ${task.id} 补充 <要求>\n关闭提醒：任务 ${task.id} 静音${tree?`\n\n在独立分支 ${tree.plan.branch} 上做。做完：任务 ${task.id} 提交 → 任务 ${task.id} 合回`:''}`,
       })
     },{matterId:safeOriginMatterId(input.ownerChatId),messageId:input.originMessageId??null})
     return receipt
