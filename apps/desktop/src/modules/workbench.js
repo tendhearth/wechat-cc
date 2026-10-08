@@ -740,7 +740,7 @@ export function initWorkbenchPage(deps) {
     }
   }
   const thumbnails=createWorkbenchThumbnails({invoke:deps.invokeWorkbenchApi})
-  const attachments=createWorkbenchAttachments({preview:thumbnails.local,removePreview:thumbnails.remove,drafts:pageDrafts,invokeWorkbenchApi:deps.invokeWorkbenchApi,changed:scope=>{if(alive&&scope===renderedScope)controller.paint(true)}})
+  const attachments=createWorkbenchAttachments({preview:thumbnails.local,removePreview:thumbnails.remove,drafts:pageDrafts,invokeWorkbenchApi:deps.invokeWorkbenchApi,changed:scope=>{if(alive&&scope===renderedScope){draftRevision++;controller.paint(true)}}})
   const attachmentPayload=(/** @type {Draft} */ draft)=>draft.attachments?.length?{attachmentIds:draft.attachments.map(a=>a.id),draftId:draft.draftId}:{}
   const executionContext=()=>{
     const detail=controller.state.detail

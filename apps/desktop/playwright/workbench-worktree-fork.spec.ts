@@ -8,11 +8,12 @@ import {initWorkbenchPage,stopWorkbenchPolling} from '/modules/workbench.js'
 const task=(id,title,providerId='codex')=>({id,title,providerId,path:'/copies/'+id,workspaceKind:'project',status:'completed',createdAt:1,updatedAt:1,error:null,worktree:{branch:'cc/'+id,projectPath:'/work/site',removed:false}})
 const wt=task('aaaa1111','整理首页'),fork=task('bbbb2222','整理首页','claude'),other=task('cccc3333','另一件事')
 let tasks=[wt,other]
-const q={calls:[],mode:'success',receipt:false,release:null,attachments:false,workspace:false,mismatch:false}
+const q={calls:[],mode:'success',receipt:false,release:null,attachments:false,workspace:false,mismatch:false,uploadDeferred:false,uploadRelease:null}
 const detail=t=>({task:t,version:1,events:[{id:'1',taskId:t.id,kind:'user',text:'把首页的标题改短',createdAt:1,...(q.attachments?{attachments:[{id:'image',name:'reference.png',mime:'image/png',size:10}]}:{})}],artifacts:[],permissions:[],...(q.workspace?{workspace:{id:'ws',mode:'isolated',sourcePath:'/work/site',executionPath:t.path,branch:'codex/cc-task-fixture',baseCommit:'a'.repeat(40)}}:{})})
 const accepted=id=>({receipt:{requestId:q.mismatch?'ffffffff-ffff-ffff-ffff-ffffffffffff':id,taskId:fork.id,matterId:fork.id,runId:'r',acceptedAt:1},task:fork})
 const invoke=async(method,path,body)=>{
  q.calls.push({method,path,body:body&&structuredClone(body)})
+ if(path==='/v1/workbench/attachment'){if(q.uploadDeferred)await new Promise(r=>{q.uploadRelease=r});return{attachment:{id:body.id,name:body.name,mime:body.mime,size:atob(body.base64).length,sha256:'a'.repeat(64)}}}
  if(path==='/v1/workbench/create-entry'){if(q.mode==='unknown')throw Error('network_offline');if(q.mode==='rejected')throw Error('invalid_text');if(q.mode==='deferred')await new Promise(r=>{q.release=r});tasks=[fork,wt,other];return accepted(body.requestId)}
  if(path.startsWith('/v1/workbench/entry-receipt?')){if(!q.receipt)throw Error('network_offline');tasks=[fork,wt,other];return accepted(new URL('http://x'+path).searchParams.get('requestId'))}
  if(path.startsWith('/v1/workbench/task?')){if(path.includes('since='))return new Promise(()=>{});return detail(tasks.find(t=>t.id===new URL('http://x'+path).searchParams.get('id')))}
@@ -103,5 +104,51 @@ test('opening another delegation while a fork is pending prevents its late navig
  await page.locator('[data-action="task-entry"]').first().click()
  await page.evaluate(()=>{(window as any).qa.release()});await page.evaluate(()=>new Promise<void>(r=>requestAnimationFrame(()=>requestAnimationFrame(()=>r()))))
  expect(await page.evaluate(()=>(window as any).qa.delegating)).toBe(true)
+ expect(await page.evaluate(()=>(window as any).qa.controller.state.selectedId)).toBe('aaaa1111')
+})
+
+for(const gesture of ['drop','paste'])test('late fork preserves an attachment draft added by '+gesture,async({page})=>{
+ await page.evaluate(()=>{(window as any).qa.mode='deferred'});await click(page)
+ await expect.poll(()=>page.evaluate(()=>(window as any).qa.release!==null)).toBe(true)
+ await page.locator('#wb-followup-text').evaluate((el,gesture)=>{
+  const data=new DataTransfer();data.items.add(new File(['new draft material'],'new-draft.txt',{type:'text/plain'}))
+  el.dispatchEvent(gesture==='drop'?new DragEvent('drop',{bubbles:true,cancelable:true,dataTransfer:data}):new ClipboardEvent('paste',{bubbles:true,cancelable:true,clipboardData:data}))
+ },gesture)
+ await expect(page.locator('.wb-attachment-chip[data-upload-status="ready"]')).toContainText('new-draft.txt')
+ await page.evaluate(()=>{(window as any).qa.release()})
+ await page.evaluate(()=>new Promise<void>(r=>requestAnimationFrame(()=>requestAnimationFrame(()=>r()))))
+ expect(await page.evaluate(()=>(window as any).qa.controller.state.selectedId)).toBe('aaaa1111')
+ await expect(page.locator('.wb-attachment-chip[data-upload-status="ready"]')).toContainText('new-draft.txt')
+})
+test('late fork preserves a draft changed by removing an attachment',async({page})=>{
+ await page.locator('#wb-attachment-files').setInputFiles({name:'remove-me.txt',mimeType:'text/plain',buffer:Buffer.from('old draft')})
+ await expect(page.locator('.wb-attachment-chip[data-upload-status="ready"]')).toContainText('remove-me.txt')
+ await page.evaluate(()=>{(window as any).qa.mode='deferred'});await click(page)
+ await expect.poll(()=>page.evaluate(()=>(window as any).qa.release!==null)).toBe(true)
+ await page.locator('[data-action="remove-attachment"]').click()
+ await page.evaluate(()=>{(window as any).qa.release()})
+ await page.evaluate(()=>new Promise<void>(r=>requestAnimationFrame(()=>requestAnimationFrame(()=>r()))))
+ expect(await page.evaluate(()=>(window as any).qa.controller.state.selectedId)).toBe('aaaa1111')
+})
+
+test('late fork preserves attachment editing while upload is still pending',async({page})=>{
+ await page.evaluate(()=>{const q=(window as any).qa;q.mode='deferred';q.uploadDeferred=true});await click(page)
+ await expect.poll(()=>page.evaluate(()=>(window as any).qa.release!==null)).toBe(true)
+ await page.locator('#wb-followup-text').evaluate(el=>{const data=new DataTransfer();data.items.add(new File(['material'],'pending.txt',{type:'text/plain'}));el.dispatchEvent(new DragEvent('drop',{bubbles:true,cancelable:true,dataTransfer:data}))})
+ await expect(page.locator('.wb-attachment-chip[data-upload-status="uploading"]')).toContainText('pending.txt')
+ await expect.poll(()=>page.evaluate(()=>(window as any).qa.uploadRelease!==null)).toBe(true)
+ await page.evaluate(()=>{(window as any).qa.release()});await page.evaluate(()=>new Promise<void>(r=>requestAnimationFrame(()=>requestAnimationFrame(()=>r()))))
+ expect(await page.evaluate(()=>(window as any).qa.controller.state.selectedId)).toBe('aaaa1111')
+ await page.evaluate(()=>{(window as any).qa.uploadRelease()})
+ await expect(page.locator('.wb-attachment-chip[data-upload-status="ready"]')).toContainText('pending.txt')
+})
+test('upload completing after fork starts invalidates its late navigation',async({page})=>{
+ await page.evaluate(()=>{(window as any).qa.uploadDeferred=true})
+ await page.locator('#wb-attachment-files').setInputFiles({name:'finishing.txt',mimeType:'text/plain',buffer:Buffer.from('material')})
+ await expect.poll(()=>page.evaluate(()=>(window as any).qa.uploadRelease!==null)).toBe(true)
+ await page.evaluate(()=>{(window as any).qa.mode='deferred'});await click(page)
+ await expect.poll(()=>page.evaluate(()=>(window as any).qa.release!==null)).toBe(true)
+ await page.evaluate(()=>{(window as any).qa.uploadRelease()});await expect(page.locator('.wb-attachment-chip[data-upload-status="ready"]')).toContainText('finishing.txt')
+ await page.evaluate(()=>{(window as any).qa.release()});await page.evaluate(()=>new Promise<void>(r=>requestAnimationFrame(()=>requestAnimationFrame(()=>r()))))
  expect(await page.evaluate(()=>(window as any).qa.controller.state.selectedId)).toBe('aaaa1111')
 })
