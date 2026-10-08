@@ -4,7 +4,7 @@ import { existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, writeFi
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { removeTempDir } from '../../lib/test-temp'
-import { commitWorktree, ensureWorktree, git, mergeHint, mergeWorktree, planWorktree, removeWorktree, repoRootOf, worktreeDirty } from './worktree-workspaces'
+import { commitWorktree, copyIncludedFiles, ensureWorktree, git, mergeHint, mergeWorktree, planWorktree, removeWorktree, repoRootOf, worktreeDirty } from './worktree-workspaces'
 
 const dirs: string[] = []
 afterEach(() => { for (const d of dirs.splice(0)) removeTempDir(d) })
@@ -90,6 +90,33 @@ describe('worktree workspaces (2026-10-07)', () => {
     // 项目不在分支上 ⇒ 不动
     execFileSync('git', ['checkout', '-q', '--detach'], { cwd: project })
     expect(() => mergeWorktree(repoRoot, other.root, other.branch)).toThrow('project_detached')
+  })
+  it('a new worktree brings the ignored files .worktreeinclude lists (2026-10-08); tracked / unlisted / symlinked ones stay behind', () => {
+    const { project, state } = repo()
+    const g = (...a: string[]) => execFileSync('git', a, { cwd: project, stdio: 'pipe' })
+    writeFileSync(join(project, '.gitignore'), '.env\n.env.*\nsecrets/\nbuild/\n')
+    writeFileSync(join(project, '.worktreeinclude'), '.env\n.env.*\nsecrets/\nnot-ignored.txt\n')
+    g('add', '.gitignore', '.worktreeinclude'); g('commit', '-q', '-m', 'ignore')
+    writeFileSync(join(project, '.env'), 'KEY=1\n'); writeFileSync(join(project, '.env.local'), 'L=1\n')
+    mkdirSync(join(project, 'secrets')); writeFileSync(join(project, 'secrets', 'cert.pem'), 'pem\n')
+    mkdirSync(join(project, 'build')); writeFileSync(join(project, 'build', 'out.js'), 'x\n')
+    writeFileSync(join(project, 'not-ignored.txt'), 'untracked but not ignored\n')
+    const repoRoot = repoRootOf(project)!
+    const plan = planWorktree({ stateDir: state, projectId: PID, projectPath: project, repoRoot, id: 'bbbb0001' })
+    const path = ensureWorktree(plan)
+    expect(readFileSync(join(path, '.env'), 'utf8')).toBe('KEY=1\n')
+    expect(readFileSync(join(path, '.env.local'), 'utf8')).toBe('L=1\n')
+    expect(readFileSync(join(path, 'secrets', 'cert.pem'), 'utf8')).toBe('pem\n')
+    expect(existsSync(join(path, 'build', 'out.js'))).toBe(false)
+    expect(existsSync(join(path, 'not-ignored.txt'))).toBe(false)
+    // 带进来的文件被忽略:不算没提交的改动,也不挡删除
+    expect(worktreeDirty(plan.root)).toBe(false)
+    removeWorktree(repoRoot, plan.root)
+    expect(existsSync(plan.root)).toBe(false)
+    // 没有 .worktreeinclude ⇒ 什么都不带
+    const bare = repo()
+    writeFileSync(join(bare.project, '.gitignore'), '.env\n'); writeFileSync(join(bare.project, '.env'), 'K\n')
+    expect(copyIncludedFiles(bare.project, bare.state)).toBe(0)
   })
   it('merge hint quotes paths with spaces', () => {
     expect(mergeHint('/Users/a/My Project', 'cc/abcd1234')).toBe("cd '/Users/a/My Project' && git merge cc/abcd1234")
