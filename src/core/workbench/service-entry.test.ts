@@ -331,7 +331,7 @@ it('WeChat 「任务 新建 <项目> 独立」 (2026-10-07): runs in a worktree,
   const g=(...a:string[])=>execFileSync('git',a,{cwd:project,stdio:'pipe'}).toString().trim()
   g('init','-q','-b','main');g('config','user.email','t@t');g('config','user.name','t');writeFileSync(join(project,'a.txt'),'x\n');g('add','-A');g('commit','-q','-m','i')
   const first=service.createWechat(wechat(rid)),again=service.createWechat(wechat(rid))
-  expect(again.taskId).toBe(first.taskId)
+  expect(again.taskId).toBe(first.taskId);expect(first.reply).toContain(`任务 ${first.taskId} 合回`)
   const task=service.detail(first.taskId).task
   expect(task.path.startsWith(join(realpathSync.native(stateDir),'worktrees'))).toBe(true)
   expect(task.worktree).toMatchObject({projectPath:project,removed:false})

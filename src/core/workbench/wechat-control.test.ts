@@ -1,4 +1,4 @@
-import {afterEach,beforeEach,describe,expect,it} from 'vitest'
+import {afterEach,beforeEach,describe,expect,it,vi} from 'vitest'
 import {mkdtempSync,mkdirSync,realpathSync} from 'node:fs'
 import {createHash} from 'node:crypto'
 import {makeWechatWorkbenchControl,wechatTaskMessageKey} from './wechat-control'
@@ -140,6 +140,26 @@ describe('WeChat task control through the shared service',()=>{
     const noReview=makeWechatWorkbenchControl({store,ownerChatId:()=>owner,actions:{...service,reviewList:undefined}})
     expect(await noReview('owner',`任务 ${task.id} 改动`,identity)).toContain('桌面工作台的「改动」面板')
     expect(await control('owner',`任务 ${task.id} 改动 a.ts`,identity)).toContain('用法')
+  })
+
+  it('任务 <编号> 提交 / 合回 / 删除工作区 (2026-10-08) go to worktreeAction instead of being sent to the executor as a supplement',async()=>{
+    setup({async spawn(){return{async *dispatch(){yield result},async close(){}}}})
+    const task=create();await settled(task.id)
+    const act=vi.fn((_id:string,action:string)=>{
+      if(action==='merge')throw new Error('worktree_not_ff')
+      return action==='commit'?{branch:'cc/abcd1234',committed:true,sha:'0123456789'}:{branch:'cc/abcd1234',removed:true}
+    })
+    const control=makeWechatWorkbenchControl({store,ownerChatId:()=>owner,actions:{...service,worktreeAction:act}})
+    const before=service.detail(task.id).events.length
+    expect(await control('owner',`任务 ${task.id} 提交`,identity)).toContain('已提交到分支 cc/abcd1234（0123456）')
+    expect(await control('owner',`任务 ${task.id} 合回`,identity)).toContain('不能直接快进')
+    expect(await control('owner',`任务 ${task.id} 删除工作区`,identity)).toContain('分支 cc/abcd1234 保留')
+    expect(act.mock.calls.map(c=>c[1])).toEqual(['commit','merge','remove'])
+    // 一条都没当成补充发给执行者
+    expect(service.detail(task.id).events.length).toBe(before)
+    expect(await control('owner',`任务 ${task.id} 提交 一下`,identity)).toContain('用法')
+    const plain=makeWechatWorkbenchControl({store,ownerChatId:()=>owner,actions:{...service,worktreeAction:()=>{throw new Error('not_worktree')}}})
+    expect(await plain('owner',`任务 ${task.id} 合回`,identity)).toContain('不在独立工作区里')
   })
 
   it('lists only the current owner original tasks and keeps ordinary conversation out of the workbench',async()=>{
