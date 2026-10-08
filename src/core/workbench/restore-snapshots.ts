@@ -31,7 +31,8 @@ export function observe(root:string,path:string,maxBytes:number=RESTORE_LIMITS.f
   exactName(dirname(target),path.split('/').at(-1)!,cache);
   if(!st.isFile()||st.isSymbolicLink()||st.nlink!==1)throw Error('unsupported_file_type')
   if(st.size>maxBytes)throw Error('file_limit')
-  const fd=openSync(target,constants.O_RDONLY|constants.O_NOFOLLOW)
+  // A leaf may become a FIFO after lstat; open must not block before fstat can reject it.
+  const fd=openSync(target,constants.O_RDONLY|constants.O_NOFOLLOW|constants.O_NONBLOCK)
   try{
     const before=fstatSync(fd);if(leafId(before)!==leafId(st)||before.nlink!==1||!before.isFile())throw Error('file_identity_changed')
     const bytes=Buffer.alloc(before.size);let offset=0;while(offset<bytes.length){const n=readSync(fd,bytes,offset,bytes.length-offset,offset);if(!n)throw Error('file_changed');offset+=n}
@@ -40,7 +41,7 @@ export function observe(root:string,path:string,maxBytes:number=RESTORE_LIMITS.f
     return {kind:'file',blobSha:digest(bytes),size:bytes.length,mode:before.mode&0o777,identity:leafId(before),chain}
   }finally{closeSync(fd)}
 }
-export function readVersion(root:string,path:string,version:FileVersion){if(version.kind!=='file')throw Error('missing_raw_version');const fd=openSync(join(root,path),constants.O_RDONLY|constants.O_NOFOLLOW);try{const bytes=readFileSync(fd);if(digest(bytes)!==version.blobSha||fstatSync(fd).nlink!==1)throw Error('file_changed');checkChain(root,version.chain);return bytes}finally{closeSync(fd)}}
+export function readVersion(root:string,path:string,version:FileVersion){if(version.kind!=='file')throw Error('missing_raw_version');const fd=openSync(join(root,path),constants.O_RDONLY|constants.O_NOFOLLOW|constants.O_NONBLOCK);try{const st=fstatSync(fd);if(!st.isFile()||st.nlink!==1)throw Error('file_changed');const bytes=readFileSync(fd);if(digest(bytes)!==version.blobSha||fstatSync(fd).nlink!==1)throw Error('file_changed');checkChain(root,version.chain);return bytes}finally{closeSync(fd)}}
 export function verifyBlobRoot(blobRoot:string,identity:string){
   try{if(realpathSync(blobRoot)!==resolve(blobRoot)||directoryId(blobRoot)!==identity)throw Error('blob_identity_changed')}catch{throw Error('blob_identity_changed')}
 }
@@ -57,8 +58,8 @@ export function saveBlob(blobRoot:string,bytes:Buffer,identity:string){verifyBlo
   try{let offset=0;while(offset<bytes.length)offset+=writeSync(fd,bytes,offset,bytes.length-offset);fsyncSync(fd)}finally{closeSync(fd)}
   verifyBlobRoot(blobRoot,identity);syncDirectory(blobRoot);return sha
 }
-export function loadBlob(blobRoot:string,sha:string,identity:string){verifyBlobRoot(blobRoot,identity);if(!/^[a-f0-9]{64}$/.test(sha))throw Error('invalid_blob');let fd:number;try{fd=openSync(join(blobRoot,sha),constants.O_RDONLY|constants.O_NOFOLLOW)}catch{throw Error('blob_unavailable')};try{const st=fstatSync(fd);if(!st.isFile()||st.nlink!==1||st.size>RESTORE_LIMITS.fileBytes)throw Error('blob_invalid');const bytes=readFileSync(fd);if(digest(bytes)!==sha)throw Error('blob_corrupt');verifyBlobRoot(blobRoot,identity);return bytes}finally{closeSync(fd)}}
-export function syncDirectory(path:string){const fd=openSync(path,constants.O_RDONLY);try{fsyncSync(fd)}finally{closeSync(fd)}}
+export function loadBlob(blobRoot:string,sha:string,identity:string){verifyBlobRoot(blobRoot,identity);if(!/^[a-f0-9]{64}$/.test(sha))throw Error('invalid_blob');let fd:number;try{fd=openSync(join(blobRoot,sha),constants.O_RDONLY|constants.O_NOFOLLOW|constants.O_NONBLOCK)}catch{throw Error('blob_unavailable')};try{const st=fstatSync(fd);if(!st.isFile()||st.nlink!==1||st.size>RESTORE_LIMITS.fileBytes)throw Error('blob_invalid');const bytes=readFileSync(fd);if(digest(bytes)!==sha)throw Error('blob_corrupt');verifyBlobRoot(blobRoot,identity);return bytes}finally{closeSync(fd)}}
+export function syncDirectory(path:string){const fd=openSync(path,constants.O_RDONLY|constants.O_NOFOLLOW|constants.O_NONBLOCK);try{if(!fstatSync(fd).isDirectory())throw Error('directory_identity_changed');fsyncSync(fd)}finally{closeSync(fd)}}
 const execute=promisify(execFile)
 export async function gitInventory(root:string){
   const env={...process.env};for(const key of Object.keys(env))if(key.toUpperCase().startsWith('GIT_'))delete env[key]
