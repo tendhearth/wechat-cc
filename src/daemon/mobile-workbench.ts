@@ -5,7 +5,7 @@ import type {MattersService,MatterSayInput} from '../core/matters/service'
 import {entryErrorStatus,parseEntryInput,type EntryInput,type EntryOptions} from '../core/workbench/task-entry'
 import type {NativeContinuePreview} from '../core/workbench/native-adoption'
 
-export type MobileMatterActions=Partial<Pick<MattersService,'permission'|'answer'|'artifactChunk'|'handoff'|'inputReceipt'|'stop'>>
+export type MobileMatterActions=Partial<Pick<MattersService,'permission'|'answer'|'artifactChunk'|'handoff'|'inputReceipt'|'stop'|'worktree'>>
 export interface MobileEntryActions {
   entryOptions():EntryOptions
   /** 交办时可选的模型(2026-10-06):手机只给执行者 id 与项目目录 id,路径在电脑上解析。没接 ⇒ 手机不显示模型选择。 */
@@ -32,7 +32,8 @@ export function mobileMatterError(error:unknown):Response {
   if(code==='invalid_entry_owner')return json({ok:false,error:code},403)
   // 独立工作区(2026-10-07):项目不是 Git 仓库 / 同名分支或目录已占 / git 自己失败。
   if(code==='worktree_not_git')return json({ok:false,error:code},422)
-  if(['worktree_branch_exists','worktree_conflict'].includes(code))return json({ok:false,error:code},409)
+  if(['worktree_branch_exists','worktree_conflict','worktree_dirty','worktree_removed','worktree_uncommitted','project_dirty','project_detached','worktree_not_ff','project_busy'].includes(code))return json({ok:false,error:code},409)
+  if(code==='not_worktree')return json({ok:false,error:code},422)
   if(code==='worktree_git_failed')return json({ok:false,error:code},502)
   if(['creation_conflict','managed_workspace_changed','attachment_scope','attachment_conflict'].includes(code))return json({ok:false,error:code},409)
   if(['entry_not_wired','managed_workspace_unavailable','invalid_managed_workspace','workbench_stopping','unavailable_provider','provider_quota_exhausted','quota_handoff_unavailable','network_unprotected'].includes(code))return json({ok:false,error:code},503)
@@ -114,6 +115,17 @@ export async function mobileWorkbenchRoute(actions:MobileMatterActions|undefined
       if(!object(b)||Object.keys(b).some(k=>!['id','requestId','providerId'].includes(k))||typeof b.id!=='string'||!ID.test(b.id)||typeof b.requestId!=='string'||!UUID.test(b.requestId)||typeof b.providerId!=='string'||!/^[a-z][a-z0-9._-]{0,63}$/.test(b.providerId))throw Error('invalid_request')
       if(!actions?.handoff)throw Error('workbench_not_wired')
       return json({ok:true,...await actions.handoff(b.id,{requestId:b.requestId,providerId:b.providerId},'phone')})
+    }catch(error){return mobileMatterError(error)}
+  }
+  // 独立工作区(2026-10-07):提交到分支 / 删除工作区 / 合回项目(10-08);正文恰好 id + action。
+  if(url.pathname==='/m/api/matter/worktree'){
+    if(req.method!=='POST')return json({ok:false,error:'method_not_allowed'},405)
+    try{
+      let b:unknown
+      try{b=await req.json()}catch{throw Error('invalid_request')}
+      if(!object(b)||Object.keys(b).some(k=>k!=='id'&&k!=='action')||typeof b.id!=='string'||!ID.test(b.id)||(b.action!=='commit'&&b.action!=='remove'&&b.action!=='merge'))throw Error('invalid_request')
+      if(!actions?.worktree)throw Error('workbench_not_wired')
+      return json({ok:true,...actions.worktree(b.id,b.action)})
     }catch(error){return mobileMatterError(error)}
   }
   // 停下正在跑的这一轮(2026-10-06):正文恰好 id + runId;runId 必须是手机看到的那一轮。

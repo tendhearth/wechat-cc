@@ -75,11 +75,12 @@ export const MatterSession = z.object({
 export const MatterTaskView = z.object({
   sourcePath: z.string().optional(),
   workspace: z.object({id:z.string(),mode:z.literal('isolated'),sourcePath:z.string(),executionPath:z.string(),branch:z.string(),baseCommit:z.string(),removed:z.boolean().optional()}).optional(),
-  worktree: z.object({projectPath:z.string(),branch:z.string(),removed:z.boolean()}).optional(),
 
   id: z.string(), title: z.string(), status: z.string(), phase: z.string().optional(),
   providerId: z.string(), path: z.string(), error: z.string().nullable(), updatedAt: z.number(),
   archivedAt: z.number().nullable().optional(),
+  // 独立工作区(2026-10-07):分支名 + 工作区删了没;手机据此给「提交到分支 / 删除工作区」。
+  worktree: z.object({ projectPath: z.string().optional(), branch: z.string(), removed: z.boolean(), merged: z.boolean().optional() }).optional(),
 })
 
 export const MatterEvent = z.object({
@@ -478,6 +479,7 @@ export const PHONE_API_SCHEMAS: Readonly<Record<string, z.ZodTypeAny>> = {
   'GET /m/api/matter/create-receipt': z.union([z.object({ ok: z.literal(true) }).extend(EntryResult.shape), PhoneErrorResponse]),
   'POST /m/api/matter/permission': z.union([z.object({ ok: z.literal(true) }), PhoneErrorResponse]),
   'POST /m/api/matter/stop': z.union([z.object({ ok: z.literal(true) }), PhoneErrorResponse]),
+  'POST /m/api/matter/worktree': z.union([z.object({ ok: z.literal(true), branch: z.string(), committed: z.boolean().optional(), removed: z.boolean().optional(), merged: z.boolean().optional() }), PhoneErrorResponse]),
   'POST /m/api/matter/answer': z.union([z.object({ ok: z.literal(true) }), PhoneErrorResponse]),
   'GET /m/api/matter/artifact': z.union([z.object({ ok: z.literal(true) }).extend(MatterArtifactChunk.shape), PhoneErrorResponse]),
   'POST /m/api/matter/handoff': z.union([z.object({ ok: z.literal(true) }).extend(MatterHandoffResult.shape), PhoneErrorResponse]),

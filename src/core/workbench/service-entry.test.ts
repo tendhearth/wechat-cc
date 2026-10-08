@@ -1,6 +1,6 @@
 import {afterEach,beforeEach,expect,it,vi} from 'vitest'
 import {randomUUID} from 'node:crypto'
-import {existsSync,mkdirSync,mkdtempSync,realpathSync,renameSync,writeFileSync,unlinkSync} from 'node:fs'
+import {existsSync,mkdirSync,mkdtempSync,realpathSync,readFileSync,renameSync,writeFileSync,unlinkSync} from 'node:fs'
 import {tmpdir} from 'node:os'
 import {join} from 'node:path'
 import {openDb,type Db} from '../../lib/db'
@@ -354,6 +354,9 @@ it('preserves explicit commit/remove for historical v74 worktrees',async()=>{
   expect(commit).toMatchObject({committed:true,mergeHint:mergeHint(project,a.worktree!.branch)})
   expect(g('log','-1','--format=%s',a.worktree!.branch)).toBe(a.title)
   expect(existsSync(join(project,'out.txt'))).toBe(false)
+  // 合回项目(10-08):快进进 main,任务页记「已合回」
+  expect(service.worktreeAction(one.receipt.taskId,'merge')).toMatchObject({merged:true,into:'main'})
+  expect(readFileSync(join(project,'out.txt'),'utf8').replace(/\r\n/g,'\n')).toBe('done\n');expect(service.detail(one.receipt.taskId).task.worktree?.merged).toBe(true)
   // 有没提交的改动 ⇒ 不删;提交后删 ⇒ 目录没了、分支还在
   expect(()=>service.worktreeAction(two.receipt.taskId,'remove')).toThrow('worktree_dirty')
   service.worktreeAction(one.receipt.taskId,'remove')

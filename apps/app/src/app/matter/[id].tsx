@@ -69,6 +69,9 @@ export default function Matter() {
   const [stopArmed, setStopArmed] = useState(false)
   const [stopping, setStopping] = useState(false)
   const [stopNote, setStopNote] = useState<string | null>(null)
+  const [wtArmed, setWtArmed] = useState<'remove' | 'merge' | null>(null)
+  const [wtBusy, setWtBusy] = useState(false)
+  const [wtNote, setWtNote] = useState<string | null>(null)
   useEffect(() => { if (!stopArmed) return; const tm = setTimeout(() => setStopArmed(false), 3000); return () => clearTimeout(tm) }, [stopArmed])
   const handoffReq = useRef('')
   const idRef = useRef(id)
@@ -117,6 +120,22 @@ export default function Matter() {
     const r = await submit(`stop:${id}`, () => backend.stop({ id, runId }))
     setStopping(false)
     if (r !== 'ok') setStopNote(t(lang, r !== 'busy' && r.error === 'input_stale' ? 'progress.stopStale' : 'progress.stopFailed'))
+    void refreshDetail()
+  }
+  // 独立工作区(2026-10-07):提交到分支 / 合回项目(10-08,只快进)/ 删除工作区;合回、删除都点两下。
+  const worktreeAct = async (action: 'commit' | 'remove' | 'merge') => {
+    if (wtBusy) return
+    if (action !== 'commit' && wtArmed !== action) { setWtArmed(action); setWtNote(null); return }
+    setWtArmed(null); setWtBusy(true); setWtNote(null)
+    const r = await submit(`worktree:${id}:${action}`, async () => { await backend.worktree({ id, action }) })
+    setWtBusy(false)
+    const err = r === 'ok' || r === 'busy' ? null : r.error
+    if (r === 'ok') setWtNote(t(lang, action === 'commit' ? 'progress.wtCommitted' : action === 'merge' ? 'progress.wtMerged' : 'progress.wtRemoved'))
+    else if (err === 'worktree_dirty') setWtNote(t(lang, 'progress.wtDirty'))
+    else if (err === 'worktree_uncommitted') setWtNote(t(lang, 'progress.wtUncommitted'))
+    else if (err === 'merge_manual') setWtNote(t(lang, 'progress.wtMergeManual'))
+    else if (err === 'project_busy') setWtNote(t(lang, 'progress.wtProjectBusy'))
+    else setWtNote(t(lang, r === 'busy' || err === 'busy' ? (action === 'remove' ? 'progress.wtBusyRemove' : 'progress.wtBusyCommit') : 'progress.wtFailed'))
     void refreshDetail()
   }
   const openHandoff = () => { handoffReq.current = uuid(); setFailure(null); setSheet(true) }
@@ -235,6 +254,19 @@ export default function Matter() {
           <Button kind="secondary" testID="progress-stop" label={t(lang, stopArmed ? 'progress.stopConfirm' : 'progress.stop')} onPress={() => void stop()} disabled={!online} busy={stopping} />
         ) : null}
         {stopNote ? <Txt testID="progress-stop-note" role="meta" tone="inkSoft" accessibilityLiveRegion="polite">{stopNote}</Txt> : null}
+        {d.task?.worktree ? (
+          <View testID="progress-worktree" style={{ gap: space.s }}>
+            <Txt role="meta" tone="inkSoft">{t(lang, d.task.worktree.removed ? 'progress.wtGone' : d.task.worktree.merged ? 'progress.wtOnMerged' : 'progress.wtOn', { branch: d.task.worktree.branch })}</Txt>
+            {!d.task.worktree.removed ? (
+              <View style={{ flexDirection: 'row', gap: space.s, flexWrap: 'wrap' }}>
+                <Button kind="secondary" testID="progress-wt-commit" label={t(lang, 'progress.wtCommit')} onPress={() => void worktreeAct('commit')} disabled={!online} busy={wtBusy} />
+                {d.task.workspace?.mode !== 'isolated' ? <Button kind="secondary" testID="progress-wt-merge" label={t(lang, wtArmed === 'merge' ? 'progress.wtMergeConfirm' : 'progress.wtMerge')} onPress={() => void worktreeAct('merge')} disabled={!online || wtBusy} /> : null}
+                <Button kind="secondary" testID="progress-wt-remove" label={t(lang, wtArmed === 'remove' ? 'progress.wtRemoveConfirm' : 'progress.wtRemove')} onPress={() => void worktreeAct('remove')} disabled={!online || wtBusy} />
+              </View>
+            ) : null}
+            {wtNote ? <Txt testID="progress-wt-note" role="meta" tone="inkSoft" accessibilityLiveRegion="polite">{wtNote}</Txt> : null}
+          </View>
+        ) : null}
         {v.pendingCount > 0 ? (
           <Button kind="primary" testID="progress-view-approval" label={t(lang, 'progress.viewApproval')} onPress={() => router.push(`/approval/${encodeURIComponent(d.task?.id ?? id)}`)} />
         ) : null}

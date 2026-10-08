@@ -634,6 +634,7 @@ describe('Workbench internal HTTP API', () => {
     const act=vi.fn((id:string,action:string)=>{
       if(id==='cafebabe')throw new Error('worktree_dirty')
       if(id==='0badf00d')throw new Error('not_worktree')
+      if(id==='feedface')throw new Error('worktree_not_ff')
       return action==='commit'?{branch:'cc/abcd1234',committed:true,sha:'s',mergeHint:'cd /p && git merge cc/abcd1234'}:{branch:'cc/abcd1234',removed:true}
     })
     ;(workbench as unknown as {worktreeAction:typeof act}).worktreeAction=act
@@ -643,7 +644,9 @@ describe('Workbench internal HTTP API', () => {
     expect(ok.status).toBe(200);expect(await ok.json()).toMatchObject({worktree:{committed:true,mergeHint:expect.stringContaining('git merge')}})
     expect((await request('/v1/workbench/worktree',body('cafebabe','remove'),operatorToken)).status).toBe(409)
     expect((await request('/v1/workbench/worktree',body('0badf00d','commit'),operatorToken)).status).toBe(422)
-    for(const bad of [body('deadbeef','merge'),body('bad','commit'),body('deadbeef','commit',{x:1})])expect((await request('/v1/workbench/worktree',bad,operatorToken)).status).toBe(400)
+    // 合回项目(10-08):快进不了 409,主人自己合
+    expect((await request('/v1/workbench/worktree',body('feedface','merge'),operatorToken)).status).toBe(409)
+    for(const bad of [body('deadbeef','rebase'),body('bad','commit'),body('deadbeef','commit',{x:1})])expect((await request('/v1/workbench/worktree',bad,operatorToken)).status).toBe(400)
   })
 
   it('acknowledges an unattended executor only for the desktop operator credential',async()=>{

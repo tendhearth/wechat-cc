@@ -302,6 +302,9 @@ export function makeLiveBackend(d: LiveDeps): Backend {
     async stop(p) {
       await call('POST /m/api/matter/stop', '/m/api/matter/stop', { body: { id: p.id, runId: p.runId } })
     },
+    async worktree(p) {
+      return strip(await call<{ ok: true; branch: string; committed?: boolean; removed?: boolean; merged?: boolean }>('POST /m/api/matter/worktree', '/m/api/matter/worktree', { body: { id: p.id, action: p.action } }))
+    },
     async answer(p) {
       if (p.answers !== null && JSON.stringify(p.answers).length > PHONE_ANSWER_MAX_JSON) throw new BackendError('invalid')
       await call('POST /m/api/matter/answer', '/m/api/matter/answer', { body: { id: p.id, runId: p.runId, requestId: p.requestId, answers: p.answers } })
