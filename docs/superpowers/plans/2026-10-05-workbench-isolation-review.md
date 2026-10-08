@@ -153,7 +153,7 @@
 **步骤：**
 - [x] 每个模块先独立审阅再整合；共享契约差异以已批准设计为准记录裁决，不能默默降级数据保护边界。
 - [x] 使用实际 HTTP+持久 SQLite+临时 Git+可控制关闭的执行者 fixture 走新建→并行→接手→close→查看→撤回→导出→重启恢复；断言源工作树/branch/index 未变。
-- [ ] Bun 全套、Node 全套、typecheck、depcheck、完整 desktop Playwright；Rust allowlist 改动跑相关完整 Cargo 测试。
+- [x] Bun 全套、Node 全套、typecheck、depcheck、完整 desktop Playwright；Rust allowlist 改动跑相关完整 Cargo 测试。
 - [x] 独立整支评审，修复必须覆盖失败回归；没有恢复证据或仍存在覆盖风险不发布。
 - [ ] 更新 cc-workbench/roadmap/全景图中的真实交付与边界；HTML 通过 build:map 生成。纯计划和文档不伪装已实现能力。
 - [ ] 推特性分支并创建 dev PR，附加本聊天，核对准确 SHA 的 CI，保留原始失败和已知额度限制。
