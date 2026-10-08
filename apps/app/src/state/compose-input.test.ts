@@ -7,7 +7,7 @@ import { PHONE_API_SCHEMAS, type ClientOpts, type ProtocolClient, type ProtocolR
 import { makeLiveBackend } from '../backend/live'
 import { DETAIL, ID, OPTIONS, RUN, WB_TASK, RECEIPT } from '../backend/fixtures'
 import type { Backend, MatterInputT } from '../backend/types'
-import { clearDrafts, getDraft, setDraft, setEntrySettings } from '../state/drafts'
+import { clearDrafts, getDraft, getDraftImages, getEntrySettings, setDraft, setEntrySettings } from '../state/drafts'
 import { makeStore, type Store } from '../state/store'
 import { watchConnection } from '../state/wiring'
 import { makeInputJournal } from './input-journal'
@@ -446,4 +446,87 @@ it.each(['default-project', 'missing-project', 'missing-provider', 'default-prov
  const edited=h.requests.filter(r=>r.path==='/m/api/matter/create').at(-1)!.body
  expect(edited.requestId).not.toBe(before.requestId)
  expect(edited.target.projectId).toBe(['default-project','missing-project'].includes(drift)?'p-1111111111111111111':'p-0123456789abcdef0123')
+})
+
+
+const forkParams = { fork: ID, project: OPTIONS.projects[0]!.id, exclude: 'claude' }
+const forkOptions = {...OPTIONS,providers:[...OPTIONS.providers,{...OPTIONS.providers[0]!,id:'codex',displayName:'Codex'}]}
+const choice = async (ui: Awaited<ReturnType<typeof mount>>, label: string) => {
+ await act(()=>ui.container.querySelector<HTMLButtonElement>(`[aria-label="${label}"]`)!.click());await flush()
+}
+const unmount = async (ui: Awaited<ReturnType<typeof mount>>) => { await act(()=>ui.root.unmount());roots.splice(roots.indexOf(ui.root),1) }
+const creations = (h: ReturnType<typeof harness>) => h.requests.filter(r=>r.path==='/m/api/matter/create')
+
+it('fork starts in source project with an available alternative and explicitly isolated mode',async()=>{
+ const h=harness();host.params=forkParams;h.setOptions(forkOptions);h.setCreate(()=>new Error('timeout'))
+ const ui=await mount();await ui.type('另做一份');await ui.click('compose-send')
+ expect(creations(h)[0]!.body).toMatchObject({target:{kind:'project',projectId:forkParams.project},executionMode:'isolated',providerId:'codex'})
+ expect(getEntrySettings('new')).toEqual({projectId:null,providerId:null,executionMode:'auto'})
+ expect(getDraft(`fork:${ID}`)).toBe('另做一份')
+})
+
+it.each([null,'codex'])('fork preserves deliberate provider %s, location, model and images through remount and catalog loss',async providerId=>{
+ const h=harness();host.params=forkParams;h.setOptions(forkOptions);h.setCreate(()=>new Error('timeout'))
+ setEntrySettings(`fork:${ID}`,{projectId:forkParams.project,providerId,executionMode:'project',modelId:'saved-model',effort:'high'})
+ const ui=await mount();await ui.type('保留分叉选择');await ui.click('compose-add-image');await ui.click('compose-send')
+ const first=creations(h)[0]!.body
+ expect(first).toMatchObject({target:{kind:'project',projectId:forkParams.project},executionMode:'project',execution:{model:'saved-model',reasoningEffort:'high'},attachmentIds:['22222222-2222-4222-8222-222222222222']})
+ if(providerId)expect(first.providerId).toBe(providerId);else expect(first).not.toHaveProperty('providerId')
+ await unmount(ui);h.store.revalidateAll();h.setOptions({...OPTIONS,projects:[],providers:[]})
+ const reopened=await mount();await reopened.click('compose-send')
+ expect(creations(h)[1]!.body).toEqual(first);expect(getDraftImages(`fork:${ID}`)).toHaveLength(1)
+ expect(getEntrySettings(`fork:${ID}`).modelId).toBe('saved-model')
+})
+
+it('choosing CC arrangements in fork stays null across catalog refresh and remount',async()=>{
+ const h=harness();host.params=forkParams;h.setOptions(forkOptions);h.setCreate(()=>new Error('timeout'))
+ const ui=await mount();await ui.type('由 CC 安排');await choice(ui,'CC 安排执行');await ui.click('compose-send')
+ expect(creations(h)[0]!.body).not.toHaveProperty('providerId')
+ await unmount(ui);h.store.revalidateAll();h.setOptions({...forkOptions,providers:[...forkOptions.providers,{...OPTIONS.providers[0]!,id:'cursor',displayName:'Cursor'}]})
+ const reopened=await mount();await reopened.click('compose-send')
+ expect(creations(h)[1]!.body).toEqual(creations(h)[0]!.body);expect(getEntrySettings(`fork:${ID}`).providerId).toBeNull()
+})
+
+it('missing fork source is sent as original id for known rejection without a fallback',async()=>{
+ const h=harness();host.params={...forkParams,project:'p-missing-source'};h.setOptions(forkOptions)
+ h.setCreate(()=>ok({ok:false,error:'project_not_found'},400))
+ const ui=await mount();await ui.type('原项目要求');await ui.click('compose-send')
+ expect(creations(h)[0]!.body).toMatchObject({target:{kind:'project',projectId:'p-missing-source'},executionMode:'isolated'})
+ expect(ui.container.querySelector<HTMLButtonElement>('[aria-label="Portfolio"]')!.textContent).not.toContain('✓');expect(getDraft(`fork:${ID}`)).toBe('原项目要求');expect(host.replace).not.toHaveBeenCalled()
+})
+
+it('fork without available alternative keeps honest CC arrangements after catalog changes',async()=>{
+ const h=harness();host.params=forkParams;h.setCreate(()=>new Error('timeout'))
+ const ui=await mount();await ui.type('还未选择执行者');await ui.click('compose-send')
+ const first=creations(h)[0]!.body;expect(first).not.toHaveProperty('providerId')
+ await unmount(ui);h.store.revalidateAll();h.setOptions(forkOptions)
+ const reopened=await mount();await reopened.click('compose-send')
+ expect(creations(h)[1]!.body).toEqual(first);expect(getEntrySettings(`fork:${ID}`).providerId).toBeNull()
+})
+
+it('changing compose route swaps whole draft and ignores old fork late receipt',async()=>{
+ const h=harness();host.params=forkParams;h.setOptions(forkOptions);const sent=gate<Reply>();h.setCreate(()=>sent.promise)
+ const ui=await mount();await ui.type('旧分叉');await ui.click('compose-add-image')
+ await act(()=>ui.byId<HTMLButtonElement>('compose-send').click());await flush()
+ setDraft('fork:deadbeef','另一份草稿');setEntrySettings('fork:deadbeef',{projectId:forkParams.project,providerId:null,executionMode:'project'})
+ host.params={...forkParams,fork:'deadbeef'};await act(()=>ui.root.render(createElement(Compose)));await flush()
+ expect(ui.byId<HTMLTextAreaElement>('compose-input').value).toBe('另一份草稿');expect(getDraftImages('fork:deadbeef')).toEqual([])
+ expect(getDraftImages(`fork:${ID}`)).toHaveLength(1);expect(getEntrySettings('fork:deadbeef').executionMode).toBe('project')
+ await act(()=>sent.resolve(ok({ok:true,receipt:RECEIPT,task:WB_TASK},202)));await flush()
+ expect(getDraft('fork:deadbeef')).toBe('另一份草稿');expect(host.replace).not.toHaveBeenCalled()
+})
+
+
+it('managed UUID matter offers fork with source project and text while hiding source merge',async()=>{
+ const h=harness()
+ const workspace={id:'cc730ffd-1192-4a75-b99e-b6fc3e23d105',mode:'isolated',sourcePath:'/p',executionPath:'/copies/p',branch:'codex/cc-task-cc730ffd-1192-4a75-b99e-b6fc3e23d105',baseCommit:'a'.repeat(40)}
+ h.setDetail({...DETAIL,task:{...DETAIL.task,path:workspace.executionPath,sourcePath:workspace.sourcePath,workspace,worktree:{branch:workspace.branch,removed:false,projectId:forkParams.project}},events:[{kind:'user',text:'原来的文字',createdAt:1,attachments:[{id:'image',name:'old.png',mime:'image/png',size:3,sha256:'a'.repeat(64)}]}]})
+ const ui=await mount(Matter)
+ expect(ui.byId('progress-wt-merge')).toBeNull();expect(ui.byId('progress-wt-fork')).not.toBeNull()
+ await ui.click('progress-wt-fork')
+ expect(host.push).toHaveBeenCalledWith(`/compose?fork=${ID}&project=${forkParams.project}&exclude=claude`)
+ expect(getDraft(`fork:${ID}`)).toBe('原来的文字');expect(getDraftImages(`fork:${ID}`)).toEqual([])
+ setDraft(`fork:${ID}`,'后来的草稿');await ui.click('progress-wt-fork');expect(getDraft(`fork:${ID}`)).toBe('后来的草稿')
+ await unmount(ui);host.params=forkParams;const compose=await mount()
+ expect(compose.container.textContent).toContain('原来的图片不会自动带过来')
 })

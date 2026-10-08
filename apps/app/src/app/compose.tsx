@@ -34,15 +34,27 @@ import { inputFailure, inputRows, matterInputHint } from '../view/matter-input'
 const one = (v: string | string[] | undefined) => (Array.isArray(v) ? v[0] : v)
 const NO_INPUTS: readonly MatterInputT[] = []
 
+type ComposeParams = { matter?: string; focus?: string; fork?: string; project?: string; exclude?: string }
+
 export default function Compose() {
+  const params = useLocalSearchParams<ComposeParams>()
+  const matter = one(params.matter) || undefined
+  const fork = matter ? undefined : one(params.fork) || undefined
+  const draftKey = matter ?? (fork ? `fork:${fork}` : 'new')
+  // Route changes replace all draft-owned state together, before any image/settings effect can write.
+  const { backend } = useBackendCtx()
+  const identity = useRef({ backend, version: 0 })
+  if (identity.current.backend !== backend) identity.current = { backend, version: identity.current.version + 1 }
+  return <ComposeScreen key={`${draftKey}:${pairingGen()}:${identity.current.version}`} params={params} matter={matter} fork={fork} draftKey={draftKey} />
+}
+
+function ComposeScreen({ params, matter, fork, draftKey }: { params: ComposeParams; matter?: string; fork?: string; draftKey: string }) {
   const { c } = useTheme()
   const lang = useLang()
   const router = useRouter()
   const conn = useConnection()
   const submit = useSubmit()
-  const params = useLocalSearchParams<{ matter?: string; focus?: string }>()
-  const matter = one(params.matter) || undefined
-  const draftKey = matter ?? 'new'
+  const excludeProvider = one(params.exclude) || null
   // 与文字一起留在本次进程的草稿里,离开页面后仍能核对原交办。
   const [images, setImages] = useState<PickedImage[]>(()=>getDraftImages(draftKey))
   useEffect(()=>setDraftImages(draftKey,images),[draftKey,images])
@@ -65,22 +77,25 @@ export default function Compose() {
   const draftKeyRef = useRef(draftKey)
   draftKeyRef.current = draftKey
   const setText = (v: string) => { textRef.current = v; setDraft(draftKey, v); setTextState(v) }
-  const [adjust, setAdjust] = useState(false)
+  const [adjust, setAdjust] = useState(!!fork)
   const [busy, setBusy] = useState(false)
   const [outcome, setOutcome] = useState<null | ComposeOutcome>(null)
   const [inputNotice, setInputNotice] = useState<string | null>(null)
-  const [projectId, setProjectId] = useState<string | null>(()=>getEntrySettings('new').projectId)
-  const [providerId, setProviderId] = useState<string | null>(()=>getEntrySettings('new').providerId)
-  const [executionMode,setExecutionMode]=useState<'auto'|'isolated'|'project'>(()=>getEntrySettings('new').executionMode)
+  const [initialSettings] = useState(() => getEntrySettings(draftKey, fork ? { projectId: one(params.project) || null, providerId: null, executionMode: 'isolated', forkProviderPending: true } : undefined))
+  const [projectId, setProjectId] = useState<string | null>(initialSettings.projectId)
+  const [providerId, setProviderId] = useState<string | null>(initialSettings.providerId)
+  const [executionMode,setExecutionMode]=useState<'auto'|'isolated'|'project'>(initialSettings.executionMode)
+  const [providerDefaultPending, setProviderDefaultPending] = useState(!!initialSettings.forkProviderPending)
+  const chooseProvider = (id: string | null) => { setProviderDefaultPending(false); setProviderId(id) }
   // 交办时选模型 / 思考强度(2026-10-06,对标 Paseo / Orca);null = 用执行者自己的默认。换执行者 / 项目就回到默认。
-  const [modelId, setModelId] = useState<string | null>(()=>getEntrySettings('new').modelId??null)
-  const [effort, setEffort] = useState<string | null>(()=>getEntrySettings('new').effort??null)
+  const [modelId, setModelId] = useState<string | null>(initialSettings.modelId??null)
+  const [effort, setEffort] = useState<string | null>(initialSettings.effort??null)
   const modelSource=useRef({projectId,providerId})
   useEffect(() => {
     if(modelSource.current.projectId!==projectId||modelSource.current.providerId!==providerId){setModelId(null);setEffort(null)}
     modelSource.current={projectId,providerId}
   }, [providerId, projectId])
-  useEffect(()=>{if(!matter)setEntrySettings('new',{projectId,providerId,executionMode,...(modelId?{modelId}:{}),...(effort?{effort}:{})})},[matter,projectId,providerId,executionMode,modelId,effort])
+  useEffect(()=>{if(!matter)setEntrySettings(draftKey,{projectId,providerId,executionMode,...(modelId?{modelId}:{}),...(effort?{effort}:{}),...(providerDefaultPending?{forkProviderPending:true}:{})})},[matter,draftKey,projectId,providerId,executionMode,modelId,effort,providerDefaultPending])
   const sending = useRef(false)
   const options = useQuery('entryOptions', l => backend.entryOptions(l), { enabled: !matter })
   // 说的是一件事:读它的详情(与进展页共用缓存)—— 接过来还没发第一句的,顶上说清第一句会怎样;失败句要知道执行者叫什么
@@ -97,6 +112,10 @@ export default function Compose() {
     seen.current = verKey
   }, [matter, verKey, refreshDetail])
   useEffect(() => {
+    draftKeyRef.current = draftKey
+    return () => { draftKeyRef.current = '' }
+  }, [draftKey])
+  useEffect(() => {
     textRef.current = getDraft(draftKey); setTextState(textRef.current)
     setOutcome(null); setInputNotice(null)
   }, [draftKey, backend])
@@ -111,7 +130,13 @@ export default function Compose() {
   const inputHint = matterInputHint(detail.data, lang)
   const nativeStart = matter ? detail.data?.nativeStart : undefined
   const opt = options.data
-  const project = opt?.projects.find((p) => p.id === projectId) ?? opt?.projects[0]
+  // 另做一份:默认挑一位不是原来那位的可用执行者(主人可以再换)
+  useEffect(() => {
+    if (!fork || !providerDefaultPending || !opt) return
+    setProviderId(opt.providers.find(p => p.available && p.id !== excludeProvider)?.id ?? null)
+    setProviderDefaultPending(false)
+  }, [fork, providerDefaultPending, opt, excludeProvider])
+  const project = opt?.projects.find((p) => p.id === projectId) ?? (fork ? undefined : opt?.projects[0])
   const provider = providerId ? opt?.providers.find((p) => p.id === providerId) : null
   const canPickModel = !matter && !!provider?.capabilities.features.modelCatalog
   const models = useQuery(`entryModels:${provider?.id ?? ''}:${project?.id ?? ''}`, () => backend.entryModels(provider!.id, project?.id), { enabled: adjust && canPickModel })
@@ -193,10 +218,15 @@ export default function Compose() {
       const materials = !matter && images.length ? { draftId: materialDraftId(draftKey), attachmentIds: images.map(i => i.id) } : undefined
       if (matter) await backend.say(matter, body, requestIdFor(draftKey, body))
       else {
+        // Sending before the initial catalog arrives also freezes the explicit null selection.
+        if (providerDefaultPending) {
+          setProviderDefaultPending(false)
+          setEntrySettings(draftKey, { projectId, providerId, executionMode, ...(modelId?{modelId}:{}), ...(effort?{effort}:{}) })
+        }
         // Raw selections describe user intent; mutable option defaults never replace an unknown attempt.
         const input = creationInputFor(draftKey, JSON.stringify([body, projectId, providerId, executionMode, materials?.attachmentIds ?? [], execution ?? null]), {
-          text: body, projectId: project?.id, providerId: provider?.id,
-          ...(project ? { executionMode } : {}), ...(materials ?? {}), ...(execution ? { execution } : {}),
+          text: body, projectId: fork ? projectId ?? undefined : project?.id, providerId: fork ? providerId ?? undefined : provider?.id,
+          ...(project || fork ? { executionMode } : {}), ...(materials ?? {}), ...(execution ? { execution } : {}),
         })
         if (input.draftId && input.attachmentIds?.length) await uploadImages(backend, input.draftId, images.filter(image=>input.attachmentIds!.includes(image.id)), bytesToBase64)
         try { newId = (await backend.create(input)).matterId }
@@ -243,7 +273,7 @@ export default function Compose() {
           ) : (
             <>
               <Txt role="title" accessibilityRole="header">{t(lang, 'compose.handoffTitle')}</Txt>
-              <Txt role="bubble" tone="inkSoft">{t(lang, 'compose.handoffHint')}</Txt>
+              <Txt role="bubble" tone="inkSoft">{t(lang, fork ? 'compose.forkHint' : 'compose.handoffHint')}</Txt>
             </>
           )}
           <Card>
@@ -309,10 +339,10 @@ export default function Compose() {
           <Txt role="item" accessibilityRole="header">{t(lang, 'compose.adjustTitle')}</Txt>
           <Txt role="meta" tone="inkSoft" style={{ marginTop: space.m }}>{t(lang, 'compose.project')}</Txt>
           {opt?.projects.map((p) => <ChoiceRow key={p.id} label={p.name} content="user" on={p.id === project?.id} onPress={() => setProjectId(p.id)} />)}
-          {project?<><Txt role="meta" tone="inkSoft" style={{ marginTop: space.m }}>{t(lang,'compose.location')}</Txt><ChoiceRow label={t(lang,'compose.isolated')} on={executionMode!=='project'} onPress={()=>setExecutionMode('auto')} /><ChoiceRow label={t(lang,'compose.original')} on={executionMode==='project'} onPress={()=>setExecutionMode('project')} /><Txt role="meta" tone="inkSoft">{t(lang,'compose.locationHint')}</Txt></>:null}
+          {project?<><Txt role="meta" tone="inkSoft" style={{ marginTop: space.m }}>{t(lang,'compose.location')}</Txt><ChoiceRow label={t(lang,'compose.isolated')} on={executionMode!=='project'} onPress={()=>setExecutionMode(fork ? 'isolated' : 'auto')} /><ChoiceRow label={t(lang,'compose.original')} on={executionMode==='project'} onPress={()=>setExecutionMode('project')} /><Txt role="meta" tone="inkSoft">{t(lang,'compose.locationHint')}</Txt></>:null}
           <Txt role="meta" tone="inkSoft" style={{ marginTop: space.m }}>{t(lang, 'compose.executor')}</Txt>
-          <ChoiceRow label={t(lang, 'compose.ccArranges')} on={!provider} onPress={() => setProviderId(null)} />
-          {opt?.providers.filter((p) => p.available).map((p) => <ChoiceRow key={p.id} label={p.displayName} on={p.id === provider?.id} onPress={() => setProviderId(p.id)} />)}
+          <ChoiceRow label={t(lang, 'compose.ccArranges')} on={!provider} onPress={() => chooseProvider(null)} />
+          {opt?.providers.filter((p) => p.available).map((p) => <ChoiceRow key={p.id} label={p.displayName} on={p.id === provider?.id} onPress={() => chooseProvider(p.id)} />)}
           {canPickModel ? (
             <>
               <Txt role="meta" tone="inkSoft" style={{ marginTop: space.m }}>{t(lang, 'compose.model')}</Txt>
