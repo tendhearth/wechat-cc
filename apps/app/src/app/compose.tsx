@@ -96,6 +96,8 @@ function ComposeScreen({ params, matter, fork, draftKey }: { params: ComposePara
   const [initialSettings] = useState(() => getEntrySettings(draftKey, fork ? { projectId: one(params.project) || null, providerId: null, executionMode: 'isolated', forkProviderPending: true } : undefined))
   const [projectId, setProjectId] = useState<string | null>(initialSettings.projectId)
   const [providerId, setProviderId] = useState<string | null>(initialSettings.providerId)
+  // Retained branch intent stays in the frozen request; this batch exposes no branch picker.
+  const [base,setBase]=useState<string|undefined>(initialSettings.base)
   const [executionMode,setExecutionMode]=useState<'auto'|'isolated'|'project'>(initialSettings.executionMode)
   const [providerDefaultPending, setProviderDefaultPending] = useState(!!initialSettings.forkProviderPending)
   const chooseProvider = (id: string | null) => { setProviderDefaultPending(false); setProviderId(id) }
@@ -107,7 +109,7 @@ function ComposeScreen({ params, matter, fork, draftKey }: { params: ComposePara
     if(modelSource.current.projectId!==projectId||modelSource.current.providerId!==providerId){setModelId(null);setEffort(null)}
     modelSource.current={projectId,providerId}
   }, [providerId, projectId])
-  useEffect(()=>{if(!matter)setEntrySettings(draftKey,{projectId,providerId,executionMode,...(modelId?{modelId}:{}),...(effort?{effort}:{}),...(providerDefaultPending?{forkProviderPending:true}:{})})},[matter,draftKey,projectId,providerId,executionMode,modelId,effort,providerDefaultPending])
+  useEffect(()=>{if(!matter)setEntrySettings(draftKey,{projectId,providerId,executionMode,...(base!==undefined?{base}:{}),...(modelId?{modelId}:{}),...(effort?{effort}:{}),...(providerDefaultPending?{forkProviderPending:true}:{})})},[matter,draftKey,projectId,providerId,executionMode,base,modelId,effort,providerDefaultPending])
   const sending = useRef(false)
   const options = useQuery('entryOptions', l => backend.entryOptions(l), { enabled: !matter })
   // 说的是一件事:读它的详情(与进展页共用缓存)—— 接过来还没发第一句的,顶上说清第一句会怎样;失败句要知道执行者叫什么
@@ -234,12 +236,12 @@ function ComposeScreen({ params, matter, fork, draftKey }: { params: ComposePara
         // Sending before the initial catalog arrives also freezes the explicit null selection.
         if (providerDefaultPending) {
           setProviderDefaultPending(false)
-          setEntrySettings(draftKey, { projectId, providerId, executionMode, ...(modelId?{modelId}:{}), ...(effort?{effort}:{}) })
+          setEntrySettings(draftKey, { projectId, providerId, executionMode, ...(base!==undefined?{base}:{}), ...(modelId?{modelId}:{}), ...(effort?{effort}:{}) })
         }
         // Raw selections describe user intent; mutable option defaults never replace an unknown attempt.
-        const input = creationInputFor(draftKey, JSON.stringify([body, projectId, providerId, executionMode, materials?.attachmentIds ?? [], execution ?? null]), {
+        const input = creationInputFor(draftKey, JSON.stringify([body, projectId, providerId, executionMode, base, materials?.attachmentIds ?? [], execution ?? null]), {
           text: body, projectId: fork ? projectId ?? undefined : project?.id, providerId: fork ? providerId ?? undefined : provider?.id,
-          ...(project || fork ? { executionMode } : {}), ...(materials ?? {}), ...(execution ? { execution } : {}),
+          ...(project || fork ? { executionMode } : {}),...(base!==undefined?{base,isolation:true}:{}), ...(materials ?? {}), ...(execution ? { execution } : {}),
         })
         submittedStamp = getDraftStamp(myKey)
         if (input.draftId && input.attachmentIds?.length) await uploadImages(backend, input.draftId, images.filter(image=>input.attachmentIds!.includes(image.id)), bytesToBase64)
@@ -360,8 +362,8 @@ function ComposeScreen({ params, matter, fork, draftKey }: { params: ComposePara
         <View testID="compose-adjust-sheet" style={{ backgroundColor: c.paper, padding: space.xl, gap: space.s, borderTopLeftRadius: radius.sheet, borderTopRightRadius: radius.sheet }}>
           <Txt role="item" accessibilityRole="header">{t(lang, 'compose.adjustTitle')}</Txt>
           <Txt role="meta" tone="inkSoft" style={{ marginTop: space.m }}>{t(lang, 'compose.project')}</Txt>
-          {opt?.projects.map((p) => <ChoiceRow key={p.id} label={p.name} content="user" on={p.id === project?.id} onPress={() => setProjectId(p.id)} />)}
-          {project?<><Txt role="meta" tone="inkSoft" style={{ marginTop: space.m }}>{t(lang,'compose.location')}</Txt><ChoiceRow label={t(lang,'compose.isolated')} on={executionMode!=='project'} onPress={()=>setExecutionMode(fork ? 'isolated' : 'auto')} /><ChoiceRow label={t(lang,'compose.original')} on={executionMode==='project'} onPress={()=>setExecutionMode('project')} /><Txt role="meta" tone="inkSoft">{t(lang,'compose.locationHint')}</Txt></>:null}
+          {opt?.projects.map((p) => <ChoiceRow key={p.id} label={p.name} content="user" on={p.id === project?.id} onPress={() => {setBase(undefined);setProjectId(p.id)}} />)}
+          {project?<><Txt role="meta" tone="inkSoft" style={{ marginTop: space.m }}>{t(lang,'compose.location')}</Txt><ChoiceRow label={t(lang,'compose.isolated')} on={executionMode!=='project'} onPress={()=>{setBase(undefined);setExecutionMode(fork ? 'isolated' : 'auto')}} /><ChoiceRow label={t(lang,'compose.original')} on={executionMode==='project'} onPress={()=>{setBase(undefined);setExecutionMode('project')}} /><Txt role="meta" tone="inkSoft">{t(lang,'compose.locationHint')}</Txt></>:null}
           <Txt role="meta" tone="inkSoft" style={{ marginTop: space.m }}>{t(lang, 'compose.executor')}</Txt>
           <ChoiceRow label={t(lang, 'compose.ccArranges')} on={!provider} onPress={() => chooseProvider(null)} />
           {opt?.providers.filter((p) => p.available).map((p) => <ChoiceRow key={p.id} label={p.displayName} on={p.id === provider?.id} onPress={() => chooseProvider(p.id)} />)}

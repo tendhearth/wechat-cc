@@ -23,6 +23,8 @@ export function executionErrorMessage(error){
   writer_not_closed:'执行程序还没有确认退出，工作文件夹暂时保留占用。请检查原进程是否已结束；确认退出后再继续。',
   writer_alive:'执行程序还在运行，请先结束它；结束后占用会自动解除。',
   worktree_not_git:'这个项目不是 Git 仓库，开不了独立工作区。取消勾选后可以照常交办。',
+  worktree_base_unsupported:'当前交办不支持从保留分支开始。要求和材料已保留；请重新选择项目后，从该项目当前提交交办。',
+  worktree_base_missing:'项目里没有这个分支。请核对分支名（本地分支），或留空从最新提交开始。',
   worktree_dirty:'独立工作区里还有没提交的改动，先「提交到分支」再删除。',
   worktree_removed:'独立工作区已经删除了，分支还在项目里。请查看任务上的可用操作，或从来源项目重新交办。',
   worktree_branch_missing:'分支已经不在项目里了，没法重开。请重新交办一件。',

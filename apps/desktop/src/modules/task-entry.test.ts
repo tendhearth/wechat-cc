@@ -490,3 +490,16 @@ it('project creation has one location control and submits mode without a conflic
   expect(drafts.at(-1)).toMatchObject({executionMode:'auto', target: {kind: 'project', projectId: 'p-0123456789abcdef0123'}})
   expect(drafts.at(-1)?.target).not.toHaveProperty('isolation')
 })
+
+it('retains a saved explicit branch in the frozen request across unknown retry without showing a branch picker',async()=>{
+ const projectId='p-0123456789abcdef0123'
+ memory.set('cc.task-entry.window.v1',JSON.stringify({sourceText:'分支要求',text:'分支要求',draftId:crypto.randomUUID(),target:{kind:'project',projectId,isolation:'worktree',base:'cc/retained'},providerId:'codex',executionMode:'isolated',execution:{defaults:'provider',model:null,reasoningEffort:null},candidates:[],selected:[],pending:null}))
+ const {createTaskEntry}=await import('./task-entry.js');const posts:any[]=[]
+ const invoke=api(async(_m,p,b)=>{if(p==='/v1/workbench/create-entry'){posts.push(structuredClone(b));throw Error('network_offline')}})
+ const entry=createTaskEntry({storage,invokeWorkbenchApi:invoke});void entry.open({text:'分支要求'});await settle()
+ expect(dialog.innerHTML).not.toContain('name="base"');dialog.submit();await settle()
+ expect(posts[0].target).toEqual({kind:'project',projectId,isolation:'worktree',base:'cc/retained'})
+ dialog.click('cancel')
+ const reopened=createTaskEntry({storage,invokeWorkbenchApi:invoke});void reopened.open({text:'分支要求'});await settle();dialog.submit();await settle()
+ expect(posts[1]).toEqual(posts[0]);dialog.click('cancel')
+})

@@ -115,6 +115,7 @@ export function makeEntryDomain(ctx:ServiceCtx, domains:EntryDomains) {
       return {task:taskView(publicTask(store.get(receipt.taskId)))}
     }
     const priorWechat=wechatWinner();if(priorWechat)return priorWechat
+    if(input.target.kind==='project'&&input.target.base!==undefined)throw Error('worktree_base_unsupported')
     ctx.ensureAccepting()
     if(!ctx.deps.matters&&context.surface!=='wechat')throw Error('entry_not_wired')
     const text=composeEntryPrompt(input)
@@ -213,6 +214,7 @@ export function makeEntryDomain(ctx:ServiceCtx, domains:EntryDomains) {
   function create(input:CreateTask & {requestId?:undefined}):WorkbenchTaskView
   function create(input:CreateTask):WorkbenchTaskView|Promise<WorkbenchTaskView>
   function create(input:CreateTask):WorkbenchTaskView|Promise<WorkbenchTaskView>{
+    if(Object.hasOwn(input,'base')||Object.hasOwn(input,'fromBranch'))throw Error('worktree_base_unsupported')
     if(input.requestId===undefined){
       if(input.executionMode!==undefined&&input.executionMode!=='project')throw Error('invalid_request_id')
       return domains.execute.create(input)
@@ -235,7 +237,7 @@ export function makeEntryDomain(ctx:ServiceCtx, domains:EntryDomains) {
     if(!input.ownerChatId||ctx.deps.ownerChatId()!==input.ownerChatId||!input.accountId?.trim())throw Error('invalid_wechat_identity')
     const id=normalizeInputRequestId(input.requestId)
     if(!/^[a-f0-9]{64}$/.test(input.commandHash))throw Error('invalid_request')
-    const value:EntryInput={requestId:id,text:input.text,target:{kind:'project',projectId:input.projectId,...(input.isolation?{isolation:'worktree' as const}:{})},...(input.providerId?{providerId:input.providerId}:{}),...(input.executionMode?{executionMode:input.executionMode}:{})}
+    const value:EntryInput={requestId:id,text:input.text,target:{kind:'project',projectId:input.projectId,...(input.isolation?{isolation:'worktree' as const}:{}),...(input.base!==undefined?{base:input.base}:{})},...(input.providerId?{providerId:input.providerId}:{}),...(input.executionMode?{executionMode:input.executionMode}:{})}
     const receiptDomain={kind:'wechat' as const,accountId:input.accountId,commandHash:input.commandHash}
     const prior=store.creationReceipts.get(id)
     if(prior){

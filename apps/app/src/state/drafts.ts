@@ -12,7 +12,7 @@ export type DraftStamp = { owner: string; revision: number }
 /** A process-owned revision distinguishes retyped identical text from the submitted draft. */
 export const getDraftStamp = (key: string): DraftStamp => ({ owner: draftOwner ??= uuid(), revision: revisions.get(key) ?? revision })
 export const sameDraftStamp = (a: DraftStamp | undefined, b: DraftStamp) => !!a && a.owner === b.owner && a.revision === b.revision
-export type EntrySettings={projectId:string|null;providerId:string|null;executionMode:'auto'|'isolated'|'project';modelId?:string;effort?:string;forkProviderPending?:boolean}
+export type EntrySettings={projectId:string|null;providerId:string|null;executionMode:'auto'|'isolated'|'project';modelId?:string;effort?:string;base?:string;forkProviderPending?:boolean}
 const entrySettings=new Map<string,EntrySettings>()
 export const getEntrySettings=(key:string,fallback:EntrySettings={projectId:null,providerId:null,executionMode:'auto'}):EntrySettings=>({...entrySettings.get(key)??fallback})
 export const setEntrySettings=(key:string,value:EntrySettings)=>{

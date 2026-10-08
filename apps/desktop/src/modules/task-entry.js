@@ -74,9 +74,9 @@ export function createTaskEntry(deps){
       const projectUnavailable=()=>!!options&&state.target.kind==='project'&&!project()
       /** Only a changed destination resets the project's execution choices.
        * A missing catalog project stays invalid until the owner chooses a destination.
-       * @param {EntryInput['target']} target @param {string|null|undefined} preferred */
-      function setDestination(target,preferred){
-        const changed=state.target.kind!==target.kind||(target.kind==='project'&&(state.target.kind!=='project'||state.target.projectId!==target.projectId))
+       * @param {EntryInput['target']} target @param {string|null|undefined} preferred @param {boolean} [resetBase] */
+      function setDestination(target,preferred,resetBase=false){
+        const changed=state.target.kind!==target.kind||(target.kind==='project'&&(state.target.kind!=='project'||state.target.projectId!==target.projectId||resetBase&&state.target.base!==undefined))
         if(!changed)return
         state.target=target;state.executionMode='auto'
         if(preferred&&options?.providers.some(p=>p.id===preferred))state.providerId=preferred
@@ -86,7 +86,7 @@ export function createTaskEntry(deps){
       /** @param {string} requestId @returns {EntryInput} */
       const input=requestId=>{
         const material=drafts.get(scope),selected=state.selected.flatMap(i=>state.candidates[i]?[state.candidates[i]]:[])
-        return{requestId,text:state.text,target:state.target.kind==='project'?{kind:'project',projectId:state.target.projectId}:{kind:'managed'},...(state.target.kind==='project'?{executionMode:state.executionMode}:{}),...(state.providerId?{providerId:state.providerId}:{}),execution:{...state.execution},draftId:state.draftId,...(material.attachments?.length?{attachmentIds:material.attachments.map(a=>a.id)}:{}),...(selected.length?{context:{source:'owner-chat',excerpts:selected.map(m=>({role:/** @type {'user'|'assistant'} */(m.role==='cc'?'assistant':'user'),text:m.text}))}}:{})}
+        return{requestId,text:state.text,target:{...state.target},...(state.target.kind==='project'?{executionMode:state.executionMode}:{}),...(state.providerId?{providerId:state.providerId}:{}),execution:{...state.execution},draftId:state.draftId,...(material.attachments?.length?{attachmentIds:material.attachments.map(a=>a.id)}:{}),...(selected.length?{context:{source:'owner-chat',excerpts:selected.map(m=>({role:/** @type {'user'|'assistant'} */(m.role==='cc'?'assistant':'user'),text:m.text}))}}:{})}
       }
       const signature=()=>JSON.stringify([input(''),attachmentSignature(drafts.get(scope).attachments)])
       const disabled=()=>busy||(!state.pending?.uncertain&&(!options||projectUnavailable()||!provider()?.available||!attachments.ready(scope)||(!state.text.trim()&&!drafts.get(scope).attachments?.length)))
@@ -137,6 +137,9 @@ export function createTaskEntry(deps){
         let submission=state.pending
         if(!submission||!submission.uncertain&&submission.signature!==signature()){
           if(disabled()){error=projectUnavailable()?'所选项目暂不可用，请在更多设置里重新选择。':options?.reason?.message??'先连接一个可用的执行者，并等附件上传完成。';render();return}
+          // 分支名只收安全子集(与 daemon validBaseBranch 同一条):字母数字开头,只含 ._/-,不含 ..
+          const base=state.target.kind==='project'?state.target.base:undefined
+          if(base&&(!/^[A-Za-z0-9][A-Za-z0-9._/-]{0,199}$/.test(base)||base.includes('..')||base.includes('//')||/(\/|\.lock|\.)$/.test(base))){error='分支名格式不对：只能用字母、数字和 . _ / -，例如 feature/login。';render();return}
           const payload=input(crypto.randomUUID()),contentError=entryContentError(payload)
           if(contentError){error=contentError==='invalid_context'?`讨论材料超过 ${ENTRY_LIMITS.context.toLocaleString('en-US')} 字或 ${ENTRY_LIMITS.excerpts} 条，请取消部分摘录。`:'要求和所选讨论材料合计过长，请缩减后再交办。';render();return}
           submission={input:payload,signature:signature(),uncertain:false,material:drafts.get(scope)}
@@ -175,8 +178,8 @@ export function createTaskEntry(deps){
         // the owner is about to click (including Cancel and Submit).
         if(name==='text')return
         if(name==='excerpt'){const index=Number(field.value);if(state.candidates[index])state.selected=field.checked?[...new Set([...state.selected,index])].sort((a,b)=>a-b):state.selected.filter(i=>i!==index)}
-        else if(name==='project'){const p=options?.projects.find(p=>p.id===field.value);if(field.value!=='managed'&&!p)return;destinationChosen=true;error='';setDestination(p?{kind:'project',projectId:p.id}:{kind:'managed'},p?.providerId??options?.defaultProviderId)}
-        else if(name==='executionMode'&&state.target.kind==='project')state.executionMode=field.value==='project'?'project':'auto'
+        else if(name==='project'){const p=options?.projects.find(p=>p.id===field.value);if(field.value!=='managed'&&!p)return;destinationChosen=true;error='';setDestination(p?{kind:'project',projectId:p.id}:{kind:'managed'},p?.providerId??options?.defaultProviderId,true)}
+        else if(name==='executionMode'&&state.target.kind==='project'){state.executionMode=field.value==='project'?'project':'auto';const {isolation:_,base:__,...target}=state.target;state.target=target}
         else if(name==='provider'){if(!options?.providers.some(p=>p.id===field.value&&p.available))return;state.providerId=field.value;state.execution=auto()}
         else if(name==='defaults')state.execution={...state.execution,defaults:field.value==='native'?'native':'provider'}
         else if(field.id==='task-entry-model')state.execution={...state.execution,model:field.value||null,reasoningEffort:null}

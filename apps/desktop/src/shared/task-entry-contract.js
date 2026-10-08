@@ -33,6 +33,7 @@ export function createEntryContract() {
     invalid_target:{status:400,phone:true},
     invalid_execution:{status:400,phone:true},
     invalid_execution_mode:{status:400,phone:true},
+    worktree_base_unsupported:{status:422,phone:true},
     git_workspace_source_unsupported:{status:422,phone:true},
     configuration_not_reproducible:{status:422,phone:true},
     git_workspace_configuration_rejected:{status:422,phone:true},

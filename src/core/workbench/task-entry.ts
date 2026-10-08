@@ -3,12 +3,13 @@ import type {WorkbenchExecutorCapabilities} from './executor-capabilities'
 import {isWorkbenchProviderId} from './executor-capabilities'
 import {normalizeExecutionChoice, PROVIDER_EXECUTION_CHOICE} from './execution-settings'
 import type {ProjectCatalogEntry} from './project-catalog'
+import {validBaseBranch} from './worktree-workspaces'
 import {ENTRY_LIMITS, entryContentError,entryErrorStatus as sharedEntryErrorStatus} from '../../../apps/desktop/src/shared/task-entry-contract.js'
 export {ENTRY_LIMITS, composeEntryPrompt, entryContentError, entryFailureKind} from '../../../apps/desktop/src/shared/task-entry-contract.js'
 
 /** isolation:'worktree' ⇒ 在这个项目的独立工作区(git worktree)里做,不占项目目录本身(2026-10-07)。 */
 export type ExecutionMode = 'auto' | 'isolated' | 'project'
-export type EntryTarget = {kind: 'managed'} | {kind: 'project'; projectId: string; isolation?: 'worktree'}
+export type EntryTarget = {kind: 'managed'} | {kind: 'project'; projectId: string; isolation?: 'worktree';base?:string}
 export type EntryExcerpt = {role: 'user' | 'assistant'; text: string}
 export type EntryInput = {
   requestId: string
@@ -63,16 +64,17 @@ function uuid(value: unknown, error: string): string {
 }
 
 function target(value: unknown): EntryTarget {
-  const input = record(value, ['kind', 'projectId', 'isolation'], 'invalid_target')
+  const input = record(value, ['kind', 'projectId', 'isolation', 'base'], 'invalid_target')
   if (input.kind === 'managed') {
-    if (Object.hasOwn(input, 'projectId') || Object.hasOwn(input, 'isolation')) throw Error('invalid_target')
+    if (Object.hasOwn(input, 'projectId') || Object.hasOwn(input, 'isolation') || Object.hasOwn(input, 'base')) throw Error('invalid_target')
     return {kind: 'managed'}
   }
   if (input.kind !== 'project' || typeof input.projectId !== 'string' || !/^p-[a-f0-9]{20}$/.test(input.projectId)) {
     throw Error('invalid_target')
   }
   if (input.isolation !== undefined && input.isolation !== 'worktree') throw Error('invalid_target')
-  return input.isolation === 'worktree' ? {kind: 'project', projectId: input.projectId, isolation: 'worktree'} : {kind: 'project', projectId: input.projectId}
+  if (input.base !== undefined && (input.isolation !== 'worktree' || !validBaseBranch(input.base))) throw Error('invalid_target')
+  return input.isolation === 'worktree' ? {kind: 'project', projectId: input.projectId, isolation: 'worktree', ...(input.base !== undefined ? {base: input.base as string} : {})} : {kind: 'project', projectId: input.projectId}
 }
 
 function context(value: unknown): NonNullable<EntryInput['context']> {
@@ -147,7 +149,7 @@ export function canonicalEntryHashV2(input: EntryInput, legacyPath?: string): st
 
 /** Admission codes shared by HTTP and phone, including native workspace failures. */
 export function entryErrorStatus(code:string):number|undefined {
- if(['git_workspace_source_unsupported','configuration_not_reproducible','git_workspace_configuration_rejected'].includes(code))return 422
+ if(['worktree_base_unsupported','git_workspace_source_unsupported','configuration_not_reproducible','git_workspace_configuration_rejected'].includes(code))return 422
  if(['git_workspace_binding_required','git_workspace_changed','git_workspace_conflict','git_workspace_needs_recovery','git_workspace_configuration_changed'].includes(code))return 409
  if(['git_timeout','git_unavailable','git_output_limit'].includes(code))return 503
  if(code==='invalid_execution_mode')return 400

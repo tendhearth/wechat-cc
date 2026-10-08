@@ -15,7 +15,7 @@ const SPECIFIC: ReadonlyMap<string, BackendCode> = new Map<string, BackendCode>(
   ['native_session_busy', 'session_busy'], ['native_folder_busy', 'folder_busy'],
   ['unavailable_provider', 'provider_missing'], ['invalid_path', 'folder_missing'], ['provider_quota_exhausted', 'quota'], ['worktree_not_git', 'worktree_not_git'], ['worktree_dirty', 'worktree_dirty'],
   // 合回项目(2026-10-08):工作区还没提交 / 只能回电脑上自己合(项目有改动、不在分支上、快进不了)/ 项目里别的任务在跑。
-  ['worktree_uncommitted', 'worktree_uncommitted'], ['project_dirty', 'merge_manual'], ['project_detached', 'merge_manual'], ['worktree_not_ff', 'merge_manual'], ['project_busy', 'project_busy'], ['worktree_branch_missing', 'worktree_branch_missing'],
+  ['worktree_uncommitted', 'worktree_uncommitted'], ['project_dirty', 'merge_manual'], ['project_detached', 'merge_manual'], ['worktree_not_ff', 'merge_manual'], ['project_busy', 'project_busy'], ['worktree_branch_missing', 'worktree_branch_missing'], ['worktree_base_missing', 'worktree_base_missing'], ['worktree_base_unsupported','worktree_base_unsupported'],
   ['native_history_changed', 'session_changed'], ['native_history_empty', 'session_empty'], ['native_session_already_managed', 'session_managed'],
   // 第一句(continueImported)时:记录在确认之后又变了(终端里的 Claude Code 还在写)/ 原会话已经不能直接接上 ⇒ 都按「会话刚变」说(final fix I1)
   ['external_close_confirmation_stale', 'session_changed'], ['restart_confirmation_required', 'session_changed'],

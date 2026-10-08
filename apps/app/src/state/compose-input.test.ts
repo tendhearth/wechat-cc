@@ -624,3 +624,14 @@ it('accepted edited draft replaces an earlier creation rejection notice with its
  expect(ui.byId('compose-accepted-draft').textContent).toContain('已接下')
  expect(ui.byId('compose-input-notice')).toBeNull();expect(ui.byId('compose-refused')).toBeNull()
 })
+
+it.each(['new','fork'] as const)('retains an explicit saved branch in unknown %s creation across missing-project remount',async kind=>{
+ const h=harness();host.params=kind==='fork'?forkParams:{};h.setCreate(()=>new Error('timeout'))
+ setEntrySettings(kind==='fork'?`fork:${ID}`:'new',{projectId:OPTIONS.projects[0]!.id,providerId:null,executionMode:'isolated',base:'cc/retained',...(kind==='fork'?{forkProviderPending:true}:{})})
+ const ui=await mount();await ui.type('保留分支要求');await ui.click('compose-send')
+ const first=creations(h)[0]!.body
+ expect(first.target).toMatchObject({kind:'project',projectId:OPTIONS.projects[0]!.id,isolation:'worktree',base:'cc/retained'})
+ await act(()=>ui.root.unmount());roots.splice(roots.indexOf(ui.root),1);h.store.revalidateAll();h.setOptions({...OPTIONS,projects:[]})
+ const reopened=await mount();await reopened.click('compose-send')
+ expect(creations(h)[1]!.body).toEqual(first)
+})

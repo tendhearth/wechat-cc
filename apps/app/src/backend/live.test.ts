@@ -491,6 +491,10 @@ describe('跟 CC 说 / 连接 / 原生会话', () => {
     expect(reqs.at(-1)!.body).toEqual({...bodyFields, target:{kind:'project',projectId:fields.projectId}, executionMode:'project'})
     await b.create({...fields, isolation:true})
     expect(reqs.at(-1)!.body).toMatchObject({target:{kind:'project',projectId:fields.projectId,isolation:'worktree'},executionMode:'auto',execution:fields.execution,attachmentIds:fields.attachmentIds})
+    await b.create({...fields,isolation:true,base:'cc/retained'})
+    expect(reqs.at(-1)!.body).toMatchObject({target:{kind:'project',projectId:fields.projectId,isolation:'worktree',base:'cc/retained'}})
+    await b.create({...fields,base:'cc/retained'})
+    expect(reqs.at(-1)!.body).toMatchObject({target:{kind:'project',projectId:fields.projectId,base:'cc/retained'}})
   })
   it('这条对话用谁(2026-10-06):读与钉走 /m/api/chat/model,model=null 原样带上(跟随全局)', async () => {
     const VIEW = { ok: true, mode: 'solo', provider: 'claude', model: null, globalModel: 'claude-opus-5-5', providers: [{ id: 'claude', name: 'Claude' }] }

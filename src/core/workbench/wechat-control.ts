@@ -1,3 +1,4 @@
+import {validBaseBranch} from './worktree-workspaces'
 import {createHash,randomUUID} from 'node:crypto'
 import type {WorkbenchStore,Task} from './store'
 import type {LiveInput} from './live-inputs'
@@ -199,6 +200,8 @@ function failure(error:unknown,id:string,isolated=false){
   if(code==='input_conflict')return '这条消息的内容与已记录的补充不一致，未再次发送。请重新查询任务。'
   if(code==='control_conflict')return '这条消息的内容与已记录的操作不一致，未再次执行。请重新查询任务。'
   if(code==='creation_conflict')return '这条消息的内容与已记录的新建要求不一致，未再次创建。请发送一条新消息。'
+  if(code==='worktree_base_unsupported')return '暂不支持从保留分支开始，没有开始工作。请重新选择项目，从当前已提交版本交办。'
+  if(code==='worktree_base_missing')return '所选分支已不存在，没有开始工作。请核对项目里的保留分支。'
   if(code==='git_workspace_source_unsupported')return '这个项目目前无法创建独立副本，没有开始工作。请在桌面查看项目状态，或明确选择原目录。'
   if(['configuration_not_reproducible','git_workspace_configuration_rejected'].includes(code))return '项目配置暂时无法在独立副本中安全使用，没有开始工作。请在桌面查看说明，或明确选择原目录。'
   if(['git_workspace_changed','git_workspace_conflict','git_workspace_needs_recovery','git_workspace_configuration_changed'].includes(code))return '准备副本时发现项目或配置已变化，没有开始工作。请在桌面核对原请求和副本状态。'
@@ -261,19 +264,22 @@ export function makeWechatWorkbenchControl(opts:{store:WorkbenchStore;ownerChatI
     if(/^新建(?:\s|$)/.test(command)){
       if(!identity?.accountId?.trim())return failure(Error('invalid_wechat_identity'),'')
       // 「任务 新建 <项目> 独立 <要求>」:在这个项目的独立工作区里做(2026-10-07),可以和别的任务同时进行。
-      const isolated=/^新建\s+p-[a-f0-9]{20}\s+独立\s+\S/i.test(command)
-      const match=(isolated?/^新建\s+(p-[a-f0-9]{20})\s+独立\s+([\s\S]+)$/i:/^新建\s+(p-[a-f0-9]{20})\s+([\s\S]+)$/i).exec(command)
+      // Preserve explicit branch intent in the protocol; UUID admission refuses it before work starts.
+      const isolated=/^新建\s+p-[a-f0-9]{20}\s+独立(?:@\S+)?\s+\S/i.test(command)
+      const match=(isolated?/^新建\s+(p-[a-f0-9]{20})\s+独立(?:@(\S+))?\s+([\s\S]+)$/i:/^新建\s+(p-[a-f0-9]{20})\s+()([\s\S]+)$/i).exec(command)
       if(!match)return usage()
+      const base=isolated&&match[2]?match[2]:undefined,body=match[3]!
+      if(base!==undefined&&!validBaseBranch(base))return usage()
       // @ makes an executor choice unambiguous; "用 Python 处理数据" remains ordinary input.
-      const explicit=/^用\s+@(\S+)(?:\s+|$)([\s\S]*)$/i.exec(match[2]!)
-      if(/^用\s+@/i.test(match[2]!)&&(!explicit||!isWorkbenchProviderId(explicit[1]!.toLowerCase())))return usage()
-      const choice=explicit??/^用\s+(claude|codex)(?:\s+|$)([\s\S]*)$/i.exec(match[2]!)
+      const explicit=/^用\s+@(\S+)(?:\s+|$)([\s\S]*)$/i.exec(body)
+      if(/^用\s+@/i.test(body)&&(!explicit||!isWorkbenchProviderId(explicit[1]!.toLowerCase())))return usage()
+      const choice=explicit??/^用\s+(claude|codex)(?:\s+|$)([\s\S]*)$/i.exec(body)
       // 终审第 5 项:origin_message_id 声明(db.ts:1350)的是 messages.id,
       // 不是平台原始 msgId——那条入站真正的 messages.id 是
       // wechatTaskMessageKey(v'workbench:'+requestId),不是 identity.msgId。
       // 今天只写不读,不坏事,但留着就是给第一个写 join 的人埋雷。
       const originMessageId=wechatTaskMessageKey({...identity,chatId,text})
-      try{return (await opts.actions.createWechat({ownerChatId:chatId,accountId:identity.accountId,requestId:inputId(chatId,'',text,identity),commandHash:createHash('sha256').update(text).digest('hex'),projectId:match[1]!.toLowerCase(),...(isolated?{isolation:true}:{}),...(choice?{providerId:choice[1]!.toLowerCase()}:{}),...(originMessageId?{originMessageId}:{}),text:choice?choice[2]!:match[2]!})).reply}
+      try{return (await opts.actions.createWechat({ownerChatId:chatId,accountId:identity.accountId,requestId:inputId(chatId,'',text,identity),commandHash:createHash('sha256').update(text).digest('hex'),projectId:match[1]!.toLowerCase(),...(isolated?{isolation:true}:{}),...(base!==undefined?{base}:{}),...(choice?{providerId:choice[1]!.toLowerCase()}:{}),...(originMessageId?{originMessageId}:{}),text:choice?choice[2]!:body})).reply}
       catch(error){return failure(error,'')}
     }
     if(!command||command==='列表'){

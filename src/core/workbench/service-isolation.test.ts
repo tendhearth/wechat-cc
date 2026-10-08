@@ -185,3 +185,40 @@ it('accepts one concurrent Git request through independent SQLite connections',a
   await expect.poll(()=>service.detail(a.task.id).task.status).toBe('completed');expect(spawned).toHaveLength(1)
  }finally{await other.shutdown();secondDb.close()}
 })
+
+it('refuses an explicit retained branch before any UUID reservation, provider or source effect',async()=>{
+ git('branch','cc/retained')
+ const before={head:git('rev-parse','HEAD'),index:readFileSync(join(source,'.git','index')),status:git('status','--porcelain'),refs:git('show-ref')}
+ const body={...request(),target:{...request().target,isolation:'worktree' as const,base:'cc/retained'}}
+ await expect(service.createEntry(body,context)).rejects.toThrow('worktree_base_unsupported')
+ const {workbenchRoutes}=await import('../../daemon/internal-api/routes-workbench'),{mobileWorkbenchRoute}=await import('../../daemon/mobile-workbench')
+ const routes=workbenchRoutes({workbench:service,resolveAdminChatId:()=> 'owner'} as never)
+ expect(await routes['POST /v1/workbench/create-entry']!(new URLSearchParams(),body)).toMatchObject({status:422,body:{error:'worktree_base_unsupported'}})
+ for(const field of ['base','fromBranch'])expect(await routes['POST /v1/workbench/create']!(new URLSearchParams(),{path:source,providerId:'claude',text:'selected branch',[field]:'cc/retained'})).toMatchObject({status:422,body:{error:'worktree_base_unsupported'}})
+ const url=new URL('http://phone.test/m/api/matter/create')
+ const response=await mobileWorkbenchRoute(undefined,url,new Request(url,{method:'POST',body:JSON.stringify(body)}),{entryOptions:()=>service.entryOptions({...context,surface:'phone'}),entryReceipt:id=>service.entryReceipt(id,{...context,surface:'phone'}),createEntry:value=>service.createEntry(value,{...context,surface:'phone'})})
+ expect(response!.status).toBe(422);expect(await response!.json()).toMatchObject({error:'worktree_base_unsupported'})
+ const reply=await service.handleWechat('owner',`任务 新建 ${body.target.projectId} 独立@cc/retained 要求`,{accountId:'fixture',userId:'owner',createTimeMs:Date.now()})
+ expect(reply).toContain('不支持从保留分支开始');expect(reply).not.toContain('已开始')
+
+ expect(store.entryRequests.get('owner',body.requestId)).toBeNull();expect(store.creationReceipts.get(body.requestId)).toBeNull()
+ expect(store.gitWorkspaces.list()).toEqual([]);expect(store.list()).toEqual([]);expect(spawned).toEqual([])
+ expect({head:git('rev-parse','HEAD'),index:readFileSync(join(source,'.git','index')),status:git('status','--porcelain'),refs:git('show-ref')}).toEqual(before)
+})
+
+it('replays a genuine legacy branch receipt without allocating a UUID copy and refuses changed branch content',async()=>{
+ const {ensureWorktree,planWorktree}=await import('./worktree-workspaces'),{canonicalEntryHash}=await import('./task-entry')
+ git('branch','cc/retained')
+ const body={...request(),target:{...request().target,isolation:'worktree' as const,base:'cc/retained'}}
+ const plan=planWorktree({stateDir:join(area,'state'),projectId:body.target.projectId,projectPath:source,repoRoot:source,id:'abc12345',base:body.target.base}),path=ensureWorktree(plan)
+ const task=service.create({path,providerId:'claude',text:'historical branch',registerProject:false})
+ store.worktrees.record({taskId:task.id,projectPath:source,repoRoot:source,root:plan.root,branch:plan.branch})
+ await expect.poll(()=>service.detail(task.id).task.canArchive).toBe(true)
+ store.entryRequests.reserve({ownerKey:'owner',requestId:body.requestId,canonicalRequestHash:canonicalEntryHash(body),target:body.target,workspaceId:null,resolvedPath:path,directoryIdentity:'historical-fixture',providerId:'claude',execution:{defaults:'provider',model:null,reasoningEffort:null},materialSnapshot:[]})
+ store.entryRequests.accept('owner',body.requestId,{taskId:task.id,matterId:task.id,runId:randomUUID(),acceptedAt:Date.now(),resolvedPath:path,directoryIdentity:'historical-fixture'})
+ const receipt=service.entryReceipt(body.requestId,context),before={refs:git('show-ref'),index:readFileSync(join(source,'.git','index')),spawned:[...spawned]}
+ expect(await service.createEntry(body,context)).toEqual(receipt)
+ await expect(service.createEntry({...body,target:{...body.target,base:'another'}},context)).rejects.toThrow('creation_conflict')
+ expect({refs:git('show-ref'),index:readFileSync(join(source,'.git','index')),spawned:[...spawned]}).toEqual(before)
+ expect(store.gitWorkspaces.list()).toEqual([])
+})
