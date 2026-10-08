@@ -319,6 +319,12 @@ it('isolated worktree tasks (2026-10-07): run in parallel on one project, stay o
   expect(()=>service.worktreeAction(one.receipt.taskId,'commit')).toThrow('worktree_removed')
   // 工作区删了 ⇒ 不再接着做(否则执行者对着不存在的目录跑)
   expect(()=>service.continueTask(one.receipt.taskId,'再改一下')).toThrow('worktree_removed')
+  // 重新打开(10-08):从保留的分支检出回原位置,又能接着做
+  expect(()=>service.worktreeAction(two.receipt.taskId,'reopen')).toThrow('worktree_open')
+  expect(service.worktreeAction(one.receipt.taskId,'reopen')).toMatchObject({reopened:true})
+  expect(service.detail(one.receipt.taskId).task.worktree?.removed).toBe(false);expect(readFileSync(join(a.path,'more.txt'),'utf8')).toBe('more\n')
+  service.continueTask(one.receipt.taskId,'再改一下');await settle(one.receipt.taskId)
+  service.worktreeAction(one.receipt.taskId,'commit');service.worktreeAction(one.receipt.taskId,'remove')
   // 归档时顺手收拾(10-08):有没提交的改动 ⇒ 留着并说一句;提交后再归档 ⇒ 工作区删掉、分支还在
   service.setArchived(two.receipt.taskId,true)
   expect(service.detail(two.receipt.taskId).task.worktree?.removed).toBe(false);expect(existsSync(b.path)).toBe(true)

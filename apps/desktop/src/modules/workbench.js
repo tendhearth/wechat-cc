@@ -49,7 +49,7 @@ function writerExitHtml(task) {
 function worktreeHtml(task, providers = []) {
   const wt = task.worktree
   if (!wt) return ''
-  if (wt.removed) return `<p class="wb-worktree">在分支 <code>${escapeWorkbenchHtml(wt.branch)}</code> 上做过，工作区已删除（分支还在项目里）。</p>`
+  if (wt.removed) return `<p class="wb-worktree">在分支 <code>${escapeWorkbenchHtml(wt.branch)}</code> 上做过，工作区已删除（分支还在项目里）。<button type="button" class="wb-new" data-action="worktree-reopen">重新打开工作区</button></p>`
   const status = wt.merged ? '，已合回项目' : '，不影响项目目录本身'
   return `<p class="wb-worktree">在独立分支 <code>${escapeWorkbenchHtml(wt.branch)}</code> 上做${status}。<button type="button" class="wb-new" data-action="worktree-commit">提交到分支</button><button type="button" class="wb-new" data-action="worktree-merge" title="只做快进合并；项目有没提交的改动或已经往前走时不动">合回项目</button><button type="button" class="wb-new" data-action="worktree-remove">删除工作区</button></p>${forkHtml(task, providers)}`
 }
@@ -1069,11 +1069,11 @@ export function initWorkbenchPage(deps) {
       return
     }
     // 独立工作区(2026-10-07):提交到分支 / 合回项目(10-08,只快进)/ 删除工作区(合回、删除都点两下才算)。
-    if ((action === 'worktree-commit' || action === 'worktree-merge' || action === 'worktree-remove') && controller.state.selectedId && controller.state.detail?.task.worktree && !controller.state.detail.task.worktree.removed) {
+    if ((action === 'worktree-commit' || action === 'worktree-merge' || action === 'worktree-remove' || action === 'worktree-reopen') && controller.state.selectedId && controller.state.detail?.task.worktree && controller.state.detail.task.worktree.removed === (action === 'worktree-reopen')) {
       if (action === 'worktree-remove' && !armConfirm(target, '再点一次：删除工作区（分支保留）')) return
       if (action === 'worktree-merge' && !armConfirm(target, '再点一次：快进合并到项目当前分支')) return
       return mutate('POST', '/v1/workbench/worktree', { id: controller.state.selectedId, action: action.slice('worktree-'.length) }, e => {
-        const code = String(e instanceof Error ? e.message : e).match(/\b(workbench_busy|worktree_dirty|worktree_removed|worktree_git_failed|not_worktree|worktree_uncommitted|project_dirty|project_detached|worktree_not_ff|project_busy)\b/)?.[1]
+        const code = String(e instanceof Error ? e.message : e).match(/\b(workbench_busy|worktree_dirty|worktree_removed|worktree_git_failed|not_worktree|worktree_uncommitted|project_dirty|project_detached|worktree_not_ff|project_busy|worktree_branch_missing|worktree_open|worktree_conflict|workbench_archived)\b/)?.[1]
         if (!code) return false
         fail(new Error(code === 'workbench_busy' ? '这个工作区还有会话占着，先收工再操作。' : executionErrorMessage(code) ?? code))
         return true
