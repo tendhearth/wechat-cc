@@ -57,14 +57,26 @@ describe('演示后端', () => {
     vi.useFakeTimers()
     try {
       const b = makeDemoBackend()
+      // 起点不写死:演示里这件事带着最初那句要求(独立工作区「另做一份」要用)
+      const base = (await b.matter('e5f6a7b8', 'en')).events.length
       await b.say('e5f6a7b8', 'hi', 'say-1')
-      expect((await b.matter('e5f6a7b8', 'en')).events.length).toBe(1)
+      expect((await b.matter('e5f6a7b8', 'en')).events.length).toBe(base + 1)
       // 同一个 requestId 重发(超时后重试)⇒ 不重复记
       await b.say('e5f6a7b8', 'hi', 'say-1')
-      expect((await b.matter('e5f6a7b8', 'en')).events.length).toBe(1)
+      expect((await b.matter('e5f6a7b8', 'en')).events.length).toBe(base + 1)
       await vi.advanceTimersByTimeAsync(2000)
-      expect((await b.matter('e5f6a7b8', 'en')).events.length).toBe(2)
+      expect((await b.matter('e5f6a7b8', 'en')).events.length).toBe(base + 2)
     } finally { vi.useRealTimers() }
+  })
+  it('演示独立工作区:合回 / 删除 / 重开会翻任务页上的状态(2026-10-08)', async () => {
+    const b = makeDemoBackend()
+    expect((await b.matter('e5f6a7b8', 'en')).task?.worktree).toMatchObject({ branch: 'cc/notes001', removed: false, projectId: 'portfolio' })
+    await b.worktree({ id: 'e5f6a7b8', action: 'merge' })
+    expect((await b.matter('e5f6a7b8', 'en')).task?.worktree?.merged).toBe(true)
+    await b.worktree({ id: 'e5f6a7b8', action: 'remove' })
+    expect((await b.matter('e5f6a7b8', 'en')).task?.worktree?.removed).toBe(true)
+    await b.worktree({ id: 'e5f6a7b8', action: 'reopen' })
+    expect((await b.matter('e5f6a7b8', 'en')).task?.worktree?.removed).toBe(false)
   })
   it('演示会话按标题/项目过滤,读取明确反映recent/start并限制近期20条', async () => {
     const b = makeDemoBackend()
