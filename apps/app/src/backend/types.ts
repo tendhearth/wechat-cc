@@ -53,7 +53,7 @@ export interface Backend {
   matterInputReceipt(id: string, requestId: string): Promise<MatterInputT | null>
   entryOptions(lang: Lang): Promise<EntryOptionsT>
   /** requestId:同一份草稿、同样的正文重发用同一个(daemon 据此去重、超时后查回执)。projectId 缺省 ⇒ 由 CC 安排(managed)。 */
-  create(p: { requestId: string; text: string; projectId?: string; providerId?: string }): Promise<{ matterId: string }>
+  create(p: { requestId: string; text: string; projectId?: string; providerId?: string; executionMode?: 'auto'|'isolated'|'project' }): Promise<{ matterId: string }>
   devices(): Promise<DeviceRowT[]>
   renameDevice(label: string): Promise<void>
   /** 登记本机的 APNs / FCM token(POST /m/api/push/register)。daemon 没接推送(还没上 v2 中继)⇒ BackendError('unavailable')。 */
@@ -91,5 +91,5 @@ export interface Backend {
 
 /** code 见 BackendCode;store 把 timeout 映射成「不确定」。 */
 export class BackendError extends Error {
-  constructor(public code: string) { super(code) }
+  constructor(public code: string, public reason?: string) { super(code) }
 }

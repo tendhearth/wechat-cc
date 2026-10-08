@@ -3,16 +3,16 @@ import {createWorkbenchAttachments, renderAttachmentComposer, attachmentSignatur
 import {createWorkbenchDraftStore} from './workbench-window-state.js'
 import {createExecutionCatalogs, renderExecutionControls, executionErrorMessage} from './workbench-execution.js'
 import {createWorkbenchThumbnails} from './workbench-thumbnails.js'
-import {ENTRY_LIMITS,entryContentError,entryFailureKind} from '../shared/task-entry-contract.js'
+import {ENTRY_LIMITS,entryContentError,entryFailureKind,entryRejectionMessage} from '../shared/task-entry-contract.js'
 import {renderWorkbenchMarkdown,renderWorkbenchUserText,captureUserSources,restoreUserSources} from './workbench-markdown.js'
 
-/** @typedef {import('../../../../src/core/workbench/task-entry').EntryInput} EntryInput */
+/** @typedef {import('../../../../src/core/workbench/task-entry').EntryInput & {executionMode?:'auto'|'isolated'|'project'}} EntryInput */
 /** @typedef {import('../../../../src/core/workbench/service').EntryResult} EntryResult */
 /** @typedef {import('../../../../src/core/workbench/task-entry').EntryOptions} EntryOptions */
 /** @typedef {{role:'user'|'cc',text:string,pending?:boolean}} Message */
 /** @typedef {{text:string,visibleMessages?:Message[],projectPath?:string}} Draft */
 /** @typedef {{input:EntryInput,signature:string,uncertain:boolean,material:import('./workbench-window-state.js').Draft}} Submission */
-/** @typedef {{sourceText:string,text:string,draftId:string,target:EntryInput['target'],providerId:string,execution:import('./workbench-execution.js').ExecutionChoice,candidates:Message[],selected:number[],pending:Submission|null}} EntryDraft */
+/** @typedef {{sourceText:string,text:string,draftId:string,target:EntryInput['target'],providerId:string,executionMode:'auto'|'isolated'|'project',execution:import('./workbench-execution.js').ExecutionChoice,candidates:Message[],selected:number[],pending:Submission|null}} EntryDraft */
 /** @typedef {{invokeWorkbenchApi:(method:'GET'|'POST',path:string,body?:Record<string,unknown>)=>Promise<unknown>,storage?:Pick<Storage,'getItem'|'setItem'|'removeItem'>|null,createAttachments?:typeof createWorkbenchAttachments,onAccepted?:(result:EntryResult)=>void|Promise<void>}} Deps */
 const KEY='cc.task-entry.window.v1'
 const esc=(/** @type {unknown} */v)=>String(v??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'})[c]??c)
@@ -38,7 +38,7 @@ export function createTaskEntry(deps){
     const saved=JSON.parse(storage?.getItem(KEY)??'null')
     if(saved&&typeof saved.sourceText==='string'&&typeof saved.text==='string'&&uuid(saved.draftId)&&saved.target&&['managed','project'].includes(saved.target.kind)){
       const candidates=messages(saved.excerpts)
-      retained={sourceText:saved.sourceText,text:saved.text,draftId:saved.draftId,target:saved.target,providerId:typeof saved.providerId==='string'?saved.providerId:'',execution:saved.execution??auto(),candidates,selected:candidates.map((_,i)=>i),pending:null}
+      retained={sourceText:saved.sourceText,text:saved.text,draftId:saved.draftId,target:saved.target,providerId:typeof saved.providerId==='string'?saved.providerId:'',executionMode:['auto','isolated','project'].includes(saved.executionMode)?saved.executionMode:'auto',execution:saved.execution??auto(),candidates,selected:candidates.map((_,i)=>i),pending:null}
       if(saved.pending&&uuid(saved.pending.input?.requestId)&&typeof saved.pending.input?.text==='string'&&typeof saved.pending.signature==='string')retained.pending=saved.pending
     }
   }catch{/* An invalid local draft must never prevent starting a new request. */}
@@ -52,7 +52,7 @@ export function createTaskEntry(deps){
       const projectPath=typeof draft.projectPath==='string'&&draft.projectPath?draft.projectPath:null
       const recovering=!!previous?.pending
       const same=previous?.sourceText===draft.text||!draft.text.trim()
-      const state=/** @type {EntryDraft} */(previous&&(same||previous.pending||projectPath)?previous:{sourceText:draft.text,text:draft.text,draftId:crypto.randomUUID(),target:{kind:'managed'},providerId:'',execution:auto(),candidates:messages(draft.visibleMessages),selected:[],pending:null})
+      const state=/** @type {EntryDraft} */(previous&&(same||previous.pending||projectPath)?previous:{sourceText:draft.text,text:draft.text,draftId:crypto.randomUUID(),target:{kind:'managed'},providerId:'',executionMode:'auto',execution:auto(),candidates:messages(draft.visibleMessages),selected:[],pending:null})
       if(previous&&!same&&previous.pending&&!projectPath){state.sourceText=draft.text;state.text=draft.text}
       const scope=`entry:${state.draftId}`
       let attachmentDraft=drafts.get(scope);attachmentDraft.draftId=state.draftId;drafts.set(scope,attachmentDraft)
@@ -78,7 +78,7 @@ export function createTaskEntry(deps){
       function setDestination(target,preferred){
         const changed=state.target.kind!==target.kind||(target.kind==='project'&&(state.target.kind!=='project'||state.target.projectId!==target.projectId))
         if(!changed)return
-        state.target=target
+        state.target=target;state.executionMode='auto'
         if(preferred&&options?.providers.some(p=>p.id===preferred))state.providerId=preferred
         state.execution=auto()
       }
@@ -86,7 +86,7 @@ export function createTaskEntry(deps){
       /** @param {string} requestId @returns {EntryInput} */
       const input=requestId=>{
         const material=drafts.get(scope),selected=state.selected.flatMap(i=>state.candidates[i]?[state.candidates[i]]:[])
-        return{requestId,text:state.text,target:structuredClone(state.target),...(state.providerId?{providerId:state.providerId}:{}),execution:{...state.execution},draftId:state.draftId,...(material.attachments?.length?{attachmentIds:material.attachments.map(a=>a.id)}:{}),...(selected.length?{context:{source:'owner-chat',excerpts:selected.map(m=>({role:/** @type {'user'|'assistant'} */(m.role==='cc'?'assistant':'user'),text:m.text}))}}:{})}
+        return{requestId,text:state.text,target:structuredClone(state.target),...(state.target.kind==='project'?{executionMode:state.executionMode}:{}),...(state.providerId?{providerId:state.providerId}:{}),execution:{...state.execution},draftId:state.draftId,...(material.attachments?.length?{attachmentIds:material.attachments.map(a=>a.id)}:{}),...(selected.length?{context:{source:'owner-chat',excerpts:selected.map(m=>({role:/** @type {'user'|'assistant'} */(m.role==='cc'?'assistant':'user'),text:m.text}))}}:{})}
       }
       const signature=()=>JSON.stringify([input(''),attachmentSignature(drafts.get(scope).attachments)])
       const disabled=()=>busy||(!state.pending?.uncertain&&(!options||projectUnavailable()||!provider()?.available||!attachments.ready(scope)||(!state.text.trim()&&!drafts.get(scope).attachments?.length)))
@@ -103,6 +103,7 @@ export function createTaskEntry(deps){
           ${state.candidates.length?state.candidates.map((m,i)=>`<div class="task-entry-excerpt"><input id="task-entry-excerpt-${i}" type="checkbox" name="excerpt" value="${i}" aria-label="带上${m.role==='user'?'我':'CC'}的第 ${i+1} 段讨论"${state.selected.includes(i)?' checked':''}><div class="task-entry-excerpt-content"><label class="task-entry-excerpt-author" for="task-entry-excerpt-${i}">${m.role==='user'?'我':'CC'}</label><div class="task-entry-excerpt-body ${m.role==='cc'?'cc-readable-markdown wb-markdown':''}">${m.role==='cc'?renderWorkbenchMarkdown(m.text):renderWorkbenchUserText(m.text,`entry:${state.draftId}:${i}`)}</div></div></div>`).join(''):'<p class="task-entry-hint">没有选择讨论材料，只会交办上面的要求。</p>'}</section>
           ${renderAttachmentComposer(material,attachments.error(scope)).replace('id="wb-attachment-files"','id="task-entry-files"')}
           <details class="task-entry-more"${more?' open':''}><summary>更多：项目和执行设置</summary><label>放在哪里<select name="project">${projectUnavailable()?'<option value="" selected disabled>所选项目暂不可用，请重新选择</option>':''}<option value="managed"${state.target.kind==='managed'?' selected':''}>随手交办 · 自动准备独立文件夹</option>${(options?.projects??[]).map(p=>`<option value="${esc(p.id)}"${state.target.kind==='project'&&state.target.projectId===p.id?' selected':''}>${esc(p.name)} · ${esc(p.path)}</option>`).join('')}</select></label>
+          ${state.target.kind==='project'?`<label>执行位置<select name="executionMode"><option value="auto"${state.executionMode!=='project'?' selected':''}>独立副本（Git 项目默认）</option><option value="project"${state.executionMode==='project'?' selected':''}>原目录</option></select></label><p class="task-entry-hint">Git 项目默认在固定版本的副本里做；当前未提交内容不会带入。无法准备时会说明原因，要求和材料会保留。非 Git 项目沿用原目录。</p>`:''}
           <label>执行者<select name="provider">${(options?.providers??[]).map(p=>`<option value="${esc(p.id)}"${state.providerId===p.id?' selected':''}${p.available?'':' disabled'}>${esc(p.displayName)}${p.available?'':` · ${esc(p.unavailableReason?.message??'暂不可用')}`}</option>`).join('')}</select></label>
           ${canExecution?`<label>默认设置<select name="defaults"><option value="provider"${state.execution.defaults==='provider'?' selected':''}>沿用 CC 设置</option><option value="native"${state.execution.defaults==='native'?' selected':''}>沿用执行者本身设置</option></select></label>${p?renderExecutionControls(state.execution,catalogs.get(state.providerId,p.path)).replaceAll('wb-model','task-entry-model').replaceAll('wb-reasoning-effort','task-entry-effort'):'<p class="task-entry-hint">新事项使用自动模型；选择已有项目后可读取该项目的模型设置。</p>'}`:'<p class="task-entry-hint">这个执行者沿用已连接的设置。</p>'}</details>
           <p class="task-entry-destination">${projectPath&&!recovering&&!destinationChosen&&!options?'正在确认所选项目…':state.target.kind==='managed'?'随手交办：CC 会为这件事准备独立文件夹。':`项目：${esc(p?.name??'所选项目暂不可用')}`}</p>
@@ -159,7 +160,7 @@ export function createTaskEntry(deps){
           if(confirmed){receive(confirmed,submission);return}
           const kind=entryFailureKind(cause instanceof Error?cause.message:String(cause),{surface:'desktop',method:creating?'POST':'GET',...(cause&&typeof cause==='object'&&'status' in cause&&typeof cause.status==='number'?{status:cause.status}:{})})
           if(kind==='expired'){state.pending=null;release?.();release=null;error='这份未接受的交办已过期，要求仍保留。请重新选择材料，再点击交办。'}
-          else if(kind==='rejected'){submission.uncertain=false;release?.();release=null;error=executionErrorMessage(cause)??'这次交办未被接受，请检查要求和所选材料后重试。'}
+          else if(kind==='rejected'){submission.uncertain=false;release?.();release=null;error=executionErrorMessage(cause)??`${entryRejectionMessage(cause instanceof Error?cause.message:String(cause))}要求和材料已保留。`}
           else error='暂时无法确认是否已接收。要求和材料已保留；重试只确认或重发同一请求。'
           persist(state)
         }finally{busy=false;render()}
@@ -175,6 +176,7 @@ export function createTaskEntry(deps){
         if(name==='text')return
         if(name==='excerpt'){const index=Number(field.value);if(state.candidates[index])state.selected=field.checked?[...new Set([...state.selected,index])].sort((a,b)=>a-b):state.selected.filter(i=>i!==index)}
         else if(name==='project'){const p=options?.projects.find(p=>p.id===field.value);if(field.value!=='managed'&&!p)return;destinationChosen=true;error='';setDestination(p?{kind:'project',projectId:p.id}:{kind:'managed'},p?.providerId??options?.defaultProviderId)}
+        else if(name==='executionMode'&&state.target.kind==='project')state.executionMode=field.value==='project'?'project':'auto'
         else if(name==='provider'){if(!options?.providers.some(p=>p.id===field.value&&p.available))return;state.providerId=field.value;state.execution=auto()}
         else if(name==='defaults')state.execution={...state.execution,defaults:field.value==='native'?'native':'provider'}
         else if(field.id==='task-entry-model')state.execution={...state.execution,model:field.value||null,reasoningEffort:null}

@@ -5,7 +5,7 @@ import { SafeAreaView } from 'react-native-safe-area-context'
 import { BackendError, type MatterInputT } from '../backend/types'
 import { t } from '../i18n'
 import { useLang } from '../i18n/useLang'
-import { deleteDraft, getDraft, pairingGen, requestIdFor, setDraft } from '../state/drafts'
+import { deleteDraft, getDraft, getEntrySettings, setEntrySettings, pairingGen, requestIdFor, setDraft } from '../state/drafts'
 import { useConnection, useQuery, useSubmit, useTopic } from '../state/hooks'
 import { useBackendCtx } from '../state/BackendProvider'
 import { consumeMatterInputDraft, matchesMatterInput, matterInputState, matterInputs, updateMatterInput, type InputSnapshot } from '../state/matter-inputs'
@@ -23,7 +23,7 @@ import { radius, space } from '../ui/tokens'
 import { TopBar } from '../ui/TopBar'
 import { Txt } from '../ui/Txt'
 import { useTheme } from '../ui/useTheme'
-import { composeOutcome, composeOutcomeDot, composeOutcomeText, composeTooLong, type ComposeOutcome } from '../view/compose'
+import { composeCreationReason, composeOutcome, composeOutcomeDot, composeOutcomeText, composeTooLong, type ComposeOutcome } from '../view/compose'
 import { nativeStartLines } from '../view/continue'
 import { canSubmit } from '../view/connection'
 import { inputFailure, inputRows, matterInputHint } from '../view/matter-input'
@@ -54,8 +54,10 @@ export default function Compose() {
   const [busy, setBusy] = useState(false)
   const [outcome, setOutcome] = useState<null | ComposeOutcome>(null)
   const [inputNotice, setInputNotice] = useState<string | null>(null)
-  const [projectId, setProjectId] = useState<string | null>(null)
-  const [providerId, setProviderId] = useState<string | null>(null)
+  const [projectId, setProjectId] = useState<string | null>(()=>getEntrySettings('new').projectId)
+  const [providerId, setProviderId] = useState<string | null>(()=>getEntrySettings('new').providerId)
+  const [executionMode,setExecutionMode]=useState<'auto'|'isolated'|'project'>(()=>getEntrySettings('new').executionMode)
+  useEffect(()=>{if(!matter)setEntrySettings('new',{projectId,providerId,executionMode})},[matter,projectId,providerId,executionMode])
   const sending = useRef(false)
   const options = useQuery('entryOptions', l => backend.entryOptions(l), { enabled: !matter })
   // 说的是一件事:读它的详情(与进展页共用缓存)—— 接过来还没发第一句的,顶上说清第一句会怎样;失败句要知道执行者叫什么
@@ -151,9 +153,9 @@ export default function Compose() {
     let newId: string | null = null
     const r = await submit(`compose:${draftKey}`, async () => {
       // 同一份草稿、同样正文重发(「不确定」之后再点)⇒ 同一个 requestId,daemon 去重,不会说两遍。
-      const requestId = requestIdFor(draftKey, body)
+      const requestId = requestIdFor(draftKey, matter?body:JSON.stringify([body,project?.id??null,provider?.id??null,executionMode]))
       if (matter) await backend.say(matter, body, requestId)
-      else newId = (await backend.create({ requestId, text: body, projectId: project?.id, providerId: provider?.id })).matterId
+      else {try{newId = (await backend.create({ requestId, text: body, projectId: project?.id, providerId: provider?.id,...(project?{executionMode}:{}) })).matterId}catch(error){if(atGen===pairingGen()&&draftKeyRef.current===myKey&&error instanceof BackendError&&error.reason)setInputNotice(composeCreationReason(error.reason,lang));throw error}}
     })
     sending.current = false
     if (atGen !== pairingGen() || draftKeyRef.current !== myKey) return
@@ -253,6 +255,7 @@ export default function Compose() {
           <Txt role="item" accessibilityRole="header">{t(lang, 'compose.adjustTitle')}</Txt>
           <Txt role="meta" tone="inkSoft" style={{ marginTop: space.m }}>{t(lang, 'compose.project')}</Txt>
           {opt?.projects.map((p) => <ChoiceRow key={p.id} label={p.name} content="user" on={p.id === project?.id} onPress={() => setProjectId(p.id)} />)}
+          {project?<><Txt role="meta" tone="inkSoft" style={{ marginTop: space.m }}>{t(lang,'compose.location')}</Txt><ChoiceRow label={t(lang,'compose.isolated')} on={executionMode!=='project'} onPress={()=>setExecutionMode('auto')} /><ChoiceRow label={t(lang,'compose.original')} on={executionMode==='project'} onPress={()=>setExecutionMode('project')} /><Txt role="meta" tone="inkSoft">{t(lang,'compose.locationHint')}</Txt></>:null}
           <Txt role="meta" tone="inkSoft" style={{ marginTop: space.m }}>{t(lang, 'compose.executor')}</Txt>
           <ChoiceRow label={t(lang, 'compose.ccArranges')} on={!provider} onPress={() => setProviderId(null)} />
           {opt?.providers.filter((p) => p.available).map((p) => <ChoiceRow key={p.id} label={p.displayName} on={p.id === provider?.id} onPress={() => setProviderId(p.id)} />)}

@@ -505,3 +505,9 @@ describe('durable single input receipt', () => {
     expect(revoked.b.connection().state).toBe('revoked')
   })
 })
+it('sends project execution mode without changing the request identity on retry',async()=>{
+ const {b,reqs}=harness({'POST /m/api/matter/create':ok({ok:true,receipt:RECEIPT,task:WB_TASK},202)})
+ const input={requestId:REQ,text:'做一件事',projectId:'project',executionMode:'project' as const}
+ await b.create(input);await b.create(input)
+ expect(reqs.filter(r=>r.key==='POST /m/api/matter/create').map(r=>r.body)).toEqual([0,1].map(()=>({requestId:REQ,text:'做一件事',target:{kind:'project',projectId:'project'},executionMode:'project'})))
+})

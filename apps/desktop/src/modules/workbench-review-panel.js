@@ -4,10 +4,11 @@
  * 这里是纯函数 —— 不碰 document,diff 的渲染由调用方递进来(复用 workbench-code-review.js),
  * 转义也由调用方递进来(桌面用 escapeWorkbenchHtml)。 */
 
-/** @typedef {import('../../../../src/core/workbench/review').ReviewTurn} ReviewTurn */
-/** @typedef {import('../../../../src/core/workbench/review').ReviewTurnFile} ReviewTurnFile */
+/** @typedef {{changeId:string,state:'available'|'blocked'|'reverted'|'needs_recovery'|'resolved_keep_current',reason?:string,operationId?:string,observedFingerprint?:string}} Revert */
+/** @typedef {Omit<import('../../../../src/core/workbench/review').ReviewTurn,'files'> & {restore?:{runId:string,scope:'closed_session',startedAt:number,finishedAt:number},files:ReviewTurnFile[]}} ReviewTurn */
+/** @typedef {import('../../../../src/core/workbench/review').ReviewTurnFile & {revert?:Revert}} ReviewTurnFile */
 /** @typedef {{artifactId:string,paths:string[],comment?:string,notice?:string,restartToken?:string}} ReviewReturnOpen */
-/** @typedef {{escapeHtml:(value:unknown)=>string,formatTime:(value:number)=>string,renderDiff:(file:ReviewTurnFile)=>string,returnOpen?:ReviewReturnOpen|null,error?:boolean,budget?:{limited:boolean}}} ReviewPanelOptions */
+/** @typedef {{escapeHtml:(value:unknown)=>string,formatTime:(value:number)=>string,renderDiff:(file:ReviewTurnFile)=>string,writerOpen?:boolean,returnOpen?:ReviewReturnOpen|null,error?:boolean,budget?:{limited:boolean}}} ReviewPanelOptions */
 
 const KIND_LABEL = /** @type {Record<string,string>} */ ({ added: '新增', deleted: '删除', modified: '修改', not_reviewed: '未展开' })
 const STATUS_LABEL = /** @type {Record<string,string>} */ ({ complete: '完整', partial: '部分', unavailable: '不可用' })
@@ -38,8 +39,8 @@ export function reviewSummary(reviews) {
  * @param {ReviewTurn[]|null|undefined} reviews */
 export function reviewsSignature(reviews) {
   return JSON.stringify((reviews ?? []).map(turn => [
-    turn.sha256 ?? '', turn.status ?? '',
-    (turn.files ?? []).map(file => [file.path, file.mark?.mark ?? null, file.mark?.comment ?? '']),
+    turn.sha256 ?? '', turn.status ?? '', turn.restore ?? null,
+    (turn.files ?? []).map(file => [file.path, file.mark?.mark ?? null, file.mark?.comment ?? '', file.revert ?? null]),
   ]))
 }
 
@@ -60,10 +61,12 @@ function renderTurn(turn, round, index, options) {
     const badge = mark ? `<span class="wb-review-badge" data-mark="${mark.mark}">${mark.mark === 'accepted' ? '已接受' : '已打回'}</span>` : ''
     const comment = mark?.comment ? `<p class="wb-review-note">意见：${cut(mark.comment)}</p>` : ''
     const reason = file.reason ? `<p class="wb-review-note">${cut(file.reason)}</p>` : ''
+    const r=file.revert,restorable=turn.restore?.scope==='closed_session'
+    const restoreAction=restorable&&r?`<p class="wb-review-note">${r.state==='reverted'?'已撤回':r.state==='resolved_keep_current'?'已保留当前现场':r.state==='needs_recovery'?'撤回结果需要核对，请先保留当前现场或重新确认。':r.state==='blocked'?`暂不可撤回：${cut(r.reason??'恢复条件未满足')}`:''}</p>${!options.writerOpen&&r.state==='available'?`<button type="button" class="wb-new" data-action="review-revert" data-artifact-id="${esc(turn.artifactId)}" data-path="${esc(file.path)}" data-change-id="${esc(r.changeId)}">撤回这个文件</button>`:!options.writerOpen&&r.state==='needs_recovery'&&r.operationId&&r.observedFingerprint?`<button type="button" class="wb-new" data-action="review-revert-resolve" data-operation-id="${esc(r.operationId)}" data-observed-fingerprint="${esc(r.observedFingerprint)}">保留当前现场</button>`:''}`:''
     const actions = markable(file)
       ? `<div class="wb-review-file-actions"><button type="button" class="wb-new" data-action="review-accept" data-artifact-id="${esc(turn.artifactId)}" data-path="${esc(file.path)}">${mark?.mark === 'accepted' ? '已接受' : '接受'}</button><button type="button" class="wb-new" data-action="review-return" data-artifact-id="${esc(turn.artifactId)}" data-path="${esc(file.path)}">打回</button></div>`
       : ''
-    return `<div class="wb-review-file-row"><details id="wb-review-${key}-${fileIndex}" class="wb-review-file" data-review-disclosure data-review-file-path="${esc(file.path)}"><summary><span class="wb-review-kind" data-kind="${esc(file.kind)}">${KIND_LABEL[file.kind] ?? esc(file.kind)}</span><span class="wb-review-path">${esc(file.path)}</span>${file.preexisting ? '<small>开始时已有修改</small>' : ''}${badge}</summary>${reason}${!inline && file.diff ? OLDER_TURN : options.renderDiff(file)}</details>${comment}${actions}</div>`
+    return `<div class="wb-review-file-row"><details id="wb-review-${key}-${fileIndex}" class="wb-review-file" data-review-disclosure data-review-file-path="${esc(file.path)}"><summary><span class="wb-review-kind" data-kind="${esc(file.kind)}">${KIND_LABEL[file.kind] ?? esc(file.kind)}</span><span class="wb-review-path">${esc(file.path)}</span>${file.preexisting ? '<small>开始时已有修改</small>' : ''}${badge}</summary>${reason}${!inline && file.diff ? OLDER_TURN : options.renderDiff(file)}</details>${comment}${actions}${restoreAction}</div>`
   }).join('')
   const open = options.returnOpen && options.returnOpen.artifactId === turn.artifactId ? options.returnOpen : null
   const checked = new Set(open?.paths ?? [])
@@ -71,9 +74,10 @@ function renderTurn(turn, round, index, options) {
   const form = open && choices.length
     ? `<form class="wb-review-return-form" data-action="review-return-submit" data-artifact-id="${esc(turn.artifactId)}"><p>选择要打回的文件，并写一句要怎么改。</p>${open.notice ? `<p class="wb-review-note" role="status">${cut(open.notice)}</p>` : ''}<ul class="wb-review-return-paths">${choices.map(file => `<li><label><input type="checkbox" name="paths" value="${esc(file.path)}"${checked.has(file.path) ? ' checked' : ''}><span>${esc(file.path)}</span></label></li>`).join('')}</ul><label class="wb-sr-only" for="wb-review-comment">修改意见</label><textarea id="wb-review-comment" name="comment" rows="3" maxlength="${MAX_TEXT}" placeholder="说明要怎么改…">${esc(open.comment ?? '')}</textarea><div class="wb-control-actions"><button type="button" class="wb-new" data-action="review-return-cancel">取消</button><button type="submit" class="wb-btn wb-btn-primary">${open.restartToken ? '带记录重新开始并发回' : '发回'}</button></div></form>`
     : ''
+  const scope=turn.restore?.scope==='closed_session'?`<p class="wb-review-note">整段已关闭会话：${esc(options.formatTime(turn.restore.startedAt))} — ${esc(options.formatTime(turn.restore.finishedAt))}。撤回会恢复此文件在会话开始时的内容、存在状态和权限。${options.writerOpen?'请先用「结束会话」关闭正在写入的执行者，再核对恢复资格。':''}</p>`:''
   const status = STATUS_LABEL[turn.status] ?? esc(String(turn.status ?? ''))
   const empty = files ? '' : '<p class="wb-review-note">这一轮没有列出可展开的文件。</p>'
-  return `<section class="wb-review-turn" data-review-turn="${esc(turn.sha256)}"><header><h4>第 ${round} 轮 · ${esc(options.formatTime(turn.createdAt))} · ${status}</h4></header>${notes}${preexisting}${files}${empty}${form}</section>`
+  return `<section class="wb-review-turn" data-review-turn="${esc(turn.sha256)}"><header><h4>${turn.restore?.scope==='closed_session'?'已关闭会话':`第 ${round} 轮`} · ${esc(options.formatTime(turn.createdAt))} · ${status}</h4></header>${scope}${notes}${preexisting}${files}${empty}${form}</section>`
 }
 
 /** 新的一轮排在最前面(后台按新→旧给)。没有任何一轮、也没出错时不占地方。

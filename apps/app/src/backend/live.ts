@@ -163,7 +163,7 @@ export function makeLiveBackend(d: LiveDeps): Backend {
     if (mapped) {
       if (mapped === 'revoked') revoke()
       else log(`${key}: ${res.status} ${mapped}`)
-      throw new BackendError(mapped)
+      throw new BackendError(mapped, typeof (json as {error?:unknown})?.error==='string'?(json as {error:string}).error:undefined)
     }
     const schema = PHONE_API_SCHEMAS[key]
     const p = schema ? schema.safeParse(json) : null
@@ -283,6 +283,7 @@ export function makeLiveBackend(d: LiveDeps): Backend {
         requestId: p.requestId, text: p.text,
         target: p.projectId ? { kind: 'project', projectId: p.projectId } : { kind: 'managed' },
         ...(p.providerId ? { providerId: p.providerId } : {}),
+        ...(p.projectId ? {executionMode:p.executionMode ?? 'auto'} : {}),
       }
       try {
         const r = await call<{ receipt: { matterId: string } }>('POST /m/api/matter/create', '/m/api/matter/create', { body, retry: true })

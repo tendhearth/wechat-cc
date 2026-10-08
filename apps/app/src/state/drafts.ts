@@ -10,11 +10,15 @@ export type DraftStamp = { owner: string; revision: number }
 /** A process-owned revision distinguishes retyped identical text from the submitted draft. */
 export const getDraftStamp = (key: string): DraftStamp => ({ owner: draftOwner ??= uuid(), revision: revisions.get(key) ?? revision })
 export const sameDraftStamp = (a: DraftStamp | undefined, b: DraftStamp) => !!a && a.owner === b.owner && a.revision === b.revision
+export type EntrySettings={projectId:string|null;providerId:string|null;executionMode:'auto'|'isolated'|'project'}
+const entrySettings=new Map<string,EntrySettings>()
+export const getEntrySettings=(key:string):EntrySettings=>({...entrySettings.get(key)??{projectId:null,providerId:null,executionMode:'auto'}})
+export const setEntrySettings=(key:string,value:EntrySettings)=>{entrySettings.set(key,{...value})}
 const requestIds = new Map<string, { text: string; id: string }>()
 export const getDraft = (key: string) => drafts.get(key) ?? ''
 export const setDraft = (key: string, v: string) => { drafts.set(key, v); revisions.set(key, ++revision) }
-export const deleteDraft = (key: string) => { drafts.delete(key); requestIds.delete(key); revisions.set(key, ++revision) }
-export const clearDrafts = () => { gen++; revision++; drafts.clear(); revisions.clear(); requestIds.clear(); replied.clear(); clearReceipts() }
+export const deleteDraft = (key: string) => { drafts.delete(key); entrySettings.delete(key); requestIds.delete(key); revisions.set(key, ++revision) }
+export const clearDrafts = () => { gen++; revision++; drafts.clear(); entrySettings.clear(); revisions.clear(); requestIds.clear(); replied.clear(); clearReceipts() }
 
 /**
  * 这些都只对「当前这台电脑」有意义(复评):换配对(配上 / 解除 / 换电脑 / 演示↔真连)⇒ 全清,配对代 +1。
@@ -33,7 +37,7 @@ export function setPairingScope(key: string): void {
   if (first) return
   gen++
   revision++; revisions.clear()
-  drafts.clear(); requestIds.clear(); replied.clear()
+  drafts.clear(); entrySettings.clear(); requestIds.clear(); replied.clear()
   if (receipts.length) { receipts = []; queueMicrotask(notifyReceipts) }
 }
 

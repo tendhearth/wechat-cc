@@ -39,3 +39,10 @@ it('allows a first managed entry without adding a project or knowing a local fol
  expect(html).not.toContain('id="wb-path"')
  expect(renderWorkbench({...state,projects:[],newScope:'new:add-project'})).toContain('id="wb-project-form"')
 })
+it('groups isolated tasks by source and keeps old task paths compatible',()=>{
+ const task={id:'one',path:'/copies/one',sourcePath:project.path,title:'副本',providerId:'codex',status:'completed',createdAt:1,updatedAt:1,error:null}
+ expect(groupWorkbenchTasks([task],state.projects)).toEqual([{path:project.path,label:project.name,tasks:[task]}])
+ const html=renderWorkbench({...state,tasks:[task],selectedId:'one',detail:{task,events:[],artifacts:[],workspace:{id:'ws',mode:'isolated',sourcePath:project.path,executionPath:task.path,branch:'codex/cc-task-x',baseCommit:'a'.repeat(40)}}})
+ expect(html).toContain('在独立副本里做');expect(html).toContain('data-action="workspace-export"');expect(html).toContain('data-action="open-task-folder"');expect(html).toContain('归档会保留副本')
+ expect(groupWorkbenchTasks([{...task,sourcePath:undefined}],[])[0]?.path).toBe('/copies/one')
+})
