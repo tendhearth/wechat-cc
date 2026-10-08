@@ -72,7 +72,7 @@ export interface Backend {
   entryOptions(lang: Lang): Promise<EntryOptionsT>
   /** requestId:同一份草稿、同样的正文重发用同一个(daemon 据此去重、超时后查回执)。projectId 缺省 ⇒ 由 CC 安排(managed)。 */
   /** isolation:在这个项目的独立工作区(git worktree)里做,同一项目可以并行(2026-10-07)。 */
-  create(p: { requestId: string; text: string; projectId?: string; providerId?: string; execution?: EntryExecution; isolation?: boolean } & Partial<PhoneMaterials>): Promise<{ matterId: string }>
+  create(p: { requestId: string; text: string; projectId?: string; providerId?: string; execution?: EntryExecution; isolation?: boolean; executionMode?: 'auto'|'isolated'|'project' } & Partial<PhoneMaterials>): Promise<{ matterId: string }>
   /** 交办时可选的模型(GET /m/api/entry/models,2026-10-06);执行者不带模型目录 ⇒ BackendError。 */
   entryModels(providerId: string, projectId?: string): Promise<EntryModelCatalogT>
   /** 材料分块上传(POST /m/api/attachment/chunk,2026-10-06 起手机 app 也用):每块 128 KiB、按 offset 续传;最后一块后 status=ready。 */
@@ -130,5 +130,5 @@ export interface Backend {
 
 /** code 见 BackendCode;store 把 timeout 映射成「不确定」。 */
 export class BackendError extends Error {
-  constructor(public code: string) { super(code) }
+  constructor(public code: string, public reason?: string) { super(code) }
 }

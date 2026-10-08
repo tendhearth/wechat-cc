@@ -106,3 +106,9 @@ describe('换配对就清(复评:A 电脑的「可能没送到」不能带到 B 
     expect(pairingScopeKey(p)).not.toContain('t1')   // 不拿令牌当键
   })
 })
+it('retains project location settings through screen remount and clears them with the owning draft',async()=>{
+ const {getEntrySettings,setEntrySettings}=await import('./drafts')
+ setEntrySettings('new',{projectId:'project',providerId:null,executionMode:'project'})
+ expect(getEntrySettings('new')).toEqual({projectId:'project',providerId:null,executionMode:'project'})
+ deleteDraft('new');expect(getEntrySettings('new')).toEqual({projectId:null,providerId:null,executionMode:'auto'})
+})

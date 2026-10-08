@@ -20,8 +20,12 @@ import { isAckRequiredError, isUnattendedProvider, mountUnattendedDialog, unatte
 import { escapeWorkbenchHtml, renderWorkbenchMarkdown, renderWorkbenchUserText } from './workbench-markdown.js'
 export { escapeWorkbenchHtml, renderWorkbenchMarkdown } from './workbench-markdown.js'
 import { WORKBENCH_CODE_REVIEW_MIME, createReviewDiffBudget, renderReviewFileDiff, renderWorkbenchCodeReview } from './workbench-code-review.js'
+import {entryRejectionMessage,entryFailureKind} from '../shared/task-entry-contract.js'
+import {createWorkbenchCreateAttempts} from './workbench-create-attempts.js'
+import {mountRestoreConfirmation} from './workbench-restore-confirm.js'
+import {createRestoreActions} from './workbench-restore.js'
 import { renderReviewPanel, reviewsSignature } from './workbench-review-panel.js'
-/** @typedef {import('../../../../src/core/workbench/review').ReviewTurn} ReviewTurn */
+/** @typedef {import('./workbench-review-panel.js').ReviewTurn} ReviewTurn */
 import { createWorkbenchInteractions, captureWorkbenchQuestionDrafts, syncWorkbenchQuestionChoice, renderWorkbenchQuestions, renderWorkbenchInputs } from './workbench-interaction.js'
 import { renderWorkbenchTimeline, workbenchTimelineEventId, renderWorkbenchOperation, captureWorkbenchTimelineAnchor, restoreWorkbenchTimelineAnchor } from './workbench-timeline.js'
 import { mergeEvents, structuralSignature, patchLiveTimeline, createLongPoll, clearLiveTimelinePatches, hasLiveTimelineInteraction } from './workbench-live.js'
@@ -40,18 +44,27 @@ function writerExitHtml(task) {
   if (task.writerExit === 'alive') return '<p class="wb-error-note">执行程序还在运行。结束它之后，这条占用会自动解除。</p>'
   return '<button type="button" class="wb-new" data-action="confirm-writer-exited">我确认它已经结束</button>'
 }
+/** All file mutation entry points use the same evidence that a writer is still open.
+ * @param {Detail|null|undefined} detail */
+function reviewWriterBlocked(detail) {
+  return !detail || ['running','queued','cancelling'].includes(detail.task.status)
+    || !!(detail.runtime ?? detail.task.runtime)?.retained || !!detail.requiresExternalClose
+    || detail.task.error === 'writer_not_closed'
+    || detail.task.writerExit === 'alive' || detail.task.writerExit === 'unconfirmed'
+}
 /** @typedef {{taskId:string,title:string,reason:'same_path'|'nested_path'|'writer_not_closed',holderWriting?:boolean,closeInMs?:number|null}} WaitingFor */
 /**
  * 独立工作区那一行(2026-10-07):分支名 + 「提交到分支」「删除工作区」。合并留给主人,提交后时间线里有一行合并命令。
- * @param {{worktree?:{branch:string,projectPath:string,removed:boolean}}} task
+ * @param {{worktree?:{branch:string,projectPath:string,removed:boolean,removedAt?:number|null}}} task
+ * @param {Workspace} [workspace]
  */
-function worktreeHtml(task) {
-  const wt = task.worktree
+function worktreeHtml(task, workspace) {
+  const wt = workspace?.mode === 'isolated' ? workspace : task.worktree
   if (!wt) return ''
-  if (wt.removed) return `<p class="wb-worktree">在分支 <code>${escapeWorkbenchHtml(wt.branch)}</code> 上做过，工作区已删除（分支还在项目里）。</p>`
-  return `<p class="wb-worktree">在独立分支 <code>${escapeWorkbenchHtml(wt.branch)}</code> 上做，不影响项目目录本身。<button type="button" class="wb-new" data-action="worktree-commit">提交到分支</button><button type="button" class="wb-new" data-action="worktree-remove">删除工作区</button></p>`
+  if (wt.removed || 'removedAt' in wt && wt.removedAt != null) return `<p class="wb-worktree">在分支 <code>${escapeWorkbenchHtml(wt.branch)}</code> 上做过，工作区已删除（分支还在项目里）。</p>`
+  return `<p class="wb-worktree">在独立分支 <code>${escapeWorkbenchHtml(wt.branch)}</code> 上做。<button type="button" class="wb-new" data-action="worktree-commit">提交到分支</button><button type="button" class="wb-new" data-action="worktree-remove">删除工作区</button></p>`
 }
-/** @typedef {{id:string,title:string,path:string,workspaceKind?:'managed'|'project',providerId:string,status:string,createdAt:number,updatedAt:number,error:string|null,writerExit?:'alive'|'unconfirmed',worktree?:{branch:string,projectPath:string,removed:boolean},phase?:string,archivedAt?:number|null,canArchive?:boolean,pendingPermissionCount?:number,pendingQuestionCount?:number,waitingFor?:WaitingFor|null,importedOnly?:boolean,runtime?:RuntimeSnapshot,networkSuspended?:{since:number}|null}} Task */
+/** @typedef {{id:string,title:string,path:string,sourcePath?:string,workspaceKind?:'managed'|'project',providerId:string,status:string,createdAt:number,updatedAt:number,error:string|null,writerExit?:'alive'|'unconfirmed',worktree?:{branch:string,projectPath:string,removed:boolean,removedAt?:number|null},phase?:string,archivedAt?:number|null,canArchive?:boolean,pendingPermissionCount?:number,pendingQuestionCount?:number,waitingFor?:WaitingFor|null,importedOnly?:boolean,runtime?:RuntimeSnapshot,networkSuspended?:{since:number}|null}} Task */
 /** @typedef {{id:string,type:'command'|'read'|'edit'|'search'|'tool'|'agent',status:'running'|'completed'|'failed'|'cancelled'|'interrupted',label:string,detail?:string,output?:string,parentId?:string,agentIds?:string[]}} WorkbenchActivity */
 /** @typedef {{id:string,taskId:string,kind:'user'|'text'|'tool_call'|'system'|'error',text:string,createdAt:number,attachments?:import('./workbench-attachments.js').Attachment[],sourceId?:string|null,runId?:string,activity?:WorkbenchActivity,errorCode?:'execution_model_unsupported',diagnostic?:string}} WorkbenchEvent */
 /** @typedef {{id:string,taskId:string,name:string,mime:string,size:number,sha256:string,createdAt:number,approvedAt:number|null}} Artifact */
@@ -71,7 +84,8 @@ function providerLabel(p) {
 /** @typedef {import('../../../../src/core/workbench/native-adoption').NativeSource} NativeSource */
 /** @typedef {import('../../../../src/core/workbench/native-adoption').NativeResumeDecision} NativeResume */
 /** @typedef {import('../../../../src/core/workbench/handoff').HandoffView} Handoff */
-/** @typedef {{quotaHandoff?:import('./workbench-quota-handoff.js').Offer|null,execution?:ExecutionChoice,lastExecution?:import('./workbench-execution.js').RunExecution|null,attachments?:import('./workbench-attachments.js').Attachment[],handoffs?:Handoff[],requiresExternalClose?:boolean,source?:NativeSource,task:Task,events:WorkbenchEvent[],artifacts:Artifact[],permissions?:Permission[],continuation?:Continuation,runId?:string,inputMode?:'steer'|'send'|'queue',runtime?:RuntimeSnapshot,questions?:import('./workbench-interaction.js').QuestionRequest[],inputs?:import('./workbench-interaction.js').LiveInput[],version?:number}} Detail */
+/** @typedef {{id:string,mode:'isolated',sourcePath:string,executionPath:string,branch:string,baseCommit:string,removed?:boolean}} Workspace */
+/** @typedef {{workspace?:Workspace,quotaHandoff?:import('./workbench-quota-handoff.js').Offer|null,execution?:ExecutionChoice,lastExecution?:import('./workbench-execution.js').RunExecution|null,attachments?:import('./workbench-attachments.js').Attachment[],handoffs?:Handoff[],requiresExternalClose?:boolean,source?:NativeSource,task:Task,events:WorkbenchEvent[],artifacts:Artifact[],permissions?:Permission[],continuation?:Continuation,runId?:string,inputMode?:'steer'|'send'|'queue',runtime?:RuntimeSnapshot,questions?:import('./workbench-interaction.js').QuestionRequest[],inputs?:import('./workbench-interaction.js').LiveInput[],version?:number}} Detail */
 /** @typedef {{q:string,archived:'exclude'|'only'|'all'}} TaskQuery */
 /** @typedef {{limit:number,total:number,hasMore:boolean,nextCursor:string|null}} TaskPage */
 /** @typedef {{tasks:Task[],providers:Provider[],defaultProvider:string|null,canWechat:boolean,historyProviders?:string[],page?:TaskPage,projects?:Array<{id:string,name:string,path:string,providerId:string}>,projectProviders?:Record<string,string>}} ListResult */
@@ -192,7 +206,7 @@ function pathParts(path) {
 }
 
 /** 侧栏按哪个项目归组:独立工作区的任务归到源项目(2026-10-07),其余按自己的目录。 @param {Task} task */
-export const projectPathOf = task => task.worktree?.projectPath ?? task.path
+export const projectPathOf = task => task.sourcePath ?? task.worktree?.projectPath ?? task.path
 
 /** @param {Task[]} tasks @param {Array<{name:string,path:string}>} [projects] */
 export function groupWorkbenchTasks(tasks,projects=[]) {
@@ -343,14 +357,14 @@ export function renderWorkbench(state, interactions, draft, attachmentError='',e
   // 整块面板共用一份预览额度(和「成果」里那份报告同样的 256KiB / 4000 行):
   // 十几轮 × 几十个文件不能各渲各的,不然这一页会被 diff 压垮。
   const reviewBudget = createReviewDiffBudget()
-  const reviewHtml = detail ? renderReviewPanel(state.reviews ?? [], { escapeHtml: escapeWorkbenchHtml, formatTime: time, renderDiff: file => renderReviewFileDiff(file, escapeWorkbenchHtml, reviewBudget), budget: reviewBudget, returnOpen: state.reviewReturnOpen ?? null, error: !!state.reviewsError }) : ''
+  const reviewHtml = detail ? renderReviewPanel(state.reviews ?? [], { escapeHtml: escapeWorkbenchHtml, formatTime: time, renderDiff: file => renderReviewFileDiff(file, escapeWorkbenchHtml, reviewBudget), budget: reviewBudget, writerOpen:reviewWriterBlocked(detail), returnOpen: state.reviewReturnOpen ?? null, error: !!state.reviewsError }) : ''
   const artifactHtml = detail?.artifacts?.length && !artifactPanel ? `<details id="wb-artifacts" class="wb-disclosure wb-artifacts"><summary><span>成果</span><small>${detail.artifacts.length} 件</small></summary><div class="wb-artifact-list">${artifacts}</div><button type="button" class="wb-new" data-action="back-to-dialogue">回到对话</button></details>` : ''
   const execution=draft?.execution??detail?.execution??{defaults:/** @type {const} */('provider'),model:null,reasoningEffort:null}
   const executionDisabled=!!executionView.busy||!!(detail&&(detail.task.archivedAt!=null||['running','queued','cancelling'].includes(detail.task.status)))
   const executionControls=renderExecutionControls(execution,executionView.catalog,executionDisabled)
   const decisionCount = permissions.length + (detail?.questions ?? []).filter(request => request.taskId === detail?.task.id).length
   const progress = detail ? `<div class="wb-task-progress"><span class="wb-status" data-status="${escapeWorkbenchHtml(statusValue({...detail.task,runtime:detail.runtime ?? detail.task.runtime}))}">${escapeWorkbenchHtml(detail.task.importedOnly ? '尚未执行' : statusLabel(detail.task.status, detail.runtime ?? detail.task.runtime, detail.task.phase, detail.task.networkSuspended))}</span>${decisionCount ? `<button type="button" class="wb-new wb-decision-jump" data-action="show-decisions">${decisionCount} 项等你处理 ↓</button>` : detail.task.phase === 'replied' ? '<span>这一轮已答复，可以继续补充要求</span>' : ''}</div>` : ''
-  const taskHeader = detail ? `<header class="wb-task-head"><div><p class="wb-task-context">${detail.task.workspaceKind==='managed'?'随手交办':escapeWorkbenchHtml(state.projects?.find(project => project.path === projectPathOf(detail.task))?.name ?? pathParts(projectPathOf(detail.task)).name)} · ${escapeWorkbenchHtml(helper)}</p><h2 title="${escapeWorkbenchHtml(detail.task.title || '未命名任务')}">${escapeWorkbenchHtml(detail.task.title || '未命名任务')}</h2>${worktreeHtml(detail.task)}${progress}${isUnattendedProvider(state.providers.find(p => p.id === detail.task.providerId)) ? '<p class="wb-task-unattended">免审执行者 · 看不到单步,只能停止</p>' : ''}</div><div class="wb-task-head-actions">${detail.artifacts.length ? `<button type="button" class="wb-new" data-action="show-artifacts">成果 · ${detail.artifacts.length}</button>` : ''}<details id="wb-task-info" class="wb-task-info"><summary>任务详情</summary><div class="wb-task-info-body"><dl><div><dt>完整路径</dt><dd class="wb-path">${escapeWorkbenchHtml(detail.task.path)}${detail.task.workspaceKind==='managed'?'<button type="button" class="wb-new" data-action="open-task-folder">打开工作位置</button>':''}</dd></div><div><dt>任务编号</dt><dd><code>${escapeWorkbenchHtml(detail.task.id)}</code></dd></div><div><dt>执行者</dt><dd>${escapeWorkbenchHtml(helper)}</dd></div><div><dt>更新时间</dt><dd>${escapeWorkbenchHtml(time(detail.task.updatedAt))}</dd></div>${detail.source?`<div><dt>原会话</dt><dd>${escapeWorkbenchHtml(detail.source.providerId)} · <code>${escapeWorkbenchHtml(detail.source.nativeId)}</code></dd></div><div><dt>已保存的原记录</dt><dd>${detail.source.selectedMessageCount} 段${detail.source.truncated?' · 部分文字':''}</dd></div>`:''}</dl><section class="wb-task-execution"><h3>下一轮使用</h3>${executionControls}${renderExecutionObservation(detail.lastExecution)}</section>${detail.task.archivedAt != null ? '<div class="wb-task-organization"><button type="button" class="wb-btn" data-action="restore-task">恢复任务</button></div>' : detail.task.canArchive === true ? '<div class="wb-task-organization"><button type="button" class="wb-btn" data-action="archive-task">归档任务</button></div>' : ''}${state.canWechat && detail.task.archivedAt == null ? `<div class="wb-wechat"><span>在微信继续</span><code>任务 ${escapeWorkbenchHtml(detail.task.id)}</code><button type="button" class="wb-btn" data-action="copy-wechat-command">复制</button></div>` : ''}</div></details></div></header>` : ''
+  const taskHeader = detail ? `<header class="wb-task-head"><div><p class="wb-task-context">${detail.task.workspaceKind==='managed'?'随手交办':escapeWorkbenchHtml(state.projects?.find(project => project.path === projectPathOf(detail.task))?.name ?? pathParts(projectPathOf(detail.task)).name)} · ${escapeWorkbenchHtml(helper)}</p><h2 title="${escapeWorkbenchHtml(detail.task.title || '未命名任务')}">${escapeWorkbenchHtml(detail.task.title || '未命名任务')}</h2>${detail.workspace?.mode==='isolated'?'<p class="wb-field-help">在独立副本里做 · 归档会保留副本</p>':''}${worktreeHtml(detail.task,detail.workspace)}${progress}${isUnattendedProvider(state.providers.find(p => p.id === detail.task.providerId)) ? '<p class="wb-task-unattended">免审执行者 · 看不到单步,只能停止</p>' : ''}</div><div class="wb-task-head-actions">${detail.artifacts.length ? `<button type="button" class="wb-new" data-action="show-artifacts">成果 · ${detail.artifacts.length}</button>` : ''}<details id="wb-task-info" class="wb-task-info"><summary>任务详情</summary><div class="wb-task-info-body"><dl><div><dt>完整路径</dt><dd class="wb-path">${escapeWorkbenchHtml(detail.task.path)}${detail.task.workspaceKind==='managed'||detail.workspace||detail.task.worktree?'<button type="button" class="wb-new" data-action="open-task-folder">打开工作位置</button>':''}</dd></div>${detail.workspace?`<div><dt>执行方式</dt><dd>独立副本</dd></div><div><dt>工作副本编号</dt><dd><code>${escapeWorkbenchHtml(detail.workspace.id)}</code></dd></div><div><dt>执行位置</dt><dd class="wb-path">${escapeWorkbenchHtml(detail.workspace.executionPath)}</dd></div><div><dt>来源项目</dt><dd class="wb-path">${escapeWorkbenchHtml(detail.workspace.sourcePath)}</dd></div><div><dt>副本分支</dt><dd><code>${escapeWorkbenchHtml(detail.workspace.branch)}</code></dd></div><div><dt>固定版本</dt><dd><code>${escapeWorkbenchHtml(detail.workspace.baseCommit)}</code></dd></div><div><dt>带回成果</dt><dd><button type="button" class="wb-new" data-action="workspace-export">导出完整补丁</button><small>包含当前副本的改动。下载后可自行应用到原项目。</small></dd></div>`:detail.task.worktree?`<div><dt>来源项目</dt><dd class="wb-path">${escapeWorkbenchHtml(detail.task.worktree.projectPath)}</dd></div><div><dt>副本分支</dt><dd><code>${escapeWorkbenchHtml(detail.task.worktree.branch)}</code></dd></div>`:''}<div><dt>任务编号</dt><dd><code>${escapeWorkbenchHtml(detail.task.id)}</code></dd></div><div><dt>执行者</dt><dd>${escapeWorkbenchHtml(helper)}</dd></div><div><dt>更新时间</dt><dd>${escapeWorkbenchHtml(time(detail.task.updatedAt))}</dd></div>${detail.source?`<div><dt>原会话</dt><dd>${escapeWorkbenchHtml(detail.source.providerId)} · <code>${escapeWorkbenchHtml(detail.source.nativeId)}</code></dd></div><div><dt>已保存的原记录</dt><dd>${detail.source.selectedMessageCount} 段${detail.source.truncated?' · 部分文字':''}</dd></div>`:''}</dl><section class="wb-task-execution"><h3>下一轮使用</h3>${executionControls}${renderExecutionObservation(detail.lastExecution)}</section>${detail.task.archivedAt != null ? '<div class="wb-task-organization"><button type="button" class="wb-btn" data-action="restore-task">恢复任务</button></div>' : detail.task.canArchive === true ? '<div class="wb-task-organization"><button type="button" class="wb-btn" data-action="archive-task">归档任务</button></div>' : ''}${state.canWechat && detail.task.archivedAt == null ? `<div class="wb-wechat"><span>在微信继续</span><code>任务 ${escapeWorkbenchHtml(detail.task.id)}</code><button type="button" class="wb-btn" data-action="copy-wechat-command">复制</button></div>` : ''}</div></details></div></header>` : ''
   const modelErrorInTimeline=detail?.task.error==='execution_model_unsupported'&&detail.events.filter(event=>event.kind==='error').at(-1)?.errorCode==='execution_model_unsupported'
   const content = detail ? `
     ${related}
@@ -378,7 +392,7 @@ export function renderWorkbench(state, interactions, draft, attachmentError='',e
         <label>要做什么<textarea id="wb-create-text" name="text" rows="4" maxlength="20000" placeholder="例如：整理这些访谈记录，做一份主题摘要和引用表"></textarea></label>
         ${renderAttachmentComposer(draft,attachmentError)}
         ${state.providers.length ? '' : '<p class="wb-provider-missing" role="alert">暂时没有可用的工作执行者。请连接或管理一个支持工作任务的执行者后再开始任务。</p>'}
-        <details id="wb-options" class="wb-options"><summary>执行者与命名 <span>当前使用 ${escapeWorkbenchHtml((p => p ? providerLabel(p) : '尚未选择执行者')(state.providers.find(p => p.id === state.defaultProvider)))}</span></summary><label>执行者<select id="wb-provider" name="providerId"${executionView.busy?' disabled':''}>${(state.providers ?? []).map((p) => `<option value="${escapeWorkbenchHtml(p.id)}" ${p.id === state.defaultProvider ? 'selected' : ''}>${escapeWorkbenchHtml(providerLabel(p))}</option>`).join('')}</select></label>
+        <label>执行位置<select id="wb-execution-mode" name="executionMode"><option value="auto"${draft?.executionMode!=='project'?' selected':''}>独立副本（Git 项目默认）</option><option value="project"${draft?.executionMode==='project'?' selected':''}>原目录</option></select><small class="wb-field-help">Git 项目默认在固定版本的副本里做；未提交内容不会带入。非 Git 项目沿用原目录。无法准备时要求和材料会保留。</small></label><details id="wb-options" class="wb-options"><summary>执行者与命名 <span>当前使用 ${escapeWorkbenchHtml((p => p ? providerLabel(p) : '尚未选择执行者')(state.providers.find(p => p.id === state.defaultProvider)))}</span></summary><label>执行者<select id="wb-provider" name="providerId"${executionView.busy?' disabled':''}>${(state.providers ?? []).map((p) => `<option value="${escapeWorkbenchHtml(p.id)}" ${p.id === state.defaultProvider ? 'selected' : ''}>${escapeWorkbenchHtml(providerLabel(p))}</option>`).join('')}</select></label>
         ${executionControls}<label>任务名称 <span class="wb-optional">可选</span><input id="wb-title" name="title" placeholder="留空时使用任务要求的前 40 个字"></label></details>
         <button class="wb-btn wb-btn-primary" type="submit"${state.providers.length&&!draft?.attachments?.some(a=>a.status!=='ready') ? '' : ' disabled'}>开始任务</button>
       </form></div>`
@@ -703,12 +717,12 @@ export function initWorkbenchPage(deps) {
     // Chat metadata can paint first with an empty provider select. A real select
     // cannot hold its saved value until options arrive; that is not a user edit.
     const providerId = input('wb-provider')?.value || draft.providerId
-    pageDrafts.set(renderedScope, { ...draft,...(execution?{execution}:{}), path: input('wb-path')?.value ?? '', text: input('wb-create-text')?.value ?? draft.text, title: input('wb-title')?.value ?? '', providerId, followup: input('wb-followup-text')?.value ?? '' })
+    pageDrafts.set(renderedScope, { ...draft,...(execution?{execution}:{}), executionMode:input('wb-execution-mode')?.value==='project'?'project':'auto',path: input('wb-path')?.value ?? '', text: input('wb-create-text')?.value ?? draft.text, title: input('wb-title')?.value ?? '', providerId, followup: input('wb-followup-text')?.value ?? '' })
   }
   const restoreDraft = (/** @type {string} */ scope) => {
     const draft = pageDrafts.get(scope)
     if(draft.execution){const model=input('wb-model'),effort=input('wb-reasoning-effort');if(model)model.value=draft.execution.model??'';if(effort)effort.value=draft.execution.reasoningEffort??''}
-    for (const [id, value] of /** @type {Array<[string,string]>} */ ([['wb-path', draft.path], ['wb-create-text', draft.text], ['wb-title', draft.title], ['wb-provider', draft.providerId], ['wb-followup-text', draft.followup]])) {
+    for (const [id, value] of /** @type {Array<[string,string]>} */ ([['wb-path', draft.path], ['wb-create-text', draft.text], ['wb-title', draft.title], ['wb-provider', draft.providerId], ['wb-execution-mode',draft.executionMode??'auto'], ['wb-followup-text', draft.followup]])) {
       const field = input(id); if (field && value) field.value = value
     }
   }
@@ -781,7 +795,7 @@ export function initWorkbenchPage(deps) {
       if (!renderedSidebarSearch || disclosure.id === 'wb-list-more') sidebarDisclosures.set(disclosure.id, disclosure.hasAttribute('open'))
     }
     if (nextScope !== renderedScope) {
-      const selectedPath = state.detail?.task.workspaceKind === 'managed' ? '' : state.detail?.task.path ?? (state.newScope?.startsWith('new:') ? state.newScope.slice(4) : undefined)
+      const selectedPath = state.detail?.task.workspaceKind === 'managed' ? '' : (state.detail ? projectPathOf(state.detail.task) : undefined) ?? (state.newScope?.startsWith('new:') ? state.newScope.slice(4) : undefined)
       if (selectedPath !== undefined) sidebarDisclosures.set(projectDisclosureId(selectedPath), true)
     }
     const hasStoredScroll = scrollPositions.has(nextScope) || renderedScope === nextScope
@@ -880,6 +894,7 @@ export function initWorkbenchPage(deps) {
     const executionError=executionErrorMessage(error)
     if(executionError){controller.state.error=executionError;controller.paint();return}
     const message = error instanceof Error ? error.message : String(error)
+    if(entryFailureKind(message,{surface:'desktop',method:'POST'})==='rejected'){controller.state.error=entryRejectionMessage(message)+'要求和材料已保留。';controller.paint();return}
     if(/external_close_confirmation_stale|native_history_changed/.test(message))controller.state.nativeResume=null
     const nativeErrors=/** @type {Record<string,string>} */({'external_close_confirmation_required':'请先确认原执行程序已关闭，再从这里继续。','external_close_confirmation_stale':'原会话或恢复信息已更新。任务尚未开始，请重新点击继续。','native_session_busy':'这条会话或文件夹仍被另一项任务占用，请先结束原任务。','native_session_identity_mismatch':'原工具返回了另一条会话，CC 已停止处理并保留原记录。','native_history_changed':'原会话记录已更新，请重新打开确认。','native_history_unsupported':'当前版本不支持读取这类原会话。','native_history_unavailable':'暂时读不到原会话，记录仍然保留，请稍后重试。'})
     if(nativeErrors[message]){controller.state.error=nativeErrors[message];controller.paint();return}
@@ -910,17 +925,21 @@ export function initWorkbenchPage(deps) {
       if (button instanceof HTMLButtonElement) button.disabled = false
     }
   }
+  const createAttempts=createWorkbenchCreateAttempts({storage:windowStorage,invoke:deps.invokeWorkbenchApi})
+  /** @type {ReturnType<typeof mountRestoreConfirmation>|null} */let restoreConfirmation=null
+  const restoreActions=createRestoreActions({storage:windowStorage,invoke:deps.invokeWorkbenchApi})
   const confirmUnattended = deps.confirmUnattended ?? (() => mountUnattendedDialog())
   /** 第一次把事交给免审执行者时后台回 428。当面确认一次,登记下来,再把同一份请求
    * 原样重发;主人说「先不用」就到此为止,不当成出错。
    * @param {'GET'|'POST'} method @param {string} path @param {Record<string,unknown>} body */
   const sendMutation = async (method, path, body) => {
-    try { return /** @type {{task?:Task}} */ (await deps.invokeWorkbenchApi(method, path, body)) }
+    const creationScope=renderedScope
+    try { return /** @type {{task?:Task,matches?:boolean,input?:Record<string,unknown>}} */ (path==='/v1/workbench/create'?await createAttempts.send(creationScope,body):await deps.invokeWorkbenchApi(method, path, body)) }
     catch (error) {
       if (!isAckRequiredError(error)) throw error
       if (!(await confirmUnattended()) || !alive) return null
       await deps.invokeWorkbenchApi('POST', '/v1/workbench/unattended-ack')
-      return /** @type {{task?:Task}} */ (await deps.invokeWorkbenchApi(method, path, body))
+      return /** @type {{task?:Task,matches?:boolean,input?:Record<string,unknown>}} */ (path==='/v1/workbench/create'?await createAttempts.send(creationScope,body):await deps.invokeWorkbenchApi(method, path, body))
     }
   }
   /** onError 让调用方自己接住一类错误(打回遇上「要重开」就是这样):回 true 表示这一笔已经
@@ -928,6 +947,7 @@ export function initWorkbenchPage(deps) {
    * @param {'GET'|'POST'} method @param {string} path @param {Record<string,unknown>} body
    * @param {(error:unknown)=>boolean|Promise<boolean>} [onError] */
   const mutate = async (method, path, body, onError) => {
+    const creationScopeForMutation=renderedScope
     const key = path === '/v1/workbench/create' ? 'create' : `task:${String(body.id ?? '')}`
     if (busy.has(key) || !alive) return false
     busy.add(key);controller.paint(true)
@@ -937,6 +957,7 @@ export function initWorkbenchPage(deps) {
       if (!alive || !result) return false
       const id = result.task?.id ?? controller.state.selectedId
       await controller.refresh({ force: true })
+      if(path==='/v1/workbench/create'&&result.matches===false){const acceptedIds=new Set(Array.isArray(result.input?.attachmentIds)?result.input.attachmentIds:[]),current=pageDrafts.get(creationScopeForMutation);current.attachments=current.attachments?.filter(a=>!acceptedIds.has(a.id));pageDrafts.set(creationScopeForMutation,current);if(alive&&navigation===navigationGeneration){controller.state.error='上一份交办已接收，当前修改尚未交办。草稿和材料已保留。';controller.paint(true)};return false}
       if (alive && path === '/v1/workbench/create' && navigation === navigationGeneration && id && controller.state.selectedId !== id) await controller.selectTask(id)
       return alive
     } catch (e) {
@@ -1030,30 +1051,53 @@ export function initWorkbenchPage(deps) {
     }
     // 改动面板的按钮也带 data-artifact-id(那是快照那件成果),必须赶在下面
     // 「点成果就预览」那条分支之前认领,否则一点接受就跳去预览了。
+    if(action==='review-revert'||action==='review-revert-resolve'){
+      const detail=controller.state.detail,id=controller.state.selectedId
+      if(!detail||!id||detail.task.id!==id||!detail.workspace||busy.has(`task:${id}`))return
+      const navigation=navigationGeneration
+      const turn=controller.state.reviews?.find(r=>r.artifactId===target.dataset.artifactId)
+      const file=turn?.files.find(f=>f.path===target.dataset.path&&f.revert?.changeId===target.dataset.changeId)
+      if(reviewWriterBlocked(detail))return
+      const recoveryTurn=controller.state.reviews?.find(r=>r.restore?.scope==='closed_session'&&r.files.some(f=>f.revert?.state==='needs_recovery'&&f.revert.operationId===target.dataset.operationId&&f.revert.observedFingerprint===target.dataset.observedFingerprint)),recoveryFile=recoveryTurn?.files.find(f=>f.revert?.operationId===target.dataset.operationId)
+      if(action==='review-revert-resolve'&&(!recoveryTurn||!recoveryFile))return
+      if(action==='review-revert'&&(!turn?.restore||turn.restore.scope!=='closed_session'||!file||file.revert?.state!=='available'))return
+      restoreConfirmation?.close();restoreConfirmation=mountRestoreConfirmation({keepCurrent:action==='review-revert-resolve',path:file?.path,kind:file?.kind,startedAt:turn?.restore?time(turn.restore.startedAt):'',finishedAt:turn?.restore?time(turn.restore.finishedAt):''})
+      if(!await restoreConfirmation.result||!alive||navigation!==navigationGeneration||controller.state.selectedId!==id||reviewWriterBlocked(controller.state.detail))return
+      restoreConfirmation=null
+      captureDraft();busy.add(`task:${id}`)
+      try{
+        const result=action==='review-revert'?await restoreActions.revert({id,artifactId:target.dataset.artifactId??'',path:target.dataset.path??'',changeId:target.dataset.changeId??''},detail.workspace.id):await restoreActions.resolve({id,operationId:target.dataset.operationId??'',observedFingerprint:target.dataset.observedFingerprint??''},{artifactId:recoveryTurn?.artifactId??'',path:recoveryFile?.path??'',changeId:recoveryFile?.revert?.changeId??''})
+        if(!alive||navigation!==navigationGeneration||controller.state.selectedId!==id)return
+        const notice=result.state==='reverted'?'已撤回这个文件。':result.state==='resolved_keep_current'?'已保留当前现场，文件未撤回。':result.state==='needs_recovery'?'撤回结果需要核对，请查看恢复记录后处理。':result.state==='failed'?`当前现场未确认：${result.error}。请刷新记录后重新核对。`:`暂时无法确认撤回结果${'error' in result&&result.error?`：${result.error}`:''}。重试会核对同一请求。`
+        await refreshInteraction(id,navigation);if(alive&&navigation===navigationGeneration&&controller.state.selectedId===id){controller.state.error=notice;controller.paint(true)}
+      }catch(error){if(alive&&navigation===navigationGeneration)fail(error)}finally{busy.delete(`task:${id}`)}
+      return
+    }
+    if(action==='workspace-export'){
+      const id=controller.state.selectedId,navigation=navigationGeneration
+      if(!id||!controller.state.detail?.workspace||busy.has(`task:${id}`))return
+      captureDraft();busy.add(`task:${id}`)
+      try{
+        const value=/** @type {{artifact:Artifact}} */(await deps.invokeWorkbenchApi('POST','/v1/workbench/workspace-export',{id}))
+        if(!alive||navigation!==navigationGeneration||controller.state.selectedId!==id)return
+        if(!value.artifact?.id||value.artifact.taskId!==id)throw Error('workspace_export_receipt_mismatch')
+        const data=/** @type {{name:string,mime:string,contentBase64:string}} */(await deps.invokeWorkbenchApi('GET',`/v1/workbench/artifact?id=${encodeURIComponent(id)}&artifactId=${encodeURIComponent(value.artifact.id)}`))
+        if(!alive||navigation!==navigationGeneration||controller.state.selectedId!==id)return
+        await saveDownload(data.name,data.mime,decodeBase64(data.contentBase64),target)
+        await refreshInteraction(id,navigation)
+      }catch(error){if(alive&&navigation===navigationGeneration)fail(error)}finally{busy.delete(`task:${id}`)}
+      return
+    }
     if (action === 'review-accept' && controller.state.selectedId && target.dataset.artifactId && target.dataset.path) {
       return mutate('POST', '/v1/workbench/review-mark', { id: controller.state.selectedId, artifactId: target.dataset.artifactId, path: target.dataset.path, mark: 'accepted' })
     }
     // 独立工作区(2026-10-07):提交到分支 / 删除工作区(删除点两下才算)。
-    if ((action === 'worktree-commit' || action === 'worktree-remove') && controller.state.selectedId && controller.state.detail?.task.worktree && !controller.state.detail.task.worktree.removed) {
+    if ((action === 'worktree-commit' || action === 'worktree-remove') && controller.state.selectedId && controller.state.detail && (controller.state.detail.workspace?.mode==='isolated' ? !controller.state.detail.workspace.removed : controller.state.detail.task.worktree && !controller.state.detail.task.worktree.removed && controller.state.detail.task.worktree.removedAt==null)) {
       if (action === 'worktree-remove' && !armConfirm(target, '再点一次：删除工作区（分支保留）')) return
       return mutate('POST', '/v1/workbench/worktree', { id: controller.state.selectedId, action: action === 'worktree-commit' ? 'commit' : 'remove' }, e => {
         const code = String(e instanceof Error ? e.message : e).match(/\b(workbench_busy|worktree_dirty|worktree_removed|worktree_git_failed|not_worktree)\b/)?.[1]
         if (!code) return false
         fail(new Error(code === 'workbench_busy' ? '这个工作区还有会话占着，先收工再操作。' : executionErrorMessage(code) ?? code))
-        return true
-      })
-    }
-    // 逐文件撤销(2026-10-06):点两下才算;被拒的原因说成人话(daemon 那边全是拒绝条件,没有「尽量」)。
-    if (action === 'review-revert' && controller.state.selectedId && target.dataset.artifactId && target.dataset.path) {
-      if (!armConfirm(target, '再点一次：恢复成这一轮开始前')) return
-      return mutate('POST', '/v1/workbench/review-revert', { id: controller.state.selectedId, artifactId: target.dataset.artifactId, path: target.dataset.path }, e => {
-        const code = String(e instanceof Error ? e.message : e).match(/\b(workbench_busy|review_file_changed|review_revert_unavailable)\b/)?.[1]
-        if (!code) return false
-        fail(new Error({
-          workbench_busy: '这个文件夹还有会话占着，先收工再撤销。',
-          review_file_changed: '这个文件之后又被改过，不能直接撤销。',
-          review_revert_unavailable: '这个文件没法自动恢复（内容太大、不是文本，或只改了权限），请手动处理。',
-        }[code]))
         return true
       })
     }
@@ -1148,7 +1192,7 @@ export function initWorkbenchPage(deps) {
     }
     if (action === 'open-task-folder') {
       const task=controller.state.detail?.task,navigation=navigationGeneration
-      if(!task||task.workspaceKind!=='managed')return
+      if(!task||task.workspaceKind!=='managed'&&!controller.state.detail?.workspace&&!task.worktree)return
       try{if(!deps.invoke)throw Error('请在桌面应用中打开工作位置');await deps.invoke('open_workbench_folder',{taskId:task.id})}
       catch(error){if(alive&&navigation===navigationGeneration)fail(error)}
       return
@@ -1202,7 +1246,7 @@ export function initWorkbenchPage(deps) {
       const path = target.dataset.projectPath
       const scope = `new:${path}`
       if (!pageDrafts.has(scope)) {
-        const recent = controller.state.tasks.filter(task => task.path === path).sort((a, b) => b.updatedAt - a.updatedAt || b.id.localeCompare(a.id))[0]
+        const recent = controller.state.tasks.filter(task => projectPathOf(task) === path).sort((a, b) => b.updatedAt - a.updatedAt || b.id.localeCompare(a.id))[0]
         pageDrafts.set(scope, { ...emptyDraft(), path, providerId: controller.state.projectProviders?.[path] ?? recent?.providerId ?? controller.state.defaultProvider ?? '' })
       }
       navigationGeneration++; artifactRequest++
@@ -1412,9 +1456,9 @@ export function initWorkbenchPage(deps) {
       if(!sent.text.trim()&&!files.attachments?.length)return
       if(!attachments.ready(scope))return fail(new Error('请等附件上传完成，或移除上传失败的附件。'))
       const release=attachments.reserve(scope,files)
-      if (await mutate('POST', '/v1/workbench/create', { title: sent.title || undefined, path: sent.path, providerId: sent.providerId, text: sent.text,...attachmentPayload(files),...executionPayload(files) }).finally(release)) {
+      if (await mutate('POST', '/v1/workbench/create', { title: sent.title || undefined, path: sent.path, providerId: sent.providerId, text: sent.text,executionMode:files.executionMode??'auto',...attachmentPayload(files),...executionPayload(files) }).finally(release)) {
         const draft = pageDrafts.get(scope)
-        const changedAttachments=attachmentSignature(draft.attachments)!==attachmentSignature(files.attachments)||executionSignature(draft.execution)!==executionSignature(files.execution)
+        const changedAttachments=attachmentSignature(draft.attachments)!==attachmentSignature(files.attachments)||executionSignature(draft.execution)!==executionSignature(files.execution)||draft.executionMode!==files.executionMode
         // Submitted IDs now belong to the created task. A newly edited task
         // draft keeps only material that was added after this submission.
         files.attachments?.forEach(a=>thumbnails.remove(a.id))
@@ -1543,7 +1587,7 @@ export function initWorkbenchPage(deps) {
     if (!alive || navigation !== navigationGeneration) return false
     captureDraft()
     const path = incoming.path, scope = path ? `new:${path}` : 'new'
-    const recent = controller.state.tasks.filter(task => task.path === path).sort((a, b) => b.updatedAt - a.updatedAt || b.id.localeCompare(a.id))[0]
+    const recent = controller.state.tasks.filter(task => projectPathOf(task) === path).sort((a, b) => b.updatedAt - a.updatedAt || b.id.localeCompare(a.id))[0]
     const project = controller.state.projects?.find(project => project.path === path)
     if (path && controller.state.projects && !project) return false
     const providerId = incoming.providerId ?? controller.state.projectProviders?.[path] ?? recent?.providerId ?? project?.providerId ?? controller.state.defaultProvider ?? ''
@@ -1563,7 +1607,7 @@ export function initWorkbenchPage(deps) {
     resumeSearch = input('wb-search')?.value ?? searchDraft
     if (controller.state.selectedId) resumeScope = `task:${controller.state.selectedId}`
     else if (document.getElementById('wb-create-form')) resumeScope = scopeFor(controller.state)
-    releaseHostedPreview();pdfCleanup?.();clearLiveTimelinePatches(root);thumbnails.destroy();recoveryPreviews.destroy();catalogs.destroy();root.removeEventListener('toggle',onToggle,true);handoffCleanup?.();quotaHandoffCleanup?.(); nativeHistoryCleanup?.();attachmentPreviewCleanup?.();root.removeEventListener('paste',onPaste);root.removeEventListener('drop',onDrop);root.removeEventListener('dragover',onDragOver); alive = false; artifactRequest++; controller.destroy(); root.removeEventListener('input', onInput); window.removeEventListener?.('pagehide', saveWindowState); root.removeEventListener('scroll', onScroll, true); root.removeEventListener('change', onChange); root.removeEventListener('click', onClick, true); root.removeEventListener('submit', onSubmit); if (objectUrl) URL.revokeObjectURL(objectUrl)
+    restoreConfirmation?.close();releaseHostedPreview();pdfCleanup?.();clearLiveTimelinePatches(root);thumbnails.destroy();recoveryPreviews.destroy();catalogs.destroy();root.removeEventListener('toggle',onToggle,true);handoffCleanup?.();quotaHandoffCleanup?.(); nativeHistoryCleanup?.();attachmentPreviewCleanup?.();root.removeEventListener('paste',onPaste);root.removeEventListener('drop',onDrop);root.removeEventListener('dragover',onDragOver); alive = false; artifactRequest++; controller.destroy(); root.removeEventListener('input', onInput); window.removeEventListener?.('pagehide', saveWindowState); root.removeEventListener('scroll', onScroll, true); root.removeEventListener('change', onChange); root.removeEventListener('click', onClick, true); root.removeEventListener('submit', onSubmit); if (objectUrl) URL.revokeObjectURL(objectUrl)
   } }
   return controller
 }

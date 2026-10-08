@@ -17,14 +17,14 @@ it.each(bodyLimits)('accepts exactly the UTF-8 byte limit for %s',async(path,lim
 it.each(bodyLimits)('stops streamed input above the byte limit for %s before buffering the rest or forwarding',async(path,limit)=>{
  let reads=0;const cancel=vi.fn(),chunks=[new Uint8Array(limit),new Uint8Array(1),new Uint8Array(64)]
  const stream=new ReadableStream<Uint8Array>({pull(controller){const chunk=chunks[reads++];if(chunk)controller.enqueue(chunk);else controller.close()},cancel},{highWaterMark:0})
- const request=new Request('http://127.0.0.1:4187'+path,{method:'POST',body:stream}),upstream=vi.fn(async()=>Response.json({ok:true}))
+ const request=new Request('http://127.0.0.1:4187'+path,{method:'POST',body:stream,...{duplex:'half'}}),upstream=vi.fn(async()=>Response.json({ok:true}))
  const response=await createWorkbenchProxy({stateDir:dir,dryRun:false,allowWrites:true,fetch:upstream})(request)
  expect(response?.status).toBe(413);expect(await response!.json()).toEqual({error:'request_body_too_large'})
  expect(upstream).not.toHaveBeenCalled();expect(reads).toBe(2);expect(cancel).toHaveBeenCalledTimes(1)
 })
 it('rejects a declared oversized upload without reading its body or accessing daemon discovery',async()=>{
  let reads=0;const cancel=vi.fn(),stream=new ReadableStream<Uint8Array>({pull(controller){reads++;controller.enqueue(new Uint8Array(1));controller.close()},cancel},{highWaterMark:0})
- const request=new Request('http://127.0.0.1:4187/v1/workbench/attachment',{method:'POST',headers:{'content-length':String(12*1024*1024+1)},body:stream}),upstream=vi.fn()
+ const request=new Request('http://127.0.0.1:4187/v1/workbench/attachment',{method:'POST',headers:{'content-length':String(12*1024*1024+1)},body:stream,...{duplex:'half'}}),upstream=vi.fn()
  const response=await createWorkbenchProxy({stateDir:join(dir,'missing'),dryRun:false,allowWrites:true,fetch:upstream})(request)
  expect(response?.status).toBe(413);expect(await response!.json()).toEqual({error:'request_body_too_large'})
  expect(reads).toBe(0);expect(cancel).toHaveBeenCalledTimes(1);expect(upstream).not.toHaveBeenCalled()
@@ -169,4 +169,13 @@ it('GET /v1/connections goes to the real daemon in live preview, and is left to 
  expect(await createWorkbenchProxy({stateDir:dir,dryRun:true,allowWrites:false,fetch:upstream})(req('/v1/connections'))).toBeNull()
  expect((await createWorkbenchProxy({stateDir:dir,dryRun:false,allowWrites:true,fetch:upstream})(req('/v1/connections','POST')))?.status).toBe(405)
  expect(await createWorkbenchProxy({stateDir:dir,dryRun:false,allowWrites:true,fetch:upstream})(req('/v1/connectionsx'))).toBeNull()
+})
+it.each(['review-revert','review-revert-resolve','workspace-export'])('proxies only POST %s and refuses read-only/DRY_RUN',async action=>{
+ const upstream=vi.fn(async()=>Response.json({operation:{state:'reverted'}}))
+ const path='/v1/workbench/'+action
+ const proxy=createWorkbenchProxy({stateDir:dir,dryRun:false,allowWrites:true,fetch:upstream})
+ expect((await proxy(req(path,'POST')))?.status).toBe(200)
+ expect((await proxy(req(path)))?.status).toBe(405)
+ expect((await createWorkbenchProxy({stateDir:dir,dryRun:true,allowWrites:true,fetch:upstream})(req(path,'POST')))?.status).toBe(503)
+ expect(upstream).toHaveBeenCalledTimes(1)
 })

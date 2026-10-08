@@ -7,7 +7,7 @@ import { PHONE_API_SCHEMAS, type ClientOpts, type ProtocolClient, type ProtocolR
 import { makeLiveBackend } from '../backend/live'
 import { DETAIL, ID, OPTIONS, RUN, WB_TASK, RECEIPT } from '../backend/fixtures'
 import type { Backend, MatterInputT } from '../backend/types'
-import { clearDrafts, getDraft, setDraft } from '../state/drafts'
+import { clearDrafts, getDraft, setDraft, setEntrySettings } from '../state/drafts'
 import { makeStore, type Store } from '../state/store'
 import { watchConnection } from '../state/wiring'
 import { makeInputJournal } from './input-journal'
@@ -39,7 +39,7 @@ vi.mock('react-native', async () => {
     'aria-expanded': accessibilityState?.expanded, 'aria-disabled': accessibilityState?.disabled,
   }, children)
   const Modal = ({ children, visible }: any) => visible ? createElement('div', null, children) : null
-  return { View, Text, TextInput, Pressable, Modal, ScrollView: View, KeyboardAvoidingView: View, ActivityIndicator: View, Linking: { openURL: vi.fn() }, Platform: { OS: 'ios', select: (options: any) => options.ios ?? options.default } }
+  return { View, Image: View, Text, TextInput, Pressable, Modal, ScrollView: View, KeyboardAvoidingView: View, ActivityIndicator: View, Linking: { openURL: vi.fn() }, Platform: { OS: 'ios', select: (options: any) => options.ios ?? options.default } }
 })
 vi.mock('react-native-safe-area-context', async () => {
   const { createElement } = await import('react')
@@ -50,12 +50,14 @@ vi.mock('../i18n/useLang', () => ({ useLang: () => 'zh-Hans' }))
 vi.mock('../state/BackendProvider', () => ({ useBackendCtx: () => host.ctx }))
 vi.mock('../state/session', () => ({ useSession: () => ({ pairing: null, inputScope: matterInputState.recovery().scope }) }))
 vi.mock('../ui/TopBar', () => ({ TopBar: () => null }))
+vi.mock('../net/image-pick', () => ({ pickImages: async () => ({images:[{id:'22222222-2222-4222-8222-222222222222',name:'photo.png',mime:'image/png',size:3,sha256:'a'.repeat(64),bytes:new Uint8Array([1,2,3]),uri:'test://image'}],skipped:null}) }))
 
 type Reply = { status: number; json: unknown } | Error
 const ok = (json: unknown, status = 200): Reply => ({ status, json })
 type Request = { path: string; method: string; body: any; retry?: boolean }
 function harness() {
   let detail: any = structuredClone(DETAIL)
+  let entryOptions: any = structuredClone(OPTIONS)
   let say: (request: Request) => Reply | Promise<Reply> = request => {
     const input: MatterInputT = { id: request.body.requestId, taskId: ID, runId: request.body.runId ?? RUN, text: request.body.text, status: 'sending' }
     detail.inputs.push(input)
@@ -82,7 +84,9 @@ function harness() {
         }
         else if (path === '/m/api/matter/say') reply = await say(request)
         else if (path === '/m/api/matter/create') reply = await create(request)
-        else if (path === '/m/api/entry/options') reply = ok({ ok: true, ...OPTIONS })
+        else if (path === '/m/api/entry/options') reply = ok({ ok: true, ...entryOptions })
+        else if (path === '/m/api/entry/models') reply = ok({ok:true,catalog:{source:'native',defaultModel:'test-model',models:[{id:'test-model',displayName:'Test model',reasoningEfforts:['low','high']}]}})
+        else if (path === '/m/api/attachment/upload') { const q=new URLSearchParams(req.path.split('?')[1]); reply=ok({ok:true,id:q.get('id'),draftId:q.get('draftId'),taskId:null,size:3,sha256:'a'.repeat(64),nextOffset:3,status:'ready'}) }
         else if (path === '/m/api/matter/insight') reply = ok({ ok: true, explanations: {}, progress: null })
         else if (path === '/m/api/matter/changes') reply = ok({ ok: true, turn: null })
         else throw new Error(`unexpected route ${path}`)
@@ -108,6 +112,7 @@ function harness() {
     backend, store, requests, status,
     posts: () => requests.filter(request => request.path === '/m/api/matter/say'),
     detail: () => detail,
+    setOptions: (next: any) => { entryOptions=next },
     setDetail: (next: any) => { detail = next },
     setSay: (next: typeof say) => { say = next },
     setCreate: (next: typeof create) => { create = next },
@@ -384,4 +389,61 @@ describe('real Compose durable send boundary', () => {
     expect(ui.byId('progress-error-raw-0').textContent).toBe(diagnostic)
     expect(ui.byId('progress-error-raw-0').querySelector('a,strong')).toBeNull()
   })
+})
+
+it('native project location survives remount, reuses a retry id, and mode changes create a new request without deleting text',async()=>{
+ const h=harness();host.params={};h.setCreate(()=>ok({ok:false,error:'git_workspace_source_unsupported'},422))
+ const ui=await mount();await ui.type('保留要求');await ui.click('compose-adjust')
+ await act(()=>ui.container.querySelector<HTMLButtonElement>('[aria-label="原目录"]')!.click());await flush()
+ await ui.click('compose-send');await ui.click('compose-send')
+ let posts=h.requests.filter(r=>r.path==='/m/api/matter/create')
+ expect(posts[0]!.body.executionMode).toBe('project');expect(posts[1]!.body.requestId).toBe(posts[0]!.body.requestId)
+ expect(getDraft('new')).toBe('保留要求');expect(ui.byId('compose-input-notice').textContent).toContain('当前无法准备独立副本')
+ await act(()=>ui.root.unmount());roots.splice(roots.indexOf(ui.root),1)
+ const reopened=await mount();await reopened.click('compose-send')
+ posts=h.requests.filter(r=>r.path==='/m/api/matter/create');expect(posts[2]!.body).toEqual(posts[0]!.body)
+ await reopened.click('compose-adjust');await act(()=>reopened.container.querySelector<HTMLButtonElement>('[aria-label="独立副本（Git 项目默认）"]')!.click());await flush()
+ await reopened.click('compose-send');posts=h.requests.filter(r=>r.path==='/m/api/matter/create')
+ expect(posts[3]!.body.executionMode).toBe('auto');expect(posts[3]!.body.requestId).not.toBe(posts[0]!.body.requestId)
+ expect(getDraft('new')).toBe('保留要求')
+})
+
+it('native model and selected image payload survive an uncertain creation remount with the same identity',async()=>{
+ const h=harness();host.params={}
+ h.setOptions({...OPTIONS,providers:OPTIONS.providers.map(p=>({...p,capabilities:{...p.capabilities,features:{...p.capabilities.features,modelCatalog:true}}}))})
+ h.setCreate(()=>new Error('timeout'))
+ const ui=await mount();await ui.type('带图和模型');await ui.click('compose-adjust')
+ await act(()=>ui.container.querySelector<HTMLButtonElement>('[aria-label="Claude"]')!.click());await flush()
+ await act(()=>ui.container.querySelector<HTMLButtonElement>('[aria-label="Test model"]')!.click());await flush()
+ await act(()=>ui.container.querySelector<HTMLButtonElement>('[aria-label="高"]')!.click());await flush()
+ await ui.click('compose-add-image');await ui.click('compose-send')
+ const first=h.requests.find(r=>r.path==='/m/api/matter/create')!
+ expect(first.body).toMatchObject({executionMode:'auto',execution:{model:'test-model',reasoningEffort:'high'},attachmentIds:['22222222-2222-4222-8222-222222222222']})
+ await act(()=>ui.root.unmount());roots.splice(roots.indexOf(ui.root),1)
+ h.store.revalidateAll();h.setOptions({...OPTIONS,projects:[],providers:[]})
+ const reopened=await mount();await reopened.click('compose-send')
+ const posts=h.requests.filter(r=>r.path==='/m/api/matter/create')
+ expect(posts).toHaveLength(2);expect(posts[1]!.body).toEqual(first.body)
+ expect(getDraft('new')).toBe('带图和模型')
+})
+
+// Mutable entry options must not change an already-submitted creation attempt.
+it.each(['default-project', 'missing-project', 'missing-provider', 'default-provider'] as const)('uncertain creation freezes the full input across %s refresh and remount', async drift => {
+ const h=harness();host.params={};h.setCreate(()=>new Error('timeout'))
+ if(drift==='missing-project')setEntrySettings('new',{projectId:OPTIONS.projects[0]!.id,providerId:null,executionMode:'auto'})
+ if(drift==='missing-provider')setEntrySettings('new',{projectId:null,providerId:'claude',executionMode:'auto'})
+ const ui=await mount();await ui.type('原项目要求');await ui.click('compose-send')
+ const before=h.requests.find(r=>r.path==='/m/api/matter/create')!.body
+ expect(before).toMatchObject({text:'原项目要求',target:{kind:'project',projectId:'p-0123456789abcdef0123'},executionMode:'auto'})
+ await act(()=>ui.root.unmount());roots.splice(roots.indexOf(ui.root),1)
+ h.store.revalidateAll()
+ h.setOptions({...OPTIONS,defaultProviderId:'codex',providers:drift==='missing-provider'?[]:OPTIONS.providers,projects:['default-project','missing-project'].includes(drift)?[{...OPTIONS.projects[0]!,id:'p-1111111111111111111',name:'New default',path:'/another'},...(drift==='missing-project'?[]:OPTIONS.projects)]:OPTIONS.projects})
+ const reopened=await mount();await reopened.click('compose-send')
+ const posts=h.requests.filter(r=>r.path==='/m/api/matter/create')
+ expect(posts).toHaveLength(2);expect(posts[1]!.body).toEqual(before)
+ // An intentional edit, including retyping the same body, is a new attempt.
+ await reopened.type('改过的要求');await reopened.type('原项目要求');await reopened.click('compose-send')
+ const edited=h.requests.filter(r=>r.path==='/m/api/matter/create').at(-1)!.body
+ expect(edited.requestId).not.toBe(before.requestId)
+ expect(edited.target.projectId).toBe(['default-project','missing-project'].includes(drift)?'p-1111111111111111111':'p-0123456789abcdef0123')
 })

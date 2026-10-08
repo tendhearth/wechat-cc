@@ -137,3 +137,22 @@ describe('改动面板', () => {
     expect(reviewsSignature([])).toBe(reviewsSignature([]))
   })
 })
+
+it('only closed-session restore records offer revert, with the whole session range', () => {
+  const revert={changeId:'change',state:'available'}
+  expect(renderReviewPanel([turn({files:[file({revert})]})],options())).not.toContain('data-action="review-revert"')
+  const restored=turn({restore:{runId:'run',scope:'closed_session',startedAt:10,finishedAt:90},files:[file({revert})]})
+  const html=renderReviewPanel([restored],options())
+  expect(html).toContain('整段已关闭会话');expect(html).toContain('T10');expect(html).toContain('T90')
+  expect(html).toContain('data-action="review-revert"');expect(html).toContain('data-change-id="change"')
+  expect(renderReviewPanel([restored],options({writerOpen:true}))).not.toContain('data-action="review-revert"')
+})
+it('needs recovery offers keep current, never claims it was reverted, and state updates change signature',()=>{
+  const restore={runId:'run',scope:'closed_session',startedAt:10,finishedAt:90}
+  const old=turn({restore,files:[file({revert:{changeId:'change',state:'available'}})]})
+  const next=turn({restore,files:[file({revert:{changeId:'change',state:'needs_recovery',operationId:'op',observedFingerprint:'fp'}})]})
+  const html=renderReviewPanel([next],options())
+  expect(html).toContain('data-action="review-revert-resolve"');expect(html).not.toContain('已撤回')
+  expect(reviewsSignature([old])).not.toBe(reviewsSignature([next]))
+  expect(renderReviewPanel([turn({restore,files:[file({revert:{changeId:'change',state:'resolved_keep_current'}})]})],options())).toContain('已保留当前现场')
+})

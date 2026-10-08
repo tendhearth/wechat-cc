@@ -601,3 +601,12 @@ describe('stale 401/403 from the token used before pairing', () => {
     expect(phone.get('entry-notice').textContent).toContain('手机连接已失效')
   })
 })
+it('submits selected project mode and retains immutable input across reload/retry',async()=>{
+ const bodies:any[]=[],storage=new Map<string,string>()
+ const api:Api=async(path,opts)=>path.endsWith('/options')?response({...ready,projects:[{id:'project',name:'项目',path:'/project'}]}):path.includes('create-receipt')?response({error:'entry_not_found'},404):(bodies.push(JSON.parse(opts!.body!)),response({error:'temporary'},503))
+ const phone=load(api,storage);await phone.openEntry();phone.edit('原稿')
+ phone.get('entry-project').value='project';phone.get('entry-project').handlers.change!({target:phone.get('entry-project')})
+ phone.get('entry-execution-mode').value='project';phone.get('entry-execution-mode').handlers.change!({target:phone.get('entry-execution-mode')})
+ await phone.submitEntry();expect(bodies[0]).toMatchObject({executionMode:'project'})
+ const retry=load(api,storage);await retry.openEntry();await retry.submitEntry();expect(bodies[1]).toEqual(bodies[0])
+})

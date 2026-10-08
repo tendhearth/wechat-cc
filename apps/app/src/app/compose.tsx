@@ -5,7 +5,7 @@ import { SafeAreaView } from 'react-native-safe-area-context'
 import { BackendError, type MatterInputT } from '../backend/types'
 import { t, type Lang } from '../i18n'
 import { useLang } from '../i18n/useLang'
-import { deleteDraft, getDraft, materialDraftId, pairingGen, requestIdFor, setDraft } from '../state/drafts'
+import { deleteDraft, getDraft, getEntrySettings, setEntrySettings, getDraftImages, setDraftImages, pairingGen, creationInputFor, requestIdFor, setDraft, materialDraftId } from '../state/drafts'
 import { AddImageButton, ImageTray } from '../ui/ImageTray'
 import { bytesToBase64, uploadImages, type PickedImage } from '../state/image-upload'
 import { PHONE_CHAT_MAX_IMAGES as MAX_IMAGES } from '@wechat-cc/protocol'
@@ -26,7 +26,7 @@ import { radius, space } from '../ui/tokens'
 import { TopBar } from '../ui/TopBar'
 import { Txt } from '../ui/Txt'
 import { useTheme } from '../ui/useTheme'
-import { composeOutcome, composeOutcomeDot, composeOutcomeText, composeTooLong, type ComposeOutcome } from '../view/compose'
+import { composeCreationReason, composeOutcome, composeOutcomeDot, composeOutcomeText, composeTooLong, type ComposeOutcome } from '../view/compose'
 import { nativeStartLines } from '../view/continue'
 import { canSubmit } from '../view/connection'
 import { inputFailure, inputRows, matterInputHint } from '../view/matter-input'
@@ -40,8 +40,12 @@ export default function Compose() {
   const router = useRouter()
   const conn = useConnection()
   const submit = useSubmit()
-  // 新交办带的图(2026-10-06;补充一句暂不带图)。只在这一屏里,交出去才清。
-  const [images, setImages] = useState<PickedImage[]>([])
+  const params = useLocalSearchParams<{ matter?: string; focus?: string }>()
+  const matter = one(params.matter) || undefined
+  const draftKey = matter ?? 'new'
+  // 与文字一起留在本次进程的草稿里,离开页面后仍能核对原交办。
+  const [images, setImages] = useState<PickedImage[]>(()=>getDraftImages(draftKey))
+  useEffect(()=>setDraftImages(draftKey,images),[draftKey,images])
   const [imageNote, setImageNote] = useState<string | null>(null)
   const addImages = async () => {
     // 用到才加载:相册与哈希是原生模块,不进页面的静态依赖(测试与首屏都不需要它)
@@ -54,11 +58,8 @@ export default function Compose() {
   const { backend } = useBackendCtx()
   const session = useSession()
   const recovery = useInputRecovery()
-  const params = useLocalSearchParams<{ matter?: string; focus?: string }>()
-  const matter = one(params.matter) || undefined
   // 从「接着做」进来:输入框直接聚焦,主人接着打字(spec §4.4)
   const focus = one(params.focus) === '1'
-  const draftKey = matter ?? 'new'
   const [text, setTextState] = useState(() => getDraft(draftKey))
   const textRef = useRef(text)
   const draftKeyRef = useRef(draftKey)
@@ -68,13 +69,18 @@ export default function Compose() {
   const [busy, setBusy] = useState(false)
   const [outcome, setOutcome] = useState<null | ComposeOutcome>(null)
   const [inputNotice, setInputNotice] = useState<string | null>(null)
-  const [projectId, setProjectId] = useState<string | null>(null)
-  const [isolated, setIsolated] = useState(false)
-  const [providerId, setProviderId] = useState<string | null>(null)
+  const [projectId, setProjectId] = useState<string | null>(()=>getEntrySettings('new').projectId)
+  const [providerId, setProviderId] = useState<string | null>(()=>getEntrySettings('new').providerId)
+  const [executionMode,setExecutionMode]=useState<'auto'|'isolated'|'project'>(()=>getEntrySettings('new').executionMode)
   // 交办时选模型 / 思考强度(2026-10-06,对标 Paseo / Orca);null = 用执行者自己的默认。换执行者 / 项目就回到默认。
-  const [modelId, setModelId] = useState<string | null>(null)
-  const [effort, setEffort] = useState<string | null>(null)
-  useEffect(() => { setModelId(null); setEffort(null) }, [providerId, projectId])
+  const [modelId, setModelId] = useState<string | null>(()=>getEntrySettings('new').modelId??null)
+  const [effort, setEffort] = useState<string | null>(()=>getEntrySettings('new').effort??null)
+  const modelSource=useRef({projectId,providerId})
+  useEffect(() => {
+    if(modelSource.current.projectId!==projectId||modelSource.current.providerId!==providerId){setModelId(null);setEffort(null)}
+    modelSource.current={projectId,providerId}
+  }, [providerId, projectId])
+  useEffect(()=>{if(!matter)setEntrySettings('new',{projectId,providerId,executionMode,...(modelId?{modelId}:{}),...(effort?{effort}:{})})},[matter,projectId,providerId,executionMode,modelId,effort])
   const sending = useRef(false)
   const options = useQuery('entryOptions', l => backend.entryOptions(l), { enabled: !matter })
   // 说的是一件事:读它的详情(与进展页共用缓存)—— 接过来还没发第一句的,顶上说清第一句会怎样;失败句要知道执行者叫什么
@@ -110,7 +116,7 @@ export default function Compose() {
   const canPickModel = !matter && !!provider?.capabilities.features.modelCatalog
   const models = useQuery(`entryModels:${provider?.id ?? ''}:${project?.id ?? ''}`, () => backend.entryModels(provider!.id, project?.id), { enabled: adjust && canPickModel })
   const model = modelId ? models.data?.models.find(m => m.id === modelId) : undefined
-  const execution = model ? { model: model.id, ...(effort ? { reasoningEffort: effort } : {}) } : undefined
+  const execution = modelId ? { model: modelId, ...(effort ? { reasoningEffort: effort } : {}) } : undefined
 
   // 不在线(连接中 / 离线 / 撤销)⇒ 草稿照写,「交给 CC」锁住,ConnectionNotice 说明原因。
   const online = canSubmit(conn) && recovery.phase === 'ready' && (backend.mode !== 'live' || !!recovery.scope && recovery.scope === session.inputScope)
@@ -185,12 +191,16 @@ export default function Compose() {
     const r = await submit(`compose:${draftKey}`, async () => {
       // 同一份草稿、同样正文重发(「不确定」之后再点)⇒ 同一个 requestId,daemon 去重,不会说两遍。
       const materials = !matter && images.length ? { draftId: materialDraftId(draftKey), attachmentIds: images.map(i => i.id) } : undefined
-      // 换了图或模型就是新的一件:requestId 跟着正文、图、模型一起定
-      const requestId = requestIdFor(draftKey, [body, materials?.attachmentIds.join(',') ?? '', execution ? JSON.stringify(execution) : '', project && isolated ? 'worktree' : ''].join('\u0000'))
-      if (matter) await backend.say(matter, body, requestId)
+      if (matter) await backend.say(matter, body, requestIdFor(draftKey, body))
       else {
-        if (materials) await uploadImages(backend, materials.draftId, images, bytesToBase64)
-        newId = (await backend.create({ requestId, text: body, projectId: project?.id, ...(project && isolated ? { isolation: true } : {}), providerId: provider?.id, ...(materials ?? {}), ...(execution ? { execution } : {}) })).matterId
+        // Raw selections describe user intent; mutable option defaults never replace an unknown attempt.
+        const input = creationInputFor(draftKey, JSON.stringify([body, projectId, providerId, executionMode, materials?.attachmentIds ?? [], execution ?? null]), {
+          text: body, projectId: project?.id, providerId: provider?.id,
+          ...(project ? { executionMode } : {}), ...(materials ?? {}), ...(execution ? { execution } : {}),
+        })
+        if (input.draftId && input.attachmentIds?.length) await uploadImages(backend, input.draftId, images.filter(image=>input.attachmentIds!.includes(image.id)), bytesToBase64)
+        try { newId = (await backend.create(input)).matterId }
+        catch (error) { if (atGen === pairingGen() && draftKeyRef.current === myKey && error instanceof BackendError && error.reason) setInputNotice(composeCreationReason(error.reason, lang)); throw error }
       }
     })
     sending.current = false
@@ -299,8 +309,7 @@ export default function Compose() {
           <Txt role="item" accessibilityRole="header">{t(lang, 'compose.adjustTitle')}</Txt>
           <Txt role="meta" tone="inkSoft" style={{ marginTop: space.m }}>{t(lang, 'compose.project')}</Txt>
           {opt?.projects.map((p) => <ChoiceRow key={p.id} label={p.name} content="user" on={p.id === project?.id} onPress={() => setProjectId(p.id)} />)}
-          {project ? <ChoiceRow testID="compose-isolation" label={t(lang, 'compose.isolation')} on={isolated} onPress={() => setIsolated(v => !v)} /> : null}
-          {project && isolated ? <Txt role="caption" tone="inkSoft">{t(lang, 'compose.isolationHint')}</Txt> : null}
+          {project?<><Txt role="meta" tone="inkSoft" style={{ marginTop: space.m }}>{t(lang,'compose.location')}</Txt><ChoiceRow label={t(lang,'compose.isolated')} on={executionMode!=='project'} onPress={()=>setExecutionMode('auto')} /><ChoiceRow label={t(lang,'compose.original')} on={executionMode==='project'} onPress={()=>setExecutionMode('project')} /><Txt role="meta" tone="inkSoft">{t(lang,'compose.locationHint')}</Txt></>:null}
           <Txt role="meta" tone="inkSoft" style={{ marginTop: space.m }}>{t(lang, 'compose.executor')}</Txt>
           <ChoiceRow label={t(lang, 'compose.ccArranges')} on={!provider} onPress={() => setProviderId(null)} />
           {opt?.providers.filter((p) => p.available).map((p) => <ChoiceRow key={p.id} label={p.displayName} on={p.id === provider?.id} onPress={() => setProviderId(p.id)} />)}

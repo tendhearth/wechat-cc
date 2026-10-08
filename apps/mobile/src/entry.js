@@ -4,7 +4,7 @@ var eContract
 var eStorage = "cc.phone.entry.v1:" + (REMOTE ? REMOTE.id : location.host)
 var eState = null, eOptions = null, eMounted = false, eViewEpoch = 0, eOptionsSeq = 0, eBusy = {}, eAttachments = null, eMaterialQuiet = false
 var E_PENDING_LIMIT = 8
-function eEmptyDraft(revision) { return { text: "", target: { kind: "managed" }, providerId: "", requestId: null, revision: revision || 0, draftId:mUuid(), materialSignature:"[]" } }
+function eEmptyDraft(revision) { return { text: "", target: { kind: "managed" }, providerId: "", executionMode:"auto", requestId: null, revision: revision || 0, draftId:mUuid(), materialSignature:"[]" } }
 function eLoad() {
   if (eState) return
   try {
@@ -26,6 +26,7 @@ function eText() { return /** @type {HTMLTextAreaElement} */ (document.getElemen
 function eInput() {
   var draft = eState.draft, input = { requestId: draft.requestId, text: draft.text, target: Object.assign({}, draft.target) }
   if (draft.providerId) input["providerId"] = draft.providerId
+  if(draft.target.kind === "project") input["executionMode"] = draft.executionMode || "auto"
   var ids = eAttachments ? eAttachments.readyIds() : []
   if (ids.length) { input["draftId"] = draft.draftId; input["attachmentIds"] = ids }
   return input
@@ -81,12 +82,13 @@ function eSelectionError() {
   return ""
 }
 function eUpdate() {
+  document.getElementById("entry-location").hidden = eState.draft.target.kind !== "project"
   var record = eCurrentRecord(), same = record && eSame(record), button = /** @type {HTMLButtonElement} */ (document.getElementById("entry-submit"))
   button.textContent = same ? (eBusy[record.input.requestId] ? "正在确认是否收到…" : "确认是否收到") : (eState.draft.requestId ? "交办这件新事" : "交给 CC")
   button.disabled = same ? !!eBusy[record.input.requestId] : !!eSelectionError() || (!eState.draft.text.trim() && !eAttachments.readyIds().length) || !eAttachments.isReady() || !!eContract.entryContentError(eState.draft) || eState.pending.length >= E_PENDING_LIMIT
   document.getElementById("entry-another").hidden = !eAttachments.items().some(function(item){ return item.frozen })
   document.getElementById("entry-count").textContent = eContract.entryContentError(eState.draft) ? "要求有些长，请缩减到 " + eContract.ENTRY_LIMITS.text.toLocaleString("en-US") + " 字以内；原文还在。" : ""
-  document.getElementById("entry-selection").textContent = eState.draft.target.kind === "managed" ? "CC 会为这件事安排一处独立的工作位置。" : "会在你选择的项目里继续工作。"
+  document.getElementById("entry-selection").textContent = eState.draft.target.kind === "managed" ? "CC 会为这件事安排一处独立的工作位置。" : (eState.draft.executionMode === "project" ? "会在原目录里工作。" : "Git 项目默认在独立副本里做，当前未提交内容不会带入；非 Git 项目沿用原目录。无法准备时会说明原因，草稿和材料会保留。")
 }
 function eChoices() {
   var draft = eState.draft, project = /** @type {HTMLSelectElement} */ (document.getElementById("entry-project")), provider = /** @type {HTMLSelectElement} */ (document.getElementById("entry-provider"))
@@ -96,6 +98,8 @@ function eChoices() {
   project.innerHTML = '<option value="">由 CC 安排</option>' + (missingProject ? '<option value="__missing" disabled>原项目暂不可用，请重新选择</option>' : '') + projects.map(function(p){ return '<option value="' + esc(p.id) + '">' + esc(p.name) + '</option>' }).join("")
   provider.innerHTML = '<option value="">按项目或 CC 的默认选择</option>' + (missingProvider ? '<option value="__missing" disabled>原执行者暂不可用，请重新选择</option>' : '') + providers.map(function(p){ return '<option value="' + esc(p.id) + '">' + esc(p.displayName) + '</option>' }).join("")
   project.value = missingProject ? "__missing" : (draft.target.projectId || "")
+  var locationChoice = /** @type {HTMLSelectElement} */(document.getElementById("entry-execution-mode"))
+  locationChoice.value = draft.executionMode || "auto"
   provider.value = missingProvider ? "__missing" : (draft.providerId || "")
   eUpdate()
 }
@@ -115,7 +119,8 @@ function eMount() {
   if (eMounted) return
   var root = document.getElementById("entry-root")
   if (!root) return
-  root.innerHTML = '<form id="entry-form" class="entry-card"><label for="entry-text" class="entry-heading">有件事，想交给 CC</label><p class="entry-intro">说说你想做什么，我们从这里开始。</p><textarea id="entry-text" rows="3" placeholder="比如，帮我整理一份周末出游清单…" aria-describedby="entry-count entry-notice"></textarea><p id="entry-count" class="entry-hint"></p><div id="entry-attachments"></div><details class="entry-more"><summary>更多选择</summary><label for="entry-project">在哪儿做<select id="entry-project"></select></label><label for="entry-provider">交给谁<select id="entry-provider"></select></label><p id="entry-selection" class="entry-hint"></p></details><div class="entry-actions"><button id="entry-submit" type="submit">交给 CC</button><button id="entry-another" type="button" hidden>另写一件</button><button id="entry-refresh" type="button">刷新连接</button></div><p id="entry-notice" role="status" aria-live="polite"></p></form><div id="entry-history"></div>'
+  root.innerHTML = '<form id="entry-form" class="entry-card"><label for="entry-text" class="entry-heading">有件事，想交给 CC</label><p class="entry-intro">说说你想做什么，我们从这里开始。</p><textarea id="entry-text" rows="3" placeholder="比如，帮我整理一份周末出游清单…" aria-describedby="entry-count entry-notice"></textarea><p id="entry-count" class="entry-hint"></p><div id="entry-attachments"></div><details class="entry-more"><summary>更多选择</summary><label for="entry-project">在哪儿做<select id="entry-project"></select></label><label id="entry-location" for="entry-execution-mode" hidden>执行位置<select id="entry-execution-mode"><option value="auto">独立副本（Git 项目默认）</option><option value="project">原目录</option></select></label><label for="entry-provider">交给谁<select id="entry-provider"></select></label><p id="entry-selection" class="entry-hint"></p></details><div class="entry-actions"><button id="entry-submit" type="submit">交给 CC</button><button id="entry-another" type="button" hidden>另写一件</button><button id="entry-refresh" type="button">刷新连接</button></div><p id="entry-notice" role="status" aria-live="polite"></p></form><div id="entry-history"></div>'
+  document.getElementById("entry-execution-mode").addEventListener("change",function(event){eState.draft.executionMode=/** @type {HTMLSelectElement} */(event.target).value === "project" ? "project" : "auto"; eState.draft.revision++;eSave();eUpdate()})
   eMounted = true
   eText().value = eState.draft.text
   eText().addEventListener("input", function(){ eDetachMaterials(); eState.draft.text = eText().value; eState.draft.revision++; eSave(); eUpdate() })
@@ -147,7 +152,7 @@ function eMount() {
       var expired = eState.expired.concat(eState.rejected).find(function(p){ return p.input.requestId === button.dataset.entryRecover })
       if (!expired) return
       if ((eState.draft.text.trim() && eState.draft.text !== expired.input.text) || eAttachments.items().length) { eNotice("当前还有新草稿，先处理它再恢复旧要求。原文保留在下方。"); return }
-      eState.draft = Object.assign(eEmptyDraft(eState.draft.revision + 1), {text:expired.input.text,target:Object.assign({},expired.input.target),providerId:expired.input.providerId || ""})
+      eState.draft = Object.assign(eEmptyDraft(eState.draft.revision + 1), {text:expired.input.text,target:Object.assign({},expired.input.target),providerId:expired.input.providerId || "",executionMode:expired.input.executionMode || "auto"})
       eText().value = eState.draft.text; eMountMaterials(); eChoices(); eNotice("原要求已放回草稿，请重新选择材料，再交给 CC。"); eText().focus()
     }
     if (button.dataset.entryForget) {
@@ -202,7 +207,7 @@ function eCheck(record) {
 function eRejectionMessage(code) {
   if (/attachment/.test(code)) return "这位执行者暂时不能接收这份材料，请调整材料或在更多选择里换一位执行者。"
   if (code === "unattended_ack_required") return "请先在桌面确认这位执行者的运行方式，再回来交办。"
-  return "请调整要求或更多选择，再交给 CC。"
+  return eContract.entryRejectionMessage(code)
 }
 /** @param {string} [sentAs] 发这一趟时用的令牌 */
 function eFailure(record, error, creating, sentAs) {
@@ -226,7 +231,7 @@ function eFailure(record, error, creating, sentAs) {
   // 单次配对(plan 7a):这一趟在飞时刚配上、换了令牌,旧短令牌回 401/403 不说明连接失效 —— 保持「正在确认」,下一次核对用新令牌。
   else if (error.status === 401 || error.status === 403) { if (sentAs === T) message = "手机连接已失效，请从微信重新打开随身 CC。草稿与待确认交办已保留。" }
   else if (error.message === "creation_conflict") message = "这件交办的内容与先前不同，请先确认原交办；原文已保留。"
-  else if (error.status >= 400 && error.status < 500) message = "这次交办尚未确认。请检查要求和更多选择，原文已保留。"
+  else if (error.status >= 400 && error.status < 500) message = "这次交办尚未确认：" + error.message + "。请检查要求和执行位置，原文和材料已保留；重试会核对同一请求。"
   record.error = message; eSave(); eNotice(message); eHistory()
 }
 function eSend(record, retry, navigate) {

@@ -39,6 +39,13 @@ it('allows a first managed entry without adding a project or knowing a local fol
  expect(html).not.toContain('id="wb-path"')
  expect(renderWorkbench({...state,projects:[],newScope:'new:add-project'})).toContain('id="wb-project-form"')
 })
+it('groups isolated tasks by source and keeps old task paths compatible',()=>{
+ const task={id:'one',path:'/copies/one',sourcePath:project.path,title:'副本',providerId:'codex',status:'completed',createdAt:1,updatedAt:1,error:null}
+ expect(groupWorkbenchTasks([task],state.projects)).toEqual([{path:project.path,label:project.name,tasks:[task]}])
+ const html=renderWorkbench({...state,tasks:[task],selectedId:'one',detail:{task,events:[],artifacts:[],workspace:{id:'ws',mode:'isolated',sourcePath:project.path,executionPath:task.path,branch:'codex/cc-task-x',baseCommit:'a'.repeat(40)}}})
+ expect(html).toContain('在独立副本里做');expect(html).toContain('data-action="workspace-export"');expect(html).toContain('data-action="open-task-folder"');expect(html).toContain('归档会保留副本')
+ expect(groupWorkbenchTasks([{...task,sourcePath:undefined}],[])[0]?.path).toBe('/copies/one')
+})
 
 it('independent-workspace tasks (2026-10-07) are grouped under their source project with a branch badge and actions',()=>{
  const wt={id:'wt1',path:'/state/worktrees/p/abcd1234',title:'并行一件',workspaceKind:'project' as const,providerId:'codex',status:'completed',createdAt:1,updatedAt:2,error:null,worktree:{branch:'cc/abcd1234',projectPath:'/work/site',removed:false}}
@@ -52,4 +59,19 @@ it('independent-workspace tasks (2026-10-07) are grouped under their source proj
  expect(page).toContain('data-action="worktree-commit"');expect(page).toContain('data-action="worktree-remove"');expect(page).toContain('cc/abcd1234')
  const removed=renderWorkbench({...state,tasks:[{...wt,worktree:{...wt.worktree,removed:true}}],selectedId:'wt1',detail:{...detail,task:{...wt,worktree:{...wt.worktree,removed:true}}}} as never)
  expect(removed).not.toContain('data-action="worktree-commit"');expect(removed).toContain('工作区已删除')
+})
+
+it('sourcePath takes priority over legacy projection and workspace detail retains explicit actions',()=>{
+ const task={id:'new',path:'/copy/execution',sourcePath:'/work/source',title:'新副本',workspaceKind:'project' as const,providerId:'codex',status:'completed',createdAt:1,updatedAt:2,error:null,worktree:{branch:'old-branch',projectPath:'/old-source',removed:false}}
+ const workspace={id:'ws-new',mode:'isolated' as const,sourcePath:'/work/source',executionPath:task.path,branch:'codex/cc-task-new',baseCommit:'b'.repeat(40)}
+ expect(groupWorkbenchTasks([task],[])[0]?.path).toBe('/work/source')
+ const detail={task,events:[],artifacts:[],workspace}
+ const page=renderWorkbench({...state,tasks:[task],selectedId:task.id,detail})
+ expect(page).toContain('ws-new');expect(page).toContain(workspace.branch);expect(page).toContain(workspace.executionPath)
+ expect(page.match(/data-action="worktree-commit"/g)).toHaveLength(1)
+ expect(page.match(/data-action="worktree-remove"/g)).toHaveLength(1)
+ expect(page).not.toContain('old-branch</code>')
+ const removed=renderWorkbench({...state,tasks:[task],selectedId:task.id,detail:{...detail,workspace:{...workspace,removed:true}}})
+ expect(removed).not.toContain('data-action="worktree-commit"');expect(removed).not.toContain('data-action="worktree-remove"')
+ expect(removed).toContain('工作区已删除（分支还在项目里）')
 })
