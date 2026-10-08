@@ -19,7 +19,7 @@ export function createGitRunner(options:GitRunnerOptions={}) {
     if(!isAbsolute(cwd)||args.some(arg=>typeof arg!=='string'||arg.includes('\0'))){reject(Error('git_invalid_arguments'));return}
     const env:NodeJS.ProcessEnv={}
     for(const [key,value] of Object.entries(process.env))if(!key.toUpperCase().startsWith('GIT_')&&!['SSH_ASKPASS','SSH_ASKPASS_REQUIRE'].includes(key))env[key]=value
-    Object.assign(env,{GIT_CONFIG_NOSYSTEM:'1',GIT_CONFIG_GLOBAL:NULL,GIT_TERMINAL_PROMPT:'0',GIT_OPTIONAL_LOCKS:'0',GIT_LITERAL_PATHSPECS:'1',GIT_NO_REPLACE_OBJECTS:'1',GIT_ASKPASS:NULL})
+    Object.assign(env,{GIT_CONFIG_NOSYSTEM:'1',GIT_CONFIG_GLOBAL:NULL,GIT_TERMINAL_PROMPT:'0',GIT_OPTIONAL_LOCKS:'0',GIT_LITERAL_PATHSPECS:'1',GIT_NO_REPLACE_OBJECTS:'1',GIT_NO_LAZY_FETCH:'1',GIT_ASKPASS:NULL})
     if(runOptions.privateIndexPath){
       const path=runOptions.privateIndexPath
       try{
@@ -27,7 +27,8 @@ export function createGitRunner(options:GitRunnerOptions={}) {
       }catch{reject(Error('git_invalid_private_index'));return}
       env.GIT_INDEX_FILE=path
     }
-    const child=spawn('git',[...SAFE_CONFIG,'-C',cwd,...args],{env,stdio:['pipe','pipe','pipe'],detached:process.platform!=='win32',windowsHide:true})
+    // An explicit option fails closed on Git versions that ignore the environment flag.
+    const child=spawn('git',['--no-lazy-fetch',...SAFE_CONFIG,'-C',cwd,...args],{env,stdio:['pipe','pipe','pipe'],detached:process.platform!=='win32',windowsHide:true})
     const output:Buffer[]=[];let length=0,failure:string|null=null
     const stop=()=>{try{if(process.platform!=='win32'&&child.pid)process.kill(-child.pid,'SIGKILL');else child.kill('SIGKILL')}catch{/* already exited */}}
     const timer=setTimeout(()=>{failure='git_timeout';stop()},timeoutMs)

@@ -121,13 +121,25 @@ export function createGitWorkspaces(options:GitWorkspaceOptions) {
       fingerprint=await options.validateConfiguration({sourcePath:record.sourcePath,executionPath:record.executionPath,providerId:record.providerId})
       if(typeof fingerprint!=='string'||!fingerprint.trim()||fingerprint.length>4096)throw Error('git_workspace_configuration_rejected')
       if(record.configurationFingerprint!==null&&record.configurationFingerprint!==fingerprint)throw Error('git_workspace_configuration_changed')
-    }catch(error){store.update({...record,status:'failed',failureReason:error instanceof Error?error.message:'git_workspace_configuration_rejected'});throw error}
+    }catch(error){
+      const allowed=['configuration_not_reproducible','git_workspace_configuration_rejected','git_workspace_configuration_changed']
+      const reason=error instanceof Error&&allowed.includes(error.message)?error.message:'git_workspace_configuration_rejected'
+      store.update({...record,status:'failed',failureReason:reason});throw Error(reason)
+    }
     return store.update({...record,configurationFingerprint:fingerprint})
+  }
+  const readyRetry=async(record:GitWorkspaceRecord)=>{
+    await verify(record)
+    const configured=await configuration(record)
+    try{await verify(configured)}catch{
+      store.update({...configured,status:'needs_recovery',failureReason:RECOVERY});throw Error(RECOVERY)
+    }
+    return configured
   }
   const prepare=async(request:GitWorkspacePrepareInput):Promise<GitWorkspaceRecord>=>{
     assertInput(request);locations()
     let record=store.get(request.workspaceId)
-    if(record){checkInput(request,record);if(record.status==='failed'||record.status==='needs_recovery')throw Error(record.failureReason??RECOVERY);if(record.status==='ready'){await verify(record);return configuration(record)}}
+    if(record){checkInput(request,record);if(record.status==='failed'||record.status==='needs_recovery')throw Error(record.failureReason??RECOVERY);if(record.status==='ready')return readyRetry(record)}
     else {
       try{
         const sourcePath=physical(request.sourcePath),gitRoot=physical(await command(sourcePath,['rev-parse','--show-toplevel'])),gitDir=physical(await command(sourcePath,['rev-parse','--absolute-git-dir'])),commonDir=physical(await command(sourcePath,['rev-parse','--path-format=absolute','--git-common-dir']))
@@ -142,7 +154,7 @@ export function createGitWorkspaces(options:GitWorkspaceOptions) {
     return withAllocationLock(reserved,()=>{const saved=store.get(reserved.id)!;store.update({...saved,status:'needs_recovery',failureReason:RECOVERY})},async()=>{
       let current=store.get(reserved.id)!
       checkInput(request,current)
-      if(current.status==='ready'){await verify(current);return configuration(current)}
+      if(current.status==='ready')return readyRetry(current)
       if(current.status==='failed'||current.status==='needs_recovery')throw Error(current.failureReason??RECOVERY)
       try{
         await sourceIdentityCheck(current)

@@ -1,7 +1,7 @@
 import {afterEach,beforeEach,describe,expect,it} from 'vitest'
 import {createHash,randomUUID} from 'node:crypto'
 import {execFileSync,spawn} from 'node:child_process'
-import {existsSync,mkdirSync,mkdtempSync,readFileSync,realpathSync,renameSync,rmSync,writeFileSync,chmodSync} from 'node:fs'
+import {existsSync,mkdirSync,mkdtempSync,readFileSync,realpathSync,renameSync,rmSync,writeFileSync,chmodSync,unlinkSync} from 'node:fs'
 import {tmpdir} from 'node:os'
 import {join} from 'node:path'
 import {openSqlite,type SqlDatabase} from '../../lib/runtime/sqlite'
@@ -92,6 +92,18 @@ describe('isolated Git workspaces',()=>{
     const old=process.env.GIT_DIR;process.env.GIT_DIR=join(base,'nonexistent')
     try{const a=await manager().prepare(input());writeFileSync(join(a.executionPath,'a.txt'),'raw');await manager().exportPatch(a);expect(existsSync(sentinel)).toBe(false)}finally{if(old===undefined)delete process.env.GIT_DIR;else process.env.GIT_DIR=old}
   })
+  it.skipIf(process.platform==='win32')('never fetches a missing promisor blob or executes repository uploadpack while preparing',async()=>{
+    const remote=join(base,'remote.git');git(base,'clone','--bare',source,remote);git(source,'remote','add','origin',remote)
+    git(source,'config','remote.origin.promisor','true');git(source,'config','remote.origin.partialclonefilter','blob:none');git(remote,'config','uploadpack.allowFilter','true')
+    const sentinel=join(base,'unexpected-fetch'),script=join(base,'upload-pack')
+    writeFileSync(script,'#!/bin/sh\nprintf fetched > "'+sentinel+'"\nexec git-upload-pack "$@"\n');chmodSync(script,0o755);git(source,'config','remote.origin.uploadpack',script)
+    const blob=git(source,'rev-parse','HEAD:a.txt').trim(),object=join(source,'.git','objects',blob.slice(0,2),blob.slice(2));unlinkSync(object)
+    const request=input(),m=manager();let outcome=''
+    try{outcome=(await m.prepare(request)).status}catch(error){outcome=(error as Error).message}
+    expect({outcome,externalProgramExecuted:existsSync(sentinel)}).toEqual({outcome:'git_workspace_needs_recovery',externalProgramExecuted:false})
+    expect(existsSync(object)).toBe(false);expect(m.get(request.workspaceId)?.status).toBe('needs_recovery')
+    await expect(m.prepare(request)).rejects.toThrow('git_workspace_needs_recovery')
+  })
   it('exports committed, staged, unstaged, deleted, binary and untracked contents with a private index',async()=>{
     const m=manager(),a=await m.prepare(input());writeFileSync(join(a.executionPath,'a.txt'),'committed\r\n');git(a.executionPath,'add','a.txt');git(a.executionPath,'commit','-m','task commit')
     writeFileSync(join(a.executionPath,'staged.txt'),'stage');git(a.executionPath,'add','staged.txt');writeFileSync(join(a.executionPath,'a.txt'),'final\r\n');rmSync(join(a.executionPath,'gone.txt'));writeFileSync(join(a.executionPath,'new.bin'),Buffer.from([0,1,2,255]));writeFileSync(join(a.executionPath,'ignored-secret'),'secret')
@@ -140,6 +152,40 @@ describe('isolated Git workspaces',()=>{
     const m=createGitWorkspaces({db,root,stateDir,validateConfiguration:async()=>fingerprint})
     const a=await m.prepare(request);expect(a.configurationFingerprint).toBe('configuration-v1');fingerprint='configuration-v2'
     await expect(m.prepare(request)).rejects.toThrow('git_workspace_configuration_changed');expect(m.get(a.id)?.status).toBe('failed')
+  })
+  it('rejects a real directory replacement during configuration on a ready retry and persists recovery',async()=>{
+    const request=input();let calls=0
+    const m=createGitWorkspaces({db,root,stateDir,validateConfiguration:async({executionPath})=>{
+      if(++calls===2){renameSync(executionPath,executionPath+'-saved');mkdirSync(executionPath);writeFileSync(join(executionPath,'stranger'),'keep')}
+      return 'configuration-v1'
+    }})
+    const a=await m.prepare(request)
+    await expect(m.prepare(request)).rejects.toThrow('git_workspace_needs_recovery')
+    expect(m.get(a.id)?.status).toBe('needs_recovery');expect(readFileSync(join(a.executionPath,'stranger'),'utf8')).toBe('keep')
+    await expect(manager().prepare(request)).rejects.toThrow('git_workspace_needs_recovery')
+  })
+  it('rechecks task branch ownership after configuration on a ready retry',async()=>{
+    const request=input();let calls=0
+    const m=createGitWorkspaces({db,root,stateDir,validateConfiguration:async({executionPath})=>{
+      if(++calls===2)git(executionPath,'checkout','--detach')
+      return 'configuration-v1'
+    }})
+    const a=await m.prepare(request)
+    await expect(m.prepare(request)).rejects.toThrow('git_workspace_needs_recovery');expect(m.get(a.id)?.status).toBe('needs_recovery')
+  })
+  it('retains task commits and staged or unstaged edits on a configuration-validated ready retry',async()=>{
+    const request=input(),m=createGitWorkspaces({db,root,stateDir,validateConfiguration:async()=> 'configuration-v1'}),a=await m.prepare(request)
+    writeFileSync(join(a.executionPath,'a.txt'),'task commit');git(a.executionPath,'add','a.txt');git(a.executionPath,'commit','-m','task commit')
+    writeFileSync(join(a.executionPath,'staged.txt'),'staged');git(a.executionPath,'add','staged.txt');writeFileSync(join(a.executionPath,'a.txt'),'working edit')
+    const before=await m.readGitState(a.executionPath);expect(before.head).not.toBe(a.baseCommit)
+    const returned=await m.prepare(request);expect(returned.status).toBe('ready');await m.verify(returned)
+    expect(await m.readGitState(a.executionPath)).toEqual(before);expect(readFileSync(join(a.executionPath,'a.txt'),'utf8')).toBe('working edit')
+  })
+  it('sanitizes callback error text before returning and persisting a configuration failure',async()=>{
+    const request=input(),secret='credential=private-token-value',m=createGitWorkspaces({db,root,stateDir,validateConfiguration:async()=>{throw Error(secret)}})
+    await expect(m.prepare(request)).rejects.toThrow('git_workspace_configuration_rejected')
+    expect(m.get(request.workspaceId)?.failureReason).toBe('git_workspace_configuration_rejected')
+    expect(JSON.stringify(m.get(request.workspaceId))).not.toContain(secret)
   })
   it('rejects an unpinned record object instead of trusting caller supplied identities',async()=>{
     const m=manager(),a=await m.prepare(input())
