@@ -4,14 +4,15 @@
  *   - 工作区放在 CC 的状态目录 `<stateDir>/worktrees/<项目编号>/<8 位>`,不弄乱项目周围;
  *   - 分支 `cc/<8 位>`,起点是 HEAD(项目里没提交的改动不带进去 —— 界面要说);
  *   - 「提交到分支」由 CC 做(`git add -A` + `git commit`),合并留给主人;
- *   - 删工作区只删目录、分支保留;工作区里还有没提交的改动 ⇒ 拒绝。
+ *   - 删工作区只删目录、分支保留;工作区里还有没提交的改动 ⇒ 拒绝;
+ *   - 仓库根有 `.worktreeinclude` ⇒ 新工作区带上它列出的被忽略文件(见 copyIncludedFiles)。
  * 项目是仓库里的子目录(monorepo)时,工作区是整个仓库的,任务目录 = 工作区里同样的相对位置。
  *
  * git 一律:清掉继承的 GIT_* 环境、不读全局配置、不跑仓库钩子(无人值守时不执行仓库里的脚本;
  * 代价是 LFS 之类靠钩子的内容不会自动展开,设计稿已写明)。每条命令有超时。
  */
 import { execFileSync } from 'node:child_process'
-import { existsSync, mkdirSync, realpathSync } from 'node:fs'
+import { copyFileSync, existsSync, lstatSync, mkdirSync, realpathSync } from 'node:fs'
 import { dirname, isAbsolute, join, relative, sep } from 'node:path'
 
 export interface WorktreePlan { root: string; branch: string; taskPath: string; repoRoot: string; projectPath: string }
@@ -30,9 +31,9 @@ function gitEnv(ownerConfig = false): NodeJS.ProcessEnv {
 }
 const SAFE = ['-c', 'core.hooksPath=/dev/null', '-c', 'core.fsmonitor=false']
 /** 跑一条 git;非零退出抛 `worktree_git_failed`(stderr 头几行带上,只给日志)。 */
-export function git(cwd: string, args: string[], opts: { ownerConfig?: boolean } = {}): string {
+export function git(cwd: string, args: string[], opts: { ownerConfig?: boolean; input?: string } = {}): string {
   try {
-    return execFileSync('git', [...SAFE, ...args], { cwd, env: gitEnv(opts.ownerConfig), encoding: 'utf8', timeout: TIMEOUT_MS, stdio: ['ignore', 'pipe', 'pipe'] }).trim()
+    return execFileSync('git', [...SAFE, ...args], { cwd, env: gitEnv(opts.ownerConfig), encoding: 'utf8', timeout: TIMEOUT_MS, maxBuffer: 16 * 1024 * 1024, ...(opts.input !== undefined ? { input: opts.input } : { stdio: ['ignore', 'pipe', 'pipe'] }) }).trim()
   } catch (error) {
     const stderr = String((error as { stderr?: unknown }).stderr ?? '').trim().split('\n').slice(0, 3).join(' | ')
     throw Object.assign(new Error('worktree_git_failed'), { detail: stderr })
@@ -81,9 +82,39 @@ export function ensureWorktree(plan: WorktreePlan): string {
     catch (error) { if ((error as Error).message === 'worktree_branch_exists') throw error }
     mkdirSync(dirname(plan.root), { recursive: true, mode: 0o700 })
     git(plan.repoRoot, ['worktree', 'add', '-b', plan.branch, plan.root, 'HEAD'])
+    copyIncludedFiles(plan.repoRoot, plan.root)
   }
   if (!existsSync(plan.taskPath)) throw new Error('worktree_project_missing')
   return real(plan.taskPath)
+}
+
+const INCLUDE_MAX_FILES = 1000
+const INCLUDE_MAX_BYTES = 100 * 1024 * 1024
+/**
+ * 新工作区带上本地文件(2026-10-08,对标 Conductor / Claude Code 的同名约定):仓库根有 `.worktreeinclude`(gitignore 写法)时,
+ * 把**既被 git 忽略、又被它列出**的文件(典型是 `.env`、本地证书)从项目复制进新工作区 —— 不然执行者一跑就缺配置。
+ * 只复制、从不执行;符号链接跳过;已经存在的不覆盖;最多 1000 个文件 / 100 MB,超了就停(node_modules 这类请让执行者自己装)。
+ * 返回复制了几个。读不了 / 没有这个文件 ⇒ 0,不拦建工作区。
+ */
+export function copyIncludedFiles(repoRoot: string, root: string): number {
+  if (!existsSync(join(repoRoot, '.worktreeinclude'))) return 0
+  let listed: string[], ignored: Set<string>
+  try {
+    listed = git(repoRoot, ['ls-files', '-z', '--others', '--ignored', '--exclude-from=.worktreeinclude']).split('\0').filter(Boolean)
+    if (!listed.length) return 0
+    ignored = new Set(git(repoRoot, ['check-ignore', '-z', '--stdin'], { input: listed.join('\0') + '\0' }).split('\0').filter(Boolean))
+  } catch { return 0 }
+  let files = 0, bytes = 0
+  for (const rel of listed) {
+    if (!ignored.has(rel) || rel.split('/').includes('..') || isAbsolute(rel)) continue
+    const from = join(repoRoot, rel), to = join(root, rel)
+    let st
+    try { st = lstatSync(from) } catch { continue }
+    if (!st.isFile() || existsSync(to)) continue
+    if (files + 1 > INCLUDE_MAX_FILES || bytes + st.size > INCLUDE_MAX_BYTES) break
+    try { mkdirSync(dirname(to), { recursive: true }); copyFileSync(from, to); files++; bytes += st.size } catch { /* 这一个跳过 */ }
+  }
+  return files
 }
 
 /** 工作区里有没有没提交的改动(含未跟踪的文件)。 */
