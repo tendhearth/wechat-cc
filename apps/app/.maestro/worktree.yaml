@@ -1,0 +1,68 @@
+# 独立工作区(2026-10-08):一起做 → 整理笔记那件(独立分支)→ 提交到分支 → 合回项目(点两下)→ 任务页说「已合回」
+# → 删除工作区(点两下)→ 出现「重新打开工作区」→ 重开 → 「交给另一位另做一份」进交办页:要求、项目、独立工作区都预先填好。演示模式。
+appId: com.tendhearth.app
+---
+- runFlow: subflows/_start.yaml
+- tapOn:
+    id: welcome-look-first
+- extendedWaitUntil:
+    visible:
+      id: now-connections
+    timeout: 10000
+- retry:
+    maxRetries: 2
+    commands:
+      - tapOn:
+          id: tab-together
+      - extendedWaitUntil:
+          visible:
+            id: together-item-a1b2c3d4
+          timeout: 3000
+- scrollUntilVisible:
+    element:
+      id: together-item-e5f6a7b8
+- tapOn:
+    id: together-item-e5f6a7b8
+- scrollUntilVisible:
+    element:
+      id: progress-worktree
+- assertVisible: ".*cc/notes001.*"
+- tapOn:
+    id: progress-wt-commit
+- extendedWaitUntil:
+    visible:
+      id: progress-wt-note
+    timeout: 5000
+# 合回要点两下:第一下只换成确认字样
+- tapOn:
+    id: progress-wt-merge
+- assertVisible: ".*(再点一次：快进合并到项目|Tap again to fast-forward the project).*"
+- tapOn:
+    id: progress-wt-merge
+- extendedWaitUntil:
+    visible: ".*(已合回项目|merged into the project).*"
+    timeout: 5000
+- tapOn:
+    id: progress-wt-remove
+- tapOn:
+    id: progress-wt-remove
+- extendedWaitUntil:
+    visible:
+      id: progress-wt-reopen
+    timeout: 5000
+- tapOn:
+    id: progress-wt-reopen
+- extendedWaitUntil:
+    visible:
+      id: progress-wt-fork
+    timeout: 5000
+- takeScreenshot: worktree-matter
+- tapOn:
+    id: progress-wt-fork
+- extendedWaitUntil:
+    visible:
+      id: compose-isolation
+    timeout: 10000
+- assertVisible:
+    id: compose-base
+- takeScreenshot: worktree-fork-compose

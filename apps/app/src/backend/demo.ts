@@ -91,7 +91,9 @@ export function makeDemoBackend(opts: { now?: () => number; setTimeout?: typeof 
       }), 'ask', [{ kind: 'tool_call', key: 'stepTrip1', createdAt: n - 200_000 }], 'tripTitle')
     const nTitle = t(lastLang, 'notesTitle')
     add(mkDetail(mkMatter(IDS.notes, 'task', nTitle, 'replied', '~/Projects/notes', n - DAY),
-      taskOf(IDS.notes, nTitle, '~/Projects/notes', 'replied', n - DAY)), 'replied', [], 'notesTitle')
+      // 演示独立工作区(2026-10-08):提交 / 合回 / 删除 / 重开 / 另做一份 都有地方点
+      { ...taskOf(IDS.notes, nTitle, '~/Projects/notes', 'replied', n - DAY), worktree: { branch: 'cc/notes001', removed: false, projectId: 'portfolio' } }), 'replied',
+      [{ kind: 'user', key: 'notesTitle', createdAt: n - DAY - 60_000 }], 'notesTitle')
     // 额度用完的一件(spec continue-sessions §7-3):Claude Code 没做完,电脑说可以交给 Codex 继续
     const rTitle = t(lastLang, 'reportTitle')
     add(mkDetail(mkMatter(IDS.report, 'task', rTitle, 'done', '~/Projects/notes', n - 2 * HOUR),
@@ -364,8 +366,13 @@ export function makeDemoBackend(opts: { now?: () => number; setTimeout?: typeof 
       let s = ''; for (const b of bytes.subarray(offset, end)) s += String.fromCharCode(b)
       return { offset, nextOffset: end, size: bytes.length, contentBase64: btoa(s) }
     },
-    async worktree({ action }) {
-      // 演示里没有真的 git 工作区:说一句结果就好
+    async worktree({ id, action }) {
+      // 演示里没有真的 git 工作区:只把任务页上那几个状态翻过来
+      const e = entries.get(id), wt = e?.detail.task?.worktree
+      if (e?.detail.task && wt) {
+        e.detail.task = { ...e.detail.task, worktree: { ...wt, ...(action === 'merge' ? { merged: true } : action === 'remove' ? { removed: true } : action === 'reopen' ? { removed: false } : {}) } }
+        e.version++; publish([id])
+      }
       return action === 'commit' ? { branch: 'cc/demo1234', committed: true } : action === 'merge' ? { branch: 'cc/demo1234', merged: true } : action === 'reopen' ? { branch: 'cc/demo1234', reopened: true } : { branch: 'cc/demo1234', removed: true }
     },
     async stop({ id, runId }) {
