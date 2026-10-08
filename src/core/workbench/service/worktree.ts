@@ -32,7 +32,7 @@ export function makeWorktreeDomain(ctx: ServiceCtx) {
     }
     return { task, wt }
   }
-  return {
+  const domain = {
     worktreeAction(id: string, action: Action): { branch: string; committed?: boolean; sha?: string; mergeHint?: string; removed?: boolean; merged?: boolean; into?: string } {
       if (action !== 'commit' && action !== 'remove' && action !== 'merge') throw new Error('invalid_request')
       const { task, wt } = target(id, action)
@@ -56,5 +56,20 @@ export function makeWorktreeDomain(ctx: ServiceCtx) {
       ctx.hub.touched(id)
       return { branch: wt.branch, removed: true }
     },
+    /**
+     * 归档时顺手收拾(2026-10-08,设计稿第 6 条):工作区干净 ⇒ 删目录(提交过的都在分支上,分支保留);
+     * 有没提交的改动 / 会话还开着 / git 出错 ⇒ 留着,时间线说一句,不拦归档 —— 宁可多占盘也不丢东西。
+     */
+    tidyOnArchive(id: string): void {
+      const wt = store.worktrees.get(id)
+      if (!wt || wt.removedAt !== null) return
+      try { domain.worktreeAction(id, 'remove') }
+      catch (error) {
+        const code = error instanceof Error ? error.message : ''
+        store.addEvent(id, 'system', code === 'worktree_dirty' ? `已归档。独立工作区里还有没提交的改动，先保留着；需要时恢复任务再提交或删除。` : `已归档。独立工作区暂时删不掉（${code === 'workbench_busy' ? '会话还开着' : '出了点问题'}），先保留着；需要时恢复任务再删除。`)
+        ctx.hub.touched(id)
+      }
+    },
   }
+  return domain
 }
