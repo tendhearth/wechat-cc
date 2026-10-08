@@ -32,7 +32,11 @@ function gitDirectoryOutput(transform:(path:string,kind:'rev-parse'|'registratio
   })
 }
 beforeEach(()=>{
-  base=realpathSync(mkdtempSync(join(tmpdir(),'cc-git-workspaces-')));source=join(base,'project');root=join(base,'Tasks','GitWorkspaces');stateDir=join(base,'state')
+  const temporary=mkdtempSync(join(tmpdir(),'cc-git-workspaces-'))
+  // Windows tmpdir may contain RUNNER~1. Match the native physical spelling
+  // required by admission; aliases remain explicit rejection fixtures below.
+  try{base=realpathSync.native(temporary)}catch{base=realpathSync(temporary)}
+  source=join(base,'project');root=join(base,'Tasks','GitWorkspaces');stateDir=join(base,'state')
   mkdirSync(source);mkdirSync(stateDir)
   git(source,'init','-b','main');writeFileSync(join(source,'a.txt'),'base\r\n');writeFileSync(join(source,'gone.txt'),'delete me');mkdirSync(join(source,'sub'));writeFileSync(join(source,'sub','nested.txt'),'nested');writeFileSync(join(source,'.gitignore'),'ignored*\n')
   git(source,'add','.');git(source,'commit','-m','base');db=openSqlite(join(stateDir,'test.sqlite'));db.exec(GIT_WORKSPACE_SCHEMA_SQL)
@@ -41,13 +45,14 @@ afterEach(()=>{vi.restoreAllMocks();db.close();rmSync(base,{recursive:true,force
 
 describe('isolated Git workspaces',()=>{
   it('reuses the first frozen reservation for concurrent same-UUID managers with separate SQLite connections',async()=>{
-    const secondDb=openSqlite(join(stateDir,'test.sqlite')),request=input();let firstCreatedAt:number|undefined,clock=Date.now()
-    // Distinct admission attempts may reach reservation in the same millisecond;
-    // make their new timestamps distinct without changing Git or SQLite effects.
-    vi.spyOn(Date,'now').mockImplementation(()=>++clock)
-    const validate=async()=>{firstCreatedAt??=m1.get(request.workspaceId)!.createdAt;return 'fixture-config'}
-    const m1=createGitWorkspaces({db,root,stateDir,validateConfiguration:validate}),m2=createGitWorkspaces({db:secondDb,root,stateDir,validateConfiguration:validate})
+    const secondDb=openSqlite(join(stateDir,'test.sqlite'))
     try{
+      const request=input();let firstCreatedAt:number|undefined,clock=Date.now()
+      // Distinct admission attempts may reach reservation in the same millisecond;
+      // make their new timestamps distinct without changing Git or SQLite effects.
+      vi.spyOn(Date,'now').mockImplementation(()=>++clock)
+      const validate=async()=>{firstCreatedAt??=m1.get(request.workspaceId)!.createdAt;return 'fixture-config'}
+      const m1=createGitWorkspaces({db,root,stateDir,validateConfiguration:validate}),m2=createGitWorkspaces({db:secondDb,root,stateDir,validateConfiguration:validate})
       const sourceBefore=await m1.readGitState(source)
       const [first,second]=await Promise.allSettled([m1.prepare(request),m2.prepare(request)])
       expect([first.status,second.status]).toEqual(['fulfilled','fulfilled'])
