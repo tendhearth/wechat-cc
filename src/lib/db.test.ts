@@ -5,6 +5,8 @@ import type { Db } from './db'
 import { existsSync, mkdtempSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
+import { execFile } from 'node:child_process'
+import { promisify } from 'node:util'
 import { removeTempDir } from './test-temp'
 
 describe('withLockRetry', () => {
@@ -91,6 +93,29 @@ describe('openDb', () => {
       kept.get()
       expect(() => db.close(true)).not.toThrow()
     } finally {
+      removeTempDir(dir)
+    }
+  })
+
+  it('strict close releases uncached statements after real asynchronous subprocess boundaries', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'db-test-async-close-'))
+    const db = openDb({ path: join(dir, 'close.db') })
+    let closed = false
+    try {
+      const kept = db.prepare<{ one: number }, []>('SELECT 1 AS one')
+      for (let round = 0; round < 3; round++) {
+        for (let i = 0; i < 40; i++) {
+          expect(db.query<{ n: number }, []>(`SELECT ${round * 40 + i} AS n`).get()!.n).toBe(round * 40 + i)
+        }
+        const { stdout } = await promisify(execFile)(process.execPath, ['-e', 'process.stdout.write("boundary")'])
+        expect(stdout).toBe('boundary')
+        expect(kept.get()!.one).toBe(1)
+      }
+      expect(() => db.close(true)).not.toThrow()
+      closed = true
+      expect(() => kept.get()).toThrow()
+    } finally {
+      if (!closed) db.close()
       removeTempDir(dir)
     }
   })

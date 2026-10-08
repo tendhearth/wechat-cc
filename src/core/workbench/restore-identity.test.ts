@@ -48,7 +48,7 @@ beforeEach(()=>{
   git('init','-q');git('config','user.name','Fixture');git('config','user.email','fixture@example.invalid');fs.writeFileSync(join(project,'file.txt'),'before');git('add','.');git('commit','-qm','base')
   db=openDb({path:join(root,'state.sqlite')});db.exec(RESTORE_SCHEMA_SQL);manager=make()
 })
-afterEach(()=>{state.ids.clear();state.mapTemporary=false;db.close();actual.rmSync(root,{recursive:true,force:true})})
+afterEach(()=>{state.ids.clear();state.mapTemporary=false;db.close(true);actual.rmSync(root,{recursive:true,force:true})})
 
 it('must reject a later same-content leaf with a distinct uint64 inode that rounds to the recorded number',async()=>{
   const file=join(project,'file.txt');mapped(file,A)
