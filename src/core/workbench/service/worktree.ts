@@ -5,10 +5,10 @@
 import {existsSync} from 'node:fs'
 import {createGitRunner} from '../git-runner'
 import { pathsConflict } from '../scheduler'
-import { commitWorktree, mergeHint, mergeWorktree, removeWorktree } from '../worktree-workspaces'
+import { commitWorktree, mergeHint, mergeWorktree, removeWorktree, reopenWorktree } from '../worktree-workspaces'
 import type { ServiceCtx } from './ctx'
 
-type Action = 'commit' | 'remove' | 'merge'
+type Action = 'commit' | 'remove' | 'merge' | 'reopen'
 
 export function makeWorktreeDomain(ctx: ServiceCtx) {
   const { store, state } = ctx
@@ -20,12 +20,12 @@ export function makeWorktreeDomain(ctx: ServiceCtx) {
     const task = store.get(id)
     const wt = store.worktrees.get(id)
     if (!wt) throw new Error('not_worktree')
-    if (wt.removedAt !== null) throw new Error('worktree_removed')
+    if (action !== 'reopen' && wt.removedAt !== null) throw new Error('worktree_removed')
     if (task.error === 'writer_not_closed') throw new Error('workbench_busy')
     for (const holder of [...state.reservations.values(), ...state.writerOrphans.values(), ...state.mutations.values()]) {
       if (!pathsConflict(holder.path, task.path)) continue
       const own = state.runsByTask.get(id)
-      const quietOwn = action !== 'remove' && own !== undefined && holder === own && !own.finishing && !own.uncertain && ctx.actions.deref('worktree').isReplied(own)
+      const quietOwn = (action === 'commit' || action === 'merge') && own !== undefined && holder === own && !own.finishing && !own.uncertain && ctx.actions.deref('worktree').isReplied(own)
       if (!quietOwn) throw new Error('workbench_busy')
     }
     // 合回会改项目目录里的文件:那里有别的任务在跑(或关不掉的执行程序)⇒ 不动。
@@ -34,7 +34,7 @@ export function makeWorktreeDomain(ctx: ServiceCtx) {
     }
     return { task, wt }
   }
-  type Result={branch:string;committed?:boolean;sha?:string;mergeHint?:string;removed?:boolean;merged?:boolean;into?:string}
+  type Result={branch:string;committed?:boolean;sha?:string;mergeHint?:string;removed?:boolean;merged?:boolean;into?:string;reopened?:boolean}
   async function boundAction(id:string,action:'commit'|'remove'):Promise<Result>{
     const recovery=ctx.recovery!,{task,w}=recovery.owned(id)
     recovery.gate(task.path)
@@ -74,6 +74,17 @@ export function makeWorktreeDomain(ctx: ServiceCtx) {
   function legacyAction(id: string, action: Action): Result {
     const { task, wt } = target(id, action)
     ctx.recovery?.gate(task.path)
+    if (action === 'reopen') {
+      if (wt.removedAt === null) throw new Error('worktree_open')
+      if (task.archivedAt !== null) throw new Error('workbench_archived')
+      if (['queued','running','cancelling'].includes(task.status)) throw new Error('workbench_busy')
+      reopenWorktree(wt.repoRoot, wt.root, wt.branch)
+      if (!existsSync(task.path)) throw new Error('worktree_project_missing')
+      store.worktrees.markReopened(id)
+      store.addEvent(id, 'system', `已从分支 ${wt.branch} 重新打开独立工作区，可以接着做了。`)
+      ctx.hub.touched(id)
+      return { branch: wt.branch, reopened: true }
+    }
     if (action === 'commit') {
       const result = commitWorktree(wt.root, task.title)
       const hint = mergeHint(wt.projectPath, wt.branch)
@@ -99,9 +110,9 @@ export function makeWorktreeDomain(ctx: ServiceCtx) {
   }
   const domain = {
     worktreeAction(id: string, action: Action): Result|Promise<Result> {
-      if (action !== 'commit' && action !== 'remove' && action !== 'merge') throw new Error('invalid_request')
+      if (action !== 'commit' && action !== 'remove' && action !== 'merge' && action !== 'reopen') throw new Error('invalid_request')
       if(store.gitWorkspaceForTask(id)){
-        if(action==='merge')throw Error('invalid_request')
+        if(action==='merge'||action==='reopen')throw Error('invalid_request')
         return boundAction(id,action)
       }
       return legacyAction(id,action)

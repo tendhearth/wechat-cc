@@ -230,3 +230,14 @@ it('waits for an asynchronous managed worktree action and returns its completed 
  const result=await mobileWorkbenchRoute({worktree:async()=>({branch:'cc/new',committed:true})} as never,url,new Request(url,{method:'POST',body:JSON.stringify({id:'deadbeef',action:'commit'})}))
  expect(await result!.json()).toEqual({ok:true,branch:'cc/new',committed:true})
 })
+
+it.each([true,false])('awaits reopen receipt and preserves reopened=%s through the phone protocol schema',async reopened=>{
+ const url=new URL('http://phone.test/m/api/matter/worktree')
+ let finish!:()=>void;const gate=new Promise<void>(resolve=>{finish=resolve})
+ const route=mobileWorkbenchRoute({worktree:async()=>{await gate;return{branch:'cc/old',reopened}}} as never,url,new Request(url,{method:'POST',body:JSON.stringify({id:'deadbeef',action:'reopen'})}))
+ let settled=false;void route.then(()=>{settled=true});await Promise.resolve();expect(settled).toBe(false);finish()
+ const response=await route;expect(response!.status).toBe(200)
+ const value=await response!.json();expect(value).toEqual({ok:true,branch:'cc/old',reopened})
+ const {PHONE_API_SCHEMAS}=await import('@wechat-cc/protocol')
+ expect(PHONE_API_SCHEMAS['POST /m/api/matter/worktree']!.parse(value)).toEqual(value)
+})

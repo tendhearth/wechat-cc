@@ -147,14 +147,15 @@ describe('WeChat task control through the shared service',()=>{
     const task=create();await settled(task.id)
     const act=vi.fn((_id:string,action:string)=>{
       if(action==='merge')throw new Error('worktree_not_ff')
-      return action==='commit'?{branch:'cc/abcd1234',committed:true,sha:'0123456789'}:{branch:'cc/abcd1234',removed:true}
+      return action==='commit'?{branch:'cc/abcd1234',committed:true,sha:'0123456789'}:action==='reopen'?{branch:'cc/abcd1234',reopened:true}:{branch:'cc/abcd1234',removed:true}
     })
     const control=makeWechatWorkbenchControl({store,ownerChatId:()=>owner,actions:{...service,worktreeAction:act}})
     const before=service.detail(task.id).events.length
     expect(await control('owner',`任务 ${task.id} 提交`,identity)).toContain('已提交到分支 cc/abcd1234（0123456）')
     expect(await control('owner',`任务 ${task.id} 合回`,identity)).toContain('不能直接快进')
     expect(await control('owner',`任务 ${task.id} 删除工作区`,identity)).toContain('分支 cc/abcd1234 保留')
-    expect(act.mock.calls.map(c=>c[1])).toEqual(['commit','merge','remove'])
+    expect(await control('owner',`任务 ${task.id} 重开工作区`,identity)).toContain('重新打开独立工作区')
+    expect(act.mock.calls.map(c=>c[1])).toEqual(['commit','merge','remove','reopen'])
     // 一条都没当成补充发给执行者
     expect(service.detail(task.id).events.length).toBe(before)
     expect(await control('owner',`任务 ${task.id} 提交 一下`,identity)).toContain('用法')
@@ -473,4 +474,16 @@ it('awaits an explicit no-merge receipt and describes it without claiming a merg
  pending.resolve()
  const value=await reply
  expect(value).toContain('不用合');expect(value).not.toContain('已合进');expect(value).not.toContain('尚未确认')
+})
+
+it.each([true,false,undefined])('awaits reopened=%s and only a true receipt announces reopening',async reopened=>{
+ setup({async spawn(){return{async *dispatch(){yield result},async close(){}}}})
+ const task=store.create({title:'reopen receipt',path:project,providerId:'claude',ownerChatId:'owner'}),pending=gate()
+ const action=async()=>{await pending.promise;return{branch:'cc/reopen',...(reopened===undefined?{}:{reopened})}}
+ const control=makeWechatWorkbenchControl({store,ownerChatId:()=>owner,actions:{...service,worktreeAction:action}})
+ let settled=false;const reply=control('owner',`任务 ${task.id} 重开工作区`).then(value=>{settled=true;return value})
+ await Promise.resolve();await Promise.resolve();expect(settled).toBe(false);pending.resolve()
+ const value=await reply
+ if(reopened===true)expect(value).toContain('重新打开独立工作区')
+ else {expect(value).toContain('尚未确认');expect(value).not.toContain('可以接着做了')}
 })

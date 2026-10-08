@@ -43,7 +43,7 @@ export type Connection = { state: ConnState; lastSyncedAt: number | null; epoch:
 export type BackendCode = 'stale' | 'busy' | 'offline' | 'revoked' | 'timeout' | 'not_found' | 'invalid' | 'unavailable' | 'unknown'
   | 'session_busy' | 'folder_busy' | 'provider_missing' | 'folder_missing' | 'quota' | 'session_changed' | 'session_empty' | 'session_managed'
   | 'handoff_changed'
-  | 'worktree_not_git' | 'worktree_dirty' | 'worktree_uncommitted' | 'merge_manual' | 'project_busy'
+  | 'worktree_not_git' | 'worktree_dirty' | 'worktree_uncommitted' | 'merge_manual' | 'project_busy' | 'worktree_branch_missing'
   | 'input_stale' | 'input_conflict'
   | 'too_large' | 'no_voice'
   | 'images_gone' | 'images_unsupported'
@@ -64,7 +64,7 @@ export interface Backend {
   /** 停下正在跑的这一轮(POST /m/api/matter/stop,2026-10-06)。runId = 手机看到的那一轮;已经换了一轮 ⇒ BackendError('input_stale')。 */
   stop(p: { id: string; runId: string }): Promise<void>
   /** 独立工作区:提交到分支 / 删除工作区(2026-10-07)/ 合回项目(10-08,只快进;快进不了 ⇒ BackendError('merge_manual'),回电脑上合)。 */
-  worktree(p: { id: string; action: 'commit' | 'remove' | 'merge' }): Promise<{ branch: string; committed?: boolean; removed?: boolean; merged?: boolean }>
+  worktree(p: { id: string; action: 'commit' | 'remove' | 'merge' | 'reopen' }): Promise<{ branch: string; committed?: boolean; removed?: boolean; merged?: boolean; reopened?: boolean }>
   /** 一件事的成果按块读(GET /m/api/matter/artifact,每块 128 KiB);sha256 对不上 ⇒ 电脑上那份已经换了。 */
   artifactChunk(p: { id: string; artifactId: string; sha256: string; offset: number }): Promise<{ offset: number; nextOffset: number; size: number; contentBase64: string }>
   /** 工作台补充携带首次提交的 runId;重发时 requestId / runId / text 保持同一份快照。缺省仍兼容聊天与首次接续。 */

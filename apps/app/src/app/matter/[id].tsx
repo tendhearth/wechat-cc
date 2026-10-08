@@ -123,19 +123,20 @@ export default function Matter() {
     void refreshDetail()
   }
   // 独立工作区(2026-10-07):提交到分支 / 合回项目(10-08,只快进)/ 删除工作区;合回、删除都点两下。
-  const worktreeAct = async (action: 'commit' | 'remove' | 'merge') => {
+  const worktreeAct = async (action: 'commit' | 'remove' | 'merge' | 'reopen') => {
     if (wtBusy) return
-    if (action !== 'commit' && wtArmed !== action) { setWtArmed(action); setWtNote(null); return }
+    if ((action === 'remove' || action === 'merge') && wtArmed !== action) { setWtArmed(action); setWtNote(null); return }
     setWtArmed(null); setWtBusy(true); setWtNote(null)
-    let mergedNow = true
-    const r = await submit(`worktree:${id}:${action}`, async () => { mergedNow = (await backend.worktree({ id, action })).merged !== false })
+    let mergedNow = true, reopenedNow = false
+    const r = await submit(`worktree:${id}:${action}`, async () => { const receipt = await backend.worktree({ id, action }); mergedNow = receipt.merged !== false; reopenedNow = receipt.reopened === true })
     setWtBusy(false)
     const err = r === 'ok' || r === 'busy' ? null : r.error
-    if (r === 'ok') setWtNote(t(lang, action === 'commit' ? 'progress.wtCommitted' : action === 'merge' ? (mergedNow ? 'progress.wtMerged' : 'progress.wtNothingToMerge') : 'progress.wtRemoved'))
+    if (r === 'ok') setWtNote(t(lang, action === 'commit' ? 'progress.wtCommitted' : action === 'merge' ? (mergedNow ? 'progress.wtMerged' : 'progress.wtNothingToMerge') : action === 'reopen' ? (reopenedNow ? 'progress.wtReopened' : 'progress.wtFailed') : 'progress.wtRemoved'))
     else if (err === 'worktree_dirty') setWtNote(t(lang, 'progress.wtDirty'))
     else if (err === 'worktree_uncommitted') setWtNote(t(lang, 'progress.wtUncommitted'))
     else if (err === 'merge_manual') setWtNote(t(lang, 'progress.wtMergeManual'))
     else if (err === 'project_busy') setWtNote(t(lang, 'progress.wtProjectBusy'))
+    else if (err === 'worktree_branch_missing') setWtNote(t(lang, 'progress.wtBranchMissing'))
     else setWtNote(t(lang, r === 'busy' || err === 'busy' ? (action === 'remove' ? 'progress.wtBusyRemove' : 'progress.wtBusyCommit') : 'progress.wtFailed'))
     void refreshDetail()
   }
@@ -265,6 +266,7 @@ export default function Matter() {
         {d.task?.worktree ? (
           <View testID="progress-worktree" style={{ gap: space.s }}>
             <Txt role="meta" tone="inkSoft">{t(lang, d.task.worktree.removed ? 'progress.wtGone' : d.task.worktree.merged ? 'progress.wtOnMerged' : 'progress.wtOn', { branch: d.task.worktree.branch })}</Txt>
+            {d.task.worktree.removed && !d.task.workspace && !d.task.sourcePath ? <Button kind="secondary" testID="progress-wt-reopen" label={t(lang, 'progress.wtReopen')} onPress={() => void worktreeAct('reopen')} disabled={!online} busy={wtBusy} /> : null}
             {!d.task.worktree.removed ? (
               <View style={{ flexDirection: 'row', gap: space.s, flexWrap: 'wrap' }}>
                 <Button kind="secondary" testID="progress-wt-commit" label={t(lang, 'progress.wtCommit')} onPress={() => void worktreeAct('commit')} disabled={!online} busy={wtBusy} />

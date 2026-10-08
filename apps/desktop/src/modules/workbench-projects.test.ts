@@ -64,7 +64,7 @@ it('independent-workspace tasks (2026-10-07) are grouped under their source proj
  const merged=renderWorkbench({...state,tasks:[wt],selectedId:'wt1',detail:{...detail,task:{...wt,worktree:{...wt.worktree,merged:true}}}} as never)
  expect(merged).toContain('已合回项目')
  const removed=renderWorkbench({...state,tasks:[{...wt,worktree:{...wt.worktree,removed:true}}],selectedId:'wt1',detail:{...detail,task:{...wt,worktree:{...wt.worktree,removed:true}}}} as never)
- expect(removed).not.toContain('data-action="worktree-commit"');expect(removed).toContain('工作区已删除')
+ expect(removed).not.toContain('data-action="worktree-commit"');expect(removed).toContain('工作区已删除');expect(removed).toContain('data-action="worktree-reopen"')
 })
 
 it('sourcePath takes priority over legacy projection and workspace detail retains explicit actions',()=>{
@@ -98,4 +98,13 @@ it('archive tidy hint is legacy-only even when a UUID workspace has the compatib
   expect(html).not.toContain('data-action="archive-task"')
   expect(html).not.toContain('独立工作区没有没提交的改动时会一起删掉')
  }
+})
+
+it('offers historical reopen only for removed legacy copies, never a removed UUID workspace projection',()=>{
+ const task={id:'removed',path:'/copy/removed',title:'已删除',providerId:'codex',status:'completed',createdAt:1,updatedAt:2,error:null,worktree:{branch:'cc/old',projectPath:'/work/site',removed:true}}
+ const workspace={id:'uuid',mode:'isolated' as const,sourcePath:'/work/site',executionPath:task.path,branch:'codex/cc-task-uuid',baseCommit:'a'.repeat(40),removed:true}
+ const page=(detail:unknown)=>renderWorkbench({...state,selectedId:task.id,detail} as never)
+ const base={task,events:[],artifacts:[]}
+ expect(page(base)).toContain('data-action="worktree-reopen"')
+ for(const detail of [{...base,workspace},{...base,task:{...task,workspace}},{...base,task:{...task,sourcePath:'/work/site'}}])expect(page(detail)).not.toContain('data-action="worktree-reopen"')
 })

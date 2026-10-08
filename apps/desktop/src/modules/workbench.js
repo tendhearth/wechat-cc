@@ -56,15 +56,15 @@ function reviewWriterBlocked(detail) {
 /** @typedef {{taskId:string,title:string,reason:'same_path'|'nested_path'|'writer_not_closed',holderWriting?:boolean,closeInMs?:number|null}} WaitingFor */
 /**
  * 独立工作区的显式动作；旧工作区保留「合回项目」，新副本本批提供提交与删除。
- * @param {{providerId:string,worktree?:{branch:string,projectPath:string,removed:boolean,removedAt?:number|null,merged?:boolean}}} task
+ * @param {{providerId:string,sourcePath?:string,workspace?:Workspace,worktree?:{branch:string,projectPath:string,removed:boolean,removedAt?:number|null,merged?:boolean}}} task
  * @param {Workspace} [workspace]
  * @param {Provider[]} [providers]
  */
 function worktreeHtml(task, workspace, providers = []) {
   const wt = workspace?.mode === 'isolated' ? workspace : task.worktree
   if (!wt) return ''
-  if (wt.removed || 'removedAt' in wt && wt.removedAt != null) return `<p class="wb-worktree">在分支 <code>${escapeWorkbenchHtml(wt.branch)}</code> 上做过，工作区已删除（分支还在项目里）。</p>`
-  const legacy = workspace?.mode !== 'isolated'
+  const legacy = !workspace && !task.workspace && !task.sourcePath
+  if (wt.removed || 'removedAt' in wt && wt.removedAt != null) return `<p class="wb-worktree">在分支 <code>${escapeWorkbenchHtml(wt.branch)}</code> 上做过，工作区已删除（分支还在项目里）。${legacy?'<button type="button" class="wb-new" data-action="worktree-reopen">重新打开工作区</button>':''}</p>`
   const status = legacy && 'merged' in wt && wt.merged ? '，已合回项目' : ''
   const merge = legacy ? '<button type="button" class="wb-new" data-action="worktree-merge" title="只做快进合并；项目有没提交的改动或已经往前走时不动">合回项目</button>' : ''
   return `<p class="wb-worktree">在独立分支 <code>${escapeWorkbenchHtml(wt.branch)}</code> 上做${status}。<button type="button" class="wb-new" data-action="worktree-commit">提交到分支</button>${merge}<button type="button" class="wb-new" data-action="worktree-remove">删除工作区</button></p>${forkHtml(task, providers)}`
@@ -1143,12 +1143,17 @@ export function initWorkbenchPage(deps) {
       }finally{forking=false;if(alive)controller.paint(true)}
       return
     }
+    const actionDetail=controller.state.detail
+    if(action==='worktree-reopen'&&controller.state.selectedId&&actionDetail&&!actionDetail.workspace&&!actionDetail.task.workspace&&!actionDetail.task.sourcePath&&actionDetail.task.worktree?.removed){
+      if(reviewWriterBlocked(actionDetail))return
+      return mutate('POST','/v1/workbench/worktree',{id:controller.state.selectedId,action:'reopen'})
+    }
     // 合回项目只沿用旧工作区入口；新副本不在本批新增合回动作。
     if ((action === 'worktree-commit' || action === 'worktree-merge' || action === 'worktree-remove') && controller.state.selectedId && controller.state.detail && (controller.state.detail.workspace?.mode==='isolated' ? action !== 'worktree-merge' && !controller.state.detail.workspace.removed : controller.state.detail.task.worktree && !controller.state.detail.task.worktree.removed && controller.state.detail.task.worktree.removedAt==null)) {
       if (action === 'worktree-remove' && !armConfirm(target, '再点一次：删除工作区（分支保留）')) return
       if (action === 'worktree-merge' && !armConfirm(target, '再点一次：快进合并到项目当前分支')) return
       return mutate('POST', '/v1/workbench/worktree', { id: controller.state.selectedId, action: action.slice('worktree-'.length) }, e => {
-        const code = String(e instanceof Error ? e.message : e).match(/\b(workbench_busy|worktree_dirty|worktree_removed|worktree_git_failed|not_worktree|worktree_uncommitted|project_dirty|project_detached|worktree_not_ff|project_busy)\b/)?.[1]
+        const code = String(e instanceof Error ? e.message : e).match(/\b(workbench_busy|worktree_dirty|worktree_removed|worktree_git_failed|not_worktree|worktree_uncommitted|project_dirty|project_detached|worktree_not_ff|project_busy|worktree_branch_missing|worktree_open|worktree_conflict|workbench_archived)\b/)?.[1]
         if (!code) return false
         fail(new Error(code === 'workbench_busy' ? '这个工作区还有会话占着，先收工再操作。' : executionErrorMessage(code) ?? code))
         return true
