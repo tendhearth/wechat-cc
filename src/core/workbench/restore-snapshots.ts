@@ -3,6 +3,7 @@ import {promisify} from 'node:util'
 import {createHash} from 'node:crypto'
 import {type Stats,constants,closeSync,fstatSync,fsyncSync,lstatSync,mkdirSync,openSync,readFileSync,readdirSync,readSync,realpathSync,writeSync} from 'node:fs'
 import {dirname,isAbsolute,join,relative,resolve,sep} from 'node:path'
+import {platform} from 'node:os'
 
 export const RESTORE_LIMITS={fileBytes:256*1024,totalBytes:16*1024*1024,entries:50_000} as const
 export type GitState={head:string;index:Record<string,string>}
@@ -56,10 +57,29 @@ export function initializeBlobs(blobRoot:string,workspace:string):string{
 export function saveBlob(blobRoot:string,bytes:Buffer,identity:string){verifyBlobRoot(blobRoot,identity);const sha=digest(bytes),path=join(blobRoot,sha);let fd:number
   try{fd=openSync(path,constants.O_WRONLY|constants.O_CREAT|constants.O_EXCL|constants.O_NOFOLLOW,0o600)}catch(e){if((e as NodeJS.ErrnoException).code!=='EEXIST')throw e;loadBlob(blobRoot,sha,identity);return sha}
   try{let offset=0;while(offset<bytes.length)offset+=writeSync(fd,bytes,offset,bytes.length-offset);fsyncSync(fd)}finally{closeSync(fd)}
-  verifyBlobRoot(blobRoot,identity);syncDirectory(blobRoot);return sha
+  verifyBlobRoot(blobRoot,identity);verifyDirectoryAfterWrite(blobRoot);return sha
 }
 export function loadBlob(blobRoot:string,sha:string,identity:string){verifyBlobRoot(blobRoot,identity);if(!/^[a-f0-9]{64}$/.test(sha))throw Error('invalid_blob');let fd:number;try{fd=openSync(join(blobRoot,sha),constants.O_RDONLY|constants.O_NOFOLLOW|constants.O_NONBLOCK)}catch{throw Error('blob_unavailable')};try{const st=fstatSync(fd);if(!st.isFile()||st.nlink!==1||st.size>RESTORE_LIMITS.fileBytes)throw Error('blob_invalid');const bytes=readFileSync(fd);if(digest(bytes)!==sha)throw Error('blob_corrupt');verifyBlobRoot(blobRoot,identity);return bytes}finally{closeSync(fd)}}
-export function syncDirectory(path:string){const fd=openSync(path,constants.O_RDONLY|constants.O_NOFOLLOW|constants.O_NONBLOCK);try{if(!fstatSync(fd).isDirectory())throw Error('directory_identity_changed');fsyncSync(fd)}finally{closeSync(fd)}}
+/**
+ * POSIX also flushes directory metadata. Windows has no equivalent through
+ * node:fs: its read-only directory handle cannot call FlushFileBuffers.
+ * There we verify the physical directory/ancestor identities without opening
+ * or claiming to flush them. Regular-file fsync and SQLite journal commits
+ * remain mandatory: recovery covers daemon/process crashes, not OS/power loss.
+ */
+export function verifyDirectoryAfterWrite(path:string){
+  const chain:Identity[]=[]
+  for(let current=resolve(path);;current=dirname(current)){
+    if(realpathSync(current)!==current)throw Error('directory_identity_changed')
+    chain.push({path:current,id:directoryId(current)})
+    if(dirname(current)===current)break
+  }
+  if(platform()!=='win32'){
+    const fd=openSync(path,constants.O_RDONLY|constants.O_NOFOLLOW|constants.O_NONBLOCK)
+    try{const stat=fstatSync(fd,{bigint:true});if(!stat.isDirectory()||`${stat.dev}:${stat.ino}`!==chain[0]!.id)throw Error('directory_identity_changed');fsyncSync(fd)}finally{closeSync(fd)}
+  }
+  for(const entry of chain)if(realpathSync(entry.path)!==entry.path||directoryId(entry.path)!==entry.id)throw Error('directory_identity_changed')
+}
 const execute=promisify(execFile)
 export async function gitInventory(root:string){
   const env={...process.env};for(const key of Object.keys(env))if(key.toUpperCase().startsWith('GIT_'))delete env[key]

@@ -17,7 +17,7 @@ describe.skipIf(process.platform==='win32')('restore snapshot special-file reads
     ['saveBlob','blob_invalid'],
     ['readVersion','file_changed'],
     ['observe','file_identity_changed'],
-    ['syncDirectory','directory_identity_changed'],
+    ['verifyDirectoryAfterWrite','directory_identity_changed'],
   ])('rejects FIFO in %s before blocking or reading', (operation,reason)=>{
     execFileSync('mkfifo',[join(root,'fifo')])
     const modulePath=fileURLToPath(new URL('./restore-snapshots.ts',import.meta.url))
@@ -33,8 +33,8 @@ describe.skipIf(process.platform==='win32')('restore snapshot special-file reads
         fs.renameSync(fifo,join(root,sha));
         const identity=snapshots.directoryId(root);
         call=()=>operation==='loadBlob'?snapshots.loadBlob(root,sha,identity):snapshots.saveBlob(root,bytes,identity);
-      } else if(operation==='syncDirectory') {
-        call=()=>snapshots.syncDirectory(fifo);
+      } else if(operation==='verifyDirectoryAfterWrite') {
+        call=()=>snapshots.verifyDirectoryAfterWrite(fifo);
       } else {
         fs.writeFileSync(file,bytes);
         const version=snapshots.observe(root,'file.txt');

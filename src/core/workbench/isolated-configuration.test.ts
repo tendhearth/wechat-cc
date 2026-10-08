@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, it } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 import { chmod, link, mkdir, mkdtemp, readFile, readdir, realpath, rm, symlink, writeFile } from 'node:fs/promises'
 import { execFile } from 'node:child_process'
 import { promisify } from 'node:util'
@@ -6,8 +6,20 @@ import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
 import { validateIsolatedConfiguration } from './isolated-configuration'
 
+// Windows chmod only changes the read-only attribute; it cannot remove read
+// access. Inject just the failing open syscall, keeping inspection and all
+// source/execution/config files real on every platform.
+const deniedOpen = vi.hoisted(() => ({ path: '' }))
+vi.mock('node:fs/promises', async importOriginal => {
+  const actual = await importOriginal<typeof import('node:fs/promises')>()
+  return { ...actual, open: ((...args: Parameters<typeof actual.open>) => {
+    if (String(args[0]) === deniedOpen.path) return Promise.reject(Object.assign(new Error('EACCES fixture-secret'), { code: 'EACCES', path: deniedOpen.path }))
+    return actual.open(...args)
+  }) }
+})
+
 const roots: string[] = []
-afterEach(async () => { await Promise.all(roots.splice(0).map(path => rm(path, { recursive: true, force: true }))) })
+afterEach(async () => { deniedOpen.path = ''; await Promise.all(roots.splice(0).map(path => rm(path, { recursive: true, force: true }))) })
 async function fixture(providerId = 'claude') {
   const root = await realpath(await mkdtemp(join(tmpdir(), 'cc-isolated-config-'))); roots.push(root)
   const sourcePath = join(root, 'source', 'project'), executionPath = join(root, 'copies', 'task'), home = join(root, 'home'), system = join(root, 'system')
@@ -98,13 +110,34 @@ describe('isolated native configuration admission', () => {
     const f = await fixture('cursor'), key = f.sourcePath.replace(/[^a-zA-Z0-9]/g, '-').replace(/-+/g, '-').replace(/^-+|-+$/g, '')
     await f.put(join(f.home, '.cursor/projects', key, name), {}); await rejected(f.validate())
   })
-  it.each(['malformed', 'oversized', 'directory', 'symlink', 'hardlink', 'unreadable'])('fails closed on %s global config without disclosing content', async kind => {
+  it.each(['malformed', 'oversized', 'directory', 'symlink', 'hardlink'])('fails closed on %s global config without disclosing content', async kind => {
     const f = await fixture('codex'), path = join(f.home, '.codex/config.toml'); await mkdir(dirname(path), { recursive: true })
     if (kind === 'directory') await mkdir(path)
     else if (kind === 'symlink') { await f.put(join(f.root, 'target'), 'model="fixture-secret"'); await symlink(join(f.root, 'target'), path) }
     else if (kind === 'hardlink') { await f.put(join(f.root, 'target'), 'model="fixture-secret"'); await link(join(f.root, 'target'), path) }
-    else { await f.put(path, kind === 'malformed' ? 'fixture-secret=[' : kind === 'oversized' ? '#'.repeat(1_000_001) : 'model="fixture-secret"'); if (kind === 'unreadable') await chmod(path, 0) }
+    else { await f.put(path, kind === 'malformed' ? 'fixture-secret=[' : kind === 'oversized' ? '#'.repeat(1_000_001) : 'model="fixture-secret"') }
     await rejected(f.validate())
+  })
+  it.skipIf(process.platform === 'win32')('rejects global config with no POSIX read mode bits', async () => {
+    const f = await fixture('codex'), path = join(f.home, '.codex/config.toml')
+    await f.put(path, 'model="fixture-secret"'); await chmod(path, 0)
+    try { await rejected(f.validate()) } finally { await chmod(path, 0o600) }
+  })
+  it('sanitizes a denied config open and leaves all real files unchanged', async () => {
+    const f = await fixture('codex'), path = join(f.home, '.codex/config.toml')
+    await f.put(path, 'model="fixture-secret"')
+    const before = await readFile(path), directories = [f.sourcePath, f.executionPath, f.home, dirname(path)]
+    const entries = await Promise.all(directories.map(dir => readdir(dir)))
+    deniedOpen.path = path
+    let error: unknown
+    try { await f.validate() } catch (caught) { error = caught }
+    expect(error instanceof Error && error.message === 'configuration_not_reproducible').toBe(true)
+    expect((error as { code?: string })?.code).toBe('configuration_not_reproducible')
+    expect(JSON.stringify(error).includes('fixture-secret')).toBe(false)
+    expect(JSON.stringify(error).includes(path)).toBe(false)
+    deniedOpen.path = ''
+    expect((await readFile(path)).equals(before)).toBe(true)
+    expect(await Promise.all(directories.map(dir => readdir(dir)))).toEqual(entries)
   })
   it('rejects symlink config directories and unknown native settings', async () => {
     const f = await fixture('codex'); await f.put(join(f.root, 'linked/config.toml'), 'model="same"'); await symlink(join(f.root, 'linked'), join(f.home, '.codex')); await rejected(f.validate())

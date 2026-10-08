@@ -4,7 +4,7 @@ import {dirname,join,resolve} from 'node:path'
 import type {Db} from '../../lib/db'
 import type {GitReview,ReviewFile} from './git-review'
 import {createRestoreStore,type RestoreOperation,type RestoreRun,type StoredChange,type StoredOperation,type StoredRun} from './restore-store'
-import {captureSnapshot,checkChain,digest,directoryId,gitInventory,initializeBlobs,verifyBlobRoot,loadBlob,observe,parentChain,safeRelative,sameContent,restoreError,syncDirectory,versionAt,type FileVersion,type GitState} from './restore-snapshots'
+import {captureSnapshot,checkChain,digest,directoryId,gitInventory,initializeBlobs,verifyBlobRoot,loadBlob,observe,parentChain,safeRelative,sameContent,restoreError,verifyDirectoryAfterWrite,versionAt,type FileVersion,type GitState} from './restore-snapshots'
 export type {RestoreOperation,RestoreRun} from './restore-store'
 export interface RestoreFile {path:string;changeId:string;state:'available'|'blocked'|'reverted'|'needs_recovery'|'resolved_keep_current';reason?:string;operationId?:string;observedFingerprint?:string}
 export interface RestoreReview extends RestoreRun {artifactId:string|null;files:RestoreFile[];review:GitReview}
@@ -75,7 +75,7 @@ export function createRestoreManager(options:RestoreManagerOptions){
   checkAfter(run,change);checkChain(run.path,op.chain)
   const target=join(run.path,change.path)
   if(change.before.kind==='absent'){
-   op.effectReady=true;op.receipt.state='applying';store.putOperation(op);checkAfter(run,change);unlinkSync(target);syncDirectory(dirname(target))
+   op.effectReady=true;op.receipt.state='applying';store.putOperation(op);checkAfter(run,change);unlinkSync(target);verifyDirectoryAfterWrite(dirname(target))
   }else if(change.before.kind==='file'){
    const bytes=loadBlob(blobRoot,change.before.blobSha,run.blobRootIdentity),temporaryPath=join(dirname(change.path),`.cc-workbench-restore-${op.receipt.operationId}.tmp`)
    if(op.temporaryPath&&op.temporaryPath!==temporaryPath)throw Error('temporary_identity_changed')
@@ -85,9 +85,9 @@ export function createRestoreManager(options:RestoreManagerOptions){
     const fd=openSync(join(run.path,temporaryPath),constants.O_WRONLY|constants.O_CREAT|constants.O_EXCL|constants.O_NOFOLLOW,0o600)
     try{let offset=0;while(offset<bytes.length)offset+=writeSync(fd,bytes,offset,bytes.length-offset);fchmodSync(fd,change.before.mode);fsyncSync(fd);const s=fstatSync(fd);op.temporaryIdentity=`${s.dev}:${s.ino}`}finally{closeSync(fd)}
    }
-   syncDirectory(dirname(target));op.effectReady=true;op.receipt.state='applying';store.putOperation(op);checkAfter(run,change);checkChain(run.path,op.chain)
+   verifyDirectoryAfterWrite(dirname(target));op.effectReady=true;op.receipt.state='applying';store.putOperation(op);checkAfter(run,change);checkChain(run.path,op.chain)
    if(change.after.kind==='absent'){linkSync(join(run.path,temporaryPath),target);unlinkSync(join(run.path,temporaryPath))}else renameSync(join(run.path,temporaryPath),target)
-   syncDirectory(dirname(target))
+   verifyDirectoryAfterWrite(dirname(target))
   }else throw Error('snapshot_unavailable')
   const current=observe(run.path,change.path);if(!sameContent(current,change.before)||(current.kind==='file'&&current.identity!==op.temporaryIdentity))throw Error('effect_not_verified')
   return finish(op,'reverted')
