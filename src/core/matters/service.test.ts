@@ -106,5 +106,9 @@ describe('worktree on the phone (2026-10-07)',()=>{
     expect((await service.detail('deadbeef')).task?.worktree).toEqual({branch:'cc/abcd1234',removed:false})
     expect(service.worktree('deadbeef','commit')).toEqual({branch:'cc/abcd1234',committed:true})
     expect(worktreeAction).toHaveBeenCalledWith('deadbeef','commit')
+    worktreeAction.mockReturnValueOnce({branch:'cc/abcd1234',merged:true,into:'main'} as never)
+    expect(service.worktree('deadbeef','merge')).toEqual({branch:'cc/abcd1234',merged:true})
+    task.worktree={...task.worktree,merged:true} as never
+    expect((await service.detail('deadbeef')).task?.worktree).toEqual({branch:'cc/abcd1234',removed:false,merged:true})
   })
 })
