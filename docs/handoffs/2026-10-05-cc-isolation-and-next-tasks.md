@@ -8,7 +8,7 @@
 - [六项实施计划](../superpowers/plans/2026-10-05-workbench-isolation-review.md)
 - [维护者入口](../maintainer/README.md)及根目录 AGENTS.md
 
-上批桌面与跨平台收口已通过 [PR 230](https://github.com/tendhearth/wechat-cc/pull/230) 进入 dev，本批最初产品基线为 `b2ef0c71`。10 月 8 日整合树已对齐 dev `b92b46cd`，保留后来加入的工作区、执行者退出、自定义 ACP、模型及图片功能。本批 [PR 262](https://github.com/tendhearth/wechat-cc/pull/262) 仍是草稿，尚未部署。10 月 5 日的 Claude 与 Qwen3.8 真执行者证据不代替本批验收；Cursor 当时受额度限制，合入前还需重新核对远端 dev 和本机版本。
+上批桌面与跨平台收口已通过 [PR 230](https://github.com/tendhearth/wechat-cc/pull/230) 进入 dev，本批最初产品基线为 `b2ef0c71`。10 月 8 日整合树已对齐 dev `d195d238`，保留后来加入的工作区、执行者退出、自定义 ACP、模型、图片及旧工作区合回功能。本批 [PR 262](https://github.com/tendhearth/wechat-cc/pull/262) 仍是草稿，尚未部署。10 月 5 日的 Claude 与 Qwen3.8 真执行者证据不代替本批验收；Cursor 当时受额度限制，合入前还需重新核对远端 dev 和本机版本。
 
 ## 第一优先级 完成当前批准的一批
 
@@ -19,8 +19,8 @@
 | 桌面和手机执行位置及桌面撤回交互 | `cf98c031` 两项复审通过并整合；原生各 119 项、桌面/PWA 各 284 项、实际浏览器 17 项通过 | 对接真实服务；未知创建冻结完整请求，未确认退出不开放撤回；只有匹配的 reverted 回执表示已撤回 |
 | 原生执行配置准入 | `7323695c` 修复已独立复审并整合；各 111 项及 10 个实际分配样例通过 | 保守核对规则、配置、授权及路径等价；无法证明就拒绝，4096 项扫描上限需说明 |
 | 任务创建与来源项目绑定 | `2770d2b9` 与微信事务修复 `0c667d65` 已独立复审通过并整合；复审各 232 项和 10 个独立探针通过 | 最终版本重验各入口；保留旧回执及无 MatterStore 兼容，失败不接受或派发 |
-| 会话关闭证明及撤回和导出服务 | Task 5 已在独立树实施，实际服务恢复、退出不确定、重启和日志故障测试陆续转绿 | 完成全部生命周期和竞争边界、独立审阅；管理员路由、权限登记和成果接齐后再整体验收 |
-| 整体验收与交付 | 待整合，计划 Task 6 | 全套 Bun、Node、类型和模块边界、桌面和 Rust 检查；准确提交的 CI；dev、本机安装和真实执行者闭环 |
+| 会话关闭证明及撤回和导出服务 | Task 5 候选 `f7726aba` 完成，相关 Bun/Node 各 717 项通过；独立审阅发现 resolve 回执重试 P2，正在修复 | 修复后复审全部接线；管理员路由、权限登记和成果接齐后再整体验收 |
+| 整体验收与交付 | Task 6 实际 HTTP 验收 `8ab4bb45` 的三场景在 Bun、Node 24/26 均通过，待最终整合 | 全套 Bun、Node、类型和模块边界、桌面和 Rust 检查；准确提交的 CI；dev、本机安装和真实执行者闭环 |
 
 验收必须走新建两件同项目任务 → 并行执行 → 交给另一位检查 → 关闭会话 → 看整段改动 → 撤回一个文件 → 导出补丁 → 重启后核对未决操作。使用自建 Git 样例，保留原项目的文件、HEAD 和 index 对照。旧任务、普通逐回合 diff、保留中的会话都不能凭空获得恢复点。
 
@@ -35,9 +35,9 @@
 | `cc-isolation-restore` | `codex/cc-isolation-restore` | 恢复模块，已提交；修改仍交原负责人 |
 | `cc-isolation-ui` | `codex/cc-isolation-ui` | apps 内客户端、桌面代理与原生白名单 |
 | `cc-isolation-config` | `codex/cc-isolation-config` | 新配置准入 helper 和测试 |
-| `cc-isolation-module-review` | `codex/cc-http-upload-closeout` | Task 4 审阅结束后转为 Node 上传连接边界的独立修复 |
+| `cc-isolation-module-review` | `codex/cc-isolation-http-acceptance` | HTTP 修复已复审通过；现移交为 Task 6 实际 HTTP 验收 |
 | `cc-isolation-core` | `codex/cc-isolation-core` | Task 4 与微信事务修复完成并复审通过 |
-| `cc-isolation-dev-audit` | `codex/cc-isolation-ui-final-review` | 已转为 UI 独立复审，`cf98c031` 通过 |
+| `cc-isolation-dev-audit` | `codex/cc-isolation-final-review` | Task 5 与最终整支接线独立审阅 |
 | `cc-isolation-windows-ci` | `codex/cc-http-upload-review` | Windows 修复已提交；现移交为 HTTP 修复的独立复审树 |
 | `cc-isolation-lifecycle` | `codex/cc-isolation-lifecycle` | Task 5 服务生命周期、关闭证明、恢复路由及动作 |
 
@@ -50,7 +50,7 @@
 - 新 Git 任务默认独立副本，脏项目或不安全配置明确拒绝；用户可以显式选原目录。无编号旧协议保留原目录兼容，不宣称去重。
 - `Task.path` 是执行目录，来源项目另存。旧桌面创建接口保留标题和路径语义，但加稳定 requestId 和 executionMode，与新版共用回执。结果未知保留编号，修改内容或执行位置才换编号。
 - 子项目保持目录范围。Git 记录的 `executionIdentity` 才对应实际执行目录；恢复 begin 使用它，不能误用更外层 worktree 的身份。
-- before 在 writer 启动前冻结；retained 续接和自主唤醒属于同一段会话。实际 close 确认后才采 after；重启后没有内存对象不代表已退出。
+- before 在 writer 启动前冻结；retained 续接和自主唤醒属于同一段会话。实际 close 确认后才采 after；重启后没有内存对象不代表已退出。pending/sending 补充阻挡撤回；held 保存给用户判断、不自动重发，主动重发仍须经过新 writer 的代际与占用门。
 - 撤回与新写入共用父子路径占用规则。prepared、applying、needs_recovery 持久阻挡；成功回执、路径版本及任务事件在同一个 SQLite 事务提交。
 - 撤回路由返回 `{operation}`。必须匹配任务、成果、路径、changeId 和 requestId；resolved_keep_current 只表示保留现场。
 - 补丁使用私有 index，含提交、暂存、未暂存和非忽略新增；排除内部材料，拒绝不完整输出。归档保留副本，本批不自动合并原项目或删除副本。
@@ -64,9 +64,9 @@
 
 草稿 PR 的 `13ae30ad`、`03434cac` 两轮 Mac、Linux、Node 及后端端到端检查通过；Windows 都失败。第二轮明确暴露测试临时路径的 8.3 别名与严格物理路径检查冲突；Git 模块夹具修复 `108132ae` 已整合为 `d376fd41`，服务夹具也在修正，不放宽来源别名门。配置权限夹具和恢复目录处理已经复审通过，但尚需下一轮真实 CI。最终整合版本要重新跑全套，不能用早期模块或 CI 绿代替。五万项真实覆盖测试保持完整扫描和拒绝断言，失败会附资格诊断。
 
-本机 Node 26 与官方 Node 24 的超限分块上传测试都复现过连接早关闭的 `EPIPE`；早期 CI 一次通过不能排除这条竞争。修复 `99887ead` 在 Bun、Node 26 和 Node 24 的各 764 项 HTTP 检查通过，原分块病例两版 Node 各连续 10 次通过；正独立复审核对完整 413、同连接后续请求零执行和有界资源释放，尚未合入。
+本机 Node 26 与官方 Node 24 的超限分块上传测试都复现过连接早关闭的 `EPIPE`；早期 CI 一次通过不能排除这条竞争。修复 `99887ead` 在 Bun、Node 26 和 Node 24 的各 764 项 HTTP 检查通过，原分块病例两版 Node 各连续 10 次通过；独立复审 `9fe0f942` 同样通过三个运行时，并实际观测同连接两次解析而业务零执行、固定约 1 秒回收与清理，已合入根树 `bda4d21a`。
 
-只读文件身份审计另确认 64 位 inode 转为 Number 的精度风险：不同文件可被错误认成同一文件，导致错误撤回或重启后错误解除阻挡。Task 5 正把叶子与临时文件身份改为精确整数，并对无法证明精度的旧记录保守拒绝；两条原始实际文件探针在修复树已转绿，历史记录与重启病例仍在补验。
+只读文件身份审计另确认 64 位 inode 转为 Number 的精度风险：不同文件可被错误认成同一文件，导致错误撤回或重启后错误解除阻挡。Task 5 将叶子与临时文件身份改为精确整数，并对无法证明精度的旧记录保守拒绝；原始两探针及历史身份两病例在修复树 Bun/Node 均通过，独立复审也通过原两探针。
 
 UI 分支的新增路由需要 Task 5 补 daemon 和 token 白名单后才能通过路由守卫。手机生成页由整合者按现有构建流程重建，不能忽略生成物与源码不一致。原生确认框已改为应用对话框，还要在实际安装包验收。
 
