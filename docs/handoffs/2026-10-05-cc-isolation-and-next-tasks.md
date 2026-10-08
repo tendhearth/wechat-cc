@@ -8,7 +8,7 @@
 - [六项实施计划](../superpowers/plans/2026-10-05-workbench-isolation-review.md)
 - [维护者入口](../maintainer/README.md)及根目录 AGENTS.md
 
-上批桌面与跨平台收口已通过 [PR 230](https://github.com/tendhearth/wechat-cc/pull/230) 进入 dev，本批最初产品基线为 `b2ef0c71`。10 月 8 日整合树已对齐 dev `7cd9d7d4`，保留后来加入的工作区、执行者退出、自定义 ACP、模型、图片及旧工作区合回功能；旧 `.worktreeinclude` helper 保留，新默认副本不使用它。桌面「另做一份」、手机同类入口和微信工作区动作的兼容修正都已独立复审并整合。本批 [PR 262](https://github.com/tendhearth/wechat-cc/pull/262) 仍是草稿，尚未部署。10 月 5 日的 Claude 与 Qwen3.8 真执行者证据不代替本批验收；Cursor 当时受额度限制，合入前还需重新核对远端 dev 和本机版本。
+上批桌面与跨平台收口已通过 [PR 230](https://github.com/tendhearth/wechat-cc/pull/230) 进入 dev，本批最初产品基线为 `b2ef0c71`。10 月 8 日整合树已对齐 dev `c3d7cfe5`，并正在保留最新 `2d5c0aa2` 的手机路径与旧工作区修正，保留后来加入的工作区、执行者退出、自定义 ACP、模型、图片及旧工作区合回功能；旧 `.worktreeinclude` helper 保留，新默认副本不使用它。桌面「另做一份」、手机同类入口和微信工作区动作的兼容修正都已独立复审并整合。本批 [PR 262](https://github.com/tendhearth/wechat-cc/pull/262) 仍是草稿，尚未部署。10 月 5 日的 Claude 与 Qwen3.8 真执行者证据不代替本批验收；Cursor 当时受额度限制，合入前还需重新核对远端 dev 和本机版本。
 
 ## 第一优先级 完成当前批准的一批
 
@@ -20,7 +20,7 @@
 | 原生执行配置准入 | `7323695c` 修复已独立复审并整合；各 111 项及 10 个实际分配样例通过 | 保守核对规则、配置、授权及路径等价；无法证明就拒绝，4096 项扫描上限需说明 |
 | 任务创建与来源项目绑定 | `2770d2b9` 与微信事务修复 `0c667d65` 已独立复审通过并整合；复审各 232 项和 10 个独立探针通过 | 最终版本重验各入口；保留旧回执及无 MatterStore 兼容，失败不接受或派发 |
 | 会话关闭证明及撤回和导出服务 | 候选 `f7726aba`、回执修复 `90ae470c` 和启动域整理 `2574d576` 均完成，独立整支与增量审阅通过，无未决 P1/P2 | 管理员路由、权限登记和成果已接齐；继续准确提交的 CI 与真执行者验收 |
-| 整体验收与交付 | HTTP 三场景在三个运行时通过；先前整合 `994a9fd7` 全套已通过；最新 `b603e74d` Bun 12,214 项通过、1 项 Claude 进程存活核验失败，类型与模块检查通过；桌面浏览器 232 项通过 | 定位并修复系统权限错误，完成最新全套与准确提交的 CI；dev、本机安装和真实执行者闭环；公开发布另排 |
+| 整体验收与交付 | HTTP 三场景在三个运行时通过；进程修复整合 `4aec77cd` 的 Bun 12,233 项、Node 10,466 项全部通过；归档整合 `f194161a` 全套又暴露 2 个失败，正在核对；类型与模块检查通过 | 完成最新上游适配和失败核对，再完成最终全套与准确提交的 CI；dev、本机安装和真实执行者闭环；公开发布另排 |
 
 验收必须走新建两件同项目任务 → 并行执行 → 交给另一位检查 → 关闭会话 → 看整段改动 → 撤回一个文件 → 导出补丁 → 重启后核对未决操作。使用自建 Git 样例，保留原项目的文件、HEAD 和 index 对照。旧任务、普通逐回合 diff、保留中的会话都不能凭空获得恢复点。
 
@@ -33,7 +33,7 @@
 | `cc-closeout-integrate` | `codex/workbench-isolation-review` | 根整合、计划、交接、最终验收及部署 |
 | `cc-isolation-workspaces` | `codex/cc-isolation-workspaces` | Git 模块，已提交；修改仍交原负责人 |
 | `cc-isolation-restore` | `codex/cc-isolation-restore` | 恢复模块，已提交；修改仍交原负责人 |
-| `cc-isolation-ui` | `codex/cc-isolation-fork-adapt` | 桌面最新入口已复审完成；现仅准备 ignored 真执行者专项验收脚本，不操作生产环境 |
+| `cc-isolation-ui` | `codex/cc-isolation-archive-compat` | 桌面入口与归档兼容已独立复审；继续保留最新旧工作区修正，不操作生产环境 |
 | `cc-isolation-config` | `codex/cc-isolation-config` | 新配置准入 helper 和测试 |
 | `cc-isolation-module-review` | `codex/cc-isolation-http-acceptance` | HTTP 修复已复审通过；现移交为 Task 6 实际 HTTP 验收 |
 | `cc-isolation-core` | `codex/cc-isolation-phone-fork` | 原 Task 4 已完成；现明确移交为最新 dev 手机入口兼容适配工作区 |
@@ -78,9 +78,11 @@
 
 手机增量的复审也复现了同一草稿的晚回执删除新图片与新执行者选择；`a533acdc` 已按完整草稿版本保护并提供已受理任务入口。原两个失败探针在 Bun/Node 均转绿，相关独立检查各 122 项通过，已整合至 `b603e74d`。微信动作等待实际异步结果，只在明确成功标记后报告完成；新 UUID 副本不提示自动合回原项目。
 
-发布的 `5f201dfc` 因同时到来的 dev 桌面改动尚未触发 CI，triage 返回 NORUN；这不是测试通过或测试失败。最新整合已保留所有上述入口，仍须修复当前全套失败后，针对准确最终提交检查 CI。
+发布的 `5f201dfc` 因同时到来的 dev 桌面改动尚未触发 CI，triage 返回 NORUN；这不是测试通过或测试失败。最新整合已保留上述入口，仍须完成最新归档与旧工作区兼容的全套检查，针对准确最终提交检查 CI。
 
-最新全套原始失败保存在本机 `/tmp/cc-isolation-final-latest-bun.log`：Claude 冻结并结束自建子进程后，存活核验 `kill(..., 0)` 返回 EPERM。尚未断言原因为僵尸进程，也不把所有权限错误当作已退出；交由独占的进程关闭修复工作区诊断、回归与复审。不跳过检查、不放宽未确认 writer 的门。
+早期全套原始失败保存在本机 `/tmp/cc-isolation-final-latest-bun.log`：Claude 子进程关闭核验返回 EPERM。独立自建的 Darwin 僵尸组已实际复现同类错误，但原失败未保存完整进程身份，原因仍未知。`0cd37efa` 仅在捕获的自有进程身份一致、所有成员均为僵尸且根进程已退出时证明关闭；活进程、未知状态、身份变化和缺少观测仍拒绝。独立复审通过，根整合 `4aec77cd` 的 Bun 12,233 项、Node 10,466 项全套通过，未跳过检查。
+
+最新归档兼容 `0e071947` 独立复审通过：旧工作区归档落盘成功后才清理干净目录，返回真实删除状态；新 UUID 副本即使兼有旧记录也保留目录、恢复资格和私有原始字节。`f194161a` 的全套 Bun 又出现 2 个失败：恢复夹具没有找到目标文件，原因待核对；旧归档夹具只修改 canArchive 却保留 writer_not_closed，与真实后台状态矛盾，需修正夹具并保留未确认 writer 的隐藏断言。原始日志 `/tmp/cc-isolation-final-archive-bun.log` 保留，不称为 flake。
 
 源码和本地自动检查通过仍不等于生产功能交付。准确提交的 CI、dev 整合、完整本机安装及真实执行者验收仍待完成；公开 master、商店和新版本发布不在这批范围。
 
