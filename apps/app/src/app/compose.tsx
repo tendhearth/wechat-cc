@@ -5,7 +5,7 @@ import { SafeAreaView } from 'react-native-safe-area-context'
 import { BackendError, type MatterInputT } from '../backend/types'
 import { t, type Lang } from '../i18n'
 import { useLang } from '../i18n/useLang'
-import { deleteDraft, getDraft, getEntrySettings, setEntrySettings, getDraftImages, setDraftImages, pairingGen, creationInputFor, requestIdFor, setDraft, materialDraftId } from '../state/drafts'
+import { deleteDraft, getDraft, getEntrySettings, setEntrySettings, getDraftImages, setDraftImages, pairingGen, creationInputFor, getDraftStamp, sameDraftStamp, requestIdFor, setDraft, materialDraftId } from '../state/drafts'
 import { AddImageButton, ImageTray } from '../ui/ImageTray'
 import { bytesToBase64, uploadImages, type PickedImage } from '../state/image-upload'
 import { PHONE_CHAT_MAX_IMAGES as MAX_IMAGES } from '@wechat-cc/protocol'
@@ -56,16 +56,27 @@ function ComposeScreen({ params, matter, fork, draftKey }: { params: ComposePara
   const submit = useSubmit()
   const excludeProvider = one(params.exclude) || null
   // 与文字一起留在本次进程的草稿里,离开页面后仍能核对原交办。
-  const [images, setImages] = useState<PickedImage[]>(()=>getDraftImages(draftKey))
-  useEffect(()=>setDraftImages(draftKey,images),[draftKey,images])
+  const [images, setImagesState] = useState<PickedImage[]>(()=>getDraftImages(draftKey))
+  const imagesRef = useRef(images)
+  const setImages = (next: PickedImage[] | ((current: PickedImage[]) => PickedImage[])) => {
+    const value = typeof next === 'function' ? next(imagesRef.current) : next
+    imagesRef.current = value
+    setDraftImages(draftKey, value)
+    setImagesState(value)
+  }
+  const pickerPending = useRef(0)
   const [imageNote, setImageNote] = useState<string | null>(null)
   const addImages = async () => {
     // 用到才加载:相册与哈希是原生模块,不进页面的静态依赖(测试与首屏都不需要它)
-    const { pickImages } = await import('../net/image-pick')
-    const r = await pickImages(MAX_IMAGES - images.length)
-    if (!r) return
-    setImages(cur => [...cur, ...r.images].slice(0, MAX_IMAGES))
-    setImageNote(r.skipped === 'too_large' ? t(lang, 'images.tooLarge') : r.skipped === 'unsupported' ? t(lang, 'images.unsupported') : null)
+    const atGen = pairingGen()
+    pickerPending.current++
+    try {
+      const { pickImages } = await import('../net/image-pick')
+      const r = await pickImages(MAX_IMAGES - imagesRef.current.length)
+      if (!r || atGen !== pairingGen() || draftKeyRef.current !== draftKey) return
+      setImages(cur => [...cur, ...r.images].slice(0, MAX_IMAGES))
+      setImageNote(r.skipped === 'too_large' ? t(lang, 'images.tooLarge') : r.skipped === 'unsupported' ? t(lang, 'images.unsupported') : null)
+    } finally { pickerPending.current-- }
   }
   const { backend } = useBackendCtx()
   const session = useSession()
@@ -81,6 +92,7 @@ function ComposeScreen({ params, matter, fork, draftKey }: { params: ComposePara
   const [busy, setBusy] = useState(false)
   const [outcome, setOutcome] = useState<null | ComposeOutcome>(null)
   const [inputNotice, setInputNotice] = useState<string | null>(null)
+  const [acceptedMatter, setAcceptedMatter] = useState<string | null>(null)
   const [initialSettings] = useState(() => getEntrySettings(draftKey, fork ? { projectId: one(params.project) || null, providerId: null, executionMode: 'isolated', forkProviderPending: true } : undefined))
   const [projectId, setProjectId] = useState<string | null>(initialSettings.projectId)
   const [providerId, setProviderId] = useState<string | null>(initialSettings.providerId)
@@ -211,7 +223,8 @@ function ComposeScreen({ params, matter, fork, draftKey }: { params: ComposePara
     const atGen = pairingGen()
     const myKey = draftKey
     sending.current = true
-    setBusy(true); setOutcome(null)
+    setBusy(true); setOutcome(null); setInputNotice(null); setAcceptedMatter(null)
+    let submittedStamp = getDraftStamp(myKey)
     let newId: string | null = null
     const r = await submit(`compose:${draftKey}`, async () => {
       // 同一份草稿、同样正文重发(「不确定」之后再点)⇒ 同一个 requestId,daemon 去重,不会说两遍。
@@ -228,6 +241,7 @@ function ComposeScreen({ params, matter, fork, draftKey }: { params: ComposePara
           text: body, projectId: fork ? projectId ?? undefined : project?.id, providerId: fork ? providerId ?? undefined : provider?.id,
           ...(project || fork ? { executionMode } : {}), ...(materials ?? {}), ...(execution ? { execution } : {}),
         })
+        submittedStamp = getDraftStamp(myKey)
         if (input.draftId && input.attachmentIds?.length) await uploadImages(backend, input.draftId, images.filter(image=>input.attachmentIds!.includes(image.id)), bytesToBase64)
         try { newId = (await backend.create(input)).matterId }
         catch (error) { if (atGen === pairingGen() && draftKeyRef.current === myKey && error instanceof BackendError && error.reason) setInputNotice(composeCreationReason(error.reason, lang)); throw error }
@@ -239,7 +253,11 @@ function ComposeScreen({ params, matter, fork, draftKey }: { params: ComposePara
     if (r === 'busy') {
       setOutcome('busy')
     } else if (r === 'ok') {
-      if (getDraft(myKey) === rawText) { deleteDraft(myKey); textRef.current = ''; setTextState('') }
+      if (!sameDraftStamp(submittedStamp, getDraftStamp(myKey)) || pickerPending.current > 0) {
+        setAcceptedMatter(newId ?? matter ?? null)
+        return
+      }
+      deleteDraft(myKey); textRef.current = ''; setTextState('')
       setImages([]); setImageNote(null)
       if (matter) router.back()
       else router.replace(`/matter/${encodeURIComponent(newId ?? '')}`)
@@ -322,6 +340,10 @@ function ComposeScreen({ params, matter, fork, draftKey }: { params: ComposePara
               <Txt testID={`compose-${outcome}`} role="meta" tone="inkSoft" accessibilityLiveRegion="polite" style={{ flex: 1 }}>{composeOutcomeText(outcome, lang, matter ? detail.data?.task?.providerId ?? null : provider?.id ?? null, !!matter)}</Txt>
             </View>
           ) : null}
+          {acceptedMatter ? <View style={{ gap: space.s }}>
+            <Txt testID="compose-accepted-draft" role="meta" tone="inkSoft" accessibilityLiveRegion="polite">{t(lang, 'compose.acceptedDraftSaved')}</Txt>
+            <Button kind="secondary" testID="compose-accepted-progress" label={t(lang, 'input.viewProgress')} onPress={() => router.push(`/matter/${encodeURIComponent(acceptedMatter)}`)} />
+          </View> : null}
           {rows.length ? <InputReceipts rows={rows} onRestore={restoreInput} onRetry={row => void sendInput(row.rawText, row.runId, row)} disabled={busy || !online} /> : null}
           {inputNotice ? <Txt testID="compose-input-notice" role="meta" tone="inkSoft" accessibilityLiveRegion="polite">{inputNotice}</Txt> : null}
           {matter && rows.length ? <Button kind="secondary" testID="compose-progress" label={t(lang, 'input.viewProgress')} onPress={() => router.canGoBack() ? router.back() : router.replace(`/matter/${encodeURIComponent(matter)}`)} /> : null}

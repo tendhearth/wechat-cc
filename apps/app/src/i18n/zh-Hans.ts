@@ -466,6 +466,7 @@ const zh: Record<keyof typeof en, string> = {
   'compose.handoffTitle': '交给 CC 去做一件事',
   'compose.handoffHint': 'CC 会在电脑上开一件事去做；只想聊聊就回到对话。',
   'compose.forkHint': '发送前请核对带来的文字要求。原来的图片不会自动带过来，可以在这里补充。',
+  'compose.acceptedDraftSaved': '这次提交已接下，当前草稿已保留。',
   'continue.action': '接着做',
   'continue.open': '打开这件事',
   'continue.title': '在手机上接着做？',

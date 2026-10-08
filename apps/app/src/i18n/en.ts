@@ -464,6 +464,7 @@ const en = {
   'compose.handoffTitle': 'Hand a task to CC',
   'compose.handoffHint': 'CC will open a task on your computer and work on it. Just want to chat? Go back to the conversation.',
   'compose.forkHint': 'Review the saved text before sending. The original images are not copied; you can add images here.',
+  'compose.acceptedDraftSaved': 'Your computer accepted this submission. Your current draft is saved.',
   'continue.action': 'Continue here',
   'continue.open': 'Open this task',
   'continue.title': 'Continue from your phone?',

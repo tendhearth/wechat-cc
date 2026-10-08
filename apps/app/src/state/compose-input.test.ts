@@ -19,7 +19,7 @@ type Root = { render(node: ReactNode): void; unmount(): void }
 const createRoot = createRequire(import.meta.url)('react-dom/client').createRoot as (container: Element) => Root
 const roots: Root[] = []
 const disposers: Array<() => void> = []
-const host = vi.hoisted(() => ({ ctx: null as unknown as { backend: Backend; store: Store }, params: {} as Record<string, string>, back: vi.fn(), push: vi.fn(), replace: vi.fn(), sources: [] as { text: unknown; selectable?: boolean; id?: string }[] }))
+const host = vi.hoisted(() => ({ ctx: null as unknown as { backend: Backend; store: Store }, params: {} as Record<string, string>, back: vi.fn(), push: vi.fn(), replace: vi.fn(), pickerGate: null as null | Promise<any>, sources: [] as { text: unknown; selectable?: boolean; id?: string }[] }))
 Object.assign(globalThis, { IS_REACT_ACT_ENVIRONMENT: true })
 
 // 只替换原生宿主、路由与 provider 取值;真实请求、缓存、订阅、文本与回执组件一起执行。
@@ -50,7 +50,7 @@ vi.mock('../i18n/useLang', () => ({ useLang: () => 'zh-Hans' }))
 vi.mock('../state/BackendProvider', () => ({ useBackendCtx: () => host.ctx }))
 vi.mock('../state/session', () => ({ useSession: () => ({ pairing: null, inputScope: matterInputState.recovery().scope }) }))
 vi.mock('../ui/TopBar', () => ({ TopBar: () => null }))
-vi.mock('../net/image-pick', () => ({ pickImages: async () => ({images:[{id:'22222222-2222-4222-8222-222222222222',name:'photo.png',mime:'image/png',size:3,sha256:'a'.repeat(64),bytes:new Uint8Array([1,2,3]),uri:'test://image'}],skipped:null}) }))
+vi.mock('../net/image-pick', () => ({ pickImages: async () => host.pickerGate ?? ({images:[{id:'22222222-2222-4222-8222-222222222222',name:'photo.png',mime:'image/png',size:3,sha256:'a'.repeat(64),bytes:new Uint8Array([1,2,3]),uri:'test://image'}],skipped:null}) }))
 
 type Reply = { status: number; json: unknown } | Error
 const ok = (json: unknown, status = 200): Reply => ({ status, json })
@@ -121,7 +121,7 @@ function harness() {
   }
 }
 beforeEach(async () => {
-  clearDrafts(); host.back.mockClear(); host.push.mockClear(); host.replace.mockClear(); host.sources.length = 0
+  host.pickerGate=null; clearDrafts(); host.back.mockClear(); host.push.mockClear(); host.replace.mockClear(); host.sources.length = 0
   const disk = new Map<string,string>()
   matterInputState.configure(makeInputJournal({ getItemAsync: async k => disk.get(k) ?? null, setItemAsync: async (k,v) => { disk.set(k,v) }, deleteItemAsync: async k => { disk.delete(k) } }, async s => createHash('sha256').update(s).digest('hex')))
   await matterInputState.activate({ v: 1, relayHost: 'test', relayUrl: 'wss://test', daemonId: 'test', deviceId: 'test', deviceToken: 'private-test-token', pairedAt: 1 })
@@ -320,7 +320,10 @@ describe('real LiveBackend + native compose inputs', () => {
     await next.type('另一件事草稿')
     await act(() => create.resolve(ok({ ok: true, receipt: RECEIPT, task: WB_TASK }, 202))); await flush()
     expect(getDraft('new')).toBe('另一件事草稿')
-    expect(host.replace).toHaveBeenCalledWith(`/matter/${ID}`)
+    expect(host.replace).not.toHaveBeenCalled()
+    expect(next.byId('compose-accepted-draft').textContent).toContain('已接下')
+    await next.click('compose-accepted-progress')
+    expect(host.push).toHaveBeenCalledWith(`/matter/${ID}`)
   })
   it('shows the same receipts on the real matter page and restores the exact original without overwriting a newer draft', async () => {
     const h = harness(); const ui = await mount(); await ui.type('\n**要求**\n'); await ui.click('compose-send')
@@ -529,4 +532,95 @@ it('managed UUID matter offers fork with source project and text while hiding so
  setDraft(`fork:${ID}`,'后来的草稿');await ui.click('progress-wt-fork');expect(getDraft(`fork:${ID}`)).toBe('后来的草稿')
  await unmount(ui);host.params=forkParams;const compose=await mount()
  expect(compose.container.textContent).toContain('原来的图片不会自动带过来')
+})
+
+
+it.each(['provider','location','project','model','text','same-text edit'] as const)('late fork success preserves the full draft after a %s edit and offers the accepted task',async edit=>{
+ const h=harness();host.params=forkParams
+ h.setOptions({...forkOptions,projects:[...forkOptions.projects,{...OPTIONS.projects[0]!,id:'p-11111111111111111111',name:'Another project'}],providers:forkOptions.providers.map(p=>({...p,capabilities:{...p.capabilities,features:{...p.capabilities.features,modelCatalog:true}}}))})
+ const sent=gate<Reply>();h.setCreate(()=>sent.promise)
+ const ui=await mount();await ui.type('fork intent')
+ await act(()=>ui.byId<HTMLButtonElement>('compose-send').click());await flush()
+ const submitted=creations(h)[0]!.body
+ if(edit==='provider')await choice(ui,'CC 安排执行')
+ if(edit==='location')await choice(ui,'原目录')
+ if(edit==='project')await choice(ui,'Another project')
+ if(edit==='model')await choice(ui,'Test model')
+ if(edit==='text')await ui.type('later intent')
+ if(edit==='same-text edit'){await ui.type('temporary text');await ui.type('fork intent')}
+ const settings=getEntrySettings(`fork:${ID}`)
+ await act(()=>sent.resolve(ok({ok:true,receipt:RECEIPT,task:WB_TASK},202)));await flush()
+ expect(getDraft(`fork:${ID}`)).toBe(edit==='text'?'later intent':'fork intent')
+ expect(getEntrySettings(`fork:${ID}`)).toEqual(settings)
+ expect(host.replace).not.toHaveBeenCalled();expect(ui.byId('compose-accepted-draft').textContent).toContain('已接下')
+ expect(ui.byId('compose-refused')).toBeNull()
+ await ui.click('compose-accepted-progress')
+ expect(host.push).toHaveBeenCalledWith(`/matter/${ID}`)
+ // Only an explicit new submit creates the later intent; a deliberate edit gets a new request.
+ expect(creations(h)).toHaveLength(1)
+ h.setCreate(()=>new Error('timeout'));await ui.click('compose-send')
+ expect(creations(h)[1]!.body.requestId).not.toBe(submitted.requestId)
+})
+
+it('pre-opened picker result remains in the fork draft after an accepted creation',async()=>{
+ const h=harness();host.params=forkParams;h.setOptions(forkOptions)
+ const sent=gate<Reply>();h.setCreate(()=>sent.promise)
+ const picked=gate<any>();host.pickerGate=picked.promise
+ const ui=await mount();await ui.type('fork intent');await ui.click('compose-add-image')
+ await act(()=>ui.byId<HTMLButtonElement>('compose-send').click());await flush()
+ const submitted=creations(h)[0]!.body
+ await act(()=>picked.resolve({images:[{id:'33333333-3333-4333-8333-333333333333',name:'new.png',mime:'image/png',size:3,sha256:'a'.repeat(64),bytes:new Uint8Array([1,2,3]),uri:'test://new'}],skipped:null}));await flush()
+ expect(getDraftImages(`fork:${ID}`)).toHaveLength(1)
+ await act(()=>sent.resolve(ok({ok:true,receipt:RECEIPT,task:WB_TASK},202)));await flush()
+ expect(getDraftImages(`fork:${ID}`)).toHaveLength(1);expect(getDraft(`fork:${ID}`)).toBe('fork intent');expect(host.replace).not.toHaveBeenCalled()
+ expect(ui.byId('compose-accepted-progress')).not.toBeNull();expect(creations(h)).toHaveLength(1)
+ h.setCreate(()=>new Error('timeout'));await ui.click('compose-send')
+ expect(creations(h)[1]!.body.requestId).not.toBe(submitted.requestId)
+ expect(creations(h)[1]!.body.attachmentIds).toEqual(['33333333-3333-4333-8333-333333333333'])
+})
+
+it('unchanged complete fork draft is cleared and opened after its accepted creation',async()=>{
+ const h=harness();host.params=forkParams;h.setOptions(forkOptions)
+ const ui=await mount();await ui.type('fork intent');await ui.click('compose-add-image');await ui.click('compose-send')
+ expect(getDraft(`fork:${ID}`)).toBe('');expect(getDraftImages(`fork:${ID}`)).toEqual([])
+ expect(getEntrySettings(`fork:${ID}`)).toEqual({projectId:null,providerId:null,executionMode:'auto'})
+ expect(host.replace).toHaveBeenCalledWith(`/matter/${ID}`);expect(ui.byId('compose-accepted-progress')).toBeNull()
+})
+
+
+it('acceptance while the native picker is still open preserves the draft for its later result',async()=>{
+ const h=harness();host.params=forkParams;h.setOptions(forkOptions)
+ const picked=gate<any>();host.pickerGate=picked.promise
+ const ui=await mount();await ui.type('fork intent');await ui.click('compose-add-image');await ui.click('compose-send')
+ expect(getDraft(`fork:${ID}`)).toBe('fork intent');expect(host.replace).not.toHaveBeenCalled()
+ expect(ui.byId('compose-accepted-progress')).not.toBeNull()
+ await act(()=>picked.resolve({images:[{id:'33333333-3333-4333-8333-333333333333',name:'new.png',mime:'image/png',size:3,sha256:'a'.repeat(64),bytes:new Uint8Array([1,2,3]),uri:'test://new'}],skipped:null}));await flush()
+ expect(getDraftImages(`fork:${ID}`)).toHaveLength(1)
+ expect(creations(h)).toHaveLength(1)
+})
+
+it.each(['route','pairing'] as const)('picker result after a %s ownership change cannot mutate either draft',async change=>{
+ const h=harness();host.params=forkParams;h.setOptions(forkOptions)
+ const picked=gate<any>();host.pickerGate=picked.promise
+ const ui=await mount();await ui.type('old intent');await ui.click('compose-add-image')
+ if(change==='route'){
+  host.params={...forkParams,fork:'deadbeef'};await act(()=>ui.root.render(createElement(Compose)));await flush()
+ }else clearDrafts()
+ await act(()=>picked.resolve({images:[{id:'33333333-3333-4333-8333-333333333333',name:'new.png',mime:'image/png',size:3,sha256:'a'.repeat(64),bytes:new Uint8Array([1,2,3]),uri:'test://new'}],skipped:null}));await flush()
+ expect(getDraftImages(`fork:${ID}`)).toEqual([]);expect(getDraftImages('fork:deadbeef')).toEqual([])
+ expect(creations(h)).toHaveLength(0)
+})
+
+
+it('accepted edited draft replaces an earlier creation rejection notice with its actual acceptance',async()=>{
+ const h=harness();host.params=forkParams;h.setOptions(forkOptions)
+ h.setCreate(()=>ok({ok:false,error:'git_workspace_source_unsupported'},409))
+ const ui=await mount();await ui.type('fork intent');await ui.click('compose-send')
+ expect(ui.byId('compose-input-notice').textContent).toContain('当前无法准备独立副本')
+ const sent=gate<Reply>();h.setCreate(()=>sent.promise)
+ await act(()=>ui.byId<HTMLButtonElement>('compose-send').click());await flush()
+ await choice(ui,'CC 安排执行')
+ await act(()=>sent.resolve(ok({ok:true,receipt:RECEIPT,task:WB_TASK},202)));await flush()
+ expect(ui.byId('compose-accepted-draft').textContent).toContain('已接下')
+ expect(ui.byId('compose-input-notice')).toBeNull();expect(ui.byId('compose-refused')).toBeNull()
 })
