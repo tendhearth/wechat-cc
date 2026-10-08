@@ -22,8 +22,9 @@ export interface AcpCustomAgent { id: string; name: string; command: string; arg
 export const RESERVED_EXECUTOR_IDS: ReadonlySet<string> = new Set(['claude', 'codex', 'cursor', 'agy', 'openai', 'gemini', 'api'])
 export const ACP_AGENT_ID = /^[a-z][a-z0-9-]{1,30}$/
 /** 已知会说 ACP 的 CLI:命令名 + 参数。版本不对的话第一次 initialize 会如实报错,这里不探测。 */
-export const ACP_PRESETS: Readonly<Record<string, { name: string; bin: string; args: string[] }>> = Object.freeze({
-  'gemini-cli': { name: 'Gemini CLI', bin: 'gemini', args: ['--acp'] },
+export const ACP_PRESETS: Readonly<Record<string, { name: string; bin: string; args: string[]; note?: string }>> = Object.freeze({
+  // 2026-10-07 真机:Google 已停用 Gemini CLI 的个人 Google 账号登录(「请迁到 Antigravity」)⇒ 要用 API key(gemini-api-key)。
+  'gemini-cli': { name: 'Gemini CLI', bin: 'gemini', args: ['--acp'], note: '个人 Google 账号登录已被 Google 停用，需要 API key（--auth-method gemini-api-key）；订阅版 Gemini 请用 agy' },
   opencode: { name: 'OpenCode', bin: 'opencode', args: ['acp'] },
   goose: { name: 'Goose', bin: 'goose', args: ['acp'] },
   'qwen-code': { name: 'Qwen Code', bin: 'qwen', args: ['--acp'] },

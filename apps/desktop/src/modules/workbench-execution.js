@@ -84,6 +84,7 @@ export function executionErrorMessage(error){
   ['acp_attachment_image_unsupported','这个版本的 Cursor 不接收图片附件，请移除图片，或改用 Claude / Codex。'],
   ['acp_prompt_too_large','附件太大，Cursor 一次接不下（上限约 4 MB），请压缩图片或分批发送。'],
  ])
+ if(code.startsWith('acp_agent_auth_required: '))return `这个执行者没能登录：${code.slice('acp_agent_auth_required: '.length)}`
  for(const [prefix,text] of acp) if(code===prefix||code.startsWith(`${prefix}:`)) return text
  return messages[code]??null
 }

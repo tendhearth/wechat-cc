@@ -422,7 +422,7 @@ describe('ACP provider — reports the model the session actually runs (review #
       const spawning = createAcpProvider({ command: '/gemini', args: ['--acp'], displayName: 'Gemini CLI', rpcTimeoutMs: 200, closeTimeoutMs: 250, permissions: 'mode', text: 'messages', authMethod: 'nope', authErrorCode: 'acp_agent_auth_required' }).spawn({ alias: 'a', path: '/tmp' } as never, context())
       await expect.poll(() => children.length).toBe(1)
       children[0]!.requireAuth = true; children[0]!.initializeResult = { protocolVersion: 1, authMethods: [{ id: 'oauth-personal' }] }
-      await expect(spawning).rejects.toThrow('acp_agent_auth_required')
+      await expect(spawning).rejects.toThrow('acp_agent_auth_required: Authentication required')
       expect(children[0]!.sent.some(m => m.method === 'authenticate')).toBe(false)
     })
   })

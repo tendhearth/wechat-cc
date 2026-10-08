@@ -78,6 +78,8 @@ export function executionFailureMessage(code:string):string {
     ['acp_attachment_image_unsupported', '这个版本的 Cursor 不接收图片附件，请移除图片，或改用 Claude / Codex。'],
     ['acp_prompt_too_large', '附件太大，Cursor 一次接不下（上限约 4 MB），请压缩图片或分批发送。'],
   ]
+  // 自定义执行者的登录失败带着 agent 自己说的原因:原样给主人看,比一句笼统的「没登录」有用得多。
+  if (code.startsWith('acp_agent_auth_required: ')) return `这个执行者没能登录：${code.slice('acp_agent_auth_required: '.length)}`
   for (const [prefix, text] of acp) if (code === prefix || code.startsWith(`${prefix}:`)) return text
   return messages[code]??code
 }
