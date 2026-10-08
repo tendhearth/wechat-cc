@@ -100,7 +100,7 @@
 
 <details class="sec">
   <summary>工作台(把一件事派进文件夹做完) <span class="count">11</span></summary>
-  <ul><li>做 <b>新 Git 任务默认固定提交的独立副本，配置不能安全重现就明确拒绝</b> [定 2026-10-05，实施见 PR 262] <button class="why" onclick="this.nextElementSibling.hidden=!this.nextElementSibling.hidden">why</button><span class="why-body" hidden>原项目与执行目录分别记录；脏项目、忽略配置和原目录专属授权不静默复制或降级。项目内正常文件操作彼此独立，Git 元数据仍共享；不是系统沙箱</span></li>
+  <ul><li>做 <b>新 Git 任务默认固定提交的独立副本，配置不能安全重现就明确拒绝</b> [定 2026-10-05，实施见 PR 262] <button class="why" onclick="this.nextElementSibling.hidden=!this.nextElementSibling.hidden">why</button><span class="why-body" hidden>原项目与执行目录分别记录；脏项目、忽略配置和原目录专属授权不静默复制或降级。当前 UUID 只从来源项目当前提交开始，指定分支起点与删除后重开另排，保存请求明确拒绝而不换起点。项目内正常文件操作彼此独立，Git 元数据仍共享；不是系统沙箱</span></li>
 <li>做 <b>确认整段会话关闭后的逐文件原始字节撤回，未决操作持久挡住新 writer</b> [定 2026-10-05，实施见 PR 262] <button class="why" onclick="this.nextElementSibling.hidden=!this.nextElementSibling.hidden">why</button><span class="why-body" hidden>逐回合 diff 继续审阅，可靠恢复另存私有前后像、存在性、身份及代际证明。原请求重试只回执；不确定时可核对后保留当前文件。旧任务不补造恢复点</span></li>
 <li>做 <b>固定基线的完整项目补丁导出，归档保留副本</b> [定 2026-10-05，实施见 PR 262] <button class="why" onclick="this.nextElementSibling.hidden=!this.nextElementSibling.hidden">why</button><span class="why-body" hidden>提交、暂存、未暂存和非忽略新增都要覆盖，真实 index 和原项目不变；新 UUID 副本合回原项目另排，旧工作区已有动作保留</span></li>
 <li>做 <b>文件夹的占用从派发到会话关闭</b> [定 2026-09-21] · 不做 <b>答复即释放(回合租约那一套)</b> <button class="why" onclick="this.nextElementSibling.hidden=!this.nextElementSibling.hidden">why</button><span class="why-body" hidden>保留下来的原生会话随时被后台通知唤醒、自己又动手,而且没有任何事件预告——所以「已答复」从不等于「文件夹空了」。同日早些时候那套回合代数 + 状态转移探测器 + fail-closed 结束会话,都是在用事后观察逼近一个错的前提。换成一条不变式后是净删代码。详见 [roadmap](roadmap.md) 与 superpowers/specs/2026-09-21-one-folder-one-session-design.md</span></li>

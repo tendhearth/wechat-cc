@@ -8,7 +8,7 @@
 - [六项实施计划](../superpowers/plans/2026-10-05-workbench-isolation-review.md)
 - [维护者入口](../maintainer/README.md)及根目录 AGENTS.md
 
-上批桌面与跨平台收口已通过 [PR 230](https://github.com/tendhearth/wechat-cc/pull/230) 进入 dev，本批最初产品基线为 `b2ef0c71`。10 月 8 日整合树已对齐 dev `5e02d531`，手机路径、旧工作区修正与旧分支重新打开也已独立复审通过并整合，保留后来加入的工作区、执行者退出、自定义 ACP、模型、图片及旧工作区合回功能；旧 `.worktreeinclude` helper 保留，新默认副本不使用它。桌面「另做一份」、手机同类入口和微信工作区动作的兼容修正都已独立复审并整合。本批 [PR 262](https://github.com/tendhearth/wechat-cc/pull/262) 仍是草稿，尚未部署。10 月 5 日的 Claude 与 Qwen3.8 真执行者证据不代替本批验收；Cursor 当时受额度限制，合入前还需重新核对远端 dev 和本机版本。
+上批桌面与跨平台收口已通过 [PR 230](https://github.com/tendhearth/wechat-cc/pull/230) 进入 dev，本批最初产品基线为 `b2ef0c71`。10 月 8 日整合树已对齐 dev `0936e48d`，手机路径、旧工作区修正、旧分支重新打开及分支起点兼容也已独立复审通过并整合，保留后来加入的工作区、执行者退出、自定义 ACP、模型、图片及旧工作区合回功能；旧 `.worktreeinclude` helper 保留，新默认副本不使用它。新 UUID 暂不支持指定分支起点和删除后重开，明确拒绝且保留草稿及原回执。桌面「另做一份」、手机同类入口和微信工作区动作的兼容修正都已独立复审并整合。本批 [PR 262](https://github.com/tendhearth/wechat-cc/pull/262) 仍是草稿，尚未部署。10 月 5 日的 Claude 与 Qwen3.8 真执行者证据不代替本批验收；Cursor 当时受额度限制，合入前还需重新核对远端 dev 和本机版本。
 
 ## 第一优先级 完成当前批准的一批
 
@@ -20,7 +20,7 @@
 | 原生执行配置准入 | `7323695c` 修复已独立复审并整合；各 111 项及 10 个实际分配样例通过 | 保守核对规则、配置、授权及路径等价；无法证明就拒绝，4096 项扫描上限需说明 |
 | 任务创建与来源项目绑定 | `2770d2b9` 与微信事务修复 `0c667d65` 已独立复审通过并整合；复审各 232 项和 10 个独立探针通过 | 最终版本重验各入口；保留旧回执及无 MatterStore 兼容，失败不接受或派发 |
 | 会话关闭证明及撤回和导出服务 | 候选 `f7726aba`、回执修复 `90ae470c` 和启动域整理 `2574d576` 均完成，独立整支与增量审阅通过，无未决 P1/P2 | 管理员路由、权限登记和成果已接齐；继续准确提交的 CI 与真执行者验收 |
-| 整体验收与交付 | HTTP 三场景在三个运行时通过；`55bc0c95` 本地 Bun 12,238 项、Node 10,470 项、Chromium 233 项及四项类型检查通过；该准确提交的 CI 9 项通过，Windows 14 项失败；最新上游与三类修正已独立复审并整合，最终全套与 CI 待重验 | 完成最新准确提交的全套与 CI；dev、本机安装和真实执行者闭环；公开发布另排 |
+| 整体验收与交付 | 实际 HTTP 在三个运行时通过；`55bc0c95` 的 CI 9 项通过，Windows 14 项失败；三类修正已独立复审并整合，`4c3f6984` 本地 Bun 12,250 项、Node 10,481 项、Chromium 234 项及四项类型检查通过；最新分支起点兼容已独立复审，最终准确提交全套与 CI 待重验 | 完成最新准确提交的全套与 CI；dev、本机安装和真实执行者闭环；公开发布另排 |
 
 验收必须走新建两件同项目任务 → 并行执行 → 交给另一位检查 → 关闭会话 → 看整段改动 → 撤回一个文件 → 导出补丁 → 重启后核对未决操作。使用自建 Git 样例，保留原项目的文件、HEAD 和 index 对照。旧任务、普通逐回合 diff、保留中的会话都不能凭空获得恢复点。
 
@@ -31,14 +31,14 @@
 | 目录 | 分支 | 所属工作 |
 | --- | --- | --- |
 | `cc-closeout-integrate` | `codex/workbench-isolation-review` | 根整合、计划、交接、最终验收及部署 |
-| `cc-isolation-workspaces` | `codex/cc-isolation-workspaces` | Git 模块，已提交；修改仍交原负责人 |
-| `cc-isolation-restore` | `codex/cc-isolation-restore` | 恢复模块，已提交；修改仍交原负责人 |
-| `cc-isolation-ui` | `codex/cc-isolation-archive-compat` | 桌面入口与归档兼容已独立复审；继续保留最新旧工作区修正，不操作生产环境 |
+| `cc-isolation-workspaces` | `codex/cc-isolation-win-fixtures` | Git 模块已完成；明确移交的物理路径与 clone 换行夹具修正已独立复审 |
+| `cc-isolation-restore` | `codex/cc-isolation-win-cleanup` | 恢复模块已完成；明确移交的 Bun 原生 SQLite 语句关闭修正已独立复审 |
+| `cc-isolation-ui` | `codex/cc-isolation-branch-compat` | 桌面入口、归档与指定分支拒绝兼容已独立复审；不操作生产环境 |
 | `cc-isolation-config` | `codex/cc-isolation-config` | 新配置准入 helper 和测试 |
 | `cc-isolation-module-review` | `codex/cc-isolation-http-acceptance` | HTTP 修复已复审通过；现移交为 Task 6 实际 HTTP 验收 |
 | `cc-isolation-core` | `codex/cc-isolation-phone-fork` | 原 Task 4 已完成；现明确移交为最新 dev 手机入口兼容适配工作区 |
 | `cc-isolation-dev-audit` | `codex/cc-isolation-final-review` | Task 5 与最终整支接线独立审阅 |
-| `cc-isolation-windows-ci` | `codex/cc-http-upload-review` | Windows 修复已提交；现移交为 HTTP 修复的独立复审树 |
+| `cc-isolation-windows-ci` | `codex/cc-isolation-win-http` | 明确移交的实际 HTTP 场景拆分及失败阶段诊断已独立复审 |
 | `cc-isolation-lifecycle` | `codex/cc-isolation-close-process` | 原 Task 5 已完成；现明确移交为最新全套暴露的 Claude 进程关闭核验修复工作区 |
 
 不要另派一位重复写这些树。根树 `.superpowers/sdd/2026-10-05-workbench-isolation-review/` 保存最新进度、接口裁决和模块报告；各实现树也有自己的交接报告。它们是本机工作记录，接手时结合 Git 实际状态核对。报告专用提交不作为产品代码合入。
@@ -70,7 +70,7 @@
 
 新增路由、daemon 和 token 白名单已接齐并通过全套路由守卫。手机生成页由整合者按现有构建流程重建，最终源码没有未提交的生成物差异。原生确认框已改为应用对话框，还要在实际安装包验收。
 
-10 月 8 日原生窗口工具曾因 Mac 锁屏无法操作；主人随后回复「已解锁」，工具已恢复读取原生窗口。确认框仍须在最终安装包中用自建任务实际验证，不能以浏览器检查代替。隔离专项脚本会保留第二个已经真正关闭、仍有可撤回文件的副本供这一项使用。
+10 月 8 日原生窗口工具曾因 Mac 锁屏无法操作；主人随后回复「已解锁」，工具曾恢复读取原生窗口，后续读取再次报告锁屏，已请求主人再次解锁。确认框仍须在最终安装包中用自建任务实际验证，不能以浏览器检查代替。隔离专项脚本会保留第二个已经真正关闭、仍有可撤回文件的副本供这一项使用。
 
 首轮全套检查发现主 service 超出 171 行限制，已将恢复初始化移入现有域，保留启动顺序和限制，复审与全套重新通过。两次早期 Bun 快照夹具在构造撤回请求前缺目标文件的原因仍未知，未执行文件写入；已增强完整诊断并保留原红，不能称已定位或登记成 flake。最终顺序目标及根全套未复现。
 
@@ -107,3 +107,7 @@
 清理失败进一步暴露真实 SQLite 关闭泄漏：Bun 异步查询的 JS 包装对象消失后，弱引用集合不能再释放仍存活的原生语句。实际失败恢复路径在 strict close 报数据库锁定，且自建目录的 SQLite/WAL/SHM 留有四个句柄；修复后为零。修复追踪原生语句并在包装对象回收或关闭时释放，Node 行为保留；恢复夹具反而加强为 strict close，没有增加清理重试或 GC 掩盖。独立审阅的 Bun、Node 24、Node 26 各 98 项及生命周期、真实句柄探针通过。
 
 三份实现为 `8a030739`、`844f1c9c`、`374d53d4`，组合独立审阅 `ebe8221e` 通过。Windows 上原句柄拥有者未能回溯；实际新提交 CI 仍是最终验证，不提前宣称 Windows 已修好。旧工作区重开限旧登记行，新 UUID 重开明确拒绝且不改变恢复、回执、目录或源 Git 状态。
+
+指定分支兼容候选 `3dcc4e04` 与独立审阅 `33201a2b` 全树一致；审阅 Bun/Node 各 335 项、Chromium 2 项、四项类型检查通过。已有 accepted 分支回执先重放，新 UUID 的 `target.base` 及旧形状显式分支请求在 provider、材料和分配前 422 拒绝，无目录、任务、回执或源 Git 副作用。未知提交冻结原编号与全部参数；明确拒绝后显式重选项目或位置才清分支意图。#273 吞 EPIPE/reset 的夹具放宽没有合入，严格完整 413、同连接隔离和固定回收检查原样保留。
+
+#275 的旧工作区演示数据保留；Maestro 改用现有设置面板，核对真正预选的来源项目、独立副本和另一位执行者，并检查分支输入不出现。调整后流程尚未重跑模拟器，原上游模拟器记录不代替当前准确源码、UUID 或真实 Git 验收。
