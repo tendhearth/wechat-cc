@@ -364,7 +364,7 @@ it('preserves explicit commit/remove for historical v74 worktrees',async()=>{
     store.worktrees.record({taskId:task.id,projectPath:project,repoRoot:project,root:plan.root,branch:plan.branch});await settle(task.id)
     writeFileSync(join(path,'out.txt'),'done\n');return task
   }
-  const first=await make(),second=await make(),a=service.detail(first.id).task,one={receipt:{taskId:first.id}},two={receipt:{taskId:second.id}}
+  const first=await make(),second=await make(),a=service.detail(first.id).task,b=service.detail(second.id).task,one={receipt:{taskId:first.id}},two={receipt:{taskId:second.id}}
   // 提交到分支;项目本身不动
   const commit=await service.worktreeAction(one.receipt.taskId,'commit')
   const {mergeHint}=await import('./worktree-workspaces')
@@ -380,4 +380,22 @@ it('preserves explicit commit/remove for historical v74 worktrees',async()=>{
   expect(existsSync(a.path)).toBe(false);expect(service.detail(one.receipt.taskId).task.worktree?.removed).toBe(true)
   expect(g('rev-parse','--verify',a.worktree!.branch)).toBe(commit.sha)
   expect(()=>service.worktreeAction(one.receipt.taskId,'commit')).toThrow('worktree_removed')
+  // Archive must commit successfully before touching the filesystem or emitting cleanup events.
+  service.worktreeAction(second.id,'commit')
+  const events=service.detail(second.id).events.length
+  db.exec("CREATE TRIGGER archive_fault BEFORE UPDATE OF archived_at ON workbench_tasks BEGIN SELECT RAISE(ABORT,'archive_fault'); END")
+  expect(()=>service.setArchived(second.id,true)).toThrow('archive_fault')
+  expect(service.detail(second.id).task.archivedAt).toBeNull();expect(service.detail(second.id).events).toHaveLength(events)
+  expect(existsSync(b.path)).toBe(true);expect(store.worktrees.get(second.id)?.removedAt).toBeNull()
+  db.exec('DROP TRIGGER archive_fault');writeFileSync(join(b.path,'out.txt'),'dirty after committed archive fixture\n')
+  // 归档时顺手收拾(10-08):有没提交的改动 ⇒ 留着并说一句;提交后再归档 ⇒ 工作区删掉、分支还在
+  service.setArchived(two.receipt.taskId,true)
+  expect(service.detail(two.receipt.taskId).task.worktree?.removed).toBe(false);expect(existsSync(b.path)).toBe(true)
+  expect(service.detail(two.receipt.taskId).events.at(-1)?.text).toContain('还有没提交的改动，先保留着')
+  service.setArchived(two.receipt.taskId,false);service.worktreeAction(two.receipt.taskId,'commit')
+  const archived=service.setArchived(two.receipt.taskId,true)
+  expect(archived).not.toBeInstanceOf(Promise);expect(archived.archivedAt).toEqual(expect.any(Number))
+  expect(archived.worktree?.removed).toBe(true)
+  expect(service.detail(two.receipt.taskId).task.worktree?.removed).toBe(true);expect(existsSync(b.path)).toBe(false)
+  expect(g('rev-parse','--verify',b.worktree!.branch)).toMatch(/^[0-9a-f]{40}$/)
 })

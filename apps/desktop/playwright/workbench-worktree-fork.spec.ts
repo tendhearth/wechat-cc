@@ -152,3 +152,16 @@ test('upload completing after fork starts invalidates its late navigation',async
  await page.evaluate(()=>{(window as any).qa.release()});await page.evaluate(()=>new Promise<void>(r=>requestAnimationFrame(()=>requestAnimationFrame(()=>r()))))
  expect(await page.evaluate(()=>(window as any).qa.controller.state.selectedId)).toBe('aaaa1111')
 })
+
+test('archive hint distinguishes historical worktrees from UUID copies and keeps the live-writer guard',async({page})=>{
+ await page.evaluate(async()=>{const q=(window as any).qa;q.controller.state.tasks[0].canArchive=true;await q.controller.refresh({force:true})})
+ await page.locator('#wb-task-info summary').click()
+ await expect(page.locator('[data-action="archive-task"]')).toBeVisible()
+ await expect(page.locator('.wb-task-organization small')).toHaveText('独立工作区没有没提交的改动时会一起删掉（分支保留）。')
+ await page.evaluate(async()=>{const q=(window as any).qa;q.workspace=true;await q.controller.refresh({force:true})})
+ await expect(page.locator('[data-action="archive-task"]')).toBeVisible()
+ await expect(page.locator('.wb-task-organization small')).toHaveCount(0)
+ await expect(page.locator('.wb-task-head')).toContainText('归档会保留副本')
+ await page.evaluate(async()=>{const q=(window as any).qa;Object.assign(q.controller.state.tasks[0],{error:'writer_not_closed',writerExit:'unconfirmed'});await q.controller.refresh({force:true})})
+ await expect(page.locator('[data-action="archive-task"]')).toHaveCount(0)
+})

@@ -5,7 +5,7 @@ import type { MatterStore } from '../matters/store'
 import type { ReportSink } from '../matters/report'
 import type { RecollectSink } from '../matters/recollection'
 import type { UsageSnapshot } from '../subscription-usage'
-import { type WorkbenchStore } from './store'
+import { publicTask, type WorkbenchStore } from './store'
 import { makeTaskChangeHub, type TaskChangeHub } from './task-changes'
 
 interface Options {
@@ -140,7 +140,7 @@ export function makeWorkbenchService(opts: Options) {
     discardAttachmentUpload:attachmentsDomain.discardAttachmentUpload,takeChatImages:attachmentsDomain.takeChatImages,
     readAttachment:attachmentsDomain.readAttachment,
     discardAttachment:attachmentsDomain.discardAttachment,
-    setArchived:lifecycleDomain.setArchived,confirmWriterExited:lifecycleDomain.confirmWriterExited,
+    setArchived:(id:string,archived:boolean)=>{const view=lifecycleDomain.setArchived(id,archived);if(!archived)return view;worktreeDomain.tidyOnArchive(id);return taskView(publicTask(store.get(id)))},confirmWriterExited:lifecycleDomain.confirmWriterExited,
     cancel:lifecycleDomain.cancel,suspendForNetwork:lifecycleDomain.suspendForNetwork,resumeFromNetwork:lifecycleDomain.resumeFromNetwork,stopSuspendedForNetwork:lifecycleDomain.stopSuspendedForNetwork,networkSuspended:lifecycleDomain.networkSuspended,
     artifact:artifactsDomain.artifact,
     approve:artifactsDomain.approve,
