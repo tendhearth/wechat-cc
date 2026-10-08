@@ -3,16 +3,20 @@
  */
 import { ACP_PRESETS, acpAgentProblem, type AcpCustomAgent } from '../core/acp/agents'
 
-type Agent = { id: string; name: string; command: string; args?: string[] }
+type Agent = { id: string; name: string; command: string; args?: string[]; auth_method?: string }
 
 /** 加一个:给了预设 id 且没给命令 ⇒ 用预设(命令名要在 PATH 上找得到);同 id ⇒ 替换。 */
-export function addAcpAgent(agents: readonly Agent[], input: { id: string; name?: string; command?: string; args?: string[] }, findOnPath: (cmd: string) => string | null):
+/**
+ * 加一个。authMethod 没给时,预设可以自己从 agent 的配置里读出本机在用的登录方式(Gemini CLI:~/.gemini/settings.json)。
+ */
+export function addAcpAgent(agents: readonly Agent[], input: { id: string; name?: string; command?: string; args?: string[]; authMethod?: string }, findOnPath: (cmd: string) => string | null, detectAuth: (presetId: string) => string | null = () => null):
   { ok: true; agents: Agent[]; agent: Agent; replaced: boolean } | { ok: false; error: string } {
   const preset = ACP_PRESETS[input.id]
   if (!input.command && !preset) return { ok: false, error: `${input.id} 不是已知的预设(${Object.keys(ACP_PRESETS).join(' / ')}),请用 --command 给出启动命令` }
   const command = input.command ?? preset!.bin
   if (!input.command && !findOnPath(command)) return { ok: false, error: `没找到 ${command},先装好它再加` }
-  const agent: Agent = { id: input.id, name: input.name ?? preset?.name ?? input.id, command, ...(input.args ?? preset?.args ? { args: input.args ?? [...preset!.args] } : {}) }
+  const authMethod = input.authMethod ?? (preset ? detectAuth(input.id) : null)
+  const agent: Agent = { id: input.id, name: input.name ?? preset?.name ?? input.id, command, ...(input.args ?? preset?.args ? { args: input.args ?? [...preset!.args] } : {}), ...(authMethod ? { auth_method: authMethod } : {}) }
   const problem = acpAgentProblem(agent)
   if (problem) return { ok: false, error: problem }
   const replaced = agents.some(a => a.id === agent.id)
@@ -32,3 +36,13 @@ export function formatAcpAgents(agents: readonly Agent[], findOnPath: (cmd: stri
   return [...lines, '', '预设(wechat-cc cli acp add <预设>):', ...presets, '', '改完要重启 daemon 才生效:wechat-cc service stop && wechat-cc service start'].join('\n')
 }
 export type { AcpCustomAgent }
+
+/** 本机 Gemini CLI 在用的登录方式(settings.json 的 security.auth.selectedType,老版本叫 selectedAuthType)。读不到 ⇒ null。 */
+export function detectGeminiAuthMethod(readSettings: () => string | null): string | null {
+  try {
+    const raw = readSettings(); if (!raw) return null
+    const s = JSON.parse(raw) as { security?: { auth?: { selectedType?: unknown } }; selectedAuthType?: unknown }
+    const v = s.security?.auth?.selectedType ?? s.selectedAuthType
+    return typeof v === 'string' && /^[a-z0-9-]{1,64}$/.test(v) ? v : null
+  } catch { return null }
+}

@@ -22,14 +22,17 @@ const addCmd = defineCommand({
     name: { type: 'string', description: '显示名' },
     command: { type: 'string', description: '启动命令(可执行文件名或绝对路径)' },
     args: { type: 'string', description: '参数,空格分隔,如 "acp" 或 "--acp"' },
+    'auth-method': { type: 'string', description: 'ACP 登录方式 id(如 oauth-personal);预设会自己从 agent 配置里读' },
   },
   async run({ args }) {
-    const d = await deps(), { addAcpAgent } = await import('../acp-agents')
+    const d = await deps(), { addAcpAgent, detectGeminiAuthMethod } = await import('../acp-agents')
+    const { readFileSync } = await import('node:fs'), { homedir } = await import('node:os'), { join } = await import('node:path')
+    const detect = (presetId: string) => presetId === 'gemini-cli' ? detectGeminiAuthMethod(() => { try { return readFileSync(join(homedir(), '.gemini', 'settings.json'), 'utf8') } catch { return null } }) : null
     const config = d.load()
-    const r = addAcpAgent(config.acp_agents ?? [], { id: args.id, ...(args.name ? { name: args.name } : {}), ...(args.command ? { command: args.command } : {}), ...(args.args !== undefined ? { args: args.args.split(/\s+/).filter(Boolean) } : {}) }, d.findOnPath)
+    const r = addAcpAgent(config.acp_agents ?? [], { id: args.id, ...(args.name ? { name: args.name } : {}), ...(args.command ? { command: args.command } : {}), ...(args.args !== undefined ? { args: args.args.split(/\s+/).filter(Boolean) } : {}), ...(args['auth-method'] ? { authMethod: args['auth-method'] } : {}) }, d.findOnPath, detect)
     if (!r.ok) { console.error(`cli acp add: ${r.error}`); process.exit(1) }
     d.save({ ...config, acp_agents: r.agents })
-    console.log(`${r.replaced ? '已更新' : '已加'} ${r.agent.id}(${r.agent.name}):${[r.agent.command, ...(r.agent.args ?? [])].join(' ')}\n重启 daemon 后出现在一起做的执行者里:wechat-cc service stop && wechat-cc service start`)
+    console.log(`${r.replaced ? '已更新' : '已加'} ${r.agent.id}(${r.agent.name}):${[r.agent.command, ...(r.agent.args ?? [])].join(' ')}${r.agent.auth_method ? `,登录方式 ${r.agent.auth_method}` : ''}\n重启 daemon 后出现在一起做的执行者里:wechat-cc service stop && wechat-cc service start`)
   },
 })
 const removeCmd = defineCommand({

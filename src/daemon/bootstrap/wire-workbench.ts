@@ -106,7 +106,7 @@ export function registerAcpExecutors(target: ProviderRegistry, source: Pick<Prov
  * 和 Cursor 同一个 ACP 客户端)。不报调用目标 ⇒ 网络闸门按「需要保护」处理(fail closed)。
  * 不合格 / 命令找不到 / id 已被占 ⇒ 跳过并记一行,不影响别的。
  */
-export function registerCustomAcpExecutors(target: ProviderRegistry, agents: ReadonlyArray<{ id: string; name: string; command: string; args?: string[] }> | undefined,
+export function registerCustomAcpExecutors(target: ProviderRegistry, agents: ReadonlyArray<{ id: string; name: string; command: string; args?: string[]; auth_method?: string }> | undefined,
   deps: { findOnPath?: (cmd: string) => string | null; create?: typeof createAcpWorkbenchProvider; log?: (tag: string, line: string) => void } = {}): string[] {
   const registered: string[] = []
   for (const agent of agents ?? []) {
@@ -115,7 +115,7 @@ export function registerCustomAcpExecutors(target: ProviderRegistry, agents: Rea
     if (target.has(agent.id)) { deps.log?.('WORKBENCH', `acp agent ${agent.id} skipped: id already registered`); continue }
     const launch = resolveCustomAcpAgent({ id: agent.id, name: agent.name, command: agent.command, args: agent.args ?? [] }, deps.findOnPath ?? findOnPath)
     if (!launch) { deps.log?.('WORKBENCH', `acp agent ${agent.id}: command ${agent.command} not found — not registered`); continue }
-    const provider = (deps.create ?? createAcpWorkbenchProvider)({ command: launch.command, args: launch.args, displayName: launch.name, log: deps.log })
+    const provider = (deps.create ?? createAcpWorkbenchProvider)({ command: launch.command, args: launch.args, displayName: launch.name, log: deps.log, authErrorCode: 'acp_agent_auth_required', ...(agent.auth_method ? { authMethod: agent.auth_method } : {}) })
     target.register(agent.id, provider, { displayName: launch.name, canResume: () => true, workbench: ACP_CAPABILITIES })
     registered.push(agent.id)
   }
