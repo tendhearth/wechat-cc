@@ -1,12 +1,13 @@
-import {afterEach,beforeEach,describe,expect,it} from 'vitest'
+import {afterEach,beforeEach,describe,expect,it,vi} from 'vitest'
 import {createHash,randomUUID} from 'node:crypto'
 import {execFileSync,spawn} from 'node:child_process'
-import {existsSync,mkdirSync,mkdtempSync,readFileSync,realpathSync,renameSync,rmSync,writeFileSync,chmodSync,unlinkSync} from 'node:fs'
+import {existsSync,mkdirSync,mkdtempSync,readFileSync,realpathSync,renameSync,rmSync,writeFileSync,chmodSync,unlinkSync,symlinkSync,readdirSync} from 'node:fs'
 import {tmpdir} from 'node:os'
 import {join} from 'node:path'
 import {openSqlite,type SqlDatabase} from '../../lib/runtime/sqlite'
 import {createGitWorkspaces,type GitWorkspacePrepareInput} from './git-workspaces'
-import {GIT_WORKSPACE_SCHEMA_SQL} from './git-workspace-store'
+import {createGitWorkspaceStore,GIT_WORKSPACE_SCHEMA_SQL} from './git-workspace-store'
+import * as gitRunner from './git-runner'
 
 let base:string,source:string,root:string,stateDir:string,db:SqlDatabase
 function git(path:string,...args:string[]):string {
@@ -16,15 +17,101 @@ function git(path:string,...args:string[]):string {
 }
 function input(sourcePath=source,workspaceId=randomUUID()):GitWorkspacePrepareInput{return {workspaceId,ownerKey:'fixture-owner',requestId:randomUUID(),canonicalRequestHash:'a'.repeat(64),sourcePath,providerId:'fixture'}}
 const manager=()=>createGitWorkspaces({db,root,stateDir})
+// Keep real Git effects/state and alter only its absolute-directory output. This
+// models a spelling boundary without pretending POSIX can execute Windows paths.
+function gitDirectoryOutput(transform:(path:string,kind:'rev-parse'|'registration')=>string) {
+  const create=gitRunner.createGitRunner
+  vi.spyOn(gitRunner,'createGitRunner').mockImplementation(options=>{
+    const runner=create(options)
+    return {async run(cwd,args,runOptions){
+      const bytes=await runner.run(cwd,args,runOptions)
+      if(args[0]==='rev-parse'&&['--show-toplevel','--absolute-git-dir','--git-common-dir'].some(option=>args.includes(option)))return Buffer.from(transform(bytes.toString('utf8').trim(),'rev-parse')+'\n')
+      if(args[0]==='worktree'&&args[1]==='list')return Buffer.from(bytes.toString('utf8').split('\0').map(entry=>entry.startsWith('worktree ')?'worktree '+transform(entry.slice(9),'registration'):entry).join('\0'))
+      return bytes
+    }}
+  })
+}
 beforeEach(()=>{
   base=realpathSync(mkdtempSync(join(tmpdir(),'cc-git-workspaces-')));source=join(base,'project');root=join(base,'Tasks','GitWorkspaces');stateDir=join(base,'state')
   mkdirSync(source);mkdirSync(stateDir)
   git(source,'init','-b','main');writeFileSync(join(source,'a.txt'),'base\r\n');writeFileSync(join(source,'gone.txt'),'delete me');mkdirSync(join(source,'sub'));writeFileSync(join(source,'sub','nested.txt'),'nested');writeFileSync(join(source,'.gitignore'),'ignored*\n')
   git(source,'add','.');git(source,'commit','-m','base');db=openSqlite(join(stateDir,'test.sqlite'));db.exec(GIT_WORKSPACE_SCHEMA_SQL)
 })
-afterEach(()=>{db.close();rmSync(base,{recursive:true,force:true})})
+afterEach(()=>{vi.restoreAllMocks();db.close();rmSync(base,{recursive:true,force:true})})
 
 describe('isolated Git workspaces',()=>{
+  it('reuses the first frozen reservation for concurrent same-UUID managers with separate SQLite connections',async()=>{
+    const secondDb=openSqlite(join(stateDir,'test.sqlite')),request=input();let firstCreatedAt:number|undefined,clock=Date.now()
+    // Distinct admission attempts may reach reservation in the same millisecond;
+    // make their new timestamps distinct without changing Git or SQLite effects.
+    vi.spyOn(Date,'now').mockImplementation(()=>++clock)
+    const validate=async()=>{firstCreatedAt??=m1.get(request.workspaceId)!.createdAt;return 'fixture-config'}
+    const m1=createGitWorkspaces({db,root,stateDir,validateConfiguration:validate}),m2=createGitWorkspaces({db:secondDb,root,stateDir,validateConfiguration:validate})
+    try{
+      const sourceBefore=await m1.readGitState(source)
+      const [first,second]=await Promise.allSettled([m1.prepare(request),m2.prepare(request)])
+      expect([first.status,second.status]).toEqual(['fulfilled','fulfilled'])
+      if(first.status!=='fulfilled'||second.status!=='fulfilled')throw Error('concurrent_preparation_rejected')
+      const a=first.value,b=second.value
+      expect({...a,updatedAt:0}).toEqual({...b,updatedAt:0});expect(a.status).toBe('ready');expect(a.createdAt).toBe(firstCreatedAt)
+      expect(m1.get(a.id)?.createdAt).toBe(firstCreatedAt);expect(m2.get(a.id)?.createdAt).toBe(firstCreatedAt)
+      expect(readdirSync(root)).toEqual([request.workspaceId])
+      expect(git(source,'branch','--list','--format=%(refname:short)','codex/cc-task-*').trim().split('\n')).toEqual([a.branch])
+      expect(git(source,'worktree','list','--porcelain').split('worktree ').length).toBe(3)
+      expect(readFileSync(join(source,'a.txt'),'utf8')).toBe('base\r\n');expect(git(source,'branch','--show-current').trim()).toBe('main')
+      expect(await m1.readGitState(source)).toEqual(sourceBefore)
+    }finally{secondDb.close()}
+  })
+  it('keeps semantic reservation fields and the first creation time immutable',async()=>{
+    const a=await manager().prepare(input()),store=createGitWorkspaceStore(db)
+    expect(store.reserve({...a,createdAt:a.createdAt+1})).toEqual(a)
+    for(const changed of [{ownerKey:'other'},{sourceIdentity:a.sourceIdentity+'-other'},{baseCommit:'b'.repeat(40)},{sourceGitState:{...a.sourceGitState,head:'b'.repeat(40)}},{sourceGitState:{...a.sourceGitState,index:{...a.sourceGitState.index,'a.txt':'100644 '+'b'.repeat(40)+' 0'}}},{sourceStatus:'dirty'}]){
+      expect(()=>store.reserve({...a,...changed,createdAt:a.createdAt+1})).toThrow('git_workspace_conflict')
+      expect(store.get(a.id)).toEqual(a)
+    }
+    expect(()=>store.update({...a,createdAt:a.createdAt+1})).toThrow('git_workspace_conflict')
+    expect(store.get(a.id)).toEqual(a)
+  })
+  it.each(['rev-parse','registration'] as const)('verifies and retries when Git %s paths use an equivalent separator spelling',async kind=>{
+    gitDirectoryOutput((path,outputKind)=>outputKind===kind?path.replaceAll('\\','/')+'/':path)
+    const request=input(),m=manager(),a=await m.prepare(request)
+    expect(a.status).toBe('ready');expect(a.gitRoot).toBe(source);expect(a.worktreeRoot).toBe(join(root,request.workspaceId))
+    writeFileSync(join(a.executionPath,'a.txt'),'task edit')
+    await m.verify(a);expect(await manager().prepare(request)).toEqual(a)
+    expect((await m.exportPatch(a)).bytes.toString()).toContain('+task edit')
+    expect(readFileSync(join(source,'a.txt'),'utf8')).toBe('base\r\n')
+  })
+  it.each(['different-directory','dot-segment','symlink'] as const)('rejects a Git root reported through %s before allocation',async kind=>{
+    const alias=join(base,'alias')
+    if(kind==='symlink')symlinkSync(source,alias,process.platform==='win32'?'junction':'dir')
+    const reported=kind==='different-directory'?stateDir:kind==='dot-segment'?source+'/../project':alias
+    gitDirectoryOutput((path,outputKind)=>outputKind==='rev-parse'&&path.replaceAll('\\','/')===source.replaceAll('\\','/')?reported:path)
+    await expect(manager().prepare(input())).rejects.toThrow('git_workspace_source_unsupported')
+    expect(existsSync(root)).toBe(false);expect(readFileSync(join(source,'a.txt'),'utf8')).toBe('base\r\n')
+  })
+  it('rejects a registration redirected to a directory alias while preserving task contents',async()=>{
+    const m=manager(),a=await m.prepare(input()),alias=join(base,'task-alias')
+    symlinkSync(a.worktreeRoot,alias,process.platform==='win32'?'junction':'dir')
+    gitDirectoryOutput((path,kind)=>kind==='registration'&&path.replaceAll('\\','/')===a.worktreeRoot.replaceAll('\\','/')?alias:path)
+    writeFileSync(join(a.executionPath,'a.txt'),'keep')
+    await expect(manager().verify(a)).rejects.toThrow('git_workspace_changed')
+    expect(readFileSync(join(a.executionPath,'a.txt'),'utf8')).toBe('keep')
+  })
+  it('recovers a pinned provisioning worktree when Git registration uses an equivalent separator spelling',async()=>{
+    gitDirectoryOutput((path,kind)=>kind==='registration'?path.replaceAll('\\','/')+'/':path)
+    const request=input();db.exec("CREATE TRIGGER interrupt_ready BEFORE UPDATE ON workbench_git_workspaces WHEN NEW.status='ready' BEGIN SELECT RAISE(FAIL,'receipt_interrupted'); END")
+    await expect(manager().prepare(request)).rejects.toThrow('receipt_interrupted')
+    db.exec('DROP TRIGGER interrupt_ready')
+    const a=await manager().prepare(request)
+    expect(a.status).toBe('ready');expect(a.worktreeRoot).toBe(join(root,request.workspaceId))
+    expect(git(source,'worktree','list','--porcelain').split('worktree ').length).toBe(3)
+  })
+  it('ignores an unrelated stale Git registration without adopting or deleting it',async()=>{
+    const stale=join(base,'stale');git(source,'worktree','add','-b','unrelated',stale,'HEAD');rmSync(stale,{recursive:true})
+    const m=manager(),a=await m.prepare(input());await m.verify(a)
+    expect(git(source,'worktree','list','--porcelain')).toContain(stale.replaceAll('\\','/'))
+    expect(git(source,'branch','--list','--format=%(refname:short)','unrelated').trim()).toBe('unrelated')
+  })
   it('isolates two task directories and preserves the source branch, index and files; restart retry retains edits',async()=>{
     const m=manager(),request=input(),before=await m.readGitState(source)
     const [a,b]=await Promise.all([m.prepare(request),m.prepare(input())])

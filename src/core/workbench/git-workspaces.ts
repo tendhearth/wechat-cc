@@ -18,9 +18,15 @@ const within=(root:string,path:string)=>{const delta=relative(root,path);return 
 const same=(a:unknown,b:unknown)=>JSON.stringify(a)===JSON.stringify(b)
 const physical=(path:string)=>{
   if(!isAbsolute(path)||path.includes('\0')||path.split(/[\\/]/).some(part=>part==='.'||part==='..')||(process.platform!=='win32'&&path.includes('\\')))throw Error(CHANGED)
-  const result=realpathSync(path);verifyFromFilesystemRoot(result,CHANGED);if(resolve(path)!==result)throw Error(CHANGED)
+  verifyFromFilesystemRoot(path,CHANGED)
+  let result:string
+  try{result=realpathSync.native(path)}catch{result=realpathSync(path)}
+  verifyFromFilesystemRoot(result,CHANGED);if(resolve(path)!==result)throw Error(CHANGED)
   return result
 }
+// Git uses forward slashes on Windows; persisted directories use native physical
+// paths. Normalize only through the same strict identity/link/alias checks.
+const gitDirectoryMatches=(path:string,expected:string)=>{try{return physical(path)===expected}catch{return false}}
 const directoryIdentity=(path:string)=>{const stat=verifyFromFilesystemRoot(path,CHANGED).stat;return `${stat.dev}:${stat.ino}`}
 const text=(bytes:Buffer)=>{const decoded=bytes.toString('utf8');if(!Buffer.from(decoded).equals(bytes))throw Error(CHANGED);return decoded}
 const fields=(bytes:Buffer)=>text(bytes).split('\0').filter(Boolean)
@@ -91,15 +97,15 @@ export function createGitWorkspaces(options:GitWorkspaceOptions) {
   const sourceIdentityCheck=async(record:GitWorkspaceRecord)=>{
     locations()
     for(const [path,id] of [[record.sourcePath,record.sourceIdentity],[record.gitRoot,record.gitRootIdentity],[record.gitDir,record.gitDirIdentity],[record.commonDir,record.commonDirIdentity]] as const)if(physical(path)!==path||directoryIdentity(path)!==id)throw Error(CHANGED)
-    if(await command(record.sourcePath,['rev-parse','--show-toplevel'])!==record.gitRoot||await command(record.sourcePath,['rev-parse','--path-format=absolute','--git-common-dir'])!==record.commonDir||await command(record.sourcePath,['rev-parse','--absolute-git-dir'])!==record.gitDir)throw Error(CHANGED)
+    if(physical(await command(record.sourcePath,['rev-parse','--show-toplevel']))!==record.gitRoot||physical(await command(record.sourcePath,['rev-parse','--path-format=absolute','--git-common-dir']))!==record.commonDir||physical(await command(record.sourcePath,['rev-parse','--absolute-git-dir']))!==record.gitDir)throw Error(CHANGED)
   }
   const identityCheck=async(record:GitWorkspaceRecord)=>{
     await sourceIdentityCheck(record)
     if(!record.directoryIdentity||!record.executionIdentity||!record.worktreeGitDir||!record.worktreeGitDirIdentity||!record.rootIdentity)throw Error(CHANGED)
     for(const [path,id] of [[root,record.rootIdentity],[record.worktreeRoot,record.directoryIdentity],[record.executionPath,record.executionIdentity],[record.worktreeGitDir,record.worktreeGitDirIdentity]] as const)if(physical(path)!==path||directoryIdentity(path)!==id)throw Error(CHANGED)
-    const registration=(await registrations(record)).find(item=>item.path===record.worktreeRoot)
+    const registration=(await registrations(record)).find(item=>gitDirectoryMatches(item.path,record.worktreeRoot))
     if(!registration||registration.branch!=='refs/heads/'+record.branch)throw Error(CHANGED)
-    if(await command(record.worktreeRoot,['rev-parse','--show-toplevel'])!==record.worktreeRoot||await command(record.worktreeRoot,['rev-parse','--absolute-git-dir'])!==record.worktreeGitDir||await command(record.worktreeRoot,['rev-parse','--path-format=absolute','--git-common-dir'])!==record.commonDir||await command(record.worktreeRoot,['symbolic-ref','--quiet','HEAD'])!=='refs/heads/'+record.branch)throw Error(CHANGED)
+    if(physical(await command(record.worktreeRoot,['rev-parse','--show-toplevel']))!==record.worktreeRoot||physical(await command(record.worktreeRoot,['rev-parse','--absolute-git-dir']))!==record.worktreeGitDir||physical(await command(record.worktreeRoot,['rev-parse','--path-format=absolute','--git-common-dir']))!==record.commonDir||await command(record.worktreeRoot,['symbolic-ref','--quiet','HEAD'])!=='refs/heads/'+record.branch)throw Error(CHANGED)
   }
   const verify=async(record:GitWorkspaceRecord)=>{
     const saved=store.get(record.id)
@@ -167,7 +173,7 @@ export function createGitWorkspaces(options:GitWorkspaceOptions) {
           mkdirSync(current.worktreeRoot,{mode:0o700})
           current=store.update({...current,status:'provisioning',rootIdentity:directoryIdentity(root),directoryIdentity:directoryIdentity(current.worktreeRoot)})
         }else if(directoryIdentity(current.worktreeRoot)!==current.directoryIdentity)throw Error(RECOVERY)
-        const registered=(await registrations(current)).find(item=>item.path===current.worktreeRoot)
+        const registered=(await registrations(current)).find(item=>gitDirectoryMatches(item.path,current.worktreeRoot))
         if(!registered){
           if((await command(current.gitRoot,['branch','--list',current.branch]))||requireEmpty(current.worktreeRoot)===false)throw Error(RECOVERY)
           await git.run(current.gitRoot,['worktree','add','-b',current.branch,current.worktreeRoot,current.baseCommit])

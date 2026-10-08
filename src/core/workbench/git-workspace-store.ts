@@ -23,7 +23,9 @@ export function createGitWorkspaceStore(db:SqlDatabase) {
       return db.transaction(()=>{
         const prior=get(record.id)
         if(prior){
-          for(const key of frozenKeys)if(JSON.stringify(prior[key])!==JSON.stringify(record[key]))throw Error('git_workspace_conflict')
+          // Concurrent admission generates another timestamp for the same
+          // reservation. Adopt the first receipt; semantic identities still match.
+          for(const key of frozenKeys)if(key!=='createdAt'&&JSON.stringify(prior[key])!==JSON.stringify(record[key]))throw Error('git_workspace_conflict')
           return prior
         }
         const conflict=db.query<Row,[string,string]>('SELECT record_json FROM workbench_git_workspaces WHERE owner_key=? AND request_id=?').get(record.ownerKey,record.requestId)
