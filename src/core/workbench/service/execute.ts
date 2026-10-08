@@ -533,7 +533,7 @@ export function makeExecuteDomain(ctx:ServiceCtx, domains:ExecuteDomains) {
     const tree=input.isolation?(()=>{
       const repoRoot=repoRootOf(project.path)
       if(!repoRoot)throw Error('worktree_not_git')
-      const plan=planWorktree({stateDir:ctx.stateDir,projectId:project.id,projectPath:project.path,repoRoot,id:createHash('sha256').update(id).digest('hex').slice(0,8)})
+      const plan=planWorktree({stateDir:ctx.stateDir,projectId:project.id,projectPath:project.path,repoRoot,id:createHash('sha256').update(id).digest('hex').slice(0,8),...(input.base!==undefined?{base:input.base}:{})})
       return {plan,path:ensureWorktree(plan)}
     })():null
     let receipt!:CreationReceipt

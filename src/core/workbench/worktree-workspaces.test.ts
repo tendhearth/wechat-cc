@@ -4,7 +4,7 @@ import { existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, symlink
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { removeTempDir } from '../../lib/test-temp'
-import { commitWorktree, copyIncludedFiles, ensureWorktree, git, mergeHint, mergeWorktree, planWorktree, removeWorktree, reopenWorktree, repoRootOf, worktreeDirty } from './worktree-workspaces'
+import { baseBranchExists, validBaseBranch, commitWorktree, copyIncludedFiles, ensureWorktree, git, mergeHint, mergeWorktree, planWorktree, removeWorktree, reopenWorktree, repoRootOf, worktreeDirty } from './worktree-workspaces'
 
 const dirs: string[] = []
 afterEach(() => { for (const d of dirs.splice(0)) removeTempDir(d) })
@@ -146,6 +146,21 @@ describe('worktree workspaces (2026-10-07)', () => {
     expect(() => reopenWorktree(repoRoot, plan.root, plan.branch)).toThrow('worktree_conflict')
     removeWorktree(repoRoot, plan.root); execFileSync('git', ['branch', '-D', plan.branch], { cwd: project, stdio: 'pipe' })
     expect(() => reopenWorktree(repoRoot, plan.root, plan.branch)).toThrow('worktree_branch_missing')
+  })
+  it('starts from a named local branch when asked (2026-10-08); bad names never reach git', () => {
+    const { project, state } = repo()
+    const g = (...a: string[]) => execFileSync('git', a, { cwd: project, stdio: 'pipe' })
+    g('checkout', '-q', '-b', 'feature/login'); writeFileSync(join(project, 'login.txt'), 'l\n'); g('add', 'login.txt'); g('commit', '-q', '-m', 'login'); g('checkout', '-q', 'main')
+    const repoRoot = repoRootOf(project)!
+    expect(baseBranchExists(repoRoot, 'feature/login')).toBe(true)
+    const plan = planWorktree({ stateDir: state, projectId: PID, projectPath: project, repoRoot, id: 'eeee0001', base: 'feature/login' })
+    const path = ensureWorktree(plan)
+    expect(readFileSync(join(path, 'login.txt'), 'utf8')).toBe('l\n')
+    expect(git(project, ['rev-parse', 'HEAD'])).not.toBe(git(path, ['rev-parse', 'HEAD']))
+    expect(() => ensureWorktree(planWorktree({ stateDir: state, projectId: PID, projectPath: project, repoRoot, id: 'eeee0002', base: 'nope' }))).toThrow('worktree_base_missing')
+    for (const bad of ['-x', '../x', 'a..b', '/abs', 'a/', 'x.lock', 'a b', 'a//b', '', 'x~1', 'a@{0}'])
+      expect(validBaseBranch(bad), bad).toBe(false)
+    expect(() => planWorktree({ stateDir: state, projectId: PID, projectPath: project, repoRoot, id: 'eeee0003', base: '--upload-pack=x' })).toThrow('invalid_worktree')
   })
   it('merge hint quotes paths with spaces', () => {
     expect(mergeHint('/Users/a/My Project', 'cc/abcd1234')).toBe("cd '/Users/a/My Project' && git merge cc/abcd1234")

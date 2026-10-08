@@ -31,7 +31,7 @@ export function mobileMatterError(error:unknown):Response {
   if(['upload_conflict','upload_changed','upload_offset','attachment_in_use'].includes(code))return json({ok:false,error:code},409)
   if(code==='invalid_entry_owner')return json({ok:false,error:code},403)
   // 独立工作区(2026-10-07):项目不是 Git 仓库 / 同名分支或目录已占 / git 自己失败。
-  if(code==='worktree_not_git')return json({ok:false,error:code},422)
+  if(code==='worktree_not_git'||code==='worktree_base_missing')return json({ok:false,error:code},422)
   if(['worktree_branch_exists','worktree_conflict','worktree_dirty','worktree_removed','worktree_uncommitted','project_dirty','project_detached','worktree_not_ff','project_busy','worktree_branch_missing','worktree_open'].includes(code))return json({ok:false,error:code},409)
   if(code==='not_worktree')return json({ok:false,error:code},422)
   if(code==='worktree_git_failed')return json({ok:false,error:code},502)

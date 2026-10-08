@@ -142,6 +142,18 @@ describe('WeChat task control through the shared service',()=>{
     expect(await control('owner',`任务 ${task.id} 改动 a.ts`,identity)).toContain('用法')
   })
 
+  it('任务 新建 <项目> 独立@<分支> passes the start branch; a bad name is usage, not git (2026-10-08)',async()=>{
+    setup({async spawn(){return{async *dispatch(){yield result},async close(){}}}})
+    const createWechat=vi.fn((_input:{base?:string}):never=>({reply:'ok'}) as never)
+    const control=makeWechatWorkbenchControl({store,ownerChatId:()=>owner,actions:{...service,createWechat}})
+    expect(await control('owner','任务 新建 p-0123456789abcdef0123 独立@feature/login 修登录',identity)).toBe('ok')
+    expect(createWechat).toHaveBeenLastCalledWith(expect.objectContaining({isolation:true,base:'feature/login',text:'修登录'}))
+    expect(await control('owner','任务 新建 p-0123456789abcdef0123 独立 修登录',identity)).toBe('ok')
+    expect(createWechat.mock.lastCall![0]).not.toHaveProperty('base')
+    expect(await control('owner','任务 新建 p-0123456789abcdef0123 独立@../x 修登录',identity)).toContain('用法')
+    expect(createWechat).toHaveBeenCalledTimes(2)
+  })
+
   it('任务 <编号> 提交 / 合回 / 删除工作区 (2026-10-08) go to worktreeAction instead of being sent to the executor as a supplement',async()=>{
     setup({async spawn(){return{async *dispatch(){yield result},async close(){}}}})
     const task=create();await settled(task.id)

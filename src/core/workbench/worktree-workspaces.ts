@@ -15,7 +15,7 @@ import { execFileSync } from 'node:child_process'
 import { copyFileSync, existsSync, lstatSync, mkdirSync, realpathSync } from 'node:fs'
 import { dirname, isAbsolute, join, relative, sep } from 'node:path'
 
-export interface WorktreePlan { root: string; branch: string; taskPath: string; repoRoot: string; projectPath: string }
+export interface WorktreePlan { root: string; branch: string; taskPath: string; repoRoot: string; projectPath: string; /** 从哪个本地分支开始(10-08);缺省 = 项目当前 HEAD。 */ base?: string }
 
 const BRANCH_PREFIX = 'cc/'
 const TIMEOUT_MS = 30_000
@@ -58,14 +58,28 @@ function real(path: string): string {
 const ID = /^[a-f0-9]{8}$/
 const PROJECT_ID = /^p-[a-f0-9]{20}$/
 
+/**
+ * 「从哪个分支开始」的名字(2026-10-08,对标 Paseo):只收本地分支名的安全子集 —— 字母数字和 `._/-`,
+ * 不以 `-` / `/` / `.` 开头,不含 `..` / `//` / `@{`,不以 `/` / `.lock` 结尾,最长 200。拼不出选项或越界的 ref。
+ */
+export function validBaseBranch(name: unknown): name is string {
+  return typeof name === 'string' && name.length > 0 && name.length <= 200 && /^[A-Za-z0-9][A-Za-z0-9._/-]*$/.test(name)
+    && !name.includes('..') && !name.includes('//') && !name.endsWith('/') && !name.endsWith('.lock') && !name.endsWith('.')
+}
+/** 这个本地分支在不在。 */
+export function baseBranchExists(repoRoot: string, base: string): boolean {
+  if (!validBaseBranch(base)) return false
+  try { git(repoRoot, ['rev-parse', '--verify', '--quiet', `refs/heads/${base}`]); return true } catch { return false }
+}
+
 /** 算位置,不碰盘。projectId / id 都按格式校验,拼不出越界的路径。 */
-export function planWorktree(input: { stateDir: string; projectId: string; projectPath: string; repoRoot: string; id: string }): WorktreePlan {
-  if (!PROJECT_ID.test(input.projectId) || !ID.test(input.id)) throw new Error('invalid_worktree')
+export function planWorktree(input: { stateDir: string; projectId: string; projectPath: string; repoRoot: string; id: string; base?: string }): WorktreePlan {
+  if (!PROJECT_ID.test(input.projectId) || !ID.test(input.id) || (input.base !== undefined && !validBaseBranch(input.base))) throw new Error('invalid_worktree')
   const repoRoot = real(input.repoRoot), projectPath = real(input.projectPath)
   const rel = relative(repoRoot, projectPath)
   if (rel.startsWith('..') || isAbsolute(rel)) throw new Error('invalid_worktree')
   const root = join(input.stateDir, 'worktrees', input.projectId, input.id)
-  return { root, branch: `${BRANCH_PREFIX}${input.id}`, taskPath: rel ? join(root, rel) : root, repoRoot, projectPath: input.projectPath }
+  return { root, branch: `${BRANCH_PREFIX}${input.id}`, taskPath: rel ? join(root, rel) : root, repoRoot, projectPath: input.projectPath, ...(input.base !== undefined ? { base: input.base } : {}) }
 }
 
 /**
@@ -80,8 +94,9 @@ export function ensureWorktree(plan: WorktreePlan): string {
   } else {
     try { git(plan.repoRoot, ['rev-parse', '--verify', '--quiet', `refs/heads/${plan.branch}`]); throw new Error('worktree_branch_exists') }
     catch (error) { if ((error as Error).message === 'worktree_branch_exists') throw error }
+    if (plan.base !== undefined && !baseBranchExists(plan.repoRoot, plan.base)) throw new Error('worktree_base_missing')
     mkdirSync(dirname(plan.root), { recursive: true, mode: 0o700 })
-    git(plan.repoRoot, ['worktree', 'add', '-b', plan.branch, plan.root, 'HEAD'])
+    git(plan.repoRoot, ['worktree', 'add', '-b', plan.branch, plan.root, plan.base !== undefined ? `refs/heads/${plan.base}` : 'HEAD'])
     copyIncludedFiles(plan.repoRoot, plan.root)
   }
   if (!existsSync(plan.taskPath)) throw new Error('worktree_project_missing')
