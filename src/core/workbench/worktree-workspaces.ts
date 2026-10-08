@@ -112,7 +112,13 @@ export function copyIncludedFiles(repoRoot: string, root: string): number {
     try { st = lstatSync(from) } catch { continue }
     if (!st.isFile() || existsSync(to)) continue
     if (files + 1 > INCLUDE_MAX_FILES || bytes + st.size > INCLUDE_MAX_BYTES) break
-    try { mkdirSync(dirname(to), { recursive: true }); copyFileSync(from, to); files++; bytes += st.size } catch { /* 这一个跳过 */ }
+    try {
+      mkdirSync(dirname(to), { recursive: true })
+      // 目标父目录不能借符号链接逃出工作区(HEAD 里某个目录是链接时)
+      const parent = real(dirname(to)), base = real(root)
+      if (parent !== base && !parent.startsWith(base + sep)) continue
+      copyFileSync(from, to); files++; bytes += st.size
+    } catch { /* 这一个跳过 */ }
   }
   return files
 }
