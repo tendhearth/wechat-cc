@@ -31,7 +31,7 @@ export type QuotaHandoffView =
 /** Recovery coordination contract: ctx depends on types, never on a domain factory. */
 export interface RecoveryDomain {
   manager:ReturnType<typeof import('../restore-manager').createRestoreManager>
-  owned(taskId:string):{task:import('../store').StoredTask;w:import('../git-workspace-store').GitWorkspaceRecord}
+  owned(taskId:string,receiptOnly?:boolean):{task:import('../store').StoredTask;w:import('../git-workspace-store').GitWorkspaceRecord}
   git():ReturnType<typeof import('../git-workspaces').createGitWorkspaces>
   blockReason(workspaceId:string):string|undefined
   admit(path:string,gitWorkspaceId?:string|null):void

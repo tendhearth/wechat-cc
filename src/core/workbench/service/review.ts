@@ -53,10 +53,16 @@ export function makeReviewDomain(ctx:ServiceCtx):ReviewDomain {
 
   return {
     async resolveReviewRevert(id,input){
-      const {w}=ctx.recovery!.owned(id)
+      const {w}=ctx.recovery!.owned(id,true)
       normalizeInputRequestId(input.operationId)
       if(!/^[a-f0-9]{64}$/.test(input.observedFingerprint))throw Error('invalid_request')
-      const operation=await ctx.recovery!.manager.resolveKeepCurrent({workspaceId:w.id,taskId:id,...input})
+      const saved=store.restores.operation(input.operationId)
+      if(!saved||saved.receipt.taskId!==id||saved.receipt.workspaceId!==w.id)throw Error('operation_not_found')
+      store.artifact(id,saved.receipt.artifactId)
+      const request={workspaceId:w.id,taskId:id,...input}
+      const prior=ctx.recovery!.manager.lookupResolveKeepCurrent(request)
+      if(prior)return prior
+      const operation=await ctx.recovery!.manager.resolveKeepCurrent(request)
       ctx.hub.touched(id);return operation
     },
     async exportWorkspace(id){
@@ -146,11 +152,12 @@ export function makeReviewDomain(ctx:ServiceCtx):ReviewDomain {
     async revertReviewFile(id:string,input:{artifactId:string;path:string;changeId?:string;requestId?:string}) {
       if(!input.changeId||!input.requestId)throw Error('review_revert_unavailable')
       normalizeInputRequestId(input.changeId);normalizeInputRequestId(input.requestId)
-      const {w}=ctx.recovery!.owned(id)
-      reviewTarget(id,input.artifactId)
+      const {w}=ctx.recovery!.owned(id,true)
+      store.artifact(id,input.artifactId)
       const request={workspaceId:w.id,taskId:id,artifactId:input.artifactId,path:input.path,changeId:input.changeId,requestId:input.requestId}
       const prior=ctx.recovery!.manager.lookupRevert(request)
       if(prior)return prior
+      reviewTarget(id,input.artifactId)
       const operation=await ctx.recovery!.manager.revert(request)
       ctx.hub.touched(id)
       return operation
