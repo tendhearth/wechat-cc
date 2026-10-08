@@ -30,6 +30,8 @@ export const PhoneErrorResponse = z.object({ ok: z.literal(false), error: z.stri
 export const PhonePlainError = z.object({ error: z.string() })
 /** 手机「说一句」正文上限(settings-panel.ts 的 POST /m/api/matter/say)。app 在手机上就拦。 */
 export const PHONE_SAY_MAX_CHARS = 20_000
+/** 手机「跟 CC 说」一句最多带几张图(2026-10-06;与桌面此刻同一个上限)。 */
+export const PHONE_CHAT_MAX_IMAGES = 4
 /** 回答问题:answers 的 JSON 序列化长度上限(mobile-workbench.ts 的 POST /m/api/matter/answer)。app 在手机上就拦。 */
 export const PHONE_ANSWER_MAX_JSON = 20_000
 
@@ -165,6 +167,11 @@ export const WorkbenchExecutorCapabilities = z.object({
   }),
 })
 
+/** 交办时可选的模型(GET /m/api/entry/models,2026-10-06;agent-provider.ts 的 AgentModelCatalog)。 */
+export const EntryModelCatalog = z.object({
+  models: z.array(z.object({ id: z.string(), displayName: z.string(), description: z.string().optional(), reasoningEfforts: z.array(z.string()), defaultReasoningEffort: z.string().optional() }).passthrough()),
+  defaultModel: z.string().optional(), source: z.string(),
+})
 export const EntryOptions = z.object({
   status: z.enum(['ready', 'needs_connection']),
   reason: Reason.optional(),
@@ -256,7 +263,7 @@ const CuratedItem = z.object({
   id: z.string().nullable(), text: z.string(), display: z.string(), due: z.string().nullable(),
   due_label: z.string().nullable(), person: z.object({ name: z.string(), rel: z.string() }).nullable(), changed: z.boolean(),
 })
-const MemorySuccess = z.object({
+export const MemorySuccess = z.object({
   ok: z.literal(true), updated_at: z.string().nullable(), when_label: z.string().nullable(),
   mood: z.enum(['changed', 'steady', 'first']), failures: z.number(), changes: z.array(ViewChange),
   sections: z.array(z.object({ name: MemorySection, items: z.array(CuratedItem) })),
@@ -345,6 +352,8 @@ export const CHAT_TEXT_MAX = 4000
  *   联网表情没有 `file`,只显示 label —— daemon 不替 app 去外网取图。
  * - file:只给名字。文件在电脑上;手机没有取文件的路由(不为它新开一条)。
  */
+/** 搜主人对话的一条结果(GET /m/api/chat/search,2026-10-06)。 */
+export const ChatSearchHit = z.object({ id: z.string(), role: z.enum(['me', 'cc']), text: z.string(), truncated: z.boolean(), at: z.number(), source: z.string().nullable() })
 export const ChatAttachment = z.discriminatedUnion('kind', [
   z.object({ kind: z.literal('voice'), text: z.string() }),
   z.object({ kind: z.literal('sticker'), label: z.string(), file: z.string().optional() }),
@@ -382,6 +391,12 @@ export const Connections = z.object({
   computers: z.array(z.object({ id: z.string(), label: z.string(), online: z.boolean(), since: z.number().nullable(), version: z.string().nullable() })),
   recent: z.array(z.object({ matterId: z.string(), title: z.string(), phase: z.string(), at: z.number() })),
   outputs: z.array(z.object({ matterId: z.string(), name: z.string(), mime: z.string(), at: z.number() })),
+  // 「CC 现在怎么样」(2026-10-06):各项能力四态 + 原因码 + 人话 + 至多一个动作。可选:老 daemon 不带。
+  capabilities: z.array(z.object({
+    id: z.string(), name: z.string(), state: z.enum(['ok', 'fallback', 'needs_you', 'off']),
+    code: z.string(), params: z.record(z.string(), z.union([z.string(), z.number()])).optional(), reason: z.string(),
+    action: z.object({ label: z.string(), where: z.enum(['desktop', 'settings', 'wechat']), url: z.string().optional() }).optional(),
+  })).optional(),
 })
 export type ConnectionsT = z.infer<typeof Connections>
 
@@ -403,6 +418,9 @@ export const SessionContinueResult = z.object({ matterId: z.string(), created: z
 
 // ── 汇总:`"METHOD /path"` → schema(反向由 daemon 守卫测试核对）───────────
 
+/** 主人对话的后端 / 模型(GET/POST /m/api/chat/model,2026-10-06)。model=null ⇒ 用这个后端的全局设置。 */
+export const ChatModelView = z.object({ ok: z.literal(true), mode: z.string(), provider: z.string(), model: z.string().nullable(), globalModel: z.string().nullable(), providers: z.array(z.object({ id: z.string(), name: z.string() })) })
+
 export const PHONE_API_SCHEMAS: Readonly<Record<string, z.ZodTypeAny>> = {
   'GET /set/api/state': z.union([SetStateSuccess, PhoneErrorResponse]),
   'POST /set/api/apply': z.object({ ok: z.boolean(), error: z.string().optional(), restart: z.enum(['requested', 'required']).optional() }),
@@ -416,6 +434,7 @@ export const PHONE_API_SCHEMAS: Readonly<Record<string, z.ZodTypeAny>> = {
   'GET /m/api/art/blink': z.object({ ok: z.literal(true), mime: z.literal('image/png'), half: z.string(), closed: z.string() }),
   'GET /m/api/art/presence': z.object({ ok: z.literal(true), mime: z.literal('image/png'), unlit: z.string(), lit: z.string() }),
   'GET /m/api/memory': z.union([MemorySuccess, PhoneErrorResponse]),
+  'POST /m/api/memory/correct': z.union([z.object({ ok: z.literal(true) }), PhoneErrorResponse]),
   'GET /m/api/home': z.union([HomeSuccess, PhoneErrorResponse]),
   'GET /m/api/feed': z.union([FeedSuccess, PhoneErrorResponse]),
   'POST /m/api/seen': z.union([z.object({ ok: z.literal(true), seen_until: z.string() }), PhoneErrorResponse]),
@@ -429,7 +448,11 @@ export const PHONE_API_SCHEMAS: Readonly<Record<string, z.ZodTypeAny>> = {
   'GET /m/api/matter/input-receipt': z.union([MatterInputReceiptResult, PhoneErrorResponse]),
   'POST /m/api/matter/say': z.union([z.object({ ok: z.literal(true), result: MatterSayResult }), PhoneErrorResponse]),
   'GET /m/api/chat': z.union([z.object({ ok: z.literal(true) }).extend(ChatPage.shape), PhoneErrorResponse]),
+  'GET /m/api/chat/search': z.union([z.object({ ok: z.literal(true), hits: z.array(ChatSearchHit) }), PhoneErrorResponse]),
   'POST /m/api/chat/say': z.union([z.object({ ok: z.literal(true), matterId: z.string(), job: ChatJob }), PhoneErrorResponse]),
+  'GET /m/api/chat/model': z.union([ChatModelView, PhoneErrorResponse]),
+  'POST /m/api/chat/model': z.union([ChatModelView, PhoneErrorResponse]),
+  'GET /m/api/chat/file': z.union([z.object({ ok: z.literal(true), name: z.string(), mime: z.string(), size: z.number(), sha256: z.string(), offset: z.number(), nextOffset: z.number(), contentBase64: z.string() }), PhoneErrorResponse]),
   'GET /m/api/chat/voice': z.union([z.object({ ok: z.literal(true) }).extend(ChatVoice.shape), PhoneErrorResponse]),
   'GET /m/api/connections': z.union([z.object({ ok: z.literal(true) }).extend(Connections.shape), PhoneErrorResponse]),
   'GET /m/api/sessions': z.union([z.object({ ok: z.literal(true), items: z.array(NativeSessionRow), nextCursor: z.string().nullable() }), PhoneErrorResponse]),
@@ -441,10 +464,12 @@ export const PHONE_API_SCHEMAS: Readonly<Record<string, z.ZodTypeAny>> = {
   'POST /m/api/attachment/chunk': z.union([z.object({ ok: z.literal(true) }).extend(UploadState.shape), PhoneErrorResponse]),
   'GET /m/api/attachment/upload': z.union([z.object({ ok: z.literal(true) }).extend(UploadState.shape), PhoneErrorResponse]),
   'POST /m/api/attachment/discard': z.union([z.object({ ok: z.literal(true) }), PhoneErrorResponse]),
+  'GET /m/api/entry/models': z.union([z.object({ ok: z.literal(true), catalog: EntryModelCatalog }), PhoneErrorResponse]),
   'GET /m/api/entry/options': z.union([z.object({ ok: z.literal(true) }).extend(EntryOptions.shape), PhoneErrorResponse]),
   'POST /m/api/matter/create': z.union([z.object({ ok: z.literal(true) }).extend(EntryResult.shape), PhoneErrorResponse]),
   'GET /m/api/matter/create-receipt': z.union([z.object({ ok: z.literal(true) }).extend(EntryResult.shape), PhoneErrorResponse]),
   'POST /m/api/matter/permission': z.union([z.object({ ok: z.literal(true) }), PhoneErrorResponse]),
+  'POST /m/api/matter/stop': z.union([z.object({ ok: z.literal(true) }), PhoneErrorResponse]),
   'POST /m/api/matter/answer': z.union([z.object({ ok: z.literal(true) }), PhoneErrorResponse]),
   'GET /m/api/matter/artifact': z.union([z.object({ ok: z.literal(true) }).extend(MatterArtifactChunk.shape), PhoneErrorResponse]),
   'POST /m/api/matter/handoff': z.union([z.object({ ok: z.literal(true) }).extend(MatterHandoffResult.shape), PhoneErrorResponse]),

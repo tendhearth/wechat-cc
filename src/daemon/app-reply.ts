@@ -109,10 +109,23 @@ export type ConverseAttachment =
   | Exclude<AppAttachment, { kind: 'sticker' }>
   | { kind: 'sticker'; label: string; file?: string; image?: string }
 
-/** 桌面「此刻」里拖进 / 粘进来的图(2026-10-05):路由已校验并解码,companionConverse 落到 inbox 当附件交给 CC。 */
-export interface ConverseImage { mime: string; bytes: Uint8Array }
-/** 一次最多几张、每张多大、认哪些格式 —— 路由与测试共用。 */
-export const CONVERSE_IMAGE_LIMITS = { count: 4, bytes: 10 * 1024 * 1024, mimes: { 'image/png': 'png', 'image/jpeg': 'jpg', 'image/webp': 'webp', 'image/gif': 'gif', 'image/heic': 'heic' } as Record<string, string> }
+/** 桌面「此刻」里拖进 / 粘进来的图(2026-10-05)与文件(2026-10-06):路由已校验并解码,companionConverse 落到 inbox
+ *  当附件交给 CC(图 ⇒ image,其余 ⇒ file)。name 只用来让落盘的文件名带上原名(CC 看得出是什么),不当路径用。 */
+export interface ConverseImage { mime: string; bytes: Uint8Array; name?: string }
+const CONVERSE_FILE_MIMES: Record<string, string> = {
+  'application/pdf': 'pdf', 'text/plain': 'txt', 'text/markdown': 'md', 'text/csv': 'csv', 'application/json': 'json',
+  'application/vnd.openxmlformats-officedocument.wordprocessingml.document': 'docx',
+  'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet': 'xlsx',
+  'application/vnd.openxmlformats-officedocument.presentationml.presentation': 'pptx',
+}
+/** 一次最多几份、每份多大、认哪些格式 —— 路由与测试共用。 */
+export const CONVERSE_IMAGE_LIMITS = { count: 4, bytes: 10 * 1024 * 1024, mimes: { 'image/png': 'png', 'image/jpeg': 'jpg', 'image/webp': 'webp', 'image/gif': 'gif', 'image/heic': 'heic', ...CONVERSE_FILE_MIMES } as Record<string, string> }
+export const isConverseImageMime = (mime: string) => mime.startsWith('image/')
+/** 落盘文件名里的原名部分:只留字母数字、中文、横线、下划线(点也换掉,扩展名按 mime 定),最多 60 字。 */
+export function converseFileStem(name: string | undefined): string {
+  const base = (name ?? '').replace(/\.[A-Za-z0-9]{1,8}$/, '').replace(/[^\p{L}\p{N}_-]+/gu, '_').replace(/^_+|_+$/g, '').slice(0, 60)
+  return base
+}
 
 export interface ConverseResult { reply: string; attachments?: ConverseAttachment[]; narration?: string[] }
 

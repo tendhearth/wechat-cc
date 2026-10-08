@@ -443,6 +443,73 @@ describe('跟 CC 说 / 连接 / 原生会话', () => {
     const down = harness({ 'POST /m/api/chat/say': ok({ ok: false, error: 'unavailable' }, 503) })
     await expect(down.b.chatSay('hi', SAY_REQ2)).rejects.toMatchObject({ code: 'unavailable' })
   })
+  it('chatSay 带图(2026-10-06):draftId + attachmentIds 进正文;电脑上图不在了 ⇒ images_gone;老电脑 ⇒ images_unsupported', async () => {
+    const D = '11111111-1111-4111-8111-111111111111', A = '22222222-2222-4222-8222-222222222222'
+    const { b, reqs } = harness({ 'POST /m/api/chat/say': ok({ ok: true, matterId: 'c0ffee01', job: { requestId: SAY_REQ, text: '', status: 'pending', since: 1 } }, 202) })
+    await b.chatSay('', SAY_REQ, { draftId: D, attachmentIds: [A] })
+    expect(reqs.at(-1)).toMatchObject({ body: { requestId: SAY_REQ, text: '', draftId: D, attachmentIds: [A] } })
+    const gone = harness({ 'POST /m/api/chat/say': ok({ ok: false, error: 'invalid_attachment' }, 409) })
+    await expect(gone.b.chatSay('', SAY_REQ, { draftId: D, attachmentIds: [A] })).rejects.toMatchObject({ code: 'images_gone' })
+    const old = harness({ 'POST /m/api/chat/say': ok({ ok: false, error: 'images_not_supported' }, 409) })
+    await expect(old.b.chatSay('', SAY_REQ, { draftId: D, attachmentIds: [A] })).rejects.toMatchObject({ code: 'images_unsupported' })
+  })
+  it('材料分块上传 / 查进度 / 丢弃 走对应路由;交办带上 draftId + attachmentIds', async () => {
+    const D = '11111111-1111-4111-8111-111111111111', A = '22222222-2222-4222-8222-222222222222'
+    const state = { id: A, draftId: D, taskId: null, size: 3, sha256: 'a'.repeat(64), nextOffset: 3, status: 'ready' }
+    const { b, reqs } = harness({
+      'POST /m/api/attachment/chunk': ok({ ok: true, ...state }),
+      'GET /m/api/attachment/upload': ok({ ok: true, ...state }),
+      'POST /m/api/attachment/discard': ok({ ok: true }),
+      'POST /m/api/matter/create': ok({ ok: true, receipt: RECEIPT, task: WB_TASK }, 202),
+    })
+    expect((await b.uploadChunk({ id: A, draftId: D, name: 'a.png', mime: 'image/png', size: 3, sha256: 'a'.repeat(64), offset: 0, contentBase64: 'AAAA' })).status).toBe('ready')
+    expect((await b.uploadStatus(A, D)).nextOffset).toBe(3)
+    expect(reqs.at(-1)!.path).toBe(`/m/api/attachment/upload?id=${A}&draftId=${D}`)
+    await b.discardUpload(A, D)
+    expect(reqs.at(-1)).toMatchObject({ body: { id: A, draftId: D } })
+    await b.create({ requestId: SAY_REQ, text: '看图', draftId: D, attachmentIds: [A] })
+    expect(reqs.at(-1)).toMatchObject({ body: { requestId: SAY_REQ, text: '看图', draftId: D, attachmentIds: [A] } })
+  })
+  it('交办选模型(2026-10-06):entryModels 只带执行者与项目目录 id;create 带 execution', async () => {
+    const CAT = { source: 'native', defaultModel: 'gpt-5.6', models: [{ id: 'gpt-5.6', displayName: 'GPT-5.6', reasoningEfforts: ['low', 'high'] }] }
+    const { b, reqs } = harness({
+      'GET /m/api/entry/models': ok({ ok: true, catalog: CAT }),
+      'POST /m/api/matter/create': ok({ ok: true, receipt: RECEIPT, task: WB_TASK }, 202),
+    })
+    expect((await b.entryModels('codex', 'p-0123456789abcdef0123')).models[0]!.id).toBe('gpt-5.6')
+    expect(reqs.at(-1)!.path).toBe('/m/api/entry/models?providerId=codex&projectId=p-0123456789abcdef0123')
+    await b.create({ requestId: SAY_REQ, text: '整理一下', providerId: 'codex', execution: { model: 'gpt-5.6', reasoningEffort: 'high' } })
+    expect(reqs.at(-1)).toMatchObject({ body: { execution: { model: 'gpt-5.6', reasoningEffort: 'high' } } })
+    await b.create({ requestId: SAY_REQ, text: '整理一下', execution: {} })
+    expect(reqs.at(-1)!.body).not.toHaveProperty('execution')
+  })
+  it('project execution mode coexists with models, materials and legacy isolation without dropping fields', async () => {
+    const { b, reqs } = harness({ 'POST /m/api/matter/create': ok({ ok: true, receipt: RECEIPT, task: WB_TASK }, 202) })
+    const fields = { requestId:SAY_REQ, text:'保留设置', projectId:'p-0123456789abcdef0123', providerId:'codex', draftId:'11111111-1111-4111-8111-111111111111', attachmentIds:['22222222-2222-4222-8222-222222222222'], execution:{model:'gpt-5.6',reasoningEffort:'high'} }
+    await b.create({...fields, executionMode:'project'})
+    const {projectId, ...bodyFields}=fields
+    expect(reqs.at(-1)!.body).toEqual({...bodyFields, target:{kind:'project',projectId:fields.projectId}, executionMode:'project'})
+    await b.create({...fields, isolation:true})
+    expect(reqs.at(-1)!.body).toMatchObject({target:{kind:'project',projectId:fields.projectId,isolation:'worktree'},executionMode:'auto',execution:fields.execution,attachmentIds:fields.attachmentIds})
+  })
+  it('这条对话用谁(2026-10-06):读与钉走 /m/api/chat/model,model=null 原样带上(跟随全局)', async () => {
+    const VIEW = { ok: true, mode: 'solo', provider: 'claude', model: null, globalModel: 'claude-opus-5-5', providers: [{ id: 'claude', name: 'Claude' }] }
+    const { b, reqs } = harness({ 'GET /m/api/chat/model': ok(VIEW), 'POST /m/api/chat/model': ok({ ...VIEW, provider: 'openai', model: 'DeepSeek' }) })
+    expect((await b.chatModel()).globalModel).toBe('claude-opus-5-5')
+    expect((await b.setChatModel('openai', 'DeepSeek')).model).toBe('DeepSeek')
+    expect(reqs.at(-1)).toMatchObject({ body: { provider: 'openai', model: 'DeepSeek' } })
+    await b.setChatModel('claude', null)
+    expect(reqs.at(-1)!.body).toEqual({ provider: 'claude', model: null })
+  })
+  it('CC 记得你(2026-10-06):读记忆、逐条纠错走对应路由;不在了 ⇒ not_found', async () => {
+    const VIEW = { ok: true, updated_at: null, when_label: null, mood: 'steady', failures: 0, changes: [], sections: [] }
+    const { b, reqs } = harness({ 'GET /m/api/memory': ok(VIEW), 'POST /m/api/memory/correct': ok({ ok: true }) })
+    expect((await b.memory()).mood).toBe('steady')
+    await b.correctMemory('abc123', 'outdated')
+    expect(reqs.at(-1)).toMatchObject({ body: { id: 'abc123', verdict: 'outdated' } })
+    const gone = harness({ 'POST /m/api/memory/correct': ok({ ok: false, error: 'not_found' }, 404) })
+    await expect(gone.b.correctMemory('abc123', 'wrong')).rejects.toMatchObject({ code: 'not_found' })
+  })
   it('connections / sessions / session 走对应路由', async () => {
     const CONN = { ok: true, generatedAt: 1, sources: [{ id: 'wxvault', kind: 'plugin', name: 'wxvault', state: 'ready', latestAt: null, syncedAt: null }], computers: [], recent: [], outputs: [] }
     const ROW = { key: 'k', provider: 'codex', title: 't', project: 'p', updatedAt: 1, active: false }

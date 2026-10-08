@@ -36,6 +36,8 @@ export interface AgentConfig {
   /** Resolved `cursor-agent` binary path override (tests opt in; production
    *  falls back to PATH lookup — see providers.ts's cursor CLI branch). */
   cursorAgentBin?: string
+  /** 自定义 ACP 执行者(2026-10-07):任何会说 ACP 的 CLI 接进一起做。见 core/acp/agents.ts。 */
+  acp_agents?: Array<{ id: string; name: string; command: string; args?: string[]; auth_method?: string }>
   /** 随身 CC 远程隧道开关(2026-08-26):true 则 daemon 拨中继,手机出门
    *  可访问。默认关。`remote_relay_url` 可覆盖默认 relay。 */
   remote_tunnel?: boolean
@@ -316,6 +318,7 @@ const AgentConfigSchema = z.object({
   agyModel: z.string().optional(),
   agyBin: z.string().optional(),
   cursorAgentBin: z.string().optional(),
+  acp_agents: z.array(z.object({ id: z.string(), name: z.string(), command: z.string(), args: z.array(z.string()).optional(), auth_method: z.string().max(64).optional() })).max(20).optional(),
   remote_tunnel: z.boolean().optional(),
   remote_relay_url: z.string().optional(),
   relay_v2_url: z.string().optional(),
@@ -454,6 +457,7 @@ export function loadAgentConfig(stateDir: string): AgentConfig {
       ...(typeof parsed.agyModel === 'string' ? { agyModel: parsed.agyModel } : {}),
       ...(typeof parsed.agyBin === 'string' ? { agyBin: parsed.agyBin } : {}),
       ...(typeof parsed.cursorAgentBin === 'string' ? { cursorAgentBin: parsed.cursorAgentBin } : {}),
+      ...(parsed.acp_agents && parsed.acp_agents.length ? { acp_agents: parsed.acp_agents } : {}),
       ...(typeof parsed.remote_tunnel === 'boolean' ? { remote_tunnel: parsed.remote_tunnel } : {}),
       ...(typeof parsed.remote_relay_url === 'string' ? { remote_relay_url: parsed.remote_relay_url } : {}),
       ...(typeof parsed.relay_v2_url === 'string' ? { relay_v2_url: parsed.relay_v2_url } : {}),

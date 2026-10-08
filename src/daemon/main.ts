@@ -781,7 +781,7 @@ export async function bootDaemon(opts: BootDaemonOpts): Promise<DaemonHandle> {
     guardRt.setSuspendedTasks(() => workbench.networkSuspended())
     lc.register({ name: 'workbench', stop: () => workbench.shutdown() })
     const wired = wireMain({
-      workbench, matters, guardRuntime: guardRt,
+      workbench, matters, guardRuntime: guardRt, subsystems: () => sup.statuses(),
       panelTokens: internalApi.panelTokens,
       cliReply: cliReplyHandler,
       stickers: stickerLib,

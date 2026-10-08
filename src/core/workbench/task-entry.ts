@@ -6,7 +6,8 @@ import type {ProjectCatalogEntry} from './project-catalog'
 import {ENTRY_LIMITS, entryContentError} from '../../../apps/desktop/src/shared/task-entry-contract.js'
 export {ENTRY_LIMITS, composeEntryPrompt, entryContentError, entryErrorStatus, entryFailureKind} from '../../../apps/desktop/src/shared/task-entry-contract.js'
 
-export type EntryTarget = {kind: 'managed'} | {kind: 'project'; projectId: string}
+/** isolation:'worktree' ⇒ 在这个项目的独立工作区(git worktree)里做,不占项目目录本身(2026-10-07)。 */
+export type EntryTarget = {kind: 'managed'} | {kind: 'project'; projectId: string; isolation?: 'worktree'}
 export type EntryExcerpt = {role: 'user' | 'assistant'; text: string}
 export type EntryInput = {
   requestId: string
@@ -60,15 +61,16 @@ function uuid(value: unknown, error: string): string {
 }
 
 function target(value: unknown): EntryTarget {
-  const input = record(value, ['kind', 'projectId'], 'invalid_target')
+  const input = record(value, ['kind', 'projectId', 'isolation'], 'invalid_target')
   if (input.kind === 'managed') {
-    if (Object.hasOwn(input, 'projectId')) throw Error('invalid_target')
+    if (Object.hasOwn(input, 'projectId') || Object.hasOwn(input, 'isolation')) throw Error('invalid_target')
     return {kind: 'managed'}
   }
   if (input.kind !== 'project' || typeof input.projectId !== 'string' || !/^p-[a-f0-9]{20}$/.test(input.projectId)) {
     throw Error('invalid_target')
   }
-  return {kind: 'project', projectId: input.projectId}
+  if (input.isolation !== undefined && input.isolation !== 'worktree') throw Error('invalid_target')
+  return input.isolation === 'worktree' ? {kind: 'project', projectId: input.projectId, isolation: 'worktree'} : {kind: 'project', projectId: input.projectId}
 }
 
 function context(value: unknown): NonNullable<EntryInput['context']> {

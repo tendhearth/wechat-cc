@@ -21,6 +21,13 @@ export function executionErrorMessage(error){
  const code=error instanceof Error?error.message:String(error)
  const messages=/** @type {Record<string,string>} */({
   writer_not_closed:'执行程序还没有确认退出，工作文件夹暂时保留占用。请检查原进程是否已结束；确认退出后再继续。',
+  writer_alive:'执行程序还在运行，请先结束它；结束后占用会自动解除。',
+  worktree_not_git:'这个项目不是 Git 仓库，开不了独立工作区。取消勾选后可以照常交办。',
+  worktree_dirty:'独立工作区里还有没提交的改动，先「提交到分支」再删除。',
+  worktree_removed:'独立工作区已经删除了，分支还在项目里。',
+  not_worktree:'这件事不在独立工作区里。',
+  worktree_git_failed:'git 操作没成功，请在终端里看看这个项目的状态。',
+  worktree_branch_exists:'同名分支已经存在，没有覆盖。请重新交办一次。',
   execution_model_unsupported:'当前模型不可用。请为这件事选择可用的模型后继续；自动会沿用原设置。',
   execution_effort_unsupported:'这个模型不支持所选思考强度，请重新选择，或使用自动。',
   execution_model_unknown:'暂时无法确认当前模型，请明确选择一个模型后重试。',
@@ -61,6 +68,7 @@ export function executionErrorMessage(error){
  const ACP_SESSION='Cursor 的 ACP 会话无法建立或中断，请确认 cursor-agent 是支持 acp 子命令的版本后重试。'
  const acp=/** @type {Array<[string,string]>} */([
   ['acp_auth_required','Cursor 登录态失效，请在电脑上跑一次 cursor-agent login 后再试。'],
+  ['acp_agent_auth_required','这个执行者还没登录。先在终端里登录它一次（比如直接运行一次 gemini），或用 wechat-cc cli acp add 时加 --auth-method 指定登录方式。'],
   ['acp_resume_unsupported','这个版本的 Cursor 不支持接着原会话，请带记录重新开始。'],
   ['acp_protocol_version_unsupported',ACP_SESSION],['acp_session_failed',ACP_SESSION],['acp_process_exited',ACP_SESSION],
   ['acp_process_start_failed',ACP_SESSION],['acp_invalid_protocol_message',ACP_SESSION],['acp_line_too_long',ACP_SESSION],['acp_protocol_write_failed',ACP_SESSION],
@@ -76,6 +84,7 @@ export function executionErrorMessage(error){
   ['acp_attachment_image_unsupported','这个版本的 Cursor 不接收图片附件，请移除图片，或改用 Claude / Codex。'],
   ['acp_prompt_too_large','附件太大，Cursor 一次接不下（上限约 4 MB），请压缩图片或分批发送。'],
  ])
+ if(code.startsWith('acp_agent_auth_required: '))return `这个执行者没能登录：${code.slice('acp_agent_auth_required: '.length)}`
  for(const [prefix,text] of acp) if(code===prefix||code.startsWith(`${prefix}:`)) return text
  return messages[code]??null
 }

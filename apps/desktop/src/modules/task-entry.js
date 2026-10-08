@@ -38,7 +38,7 @@ export function createTaskEntry(deps){
     const saved=JSON.parse(storage?.getItem(KEY)??'null')
     if(saved&&typeof saved.sourceText==='string'&&typeof saved.text==='string'&&uuid(saved.draftId)&&saved.target&&['managed','project'].includes(saved.target.kind)){
       const candidates=messages(saved.excerpts)
-      retained={sourceText:saved.sourceText,text:saved.text,draftId:saved.draftId,target:saved.target,providerId:typeof saved.providerId==='string'?saved.providerId:'',executionMode:['auto','isolated','project'].includes(saved.executionMode)?saved.executionMode:'auto',execution:saved.execution??auto(),candidates,selected:candidates.map((_,i)=>i),pending:null}
+      retained={sourceText:saved.sourceText,text:saved.text,draftId:saved.draftId,target:saved.target,providerId:typeof saved.providerId==='string'?saved.providerId:'',executionMode:['auto','isolated','project'].includes(saved.executionMode)?saved.executionMode:saved.target.isolation==='worktree'?'isolated':'auto',execution:saved.execution??auto(),candidates,selected:candidates.map((_,i)=>i),pending:null}
       if(saved.pending&&uuid(saved.pending.input?.requestId)&&typeof saved.pending.input?.text==='string'&&typeof saved.pending.signature==='string')retained.pending=saved.pending
     }
   }catch{/* An invalid local draft must never prevent starting a new request. */}
@@ -86,7 +86,7 @@ export function createTaskEntry(deps){
       /** @param {string} requestId @returns {EntryInput} */
       const input=requestId=>{
         const material=drafts.get(scope),selected=state.selected.flatMap(i=>state.candidates[i]?[state.candidates[i]]:[])
-        return{requestId,text:state.text,target:structuredClone(state.target),...(state.target.kind==='project'?{executionMode:state.executionMode}:{}),...(state.providerId?{providerId:state.providerId}:{}),execution:{...state.execution},draftId:state.draftId,...(material.attachments?.length?{attachmentIds:material.attachments.map(a=>a.id)}:{}),...(selected.length?{context:{source:'owner-chat',excerpts:selected.map(m=>({role:/** @type {'user'|'assistant'} */(m.role==='cc'?'assistant':'user'),text:m.text}))}}:{})}
+        return{requestId,text:state.text,target:state.target.kind==='project'?{kind:'project',projectId:state.target.projectId}:{kind:'managed'},...(state.target.kind==='project'?{executionMode:state.executionMode}:{}),...(state.providerId?{providerId:state.providerId}:{}),execution:{...state.execution},draftId:state.draftId,...(material.attachments?.length?{attachmentIds:material.attachments.map(a=>a.id)}:{}),...(selected.length?{context:{source:'owner-chat',excerpts:selected.map(m=>({role:/** @type {'user'|'assistant'} */(m.role==='cc'?'assistant':'user'),text:m.text}))}}:{})}
       }
       const signature=()=>JSON.stringify([input(''),attachmentSignature(drafts.get(scope).attachments)])
       const disabled=()=>busy||(!state.pending?.uncertain&&(!options||projectUnavailable()||!provider()?.available||!attachments.ready(scope)||(!state.text.trim()&&!drafts.get(scope).attachments?.length)))

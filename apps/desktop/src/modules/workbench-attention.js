@@ -5,6 +5,38 @@
 /** @typedef {{tasks:AttentionTask[],stale:boolean}} AttentionState */
 /** @typedef {{invokeWorkbenchApi:(method:'GET',path:string)=>Promise<unknown>,invoke:(command:string,args:Record<string,unknown>)=>Promise<unknown>,onChange?:(state:AttentionState)=>void,getContext?:()=>{taskId:string|null,focused:boolean},intervalMs?:number,maxBackoffMs?:number,requestTimeoutMs?:number}} PollerOptions */
 
+/**
+ * 各任务的 phase(2026-10-06,回复 / 停下的系统通知)。老 daemon 没有这一项 ⇒ null(不弹,也不报错)。
+ * @param {unknown} value @returns {Map<string,string>|null}
+ */
+export function parseProgress(value) {
+  const progress = /** @type {{progress?:unknown}} */ (value)?.progress
+  if (!Array.isArray(progress)) return null
+  const out = new Map()
+  for (const item of progress) {
+    const p = /** @type {{id?:unknown,phase?:unknown}} */ (item)
+    if (p && typeof p.id === 'string' && p.id && typeof p.phase === 'string') out.set(p.id, p.phase)
+  }
+  return out
+}
+
+/**
+ * 两次之间「在做 → 回复了 / 停下了」的任务。取消不算(那是主人自己按的);消失的(归档)不算。
+ * @param {Map<string,string>|null} before @param {Map<string,string>|null} after
+ * @returns {{replied:string[],stopped:string[]}}
+ */
+export function progressTransitions(before, after) {
+  /** @type {string[]} */ const replied = []
+  /** @type {string[]} */ const stopped = []
+  if (!before || !after) return { replied, stopped }
+  for (const [id, phase] of after) {
+    if (before.get(id) !== 'working') continue
+    if (phase === 'replied') replied.push(id)
+    else if (phase === 'failed' || phase === 'interrupted') stopped.push(id)
+  }
+  return { replied, stopped }
+}
+
 /** The key is the exact JSON array of active request IDs, not a task revision.
  * @param {unknown} value @returns {{task:AttentionTask,requestIds:string[]}[]} */
 function parseAttention(value) {
@@ -40,6 +72,7 @@ export function createWorkbenchAttentionPoller(options) {
   /** @type {Promise<AttentionTask[]|null>|null} */ let inflight = null
   /** @type {(()=>void)|null} */ let cancelRequest = null
   let running = false, destroyed = false, initialized = false, retryMs = intervalMs
+  /** @type {Map<string,string>|null} */ let lastProgress = null
 
   function refresh() {
     if (destroyed) return Promise.resolve(null)
@@ -55,6 +88,9 @@ export function createWorkbenchAttentionPoller(options) {
         if (destroyed) return null
         const entries = parseAttention(result)
         const context = options.getContext?.() ?? { taskId: null, focused: false }
+        const progress = parseProgress(result)
+        const moved = initialized ? progressTransitions(lastProgress, progress) : { replied: [], stopped: [] }
+        lastProgress = progress
         let shouldNotify = false
         const activeIds = new Set()
         for (const { task, requestIds } of entries) {
@@ -77,6 +113,13 @@ export function createWorkbenchAttentionPoller(options) {
         retryMs = intervalMs
         tasks = entries.map(({ task }) => task)
         options.onChange?.({ tasks, stale: false })
+        // 回复 / 停下:窗口在前面就不弹(你正看着 CC);待处理那条优先,一次轮询最多一条通知。
+        const finishNotice = !shouldNotify && !context.focused
+          ? moved.stopped.length ? { title: '一起做有任务停下了', body: '打开 CC 看看发生了什么。' }
+            : moved.replied.length ? { title: '一起做有回复了', body: moved.replied.length > 1 ? `${moved.replied.length} 件事回复了。打开 CC 查看。` : '有一件事回复了。打开 CC 查看。' }
+            : null
+          : null
+        if (finishNotice && !destroyed) void Promise.resolve().then(() => options.invoke('notify_user', finishNotice)).catch(() => {})
         if (shouldNotify && !destroyed) {
           // No task title, prompt, command, path, or request ID crosses into OS
           // notifications. Denied or uncertain delivery is intentionally final.

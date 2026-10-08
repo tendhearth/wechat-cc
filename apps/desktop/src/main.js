@@ -165,7 +165,7 @@ presencePoller.subscribe(p => { lastPresence = p; renderRail() })
 // 右上角状态行打开的「CC 的连接」(GET /v1/connections,admin,走原生宿主的 operator 凭据)。
 // 只在浮层打开时读:打开时立刻读一次,开着时每 30 秒再读。
 const nowConnectionsHost = document.getElementById('now-connections')
-const nowConnections = nowConnectionsHost ? mountNowConnections({ host: nowConnectionsHost, call: (method, path) => invokeWorkbenchApi(method, path) }) : null
+const nowConnections = nowConnectionsHost ? mountNowConnections({ host: nowConnectionsHost, call: (method, path) => invokeWorkbenchApi(method, path), openUrl: url => { if (!mock) void Promise.resolve(invoke('open_url', { url })).catch(err => showToast(`打不开：${formatInvokeError(err)}`)) } }) : null
 {
   const details = /** @type {HTMLDetailsElement|null} */ (document.querySelector('.cc-home-details'))
   /** @type {ReturnType<typeof setInterval>|null} */ let timer = null

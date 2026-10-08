@@ -445,6 +445,22 @@ Use wechat-cc ci <command> --help for more information about a command.
 "
 `;
 
+exports[`cli.ts --help 快照(逐字节) > cli --help > cli acp --help 1`] = `
+"自定义 ACP 执行者:任何会说 ACP 的 CLI(Gemini CLI / OpenCode / Goose …)接进一起做 (cli acp)
+
+USAGE cli acp list|add|remove
+
+COMMANDS
+
+    list    列出自定义 ACP 执行者和可用的预设                                                     
+     add    加一个 ACP 执行者:预设(gemini-cli / opencode / goose / qwen-code)或 --command 自定义
+  remove    去掉一个自定义 ACP 执行者                                                         
+
+Use cli acp <command> --help for more information about a command.
+
+"
+`;
+
 exports[`cli.ts --help 快照(逐字节) > cli --help > cli rollback --help 1`] = `
 "退回上一个版本(本机留着的旧版本 / 官方装指定版本),当前版本记为有问题。daemon 需在跑 (cli rollback)
 
@@ -497,13 +513,14 @@ OPTIONS
 exports[`cli.ts --help 快照(逐字节) > cli --help 1`] = `
 "外部 agent CLI(claude / codex / cursor-agent / agy)的版本与自动升级 (wechat-cc cli v1.7.5 (dev))
 
-USAGE wechat-cc cli status|upgrade|rollback
+USAGE wechat-cc cli status|upgrade|rollback|acp
 
 COMMANDS
 
-    status    本机外部 agent CLI 的版本、升级器、能否自动退回,以及 daemon 记下的自动升级状态(只读)
-   upgrade    现在就查最新并用官方升级器升级一个 CLI(只在空闲时;升完自检,不过自动退回)。daemon 需在跑  
-  rollback    退回上一个版本(本机留着的旧版本 / 官方装指定版本),当前版本记为有问题。daemon 需在跑     
+    status    本机外部 agent CLI 的版本、升级器、能否自动退回,以及 daemon 记下的自动升级状态(只读)           
+   upgrade    现在就查最新并用官方升级器升级一个 CLI(只在空闲时;升完自检,不过自动退回)。daemon 需在跑             
+  rollback    退回上一个版本(本机留着的旧版本 / 官方装指定版本),当前版本记为有问题。daemon 需在跑                
+       acp    自定义 ACP 执行者:任何会说 ACP 的 CLI(Gemini CLI / OpenCode / Goose …)接进一起做
 
 Use wechat-cc cli <command> --help for more information about a command.
 
@@ -2097,6 +2114,20 @@ OPTIONS
 "
 `;
 
+exports[`cli.ts --help 快照(逐字节) > selftest --help > selftest embed --help 1`] = `
+"知识库向量化自检:本进程跑一次 JS 向量化(不需要 daemon;打包版核对 onnxruntime 载入) (selftest embed)
+
+USAGE selftest embed [OPTIONS] 
+
+OPTIONS
+
+  --model=<model>    模型 id(缺省 bge-small-zh-v1.5)
+           --json    JSON 输出                    
+
+
+"
+`;
+
 exports[`cli.ts --help 快照(逐字节) > selftest --help > selftest phone --help 1`] = `
 "真机闭环自检:配一台一次性设备经真中继连隧道,核对 v2 协议/agents 事件流,收尾撤销该设备(daemon 需在跑) (selftest phone)
 
@@ -2134,13 +2165,14 @@ OPTIONS
 exports[`cli.ts --help 快照(逐字节) > selftest --help 1`] = `
 "自维护:真机闭环自检(daemon 需在跑);见 docs/maintainer/verify.md (wechat-cc selftest v1.7.5 (dev))
 
-USAGE wechat-cc selftest workbench|chat|phone
+USAGE wechat-cc selftest workbench|chat|phone|embed
 
 COMMANDS
 
   workbench    真机闭环自检:起一个 scratch 工作台任务,核对回复/工具活动/权限卡放行/写文件等信号(daemon 需在跑)   
        chat    真机闭环自检:一轮测试对话(daemon 代 spawn,不发微信),核对回复/工具调用(daemon 需在跑)      
       phone    真机闭环自检:配一台一次性设备经真中继连隧道,核对 v2 协议/agents 事件流,收尾撤销该设备(daemon 需在跑)
+      embed    知识库向量化自检:本进程跑一次 JS 向量化(不需要 daemon;打包版核对 onnxruntime 载入)       
 
 Use wechat-cc selftest <command> --help for more information about a command.
 

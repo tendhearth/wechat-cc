@@ -359,3 +359,85 @@ describe('returnReviewFiles · 保留会话(评审 2026-09-21 #7)', () => {
     await vi.waitFor(() => expect(service.detail(id).task.status).toBe('completed'))
   })
 })
+
+describe('revertReviewFile (2026-10-06)', () => {
+  // 真 git 生成的快照:baseline → 改盘 → finishGitReview,和工作台存下来的完全同一种。
+  async function realReview(change: (project: string) => void, setupFiles: (project: string) => void) {
+    const { execFileSync } = await import('node:child_process')
+    const { captureGitBaseline, finishGitReview } = await import('./git-review')
+    const fixture = setup()
+    execFileSync('git', ['init', '-q'], { cwd: fixture.project })
+    setupFiles(fixture.project)
+    const task = await completedTask(fixture.service, fixture.project)
+    const baseline = await captureGitBaseline(fixture.project)
+    change(fixture.project)
+    const snapshot = await finishGitReview(baseline)
+    const artifactId = plant(fixture.store, task.id, fixture.stateDir, '代码变更-真.json', serializeGitReview(snapshot!))
+    return { ...fixture, id: task.id, artifactId }
+  }
+  it('restores a modified file byte for byte (keeping its mode), deletes an added one, re-creates a deleted one, and logs each', async () => {
+    const { readFileSync, writeFileSync, unlinkSync, existsSync, statSync, chmodSync, mkdirSync: mk } = await import('node:fs')
+    const { service, project, id, artifactId } = await realReview(p => {
+      writeFileSync(join(p, 'src', 'a.ts'), 'export const a = 2\nexport const b = 3\n')
+      writeFileSync(join(p, 'src', 'new.ts'), 'brand new\n')
+      unlinkSync(join(p, 'gone.md'))
+    }, p => {
+      mk(join(p, 'src')); writeFileSync(join(p, 'src', 'a.ts'), 'export const a = 1\n'); chmodSync(join(p, 'src', 'a.ts'), 0o755)
+      writeFileSync(join(p, 'gone.md'), '# 再见\n没有换行结尾')
+    })
+    expect(service.revertReviewFile(id, { artifactId, path: 'src/a.ts' })).toEqual({ path: 'src/a.ts', restored: 'content' })
+    expect(readFileSync(join(project, 'src', 'a.ts'), 'utf8')).toBe('export const a = 1\n')
+    if (process.platform !== 'win32') expect(statSync(join(project, 'src', 'a.ts')).mode & 0o777).toBe(0o755)
+    expect(service.revertReviewFile(id, { artifactId, path: 'src/new.ts' })).toEqual({ path: 'src/new.ts', restored: 'removed' })
+    expect(existsSync(join(project, 'src', 'new.ts'))).toBe(false)
+    service.revertReviewFile(id, { artifactId, path: 'gone.md' })
+    expect(readFileSync(join(project, 'gone.md'), 'utf8')).toBe('# 再见\n没有换行结尾')
+    expect(service.detail(id).events.filter(e => e.text.startsWith('已撤销')).length).toBe(3)
+    // 已经撤销过:现在的内容不再是快照里「改完」的那份 ⇒ 拒绝,不重复写
+    expect(() => service.revertReviewFile(id, { artifactId, path: 'src/a.ts' })).toThrow('review_file_changed')
+  })
+  it('refuses when the file changed after the snapshot, and when a session still holds the folder', async () => {
+    const { writeFileSync, readFileSync, mkdirSync: mk } = await import('node:fs')
+    const { service, store, project, id, artifactId } = await realReview(p => { writeFileSync(join(p, 'x.txt'), 'two\n') }, p => { writeFileSync(join(p, 'x.txt'), 'one\n'); mk(join(p, 'd')) })
+    writeFileSync(join(project, 'x.txt'), 'three\n')
+    expect(() => service.revertReviewFile(id, { artifactId, path: 'x.txt' })).toThrow('review_file_changed')
+    expect(readFileSync(join(project, 'x.txt'), 'utf8')).toBe('three\n')
+    writeFileSync(join(project, 'x.txt'), 'two\n')
+    // 「没确认退出」的那种也算占着:执行程序可能还在写
+    store.update(id, 'interrupted', 'writer_not_closed')
+    expect(() => service.revertReviewFile(id, { artifactId, path: 'x.txt' })).toThrow('workbench_busy')
+    store.clearWriterError(id)
+    expect(() => service.revertReviewFile(id, { artifactId, path: 'nope.txt' })).toThrow('invalid_review_reference')
+    service.revertReviewFile(id, { artifactId, path: 'x.txt' })
+    expect(readFileSync(join(project, 'x.txt'), 'utf8')).toBe('one\n')
+  })
+})
+
+describe('独立工作区:自己保留的会话安静着时可以提交(2026-10-07 真机核对)', () => {
+  it('回合中 ⇒ busy;答复后安静 ⇒ 提交成功;删工作区仍要先收工', async () => {
+    const { execFileSync } = await import('node:child_process')
+    const { writeFileSync } = await import('node:fs')
+    const { ensureWorktree, planWorktree, repoRootOf } = await import('./worktree-workspaces')
+    const { stateDir, project } = tempRoot('wb-wt-commit-')
+    const g = (...a: string[]) => execFileSync('git', a, { cwd: project, stdio: 'pipe' }).toString().trim()
+    g('init', '-q', '-b', 'main'); g('config', 'user.email', 't@t'); g('config', 'user.name', 't'); writeFileSync(join(project, 'a.txt'), 'x\n'); g('add', '-A'); g('commit', '-q', '-m', 'i')
+    const plan = planWorktree({ stateDir, projectId: 'p-0123456789abcdef0123', projectPath: project, repoRoot: repoRootOf(project)!, id: 'abcdef12' })
+    const path = ensureWorktree(plan)
+    const db = openTestDb(); dbs.push(db)
+    const store = makeWorkbenchStore(db)
+    const registry = createProviderRegistry()
+    const runtimes: RetainedRuntime[] = []
+    registry.register('claude', { async spawn() { const r = new RetainedRuntime(); runtimes.push(r); return r.session } }, { displayName: 'Claude', canResume: () => true, workbench: MANAGED_NATIVE_CAPABILITIES })
+    const service = makeWorkbenchService({ store, registry, stateDir, ownerChatId: () => 'owner' }); services.push(service)
+    const task = service.create({ path, providerId: 'claude', text: '做点事' })
+    store.worktrees.record({ taskId: task.id, projectPath: project, repoRoot: plan.repoRoot, root: plan.root, branch: plan.branch })
+    await vi.waitFor(() => expect(service.detail(task.id).events.some(e => e.kind === 'text')).toBe(true))
+    writeFileSync(join(path, 'out.txt'), 'done\n')
+    expect(() => service.worktreeAction(task.id, 'commit')).toThrow('workbench_busy')
+    runtimes[0]!.finishTurn()
+    await vi.waitFor(() => expect(service.detail(task.id).task.phase).toBe('replied'))
+    expect(service.worktreeAction(task.id, 'commit')).toMatchObject({ committed: true, branch: plan.branch })
+    expect(g('log', '-1', '--format=%s', plan.branch)).toBe(task.title)
+    expect(() => service.worktreeAction(task.id, 'remove')).toThrow('workbench_busy')
+  })
+})

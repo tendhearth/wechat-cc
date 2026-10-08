@@ -129,6 +129,8 @@ export interface SettingsPanelDeps {
   }
   /** 手机「CC 记得你」(2026-09-25,memory/nightly-runtime)。 */
   curatedMemory?: () => import('./memory/nightly-runtime').CuratedView
+  /** 主人逐条纠错(2026-10-06):不对 / 过时 / 删掉。没接 ⇒ 503。 */
+  correctMemory?: (id: string, verdict: import('./memory/nightly-runtime').MemoryVerdict) => Promise<{ text: string }>
   /** 远程隧道信息(启用时):relay wss + 本机 daemon id。手机页出门时用它
    *  经中继访问。缺省 ⇒ 手机页只能在同一 Wi-Fi 直连。 */
   remoteInfo?: () => { relay: string; id: string } | null
@@ -715,6 +717,20 @@ export function makeSettingsPanel(deps: SettingsPanelDeps): SettingsPanel {
             if (!deps.curatedMemory) return json({ ok: false, error: 'memory_not_wired' }, 503)
             // 经隧道时 handleRequest 抛出不会回包,手机会一直等 —— 这里兜住,让页面走「暂时读不到」。
             try { return json({ ok: true, ...deps.curatedMemory() }) } catch { return json({ ok: false, error: 'unavailable' }, 500) }
+          }
+          // 「CC 记得你」逐条纠错(步骤 A,2026-10-06):正文恰好 id + verdict;id 是 memory.md 每条尾注里的那串 hex。
+          if (url.pathname === '/m/api/memory/correct') {
+            if (req.method !== 'POST') return json({ ok: false, error: 'method_not_allowed' }, 405)
+            if (!deps.correctMemory) return json({ ok: false, error: 'memory_not_wired' }, 503)
+            let b: unknown
+            try { b = await req.json() } catch { return json({ ok: false, error: 'invalid' }, 400) }
+            const o = b as { id?: unknown; verdict?: unknown } | null
+            if (!o || typeof o !== 'object' || Array.isArray(o) || Object.keys(o).some(k => k !== 'id' && k !== 'verdict')
+              || typeof o.id !== 'string' || !/^[a-f0-9]{2,32}$/.test(o.id) || (o.verdict !== 'wrong' && o.verdict !== 'outdated' && o.verdict !== 'delete')) return json({ ok: false, error: 'invalid' }, 400)
+            try { await deps.correctMemory(o.id, o.verdict); return json({ ok: true }) } catch (e) {
+              const m = e instanceof Error ? e.message : ''
+              return m === 'memory_entry_not_found' || m === 'memory_not_found' ? json({ ok: false, error: 'not_found' }, 404) : json({ ok: false, error: 'unavailable' }, 500)
+            }
           }
           if (url.pathname === '/m/api/home' && req.method === 'GET') {
             return json(await home(parseLimit(url)))

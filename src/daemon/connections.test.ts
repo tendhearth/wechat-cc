@@ -93,3 +93,16 @@ describe('cacheConnections', () => {
     t = 25_000; boom = true; expect(() => c()).toThrow(); boom = false; expect(c().generatedAt).toBe(4)
   })
 })
+
+describe('capabilities (2026-10-06)', () => {
+  it('rides along when wired; phone redaction drops raw error detail; a throwing source never takes the card down', () => {
+    const cap = { id: 'brain', name: '大脑', state: 'fallback' as const, code: 'brain.retrying', reason: 'Codex 正在重试。', detail: 'spawn ENOENT /Users/x/bin/codex' }
+    const snap = buildConnections(deps({ capabilities: () => [cap] }))
+    expect(snap.capabilities).toEqual([cap])
+    expect(redactConnections(snap).capabilities).toEqual([{ id: 'brain', name: '大脑', state: 'fallback', code: 'brain.retrying', reason: 'Codex 正在重试。' }])
+    const broken = buildConnections(deps({ capabilities: () => { throw new Error('boom') } }))
+    expect(broken.capabilities).toBeUndefined()
+    expect(broken.sources.length).toBeGreaterThan(0)
+    expect(buildConnections(deps()).capabilities).toBeUndefined()
+  })
+})

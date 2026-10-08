@@ -5,7 +5,7 @@
  * Refs are passed in for late-bound polling/guard access from closures.
  */
 import type { SinkExtras } from '../reply-sinks'
-import { encodeExtras, hasExtras, projectReplyExtras, stickerDataUri, withStickerImages, type AppReplyExtras, type ConverseResult, CONVERSE_IMAGE_LIMITS, type ConverseImage } from '../app-reply'
+import { encodeExtras, hasExtras, projectReplyExtras, stickerDataUri, withStickerImages, type AppReplyExtras, type ConverseResult, CONVERSE_IMAGE_LIMITS, converseFileStem, isConverseImageMime, type ConverseImage } from '../app-reply'
 import { join } from 'node:path'
 import { recallFromMemory } from '../memory/recall'
 import { randomBytes } from 'node:crypto'
@@ -31,6 +31,9 @@ import type { ChatPrefsStore } from '../chat-prefs'
 import type { CareLedger } from '../companion/care-ledger'
 import type { ReplySinks } from '../reply-sinks'
 import { loadCompanionConfig } from '../companion/config'
+import { buildCapabilities } from '../capabilities'
+import { hasFullDiskAccess } from '../../lib/fs-access'
+import { readNightlyState } from '../memory/nightly'
 import { readPlanLogDays } from '../companion/plan-memory'
 import { readJournalSeen, writeJournalSeen } from '../../core/journal-seen'
 import { resolveAdminChatId } from '../companion/resolve-admin'
@@ -65,7 +68,7 @@ import { makeForwardBudget } from '../../core/forward-budget'
 import type { InboundMsg } from '../../core/prompt-format'
 import { makeOnboardingHandler } from '../onboarding'
 import { botName, botNameFromModeFallback } from '../bot-name'
-import { loadAgentConfig, saveAgentConfig } from '../../lib/agent-config'
+import { loadAgentConfig, modelForProvider, saveAgentConfig } from '../../lib/agent-config'
 import { writeConfigKey } from '../config-surface'
 import { makeOpenaiModels } from '../openai-models'
 import { hasLlmKey } from '../llm-keys'
@@ -151,6 +154,8 @@ export interface PipelineDepsOpts {
   workbench?: import('../../core/workbench/service').WorkbenchService
   /** 网络守护运行时(2026-10-02):微信入站闸门 + 每晚整理记忆的跳过判据。 */
   guardRuntime?: import('../guard/runtime').GuardRuntime
+  /** 可选子系统的开机状态(SubsystemSupervisor.statuses;「CC 现在怎么样」用)。 */
+  subsystems?: () => Array<{ name: string; state: 'ok' | 'degraded' | 'off'; error?: string }>
   /** 内部 API 的 token-registry 窄接口,给手机设置面板登记链接 / 设备令牌(梳理第 6 步)。 */
   panelTokens?: import('../internal-api/token-registry').PanelTokens
   matters?: import('../../core/matters/store').MatterStore
@@ -594,6 +599,7 @@ export function buildPipelineDeps(opts: PipelineDepsOpts, refs: PipelineDepsRefs
       ownerChatId,
       say: (text: string, surface?: 'desktop' | 'phone') => companionConverse(text, surface ?? 'desktop'),
       recent: async (chatId: string, limit: number) => (await messagesStore.listRange(chatId, { limit })).map(r => ({ kind: r.direction === 'in' ? 'user' : 'text', text: r.text, createdAt: Date.parse(r.ts), source: r.source })),
+      search: async (chatId: string, query: string, limit: number) => (await messagesStore.search(chatId, query, limit)).map(r => ({ id: r.id, kind: r.direction === 'in' ? 'user' as const : 'text' as const, text: r.text, createdAt: Date.parse(r.ts), source: r.source })),
     },
     // 手机对聊天那件事「说一句」按 requestId 去重(v70,与工作台输入回执同一规矩)。
     sayReceipts: makeSayReceipts(db),
@@ -608,7 +614,9 @@ export function buildPipelineDeps(opts: PipelineDepsOpts, refs: PipelineDepsRefs
   // isInFlight 前置拒 + coordinator.submitTurn 持每 chat 锁),手机一句不会和微信一轮在主人会话上并跑。
   // companionConverse 在下面才定义;这里只捕获引用,调用发生在请求到来时(与 mattersService 同一姿势)。
   const phoneChat = phoneOwner ? makePhoneChat({
-    converse: text => companionConverse(text, 'phone'),
+    converse: (text, images) => companionConverse(text, 'phone', images),
+    // 手机带的图:材料暂存里按主人取(与交办同一套校验),读完即删,图落到对话 inbox(2026-10-06)。
+    ...(opts.workbench ? { takeImages: (m: { draftId: string; attachmentIds: string[] }) => opts.workbench!.takeChatImages(m, { ownerKey: ownerChatId() ?? '', surface: 'phone' }) } : {}),
     ownerMatterId: () => phoneOwner.ensure(),
     onSettled: id => { matterActivity?.note(id); phoneEvents?.poke() },
     log: (tag, line) => log(tag, line),
@@ -623,6 +631,28 @@ export function buildPipelineDeps(opts: PipelineDepsOpts, refs: PipelineDepsRefs
     computer: () => ({ label: hostname().replace(/\.local$/, ''), since: startedAt, version: APP_VERSION }),
     detailLimit: 3,
     ...(opts.workbench ? { workbench: opts.workbench } : {}),
+    // 「CC 现在怎么样」(2026-10-06):现有信号拼成四态能力表(capabilities.ts);任何一路读不到就当没有,不让整张卡挂掉。
+    capabilities: () => {
+      const cfg = loadAgentConfig(stateDir) as { provider?: string; knowledge_enabled?: boolean }
+      const provider = cfg.provider ?? 'claude'
+      const probe = (boot.providerProbes?.() ?? []).find(p => p.id === provider)
+      const outbound = ilink.outboundHealth()
+      const guard = opts.guardRuntime?.health()
+      const fda = process.platform === 'darwin' ? hasFullDiskAccess() : null
+      const nightly = readNightlyState(stateDir)
+      let devices = 0
+      try { devices = settingsPanel.phoneDevices().length } catch { /* 读不到就当没配对 */ }
+      return buildCapabilities({
+        wechat: { outbound: outbound.state, expired: ilink.sessionState.listExpired().length, lastError: outbound.lastError ?? null },
+        brain: { provider, name: boot.registry.get(provider)?.opts.displayName ?? provider, registered: boot.registry.has(provider), retrying: probe?.state === 'retrying', lastError: probe?.last_error ?? null },
+        guard: guard?.enabled ? { safe: guard.safe, paused: !!guard.paused, detail: guard.detail ?? null } : null,
+        fullDiskAccess: fda === null ? null : { granted: fda, settingsUrl: 'x-apple.systempreferences:com.apple.preference.security?Privacy_AllFiles' },
+        knowledge: cfg.knowledge_enabled === true ? { built: !!boot.knowledge, embed: boot.knowledge?.embedStatus?.() ?? (boot.knowledge?.embedder ? 'python' : 'none') } : null,
+        memory: loadCompanionConfig(stateDir).memory_nightly_enabled ? { failures: nightly.failures, firstRunDone: nightly.firstRunDone } : null,
+        phone: { relay: relayV2Configured(stateDir), devices },
+        subsystems: opts.subsystems?.() ?? [],
+      })
+    },
   }))
   // 原生会话读:单飞 + 短缓存(裁定 8),10 s 预算超了也不会堆积后台扫描。
   const phoneSessions = opts.workbench ? cacheSessions({ list: (p, i) => opts.workbench!.listNativeHistory(p, i), read: (k, i) => opts.workbench!.readNativeHistory(k, i), readRecent: (k, i) => opts.workbench!.readRecentNativeHistory(k, i) }) : null
@@ -653,17 +683,34 @@ export function buildPipelineDeps(opts: PipelineDepsOpts, refs: PipelineDepsRefs
     }}:{}),
     ...(opts.workbench?{entry:{
       entryOptions:()=>opts.workbench!.entryOptions({ownerKey:ownerChatId()??'',surface:'phone'}),
+      entryModels:(input:{providerId:string;projectId?:string})=>opts.workbench!.entryModels(input,{ownerKey:ownerChatId()??'',surface:'phone'}),
       createEntry:(input:import('../../core/workbench/task-entry').EntryInput)=>opts.workbench!.createEntry(input,{ownerKey:ownerChatId()??'',surface:'phone'}),
       entryReceipt:(requestId:string)=>opts.workbench!.entryReceipt(requestId,{ownerKey:ownerChatId()??'',surface:'phone'}),
     }}:{}),
     curatedMemory: () => memoryNightly.curatedView(),
-    ...(mattersService && opts.matters ? { matters: { list: (f) => mattersService.list(f), detail: (id) => mattersService.detail(id), inputReceipt:mattersService.inputReceipt, say: (id, text, input) => mattersService.say(id, text, 'phone',input), permission:mattersService.permission,answer:mattersService.answer,artifactChunk:mattersService.artifactChunk,handoff:mattersService.handoff,seenOnPhone: (id) => opts.matters!.bind(id, 'phone', 'pwa') } } : {}),
+    correctMemory: (id: string, verdict: import('../memory/nightly-runtime').MemoryVerdict) => memoryNightly.correct(id, verdict),
+    ...(mattersService && opts.matters ? { matters: { list: (f) => mattersService.list(f), detail: (id) => mattersService.detail(id), inputReceipt:mattersService.inputReceipt, say: (id, text, input) => mattersService.say(id, text, 'phone',input), permission:mattersService.permission,answer:mattersService.answer,stop:mattersService.stop,artifactChunk:mattersService.artifactChunk,handoff:mattersService.handoff,seenOnPhone: (id) => opts.matters!.bind(id, 'phone', 'pwa') } } : {}),
     ...(phoneOwner && phoneChat ? { chat: {
       owner: () => phoneOwner.peek(),
       history: (chatId: string, o: { beforeTs?: string; limit: number }) => messagesStore.listRange(chatId, o),
       chat: phoneChat,
       message: (chatId: string, id: string) => messagesStore.get(chatId, id),
+      search: (chatId: string, query: string, limit: number) => messagesStore.search(chatId, query, limit),
       speak: (text: string) => ilink.voice.synthesizeSpeech(text),
+      // 与微信 `/api <模型>` 同一处:Mode.solo 按对话钉,下一句生效(同后端换模型时协调器自己释放旧会话)。
+      model: {
+        current: (chatId: string) => {
+          const mode = boot.coordinator.getMode(chatId), cfg = loadAgentConfig(stateDir)
+          const provider = mode.kind === 'solo' ? mode.provider : cfg.provider
+          return {
+            mode: mode.kind, provider,
+            model: mode.kind === 'solo' ? mode.model ?? null : null,
+            globalModel: modelForProvider(cfg, provider) ?? null,
+            providers: boot.registry.list().map(id => ({ id, name: boot.registry.get(id)?.opts.displayName ?? id })),
+          }
+        },
+        set: (chatId: string, provider: string, model: string | null) => boot.coordinator.setMode(chatId, { kind: 'solo', provider, ...(model ? { model } : {}) }),
+      },
     } } : {}),
     ...(remoteTunnel ? { remoteInfo: () => remoteTunnel } : {}),
     ...(phonePush ? { push: phonePush } : {}),
@@ -1054,10 +1101,15 @@ export function buildPipelineDeps(opts: PipelineDepsOpts, refs: PipelineDepsRefs
   // 「一件事」:桌面 / 手机上跟 CC 说的话和微信里的进同一条消息流(source 记表面),三个入口看到的是同一段对话。落库失败不影响这一轮。
   // 回复交付(2026-10-04):附件与旁白跟着回复那一行落库(messages.extras),手机从消息库拉对话时才看得到;
   // 只有附件、没有文字的一轮也写这一行(text 为空),否则那张表情 / 那段语音就没地方挂。
+  /** 带附件的那句在历史里记成什么样:「原文\n[图片 ×N]」(手机按它认落地,一字不能改),有文件再加「[文件 ×M]」。 */
+  const attachmentRecordText = (text: string, atts: NonNullable<InboundMsg['attachments']>) => {
+    const images = atts.filter(a => a.kind === 'image').length, files = atts.length - images
+    return [text.trim(), images ? `[图片 ×${images}]` : '', files ? `[文件 ×${files}]` : ''].filter(Boolean).join('\n')
+  }
   const persistAppTurn = (origin: 'desktop' | 'phone', synthetic: InboundMsg, text: string, reply: string | undefined, extras?: AppReplyExtras | null) => {
     const ts = new Date().toISOString()
     const ownerChatId = synthetic.chatId
-    void messagesStore.append({ id: `app:${origin}:${synthetic.createTimeMs}:in`, chatId: ownerChatId, ts, direction: 'in', kind: 'text', text: synthetic.attachments?.length ? [text.trim(), `[图片 ×${synthetic.attachments.length}]`].filter(Boolean).join('\n') : text, source: origin }).catch(() => {})
+    void messagesStore.append({ id: `app:${origin}:${synthetic.createTimeMs}:in`, chatId: ownerChatId, ts, direction: 'in', kind: 'text', text: synthetic.attachments?.length ? attachmentRecordText(text, synthetic.attachments) : text, source: origin }).catch(() => {})
     const encoded = encodeExtras(extras)
     if (reply || encoded) void messagesStore.append({ id: `app:${origin}:${synthetic.createTimeMs}:out`, chatId: ownerChatId, ts: new Date(Date.now() + 1).toISOString(), direction: 'out', kind: 'text', text: reply ?? '', source: origin, ...(encoded ? { extras: encoded } : {}) }).catch(() => {})
   }
@@ -1133,7 +1185,8 @@ export function buildPipelineDeps(opts: PipelineDepsOpts, refs: PipelineDepsRefs
       const inbox = join(stateDir, 'inbox')
       mkdirSync(inbox, { recursive: true })
       images.forEach((img, i) => {
-        const path = join(inbox, `app-${origin}-${createTimeMs}-${i + 1}.${CONVERSE_IMAGE_LIMITS.mimes[img.mime] ?? 'img'}`)
+        const stem = isConverseImageMime(img.mime) ? '' : converseFileStem(img.name)
+        const path = join(inbox, `app-${origin}-${createTimeMs}-${i + 1}${stem ? `-${stem}` : ''}.${CONVERSE_IMAGE_LIMITS.mimes[img.mime] ?? 'bin'}`)
         writeFileSync(path, img.bytes, { mode: 0o600 })
         imagePaths.push(path)
       })
@@ -1142,10 +1195,10 @@ export function buildPipelineDeps(opts: PipelineDepsOpts, refs: PipelineDepsRefs
       chatId: ownerChatId,
       userId: ownerChatId,
       text,
-      msgType: imagePaths.length && !text.trim() ? 'image' : 'text',
+      msgType: imagePaths.length && !text.trim() ? (images!.every(i => isConverseImageMime(i.mime)) ? 'image' : 'file') : 'text',
       createTimeMs,
       accountId: ilink.resolveAccountId(ownerChatId),
-      ...(imagePaths.length ? { attachments: imagePaths.map(path => ({ kind: 'image' as const, path })) } : {}),
+      ...(imagePaths.length ? { attachments: imagePaths.map((path, i) => ({ kind: isConverseImageMime(images![i]!.mime) ? 'image' as const : 'file' as const, path })) } : {}),
     }
     // 第四步(d):App 说的话也先过 route + consume 这张表(与微信同一份消费者实例)。消费者的
     // 回话在回复作用域里被截住交还给 App;没人吃 ⇒ 下面照常进对话。没接 appTurn(测试 /

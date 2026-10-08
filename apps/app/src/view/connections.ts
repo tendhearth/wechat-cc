@@ -1,5 +1,5 @@
 import type { ConnectionsT } from '../backend/types'
-import { t, type Lang } from '../i18n'
+import { hasMessage, t, type Lang } from '../i18n'
 
 export type Dot = 'ok' | 'warn' | 'bad' | 'unknown'
 type State = ConnectionsT['sources'][number]['state']
@@ -15,7 +15,15 @@ const DOT: Record<State, Dot> = { ready: 'ok', behind: 'warn', not_loaded: 'bad'
 // 最坏的在前:headline 取最坏;没有任何来源 ⇒ unknown(绝不默认绿)
 const SEVERITY: Dot[] = ['bad', 'warn', 'unknown', 'ok']
 const HEADLINE = { ok: 'links.headlineOk', warn: 'links.headlineWarn', bad: 'links.headlineBad', unknown: 'links.headlineUnknown' } as const
-type HeadlineKey = (typeof HEADLINE)[Dot] | 'links.headlineOffline' | 'links.headlineStarting'
+type HeadlineKey = (typeof HEADLINE)[Dot] | 'links.headlineOffline' | 'links.headlineStarting' | 'links.headlineNeedsYou' | 'links.headlineFallback'
+type Capability = NonNullable<ConnectionsT['capabilities']>[number]
+const CAP_DOT: Record<Capability['state'], Dot> = { ok: 'ok', fallback: 'warn', needs_you: 'bad', off: 'unknown' }
+const CAP_NAMES = ['wechat', 'brain', 'guard', 'disk', 'knowledge', 'memory', 'phone'] as const
+/** 能力行的人话:认得的原因码按本机语言说;认不出的(新 daemon 的新码)用 daemon 给的原文。 */
+function capabilityLabel(c: Capability, lang: Lang): string {
+  const key = `cap.${c.code}`
+  return hasMessage(lang, key) ? t(lang, key, c.params) : c.reason
+}
 
 /**
  * opts.stale:这份快照只是「上次所知」(见 connectionsTrust)⇒ 电脑那行不说「在线」。
@@ -24,6 +32,7 @@ type HeadlineKey = (typeof HEADLINE)[Dot] | 'links.headlineOffline' | 'links.hea
  */
 export function connectionsView(s: ConnectionsT, _now: number, lang: Lang, opts: { stale?: boolean; demo?: boolean } = {}): {
   headline: { dot: Dot; key: HeadlineKey; n: number }
+  capabilities: Array<{ id: string; name: string; dot: Dot; label: string; action: string | null }>
   sources: Array<{ id: string; name: string; dot: Dot; label: string }>
   computers: Array<{ id: string; label: string; dot: Dot; detail: string }>
   recent: Array<{ matterId: string; title: string; when: string }>
@@ -41,8 +50,22 @@ export function connectionsView(s: ConnectionsT, _now: number, lang: Lang, opts:
   const offline = s.computers.filter(c => !c.online).length
   const worst = SEVERITY.find(d => sources.some(x => x.dot === d) || (d === 'bad' && offline > 0)) ?? 'unknown'
   const badSources = sources.filter(x => x.dot === 'bad').length
-  const headline: { dot: Dot; key: HeadlineKey; n: number } = worst === 'bad' && badSources === 0
+  const caps = s.capabilities ?? []
+  const capabilities = caps.map(c => ({
+    id: c.id,
+    name: (CAP_NAMES as readonly string[]).includes(c.id) ? t(lang, `cap.name.${c.id}` as Parameters<typeof t>[1]) : c.name,
+    dot: CAP_DOT[c.state], label: capabilityLabel(c, lang),
+    // 修只能在电脑上做:手机上把动作说成一句提示,不做成按钮。
+    action: c.action && c.state !== 'ok' ? t(lang, 'cap.actionOnComputer', { action: c.action.label }) : null,
+  }))
+  const needsYou = caps.filter(c => c.state === 'needs_you').length, fallback = caps.filter(c => c.state === 'fallback').length
+  const headline: { dot: Dot; key: HeadlineKey; n: number } = needsYou > 0
+    // 要主人动手的排第一:这是总览存在的理由(2026-10-06)。
+    ? { dot: 'bad', key: 'links.headlineNeedsYou', n: needsYou }
+    : worst === 'bad' && badSources === 0
     ? { dot: 'bad', key: 'links.headlineOffline', n: offline }
+    : fallback > 0 && worst !== 'bad'
+    ? { dot: 'warn', key: 'links.headlineFallback', n: fallback }
     : { dot: worst, key: worst === 'unknown' && s.starting === true ? 'links.headlineStarting' : HEADLINE[worst], n: sources.filter(x => x.dot === worst).length }
   // 演示:根本没有电脑 ⇒ 不说「在线」,写明是演示(与顶栏「演示 · 没有连电脑」一致);圆点由 connectionsPage 压灰
   const computers = opts.demo ? s.computers.map(c => ({ id: c.id, label: t(lang, 'links.demoComputer'), dot: 'unknown' as Dot, detail: t(lang, 'links.demoComputerDetail') })) : s.computers.map(c => ({
@@ -50,7 +73,7 @@ export function connectionsView(s: ConnectionsT, _now: number, lang: Lang, opts:
     detail: !c.online ? t(lang, 'links.computerOffline') : opts.stale ? t(lang, 'links.computerLastKnownOnline') : c.since === null ? t(lang, 'links.computerOnlineNow') : t(lang, 'links.computerOnline', { date: shortDate(c.since, lang) }),
   }))
   return {
-    headline, sources, computers,
+    headline, capabilities, sources, computers,
     recent: s.recent.map(r => ({ matterId: r.matterId, title: r.title, when: shortDate(r.at, lang) })),
     outputs: s.outputs.map(o => ({ matterId: o.matterId, name: o.name, when: shortDate(o.at, lang) })),
   }
@@ -66,10 +89,11 @@ export function connectionsTrust(q: { data?: unknown; error?: string }, connStat
 }
 
 /** stale 时把所有圆点压成 unknown(灰),文字照旧当作「上次所知」。 */
-export function muteDots<V extends { headline: { dot: Dot }; sources: Array<{ dot: Dot }>; computers: Array<{ dot: Dot }> }>(v: V): V {
+export function muteDots<V extends { headline: { dot: Dot }; capabilities: Array<{ dot: Dot }>; sources: Array<{ dot: Dot }>; computers: Array<{ dot: Dot }> }>(v: V): V {
   return {
     ...v,
     headline: { ...v.headline, dot: 'unknown' as Dot },
+    capabilities: v.capabilities.map(x => ({ ...x, dot: 'unknown' as Dot })),
     sources: v.sources.map(x => ({ ...x, dot: 'unknown' as Dot })),
     computers: v.computers.map(x => ({ ...x, dot: 'unknown' as Dot })),
   }

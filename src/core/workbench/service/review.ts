@@ -5,7 +5,13 @@
  */
 import { randomUUID } from 'node:crypto'
 import { readArtifactSnapshot } from '../artifacts'
-import { GIT_REVIEW_MIME, type GitReview, type ReviewFile } from '../git-review'
+import { GIT_REVIEW_MIME, reverseApplyDiff, type GitReview, type ReviewFile } from '../git-review'
+import { closeSync, constants, fsyncSync, lstatSync, renameSync, unlinkSync, writeSync } from 'node:fs'
+import { createHash } from 'node:crypto'
+import { join } from 'node:path'
+import { openAnchored, verifyChain } from '../anchored-fs'
+import { readAnchoredRegular } from '../artifacts'
+import { pathsConflict } from '../scheduler'
 import { normalizeInputRequestId, type LiveInput } from '../live-inputs'
 import { composeReturnText, derivedReturnRequestId, parseGitReviewSnapshot, type ReviewTurn } from '../review'
 import type { ReviewMark } from '../review-marks'
@@ -16,6 +22,8 @@ export interface ReviewDomain {
   reviewList(id:string):ReviewTurn[]
   markReviewFile(id:string,input:{artifactId:string;path:string;mark:'accepted'|'returned';comment?:string}):ReviewMark
   returnReviewFiles(id:string,input:{artifactId:string;paths:string[];comment:string;inputRequestId?:string;restartToken?:string}):WorkbenchTaskView|Promise<LiveInput>
+  /** 把一个文件恢复成这一轮开始前的样子(2026-10-06,对标 Codex 的逐文件撤销)。见实现处的门。 */
+  revertReviewFile(id:string,input:{artifactId:string;path:string}):{path:string;restored:'content'|'removed'}
 }
 
 export function makeReviewDomain(ctx:ServiceCtx):ReviewDomain {
@@ -112,5 +120,52 @@ export function makeReviewDomain(ctx:ServiceCtx):ReviewDomain {
       const task=ctx.actions.deref('review').continueTask(id,text,{inputRequestId:given??randomUUID(),...(input.restartToken!==undefined?{restartToken:input.restartToken}:{})})
       marks()
       return task
-    },  }
+    },
+    /**
+     * 逐文件撤销(2026-10-06):把这个文件恢复成快照里「这一轮开始前」的内容。全部是拒绝条件,没有「尽量」:
+     * - 文件夹还有会话占着(包括这件事自己留着的会话、没确认退出的那种)⇒ workbench_busy —— 执行者随时可能再写;
+     * - 现在的内容和快照里「改完」的那份对不上(sha256)⇒ review_file_changed —— 之后又被改过,不替谁做合并;
+     * - 倒推出来的内容和「改动前」的 sha256 对不上 ⇒ review_revert_unavailable(diff 被截断、二进制、只改了权限……);
+     * - 要恢复的文件所在目录已经不在 ⇒ review_revert_unavailable(不替人建目录)。
+     * 写法:同目录临时文件 → fsync → rename(保留原来的权限位);新增的文件撤销 = 删掉它。全程锚定、不跟链接。
+     */
+    revertReviewFile(id:string,input:{artifactId:string;path:string}) {
+      if(typeof input.path!=='string'||!input.path)throw new Error('invalid_review_reference')
+      const task=store.get(id)
+      const {review}=reviewTarget(id,input.artifactId)
+      const file=markableFile(review,input.path)
+      if(!file.diff)throw new Error('review_revert_unavailable')
+      if(task.error==='writer_not_closed')throw new Error('workbench_busy')
+      for(const holder of [...ctx.state.reservations.values(),...ctx.state.writerOrphans.values()])if(pathsConflict(holder.path,task.path))throw new Error('workbench_busy')
+      const parts=file.path.split('/')
+      const fail='review_revert_unavailable'
+      const sha=(text:string)=>createHash('sha256').update(text).digest('hex')
+      let current:string|null=null,mode=0o644
+      try {
+        const st=lstatSync(join(task.path,file.path))
+        if(!st.isFile())throw new Error(fail)
+        mode=st.mode&0o777
+        current=readAnchoredRegular(task.path,file.path).toString('utf8')
+      } catch(error) { if((error as NodeJS.ErrnoException).code!=='ENOENT')throw new Error(error instanceof Error&&error.message===fail?fail:'review_file_changed') }
+      if(file.kind==='deleted'?current!==null:current===null||!file.afterSha256||sha(current)!==file.afterSha256)throw new Error('review_file_changed')
+      const before=reverseApplyDiff(current??'',file.diff)
+      if(before===null)throw new Error('review_file_changed')
+      verifyChain(task.path,parts.slice(0,-1),fail,{leafDirectory:true})
+      if(file.kind==='added') {
+        if(before!=='')throw new Error(fail)
+        verifyChain(task.path,parts,fail)
+        unlinkSync(join(task.path,file.path))
+      } else {
+        if(!file.beforeSha256||sha(before)!==file.beforeSha256)throw new Error(fail)
+        const tmpParts=[...parts.slice(0,-1),`.${parts.at(-1)}.cc-revert-${randomUUID().slice(0,8)}`]
+        const fd=openAnchored(task.path,tmpParts,constants.O_CREAT|constants.O_EXCL|constants.O_WRONLY,mode,fail)
+        try { const bytes=Buffer.from(before,'utf8'); let at=0; while(at<bytes.length)at+=writeSync(fd,bytes,at); fsyncSync(fd) } finally { closeSync(fd) }
+        try { verifyChain(task.path,parts.slice(0,-1),fail,{leafDirectory:true}); renameSync(join(task.path,...tmpParts),join(task.path,...parts)) }
+        catch(error) { try{unlinkSync(join(task.path,...tmpParts))}catch{ /* best-effort */ }; throw error }
+      }
+      store.addEvent(id,'system',file.kind==='added'?`已撤销 ${file.path}：这一轮新建的文件已删除。`:`已撤销 ${file.path} 的改动，恢复成这一轮开始前的内容。`)
+      ctx.hub.touched(id)
+      return {path:file.path,restored:file.kind==='added'?'removed' as const:'content' as const}
+    },
+  }
 }

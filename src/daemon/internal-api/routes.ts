@@ -760,17 +760,17 @@ const onlineStickerCursor = new Map<string, number>()
     'POST /v1/companion/converse': async (_q, body) => {
       if (!deps.companionConverse) return { status: 503, body: { error: 'companion_converse_not_wired' } }
       const { text, images } = body as { text?: unknown; images?: unknown }
-      // 图(2026-10-05):[{ mime, data_b64 }],最多 4 张、每张 ≤10MB、只认常见图片格式。有图时文字可以空。
+      // 图(2026-10-05)与文件(2026-10-06):[{ mime, data_b64, name? }],最多 4 份、每份 ≤10MB、只认常见图片与文档格式。有附件时文字可以空。
       const decoded: ConverseImage[] = []
       if (images !== undefined) {
         if (!Array.isArray(images) || images.length > CONVERSE_IMAGE_LIMITS.count) return { status: 400, body: { error: 'too_many_images' } }
         for (const raw of images) {
-          const { mime, data_b64 } = (raw ?? {}) as { mime?: unknown; data_b64?: unknown }
-          if (typeof mime !== 'string' || !(mime in CONVERSE_IMAGE_LIMITS.mimes) || typeof data_b64 !== 'string') return { status: 400, body: { error: 'invalid_image' } }
+          const { mime, data_b64, name } = (raw ?? {}) as { mime?: unknown; data_b64?: unknown; name?: unknown }
+          if (typeof mime !== 'string' || !(mime in CONVERSE_IMAGE_LIMITS.mimes) || typeof data_b64 !== 'string' || (name !== undefined && (typeof name !== 'string' || name.length > 255))) return { status: 400, body: { error: 'invalid_image' } }
           if (data_b64.length > Math.ceil(CONVERSE_IMAGE_LIMITS.bytes / 3) * 4 + 4) return { status: 413, body: { error: 'image_too_large' } }
           const bytes = Buffer.from(data_b64, 'base64')
           if (bytes.length === 0 || bytes.length > CONVERSE_IMAGE_LIMITS.bytes) return { status: bytes.length ? 413 : 400, body: { error: bytes.length ? 'image_too_large' : 'invalid_image' } }
-          decoded.push({ mime, bytes })
+          decoded.push({ mime, bytes, ...(typeof name === 'string' && name ? { name } : {}) })
         }
       }
       if (typeof text !== 'string' || (text.trim().length === 0 && decoded.length === 0)) {

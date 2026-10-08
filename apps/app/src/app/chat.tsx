@@ -5,13 +5,17 @@ import { SafeAreaView } from 'react-native-safe-area-context'
 import { t, type Lang } from '../i18n'
 import { useLang } from '../i18n/useLang'
 import { getDraft, setDraft } from '../state/drafts'
-import { useConnection } from '../state/hooks'
+import { useBackendCtx } from '../state/BackendProvider'
+import { useConnection, useQuery } from '../state/hooks'
 import { useChat, type ChatSendOutcome } from '../state/useChat'
 import { ConnectionNotice } from '../ui/ConnectionNotice'
 import { Dot } from '../ui/Dot'
 import { MessageText } from '../ui/Markdown'
 import { ReplyAttachments, ReplyProcess } from '../ui/ReplyExtras'
 import { TextField } from '../ui/TextField'
+import { AddImageButton, ImageTray } from '../ui/ImageTray'
+import type { PickedImage } from '../state/image-upload'
+import { PHONE_CHAT_MAX_IMAGES as CHAT_MAX_IMAGES } from '@wechat-cc/protocol'
 import { radius, space } from '../ui/tokens'
 import { TopBar } from '../ui/TopBar'
 import { Txt } from '../ui/Txt'
@@ -23,7 +27,7 @@ const pad = (n: number) => String(n).padStart(2, '0')
 const hhmm = (ms: number) => { const d = new Date(ms); return `${pad(d.getHours())}:${pad(d.getMinutes())}` }
 
 const FAILED_KEY = { busy: 'chat.failedBusy', unavailable: 'chat.failedUnavailable', notConfigured: 'chat.failedNotConfigured', maybeLost: 'chat.maybeLost', notConfirmed: 'chat.notConfirmed' } as const
-const OUTCOME_KEY = { busy: 'compose.busy', ccBusy: 'chat.ccBusy', uncertain: 'compose.uncertain', tooLong: 'compose.tooLong', revoked: 'conn.revokedTitle', failed: 'compose.failed', refused: 'compose.notTaken' } as const
+const OUTCOME_KEY = { busy: 'compose.busy', ccBusy: 'chat.ccBusy', uncertain: 'compose.uncertain', tooLong: 'compose.tooLong', revoked: 'conn.revokedTitle', failed: 'compose.failed', refused: 'compose.notTaken' , imagesGone: 'chat.imagesGone', imagesUnsupported: 'chat.imagesUnsupported'} as const
 
 // 跟 CC 说:主人那条对话(微信 / 电脑 / 手机说的都在),往上滑看更早的;回复异步到,等回复时显示「在想…」。
 export default function Chat() {
@@ -33,6 +37,7 @@ export default function Chat() {
   const conn = useConnection()
   const online = canSubmit(conn)
   const chat = useChat()
+  const { backend } = useBackendCtx()
   const [text, setTextState] = useState(() => getDraft('chat'))
   // 发送是异步的:成功回来时比的是「现在」输入框里的字,不是点发送时闭包里的那份
   const textRef = useRef(text)
@@ -40,6 +45,17 @@ export default function Chat() {
   const [sending, setSending] = useState(false)
   const [outcome, setOutcome] = useState<Exclude<ChatSendOutcome, 'ok'> | null>(null)
   const lock = useRef(false)
+  // 待发的图(2026-10-06):只在这一屏里;发成功就清,没发出去留着再点就是重发同一句。
+  const [images, setImages] = useState<PickedImage[]>([])
+  const [imageNote, setImageNote] = useState<string | null>(null)
+  const addImages = async () => {
+    // 用到才加载:相册与哈希是原生模块,不进页面的静态依赖(测试与首屏都不需要它)
+    const { pickImages } = await import('../net/image-pick')
+    const r = await pickImages(CHAT_MAX_IMAGES - images.length)
+    if (!r) return
+    setImages(cur => [...cur, ...r.images].slice(0, CHAT_MAX_IMAGES))
+    setImageNote(r.skipped === 'too_large' ? t(lang, 'images.tooLarge') : r.skipped === 'unsupported' ? t(lang, 'images.unsupported') : null)
+  }
 
   const run = async (go: () => Promise<ChatSendOutcome>, sent: string | null) => {
     if (lock.current || !online) return
@@ -48,6 +64,7 @@ export default function Chat() {
     try {
       const r = await go()
       if (r === 'ok') {
+        setImages([]); setImageNote(null)
         // 只去掉发出去的那段(Task 11 a):原样那句的草稿由 useChat.send 删;接着打过的字同步回草稿
         if (sent !== null) {
           const cur = textRef.current, left = textAfterSend(cur, sent)
@@ -59,9 +76,12 @@ export default function Chat() {
       setSending(false)
     }
   }
-  const send = () => { const sent = text; if (sent.trim()) void run(() => chat.send(sent), sent) }
+  const send = () => { const sent = text, imgs = images; if (sent.trim() || imgs.length) void run(() => chat.send(sent, imgs), sent) }
+  const canSend = online && (!!text.trim() || images.length > 0) && !sending
   const retry = (b: Bubble) => { if (b.requestId) void run(() => chat.retry(b.requestId!, b.text), null) }
 
+  // 这条对话现在用谁(2026-10-06):一眼看见,点进去换。
+  const chatModel = useQuery('chatModel', () => backend.chatModel(), { refreshOnMount: true })
   const data = [...chat.bubbles].reverse()
   const loadFailed = !chat.page && chat.error !== undefined && !chat.noOwner
 
@@ -113,16 +133,29 @@ export default function Chat() {
               <Txt testID={`chat-outcome-${outcome}`} role="meta" tone="inkSoft" accessibilityLiveRegion="polite" style={{ flex: 1 }}>{t(lang, OUTCOME_KEY[outcome])}</Txt>
             </View>
           ) : null}
-          <Pressable
-            testID="chat-handoff"
-            accessibilityRole="button"
-            accessibilityLabel={t(lang, 'chat.handoff')}
-            onPress={() => router.push('/compose')}
-            hitSlop={6}
-            style={({ pressed }) => ({ alignSelf: 'flex-start', minHeight: 36, justifyContent: 'center', paddingHorizontal: space.m, borderRadius: radius.control, borderWidth: 1, borderColor: c.hair, opacity: pressed ? 0.7 : 1 })}
-          >
-            <Txt role="meta">{t(lang, 'chat.handoff')} ›</Txt>
-          </Pressable>
+          <View style={{ flexDirection: 'row', gap: space.s }}>
+            <Pressable
+              testID="chat-handoff"
+              accessibilityRole="button"
+              accessibilityLabel={t(lang, 'chat.handoff')}
+              onPress={() => router.push('/compose')}
+              hitSlop={6}
+              style={({ pressed }) => ({ alignSelf: 'flex-start', minHeight: 36, justifyContent: 'center', paddingHorizontal: space.m, borderRadius: radius.control, borderWidth: 1, borderColor: c.hair, opacity: pressed ? 0.7 : 1 })}
+            >
+              <Txt role="meta">{t(lang, 'chat.handoff')} ›</Txt>
+            </Pressable>
+            <AddImageButton testID="chat-add-image" lang={lang} disabled={sending || images.length >= CHAT_MAX_IMAGES} onPress={() => { void addImages() }} />
+            <Pressable testID="chat-model-open" accessibilityRole="button" accessibilityLabel={t(lang, 'chatModel.title')} onPress={() => router.push('/chat-model')} hitSlop={6}
+              style={({ pressed }) => ({ alignSelf: 'flex-start', minHeight: 36, justifyContent: 'center', paddingHorizontal: space.m, borderRadius: radius.control, borderWidth: 1, borderColor: c.hair, opacity: pressed ? 0.7 : 1 })}>
+              <Txt role="meta" numberOfLines={1}>{chatModelLabel(chatModel.data) ?? t(lang, 'chatModel.open')}</Txt>
+            </Pressable>
+            <Pressable testID="chat-search-open" accessibilityRole="button" accessibilityLabel={t(lang, 'chatSearch.title')} onPress={() => router.push('/chat-search')} hitSlop={6}
+              style={({ pressed }) => ({ alignSelf: 'flex-start', minHeight: 36, justifyContent: 'center', paddingHorizontal: space.m, borderRadius: radius.control, borderWidth: 1, borderColor: c.hair, opacity: pressed ? 0.7 : 1 })}>
+              <Txt role="meta">{t(lang, 'chatSearch.open')}</Txt>
+            </Pressable>
+          </View>
+          <ImageTray testID="chat-images" images={images} lang={lang} onRemove={id => { setImages(cur => cur.filter(i => i.id !== id)); setImageNote(null) }} />
+          {imageNote ? <Txt testID="chat-image-note" role="meta" tone="inkSoft">{imageNote}</Txt> : null}
           <View style={{ flexDirection: 'row', alignItems: 'flex-end', gap: space.s }}>
             <TextField
               testID="chat-input"
@@ -137,10 +170,10 @@ export default function Chat() {
               testID="chat-send"
               accessibilityRole="button"
               accessibilityLabel={t(lang, 'chat.send')}
-              accessibilityState={{ disabled: !online || !text.trim() || sending, busy: sending }}
-              disabled={!online || !text.trim() || sending}
+              accessibilityState={{ disabled: !canSend, busy: sending }}
+              disabled={!canSend}
               onPress={send}
-              style={({ pressed }) => ({ minHeight: 48, paddingHorizontal: space.l, borderRadius: radius.control, justifyContent: 'center', backgroundColor: c.accent, opacity: !online || !text.trim() || sending ? 0.55 : pressed ? 0.85 : 1 })}
+              style={({ pressed }) => ({ minHeight: 48, paddingHorizontal: space.l, borderRadius: radius.control, justifyContent: 'center', backgroundColor: c.accent, opacity: !canSend ? 0.55 : pressed ? 0.85 : 1 })}
             >
               {sending ? <ActivityIndicator color={c.onAccent} /> : <Txt role="body" tone="onAccent">{t(lang, 'chat.send')}</Txt>}
             </Pressable>
@@ -235,4 +268,12 @@ function Thinking({ lang }: { lang: Lang }) {
       </Animated.View>
     </View>
   )
+}
+
+/** 「Claude · claude-opus-5-5」:钉了的模型优先,没钉看全局;读不到 ⇒ null(按钮显示「模型」)。 */
+function chatModelLabel(v: { provider: string; model: string | null; globalModel: string | null; providers: Array<{ id: string; name: string }> } | undefined): string | null {
+  if (!v) return null
+  const name = v.providers.find(p => p.id === v.provider)?.name ?? v.provider
+  const model = v.model ?? v.globalModel
+  return model ? `${name} · ${model}` : name
 }

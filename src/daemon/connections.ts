@@ -4,6 +4,7 @@
  * detail(插件目录、未就绪原因)只给 admin;手机路由一律经 redactConnections。
  */
 import type { PluginsHealth } from './plugins/health'
+import type { Capability } from './capabilities'
 
 export type SourceState = 'ready' | 'behind' | 'not_loaded' | 'unknown'
 export interface ConnectionSource { id: string; kind: 'wechat_history' | 'knowledge' | 'plugin'; name: string; state: SourceState; latestAt: number | null; syncedAt: number | null; detail?: { reason?: string; dir?: string | null } }
@@ -15,6 +16,8 @@ export interface ConnectionsSnapshot {
   computers: Array<{ id: string; label: string; online: boolean; since: number | null; version: string | null }>
   recent: Array<{ matterId: string; title: string; phase: string; at: number }>
   outputs: Array<{ matterId: string; name: string; mime: string; at: number }>
+  /** 「CC 现在怎么样」(2026-10-06):各项能力的四态 + 人话 + 一个动作(见 capabilities.ts)。没接 ⇒ 不出现。 */
+  capabilities?: Capability[]
 }
 export const WECHAT_SYNC_STALE_MS = 24 * 3_600_000
 export const KNOWLEDGE_STALE_MS = 72 * 3_600_000
@@ -28,6 +31,7 @@ export interface ConnectionsDeps {
     list(q: { archived: 'exclude'; limit: number }): { tasks: Array<{ id: string; title: string; phase?: string; updatedAt: number }> }
     detail(id: string): { artifacts: Array<{ name: string; mime: string; createdAt: number }> }
   }
+  capabilities?: () => Capability[]
   /** How many recent matters get a detail() call for outputs (default 5; the wiring caller passes 3 — cost cap). */
   detailLimit?: number
   now?: () => number
@@ -85,11 +89,13 @@ export function buildConnections(d: ConnectionsDeps): ConnectionsSnapshot {
     outputs = all.sort((a, b) => b.at - a.at).slice(0, 3)
   }
 
-  return { generatedAt: now, starting: !h, sources, computers: [{ id: 'home', online: true, ...d.computer() }], recent, outputs }
+  let capabilities: Capability[] | undefined
+  try { capabilities = d.capabilities?.() } catch { capabilities = undefined }
+  return { generatedAt: now, starting: !h, sources, computers: [{ id: 'home', online: true, ...d.computer() }], recent, outputs, ...(capabilities ? { capabilities } : {}) }
 }
 
 export function redactConnections(s: ConnectionsSnapshot): ConnectionsSnapshot {
-  return { ...s, sources: s.sources.map(({ detail: _detail, ...rest }) => rest) }
+  return { ...s, sources: s.sources.map(({ detail: _detail, ...rest }) => rest), ...(s.capabilities ? { capabilities: s.capabilities.map(({ detail: _detail, ...rest }) => rest) } : {}) }
 }
 
 /** 裁定 8:快照缓存 ttlMs(默认 10 s)。抛错不缓存(下一次重算);fn 在 ttl 内只跑一次。 */

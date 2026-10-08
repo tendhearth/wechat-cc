@@ -1,6 +1,6 @@
 // CC 回复的过程与附件(回复交付,2026-10-04)。过程:灰、默认收起,说清没发到微信;
 // 附件:语音(点了才向电脑要声音再放)、表情(本地表情从电脑表情库取图;联网表情只写情绪,不替你去外网取图)、
-// 文件(只有名字 —— 文件在电脑上,手机不下载)。
+// 文件(2026-10-06 起点一下按块读下来、在手机上打开;以前只有名字)。
 import { useEffect, useState, type ReactNode } from 'react'
 import { ActivityIndicator, Image, Pressable, View } from 'react-native'
 import { t, type Lang } from '../i18n'
@@ -11,6 +11,8 @@ import { radius, space } from './tokens'
 import { Txt } from './Txt'
 import { useTheme } from './useTheme'
 import { playVoice } from './voice-player'
+import { downloadReplyFile } from '../state/artifact-download'
+import { sha256Hex, useFileOpener } from './FileViewer'
 
 const codeOf = (e: unknown) => (e && typeof e === 'object' && 'code' in e ? String((e as { code: unknown }).code) : '')
 
@@ -47,7 +49,7 @@ export function ReplyAttachments({ messageId, items, lang }: { messageId: string
       {items.map((a, i) =>
         a.kind === 'voice' ? <VoiceChip key={i} messageId={messageId} index={i} text={a.text} lang={lang} />
           : a.kind === 'sticker' ? (a.file ? <StickerImage key={i} file={a.file} label={a.label} lang={lang} /> : <Chip key={i} testID="chat-att-sticker-label"><Txt role="small" tone="inkSoft">{t(lang, 'chat.stickerOnline', { label: a.label })}</Txt></Chip>)
-            : <Chip key={i} testID="chat-att-file"><Txt role="small" content="user" style={{ flexShrink: 1 }}>{a.name}</Txt><Txt role="caption" tone="inkSoft">{t(lang, 'chat.fileOnComputer')}</Txt></Chip>,
+            : <FileChip key={i} messageId={messageId} index={i} name={a.name} lang={lang} />
       )}
     </View>
   )
@@ -112,4 +114,27 @@ function StickerImage({ file, label, lang }: { file: string; label: string; lang
       {uri ? <Image source={{ uri }} style={{ width: 120, height: 120 }} resizeMode="contain" /> : <ActivityIndicator size="small" />}
     </View>
   )
+}
+
+/** CC 回复里的文件(2026-10-06):点一下按块读下来,在手机上打开(图片 / 文字在 app 里看,其它交给系统)。 */
+function FileChip({ messageId, index, name, lang }: { messageId: string; index: number; name: string; lang: Lang }) {
+  const { backend } = useBackendCtx()
+  const opener = useFileOpener(lang)
+  const id = `${messageId}:${index}`
+  const mime = guessMime(name)
+  return (
+    <View style={{ gap: space.xs }}>
+      <Pressable testID="chat-att-file" accessibilityRole="button" accessibilityLabel={t(lang, 'chat.fileOpen', { name })} disabled={!!opener.busyId}
+        onPress={() => void opener.open({ id, name, mime }, () => downloadReplyFile(backend, messageId, index, sha256Hex))}>
+        <Chip testID="chat-att-file-chip"><Txt role="small" content="user" style={{ flexShrink: 1 }}>{name}</Txt><Txt role="caption" tone="inkSoft">{opener.busyId === id ? t(lang, 'progress.loading') : t(lang, 'artifacts.open')}</Txt></Chip>
+      </Pressable>
+      {opener.note ? <Txt testID="chat-att-file-note" role="caption" tone="inkSoft" accessibilityLiveRegion="polite">{opener.note}</Txt> : null}
+      {opener.viewer}
+    </View>
+  )
+}
+/** 按扩展名猜类型(只用来决定在 app 里看还是交给系统;电脑那边回的 mime 不影响)。 */
+function guessMime(name: string): string {
+  const ext = (/\.([A-Za-z0-9]+)$/.exec(name)?.[1] ?? '').toLowerCase()
+  return ({ png: 'image/png', jpg: 'image/jpeg', jpeg: 'image/jpeg', gif: 'image/gif', webp: 'image/webp', md: 'text/markdown', txt: 'text/plain', csv: 'text/csv', json: 'application/json', pdf: 'application/pdf' } as Record<string, string>)[ext] ?? 'application/octet-stream'
 }

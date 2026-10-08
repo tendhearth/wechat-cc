@@ -1,7 +1,7 @@
 import { PHONE_SAY_MAX_CHARS } from '@wechat-cc/protocol'
 import { labelJoin, type Lang } from '../i18n'
 import { DEMO_STICKER, DEMO_STICKER_FILE, DEMO_VOICE } from './demo-media'
-import { BackendError, type Backend, type Connection, type MatterT, type MatterDetailT, type ApprovalExplanationT, type ChatJobT, type ChatMessageT, type SessionContinueT, type MatterSayResultT } from './types'
+import { BackendError, type Backend, type Connection, type MatterT, type MatterDetailT, type ApprovalExplanationT, type ChatJobT, type ChatMessageT, type SessionContinueT, type MatterSayResultT, type UploadStateT, type ChatModelViewT } from './types'
 import {
   copy, IDS, CHAT_ID, PERM_ID, QUESTION_ID, RUN_IDS, t, explanation, progress, changesTurn, entryOptions,
   demoConnections, demoSessions, demoSessionMessages, demoSessionTitleKey, DEMO_SESSION_MESSAGES, type Stage,
@@ -41,6 +41,11 @@ export function makeDemoBackend(opts: { now?: () => number; setTimeout?: typeof 
   // 主人那条对话(与 daemon 一致:说一句收下即回,回复落地后经 matter/<CHAT_ID> 主题唤醒)
   let chatMsgs: ChatRec[] = []
   let chatPending: ChatJobT | null = null
+  const uploads = new Map<string, UploadStateT>()
+  // 演示:主人对话的后端 / 模型
+  let demoChatModel: ChatModelViewT = { mode: 'solo', provider: 'claude', model: null, globalModel: 'claude-opus-5-5', providers: [{ id: 'claude', name: 'Claude' }, { id: 'codex', name: 'Codex' }, { id: 'openai', name: 'API' }] }
+  // 演示用的几条记忆(只在内存里;纠错会真的拿掉)
+  const demoMemory = [{ id: 'a1b2c3', text: '回复喜欢直接，先说结论' }, { id: 'd4e5f6', text: '周末不安排工作会议' }]
   let chatJobs = new Map<string, ChatJobT>()
   const subs = new Map<Topic, Set<(d: any) => void>>()
 
@@ -224,11 +229,14 @@ export function makeDemoBackend(opts: { now?: () => number; setTimeout?: typeof 
         messages: chatMsgs.map(m => ({ id: m.id, role: m.role, kind: 'text', text: chatText(m, l), truncated: false, at: m.at, source: m.source, ...chatExtras(m, l) })),
       }
     },
-    async chatSay(text, requestId) {
-      // 与 daemon 一致:同一 requestId ⇒ 回原来那张回执,不说两遍;上一句还在等 ⇒ busy。
+    async chatSay(text, requestId, materials) {
+      // 与 daemon 一致:同一 requestId ⇒ 回原来那张回执,不说两遍;上一句还在等 ⇒ busy。有图时文字可空。
       const seen = chatJobs.get(requestId)
       if (seen) return { ...seen }
-      if (!text.trim() || text.length > PHONE_SAY_MAX_CHARS) throw new BackendError('invalid')
+      const images = materials?.attachmentIds.filter(id => uploads.get(id)?.status === 'ready').length ?? 0
+      if ((materials?.attachmentIds.length ?? 0) !== images) throw new BackendError('invalid_attachment')
+      if ((!text.trim() && !images) || text.length > PHONE_SAY_MAX_CHARS) throw new BackendError('invalid')
+      if (images) text = [text.trim(), `[图片 ×${images}]`].filter(Boolean).join('\n')
       if (chatPending) throw new BackendError('busy')
       const job: ChatJobT = { requestId, text, status: 'pending', since: now() }
       chatJobs.set(requestId, job); chatPending = job
@@ -249,6 +257,23 @@ export function makeDemoBackend(opts: { now?: () => number; setTimeout?: typeof 
         publish([CHAT_ID])
       })
       return { ...job }
+    },
+    async chatSearch(q) {
+      const query = q.trim()
+      if (!query) throw new BackendError('invalid')
+      const l = lastLang
+      return chatMsgs.filter(m => chatText(m, l).includes(query)).reverse().slice(0, 30)
+        .map(m => ({ id: m.id, role: m.role === 'me' ? 'me' as const : 'cc' as const, text: chatText(m, l), truncated: false, at: m.at, source: m.source ?? null }))
+    },
+    async chatModel() { return { ...demoChatModel } },
+    async setChatModel(provider, model) {
+      if (!demoChatModel.providers.some(p => p.id === provider)) throw new BackendError('unknown_provider')
+      demoChatModel = { ...demoChatModel, provider, model, globalModel: provider === 'claude' ? 'claude-opus-5-5' : null }
+      return { ...demoChatModel }
+    },
+    async chatFileChunk() {
+      // 演示里的文件只是一个名字(放在电脑上的那份不存在)
+      throw new BackendError('not_found')
     },
     async chatVoice(messageId, index) {
       const a = chatMsgs.find(m => m.id === messageId)?.atts?.[index]
@@ -330,6 +355,20 @@ export function makeDemoBackend(opts: { now?: () => number; setTimeout?: typeof 
         ev(e, 'tool_call', 'evDenied'); e.stage = 'denied'; touch(e, { phase: 'replied', status: 'replied' }); publish([id])
       }
     },
+    async artifactChunk({ id, artifactId, offset }) {
+      // 演示:每件事的成果就是一小段说明文字(与 demo 详情里列出的成果同名)。
+      const a = entries.get(id)?.detail.artifacts.find(x => x.id === artifactId)
+      if (!a) throw new BackendError('not_found')
+      const bytes = new TextEncoder().encode(t(lastLang, 'artifactBody'))
+      const end = Math.min(bytes.length, offset + 128 * 1024)
+      let s = ''; for (const b of bytes.subarray(offset, end)) s += String.fromCharCode(b)
+      return { offset, nextOffset: end, size: bytes.length, contentBase64: btoa(s) }
+    },
+    async stop({ id, runId }) {
+      const e = entries.get(id)
+      if (!e || e.detail.runId !== runId) throw new BackendError('input_stale')
+      ev(e, 'text', 'stopped'); e.stage = 'replied'; touch(e, { phase: 'cancelled', status: 'replied' }); delete e.detail.runId; publish([id])
+    },
     async answer({ id, requestId, answers }) {
       const e = get(id)
       const req = e.detail.questions.find(q => q.id === requestId)
@@ -375,7 +414,40 @@ export function makeDemoBackend(opts: { now?: () => number; setTimeout?: typeof 
       })
       return result
     },
+    async entryModels(providerId) {
+      // 演示:只有 Codex 带模型目录(与真机一样,不是每个执行者都能选模型)
+      if (providerId !== 'codex') throw new BackendError('unavailable')
+      return { source: 'native', defaultModel: 'gpt-5.6', models: [
+        { id: 'gpt-5.6', displayName: 'GPT-5.6', reasoningEfforts: ['low', 'medium', 'high'], defaultReasoningEffort: 'medium' },
+        { id: 'gpt-5.6-mini', displayName: 'GPT-5.6 mini', reasoningEfforts: ['low', 'medium'] },
+      ] }
+    },
     async entryOptions(l) { noteLang(l); return entryOptions(l) },
+    // 演示:材料只记在内存里,按 offset 续传的规矩与 daemon 一样(每块 128 KiB)。
+    async memory() {
+      return { updated_at: new Date(now() - 6 * 3600_000).toISOString(), when_label: lastLang === 'en' ? 'early this morning' : '今天凌晨', mood: 'steady' as const, failures: 0, changes: [],
+        sections: demoMemory.length ? [{ name: '偏好' as const, items: demoMemory.map(m => ({ id: m.id, text: m.text, display: m.text, due: null, due_label: null, person: null, changed: false })) }] : [] }
+    },
+    async correctMemory(id) {
+      const i = demoMemory.findIndex(m => m.id === id)
+      if (i < 0) throw new BackendError('not_found')
+      demoMemory.splice(i, 1)
+    },
+    async uploadChunk(p) {
+      const cur = uploads.get(p.id) ?? { id: p.id, draftId: p.draftId, size: p.size, nextOffset: 0, status: 'uploading' as const }
+      if (cur.draftId !== p.draftId || cur.size !== p.size || p.offset !== cur.nextOffset) throw new BackendError('invalid_attachment')
+      const n = Math.floor((p.contentBase64.length * 3) / 4) - (p.contentBase64.endsWith('==') ? 2 : p.contentBase64.endsWith('=') ? 1 : 0)
+      const nextOffset = cur.nextOffset + n
+      const next = { ...cur, nextOffset, status: nextOffset >= p.size ? 'ready' as const : 'uploading' as const }
+      uploads.set(p.id, next)
+      return { ...next }
+    },
+    async uploadStatus(id, draftId) {
+      const cur = uploads.get(id)
+      if (!cur || cur.draftId !== draftId) throw new BackendError('not_found')
+      return { ...cur }
+    },
+    async discardUpload(id) { uploads.delete(id) },
     async create({ requestId, text, projectId }) {
       const dup = createdBy.get(requestId)
       if (dup) return { matterId: dup }

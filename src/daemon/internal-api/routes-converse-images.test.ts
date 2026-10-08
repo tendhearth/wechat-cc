@@ -42,4 +42,12 @@ describe('POST /v1/companion/converse with images', () => {
     expect(await post({ text: 'x', images: [{ mime: 'image/png', data_b64: big }] })).toEqual({ status: 413, body: { error: 'image_too_large' } })
     expect(companionConverse).not.toHaveBeenCalled()
   })
+
+  it('accepts documents with their names; refuses unknown types and overlong names (2026-10-06)', async () => {
+    const { post, companionConverse } = setup()
+    expect((await post({ text: '看看', images: [{ mime: 'application/pdf', data_b64: b64([37, 80, 68, 70]), name: 'q3.pdf' }] })).status).toBe(200)
+    expect(companionConverse).toHaveBeenCalledWith('看看', 'desktop', [{ mime: 'application/pdf', bytes: Buffer.from([37, 80, 68, 70]), name: 'q3.pdf' }])
+    expect((await post({ text: 'x', images: [{ mime: 'application/zip', data_b64: b64([1]) }] })).status).toBe(400)
+    expect((await post({ text: 'x', images: [{ mime: 'text/plain', data_b64: b64([1]), name: 'n'.repeat(256) }] })).status).toBe(400)
+  })
 })

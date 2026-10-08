@@ -1150,6 +1150,7 @@ fn workbench_request_allowed(method: &str, path: &str) -> bool {
             | ("POST", "/v1/workbench/approve")
             | ("POST", "/v1/workbench/permission")
             | ("POST", "/v1/workbench/archive")
+            | ("POST", "/v1/workbench/writer-exited")
             | ("POST", "/v1/workbench/unattended-ack")
             | ("GET", "/v1/workbench/review")
             | ("POST", "/v1/workbench/review-mark")
@@ -1157,6 +1158,7 @@ fn workbench_request_allowed(method: &str, path: &str) -> bool {
             | ("POST", "/v1/workbench/review-revert")
             | ("POST", "/v1/workbench/review-revert-resolve")
             | ("POST", "/v1/workbench/workspace-export")
+            | ("POST", "/v1/workbench/worktree")
             | ("POST", "/v1/workbench/import")
             | ("POST", "/v1/workbench/prepare-resume")
             | ("POST", "/v1/workbench/prepare-continuation")
@@ -1169,6 +1171,8 @@ fn workbench_request_allowed(method: &str, path: &str) -> bool {
             | ("GET", "/v1/matters")
             | ("GET", "/v1/matter")
             | ("GET", "/v1/matter/owner-chat")
+            // 此刻里搜主人那条对话(2026-10-06)
+            | ("GET", "/v1/matter/owner-chat/search")
             | ("POST", "/v1/matter/say")
             // 「CC 的连接」(2026-10-01):此刻右上角的连接浮层,只读。
             | ("GET", "/v1/connections")
@@ -1824,6 +1828,7 @@ mod workbench_proxy_tests {
             ("POST", "/v1/workbench/approve"),
             ("POST", "/v1/workbench/permission"),
             ("POST", "/v1/workbench/archive"),
+            ("POST", "/v1/workbench/writer-exited"),
             ("POST", "/v1/workbench/unattended-ack"),
             ("GET", "/v1/workbench/review?id=A1B2C3D4"),
             ("POST", "/v1/workbench/review-mark"),
@@ -1831,6 +1836,7 @@ mod workbench_proxy_tests {
             ("POST", "/v1/workbench/review-revert"),
             ("POST", "/v1/workbench/review-revert-resolve"),
             ("POST", "/v1/workbench/workspace-export"),
+            ("POST", "/v1/workbench/worktree"),
             ("POST", "/v1/workbench/import"),
             ("POST", "/v1/workbench/prepare-resume"),
             ("POST", "/v1/workbench/prepare-continuation"),

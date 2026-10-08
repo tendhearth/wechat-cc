@@ -296,6 +296,14 @@ agy(Go)`dial tcp: lookup …: no such host`、`…: EOF`、`There was a network 
 
 **还没做(下一片)**:~~Claude 的一次性评估与工作台运行时;§4.2–§4.8~~ —— 都在 §7 做了。
 
+## 6½. 删文本回退之前先看留痕(2026-10-06)
+
+`health/classify.classifyFailure` 每次**没码、靠文本**下结论,都在本机日志记一行 `ERROR_FALLBACK`(`no provider code → network|llm_auth|unknown: <错误开头 80 字,数字抹成 #>`,同一形状一小时一次)。
+删 `looksLikeAuthFailure` / `AUTH_FAIL_SDK_ERROR` 之前:`grep ERROR_FALLBACK ~/.claude/channels/wechat/channel.log*` 跑一段时间看 ——
+- 没有 `llm_auth` 行 ⇒ 认证的文本回退可以删;
+- 有 ⇒ 那一行的形状就是还没在边界产码的那条路,先补那家的边界。
+`unknown` 行不影响通知(本来就是不可操作),但同样指向一条没产码的路。
+
 ## 7. 第 2 步余下部分:每家边界产码(2026-10-02)
 
 **owner 决定(2026-10-02)**:做完 #4 第 2 步 —— 每个 provider 边界产固定的码,下游读码,文本正则只作最后回退。两条红线不变:「登录过期」只属于 Claude 的两句哨兵(其余家的 `auth_failed` 只在「根本没有凭证、修法就是该家的登录命令」时产);agy 歧义句 = 瞬时。守护拒绝(`network_unprotected`,见 [network-guard.md](network-guard.md))**不是** provider 错误,永远不进这个闭集、不被归成 `network`。

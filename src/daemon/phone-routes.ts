@@ -22,6 +22,8 @@ export const PHONE_ROUTES: ReadonlySet<string> = new Set([
   'GET /m/api/art/blink',
   'GET /m/api/art/presence',
   'GET /m/api/memory',
+  // 「CC 记得你」逐条纠错(2026-10-06)
+  'POST /m/api/memory/correct',
   'GET /m/api/home',
   'GET /m/api/feed',
   'POST /m/api/seen',
@@ -34,8 +36,15 @@ export const PHONE_ROUTES: ReadonlySet<string> = new Set([
   // 跟 CC 说(spec 2026-10-01,mobile-chat.ts):主人对话一页 + 收下即回的说一句
   'GET /m/api/chat',
   'POST /m/api/chat/say',
+  // 搜主人那条对话(2026-10-06)
+  'GET /m/api/chat/search',
   // 回复里的语音附件按需合成(2026-10-04):只念库里那一行真有的那段
   'GET /m/api/chat/voice',
+  // CC 回复里的文件按块读(2026-10-06)
+  'GET /m/api/chat/file',
+  // 主人对话用哪个后端 / 模型:读与钉(2026-10-06)
+  'GET /m/api/chat/model',
+  'POST /m/api/chat/model',
   // CC 的连接(spec 2026-10-01,mobile-reads.ts),去掉 detail
   'GET /m/api/connections',
   // 电脑上的原生会话(只读,spec 2026-10-01),项目只给目录名
@@ -47,6 +56,8 @@ export const PHONE_ROUTES: ReadonlySet<string> = new Set([
   'POST /m/api/todo',
   'GET /m/api/sticker/',
   // 交办与材料(mobile-workbench.ts,#129)
+  // 交办时可选的模型(2026-10-06)
+  'GET /m/api/entry/models',
   'POST /m/api/attachment/chunk',
   'GET /m/api/attachment/upload',
   'POST /m/api/attachment/discard',
@@ -54,6 +65,8 @@ export const PHONE_ROUTES: ReadonlySet<string> = new Set([
   'POST /m/api/matter/create',
   'GET /m/api/matter/create-receipt',
   'POST /m/api/matter/permission',
+  // 手机上停下正在跑的这一轮(2026-10-06)
+  'POST /m/api/matter/stop',
   'POST /m/api/matter/answer',
   'GET /m/api/matter/artifact',
   // 额度用完 ⇒ 交给另一位执行者继续(spec 2026-10-01-tendhearth-continue-sessions §7-3,mobile-workbench.ts)

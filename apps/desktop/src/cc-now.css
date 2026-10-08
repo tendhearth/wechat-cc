@@ -24,6 +24,13 @@
 .now-connections .nc-row:not(:has(.dot)) { grid-template-columns: minmax(0, 1fr) auto; }
 .now-connections .nc-name { overflow-wrap: anywhere; }
 .now-connections .nc-detail { font-size: var(--th-size-small); color: var(--th-ink-soft); text-align: right; }
+/* 「CC 现在怎么样」的能力行(2026-10-06):原因是一句话,放到名字下面;动作在原因下面。 */
+.now-connections .nc-capability { grid-template-columns: auto minmax(0, 1fr); align-items: start; row-gap: 2px; }
+.now-connections .nc-capability .nc-detail { grid-column: 2; text-align: left; }
+.now-connections .nc-capability .nc-action,
+.now-connections .nc-capability .nc-action-hint { grid-column: 2; justify-self: start; margin-top: 4px; font-size: var(--th-size-small); }
+.now-connections .nc-action { padding: 3px 10px; border: 1px solid var(--th-hair); border-radius: 6px; background: transparent; color: var(--th-ink); cursor: pointer; }
+.now-connections .nc-action-hint { color: var(--th-ink-soft); }
 .now-connections .dot { width: 8px; height: 8px; border-radius: 50%; background: var(--th-unknown); align-self: center; }
 .now-connections .dot.ok { background: var(--th-ok); }
 .now-connections .dot.warn { background: var(--th-warn); }
@@ -75,6 +82,8 @@
 
 /* home:对话记录收起,composer 只露输入框 + 发送 */
 .dashboard .cc-now-pane[data-now="home"] { align-items: center; gap: var(--th-space-xl); padding-top: clamp(76px, 12vh, 120px); }
+.cc-now-pane[data-now="home"] .converse-search-bar,
+.cc-now-pane[data-now="home"] #converse-search-results,
 .cc-now-pane[data-now="home"] #converse-scroll,
 .cc-now-pane[data-now="home"] .converse-toolbar > :not(#converse-send) { display: none; }
 .cc-now-pane[data-now="home"] #converse-root { flex: none; width: 100%; max-width: 680px; }

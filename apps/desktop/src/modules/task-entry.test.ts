@@ -476,3 +476,17 @@ it('definitive isolation rejection keeps requirement and permits explicit projec
  dialog.choose('executionMode','project');dialog.submit();await settle()
  expect(posts[1].requestId).not.toBe(posts[0].requestId);expect(posts[1].executionMode).toBe('project');dialog.click('cancel')
 })
+it('project creation has one location control and submits mode without a conflicting legacy checkbox', async () => {
+  const {createTaskEntry} = await import('./task-entry.js')
+  const entry = createTaskEntry({invokeWorkbenchApi: api(), storage})
+  const pending = entry.open({text: '并行做一件事'}); await settle()
+  expect(dialog.innerHTML).not.toContain('name="executionMode"')
+  dialog.choose('project', 'p-0123456789abcdef0123')
+  expect(dialog.innerHTML.match(/name="executionMode"/g)).toHaveLength(1)
+  expect(dialog.innerHTML).not.toContain('name="isolation"')
+  dialog.choose('executionMode', 'project')
+  dialog.choose('executionMode', 'auto')
+  dialog.submit(); await settle(); await pending
+  expect(drafts.at(-1)).toMatchObject({executionMode:'auto', target: {kind: 'project', projectId: 'p-0123456789abcdef0123'}})
+  expect(drafts.at(-1)?.target).not.toHaveProperty('isolation')
+})

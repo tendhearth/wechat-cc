@@ -61,3 +61,26 @@ describe('connectionsView', () => {
     expect(connectionsView(snap([src('a', 'ready')]), NOW, 'zh-Hans').computers[0]!.detail).toContain('在线 · 自')
   })
 })
+
+describe('capabilities in the connections view (2026-10-06)', () => {
+  const snap = (caps: unknown[]) => ({ generatedAt: 1, sources: [], computers: [{ id: 'home', label: 'Mac', online: true, since: null, version: null }], recent: [], outputs: [], capabilities: caps }) as never
+  it('needs_you leads the headline, rows are localized by code with params, actions become an on-computer hint', async () => {
+    const { connectionsView } = await import('./connections')
+    const v = connectionsView(snap([
+      { id: 'disk', name: '完全磁盘访问', state: 'needs_you', code: 'disk.denied', reason: 'x', action: { label: 'Open System Settings', where: 'settings' } },
+      { id: 'brain', name: '大脑', state: 'ok', code: 'brain.ok', params: { name: 'Claude' }, reason: 'y' },
+      { id: 'phone', name: '手机', state: 'off', code: 'phone.relay_off', reason: 'z' },
+    ]), 1, 'en')
+    expect(v.headline).toMatchObject({ dot: 'bad', key: 'links.headlineNeedsYou', n: 1 })
+    expect(v.capabilities.map(c => [c.name, c.dot])).toEqual([['Full Disk Access', 'bad'], ['Brain', 'ok'], ['Phone', 'unknown']])
+    expect(v.capabilities[1]!.label).toBe('Using Claude.')
+    expect(v.capabilities[0]!.action).toBe('On your computer: Open System Settings')
+    expect(v.capabilities[1]!.action).toBeNull()
+  })
+  it('an unknown code from a newer daemon falls back to its own text; fallback-only shows the fallback headline', async () => {
+    const { connectionsView } = await import('./connections')
+    const v = connectionsView(snap([{ id: 'subsystem:new', name: '新东西', state: 'fallback', code: 'brand.new', reason: '原文', }]), 1, 'zh-Hans')
+    expect(v.capabilities[0]).toMatchObject({ name: '新东西', label: '原文', dot: 'warn' })
+    expect(v.headline).toMatchObject({ key: 'links.headlineFallback', n: 1 })
+  })
+})

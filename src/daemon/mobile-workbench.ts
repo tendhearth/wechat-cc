@@ -5,9 +5,11 @@ import type {MattersService,MatterSayInput} from '../core/matters/service'
 import {entryErrorStatus,parseEntryInput,type EntryInput,type EntryOptions} from '../core/workbench/task-entry'
 import type {NativeContinuePreview} from '../core/workbench/native-adoption'
 
-export type MobileMatterActions=Partial<Pick<MattersService,'permission'|'answer'|'artifactChunk'|'handoff'|'inputReceipt'>>
+export type MobileMatterActions=Partial<Pick<MattersService,'permission'|'answer'|'artifactChunk'|'handoff'|'inputReceipt'|'stop'>>
 export interface MobileEntryActions {
   entryOptions():EntryOptions
+  /** 交办时可选的模型(2026-10-06):手机只给执行者 id 与项目目录 id,路径在电脑上解析。没接 ⇒ 手机不显示模型选择。 */
+  entryModels?(input:{providerId:string;projectId?:string}):Promise<unknown>
   createEntry(input:EntryInput):EntryResult
   entryReceipt(requestId:string):EntryResult|null
 }
@@ -28,6 +30,10 @@ export function mobileMatterError(error:unknown):Response {
   if(['attachment_storage_limit','attachment_limit','upload_limit','upload_unfinished_limit','invalid_attachment_size'].includes(code))return json({ok:false,error:code},413)
   if(['upload_conflict','upload_changed','upload_offset','attachment_in_use'].includes(code))return json({ok:false,error:code},409)
   if(code==='invalid_entry_owner')return json({ok:false,error:code},403)
+  // 独立工作区(2026-10-07):项目不是 Git 仓库 / 同名分支或目录已占 / git 自己失败。
+  if(code==='worktree_not_git')return json({ok:false,error:code},422)
+  if(['worktree_branch_exists','worktree_conflict'].includes(code))return json({ok:false,error:code},409)
+  if(code==='worktree_git_failed')return json({ok:false,error:code},502)
   if(['creation_conflict','managed_workspace_changed','attachment_scope','attachment_conflict'].includes(code))return json({ok:false,error:code},409)
   if(['entry_not_wired','managed_workspace_unavailable','invalid_managed_workspace','workbench_stopping','unavailable_provider','provider_quota_exhausted','quota_handoff_unavailable','network_unprotected'].includes(code))return json({ok:false,error:code},503)
   if(['permission_stale','question_stale','input_stale','input_conflict','input_delivery_busy','workbench_busy','reply_sink_busy','workbench_archived','artifact_changed','restart_confirmation_required','restart_confirmation_stale','external_close_confirmation_required','external_close_confirmation_stale','native_session_busy','native_folder_busy','native_history_changed','quota_handoff_not_needed','quota_handoff_changed'].includes(code))return json({ok:false,error:code},409)
@@ -74,6 +80,15 @@ export async function mobileWorkbenchRoute(actions:MobileMatterActions|undefined
     }catch(error){return mobileMatterError(error)}
   }
 
+  if(url.pathname==='/m/api/entry/models'){
+    if(req.method!=='GET')return json({ok:false,error:'method_not_allowed'},405)
+    try{
+      const q=url.searchParams,providerId=q.get('providerId'),projectId=q.get('projectId')
+      if(q.getAll('providerId').length!==1||q.getAll('projectId').length>1||[...q.keys()].some(k=>!['providerId','projectId','t','d','_via'].includes(k))||!providerId||!/^[a-z][a-z0-9._-]{0,63}$/.test(providerId)||(projectId!==null&&!/^p-[A-Za-z0-9_-]{1,64}$/.test(projectId)))throw Error('invalid_request')
+      if(!entry?.entryModels)throw Error('entry_not_wired')
+      return json({ok:true,catalog:await entry.entryModels({providerId,...(projectId?{projectId}:{})})})
+    }catch(error){return mobileMatterError(error)}
+  }
   const entryOperation=url.pathname==='/m/api/entry/options'?'options':url.pathname==='/m/api/matter/create'?'create':url.pathname==='/m/api/matter/create-receipt'?'receipt':null
   if(entryOperation){
     if(req.method!==(entryOperation==='create'?'POST':'GET'))return json({ok:false,error:'method_not_allowed'},405)
@@ -99,6 +114,18 @@ export async function mobileWorkbenchRoute(actions:MobileMatterActions|undefined
       if(!object(b)||Object.keys(b).some(k=>!['id','requestId','providerId'].includes(k))||typeof b.id!=='string'||!ID.test(b.id)||typeof b.requestId!=='string'||!UUID.test(b.requestId)||typeof b.providerId!=='string'||!/^[a-z][a-z0-9._-]{0,63}$/.test(b.providerId))throw Error('invalid_request')
       if(!actions?.handoff)throw Error('workbench_not_wired')
       return json({ok:true,...await actions.handoff(b.id,{requestId:b.requestId,providerId:b.providerId},'phone')})
+    }catch(error){return mobileMatterError(error)}
+  }
+  // 停下正在跑的这一轮(2026-10-06):正文恰好 id + runId;runId 必须是手机看到的那一轮。
+  if(url.pathname==='/m/api/matter/stop'){
+    if(req.method!=='POST')return json({ok:false,error:'method_not_allowed'},405)
+    try{
+      let b:unknown
+      try{b=await req.json()}catch{throw Error('invalid_request')}
+      if(!object(b)||Object.keys(b).some(k=>k!=='id'&&k!=='runId')||typeof b.id!=='string'||!ID.test(b.id)||typeof b.runId!=='string'||!UUID.test(b.runId))throw Error('invalid_request')
+      if(!actions?.stop)throw Error('workbench_not_wired')
+      await actions.stop(b.id,b.runId.toLowerCase())
+      return json({ok:true})
     }catch(error){return mobileMatterError(error)}
   }
   const operation=url.pathname==='/m/api/matter/permission'?'permission':url.pathname==='/m/api/matter/answer'?'answer':url.pathname==='/m/api/matter/artifact'?'artifact':null

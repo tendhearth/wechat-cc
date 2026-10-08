@@ -16,6 +16,7 @@ const result: AgentEvent = { kind: 'result', sessionId: 'session-one', numTurns:
 function setup(provider: AgentProvider, owner: () => string | null = () => 'owner', permissionTimeoutMs?: number, extra: {
   timeoutMs?:number; closeTimeoutMs?:number; holdBusy?:(label:string)=>()=>void
   mintSessionToken?:(key:string)=>string; revokeSessionToken?:(key:string)=>void
+  writerGroupAlive?:(group:number)=>boolean; writerWatchMs?:number
 } = {}) {
   const registry = createProviderRegistry()
   registry.register('claude', provider, { displayName: 'Claude', canResume: () => true,workbench:MANAGED_NATIVE_CAPABILITIES })
@@ -822,6 +823,57 @@ describe('persistent workbench', () => {
     setup({async spawn(){throw new Error('must not spawn')}})
     expect(service.detail(task.id).task).toMatchObject({status:'interrupted',error:'writer_not_closed',canArchive:false})
     expect(()=>service.setArchived(task.id,true)).toThrow('workbench_busy')
+  })
+
+  describe('writer exit evidence (2026-10-06)', () => {
+    const stuck = (groups: number[]): AgentProvider => ({ async spawn() { return { async *dispatch() { yield result }, async close() { throw new Error('still alive') }, processGroups: () => groups } } })
+    it('records the process groups; after a restart a live group keeps the folder held until it exits', async () => {
+      const alive = new Set([4242])
+      setup(stuck([4242]), undefined, undefined, { writerGroupAlive: g => alive.has(g), writerWatchMs: 20 })
+      const task = create(); await settle(task.id); await service.shutdown()
+      expect(db.query('SELECT writer_groups FROM workbench_tasks WHERE id=?').get(task.id)).toEqual({ writer_groups: '[4242]' })
+      setup({ async spawn() { return { async *dispatch() { yield result }, async close() {} } } }, undefined, undefined, { writerGroupAlive: g => alive.has(g), writerWatchMs: 20 })
+      expect(service.detail(task.id).task).toMatchObject({ error: 'writer_not_closed', writerExit: 'alive', canArchive: false })
+      await expect(service.confirmWriterExited(task.id)).rejects.toThrow('writer_alive')
+      const next = create('接着做')
+      expect(service.detail(next.id).task.waitingFor).toMatchObject({ taskId: task.id, reason: 'writer_not_closed' })
+      alive.clear()
+      await settle(next.id)
+      expect(service.detail(next.id).task.status).toBe('completed')
+      expect(service.detail(task.id).task).toMatchObject({ error: null, canArchive: true })
+      expect(service.detail(task.id).events.at(-1)?.text).toContain('已经退出')
+      await service.shutdown()
+    })
+    it('a restart with every recorded group gone releases the hold at boot', async () => {
+      setup(stuck([4243]), undefined, undefined, { writerGroupAlive: () => true })
+      const task = create(); await settle(task.id); await service.shutdown()
+      setup({ async spawn() { throw new Error('must not spawn') } }, undefined, undefined, { writerGroupAlive: () => false })
+      expect(service.detail(task.id).task).toMatchObject({ error: null, canArchive: true })
+      expect(service.detail(task.id).events.at(-1)?.text).toContain('重启后核对')
+      await service.shutdown()
+    })
+    it('an old record without groups is released only by the owner, and does not block new tasks after a restart', async () => {
+      setup(stuck([]))
+      const task = create(); await settle(task.id); await service.shutdown()
+      setup({ async spawn() { return { async *dispatch() { yield result }, async close() {} } } })
+      expect(service.detail(task.id).task).toMatchObject({ error: 'writer_not_closed', writerExit: 'unconfirmed', canArchive: false })
+      const view = await service.confirmWriterExited(task.id)
+      expect(view).toMatchObject({ error: null, canArchive: true })
+      expect(service.detail(task.id).events.at(-1)?.text).toContain('主人确认')
+      await expect(service.confirmWriterExited(task.id)).rejects.toThrow('invalid_state')
+      await service.shutdown()
+    })
+    it('in-process: once the stuck writer\'s groups are gone the folder is released without a restart', async () => {
+      const alive = new Set([4244])
+      setup(stuck([4244]), undefined, undefined, { writerGroupAlive: g => alive.has(g), writerWatchMs: 20 })
+      const task = create(); await settle(task.id)
+      const blocked = create('等着')
+      expect(service.detail(blocked.id).task.waitingFor).toMatchObject({ reason: 'writer_not_closed' })
+      alive.clear()
+      await settle(blocked.id)
+      expect(service.detail(task.id).task.error).toBeNull()
+      await service.shutdown()
+    })
   })
 
   it('quarantines only overlapping paths and retains busy ownership when a writer fails to close', async () => {

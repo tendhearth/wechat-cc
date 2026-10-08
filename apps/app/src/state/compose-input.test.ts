@@ -39,7 +39,7 @@ vi.mock('react-native', async () => {
     'aria-expanded': accessibilityState?.expanded, 'aria-disabled': accessibilityState?.disabled,
   }, children)
   const Modal = ({ children, visible }: any) => visible ? createElement('div', null, children) : null
-  return { View, Text, TextInput, Pressable, Modal, ScrollView: View, KeyboardAvoidingView: View, ActivityIndicator: View, Linking: { openURL: vi.fn() }, Platform: { OS: 'ios', select: (options: any) => options.ios ?? options.default } }
+  return { View, Image: View, Text, TextInput, Pressable, Modal, ScrollView: View, KeyboardAvoidingView: View, ActivityIndicator: View, Linking: { openURL: vi.fn() }, Platform: { OS: 'ios', select: (options: any) => options.ios ?? options.default } }
 })
 vi.mock('react-native-safe-area-context', async () => {
   const { createElement } = await import('react')
@@ -50,12 +50,14 @@ vi.mock('../i18n/useLang', () => ({ useLang: () => 'zh-Hans' }))
 vi.mock('../state/BackendProvider', () => ({ useBackendCtx: () => host.ctx }))
 vi.mock('../state/session', () => ({ useSession: () => ({ pairing: null, inputScope: matterInputState.recovery().scope }) }))
 vi.mock('../ui/TopBar', () => ({ TopBar: () => null }))
+vi.mock('../net/image-pick', () => ({ pickImages: async () => ({images:[{id:'22222222-2222-4222-8222-222222222222',name:'photo.png',mime:'image/png',size:3,sha256:'a'.repeat(64),bytes:new Uint8Array([1,2,3]),uri:'test://image'}],skipped:null}) }))
 
 type Reply = { status: number; json: unknown } | Error
 const ok = (json: unknown, status = 200): Reply => ({ status, json })
 type Request = { path: string; method: string; body: any; retry?: boolean }
 function harness() {
   let detail: any = structuredClone(DETAIL)
+  let entryOptions: any = structuredClone(OPTIONS)
   let say: (request: Request) => Reply | Promise<Reply> = request => {
     const input: MatterInputT = { id: request.body.requestId, taskId: ID, runId: request.body.runId ?? RUN, text: request.body.text, status: 'sending' }
     detail.inputs.push(input)
@@ -82,7 +84,9 @@ function harness() {
         }
         else if (path === '/m/api/matter/say') reply = await say(request)
         else if (path === '/m/api/matter/create') reply = await create(request)
-        else if (path === '/m/api/entry/options') reply = ok({ ok: true, ...OPTIONS })
+        else if (path === '/m/api/entry/options') reply = ok({ ok: true, ...entryOptions })
+        else if (path === '/m/api/entry/models') reply = ok({ok:true,catalog:{source:'native',defaultModel:'test-model',models:[{id:'test-model',displayName:'Test model',reasoningEfforts:['low','high']}]}})
+        else if (path === '/m/api/attachment/upload') { const q=new URLSearchParams(req.path.split('?')[1]); reply=ok({ok:true,id:q.get('id'),draftId:q.get('draftId'),taskId:null,size:3,sha256:'a'.repeat(64),nextOffset:3,status:'ready'}) }
         else if (path === '/m/api/matter/insight') reply = ok({ ok: true, explanations: {}, progress: null })
         else if (path === '/m/api/matter/changes') reply = ok({ ok: true, turn: null })
         else throw new Error(`unexpected route ${path}`)
@@ -108,6 +112,7 @@ function harness() {
     backend, store, requests, status,
     posts: () => requests.filter(request => request.path === '/m/api/matter/say'),
     detail: () => detail,
+    setOptions: (next: any) => { entryOptions=next },
     setDetail: (next: any) => { detail = next },
     setSay: (next: typeof say) => { say = next },
     setCreate: (next: typeof create) => { create = next },
@@ -401,4 +406,22 @@ it('native project location survives remount, reuses a retry id, and mode change
  await reopened.click('compose-send');posts=h.requests.filter(r=>r.path==='/m/api/matter/create')
  expect(posts[3]!.body.executionMode).toBe('auto');expect(posts[3]!.body.requestId).not.toBe(posts[0]!.body.requestId)
  expect(getDraft('new')).toBe('保留要求')
+})
+
+it('native model and selected image payload survive an uncertain creation remount with the same identity',async()=>{
+ const h=harness();host.params={}
+ h.setOptions({...OPTIONS,providers:OPTIONS.providers.map(p=>({...p,capabilities:{...p.capabilities,features:{...p.capabilities.features,modelCatalog:true}}}))})
+ h.setCreate(()=>new Error('timeout'))
+ const ui=await mount();await ui.type('带图和模型');await ui.click('compose-adjust')
+ await act(()=>ui.container.querySelector<HTMLButtonElement>('[aria-label="Claude"]')!.click());await flush()
+ await act(()=>ui.container.querySelector<HTMLButtonElement>('[aria-label="Test model"]')!.click());await flush()
+ await act(()=>ui.container.querySelector<HTMLButtonElement>('[aria-label="高"]')!.click());await flush()
+ await ui.click('compose-add-image');await ui.click('compose-send')
+ const first=h.requests.find(r=>r.path==='/m/api/matter/create')!
+ expect(first.body).toMatchObject({executionMode:'auto',execution:{model:'test-model',reasoningEffort:'high'},attachmentIds:['22222222-2222-4222-8222-222222222222']})
+ await act(()=>ui.root.unmount());roots.splice(roots.indexOf(ui.root),1)
+ const reopened=await mount();await reopened.click('compose-send')
+ const posts=h.requests.filter(r=>r.path==='/m/api/matter/create')
+ expect(posts).toHaveLength(2);expect(posts[1]!.body).toEqual(first.body)
+ expect(getDraft('new')).toBe('带图和模型')
 })

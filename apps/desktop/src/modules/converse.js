@@ -22,7 +22,7 @@ import { paintConversation, syncConversationLatest, showConversationLatest, conv
  * @typedef {{ getUserMedia: (c: MediaStreamConstraints) => Promise<MediaStream>, makeRecorder: (s: MediaStream) => MediaRecorder }} MediaDeps
  * @typedef {{ invoke: (cmd: string, args: Record<string, unknown>) => Promise<unknown>, media?: MediaDeps, invokeWorkbenchApi?: (method: 'GET'|'POST', path: string, body?: Record<string, unknown>) => Promise<unknown>, onDelegate?: (draft: import('./task-entry.js').Draft) => Promise<import('./task-entry.js').EntryResult|null>, onSend?: () => void }} Deps
  * @typedef {{ kind: 'voice', text: string } | { kind: 'sticker', label: string, file?: string, image?: string } | { kind: 'file', name: string, ref?: string }} ReplyAttachment
- * @typedef {{ id: number, role: 'user'|'cc'|'error'|'system', text: string, pending?: boolean, at?: number, source?: string, attachments?: ReplyAttachment[], narration?: string[], images?: string[] }} ConverseMsg
+ * @typedef {{ id: number, role: 'user'|'cc'|'error'|'system', text: string, pending?: boolean, at?: number, source?: string, attachments?: ReplyAttachment[], narration?: string[], images?: string[], files?: string[] }} ConverseMsg
  */
 
 // ── module state ───────────────────────────────────────────────────────
@@ -35,10 +35,22 @@ let nextId = 1
 let sending = false
 let delegating = false
 // 此刻里拖进 / 粘进来、还没发出去的图(2026-10-05)。url 是本页的 blob 预览,发出去时只带 mime + base64。
+// 2026-10-06 起也收文档(PDF / 文本 / Markdown / CSV / JSON / Word / Excel / PPT):图显示缩略图,文档显示名字。
 /** @type {{ id: number, mime: string, data_b64: string, url: string, name: string }[]} */
 let pendingImages = []
 let nextImageId = 1
 const IMAGE_MIMES = ["image/png", "image/jpeg", "image/webp", "image/gif", "image/heic"]
+/** @type {Record<string,string>} */
+const DOC_MIMES_BY_EXT = { pdf: "application/pdf", txt: "text/plain", md: "text/markdown", markdown: "text/markdown", csv: "text/csv", json: "application/json",
+  docx: "application/vnd.openxmlformats-officedocument.wordprocessingml.document", xlsx: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+  pptx: "application/vnd.openxmlformats-officedocument.presentationml.presentation" }
+const DOC_MIMES = new Set(Object.values(DOC_MIMES_BY_EXT))
+/** 浏览器给 .md / .csv 之类常常报空 type:按扩展名补。认不出 ⇒ ""(不收)。 @param {File} file */
+function attachmentMime(file) {
+  if (IMAGE_MIMES.includes(file.type) || DOC_MIMES.has(file.type)) return file.type
+  const ext = (/\.([A-Za-z0-9]+)$/.exec(file.name)?.[1] ?? "").toLowerCase()
+  return DOC_MIMES_BY_EXT[ext] ?? ""
+}
 const IMAGE_MAX = 4
 const IMAGE_MAX_BYTES = 10 * 1024 * 1024
 // 「此刻」页的气泡要显示 CC 最近一句真话:订阅者每次渲染都拿到当前消息表。
@@ -69,12 +81,20 @@ let recordingTimer = null
 /** @param {HTMLElement} root @param {Deps} deps */
 function renderSkeleton(root, deps) {
   root.innerHTML = `
+    <div class="converse-search-bar">
+      <button id="converse-search-open" class="converse-search-open" type="button"${deps.invokeWorkbenchApi ? "" : " hidden"}>搜索对话</button>
+      <form id="converse-search" class="converse-search" role="search" hidden>
+        <input id="converse-search-input" type="search" maxlength="200" placeholder="搜索和 CC 的对话(微信、电脑、手机说的都在)" aria-label="搜索和 CC 的对话" />
+        <button id="converse-search-close" type="button">关闭</button>
+      </form>
+    </div>
+    <div id="converse-search-results" class="converse-search-results" role="region" aria-label="搜索结果" aria-live="polite" hidden></div>
     <div id="converse-scroll" class="converse-scroll"></div>
     <button id="converse-latest" class="converse-latest" type="button" hidden>有新回复 · 回到最新</button>
     <div class="converse-compose">
       <div id="converse-images" class="converse-images" aria-label="要一起发的图片" hidden></div>
       <p id="converse-image-note" class="converse-image-note" role="status" hidden></p>
-      <textarea id="converse-input" class="converse-textarea" aria-label="消息" placeholder="跟 CC 说点什么…可以拖进或粘贴截图" rows="2"></textarea>
+      <textarea id="converse-input" class="converse-textarea" aria-label="消息" placeholder="跟 CC 说点什么…可以拖进截图或文件" rows="2"></textarea>
       <div id="converse-recording" class="converse-recording" hidden>
         <button id="converse-cancel-recording" type="button">取消</button>
         <span class="converse-recording-dot" aria-hidden="true"></span>
@@ -189,8 +209,8 @@ function messageHtml(m) {
   const markdown = m.role === "cc" && !m.pending
   const bubble = `<div class="converse-bubble${markdown ? ' cc-readable-markdown wb-markdown' : m.role==='user' ? ' cc-user-bubble' : ''}">${markdown ? renderWorkbenchMarkdown(m.text) : m.role==='user' ? renderWorkbenchUserText(m.text,`converse:${m.id}`) : escapeHtml(m.text)}</div>`
   // 主人发的图:缩略图跟在自己那条气泡上(只是本页的预览,刷新后历史里是「[图片 ×N]」)。
-  const userImages = m.role === "user" && m.images?.length
-    ? `<div class="converse-user-images">${m.images.map(src => `<img src="${escapeHtml(src)}" alt="你发的图片" />`).join("")}</div>`
+  const userImages = m.role === "user" && (m.images?.length || m.files?.length)
+    ? `<div class="converse-user-images">${(m.images ?? []).map(src => `<img src="${escapeHtml(src)}" alt="你发的图片" />`).join("")}${(m.files ?? []).map(name => `<span class="converse-file-chip">${escapeHtml(name)}</span>`).join("")}</div>`
     : ""
   const extras = m.role === "cc" && ((m.attachments?.length ?? 0) > 0 || (m.narration?.length ?? 0) > 0)
   // 带附件 / 过程的回复:过程在上、回复居中、附件在下,一列排;没有的照旧(样式与测试不动)。
@@ -508,7 +528,8 @@ async function sendMessage(deps) {
   if (!text && !images.length) return
   deps.onSend?.()
 
-  messages.push({ id: nextId++, role: "user", text, at: Date.now(), ...(images.length ? { images: images.map(i => i.url) } : {}) })
+  const pics = images.filter(i => i.mime.startsWith("image/")), docs = images.filter(i => !i.mime.startsWith("image/"))
+  messages.push({ id: nextId++, role: "user", text, at: Date.now(), ...(pics.length ? { images: pics.map(i => i.url) } : {}), ...(docs.length ? { files: docs.map(i => i.name) } : {}) })
   pendingImages = []
   renderPendingImages()
   const pendingId = nextId++
@@ -533,7 +554,7 @@ async function sendMessage(deps) {
   }, Number(delay)))
 
   try {
-    const res = normalizeConverseReply(await deps.invoke("agent_converse", images.length ? { text, images: images.map(({ mime, data_b64 }) => ({ mime, data_b64 })) } : { text }))
+    const res = normalizeConverseReply(await deps.invoke("agent_converse", images.length ? { text, images: images.map(({ mime, data_b64, name }) => ({ mime, data_b64, name })) } : { text }))
     pendingTimers.forEach(clearTimeout)
     messages = messages.filter(m => m.id !== pendingId)
     const replyText = res.reply
@@ -593,7 +614,9 @@ function renderPendingImages() {
   const host = document.getElementById("converse-images")
   if (!host) return
   host.hidden = pendingImages.length === 0
-  host.innerHTML = pendingImages.map(img => `<span class="converse-image-chip"><img src="${escapeHtml(img.url)}" alt="${escapeHtml(img.name)}" /><button type="button" data-remove-image="${img.id}" aria-label="移除这张图片">×</button></span>`).join("")
+  host.innerHTML = pendingImages.map(img => img.mime.startsWith("image/")
+    ? `<span class="converse-image-chip"><img src="${escapeHtml(img.url)}" alt="${escapeHtml(img.name)}" /><button type="button" data-remove-image="${img.id}" aria-label="移除这张图片">×</button></span>`
+    : `<span class="converse-image-chip converse-file-chip" title="${escapeHtml(img.name)}"><span>${escapeHtml(img.name)}</span><button type="button" data-remove-image="${img.id}" aria-label="移除这个文件">×</button></span>`).join("")
 }
 
 /** 读进来的文件里挑图片,超过张数 / 大小 / 格式的说一句,不悄悄丢。
@@ -604,16 +627,17 @@ export async function addImages(files) {
   let skipped = ""
   let added = 0
   for (const file of list) {
-    if (!IMAGE_MIMES.includes(file.type)) { skipped = "只支持 PNG、JPEG、WebP、GIF、HEIC 图片"; continue }
-    if (file.size > IMAGE_MAX_BYTES) { skipped = "单张图片不能超过 10MB"; continue }
-    if (pendingImages.length >= IMAGE_MAX) { skipped = `一次最多 ${IMAGE_MAX} 张`; break }
+    const mime = attachmentMime(file)
+    if (!mime) { skipped = "只支持图片(PNG、JPEG、WebP、GIF、HEIC)和文档(PDF、文本、Markdown、CSV、JSON、Word、Excel、PPT)"; continue }
+    if (file.size > IMAGE_MAX_BYTES) { skipped = "单个文件不能超过 10MB"; continue }
+    if (pendingImages.length >= IMAGE_MAX) { skipped = `一次最多 ${IMAGE_MAX} 个`; break }
     const data_b64 = await new Promise((resolve, reject) => {
       const reader = new FileReader()
       reader.onload = () => resolve(String(reader.result).replace(/^data:[^,]*,/, ""))
       reader.onerror = () => reject(reader.error)
       reader.readAsDataURL(file)
     })
-    pendingImages.push({ id: nextImageId++, mime: file.type, data_b64: String(data_b64), url: URL.createObjectURL(file), name: file.name || "截图" })
+    pendingImages.push({ id: nextImageId++, mime, data_b64: String(data_b64), url: mime.startsWith("image/") ? URL.createObjectURL(file) : "", name: file.name || "截图" })
     added++
   }
   imageNote(skipped)
@@ -649,8 +673,60 @@ async function delegateDraft(deps) {
   }
 }
 
+// ── search (2026-10-06,对标 Orca 会话历史搜索) ─────────────────────────
+
+const SOURCE_LABEL = /** @type {Record<string,string>} */ ({ wechat: "微信", desktop: "电脑", phone: "手机", live: "", app: "电脑" })
+/** @param {string} text @param {string} q */
+function highlight(text, q) {
+  const safe = escapeHtml(text.length > 600 ? text.slice(0, 600) + "…" : text)
+  const needle = escapeHtml(q)
+  return needle ? safe.split(needle).join(`<mark>${needle}</mark>`) : safe
+}
+/** @param {number} ms */
+function hitTime(ms) {
+  const d = new Date(ms), pad = (/** @type {number} */ n) => String(n).padStart(2, "0")
+  return `${d.getMonth() + 1}/${d.getDate()} ${pad(d.getHours())}:${pad(d.getMinutes())}`
+}
+let searchSeq = 0
+/** @param {Deps} deps @param {string} q */
+async function runSearch(deps, q) {
+  const host = document.getElementById("converse-search-results")
+  if (!host || !deps.invokeWorkbenchApi) return
+  const query = q.trim()
+  if (!query) { host.hidden = true; host.innerHTML = ""; return }
+  const seq = ++searchSeq
+  host.hidden = false
+  host.innerHTML = '<p class="converse-search-note">正在搜…</p>'
+  try {
+    const r = /** @type {{hits?:Array<{kind:string,text:string,createdAt:number,source?:string}>}} */ (await deps.invokeWorkbenchApi("GET", `/v1/matter/owner-chat/search?q=${encodeURIComponent(query)}&limit=30`))
+    if (seq !== searchSeq) return
+    const hits = r?.hits ?? []
+    host.innerHTML = hits.length
+      ? `<p class="converse-search-note">找到 ${hits.length} 条${hits.length >= 30 ? "(只显示最近 30 条)" : ""}</p><ol class="converse-search-list">${hits.map(h => `<li><div class="converse-search-meta">${h.kind === "user" ? "你" : "CC"} · ${hitTime(h.createdAt)}${h.source && SOURCE_LABEL[h.source] ? ` · ${SOURCE_LABEL[h.source]}` : ""}</div><div class="converse-search-text">${highlight(h.text, query)}</div></li>`).join("")}</ol>`
+      : '<p class="converse-search-note">没有找到。换个词试试。</p>'
+  } catch {
+    if (seq === searchSeq) host.innerHTML = '<p class="converse-search-note">暂时搜不了,稍后再试。</p>'
+  }
+}
+/** @param {boolean} open */
+function setSearchOpen(open) {
+  const form = document.getElementById("converse-search"), btn = document.getElementById("converse-search-open"), host = document.getElementById("converse-search-results")
+  if (form) form.hidden = !open
+  if (btn) btn.hidden = open
+  if (!open && host) { host.hidden = true; host.innerHTML = "" }
+  if (open) /** @type {HTMLInputElement|null} */ (document.getElementById("converse-search-input"))?.focus()
+}
+
 /** @param {HTMLElement} root @param {Deps} deps */
 function wireEvents(root, deps) {
+  root.querySelector("#converse-search-open")?.addEventListener("click", () => setSearchOpen(true))
+  root.querySelector("#converse-search-close")?.addEventListener("click", () => setSearchOpen(false))
+  root.querySelector("#converse-search")?.addEventListener("submit", ev => {
+    ev.preventDefault()
+    void runSearch(deps, /** @type {HTMLInputElement|null} */ (document.getElementById("converse-search-input"))?.value ?? "")
+  })
+  root.querySelector("#converse-search-input")?.addEventListener("keydown", ev => { if (/** @type {KeyboardEvent} */ (ev).key === "Escape") setSearchOpen(false) })
+
   const scroll=root.querySelector("#converse-scroll")
   const latest=/** @type {HTMLButtonElement|null} */(root.querySelector("#converse-latest"))
   if(scroll instanceof HTMLElement){
@@ -674,7 +750,7 @@ function wireEvents(root, deps) {
   // 截图:粘贴(⌘V)或拖进对话区都收;只拦图片,文字照常粘。
   input?.addEventListener("paste", (ev) => {
     const files = /** @type {ClipboardEvent} */ (ev).clipboardData?.files
-    if (!files?.length || ![...files].some(f => f.type.startsWith("image/"))) return
+    if (!files?.length || ![...files].some(f => !!attachmentMime(f))) return
     ev.preventDefault()
     void addImages(files).then(() => input.focus())
   })
