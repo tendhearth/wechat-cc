@@ -1,5 +1,7 @@
 import { afterEach, describe, expect, it } from 'vitest'
 import { chmod, link, mkdir, mkdtemp, readFile, readdir, realpath, rm, symlink, writeFile } from 'node:fs/promises'
+import { execFile } from 'node:child_process'
+import { promisify } from 'node:util'
 import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
 import { validateIsolatedConfiguration } from './isolated-configuration'
@@ -130,4 +132,166 @@ describe('isolated native configuration admission', () => {
     const writer = (async () => { let i = 0; while (active) { await writeFile(path, `model="m${i++}"`); await new Promise(resolve => setImmediate(resolve)) } })()
     try { await rejected(f.validate()) } finally { active = false; await writer }
   })
+})
+
+
+// Real files and fresh Git checkouts: omission must reject even when Git says
+// clean; copying ordinary tracked rules must remain admissible.
+describe('native instruction equivalence', () => {
+  async function gitFixture() {
+    const f = await fixture('cursor')
+    const git = async (...args: string[]) => (await promisify(execFile)('git', ['-c', 'core.hooksPath=/dev/null', ...args], {
+      cwd: f.sourcePath, env: { PATH: process.env.PATH, HOME: f.home, GIT_CONFIG_NOSYSTEM: '1', GIT_CONFIG_GLOBAL: '/dev/null',
+        GIT_AUTHOR_NAME: 'Fixture', GIT_AUTHOR_EMAIL: 'fixture@example.invalid', GIT_COMMITTER_NAME: 'Fixture', GIT_COMMITTER_EMAIL: 'fixture@example.invalid' },
+    })).stdout.trim()
+    await git('init', '-q')
+    await f.put(join(f.sourcePath, '.gitignore'), 'ignored/\nAGENTS.local.md\n')
+    await f.put(join(f.sourcePath, 'file.txt'), 'base')
+    return { ...f, git, checkout: async () => { await git('add', '.'); await git('commit', '-qm', 'base'); await git('worktree', 'add', '--detach', f.executionPath, 'HEAD') } }
+  }
+  it('rejects a clean Git source with ignored AGENTS.md missing in the linked worktree', async () => {
+    const f = await gitFixture()
+    await f.put(join(f.sourcePath, '.gitignore'), 'AGENTS.md\n')
+    await f.checkout()
+    await f.put(join(f.sourcePath, 'AGENTS.md'), 'Do not change protected files.')
+    expect(await f.git('status', '--porcelain')).toBe('')
+    await rejected(f.validate())
+  })
+  it('rejects source-only ancestor Cursor alwaysApply rules despite clean Git', async () => {
+    const f = await gitFixture(); await f.checkout()
+    await f.put(join(dirname(f.sourcePath), '.cursor/rules/policy.mdc'), '---\nalwaysApply: true\n---\nProtect files.')
+    expect(await f.git('status', '--porcelain')).toBe('')
+    await rejected(f.validate())
+  })
+  it('admits tracked copied AGENTS and nested Cursor rules and fingerprints content', async () => {
+    const f = await gitFixture()
+    await f.put(join(f.sourcePath, 'AGENTS.md'), 'Use the test runner.')
+    await f.put(join(f.sourcePath, '.cursor/rules/team/policy.mdc'), '---\nalwaysApply: true\n---\nProtect files.')
+    await f.checkout()
+    const before = await f.validate()
+    for (const dir of [f.sourcePath, f.executionPath]) await f.put(join(dir, '.cursor/rules/team/policy.mdc'), '---\nalwaysApply: true\n---\nRun tests.')
+    expect(await f.validate()).not.toBe(before)
+  })
+  it.each([
+    ['claude', 'AGENTS.md'], ['claude', 'CLAUDE.md'], ['claude', 'CLAUDE.local.md'], ['claude', '.claude/CLAUDE.md'], ['claude', '.claude/rules/team/policy.md'],
+    ['codex', 'AGENTS.md'], ['codex', 'AGENTS.override.md'],
+    ['cursor', 'AGENTS.md'], ['cursor', 'CLAUDE.md'], ['cursor', 'CLAUDE.local.md'], ['cursor', '.cursor/rules/team/policy.mdc'], ['cursor', '.cursorrules'],
+  ])('rejects omitted %s instruction %s on either side', async (provider, name) => {
+    for (const side of ['sourcePath', 'executionPath'] as const) {
+      const f = await fixture(provider); await f.put(join(f[side], name), 'Protect files.'); await rejected(f.validate())
+    }
+  })
+  it.each(['claude', 'codex', 'cursor'])('admits copied instructions and fingerprints changes for %s', async provider => {
+    const f = await fixture(provider)
+    for (const dir of [f.sourcePath, f.executionPath]) await f.put(join(dir, 'AGENTS.md'), 'Run tests.')
+    const before = await f.validate()
+    for (const dir of [f.sourcePath, f.executionPath]) await f.put(join(dir, 'AGENTS.md'), 'Run all tests.')
+    expect(await f.validate()).not.toBe(before)
+  })
+  it.each(['claude', 'cursor'])('rejects equal content from different outside ancestors for %s', async provider => {
+    const f = await fixture(provider)
+    for (const dir of [dirname(f.sourcePath), dirname(f.executionPath)]) await f.put(join(dir, 'AGENTS.md'), 'Same text with different scope.')
+    await rejected(f.validate())
+  })
+  it.each(['claude', 'cursor'])('fingerprints a genuinely shared ancestor for %s', async provider => {
+    const f = await fixture(provider); await f.put(join(f.root, 'AGENTS.md'), 'Shared rules.')
+    const before = await f.validate(); await f.put(join(f.root, 'AGENTS.md'), 'Changed shared rules.')
+    expect(await f.validate()).not.toBe(before)
+  })
+  it('preserves Git-root to project-subdirectory hierarchy and rejects moved rules', async () => {
+    const f = await gitFixture()
+    await f.put(join(f.sourcePath, 'AGENTS.md'), 'Root rules.'); await f.put(join(f.sourcePath, 'app/AGENTS.md'), 'App rules.')
+    await f.checkout()
+    const validate = () => validateIsolatedConfiguration({ providerId: 'codex', sourcePath: join(f.sourcePath, 'app'), executionPath: join(f.executionPath, 'app') }, { environment: { HOME: f.home }, systemDirectories: [f.system] })
+    expect(await validate()).toMatch(/^[a-f0-9]{64}$/)
+    await rm(join(f.executionPath, 'AGENTS.md'))
+    await f.put(join(f.executionPath, 'app/AGENTS.md'), 'Root rules.\nApp rules.')
+    await rejected(validate())
+  })
+  it.each(['claude', 'cursor'])('rejects source-only nested instructions lazily loaded by %s', async provider => {
+    const f = await fixture(provider); await f.put(join(f.sourcePath, 'nested/AGENTS.md'), 'Nested rules.'); await rejected(f.validate())
+  })
+  it.each(['claude', 'codex'])('fingerprints shared user instruction changes for %s', async provider => {
+    const f = await fixture(provider), path = join(f.home, provider === 'claude' ? '.claude/CLAUDE.md' : '.codex/AGENTS.md')
+    await f.put(path, 'Shared user rules.'); const before = await f.validate(); await f.put(path, 'Changed user rules.')
+    expect(await f.validate()).not.toBe(before)
+  })
+  it('rejects unresolved Claude imports even when the importing instructions were copied', async () => {
+    const f = await fixture()
+    for (const dir of [f.sourcePath, f.executionPath]) await f.put(join(dir, 'CLAUDE.md'), 'See @../private.md')
+    await rejected(f.validate())
+  })
+  it.each(['symlink', 'hardlink', 'oversized', 'directory', 'invalid-utf8'])('fails closed on %s instruction inputs', async kind => {
+    const f = await fixture('cursor'), path = join(f.sourcePath, 'AGENTS.md')
+    if (kind === 'directory') await mkdir(path)
+    else if (kind === 'symlink' || kind === 'hardlink') { await f.put(join(f.root, 'target'), 'fixture-secret'); await (kind === 'symlink' ? symlink : link)(join(f.root, 'target'), path) }
+    else if (kind === 'invalid-utf8') await writeFile(path, Buffer.from([0xff]))
+    else await f.put(path, 'x'.repeat(1_000_001))
+    await rejected(f.validate())
+  })
+  it('rejects linked rule directories', async () => {
+    const f = await fixture('cursor'); await f.put(join(f.root, 'rules/policy.mdc'), 'fixture-secret')
+    await mkdir(join(f.sourcePath, '.cursor')); await symlink(join(f.root, 'rules'), join(f.sourcePath, '.cursor/rules'))
+    await rejected(f.validate())
+  })
+  it('rejects lazy instructions inside native metadata subdirectories too', async () => {
+    const f = await fixture('claude'); await f.put(join(f.sourcePath, '.claude/notes/CLAUDE.md'), 'Nested rules.')
+    await rejected(f.validate())
+  })
+  it('does not inspect instructions beyond the Codex Git-root boundary', async () => {
+    const f = await gitFixture(); await f.checkout()
+    await f.put(join(dirname(f.sourcePath), 'AGENTS.md'), 'Outside Git root.')
+    const options = { environment: { HOME: f.home }, systemDirectories: [f.system] }
+    expect(await validateIsolatedConfiguration({ sourcePath: f.sourcePath, executionPath: f.executionPath, providerId: 'codex' }, options)).toMatch(/^[a-f0-9]{64}$/)
+  })
+  it.each(['.cursorignore', '.cursorindexingignore'])('rejects unverifiable native rule selector %s even when copied', async name => {
+    const f = await fixture('cursor')
+    for (const dir of [f.sourcePath, f.executionPath]) await f.put(join(dir, name), '*.md')
+    await rejected(f.validate())
+  })
+  it('rejects unsafe rule imports in copied nested rules', async () => {
+    const f = await fixture('claude')
+    for (const dir of [f.sourcePath, f.executionPath]) await f.put(join(dir, '.claude/rules/policy.md'), 'See @../private.md')
+    await rejected(f.validate())
+  })
+  it('rejects managed instructions', async () => {
+    const f = await fixture('claude'); await f.put(join(f.system, 'CLAUDE.md'), 'Managed policy.'); await rejected(f.validate())
+  })
+  it('bounds cumulative instruction bytes', async () => {
+    const f = await fixture('cursor')
+    for (let n = 0; n < 9; n++) await f.put(join(f.sourcePath, '.cursor/rules', `${n}.mdc`), 'x'.repeat(950_000))
+    await rejected(f.validate())
+  })
+  it('bounds rule directory discovery depth', async () => {
+    const f = await fixture('cursor')
+    await f.put(join(f.sourcePath, '.cursor/rules', ...Array<string>(34).fill('nested'), 'policy.mdc'), 'Protect files.')
+    await rejected(f.validate())
+  })
+  it('bounds directory enumeration without reading ordinary project contents', async () => {
+    const f = await fixture('cursor')
+    for (let n = 0; n < 4200; n++) await f.put(join(f.sourcePath, `file-${n}`), '')
+    await rejected(f.validate())
+  })
+  it('rejects racing rule-directory membership changes', async () => {
+    const f = await fixture('cursor')
+    for (const dir of [f.sourcePath, f.executionPath]) await f.put(join(dir, '.cursor/rules/base.mdc'), 'Protect files.')
+    let active = true
+    const writer = (async () => { let n = 0; while (active) { await f.put(join(f.sourcePath, '.cursor/rules', `${n++}.mdc`), 'New rule.'); await new Promise(resolve => setImmediate(resolve)) } })()
+    try { await rejected(f.validate()) } finally { active = false; await writer }
+  })
+  it('rejects racing instruction edits', async () => {
+    const f = await fixture('claude')
+    for (const dir of [f.sourcePath, f.executionPath]) await f.put(join(dir, 'CLAUDE.md'), 'Rules.')
+    let active = true
+    const writer = (async () => { let n = 0; while (active) { await f.put(join(f.sourcePath, 'CLAUDE.md'), `New rules ${n++}.`); await new Promise(resolve => setImmediate(resolve)) } })()
+    try { await rejected(f.validate()) } finally { active = false; await writer }
+  })
+
+  it('rejects an unverified nested Git boundary even when instruction text matches', async () => {
+    const f = await gitFixture()
+    await f.put(join(f.sourcePath, 'nested/AGENTS.md'), 'Nested instructions.'); await f.checkout()
+    await f.git('-C', join(f.sourcePath, 'nested'), 'init', '-q')
+    await rejected(f.validate())
+  })
+
 })

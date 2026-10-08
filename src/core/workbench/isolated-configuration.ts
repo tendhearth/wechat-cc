@@ -1,8 +1,8 @@
 import { createHash } from 'node:crypto'
 import { constants } from 'node:fs'
-import { lstat, open, realpath } from 'node:fs/promises'
+import { lstat, open, opendir, realpath } from 'node:fs/promises'
 import { homedir } from 'node:os'
-import { dirname, isAbsolute, join, resolve, sep } from 'node:path'
+import { dirname, isAbsolute, join, relative, resolve, sep } from 'node:path'
 import { parse as parseToml } from 'smol-toml'
 import { isCompanionMcp } from './native-tools'
 
@@ -35,7 +35,7 @@ function stable(v: unknown): string {
  *   config/read could prove arbitrary layer equivalence. We never start it here.
  * - Cursor 2026.10.01 cursor-config/paths + mcp/project-paths store authorization
  *   under CURSOR_DATA_DIR/projects/<sanitized-root>, including ancestor trust.
- * Consequently any project/ancestor layer or applicable per-path state rejects,
+ * Consequently any project/ancestor settings layer or applicable per-path state rejects,
  * even when copied byte-for-byte. Stdio commands can inspect cwd themselves;
  * copying their script cannot prove equivalence, so they also reject.
  * This is an admission fingerprint, not an execution-time lock or auth grant.
@@ -69,7 +69,7 @@ async function validate(input: IsolatedConfigurationInput, options: IsolatedConf
     for (const dir of ancestors(dirname(path)).reverse()) { const s = await observe(dir); if (s && !s.isDirectory()) fail() }
     return observe(path)
   }
-  const read = async (path: string): Promise<Obj | null> => {
+  const readText = async (path: string): Promise<string | null> => {
     const before = await inspect(path)
     if (!before) return null
     if (!before.isFile() || before.nlink !== 1n || before.size > 1_000_000n || (before.mode & 0o444n) === 0n) fail()
@@ -83,11 +83,34 @@ async function validate(input: IsolatedConfigurationInput, options: IsolatedConf
       total += count
       if (count > 1_000_000 || total > 8_000_000 || stamp(await fd.stat({ bigint: true })) !== stamp(before)) fail()
       await observe(path)
-      const text = new TextDecoder('utf-8', { fatal: true }).decode(bytes.subarray(0, count))
-      const parsed: unknown = path.endsWith('.toml') ? parseToml(text) : JSON.parse(text)
-      if (!object(parsed)) fail()
-      return parsed
+      return new TextDecoder('utf-8', { fatal: true }).decode(bytes.subarray(0, count))
     } finally { await fd.close() }
+  }
+  const read = async (path: string): Promise<Obj | null> => {
+    const text = await readText(path)
+    if (text === null) return null
+    const parsed: unknown = path.endsWith('.toml') ? parseToml(text) : JSON.parse(text)
+    if (!object(parsed)) fail()
+    return parsed
+  }
+  // Unlike identity-only ancestor probes, enumerated rule/project directories
+  // must also retain their membership throughout admission.
+  const listings = new Map<string, string>()
+  const listingStamp = (s: NonNullable<Awaited<ReturnType<typeof stat>>>) => `${stamp(s)}:${s.mtimeNs}:${s.ctimeNs}`
+  let entries = 0
+  const list = async (path: string): Promise<string[] | null> => {
+    const before = await inspect(path)
+    if (!before) return null
+    if (!before.isDirectory() || (before.mode & 0o555n) === 0n) fail()
+    const expected = listingStamp(before), previous = listings.get(path)
+    if (previous !== undefined && previous !== expected) fail()
+    listings.set(path, expected)
+    const out: string[] = []
+    const dir = await opendir(path, { bufferSize: 32 })
+    for await (const entry of dir) { if (++entries > 4096) fail(); out.push(entry.name) }
+    const after = await observe(path)
+    if (!after || listingStamp(after) !== expected) fail()
+    return out.sort()
   }
   for (const path of [source, execution]) if (!(await inspect(path))?.isDirectory()) fail()
   if (input.providerId === 'openai') {
@@ -257,11 +280,110 @@ async function validate(input: IsolatedConfigurationInput, options: IsolatedConf
       : input.providerId === 'codex' ? ['.codex/config.toml']
         : ['.cursor/cli.json', '.cursor/cli-config.json', '.cursor/mcp.json', '.cursor/permissions.json', '.cursor/hooks.json', '.workspace-trusted']
     for (const dir of relevant) for (const name of localNames) { const path = join(dir, name); if (!globalPaths.has(path) && await inspect(path)) fail() }
+    // Native instructions are executable input to the agent even when Git
+    // ignores them. Compare the file graph, not just settings JSON/TOML:
+    // Cursor 2026.10.01 LocalCursorRulesService walks all cwd ancestors and
+    // recursive .cursor/rules; Claude also loads descendant memories lazily.
+    // Codex uses Git-root -> cwd AGENTS(.override).md plus CODEX_HOME memory.
+    // Comparing the superset of candidate files is intentionally conservative
+    // about fallback/override flags; an unproven candidate never disappears.
+    const repositoryRoot = async (cwd: string) => {
+      for (const dir of ancestors(cwd)) {
+        const marker = await inspect(join(dir, '.git'))
+        if (marker) {
+          if (!marker.isDirectory() && (!marker.isFile() || marker.nlink !== 1n)) fail()
+          return dir
+        }
+      }
+      return cwd
+    }
+    const sourceRoot = await repositoryRoot(source), executionRoot = await repositoryRoot(execution)
+    if (relative(sourceRoot, source) !== relative(executionRoot, execution)) fail()
+    const names = input.providerId === 'codex' ? ['AGENTS.override.md', 'AGENTS.md']
+      : input.providerId === 'claude' ? ['AGENTS.md', 'CLAUDE.md', 'CLAUDE.local.md', '.claude/CLAUDE.md']
+        : ['AGENTS.md', 'CLAUDE.md', 'CLAUDE.local.md']
+    const ruleName = input.providerId === 'claude' ? '.claude/rules' : input.providerId === 'cursor' ? '.cursor/rules' : null
+    const ruleExtension = input.providerId === 'claude' ? '.md' : '.mdc'
+    type Instruction = { scope: string; name: string; sha256: string }
+    const addInstruction = async (out: Instruction[], path: string, scope: string, name: string) => {
+      const text = await readText(path)
+      if (text === null) return
+      reference(text)
+      // Imports may depend on external files and per-cwd consent. Do not
+      // emulate native import expansion or silently fingerprint only the stub.
+      if (/(?:^|[\s([{"'])@[^\s]/m.test(text)) fail()
+      for (const root of [sourceRoot, executionRoot]) if (text.includes(root)) fail()
+      out.push({ scope, name, sha256: digest(text) })
+    }
+    const ruleTree = async (out: Instruction[], dir: string, scope: string, prefix: string, depth = 0): Promise<void> => {
+      if (depth > 32) fail()
+      const children = await list(dir)
+      if (!children) return
+      for (const name of children) {
+        const path = join(dir, name), s = await observe(path)
+        if (!s) fail()
+        if (s.isDirectory()) await ruleTree(out, path, scope, `${prefix}/${name}`, depth + 1)
+        else if (name.endsWith(ruleExtension)) await addInstruction(out, path, scope, `${prefix}/${name}`)
+        else if (!s.isFile()) fail()
+      }
+    }
+    const layer = async (out: Instruction[], dir: string, scope: string) => {
+      for (const name of names) await addInstruction(out, join(dir, name), scope, name)
+      if (ruleName) await ruleTree(out, join(dir, ruleName), scope, ruleName)
+      // Cursor applies ignore rules using absolute paths and native defaults.
+      // Until those selectors can be reproduced, never assume equal rule text
+      // means equal applicability in the two directories.
+      if (input.providerId === 'cursor') for (const name of ['.cursorignore', '.cursorindexingignore']) if (await inspect(join(dir, name))) fail()
+    }
+    const instructions = async (cwd: string, root: string): Promise<Instruction[]> => {
+      const out: Instruction[] = []
+      const dirs = ancestors(cwd)
+      const scoped = input.providerId === 'codex' ? dirs.slice(0, dirs.indexOf(root) + 1) : dirs
+      for (const dir of [...scoped].reverse()) {
+        const rel = relative(root, dir)
+        const inside = rel === '' || (rel !== '..' && !rel.startsWith('..' + sep) && !isAbsolute(rel))
+        await layer(out, dir, inside ? `project:${rel}` : `ancestor:${dir}`)
+      }
+      if (input.providerId === 'cursor') await addInstruction(out, join(root, '.cursorrules'), 'project:', '.cursorrules')
+      // Native descendants can become effective after a Read/Edit or nested
+      // rule discovery. Scan directories only, never ordinary project content.
+      // No Git-ignore shortcut: ignored native instructions caused this bug.
+      const descendants = async (dir: string, depth: number): Promise<void> => {
+        if (depth > 32) fail()
+        for (const name of await list(dir) ?? []) {
+          if (name === '.git') { if (dir !== root) fail(); continue }
+          const path = join(dir, name), s = await observe(path)
+          if (!s) fail()
+          if (!s.isDirectory()) continue
+          await layer(out, path, `project:${relative(root, path)}`)
+          await descendants(path, depth + 1)
+        }
+      }
+      await descendants(cwd, 0)
+      return out
+    }
+    const sourceInstructions = await instructions(source, sourceRoot)
+    const executionInstructions = await instructions(execution, executionRoot)
+    if (stable(sourceInstructions) !== stable(executionInstructions)) fail()
+    values.push({ instructions: sourceInstructions })
+    const sharedInstructions: Instruction[] = []
+    if (input.providerId === 'codex') {
+      for (const name of names) await addInstruction(sharedInstructions, join(configRoot, name), 'user', name)
+    } else if (input.providerId === 'claude') {
+      for (const name of ['CLAUDE.md', 'AGENTS.md']) await addInstruction(sharedInstructions, join(configRoot, name), 'user', name)
+      await ruleTree(sharedInstructions, join(configRoot, 'rules'), 'user', 'rules')
+      for (const root of systemRoots) {
+        // Preserve the conservative managed-constraint policy.
+        for (const name of ['CLAUDE.md', 'AGENTS.md', 'rules']) if (await inspect(join(root, name))) fail()
+      }
+    }
+    values.push({ sharedInstructions })
     const nativeEnvironment = Object.fromEntries(Object.entries(env).filter(([name]) => !privateEnv.test(name) && /^(ANTHROPIC_|CLAUDE_|CODEX_|CURSOR_|OPENAI_|HTTP_PROXY$|HTTPS_PROXY$|ALL_PROXY$|NO_PROXY$)/.test(name)))
     reference(nativeEnvironment); values.push(nativeEnvironment)
   }
   // Includes absent paths and directory identities: newly introduced layers,
   // replaced parents, inode swaps and in-place changes invalidate admission.
   for (const [path, expected] of observations) if (stamp(await stat(path)) !== expected) fail()
-  return digest(stable({ version: 1, provider: input.providerId, values }))
+  for (const [path, expected] of listings) { const s = await stat(path); if (!s || listingStamp(s) !== expected) fail() }
+  return digest(stable({ version: 2, provider: input.providerId, values }))
 }
