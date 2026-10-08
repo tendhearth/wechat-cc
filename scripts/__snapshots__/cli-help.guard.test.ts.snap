@@ -445,6 +445,22 @@ Use wechat-cc ci <command> --help for more information about a command.
 "
 `;
 
+exports[`cli.ts --help 快照(逐字节) > cli --help > cli acp --help 1`] = `
+"自定义 ACP 执行者:任何会说 ACP 的 CLI(Gemini CLI / OpenCode / Goose …)接进一起做 (cli acp)
+
+USAGE cli acp list|add|remove
+
+COMMANDS
+
+    list    列出自定义 ACP 执行者和可用的预设                                                     
+     add    加一个 ACP 执行者:预设(gemini-cli / opencode / goose / qwen-code)或 --command 自定义
+  remove    去掉一个自定义 ACP 执行者                                                         
+
+Use cli acp <command> --help for more information about a command.
+
+"
+`;
+
 exports[`cli.ts --help 快照(逐字节) > cli --help > cli rollback --help 1`] = `
 "退回上一个版本(本机留着的旧版本 / 官方装指定版本),当前版本记为有问题。daemon 需在跑 (cli rollback)
 
@@ -497,13 +513,14 @@ OPTIONS
 exports[`cli.ts --help 快照(逐字节) > cli --help 1`] = `
 "外部 agent CLI(claude / codex / cursor-agent / agy)的版本与自动升级 (wechat-cc cli v1.7.5 (dev))
 
-USAGE wechat-cc cli status|upgrade|rollback
+USAGE wechat-cc cli status|upgrade|rollback|acp
 
 COMMANDS
 
-    status    本机外部 agent CLI 的版本、升级器、能否自动退回,以及 daemon 记下的自动升级状态(只读)
-   upgrade    现在就查最新并用官方升级器升级一个 CLI(只在空闲时;升完自检,不过自动退回)。daemon 需在跑  
-  rollback    退回上一个版本(本机留着的旧版本 / 官方装指定版本),当前版本记为有问题。daemon 需在跑     
+    status    本机外部 agent CLI 的版本、升级器、能否自动退回,以及 daemon 记下的自动升级状态(只读)           
+   upgrade    现在就查最新并用官方升级器升级一个 CLI(只在空闲时;升完自检,不过自动退回)。daemon 需在跑             
+  rollback    退回上一个版本(本机留着的旧版本 / 官方装指定版本),当前版本记为有问题。daemon 需在跑                
+       acp    自定义 ACP 执行者:任何会说 ACP 的 CLI(Gemini CLI / OpenCode / Goose …)接进一起做
 
 Use wechat-cc cli <command> --help for more information about a command.
 
