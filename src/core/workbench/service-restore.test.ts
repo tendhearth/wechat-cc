@@ -301,3 +301,11 @@ it('does not invent an unknown writer for a genuinely closed historical legacy p
  expect(service.detail(legacy.id).task.error).not.toBe('writer_not_closed')
  service.continueTask(task.id,'continue safely');await expect.poll(()=>runtimes.length).toBe(3)
 })
+
+
+it('rejects merge for a new managed workspace without changing source, events, or worktree records',async()=>{
+ const {task}=await closed(),head=git('rev-parse','HEAD'),events=store.events(task.id).length
+ expect(()=>service.worktreeAction(task.id,'merge')).toThrow('invalid_request')
+ expect(git('rev-parse','HEAD')).toBe(head);expect(store.events(task.id)).toHaveLength(events);expect(store.worktrees.get(task.id)).toBeNull()
+ expect(service.detail(task.id).task.worktree).toMatchObject({merged:false,removed:false})
+})

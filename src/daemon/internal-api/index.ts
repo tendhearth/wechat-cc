@@ -28,7 +28,7 @@ import { randomBytes } from 'node:crypto'
 import { makeTokenRegistry, type TokenInfo } from './token-registry'
 import { minTierFor, tierMeets } from './route-tiers'
 import type { UserTier } from '../../core/user-tier'
-import type { AddressInfo } from 'node:net'
+import type { AddressInfo, Socket } from 'node:net'
 import {
   errMsg,
   type InternalApi,
@@ -39,6 +39,7 @@ import { makeMaybePrefix, makeRoutes } from './routes'
 import { computePresence } from './routes-presence'
 import { REQUEST_SCHEMAS } from './schema'
 import { ALL_CHATS, SEND_SCOPED_ROUTES, sendScopeDecision, sharedTokenTurn } from './send-scope'
+import { isBun } from '../../lib/runtime'
 import { replyDeliveryFor } from '../../core/capability-matrix'
 
 export type {
@@ -117,9 +118,11 @@ export function createInternalApi(deps: InternalApiDeps): InternalApi {
     maybePrefix,
   })
 
+  const rejectedBodySockets = new WeakSet<Socket>()
+
   async function readJsonBody(req: IncomingMessage,maxBytes?:number): Promise<unknown> {
     if(maxBytes!==undefined){
-      if(Number(req.headers['content-length'])>maxBytes){req.resume();throw Error('request_body_too_large')}
+      if(Number(req.headers['content-length'])>maxBytes){rejectedBodySockets.add(req.socket);req.resume();throw Error('request_body_too_large')}
       return new Promise((resolve,reject)=>{
         const chunks:Buffer[]= [];let bytes=0
         const cleanup=()=>{req.off('data',onData);req.off('end',onEnd);req.off('error',onError);req.off('aborted',onAborted)}
@@ -127,7 +130,7 @@ export function createInternalApi(deps: InternalApiDeps): InternalApi {
         const onAborted=()=>onError(Error('request_aborted'))
         const onData=(chunk:Buffer)=>{
           bytes+=chunk.length
-          if(bytes>maxBytes){cleanup();chunks.length=0;req.resume();reject(Error('request_body_too_large'));return}
+          if(bytes>maxBytes){rejectedBodySockets.add(req.socket);cleanup();chunks.length=0;req.resume();reject(Error('request_body_too_large'));return}
           chunks.push(chunk)
         }
         const onEnd=()=>{cleanup();try{const text=Buffer.concat(chunks).toString('utf8');resolve(text?JSON.parse(text):null)}catch(error){reject(error)}}
@@ -142,6 +145,9 @@ export function createInternalApi(deps: InternalApiDeps): InternalApi {
   }
 
   async function handleRequest(req: IncomingMessage, res: ServerResponse): Promise<void> {
+    // Mark the socket synchronously at the size boundary: the HTTP parser may
+    // dispatch a pipelined request before the rejected body's promise resumes.
+    if (rejectedBodySockets.has(req.socket)) { req.resume(); return }
     const origin = (req.headers.origin && typeof req.headers.origin === 'string') ? req.headers.origin : undefined
 
     // CORS preflight — browsers strip auth + custom headers off OPTIONS,
@@ -229,12 +235,42 @@ export function createInternalApi(deps: InternalApiDeps): InternalApi {
         body = await readJsonBody(req,url.pathname==='/v1/workbench/attachment'?12*1024*1024:url.pathname.startsWith('/v1/workbench/')?128*1024:undefined)
       } catch (err) {
         if(err instanceof Error&&err.message==='request_body_too_large'){
-          // A rejected stream may still contain unread chunks. Do not reuse its
-          // connection for a following request before the parser finishes it.
-          // Bun's node:http compatibility layer needs the explicit end as well
-          // as the header; end after finish so the 413 response is flushed first.
-          const socket=req.socket
-          res.once('finish',()=>{if(!socket.destroyed)socket.end()})
+          // Node's native Connection: close path calls destroySoon after the
+          // response flush. Destroying while upload bytes remain unread can
+          // reset the connection before its client receives the 413. Half-close
+          // this rejected socket and discard input until peer EOF or a fixed
+          // deadline; no subsequent request on it can enter the route layer.
+          const socket = req.socket
+          if (isBun()) {
+            // Bun still needs the explicit end. Its node:http layer does not
+            // use Node's native destroySoon path or emit all native close events.
+            res.once('finish', () => { if (!socket.destroyed) socket.end() })
+          } else {
+            const originalDestroySoon = socket.destroySoon
+            let deadline: ReturnType<typeof setTimeout> | undefined
+            let closing = false
+            const cleanup = () => {
+              if (deadline !== undefined) clearTimeout(deadline)
+              socket.off('end', destroy)
+              socket.off('close', cleanup)
+              res.off('finish', close)
+              socket.destroySoon = originalDestroySoon
+            }
+            const destroy = () => { cleanup(); socket.destroy() }
+            const close = () => {
+              if (closing || socket.destroyed) return
+              closing = true
+              // A wall-clock deadline cannot be prolonged by an endless upload.
+              deadline = setTimeout(destroy, 1000)
+              deadline.unref()
+              socket.once('end', destroy)
+              socket.end()
+              if (socket.readableEnded) destroy()
+            }
+            socket.once('close', cleanup)
+            socket.destroySoon = close
+            res.once('finish', close)
+          }
           res.setHeader('connection','close')
           return send(res,413,{error:'request_body_too_large'},origin)
         }

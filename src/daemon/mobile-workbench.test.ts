@@ -203,3 +203,30 @@ describe('phone entry models (2026-10-06)',()=>{
     expect(entryModels).not.toHaveBeenCalled()
   })
 })
+
+describe('phone worktree actions (2026-10-07)',()=>{
+  const post=(worktree:(id:string,a:'commit'|'remove'|'merge')=>{branch:string;committed?:boolean;removed?:boolean;merged?:boolean},body:unknown)=>{const url=new URL('http://phone.test/m/api/matter/worktree');return mobileWorkbenchRoute({worktree},url,new Request(url,{method:'POST',body:JSON.stringify(body)}))}
+  it('commit / remove go through; the answer is just branch + result',async()=>{
+    const fn=vi.fn((_id:string,a:'commit'|'remove'|'merge')=>a==='commit'?{branch:'cc/abcd1234',committed:true}:{branch:'cc/abcd1234',removed:true})
+    const c=await post(fn,{id:'deadbeef',action:'commit'})
+    expect(c?.status).toBe(200);expect(await c!.json()).toEqual({ok:true,branch:'cc/abcd1234',committed:true})
+    expect(fn).toHaveBeenCalledWith('deadbeef','commit')
+    expect(await (await post(fn,{id:'deadbeef',action:'remove'}))!.json()).toEqual({ok:true,branch:'cc/abcd1234',removed:true})
+    expect(await (await post(()=>({branch:'cc/abcd1234',merged:true}),{id:'deadbeef',action:'merge'}))!.json()).toEqual({ok:true,branch:'cc/abcd1234',merged:true})
+  })
+  it('bad bodies are 400; dirty / removed 409; not a worktree 422; busy 409',async()=>{
+    const fn=vi.fn(()=>({branch:'x'}))
+    for(const b of [{id:'deadbeef'},{id:'x',action:'commit'},{id:'deadbeef',action:'rebase'},{id:'deadbeef',action:'commit',force:1}])expect((await post(fn,b))?.status).toBe(400)
+    expect(fn).not.toHaveBeenCalled()
+    for(const [code,status] of [['writer_not_closed',409],['workspace_blocked',409],['git_workspace_binding_required',409],['worktree_dirty',409],['worktree_removed',409],['not_worktree',422],['workbench_busy',409],['worktree_not_ff',409],['project_dirty',409],['worktree_uncommitted',409],['project_busy',409]] as const){
+      const r=await post(()=>{throw Error(code)},{id:'deadbeef',action:'remove'})
+      expect(r!.status,code).toBe(status);expect(await r!.json()).toEqual({ok:false,error:code})
+    }
+  })
+})
+
+it('waits for an asynchronous managed worktree action and returns its completed result',async()=>{
+ const url=new URL('http://phone.test/m/api/matter/worktree')
+ const result=await mobileWorkbenchRoute({worktree:async()=>({branch:'cc/new',committed:true})} as never,url,new Request(url,{method:'POST',body:JSON.stringify({id:'deadbeef',action:'commit'})}))
+ expect(await result!.json()).toEqual({ok:true,branch:'cc/new',committed:true})
+})

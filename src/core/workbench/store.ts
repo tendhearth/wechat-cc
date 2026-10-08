@@ -240,10 +240,11 @@ export function makeWorkbenchStore(db: Db) {
       record(input:{taskId:string;projectPath:string;repoRoot:string;root:string;branch:string}) {
         db.query('INSERT OR IGNORE INTO workbench_worktrees(task_id,project_path,repo_root,root,branch,created_at) VALUES(?,?,?,?,?,?)').run(input.taskId,input.projectPath,input.repoRoot,input.root,input.branch,Date.now())
       },
-      get(taskId:string):{taskId:string;projectPath:string;repoRoot:string;root:string;branch:string;createdAt:number;removedAt:number|null}|null {
-        return db.query<{taskId:string;projectPath:string;repoRoot:string;root:string;branch:string;createdAt:number;removedAt:number|null},[string]>('SELECT task_id AS taskId,project_path AS projectPath,repo_root AS repoRoot,root,branch,created_at AS createdAt,removed_at AS removedAt FROM workbench_worktrees WHERE task_id=?').get(taskId)??null
+      get(taskId:string):{taskId:string;projectPath:string;repoRoot:string;root:string;branch:string;createdAt:number;removedAt:number|null;mergedAt:number|null}|null {
+        return db.query<{taskId:string;projectPath:string;repoRoot:string;root:string;branch:string;createdAt:number;removedAt:number|null;mergedAt:number|null},[string]>('SELECT task_id AS taskId,project_path AS projectPath,repo_root AS repoRoot,root,branch,created_at AS createdAt,removed_at AS removedAt,merged_at AS mergedAt FROM workbench_worktrees WHERE task_id=?').get(taskId)??null
       },
       markRemoved(taskId:string) { db.query('UPDATE workbench_worktrees SET removed_at=COALESCE(removed_at,?) WHERE task_id=?').run(Date.now(),taskId) },
+      markMerged(taskId:string) { db.query('UPDATE workbench_worktrees SET merged_at=COALESCE(merged_at,?) WHERE task_id=?').run(Date.now(),taskId) },
     },
     /** 关不掉的执行程序的进程组(v73,2026-10-06):退出证据从这里查,见 lifecycle 的 writer 守望。 */
     setWriterGroups(id:string,groups:readonly number[]) {

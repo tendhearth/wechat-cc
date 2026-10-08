@@ -30,7 +30,7 @@ export function createRestoreActions(deps){
         persist()
         try{
           const value=/** @type {{operation?:Operation}} */(await deps.invoke('POST','/v1/workbench/review-revert',{...snapshot.input})),o=value?.operation
-          if(!o||o.taskId!==snapshot.input.id||o.requestId!==snapshot.input.requestId||o.artifactId!==snapshot.input.artifactId||o.path!==snapshot.input.path||o.changeId!==snapshot.input.changeId||!o.operationId||!o.workspaceId||(snapshot.workspaceId&&o.workspaceId!==snapshot.workspaceId)||!['reverted','needs_recovery'].includes(o.state))throw Error('restore_receipt_mismatch')
+          if(!o||o.taskId!==snapshot.input.id||o.requestId!==snapshot.input.requestId||o.artifactId!==snapshot.input.artifactId||o.path!==snapshot.input.path||o.changeId!==snapshot.input.changeId||!o.operationId||!o.workspaceId||(snapshot.workspaceId&&o.workspaceId!==snapshot.workspaceId)||!['reverted','needs_recovery','resolved_keep_current'].includes(o.state))throw Error('restore_receipt_mismatch')
           snapshot.operation=o;snapshot.state=o.state;delete snapshot.error;persist()
         }catch(error){snapshot.error=error instanceof Error?error.message:String(error);persist()/* Never infer that bytes were restored. */}
         return snapshot

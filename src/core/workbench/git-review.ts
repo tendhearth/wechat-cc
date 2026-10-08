@@ -16,8 +16,8 @@ export interface GitBaseline {
   project:string;startedAt:number;head:string|null;limits:Limits
   kind:'git'|'not_git'|'unavailable';paths:Set<string>;initial:Map<string,FileState>;preexistingPaths:string[];notes:string[]
 }
-export interface ReviewFile {path:string;preexisting:boolean;kind:'added'|'deleted'|'modified'|'not_reviewed';beforeSha256?:string;afterSha256?:string;diff?:string;reason?:string}
-export interface GitReview {version:1;scope:'working-tree-before-after';startedAt:number;finishedAt:number;headBefore:string|null;headAfter:string|null;status:'complete'|'partial'|'unavailable';preexistingPaths:string[];notes:string[];files:ReviewFile[]}
+export type {GitReview,ReviewFile} from './git-review-types'
+import type {GitReview,ReviewFile} from './git-review-types'
 function gitEnv() {
   const env:NodeJS.ProcessEnv={...process.env}
   for(const key of Object.keys(env))if(key.startsWith('GIT_'))delete env[key]

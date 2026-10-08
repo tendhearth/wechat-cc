@@ -75,13 +75,13 @@ export function makeViewDomain(ctx:ServiceCtx, queries?:{quotaHandoff(id:string)
     const workspace=store.gitWorkspaceForTask(task.id)
     return {
       ...task,
-      ...(workspace?{sourcePath:workspace.sourcePath,workspace:{id:workspace.id,mode:'isolated' as const,sourcePath:workspace.sourcePath,executionPath:workspace.executionPath,branch:workspace.branch,baseCommit:workspace.baseCommit,...(workspace.removedAt?{removed:true}:{})},worktree:{projectPath:workspace.sourcePath,branch:workspace.branch,removed:!!workspace.removedAt}}:{}),
+      ...(workspace?{sourcePath:workspace.sourcePath,workspace:{id:workspace.id,mode:'isolated' as const,sourcePath:workspace.sourcePath,executionPath:workspace.executionPath,branch:workspace.branch,baseCommit:workspace.baseCommit,...(workspace.removedAt?{removed:true}:{})},worktree:{projectPath:workspace.sourcePath,branch:workspace.branch,removed:!!workspace.removedAt,merged:false}}:{}),
       phase:phaseOf(task,running),
       ...(runtime?{runtime}:{}),
       ...(!running&&TERMINAL_TASK_STATUSES.includes(task.status)&&store.source(task.id)?.firstDispatchedAt===null?{importedOnly:true}:{}),
       canArchive:TERMINAL_TASK_STATUSES.includes(task.status) && !running && task.error!=='writer_not_closed',
       // 独立工作区(2026-10-07):分支、源项目、目录删了没;桌面按源项目归组、给「提交到分支」。
-      ...(()=>{const wt=store.worktrees.get(task.id);return wt?{worktree:{branch:wt.branch,projectPath:wt.projectPath,removed:wt.removedAt!==null}}:{}})(),
+      ...(()=>{const wt=store.worktrees.get(task.id);return wt?{worktree:{branch:wt.branch,projectPath:wt.projectPath,removed:wt.removedAt!==null,merged:wt.mergedAt!==null}}:{}})(),
       // 「没确认退出」:进程组还活着 ⇒ 'alive'(先结束它);没有相反证据 ⇒ 'unconfirmed'(主人可以确认已经结束)。
       ...(task.error==='writer_not_closed'?{writerExit:writerAlive(ctx,task.id)?'alive' as const:'unconfirmed' as const}:{}),
       waitingFor:running ? waitingFor(running) : null,

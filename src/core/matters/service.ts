@@ -14,7 +14,7 @@ import {sayTextHash,type SayReceipts} from './say-receipts'
  * (工作台任务从 workbench 详情取),这里不复制数据。`say` 按 kind 路由:
  * task → 工作台续接;chat → 现有的 app 对话通道(只对主人的 chat)。
  */
-export interface MatterTaskView {id:string;title:string;status:string;phase?:string;providerId:string;path:string;error:string|null;updatedAt:number;archivedAt?:number|null}
+export interface MatterTaskView {id:string;title:string;status:string;phase?:string;providerId:string;path:string;error:string|null;updatedAt:number;archivedAt?:number|null;worktree?:{branch:string;removed:boolean;merged?:boolean}}
 export interface MatterEvent {kind:string;text:string;createdAt:number;source?:string;attachments?:Attachment[];errorCode?:'execution_model_unsupported';diagnostic?:string}
 export type MatterInput=Pick<LiveInput,'id'|'taskId'|'runId'|'text'|'status'|'attachments'>&Partial<Pick<LiveInput,'error'>>
 // 只投影显示材料所需的五个字段；不能把内部存储路径、owner 或草稿身份带到手机。
@@ -52,6 +52,8 @@ export interface MattersServiceDeps {
     resolvePermission?(id:string,requestId:string,decision:PermissionDecision):void
     /** 停下这一轮(与桌面「停止」同一个 cancel;expectedRunId 不对 ⇒ 不停,免得停掉后来的那一轮)。 */
     cancel?(id:string,expectedRunId?:string):Promise<unknown>
+    /** 独立工作区:提交到分支 / 删除工作区(2026-10-07,手机也能做)。没接 ⇒ 手机没有这两个按钮。 */
+    worktreeAction?(id:string,action:'commit'|'remove'|'merge'):{branch:string;committed?:boolean;removed?:boolean;merged?:boolean;into?:string}|Promise<{branch:string;committed?:boolean;removed?:boolean;merged?:boolean;into?:string}>
     resolveAnswer?(id:string,requestId:string,answers:unknown):void
     artifact?(id:string,artifactId:string):{name:string;mime:string;size:number;sha256:string;contentBase64:string}
     /** 额度用完时这件事能不能交给另一位;null = 不用打扰。没接 ⇒ 详情里没有这一块。 */
@@ -77,6 +79,8 @@ export interface MattersService {
   answer(id:string,runId:string,requestId:string,answers:unknown):void
   /** 手机上停下正在跑的这一轮(2026-10-06)。runId 必须是手机看到的那一轮;已经换了一轮 / 没在跑 ⇒ input_stale。 */
   stop(id:string,runId:string):Promise<void>
+  /** 独立工作区的提交 / 删除(2026-10-07):手机看不到合并命令(在电脑上合并),只回分支和结果。 */
+  worktree(id:string,action:'commit'|'remove'|'merge'):{branch:string;committed?:boolean;removed?:boolean;merged?:boolean}|Promise<{branch:string;committed?:boolean;removed?:boolean;merged?:boolean}>
   artifactChunk(id:string,input:MatterArtifactInput):MatterArtifactChunk
   /** 在主人那条对话里搜(2026-10-06,对标 Orca 会话历史搜索):新的在前;没配主人 ⇒ null。 */
   searchOwnerChat(query:string,limit?:number):Promise<{hits:(MatterEvent&{id:string})[]}|null>
@@ -133,7 +137,7 @@ export function makeMattersService(deps:MattersServiceDeps):MattersService {
       }
       if(matter.kind==='task'&&deps.workbench){
         try{
-          const d=taskDetail(matter.id);task=d.task;events=d.events.slice(-50).map(publicEvent)
+          const d=taskDetail(matter.id);const wt=(d.task as {worktree?:{branch:string;removed:boolean;merged?:boolean}}).worktree;task={...d.task,...(wt?{worktree:{branch:wt.branch,removed:wt.removed,...(wt.merged?{merged:true}:{})}}:{})};events=d.events.slice(-50).map(publicEvent)
           controls={...(d.runId?{runId:d.runId}:{}),...(d.inputMode?{inputMode:d.inputMode}:{}),
             permissions:(d.permissions??[]).filter(p=>p.taskId===id).map(({id,taskId,tool,description,createdAt})=>({id,taskId,tool,description,createdAt})),
             questions:(d.questions??[]).filter(q=>q.taskId===id).map(({id,taskId,createdAt,questions})=>({id,taskId,createdAt,questions:questions.map(({id,header,question,options,multiSelect,allowOther})=>({id,header,question,options:options.map(({label,description})=>({label,description})),multiSelect,allowOther}))})),
@@ -237,6 +241,13 @@ export function makeMattersService(deps:MattersServiceDeps):MattersService {
       current(id,runId,requestId,'permissions')
       if(!deps.workbench?.resolvePermission)throw Error('workbench_not_wired')
       deps.workbench.resolvePermission(id,requestId,decision)
+    },
+    worktree(id,action){
+      require(id)
+      if(!deps.workbench?.worktreeAction)throw Error('workbench_not_wired')
+      const r=deps.workbench.worktreeAction(id,action)
+      const project=(value:Awaited<typeof r>)=>({branch:value.branch,...(value.committed!==undefined?{committed:value.committed}:{}),...(value.removed?{removed:true}:{}),...(value.merged?{merged:true}:{})})
+      return r instanceof Promise?r.then(project):project(r)
     },
     async stop(id,runId){
       const detail=taskDetail(id)

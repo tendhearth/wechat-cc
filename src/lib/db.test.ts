@@ -738,6 +738,24 @@ it('upgrades v67 without assigning staged legacy attachments to a new owner',()=
   } finally {db.close()}
 })
 
+it('upgrades published v75 without losing merged worktrees or assigning legacy restoration history',()=>{
+  const db=openSqlite(':memory:')
+  try{
+    db.exec('PRAGMA foreign_keys=ON')
+    for(const migration of migrations.slice(0,75))migration(db)
+    db.exec('PRAGMA user_version=75')
+    db.query('INSERT INTO workbench_tasks(id,title,path,provider_id,status,created_at,updated_at) VALUES(?,?,?,?,?,?,?)').run('deadbeef','legacy','/copy','claude','completed',1,2)
+    db.query('INSERT INTO workbench_worktrees(task_id,project_path,repo_root,root,branch,created_at,removed_at,merged_at) VALUES(?,?,?,?,?,?,?,?)').run('deadbeef','/project','/project','/copy','cc/deadbeef',1,null,3)
+    const prior=db.query('SELECT * FROM workbench_worktrees').get()
+    runMigrations(db);runMigrations(db)
+    expect(db.query('SELECT * FROM workbench_worktrees').get()).toEqual(prior)
+    expect(db.query('SELECT path,git_workspace_id FROM workbench_tasks').get()).toEqual({path:'/copy',git_workspace_id:null})
+    for(const table of ['workbench_git_workspaces','workbench_restore_runs','workbench_restore_operations'])expect(db.query(`SELECT * FROM ${table}`).all()).toEqual([])
+    expect(db.query('PRAGMA foreign_key_check').all()).toEqual([])
+    expect(db.query('PRAGMA user_version').get()).toEqual({user_version:migrations.length})
+  }finally{db.close()}
+})
+
 it('v61: workbench_tasks / workbench_events 都有 seq 列,事件表有 (task_id, seq) 索引', () => {
   const db = openTestDb()
   const cols = (t: string) => db.query<{ name: string }, []>(`PRAGMA table_info(${t})`).all().map(c => c.name)
