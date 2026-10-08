@@ -24,7 +24,7 @@ export function executionErrorMessage(error){
   writer_alive:'执行程序还在运行，请先结束它；结束后占用会自动解除。',
   worktree_not_git:'这个项目不是 Git 仓库，开不了独立工作区。取消勾选后可以照常交办。',
   worktree_dirty:'独立工作区里还有没提交的改动，先「提交到分支」再删除。',
-  worktree_removed:'独立工作区已经删除了，分支还在项目里。',
+  worktree_removed:'独立工作区已经删除了，分支还在项目里。要接着做，用「另做一份」或重新交办。',
   not_worktree:'这件事不在独立工作区里。',
   worktree_git_failed:'git 操作没成功，请在终端里看看这个项目的状态。',
   worktree_branch_exists:'同名分支已经存在，没有覆盖。请重新交办一次。',

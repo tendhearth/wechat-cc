@@ -461,3 +461,16 @@ it.each(['合回','删除工作区'] as const)('requires an explicit success fla
  const reply=await control('owner',`任务 ${task.id} ${verb}`)
  expect(reply).toContain('尚未确认');expect(reply).not.toContain(verb==='合回'?'已合进':'已删除')
 })
+
+it('awaits an explicit no-merge receipt and describes it without claiming a merge or uncertainty',async()=>{
+ setup({async spawn(){return{async *dispatch(){yield result},async close(){}}}})
+ const task=store.create({title:'no merge needed',path:project,providerId:'claude',ownerChatId:'owner'}),pending=gate()
+ const action=async()=>{await pending.promise;return{branch:'cc/no-change',merged:false,into:'main'}}
+ const control=makeWechatWorkbenchControl({store,ownerChatId:()=>owner,actions:{...service,worktreeAction:action}})
+ let settled=false
+ const reply=control('owner',`任务 ${task.id} 合回`).then(value=>{settled=true;return value})
+ await Promise.resolve();await Promise.resolve();expect(settled).toBe(false)
+ pending.resolve()
+ const value=await reply
+ expect(value).toContain('不用合');expect(value).not.toContain('已合进');expect(value).not.toContain('尚未确认')
+})

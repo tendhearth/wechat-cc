@@ -374,12 +374,23 @@ it('preserves explicit commit/remove for historical v74 worktrees',async()=>{
   // 合回项目(10-08):快进进 main,任务页记「已合回」
   expect(service.worktreeAction(one.receipt.taskId,'merge')).toMatchObject({merged:true,into:'main'})
   expect(readFileSync(join(project,'out.txt'),'utf8').replace(/\r\n/g,'\n')).toBe('done\n');expect(service.detail(one.receipt.taskId).task.worktree?.merged).toBe(true)
+  // 再点一次:没有新提交 ⇒ merged:false,但「已合回」不撤;再提交新改动 ⇒「已合回」清掉(10-08 评审)
+  expect(service.worktreeAction(one.receipt.taskId,'merge')).toMatchObject({merged:false})
+  const unchanged=await service.handleWechat('owner',`任务 ${first.id} 合回`)
+  expect(unchanged).toContain('不用合');expect(unchanged).not.toContain('已合进')
+  expect(service.detail(first.id).task.worktree?.merged).toBe(true)
+  writeFileSync(join(a.path,'more.txt'),'more\n');const again=await service.worktreeAction(one.receipt.taskId,'commit')
+  expect(service.detail(one.receipt.taskId).task.worktree?.merged).toBe(false)
+  // 时间线(会到手机)不带项目路径
+  expect(service.detail(one.receipt.taskId).events.some(e=>e.text.includes(project))).toBe(false)
   // 有没提交的改动 ⇒ 不删;提交后删 ⇒ 目录没了、分支还在
   expect(()=>service.worktreeAction(two.receipt.taskId,'remove')).toThrow('worktree_dirty')
   service.worktreeAction(one.receipt.taskId,'remove')
   expect(existsSync(a.path)).toBe(false);expect(service.detail(one.receipt.taskId).task.worktree?.removed).toBe(true)
-  expect(g('rev-parse','--verify',a.worktree!.branch)).toBe(commit.sha)
+  expect(g('rev-parse','--verify',a.worktree!.branch)).toBe(again.sha)
   expect(()=>service.worktreeAction(one.receipt.taskId,'commit')).toThrow('worktree_removed')
+  // 工作区删了 ⇒ 不再接着做(否则执行者对着不存在的目录跑)
+  expect(()=>service.continueTask(one.receipt.taskId,'再改一下')).toThrow('worktree_removed')
   // Archive must commit successfully before touching the filesystem or emitting cleanup events.
   service.worktreeAction(second.id,'commit')
   const events=service.detail(second.id).events.length

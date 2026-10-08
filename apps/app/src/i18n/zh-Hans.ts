@@ -60,6 +60,7 @@ const zh: Record<keyof typeof en, string> = {
   'progress.wtFork': '交给另一位另做一份',
   'progress.wtMergeConfirm': '再点一次：快进合并到项目',
   'progress.wtMerged': '已合回项目。',
+  'progress.wtNothingToMerge': '分支上没有项目里还没有的提交，不用合。没提交的改动要先「提交到分支」。',
   'progress.wtOnMerged': '在独立分支 {branch} 上做，已合回项目。',
   'progress.wtUncommitted': '还有没提交的改动，先「提交到分支」再合回。',
   'progress.wtMergeManual': '这次没法直接快进（项目里有没提交的改动，或已经往前走了），请回到电脑上自己合并。',

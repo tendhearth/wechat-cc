@@ -77,17 +77,19 @@ export function makeWorktreeDomain(ctx: ServiceCtx) {
     if (action === 'commit') {
       const result = commitWorktree(wt.root, task.title)
       const hint = mergeHint(wt.projectPath, wt.branch)
-      store.addEvent(id, 'system', result.committed ? `已提交到分支 ${wt.branch}（${result.sha.slice(0, 7)}）。合并到项目：${hint}` : `分支 ${wt.branch} 上没有新的改动要提交。`)
+      // 时间线会到手机:不写项目路径;完整合并命令留在桌面的 mergeHint 回执。
+      if (result.committed) store.worktrees.clearMerged(id)
+      store.addEvent(id, 'system', result.committed ? `已提交到分支 ${wt.branch}（${result.sha.slice(0, 7)}）。可以「合回项目」，或在项目目录里执行 git merge ${wt.branch}。` : `分支 ${wt.branch} 上没有新的改动要提交。`)
       ctx.hub.touched(id)
       return { branch: wt.branch, committed: result.committed, sha: result.sha, mergeHint: hint }
     }
     if (action === 'merge') {
       ctx.recovery?.gate(wt.projectPath);ctx.recovery?.gate(wt.repoRoot)
       const result = mergeWorktree(wt.repoRoot, wt.root, wt.branch)
-      store.worktrees.markMerged(id)
-      store.addEvent(id, 'system', result.merged ? `分支 ${wt.branch} 已快进合并到项目的 ${result.into}。` : `分支 ${wt.branch} 的内容已经在项目的 ${result.into} 里了。`)
+      if (result.merged) store.worktrees.markMerged(id)
+      store.addEvent(id, 'system', result.merged ? `分支 ${wt.branch} 已快进合并到项目的 ${result.into}。` : `分支 ${wt.branch} 上没有项目里还没有的提交，不用合。`)
       ctx.hub.touched(id)
-      return { branch: wt.branch, merged: true, into: result.into }
+      return { branch: wt.branch, merged: result.merged, into: result.into }
     }
     removeWorktree(wt.repoRoot, wt.root)
     store.worktrees.markRemoved(id)
@@ -114,8 +116,7 @@ export function makeWorktreeDomain(ctx: ServiceCtx) {
       try { legacyAction(id, 'remove') }
       catch (error) {
         const code = error instanceof Error ? error.message : ''
-        store.addEvent(id, 'system', code === 'worktree_dirty' ? `已归档。独立工作区里还有没提交的改动，先保留着；需要时恢复任务再提交或删除。` : `已归档。独立工作区暂时删不掉（${code === 'workbench_busy' ? '会话还开着' : '出了点问题'}），先保留着；需要时恢复任务再删除。`)
-        ctx.hub.touched(id)
+        try { store.addEvent(id, 'system', code === 'worktree_dirty' ? `已归档。独立工作区里还有没提交的改动，先保留着；需要时恢复任务再提交或删除。` : `已归档。独立工作区暂时删不掉（${code === 'workbench_busy' ? '会话还开着' : '出了点问题'}），先保留着；需要时恢复任务再删除。`); ctx.hub.touched(id) } catch { /* 归档已经成了,说不上这句也不回滚 */ }
       }
     },
   }
