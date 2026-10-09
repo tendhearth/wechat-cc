@@ -32,7 +32,7 @@ export async function chooseWorkbenchProject(invokeWorkbenchApi) {
       const selected = /** @type {HTMLSelectElement|null} */ (dialog.querySelector('#wb-entry-project'))
       const project = projects[Number(selected?.value)]
       if (!project) return
-      const recent = (list.tasks ?? []).filter(task => task.path === project.path).sort((a, b) => b.updatedAt - a.updatedAt || b.id.localeCompare(a.id))[0]
+      const recent = (list.tasks ?? []).filter(task => (task.sourcePath ?? task.path) === project.path).sort((a, b) => b.updatedAt - a.updatedAt || b.id.localeCompare(a.id))[0]
       answer = { path: project.path, providerId: list.projectProviders?.[project.path] ?? recent?.providerId ?? project.providerId ?? list.defaultProvider ?? '' }
       dialog.close()
     })

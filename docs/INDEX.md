@@ -31,6 +31,7 @@
 | 发版(tag → 三平台构建 → Publish → R2 更新源) | [maintainer/release.md](maintainer/release.md) | — |
 | macOS 改名迁移(`Tendhearth CC.app`、进程名、LaunchAgent 自修、1.7.4→1.7.5 真机清单) | [maintainer/app-rename-migration.md](maintainer/app-rename-migration.md) | 主人拍板(2026-10-04) |
 | 自维护(部署 / 自检 / CI 闸门) | [maintainer/](maintainer/README.md) | `superpowers/specs/2026-09-18-{self-maintenance,ci-triage}-design.md` |
+| 项目隔离与文件撤回 当前交接 | [任务与工作区交接](handoffs/2026-10-05-cc-isolation-and-next-tasks.md) | [批准的设计](superpowers/specs/2026-10-05-workbench-isolation-review-design.md)；[实施计划](superpowers/plans/2026-10-05-workbench-isolation-review.md) |
 | 自改流水线(`self change`) | [maintainer/self-change.md](maintainer/self-change.md) | `superpowers/specs/2026-09-18-self-change-pipeline-design.md` |
 | 外部 agent CLI 自动升级(claude / codex / cursor-agent / agy:官方升级器、升级后自检、自动退回、坏版本、`wechat-cc cli`) | [maintainer/cli-auto-upgrade.md](maintainer/cli-auto-upgrade.md) | 主人拍板(2026-10-04),见 roadmap 修订记录 |
 | 「一件事」matter 原语与任务入口 | [工作台现状](cc-workbench.md) | `superpowers/specs/2026-09-13-cc-unified-task-entry.md` 那一批(09-12/09-13)；[陪伴交办与手机验收记录](superpowers/reports/2026-09-22-cc-companion-task-entry.md)；[统一交办开发分支验证](superpowers/plans/2026-09-26-task-entry-validation.md) |

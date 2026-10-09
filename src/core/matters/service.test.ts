@@ -108,6 +108,8 @@ describe('worktree on the phone (2026-10-07)',()=>{
     expect(worktreeAction).toHaveBeenCalledWith('deadbeef','commit')
     worktreeAction.mockReturnValueOnce({branch:'cc/abcd1234',merged:true,into:'main'} as never)
     expect(service.worktree('deadbeef','merge')).toEqual({branch:'cc/abcd1234',merged:true})
+    worktreeAction.mockReturnValueOnce({branch:'cc/abcd1234',merged:false,into:'main'} as never)
+    expect(service.worktree('deadbeef','merge')).toEqual({branch:'cc/abcd1234',merged:false})
     task.worktree={...task.worktree,merged:true} as never
     expect((await service.detail('deadbeef')).task?.worktree).toEqual({branch:'cc/abcd1234',removed:false,merged:true})
     // 另做一份(10-08):源项目只给编号
@@ -115,4 +117,51 @@ describe('worktree on the phone (2026-10-07)',()=>{
     const shown=(await withProjects.detail('deadbeef')).task?.worktree
     expect(shown).toEqual({branch:'cc/abcd1234',removed:false,merged:true,projectId:'p-1'});expect(JSON.stringify(shown)).not.toContain('/Users/me')
   })
+})
+
+it('projects a completed asynchronous managed worktree result without exposing private fields',async()=>{
+ store.create({id:'deadbeef',kind:'task',title:'managed',projectPath:'/work',ownerChatId:'owner'})
+ const worktreeAction=async()=>({branch:'cc/new',committed:true,sha:'private',mergeHint:'/private'})
+ const service=makeMattersService({store,workbench:{detail:()=>({task:TASK,events:[]}),continueTask:vi.fn(),worktreeAction} as never})
+ expect(await service.worktree('deadbeef','commit')).toEqual({branch:'cc/new',committed:true})
+})
+
+
+it.each([
+ {sourcePath:'/legacy',workspace:{id:'cc730ffd-1192-4a75-b99e-b6fc3e23d105',mode:'isolated' as const,sourcePath:'/source',executionPath:'/copies/project',branch:'codex/cc-task-cc730ffd-1192-4a75-b99e-b6fc3e23d105',baseCommit:'a'.repeat(40)},worktree:{branch:'codex/cc-task-cc730ffd-1192-4a75-b99e-b6fc3e23d105',removed:false,projectPath:'/legacy'}},
+ {sourcePath:'/source',worktree:{branch:'cc/abcd1234',removed:false,projectPath:'/legacy'}},
+ {worktree:{branch:'cc/abcd1234',removed:false,projectPath:'/source'}},
+])('fork project identity follows source projection, never execution path: %j',async projection=>{
+ store.create({id:'deadbeef',kind:'task',title:'fork',projectPath:'/source',ownerChatId:'owner'})
+ const task={...TASK,path:'/copies/project',...projection}
+ const service=makeMattersService({store,workbench:{detail:()=>({task,events:[]}),continueTask:()=>task,projects:()=>[{id:'source-project',path:'/source'},{id:'wrong-execution',path:'/copies/project'},{id:'wrong-legacy',path:'/legacy'}]}})
+ const detail=await service.detail('deadbeef')
+ expect(detail.task?.worktree?.projectId).toBe('source-project')
+ expect(detail.task?.path).toBe('/copies/project')
+ if('workspace' in projection)expect(detail.task).toMatchObject({workspace:projection.workspace,sourcePath:projection.sourcePath})
+})
+
+it('missing source project never substitutes the execution folder project',async()=>{
+ store.create({id:'deadbeef',kind:'task',title:'fork',projectPath:'/source',ownerChatId:'owner'})
+ const task={...TASK,path:'/copies/project',sourcePath:'/missing',worktree:{branch:'cc/abcd1234',removed:false,projectPath:'/copies/project'}}
+ const service=makeMattersService({store,workbench:{detail:()=>({task,events:[]}),continueTask:()=>task,projects:()=>[{id:'wrong-execution',path:'/copies/project'}]}})
+ expect((await service.detail('deadbeef')).task?.worktree?.projectId).toBeUndefined()
+})
+
+it('preserves an explicit no-merge result only after an asynchronous worktree receipt settles',async()=>{
+ store.create({id:'deadbeef',kind:'task',title:'legacy result',projectPath:'/work',ownerChatId:'owner'})
+ let finish!:(value:{branch:string;merged:boolean;into:string})=>void
+ const deferred=new Promise<{branch:string;merged:boolean;into:string}>(resolve=>{finish=resolve})
+ const service=makeMattersService({store,workbench:{detail:()=>({task:TASK,events:[]}),continueTask:vi.fn(),worktreeAction:()=>deferred} as never})
+ let settled=false
+ const pending=Promise.resolve(service.worktree('deadbeef','merge')).then(value=>{settled=true;return value})
+ await Promise.resolve();expect(settled).toBe(false)
+ finish({branch:'cc/legacy',merged:false,into:'main'})
+ expect(await pending).toEqual({branch:'cc/legacy',merged:false})
+})
+
+it.each([true,false])('preserves an asynchronous reopened=%s flag without private fields',async reopened=>{
+ store.create({id:'deadbeef',kind:'task',title:'reopen',projectPath:'/work',ownerChatId:'owner'})
+ const service=makeMattersService({store,workbench:{detail:()=>({task:TASK,events:[]}),continueTask:vi.fn(),worktreeAction:async()=>({branch:'cc/old',reopened,mergeHint:'/private'})} as never})
+ expect(await service.worktree('deadbeef','reopen')).toEqual({branch:'cc/old',reopened})
 })

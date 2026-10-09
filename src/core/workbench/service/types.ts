@@ -8,7 +8,7 @@ import type { ProviderRegistry } from '../../provider-registry'
 import type { WorkbenchExecutorCapabilities } from '../executor-capabilities'
 
 export interface InputMaterials {attachmentIds?:string[];draftId?:string;execution?:unknown}
-export interface CreateTask extends InputMaterials { title?: string; path: string; providerId: string; text: string; /** false ⇒ 不登记成项目(独立工作区的目录)。 */ registerProject?: boolean }
+export interface CreateTask extends InputMaterials { title?: string; path: string; providerId: string; text: string; requestId?:string; executionMode?:import('../task-entry').ExecutionMode; /** false ⇒ 不登记成项目(独立工作区的目录)。 */ registerProject?: boolean }
 /**
  * 主人眼里的进度,两家执行者一致。持久化的 status 记的是这条 run 的生命周期
  * (Claude 会话保留时它永远是 running,Codex 自行收尾后是 completed),而主人要问的
@@ -27,3 +27,23 @@ export type QuotaHandoffView =
   | { state: 'offer'; from: string; to: string; kind: QuotaKind; resetAt: number }
   | { state: 'none'; from: string; kind: QuotaKind; resetAt: number }
   | { state: 'handed'; from: string; to: string; matterId: string }
+
+/** Recovery coordination contract: ctx depends on types, never on a domain factory. */
+export interface RecoveryDomain {
+  manager:ReturnType<typeof import('../restore-manager').createRestoreManager>
+  owned(taskId:string,receiptOnly?:boolean):{task:import('../store').StoredTask;w:import('../git-workspace-store').GitWorkspaceRecord}
+  git():ReturnType<typeof import('../git-workspaces').createGitWorkspaces>
+  blockReason(workspaceId:string):string|undefined
+  admit(path:string,gitWorkspaceId?:string|null):void
+  initializeWriters(adoptLegacyWriters:()=>void):void
+  startRecovery():void
+  gate(path:string,own?:import('./state').Active):void
+  begin(running:import('./state').Active):Promise<void>
+  remember(running:import('./state').Active):void
+  mark(running:import('./state').Active,status:'closing'|'uncertain'):void
+  close(running:import('./state').Active,kind?:'session_close'|'spawn_rejected'|'groups_gone'|'administrator'):Promise<void>
+  confirmOrphan(taskId:string,kind:'groups_gone'|'administrator'):Promise<void>
+  facts(taskId:string):string
+  withMutation<T>(workspaceId:string,operation:()=>Promise<T>):Promise<T>
+  withCommit<T>(taskId:string,operation:()=>Promise<T>):Promise<T>
+}

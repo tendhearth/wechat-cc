@@ -163,7 +163,7 @@ export function makeLiveBackend(d: LiveDeps): Backend {
     if (mapped) {
       if (mapped === 'revoked') revoke()
       else log(`${key}: ${res.status} ${mapped}`)
-      throw new BackendError(mapped)
+      throw new BackendError(mapped, typeof (json as {error?:unknown})?.error==='string'?(json as {error:string}).error:undefined)
     }
     const schema = PHONE_API_SCHEMAS[key]
     const p = schema ? schema.safeParse(json) : null
@@ -323,8 +323,9 @@ export function makeLiveBackend(d: LiveDeps): Backend {
     async create(p) {
       const body = {
         requestId: p.requestId, text: p.text,
-        target: p.projectId ? { kind: 'project', projectId: p.projectId, ...(p.isolation ? { isolation: 'worktree', ...(p.base ? { base: p.base } : {}) } : {}) } : { kind: 'managed' },
+        target: p.projectId ? { kind: 'project', projectId: p.projectId, ...(p.isolation ? { isolation: 'worktree' } : {}),...(p.base!==undefined?{base:p.base}:{}) } : { kind: 'managed',...(p.base!==undefined?{base:p.base}:{}) },
         ...(p.providerId ? { providerId: p.providerId } : {}),
+        ...(p.projectId ? {executionMode:p.executionMode ?? 'auto'} : {}),
         ...(p.attachmentIds?.length && p.draftId ? { draftId: p.draftId, attachmentIds: p.attachmentIds } : {}),
         ...(p.execution && (p.execution.model || p.execution.reasoningEffort) ? { execution: { ...(p.execution.model ? { model: p.execution.model } : {}), ...(p.execution.reasoningEffort ? { reasoningEffort: p.execution.reasoningEffort } : {}) } } : {}),
       }

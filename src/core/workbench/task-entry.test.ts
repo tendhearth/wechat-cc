@@ -264,3 +264,11 @@ describe('canonicalEntryHash', () => {
     expect(canonicalEntryHash({...valid, text: '', attachmentIds: [imageId]})).toMatch(/^[a-f0-9]{64}$/)
   })
 })
+
+it('includes explicit branch in V2 identity and treats unavailable branch admission as definite rejection',()=>{
+ const input={requestId,text:'branch',target:{kind:'project' as const,projectId:'p-0123456789abcdef0123',isolation:'worktree' as const,base:'cc/one'}}
+ expect(entryContract.canonicalEntryHashV2(input)).not.toBe(entryContract.canonicalEntryHashV2({...input,target:{...input.target,base:'cc/two'}}))
+ expect(entryContract.entryErrorStatus('worktree_base_unsupported')).toBe(422)
+ for(const surface of ['desktop','phone'] as const)expect(entryContract.entryFailureKind('worktree_base_unsupported',{surface,method:'POST',status:422})).toBe('rejected')
+ expect(entryContract.entryFailureKind('worktree_base_unsupported',{surface:'phone',method:'POST'})).toBe('unknown')
+})

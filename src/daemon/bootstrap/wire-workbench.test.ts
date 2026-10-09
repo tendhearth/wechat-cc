@@ -40,7 +40,7 @@ it('does not inherit companion memory, MCP servers or daemon permission bypass i
   expect(decision.behavior).toBe('deny')
 })
 
-it('inherits native tools through exact server asks but never inherits companion execution settings', () => {
+it('inherits native tools through exact server asks but never inherits companion execution settings', async () => {
   const options = workbenchClaudeOptions({ cwd:'/project', model:'native-model', allowedTools:['*'], agents:{ personal:{ description:'private',prompt:'private memory' } }, env:{ PATH:'/bin', ANTHROPIC_API_KEY:'native-auth', WECHAT_SESSION_TOKEN:'private' }, settings:{ permissions:{ defaultMode:'bypassPermissions' } } }, 'task instructions', vi.fn(), { servers:{ catalog:{ command:'catalog-server' } }, omitted:[] })
   expect(options.mcpServers).toEqual({ catalog:{ command:'catalog-server' } })
   expect(options.settings).toMatchObject({ disableAllHooks:true, disableSkillShellExecution:true, permissions:{ defaultMode:'default',disableBypassPermissionsMode:'disable',ask:expect.arrayContaining(['mcp__catalog__*','Bash']) } })
@@ -50,7 +50,7 @@ it('inherits native tools through exact server asks but never inherits companion
   expect(options.env?.ANTHROPIC_API_KEY === 'native-auth').toBe(true)
 })
 
-it('neutralizes private disk settings environment names at flag scope without overriding ordinary native auth', () => {
+it('neutralizes private disk settings environment names at flag scope without overriding ordinary native auth', async () => {
   const options=workbenchClaudeOptions({cwd:'/project',env:{CATALOG_API_KEY:'native-tool-auth'}},'',vi.fn(),{
     servers:{catalog:{command:'catalog-server'}},omitted:[],
     privateEnvironmentKeys:['WECHAT_SETTINGS_PROOF','hearth_settings_proof','WXVAULT_SETTINGS_PROOF','WxGraph_SETTINGS_PROOF'],
@@ -62,13 +62,13 @@ it('neutralizes private disk settings environment names at flag scope without ov
   expect(options.settings).not.toHaveProperty('env.CATALOG_API_KEY')
 })
 
-it('passes merged native MCP allow and deny policy at flag scope', () => {
+it('passes merged native MCP allow and deny policy at flag scope', async () => {
   const nativeMcpPolicy={allowedMcpServers:[{serverName:'catalog'},{serverName:'extra'}],deniedMcpServers:[{serverUrl:'https://blocked.example/*'}]}
   const options=workbenchClaudeOptions({cwd:'/project'},'',vi.fn(),{servers:{catalog:{command:'catalog-server'}},omitted:[],nativeMcpPolicy})
   expect(options.settings).toMatchObject(nativeMcpPolicy)
 })
 
-it('retains provider reasoning defaults for a fresh task while excluding unrelated companion options',()=>{
+it('retains provider reasoning defaults for a fresh task while excluding unrelated companion options',async ()=>{
   const options=workbenchClaudeOptions({cwd:'/project',model:'configured-model',effort:'low',thinking:{type:'adaptive'},fallbackModel:'companion-fallback'},'',vi.fn())
   expect(options.effort).toBe('low')
   expect(options.thinking).toEqual({type:'adaptive'})
@@ -79,7 +79,7 @@ const fakeProvider = (): AgentProvider => ({
   spawn: async () => makeFakeSession({ events: [{ kind: 'result', sessionId: '_', numTurns: 1, durationMs: 0 }] }),
 })
 
-it('registers only agy as unattended; cursor is no longer an unattended executor', () => {
+it('registers only agy as unattended; cursor is no longer an unattended executor', async () => {
   const source = createProviderRegistry(), target = createProviderRegistry()
   const agy = fakeProvider(), cursor = fakeProvider()
   source.register('agy', agy, { displayName: 'Gemini (agy)', canResume: () => true })
@@ -91,7 +91,7 @@ it('registers only agy as unattended; cursor is no longer an unattended executor
   expect(target.has('cursor')).toBe(false)
 })
 
-it('registers cursor through the ACP provider with ACP capabilities when the binary resolves', () => {
+it('registers cursor through the ACP provider with ACP capabilities when the binary resolves', async () => {
   const source = createProviderRegistry(), target = createProviderRegistry()
   source.register('cursor', fakeProvider(), { displayName: 'Cursor', canResume: () => true })
   const acp = fakeProvider(), create = vi.fn(() => acp), log = vi.fn()
@@ -104,7 +104,7 @@ it('registers cursor through the ACP provider with ACP capabilities when the bin
   expect(target.get('cursor')!.opts.workbench).toBe(ACP_CAPABILITIES)
 })
 
-it('registers nothing for ACP when boot lacks cursor or the binary cannot be resolved', () => {
+it('registers nothing for ACP when boot lacks cursor or the binary cannot be resolved', async () => {
   const source = createProviderRegistry(), target = createProviderRegistry()
   expect(registerAcpExecutors(target, source, {}, { findOnPath: () => '/usr/bin/cursor-agent', create: vi.fn() })).toEqual([])
   source.register('cursor', fakeProvider(), { displayName: 'Cursor', canResume: () => true })
@@ -114,7 +114,7 @@ it('registers nothing for ACP when boot lacks cursor or the binary cannot be res
   expect(log).toHaveBeenCalledWith('WORKBENCH', expect.stringContaining('cursor'))
 })
 
-it('registers nothing when the source registry lacks agy/cursor', () => {
+it('registers nothing when the source registry lacks agy/cursor', async () => {
   const source = createProviderRegistry(), target = createProviderRegistry()
   source.register('claude', fakeProvider(), { displayName: 'Claude', canResume: () => true })
   const registered = registerUnattendedExecutors(target, source)
@@ -127,7 +127,7 @@ it('registers nothing when the source registry lacks agy/cursor', () => {
 const acknowledgeDirs: string[] = []
 afterEach(() => { for (const dir of acknowledgeDirs.splice(0)) removeTempDir(dir) })
 
-it('round-trips the unattended-ack timestamp through agent-config.json, preserving other fields', () => {
+it('round-trips the unattended-ack timestamp through agent-config.json, preserving other fields', async () => {
   const dir = mkdtempSync(join(tmpdir(), 'unattended-ack-')); acknowledgeDirs.push(dir)
   saveAgentConfig(dir, { provider: 'claude', bot_name: 'kept', dangerouslySkipPermissions: true, autoStart: true, closeStopsDaemon: false })
   const store = makeUnattendedAckStore(dir)
@@ -139,7 +139,7 @@ it('round-trips the unattended-ack timestamp through agent-config.json, preservi
   expect(after.workbench_unattended_ack_at).toBe(123)
 })
 
-it('wires boot-discovered agy into the live workbench service with unattended permissions and the persisted ack', () => {
+it('wires boot-discovered agy into the live workbench service with unattended permissions and the persisted ack', async () => {
   const root = realpathSync(mkdtempSync(join(tmpdir(), 'wire-workbench-'))); acknowledgeDirs.push(root)
   const stateDir = join(root, 'state')
   saveAgentConfig(stateDir, { provider: 'claude', dangerouslySkipPermissions: true, autoStart: true, closeStopsDaemon: false, workbench_unattended_ack_at: 999 })
@@ -219,11 +219,11 @@ it('从微信交办的事,答复静下来那一拍真的把回报写进 matter_r
       log: () => {},
     })
     const projectView = service.projects().find(p => p.path === project)!
-    const receipt = service.createWechat({
+    const receipt = (await service.createWechat({
       ownerChatId: 'chat-1', accountId: 'acct-1', requestId: randomUUID(),
       commandHash: createHash('sha256').update('改首页').digest('hex'),
       originMessageId: 'msg-7', projectId: projectView.id, providerId: 'agy', text: '改首页',
-    })
+    }))
     await expect.poll(() => matters.sessions(receipt.taskId)).not.toHaveLength(0)
     runtime.finishTurn()
     await expect.poll(() => matters.get(receipt.taskId)?.status).toBe('replied')
@@ -273,11 +273,11 @@ it('notificationsEnabled 默认值:没有订阅记录时按"没静音过"处理,
       log: () => {},
     })
     const projectView = service.projects().find(p => p.path === project)!
-    const receipt = service.createWechat({
+    const receipt = (await service.createWechat({
       ownerChatId: 'chat-1', accountId: 'acct-1', requestId: randomUUID(),
       commandHash: createHash('sha256').update('改首页').digest('hex'),
       originMessageId: 'msg-7', projectId: projectView.id, providerId: 'agy', text: '改首页',
-    })
+    }))
     // 正常创建流程会一并写一条订阅记录(enabled=true)——手动删掉,精确模拟
     // "有出生地但没有订阅记录"这个边界状态,只测 notificationsEnabled 的默认值。
     db.query('DELETE FROM workbench_wechat_subscriptions WHERE task_id=?').run(receipt.taskId)
@@ -351,11 +351,11 @@ it('从微信交办的事(真 agy 形状:非 retained、无 workbenchRuntime),�
       log: () => {},
     })
     const projectView = service.projects().find(p => p.path === project)!
-    const receipt = service.createWechat({
+    const receipt = (await service.createWechat({
       ownerChatId: 'chat-1', accountId: 'acct-1', requestId: randomUUID(),
       commandHash: createHash('sha256').update('改首页').digest('hex'),
       originMessageId: 'msg-7', projectId: projectView.id, providerId: 'agy', text: '改首页',
-    })
+    }))
     // 非 retained:永不经过 settleQuiet,直接终态 done(跟 service-report.test.ts
     // 的「非 retained 执行者」用例、service-recollect.test.ts 的同类用例一致)。
     await expect.poll(() => matters.get(receipt.taskId)?.status).toBe('done')
@@ -428,11 +428,11 @@ it('回忆的便宜模型来源是 opts.boot.registry(带 cheapEvalProvider 钉�
       log: () => {},
     })
     const projectView = service.projects().find(p => p.path === project)!
-    const receipt = service.createWechat({
+    const receipt = (await service.createWechat({
       ownerChatId: 'chat-1', accountId: 'acct-1', requestId: randomUUID(),
       commandHash: createHash('sha256').update('改首页').digest('hex'),
       originMessageId: 'msg-7', projectId: projectView.id, providerId: 'agy', text: '改首页',
-    })
+    }))
     await expect.poll(() => matters.get(receipt.taskId)?.status).toBe('done')
     const journal = makeJournal(db)
     await expect.poll(() => journal.list().length).toBe(1)
@@ -481,11 +481,11 @@ it('便宜模型的回复其实是认证失效(401/登出):当成真的调用失
       log: (tag, line) => logs.push([tag, line]),
     })
     const projectView = service.projects().find(p => p.path === project)!
-    const receipt = service.createWechat({
+    const receipt = (await service.createWechat({
       ownerChatId: 'chat-1', accountId: 'acct-1', requestId: randomUUID(),
       commandHash: createHash('sha256').update('改首页').digest('hex'),
       originMessageId: 'msg-7', projectId: projectView.id, providerId: 'agy', text: '改首页',
-    })
+    }))
     await expect.poll(() => matters.get(receipt.taskId)?.status).toBe('done')
     await expect.poll(() => logs.some(([tag]) => tag === 'MATTER_RECOLLECT')).toBe(true)
     expect(logs.some(([tag, line]) => tag === 'MATTER_RECOLLECT' && line.includes('auth_failed'))).toBe(true)

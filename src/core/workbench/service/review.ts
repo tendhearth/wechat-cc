@@ -4,14 +4,8 @@
  * 续接与投递走 ctx.actions 晚绑定。
  */
 import { randomUUID } from 'node:crypto'
-import { readArtifactSnapshot } from '../artifacts'
-import { GIT_REVIEW_MIME, reverseApplyDiff, type GitReview, type ReviewFile } from '../git-review'
-import { closeSync, constants, fsyncSync, lstatSync, renameSync, unlinkSync, writeSync } from 'node:fs'
-import { createHash } from 'node:crypto'
-import { join } from 'node:path'
-import { openAnchored, verifyChain } from '../anchored-fs'
-import { readAnchoredRegular } from '../artifacts'
-import { pathsConflict } from '../scheduler'
+import { saveArtifactSnapshot,readArtifactSnapshot } from '../artifacts'
+import { GIT_REVIEW_MIME, type GitReview, type ReviewFile } from '../git-review'
 import { normalizeInputRequestId, type LiveInput } from '../live-inputs'
 import { composeReturnText, derivedReturnRequestId, parseGitReviewSnapshot, type ReviewTurn } from '../review'
 import type { ReviewMark } from '../review-marks'
@@ -19,11 +13,13 @@ import type { ServiceCtx } from './ctx'
 import type { WorkbenchTaskView } from './types'
 
 export interface ReviewDomain {
+  resolveReviewRevert(id:string,input:{operationId:string;observedFingerprint:string}):Promise<import('../restore-manager').RestoreOperation>
+  exportWorkspace(id:string):Promise<import('../store').Artifact>
   reviewList(id:string):ReviewTurn[]
   markReviewFile(id:string,input:{artifactId:string;path:string;mark:'accepted'|'returned';comment?:string}):ReviewMark
   returnReviewFiles(id:string,input:{artifactId:string;paths:string[];comment:string;inputRequestId?:string;restartToken?:string}):WorkbenchTaskView|Promise<LiveInput>
   /** 把一个文件恢复成这一轮开始前的样子(2026-10-06,对标 Codex 的逐文件撤销)。见实现处的门。 */
-  revertReviewFile(id:string,input:{artifactId:string;path:string}):{path:string;restored:'content'|'removed'}
+  revertReviewFile(id:string,input:{artifactId:string;path:string;changeId?:string;requestId?:string}):Promise<import('../restore-manager').RestoreOperation>
 }
 
 export function makeReviewDomain(ctx:ServiceCtx):ReviewDomain {
@@ -56,16 +52,48 @@ export function makeReviewDomain(ctx:ServiceCtx):ReviewDomain {
   }
 
   return {
+    async resolveReviewRevert(id,input){
+      const {w}=ctx.recovery!.owned(id,true)
+      normalizeInputRequestId(input.operationId)
+      if(!/^[a-f0-9]{64}$/.test(input.observedFingerprint))throw Error('invalid_request')
+      const saved=store.restores.operation(input.operationId)
+      if(!saved||saved.receipt.taskId!==id||saved.receipt.workspaceId!==w.id)throw Error('operation_not_found')
+      store.artifact(id,saved.receipt.artifactId)
+      const request={workspaceId:w.id,taskId:id,...input}
+      const prior=ctx.recovery!.manager.lookupResolveKeepCurrent(request)
+      if(prior)return prior
+      const operation=await ctx.recovery!.manager.resolveKeepCurrent(request)
+      ctx.hub.touched(id);return operation
+    },
+    async exportWorkspace(id){
+      const {w}=ctx.recovery!.owned(id)
+      return ctx.recovery!.withMutation(w.id,async()=>{
+        if(ctx.recovery!.manager.blocked(w.id))throw Error('workspace_blocked')
+        const exported=await ctx.recovery!.git().exportPatch(w)
+        const name=`workspace-${randomUUID()}.patch`
+        store.atomic(()=>{saveArtifactSnapshot(store,id,{name,mime:'text/x-patch',bytes:exported.bytes},ctx.stateDir);store.addEvent(id,'system',JSON.stringify({type:'workspace_export',sha256:exported.sha256,excluded:exported.excluded}))})
+        ctx.hub.touched(id)
+        const {storagePath:_storage,...artifact}=store.artifacts(id).find(a=>a.name===name)!
+        return artifact
+      })
+    },
     reviewList(id:string):ReviewTurn[] {
       store.get(id)
+      const workspace=store.gitWorkspaceForTask(id)
+      const blockReason=workspace?(workspace.removedAt?'worktree_removed':ctx.recovery?.blockReason(workspace.id)):undefined
+      const restores=workspace?ctx.recovery?.manager.list(workspace.id)??[]:[]
       const marks=new Map<string,ReviewMark>()
       for(const mark of store.reviewMarks.list(id))marks.set(`${mark.artifactSha256}\0${mark.path}`,mark)
       return store.artifacts(id).filter(a=>a.mime===GIT_REVIEW_MIME).map(a=>{
         const head={artifactId:a.id,sha256:a.sha256,name:a.name,createdAt:a.createdAt}
+        const restore=restores.find(r=>r.taskId===id&&r.artifactId===a.id)
         const review=readReviewSnapshot(a)
         if(!review)return {...head,status:'unavailable' as const,headBefore:null,headAfter:null,preexistingPaths:[],notes:['快照无法读取或已损坏'],files:[]}
-        return {...head,status:review.status,headBefore:review.headBefore,headAfter:review.headAfter,preexistingPaths:review.preexistingPaths,notes:review.notes,
+        return {...head,...(restore?{restore:{runId:restore.restoreRunId,scope:'closed_session' as const,startedAt:restore.startedAt,finishedAt:restore.finishedAt!}}:{}),status:review.status,headBefore:review.headBefore,headAfter:review.headAfter,preexistingPaths:review.preexistingPaths,notes:review.notes,
           files:review.files.map(file=>{
+            const found=restore?.files.find(f=>f.path===file.path)
+            const revert=found?.state==='available'&&blockReason?{...found,state:'blocked' as const,reason:blockReason}:found
+            if(revert)file={...file,revert} as ReviewFile
             const mark=marks.get(`${a.sha256}\0${file.path}`)
             return mark?{...file,mark:{mark:mark.mark,comment:mark.comment,createdAt:mark.createdAt}}:{...file}
           })}
@@ -121,51 +149,18 @@ export function makeReviewDomain(ctx:ServiceCtx):ReviewDomain {
       marks()
       return task
     },
-    /**
-     * 逐文件撤销(2026-10-06):把这个文件恢复成快照里「这一轮开始前」的内容。全部是拒绝条件,没有「尽量」:
-     * - 文件夹还有会话占着(包括这件事自己留着的会话、没确认退出的那种)⇒ workbench_busy —— 执行者随时可能再写;
-     * - 现在的内容和快照里「改完」的那份对不上(sha256)⇒ review_file_changed —— 之后又被改过,不替谁做合并;
-     * - 倒推出来的内容和「改动前」的 sha256 对不上 ⇒ review_revert_unavailable(diff 被截断、二进制、只改了权限……);
-     * - 要恢复的文件所在目录已经不在 ⇒ review_revert_unavailable(不替人建目录)。
-     * 写法:同目录临时文件 → fsync → rename(保留原来的权限位);新增的文件撤销 = 删掉它。全程锚定、不跟链接。
-     */
-    revertReviewFile(id:string,input:{artifactId:string;path:string}) {
-      if(typeof input.path!=='string'||!input.path)throw new Error('invalid_review_reference')
-      const task=store.get(id)
-      const {review}=reviewTarget(id,input.artifactId)
-      const file=markableFile(review,input.path)
-      if(!file.diff)throw new Error('review_revert_unavailable')
-      if(task.error==='writer_not_closed')throw new Error('workbench_busy')
-      for(const holder of [...ctx.state.reservations.values(),...ctx.state.writerOrphans.values()])if(pathsConflict(holder.path,task.path))throw new Error('workbench_busy')
-      const parts=file.path.split('/')
-      const fail='review_revert_unavailable'
-      const sha=(text:string)=>createHash('sha256').update(text).digest('hex')
-      let current:string|null=null,mode=0o644
-      try {
-        const st=lstatSync(join(task.path,file.path))
-        if(!st.isFile())throw new Error(fail)
-        mode=st.mode&0o777
-        current=readAnchoredRegular(task.path,file.path).toString('utf8')
-      } catch(error) { if((error as NodeJS.ErrnoException).code!=='ENOENT')throw new Error(error instanceof Error&&error.message===fail?fail:'review_file_changed') }
-      if(file.kind==='deleted'?current!==null:current===null||!file.afterSha256||sha(current)!==file.afterSha256)throw new Error('review_file_changed')
-      const before=reverseApplyDiff(current??'',file.diff)
-      if(before===null)throw new Error('review_file_changed')
-      verifyChain(task.path,parts.slice(0,-1),fail,{leafDirectory:true})
-      if(file.kind==='added') {
-        if(before!=='')throw new Error(fail)
-        verifyChain(task.path,parts,fail)
-        unlinkSync(join(task.path,file.path))
-      } else {
-        if(!file.beforeSha256||sha(before)!==file.beforeSha256)throw new Error(fail)
-        const tmpParts=[...parts.slice(0,-1),`.${parts.at(-1)}.cc-revert-${randomUUID().slice(0,8)}`]
-        const fd=openAnchored(task.path,tmpParts,constants.O_CREAT|constants.O_EXCL|constants.O_WRONLY,mode,fail)
-        try { const bytes=Buffer.from(before,'utf8'); let at=0; while(at<bytes.length)at+=writeSync(fd,bytes,at); fsyncSync(fd) } finally { closeSync(fd) }
-        try { verifyChain(task.path,parts.slice(0,-1),fail,{leafDirectory:true}); renameSync(join(task.path,...tmpParts),join(task.path,...parts)) }
-        catch(error) { try{unlinkSync(join(task.path,...tmpParts))}catch{ /* best-effort */ }; throw error }
-      }
-      store.addEvent(id,'system',file.kind==='added'?`已撤销 ${file.path}：这一轮新建的文件已删除。`:`已撤销 ${file.path} 的改动，恢复成这一轮开始前的内容。`)
+    async revertReviewFile(id:string,input:{artifactId:string;path:string;changeId?:string;requestId?:string}) {
+      if(!input.changeId||!input.requestId)throw Error('review_revert_unavailable')
+      normalizeInputRequestId(input.changeId);normalizeInputRequestId(input.requestId)
+      const {w}=ctx.recovery!.owned(id,true)
+      store.artifact(id,input.artifactId)
+      const request={workspaceId:w.id,taskId:id,artifactId:input.artifactId,path:input.path,changeId:input.changeId,requestId:input.requestId}
+      const prior=ctx.recovery!.manager.lookupRevert(request)
+      if(prior)return prior
+      reviewTarget(id,input.artifactId)
+      const operation=await ctx.recovery!.manager.revert(request)
       ctx.hub.touched(id)
-      return {path:file.path,restored:file.kind==='added'?'removed' as const:'content' as const}
+      return operation
     },
   }
 }

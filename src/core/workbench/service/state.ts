@@ -23,6 +23,8 @@ export interface Active extends PathReservation {
   handoffId?:string
   handoffArtifacts?:ArtifactSelection[]
   nativeResume?:AcceptedNativeResume
+  restoreRunId?: string
+  restoreSettlement?: Promise<void>
   reviewBaseline?: GitBaseline
   /** 已截取的代码变更快照数;第一份沿用旧名,之后带 -2/-3。 */
   reviewSeq?: number
@@ -105,6 +107,7 @@ export interface WorkbenchRuntimeState {
    * 这道保护只剩库里一个标记,同文件夹的新任务其实不再等。组都没了 ⇒ 解除(lifecycle 的 writer 守望)。
    */
   writerOrphans: Map<string, PathReservation & { groups: number[] }>
+  mutations: Map<string, PathReservation>
   writerWatch: ReturnType<typeof setInterval> | undefined
 }
 
@@ -115,6 +118,11 @@ export function makeRuntimeState(): WorkbenchRuntimeState {
     order: 0, stopping: false, shutdownComplete: false, shutdownPromise: undefined,
     noticeWake: async () => {}, artifactDelivery: undefined,
     autoContinueBlocked: new Set(),
-    writerOrphans: new Map(), writerWatch: undefined,
+    writerOrphans: new Map(), mutations: new Map(), writerWatch: undefined,
   }
+}
+
+/** Shared admission guard reads the current shutdown state at the point of use. */
+export function assertAccepting(state:Pick<WorkbenchRuntimeState,'stopping'>):void {
+  if(state.stopping)throw new Error('workbench_stopping')
 }

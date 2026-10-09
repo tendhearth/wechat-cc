@@ -483,6 +483,19 @@ describe('跟 CC 说 / 连接 / 原生会话', () => {
     await b.create({ requestId: SAY_REQ, text: '整理一下', execution: {} })
     expect(reqs.at(-1)!.body).not.toHaveProperty('execution')
   })
+  it('project execution mode coexists with models, materials and legacy isolation without dropping fields', async () => {
+    const { b, reqs } = harness({ 'POST /m/api/matter/create': ok({ ok: true, receipt: RECEIPT, task: WB_TASK }, 202) })
+    const fields = { requestId:SAY_REQ, text:'保留设置', projectId:'p-0123456789abcdef0123', providerId:'codex', draftId:'11111111-1111-4111-8111-111111111111', attachmentIds:['22222222-2222-4222-8222-222222222222'], execution:{model:'gpt-5.6',reasoningEffort:'high'} }
+    await b.create({...fields, executionMode:'project'})
+    const {projectId, ...bodyFields}=fields
+    expect(reqs.at(-1)!.body).toEqual({...bodyFields, target:{kind:'project',projectId:fields.projectId}, executionMode:'project'})
+    await b.create({...fields, isolation:true})
+    expect(reqs.at(-1)!.body).toMatchObject({target:{kind:'project',projectId:fields.projectId,isolation:'worktree'},executionMode:'auto',execution:fields.execution,attachmentIds:fields.attachmentIds})
+    await b.create({...fields,isolation:true,base:'cc/retained'})
+    expect(reqs.at(-1)!.body).toMatchObject({target:{kind:'project',projectId:fields.projectId,isolation:'worktree',base:'cc/retained'}})
+    await b.create({...fields,base:'cc/retained'})
+    expect(reqs.at(-1)!.body).toMatchObject({target:{kind:'project',projectId:fields.projectId,base:'cc/retained'}})
+  })
   it('这条对话用谁(2026-10-06):读与钉走 /m/api/chat/model,model=null 原样带上(跟随全局)', async () => {
     const VIEW = { ok: true, mode: 'solo', provider: 'claude', model: null, globalModel: 'claude-opus-5-5', providers: [{ id: 'claude', name: 'Claude' }] }
     const { b, reqs } = harness({ 'GET /m/api/chat/model': ok(VIEW), 'POST /m/api/chat/model': ok({ ...VIEW, provider: 'openai', model: 'DeepSeek' }) })
@@ -562,4 +575,10 @@ describe('durable single input receipt', () => {
     await expect(revoked.b.matterInputReceipt(ID, SAY_REQ)).rejects.toMatchObject({ code: 'revoked' })
     expect(revoked.b.connection().state).toBe('revoked')
   })
+})
+it('sends project execution mode without changing the request identity on retry',async()=>{
+ const {b,reqs}=harness({'POST /m/api/matter/create':ok({ok:true,receipt:RECEIPT,task:WB_TASK},202)})
+ const input={requestId:REQ,text:'做一件事',projectId:'project',executionMode:'project' as const}
+ await b.create(input);await b.create(input)
+ expect(reqs.filter(r=>r.key==='POST /m/api/matter/create').map(r=>r.body)).toEqual([0,1].map(()=>({requestId:REQ,text:'做一件事',target:{kind:'project',projectId:'project'},executionMode:'project'})))
 })

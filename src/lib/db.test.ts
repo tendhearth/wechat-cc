@@ -3,8 +3,10 @@ import { openSqlite } from './runtime/sqlite'
 import { migrations, openTestDb, openDb, renameMigrated, runMigrations, withLockRetry } from './db'
 import type { Db } from './db'
 import { existsSync, mkdtempSync, writeFileSync } from 'node:fs'
-import { tmpdir } from 'node:os'
+import { availableParallelism, cpus, tmpdir } from 'node:os'
 import { join } from 'node:path'
+import { execFile } from 'node:child_process'
+import { promisify } from 'node:util'
 import { removeTempDir } from './test-temp'
 
 describe('withLockRetry', () => {
@@ -91,6 +93,29 @@ describe('openDb', () => {
       kept.get()
       expect(() => db.close(true)).not.toThrow()
     } finally {
+      removeTempDir(dir)
+    }
+  })
+
+  it('strict close releases uncached statements after real asynchronous subprocess boundaries', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'db-test-async-close-'))
+    const db = openDb({ path: join(dir, 'close.db') })
+    let closed = false
+    try {
+      const kept = db.prepare<{ one: number }, []>('SELECT 1 AS one')
+      for (let round = 0; round < 3; round++) {
+        for (let i = 0; i < 40; i++) {
+          expect(db.query<{ n: number }, []>(`SELECT ${round * 40 + i} AS n`).get()!.n).toBe(round * 40 + i)
+        }
+        const { stdout } = await promisify(execFile)(process.execPath, ['-e', 'process.stdout.write("boundary")'])
+        expect(stdout).toBe('boundary')
+        expect(kept.get()!.one).toBe(1)
+      }
+      expect(() => db.close(true)).not.toThrow()
+      closed = true
+      expect(() => kept.get()).toThrow()
+    } finally {
+      if (!closed) db.close()
       removeTempDir(dir)
     }
   })
@@ -613,28 +638,47 @@ describe('旧社交表退役(spec 2026-09-04-wish-postcard §3)', () => {
 })
 
 
-// 跑完整条迁移阶梯,CI 慢机上实测 7.5s,默认 5s 会假红。
-it('upgrades a real v46 database retaining task history, native identity and approved artifacts',{timeout:30_000},()=>{
+it('upgrades a real v46 database retaining task history, native identity and approved artifacts',{timeout:30_000},({onTestFailed})=>{
+  // Static, bounded phase labels only; no database paths or fixture contents in failure output.
+  const cpu=()=>{try{return typeof process.cpuUsage==='function'?process.cpuUsage():undefined}catch{return undefined}}
+  const number=(read:()=>number)=>{try{const value=read();return Number.isFinite(value)?value:undefined}catch{return undefined}}
+  const workerId=(value:string|undefined)=>value&&/^\d{1,10}$/.test(value)?Number(value):undefined
+  let phase='create-directory',started=performance.now(),cpuStarted=cpu()
+  const timings:Array<{phase:string,ms:number,cpuMs?:number}>=[]
+  const sample=()=>{const usage=cpu();return {phase,ms:Math.round(performance.now()-started),cpuMs:usage&&cpuStarted?Math.round((usage.user+usage.system-cpuStarted.user-cpuStarted.system)/1000):undefined}}
+  const mark=(next:string)=>{try{if(timings.length<16)timings.push(sample());phase=next;started=performance.now();cpuStarted=cpu()}catch{/* Diagnostics must not change the test result. */}}
+  onTestFailed(()=>{try{console.error('[v46-upgrade phases]',JSON.stringify({timings,current:sample(),runtime:{pid:process.pid,poolId:workerId(process.env.VITEST_POOL_ID),workerId:workerId(process.env.VITEST_WORKER_ID),availableParallelism:number(()=>availableParallelism()),cpuCount:number(()=>cpus().length),bun:process.versions.bun,node:process.versions.node}}))}catch{/* Diagnostics must not replace the original failure. */}})
   const dir=mkdtempSync(join(tmpdir(),'workbench-v46-')),path=join(dir,'state.db')
   try {
+    mark('open-v46-fixture')
     const prior=openSqlite(path)
     prior.exec('PRAGMA foreign_keys=ON')
-    for(const migration of migrations.slice(0,46))migration(prior)
-    prior.exec('PRAGMA user_version=46')
-    prior.query('INSERT INTO workbench_tasks(id,title,path,provider_id,owner_chat_id,session_id,status,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?,?)').run('deadbeef','old task','/missing/project','codex','owner','native-session','completed',1,2)
-    prior.query('INSERT INTO workbench_events(task_id,kind,text,created_at) VALUES(?,?,?,?)').run('deadbeef','user','old request',3)
-    prior.query('INSERT INTO workbench_artifacts(id,task_id,name,mime,size,sha256,storage_path,created_at,approved_at) VALUES(?,?,?,?,?,?,?,?,?)').run('artifact-id','deadbeef','report.md','text/plain',7,'a'.repeat(64),'/immutable/file',4,5)
+    mark('seed-v46-fixture')
+    // Construct the historical disk fixture in one commit instead of committing each
+    // schema statement. The upgrade below still uses the actual production runner.
+    prior.transaction(()=>{
+      for(const migration of migrations.slice(0,46))migration(prior)
+      prior.exec('PRAGMA user_version=46')
+      prior.query('INSERT INTO workbench_tasks(id,title,path,provider_id,owner_chat_id,session_id,status,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?,?)').run('deadbeef','old task','/missing/project','codex','owner','native-session','completed',1,2)
+      prior.query('INSERT INTO workbench_events(task_id,kind,text,created_at) VALUES(?,?,?,?)').run('deadbeef','user','old request',3)
+      prior.query('INSERT INTO workbench_artifacts(id,task_id,name,mime,size,sha256,storage_path,created_at,approved_at) VALUES(?,?,?,?,?,?,?,?,?)').run('artifact-id','deadbeef','report.md','text/plain',7,'a'.repeat(64),'/immutable/file',4,5)
+    })()
+    mark('read-legacy-state')
     const oldTask=prior.query('SELECT * FROM workbench_tasks').get(),oldEvents=prior.query('SELECT * FROM workbench_events').all(),oldArtifacts=prior.query('SELECT * FROM workbench_artifacts').all()
+    expect(prior.query('PRAGMA user_version').get()).toEqual({user_version:46})
+    mark('close-v46-fixture')
     prior.close()
     for(let i=0;i<2;i++) {
+      mark(i===0?'production-upgrade':'production-reopen')
       const upgraded=openDb({path})
       try {
-        expect(upgraded.query('SELECT * FROM workbench_tasks').get()).toEqual({...oldTask as object,archived_at:null,matter_id:(oldTask as {id:string}).id,execution_choice_json:'{"defaults":"provider","model":null,"reasoningEffort":null}',seq:0,workspace_kind:'project',writer_groups:null})
+        mark(i===0?'verify-upgrade':'verify-reopen')
+        expect(upgraded.query('SELECT * FROM workbench_tasks').get()).toEqual({...oldTask as object,archived_at:null,matter_id:(oldTask as {id:string}).id,execution_choice_json:'{"defaults":"provider","model":null,"reasoningEffort":null}',seq:0,workspace_kind:'project',writer_groups:null,git_workspace_id:null})
         expect(upgraded.query('SELECT * FROM workbench_events').all()).toEqual(oldEvents.map(row=>({...row as object,source_id:null,run_id:null,event_key:null,activity_json:null,attachments_json:'[]',seq:0})))
         expect(upgraded.query('SELECT * FROM workbench_artifacts').all()).toEqual(oldArtifacts)
-      } finally {upgraded.close()}
+      } finally {mark(i===0?'close-upgrade':'close-reopen');upgraded.close()}
     }
-  } finally {removeTempDir(dir)}
+  } finally {mark('cleanup');removeTempDir(dir);mark('finished')}
 })
 
 
@@ -650,7 +694,7 @@ it('upgrades v51 with separate durable control receipts while preserving task hi
     runMigrations(db)
     db.query('INSERT INTO workbench_control_receipts(id,task_id,run_id,action,text_hash,created_at) VALUES(?,?,?,?,?,?)').run('stop-one','deadbeef','run-original','stop','hash',5)
     runMigrations(db)
-    expect(db.query('SELECT * FROM workbench_tasks').all()).toEqual(tasks.map(row=>({...row as object,matter_id:(row as {id:string}).id,execution_choice_json:'{"defaults":"provider","model":null,"reasoningEffort":null}',seq:0,workspace_kind:'project',writer_groups:null})))
+    expect(db.query('SELECT * FROM workbench_tasks').all()).toEqual(tasks.map(row=>({...row as object,matter_id:(row as {id:string}).id,execution_choice_json:'{"defaults":"provider","model":null,"reasoningEffort":null}',seq:0,workspace_kind:'project',writer_groups:null,git_workspace_id:null})))
     expect(db.query('SELECT * FROM workbench_events').all()).toEqual(events.map(row=>({...row as object,attachments_json:'[]',seq:0})))
     expect(db.query('SELECT * FROM workbench_live_inputs').all()).toEqual(inputs.map(row=>({...row as object,attachments_json:'[]',execution_json:null})))
     expect(db.query('SELECT * FROM workbench_control_receipts').all()).toHaveLength(1)
@@ -712,7 +756,7 @@ it('upgrades v53 with provider defaults, native import defaults and nullable que
     const oldTasks=db.query<Record<string,unknown>,[]>('SELECT * FROM workbench_tasks ORDER BY id').all()
     runMigrations(db);runMigrations(db)
     const tasks=db.query<Record<string,unknown>,[]>('SELECT * FROM workbench_tasks ORDER BY id').all()
-    expect(tasks).toEqual(oldTasks.map(row=>({...row,matter_id:row.id,execution_choice_json:JSON.stringify({defaults:row.id==='feedbeef'?'native':'provider',model:null,reasoningEffort:null}),seq:0,workspace_kind:'project',writer_groups:null})))
+    expect(tasks).toEqual(oldTasks.map(row=>({...row,matter_id:row.id,execution_choice_json:JSON.stringify({defaults:row.id==='feedbeef'?'native':'provider',model:null,reasoningEffort:null}),seq:0,workspace_kind:'project',writer_groups:null,git_workspace_id:null})))
     expect(db.query('SELECT execution_json FROM workbench_live_inputs').get()).toEqual({execution_json:null})
     expect(db.query("SELECT name FROM sqlite_master WHERE name='workbench_run_execution'").get()).toEqual({name:'workbench_run_execution'})
     // Repair replay must not overwrite an accepted native task choice.
@@ -736,6 +780,24 @@ it('upgrades v67 without assigning staged legacy attachments to a new owner',()=
     expect(db.query('SELECT workspace_kind FROM workbench_tasks').get()).toEqual({workspace_kind:'project'})
     expect(db.query('SELECT * FROM workbench_entry_requests').all()).toEqual([])
   } finally {db.close()}
+})
+
+it('upgrades published v75 without losing merged worktrees or assigning legacy restoration history',()=>{
+  const db=openSqlite(':memory:')
+  try{
+    db.exec('PRAGMA foreign_keys=ON')
+    for(const migration of migrations.slice(0,75))migration(db)
+    db.exec('PRAGMA user_version=75')
+    db.query('INSERT INTO workbench_tasks(id,title,path,provider_id,status,created_at,updated_at) VALUES(?,?,?,?,?,?,?)').run('deadbeef','legacy','/copy','claude','completed',1,2)
+    db.query('INSERT INTO workbench_worktrees(task_id,project_path,repo_root,root,branch,created_at,removed_at,merged_at) VALUES(?,?,?,?,?,?,?,?)').run('deadbeef','/project','/project','/copy','cc/deadbeef',1,null,3)
+    const prior=db.query('SELECT * FROM workbench_worktrees').get()
+    runMigrations(db);runMigrations(db)
+    expect(db.query('SELECT * FROM workbench_worktrees').get()).toEqual(prior)
+    expect(db.query('SELECT path,git_workspace_id FROM workbench_tasks').get()).toEqual({path:'/copy',git_workspace_id:null})
+    for(const table of ['workbench_git_workspaces','workbench_restore_runs','workbench_restore_operations'])expect(db.query(`SELECT * FROM ${table}`).all()).toEqual([])
+    expect(db.query('PRAGMA foreign_key_check').all()).toEqual([])
+    expect(db.query('PRAGMA user_version').get()).toEqual({user_version:migrations.length})
+  }finally{db.close()}
 })
 
 it('v61: workbench_tasks / workbench_events 都有 seq 列,事件表有 (task_id, seq) 索引', () => {

@@ -3,6 +3,7 @@ import { mkdtempSync, readFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { tmpdir } from 'node:os'
 import { request as httpRequest } from 'node:http'
+import { createConnection } from 'node:net'
 import { createInternalApi, type InternalApi } from './index'
 import { minTierFor } from './route-tiers'
 import {openDb} from '../../lib/db'
@@ -314,15 +315,13 @@ describe('Workbench internal HTTP API', () => {
   })
   it('bounds chunked uploads without trusting a content length and keeps the API usable',async()=>{
     const uploadAttachment=vi.fn(),{port,adminToken,request}=await start(service({uploadAttachment}))
-    const result=await new Promise<{status:number;body:string;connection:string|undefined}|'reset'>((resolve,reject)=>{
+    const result=await new Promise<{status:number;body:string;connection:string|undefined}>((resolve,reject)=>{
       let stopped=false,sent=0
       const req=httpRequest({host:'127.0.0.1',port,path:'/v1/workbench/attachment',method:'POST',headers:{authorization:`Bearer ${adminToken}`,'content-type':'application/json','transfer-encoding':'chunked'}},res=>{
         stopped=true
         let body='';res.setEncoding('utf8');res.on('data',chunk=>{body+=chunk});res.on('end',()=>{req.destroy();resolve({status:res.statusCode!,body,connection:res.headers.connection})});res.on('error',error=>{req.destroy();reject(error)})
       })
-      // 服务器回 413 后立刻断开:客户端下一次写可能先撞上 EPIPE / ECONNRESET、来不及读到回应(node 下常见)——
-      // 那同样是「服务器拒收了」,不算失败;下面照样核对没存东西、API 还能用。
-      req.on('error',error=>{stopped=true;req.destroy();const code=(error as NodeJS.ErrnoException).code;if(code==='EPIPE'||code==='ECONNRESET')resolve('reset');else reject(error)})
+      req.on('error',error=>{stopped=true;req.destroy();reject(error)})
       const chunk=Buffer.alloc(64*1024,32)
       // Respect backpressure and let the early 413 stop the upload before queuing more data.
       const send=()=>{
@@ -334,14 +333,68 @@ describe('Workbench internal HTTP API', () => {
       }
       send()
     })
-    if(result!=='reset'){
-      expect(result.status).toBe(413)
-      expect(result.connection).toBe('close')
-      expect(JSON.parse(result.body)).toEqual({error:'request_body_too_large'})
-    }
+    expect(result.status).toBe(413)
+    expect(result.connection).toBe('close')
+    expect(JSON.parse(result.body)).toEqual({error:'request_body_too_large'})
     expect(uploadAttachment).not.toHaveBeenCalled()
     const following=await request('/v1/workbench')
     expect({status:following.status,body:await following.text()}).toEqual({status:200,body:JSON.stringify({tasks:[TASK],providers:[{id:'codex',displayName:'Codex'}],defaultProvider:'codex',canWechat:true})})
+  })
+  function completeHttpResponse(response:string):boolean {
+    const boundary=response.indexOf('\r\n\r\n')
+    if(boundary<0||!/^HTTP\/1\.[01] \d{3} /.test(response))return false
+    const length=/\r\ncontent-length: (\d+)\r\n/i.exec(response.slice(0,boundary+2))
+    return length!==null&&Buffer.byteLength(response.slice(boundary+4))===Number(length[1])
+  }
+  it('quarantines pipelined requests on a rejected upload connection',async()=>{
+    const create=vi.fn(),uploadAttachment=vi.fn(),{port,adminToken,request}=await start(service({create,uploadAttachment}))
+    const second=JSON.stringify({path:'/tmp/project',providerId:'codex',text:'must not execute'})
+    const result=await new Promise<string>((resolve,reject)=>{
+      let response=''
+      const socket=createConnection({host:'127.0.0.1',port},()=>{
+        const first=`POST /v1/workbench/create HTTP/1.1\r\nHost: localhost\r\nAuthorization: Bearer ${adminToken}\r\nTransfer-Encoding: chunked\r\n\r\n`
+        // Cross the 128 KiB streamed limit in the same write as a complete
+        // following request, before the rejected body's promise can resume.
+        socket.write(Buffer.concat([Buffer.from(first+'20000\r\n'),Buffer.alloc(128*1024,32),Buffer.from('\r\n')]))
+        setImmediate(()=>socket.write(`1\r\n \r\n0\r\n\r\nPOST /v1/workbench/create HTTP/1.1\r\nHost: localhost\r\nAuthorization: Bearer ${adminToken}\r\nContent-Type: application/json\r\nContent-Length: ${Buffer.byteLength(second)}\r\n\r\n${second}`))
+      })
+      const timeout=setTimeout(()=>{socket.destroy();reject(Error('rejected connection did not end within 3 seconds'))},3000)
+      socket.on('data',chunk=>{response+=chunk.toString('utf8');if(Buffer.byteLength(response)>16*1024){socket.destroy();reject(Error('response exceeded 16 KiB'))}})
+      socket.on('error',error=>{if(!completeHttpResponse(response))reject(error)})
+      socket.on('end',()=>{clearTimeout(timeout);socket.destroy();resolve(response)})
+      socket.on('close',()=>{clearTimeout(timeout);resolve(response)})
+    })
+    expect(completeHttpResponse(result)).toBe(true)
+    expect(result).toMatch(/^HTTP\/1\.1 413 /)
+    expect(result).toMatch(/\r\nconnection: close\r\n/i)
+    expect(result.split('\r\n\r\n')[1]).toBe('{"error":"request_body_too_large"}')
+    expect(create).not.toHaveBeenCalled();expect(uploadAttachment).not.toHaveBeenCalled()
+    expect((await request('/v1/workbench')).status).toBe(200)
+  })
+  it('gives a rejected upload a bounded drain even when the peer keeps sending',async()=>{
+    const uploadAttachment=vi.fn(),{port,adminToken,request}=await start(service({uploadAttachment}))
+    const result=await new Promise<{response:string;elapsed:number}>((resolve,reject)=>{
+      const started=Date.now()
+      let response=''
+      const socket=createConnection({host:'127.0.0.1',port,allowHalfOpen:true},()=>{
+        socket.write(`POST /v1/workbench/attachment HTTP/1.1\r\nHost: localhost\r\nAuthorization: Bearer ${adminToken}\r\nContent-Length: 12582913\r\n\r\n`)
+      })
+      const sending=setInterval(()=>{if(!socket.destroyed)socket.write(' ')},20)
+      const timeout=setTimeout(()=>{socket.destroy();reject(Error('rejected connection did not close within 3 seconds'))},3000)
+      socket.on('data',chunk=>{
+        response+=chunk.toString('utf8')
+        if(Buffer.byteLength(response)>16*1024){socket.destroy();reject(Error('response exceeded 16 KiB'));return}
+        if(completeHttpResponse(response))void request('/v1/workbench').then(response=>{expect(response.status).toBe(200);const stoppingApi=api!;api=null;return stoppingApi.stop()}).then(()=>{clearInterval(sending);clearTimeout(timeout);socket.destroy();resolve({response,elapsed:Date.now()-started})},reject)
+      })
+      socket.on('error',error=>{if(!completeHttpResponse(response))reject(error)})
+      socket.on('close',()=>{clearInterval(sending);if(!completeHttpResponse(response)){clearTimeout(timeout);reject(Error('incomplete rejection response'))}})
+    })
+    expect(completeHttpResponse(result.response)).toBe(true)
+    expect(result.response).toMatch(/^HTTP\/1\.1 413 /)
+    expect(result.response).toMatch(/\r\nconnection: close\r\n/i)
+    expect(result.response.split('\r\n\r\n')[1]).toBe('{"error":"request_body_too_large"}')
+    expect(result.elapsed).toBeLessThan(3000)
+    expect(uploadAttachment).not.toHaveBeenCalled()
   })
   it('gates live input, question answers and unpaginated attention behind exact admin routes',async()=>{
     const submitInput=vi.fn(async()=>({status:'pending'})),resolveAnswer=vi.fn(),withdrawInput=vi.fn(),attention=vi.fn(()=>({tasks:[]}))
@@ -615,30 +668,41 @@ describe('Workbench internal HTTP API', () => {
     expect((await request('/v1/workbench/writer-exited',{method:'POST',body:JSON.stringify({id:'bad'})},operatorToken)).status).toBe(400)
   })
 
-  it('reverts one reviewed file for the desktop owner; changed file is 409, unrecoverable is 422, agents are denied (2026-10-06)',async()=>{
+  it('requires restore proof and owner authorization, awaits the exact operation receipt',async()=>{
     const workbench=service(),{request,operatorToken,trustedToken}=await start(workbench)
-    const revert=vi.fn((_id:string,input:{artifactId:string;path:string})=>{
-      if(input.path==='changed.ts')throw new Error('review_file_changed')
-      if(input.path==='bin.dat')throw new Error('review_revert_unavailable')
-      return {path:input.path,restored:'content'}
-    })
-    ;(workbench as unknown as {revertReviewFile:typeof revert}).revertReviewFile=revert
-    const body=(path:string,extra={})=>({method:'POST',body:JSON.stringify({id:'deadbeef',artifactId:'11111111-1111-4111-8111-111111111111',path,...extra})})
-    expect((await request('/v1/workbench/review-revert',body('a.ts'),trustedToken)).status).toBe(403)
-    expect(revert).not.toHaveBeenCalled()
-    const ok=await request('/v1/workbench/review-revert',body('src/a.ts'),operatorToken)
-    expect(ok.status).toBe(200);expect(await ok.json()).toEqual({reverted:{path:'src/a.ts',restored:'content'}})
-    expect((await request('/v1/workbench/review-revert',body('changed.ts'),operatorToken)).status).toBe(409)
-    expect((await request('/v1/workbench/review-revert',body('bin.dat'),operatorToken)).status).toBe(422)
-    for(const bad of [body(''),body('a.ts',{extra:1}),{method:'POST',body:JSON.stringify({id:'bad',artifactId:'x',path:'a'})}])expect((await request('/v1/workbench/review-revert',bad,operatorToken)).status).toBe(400)
+    const operation={operationId:'33333333-3333-4333-8333-333333333333',workspaceId:'44444444-4444-4444-8444-444444444444',taskId:'deadbeef',artifactId:'11111111-1111-4111-8111-111111111111',path:'src/a.ts',changeId:'22222222-2222-4222-8222-222222222222',requestId:'55555555-5555-4555-8555-555555555555',state:'reverted'}
+    Object.assign(workbench,{revertReviewFile:async(_id:string,input:{path:string})=>{if(input.path==='changed.ts')throw Error('file_changed');return operation}})
+    const body=(extra={})=>({method:'POST',body:JSON.stringify({id:'deadbeef',artifactId:operation.artifactId,path:'src/a.ts',changeId:operation.changeId,requestId:operation.requestId,...extra})})
+    expect((await request('/v1/workbench/review-revert',body(),trustedToken)).status).toBe(403)
+    const ok=await request('/v1/workbench/review-revert',body(),operatorToken)
+    expect(ok.status).toBe(200);expect(await ok.json()).toEqual({operation})
+    expect((await request('/v1/workbench/review-revert',body({path:'changed.ts'}),operatorToken)).status).toBe(409)
+    expect((await request('/v1/workbench/review-revert',body({changeId:undefined,requestId:undefined}),operatorToken)).status).toBe(422)
+    for(const extra of [{path:''},{extra:1},{changeId:'bad'},{requestId:'bad'},{id:'bad'}])expect((await request('/v1/workbench/review-revert',body(extra),operatorToken)).status).toBe(400)
+  })
+  it('registers owner-only resolve and export routes with strict payloads and public response envelopes',async()=>{
+    const workbench=service(),{request,operatorToken,trustedToken}=await start(workbench)
+    Object.assign(workbench,{resolveReviewRevert:async()=>({state:'resolved_keep_current'}),exportWorkspace:async()=>({id:'artifact'})})
+    for(const [route,payload,key,want] of [
+      ['review-revert-resolve',{id:'deadbeef',operationId:'33333333-3333-4333-8333-333333333333',observedFingerprint:'a'.repeat(64)},'operation',{state:'resolved_keep_current'}],
+      ['workspace-export',{id:'deadbeef'},'artifact',{id:'artifact'}],
+    ] as const){
+      const body=(extra={})=>({method:'POST',body:JSON.stringify({...payload,...extra})})
+      expect((await request('/v1/workbench/'+route,body(),trustedToken)).status).toBe(403)
+      const response=await request('/v1/workbench/'+route,body(),operatorToken)
+      expect(response.status).toBe(200);expect(await response.json()).toEqual({[key]:want})
+      expect((await request('/v1/workbench/'+route,body({extra:1}),operatorToken)).status).toBe(400)
+    }
   })
 
   it('worktree commit/remove for the desktop owner; dirty is 409, plain task 422, agents denied (2026-10-07)',async()=>{
     const workbench=service(),{request,operatorToken,trustedToken}=await start(workbench)
-    const act=vi.fn((id:string,action:string)=>{
+    const act=vi.fn(async(id:string,action:string)=>{
       if(id==='cafebabe')throw new Error('worktree_dirty')
       if(id==='0badf00d')throw new Error('not_worktree')
       if(id==='feedface')throw new Error('worktree_not_ff')
+      await Promise.resolve()
+      if(action==='reopen')return {branch:'cc/abcd1234',reopened:true}
       return action==='commit'?{branch:'cc/abcd1234',committed:true,sha:'s',mergeHint:'cd /p && git merge cc/abcd1234'}:{branch:'cc/abcd1234',removed:true}
     })
     ;(workbench as unknown as {worktreeAction:typeof act}).worktreeAction=act
@@ -646,6 +710,8 @@ describe('Workbench internal HTTP API', () => {
     expect((await request('/v1/workbench/worktree',body('deadbeef','commit'),trustedToken)).status).toBe(403)
     const ok=await request('/v1/workbench/worktree',body('deadbeef','commit'),operatorToken)
     expect(ok.status).toBe(200);expect(await ok.json()).toMatchObject({worktree:{committed:true,mergeHint:expect.stringContaining('git merge')}})
+    const reopened=await request('/v1/workbench/worktree',body('deadbeef','reopen'),operatorToken)
+    expect(reopened.status).toBe(200);expect(await reopened.json()).toEqual({worktree:{branch:'cc/abcd1234',reopened:true}})
     expect((await request('/v1/workbench/worktree',body('cafebabe','remove'),operatorToken)).status).toBe(409)
     expect((await request('/v1/workbench/worktree',body('0badf00d','commit'),operatorToken)).status).toBe(422)
     // 合回项目(10-08):快进不了 409,主人自己合

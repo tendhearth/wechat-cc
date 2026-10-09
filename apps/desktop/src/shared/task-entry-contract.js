@@ -32,6 +32,15 @@ export function createEntryContract() {
     invalid_context:{status:400,phone:true},
     invalid_target:{status:400,phone:true},
     invalid_execution:{status:400,phone:true},
+    invalid_execution_mode:{status:400,phone:true},
+    worktree_base_unsupported:{status:422,phone:true},
+    git_workspace_source_unsupported:{status:422,phone:true},
+    configuration_not_reproducible:{status:422,phone:true},
+    git_workspace_configuration_rejected:{status:422,phone:true},
+    git_workspace_changed:{status:409,phone:true},
+    git_workspace_conflict:{status:409,phone:true},
+    git_workspace_needs_recovery:{status:409,phone:true},
+    git_workspace_configuration_changed:{status:409,phone:true},
     invalid_provider:{status:400,phone:true},
     invalid_attachment:{status:400,phone:true},
     invalid_path:{status:400,phone:true},
@@ -65,7 +74,12 @@ export function createEntryContract() {
     if (context.surface === 'phone' && (!rejection.phone || context.status === undefined)) return 'unknown'
     return code === 'entry_expired' ? 'expired' : 'rejected'
   }
-  return Object.freeze({ENTRY_LIMITS,composeEntryPrompt,entryContentError,entryErrorStatus,entryFailureKind})
+    /** @param {string} code */
+  function entryRejectionMessage(code){
+    const messages=/** @type {Record<string,string>} */({git_workspace_source_unsupported:'这个项目当前无法准备独立副本，请处理项目状态，或明确选择原目录。',configuration_not_reproducible:'这个项目的执行设置无法在副本安全重现，请检查设置，或明确选择原目录。',git_workspace_configuration_rejected:'这个项目的执行设置无法用于副本，请检查设置，或明确选择原目录。',git_workspace_changed:'原项目已变化，请核对项目后重新交办。',git_workspace_conflict:'这份副本分配与已有请求冲突，请核对原交办。',git_workspace_needs_recovery:'这份副本需要先核对恢复状态，请在桌面处理后重试。',git_workspace_configuration_changed:'项目的执行设置已变化，请核对后重新交办。',invalid_execution_mode:'请重新选择执行位置。'})
+    return messages[code]??`这次交办未被接受：${code}。`
+  }
+  return Object.freeze({entryRejectionMessage,ENTRY_LIMITS,composeEntryPrompt,entryContentError,entryErrorStatus,entryFailureKind})
 }
 
-export const {ENTRY_LIMITS,composeEntryPrompt,entryContentError,entryErrorStatus,entryFailureKind} = createEntryContract()
+export const {entryRejectionMessage,ENTRY_LIMITS,composeEntryPrompt,entryContentError,entryErrorStatus,entryFailureKind} = createEntryContract()

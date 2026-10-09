@@ -1409,7 +1409,7 @@ describe('workbench mutations', () => {
       if (edit === 'text') fields['wb-create-text']!.value = 'Unsent request'
       if (edit === 'provider') fields['wb-provider']!.value = 'codex'
       finishCreate(); await submitting
-      expect(invokeWorkbenchApi).toHaveBeenCalledWith('POST', '/v1/workbench/create', { path: '/work', text: 'Submitted request', title: 'Submitted name', providerId: 'claude' })
+      expect(invokeWorkbenchApi).toHaveBeenCalledWith('POST', '/v1/workbench/create', { path: '/work', text: 'Submitted request', title: 'Submitted name', providerId: 'claude',executionMode:'auto',requestId:expect.stringMatching(/^[0-9a-f-]{36}$/i) })
       latestProvider = edit === 'provider' ? 'claude' : 'codex'
       await controller.refresh()
       await click({ target: projectNew })

@@ -1,3 +1,5 @@
+import type { Backend } from '../backend/types'
+import type { PickedImage } from './image-upload'
 import type { PairingRecord } from '../net/pairing'
 import { uuid } from '../net/uuid'
 
@@ -10,14 +12,45 @@ export type DraftStamp = { owner: string; revision: number }
 /** A process-owned revision distinguishes retyped identical text from the submitted draft. */
 export const getDraftStamp = (key: string): DraftStamp => ({ owner: draftOwner ??= uuid(), revision: revisions.get(key) ?? revision })
 export const sameDraftStamp = (a: DraftStamp | undefined, b: DraftStamp) => !!a && a.owner === b.owner && a.revision === b.revision
+export type EntrySettings={projectId:string|null;providerId:string|null;executionMode:'auto'|'isolated'|'project';modelId?:string;effort?:string;base?:string;forkProviderPending?:boolean}
+const entrySettings=new Map<string,EntrySettings>()
+export const getEntrySettings=(key:string,fallback:EntrySettings={projectId:null,providerId:null,executionMode:'auto'}):EntrySettings=>({...entrySettings.get(key)??fallback})
+export const setEntrySettings=(key:string,value:EntrySettings)=>{
+  if(JSON.stringify(getEntrySettings(key))!==JSON.stringify(value))revisions.set(key,++revision)
+  entrySettings.set(key,{...value})
+}
+// Selected materials stay with the same process-owned draft across screen remounts.
+const draftImages=new Map<string,PickedImage[]>()
+export const getDraftImages=(key:string):PickedImage[]=>[...draftImages.get(key)??[]]
+export const setDraftImages=(key:string,images:PickedImage[])=>{
+  if(JSON.stringify(getDraftImages(key).map(i=>i.id))!==JSON.stringify(images.map(i=>i.id)))revisions.set(key,++revision)
+  if(images.length)draftImages.set(key,[...images]);else draftImages.delete(key)
+}
+type CreationInput = Parameters<Backend['create']>[0]
+const creationAttempts = new Map<string, { signature: string; stamp: DraftStamp; input: CreationInput }>()
+/** Freeze the effective creation payload until the user edits this process-owned draft. */
+export function creationInputFor(key: string, signature: string, input: Omit<CreationInput, 'requestId'>): CreationInput {
+  const stamp = getDraftStamp(key), prior = creationAttempts.get(key)
+  if (prior?.signature === signature && sameDraftStamp(prior.stamp, stamp)) return prior.input
+  const frozen: CreationInput = {
+    ...input, requestId: uuid(),
+    ...(input.execution ? { execution: { ...input.execution } } : {}),
+    ...(input.attachmentIds ? { attachmentIds: [...input.attachmentIds] } : {}),
+  }
+  if (frozen.execution) Object.freeze(frozen.execution)
+  if (frozen.attachmentIds) Object.freeze(frozen.attachmentIds)
+  Object.freeze(frozen)
+  creationAttempts.set(key, { signature, stamp, input: frozen })
+  return frozen
+}
 const requestIds = new Map<string, { text: string; id: string }>()
 // 带图时那份草稿的材料草稿 id(2026-10-06):选图起就定下,发成功(deleteDraft)才换 —— 重发 / 续传都落在同一个草稿下。
 const materialDrafts = new Map<string, string>()
 export const materialDraftId = (key: string): string => { let id = materialDrafts.get(key); if (!id) { id = uuid(); materialDrafts.set(key, id) } return id }
 export const getDraft = (key: string) => drafts.get(key) ?? ''
 export const setDraft = (key: string, v: string) => { drafts.set(key, v); revisions.set(key, ++revision) }
-export const deleteDraft = (key: string) => { drafts.delete(key); requestIds.delete(key); materialDrafts.delete(key); revisions.set(key, ++revision) }
-export const clearDrafts = () => { gen++; revision++; drafts.clear(); revisions.clear(); requestIds.clear(); materialDrafts.clear(); replied.clear(); clearReceipts() }
+export const deleteDraft = (key: string) => { drafts.delete(key); entrySettings.delete(key); draftImages.delete(key); requestIds.delete(key); creationAttempts.delete(key); materialDrafts.delete(key); revisions.set(key, ++revision) }
+export const clearDrafts = () => { gen++; revision++; drafts.clear(); entrySettings.clear(); draftImages.clear(); revisions.clear(); requestIds.clear(); creationAttempts.clear(); materialDrafts.clear(); replied.clear(); clearReceipts() }
 
 /**
  * 这些都只对「当前这台电脑」有意义(复评):换配对(配上 / 解除 / 换电脑 / 演示↔真连)⇒ 全清,配对代 +1。
@@ -36,7 +69,7 @@ export function setPairingScope(key: string): void {
   if (first) return
   gen++
   revision++; revisions.clear()
-  drafts.clear(); requestIds.clear(); materialDrafts.clear(); replied.clear()
+  drafts.clear(); entrySettings.clear(); draftImages.clear(); requestIds.clear(); creationAttempts.clear(); materialDrafts.clear(); replied.clear()
   if (receipts.length) { receipts = []; queueMicrotask(notifyReceipts) }
 }
 

@@ -72,3 +72,14 @@ export function composeOutcomeText(o: ComposeOutcome, lang: Lang, provider: stri
     case 'baseMissing': return t(lang, 'compose.baseMissing')
   }
 }
+
+/** Creation admission errors keep the original draft and explain the location choice. */
+export function composeCreationReason(code:string,lang:Lang):string {
+  if(code==='worktree_base_unsupported')return t(lang,'compose.baseUnsupported')
+  if(code==='git_workspace_source_unsupported')return t(lang,'compose.copyUnavailable')
+  if(['configuration_not_reproducible','git_workspace_configuration_rejected','git_workspace_configuration_changed'].includes(code))return t(lang,'compose.copyConfiguration')
+  if(['git_workspace_changed','git_workspace_conflict'].includes(code))return t(lang,'compose.copyChanged')
+  if(code==='git_workspace_needs_recovery')return t(lang,'compose.copyRecovery')
+  if(code==='invalid_execution_mode')return t(lang,'compose.copyLocation')
+  return `${t(lang,'compose.createReason')} ${code}`
+}

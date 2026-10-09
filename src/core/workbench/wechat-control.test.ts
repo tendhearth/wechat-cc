@@ -159,7 +159,7 @@ describe('WeChat task control through the shared service',()=>{
     const task=create();await settled(task.id)
     const act=vi.fn((_id:string,action:string)=>{
       if(action==='merge')throw new Error('worktree_not_ff')
-      return action==='commit'?{branch:'cc/abcd1234',committed:true,sha:'0123456789'}:{branch:'cc/abcd1234',removed:true}
+      return action==='commit'?{branch:'cc/abcd1234',committed:true,sha:'0123456789'}:action==='reopen'?{branch:'cc/abcd1234',reopened:true}:{branch:'cc/abcd1234',removed:true}
     })
     const control=makeWechatWorkbenchControl({store,ownerChatId:()=>owner,actions:{...service,worktreeAction:act}})
     const before=service.detail(task.id).events.length
@@ -438,4 +438,64 @@ describe('任务 新建 <项目> 独立 <要求> (2026-10-07)',()=>{
     expect(calls[1]).toMatchObject({projectId,text:'整理周报'});expect(calls[1]).not.toHaveProperty('isolation')
     expect(await control('owner','任务',identity)).not.toBe('')
   })
+})
+
+
+it.each(['提交','合回','删除工作区'] as const)('awaits asynchronous %s result before announcing success',async verb=>{
+ setup({async spawn(){return{async *dispatch(){yield result},async close(){}}}})
+ const task=store.create({title:'async action',path:project,providerId:'claude',ownerChatId:'owner'})
+ const pending=gate()
+ const action=async()=>{await pending.promise;return{branch:'cc/async',committed:true,sha:'0123456789',merged:true,into:'main',removed:true}}
+ const control=makeWechatWorkbenchControl({store,ownerChatId:()=>owner,actions:{...service,worktreeAction:action}})
+ let completed=false
+ const reply=control('owner',`任务 ${task.id} ${verb}`).then(value=>{completed=true;return value})
+ await Promise.resolve();await Promise.resolve();expect(completed).toBe(false)
+ pending.resolve()
+ expect(await reply).toContain(verb==='提交'?'已提交到分支 cc/async':verb==='合回'?'已合进项目的 main':'分支 cc/async 保留')
+ expect(service.detail(task.id).events).toEqual([])
+})
+
+it.each(['合回','删除工作区'] as const)('an asynchronous %s refusal cannot be described as completed',async verb=>{
+ setup({async spawn(){return{async *dispatch(){yield result},async close(){}}}})
+ const task=store.create({title:'async refusal',path:project,providerId:'claude',ownerChatId:'owner'})
+ const action=async()=>{await Promise.resolve();throw Error('worktree_dirty')}
+ // Observe rejection here too so the old synchronous adapter cannot create an unhandled test rejection.
+ const observed=()=>{const promise=action();void promise.catch(()=>{});return promise}
+ const control=makeWechatWorkbenchControl({store,ownerChatId:()=>owner,actions:{...service,worktreeAction:observed}})
+ const reply=await control('owner',`任务 ${task.id} ${verb}`)
+ expect(reply).toContain('没提交的改动');expect(reply).not.toContain(verb==='合回'?'已合进':'已删除')
+ expect(service.detail(task.id).events).toEqual([])
+})
+
+it.each(['合回','删除工作区'] as const)('requires an explicit success flag for %s',async verb=>{
+ setup({async spawn(){return{async *dispatch(){yield result},async close(){}}}})
+ const task=store.create({title:'no receipt',path:project,providerId:'claude',ownerChatId:'owner'})
+ const control=makeWechatWorkbenchControl({store,ownerChatId:()=>owner,actions:{...service,worktreeAction:async()=>({branch:'cc/no-result'})}})
+ const reply=await control('owner',`任务 ${task.id} ${verb}`)
+ expect(reply).toContain('尚未确认');expect(reply).not.toContain(verb==='合回'?'已合进':'已删除')
+})
+
+it('awaits an explicit no-merge receipt and describes it without claiming a merge or uncertainty',async()=>{
+ setup({async spawn(){return{async *dispatch(){yield result},async close(){}}}})
+ const task=store.create({title:'no merge needed',path:project,providerId:'claude',ownerChatId:'owner'}),pending=gate()
+ const action=async()=>{await pending.promise;return{branch:'cc/no-change',merged:false,into:'main'}}
+ const control=makeWechatWorkbenchControl({store,ownerChatId:()=>owner,actions:{...service,worktreeAction:action}})
+ let settled=false
+ const reply=control('owner',`任务 ${task.id} 合回`).then(value=>{settled=true;return value})
+ await Promise.resolve();await Promise.resolve();expect(settled).toBe(false)
+ pending.resolve()
+ const value=await reply
+ expect(value).toContain('不用合');expect(value).not.toContain('已合进');expect(value).not.toContain('尚未确认')
+})
+
+it.each([true,false,undefined])('awaits reopened=%s and only a true receipt announces reopening',async reopened=>{
+ setup({async spawn(){return{async *dispatch(){yield result},async close(){}}}})
+ const task=store.create({title:'reopen receipt',path:project,providerId:'claude',ownerChatId:'owner'}),pending=gate()
+ const action=async()=>{await pending.promise;return{branch:'cc/reopen',...(reopened===undefined?{}:{reopened})}}
+ const control=makeWechatWorkbenchControl({store,ownerChatId:()=>owner,actions:{...service,worktreeAction:action}})
+ let settled=false;const reply=control('owner',`任务 ${task.id} 重开工作区`).then(value=>{settled=true;return value})
+ await Promise.resolve();await Promise.resolve();expect(settled).toBe(false);pending.resolve()
+ const value=await reply
+ if(reopened===true)expect(value).toContain('重新打开独立工作区')
+ else {expect(value).toContain('尚未确认');expect(value).not.toContain('可以接着做了')}
 })

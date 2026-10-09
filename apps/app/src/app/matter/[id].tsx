@@ -127,11 +127,11 @@ export default function Matter() {
     if (wtBusy) return
     if ((action === 'remove' || action === 'merge') && wtArmed !== action) { setWtArmed(action); setWtNote(null); return }
     setWtArmed(null); setWtBusy(true); setWtNote(null)
-    let mergedNow = true
-    const r = await submit(`worktree:${id}:${action}`, async () => { mergedNow = (await backend.worktree({ id, action })).merged !== false })
+    let mergedNow = true, reopenedNow = false
+    const r = await submit(`worktree:${id}:${action}`, async () => { const receipt = await backend.worktree({ id, action }); mergedNow = receipt.merged !== false; reopenedNow = receipt.reopened === true })
     setWtBusy(false)
     const err = r === 'ok' || r === 'busy' ? null : r.error
-    if (r === 'ok') setWtNote(t(lang, action === 'commit' ? 'progress.wtCommitted' : action === 'merge' ? (mergedNow ? 'progress.wtMerged' : 'progress.wtNothingToMerge') : action === 'reopen' ? 'progress.wtReopened' : 'progress.wtRemoved'))
+    if (r === 'ok') setWtNote(t(lang, action === 'commit' ? 'progress.wtCommitted' : action === 'merge' ? (mergedNow ? 'progress.wtMerged' : 'progress.wtNothingToMerge') : action === 'reopen' ? (reopenedNow ? 'progress.wtReopened' : 'progress.wtFailed') : 'progress.wtRemoved'))
     else if (err === 'worktree_dirty') setWtNote(t(lang, 'progress.wtDirty'))
     else if (err === 'worktree_uncommitted') setWtNote(t(lang, 'progress.wtUncommitted'))
     else if (err === 'merge_manual') setWtNote(t(lang, 'progress.wtMergeManual'))
@@ -266,11 +266,11 @@ export default function Matter() {
         {d.task?.worktree ? (
           <View testID="progress-worktree" style={{ gap: space.s }}>
             <Txt role="meta" tone="inkSoft">{t(lang, d.task.worktree.removed ? 'progress.wtGone' : d.task.worktree.merged ? 'progress.wtOnMerged' : 'progress.wtOn', { branch: d.task.worktree.branch })}</Txt>
-            {d.task.worktree.removed ? <Button kind="secondary" testID="progress-wt-reopen" label={t(lang, 'progress.wtReopen')} onPress={() => void worktreeAct('reopen')} disabled={!online} busy={wtBusy} /> : null}
+            {d.task.worktree.removed && !d.task.workspace && !d.task.sourcePath ? <Button kind="secondary" testID="progress-wt-reopen" label={t(lang, 'progress.wtReopen')} onPress={() => void worktreeAct('reopen')} disabled={!online} busy={wtBusy} /> : null}
             {!d.task.worktree.removed ? (
               <View style={{ flexDirection: 'row', gap: space.s, flexWrap: 'wrap' }}>
                 <Button kind="secondary" testID="progress-wt-commit" label={t(lang, 'progress.wtCommit')} onPress={() => void worktreeAct('commit')} disabled={!online} busy={wtBusy} />
-                <Button kind="secondary" testID="progress-wt-merge" label={t(lang, wtArmed === 'merge' ? 'progress.wtMergeConfirm' : 'progress.wtMerge')} onPress={() => void worktreeAct('merge')} disabled={!online || wtBusy} />
+                {d.task.workspace?.mode !== 'isolated' ? <Button kind="secondary" testID="progress-wt-merge" label={t(lang, wtArmed === 'merge' ? 'progress.wtMergeConfirm' : 'progress.wtMerge')} onPress={() => void worktreeAct('merge')} disabled={!online || wtBusy} /> : null}
                 <Button kind="secondary" testID="progress-wt-remove" label={t(lang, wtArmed === 'remove' ? 'progress.wtRemoveConfirm' : 'progress.wtRemove')} onPress={() => void worktreeAct('remove')} disabled={!online || wtBusy} />
                 {d.task.worktree.projectId ? <Button kind="secondary" testID="progress-wt-fork" label={t(lang, 'progress.wtFork')} onPress={() => forkToAnother(d.task!.worktree!.projectId!, d.task!.providerId)} /> : null}
               </View>

@@ -3,12 +3,13 @@ import type {WorkbenchExecutorCapabilities} from './executor-capabilities'
 import {isWorkbenchProviderId} from './executor-capabilities'
 import {normalizeExecutionChoice, PROVIDER_EXECUTION_CHOICE} from './execution-settings'
 import type {ProjectCatalogEntry} from './project-catalog'
-import {ENTRY_LIMITS, entryContentError} from '../../../apps/desktop/src/shared/task-entry-contract.js'
-import { validBaseBranch } from './worktree-workspaces'
-export {ENTRY_LIMITS, composeEntryPrompt, entryContentError, entryErrorStatus, entryFailureKind} from '../../../apps/desktop/src/shared/task-entry-contract.js'
+import {validBaseBranch} from './worktree-workspaces'
+import {ENTRY_LIMITS, entryContentError,entryErrorStatus as sharedEntryErrorStatus} from '../../../apps/desktop/src/shared/task-entry-contract.js'
+export {ENTRY_LIMITS, composeEntryPrompt, entryContentError, entryFailureKind} from '../../../apps/desktop/src/shared/task-entry-contract.js'
 
 /** isolation:'worktree' ⇒ 在这个项目的独立工作区(git worktree)里做,不占项目目录本身(2026-10-07)。 */
-export type EntryTarget = {kind: 'managed'} | {kind: 'project'; projectId: string; isolation?: 'worktree'; /** 独立工作区从哪个本地分支开始(10-08);只和 isolation 一起出现。 */ base?: string}
+export type ExecutionMode = 'auto' | 'isolated' | 'project'
+export type EntryTarget = {kind: 'managed'} | {kind: 'project'; projectId: string; isolation?: 'worktree';base?:string}
 export type EntryExcerpt = {role: 'user' | 'assistant'; text: string}
 export type EntryInput = {
   requestId: string
@@ -17,11 +18,12 @@ export type EntryInput = {
   target: EntryTarget
   providerId?: string
   execution?: unknown
+  executionMode?: ExecutionMode
   draftId?: string
   attachmentIds?: string[]
   context?: {source: 'owner-chat'; excerpts: EntryExcerpt[]}
 }
-export type EntryContext = {ownerKey: string; surface: 'desktop' | 'phone'}
+export type EntryContext = {ownerKey: string; surface: 'desktop' | 'phone' | 'wechat'}
 export type EntryReceipt = {
   requestId: string
   taskId: string
@@ -45,7 +47,7 @@ export type EntryOptions = {
 
 // Match the existing attachment UUID contract; new clients generate v4 IDs.
 const UUID = /^[a-f0-9]{8}-[a-f0-9]{4}-[1-5][a-f0-9]{3}-[89ab][a-f0-9]{3}-[a-f0-9]{12}$/i
-const ENTRY_KEYS = ['requestId', 'text', 'title', 'target', 'providerId', 'execution', 'draftId', 'attachmentIds', 'context']
+const ENTRY_KEYS = ['requestId', 'text', 'title', 'target', 'providerId', 'execution', 'draftId', 'attachmentIds', 'context', 'executionMode']
 const EXECUTION_KEYS = ['defaults', 'model', 'reasoningEffort'] as const
 
 function record(value: unknown, keys: readonly string[], error: string): Record<string, unknown> {
@@ -99,6 +101,11 @@ export function parseEntryInput(value: unknown): EntryInput {
   const requestId = uuid(input.requestId, 'invalid_request_id')
   if (typeof input.text !== 'string' || input.text.length > ENTRY_LIMITS.text) throw Error('invalid_text')
   const parsed: EntryInput = {requestId, text: input.text, target: target(input.target)}
+  if (input.executionMode !== undefined) {
+    if (!['auto','isolated','project'].includes(input.executionMode as string)) throw Error('invalid_execution_mode')
+    parsed.executionMode = input.executionMode as ExecutionMode
+  }
+  if (parsed.target.kind === 'project' && parsed.target.isolation === 'worktree' && parsed.executionMode === 'project') throw Error('invalid_execution_mode')
   if (input.title !== undefined) {
     if (typeof input.title !== 'string' || !input.title.trim() || input.title.length > ENTRY_LIMITS.title) throw Error('invalid_title')
     parsed.title = input.title.trim()
@@ -132,4 +139,19 @@ export function parseEntryInput(value: unknown): EntryInput {
 export function canonicalEntryHash(input: EntryInput): string {
   const {requestId: _requestId, ...content} = parseEntryInput(input)
   return createHash('sha256').update(JSON.stringify(content)).digest('hex')
+}
+
+/** v1 hashes above are immutable for existing reservations. New requests freeze auto explicitly. */
+export function canonicalEntryHashV2(input: EntryInput, legacyPath?: string): string {
+  const {requestId: _id, executionMode, ...content} = parseEntryInput(input)
+  return createHash('sha256').update(JSON.stringify({...content,executionMode:executionMode ?? 'auto',...(legacyPath?{legacyPath}:{})})).digest('hex')
+}
+
+/** Admission codes shared by HTTP and phone, including native workspace failures. */
+export function entryErrorStatus(code:string):number|undefined {
+ if(['worktree_base_unsupported','git_workspace_source_unsupported','configuration_not_reproducible','git_workspace_configuration_rejected'].includes(code))return 422
+ if(['git_workspace_binding_required','git_workspace_changed','git_workspace_conflict','git_workspace_needs_recovery','git_workspace_configuration_changed'].includes(code))return 409
+ if(['git_timeout','git_unavailable','git_output_limit'].includes(code))return 503
+ if(code==='invalid_execution_mode')return 400
+ return sharedEntryErrorStatus(code)
 }

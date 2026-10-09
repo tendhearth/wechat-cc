@@ -5,13 +5,14 @@ import type { MatterStore } from '../matters/store'
 import type { ReportSink } from '../matters/report'
 import type { RecollectSink } from '../matters/recollection'
 import type { UsageSnapshot } from '../subscription-usage'
-import { type WorkbenchStore } from './store'
+import { publicTask, type WorkbenchStore } from './store'
 import { makeTaskChangeHub, type TaskChangeHub } from './task-changes'
 
 interface Options {
   store: WorkbenchStore
   registry: ProviderRegistry
   stateDir: string
+  isolatedConfiguration?: import('./isolated-configuration').IsolatedConfigurationOptions
   managedWorkspaceRoot?: string; networkGate?: import('../../lib/network-gate').NetworkGate  // 网络闸门(2026-10-02),见 ServiceDeps
   ownerChatId: () => string | null
   /** 「一件事」登记处:任务与 matter 一对一同 id,生命周期同步(docs/cc-workbench.md「一件事」)。可选,老接线不传。 */
@@ -46,7 +47,8 @@ interface Options {
   /** 免审执行者的一次性确认(daemon 侧持久化);不传 ⇒ 免审执行者永远要求确认。 */
   unattendedAck?: { get(): number | null; set(at: number): void }
 }
-import { makeRuntimeState } from './service/state'
+import {makeRecoveryDomain} from './service/recovery'
+import { makeRuntimeState, assertAccepting } from './service/state'
 import { Ref } from '../../lib/lifecycle'
 import { makeReviewDomain } from './service/review'; import { makeWorktreeDomain } from './service/worktree'
 import { makeAttachmentsDomain } from './service/attachments'
@@ -74,7 +76,8 @@ export function makeWorkbenchService(opts: Options) {
   const bumped = (id: string) => { try { touched(id, store.bump(id)) } catch { /* 信号丢了只是多等一轮 */ } }
   const state=makeRuntimeState()
   const actions=new Ref<ServiceActions>('workbench-actions')
-  const ctx:ServiceCtx={store,stateDir:opts.stateDir,state,hub:{touched,bumped,dispose:()=>changes.dispose()},deps:{ownerChatId:opts.ownerChatId,registry:opts.registry,...(opts.usage?{usage:opts.usage}:{}),...(opts.permissionTimeoutMs!==undefined?{permissionTimeoutMs:opts.permissionTimeoutMs}:{}),...(opts.unattendedAck?{unattendedAck:opts.unattendedAck}:{}),...(opts.nativeHistory?{nativeHistory:opts.nativeHistory}:{}),...(opts.registeredProjects?{registeredProjects:opts.registeredProjects}:{}),...(opts.defaultProvider!==undefined?{defaultProvider:opts.defaultProvider}:{}),...(opts.executionConflict?{executionConflict:opts.executionConflict}:{}),...(opts.reports?{reports:opts.reports}:{}),...(opts.recollect?{recollect:opts.recollect}:{}),...(opts.revokeSessionToken?{revokeSessionToken:opts.revokeSessionToken}:{}),...(opts.retainedIdleCloseMs!==undefined?{retainedIdleCloseMs:opts.retainedIdleCloseMs}:{}),...(opts.handoffGraceMs!==undefined?{handoffGraceMs:opts.handoffGraceMs}:{}),...(opts.matters?{matters:opts.matters}:{}),...(opts.mintSessionToken?{mintSessionToken:opts.mintSessionToken}:{}),...(opts.timeoutMs!==undefined?{timeoutMs:opts.timeoutMs}:{}),...(opts.closeTimeoutMs!==undefined?{closeTimeoutMs:opts.closeTimeoutMs}:{}),...(opts.holdBusy?{holdBusy:opts.holdBusy}:{}),...(opts.onTurnError?{onTurnError:opts.onTurnError}:{}),...(opts.writerGroupAlive?{writerGroupAlive:opts.writerGroupAlive}:{}),...(opts.writerWatchMs!==undefined?{writerWatchMs:opts.writerWatchMs}:{}),...(opts.managedWorkspaceRoot!==undefined?{managedWorkspaceRoot:opts.managedWorkspaceRoot}:{}),...(opts.networkGate?{networkGate:opts.networkGate}:{})},ensureAccepting,...(opts.log?{log:opts.log}:{}),now:Date.now,actions}
+  const ctx:ServiceCtx={store,stateDir:opts.stateDir,state,hub:{touched,bumped,dispose:()=>changes.dispose()},deps:{isolatedConfiguration:opts.isolatedConfiguration,ownerChatId:opts.ownerChatId,registry:opts.registry,...(opts.usage?{usage:opts.usage}:{}),...(opts.permissionTimeoutMs!==undefined?{permissionTimeoutMs:opts.permissionTimeoutMs}:{}),...(opts.unattendedAck?{unattendedAck:opts.unattendedAck}:{}),...(opts.nativeHistory?{nativeHistory:opts.nativeHistory}:{}),...(opts.registeredProjects?{registeredProjects:opts.registeredProjects}:{}),...(opts.defaultProvider!==undefined?{defaultProvider:opts.defaultProvider}:{}),...(opts.executionConflict?{executionConflict:opts.executionConflict}:{}),...(opts.reports?{reports:opts.reports}:{}),...(opts.recollect?{recollect:opts.recollect}:{}),...(opts.revokeSessionToken?{revokeSessionToken:opts.revokeSessionToken}:{}),...(opts.retainedIdleCloseMs!==undefined?{retainedIdleCloseMs:opts.retainedIdleCloseMs}:{}),...(opts.handoffGraceMs!==undefined?{handoffGraceMs:opts.handoffGraceMs}:{}),...(opts.matters?{matters:opts.matters}:{}),...(opts.mintSessionToken?{mintSessionToken:opts.mintSessionToken}:{}),...(opts.timeoutMs!==undefined?{timeoutMs:opts.timeoutMs}:{}),...(opts.closeTimeoutMs!==undefined?{closeTimeoutMs:opts.closeTimeoutMs}:{}),...(opts.holdBusy?{holdBusy:opts.holdBusy}:{}),...(opts.onTurnError?{onTurnError:opts.onTurnError}:{}),...(opts.writerGroupAlive?{writerGroupAlive:opts.writerGroupAlive}:{}),...(opts.writerWatchMs!==undefined?{writerWatchMs:opts.writerWatchMs}:{}),...(opts.managedWorkspaceRoot!==undefined?{managedWorkspaceRoot:opts.managedWorkspaceRoot}:{}),...(opts.networkGate?{networkGate:opts.networkGate}:{})},ensureAccepting:()=>assertAccepting(state),...(opts.log?{log:opts.log}:{}),now:Date.now,actions}
+  ctx.recovery=makeRecoveryDomain(ctx)
   const review=makeReviewDomain(ctx);const worktreeDomain=makeWorktreeDomain(ctx)
   const attachmentsDomain=makeAttachmentsDomain(ctx)
   const {continuationAttachmentScope,selectAttachments,combinedAttachments,handoffAttachments}=attachmentsDomain
@@ -95,12 +98,8 @@ export function makeWorkbenchService(opts: Options) {
   const {collect,collectTurnArtifacts,captureCodeChanges}=artifactsDomain
   const executeDomain=makeExecuteDomain(ctx,{admission:admissionDomain,attachments:attachmentsDomain,quota:quotaDomain,view:viewDomain,native:nativeDomain,inputs:inputsDomain,lifecycle:lifecycleDomain,notices:noticesDomain,artifacts:artifactsDomain})
   const entryDomain=makeEntryDomain(ctx,{execute:executeDomain,view:viewDomain,admission:admissionDomain,quota:quotaDomain}),quotaHandoffDomain=makeQuotaHandoffDomain(ctx,{execute:executeDomain,quota:quotaDomain})
-  store.recover()
-  store.liveInputs.recover();lifecycleDomain.adoptWriters()
+  ctx.recovery.initializeWriters(lifecycleDomain.adoptWriters)
 
-  function ensureAccepting() {
-    if (state.stopping) throw new Error('workbench_stopping')
-  }
 
 
   const service={
@@ -121,7 +120,7 @@ export function makeWorkbenchService(opts: Options) {
     entryReceipt:entryDomain.entryReceipt,
     createEntry:entryDomain.createEntry,
     projects:viewDomain.projects,
-    createWechat:executeDomain.createWechat,
+    createWechat:entryDomain.createWechat,
     attention:viewDomain.attention,
     resolveAnswer:inputsDomain.resolveAnswer,
     withdrawInput:inputsDomain.withdrawInput,
@@ -132,7 +131,7 @@ export function makeWorkbenchService(opts: Options) {
     modelCatalog:admissionDomain.modelCatalog,
     prepareContinuation:admissionDomain.prepareContinuation,
     detail:viewDomain.detail,
-    create:executeDomain.create,
+    create:entryDomain.create,
     acknowledgeUnattended:admissionDomain.acknowledgeUnattended,
     continueTask:executeDomain.continueTask,
     uploadAttachment:attachmentsDomain.uploadAttachment,
@@ -141,14 +140,14 @@ export function makeWorkbenchService(opts: Options) {
     discardAttachmentUpload:attachmentsDomain.discardAttachmentUpload,takeChatImages:attachmentsDomain.takeChatImages,
     readAttachment:attachmentsDomain.readAttachment,
     discardAttachment:attachmentsDomain.discardAttachment,
-    setArchived:(id:string,archived:boolean)=>{const view=lifecycleDomain.setArchived(id,archived);if(archived)worktreeDomain.tidyOnArchive(id);return view},confirmWriterExited:lifecycleDomain.confirmWriterExited,
+    setArchived:(id:string,archived:boolean)=>{const view=lifecycleDomain.setArchived(id,archived);if(!archived)return view;worktreeDomain.tidyOnArchive(id);return taskView(publicTask(store.get(id)))},confirmWriterExited:lifecycleDomain.confirmWriterExited,
     cancel:lifecycleDomain.cancel,suspendForNetwork:lifecycleDomain.suspendForNetwork,resumeFromNetwork:lifecycleDomain.resumeFromNetwork,stopSuspendedForNetwork:lifecycleDomain.stopSuspendedForNetwork,networkSuspended:lifecycleDomain.networkSuspended,
     artifact:artifactsDomain.artifact,
     approve:artifactsDomain.approve,
     /** 这个任务的所有变更快照,新→旧,每个文件附上当前标记。坏的那一轮单独 unavailable,不牵连别轮。 */
     reviewList:review.reviewList,
     markReviewFile:review.markReviewFile,
-    returnReviewFiles:review.returnReviewFiles,revertReviewFile:review.revertReviewFile,worktreeAction:worktreeDomain.worktreeAction,
+    returnReviewFiles:review.returnReviewFiles,revertReviewFile:review.revertReviewFile,resolveReviewRevert:review.resolveReviewRevert,exportWorkspace:review.exportWorkspace,worktreeAction:worktreeDomain.worktreeAction,
     resolvePermission:inputsDomain.resolvePermission,
     async handleWechat(chatId:string,text:string,identity?:WechatMessageIdentity):Promise<WechatWorkbenchReply|null>{return wechatControl(chatId,text,identity)},
     shutdown:lifecycleDomain.shutdown,
@@ -166,6 +165,7 @@ export function makeWorkbenchService(opts: Options) {
   }
   actions.set({submitInput:(id,input,policy)=>service.submitInput(id,input,policy),continueTask:(id,text,options,policy)=>service.continueTask(id,text,options,policy),isReplied,fallbackExecutor,artifact:(id,artifactId)=>service.artifact(id,artifactId),quotaExhausted:quotaDomain.quotaExhausted,continuation,provider,requireInput,canResume,taskVersion,selectAttachments,combinedAttachments,handoffAttachments,taskView,matterSync:executeDomain.matterSync,start:executeDomain.start,continuationAttachmentScope,inputMode,armIdleClose:lifecycleDomain.armIdleClose,cancelIdleClose,settleAfterDecision,execute:executeDomain.execute,hasUndeliveredInput,holdInputs,collect,collectTurnArtifacts,captureCodeChanges,runtimeSnapshot,held,stageFinishedNotice,publishFinishedNotices,enqueueNotice})
   const wechatControl=makeWechatWorkbenchControl({store,ownerChatId:opts.ownerChatId,actions:service})
+  ctx.recovery.startRecovery()
   return service
 }
 export type WorkbenchService=ReturnType<typeof makeWorkbenchService>

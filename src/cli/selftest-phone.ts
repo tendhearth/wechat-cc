@@ -1,3 +1,4 @@
+import {randomUUID} from 'node:crypto'
 /**
  * selftest-phone — `wechat-cc selftest phone` (spec
  * docs/superpowers/plans/2026-09-29-phone-protocol-v2.md Task 13).
@@ -390,6 +391,7 @@ export async function runPhoneSelftest(
     scratchPath = join(deps.scratchRoot, `phone-${deps.now()}`)
     deps.fs.mkdir(scratchPath)
     const createRes = await jsonCall(deps, `${api.baseUrl}/v1/workbench/create`, api.operatorToken, 'POST', {
+      requestId: randomUUID(), executionMode: 'project',
       path: scratchPath, providerId: opts.executor, title: 'selftest-phone', text: MINIMAL_TASK_TEXT,
     })
     taskId = createRes.ok && createRes.json?.task?.id ? String(createRes.json.task.id) : undefined

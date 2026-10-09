@@ -442,16 +442,64 @@ it('requires an explicit executor change when the hinted project executor is una
   expect(drafts[0]?.providerId).toBe('codex')
 })
 
-it('the independent-workspace checkbox (2026-10-07) only appears for a project and puts isolation on the target', async () => {
+it('submits project location and retries the frozen location under the original identity', async () => {
+  const {createTaskEntry} = await import('./task-entry.js')
+  const posted: any[] = []
+  const entry = createTaskEntry({storage, invokeWorkbenchApi: api(async (_method,path,body) => {
+    if(path==='/v1/workbench/create-entry'){posted.push(structuredClone(body));throw Error('timeout')}
+  })})
+  void entry.open({text:'保留原文',projectPath:'/projects/example'}); await settle()
+  expect(dialog.innerHTML).toContain('name="executionMode"')
+  dialog.choose('executionMode','project'); dialog.submit(); await settle()
+  expect(posted[0]).toMatchObject({executionMode:'project',text:'保留原文'})
+  dialog.choose('executionMode','auto'); dialog.submit(); await settle()
+  expect(posted[1]).toEqual(posted[0])
+  dialog.click('cancel')
+  void entry.open({text:'保留原文'}); await settle(); dialog.submit(); await settle()
+  expect(posted[2]).toEqual(posted[0])
+  dialog.click('cancel')
+})
+
+it('managed targets omit location controls and project default is submitted as auto', async () => {
+  const {createTaskEntry} = await import('./task-entry.js')
+  const entry=createTaskEntry({storage,invokeWorkbenchApi:api()})
+  void entry.open({text:'要求'});await settle()
+  expect(dialog.innerHTML).not.toContain('name="executionMode"');dialog.click('cancel')
+  void entry.open({text:'要求',projectPath:'/projects/example'});await settle();dialog.submit();await settle()
+  expect(drafts[0]).toMatchObject({executionMode:'auto'})
+})
+it('definitive isolation rejection keeps requirement and permits explicit project retry under a new identity',async()=>{
+ const {createTaskEntry}=await import('./task-entry.js');const posts:any[]=[]
+ const entry=createTaskEntry({storage,invokeWorkbenchApi:api(async(_m,p,b)=>{if(p==='/v1/workbench/create-entry'){posts.push(structuredClone(b));throw Error('git_workspace_source_unsupported')}})})
+ void entry.open({text:'尚未交办',projectPath:'/projects/example'});await settle();dialog.submit();await settle()
+ expect(dialog.innerHTML).toContain('当前无法准备独立副本');expect(dialog.innerHTML).toContain('尚未交办')
+ dialog.choose('executionMode','project');dialog.submit();await settle()
+ expect(posts[1].requestId).not.toBe(posts[0].requestId);expect(posts[1].executionMode).toBe('project');dialog.click('cancel')
+})
+it('project creation has one location control and submits mode without a conflicting legacy checkbox', async () => {
   const {createTaskEntry} = await import('./task-entry.js')
   const entry = createTaskEntry({invokeWorkbenchApi: api(), storage})
   const pending = entry.open({text: '并行做一件事'}); await settle()
-  expect(dialog.innerHTML).not.toContain('name="isolation"')
+  expect(dialog.innerHTML).not.toContain('name="executionMode"')
   dialog.choose('project', 'p-0123456789abcdef0123')
-  expect(dialog.innerHTML).toContain('name="isolation"')
-  dialog.event('change', {name: 'isolation', checked: true})
-  dialog.event('change', {name: 'isolation', checked: false})
-  dialog.event('change', {name: 'isolation', checked: true})
+  expect(dialog.innerHTML.match(/name="executionMode"/g)).toHaveLength(1)
+  expect(dialog.innerHTML).not.toContain('name="isolation"')
+  dialog.choose('executionMode', 'project')
+  dialog.choose('executionMode', 'auto')
   dialog.submit(); await settle(); await pending
-  expect(drafts.at(-1)).toMatchObject({target: {kind: 'project', projectId: 'p-0123456789abcdef0123', isolation: 'worktree'}})
+  expect(drafts.at(-1)).toMatchObject({executionMode:'auto', target: {kind: 'project', projectId: 'p-0123456789abcdef0123'}})
+  expect(drafts.at(-1)?.target).not.toHaveProperty('isolation')
+})
+
+it('retains a saved explicit branch in the frozen request across unknown retry without showing a branch picker',async()=>{
+ const projectId='p-0123456789abcdef0123'
+ memory.set('cc.task-entry.window.v1',JSON.stringify({sourceText:'分支要求',text:'分支要求',draftId:crypto.randomUUID(),target:{kind:'project',projectId,isolation:'worktree',base:'cc/retained'},providerId:'codex',executionMode:'isolated',execution:{defaults:'provider',model:null,reasoningEffort:null},candidates:[],selected:[],pending:null}))
+ const {createTaskEntry}=await import('./task-entry.js');const posts:any[]=[]
+ const invoke=api(async(_m,p,b)=>{if(p==='/v1/workbench/create-entry'){posts.push(structuredClone(b));throw Error('network_offline')}})
+ const entry=createTaskEntry({storage,invokeWorkbenchApi:invoke});void entry.open({text:'分支要求'});await settle()
+ expect(dialog.innerHTML).not.toContain('name="base"');dialog.submit();await settle()
+ expect(posts[0].target).toEqual({kind:'project',projectId,isolation:'worktree',base:'cc/retained'})
+ dialog.click('cancel')
+ const reopened=createTaskEntry({storage,invokeWorkbenchApi:invoke});void reopened.open({text:'分支要求'});await settle();dialog.submit();await settle()
+ expect(posts[1]).toEqual(posts[0]);dialog.click('cancel')
 })

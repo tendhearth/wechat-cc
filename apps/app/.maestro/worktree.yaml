@@ -1,5 +1,5 @@
 # 独立工作区(2026-10-08):一起做 → 整理笔记那件(独立分支)→ 提交到分支 → 合回项目(点两下)→ 任务页说「已合回」
-# → 删除工作区(点两下)→ 出现「重新打开工作区」→ 重开 → 「交给另一位另做一份」进交办页:要求、项目、独立工作区都预先填好。演示模式。
+# → 删除工作区(点两下)→ 出现「重新打开工作区」→ 重开 → 「交给另一位另做一份」进交办页:要求、来源项目、独立副本和另一位执行者已选好。旧工作区演示，不证明 UUID 分支起点或真实 Git。
 appId: com.tendhearth.app
 ---
 - runFlow: subflows/_start.yaml
@@ -61,8 +61,29 @@ appId: com.tendhearth.app
     id: progress-wt-fork
 - extendedWaitUntil:
     visible:
-      id: compose-isolation
+      id: compose-adjust-sheet
     timeout: 10000
+# fork 自动打开设置；直接核对预选状态，不靠点击制造结果。
 - assertVisible:
+    text: "作品集|Portfolio"
+    checked: true
+- assertVisible:
+    text: "独立副本（Git 项目默认）|Separate copy \\(default for Git projects\\)"
+    checked: true
+- assertVisible:
+    text: "Codex"
+    checked: true
+- assertVisible:
+    text: "Claude"
+    checked: false
+- assertNotVisible:
     id: compose-base
+- tapOn: "完成|Done"
+- extendedWaitUntil:
+    visible:
+      id: compose-input
+    timeout: 5000
+- assertVisible:
+    id: compose-input
+    text: ".*(把零散想法收一收|A home for loose ideas).*"
 - takeScreenshot: worktree-fork-compose

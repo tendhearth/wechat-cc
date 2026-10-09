@@ -18,6 +18,7 @@ import { publicTask, TERMINAL_TASK_STATUSES, type StoredTask } from '../store'
 import { normalizeInputRequestId } from '../live-inputs'
 import { checkedText } from './checked-text'
 import { directoryIdentity } from './directory-identity'
+import { validateWorkspaceProvider } from './workspace-configuration'
 import type { ServiceCtx } from './ctx'
 import type { AcceptedContinuation } from './state'
 import type { InputMaterials, WorkbenchTaskView } from './types'
@@ -116,6 +117,7 @@ export function makeNativeDomain(ctx:ServiceCtx) {
     const p=decision.preview,source=store.get(p.sourceTaskId),target=p.targetTaskId?store.get(p.targetTaskId):null
     const assertCurrent=()=>{
       ctx.ensureAccepting()
+      ctx.recovery?.admit(source.path,source.gitWorkspaceId);ctx.recovery?.gate(source.path)
       if(state.handoffDecisions.get(input.token)!==decision||decision.expiresAt<Date.now()||act().taskVersion(store.get(source.id))!==decision.sourceVersion||(target&&act().taskVersion(store.get(target.id))!==decision.targetVersion))throw new Error('handoff_changed')
       if(canonicalProject(source.path)!==source.path||directoryIdentity(source.path)!==decision.directoryIdentity)throw new Error('invalid_path')
       if(target?.archivedAt!=null)throw new Error('workbench_archived')
@@ -145,8 +147,16 @@ export function makeNativeDomain(ctx:ServiceCtx) {
       }
     }
     act().requireInput(p.targetProviderId,act().combinedAttachments(checkedHandoffAttachments,accepted.mode==='restart'?accepted.preview.attachments:[]),p.targetExecution??PROVIDER_EXECUTION_CHOICE,accepted.mode==='resume')
+    try{await validateWorkspaceProvider(ctx,source,p.targetProviderId)}catch(error){
+      const winner=store.handoffByToken(hash)
+      if(winner)return{task:act().taskView(publicTask(store.get(winner.targetTaskId))),handoffId:winner.id,sourceTaskId:winner.sourceTaskId}
+      throw error
+    }
+    const raced=store.handoffByToken(hash)
+    if(raced)return{task:act().taskView(publicTask(store.get(raced.targetTaskId))),handoffId:raced.id,sourceTaskId:raced.sourceTaskId}
+    assertCurrent()
     const packetJson=JSON.stringify({context:p.context,request:p.request,artifacts:p.artifacts,attachments:p.attachments??[],quote:p.quote,truncated:p.truncated,continuation:accepted,execution:p.targetExecution})
-    const record=store.createHandoff({id:randomUUID(),sourceTaskId:source.id,targetTaskId:target?.id??null,targetProviderId:p.targetProviderId,path:source.path,title:`检查 · ${source.title}`.slice(0,120),ownerChatId:source.ownerChatId,purpose:p.purpose,request:p.request,packetSha256:snapshotHash(packetJson),packetJson,artifactRefsJson:JSON.stringify(p.artifacts),quoteJson:p.quote?JSON.stringify(p.quote):null,sourceNativeId:source.sessionId,tokenHash:hash})
+    const record=store.atomic(()=>{const record=store.createHandoff({id:randomUUID(),sourceTaskId:source.id,targetTaskId:target?.id??null,targetProviderId:p.targetProviderId,path:source.path,title:`检查 · ${source.title}`.slice(0,120),ownerChatId:source.ownerChatId,purpose:p.purpose,request:p.request,packetSha256:snapshotHash(packetJson),packetJson,artifactRefsJson:JSON.stringify(p.artifacts),quoteJson:p.quote?JSON.stringify(p.quote):null,sourceNativeId:source.sessionId,tokenHash:hash});if(ctx.deps.matters)ensureTaskMatter(store.get(record.targetTaskId));return record})
     state.handoffDecisions.delete(input.token)
     if(native)state.nativeDecisions.delete(native.token)
     let task:WorkbenchTaskView
@@ -186,6 +196,7 @@ export function makeNativeDomain(ctx:ServiceCtx) {
     ctx.ensureAccepting()
     // 任务走真目录;来源记下原样的 cwd(与真目录不同 ⇒ 不恢复原会话,见 admission.canResume)。
     const path=nativeProjectPath(read.session.cwd)
+    ctx.recovery?.admit(path)
     const result=store.importSource({providerId,nativeId,cwd:read.session.cwd!,path,title:read.session.title.slice(0,120),ownerChatId:ctx.deps.ownerChatId(),messages:read.messages,snapshotJson:read.snapshotJson,snapshotSha256:read.snapshotSha256,pagesJson:read.pagesJson,observedFingerprint:read.observedFingerprint,truncated:read.truncated})
     return{...result,task:act().taskView(publicTask(result.task))}
   }
@@ -224,6 +235,7 @@ export function makeNativeDomain(ctx:ServiceCtx) {
     const accepted:AcceptedContinuation=decision.mode==='native_resume'?{mode:'resume',sessionId:decision.nativeId}:{mode:'restart',preview:restartPreview(task,store.events(id),store.execution.choice(id))}
     if(accepted.mode==='restart'&&(restartToken!==accepted.preview.token||restartToken!==decision.restartToken))throw new Error('restart_confirmation_stale')
     act().requireInput(task.providerId,act().combinedAttachments(attachments,accepted.mode==='restart'?accepted.preview.attachments:[]),execution,accepted.mode==='resume')
+    ctx.recovery?.admit(task.path,task.gitWorkspaceId);ctx.recovery?.gate(task.path)
     state.nativeDecisions.delete(sourceClosedToken)
     // extra.inputRequestId 进 start 的 queuedInputId:与 continueTask 同一张回执表(spec D6);内部 API 不带尾参,行为不变。
     return act().start(task,request,decision.directoryIdentity,accepted,decision,undefined,undefined,extra.inputRequestId,attachments,materials.draftId,execution,undefined,extra.attachmentPolicy)
@@ -371,7 +383,7 @@ export function makeNativeDomain(ctx:ServiceCtx) {
     // 三步同一事务;且只有 create 看「已有」—— linkTask / bind 都幂等,每次都跑:哪一步中途失败,下次再点都能补齐。
     // 状态与 execute 的终态登记一致:完成 / 失败 / 取消 ⇒ done;interrupted 与仍在跑的 ⇒ open。
     store.atomic(()=>{
-      if(!m.get(task.id))m.create({id:task.id,kind:'task',title:task.title,projectPath:task.path,ownerChatId:task.ownerChatId??null,status:task.status==='completed'||task.status==='failed'||task.status==='cancelled'?'done':'open'})
+      if(!m.get(task.id))m.create({id:task.id,kind:'task',title:task.title,projectPath:store.sourcePath(task),ownerChatId:task.ownerChatId??null,status:task.status==='completed'||task.status==='failed'||task.status==='cancelled'?'done':'open'})
       m.linkTask(task.id)
       if(task.ownerChatId)m.bind(task.id,'wechat',task.ownerChatId)
     })

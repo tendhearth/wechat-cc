@@ -2,9 +2,10 @@ import { createHash } from 'node:crypto'
 import type { GitReview, ReviewFile } from './git-review'
 
 /** 一个文件加上它在这一轮里的当前标记(`store.reviewMarks`,按 快照 sha + 路径 键)。 */
-export interface ReviewTurnFile extends ReviewFile { mark?: { mark: 'accepted' | 'returned'; comment: string; createdAt: number } }
+export interface ReviewTurnFile extends ReviewFile { revert?:import('./restore-manager').RestoreFile; mark?: { mark: 'accepted' | 'returned'; comment: string; createdAt: number } }
 /** 一轮变更快照 = 一件 `GIT_REVIEW_MIME` 成果。解析不出来的那一轮是 `status:'unavailable'` 加一条说明,不是抛错。 */
 export interface ReviewTurn {
+  restore?:{runId:string;scope:'closed_session';startedAt:number;finishedAt:number}
   artifactId: string; sha256: string; name: string; createdAt: number
   status: GitReview['status']; headBefore: string | null; headAfter: string | null
   preexistingPaths: string[]; notes: string[]; files: ReviewTurnFile[]

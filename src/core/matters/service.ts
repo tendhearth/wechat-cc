@@ -14,7 +14,7 @@ import {sayTextHash,type SayReceipts} from './say-receipts'
  * (工作台任务从 workbench 详情取),这里不复制数据。`say` 按 kind 路由:
  * task → 工作台续接;chat → 现有的 app 对话通道(只对主人的 chat)。
  */
-export interface MatterTaskView {id:string;title:string;status:string;phase?:string;providerId:string;path:string;error:string|null;updatedAt:number;archivedAt?:number|null;worktree?:{branch:string;removed:boolean;merged?:boolean;projectId?:string}}
+export interface MatterTaskView {id:string;title:string;status:string;phase?:string;providerId:string;path:string;error:string|null;updatedAt:number;archivedAt?:number|null;sourcePath?:string;workspace?:{id:string;mode:'isolated';sourcePath:string;executionPath:string;branch:string;baseCommit:string;removed?:boolean};worktree?:{branch:string;removed:boolean;merged?:boolean;projectPath?:string;projectId?:string}}
 export interface MatterEvent {kind:string;text:string;createdAt:number;source?:string;attachments?:Attachment[];errorCode?:'execution_model_unsupported';diagnostic?:string}
 export type MatterInput=Pick<LiveInput,'id'|'taskId'|'runId'|'text'|'status'|'attachments'>&Partial<Pick<LiveInput,'error'>>
 // 只投影显示材料所需的五个字段；不能把内部存储路径、owner 或草稿身份带到手机。
@@ -53,15 +53,15 @@ export interface MattersServiceDeps {
     /** 停下这一轮(与桌面「停止」同一个 cancel;expectedRunId 不对 ⇒ 不停,免得停掉后来的那一轮)。 */
     cancel?(id:string,expectedRunId?:string):Promise<unknown>
     /** 独立工作区:提交到分支 / 删除工作区(2026-10-07,手机也能做)。没接 ⇒ 手机没有这两个按钮。 */
-    /** 手机「另做一份」要源项目编号(只给编号,不给路径);没接 ⇒ 手机没有这个按钮。 */
+    /** 手机另做一份需要原项目编号。 */
     projects?():ReadonlyArray<{id:string;path:string}>
-    worktreeAction?(id:string,action:'commit'|'remove'|'merge'|'reopen'):{branch:string;committed?:boolean;removed?:boolean;merged?:boolean;into?:string;reopened?:boolean}
+    worktreeAction?(id:string,action:'commit'|'remove'|'merge'|'reopen'):{branch:string;committed?:boolean;removed?:boolean;merged?:boolean;into?:string;reopened?:boolean}|Promise<{branch:string;committed?:boolean;removed?:boolean;merged?:boolean;into?:string;reopened?:boolean}>
     resolveAnswer?(id:string,requestId:string,answers:unknown):void
     artifact?(id:string,artifactId:string):{name:string;mime:string;size:number;sha256:string;contentBase64:string}
     /** 额度用完时这件事能不能交给另一位;null = 不用打扰。没接 ⇒ 详情里没有这一块。 */
     quotaHandoff?(id:string):MatterQuotaHandoff|null
     /** 交出去(按 requestId 幂等、一件事只交一次);回新那件的任务 id。 */
-    handOff?(id:string,input:{requestId:string;providerId:string}):{taskId:string;created:boolean}
+    handOff?(id:string,input:{requestId:string;providerId:string}):{taskId:string;created:boolean}|Promise<{taskId:string;created:boolean}>
   }
   /** 对主人的 chat 说话(app 对话通道),surface 记这句是从哪个表面来的;recent 读该 chat 的消息流(微信 / 桌面 / 手机三处进同一条)。 */
   chat?:{ownerChatId():string|null;say(text:string,surface?:'desktop'|'phone'):Promise<{reply:string}>;recent?(chatId:string,limit:number):Promise<MatterEvent[]>;search?(chatId:string,query:string,limit:number):Promise<(MatterEvent&{id:string})[]>}
@@ -82,7 +82,7 @@ export interface MattersService {
   /** 手机上停下正在跑的这一轮(2026-10-06)。runId 必须是手机看到的那一轮;已经换了一轮 / 没在跑 ⇒ input_stale。 */
   stop(id:string,runId:string):Promise<void>
   /** 独立工作区的提交 / 删除(2026-10-07):手机看不到合并命令(在电脑上合并),只回分支和结果。 */
-  worktree(id:string,action:'commit'|'remove'|'merge'|'reopen'):{branch:string;committed?:boolean;removed?:boolean;merged?:boolean;reopened?:boolean}
+  worktree(id:string,action:'commit'|'remove'|'merge'|'reopen'):{branch:string;committed?:boolean;removed?:boolean;merged?:boolean;reopened?:boolean}|Promise<{branch:string;committed?:boolean;removed?:boolean;merged?:boolean;reopened?:boolean}>
   artifactChunk(id:string,input:MatterArtifactInput):MatterArtifactChunk
   /** 在主人那条对话里搜(2026-10-06,对标 Orca 会话历史搜索):新的在前;没配主人 ⇒ null。 */
   searchOwnerChat(query:string,limit?:number):Promise<{hits:(MatterEvent&{id:string})[]}|null>
@@ -139,7 +139,11 @@ export function makeMattersService(deps:MattersServiceDeps):MattersService {
       }
       if(matter.kind==='task'&&deps.workbench){
         try{
-          const d=taskDetail(matter.id);const wt=(d.task as {worktree?:{branch:string;projectPath?:string;removed:boolean;merged?:boolean}}).worktree;const projectId=wt?.projectPath?deps.workbench.projects?.().find(p=>p.path===wt.projectPath)?.id:undefined;task={...d.task,...(wt?{worktree:{branch:wt.branch,removed:wt.removed,...(wt.merged?{merged:true}:{}),...(projectId?{projectId}:{})}}:{})};events=d.events.slice(-50).map(publicEvent)
+          const d=taskDetail(matter.id)
+          const wt=d.task.worktree
+          const sourcePath=d.task.workspace?.sourcePath??d.task.sourcePath??wt?.projectPath
+          const projectId=sourcePath?deps.workbench.projects?.().find(p=>p.path===sourcePath)?.id:undefined
+          task={...d.task,...(wt?{worktree:{branch:wt.branch,removed:wt.removed,...(wt.merged?{merged:true}:{}),...(projectId?{projectId}:{})}}:{})};events=d.events.slice(-50).map(publicEvent)
           controls={...(d.runId?{runId:d.runId}:{}),...(d.inputMode?{inputMode:d.inputMode}:{}),
             permissions:(d.permissions??[]).filter(p=>p.taskId===id).map(({id,taskId,tool,description,createdAt})=>({id,taskId,tool,description,createdAt})),
             questions:(d.questions??[]).filter(q=>q.taskId===id).map(({id,taskId,createdAt,questions})=>({id,taskId,createdAt,questions:questions.map(({id,header,question,options,multiSelect,allowOther})=>({id,header,question,options:options.map(({label,description})=>({label,description})),multiSelect,allowOther}))})),
@@ -233,7 +237,7 @@ export function makeMattersService(deps:MattersServiceDeps):MattersService {
       if(require(id).kind!=='task')throw Error('matter_task_required')
       const requestId=normalizeInputRequestId(input.requestId)
       if(!deps.workbench?.handOff)throw Error('workbench_not_wired')
-      const r=deps.workbench.handOff(id,{requestId,providerId:input.providerId})
+      const r=await deps.workbench.handOff(id,{requestId,providerId:input.providerId})
       const matterId=deps.store.get(r.taskId)?.id??r.taskId
       if(surface==='phone'){try{deps.store.bind(matterId,'phone','pwa')}catch{/* 只是露面登记 */}}
       return {matterId,created:r.created}
@@ -248,7 +252,8 @@ export function makeMattersService(deps:MattersServiceDeps):MattersService {
       require(id)
       if(!deps.workbench?.worktreeAction)throw Error('workbench_not_wired')
       const r=deps.workbench.worktreeAction(id,action)
-      return {branch:r.branch,...(r.committed!==undefined?{committed:r.committed}:{}),...(r.removed?{removed:true}:{}),...(r.merged!==undefined?{merged:r.merged}:{}),...(r.reopened?{reopened:true}:{})}
+      const project=(value:Awaited<typeof r>)=>({branch:value.branch,...(value.committed!==undefined?{committed:value.committed}:{}),...(value.removed?{removed:true}:{}),...(value.merged!==undefined?{merged:value.merged}:{}),...(value.reopened!==undefined?{reopened:value.reopened}:{})})
+      return r instanceof Promise?r.then(project):project(r)
     },
     async stop(id,runId){
       const detail=taskDetail(id)

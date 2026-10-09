@@ -73,12 +73,14 @@ export const MatterSession = z.object({
 /** `matters/service.ts` 的 `MatterTaskView`(手机详情/say 结果里的任务投影)——
  * 跟 workbench 内部的 `WorkbenchTaskView`(见下面 entry 一节)不是同一个类型。 */
 export const MatterTaskView = z.object({
+  sourcePath: z.string().optional(),
+  workspace: z.object({id:z.string(),mode:z.literal('isolated'),sourcePath:z.string(),executionPath:z.string(),branch:z.string(),baseCommit:z.string(),removed:z.boolean().optional()}).optional(),
+
   id: z.string(), title: z.string(), status: z.string(), phase: z.string().optional(),
   providerId: z.string(), path: z.string(), error: z.string().nullable(), updatedAt: z.number(),
   archivedAt: z.number().nullable().optional(),
   // 独立工作区(2026-10-07):分支名 + 工作区删了没;手机据此给「提交到分支 / 删除工作区」。
-  // projectId(10-08):源项目编号,手机「另做一份」交到同一个项目;不给路径。
-  worktree: z.object({ branch: z.string(), removed: z.boolean(), merged: z.boolean().optional(), projectId: z.string().optional() }).optional(),
+  worktree: z.object({ projectPath: z.string().optional(), projectId: z.string().optional(), branch: z.string(), removed: z.boolean(), merged: z.boolean().optional() }).optional(),
 })
 
 export const MatterEvent = z.object({
@@ -189,6 +191,10 @@ export const EntryOptions = z.object({
 
 /** workbench/service.ts 的 `WorkbenchTaskView`(entry/create 与 create-receipt 回的任务快照)。 */
 export const WorkbenchTaskView = z.object({
+  sourcePath: z.string().optional(),
+  workspace: z.object({id:z.string(),mode:z.literal('isolated'),sourcePath:z.string(),executionPath:z.string(),branch:z.string(),baseCommit:z.string(),removed:z.boolean().optional()}).optional(),
+  worktree: z.object({projectPath:z.string(),branch:z.string(),removed:z.boolean()}).optional(),
+
   id: z.string(), title: z.string(), path: z.string(), providerId: z.string(),
   status: z.enum(['queued', 'running', 'cancelling', 'completed', 'failed', 'cancelled', 'interrupted']),
   workspaceKind: z.enum(['project', 'managed']),

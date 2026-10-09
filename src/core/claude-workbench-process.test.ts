@@ -1,3 +1,4 @@
+import { execFileSync } from 'node:child_process'
 import { existsSync, mkdtempSync, readFileSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -32,6 +33,31 @@ describe.skipIf(process.platform === 'win32')('Claude owned process teardown', (
       rmSync(area, { recursive: true, force: true })
     }
     // 三层 spawn 加上 close 那 2500ms 的 deadline,在满载机器上塞不进 5s。
+  }, 60_000)
+
+  it('closes an already-zombie detached descendant without requiring its parent to reap first', async () => {
+    const area = mkdtempSync(join(tmpdir(), 'cc-claude-owned-zombie-')), sentinel = join(area, 'child.pid')
+    const owner = ownClaudeWorkbenchProcess(undefined)
+    const descendant = `require('node:fs').writeFileSync(${JSON.stringify(sentinel)}, String(process.pid));setInterval(()=>{},1000)`
+    const parent = `require('node:child_process').spawn(process.execPath,['-e',${JSON.stringify(descendant)}],{detached:true,stdio:'ignore',env:{PATH:'/usr/bin:/bin'}});setInterval(()=>{},1000)`
+    const child = owner.spawn({ command: process.execPath, args: ['-e', parent], cwd: area, env: { PATH: '/usr/bin:/bin' }, signal: new AbortController().signal })
+    let pid: number | undefined
+    try {
+      await expect.poll(() => existsSync(sentinel), { timeout: 30_000 }).toBe(true)
+      pid = Number(readFileSync(sentinel, 'utf8'))
+      // Hold the parent stopped so the killed child remains observable as Z.
+      process.kill(-child.pid!, 'SIGSTOP')
+      process.kill(-pid, 'SIGKILL')
+      await expect.poll(() => execFileSync('/bin/ps', ['-p', String(pid), '-o', 'stat='], { encoding: 'utf8' }).trim().startsWith('Z'), { timeout: 2500 }).toBe(true)
+      if (process.platform === 'darwin') expect(() => process.kill(-pid!, 0)).toThrow(expect.objectContaining({ code: 'EPERM' }))
+      const deadline = Date.now() + 2500
+      owner.prepareClose(deadline)
+      await expect(owner.close(deadline)).resolves.toBeUndefined()
+      expect(exists(child.pid!)).toBe(false)
+    } finally {
+      for (const target of [pid, child.pid]) if (target) { try { process.kill(-target, 'SIGKILL') } catch {} }
+      rmSync(area, { recursive: true, force: true })
+    }
   }, 60_000)
 
   // 网络守护「暂停在跑的任务」(2026-10-03):冻住整棵树(含另起一组的后代),放开后接着跑;

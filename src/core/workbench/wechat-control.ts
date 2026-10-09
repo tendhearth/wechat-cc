@@ -16,9 +16,10 @@ import type {ReviewTurn} from './review'
 export interface WechatMessageIdentity {accountId:string;userId:string;msgId?:string;createTimeMs:number}
 export type WechatWorkbenchReply=string|{kind:'artifact_delivered';receiptId:string}
 type Detail=ReturnType<WorkbenchStore['detail']>&{runId?:string;runtime?:AgentRuntimeSnapshot;inputMode?:'steer'|'send'|'queue';inputs:LiveInput[];permissions:PendingWorkbenchPermission[];questions:PendingUserInput[];wechatNotifications?:{enabled:boolean;notices:Array<{status:string}>};task:Task&{waitingFor?:TaskWaitingFor|null;networkSuspended?:{since:number}}}
+type WorktreeResult={branch:string;committed?:boolean;sha?:string;mergeHint?:string;removed?:boolean;merged?:boolean;into?:string;reopened?:boolean}
 interface Actions {
   projects():ProjectCatalogEntry[]
-  createWechat(input:CreateWechatTask):CreationReceipt
+  createWechat(input:CreateWechatTask):Promise<CreationReceipt>|CreationReceipt
   setWechatWatch(id:string,accountId:string,enabled:boolean):unknown
   deliverWechatArtifact?(input:SendWechatArtifact):Promise<ArtifactDeliveryReceipt>
   detail(id:string):Detail
@@ -30,7 +31,7 @@ interface Actions {
   /** 变更快照(新→旧);没接就没有「改动」这条命令。 */
   reviewList?(id:string):ReviewTurn[]
   /** 独立工作区三个动作(2026-10-08 微信也能做);没接就回「在桌面上做」。 */
-  worktreeAction?(id:string,action:'commit'|'remove'|'merge'|'reopen'):{branch:string;committed?:boolean;sha?:string;mergeHint?:string;removed?:boolean;merged?:boolean;into?:string;reopened?:boolean}
+  worktreeAction?(id:string,action:'commit'|'remove'|'merge'|'reopen'):WorktreeResult|Promise<WorktreeResult>
 }
 const UUID='[a-f0-9]{8}-[a-f0-9]{4}-[1-5][a-f0-9]{3}-[89ab][a-f0-9]{3}-[a-f0-9]{12}'
 const requestCommand=new RegExp(`^(权限|问题|允许|拒绝|回答)\\s+(${UUID})(?:\\s+([\\s\\S]+))?$`,'i')
@@ -48,7 +49,7 @@ const REQUEST_MAX=6000
 const unavailable='没有找到这个任务，请在桌面工作台核对编号。'
 const stale='这条请求已失效或不属于这个任务。请重新查询任务，使用当前请求编号。'
 const stopUnconfirmed='这条停止请求已记录，但尚未确认执行结果。请查询任务状态；如需停止当前轮次，请发送一条新的停止消息。'
-const usage=(id='<任务编号>')=>`用法：\n项目：任务 项目\n新建：任务 新建 <项目编号> <要求>\n并行：任务 新建 <项目编号> 独立 <要求>（从某个分支开始：独立@<分支>）\n查看：任务 ${id}\n补充：任务 ${id} 补充 <要求>\n改动：任务 ${id} 改动\n独立工作区：任务 ${id} 提交 / 合回 / 删除工作区 / 重开工作区\n停止：任务 ${id} 停止\n处理待办时，请复制任务消息中的完整请求编号。`
+const usage=(id='<任务编号>')=>`用法：\n项目：任务 项目\n新建：任务 新建 <项目编号> <要求>\n并行：任务 新建 <项目编号> 独立 <要求>\n查看：任务 ${id}\n补充：任务 ${id} 补充 <要求>\n改动：任务 ${id} 改动\n独立工作区：任务 ${id} 提交 / 合回 / 删除工作区\n旧工作区重开：任务 ${id} 重开工作区\n停止：任务 ${id} 停止\n处理待办时，请复制任务消息中的完整请求编号。`
 const clip=(value:string,max:number)=>value.length>max?value.slice(0,max)+'…':value
 const singleLine=(value:string,max=100)=>clip(value.replace(/[\r\n]+/g,' '),max)
 export const isWechatTaskCommand=(text:string)=>/^(?:任务|\/task)(?:\s|$)/i.test(text.trim())
@@ -160,23 +161,29 @@ const WORKTREE_REFUSED:Record<string,string>={
   project_detached:'项目目录现在不在任何分支上，请在电脑上自己合并。',
   worktree_not_ff:'项目在这之后又有了新提交，不能直接快进。请在电脑上自己合并（可能要处理冲突）。',
   project_busy:'项目目录里还有别的任务在跑，等它收工再合回。',
+  git_workspace_source_merge_unsupported:'这份副本不支持直接合回原项目，请在桌面查看改动或导出补丁。',
   worktree_git_failed:'git 操作没成功，请在电脑上看看这个项目的状态。',
 }
 /** 「任务 <编号> 提交 / 合回 / 删除工作区」:与桌面、手机同一个 worktreeAction;拒绝原因都说成人话。 */
-function worktreeReply(id:string,verb:'提交'|'合回'|'删除工作区'|'重开工作区',act:Actions['worktreeAction']){
+async function worktreeReply(id:string,verb:'提交'|'合回'|'删除工作区'|'重开工作区',act:Actions['worktreeAction'],isolated:boolean){
+  if(isolated&&verb==='重开工作区')return '这份独立副本不支持重开，请从来源项目重新交办。'
   if(!act)return '这里做不了独立工作区的操作，请在桌面工作台上做。'
   try{
-    const r=act(id,verb==='提交'?'commit':verb==='合回'?'merge':verb==='重开工作区'?'reopen':'remove')
-    if(verb==='重开工作区')return `任务 ${id}：已从分支 ${r.branch} 重新打开独立工作区，可以接着做了。\n补充：任务 ${id} 补充 <要求>`
-    if(verb==='提交')return r.committed?`任务 ${id}：已提交到分支 ${r.branch}（${(r.sha??'').slice(0,7)}）。\n合回项目：任务 ${id} 合回`:`任务 ${id}：分支 ${r.branch} 上没有新的改动要提交。`
-    if(verb==='合回')return r.merged?`任务 ${id}：分支 ${r.branch} 已合进项目的 ${r.into??'当前分支'}。\n不再需要工作区：任务 ${id} 删除工作区`:`任务 ${id}：分支 ${r.branch} 上没有项目里还没有的提交，不用合。没提交的改动要先发「任务 ${id} 提交」。`
+    const r=await act(id,verb==='提交'?'commit':verb==='合回'?'merge':verb==='重开工作区'?'reopen':'remove')
+    if(verb==='重开工作区')return r.reopened===true?`任务 ${id}：已从分支 ${r.branch} 重新打开独立工作区，可以接着做了。\n补充：任务 ${id} 补充 <要求>`:`任务 ${id}：重开工作区结果尚未确认，请在桌面工作台核对。`
+    if(verb==='提交')return r.committed?`任务 ${id}：已提交到分支 ${r.branch}（${(r.sha??'').slice(0,7)}）。\n${isolated?'查看改动或导出补丁：请在桌面工作台操作。':`合回项目：任务 ${id} 合回`}`:`任务 ${id}：分支 ${r.branch} 上没有新的改动要提交。`
+    if(verb==='合回'&&r.merged===false)return `任务 ${id}：分支 ${r.branch} 上没有项目里还没有的提交，不用合。没提交的改动要先发「任务 ${id} 提交」。`
+    if((verb==='合回'&&r.merged!==true)||(verb==='删除工作区'&&r.removed!==true))return `任务 ${id}：${verb}结果尚未确认，请在桌面工作台核对。`
+    if(verb==='合回')return `任务 ${id}：分支 ${r.branch} 已合进项目的 ${r.into??'当前分支'}。\n不再需要工作区：任务 ${id} 删除工作区`
     return `任务 ${id}：独立工作区已删除，分支 ${r.branch} 保留在项目里。`
   }catch(error){
     const code=error instanceof Error?error.message:''
+    if(isolated&&code==='worktree_removed')return failure(error,id,true)
+    if(isolated&&verb==='合回'&&code==='invalid_request')return WORKTREE_REFUSED.git_workspace_source_merge_unsupported!
     return WORKTREE_REFUSED[code]?.replaceAll('{id}',id)??'暂时无法处理，请在桌面工作台查看任务状态。'
   }
 }
-function failure(error:unknown,id:string){
+function failure(error:unknown,id:string,isolated=false){
   const code=error instanceof Error?error.message:''
   if(code==='artifact_delivery_conflict')return '这条文件请求与已记录的内容不一致，没有再次发送。请重新查看任务成果。'
   if(code==='artifact_transport_unavailable')return '文件发送暂不可用，已保存的成果仍可在桌面工作台查看。'
@@ -184,8 +191,7 @@ function failure(error:unknown,id:string){
   if(code==='subscription_conflict')return '提醒绑定的账号已变化，没有把旧提醒转发到新账号。请在原聊天关闭提醒后重新设置。'
   if(code==='permission_stale'||code==='question_stale')return stale
   if(code==='invalid_answer'||error instanceof SyntaxError)return '答案格式或选项不正确，尚未提交。请按问题中的示例回答。'
-  if(code==='worktree_base_missing')return '项目里没有这个分支，没有开始工作。请核对分支名（本地分支），或去掉 @<分支> 从最新提交开始。'
-  if(code==='worktree_not_git')return '这个项目不是 Git 仓库，开不了独立工作区。去掉「独立」就能照常交办。'
+  if(code==='worktree_removed'&&isolated)return '这份独立副本已经删除，不支持重开；请从来源项目重新交办。'
   if(code==='worktree_removed')return `这件事的独立工作区已经删除了（分支还在项目里）。要接着做，先发「任务 ${id} 重开工作区」。`
   if(code==='workbench_archived')return '这项任务已归档。请在桌面工作台恢复任务后再继续。'
   if(code==='restart_confirmation_required'||code==='restart_confirmation_stale')return '原执行会话暂时无法恢复。请打开桌面工作台，查看恢复选项并确认是否带此前记录重新开始。'
@@ -194,6 +200,12 @@ function failure(error:unknown,id:string){
   if(code==='input_conflict')return '这条消息的内容与已记录的补充不一致，未再次发送。请重新查询任务。'
   if(code==='control_conflict')return '这条消息的内容与已记录的操作不一致，未再次执行。请重新查询任务。'
   if(code==='creation_conflict')return '这条消息的内容与已记录的新建要求不一致，未再次创建。请发送一条新消息。'
+  if(code==='worktree_base_unsupported')return '暂不支持从保留分支开始，没有开始工作。请重新选择项目，从当前已提交版本交办。'
+  if(code==='worktree_base_missing')return '所选分支已不存在，没有开始工作。请核对项目里的保留分支。'
+  if(code==='git_workspace_source_unsupported')return '这个项目目前无法创建独立副本，没有开始工作。请在桌面查看项目状态，或明确选择原目录。'
+  if(['configuration_not_reproducible','git_workspace_configuration_rejected'].includes(code))return '项目配置暂时无法在独立副本中安全使用，没有开始工作。请在桌面查看说明，或明确选择原目录。'
+  if(['git_workspace_changed','git_workspace_conflict','git_workspace_needs_recovery','git_workspace_configuration_changed'].includes(code))return '准备副本时发现项目或配置已变化，没有开始工作。请在桌面核对原请求和副本状态。'
+  if(['git_timeout','git_unavailable','git_output_limit'].includes(code))return '副本准备暂时未能完成。请保留这条要求，并在桌面核对创建结果。'
   if(code==='project_stale')return '这个项目编号已失效或目录已变化，没有开始工作。请发送「任务 项目」重新选择。'
   if(code==='workbench_attachments_unsupported')return '这个执行者暂不支持工作任务附件，没有开始工作。请移除附件，或改用支持附件的执行者。'
   if(code==='workbench_execution_unsupported')return '这个执行者暂不支持所选执行设置，没有开始工作。请改为自动设置，或选择其他执行者。'
@@ -252,7 +264,7 @@ export function makeWechatWorkbenchControl(opts:{store:WorkbenchStore;ownerChatI
     if(/^新建(?:\s|$)/.test(command)){
       if(!identity?.accountId?.trim())return failure(Error('invalid_wechat_identity'),'')
       // 「任务 新建 <项目> 独立 <要求>」:在这个项目的独立工作区里做(2026-10-07),可以和别的任务同时进行。
-      // 「独立@<分支>」(10-08):独立工作区从这个本地分支开始
+      // Preserve explicit branch intent in the protocol; UUID admission refuses it before work starts.
       const isolated=/^新建\s+p-[a-f0-9]{20}\s+独立(?:@\S+)?\s+\S/i.test(command)
       const match=(isolated?/^新建\s+(p-[a-f0-9]{20})\s+独立(?:@(\S+))?\s+([\s\S]+)$/i:/^新建\s+(p-[a-f0-9]{20})\s+()([\s\S]+)$/i).exec(command)
       if(!match)return usage()
@@ -267,7 +279,7 @@ export function makeWechatWorkbenchControl(opts:{store:WorkbenchStore;ownerChatI
       // wechatTaskMessageKey(v'workbench:'+requestId),不是 identity.msgId。
       // 今天只写不读,不坏事,但留着就是给第一个写 join 的人埋雷。
       const originMessageId=wechatTaskMessageKey({...identity,chatId,text})
-      try{return opts.actions.createWechat({ownerChatId:chatId,accountId:identity.accountId,requestId:inputId(chatId,'',text,identity),commandHash:createHash('sha256').update(text).digest('hex'),projectId:match[1]!.toLowerCase(),...(isolated?{isolation:true}:{}),...(base!==undefined?{base}:{}),...(choice?{providerId:choice[1]!.toLowerCase()}:{}),...(originMessageId?{originMessageId}:{}),text:choice?choice[2]!:body}).reply}
+      try{return (await opts.actions.createWechat({ownerChatId:chatId,accountId:identity.accountId,requestId:inputId(chatId,'',text,identity),commandHash:createHash('sha256').update(text).digest('hex'),projectId:match[1]!.toLowerCase(),...(isolated?{isolation:true}:{}),...(base!==undefined?{base}:{}),...(choice?{providerId:choice[1]!.toLowerCase()}:{}),...(originMessageId?{originMessageId}:{}),text:choice?choice[2]!:body})).reply}
       catch(error){return failure(error,'')}
     }
     if(!command||command==='列表'){
@@ -314,7 +326,7 @@ export function makeWechatWorkbenchControl(opts:{store:WorkbenchStore;ownerChatI
       }
       if(suffix==='改动')return changesReply(id,opts.actions.reviewList?.(id)??null)
       // 独立工作区(2026-10-08):以前这三句会落到下面「补充」,当成要求发给执行者
-      if(suffix==='提交'||suffix==='合回'||suffix==='删除工作区'||suffix==='重开工作区')return worktreeReply(id,suffix,opts.actions.worktreeAction)
+      if(suffix==='提交'||suffix==='合回'||suffix==='删除工作区'||suffix==='重开工作区')return await worktreeReply(id,suffix,opts.actions.worktreeAction,!!opts.store.gitWorkspaceForTask(id))
       if(/^正文(?:\s|$)/.test(suffix)){
         const page=/^正文\s+(r[1-9]\d*-[a-f0-9]{12})\s+([1-9]\d*)$/i.exec(suffix)
         if(!page)return resultCommandHelp(id)
@@ -365,6 +377,6 @@ export function makeWechatWorkbenchControl(opts:{store:WorkbenchStore;ownerChatI
       }
       opts.actions.continueTask(task.id,supplement,{inputRequestId:requestId})
       return `任务 ${id}：已收到补充要求，继续处理。稍后发送「任务 ${id}」查看进展。`
-    }catch(error){return failure(error,id)}
+    }catch(error){return failure(error,id,!!opts.store.gitWorkspaceForTask(id))}
   }
 }

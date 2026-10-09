@@ -60,29 +60,29 @@ function setup() {
 }
 
 describe('quotaHandoff:这件事要不要、能不能交给另一位继续(只读)', () => {
-  it('执行者没耗尽 ⇒ null(不打扰)', () => {
+  it('执行者没耗尽 ⇒ null(不打扰)', async () => {
     const { handoff, failed } = setup()
     expect(handoff.quotaHandoff(failed().id)).toBeNull()
   })
-  it('耗尽 + 有别人能接 ⇒ offer(from / to / kind / resetAt)', () => {
+  it('耗尽 + 有别人能接 ⇒ offer(from / to / kind / resetAt)', async () => {
     const { handoff, failed, exhaust } = setup()
     const t = failed(); exhaust()
     expect(handoff.quotaHandoff(t.id)).toMatchObject({ state: 'offer', from: 'claude', to: 'codex', kind: 'quota' })
     expect((handoff.quotaHandoff(t.id) as { resetAt: number }).resetAt).toBeGreaterThan(Date.now())
   })
-  it('两家都耗尽 ⇒ none(说实话:现在没人能接)', () => {
+  it('两家都耗尽 ⇒ none(说实话:现在没人能接)', async () => {
     const { handoff, failed, exhaust } = setup()
     const t = failed(); exhaust('claude'); exhaust('codex')
     expect(handoff.quotaHandoff(t.id)).toMatchObject({ state: 'none', from: 'claude', kind: 'quota' })
   })
-  it('这件事正在跑 ⇒ null(跑完 / 失败了再说)', () => {
+  it('这件事正在跑 ⇒ null(跑完 / 失败了再说)', async () => {
     const { handoff, failed, exhaust, state } = setup()
     const t = failed(); exhaust()
     state.runsByTask.set(t.id, {} as never)
     expect(handoff.quotaHandoff(t.id)).toBeNull()
     state.runsByTask.delete(t.id)
   })
-  it('不是主人的任务 ⇒ null', () => {
+  it('不是主人的任务 ⇒ null', async () => {
     const { handoff, failed, exhaust } = setup()
     const t = failed('someone'); exhaust()
     expect(handoff.quotaHandoff(t.id)).toBeNull()
@@ -90,68 +90,68 @@ describe('quotaHandoff:这件事要不要、能不能交给另一位继续(只�
 })
 
 describe('handOff:在同一个文件夹交给另一位新开一件(幂等)', () => {
-  it('成功:新任务用 to、同一文件夹、标题不变、第一句说清接替谁;之后详情是 handed', () => {
+  it('成功:新任务用 to、同一文件夹、标题不变、第一句说清接替谁;之后详情是 handed', async () => {
     const { handoff, failed, exhaust, store, project } = setup()
     const t = failed(); exhaust()
-    const r = handoff.handOff(t.id, { requestId: REQ, providerId: 'codex' })
+    const r = (await handoff.handOff(t.id, { requestId: REQ, providerId: 'codex' }))
     expect(r.created).toBe(true); expect(r.taskId).not.toBe(t.id)
     const made = store.get(r.taskId)
     expect(made).toMatchObject({ providerId: 'codex', path: project, title: '修登录页', ownerChatId: 'owner' })
     expect(handoff.quotaHandoff(t.id)).toEqual({ state: 'handed', from: 'claude', to: 'codex', matterId: r.taskId })
   })
-  it('同一个 requestId 重发 ⇒ 同一件、不建第二件(即使额度已恢复)', () => {
+  it('同一个 requestId 重发 ⇒ 同一件、不建第二件(即使额度已恢复)', async () => {
     const { handoff, failed, exhaust, tasks, quota } = setup()
     const t = failed(); exhaust()
-    const a = handoff.handOff(t.id, { requestId: REQ, providerId: 'codex' })
+    const a = (await handoff.handOff(t.id, { requestId: REQ, providerId: 'codex' }))
     quota.quota.clear('claude')
-    const b = handoff.handOff(t.id, { requestId: REQ, providerId: 'codex' })
+    const b = (await handoff.handOff(t.id, { requestId: REQ, providerId: 'codex' }))
     expect(b).toEqual({ taskId: a.taskId, created: false })
     expect(tasks()).toHaveLength(2)
   })
-  it('别的 requestId(另一台设备)再交 ⇒ 回已交出的那件,不建第二件', () => {
+  it('别的 requestId(另一台设备)再交 ⇒ 回已交出的那件,不建第二件', async () => {
     const { handoff, failed, exhaust, tasks } = setup()
     const t = failed(); exhaust()
-    const a = handoff.handOff(t.id, { requestId: REQ, providerId: 'codex' })
-    expect(handoff.handOff(t.id, { requestId: REQ2, providerId: 'codex' })).toEqual({ taskId: a.taskId, created: false })
+    const a = (await handoff.handOff(t.id, { requestId: REQ, providerId: 'codex' }))
+    expect((await handoff.handOff(t.id, { requestId: REQ2, providerId: 'codex' }))).toEqual({ taskId: a.taskId, created: false })
     expect(tasks()).toHaveLength(2)
   })
-  it('同一个 requestId 用在另一件事上 ⇒ creation_conflict', () => {
+  it('同一个 requestId 用在另一件事上 ⇒ creation_conflict', async () => {
     const { handoff, failed, exhaust } = setup()
     const a = failed(), b = failed(); exhaust()
-    handoff.handOff(a.id, { requestId: REQ, providerId: 'codex' })
-    expect(() => handoff.handOff(b.id, { requestId: REQ, providerId: 'codex' })).toThrow('creation_conflict')
+    await handoff.handOff(a.id, { requestId: REQ, providerId: 'codex' })
+    await expect(handoff.handOff(b.id, { requestId: REQ, providerId: 'codex' })).rejects.toThrow('creation_conflict')
   })
-  it('额度已经恢复 ⇒ quota_handoff_not_needed,什么都不建', () => {
+  it('额度已经恢复 ⇒ quota_handoff_not_needed,什么都不建', async () => {
     const { handoff, failed, tasks } = setup()
     const t = failed()
-    expect(() => handoff.handOff(t.id, { requestId: REQ, providerId: 'codex' })).toThrow('quota_handoff_not_needed')
+    await expect(handoff.handOff(t.id, { requestId: REQ, providerId: 'codex' })).rejects.toThrow('quota_handoff_not_needed')
     expect(tasks()).toHaveLength(1)
   })
-  it('确认卡上的接手人变了 ⇒ quota_handoff_changed;没人能接 ⇒ quota_handoff_unavailable', () => {
+  it('确认卡上的接手人变了 ⇒ quota_handoff_changed;没人能接 ⇒ quota_handoff_unavailable', async () => {
     const { handoff, failed, exhaust, tasks } = setup()
     const t = failed(); exhaust()
-    expect(() => handoff.handOff(t.id, { requestId: REQ, providerId: 'claude' })).toThrow('quota_handoff_changed')
+    await expect(handoff.handOff(t.id, { requestId: REQ, providerId: 'claude' })).rejects.toThrow('quota_handoff_changed')
     exhaust('codex')
-    expect(() => handoff.handOff(t.id, { requestId: REQ, providerId: 'codex' })).toThrow('quota_handoff_unavailable')
+    await expect(handoff.handOff(t.id, { requestId: REQ, providerId: 'codex' })).rejects.toThrow('quota_handoff_unavailable')
     expect(tasks()).toHaveLength(1)
   })
-  it('正在跑 ⇒ workbench_busy;不是主人的 ⇒ invalid_entry_owner;坏参数 ⇒ invalid_request / invalid_provider', () => {
+  it('正在跑 ⇒ workbench_busy;不是主人的 ⇒ invalid_entry_owner;坏参数 ⇒ invalid_request / invalid_provider', async () => {
     const { handoff, failed, exhaust, state } = setup()
     const t = failed(); exhaust()
     state.runsByTask.set(t.id, {} as never)
-    expect(() => handoff.handOff(t.id, { requestId: REQ, providerId: 'codex' })).toThrow('workbench_busy')
+    await expect(handoff.handOff(t.id, { requestId: REQ, providerId: 'codex' })).rejects.toThrow('workbench_busy')
     state.runsByTask.delete(t.id)
     const other = failed('someone')
-    expect(() => handoff.handOff(other.id, { requestId: REQ, providerId: 'codex' })).toThrow('invalid_entry_owner')
-    expect(() => handoff.handOff('nope', { requestId: REQ, providerId: 'codex' })).toThrow('invalid_request')
-    expect(() => handoff.handOff(t.id, { requestId: 'x', providerId: 'codex' })).toThrow('invalid_request')
-    expect(() => handoff.handOff(t.id, { requestId: REQ, providerId: 'Bad Id!' })).toThrow('invalid_provider')
+    await expect(handoff.handOff(other.id, { requestId: REQ, providerId: 'codex' })).rejects.toThrow('invalid_entry_owner')
+    await expect(handoff.handOff('nope', { requestId: REQ, providerId: 'codex' })).rejects.toThrow('invalid_request')
+    await expect(handoff.handOff(t.id, { requestId: 'x', providerId: 'codex' })).rejects.toThrow('invalid_request')
+    await expect(handoff.handOff(t.id, { requestId: REQ, providerId: 'Bad Id!' })).rejects.toThrow('invalid_provider')
   })
-  it('文件夹不在了 ⇒ 抛(不建),与交办同一个错误', () => {
+  it('文件夹不在了 ⇒ 抛(不建),与交办同一个错误', async () => {
     const { handoff, failed, exhaust, project, tasks } = setup()
     const t = failed(); exhaust()
     rmSync(project, { recursive: true })
-    expect(() => handoff.handOff(t.id, { requestId: REQ, providerId: 'codex' })).toThrow()
+    await expect(handoff.handOff(t.id, { requestId: REQ, providerId: 'codex' })).rejects.toThrow()
     expect(tasks()).toHaveLength(1)
   })
 })

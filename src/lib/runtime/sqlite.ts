@@ -54,16 +54,19 @@ export function openSqlite(filename: string, options?: OpenSqliteOptions | numbe
 // ───────────────────────── Bun ─────────────────────────
 // `bun:sqlite` 的 close() 走 sqlite3_close_v2:还有没 finalize 的语句时,连接不真关,
 // 变成"僵尸",文件句柄一直开到那些语句被 GC。而 `db.query()` 的缓存只装 20 条 ——
-// 第 21 条不同的 SQL 进来,被挤出缓存的语句**不会** finalize,只是丢给 GC。openDb
+// 第 21 条不同的 SQL 进来,未缓存的语句**不会** finalize,只是丢给 GC。openDb
 // 跑迁移就要 30 来条不同的 SQL,所以每一个开过 openDb 的文件库,close() 之后句柄都还开着
 // (2026-10-01 本机 lsof 实测:close 后 4 个句柄 —— 库 / -wal / -shm —— 一直在,手动 GC 才放)。
 // macOS / Linux 允许删掉仍被打开的文件,看不出来;Windows 上紧跟着删 / 改名这个库就是
 // EBUSY,而且怎么退避重试都不会好(句柄要等 GC)。测试里的 removeTempDir 每次白等 21 轮,
 // 备份还原那种「关库再 rename」在 Windows 上同样会撞。
-// 修法:记下 query()/prepare() 交出去的每一条语句(弱引用,不拦 GC),close() 之前统一
-// finalize,让 close_v2 真的关掉连接。finalize 可以重复调,Bun 自己缓存里的那几条再
-// finalize 一次也无害;close 之后谁再用这些语句本来就会抛。
-type BunStatement = { finalize(): void }
+// JS Statement 的弱引用会先失效,其 native sqlite3_stmt 却可能尚未释放:异步 Git
+// 子进程之间的语句因此从旧的 close() 清单里漏掉。保留 native finalizer,同时仍然弱引
+// 用 JS wrapper;wrapper 被收集时释放 native 并移出清单,动态 SQL 不会全部保留到关库。
+// close() 也释放尚未收到收集回调的 native。Bun 1.3.14 的 Statement.native 暴露
+// finalize();只在本适配层使用。活 wrapper 仍走自己的 finalize,保留 isFinalized 状态。
+type BunNativeStatement = { finalize(): void }
+type BunStatement = { readonly native: BunNativeStatement; finalize(): void }
 type BunDatabaseCtor = new (filename?: string, options?: number | OpenSqliteOptions) => SqlDatabase
 let closingBunDatabaseClass: BunDatabaseCtor | undefined
 function closingBunDatabase(): BunDatabaseCtor {
@@ -75,22 +78,29 @@ function closingBunDatabase(): BunDatabaseCtor {
     close(throwOnError?: boolean): void
   }
   class ClosingDatabase extends Base {
-    #live = new Set<WeakRef<BunStatement>>()
+    #live = new Map<BunNativeStatement, WeakRef<BunStatement>>()
     #seen = new WeakSet<BunStatement>()
-    #registry = new FinalizationRegistry<WeakRef<BunStatement>>(ref => { this.#live.delete(ref) })
+    #registry = new FinalizationRegistry<BunNativeStatement>(native => {
+      try { native.finalize() } finally { this.#live.delete(native) }
+    })
     #track(statement: BunStatement): BunStatement {
       if (!this.#seen.has(statement)) {
         this.#seen.add(statement)
-        const ref = new WeakRef(statement)
-        this.#live.add(ref)
-        this.#registry.register(statement, ref)
+        const native = statement.native
+        this.#live.set(native, new WeakRef(statement))
+        this.#registry.register(statement, native, native)
       }
       return statement
     }
     override query(sql: string): BunStatement { return this.#track(super.query(sql)) }
     override prepare(sql: string, params?: unknown): BunStatement { return this.#track(super.prepare(sql, params)) }
     override close(throwOnError?: boolean): void {
-      for (const ref of this.#live) { try { ref.deref()?.finalize() } catch { /* 已经 finalize 过 */ } }
+      for (const [native, ref] of this.#live) {
+        this.#registry.unregister(native)
+        const statement = ref.deref()
+        if (statement) statement.finalize()
+        else native.finalize()
+      }
       this.#live.clear()
       super.close(throwOnError)
     }
