@@ -155,8 +155,9 @@
 - [x] 使用实际 HTTP+持久 SQLite+临时 Git+可控制关闭的执行者 fixture 走新建→并行→接手→close→查看→撤回→导出→重启恢复；断言源工作树/branch/index 未变。
 - [x] Bun 全套、Node 全套、typecheck、depcheck、完整 desktop Playwright；Rust allowlist 改动跑相关完整 Cargo 测试。
 - [x] 独立整支评审，修复必须覆盖失败回归；没有恢复证据或仍存在覆盖风险不发布。
-- [ ] 更新 cc-workbench/roadmap/全景图中的真实交付与边界；HTML 通过 build:map 生成。纯计划和文档不伪装已实现能力。
-- [ ] 推特性分支并创建 dev PR，附加本聊天，核对准确 SHA 的 CI，保留原始失败和已知额度限制。
+- [x] 更新 cc-workbench/roadmap/全景图中的当前实现、待交付状态与边界；HTML 通过 build:map 生成。纯计划和文档不伪装已实现能力。
+- [x] 推特性分支并创建 dev PR 262，附加本聊天，保留原始失败和已知额度限制。
+- [ ] 准确最终 SHA 的 CI 全绿；`fada498a` 本地全套通过，但 Windows 两轮超时仍按真实失败处理。有界 worker 预算候选另验，不能用旧模块通过核销。
 - [ ] 按本项目既有整合授权和维护标准回路完成 dev 整合、本机部署与真执行者验收；公开 master/商店/版本发布不属于这批。
 - [ ] 真验收只用自建 Git 项目与测试文件。关闭/归档测试任务，收尾仅清理本批确认归属的夹具；保留可恢复成果和代码工作树。
 
