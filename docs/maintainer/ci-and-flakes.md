@@ -12,6 +12,14 @@
 
 bun 版本在 workflow 里**钉死**(`bun-version: 1.3.14`),不用 `latest` —— 上游发新版能让 CI 在没有任何提交的情况下自己变红。升 bun 该是一件有人盯着的事。
 
+## Windows 测试 worker 预算
+
+Windows 的 `Run tests` 使用 `bun run test --maxWorkers=2`;Linux / macOS 仍使用 `bun run test`,不加 worker 参数。两条命令走同一个 `package.json` 测试脚本和原配置,保留全部原测试选择、测试内部的并发场景、超时门槛与既有平台排除清单。
+
+`2` 是明确的 runner 资源预算。2026-10-08 的 Windows 两轮运行都在四个可用 CPU 上出现超时,但阶段记录只包含父进程 CPU,不能证明资源竞争、磁盘或子进程就是原因;原因仍是 **UNKNOWN**。这个预算候选必须由准确提交的 Windows CI 验证,本地 `bun run test --maxWorkers=2` 通过不能替代该门。两轮仍红的既有运行继续按真红处理,不改变 flake 判定或增加重跑机会。
+
+Windows 测试前仅输出五项白名单元数据:`availableParallelism`、`cpuCount`、`bunVersion`、`vitestVersion`、`selectedMaxWorkers`,用于核对实际运行时与选定预算。
+
 ## Windows 排除清单的规矩
 
 `vitest.config.ts` 里有一段 `process.platform === 'win32' ? [...] : []` 的排除列表。规矩只有一条:

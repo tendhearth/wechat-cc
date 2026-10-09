@@ -129,11 +129,22 @@ jobs:
         if: ${{ !cancelled() && matrix.os == 'ubuntu-latest' }}
         run: bun scripts/smoke-compiled-sidecar.ts
 
+      - name: Windows test worker metadata
+        if: ${{ !cancelled() && matrix.os == 'windows-latest' }}
+        run: >
+          bun -e "import { availableParallelism, cpus } from 'node:os';
+          console.log(JSON.stringify({ availableParallelism: availableParallelism(),
+          cpuCount: cpus().length, bunVersion: Bun.version,
+          vitestVersion: (await import('vitest/package.json')).default.version,
+          selectedMaxWorkers: 2 }))"
+
       - name: Run tests
         if: ${{ !cancelled() }}
         # `bun run test` invokes `bun --bun vitest run` per package.json
         # (PR7 — vitest needs Bun's runtime to resolve `bun:sqlite`).
-        run: bun run test
+        # Windows has an explicit runner budget; test selection and in-test
+        # concurrency stay unchanged. This does not establish timeout causes.
+        run: bun run test ${{ matrix.os == 'windows-latest' && '--maxWorkers=2' || '' }}
 
   # 「换运行时的出口是真的」的证明:同一套单元测试(整个 src,只差 Bun.serve 上的 ws 服务端)
   # 在 Node 24 上跑。2026-09-16 起步时 lib + core 是 2765 过 / 38 红;适配层补齐后同日整个 src
