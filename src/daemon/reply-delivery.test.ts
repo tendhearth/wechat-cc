@@ -187,6 +187,26 @@ describe('makeReplyDeliveryRuntime — 一轮的句柄', () => {
     expect(rt.attach('c1', s)).toBe(false) // 交付完就关了
   })
 
+  it('/both、/chat 两位共用一轮时,同一个附件只发一次;一位放弃不丢另一位的附件(2026-10-10)', async () => {
+    const h = harness()
+    const rt = makeReplyDeliveryRuntime(h.deps)
+    const claude = rt.begin('c1', { mode: 'daemon', context: 'dm', providerId: 'claude' })
+    const codex = rt.begin('c1', { mode: 'daemon', context: 'dm', providerId: 'codex' })
+    const s = pending({ kind: 'sticker', ref: { tag: '开心' } })
+    rt.attach('c1', s)
+    await claude.deliver({ finalText: 'Claude 的回答在这里', narration: [] })
+    const r = await codex.deliver({ finalText: 'Codex 的回答在这里', narration: [] })
+    expect(s.send).toHaveBeenCalledTimes(1)
+    expect(r.attachmentsSent).toBe(0)
+    const a = rt.begin('c2', { mode: 'daemon', context: 'dm', providerId: 'claude' })
+    const b = rt.begin('c2', { mode: 'daemon', context: 'dm', providerId: 'codex' })
+    const v = pending({ kind: 'sticker', ref: { tag: '好的' } })
+    rt.attach('c2', v)
+    a.abandon('error')
+    await b.deliver({ finalText: 'Codex 接着说完', narration: [] })
+    expect(v.send).toHaveBeenCalledTimes(1)
+  })
+
   it('turnChatFor:共享令牌按「这家 provider 此刻在跑的 daemon 轮」认聊天(none / bound / ambiguous;shadow 不算;交付或放弃后解绑)', async () => {
     const h = harness()
     const rt = makeReplyDeliveryRuntime(h.deps)
