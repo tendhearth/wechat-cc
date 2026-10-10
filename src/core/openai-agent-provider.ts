@@ -170,7 +170,11 @@ function makeOpenAiSession(args: {
                 permissionMode: ctx.permissionMode,
               })
               let result: string
-              if (decision === 'deny') {
+              // 一步里多个工具调用:主人 /stop 之后剩下的(可能是有副作用的 Bash)一个都不再跑,
+              // 但每个 call id 仍要回一条结果,否则这个会话下一次请求在 API 那边是坏的。
+              if (abort.signal.aborted) {
+                result = 'Cancelled: the user stopped this turn before this tool ran.'
+              } else if (decision === 'deny') {
                 result = `Permission denied: tool "${tc.name}" is not allowed for this chat.`
               } else {
                 try {
@@ -195,7 +199,8 @@ function makeOpenAiSession(args: {
               }
               messages.push(chatModel.toolResultMessage(tc.id, tc.name, result))
             }
-            // Boundary check #2 — right after tool execution, before the
+            // Boundary check #2 — right after the tool batch (each call also
+            // checks the signal before running), before the
             // step-budget check. Same shape as step_budget: error then
             // break, finish still fires.
             if (abort.signal.aborted) {

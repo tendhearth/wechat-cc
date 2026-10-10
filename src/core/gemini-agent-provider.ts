@@ -166,6 +166,11 @@ export async function* runDispatchLoop(args: DispatchLoopArgs): AsyncIterable<Ag
       for (const call of validCalls) {
         const name = call.name!
         const callArgs = call.args ?? {}
+        // /stop 落在这一批中间:剩下的不再执行,但照样回一条 functionResponse(数量要对上)
+        if (args.signal?.aborted) {
+          responseParts.push({ functionResponse: { name, response: { error: 'cancelled: the user stopped this turn before this tool ran' } } })
+          continue
+        }
         yield { kind: 'tool_call', server: 'wechat', tool: name }
         const decision = await args.gate(name, callArgs)
         if (!decision.allow) {
