@@ -645,8 +645,13 @@ function switchPane(name) {
     loadMemoryPane(deps).catch(err => {
       console.error("memory load failed", err)
       const mr = document.getElementById("memory-rendered")
-      if (mr) mr.innerHTML =
-        `<p class="empty-state">加载失败：${formatInvokeError(err)}</p>`
+      // 错误信息可能带 CLI 的 stderr(文件名、联系人名):按纯文本放,不进 innerHTML
+      if (mr) {
+        const p = document.createElement("p")
+        p.className = "empty-state"
+        p.textContent = `加载失败：${formatInvokeError(err)}`
+        mr.replaceChildren(p)
+      }
     })
     loadMemoryTopZone(deps).catch(err => console.error("memory top zone failed", err))
   }

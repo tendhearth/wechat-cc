@@ -181,7 +181,7 @@ async function runSetup(name, btn) {
   const poll = setInterval(async () => {
     try {
       const s = await invoke('wechat_cli_json', { args: ['plugin', 'setup-status'] })
-      if (s && s.running) showNote(`解密中… [${s.stage}/${s.total}] ${escapeHtml(String(s.label ?? ''))}`)
+      if (s && s.running) showNote(`解密中… [${s.stage}/${s.total}] ${String(s.label ?? '')}`)
     } catch { /* transient */ }
   }, 700)
   try {
@@ -190,7 +190,7 @@ async function runSetup(name, btn) {
     const s = await invoke('wechat_cli_json', { args: ['plugin', 'setup-status'] }).catch(() => null)
     showNote(s?.ok
       ? `${name} 解密完成 — 现在可「启用」并重启 daemon 生效`
-      : `连接失败：${escapeHtml(String(s?.error ?? '见日志'))}（微信是否已登录？）`, s?.ok ? 'success' : 'error')
+      : `连接失败：${String(s?.error ?? '见日志')}（微信是否已登录？）`, s?.ok ? 'success' : 'error')
   } catch (err) {
     showNote(`连接失败：${err instanceof Error ? err.message : String(err)}`, 'error')
   } finally {
