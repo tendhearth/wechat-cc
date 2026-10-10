@@ -1,5 +1,5 @@
 import { query, type CanUseTool, type Options, type PermissionResult, type SDKMessage, type SDKUserMessage } from '@anthropic-ai/claude-agent-sdk'
-import type { AgentActivity, AgentAttachment, AgentEvent, AgentProject, AgentProvider, AgentSession, PermissionMode, ProviderCapabilities, SpawnContext } from './agent-provider'
+import type { AgentActivity, AgentAttachment, AgentEvent, AgentProject, AgentProvider, AgentSession, PermissionMode, SpawnContext } from './agent-provider'
 import { classifyToolUse, TIER_PROFILES, type TierProfile, type ToolKind } from './user-tier'
 import { WORKBENCH_PERMISSION_DESCRIPTION_MAX, WORKBENCH_PERMISSION_TOOL_MAX } from './workbench/permissions'
 import { validateUserInputAnswers, validateUserInputRequest } from './workbench/user-input'
@@ -12,6 +12,8 @@ import { claudeApiErrorCode } from './claude-api-error-code'
 import { discoverClaudeModels } from './workbench/claude-model-catalog'
 import { executionModel, nativeModelId } from './workbench/native-model-catalog'
 import { createClaudeWorkbenchSession } from './claude-workbench-runtime'
+import { effectivePolicy } from './permission-relay'
+import { lookup } from './capability-matrix'
 
 function userContent(text: string, attachments: readonly AgentAttachment[] = []): Exclude<SDKUserMessage['message']['content'], string> {
   const content: Exclude<SDKUserMessage['message']['content'], string> = text || !attachments.length ? [{ type: 'text', text }] : []
@@ -31,28 +33,7 @@ function userContent(text: string, attachments: readonly AgentAttachment[] = [])
   return content
 }
 
-/**
- * RFC 05 Phase 2 — static capabilities. Claude is the only provider with
- * a per-tool callback SDK; sandbox levels are empty because Claude has
- * no SDK-level sandbox knob (relies on canUseTool + disallowedTools).
- */
-export const CLAUDE_CAPABILITIES: ProviderCapabilities = {
-  perToolCallback: true,
-  adminMcpTools: true,
-  sandboxLevels: new Set(),
-  supportsDelegation: true,
-  supportsResume: true,
-  defaultPeer: 'codex',
-  authFailHint: '⚠ Claude 登录已过期，请在电脑上跑 `claude login` 后再发消息。',
-  // 回复交付第 5 步(2026-10-03,维护者按约定定,主人授权):最后一段非空文字就是回复,之前的段是旁白(不进微信,
-  // 超过 120 秒 daemon 发一句进度)。wechat MCP 是 wechatStdioMcpSpec('claude') + 会话 env(sdkOptionsForProject),
-  // 按这个开关带 WECHAT_REPLY_DELIVERY=daemon ⇒ 没有 reply 族,只有附件工具(+ admin 的 message);会话令牌里有 chat。
-  // SDK 的 result.result 只用来核对分段(见下面 result 分支)。闸门见 docs/reference/reply-once-experiment.md「第 5 步」。
-  // 回滚:agent-config 的 reply_delivery: { claude: 'legacy' } + 重启 daemon(docs/maintainer/reply-delivery.md)。
-  replyDelivery: 'daemon',
-  // 编码型执行者:只取最后一段(spec §4.2 / 修订记录 2026-10-03)。
-  replyText: 'last_segment',
-}
+export { CLAUDE_CAPABILITIES } from './provider-capabilities'
 
 /**
  * Map ToolKind → the Claude Code built-in tool names that fall into it.
@@ -221,14 +202,6 @@ export function makeWorkbenchClaudeCanUseTool(
       } catch { return denied }
     }
     const kind = classifyToolUse(toolName, input)
-    // Load after provider module initialization. permission-relay depends on
-    // capability-matrix, whose provider declarations include this module.
-    // A static import here would evaluate that cycle before the declarations
-    // exist and fail closed by crashing startup instead of denying a tool.
-    const [{ effectivePolicy }, { lookup }] = await Promise.all([
-      import('./permission-relay'),
-      import('./capability-matrix'),
-    ])
     if (options.signal.aborted) {
       return { behavior:'deny', message:'This task tool call was cancelled.' } satisfies PermissionResult
     }

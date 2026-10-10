@@ -15,7 +15,7 @@
  * Decoupled from bootstrap via injected genai / mcpConnect / buildGate so the
  * loop is unit-testable. See docs/superpowers/specs/2026-06-04-gemini-provider-design.md.
  */
-import type { AgentEvent, AgentProject, AgentProvider, AgentSession, PermissionMode, ProviderCapabilities, SpawnContext } from './agent-provider'
+import type { AgentEvent, AgentProject, AgentProvider, AgentSession, PermissionMode, SpawnContext } from './agent-provider'
 import type { TierProfile } from './user-tier'
 import { classifyToolUse } from './user-tier'
 import type { McpStdioSpec } from './mcp-stdio-spec'
@@ -24,24 +24,7 @@ import { makeTurnEmitter } from './turn-emitter'
 import { openaiErrorCode } from './openai-error-code'
 import { withProviderCode } from '../lib/provider-error-code'
 
-/** RFC 05 Phase 2 capability declaration. We OWN the loop → per-tool gating is
- *  realisable (perToolCallback). No SDK sandbox (enforcement is the tool gate,
- *  like Claude). Delegation + resume deferred to a follow-up. */
-export const GEMINI_CAPABILITIES: ProviderCapabilities = {
-  perToolCallback: true,
-  // mcpEnv threads WECHAT_SESSION_TIER per session.
-  adminMcpTools: true,
-  sandboxLevels: new Set(),
-  supportsDelegation: false,
-  supportsResume: false,
-  defaultPeer: 'claude',
-  // 回复交付收尾(spec 2026-10-03 §5.7 删除清单「gemini 二选一」,2026-10-04 定:迁到 daemon,不删)。
-  // 和 openai 同一种形状:自研循环(没有 functionCall 的那一步就是一轮的结束)、聊天型模型 ⇒ 全部文字段按
-  // 顺序交付。迁过来后 legacy 路径不再有任何默认使用者,第 6 步可以整块删。这家一直没有真模型闸门(主人
-  // 机器上从没配过 GEMINI_API_KEY);回滚同其它家:agent-config 的 reply_delivery: { gemini: 'legacy' } + 重启。
-  replyDelivery: 'daemon',
-  replyText: 'all_segments',
-}
+export { GEMINI_CAPABILITIES } from './provider-capabilities'
 
 export interface GeminiTierSdkOpts {
   /** strict ⇒ the per-tool gate runs; dangerously ⇒ operator bypassed everything. */

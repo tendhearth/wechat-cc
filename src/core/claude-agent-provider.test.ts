@@ -463,11 +463,11 @@ describe('claude-agent-provider', () => {
     expect(requestPermission).not.toHaveBeenCalled()
   })
 
-  it('denies an allow-policy tool when the SDK aborts while policy modules load', async () => {
+  it('denies an allow-policy tool when the SDK has already aborted', async () => {
     const controller = new AbortController()
     const gate = makeWorkbenchClaudeCanUseTool(vi.fn(async () => true))
-    const decision = gate('Read', { file_path: '/tmp/report.md' }, { signal: controller.signal } as never)
     controller.abort()
+    const decision = gate('Read', { file_path: '/tmp/report.md' }, { signal: controller.signal } as never)
     await expect(decision).resolves.toMatchObject({ behavior: 'deny' })
   })
 

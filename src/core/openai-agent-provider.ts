@@ -6,7 +6,6 @@ import {
   type AgentEvent,
   type AgentProject,
   type SpawnContext,
-  type ProviderCapabilities,
   assertNotAuthFailed,
 } from './agent-provider'
 import { isAuthErrorCode, withProviderCode } from '../lib/provider-error-code'
@@ -17,25 +16,7 @@ import { builtinTools, type BuiltinTool } from './openai-tools'
 import { gateTool } from './openai-gate'
 import { makeTurnEmitter } from './turn-emitter'
 
-export const OPENAI_CAPABILITIES: ProviderCapabilities = {
-  // We own the loop, so per-tool gating IS realisable.
-  perToolCallback: true,
-  // openai-mcp-bridge threads WECHAT_SESSION_TIER per session.
-  adminMcpTools: true,
-  // No SDK/OS sandbox in v1 — the tier gate is the only barrier.
-  sandboxLevels: new Set(),
-  supportsDelegation: true,
-  supportsResume: false,
-  defaultPeer: 'claude',
-  authFailHint: 'openai: set WECHAT_OPENAI_API_KEY (and check base_url/model in agent config).',
-  // 回复交付第 1 步(spec 2026-10-03 §5.2):2026-10-03 维护者决定切 daemon(主人授权)。四轮 reply-once
-  // 闸门里新路在真正的故障点上全面好于 legacy(污染会话 15/15 干净收住 vs legacy 8.4 条、3/5 跑满步数;
-  // 推送该静默 4/5 vs 0/5);剩下的是「语音后多一句」这类小毛病。回滚:agent-config 的
-  // reply_delivery: { openai: 'legacy' } + 重启 daemon(docs/maintainer/reply-delivery.md)。
-  replyDelivery: 'daemon',
-  // 聊天型模型:本轮所有文字段按顺序都交付(工具前说的话也是聊天内容,不是长任务旁白)。
-  replyText: 'all_segments',
-}
+export { OPENAI_CAPABILITIES } from './provider-capabilities'
 
 /**
  * Text-delta → event mapping only. `tool_call` deltas are NOT handled here:
