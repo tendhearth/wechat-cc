@@ -189,7 +189,9 @@ export function isRetryableSendError(err: Error): boolean {
   // had this same hazard but was less likely to trip with the stricter
   // `\s5\d\d:` pattern. With the looser `\b5\d\d\b` we now check
   // errcodes first.
-  if (/errcode=(-14|-6)\b/.test(err.message)) return false
+  // -2 = 主动推送窗口没开(主人太久没说话,outbound-health 判为非暂时性):重试只是同一个
+  // 结果多打两次线上调用、多等 2 秒(每条开机通知 / 提醒 / 广播都是)。
+  if (/errcode=(-14|-6|-2)\b/.test(err.message)) return false
   if (/errcode=/.test(err.message)) return true
   // ilinkPost throws `${endpoint} ${status}: ${body}` on !res.ok. The
   // prior regex `/\s5\d\d:/` only matched when the body was followed
