@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest'
-import { mkdtempSync, mkdirSync, writeFileSync, rmSync, existsSync } from 'node:fs'
+import { mkdtempSync, mkdirSync, writeFileSync, rmSync, existsSync, statSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { loadPlugins, pluginMcpSpecs, setPluginEnabled, cmpVersion } from './registry'
@@ -94,6 +94,13 @@ describe('plugin registry', () => {
     const p = loadPlugins({ stateDir, bundledDir }).find(x => x.name === 'wxperson')!
     expect(p.enabled).toBe(true)
     expect(p.ready).toBe(true)   // dataDir auto-created → `..` resolves
+  })
+
+  // 2026-10-10:wxvault 在 plugin-data 下放主人解密后的微信记录 —— 只给自己读。
+  it.skipIf(process.platform === 'win32')('creates the plugin\'s ${dataDir} owner-only (0700)', () => {
+    writePlugin(bundledDir, 'wxvault', good('wxvault'))
+    loadPlugins({ stateDir, bundledDir })
+    expect(statSync(join(stateDir, 'plugin-data', 'wxvault')).mode & 0o777).toBe(0o700)
   })
 
   it('does NOT create ${dataDir} for a disabled plugin (no discovery-time litter)', () => {
