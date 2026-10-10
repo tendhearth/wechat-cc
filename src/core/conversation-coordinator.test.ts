@@ -2782,6 +2782,26 @@ describe('dispatch-time provider policy + cold-start block', () => {
     expect(acquire).toHaveBeenCalledTimes(1)
     expect(sendAssistantText).not.toHaveBeenCalledWith('chat-1', expect.stringContaining('对访客不开放'))
   })
+  // 2026-10-10 评审:/both、/chat 原先只剥 agy,不查 guestSafe / trusted_providers ⇒ 访客 `/both claude cursor`
+  // 就把 Cursor 以访客档拉起来(工作区内编辑不经权限卡),也绕过主人的 /set providers 限制。
+  it('parallel + guest chat: cursor is dropped from the participants, never acquired', async () => {
+    const { c, store, acquire } = setupWith(guest)
+    store.set('chat-1', { kind: 'parallel', participants: ['claude', 'cursor'] })
+    await c.dispatch(inbound('chat-1', 'hi'))
+    expect(acquire.mock.calls.map(([r]) => r.providerId)).not.toContain('cursor')
+  })
+  it('parallel + trusted chat outside the admin allowlist: the disallowed participant is dropped', async () => {
+    const { c, store, acquire } = setupWith(trusted, { trustedProviders: () => ['claude'] })
+    store.set('chat-1', { kind: 'parallel', participants: ['claude', 'openai'] })
+    await c.dispatch(inbound('chat-1', 'hi'))
+    expect(acquire.mock.calls.map(([r]) => r.providerId)).not.toContain('openai')
+  })
+  it('chatroom + guest chat: cursor never speaks', async () => {
+    const { c, store, acquire } = setupWith(guest)
+    store.set('chat-1', { kind: 'chatroom', participants: ['claude', 'cursor', 'openai'] })
+    await c.dispatch(inbound('chat-1', 'hi'))
+    expect(acquire.mock.calls.map(([r]) => r.providerId)).not.toContain('cursor')
+  })
   it('trusted chat on a provider outside the admin allowlist is refused; inside dispatches', async () => {
     const { c, store, acquire, sendAssistantText } = setupWith(trusted, { trustedProviders: () => ['claude'] })
     store.set('chat-1', { kind: 'solo', provider: 'agy' })
