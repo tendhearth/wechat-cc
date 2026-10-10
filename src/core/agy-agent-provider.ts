@@ -11,7 +11,7 @@
  * source of the CONTROLLER RULINGS baked into arg assembly below).
  */
 import { tmpdir } from 'node:os'
-import { assertNotAuthFailed, normalizeWechatMcpServer, type AgentEvent, type AgentProject, type AgentProvider, type AgentSession, type CheapEval, type ProviderCapabilities, type SpawnContext } from './agent-provider'
+import { assertNotAuthFailed, normalizeWechatMcpServer, type AgentEvent, type AgentProject, type AgentProvider, type AgentSession, type CheapEval, type SpawnContext } from './agent-provider'
 import { makeAgyStreamParser } from './agy-stream'
 import { makeTurnEmitter } from './turn-emitter'
 import { agyErrorCode } from './agy-errors'
@@ -19,36 +19,10 @@ import { errorWithProviderCode } from '../lib/provider-error-code'
 import { spawn } from '../lib/runtime/process'
 import { wrapForProcessTree } from '../lib/jobspawn'
 
-/**
- * RFC 05 Phase 2 capability declaration. agy has no per-tool callback (print
- * mode auto-denies/auto-allows) and no SDK sandbox surface we map in v1
- * (`--sandbox` deferred, see spec §7 non-goals). Resume IS real (native
- * `--conversation <id>`); delegation is explicitly out for v1 (spec §0
- * decision 2 — supportsDelegation:false keeps agy off primary_tool/parallel).
- */
 /** agyModel 没设时的兜底 —— 只此一处(见 claude-agent-provider 的 DEFAULT_CLAUDE_MODEL 注释)。 */
 export const DEFAULT_AGY_MODEL = 'gemini-3.7-flash-medium'
 
-export const AGY_CAPABILITIES: ProviderCapabilities = {
-  perToolCallback: false,
-  // agy-mcp-config.ts pins WECHAT_SESSION_TIER to 'trusted' for its MCP
-  // child (one static token, not per-session) — SESSION_IS_ADMIN is always
-  // false, so admin-only tools (incl. the social-tools family) never
-  // register for agy even when the owner is chatting.
-  adminMcpTools: false,
-  sandboxLevels: new Set(),
-  supportsDelegation: false,
-  supportsResume: true,
-  defaultPeer: 'claude',
-  authFailHint: 'agy 登录态失效，请在电脑上跑一次 `agy` 重新登录后再发消息。',
-  // 回复交付第 2 步(2026-10-03):维护者决定切 daemon(主人授权)。沙盒闸门(真 agy,56 轮)两臂行为打平、
-  // daemon 非回复工具调用更少(10.3 vs 15.0);结构收益:双发不再依赖命名空间折叠、共享令牌的附件绑到本轮
-  // (#199 豁免在 daemon 下取消)、走统一交付路径(终局要删 legacy)。回滚:agent-config 的
-  // reply_delivery: { agy: 'legacy' } + 重启 daemon(docs/maintainer/reply-delivery.md)。
-  replyDelivery: 'daemon',
-  // 聊天型(订阅版 Gemini 的 CLI):翻到 daemon 时本轮所有文字段都交付,不只取最后一段(2026-10-03 修订)。
-  replyText: 'all_segments',
-}
+export { AGY_CAPABILITIES } from './provider-capabilities'
 
 /** Test-time (and default Bun.spawn) seam for the agy child process. */
 export interface AgySpawnHandle {

@@ -14,9 +14,8 @@ import {makeCreationReceiptStore} from './creation-receipts'
 import {createEntryStore} from './entry-store'
 import {makeWechatNotificationStore} from './wechat-notifications'
 import {makeArtifactDeliveryStore} from './artifact-deliveries'
-import {makeTimelineEvents} from './timeline-events'
+import {makeTimelineEvents,type TaskEvent} from './timeline-events'
 import {makeReviewMarkStore} from './review-marks'
-import type {AgentActivity} from '../agent-provider'
 
 export type TaskStatus = 'queued' | 'running' | 'cancelling' | 'completed' | 'failed' | 'cancelled' | 'interrupted'
 export interface Task {
@@ -32,7 +31,7 @@ function parseGroups(raw:string|null):number[]|null {
   try { const v:unknown=JSON.parse(raw); return Array.isArray(v)&&v.length&&v.every(g=>Number.isInteger(g)&&g>1)?v as number[]:null } catch { return null }
 }
 export interface StoredTask extends Task { ownerChatId: string | null; sessionId: string | null }
-export interface TaskEvent { id: number; taskId: string; kind: 'user' | 'text' | 'tool_call' | 'system' | 'error'; text: string; createdAt: number; sourceId?:string|null; runId?:string; activity?:AgentActivity; attachments?:import('./attachments').Attachment[]; errorCode?:'execution_model_unsupported'; diagnostic?:string }
+export type {TaskEvent} from './timeline-events'
 export interface Artifact { id: string; taskId: string; name: string; mime: string; size: number; sha256: string; createdAt: number; approvedAt: number | null }
 export interface StoredArtifact extends Artifact { storagePath: string }
 const TASK_SELECT = 'SELECT id,title,path,provider_id AS providerId,owner_chat_id AS ownerChatId,session_id AS sessionId,status,error,created_at AS createdAt,updated_at AS updatedAt,archived_at AS archivedAt,workspace_kind AS workspaceKind FROM workbench_tasks'
