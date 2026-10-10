@@ -307,6 +307,8 @@ export type YiHubListen = z.infer<typeof YiHubListen>
 export type YiBrain = z.infer<typeof YiBrain>
 export type ForwardBudgetConfig = z.infer<typeof ForwardBudgetConfig>
 
+const AcpAgentEntry = z.object({ id: z.string(), name: z.string(), command: z.string(), args: z.array(z.string()).optional(), auth_method: z.string().max(64).optional() })
+
 const AgentConfigSchema = z.object({
   provider: z.enum(PROVIDER_IDS).default('claude'),
   model: z.string().optional(),
@@ -318,7 +320,7 @@ const AgentConfigSchema = z.object({
   agyModel: z.string().optional(),
   agyBin: z.string().optional(),
   cursorAgentBin: z.string().optional(),
-  acp_agents: z.array(z.object({ id: z.string(), name: z.string(), command: z.string(), args: z.array(z.string()).optional(), auth_method: z.string().max(64).optional() })).max(20).optional(),
+  acp_agents: z.array(AcpAgentEntry).max(20).optional(),
   remote_tunnel: z.boolean().optional(),
   remote_relay_url: z.string().optional(),
   relay_v2_url: z.string().optional(),
@@ -403,6 +405,10 @@ export function loadAgentConfig(stateDir: string): AgentConfig {
       : undefined
     const yiHubListen = parsed.yi_hub_listen != null ? YiHubListen.safeParse(parsed.yi_hub_listen).data : undefined
     const yiBrain = parsed.yi_brain != null ? YiBrain.safeParse(parsed.yi_brain).data : undefined
+    // 读盘不经 zod:手改出错的条目(null / 缺字段)逐条丢掉,别让 wire-workbench 在开机时读 agent.id 崩掉(2026-10-10)
+    const acpAgents = Array.isArray(parsed.acp_agents)
+      ? parsed.acp_agents.flatMap(r => { const result = AcpAgentEntry.safeParse(r); return result.success ? [result.data] : [] }).slice(0, 20)
+      : undefined
     const a2aAgentsRaw = Array.isArray(parsed.a2a_agents) ? parsed.a2a_agents : undefined
     const a2aAgents = a2aAgentsRaw != null
       ? a2aAgentsRaw.flatMap(r => {
@@ -457,7 +463,7 @@ export function loadAgentConfig(stateDir: string): AgentConfig {
       ...(typeof parsed.agyModel === 'string' ? { agyModel: parsed.agyModel } : {}),
       ...(typeof parsed.agyBin === 'string' ? { agyBin: parsed.agyBin } : {}),
       ...(typeof parsed.cursorAgentBin === 'string' ? { cursorAgentBin: parsed.cursorAgentBin } : {}),
-      ...(parsed.acp_agents && parsed.acp_agents.length ? { acp_agents: parsed.acp_agents } : {}),
+      ...(acpAgents && acpAgents.length ? { acp_agents: acpAgents } : {}),
       ...(typeof parsed.remote_tunnel === 'boolean' ? { remote_tunnel: parsed.remote_tunnel } : {}),
       ...(typeof parsed.remote_relay_url === 'string' ? { remote_relay_url: parsed.remote_relay_url } : {}),
       ...(typeof parsed.relay_v2_url === 'string' ? { relay_v2_url: parsed.relay_v2_url } : {}),
