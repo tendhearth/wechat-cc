@@ -1,8 +1,8 @@
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
-import { mkdtempSync, readFileSync, rmSync } from 'node:fs'
+import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { buildServicePlan, installService, DESKTOP_APP_BUNDLE_ID } from './service-manager'
+import { buildServicePlan, installService, uninstallService, DESKTOP_APP_BUNDLE_ID, type ServicePlan } from './service-manager'
 import { validatePowerShellScript } from './powershell-validator'
 import { SUPERVISED_ENV } from '../core/supervised-env'
 
@@ -448,5 +448,23 @@ describe('service-manager', () => {
         windowsUser: 'bob',
       }))
     }, TIMEOUT_MS)
+  })
+})
+
+// `service stop` 之后 launchd 里已经没有这个任务:bootout 非零退出。以前 uninstall 在那里就抛了,
+// plist(RunAtLoad=true)留在盘上 ⇒ 下次登录 daemon 又起来,而用户以为已经卸载。
+describe.skipIf(process.platform === 'win32')('uninstallService', () => {
+  it('removes the service file even when the unload step fails (service was not loaded)', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'svc-uninstall-'))
+    try {
+      const serviceFile = join(dir, 'com.wechat-cc.daemon.plist')
+      writeFileSync(serviceFile, '<plist/>')
+      const plan: ServicePlan = {
+        kind: 'launchagent', serviceName: 'x', serviceFile, fileContent: null,
+        installCommands: [], startCommands: [], stopCommands: [], uninstallCommands: [['false']],
+      }
+      try { uninstallService(plan) } catch { /* the failure may still be reported */ }
+      expect(existsSync(serviceFile)).toBe(false)
+    } finally { rmSync(dir, { recursive: true, force: true }) }
   })
 })

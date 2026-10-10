@@ -48,11 +48,21 @@ const accountRemoveCmd = defineCommand({
   },
 })
 
+/**
+ * 口令保护的是 bot 的凭证:放在命令行参数里,本机任何用户 `ps` 都看得见、还进 shell 历史。
+ * 优先读环境变量 WECHAT_CC_PASSPHRASE;--passphrase 留着兼容(桌面 / 旧脚本)。
+ */
+export function accountPassphrase(flag: string | undefined, env: NodeJS.ProcessEnv = process.env): string {
+  const p = flag ?? env.WECHAT_CC_PASSPHRASE
+  if (!p) throw new Error('passphrase required — set WECHAT_CC_PASSPHRASE (or pass --passphrase)')
+  return p
+}
+
 const accountExportCmd = defineCommand({
   meta: { name: 'export', description: 'Export a bound bot (encrypted) so another machine can drive it — no re-scan' },
   args: {
     'bot-id': { type: 'string', description: 'Which account (default: the sole bound one)' },
-    passphrase: { type: 'string', required: true, description: 'Encrypts the bundle (you type the same on import)' },
+    passphrase: { type: 'string', description: 'Encrypts the bundle (you type the same on import). Prefer env WECHAT_CC_PASSPHRASE — a flag is visible in `ps` and shell history' },
     out: { type: 'string', description: 'Output file (default: <botId>.wccaccount)' },
     json: { type: 'boolean', description: 'JSON envelope' },
   },
@@ -60,7 +70,7 @@ const accountExportCmd = defineCommand({
     const { resolveAccountId, exportAccount, markMultiDevice } = await import('../account-transfer.ts')
     try {
       const id = resolveAccountId(STATE_DIR, args['bot-id'])
-      const blob = exportAccount(STATE_DIR, id, args.passphrase)
+      const blob = exportAccount(STATE_DIR, id, accountPassphrase(args.passphrase))
       // Exporting = this bot is now shared → mark the source too, so when the
       // other device takes over, THIS machine also stands by gracefully.
       markMultiDevice(STATE_DIR, id)
@@ -82,7 +92,7 @@ const accountImportCmd = defineCommand({
   meta: { name: 'import', description: 'Import an account bundle from another machine — drive the same bot without re-scanning' },
   args: {
     file: { type: 'positional', required: true, description: 'The .wccaccount bundle', valueHint: 'file' },
-    passphrase: { type: 'string', required: true, description: 'The passphrase used on export' },
+    passphrase: { type: 'string', description: 'The passphrase used on export. Prefer env WECHAT_CC_PASSPHRASE — a flag is visible in `ps` and shell history' },
     json: { type: 'boolean', description: 'JSON envelope' },
   },
   async run({ args }) {
@@ -90,7 +100,7 @@ const accountImportCmd = defineCommand({
     try {
       const { readFileSync } = await import('node:fs')
       const blob = readFileSync(args.file)
-      const res = importAccount(STATE_DIR, blob, args.passphrase)
+      const res = importAccount(STATE_DIR, blob, accountPassphrase(args.passphrase))
       if (args.json) { console.log(JSON.stringify({ ok: true, ...res })); return }
       console.log(`imported ${res.botId}${res.overwritten ? ' (overwrote existing)' : ''}`)
       console.log('\n重启 daemon 即接管该 bot(会从另一台手里接管会话,对方退到后台)。')
