@@ -91,6 +91,7 @@ export interface CliUpgradeStatus {
 const HOUR = 3_600_000
 const REACTIVE_DEBOUNCE_MS = 30 * 60_000
 const VERIFY_RETRY_MS = 30 * 60_000
+const HEAVY: ReadonlySet<string> = new Set(['upgraded', 'rolled_back', 'unverified', 'rollback_failed'])
 const DEFAULT_UPDATE_TIMEOUT_MS = 10 * 60_000
 
 export function backoffMs(failures: number): number {
@@ -217,10 +218,10 @@ export function makeCliUpgrader(deps: CliUpgraderDeps): CliUpgrader {
   }
 
   /** 版本已经从 from 变成 to:自检;不过就退回 from。调用方已持 exclusive + busy。 */
-  async function verifyAfterChange(spec: CliSpec, bin: string, from: string | null, toVersion: string | null, source: UpgradeSource, brokenDetail?: string): Promise<OpOutcome> {
+  async function verifyAfterChange(spec: CliSpec, bin: string, from: string | null, toVersion: string | null, source: UpgradeSource, brokenDetail?: string, guessedTo?: string | null): Promise<OpOutcome> {
     const id = spec.id
     const t = now()
-    const to = toVersion ?? '(打不出版本)'
+    const to = toVersion ?? (guessedTo ? `${guessedTo}(打不出版本)` : '(打不出版本)')
     const bad = toVersion !== null && read(id).knownBad.includes(toVersion)
     const vr: VerifyResult = brokenDetail ? { status: 'fail', detail: brokenDetail }
       : bad ? { status: 'fail', detail: `${to} 之前已经验出过问题` } : await safeVerify(spec)
@@ -321,9 +322,14 @@ export function makeCliUpgrader(deps: CliUpgraderDeps): CliUpgrader {
         const r = await deps.run(g.bin, spec.updateArgs, { timeoutMs: deps.updateTimeoutMs ?? DEFAULT_UPDATE_TIMEOUT_MS })
         const after = await installedVersion(spec, g.bin, deps.run)
         if (after === null && before !== null) {
-          // 升级器把 CLI 弄得连 --version 都打不出来了:按自检失败处理(退回),新版本号不知道就不记坏版本。
-          mutate(id, (s) => { s.pending = null; s.installed = null })
-          return await verifyAfterChange(spec, g.bin, before, null, source, `升级后 ${spec.bin} --version 打不出来`)
+          // 升级器把 CLI 弄得连 --version 都打不出来了:按自检失败处理(退回)。装上的多半就是查到的 latest ⇒ 记成坏版本,
+          // 不然第二天又升、又坏、又退(通知按版本去重,主人只会听到第一次)(2026-10-10)。
+          const guess = spec.latest.kind !== 'none' && s0.latest && s0.latest !== before ? s0.latest : null
+          mutate(id, (s) => {
+            s.pending = null; s.installed = null
+            if (guess && !s.knownBad.includes(guess)) s.knownBad = [...s.knownBad, guess].slice(-20)
+          })
+          return await verifyAfterChange(spec, g.bin, before, null, source, `升级后 ${spec.bin} --version 打不出来`, guess)
         }
         if (r.code !== 0 && after === before) {
           const detail = `${spec.bin} ${spec.updateArgs.join(' ')} 退出码 ${r.code ?? (r.timedOut ? '超时' : '?')}${(r.stderr || r.error) ? `:${(r.stderr || r.error || '').trim().slice(-300)}` : ''}`
@@ -355,10 +361,20 @@ export function makeCliUpgrader(deps: CliUpgraderDeps): CliUpgrader {
     const spec = specs[id]
     return exclusive(id, async () => {
       const g = gate(spec)
-      if ('result' in g) return g
+      if ('result' in g) {
+        // 卸了 / 换成 SDK 自带的:这笔自检永远补不上,销掉,别让 tick 每分钟撞一次(2026-10-10)
+        if (g.result === 'not_installed' || g.result === 'bundled') mutate(id, (x) => { if (x.rollbackTo) { x.rollbackTo = null; x.verify = 'unknown'; x.verifyAttemptAt = null } })
+        return g
+      }
       try {
         const s = read(id)
         const cur = await installedVersion(spec, g.bin, deps.run)
+        if (!cur && s.verify === 'unverified' && s.rollbackTo) {
+          // 打不出版本:这一拍补不了,按重试间隔再来,不每分钟 spawn 一次
+          mutate(id, (x) => { x.verifyAttemptAt = iso(now()) })
+          log(`${id}: 欠着的自检补不了(--version 打不出来),${VERIFY_RETRY_MS / 60_000} 分钟后再试`)
+          return { ok: false, result: 'nothing_to_verify', detail: '--version 打不出来' }
+        }
         if (!cur || s.verify !== 'unverified' || !s.rollbackTo) return { ok: true, result: 'nothing_to_verify' }
         if (cur === s.rollbackTo) {
           // 有人(主人 / CLI 自己)已经换回去了:不欠自检了。
@@ -444,8 +460,9 @@ export function makeCliUpgrader(deps: CliUpgraderDeps): CliUpgrader {
         if (s.verify === 'unverified' && s.rollbackTo !== undefined && s.rollbackTo !== null) {
           const last = s.verifyAttemptAt ? Date.parse(s.verifyAttemptAt) : 0
           if (t - last >= VERIFY_RETRY_MS && deps.isIdle(specs[id]).idle) {
-            await verifyOwed(id)
-            return // 一拍只做一件重活
+            const r = await verifyOwed(id)
+            // 一拍只做一件重活;没做成的(没装 / 不空闲 / 没得补)不算,接着看下一个 CLI
+            if (HEAVY.has(r.result)) return
           }
         }
         if (s.pending && deps.isIdle(specs[id]).idle) {
