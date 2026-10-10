@@ -3,7 +3,6 @@
  * 都要求没有会话占着这个目录(执行者随时可能再写),和逐文件撤销同一道门;合回还要求源项目目录没被别的任务占着。
  */
 import { pathsConflict } from '../scheduler'
-import { existsSync } from 'node:fs'
 import { commitWorktree, mergeHint, mergeWorktree, removeWorktree, reopenWorktree } from '../worktree-workspaces'
 import type { ServiceCtx } from './ctx'
 
@@ -42,8 +41,7 @@ export function makeWorktreeDomain(ctx: ServiceCtx) {
         if (!wt) throw new Error('not_worktree')
         if (wt.removedAt === null) throw new Error('worktree_open')
         if (task.archivedAt !== null) throw new Error('workbench_archived')
-        reopenWorktree(wt.repoRoot, wt.root, wt.branch)
-        if (!existsSync(task.path)) throw new Error('worktree_project_missing')
+        reopenWorktree(wt.repoRoot, wt.root, wt.branch, task.path)
         store.worktrees.markReopened(id)
         store.addEvent(id, 'system', `已从分支 ${wt.branch} 重新打开独立工作区，可以接着做了。`)
         ctx.hub.touched(id)

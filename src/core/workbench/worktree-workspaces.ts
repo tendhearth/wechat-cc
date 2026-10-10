@@ -12,7 +12,7 @@
  * 代价是 LFS 之类靠钩子的内容不会自动展开,设计稿已写明)。每条命令有超时。
  */
 import { execFileSync } from 'node:child_process'
-import { copyFileSync, existsSync, lstatSync, mkdirSync, realpathSync } from 'node:fs'
+import { copyFileSync, existsSync, lstatSync, mkdirSync, realpathSync, rmSync } from 'node:fs'
 import { dirname, isAbsolute, join, relative, sep } from 'node:path'
 
 export interface WorktreePlan { root: string; branch: string; taskPath: string; repoRoot: string; projectPath: string; /** 从哪个本地分支开始(10-08);缺省 = 项目当前 HEAD。 */ base?: string }
@@ -87,6 +87,7 @@ export function planWorktree(input: { stateDir: string; projectId: string; proje
  * 分支已经存在(别处用过这个名字)⇒ 拒绝,不覆盖。返回任务目录(真实路径)。
  */
 export function ensureWorktree(plan: WorktreePlan): string {
+  let created = false
   if (existsSync(plan.root)) {
     let branch = ''
     try { branch = git(plan.root, ['rev-parse', '--abbrev-ref', 'HEAD']) } catch { /* 下面拒绝 */ }
@@ -97,9 +98,14 @@ export function ensureWorktree(plan: WorktreePlan): string {
     if (plan.base !== undefined && !baseBranchExists(plan.repoRoot, plan.base)) throw new Error('worktree_base_missing')
     mkdirSync(dirname(plan.root), { recursive: true, mode: 0o700 })
     git(plan.repoRoot, ['worktree', 'add', '-b', plan.branch, plan.root, plan.base !== undefined ? `refs/heads/${plan.base}` : 'HEAD'])
+    created = true
     copyIncludedFiles(plan.repoRoot, plan.root)
   }
-  if (!existsSync(plan.taskPath)) throw new Error('worktree_project_missing')
+  if (!existsSync(plan.taskPath)) {
+    // 基线分支上没有这个子项目:刚建的工作区和分支一并撤回,不留孤儿(2026-10-10)
+    if (created) { discardCheckout(plan.repoRoot, plan.root); try { git(plan.repoRoot, ['branch', '-D', plan.branch]) } catch { /* 尽力 */ } }
+    throw new Error('worktree_project_missing')
+  }
   return real(plan.taskPath)
 }
 
@@ -188,15 +194,25 @@ export function mergeWorktree(repoRoot: string, root: string, branch: string): {
 
 /**
  * 重新打开(2026-10-08):工作区删了、分支还在 ⇒ 在原来的位置从这个分支重新检出,任务可以接着做。
- * 目录已经在 ⇒ `worktree_conflict`;分支没了(主人删过)⇒ `worktree_branch_missing`。照常带上 .worktreeinclude 的文件。
+ * 目录已经在 ⇒ `worktree_conflict`;分支没了(主人删过)⇒ `worktree_branch_missing`;分支上没有任务目录 ⇒ 撤回检出、
+ * `worktree_project_missing`。照常带上 .worktreeinclude 的文件。
  */
-export function reopenWorktree(repoRoot: string, root: string, branch: string): void {
+export function reopenWorktree(repoRoot: string, root: string, branch: string, taskPath: string): void {
   if (existsSync(root)) throw new Error('worktree_conflict')
   try { git(repoRoot, ['rev-parse', '--verify', '--quiet', `refs/heads/${branch}`]) } catch { throw new Error('worktree_branch_missing') }
   git(repoRoot, ['worktree', 'prune'])
   mkdirSync(dirname(root), { recursive: true, mode: 0o700 })
   git(repoRoot, ['worktree', 'add', root, branch])
   copyIncludedFiles(repoRoot, root)
+  // 分支上已经没有这个子项目:撤回这次检出(分支保留),否则目录留着、下次只会报 worktree_conflict(2026-10-10)
+  if (!existsSync(taskPath)) { discardCheckout(repoRoot, root); throw new Error('worktree_project_missing') }
+}
+
+/** 撤回刚做的检出:里面只有分支内容和 .worktreeinclude 复制进来的文件,没有用户的改动,所以 --force。尽力而为。 */
+function discardCheckout(repoRoot: string, root: string): void {
+  try { git(repoRoot, ['worktree', 'remove', '--force', root]) } catch { /* 下面 prune 兜底 */ }
+  if (existsSync(root)) rmSync(root, { recursive: true, force: true })
+  try { git(repoRoot, ['worktree', 'prune']) } catch { /* 尽力 */ }
 }
 
 /** 合并提示:主人自己在项目里跑。路径里有空格 / 引号时也安全地拼出来。 */

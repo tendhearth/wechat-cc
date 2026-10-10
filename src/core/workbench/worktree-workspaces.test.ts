@@ -140,12 +140,12 @@ describe('worktree workspaces (2026-10-07)', () => {
     const path = ensureWorktree(plan)
     writeFileSync(join(path, 'work.txt'), 'w\n'); commitWorktree(plan.root, 'work')
     removeWorktree(repoRoot, plan.root)
-    reopenWorktree(repoRoot, plan.root, plan.branch)
+    reopenWorktree(repoRoot, plan.root, plan.branch, plan.taskPath)
     expect(readFileSync(join(plan.root, 'work.txt'), 'utf8')).toBe('w\n')
     expect(git(plan.root, ['rev-parse', '--abbrev-ref', 'HEAD'])).toBe(plan.branch)
-    expect(() => reopenWorktree(repoRoot, plan.root, plan.branch)).toThrow('worktree_conflict')
+    expect(() => reopenWorktree(repoRoot, plan.root, plan.branch, plan.taskPath)).toThrow('worktree_conflict')
     removeWorktree(repoRoot, plan.root); execFileSync('git', ['branch', '-D', plan.branch], { cwd: project, stdio: 'pipe' })
-    expect(() => reopenWorktree(repoRoot, plan.root, plan.branch)).toThrow('worktree_branch_missing')
+    expect(() => reopenWorktree(repoRoot, plan.root, plan.branch, plan.taskPath)).toThrow('worktree_branch_missing')
   })
   it('starts from a named local branch when asked (2026-10-08); bad names never reach git', () => {
     const { project, state } = repo()
@@ -161,6 +161,27 @@ describe('worktree workspaces (2026-10-07)', () => {
     for (const bad of ['-x', '../x', 'a..b', '/abs', 'a/', 'x.lock', 'a b', 'a//b', '', 'x~1', 'a@{0}'])
       expect(validBaseBranch(bad), bad).toBe(false)
     expect(() => planWorktree({ stateDir: state, projectId: PID, projectPath: project, repoRoot, id: 'eeee0003', base: '--upload-pack=x' })).toThrow('invalid_worktree')
+  })
+  it('a project folder missing on the branch leaves nothing behind, so a retry is not stuck (2026-10-10)', () => {
+    const { project, state } = repo()
+    const g = (...a: string[]) => execFileSync('git', a, { cwd: project, stdio: 'pipe' })
+    g('checkout', '-q', '-b', 'no-app'); g('rm', '-rq', 'pkg'); g('commit', '-q', '-m', 'drop app'); g('checkout', '-q', 'main')
+    const sub = join(project, 'pkg', 'app'), repoRoot = repoRootOf(sub)!
+    // 新建:基线分支上没有这个子项目 ⇒ 不留工作区目录、不留分支
+    const fresh = planWorktree({ stateDir: state, projectId: PID, projectPath: sub, repoRoot, id: 'ffff0001', base: 'no-app' })
+    expect(() => ensureWorktree(fresh)).toThrow('worktree_project_missing')
+    expect(existsSync(fresh.root)).toBe(false)
+    expect(() => git(project, ['rev-parse', '--verify', '--quiet', `refs/heads/${fresh.branch}`])).toThrow()
+    expect(git(project, ['worktree', 'list', '--porcelain'])).not.toContain(fresh.root)
+    // 重新打开:分支上把子项目删了 ⇒ 撤回检出、分支照旧保留;再试一次还是同一个错,不会变成 worktree_conflict
+    const plan = planWorktree({ stateDir: state, projectId: PID, projectPath: sub, repoRoot, id: 'ffff0002' })
+    const path = ensureWorktree(plan)
+    execFileSync('git', ['rm', '-rq', '.'], { cwd: path, stdio: 'pipe' }); commitWorktree(plan.root, 'drop')
+    removeWorktree(repoRoot, plan.root)
+    expect(() => reopenWorktree(repoRoot, plan.root, plan.branch, path)).toThrow('worktree_project_missing')
+    expect(existsSync(plan.root)).toBe(false)
+    expect(() => reopenWorktree(repoRoot, plan.root, plan.branch, path)).toThrow('worktree_project_missing')
+    expect(git(project, ['rev-parse', '--verify', plan.branch])).toMatch(/^[0-9a-f]{40}$/)
   })
   it('merge hint quotes paths with spaces', () => {
     expect(mergeHint('/Users/a/My Project', 'cc/abcd1234')).toBe("cd '/Users/a/My Project' && git merge cc/abcd1234")
