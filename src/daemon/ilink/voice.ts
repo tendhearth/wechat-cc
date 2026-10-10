@@ -7,6 +7,7 @@
  */
 import { assertCallAllowed, decideCall, unprotectedMessage, type CallTarget, type NetworkGate } from '../../lib/network-gate'
 import { join } from 'node:path'
+import { randomBytes } from 'node:crypto'
 import { mkdirSync, writeFileSync, unlinkSync } from 'node:fs'
 import type { WechatVoiceDep } from '../wechat-tool-deps'
 import { buildMediaItemFromFile } from '../media'
@@ -71,7 +72,9 @@ export function makeVoice(ctx: IlinkContext): WechatVoiceDep {
         const tmpDir = join(stateDir, 'tts-tmp')
         mkdirSync(tmpDir, { recursive: true })
         const ext = /wav/i.test(mimeType) ? '.wav' : '.mp3'
-        const tmpPath = join(tmpDir, `reply-${Date.now()}-${process.pid}${ext}`)
+        // 带随机后缀:两个 chat 同一毫秒合成完会撞同名,后一个覆盖前一个、先结束的 finally 又把它删了
+        // —— 一边发送失败,另一边可能收到别人的语音。
+        const tmpPath = join(tmpDir, `reply-${Date.now()}-${process.pid}-${randomBytes(4).toString('hex')}${ext}`)
         writeFileSync(tmpPath, audio)
         try {
           const acct = resolveAccount(chatId)
