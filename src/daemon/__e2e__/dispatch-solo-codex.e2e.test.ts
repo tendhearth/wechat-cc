@@ -15,6 +15,8 @@ describe('e2e: solo codex text inbound → codex dispatch + outbound reply', () 
     let claudeWasCalled = false
     const daemon = await startTestDaemon({
       dangerously: true,
+      // Codex 对访客关门(2026-10-10,guestSafe:false)⇒ 这条路由测试用管理员对话。
+      access: { admins: ['chat1'] },
       modes: { chat1: { kind: 'solo', provider: 'codex' } },
       claudeScript: {
         async onDispatch(_text) {
