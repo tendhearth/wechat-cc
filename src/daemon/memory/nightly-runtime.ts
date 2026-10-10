@@ -6,7 +6,7 @@ import { appendFileSync, existsSync, mkdirSync, readFileSync, renameSync, writeF
 import { join } from 'node:path'
 import { MEMORY_FILENAME, SECTIONS, parseDue, parseMemoryDoc, serializeMemoryDoc, type Section } from './curated-doc'
 import { DISPLAY_ORDER, dueLabel, formatWeChatMemory, splitPerson, spokenTime, stripDue, viewChanges, type ViewChange } from './memory-text'
-import { MEMORY_LOG_FILE, ownerMemoryRoot, readNightlyState, runMemoryNightly, writeNightlyState, type NightlyRunDeps } from './nightly'
+import { CORRECTIONS_FILENAME, MEMORY_LOG_FILE, ownerMemoryRoot, readNightlyState, runMemoryNightly, writeNightlyState, type NightlyRunDeps } from './nightly'
 import type { NightlyRunResult } from './nightly-notify'
 import type { AppliedOp } from './nightly-ops'
 import { localParts, noticeTiming } from './nightly-schedule'
@@ -134,7 +134,7 @@ export function makeMemoryNightlyRuntime(deps: NightlyRunDeps & NoticeDeps): Mem
       writeFileSync(tmp, serializeMemoryDoc(got.doc, nowIso))
       renameSync(tmp, memPath)
       // 改名成功后才记:失败了 memory.md 没动,也不留一行假的纠正
-      appendFileSync(join(got.root, 'profile.md'), `\n- ${day} ${VERDICT_LINE[verdict]}:[${hit.section}] ${hit.text}\n`)
+      appendFileSync(join(got.root, CORRECTIONS_FILENAME), `- ${day} ${VERDICT_LINE[verdict]}:[${hit.section}] ${hit.text}\n`)
       if (verdict === 'outdated') {
         const owner = deps.ownerChatId()
         if (owner) {

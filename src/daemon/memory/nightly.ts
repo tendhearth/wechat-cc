@@ -9,7 +9,7 @@ import { join } from 'node:path'
 import { readJsonFile } from '../../lib/read-json-file'
 import { isNetworkUnprotectedError } from '../../lib/network-gate'
 import { MEMORY_FILENAME, assignMissingIds, parseMemoryDoc, serializeMemoryDoc } from './curated-doc'
-import { applyNightly, parseOps } from './nightly-ops'
+import { applyNightly, parseOps, type NightlyOps } from './nightly-ops'
 import { composeNotice, noticeItems, type NightlyRunResult } from './nightly-notify'
 import { isDue, localParts } from './nightly-schedule'
 import { TODAY_DRAFT_FILENAME, consumeDraft } from './today-draft'
@@ -83,6 +83,31 @@ export function ownerMemoryRoot(stateDir: string, owner: string): string | null 
 
 const readIf = (p: string): string => (existsSync(p) ? readFileSync(p, 'utf8') : '')
 
+/**
+ * 主人纠正过的条目(2026-10-10):「记错了 / 过时了 / 不用记」各记一行,只归 daemon 写(会话写会被拒)。
+ * 原先追加在 profile.md 末尾:profile 一长就被素材截断砍掉、CC 整个重写 profile 也会把它抹掉 ⇒ 第二晚又被写回。
+ * 现在单独一个文件,整理时放在素材最前面、不占预算;写回的逐字相同条目在代码里直接丢掉,不全靠模型听话。
+ */
+export const CORRECTIONS_FILENAME = 'corrections.md'
+export const CORRECTIONS_BLOCK = '主人纠正过的条目 corrections.md(这些内容一律不要再 add 或 update 回记忆)'
+const CORRECTIONS_CAP = 3000
+const normalizeEntry = (text: string): string => text.replace(/\s+/g, ' ').trim()
+/** 纠正记录:给模型看的尾部(最新的在后,封顶)+ 全部纠正过的正文(代码里拦逐字写回)。 */
+export function readCorrections(root: string): { block: string; texts: Set<string> } {
+  const raw = readIf(join(root, CORRECTIONS_FILENAME))
+  const texts = new Set<string>()
+  for (const line of raw.split('\n')) {
+    const m = /\] (.+)$/.exec(line)
+    if (m) texts.add(normalizeEntry(m[1]!))
+  }
+  return { block: raw.trim().slice(-CORRECTIONS_CAP), texts }
+}
+/** 去掉模型写回的、主人纠正过的条目(逐字比较,空白归一)。 */
+export function dropCorrected(ops: NightlyOps, texts: ReadonlySet<string>): NightlyOps {
+  if (!texts.size) return ops
+  return { ...ops, add: ops.add.filter(a => !texts.has(normalizeEntry(a.text))), update: ops.update.filter(u => !texts.has(normalizeEntry(u.text))) }
+}
+
 export const DRAFT_BLOCK = '今天的草稿 today-draft.md(白天 CC 刚记下的新情况,优先整理进来)'
 
 /**
@@ -155,6 +180,7 @@ export function buildNightlyPrompt(a: { today: string; current: string; material
     '五栏:关于你(稳定事实)/ 偏好(做事方式、喜恶)/ 承诺(谁答应了谁什么;有期限就在正文写「(期限 YYYY-MM-DD)」)/ 身边的人(重要的人与关系)/ 近况(有时效的状态)。',
     '规则:',
     '- 只根据下面的素材改,不要编造;素材里主人说某条不对,就改掉或删掉它。',
+    '- 「主人纠正过的条目」里的内容,哪怕别的素材里还提到,也不要再写回记忆(不 add、不 update 成它)。',
     '- 仍然成立的条目放进 confirm;合并措辞、补充细节用 update 且 reversal=false;意思被推翻才 reversal=true。',
     '- 删除必须写原因;只有确定不再成立才删。',
     '- 每条只写一件事:一个人一条,一个偏好一条。',
@@ -204,7 +230,12 @@ export async function runMemoryNightly(deps: NightlyRunDeps, opts: { force: bool
   // 来自 profile.md 的新增,profile 变了指纹自然会变 —— 所以指纹不算草稿,否则清掉草稿第二晚就会
   // 白白多调一次模型。
   const draft = readIf(join(root, TODAY_DRAFT_FILENAME))
-  const material = draft.trim() ? `### ${DRAFT_BLOCK}\n${draft.trim()}${rest ? `\n\n${rest}` : ''}` : rest
+  const corrections = readCorrections(root)
+  const material = [
+    corrections.block ? `### ${CORRECTIONS_BLOCK}\n${corrections.block}` : '',
+    draft.trim() ? `### ${DRAFT_BLOCK}\n${draft.trim()}` : '',
+    rest,
+  ].filter(Boolean).join('\n\n')
   const fingerprint = createHash('sha256').update(rest).digest('hex')
   if (!firstRun && fingerprint === state.fingerprint) {
     mergeRunState(deps.stateDir, { lastRunDay: day })
@@ -234,8 +265,9 @@ export async function runMemoryNightly(deps: NightlyRunDeps, opts: { force: bool
     }
     return fail(`eval_error:${e instanceof Error ? e.message : String(e)}`)
   }
-  const ops = parseOps(raw)
-  if (!ops) return fail('bad_json')
+  const parsed = parseOps(raw)
+  if (!parsed) return fail('bad_json')
+  const ops = dropCorrected(parsed, corrections.texts)
   const res = applyNightly(doc, ops, { today: day, newId: deps.newId })
   if (!res.ok) return fail(res.reason)
 
