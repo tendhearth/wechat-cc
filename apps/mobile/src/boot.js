@@ -1,6 +1,7 @@
 
 try {
-  if (T.charAt(0) === "d") localStorage.setItem("deviceToken", T)
+  // 壳页模式(中继域,所有电脑共用)同时记下令牌属于哪台电脑,见 relay/pset.src.html
+  if (T.charAt(0) === "d") { localStorage.setItem("deviceToken", T); if (window.__CC_SHELL__) localStorage.setItem("deviceTokenId", window.__CC_SHELL__.id) }
   if (REMOTE) localStorage.setItem("ccRemote", JSON.stringify(REMOTE))
   else { var rr = localStorage.getItem("ccRemote"); if (rr) REMOTE = JSON.parse(rr) }
 } catch (e) {}

@@ -3,7 +3,7 @@ document.getElementById("pairbtn").addEventListener("click", function() {
   // 走 api():壳模式(微信里点 /set 链接,人在外面)下裸 fetch 打到中继域,必 404。
   api("/set/api/pair", { method: "POST" }).then(function(r){ return r.json() }).then(function(r) {
     if (r.ok && r.device_token) {
-      try { localStorage.setItem("deviceToken", r.device_token) } catch (e) {}
+      try { localStorage.setItem("deviceToken", r.device_token); if (window.__CC_SHELL__) localStorage.setItem("deviceTokenId", window.__CC_SHELL__.id) } catch (e) {}
       T = r.device_token; isDevice = true
       resetTunnel()
       document.getElementById("pairbar").hidden = true
