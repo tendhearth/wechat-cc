@@ -1047,3 +1047,45 @@ describe('pluginSourceCandidates', () => {
     expect(pluginSourceCandidates('/r', bad)).toEqual(['/r/plugins'])
   })
 })
+
+// 2026-10-10 评审:不签却往 Developer ID 封好的包里换(09-28 TCC 事故的同一条路),以及两次部署同时跑。
+describe('executeSelfDeploy — signing guard and deploy lock', () => {
+  function sealedApp(h: Harness, team: string) {
+    h.plan.appPath = join(h.dir, 'app')
+    const inner = h.deps.spawnSync
+    h.deps.spawnSync = (cmd, args, opts) => cmd === 'codesign' && args[0] === '-dv'
+      ? { status: 0, stdout: '', stderr: `Executable=${h.plan.appPath}/Contents/MacOS/x\nIdentifier=com.tendhearth.cc\nTeamIdentifier=${team}\n` }
+      : inner(cmd, args, opts)
+  }
+  it('refuses to swap an unsigned sidecar into a Developer ID sealed app, before touching anything', async () => {
+    const h = harness()
+    sealedApp(h, '9Y6JAPDP7A')
+    const r = await executeSelfDeploy(h.plan, h.deps)
+    expect(r).toMatchObject({ ok: false, exitCode: 1 })
+    expect(r.steps.at(-1)).toMatchObject({ name: 'signing', ok: false })
+    expect(readFileSync(h.plan.sidecarPath, 'utf8')).toBe('OLD_BINARY_CONTENT')
+    expect(existsSync(h.plan.tmpPath)).toBe(false)
+    expect(h.kickstartCalls).toBe(0)
+  })
+  it('--allow-unsigned, an ad-hoc app, or deploying from .prev all go ahead', async () => {
+    const a = harness(); sealedApp(a, '9Y6JAPDP7A'); a.plan.allowUnsigned = true
+    expect((await executeSelfDeploy(a.plan, a.deps)).ok).toBe(true)
+    const b = harness(); sealedApp(b, 'not set')
+    expect((await executeSelfDeploy(b.plan, b.deps)).ok).toBe(true)
+    const c = harness(); sealedApp(c, '9Y6JAPDP7A')
+    writeFileSync(c.plan.prevPath, 'PREV'); c.plan.newBinaryPath = c.plan.prevPath
+    expect((await executeSelfDeploy(c.plan, c.deps)).steps.find(s => s.name === 'signing')).toBeUndefined()
+  })
+  it('a second deploy while one holds the lock is refused; a stale lock from a dead pid is taken over', async () => {
+    const h = harness()
+    h.plan.lockPath = join(h.dir, 'state', 'self-deploy.lock')
+    writeFileSync(h.plan.lockPath, String(process.pid))
+    const busy = await executeSelfDeploy(h.plan, h.deps)
+    expect(busy).toMatchObject({ ok: false, exitCode: 1 })
+    expect(busy.steps).toEqual([expect.objectContaining({ name: 'lock', ok: false })])
+    expect(readFileSync(h.plan.sidecarPath, 'utf8')).toBe('OLD_BINARY_CONTENT')
+    writeFileSync(h.plan.lockPath, '999999999')
+    expect((await executeSelfDeploy(h.plan, h.deps)).ok).toBe(true)
+    expect(existsSync(h.plan.lockPath)).toBe(false)
+  })
+})
