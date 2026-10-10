@@ -12,6 +12,13 @@ describe('providerDenialFor', () => {
     expect(providerDenialFor('claude', 'guest', undefined)).toBeNull()
     expect(providerDenialFor('openai', 'guest', undefined)).toBeNull()
   })
+  // 2026-10-10 评审:Codex 给访客的是 read-only 沙盒 + untrusted 审批 —— 只读沙盒照样能读整台电脑
+  // (cat ~/.private_keys/…、记忆、access.json),cat / ls / grep 这类「安全命令」也不问就跑 ⇒ 访客档约束不到读。
+  it('codex is not guest-safe either: its read-only sandbox can still read any file on the machine', () => {
+    expect(providerDenialFor('codex', 'guest', undefined)).toEqual({ kind: 'unconfined_guest' })
+    expect(providerDenialFor('codex', 'trusted', undefined)).toBeNull()
+    expect(describeProviderDenial({ kind: 'unconfined_guest' }, 'codex')).toContain('/codex 对访客不开放')
+  })
   it('cursor stays open to trusted and admin — only guest is refused', () => {
     expect(providerDenialFor('cursor', 'trusted', undefined)).toBeNull()
     expect(providerDenialFor('cursor', 'admin', undefined)).toBeNull()

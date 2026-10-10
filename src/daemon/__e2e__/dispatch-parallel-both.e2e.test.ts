@@ -15,6 +15,8 @@ describe('e2e: parallel mode → both providers dispatch + both replies forwarde
     const dispatchedTo: string[] = []
     const daemon = await startTestDaemon({
       dangerously: true,
+      // 多家模式按原始档位过门、Codex 对访客关门(2026-10-10)⇒ 这条路由测试用管理员对话。
+      access: { admins: ['chat1'] },
       modes: { chat1: { kind: 'parallel' } },
       claudeScript: {
         async onDispatch(_text) {

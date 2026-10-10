@@ -619,7 +619,8 @@ describe('settings panel — 模型与后端', () => {
       expect([...m.shared_token].sort()).toEqual(['agy'])
       // …but a guest still can't use it: ACP Cursor edits the workspace without
       // a permission card (guestSafe:false), so it joins the "访客不可用" list.
-      expect([...m.guest_blocked].sort()).toEqual(['agy', 'cursor'])
+      // Codex too (2026-10-10): its read-only sandbox can still read any file on the machine.
+      expect([...m.guest_blocked].sort()).toEqual(['agy', 'codex', 'cursor'])
     } finally { cleanup() }
   })
 

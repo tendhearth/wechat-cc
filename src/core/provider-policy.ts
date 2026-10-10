@@ -48,7 +48,11 @@ export function providerDenialFor(
 /** 用户看得懂的拒绝语。slash = 用户打的那个词(cc/agy/cursor…)。 */
 export function describeProviderDenial(d: ProviderDenial, slash: string): string {
   if (d.kind === 'shared_token_guest') return `❌ /${slash} 目前仅管理员/信任聊天可用（工具通道暂无法按会话隔离权限）。`
-  if (d.kind === 'unconfined_guest') return '❌ Cursor 对访客不开放：它在工作区内的文件编辑不经过权限卡，访客的权限约束不到它。'
+  if (d.kind === 'unconfined_guest') {
+    if (slash === 'cursor') return '❌ Cursor 对访客不开放：它在工作区内的文件编辑不经过权限卡，访客的权限约束不到它。'
+    if (slash === 'codex') return '❌ /codex 对访客不开放：它的只读沙盒仍能读这台电脑上的任意文件，访客的权限约束不到它。'
+    return `❌ /${slash} 对访客不开放：访客的权限约束不到它。`
+  }
   return `❌ 管理员没把 /${slash} 开放给非管理员对话。可用: ${d.allowed.length ? d.allowed.join(', ') : '(无)'}`
 }
 
