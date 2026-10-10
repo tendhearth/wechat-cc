@@ -14,6 +14,16 @@ describe('agent-config', () => {
     }
   })
 
+  it('keeps only well-formed acp_agents entries on load, so a hand-edit typo cannot crash boot (2026-10-10)', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'agent-config-acp-'))
+    try {
+      const good = { id: 'gem', name: 'Gemini', command: '/usr/local/bin/gemini', args: ['--acp'] }
+      writeFileSync(join(dir, 'agent-config.json'), JSON.stringify({ acp_agents: [null, 'x', { id: 1 }, good, { ...good, id: 'g2', auth_method: 7 }] }))
+      expect(loadAgentConfig(dir).acp_agents).toEqual([good])
+      writeFileSync(join(dir, 'agent-config.json'), JSON.stringify({ acp_agents: { length: 1 } }))
+      expect(loadAgentConfig(dir).acp_agents).toBeUndefined()
+    } finally { rmSync(dir, { recursive: true, force: true }) }
+  })
   it('defaults autoStart to true when no config file exists (v0.6)', () => {
     const dir = mkdtempSync(join(tmpdir(), 'agent-config-'))
     try {
