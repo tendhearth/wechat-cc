@@ -21,6 +21,8 @@ describe('uploadToCdnOnce timeout', () => {
     }) as never
     const p = uploadToCdnOnce({ filePath: file, toUserId: 'u', baseUrl: 'https://ilink.example', token: 't', mediaType: 1 })
     const settled = expect(p).rejects.toMatchObject({ name: 'AbortError' })
+    // 读文件是真 IO:等 CDN 那次 fetch 真的发出去(计时器已经挂上)再拨钟 —— node 下读文件比 bun 慢一拍
+    await vi.waitFor(() => expect(globalThis.fetch).toHaveBeenCalledTimes(2))
     await vi.advanceTimersByTimeAsync(cdnUploadTimeoutMs(1024) + 1)
     await settled
   })
