@@ -332,7 +332,10 @@ const onlineStickerCursor = new Map<string, number>()
         }
         // Per-chat audit log. Constructed per-call — prepared-statement
         // cache lives on db, not store, so this is cheap.
-        await makeEventsStore(deps.db, chat_id).append({
+        // 会话来的:审计记到它自己的 chat(路径已被 memoryScopeDenied 限在那里),
+        // 不信模型填的 chat_id —— 否则能往别人的事件流里写一条伪造的「删了记忆」。
+        const auditChat = caller?.origin === 'session' && caller.chatId ? caller.chatId : chat_id
+        await makeEventsStore(deps.db, auditChat).append({
           kind: 'memory_deleted',
           trigger: 'mcp_tool_call',
           reasoning: reason,
