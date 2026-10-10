@@ -67,7 +67,9 @@ describe.skipIf(process.platform === 'win32')('Claude owned process teardown', (
     const parent = `require('node:child_process').spawn(process.execPath, ['-e', ${JSON.stringify(descendant)}], {detached:true,stdio:'ignore',env:{PATH:'/usr/bin:/bin'}}); setInterval(()=>{}, 1000)`
     const owner = ownClaudeWorkbenchProcess(undefined)
     const processChild = owner.spawn({ command: process.execPath, args: ['-e', parent], cwd: area, env: { PATH: '/usr/bin:/bin' }, signal: new AbortController().signal })
-    const read = () => { try { return Number(readFileSync(ticks, 'utf8')) } catch { return 0 } }
+    // 计数文件整个重写(先截断再写):读在中间会读到空串 ⇒ 0。只增不减,记住见过的最大值(同 process-tree-freeze.test.ts)。
+    let seen = 0
+    const read = () => { try { seen = Math.max(seen, Number(readFileSync(ticks, 'utf8')) || 0) } catch { /* not yet written */ } return seen }
     let descendantPid: number | undefined
     try {
       // 同上一条:满载套件(编译型测试同时在跑)里两层 spawn 可能十几秒才开始数,预算给够。
