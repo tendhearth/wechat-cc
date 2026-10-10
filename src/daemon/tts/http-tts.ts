@@ -1,5 +1,6 @@
 import type { TTSProvider } from './types'
 import { Buffer } from 'node:buffer'
+import { withTtsTimeout } from './fetch-timeout'
 import { isConnectFailure } from '../../lib/net-errors'
 
 export interface HttpTTSProviderOptions {
@@ -17,26 +18,29 @@ export function makeHttpTTSProvider(opts: HttpTTSProviderOptions): TTSProvider {
   const defaultVoice = opts.defaultVoice ?? 'default'
 
   async function synth(text: string, voice: string) {
-    const headers: Record<string, string> = { 'Content-Type': 'application/json' }
-    if (opts.apiKey) headers['Authorization'] = `Bearer ${opts.apiKey}`
-    const res = await fetch(opts.baseUrl, {
-      method: 'POST',
-      headers,
-      body: JSON.stringify({
-        model: opts.model,
-        voice,
-        input: text,
-      }),
+    return withTtsTimeout('HTTP TTS', async (signal) => {
+      const headers: Record<string, string> = { 'Content-Type': 'application/json' }
+      if (opts.apiKey) headers['Authorization'] = `Bearer ${opts.apiKey}`
+      const res = await fetch(opts.baseUrl, {
+        method: 'POST',
+        signal,
+        headers,
+        body: JSON.stringify({
+          model: opts.model,
+          voice,
+          input: text,
+        }),
+      })
+      if (!res.ok) {
+        const body = await res.text().catch(() => '')
+        throw new Error(`HTTP TTS ${res.status}: ${body.slice(0, 200)}`)
+      }
+      const audio = Buffer.from(await res.arrayBuffer())
+      const mimeType = typeof res.headers.get === 'function'
+        ? (res.headers.get('content-type') ?? 'audio/mpeg')
+        : 'audio/mpeg'
+      return { audio, mimeType }
     })
-    if (!res.ok) {
-      const body = await res.text().catch(() => '')
-      throw new Error(`HTTP TTS ${res.status}: ${body.slice(0, 200)}`)
-    }
-    const audio = Buffer.from(await res.arrayBuffer())
-    const mimeType = typeof res.headers.get === 'function'
-      ? (res.headers.get('content-type') ?? 'audio/mpeg')
-      : 'audio/mpeg'
-    return { audio, mimeType }
   }
 
   async function test(): Promise<{ ok: true } | { ok: false; reason: string; detail?: string }> {
