@@ -564,6 +564,10 @@ export function createConversationCoordinator(deps: ConversationCoordinatorDeps)
   // for one chatId). Registered right after acquire, unregistered when the
   // turn settles — same lifecycle shape as inFlightAborters.
   const inFlightHandleCancels = new Map<string, Set<() => void>>()
+  // /stop 的代数(2026-10-10):cancel() 每次 +1;一轮开始时记下、结束时比对 ⇒ 这一轮被主人中止过。
+  // 中止过的轮不发出错通知、不交付半截话 —— 各家 provider 中止后的收尾不一样(报 error / 像正常结束)。
+  const cancelGen = new Map<string, number>()
+  const stopMark = (chatId: string) => { const g = cancelGen.get(chatId) ?? 0; return () => (cancelGen.get(chatId) ?? 0) !== g }
   function registerHandleCancel(chatId: string, fn: () => void): () => void {
     let set = inFlightHandleCancels.get(chatId)
     if (!set) { set = new Set(); inFlightHandleCancels.set(chatId, set) }
@@ -758,6 +762,7 @@ export function createConversationCoordinator(deps: ConversationCoordinatorDeps)
       // this turn for its entire lifetime — cleared in the finally below,
       // same lifecycle as chatroom's inFlightAborters.
       unregisterCancel = registerHandleCancel(msg.chatId, () => { void handle.cancel?.() })
+      const stopped = stopMark(msg.chatId)
       let text = deps.format(msg)
       // 换 provider 后的第一条:前置交接块(近况原文 + chat_history 提示)。
       const handoff = handoffLedger.takeHandoff(msg.chatId)
@@ -823,6 +828,12 @@ export function createConversationCoordinator(deps: ConversationCoordinatorDeps)
       }
 
       outcome = summary.error ? 'error' : 'completed'
+
+      if (delivery && stopped()) {
+        settle('cancelled')
+        deps.log('REPLY', `chat=${msg.chatId} provider=${providerId} 主人中止了这一轮 —— 不发通知、不交付半截话`)
+        return
+      }
 
       // 回复交付 daemon(spec §4.2 末段 / §4.3):只有 completed 的轮交付最后的话;出错一律只发通知、
       // 不发残文(与 #190「错误不许当回复发」同一条红线)。没有 FALLBACK_REPLY:有文字没调工具是正常路径。
@@ -1129,6 +1140,7 @@ export function createConversationCoordinator(deps: ConversationCoordinatorDeps)
     // handle gets its own slot in the shared per-chat set (dispatchSolo's
     // single-slot registration doesn't fit here: N participants share one
     // chatId).
+    const stopped = stopMark(msg.chatId)
     const unregisterCancels = acquired.map(a =>
       a.status === 'fulfilled' ? registerHandleCancel(msg.chatId, () => { void a.value.cancel?.() }) : undefined,
     )
@@ -1164,6 +1176,7 @@ export function createConversationCoordinator(deps: ConversationCoordinatorDeps)
       let report: DeliveryReport | undefined
       try {
         const turnDelivery = deliveries[i]
+        if (turnDelivery && stopped()) { turnDelivery.abandon('cancelled'); continue }
         if (turnDelivery && (r.status === 'rejected' || r.value.error)) turnDelivery.abandon(r.status === 'rejected' ? 'threw' : (r.value.errorCode ?? 'error'))
         if (r.status === 'rejected') {
           deps.log('COORDINATOR_PARALLEL', `provider=${providerId} threw: ${r.reason instanceof Error ? r.reason.message : r.reason}`)
@@ -1579,6 +1592,7 @@ export function createConversationCoordinator(deps: ConversationCoordinatorDeps)
         for (const fn of handleCancels) fn()
         cancelledAny = true
       }
+      if (cancelledAny) cancelGen.set(chatId, (cancelGen.get(chatId) ?? 0) + 1)
       return cancelledAny
     },
     runExclusive: mutex.runExclusive,
