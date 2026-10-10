@@ -48,12 +48,12 @@ Use wechat-cc access <command> --help for more information about a command.
 exports[`cli.ts --help 快照(逐字节) > account --help > account export --help 1`] = `
 "Export a bound bot (encrypted) so another machine can drive it — no re-scan (account export)
 
-USAGE account export [OPTIONS] --passphrase=<passphrase>
+USAGE account export [OPTIONS] 
 
 OPTIONS
 
           --bot-id=<bot_id>    Which account (default: the sole bound one)                 
-  --passphrase=<passphrase>    Encrypts the bundle (you type the same on import) (Required)
+  --passphrase=<passphrase>    Encrypts the bundle (or env WECHAT_CC_PASSPHRASE, preferred)
                 --out=<out>    Output file (default: <botId>.wccaccount)                   
                      --json    JSON envelope                                               
 
@@ -64,7 +64,7 @@ OPTIONS
 exports[`cli.ts --help 快照(逐字节) > account --help > account import --help 1`] = `
 "Import an account bundle from another machine — drive the same bot without re-scanning (account import)
 
-USAGE account import [OPTIONS] <FILE> --passphrase=<passphrase>
+USAGE account import [OPTIONS] <FILE>
 
 ARGUMENTS
 
@@ -72,8 +72,8 @@ ARGUMENTS
 
 OPTIONS
 
-  --passphrase=<passphrase>    The passphrase used on export (Required)
-                     --json    JSON envelope                           
+  --passphrase=<passphrase>    Passphrase used on export (or env WECHAT_CC_PASSPHRASE, preferred)
+                     --json    JSON envelope                                                     
 
 
 "
