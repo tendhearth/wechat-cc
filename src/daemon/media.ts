@@ -411,6 +411,14 @@ export async function buildVoiceItemFromWav(
   }
 }
 
+/**
+ * CDN 上传的整体时限:60s 起步,再按 256KB/s 的慢链路给够(50MB ≈ 4 分多钟)。
+ * 只是兜底 —— 没有它,CDN 接了连接却不回时 fetch 永远不结束,重试也轮不到。
+ */
+export function cdnUploadTimeoutMs(bytes: number): number {
+  return 60_000 + Math.ceil(bytes / (256 * 1024)) * 1000
+}
+
 export async function uploadToCdnOnce(params: {
   filePath: string; toUserId: string; baseUrl: string; token: string; mediaType: number
 }): Promise<{ downloadParam: string; aeskey: string; fileSize: number; fileSizeCiphertext: number }> {
@@ -436,14 +444,24 @@ export async function uploadToCdnOnce(params: {
   const ciphertext = encryptAesEcb(plaintext, aeskey)
   // NOTE: do NOT attach AbortSignal to this fetch. Bun appears to switch
   // the body encoding path when a signal is present, which the ilink CDN
-  // stores in a form the WeChat client can't decrypt. getuploadurl above
-  // already has API_TIMEOUT_MS (30s) via ilinkPost, and the retry wrapper
-  // below bounds total wall time, so a signal here is redundant anyway.
-  const cdnRes = await fetch(uploadUrl, {
+  // stores in a form the WeChat client can't decrypt. The retry wrapper
+  // below only retries after a call SETTLES, so a stalled CDN would hang
+  // forever — race a timer instead (same shape as logicalUpload); the
+  // orphaned fetch is left to finish or die on its own. AbortError name ⇒
+  // uploadToCdn's retry predicate treats it as transient.
+  const cdnFetch = fetch(uploadUrl, {
     method: 'POST',
     headers: { 'Content-Type': 'application/octet-stream' },
     body: new Uint8Array(ciphertext),
   })
+  cdnFetch.catch(() => {})
+  let timer: ReturnType<typeof setTimeout> | undefined
+  const cdnRes = await Promise.race([
+    cdnFetch,
+    new Promise<never>((_, reject) => {
+      timer = setTimeout(() => reject(new DOMException('CDN upload timed out', 'AbortError')), cdnUploadTimeoutMs(filesize))
+    }),
+  ]).finally(() => clearTimeout(timer))
   if (!cdnRes.ok) throw new Error(`CDN upload ${cdnRes.status}: ${await cdnRes.text()}`)
 
   const downloadParam = cdnRes.headers.get('x-encrypted-param')
