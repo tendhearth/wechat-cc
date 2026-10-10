@@ -16,7 +16,7 @@ export interface GitBaseline {
   project:string;startedAt:number;head:string|null;limits:Limits
   kind:'git'|'not_git'|'unavailable';paths:Set<string>;initial:Map<string,FileState>;preexistingPaths:string[];notes:string[]
 }
-export interface ReviewFile {path:string;preexisting:boolean;kind:'added'|'deleted'|'modified'|'not_reviewed';beforeSha256?:string;afterSha256?:string;diff?:string;reason?:string}
+export interface ReviewFile {path:string;preexisting:boolean;kind:'added'|'deleted'|'modified'|'not_reviewed';beforeSha256?:string;afterSha256?:string;diff?:string;reason?:string;/** 开始时是不是可执行;撤销时还原执行位(2026-10-10)。旧快照没有。 */beforeExecutable?:boolean}
 export interface GitReview {version:1;scope:'working-tree-before-after';startedAt:number;finishedAt:number;headBefore:string|null;headAfter:string|null;status:'complete'|'partial'|'unavailable';preexistingPaths:string[];notes:string[];files:ReviewFile[]}
 function gitEnv() {
   const env:NodeJS.ProcessEnv={...process.env}
@@ -142,6 +142,7 @@ export async function finishGitReview(baseline:GitBaseline):Promise<GitReview|nu
       if(before.kind==='text'&&after.kind==='text'&&before.hash===after.hash&&before.mode===after.mode)continue
       const oldText=before.kind==='text'?before.text:'',newText=after.kind==='text'?after.text:''
       file.beforeSha256=before.kind==='text'?before.hash:undefined;file.afterSha256=after.kind==='text'?after.hash:undefined
+      if(before.kind==='text')file.beforeExecutable=before.mode==='100755'
       file.kind=before.kind==='missing'?'added':after.kind==='missing'?'deleted':'modified'
       try {
         if(diffBytes>=baseline.limits.maxDiffBytes)throw new Error('diff_limit')

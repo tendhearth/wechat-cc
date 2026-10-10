@@ -148,6 +148,8 @@ export function makeReviewDomain(ctx:ServiceCtx):ReviewDomain {
         current=readAnchoredRegular(task.path,file.path).toString('utf8')
       } catch(error) { if((error as NodeJS.ErrnoException).code!=='ENOENT')throw new Error(error instanceof Error&&error.message===fail?fail:'review_file_changed') }
       if(file.kind==='deleted'?current!==null:current===null||!file.afterSha256||sha(current)!==file.afterSha256)throw new Error('review_file_changed')
+      // 执行位按开始时还原(快照记了的话):删掉的脚本重建、或这一轮改过执行位的,都回到原样
+      if(file.beforeExecutable!==undefined)mode=file.kind==='deleted'?(file.beforeExecutable?0o755:0o644):file.beforeExecutable?mode|((mode&0o444)>>2):mode&~0o111
       const before=reverseApplyDiff(current??'',file.diff)
       if(before===null)throw new Error('review_file_changed')
       verifyChain(task.path,parts.slice(0,-1),fail,{leafDirectory:true})

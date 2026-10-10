@@ -396,6 +396,21 @@ describe('revertReviewFile (2026-10-06)', () => {
     // 已经撤销过:现在的内容不再是快照里「改完」的那份 ⇒ 拒绝,不重复写
     expect(() => service.revertReviewFile(id, { artifactId, path: 'src/a.ts' })).toThrow('review_file_changed')
   })
+  it.skipIf(process.platform === 'win32')('brings back the executable bit of a deleted script, and of one whose bit the turn changed (2026-10-10)', async () => {
+    const { writeFileSync, unlinkSync, statSync, chmodSync, mkdirSync: mk } = await import('node:fs')
+    const { service, project, id, artifactId } = await realReview(p => {
+      unlinkSync(join(p, 'scripts', 'build.sh'))
+      writeFileSync(join(p, 'scripts', 'run.sh'), '#!/bin/sh\necho two\n'); chmodSync(join(p, 'scripts', 'run.sh'), 0o644)
+    }, p => {
+      mk(join(p, 'scripts'))
+      writeFileSync(join(p, 'scripts', 'build.sh'), '#!/bin/sh\necho build\n'); chmodSync(join(p, 'scripts', 'build.sh'), 0o755)
+      writeFileSync(join(p, 'scripts', 'run.sh'), '#!/bin/sh\necho one\n'); chmodSync(join(p, 'scripts', 'run.sh'), 0o755)
+    })
+    service.revertReviewFile(id, { artifactId, path: 'scripts/build.sh' })
+    expect(statSync(join(project, 'scripts', 'build.sh')).mode & 0o111).not.toBe(0)
+    service.revertReviewFile(id, { artifactId, path: 'scripts/run.sh' })
+    expect(statSync(join(project, 'scripts', 'run.sh')).mode & 0o111).not.toBe(0)
+  })
   it('refuses when the file changed after the snapshot, and when a session still holds the folder', async () => {
     const { writeFileSync, readFileSync, mkdirSync: mk } = await import('node:fs')
     const { service, store, project, id, artifactId } = await realReview(p => { writeFileSync(join(p, 'x.txt'), 'two\n') }, p => { writeFileSync(join(p, 'x.txt'), 'one\n'); mk(join(p, 'd')) })
