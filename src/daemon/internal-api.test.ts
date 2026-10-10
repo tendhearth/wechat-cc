@@ -345,6 +345,25 @@ describe('internal-api', () => {
         db.close()
       })
 
+      it('session caller: the audit row goes to the caller\'s own chat, not whatever chat_id the model passed', async () => {
+        const { port, token, db } = await startWithMemoryAndDb()
+        await fetch(`http://127.0.0.1:${port}/v1/memory/write`, {
+          method: 'POST',
+          headers: { Authorization: `Bearer ${token}`, 'content-type': 'application/json' },
+          body: JSON.stringify({ path: 'chat-1/note.md', content: 'x' }),
+        })
+        const tok = api!.mintSessionToken('trusted', 'claude/a/chat-1')
+        const resp = await fetch(`http://127.0.0.1:${port}/v1/memory/delete`, {
+          method: 'POST',
+          headers: { Authorization: `Bearer ${tok}`, 'content-type': 'application/json' },
+          body: JSON.stringify({ chat_id: 'victim', path: 'chat-1/note.md', reason: 'forged into someone else\'s log' }),
+        })
+        expect(resp.status).toBe(200)
+        expect(await makeEventsStore(db, 'victim').list()).toHaveLength(0)
+        expect(await makeEventsStore(db, 'chat-1').list()).toHaveLength(1)
+        db.close()
+      })
+
       it('returns ok:true existed:false (no event) when target does not exist', async () => {
         const { port, token, db } = await startWithMemoryAndDb()
         const resp = await fetch(`http://127.0.0.1:${port}/v1/memory/delete`, {
