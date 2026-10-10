@@ -237,6 +237,30 @@ describe('握手协商', () => {
   })
 })
 
+// 2026-10-10 评审:版本协商是明文,中继能把 v 剥掉、把双方降到没有防重放的 v1。原生 app 只和会说 v2 的后台
+// 打交道 ⇒ requireV2 时回来的是 v1 一律当篡改:不建 v1 密钥、不发请求,报 downgrade_refused。
+describe('requireV2:拒绝降级', () => {
+  it('requireV2 + 后台只回 {hs} ⇒ 不走 v1、请求不发出去,报 downgrade_refused', async () => {
+    const daemon = makeFakeDaemon({ version: 1 })
+    const onProtocolError = vi.fn()
+    const { c } = client(daemon, { requireV2: true, onProtocolError, requestDeadlineMs: 200 })
+    const r = c.request({ method: 'POST', path: '/m/api/chat/say', body: '{"text":"hi"}' })
+    const settled = r.then(() => 'resolved', () => 'rejected')
+    await vi.advanceTimersByTimeAsync(5_000)
+    expect(await settled).toBe('rejected')
+    expect(daemon.d.reqs).toEqual([])
+    expect(c.version()).not.toBe(1)
+    expect(onProtocolError).toHaveBeenCalledWith('downgrade_refused', undefined)
+    c.close()
+  })
+  it('requireV2 + v2 后台 ⇒ 照常', async () => {
+    const daemon = makeFakeDaemon({ version: 2 })
+    const { c } = client(daemon, { requireV2: true })
+    expect((await c.request({ method: 'GET', path: '/v1/health' })).status).toBe(200)
+    c.close()
+  })
+})
+
 describe('请求 / 响应', () => {
   it('base64 二进制请求体与响应体、请求头都原样过去', async () => {
     const daemon = makeFakeDaemon({ version: 2 })
