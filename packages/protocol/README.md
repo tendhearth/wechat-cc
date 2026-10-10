@@ -12,7 +12,7 @@
 | `v2.ts` | `deriveV2Keys` `makeV2Channel` | v2:两个方向各一把密钥、计数器 nonce、收到重复/倒退的计数一律拒绝(防重放) |
 | `push.ts` | `derivePushKey` `sealPush` `openPush` | 推送载荷加密的密钥派生(推送本身在子项目 2 发) |
 | `messages.ts` | `ClientHello` `ServerHello` `ReqMsg` `ResMsg` `SubMsg` `UnsubMsg` `EvMsg` `ErrMsg` `PingMsg` `PongMsg` `V2Message` … | 线上消息的 zod 模式;`b64Encode`/`b64Decode` |
-| `client.ts` | `makeProtocolClient` | 协议客户端:握手协商 v1/v2、`request()`、`subscribe()`、重连退避、保活 |
+| `client.ts` | `makeProtocolClient` | 协议客户端:握手协商 v1/v2、`request()`、`subscribe()`、重连退避、保活;`requireV2` 拒绝降级(协商是明文,中继可剥掉 `v` 把双方降到无防重放的 v1;原生 app 打开) |
 | `api.ts` | `PHONE_API_SCHEMAS` `PHONE_HTML_ROUTES` 及 `Matter*` `Presence` `HomeWork` `FeedEvent` … | `/m/api/*` 响应体的 zod 模式;后台有守卫测试对着真实响应核对 |
 | `browser.ts` | (默认导出 `CCP`) | 经典脚本入口,打成 IIFE 挂 `globalThis.CCP`,给不能 `import` 的手写页面用 |
 

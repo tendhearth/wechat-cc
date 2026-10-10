@@ -108,6 +108,8 @@ export function makeLiveBackend(d: LiveDeps): Backend {
     if (client || disposed || conn.state === 'revoked') return
     const my = ++gen
     client = mk({
+      // 原生 app 只跟会说 v2 的后台打交道:回来 v1 ⇒ 当中继篡改,拒绝降级(见 ClientOpts.requireV2)
+      requireV2: true,
       ...d.clientOpts,
       open: d.open,
       token: d.token,

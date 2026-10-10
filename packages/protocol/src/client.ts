@@ -293,6 +293,7 @@ export function makeProtocolClient(opts: ClientOpts): ProtocolClient {
       theirPub = b64uDecode(h.data.hs)
       shared = x25519Shared(c.priv, theirPub)
     } catch (e) { protoErr('bad_hello_key', e); dropConn(c); return }
+    if (h.data.v !== 2 && opts.requireV2) { protoErr('downgrade_refused'); dropConn(c); return }
     if (h.data.v === 2) {
       c.chan = makeV2Channel(deriveV2Keys(shared, opts.token), 'client')
       c.version = 2
