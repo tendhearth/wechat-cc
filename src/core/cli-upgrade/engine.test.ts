@@ -424,6 +424,45 @@ describe.skipIf(!posix)('cli-upgrade engine with fake CLIs', { timeout: 60_000 }
     expect(h.store.snapshot().claude.knownBad).toEqual(['1.1.0'])
   })
 
+  it('an owed selftest that cannot run (CLI gone) is dropped and never starves the other CLIs (2026-10-10)', async () => {
+    const c = fakeClaude(join(root, 'c'), ['1.0.0', '1.1.0'], '1.0.0')
+    const x = fakeCodex(join(root, 'x'), ['0.1.0', '0.2.0'], '0.1.0')
+    const fakes: Partial<Record<CliId, Fake>> = { claude: c, codex: x }
+    const h = harness(fakes)
+    h.setLatest('claude', '1.1.0'); c.setNext('1.1.0')
+    h.verifyMode.mode = 'deferred'
+    const up = makeCliUpgrader(h.deps)
+    expect((await up.upgrade('claude', { source: 'scheduled' })).result).toBe('unverified')
+    h.verifyMode.mode = 'version'
+    // claude 被卸了;codex 有新版待升
+    delete fakes.claude
+    h.setLatest('codex', '0.2.0'); x.setNext('0.2.0')
+    await up.check('codex', 'manual')
+    h.clock.t += 31 * 60_000
+    await up.tick()
+    expect(h.store.snapshot().claude).toMatchObject({ rollbackTo: null })
+    await up.tick()
+    expect(await x.current()).toBe('0.2.0')
+  })
+
+  it('an upgrade that breaks --version marks the looked-up latest bad, so it is not retried every day (2026-10-10)', async () => {
+    const c = fakeClaude(root, ['1.0.0'], '1.0.0')
+    const vers = join(root, 'home', '.local', 'share', 'claude', 'versions')
+    writeWarmExecFixture(join(vers, '1.1.0'), '#!/bin/sh\nexit 3\n')
+    const h = harness({ claude: c })
+    h.setLatest('claude', '1.1.0'); c.setNext('1.1.0')
+    const up = makeCliUpgrader(h.deps)
+    await up.check('claude', 'scheduled')
+    expect((await up.upgrade('claude', { source: 'scheduled' })).result).toBe('rolled_back')
+    expect(await c.current()).toBe('1.0.0')
+    expect(h.store.snapshot().claude.knownBad).toEqual(['1.1.0'])
+    expect(h.notes).toHaveLength(1)
+    expect(h.notes[0]).toContain('1.1.0')
+    h.clock.day = '2026-10-05'
+    await up.check('claude', 'scheduled')
+    expect(h.store.snapshot().claude.pending).toBeNull()
+  })
+
   it('a CLI that is not installed is reported, never touched', async () => {
     const h = harness({})
     const up = makeCliUpgrader(h.deps)
