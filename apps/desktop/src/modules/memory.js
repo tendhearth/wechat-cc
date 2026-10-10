@@ -15,7 +15,7 @@ import { ccPageArt } from "../cc-page-art.js"
  */
 
 // Memory pane module. Lists Companion v2 memory files (per-user grouping),
-// renders selected .md files with the vendored `marked` parser, and lets
+// renders selected .md files with the shared safe markdown renderer (vendor/markdown.js), and lets
 // the user edit + save them in-place via `wechat-cc memory write`.
 //
 // Owns: #memory-sidebar, #memory-rendered, #memory-meta, #memory-count,
@@ -24,6 +24,7 @@ import { ccPageArt } from "../cc-page-art.js"
 //       #memory-editor (textarea), #memory-status (save feedback)
 
 import { escapeHtml, formatRelativeTime } from "../view.js"
+import { renderMarkdown } from "../vendor/markdown.js"
 import { observationRow, milestoneCard } from "./observations.js"
 import { decisionRow } from "./decisions.js"
 import { icon } from "./icons.js"
@@ -84,17 +85,18 @@ export function setMemoryEmbryoEnabled(on) {
   }
 }
 
+/**
+ * 记忆文件 → HTML。用和对话 / 工作台同一个安全渲染器(转义原始 HTML、只放行 http(s) 链接)。
+ * 2026-10-10:原先用 marked,原始 HTML 原样进 innerHTML —— 记忆是模型写的、可被提示注入塑形,
+ * 一句 <meta refresh> 就能把主窗口导到外站,而外站拿得到这扇窗口的 Tauri 命令。
+ * @param {string} md
+ */
+export function renderMemoryMarkdown(md) {
+  return renderMarkdown(md)
+}
+
 async function loadMarked() {
-  if (memoryState.marked) return memoryState.marked
-  try {
-    const mod = await import("../vendor/marked.js")
-    memoryState.marked = /** @type {{ parse: (s: string) => string }} */ (mod.marked || mod.defaults || mod)
-    return memoryState.marked
-  } catch (err) {
-    console.warn("local marked load failed, falling back to <pre>", err)
-    memoryState.marked = { parse: (/** @type {string} */ s) => `<pre>${escapeHtml(s)}</pre>` }
-    return memoryState.marked
-  }
+  return { parse: renderMemoryMarkdown }
 }
 
 /** @param {Deps} deps */
