@@ -77,7 +77,7 @@ function resetTunnel() {
 /** @param {string} sentAs */
 function onUnauthorized(sentAs) {
   if (sentAs !== T) return
-  try { localStorage.removeItem("deviceToken") } catch (e) {}
+  try { localStorage.removeItem("deviceToken"); localStorage.removeItem("deviceTokenId") } catch (e) {}
   location.replace("/m")
 }
 // api():在家直连,出门走隧道。一旦直连失败一次就记住"在外面",后续

@@ -12,6 +12,8 @@ describe('入口 Worker', () => {
     expect(r.status).toBe(200)
     expect(r.headers.get('content-type')).toContain('text/html')
     expect(await r.text()).toContain('/v2/phone')
+    // 2026-10-10:别的站不能把壳页套进 iframe
+    expect(r.headers.get('content-security-policy')).toContain("frame-ancestors 'none'")
   })
   it('未知路径 404', async () => {
     expect((await SELF.fetch('https://relay.test/tunnel/phone?id=x')).status).toBe(404)
