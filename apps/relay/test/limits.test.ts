@@ -6,7 +6,7 @@ describe('limits', () => {
     expect(LIMITS).toMatchObject({
       maxPhoneStreams: 16, maxFrameBytes: 512 * 1024,
       phoneRate: { capacity: 120, refillPerSec: 20 }, daemonRate: { capacity: 1000, refillPerSec: 200 },
-      dailyPushes: 500, dailyBytes: 1_000_000_000, loginTimeoutMs: 10_000,
+      dailyPushes: 500, dailyBytes: 1_000_000_000, loginTimeoutMs: 10_000, phoneHandshakeMs: 15_000,
     })
   })
   it('env 覆盖(字符串),非法值回落缺省', () => {

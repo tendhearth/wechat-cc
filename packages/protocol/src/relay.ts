@@ -64,7 +64,7 @@ export function verifyRelayLogin(daemonId: string, challenge: string, pub: strin
   }
 }
 
-export const RELAY_ERRORS = ['daemon_offline', 'frame_too_large', 'rate_limited', 'quota_exceeded', 'too_many_streams', 'login_failed'] as const
+export const RELAY_ERRORS = ['daemon_offline', 'frame_too_large', 'rate_limited', 'quota_exceeded', 'too_many_streams', 'login_failed', 'handshake_timeout'] as const
 export type RelayError = (typeof RELAY_ERRORS)[number]
 
 /** apns_sandbox:Xcode 调试包拿到的是沙盒 token,要打 api.sandbox.push.apple.com(计划裁决 1)。 */

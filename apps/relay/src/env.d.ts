@@ -13,6 +13,7 @@ interface Env {
   RELAY_DAILY_BYTES?: string
   RELAY_DAILY_PUSHES?: string
   RELAY_LOGIN_TIMEOUT_MS?: string
+  RELAY_PHONE_HANDSHAKE_MS?: string
   APNS_KEY_P8?: string
   APNS_KEY_ID?: string
   APNS_TEAM_ID?: string

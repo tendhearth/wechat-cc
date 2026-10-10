@@ -18,11 +18,17 @@ import { count } from './metrics'
 import { sendPush, type PushOutcome } from './push'
 
 export type DaemonAtt = { role: 'daemon'; id: string; challenge: string; openedAt: number; authed: boolean; authedAt: number; replaced: boolean }
-export type PhoneAtt = { role: 'phone'; stream: string; rejected?: boolean }
+/** openedAt / established:daemon 往这条流回过一帧 = 握手完成;没完成的流到 phoneHandshakeMs 就关(2026-10-10)。 */
+export type PhoneAtt = { role: 'phone'; stream: string; rejected?: boolean; openedAt?: number; established?: boolean }
 export type Att = DaemonAtt | PhoneAtt
 
 export function expiredLogins(atts: readonly DaemonAtt[], now: number, timeoutMs: number): DaemonAtt[] {
   return atts.filter(a => !a.authed && a.openedAt + timeoutMs <= now)
+}
+
+/** 开着、没被拒、daemon 一帧都没回过,且 openedAt + 超时 ≤ now 的手机流。老 attachment 没有 openedAt ⇒ 不算。 */
+export function expiredPhoneStreams(atts: readonly PhoneAtt[], now: number, timeoutMs: number): PhoneAtt[] {
+  return atts.filter(a => !a.rejected && !a.established && a.openedAt !== undefined && a.openedAt + timeoutMs <= now)
 }
 
 export class Room extends DurableObject<Env> {
@@ -106,6 +112,17 @@ export class Room extends DurableObject<Env> {
     for (const [ws, a] of pending) {
       if (expired.has(a)) this.fail(ws, 'login_failed', 4001)
       else next = Math.min(next ?? Infinity, a.openedAt + this.limits.loginTimeoutMs)
+    }
+    // 握手没完成的手机流(只知道 id 的人开满空流挡住主人的手机)
+    const phones: Array<[WebSocket, PhoneAtt]> = []
+    for (const ws of this.ctx.getWebSockets('phone')) { const a = this.att(ws); if (a?.role === 'phone' && !a.rejected && !a.established && a.openedAt !== undefined) phones.push([ws, a]) }
+    const stale = new Set(expiredPhoneStreams(phones.map(p => p[1]), now, this.limits.phoneHandshakeMs))
+    for (const [ws, a] of phones) {
+      if (stale.has(a)) {
+        ws.serializeAttachment({ ...a, rejected: true } satisfies PhoneAtt)   // 关闭握手完成前别再占名额
+        this.buckets.delete(`p:${a.stream}`)
+        this.fail(ws, 'handshake_timeout', 1008)
+      } else next = Math.min(next ?? Infinity, a.openedAt! + this.limits.phoneHandshakeMs)
     }
     if (next !== null) await this.ctx.storage.setAlarm(next)
   }
@@ -216,8 +233,14 @@ export class Room extends DurableObject<Env> {
     else if (others >= this.limits.maxPhoneStreams) reject = 'too_many_streams'
     else if ((await this.usage()).bytes >= this.limits.dailyBytes) reject = 'quota_exceeded'
     this.ctx.acceptWebSocket(server, ['phone', stream])
-    server.serializeAttachment(reject ? { role: 'phone', stream, rejected: true } satisfies PhoneAtt : { role: 'phone', stream } satisfies PhoneAtt)
+    const openedAt = Date.now()
+    server.serializeAttachment(reject ? { role: 'phone', stream, rejected: true } satisfies PhoneAtt : { role: 'phone', stream, openedAt } satisfies PhoneAtt)
     if (reject) this.fail(server, reject, closeCode)
+    else {
+      const due = openedAt + this.limits.phoneHandshakeMs
+      const cur = await this.ctx.storage.getAlarm()
+      if (cur === null || cur > due) await this.ctx.storage.setAlarm(due)
+    }
     return new Response(null, { status: 101, webSocket: pair[0] })
   }
 
@@ -273,6 +296,8 @@ export class Room extends DurableObject<Env> {
         try { phone.close(1008, 'closed_by_daemon') } catch { /* 已经关了 */ }
         return
       }
+      const pa = this.att(phone)
+      if (pa?.role === 'phone' && !pa.established) phone.serializeAttachment({ ...pa, established: true } satisfies PhoneAtt)
       this.sendJson(phone, msg.frame ?? {})
       await this.addBytes(size)
       return
