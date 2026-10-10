@@ -62,7 +62,7 @@ const accountExportCmd = defineCommand({
   meta: { name: 'export', description: 'Export a bound bot (encrypted) so another machine can drive it — no re-scan' },
   args: {
     'bot-id': { type: 'string', description: 'Which account (default: the sole bound one)' },
-    passphrase: { type: 'string', description: 'Encrypts the bundle (you type the same on import). Prefer env WECHAT_CC_PASSPHRASE — a flag is visible in `ps` and shell history' },
+    passphrase: { type: 'string', description: 'Encrypts the bundle (or env WECHAT_CC_PASSPHRASE, preferred)' },
     out: { type: 'string', description: 'Output file (default: <botId>.wccaccount)' },
     json: { type: 'boolean', description: 'JSON envelope' },
   },
@@ -92,7 +92,7 @@ const accountImportCmd = defineCommand({
   meta: { name: 'import', description: 'Import an account bundle from another machine — drive the same bot without re-scanning' },
   args: {
     file: { type: 'positional', required: true, description: 'The .wccaccount bundle', valueHint: 'file' },
-    passphrase: { type: 'string', description: 'The passphrase used on export. Prefer env WECHAT_CC_PASSPHRASE — a flag is visible in `ps` and shell history' },
+    passphrase: { type: 'string', description: 'Passphrase used on export (or env WECHAT_CC_PASSPHRASE, preferred)' },
     json: { type: 'boolean', description: 'JSON envelope' },
   },
   async run({ args }) {
