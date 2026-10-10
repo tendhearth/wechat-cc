@@ -547,7 +547,11 @@ export function buildTickBodies(deps: TickDeps): TickBodies {
             turn.abandon(summary.errorCode ?? 'error')
           } else {
             const report = await turn.deliver({ finalText: summary.finalText ?? '', narration: summary.narration ?? [] })
-            if (report.delivery === 'silent' || report.delivery === 'empty') {
+            if (report.failures.length > 0 && report.bubbles === 0 && report.attachmentsSent === 0) {
+              // 发了但没发出去(断线 / 风控):登记保留,不在下一拍重跑模型再发一次(2026-10-10)。
+              // 「失败」也可能其实送到了(超时之后服务端已收),重发就是重复;断线时每拍一轮模型也违背「断线时停掉外发与模型轮次」。
+              deps.log('COMPANION', `chat=${chatId} tick send failed (${report.failures[0]}) — claim kept, not retried`)
+            } else if (report.delivery === 'silent' || report.delivery === 'empty') {
               // 没发出去就不算发过:撤回登记(at-most-once 只管「发了一半」,静默是一个决定)。
               deps.log('COMPANION', `chat=${chatId} tick delivered nothing (${report.delivery}) — claim undone`)
               try { undo?.() } catch (e) { deps.log('SCHED', `undo claim failed: ${errMsg(e)}`) }

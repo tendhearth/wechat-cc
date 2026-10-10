@@ -1692,7 +1692,7 @@ describe('伙伴推送 × 回复交付(spec 2026-10-03 §4.4 / 已定 ③)', () 
   beforeEach(() => { cleanup = [] })
   afterEach(() => { for (const d of cleanup) rmSync(d, { recursive: true, force: true }) })
 
-  function withDelivery(s: Setup, events: unknown[], report: { delivery: 'text' | 'silent' | 'empty' | 'attachments_only' } = { delivery: 'text' }) {
+  function withDelivery(s: Setup, events: unknown[], report: { delivery: 'text' | 'silent' | 'empty' | 'attachments_only'; failures?: string[] } = { delivery: 'text' }) {
     s.dispatch.mockImplementation(() => ({ async *[Symbol.asyncIterator]() { for (const e of events) yield e } }))
     const begun: unknown[] = []
     const delivered: unknown[] = []
@@ -1761,6 +1761,14 @@ describe('伙伴推送 × 回复交付(spec 2026-10-03 §4.4 / 已定 ③)', () 
     expect(s.careLedgerEntries['chat-1']).toBeUndefined()
     expect(readFileSync(join(s.stateDir, 'memory', 'chat-1', 'agenda.md'), 'utf8')).toContain('- [ ] due:2026-05-13')
     expect(s.logs.some(l => l.includes('REPLY_SILENT') || l.includes('silent'))).toBe(true)
+  })
+
+  it('daemon:第一条就发送失败(empty + failures)⇒ 登记保留,不在下一拍重跑模型重发(2026-10-10)', async () => {
+    const s = setupDeps({ defaultChatId: 'chat-1', inFlight: false, agendaMd: '- [ ] due:2026-05-13 check in on project' })
+    cleanup.push(s.stateDir)
+    withDelivery(s, [{ kind: 'text', text: '早呀,记得今天去健身' }, { kind: 'result', sessionId: 's', numTurns: 1, durationMs: 1 }], { delivery: 'empty', failures: ['ilink ret=-2'] })
+    await buildTickBodies(s.deps).pushTick({ nowIso: '2026-05-13T10:00:00.000Z' })
+    expect(s.careLedgerEntries['chat-1']).toBeDefined()
   })
 
   it('daemon:这一轮出错 ⇒ 不交付(abandon),登记保留(at-most-once 不变)', async () => {
