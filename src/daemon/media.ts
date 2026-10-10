@@ -32,6 +32,15 @@ export function encryptAesEcb(plaintext: Buffer, key: Buffer): Buffer {
   return Buffer.concat([cipher.update(plaintext), cipher.final()])
 }
 
+/**
+ * 入站附件在轮询循环里同步下载(onInbound 被 await):CDN 接了连接却不回 ⇒ 这个账号后面的
+ * 消息全卡住、心跳也停(锁会被当成死掉)。请求 + 读 body 共用这一个超时;到点 abort ⇒
+ * AbortError,materializeAttachments 的重试照常认它。
+ */
+export const CDN_DOWNLOAD_TIMEOUT_MS = 60_000
+/** 入站附件上限:整个 body 要读进内存再解密、再写盘(三份),不设上限就是随对方发多大占多大。 */
+export const MAX_INBOUND_MEDIA_BYTES = 100 * 1024 * 1024
+
 export async function downloadCdnMedia(media: CDNMedia, aesKeyHexOverride?: string): Promise<Buffer> {
   let url: string
   if (media.full_url) {
@@ -42,9 +51,23 @@ export async function downloadCdnMedia(media: CDNMedia, aesKeyHexOverride?: stri
     throw new Error('no download URL: need full_url or encrypt_query_param')
   }
 
-  const res = await fetch(url)
-  if (!res.ok) throw new Error(`CDN download ${res.status}: ${res.statusText}`)
-  const encrypted = Buffer.from(await res.arrayBuffer())
+  const ctrl = new AbortController()
+  const timer = setTimeout(() => ctrl.abort(), CDN_DOWNLOAD_TIMEOUT_MS)
+  let encrypted: Buffer
+  try {
+    const res = await fetch(url, { signal: ctrl.signal })
+    if (!res.ok) throw new Error(`CDN download ${res.status}: ${res.statusText}`)
+    const declared = Number(res.headers?.get?.('content-length') ?? NaN)
+    if (Number.isFinite(declared) && declared > MAX_INBOUND_MEDIA_BYTES) {
+      ctrl.abort()
+      throw new Error(`CDN download too large: ${declared} bytes (cap ${MAX_INBOUND_MEDIA_BYTES})`)
+    }
+    encrypted = Buffer.from(await res.arrayBuffer())
+  } finally {
+    clearTimeout(timer)
+  }
+  // 没有 Content-Length(分块传输)时只能读完再查
+  if (encrypted.length > MAX_INBOUND_MEDIA_BYTES) throw new Error(`CDN download too large: ${encrypted.length} bytes (cap ${MAX_INBOUND_MEDIA_BYTES})`)
 
   const key = aesKeyHexOverride
     ? Buffer.from(aesKeyHexOverride, 'hex')
