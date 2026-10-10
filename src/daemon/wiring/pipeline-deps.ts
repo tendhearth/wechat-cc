@@ -42,7 +42,7 @@ import { scopedSend, withReplyScope } from '../inbound/reply-scope'
 import type { InboundCtx } from '../inbound/types'
 import type { AppTurn } from '../inbound/build'
 import { basename as pathBasename } from 'node:path'
-import { makeSettingsPanel } from '../settings-panel'
+import { makeSettingsPanel, phoneMayOpenMatter } from '../settings-panel'
 import { buildConnections, cacheConnections } from '../connections'
 import { makeRemoteToggle, relayV2Configured } from '../remote-toggle'
 import { cacheSessions } from '../mobile-reads'
@@ -670,7 +670,12 @@ export function buildPipelineDeps(opts: PipelineDepsOpts, refs: PipelineDepsRefs
       const cheap = () => wrapCheapEvalWithAuthFailCheck(boot.registry.getCheapEval(), (tag, line) => log(tag, line)) ?? null
       const budgetMs = () => boot.registry.getCheapEvalBudgetMs()
       return { insight: makePhoneInsight({
-        detail: (id: string) => mattersService.detail(id),
+        // 手机「解读」同详情一条规矩:别人的聊天不拿去给模型总结、也不回给手机
+        detail: async (id: string) => {
+          const d = await mattersService.detail(id)
+          if (!phoneMayOpenMatter(d.matter, ownerChatId())) throw new Error('matter_not_found')
+          return d
+        },
         explainer: makeApprovalExplainer({ cheapEval: cheap, budgetMs, log: (tag, line) => log(tag, line) }),
         summarizer: makeProgressSummarizer({ cheapEval: cheap, budgetMs, now: () => Date.now(), log: (tag, line) => log(tag, line) }),
       }) }
