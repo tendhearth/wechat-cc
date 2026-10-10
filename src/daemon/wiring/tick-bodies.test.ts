@@ -1326,6 +1326,48 @@ describe('人类做客 —— 朋友来聊过、走了,伙伴跟主人提一句'
     expect(sent).toEqual(['🛎 刚才小王来过,问了工具的事。'])
   })
 
+  it('第二位客人发给主人时断网 → 第一位已讲完的水位照样落盘,下一拍不重讲', async () => {
+    const s = setupDeps({ defaultChatId: 'owner', inFlight: false, ...quiet('owner') })
+    cleanup.push(s.stateDir)
+    await seedGuest(s, 'g1@im.wechat', '2026-05-13T09:15:00.000Z')
+    await seedGuest(s, 'g2@im.wechat', '2026-05-13T09:15:00.000Z')
+    const { sent } = armEval(s)
+    let calls = 0
+    ;(s.deps.ilink as unknown as { sendMessage: unknown }).sendMessage = async (_c: string, t: string) => {
+      calls++
+      if (calls === 2) throw new Error('ilink down')
+      sent.push(t); return { msgId: String(calls) }
+    }
+    const ticks = buildTickBodies(s.deps)
+    await ticks.pushTick({ nowIso: '2026-05-13T10:00:00.000Z' })
+    expect(sent).toHaveLength(1)
+    await ticks.pushTick({ nowIso: '2026-05-13T10:20:00.000Z' })
+    // 第二拍只补发没送出去的那一位
+    expect(sent).toHaveLength(2)
+  })
+
+  it('微信连接降级(shouldSuspend)→ 这一拍不讲,也不调模型', async () => {
+    const s = setupDeps({ defaultChatId: 'owner', inFlight: false, ...quiet('owner') })
+    cleanup.push(s.stateDir)
+    await seedGuest(s, 'guest@im.wechat', '2026-05-13T09:15:00.000Z')
+    const { evalFn, sent } = armEval(s)
+    await buildTickBodies({ ...s.deps, health: { shouldSuspend: () => true } }).pushTick({ nowIso: '2026-05-13T10:00:00.000Z' })
+    expect(evalFn).not.toHaveBeenCalled()
+    expect(sent).toEqual([])
+  })
+
+  it('一时没有可用模型 → 不吞掉这次做客;有模型了照讲', async () => {
+    const s = setupDeps({ defaultChatId: 'owner', inFlight: false, ...quiet('owner') })
+    cleanup.push(s.stateDir)
+    await seedGuest(s, 'guest@im.wechat', '2026-05-13T09:15:00.000Z')
+    const ticks = buildTickBodies(s.deps)
+    await ticks.pushTick({ nowIso: '2026-05-13T10:00:00.000Z' })   // registry 默认无模型
+    const { evalFn, sent } = armEval(s)
+    await ticks.pushTick({ nowIso: '2026-05-13T10:20:00.000Z' })
+    expect(evalFn).toHaveBeenCalledOnce()
+    expect(sent).toEqual(['🛎 刚才小王来过,问了工具的事。'])
+  })
+
   it('只说了一句「在吗」→ 不算做客', async () => {
     const s = setupDeps({ defaultChatId: 'owner', inFlight: false, ...quiet('owner') })
     cleanup.push(s.stateDir)
