@@ -245,6 +245,26 @@ describe('runDispatchLoop', () => {
     expect(generateContentCalls).toBe(1)
   })
 
+  it('signal aborted mid-batch → remaining calls in the same round never execute, response count still matches', async () => {
+    const history: any[] = []
+    const controller = new AbortController()
+    const executed: string[] = []
+    const genai = fakeGenai([{ functionCalls: [{ name: 'a', args: {} }, { name: 'b', args: {} }, { name: 'c', args: {} }] }])
+    const events = runDispatchLoop({
+      genai,
+      mcp: { async callTool(name) { executed.push(name); controller.abort(); return { content: [{ type: 'text', text: 'ok' }] } } },
+      gate: async () => ({ allow: true }),
+      model: 'm', systemInstruction: 's', functionDeclarations: [{ name: 'a' }, { name: 'b' }, { name: 'c' }],
+      history, sessionId: 's7', userText: 'x',
+      signal: controller.signal,
+    })
+    for await (const _ of events) { /* drain */ }
+    expect(executed).toEqual(['a'])
+    // Gemini 400s if functionResponse count != functionCall count
+    const responses = history.find((h: any) => h.role === 'user' && h.parts.some((p: any) => p.functionResponse))
+    expect(responses.parts).toHaveLength(3)
+  })
+
   it('signal aborted before the loop starts → no generateContent call at all, alternation preserved', async () => {
     const history: any[] = []
     const controller = new AbortController()
