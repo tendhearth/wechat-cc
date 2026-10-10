@@ -16,7 +16,7 @@ const result: AgentEvent = { kind: 'result', sessionId: 'session-one', numTurns:
 function setup(provider: AgentProvider, owner: () => string | null = () => 'owner', permissionTimeoutMs?: number, extra: {
   timeoutMs?:number; closeTimeoutMs?:number; holdBusy?:(label:string)=>()=>void
   mintSessionToken?:(key:string)=>string; revokeSessionToken?:(key:string)=>void
-  writerGroupAlive?:(group:number)=>boolean; writerWatchMs?:number
+  writerGroupAlive?:(group:number)=>boolean; writerWatchMs?:number; bootTimeMs?:()=>number
 } = {}) {
   const registry = createProviderRegistry()
   registry.register('claude', provider, { displayName: 'Claude', canResume: () => true,workbench:MANAGED_NATIVE_CAPABILITIES })
@@ -831,7 +831,7 @@ describe('persistent workbench', () => {
       const alive = new Set([4242])
       setup(stuck([4242]), undefined, undefined, { writerGroupAlive: g => alive.has(g), writerWatchMs: 20 })
       const task = create(); await settle(task.id); await service.shutdown()
-      expect(db.query('SELECT writer_groups FROM workbench_tasks WHERE id=?').get(task.id)).toEqual({ writer_groups: '[4242]' })
+      expect(JSON.parse((db.query('SELECT writer_groups FROM workbench_tasks WHERE id=?').get(task.id) as { writer_groups: string }).writer_groups)).toMatchObject({ groups: [4242], boot: expect.any(Number) })
       setup({ async spawn() { return { async *dispatch() { yield result }, async close() {} } } }, undefined, undefined, { writerGroupAlive: g => alive.has(g), writerWatchMs: 20 })
       expect(service.detail(task.id).task).toMatchObject({ error: 'writer_not_closed', writerExit: 'alive', canArchive: false })
       await expect(service.confirmWriterExited(task.id)).rejects.toThrow('writer_alive')
@@ -850,6 +850,20 @@ describe('persistent workbench', () => {
       setup({ async spawn() { throw new Error('must not spawn') } }, undefined, undefined, { writerGroupAlive: () => false })
       expect(service.detail(task.id).task).toMatchObject({ error: null, canArchive: true })
       expect(service.detail(task.id).events.at(-1)?.text).toContain('重启后核对')
+      await service.shutdown()
+    })
+    it('after the computer itself rebooted, recorded groups are released even if a stranger now holds those numbers (2026-10-10)', async () => {
+      const boot = Date.parse('2026-10-10T00:00:00Z')
+      setup(stuck([4245]), undefined, undefined, { writerGroupAlive: () => true, bootTimeMs: () => boot })
+      const task = create(); await settle(task.id); await service.shutdown()
+      // 同一次开机:组号还「活着」⇒ 照旧占着
+      setup({ async spawn() { throw new Error('must not spawn') } }, undefined, undefined, { writerGroupAlive: () => true, bootTimeMs: () => boot + 60_000 })
+      expect(service.detail(task.id).task.error).toBe('writer_not_closed')
+      await service.shutdown()
+      // 电脑重启过:组号就算被别的进程占了,也不是那个执行程序
+      setup({ async spawn() { throw new Error('must not spawn') } }, undefined, undefined, { writerGroupAlive: () => true, bootTimeMs: () => boot + 86_400_000 })
+      expect(service.detail(task.id).task).toMatchObject({ error: null, canArchive: true })
+      expect(service.detail(task.id).events.at(-1)?.text).toContain('电脑重启过')
       await service.shutdown()
     })
     it('an old record without groups is released only by the owner, and does not block new tasks after a restart', async () => {

@@ -26,9 +26,16 @@ export interface Task {
 export interface WorkbenchProject { id:string; path:string; name:string; providerId:string; createdAt:number }
 const PROJECT_SELECT='SELECT id,path,name,provider_id AS providerId,created_at AS createdAt FROM workbench_projects'
 const projectName=(project:WorkbenchProject):WorkbenchProject=>({...project,name:project.name||basename(project.path)||project.path})
-function parseGroups(raw:string|null):number[]|null {
-  if(!raw)return null
-  try { const v:unknown=JSON.parse(raw); return Array.isArray(v)&&v.length&&v.every(g=>Number.isInteger(g)&&g>1)?v as number[]:null } catch { return null }
+/** writer_groups:旧格式是组号数组;2026-10-10 起是 {boot, groups}(boot = 记下时的开机时刻,毫秒)。 */
+function parseGroups(raw:string|null):{groups:number[]|null;boot:number|null} {
+  if(!raw)return {groups:null,boot:null}
+  const ok=(v:unknown):v is number[]=>Array.isArray(v)&&v.length>0&&v.every(g=>Number.isInteger(g)&&g>1)
+  try {
+    const v:unknown=JSON.parse(raw)
+    if(ok(v))return {groups:v,boot:null}
+    if(v&&typeof v==='object'){const r=v as {groups?:unknown;boot?:unknown};if(ok(r.groups))return {groups:r.groups,boot:typeof r.boot==='number'&&Number.isFinite(r.boot)?r.boot:null}}
+  } catch { /* 下面 */ }
+  return {groups:null,boot:null}
 }
 export interface StoredTask extends Task { ownerChatId: string | null; sessionId: string | null }
 export type {TaskEvent} from './timeline-events'
@@ -229,13 +236,13 @@ export function makeWorkbenchStore(db: Db) {
       markMerged(taskId:string) { db.query('UPDATE workbench_worktrees SET merged_at=COALESCE(merged_at,?) WHERE task_id=?').run(Date.now(),taskId) },
     },
     /** 关不掉的执行程序的进程组(v73,2026-10-06):退出证据从这里查,见 lifecycle 的 writer 守望。 */
-    setWriterGroups(id:string,groups:readonly number[]) {
-      db.query('UPDATE workbench_tasks SET writer_groups=? WHERE id=?').run(groups.length?JSON.stringify(groups):null,id)
+    setWriterGroups(id:string,groups:readonly number[],bootMs?:number) {
+      db.query('UPDATE workbench_tasks SET writer_groups=? WHERE id=?').run(groups.length?JSON.stringify(bootMs===undefined?groups:{boot:Math.round(bootMs),groups}):null,id)
     },
     /** 所有还挂着「没确认退出」的任务;groups=null ⇒ 旧记录 / 执行者没交出进程组,没有证据可查。 */
-    writerHolds():Array<{id:string;title:string;path:string;groups:number[]|null}> {
+    writerHolds():Array<{id:string;title:string;path:string;groups:number[]|null;boot:number|null}> {
       return db.query<{id:string;title:string;path:string;groups:string|null},[]>("SELECT id,title,path,writer_groups AS groups FROM workbench_tasks WHERE error='writer_not_closed'").all()
-        .map(row=>({id:row.id,title:row.title,path:row.path,groups:parseGroups(row.groups)}))
+        .map(row=>({id:row.id,title:row.title,path:row.path,...parseGroups(row.groups)}))
     },
     create(input: { title: string; path: string; providerId: string; ownerChatId: string | null;workspaceKind?:'project'|'managed';registerProject?:boolean }): StoredTask {
       let id: string

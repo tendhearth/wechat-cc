@@ -106,6 +106,8 @@ export interface ServiceDeps {
   revokeSessionToken?: (sessionKey: string) => void
   /** 进程组还在不在(writer 退出证据);缺省 kill(-组, 0),只有 ESRCH 算不在。测试注入。 */
   writerGroupAlive?: (group: number) => boolean
+  /** 这次开机的时刻(毫秒);测试注入。缺省按 os.uptime 推算。 */
+  bootTimeMs?: () => number
   /** writer 守望多久查一次(ms;缺省 15 秒)。 */
   writerWatchMs?: number
   /** 保留会话安静下来、没人等这个文件夹时的空闲自动收工时长(ms;缺省 10 分钟);函数形式热生效。 */
