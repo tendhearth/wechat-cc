@@ -12,7 +12,7 @@ import type { Active } from './state'
 import type { WorkbenchTaskView } from './types'
 import type { ServiceCtx } from './ctx'
 import { liveRunTarget } from './call-target'
-import { groupAlive as isGroupAlive, writerGroupsOf } from './writer-exit'
+import { BOOT_TOLERANCE_MS, bootTimeMs, groupAlive as isGroupAlive, writerGroupsOf } from './writer-exit'
 import type { CallTarget } from '../../../lib/network-gate'
 
 /** 桌面 / 手机 / 微信同一句状态(主人 2026-10-03)。 */
@@ -195,7 +195,7 @@ export function makeLifecycleDomain(ctx:ServiceCtx) {
     // 退出证据(2026-10-06):把它的进程组落库 —— close() 迟到成功是一种证据,组全没了是另一种,
     // 而且 daemon 重启后还能查。交不出进程组(还没起来 / 执行者没实现)⇒ 只能等主人确认。
     const groups=writerGroupsOf(running)
-    if (groups.length) { try { store.setWriterGroups(running.taskId,groups) } catch { /* the in-memory hold still protects this process */ } }
+    if (groups.length) { try { store.setWriterGroups(running.taskId,groups,bootTimeMs(ctx)) } catch { /* the in-memory hold still protects this process */ } }
     watchWriters()
   }
   /** 有退出证据 = 记过进程组、而且一个都不在了。没记过 ⇒ 没有证据,返回 false。 */
@@ -211,8 +211,10 @@ export function makeLifecycleDomain(ctx:ServiceCtx) {
   function adoptWriters() {
     let holds:ReturnType<typeof store.writerHolds>
     try { holds=store.writerHolds() } catch { return }
+    const boot=bootTimeMs(ctx)
     for (const hold of holds) {
       if (!hold.groups) continue
+      if (hold.boot!==null && Math.abs(hold.boot-boot)>BOOT_TOLERANCE_MS) { releaseWriter(hold.id,'重启后核对：电脑重启过，当时没确认退出的执行程序已经不在了，这条占用随之解除。'); continue }
       if (writerGone(hold.groups)) { releaseWriter(hold.id,'重启后核对：当时没确认退出的执行程序已经不在了，这条占用随之解除。'); continue }
       state.writerOrphans.set(hold.id,{identity:`writer/${hold.id}`,taskId:hold.id,title:hold.title,path:hold.path,order:-1,state:'uncertain',groups:hold.groups})
     }
