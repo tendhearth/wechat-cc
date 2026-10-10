@@ -208,6 +208,10 @@ export function adoptPeerCard(
 ): { ok: true; rowId: string; channelOpened: boolean } | { ok: false; reason: 'id_conflict' } {
   const existing = deps.registry.get(card.self_id)
   if (existing && existing.mailbox_addr !== card.mailbox_addr) return { ok: false, reason: 'id_conflict' }
+  // 介绍来的名片是第三方转手的(介绍人递过来),不能用来覆盖已有朋友(2026-10-10 评审):mailbox_addr 是公开的、
+  // 每张名片都带,介绍人知道我朋友 C 的 addr,就能递一张 self_id=C、addr=C、enc_pub / bearer 却是自己的名片,
+  // 把 C 的记录换掉、之后发给 C 的信全改道给他。真重配只走配对码(那条路验过名片确实来自对端)。
+  if (existing && rowPrefix === 'intro') return { ok: false, reason: 'id_conflict' }
   const rec: A2AAgentRecord = {
     id: card.self_id,
     name: card.name,
