@@ -12,17 +12,19 @@ Claude is trained to confirm destructive operations via natural-language
 reply before acting. Use only on a personal daemon where you control the
 allowlist.
 
-> ⚠️ Don't run `--dangerously` on a bot you share with less-trusted users
-> via `access.json.allowFrom[]` — any allowed chat gets bypass.
+> ⚠️ `--dangerously` applies to the chats **you** chose — `access.json.admins[]`
+> and `trusted[]` run in bypass. **Guests never do** (2026-10-10): a chat admitted
+> via request→approve or an invite code keeps the guest tier and its sessions run
+> strict even under `--dangerously` (`effectivePermissionMode` in
+> `src/core/user-tier.ts`). Before that, the first approved guest got admin —
+> shell, files, the owner's WeChat history (wxvault) and the knowledge base.
 
 > ℹ️ **Note on the recommended install.** The bare `wechat-cc run` is strict,
 > but the desktop wizard / `service install` path launches the daemon with
 > `--dangerously` by default — an unattended background service has no human to
-> answer per-tool prompts. This is safe because the allowlist is **empty by
-> default** (only chat IDs you add in `access.json.allowFrom[]` can reach the
-> bot at all), but be aware the installed service runs in bypass mode. Keep the
-> allowlist to people you trust, or run `wechat-cc run` in the foreground for
-> strict prompting.
+> answer per-tool prompts. Bypass only reaches admin / trusted chats;
+> guests stay confined (see above). Keep `trusted[]` to people you would hand a
+> shell to, or run `wechat-cc run` in the foreground for strict prompting.
 
 ## Provider × mode interaction
 

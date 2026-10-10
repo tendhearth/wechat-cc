@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { resolveTier, resolveEffectiveTier, TIER_PROFILES, ALL_KINDS, type UserTier, type ToolKind } from './user-tier'
+import { resolveTier, resolveEffectiveTier, TIER_PROFILES, ALL_KINDS, type UserTier, type ToolKind, effectivePermissionMode } from './user-tier'
 import type { Access } from '../lib/access'
 
 const baseAccess: Access = {
@@ -41,16 +41,25 @@ describe('resolveEffectiveTier — --dangerously override', () => {
     expect(resolveEffectiveTier('unknown', baseAccess, 'strict')).toBe('guest')
   })
 
-  it('dangerously mode: every chat is promoted to admin', () => {
-    // The operator launched `wechat-cc run --dangerously` expecting all
+  it('dangerously mode: chats the owner chose (admin / trusted) are promoted to admin', () => {
+    // The operator launched `wechat-cc run --dangerously` expecting their
     // chats to bypass sandbox/relay. Pre-fix, only access.admins chats
-    // got admin perms; guest/trusted chats silently kept their reduced
-    // sandbox (codex guest → read-only + untrusted, claude trusted →
-    // canUseTool relay) regardless of the daemon flag.
+    // got admin perms; trusted chats silently kept their reduced
+    // sandbox regardless of the daemon flag.
     expect(resolveEffectiveTier('admin1', baseAccess, 'dangerously')).toBe('admin')
     expect(resolveEffectiveTier('trusted1', baseAccess, 'dangerously')).toBe('admin')
-    expect(resolveEffectiveTier('guest1', baseAccess, 'dangerously')).toBe('admin')
-    expect(resolveEffectiveTier('unknown', baseAccess, 'dangerously')).toBe('admin')
+  })
+
+  // 2026-10-10 评审:访客(请求-批准 / 邀请码进来的人)不是主人选的,--dangerously 是缺省开的 ⇒ 原先第一个
+  // 被批准的访客就拿到 admin:shell、文件、主人解密后的微信记录(wxvault)、知识库。访客永不提权。
+  it('dangerously mode: guests are never promoted, and their spawns run strict', () => {
+    expect(resolveEffectiveTier('guest1', baseAccess, 'dangerously')).toBe('guest')
+    expect(resolveEffectiveTier('unknown', baseAccess, 'dangerously')).toBe('guest')
+    expect(effectivePermissionMode('guest1', baseAccess, 'dangerously')).toBe('strict')
+    expect(effectivePermissionMode('unknown', baseAccess, 'dangerously')).toBe('strict')
+    expect(effectivePermissionMode('trusted1', baseAccess, 'dangerously')).toBe('dangerously')
+    expect(effectivePermissionMode('admin1', baseAccess, 'dangerously')).toBe('dangerously')
+    expect(effectivePermissionMode('guest1', baseAccess, 'strict')).toBe('strict')
   })
 })
 

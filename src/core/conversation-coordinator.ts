@@ -32,7 +32,7 @@ import { assertSupported, capabilitiesFor, replyDeliveryFor, replyTextStrategyFo
 import { buildTurnReply, makeTurnTextCollector, type DeliveryKind, type DeliveryReport, type ReplyDeliveryMode, type ReplyDeliveryPort, type ReplyTextStrategy, type TurnDeliveryHandle } from './turn-reply'
 import { collectTurn, TURN_TIMEOUT_CODE, type AgentEvent, type TurnSummary } from './agent-provider'
 import { isAuthErrorCode, providerErrorCodeOf } from '../lib/provider-error-code'
-import { resolveEffectiveTier, resolveTier, TIER_PROFILES, type TierProfile } from './user-tier'
+import { resolveEffectiveTier, resolveTier, TIER_PROFILES, type TierProfile, effectivePermissionMode } from './user-tier'
 import type { Access } from '../lib/access'
 import { decideCall, unprotectedMessage, type NetworkGate } from '../lib/network-gate'
 import { makeChatMutex } from './async-mutex'
@@ -741,7 +741,7 @@ export function createConversationCoordinator(deps: ConversationCoordinatorDeps)
           providerId,
           chatId: msg.chatId,
           tierProfile,
-          permissionMode: deps.permissionMode,
+          permissionMode: effectivePermissionMode(msg.chatId, deps.loadAccess(), deps.permissionMode),
           ...(pinnedModel !== undefined ? { model: pinnedModel } : {}),
         })
       } catch (err) {
@@ -1128,7 +1128,7 @@ export function createConversationCoordinator(deps: ConversationCoordinatorDeps)
         providerId: p,
         chatId: msg.chatId,
         tierProfile,
-        permissionMode: deps.permissionMode,
+        permissionMode: effectivePermissionMode(msg.chatId, deps.loadAccess(), deps.permissionMode),
       })),
     )
     const text = deps.format(msg)
@@ -1292,7 +1292,7 @@ export function createConversationCoordinator(deps: ConversationCoordinatorDeps)
       try {
         const handle = await deps.manager.acquire({
           alias: proj.alias, path: proj.path, providerId,
-          chatId: msg.chatId, tierProfile, permissionMode: deps.permissionMode,
+          chatId: msg.chatId, tierProfile, permissionMode: effectivePermissionMode(msg.chatId, deps.loadAccess(), deps.permissionMode),
         })
         if (deliveryModeFor(providerId) === 'daemon') {
           delivery = deps.replyDelivery!.begin(msg.chatId, { mode: 'daemon', context: 'chatroom', providerId, participantLabel: dn, textStrategy: textStrategyFor(providerId) })

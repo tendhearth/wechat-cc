@@ -2740,7 +2740,7 @@ describe('onTurnEvent (CC 桌宠 Phase B)', () => {
 
 // ── provider policy at dispatch + cold-start context for non-resume providers ──
 describe('dispatch-time provider policy + cold-start block', () => {
-  function setupWith(access: () => Access, extra: { trustedProviders?: () => string[] | undefined; has?: () => boolean; recent?: Array<{ dir: 'in' | 'out'; text: string; ts: string }> } = {}) {
+  function setupWith(access: () => Access, extra: { trustedProviders?: () => string[] | undefined; has?: () => boolean; recent?: Array<{ dir: 'in' | 'out'; text: string; ts: string }>; permissionMode?: 'strict' | 'dangerously' } = {}) {
     const store = makeMockStore()
     const registry = createProviderRegistry()
     for (const id of ['claude', 'cursor', 'agy', 'openai']) registry.register(id, dummyProvider, { displayName: id, canResume: () => true })
@@ -2752,7 +2752,7 @@ describe('dispatch-time provider policy + cold-start block', () => {
       resolveProject: () => ({ alias: 'a', path: '/p' }),
       manager: { acquire, ...(extra.has ? { has: extra.has } : {}) },
       conversationStore: store, registry, defaultProviderId: 'claude',
-      format: (m) => m.text, sendAssistantText, permissionMode: 'strict', loadAccess: access, log: () => {},
+      format: (m) => m.text, sendAssistantText, permissionMode: extra.permissionMode ?? 'strict', loadAccess: access, log: () => {},
       ...(extra.trustedProviders ? { trustedProviders: extra.trustedProviders } : {}),
       ...(extra.recent ? { recentTurns: async () => extra.recent! } : {}),
     })
@@ -2801,6 +2801,18 @@ describe('dispatch-time provider policy + cold-start block', () => {
     store.set('chat-1', { kind: 'chatroom', participants: ['claude', 'cursor', 'openai'] })
     await c.dispatch(inbound('chat-1', 'hi'))
     expect(acquire.mock.calls.map(([r]) => r.providerId)).not.toContain('cursor')
+  })
+  // 2026-10-10 评审:--dangerously(缺省开)原先把每个对话都提成 admin、会话也带 dangerously ⇒ 访客拿到 shell / 文件 /
+  // 主人的微信记录。访客的会话要以访客档 + strict 起;主人选过的 trusted 照旧随 --dangerously。
+  it('--dangerously: a guest turn is spawned with the guest profile and strict mode; trusted keeps dangerously', async () => {
+    const g = setupWith(guest, { permissionMode: 'dangerously' })
+    g.store.set('chat-1', { kind: 'solo', provider: 'claude' })
+    await g.c.dispatch(inbound('chat-1', 'hi'))
+    expect(g.acquire).toHaveBeenCalledWith(expect.objectContaining({ permissionMode: 'strict', tierProfile: TIER_PROFILES.guest }))
+    const t = setupWith(trusted, { permissionMode: 'dangerously' })
+    t.store.set('chat-1', { kind: 'solo', provider: 'claude' })
+    await t.c.dispatch(inbound('chat-1', 'hi'))
+    expect(t.acquire).toHaveBeenCalledWith(expect.objectContaining({ permissionMode: 'dangerously', tierProfile: TIER_PROFILES.admin }))
   })
   it('trusted chat on a provider outside the admin allowlist is refused; inside dispatches', async () => {
     const { c, store, acquire, sendAssistantText } = setupWith(trusted, { trustedProviders: () => ['claude'] })

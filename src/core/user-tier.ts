@@ -180,8 +180,24 @@ export function resolveEffectiveTier(
   access: Access,
   permissionMode: PermissionMode,
 ): UserTier {
-  if (permissionMode === 'dangerously') return 'admin'
-  return resolveTier(chatId, access)
+  const raw = resolveTier(chatId, access)
+  // 访客永不提权(2026-10-10 评审):访客是请求-批准 / 邀请码进来的人,不是主人选的;--dangerously
+  // 又是缺省开的 ⇒ 原先第一个被批准的访客就拿到 admin(shell、文件、wxvault 里主人的微信记录、知识库)。
+  if (permissionMode === 'dangerously' && raw !== 'guest') return 'admin'
+  return raw
+}
+
+/**
+ * 这一轮实际用的权限模式:--dangerously 只给主人选过的对话(admin / trusted),访客的会话一律 strict ——
+ * 否则 Claude 的 bypassPermissions 跳过 canUseTool、Codex 拿到 danger-full-access,访客档形同虚设。
+ */
+export function effectivePermissionMode(
+  chatId: string,
+  access: Access,
+  permissionMode: PermissionMode,
+): PermissionMode {
+  if (permissionMode === 'dangerously' && resolveTier(chatId, access) === 'guest') return 'strict'
+  return permissionMode
 }
 
 /**
