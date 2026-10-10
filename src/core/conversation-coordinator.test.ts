@@ -1850,6 +1850,57 @@ describe('ConversationCoordinator', () => {
       expect(haikuEval).not.toHaveBeenCalled()
     })
 
+    it('/stop mid-beat cancels the running speakers and delivers nothing they say afterwards', async () => {
+      // 一拍进行中主人 /stop:正在说话的几位要被真正取消(否则跑满一拍超时),
+      // 取消之后它们收尾吐出来的话不许再发到微信,也不发「没有 AI 成功回应」。
+      const store = makeMockStore()
+      store.set('chat-1', { kind: 'chatroom' })
+      const registry = createProviderRegistry()
+      registry.register('claude', dummyProvider, { displayName: 'Claude', canResume: () => true })
+      registry.register('codex', dummyProvider, { displayName: 'Codex', canResume: () => true })
+      const cancelSpies: Array<ReturnType<typeof vi.fn>> = []
+      const acquire = vi.fn(async ({ providerId }: AcquireRequest) => {
+        let unblock: (() => void) | undefined
+        const cancel = vi.fn(async () => { unblock?.() })
+        cancelSpies.push(cancel)
+        return {
+          alias: 'a', path: '/p', providerId, lastUsedAt: 0, cancel,
+          dispatch: (): AsyncIterable<AgentEvent> => ({
+            async *[Symbol.asyncIterator]() {
+              await new Promise<void>(r => { unblock = r })
+              // 取消后像正常结束一样吐出一段话(有的 provider 就是这样收尾的)
+              yield { kind: 'text', text: '被打断前想说的话' } as AgentEvent
+              yield { kind: 'result', sessionId: '_', numTurns: 1, durationMs: 0 } as AgentEvent
+            },
+          }),
+          close: async () => {},
+        }
+      })
+      const sendAssistantText = vi.fn(async (_chatId: string, _text: string) => {})
+      const haikuEval = vi.fn(async () => '🎯 verdict')
+      const c = createConversationCoordinator({
+        resolveProject: () => ({ alias: 'a', path: '/p' }),
+        manager: { acquire },
+        conversationStore: store,
+        registry,
+        defaultProviderId: 'claude',
+        format: () => 'x',
+        sendAssistantText,
+        permissionMode: 'strict',
+        loadAccess: adminAccess,
+        log: () => {},
+        haikuEval,
+      })
+      const p = c.dispatch(inbound('chat-1', 'debate'))
+      await vi.waitFor(() => expect(acquire).toHaveBeenCalledTimes(2))
+      await new Promise(r => setTimeout(r, 0))
+      expect(c.cancel('chat-1')).toBe(true)
+      await p
+      expect(cancelSpies).toHaveLength(2)
+      for (const spy of cancelSpies) expect(spy).toHaveBeenCalled()
+      expect(sendAssistantText).not.toHaveBeenCalled()
+    })
+
     it('falls back to solo+default when chatroom resolves to a single participant', async () => {
       // P3 N-way: when the registry has only 1 provider, resolveParticipants
       // returns a 1-element list and dispatch degrades to solo (using that
