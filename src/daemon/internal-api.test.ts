@@ -439,7 +439,8 @@ describe('internal-api', () => {
         const { port, tokenFilePath } = await api.start()
         const token = readFileSync(tokenFilePath, 'utf8').trim()
         const admin = api.mintSessionToken('admin', 'claude/a/ownerchat')
-        for (const p of ['ownerchat/today-draft.md', './ownerchat/Today-Draft.md', 'ownerchat/x/../today-draft.md/']) {
+        // corrections.md(主人纠正过的条目,2026-10-10)同样只归 daemon
+        for (const p of ['ownerchat/today-draft.md', './ownerchat/Today-Draft.md', 'ownerchat/x/../today-draft.md/', 'ownerchat/corrections.md']) {
           const w = await write(port, admin, p)
           expect(await w.json()).toMatchObject({ ok: false, error: 'curated_memory_readonly' })
         }

@@ -117,11 +117,12 @@ function curatedMemoryDenied(path: string, caller?: { origin: string }): boolean
   const n = posix.normalize(path.replace(/\\/g, '/')).replace(/^(\.\/)+/, '').replace(/\/+$/, '')
   // today-draft.md(今天的草稿,2026-10-01)同样只归 daemon:它由 profile.md 写入派生、每晚被整理消费,
   // 会话手写进去会被每次对话当成「主人今天说过的话」注入。
-  return /^[^/]+\/(?:memory|today-draft)\.md$/i.test(n)
+  // corrections.md(主人纠正过的条目,2026-10-10)同理:会话整份重写会把纠正抹掉,第二晚又被写回。
+  return /^[^/]+\/(?:memory|today-draft|corrections)\.md$/i.test(n)
 }
 const CURATED_READONLY = {
   status: 200 as const,
-  body: { ok: false, error: 'curated_memory_readonly', hint: 'memory.md 和 today-draft.md 由后台维护,白天别直接改:新情况记到 profile.md(新增的行会自动进今天的草稿)或 notes/,今晚会整理进去。' },
+  body: { ok: false, error: 'curated_memory_readonly', hint: 'memory.md、today-draft.md 和 corrections.md 由后台维护,白天别直接改:新情况记到 profile.md(新增的行会自动进今天的草稿)或 notes/,今晚会整理进去。' },
 }
 
 function toWireOutbound(h: import('../ilink/outbound-health').OutboundHealth) {

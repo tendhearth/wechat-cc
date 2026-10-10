@@ -174,7 +174,7 @@ describe('rich view + WeChat letter', () => {
 })
 
 describe('owner corrections, step A (2026-10-06)', () => {
-  it('removes the entry now, records a line in profile.md so the nightly tidy does not write it back, archives "outdated"', async () => {
+  it('removes the entry now, records it in corrections.md so the nightly tidy does not write it back, archives "outdated"', async () => {
     const rt = makeMemoryNightlyRuntime(deps())
     await rt.runNow()
     const id = rt.curatedView().sections.flatMap(s => s.items)[0]!.id!
@@ -182,10 +182,25 @@ describe('owner corrections, step A (2026-10-06)', () => {
     await rt.correct(id, 'outdated')
     expect(rt.curatedView().sections.flatMap(s => s.items).map(i => i.id)).not.toContain(id)
     const { readFileSync } = await import('node:fs')
-    const profile = readFileSync(join(root, 'profile.md'), 'utf8')
-    expect(profile).toContain('主人说这条已经过时,整理时不要再写回:[承诺] 周五前给 X 回话')
+    expect(readFileSync(join(root, 'corrections.md'), 'utf8')).toContain('主人说这条已经过时,整理时不要再写回:[承诺] 周五前给 X 回话')
+    expect(readFileSync(join(root, 'profile.md'), 'utf8')).not.toContain('不要再写回')
     expect(readFileSync(join(stateDir, 'memory-archive', OWNER, 'memory-expired.md'), 'utf8')).toContain('(owner_outdated)')
     await expect(rt.correct(id, 'wrong')).rejects.toThrow('memory_entry_not_found')
+  })
+  it('a correction survives a large profile.md and a model that writes the entry back word for word (2026-10-10)', async () => {
+    const prompts: string[] = []
+    const reAdd = async (p: string) => { prompts.push(p); return JSON.stringify({ add: [{ section: '承诺', text: '周五前给 X 回话(期限 2026-09-26)' }], update: [], confirm: [], remove: [] }) }
+    const rt = makeMemoryNightlyRuntime(deps({ cheapEval: () => reAdd }))
+    await rt.runNow()
+    const id = rt.curatedView().sections.flatMap(s => s.items)[0]!.id!
+    await rt.correct(id, 'wrong')
+    // CC 白天把 profile.md 整个重写、而且很长:纠正不能靠它
+    writeFileSync(join(root, 'profile.md'), '长'.repeat(9000))
+    now += 86_400_000
+    await rt.runNow()
+    expect(rt.curatedView().sections.flatMap(s => s.items).map(i => i.text)).not.toContain('周五前给 X 回话(期限 2026-09-26)')
+    expect(prompts.at(-1)).toContain('主人纠正过')
+    expect(prompts.at(-1)).toContain('周五前给 X 回话')
   })
   it('no memory yet ⇒ memory_not_found; corrections run on the same queue as the nightly run', async () => {
     const rt = makeMemoryNightlyRuntime(deps())
