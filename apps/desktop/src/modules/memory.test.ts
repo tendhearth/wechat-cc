@@ -17,6 +17,7 @@ beforeEach(() => {
 const {
   synthesizeMemory,
   generateMemoryProfile,
+  renderMemoryMarkdown,
 } = await import('./memory.js')
 
 function fakeEl() {
@@ -195,5 +196,17 @@ describe('profile evidence and honest empty states',()=>{
   it('does not fill missing stale profile fields from a separately generated overview',async()=>{
     const html=await render({version:1,chatId:'owner',generatedAt:'2026-09-22',needsRefresh:true,summary:'',insight:'',tags:[],traits:[{title:'旧卡片',body:'保留旧内容'}],preferences:[],rememberedEvents:[]},[],[],'## 整体理解\n来源改正前的另一份旧判断。')
     expect(html).not.toContain('来源改正前的另一份旧判断');expect(html).toContain('保留旧内容')
+  })
+})
+
+// 2026-10-10 评审:记忆文件是模型写的(Claude Code 在任意仓库里、CC 在微信对话里),可被提示注入塑形。
+// 原先用 marked 原样放行 HTML 进 innerHTML ⇒ <meta refresh> 能把主窗口导到外站,外站拿得到 Tauri 命令。
+describe('renderMemoryMarkdown', () => {
+  it('escapes raw HTML and drops script-ish links; ordinary markdown still renders', () => {
+    const html = renderMemoryMarkdown('# 标题\n\n<meta http-equiv="refresh" content="0;url=https://evil.example/">\n\n<form action="https://evil.example"><button>点我</button></form>\n\n[x](javascript:alert(1)) **粗** `码`\n\n- 一\n- 二')
+    expect(html).not.toMatch(/<meta|<form|<button|javascript:/i)
+    expect(html).toContain('<h1>标题</h1>')
+    expect(html).toContain('<strong>粗</strong>')
+    expect(html).toContain('<li>一</li>')
   })
 })
