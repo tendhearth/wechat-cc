@@ -100,6 +100,8 @@ import { readNeighborMemory, writeNeighborMemory } from '../companion/neighbor-m
 export { readNeighborMemory, writeNeighborMemory }
 
 const DAY_MS = 86_400_000
+/** 每条信道一天最多接几趟新来访。 */
+const HOSTED_PER_DAY = 3
 
 /** 模型偶尔还是会带引号/前缀;剥掉,别让主人看到「小满:『……』」。 */
 export function cleanSpeech(raw: string): string {
@@ -158,6 +160,12 @@ export function makeVisit(deps: VisitDeps): Visit {
     driver: PeerDriver
     /** 我的 persona 附加段(邻居:「上次去X家时」)。 */
     myPersonaExtra: string | null
+    /**
+     * 回话的 prompt 里带不带「CC 眼中的主人」(_overview.md)。真朋友那边是别人的 bot:概要一进 prompt,
+     * 能不能守住只剩 prompt 里的披露底线,对方一句「说说你主人」就可能带走(2026-10-10 评审)⇒ 不带;
+     * 邻居是本地生成的,不出这台机器 ⇒ 照带。
+     */
+    shareOverview: boolean
     scene(): string
     /** 讲给主人之前(邻居:第一次先说明邻居是什么)。只在真的要讲时才调 —— 中途夭折不说。 */
     beforeTell?(): void
@@ -174,6 +182,7 @@ export function makeVisit(deps: VisitDeps): Visit {
 
   const myPersona = (s: Session): VisitPersonaArgs => {
     const me = persona()
+    if (!s.shareOverview) me.ownerOverview = null
     if (s.myPersonaExtra) me.persona = `${me.persona ?? ''}\n\n${s.myPersonaExtra}`.trim()
     return me
   }
@@ -263,6 +272,7 @@ export function makeVisit(deps: VisitDeps): Visit {
       record: () => { /* correspondent 已把两个方向的信封都入库 */ },
       driver: remoteDriver,
       myPersonaExtra: null,
+      shareOverview: false,
       scene: () => sceneFromTranscript(transcriptFromLetters(deps.letterStore.listForChannel(channelRowId), id), `${label}家`),
     }
     remoteChannel.set(s, channelRowId)
@@ -295,6 +305,7 @@ export function makeVisit(deps: VisitDeps): Visit {
       transcript: () => transcript,
       record: (t) => { transcript.push(t) },
       driver: neighborDriver(nb, them),
+      shareOverview: true,
       myPersonaExtra: mem.notes[nb.id] ? `【上次去${nb.name}家时】\n${mem.notes[nb.id]!.note}` : null,
       scene: () => sceneFromTranscript(transcript, nb.world),
       // 第一次去邻居家,先跟主人说清楚邻居是什么 —— 规则是明的,才不是骗。
@@ -371,12 +382,28 @@ export function makeVisit(deps: VisitDeps): Visit {
     return startRemote(ch.id)
   }
 
+  // 来访的上限(2026-10-10 评审):对端随时能用新 id 发起一趟,原先每封都触发一轮强模型 + 推主人微信。
+  // 每条信道一天最多接 HOSTED_PER_DAY 趟新来访;中途插进来、我没说过上一句的 id 不接。
+  const hostedStarts = new Map<string, number[]>()
+  const admitInbound = (channelRowId: string, s: Session, p: VisitPayload): string | null => {
+    if (p.round > 1) {
+      const mine = s.transcript().some(t => t.who === 'me' && t.round === p.round - 1)
+      return mine ? null : `round ${p.round} 但我没说过第 ${p.round - 1} 句`
+    }
+    const t = now(), recent = (hostedStarts.get(channelRowId) ?? []).filter(x => t - x < DAY_MS)
+    if (recent.length >= HOSTED_PER_DAY) { hostedStarts.set(channelRowId, recent); return `今天已经接过 ${recent.length} 趟` }
+    hostedStarts.set(channelRowId, [...recent, t])
+    return null
+  }
+
   return {
     onInbound(channelRowId, env, letterId) {
       const p = parseVisitPayload(env)
       if (!p) return false
       try { deps.letterStore.markRead(letterId, new Date().toISOString()) } catch { /* 标不上就算了 */ }
       const s = remoteSession(channelRowId, p.id)
+      const refused = admitInbound(channelRowId, s, p)
+      if (refused) { deps.log('VISIT', `visit=${p.id} 不接(${channelRowId}):${refused}`); return true }
       // 回程也是一段脱离会话的模型活 —— 和出门一样登记,否则重启会掐在
       // 「对方说完了、我还没回」那一格上。
       const release = holdBusy('visit-inbound')

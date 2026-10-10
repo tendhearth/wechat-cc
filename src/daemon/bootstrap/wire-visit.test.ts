@@ -396,3 +396,51 @@ describe('activeVisit —— 桌宠要知道熊在不在家(spec 2026-09-03-comp
     expect(visit.activeVisit()).toBe(null)
   })
 })
+
+// 2026-10-10 评审:来访是对端随时能发起的 —— 任意 id、任意 max、任意长的话,原先每封都触发一轮强模型 + 推主人微信;
+// 回话的 prompt 还带着「CC 眼中的主人」(_overview.md),只靠 prompt 里的披露底线挡。
+describe('来访的上限与隐私', () => {
+  const visitEnv = (id: string, round: number, max = 6, text = '你好呀') => ({ kind: 'visit', payload: { id, round, max, text } }) as Envelope
+  it('parseVisitPayload:max 超过上限、话太长 ⇒ 不认', () => {
+    expect(parseVisitPayload(visitEnv('a', 1, 99))).toBeNull()
+    expect(parseVisitPayload(visitEnv('a', 1, 6, 'x'.repeat(5000)))).toBeNull()
+    expect(parseVisitPayload(visitEnv('a', 1, 6))).not.toBeNull()
+  })
+  it('同一条信道一天里新开的来访有上限;没聊过的 id 中途插进来 ⇒ 不接', async () => {
+    const calls: string[] = []
+    const host = side('主', async (p) => { calls.push(p); return '回一句' })
+    const sink = side('客', async () => 'x')
+    host.setPeer({ ...sink, visit: { ...sink.visit, onInbound: () => true } } as Side)
+    for (let i = 0; i < 6; i++) host.visit.onInbound('ch', visitEnv(`v${i}`, 1), `in-${i}`)
+    await flush()
+    const replies = calls.filter(p => !p.includes('串门回来') && !p.includes('坐了会儿'))
+    expect(replies.length).toBe(3)
+    calls.length = 0
+    host.visit.onInbound('ch', visitEnv('never-started', 3), 'in-x')
+    await flush()
+    expect(calls).toEqual([])
+  })
+  it('跟真朋友聊天的 prompt 里不带主人概要;去邻居家(本地)照带', async () => {
+    const { saveCompanionConfig, defaultCompanionConfig } = await import('../companion/config')
+    const { mkdirSync, writeFileSync } = await import('node:fs')
+    const prompts: string[] = []
+    const stateDir = mkdtempSync(join(tmpdir(), 'visit-ov-'))
+    await saveCompanionConfig(stateDir, { ...defaultCompanionConfig(), default_chat_id: 'owner' })
+    mkdirSync(join(stateDir, 'memory', 'owner'), { recursive: true })
+    writeFileSync(join(stateDir, 'memory', 'owner', '_overview.md'), '主人住在杭州西湖区某某小区')
+    const v = makeVisit({
+      stateDir,
+      channelStore: { get: () => ({ id: 'ch', status: 'open', degree: 1 }), list: () => [] } as never,
+      letterStore: { listForChannel: () => [], markRead: () => {} } as never,
+      sendEnvelope: async () => ({ ok: true }),
+      evalText: async (p) => { prompts.push(p); return '回一句' },
+      myName: '主', disclosurePolicy: '不说住址', notifyOwner: () => {}, log: () => {},
+    })
+    v.onInbound('ch', visitEnv('r1', 1), 'in-1')
+    await flush()
+    expect(prompts.at(-1)).not.toContain('西湖区')
+    prompts.length = 0
+    await v.startVisit('neighbor')
+    expect(prompts.some(p => p.includes('西湖区'))).toBe(true)
+  })
+})
