@@ -16,7 +16,7 @@ import { makeEventsStore } from '../events/store'
 import { makeObservationsStore } from '../observations/store'
 import { runIntrospectTick } from '../companion/introspect'
 import { resolveIntrospectChatId, makeIntrospectAgent } from '../companion/introspect-runtime'
-import { resolveEffectiveTier, TIER_PROFILES } from '../../core/user-tier'
+import { resolveEffectiveTier, TIER_PROFILES, effectivePermissionMode } from '../../core/user-tier'
 import { dueGuestVisit, guestLabel, type GuestVisitState } from '../companion/guest-visits'
 import { buildGuestVisitNarrationPrompt } from '../../core/visit'
 import type { Access } from '../../lib/access'
@@ -522,7 +522,7 @@ export function buildTickBodies(deps: TickDeps): TickBodies {
         providerId,
         chatId,
         tierProfile,
-        permissionMode: deps.permissionMode,
+        permissionMode: effectivePermissionMode(chatId, deps.loadAccess(), deps.permissionMode),
       })
       // Claim BEFORE dispatch — mark the send up front so a push that is
       // interrupted (machine sleeps mid-turn; daemon restart / lock-steal on
