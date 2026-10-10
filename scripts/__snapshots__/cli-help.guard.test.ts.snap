@@ -1932,7 +1932,7 @@ Usage:
                         --check probes only (no side effects); GUI calls
                         this on a timer to surface the Update button.
   wechat-cc self deploy [--binary <path>] [--app <path>] [--no-rollback]
-                        [--no-sign] [--health-timeout-ms N] [--json]
+                        [--no-sign] [--allow-unsigned] [--health-timeout-ms N] [--json]
                         自维护:原子换 sidecar 进 .app、launchd 重启、健康门,
                         失败自动回滚(仅 macOS)。见 docs/maintainer/deploy.md。
   wechat-cc self change "<需求>" [--from cli|wechat] [--budget-usd N]
@@ -2070,13 +2070,14 @@ USAGE self deploy [OPTIONS]
 
 OPTIONS
 
-                        --binary=<binary>    新 sidecar 二进制路径(源码模式缺省按 repoRoot + 架构推导;打包模式下必填)  
-                              --app=<app>    .app 包路径,覆盖从 LaunchAgent plist 推导的部署目标            
-                            --no-rollback    健康门失败时不自动回滚（默认会回滚）                                
-                  --allow-missing-plugins    插件门红了也放行(记日志);给本来就没有插件的机器,不必永久 plugin disable     
-                                --no-sign    不用本机钥匙串里的 Developer ID 重签 sidecar 与 .app(缺省:有证书就签)
-  --health-timeout-ms=<health_timeout_ms>    健康门超时,毫秒(缺省 60000)                                
-                                   --json    JSON 输出（SelfDeployResult）                         
+                        --binary=<binary>    新 sidecar 二进制路径(源码模式缺省按 repoRoot + 架构推导;打包模式下必填)                         
+                              --app=<app>    .app 包路径,覆盖从 LaunchAgent plist 推导的部署目标                                   
+                            --no-rollback    健康门失败时不自动回滚（默认会回滚）                                                       
+                  --allow-missing-plugins    插件门红了也放行(记日志);给本来就没有插件的机器,不必永久 plugin disable                            
+                                --no-sign    不用本机钥匙串里的 Developer ID 重签 sidecar 与 .app(缺省:有证书就签)                       
+                         --allow-unsigned    .app 是 Developer ID 封的、这次却不签,也照样换(缺省拒绝:ad-hoc sidecar 会让 daemon 卡在 TCC 框)
+  --health-timeout-ms=<health_timeout_ms>    健康门超时,毫秒(缺省 60000)                                                       
+                                   --json    JSON 输出（SelfDeployResult）                                                
 
 
 "
