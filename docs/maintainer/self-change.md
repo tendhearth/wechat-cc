@@ -148,6 +148,8 @@ wechat-cc self change --unhalt     # 清 halted_at / halt_reason,fail_streak 归
 | --- | --- |
 | `.github/workflows/**`(整个目录) | 发版通道就在里面(`publish-update.yml` `mirror-desktop-tag.yml` `desktop.yml`),能把二进制发到所有用户机器上;按确切路径列会漏掉新加的那个 |
 | `package.json` | `scripts` 里的 `typecheck` / `depcheck` / `test` 就是 tests 那道闸门的定义 —— 一条 `"test": "true"` 能让它变成橡皮图章 |
+| `vitest.config.ts` `vitest.node.config.ts` `vitest.setup.ts` `tsconfig.json` `.dependency-cruiser.cjs` `apps/{mobile,relay,app}/tsconfig.json` | tests 闸门实际读的配置(2026-10-10 补):vitest 配置一句 `include: []` + `passWithNoTests`,本地闸门和 CI(同一份配置)一起变绿 |
+| `apps/desktop/scripts/build-sidecar.ts` | 部署那一步跑的构建脚本 |
 | `scripts/publish-update*.ts` `scripts/update-hosting.json` | 发版脚本与更新源 |
 | `apps/desktop/src-tauri/tauri.conf.json` | 签名与更新源配置 |
 | `src/cli/self-change/policy.ts` | 护栏本身(清单和缺省值) |

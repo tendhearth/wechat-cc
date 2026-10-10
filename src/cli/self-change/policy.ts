@@ -9,9 +9,9 @@ import { globToRegExp } from '../ci-triage'
  *
  * 分四类:
  *  · 能把二进制发到所有用户机器上的(发版工作流、发版脚本、更新源、签名配置)
- *  · **闸门本身的定义**:`.github/workflows/**`(CI 那道门)和 `package.json`
- *    的 scripts(tests 那道门跑的就是里面的 typecheck / depcheck / test)——
- *    一条 `"test": "true"` 就能让两道闸门同时变成橡皮图章
+ *  · **闸门本身的定义**:`.github/workflows/**`(CI 那道门)、`package.json`
+ *    的 scripts(tests 那道门跑的就是里面的 typecheck / depcheck / test)以及它们读的
+ *    vitest / tsconfig / depcruise 配置 —— 一条 `"test": "true"` 就能让两道闸门同时变成橡皮图章
  *  · 护栏本身(这个文件)
  *  · 出事之后把机器救回来的那条路(self-deploy 的回滚)
  *
@@ -25,6 +25,17 @@ export const FORBIDDEN_GLOBS: readonly string[] = [
   'apps/desktop/src-tauri/tauri.conf.json',
   'src/cli/self-change/policy.ts',
   'src/cli/self-deploy.ts',
+  // 闸门的定义不只在 package.json(2026-10-10 评审):vitest 配置一句 include: [] + passWithNoTests,本地 tests
+  // 闸门和 CI(同一份配置)一起变绿;tsconfig / depcruise 配置同理。部署那一步跑的是 build-sidecar。
+  'vitest.config.ts',
+  'vitest.node.config.ts',
+  'vitest.setup.ts',
+  'tsconfig.json',
+  '.dependency-cruiser.cjs',
+  'apps/mobile/tsconfig.json',
+  'apps/relay/tsconfig.json',
+  'apps/app/tsconfig.json',
+  'apps/desktop/scripts/build-sidecar.ts',
 ]
 
 /**
