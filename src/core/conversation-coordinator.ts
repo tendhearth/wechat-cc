@@ -998,7 +998,8 @@ export function createConversationCoordinator(deps: ConversationCoordinatorDeps)
       // beat that embeds `question` (opening, rebuttal, convergence, verdict).
       const question = `[chat_id:${msg.chatId}]\n${deps.format(msg)}`
 
-      const openings = await runBeat(msg, proj, tierProfile, participants, (p) => buildOpeningPrompt(question, participants, p))
+      const openings = await runBeat(msg, proj, tierProfile, participants, (p) => buildOpeningPrompt(question, participants, p), false, aborter.signal)
+      if (aborter.signal.aborted) { deps.log('COORDINATOR_CHATROOM', `chat=${msg.chatId} aborted mid-debate`); return }
       if (openings.length === 0) {
         await notice(msg.chatId, '⚠️ 这轮没有 AI 成功回应，请稍后重发一次。')
         return
@@ -1040,7 +1041,7 @@ export function createConversationCoordinator(deps: ConversationCoordinatorDeps)
         const beat2 = await runBeat(msg, proj, tierProfile, speakers,
           (p) => buildRebuttalPrompt(question, {
             labels, contested: contention.contested, lens: lensFor(speakers.indexOf(p)), self: p,
-          }), true)
+          }), true, aborter.signal)
         rebuttals = beat2.map(b => ({ speaker: b.speaker, text: b.text }))
         const votes = beat2.map(b => ({ voter: b.speaker, ranking: b.ranking }))
 
@@ -1056,7 +1057,7 @@ export function createConversationCoordinator(deps: ConversationCoordinatorDeps)
               (p) => buildRebuttalPrompt(question, {
                 labels, contested: contention.contested, lens: lensFor(speakers.indexOf(p)), self: p,
                 focus: conv.disagreement!,
-              }), true)
+              }), true, aborter.signal)
             rebuttals = [...rebuttals, ...extra.map(b => ({ speaker: b.speaker, text: b.text }))]
             votes.push(...extra.map(b => ({ voter: b.speaker, ranking: b.ranking })))
           }
@@ -1080,7 +1081,7 @@ export function createConversationCoordinator(deps: ConversationCoordinatorDeps)
           }))).trim()
         }
         catch (e) { deps.log('COORDINATOR_CHATROOM', `verdict failed: ${e instanceof Error ? e.message : e}`) }
-        if (verdict) {
+        if (verdict && !aborter.signal.aborted) {
           // 名次跟裁决同一条消息发出去 —— 微信上多一条消息就是多一次打扰,
           // 而这一行恰恰是让「这场辩论有没有用」变得可衡量的东西。
           const footer = [formatRankingFooter(ranking), ...notes].filter(Boolean).join('\n')
@@ -1279,6 +1280,8 @@ export function createConversationCoordinator(deps: ConversationCoordinatorDeps)
      *  **剥离**那一行则是无条件的** —— 它是内部信号,任何一拍里冒出来都
      *  不该出现在给用户看的发言里(开场并没有要求它,但模型偶尔会自作主张)。 */
     countRank = false,
+    /** 这一轮 /chat 的 aborter.signal:/stop 或新消息抢占时,正在说的几位当场取消,说出来的不再交付。 */
+    signal?: AbortSignal,
   ): Promise<BeatResult[]> {
     const results = await Promise.all(participants.map(async (providerId): Promise<BeatResult | null> => {
       const startedAt = nowMs()
@@ -1289,17 +1292,26 @@ export function createConversationCoordinator(deps: ConversationCoordinatorDeps)
       // 不分条);开轮在 dispatch 之前,附件才登记得上。legacy 的发言人照旧拼全部文字一条发。
       let delivery: TurnDeliveryHandle | undefined
       let report: DeliveryReport | undefined
+      let onAbort: (() => void) | undefined
       try {
         const handle = await deps.manager.acquire({
           alias: proj.alias, path: proj.path, providerId,
           chatId: msg.chatId, tierProfile, permissionMode: effectivePermissionMode(msg.chatId, deps.loadAccess(), deps.permissionMode),
         })
+        if (signal) {
+          // 拍与拍之间才看 aborter 不够:一拍里慢的那位会跑满整拍超时,抢占的新消息也得干等。
+          onAbort = () => { void handle.cancel?.() }
+          if (signal.aborted) onAbort()
+          else signal.addEventListener('abort', onAbort, { once: true })
+        }
         if (deliveryModeFor(providerId) === 'daemon') {
           delivery = deps.replyDelivery!.begin(msg.chatId, { mode: 'daemon', context: 'chatroom', providerId, participantLabel: dn, textStrategy: textStrategyFor(providerId) })
         }
         summary = await oneTurnPerSession(msg.chatId, proj.alias, providerId, () => collectTurn(handle.dispatch(promptFor(providerId)), { timeoutMs: Math.min(deps.turnTimeoutMs ?? CHATROOM_BEAT_TIMEOUT_MS, CHATROOM_BEAT_TIMEOUT_MS), onEvent: (ev) => deps.onTurnEvent?.(msg.chatId, ev) }))
       } catch (e) {
         err = e instanceof Error ? e.message : String(e)
+      } finally {
+        if (onAbort) signal?.removeEventListener('abort', onAbort)
       }
       const endedAt = nowMs()
       const outcome: TurnRecord['outcome'] =
@@ -1309,6 +1321,12 @@ export function createConversationCoordinator(deps: ConversationCoordinatorDeps)
         : summary?.error ? 'error'
         : 'completed'
       try {
+        // 主人中止 / 被新消息抢占:不发出错通知、不交付取消之后吐出来的话(与 solo/parallel 的 stopMark 同义)
+        if (signal?.aborted) {
+          delivery?.abandon('cancelled')
+          deps.log('COORDINATOR_CHATROOM', `chat=${msg.chatId} provider=${providerId} 这一拍被中止 —— 不交付`)
+          return null
+        }
         if (delivery && outcome !== 'completed') delivery.abandon(outcome)
         // Self-heal parity with dispatchParallel: release wedged/stale sessions
         // and notify the user, per-provider, so beats continue for healthy agents.
