@@ -49,3 +49,22 @@ describe('renderTranscriptTail', () => {
     expect(renderTranscriptTail('', 'codex')).toContain('还没有对话文字')
   })
 })
+
+// 2026-10-10 评审:「看 码」把对话尾巴发成一个不用登录的公开页面。Claude Code 的 `!` 命令输出
+// (<bash-input> / <bash-stdout> / <bash-stderr>)原先照样进页面 ⇒ `! env`、`! cat .env` 的密钥就上了公网。
+describe('transcript secrets', () => {
+  it('skips the `!` shell blocks and masks obvious keys in what is left', () => {
+    const jsonl = [
+      { type: 'user', message: { content: '<bash-input>env</bash-input>' } },
+      { type: 'user', message: { content: '<bash-stdout>OPENAI_API_KEY=sk-proj-abcdefghijklmnopqrstuvwxyz0123</bash-stdout><bash-stderr></bash-stderr>' } },
+      { type: 'user', message: { content: '我的 key 是 sk-ant-api03-ABCDEFGHIJKLMNOPQRSTUVWX,GitHub ghp_ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789,AWS AKIAIOSFODNN7EXAMPLE' } },
+      { type: 'assistant', message: { content: [{ type: 'text', text: '已设置 DB_PASSWORD=hunter2hunter2 和 api_key: "abc123def456ghi789"' }] } },
+    ].map(x => JSON.stringify(x)).join('\n')
+    const turns = parseTranscript(jsonl, 'claude')
+    const all = turns.map(t => t.text).join('\n')
+    expect(turns).toHaveLength(2)
+    expect(all).not.toMatch(/sk-proj-abcdef|sk-ant-api03-ABCDEF|ghp_ABCDEF|AKIAIOSFODNN7EXAMPLE|hunter2hunter2|abc123def456ghi789/)
+    expect(all).toContain('我的 key 是')
+    expect(all).toContain('DB_PASSWORD=')
+  })
+})
