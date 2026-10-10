@@ -224,6 +224,15 @@ import { latestChanges } from './phone-changes'
 import { LAN_ONLY_OPS, LINK_ROUTES, PHONE_ROUTES, phoneRouteAllowed } from './phone-routes'
 import { phoneLinkState, psetUrl, type PhoneLinkResult } from './phone-link'
 
+/**
+ * 手机能不能看这件 matter:聊天 matter 只给主人自己的(别人的聊天 —— 访客、朋友 —— 不到手机)。
+ * 列表筛选和按 id 打开(详情 / 解读)共用这一条,免得两条路漂开:列表藏住了,按 id 却能读出最近 50 条。
+ */
+export function phoneMayOpenMatter(matter: unknown, owner: string | null): boolean {
+  const m = (matter ?? {}) as { kind?: unknown; ownerChatId?: unknown }
+  return m.kind !== 'chat' || (owner !== null && m.ownerChatId === owner)
+}
+
 export function makeSettingsPanel(deps: SettingsPanelDeps): SettingsPanel {
   const now = deps.now ?? (() => Date.now())
   let server: Server | null = null
@@ -787,7 +796,7 @@ export function makeSettingsPanel(deps: SettingsPanelDeps): SettingsPanel {
             // 多取一些再筛:别人的聊天 matter(updated_at 现在会被微信入站推高)不给手机,也不挤掉任务。
             const owner = deps.ownerChatId()
             const matters = deps.matters.list({ ...(kind ? { kind: kind as 'chat' | 'task' | 'companion' } : {}), statuses, limit: 200 })
-              .filter(m => (m as { kind?: unknown }).kind !== 'chat' || (owner !== null && (m as { ownerChatId?: unknown }).ownerChatId === owner))
+              .filter(m => phoneMayOpenMatter(m, owner))
               .slice(0, 50)
             for (const m of matters) { const id = (m as { id?: unknown }).id; if (typeof id === 'string') { try { deps.matters.seenOnPhone(id) } catch { /* 只是露面登记 */ } } }
             return json({ ok: true, matters })
@@ -796,7 +805,13 @@ export function makeSettingsPanel(deps: SettingsPanelDeps): SettingsPanel {
             if (!deps.matters) return json({ ok: false, error: 'matters_not_wired' }, 503)
             const id = url.searchParams.get('id')
             if (!id || !/^[a-f0-9]{8}$/.test(id)) return json({ ok: false, error: 'invalid' }, 400)
-            try { const detail = await deps.matters.detail(id); try { deps.matters.seenOnPhone(id) } catch { /* 只是露面登记 */ } return mobileMatterDetailResponse(detail) }
+            try {
+              const detail = await deps.matters.detail(id)
+              // 跟列表同一条规矩:别人的聊天按 id 也打不开,回得跟「没有这件」一样(不让人拿 id 试探)
+              if (!phoneMayOpenMatter((detail as { matter?: unknown } | null)?.matter, deps.ownerChatId())) return json({ ok: false, error: 'matter_not_found' }, 404)
+              try { deps.matters.seenOnPhone(id) } catch { /* 只是露面登记 */ }
+              return mobileMatterDetailResponse(detail)
+            }
             catch (e) { const msg = e instanceof Error ? e.message : 'internal'; return json({ ok: false, error: msg === 'matter_not_found' ? msg : 'unavailable' }, msg === 'matter_not_found' ? 404 : 500) }
           }
           if (url.pathname === '/m/api/matter/insight' && req.method === 'GET') {

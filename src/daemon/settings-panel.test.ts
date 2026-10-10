@@ -719,6 +719,16 @@ describe('「一件事」手机路由(2026-09-16)', () => {
     expect(r.matters[0]!.id).toBe('cccccccc')
     expect(r.matters.slice(1).every(m => m.kind === 'task')).toBe(true)
   })
+  it('别人的聊天 matter:列表里没有,按 id 直接打开也是 404(不读出消息、不登记手机露面)', async () => {
+    const guest = { ...MATTER, id: 'aaaaaaaa', kind: 'chat', ownerChatId: 'guest@im.wechat' }
+    matters.detail.mockReturnValueOnce({ matter: guest, bindings: [], sessions: [], task: null, events: [{ kind: 'text', text: '客人的私事', createdAt: 3 }] } as never)
+    panel = make(true)
+    const { port } = await panel.start(0), base = `http://127.0.0.1:${port}`, t = panel.issueToken()
+    const r = await fetch(`${base}/m/api/matter?id=aaaaaaaa&t=${t}`)
+    expect(r.status).toBe(404)
+    expect(JSON.stringify(await r.json())).not.toContain('客人的私事')
+    expect(matters.seenOnPhone).not.toHaveBeenCalled()
+  })
   it('is 503 when the matter registry is not wired, and maps not-found / busy', async () => {
     panel = make(false)
     const { port } = await panel.start(0), base = `http://127.0.0.1:${port}`, t = panel.issueToken()
