@@ -28,6 +28,8 @@ const signal = (group: number, value: NodeJS.Signals) => {
  * Missing ancestry or an already-lost process cannot prove cleanup and rejects. */
 export function ownClaudeWorkbenchProcess(stderr: Options['stderr']) {
   let child: ChildProcessWithoutNullStreams | undefined, exited = false, closing = false, terminated = false
+  // 扫描做完了才算知道全部进程组(2026-10-10):根进程先没了、冻住后被停、扫描中途报错 ⇒ 不完整。
+  let scanned = false
   const groups = new Set<number>(), pids = new Set<number>()
   // 网络守护「暂停在跑的任务」(2026-10-03):冻住 / 放开整棵树。冻住期间要停 ⇒ terminate 直接
   // SIGKILL 冻住的那些组(绝不先放开),close 不再要求进程还活着。
@@ -35,8 +37,11 @@ export function ownClaudeWorkbenchProcess(stderr: Options['stderr']) {
   return {
     freeze(): boolean { return !closing && !terminated && !!child?.pid && !exited && freezer.freeze() },
     thaw(): void { if (!terminated) freezer.thaw() },
-    /** 起过的全部进程组(含子进程自己 setsid 出去的,见 prepareClose 的扫描)。 */
-    groups(): number[] { return [...groups] },
+    /**
+     * 起过的全部进程组(含子进程自己 setsid 出去的,见 prepareClose 的扫描)。这是「没确认退出」的退出证据:
+     * 「组全没了」会放开文件夹,所以扫描没做完时一个都不交(= 没有证据,等主人确认),不交半份。
+     */
+    groups(): number[] { return scanned ? [...groups] : [] },
     terminate(): void { terminated = true; freezer.kill() },
     spawn(options: SpawnOptions) {
       if (closing || child) throw new Error('claude_runtime_closed_or_duplicate_spawn')
@@ -72,7 +77,7 @@ export function ownClaudeWorkbenchProcess(stderr: Options['stderr']) {
           }
           if (!pids.has(row.pid)) { pids.add(row.pid); added = true }
         }
-        if (!added) return
+        if (!added) { scanned = true; return }
       }
       throw new Error('claude_runtime_descendants_not_frozen')
     },

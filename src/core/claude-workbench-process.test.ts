@@ -34,6 +34,31 @@ describe.skipIf(process.platform === 'win32')('Claude owned process teardown', (
     // 三层 spawn 加上 close 那 2500ms 的 deadline,在满载机器上塞不进 5s。
   }, 60_000)
 
+  // 「没确认退出」的退出证据(2026-10-10 评审):扫描没做完就交不出完整的进程组 ⇒ 一个都不交(没有证据),
+  // 免得「记下的组全没了」被当成退出、而 setsid 出去的子进程还在写。
+  it('reports no process groups unless the descendant scan completed', async () => {
+    const owner = ownClaudeWorkbenchProcess(undefined)
+    const child = owner.spawn({ command: process.execPath, args: ['-e', 'process.exit(0)'], cwd: tmpdir(), env: { PATH: '/usr/bin:/bin' }, signal: new AbortController().signal })
+    await new Promise<void>(resolve => child.once('exit', () => resolve()))
+    expect(() => owner.prepareClose(Date.now() + 2500)).toThrow('claude_runtime_process_ownership_lost')
+    expect(owner.groups()).toEqual([])
+    const frozen = ownClaudeWorkbenchProcess(undefined)
+    const live = frozen.spawn({ command: process.execPath, args: ['-e', 'setInterval(()=>{},1000)'], cwd: tmpdir(), env: { PATH: '/usr/bin:/bin' }, signal: new AbortController().signal })
+    try {
+      frozen.terminate()
+      frozen.prepareClose(Date.now() + 2500)
+      expect(frozen.groups()).toEqual([])
+    } finally { try { process.kill(-live.pid!, 'SIGKILL') } catch {} }
+    const clean = ownClaudeWorkbenchProcess(undefined)
+    const ok = clean.spawn({ command: process.execPath, args: ['-e', 'setInterval(()=>{},1000)'], cwd: tmpdir(), env: { PATH: '/usr/bin:/bin' }, signal: new AbortController().signal })
+    try {
+      await expect.poll(() => { try { process.kill(ok.pid!, 0); return true } catch { return false } }).toBe(true)
+      clean.prepareClose(Date.now() + 10_000)
+      expect(clean.groups()).toEqual([ok.pid])
+      await clean.close(Date.now() + 10_000)
+    } finally { try { process.kill(-ok.pid!, 'SIGKILL') } catch {} }
+  }, 60_000)
+
   // 网络守护「暂停在跑的任务」(2026-10-03):冻住整棵树(含另起一组的后代),放开后接着跑;
   // 冻住期间 terminate ⇒ 不放开直接杀,close 不再因为「进程已经没了」报 ownership_lost。
   it('freeze stops the whole tree, thaw resumes it, terminate-while-frozen closes cleanly', async () => {
