@@ -477,7 +477,12 @@ export function createConversationCoordinator(deps: ConversationCoordinatorDeps)
     // row that predates that guard (or was written directly to the store,
     // bypassing setMode — see the N-way participants tests) — the shared-
     // token hazard this is defending is worth a second, cheap check.
-    const filtered = list.filter(p => deps.registry.has(p) && p !== 'agy')
+    // 2026-10-10 评审:solo 在派发时按档位查 provider(providerDenialFor),多家模式原先只剥 agy ⇒ 访客
+    // `/both claude cursor` 能把 Cursor 以访客档拉起来(工作区内编辑不经权限卡),也绕过主人的 trusted_providers。
+    // 这里同一道门、同样用原始档位(不吃 --dangerously 的提权):被拒的参与者剔掉,剩 ≤1 家时调用方照旧退回 solo。
+    const rawTier = resolveTier(chatId, deps.loadAccess())
+    const trustedProviders = deps.trustedProviders?.()
+    const filtered = list.filter(p => deps.registry.has(p) && p !== 'agy' && providerDenialFor(p, rawTier, trustedProviders) === null)
     if (filtered.length < list.length) {
       deps.log('COORDINATOR', `chat=${chatId} participants filtered ${list.join(',')} → ${filtered.join(',')} (registry: ${deps.registry.list().join(',')})`)
     }
