@@ -386,6 +386,14 @@ export function makeVisit(deps: VisitDeps): Visit {
   // 每条信道一天最多接 HOSTED_PER_DAY 趟新来访;中途插进来、我没说过上一句的 id 不接。
   const hostedStarts = new Map<string, number[]>()
   const admitInbound = (channelRowId: string, s: Session, p: VisitPayload): string | null => {
+    // correspondent 只按 nonce 去重:对端换个 nonce 重放同一轮,每封都会再跑一轮模型、
+    // 再回一封,最后一轮还会再推主人一次。这封已入库,同一 (id, round) 不止一封 = 重放。
+    const same = deps.letterStore.listForChannel(channelRowId).filter(l => {
+      if (l.direction !== 'in' || l.kind !== 'visit' || !l.payload) return false
+      try { const q = JSON.parse(l.payload) as Partial<VisitPayload>; return q.id === p.id && q.round === p.round }
+      catch { return false }
+    })
+    if (same.length > 1) return `round ${p.round} 已经收过`
     if (p.round > 1) {
       const mine = s.transcript().some(t => t.who === 'me' && t.round === p.round - 1)
       return mine ? null : `round ${p.round} 但我没说过第 ${p.round - 1} 句`

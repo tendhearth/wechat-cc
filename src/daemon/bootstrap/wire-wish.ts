@@ -89,6 +89,9 @@ export interface WishService {
   onInbound(channelRowId: string, env: Envelope, letterId: string): boolean
 }
 
+const DAY_MS = 86_400_000
+/** 每条信道一天最多接几条新心愿(自己这边同时只能有 3 条 open,再加转问过来的,5 条够了)。 */
+export const WISHES_PER_DAY = 5
 const errText = (err: unknown): string => (err instanceof Error ? err.message : String(err))
 const without = <T>(rec: Record<string, T>, key: string): Record<string, T> => {
   const { [key]: _drop, ...rest } = rec
@@ -222,6 +225,7 @@ export function makeWish(deps: WishDeps): WishService {
     log(`wish=${id} 回了一张明信片 → ${channelRowId}`)
   }
 
+  const wishStarts = new Map<string, number[]>()
   /** 收到一条心愿。是我们的 kind 就认领(返回 true),坏的/过期的/重复的只记日志。 */
   const handleWish = (channelRowId: string, env: Envelope): boolean => {
     const p = parseWishPayload(env)
@@ -238,6 +242,14 @@ export function makeWish(deps: WishDeps): WishService {
       log(`wish=${p.id} 这条信道上已经处理过 — 丢(信箱 at-least-once)`)
       return true
     }
+    // 对端换个 id 就是一条新心愿:每条都会跑判官 + 闸门、推主人一句。像来访一样,每条信道一天限量。
+    const t = now(), recent = (wishStarts.get(channelRowId) ?? []).filter(x => t - x < DAY_MS)
+    if (recent.length >= WISHES_PER_DAY) {
+      wishStarts.set(channelRowId, recent)
+      log(`wish=${p.id} 这条信道今天已经收了 ${recent.length} 条 — 丢`)
+      return true
+    }
+    wishStarts.set(channelRowId, [...recent, t])
     // 判官 + 闸门 + 回信都慢,onInbound 必须同步返回:分发点不能被一次模型调用堵住。
     void answerWish(channelRowId, p.id, p.text, new Date(expiresAtMs).toISOString(), p.hop)
       .catch(err => log(`wish=${p.id} 回不上来(没打扰主人): ${errText(err)}`))
