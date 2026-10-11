@@ -614,7 +614,8 @@ describe('旧社交表退役(spec 2026-09-04-wish-postcard §3)', () => {
 
 
 // 跑完整条迁移阶梯,CI 慢机上实测 7.5s,默认 5s 会假红。
-it('upgrades a real v46 database retaining task history, native identity and approved artifacts',{timeout:30_000},()=>{
+// 真文件库、全部迁移跑两遍:Windows runner 上 32s(10-10 #323 的 windows 红),给 60s。
+it('upgrades a real v46 database retaining task history, native identity and approved artifacts',{timeout:60_000},()=>{
   const dir=mkdtempSync(join(tmpdir(),'workbench-v46-')),path=join(dir,'state.db')
   try {
     const prior=openSqlite(path)
