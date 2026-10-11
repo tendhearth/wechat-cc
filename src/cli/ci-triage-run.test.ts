@@ -168,6 +168,39 @@ describe('runCiTriage', () => {
     expect(report.jobs[0]!.classified[0]!.failure?.file).toBe('src/cli/selftest.test.ts')
   })
 
+  // 作业结论不只有 failure:timeout-minutes 到点是 timed_out,runner 丢了 / 并发组取消是 cancelled。
+  // 以前只挑 'failure' ⇒ 失败作业为空 ⇒ verdictOf([]) = green;自改流水线只看 verdict,红 CI 就进了拍板。
+  it.each([
+    ['timed_out', 'failure'],
+    ['cancelled', 'cancelled'],
+    ['startup_failure', 'failure'],
+  ])('a red run whose red job is %s (run=%s) is never reported green', async (jobConclusion, runConclusion) => {
+    const jobs = JSON.stringify({ jobs: [
+      { name: 'build · ubuntu-latest', databaseId: 1, conclusion: 'success', steps: [{ name: 'Run tests', conclusion: 'success' }] },
+      { name: 'build · windows-latest', databaseId: WIN_JOB_ID, conclusion: jobConclusion, steps: [{ name: 'Run tests', conclusion: jobConclusion }] },
+    ] })
+    const base = failedRunHandler('', '')
+    const h = harness((line) => {
+      if (line.startsWith('gh run list --commit')) return runListRow({ conclusion: runConclusion })
+      if (line.startsWith('gh run view') && line.includes('--json jobs')) return jobs
+      return base(line)
+    })
+    const { report, exitCode } = await runCiTriage(h.deps, { sha: SHA })
+    expect(report.verdict).not.toBe('green')
+    expect(exitCode).toBe(CI_TRIAGE_EXIT.real)
+  })
+
+  it('a red run with no red job found at all ⇒ unknown, not green', async () => {
+    const base = failedRunHandler('', '')
+    const h = harness((line) => {
+      if (line.startsWith('gh run view') && line.includes('--json jobs')) return JSON.stringify({ jobs: [] })
+      return base(line)
+    })
+    const { report, exitCode } = await runCiTriage(h.deps, { sha: SHA })
+    expect(report.verdict).toBe('unknown')
+    expect(exitCode).toBe(CI_TRIAGE_EXIT.real)
+  })
+
   it('flake 但没给 --rerun ⇒ verdict flake,退出 3,没有发出 rerun', async () => {
     const h = harness(failedRunHandler(FLAKE_LOG, 'docs/x.md\n'))
     const { report, exitCode } = await runCiTriage(h.deps, { sha: SHA })
