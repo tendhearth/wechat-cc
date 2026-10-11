@@ -104,6 +104,38 @@ describe('串门:两只伙伴对着聊', () => {
     expect([...A.busy, ...B.busy].every(b => b.released)).toBe(true)
   })
 
+  it('对端换个 nonce 重放已经答过的一轮 → 不再调模型、不再回信、不再推主人', async () => {
+    const calls: string[] = []
+    const fakeEval = (who: string) => async (p: string) => {
+      calls.push(who)
+      return (p.includes('串门回来') || p.includes('坐了会儿')) ? `${who}回来说:聊得挺好` : `${who}的第几句`
+    }
+    const A = side('阿一', fakeEval('阿一'))
+    const B = side('阿二', fakeEval('阿二'))
+    A.setPeer(B); B.setPeer(A)
+    await A.visit.startVisit('ch')
+    await flush()
+    const before = { calls: calls.length, aOut: A.letters.length, aOwner: A.owner.length, bOwner: B.owner.length }
+
+    // correspondent 只按 nonce 去重,重放的信照样入库一封新的 in,再交给 onInbound
+    const replay = (s: Side, round: number) => {
+      const orig = s.letters.find(l => l.direction === 'in' && JSON.parse(l.payload!).round === round)!
+      const id = `${s.name}-replay-${s.letters.length}`
+      s.letters.push({ ...orig, id, read_at: null })
+      return s.visit.onInbound('ch', { kind: 'visit', payload: JSON.parse(orig.payload!) } as Envelope, id)
+    }
+    expect(replay(A, 2)).toBe(true)  // 中间轮:我已经答过第 3 句
+    expect(replay(A, 6)).toBe(true)  // 最后一轮:已经讲给主人了
+    expect(replay(B, 1)).toBe(true)  // 开场:不该再占一趟来访名额、再答一遍
+    await flush()
+
+    expect(calls.length).toBe(before.calls)
+    expect(A.owner.length).toBe(before.aOwner)
+    expect(B.owner.length).toBe(before.bOwner)
+    expect(A.logs.filter(l => l.includes('不接')).length).toBe(2)
+    expect(B.logs.some(l => l.includes('不接'))).toBe(true)
+  })
+
   it('不是串门信封 → 返回 false(分发点会把它交给别的 case)', () => {
     const A = side('阿一', async () => 'x')
     expect(A.visit.onInbound('ch', { kind: 'letter', payload: { text: '主人写的普通信' } }, 'l1')).toBe(false)

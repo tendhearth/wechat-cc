@@ -2,7 +2,7 @@ import { describe, it, expect } from 'vitest'
 import { mkdtempSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { makeWish, type WishDeps } from './wire-wish'
+import { makeWish, WISHES_PER_DAY, type WishDeps } from './wire-wish'
 import { NetworkUnprotectedError } from '../../lib/network-gate'
 import { readWishes } from '../companion/wish-memory'
 import { readIntroIndex, writeIntroIndex } from '../companion/intro-memory'
@@ -117,6 +117,16 @@ describe('心愿:两只伙伴对着问', () => {
     const env: Envelope = { kind: 'wish', payload: JSON.parse(A.letters[0]!.payload!) }
     expect(B.wish.onInbound('ch', env, 'dup')).toBe(true); await flush()
     expect(B.owner).toHaveLength(1)
+  })
+  it('同一条信道一天来的新心愿有上限 —— 换 id 刷屏不能每条都跑判官、推主人', async () => {
+    const B = side('B', { match: 'no' })
+    const exp = new Date(NOW.ms + 86_400_000).toISOString()
+    for (let i = 0; i < WISHES_PER_DAY + 2; i++) {
+      expect(B.wish.onInbound('ch', { kind: 'wish', payload: { id: `spam${String(i).padStart(4, '0')}`, text: '在吗', expiresAt: exp } }, `l${i}`)).toBe(true)
+    }
+    await flush()
+    expect(B.owner).toHaveLength(WISHES_PER_DAY)
+    expect(B.logs.filter(l => l.includes('今天已经收了'))).toHaveLength(2)
   })
   it('过期的心愿被 B 丢;A 收到不认识 / 过期 wishId 的明信片丢', async () => {
     const A = side('A'), B = side('B', { match: 'yes', blurb: 'ok' }); A.setPeer(B); B.setPeer(A)
