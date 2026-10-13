@@ -162,7 +162,7 @@ export function showStep(stepState, name) {
     if (num) num.textContent = stepIdx < idx ? "✓" : String(stepIdx + 1)
   })
   const stepOf = document.getElementById("wizard-step-of")
-  if (stepOf) stepOf.textContent = `step ${idx + 1} of ${STEP_ORDER.length}`
+  if (stepOf) stepOf.textContent = idx >= 0 ? `第 ${idx + 1} 步 · 共 ${STEP_ORDER.length} 步` : ''
   return name
 }
 
