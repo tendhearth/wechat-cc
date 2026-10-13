@@ -1042,6 +1042,11 @@ describe('distillAndPushOwnerKnowledge — hearth push (HI W3)', () => {
     expect(readFileSync(knowledgeMdPath(s.stateDir, 'chat-1'), 'utf8')).toContain('老王 200 元')
     expect(s.logs.some(l => l.includes('distilled knowledge.md for chat-1'))).toBe(true)
     expect(s.logs.some(l => l.toLowerCase().includes('hearth'))).toBe(false)
+    // 同样的内容再来一轮:不重写、不再记一行(10-13)
+    const before = s.logs.filter(l => l.includes('distilled knowledge.md')).length
+    await distillAndPushOwnerKnowledge(s.deps, 'chat-1')
+    expect(s.logs.filter(l => l.includes('distilled knowledge.md')).length).toBe(before)
+    expect(readFileSync(knowledgeMdPath(s.stateDir, 'chat-1'), 'utf8')).toContain('老王 200 元')
   })
 
   it('fake hearth (enabled) + low-risk plan ⇒ submit then applyForOwner(_, ownerChat, "wechat")', async () => {
