@@ -292,10 +292,10 @@ describe('doctor installer JSON', () => {
     expect(report.nextActions).not.toContain('install_cursor')
   })
 
-  it('cursor.ok = false when API key is set but SDK is missing — fix hints at install', () => {
+  it('cursor.ok = false when API key is set but SDK is missing and no cursor-agent CLI — fix points at the CLI (2026-10-13)', () => {
     const report = analyzeDoctor({
       stateDir: '/state',
-      findOnPath: (cmd) => `/bin/${cmd}`,
+      findOnPath: (cmd) => cmd === 'cursor-agent' ? null : `/bin/${cmd}`,
       probeCursor: () => ({ apiKeySet: true, sdkInstalled: false }),
       readAccounts: () => [],
       readAccess: () => ({ dmPolicy: 'allowlist', allowFrom: [] }),
@@ -307,13 +307,13 @@ describe('doctor installer JSON', () => {
     })
     expect(report.checks.cursor.ok).toBe(false)
     expect(report.checks.cursor.severity).toBe('soft')  // not the active provider
-    expect(report.checks.cursor.fix?.command).toBe('bun add @cursor/sdk')
+    expect(report.checks.cursor.fix?.action).toContain('cursor-agent login')
   })
 
-  it('cursor.ok = false when SDK is installed but API key is missing — fix hints at env var', () => {
+  it('cursor.ok = false when SDK is installed but API key is missing and no cursor-agent CLI', () => {
     const report = analyzeDoctor({
       stateDir: '/state',
-      findOnPath: (cmd) => `/bin/${cmd}`,
+      findOnPath: (cmd) => cmd === 'cursor-agent' ? null : `/bin/${cmd}`,
       probeCursor: () => ({ apiKeySet: false, sdkInstalled: true }),
       readAccounts: () => [],
       readAccess: () => ({ dmPolicy: 'allowlist', allowFrom: [] }),
@@ -324,7 +324,7 @@ describe('doctor installer JSON', () => {
       service: missingSystemd,
     })
     expect(report.checks.cursor.ok).toBe(false)
-    expect(report.checks.cursor.fix?.action).toContain('CURSOR_API_KEY')
+    expect(report.checks.cursor.fix?.action).toContain('cursor-agent login')
   })
 
   it('provider=cursor + cursorOk=false → provider check is hard, install_cursor in nextActions', () => {
@@ -343,11 +343,19 @@ describe('doctor installer JSON', () => {
     expect(report.checks.cursor.severity).toBe('hard')
     expect(report.checks.provider.ok).toBe(false)
     expect(report.checks.provider.severity).toBe('hard')
-    expect(report.checks.provider.fix?.action).toContain('CURSOR_API_KEY')
+    expect(report.checks.provider.fix?.action).toContain('cursor-agent login')
     expect(report.nextActions).toContain('install_cursor')
     // install_claude / install_codex should NOT appear when cursor is selected
     expect(report.nextActions).not.toContain('install_claude')
     expect(report.nextActions).not.toContain('install_codex')
+  })
+
+  it('cursor-agent CLI on PATH is ready by itself — same rule as the daemon; not on Windows (2026-10-13)', () => {
+    const base = { stateDir: '/state', probeCursor: () => ({ apiKeySet: false, sdkInstalled: false }), readAccounts: () => [], readAccess: () => ({ dmPolicy: 'allowlist' as const, allowFrom: [] }), readAgentConfig: () => ({ provider: 'cursor' as const, dangerouslySkipPermissions: true, autoStart: false, closeStopsDaemon: false }), readUserNames: () => ({}), readExpiredBots: () => [], daemon: () => ({ alive: false, pid: null }), service: missingSystemd }
+    const mac = analyzeDoctor({ ...base, platform: 'darwin', findOnPath: (cmd: string) => cmd === 'cursor-agent' ? '/bin/cursor-agent' : null })
+    expect(mac.checks.cursor).toMatchObject({ ok: true, cliInstalled: true });expect(mac.checks.provider.ok).toBe(true);expect(mac.nextActions).not.toContain('install_cursor')
+    const win = analyzeDoctor({ ...base, platform: 'win32', findOnPath: (cmd: string) => cmd === 'cursor-agent' ? 'C:/bin/cursor-agent' : null })
+    expect(win.checks.cursor).toMatchObject({ ok: false, cliInstalled: false })
   })
 
   it('provider=cursor + cursorOk=true → provider check passes despite missing claude/codex binaries', () => {

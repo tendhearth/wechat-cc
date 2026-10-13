@@ -218,7 +218,10 @@ export function analyzeDoctor(deps: DoctorDeps): DoctorReport {
   const codexIsActive = agent.provider === 'codex'
   const cursorIsActive = agent.provider === 'cursor'
   const geminiIsActive = agent.provider === 'gemini'
-  const cursorOk = cursorProbe.apiKeySet && cursorProbe.sdkInstalled
+  // 与 daemon 注册同一条(bootstrap/providers.ts,2026-10-13):首选 cursor-agent CLI(订阅登录 `cursor-agent login`),
+  // Windows 上 ACP 那条没验过不注册;API key + @cursor/sdk 只是兜底。以前只看兜底 ⇒ 装好 CLI 的人也被说成「缺少 CURSOR_API_KEY」。
+  const cursorCli = (deps.platform ?? osPlatform()) !== 'win32' && !!(agent.cursorAgentBin ?? deps.findOnPath('cursor-agent'))
+  const cursorOk = cursorCli || (cursorProbe.apiKeySet && cursorProbe.sdkInstalled)
   const geminiOk = geminiProbe.apiKeySet && geminiProbe.sdkInstalled
   // WSL is a Windows-only concept; checking findOnPath('wsl') on non-win32
   // would risk false positives (some Linux distros ship `wsl` as an unrelated
@@ -290,17 +293,13 @@ export function analyzeDoctor(deps: DoctorDeps): DoctorReport {
     },
     cursor: {
       ok: cursorOk,
+      cliInstalled: cursorCli,
       apiKeySet: cursorProbe.apiKeySet,
       sdkInstalled: cursorProbe.sdkInstalled,
       ...(cursorOk ? {} : {
         severity: (cursorIsActive ? 'hard' : 'soft') as Severity,
-        // Fix hint picks the missing leg — env var or SDK install. When both
-        // are missing we surface the env var first (operators reading the
-        // doctor output left-to-right will fix that, then re-run to see
-        // the SDK leg).
-        fix: !cursorProbe.apiKeySet
-          ? { action: 'export CURSOR_API_KEY=<your-key>' }
-          : { command: 'bun add @cursor/sdk' },
+        // 修法指向首选那条:装 Cursor CLI 再登录(订阅)。GUI 用户没法 export 环境变量、也没法往打包的 sidecar 里 bun add。
+        fix: { action: '安装 Cursor CLI(cursor-agent),在终端里运行 cursor-agent login 登录', link: 'https://cursor.com/cli' },
       }),
     },
     gemini: {
@@ -361,9 +360,7 @@ export function analyzeDoctor(deps: DoctorDeps): DoctorReport {
         fix: agent.provider === 'codex'
           ? { link: 'https://github.com/openai/codex#installation' }
           : agent.provider === 'cursor'
-            ? (!cursorProbe.apiKeySet
-                ? { action: 'export CURSOR_API_KEY=<your-key>' }
-                : { command: 'bun add @cursor/sdk' })
+            ? { action: '安装 Cursor CLI(cursor-agent),在终端里运行 cursor-agent login 登录', link: 'https://cursor.com/cli' }
             : agent.provider === 'gemini'
               ? (!geminiProbe.apiKeySet
                   ? { action: 'export GEMINI_API_KEY=<your-key>  (or GOOGLE_API_KEY)' }
