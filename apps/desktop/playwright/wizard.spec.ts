@@ -199,7 +199,8 @@ test('wizard guard toggle rolls back and says so when enabling fails (2026-10-13
     document.querySelectorAll('#screen-service').forEach(s => s.classList.add('active'))
     const t = document.getElementById('screen-guard-toggle')!; t.classList.remove('on'); t.setAttribute('aria-pressed', 'false')
   })
-  await page.locator('#screen-guard-toggle').click()
+  // 用 DOM 点:shim 可能直接进了仪表盘(CI 上就是),向导藏着,Playwright 的 click 会一直等它可见。处理函数照样挂着。
+  await page.evaluate(() => (document.getElementById('screen-guard-toggle') as HTMLElement).click())
   await expect(page.locator('#screen-guard-status-line')).toContainText('没能开启网络守护')
   await expect(page.locator('#screen-guard-toggle')).not.toHaveClass(/\bon\b/)
   await expect(page.locator('#screen-guard-toggle')).toHaveAttribute('aria-pressed', 'false')
