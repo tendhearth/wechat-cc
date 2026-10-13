@@ -3,8 +3,8 @@
  * 升级器 / 退回都在临时目录里改链接。永远不碰主人真装的 claude / codex / cursor-agent / agy。
  * 假 CLI 是 `#!/bin/sh`,win32 跳过。
  */
-import { describe, it, expect, beforeEach, afterEach } from 'vitest'
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, readlinkSync, symlinkSync, unlinkSync, writeFileSync } from 'node:fs'
+import { describe, it, expect, beforeEach, afterEach, afterAll } from 'vitest'
+import { existsSync, linkSync, mkdirSync, mkdtempSync, readFileSync, readlinkSync, realpathSync, symlinkSync, unlinkSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { removeTempDir, writeWarmExecFixture } from '../../lib/test-temp'
@@ -19,27 +19,49 @@ const posix = process.platform !== 'win32'
 
 interface Fake { bin: string; ctl: string; setNext(v: string | null): void; failUpdate(on: boolean): void; calls(): string[]; current(): Promise<string | null> }
 
-function script(ctl: string, versionLine: string, switchCmd: string): string {
-  return `#!/bin/sh
-CTL='${ctl}'
+/**
+ * 假 CLI 一律是**同一个**预热过的通用脚本的硬链接(2026-10-13 提速):macOS 对每个新可执行文件首跑要做一次
+ * 安全校验(~0.4–1s,按文件算,硬链接共享同一个文件就不再校验),以前每条用例每个版本都新写一个脚本,
+ * 整个文件 ~42s、是全套件的最长那条。每个链接的行为(版本行、控制目录、切换命令)写在 CONF_DIR 里,
+ * 键是它的真实路径;不放在假安装目录里,免得被布局检测当成一个「版本」。
+ */
+const FAKE_DIR = posix ? realpathSync(mkdtempSync(join(tmpdir(), 'cc-fake-cli-'))) : ''
+const CONF_DIR = join(FAKE_DIR, 'conf')
+const BASE = join(FAKE_DIR, 'fake-cli')
+const confKey = (path: string) => realpathSync(path).replace(/\//g, '_')
+const shQuote = (v: string) => `'${v.replace(/'/g, `'\\''`)}'`
+if (posix) {
+  mkdirSync(CONF_DIR)
+  writeWarmExecFixture(BASE, `#!/bin/sh
+KEY=$(realpath "$0" | tr / _)
+. "${CONF_DIR}/$KEY"
 case "$1" in
-  --version) echo "${versionLine}"; exit 0;;
+  --version) echo "$VERSION_LINE"; exit 0;;
   update)
     echo update >> "$CTL/calls"
     if [ -f "$CTL/update_fail" ]; then echo "network down" >&2; exit 1; fi
     NEXT=$(cat "$CTL/next" 2>/dev/null)
     if [ -z "$NEXT" ]; then echo "already up to date"; exit 0; fi
-    ${switchCmd}
+    eval "$SWITCH"
     exit 0;;
   install)
     echo "install $2" >> "$CTL/calls"
     NEXT="$2"
-    ${switchCmd}
+    eval "$SWITCH"
     exit 0;;
 esac
 exit 2
-`
+`)
 }
+afterAll(() => { if (posix) removeTempDir(FAKE_DIR) })
+
+/** 在 path 放一个假 CLI(硬链接到 BASE),行为写进它的配置。$NEXT 在 switchCmd 里按字面留给脚本运行时展开。 */
+function fakeCli(path: string, ctl: string, versionLine: string, switchCmd: string): void {
+  linkSync(BASE, path)
+  writeFileSync(join(CONF_DIR, confKey(path)), `VERSION_LINE=${shQuote(versionLine)}\nCTL=${shQuote(ctl)}\nSWITCH=${shQuote(switchCmd)}\n`)
+}
+/** 假 CLI 的配置跟着文件走(agy 升级器原地替换那个文件时,版本也要一起换)。 */
+const confCopyCmd = (from: string, to: string) => `cp "${CONF_DIR}/$(realpath "${from}" | tr / _)" "${CONF_DIR}/$(realpath "${to}" | tr / _)"`
 
 function fakeControls(ctl: string, bin: string, spec: CliSpec): Fake {
   return {
@@ -57,7 +79,7 @@ function fakeClaude(root: string, versions: string[], linked: string): Fake {
   const vers = join(root, 'home', '.local', 'share', 'claude', 'versions'); mkdirSync(vers, { recursive: true })
   const binDir = join(root, 'home', '.local', 'bin'); mkdirSync(binDir, { recursive: true })
   const link = join(binDir, 'claude')
-  for (const v of versions) writeWarmExecFixture(join(vers, v), script(ctl, `${v} (Claude Code)`, `ln -sfn "${vers}/$NEXT" "${link}"`))
+  for (const v of versions) fakeCli(join(vers, v), ctl, `${v} (Claude Code)`, `ln -sfn "${vers}/$NEXT" "${link}"`)
   symlinkSync(join(vers, linked), link)
   return fakeControls(ctl, link, CLI_SPECS.claude)
 }
@@ -70,7 +92,7 @@ function fakeCodex(root: string, versions: string[], linked: string): Fake {
   const cur = join(sa, 'current')
   for (const v of versions) {
     const d = join(rel, `${v}-aarch64-apple-darwin`, 'bin'); mkdirSync(d, { recursive: true })
-    writeWarmExecFixture(join(d, 'codex'), script(ctl, `codex-cli ${v}`, `ln -sfn "${rel}/$NEXT-aarch64-apple-darwin" "${cur}"`))
+    fakeCli(join(d, 'codex'), ctl, `codex-cli ${v}`, `ln -sfn "${rel}/$NEXT-aarch64-apple-darwin" "${cur}"`)
   }
   symlinkSync(join(rel, `${linked}-aarch64-apple-darwin`), cur)
   const binDir = join(root, 'home', '.local', 'bin'); mkdirSync(binDir, { recursive: true })
@@ -86,7 +108,7 @@ function fakeCursor(root: string, versions: string[], linked: string): Fake {
   const a = join(binDir, 'cursor-agent'), b = join(binDir, 'agent')
   for (const v of versions) {
     mkdirSync(join(vers, v), { recursive: true })
-    writeWarmExecFixture(join(vers, v, 'cursor-agent'), script(ctl, v, `ln -sfn "${vers}/$NEXT/cursor-agent" "${a}"; ln -sfn "${vers}/$NEXT/cursor-agent" "${b}"`))
+    fakeCli(join(vers, v, 'cursor-agent'), ctl, v, `ln -sfn "${vers}/$NEXT/cursor-agent" "${a}"; ln -sfn "${vers}/$NEXT/cursor-agent" "${b}"`)
   }
   symlinkSync(join(vers, linked, 'cursor-agent'), a)
   symlinkSync(join(vers, linked, 'cursor-agent'), b)
@@ -98,8 +120,10 @@ function fakeAgy(root: string, versions: string[], linked: string): Fake {
   const ctl = join(root, 'ctl'); mkdirSync(ctl, { recursive: true })
   const binDir = join(root, 'home', '.local', 'bin'); mkdirSync(binDir, { recursive: true })
   const bin = join(binDir, 'agy')
-  for (const v of versions) writeWarmExecFixture(join(ctl, `agy-${v}`), script(ctl, v, `cp "${ctl}/agy-$NEXT" "${bin}"`))
-  writeWarmExecFixture(bin, readFileSync(join(ctl, `agy-${linked}`), 'utf8'))
+  // 升级器原地替换:新版本文件换到 bin(硬链接,不触发首跑校验),它的配置一起换过去
+  for (const v of versions) fakeCli(join(ctl, `agy-${v}`), ctl, v, `ln -f "${ctl}/agy-$NEXT" "${bin}"; ${confCopyCmd(`${ctl}/agy-$NEXT`, bin)}`)
+  linkSync(join(ctl, `agy-${linked}`), bin)
+  writeFileSync(join(CONF_DIR, confKey(bin)), readFileSync(join(CONF_DIR, confKey(join(ctl, `agy-${linked}`))), 'utf8'))
   return fakeControls(ctl, bin, CLI_SPECS.agy)
 }
 
