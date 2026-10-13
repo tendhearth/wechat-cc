@@ -159,7 +159,7 @@ async function serviceActionInner(deps, state, action, planEl, summaryEl, alertE
     // (which already shows the npm install command + 复制 button).
     const hardReds = collectHardReds(/** @type {DoctorReport | null} */ (deps.doctorPoller.current))
     if (hardReds.length > 0) {
-      summary.textContent = `先装 ${hardReds.join("、")} — daemon 起来后无法工作。复制上方命令即可。`
+      summary.textContent = `还没装 ${hardReds.join("、")}：没有它，CC 启动了也回不了话。回到第一步「检查」，展开「查看完整诊断」能看到安装方法。`
       return
     }
     // Wizard and settings toggles update state; the hidden drawer may be stale.
@@ -173,10 +173,10 @@ async function serviceActionInner(deps, state, action, planEl, summaryEl, alertE
     // force-kill before we touch any unit files.
     const status = /** @type {ServiceStatus | null} */ (await deps.invoke("wechat_cli_json", { args: ["service", "status", "--json"] }).catch(() => null))
     if (status && status.alive && !status.installed && status.pid) {
-      summary.textContent = "检测到前台 daemon 仍在运行，需要先停掉再安装服务。"
+      summary.textContent = "这台电脑上已经有一个 CC 在运行(不是从这里启动的)，要先停掉它，再安装后台服务。"
       showPostStopAlert(status.pid)
       const headEl = document.querySelector("#post-stop-alert .h")
-      if (headEl) headEl.textContent = `先停掉前台 daemon (pid ${status.pid}) — 否则装上的 service 会立刻被 PID 锁挤掉`
+      if (headEl) headEl.textContent = `先停掉正在运行的 CC(进程 ${status.pid})，不然新装的后台服务会和它抢着运行`
       return
     }
   }
@@ -191,7 +191,7 @@ async function serviceActionInner(deps, state, action, planEl, summaryEl, alertE
     result = /** @type {ServiceInstall | ServiceStart | ServiceStop | ServiceUninstall} */ (await deps.invoke("wechat_cli_json", { args }))
   } catch (err) {
     const friendly = deps.formatInvokeError(err)
-    summary.textContent = friendly
+    summary.textContent = serviceFailureText(action, friendly)
     if (planEl) {
       const errObj = /** @type {Error | null} */ (err instanceof Error ? err : null)
       planEl.textContent += `\n[${nowStamp()}] ❌ service ${action} 失败：\n${friendly}\n\n— 原始错误 —\n${errObj?.stack || String(err)}\n`
@@ -387,3 +387,18 @@ export async function forceKillDaemon(deps) {
   }
   await deps.doctorPoller.refresh()
 }
+
+/**
+ * 安装 / 启动 / 停止 / 卸载后台服务失败时给主人看的那一句(2026-10-13,上手门槛:这一步最容易出错,以前直接贴原始报错)。
+ * 现象 → 原因 → 一个动作;原始报错照旧进「技术详情」。认不出来的一律给通用的一句,不猜。
+ * @param {string} action @param {string} raw
+ */
+export function serviceFailureText(action, raw) {
+  const what = /** @type {Record<string,string>} */ ({ install: '后台服务没装好', start: '后台服务没启动起来', stop: '后台服务没停下', uninstall: '后台服务没卸掉' })[action] ?? '后台服务出了问题'
+  if (/无法连接到 wechat-cc CLI/.test(raw)) return `${what}：这个窗口连不上 CC 的命令行组件。关掉 Tendhearth 重新打开再试；还不行就重新安装 Tendhearth。`
+  if (/EACCES|EPERM|permission denied|Operation not permitted/i.test(raw)) return `${what}：没有权限写入系统的启动项目录。在「系统设置 → 隐私与安全性」里允许 Tendhearth 后再试。`
+  if (/Bootstrap failed|already (loaded|bootstrapped)|service already loaded|Input\/output error/i.test(raw)) return `${what}：系统里还挂着一个旧的 CC 后台服务。再点一次「安装并启动」覆盖它；还不行就重启电脑后再试。`
+  if (/timed? ?out|超时|health/i.test(raw)) return `${what}：CC 启动后没有按时回应，可能还在准备。等半分钟点「重新检查」；还不行再点一次「安装并启动」。`
+  return `${what}。再点一次刚才的按钮试试；还不行，展开下面的「技术详情」，把里面的内容发给我们。`
+}
+

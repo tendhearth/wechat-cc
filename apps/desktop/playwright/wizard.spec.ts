@@ -176,3 +176,12 @@ test('setup-poll returns confirmed after the DRY_RUN auto-pass', async ({ shim }
   expect(confirmed.result?.status).toBe('confirmed')
   expect(confirmed.result?.accountId).toBe('mock-bot')
 })
+
+test('wizard header says which step of four, in Chinese (2026-10-13)', async ({ page, shimUrl }, testInfo) => {
+  await page.goto(shimUrl)
+  await waitForBoot(page)
+  if (await page.evaluate(() => document.documentElement.dataset.mode) !== 'wizard') test.skip(true, 'shim booted straight into the dashboard')
+  // 以前 showStep 写的 #wizard-step-of 在页面里根本不存在,主人看不到自己走到第几步
+  await expect(page.locator('#wizard-step-of')).toHaveText(/^第 [1-4] 步 · 共 4 步$/)
+  await page.locator('.wz-top').screenshot({ path: testInfo.outputPath('wizard-step-of.png') })
+})
