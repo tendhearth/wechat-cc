@@ -46,7 +46,9 @@ export function renderDoctorWizard(report) {
   // Surface the more useful missing-piece on the wizard card.
   if (cursorMeta) {
     const c = report.checks.cursor
+    // 首选 cursor-agent CLI(订阅登录);老 sidecar 没有 cliInstalled 字段时照旧说缺哪一样
     cursorMeta.textContent = c?.ok ? "已就绪"
+      : c && 'cliInstalled' in c ? "未安装 Cursor CLI"
       : !c?.apiKeySet ? "缺少 CURSOR_API_KEY"
       : !c?.sdkInstalled ? "缺少 @cursor/sdk"
       : "未检测到"

@@ -86,6 +86,7 @@ export const DoctorOutput = z.object({
     // Both must be true for the daemon's bootstrap to register cursor
     // (see src/daemon/bootstrap/index.ts) so `ok` mirrors that AND.
     cursor: DoctorCheckBase.extend({
+      cliInstalled: z.boolean().optional(),
       apiKeySet: z.boolean(),
       sdkInstalled: z.boolean(),
     }),
