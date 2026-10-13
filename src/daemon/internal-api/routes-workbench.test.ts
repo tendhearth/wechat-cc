@@ -318,8 +318,10 @@ describe('Workbench internal HTTP API', () => {
       let stopped=false,sent=0
       const req=httpRequest({host:'127.0.0.1',port,path:'/v1/workbench/attachment',method:'POST',headers:{authorization:`Bearer ${adminToken}`,'content-type':'application/json','transfer-encoding':'chunked'}},res=>{
         stopped=true
-        let body='';res.setEncoding('utf8');res.on('data',chunk=>{body+=chunk});res.on('end',()=>{req.destroy();resolve({status:res.statusCode!,body,connection:res.headers.connection})});res.on('error',error=>{req.destroy();reject(error)})
+        let body='';res.setEncoding('utf8');res.on('data',chunk=>{body+=chunk});res.on('end',()=>{resolve({status:res.statusCode!,body,connection:res.headers.connection})});res.on('error',error=>{req.destroy();reject(error)})
       })
+      // 回应读完不再 req.destroy():服务器已经 connection: close,Bun 下这时销毁会撞上已关的请求体流、抛出没人接的
+      // TypeError「ReadableStreamDirectController is now closed」(2026-10-13 CI Linux,整次运行判红)。
       // 服务器回 413 后立刻断开:客户端下一次写可能先撞上 EPIPE / ECONNRESET、来不及读到回应(node 下常见)——
       // 那同样是「服务器拒收了」,不算失败;下面照样核对没存东西、API 还能用。
       req.on('error',error=>{stopped=true;req.destroy();const code=(error as NodeJS.ErrnoException).code;if(code==='EPIPE'||code==='ECONNRESET')resolve('reset');else reject(error)})
