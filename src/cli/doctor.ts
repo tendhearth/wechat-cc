@@ -1,7 +1,7 @@
 import { existsSync, readFileSync, readdirSync, realpathSync } from 'node:fs'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
-import { platform as osPlatform } from 'node:os'
+import { homedir, platform as osPlatform } from 'node:os'
 import { createRequire } from 'node:module'
 import { spawnSync } from 'node:child_process'
 import { STATE_DIR } from '../lib/config'
@@ -67,6 +67,12 @@ export interface DoctorDeps {
    * implementation in `defaultDoctorDeps` uses `spawnSync` with a 3 s cap.
    */
   probeBinaryVersion?: (path: string) => string | null
+  /**
+   * 装了的 claude / codex 登录过没有(2026-10-13,上手门槛:以前装了就叫「已就绪」,没登录也一样,
+   * 向导走完第一句微信才失败)。只在本机看凭据**在不在**,不读内容、不联网(无人值守不外呼的红线)。
+   * true = 看到了登录;false = 哪种登录方式都没看到;null = 判断不了。缺省接线见 defaultProbeLogin。
+   */
+  probeLogin?: (cli: 'claude' | 'codex') => boolean | null
   /**
    * Probe for the Cursor agent backend — Cursor has no PATH binary (unlike
    * claude/codex CLI), it's a Node SDK. Reports whether CURSOR_API_KEY is
@@ -137,8 +143,8 @@ export interface DoctorReport {
     // isn't on disk, when --version timed out, or when no probe is wired.
     // Surfaced so support flows can spot SDK↔CLI protocol mismatches
     // (see src/lib/find-codex-binary.ts for the codex 0.125/0.128 trap).
-    claude: DoctorCheckBase & { path: string | null; version: string | null }
-    codex: DoctorCheckBase & { path: string | null; version: string | null }
+    claude: DoctorCheckBase & { path: string | null; version: string | null; loggedIn?: boolean | null }
+    codex: DoctorCheckBase & { path: string | null; version: string | null; loggedIn?: boolean | null }
     // Cursor has no PATH binary — it's a Node SDK loaded via dynamic import
     // by the daemon's bootstrap. Both apiKeySet AND sdkInstalled must be true
     // for cursor to register (see src/daemon/bootstrap/index.ts ~L514). The
@@ -192,6 +198,7 @@ export function analyzeDoctor(deps: DoctorDeps): DoctorReport {
   const probe = deps.probeBinaryVersion ?? (() => null)
   const claudeVersion = claude ? probe(claude) : null
   const codexVersion = codex ? probe(codex) : null
+  const login = deps.probeLogin ?? (() => null)
   const cursorProbe = (deps.probeCursor ?? defaultProbeCursor)()
   const geminiProbe = (deps.probeGemini ?? defaultProbeGemini)()
   const accounts = deps.readAccounts()
@@ -268,14 +275,14 @@ export function analyzeDoctor(deps: DoctorDeps): DoctorReport {
       ...(isBundle || git ? {} : { severity: 'soft' as const }),
     },
     claude: {
-      ok: !!claude, path: claude, version: claudeVersion,
+      ok: !!claude, path: claude, version: claudeVersion, ...(claude ? { loggedIn: login('claude') } : {}),
       ...(claude ? {} : {
         severity: (claudeIsActive ? 'hard' : 'soft') as Severity,
         fix: { command: 'npm install -g @anthropic-ai/claude-code', link: 'https://docs.claude.com/en/docs/claude-code/install' },
       }),
     },
     codex: {
-      ok: !!codex, path: codex, version: codexVersion,
+      ok: !!codex, path: codex, version: codexVersion, ...(codex ? { loggedIn: login('codex') } : {}),
       ...(codex ? {} : {
         severity: (codexIsActive ? 'hard' : 'soft') as Severity,
         fix: { link: 'https://github.com/openai/codex#installation' },
@@ -438,6 +445,30 @@ export function serviceStatus(deps: { daemon: () => DaemonSnapshot; service: () 
  * cursor provider. Uses `createRequire` so resolution works both under
  * `bun cli.ts` (ESM) and the compiled-bundle sidecar.
  */
+/**
+ * 本机看 claude / codex 有没有登录过 —— 只看凭据在不在(不读内容、不带 -w、不联网)。任一种登录方式都算:
+ *   claude:环境变量里的 key / token、Bedrock / Vertex、`~/.claude/.credentials.json`、settings 里的 apiKeyHelper、
+ *           macOS 钥匙串条目「Claude Code-credentials」(只查条目在不在,不取密码,不会弹授权框);
+ *   codex:OPENAI_API_KEY / CODEX_API_KEY、`$CODEX_HOME/auth.json`(缺省 ~/.codex)。
+ * 出错 ⇒ null(判断不了),向导照常放行,只是不提示。
+ */
+export function defaultProbeLogin(cli: 'claude' | 'codex', env: NodeJS.ProcessEnv = process.env, home = homedir(), platform = osPlatform(),
+  keychainHas: (service: string) => boolean = service => spawnSync('security', ['find-generic-password', '-s', service], { stdio: 'ignore', timeout: 3000, windowsHide: true }).status === 0): boolean | null {
+  try {
+    const set = (k: string) => !!env[k]?.trim()
+    if (cli === 'codex') {
+      if (set('OPENAI_API_KEY') || set('CODEX_API_KEY')) return true
+      return existsSync(join(env.CODEX_HOME?.trim() || join(home, '.codex'), 'auth.json'))
+    }
+    if (['ANTHROPIC_API_KEY', 'ANTHROPIC_AUTH_TOKEN', 'CLAUDE_CODE_OAUTH_TOKEN', 'CLAUDE_CODE_USE_BEDROCK', 'CLAUDE_CODE_USE_VERTEX'].some(set)) return true
+    const dir = env.CLAUDE_CONFIG_DIR?.trim() || join(home, '.claude')
+    if (existsSync(join(dir, '.credentials.json'))) return true
+    try { if (typeof readJsonFile<{ apiKeyHelper?: unknown }>(join(dir, 'settings.json'))?.apiKeyHelper === 'string') return true } catch { /* 没有 / 坏了:不算 */ }
+    if (platform === 'darwin' && keychainHas('Claude Code-credentials')) return true
+    return false
+  } catch { return null }
+}
+
 export function defaultProbeCursor(): { apiKeySet: boolean; sdkInstalled: boolean } {
   const apiKeySet = !!process.env.CURSOR_API_KEY
   let sdkInstalled = false
@@ -491,6 +522,7 @@ export function defaultDoctorDeps(stateDir = STATE_DIR): DoctorDeps {
     stateDir,
     findOnPath,
     probeBinaryVersion,
+    probeLogin: cli => defaultProbeLogin(cli),
     probeCursor: defaultProbeCursor,
     probeGemini: defaultProbeGemini,
     readAccounts: () => readAccounts(stateDir),
