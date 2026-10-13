@@ -895,7 +895,14 @@ function wireEvents() {
         try {
           await invoke("wechat_cli_json", { args: ["guard", on ? "enable" : "disable", "--json"] })
           refreshGuardStatus()
-        } catch { /* best-effort — toggle stays in the UI either way */ }
+        } catch (err) {
+          // 2026-10-13:以前吞掉错误、开关停在新位置 —— 界面说开了其实没开。跟设置抽屉一样回滚,并在下面那行说一句。
+          console.error("guard toggle failed:", err)
+          el.classList.toggle("on", !on)
+          el.setAttribute("aria-pressed", !on ? "true" : "false")
+          const line = document.getElementById("screen-guard-status-line")
+          if (line) { line.textContent = `没能${on ? "开启" : "关闭"}网络守护，开关已恢复原样。稍后再点一次。`; line.dataset.state = "down" }
+        }
       }
     })
   })

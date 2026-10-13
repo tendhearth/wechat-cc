@@ -185,3 +185,22 @@ test('wizard header says which step of four, in Chinese (2026-10-13)', async ({ 
   await expect(page.locator('#wizard-step-of')).toHaveText(/^第 [1-4] 步 · 共 4 步$/)
   await page.locator('.wz-top').screenshot({ path: testInfo.outputPath('wizard-step-of.png') })
 })
+
+test('wizard guard toggle rolls back and says so when enabling fails (2026-10-13)', async ({ page, shimUrl }) => {
+  await page.goto(shimUrl)
+  await waitForBoot(page)
+  // 只让「guard enable」这一次失败,其余照常走 shim
+  await page.route('**/__invoke', async route => {
+    const body = route.request().postData() ?? ''
+    if (body.includes('"guard"') && body.includes('"enable"')) return route.fulfill({ status: 500, contentType: 'application/json', body: JSON.stringify({ error: 'guard enable failed' }) })
+    return route.continue()
+  })
+  await page.evaluate(() => {
+    document.querySelectorAll('#screen-service').forEach(s => s.classList.add('active'))
+    const t = document.getElementById('screen-guard-toggle')!; t.classList.remove('on'); t.setAttribute('aria-pressed', 'false')
+  })
+  await page.locator('#screen-guard-toggle').click()
+  await expect(page.locator('#screen-guard-status-line')).toContainText('没能开启网络守护')
+  await expect(page.locator('#screen-guard-toggle')).not.toHaveClass(/\bon\b/)
+  await expect(page.locator('#screen-guard-toggle')).toHaveAttribute('aria-pressed', 'false')
+})
