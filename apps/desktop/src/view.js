@@ -119,7 +119,7 @@ export function escapeHtml(value) {
 
 /** All installed executors and an already configured API can satisfy setup. */
 export function hasUsableProvider(report) {
-  return !!(report?.checks?.provider?.ok || ['claude','codex','cursor','gemini'].some(id => report?.checks?.[id]?.ok))
+  return !!(report?.checks?.provider?.ok || ['claude','codex','cursor','gemini','agy'].some(id => report?.checks?.[id]?.ok))
 }
 export function providerReady(report, id) {
   return !!(report?.checks?.[id]?.ok || (report?.checks?.provider?.provider === id && report.checks.provider.ok))

@@ -155,6 +155,7 @@ export interface DoctorReport {
     // @google/genai SDK are the two install signals. Both must be present for
     // bootstrap to register the gemini provider.
     gemini: DoctorCheckBase & { apiKeySet: boolean; sdkInstalled: boolean }
+    agy?: DoctorCheckBase & { path: string | null }
     accounts: DoctorCheckBase & { count: number; items: BoundAccount[] }
     access: DoctorCheckBase & { dmPolicy: string; allowFromCount: number; admins?: string[] }
     // A1 (spec §A1): allowFrom non-empty + admins empty/missing means the
@@ -209,11 +210,18 @@ export function analyzeDoctor(deps: DoctorDeps): DoctorReport {
   // Cursor and Gemini have no PATH binary — providerBinary stays null for
   // them and the provider check below treats SDK+key presence as the
   // "binary" equivalent.
+  // agy 有自己的二进制(与 daemon 同一条:agent-config 的 agyBin,否则 PATH 上的 agy);openai 是 API,没有二进制。
+  // 2026-10-13 以前除 codex / cursor / gemini 外一律当 claude —— 只装了 agy 的人被叫去装 Claude。
+  const agyPath = agent.agyBin ?? deps.findOnPath('agy')
   const providerBinary = agent.provider === 'codex'
     ? codex
-    : (agent.provider === 'cursor' || agent.provider === 'gemini')
-      ? null
-      : claude
+    : agent.provider === 'agy'
+      ? agyPath
+      : (agent.provider === 'cursor' || agent.provider === 'gemini' || agent.provider === 'openai')
+        ? null
+        : claude
+  // openai 的 key 只在 daemon 的环境里(WECHAT_OPENAI_API_KEY),这里看不到 —— 配了地址和模型就不拦。
+  const openaiOk = !!(agent.openaiBaseUrl && agent.openaiModel)
   const claudeIsActive = agent.provider === 'claude'
   const codexIsActive = agent.provider === 'codex'
   const cursorIsActive = agent.provider === 'cursor'
@@ -239,8 +247,8 @@ export function analyzeDoctor(deps: DoctorDeps): DoctorReport {
   // consumers don't know about `install_cursor`, so reuse the same hook
   // name ('install_cursor') only when cursor is selected; claude/codex
   // continue to emit their existing action strings unchanged.
-  if (!providerBinary && agent.provider !== 'cursor' && agent.provider !== 'gemini') {
-    nextActions.push(agent.provider === 'codex' ? 'install_codex' : 'install_claude')
+  if (!providerBinary && agent.provider !== 'cursor' && agent.provider !== 'gemini' && agent.provider !== 'openai') {
+    nextActions.push(agent.provider === 'codex' ? 'install_codex' : agent.provider === 'agy' ? 'install_agy' : 'install_claude')
   } else if (agent.provider === 'cursor' && !cursorOk) {
     nextActions.push('install_cursor')
   } else if (agent.provider === 'gemini' && !geminiOk) {
@@ -302,6 +310,11 @@ export function analyzeDoctor(deps: DoctorDeps): DoctorReport {
         fix: { action: '安装 Cursor CLI(cursor-agent),在终端里运行 cursor-agent login 登录', link: 'https://cursor.com/cli' },
       }),
     },
+    // agy:订阅版 Gemini(Antigravity CLI)。2026-10-13 起向导也列它;能用 = 二进制在(与 daemon 注册同一条)。
+    agy: {
+      ok: !!agyPath, path: agyPath,
+      ...(agyPath ? {} : { severity: (agent.provider === 'agy' ? 'hard' : 'soft') as Severity, fix: { action: '安装 Antigravity CLI(agy)并在终端里登录一次' } }),
+    },
     gemini: {
       ok: geminiOk,
       apiKeySet: geminiProbe.apiKeySet,
@@ -351,14 +364,18 @@ export function analyzeDoctor(deps: DoctorDeps): DoctorReport {
       // Cursor and Gemini's "backend ready" check is SDK+key, not a PATH
       // binary — fall through to their respective Ok when the active provider
       // is cursor/gemini so the gate aligns with what bootstrap will register.
-      ok: cursorIsActive ? cursorOk : geminiIsActive ? geminiOk : !!providerBinary,
+      ok: cursorIsActive ? cursorOk : geminiIsActive ? geminiOk : agent.provider === 'openai' ? openaiOk : !!providerBinary,
       provider: agent.provider,
       ...(agent.model ? { model: agent.model } : {}),
       binaryPath: providerBinary,
-      ...((cursorIsActive ? cursorOk : geminiIsActive ? geminiOk : !!providerBinary) ? {} : {
+      ...((cursorIsActive ? cursorOk : geminiIsActive ? geminiOk : agent.provider === 'openai' ? openaiOk : !!providerBinary) ? {} : {
         severity: 'hard' as const,
         fix: agent.provider === 'codex'
           ? { link: 'https://github.com/openai/codex#installation' }
+          : agent.provider === 'agy'
+            ? { action: '安装 Antigravity CLI(agy)并在终端里登录一次' }
+          : agent.provider === 'openai'
+            ? { action: '在设置的「模型与后端」里填好接口地址和模型' }
           : agent.provider === 'cursor'
             ? { action: '安装 Cursor CLI(cursor-agent),在终端里运行 cursor-agent login 登录', link: 'https://cursor.com/cli' }
             : agent.provider === 'gemini'

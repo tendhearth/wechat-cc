@@ -55,6 +55,8 @@ export function renderDoctorWizard(report) {
   }
   const geminiMeta = document.getElementById('gemini-meta')
   if (geminiMeta) geminiMeta.textContent = report.checks.gemini?.ok ? '已就绪' : '尚未连接'
+  const agyMeta = document.getElementById('agy-meta')
+  if (agyMeta) agyMeta.textContent = report.checks.agy?.ok ? '已就绪' : '未安装 agy'
   renderDoctorHeadline(report)
   renderProviderStatus("claude", report.checks.claude)
   renderProviderStatus("codex", report.checks.codex)
