@@ -20,7 +20,7 @@ import { spawn } from '../lib/runtime/process'
 import { wrapForProcessTree } from '../lib/jobspawn'
 
 /** agyModel 没设时的兜底 —— 只此一处(见 claude-agent-provider 的 DEFAULT_CLAUDE_MODEL 注释)。 */
-export const DEFAULT_AGY_MODEL = 'gemini-3.7-flash-medium'
+export const DEFAULT_AGY_MODEL = 'gemini-3.8-flash-medium'
 
 export { AGY_CAPABILITIES } from './provider-capabilities'
 
@@ -56,7 +56,7 @@ export interface AgyAgentProviderOptions {
 
 const DEFAULT_TURN_TIMEOUT_MS = 600_000
 /** spec §2 — cheapEval always uses the cheapest subscription model, regardless of the provider's configured default. */
-const CHEAP_EVAL_MODEL = 'gemini-3.7-flash-low'
+const CHEAP_EVAL_MODEL = 'gemini-3.8-flash-low'
 /** Cap on captured stderr text (see drainCappedStderr's doc comment). */
 const STDERR_CAP_BYTES = 64 * 1024
 
@@ -271,14 +271,59 @@ async function oneShotEval(spawnFn: AgySpawnFn, model: string, prompt: string, t
   return texts.join('')
 }
 
+/**
+ * agy 不认这个模型名(2026-10-13 真机:Google 下线 gemini-3.7-*,写死的 cheapEval 模型让每一次后台判断都失败,
+ * 知识抽取一整天没做成)。只在真调用失败之后才问一次 `agy models`(不做无人值守的探测),换成同家族同档位里最新的那个。
+ */
+export function isUnknownAgyModel(err: unknown): boolean {
+  return /not recognized as a known model|invalid model selection/i.test(err instanceof Error ? err.message : String(err))
+}
+/** 从 `agy models` 的输出里挑同家族同档位(如 gemini-*-flash-low)版本号最大的一个;挑不出 ⇒ null。 */
+export function pickReplacementModel(current: string, listing: string): string | null {
+  const m = /^([a-z]+)-([\d.]+)-(.+)$/i.exec(current)
+  if (!m) return null
+  const [, family, , rest] = m
+  const ids = listing.split('\n').map(l => l.split(/\s+/)[0] ?? '').filter(Boolean)
+  const candidates = ids.flatMap(id => {
+    const c = /^([a-z]+)-([\d.]+)-(.+)$/i.exec(id)
+    return c && c[1] === family && c[3] === rest ? [{ id, v: c[2]!.split('.').map(Number) }] : []
+  })
+  candidates.sort((a, b) => { for (let i = 0; i < Math.max(a.v.length, b.v.length); i++) { const d = (b.v[i] ?? 0) - (a.v[i] ?? 0); if (d) return d } return 0 })
+  const best = candidates[0]?.id
+  return best && best !== current ? best : null
+}
+async function listAgyModels(spawnFn: AgySpawnFn): Promise<string> {
+  const proc = spawnFn(['models'], { cwd: tmpdir() })
+  const lines: string[] = []
+  for await (const line of readLines(proc.stdout, new AbortController().signal)) lines.push(line)
+  await proc.exited
+  return lines.join('\n')
+}
+
 export function createAgyAgentProvider(opts: AgyAgentProviderOptions): AgentProvider {
   const log = opts.log
   const spawnFn = opts.spawnFn ?? defaultSpawnFn(opts.bin)
+  // 后台一次性评估用的模型名被 agy 拒了 ⇒ 换成同档最新的,本进程记住(见 isUnknownAgyModel)
+  const healedModels = new Map<string, string>()
+  const modelFor = (model: string) => healedModels.get(model) ?? model
+  async function evalHealing(model: string, prompt: string, turnTimeoutMs: number): Promise<string> {
+    const current = modelFor(model)
+    try { return await oneShotEval(spawnFn, current, prompt, turnTimeoutMs) }
+    catch (err) {
+      if (!isUnknownAgyModel(err)) throw err
+      let next: string | null = null
+      try { next = pickReplacementModel(current, await listAgyModels(spawnFn)) } catch { /* 列不出来就照原样报错 */ }
+      if (!next) throw err
+      healedModels.set(model, next)
+      opts.log('AGY', `model ${current} not recognized by agy — using ${next} instead (update agyModel / the built-in default)`)
+      return await oneShotEval(spawnFn, next, prompt, turnTimeoutMs)
+    }
+  }
   const turnTimeoutMs = opts.turnTimeoutMs && opts.turnTimeoutMs > 0 ? opts.turnTimeoutMs : DEFAULT_TURN_TIMEOUT_MS
 
   return {
     // 守护(评审 #193 P1-1):agy 永远连 Google;模型和下面 spawn / oneShotEval 用的是同一份。
-    callTarget: (kind, ctx) => ({ provider: 'agy', model: kind === 'cheapEval' ? CHEAP_EVAL_MODEL : kind === 'strongEval' ? opts.model : ctx?.model ?? opts.model }),
+    callTarget: (kind, ctx) => ({ provider: 'agy', model: kind === 'cheapEval' ? modelFor(CHEAP_EVAL_MODEL) : kind === 'strongEval' ? modelFor(opts.model) : ctx?.model ?? opts.model }),
     async spawn(project: AgentProject, ctx: SpawnContext): Promise<AgentSession> {
       // resumeSessionId-seeded spawns already have a handle — their first
       // dispatch uses `--conversation`, never `--new-project` (RULING 1).
@@ -523,17 +568,17 @@ export function createAgyAgentProvider(opts: AgyAgentProviderOptions): AgentProv
         },
       }
     },
-    /** 真机实测(2026-09-01,gemini-3.7-flash-low,每次一个 CLI 冷启动):
+    /** 真机实测(2026-09-01,当时的 gemini-3.7-flash-low,每次一个 CLI 冷启动):
      *  单次 10.3–14.3s,并发两闸门墙钟 12.66s。30s 是留了一倍余量的「慢到
      *  这个程度还算正常」,不是保证。见 AgentProvider.cheapEvalBudgetMs。 */
     cheapEvalBudgetMs: 30_000,
     async cheapEval(prompt: string): Promise<string> {
-      const text = await oneShotEval(spawnFn, CHEAP_EVAL_MODEL, prompt, turnTimeoutMs)
+      const text = await evalHealing(CHEAP_EVAL_MODEL, prompt, turnTimeoutMs)
       assertNotAuthFailed(text, log, 'agy cheapEval')
       return text
     },
     async strongEval(prompt: string): Promise<string> {
-      const text = await oneShotEval(spawnFn, opts.model, prompt, turnTimeoutMs)
+      const text = await evalHealing(opts.model, prompt, turnTimeoutMs)
       assertNotAuthFailed(text, log, 'agy strongEval')
       return text
     },
