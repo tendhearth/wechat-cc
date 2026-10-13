@@ -1,7 +1,8 @@
 import { describe, expect, it, afterEach } from 'vitest'
-import { mkdirSync, writeFileSync, rmSync } from 'node:fs'
+import { mkdirSync, mkdtempSync, writeFileSync, rmSync } from 'node:fs'
+import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { analyzeDoctor, setupStatus, serviceStatus, readDaemon, readAccess, readExpiredBots, defaultProbeCursor, defaultProbeGemini, probeOutboundWarning } from './doctor'
+import { analyzeDoctor, setupStatus, serviceStatus, readDaemon, readAccess, readExpiredBots, defaultProbeCursor, defaultProbeGemini, defaultProbeLogin, probeOutboundWarning } from './doctor'
 import { openWechatDb } from '../lib/db'
 import { makeSessionStateStore } from '../core/session-state'
 
@@ -825,5 +826,42 @@ describe('probeOutboundWarning', () => {
     await probeOutboundWarning(daemonAlive, fetchFn as any, () => 'tok')
     expect(capturedInit).toBeDefined()
     expect(capturedInit.signal).toBeInstanceOf(AbortSignal)
+  })
+})
+
+describe('defaultProbeLogin — local, presence-only (2026-10-13)', () => {
+  const fresh = () => { const d = mkdtempSync(join(tmpdir(), 'cc-login-')); return d }
+  const never = () => false
+  it('codex: env key or auth.json under CODEX_HOME / ~/.codex', () => {
+    const home = fresh()
+    expect(defaultProbeLogin('codex', {}, home, 'darwin', never)).toBe(false)
+    expect(defaultProbeLogin('codex', { OPENAI_API_KEY: 'x' }, home, 'darwin', never)).toBe(true)
+    mkdirSync(join(home, '.codex')); writeFileSync(join(home, '.codex', 'auth.json'), '{}')
+    expect(defaultProbeLogin('codex', {}, home, 'darwin', never)).toBe(true)
+    const alt = fresh(); writeFileSync(join(alt, 'auth.json'), '{}')
+    expect(defaultProbeLogin('codex', { CODEX_HOME: alt }, fresh(), 'darwin', never)).toBe(true)
+  })
+  it('claude: env / bedrock / credentials file / apiKeyHelper / keychain item (darwin only), never the secret itself', () => {
+    const home = fresh()
+    expect(defaultProbeLogin('claude', {}, home, 'darwin', never)).toBe(false)
+    expect(defaultProbeLogin('claude', { CLAUDE_CODE_USE_BEDROCK: '1' }, home, 'darwin', never)).toBe(true)
+    const asked: string[] = []
+    expect(defaultProbeLogin('claude', {}, home, 'darwin', s => { asked.push(s); return true })).toBe(true)
+    expect(asked).toEqual(['Claude Code-credentials'])
+    expect(defaultProbeLogin('claude', {}, home, 'linux', () => true)).toBe(false)
+    mkdirSync(join(home, '.claude')); writeFileSync(join(home, '.claude', 'settings.json'), JSON.stringify({ apiKeyHelper: '/bin/echo' }))
+    expect(defaultProbeLogin('claude', {}, home, 'linux', never)).toBe(true)
+    const h2 = fresh(); mkdirSync(join(h2, '.claude')); writeFileSync(join(h2, '.claude', '.credentials.json'), '{}')
+    expect(defaultProbeLogin('claude', {}, h2, 'linux', never)).toBe(true)
+  })
+  it('analyzeDoctor reports loggedIn only for installed CLIs and never flips ok', () => {
+    const r = analyzeDoctor({ stateDir: '/state', readAccounts: () => [], readAccess: () => ({ dmPolicy: 'allowlist', allowFrom: [] }), readAgentConfig: () => ({ provider: 'claude', dangerouslySkipPermissions: true, autoStart: false, closeStopsDaemon: false }), readUserNames: () => ({}), readExpiredBots: () => [], daemon: () => ({ alive: false, pid: null }), service: missingSystemd, findOnPath: (c: string) => c === 'claude' ? '/bin/claude' : null, probeLogin: () => false } as never)
+    expect(r.checks.claude).toMatchObject({ ok: true, loggedIn: false })
+    expect('loggedIn' in r.checks.codex).toBe(false)
+  })
+  it('the --json output schema keeps loggedIn (zod strips unknown keys; the GUI reads this JSON)', async () => {
+    const { DoctorOutput } = await import('./schema')
+    const r = analyzeDoctor({ stateDir: '/state', readAccounts: () => [], readAccess: () => ({ dmPolicy: 'allowlist', allowFrom: [] }), readAgentConfig: () => ({ provider: 'claude', dangerouslySkipPermissions: true, autoStart: false, closeStopsDaemon: false }), readUserNames: () => ({}), readExpiredBots: () => [], daemon: () => ({ alive: false, pid: null }), service: missingSystemd, findOnPath: (c: string) => c === 'claude' ? '/bin/claude' : null, probeLogin: () => false } as never)
+    expect(DoctorOutput.parse(r).checks.claude.loggedIn).toBe(false)
   })
 })
