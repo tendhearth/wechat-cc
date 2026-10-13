@@ -205,3 +205,12 @@ test('wizard guard toggle rolls back and says so when enabling fails (2026-10-13
   await expect(page.locator('#screen-guard-toggle')).not.toHaveClass(/\bon\b/)
   await expect(page.locator('#screen-guard-toggle')).toHaveAttribute('aria-pressed', 'false')
 })
+
+test('provider picker also offers subscription Gemini via agy (2026-10-13)', async ({ page, shimUrl }, testInfo) => {
+  await page.goto(shimUrl)
+  await waitForBoot(page)
+  await expect(page.locator('button.agent[data-provider="agy"]')).toBeAttached()
+  await expect(page.locator('#agy-meta')).toHaveText(/已就绪|未安装 agy|检测中/)
+  await page.evaluate(() => { document.querySelectorAll('.wizard .screen').forEach(s => s.classList.remove('active')); document.getElementById('screen-provider')?.classList.add('active'); document.documentElement.dataset.mode = 'wizard' })
+  await page.locator('#screen-provider .agent-grid').screenshot({ path: testInfo.outputPath('provider-grid.png') }).catch(() => {})
+})

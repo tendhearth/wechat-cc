@@ -873,3 +873,25 @@ describe('defaultProbeLogin — local, presence-only (2026-10-13)', () => {
     expect(DoctorOutput.parse(r).checks.claude.loggedIn).toBe(false)
   })
 })
+
+describe('provider check for agy / openai (2026-10-13)', () => {
+  const base = { stateDir: '/state', readAccounts: () => [], readAccess: () => ({ dmPolicy: 'allowlist' as const, allowFrom: [] }), readUserNames: () => ({}), readExpiredBots: () => [], daemon: () => ({ alive: false, pid: null }), service: () => ({ installed: false, kind: 'systemd-user' as const }) }
+  it('agy only on PATH ⇒ provider=agy is ready; nobody is told to install Claude', () => {
+    const r = analyzeDoctor({ ...base, findOnPath: (c: string) => c === 'agy' ? '/bin/agy' : null, readAgentConfig: () => ({ provider: 'agy', dangerouslySkipPermissions: true, autoStart: false, closeStopsDaemon: false }) } as never)
+    expect(r.checks.provider).toMatchObject({ ok: true, binaryPath: '/bin/agy' })
+    expect(r.checks.agy).toMatchObject({ ok: true, path: '/bin/agy' })
+    expect(r.nextActions).not.toContain('install_claude')
+  })
+  it('agy missing ⇒ install_agy, not install_claude; agyBin from config wins over PATH', () => {
+    const missing = analyzeDoctor({ ...base, findOnPath: (c: string) => c === 'claude' ? '/bin/claude' : null, readAgentConfig: () => ({ provider: 'agy', dangerouslySkipPermissions: true, autoStart: false, closeStopsDaemon: false }) } as never)
+    expect(missing.checks.provider.ok).toBe(false);expect(missing.nextActions).toContain('install_agy');expect(missing.nextActions).not.toContain('install_claude')
+    const pinned = analyzeDoctor({ ...base, findOnPath: () => null, readAgentConfig: () => ({ provider: 'agy', agyBin: '/opt/agy', dangerouslySkipPermissions: true, autoStart: false, closeStopsDaemon: false }) } as never)
+    expect(pinned.checks.provider).toMatchObject({ ok: true, binaryPath: '/opt/agy' })
+  })
+  it('openai is an API: ready once base url + model are configured, no binary needed (the key lives in the daemon env)', () => {
+    const ok = analyzeDoctor({ ...base, findOnPath: () => null, readAgentConfig: () => ({ provider: 'openai', openaiBaseUrl: 'https://x/v1', openaiModel: 'm', dangerouslySkipPermissions: true, autoStart: false, closeStopsDaemon: false }) } as never)
+    expect(ok.checks.provider.ok).toBe(true);expect(ok.nextActions).not.toContain('install_claude')
+    const no = analyzeDoctor({ ...base, findOnPath: () => '/bin/claude', readAgentConfig: () => ({ provider: 'openai', dangerouslySkipPermissions: true, autoStart: false, closeStopsDaemon: false }) } as never)
+    expect(no.checks.provider.ok).toBe(false);expect(no.checks.provider.fix?.action).toContain('模型与后端')
+  })
+})

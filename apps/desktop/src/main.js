@@ -561,6 +561,7 @@ async function ensureUsableProviderSelected(report) {
     : report?.checks?.codex?.ok ? "codex"
     : report?.checks?.cursor?.ok ? "cursor"
     : report?.checks?.gemini?.ok ? "gemini"
+    : report?.checks?.agy?.ok ? "agy"
     : null
   if (!fallback) return false
   return await commitProvider(fallback)

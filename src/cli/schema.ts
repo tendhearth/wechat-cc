@@ -93,6 +93,7 @@ export const DoctorOutput = z.object({
     // Gemini has no PATH binary either — SDK + API key are the install
     // signals (GEMINI_API_KEY or GOOGLE_API_KEY + @google/genai package).
     gemini: DoctorCheckBase.extend({ apiKeySet: z.boolean(), sdkInstalled: z.boolean() }),
+    agy: DoctorCheckBase.extend({ path: z.string().nullable() }).optional(),
     accounts: DoctorCheckBase.extend({
       count: z.number(),
       items: z.array(BoundAccount),
