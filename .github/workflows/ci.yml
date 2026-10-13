@@ -72,6 +72,18 @@ jobs:
           # 自己变红(db.test.ts 的 v53 迁移)。升级 bun 该是一件有人盯着的事。
           bun-version: 1.3.14
 
+      # Windows 托管机默认开着 Defender 实时扫描:测试大量建临时库 / 起子进程,每个新文件都被扫一遍,
+      # 套件慢到 1200s 并且隔三差五撞 hook / test 超时(2026-10-13 一天里同一 PR 连红两次,每次是不同的无关用例)。
+      # 关掉实时扫描 + 排除临时目录与工作区。失败也不拦作业(continue-on-error):不能关就照旧慢着跑。
+      - name: Turn off Defender real-time scanning (Windows)
+        if: ${{ matrix.os == 'windows-latest' }}
+        continue-on-error: true
+        shell: pwsh
+        run: |
+          Set-MpPreference -DisableRealtimeMonitoring $true
+          Add-MpPreference -ExclusionPath $env:TEMP, $env:RUNNER_TEMP, $env:GITHUB_WORKSPACE
+          Get-MpPreference | Select-Object DisableRealtimeMonitoring
+
       - name: Install dependencies
         run: bun install --frozen-lockfile
 
