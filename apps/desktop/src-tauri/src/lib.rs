@@ -10,6 +10,7 @@
 pub mod bundle_migrate;
 pub mod daemon_mode;
 mod html_preview;
+mod nav_guard;
 
 #[cfg(test)]
 mod workbench_folder_tests;
@@ -1634,6 +1635,8 @@ pub fn run() {
                 request.method().as_str(), request.uri().path(), request.uri().query().is_some(), cfg!(windows),
             ))
         })
+        // 每个 webview 只许在 app 自己的源 + 预览框之间导航(nav_guard.rs)
+        .plugin(nav_guard::plugin())
         .plugin(tauri_plugin_shell::init())
         .plugin(tauri_plugin_notification::init())
         .plugin(tauri_plugin_updater::Builder::new().build())
