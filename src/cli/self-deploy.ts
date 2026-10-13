@@ -629,6 +629,12 @@ function samePath(a: string, b: string): boolean {
 }
 
 const CODESIGN_TIMEOUT_MS = 60_000
+/**
+ * 刚重签的二进制第一次跑要等 Gatekeeper / syspolicyd 重新评估(10-04 真机:普通负载下版本探测就要 4.75s),
+ * 机器忙时更久。10-13 真机:负载 ~50 时 5s 一刀切 ⇒ `signed binary fails --version (exit null)`,好好的包被拒。
+ * 只在它真能跑时多等 —— 坏包照样失败,只是晚一点。
+ */
+const SIGNED_PROBE_TIMEOUT_MS = 30_000
 
 /** codesign the staged sidecar, then prove it still runs (`--version`). */
 function signSidecar(plan: SelfDeployPlan, deps: SelfDeployDeps): SelfDeployStep {
@@ -638,8 +644,8 @@ function signSidecar(plan: SelfDeployPlan, deps: SelfDeployDeps): SelfDeployStep
     '--entitlements', entitlementsPath, '--identifier', SIDECAR_CODE_IDENTIFIER, plan.tmpPath,
   ], { timeoutMs: CODESIGN_TIMEOUT_MS, windowsHide: true })
   if (r.status !== 0) return { name: 'sign', ok: false, detail: `codesign exited ${r.status ?? 'null'}: ${(r.stderr || r.stdout).trim()}` }
-  const probe = deps.spawnSync(plan.tmpPath, ['--version'], { timeoutMs: 5000, windowsHide: true })
-  if (probe.status !== 0) return { name: 'sign', ok: false, detail: `signed binary fails --version (exit ${probe.status ?? 'null'}): ${(probe.stderr || probe.stdout).trim()}` }
+  const probe = deps.spawnSync(plan.tmpPath, ['--version'], { timeoutMs: SIGNED_PROBE_TIMEOUT_MS, windowsHide: true })
+  if (probe.status !== 0) return { name: 'sign', ok: false, detail: `signed binary fails --version (exit ${probe.status ?? `null — killed or timed out after ${SIGNED_PROBE_TIMEOUT_MS / 1000}s`}): ${(probe.stderr || probe.stdout).trim()}` }
   return { name: 'sign', ok: true, detail: identity }
 }
 

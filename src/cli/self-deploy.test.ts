@@ -389,7 +389,7 @@ function makeHarness(): Harness {
     ...real,
     log: () => {},
     sleep: () => new Promise((resolve) => setTimeout(resolve, 3)),
-    spawnSync(cmd, args) {
+    spawnSync(cmd, args, opts) {
       if (cmd === newBinaryPath && args[0] === '--version') {
         return { status: 0, stdout: 'wechat-cc-cli 9.9.9-test\n', stderr: '' }
       }
@@ -407,6 +407,7 @@ function makeHarness(): Harness {
       // binary missing its JIT entitlements is SIGKILLed right here, before
       // anything goes live.
       if (cmd === `${sidecarPath}.new` && args[0] === '--version') {
+        signedProbeTimeouts.push(opts?.timeoutMs)
         if (signedSidecarDies) return { status: null, stdout: '', stderr: 'Killed: 9' }
         return { status: 0, stdout: 'wechat-cc-cli 9.9.9-test\n', stderr: '' }
       }
@@ -481,6 +482,7 @@ function makeHarness(): Harness {
 }
 
 const harnesses: string[] = []
+const signedProbeTimeouts: Array<number | undefined> = []
 afterEach(() => {
   for (const d of harnesses.splice(0)) rmSync(d, { recursive: true, force: true })
 })
@@ -733,6 +735,8 @@ describe('executeSelfDeploy', () => {
     expect(result.ok).toBe(true)
     expect(result.steps.map((s) => s.name)).toEqual(['preflight', 'stage', 'sign', 'backup', 'swap', 'seal', 'restart', 'health'])
     expect(result.steps.every((s) => s.ok)).toBe(true)
+    // 刚重签的第一次启动要等 Gatekeeper 评估:探测给 30s,不是 5s(10-13 真机负载 ~50 时被 5s 误杀)
+    expect(signedProbeTimeouts.at(-1)).toBe(30_000)
     expect(h.codesignCalls).toHaveLength(2)
     const [sidecar, app] = h.codesignCalls
     // 1st: the staged copy, with hardened runtime + entitlements + the CLI identifier, while the OLD sidecar is still live
