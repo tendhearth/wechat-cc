@@ -17,6 +17,7 @@ import { parseCliReply, resumeCommand } from '../core/cli-reply'
 import { renderTranscriptTail } from '../core/cli-transcript'
 import { stripMarkdown, INLINE_MAX, type CliEventHub, type CliSessionInfo } from '../core/cli-events'
 import { formatCliSessionDigest, type CliDigestView } from '../core/cli-session-digest'
+import { formatOverseerToday, type OverseerToday } from '../core/overseer-today'
 
 export const RESUME_TIMEOUT_MS = 10 * 60_000
 const TRANSCRIPT_READ_MAX = 512 * 1024
@@ -89,6 +90,11 @@ export interface CliReplyHandlerDeps extends CliReplyCoreDeps {
    * 交给后面(老测试 / 没接登记处)。
    */
   listSessions?: () => CliDigestView[]
+  /**
+   * 「日报」:过去 24 小时终端 + 一起做的一眼看完(core/overseer-today.ts)。缺席 ⇒ 不认「日报」,
+   * 交给后面。只在被问时算,不定时、不主动发。
+   */
+  today?: () => OverseerToday
   now?: () => number
 }
 
@@ -230,6 +236,16 @@ export function makeCliReplyHandler(deps: CliReplyHandlerDeps): CliReplyHandler 
     await say(chatId, formatCliSessionDigest(views, { now: (deps.now ?? Date.now)(), localMachine: deps.localMachine }))
   }
 
+  async function today(chatId: string): Promise<void> {
+    let text: string
+    try { text = formatOverseerToday(deps.today!(), { now: (deps.now ?? Date.now)() }) }
+    catch (err) {
+      deps.log('CLI_REPLY', `today failed: ${err instanceof Error ? err.message : String(err)}`)
+      text = '现在读不到今天的情况,稍后再试。'
+    }
+    await say(chatId, text)
+  }
+
   async function view(chatId: string, code: string): Promise<void> {
     const s = deps.hub.lookup(code)
     if (!s) { await say(chatId, notFound(code)); return }
@@ -268,18 +284,22 @@ export function makeCliReplyHandler(deps: CliReplyHandlerDeps): CliReplyHandler 
     })
   }
 
+  /** 「终端」「日报」要有数据源才认;没接 ⇒ 当普通消息交给后面。 */
+  const supported = (p: NonNullable<ReturnType<typeof parseCliReply>>): boolean =>
+    p.kind === 'list' ? !!deps.listSessions : p.kind === 'today' ? !!deps.today : true
+
   return {
     probe(text, chatId) {
       const parsed = parseCliReply(text)
-      if (!parsed || (parsed.kind === 'list' && !deps.listSessions)) return false
+      if (!parsed || !supported(parsed)) return false
       return deps.isOwner(chatId)
     },
     async handle(text, chatId) {
       const parsed = parseCliReply(text)
-      if (!parsed) return false
-      if (parsed.kind === 'list' && !deps.listSessions) return false
+      if (!parsed || !supported(parsed)) return false
       if (!deps.isOwner(chatId)) return false   // 不是主人:当普通消息,别暴露会话码这套
       if (parsed.kind === 'list') await list(chatId)
+      else if (parsed.kind === 'today') await today(chatId)
       else if (parsed.kind === 'view') await view(chatId, parsed.code)
       else await sayTo(chatId, parsed.code, parsed.text)
       return true

@@ -426,6 +426,28 @@ export const CliSessionRow = z.object({
 export type CliSessionRowT = z.infer<typeof CliSessionRow>
 export type NativeSessionPageT = z.infer<typeof NativeSessionPage>
 
+/**
+ * 「今天」一眼看完(GET /m/api/today,2026-10-14,daemon 的 core/overseer-today.ts):终端 + 一起做,
+ * 过去 24 小时(滚动窗)。一件事只在一组里:needsYou(等得最久的在前)/ done / running(新的在前)/
+ * stuck(失败、中断在前,再是 30 分钟没动静的)。source=terminal ⇒ id 是会话 id(进 /terminal/[id]);
+ * source=together ⇒ id 是 matter id(进 /matter/[id])。project 只是目录名。
+ * unavailable 非空 ⇒ 那一路读不到,数字不全,别当「没事」。
+ */
+export const TodayItem = z.object({
+  source: z.enum(['terminal', 'together']), id: z.string(), code: z.string(), project: z.string(), agent: z.string(),
+  title: z.string().nullable(), summary: z.string().nullable(), at: z.number(), machine: z.string().nullable(),
+})
+export const TodayNeed = TodayItem.extend({ kind: z.enum(['permission', 'question']), count: z.number(), replyRef: z.string().nullable() })
+export const TodayStuck = TodayItem.extend({ reason: z.enum(['quiet', 'failed', 'interrupted']) })
+export const OverseerToday = z.object({
+  generatedAt: z.number(), since: z.number(), windowHours: z.number(),
+  needsYou: z.array(TodayNeed), done: z.array(TodayItem), running: z.array(TodayItem), stuck: z.array(TodayStuck),
+  counts: z.object({ needsYou: z.number(), done: z.number(), running: z.number(), stuck: z.number() }),
+  unavailable: z.array(z.enum(['terminal', 'together'])),
+})
+export type TodayItemT = z.infer<typeof TodayItem>
+export type OverseerTodayT = z.infer<typeof OverseerToday>
+
 // ── 在手机上接着做电脑上的会话(spec 2026-10-01-tendhearth-continue-sessions §4.3):只给目录名,matterId 只在 managed 有 ──
 export const SESSION_CONTINUE_STATES = ['ready', 'managed', 'busy_session', 'busy_folder', 'provider_missing', 'folder_missing', 'quota', 'empty'] as const
 export const SessionContinue = z.object({
@@ -480,6 +502,7 @@ export const PHONE_API_SCHEMAS: Readonly<Record<string, z.ZodTypeAny>> = {
   'POST /m/api/cli/permission': z.union([z.object({ ok: z.literal(true) }), PhoneErrorResponse]),
   // 收下即回;结果成为这条会话的下一句 last_summary。错误码:cli_session_busy(在跑 / 在等批准)/ cli_session_ended / cli_session_remote(在别的电脑上)409,not_found 404。
   'POST /m/api/cli/say': z.union([z.object({ ok: z.literal(true), accepted: z.literal(true) }), PhoneErrorResponse]),
+  'GET /m/api/today': z.union([z.object({ ok: z.literal(true), today: OverseerToday }), PhoneErrorResponse]),
   'GET /m/api/session': z.union([z.object({ ok: z.literal(true) }).extend(NativeSessionPage.shape), PhoneErrorResponse]),
   'GET /m/api/session/continue': z.union([z.object({ ok: z.literal(true) }).extend(SessionContinue.shape), PhoneErrorResponse]),
   'POST /m/api/session/continue': z.union([z.object({ ok: z.literal(true) }).extend(SessionContinueResult.shape), PhoneErrorResponse]),

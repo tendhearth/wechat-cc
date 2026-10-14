@@ -120,6 +120,8 @@ export interface SettingsPanelDeps {
   cliSessions?: () => import('../core/cli-session-store').CliSessionView[]
   /** 终端会话:拍板等批准的那一项、接着说一句(cli-phone-actions.ts)。缺省 ⇒ /m/api/cli/permission、/m/api/cli/say 503,列表不带码。 */
   cliActions?: import('./cli-phone-actions').CliPhoneActions
+  /** 「今天」一眼看完(core/overseer-today.ts,只读)。缺省 ⇒ /m/api/today 503。 */
+  overseerToday?: () => import('../core/overseer-today').OverseerToday
   /** 在手机上接着做电脑上的会话(spec 2026-10-01-tendhearth-continue-sessions)。缺省 ⇒ /m/api/session/continue 503。 */
   sessionContinue?: MobileSessionContinueActions
   /** 主人「看到哪了」的水位,与桌面觅食台同一个文件(一个主人一个水位)。缺省 ⇒ POST /m/api/seen 503。 */
@@ -789,7 +791,7 @@ export function makeSettingsPanel(deps: SettingsPanelDeps): SettingsPanel {
           // 跟 CC 说(spec 2026-10-01):主人对话一页 + 收下即回的说一句。
           const chatResponse = await mobileChatRoute(deps.chat, url, req)
           if (chatResponse) return chatResponse
-          const readResponse = await mobileReadsRoute({ ...(deps.connections ? { connections: deps.connections } : {}), ...(deps.sessions ? { sessions: deps.sessions } : {}), ...(deps.cliSessions ? { cliSessions: deps.cliSessions } : {}), ...(deps.cliActions ? { cliActions: deps.cliActions } : {}) }, url, req)
+          const readResponse = await mobileReadsRoute({ ...(deps.connections ? { connections: deps.connections } : {}), ...(deps.sessions ? { sessions: deps.sessions } : {}), ...(deps.cliSessions ? { cliSessions: deps.cliSessions } : {}), ...(deps.cliActions ? { cliActions: deps.cliActions } : {}), ...(deps.overseerToday ? { today: deps.overseerToday } : {}) }, url, req)
           if (readResponse) return readResponse
           if (url.pathname === '/m/api/matters' && req.method === 'GET') {
             if (!deps.matters) return json({ ok: false, error: 'matters_not_wired' }, 503)

@@ -156,6 +156,8 @@ export interface PipelineDepsOpts {
   cliSessions?: () => import('../../core/cli-session-store').CliSessionView[]
   /** 终端会话的手机动作(拍板 / 说一句):POST /m/api/cli/permission、/m/api/cli/say。缺省 ⇒ 503。 */
   cliActions?: import('../cli-phone-actions').CliPhoneActions
+  /** 「今天」一眼看完(core/overseer-today.ts):手机 GET /m/api/today 读它。缺省 ⇒ 503。 */
+  overseerToday?: () => import('../../core/overseer-today').OverseerToday
   /** 网络守护运行时(2026-10-02):微信入站闸门 + 每晚整理记忆的跳过判据。 */
   guardRuntime?: import('../guard/runtime').GuardRuntime
   /** 可选子系统的开机状态(SubsystemSupervisor.statuses;「CC 现在怎么样」用)。 */
@@ -673,6 +675,7 @@ export function buildPipelineDeps(opts: PipelineDepsOpts, refs: PipelineDepsRefs
     connections,
     ...(opts.cliSessions ? { cliSessions: opts.cliSessions } : {}),
     ...(opts.cliActions ? { cliActions: opts.cliActions } : {}),
+    ...(opts.overseerToday ? { overseerToday: opts.overseerToday } : {}),
     ...(phoneSessions ? { sessions: phoneSessions } : {}),
     // 在手机上接着做电脑上的会话:预览不缓存(「正在跑」不能晚 15 秒才知道),接成一件事幂等。
     ...(opts.workbench ? { sessionContinue: { preview: (k: string) => opts.workbench!.previewNativeContinue(k), adopt: (k: string) => opts.workbench!.adoptNativeSession(k) } } : {}),

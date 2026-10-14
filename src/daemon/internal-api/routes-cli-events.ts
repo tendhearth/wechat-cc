@@ -48,5 +48,12 @@ export function cliEventRoutes(deps: InternalApiDeps): RouteTable {
       const sessions = deps.cliEvents.list({ includeEnded: q.get('ended') === '1', limit })
       return { status: 200, body: { ok: true, sessions } }
     },
+    // 「今天」一眼看完(2026-10-14):终端 + 一起做,过去 24 小时;等你 / 做完 / 在跑 / 可能卡住。
+    // 结构化数据,微信那段纯文本由调用方(CC 的 today_digest 工具)用 formatOverseerToday 排。admin 档。
+    'GET /v1/overseer/today': async () => {
+      if (!deps.overseerToday) return { status: 503, body: { error: 'overseer_today_not_wired' } }
+      try { return { status: 200, body: { ok: true, today: deps.overseerToday() } } }
+      catch { return { status: 503, body: { error: 'unavailable' } } }
+    },
   }
 }

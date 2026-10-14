@@ -40,6 +40,8 @@ export interface WireMainOpts {
   cliSessions?: () => import('../../core/cli-session-store').CliSessionView[]
   /** 终端会话的手机动作(拍板 / 说一句):POST /m/api/cli/permission、/m/api/cli/say。缺省 ⇒ 503。 */
   cliActions?: import('../cli-phone-actions').CliPhoneActions
+  /** 「今天」一眼看完(core/overseer-today.ts):手机 GET /m/api/today 读它。缺省 ⇒ 503。 */
+  overseerToday?: () => import('../../core/overseer-today').OverseerToday
   /** 网络守护运行时(2026-10-02,main.ts 建):闸门 + 调度器 Ref + 后台任务跳过包装。缺省 = 老行为。 */
   guardRuntime?: import('../guard/runtime').GuardRuntime
   /** 可选子系统开机状态(SubsystemSupervisor.statuses)→「CC 现在怎么样」。 */

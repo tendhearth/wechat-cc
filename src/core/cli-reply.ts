@@ -10,6 +10,7 @@ import type { CliSource } from './cli-events'
 
 export type CliReply =
   | { kind: 'list' }
+  | { kind: 'today' }
   | { kind: 'view'; code: string }
   | { kind: 'say'; code: string; text: string }
 
@@ -23,9 +24,18 @@ const SAY_RE = /^@([a-z0-9]{4,12})\s+([\s\S]+)$/i
  */
 const LIST_RE = /^(?:看看?)?(?:终端(?:会话|列表)?|会话列表|\/cli)\s*[?？]?$/i
 
+/**
+ * 「日报」—— 过去 24 小时终端 + 一起做的一眼看完(2026-10-14,core/overseer-today.ts)。整句匹配:
+ * 日报 / 今日日报 / 今天日报 / 看日报 / 看看日报 / /today,可带问号。
+ * 不认「今天」「今天怎么样」:前者是 CC 问「什么时候」时最常见的整句回答,后者是日常寒暄,
+ * 而且句尾的「怎么样」本来就归管家(mw-task-reference 的 STATUS_VERB)。
+ */
+const TODAY_RE = /^(?:(?:看看?)?(?:今[天日])?日报|\/today)\s*[?？]?$/i
+
 export function parseCliReply(text: string): CliReply | null {
   const t = text.trim()
   if (LIST_RE.test(t)) return { kind: 'list' }
+  if (TODAY_RE.test(t)) return { kind: 'today' }
   const v = VIEW_RE.exec(t)
   if (v) return { kind: 'view', code: v[1]!.toLowerCase() }
   const s = SAY_RE.exec(t)

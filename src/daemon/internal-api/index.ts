@@ -442,6 +442,10 @@ export function createInternalApi(deps: InternalApiDeps): InternalApi {
       deps.cliPermissions = relay
     },
 
+    setOverseerToday(fn) {
+      deps.overseerToday = fn
+    },
+
     getPresence() {
       return computePresence(deps)
     },

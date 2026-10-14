@@ -2,6 +2,7 @@ import { basename } from 'node:path'
 import { redactConnections, type ConnectionsSnapshot } from './connections'
 import { framedTooLarge } from './mobile-matter-response'
 import type { CliSessionView } from '../core/cli-session-store'
+import type { OverseerToday } from '../core/overseer-today'
 import { PHONE_CLI_SAY_MAX, type CliPhoneActions } from './cli-phone-actions'
 import type { NativeHistoryItem, NativeHistoryListInput, NativeHistoryPage, NativeHistoryPreview, NativeHistoryReadInput } from '../core/workbench/native-history'
 
@@ -22,7 +23,11 @@ export interface MobileSessionsDeps {
   read(key: string, input: NativeHistoryReadInput): Promise<NativeHistoryPreview>
   readRecent?(key: string, input: { limit: number }): Promise<NativeHistoryPreview>
 }
-export interface MobileReadsDeps { connections?: () => ConnectionsSnapshot; sessions?: MobileSessionsDeps; cliSessions?: () => CliSessionView[]; cliActions?: CliPhoneActions }
+export interface MobileReadsDeps {
+  connections?: () => ConnectionsSnapshot; sessions?: MobileSessionsDeps; cliSessions?: () => CliSessionView[]; cliActions?: CliPhoneActions
+  /** 「今天」一眼看完(core/overseer-today.ts)。结构里只有目录名、没有完整路径,手机口径原样给。 */
+  today?: () => OverseerToday
+}
 /** 手机上终端会话列表最多给这么多条。 */
 export const PHONE_CLI_SESSIONS_MAX = 50
 /**
@@ -124,6 +129,13 @@ export async function mobileReadsRoute(deps: MobileReadsDeps, url: URL, req: Req
     if (!deps.cliSessions) return json({ ok: false, error: 'cli_sessions_not_wired' }, 503)
     const ph = deps.cliActions ? (id: string) => deps.cliActions!.pendingHash(id) : undefined
     try { return json({ ok: true, sessions: deps.cliSessions().slice(0, PHONE_CLI_SESSIONS_MAX).map(v => phoneCliSession(v, ph)) }) }
+    catch { return json({ ok: false, error: 'unavailable' }, 503) }
+  }
+  // 「今天」(2026-10-14):终端 + 一起做,过去 24 小时 —— 与微信「日报」同一份数据。
+  if (url.pathname === '/m/api/today') {
+    if (req.method !== 'GET') return json({ ok: false, error: 'method_not_allowed' }, 405)
+    if (!deps.today) return json({ ok: false, error: 'today_not_wired' }, 503)
+    try { return json({ ok: true, today: deps.today() }) }
     catch { return json({ ok: false, error: 'unavailable' }, 503) }
   }
   // 拍板终端会话等批准的那一项 —— 与微信「y/n 码」同一条路(cli-phone-actions.ts)。

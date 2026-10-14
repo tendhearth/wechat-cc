@@ -1,6 +1,7 @@
 import { describe, it, expect, vi } from 'vitest'
 import { makeCliReplyHandler, makeCliReplyCore, makeHandReplyExecutor, readTail, defaultRunner, RESUME_TIMEOUT_MS, type Runner } from './cli-reply-handler'
 import type { CliSessionInfo } from '../core/cli-events'
+import { buildOverseerToday } from '../core/overseer-today'
 import { mkdtempSync, writeFileSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -71,6 +72,40 @@ describe('cli-reply-handler', () => {
     const broken = makeCliReplyHandler({ ...base, isOwner: () => true, listSessions: () => { throw new Error('db gone') } })
     expect(await broken.handle('终端', 'c')).toBe(true)
     expect(sent[1]).toContain('读不到终端会话')
+  })
+
+  it('日报:主人 → 回「今天」纯文本(不进模型);不是主人 / 没接 → 不认;读不到 → 说一声', async () => {
+    const sent: string[] = []
+    const base = {
+      hub: { lookup: () => null, sessions: () => [] },
+      sendMessage: async (_c: string, t: string) => { sent.push(t) },
+      sharePage: async () => null,
+      log: () => {},
+      dangerously: false,
+      localMachine: 'here',
+    }
+    const now = 1_800_000_000_000
+    const today = vi.fn(() => buildOverseerToday({
+      now, terminal: [], attention: [],
+      tasks: [{ id: 'a1b2c3d4', title: '修打包', path: '/w/melu', providerId: 'codex', phase: 'replied', updatedAt: now - 60_000, error: null, archivedAt: null }],
+    }))
+    const owner = makeCliReplyHandler({ ...base, isOwner: () => true, today, now: () => now })
+    expect(owner.probe('日报', 'c')).toBe(true)
+    expect(await owner.handle('/today', 'c')).toBe(true)
+    expect(sent[0]).toBe('今天(过去 24 小时):0 件等你 · 1 件做完 · 0 件在跑\n✓ 修打包 · 一起做 a1b2c3d4 · 1 分钟前\n「任务 编号」看一起做')
+
+    const guest = makeCliReplyHandler({ ...base, isOwner: () => false, today })
+    expect(guest.probe('日报', 'c')).toBe(false)
+    expect(await guest.handle('日报', 'c')).toBe(false)
+    const unwired = makeCliReplyHandler({ ...base, isOwner: () => true })
+    expect(unwired.probe('日报', 'c')).toBe(false)
+    expect(await unwired.handle('日报', 'c')).toBe(false)
+    expect(await owner.handle('今天怎么样', 'c')).toBe(false)
+    expect(sent).toHaveLength(1)
+
+    const broken = makeCliReplyHandler({ ...base, isOwner: () => true, today: () => { throw new Error('db gone') } })
+    expect(await broken.handle('日报', 'c')).toBe(true)
+    expect(sent[1]).toBe('现在读不到今天的情况,稍后再试。')
   })
 
   it('看 码:渲染尾巴 → share_page → 回链接;没有页面就内联', async () => {

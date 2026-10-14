@@ -7,6 +7,7 @@ import { useBackendCtx } from '../../state/BackendProvider'
 import { useConnection, useQuery } from '../../state/hooks'
 import { useWork } from '../../state/useWork'
 import { useTerminalSessions } from '../../state/useTerminal'
+import { useToday } from '../../state/useToday'
 import { CCFigure } from '../../ui/CCFigure'
 import { ConnectionNotice } from '../../ui/ConnectionNotice'
 import { DemoBanner } from '../../ui/DemoBanner'
@@ -19,6 +20,7 @@ import { formatSynced } from '../../view/connection'
 import { latestCCLine, nowView } from '../../view/now'
 import { ccPresence } from '../../view/presence'
 import { terminalNeedsYou, terminalRow } from '../../view/terminal'
+import { todayView } from '../../view/today'
 
 // 等你的事那一行的标题:只有第一行会主动请求说明(可能触发电脑上的便宜模型),其余只读已缓存的;优先用后端给的说明标题(按任务缓存),没有就退回原始概括。
 function WaitingTitle({ taskId, requestId, fallback, fetch }: { taskId: string; requestId: string; fallback: string; fetch: boolean }) {
@@ -46,6 +48,8 @@ export default function Now() {
   const terminal = useTerminalSessions()
   const termWaiting = terminalNeedsYou(terminal.sessions, !v.waitingUnknown).map(s => terminalRow(s, Date.now(), lang))
   const waitingTotal = v.waiting.length + termWaiting.length
+  // 「今天」:CC 统管的所有执行者过去 24 小时的几个数 + 最近做完的三件(与微信「日报」同一份)。
+  const today = todayView(useToday().today, Date.now(), lang)
 
   return (
     <SafeAreaView edges={['top']} style={{ flex: 1, backgroundColor: c.paper }}>
@@ -73,6 +77,30 @@ export default function Now() {
             </Pressable>
           </View>
         </View>
+        {today ? (
+          <View testID="now-today">
+            <Pressable testID="now-today-counts" accessibilityRole="button" accessibilityLabel={`${t(lang, 'today.title')}: ${today.counts}. ${t(lang, 'today.openAll')}`} onPress={() => router.push('/together')}
+              style={({ pressed }) => ({ gap: 2, marginBottom: space.s, opacity: pressed ? 0.7 : 1 })}>
+              <Txt role="meta" tone="inkSoft" accessibilityRole="header">{t(lang, 'today.title')}</Txt>
+              <Txt role="item">{today.counts}</Txt>
+              {today.partial ? <Txt testID="now-today-partial" role="caption" tone="inkSoft">{t(lang, 'today.partial')}</Txt> : null}
+            </Pressable>
+            {today.done.length ? (
+              <View style={{ borderTopWidth: 1, borderTopColor: c.hair }}>
+                {today.done.map(r => (
+                  <Pressable key={r.key} testID={`now-today-${r.key}`} accessibilityRole="button" onPress={() => router.push(r.href)}
+                    style={({ pressed }) => ({ flexDirection: 'row', alignItems: 'center', gap: space.l, minHeight: 56, paddingVertical: space.m, paddingHorizontal: space.xs, borderBottomWidth: 1, borderBottomColor: c.hair, opacity: pressed ? 0.7 : 1 })}>
+                    <View style={{ flex: 1, gap: 2 }}>
+                      <Txt role="item" content="user" numberOfLines={1}>{r.title}</Txt>
+                      <Txt role="meta" tone="inkSoft" content="user" numberOfLines={1}>{r.sub}</Txt>
+                    </View>
+                    <Txt role="caption" tone="inkSoft">{r.ago}</Txt>
+                  </Pressable>
+                ))}
+              </View>
+            ) : null}
+          </View>
+        ) : null}
         {v.waitingUnknown ? (
           <Txt testID="now-waiting-unknown" role="meta" tone="inkSoft">{t(lang, 'now.waitingUnknown')}</Txt>
         ) : null}

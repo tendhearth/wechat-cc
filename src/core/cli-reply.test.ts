@@ -18,6 +18,13 @@ describe('parseCliReply', () => {
     for (const t of ['会话', '终端里那几个在干嘛', '打开终端', '终端怎么用', '帮我开个终端', '看 终端x', 'cli'])
       expect(parseCliReply(t)).toBeNull()
   })
+
+  it('「日报」:只认整句的几种说法,可带问号;不认「今天」「今天怎么样」(日常回答 / 寒暄,句尾「怎么样」归管家)', () => {
+    for (const t of ['日报', ' 日报 ', '日报?', '日报？', '今天日报', '今日日报', '看日报', '看看日报', '看今天日报', '/today', '/TODAY'])
+      expect(parseCliReply(t)).toEqual({ kind: 'today' })
+    for (const t of ['今天', '今天怎么样', '今天怎么样?', '今天呢', '写个日报', '日报模板发我', '帮我写今天的日报', 'today', '/today x'])
+      expect(parseCliReply(t)).toBeNull()
+  })
 })
 
 describe('resumeCommand', () => {

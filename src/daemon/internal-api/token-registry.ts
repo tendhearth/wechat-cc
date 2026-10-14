@@ -273,6 +273,8 @@ export function makeTokenRegistry(
           // 同一份 operator 凭据。桌面「此刻」的等你行读它(2026-10-14):Tauri 宿主(lib.rs)与
           // workbench-proxy.ts 都已登记;拍板不走这条,走 POST /v1/permissions/resolve。
           'GET /v1/cli/sessions',
+          // 「今天」一眼看完(2026-10-14):同一份 operator 凭据,admin 档、只读。桌面暂不调(保持简单)。
+          'GET /v1/overseer/today',
         ]),
       })
     },
