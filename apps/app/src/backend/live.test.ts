@@ -563,3 +563,29 @@ describe('durable single input receipt', () => {
     expect(revoked.b.connection().state).toBe('revoked')
   })
 })
+
+describe('终端里的会话(2026-10-14)', () => {
+  const CLI = { session_id: 'sess-1', code: 'sess-1', source: 'claude', status: 'waiting', stale: false, project: 'blog', machine: null, last_summary: null, last_event_at: 5, last_prompt_at: null, created_at: 1, pending: { tool: 'Bash', summary: 'ls', since: 5, hash: 'ab12c', actionable: true } }
+  it('列表过 schema;拍板带码、不自动重试;码失效 ⇒ stale;终端自己在问 ⇒ cli_not_actionable', async () => {
+    let n = 0
+    const { b, reqs } = harness({
+      'GET /m/api/cli/sessions': ok({ ok: true, sessions: [CLI] }),
+      'POST /m/api/cli/permission': () => (n++ === 0 ? ok({ ok: true }) : n === 2 ? ok({ ok: false, error: 'cli_permission_stale' }, 409) : ok({ ok: false, error: 'cli_not_actionable' }, 409)),
+    })
+    expect((await b.cliSessions())[0]).toMatchObject({ session_id: 'sess-1', pending: { hash: 'ab12c', actionable: true } })
+    await b.cliPermission({ sessionId: 'sess-1', hash: 'ab12c', decision: 'allow' })
+    expect(reqs.at(-1)).toMatchObject({ key: 'POST /m/api/cli/permission', body: { session_id: 'sess-1', hash: 'ab12c', decision: 'allow' }, retry: undefined })
+    await expect(b.cliPermission({ sessionId: 'sess-1', decision: 'deny' })).rejects.toMatchObject({ code: 'stale' })
+    expect(reqs.at(-1)!.body).toEqual({ session_id: 'sess-1', decision: 'deny' })
+    await expect(b.cliPermission({ sessionId: 'sess-1', decision: 'deny' })).rejects.toMatchObject({ code: 'cli_not_actionable' })
+  })
+  it('说一句:收下即回;在跑 ⇒ busy;结束 / 在别的电脑 ⇒ 各有各的码', async () => {
+    const replies: Reply[] = [ok({ ok: true, accepted: true }), ok({ ok: false, error: 'cli_session_busy' }, 409), ok({ ok: false, error: 'cli_session_ended' }, 409), ok({ ok: false, error: 'cli_session_remote' }, 409)]
+    const { b, reqs } = harness({ 'POST /m/api/cli/say': () => replies.shift()! })
+    await b.cliSay('sess-1', 'go on')
+    expect(reqs.at(-1)).toMatchObject({ body: { session_id: 'sess-1', text: 'go on' } })
+    await expect(b.cliSay('sess-1', 'x')).rejects.toMatchObject({ code: 'busy' })
+    await expect(b.cliSay('sess-1', 'x')).rejects.toMatchObject({ code: 'cli_ended' })
+    await expect(b.cliSay('sess-1', 'x')).rejects.toMatchObject({ code: 'cli_remote' })
+  })
+})

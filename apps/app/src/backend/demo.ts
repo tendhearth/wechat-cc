@@ -1,7 +1,7 @@
 import { PHONE_SAY_MAX_CHARS } from '@wechat-cc/protocol'
 import { labelJoin, type Lang } from '../i18n'
 import { DEMO_STICKER, DEMO_STICKER_FILE, DEMO_VOICE } from './demo-media'
-import { BackendError, type Backend, type Connection, type MatterT, type MatterDetailT, type ApprovalExplanationT, type ChatJobT, type ChatMessageT, type SessionContinueT, type MatterSayResultT, type UploadStateT, type ChatModelViewT } from './types'
+import { BackendError, type Backend, type CliSessionRowT, type Connection, type MatterT, type MatterDetailT, type ApprovalExplanationT, type ChatJobT, type ChatMessageT, type SessionContinueT, type MatterSayResultT, type UploadStateT, type ChatModelViewT } from './types'
 import {
   copy, IDS, CHAT_ID, PERM_ID, QUESTION_ID, RUN_IDS, t, explanation, progress, changesTurn, entryOptions,
   demoConnections, demoSessions, demoSessionMessages, demoSessionTitleKey, DEMO_SESSION_MESSAGES, type Stage,
@@ -48,6 +48,19 @@ export function makeDemoBackend(opts: { now?: () => number; setTimeout?: typeof 
   const demoMemory = [{ id: 'a1b2c3', text: '回复喜欢直接，先说结论' }, { id: 'd4e5f6', text: '周末不安排工作会议' }]
   let chatJobs = new Map<string, ChatJobT>()
   const subs = new Map<Topic, Set<(d: any) => void>>()
+  // 终端里的会话(演示):一条等你批准(能在手机上拍)、一条歇着(能接着说一句)。最后一句按语言读时生成。
+  type CliRec = Omit<CliSessionRowT, 'last_summary'> & { summaryKey: Copy | null }
+  const seedCli = (): CliRec[] => {
+    const n = now()
+    const base = { stale: false, machine: null, last_prompt_at: null }
+    return [
+      { ...base, session_id: 'demo-cli-blog', code: 'democl', source: 'claude', status: 'waiting', project: 'blog', summaryKey: 'cliBlogLast', last_event_at: n - 90_000, created_at: n - HOUR,
+        pending: { tool: 'Bash', summary: 'npm run deploy', since: n - 90_000, hash: 'dm0a1', actionable: true } },
+      { ...base, session_id: 'demo-cli-api', code: 'democx', source: 'codex', status: 'idle', project: 'api-server', summaryKey: 'cliApiLast', last_event_at: n - 25 * 60_000, created_at: n - 3 * HOUR, pending: null },
+    ]
+  }
+  let cli = seedCli()
+  const cliGet = (id: string) => { const r = cli.find(x => x.session_id === id); if (!r) throw new BackendError('not_found'); return r }
 
   function mkMatter(id: string, kind: MatterT['kind'], title: string, status: MatterT['status'], path: string | null, ts: number): MatterT {
     return { id, kind, title, projectPath: path, status, ownerChatId: null, originMatterId: null, originMessageId: null, createdAt: ts, updatedAt: ts }
@@ -486,8 +499,27 @@ export function makeDemoBackend(opts: { now?: () => number; setTimeout?: typeof 
     async registerPush() {},
     async testPush() { return { ok: false, code: 'demo' } },
     async unpair() {},
+    async cliSessions() {
+      const rows = cli.map(({ summaryKey, ...r }) => ({ ...r, last_summary: summaryKey ? t(lastLang, summaryKey) : null }))
+      return rows.sort((a, b) => (Number(b.status === 'waiting') - Number(a.status === 'waiting')) || b.last_event_at - a.last_event_at)
+    },
+    async cliPermission({ sessionId, hash, decision }) {
+      const r = cliGet(sessionId)
+      if (r.status !== 'waiting' || !r.pending || (hash && r.pending.hash !== hash)) throw new BackendError('stale')
+      r.status = 'running'; r.pending = null; r.last_event_at = now()
+      // 允许 ⇒ 接着跑完;拒绝 ⇒ 终端那边停下这一步
+      later(2000, () => { r.status = 'idle'; r.last_event_at = now(); if (decision === 'allow') r.summaryKey = 'cliDemoReply' })
+    },
+    async cliSay(sessionId, text) {
+      const r = cliGet(sessionId)
+      if (!text.trim()) throw new BackendError('invalid')
+      if (r.status === 'running' || r.status === 'waiting') throw new BackendError('busy')
+      if (r.status === 'ended') throw new BackendError('cli_ended')
+      r.status = 'running'; r.last_event_at = now(); r.last_prompt_at = now()
+      later(3000, () => { r.status = 'idle'; r.last_event_at = now(); r.summaryKey = 'cliDemoReply' })
+    },
     setActive() {},
     dispose() {},
-    reset() { epoch++; seq = 0; createdBy = new Map(); saidBy = new Map(); adopted = new Map(); handedBy = new Map(); deviceLabel = ''; seed(); publish([...order]) },
+    reset() { epoch++; seq = 0; cli = seedCli(); createdBy = new Map(); saidBy = new Map(); adopted = new Map(); handedBy = new Map(); deviceLabel = ''; seed(); publish([...order]) },
   }
 }

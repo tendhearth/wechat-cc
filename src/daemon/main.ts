@@ -64,6 +64,7 @@ import { makeCliEventHub, makeProjectNamer } from '../core/cli-events'
 import { makeCliSessionStore } from '../core/cli-session-store'
 import { makeCliPermissionRelay } from '../core/cli-permission-relay'
 import { makeCliReplyHandler, makeCliReplyCore, makeHandReplyExecutor } from './cli-reply-handler'
+import { makeCliPhoneActions } from './cli-phone-actions'
 import { scopedSend } from './inbound/reply-scope'
 import { makeBrainForwarder } from './cli-brain-forward'
 import { makeRemoteReply } from './cli-remote-reply'
@@ -797,7 +798,13 @@ export async function bootDaemon(opts: BootDaemonOpts): Promise<DaemonHandle> {
     lc.register({ name: 'workbench', stop: () => workbench.shutdown() })
     const wired = wireMain({
       workbench,
-      cliSessions: () => cliEvents.list({ limit: 50 }), matters, guardRuntime: guardRt, subsystems: () => sup.statuses(),
+      cliSessions: () => cliEvents.list({ limit: 50 }),
+      // 手机拍板 / 说一句:拍板与微信「y/n 码」、桌宠权限卡同一份待批;说一句与微信「@码」同一个 core。
+      cliActions: makeCliPhoneActions({
+        hub: cliEvents, relay: cliPermissions, core: replyCore, localMachine: osHostname(), log: (t, l) => log(t, l),
+        resolve: (h, d) => { const ok = ilink.resolvePermission(h, d); if (ok) petSignals.noteContact(); return ok },
+      }),
+      matters, guardRuntime: guardRt, subsystems: () => sup.statuses(),
       panelTokens: internalApi.panelTokens,
       cliReply: cliReplyHandler,
       stickers: stickerLib,

@@ -54,6 +54,13 @@ export interface CliPermissionRelay {
   status(hash: string): CliPermissionStatus
   /** 等到状态离开 pending 或 maxMs 到点;返回当时的状态。 */
   wait(hash: string, maxMs: number): Promise<CliPermissionStatus>
+  /**
+   * 这条会话现在挂着的、由本中继开出去的待批码(还在 pending)。没有 ⇒ null —— 主人在场时
+   * 留给终端自己问(owner_present)、或这只手把请求转给了脑,都没有码,手机上也就拍不了。
+   */
+  pendingHash(sessionId: string): string | null
+  /** 这个码是不是本中继开的、且还在等。手机拍板只认这些,不让它顺手批掉别的待批(自改、工作台)。 */
+  owns(hash: string): boolean
   dispose(): void
 }
 
@@ -126,6 +133,15 @@ export function makeCliPermissionRelay(deps: CliPermissionRelayDeps): CliPermiss
         ;(t as { unref?: () => void }).unref?.()
         e.waiters.push(finish)
       })
+    },
+    pendingHash(sessionId) {
+      let found: string | null = null
+      // Map 按插入序:同一会话有多条时取最新开的那条。
+      for (const [h, e] of entries) if (e.sessionId === sessionId && e.status === 'pending') found = h
+      return found
+    },
+    owns(hash) {
+      return entries.get(hash)?.status === 'pending'
     },
     dispose() {
       for (const e of entries.values()) { if (e.retain) clearTimeout(e.retain); for (const w of e.waiters) w() }

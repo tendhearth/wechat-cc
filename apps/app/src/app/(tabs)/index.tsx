@@ -6,6 +6,7 @@ import { useLang } from '../../i18n/useLang'
 import { useBackendCtx } from '../../state/BackendProvider'
 import { useConnection, useQuery } from '../../state/hooks'
 import { useWork } from '../../state/useWork'
+import { useTerminalSessions } from '../../state/useTerminal'
 import { CCFigure } from '../../ui/CCFigure'
 import { ConnectionNotice } from '../../ui/ConnectionNotice'
 import { DemoBanner } from '../../ui/DemoBanner'
@@ -17,6 +18,7 @@ import { useTheme } from '../../ui/useTheme'
 import { formatSynced } from '../../view/connection'
 import { latestCCLine, nowView } from '../../view/now'
 import { ccPresence } from '../../view/presence'
+import { terminalNeedsYou, terminalRow } from '../../view/terminal'
 
 // 等你的事那一行的标题:只有第一行会主动请求说明(可能触发电脑上的便宜模型),其余只读已缓存的;优先用后端给的说明标题(按任务缓存),没有就退回原始概括。
 function WaitingTitle({ taskId, requestId, fallback, fetch }: { taskId: string; requestId: string; fallback: string; fetch: boolean }) {
@@ -40,6 +42,10 @@ export default function Now() {
   const line = latestCCLine(chat.data)
   const presence = ccPresence(conn, { demo }) // 演示:暗(不是真信号)
   const openChat = () => router.push('/chat')
+  // 终端里等你批准的(手机拍得了的那些)和 CC 自己的事排在同一个「N 件事等你」里。
+  const terminal = useTerminalSessions()
+  const termWaiting = terminalNeedsYou(terminal.sessions, !v.waitingUnknown).map(s => terminalRow(s, Date.now(), lang))
+  const waitingTotal = v.waiting.length + termWaiting.length
 
   return (
     <SafeAreaView edges={['top']} style={{ flex: 1, backgroundColor: c.paper }}>
@@ -70,9 +76,9 @@ export default function Now() {
         {v.waitingUnknown ? (
           <Txt testID="now-waiting-unknown" role="meta" tone="inkSoft">{t(lang, 'now.waitingUnknown')}</Txt>
         ) : null}
-        {v.waiting.length > 0 ? (
+        {waitingTotal > 0 ? (
           <View>
-            <Txt testID="now-waiting-title" role="meta" tone="inkSoft" accessibilityRole="header" style={{ marginBottom: space.s }}>{tCount(lang, 'now.waiting', v.waiting.length)}</Txt>
+            <Txt testID="now-waiting-title" role="meta" tone="inkSoft" accessibilityRole="header" style={{ marginBottom: space.s }}>{tCount(lang, 'now.waiting', waitingTotal)}</Txt>
             <View style={{ borderTopWidth: 1, borderTopColor: c.hair }}>
               {v.waiting.map((w, i) => (
                 <View key={w.taskId} testID="now-needs-you-card">
@@ -85,6 +91,16 @@ export default function Now() {
                     <Txt role="bubble" tone="inkSoft">{t(lang, w.kind === 'permission' ? 'now.goLook' : 'now.goAnswer')} ›</Txt>
                   </Pressable>
                 </View>
+              ))}
+              {termWaiting.map(r => (
+                <Pressable key={`terminal-${r.id}`} testID={`now-terminal-${r.id}`} accessibilityRole="button" onPress={() => router.push(`/terminal/${encodeURIComponent(r.id)}`)}
+                  style={({ pressed }) => ({ flexDirection: 'row', alignItems: 'center', gap: space.l, minHeight: 64, paddingVertical: space.l, paddingHorizontal: space.xs, borderBottomWidth: 1, borderBottomColor: c.hair, opacity: pressed ? 0.7 : 1 })}>
+                  <View style={{ flex: 1, gap: 2 }}>
+                    <Txt role="item" content="user" numberOfLines={2}>{r.pendingText}</Txt>
+                    <Txt role="meta" tone="inkSoft" content="user" numberOfLines={1}>{`${r.project} · ${r.source}`}</Txt>
+                  </View>
+                  <Txt role="bubble" tone="inkSoft">{t(lang, 'now.goLook')} ›</Txt>
+                </Pressable>
               ))}
             </View>
           </View>

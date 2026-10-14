@@ -52,6 +52,9 @@ export const PHONE_ROUTES: ReadonlySet<string> = new Set([
   'GET /m/api/session',
   // 终端会话登记处(v76,2026-10-14):主人在 CC 外面开的 claude / codex 会话 —— 谁在跑、谁在等批准
   'GET /m/api/cli/sessions',
+  // 手机上拍板终端会话等批准的那一项(同微信「y/n 码」)、接着说一句(同微信「@码」)(2026-10-14)
+  'POST /m/api/cli/permission',
+  'POST /m/api/cli/say',
   // 在手机上接着做电脑上的会话(spec 2026-10-01-tendhearth-continue-sessions,mobile-workbench.ts):预览 + 接成一件事
   'GET /m/api/session/continue',
   'POST /m/api/session/continue',
