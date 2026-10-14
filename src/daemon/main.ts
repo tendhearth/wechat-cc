@@ -61,6 +61,7 @@ import { careLevel } from './companion/calibration'
 import { loadCompanionConfig } from './companion/config'
 import { makeSelfChangeGlue } from './self-change-glue'
 import { makeCliEventHub, makeProjectNamer } from '../core/cli-events'
+import { makeCliSessionStore } from '../core/cli-session-store'
 import { makeCliPermissionRelay } from '../core/cli-permission-relay'
 import { makeCliReplyHandler, makeCliReplyCore, makeHandReplyExecutor } from './cli-reply-handler'
 import { scopedSend } from './inbound/reply-scope'
@@ -682,6 +683,8 @@ export async function bootDaemon(opts: BootDaemonOpts): Promise<DaemonHandle> {
         return r.url
       },
       localMachine: osHostname(),
+      // 终端会话登记处(v76):状态落库,重启后「看 码」「@码」照样认得;GET /v1/cli/sessions、手机都读它。
+      store: makeCliSessionStore(db),
     })
     lc.register({ name: 'cli-events', stop: async () => cliEvents.dispose() })
     // 终端会话的权限 → 微信 y/n(同 spec §6.3)。复用 ilink.askUser,所以微信「y 码」、
@@ -695,6 +698,8 @@ export async function bootDaemon(opts: BootDaemonOpts): Promise<DaemonHandle> {
       presence: (s, idle) => cliEvents.presence(s, idle),
       projectName: makeProjectNamer(() => ilink.projects.list()),
       onRelayed: (s) => cliEvents.notePermissionRelay(s),
+      onAsked: (req) => cliEvents.permissionAsked(req),
+      onSettled: (s, status) => cliEvents.permissionSettled(s, status),
       log: (t, l) => log(t, l),
       localMachine: osHostname(),
     })
@@ -710,10 +715,20 @@ export async function bootDaemon(opts: BootDaemonOpts): Promise<DaemonHandle> {
       log: (t, l) => log(t, l),
     }) : null
     internalApi.setCliEvents({
-      ingest: (ev) => forwarder?.brain() ? forwarder.event(ev) : cliEvents.ingest(ev),
+      // 转给脑的事件本机登记处也记一笔(observe 只记不推):这台机自己的列表也看得到。
+      ingest: (ev) => {
+        if (!forwarder?.brain()) return cliEvents.ingest(ev)
+        cliEvents.observe(ev)
+        return forwarder.event(ev)
+      },
+      list: (opts) => cliEvents.list(opts),
     })
     internalApi.setCliPermissions({
-      open: async (req) => (forwarder?.brain() ? await forwarder.permissionOpen(req) : null) ?? cliPermissions.open(req),
+      open: async (req) => {
+        if (!forwarder?.brain()) return cliPermissions.open(req)
+        cliEvents.permissionAsked(req)
+        return (await forwarder.permissionOpen(req)) ?? cliPermissions.open(req)
+      },
       status: (h) => cliPermissions.status(h),
       wait: (h, ms) => forwarder?.ownsHash(h) ? forwarder.permissionWait(h, ms) : cliPermissions.wait(h, ms),
     })
@@ -781,7 +796,8 @@ export async function bootDaemon(opts: BootDaemonOpts): Promise<DaemonHandle> {
     guardRt.setSuspendedTasks(() => workbench.networkSuspended())
     lc.register({ name: 'workbench', stop: () => workbench.shutdown() })
     const wired = wireMain({
-      workbench, matters, guardRuntime: guardRt, subsystems: () => sup.statuses(),
+      workbench,
+      cliSessions: () => cliEvents.list({ limit: 50 }), matters, guardRuntime: guardRt, subsystems: () => sup.statuses(),
       panelTokens: internalApi.panelTokens,
       cliReply: cliReplyHandler,
       stickers: stickerLib,

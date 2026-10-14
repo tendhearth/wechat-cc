@@ -737,6 +737,12 @@ export const CliPermissionQuery = z.object({
   hash: z.string().min(1).max(16),
   wait_ms: z.coerce.number().int().min(0).max(60_000).optional(),
 })
+// ── GET /v1/cli/sessions(终端会话登记处,v76)──────────────────────────────
+// ended=1 连已结束的也列;limit 默认 100,封顶 500(= 登记处的行数上限)。
+export const CliSessionsQuery = z.object({
+  ended: z.enum(['0', '1']).optional(),
+  limit: z.coerce.number().int().min(1).max(500).optional(),
+})
 
 // ── Lookup tables ───────────────────────────────────────────────────────
 // REQUEST_SCHEMAS includes both POST body schemas (most routes) and GET
@@ -800,6 +806,7 @@ export const REQUEST_SCHEMAS: Record<string, z.ZodTypeAny | undefined> = {
   'POST /v1/cli/event': CliEventRequest,
   'POST /v1/cli/permission': CliPermissionRequest,
   'GET /v1/cli/permission': CliPermissionQuery,
+  'GET /v1/cli/sessions': CliSessionsQuery,
 
   // conversation
   'POST /v1/conversation/set-mode': ConversationSetModeRequest,

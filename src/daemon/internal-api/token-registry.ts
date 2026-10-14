@@ -269,6 +269,9 @@ export function makeTokenRegistry(
           // admin 档。桌面不调(状态从 /v1/health 的 cli_upgrade 读)。
           'POST /v1/cli/upgrade',
           'POST /v1/cli/rollback',
+          // 终端会话登记处(v76,2026-10-14):CC 统管主人所有终端 agent 会话的只读列表。admin 档,
+          // 同一份 operator 凭据;桌面 UI 接入时还要登记 Tauri 宿主(lib.rs)与 workbench-proxy.ts。
+          'GET /v1/cli/sessions',
         ]),
       })
     },

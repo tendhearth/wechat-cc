@@ -41,6 +41,10 @@ export interface CliPermissionRelayDeps {
   /** 卡片发出去了 —— hub 据此压掉紧随其后的「等你批准」提醒。 */
   onRelayed: (sessionId: string) => void
   log: (tag: string, line: string) => void
+  /** 请求一来(在场判断之前)就报一声 —— 终端会话登记处据此记 waiting(v76)。 */
+  onAsked?: (req: CliPermissionRequest) => void
+  /** 有了结果(allow / deny / timeout / undelivered)—— 登记处据此把 waiting 放回 running。 */
+  onSettled?: (sessionId: string, status: CliPermissionStatus) => void
   waitMs?: number
   localMachine?: string
 }
@@ -53,7 +57,7 @@ export interface CliPermissionRelay {
   dispose(): void
 }
 
-interface Entry { status: CliPermissionStatus; waiters: (() => void)[]; retain?: ReturnType<typeof setTimeout> }
+interface Entry { sessionId: string; status: CliPermissionStatus; waiters: (() => void)[]; retain?: ReturnType<typeof setTimeout> }
 
 /** 5 位小写字母数字 —— PERMISSION_REPLY_RE 只认恰好 5 位。 */
 export function newPermissionHash(): string {
@@ -82,19 +86,21 @@ export function makeCliPermissionRelay(deps: CliPermissionRelayDeps): CliPermiss
     e.status = status
     for (const w of e.waiters) w()
     e.waiters = []
+    try { deps.onSettled?.(e.sessionId, status) } catch { /* 登记处出错不影响拍板 */ }
     e.retain = setTimeout(() => { entries.delete(hash) }, RETAIN_MS)
     ;(e.retain as { unref?: () => void }).unref?.()
   }
 
   return {
     async open(req) {
+      try { deps.onAsked?.(req) } catch { /* 登记处出错不影响中继 */ }
       if (await deps.presence(req.session_id, req.idle_s) === 'present') {
         deps.log('CLI_PERMISSION', `owner present for ${req.session_id.slice(0, 6)}: leave it to the terminal`)
         return { status: 'owner_present' }
       }
       let hash = newPermissionHash()
       while (entries.has(hash)) hash = newPermissionHash()
-      entries.set(hash, { status: 'pending', waiters: [] })
+      entries.set(hash, { sessionId: req.session_id, status: 'pending', waiters: [] })
       let projectName: string
       try { projectName = deps.projectName(req.cwd) } catch { projectName = req.cwd }
       const prompt = formatCliPermissionPrompt(req, projectName, hash, waitMs, deps.localMachine)

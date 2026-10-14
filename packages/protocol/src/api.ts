@@ -408,6 +408,19 @@ export const NativeSessionRow = z.object({ key: z.string(), provider: z.enum(['c
 export const NativeSessionMessage = z.object({ id: z.string(), role: z.enum(['user', 'assistant']), text: z.string(), truncated: z.boolean() })
 export const NativeSessionPage = z.object({ session: NativeSessionRow, messages: z.array(NativeSessionMessage), nextCursor: z.string().nullable(), managed: z.boolean(), window: z.enum(['recent', 'start']).optional() })
 export type NativeSessionRowT = z.infer<typeof NativeSessionRow>
+/**
+ * 终端会话登记处(GET /m/api/cli/sessions,v76,2026-10-14):主人在 CC 外面开的 claude / codex 会话。
+ * status 已折算:running / waiting 超过 30 分钟没事件 ⇒ idle + stale。waiting 在最前,其余按 last_event_at 倒序。
+ * code = 微信「看 码」「@码」用的短码。手机口径只给目录名(project),不给完整路径。
+ */
+export const CliSessionRow = z.object({
+  session_id: z.string(), code: z.string(), source: z.enum(['claude', 'codex']),
+  status: z.enum(['running', 'waiting', 'idle', 'ended']), stale: z.boolean(),
+  project: z.string(), machine: z.string().nullable(), last_summary: z.string().nullable(),
+  last_event_at: z.number(), last_prompt_at: z.number().nullable(), created_at: z.number(),
+  pending: z.object({ tool: z.string(), summary: z.string().nullable(), since: z.number() }).nullable(),
+})
+export type CliSessionRowT = z.infer<typeof CliSessionRow>
 export type NativeSessionPageT = z.infer<typeof NativeSessionPage>
 
 // ── 在手机上接着做电脑上的会话(spec 2026-10-01-tendhearth-continue-sessions §4.3):只给目录名,matterId 只在 managed 有 ──
@@ -459,6 +472,7 @@ export const PHONE_API_SCHEMAS: Readonly<Record<string, z.ZodTypeAny>> = {
   'GET /m/api/chat/voice': z.union([z.object({ ok: z.literal(true) }).extend(ChatVoice.shape), PhoneErrorResponse]),
   'GET /m/api/connections': z.union([z.object({ ok: z.literal(true) }).extend(Connections.shape), PhoneErrorResponse]),
   'GET /m/api/sessions': z.union([z.object({ ok: z.literal(true), items: z.array(NativeSessionRow), nextCursor: z.string().nullable() }), PhoneErrorResponse]),
+  'GET /m/api/cli/sessions': z.union([z.object({ ok: z.literal(true), sessions: z.array(CliSessionRow) }), PhoneErrorResponse]),
   'GET /m/api/session': z.union([z.object({ ok: z.literal(true) }).extend(NativeSessionPage.shape), PhoneErrorResponse]),
   'GET /m/api/session/continue': z.union([z.object({ ok: z.literal(true) }).extend(SessionContinue.shape), PhoneErrorResponse]),
   'POST /m/api/session/continue': z.union([z.object({ ok: z.literal(true) }).extend(SessionContinueResult.shape), PhoneErrorResponse]),

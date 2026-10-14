@@ -249,7 +249,11 @@ export interface InternalApiDeps {
    * main.ts 在 bootstrap 之后 setCliEvents —— hub 要 boot.sendAssistantText。
    * 没设之前 POST /v1/cli/event 503。
    */
-  cliEvents?: { ingest(ev: import('../../core/cli-events').CliEvent): import('../../core/cli-events').CliEventAction | Promise<import('../../core/cli-events').CliEventAction> }
+  cliEvents?: {
+    ingest(ev: import('../../core/cli-events').CliEvent): import('../../core/cli-events').CliEventAction | Promise<import('../../core/cli-events').CliEventAction>
+    /** 终端会话登记处(v76):GET /v1/cli/sessions。缺席 ⇒ 那条路由 503。 */
+    list?(opts?: { includeEnded?: boolean; limit?: number }): import('../../core/cli-session-store').CliSessionView[]
+  }
   /** 终端会话权限 → 微信 y/n(spec 2026-09-09-cli-hook-push §6.3)。main.ts setCliPermissions。 */
   cliPermissions?: Pick<import('../../core/cli-permission-relay').CliPermissionRelay, 'open' | 'status' | 'wait'>
   /**

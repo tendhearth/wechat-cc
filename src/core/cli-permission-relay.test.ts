@@ -106,3 +106,41 @@ describe('formatCliPermissionPrompt', () => {
     expect((await relay.open(req({ idle_s: 900 }))).status).toBe('pending')
   })
 })
+
+describe('CliPermissionRelay → 终端会话登记处(v76)', () => {
+  beforeEach(() => { vi.useFakeTimers() })
+  afterEach(() => { vi.useRealTimers() })
+
+  it('onAsked 在场判断之前就报(在场也报);拍板后 onSettled 带会话 id 与结果', async () => {
+    const asked: string[] = []
+    const settled: [string, string][] = []
+    const mk = (presence: 'present' | 'away') => makeCliPermissionRelay({
+      ask: () => new Promise((resolve) => { setTimeout(() => resolve('deny'), 500) }),
+      presence: async () => presence,
+      projectName: (c) => c,
+      onRelayed: () => {},
+      onAsked: (r) => asked.push(r.session_id),
+      onSettled: (s, st) => settled.push([s, st]),
+      log: () => {},
+    })
+    expect(await mk('present').open(req({ session_id: 'here-1' }))).toEqual({ status: 'owner_present' })
+    const relay = mk('away')
+    const r = await relay.open(req({ session_id: 'away-1' }))
+    expect(r.status).toBe('pending')
+    expect(asked).toEqual(['here-1', 'away-1'])
+    await vi.advanceTimersByTimeAsync(500)
+    expect(settled).toEqual([['away-1', 'deny']])
+    relay.dispose()
+  })
+
+  it('onAsked / onSettled 抛错不影响中继', async () => {
+    const relay = makeCliPermissionRelay({
+      ask: async () => 'allow', presence: async () => 'away', projectName: (c) => c, onRelayed: () => {}, log: () => {},
+      onAsked: () => { throw new Error('db gone') }, onSettled: () => { throw new Error('db gone') },
+    })
+    const r = await relay.open(req())
+    await vi.advanceTimersByTimeAsync(0)
+    expect(relay.status((r as { hash: string }).hash)).toBe('allow')
+    relay.dispose()
+  })
+})
