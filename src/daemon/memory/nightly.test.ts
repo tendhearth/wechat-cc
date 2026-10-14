@@ -93,6 +93,35 @@ describe('runMemoryNightly', () => {
     now = Date.parse('2026-09-26T04:20:00Z')
     expect(await runMemoryNightly(deps(), { force: false })).toEqual({ status: 'skipped', reason: 'failed_today' })
   })
+  it('connection failure: retries the same day at most 3 times, an hour apart, then gives up for the day', async () => {
+    let down = true
+    const d = deps({ cheapEval: () => async (p: string) => {
+      calls.push(p)
+      if (down) throw new Error('Unable to connect. Is the computer able to access the url?')
+      return reply
+    } })
+    const at = (t: string) => { now = Date.parse(t) }
+    at('2026-09-25T04:05:00Z')
+    expect(await runMemoryNightly(d, { force: false })).toEqual({ status: 'skipped', reason: 'retry_later' })
+    expect(readNightlyState(stateDir)).toMatchObject({ failures: 0, lastFailDay: null })
+    at('2026-09-25T04:20:00Z')
+    expect(await runMemoryNightly(d, { force: false })).toEqual({ status: 'skipped', reason: 'retry_later' })
+    expect(calls).toHaveLength(1)
+    at('2026-09-25T05:05:00Z'); await runMemoryNightly(d, { force: false })
+    at('2026-09-25T06:05:00Z'); await runMemoryNightly(d, { force: false })
+    at('2026-09-25T07:05:00Z')
+    expect((await runMemoryNightly(d, { force: false })).status).toBe('failed')
+    expect(calls).toHaveLength(4)
+    expect(readNightlyState(stateDir)).toMatchObject({ failures: 1, lastFailDay: '2026-09-25' })
+    // 第二天重新给 3 次机会;连上了就照常写,推迟记录清掉
+    at('2026-09-26T04:05:00Z'); down = false
+    expect((await runMemoryNightly(d, { force: false })).status).toBe('written')
+    expect(readNightlyState(stateDir)).toMatchObject({ failures: 0, netRetry: null })
+  })
+  it('a non-network eval error still fails for the day right away', async () => {
+    const d = deps({ cheapEval: () => async () => { throw new Error('invalid model selection') } })
+    expect(await runMemoryNightly(d, { force: false })).toEqual({ status: 'failed', reason: 'eval_error:invalid model selection' })
+  })
   it('owner edit during the model call wins — result dropped, not counted as a failure', async () => {
     await runMemoryNightly(deps(), { force: true })
     writeFileSync(join(root, 'profile.md'), '又一份草稿\n')
@@ -123,7 +152,7 @@ describe('runMemoryNightly', () => {
     expect(await runMemoryNightly(deps({ ownerChatId: () => '../x' }), { force: true })).toEqual({ status: 'skipped', reason: 'no_owner' })
   })
   it('state round-trips and defaults when missing', () => {
-    expect(readNightlyState(stateDir)).toEqual({ lastRunDay: null, lastRunIso: null, fingerprint: null, failures: 0, lastFailDay: null, firstRunDone: false, pendingNotice: null })
+    expect(readNightlyState(stateDir)).toEqual({ lastRunDay: null, lastRunIso: null, fingerprint: null, failures: 0, lastFailDay: null, firstRunDone: false, netRetry: null, pendingNotice: null })
     writeNightlyState(stateDir, { ...readNightlyState(stateDir), failures: 2 })
     expect(readNightlyState(stateDir).failures).toBe(2)
   })

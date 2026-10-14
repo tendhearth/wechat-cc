@@ -8,6 +8,8 @@ import { createHash } from 'node:crypto'
 import { join } from 'node:path'
 import { readJsonFile } from '../../lib/read-json-file'
 import { isNetworkUnprotectedError } from '../../lib/network-gate'
+import { isConnectFailure } from '../../lib/net-errors'
+import { providerErrorCodeOf } from '../../lib/provider-error-code'
 import { MEMORY_FILENAME, assignMissingIds, parseMemoryDoc, serializeMemoryDoc } from './curated-doc'
 import { applyNightly, parseOps, type NightlyOps } from './nightly-ops'
 import { composeNotice, noticeItems, type NightlyRunResult } from './nightly-notify'
@@ -28,6 +30,8 @@ export interface NightlyState {
   failures: number
   lastFailDay: string | null
   firstRunDone: boolean
+  /** 当天因连不上而推迟的次数与下次最早时间 —— 见 NET_RETRY_MAX。 */
+  netRetry: { day: string; count: number; afterMs: number } | null
   pendingNotice: { text: string; createdAtMs: number } | null
 }
 export interface NightlyRunDeps {
@@ -46,7 +50,12 @@ export const MEMORY_LOG_FILE = 'memory-log.jsonl'
 const STATE_FILE = 'memory-nightly.json'
 const BLOCK_CAP = 6000
 const EVAL_TIMEOUT_MS = 5 * 60_000
-const DEFAULT_STATE: NightlyState = { lastRunDay: null, lastRunIso: null, fingerprint: null, failures: 0, lastFailDay: null, firstRunDone: false, pendingNotice: null }
+// 连不上(网络瞬断、bx 正在重连)不是这一晚的结论:整晚放弃的话 memory.md 就白白旧一天
+// (2026-09-26 → 10-12 有 5 晚都是这么丢的)。同一天最多再试 3 次、每次隔 1 小时 ——
+// 有上限、有间隔,断网时不会变成重试风暴。
+const NET_RETRY_MAX = 3
+const NET_RETRY_GAP_MS = 60 * 60_000
+const DEFAULT_STATE: NightlyState = { lastRunDay: null, lastRunIso: null, fingerprint: null, failures: 0, lastFailDay: null, firstRunDone: false, netRetry: null, pendingNotice: null }
 
 export function readNightlyState(stateDir: string): NightlyState {
   try { return { ...DEFAULT_STATE, ...(readJsonFile<Partial<NightlyState>>(join(stateDir, 'companion', STATE_FILE))) } }
@@ -62,7 +71,7 @@ export function writeNightlyState(stateDir: string, s: NightlyState): void {
 }
 
 /** Only the fields a run owns. pendingNotice is deliberately absent — see mergeRunState. */
-type RunOwnedFields = Partial<Pick<NightlyState, 'lastRunDay' | 'lastRunIso' | 'fingerprint' | 'failures' | 'lastFailDay' | 'firstRunDone'>>
+type RunOwnedFields = Partial<Pick<NightlyState, 'lastRunDay' | 'lastRunIso' | 'fingerprint' | 'failures' | 'lastFailDay' | 'firstRunDone' | 'netRetry'>>
 
 /**
  * Re-read the state right before writing and merge only this run's fields.
@@ -217,6 +226,7 @@ export async function runMemoryNightly(deps: NightlyRunDeps, opts: { force: bool
   if (!opts.force) {
     if (!isDue({ nowMs, tz: cfg.timezone, at: cfg.at, lastRunDay: state.lastRunDay })) return { status: 'skipped', reason: 'not_due' }
     if (state.lastFailDay === day) return { status: 'skipped', reason: 'failed_today' }
+    if (state.netRetry?.day === day && nowMs < state.netRetry.afterMs) return { status: 'skipped', reason: 'retry_later' }
     if (await deps.ownerRecentlyActive()) return { status: 'skipped', reason: 'owner_busy' }
   }
 
@@ -263,7 +273,14 @@ export async function runMemoryNightly(deps: NightlyRunDeps, opts: { force: bool
       deps.log('MEMORY_NIGHTLY', 'skipped — the eval needs a protected provider and the network is unprotected')
       return { status: 'skipped', reason: 'network_unprotected' }
     }
-    return fail(`eval_error:${e instanceof Error ? e.message : String(e)}`)
+    const msg = e instanceof Error ? e.message : String(e)
+    const tries = state.netRetry?.day === day ? state.netRetry.count : 0
+    if (!opts.force && tries < NET_RETRY_MAX && (providerErrorCodeOf(e) === 'network' || isConnectFailure(msg))) {
+      mergeRunState(deps.stateDir, { netRetry: { day, count: tries + 1, afterMs: nowMs + NET_RETRY_GAP_MS } })
+      deps.log('MEMORY_NIGHTLY', `eval could not reach the model (${msg}) — retry ${tries + 1}/${NET_RETRY_MAX} in 1h`)
+      return { status: 'skipped', reason: 'retry_later' }
+    }
+    return fail(`eval_error:${msg}`)
   }
   const parsed = parseOps(raw)
   if (!parsed) return fail('bad_json')
@@ -317,6 +334,7 @@ export async function runMemoryNightly(deps: NightlyRunDeps, opts: { force: bool
     fingerprint,
     failures: 0,
     lastFailDay: null,
+    netRetry: null,
     firstRunDone: true,
   }, !opts.force && notice ? { text: notice, createdAtMs: nowMs } : null)
   deps.log('MEMORY_NIGHTLY', `written: ${res.applied.length} change(s)`)
