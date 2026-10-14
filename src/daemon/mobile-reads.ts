@@ -1,6 +1,7 @@
 import { basename } from 'node:path'
 import { redactConnections, type ConnectionsSnapshot } from './connections'
 import { framedTooLarge } from './mobile-matter-response'
+import type { CliSessionView } from '../core/cli-session-store'
 import type { NativeHistoryItem, NativeHistoryListInput, NativeHistoryPage, NativeHistoryPreview, NativeHistoryReadInput } from '../core/workbench/native-history'
 
 /**
@@ -20,7 +21,20 @@ export interface MobileSessionsDeps {
   read(key: string, input: NativeHistoryReadInput): Promise<NativeHistoryPreview>
   readRecent?(key: string, input: { limit: number }): Promise<NativeHistoryPreview>
 }
-export interface MobileReadsDeps { connections?: () => ConnectionsSnapshot; sessions?: MobileSessionsDeps }
+export interface MobileReadsDeps { connections?: () => ConnectionsSnapshot; sessions?: MobileSessionsDeps; cliSessions?: () => CliSessionView[] }
+/** 手机上终端会话列表最多给这么多条。 */
+export const PHONE_CLI_SESSIONS_MAX = 50
+/**
+ * 手机口径的终端会话:与上面原生会话同一条规矩 —— 项目只给目录名,不给完整路径。
+ * 其余字段同 GET /v1/cli/sessions(状态已折算 stale、等你批准的在前)。
+ */
+export function phoneCliSession(v: CliSessionView) {
+  return {
+    session_id: v.session_id, code: v.code, source: v.source, status: v.status, stale: v.stale,
+    project: v.project, machine: v.machine, last_summary: v.last_summary,
+    last_event_at: v.last_event_at, last_prompt_at: v.last_prompt_at, created_at: v.created_at, pending: v.pending,
+  }
+}
 const json = (body: object, status = 200) => new Response(JSON.stringify(body), { status, headers: { 'content-type': 'application/json; charset=utf-8', 'cache-control': 'no-store' } })
 
 const row = (i: NativeHistoryItem, max = 200) => ({ key: i.key, provider: i.providerId, title: i.title.slice(0, max), project: i.cwd ? basename(i.cwd).slice(0, max) : null, updatedAt: i.updatedAt, active: i.observedState === 'active' })
@@ -91,6 +105,12 @@ export async function mobileReadsRoute(deps: MobileReadsDeps, url: URL, req: Req
     if (!deps.connections) return json({ ok: false, error: 'connections_not_wired' }, 503)
     // 裁定 7:内部失败一律 503(客户端当作离线/不可用),不是 500。
     try { return json({ ok: true, ...redactConnections(deps.connections()) }) }
+    catch { return json({ ok: false, error: 'unavailable' }, 503) }
+  }
+  if (url.pathname === '/m/api/cli/sessions') {
+    if (req.method !== 'GET') return json({ ok: false, error: 'method_not_allowed' }, 405)
+    if (!deps.cliSessions) return json({ ok: false, error: 'cli_sessions_not_wired' }, 503)
+    try { return json({ ok: true, sessions: deps.cliSessions().slice(0, PHONE_CLI_SESSIONS_MAX).map(phoneCliSession) }) }
     catch { return json({ ok: false, error: 'unavailable' }, 503) }
   }
   if (url.pathname === '/m/api/sessions') {

@@ -50,6 +50,8 @@ export const PHONE_ROUTES: ReadonlySet<string> = new Set([
   // 电脑上的原生会话(只读,spec 2026-10-01),项目只给目录名
   'GET /m/api/sessions',
   'GET /m/api/session',
+  // 终端会话登记处(v76,2026-10-14):主人在 CC 外面开的 claude / codex 会话 —— 谁在跑、谁在等批准
+  'GET /m/api/cli/sessions',
   // 在手机上接着做电脑上的会话(spec 2026-10-01-tendhearth-continue-sessions,mobile-workbench.ts):预览 + 接成一件事
   'GET /m/api/session/continue',
   'POST /m/api/session/continue',

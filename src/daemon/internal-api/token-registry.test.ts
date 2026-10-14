@@ -97,6 +97,7 @@ describe('token-registry', () => {
       'GET /v1/settings/link',
       'POST /v1/cli/upgrade',
       'POST /v1/cli/rollback',
+      'GET /v1/cli/sessions',
     ]))
     expect(opInfo?.routeAllow).not.toContain('POST /v1/daemon/restart')
     expect(r.resolve('cc'.repeat(32))).toEqual({ tier: 'trusted', origin: 'file' })

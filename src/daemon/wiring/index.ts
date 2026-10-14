@@ -36,6 +36,8 @@ import { existsSync, readFileSync } from 'node:fs'
 
 export interface WireMainOpts {
   workbench?: import('../../core/workbench/service').WorkbenchService
+  /** 终端会话登记处(v76):手机 GET /m/api/cli/sessions 读它。缺省 ⇒ 503。 */
+  cliSessions?: () => import('../../core/cli-session-store').CliSessionView[]
   /** 网络守护运行时(2026-10-02,main.ts 建):闸门 + 调度器 Ref + 后台任务跳过包装。缺省 = 老行为。 */
   guardRuntime?: import('../guard/runtime').GuardRuntime
   /** 可选子系统开机状态(SubsystemSupervisor.statuses)→「CC 现在怎么样」。 */

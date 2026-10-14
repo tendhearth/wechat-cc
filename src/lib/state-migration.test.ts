@@ -121,7 +121,7 @@ describe('full state-dir migration — upgrading-user smoke', () => {
     // AUTOINCREMENT,SQLite 因此也会自建 sqlite_sequence——这两个同样是三条
     // 迁移加完之后漏改的(跟上面 v 的字面量是同一处腐烂,一起修)。
     expect(tables.map(t => t.name)).toEqual([
-      'a2a_events', 'activity', 'connection_heartbeat', 'conversations', 'customer_review_analysis_issues', 'customer_review_evidence',
+      'a2a_events', 'activity', 'cli_sessions', 'connection_heartbeat', 'conversations', 'customer_review_analysis_issues', 'customer_review_evidence',
       'customer_review_feedback', 'customer_review_items', 'customer_reviews', 'events', 'handled_messages', 'journal', 'matter_bindings', 'matter_report_outbox', 'matter_say_receipts', 'matter_sessions', 'matters', 'message_attempts', 'messages',
       'milestones', 'observations', 'penpal_channel', 'penpal_letter', 'reminders', 'session_fts_state', 'session_state',
       'session_turns_fts', 'session_turns_fts_config', 'session_turns_fts_content', 'session_turns_fts_data',

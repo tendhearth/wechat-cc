@@ -61,3 +61,25 @@ describe('/v1/cli/permission(spec §6.3)', () => {
     expect(minTierFor('GET /v1/cli/permission')).toBe('trusted')
   })
 })
+
+describe('GET /v1/cli/sessions(终端会话登记处,v76)', () => {
+  it('没接 list → 503;接了 → 转给 hub.list(默认 100 条、不含已结束;ended=1 / limit 封顶 500)', async () => {
+    const off = cliEventRoutes(deps({ ingest: vi.fn() }))['GET /v1/cli/sessions']!
+    expect(await off(qs(), undefined)).toEqual({ status: 503, body: { error: 'cli_sessions_not_wired' } })
+    const view = { session_id: 'abc123', code: 'abc123', status: 'waiting' }
+    const list = vi.fn(() => [view] as never)
+    const on = cliEventRoutes(deps({ ingest: vi.fn(), list }))['GET /v1/cli/sessions']!
+    expect(await on(qs(), undefined)).toEqual({ status: 200, body: { ok: true, sessions: [view] } })
+    expect(list).toHaveBeenLastCalledWith({ includeEnded: false, limit: 100 })
+    await on(new URLSearchParams({ ended: '1', limit: '9999' }), undefined)
+    expect(list).toHaveBeenLastCalledWith({ includeEnded: true, limit: 500 })
+  })
+  it('admin 档(列出主人所有终端会话的路径与命令);query schema', () => {
+    expect(minTierFor('GET /v1/cli/sessions')).toBe('admin')
+    const s = REQUEST_SCHEMAS['GET /v1/cli/sessions']!
+    expect(s.safeParse({}).success).toBe(true)
+    expect(s.safeParse({ ended: '1', limit: '20' }).success).toBe(true)
+    expect(s.safeParse({ ended: 'yes' }).success).toBe(false)
+    expect(s.safeParse({ limit: '0' }).success).toBe(false)
+  })
+})
