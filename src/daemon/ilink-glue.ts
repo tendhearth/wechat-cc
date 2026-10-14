@@ -56,6 +56,11 @@ export interface IlinkAdapter {
   sendFile(chatId: string, path: string): Promise<void>
   /** Passive outbound link health (spec 2026-08-22-outbound-health). */
   outboundHealth(): OutboundHealth
+  /**
+   * 这个 chat 的主动推送窗口从什么时候起是关的(ilink errcode=-2:对方太久没说话);null = 没关。
+   * 下一次发给它成功就清掉。给「CC 现在怎么样」用:主人那一路关了,完成通知和提醒都会丢,而解法只有主人随便回一句。
+   */
+  proactiveClosedSince(chatId: string): string | null
   editMessage(chatId: string, msgId: string, text: string): Promise<void>
   broadcast(text: string, accountId?: string): Promise<{ ok: number; failed: number }>
   sharePage(title: string, content: string, opts?: { needs_approval?: boolean; chat_id?: string; account_id?: string }): Promise<{ url: string; slug: string }>
@@ -180,6 +185,7 @@ export function makeIlinkAdapter(opts: {
   const voice = gateVoice(makeVoice(ctx), opts.networkGate)
   const companion = makeCompanion(ctx)
   const outbound = makeOutboundHealthTracker({ log: (t, l) => log(t, l) })
+  const windowClosed = new Map<string, string>()
 
   // PR4 Task 15 — when ilink rejects an account with errcode=-14 ("rebound
   // elsewhere"), fan out a 3-line user-facing notification to every chat
@@ -226,6 +232,7 @@ export function makeIlinkAdapter(opts: {
           await ilinkSendMessage(acct.baseUrl, acct.token, botTextMessage(chatId, part, ctxToken))
         }
         outbound.recordSuccess(new Date().toISOString())
+        windowClosed.delete(chatId)
         // Record ONE row with the full pre-chunk text (fire-and-forget;
         // recording failure must never break the send result).
         void messagesStore.append({
@@ -251,6 +258,7 @@ export function makeIlinkAdapter(opts: {
         // (否则每次 boot 给离线用户发通知失败都误报 degraded)。见
         // isProactiveWindowClosed 的说明。
         if (reachedWire && !isProactiveWindowClosed(msg)) outbound.recordFailure(new Date().toISOString(), msg)
+        if (reachedWire && isProactiveWindowClosed(msg) && !windowClosed.has(chatId)) windowClosed.set(chatId, new Date().toISOString())
         return {
           msgId: `err:${Date.now()}`,
           error: msg,
@@ -259,6 +267,7 @@ export function makeIlinkAdapter(opts: {
     },
 
     outboundHealth: () => outbound.snapshot(),
+    proactiveClosedSince: (chatId) => windowClosed.get(chatId) ?? null,
 
     async sendFile(chatId, filePath) {
       assertSendable(filePath)

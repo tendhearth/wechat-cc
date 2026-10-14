@@ -18,7 +18,7 @@ const HEADLINE = { ok: 'links.headlineOk', warn: 'links.headlineWarn', bad: 'lin
 type HeadlineKey = (typeof HEADLINE)[Dot] | 'links.headlineOffline' | 'links.headlineStarting' | 'links.headlineNeedsYou' | 'links.headlineFallback'
 type Capability = NonNullable<ConnectionsT['capabilities']>[number]
 const CAP_DOT: Record<Capability['state'], Dot> = { ok: 'ok', fallback: 'warn', needs_you: 'bad', off: 'unknown' }
-const CAP_NAMES = ['wechat', 'brain', 'guard', 'disk', 'knowledge', 'memory', 'phone'] as const
+const CAP_NAMES = ['wechat', 'brain', 'guard', 'disk', 'knowledge', 'memory', 'background', 'phone'] as const
 /** 能力行的人话:认得的原因码按本机语言说;认不出的(新 daemon 的新码)用 daemon 给的原文。 */
 function capabilityLabel(c: Capability, lang: Lang): string {
   const key = `cap.${c.code}`
@@ -55,8 +55,8 @@ export function connectionsView(s: ConnectionsT, _now: number, lang: Lang, opts:
     id: c.id,
     name: (CAP_NAMES as readonly string[]).includes(c.id) ? t(lang, `cap.name.${c.id}` as Parameters<typeof t>[1]) : c.name,
     dot: CAP_DOT[c.state], label: capabilityLabel(c, lang),
-    // 修只能在电脑上做:手机上把动作说成一句提示,不做成按钮。
-    action: c.action && c.state !== 'ok' ? t(lang, 'cap.actionOnComputer', { action: c.action.label }) : null,
+    // 修只能在电脑上做:手机上把动作说成一句提示,不做成按钮。唯一的例外是在微信里回一句。
+    action: c.action && c.state !== 'ok' ? t(lang, c.action.where === 'wechat' ? 'cap.actionInWechat' : 'cap.actionOnComputer', { action: c.action.label }) : null,
   }))
   const needsYou = caps.filter(c => c.state === 'needs_you').length, fallback = caps.filter(c => c.state === 'fallback').length
   const headline: { dot: Dot; key: HeadlineKey; n: number } = needsYou > 0

@@ -59,6 +59,22 @@ describe('ProviderRegistry', () => {
       cheapEval: async () => label,
     })
 
+    it('cheapEvalHealth counts real failures in a row, ignores connection failures, resets on success', async () => {
+      const r = createProviderRegistry()
+      let fail: Error | null = new Error('invalid model selection')
+      r.register('claude', { ...stub, cheapEval: async () => { if (fail) throw fail; return 'ok' } }, { displayName: 'Claude', canResume: () => true })
+      const ce = r.getCheapEval()!
+      await expect(ce('a')).rejects.toThrow()
+      await expect(r.getCheapEval()!('b')).rejects.toThrow()
+      expect(r.cheapEvalHealth!()).toMatchObject({ consecutiveFailures: 2, lastError: 'invalid model selection' })
+      fail = new Error('Unable to connect. Is the computer able to access the url?')
+      await expect(ce('c')).rejects.toThrow()
+      expect(r.cheapEvalHealth!().consecutiveFailures).toBe(2)
+      fail = null
+      expect(await ce('d')).toBe('ok')
+      expect(r.cheapEvalHealth!()).toMatchObject({ consecutiveFailures: 0 })
+    })
+
     it('returns null when no registered provider implements cheapEval', () => {
       const r = createProviderRegistry()
       r.register('claude', stub, { displayName: 'Claude', canResume: () => true })
@@ -349,16 +365,16 @@ describe('getCheapEvalBudgetMs —— 延迟预算由 provider 声明', () => {
 })
 
 describe('cheapEvalProvider as a getter (hot-reload)', () => {
-  it('re-reads the pin on every getCheapEval() so /set cheap takes effect without a restart', () => {
+  it('re-reads the pin on every getCheapEval() so /set cheap takes effect without a restart', async () => {
     let pin: string | undefined = 'a'
     const r = createProviderRegistry({ cheapEvalProvider: () => pin })
     const evA = async () => 'A'
     const evB = async () => 'B'
     r.register('a', { spawn: async () => { throw new Error('x') }, cheapEval: evA } as never, { displayName: 'A', canResume: () => false })
     r.register('b', { spawn: async () => { throw new Error('x') }, cheapEval: evB } as never, { displayName: 'B', canResume: () => false })
-    expect(r.getCheapEval()).toBe(evA)
+    expect(await r.getCheapEval()!('q')).toBe('A')
     pin = 'b'
-    expect(r.getCheapEval()).toBe(evB)
+    expect(await r.getCheapEval()!('q')).toBe('B')
     pin = undefined
     expect(r.getCheapEval()).not.toBeNull()   // 回落偏好序
   })

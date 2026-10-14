@@ -27,7 +27,8 @@ export interface Capability {
 }
 
 export interface CapabilityInputs {
-  wechat: { outbound: 'unknown' | 'ok' | 'degraded'; expired: number; lastError?: string | null }
+  /** ownerWindowClosedSince:主人那一路的主动推送窗口关着(errcode=-2)的起始时间。 */
+  wechat: { outbound: 'unknown' | 'ok' | 'degraded'; expired: number; lastError?: string | null; ownerWindowClosedSince?: string | null }
   brain: { provider: string; name: string; registered: boolean; retrying: boolean; lastError?: string | null }
   /** null = 没开网络守护(不出现)。 */
   guard: { safe: boolean; paused: boolean; detail?: string | null } | null
@@ -37,6 +38,8 @@ export interface CapabilityInputs {
   knowledge: { built: boolean; embed: 'js' | 'python' | 'js_fell_back' | 'none' } | null
   /** null = 关了每晚整理(不出现)。 */
   memory: { failures: number; firstRunDone: boolean } | null
+  /** 后台判断(便宜模型)连续真失败的次数;null = 读不到(不出现)。 */
+  background?: { failures: number; lastError: string | null } | null
   phone: { relay: boolean; devices: number }
   subsystems: Array<{ name: string; state: 'ok' | 'degraded' | 'off'; error?: string }>
 }
@@ -46,12 +49,16 @@ const SUBSYSTEM_NAMES: Record<string, string> = {
   'mailbox-poller': '笔友信箱', 'memory-nightly': '记忆整理', pairing: '手机配对', reminders: '提醒', reports: '任务回报', 'self-restart': '空闲自动重启', social: '社交', yi: '一件事',
 }
 
+/** 一两次失败多半是一时的(模型偶尔吐坏格式);连着 3 次才说。 */
+const BACKGROUND_FAILING_AFTER = 3
+
 export function buildCapabilities(i: CapabilityInputs): Capability[] {
   const out: Capability[] = []
 
   // 微信:登录失效只有主人能修(重新扫码);外发失败多半是网络,CC 在重试。
   if (i.wechat.expired > 0) out.push({ id: 'wechat', name: '微信', state: 'needs_you', code: 'wechat.expired', reason: '微信登录失效了，CC 收不到也发不出消息。', action: { label: '重新扫码绑定', where: 'desktop' } })
   else if (i.wechat.outbound === 'degraded') out.push({ id: 'wechat', name: '微信', state: 'fallback', code: 'wechat.degraded', reason: '最近发微信消息失败，CC 在自动重试。', ...(i.wechat.lastError ? { detail: i.wechat.lastError } : {}) })
+  else if (i.wechat.ownerWindowClosedSince) out.push({ id: 'wechat', name: '微信', state: 'needs_you', code: 'wechat.window_closed', reason: '你有一阵没在微信里跟 CC 说话，微信暂时不让 CC 主动发消息，完成通知和提醒会收不到。', action: { label: '在微信里随便回 CC 一句', where: 'wechat' } })
   else out.push({ id: 'wechat', name: '微信', state: 'ok', code: i.wechat.outbound === 'ok' ? 'wechat.ok' : 'wechat.idle', reason: i.wechat.outbound === 'ok' ? '收发正常。' : '已连上，还没发过消息。' })
 
   // 大脑:当前选的后端注册上没有。
@@ -83,6 +90,8 @@ export function buildCapabilities(i: CapabilityInputs): Capability[] {
     if (i.memory.failures >= 3) out.push({ id: 'memory', name: '记忆整理', state: 'fallback', code: 'memory.failing', params: { n: i.memory.failures }, reason: `每晚整理连续 ${i.memory.failures} 次没成功，记忆停在上一次。` })
     else out.push({ id: 'memory', name: '记忆整理', state: 'ok', code: i.memory.firstRunDone ? 'memory.ok' : 'memory.first', reason: i.memory.firstRunDone ? '每晚整理一次。' : '今晚第一次整理。' })
   }
+
+  if (i.background && i.background.failures >= BACKGROUND_FAILING_AFTER) out.push({ id: 'background', name: '后台判断', state: 'fallback', code: 'background.failing', params: { n: i.background.failures }, reason: `后台判断(整理聊天、记忆、提醒等)连续 ${i.background.failures} 次失败。`, action: { label: '在设置里换后台用的模型', where: 'settings' }, ...(i.background.lastError ? { detail: i.background.lastError } : {}) })
 
   if (!i.phone.relay) out.push({ id: 'phone', name: '手机', state: 'off', code: 'phone.relay_off', reason: '没开手机连接。' })
   else if (i.phone.devices === 0) out.push({ id: 'phone', name: '手机', state: 'off', code: 'phone.no_device', reason: '还没连接手机。', action: { label: '在电脑上连接手机', where: 'desktop' } })
