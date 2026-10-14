@@ -4,7 +4,7 @@
  * 假 CLI 是 `#!/bin/sh`,win32 跳过。
  */
 import { describe, it, expect, beforeEach, afterEach, afterAll } from 'vitest'
-import { existsSync, linkSync, mkdirSync, mkdtempSync, readFileSync, readlinkSync, realpathSync, symlinkSync, unlinkSync, writeFileSync } from 'node:fs'
+import { chmodSync, copyFileSync, existsSync, mkdirSync, mkdtempSync, readFileSync, readlinkSync, realpathSync, symlinkSync, unlinkSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { removeTempDir, writeWarmExecFixture } from '../../lib/test-temp'
@@ -20,10 +20,12 @@ const posix = process.platform !== 'win32'
 interface Fake { bin: string; ctl: string; setNext(v: string | null): void; failUpdate(on: boolean): void; calls(): string[]; current(): Promise<string | null> }
 
 /**
- * 假 CLI 一律是**同一个**预热过的通用脚本的硬链接(2026-10-13 提速):macOS 对每个新可执行文件首跑要做一次
- * 安全校验(~0.4–1s,按文件算,硬链接共享同一个文件就不再校验),以前每条用例每个版本都新写一个脚本,
- * 整个文件 ~42s、是全套件的最长那条。每个链接的行为(版本行、控制目录、切换命令)写在 CONF_DIR 里,
- * 键是它的真实路径;不放在假安装目录里,免得被布局检测当成一个「版本」。
+ * 假 CLI 一律是**同一个**通用脚本的副本(2026-10-13 提速):macOS 对新可执行文件首跑要做安全校验,内容各不相同的
+ * 脚本每个 0.4–1s,内容相同的副本只要 ~0.18s(按内容缓存)。以前每条用例每个版本都写一份内容不同的脚本,
+ * 整个文件 ~42s。每个副本的行为(版本行、控制目录、切换命令)写在 CONF_DIR 里,键是它的真实路径;
+ * 不放在假安装目录里,免得被布局检测当成一个「版本」。
+ * **不能用硬链接**:macOS 的 realpath() 对有多个硬链接的文件可能返回**另一个**链接的路径(按名字缓存挑一个),
+ * 布局检测和这里的配置键都会认错(#340 的写法,并发跑约 1/16 红)。
  */
 const FAKE_DIR = posix ? realpathSync(mkdtempSync(join(tmpdir(), 'cc-fake-cli-'))) : ''
 const CONF_DIR = join(FAKE_DIR, 'conf')
@@ -55,9 +57,9 @@ exit 2
 }
 afterAll(() => { if (posix) removeTempDir(FAKE_DIR) })
 
-/** 在 path 放一个假 CLI(硬链接到 BASE),行为写进它的配置。$NEXT 在 switchCmd 里按字面留给脚本运行时展开。 */
+/** 在 path 放一个假 CLI(BASE 的副本),行为写进它的配置。$NEXT 在 switchCmd 里按字面留给脚本运行时展开。 */
 function fakeCli(path: string, ctl: string, versionLine: string, switchCmd: string): void {
-  linkSync(BASE, path)
+  copyFileSync(BASE, path); chmodSync(path, 0o755)
   writeFileSync(join(CONF_DIR, confKey(path)), `VERSION_LINE=${shQuote(versionLine)}\nCTL=${shQuote(ctl)}\nSWITCH=${shQuote(switchCmd)}\n`)
 }
 /** 假 CLI 的配置跟着文件走(agy 升级器原地替换那个文件时,版本也要一起换)。 */
@@ -120,9 +122,9 @@ function fakeAgy(root: string, versions: string[], linked: string): Fake {
   const ctl = join(root, 'ctl'); mkdirSync(ctl, { recursive: true })
   const binDir = join(root, 'home', '.local', 'bin'); mkdirSync(binDir, { recursive: true })
   const bin = join(binDir, 'agy')
-  // 升级器原地替换:新版本文件换到 bin(硬链接,不触发首跑校验),它的配置一起换过去
-  for (const v of versions) fakeCli(join(ctl, `agy-${v}`), ctl, v, `ln -f "${ctl}/agy-$NEXT" "${bin}"; ${confCopyCmd(`${ctl}/agy-$NEXT`, bin)}`)
-  linkSync(join(ctl, `agy-${linked}`), bin)
+  // 升级器原地替换:新版本文件复制到 bin,它的配置一起换过去
+  for (const v of versions) fakeCli(join(ctl, `agy-${v}`), ctl, v, `cp "${ctl}/agy-$NEXT" "${bin}"; ${confCopyCmd(`${ctl}/agy-$NEXT`, bin)}`)
+  copyFileSync(join(ctl, `agy-${linked}`), bin); chmodSync(bin, 0o755)
   writeFileSync(join(CONF_DIR, confKey(bin)), readFileSync(join(CONF_DIR, confKey(join(ctl, `agy-${linked}`))), 'utf8'))
   return fakeControls(ctl, bin, CLI_SPECS.agy)
 }
