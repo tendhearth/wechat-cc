@@ -59,6 +59,7 @@ import { refreshPostcardAlbum } from "./modules/postcard-album.js"
 import { initWorkbenchPage, stopWorkbenchPolling, openWorkbenchTask, getActiveWorkbenchTaskId } from "./modules/workbench.js"
 import { createWorkbenchNavigation, isCurrentWorkbenchPane } from "./modules/workbench-navigation.js"
 import { createWorkbenchAttentionPoller } from "./modules/workbench-attention.js"
+import { createTerminalWaitingPoller } from "./modules/terminal-waiting.js"
 import { installExternalLinks } from "./modules/external-links.js"
 
 const state = {
@@ -147,6 +148,11 @@ const nowRoot = /** @type {HTMLElement|null} */ (document.querySelector('.cc-now
 const nowPage = nowRoot ? mountNowPage({
   root: nowRoot, presencePoller,
   onOpenTask: async (/** @type {string} */ id) => { switchPane('workbench'); await openWorkbenchTask(id) },
+  // 终端里等批准的会话:与桌宠权限卡、微信「y 码」同一条拍板路(POST /v1/permissions/resolve,凭据在原生宿主)。
+  onResolveTerminal: async (hash, decision) => {
+    try { return (await invoke('pet_permission_resolve', { hash, decision })) === true }
+    finally { void terminalWaiting.refresh() }
+  },
   onModeChange: m => {
     setConverseMode(m)
     if (m === 'chat') document.getElementById('converse-input')?.focus()
@@ -201,13 +207,28 @@ const conversationsPoller = createConversationsPoller({ invoke, intervalMs: 1000
 /** @type {ReturnType<typeof createWorkbenchAttentionPoller>|null} */
 let workbenchAttention = null
 const nowCount = document.getElementById('now-count')
+/** @type {{stale:boolean,tasks:unknown[]}|null} */ let lastAttention = null
+let terminalWaitingCount = 0
+function renderNowCount() {
+  if (!nowCount) return
+  const n = (lastAttention && !lastAttention.stale ? lastAttention.tasks.length : 0) + terminalWaitingCount
+  nowCount.textContent = n ? String(n) : ''
+}
+// 终端里等批准的 Claude Code / Codex(GET /v1/cli/sessions,admin,走原生宿主):接在「N 件事等你」后面,不另开一页。
+const terminalWaiting = createTerminalWaitingPoller({
+  call: (method, path) => invokeWorkbenchApi(method, path),
+  onChange: rows => { terminalWaitingCount = rows.length; nowPage?.setTerminal(rows); renderNowCount() },
+})
+terminalWaiting.start()
+window.addEventListener('pagehide', () => terminalWaiting.stop())
+window.addEventListener('pageshow', event => { if (event.persisted) terminalWaiting.start() })
 function startWorkbenchAttention() {
   if (workbenchAttention) return
   workbenchAttention = createWorkbenchAttentionPoller({
     invokeWorkbenchApi, invoke,
     onChange: snapshot => {
       careSheet.setAttention(snapshot); nowPage?.setAttention(snapshot)
-      if (nowCount) nowCount.textContent = !snapshot.stale && snapshot.tasks.length ? String(snapshot.tasks.length) : ''
+      lastAttention = snapshot; renderNowCount()
     },
     getContext: () => ({
       taskId: state.mode === 'dashboard' ? getActiveWorkbenchTaskId() : null,

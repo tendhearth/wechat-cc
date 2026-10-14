@@ -11,6 +11,13 @@ describe('parseCliReply', () => {
     expect(parseCliReply('看 abc')).toBeNull()
     expect(parseCliReply('y k3x9z')).toBeNull()
   })
+
+  it('「终端」列会话:只认整句的几种说法,可带问号;不认单独的「会话」与夹在句子里的', () => {
+    for (const t of ['终端', ' 终端 ', '终端?', '终端？', '终端会话', '终端列表', '看终端', '看看终端', '看终端会话', '会话列表', '/cli', '/CLI'])
+      expect(parseCliReply(t)).toEqual({ kind: 'list' })
+    for (const t of ['会话', '终端里那几个在干嘛', '打开终端', '终端怎么用', '帮我开个终端', '看 终端x', 'cli'])
+      expect(parseCliReply(t)).toBeNull()
+  })
 })
 
 describe('resumeCommand', () => {

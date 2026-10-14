@@ -64,6 +64,7 @@ import { makeCliEventHub, makeProjectNamer } from '../core/cli-events'
 import { makeCliSessionStore } from '../core/cli-session-store'
 import { makeCliPermissionRelay } from '../core/cli-permission-relay'
 import { makeCliReplyHandler, makeCliReplyCore, makeHandReplyExecutor } from './cli-reply-handler'
+import { withReplyRefs } from '../core/cli-session-digest'
 import { makeCliPhoneActions } from './cli-phone-actions'
 import { makeCliHubAppPush, makeCliPermissionAsk, type AppPushOutlet } from './cli-app-push'
 import { scopedSend } from './inbound/reply-scope'
@@ -725,6 +726,10 @@ export async function bootDaemon(opts: BootDaemonOpts): Promise<DaemonHandle> {
       projectName: makeProjectNamer(() => ilink.projects.list()),
       log: (t, l) => log(t, l),
     }) : null
+    // 登记处列表 + 等批准那一项在微信里怎么回(中继开的 5 位码与卡片上的两位数码)。微信「终端」、
+    // GET /v1/cli/sessions(桌面「此刻」、CC 的只读工具 terminal_sessions)都读这一份。
+    const cliSessionViews = (opts?: { includeEnded?: boolean; limit?: number }) =>
+      withReplyRefs(cliEvents.list(opts), (id) => cliPermissions.pendingHash(id), (h) => ilink.pendingPermissionCodeOf(h))
     internalApi.setCliEvents({
       // 转给脑的事件本机登记处也记一笔(observe 只记不推):这台机自己的列表也看得到。
       ingest: (ev) => {
@@ -732,7 +737,7 @@ export async function bootDaemon(opts: BootDaemonOpts): Promise<DaemonHandle> {
         cliEvents.observe(ev)
         return forwarder.event(ev)
       },
-      list: (opts) => cliEvents.list(opts),
+      list: (opts) => cliSessionViews(opts),
     })
     internalApi.setCliPermissions({
       open: async (req) => {
@@ -789,6 +794,7 @@ export async function bootDaemon(opts: BootDaemonOpts): Promise<DaemonHandle> {
       dangerously,
       networkGate: guardRt.gate,
       localMachine: osHostname(),
+      listSessions: () => cliSessionViews({ limit: 50 }),
       ...(a2a ? { remote: makeRemoteReply({ registry: a2a.registry, client: a2a.client, selfId: boot.selfId }) } : {}),
     })
     // 「一件事」登记处:一份 store,工作台、微信入站、app 对话、内部 API 都用它(2026-09-16)。

@@ -39,6 +39,40 @@ describe('cli-reply-handler', () => {
     expect(b.sent).toEqual([])
   })
 
+  it('终端:主人 → 回登记处列表(等你批准在前、带 y/n);不是主人 / 没接登记处 → 不认', async () => {
+    const sent: string[] = []
+    const base = {
+      hub: { lookup: () => null, sessions: () => [] },
+      sendMessage: async (_c: string, t: string) => { sent.push(t) },
+      sharePage: async () => null,
+      log: () => {},
+      dangerously: false,
+      localMachine: 'here',
+    }
+    const listSessions = vi.fn(() => [{
+      session_id: 'ab12c3-x', code: 'ab12c3', source: 'claude' as const, status: 'waiting' as const, stale: false, project: 'wechat-cc', cwd: '/w/wechat-cc',
+      machine: 'here', origin_agent: null, last_summary: null, last_event_at: 1_000, last_prompt_at: null, created_at: 1_000,
+      pending: { tool: 'Bash', summary: 'ls', since: 1_000, hash: 'k3x9z', reply_code: null },
+    }])
+    const owner = makeCliReplyHandler({ ...base, isOwner: () => true, listSessions, now: () => 61_000 })
+    expect(owner.probe('终端', 'c')).toBe(true)
+    expect(await owner.handle('终端', 'c')).toBe(true)
+    expect(sent[0]).toContain('✋ 等你批准 · wechat-cc · Claude Code · 码 ab12c3 · 1 分钟前')
+    expect(sent[0]).toContain('回「y k3x9z」放行')
+
+    const guest = makeCliReplyHandler({ ...base, isOwner: () => false, listSessions })
+    expect(guest.probe('终端', 'c')).toBe(false)
+    expect(await guest.handle('终端', 'c')).toBe(false)
+    const unwired = makeCliReplyHandler({ ...base, isOwner: () => true })
+    expect(unwired.probe('终端', 'c')).toBe(false)
+    expect(await unwired.handle('终端', 'c')).toBe(false)
+    expect(sent).toHaveLength(1)
+
+    const broken = makeCliReplyHandler({ ...base, isOwner: () => true, listSessions: () => { throw new Error('db gone') } })
+    expect(await broken.handle('终端', 'c')).toBe(true)
+    expect(sent[1]).toContain('读不到终端会话')
+  })
+
   it('看 码:渲染尾巴 → share_page → 回链接;没有页面就内联', async () => {
     const a = harness()
     expect(await a.h.handle('看 a1b2', 'c')).toBe(true)

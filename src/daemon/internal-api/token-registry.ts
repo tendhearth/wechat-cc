@@ -270,7 +270,8 @@ export function makeTokenRegistry(
           'POST /v1/cli/upgrade',
           'POST /v1/cli/rollback',
           // 终端会话登记处(v76,2026-10-14):CC 统管主人所有终端 agent 会话的只读列表。admin 档,
-          // 同一份 operator 凭据;桌面 UI 接入时还要登记 Tauri 宿主(lib.rs)与 workbench-proxy.ts。
+          // 同一份 operator 凭据。桌面「此刻」的等你行读它(2026-10-14):Tauri 宿主(lib.rs)与
+          // workbench-proxy.ts 都已登记;拍板不走这条,走 POST /v1/permissions/resolve。
           'GET /v1/cli/sessions',
         ]),
       })

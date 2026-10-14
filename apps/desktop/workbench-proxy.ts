@@ -16,6 +16,8 @@ const ROUTES = new Set([
   'GET /v1/workbench/attention','POST /v1/workbench/input','POST /v1/workbench/answer','POST /v1/workbench/withdraw-input',
   'GET /v1/connections',
   'POST /v1/phone/link','GET /v1/phone/devices',
+  // 终端会话(2026-10-14):此刻「N 件事等你」里的终端行,只读。
+  'GET /v1/cli/sessions',
 ])
 interface Options {
   stateDir:string; dryRun:boolean; allowWrites:boolean
@@ -42,8 +44,8 @@ async function boundedBody(req:Request,maxBytes:number):Promise<string> {
 export function createWorkbenchProxy(opts:Options) {
   return async (req:Request):Promise<Response|null> => {
     const url=new URL(req.url)
-    // /v1/connections(此刻的连接浮层)与 /v1/phone/*(连接手机)也走这里;mock 模式下交给 test-shim 的演示路由
-    const ownerSurface=url.pathname==='/v1/connections'||url.pathname.startsWith('/v1/phone/')
+    // /v1/connections(此刻的连接浮层)、/v1/phone/*(连接手机)、/v1/cli/sessions(此刻里的终端会话)也走这里;mock 模式下交给 test-shim 的演示路由
+    const ownerSurface=url.pathname==='/v1/connections'||url.pathname.startsWith('/v1/phone/')||url.pathname==='/v1/cli/sessions'
     if(!ownerSurface&&url.pathname!=='/v1/workbench'&&!url.pathname.startsWith('/v1/workbench/'))return null
     if(ownerSurface&&opts.dryRun)return null
     if(!['127.0.0.1','localhost','[::1]'].includes(url.hostname))return Response.json({error:'forbidden'},{status:403})
