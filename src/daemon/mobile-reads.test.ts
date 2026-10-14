@@ -2,6 +2,7 @@ import { describe, expect, it, vi } from 'vitest'
 import { PHONE_API_SCHEMAS } from '@wechat-cc/protocol'
 import { mobileReadsRoute, cacheSessions, SESSIONS_DONE_MAX, type MobileSessionsDeps } from './mobile-reads'
 import type { ConnectionsSnapshot } from './connections'
+import { buildOverseerToday } from '../core/overseer-today'
 import { deriveSharedKey, generateTunnelKeypair, sealFrame } from '../lib/tunnel-crypto'
 
 const SNAP: ConnectionsSnapshot = {
@@ -216,5 +217,24 @@ describe('GET /m/api/cli/sessions(终端会话登记处,v76)', () => {
     expect((await run({ cliSessions: () => [view] }, '/m/api/cli/sessions', 'POST'))!.status).toBe(405)
     const many = await run({ cliSessions: () => Array.from({ length: 80 }, (_, i) => ({ ...view, session_id: `s${i}` })) }, '/m/api/cli/sessions')
     expect(many!.body.sessions.length).toBe(50)
+  })
+})
+
+describe('GET /m/api/today(「今天」一眼看完,2026-10-14)', () => {
+  it('原样给结构(只有目录名),过 schema;没接 ⇒ 503;抛 ⇒ 503;非 GET ⇒ 405', async () => {
+    const now = 1_800_000_000_000
+    const today = buildOverseerToday({
+      now, localMachine: 'mac', attention: [],
+      terminal: [{ session_id: 'abc123-xyz', code: 'abc123', source: 'claude', status: 'idle', stale: false, project: 'wechat-cc', cwd: '/Users/nate/work/wechat-cc', machine: 'mac', origin_agent: null, last_summary: '改好了', last_event_at: now - 60_000, last_prompt_at: null, created_at: 1, pending: null }],
+      tasks: [{ id: 'a1b2c3d4', title: '修打包', path: '/Users/nate/work/melu', providerId: 'codex', phase: 'working', updatedAt: now - 1000, error: null, archivedAt: null }],
+    })
+    const r = await run({ today: () => today }, '/m/api/today')
+    expect(r!.status).toBe(200)
+    expect(JSON.stringify(r!.body)).not.toContain('/Users')
+    expect(r!.body.today.counts).toEqual({ needsYou: 0, done: 1, running: 1, stuck: 0 })
+    PHONE_API_SCHEMAS['GET /m/api/today']!.parse(r!.body)
+    expect((await run({}, '/m/api/today'))!.status).toBe(503)
+    expect((await run({ today: () => { throw new Error('x') } }, '/m/api/today'))!.body).toEqual({ ok: false, error: 'unavailable' })
+    expect((await run({ today: () => today }, '/m/api/today', 'POST'))!.status).toBe(405)
   })
 })

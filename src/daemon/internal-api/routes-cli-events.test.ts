@@ -83,3 +83,16 @@ describe('GET /v1/cli/sessions(终端会话登记处,v76)', () => {
     expect(s.safeParse({ limit: '0' }).success).toBe(false)
   })
 })
+
+describe('GET /v1/overseer/today(「今天」一眼看完,2026-10-14)', () => {
+  it('没接 → 503;接了 → { ok, today };抛 → 503 unavailable;admin 档', async () => {
+    const off = cliEventRoutes(deps())['GET /v1/overseer/today']!
+    expect(await off(qs(), undefined)).toEqual({ status: 503, body: { error: 'overseer_today_not_wired' } })
+    const today = { generatedAt: 1, counts: { needsYou: 0, done: 0, running: 0, stuck: 0 } }
+    const on = cliEventRoutes({ overseerToday: () => today } as unknown as InternalApiDeps)['GET /v1/overseer/today']!
+    expect(await on(qs(), undefined)).toEqual({ status: 200, body: { ok: true, today } })
+    const broken = cliEventRoutes({ overseerToday: () => { throw new Error('db gone') } } as unknown as InternalApiDeps)['GET /v1/overseer/today']!
+    expect(await broken(qs(), undefined)).toEqual({ status: 503, body: { error: 'unavailable' } })
+    expect(minTierFor('GET /v1/overseer/today')).toBe('admin')
+  })
+})

@@ -1,7 +1,7 @@
 import { PHONE_SAY_MAX_CHARS } from '@wechat-cc/protocol'
 import { labelJoin, type Lang } from '../i18n'
 import { DEMO_STICKER, DEMO_STICKER_FILE, DEMO_VOICE } from './demo-media'
-import { BackendError, type Backend, type CliSessionRowT, type Connection, type MatterT, type MatterDetailT, type ApprovalExplanationT, type ChatJobT, type ChatMessageT, type SessionContinueT, type MatterSayResultT, type UploadStateT, type ChatModelViewT } from './types'
+import { BackendError, type Backend, type CliSessionRowT, type Connection, type MatterT, type MatterDetailT, type ApprovalExplanationT, type ChatJobT, type ChatMessageT, type SessionContinueT, type MatterSayResultT, type UploadStateT, type ChatModelViewT, type OverseerTodayT, type TodayItemT } from './types'
 import {
   copy, IDS, CHAT_ID, PERM_ID, QUESTION_ID, RUN_IDS, t, explanation, progress, changesTurn, entryOptions,
   demoConnections, demoSessions, demoSessionMessages, demoSessionTitleKey, DEMO_SESSION_MESSAGES, type Stage,
@@ -502,6 +502,32 @@ export function makeDemoBackend(opts: { now?: () => number; setTimeout?: typeof 
     async cliSessions() {
       const rows = cli.map(({ summaryKey, ...r }) => ({ ...r, last_summary: summaryKey ? t(lastLang, summaryKey) : null }))
       return rows.sort((a, b) => (Number(b.status === 'waiting') - Number(a.status === 'waiting')) || b.last_event_at - a.last_event_at)
+    },
+    // 「今天」(演示):与 daemon 同一个分组口径 —— 终端演示会话 + 演示里的一起做,过去 24 小时。
+    async today() {
+      const n = now(), since = n - DAY
+      const needsYou: OverseerTodayT['needsYou'] = [], done: TodayItemT[] = [], running: TodayItemT[] = [], stuck: OverseerTodayT['stuck'] = []
+      for (const r of cli) {
+        const base: TodayItemT = { source: 'terminal', id: r.session_id, code: r.code, project: r.project, agent: r.source === 'codex' ? 'Codex' : 'Claude Code', title: null,
+          summary: r.summaryKey ? t(lastLang, r.summaryKey) : null, at: r.last_event_at, machine: null }
+        if (r.status === 'waiting' && r.pending) needsYou.push({ ...base, kind: 'permission', count: 1, replyRef: r.pending.hash ?? null, at: r.pending.since, summary: `${r.pending.tool}: ${r.pending.summary ?? ''}` })
+        else if (r.status === 'running') running.push(base)
+        else if (r.status === 'idle' && r.last_event_at >= since) done.push(base)
+      }
+      for (const e of list()) {
+        const d = localize(e, lastLang)
+        if (d.matter.kind !== 'task' || !d.task) continue
+        const base: TodayItemT = { source: 'together', id: d.matter.id, code: d.matter.id, project: (d.task.path.split('/').filter(Boolean).pop() ?? ''), agent: d.task.providerId === 'codex' ? 'Codex' : 'Claude',
+          title: d.matter.title, summary: null, at: d.task.updatedAt, machine: null }
+        const waiting = d.permissions.length + d.questions.length
+        if (waiting) needsYou.push({ ...base, kind: d.permissions.length ? 'permission' : 'question', count: waiting, replyRef: null })
+        else if (d.task.phase === 'working' || d.task.phase === 'queued') running.push(base)
+        else if (d.task.phase === 'replied' && d.task.updatedAt >= since) done.push(base)
+        else if ((d.task.phase === 'failed' || d.task.phase === 'interrupted') && d.task.updatedAt >= since) stuck.push({ ...base, reason: d.task.phase })
+      }
+      needsYou.sort((a, b) => a.at - b.at); done.sort((a, b) => b.at - a.at); running.sort((a, b) => b.at - a.at)
+      return { generatedAt: n, since, windowHours: 24, needsYou, done, running, stuck,
+        counts: { needsYou: needsYou.length, done: done.length, running: running.length, stuck: stuck.length }, unavailable: [] }
     },
     async cliPermission({ sessionId, hash, decision }) {
       const r = cliGet(sessionId)

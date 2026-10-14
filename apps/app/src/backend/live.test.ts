@@ -588,4 +588,12 @@ describe('终端里的会话(2026-10-14)', () => {
     await expect(b.cliSay('sess-1', 'x')).rejects.toMatchObject({ code: 'cli_ended' })
     await expect(b.cliSay('sess-1', 'x')).rejects.toMatchObject({ code: 'cli_remote' })
   })
+  it('今天:GET /m/api/today 回结构里的 today;读不到 ⇒ 抛', async () => {
+    const today = { generatedAt: 1, since: 0, windowHours: 24, needsYou: [], done: [], running: [], stuck: [], counts: { needsYou: 0, done: 0, running: 0, stuck: 0 }, unavailable: ['terminal'] }
+    const { b, reqs } = harness({ 'GET /m/api/today': ok({ ok: true, today }) })
+    expect(await b.today()).toEqual(today)
+    expect(reqs.at(-1)).toMatchObject({ key: 'GET /m/api/today' })
+    const bad = harness({ 'GET /m/api/today': ok({ ok: false, error: 'today_not_wired' }, 503) })
+    await expect(bad.b.today()).rejects.toBeTruthy()
+  })
 })

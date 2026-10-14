@@ -8,6 +8,7 @@ import { Client } from '@modelcontextprotocol/sdk/client/index.js'
 import { InMemoryTransport } from '@modelcontextprotocol/sdk/inMemory.js'
 import { registerDaemonTools } from './tools-daemon'
 import { InternalApiError, type InternalApiClient } from './client'
+import { buildOverseerToday } from '../../core/overseer-today'
 
 async function harness(respond: (method: string, path: string) => unknown) {
   const calls: string[] = []
@@ -49,6 +50,22 @@ describe('terminal_sessions', () => {
     const h = await harness(() => ({ ok: true, sessions: Array.from({ length: 12 }, (_, i) => row(i)) }))
     expect(await h.call()).toContain('(还有 4 个没列出)')
     expect(await h.call({ limit: 3 })).toContain('(还有 9 个没列出)')
+  })
+
+  it('today_digest:读 GET /v1/overseer/today,回与微信「日报」同样的纯文本;报错 ⇒ 结构化错误', async () => {
+    const today = buildOverseerToday({
+      now, attention: [], tasks: [],
+      terminal: [row(0, { source: 'claude', status: 'waiting', last_summary: null, pending: { tool: 'Bash', summary: 'npm publish', since: now - 60_000, hash: 'k3x9z', reply_code: '07' } })] as never,
+    })
+    const h = await harness(() => ({ ok: true, today }))
+    expect((await h.mcp.listTools()).tools.map(t => t.name)).toContain('today_digest')
+    const res = await h.mcp.callTool({ name: 'today_digest', arguments: {} }) as { content: Array<{ text: string }> }
+    expect(h.calls).toEqual(['GET /v1/overseer/today'])
+    expect(res.content[0]!.text).toContain('1 件等你')
+    expect(res.content[0]!.text).toContain('回「y 07」/「n 07」')
+    const bad = await harness(() => { throw new InternalApiError('not wired', 503, '/v1/overseer/today', { error: 'overseer_today_not_wired' }) })
+    const err = await bad.mcp.callTool({ name: 'today_digest', arguments: {} }) as { content: Array<{ text: string }> }
+    expect(JSON.parse(err.content[0]!.text).error).toContain('503')
   })
 
   it('daemon 报错 ⇒ 结构化错误,不抛', async () => {

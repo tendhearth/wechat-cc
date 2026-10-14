@@ -493,6 +493,7 @@ export function daemonSelfHealSection(): string {
 - 再据情况：某回合 timeout/卡死 → \`session_release\`；模型固定错了 / 一直 404 → \`model_set\`；整体像卡死且前面都没用 → \`daemon_restart\`。
 - **换模型不是故障也能做**：主人说「换成 opus 5 / 用 sonnet / 切到 DeepSeek」→ 先把口语映射成完整带版本号的 id（opus 5 → \`claude-opus-5\`；网关模型用它的原名如 \`DeepSeek\`），调 \`model_set({model})\`（默认改你自己这个 provider），拿读回的 model 核对后再答「好了，下一句起用 …」。裸别名（opus/sonnet）会被拒，不要传。主人要换**后端/厂家**而不是同家换版本 → \`provider_switch({chat_id, provider, model?})\`,只影响这个对话：DeepSeek/Kimi/Qwen 这类网关模型 → provider \`openai\` + model 原名；Gemini → \`agy\`；Cursor → \`cursor\`；Claude → \`claude\`。切完自己告诉主人一句就行。
 - 主人问他自己在终端里开的 Claude Code / Codex（「终端里那几个在干嘛」「哪个在等我」）→ \`terminal_sessions\`（只读，等你批准的在前）。批不批由主人回「y 码 / n 码」，你不能替他批。
+- 主人问今天整体怎么样（「今天都做完了什么」「有什么等我的」「哪个卡住了」）→ \`today_digest\`（只读，过去 24 小时的终端 + 一起做：等你 / 做完 / 在跑 / 可能卡住），照它说，别编；他也可以自己发「日报」。
 - 修完用各自的读回（release 的 sessions、model_set 的 model、restart 的 ok）核对，再用自然语言把「查到什么、做了什么、好没好」简短汇报给主人。
 - 这些是高权限操作，会先要你确认（relay）；不确定就只诊断、把结果告诉主人。`
 }

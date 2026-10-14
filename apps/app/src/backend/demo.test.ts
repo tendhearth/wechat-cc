@@ -382,3 +382,15 @@ describe('演示后端:终端里的会话(2026-10-14)', () => {
     } finally { vi.useRealTimers() }
   })
 })
+
+describe('演示后端:今天(2026-10-14)', () => {
+  it('过真 schema;终端那条等你批准算进「等你」,歇着的算「做完」;数字与列表一致', async () => {
+    const b = makeDemoBackend()
+    const today = await b.today()
+    expect(PHONE_API_SCHEMAS['GET /m/api/today']!.safeParse({ ok: true, today }).success).toBe(true)
+    expect(today.needsYou.some(n => n.source === 'terminal' && n.replyRef === 'dm0a1')).toBe(true)
+    expect(today.done.some(d => d.source === 'terminal' && d.project === 'api-server')).toBe(true)
+    expect(today.counts).toEqual({ needsYou: today.needsYou.length, done: today.done.length, running: today.running.length, stuck: today.stuck.length })
+    expect(today.unavailable).toEqual([])
+  })
+})

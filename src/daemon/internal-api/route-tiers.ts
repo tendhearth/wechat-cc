@@ -144,6 +144,8 @@ export const ROUTE_MIN_TIER: Record<string, UserTier> = {
   'GET /v1/cli/permission': 'trusted',
   // 终端会话登记处(v76):列出主人所有终端会话的路径、最后一句、等批准的命令 —— 主人的私事,admin。
   'GET /v1/cli/sessions': 'admin',
+  // 「今天」一眼看完(2026-10-14):同上一份登记处 + 一起做的标题与待批 —— 主人的私事,admin。
+  'GET /v1/overseer/today': 'admin',
   'POST /v1/chat-prefs': 'trusted',
   // POST /v1/stickers writes an arbitrary sourcePath into the lib — same
   // trust class as send_file, so it's trusted not guest.

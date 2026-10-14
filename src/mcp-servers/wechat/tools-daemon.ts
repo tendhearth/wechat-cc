@@ -11,6 +11,7 @@ import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js'
 import type { InternalApiClient } from './client'
 import { passthroughErrorResult } from './tool-helpers'
 import { formatCliSessionDigest, type CliDigestView } from '../../core/cli-session-digest'
+import { formatOverseerToday, type OverseerToday } from '../../core/overseer-today'
 
 /** 本会话的 provider id —— daemon 在 spawn wechat-mcp 子进程时写进 env
  *  (mcp-specs.ts participantTag)。model_get/model_set 默认作用于它,这样
@@ -95,6 +96,25 @@ export function registerDaemonTools(server: McpServer, client: InternalApiClient
         return { content: [{ type: 'text', text }] }
       } catch (err) {
         return passthroughErrorResult(err, 'terminal_sessions')
+      }
+    },
+  )
+
+  // 「今天」一眼看完(2026-10-14):与微信「日报」同一份数据、同一套措辞。只读、确定性(不叫模型)。
+  server.registerTool(
+    'today_digest',
+    {
+      title: 'Today digest',
+      description: '【管理员】主人所有编码 agent 过去 24 小时的一眼看完：终端里的 Claude Code / Codex + CC 自己「一起做」的事，分成等你（附微信里怎么回）/ 做完 / 在跑 / 可能卡住（失败、中断、30 分钟没动静）。主人问「今天都做完了什么」「有什么等我的」「哪个卡住了」时用。只读：你不能替主人批权限。',
+      inputSchema: {},
+    },
+    async () => {
+      try {
+        const r = await client.request<{ ok?: boolean; today?: OverseerToday }>('GET', '/v1/overseer/today')
+        if (!r?.today) return { content: [{ type: 'text', text: '现在读不到今天的情况。' }], isError: true }
+        return { content: [{ type: 'text', text: formatOverseerToday(r.today, { now: Date.now() }) }] }
+      } catch (err) {
+        return passthroughErrorResult(err, 'today_digest')
       }
     },
   )
