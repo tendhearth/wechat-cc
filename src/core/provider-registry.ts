@@ -16,6 +16,7 @@ import type { WorkbenchExecutorCapabilities } from './workbench/executor-capabil
 import type { ProviderId } from './conversation'
 import { hasAuthCode } from '../lib/auth-failure'
 import { isAuthErrorCode, providerErrorCodeOf } from '../lib/provider-error-code'
+import { isConnectFailure } from '../lib/net-errors'
 import { assertCallAllowed, decideCall, isNetworkUnprotectedError, NetworkUnprotectedError, sessionCallTarget, unprotectedMessage, unresolvedTarget, type CallTarget, type NetworkGate } from '../lib/network-gate'
 
 /**
@@ -134,6 +135,8 @@ function guardRuntime(inner: AgentWorkbenchRuntime, gate: NetworkGate, target: (
   }
 }
 
+export interface CheapEvalHealth { consecutiveFailures: number; lastError: string | null; lastFailAt: number | null; lastOkAt: number | null }
+
 export interface ProviderRegistration {
   /** Explicitly opted-in task protocol; a normal chat provider is not sufficient. */
   workbench?: WorkbenchExecutorCapabilities
@@ -165,6 +168,12 @@ export interface ProviderRegistry {
    * Anthropic's haiku to OpenAI's mini purely from interface metadata).
    */
   getCheapEval(): CheapEval | null
+  /**
+   * 后台判断(getCheapEval 交出去的那些调用)最近的成败。只数**真失败**:网络没受保护、连不上不算 ——
+   * 那两样「CC 现在怎么样」里已经有网络守护 / 微信两行在说。2026-10-13 gemini-3.7 下线,后台判断
+   * 从 11:25 起全挂,只在日志里;这里让总览看得见。
+   */
+  cheapEvalHealth?(): CheapEvalHealth
   /**
    * Resolve the STRONG one-shot eval of a SPECIFIC provider (the default
    * provider, for the /chat verdict) — unlike getCheapEval, no cross-provider
@@ -251,6 +260,52 @@ export function createProviderRegistry(opts?: {
 }): ProviderRegistry {
   const now = opts?.now ?? Date.now
   const entries = new Map<ProviderId, { provider: AgentProvider; opts: ProviderRegistration }>()
+  // 显式指定优先 — 见 opts.cheapEvalProvider 文档。
+  function resolveCheapEval(): CheapEval | null {
+    // 可以是 getter(bootstrap 传 mtime 缓存的 config 读法),这样 /set cheap
+    // 改完下一次评估就生效,不用重启。
+    const pinnedId = readPinnedId()
+    if (pinnedId) {
+      const pinned = entries.get(pinnedId as ProviderId)?.provider.cheapEval
+      if (pinned) return pinned
+      opts?.log?.(`cheap_eval_provider=${pinnedId} 未注册或无 cheapEval — 回落偏好序`)
+      // 钉的 provider 此刻没注册(2026-10-04:开机 `--version` 探测一时失败、正在后台
+      // 退避重探)。很多调用方在开机时就把这里返回的函数缓存住了(coordinator 的
+      // haikuEval、social 的闸门 …),所以不能把「回落」焊死:返回一个**按调用现取**的
+      // 派发器 —— 钉的那家晚注册上的那一刻起,每一次评估都回到它。
+      const fallback = resolveUnpinned()
+      if (!fallback) return null
+      let returned = false
+      return async (prompt: string) => {
+        const id = readPinnedId()
+        const live = id ? entries.get(id as ProviderId)?.provider.cheapEval : undefined
+        if (live) {
+          if (!returned) { returned = true; opts?.log?.(`cheap_eval_provider=${id} 已注册 — 后台评估回到它`) }
+          return live(prompt)
+        }
+        return (resolveUnpinned() ?? fallback)(prompt)
+      }
+    }
+    return resolveUnpinned()
+  }
+
+  const evalHealth: CheapEvalHealth = { consecutiveFailures: 0, lastError: null, lastFailAt: null, lastOkAt: null }
+  const tracked = (fn: CheapEval): CheapEval => async (prompt: string) => {
+    try {
+      const out = await fn(prompt)
+      evalHealth.consecutiveFailures = 0
+      evalHealth.lastOkAt = Date.now()
+      return out
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : String(e)
+      if (!isNetworkUnprotectedError(e) && providerErrorCodeOf(e) !== 'network' && !isConnectFailure(msg)) {
+        evalHealth.consecutiveFailures++
+        evalHealth.lastError = msg.slice(0, 200)
+        evalHealth.lastFailAt = Date.now()
+      }
+      throw e
+    }
+  }
   // cheapEval failover state — per-registry (= per-daemon-lifetime), never persisted.
   const cheapEvalCooldownUntil = new Map<ProviderId, number>()
   const networkGate = opts?.networkGate
@@ -362,33 +417,12 @@ export function createProviderRegistry(opts?: {
     list() {
       return Array.from(entries.keys())
     },
+    cheapEvalHealth() {
+      return { ...evalHealth }
+    },
     getCheapEval() {
-      // 显式指定优先 — 见 opts.cheapEvalProvider 文档。
-      // 可以是 getter(bootstrap 传 mtime 缓存的 config 读法),这样 /set cheap
-      // 改完下一次评估就生效,不用重启。
-      const pinnedId = readPinnedId()
-      if (pinnedId) {
-        const pinned = entries.get(pinnedId as ProviderId)?.provider.cheapEval
-        if (pinned) return pinned
-        opts?.log?.(`cheap_eval_provider=${pinnedId} 未注册或无 cheapEval — 回落偏好序`)
-        // 钉的 provider 此刻没注册(2026-10-04:开机 `--version` 探测一时失败、正在后台
-        // 退避重探)。很多调用方在开机时就把这里返回的函数缓存住了(coordinator 的
-        // haikuEval、social 的闸门 …),所以不能把「回落」焊死:返回一个**按调用现取**的
-        // 派发器 —— 钉的那家晚注册上的那一刻起,每一次评估都回到它。
-        const fallback = resolveUnpinned()
-        if (!fallback) return null
-        let returned = false
-        return async (prompt: string) => {
-          const id = readPinnedId()
-          const live = id ? entries.get(id as ProviderId)?.provider.cheapEval : undefined
-          if (live) {
-            if (!returned) { returned = true; opts?.log?.(`cheap_eval_provider=${id} 已注册 — 后台评估回到它`) }
-            return live(prompt)
-          }
-          return (resolveUnpinned() ?? fallback)(prompt)
-        }
-      }
-      return resolveUnpinned()
+      const fn = resolveCheapEval()
+      return fn ? tracked(fn) : null
     },
     getStrongEval(id) {
       return entries.get(id)?.provider.strongEval ?? null

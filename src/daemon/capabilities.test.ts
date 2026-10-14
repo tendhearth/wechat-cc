@@ -46,6 +46,17 @@ describe('buildCapabilities (2026-10-06)', () => {
     expect(by.phone).toMatchObject({ state: 'off' })
     expect(worstCapability(rows)?.state).toBe('fallback')
   })
+  it('owner WeChat push window closed (errcode=-2) asks the owner to reply in WeChat; expired login still wins', () => {
+    const closed = buildCapabilities(base({ wechat: { outbound: 'ok', expired: 0, ownerWindowClosedSince: '2026-10-14T02:05:21Z' } })).find(r => r.id === 'wechat')
+    expect(closed).toMatchObject({ state: 'needs_you', code: 'wechat.window_closed', action: { where: 'wechat' } })
+    expect(buildCapabilities(base({ wechat: { outbound: 'ok', expired: 1, ownerWindowClosedSince: '2026-10-14T02:05:21Z' } })).find(r => r.id === 'wechat')?.code).toBe('wechat.expired')
+  })
+  it('background checks show up only after 3 failures in a row, with the raw error in detail', () => {
+    expect(buildCapabilities(base({ background: { failures: 2, lastError: 'x' } })).find(r => r.id === 'background')).toBeUndefined()
+    const row = buildCapabilities(base({ background: { failures: 5, lastError: 'invalid model selection' } })).find(r => r.id === 'background')
+    expect(row).toMatchObject({ state: 'fallback', code: 'background.failing', params: { n: 5 }, detail: 'invalid model selection' })
+    expect(row!.reason).not.toContain('invalid model')
+  })
   it('an unregistered brain with no retry needs the owner', () => {
     expect(buildCapabilities(base({ brain: { provider: 'cursor', name: 'Cursor', registered: false, retrying: false } })).find(r => r.id === 'brain')).toMatchObject({ state: 'needs_you', action: { where: 'settings' } })
   })
