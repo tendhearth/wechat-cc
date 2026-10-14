@@ -228,6 +228,23 @@ describe('makeIlinkAdapter (composed)', () => {
     }
   })
 
+  it('askUser keepOnUndelivered:卡片没送到也不作废码 —— 别的面(手机)还能拍板', async () => {
+    vi.useFakeTimers()
+    try {
+      const a = makeIlinkAdapter({ stateDir: newStateDir(), accounts: [acct], ...newAdapterDeps() })
+      const p = a.askUser('chat-1', 'test', 'kee12', 600_000, { keepOnUndelivered: true })
+      let settled: string | null = null
+      void p.then(d => { settled = d })
+      await vi.advanceTimersByTimeAsync(100)
+      expect(settled).toBeNull()
+      expect(a.listPendingPermissions().map(x => x.hash)).toContain('kee12')
+      expect(a.resolvePermission('kee12', 'allow')).toBe(true)
+      await expect(p).resolves.toBe('allow')
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
   it('projects.list() returns empty array when projects.json missing', () => {
     const a = makeIlinkAdapter({ stateDir: newStateDir(), accounts: [acct], ...newAdapterDeps() })
     expect(a.projects.list()).toEqual([])

@@ -92,7 +92,11 @@ export interface IlinkAdapter {
   projects: WechatProjectsDep
   voice: WechatVoiceDep
   companion: WechatCompanionDep
-  askUser(chatId: string, prompt: string, hash: string, timeoutMs: number): Promise<'allow' | 'deny' | 'timeout' | 'undelivered'>
+  /**
+   * 发拍板卡到 chatId 并等 y/n。卡片没送到(errcode=-2 等)默认立刻 resolve 'undelivered'(没人能回,别死等);
+   * `keepOnUndelivered` ⇒ 条目留在登记处等到点 —— 调用方另有面(手机 app 推送)能拍板时用。
+   */
+  askUser(chatId: string, prompt: string, hash: string, timeoutMs: number, opts?: { keepOnUndelivered?: boolean }): Promise<'allow' | 'deny' | 'timeout' | 'undelivered'>
   loadProjects(): { projects: Record<string, { path: string; last_active: number }>; current: string | null }
   lastActiveChatId(): string | null
   markChatActive(chatId: string, accountId?: string): void
@@ -440,7 +444,7 @@ export function makeIlinkAdapter(opts: {
     voice,
     companion,
 
-    async askUser(chatId, prompt, hash, timeoutMs) {
+    async askUser(chatId, prompt, hash, timeoutMs, opts) {
       // Register pending entry first so timeout can fire even if send fails.
       const resultPromise = pending.register(hash, timeoutMs, { chatId, prompt })
       // 怎么回的那一行在这里统一加,调用方(工具权限 / 终端 hook / gemini)只描述「要批什么」。
@@ -464,12 +468,15 @@ export function makeIlinkAdapter(opts: {
         (res) => {
           const err = (res as { error?: string } | null | undefined)?.error
           if (err) {
+            if (opts?.keepOnUndelivered) { log('PERMISSION', `approval prompt undelivered to ${chatId}: ${err} — kept pending for another surface (phone)`); return }
             log('PERMISSION', `approval prompt undelivered to ${chatId}: ${err} — failing fast (not waiting ${Math.round(timeoutMs / 1000)}s)`)
             pending.fail(hash)
           }
         },
         (err) => {
-          log('PERMISSION', `approval prompt send threw for ${chatId}: ${err instanceof Error ? err.message : String(err)} — failing fast`)
+          const why = err instanceof Error ? err.message : String(err)
+          if (opts?.keepOnUndelivered) { log('PERMISSION', `approval prompt send threw for ${chatId}: ${why} — kept pending for another surface (phone)`); return }
+          log('PERMISSION', `approval prompt send threw for ${chatId}: ${why} — failing fast`)
           pending.fail(hash)
         },
       )

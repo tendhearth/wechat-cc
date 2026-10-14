@@ -6,6 +6,8 @@ import { openPush, PushKind, PushPlaintext, type PushKindT, type PushPlaintextT,
 export type PushTarget = { kind: PushKindT; taskId?: string; requestId?: string }
 
 const TASK = /^[a-f0-9]{8}$/
+/** 终端会话的推送(daemon cli-app-push.ts):`cli:<session_id>`;只有前缀 ⇒ 终端列表。 */
+export const CLI_TASK = /^cli:[A-Za-z0-9_.:-]{0,56}$/
 const REQ = /^[A-Za-z0-9_.:-]{1,128}$/
 const obj = (x: unknown): Record<string, unknown> | null => (typeof x === 'object' && x !== null && !Array.isArray(x) ? (x as Record<string, unknown>) : null)
 const one = (v: string | string[] | undefined) => (Array.isArray(v) ? v[0] : v)
@@ -16,7 +18,7 @@ export function cleanTarget(raw: unknown): PushTarget | null {
   const kind = PushKind.safeParse(o.kind)
   if (!kind.success) return null
   const out: PushTarget = { kind: kind.data }
-  if (typeof o.taskId === 'string' && TASK.test(o.taskId)) out.taskId = o.taskId
+  if (typeof o.taskId === 'string' && (TASK.test(o.taskId) || CLI_TASK.test(o.taskId))) out.taskId = o.taskId
   if (typeof o.requestId === 'string' && REQ.test(o.requestId)) out.requestId = o.requestId
   return out
 }

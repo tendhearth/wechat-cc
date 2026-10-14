@@ -34,8 +34,11 @@ const RETAIN_MS = 5 * 60_000
 const HASH_ALPHABET = 'abcdefghijklmnopqrstuvwxyz0123456789'
 
 export interface CliPermissionRelayDeps {
-  /** = ilink.askUser 对主人 chat 的封装;没有主人 chat 时应 resolve 'undelivered'。 */
-  ask: (prompt: string, hash: string, timeoutMs: number) => Promise<'allow' | 'deny' | 'timeout' | 'undelivered'>
+  /**
+   * = ilink.askUser 对主人 chat 的封装(+ 手机 app 推送,见 daemon/cli-app-push.ts);谁都够不着时应
+   * resolve 'undelivered'。第四个参数是这条请求本身与算好的项目名,给推送的深链与正文用。
+   */
+  ask: (prompt: string, hash: string, timeoutMs: number, ctx: { req: CliPermissionRequest; projectName: string }) => Promise<'allow' | 'deny' | 'timeout' | 'undelivered'>
   presence: (sessionId: string, idleS?: number | null) => Promise<CliPresence>
   projectName: (cwd: string) => string
   /** 卡片发出去了 —— hub 据此压掉紧随其后的「等你批准」提醒。 */
@@ -113,7 +116,7 @@ export function makeCliPermissionRelay(deps: CliPermissionRelayDeps): CliPermiss
       const prompt = formatCliPermissionPrompt(req, projectName, hash, waitMs, deps.localMachine)
       deps.onRelayed(req.session_id)
       deps.log('CLI_PERMISSION', `asking wechat for ${req.source}/${req.session_id.slice(0, 6)} ${req.tool_name} hash=${hash}`)
-      deps.ask(prompt, hash, waitMs).then(
+      deps.ask(prompt, hash, waitMs, { req, projectName }).then(
         (answer) => { deps.log('CLI_PERMISSION', `${answer} hash=${hash}`); settle(hash, answer) },
         (err) => { deps.log('CLI_PERMISSION', `ask failed hash=${hash}: ${err instanceof Error ? err.message : String(err)}`); settle(hash, 'undelivered') },
       )

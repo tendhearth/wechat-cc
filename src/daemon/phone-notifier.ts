@@ -10,6 +10,30 @@ import type { PhoneEvents } from './phone-events'
 import type { ApprovalSummary } from './phone-topic-sources'
 import type { PhonePush, PushPayload } from './phone-push'
 
+/**
+ * 一条推送发给每台登记过的手机;正连着实时订阅的跳过(它自己看得见)。单台失败只记日志、不重试。
+ * 回 sent = 交给中继的台数、online = 因在线跳过的台数(调用方据此判断「手机够得着」)。
+ * phone-notifier 与终端会话推送(cli-app-push.ts)共用这一个。
+ */
+export function fanoutPush(deps: {
+  push: Pick<PhonePush, 'registered' | 'notify'>
+  subscribedDevices(): Set<string>
+  log: (tag: string, line: string) => void
+}, p: PushPayload): { sent: number; online: number } {
+  const online = deps.subscribedDevices()
+  let sent = 0, skipped = 0
+  for (const id of deps.push.registered()) {
+    if (online.has(id)) { skipped++; continue }
+    try {
+      if (deps.push.notify(id, p)) sent++
+      else deps.log('PUSH', `notify ${p.kind} → ${id} not sent (relay offline / unregistered)`)
+    } catch (e) {
+      deps.log('PUSH', `notify ${p.kind} → ${id} threw: ${e instanceof Error ? e.message : String(e)}`)
+    }
+  }
+  return { sent, online: skipped }
+}
+
 type AgentsSnap = { tasks: Array<{ id: string; title: string; phase: string }> }
 
 export function makePhoneNotifier(deps: {
@@ -23,17 +47,7 @@ export function makePhoneNotifier(deps: {
   let approvalsSeen: Set<string> | null = null
   let agentsPrev: Map<string, { title: string; phase: string }> | null = null
 
-  function fanout(p: PushPayload): void {
-    const online = deps.subscribedDevices()
-    for (const id of deps.push.registered()) {
-      if (online.has(id)) continue
-      try {
-        if (!deps.push.notify(id, p)) deps.log('PUSH', `notify ${p.kind} → ${id} not sent (relay offline / unregistered)`)
-      } catch (e) {
-        deps.log('PUSH', `notify ${p.kind} → ${id} threw: ${e instanceof Error ? e.message : String(e)}`)
-      }
-    }
-  }
+  const fanout = (p: PushPayload): void => { fanoutPush(deps, p) }
 
   // 一条事件失败不连累其余;整个 fanout(registered / subscribedDevices 抛)也不许冒出去。
   function safeFanout(mk: () => PushPayload | null): void {

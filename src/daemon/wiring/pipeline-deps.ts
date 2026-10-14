@@ -58,7 +58,7 @@ import { wrapCheapEvalWithAuthFailCheck } from '../bootstrap/wire-coordinator'
 import { makePhoneEventsWiring } from '../phone-topic-sources'
 import { resolveRemoteRelays, mergeOnlineDevices } from '../remote-relay-config'
 import { makePhonePush } from '../phone-push'
-import { makePhoneNotifier } from '../phone-notifier'
+import { fanoutPush, makePhoneNotifier } from '../phone-notifier'
 import { deviceIdOf } from '../device-store'
 import { makeCommandRouter } from './command-router'
 import { ensureChatAndNote, makeMatterActivity, wireMatterActivity } from '../matter-activity'
@@ -260,6 +260,8 @@ export interface BuildPipelineDepsResult {
   petTurn: PetTurnDep
   /** 每晚记忆整理运行时;main.ts 挂定时器并接到 internal-api。 */
   memoryNightly: import('../memory/nightly-runtime').MemoryNightlyRuntime
+  /** 手机 app 原生推送出口(中继 v2);没开 v2 ⇒ 调用回 null。终端会话推送用(main.ts 懒绑定)。 */
+  appPush: import('../cli-app-push').AppPushOutlet
 }
 
 export function buildPipelineDeps(opts: PipelineDepsOpts, refs: PipelineDepsRefs): BuildPipelineDepsResult {
@@ -587,6 +589,12 @@ export function buildPipelineDeps(opts: PipelineDepsOpts, refs: PipelineDepsRefs
     log: (tag, line) => log(tag, line),
   }) : null
 
+  // 两条隧道合并(Review Focus 4):同一台手机从哪条连着都算在线。隧道没建 ⇒ 空。
+  const onlineDevices = () => mergeOnlineDevices([legacyTunnel?.subscribedDeviceTokens() ?? [], v2Tunnel?.subscribedDeviceTokens() ?? []], deviceIdOf)
+  // 终端会话的手机推送出口(cli-app-push.ts):与工作台通知同一套 fanout(在线的跳过、失败只记日志)。
+  const appPush: import('../cli-app-push').AppPushOutlet = (p) =>
+    phonePush ? fanoutPush({ push: phonePush, subscribedDevices: onlineDevices, log: (tag, line) => log(tag, line) }, p) : null
+
   // 主人的 chat:设置面板与微信管家都要,算一次(评审 2026-09-16 去重)。
   const ownerChatId = () => resolveAdminChatId(loadAccess(), loadCompanionConfig(stateDir), null)
   // 「一件事」的活动时间(spec 2026-10-01 §3):微信入站与工作台事件节流地推 updated_at。随 daemon 常驻。
@@ -828,7 +836,7 @@ export function buildPipelineDeps(opts: PipelineDepsOpts, refs: PipelineDepsRefs
           events: phone.events,
           push: phonePush,
           // 两条隧道合并(Review Focus 4):同一台手机从哪条连着都算在线。
-          subscribedDevices: () => mergeOnlineDevices([legacyTunnel?.subscribedDeviceTokens() ?? [], v2Tunnel?.subscribedDeviceTokens() ?? []], deviceIdOf),
+          subscribedDevices: onlineDevices,
           taskInfo: (id) => { try { const d = wb.detail(id); return { title: d.task.title, status: d.task.status } } catch { return null } },
           log: (tag, line) => log(tag, line),
         })
@@ -1311,5 +1319,5 @@ export function buildPipelineDeps(opts: PipelineDepsOpts, refs: PipelineDepsRefs
     })
   }
 
-  return { pipelineDeps, companionConverse, petTurn, mattersService, memoryNightly, stopMatterActivity, settingsPanelLink: () => settingsPanel.linkUrl(), phoneChat, connections, phoneConnect: { link: (o) => settingsPanel.phoneLink(o), devices: () => settingsPanel.phoneDevices() } }
+  return { appPush, pipelineDeps, companionConverse, petTurn, mattersService, memoryNightly, stopMatterActivity, settingsPanelLink: () => settingsPanel.linkUrl(), phoneChat, connections, phoneConnect: { link: (o) => settingsPanel.phoneLink(o), devices: () => settingsPanel.phoneDevices() } }
 }
