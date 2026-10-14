@@ -192,3 +192,31 @@ it('守护(2026-10-03):终端 Codex 会话按 codex 自己的配置判,不看 OP
   rmSync(root,{recursive:true,force:true})
  }
 })
+
+describe('makeCliReplyCore 把接着跑的这一轮记进登记处(手机看得到,2026-10-14)', () => {
+  const s = { session_id: 'sess-1', source: 'claude' as const, cwd: '/w/p', lastSeenAt: 0, transcript_path: '/t.jsonl' }
+  it('开跑记 prompt、跑完记 stop + 回复;失败 / 超时也记一句', async () => {
+    const seen: { kind: string; text?: string; session_id: string; transcript_path?: string }[] = []
+    const observe = (ev: { kind: string; text?: string; session_id: string }) => { seen.push(ev) }
+    let release!: () => void
+    const run: Runner = () => new Promise(r => { release = () => r({ code: 0, stdout: '改好了', stderr: '', timedOut: false }) })
+    const core = makeCliReplyCore({ hub: { lookup: () => s, sessions: () => [s], observe }, run, log: () => {}, dangerously: false })
+    const p = core.resume(s, 'go')
+    // 开跑那一刻(同步)就记了 running —— 手机据此拒绝再说一句。
+    expect(seen).toEqual([expect.objectContaining({ kind: 'prompt', session_id: 'sess-1', transcript_path: '/t.jsonl' })])
+    await vi.waitFor(() => { expect(release).toBeTypeOf('function') })
+    release()
+    expect((await p).kind).toBe('ok')
+    expect(seen[1]).toMatchObject({ kind: 'stop', text: '改好了' })
+    const failed = makeCliReplyCore({ hub: { lookup: () => s, sessions: () => [s], observe }, run: async () => ({ code: 1, stdout: '', stderr: 'boom', timedOut: false }), log: () => {}, dangerously: false })
+    await failed.resume(s, 'go')
+    expect(seen.at(-1)!.text).toContain('没跑起来')
+    const timeout = makeCliReplyCore({ hub: { lookup: () => s, sessions: () => [s], observe }, run: async () => ({ code: null, stdout: '一半', stderr: '', timedOut: true }), log: () => {}, dangerously: false })
+    await timeout.resume(s, 'go')
+    expect(seen.at(-1)!.text).toContain('先停了')
+  })
+  it('observe 抛错不影响接着跑', async () => {
+    const core = makeCliReplyCore({ hub: { lookup: () => s, sessions: () => [s], observe: () => { throw new Error('db') } }, run: async () => ({ code: 0, stdout: 'ok', stderr: '', timedOut: false }), log: () => {}, dangerously: false })
+    expect((await core.resume(s, 'go')).kind).toBe('ok')
+  })
+})

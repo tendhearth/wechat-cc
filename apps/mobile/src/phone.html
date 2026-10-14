@@ -101,6 +101,11 @@
       <div id="m-say-materials"></div>
       <button id="m-send" class="done-btn" type="button" style="margin-top:6px">发送</button></div>
   </div>
+  <!-- 终端里的会话(2026-10-14):CC 外面开的 Claude Code / Codex,和交给 CC 的事并排。打开一件事时隐藏。 -->
+  <section id="terminal-root" aria-label="终端里的会话" hidden>
+    <h2 class="terminal-heading">终端里的会话</h2>
+    <div id="terminal-list" aria-live="polite"></div>
+  </section>
 </div>
 <div class="pane" id="p-sessions">
   <button id="sessions-back" class="sessions-text-action" type="button">← 一起做</button>
@@ -139,9 +144,10 @@
 <style>{{>you.css}}</style>
 <style>{{>markdown.css}}</style>
 <style>{{>sessions.css}}</style>
+<style>{{>terminal.css}}</style>
 <div id="toast"></div>
 <script>
 var T = {{TOKEN_JSON}}
 var REMOTE = {{REMOTE_JSON}}{{>boot.js}}{{>transport.js}}{{>nav.js}}{{>markdown.js}}{{>workbench.js}}
 {{>attachments.js}}{{>entry.js}}
-{{>presence.js}}{{>you.js}}{{>home.js}}{{>sessions.js}}</script></body></html>
+{{>presence.js}}{{>you.js}}{{>home.js}}{{>sessions.js}}{{>terminal.js}}</script></body></html>

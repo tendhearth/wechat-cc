@@ -144,3 +144,25 @@ describe('CliPermissionRelay → 终端会话登记处(v76)', () => {
     relay.dispose()
   })
 })
+
+describe('CliPermissionRelay.pendingHash / owns(手机拍板,2026-10-14)', () => {
+  beforeEach(() => { vi.useFakeTimers() })
+  afterEach(() => { vi.useRealTimers() })
+
+  it('开了码 ⇒ 按会话找得到、owns 认;拍完 / 在场没开码 ⇒ 都没有', async () => {
+    const { relay } = harness({ answer: 'allow', answerAfterMs: 1000 })
+    const r = await relay.open(req({ session_id: 'away-1' }))
+    const hash = (r as { hash: string }).hash
+    expect(relay.pendingHash('away-1')).toBe(hash)
+    expect(relay.owns(hash)).toBe(true)
+    expect(relay.owns('zzzzz')).toBe(false)
+    expect(relay.pendingHash('other')).toBeNull()
+    await vi.advanceTimersByTimeAsync(1000)
+    expect(relay.pendingHash('away-1')).toBeNull()
+    expect(relay.owns(hash)).toBe(false)
+    const here = harness({ presence: 'present' }).relay
+    await here.open(req({ session_id: 'here-1' }))
+    expect(here.pendingHash('here-1')).toBeNull()
+    relay.dispose(); here.dispose()
+  })
+})

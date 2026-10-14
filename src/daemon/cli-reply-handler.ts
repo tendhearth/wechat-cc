@@ -58,7 +58,12 @@ export const defaultRunner: Runner = (cmd, args, cwd, timeoutMs) => new Promise(
 export interface CliReplyCoreDeps {
   executionConflict?:(s:CliSessionInfo)=>boolean
   reserveExecution?:(s:CliSessionInfo)=>(closed:boolean)=>void
-  hub: Pick<CliEventHub, 'lookup' | 'sessions'>
+  /**
+   * observe(可选):接着跑的这一轮也记进终端会话登记处 —— 开跑记 running、跑完记 idle + 最后一句
+   * (`claude -p --resume` 继承 WECHAT_CC_DAEMON_CHILD=1,它自己的 hooks 不报)。手机据此看到「在跑」
+   * 和这轮的结果,也据此拒绝在跑时再说一句。缺席(老测试)⇒ 不记。
+   */
+  hub: Pick<CliEventHub, 'lookup' | 'sessions'> & Partial<Pick<CliEventHub, 'observe'>>
   run?: Runner
   holdBusy?: (label: string) => () => void
   log: (tag: string, line: string) => void
@@ -98,32 +103,40 @@ export function makeCliReplyCore(deps: CliReplyCoreDeps): CliReplyCore {
       catch (err) { return { ok: false, error: `读不到记录:${err instanceof Error ? err.message : String(err)}` } }
     },
     async resume(s, text) {
-      // 守护 v2:按这条终端会话的来源分类(claude 看 ANTHROPIC_BASE_URL;codex 看它自己的配置层 ——
-      // CODEX_HOME/config.toml + 这个目录的项目层,codex 不认 OPENAI_BASE_URL);需要保护且网络不安全才不起 CLI。
-      if (deps.networkGate) {
-        const target = s.source === 'codex'
-          ? codexCallTarget({ model: null, purpose: 'turn' }, { env: process.env, cwd: s.cwd })
-          : { provider: s.source, purpose: 'turn' as const }
-        const d = await decideCall(deps.networkGate, target)
-        if (!d.allowed) { deps.log('CLI_REPLY', `resume ${s.source}/${s.session_id.slice(0, 6)} refused — network unprotected [${d.verdict!.source}]`); return { kind: 'failed', text: unprotectedMessage(d.verdict!, d.cls.label) } }
-      }
-      if(deps.executionConflict?.(s))return{kind:'failed',text:'这条会话或文件夹已由 CC 工作台管理，请在那里继续。'}
-      let settle:((closed:boolean)=>void)|undefined,closed=false
-      try{settle=deps.reserveExecution?.(s)}catch{return{kind:'failed',text:'这个文件夹有另一项任务正在执行，请稍后再试。'}}
-      const { cmd, args } = resumeCommand(s.source, s.session_id, text, deps.dangerously)
-      const release = deps.holdBusy?.(`cli-resume:${s.session_id.slice(0, 6)}`) ?? (() => {})
-      try {
-        deps.log('CLI_REPLY', `resume ${s.source}/${s.session_id.slice(0, 6)} in ${s.cwd}`)
-        const r = await run(cmd, args, s.cwd, RESUME_TIMEOUT_MS)
-        closed=r.closed===true
-        const out = r.stdout.trim()
-        if (r.timedOut) return { kind: 'timeout', text: out }
-        if (r.code !== 0 && !out) return { kind: 'failed', text: `exit ${r.code ?? '?'}:${r.stderr.trim().slice(0, 400) || '没有错误输出'}` }
-        return { kind: 'ok', text: out || '(没有输出)' }
-      } catch (err) {
-        return { kind: 'failed', text: err instanceof Error ? err.message : String(err) }
-      } finally { release();settle?.(closed) }
+      const ident = { source: s.source, session_id: s.session_id, cwd: s.cwd, ...(s.machine ? { machine: s.machine } : {}), ...(s.transcript_path ? { transcript_path: s.transcript_path } : {}), ...(s.origin_agent ? { origin_agent: s.origin_agent } : {}) }
+      const note = (ev: { kind: 'prompt' } | { kind: 'stop'; text: string }) => { try { deps.hub.observe?.({ ...ident, ...ev }) } catch { /* 登记处出错不影响接着跑 */ } }
+      note({ kind: 'prompt' })
+      const r = await resumeInner(s, text)
+      note({ kind: 'stop', text: r.kind === 'ok' ? r.text : r.kind === 'timeout' ? `跑了 ${Math.round(RESUME_TIMEOUT_MS / 60_000)} 分钟还没完,先停了。${r.text ? ` ${r.text}` : ''}` : `没跑起来(${r.text})` })
+      return r
     },
+  }
+  async function resumeInner(s: CliSessionInfo, text: string): Promise<ResumeOutcome> {
+    // 守护 v2:按这条终端会话的来源分类(claude 看 ANTHROPIC_BASE_URL;codex 看它自己的配置层 ——
+    // CODEX_HOME/config.toml + 这个目录的项目层,codex 不认 OPENAI_BASE_URL);需要保护且网络不安全才不起 CLI。
+    if (deps.networkGate) {
+      const target = s.source === 'codex'
+        ? codexCallTarget({ model: null, purpose: 'turn' }, { env: process.env, cwd: s.cwd })
+        : { provider: s.source, purpose: 'turn' as const }
+      const d = await decideCall(deps.networkGate, target)
+      if (!d.allowed) { deps.log('CLI_REPLY', `resume ${s.source}/${s.session_id.slice(0, 6)} refused — network unprotected [${d.verdict!.source}]`); return { kind: 'failed', text: unprotectedMessage(d.verdict!, d.cls.label) } }
+    }
+    if(deps.executionConflict?.(s))return{kind:'failed',text:'这条会话或文件夹已由 CC 工作台管理，请在那里继续。'}
+    let settle:((closed:boolean)=>void)|undefined,closed=false
+    try{settle=deps.reserveExecution?.(s)}catch{return{kind:'failed',text:'这个文件夹有另一项任务正在执行，请稍后再试。'}}
+    const { cmd, args } = resumeCommand(s.source, s.session_id, text, deps.dangerously)
+    const release = deps.holdBusy?.(`cli-resume:${s.session_id.slice(0, 6)}`) ?? (() => {})
+    try {
+      deps.log('CLI_REPLY', `resume ${s.source}/${s.session_id.slice(0, 6)} in ${s.cwd}`)
+      const r = await run(cmd, args, s.cwd, RESUME_TIMEOUT_MS)
+      closed=r.closed===true
+      const out = r.stdout.trim()
+      if (r.timedOut) return { kind: 'timeout', text: out }
+      if (r.code !== 0 && !out) return { kind: 'failed', text: `exit ${r.code ?? '?'}:${r.stderr.trim().slice(0, 400) || '没有错误输出'}` }
+      return { kind: 'ok', text: out || '(没有输出)' }
+    } catch (err) {
+      return { kind: 'failed', text: err instanceof Error ? err.message : String(err) }
+    } finally { release();settle?.(closed) }
   }
 }
 

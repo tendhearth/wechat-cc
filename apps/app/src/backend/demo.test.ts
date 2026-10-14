@@ -1,5 +1,5 @@
 import { describe, it, expect, vi } from 'vitest'
-import { Connections, NativeSessionPage, ChatPage, ChatJob, MatterTopic, Matter, MatterDetail, SessionContinue } from '@wechat-cc/protocol'
+import { Connections, NativeSessionPage, ChatPage, ChatJob, MatterTopic, Matter, MatterDetail, SessionContinue, PHONE_API_SCHEMAS } from '@wechat-cc/protocol'
 import { DEMO_CHAT_REPLY_MS, makeDemoBackend } from './demo'
 
 describe('演示后端', () => {
@@ -354,5 +354,31 @@ describe('演示后端 · 额度用完交给另一位(spec continue-sessions §7
     const b = makeDemoBackend()
     await expect(b.handoff({ id: 'f3a4b5c6', requestId: REQ, providerId: 'gemini' })).rejects.toMatchObject({ code: 'handoff_changed' })
     await expect(b.handoff({ id: 'e5f6a7b8', requestId: REQ, providerId: 'codex' })).rejects.toMatchObject({ code: 'handoff_changed' })
+  })
+})
+
+describe('演示后端:终端里的会话(2026-10-14)', () => {
+  it('一条等你批准(拍得了)、一条歇着;过 schema;允许 ⇒ 在跑 ⇒ 歇着并有回复;歇着的能说一句,在跑时说 ⇒ busy', async () => {
+    vi.useFakeTimers()
+    try {
+      const b = makeDemoBackend()
+      const list = await b.cliSessions()
+      expect(PHONE_API_SCHEMAS['GET /m/api/cli/sessions']!.safeParse({ ok: true, sessions: list }).success).toBe(true)
+      expect(list.map(s => s.status)).toEqual(['waiting', 'idle'])
+      const w = list[0]!
+      expect(w.pending?.actionable).toBe(true)
+      await b.cliPermission({ sessionId: w.session_id, hash: w.pending!.hash!, decision: 'allow' })
+      expect((await b.cliSessions()).find(s => s.session_id === w.session_id)!.status).toBe('running')
+      await expect(b.cliPermission({ sessionId: w.session_id, decision: 'allow' })).rejects.toMatchObject({ code: 'stale' })
+      await expect(b.cliSay(w.session_id, 'x')).rejects.toMatchObject({ code: 'busy' })
+      await vi.advanceTimersByTimeAsync(2000)
+      const done = (await b.cliSessions()).find(s => s.session_id === w.session_id)!
+      expect(done.status).toBe('idle')
+      await b.cliSay(w.session_id, 'next')
+      expect((await b.cliSessions()).find(s => s.session_id === w.session_id)!.status).toBe('running')
+      await expect(b.cliSay('nope', 'x')).rejects.toMatchObject({ code: 'not_found' })
+      b.reset()
+      expect((await b.cliSessions())[0]!.status).toBe('waiting')
+    } finally { vi.useRealTimers() }
   })
 })

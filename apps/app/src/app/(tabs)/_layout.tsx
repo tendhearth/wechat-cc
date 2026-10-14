@@ -6,8 +6,10 @@ import type { ApprovalItemT } from '../../backend/types'
 import { useBackendCtx } from '../../state/BackendProvider'
 import { useConnection, useTopic } from '../../state/hooks'
 import { useSession } from '../../state/session'
+import { useTerminalSessions } from '../../state/useTerminal'
 import { TabBar } from '../../ui/TabBar'
 import { waitingCount } from '../../view/now'
+import { terminalNeedsYou } from '../../view/terminal'
 
 export default function TabsLayout() {
   const lang = useLang()
@@ -18,7 +20,9 @@ export default function TabsLayout() {
   // 「此刻」旁边写几件事等你(2026-10-05,和桌面主导航一样):在「一起做」也看得到,不用另起横幅。
   // 够不着电脑时这份是旧的 ⇒ 不写数(此刻页会说「暂时不知道」)。
   const known = backend.mode === 'demo' || conn.state === 'online'
-  const waiting = waitingCount(approvals ?? [], known)
+  // 终端里等你批准、手机上拍得了的,也算一件(2026-10-14)。只读缓存,拉新交给看得见的页面。
+  const terminal = useTerminalSessions({ poll: false })
+  const waiting = waitingCount(approvals ?? [], known) + terminalNeedsYou(terminal.sessions, known).length
   // 首次打开(本次运行还没看过欢迎页)⇒ 先去欢迎页。标记只存内存,下一份计划落盘。
   if (!seenWelcome) return <Redirect href="/welcome" />
   return (

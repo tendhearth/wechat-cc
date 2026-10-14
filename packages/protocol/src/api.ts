@@ -412,13 +412,16 @@ export type NativeSessionRowT = z.infer<typeof NativeSessionRow>
  * 终端会话登记处(GET /m/api/cli/sessions,v76,2026-10-14):主人在 CC 外面开的 claude / codex 会话。
  * status 已折算:running / waiting 超过 30 分钟没事件 ⇒ idle + stale。waiting 在最前,其余按 last_event_at 倒序。
  * code = 微信「看 码」「@码」用的短码。手机口径只给目录名(project),不给完整路径。
+ * pending.hash / actionable(2026-10-14):中继真在微信里开了码(主人不在)⇒ 有 hash、actionable=true,
+ * 手机可经 POST /m/api/cli/permission 拍板;主人在场、终端自己在问 ⇒ hash=null、actionable=false。
+ * 老 daemon 不带这两个字段,客户端当作不可拍。
  */
 export const CliSessionRow = z.object({
   session_id: z.string(), code: z.string(), source: z.enum(['claude', 'codex']),
   status: z.enum(['running', 'waiting', 'idle', 'ended']), stale: z.boolean(),
   project: z.string(), machine: z.string().nullable(), last_summary: z.string().nullable(),
   last_event_at: z.number(), last_prompt_at: z.number().nullable(), created_at: z.number(),
-  pending: z.object({ tool: z.string(), summary: z.string().nullable(), since: z.number() }).nullable(),
+  pending: z.object({ tool: z.string(), summary: z.string().nullable(), since: z.number(), hash: z.string().nullable().optional(), actionable: z.boolean().optional() }).nullable(),
 })
 export type CliSessionRowT = z.infer<typeof CliSessionRow>
 export type NativeSessionPageT = z.infer<typeof NativeSessionPage>
@@ -473,6 +476,10 @@ export const PHONE_API_SCHEMAS: Readonly<Record<string, z.ZodTypeAny>> = {
   'GET /m/api/connections': z.union([z.object({ ok: z.literal(true) }).extend(Connections.shape), PhoneErrorResponse]),
   'GET /m/api/sessions': z.union([z.object({ ok: z.literal(true), items: z.array(NativeSessionRow), nextCursor: z.string().nullable() }), PhoneErrorResponse]),
   'GET /m/api/cli/sessions': z.union([z.object({ ok: z.literal(true), sessions: z.array(CliSessionRow) }), PhoneErrorResponse]),
+  // 错误码:not_found 404;cli_not_actionable(终端自己在问,没开码)/ cli_permission_stale(码已失效)409。
+  'POST /m/api/cli/permission': z.union([z.object({ ok: z.literal(true) }), PhoneErrorResponse]),
+  // 收下即回;结果成为这条会话的下一句 last_summary。错误码:cli_session_busy(在跑 / 在等批准)/ cli_session_ended / cli_session_remote(在别的电脑上)409,not_found 404。
+  'POST /m/api/cli/say': z.union([z.object({ ok: z.literal(true), accepted: z.literal(true) }), PhoneErrorResponse]),
   'GET /m/api/session': z.union([z.object({ ok: z.literal(true) }).extend(NativeSessionPage.shape), PhoneErrorResponse]),
   'GET /m/api/session/continue': z.union([z.object({ ok: z.literal(true) }).extend(SessionContinue.shape), PhoneErrorResponse]),
   'POST /m/api/session/continue': z.union([z.object({ ok: z.literal(true) }).extend(SessionContinueResult.shape), PhoneErrorResponse]),
