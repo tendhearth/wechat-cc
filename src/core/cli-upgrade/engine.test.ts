@@ -3,8 +3,8 @@
  * 升级器 / 退回都在临时目录里改链接。永远不碰主人真装的 claude / codex / cursor-agent / agy。
  * 假 CLI 是 `#!/bin/sh`,win32 跳过。
  */
-import { describe, it, expect, beforeEach, afterEach } from 'vitest'
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, readlinkSync, symlinkSync, unlinkSync, writeFileSync } from 'node:fs'
+import { describe, it, expect, beforeEach, afterEach, afterAll } from 'vitest'
+import { chmodSync, copyFileSync, existsSync, mkdirSync, mkdtempSync, readFileSync, readlinkSync, realpathSync, symlinkSync, unlinkSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { removeTempDir, writeWarmExecFixture } from '../../lib/test-temp'
@@ -19,27 +19,51 @@ const posix = process.platform !== 'win32'
 
 interface Fake { bin: string; ctl: string; setNext(v: string | null): void; failUpdate(on: boolean): void; calls(): string[]; current(): Promise<string | null> }
 
-function script(ctl: string, versionLine: string, switchCmd: string): string {
-  return `#!/bin/sh
-CTL='${ctl}'
+/**
+ * 假 CLI 一律是**同一个**通用脚本的副本(2026-10-13 提速):macOS 对新可执行文件首跑要做安全校验,内容各不相同的
+ * 脚本每个 0.4–1s,内容相同的副本只要 ~0.18s(按内容缓存)。以前每条用例每个版本都写一份内容不同的脚本,
+ * 整个文件 ~42s。每个副本的行为(版本行、控制目录、切换命令)写在 CONF_DIR 里,键是它的真实路径;
+ * 不放在假安装目录里,免得被布局检测当成一个「版本」。
+ * **不能用硬链接**:macOS 的 realpath() 对有多个硬链接的文件可能返回**另一个**链接的路径(按名字缓存挑一个),
+ * 布局检测和这里的配置键都会认错(#340 的写法,并发跑约 1/16 红)。
+ */
+const FAKE_DIR = posix ? realpathSync(mkdtempSync(join(tmpdir(), 'cc-fake-cli-'))) : ''
+const CONF_DIR = join(FAKE_DIR, 'conf')
+const BASE = join(FAKE_DIR, 'fake-cli')
+const confKey = (path: string) => realpathSync(path).replace(/\//g, '_')
+const shQuote = (v: string) => `'${v.replace(/'/g, `'\\''`)}'`
+if (posix) {
+  mkdirSync(CONF_DIR)
+  writeWarmExecFixture(BASE, `#!/bin/sh
+KEY=$(realpath "$0" | tr / _)
+. "${CONF_DIR}/$KEY"
 case "$1" in
-  --version) echo "${versionLine}"; exit 0;;
+  --version) echo "$VERSION_LINE"; exit 0;;
   update)
     echo update >> "$CTL/calls"
     if [ -f "$CTL/update_fail" ]; then echo "network down" >&2; exit 1; fi
     NEXT=$(cat "$CTL/next" 2>/dev/null)
     if [ -z "$NEXT" ]; then echo "already up to date"; exit 0; fi
-    ${switchCmd}
+    eval "$SWITCH"
     exit 0;;
   install)
     echo "install $2" >> "$CTL/calls"
     NEXT="$2"
-    ${switchCmd}
+    eval "$SWITCH"
     exit 0;;
 esac
 exit 2
-`
+`)
 }
+afterAll(() => { if (posix) removeTempDir(FAKE_DIR) })
+
+/** 在 path 放一个假 CLI(BASE 的副本),行为写进它的配置。$NEXT 在 switchCmd 里按字面留给脚本运行时展开。 */
+function fakeCli(path: string, ctl: string, versionLine: string, switchCmd: string): void {
+  copyFileSync(BASE, path); chmodSync(path, 0o755)
+  writeFileSync(join(CONF_DIR, confKey(path)), `VERSION_LINE=${shQuote(versionLine)}\nCTL=${shQuote(ctl)}\nSWITCH=${shQuote(switchCmd)}\n`)
+}
+/** 假 CLI 的配置跟着文件走(agy 升级器原地替换那个文件时,版本也要一起换)。 */
+const confCopyCmd = (from: string, to: string) => `cp "${CONF_DIR}/$(realpath "${from}" | tr / _)" "${CONF_DIR}/$(realpath "${to}" | tr / _)"`
 
 function fakeControls(ctl: string, bin: string, spec: CliSpec): Fake {
   return {
@@ -57,7 +81,7 @@ function fakeClaude(root: string, versions: string[], linked: string): Fake {
   const vers = join(root, 'home', '.local', 'share', 'claude', 'versions'); mkdirSync(vers, { recursive: true })
   const binDir = join(root, 'home', '.local', 'bin'); mkdirSync(binDir, { recursive: true })
   const link = join(binDir, 'claude')
-  for (const v of versions) writeWarmExecFixture(join(vers, v), script(ctl, `${v} (Claude Code)`, `ln -sfn "${vers}/$NEXT" "${link}"`))
+  for (const v of versions) fakeCli(join(vers, v), ctl, `${v} (Claude Code)`, `ln -sfn "${vers}/$NEXT" "${link}"`)
   symlinkSync(join(vers, linked), link)
   return fakeControls(ctl, link, CLI_SPECS.claude)
 }
@@ -70,7 +94,7 @@ function fakeCodex(root: string, versions: string[], linked: string): Fake {
   const cur = join(sa, 'current')
   for (const v of versions) {
     const d = join(rel, `${v}-aarch64-apple-darwin`, 'bin'); mkdirSync(d, { recursive: true })
-    writeWarmExecFixture(join(d, 'codex'), script(ctl, `codex-cli ${v}`, `ln -sfn "${rel}/$NEXT-aarch64-apple-darwin" "${cur}"`))
+    fakeCli(join(d, 'codex'), ctl, `codex-cli ${v}`, `ln -sfn "${rel}/$NEXT-aarch64-apple-darwin" "${cur}"`)
   }
   symlinkSync(join(rel, `${linked}-aarch64-apple-darwin`), cur)
   const binDir = join(root, 'home', '.local', 'bin'); mkdirSync(binDir, { recursive: true })
@@ -86,7 +110,7 @@ function fakeCursor(root: string, versions: string[], linked: string): Fake {
   const a = join(binDir, 'cursor-agent'), b = join(binDir, 'agent')
   for (const v of versions) {
     mkdirSync(join(vers, v), { recursive: true })
-    writeWarmExecFixture(join(vers, v, 'cursor-agent'), script(ctl, v, `ln -sfn "${vers}/$NEXT/cursor-agent" "${a}"; ln -sfn "${vers}/$NEXT/cursor-agent" "${b}"`))
+    fakeCli(join(vers, v, 'cursor-agent'), ctl, v, `ln -sfn "${vers}/$NEXT/cursor-agent" "${a}"; ln -sfn "${vers}/$NEXT/cursor-agent" "${b}"`)
   }
   symlinkSync(join(vers, linked, 'cursor-agent'), a)
   symlinkSync(join(vers, linked, 'cursor-agent'), b)
@@ -98,8 +122,10 @@ function fakeAgy(root: string, versions: string[], linked: string): Fake {
   const ctl = join(root, 'ctl'); mkdirSync(ctl, { recursive: true })
   const binDir = join(root, 'home', '.local', 'bin'); mkdirSync(binDir, { recursive: true })
   const bin = join(binDir, 'agy')
-  for (const v of versions) writeWarmExecFixture(join(ctl, `agy-${v}`), script(ctl, v, `cp "${ctl}/agy-$NEXT" "${bin}"`))
-  writeWarmExecFixture(bin, readFileSync(join(ctl, `agy-${linked}`), 'utf8'))
+  // 升级器原地替换:新版本文件复制到 bin,它的配置一起换过去
+  for (const v of versions) fakeCli(join(ctl, `agy-${v}`), ctl, v, `cp "${ctl}/agy-$NEXT" "${bin}"; ${confCopyCmd(`${ctl}/agy-$NEXT`, bin)}`)
+  copyFileSync(join(ctl, `agy-${linked}`), bin); chmodSync(bin, 0o755)
+  writeFileSync(join(CONF_DIR, confKey(bin)), readFileSync(join(CONF_DIR, confKey(join(ctl, `agy-${linked}`))), 'utf8'))
   return fakeControls(ctl, bin, CLI_SPECS.agy)
 }
 
@@ -422,6 +448,45 @@ describe.skipIf(!posix)('cli-upgrade engine with fake CLIs', { timeout: 60_000 }
     expect(r).toMatchObject({ result: 'rolled_back', from: '1.1.0', to: '1.0.0' })
     expect(await c.current()).toBe('1.0.0')
     expect(h.store.snapshot().claude.knownBad).toEqual(['1.1.0'])
+  })
+
+  it('an owed selftest that cannot run (CLI gone) is dropped and never starves the other CLIs (2026-10-10)', async () => {
+    const c = fakeClaude(join(root, 'c'), ['1.0.0', '1.1.0'], '1.0.0')
+    const x = fakeCodex(join(root, 'x'), ['0.1.0', '0.2.0'], '0.1.0')
+    const fakes: Partial<Record<CliId, Fake>> = { claude: c, codex: x }
+    const h = harness(fakes)
+    h.setLatest('claude', '1.1.0'); c.setNext('1.1.0')
+    h.verifyMode.mode = 'deferred'
+    const up = makeCliUpgrader(h.deps)
+    expect((await up.upgrade('claude', { source: 'scheduled' })).result).toBe('unverified')
+    h.verifyMode.mode = 'version'
+    // claude 被卸了;codex 有新版待升
+    delete fakes.claude
+    h.setLatest('codex', '0.2.0'); x.setNext('0.2.0')
+    await up.check('codex', 'manual')
+    h.clock.t += 31 * 60_000
+    await up.tick()
+    expect(h.store.snapshot().claude).toMatchObject({ rollbackTo: null })
+    await up.tick()
+    expect(await x.current()).toBe('0.2.0')
+  })
+
+  it('an upgrade that breaks --version marks the looked-up latest bad, so it is not retried every day (2026-10-10)', async () => {
+    const c = fakeClaude(root, ['1.0.0'], '1.0.0')
+    const vers = join(root, 'home', '.local', 'share', 'claude', 'versions')
+    writeWarmExecFixture(join(vers, '1.1.0'), '#!/bin/sh\nexit 3\n')
+    const h = harness({ claude: c })
+    h.setLatest('claude', '1.1.0'); c.setNext('1.1.0')
+    const up = makeCliUpgrader(h.deps)
+    await up.check('claude', 'scheduled')
+    expect((await up.upgrade('claude', { source: 'scheduled' })).result).toBe('rolled_back')
+    expect(await c.current()).toBe('1.0.0')
+    expect(h.store.snapshot().claude.knownBad).toEqual(['1.1.0'])
+    expect(h.notes).toHaveLength(1)
+    expect(h.notes[0]).toContain('1.1.0')
+    h.clock.day = '2026-10-05'
+    await up.check('claude', 'scheduled')
+    expect(h.store.snapshot().claude.pending).toBeNull()
   })
 
   it('a CLI that is not installed is reported, never touched', async () => {

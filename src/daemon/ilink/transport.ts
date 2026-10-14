@@ -120,6 +120,11 @@ export function makeTransport(ctx: IlinkContext, opts: TransportOpts = {}): Tran
         }
         return { expired: true }
       }
+      // 其余非零码(-6 鉴权失败、限流、服务端 ret:-1 …)以前落到下面被当成「成功的空轮询」:
+      // 服务端立刻回 ⇒ 循环不睡就再拉(风控),还记成连接健康、清掉过期标记。抛出去,
+      // 让轮询循环走指数退避 + recordFailure(no-retry-storm)。游标不动,恢复后照常续上。
+      const code = [resp.errcode, resp.ret].find(c => c !== undefined && c !== 0)
+      if (code !== undefined) throw new Error(`ilink/getupdates errcode=${code}: ${resp.errmsg ?? 'no errmsg'}`)
       return { updates: resp.msgs, sync_buf: resp.get_updates_buf, ...(resp.timed_out ? { timed_out: true } : {}) }
     },
 

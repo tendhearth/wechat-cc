@@ -19,7 +19,7 @@
 // keeps a little module-scoped state (selected chat, current view, whether
 // the user has unlocked private threads this session).
 
-import { escapeHtml } from "../view.js"
+import { escapeHtml, showToast } from "../view.js"
 import { renderWorkbenchMarkdown, renderWorkbenchUserText, captureUserSources, restoreUserSources } from "./workbench-markdown.js"
 import { formatRelativeTimeShort } from "./observations.js"
 import { icon } from "./icons.js"
@@ -843,7 +843,7 @@ async function exportMarkdown(deps) {
     messages = await fetchFullTimeline(deps, chatId)
   } catch (err) {
     console.error("dialogue export: timeline fetch failed", err)
-    alert(`导出失败：${err instanceof Error ? err.message : String(err)}`)
+    showToast(`导出失败：${err instanceof Error ? err.message : String(err)}`)
     if (exportBtn) exportBtn.disabled = false
     return
   }
@@ -867,7 +867,7 @@ async function exportMarkdown(deps) {
   try {
     if (/** @type {any} */ (window).__TAURI__?.core?.invoke) {
       const path = await deps.invoke("save_text_file", { filename, content: md })
-      alert(`已导出：${path}`)
+      showToast(`已导出：${path}`)
     } else {
       const blob = new Blob([md], { type: "text/markdown" })
       const url = URL.createObjectURL(blob)
@@ -879,7 +879,7 @@ async function exportMarkdown(deps) {
     }
   } catch (err) {
     console.error("dialogue export failed", err)
-    alert(`导出失败：${err instanceof Error ? err.message : String(err)}`)
+    showToast(`导出失败：${err instanceof Error ? err.message : String(err)}`)
   } finally {
     if (exportBtn) exportBtn.disabled = false
   }

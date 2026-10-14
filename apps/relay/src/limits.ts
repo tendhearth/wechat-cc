@@ -7,6 +7,8 @@ export const LIMITS = {
   dailyPushes: 500,
   dailyBytes: 1_000_000_000,
   loginTimeoutMs: 10_000,
+  /** 手机流开着、daemon 一直没回过一帧(握手没完成)多久关掉。挡「知道 id 的人开满 16 条空流把主人的手机挡在外面」。 */
+  phoneHandshakeMs: 15_000,
   maxPushRegistrations: 20,
   maxPendingLogins: 4,
 }
@@ -23,6 +25,7 @@ export function limitsFrom(env: Env): Limits {
     dailyPushes: num(env.RELAY_DAILY_PUSHES, LIMITS.dailyPushes),
     dailyBytes: num(env.RELAY_DAILY_BYTES, LIMITS.dailyBytes),
     loginTimeoutMs: num(env.RELAY_LOGIN_TIMEOUT_MS, LIMITS.loginTimeoutMs),
+    phoneHandshakeMs: num(env.RELAY_PHONE_HANDSHAKE_MS, LIMITS.phoneHandshakeMs),
   }
 }
 

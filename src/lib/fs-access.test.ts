@@ -51,6 +51,7 @@ describe('hasFullDiskAccess —— 不弹框的 FDA 探针', () => {
   it('提示里说清楚要「删掉再加回」—— 旧签名的勾光打开关不会刷新', () => {
     expect(FDA_MISSING_HINT).toContain('完全磁盘访问')
     expect(FDA_MISSING_HINT).toContain('删掉')
+    expect(FDA_MISSING_HINT).not.toContain('/Applications/') // 1.7.5 改名后路径可能是新名也可能保留旧名:只说「应用程序里的 Tendhearth CC」
   })
 })
 

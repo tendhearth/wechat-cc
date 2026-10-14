@@ -5,6 +5,7 @@ import { SafeAreaView } from 'react-native-safe-area-context'
 import type { MatterInputT } from '../../backend/types'
 import { t } from '../../i18n'
 import { useLang } from '../../i18n/useLang'
+import { Artifacts } from '../../ui/Artifacts'
 import { useBackendCtx } from '../../state/BackendProvider'
 import { useConnection, useQuery, useSubmit, useTopic } from '../../state/hooks'
 import { getDraft, setDraft } from '../../state/drafts'
@@ -29,7 +30,7 @@ import { nativeStartLines, providerName } from '../../view/continue'
 import { canSubmit } from '../../view/connection'
 import { HANDOFF_RECHECK, handoffBlock, handoffErrorDot, handoffErrorText, handoffSheetLines } from '../../view/handoff'
 import { uuid } from '../../net/uuid'
-import { progressView } from '../../view/progress'
+import { progressView, canStop } from '../../view/progress'
 import { inputRows } from '../../view/matter-input'
 
 const NO_INPUTS: readonly MatterInputT[] = []
@@ -64,10 +65,18 @@ export default function Matter() {
   const [failure, setFailure] = useState<{ text: string; dot: 'bad' | 'warn' | 'unknown' } | null>(null)
   const [inputNotice, setInputNotice] = useState<string | null>(null)
   const [openErrors, setOpenErrors] = useState<ReadonlySet<number>>(() => new Set())
+  // 停下这一轮(2026-10-06):点一下先「再点一次」(3 秒内),免得手滑停掉在跑的活;只停手机看到的那一轮(runId)。
+  const [stopArmed, setStopArmed] = useState(false)
+  const [stopping, setStopping] = useState(false)
+  const [stopNote, setStopNote] = useState<string | null>(null)
+  const [wtArmed, setWtArmed] = useState<'remove' | 'merge' | null>(null)
+  const [wtBusy, setWtBusy] = useState(false)
+  const [wtNote, setWtNote] = useState<string | null>(null)
+  useEffect(() => { if (!stopArmed) return; const tm = setTimeout(() => setStopArmed(false), 3000); return () => clearTimeout(tm) }, [stopArmed])
   const handoffReq = useRef('')
   const idRef = useRef(id)
   idRef.current = id
-  useEffect(() => { setSheet(false); setFailure(null); setInputNotice(null); setOpenErrors(new Set()) }, [id])
+  useEffect(() => { setSheet(false); setFailure(null); setInputNotice(null); setOpenErrors(new Set()); setStopArmed(false); setStopNote(null) }, [id])
   const { refresh: refreshDetail } = detail
   const { refresh: refreshInsight } = insight
   const { refresh: refreshChanges } = changes
@@ -103,6 +112,41 @@ export default function Matter() {
   const conv = conversationView(d.events)
   const hb = handoffBlock(d.quotaHandoff, lang, Date.now())
   const online = canSubmit(conn)
+  const stop = async () => {
+    const runId = d.runId
+    if (!runId || stopping) return
+    if (!stopArmed) { setStopArmed(true); setStopNote(null); return }
+    setStopArmed(false); setStopping(true)
+    const r = await submit(`stop:${id}`, () => backend.stop({ id, runId }))
+    setStopping(false)
+    if (r !== 'ok') setStopNote(t(lang, r !== 'busy' && r.error === 'input_stale' ? 'progress.stopStale' : 'progress.stopFailed'))
+    void refreshDetail()
+  }
+  // 独立工作区(2026-10-07):提交到分支 / 合回项目(10-08,只快进)/ 删除工作区;合回、删除都点两下。
+  const worktreeAct = async (action: 'commit' | 'remove' | 'merge' | 'reopen') => {
+    if (wtBusy) return
+    if ((action === 'remove' || action === 'merge') && wtArmed !== action) { setWtArmed(action); setWtNote(null); return }
+    setWtArmed(null); setWtBusy(true); setWtNote(null)
+    let mergedNow = true
+    const r = await submit(`worktree:${id}:${action}`, async () => { mergedNow = (await backend.worktree({ id, action })).merged !== false })
+    setWtBusy(false)
+    const err = r === 'ok' || r === 'busy' ? null : r.error
+    if (r === 'ok') setWtNote(t(lang, action === 'commit' ? 'progress.wtCommitted' : action === 'merge' ? (mergedNow ? 'progress.wtMerged' : 'progress.wtNothingToMerge') : action === 'reopen' ? 'progress.wtReopened' : 'progress.wtRemoved'))
+    else if (err === 'worktree_dirty') setWtNote(t(lang, 'progress.wtDirty'))
+    else if (err === 'worktree_uncommitted') setWtNote(t(lang, 'progress.wtUncommitted'))
+    else if (err === 'merge_manual') setWtNote(t(lang, 'progress.wtMergeManual'))
+    else if (err === 'project_busy') setWtNote(t(lang, 'progress.wtProjectBusy'))
+    else if (err === 'worktree_branch_missing') setWtNote(t(lang, 'progress.wtBranchMissing'))
+    else setWtNote(t(lang, r === 'busy' || err === 'busy' ? (action === 'remove' ? 'progress.wtBusyRemove' : 'progress.wtBusyCommit') : 'progress.wtFailed'))
+    void refreshDetail()
+  }
+  // 另做一份(2026-10-08):同样的要求、同一个项目、独立工作区,交给另一位执行者;最初那句要求在最近的记录里就带上,不在就留给主人写
+  const forkToAnother = (projectId: string, from: string) => {
+    const key = `fork:${id}`
+    const first = d.events.find(e => e.kind === 'user')?.text
+    if (first && !getDraft(key).trim()) setDraft(key, first)
+    router.push(`/compose?fork=${encodeURIComponent(id)}&project=${encodeURIComponent(projectId)}&exclude=${encodeURIComponent(from)}`)
+  }
   const openHandoff = () => { handoffReq.current = uuid(); setFailure(null); setSheet(true) }
   const confirmHandoff = async () => {
     const h = d.quotaHandoff
@@ -215,9 +259,30 @@ export default function Matter() {
 
         {inputReceipts.length ? <InputReceipts rows={inputReceipts} onRestore={restoreInput} /> : null}
         {inputNotice ? <Txt role="meta" tone="inkSoft" accessibilityLiveRegion="polite">{inputNotice}</Txt> : null}
+        {canStop(d) ? (
+          <Button kind="secondary" testID="progress-stop" label={t(lang, stopArmed ? 'progress.stopConfirm' : 'progress.stop')} onPress={() => void stop()} disabled={!online} busy={stopping} />
+        ) : null}
+        {stopNote ? <Txt testID="progress-stop-note" role="meta" tone="inkSoft" accessibilityLiveRegion="polite">{stopNote}</Txt> : null}
+        {d.task?.worktree ? (
+          <View testID="progress-worktree" style={{ gap: space.s }}>
+            <Txt role="meta" tone="inkSoft">{t(lang, d.task.worktree.removed ? 'progress.wtGone' : d.task.worktree.merged ? 'progress.wtOnMerged' : 'progress.wtOn', { branch: d.task.worktree.branch })}</Txt>
+            {d.task.worktree.removed ? <Button kind="secondary" testID="progress-wt-reopen" label={t(lang, 'progress.wtReopen')} onPress={() => void worktreeAct('reopen')} disabled={!online} busy={wtBusy} /> : null}
+            {!d.task.worktree.removed ? (
+              <View style={{ flexDirection: 'row', gap: space.s, flexWrap: 'wrap' }}>
+                <Button kind="secondary" testID="progress-wt-commit" label={t(lang, 'progress.wtCommit')} onPress={() => void worktreeAct('commit')} disabled={!online} busy={wtBusy} />
+                <Button kind="secondary" testID="progress-wt-merge" label={t(lang, wtArmed === 'merge' ? 'progress.wtMergeConfirm' : 'progress.wtMerge')} onPress={() => void worktreeAct('merge')} disabled={!online || wtBusy} />
+                <Button kind="secondary" testID="progress-wt-remove" label={t(lang, wtArmed === 'remove' ? 'progress.wtRemoveConfirm' : 'progress.wtRemove')} onPress={() => void worktreeAct('remove')} disabled={!online || wtBusy} />
+                {d.task.worktree.projectId ? <Button kind="secondary" testID="progress-wt-fork" label={t(lang, 'progress.wtFork')} onPress={() => forkToAnother(d.task!.worktree!.projectId!, d.task!.providerId)} /> : null}
+              </View>
+            ) : null}
+            {wtNote ? <Txt testID="progress-wt-note" role="meta" tone="inkSoft" accessibilityLiveRegion="polite">{wtNote}</Txt> : null}
+          </View>
+        ) : null}
         {v.pendingCount > 0 ? (
           <Button kind="primary" testID="progress-view-approval" label={t(lang, 'progress.viewApproval')} onPress={() => router.push(`/approval/${encodeURIComponent(d.task?.id ?? id)}`)} />
         ) : null}
+
+        {d.artifacts.length ? <Artifacts matterId={id} artifacts={d.artifacts} backend={backend} lang={lang} online={online} /> : null}
 
         <Sheet testID="progress-changes" title={t(lang, 'progress.viewChangesN', { n: v.changedFiles })}>
             {files.length === 0 ? <Txt role="meta" tone="inkSoft">{t(lang, 'progress.noChanges')}</Txt> : null}

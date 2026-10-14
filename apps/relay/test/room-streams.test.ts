@@ -1,7 +1,7 @@
 import { describe, it, expect } from 'vitest'
 import { env, runInDurableObject } from 'cloudflare:test'
 import { connectDaemon, connectPhone, newIdentity, openDaemonSocket } from './helpers'
-import type { Room } from '../src/room'
+import { expiredPhoneStreams, type PhoneAtt, type Room } from '../src/room'
 
 describe('房间:手机流', () => {
   it('daemon 不在线 ⇒ 手机收 daemon_offline 后被关', async () => {
@@ -182,5 +182,26 @@ describe('房间:手机流', () => {
     p.ws.send(JSON.stringify({ hs: 'still' }))
     expect(await d.next()).toMatchObject({ frame: { hs: 'still' } })
     expect(p.msgs).toEqual([])
+  })
+
+  // 2026-10-10 评审:只知道 id 的人开满 16 条手机流、一直不握手,就能把主人的手机挡在外面。
+  // daemon 回过一帧 = 握手完成;没完成的流到 phoneHandshakeMs 由闹钟关掉(纯函数判定,与 expiredLogins 同法)。
+  it('expiredPhoneStreams:只有没被拒、daemon 一帧没回过、到点了的流才算过期', () => {
+    const at = (o: Partial<PhoneAtt>): PhoneAtt => ({ role: 'phone', stream: 's', openedAt: 1000, ...o })
+    const stale = at({ stream: 'stale' })
+    const atts = [stale, at({ stream: 'ok', established: true }), at({ stream: 'rej', rejected: true }), at({ stream: 'young', openedAt: 9000 }), { role: 'phone', stream: 'legacy' } as PhoneAtt]
+    expect(expiredPhoneStreams(atts, 16_000, 15_000)).toEqual([stale])
+  })
+
+  it('daemon 往流里回过一帧 ⇒ 这条流标为握手完成,闹钟不会关它', async () => {
+    const d = await connectDaemon()
+    const p = await connectPhone(d.ident.id)
+    p.ws.send(JSON.stringify({ hs: 'pub' }))
+    const up = await d.next()
+    d.ws.send(JSON.stringify({ stream: up.stream, frame: { hs: 'dpub', v: 2 } }))
+    expect(await p.next()).toEqual({ hs: 'dpub', v: 2 })
+    const stub = env.ROOM.get(env.ROOM.idFromName(d.ident.id))
+    const atts = await runInDurableObject<Room, PhoneAtt[]>(stub, (_room, state) => state.getWebSockets('phone').map(w => w.deserializeAttachment() as PhoneAtt))
+    expect(atts.find(a => a.stream === up.stream)).toMatchObject({ established: true, openedAt: expect.any(Number) })
   })
 })

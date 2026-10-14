@@ -105,6 +105,24 @@ describe('transport getUpdatesForLoop — onAccountExpired', () => {
     expect(calls[0]?.reason).toMatch(/-14|expired|rebound/i)
   })
 
+  // 别的 errcode(-6 鉴权、限流、服务端 ret:-1)以前被当成「成功的空轮询」:没有退避、
+  // 立刻再拉,还记成连接健康、清掉过期标记。必须抛出去,让轮询循环走指数退避。
+  it.each([
+    [{ ret: -1, errcode: -6, errmsg: 'auth failed' }],
+    [{ ret: -1, errmsg: 'busy' }],
+    [{ errcode: 45009, errmsg: 'rate limited' }],
+  ])('throws on any other non-zero errcode/ret so the poll loop backs off: %j', async (resp) => {
+    vi.mocked(ilinkGetUpdates).mockResolvedValue(resp as never)
+    const transport = makeTransport(makeStubCtx(), {})
+    await expect(transport.getUpdatesForLoop('acct1', 'http://x', 'tok', 'cursor')).rejects.toThrow(/getupdates errcode=/)
+  })
+
+  it('a normal answer (ret 0 / no code) still returns messages and cursor', async () => {
+    vi.mocked(ilinkGetUpdates).mockResolvedValue({ ret: 0, msgs: [], get_updates_buf: 'next' } as never)
+    const transport = makeTransport(makeStubCtx(), {})
+    expect(await transport.getUpdatesForLoop('acct1', 'http://x', 'tok', 'cursor')).toEqual({ updates: [], sync_buf: 'next' })
+  })
+
   it('also handles ret=-14 (alternate wire field)', async () => {
     vi.mocked(ilinkGetUpdates).mockResolvedValue({ ret: -14, errmsg: 'session timeout' })
     const calls: Array<{ accountId: string; reason: string }> = []

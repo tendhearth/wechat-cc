@@ -41,6 +41,7 @@ export function parseGitReviewSnapshot(bytes: Buffer): GitReview | null {
     if (after !== undefined) file.afterSha256 = after
     if (diff !== undefined) file.diff = diff
     if (reason !== undefined) file.reason = reason
+    if (typeof entry.beforeExecutable === 'boolean') file.beforeExecutable = entry.beforeExecutable
     files.push(file)
   }
   return {

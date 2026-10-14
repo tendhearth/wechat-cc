@@ -118,15 +118,17 @@ describe('cli-reply-handler', () => {
 
 describe('defaultRunner(真起进程)', () => {
   it('收 stdout / exit code;到时限就掐掉并标 timedOut;命令不存在 → code null 带错误', async () => {
-    const ok = await defaultRunner('sh', ['-c', 'echo hi; exit 3'], process.cwd(), 5000)
+    // Windows runner 起一个 sh 偶尔就要 5s+(10-11 CI:5000ms 时限下 code null、stdout 空)。
+    // 正常那条给足 30s;超时那条的时限也放到 3s,得等 sh 先吐出 start。
+    const ok = await defaultRunner('sh', ['-c', 'echo hi; exit 3'], process.cwd(), 30_000)
     expect(ok).toMatchObject({ code: 3, stdout: 'hi\n', timedOut: false })
-    const slow = await defaultRunner('sh', ['-c', 'echo start; sleep 5'], process.cwd(), 300)
+    const slow = await defaultRunner('sh', ['-c', 'echo start; sleep 10'], process.cwd(), 3000)
     expect(slow.timedOut).toBe(true)
     expect(slow.stdout).toContain('start')
     const missing = await defaultRunner('definitely-not-a-command-xyz', [], process.cwd(), 1000)
     expect(missing.code).toBeNull()
     expect(missing.stderr).toMatch(/ENOENT|not found/)
-  })
+  }, 60_000)
 })
 
 describe('手侧 A2A 面(makeHandReplyExecutor)', () => {

@@ -167,7 +167,11 @@ function triageFailedRun(
   secondRun: boolean,
 ): { base: string; changedFiles: string[]; jobs: TriageReport['jobs'] } {
   const { jobs } = runJson<{ jobs: JobRow[] }>(deps, 'gh', ['run', 'view', String(runId), '--json', 'jobs'])
-  const failed = jobs.filter(j => j.conclusion === 'failure')
+  // 不只 'failure':timeout-minutes 到点是 timed_out,runner 丢了 / 并发组取消是 cancelled,
+  // 还有 startup_failure。以前只挑 'failure' ⇒ 这些红作业一条不剩 ⇒ verdictOf([]) = green,
+  // 而自改流水线只看 verdict(steps.ts),红 CI 就进了主人拍板。
+  const PASSING = new Set(['success', 'skipped', 'neutral'])
+  const failed = jobs.filter(j => j.conclusion !== null && j.conclusion !== undefined && !PASSING.has(j.conclusion))
 
   // 基线 = 这条分支上「上一次绿」的 headSha(且是本 SHA 的祖先)。找不到就退化
   // 成 <sha>~1 —— 比「什么都没动过」保守,后者会把真红误判成 flake。
@@ -194,6 +198,14 @@ function triageFailedRun(
 
   const ctx0: ClassifyCtx = { changedFiles: new Set(changedFiles), registry: deps.registry, secondRun }
   const out = failed.map(job => {
+    if (job.conclusion !== 'failure') {
+      // 超时 / 取消 / 起不来:没有测试失败可分类,也不该当 flake 自动重跑 —— 判不出来就是 unknown(退 1)。
+      return {
+        name: job.name,
+        step: job.steps.find(s => s.conclusion && !PASSING.has(s.conclusion))?.name ?? null,
+        classified: [{ kind: 'unknown', failure: null, excerpt: `job conclusion=${job.conclusion}` }] as Classified[],
+      }
+    }
     // runner 卡死判定要看「别的构建作业都绿」—— 按作业算,不是按整次运行。
     const siblings = jobs.filter(j => j.name !== job.name && j.name.startsWith('build · '))
     const ctx: ClassifyCtx = { ...ctx0, siblingBuildsGreen: siblings.length > 0 && siblings.every(j => j.conclusion === 'success') }
@@ -224,6 +236,10 @@ function triageFailedRun(
     }
   })
 
+  // 运行是红的(才会走到这里),却一条红作业都没找到:绝不能落成「没有失败 ⇒ 绿」。
+  if (out.length === 0) {
+    return { base, changedFiles, jobs: [{ name: '(run)', step: null, classified: [{ kind: 'unknown', failure: null, excerpt: 'run did not succeed but no failed job was found' }] as Classified[] }] }
+  }
   return { base, changedFiles, jobs: out }
 }
 

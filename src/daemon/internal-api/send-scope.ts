@@ -68,6 +68,9 @@ export const SEND_SCOPED_ROUTES: Readonly<Record<string, (body: unknown) => Send
   'POST /v1/wechat/send_online_sticker_candidate': byChatId('chat_id'),
   // 不发消息,但改的是那个 chat 的表情偏好 —— 同样只许改自己的。
   'POST /v1/wechat/sticker_feedback': byChatId('chat_id'),
+  // 同上:改那个 chat 的显示名 / 主动关心档位与拆分 —— 以前豁免着,trusted 朋友的会话能改主人的。
+  'POST /v1/user/set_name': byChatId('chat_id'),
+  'POST /v1/chat-prefs': byChatId('chat_id'),
   // chat_id 决定页脚「发 PDF 到微信」推给谁。
   'POST /v1/share/page': byChatId('chat_id'),
   // 切那个 chat 的模式,并(非 quiet 时)往那个 chat 发一句「已切换」。

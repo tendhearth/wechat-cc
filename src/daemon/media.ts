@@ -32,6 +32,15 @@ export function encryptAesEcb(plaintext: Buffer, key: Buffer): Buffer {
   return Buffer.concat([cipher.update(plaintext), cipher.final()])
 }
 
+/**
+ * 入站附件在轮询循环里同步下载(onInbound 被 await):CDN 接了连接却不回 ⇒ 这个账号后面的
+ * 消息全卡住、心跳也停(锁会被当成死掉)。请求 + 读 body 共用这一个超时;到点 abort ⇒
+ * AbortError,materializeAttachments 的重试照常认它。
+ */
+export const CDN_DOWNLOAD_TIMEOUT_MS = 60_000
+/** 入站附件上限:整个 body 要读进内存再解密、再写盘(三份),不设上限就是随对方发多大占多大。 */
+export const MAX_INBOUND_MEDIA_BYTES = 100 * 1024 * 1024
+
 export async function downloadCdnMedia(media: CDNMedia, aesKeyHexOverride?: string): Promise<Buffer> {
   let url: string
   if (media.full_url) {
@@ -42,9 +51,23 @@ export async function downloadCdnMedia(media: CDNMedia, aesKeyHexOverride?: stri
     throw new Error('no download URL: need full_url or encrypt_query_param')
   }
 
-  const res = await fetch(url)
-  if (!res.ok) throw new Error(`CDN download ${res.status}: ${res.statusText}`)
-  const encrypted = Buffer.from(await res.arrayBuffer())
+  const ctrl = new AbortController()
+  const timer = setTimeout(() => ctrl.abort(), CDN_DOWNLOAD_TIMEOUT_MS)
+  let encrypted: Buffer
+  try {
+    const res = await fetch(url, { signal: ctrl.signal })
+    if (!res.ok) throw new Error(`CDN download ${res.status}: ${res.statusText}`)
+    const declared = Number(res.headers?.get?.('content-length') ?? NaN)
+    if (Number.isFinite(declared) && declared > MAX_INBOUND_MEDIA_BYTES) {
+      ctrl.abort()
+      throw new Error(`CDN download too large: ${declared} bytes (cap ${MAX_INBOUND_MEDIA_BYTES})`)
+    }
+    encrypted = Buffer.from(await res.arrayBuffer())
+  } finally {
+    clearTimeout(timer)
+  }
+  // 没有 Content-Length(分块传输)时只能读完再查
+  if (encrypted.length > MAX_INBOUND_MEDIA_BYTES) throw new Error(`CDN download too large: ${encrypted.length} bytes (cap ${MAX_INBOUND_MEDIA_BYTES})`)
 
   const key = aesKeyHexOverride
     ? Buffer.from(aesKeyHexOverride, 'hex')
@@ -388,6 +411,14 @@ export async function buildVoiceItemFromWav(
   }
 }
 
+/**
+ * CDN 上传的整体时限:60s 起步,再按 256KB/s 的慢链路给够(50MB ≈ 4 分多钟)。
+ * 只是兜底 —— 没有它,CDN 接了连接却不回时 fetch 永远不结束,重试也轮不到。
+ */
+export function cdnUploadTimeoutMs(bytes: number): number {
+  return 60_000 + Math.ceil(bytes / (256 * 1024)) * 1000
+}
+
 export async function uploadToCdnOnce(params: {
   filePath: string; toUserId: string; baseUrl: string; token: string; mediaType: number
 }): Promise<{ downloadParam: string; aeskey: string; fileSize: number; fileSizeCiphertext: number }> {
@@ -413,14 +444,24 @@ export async function uploadToCdnOnce(params: {
   const ciphertext = encryptAesEcb(plaintext, aeskey)
   // NOTE: do NOT attach AbortSignal to this fetch. Bun appears to switch
   // the body encoding path when a signal is present, which the ilink CDN
-  // stores in a form the WeChat client can't decrypt. getuploadurl above
-  // already has API_TIMEOUT_MS (30s) via ilinkPost, and the retry wrapper
-  // below bounds total wall time, so a signal here is redundant anyway.
-  const cdnRes = await fetch(uploadUrl, {
+  // stores in a form the WeChat client can't decrypt. The retry wrapper
+  // below only retries after a call SETTLES, so a stalled CDN would hang
+  // forever — race a timer instead (same shape as logicalUpload); the
+  // orphaned fetch is left to finish or die on its own. AbortError name ⇒
+  // uploadToCdn's retry predicate treats it as transient.
+  const cdnFetch = fetch(uploadUrl, {
     method: 'POST',
     headers: { 'Content-Type': 'application/octet-stream' },
     body: new Uint8Array(ciphertext),
   })
+  cdnFetch.catch(() => {})
+  let timer: ReturnType<typeof setTimeout> | undefined
+  const cdnRes = await Promise.race([
+    cdnFetch,
+    new Promise<never>((_, reject) => {
+      timer = setTimeout(() => reject(new DOMException('CDN upload timed out', 'AbortError')), cdnUploadTimeoutMs(filesize))
+    }),
+  ]).finally(() => clearTimeout(timer))
   if (!cdnRes.ok) throw new Error(`CDN upload ${cdnRes.status}: ${await cdnRes.text()}`)
 
   const downloadParam = cdnRes.headers.get('x-encrypted-param')

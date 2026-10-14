@@ -46,6 +46,15 @@ describe('forbiddenPaths', () => {
 
   // tests 那道闸门跑的就是 package.json scripts 里的四条 —— 改得动它等于
   // 能把闸门换成橡皮图章。
+  // 2026-10-10 评审:闸门的定义不只在 package.json —— vitest 配置里一句 include: [] + passWithNoTests,
+  // 本地 tests 闸门和 CI(同一份配置)一起变绿;tsconfig / depcruise 配置同理;部署那一步跑的是 build-sidecar。
+  it('tests / typecheck / depcheck 闸门的配置与部署的构建脚本都在网里', () => {
+    const gates = ['vitest.config.ts', 'vitest.node.config.ts', 'vitest.setup.ts', 'tsconfig.json', '.dependency-cruiser.cjs',
+      'apps/mobile/tsconfig.json', 'apps/relay/tsconfig.json', 'apps/app/tsconfig.json', 'apps/desktop/scripts/build-sidecar.ts']
+    expect(forbiddenPaths(gates)).toEqual(gates)
+    expect(forbiddenPaths(['src/core/foo.test.ts', 'apps/desktop/src/main.js'])).toEqual([])
+  })
+
   it('package.json 在网里(它是 tests 闸门自己的定义)', () => {
     expect(forbiddenPaths(['package.json'])).toEqual(['package.json'])
     // 只认仓库根那一份:子包的 package.json 不在发版 / 闸门链路上。

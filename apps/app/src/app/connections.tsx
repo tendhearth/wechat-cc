@@ -68,6 +68,14 @@ export default function Connections() {
                 {q.syncedAt === undefined ? t(lang, 'links.unknown') : t(lang, 'links.staleAt', { time: formatSynced(q.syncedAt, Date.now(), lang) })}
               </Txt>
             ) : null}
+            {v.capabilities.length > 0 ? (
+              <>
+                {heading('links.capabilities')}
+                <View testID="connections-capabilities" style={{ borderTopWidth: 1, borderTopColor: c.hair }}>
+                  {v.capabilities.map(x => row(`connections-cap-${x.id}`, `cap:${x.id}`, x.dot, x.name, x.action ? `${x.label}\n${x.action}` : x.label))}
+                </View>
+              </>
+            ) : null}
             {heading('links.sources')}
             <View style={{ borderTopWidth: 1, borderTopColor: c.hair }}>
               {v.sources.map(s => row(`connections-source-${s.id}`, s.id, s.dot, s.name, s.label))}

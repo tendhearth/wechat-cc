@@ -38,7 +38,11 @@ location.hash.slice(1).split("&").forEach(function(kv){ var i = kv.indexOf("=");
 var ID = P.id, LINK_T = P.t, T = P.t, PATH = P.p || "/m"
 // 配对过的手机:设备令牌存在本域 localStorage(注入页写的),永不过期 ——
 // 优先于 hash 里可能已过期的 10 分钟短令牌。加主屏后重开因此总能进。
-try { var dt = localStorage.getItem("deviceToken"); if (dt) T = dt } catch (e) {}
+// 令牌绑在发它的那台电脑(中继 id)上(2026-10-10):中继是所有人共用的一个域,别人的配对链接
+// (#id=<他的电脑>)也能打开这个壳页 —— 只用、只删属于这台电脑的那枚。老手机存的令牌没记 id:照用,
+// 但别的链接说 auth_failed 时不删(打开一次成功后页面会补记 id)。
+var DT_ID = null
+try { var dt = localStorage.getItem("deviceToken"); DT_ID = localStorage.getItem("deviceTokenId"); if (dt && (!DT_ID || DT_ID === ID)) T = dt } catch (e) {}
 var msg = document.getElementById("msg")
 if (!ID || !T) { msg.textContent = "链接不完整,回微信跟 CC 再要一个" }
 
@@ -62,7 +66,7 @@ function viaTunnel() {
       clearTimeout(timer); try { ws.close() } catch (e) {}
       if (f.error === "auth_failed") {
         // 本域存的设备令牌不被认了(解除配对 / 换了电脑):丢掉它,用链接里的短令牌重来一次。
-        if (T !== LINK_T && LINK_T) { try { localStorage.removeItem("deviceToken") } catch (e) {}; T = LINK_T; viaTunnel(); return }
+        if (T !== LINK_T && LINK_T) { if (DT_ID === ID) { try { localStorage.removeItem("deviceToken"); localStorage.removeItem("deviceTokenId") } catch (e) {} } T = LINK_T; viaTunnel(); return }
         msg.textContent = "这个链接已经用过或过期了，回微信跟 CC 再要一个"; return
       }
       msg.textContent = f.error === "daemon_offline" ? "家里的 CC 不在线 — 电脑开着吗?" : ("连接出错:" + f.error); return

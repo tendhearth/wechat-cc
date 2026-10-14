@@ -585,7 +585,7 @@ describe('终端会话桥 /a2a/cli/* (spec 2026-09-09-cli-hook-push §6.5)', () 
     method: 'POST', headers: { authorization: `Bearer ${bearer}`, 'content-type': 'application/json' }, body: JSON.stringify(body),
   })
   it('没挂处理器 → 501;认证同 notify(缺 / 错 Bearer → 401);挂上后按路径分发', async () => {
-    const { server, baseUrl } = await startServer()
+    const { server, baseUrl } = await startServer({ agents: [rec('alpha', { capabilities: ['exec'] })] })
     try {
       const key = rec('alpha').inbound_api_key
       expect((await post(baseUrl, '/a2a/cli/event', key, { agent_id: 'alpha', kind: 'stop' })).status).toBe(501)
@@ -605,6 +605,22 @@ describe('终端会话桥 /a2a/cli/* (spec 2026-09-09-cli-hook-push §6.5)', () 
       expect(await o.json()).toEqual({ status: 'pending', hash: 'k3x9z', got: 'Bash' })
       const w = await post(baseUrl, '/a2a/cli/permission', key, { agent_id: 'alpha', hash: 'k3x9z', wait_ms: 99999 })
       expect(await w.json()).toEqual({ hash: 'k3x9z', status: 'allow', waitMs: 25_000 })
+    } finally { await server.stop() }
+  })
+  // 2026-10-10 评审:终端会话事件 / 权限请求只该来自我自己加的手(capabilities 含 exec、有 url)。
+  // 社交配对的朋友也有 bearer,原先能往主人微信里塞假的「终端会话完成」和 y/n 权限卡。
+  it('/a2a/cli/event、/a2a/cli/permission 只认手;社交对端 → 403,处理器不被调用', async () => {
+    const friend = rec('friend', { capabilities: [] })
+    const { server, baseUrl } = await startServer({ agents: [friend] })
+    try {
+      const onEvent = vi.fn(async () => ({ ok: true })), onPermissionOpen = vi.fn(async () => ({})), onPermissionWait = vi.fn(async () => ({}))
+      server.setCliHandlers({ onEvent, onPermissionOpen, onPermissionWait })
+      const e = await post(baseUrl, '/a2a/cli/event', friend.inbound_api_key, { agent_id: 'friend', source: 'claude', kind: 'stop', session_id: 's', cwd: '/w', machine: 'MacBook' })
+      expect(e.status).toBe(403)
+      expect(await e.json()).toMatchObject({ error: 'not_a_hand' })
+      expect((await post(baseUrl, '/a2a/cli/permission', friend.inbound_api_key, { agent_id: 'friend', tool_name: 'Bash' })).status).toBe(403)
+      expect((await post(baseUrl, '/a2a/cli/permission', friend.inbound_api_key, { agent_id: 'friend', hash: 'k3x9z' })).status).toBe(403)
+      expect(onEvent).not.toHaveBeenCalled(); expect(onPermissionOpen).not.toHaveBeenCalled(); expect(onPermissionWait).not.toHaveBeenCalled()
     } finally { await server.stop() }
   })
   it('/a2a/cli/reply 只让 may_exec 的脑调;坏 kind → 400', async () => {

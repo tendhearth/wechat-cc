@@ -40,3 +40,8 @@ export function latestCCLine(page: ChatPageT | undefined): { text: string; at: n
   }
   return null
 }
+
+/** 标签栏「此刻」后面的数字:几件事(按任务算,不按请求算)等你;够不着电脑时旧数据不算 ⇒ 0(不写数)。与 nowView 的行数一致。 */
+export function waitingCount(approvals: ApprovalItemT[], known: boolean): number {
+  return known ? new Set(approvals.map(a => a.taskId)).size : 0
+}

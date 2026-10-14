@@ -191,9 +191,13 @@ describe('手机协议 v2 进程内端到端', () => {
     const accepted=await client.request({method:'POST',path:'/m/api/matter/say',body:JSON.stringify({id:task.id,runId,requestId,text})})
     expect(accepted.status).toBe(200)
     expect(accepted.json<{result:{input:{status:string}}}>().result.input.status).toBe('pending')
-    for(let i=0;i<55;i++){
-      const id=randomUUID();store.liveInputs.add({id,taskId:task.id,runId,text:'后来的补充 '+i});store.liveInputs.set(id,'delivered')
-    }
+    // 这批历史种子只用来撑过详情的 50 条窗口,一次落库即可。逐条 add/set
+    // 会做 110 次同步自动提交,慢盘上可能把整个用例拖过 20s。
+    store.atomic(()=>{
+      for(let i=0;i<55;i++){
+        const id=randomUUID();store.liveInputs.add({id,taskId:task.id,runId,text:'后来的补充 '+i});store.liveInputs.set(id,'delivered')
+      }
+    })
     expect(workbench.detail(task.id).inputs.some(input=>input.id===requestId)).toBe(false)
     for(let i=0;i<4;i++)store.addEvent(task.id,'text','很长的完整内容'.repeat(6_000))
     const oversized=await client.request({method:'GET',path:'/m/api/matter?id='+task.id})

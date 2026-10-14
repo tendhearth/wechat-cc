@@ -338,7 +338,7 @@ describe('手机交办页面接线', () => {
     expect(get('entry-text').focus).not.toHaveBeenCalled()
     get('home-entry').fire('click');await vi.advanceTimersByTimeAsync(0)
     expect(get('entry-text').focus).toHaveBeenCalledOnce()
-    expect(env.ccMobilePane).toHaveBeenCalledWith('today')
+    expect(env.ccMobilePane).toHaveBeenCalledWith('matters') // 交办住在「一起做」(2026-10-05)
     expect(calls.filter(c=>c.method==='POST')).toEqual([])
     expect(env.openMatter).not.toHaveBeenCalled()
   })

@@ -16,7 +16,7 @@ export interface GitBaseline {
   project:string;startedAt:number;head:string|null;limits:Limits
   kind:'git'|'not_git'|'unavailable';paths:Set<string>;initial:Map<string,FileState>;preexistingPaths:string[];notes:string[]
 }
-export interface ReviewFile {path:string;preexisting:boolean;kind:'added'|'deleted'|'modified'|'not_reviewed';beforeSha256?:string;afterSha256?:string;diff?:string;reason?:string}
+export interface ReviewFile {path:string;preexisting:boolean;kind:'added'|'deleted'|'modified'|'not_reviewed';beforeSha256?:string;afterSha256?:string;diff?:string;reason?:string;/** 开始时是不是可执行;撤销时还原执行位(2026-10-10)。旧快照没有。 */beforeExecutable?:boolean}
 export interface GitReview {version:1;scope:'working-tree-before-after';startedAt:number;finishedAt:number;headBefore:string|null;headAfter:string|null;status:'complete'|'partial'|'unavailable';preexistingPaths:string[];notes:string[];files:ReviewFile[]}
 function gitEnv() {
   const env:NodeJS.ProcessEnv={...process.env}
@@ -142,6 +142,7 @@ export async function finishGitReview(baseline:GitBaseline):Promise<GitReview|nu
       if(before.kind==='text'&&after.kind==='text'&&before.hash===after.hash&&before.mode===after.mode)continue
       const oldText=before.kind==='text'?before.text:'',newText=after.kind==='text'?after.text:''
       file.beforeSha256=before.kind==='text'?before.hash:undefined;file.afterSha256=after.kind==='text'?after.hash:undefined
+      if(before.kind==='text')file.beforeExecutable=before.mode==='100755'
       file.kind=before.kind==='missing'?'added':after.kind==='missing'?'deleted':'modified'
       try {
         if(diffBytes>=baseline.limits.maxDiffBytes)throw new Error('diff_limit')
@@ -170,4 +171,47 @@ export function serializeGitReview(review:GitReview,maxBytes=MAX_ARTIFACT_BYTES)
   bytes=Buffer.from(JSON.stringify(bounded))
   if(bytes.length>maxBytes)throw new Error('review_size_limit')
   return bytes
+}
+
+/**
+ * 从「改完的内容」和那份 diff 倒推回改动前的内容(逐文件撤销,2026-10-06)。纯函数,不碰 git、不碰盘。
+ * diff 是 finishGitReview 存下来的那种:只有 `@@` 起的 hunk(before → after)。上下文 / 新增行必须和
+ * 现在的内容逐字对上,对不上 ⇒ null。调用方还要拿 beforeSha256 再核一次 —— 有那一道,这里出错也只会拒绝,不会写坏。
+ */
+export function reverseApplyDiff(after:string,diff:string):string|null {
+  // 按行切,每行带着自己的换行符;最后一行可能没有。
+  const lines=(text:string)=>text.match(/[^\n]*\n|[^\n]+$/g)??[]
+  const current=lines(after),out:string[]=[]
+  const hunks=diff.split(/^(?=@@ )/m).filter(h=>h.startsWith('@@ '))
+  let at=0
+  for(const hunk of hunks) {
+    const head=/^@@ -(\d+)(?:,(\d+))? \+(\d+)(?:,(\d+))? @@[^\n]*\n/.exec(hunk)
+    if(!head)return null
+    const newStart=Number(head[3]),newCount=head[4]===undefined?1:Number(head[4])
+    // 计数为 0 时起点指的是「这一行之后」。
+    const begin=newCount===0?newStart:newStart-1
+    if(begin<at||begin>current.length)return null
+    out.push(...current.slice(at,begin));at=begin
+    const body=hunk.slice(head[0].length).split('\n')
+    if(body.at(-1)==='')body.pop()
+    let last:'old'|'new'|'both'|null=null
+    for(const raw of body) {
+      if(raw.startsWith('\\')) {
+        // 「\ No newline at end of file」:前一行在它那一侧没有换行。
+        if(last==='old'||last==='both'){const i=out.length-1;if(i<0||!out[i]!.endsWith('\n'))return null;out[i]=out[i]!.slice(0,-1)}
+        if(last==='new'||last==='both'){const prev=current[at-1];if(prev===undefined||prev.endsWith('\n'))return null}
+        continue
+      }
+      const sign=raw[0],text=raw.slice(1)
+      if(sign===' '||sign==='+') {
+        const line=current[at]
+        if(line===undefined||(line.endsWith('\n')?line.slice(0,-1):line)!==text)return null
+        if(sign===' ')out.push(line)
+        at++;last=sign===' '?'both':'new'
+      } else if(sign==='-'){out.push(`${text}\n`);last='old'}
+      else return null
+    }
+  }
+  out.push(...current.slice(at))
+  return out.join('')
 }

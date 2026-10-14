@@ -16,7 +16,7 @@ import { makeEventsStore } from '../events/store'
 import { makeObservationsStore } from '../observations/store'
 import { runIntrospectTick } from '../companion/introspect'
 import { resolveIntrospectChatId, makeIntrospectAgent } from '../companion/introspect-runtime'
-import { resolveEffectiveTier, TIER_PROFILES } from '../../core/user-tier'
+import { resolveEffectiveTier, TIER_PROFILES, effectivePermissionMode } from '../../core/user-tier'
 import { dueGuestVisit, guestLabel, type GuestVisitState } from '../companion/guest-visits'
 import { buildGuestVisitNarrationPrompt } from '../../core/visit'
 import type { Access } from '../../lib/access'
@@ -181,7 +181,8 @@ export async function distillAndPushOwnerKnowledge(deps: TickDeps, ownerChat: st
   try {
     const digest = await distillOwnerKnowledge(deps.boot.knowledge)
     const fs = makeMemoryFS({ rootDir: join(deps.stateDir, 'memory', ownerChat) })
-    if (digest) { fs.write('knowledge.md', digest); deps.log('INGEST', `distilled knowledge.md for ${ownerChat} (${digest.length} chars)`) }
+    // 内容没变就不写、不记(10-13:每轮 ~20 分钟都重写同样的 540 字并记一行,纯噪声)
+    if (digest) { if (fs.read('knowledge.md') !== digest) { fs.write('knowledge.md', digest); deps.log('INGEST', `distilled knowledge.md for ${ownerChat} (${digest.length} chars)`) } }
     else if (fs.read('knowledge.md')) fs.delete('knowledge.md')
 
     try {
@@ -522,7 +523,7 @@ export function buildTickBodies(deps: TickDeps): TickBodies {
         providerId,
         chatId,
         tierProfile,
-        permissionMode: deps.permissionMode,
+        permissionMode: effectivePermissionMode(chatId, deps.loadAccess(), deps.permissionMode),
       })
       // Claim BEFORE dispatch — mark the send up front so a push that is
       // interrupted (machine sleeps mid-turn; daemon restart / lock-steal on
@@ -547,7 +548,11 @@ export function buildTickBodies(deps: TickDeps): TickBodies {
             turn.abandon(summary.errorCode ?? 'error')
           } else {
             const report = await turn.deliver({ finalText: summary.finalText ?? '', narration: summary.narration ?? [] })
-            if (report.delivery === 'silent' || report.delivery === 'empty') {
+            if (report.failures.length > 0 && report.bubbles === 0 && report.attachmentsSent === 0) {
+              // 发了但没发出去(断线 / 风控):登记保留,不在下一拍重跑模型再发一次(2026-10-10)。
+              // 「失败」也可能其实送到了(超时之后服务端已收),重发就是重复;断线时每拍一轮模型也违背「断线时停掉外发与模型轮次」。
+              deps.log('COMPANION', `chat=${chatId} tick send failed (${report.failures[0]}) — claim kept, not retried`)
+            } else if (report.delivery === 'silent' || report.delivery === 'empty') {
               // 没发出去就不算发过:撤回登记(at-most-once 只管「发了一半」,静默是一个决定)。
               deps.log('COMPANION', `chat=${chatId} tick delivered nothing (${report.delivery}) — claim undone`)
               try { undo?.() } catch (e) { deps.log('SCHED', `undo claim failed: ${errMsg(e)}`) }
@@ -881,6 +886,8 @@ export function buildTickBodies(deps: TickDeps): TickBodies {
    * 朋友,它跟伙伴说的话不该被逐字转给第三个人(prompt 里明写)。
    */
   async function guestVisitPass(ownerChat: string, nowIso: string, messagesStore: MessagesStore): Promise<void> {
+    // 断线时不调模型也不外发(no-retry-storm):跟 pushTickForChat 同一道闸
+    if (deps.health?.shouldSuspend('wechat')) return
     const statePath = join(deps.stateDir, 'companion', 'guest-visits.json')
     const state: GuestVisitState = (() => {
       try { const j = readJsonFile<Partial<GuestVisitState>>(statePath); return { narrated: j.narrated ?? {}, visits: j.visits ?? {} } }
@@ -889,59 +896,73 @@ export function buildTickBodies(deps: TickDeps): TickBodies {
     const access = deps.loadAccess()
     const nowMs = Date.parse(nowIso)
     let changed = false
-    for (const chatId of await messagesStore.listChatIds()) {
-      if (chatId === ownerChat) continue
-      if (resolveEffectiveTier(chatId, access, deps.permissionMode) === 'admin') continue
-      const latestInboundTs = await messagesStore.latestInboundTs(chatId)
-      if (!latestInboundTs) continue
-      const mark = state.narrated[chatId]
-      if (mark && latestInboundTs <= mark) continue
-      const rows = await messagesStore.listSince(chatId, mark ?? '', 40)
-      const due = dueGuestVisit({
-        chatId, latestInboundTs,
-        since: rows.map(r => ({ direction: r.direction, text: r.text, ts: r.ts })),
-      }, state, nowMs)
-      if (!due) continue
-      // 先记水位再讲:讲到一半 daemon 重启,不该下一拍再讲一遍。
-      const priorMark = state.narrated[chatId]
-      state.narrated[chatId] = latestInboundTs
-      state.visits = { ...(state.visits ?? {}), [chatId]: ((state.visits ?? {})[chatId] ?? 0) + 1 }
-      changed = true
-      const evalText = deps.boot.registry.getStrongEval?.(deps.boot.defaultProviderId) ?? deps.boot.registry.getCheapEval()
-      if (!evalText) continue
-      const name = guestLabel(deps.boot.conversationStore?.getIdentity(chatId)?.last_user_name, chatId)
-      const cfgAgent = loadAgentConfig(deps.stateDir)
-      let raw: string
-      try {
-        raw = await evalText(buildGuestVisitNarrationPrompt({
-          myName: cfgAgent.bot_name?.trim() || '我',
-          persona: null, ownerOverview: null,
-          disclosurePolicy: cfgAgent.social_disclosure_policy ?? '别转述朋友的私事。',
-          guestName: name,
-          lines: due.map(m => ({ who: m.direction === 'in' ? 'guest' as const : 'me' as const, text: m.text })),
-        }))
-      } catch (err) {
-        if (!isNetworkUnprotectedError(err)) throw err
-        // 评审 #193 P2-3:讲述被网络守护拒了 —— 没讲过,这一位的水位放回去;这一拍到此为止
-        // (前面已经讲完的几位照常落盘),下一拍再讲。
-        // 只撤这一位的水位和这一次的计数(第二轮评审 #194),前面几位这一拍讲完的照常保留。
-        if (priorMark === undefined) delete state.narrated[chatId]; else state.narrated[chatId] = priorMark
-        const n = (state.visits ?? {})[chatId] ?? 0
-        if (n > 1) state.visits = { ...state.visits, [chatId]: n - 1 }
-        else if (state.visits) { const { [chatId]: _drop, ...rest } = state.visits; state.visits = rest }
-        deps.log('VISIT', `guest narration skipped: chat=${chatId} — network unprotected; watermark unchanged, next tick retries`)
-        break
+    try {
+      for (const chatId of await messagesStore.listChatIds()) {
+        if (chatId === ownerChat) continue
+        if (resolveEffectiveTier(chatId, access, deps.permissionMode) === 'admin') continue
+        const latestInboundTs = await messagesStore.latestInboundTs(chatId)
+        if (!latestInboundTs) continue
+        const mark = state.narrated[chatId]
+        if (mark && latestInboundTs <= mark) continue
+        const rows = await messagesStore.listSince(chatId, mark ?? '', 40)
+        const due = dueGuestVisit({
+          chatId, latestInboundTs,
+          since: rows.map(r => ({ direction: r.direction, text: r.text, ts: r.ts })),
+        }, state, nowMs)
+        if (!due) continue
+        // 先记水位再讲:讲到一半 daemon 重启,不该下一拍再讲一遍。
+        const priorMark = state.narrated[chatId]
+        state.narrated[chatId] = latestInboundTs
+        state.visits = { ...(state.visits ?? {}), [chatId]: ((state.visits ?? {})[chatId] ?? 0) + 1 }
+        changed = true
+        // 没讲出去 ⇒ 只撤这一位的水位和这一次的计数,前面几位这一拍讲完的照常保留(评审 #194)
+        const unmark = (): void => {
+          if (priorMark === undefined) delete state.narrated[chatId]; else state.narrated[chatId] = priorMark
+          const n = (state.visits ?? {})[chatId] ?? 0
+          if (n > 1) state.visits = { ...state.visits, [chatId]: n - 1 }
+          else if (state.visits) { const { [chatId]: _drop, ...rest } = state.visits; state.visits = rest }
+        }
+        const evalText = deps.boot.registry.getStrongEval?.(deps.boot.defaultProviderId) ?? deps.boot.registry.getCheapEval()
+        // 一时没有可用模型:这次做客不能就此吞掉,等有模型了再讲
+        if (!evalText) { unmark(); continue }
+        const name = guestLabel(deps.boot.conversationStore?.getIdentity(chatId)?.last_user_name, chatId)
+        const cfgAgent = loadAgentConfig(deps.stateDir)
+        let raw: string
+        try {
+          raw = await evalText(buildGuestVisitNarrationPrompt({
+            myName: cfgAgent.bot_name?.trim() || '我',
+            persona: null, ownerOverview: null,
+            disclosurePolicy: cfgAgent.social_disclosure_policy ?? '别转述朋友的私事。',
+            guestName: name,
+            lines: due.map(m => ({ who: m.direction === 'in' ? 'guest' as const : 'me' as const, text: m.text })),
+          }))
+        } catch (err) {
+          if (!isNetworkUnprotectedError(err)) throw err
+          // 评审 #193 P2-3:讲述被网络守护拒了 —— 没讲过,这一位的水位放回去;这一拍到此为止
+          // (前面已经讲完的几位照常落盘),下一拍再讲。
+          unmark()
+          deps.log('VISIT', `guest narration skipped: chat=${chatId} — network unprotected; watermark unchanged, next tick retries`)
+          break
+        }
+        const text = raw.trim().replace(/^[「『"“]+|[」』"”]+$/g, '')
+        if (!text) continue
+        try { await deps.ilink.sendMessage(ownerChat, `🛎 ${text}`) }
+        catch (err) {
+          // 发不出去(多半断网):这一位撤回水位,这一拍到此为止;已讲完的几位在 finally 里落盘
+          unmark()
+          deps.log('VISIT', `guest narration send failed: chat=${chatId} — watermark unchanged, next tick retries: ${errMsg(err)}`)
+          break
+        }
+        try { deps.huntStore?.recordVisit?.({ chatId: ownerChat, text, peerLabel: `${name}来过`, nowIso }) }
+        catch (err) { deps.log('VISIT', `guest 见闻入库失败: ${errMsg(err)}`) }
+        deps.log('VISIT', `guest visit told: chat=${chatId} name=${name} lines=${due.length}`)
       }
-      const text = raw.trim().replace(/^[「『"“]+|[」』"”]+$/g, '')
-      if (!text) continue
-      await deps.ilink.sendMessage(ownerChat, `🛎 ${text}`)
-      try { deps.huntStore?.recordVisit?.({ chatId: ownerChat, text, peerLabel: `${name}来过`, nowIso }) }
-      catch (err) { deps.log('VISIT', `guest 见闻入库失败: ${errMsg(err)}`) }
-      deps.log('VISIT', `guest visit told: chat=${chatId} name=${name} lines=${due.length}`)
-    }
-    if (changed) {
-      try { mkdirSync(join(deps.stateDir, 'companion'), { recursive: true }); writeFileSync(statePath, JSON.stringify(state, null, 2)) }
-      catch (err) { deps.log('VISIT', `guest state write failed: ${errMsg(err)}`) }
+    } finally {
+      // 中途抛错也要把已讲完的几位落盘,否则下一拍重讲(重复发给主人)
+      if (changed) {
+        try { mkdirSync(join(deps.stateDir, 'companion'), { recursive: true }); writeFileSync(statePath, JSON.stringify(state, null, 2)) }
+        catch (err) { deps.log('VISIT', `guest state write failed: ${errMsg(err)}`) }
+      }
     }
   }
 

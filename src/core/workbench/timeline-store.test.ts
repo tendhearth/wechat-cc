@@ -1,4 +1,7 @@
 import {afterEach,beforeEach,describe,expect,it} from 'vitest'
+import {mkdtempSync,rmSync} from 'node:fs'
+import {tmpdir} from 'node:os'
+import {join} from 'node:path'
 import {openTestDb,type Db} from '../../lib/db'
 import {makeWorkbenchStore} from './store'
 import type {AgentActivity} from '../agent-provider'
@@ -86,5 +89,18 @@ describe('durable ordered execution timeline',()=>{
     expect(store.events(id)[0]?.text).toHaveLength(40_000)
     expect(store.events(id)[1]?.activity?.detail?.length).toBeLessThanOrEqual(2000)
     expect(JSON.stringify(store.events(id))).not.toContain('do-not-store')
+  })
+
+  it('clears a stale "writer not confirmed closed" mark on restart only when its folder is gone (2026-10-05)',()=>{
+    const dir=mkdtempSync(join(tmpdir(),'wb-writer-'))
+    const gone=store.create({title:'gone',path:join(dir,'gone'),providerId:'codex',ownerChatId:null}).id
+    const kept=store.create({title:'kept',path:dir,providerId:'codex',ownerChatId:null}).id
+    store.update(gone,'interrupted','writer_not_closed');store.update(kept,'interrupted','writer_not_closed')
+    store.recover()
+    expect(store.get(gone).error).toBeNull()
+    expect(store.setArchived(gone,true).archivedAt).not.toBeNull()
+    expect(store.get(kept).error).toBe('writer_not_closed')
+    expect(()=>store.setArchived(kept,true)).toThrow('workbench_busy')
+    rmSync(dir,{recursive:true,force:true})
   })
 })

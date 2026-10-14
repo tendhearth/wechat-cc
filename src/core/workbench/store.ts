@@ -1,3 +1,4 @@
+import { existsSync } from 'node:fs'
 import { createHash, randomBytes, randomUUID } from 'node:crypto'
 import { basename, join } from 'node:path'
 import type {StoredHandoff,HandoffView} from './handoff-record'
@@ -13,9 +14,8 @@ import {makeCreationReceiptStore} from './creation-receipts'
 import {createEntryStore} from './entry-store'
 import {makeWechatNotificationStore} from './wechat-notifications'
 import {makeArtifactDeliveryStore} from './artifact-deliveries'
-import {makeTimelineEvents} from './timeline-events'
+import {makeTimelineEvents,type TaskEvent} from './timeline-events'
 import {makeReviewMarkStore} from './review-marks'
-import type {AgentActivity} from '../agent-provider'
 
 export type TaskStatus = 'queued' | 'running' | 'cancelling' | 'completed' | 'failed' | 'cancelled' | 'interrupted'
 export interface Task {
@@ -26,8 +26,19 @@ export interface Task {
 export interface WorkbenchProject { id:string; path:string; name:string; providerId:string; createdAt:number }
 const PROJECT_SELECT='SELECT id,path,name,provider_id AS providerId,created_at AS createdAt FROM workbench_projects'
 const projectName=(project:WorkbenchProject):WorkbenchProject=>({...project,name:project.name||basename(project.path)||project.path})
+/** writer_groups:旧格式是组号数组;2026-10-10 起是 {boot, groups}(boot = 记下时的开机时刻,毫秒)。 */
+function parseGroups(raw:string|null):{groups:number[]|null;boot:number|null} {
+  if(!raw)return {groups:null,boot:null}
+  const ok=(v:unknown):v is number[]=>Array.isArray(v)&&v.length>0&&v.every(g=>Number.isInteger(g)&&g>1)
+  try {
+    const v:unknown=JSON.parse(raw)
+    if(ok(v))return {groups:v,boot:null}
+    if(v&&typeof v==='object'){const r=v as {groups?:unknown;boot?:unknown};if(ok(r.groups))return {groups:r.groups,boot:typeof r.boot==='number'&&Number.isFinite(r.boot)?r.boot:null}}
+  } catch { /* 下面 */ }
+  return {groups:null,boot:null}
+}
 export interface StoredTask extends Task { ownerChatId: string | null; sessionId: string | null }
-export interface TaskEvent { id: number; taskId: string; kind: 'user' | 'text' | 'tool_call' | 'system' | 'error'; text: string; createdAt: number; sourceId?:string|null; runId?:string; activity?:AgentActivity; attachments?:import('./attachments').Attachment[]; errorCode?:'execution_model_unsupported'; diagnostic?:string }
+export type {TaskEvent} from './timeline-events'
 export interface Artifact { id: string; taskId: string; name: string; mime: string; size: number; sha256: string; createdAt: number; approvedAt: number | null }
 export interface StoredArtifact extends Artifact { storagePath: string }
 const TASK_SELECT = 'SELECT id,title,path,provider_id AS providerId,owner_chat_id AS ownerChatId,session_id AS sessionId,status,error,created_at AS createdAt,updated_at AS updatedAt,archived_at AS archivedAt,workspace_kind AS workspaceKind FROM workbench_tasks'
@@ -100,6 +111,8 @@ export function makeWorkbenchStore(db: Db) {
   return {
     addProject,
     projects:()=>db.query<WorkbenchProject,[]>(PROJECT_SELECT+' ORDER BY created_at,id').all().map(projectName),
+    /** 还有没归档任务的文件夹 —— 这些项目即使文件夹没了也要留在列表里(任务行挂在它下面)。 */
+    activeTaskPaths:()=>new Set(db.query<{path:string},[]>('SELECT DISTINCT path FROM workbench_tasks WHERE archived_at IS NULL').all().map(r=>r.path)),
     atomic:<T>(operation:()=>T,immediate=false):T=>{const transaction=db.transaction(operation);return immediate?transaction.immediate():transaction()},
     attachments:makeTaskAttachmentStore(db),
     uploadRequestExists:(id:string)=>!!db.query('SELECT id FROM workbench_attachment_uploads WHERE id=?').get(id),
@@ -163,10 +176,10 @@ export function makeWorkbenchStore(db: Db) {
     list: () => db.query<StoredTask, []>(`${TASK_SELECT} ORDER BY updated_at DESC,rowid DESC LIMIT 200`).all().map(publicTask),
     listOwned:(ownerChatId:string,limit=8)=>db.query<StoredTask,[string,number]>(`${TASK_SELECT} WHERE owner_chat_id=? AND archived_at IS NULL ORDER BY updated_at DESC,id DESC LIMIT ?`).all(ownerChatId,Math.max(1,Math.min(20,limit))).map(publicTask),
     ownedProjects(ownerChatId:string,providers?:readonly string[]):Array<{path:string;providerId:string}> {
-      const rows=db.query<{path:string;providerId:string},[string]>("SELECT path,provider_id AS providerId FROM workbench_tasks WHERE owner_chat_id=? AND workspace_kind='project' ORDER BY updated_at DESC,id DESC").all(ownerChatId)
+      const rows=db.query<{path:string;providerId:string},[string]>("SELECT path,provider_id AS providerId FROM workbench_tasks WHERE owner_chat_id=? AND workspace_kind='project' AND id NOT IN (SELECT task_id FROM workbench_worktrees) ORDER BY updated_at DESC,id DESC").all(ownerChatId)
       const accepted=[...new Set(providers??[])]
       const available=accepted.length
-        ? db.query<{path:string;providerId:string},string[]>(`SELECT path,provider_id AS providerId FROM workbench_tasks WHERE owner_chat_id=? AND workspace_kind='project' AND provider_id IN (${accepted.map(()=>'?').join(',')}) ORDER BY updated_at DESC,id DESC`).all(ownerChatId,...accepted)
+        ? db.query<{path:string;providerId:string},string[]>(`SELECT path,provider_id AS providerId FROM workbench_tasks WHERE owner_chat_id=? AND workspace_kind='project' AND id NOT IN (SELECT task_id FROM workbench_worktrees) AND provider_id IN (${accepted.map(()=>'?').join(',')}) ORDER BY updated_at DESC,id DESC`).all(ownerChatId,...accepted)
         : []
       const preferred=new Map<string,string>()
       for(const row of available)if(!preferred.has(row.path))preferred.set(row.path,row.providerId)
@@ -207,7 +220,29 @@ export function makeWorkbenchStore(db: Db) {
       return get(id)
     },
     clearWriterError(id:string) {
-      db.query("UPDATE workbench_tasks SET error=NULL WHERE id=? AND error='writer_not_closed'").run(id)
+      db.query("UPDATE workbench_tasks SET error=NULL,writer_groups=NULL WHERE id=? AND error='writer_not_closed'").run(id)
+    },
+    /** 独立工作区(v74,2026-10-07):这件事在哪个 worktree、源项目、分支;removedAt 非空 = 目录已删(分支保留)。 */
+    worktrees: {
+      record(input:{taskId:string;projectPath:string;repoRoot:string;root:string;branch:string}) {
+        db.query('INSERT OR IGNORE INTO workbench_worktrees(task_id,project_path,repo_root,root,branch,created_at) VALUES(?,?,?,?,?,?)').run(input.taskId,input.projectPath,input.repoRoot,input.root,input.branch,Date.now())
+      },
+      get(taskId:string):{taskId:string;projectPath:string;repoRoot:string;root:string;branch:string;createdAt:number;removedAt:number|null;mergedAt:number|null}|null {
+        return db.query<{taskId:string;projectPath:string;repoRoot:string;root:string;branch:string;createdAt:number;removedAt:number|null;mergedAt:number|null},[string]>('SELECT task_id AS taskId,project_path AS projectPath,repo_root AS repoRoot,root,branch,created_at AS createdAt,removed_at AS removedAt,merged_at AS mergedAt FROM workbench_worktrees WHERE task_id=?').get(taskId)??null
+      },
+      markReopened(taskId:string) { db.query('UPDATE workbench_worktrees SET removed_at=NULL WHERE task_id=?').run(taskId) },
+      markRemoved(taskId:string) { db.query('UPDATE workbench_worktrees SET removed_at=COALESCE(removed_at,?) WHERE task_id=?').run(Date.now(),taskId) },
+      clearMerged(taskId:string) { db.query('UPDATE workbench_worktrees SET merged_at=NULL WHERE task_id=?').run(taskId) },
+      markMerged(taskId:string) { db.query('UPDATE workbench_worktrees SET merged_at=COALESCE(merged_at,?) WHERE task_id=?').run(Date.now(),taskId) },
+    },
+    /** 关不掉的执行程序的进程组(v73,2026-10-06):退出证据从这里查,见 lifecycle 的 writer 守望。 */
+    setWriterGroups(id:string,groups:readonly number[],bootMs?:number) {
+      db.query('UPDATE workbench_tasks SET writer_groups=? WHERE id=?').run(groups.length?JSON.stringify(bootMs===undefined?groups:{boot:Math.round(bootMs),groups}):null,id)
+    },
+    /** 所有还挂着「没确认退出」的任务;groups=null ⇒ 旧记录 / 执行者没交出进程组,没有证据可查。 */
+    writerHolds():Array<{id:string;title:string;path:string;groups:number[]|null;boot:number|null}> {
+      return db.query<{id:string;title:string;path:string;groups:string|null},[]>("SELECT id,title,path,writer_groups AS groups FROM workbench_tasks WHERE error='writer_not_closed'").all()
+        .map(row=>({id:row.id,title:row.title,path:row.path,...parseGroups(row.groups)}))
     },
     create(input: { title: string; path: string; providerId: string; ownerChatId: string | null;workspaceKind?:'project'|'managed';registerProject?:boolean }): StoredTask {
       let id: string
@@ -233,6 +268,15 @@ export function makeWorkbenchStore(db: Db) {
           addEvent(id, 'system', status === 'queued'
             ? '服务重启时任务仍在等待，未自动派发。原请求已保留，请补充要求后手动继续。'
             : `服务重启，任务已中断，未自动重跑。已保存的成果版本仍可查看；中断前尚未收集的文件保留在 ${join(path,'.cc-workbench',id)}。请先确认原执行程序已退出并检查该文件夹，再补充要求继续。`)
+        }
+        // 「没确认退出」(writer_not_closed)要等退出证据才解除。文件夹本身已经不在了,就没有东西可保护了 ——
+        // 这就是证据:解除标记、留一句说明,这件事才能归档 / 续上。文件夹还在的照旧不动(那条防线不变)。
+        // 2026-10-05 主人截图:自检临时目录早删了,标记却卡了三天,一起做里永远挂着一条红字。
+        const stale=db.query<{id:string;path:string},[]>("SELECT id,path FROM workbench_tasks WHERE error='writer_not_closed'").all()
+        for (const { id,path } of stale) {
+          if (existsSync(path)) continue
+          db.query("UPDATE workbench_tasks SET error=NULL,writer_groups=NULL,updated_at=? WHERE id=? AND error='writer_not_closed'").run(Date.now(),id)
+          addEvent(id,'system','执行程序当时没有确认退出；它的工作文件夹已经不在了，这条占用随之解除。')
         }
       })()
     },

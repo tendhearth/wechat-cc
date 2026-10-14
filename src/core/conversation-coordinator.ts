@@ -32,7 +32,7 @@ import { assertSupported, capabilitiesFor, replyDeliveryFor, replyTextStrategyFo
 import { buildTurnReply, makeTurnTextCollector, type DeliveryKind, type DeliveryReport, type ReplyDeliveryMode, type ReplyDeliveryPort, type ReplyTextStrategy, type TurnDeliveryHandle } from './turn-reply'
 import { collectTurn, TURN_TIMEOUT_CODE, type AgentEvent, type TurnSummary } from './agent-provider'
 import { isAuthErrorCode, providerErrorCodeOf } from '../lib/provider-error-code'
-import { resolveEffectiveTier, resolveTier, TIER_PROFILES, type TierProfile } from './user-tier'
+import { resolveEffectiveTier, resolveTier, TIER_PROFILES, type TierProfile, effectivePermissionMode } from './user-tier'
 import type { Access } from '../lib/access'
 import { decideCall, unprotectedMessage, type NetworkGate } from '../lib/network-gate'
 import { makeChatMutex } from './async-mutex'
@@ -181,13 +181,13 @@ export interface ConversationCoordinatorDeps {
    * 这个钩子把「静默」变「可见」:bootstrap 记进 /mode 并打 [PROVIDER_ANOMALY]。
    */
   onFallbackStreak?: (providerId: ProviderId, streak: number) => void
-  sendAssistantText?: (chatId: string, text: string) => Promise<void>
+  sendAssistantText?: (chatId: string, text: string) => Promise<unknown>
   /**
    * 系统通知(认证失败 / 超时 / 守护拒绝 / spawn 失败 / 本轮出错 / provider 不可用……,spec §4.3 末段
    * 「系统通知分家」)。和 agent 的话分开:日志里是 NOTICE 而不是 FALLBACK_REPLY,也不进打猎旁听。
    * app 接收器照样接(通知在 app 里也要看得见)。缺省 ⇒ 退回 sendAssistantText(老嵌入 / 测试不变)。
    */
-  sendNotice?: (chatId: string, text: string) => Promise<void>
+  sendNotice?: (chatId: string, text: string) => Promise<unknown>
   /**
    * 回复交付端口(daemon/reply-delivery.ts)。shadow / daemon 模式的 provider 才用到;缺省 ⇒ 一律按
    * legacy 走(没有端口就不可能交付)。
@@ -405,7 +405,7 @@ export function createConversationCoordinator(deps: ConversationCoordinatorDeps)
     deps.onEmptyReplyStreak?.(providerId, prev + 1)
   }
   /** 系统通知走 sendNotice(没接就退回 sendAssistantText)—— 与 agent 的话分家(spec §4.3)。 */
-  const notice = (chatId: string, text: string): Promise<void> | undefined =>
+  const notice = (chatId: string, text: string): Promise<unknown> | undefined =>
     (deps.sendNotice ?? deps.sendAssistantText)?.(chatId, text)
   /** 这一轮这家 provider 的交付模式。没有端口 ⇒ 只能 legacy。 */
   const deliveryModeFor = (providerId: ProviderId): ReplyDeliveryMode =>
@@ -477,7 +477,12 @@ export function createConversationCoordinator(deps: ConversationCoordinatorDeps)
     // row that predates that guard (or was written directly to the store,
     // bypassing setMode — see the N-way participants tests) — the shared-
     // token hazard this is defending is worth a second, cheap check.
-    const filtered = list.filter(p => deps.registry.has(p) && p !== 'agy')
+    // 2026-10-10 评审:solo 在派发时按档位查 provider(providerDenialFor),多家模式原先只剥 agy ⇒ 访客
+    // `/both claude cursor` 能把 Cursor 以访客档拉起来(工作区内编辑不经权限卡),也绕过主人的 trusted_providers。
+    // 这里同一道门、同样用原始档位(不吃 --dangerously 的提权):被拒的参与者剔掉,剩 ≤1 家时调用方照旧退回 solo。
+    const rawTier = resolveTier(chatId, deps.loadAccess())
+    const trustedProviders = deps.trustedProviders?.()
+    const filtered = list.filter(p => deps.registry.has(p) && p !== 'agy' && providerDenialFor(p, rawTier, trustedProviders) === null)
     if (filtered.length < list.length) {
       deps.log('COORDINATOR', `chat=${chatId} participants filtered ${list.join(',')} → ${filtered.join(',')} (registry: ${deps.registry.list().join(',')})`)
     }
@@ -564,6 +569,10 @@ export function createConversationCoordinator(deps: ConversationCoordinatorDeps)
   // for one chatId). Registered right after acquire, unregistered when the
   // turn settles — same lifecycle shape as inFlightAborters.
   const inFlightHandleCancels = new Map<string, Set<() => void>>()
+  // /stop 的代数(2026-10-10):cancel() 每次 +1;一轮开始时记下、结束时比对 ⇒ 这一轮被主人中止过。
+  // 中止过的轮不发出错通知、不交付半截话 —— 各家 provider 中止后的收尾不一样(报 error / 像正常结束)。
+  const cancelGen = new Map<string, number>()
+  const stopMark = (chatId: string) => { const g = cancelGen.get(chatId) ?? 0; return () => (cancelGen.get(chatId) ?? 0) !== g }
   function registerHandleCancel(chatId: string, fn: () => void): () => void {
     let set = inFlightHandleCancels.get(chatId)
     if (!set) { set = new Set(); inFlightHandleCancels.set(chatId, set) }
@@ -732,7 +741,7 @@ export function createConversationCoordinator(deps: ConversationCoordinatorDeps)
           providerId,
           chatId: msg.chatId,
           tierProfile,
-          permissionMode: deps.permissionMode,
+          permissionMode: effectivePermissionMode(msg.chatId, deps.loadAccess(), deps.permissionMode),
           ...(pinnedModel !== undefined ? { model: pinnedModel } : {}),
         })
       } catch (err) {
@@ -758,6 +767,7 @@ export function createConversationCoordinator(deps: ConversationCoordinatorDeps)
       // this turn for its entire lifetime — cleared in the finally below,
       // same lifecycle as chatroom's inFlightAborters.
       unregisterCancel = registerHandleCancel(msg.chatId, () => { void handle.cancel?.() })
+      const stopped = stopMark(msg.chatId)
       let text = deps.format(msg)
       // 换 provider 后的第一条:前置交接块(近况原文 + chat_history 提示)。
       const handoff = handoffLedger.takeHandoff(msg.chatId)
@@ -823,6 +833,12 @@ export function createConversationCoordinator(deps: ConversationCoordinatorDeps)
       }
 
       outcome = summary.error ? 'error' : 'completed'
+
+      if (delivery && stopped()) {
+        settle('cancelled')
+        deps.log('REPLY', `chat=${msg.chatId} provider=${providerId} 主人中止了这一轮 —— 不发通知、不交付半截话`)
+        return
+      }
 
       // 回复交付 daemon(spec §4.2 末段 / §4.3):只有 completed 的轮交付最后的话;出错一律只发通知、
       // 不发残文(与 #190「错误不许当回复发」同一条红线)。没有 FALLBACK_REPLY:有文字没调工具是正常路径。
@@ -982,7 +998,8 @@ export function createConversationCoordinator(deps: ConversationCoordinatorDeps)
       // beat that embeds `question` (opening, rebuttal, convergence, verdict).
       const question = `[chat_id:${msg.chatId}]\n${deps.format(msg)}`
 
-      const openings = await runBeat(msg, proj, tierProfile, participants, (p) => buildOpeningPrompt(question, participants, p))
+      const openings = await runBeat(msg, proj, tierProfile, participants, (p) => buildOpeningPrompt(question, participants, p), false, aborter.signal)
+      if (aborter.signal.aborted) { deps.log('COORDINATOR_CHATROOM', `chat=${msg.chatId} aborted mid-debate`); return }
       if (openings.length === 0) {
         await notice(msg.chatId, '⚠️ 这轮没有 AI 成功回应，请稍后重发一次。')
         return
@@ -1024,7 +1041,7 @@ export function createConversationCoordinator(deps: ConversationCoordinatorDeps)
         const beat2 = await runBeat(msg, proj, tierProfile, speakers,
           (p) => buildRebuttalPrompt(question, {
             labels, contested: contention.contested, lens: lensFor(speakers.indexOf(p)), self: p,
-          }), true)
+          }), true, aborter.signal)
         rebuttals = beat2.map(b => ({ speaker: b.speaker, text: b.text }))
         const votes = beat2.map(b => ({ voter: b.speaker, ranking: b.ranking }))
 
@@ -1040,7 +1057,7 @@ export function createConversationCoordinator(deps: ConversationCoordinatorDeps)
               (p) => buildRebuttalPrompt(question, {
                 labels, contested: contention.contested, lens: lensFor(speakers.indexOf(p)), self: p,
                 focus: conv.disagreement!,
-              }), true)
+              }), true, aborter.signal)
             rebuttals = [...rebuttals, ...extra.map(b => ({ speaker: b.speaker, text: b.text }))]
             votes.push(...extra.map(b => ({ voter: b.speaker, ranking: b.ranking })))
           }
@@ -1064,7 +1081,7 @@ export function createConversationCoordinator(deps: ConversationCoordinatorDeps)
           }))).trim()
         }
         catch (e) { deps.log('COORDINATOR_CHATROOM', `verdict failed: ${e instanceof Error ? e.message : e}`) }
-        if (verdict) {
+        if (verdict && !aborter.signal.aborted) {
           // 名次跟裁决同一条消息发出去 —— 微信上多一条消息就是多一次打扰,
           // 而这一行恰恰是让「这场辩论有没有用」变得可衡量的东西。
           const footer = [formatRankingFooter(ranking), ...notes].filter(Boolean).join('\n')
@@ -1112,7 +1129,7 @@ export function createConversationCoordinator(deps: ConversationCoordinatorDeps)
         providerId: p,
         chatId: msg.chatId,
         tierProfile,
-        permissionMode: deps.permissionMode,
+        permissionMode: effectivePermissionMode(msg.chatId, deps.loadAccess(), deps.permissionMode),
       })),
     )
     const text = deps.format(msg)
@@ -1129,6 +1146,7 @@ export function createConversationCoordinator(deps: ConversationCoordinatorDeps)
     // handle gets its own slot in the shared per-chat set (dispatchSolo's
     // single-slot registration doesn't fit here: N participants share one
     // chatId).
+    const stopped = stopMark(msg.chatId)
     const unregisterCancels = acquired.map(a =>
       a.status === 'fulfilled' ? registerHandleCancel(msg.chatId, () => { void a.value.cancel?.() }) : undefined,
     )
@@ -1164,6 +1182,7 @@ export function createConversationCoordinator(deps: ConversationCoordinatorDeps)
       let report: DeliveryReport | undefined
       try {
         const turnDelivery = deliveries[i]
+        if (turnDelivery && stopped()) { turnDelivery.abandon('cancelled'); continue }
         if (turnDelivery && (r.status === 'rejected' || r.value.error)) turnDelivery.abandon(r.status === 'rejected' ? 'threw' : (r.value.errorCode ?? 'error'))
         if (r.status === 'rejected') {
           deps.log('COORDINATOR_PARALLEL', `provider=${providerId} threw: ${r.reason instanceof Error ? r.reason.message : r.reason}`)
@@ -1261,6 +1280,8 @@ export function createConversationCoordinator(deps: ConversationCoordinatorDeps)
      *  **剥离**那一行则是无条件的** —— 它是内部信号,任何一拍里冒出来都
      *  不该出现在给用户看的发言里(开场并没有要求它,但模型偶尔会自作主张)。 */
     countRank = false,
+    /** 这一轮 /chat 的 aborter.signal:/stop 或新消息抢占时,正在说的几位当场取消,说出来的不再交付。 */
+    signal?: AbortSignal,
   ): Promise<BeatResult[]> {
     const results = await Promise.all(participants.map(async (providerId): Promise<BeatResult | null> => {
       const startedAt = nowMs()
@@ -1271,17 +1292,26 @@ export function createConversationCoordinator(deps: ConversationCoordinatorDeps)
       // 不分条);开轮在 dispatch 之前,附件才登记得上。legacy 的发言人照旧拼全部文字一条发。
       let delivery: TurnDeliveryHandle | undefined
       let report: DeliveryReport | undefined
+      let onAbort: (() => void) | undefined
       try {
         const handle = await deps.manager.acquire({
           alias: proj.alias, path: proj.path, providerId,
-          chatId: msg.chatId, tierProfile, permissionMode: deps.permissionMode,
+          chatId: msg.chatId, tierProfile, permissionMode: effectivePermissionMode(msg.chatId, deps.loadAccess(), deps.permissionMode),
         })
+        if (signal) {
+          // 拍与拍之间才看 aborter 不够:一拍里慢的那位会跑满整拍超时,抢占的新消息也得干等。
+          onAbort = () => { void handle.cancel?.() }
+          if (signal.aborted) onAbort()
+          else signal.addEventListener('abort', onAbort, { once: true })
+        }
         if (deliveryModeFor(providerId) === 'daemon') {
           delivery = deps.replyDelivery!.begin(msg.chatId, { mode: 'daemon', context: 'chatroom', providerId, participantLabel: dn, textStrategy: textStrategyFor(providerId) })
         }
         summary = await oneTurnPerSession(msg.chatId, proj.alias, providerId, () => collectTurn(handle.dispatch(promptFor(providerId)), { timeoutMs: Math.min(deps.turnTimeoutMs ?? CHATROOM_BEAT_TIMEOUT_MS, CHATROOM_BEAT_TIMEOUT_MS), onEvent: (ev) => deps.onTurnEvent?.(msg.chatId, ev) }))
       } catch (e) {
         err = e instanceof Error ? e.message : String(e)
+      } finally {
+        if (onAbort) signal?.removeEventListener('abort', onAbort)
       }
       const endedAt = nowMs()
       const outcome: TurnRecord['outcome'] =
@@ -1291,6 +1321,12 @@ export function createConversationCoordinator(deps: ConversationCoordinatorDeps)
         : summary?.error ? 'error'
         : 'completed'
       try {
+        // 主人中止 / 被新消息抢占:不发出错通知、不交付取消之后吐出来的话(与 solo/parallel 的 stopMark 同义)
+        if (signal?.aborted) {
+          delivery?.abandon('cancelled')
+          deps.log('COORDINATOR_CHATROOM', `chat=${msg.chatId} provider=${providerId} 这一拍被中止 —— 不交付`)
+          return null
+        }
         if (delivery && outcome !== 'completed') delivery.abandon(outcome)
         // Self-heal parity with dispatchParallel: release wedged/stale sessions
         // and notify the user, per-provider, so beats continue for healthy agents.
@@ -1579,6 +1615,7 @@ export function createConversationCoordinator(deps: ConversationCoordinatorDeps)
         for (const fn of handleCancels) fn()
         cancelledAny = true
       }
+      if (cancelledAny) cancelGen.set(chatId, (cancelGen.get(chatId) ?? 0) + 1)
       return cancelledAny
     },
     runExclusive: mutex.runExclusive,

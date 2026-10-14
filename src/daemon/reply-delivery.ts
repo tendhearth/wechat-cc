@@ -255,7 +255,8 @@ export function makeReplyDeliveryRuntime(deps: ReplyDeliveryRuntimeDeps): ReplyD
         }
       },
       async deliver(parts: TurnTextParts): Promise<DeliveryReport> {
-        const pending = [...turn.attachments]
+        // /both、/chat 里几位共用这一轮:谁先交付谁带走眼下登记的附件,别人不再重发(2026-10-10,原先每位都照单全发)。
+        const pending = turn.attachments.splice(0)
         const messagedOwner = [...turn.messagedOwner]
         finishDaemon()
         const built = buildTurnReply(parts, pending.map(p => p.attachment), opts.context, opts.textStrategy)

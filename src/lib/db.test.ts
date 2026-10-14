@@ -614,7 +614,8 @@ describe('旧社交表退役(spec 2026-09-04-wish-postcard §3)', () => {
 
 
 // 跑完整条迁移阶梯,CI 慢机上实测 7.5s,默认 5s 会假红。
-it('upgrades a real v46 database retaining task history, native identity and approved artifacts',{timeout:30_000},()=>{
+// 真文件库、全部迁移跑两遍:Windows runner 上 32s(10-10 #323 的 windows 红),给 60s。
+it('upgrades a real v46 database retaining task history, native identity and approved artifacts',{timeout:60_000},()=>{
   const dir=mkdtempSync(join(tmpdir(),'workbench-v46-')),path=join(dir,'state.db')
   try {
     const prior=openSqlite(path)
@@ -629,7 +630,7 @@ it('upgrades a real v46 database retaining task history, native identity and app
     for(let i=0;i<2;i++) {
       const upgraded=openDb({path})
       try {
-        expect(upgraded.query('SELECT * FROM workbench_tasks').get()).toEqual({...oldTask as object,archived_at:null,matter_id:(oldTask as {id:string}).id,execution_choice_json:'{"defaults":"provider","model":null,"reasoningEffort":null}',seq:0,workspace_kind:'project'})
+        expect(upgraded.query('SELECT * FROM workbench_tasks').get()).toEqual({...oldTask as object,archived_at:null,matter_id:(oldTask as {id:string}).id,execution_choice_json:'{"defaults":"provider","model":null,"reasoningEffort":null}',seq:0,workspace_kind:'project',writer_groups:null})
         expect(upgraded.query('SELECT * FROM workbench_events').all()).toEqual(oldEvents.map(row=>({...row as object,source_id:null,run_id:null,event_key:null,activity_json:null,attachments_json:'[]',seq:0})))
         expect(upgraded.query('SELECT * FROM workbench_artifacts').all()).toEqual(oldArtifacts)
       } finally {upgraded.close()}
@@ -650,7 +651,7 @@ it('upgrades v51 with separate durable control receipts while preserving task hi
     runMigrations(db)
     db.query('INSERT INTO workbench_control_receipts(id,task_id,run_id,action,text_hash,created_at) VALUES(?,?,?,?,?,?)').run('stop-one','deadbeef','run-original','stop','hash',5)
     runMigrations(db)
-    expect(db.query('SELECT * FROM workbench_tasks').all()).toEqual(tasks.map(row=>({...row as object,matter_id:(row as {id:string}).id,execution_choice_json:'{"defaults":"provider","model":null,"reasoningEffort":null}',seq:0,workspace_kind:'project'})))
+    expect(db.query('SELECT * FROM workbench_tasks').all()).toEqual(tasks.map(row=>({...row as object,matter_id:(row as {id:string}).id,execution_choice_json:'{"defaults":"provider","model":null,"reasoningEffort":null}',seq:0,workspace_kind:'project',writer_groups:null})))
     expect(db.query('SELECT * FROM workbench_events').all()).toEqual(events.map(row=>({...row as object,attachments_json:'[]',seq:0})))
     expect(db.query('SELECT * FROM workbench_live_inputs').all()).toEqual(inputs.map(row=>({...row as object,attachments_json:'[]',execution_json:null})))
     expect(db.query('SELECT * FROM workbench_control_receipts').all()).toHaveLength(1)
@@ -712,7 +713,7 @@ it('upgrades v53 with provider defaults, native import defaults and nullable que
     const oldTasks=db.query<Record<string,unknown>,[]>('SELECT * FROM workbench_tasks ORDER BY id').all()
     runMigrations(db);runMigrations(db)
     const tasks=db.query<Record<string,unknown>,[]>('SELECT * FROM workbench_tasks ORDER BY id').all()
-    expect(tasks).toEqual(oldTasks.map(row=>({...row,matter_id:row.id,execution_choice_json:JSON.stringify({defaults:row.id==='feedbeef'?'native':'provider',model:null,reasoningEffort:null}),seq:0,workspace_kind:'project'})))
+    expect(tasks).toEqual(oldTasks.map(row=>({...row,matter_id:row.id,execution_choice_json:JSON.stringify({defaults:row.id==='feedbeef'?'native':'provider',model:null,reasoningEffort:null}),seq:0,workspace_kind:'project',writer_groups:null})))
     expect(db.query('SELECT execution_json FROM workbench_live_inputs').get()).toEqual({execution_json:null})
     expect(db.query("SELECT name FROM sqlite_master WHERE name='workbench_run_execution'").get()).toEqual({name:'workbench_run_execution'})
     // Repair replay must not overwrite an accepted native task choice.

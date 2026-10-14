@@ -9,8 +9,9 @@
 
 /** @typedef {'ok'|'warn'|'bad'|'unknown'} Dot */
 /** @typedef {'ready'|'behind'|'not_loaded'|'unknown'} State */
+/** @typedef {{id:string,name:string,state:'ok'|'fallback'|'needs_you'|'off',code:string,reason:string,action?:{label:string,where:string,url?:string}}} Capability */
 /** @typedef {{id:string,kind:string,name:string,state:State,latestAt:number|null,syncedAt:number|null}} Source */
-/** @typedef {{generatedAt:number,sources:Source[],starting?:boolean,computers:Array<{id:string,label:string,online:boolean,since:number|null,version:string|null}>,recent:Array<{matterId:string,title:string,phase:string,at:number}>,outputs:Array<{matterId:string,name:string,mime:string,at:number}>}} Connections */
+/** @typedef {{generatedAt:number,sources:Source[],starting?:boolean,computers:Array<{id:string,label:string,online:boolean,since:number|null,version:string|null}>,recent:Array<{matterId:string,title:string,phase:string,at:number}>,outputs:Array<{matterId:string,name:string,mime:string,at:number}>,capabilities?:Capability[]}} Connections */
 
 const STALE_AFTER_MS = 30_000
 /** @param {number} ms */
@@ -21,6 +22,8 @@ const pad = (/** @type {number} */ n) => String(n).padStart(2, '0')
 const DOT = { ready: 'ok', behind: 'warn', not_loaded: 'bad', unknown: 'unknown' }
 /** @type {Dot[]} 最坏的在前 */
 const SEVERITY = ['bad', 'warn', 'unknown', 'ok']
+/** @type {Record<string, Dot>} */
+const CAP_DOT = { ok: 'ok', fallback: 'warn', needs_you: 'bad', off: 'unknown' }
 
 /** @param {Connections} s @param {{stale?:boolean}} [opts] */
 export function connectionsView(s, opts = {}) {
@@ -32,11 +35,18 @@ export function connectionsView(s, opts = {}) {
     const name = x.kind === 'wechat_history' ? '微信聊天记录' : x.kind === 'knowledge' ? '知识库' : x.name
     return { id: x.id, name, dot: DOT[x.state] ?? /** @type {Dot} */ ('unknown'), label }
   })
+  // 「CC 现在怎么样」(2026-10-06):能力四态 —— 要你动手的排第一,退路(凑合着用)其次,没开的不算问题。
+  const capabilities = (s.capabilities ?? []).map(c => ({ id: c.id, name: c.name, dot: CAP_DOT[c.state] ?? /** @type {Dot} */ ('unknown'), label: c.reason, action: c.state !== 'ok' && c.action ? c.action : null }))
+  const needsYou = (s.capabilities ?? []).filter(c => c.state === 'needs_you').length
+  const fallback = (s.capabilities ?? []).filter(c => c.state === 'fallback').length
   const offline = s.computers.filter(c => !c.online).length
   const worst = SEVERITY.find(d => sources.some(x => x.dot === d) || (d === 'bad' && offline > 0)) ?? 'unknown'
   const count = sources.filter(x => x.dot === worst).length
   const badSources = sources.filter(x => x.dot === 'bad').length
-  const text = worst === 'bad' ? (badSources === 0 ? `${offline} 台电脑不在线` : `${badSources} 项没加载`)
+  const capWorst = needsYou ? 'bad' : fallback && worst !== 'bad' ? 'warn' : null
+  const text = needsYou ? `${needsYou} 件事要你处理`
+    : capWorst === 'warn' ? `${fallback} 项在凑合着用`
+    : worst === 'bad' ? (badSources === 0 ? `${offline} 台电脑不在线` : `${badSources} 项没加载`)
     : worst === 'warn' ? `${count} 项有点旧`
     : worst === 'ok' ? '都连着'
     : s.starting === true ? '电脑还在启动，暂时不知道' : '暂时不知道连接情况'
@@ -45,8 +55,8 @@ export function connectionsView(s, opts = {}) {
     detail: !c.online ? '不在线' : opts.stale ? '上次连上时在线' : c.since === null ? '在线' : `在线 · 自 ${shortDate(c.since)}`,
   }))
   const view = {
-    headline: { dot: /** @type {Dot} */ (worst), text },
-    sources, computers,
+    headline: { dot: /** @type {Dot} */ (capWorst ?? worst), text },
+    capabilities, sources, computers,
     recent: s.recent.map(r => ({ matterId: r.matterId, title: r.title, when: shortDate(r.at) })),
     outputs: s.outputs.map(o => ({ matterId: o.matterId, name: o.name, when: shortDate(o.at) })),
   }
@@ -55,6 +65,7 @@ export function connectionsView(s, opts = {}) {
   return {
     ...view,
     headline: { ...view.headline, dot: grey },
+    capabilities: view.capabilities.map(x => ({ ...x, dot: grey })),
     sources: view.sources.map(x => ({ ...x, dot: grey })),
     computers: view.computers.map(x => ({ ...x, dot: grey })),
   }
@@ -88,9 +99,9 @@ function row(cls, d, name, detail) {
 }
 
 /**
- * @param {{host:HTMLElement, call:(method:'GET', path:string)=>Promise<unknown>, now?:()=>number}} o
+ * @param {{host:HTMLElement, call:(method:'GET', path:string)=>Promise<unknown>, now?:()=>number, openUrl?:(url:string)=>void}} o
  */
-export function mountNowConnections({ host, call, now = () => Date.now() }) {
+export function mountNowConnections({ host, call, now = () => Date.now(), openUrl }) {
   /** @type {Connections|null} */ let data = null
   /** @type {number|null} */ let fetchedAt = null
   let failed = false
@@ -103,13 +114,20 @@ export function mountNowConnections({ host, call, now = () => Date.now() }) {
     const head = el('p', 'nc-headline')
     head.append(dot(v ? v.headline.dot : 'unknown'), el('span', 'nc-headline-text', v ? v.headline.text : '暂时不知道连接情况'))
     /** @type {HTMLElement[]} */
-    const parts = [el('h2', 'nc-title', 'CC 的连接'), head]
+    const parts = [el('h2', 'nc-title', 'CC 现在怎么样'), head]
     if (stale && fetchedAt !== null) {
       const d = new Date(fetchedAt)
       const hm = `${pad(d.getHours())}:${pad(d.getMinutes())}`
       parts.push(el('p', 'nc-stale', failed ? `现在读不到连接情况，下面是 ${hm} 时的情况` : `正在更新，下面是 ${hm} 时的情况`))
     }
     if (v) {
+      if (v.capabilities.length) parts.push(section('CC 现在怎么样', v.capabilities.map(x => {
+        const li = row('nc-capability', x.dot, x.name, x.label)
+        // 能当场打开的(系统设置)给按钮;别的动作在桌面别处做,写成一句提示。
+        if (x.action?.url && openUrl) { const b = el('button', 'nc-action', x.action.label); b.setAttribute('type', 'button'); b.addEventListener('click', () => openUrl(/** @type {string} */ (x.action?.url))); li.append(b) }
+        else if (x.action) li.append(el('span', 'nc-action-hint', x.action.label))
+        return li
+      })))
       if (v.sources.length) parts.push(section('来源', v.sources.map(x => row('nc-source', x.dot, x.name, x.label))))
       if (v.computers.length) parts.push(section('家里的电脑', v.computers.map(x => row('nc-computer', x.dot, x.label, x.detail))))
       if (v.recent.length) parts.push(section('最近在做', v.recent.map(x => row('nc-recent', null, x.title, x.when))))

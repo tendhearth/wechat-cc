@@ -105,6 +105,7 @@ export default function Settings() {
         {demo || conn.state !== 'revoked' ? (
           // 紧跟语言列表时(没有通知段)接着那张表往下排:不留空白、不再画第二条线(终审 M7)
           <View style={showNotif ? { marginTop: space.xl, borderTopWidth: 1, borderTopColor: c.hair } : undefined}>
+            <LinkRow testID="settings-memory" label={t(lang, 'memory.title')} onPress={() => router.push('/memory')} />
             <LinkRow testID="settings-connections" label={t(lang, 'settings.connections')} onPress={() => router.push('/connections')} />
             <LinkRow testID="settings-sessions" label={t(lang, 'settings.sessions')} onPress={() => router.push('/sessions')} />
           </View>

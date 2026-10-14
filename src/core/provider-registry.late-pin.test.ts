@@ -22,8 +22,8 @@ describe('钉死的 cheapEval provider 晚注册 ⇒ 已缓存的函数自动回
     expect(await cached('q')).toBe('from-agy')
     expect(openai).toHaveBeenCalledTimes(1)
     expect(logs.filter(l => l.includes('已注册 — 后台评估回到它'))).toHaveLength(1)
-    // 新取的直接就是 agy 本体(钉中时的原有行为不变)。
-    expect(r.getCheapEval()).toBe(agy)
+    // 新取的直接走 agy(钉中时的原有行为不变;外面多包了一层只为记成败)。
+    expect(await r.getCheapEval()!('q')).toBe('from-agy')
   })
 
   it('钉的没注册、也没有别家 ⇒ 仍然是 null(语义不变)', () => {

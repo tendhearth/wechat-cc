@@ -1,7 +1,8 @@
 import { describe, expect, it, afterEach } from 'vitest'
-import { mkdirSync, writeFileSync, rmSync } from 'node:fs'
+import { mkdirSync, mkdtempSync, writeFileSync, rmSync } from 'node:fs'
+import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { analyzeDoctor, setupStatus, serviceStatus, readDaemon, readAccess, readExpiredBots, defaultProbeCursor, defaultProbeGemini, probeOutboundWarning } from './doctor'
+import { analyzeDoctor, setupStatus, serviceStatus, readDaemon, readAccess, readExpiredBots, defaultProbeCursor, defaultProbeGemini, defaultProbeLogin, probeOutboundWarning } from './doctor'
 import { openWechatDb } from '../lib/db'
 import { makeSessionStateStore } from '../core/session-state'
 
@@ -291,10 +292,10 @@ describe('doctor installer JSON', () => {
     expect(report.nextActions).not.toContain('install_cursor')
   })
 
-  it('cursor.ok = false when API key is set but SDK is missing — fix hints at install', () => {
+  it('cursor.ok = false when API key is set but SDK is missing and no cursor-agent CLI — fix points at the CLI (2026-10-13)', () => {
     const report = analyzeDoctor({
       stateDir: '/state',
-      findOnPath: (cmd) => `/bin/${cmd}`,
+      findOnPath: (cmd) => cmd === 'cursor-agent' ? null : `/bin/${cmd}`,
       probeCursor: () => ({ apiKeySet: true, sdkInstalled: false }),
       readAccounts: () => [],
       readAccess: () => ({ dmPolicy: 'allowlist', allowFrom: [] }),
@@ -306,13 +307,13 @@ describe('doctor installer JSON', () => {
     })
     expect(report.checks.cursor.ok).toBe(false)
     expect(report.checks.cursor.severity).toBe('soft')  // not the active provider
-    expect(report.checks.cursor.fix?.command).toBe('bun add @cursor/sdk')
+    expect(report.checks.cursor.fix?.action).toContain('cursor-agent login')
   })
 
-  it('cursor.ok = false when SDK is installed but API key is missing — fix hints at env var', () => {
+  it('cursor.ok = false when SDK is installed but API key is missing and no cursor-agent CLI', () => {
     const report = analyzeDoctor({
       stateDir: '/state',
-      findOnPath: (cmd) => `/bin/${cmd}`,
+      findOnPath: (cmd) => cmd === 'cursor-agent' ? null : `/bin/${cmd}`,
       probeCursor: () => ({ apiKeySet: false, sdkInstalled: true }),
       readAccounts: () => [],
       readAccess: () => ({ dmPolicy: 'allowlist', allowFrom: [] }),
@@ -323,7 +324,7 @@ describe('doctor installer JSON', () => {
       service: missingSystemd,
     })
     expect(report.checks.cursor.ok).toBe(false)
-    expect(report.checks.cursor.fix?.action).toContain('CURSOR_API_KEY')
+    expect(report.checks.cursor.fix?.action).toContain('cursor-agent login')
   })
 
   it('provider=cursor + cursorOk=false → provider check is hard, install_cursor in nextActions', () => {
@@ -342,11 +343,19 @@ describe('doctor installer JSON', () => {
     expect(report.checks.cursor.severity).toBe('hard')
     expect(report.checks.provider.ok).toBe(false)
     expect(report.checks.provider.severity).toBe('hard')
-    expect(report.checks.provider.fix?.action).toContain('CURSOR_API_KEY')
+    expect(report.checks.provider.fix?.action).toContain('cursor-agent login')
     expect(report.nextActions).toContain('install_cursor')
     // install_claude / install_codex should NOT appear when cursor is selected
     expect(report.nextActions).not.toContain('install_claude')
     expect(report.nextActions).not.toContain('install_codex')
+  })
+
+  it('cursor-agent CLI on PATH is ready by itself — same rule as the daemon; not on Windows (2026-10-13)', () => {
+    const base = { stateDir: '/state', probeCursor: () => ({ apiKeySet: false, sdkInstalled: false }), readAccounts: () => [], readAccess: () => ({ dmPolicy: 'allowlist' as const, allowFrom: [] }), readAgentConfig: () => ({ provider: 'cursor' as const, dangerouslySkipPermissions: true, autoStart: false, closeStopsDaemon: false }), readUserNames: () => ({}), readExpiredBots: () => [], daemon: () => ({ alive: false, pid: null }), service: missingSystemd }
+    const mac = analyzeDoctor({ ...base, platform: 'darwin', findOnPath: (cmd: string) => cmd === 'cursor-agent' ? '/bin/cursor-agent' : null })
+    expect(mac.checks.cursor).toMatchObject({ ok: true, cliInstalled: true });expect(mac.checks.provider.ok).toBe(true);expect(mac.nextActions).not.toContain('install_cursor')
+    const win = analyzeDoctor({ ...base, platform: 'win32', findOnPath: (cmd: string) => cmd === 'cursor-agent' ? 'C:/bin/cursor-agent' : null })
+    expect(win.checks.cursor).toMatchObject({ ok: false, cliInstalled: false })
   })
 
   it('provider=cursor + cursorOk=true → provider check passes despite missing claude/codex binaries', () => {
@@ -825,5 +834,64 @@ describe('probeOutboundWarning', () => {
     await probeOutboundWarning(daemonAlive, fetchFn as any, () => 'tok')
     expect(capturedInit).toBeDefined()
     expect(capturedInit.signal).toBeInstanceOf(AbortSignal)
+  })
+})
+
+describe('defaultProbeLogin — local, presence-only (2026-10-13)', () => {
+  const fresh = () => { const d = mkdtempSync(join(tmpdir(), 'cc-login-')); return d }
+  const never = () => false
+  it('codex: env key or auth.json under CODEX_HOME / ~/.codex', () => {
+    const home = fresh()
+    expect(defaultProbeLogin('codex', {}, home, 'darwin', never)).toBe(false)
+    expect(defaultProbeLogin('codex', { OPENAI_API_KEY: 'x' }, home, 'darwin', never)).toBe(true)
+    mkdirSync(join(home, '.codex')); writeFileSync(join(home, '.codex', 'auth.json'), '{}')
+    expect(defaultProbeLogin('codex', {}, home, 'darwin', never)).toBe(true)
+    const alt = fresh(); writeFileSync(join(alt, 'auth.json'), '{}')
+    expect(defaultProbeLogin('codex', { CODEX_HOME: alt }, fresh(), 'darwin', never)).toBe(true)
+  })
+  it('claude: env / bedrock / credentials file / apiKeyHelper / keychain item (darwin only), never the secret itself', () => {
+    const home = fresh()
+    expect(defaultProbeLogin('claude', {}, home, 'darwin', never)).toBe(false)
+    expect(defaultProbeLogin('claude', { CLAUDE_CODE_USE_BEDROCK: '1' }, home, 'darwin', never)).toBe(true)
+    const asked: string[] = []
+    expect(defaultProbeLogin('claude', {}, home, 'darwin', s => { asked.push(s); return true })).toBe(true)
+    expect(asked).toEqual(['Claude Code-credentials'])
+    expect(defaultProbeLogin('claude', {}, home, 'linux', () => true)).toBe(false)
+    mkdirSync(join(home, '.claude')); writeFileSync(join(home, '.claude', 'settings.json'), JSON.stringify({ apiKeyHelper: '/bin/echo' }))
+    expect(defaultProbeLogin('claude', {}, home, 'linux', never)).toBe(true)
+    const h2 = fresh(); mkdirSync(join(h2, '.claude')); writeFileSync(join(h2, '.claude', '.credentials.json'), '{}')
+    expect(defaultProbeLogin('claude', {}, h2, 'linux', never)).toBe(true)
+  })
+  it('analyzeDoctor reports loggedIn only for installed CLIs and never flips ok', () => {
+    const r = analyzeDoctor({ stateDir: '/state', readAccounts: () => [], readAccess: () => ({ dmPolicy: 'allowlist', allowFrom: [] }), readAgentConfig: () => ({ provider: 'claude', dangerouslySkipPermissions: true, autoStart: false, closeStopsDaemon: false }), readUserNames: () => ({}), readExpiredBots: () => [], daemon: () => ({ alive: false, pid: null }), service: missingSystemd, findOnPath: (c: string) => c === 'claude' ? '/bin/claude' : null, probeLogin: () => false } as never)
+    expect(r.checks.claude).toMatchObject({ ok: true, loggedIn: false })
+    expect('loggedIn' in r.checks.codex).toBe(false)
+  })
+  it('the --json output schema keeps loggedIn (zod strips unknown keys; the GUI reads this JSON)', async () => {
+    const { DoctorOutput } = await import('./schema')
+    const r = analyzeDoctor({ stateDir: '/state', readAccounts: () => [], readAccess: () => ({ dmPolicy: 'allowlist', allowFrom: [] }), readAgentConfig: () => ({ provider: 'claude', dangerouslySkipPermissions: true, autoStart: false, closeStopsDaemon: false }), readUserNames: () => ({}), readExpiredBots: () => [], daemon: () => ({ alive: false, pid: null }), service: missingSystemd, findOnPath: (c: string) => c === 'claude' ? '/bin/claude' : null, probeLogin: () => false } as never)
+    expect(DoctorOutput.parse(r).checks.claude.loggedIn).toBe(false)
+  })
+})
+
+describe('provider check for agy / openai (2026-10-13)', () => {
+  const base = { stateDir: '/state', readAccounts: () => [], readAccess: () => ({ dmPolicy: 'allowlist' as const, allowFrom: [] }), readUserNames: () => ({}), readExpiredBots: () => [], daemon: () => ({ alive: false, pid: null }), service: () => ({ installed: false, kind: 'systemd-user' as const }) }
+  it('agy only on PATH ⇒ provider=agy is ready; nobody is told to install Claude', () => {
+    const r = analyzeDoctor({ ...base, findOnPath: (c: string) => c === 'agy' ? '/bin/agy' : null, readAgentConfig: () => ({ provider: 'agy', dangerouslySkipPermissions: true, autoStart: false, closeStopsDaemon: false }) } as never)
+    expect(r.checks.provider).toMatchObject({ ok: true, binaryPath: '/bin/agy' })
+    expect(r.checks.agy).toMatchObject({ ok: true, path: '/bin/agy' })
+    expect(r.nextActions).not.toContain('install_claude')
+  })
+  it('agy missing ⇒ install_agy, not install_claude; agyBin from config wins over PATH', () => {
+    const missing = analyzeDoctor({ ...base, findOnPath: (c: string) => c === 'claude' ? '/bin/claude' : null, readAgentConfig: () => ({ provider: 'agy', dangerouslySkipPermissions: true, autoStart: false, closeStopsDaemon: false }) } as never)
+    expect(missing.checks.provider.ok).toBe(false);expect(missing.nextActions).toContain('install_agy');expect(missing.nextActions).not.toContain('install_claude')
+    const pinned = analyzeDoctor({ ...base, findOnPath: () => null, readAgentConfig: () => ({ provider: 'agy', agyBin: '/opt/agy', dangerouslySkipPermissions: true, autoStart: false, closeStopsDaemon: false }) } as never)
+    expect(pinned.checks.provider).toMatchObject({ ok: true, binaryPath: '/opt/agy' })
+  })
+  it('openai is an API: ready once base url + model are configured, no binary needed (the key lives in the daemon env)', () => {
+    const ok = analyzeDoctor({ ...base, findOnPath: () => null, readAgentConfig: () => ({ provider: 'openai', openaiBaseUrl: 'https://x/v1', openaiModel: 'm', dangerouslySkipPermissions: true, autoStart: false, closeStopsDaemon: false }) } as never)
+    expect(ok.checks.provider.ok).toBe(true);expect(ok.nextActions).not.toContain('install_claude')
+    const no = analyzeDoctor({ ...base, findOnPath: () => '/bin/claude', readAgentConfig: () => ({ provider: 'openai', dangerouslySkipPermissions: true, autoStart: false, closeStopsDaemon: false }) } as never)
+    expect(no.checks.provider.ok).toBe(false);expect(no.checks.provider.fix?.action).toContain('模型与后端')
   })
 })

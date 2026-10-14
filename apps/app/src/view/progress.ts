@@ -20,3 +20,8 @@ export function progressView(detail: MatterDetailT, insight: { progress: Progres
     summaryState: !t ? 'none' : p ? 'ready' : insight ? 'none' : insightFailed ? 'failed' : 'loading',
   }
 }
+
+/** 这件事现在能不能从手机上停(2026-10-06):有一轮在跑(详情带 runId)且还在排队 / 干活;已答复 / 结束的不显示按钮。 */
+export function canStop(d: Pick<MatterDetailT, 'runId' | 'task'>): boolean {
+  return !!d.runId && (d.task?.phase === 'queued' || d.task?.phase === 'working')
+}

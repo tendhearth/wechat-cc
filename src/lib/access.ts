@@ -10,7 +10,13 @@ import { readFileSync, writeFileSync, mkdirSync, renameSync } from 'fs'
 import { join } from 'path'
 import { STATE_DIR } from './config.ts'
 
-const ACCESS_FILE = join(STATE_DIR, 'access.json')
+/**
+ * 状态目录按调用时解析(2026-10-10):生产里 WECHAT_STATE_DIR 不变(或不设,落到 STATE_DIR),结果和原先的
+ * 模块级常量一样;e2e 一个文件里起多个 daemon、各自换 WECHAT_STATE_DIR 时,才不会一直读第一个 daemon
+ * 那个早已删掉的目录。
+ */
+const stateDir = (): string => process.env.WECHAT_STATE_DIR || STATE_DIR
+const accessFile = (): string => join(stateDir(), 'access.json')
 
 /**
  * Thrown by readAccessFile when access.json is present but unparseable.
@@ -65,7 +71,7 @@ function toStringArray(v: unknown): string[] {
 
 function readAccessFile(): Access {
   try {
-    const raw = readFileSync(ACCESS_FILE, 'utf8')
+    const raw = readFileSync(accessFile(), 'utf8')
     const parsed = JSON.parse(raw) as Partial<Access>
     return {
       dmPolicy: parsed.dmPolicy === 'disabled' ? 'disabled' : 'allowlist',
@@ -77,8 +83,8 @@ function readAccessFile(): Access {
     }
   } catch (err) {
     if ((err as NodeJS.ErrnoException).code === 'ENOENT') return defaultAccess()
-    const corruptPath = `${ACCESS_FILE}.corrupt-${Date.now()}`
-    try { renameSync(ACCESS_FILE, corruptPath) } catch {}
+    const corruptPath = `${accessFile()}.corrupt-${Date.now()}`
+    try { renameSync(accessFile(), corruptPath) } catch {}
     // Throw instead of process.exit so bootstrap can decide policy
     // (production: log + exit; tests: catch and use default access).
     // Move-aside happens before the throw so the next start finds an
@@ -88,10 +94,10 @@ function readAccessFile(): Access {
 }
 
 export function saveAccess(a: Access): void {
-  mkdirSync(STATE_DIR, { recursive: true, mode: 0o700 })
-  const tmp = ACCESS_FILE + '.tmp'
+  mkdirSync(stateDir(), { recursive: true, mode: 0o700 })
+  const tmp = accessFile() + '.tmp'
   writeFileSync(tmp, JSON.stringify(a, null, 2) + '\n', { mode: 0o600 })
-  renameSync(tmp, ACCESS_FILE)
+  renameSync(tmp, accessFile())
 }
 
 /**
@@ -143,6 +149,8 @@ export function appendAllowFrom(userId: string): boolean {
 // Cache access in memory — re-read from disk every 5s max
 let _accessCache: Access | null = null
 let _accessCacheTime = 0
+/** 缓存是哪个文件的 —— 状态目录换了(e2e 里换 daemon)就不认旧缓存。 */
+let _accessCachePath = ''
 
 // Last snapshot observed on a real disk read (post-TTL). Used to detect
 // tier-membership changes across reads; reset to null on _resetSnapshotForTest.
@@ -198,7 +206,7 @@ function tierMembershipChanged(prev: Access, next: Access): boolean {
 
 export function loadAccess(): Access {
   const now = Date.now()
-  if (_accessCache && now - _accessCacheTime < 5000) return _accessCache
+  if (_accessCache && now - _accessCacheTime < 5000 && _accessCachePath === accessFile()) return _accessCache
   const fresh = readAccessFile()
   if (_lastSnapshot && tierMembershipChanged(_lastSnapshot, fresh)) {
     try { _invalidator?.() } catch { /* invalidator errors must not crash the reader */ }
@@ -206,6 +214,7 @@ export function loadAccess(): Access {
   _lastSnapshot = fresh
   _accessCache = fresh
   _accessCacheTime = now
+  _accessCachePath = accessFile()
   return _accessCache
 }
 

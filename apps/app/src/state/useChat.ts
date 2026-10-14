@@ -3,10 +3,11 @@ import type { ChatJobT, ChatPageT } from '../backend/types'
 import { ACCEPTED_TTL_MS, acceptedSettled, chatBubbles, chatSendOutcome, mergeChatPages, olderCursor, rebaseOlder, type Bubble } from '../view/chat'
 import { composeTooLong } from '../view/compose'
 import { useBackendCtx } from './BackendProvider'
-import { deleteDraft, dropReceipt, getDraft, isReplied, listReceipts, markReplied, pairingGen, putReceipt, requestIdFor, subscribeReceipts } from './drafts'
+import { deleteDraft, dropReceipt, getDraft, isReplied, listReceipts, markReplied, materialDraftId, pairingGen, putReceipt, requestIdFor, subscribeReceipts } from './drafts'
+import { bytesToBase64, uploadImages, withImageMarker, type PickedImage } from './image-upload'
 import { useQuery, useSubmit, useTopic } from './hooks'
 
-export type ChatSendOutcome = 'ok' | 'busy' | 'ccBusy' | 'uncertain' | 'revoked' | 'failed' | 'refused' | 'tooLong'
+export type ChatSendOutcome = 'ok' | 'busy' | 'ccBusy' | 'uncertain' | 'revoked' | 'failed' | 'refused' | 'tooLong' | 'imagesGone' | 'imagesUnsupported'
 const NO_JOB = { pending: null, failed: null } as const
 
 /**
@@ -18,7 +19,8 @@ const NO_JOB = { pending: null, failed: null } as const
 export function useChat(): {
   page: ChatPageT | undefined; error: unknown; noOwner: boolean
   bubbles: Bubble[]; canLoadOlder: boolean; loadingOlder: boolean; loadOlder(): Promise<void>
-  send(text: string): Promise<ChatSendOutcome>
+  /** images:选好的图(2026-10-06),先传到电脑再说这一句;有图时文字可空。 */
+  send(text: string, images?: readonly PickedImage[]): Promise<ChatSendOutcome>
   /** 失败 / 可能没送到 / 没确认送到的那句,用**同一个** requestId 再说一次(daemon 去重);已知有回复的 id 不重发。 */
   retry(requestId: string, text: string): Promise<ChatSendOutcome>
   /** 「没确认送到 · 不管它」:清掉本机回执气泡。 */
@@ -95,11 +97,15 @@ export function useChat(): {
     finally { setLoadingOlder(false) }
   }, [backend, cursor, loadingOlder])
 
-  const say = useCallback(async (text: string, requestId: string): Promise<ChatSendOutcome> => {
+  const say = useCallback(async (text: string, requestId: string, materials?: { draftId: string; attachmentIds: string[] }, images?: readonly PickedImage[]): Promise<ChatSendOutcome> => {
     let job: ChatJobT | null = null
     // 配对代:回执回来时若已换了配对(解除 / 换电脑),putReceipt / markReplied 不落
     const gen = pairingGen()
-    const r = await submit('chat:say', async () => { job = await backend.chatSay(text, requestId) })
+    const r = await submit('chat:say', async () => {
+      // 图先传完(断点续传;已经传完的不再传),再说这一句;传不上 ⇒ 这一句不发,错误照常映射
+      if (images?.length && materials) await uploadImages(backend, materials.draftId, images, bytesToBase64)
+      job = materials ? await backend.chatSay(text, requestId, materials) : await backend.chatSay(text, requestId)
+    })
     const out = chatSendOutcome(r)
     if (out !== 'ok') return out
     const j = job as ChatJobT | null
@@ -112,17 +118,18 @@ export function useChat(): {
       // 先拉一页(带 pending)再挂回执,免得旧页上闪一下「可能没送到」
       await refresh()
       const localAt = Date.now()
-      putReceipt({ requestId, text, at: j?.since ?? localAt, localAt }, gen)
+      putReceipt({ requestId, text: materials ? withImageMarker(text, materials.attachmentIds.length) : text, at: j?.since ?? localAt, localAt, ...(materials ? { materials, sent: text } : {}) }, gen)
     }
     return 'ok'
   }, [backend, submit, refresh, drop])
 
-  const send = useCallback(async (raw: string): Promise<ChatSendOutcome> => {
+  const send = useCallback(async (raw: string, images?: readonly PickedImage[]): Promise<ChatSendOutcome> => {
     const text = raw.trim()
-    if (!text) return 'failed'
+    if (!text && !images?.length) return 'failed'
     if (composeTooLong(text)) return 'tooLong'
-    // requestIdFor 不会交出已知有回复的 id;失败 / 不确定时草稿留着,同样正文再点 ⇒ 同一个 id
-    const r = await say(text, requestIdFor('chat', text))
+    // requestIdFor 不会交出已知有回复的 id;失败 / 不确定时草稿留着,同样正文(和同一组图)再点 ⇒ 同一个 id
+    const materials = images?.length ? { draftId: materialDraftId('chat'), attachmentIds: images.map(i => i.id) } : undefined
+    const r = await say(text, requestIdFor('chat', materials ? `${text}\u0000${materials.attachmentIds.join(',')}` : text), materials, images)
     // 发送途中主人又改了草稿 ⇒ 留着新打的字(Task 11 a)
     if (r === 'ok' && getDraft('chat') === raw) deleteDraft('chat')
     return r
@@ -130,7 +137,9 @@ export function useChat(): {
 
   const retry = useCallback(async (requestId: string, text: string): Promise<ChatSendOutcome> => {
     if (isReplied(requestId)) { drop(requestId); return 'ok' }
-    return say(text, requestId)
+    // 带图的那句:原样带上同一组材料 id(图已经在电脑上了,不再传)
+    const rec = listReceipts().find(r => r.requestId === requestId)
+    return say(rec?.materials ? rec.sent ?? '' : text, requestId, rec?.materials)
   }, [say, drop])
 
   const dismiss = drop

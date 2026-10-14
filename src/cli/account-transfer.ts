@@ -12,6 +12,7 @@
  *
  * Bundle layout (bytes): MAGIC(5) | salt(16) | iv(12) | tag(16) | ciphertext
  */
+import { BOT_ID_RE } from './account-remove'
 import { createCipheriv, createDecipheriv, randomBytes, scryptSync } from 'node:crypto'
 import { existsSync, mkdirSync, readFileSync, readdirSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
@@ -111,7 +112,8 @@ export function decryptBundle(blob: Buffer, passphrase: string): AccountBundle {
     throw new Error('decrypt failed — wrong passphrase or corrupt file')
   }
   const bundle = JSON.parse(plain.toString('utf8')) as AccountBundle
-  if (bundle.v !== 1 || !bundle.botId || !bundle.files || typeof bundle.files !== 'object') {
+  // botId 会被拼成 accounts/<botId> 目录:知道口令的人就能造一个 `../..` 的包,把 token 写到状态目录外。
+  if (bundle.v !== 1 || typeof bundle.botId !== 'string' || !BOT_ID_RE.test(bundle.botId) || !bundle.files || typeof bundle.files !== 'object') {
     throw new Error('invalid bundle contents')
   }
   return bundle

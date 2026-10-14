@@ -270,3 +270,107 @@ it('persists the physical managed allocation path before any directory is create
   expect(reservation.directoryIdentity).toBeNull()
   expect(existsSync(reservation.resolvedPath!)).toBe(false)
 })
+
+it('isolated worktree tasks (2026-10-07): run in parallel on one project, stay out of the project list, commit to their branch, and clean up',async()=>{
+  const {execFileSync}=await import('node:child_process'),{readFileSync}=await import('node:fs')
+  const g=(...a:string[])=>execFileSync('git',a,{cwd:project,stdio:'pipe'}).toString().trim()
+  g('init','-q','-b','main');g('config','user.email','t@t');g('config','user.name','t')
+  writeFileSync(join(project,'a.txt'),'one\n');g('add','-A');g('commit','-q','-m','init')
+  // 两个独立工作区的任务开在同一个项目:路径不同,谁也不等谁
+  const gate=Promise.withResolvers<void>()
+  const registry=createProviderRegistry()
+  registry.register('claude',{async spawn(p){spawnCount++;return{async *dispatch(){await gate.promise;writeFileSync(join(p.path,'out.txt'),'done\n');yield{kind:'text' as const,text:'完成'};yield{kind:'result' as const,sessionId:'native',numTurns:1,durationMs:1}},async close(){}}}},{displayName:'claude',canResume:()=>true,workbench:MANAGED_NATIVE_CAPABILITIES})
+  await service.shutdown();store=makeWorkbenchStore(db)
+  service=makeWorkbenchService({store,registry,stateDir,managedWorkspaceRoot:join(area,'Tasks'),ownerChatId:()=>owner,defaultProvider:'claude',registeredProjects:()=>[{alias:'project',path:project}],matters:makeMatterStore(db),changes:makeTaskChangeHub(),mintSessionToken:()=>'t'})
+  const projectId=service.projects()[0]!.id
+  // 从分支开始(10-08):分支不在 ⇒ 预约前就拒,不留半截预约
+  const before=db.query<{n:number},[]>('SELECT count(*) AS n FROM workbench_entry_requests').get()!.n
+  expect(()=>service.createEntry(input({target:{kind:'project',projectId,isolation:'worktree',base:'nope'}}),context)).toThrow('worktree_base_missing')
+  expect(db.query<{n:number},[]>('SELECT count(*) AS n FROM workbench_entry_requests').get()!.n).toBe(before)
+  const one=service.createEntry(input({target:{kind:'project',projectId,isolation:'worktree'}}),context)
+  const two=service.createEntry(input({target:{kind:'project',projectId,isolation:'worktree'}}),context)
+  const [a,b]=[service.detail(one.receipt.taskId).task,service.detail(two.receipt.taskId).task]
+  // Windows:任务目录是长名真实路径,临时目录可能是 8.3 短名 —— 两边都用 native 真实路径比
+  const wtRoot=realpathSync.native(stateDir)
+  expect(a.path).not.toBe(b.path);expect(a.path.startsWith(join(wtRoot,'worktrees'))).toBe(true)
+  expect(a.waitingFor).toBeNull();expect(b.waitingFor).toBeNull()
+  expect(a.worktree).toMatchObject({branch:expect.stringMatching(/^cc\/[a-f0-9]{8}$/),projectPath:project,removed:false})
+  expect(readFileSync(join(a.path,'a.txt'),'utf8')).toBe('one\n')
+  gate.resolve();await settle(one.receipt.taskId);await settle(two.receipt.taskId)
+  // 不登记成项目
+  expect(store.projects().some(p=>p.path.startsWith(join(wtRoot,'worktrees')))).toBe(false);expect(store.ownedProjects('owner').some(p=>p.path.startsWith(join(wtRoot,'worktrees')))).toBe(false)
+  expect(service.projects().some(p=>p.path.startsWith(join(wtRoot,'worktrees')))).toBe(false)
+  // 提交到分支;项目本身不动
+  const commit=service.worktreeAction(one.receipt.taskId,'commit')
+  const {mergeHint}=await import('./worktree-workspaces')
+  expect(commit).toMatchObject({committed:true,mergeHint:mergeHint(project,a.worktree!.branch)})
+  expect(g('log','-1','--format=%s',a.worktree!.branch)).toBe(a.title)
+  expect(existsSync(join(project,'out.txt'))).toBe(false)
+  // 合回项目(10-08):快进进 main,任务页记「已合回」
+  expect(service.worktreeAction(one.receipt.taskId,'merge')).toMatchObject({merged:true,into:'main'})
+  expect(readFileSync(join(project,'out.txt'),'utf8').replace(/\r\n/g,'\n')).toBe('done\n');expect(service.detail(one.receipt.taskId).task.worktree?.merged).toBe(true)
+  // 再点一次:没有新提交 ⇒ merged:false,但「已合回」不撤;再提交新改动 ⇒「已合回」清掉(10-08 评审)
+  expect(service.worktreeAction(one.receipt.taskId,'merge')).toMatchObject({merged:false})
+  writeFileSync(join(a.path,'more.txt'),'more\n');const again=service.worktreeAction(one.receipt.taskId,'commit')
+  expect(service.detail(one.receipt.taskId).task.worktree?.merged).toBe(false)
+  // 时间线(会到手机)不带项目路径
+  expect(service.detail(one.receipt.taskId).events.some(e=>e.text.includes(project))).toBe(false)
+  // 有没提交的改动 ⇒ 不删;提交后删 ⇒ 目录没了、分支还在
+  expect(()=>service.worktreeAction(two.receipt.taskId,'remove')).toThrow('worktree_dirty')
+  service.worktreeAction(one.receipt.taskId,'remove')
+  expect(existsSync(a.path)).toBe(false);expect(service.detail(one.receipt.taskId).task.worktree?.removed).toBe(true)
+  expect(g('rev-parse','--verify',a.worktree!.branch)).toBe(again.sha)
+  expect(()=>service.worktreeAction(one.receipt.taskId,'commit')).toThrow('worktree_removed')
+  // 工作区删了 ⇒ 不再接着做(否则执行者对着不存在的目录跑)
+  expect(()=>service.continueTask(one.receipt.taskId,'再改一下')).toThrow('worktree_removed')
+  // 重新打开(10-08):从保留的分支检出回原位置,又能接着做
+  expect(()=>service.worktreeAction(two.receipt.taskId,'reopen')).toThrow('worktree_open')
+  expect(service.worktreeAction(one.receipt.taskId,'reopen')).toMatchObject({reopened:true})
+  expect(service.detail(one.receipt.taskId).task.worktree?.removed).toBe(false);expect(readFileSync(join(a.path,'more.txt'),'utf8')).toBe('more\n')
+  service.continueTask(one.receipt.taskId,'再改一下');await settle(one.receipt.taskId)
+  service.worktreeAction(one.receipt.taskId,'commit');service.worktreeAction(one.receipt.taskId,'remove')
+  // 归档时顺手收拾(10-08):有没提交的改动 ⇒ 留着并说一句;提交后再归档 ⇒ 工作区删掉、分支还在
+  service.setArchived(two.receipt.taskId,true)
+  expect(service.detail(two.receipt.taskId).task.worktree?.removed).toBe(false);expect(existsSync(b.path)).toBe(true)
+  expect(service.detail(two.receipt.taskId).events.at(-1)?.text).toContain('还有没提交的改动，先保留着')
+  service.setArchived(two.receipt.taskId,false);service.worktreeAction(two.receipt.taskId,'commit')
+  service.setArchived(two.receipt.taskId,true)
+  expect(service.detail(two.receipt.taskId).task.worktree?.removed).toBe(true);expect(existsSync(b.path)).toBe(false)
+  expect(g('rev-parse','--verify',b.worktree!.branch)).toMatch(/^[0-9a-f]{40}$/)
+})
+
+it('an isolated task on a non-git project is refused before anything is reserved; a plain task is not a worktree',async()=>{
+  const projectId=service.projects()[0]!.id
+  expect(()=>service.createEntry(input({target:{kind:'project',projectId,isolation:'worktree'}}),context)).toThrow('worktree_not_git')
+  expect(db.query<{n:number},[]>('SELECT count(*) AS n FROM workbench_entry_requests').get()!.n).toBe(0)
+  const plain=service.createEntry(input({target:{kind:'project',projectId}}),context)
+  expect(()=>service.worktreeAction(plain.receipt.taskId,'commit')).toThrow('not_worktree')
+  expect(()=>service.createEntry(input({target:{kind:'managed',isolation:'worktree'} as never}),context)).toThrow('invalid_target')
+})
+
+it('WeChat 「任务 新建 <项目> 独立」 (2026-10-07): runs in a worktree, a retry of the same message is the same task, non-git refused',async()=>{
+  const {execFileSync}=await import('node:child_process')
+  const projectId=service.projects()[0]!.id
+  const wechat=(requestId:string)=>({ownerChatId:'owner',accountId:'acc',requestId,commandHash:'a'.repeat(64),projectId,text:'并行整理',isolation:true})
+  const rid=randomUUID()
+  expect(()=>service.createWechat(wechat(rid))).toThrow('worktree_not_git')
+  const g=(...a:string[])=>execFileSync('git',a,{cwd:project,stdio:'pipe'}).toString().trim()
+  g('init','-q','-b','main');g('config','user.email','t@t');g('config','user.name','t');writeFileSync(join(project,'a.txt'),'x\n');g('add','-A');g('commit','-q','-m','i')
+  const first=service.createWechat(wechat(rid)),again=service.createWechat(wechat(rid))
+  expect(again.taskId).toBe(first.taskId);expect(first.reply).toContain(`任务 ${first.taskId} 合回`)
+  const task=service.detail(first.taskId).task
+  expect(task.path.startsWith(join(realpathSync.native(stateDir),'worktrees'))).toBe(true)
+  expect(task.worktree).toMatchObject({projectPath:project,removed:false})
+  expect(store.projects().some(p=>p.path===task.path)).toBe(false)
+  await settle(first.taskId)
+})
+
+it('a project added on the desktop is offered for hand-off before it has any task (2026-10-07)',async()=>{
+  const extra=join(area,'added');mkdirSync(extra)
+  expect(service.projects().some(p=>p.path===realpathSync(extra))).toBe(false)
+  service.addProject({path:extra,providerId:'claude'})
+  const offered=service.entryOptions(context).projects.find(p=>p.path===realpathSync(extra))
+  expect(offered).toMatchObject({providerId:'claude'})
+  const done=service.createEntry(input({target:{kind:'project',projectId:offered!.id}}),context)
+  await settle(done.receipt.taskId)
+})

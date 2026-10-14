@@ -12,7 +12,15 @@ const terminal = (r: InputSnapshot) => r.status === 'delivered' || r.status === 
 export const inputNeedsChecking = (r: InputSnapshot) => !terminal(r)
 export function matchesMatterInput(snapshot: InputSnapshot, input: MatterInputT): boolean {
   return snapshot.taskId === input.taskId && snapshot.requestId === input.id && snapshot.text === input.text && (snapshot.runId === undefined || snapshot.runId === input.runId)
+    && sameMaterials(snapshot.attachmentIds, input.attachments?.map(a => a.id))
 }
+/** 带图的那句:电脑回执里的材料必须正好是这几份(老 daemon 不回材料 ⇒ 不拿它否决)。 */
+function sameMaterials(mine: readonly string[] | undefined, theirs: readonly string[] | undefined): boolean {
+  if (theirs === undefined) return true
+  if (!mine?.length) return theirs.length === 0
+  return mine.length === theirs.length && [...mine].sort().join(',') === [...theirs].sort().join(',')
+}
+const materialKey = (ids: readonly string[] | undefined) => (ids ?? []).join(',')
 const safeError = (e: unknown) => e instanceof InputJournalError ? e.code : 'input_storage'
 
 /** A fresh instance restores from SecureStore, not from a previous screen/module's memory. */
@@ -127,7 +135,7 @@ export function makeMatterInputState(deps: { journal?: InputJournal; getDraft?: 
     },
     begin,
     /** Only a successful durable prepare can authorize a POST. Failure keeps the original. */
-    async prepare(taskId: string, rawText: string, runId?: string, retry?: InputSnapshot, forLive = false) {
+    async prepare(taskId: string, rawText: string, runId?: string, retry?: InputSnapshot, forLive = false, materials?: { draftId: string; attachmentIds: string[] }) {
       if (recovery.phase !== 'ready') throw new InputJournalError('input_recovery')
       if (forLive && (!journal || !scope || !liveExpected) || journal && liveExpected && !scope) throw new InputJournalError('input_scope')
       const at = gen
@@ -137,8 +145,10 @@ export function makeMatterInputState(deps: { journal?: InputJournal; getDraft?: 
         if (!known || known.taskId !== taskId || !['uncertain', 'failed'].includes(known.status)) throw new InputJournalError('input_scope')
         snapshot = known
       } else {
-        snapshot = rows.findLast(r => r.taskId === taskId && r.text === rawText.trim() && ['uncertain', 'failed'].includes(r.status))
-          ?? { taskId, requestId: (deps.mk ?? uuid)(), ...(runId !== undefined ? { runId } : {}), text: rawText.trim(), rawText, status: 'submitting', ...bindDraft(taskId, rawText) }
+        // 同样的话、同一组图才算重发同一句;图换了就是新的一句(新 requestId)
+        snapshot = rows.findLast(r => r.taskId === taskId && r.text === rawText.trim() && materialKey(r.attachmentIds) === materialKey(materials?.attachmentIds) && ['uncertain', 'failed'].includes(r.status))
+          ?? { taskId, requestId: (deps.mk ?? uuid)(), ...(runId !== undefined ? { runId } : {}), text: rawText.trim(), rawText, status: 'submitting', ...bindDraft(taskId, rawText),
+            ...(materials?.attachmentIds.length ? { draftId: materials.draftId, attachmentIds: [...materials.attachmentIds] } : {}) }
       }
       let next: readonly InputSnapshot[] = rows.some(r => r === snapshot) ? rows.map(r => r === snapshot ? { ...r, status: 'submitting' as const, error: undefined } : r) : [...rows, snapshot]
       try {

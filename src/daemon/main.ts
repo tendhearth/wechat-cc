@@ -667,9 +667,8 @@ export async function bootDaemon(opts: BootDaemonOpts): Promise<DaemonHandle> {
     const cliEvents = makeCliEventHub({
       send: async (text) => {
         const owner = resolveAdminChatId(loadAccess(), loadCompanionConfig(stateDir), null)
-        if (!owner || !boot.sendAssistantText) return false
-        await boot.sendAssistantText(owner, text)
-        return true
+        if (!owner || !boot.sendAssistantText) return 'no_target'
+        return await boot.sendAssistantText(owner, text) ? 'sent' : 'rejected'
       },
       projectName: makeProjectNamer(() => ilink.projects.list()),
       log: (t, l) => log(t, l),
@@ -782,7 +781,7 @@ export async function bootDaemon(opts: BootDaemonOpts): Promise<DaemonHandle> {
     guardRt.setSuspendedTasks(() => workbench.networkSuspended())
     lc.register({ name: 'workbench', stop: () => workbench.shutdown() })
     const wired = wireMain({
-      workbench, matters, guardRuntime: guardRt,
+      workbench, matters, guardRuntime: guardRt, subsystems: () => sup.statuses(),
       panelTokens: internalApi.panelTokens,
       cliReply: cliReplyHandler,
       stickers: stickerLib,

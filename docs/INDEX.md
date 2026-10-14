@@ -1,6 +1,6 @@
 # Tendhearth CC 文档索引 · 去哪找什么
 
-> v1 · 2026-09-22 · **这份只回答「某件事的文档在哪、哪一份还可信」。**
+> 2026-10-05 状态核对 · **这份只回答「某件事的文档在哪、哪一份还可信」。**
 > 「定了什么 / 为什么」在 [全景导图](全景导图.md);「往哪走 / 卡在哪」在 [roadmap](roadmap.md)。
 > `docs/` 下有 300+ 份计划与设计,按日期命名。**不要按日期猜文件名——从这份索引进。**
 
@@ -36,6 +36,7 @@
 | 「一件事」matter 原语与任务入口 | [工作台现状](cc-workbench.md) | `superpowers/specs/2026-09-13-cc-unified-task-entry.md` 那一批(09-12/09-13)；[陪伴交办与手机验收记录](superpowers/reports/2026-09-22-cc-companion-task-entry.md)；[统一交办开发分支验证](superpowers/plans/2026-09-26-task-entry-validation.md) |
 | 原生手机（Expo） | [roadmap.md](roadmap.md);[app 怎么跑与硬要求](../apps/app/README.md) | spec `superpowers/specs/2026-09-30-tendhearth-app-v1-design.md` + 计划 `superpowers/plans/2026-09-30-tendhearth-app-backend.md` + 计划 `superpowers/plans/2026-09-30-tendhearth-app-skeleton.md` + 计划 `superpowers/plans/2026-09-30-tendhearth-app-live.md` + 计划 `superpowers/plans/2026-09-30-tendhearth-app-push.md` + spec `superpowers/specs/2026-10-01-tendhearth-app-chat-design.md` + 计划 `superpowers/plans/2026-10-01-tendhearth-app-chat.md` + 设计稿 `design/tendhearth-app-v1/` |
 | 两端设计统一 | [roadmap.md](roadmap.md) | spec `superpowers/specs/2026-10-01-tendhearth-design-unify-design.md` + 计划 `superpowers/plans/2026-10-01-tendhearth-design-unify.md`;验收截图与对稿记录在仓库外 `~/Documents/tendhearth/cc-screens-2026-10-01-design/` |
+| 此刻 / 一起做的层级(每样东西只有一个家:对话→此刻、交办→一起做;桌面一起做不再收主导航;横条换成「此刻」旁的数字;2026-10-05) | — | `superpowers/specs/2026-10-05-now-together-hierarchy.md` |
 | 三端阅读与核心旅程优化 | [实施与验收清单](superpowers/specs/2026-10-02-core-experience-optimization.md) | 竞品一手依据、设计约束、真实回执、已有会话阅读与交付边界 |
 | 重启恢复、额度接手与模型失败 | [本轮对照与验收](superpowers/specs/2026-10-03-recovery-and-competitor-comparison.md) | 固定竞品源码依据、SecureStore 提交日志、单回执读取与两端确认流程 |
 | 手机配对 | [roadmap.md](roadmap.md);[中继 §9 通用链接](maintainer/relay.md) | spec `superpowers/specs/2026-10-01-tendhearth-pairing-ux-design.md` + 计划 `superpowers/plans/2026-10-01-tendhearth-pairing-ux.md` |
@@ -61,7 +62,7 @@
 | 引导与访客 | [reference/access-control.md](reference/access-control.md) | `superpowers/specs/2026-08-18-{owner-onboarding,guest-path}-design.md` |
 | 提醒 | — | `superpowers/specs/2026-08-20-reminders-port-design.md` |
 | 外发健康 | — | `superpowers/specs/2026-08-22-outbound-health-design.md` |
-| 回复交付(一轮最后的话就是回复、daemon 统一分条 / 节奏 / 三端送达、`NO_REPLY`、附件、`message` 工具;设计已定 2026-10-03,§6 八条按推荐定) | — | `superpowers/specs/2026-10-03-reply-delivery-design.md` |
+| 回复交付(五家迁移序列已默认 daemon，随 1.7.3 交付；gemini 也已迁移；观察期与 legacy 删除仍待收尾) | [开关、回滚与排查](maintainer/reply-delivery.md) | `superpowers/specs/2026-10-03-reply-delivery-design.md`；[实验与逐家闸门](reference/reply-once-experiment.md) |
 | openai 兼容后端「发完话还在发」:实验 harness、各候选对照表(#196 已关,harness 留作回复交付迁移的验收工具) | [reference/reply-once-experiment.md](reference/reply-once-experiment.md) | 实验结论(2026-10-02),见 roadmap 修订记录 |
 | 功能全表 / 权限模式 / 微信命令 / 运行时目录 / 访问控制 / A2A / 常见问题 | [reference/](reference/) 下同名文件 | — |
 | 插件(含内置插件来源:不随包、`plugin source` 登记、按内置默认开) | [plugins.md](plugins.md);部署侧 [maintainer/deploy.md「内置插件」](maintainer/deploy.md) | `src/lib/plugins-source.ts` + `src/daemon/plugins/health.ts` |
@@ -97,6 +98,7 @@
 
 ## 修订记录
 
+- 2026-10-05:回复交付从「设计已定」改为现行手册入口，标明默认 daemon 已交付与观察期收尾边界。
 - 2026-10-02:新增 `reference/network-guard.md`(网络守护:bx 优先、全入口拦截、威胁模型与验证),入主题表与 reference 目录说明。
 - 2026-10-02:`reference/network-guard.md` 改写为守护 v2(按调用判;主人收窄的决定原样记录)。
 - 2026-10-01:新增 `reference/workbench-file-guard.md`(工作台文件锚定层威胁模型),入主题表与 reference 目录说明。

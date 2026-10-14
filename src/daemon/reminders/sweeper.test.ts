@@ -1,7 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { openTestDb, type Db } from '../../lib/db'
 import { makeRemindersStore } from './store'
-import { runReminderSweep, lateReminderText, LATE_REMINDER_THRESHOLD_MS, RETRY_WINDOW_MS, backoffMs, MAX_SENDS_PER_SWEEP } from './sweeper'
+import { runReminderSweep, lateReminderText, LATE_REMINDER_THRESHOLD_MS, RETRY_WINDOW_MS, backoffMs, MAX_SENDS_PER_SWEEP, MIN_ATTEMPTS_BEFORE_GIVE_UP } from './sweeper'
 
 const noop = () => {}
 const noopLog = () => {}
@@ -59,10 +59,29 @@ describe('runReminderSweep', () => {
     const send = vi.fn().mockResolvedValue({ ok: false, error: 'still failing' })
 
     const past = new Date(Date.parse(due) + RETRY_WINDOW_MS + 1000).toISOString()
+    // 已经试过几轮(每次都过了退避)才放弃 —— 不是醒来第一下就判死
+    const id = (await store.list('u'))[0]!.id
+    for (let i = 0; i < MIN_ATTEMPTS_BEFORE_GIVE_UP - 1; i++) await store.recordAttempt(id, 'still failing', '2026-06-18T00:00:00.000Z')
     const res = await runReminderSweep({ store, send, nowIso: past, log: noopLog })
 
     expect(res).toEqual({ delivered: 0, retried: 0, failed: 1, deferred: 0 })
     expect((await store.list('u'))[0]!.status).toBe('failed')
+  })
+
+  it('does not give up on the first failure after a long outage — past the window but barely tried', async () => {
+    // 电脑睡了两天,醒来第一轮 sweep 时网络还没连上:这一下失败不该把提醒判死
+    const store = makeRemindersStore(db)
+    const due = '2026-06-18T10:00:00.000Z'
+    await store.schedule({ chat_id: 'u', due_at: due, text: '记得吃药' })
+    const send = vi.fn().mockResolvedValue({ ok: false, error: 'ECONNREFUSED' })
+    const past = new Date(Date.parse(due) + 2 * RETRY_WINDOW_MS).toISOString()
+
+    const res = await runReminderSweep({ store, send, nowIso: past, log: noopLog })
+
+    expect(res).toEqual({ delivered: 0, retried: 1, failed: 0, deferred: 0 })
+    const row = (await store.list('u'))[0]!
+    expect(row.status).toBe('pending')
+    expect(row.attempts).toBe(1)
   })
 
   it('never gives up a reminder blocked only by an expired push window (errcode=-2) — defers, not fails', async () => {

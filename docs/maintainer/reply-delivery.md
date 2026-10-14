@@ -91,7 +91,7 @@ agy 是外部 CLI,**只读一份静态的全局 MCP 配置** `~/.gemini/config/m
 - 开机 `wirePlugins` 先装 `reply_delivery` 覆盖,再造 `wechatStdioMcpSpec(…, 'agy')`;agy 是 `daemon` ⇒ 条目的 `env` 里带 `WECHAT_REPLY_DELIVERY=daemon`,`setupAgyGlobalMcp` 把它写进文件(内容变了才写)。agy 每一轮都是新进程、启动时读这个文件 ⇒ **重启 daemon 之后的下一轮**就是新工具表。翻回 `legacy` 同理,条目里这个变量被去掉。
 - 核对 agy 真的看到了什么:`grep WECHAT_REPLY_DELIVERY ~/.gemini/config/mcp_config.json`(daemon 模式有、legacy 没有);agy 自己的工具缓存 `~/.gemini/antigravity-cli/mcp/wechat-cc-wechat/` 里应当有 `voice.json` / `sticker.json` / `attach_file.json`(看 mtime:旧的 `reply.json` 可能还留着,agy 不一定清)。`src/mcp-servers/wechat/integration.test.ts` 用文件里写出的 env 起子进程核对过工具表;沙盒 harness 用真 agy 列过一遍(见 `reference/reply-once-experiment.md`)。
 - **附件绑到本轮**:`agy-static` 令牌里没有 chat。daemon 模式下 dispatcher 把它绑到「agy 此刻正在跑的那一轮」的聊天(`ReplyDeliveryRuntime.turnChatFor('agy')`):`/v1/turn/attach` 挂到那一轮;发送类路由按 trusted 规则只许那个聊天(#199 的共享令牌豁免在 daemon 模式下取消)。没有 agy 轮在跑 ⇒ `no_turn_in_progress` / 403 `chat_scope`;两个聊天同时在跑 agy ⇒ `ambiguous_turn`(不猜,文字照常交付)。规则全文见 `reference/internal-api-auth.md`。
-- 代码默认是 `shadow`(照旧 reply 工具 + `[REPLY_SHADOW]` 比对)。试 daemon:`{ "reply_delivery": { "agy": "daemon" } }` + 重启 daemon;回滚:删掉这一项(或写 `legacy`)再重启 —— 开机会把全局配置里的条目改回 reply 工具表。
+- 代码默认是 `daemon`(`AGY_CAPABILITIES.replyDelivery`)。回滚:`{ "reply_delivery": { "agy": "legacy" } }` + 重启 daemon，开机会把全局配置条目改回 reply 工具表。恢复默认：删掉 agy 的覆盖项(或写 `daemon`)再重启；删覆盖项不会回到 legacy。
 
 | 现象 | 看哪里 |
 |---|---|

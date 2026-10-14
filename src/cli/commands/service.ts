@@ -146,7 +146,7 @@ export const serviceCmd = defineCommand({
         ...sideOpts,
         onProgress: (e) => {
           try {
-            mkdirSync(STATE_DIR, { recursive: true })
+            mkdirSync(STATE_DIR, { recursive: true, mode: 0o700 })
             writeFileSync(progressPath, JSON.stringify({ ...e, ts: Date.now() }))
           } catch { /* progress is best-effort — never break install */ }
         },

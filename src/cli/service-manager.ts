@@ -261,7 +261,11 @@ export function stopService(plan: ServicePlan, opts: ServiceSideEffectOpts = {})
 
 export function uninstallService(plan: ServicePlan, opts: ServiceSideEffectOpts = {}): void {
   if (opts.dryRun) return
-  runCommands(plan.uninstallCommands)
+  // 卸载步骤(launchctl bootout / systemctl disable --now / Unregister-ScheduledTask)在服务
+  // 本来就没加载时非零退出 —— 典型是 `service stop` 之后再 uninstall。以前在这里就抛了,
+  // 服务文件(RunAtLoad=true)留在盘上 ⇒ 下次登录 daemon 又起来,用户却被告知卸载了。
+  // 每条都跑(不在第一条失败处停),文件一律删;命令自己的报错已经 inherit 到终端了。
+  for (const command of plan.uninstallCommands) tryRunCommands([command])
   if (plan.serviceFile) rmSync(plan.serviceFile, { force: true })
 }
 

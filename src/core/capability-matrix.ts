@@ -25,12 +25,7 @@
 import type { ReplyDeliveryMode, ReplyTextStrategy } from './turn-reply'
 import type { Mode, ProviderId } from './conversation'
 import type { ProviderCapabilities, PermissionMode } from './agent-provider'
-import { CLAUDE_CAPABILITIES } from './claude-agent-provider'
-import { CODEX_CAPABILITIES } from './codex-agent-provider'
-import { ACP_CURSOR_CAPABILITIES } from './acp-cursor-chat'
-import { OPENAI_CAPABILITIES } from './openai-agent-provider'
-import { GEMINI_CAPABILITIES } from './gemini-agent-provider'
-import { AGY_CAPABILITIES } from './agy-agent-provider'
+import { ACP_CURSOR_CAPABILITIES, AGY_CAPABILITIES, CLAUDE_CAPABILITIES, CODEX_CAPABILITIES, GEMINI_CAPABILITIES, OPENAI_CAPABILITIES } from './provider-capabilities'
 
 // Backwards-compat re-export: PermissionMode used to live here. Moved
 // to agent-provider.ts to break the cycle introduced by Phase 2's

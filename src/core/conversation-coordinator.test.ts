@@ -1850,6 +1850,57 @@ describe('ConversationCoordinator', () => {
       expect(haikuEval).not.toHaveBeenCalled()
     })
 
+    it('/stop mid-beat cancels the running speakers and delivers nothing they say afterwards', async () => {
+      // 一拍进行中主人 /stop:正在说话的几位要被真正取消(否则跑满一拍超时),
+      // 取消之后它们收尾吐出来的话不许再发到微信,也不发「没有 AI 成功回应」。
+      const store = makeMockStore()
+      store.set('chat-1', { kind: 'chatroom' })
+      const registry = createProviderRegistry()
+      registry.register('claude', dummyProvider, { displayName: 'Claude', canResume: () => true })
+      registry.register('codex', dummyProvider, { displayName: 'Codex', canResume: () => true })
+      const cancelSpies: Array<ReturnType<typeof vi.fn>> = []
+      const acquire = vi.fn(async ({ providerId }: AcquireRequest) => {
+        let unblock: (() => void) | undefined
+        const cancel = vi.fn(async () => { unblock?.() })
+        cancelSpies.push(cancel)
+        return {
+          alias: 'a', path: '/p', providerId, lastUsedAt: 0, cancel,
+          dispatch: (): AsyncIterable<AgentEvent> => ({
+            async *[Symbol.asyncIterator]() {
+              await new Promise<void>(r => { unblock = r })
+              // 取消后像正常结束一样吐出一段话(有的 provider 就是这样收尾的)
+              yield { kind: 'text', text: '被打断前想说的话' } as AgentEvent
+              yield { kind: 'result', sessionId: '_', numTurns: 1, durationMs: 0 } as AgentEvent
+            },
+          }),
+          close: async () => {},
+        }
+      })
+      const sendAssistantText = vi.fn(async (_chatId: string, _text: string) => {})
+      const haikuEval = vi.fn(async () => '🎯 verdict')
+      const c = createConversationCoordinator({
+        resolveProject: () => ({ alias: 'a', path: '/p' }),
+        manager: { acquire },
+        conversationStore: store,
+        registry,
+        defaultProviderId: 'claude',
+        format: () => 'x',
+        sendAssistantText,
+        permissionMode: 'strict',
+        loadAccess: adminAccess,
+        log: () => {},
+        haikuEval,
+      })
+      const p = c.dispatch(inbound('chat-1', 'debate'))
+      await vi.waitFor(() => expect(acquire).toHaveBeenCalledTimes(2))
+      await new Promise(r => setTimeout(r, 0))
+      expect(c.cancel('chat-1')).toBe(true)
+      await p
+      expect(cancelSpies).toHaveLength(2)
+      for (const spy of cancelSpies) expect(spy).toHaveBeenCalled()
+      expect(sendAssistantText).not.toHaveBeenCalled()
+    })
+
     it('falls back to solo+default when chatroom resolves to a single participant', async () => {
       // P3 N-way: when the registry has only 1 provider, resolveParticipants
       // returns a 1-element list and dispatch degrades to solo (using that
@@ -2740,7 +2791,7 @@ describe('onTurnEvent (CC 桌宠 Phase B)', () => {
 
 // ── provider policy at dispatch + cold-start context for non-resume providers ──
 describe('dispatch-time provider policy + cold-start block', () => {
-  function setupWith(access: () => Access, extra: { trustedProviders?: () => string[] | undefined; has?: () => boolean; recent?: Array<{ dir: 'in' | 'out'; text: string; ts: string }> } = {}) {
+  function setupWith(access: () => Access, extra: { trustedProviders?: () => string[] | undefined; has?: () => boolean; recent?: Array<{ dir: 'in' | 'out'; text: string; ts: string }>; permissionMode?: 'strict' | 'dangerously' } = {}) {
     const store = makeMockStore()
     const registry = createProviderRegistry()
     for (const id of ['claude', 'cursor', 'agy', 'openai']) registry.register(id, dummyProvider, { displayName: id, canResume: () => true })
@@ -2752,7 +2803,7 @@ describe('dispatch-time provider policy + cold-start block', () => {
       resolveProject: () => ({ alias: 'a', path: '/p' }),
       manager: { acquire, ...(extra.has ? { has: extra.has } : {}) },
       conversationStore: store, registry, defaultProviderId: 'claude',
-      format: (m) => m.text, sendAssistantText, permissionMode: 'strict', loadAccess: access, log: () => {},
+      format: (m) => m.text, sendAssistantText, permissionMode: extra.permissionMode ?? 'strict', loadAccess: access, log: () => {},
       ...(extra.trustedProviders ? { trustedProviders: extra.trustedProviders } : {}),
       ...(extra.recent ? { recentTurns: async () => extra.recent! } : {}),
     })
@@ -2781,6 +2832,38 @@ describe('dispatch-time provider policy + cold-start block', () => {
     await c.dispatch(inbound('chat-1', 'hi'))
     expect(acquire).toHaveBeenCalledTimes(1)
     expect(sendAssistantText).not.toHaveBeenCalledWith('chat-1', expect.stringContaining('对访客不开放'))
+  })
+  // 2026-10-10 评审:/both、/chat 原先只剥 agy,不查 guestSafe / trusted_providers ⇒ 访客 `/both claude cursor`
+  // 就把 Cursor 以访客档拉起来(工作区内编辑不经权限卡),也绕过主人的 /set providers 限制。
+  it('parallel + guest chat: cursor is dropped from the participants, never acquired', async () => {
+    const { c, store, acquire } = setupWith(guest)
+    store.set('chat-1', { kind: 'parallel', participants: ['claude', 'cursor'] })
+    await c.dispatch(inbound('chat-1', 'hi'))
+    expect(acquire.mock.calls.map(([r]) => r.providerId)).not.toContain('cursor')
+  })
+  it('parallel + trusted chat outside the admin allowlist: the disallowed participant is dropped', async () => {
+    const { c, store, acquire } = setupWith(trusted, { trustedProviders: () => ['claude'] })
+    store.set('chat-1', { kind: 'parallel', participants: ['claude', 'openai'] })
+    await c.dispatch(inbound('chat-1', 'hi'))
+    expect(acquire.mock.calls.map(([r]) => r.providerId)).not.toContain('openai')
+  })
+  it('chatroom + guest chat: cursor never speaks', async () => {
+    const { c, store, acquire } = setupWith(guest)
+    store.set('chat-1', { kind: 'chatroom', participants: ['claude', 'cursor', 'openai'] })
+    await c.dispatch(inbound('chat-1', 'hi'))
+    expect(acquire.mock.calls.map(([r]) => r.providerId)).not.toContain('cursor')
+  })
+  // 2026-10-10 评审:--dangerously(缺省开)原先把每个对话都提成 admin、会话也带 dangerously ⇒ 访客拿到 shell / 文件 /
+  // 主人的微信记录。访客的会话要以访客档 + strict 起;主人选过的 trusted 照旧随 --dangerously。
+  it('--dangerously: a guest turn is spawned with the guest profile and strict mode; trusted keeps dangerously', async () => {
+    const g = setupWith(guest, { permissionMode: 'dangerously' })
+    g.store.set('chat-1', { kind: 'solo', provider: 'claude' })
+    await g.c.dispatch(inbound('chat-1', 'hi'))
+    expect(g.acquire).toHaveBeenCalledWith(expect.objectContaining({ permissionMode: 'strict', tierProfile: TIER_PROFILES.guest }))
+    const t = setupWith(trusted, { permissionMode: 'dangerously' })
+    t.store.set('chat-1', { kind: 'solo', provider: 'claude' })
+    await t.c.dispatch(inbound('chat-1', 'hi'))
+    expect(t.acquire).toHaveBeenCalledWith(expect.objectContaining({ permissionMode: 'dangerously', tierProfile: TIER_PROFILES.admin }))
   })
   it('trusted chat on a provider outside the admin allowlist is refused; inside dispatches', async () => {
     const { c, store, acquire, sendAssistantText } = setupWith(trusted, { trustedProviders: () => ['claude'] })

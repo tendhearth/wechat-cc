@@ -38,6 +38,8 @@ export interface WireMainOpts {
   workbench?: import('../../core/workbench/service').WorkbenchService
   /** 网络守护运行时(2026-10-02,main.ts 建):闸门 + 调度器 Ref + 后台任务跳过包装。缺省 = 老行为。 */
   guardRuntime?: import('../guard/runtime').GuardRuntime
+  /** 可选子系统开机状态(SubsystemSupervisor.statuses)→「CC 现在怎么样」。 */
+  subsystems?: () => Array<{ name: string; state: 'ok' | 'degraded' | 'off'; error?: string }>
   /** 内部 API 的 token-registry 窄接口 → 手机设置面板(梳理第 6 步)。 */
   panelTokens?: import('../internal-api/token-registry').PanelTokens
   /** 「一件事」登记处(matters store);微信入站登记 chat、app 对话绑桌面表面、管家候选集都从这里来。 */
@@ -128,7 +130,7 @@ export interface WiredDeps {
    * main.ts late-binds this onto internal-api via setCompanionConverse()
    * once wireMain returns (bootstrap must be ready first).
    */
-  companionConverse: (text: string, origin?: 'desktop' | 'phone') => Promise<import('../app-reply').ConverseResult>
+  companionConverse: (text: string, origin?: 'desktop' | 'phone', images?: import('../app-reply').ConverseImage[]) => Promise<import('../app-reply').ConverseResult>
   /**
    * 桌宠 turn 闭包(CC 桌宠 Phase B)。main.ts 在 setCompanionConverse 旁边
    * setPetTurn 到 internal-api —— 同样要等 bootstrap 就绪。

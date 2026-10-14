@@ -103,6 +103,11 @@ describe('waitingHeader(终审 M3:读不到不等于没有)', () => {
 
 describe('nowStatusLine', () => {
   const p = (presence: string) => ({ presence })
+  it('在家但不全好 ⇒ 黄点,说出是哪一类(2026-10-06;以前一律绿)', () => {
+    expect(nowStatusLine({ alive: true }, p('offline'))).toEqual({ cls: 'warn', text: 'CC 在家 · 微信发不出去' })
+    expect(nowStatusLine({ alive: true }, p('degraded'))).toEqual({ cls: 'warn', text: 'CC 在家 · 有功能没起来' })
+    expect(nowStatusLine({ alive: true }, p('ok'))).toEqual({ cls: 'ok', text: 'CC 在家 · 运行中' })
+  })
   it('presence 够不着 ⇒ 红点 + 不在身边,即使 doctor 说 daemon 活着(与 CC 变暗同一信号)', () => {
     expect(nowStatusLine({ alive: true }, p('down'))).toEqual({ cls: 'bad', text: 'CC 不在身边' })
   })

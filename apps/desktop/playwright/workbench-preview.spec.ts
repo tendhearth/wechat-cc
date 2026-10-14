@@ -2,6 +2,19 @@ import {join} from 'node:path'
 import {zipSync,unzipSync} from 'fflate'
 import {test,expect,clickNav} from './fixtures'
 
+
+/** 「下载」在真 app 里走 Rust 的 save_file(webview 不处理 <a download>,2026-10-05):收集这次的调用。 */
+function captureSaves(page: import('@playwright/test').Page) {
+  const saves: Array<{ filename: string; bytes: Buffer }> = []
+  page.on('request', req => {
+    const body = req.postData() ?? ''
+    if (!body.includes('"save_file"')) return
+    const args = JSON.parse(body).args as { filename: string; dataB64?: string }
+    saves.push({ filename: args.filename, bytes: Buffer.from(args.dataB64 ?? '', 'base64') })
+  })
+  return saves
+}
+
 const html = `<!doctype html><html><meta charset="utf-8"><style>body{margin:0;background:#faf7f2;color:#2a2622;font:18px Georgia;padding:32px}h1{font-weight:400}button{font:inherit;padding:12px;background:#4f6b4f;color:white;border:0;border-radius:24px}</style><h1>周末的小花园</h1><p>这是 CC 做好的页面，可以直接试用。</p><button id="counter">浇水 · 0</button><script>let n=0;document.querySelector('#counter').onclick=()=>document.querySelector('#counter').textContent='浇水 · '+(++n);window.parentAccess=false;try{parent.document.body;window.parentAccess=true}catch{}</script></html>`
 const task={id:'abcd1234',title:'做一页周末花园',path:'/demo/garden',providerId:'codex',status:'completed',createdAt:1,updatedAt:2,error:null}
 function smallPdf(){
@@ -127,9 +140,9 @@ test('downloading during a slow preview does not cancel its pending result',asyn
   })
   await page.getByRole('button',{name:'成果 · 4',exact:true}).click()
   await expect(page.locator('#wb-preview')).toContainText('正在打开成果')
-  const download=page.waitForEvent('download')
+  const saves=captureSaves(page)
   await page.getByRole('button',{name:'下载',exact:true}).click()
-  await download
+  await expect.poll(()=>saves.length).toBe(1)
   release()
   await expect(page.frameLocator('#wb-preview-frame').locator('h1')).toHaveText('周末的小花园')
 })
@@ -167,14 +180,11 @@ test('PDF paints real pages, supports text selection, page and zoom, preserves r
   await reader.getByLabel('缩放',{exact:true}).selectOption('auto')
   await reader.getByRole('button',{name:'上一页',exact:true}).click()
   await expect(reader.locator('.cc-pdf-text')).toContainText('Garden design report')
-  const downloaded=page.waitForEvent('download')
+  const saves=captureSaves(page)
   await page.getByRole('button',{name:'下载',exact:true}).click()
-  const download=await downloaded
-  expect(download.suggestedFilename()).toBe('Garden report.pdf')
-  const stream=await download.createReadStream()
-  const chunks:Buffer[]=[]
-  for await(const chunk of stream!)chunks.push(Buffer.from(chunk))
-  expect(Buffer.concat(chunks).toString()).toBe(smallPdf())
+  await expect.poll(()=>saves.length).toBe(1)
+  expect(saves[0]!.filename).toBe('Garden report.pdf')
+  expect(saves[0]!.bytes.toString()).toBe(smallPdf())
   const dir=process.env.WECHAT_CC_DESIGN_SHOTS
   if(dir){await page.waitForTimeout(700);await page.screenshot({path:join(dir,'preview-pdf-wide.png')})}
   await page.setViewportSize({width:760,height:900})
@@ -182,6 +192,51 @@ test('PDF paints real pages, supports text selection, page and zoom, preserves r
   await expect.poll(()=>reader.locator('.cc-pdf-page').evaluate(el=>el.clientWidth<=el.parentElement!.clientWidth)).toBe(true)
   expect(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth)).toBe(true)
   await expect(reader.locator('.cc-pdf-text')).toContainText('Garden design report')
+})
+
+test('failed native artifact downloads preserve the interactive preview and can be retried',async({page,shim,shimUrl})=>{
+  await setup(page,shim,shimUrl)
+  await page.getByRole('button',{name:'成果 · 4',exact:true}).click()
+  const frame=page.frameLocator('#wb-preview-frame')
+  await frame.locator('#counter').click()
+  let reject=true
+  await page.route('**/__invoke',async route=>{
+    if(route.request().postDataJSON().command==='save_file'&&reject){
+      reject=false
+      await route.fulfill({json:{error:'disk full'}})
+    }else await route.fallback()
+  })
+  await page.getByRole('button',{name:'下载',exact:true}).click()
+  await expect(page.locator('#app-toast')).toContainText('下载失败')
+  await expect(frame.locator('#counter')).toHaveText('浇水 · 1')
+  const saves=captureSaves(page)
+  await page.getByRole('button',{name:'下载',exact:true}).click()
+  await expect.poll(()=>saves.length).toBe(1)
+  expect(saves[0]!.bytes.toString()).toBe(html)
+  await expect(page.locator('#app-toast')).toContainText('已保存到')
+  await expect(frame.locator('#counter')).toHaveText('浇水 · 1')
+})
+
+test('failed native attachment downloads show the error inside the dialog and preserve PDF reading',async({page,shim,shimUrl})=>{
+  await setup(page,shim,shimUrl,true)
+  await page.locator('[data-action=preview-input-attachment][data-attachment-id=input-pdf]').click()
+  const dialog=page.getByRole('dialog',{name:'参考.pdf',exact:true})
+  await expect(dialog.locator('.cc-pdf-text')).toContainText('Garden design report')
+  await dialog.getByRole('button',{name:'下一页',exact:true}).click()
+  await expect(dialog.locator('.cc-pdf-text')).toContainText('Planting notes')
+  let reject=true
+  await page.route('**/__invoke',async route=>{
+    if(route.request().postDataJSON().command==='save_file'&&reject){
+      reject=false
+      await route.fulfill({json:{error:'disk full'}})
+    }else await route.fallback()
+  })
+  await dialog.getByRole('button',{name:'下载',exact:true}).click()
+  await expect(dialog.getByRole('status')).toContainText('下载失败')
+  await expect(dialog.locator('.cc-pdf-text')).toContainText('Planting notes')
+  await dialog.getByRole('button',{name:'下载',exact:true}).click()
+  await expect(dialog.getByRole('status')).toContainText('已保存到')
+  await expect(dialog.locator('.cc-pdf-text')).toContainText('Planting notes')
 })
 
 test('unreadable PDFs keep a visible error and the download action',async({page,shim,shimUrl})=>{
@@ -261,13 +316,12 @@ test('saved website renders linked CSS, image and module imports, navigates with
   await expect(frame.locator('h1')).toHaveCSS('color','rgb(79, 107, 79)')
   await page.getByRole('button',{name:'确认这份成果',exact:true}).click()
   await expect(frame.locator('h1')).toHaveText('种植说明')
-  const pendingDownload=page.waitForEvent('download')
+  const saves=captureSaves(page)
   await page.getByRole('button',{name:'下载',exact:true}).click()
-  const download=await pendingDownload
-  expect(download.suggestedFilename()).toBe('花园.site.zip')
-  const chunks:Buffer[]=[];for await(const chunk of (await download.createReadStream())!)chunks.push(Buffer.from(chunk))
-  expect(Buffer.concat(chunks)).toEqual(Buffer.from(archive))
-  expect(Object.keys(unzipSync(Buffer.concat(chunks)))).toEqual(Object.keys(files))
+  await expect.poll(()=>saves.length).toBe(1)
+  expect(saves[0]!.filename).toBe('花园.site.zip')
+  expect(saves[0]!.bytes).toEqual(Buffer.from(archive))
+  expect(Object.keys(unzipSync(saves[0]!.bytes))).toEqual(Object.keys(files))
   await page.setViewportSize({width:760,height:900})
   await expect(page.locator('.wb-main')).toBeHidden()
   expect(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth)).toBe(true)

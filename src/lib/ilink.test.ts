@@ -73,6 +73,11 @@ describe('isRetryableSendError', () => {
     expect(isRetryableSendError(err)).toBe(true)
   })
 
+  it('does not retry errcode=-2 (proactive push window closed — deterministic, a retry is just 3 wire calls)', () => {
+    expect(isRetryableSendError(new Error('ilink/sendmessage errcode=-2: prepare failed'))).toBe(false)
+    expect(isRetryableSendError(new Error('ilink/sendmessage errcode=-20: x'))).toBe(true)
+  })
+
   it('retries on HTTP 5xx', () => {
     expect(isRetryableSendError(new Error('ilink/bot/sendmessage 502: bad gateway'))).toBe(true)
     expect(isRetryableSendError(new Error('ilink/bot/sendmessage 500: internal error'))).toBe(true)

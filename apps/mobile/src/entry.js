@@ -247,7 +247,7 @@ function eSend(record, retry, navigate) {
     .finally(function(){ delete eBusy[record.input.requestId]; eUpdate(); eHistory() })
 }
 function openEntry() {
-  eMount(); eViewEpoch++; mobilePane("today")
+  eMount(); eViewEpoch++; mobilePane("matters")
   document.getElementById("entry-root").scrollIntoView({ behavior: "smooth", block: "center" })
   eText().focus()
   return eLoadOptions()

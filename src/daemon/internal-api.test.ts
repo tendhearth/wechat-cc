@@ -345,6 +345,25 @@ describe('internal-api', () => {
         db.close()
       })
 
+      it('session caller: the audit row goes to the caller\'s own chat, not whatever chat_id the model passed', async () => {
+        const { port, token, db } = await startWithMemoryAndDb()
+        await fetch(`http://127.0.0.1:${port}/v1/memory/write`, {
+          method: 'POST',
+          headers: { Authorization: `Bearer ${token}`, 'content-type': 'application/json' },
+          body: JSON.stringify({ path: 'chat-1/note.md', content: 'x' }),
+        })
+        const tok = api!.mintSessionToken('trusted', 'claude/a/chat-1')
+        const resp = await fetch(`http://127.0.0.1:${port}/v1/memory/delete`, {
+          method: 'POST',
+          headers: { Authorization: `Bearer ${tok}`, 'content-type': 'application/json' },
+          body: JSON.stringify({ chat_id: 'victim', path: 'chat-1/note.md', reason: 'forged into someone else\'s log' }),
+        })
+        expect(resp.status).toBe(200)
+        expect(await makeEventsStore(db, 'victim').list()).toHaveLength(0)
+        expect(await makeEventsStore(db, 'chat-1').list()).toHaveLength(1)
+        db.close()
+      })
+
       it('returns ok:true existed:false (no event) when target does not exist', async () => {
         const { port, token, db } = await startWithMemoryAndDb()
         const resp = await fetch(`http://127.0.0.1:${port}/v1/memory/delete`, {
@@ -439,7 +458,8 @@ describe('internal-api', () => {
         const { port, tokenFilePath } = await api.start()
         const token = readFileSync(tokenFilePath, 'utf8').trim()
         const admin = api.mintSessionToken('admin', 'claude/a/ownerchat')
-        for (const p of ['ownerchat/today-draft.md', './ownerchat/Today-Draft.md', 'ownerchat/x/../today-draft.md/']) {
+        // corrections.md(主人纠正过的条目,2026-10-10)同样只归 daemon
+        for (const p of ['ownerchat/today-draft.md', './ownerchat/Today-Draft.md', 'ownerchat/x/../today-draft.md/', 'ownerchat/corrections.md']) {
           const w = await write(port, admin, p)
           expect(await w.json()).toMatchObject({ ok: false, error: 'curated_memory_readonly' })
         }
@@ -1468,7 +1488,7 @@ describe('internal-api', () => {
       expect(resp.status).toBe(200)
       // 附件与旁白总在(没有就是空数组):桌面不用分新旧形状(2026-10-04)。
       expect(await resp.json()).toEqual({ ok: true, reply: 'hey', attachments: [], narration: [] })
-      expect(companionConverse).toHaveBeenCalledWith('how are you')
+      expect(companionConverse).toHaveBeenCalledWith('how are you', 'desktop', undefined)
     })
 
     it('reply object: attachments (voice / sticker / file) and narration pass through in order', async () => {

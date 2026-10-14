@@ -20,6 +20,8 @@ describe('e2e: chatroom mode image inbound → speaker prompt carries chat_id + 
     let modCall = 0
     const daemon = await startTestDaemon({
       dangerously: true,
+      // 多家模式按原始档位过门、Codex 对访客关门(2026-10-10)⇒ 这条路由测试用管理员对话。
+      access: { admins: ['chat1'] },
       modes: { chat1: { kind: 'chatroom' } },
       // The LLM moderator that used to paraphrase per-speaker prompts was
       // deleted in a4101ca — the conductor (chatroom-conductor.ts) now

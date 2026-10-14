@@ -10,6 +10,7 @@
 import { isConnectFailure } from '../../lib/net-errors'
 import { looksLikeAuthFailure } from '../../lib/auth-failure'
 import { providerErrorCodeOf, type ProviderErrorCode } from '../../lib/provider-error-code'
+import { log } from '../../lib/log'
 
 export type FailureKind = 'login_taken_over' | 'llm_auth' | 'network' | 'unknown'
 
@@ -95,7 +96,23 @@ export function classifyFailure(err: unknown): FailureClass {
   const code = providerErrorCodeOf(err)
   // 返回副本:常量是共享的,调用方改了它不该影响下一次判定。
   if (code) return { ...classifyProviderCode(code) }
-  if (isNetworkish(msg)) return { ...NETWORK }
-  if (looksLikeAuthFailure(msg)) return { ...LLM_LOGIN_EXPIRED }
-  return { ...UNKNOWN }
+  const fallback = isNetworkish(msg) ? NETWORK : looksLikeAuthFailure(msg) ? LLM_LOGIN_EXPIRED : UNKNOWN
+  noteFallback(fallback.kind, msg)
+  return { ...fallback }
+}
+
+/**
+ * 文本回退的留痕(arch backlog #4 第 3 步的前提,2026-10-06):roadmap 说「真机跑一段确认码覆盖够了,再删文本回退」,
+ * 可是回退什么时候真被用到原本没有任何记录。这里每次没码、靠文本下结论时记一行 `ERROR_FALLBACK`:结论 + 错误开头
+ * 80 字(数字抹成 #,不同次的端口 / 请求号不会变成不同的行)。同一行一小时内只记一次。只进本机日志。
+ */
+const FALLBACK_SEEN = new Map<string, number>()
+export function noteFallback(kind: FailureKind, msg: string, now = Date.now(), sink: (line: string) => void = line => log('ERROR_FALLBACK', line)): void {
+  const shape = msg.replace(/\s+/g, ' ').replace(/\d+/g, '#').slice(0, 80)
+  const key = `${kind}|${shape}`
+  const last = FALLBACK_SEEN.get(key)
+  if (last !== undefined && now - last < 3_600_000) return
+  if (FALLBACK_SEEN.size > 500) FALLBACK_SEEN.clear()
+  FALLBACK_SEEN.set(key, now)
+  sink(`no provider code → ${kind}: ${shape}`)
 }

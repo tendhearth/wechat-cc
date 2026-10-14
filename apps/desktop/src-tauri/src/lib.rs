@@ -10,9 +10,12 @@
 pub mod bundle_migrate;
 pub mod daemon_mode;
 mod html_preview;
+mod nav_guard;
 
 #[cfg(test)]
 mod workbench_folder_tests;
+#[cfg(test)]
+mod native_io_tests;
 
 use serde_json::Value;
 use std::path::PathBuf;
@@ -56,18 +59,27 @@ async fn wechat_cli_text(app: AppHandle, args: Vec<String>) -> Result<String, St
 }
 
 // Direct file save — sidesteps the missing tauri-plugin-dialog/-fs.
-// Without it, exportProjectMarkdown's `<a download>.click()` blob fallback
-// silently no-ops in the Tauri webview (downloads aren't wired). Writes to
-// $HOME/Downloads/<filename>; refuses anything that would escape that dir.
-#[tauri::command]
-fn save_text_file(filename: String, content: String) -> Result<String, String> {
+// Without it, `<a download>.click()` blob downloads silently no-op in the
+// Tauri webview: with no download handler wry answers every download with
+// WKNavigationActionPolicy::Cancel (re-checked 2026-10-05 — the workbench's
+// 「下载」 buttons had been dead in the real app). Every save goes to
+// $HOME/Downloads; only the basename of `filename` is used, and an existing
+// file is never overwritten — "name (1).ext", "name (2).ext", ….
+fn write_download(filename: &str, bytes: &[u8]) -> Result<String, String> {
     let home = std::env::var("HOME")
         .or_else(|_| std::env::var("USERPROFILE"))
         .map_err(|err| format!("cannot resolve home dir: {err}"))?;
     let downloads = std::path::PathBuf::from(home).join("Downloads");
-    std::fs::create_dir_all(&downloads).map_err(|err| format!("mkdir {}: {err}", downloads.display()))?;
-    // Strip any path component from the filename — only the basename is allowed.
-    let basename = std::path::Path::new(&filename)
+    write_download_in(&downloads, filename, bytes)
+}
+
+fn write_download_in(
+    downloads: &std::path::Path,
+    filename: &str,
+    bytes: &[u8],
+) -> Result<String, String> {
+    std::fs::create_dir_all(downloads).map_err(|err| format!("mkdir {}: {err}", downloads.display()))?;
+    let basename = std::path::Path::new(filename)
         .file_name()
         .ok_or_else(|| "empty filename".to_string())?
         .to_string_lossy()
@@ -75,9 +87,47 @@ fn save_text_file(filename: String, content: String) -> Result<String, String> {
     if basename.is_empty() || basename == "." || basename == ".." {
         return Err(format!("illegal filename: {filename}"));
     }
-    let target = downloads.join(&basename);
-    std::fs::write(&target, content).map_err(|err| format!("write {}: {err}", target.display()))?;
-    Ok(target.to_string_lossy().to_string())
+    let path = std::path::Path::new(&basename);
+    let stem = path.file_stem().map(|s| s.to_string_lossy().to_string()).unwrap_or_else(|| basename.clone());
+    let ext = path.extension().map(|e| format!(".{}", e.to_string_lossy())).unwrap_or_default();
+    for n in 0..1000u32 {
+        let name = if n == 0 { basename.clone() } else { format!("{stem} ({n}){ext}") };
+        let target = downloads.join(&name);
+        match std::fs::OpenOptions::new().write(true).create_new(true).open(&target) {
+            Ok(mut file) => {
+                use std::io::Write;
+                if let Err(err) = file.write_all(bytes) {
+                    // Only this create_new branch owns the target. Close it
+                    // before removal (required on Windows); existing paths
+                    // never reach this cleanup.
+                    drop(file);
+                    let cleanup = std::fs::remove_file(&target);
+                    let detail = cleanup
+                        .err()
+                        .map(|err| format!("; remove partial download: {err}"))
+                        .unwrap_or_default();
+                    return Err(format!("write {}: {err}{detail}", target.display()));
+                }
+                return Ok(target.to_string_lossy().to_string());
+            }
+            Err(err) if err.kind() == std::io::ErrorKind::AlreadyExists => continue,
+            Err(err) => return Err(format!("write {}: {err}", target.display())),
+        }
+    }
+    Err(format!("too many files named {basename} in Downloads"))
+}
+
+#[tauri::command]
+fn save_text_file(filename: String, content: String) -> Result<String, String> {
+    write_download(&filename, content.as_bytes())
+}
+
+/// Binary-safe sibling of save_text_file (workbench outputs, attachments).
+#[tauri::command]
+fn save_file(filename: String, data_b64: String) -> Result<String, String> {
+    use base64::{engine::general_purpose::STANDARD, Engine};
+    let bytes = STANDARD.decode(data_b64.as_bytes()).map_err(|err| format!("invalid base64: {err}"))?;
+    write_download(&filename, &bytes)
 }
 
 #[tauri::command]
@@ -657,7 +707,9 @@ fn reveal_reply_file(token: String) -> Result<(), String> {
 }
 
 #[tauri::command]
-async fn agent_converse(text: String) -> Result<Value, String> {
+// `images`:此刻里拖进 / 粘进来的图(2026-10-05),原样 `[{ mime, data_b64 }]` 交给 daemon,
+// 张数 / 大小 / 格式在 daemon 的路由里校验(网页层也先挡一道,免得白传)。
+async fn agent_converse(text: String, images: Option<Vec<Value>>) -> Result<Value, String> {
     use std::time::Duration;
     use tokio::time::timeout;
 
@@ -708,7 +760,11 @@ async fn agent_converse(text: String) -> Result<Value, String> {
     // reqwest's `json` feature is not enabled in this crate (see Cargo.toml —
     // default-features = false, only "rustls-tls"), so serialize the body by
     // hand rather than pull in a new feature flag.
-    let payload = serde_json::to_string(&serde_json::json!({ "text": text }))
+    let body = match images {
+        Some(list) if !list.is_empty() => serde_json::json!({ "text": text, "images": list }),
+        _ => serde_json::json!({ "text": text }),
+    };
+    let payload = serde_json::to_string(&body)
         .map_err(|e| format!("failed to serialize request body: {e}"))?;
 
     let result = timeout(duration, async {
@@ -1095,10 +1151,13 @@ fn workbench_request_allowed(method: &str, path: &str) -> bool {
             | ("POST", "/v1/workbench/approve")
             | ("POST", "/v1/workbench/permission")
             | ("POST", "/v1/workbench/archive")
+            | ("POST", "/v1/workbench/writer-exited")
             | ("POST", "/v1/workbench/unattended-ack")
             | ("GET", "/v1/workbench/review")
             | ("POST", "/v1/workbench/review-mark")
             | ("POST", "/v1/workbench/review-return")
+            | ("POST", "/v1/workbench/review-revert")
+            | ("POST", "/v1/workbench/worktree")
             | ("POST", "/v1/workbench/import")
             | ("POST", "/v1/workbench/prepare-resume")
             | ("POST", "/v1/workbench/prepare-continuation")
@@ -1111,6 +1170,8 @@ fn workbench_request_allowed(method: &str, path: &str) -> bool {
             | ("GET", "/v1/matters")
             | ("GET", "/v1/matter")
             | ("GET", "/v1/matter/owner-chat")
+            // 此刻里搜主人那条对话(2026-10-06)
+            | ("GET", "/v1/matter/owner-chat/search")
             | ("POST", "/v1/matter/say")
             // 「CC 的连接」(2026-10-01):此刻右上角的连接浮层,只读。
             | ("GET", "/v1/connections")
@@ -1308,8 +1369,9 @@ fn is_local_preview_url(url: &str) -> bool {
 }
 
 #[tauri::command]
-fn open_url(url: String) -> Result<(), String> {
-    let ok = url.starts_with("https://") || url.starts_with("x-apple.systempreferences:") || is_local_preview_url(&url);
+async fn open_url(url: String) -> Result<(), String> {
+    // http 也放行(2026-10-05):网页里所有外部链接都走这里(external-links.js),CC 回复里的链接不全是 https。
+    let ok = url.starts_with("https://") || url.starts_with("http://") || url.starts_with("x-apple.systempreferences:") || is_local_preview_url(&url);
     if !ok {
         return Err(format!("refusing to open url with scheme: {url}"));
     }
@@ -1317,16 +1379,60 @@ fn open_url(url: String) -> Result<(), String> {
     // `open` (which wants a new opener plugin + capability for one call).
     #[cfg(target_os = "macos")]
     {
-        std::process::Command::new("open")
+        tokio::process::Command::new("open")
             .arg(&url)
             .status()
+            .await
             .map_err(|e| format!("open failed: {e}"))
             .and_then(|st| if st.success() { Ok(()) } else { Err(format!("open exited {st}")) })
     }
+    // Windows / Linux:以前直接报 macOS-only,链接在这两个平台上全哑。系统设置那种协议只在 macOS 有意义。
     #[cfg(not(target_os = "macos"))]
     {
-        let _ = url;
-        Err("open_url is macOS-only".to_string())
+        if url.starts_with("x-apple.systempreferences:") {
+            return Err("system settings links are macOS-only".to_string());
+        }
+        // Windows:explorer 把 URL 交给默认浏览器(不经 cmd /c start,免得 & 被 shell 解释);
+        // 打开成功也常返回非零退出码,所以只认「起得来」。
+        #[cfg(target_os = "windows")]
+        {
+            std::process::Command::new("explorer")
+                .arg(&url)
+                .spawn()
+                .map(|_| ())
+                .map_err(|e| format!("open failed: {e}"))
+        }
+        #[cfg(not(target_os = "windows"))]
+        {
+            let mut command = tokio::process::Command::new("xdg-open");
+            command.arg(&url);
+            launch_url_with_initial_status(command).await
+        }
+    }
+}
+
+#[cfg(any(test, not(any(target_os = "macos", target_os = "windows"))))]
+async fn launch_url_with_initial_status(mut command: tokio::process::Command) -> Result<(), String> {
+    let mut child = command.spawn().map_err(|e| format!("open failed: {e}"))?;
+    // xdg-open reports failed launches through its exit status, but a
+    // successful .desktop handler need not fork and can stay running for the
+    // browser's lifetime. Observe only the initial exit without blocking the
+    // webview or treating a long-running handler as failure.
+    match tokio::time::timeout(std::time::Duration::from_secs(1), child.wait()).await {
+        Ok(result) => {
+            let status = result.map_err(|e| format!("open wait failed: {e}"))?;
+            if status.success() {
+                Ok(())
+            } else {
+                Err(format!("open exited {status}"))
+            }
+        }
+        Err(_) => {
+            tauri::async_runtime::spawn(async move {
+                let _ = child.wait().await;
+            });
+            Ok(())
+        }
     }
 }
 
@@ -1529,6 +1635,8 @@ pub fn run() {
                 request.method().as_str(), request.uri().path(), request.uri().query().is_some(), cfg!(windows),
             ))
         })
+        // 每个 webview 只许在 app 自己的源 + 预览框之间导航(nav_guard.rs)
+        .plugin(nav_guard::plugin())
         .plugin(tauri_plugin_shell::init())
         .plugin(tauri_plugin_notification::init())
         .plugin(tauri_plugin_updater::Builder::new().build())
@@ -1538,6 +1646,7 @@ pub fn run() {
             wechat_cli_json_via_file,
             wechat_cli_text,
             save_text_file,
+            save_file,
             render_qr_svg,
             open_companion_window,
             close_companion_window,
@@ -1720,10 +1829,13 @@ mod workbench_proxy_tests {
             ("POST", "/v1/workbench/approve"),
             ("POST", "/v1/workbench/permission"),
             ("POST", "/v1/workbench/archive"),
+            ("POST", "/v1/workbench/writer-exited"),
             ("POST", "/v1/workbench/unattended-ack"),
             ("GET", "/v1/workbench/review?id=A1B2C3D4"),
             ("POST", "/v1/workbench/review-mark"),
             ("POST", "/v1/workbench/review-return"),
+            ("POST", "/v1/workbench/review-revert"),
+            ("POST", "/v1/workbench/worktree"),
             ("POST", "/v1/workbench/import"),
             ("POST", "/v1/workbench/prepare-resume"),
             ("POST", "/v1/workbench/prepare-continuation"),

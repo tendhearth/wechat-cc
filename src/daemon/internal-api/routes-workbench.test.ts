@@ -314,13 +314,17 @@ describe('Workbench internal HTTP API', () => {
   })
   it('bounds chunked uploads without trusting a content length and keeps the API usable',async()=>{
     const uploadAttachment=vi.fn(),{port,adminToken,request}=await start(service({uploadAttachment}))
-    const result=await new Promise<{status:number;body:string;connection:string|undefined}>((resolve,reject)=>{
+    const result=await new Promise<{status:number;body:string;connection:string|undefined}|'reset'>((resolve,reject)=>{
       let stopped=false,sent=0
       const req=httpRequest({host:'127.0.0.1',port,path:'/v1/workbench/attachment',method:'POST',headers:{authorization:`Bearer ${adminToken}`,'content-type':'application/json','transfer-encoding':'chunked'}},res=>{
         stopped=true
-        let body='';res.setEncoding('utf8');res.on('data',chunk=>{body+=chunk});res.on('end',()=>{req.destroy();resolve({status:res.statusCode!,body,connection:res.headers.connection})});res.on('error',error=>{req.destroy();reject(error)})
+        let body='';res.setEncoding('utf8');res.on('data',chunk=>{body+=chunk});res.on('end',()=>{resolve({status:res.statusCode!,body,connection:res.headers.connection})});res.on('error',error=>{req.destroy();reject(error)})
       })
-      req.on('error',error=>{stopped=true;req.destroy();reject(error)})
+      // 回应读完不再 req.destroy():服务器已经 connection: close,Bun 下这时销毁会撞上已关的请求体流、抛出没人接的
+      // TypeError「ReadableStreamDirectController is now closed」(2026-10-13 CI Linux,整次运行判红)。
+      // 服务器回 413 后立刻断开:客户端下一次写可能先撞上 EPIPE / ECONNRESET、来不及读到回应(node 下常见)——
+      // 那同样是「服务器拒收了」,不算失败;下面照样核对没存东西、API 还能用。
+      req.on('error',error=>{stopped=true;req.destroy();const code=(error as NodeJS.ErrnoException).code;if(code==='EPIPE'||code==='ECONNRESET')resolve('reset');else reject(error)})
       const chunk=Buffer.alloc(64*1024,32)
       // Respect backpressure and let the early 413 stop the upload before queuing more data.
       const send=()=>{
@@ -332,9 +336,11 @@ describe('Workbench internal HTTP API', () => {
       }
       send()
     })
-    expect(result.status).toBe(413)
-    expect(result.connection).toBe('close')
-    expect(JSON.parse(result.body)).toEqual({error:'request_body_too_large'})
+    if(result!=='reset'){
+      expect(result.status).toBe(413)
+      expect(result.connection).toBe('close')
+      expect(JSON.parse(result.body)).toEqual({error:'request_body_too_large'})
+    }
     expect(uploadAttachment).not.toHaveBeenCalled()
     const following=await request('/v1/workbench')
     expect({status:following.status,body:await following.text()}).toEqual({status:200,body:JSON.stringify({tasks:[TASK],providers:[{id:'codex',displayName:'Codex'}],defaultProvider:'codex',canWechat:true})})
@@ -596,6 +602,57 @@ describe('Workbench internal HTTP API', () => {
       expect(workbench.setArchived).toHaveBeenCalledWith('deadbeef',archived)
     }
     for(const body of [{id:'deadbeef'},{id:'bad',archived:true},{id:'deadbeef',archived:'true'}])expect((await request('/v1/workbench/archive',{method:'POST',body:JSON.stringify(body)})).status).toBe(400)
+  })
+
+  it('lets the desktop owner confirm a stuck writer exited; a live writer is a 409, agents are denied',async()=>{
+    const workbench=service(),{request,operatorToken,trustedToken}=await start(workbench)
+    const confirm=vi.fn(async(id:string)=>{ if(id==='cafebabe')throw new Error('writer_alive'); return {id,canArchive:true} })
+    ;(workbench as unknown as {confirmWriterExited:typeof confirm}).confirmWriterExited=confirm
+    expect((await request('/v1/workbench/writer-exited',{method:'POST',body:JSON.stringify({id:'deadbeef'})},trustedToken)).status).toBe(403)
+    expect(confirm).not.toHaveBeenCalled()
+    const ok=await request('/v1/workbench/writer-exited',{method:'POST',body:JSON.stringify({id:'deadbeef'})},operatorToken)
+    expect(ok.status).toBe(200);expect(await ok.json()).toMatchObject({task:{id:'deadbeef',canArchive:true}})
+    const alive=await request('/v1/workbench/writer-exited',{method:'POST',body:JSON.stringify({id:'cafebabe'})},operatorToken)
+    expect(alive.status).toBe(409);expect(await alive.json()).toEqual({error:'writer_alive'})
+    expect((await request('/v1/workbench/writer-exited',{method:'POST',body:JSON.stringify({id:'bad'})},operatorToken)).status).toBe(400)
+  })
+
+  it('reverts one reviewed file for the desktop owner; changed file is 409, unrecoverable is 422, agents are denied (2026-10-06)',async()=>{
+    const workbench=service(),{request,operatorToken,trustedToken}=await start(workbench)
+    const revert=vi.fn((_id:string,input:{artifactId:string;path:string})=>{
+      if(input.path==='changed.ts')throw new Error('review_file_changed')
+      if(input.path==='bin.dat')throw new Error('review_revert_unavailable')
+      return {path:input.path,restored:'content'}
+    })
+    ;(workbench as unknown as {revertReviewFile:typeof revert}).revertReviewFile=revert
+    const body=(path:string,extra={})=>({method:'POST',body:JSON.stringify({id:'deadbeef',artifactId:'11111111-1111-4111-8111-111111111111',path,...extra})})
+    expect((await request('/v1/workbench/review-revert',body('a.ts'),trustedToken)).status).toBe(403)
+    expect(revert).not.toHaveBeenCalled()
+    const ok=await request('/v1/workbench/review-revert',body('src/a.ts'),operatorToken)
+    expect(ok.status).toBe(200);expect(await ok.json()).toEqual({reverted:{path:'src/a.ts',restored:'content'}})
+    expect((await request('/v1/workbench/review-revert',body('changed.ts'),operatorToken)).status).toBe(409)
+    expect((await request('/v1/workbench/review-revert',body('bin.dat'),operatorToken)).status).toBe(422)
+    for(const bad of [body(''),body('a.ts',{extra:1}),{method:'POST',body:JSON.stringify({id:'bad',artifactId:'x',path:'a'})}])expect((await request('/v1/workbench/review-revert',bad,operatorToken)).status).toBe(400)
+  })
+
+  it('worktree commit/remove for the desktop owner; dirty is 409, plain task 422, agents denied (2026-10-07)',async()=>{
+    const workbench=service(),{request,operatorToken,trustedToken}=await start(workbench)
+    const act=vi.fn((id:string,action:string)=>{
+      if(id==='cafebabe')throw new Error('worktree_dirty')
+      if(id==='0badf00d')throw new Error('not_worktree')
+      if(id==='feedface')throw new Error('worktree_not_ff')
+      return action==='commit'?{branch:'cc/abcd1234',committed:true,sha:'s',mergeHint:'cd /p && git merge cc/abcd1234'}:{branch:'cc/abcd1234',removed:true}
+    })
+    ;(workbench as unknown as {worktreeAction:typeof act}).worktreeAction=act
+    const body=(id:string,action:string,extra={})=>({method:'POST',body:JSON.stringify({id,action,...extra})})
+    expect((await request('/v1/workbench/worktree',body('deadbeef','commit'),trustedToken)).status).toBe(403)
+    const ok=await request('/v1/workbench/worktree',body('deadbeef','commit'),operatorToken)
+    expect(ok.status).toBe(200);expect(await ok.json()).toMatchObject({worktree:{committed:true,mergeHint:expect.stringContaining('git merge')}})
+    expect((await request('/v1/workbench/worktree',body('cafebabe','remove'),operatorToken)).status).toBe(409)
+    expect((await request('/v1/workbench/worktree',body('0badf00d','commit'),operatorToken)).status).toBe(422)
+    // 合回项目(10-08):快进不了 409,主人自己合
+    expect((await request('/v1/workbench/worktree',body('feedface','merge'),operatorToken)).status).toBe(409)
+    for(const bad of [body('deadbeef','rebase'),body('bad','commit'),body('deadbeef','commit',{x:1})])expect((await request('/v1/workbench/worktree',bad,operatorToken)).status).toBe(400)
   })
 
   it('acknowledges an unattended executor only for the desktop operator credential',async()=>{

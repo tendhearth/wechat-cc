@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, it } from 'vitest'
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, statSync, utimesSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, statSync, utimesSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
-import { join } from 'node:path'
+import { dirname, join } from 'node:path'
 import {
   defaultSelfDeployDeps,
   detectDeveloperIdIdentity,
@@ -389,7 +389,7 @@ function makeHarness(): Harness {
     ...real,
     log: () => {},
     sleep: () => new Promise((resolve) => setTimeout(resolve, 3)),
-    spawnSync(cmd, args) {
+    spawnSync(cmd, args, opts) {
       if (cmd === newBinaryPath && args[0] === '--version') {
         return { status: 0, stdout: 'wechat-cc-cli 9.9.9-test\n', stderr: '' }
       }
@@ -407,6 +407,7 @@ function makeHarness(): Harness {
       // binary missing its JIT entitlements is SIGKILLed right here, before
       // anything goes live.
       if (cmd === `${sidecarPath}.new` && args[0] === '--version') {
+        signedProbeTimeouts.push(opts?.timeoutMs)
         if (signedSidecarDies) return { status: null, stdout: '', stderr: 'Killed: 9' }
         return { status: 0, stdout: 'wechat-cc-cli 9.9.9-test\n', stderr: '' }
       }
@@ -481,6 +482,7 @@ function makeHarness(): Harness {
 }
 
 const harnesses: string[] = []
+const signedProbeTimeouts: Array<number | undefined> = []
 afterEach(() => {
   for (const d of harnesses.splice(0)) rmSync(d, { recursive: true, force: true })
 })
@@ -510,6 +512,41 @@ describe('executeSelfDeploy', () => {
     if (process.platform !== 'win32') expect(statSync(h.plan.sidecarPath).ino).not.toBe(originalIno)
     expect(result.steps.map((s) => s.name)).toEqual(['preflight', 'stage', 'backup', 'swap', 'restart', 'health'])
     expect(result.steps.every((s) => s.ok)).toBe(true)
+  })
+
+  it('installs the onnxruntime libraries next to the sidecar (signed, fresh inode, before the app seal); a missing build is skipped', async () => {
+    const h = harness()
+    h.enableSigning()
+    const frameworks = join(h.dir, 'frameworks'); mkdirSync(frameworks)
+    const macos = dirname(h.plan.sidecarPath)
+    writeFileSync(join(frameworks, 'binding-aarch64'), 'BINDING')
+    h.plan.companions = [
+      { from: join(frameworks, 'binding-aarch64'), to: join(macos, 'libonnxruntime_binding.dylib') },
+      { from: join(frameworks, 'missing-aarch64'), to: join(macos, 'libonnxruntime.1.24.3.dylib') },
+    ]
+    const result = await executeSelfDeploy(h.plan, h.deps)
+    expect(result.ok).toBe(true)
+    expect(readFileSync(join(macos, 'libonnxruntime_binding.dylib'), 'utf8')).toBe('BINDING')
+    expect(existsSync(join(macos, 'libonnxruntime.1.24.3.dylib'))).toBe(false)
+    expect(result.steps.find(s => s.name === 'native')).toMatchObject({ ok: true, detail: 'libonnxruntime_binding.dylib' })
+    const targets = h.codesignCalls.map(c => c.args.at(-1))
+    const libSign = h.codesignCalls.find(c => c.args.at(-1) === join(macos, 'libonnxruntime_binding.dylib.new'))!
+    expect(libSign.args).toEqual(expect.arrayContaining(['--options', 'runtime', '--timestamp']))
+    expect(targets.indexOf(join(macos, 'libonnxruntime_binding.dylib.new'))).toBeLessThan(targets.lastIndexOf(h.plan.signing!.appPath))
+  })
+
+  it('a library that fails to sign does not block the deploy', async () => {
+    const h = harness()
+    const frameworks = join(h.dir, 'frameworks'); mkdirSync(frameworks)
+    const macos = dirname(h.plan.sidecarPath)
+    writeFileSync(join(frameworks, 'b'), 'BINDING')
+    h.plan.companions = [{ from: join(frameworks, 'b'), to: join(macos, 'libonnxruntime_binding.dylib') }]
+    h.failCodesign('sidecar')
+    const result = await executeSelfDeploy(h.plan, h.deps)
+    expect(result.ok).toBe(true)
+    expect(result.steps.find(s => s.name === 'native')?.detail).toMatch(/^partial: libonnxruntime_binding\.dylib: codesign exited 1/)
+    expect(existsSync(join(macos, 'libonnxruntime_binding.dylib'))).toBe(false)
+    expect(existsSync(join(macos, 'libonnxruntime_binding.dylib.new'))).toBe(false)
   })
 
   it('rolls back when health never passes on the new binary, and reports diagnostics', async () => {
@@ -698,6 +735,8 @@ describe('executeSelfDeploy', () => {
     expect(result.ok).toBe(true)
     expect(result.steps.map((s) => s.name)).toEqual(['preflight', 'stage', 'sign', 'backup', 'swap', 'seal', 'restart', 'health'])
     expect(result.steps.every((s) => s.ok)).toBe(true)
+    // 刚重签的第一次启动要等 Gatekeeper 评估:探测给 30s,不是 5s(10-13 真机负载 ~50 时被 5s 误杀)
+    expect(signedProbeTimeouts.at(-1)).toBe(30_000)
     expect(h.codesignCalls).toHaveLength(2)
     const [sidecar, app] = h.codesignCalls
     // 1st: the staged copy, with hardened runtime + entitlements + the CLI identifier, while the OLD sidecar is still live
@@ -1010,5 +1049,47 @@ describe('pluginSourceCandidates', () => {
     expect(pluginSourceCandidates('/main', ok)).toEqual(['/main/plugins'])
     const bad = (() => ({ status: 128, stdout: '', stderr: 'not a git repository' })) as SelfDeployDeps['spawnSync']
     expect(pluginSourceCandidates('/r', bad)).toEqual(['/r/plugins'])
+  })
+})
+
+// 2026-10-10 评审:不签却往 Developer ID 封好的包里换(09-28 TCC 事故的同一条路),以及两次部署同时跑。
+describe('executeSelfDeploy — signing guard and deploy lock', () => {
+  function sealedApp(h: Harness, team: string) {
+    h.plan.appPath = join(h.dir, 'app')
+    const inner = h.deps.spawnSync
+    h.deps.spawnSync = (cmd, args, opts) => cmd === 'codesign' && args[0] === '-dv'
+      ? { status: 0, stdout: '', stderr: `Executable=${h.plan.appPath}/Contents/MacOS/x\nIdentifier=com.tendhearth.cc\nTeamIdentifier=${team}\n` }
+      : inner(cmd, args, opts)
+  }
+  it('refuses to swap an unsigned sidecar into a Developer ID sealed app, before touching anything', async () => {
+    const h = harness()
+    sealedApp(h, '9Y6JAPDP7A')
+    const r = await executeSelfDeploy(h.plan, h.deps)
+    expect(r).toMatchObject({ ok: false, exitCode: 1 })
+    expect(r.steps.at(-1)).toMatchObject({ name: 'signing', ok: false })
+    expect(readFileSync(h.plan.sidecarPath, 'utf8')).toBe('OLD_BINARY_CONTENT')
+    expect(existsSync(h.plan.tmpPath)).toBe(false)
+    expect(h.kickstartCalls).toBe(0)
+  })
+  it('--allow-unsigned, an ad-hoc app, or deploying from .prev all go ahead', async () => {
+    const a = harness(); sealedApp(a, '9Y6JAPDP7A'); a.plan.allowUnsigned = true
+    expect((await executeSelfDeploy(a.plan, a.deps)).ok).toBe(true)
+    const b = harness(); sealedApp(b, 'not set')
+    expect((await executeSelfDeploy(b.plan, b.deps)).ok).toBe(true)
+    const c = harness(); sealedApp(c, '9Y6JAPDP7A')
+    writeFileSync(c.plan.prevPath, 'PREV'); c.plan.newBinaryPath = c.plan.prevPath
+    expect((await executeSelfDeploy(c.plan, c.deps)).steps.find(s => s.name === 'signing')).toBeUndefined()
+  })
+  it('a second deploy while one holds the lock is refused; a stale lock from a dead pid is taken over', async () => {
+    const h = harness()
+    h.plan.lockPath = join(h.dir, 'state', 'self-deploy.lock')
+    writeFileSync(h.plan.lockPath, String(process.pid))
+    const busy = await executeSelfDeploy(h.plan, h.deps)
+    expect(busy).toMatchObject({ ok: false, exitCode: 1 })
+    expect(busy.steps).toEqual([expect.objectContaining({ name: 'lock', ok: false })])
+    expect(readFileSync(h.plan.sidecarPath, 'utf8')).toBe('OLD_BINARY_CONTENT')
+    writeFileSync(h.plan.lockPath, '999999999')
+    expect((await executeSelfDeploy(h.plan, h.deps)).ok).toBe(true)
+    expect(existsSync(h.plan.lockPath)).toBe(false)
   })
 })

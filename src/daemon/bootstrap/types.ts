@@ -437,6 +437,8 @@ export interface Bootstrap {
     search: typeof import('../../core/knowledge/search').semanticSearch
     embedder?: import('../../core/knowledge/embedder-service').EmbedderService
     embedQuery?: (t: string) => Promise<number[]>
+    /** 实际在用的向量化路径(2026-10-06,状态总览):js 起不来退回 Python 时是 js_fell_back;没有向量化是 none。 */
+    embedStatus?: () => 'js' | 'python' | 'js_fell_back' | 'none'
     /**
      * Graph Query (Knowledge Graph inproc, Task 5) — the store-backed
      * accessor over graph.db, built by `core/knowledge/graph-query.ts`'s

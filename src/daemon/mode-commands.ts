@@ -463,6 +463,8 @@ export function makeModeCommands(deps: ModeCommandsDeps): ModeCommands {
               await reply(msg.chatId, await renderApiList(msg.chatId))
               return true
             }
+            // 别名是全局配置(每个对话的 /api <短名> 都按它解析):和 /set provider 一样仅管理员可改(2026-10-10 评审)。
+            if (!(deps.isAdmin?.(msg.userId ?? msg.chatId) ?? false)) { await reply(msg.chatId, '❌ /api alias / unalias 是全局设置,仅管理员可改。/api list 和 /api <模型名> 照常可用。'); return true }
             if (!deps.setOpenaiAlias) { await reply(msg.chatId, '❌ 别名功能未接线。'); return true }
             if (verb === 'unalias') {
               const aliases = deps.readConfig?.().openaiAliases ?? {}

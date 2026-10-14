@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, afterEach } from "vitest"
-import { serviceAction, silentInstallAndStart } from "./service.js"
+import { serviceAction, serviceFailureText, silentInstallAndStart } from "./service.js"
 
 describe("silentInstallAndStart", () => {
   it("returns ok=true when install + start + alive all succeed", async () => {
@@ -117,4 +117,18 @@ describe('finished installation progress',()=>{
   for(let i=0;i<5;i++)await Promise.resolve()
   expect(button).toEqual({innerHTML:'安装并启动',disabled:false})
  })
+})
+
+describe('serviceFailureText — symptom → cause → one action (2026-10-13)', () => {
+  it('turns the known failures into one sentence that names a real button', () => {
+    expect(serviceFailureText('install', 'Bootstrap failed: 5: Input/output error')).toContain('旧的 CC 后台服务')
+    expect(serviceFailureText('install', 'Bootstrap failed: 5: Input/output error')).toContain('「安装并启动」')
+    expect(serviceFailureText('start', 'EACCES: permission denied, open ~/Library/LaunchAgents/x.plist')).toContain('没有权限')
+    expect(serviceFailureText('install', 'health check timed out after 20s')).toContain('「重新检查」')
+    expect(serviceFailureText('install', '无法连接到 wechat-cc CLI。请检查 daemon 进程是否运行。')).toContain('重新打开')
+  })
+  it('never guesses: unknown errors get the generic line pointing at 技术详情', () => {
+    const t = serviceFailureText('uninstall', 'something odd')
+    expect(t).toContain('后台服务没卸掉');expect(t).toContain('技术详情');expect(t).not.toContain('something odd')
+  })
 })

@@ -33,11 +33,21 @@ describe.skipIf(!posix)('makeProcessTreeFreezer — a real child tree', () => {
     try { if (root?.pid) process.kill(-root.pid, 'SIGKILL') } catch { /* gone */ }
     rmSync(dir, { recursive: true, force: true })
   })
-  const read = (name: string) => { try { return Number(readFileSync(join(dir, name), 'utf8')) } catch { return 0 } }
+  // 计数文件是 writeFileSync 整个重写的:先截断再写,读正好落在中间就读到空串(Number('') = 0)。
+  // 满载 CI 上这个窗口被拉长 —— 循环刚看到 own>2 退出,紧跟着的 expect 再读一次却读到 0(10-10 的 flake)。
+  // 计数只增不减,所以按文件记住见过的最大值。
+  let seen: Record<string, number> = {}
+  const read = (name: string) => {
+    let v = 0
+    try { v = Number(readFileSync(join(dir, name), 'utf8')) || 0 } catch { /* not yet written */ }
+    seen[name] = Math.max(seen[name] ?? 0, v)
+    return seen[name]
+  }
   const ticks = () => ({ root: read('root.ticks'), same: read('same.ticks'), own: read('own.ticks') })
 
   it('SIGSTOP stops every process in the tree (incl. a child in its own group); SIGCONT resumes all; kill ends them without resuming', async () => {
     dir = mkdtempSync(join(tmpdir(), 'freeze-'))
+    seen = {}
     writeFileSync(join(dir, 'ticker.cjs'), TICKER)
     writeFileSync(join(dir, 'root.cjs'), ROOT)
     root = spawn(process.execPath, [join(dir, 'root.cjs'), dir, join(dir, 'ticker.cjs')], { stdio: 'ignore', detached: true })

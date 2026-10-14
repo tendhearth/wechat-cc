@@ -176,3 +176,41 @@ test('setup-poll returns confirmed after the DRY_RUN auto-pass', async ({ shim }
   expect(confirmed.result?.status).toBe('confirmed')
   expect(confirmed.result?.accountId).toBe('mock-bot')
 })
+
+test('wizard header says which step of four, in Chinese (2026-10-13)', async ({ page, shimUrl }, testInfo) => {
+  await page.goto(shimUrl)
+  await waitForBoot(page)
+  if (await page.evaluate(() => document.documentElement.dataset.mode) !== 'wizard') test.skip(true, 'shim booted straight into the dashboard')
+  // 以前 showStep 写的 #wizard-step-of 在页面里根本不存在,主人看不到自己走到第几步
+  await expect(page.locator('#wizard-step-of')).toHaveText(/^第 [1-4] 步 · 共 4 步$/)
+  await page.locator('.wz-top').screenshot({ path: testInfo.outputPath('wizard-step-of.png') })
+})
+
+test('wizard guard toggle rolls back and says so when enabling fails (2026-10-13)', async ({ page, shimUrl }) => {
+  await page.goto(shimUrl)
+  await waitForBoot(page)
+  // 只让「guard enable」这一次失败,其余照常走 shim
+  await page.route('**/__invoke', async route => {
+    const body = route.request().postData() ?? ''
+    if (body.includes('"guard"') && body.includes('"enable"')) return route.fulfill({ status: 500, contentType: 'application/json', body: JSON.stringify({ error: 'guard enable failed' }) })
+    return route.continue()
+  })
+  await page.evaluate(() => {
+    document.querySelectorAll('#screen-service').forEach(s => s.classList.add('active'))
+    const t = document.getElementById('screen-guard-toggle')!; t.classList.remove('on'); t.setAttribute('aria-pressed', 'false')
+  })
+  // 用 DOM 点:shim 可能直接进了仪表盘(CI 上就是),向导藏着,Playwright 的 click 会一直等它可见。处理函数照样挂着。
+  await page.evaluate(() => (document.getElementById('screen-guard-toggle') as HTMLElement).click())
+  await expect(page.locator('#screen-guard-status-line')).toContainText('没能开启网络守护')
+  await expect(page.locator('#screen-guard-toggle')).not.toHaveClass(/\bon\b/)
+  await expect(page.locator('#screen-guard-toggle')).toHaveAttribute('aria-pressed', 'false')
+})
+
+test('provider picker also offers subscription Gemini via agy (2026-10-13)', async ({ page, shimUrl }, testInfo) => {
+  await page.goto(shimUrl)
+  await waitForBoot(page)
+  await expect(page.locator('button.agent[data-provider="agy"]')).toBeAttached()
+  await expect(page.locator('#agy-meta')).toHaveText(/已就绪|未安装 agy|检测中/)
+  await page.evaluate(() => { document.querySelectorAll('.wizard .screen').forEach(s => s.classList.remove('active')); document.getElementById('screen-provider')?.classList.add('active'); document.documentElement.dataset.mode = 'wizard' })
+  await page.locator('#screen-provider .agent-grid').screenshot({ path: testInfo.outputPath('provider-grid.png') }).catch(() => {})
+})

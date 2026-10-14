@@ -47,6 +47,12 @@ function extractJsonObjectText(raw: string): string | null {
   return null
 }
 
+/**
+ * 条目编号在提示里写成尾注「m:xxxx」;模型时不时把「m:」也抄进 id(10-13 真机:`unknown_id:m:110648`,
+ * 那一条明明在 memory.md 里 —— 整晚因此判失败、连败四次)。这里把开头的「m:」去掉;别的照旧严格校验。
+ */
+const bareId = (id: string) => id.trim().replace(/^m:/i, '')
+
 export function parseOps(raw: string): NightlyOps | null {
   const text = extractJsonObjectText(raw)
   if (!text) return null
@@ -65,16 +71,17 @@ export function parseOps(raw: string): NightlyOps | null {
   for (const u of o.update as unknown[]) {
     const x = u as Record<string, unknown>
     if (!x || !isStr(x.id) || !isStr(x.text)) return null
-    update.push({ id: x.id, text: x.text.trim(), reversal: x.reversal === true })
+    update.push({ id: bareId(x.id), text: x.text.trim(), reversal: x.reversal === true })
   }
   if (!(o.confirm as unknown[]).every(isStr)) return null
+  const confirm = (o.confirm as string[]).map(bareId)
   const remove: NightlyOps['remove'] = []
   for (const r of o.remove as unknown[]) {
     const x = r as Record<string, unknown>
     if (!x || !isStr(x.id)) return null
-    remove.push({ id: x.id, reason: isStr(x.reason) ? x.reason : '' })
+    remove.push({ id: bareId(x.id), reason: isStr(x.reason) ? x.reason : '' })
   }
-  return { add, update, confirm: o.confirm as string[], remove }
+  return { add, update, confirm, remove }
 }
 
 export function daysBetween(fromDay: string, toDay: string): number {

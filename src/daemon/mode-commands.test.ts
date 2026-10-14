@@ -1179,7 +1179,7 @@ describe('/api list / alias / unalias', () => {
     expect(t).toContain('ds → DeepSeek')
   })
   it('/api alias ds=DeepSeek persists; /api ds then resolves the alias into the per-chat pin', async () => {
-    const { cmds, set, sentMessages, cfg } = setup({ registered: reg })
+    const { cmds, set, sentMessages, cfg } = setup({ registered: reg, isAdmin: () => true })
     await cmds.handle(inbound('/api alias ds=DeepSeek'))
     expect(cfg.openaiAliases).toEqual({ ds: 'DeepSeek' })
     expect(sentMessages[0]![1]).toContain('ds')
@@ -1188,7 +1188,7 @@ describe('/api list / alias / unalias', () => {
     expect(sentMessages[1]![1]).toContain('DeepSeek(别名 ds)')
   })
   it('/api alias accepts `a = b` and `a b` spellings; rejects a subcommand name as alias', async () => {
-    const { cmds, cfg, sentMessages } = setup({ registered: reg })
+    const { cmds, cfg, sentMessages } = setup({ registered: reg, isAdmin: () => true })
     await cmds.handle(inbound('/api alias qwen = Qwen3.8-Instruct'))
     await cmds.handle(inbound('/api alias k kimi-k2.7-code'))
     expect(cfg.openaiAliases).toEqual({ qwen: 'Qwen3.8-Instruct', k: 'kimi-k2.7-code' })
@@ -1196,8 +1196,16 @@ describe('/api list / alias / unalias', () => {
     expect(sentMessages[2]![1]).toContain('子命令')
     expect(cfg.openaiAliases).not.toHaveProperty('list')
   })
+  // 2026-10-10 评审:别名是全局配置(每个对话的 /api <短名> 都按它解析),访客原先也能改 / 删。
+  it('/api alias / unalias 是全局设置:非管理员 ⇒ 拒绝,配置不动', async () => {
+    const { cmds, cfg, sentMessages } = setup({ registered: reg, isAdmin: () => false, config: { openaiAliases: { ds: 'DeepSeek' } } })
+    await cmds.handle(inbound('/api alias ds=SomethingPricey'))
+    await cmds.handle(inbound('/api unalias ds'))
+    expect(cfg.openaiAliases).toEqual({ ds: 'DeepSeek' })
+    expect(sentMessages[0]![1]).toContain('仅管理员')
+  })
   it('/api unalias removes; unknown alias is reported with the existing ones', async () => {
-    const { cmds, cfg, sentMessages } = setup({ registered: reg, config: { openaiAliases: { ds: 'DeepSeek', k: 'kimi' } } })
+    const { cmds, cfg, sentMessages } = setup({ registered: reg, isAdmin: () => true, config: { openaiAliases: { ds: 'DeepSeek', k: 'kimi' } } })
     await cmds.handle(inbound('/api unalias ds'))
     expect(cfg.openaiAliases).toEqual({ k: 'kimi' })
     await cmds.handle(inbound('/api unalias nope'))

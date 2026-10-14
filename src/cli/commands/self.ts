@@ -23,6 +23,7 @@ const selfDeployCmd = defineCommand({
     'no-rollback': { type: 'boolean', description: '健康门失败时不自动回滚（默认会回滚）' },
     'allow-missing-plugins': { type: 'boolean', description: '插件门红了也放行(记日志);给本来就没有插件的机器,不必永久 plugin disable' },
     'no-sign': { type: 'boolean', description: '不用本机钥匙串里的 Developer ID 重签 sidecar 与 .app(缺省:有证书就签)' },
+    'allow-unsigned': { type: 'boolean', description: '.app 是 Developer ID 封的、这次却不签,也照样换(缺省拒绝:ad-hoc sidecar 会让 daemon 卡在 TCC 框)' },
     'health-timeout-ms': { type: 'string', description: '健康门超时,毫秒(缺省 60000)' },
     json: { type: 'boolean', description: 'JSON 输出（SelfDeployResult）' },
   },
@@ -92,6 +93,7 @@ const selfDeployCmd = defineCommand({
         // 插件来源登记(2026-09-30):只在源码模式下有 checkout 可登记;打包版保留已有指针。
         pluginSourceCandidates: compiled ? [] : pluginSourceCandidates(repoRoot, deps.spawnSync),
         allowMissingPlugins: (args as Record<string, unknown>)['allow-missing-plugins'] === true || (args as Record<string, unknown>).allowMissingPlugins === true,
+        allowUnsigned: (args as Record<string, unknown>)['allow-unsigned'] === true || (args as Record<string, unknown>).allowUnsigned === true,
         exists: existsSync,
       })
     } catch (err) {

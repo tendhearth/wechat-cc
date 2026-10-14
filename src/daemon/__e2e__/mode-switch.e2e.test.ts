@@ -16,6 +16,8 @@ describe('e2e: /codex slash command flips chat mode for subsequent messages', ()
     const dispatched: Array<'claude' | 'codex'> = []
     const daemon = await startTestDaemon({
       dangerously: true,
+      // Codex 对访客关门(2026-10-10,guestSafe:false)⇒ 这条路由测试用管理员对话。
+      access: { admins: ['chat1'] },
       // Default: no `modes` preset, so chat1 starts at solo+claude.
       claudeScript: {
         async onDispatch(_text) {

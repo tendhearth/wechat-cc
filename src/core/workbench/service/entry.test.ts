@@ -88,3 +88,15 @@ describe('makeEntryDomain · 选项与创建', () => {
 })
 
 function root_of() { const d = realpathSync(mkdtempSync(join(tmpdir(), 'wb-entry-root-'))); dirs.push(d); return d }
+
+describe('makeEntryDomain · entryModels(2026-10-06)', () => {
+  it('owner-checked; unknown project ⇒ project_stale; managed without a root ⇒ entry_not_wired; otherwise asks the executor for its catalog', async () => {
+    const { entry } = setup()
+    await expect(entry.entryModels({ providerId: 'claude' }, { ownerKey: 'x', surface: 'phone' })).rejects.toThrow('invalid_entry_owner')
+    await expect(entry.entryModels({ providerId: 'claude', projectId: 'p-00000000000000000000' }, OWNER)).rejects.toThrow('project_stale')
+    await expect(entry.entryModels({ providerId: 'claude' }, OWNER)).rejects.toThrow('entry_not_wired')
+    const managed = setup({ managedRoot: join(root_of(), 'managed-models') })
+    // 这个测试执行者不带模型目录 ⇒ 走到了真正去问它那一步(目录路径在电脑上解析、受管根目录被建出来)
+    await expect(managed.entry.entryModels({ providerId: 'claude' }, OWNER)).rejects.toThrow('model_catalog_unavailable')
+  })
+})

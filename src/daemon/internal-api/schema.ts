@@ -242,7 +242,8 @@ export const ProjectsRemoveResponse = z.union([
 
 export const UserSetNameRequest = z.object({
   chat_id: z.string(),
-  name: z.string(),
+  // 是个称呼,不是一段话:显示名会进提示词,不设上限就是一条往别处塞长文本的路。
+  name: z.string().max(64),
 })
 export const UserSetNameResponse = z.union([
   z.object({ ok: z.literal(true) }),

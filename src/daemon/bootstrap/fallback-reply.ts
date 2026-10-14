@@ -60,14 +60,15 @@ export interface FallbackReplyDeps {
   shadow?: (chatId: string, text: string) => void
 }
 
-export type SendAssistantText = (chatId: string, text: string) => Promise<void>
+/** 返回 true = 真送出去了(或被 app 接收器截走);false = 服务端拒了(错误信封)。抛错照旧往上抛。 */
+export type SendAssistantText = (chatId: string, text: string) => Promise<boolean>
 
 export function makeSendAssistantText(deps: FallbackReplyDeps): SendAssistantText | undefined {
   if (!deps.sendMessage) return undefined
   const send = deps.sendMessage
   return async (chatId, text) => {
     deps.shadow?.(chatId, text)
-    if (deps.capture?.(chatId, text)) return
+    if (deps.capture?.(chatId, text)) return true
     deps.observe?.(chatId, text)
     let result: SendMessageResult
     try {
@@ -79,9 +80,10 @@ export function makeSendAssistantText(deps: FallbackReplyDeps): SendAssistantTex
     }
     if (result.error) {
       deps.log('FALLBACK_REPLY_FAIL', `chat=${chatId} error=${result.error}`)
-      return
+      return false
     }
     deps.log('FALLBACK_REPLY_SENT', `chat=${chatId} msgId=${result.msgId}`)
+    return true
   }
 }
 
@@ -95,7 +97,7 @@ export function makeSendNotice(deps: FallbackReplyDeps): SendAssistantText | und
   if (!deps.sendMessage) return undefined
   const send = deps.sendMessage
   return async (chatId, text) => {
-    if (deps.capture?.(chatId, text)) return
+    if (deps.capture?.(chatId, text)) return true
     let result: SendMessageResult
     try {
       result = await send(chatId, text)
@@ -105,8 +107,9 @@ export function makeSendNotice(deps: FallbackReplyDeps): SendAssistantText | und
     }
     if (result.error) {
       deps.log('NOTICE_FAIL', `chat=${chatId} error=${result.error}`)
-      return
+      return false
     }
     deps.log('NOTICE_SENT', `chat=${chatId} msgId=${result.msgId}`)
+    return true
   }
 }

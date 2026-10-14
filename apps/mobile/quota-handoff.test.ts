@@ -242,3 +242,30 @@ describe('PWA quota handoff through the displayed controls', () => {
     expect(p.mError('something_quota_like')).toContain('检查连接')
   })
 })
+
+describe('PWA stop this round (2026-10-06)', () => {
+  const RUN = '33333333-3333-4333-8333-333333333333'
+  const running = () => ({ ...detail(SOURCE, null), runId: RUN, task: { id: SOURCE, providerId: 'claude', path: '/fixture/work', error: null, status: 'running', phase: 'working' } })
+  const stopButton = () => ({ dataset: { stop: '1', task: SOURCE, run: RUN } })
+
+  it('shows only while working; first tap arms, second tap POSTs exactly id + runId once', async () => {
+    const p = load()
+    p.setDetail(running())
+    p.post(async () => response({ ok: true }))
+    await p.openMatter(SOURCE)
+    expect(p.get('m-task-status').innerHTML).toContain('停止这一轮')
+    await p.click(stopButton() as any)
+    expect(p.posts()).toEqual([])
+    expect(p.get('m-task-status').innerHTML).toContain('再点一次，确认停止')
+    await p.click(stopButton() as any)
+    expect(p.posts()).toEqual([{ path: '/m/api/matter/stop', method: 'POST', body: { id: SOURCE, runId: RUN }, transport: 'lan' }])
+    expect(p.get('m-notice').textContent).toContain('已经请电脑停下这一轮')
+  })
+
+  it('no button once the round has replied', async () => {
+    const p = load()
+    p.setDetail({ ...running(), task: { ...running().task, phase: 'replied' } })
+    await p.openMatter(SOURCE)
+    expect(p.get('m-task-status').innerHTML).not.toContain('停止这一轮')
+  })
+})

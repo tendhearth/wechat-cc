@@ -33,6 +33,8 @@ apps/desktop/src-tauri/WixTools/
 # and bundled into the Tauri output. Never commit — they're 60+ MB and machine-
 # specific; CI rebuilds them before each desktop release.
 apps/desktop/src-tauri/binaries/
+# onnxruntime 原生库(build-sidecar 从 node_modules 拷来,打进 .app 的 Frameworks)
+apps/desktop/src-tauri/frameworks/
 
 # Playwright MCP snapshots — local debugging artifacts
 .playwright-mcp/

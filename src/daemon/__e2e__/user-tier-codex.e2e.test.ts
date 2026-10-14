@@ -50,7 +50,7 @@ function asCodexSpawnRecord(opts: Record<string, unknown>): CodexSpawnRecord {
 }
 
 describe('e2e: user-tier permissions (codex)', () => {
-  it('admin/guest get tier-specific codex SDK options at startThread', async () => {
+  it('admin gets tier-specific codex SDK options at startThread; a guest is refused before any spawn', async () => {
     const spawns: CodexSpawnRecord[] = []
     const daemon = await startTestDaemon({
       // dangerously=false so resolveTier honors access.json rather than
@@ -85,36 +85,24 @@ describe('e2e: user-tier permissions (codex)', () => {
       daemon.sendText('admin_chat', 'hi from admin')
       await daemon.waitForReplyTo('admin_chat', 8000)
 
+      // 访客:Codex 对访客关门(2026-10-10,guestSafe:false —— 只读沙盒照样能读整台电脑),
+      // 根本不起 codex,收到一句说明。
       daemon.sendText('guest_chat', 'hi from guest')
-      await daemon.waitForReplyTo('guest_chat', 8000)
+      const guestReplies = await daemon.waitForReplyTo('guest_chat', 8000)
+      expect(guestReplies.map(r => r.text).join('\n')).toContain('/codex 对访客不开放')
 
-      // Two spawns so far — one per chatId. `run()` IS implemented in the
-      // fake (the first-use probe's cheapEval depends on it), but the
-      // recorder is wired only inside `runStreamed`, so `run()` never
-      // fires it — cheapEval can't add records here.
-      expect(spawns.length).toBe(2)
+      // `run()` IS implemented in the fake (the first-use probe's cheapEval depends on it), but the
+      // recorder is wired only inside `runStreamed`, so `run()` never fires it — cheapEval can't add records here.
+      expect(spawns.length).toBe(1)
 
       const adminSpawn = spawns.find(s => s.sandboxMode === 'workspace-write')
       expect(adminSpawn, 'expected a workspace-write spawn for admin_chat').toBeTruthy()
       if (adminSpawn) {
         // Admin profile under strict mode: write within cwd, no approval
-        // prompt. Pre-RFC-05 this was danger-full-access, but the
-        // 2026-05-26 policy made ADMIN_RELAY non-empty (destructive ops
-        // relay), and codex has no canUseTool gate to honor that relay —
-        // so admin drops to workspace-write. danger-full-access is now
-        // --dangerously-only (see tierProfileToCodexSdkOpts).
+        // prompt. danger-full-access is --dangerously-only (see tierProfileToCodexSdkOpts).
         expect(adminSpawn.approvalPolicy).toBe('never')
       }
-
-      const guestSpawn = spawns.find(s => s.sandboxMode === 'read-only')
-      expect(guestSpawn, 'expected a read-only spawn for guest_chat').toBeTruthy()
-      if (guestSpawn) {
-        // The headline guarantee on the codex side: a chat that can DM
-        // the bot but isn't an admin runs codex with no write access
-        // and an approval prompt the daemon's headless setup can't
-        // answer — i.e. functionally restricted to reading + replying.
-        expect(guestSpawn.approvalPolicy).toBe('untrusted')
-      }
+      expect(spawns.find(s => s.sandboxMode === 'read-only')).toBeUndefined()
     } finally {
       await daemon.stop()
     }

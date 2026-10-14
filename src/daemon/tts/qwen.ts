@@ -1,5 +1,6 @@
 import type { TTSProvider } from './types'
 import { Buffer } from 'node:buffer'
+import { withTtsTimeout } from './fetch-timeout'
 
 export interface QwenProviderOptions {
   apiKey: string
@@ -19,27 +20,30 @@ export function makeQwenProvider(opts: QwenProviderOptions): TTSProvider {
   const model = opts.model ?? 'qwen3-tts-flash'
 
   async function synth(text: string, voice: string) {
-    const res = await fetch(endpoint, {
-      method: 'POST',
-      headers: {
-        'Authorization': `Bearer ${opts.apiKey}`,
-        'Content-Type': 'application/json',
-      },
-      body: JSON.stringify({
-        model,
-        input: { text },
-        parameters: { voice },
-      }),
+    return withTtsTimeout('Qwen TTS', async (signal) => {
+      const res = await fetch(endpoint, {
+        method: 'POST',
+        signal,
+        headers: {
+          'Authorization': `Bearer ${opts.apiKey}`,
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          model,
+          input: { text },
+          parameters: { voice },
+        }),
+      })
+      if (!res.ok) {
+        const body = await res.text().catch(() => '')
+        throw new Error(`Qwen TTS ${res.status}: ${body.slice(0, 200)}`)
+      }
+      const buf = Buffer.from(await res.arrayBuffer())
+      const mimeType = typeof res.headers.get === 'function'
+        ? (res.headers.get('content-type') ?? 'audio/mpeg')
+        : 'audio/mpeg'
+      return { audio: buf, mimeType }
     })
-    if (!res.ok) {
-      const body = await res.text().catch(() => '')
-      throw new Error(`Qwen TTS ${res.status}: ${body.slice(0, 200)}`)
-    }
-    const buf = Buffer.from(await res.arrayBuffer())
-    const mimeType = typeof res.headers.get === 'function'
-      ? (res.headers.get('content-type') ?? 'audio/mpeg')
-      : 'audio/mpeg'
-    return { audio: buf, mimeType }
   }
 
   async function test(): Promise<{ ok: true } | { ok: false; reason: string; detail?: string }> {

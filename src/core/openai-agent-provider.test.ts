@@ -224,10 +224,53 @@ describe('openai provider loop', () => {
     expect(errorEvents[0]).toMatchObject({ kind: 'error', code: 'cancelled' })
     expect(resultEvents).toHaveLength(1)
     expect(events.indexOf(errorEvents[0]!)).toBeLessThan(events.indexOf(resultEvents[0]!))
-    // Round 1's tool DID execute (the abort check comes after tool exec, not before).
-    expect(calls).toEqual(['reply'])
+    // Round 1's tool never ran — cancel landed before it, and every tool call checks the signal first.
+    expect(calls).toEqual([])
     // No round 2 — the boundary check after round 1's tool exec caught the cancel.
     expect(streamTurnCalls).toBe(1)
+    await session.close()
+  })
+
+  it('cancel() during a multi-tool batch skips the remaining tool calls but still answers every call id', async () => {
+    // 模型一步发三个工具调用;第一个执行时主人 /stop —— 后两个(可能是有副作用的 Bash)不该再跑。
+    // 每个 call id 仍要有一条工具结果,否则这个会话下一次请求是坏的。
+    const batch = [
+      { id: 'c1', name: 'reply', input: { text: 'a' } },
+      { id: 'c2', name: 'reply', input: { text: 'b' } },
+      { id: 'c3', name: 'reply', input: { text: 'c' } },
+    ]
+    const seen: any[][] = []
+    const model: ChatModelClient = {
+      streamTurn(messages, _tools) {
+        seen.push([...messages])
+        async function* deltas() { for (const tc of batch) yield { kind: 'tool_call' as const, ...tc } }
+        return { deltas: deltas(), finished: Promise.resolve({ messages: [{ role: 'assistant', content: '' } as any], toolCalls: batch }) }
+      },
+      async generate() { return 'ok' },
+      userMessage: (t) => ({ role: 'user', content: t } as any),
+      systemMessage: (t) => ({ role: 'system', content: t } as any),
+      toolResultMessage: (id, name, r) => ({ role: 'tool', tool_call_id: id, content: `${name}:${r}` } as any),
+    }
+    const calls: string[] = []
+    let session: any
+    const bridge = fakeBridge(calls)
+    const origCall = bridge.call.bind(bridge)
+    bridge.call = async (name: string, input: unknown) => {
+      const r = await origCall(name, input)
+      if (calls.length === 1) await session.cancel()
+      return r
+    }
+    const provider = createOpenAiAgentProvider({ makeChatModel: () => model, makeMcpBridge: async () => bridge })
+    session = await provider.spawn({ alias: 'a', path: '/tmp' }, guestSpawn as any)
+    const events: AgentEvent[] = []
+    for await (const e of session.dispatch('go')) events.push(e)
+
+    expect(calls).toEqual(['reply'])
+    expect(events).toContainEqual(expect.objectContaining({ kind: 'error', code: 'cancelled' }))
+    // 下一轮请求里三个 call id 都有结果
+    for await (const _ of session.dispatch('again')) { /* drain */ }
+    const toolMsgs = seen[1]!.filter((m: any) => m.role === 'tool').map((m: any) => m.tool_call_id)
+    expect(toolMsgs).toEqual(['c1', 'c2', 'c3'])
     await session.close()
   })
 

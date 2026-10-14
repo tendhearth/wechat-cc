@@ -76,10 +76,10 @@ describe('版本号的两种用法别混', () => {
 })
 
 describe('构建标识必须真的被注入', () => {
-  it('build-sidecar 用 --define 把 git 短 sha 钉进产物(漏了它,--version 又变回一个永不变的数)', () => {
+  it('build-sidecar 用 define 把 git 短 sha 钉进产物(漏了它,--version 又变回一个永不变的数)', () => {
     const src = read('apps', 'desktop', 'scripts', 'build-sidecar.ts')
-    expect(src).toContain('__BUILD_SHA__')
-    expect(src).toContain('--define')
+    // 2026-10-06 起走 Bun.build(要插件,见 sidecar-native.ts):`define: { __BUILD_SHA__: … }` 等同 CLI 的 --define。
+    expect(src).toMatch(/define:\s*\{\s*__BUILD_SHA__:/)
     expect(src).toContain('rev-parse')
   })
 })

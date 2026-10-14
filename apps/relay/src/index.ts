@@ -34,7 +34,8 @@ export default {
     const wk = wellKnown(url.pathname, env)
     if (wk) return wk
     if (url.pathname === '/pset/' || url.pathname === '/pset') {
-      return new Response(PSET_HTML, { headers: { 'content-type': 'text/html; charset=utf-8', 'cache-control': 'no-store' } })
+      // frame-ancestors:别的站不能把壳页套进 iframe(点击劫持 / 诱导配对)
+      return new Response(PSET_HTML, { headers: { 'content-type': 'text/html; charset=utf-8', 'cache-control': 'no-store', 'content-security-policy': "frame-ancestors 'none'", 'x-frame-options': 'DENY' } })
     }
     if (url.pathname.startsWith('/v2/')) {
       const limited = await ipLimited(req, env)

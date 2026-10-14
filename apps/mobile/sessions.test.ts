@@ -35,13 +35,13 @@ function load(api=vi.fn(defaultApi)){
 const wait=()=>new Promise(resolve=>setTimeout(resolve,1))
 
 describe('phone computer session journey',()=>{
- it('has two bottom destinations, moves memories into together, retains its read receipt and pauses hidden workbench polling',async()=>{
+ it('has two bottom destinations, keeps memories under 此刻, retains its read receipt and pauses hidden workbench polling',async()=>{
   const h=load();expect(Array.from(h.document.querySelectorAll('nav button')).map((button:any)=>button.textContent?.trim())).toEqual(['此刻','一起做'])
-  h.mobilePane('matters');h.document.getElementById('memory-open')!.click();await wait()
+  h.mobilePane('matters');h.mobilePane('today');h.document.getElementById('memory-open')!.click();await wait()
   expect(h.document.getElementById('p-memory')!.classList.contains('on')).toBe(true)
-  expect(h.document.querySelector('nav button.on')?.textContent?.trim()).toBe('一起做');expect(h.workActive()).toBe(false)
+  expect(h.document.querySelector('nav button.on')?.textContent?.trim()).toBe('此刻');expect(h.workActive()).toBe(false)
   expect(h.api).toHaveBeenCalledWith('/m/api/seen',expect.objectContaining({method:'POST',body:'{"until":123}'}))
-  h.document.getElementById('memory-back')!.click();expect(h.document.getElementById('p-matters')!.classList.contains('on')).toBe(true)
+  h.document.getElementById('memory-back')!.click();expect(h.document.getElementById('p-today')!.classList.contains('on')).toBe(true)
  })
  it('searches only on submit, limits queries, paginates without duplicates and ignores an old provider/search reply',async()=>{
   const old=deferred(),api=vi.fn((path:string)=>path.includes('q=old')?old.promise:defaultApi(path)),h=load(api)

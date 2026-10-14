@@ -3,7 +3,7 @@ import type { AppliedOp } from './nightly-ops'
 
 export type NightlyRunResult =
   | { status: 'written'; applied: AppliedOp[]; notice: string | null }
-  | { status: 'skipped'; reason: 'disabled' | 'no_owner' | 'not_due' | 'failed_today' | 'owner_busy' | 'no_new_material' | 'owner_edited' | 'network_unprotected' }
+  | { status: 'skipped'; reason: 'disabled' | 'no_owner' | 'not_due' | 'failed_today' | 'owner_busy' | 'no_new_material' | 'owner_edited' | 'network_unprotected' | 'retry_later' }
   | { status: 'failed'; reason: string }
 
 export interface NoticeItem { label: '新记下' | '改了' | '删了'; text: string; before?: string; reason?: string }

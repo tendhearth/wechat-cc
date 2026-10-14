@@ -1,6 +1,6 @@
 import { Codex, type Thread, type ThreadEvent, type ThreadItem } from '@openai/codex-sdk'
 import { tmpdir } from 'node:os'
-import { mergeEnvIntoMcpServers, CORE_MCP_SERVER_NAMES, type AgentEvent, type AgentProject, type AgentProvider, type AgentSession, type PermissionMode, type ProviderCapabilities, type SpawnContext } from './agent-provider'
+import { mergeEnvIntoMcpServers, CORE_MCP_SERVER_NAMES, type AgentEvent, type AgentProject, type AgentProvider, type AgentSession, type PermissionMode, type SpawnContext } from './agent-provider'
 import { resolveCodexCheapModel } from './codex-cheap-model'
 import type { TierProfile } from './user-tier'
 import type { McpStdioSpec } from './mcp-stdio-spec'
@@ -10,29 +10,7 @@ import { providerErrorCodeOf, withProviderCode } from '../lib/provider-error-cod
 import { log } from '../lib/log'
 import { codexCallTarget, type ResolveCodexTargetOptions } from '../lib/codex-target'
 
-/**
- * RFC 05 Phase 2 — Codex SDK has no per-tool callback (every dispatch
- * runs to completion against the SDK-level sandbox), so strict-mode
- * gating maps to coarse sandbox levels. All three levels supported.
- */
-export const CODEX_CAPABILITIES: ProviderCapabilities = {
-  perToolCallback: false,
-  adminMcpTools: true,
-  sandboxLevels: new Set(['read-only', 'workspace-write', 'full']),
-  supportsDelegation: true,
-  supportsResume: true,
-  defaultPeer: 'claude',
-  authFailHint: '⚠ Codex 登录已过期，请在电脑上跑 `codex login` 后再发消息。',
-  // 回复交付第 4 步(2026-10-03,维护者按约定定,主人授权):最后一段非空文字(= 一轮最后一条 agent_message)
-  // 就是回复,之前的段是旁白(不进微信,超过 120 秒 daemon 发一句进度)。wechat MCP 是按 spawn 合进 SDK config
-  // 的(mcpServers + 会话 env),wechatStdioMcpSpec('codex') 按这个开关带 WECHAT_REPLY_DELIVERY=daemon ⇒ 没有
-  // reply 族,只有附件工具(+ admin 的 message);会话令牌里有 chat,附件不带 chat_id。
-  // 闸门见 docs/reference/reply-once-experiment.md「第 4 步」。
-  // 回滚:agent-config 的 reply_delivery: { codex: 'legacy' } + 重启 daemon(docs/maintainer/reply-delivery.md)。
-  replyDelivery: 'daemon',
-  // 编码型执行者:只取最后一段(spec §4.2 / 修订记录 2026-10-03)。
-  replyText: 'last_segment',
-}
+export { CODEX_CAPABILITIES } from './provider-capabilities'
 
 /**
  * Codex 的 item 里哪些算「调了一次工具」—— 也就是「最后的话」分段的边界(core/turn-reply.ts 以 tool_call 为界)。

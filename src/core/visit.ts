@@ -21,6 +21,8 @@ import type { Envelope } from './envelope'
 
 /** 每次串门总共几封信(两边各 3 句)。 */
 export const VISIT_MAX_ROUNDS = 6
+/** 一句串门话的上限(字符)。对端发来的超长话不认 —— 它会原样进我的 prompt 和主人的微信。 */
+export const VISIT_TEXT_MAX = 1000
 
 export interface VisitHeader { id: string; round: number; max: number }
 export interface VisitPayload extends VisitHeader { text: string }
@@ -37,6 +39,8 @@ export function parseVisitPayload(env: Envelope): VisitPayload | null {
   if (!p || typeof p.id !== 'string' || typeof p.text !== 'string') return null
   const round = Number(p.round), max = Number(p.max)
   if (!Number.isInteger(round) || !Number.isInteger(max) || round < 1 || max < 1 || round > max) return null
+  // 对端说了算的 max 不能超过协议上限(否则一趟能拖成无数轮强模型);话也有长度上限(2026-10-10 评审)。
+  if (max > VISIT_MAX_ROUNDS || p.text.length > VISIT_TEXT_MAX) return null
   return { id: p.id, round, max, text: p.text }
 }
 

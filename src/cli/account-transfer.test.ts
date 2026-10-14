@@ -108,6 +108,15 @@ describe('encryption guards', () => {
     // "Invalid initialization vector / authentication tag length".
     expect(() => decryptBundle(blob.subarray(0, 30), 'pw')).toThrow(/wrong passphrase or corrupt/)
   })
+  // 包是加密的,但知道口令的人就能造一个:botId 不能当路径直接拼(和 account-remove 同一条规矩)。
+  it.each(['../evil-im-bot', '../../escape-im-bot', 'not-a-bot-id'])('rejects a bundle whose botId is not a plain bot id (%s) — nothing written', (badId) => {
+    // 两边都往下套两层,失败时越界写也落在临时目录里(不污染系统 tmp)
+    const from = join(src, 'p', 'q'), to = join(dst, 'p', 'q')
+    seedAccount(from, badId)
+    const blob = exportAccount(from, badId, 'pw')
+    expect(() => importAccount(to, blob, 'pw')).toThrow(/invalid bundle/)
+    expect(existsSync(join(to, 'accounts', badId))).toBe(false)
+  })
   it('token never appears in plaintext in the bundle', () => {
     seedAccount(src, 'a-im-bot', { token: 'SUPER-SECRET-TOKEN' })
     const blob = exportAccount(src, 'a-im-bot', 'pw')
@@ -133,5 +142,14 @@ describe('requestTakeover', () => {
 
   it('throws on an invalid pid', () => {
     expect(() => requestTakeover({ readPid: () => 'garbage', kill: () => {} }, src)).toThrow(/无效/)
+  })
+})
+
+describe('accountPassphrase (CLI)', () => {
+  it('prefers the flag, falls back to WECHAT_CC_PASSPHRASE, refuses neither', async () => {
+    const { accountPassphrase } = await import('./commands/account')
+    expect(accountPassphrase('flag', { WECHAT_CC_PASSPHRASE: 'env' })).toBe('flag')
+    expect(accountPassphrase(undefined, { WECHAT_CC_PASSPHRASE: 'env' })).toBe('env')
+    expect(() => accountPassphrase(undefined, {})).toThrow(/WECHAT_CC_PASSPHRASE/)
   })
 })

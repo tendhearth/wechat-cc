@@ -823,6 +823,7 @@ export function createWorkbenchCodexProvider(options: Options): AgentProvider {
       return {
         ...(runtime ? { workbenchRuntime: runtime } : {}),
         callTarget: () => spawnTarget,
+        processGroups: () => (process.platform !== 'win32' && child.pid ? [child.pid] : []),
         // 沙盒验证过(src/core/workbench/suspend-resume.sandbox.test.ts):冻住期间被掐断的流,放开后 codex 自己
         // 「Reconnecting… 1/5」重试接上;放开后再收到的 willRetry 由 connect 看门狗照常管。
         suspension: {

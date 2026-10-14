@@ -34,14 +34,13 @@ for (const [label, size] of [['wide', { width: 1440, height: 900 }], ['narrow', 
     await page.locator('#now-cc').click()
     await settle(page)
     await page.screenshot({ path: join(OUT!, `d02-now-chat-${label}.png`) })
-    // 一起做 面板会把全局侧栏收成 inert(要点开关才出),所以它放在最后拍;编号仍按侧栏顺序。
+    // 一起做放在最后拍(窄窗口里它会收起主导航);编号仍按侧栏顺序。
     const panes = ['workbench', 'recollections', 'memory', 'todos', 'a2a-agents', 'sessions'] as const
     for (const pane of [...panes.slice(1), panes[0]]) {
       await clickNav(page, pane)
       await settle(page)
     await page.screenshot({ path: join(OUT!, `d${String(panes.indexOf(pane) + 3).padStart(2, '0')}-${pane}-${label}.png`) })
     }
-    await page.locator('#workbench-nav-toggle').click()
     await clickNav(page, 'overview')
     await page.locator('#settings-open').click()
     await expect(page.locator('#settings-drawer')).toHaveClass(/is-open/)

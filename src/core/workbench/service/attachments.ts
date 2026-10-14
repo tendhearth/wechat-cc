@@ -27,6 +27,8 @@ export interface AttachmentsDomain {
   discardAttachmentUpload(input:{id:string;draftId:string},context:EntryContext): ReturnType<Uploads['discard']>
   readAttachment(taskId:string,id:string): ReturnType<WorkbenchStore['attachments']['read']>
   discardAttachment(id:string,draftId:string): ReturnType<WorkbenchStore['attachments']['discard']> | ReturnType<Uploads['discard']>
+  /** 手机对话里的图:按主人校验、读出字节,然后把这几条暂存删掉(图会落到对话 inbox,不归任何任务)。 */
+  takeChatImages(input:{draftId:string;attachmentIds:string[]},context:EntryContext): Array<{mime:string;bytes:Uint8Array}>
 }
 
 export function makeAttachmentsDomain(ctx:ServiceCtx):AttachmentsDomain {
@@ -75,6 +77,15 @@ export function makeAttachmentsDomain(ctx:ServiceCtx):AttachmentsDomain {
     attachmentUploadStatus(input:{id:string;draftId:string},context:EntryContext){return uploads().status(input,context)},
     discardAttachmentUpload(input:{id:string;draftId:string},context:EntryContext){return uploads().discard(input,context)},
     readAttachment(taskId:string,id:string){store.get(taskId);return store.attachments.read(taskId,id,ctx.stateDir)},
+    takeChatImages(input:{draftId:string;attachmentIds:string[]},context:EntryContext){
+      ctx.ensureAccepting()
+      const scope=strictAttachmentScope()
+      if(context.ownerKey!==scope.ownerKey)throw Error('attachment_scope')
+      const images=store.attachments.readUnboundImages(input.attachmentIds,input.draftId,ctx.stateDir,scope)
+      // 读到了才删:删失败不影响这一轮(暂存按保留期自己过期),只是少一次即时清理。
+      for(const {attachment} of images){try{if(store.uploadRequestExists(attachment.id))uploads().discard({id:attachment.id,draftId:input.draftId},context);else store.attachments.discard(attachment.id,input.draftId,scope)}catch{/* 过期清理兜底 */}}
+      return images.map(({attachment,bytes})=>({mime:attachment.mime,bytes:new Uint8Array(bytes)}))
+    },
     discardAttachment(id:string,draftId:string){if(store.uploadRequestExists(id))return uploads().discard({id,draftId},{...strictAttachmentScope(),surface:'desktop'});return store.attachments.discard(id,draftId,attachmentScope())},
   }
 }

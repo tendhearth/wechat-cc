@@ -29,7 +29,7 @@ vi.mock('react-native', async () => {
   const TextInput = forwardRef<any, any>(({ value, onChangeText, testID, accessibilityLabel, maxLength }: any, ref) => createElement('textarea', { ref, value, maxLength, 'data-testid': testID, 'aria-label': accessibilityLabel, onInput: (event: any) => onChangeText(event.currentTarget.value) }))
   const Pressable = ({ children, onPress, disabled, testID, accessibilityLabel, accessibilityRole, accessibilityState }: any) => createElement('button', { onClick: onPress, disabled, 'data-testid': testID, 'aria-label': accessibilityLabel, role: accessibilityRole, 'aria-expanded': accessibilityState?.expanded, 'aria-disabled': accessibilityState?.disabled }, children)
   const Modal = ({ visible, children }: any) => visible ? createElement('div', null, children) : null
-  const FlatList = ({ data, renderItem, ListHeaderComponent, ListEmptyComponent }: any) => createElement('div', null, ListHeaderComponent, data.length ? data.map((item: any) => createElement('div', { key: item.id }, renderItem({ item }))) : ListEmptyComponent)
+  const FlatList = ({ data, renderItem, ListHeaderComponent, ListEmptyComponent, ListFooterComponent }: any) => createElement('div', null, ListHeaderComponent, data.length ? data.map((item: any) => createElement('div', { key: item.id }, renderItem({ item }))) : ListEmptyComponent, ListFooterComponent)
   return { View, Text, TextInput, Pressable, Modal, FlatList, ScrollView: View, ActivityIndicator: View, Linking: { openURL: vi.fn() }, Platform: { OS: 'ios', select: (options: any) => options.ios ?? options.default } }
 })
 vi.mock('react-native-safe-area-context', async () => {
@@ -290,11 +290,14 @@ describe('session reading with real LiveBackend and native UI', () => {
     expect(ui.container.textContent).not.toContain('不属于这页的记录')
     expect(ui.container.textContent).toContain('另一台电脑的记录')
   })
-  it('puts a plain sessions entry on Together without adding a tab or requiring a pinned chat', async () => {
+  it('puts a plain sessions entry at the end of Together, with no pinned chat and 交办 as its bottom action', async () => {
     const h = harness(), ui = await mount(Together)
     expect(ui.byId('together-sessions').textContent).toContain('电脑上的会话')
     await ui.click('together-sessions')
     expect(host.push).toHaveBeenCalledWith('/sessions')
+    expect(ui.byId('together-pinned-chat')).toBeNull()
+    await ui.click('together-delegate')
+    expect(host.push).toHaveBeenCalledWith('/compose')
     expect(h.posts()).toHaveLength(0)
   })
 })

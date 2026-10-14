@@ -1,3 +1,4 @@
+import { CONVERSE_IMAGE_LIMITS, type ConverseImage } from '../app-reply'
 import { turnRoutes } from './routes-turn'
 import { mattersRoutes } from './routes-matters'
 import { connectionsRoutes } from './routes-connections'
@@ -116,11 +117,12 @@ function curatedMemoryDenied(path: string, caller?: { origin: string }): boolean
   const n = posix.normalize(path.replace(/\\/g, '/')).replace(/^(\.\/)+/, '').replace(/\/+$/, '')
   // today-draft.md(今天的草稿,2026-10-01)同样只归 daemon:它由 profile.md 写入派生、每晚被整理消费,
   // 会话手写进去会被每次对话当成「主人今天说过的话」注入。
-  return /^[^/]+\/(?:memory|today-draft)\.md$/i.test(n)
+  // corrections.md(主人纠正过的条目,2026-10-10)同理:会话整份重写会把纠正抹掉,第二晚又被写回。
+  return /^[^/]+\/(?:memory|today-draft|corrections)\.md$/i.test(n)
 }
 const CURATED_READONLY = {
   status: 200 as const,
-  body: { ok: false, error: 'curated_memory_readonly', hint: 'memory.md 和 today-draft.md 由后台维护,白天别直接改:新情况记到 profile.md(新增的行会自动进今天的草稿)或 notes/,今晚会整理进去。' },
+  body: { ok: false, error: 'curated_memory_readonly', hint: 'memory.md、today-draft.md 和 corrections.md 由后台维护,白天别直接改:新情况记到 profile.md(新增的行会自动进今天的草稿)或 notes/,今晚会整理进去。' },
 }
 
 function toWireOutbound(h: import('../ilink/outbound-health').OutboundHealth) {
@@ -330,7 +332,10 @@ const onlineStickerCursor = new Map<string, number>()
         }
         // Per-chat audit log. Constructed per-call — prepared-statement
         // cache lives on db, not store, so this is cheap.
-        await makeEventsStore(deps.db, chat_id).append({
+        // 会话来的:审计记到它自己的 chat(路径已被 memoryScopeDenied 限在那里),
+        // 不信模型填的 chat_id —— 否则能往别人的事件流里写一条伪造的「删了记忆」。
+        const auditChat = caller?.origin === 'session' && caller.chatId ? caller.chatId : chat_id
+        await makeEventsStore(deps.db, auditChat).append({
           kind: 'memory_deleted',
           trigger: 'mcp_tool_call',
           reasoning: reason,
@@ -758,12 +763,25 @@ const onlineStickerCursor = new Map<string, number>()
     // back to the caller synchronously — the app channel's core primitive.
     'POST /v1/companion/converse': async (_q, body) => {
       if (!deps.companionConverse) return { status: 503, body: { error: 'companion_converse_not_wired' } }
-      const { text } = body as { text?: unknown }
-      if (typeof text !== 'string' || text.trim().length === 0) {
+      const { text, images } = body as { text?: unknown; images?: unknown }
+      // 图(2026-10-05)与文件(2026-10-06):[{ mime, data_b64, name? }],最多 4 份、每份 ≤10MB、只认常见图片与文档格式。有附件时文字可以空。
+      const decoded: ConverseImage[] = []
+      if (images !== undefined) {
+        if (!Array.isArray(images) || images.length > CONVERSE_IMAGE_LIMITS.count) return { status: 400, body: { error: 'too_many_images' } }
+        for (const raw of images) {
+          const { mime, data_b64, name } = (raw ?? {}) as { mime?: unknown; data_b64?: unknown; name?: unknown }
+          if (typeof mime !== 'string' || !(mime in CONVERSE_IMAGE_LIMITS.mimes) || typeof data_b64 !== 'string' || (name !== undefined && (typeof name !== 'string' || name.length > 255))) return { status: 400, body: { error: 'invalid_image' } }
+          if (data_b64.length > Math.ceil(CONVERSE_IMAGE_LIMITS.bytes / 3) * 4 + 4) return { status: 413, body: { error: 'image_too_large' } }
+          const bytes = Buffer.from(data_b64, 'base64')
+          if (bytes.length === 0 || bytes.length > CONVERSE_IMAGE_LIMITS.bytes) return { status: bytes.length ? 413 : 400, body: { error: bytes.length ? 'image_too_large' : 'invalid_image' } }
+          decoded.push({ mime, bytes, ...(typeof name === 'string' && name ? { name } : {}) })
+        }
+      }
+      if (typeof text !== 'string' || (text.trim().length === 0 && decoded.length === 0)) {
         return { status: 400, body: { error: 'text required' } }
       }
       try {
-        const r = await deps.companionConverse(text)
+        const r = await deps.companionConverse(text, 'desktop', decoded.length ? decoded : undefined)
         // 回复交付(spec 2026-10-03 §4.10,app 显示 2026-10-04):附件与旁白**总在**(没有就是空数组),桌面不用分新旧形状。
         // 附件是 app 的形状(src/daemon/app-reply.ts):语音 { text }、表情 { label, file?, image? }、文件 { name, path }。
         // path 只给桌面的 Rust 层(换成一次性引用再交给网页,见 lib.rs agent_converse);这条路由本来就只认 admin 令牌。

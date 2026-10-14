@@ -35,6 +35,14 @@ export function mattersRoutes(deps:InternalApiDeps):RouteTable {
       try{const d=await deps.matters.ownerChat('desktop');return d?{status:200,body:d}:{status:404,body:{error:'owner_chat_not_configured'}}}
       catch(error){const message=error instanceof Error?error.message:'internal';return known(message)?{status:400,body:{error:message}}:{status:500,body:{error:'internal'}}}
     },
+    // 在主人那条对话里搜(2026-10-06):q 1–200 字,limit ≤ 50,新的在前。
+    'GET /v1/matter/owner-chat/search': async query => {
+      const q=query.get('q')??'',limit=Number(query.get('limit')??'30')
+      if(query.getAll('q').length!==1||!q.trim()||q.length>200||!Number.isFinite(limit))return invalid()
+      if(!deps.matters)return {status:503,body:{error:'matters_not_wired'}}
+      try{const r=await deps.matters.searchOwnerChat(q,limit);return r?{status:200,body:r}:{status:404,body:{error:'owner_chat_not_configured'}}}
+      catch(error){const message=error instanceof Error?error.message:'internal';return message==='invalid_query'?invalid():{status:500,body:{error:'internal'}}}
+    },
     'GET /v1/matter': async query => {
       const id=query.get('id')
       if(query.getAll('id').length!==1||!id||!ID.test(id))return invalid()

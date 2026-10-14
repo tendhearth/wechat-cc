@@ -1042,6 +1042,11 @@ describe('distillAndPushOwnerKnowledge — hearth push (HI W3)', () => {
     expect(readFileSync(knowledgeMdPath(s.stateDir, 'chat-1'), 'utf8')).toContain('老王 200 元')
     expect(s.logs.some(l => l.includes('distilled knowledge.md for chat-1'))).toBe(true)
     expect(s.logs.some(l => l.toLowerCase().includes('hearth'))).toBe(false)
+    // 同样的内容再来一轮:不重写、不再记一行(10-13)
+    const before = s.logs.filter(l => l.includes('distilled knowledge.md')).length
+    await distillAndPushOwnerKnowledge(s.deps, 'chat-1')
+    expect(s.logs.filter(l => l.includes('distilled knowledge.md')).length).toBe(before)
+    expect(readFileSync(knowledgeMdPath(s.stateDir, 'chat-1'), 'utf8')).toContain('老王 200 元')
   })
 
   it('fake hearth (enabled) + low-risk plan ⇒ submit then applyForOwner(_, ownerChat, "wechat")', async () => {
@@ -1323,6 +1328,48 @@ describe('人类做客 —— 朋友来聊过、走了,伙伴跟主人提一句'
     expect(existsSync(statePath) ? JSON.parse(readFileSync(statePath, 'utf8')).narrated['guest@im.wechat'] : undefined).toBeUndefined()
     await ticks.pushTick({ nowIso: '2026-05-13T10:05:00.000Z' })
     expect(evalFn).toHaveBeenCalledTimes(2)
+    expect(sent).toEqual(['🛎 刚才小王来过,问了工具的事。'])
+  })
+
+  it('第二位客人发给主人时断网 → 第一位已讲完的水位照样落盘,下一拍不重讲', async () => {
+    const s = setupDeps({ defaultChatId: 'owner', inFlight: false, ...quiet('owner') })
+    cleanup.push(s.stateDir)
+    await seedGuest(s, 'g1@im.wechat', '2026-05-13T09:15:00.000Z')
+    await seedGuest(s, 'g2@im.wechat', '2026-05-13T09:15:00.000Z')
+    const { sent } = armEval(s)
+    let calls = 0
+    ;(s.deps.ilink as unknown as { sendMessage: unknown }).sendMessage = async (_c: string, t: string) => {
+      calls++
+      if (calls === 2) throw new Error('ilink down')
+      sent.push(t); return { msgId: String(calls) }
+    }
+    const ticks = buildTickBodies(s.deps)
+    await ticks.pushTick({ nowIso: '2026-05-13T10:00:00.000Z' })
+    expect(sent).toHaveLength(1)
+    await ticks.pushTick({ nowIso: '2026-05-13T10:20:00.000Z' })
+    // 第二拍只补发没送出去的那一位
+    expect(sent).toHaveLength(2)
+  })
+
+  it('微信连接降级(shouldSuspend)→ 这一拍不讲,也不调模型', async () => {
+    const s = setupDeps({ defaultChatId: 'owner', inFlight: false, ...quiet('owner') })
+    cleanup.push(s.stateDir)
+    await seedGuest(s, 'guest@im.wechat', '2026-05-13T09:15:00.000Z')
+    const { evalFn, sent } = armEval(s)
+    await buildTickBodies({ ...s.deps, health: { shouldSuspend: () => true } }).pushTick({ nowIso: '2026-05-13T10:00:00.000Z' })
+    expect(evalFn).not.toHaveBeenCalled()
+    expect(sent).toEqual([])
+  })
+
+  it('一时没有可用模型 → 不吞掉这次做客;有模型了照讲', async () => {
+    const s = setupDeps({ defaultChatId: 'owner', inFlight: false, ...quiet('owner') })
+    cleanup.push(s.stateDir)
+    await seedGuest(s, 'guest@im.wechat', '2026-05-13T09:15:00.000Z')
+    const ticks = buildTickBodies(s.deps)
+    await ticks.pushTick({ nowIso: '2026-05-13T10:00:00.000Z' })   // registry 默认无模型
+    const { evalFn, sent } = armEval(s)
+    await ticks.pushTick({ nowIso: '2026-05-13T10:20:00.000Z' })
+    expect(evalFn).toHaveBeenCalledOnce()
     expect(sent).toEqual(['🛎 刚才小王来过,问了工具的事。'])
   })
 
@@ -1692,7 +1739,7 @@ describe('伙伴推送 × 回复交付(spec 2026-10-03 §4.4 / 已定 ③)', () 
   beforeEach(() => { cleanup = [] })
   afterEach(() => { for (const d of cleanup) rmSync(d, { recursive: true, force: true }) })
 
-  function withDelivery(s: Setup, events: unknown[], report: { delivery: 'text' | 'silent' | 'empty' | 'attachments_only' } = { delivery: 'text' }) {
+  function withDelivery(s: Setup, events: unknown[], report: { delivery: 'text' | 'silent' | 'empty' | 'attachments_only'; failures?: string[] } = { delivery: 'text' }) {
     s.dispatch.mockImplementation(() => ({ async *[Symbol.asyncIterator]() { for (const e of events) yield e } }))
     const begun: unknown[] = []
     const delivered: unknown[] = []
@@ -1761,6 +1808,14 @@ describe('伙伴推送 × 回复交付(spec 2026-10-03 §4.4 / 已定 ③)', () 
     expect(s.careLedgerEntries['chat-1']).toBeUndefined()
     expect(readFileSync(join(s.stateDir, 'memory', 'chat-1', 'agenda.md'), 'utf8')).toContain('- [ ] due:2026-05-13')
     expect(s.logs.some(l => l.includes('REPLY_SILENT') || l.includes('silent'))).toBe(true)
+  })
+
+  it('daemon:第一条就发送失败(empty + failures)⇒ 登记保留,不在下一拍重跑模型重发(2026-10-10)', async () => {
+    const s = setupDeps({ defaultChatId: 'chat-1', inFlight: false, agendaMd: '- [ ] due:2026-05-13 check in on project' })
+    cleanup.push(s.stateDir)
+    withDelivery(s, [{ kind: 'text', text: '早呀,记得今天去健身' }, { kind: 'result', sessionId: 's', numTurns: 1, durationMs: 1 }], { delivery: 'empty', failures: ['ilink ret=-2'] })
+    await buildTickBodies(s.deps).pushTick({ nowIso: '2026-05-13T10:00:00.000Z' })
+    expect(s.careLedgerEntries['chat-1']).toBeDefined()
   })
 
   it('daemon:这一轮出错 ⇒ 不交付(abandon),登记保留(at-most-once 不变)', async () => {

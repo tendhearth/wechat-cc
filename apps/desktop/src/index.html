@@ -17,7 +17,6 @@
     <link rel="stylesheet" href="./styles/workbench.css" />
     <link rel="stylesheet" href="./styles/pdf-reader.css" />
     <link rel="stylesheet" href="./styles/task-entry.css" />
-    <link rel="stylesheet" href="./styles/workbench-attention.css" />
     <link rel="stylesheet" href="./styles/record-reader.css" />
     <link rel="stylesheet" href="./styles/todos.css" />
     <link rel="stylesheet" href="./styles/forage.css" />
@@ -25,7 +24,6 @@
   <body data-pane="overview">
 
     <div id="dev-banner" class="dev-banner" hidden></div>
-    <div id="workbench-attention" class="workbench-attention" role="region" aria-label="一起做待处理" hidden></div>
 
     <!-- Narrow transparent drag handles for the hidden-titlebar window.
          They sit just inside the native resize edge, so dragging the blank
@@ -46,6 +44,7 @@
           <div class="wz-brand">
             <span class="dash-wordmark wz-wordmark">tendhearth</span>
           </div>
+          <span class="step-of" id="wizard-step-of" aria-live="polite"></span>
           <button class="wz-back" data-action="open-dashboard" title="关闭启动页" aria-label="关闭启动页"><span data-hg-icon="cancel-01" data-hg-size="18"></span></button>
         </div>
 
@@ -126,6 +125,11 @@
                   <div class="desc">使用已连接的 Gemini 服务。</div>
                   <div class="path" id="gemini-meta">检测中</div>
                 </button>
+                <button class="agent" data-provider="agy">
+                  <div class="head"><div class="name">Gemini · 订阅</div><span class="pick"></span></div>
+                  <div class="desc">用 Antigravity CLI(agy)登录的 Gemini 订阅。</div>
+                  <div class="path" id="agy-meta">检测中</div>
+                </button>
               </div>
             </div>
             <div class="wz-foot" style="border:0; padding: 4px 0 0;">
@@ -176,7 +180,7 @@
                 <div class="toggle-row">
                   <div>
                     <div class="lab">开机自启</div>
-                    <div class="sub">登录系统时自动启动 daemon。</div>
+                    <div class="sub">开机登录后自动让 CC 在后台运行。</div>
                   </div>
                   <button class="toggle" id="screen-autostart-toggle" data-toggle aria-pressed="false"></button>
                 </div>
@@ -210,10 +214,10 @@
             <div id="post-stop-alert" class="post-stop-alert" hidden>
               <span class="ic">!</span>
               <div>
-                <div class="h">停止未生效——daemon 仍在运行 (pid <span id="post-stop-pid">—</span>)</div>
-                <div class="body">可能原因：daemon 不是通过本 GUI 安装的，或 systemd unit 名不匹配。CLI 会先校验 cmdline 再发 SIGTERM。</div>
+                <div class="h">CC 还在运行，没能停下(进程 <span id="post-stop-pid">—</span>)</div>
+                <div class="body">它多半是在这个窗口之外启动的(比如终端里)，这里的「停止」管不到它。确认它是 CC 之后，可以点下面的按钮强制结束。</div>
               </div>
-              <button id="post-stop-kill" class="force-kill">强制 kill 进程</button>
+              <button id="post-stop-kill" class="force-kill">强制结束这个进程</button>
             </div>
 
             <div id="onboard-phone" class="onboard-phone" hidden>
@@ -389,7 +393,7 @@
           <p class="dash-wordmark">tendhearth</p>
 
           <nav class="dash-nav" aria-label="主导航">
-            <button class="dash-nav-link active" data-pane="overview">此刻</button>
+            <button class="dash-nav-link active" data-pane="overview">此刻<span class="count" id="now-count"></span></button>
             <button class="dash-nav-link" data-pane="workbench">一起做</button>
             <button class="dash-nav-link" data-pane="recollections">回忆</button>
           </nav>

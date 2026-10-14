@@ -522,6 +522,22 @@ describe('adoptPeerCard / buildOwnCard —— 配对码和介绍共用的原语'
     expect(adoptPeerCard({ registry, channelStore: chan }, card, mine, 'k', 'n', 'intro')).toEqual({ ok: false, reason: 'id_conflict' })
     expect(chan.rows).toHaveLength(0)
   })
+  // 2026-10-10 评审:mailbox_addr 是公开的(每张名片都带),介绍人知道我已有朋友 C 的 addr,就能递一张
+  // self_id=C、addr=C、enc_pub/bearer 却是自己的名片,把 C 的注册表记录整个换掉、信道改道到自己。
+  it('intro:已有这个 id ⇒ 一律 id_conflict(哪怕信箱地址一样),原记录不动', () => {
+    const registry = makeFakeRegistry(); const chan = makeFakeChannelStore()
+    const real = { id: 'cc-peer00001', mailbox_addr: 'MP', mailbox_enc_pub: 'REAL', outbound_api_key: 'real-bearer' }
+    registry.records.set('cc-peer00001', real as never)
+    expect(adoptPeerCard({ registry, channelStore: chan }, card, mine, 'k', 'n', 'intro')).toEqual({ ok: false, reason: 'id_conflict' })
+    expect(registry.get('cc-peer00001')).toMatchObject({ mailbox_enc_pub: 'REAL', outbound_api_key: 'real-bearer' })
+    expect(chan.rows).toHaveLength(0)
+  })
+  it('pair:同 id 同信箱的真重配照旧整条覆盖', () => {
+    const registry = makeFakeRegistry(); const chan = makeFakeChannelStore()
+    registry.records.set('cc-peer00001', { id: 'cc-peer00001', mailbox_addr: 'MP', mailbox_enc_pub: 'OLD' } as never)
+    expect(adoptPeerCard({ registry, channelStore: chan }, card, mine, 'k'.repeat(16), 'n', 'pair')).toMatchObject({ ok: true })
+    expect(registry.get('cc-peer00001')).toMatchObject({ mailbox_enc_pub: 'EP' })
+  })
   it('信道开失败 → 注册表仍写成,返回 channelOpened:false 并 log', () => {
     const registry = makeFakeRegistry(); const chan = makeFakeChannelStore(); const logs: string[] = []
     chan.setStatus = () => { throw new Error('disk full') }

@@ -153,3 +153,12 @@ describe('ACP failure copy', () => {
     expect(executionFailureMessage('acp_prompt_too_large')).toContain('4 MB')
   })
 })
+
+describe('custom ACP auth failure keeps the agent\'s own reason (2026-10-07)', () => {
+  it('shows the reason verbatim; the bare code and Cursor keep their copy', async () => {
+    const { executionFailureMessage } = await import('./execution-settings')
+    expect(executionFailureMessage('acp_agent_auth_required: This client is no longer supported')).toBe('这个执行者没能登录：This client is no longer supported')
+    expect(executionFailureMessage('acp_agent_auth_required')).toContain('还没登录')
+    expect(executionFailureMessage('acp_auth_required')).toContain('cursor-agent login')
+  })
+})

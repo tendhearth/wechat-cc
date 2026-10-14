@@ -160,6 +160,12 @@ export interface AgentSession {
    * 没实现 ⇒ 守护退回原来的停法。见 docs/reference/network-guard.md「暂停在跑的任务」。
    */
   suspension?: AgentSessionSuspension
+  /**
+   * 这条会话拥有的进程组(POSIX 组号 = 组长 pid;2026-10-06)。工作台关不掉它(writer_not_closed)时落库,
+   * 之后 —— 包括 daemon 重启后 —— 凭「这些组还在不在」判断执行程序到底退没退,有退出证据才解除文件夹占用。
+   * 未实现 / 空 ⇒ 没有证据可查,占用只能等进程内确认或主人手动确认。
+   */
+  processGroups?(): readonly number[]
 }
 
 export interface AgentSessionSuspension {

@@ -1,25 +1,26 @@
 // @ts-check
 
 /**
- * Keep the global dashboard rail out of the workbench until it is requested.
- * The workbench task sidebar remains part of the page and is unaffected.
+ * 一起做和其他页一样挂在主导航下(2026-10-05):窗口够宽时主导航一直在,一起做的任务列表是第二栏;
+ * 只有窗口窄到放不下两栏(没到 wideQuery)时才把主导航收起,由左上角按钮叫出来。
  *
- * @param {{shell:HTMLElement,rail:HTMLElement,toggle:HTMLElement,scrim:HTMLElement,documentTarget?:Document}} elements
+ * @param {{shell:HTMLElement,rail:HTMLElement,toggle:HTMLElement,scrim:HTMLElement,documentTarget?:Document,wideQuery?:MediaQueryList|null}} elements
  */
-export function createWorkbenchNavigation({ shell, rail, toggle, scrim, documentTarget = document }) {
+export function createWorkbenchNavigation({ shell, rail, toggle, scrim, documentTarget = document, wideQuery = null }) {
   let workbenchActive = false
   let open = false
+  const focused = () => workbenchActive && !wideQuery?.matches
 
   const render = () => {
-    const visible = workbenchActive && open
-    shell.classList.toggle('is-workbench-focused', workbenchActive)
+    const visible = focused() && open
+    shell.classList.toggle('is-workbench-focused', focused())
     shell.classList.toggle('is-workbench-nav-open', visible)
     toggle.setAttribute('aria-expanded', String(visible))
     const label = visible ? '关闭主导航' : '打开主导航'
     toggle.setAttribute('aria-label', label)
     toggle.setAttribute('title', label)
-    scrim.hidden = !workbenchActive
-    rail.inert = workbenchActive && !visible
+    scrim.hidden = !focused()
+    rail.inert = focused() && !visible
     if (rail.inert) rail.setAttribute('aria-hidden', 'true')
     else rail.removeAttribute('aria-hidden')
   }
@@ -29,11 +30,11 @@ export function createWorkbenchNavigation({ shell, rail, toggle, scrim, document
     if (!open) return
     open = false
     render()
-    if (returnFocus && workbenchActive) toggle.focus({ preventScroll: true })
+    if (returnFocus && focused()) toggle.focus({ preventScroll: true })
   }
 
   const onToggle = () => {
-    if (!workbenchActive) return
+    if (!focused()) return
     if (open) {
       close(true)
       return
@@ -49,14 +50,17 @@ export function createWorkbenchNavigation({ shell, rail, toggle, scrim, document
   const onScrim = () => close(true)
   /** @param {KeyboardEvent} event */
   const onKeydown = event => {
-    if (event.defaultPrevented || event.key !== 'Escape' || !workbenchActive || !open) return
+    if (event.defaultPrevented || event.key !== 'Escape' || !focused() || !open) return
     event.preventDefault()
     close(true)
   }
 
+  const onWidth = () => { open = false; render() }
+
   toggle.addEventListener('click', onToggle)
   scrim.addEventListener('click', onScrim)
   documentTarget.addEventListener('keydown', onKeydown)
+  wideQuery?.addEventListener('change', onWidth)
   render()
 
   return {
@@ -73,12 +77,13 @@ export function createWorkbenchNavigation({ shell, rail, toggle, scrim, document
       workbenchActive = active
       open = false
       render()
-      if (entering) toggle.focus({ preventScroll: true })
+      if (entering && focused()) toggle.focus({ preventScroll: true })
     },
     destroy() {
       toggle.removeEventListener('click', onToggle)
       scrim.removeEventListener('click', onScrim)
       documentTarget.removeEventListener('keydown', onKeydown)
+      wideQuery?.removeEventListener('change', onWidth)
     },
   }
 }

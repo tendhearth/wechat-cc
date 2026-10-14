@@ -215,7 +215,7 @@ export interface InternalApiDeps {
    * chat isn't configured yet (route maps to 503); any other rejection maps
    * to 500.
    */
-  companionConverse?: (text: string) => Promise<import('../app-reply').ConverseResult>
+  companionConverse?: (text: string, origin?: 'desktop' | 'phone', images?: import('../app-reply').ConverseImage[]) => Promise<import('../app-reply').ConverseResult>
   /**
    * CC 桌宠的「在做什么」(spec 2026-09-05-cc-desktop-pet §5.1)。整段推导 +
    * 输入采集在 wiring/pipeline-deps.ts 的闭包里(主人 chatId、会话在飞、

@@ -12,7 +12,7 @@ wechat-cc self deploy --json     # 机器可读
 
 > 1.7.5 起 macOS 的包叫 `Tendhearth CC.app`,主二进制 `Tendhearth CC`,sidecar `tendhearth-cc-cli`;老安装 / 回滚后还是 `wechat-cc.app` / `wechat_cc_desktop` / `wechat-cc-cli`。下文的 `<sidecar>` 指包里实际那个名字,`self deploy` 自己会挑。改名迁移见 [app-rename-migration.md](app-rename-migration.md)。
 
-可用开关(spec §3):`--binary <path>`(源码模式缺省 `apps/desktop/src-tauri/binaries/tendhearth-cc-cli-<arch>-apple-darwin`,老 checkout 回落 `wechat-cc-cli-…`,`arm64→aarch64`、`x64→x86_64`;**打包版里必填**)、`--app <path>`(缺省从 LaunchAgent plist 的 `ProgramArguments[0]` 推;它指的文件已经不在 ⇒ `launchagent_stale`,先打开一次 app 或跑 `<sidecar> service repair`)、`--no-rollback`、`--no-sign`(见下「签名」)、`--allow-missing-plugins`(插件门红了也放行,记 detail + 日志;给本来就没插件的机器,不必永久 `plugin disable`)、`--health-timeout-ms N`(缺省 60000)、`--json`。
+可用开关(spec §3):`--binary <path>`(源码模式缺省 `apps/desktop/src-tauri/binaries/tendhearth-cc-cli-<arch>-apple-darwin`,老 checkout 回落 `wechat-cc-cli-…`,`arm64→aarch64`、`x64→x86_64`;**打包版里必填**)、`--app <path>`(缺省从 LaunchAgent plist 的 `ProgramArguments[0]` 推;它指的文件已经不在 ⇒ `launchagent_stale`,先打开一次 app 或跑 `<sidecar> service repair`)、`--no-rollback`、`--no-sign`(见下「签名」)、`--allow-unsigned`、`--allow-missing-plugins`(插件门红了也放行,记 detail + 日志;给本来就没插件的机器,不必永久 `plugin disable`)、`--health-timeout-ms N`(缺省 60000)、`--json`。
 
 它按顺序做六件事(钥匙串里有 Developer ID 时再多两步,见「签名」):
 
@@ -43,6 +43,10 @@ wechat-cc self deploy --json     # 机器可读
 **DevID 封过的 .app 里永远别再放 ad-hoc sidecar(2026-09-28 事故)**:#143 合入后用**已装的**打包版 CLI 部署,它还是没有「从 `--binary` 旁找 entitlements」那条修的老构建 ⇒ 没签,把 ad-hoc sidecar 换进了 Developer ID 封好的 .app。TCC 当它是新身份弹了框,sidecar 单线程卡在 `openat`、一行日志没有、`internal-api-info.json` 不出现,健康门与回滚的健康门都 60s 超时(exit 3);主人点「允许」才起来。两条:① `self deploy` 步骤里没出现 `sign` / `seal` 就别让它往下走;② 改的是 CLI 自己的部署逻辑时,第一次要从目标分支用**源码模式** `bun cli.ts self deploy` 跑,已装的 CLI 是旧逻辑。诊断口诀:进程在、没日志、info 不出现 ⇒ `sample <sidecar pid> 1`,主线程停在 `openat` 就是权限框,看屏幕。
 
 `entitlements.plist` 找两处:先 repoRoot,再 `--binary` 所在 `binaries/` 的上一级 —— 打包版的 CLI(`wechat-cc self deploy`,也就是标准回路)repoRoot 是 .app 的 MacOS/,只有第二处能中。两处都没有 ⇒ 不签,步骤里也不会出现 sign / seal。`--no-sign` 强制不签。
+
+**不签却往 Developer ID 封好的包里换 ⇒ 拒绝**(2026-10-10):不签时先 `codesign -dv` 看一眼 .app,带 TeamIdentifier ⇒ `signing` 步骤失败、什么都不动(09-28 事故:ad-hoc sidecar 塞进 DevID 包,TCC 框把 daemon 堵死)。从 `.prev` 回滚不拦;确实要换就加 `--allow-unsigned`。
+
+**部署锁**:整次部署持状态目录里的 `self-deploy.lock`(写 pid;进程没了就接过来)。另一次部署在跑 ⇒ `lock` 步骤失败退出 1 —— 两次同时跑会抢同一个 `.new`,后一次还会把前一次刚换上、没过健康门的二进制拷成 `.prev`。
 
 ## 回滚别把备份吃了(2026-09-18 复审)
 

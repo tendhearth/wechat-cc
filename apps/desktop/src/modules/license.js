@@ -10,6 +10,7 @@
  * Lemon Squeezy is wired.
  */
 import { invokeApi } from '../api.js'
+import { armConfirm, showToast } from '../view.js'
 
 // TODO: replace with the real Lemon Squeezy checkout link once the store exists.
 const UPGRADE_URL = 'https://tendhearth.lemonsqueezy.com'
@@ -46,7 +47,7 @@ export async function refreshLicense() {
 async function onActivate() {
   const input = /** @type {HTMLInputElement|null} */ (document.getElementById('license-key-input'))
   const key = input?.value?.trim()
-  if (!key) { alert('先填 license key'); return }
+  if (!key) { showToast('先填 license key'); return }
   const btn = /** @type {HTMLButtonElement|null} */ (document.getElementById('license-activate-btn'))
   if (btn) { btn.disabled = true; btn.textContent = '激活中…' }
   try {
@@ -54,24 +55,24 @@ async function onActivate() {
     if (r?.ok) {
       if (input) input.value = ''
       await refreshLicense()
-      alert(r.pro ? '已激活 Pro — 重启 daemon 生效' : `已处理，但当前不是 Pro：${r.reason ?? ''}`)
+      showToast(r.pro ? '已激活 Pro — 重启 daemon 生效' : `已处理，但当前不是 Pro：${r.reason ?? ''}`)
     } else {
-      alert(`激活失败：${r?.error ?? 'unknown'}`)
+      showToast(`激活失败：${r?.error ?? 'unknown'}`)
     }
   } catch (err) {
-    alert(`激活失败：${err instanceof Error ? err.message : String(err)}`)
+    showToast(`激活失败：${err instanceof Error ? err.message : String(err)}`)
   } finally {
     if (btn) { btn.disabled = false; btn.textContent = '激活' }
   }
 }
 
 async function onDeactivate() {
-  if (!confirm('移除 license，回到 Free？')) return
+  if (!armConfirm(document.getElementById('license-deactivate-btn'), '再点一次，确认移除')) return
   try {
     await invokeApi('POST', '/v1/license/deactivate')
     await refreshLicense()
   } catch (err) {
-    alert(`移除失败：${err instanceof Error ? err.message : String(err)}`)
+    showToast(`移除失败：${err instanceof Error ? err.message : String(err)}`)
   }
 }
 

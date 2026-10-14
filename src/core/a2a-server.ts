@@ -112,7 +112,7 @@ export interface AuthFailedEvent {
    *  派活(may_exec=false)。与前三种「你不是你说的那个人」不同 —— 这是
    *  「你是,但你没这个权限」,值得区分:前者可能是攻击,后者多半是配错了
    *  (该走 hand accept / hand invite 而走了社交配对)。 */
-  reason: 'missing_bearer' | 'wrong_bearer' | 'agent_id_mismatch' | 'exec_not_authorized'
+  reason: 'missing_bearer' | 'wrong_bearer' | 'agent_id_mismatch' | 'exec_not_authorized' | 'not_a_hand'
 }
 
 export interface A2AServerOpts {
@@ -344,6 +344,14 @@ export function createA2AServer(opts: A2AServerOpts): A2AServer {
       if (!agent) { emitAuthFailed({ agent_id_claimed: claimedId, reason: 'wrong_bearer' }); return json(401, { error: 'unauthorized' }) }
       if (agent.id !== claimedId) { emitAuthFailed({ agent_id_claimed: claimedId, reason: 'agent_id_mismatch' }); return json(403, { error: 'agent_id_mismatch' }) }
       if (agent.paused) return json(202, { ok: false, reason: 'paused' })
+      // 事件 / 权限请求只来自我自己加的手(hand-pairing 的 addHand:capabilities 含 exec、有 url)。社交配对的
+      // 朋友也有 bearer —— 原先他们能往主人微信里塞假的「终端会话完成」和 y/n 权限卡,machine 还能冒充本机
+      // (2026-10-10 评审)。reply 走下面 may_exec 那道门。
+      const isHand = agent.capabilities?.includes('exec') === true && !!agent.url
+      if (url.pathname !== '/a2a/cli/reply' && !isHand) {
+        emitAuthFailed({ agent_id_claimed: claimedId, reason: 'not_a_hand' })
+        return json(403, { error: 'not_a_hand' })
+      }
       try {
         if (url.pathname === '/a2a/cli/event') {
           if (!cli.onEvent) return json(501, { error: 'cli_bridge_not_wired' })

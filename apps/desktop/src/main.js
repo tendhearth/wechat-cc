@@ -35,7 +35,7 @@ import { rerenderLogs, loadLogsPane, startLogsAutoRefresh, stopLogsAutoRefresh }
 import { initDialoguePage, stopDialogueAutoRefresh } from "./modules/dialogue-page.js"
 import { initTodosPage, deactivateTodosPage } from "./modules/todos.js"
 import { startAppUpdateChecks } from "./modules/app-update.js"
-import { initConversePage, subscribeConverse, setConverseMode } from "./modules/converse.js"
+import { initConversePage, subscribeConverse, setConverseMode, addImages as addConverseImages } from "./modules/converse.js"
 import { mountNowPage } from "./modules/now-page.js"
 import { mountNowConnections } from "./modules/now-connections.js"
 import { latestCCLine, nowStatusLine } from "./modules/now-home.js"
@@ -58,7 +58,8 @@ import { createTaskEntry } from "./modules/task-entry.js"
 import { refreshPostcardAlbum } from "./modules/postcard-album.js"
 import { initWorkbenchPage, stopWorkbenchPolling, openWorkbenchTask, getActiveWorkbenchTaskId } from "./modules/workbench.js"
 import { createWorkbenchNavigation, isCurrentWorkbenchPane } from "./modules/workbench-navigation.js"
-import { mountWorkbenchAttention } from "./modules/workbench-attention.js"
+import { createWorkbenchAttentionPoller } from "./modules/workbench-attention.js"
+import { installExternalLinks } from "./modules/external-links.js"
 
 const state = {
   setup: /** @type {SetupQrJson | null} */ (null),
@@ -84,7 +85,7 @@ const dashRail = /** @type {HTMLElement|null} */ (document.getElementById('dash-
 const workbenchNavToggle = /** @type {HTMLElement|null} */ (document.getElementById('workbench-nav-toggle'))
 const workbenchNavScrim = /** @type {HTMLElement|null} */ (document.getElementById('workbench-nav-scrim'))
 const workbenchNavigation = dashWindow && dashRail && workbenchNavToggle && workbenchNavScrim
-  ? createWorkbenchNavigation({ shell: dashWindow, rail: dashRail, toggle: workbenchNavToggle, scrim: workbenchNavScrim })
+  ? createWorkbenchNavigation({ shell: dashWindow, rail: dashRail, toggle: workbenchNavToggle, scrim: workbenchNavScrim, wideQuery: window.matchMedia?.('(min-width: 1180px)') ?? null })
   : null
 
 // window.__TAURI__ is injected by the Tauri runtime and not part of the
@@ -164,7 +165,7 @@ presencePoller.subscribe(p => { lastPresence = p; renderRail() })
 // 右上角状态行打开的「CC 的连接」(GET /v1/connections,admin,走原生宿主的 operator 凭据)。
 // 只在浮层打开时读:打开时立刻读一次,开着时每 30 秒再读。
 const nowConnectionsHost = document.getElementById('now-connections')
-const nowConnections = nowConnectionsHost ? mountNowConnections({ host: nowConnectionsHost, call: (method, path) => invokeWorkbenchApi(method, path) }) : null
+const nowConnections = nowConnectionsHost ? mountNowConnections({ host: nowConnectionsHost, call: (method, path) => invokeWorkbenchApi(method, path), openUrl: url => { if (!mock) void Promise.resolve(invoke('open_url', { url })).catch(err => showToast(`打不开：${formatInvokeError(err)}`)) } }) : null
 {
   const details = /** @type {HTMLDetailsElement|null} */ (document.querySelector('.cc-home-details'))
   /** @type {ReturnType<typeof setInterval>|null} */ let timer = null
@@ -195,49 +196,45 @@ async function loadLifeCategory(category) {
 
 const conversationsPoller = createConversationsPoller({ invoke, intervalMs: 10000 })
 
-/** @type {ReturnType<typeof mountWorkbenchAttention>|null} */
+// 等你的事:全局只读一份(GET /v1/workbench/attention)。列表只在「此刻」(N 件事等你)与一起做的「等你处理」;
+// 别的页面只在主导航「此刻」旁边写个数 —— 不再有顶部横条(2026-10-05,同一件事只出现一次)。
+/** @type {ReturnType<typeof createWorkbenchAttentionPoller>|null} */
 let workbenchAttention = null
+const nowCount = document.getElementById('now-count')
 function startWorkbenchAttention() {
-  const host = document.getElementById('workbench-attention')
-  if (!host || workbenchAttention) return
-  workbenchAttention = mountWorkbenchAttention({
-    host, invokeWorkbenchApi, invoke,
-    onChange: snapshot => { careSheet.setAttention(snapshot); nowPage?.setAttention(snapshot) },
+  if (workbenchAttention) return
+  workbenchAttention = createWorkbenchAttentionPoller({
+    invokeWorkbenchApi, invoke,
+    onChange: snapshot => {
+      careSheet.setAttention(snapshot); nowPage?.setAttention(snapshot)
+      if (nowCount) nowCount.textContent = !snapshot.stale && snapshot.tasks.length ? String(snapshot.tasks.length) : ''
+    },
     getContext: () => ({
       taskId: state.mode === 'dashboard' ? getActiveWorkbenchTaskId() : null,
       focused: document.visibilityState === 'visible' && document.hasFocus(),
     }),
-    openTask: id => {
-      if (state.mode !== 'dashboard') setMode('dashboard')
-      switchPane('workbench')
-      return openWorkbenchTask(id)
-    },
   })
   void workbenchAttention.start()
 }
 window.addEventListener('pagehide', () => { workbenchAttention?.destroy(); workbenchAttention = null })
 window.addEventListener('pageshow', event => { if (event.persisted) startWorkbenchAttention() })
 
+installExternalLinks({ invoke: mock ? null : invoke, onError: err => showToast(`打不开链接:${formatInvokeError(err)}`) })
+
+// 文件拖放(2026-10-05):窗口不再由 Tauri 截走拖进来的文件(dragDropEnabled:false),网页自己接。
+// 落在「此刻」任何地方的图 ⇒ 进对话的待发图片;各页面自己接住的(工作台附件、对话框)它们先处理;
+// 剩下没人要的一律拦掉 —— 不然 webview 会直接「打开」那个文件,把整个 app 换成一张图。
+window.addEventListener('dragover', ev => { if (ev.dataTransfer?.types?.includes('Files')) ev.preventDefault() })
+window.addEventListener('drop', ev => {
+  if (ev.defaultPrevented) return
+  ev.preventDefault()
+  const pane = /** @type {HTMLElement|null} */ (document.querySelector('.dash-pane[data-pane]:not([hidden])'))
+  if (pane?.dataset.pane === 'overview' && ev.dataTransfer?.files?.length) void addConverseImages(ev.dataTransfer.files)
+})
+
 // Bag passed to module functions instead of imported singletons. Keeps each
 // module testable in isolation (any conformant deps object → run the module
 // in a JSDOM/happy-dom harness).
-// 「一件事」:工作台里选中对话时,把「跟 CC 说」的控件整个搬进会话面(DOM 搬家,状态与监听都不丢);
-// 离开时搬回「此刻」页原位。控件只有一份,所以两个页面永远不会各画一个。
-let converseHome = /** @type {{parent:HTMLElement,next:Node|null}|null} */ (null)
-function mountConverse(/** @type {HTMLElement} */ host) {
-  const root = converseRootEl()
-  if (!root) return
-  if (!converseHome && root.parentElement) converseHome = { parent: root.parentElement, next: root.nextSibling }
-  if (root.parentElement !== host) host.appendChild(root)
-  initConversePage(deps, { focus: true })
-}
-function unmountConverse() {
-  const root = converseRootEl()
-  if (!root || !converseHome || root.parentElement === converseHome.parent) return
-  converseHome.parent.insertBefore(root, converseHome.next && converseHome.next.parentNode === converseHome.parent ? converseHome.next : null)
-}
-let converseRootRef = /** @type {HTMLElement|null} */ (null)
-function converseRootEl() { return (converseRootRef ??= document.getElementById("converse-root")) }
 
 const openAcceptedEntry = async (/** @type {import('./modules/task-entry.js').EntryResult} */ result) => {
   switchPane('workbench')
@@ -249,8 +246,6 @@ const deps = {
   invoke,
   invokeApi,
   invokeWorkbenchApi,
-  mountConverse,
-  unmountConverse,
   onSend: () => { if (document.querySelector('.cc-now-pane #converse-root')) nowPage?.setMode('chat') },
   onDelegate: async (/** @type {import('./modules/task-entry.js').Draft} */ draft) => {
     const result = await taskEntry.open(draft)
@@ -566,6 +561,7 @@ async function ensureUsableProviderSelected(report) {
     : report?.checks?.codex?.ok ? "codex"
     : report?.checks?.cursor?.ok ? "cursor"
     : report?.checks?.gemini?.ok ? "gemini"
+    : report?.checks?.agy?.ok ? "agy"
     : null
   if (!fallback) return false
   return await commitProvider(fallback)
@@ -650,8 +646,13 @@ function switchPane(name) {
     loadMemoryPane(deps).catch(err => {
       console.error("memory load failed", err)
       const mr = document.getElementById("memory-rendered")
-      if (mr) mr.innerHTML =
-        `<p class="empty-state">加载失败：${formatInvokeError(err)}</p>`
+      // 错误信息可能带 CLI 的 stderr(文件名、联系人名):按纯文本放,不进 innerHTML
+      if (mr) {
+        const p = document.createElement("p")
+        p.className = "empty-state"
+        p.textContent = `加载失败：${formatInvokeError(err)}`
+        mr.replaceChildren(p)
+      }
     })
     loadMemoryTopZone(deps).catch(err => console.error("memory top zone failed", err))
   }
@@ -666,7 +667,6 @@ function switchPane(name) {
     initWorkbenchPage(deps)
   } else {
     stopWorkbenchPolling()
-    unmountConverse()
   }
   if (name === "sessions") {
     activateDialogueWorkspace()
@@ -896,7 +896,14 @@ function wireEvents() {
         try {
           await invoke("wechat_cli_json", { args: ["guard", on ? "enable" : "disable", "--json"] })
           refreshGuardStatus()
-        } catch { /* best-effort — toggle stays in the UI either way */ }
+        } catch (err) {
+          // 2026-10-13:以前吞掉错误、开关停在新位置 —— 界面说开了其实没开。跟设置抽屉一样回滚,并在下面那行说一句。
+          console.error("guard toggle failed:", err)
+          el.classList.toggle("on", !on)
+          el.setAttribute("aria-pressed", !on ? "true" : "false")
+          const line = document.getElementById("screen-guard-status-line")
+          if (line) { line.textContent = `没能${on ? "开启" : "关闭"}网络守护，开关已恢复原样。稍后再点一次。`; line.dataset.state = "down" }
+        }
       }
     })
   })
@@ -1248,7 +1255,7 @@ function wireEvents() {
       await invoke("open_companion_window", {})
     } catch (err) {
       console.error("open companion window failed:", err)
-      alert(`无法打开桌面陪伴：${formatInvokeError(err)}`)
+      showToast(`无法打开桌面陪伴：${formatInvokeError(err)}`)
     } finally {
       companionDesktopStart.disabled = false
     }

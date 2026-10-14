@@ -4,7 +4,7 @@
  * (adminMcpTools:true),不再需要往 ~/.cursor/mcp.json 塞一把静态钥匙。
  * 一次性评估仍走 print(cursor-eval.ts)。
  */
-import type { AgentProvider, ProviderCapabilities, SpawnContext } from './agent-provider'
+import type { AgentProvider, SpawnContext } from './agent-provider'
 import { assertNotAuthFailed, CORE_MCP_SERVER_NAMES } from './agent-provider'
 import type { McpStdioSpec } from './mcp-stdio-spec'
 import { createAcpProvider, type AcpMcpServer } from './acp-agent-provider'
@@ -13,32 +13,7 @@ import { cursorOneShotEval, defaultCursorSpawnFn, type CursorSpawnFn } from './c
 /** cursorModel 没设时的兜底('auto' = 让 Cursor 自己挑)。 */
 export const DEFAULT_CURSOR_MODEL = 'auto'
 
-export const ACP_CURSOR_CAPABILITIES: ProviderCapabilities = {
-  perToolCallback: false,
-  // session/new.mcpServers[].env 逐会话带 WECHAT_SESSION_TOKEN/_TIER(spike 2026-09-17 第 4 条实证到模型手里),
-  // 所以 owner/admin 聊天真的拿到 admin tier —— 与 claude/codex 同档。
-  adminMcpTools: true,
-  sandboxLevels: new Set(),
-  supportsDelegation: false,
-  supportsResume: true,
-  // Cursor 自己的工具面按 permissionMode 就地判(acp-agent-provider 的 permissions:'mode'),
-  // tierProfile 根本到不了它;更要命的是工作区内的文件编辑压根不发 session/request_permission
-  // (2026-09-17 真机 spike 第 2 条)—— 访客的权限约束不到它,所以 guest 一律拒。
-  guestSafe: false,
-  defaultPeer: 'claude',
-  authFailHint: 'cursor 登录态失效,请在电脑上跑一次 `cursor-agent login` 重新登录后再发消息。',
-  // 回复交付第 3 步(2026-10-03,维护者按约定定,主人授权):最后一段非空文字就是回复,之前的段是旁白(不进微信,
-  // 超过 120 秒 daemon 发一句进度)。wechat MCP 是逐会话注入的(acpMcpServersFor),wechatStdioMcpSpec('cursor')
-  // 按这个开关带 WECHAT_REPLY_DELIVERY=daemon ⇒ 没有 reply 族,只有附件工具(+ admin 的 message)。
-  // 闸门(不连模型:照真机报文演的假 cursor-agent acp + 生产的 ACP 客户端 / 协调器 / 交付运行时,
-  // docs/reference/reply-once-experiment.md「第 3 步」):daemon 全部适用场景过关、无回归;legacy 在
-  // 「CLI 不带 MCP 身份」下双发 5 次、strict 下 3/3 轮主人什么都没收到,daemon 都是 0。
-  // 回滚:agent-config 的 reply_delivery: { cursor: 'legacy' } + 重启 daemon(docs/maintainer/reply-delivery.md)。
-  // Cursor 的 SDK 兜底(cursor-agent-provider.ts,没装 CLI 时)也注册在 'cursor' 这个 id 下,同一个开关。
-  replyDelivery: 'daemon',
-  // 编码型执行者:只取最后一段(spec §4.2 / 修订记录 2026-10-03)。
-  replyText: 'last_segment',
-}
+export { ACP_CURSOR_CAPABILITIES } from './provider-capabilities'
 
 export interface AcpCursorChatOptions {
   bin: string

@@ -349,3 +349,35 @@ describe('按执行者类型分两种策略(2026-10-03 修订)', () => {
     expect(p.begun[0]).toMatchObject({ textStrategy: 'last_segment' })
   })
 })
+
+// /stop(2026-10-10 评审):主人主动中止的一轮,既不发「脑子卡了一下」的出错通知,也不把半截话当回复交付。
+// 两种 provider 行为都要覆盖:中止后报 error(openai / cursor / Claude),或中止后像正常结束一样收尾(agy / gemini)。
+describe('/stop 中止的一轮(daemon)', () => {
+  function stoppable(after: AgentEvent[]) {
+    let release!: () => void
+    const gate = new Promise<void>(r => { release = r })
+    const session: AgentSession = {
+      async *dispatch() { yield { kind: 'text', text: '我先看看这个文件,接下来' } as AgentEvent; await gate; for (const e of after) yield e },
+      async close() {},
+    } as unknown as AgentSession
+    return { session, release }
+  }
+  for (const [label, after] of [
+    ['中止后报错', [{ kind: 'error', message: 'cancelled', code: 'cancelled' } as AgentEvent]],
+    ['中止后像正常结束', [RESULT]],
+  ] as const) {
+    it(`${label} ⇒ 不发通知、不交付半截话、记为放弃`, async () => {
+      const p = fakePort()
+      const s = stoppable([...after])
+      const t = setup([], { mode: 'daemon', port: p.port, session: s.session })
+      const turn = t.c.dispatch(inbound())
+      await new Promise(r => setTimeout(r, 10))
+      expect(t.c.cancel('chat-1')).toBe(true)
+      s.release()
+      await turn
+      expect(t.sendNotice).not.toHaveBeenCalled()
+      expect(p.delivered).toEqual([])
+      expect(p.abandoned).toEqual(['cancelled'])
+    })
+  }
+})

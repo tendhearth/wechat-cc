@@ -496,3 +496,24 @@ it('便宜模型的回复其实是认证失效(401/登出):当成真的调用失
     db.close()
   }
 })
+
+it('custom ACP executors (2026-10-07): valid ones register with ACP capabilities; bad / missing / taken ids are skipped with a log line', async () => {
+  const { registerCustomAcpExecutors } = await import('./wire-workbench')
+  const { createProviderRegistry } = await import('../../core/provider-registry')
+  const target = createProviderRegistry()
+  target.register('cursor', { async spawn() { throw new Error('x') } }, { displayName: 'Cursor', canResume: () => true })
+  const create = vi.fn(() => ({ async spawn() { throw new Error('x') } }))
+  const log = vi.fn()
+  const registered = registerCustomAcpExecutors(target, [
+    { id: 'gemini-cli', name: 'Gemini CLI', command: 'gemini', args: ['--acp'] },
+    { id: 'claude', name: 'Nope', command: 'claude' },
+    { id: 'cursor-dup', name: 'Dup', command: '/abs/cursor' },
+    { id: 'ghost', name: 'Ghost', command: 'ghost-cli' },
+    { id: 'Bad', name: 'Bad', command: '/x' },
+  ], { findOnPath: cmd => (cmd === 'gemini' ? '/usr/local/bin/gemini' : null), create: create as never, log })
+  expect(registered).toEqual(['gemini-cli', 'cursor-dup'])
+  expect(create).toHaveBeenCalledWith(expect.objectContaining({ command: '/usr/local/bin/gemini', args: ['--acp'], displayName: 'Gemini CLI' }))
+  expect((create.mock.calls[0] as unknown as [object])[0]).not.toHaveProperty('targetProvider')
+  expect(target.get('gemini-cli')?.opts.workbench).toMatchObject({ permissions: 'task' })
+  expect(log.mock.calls.map(c => c[1]).join('\n')).toMatch(/claude skipped[\s\S]*ghost: command ghost-cli not found[\s\S]*Bad skipped/)
+})

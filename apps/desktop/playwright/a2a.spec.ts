@@ -254,9 +254,14 @@ test('Remove with confirmation drops the agent from the list', async ({ page, sh
   const card = page.locator('.a2a-agent-card[data-id="remove-me-bot"]')
   await expect(card).toBeVisible()
 
-  // The Remove button triggers window.confirm — auto-accept it
-  page.on('dialog', dialog => dialog.accept())
-  await card.locator('button[data-action="remove"]').click()
+  // 不再用原生 confirm()(真 app 的 webview 里它恒为 false,这个按钮以前根本删不掉,2026-10-05):
+  // 第一下只是让按钮变成「再点一次，确认断开」,第二下才删。原生对话框一出现就算失败。
+  page.on('dialog', dialog => { throw new Error(`unexpected native dialog: ${dialog.message()}`) })
+  const remove = card.locator('button[data-action="remove"]')
+  await remove.click()
+  await expect(remove).toHaveText('再点一次，确认断开')
+  await expect(card).toBeVisible()
+  await remove.click()
 
   // After confirmation + server DELETE + refresh, the card must be gone
   await page.waitForFunction(

@@ -1,4 +1,5 @@
 {
   "CFBundleDisplayName": "Tendhearth",
-  "NSCameraUsageDescription": "Tendhearth uses the camera only to scan the pairing code shown on your computer."
+  "NSCameraUsageDescription": "Tendhearth uses the camera only to scan the pairing code shown on your computer.",
+  "NSPhotoLibraryUsageDescription": "Tendhearth uses your photos only when you pick a picture to send to CC."
 }

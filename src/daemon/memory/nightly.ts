@@ -8,8 +8,10 @@ import { createHash } from 'node:crypto'
 import { join } from 'node:path'
 import { readJsonFile } from '../../lib/read-json-file'
 import { isNetworkUnprotectedError } from '../../lib/network-gate'
+import { isConnectFailure } from '../../lib/net-errors'
+import { providerErrorCodeOf } from '../../lib/provider-error-code'
 import { MEMORY_FILENAME, assignMissingIds, parseMemoryDoc, serializeMemoryDoc } from './curated-doc'
-import { applyNightly, parseOps } from './nightly-ops'
+import { applyNightly, parseOps, type NightlyOps } from './nightly-ops'
 import { composeNotice, noticeItems, type NightlyRunResult } from './nightly-notify'
 import { isDue, localParts } from './nightly-schedule'
 import { TODAY_DRAFT_FILENAME, consumeDraft } from './today-draft'
@@ -28,6 +30,8 @@ export interface NightlyState {
   failures: number
   lastFailDay: string | null
   firstRunDone: boolean
+  /** 当天因连不上而推迟的次数与下次最早时间 —— 见 NET_RETRY_MAX。 */
+  netRetry: { day: string; count: number; afterMs: number } | null
   pendingNotice: { text: string; createdAtMs: number } | null
 }
 export interface NightlyRunDeps {
@@ -46,7 +50,12 @@ export const MEMORY_LOG_FILE = 'memory-log.jsonl'
 const STATE_FILE = 'memory-nightly.json'
 const BLOCK_CAP = 6000
 const EVAL_TIMEOUT_MS = 5 * 60_000
-const DEFAULT_STATE: NightlyState = { lastRunDay: null, lastRunIso: null, fingerprint: null, failures: 0, lastFailDay: null, firstRunDone: false, pendingNotice: null }
+// 连不上(网络瞬断、bx 正在重连)不是这一晚的结论:整晚放弃的话 memory.md 就白白旧一天
+// (2026-09-26 → 10-12 有 5 晚都是这么丢的)。同一天最多再试 3 次、每次隔 1 小时 ——
+// 有上限、有间隔,断网时不会变成重试风暴。
+const NET_RETRY_MAX = 3
+const NET_RETRY_GAP_MS = 60 * 60_000
+const DEFAULT_STATE: NightlyState = { lastRunDay: null, lastRunIso: null, fingerprint: null, failures: 0, lastFailDay: null, firstRunDone: false, netRetry: null, pendingNotice: null }
 
 export function readNightlyState(stateDir: string): NightlyState {
   try { return { ...DEFAULT_STATE, ...(readJsonFile<Partial<NightlyState>>(join(stateDir, 'companion', STATE_FILE))) } }
@@ -62,7 +71,7 @@ export function writeNightlyState(stateDir: string, s: NightlyState): void {
 }
 
 /** Only the fields a run owns. pendingNotice is deliberately absent — see mergeRunState. */
-type RunOwnedFields = Partial<Pick<NightlyState, 'lastRunDay' | 'lastRunIso' | 'fingerprint' | 'failures' | 'lastFailDay' | 'firstRunDone'>>
+type RunOwnedFields = Partial<Pick<NightlyState, 'lastRunDay' | 'lastRunIso' | 'fingerprint' | 'failures' | 'lastFailDay' | 'firstRunDone' | 'netRetry'>>
 
 /**
  * Re-read the state right before writing and merge only this run's fields.
@@ -82,6 +91,31 @@ export function ownerMemoryRoot(stateDir: string, owner: string): string | null 
 }
 
 const readIf = (p: string): string => (existsSync(p) ? readFileSync(p, 'utf8') : '')
+
+/**
+ * 主人纠正过的条目(2026-10-10):「记错了 / 过时了 / 不用记」各记一行,只归 daemon 写(会话写会被拒)。
+ * 原先追加在 profile.md 末尾:profile 一长就被素材截断砍掉、CC 整个重写 profile 也会把它抹掉 ⇒ 第二晚又被写回。
+ * 现在单独一个文件,整理时放在素材最前面、不占预算;写回的逐字相同条目在代码里直接丢掉,不全靠模型听话。
+ */
+export const CORRECTIONS_FILENAME = 'corrections.md'
+export const CORRECTIONS_BLOCK = '主人纠正过的条目 corrections.md(这些内容一律不要再 add 或 update 回记忆)'
+const CORRECTIONS_CAP = 3000
+const normalizeEntry = (text: string): string => text.replace(/\s+/g, ' ').trim()
+/** 纠正记录:给模型看的尾部(最新的在后,封顶)+ 全部纠正过的正文(代码里拦逐字写回)。 */
+export function readCorrections(root: string): { block: string; texts: Set<string> } {
+  const raw = readIf(join(root, CORRECTIONS_FILENAME))
+  const texts = new Set<string>()
+  for (const line of raw.split('\n')) {
+    const m = /\] (.+)$/.exec(line)
+    if (m) texts.add(normalizeEntry(m[1]!))
+  }
+  return { block: raw.trim().slice(-CORRECTIONS_CAP), texts }
+}
+/** 去掉模型写回的、主人纠正过的条目(逐字比较,空白归一)。 */
+export function dropCorrected(ops: NightlyOps, texts: ReadonlySet<string>): NightlyOps {
+  if (!texts.size) return ops
+  return { ...ops, add: ops.add.filter(a => !texts.has(normalizeEntry(a.text))), update: ops.update.filter(u => !texts.has(normalizeEntry(u.text))) }
+}
 
 export const DRAFT_BLOCK = '今天的草稿 today-draft.md(白天 CC 刚记下的新情况,优先整理进来)'
 
@@ -155,6 +189,7 @@ export function buildNightlyPrompt(a: { today: string; current: string; material
     '五栏:关于你(稳定事实)/ 偏好(做事方式、喜恶)/ 承诺(谁答应了谁什么;有期限就在正文写「(期限 YYYY-MM-DD)」)/ 身边的人(重要的人与关系)/ 近况(有时效的状态)。',
     '规则:',
     '- 只根据下面的素材改,不要编造;素材里主人说某条不对,就改掉或删掉它。',
+    '- 「主人纠正过的条目」里的内容,哪怕别的素材里还提到,也不要再写回记忆(不 add、不 update 成它)。',
     '- 仍然成立的条目放进 confirm;合并措辞、补充细节用 update 且 reversal=false;意思被推翻才 reversal=true。',
     '- 删除必须写原因;只有确定不再成立才删。',
     '- 每条只写一件事:一个人一条,一个偏好一条。',
@@ -164,7 +199,7 @@ export function buildNightlyPrompt(a: { today: string; current: string; material
     '只输出一个 JSON 对象,不要任何别的文字。四个键都必须出现,没有就给空数组:',
     '{"add":[{"section":"承诺","text":"…"}],"update":[{"id":"7f3a","text":"…","reversal":false}],"confirm":["91c2"],"remove":[{"id":"4d7c","reason":"…"}]}',
     '',
-    '## 当前记忆(每条尾注里的 m:xxxx 是编号)',
+    '## 当前记忆(每条尾注里的 m:xxxx 是编号;JSON 里的 id 只写 m: 后面那部分)',
     a.current,
     '',
     '## 新素材',
@@ -191,6 +226,7 @@ export async function runMemoryNightly(deps: NightlyRunDeps, opts: { force: bool
   if (!opts.force) {
     if (!isDue({ nowMs, tz: cfg.timezone, at: cfg.at, lastRunDay: state.lastRunDay })) return { status: 'skipped', reason: 'not_due' }
     if (state.lastFailDay === day) return { status: 'skipped', reason: 'failed_today' }
+    if (state.netRetry?.day === day && nowMs < state.netRetry.afterMs) return { status: 'skipped', reason: 'retry_later' }
     if (await deps.ownerRecentlyActive()) return { status: 'skipped', reason: 'owner_busy' }
   }
 
@@ -204,7 +240,12 @@ export async function runMemoryNightly(deps: NightlyRunDeps, opts: { force: bool
   // 来自 profile.md 的新增,profile 变了指纹自然会变 —— 所以指纹不算草稿,否则清掉草稿第二晚就会
   // 白白多调一次模型。
   const draft = readIf(join(root, TODAY_DRAFT_FILENAME))
-  const material = draft.trim() ? `### ${DRAFT_BLOCK}\n${draft.trim()}${rest ? `\n\n${rest}` : ''}` : rest
+  const corrections = readCorrections(root)
+  const material = [
+    corrections.block ? `### ${CORRECTIONS_BLOCK}\n${corrections.block}` : '',
+    draft.trim() ? `### ${DRAFT_BLOCK}\n${draft.trim()}` : '',
+    rest,
+  ].filter(Boolean).join('\n\n')
   const fingerprint = createHash('sha256').update(rest).digest('hex')
   if (!firstRun && fingerprint === state.fingerprint) {
     mergeRunState(deps.stateDir, { lastRunDay: day })
@@ -232,10 +273,18 @@ export async function runMemoryNightly(deps: NightlyRunDeps, opts: { force: bool
       deps.log('MEMORY_NIGHTLY', 'skipped — the eval needs a protected provider and the network is unprotected')
       return { status: 'skipped', reason: 'network_unprotected' }
     }
-    return fail(`eval_error:${e instanceof Error ? e.message : String(e)}`)
+    const msg = e instanceof Error ? e.message : String(e)
+    const tries = state.netRetry?.day === day ? state.netRetry.count : 0
+    if (!opts.force && tries < NET_RETRY_MAX && (providerErrorCodeOf(e) === 'network' || isConnectFailure(msg))) {
+      mergeRunState(deps.stateDir, { netRetry: { day, count: tries + 1, afterMs: nowMs + NET_RETRY_GAP_MS } })
+      deps.log('MEMORY_NIGHTLY', `eval could not reach the model (${msg}) — retry ${tries + 1}/${NET_RETRY_MAX} in 1h`)
+      return { status: 'skipped', reason: 'retry_later' }
+    }
+    return fail(`eval_error:${msg}`)
   }
-  const ops = parseOps(raw)
-  if (!ops) return fail('bad_json')
+  const parsed = parseOps(raw)
+  if (!parsed) return fail('bad_json')
+  const ops = dropCorrected(parsed, corrections.texts)
   const res = applyNightly(doc, ops, { today: day, newId: deps.newId })
   if (!res.ok) return fail(res.reason)
 
@@ -285,6 +334,7 @@ export async function runMemoryNightly(deps: NightlyRunDeps, opts: { force: bool
     fingerprint,
     failures: 0,
     lastFailDay: null,
+    netRetry: null,
     firstRunDone: true,
   }, !opts.force && notice ? { text: notice, createdAtMs: nowMs } : null)
   deps.log('MEMORY_NIGHTLY', `written: ${res.applied.length} change(s)`)

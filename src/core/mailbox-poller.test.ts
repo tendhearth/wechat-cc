@@ -67,4 +67,26 @@ describe('makeMailboxPoller', () => {
     await make(async () => ({ items: [], next_cursor: 0 })).onTick()
     expect(lines).toEqual([])
   })
+  // 中继连不上时(2026-10-10 真机日志:一天 500 多行、每 2 分钟一次):按中继各自指数退避,恢复时说一声。
+  it('backs off exponentially per relay while it is unreachable, and says so once it recovers', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'mbxp4-'))
+    const me = loadMailboxIdentity(dir)
+    let t = 0, up = false, calls = 0
+    const lines: string[] = []
+    const poller = makeMailboxPoller({
+      identity: me, relays: ['https://r/'], cursors: makeCursorStore(dir), dispatch: { dispatch: async () => {} },
+      client: { drop: async () => true, ack: async () => true, fetch: async () => { calls++; return up ? { items: [], next_cursor: 0 } : null } },
+      log: (_tag, line) => { lines.push(line) }, now: () => t,
+    })
+    const tickEvery2Min = async (n: number) => { for (let i = 0; i < n; i++) { await poller.onTick(); t += 120_000 } }
+    await tickEvery2Min(60)  // 两小时都连不上
+    expect(calls).toBeLessThan(12)
+    expect(lines.length).toBeLessThan(12)
+    up = true
+    await tickEvery2Min(16)  // 最长等 30 分钟就会再试到
+    expect(lines.at(-1)).toContain('恢复')
+    const before = calls
+    await tickEvery2Min(3)
+    expect(calls - before).toBe(3)  // 恢复后回到每拍都取
+  })
 })

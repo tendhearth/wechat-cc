@@ -11,10 +11,13 @@ export type DraftStamp = { owner: string; revision: number }
 export const getDraftStamp = (key: string): DraftStamp => ({ owner: draftOwner ??= uuid(), revision: revisions.get(key) ?? revision })
 export const sameDraftStamp = (a: DraftStamp | undefined, b: DraftStamp) => !!a && a.owner === b.owner && a.revision === b.revision
 const requestIds = new Map<string, { text: string; id: string }>()
+// 带图时那份草稿的材料草稿 id(2026-10-06):选图起就定下,发成功(deleteDraft)才换 —— 重发 / 续传都落在同一个草稿下。
+const materialDrafts = new Map<string, string>()
+export const materialDraftId = (key: string): string => { let id = materialDrafts.get(key); if (!id) { id = uuid(); materialDrafts.set(key, id) } return id }
 export const getDraft = (key: string) => drafts.get(key) ?? ''
 export const setDraft = (key: string, v: string) => { drafts.set(key, v); revisions.set(key, ++revision) }
-export const deleteDraft = (key: string) => { drafts.delete(key); requestIds.delete(key); revisions.set(key, ++revision) }
-export const clearDrafts = () => { gen++; revision++; drafts.clear(); revisions.clear(); requestIds.clear(); replied.clear(); clearReceipts() }
+export const deleteDraft = (key: string) => { drafts.delete(key); requestIds.delete(key); materialDrafts.delete(key); revisions.set(key, ++revision) }
+export const clearDrafts = () => { gen++; revision++; drafts.clear(); revisions.clear(); requestIds.clear(); materialDrafts.clear(); replied.clear(); clearReceipts() }
 
 /**
  * 这些都只对「当前这台电脑」有意义(复评):换配对(配上 / 解除 / 换电脑 / 演示↔真连)⇒ 全清,配对代 +1。
@@ -33,7 +36,7 @@ export function setPairingScope(key: string): void {
   if (first) return
   gen++
   revision++; revisions.clear()
-  drafts.clear(); requestIds.clear(); replied.clear()
+  drafts.clear(); requestIds.clear(); materialDrafts.clear(); replied.clear()
   if (receipts.length) { receipts = []; queueMicrotask(notifyReceipts) }
 }
 
@@ -61,7 +64,9 @@ export function requestIdFor(key: string, text: string, mk: () => string = () =>
  * 主人说完一句就退回「此刻」很常见,屏幕一卸载回执就丢,daemon 这时重启,那句就悄无声息地没了。
  * at 是 daemon 的钟(job.since),localAt 是本机收到回执的时刻。只在落地 / 已知回复 / 「不管它」时清;有上限。
  */
-export type Receipt = { requestId: string; text: string; at: number; localAt: number }
+/** materials:这句带的图(重试要原样带上同一组 id,电脑才认得是同一句)。带图时 text 是电脑会记下的样子(「…\n[图片 ×N]」,
+ *  用来显示和认「已落地」),sent 是真正说出去的原文(重试用它)。 */
+export type Receipt = { requestId: string; text: string; at: number; localAt: number; materials?: { draftId: string; attachmentIds: string[] }; sent?: string }
 export const RECEIPTS_MAX = 20
 let receipts: readonly Receipt[] = []
 const receiptListeners = new Set<() => void>()

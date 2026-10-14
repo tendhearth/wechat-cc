@@ -27,8 +27,8 @@
  */
 import { markPlannedRestart } from '../lib/restart-markers'
 import { spawnSync as nodeSpawnSync } from 'node:child_process'
-import { chmodSync, copyFileSync, existsSync, readFileSync, renameSync, statSync, unlinkSync } from 'node:fs'
-import { dirname, resolve } from 'node:path'
+import { chmodSync, closeSync, copyFileSync, existsSync, openSync, readFileSync, renameSync, statSync, unlinkSync, writeSync } from 'node:fs'
+import { basename, dirname, resolve } from 'node:path'
 import { readApiInfo } from '../lib/api-info'
 import { dirHasPlugins, readPluginsSourcePointer, writePluginsSourcePointer } from '../lib/plugins-source'
 import { SIDECAR_NAMES } from '../lib/app-identity'
@@ -94,6 +94,11 @@ export interface SelfDeployPlan {
   /** null ⇒ 不重签(照旧 ad-hoc)。见文件头「签名」。 */
   signing: SelfDeploySigning | null
   /**
+   * 跟 sidecar 一起装到 MacOS/ 的原生库(2026-10-06:onnxruntime,见 apps/desktop/scripts/sidecar-native.ts)。
+   * from 不存在 ⇒ 跳过(老 checkout / 别的平台)。可选:老计划没有这一项。
+   */
+  companions?: Array<{ from: string; to: string }>
+  /**
    * 内置插件来源登记(2026-09-30)。安装包按设计不带插件(1747de09),打包版 daemon
    * 只能靠状态目录里的来源指针找到主人的插件;部署时顺手把源码 checkout 里真有插件
    * 的目录登记上去。undefined/null ⇒ 不做这一步(老调用方 / 测试手搓的 plan)。
@@ -104,6 +109,12 @@ export interface SelfDeployPlan {
    * 没有插件的机器用 —— 不必为了部署去永久 `plugin disable`。
    */
   allowMissingPlugins?: boolean
+  /** .app 包根(`<MacOS>` 往上两级):不签时核对它是不是 Developer ID 封的。老计划没有这一项。 */
+  appPath?: string
+  /** `--allow-unsigned`:包是 Developer ID 封的、这次却不签,也照样换(见 checkSigningRequired)。 */
+  allowUnsigned?: boolean
+  /** 部署锁(状态目录里一份);两次部署同时跑会互相覆盖 `.new` / `.prev`。老计划没有 ⇒ 不加锁。 */
+  lockPath?: string
 }
 
 export interface SelfDeploySigning {
@@ -150,6 +161,8 @@ export interface PlanSelfDeployInput {
   pluginSourceCandidates?: string[]
   /** `--allow-missing-plugins`. */
   allowMissingPlugins?: boolean
+  /** `--allow-unsigned`. */
+  allowUnsigned?: boolean
   /**
    * 1.7.5 改名迁移:sidecar 在包里可能叫 `tendhearth-cc-cli`(新)或 `wechat-cc-cli`(老包 /
    * 回滚后),构建产物同理;LaunchAgent 指向的主二进制也可能已经不在了(原地更新换了名字、
@@ -230,8 +243,18 @@ export function planSelfDeploy(input: PlanSelfDeployInput): SelfDeployPlan {
       : null,
     pluginsSource: { stateDir: input.stateDir, candidates: input.pluginSourceCandidates ?? [] },
     allowMissingPlugins: input.allowMissingPlugins ?? false,
+    appPath: posixDirname(posixDirname(macosDir)),
+    allowUnsigned: input.allowUnsigned ?? false,
+    lockPath: posixJoin(input.stateDir, 'self-deploy.lock'),
+    companions: SIDECAR_COMPANIONS.map(name => ({
+      from: posixJoin(posixDirname(posixDirname(newBinaryPath)), 'frameworks', `${name}-${archSuffix}-apple-darwin`),
+      to: posixJoin(macosDir!, name),
+    })),
   }
 }
+
+/** build-sidecar 产出、要和 sidecar 并排放的原生库(名字与 sidecar-native.ts 的 ORT_FRAMEWORK_FILES 一致)。 */
+const SIDECAR_COMPANIONS = ['libonnxruntime_binding.dylib', 'libonnxruntime.1.24.3.dylib'] as const
 
 export interface DeveloperIdIdentity {
   name: string
@@ -340,6 +363,8 @@ export interface SelfDeployDeps {
   log: (line: string) => void
   /** kickstart 之前写 planned-restart 纸条(lib/restart-markers)。缺省 ⇒ 不写(测试)。 */
   markPlannedRestart?: (stateDir: string, reason: string) => void
+  /** 拿部署锁;拿不到(另一次部署在跑)⇒ 返回占着它的 pid。缺省 ⇒ 不加锁(测试)。 */
+  lock?: (path: string) => { release(): void } | { heldBy: number }
 }
 
 export interface SelfDeployStep {
@@ -360,6 +385,16 @@ export interface SelfDeployResult {
 const HEALTH_POLL_INTERVAL_MS = 500
 
 export async function executeSelfDeploy(plan: SelfDeployPlan, deps: SelfDeployDeps): Promise<SelfDeployResult> {
+  // 两次部署同时跑(手动 + 自改流水线)会抢同一个 `.new`,后一次的备份还会把前一次刚换上、还没过健康门的
+  // 二进制拷成 `.prev` ⇒ 之后每次回滚都回到那个没验过的版本(2026-10-10 评审)。整次部署持锁。
+  const held = plan.lockPath && deps.lock ? deps.lock(plan.lockPath) : null
+  if (held && 'heldBy' in held) {
+    return { ok: false, exitCode: 1, steps: [{ name: 'lock', ok: false, detail: `another self deploy is running (pid ${held.heldBy})` }] }
+  }
+  try { return await executeLocked(plan, deps) } finally { held?.release() }
+}
+
+async function executeLocked(plan: SelfDeployPlan, deps: SelfDeployDeps): Promise<SelfDeployResult> {
   const steps: SelfDeployStep[] = []
 
   // 1. preflight — new binary exists and `--version` exits 0. Nothing on
@@ -376,6 +411,15 @@ export async function executeSelfDeploy(plan: SelfDeployPlan, deps: SelfDeployDe
   }
   const version = (preflight.stdout || preflight.stderr).trim()
   steps.push({ name: 'preflight', ok: true, detail: version })
+
+  // 1b. 不签 + 包是 Developer ID 封的 ⇒ 拒绝(2026-10-10 评审):ad-hoc 的 sidecar 塞进 DevID 封好的 .app,
+  // TCC 框会把 daemon 堵死(2026-09-28 事故)。没证书 / 找不到 entitlements / --no-sign 时 plan.signing 为 null,
+  // 原先一声不吭照换。从 `.prev` 回滚不拦(它本来就在这个包里跑过);`--allow-unsigned` 明确放行。
+  const unsigned = checkSigningRequired(plan, deps)
+  if (unsigned) {
+    steps.push(unsigned)
+    return { ok: false, exitCode: 1, steps, version }
+  }
 
   // 2. stage — copy the new binary to <sidecar>.new + chmod, BEFORE the
   // backup step touches anything.
@@ -421,6 +465,10 @@ export async function executeSelfDeploy(plan: SelfDeployPlan, deps: SelfDeployDe
     }
     steps.push(signed)
   }
+
+  // 2c. native — sidecar 旁边的原生库(onnxruntime)。只加不减、老 sidecar 不认它们,所以不进回滚;
+  // 装不上也不拦部署(知识库向量化会自己退回 Python),只记一笔。从 .prev 回滚时不动。
+  if (!deployingFromBackup && plan.companions?.length) steps.push(installCompanions(plan, deps))
 
   // 3. backup — <sidecar> → <sidecar>.prev, overwriting whatever backup was
   // already there. Exactly one generation of rollback is kept on purpose.
@@ -555,6 +603,14 @@ export async function executeSelfDeploy(plan: SelfDeployPlan, deps: SelfDeployDe
 // failure with nothing live to roll back. Chmod-after-rename would instead
 // leave an unvalidated (wrong-permission) binary already serving as the
 // sidecar with no restart/health/rollback having run against it.
+function checkSigningRequired(plan: SelfDeployPlan, deps: SelfDeployDeps): SelfDeployStep | null {
+  if (plan.signing || plan.allowUnsigned || !plan.appPath || samePath(plan.newBinaryPath, plan.prevPath)) return null
+  const r = deps.spawnSync('codesign', ['-dv', plan.appPath], { timeoutMs: 10_000, windowsHide: true })
+  const team = /^TeamIdentifier=(.+)$/m.exec(`${r.stderr}\n${r.stdout}`)?.[1]?.trim()
+  if (r.status !== 0 || !team || team === 'not set') return null
+  return { name: 'signing', ok: false, detail: `${plan.appPath} is Developer ID signed (team ${team}) but this deploy would not sign the sidecar — an ad-hoc sidecar in a sealed app gets the daemon stuck on a TCC prompt. Fix the signing identity / entitlements, or pass --allow-unsigned.` }
+}
+
 function stageBinary(deps: SelfDeployDeps, source: string, tmpPath: string): void {
   deps.fs.copyFile(source, tmpPath)
   deps.fs.chmod(tmpPath, 0o755)
@@ -573,6 +629,12 @@ function samePath(a: string, b: string): boolean {
 }
 
 const CODESIGN_TIMEOUT_MS = 60_000
+/**
+ * 刚重签的二进制第一次跑要等 Gatekeeper / syspolicyd 重新评估(10-04 真机:普通负载下版本探测就要 4.75s),
+ * 机器忙时更久。10-13 真机:负载 ~50 时 5s 一刀切 ⇒ `signed binary fails --version (exit null)`,好好的包被拒。
+ * 只在它真能跑时多等 —— 坏包照样失败,只是晚一点。
+ */
+const SIGNED_PROBE_TIMEOUT_MS = 30_000
 
 /** codesign the staged sidecar, then prove it still runs (`--version`). */
 function signSidecar(plan: SelfDeployPlan, deps: SelfDeployDeps): SelfDeployStep {
@@ -582,9 +644,33 @@ function signSidecar(plan: SelfDeployPlan, deps: SelfDeployDeps): SelfDeployStep
     '--entitlements', entitlementsPath, '--identifier', SIDECAR_CODE_IDENTIFIER, plan.tmpPath,
   ], { timeoutMs: CODESIGN_TIMEOUT_MS, windowsHide: true })
   if (r.status !== 0) return { name: 'sign', ok: false, detail: `codesign exited ${r.status ?? 'null'}: ${(r.stderr || r.stdout).trim()}` }
-  const probe = deps.spawnSync(plan.tmpPath, ['--version'], { timeoutMs: 5000, windowsHide: true })
-  if (probe.status !== 0) return { name: 'sign', ok: false, detail: `signed binary fails --version (exit ${probe.status ?? 'null'}): ${(probe.stderr || probe.stdout).trim()}` }
+  const probe = deps.spawnSync(plan.tmpPath, ['--version'], { timeoutMs: SIGNED_PROBE_TIMEOUT_MS, windowsHide: true })
+  if (probe.status !== 0) return { name: 'sign', ok: false, detail: `signed binary fails --version (exit ${probe.status ?? `null — killed or timed out after ${SIGNED_PROBE_TIMEOUT_MS / 1000}s`}): ${(probe.stderr || probe.stdout).trim()}` }
   return { name: 'sign', ok: true, detail: identity }
+}
+
+/** 每个库:拷到 `<目标>.new` → 签名(有身份 ⇒ Developer ID + runtime;没有 ⇒ ad-hoc)→ rename(新 inode,同 sidecar)。 */
+function installCompanions(plan: SelfDeployPlan, deps: SelfDeployDeps): SelfDeployStep {
+  const installed: string[] = [], problems: string[] = []
+  for (const { from, to } of plan.companions ?? []) {
+    if (!deps.fs.exists(from)) continue
+    const tmp = `${to}.new`
+    try {
+      deps.fs.copyFile(from, tmp)
+      const r = deps.spawnSync('codesign', plan.signing
+        ? ['--force', '--sign', plan.signing.identityHash, '--options', 'runtime', '--timestamp', tmp]
+        : ['--force', '--sign', '-', tmp], { timeoutMs: CODESIGN_TIMEOUT_MS, windowsHide: true })
+      if (r.status !== 0) throw new Error(`codesign exited ${r.status ?? 'null'}: ${(r.stderr || r.stdout).trim()}`)
+      deps.fs.rename(tmp, to)
+      installed.push(basename(to))
+    } catch (err) {
+      try { deps.fs.unlink(tmp) } catch { /* best-effort */ }
+      try { deps.fs.unlink(`${tmp}.cstemp`) } catch { /* best-effort */ }
+      problems.push(`${basename(to)}: ${errMsg(err)}`)
+    }
+  }
+  if (problems.length) deps.log(`native libraries not installed (knowledge embedding falls back): ${problems.join('; ')}`)
+  return { name: 'native', ok: true, detail: problems.length ? `partial: ${problems.join('; ')}` : installed.length ? installed.join(', ') : 'none built' }
 }
 
 /** Re-sign the .app bundle (main binary + resource seal). No `--deep`: nested binaries carry their own signatures. */
@@ -802,7 +888,30 @@ export function defaultSelfDeployDeps(): SelfDeployDeps {
     sleep: (ms) => new Promise((resolve) => setTimeout(resolve, ms)),
     log: (line) => console.error(`[self deploy] ${line}`),
     markPlannedRestart: (stateDir, reason) => markPlannedRestart(stateDir, reason),
+    lock: (path) => acquireDeployLock(path),
   }
+}
+
+/** O_EXCL 建锁文件写 pid;占着的进程已经没了 ⇒ 接过来(只试一次)。 */
+function acquireDeployLock(path: string): { release(): void } | { heldBy: number } {
+  for (let attempt = 0; attempt < 2; attempt++) {
+    try {
+      const fd = openSync(path, 'wx', 0o600)
+      try { writeSync(fd, String(process.pid)) } finally { closeSync(fd) }
+      return { release: () => { try { if (readFileSync(path, 'utf8').trim() === String(process.pid)) unlinkSync(path) } catch { /* gone */ } } }
+    } catch (err) {
+      if ((err as NodeJS.ErrnoException).code !== 'EEXIST') throw err
+      let pid = 0
+      try { pid = Number(readFileSync(path, 'utf8').trim()) } catch { /* vanished: retry */ }
+      if (pid > 0 && pidAlive(pid)) return { heldBy: pid }
+      try { unlinkSync(path) } catch { /* someone else took it over */ }
+    }
+  }
+  return { heldBy: 0 }
+}
+
+function pidAlive(pid: number): boolean {
+  try { process.kill(pid, 0); return true } catch (err) { return (err as NodeJS.ErrnoException).code === 'EPERM' }
 }
 
 function readTailLines(path: string, lines: number): string {

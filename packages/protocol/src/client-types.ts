@@ -54,6 +54,12 @@ export interface ClientOpts {
    * v1 连接从不发。
    */
   keepaliveMs?: number
+  /**
+   * 只接受 v2(2026-10-10)。版本协商是明文,中继能把双方的 `v` 剥掉、降到没有防重放的 v1,
+   * 再把抓到的密封请求重放。只跟会说 v2 的后台打交道的客户端(原生 app)应当打开:
+   * 后台回的 hello 不是 v2 ⇒ 报 `downgrade_refused`、断开按退避重连,绝不走 v1。缺省 false(老后台照旧能连)。
+   */
+  requireV2?: boolean
   /** 时钟(毫秒),缺省 Date.now。用于判断连接是否稳定到可以清零退避。 */
   now?: () => number
   /** 丢弃了一条畸形/无法解密的线上消息,或 hello 畸形(只做记录)。 */

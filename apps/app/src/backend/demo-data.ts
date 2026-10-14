@@ -31,6 +31,8 @@ export const copy = {
   ccReply: ['收到，我来看看。', 'Got it, I’ll take a look.'],
   creating: ['收到，正在整理。', 'Got it, working on it.'],
   created: ['整理好了，这一轮已回复。', 'All set; this round is replied.'],
+  stopped: ['已停下这一轮。', 'Stopped this round.'],
+  artifactBody: ['# 演示成果\n\n这是演示模式里的一份成果，真实成果来自电脑上 CC 做出的文件。', '# Demo output\n\nThis is a demo output; real ones are the files CC made on your computer.'],
   title: ['可以安装图片处理组件吗？', 'May I add an image-processing package?'],
   what: ['安装 sharp 图片处理组件。', 'Install the sharp image-processing package.'],
   scope: ['作品集项目的依赖文件。', 'The dependency files in your Portfolio project.'],

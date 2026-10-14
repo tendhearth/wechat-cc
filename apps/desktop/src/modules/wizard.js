@@ -39,31 +39,46 @@ export function renderDoctorWizard(report) {
   const claudeMeta = document.getElementById("claude-meta")
   const codexMeta = document.getElementById("codex-meta")
   const cursorMeta = document.getElementById("cursor-meta")
-  if (claudeMeta) claudeMeta.textContent = report.checks.claude.ok ? '已就绪' : "未检测到"
-  if (codexMeta) codexMeta.textContent = report.checks.codex.ok ? '已就绪' : "未检测到"
+  // 装了不等于能用(2026-10-13):本机没看到登录 ⇒ 说「还没登录」,但不拦 —— 判断只看本机凭据在不在,可能看漏
+  if (claudeMeta) claudeMeta.textContent = !report.checks.claude.ok ? "未检测到" : report.checks.claude.loggedIn === false ? '已安装 · 还没登录' : '已就绪'
+  if (codexMeta) codexMeta.textContent = !report.checks.codex.ok ? "未检测到" : report.checks.codex.loggedIn === false ? '已安装 · 还没登录' : '已就绪'
   // Cursor's probe shape differs ({ apiKeySet, sdkInstalled } vs { ok, path }).
   // Surface the more useful missing-piece on the wizard card.
   if (cursorMeta) {
     const c = report.checks.cursor
+    // 首选 cursor-agent CLI(订阅登录);老 sidecar 没有 cliInstalled 字段时照旧说缺哪一样
     cursorMeta.textContent = c?.ok ? "已就绪"
+      : c && 'cliInstalled' in c ? "未安装 Cursor CLI"
       : !c?.apiKeySet ? "缺少 CURSOR_API_KEY"
       : !c?.sdkInstalled ? "缺少 @cursor/sdk"
       : "未检测到"
   }
   const geminiMeta = document.getElementById('gemini-meta')
   if (geminiMeta) geminiMeta.textContent = report.checks.gemini?.ok ? '已就绪' : '尚未连接'
+  const agyMeta = document.getElementById('agy-meta')
+  if (agyMeta) agyMeta.textContent = report.checks.agy?.ok ? '已就绪' : '未安装 agy'
   renderDoctorHeadline(report)
   renderProviderStatus("claude", report.checks.claude)
   renderProviderStatus("codex", report.checks.codex)
   updateFooterStatus(report.checks.daemon)
 }
 
-/** The same readiness signal drives startup, the headline and the next action. */
+const LOGIN_COMMAND = /** @type {Record<string,string>} */ ({ claude: 'claude', codex: 'codex login' })
+/** The same readiness signal drives startup, the headline and the next action.
+ * 能用的只有「装了但本机没看到登录」的 claude / codex ⇒ 照样能继续,但标题说还差登录,并给那一条命令(现象 → 原因 → 一个动作)。 */
 export function doctorHeadline(report) {
   const ready = hasUsableProvider(report)
-  return ready
-    ? { ready, title: "已经能见面了", note: "已检测到可用的 AI，可以继续连接微信。" }
-    : { ready, title: "还差一步就能见面了", note: "先连接一个可用的 AI，再继续。" }
+  if (!ready) return { ready, title: "还差一步就能见面了", note: "先连接一个可用的 AI，再继续。" }
+  const checks = report?.checks ?? {}
+  const loggedInElsewhere = !!checks.provider?.ok && !['claude', 'codex'].includes(checks.provider?.provider)
+    || ['cursor', 'gemini'].some(id => checks[id]?.ok)
+    || ['claude', 'codex'].some(id => checks[id]?.ok && checks[id]?.loggedIn !== false)
+  const needLogin = ['claude', 'codex'].filter(id => checks[id]?.ok && checks[id]?.loggedIn === false)
+  if (!loggedInElsewhere && needLogin.length) {
+    const how = needLogin.map(id => `「${LOGIN_COMMAND[id]}」`).join('或')
+    return { ready, needsLogin: needLogin, title: "装好了，还差登录", note: `没看到 ${needLogin.map(id => id === 'claude' ? 'Claude Code' : 'Codex').join(' / ')} 的登录，CC 会回不了话。在终端里运行${how}按提示登录，再点「重新检测」。` }
+  }
+  return { ready, title: "已经能见面了", note: "已检测到可用的 AI，可以继续连接微信。" }
 }
 
 function renderDoctorHeadline(report) {
@@ -82,8 +97,9 @@ function renderDoctorHeadline(report) {
 function renderProviderStatus(provider, check) {
   const card = document.getElementById(`${provider}-status-card`)
   const label = document.getElementById(`${provider}-status-label`)
-  if (card) card.classList.toggle("is-ok", !!check.ok)
-  if (label) label.textContent = check.ok ? "已链接" : "未链接"
+  const loggedOut = !!check.ok && check.loggedIn === false
+  if (card) card.classList.toggle("is-ok", !!check.ok && !loggedOut)
+  if (label) label.textContent = !check.ok ? "未链接" : loggedOut ? "未登录" : "已链接"
 }
 
 function renderWslNotice(report) {
@@ -150,7 +166,7 @@ export function showStep(stepState, name) {
     if (num) num.textContent = stepIdx < idx ? "✓" : String(stepIdx + 1)
   })
   const stepOf = document.getElementById("wizard-step-of")
-  if (stepOf) stepOf.textContent = `step ${idx + 1} of ${STEP_ORDER.length}`
+  if (stepOf) stepOf.textContent = idx >= 0 ? `第 ${idx + 1} 步 · 共 ${STEP_ORDER.length} 步` : ''
   return name
 }
 

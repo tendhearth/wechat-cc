@@ -32,6 +32,16 @@ describe('PendingPermissions', () => {
     expect(reg.fail('ghost')).toBe(false)
   })
 
+  // 2026-10-10 评审:同一个 hash 再登记(gemini 重开会话后 seq 从 1 重来、Claude 缺 toolUseID 时都落到同一个 id)
+  // 原先直接覆盖 ⇒ 旧的那条 promise 永远不 resolve(调用方一直挂着),主人回的「y」还落到新的那条上。
+  it('registering an id that is still pending first settles the old one as timeout', async () => {
+    const reg = new PendingPermissions()
+    const old = reg.register('dup01', 60_000)
+    const fresh = reg.register('dup01', 60_000)
+    await expect(old).resolves.toBe('timeout')
+    expect(reg.consume('dup01', 'allow')).toBe(true)
+    await expect(fresh).resolves.toBe('allow')
+  })
   it('consume returns false when hash not registered', () => {
     const reg = new PendingPermissions()
     expect(reg.consume('ghost', 'allow')).toBe(false)

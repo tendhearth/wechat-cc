@@ -5,6 +5,38 @@
 /** @typedef {{tasks:AttentionTask[],stale:boolean}} AttentionState */
 /** @typedef {{invokeWorkbenchApi:(method:'GET',path:string)=>Promise<unknown>,invoke:(command:string,args:Record<string,unknown>)=>Promise<unknown>,onChange?:(state:AttentionState)=>void,getContext?:()=>{taskId:string|null,focused:boolean},intervalMs?:number,maxBackoffMs?:number,requestTimeoutMs?:number}} PollerOptions */
 
+/**
+ * 各任务的 phase(2026-10-06,回复 / 停下的系统通知)。老 daemon 没有这一项 ⇒ null(不弹,也不报错)。
+ * @param {unknown} value @returns {Map<string,string>|null}
+ */
+export function parseProgress(value) {
+  const progress = /** @type {{progress?:unknown}} */ (value)?.progress
+  if (!Array.isArray(progress)) return null
+  const out = new Map()
+  for (const item of progress) {
+    const p = /** @type {{id?:unknown,phase?:unknown}} */ (item)
+    if (p && typeof p.id === 'string' && p.id && typeof p.phase === 'string') out.set(p.id, p.phase)
+  }
+  return out
+}
+
+/**
+ * 两次之间「在做 → 回复了 / 停下了」的任务。取消不算(那是主人自己按的);消失的(归档)不算。
+ * @param {Map<string,string>|null} before @param {Map<string,string>|null} after
+ * @returns {{replied:string[],stopped:string[]}}
+ */
+export function progressTransitions(before, after) {
+  /** @type {string[]} */ const replied = []
+  /** @type {string[]} */ const stopped = []
+  if (!before || !after) return { replied, stopped }
+  for (const [id, phase] of after) {
+    if (before.get(id) !== 'working') continue
+    if (phase === 'replied') replied.push(id)
+    else if (phase === 'failed' || phase === 'interrupted') stopped.push(id)
+  }
+  return { replied, stopped }
+}
+
 /** The key is the exact JSON array of active request IDs, not a task revision.
  * @param {unknown} value @returns {{task:AttentionTask,requestIds:string[]}[]} */
 function parseAttention(value) {
@@ -40,6 +72,7 @@ export function createWorkbenchAttentionPoller(options) {
   /** @type {Promise<AttentionTask[]|null>|null} */ let inflight = null
   /** @type {(()=>void)|null} */ let cancelRequest = null
   let running = false, destroyed = false, initialized = false, retryMs = intervalMs
+  /** @type {Map<string,string>|null} */ let lastProgress = null
 
   function refresh() {
     if (destroyed) return Promise.resolve(null)
@@ -55,6 +88,9 @@ export function createWorkbenchAttentionPoller(options) {
         if (destroyed) return null
         const entries = parseAttention(result)
         const context = options.getContext?.() ?? { taskId: null, focused: false }
+        const progress = parseProgress(result)
+        const moved = initialized ? progressTransitions(lastProgress, progress) : { replied: [], stopped: [] }
+        lastProgress = progress
         let shouldNotify = false
         const activeIds = new Set()
         for (const { task, requestIds } of entries) {
@@ -77,6 +113,13 @@ export function createWorkbenchAttentionPoller(options) {
         retryMs = intervalMs
         tasks = entries.map(({ task }) => task)
         options.onChange?.({ tasks, stale: false })
+        // 回复 / 停下:窗口在前面就不弹(你正看着 CC);待处理那条优先,一次轮询最多一条通知。
+        const finishNotice = !shouldNotify && !context.focused
+          ? moved.stopped.length ? { title: '一起做有任务停下了', body: '打开 CC 看看发生了什么。' }
+            : moved.replied.length ? { title: '一起做有回复了', body: moved.replied.length > 1 ? `${moved.replied.length} 件事回复了。打开 CC 查看。` : '有一件事回复了。打开 CC 查看。' }
+            : null
+          : null
+        if (finishNotice && !destroyed) void Promise.resolve().then(() => options.invoke('notify_user', finishNotice)).catch(() => {})
         if (shouldNotify && !destroyed) {
           // No task title, prompt, command, path, or request ID crosses into OS
           // notifications. Denied or uncertain delivery is intentionally final.
@@ -111,122 +154,6 @@ export function createWorkbenchAttentionPoller(options) {
       if (timer !== null) { clearTimeout(timer); timer = null }
       if (deadline !== null) { clearTimeout(deadline); deadline = null }
       cancelRequest?.()
-    },
-  }
-}
-
-/** @param {AttentionTask} task */
-function taskSummary(task) {
-  return [task.pendingQuestionCount ? `${task.pendingQuestionCount} 个问题` : '', task.pendingPermissionCount ? `${task.pendingPermissionCount} 项权限` : ''].filter(Boolean).join('，')
-}
-
-/** A transient list of destinations, never a second task view.
- * @param {PollerOptions & {host:HTMLElement,openTask:(id:string)=>unknown,documentTarget?:Document}} options */
-export function mountWorkbenchAttention(options) {
-  const { host } = options
-  const documentTarget = options.documentTarget ?? host.ownerDocument
-  const toggle = documentTarget.createElement('button')
-  toggle.type = 'button'
-  toggle.className = 'workbench-attention-toggle'
-  toggle.setAttribute('aria-controls', 'workbench-attention-tasks')
-  toggle.setAttribute('aria-expanded', 'false')
-  const panel = documentTarget.createElement('div')
-  panel.id = 'workbench-attention-tasks'
-  panel.className = 'workbench-attention-tasks'
-  panel.setAttribute('role', 'group')
-  panel.setAttribute('aria-label', '待处理任务')
-  panel.hidden = true
-  const status = documentTarget.createElement('span')
-  status.className = 'workbench-attention-status'
-  status.setAttribute('role', 'status')
-  const message = documentTarget.createElement('span')
-  message.className = 'workbench-attention-message'
-  host.replaceChildren(message, toggle, panel, status)
-  host.hidden = true
-  /** @type {AttentionTask[]} */ let tasks = []
-  /** @type {Map<string,HTMLButtonElement>} */ const rows = new Map()
-  let alive = true, navigation = 0
-  /** @type {string|null} */ let openingId = null
-
-  /** @param {boolean} [restoreFocus] */
-  function close(restoreFocus = false) {
-    panel.hidden = true
-    toggle.setAttribute('aria-expanded', 'false')
-    if (restoreFocus && !host.hidden) toggle.focus({ preventScroll: true })
-  }
-
-  /** @param {string} id */
-  async function open(id) {
-    if (!alive || openingId === id || !tasks.some(task => task.id === id)) return
-    close()
-    openingId = id
-    const request = ++navigation
-    status.textContent = ''
-    try { await options.openTask(id) } catch {
-      if (alive && request === navigation) status.textContent = '暂时打不开，请重试。'
-    } finally { if (request === navigation) openingId = null }
-  }
-
-  function onToggle() {
-    const first = tasks[0]
-    if (!first) return
-    if (tasks.length === 1) { void open(first.id); return }
-    if (!panel.hidden) { close(); return }
-    panel.hidden = false
-    toggle.setAttribute('aria-expanded', 'true')
-    rows.get(first.id)?.focus({ preventScroll: true })
-  }
-  /** @param {KeyboardEvent} event */
-  function onKeydown(event) { if (event.key === 'Escape' && !panel.hidden) { event.preventDefault(); close(true) } }
-  /** @param {PointerEvent} event */
-  function onOutside(event) { if (!panel.hidden && !host.contains(/** @type {Node|null} */ (event.target))) close() }
-  toggle.addEventListener('click', onToggle)
-  documentTarget.addEventListener('keydown', onKeydown)
-  documentTarget.addEventListener('pointerdown', onOutside)
-
-  const poller = createWorkbenchAttentionPoller({ ...options, onChange(state) {
-    if (!alive) return
-    tasks = state.tasks
-    host.hidden = tasks.length === 0
-    const focused = documentTarget.activeElement
-    const focusedId = [...rows.entries()].find(([, row]) => row === focused)?.[0]
-    for (const [id, row] of rows) {
-      if (!tasks.some(task => task.id === id)) { row.remove(); rows.delete(id) }
-    }
-    for (const task of tasks) {
-      let row = rows.get(task.id)
-      if (!row) {
-        row = documentTarget.createElement('button')
-        row.type = 'button'
-        row.dataset.taskId = task.id
-        row.addEventListener('click', () => open(task.id))
-        rows.set(task.id, row)
-        panel.append(row)
-      }
-      const label = `${task.title || '未命名任务'} · ${taskSummary(task)}`
-      if (row.textContent !== label) row.textContent = label
-    }
-    const count = tasks.reduce((sum, task) => sum + task.pendingPermissionCount + task.pendingQuestionCount, 0)
-    toggle.textContent = `待你处理 · ${count}`
-    toggle.setAttribute('aria-label', `${tasks.length} 个任务有 ${count} 项待处理，打开查看`)
-    message.textContent = state.stale ? '待处理状态暂未更新' : '一起做'
-    if (tasks.length < 2) close(!!focusedId)
-    else if (focusedId && !rows.has(focusedId)) close(true)
-    options.onChange?.(state)
-  } })
-
-  return {
-    start: poller.start,
-    refresh: poller.refresh,
-    destroy() {
-      alive = false
-      poller.destroy()
-      toggle.removeEventListener('click', onToggle)
-      documentTarget.removeEventListener('keydown', onKeydown)
-      documentTarget.removeEventListener('pointerdown', onOutside)
-      host.hidden = true
-      host.replaceChildren()
-      rows.clear()
     },
   }
 }

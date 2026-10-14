@@ -10,7 +10,7 @@
  * ilink context_token has expired (the same cause as errcode=-14). Policy:
  *   - success            → markSent
  *   - failure, still in retry window (due_at + RETRY_WINDOW_MS) → recordAttempt, stay pending
- *   - failure, past window                                       → markFailed
+ *   - failure, past window AND tried MIN_ATTEMPTS_BEFORE_GIVE_UP times → markFailed
  *
  * runReminderSweep is exported and side-effect-injected (store + send + now)
  * so it's unit-testable without a timer or a live ilink.
@@ -22,6 +22,14 @@ import { toLocalISO } from '../../core/prompt-format'
 
 /** How long after due_at we keep retrying a failing delivery before giving up. */
 export const RETRY_WINDOW_MS = 24 * 60 * 60 * 1000 // 24h
+
+/**
+ * 过了重试窗口也要至少真试过这么多次才放弃。窗口从 due_at 算,电脑睡/断网
+ * 超过 24h 后醒来第一轮 sweep 往往网络还没连上 —— 只看窗口会在第一下失败
+ * 就把提醒判死(-2 那条分支防的同一种「主人设的提醒悄悄丢了」)。5 次按
+ * 退避(1+2+4+8 分钟)约一刻钟,够网络恢复。
+ */
+export const MIN_ATTEMPTS_BEFORE_GIVE_UP = 5
 
 /**
  * Exponential retry backoff: 1min, 2min, 4min, … capped at 60min. June's
@@ -140,7 +148,8 @@ export async function runReminderSweep(deps: SweepDeps): Promise<SweepResult> {
       continue
     }
     const deadline = Date.parse(rec.due_at) + retryWindow
-    if (Number.isFinite(deadline) && nowMs > deadline) {
+    // rec.attempts 是此前的失败数,这一次失败是第 attempts+1 次
+    if (Number.isFinite(deadline) && nowMs > deadline && rec.attempts + 1 >= MIN_ATTEMPTS_BEFORE_GIVE_UP) {
       await deps.store.markFailed(rec.id, err)
       result.failed++
       deps.log('REMINDERS', `gave up on ${rec.id} → ${rec.chat_id} after retry window: ${err}`)

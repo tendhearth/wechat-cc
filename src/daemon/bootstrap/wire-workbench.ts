@@ -33,7 +33,7 @@ import { spawnSync } from '../../lib/runtime/process'
 import { readFileSync } from 'node:fs'
 import { homedir } from 'node:os'
 import { createAcpWorkbenchProvider } from '../../core/acp-workbench-provider'
-import { resolveAcpAgent } from '../../core/acp/agents'
+import { acpAgentProblem, resolveAcpAgent, resolveCustomAcpAgent } from '../../core/acp/agents'
 import { findOnPath } from '../../lib/util'
 
 /** Reuse transport/model setup, never the companion's prompt or bypass. */
@@ -101,6 +101,27 @@ export function registerAcpExecutors(target: ProviderRegistry, source: Pick<Prov
   return ['cursor']
 }
 
+/**
+ * 自定义 ACP 执行者(2026-10-07):agent-config 的 acp_agents 每条 ⇒ 一个一起做执行者(逐工具权限卡、逐字流、能带附件,
+ * 和 Cursor 同一个 ACP 客户端)。不报调用目标 ⇒ 网络闸门按「需要保护」处理(fail closed)。
+ * 不合格 / 命令找不到 / id 已被占 ⇒ 跳过并记一行,不影响别的。
+ */
+export function registerCustomAcpExecutors(target: ProviderRegistry, agents: ReadonlyArray<{ id: string; name: string; command: string; args?: string[]; auth_method?: string }> | undefined,
+  deps: { findOnPath?: (cmd: string) => string | null; create?: typeof createAcpWorkbenchProvider; log?: (tag: string, line: string) => void } = {}): string[] {
+  const registered: string[] = []
+  for (const agent of agents ?? []) {
+    const problem = acpAgentProblem(agent)
+    if (problem) { deps.log?.('WORKBENCH', `acp agent ${String(agent.id)} skipped: ${problem}`); continue }
+    if (target.has(agent.id)) { deps.log?.('WORKBENCH', `acp agent ${agent.id} skipped: id already registered`); continue }
+    const launch = resolveCustomAcpAgent({ id: agent.id, name: agent.name, command: agent.command, args: agent.args ?? [] }, deps.findOnPath ?? findOnPath)
+    if (!launch) { deps.log?.('WORKBENCH', `acp agent ${agent.id}: command ${agent.command} not found — not registered`); continue }
+    const provider = (deps.create ?? createAcpWorkbenchProvider)({ command: launch.command, args: launch.args, displayName: launch.name, log: deps.log, authErrorCode: 'acp_agent_auth_required', ...(agent.auth_method ? { authMethod: agent.auth_method } : {}) })
+    target.register(agent.id, provider, { displayName: launch.name, canResume: () => true, workbench: ACP_CAPABILITIES })
+    registered.push(agent.id)
+  }
+  return registered
+}
+
 /** 免审执行者一次性确认开关的落盘实现 —— 读写 agent-config.json 的
  *  `workbench_unattended_ack_at`(其余字段原样保留)。 */
 export function makeUnattendedAckStore(stateDir: string): { get(): number | null; set(at: number): void } {
@@ -166,6 +187,7 @@ export function wireWorkbench(opts: {
   }),{...codex.opts,workbench:MANAGED_NATIVE_CAPABILITIES})
   if(opts.boot.registry.has('openai'))registerWorkbenchApi(registry,opts.db,opts.stateDir,agentConfig,process.env)
   registerAcpExecutors(registry,opts.boot.registry,agentConfig,{log:opts.log})
+  registerCustomAcpExecutors(registry,agentConfig.acp_agents,{log:opts.log})
   registerUnattendedExecutors(registry,opts.boot.registry)
   const store=makeWorkbenchStore(opts.db)
   // 回报投递(task-3,2026-09-23):两样都要有才接得上——没有 matters 就没法建/追出生地,

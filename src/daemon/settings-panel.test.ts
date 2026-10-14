@@ -619,7 +619,8 @@ describe('settings panel — 模型与后端', () => {
       expect([...m.shared_token].sort()).toEqual(['agy'])
       // …but a guest still can't use it: ACP Cursor edits the workspace without
       // a permission card (guestSafe:false), so it joins the "访客不可用" list.
-      expect([...m.guest_blocked].sort()).toEqual(['agy', 'cursor'])
+      // Codex too (2026-10-10): its read-only sandbox can still read any file on the machine.
+      expect([...m.guest_blocked].sort()).toEqual(['agy', 'codex', 'cursor'])
     } finally { cleanup() }
   })
 
@@ -717,6 +718,16 @@ describe('「一件事」手机路由(2026-09-16)', () => {
     expect(r.matters.some(m => m.id.startsWith('aa'))).toBe(false)
     expect(r.matters[0]!.id).toBe('cccccccc')
     expect(r.matters.slice(1).every(m => m.kind === 'task')).toBe(true)
+  })
+  it('别人的聊天 matter:列表里没有,按 id 直接打开也是 404(不读出消息、不登记手机露面)', async () => {
+    const guest = { ...MATTER, id: 'aaaaaaaa', kind: 'chat', ownerChatId: 'guest@im.wechat' }
+    matters.detail.mockReturnValueOnce({ matter: guest, bindings: [], sessions: [], task: null, events: [{ kind: 'text', text: '客人的私事', createdAt: 3 }] } as never)
+    panel = make(true)
+    const { port } = await panel.start(0), base = `http://127.0.0.1:${port}`, t = panel.issueToken()
+    const r = await fetch(`${base}/m/api/matter?id=aaaaaaaa&t=${t}`)
+    expect(r.status).toBe(404)
+    expect(JSON.stringify(await r.json())).not.toContain('客人的私事')
+    expect(matters.seenOnPhone).not.toHaveBeenCalled()
   })
   it('is 503 when the matter registry is not wired, and maps not-found / busy', async () => {
     panel = make(false)
@@ -859,6 +870,26 @@ describe('phone curated memory', () => {
       expect((await fetch(`${base}/m/api/memory`)).status).toBe(401)
       const r = await (await fetch(`${base}/m/api/memory?t=${p.issueToken()}`)).json()
       expect(r).toEqual({ ok: true, ...view })
+    } finally { await p.stop() }
+  })
+  it('memory correct (2026-10-06): token-gated; exactly id + verdict; unknown entry ⇒ 404', async () => {
+    const correctMemory = vi.fn(async (id: string) => { if (id === 'dead') throw new Error('memory_entry_not_found'); return { text: 'x' } })
+    const p = makeSettingsPanel({
+      stateDir: mkdtempSync(join(tmpdir(), 'sp-memc-')), ownerChatId: () => null,
+      chatPrefs: { get: () => ({}), set: (_id, patch) => patch },
+      getUserName: () => null, setUserName: async () => {}, log: () => {},
+      correctMemory,
+    })
+    const { port } = await p.start(0)
+    try {
+      const base = `http://127.0.0.1:${port}`, tok = p.issueToken()
+      const post = (body: unknown, t: string | null = tok) => fetch(`${base}/m/api/memory/correct${t ? `?t=${t}` : ''}`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body) })
+      expect((await post({ id: 'b1', verdict: 'wrong' }, null)).status).toBe(401)
+      expect((await post({ id: 'b1', verdict: 'wrong' })).status).toBe(200)
+      expect(correctMemory).toHaveBeenCalledWith('b1', 'wrong')
+      for (const b of [{ id: 'b1' }, { id: 'b1', verdict: 'nope' }, { id: '../x', verdict: 'delete' }, { id: 'b1', verdict: 'delete', extra: 1 }]) expect((await post(b)).status).toBe(400)
+      expect((await post({ id: 'dead', verdict: 'delete' })).status).toBe(404)
+      expect(correctMemory).toHaveBeenCalledTimes(2)
     } finally { await p.stop() }
   })
 })

@@ -27,15 +27,15 @@ module.exports = {
   forbidden: [
     {
       name: 'no-circular',
-      severity: 'warn',
-      comment: 'Circular dependencies hide architectural mistakes. Refactor.',
+      severity: 'error',
+      comment: 'Circular dependencies hide architectural mistakes. Refactor. 2026-10-10 清零后升为 error(type-only 也算):Claude 的能力声明在 claude-capabilities.ts、TaskEvent 在 timeline-events.ts。',
       from: {},
       to: { circular: true },
     },
     {
       name: 'workbench-service-no-circular',
       severity: 'error',
-      comment: '2026-09-28 workbench service 拆分:service.ts 与 service/<domain>.ts 之间不许有环(type-only 也算);域只认 ctx,动作走 ctx.actions 晚绑定。store 层那 4 个环另立项,这里不管。',
+      comment: '2026-09-28 workbench service 拆分:service.ts 与 service/<domain>.ts 之间不许有环(type-only 也算);域只认 ctx,动作走 ctx.actions 晚绑定。store 层的环已于 2026-10-10 清零,由 no-circular 兜住。',
       from: { path: '^src/core/workbench/service(/|\\.ts$)' },
       to: { circular: true, viaOnly: { path: '^src/core/workbench/(service(/|\\.ts$)|wechat-control\\.ts$)' } },
     },

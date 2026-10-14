@@ -100,6 +100,12 @@ export interface WorkbenchRuntimeState {
   artifactDelivery: ((id:string)=>Promise<ArtifactDeliveryReceipt>) | undefined
   /** 补充暂时不能自动续投的任务(存库失败 / 被 hold 中);见 inputs 域。 */
   autoContinueBlocked: Set<string>
+  /**
+   * 重启前没确认退出、进程组至今还活着的任务(2026-10-06):没有 Active,但照样占着文件夹 —— 以前重启后
+   * 这道保护只剩库里一个标记,同文件夹的新任务其实不再等。组都没了 ⇒ 解除(lifecycle 的 writer 守望)。
+   */
+  writerOrphans: Map<string, PathReservation & { groups: number[] }>
+  writerWatch: ReturnType<typeof setInterval> | undefined
 }
 
 export function makeRuntimeState(): WorkbenchRuntimeState {
@@ -109,5 +115,6 @@ export function makeRuntimeState(): WorkbenchRuntimeState {
     order: 0, stopping: false, shutdownComplete: false, shutdownPromise: undefined,
     noticeWake: async () => {}, artifactDelivery: undefined,
     autoContinueBlocked: new Set(),
+    writerOrphans: new Map(), writerWatch: undefined,
   }
 }

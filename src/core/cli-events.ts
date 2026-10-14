@@ -76,8 +76,8 @@ export interface CliSessionInfo {
 }
 
 export interface CliEventHubDeps {
-  /** 推到主人微信。false = 没有主人 chat / 没接外发(记日志、丢弃)。 */
-  send: (text: string) => Promise<boolean>
+  /** 推到主人微信。sent = 送出去了;rejected = 微信那边拒了(如 errcode=-2);no_target = 没有主人 chat / 没接外发。 */
+  send: (text: string) => Promise<'sent' | 'rejected' | 'no_target'>
   projectName: (cwd: string) => string
   log: (tag: string, line: string) => void
   /** 人在电脑前时的面。缺席 ⇒ 在场时干脆不发(人就在终端前)。 */
@@ -177,8 +177,11 @@ export function makeCliEventHub(deps: CliEventHubDeps): CliEventHub {
     outbox = []
     const text = batch.length === 1 ? batch[0]! : batch.join('\n\n— — —\n\n')
     try {
-      const ok = await deps.send(text)
-      deps.log('CLI_PUSH', ok ? `sent ${batch.length} item(s) to wechat` : `dropped ${batch.length} item(s): no operator chat or no sender`)
+      const outcome = await deps.send(text)
+      // 服务端拒了(如 ilink errcode=-2)不能记成「已发」:那正是「出了错但没人知道」。
+      deps.log('CLI_PUSH', outcome === 'sent' ? `sent ${batch.length} item(s) to wechat`
+        : outcome === 'rejected' ? `not delivered (${batch.length} item(s)): wechat refused the send`
+        : `dropped ${batch.length} item(s): no operator chat or no sender`)
     } catch (err) {
       // 不重试:外发那一层自己有退避;这里排队只会在断线时堆成风暴。
       deps.log('CLI_PUSH', `send failed (${batch.length} item(s)): ${err instanceof Error ? err.message : String(err)}`)

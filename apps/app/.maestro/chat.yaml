@@ -54,9 +54,8 @@ appId: com.tendhearth.app
     id: chat-thinking
 - tapOn:
     id: topbar-back
+# 和 CC 的对话只住在「此刻」(2026-10-05):回到此刻点 CC 再进来,还是同一条对话。
 - tapOn:
-    id: tab-together
-- tapOn:
-    id: together-pinned-chat
+    id: now-cc
 - assertVisible:
     id: chat-input

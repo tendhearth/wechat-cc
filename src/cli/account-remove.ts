@@ -5,7 +5,7 @@ import { readJsonFile } from '../lib/read-json-file'
 // Strict botId shape: hex prefix + "-im-bot". setup-flow.ts produces
 // `<ilink_bot_id>` then strips non-[a-zA-Z0-9_-], so anything fancier than
 // this is suspicious and we refuse to act (path traversal guard).
-const BOT_ID_RE = /^[a-zA-Z0-9_-]+-im-bot$/
+export const BOT_ID_RE = /^[a-zA-Z0-9_-]+-im-bot$/
 
 export interface RemoveAccountResult {
   botId: string

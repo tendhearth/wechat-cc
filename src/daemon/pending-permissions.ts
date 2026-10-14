@@ -22,6 +22,10 @@ export class PendingPermissions {
   private nextCode = 1
 
   register(hash: string, timeoutMs: number, meta?: PendingPermissionMeta): Promise<PermissionDecision> {
+    // 同一个 id 还挂着就又来一条(gemini 重开会话后 seq 从 1 重来;Claude 缺 toolUseID 时都落到同一个 id):
+    // 先把旧的按超时了结 —— 原先直接覆盖,旧 promise 永远不 resolve,主人回的「y」也落到新的那条上(2026-10-10)。
+    const prev = this.entries.get(hash)
+    if (prev) { this.entries.delete(hash); prev.resolve('timeout') }
     return new Promise<PermissionDecision>((resolve) => {
       this.entries.set(hash, {
         resolve,

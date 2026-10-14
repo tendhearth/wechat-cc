@@ -1,4 +1,4 @@
-import {afterEach,beforeEach,describe,expect,it} from 'vitest'
+import {afterEach,beforeEach,describe,expect,it,vi} from 'vitest'
 import {mkdtempSync,mkdirSync,realpathSync} from 'node:fs'
 import {createHash} from 'node:crypto'
 import {makeWechatWorkbenchControl,wechatTaskMessageKey} from './wechat-control'
@@ -121,6 +121,60 @@ describe('WeChat task control through the shared service',()=>{
     expect(reply).not.toContain('已答复，会话还开着')
     expect(reply).not.toContain('自己让开')
   })
+  it('任务 <编号> 改动 lists the latest round of changed files with line counts (2026-10-06)',async()=>{
+    setup({async spawn(){return{async *dispatch(){yield result},async close(){}}}})
+    const task=create();await settled(task.id)
+    const turn=(files:Array<{path:string;kind:'added'|'deleted'|'modified'|'not_reviewed';diff?:string}>,status:'complete'|'partial'|'unavailable'='complete')=>({artifactId:'a',sha256:'s',name:'n',createdAt:1,status,headBefore:null,headAfter:null,preexistingPaths:[],notes:[],files:files.map(f=>({preexisting:false,...f}))})
+    let turns:ReturnType<typeof turn>[]=[]
+    const control=makeWechatWorkbenchControl({store,ownerChatId:()=>owner,actions:{...service,reviewList:()=>turns}})
+    expect(await control('owner',`任务 ${task.id} 改动`,identity)).toContain('还没有改动记录')
+    turns=[turn([{path:'src/a.ts',kind:'modified',diff:'@@ -1,2 +1,3 @@\n a\n-b\n+B\n+c\n'},{path:'new.md',kind:'added',diff:'@@ -0,0 +1 @@\n+hi\n'},{path:'big.bin',kind:'not_reviewed'}],'partial'),turn([],'complete')]
+    const reply=await control('owner',`任务 ${task.id} 改动`,identity) as string
+    expect(reply).toContain('最近一轮改了 3 个文件（共 2 轮）')
+    expect(reply).toContain('• 修改 src/a.ts（+2 −1）')
+    expect(reply).toContain('• 新建 new.md（+1 −0）')
+    expect(reply).toContain('• 未展开 big.bin')
+    expect(reply).toContain('没能完整检查')
+    turns=[turn(Array.from({length:15},(_,i)=>({path:`f${i}.ts`,kind:'modified' as const,diff:'@@ -1 +1 @@\n-x\n+y\n'})))]
+    expect(await control('owner',`任务 ${task.id} 改动`,identity)).toContain('还有 3 个。')
+    const noReview=makeWechatWorkbenchControl({store,ownerChatId:()=>owner,actions:{...service,reviewList:undefined}})
+    expect(await noReview('owner',`任务 ${task.id} 改动`,identity)).toContain('桌面工作台的「改动」面板')
+    expect(await control('owner',`任务 ${task.id} 改动 a.ts`,identity)).toContain('用法')
+  })
+
+  it('任务 新建 <项目> 独立@<分支> passes the start branch; a bad name is usage, not git (2026-10-08)',async()=>{
+    setup({async spawn(){return{async *dispatch(){yield result},async close(){}}}})
+    const createWechat=vi.fn((_input:{base?:string}):never=>({reply:'ok'}) as never)
+    const control=makeWechatWorkbenchControl({store,ownerChatId:()=>owner,actions:{...service,createWechat}})
+    expect(await control('owner','任务 新建 p-0123456789abcdef0123 独立@feature/login 修登录',identity)).toBe('ok')
+    expect(createWechat).toHaveBeenLastCalledWith(expect.objectContaining({isolation:true,base:'feature/login',text:'修登录'}))
+    expect(await control('owner','任务 新建 p-0123456789abcdef0123 独立 修登录',identity)).toBe('ok')
+    expect(createWechat.mock.lastCall![0]).not.toHaveProperty('base')
+    expect(await control('owner','任务 新建 p-0123456789abcdef0123 独立@../x 修登录',identity)).toContain('用法')
+    expect(createWechat).toHaveBeenCalledTimes(2)
+  })
+
+  it('任务 <编号> 提交 / 合回 / 删除工作区 (2026-10-08) go to worktreeAction instead of being sent to the executor as a supplement',async()=>{
+    setup({async spawn(){return{async *dispatch(){yield result},async close(){}}}})
+    const task=create();await settled(task.id)
+    const act=vi.fn((_id:string,action:string)=>{
+      if(action==='merge')throw new Error('worktree_not_ff')
+      return action==='commit'?{branch:'cc/abcd1234',committed:true,sha:'0123456789'}:{branch:'cc/abcd1234',removed:true}
+    })
+    const control=makeWechatWorkbenchControl({store,ownerChatId:()=>owner,actions:{...service,worktreeAction:act}})
+    const before=service.detail(task.id).events.length
+    expect(await control('owner',`任务 ${task.id} 提交`,identity)).toContain('已提交到分支 cc/abcd1234（0123456）')
+    expect(await control('owner',`任务 ${task.id} 合回`,identity)).toContain('不能直接快进')
+    expect(await control('owner',`任务 ${task.id} 删除工作区`,identity)).toContain('分支 cc/abcd1234 保留')
+    expect(await control('owner',`任务 ${task.id} 重开工作区`,identity)).toContain('重新打开独立工作区')
+    expect(act.mock.calls.map(c=>c[1])).toEqual(['commit','merge','remove','reopen'])
+    // 一条都没当成补充发给执行者
+    expect(service.detail(task.id).events.length).toBe(before)
+    expect(await control('owner',`任务 ${task.id} 提交 一下`,identity)).toContain('用法')
+    const plain=makeWechatWorkbenchControl({store,ownerChatId:()=>owner,actions:{...service,worktreeAction:()=>{throw new Error('not_worktree')}}})
+    expect(await plain('owner',`任务 ${task.id} 合回`,identity)).toContain('不在独立工作区里')
+  })
+
   it('lists only the current owner original tasks and keeps ordinary conversation out of the workbench',async()=>{
     setup({async spawn(){return{async *dispatch(){yield result},async close(){}}}})
     const mine=store.create({title:'我的报告',path:project,providerId:'claude',ownerChatId:'owner'})
@@ -369,5 +423,19 @@ describe('WeChat task control through the shared service',()=>{
     const before=store.events(task.id)
     for(const suffix of ['允许','回答 wrong-id 1','权限','补充'])expect(await service.handleWechat('owner',`任务 ${task.id} ${suffix}`)).toContain('用法')
     expect(store.events(task.id)).toEqual(before)
+  })
+})
+
+describe('任务 新建 <项目> 独立 <要求> (2026-10-07)',()=>{
+  it('passes isolation through; plain 新建 does not',async()=>{
+    setup({async spawn(){return{async *dispatch(){yield result},async close(){}}}})
+    const calls:unknown[]=[]
+    const projectId='p-0123456789abcdef0123'
+    const control=makeWechatWorkbenchControl({store,ownerChatId:()=>owner,actions:{...service,projects:()=>[{id:projectId,name:'project',path:project,providerId:'claude'} as never],createWechat:(i:unknown)=>{calls.push(i);throw new Error('project_stale')}}})
+    await control('owner',`任务 新建 ${projectId} 独立 并行整理周报`,identity)
+    await control('owner',`任务 新建 ${projectId} 整理周报`,{...identity,msgId:'two'})
+    expect(calls[0]).toMatchObject({projectId,isolation:true,text:'并行整理周报'})
+    expect(calls[1]).toMatchObject({projectId,text:'整理周报'});expect(calls[1]).not.toHaveProperty('isolation')
+    expect(await control('owner','任务',identity)).not.toBe('')
   })
 })

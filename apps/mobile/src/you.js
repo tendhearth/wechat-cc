@@ -23,11 +23,20 @@ function youNote(v) {
   if (v.changes.length > YOU_ORDER_NOTE) h += '<div class="you-was">还有 ' + (v.changes.length - YOU_ORDER_NOTE) + ' 处</div>'
   return h + '</div>'
 }
+// 逐条纠错(步骤 A,2026-10-06):点一条 ⇒ 下面出三个选择;选了立刻从记忆里拿掉,CC 记下这次纠正、当晚整理不再写回。
+var youOpenId = null, youBusy = false
+function youFix(it) {
+  if (!it.id || it.id !== youOpenId) return ""
+  return '<div class="you-fix" role="group" aria-label="这条怎么了">' +
+    '<button type="button" data-fix="wrong">记错了</button><button type="button" data-fix="outdated">过时了</button>' +
+    '<button type="button" data-fix="delete">不用记</button><button type="button" data-fix="cancel" class="you-fix-cancel">算了</button></div>'
+}
 function youItem(section, it) {
   var dot = it.changed ? '<span class="you-new" role="img" aria-label="昨晚更新"></span>' : ""
-  if (it.person) return '<div class="you-who"><b>' + esc(it.person.name) + '</b><span>' + esc(it.person.rel) + dot + '</span></div>'
+  var attrs = it.id ? ' data-mem-id="' + esc(it.id) + '" role="button" tabindex="0" aria-expanded="' + (it.id === youOpenId) + '"' : ""
+  if (it.person) return '<div class="you-who"' + attrs + '><b>' + esc(it.person.name) + '</b><span>' + esc(it.person.rel) + dot + '</span></div>' + youFix(it)
   var due = it.due_label ? '<span class="you-due">' + esc(it.due_label) + '</span>' : ""
-  return '<div class="you-it"><span>' + esc(it.display) + dot + '</span>' + due + '</div>'
+  return '<div class="you-it"' + attrs + '><span>' + esc(it.display) + dot + '</span>' + due + '</div>' + youFix(it)
 }
 function youHtml(v) {
   var h = '<p class="you-line">' + esc(youLine(v)) + '</p><p class="you-meta">' + esc(youMeta(v)) + '</p>'
@@ -37,7 +46,7 @@ function youHtml(v) {
     h += '<div class="you-sec">' + esc(s.name.split("").join(" ")) + '</div>'
     s.items.forEach(function(it) { h += youItem(s.name, it) })
   })
-  return h + '<p class="you-foot">不对的地方,直接跟我说。</p>'
+  return h + '<p class="you-foot">哪条不对,点它告诉我;也可以直接跟我说。</p><p id="you-fix-note" class="you-meta" role="status" aria-live="polite"></p>'
 }
 function youBlinkOnce() {
   var img = /** @type {HTMLImageElement} */ (document.getElementById("you-img"))
@@ -63,13 +72,45 @@ function youLoadFrames() {
   }).catch(function() { youFramesAsked = false })
 }
 // 读到过一封信就留着它刷新,不再每次打开都闪一下「看看我记得什么…」。
-var youShown = false
+var youShown = false, youLast = null
+function youRender(note) {
+  var body = document.getElementById("you-body")
+  if (!youLast) return
+  body.innerHTML = youHtml(youLast)
+  var n = document.getElementById("you-fix-note"); if (n && note) n.textContent = note
+}
+function youCorrect(id, verdict) {
+  if (youBusy) return
+  youBusy = true
+  var n = document.getElementById("you-fix-note"); if (n) n.textContent = "正在改…"
+  api("/m/api/memory/correct", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ id: id, verdict: verdict }) })
+    .then(function(r) { return r.json() })
+    .then(function(r) {
+      youOpenId = null
+      if (!r || !r.ok) { youRender(r && r.error === "not_found" ? "这条已经不在了,刷新一下看看。" : "没改成,稍后再试。"); return }
+      return loadYou().then(function() { var m = document.getElementById("you-fix-note"); if (m) m.textContent = "好,拿掉了。我记下了,不会再写回去。" })
+    })
+    .catch(function() { youRender("没改成,稍后再试。") })
+    .finally(function() { youBusy = false })
+}
+document.getElementById("you-body").addEventListener("click", function(ev) {
+  var t = /** @type {HTMLElement} */ (ev.target)
+  var fix = t.closest ? t.closest("[data-fix]") : null
+  if (fix) { var v = fix.getAttribute("data-fix"); if (v === "cancel") { youOpenId = null; youRender("") } else if (youOpenId) youCorrect(youOpenId, v); return }
+  var item = t.closest ? t.closest("[data-mem-id]") : null
+  if (item) { var id = item.getAttribute("data-mem-id"); youOpenId = youOpenId === id ? null : id; youRender("") }
+})
+document.getElementById("you-body").addEventListener("keydown", function(ev) {
+  var el = /** @type {HTMLElement} */ (ev.target)
+  if ((ev.key === "Enter" || ev.key === " ") && el && el.getAttribute && el.getAttribute("data-mem-id")) { ev.preventDefault(); el.click() }
+})
 function loadYou() {
   var body = document.getElementById("you-body")
   if (!youShown) body.innerHTML = '<p class="you-meta">看看我记得什么…</p>'
   youLoadFrames()
   return api("/m/api/memory").then(function(r) { return r.json() }).then(function(v) {
     if (!v || !v.ok) throw new Error("unavailable")
+    youLast = v
     body.innerHTML = youHtml(v)
     youShown = true
   }).catch(function() {

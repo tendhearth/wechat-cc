@@ -32,6 +32,14 @@ describe('chunk', () => {
     expect(parts.every(p => p.length > 0)).toBe(true)
   })
 
+  it('hard cut never splits a surrogate pair (emoji run with no whitespace)', () => {
+    const text = '😀'.repeat(2500)          // 5000 UTF-16 code units
+    const parts = chunk(text, 4001)          // 奇数上限:按码元硬切正好落在一对中间
+    expect(parts.join('')).toBe(text)
+    const lone = /[\ud800-\udbff](?![\udc00-\udfff])|(?<![\ud800-\udbff])[\udc00-\udfff]/
+    for (const p of parts) expect(lone.test(p)).toBe(false)
+  })
+
   it('hard-cuts when no good boundary', () => {
     const text = 'aaaaaaaaaaaaaaaaaaaa' // 20 'a's, no whitespace
     const parts = chunk(text, 5)

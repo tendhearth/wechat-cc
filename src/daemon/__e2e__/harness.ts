@@ -272,8 +272,11 @@ export async function startTestDaemon(opts: TestDaemonOpts = {}): Promise<Daemon
   // 6. Override env to point daemon at test stateDir.
   // WECHAT_CC_STATE_DIR is read by main.ts; WECHAT_STATE_DIR is read by
   // config.ts (send-reply.ts, access.ts, log.ts) which are module-level
-  // singletons — but they DO re-read from disk each call (sendReplyOnce
-  // passes stateDir arg or reads from the env-resolved STATE_DIR).
+  // singletons. Careful: config.ts's STATE_DIR and anything joined from it at
+  // import time is FROZEN to the first daemon's dir for the whole test file —
+  // access.ts resolves its path per call for exactly this reason (2026-10-10:
+  // later daemons read the first, already-deleted dir once the 5s access cache
+  // expired ⇒ every message dropped as not-allowlisted; CI-only flake).
   // Setting both ensures the routing files (context_tokens, user_account_ids)
   // are written and read from the same directory.
   const origStateDir = process.env.WECHAT_CC_STATE_DIR

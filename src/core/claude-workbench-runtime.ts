@@ -295,6 +295,7 @@ export function createClaudeWorkbenchSession(baseOptions: Options, context: Spaw
     dispatch() { throw new Error('claude_runtime_requires_lifetime_entry') },
     async cancel() { if (!closing && !ended) await q.interrupt() },
     close,
+    processGroups: () => processOwner.groups(),
     // 网络守护「暂停在跑的任务」(2026-10-03):沙盒验证过 —— claude 在冻住期间被掐断的流,放开后
     // 自己重试接上(src/core/workbench/suspend-resume.sandbox.test.ts)。这一层自己没有回合计时器,冻进程就够。
     suspension: {

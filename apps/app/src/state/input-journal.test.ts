@@ -242,3 +242,34 @@ describe('native durable input journal', () => {
   })
 
 })
+
+describe('follow-up with photos (2026-10-06)', () => {
+  const D = '11111111-1111-4111-8111-111111111111', A = '22222222-2222-4222-8222-222222222222', B = '33333333-3333-4333-8333-333333333333'
+  it('keeps the photo references across a process restart and resends them unchanged', async () => {
+    const f = storage(), state = controller(f); await state.activate(REC)
+    const first = await state.prepare('task', '看这张', 'run', undefined, false, { draftId: D, attachmentIds: [A] })
+    expect(first).toMatchObject({ draftId: D, attachmentIds: [A] })
+    const reboot = controller(storage(f.disk)); await reboot.activate(REC)
+    const retry = await reboot.prepare('task', 'ignored', 'run', reboot.all()[0])
+    expect(retry).toMatchObject({ requestId: first.requestId, draftId: D, attachmentIds: [A] })
+  })
+  it('the same words with different photos is a new message; the same photos is a retry', async () => {
+    const f = storage(), state = controller(f); await state.activate(REC)
+    const first = await state.prepare('task', '看这张', 'run', undefined, false, { draftId: D, attachmentIds: [A] }); await state.update(first, { status: 'failed' })
+    const other = await state.prepare('task', '看这张', 'run', undefined, false, { draftId: D, attachmentIds: [B] })
+    expect(other.requestId).not.toBe(first.requestId)
+    await state.update(other, { status: 'failed' })
+    expect((await state.prepare('task', '看这张', 'run', undefined, false, { draftId: D, attachmentIds: [A] })).requestId).toBe(first.requestId)
+  })
+  it('a receipt only matches when its photos are exactly these; older computers that omit them are not held against it', async () => {
+    const { matchesMatterInput } = await import('./matter-inputs')
+    const f = storage(), state = controller(f); await state.activate(REC)
+    const s = await state.prepare('task', '看这张', 'run', undefined, false, { draftId: D, attachmentIds: [A] })
+    const r = receipt(s)
+    const att = (id: string) => ({ id, name: 'p.jpg', mime: 'image/jpeg', size: 1, sha256: 'a'.repeat(64) })
+    expect(matchesMatterInput(s, { ...r, attachments: [att(A)] })).toBe(true)
+    expect(matchesMatterInput(s, { ...r, attachments: [att(B)] })).toBe(false)
+    expect(matchesMatterInput(s, { ...r, attachments: [] })).toBe(false)
+    expect(matchesMatterInput(s, r)).toBe(true)
+  })
+})

@@ -42,6 +42,14 @@
           "microphonePermission": false,
           "recordAudioAndroid": false
         }
+      ],
+      [
+        "expo-image-picker",
+        {
+          "photosPermission": "Tendhearth uses your photos only when you pick a picture to send to CC.",
+          "cameraPermission": "Tendhearth uses the camera only to scan the pairing code shown on your computer.",
+          "microphonePermission": false
+        }
       ]
     ],
     "experiments": {

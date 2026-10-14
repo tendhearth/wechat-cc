@@ -177,3 +177,17 @@ CC 在微信里是管家：你说某件事，它找到是哪个任务、让原�
 - **2026-09-18**：对话侧的 Cursor 也改走 ACP（每会话一个常驻 cursor-agent acp，wechat MCP 按会话注入并带逐会话 token 与 tier，主人聊天拿得到 admin 工具；delegate 通道不给 cursor——能力矩阵上它 `supportsDelegation:false`）；不再往 ~/.cursor/mcp.json 写静态钥匙，boot 时清掉上一版留下的条目（这一步需要 cursor-agent 仍装在机器上才会跑到；卸载了 CLI 的用户要清那把旧钥匙得自己手动删 `~/.cursor/mcp.json` 里的 `wechat-cc:wechat` 条目）；一次性评估（cheapEval）仍走 print 模式。设计：docs/superpowers/specs/2026-09-18-acp-cursor-chat-design.md。
 - **2026-09-18**：Cursor（ACP）执行者收附件：图片（PNG / JPEG / GIF / WebP）作为 image 块进 prompt，PDF / 文本 / Office 给引用文本块由执行者用文件工具读；agent 不报图片能力时带图直接失败并说明。
 - **2026-09-18**：按对话换钉模型（/cursor <model> 等）现在同时忘掉该对话在这家执行者上的会话存档，下一句冷启动并按新模型跑；此前只放掉了活会话，续接仍在旧模型上（与全局换模型的修法相同）。
+
+## 自定义 ACP 执行者(2026-10-07)
+
+任何会说 ACP(Agent Client Protocol)的 CLI 都能接进一起做,和 Cursor 走同一个 ACP 客户端:逐工具权限卡、逐字流、能带附件。
+
+```bash
+wechat-cc cli acp list                       # 列出已加的 + 预设(装了的会标「已装」)
+wechat-cc cli acp add gemini-cli             # 预设:gemini-cli / opencode / goose / qwen-code
+wechat-cc cli acp add my-agent --name "我的 agent" --command /path/to/bin --args "acp"
+wechat-cc cli acp remove my-agent
+```
+
+写进 `agent-config.json` 的 `acp_agents`,**重启 daemon 后**出现在执行者里。命令找不到 / id 不合格 / 与内置执行者重名 ⇒ 开机跳过并记一行 `WORKBENCH` 日志。
+这些执行者不报调用目标,网络闸门按「需要保护」处理(fail closed)。能不能续接原会话取决于 agent 自己是否支持 ACP `session/load`。

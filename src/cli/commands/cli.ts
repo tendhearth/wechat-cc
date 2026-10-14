@@ -4,6 +4,7 @@
 // 同一时刻只做一件、动手期间挡住空闲自动重启」这几条),用 operator 凭据调 /v1/cli/*。
 import { defineCommand } from 'citty'
 import { STATE_DIR } from '../../lib/config'
+import { cliAcpCmd } from './cli-acp'
 
 const EXIT = { ok: 0, failed: 1, noDaemon: 2 } as const
 const NAMES = 'claude | codex | cursor | agy'
@@ -79,5 +80,5 @@ const rollbackCmd = defineCommand({
 
 export const cliCmd = defineCommand({
   meta: { name: 'cli', description: '外部 agent CLI(claude / codex / cursor-agent / agy)的版本与自动升级' },
-  subCommands: { status: statusCmd, upgrade: upgradeCmd, rollback: rollbackCmd },
+  subCommands: { status: statusCmd, upgrade: upgradeCmd, rollback: rollbackCmd, acp: cliAcpCmd },
 })

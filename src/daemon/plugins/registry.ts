@@ -220,7 +220,8 @@ export function loadPlugins(deps: LoadPluginsDeps): LoadedPlugin[] {
     // dir fails existsSync, which would wrongly mark a fresh install NOT READY until
     // some other step happened to create the dir. Only for enabled plugins (disabled
     // ones are withheld regardless, and we don't want to litter dirs during discovery).
-    if (enabled) { try { mkdirSync(dataDir, { recursive: true }) } catch { /* checkReady will report */ } }
+    // 0700:wxvault 这类插件在这里放主人解密后的微信记录,不该让同机别的用户读到(状态目录本身未必是 0700)。
+    if (enabled) { try { mkdirSync(dataDir, { recursive: true, mode: 0o700 }) } catch { /* checkReady will report */ } }
     const spec = resolveSpec(p.manifest, p.dir, dataDir)
     const health = checkReady(p.manifest, spec, p.dir, dataDir, deps.hostVersion)   // may rewrite spec.command → absolute
     loaded.push({

@@ -1,6 +1,6 @@
 // src/core/agy-agent-provider.test.ts — 全部经注入 spawnFn 的假 agy
 import { describe, it, expect } from 'vitest'
-import { AGY_CAPABILITIES, createAgyAgentProvider, drainCappedStderr } from './agy-agent-provider'
+import { AGY_CAPABILITIES, createAgyAgentProvider, drainCappedStderr, isUnknownAgyModel, pickReplacementModel } from './agy-agent-provider'
 import { TIER_PROFILES } from './user-tier'
 import { isReplyToolCall } from './agent-provider'
 
@@ -355,11 +355,39 @@ describe('createAgyAgentProvider', () => {
     const provider = createAgyAgentProvider({ bin: 'agy', model: 'm', spawnFn, log: () => {} })
     const text = await provider.cheapEval!('prompt')
     expect(text).toBe('hi')
-    expect(calls[0]!.args).toContain('gemini-3.7-flash-low')
+    expect(calls[0]!.args).toContain('gemini-3.8-flash-low')
     // CONTROLLER RULING 2: one-shot evals add neither --conversation nor
     // --new-project (no session, tools already auto-denied in print mode).
     expect(calls[0]!.args).not.toContain('--conversation')
     expect(calls[0]!.args).not.toContain('--new-project')
+  })
+
+  // 2026-10-13 真机:Google 下线 gemini-3.7-*,写死的模型名让每次后台判断都失败。只在真失败后问一次 `agy models`,换同档最新的。
+  it('cheapEval heals an unrecognized model: lists models once, retries with the newest same-tier one, remembers it', async () => {
+    const calls: string[][] = []
+    const BAD = JSON.stringify({ event: 'result', result: { conversation_id: 'c1', status: 'ERROR', error: 'invalid model selection (--model "gemini-3.8-flash-low" --effort ""): model gemini-3.8-flash-low is not recognized as a known model or custom model in settings' } })
+    const LISTING = ['Fetching available models...', 'gemini-3.9-flash-high\tGemini 3.9 Flash (High)', 'gemini-3.9-flash-low\tGemini 3.9 Flash (Low)', 'gemini-3.10-flash-low\tGemini 3.10 Flash (Low)', 'claude-sonnet-5-5-low\tClaude Sonnet 5.5 (Low)']
+    const spawnFn = (args: string[]) => {
+      calls.push(args)
+      const lines = args[0] === 'models' ? LISTING : args.includes('gemini-3.8-flash-low') ? [INIT, BAD] : [INIT, TEXT_DONE, RESULT]
+      return { stdout: (async function* () { for (const l of lines) yield l + '\n' })(), exited: Promise.resolve(0), stderr: async () => '', kill: () => {} }
+    }
+    const logs: string[] = []
+    const provider = createAgyAgentProvider({ bin: 'agy', model: 'm', spawnFn, log: (_t, l) => logs.push(l) })
+    expect(await provider.cheapEval!('p1')).toBe('hi')
+    expect(calls.map(c => c[0] === 'models' ? 'models' : c[c.indexOf('--model') + 1])).toEqual(['gemini-3.8-flash-low', 'models', 'gemini-3.10-flash-low'])
+    expect(logs.some(l => l.includes('using gemini-3.10-flash-low'))).toBe(true)
+    // 记住了:第二次直接用新名字,不再列模型
+    expect(await provider.cheapEval!('p2')).toBe('hi')
+    expect(calls.at(-1)).toContain('gemini-3.10-flash-low');expect(calls.filter(c => c[0] === 'models')).toHaveLength(1)
+  })
+  it('model healing picks within the same family + tier only; other errors are not treated as unknown-model', () => {
+    const listing = 'gemini-3.9-flash-high\tx\ngemini-3.9-flash-low\tx\nclaude-opus-5-5-low\tx'
+    expect(pickReplacementModel('gemini-3.8-flash-low', listing)).toBe('gemini-3.9-flash-low')
+    expect(pickReplacementModel('gemini-3.8-flash-medium', listing)).toBeNull()
+    expect(pickReplacementModel('gemini-3.9-flash-low', listing)).toBeNull()
+    expect(isUnknownAgyModel(new Error('agy result status=ERROR: invalid model selection (--model "x")'))).toBe(true)
+    expect(isUnknownAgyModel(new Error('quota exhausted'))).toBe(false)
   })
 
   it('cheapEval: auth-shaped response text throws', async () => {

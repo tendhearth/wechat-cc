@@ -9,7 +9,7 @@ import { readFileSync } from 'node:fs'
 const SRC = readFileSync(new URL('../../relay/pset.html', import.meta.url), 'utf8')
 const SCRIPT = /<script>([\s\S]*?)<\/script>/.exec(SRC)![1]!
 
-function runShell(hash: string, stored: string | null) {
+function runShell(hash: string, stored: string | null, storedId?: string) {
   const sockets: FakeWS[] = []
   class FakeWS {
     url: string; sent: string[] = []; closed = false
@@ -18,7 +18,7 @@ function runShell(hash: string, stored: string | null) {
     send(s: string) { this.sent.push(s) }
     close() { this.closed = true }
   }
-  const store = new Map<string, string>(stored ? [['deviceToken', stored]] : [])
+  const store = new Map<string, string>([...(stored ? [['deviceToken', stored]] as const : []), ...(storedId ? [['deviceTokenId', storedId]] as const : [])])
   const msg = { textContent: '' }
   const images: unknown[] = []
   const env = {
@@ -48,10 +48,26 @@ describe('pset shell', () => {
     expect(sockets[0]!.url).toBe('wss://cc.example/tunnel/phone?id=D1')
   })
 
-  it('a stale stored device token falls back to the link token and retries once', () => {
-    const { sockets, store } = runShell('#id=D1&t=tLINK&p=%2Fset', 'dOLD')
+  it('a stale stored device token (of this computer) is dropped and the link token retried once', () => {
+    const { sockets, store } = runShell('#id=D1&t=tLINK&p=%2Fset', 'dOLD', 'D1')
     sockets[0]!.onmessage!({ data: JSON.stringify({ error: 'auth_failed' }) })
     expect(store.has('deviceToken')).toBe(false)
+    expect(store.has('deviceTokenId')).toBe(false)
+    expect(sockets).toHaveLength(2)
+  })
+
+  // 2026-10-10 评审:中继是所有人共用的一个域,别人的配对链接(#id=<他的电脑>)也打开这个壳页、读写同一份
+  // localStorage。对方回一句明文 auth_failed,原先就删掉主人的令牌(一键解配)。只用、只删属于这台电脑的令牌。
+  it('a link for ANOTHER computer neither uses nor deletes my token', () => {
+    const { sockets, store } = runShell('#id=rOTHER&t=tLINK', 'dMINE', 'rMINE')
+    sockets[0]!.onmessage!({ data: JSON.stringify({ error: 'auth_failed' }) })
+    expect(store.get('deviceToken')).toBe('dMINE')
+    expect(store.get('deviceTokenId')).toBe('rMINE')
+  })
+  it('a legacy token with no recorded computer is tried, but an auth_failed never deletes it', () => {
+    const { sockets, store } = runShell('#id=D1&t=tLINK&p=%2Fset', 'dOLD')
+    sockets[0]!.onmessage!({ data: JSON.stringify({ error: 'auth_failed' }) })
+    expect(store.get('deviceToken')).toBe('dOLD')
     expect(sockets).toHaveLength(2)
   })
 

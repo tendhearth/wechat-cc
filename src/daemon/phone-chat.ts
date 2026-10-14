@@ -10,9 +10,12 @@
 export type ChatJobStatus = 'pending' | 'replied' | 'failed'
 export type ChatJobError = 'busy' | 'unavailable' | 'not_configured'
 export interface ChatJob { requestId: string; matterId: string; text: string; status: ChatJobStatus; since: number; error?: ChatJobError }
+/** 这一句带的图(2026-10-06):手机先把图分块传成材料暂存,再用草稿 id + 材料 id 引用。 */
+export interface PhoneChatMaterials { draftId: string; attachmentIds: string[] }
+export interface PhoneChatImage { mime: string; bytes: Uint8Array }
 export interface PhoneChat {
-  /** 收下即回。抛 'no_owner_chat' | 'chat_busy' | 'input_conflict'(同一 requestId 换了正文)。 */
-  say(requestId: string, text: string): ChatJob
+  /** 收下即回。抛 'no_owner_chat' | 'chat_busy' | 'input_conflict'(同一 requestId 换了正文或图)| 取图的错误(invalid_attachment 等)。 */
+  say(requestId: string, text: string, materials?: PhoneChatMaterials): ChatJob
   state(): { pending: ChatJob | null; failed: ChatJob | null }
   /** 正在等回复的那件事的 matterId(给主题来源)。 */
   pendingMatter(): string | null
@@ -30,7 +33,9 @@ const errorOf = (e: unknown): ChatJobError => {
 }
 
 export function makePhoneChat(d: {
-  converse(text: string): Promise<{ reply: string }>
+  converse(text: string, images?: PhoneChatImage[]): Promise<{ reply: string }>
+  /** 按主人校验并取出这一句引用的图(读出字节后暂存即删)。没接 ⇒ 带图的一句 409 不收。 */
+  takeImages?(materials: PhoneChatMaterials): PhoneChatImage[]
   ownerMatterId(): string | null
   onSettled?(matterId: string): void
   now?: () => number
@@ -42,6 +47,10 @@ export function makePhoneChat(d: {
   let failed: ChatJob | null = null
   /** 结束时刻(只内部用,不进回包):过期按它算,不按收下时刻。 */
   const settledAt = new WeakMap<ChatJob, number>()
+  // 图只在内存里跟着这一句:失败后同一 requestId 重试要用同一组图(暂存已经删了,不能再取一次)。
+  const imagesOf = new WeakMap<ChatJob, PhoneChatImage[]>()
+  const materialKey = new WeakMap<ChatJob, string>()
+  const keyOf = (m?: PhoneChatMaterials) => JSON.stringify(m?.attachmentIds ?? [])
   const ageFrom = (j: ChatJob) => settledAt.get(j) ?? j.since
   const sweep = () => {
     const cutoff = now() - PHONE_CHAT_JOB_TTL_MS
@@ -72,7 +81,7 @@ export function makePhoneChat(d: {
     timer = setTimeout(() => finish(new Error('phone_chat_timeout')), PHONE_CHAT_TIMEOUT_MS)
     ;(timer as { unref?: () => void }).unref?.()
     // Promise.resolve().then:converse 同步抛错也落成 failed,不会让 pending 卡死。
-    Promise.resolve().then(() => d.converse(job.text)).then(
+    Promise.resolve().then(() => { const images = imagesOf.get(job); return images?.length ? d.converse(job.text, images) : d.converse(job.text) }).then(
       () => {
         if (!done) return finish(null)
         // 超时后才回来的成功(终审 I2):这句其实办成了、回复已落进对话 ⇒ 翻成 replied,
@@ -89,15 +98,23 @@ export function makePhoneChat(d: {
   }
   const visibleFailed = () => (failed && ageFrom(failed) >= now() - PHONE_CHAT_JOB_TTL_MS ? failed : null)
   return {
-    say(requestId, text) {
+    say(requestId, text, materials) {
       const seen = jobs.get(requestId)
-      // 同一 requestId 换了正文 = 客户端的 bug(app 正文一改就换 id):不当成重试 / 去重,409 说清楚(与工作台补充同一个码)。
-      if (seen && seen.text !== text) throw new Error('input_conflict')
+      // 同一 requestId 换了正文或图 = 客户端的 bug(app 正文一改就换 id):不当成重试 / 去重,409 说清楚(与工作台补充同一个码)。
+      if (seen && (seen.text !== text || materialKey.get(seen) !== keyOf(materials))) throw new Error('input_conflict')
       if (seen && seen.status !== 'failed') return { ...seen }
       if (pending && pending.requestId !== requestId) throw new Error('chat_busy')
       const matterId = d.ownerMatterId()
       if (!matterId) throw new Error('no_owner_chat')
+      // 取图放在所有「不收」的判断之后:取出来就删暂存,不能取了又不收。重试沿用上一次取到的图。
+      let images: PhoneChatImage[] = []
+      if (seen) images = imagesOf.get(seen) ?? []
+      else if (materials?.attachmentIds.length) {
+        if (!d.takeImages) throw new Error('images_not_wired')
+        images = d.takeImages(materials)
+      }
       const job: ChatJob = { requestId, matterId, text, status: 'pending', since: now() }
+      imagesOf.set(job, images); materialKey.set(job, keyOf(materials))
       // 先删再放:重试的那条挪到队尾,不会因为第一次收下得早而被当成最旧的挤掉。
       jobs.delete(requestId); jobs.set(requestId, job); sweep()
       run(job)

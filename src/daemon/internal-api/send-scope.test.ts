@@ -100,8 +100,6 @@ describe('SEND_SCOPED_ROUTES registry', () => {
     // 以 chat 为目标、guest/trusted 够得着的路由。新加一条往 chat 发消息的路由,
     // 要么进 SEND_SCOPED_ROUTES,要么在这里写明为什么豁免。
     const EXEMPT: Record<string, string> = {
-      'POST /v1/user/set_name': '只改显示名记忆,不发消息(trusted)',
-      'POST /v1/chat-prefs': '只改 care/split 偏好,不发消息(trusted)',
       'POST /v1/memory/delete': 'chat_id 只用于审计事件;路径由 memoryScopeDenied 管',
       'POST /v1/reminders/schedule': 'routes-reminders.ts 自己按会话 chat 限',
       'POST /v1/reminders/cancel': '同上',
@@ -112,6 +110,7 @@ describe('SEND_SCOPED_ROUTES registry', () => {
       'POST /v1/wechat/edit_message', 'POST /v1/wechat/broadcast', 'POST /v1/wechat/send_sticker',
       'POST /v1/wechat/search_online_sticker', 'POST /v1/wechat/send_online_sticker_candidate',
       'POST /v1/wechat/sticker_feedback', 'POST /v1/share/page', 'POST /v1/conversation/set-mode',
+      'POST /v1/user/set_name', 'POST /v1/chat-prefs',
       ...Object.keys(EXEMPT),
     ]
     for (const key of chatRoutes) {
@@ -211,6 +210,31 @@ describe('send routes over HTTP — chat scope', () => {
       nothingSent(m)
     })
   }
+
+  // 不发消息、但改的是那个 chat 的状态 —— 跟 sticker_feedback 同一条:只许改自己的。
+  // 以前 set_name 豁免着:一个 trusted 朋友的会话能把主人那个 chat 的显示名改成任意长的一段话。
+  it('trusted session → ANOTHER chat on set_name / chat-prefs ⇒ 403, nothing changed; own chat goes through', async () => {
+    const setUserName = vi.fn(async () => {})
+    const setChatPref = vi.fn(() => ({}))
+    const { port } = await boot(mocks(), { setUserName, setChatPref } as Partial<InternalApiDeps>)
+    const tok = api!.mintSessionToken('trusted', 'claude/a/my-chat')
+    expect((await post(port, tok, '/v1/user/set_name', { chat_id: 'owner@im.wechat', name: 'x' })).status).toBe(403)
+    expect((await post(port, tok, '/v1/chat-prefs', { chat_id: 'owner@im.wechat', care: 'off' })).status).toBe(403)
+    expect(setUserName).not.toHaveBeenCalled()
+    expect(setChatPref).not.toHaveBeenCalled()
+    expect((await post(port, tok, '/v1/user/set_name', { chat_id: 'my-chat', name: '小王' })).status).toBe(200)
+    expect((await post(port, tok, '/v1/chat-prefs', { chat_id: 'my-chat', care: 'low' })).status).toBe(200)
+    expect(setUserName).toHaveBeenCalledOnce()
+    expect(setChatPref).toHaveBeenCalledOnce()
+  })
+
+  it('set_name rejects an absurdly long name (it is a name, not a prompt)', async () => {
+    const setUserName = vi.fn(async () => {})
+    const { port } = await boot(mocks(), { setUserName } as Partial<InternalApiDeps>)
+    const tok = api!.mintSessionToken('trusted', 'claude/a/my-chat')
+    expect((await post(port, tok, '/v1/user/set_name', { chat_id: 'my-chat', name: 'x'.repeat(500) })).status).toBe(400)
+    expect(setUserName).not.toHaveBeenCalled()
+  })
 
   it('the denial is logged (event chat_scope_denied)', async () => {
     const m = mocks()

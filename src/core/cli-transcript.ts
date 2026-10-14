@@ -17,6 +17,27 @@ function isHarnessText(t: string): boolean {
   const s = t.trimStart()
   return s.startsWith('<system-reminder>') || s.startsWith('<task-notification>') || s.startsWith('<command-message>')
     || s.startsWith('<environment_context>') || s.startsWith('<permissions instructions>') || s.startsWith('<local-command')
+    // Claude Code 的 `!` 命令及其输出(2026-10-10):`! env` / `! cat .env` 的内容不该进「看 码」的公开页面
+    || s.startsWith('<bash-')
+}
+
+/**
+ * 「看 码」的页面不用登录 —— 明显的密钥形状一律打码(2026-10-10)。宁可多遮:这里只是给主人在手机上瞄一眼进度。
+ * 覆盖:OpenAI / Anthropic 风格的 sk-…、GitHub ghp_ / gho_ / github_pat_、AWS AKIA…、Slack xox?-,
+ * 以及 `XXX_KEY / SECRET / TOKEN / PASSWORD = 值`、`api_key: "值"` 这类赋值的值。
+ */
+const SECRET_PATTERNS: RegExp[] = [
+  /\bsk-[A-Za-z0-9_-]{16,}/g,
+  /\b(?:ghp|gho|ghu|ghs|ghr)_[A-Za-z0-9]{20,}/g,
+  /\bgithub_pat_[A-Za-z0-9_]{20,}/g,
+  /\bAKIA[0-9A-Z]{16}\b/g,
+  /\bxox[abposr]-[A-Za-z0-9-]{10,}/g,
+]
+const SECRET_ASSIGN = /\b([A-Za-z0-9_]*(?:KEY|SECRET|TOKEN|PASSWORD|PASSWD|PWD)[A-Za-z0-9_]*)(\s*[=:]\s*)(["']?)([^\s"',;]{4,})\3/gi
+export function redactSecrets(text: string): string {
+  let out = text
+  for (const re of SECRET_PATTERNS) out = out.replace(re, '[已打码]')
+  return out.replace(SECRET_ASSIGN, (_m, k: string, sep: string, q: string) => `${k}${sep}${q}[已打码]${q}`)
 }
 
 function textOf(content: unknown, kinds: string[]): string {
@@ -53,6 +74,7 @@ export function parseTranscript(jsonl: string, source: CliSource): TranscriptTur
     }
     text = text.trim()
     if (!text || isHarnessText(text)) continue
+    text = redactSecrets(text)
     if (text.length > TURN_MAX) text = text.slice(0, TURN_MAX - 1) + '…'
     turns.push({ role, text })
   }

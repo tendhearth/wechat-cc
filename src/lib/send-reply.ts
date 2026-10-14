@@ -76,10 +76,14 @@ export function chunk(text: string, limit: number): string[] {
     // position 0 (would slice an empty string and infinite-loop). When
     // no good boundary exists, cut at `limit` — losing word boundaries
     // is better than hanging.
-    const cut = para > limit / 2 ? para
+    let cut = para > limit / 2 ? para
       : line > limit / 2 ? line
       : space > 1 ? space
       : limit
+    // 硬切按 UTF-16 码元算:落在代理对中间(emoji 连串、没有空白)⇒ 两段各剩半个字符,
+    // 微信那头显示成 �。退一位,把整个字符留给下一段。
+    const hi = rest.charCodeAt(cut - 1)
+    if (cut > 1 && hi >= 0xd800 && hi <= 0xdbff) cut--
     out.push(rest.slice(0, cut))
     rest = rest.slice(cut).replace(/^\n+/, '')
   }
