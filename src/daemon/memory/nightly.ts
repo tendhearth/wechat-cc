@@ -190,7 +190,7 @@ export function buildNightlyPrompt(a: { today: string; current: string; material
     '只输出一个 JSON 对象,不要任何别的文字。四个键都必须出现,没有就给空数组:',
     '{"add":[{"section":"承诺","text":"…"}],"update":[{"id":"7f3a","text":"…","reversal":false}],"confirm":["91c2"],"remove":[{"id":"4d7c","reason":"…"}]}',
     '',
-    '## 当前记忆(每条尾注里的 m:xxxx 是编号)',
+    '## 当前记忆(每条尾注里的 m:xxxx 是编号;JSON 里的 id 只写 m: 后面那部分)',
     a.current,
     '',
     '## 新素材',

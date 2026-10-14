@@ -15,6 +15,10 @@ let n = 0
 const opts = { today: '2026-09-25', newId: () => `e${String(n++).padStart(3, '0')}` }
 
 describe('parseOps', () => {
+  it('strips the m: label the model sometimes copies into ids (10-13: unknown_id:m:110648 failed four nights)', () => {
+    expect(parseOps('{"add":[],"update":[{"id":"m:110648","text":"x","reversal":false}],"confirm":["m:cfc37c","404991"],"remove":[{"id":" M:aae2f4 ","reason":"r"}]}'))
+      .toEqual({ add: [], update: [{ id: '110648', text: 'x', reversal: false }], confirm: ['cfc37c', '404991'], remove: [{ id: 'aae2f4', reason: 'r' }] })
+  })
   it('accepts a fenced JSON object with all four keys', () => {
     expect(parseOps('```json\n{"add":[{"section":"承诺","text":"周五回话"}],"update":[],"confirm":["a001"],"remove":[]}\n```'))
       .toEqual({ add: [{ section: '承诺', text: '周五回话' }], update: [], confirm: ['a001'], remove: [] })
