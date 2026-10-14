@@ -94,7 +94,7 @@ describe('wechat-mcp stdio integration', () => {
   }
 
   const DAEMON_TOOLS = [
-    'diagnostic_turns', 'diagnostic_sessions', 'diagnostic_health',
+    'diagnostic_turns', 'diagnostic_sessions', 'diagnostic_health', 'terminal_sessions',
     'session_release', 'model_get', 'model_set', 'daemon_restart',
   ]
 

@@ -170,3 +170,13 @@ it('GET /v1/connections goes to the real daemon in live preview, and is left to 
  expect((await createWorkbenchProxy({stateDir:dir,dryRun:false,allowWrites:true,fetch:upstream})(req('/v1/connections','POST')))?.status).toBe(405)
  expect(await createWorkbenchProxy({stateDir:dir,dryRun:false,allowWrites:true,fetch:upstream})(req('/v1/connectionsx'))).toBeNull()
 })
+it('GET /v1/cli/sessions(此刻里的终端会话):live 走真 daemon、带 query;mock 交给 shim;POST 与旁路都不放',async()=>{
+ const upstream=vi.fn(async(_url:string,_init?:RequestInit)=>Response.json({ok:true,sessions:[]}))
+ const live=await createWorkbenchProxy({stateDir:dir,dryRun:false,allowWrites:false,fetch:upstream})(req('/v1/cli/sessions?limit=20'))
+ expect(live?.status).toBe(200);expect(upstream.mock.calls[0]?.[0]).toBe('http://127.0.0.1:9001/v1/cli/sessions?limit=20')
+ expect(await createWorkbenchProxy({stateDir:dir,dryRun:true,allowWrites:false,fetch:upstream})(req('/v1/cli/sessions'))).toBeNull()
+ expect((await createWorkbenchProxy({stateDir:dir,dryRun:false,allowWrites:true,fetch:upstream})(req('/v1/cli/sessions','POST')))?.status).toBe(405)
+ expect(await createWorkbenchProxy({stateDir:dir,dryRun:false,allowWrites:true,fetch:upstream})(req('/v1/cli/event','POST'))).toBeNull()
+ expect(await createWorkbenchProxy({stateDir:dir,dryRun:false,allowWrites:true,fetch:upstream})(req('/v1/cli/permission','POST'))).toBeNull()
+ expect(upstream).toHaveBeenCalledTimes(1)
+})

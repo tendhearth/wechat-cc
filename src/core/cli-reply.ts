@@ -9,14 +9,23 @@
 import type { CliSource } from './cli-events'
 
 export type CliReply =
+  | { kind: 'list' }
   | { kind: 'view'; code: string }
   | { kind: 'say'; code: string; text: string }
 
 const VIEW_RE = /^看\s*([a-z0-9]{4,12})\s*$/i
 const SAY_RE = /^@([a-z0-9]{4,12})\s+([\s\S]+)$/i
+/**
+ * 「终端」—— 列出终端里的会话(2026-10-14)。整句匹配,只认这几种说法:
+ * 终端 / 终端会话 / 终端列表 / 看终端 / 看看终端 / 会话列表 / /cli,可带问号。
+ * 不认单独的「会话」:日常聊天里太容易整句说出来。说法更散的(「我终端里那几个在干嘛」)
+ * 交给模型,它有只读工具 terminal_sessions。
+ */
+const LIST_RE = /^(?:看看?)?(?:终端(?:会话|列表)?|会话列表|\/cli)\s*[?？]?$/i
 
 export function parseCliReply(text: string): CliReply | null {
   const t = text.trim()
+  if (LIST_RE.test(t)) return { kind: 'list' }
   const v = VIEW_RE.exec(t)
   if (v) return { kind: 'view', code: v[1]!.toLowerCase() }
   const s = SAY_RE.exec(t)

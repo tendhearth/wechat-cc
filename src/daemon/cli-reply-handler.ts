@@ -16,6 +16,7 @@ import { readFileSync, statSync, openSync, readSync, closeSync } from 'node:fs'
 import { parseCliReply, resumeCommand } from '../core/cli-reply'
 import { renderTranscriptTail } from '../core/cli-transcript'
 import { stripMarkdown, INLINE_MAX, type CliEventHub, type CliSessionInfo } from '../core/cli-events'
+import { formatCliSessionDigest, type CliDigestView } from '../core/cli-session-digest'
 
 export const RESUME_TIMEOUT_MS = 10 * 60_000
 const TRANSCRIPT_READ_MAX = 512 * 1024
@@ -83,6 +84,12 @@ export interface CliReplyHandlerDeps extends CliReplyCoreDeps {
     view(s: CliSessionInfo): Promise<{ ok: true; markdown: string } | { ok: false; error: string }>
     say(s: CliSessionInfo, text: string): Promise<{ ok: boolean; error?: string }>
   }
+  /**
+   * 「终端」:登记处的列表(等你批准的在前,带中继开出去的码)。缺席 ⇒ 不认「终端」这句,
+   * 交给后面(老测试 / 没接登记处)。
+   */
+  listSessions?: () => CliDigestView[]
+  now?: () => number
 }
 
 export type ResumeOutcome = { kind: 'ok' | 'timeout' | 'failed'; text: string }
@@ -183,7 +190,7 @@ export function readTail(path: string, max = TRANSCRIPT_READ_MAX): string {
 }
 
 export interface CliReplyHandler {
-  /** 只读:主人发的「看 码」「@码 文本」。 */
+  /** 只读:主人发的「终端」「看 码」「@码 文本」。 */
   probe(text: string, chatId: string): boolean
   /** true = 这句话是给终端会话的,已处理(或已回绝);false = 不是,交给后面的中间件。 */
   handle(text: string, chatId: string): Promise<boolean>
@@ -210,6 +217,17 @@ export function makeCliReplyHandler(deps: CliReplyHandlerDeps): CliReplyHandler 
   async function sendMarkdown(chatId: string, label: string, md: string): Promise<void> {
     const url = await deps.sharePage(label, md, chatId).catch(() => null)
     await say(chatId, url ? `${label} 最近的对话:${url}` : `${label}:\n${stripMarkdown(md).slice(0, INLINE_MAX)}`)
+  }
+
+  async function list(chatId: string): Promise<void> {
+    let views: CliDigestView[]
+    try { views = deps.listSessions!() }
+    catch (err) {
+      deps.log('CLI_REPLY', `list failed: ${err instanceof Error ? err.message : String(err)}`)
+      await say(chatId, '现在读不到终端会话的登记,稍后再试。')
+      return
+    }
+    await say(chatId, formatCliSessionDigest(views, { now: (deps.now ?? Date.now)(), localMachine: deps.localMachine }))
   }
 
   async function view(chatId: string, code: string): Promise<void> {
@@ -251,12 +269,18 @@ export function makeCliReplyHandler(deps: CliReplyHandlerDeps): CliReplyHandler 
   }
 
   return {
-    probe(text, chatId) { return !!parseCliReply(text) && deps.isOwner(chatId) },
+    probe(text, chatId) {
+      const parsed = parseCliReply(text)
+      if (!parsed || (parsed.kind === 'list' && !deps.listSessions)) return false
+      return deps.isOwner(chatId)
+    },
     async handle(text, chatId) {
       const parsed = parseCliReply(text)
       if (!parsed) return false
+      if (parsed.kind === 'list' && !deps.listSessions) return false
       if (!deps.isOwner(chatId)) return false   // 不是主人:当普通消息,别暴露会话码这套
-      if (parsed.kind === 'view') await view(chatId, parsed.code)
+      if (parsed.kind === 'list') await list(chatId)
+      else if (parsed.kind === 'view') await view(chatId, parsed.code)
       else await sayTo(chatId, parsed.code, parsed.text)
       return true
     },
