@@ -82,6 +82,12 @@ export interface CliSessionInfo {
 export interface CliEventHubDeps {
   /** 推到主人微信。sent = 送出去了;rejected = 微信那边拒了(如 errcode=-2);no_target = 没有主人 chat / 没接外发。 */
   send: (text: string) => Promise<'sent' | 'rejected' | 'no_target'>
+  /**
+   * 第二个出口:主人手机 app 的原生推送(中继 v2)。与微信并列、互不牵连 —— 同一批、同一套在场 /
+   * 快问快答 / 合并窗判断,合并窗到点时两边各发一次;微信拒了(errcode=-2)app 照样收到。
+   * 同步、只投不等:失败由调用方记日志丢弃,不重试。缺席 ⇒ 只有微信,同改造前。
+   */
+  pushApp?: (items: CliPushItem[]) => void
   projectName: (cwd: string) => string
   log: (tag: string, line: string) => void
   /** 人在电脑前时的面。缺席 ⇒ 在场时干脆不发(人就在终端前)。 */
@@ -99,6 +105,18 @@ export interface CliEventHubDeps {
    * daemon 重启也认得;缺席(老测试)⇒ 只用内存表,同改造前。
    */
   store?: CliSessionStore
+}
+
+/** 推给手机 app 的一条(结构化,措辞由 daemon 那头定;core 不碰推送协议)。 */
+export interface CliPushItem {
+  kind: 'stop' | 'permission'
+  source: CliSource
+  session_id: string
+  projectName: string
+  /** 「那边」的主机名;本机会话不带。 */
+  remoteMachine?: string
+  /** 最后一句 / 工具摘要压成的一行(去 markdown);可能为空串。 */
+  summary: string
 }
 
 /** 权限请求里登记处用得到的那几样(CliPermissionRequest 的子集,不 import 它免得成环)。 */
@@ -153,7 +171,7 @@ export function makeCliEventHub(deps: CliEventHubDeps): CliEventHub {
   // Map 保持插入顺序 ⇒ 第一个就是最旧的。
   const pending = new Map<string, Pending>()
   const sessions = new Map<string, SessionState>()
-  let outbox: string[] = []
+  let outbox: { text: string; item: CliPushItem }[] = []
   let flushTimer: ReturnType<typeof setTimeout> | null = null
 
   function state(ev: Pick<CliEvent, 'session_id' | 'source' | 'cwd' | 'machine' | 'transcript_path' | 'origin_agent'>): SessionState {
@@ -229,7 +247,12 @@ export function makeCliEventHub(deps: CliEventHubDeps): CliEventHub {
     if (outbox.length === 0) return
     const batch = outbox
     outbox = []
-    const text = batch.length === 1 ? batch[0]! : batch.join('\n\n— — —\n\n')
+    // app 先投(同步、只投不等):微信那边拒了 / 抛了都不影响手机这一路。
+    if (deps.pushApp) {
+      try { deps.pushApp(batch.map(b => b.item)) }
+      catch (err) { deps.log('CLI_PUSH', `app push failed (${batch.length} item(s)): ${err instanceof Error ? err.message : String(err)}`) }
+    }
+    const text = batch.length === 1 ? batch[0]!.text : batch.map(b => b.text).join('\n\n— — —\n\n')
     try {
       const outcome = await deps.send(text)
       // 服务端拒了(如 ilink errcode=-2)不能记成「已发」:那正是「出了错但没人知道」。
@@ -242,8 +265,8 @@ export function makeCliEventHub(deps: CliEventHubDeps): CliEventHub {
     }
   }
 
-  function enqueue(text: string): void {
-    outbox.push(text)
+  function enqueue(text: string, item: CliPushItem): void {
+    outbox.push({ text, item })
     if (!flushTimer) {
       flushTimer = setTimeout(() => { void flush() }, DIGEST_WINDOW_MS)
       ;(flushTimer as { unref?: () => void }).unref?.()
@@ -269,7 +292,13 @@ export function makeCliEventHub(deps: CliEventHubDeps): CliEventHub {
     if (full.length > INLINE_MAX && deps.sharePage) {
       try { link = await deps.sharePage(header, ev.text!) } catch { link = null }
     }
-    enqueue(formatCliPush(ev, projectName, { localMachine: deps.localMachine, link }))
+    const remote = ev.machine && deps.localMachine && ev.machine !== deps.localMachine ? ev.machine : undefined
+    enqueue(formatCliPush(ev, projectName, { localMachine: deps.localMachine, link }), {
+      kind: ev.kind === 'permission' ? 'permission' : 'stop',
+      source: ev.source, session_id: ev.session_id, projectName,
+      ...(remote ? { remoteMachine: remote } : {}),
+      summary: full ? summarizeOneLine(full, SESSION_SUMMARY_MAX) : '',
+    })
     deps.log('CLI_PUSH', `queued ${ev.source}/${ev.kind} ${short(ev.session_id)}${idle === null ? '' : ` (machine idle ${Math.round(idle)}s)`}`)
   }
 

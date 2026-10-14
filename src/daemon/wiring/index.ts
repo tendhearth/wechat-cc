@@ -148,6 +148,8 @@ export interface WiredDeps {
   connections: () => import('../connections').ConnectionsSnapshot
   /** 桌面「连接手机」;main.ts setPhoneConnect 到 internal-api。 */
   phoneConnect: import('../internal-api/types').PhoneConnectDep
+  /** 手机 app 原生推送出口(pipeline-deps 造);main.ts 接给终端会话推送。 */
+  appPush: import('../cli-app-push').AppPushOutlet
   /** 每晚记忆整理运行时(pipeline-deps 造);main.ts 挂定时器 + setMemoryNightly。 */
   memoryNightly: import('../memory/nightly-runtime').MemoryNightlyRuntime
   mattersService: import('../../core/matters/service').MattersService | null
@@ -259,9 +261,10 @@ export function wireMain(opts: WireMainOpts): WiredDeps {
     health: opts.boot.health.health,
     runAtelierTick,
   })
-  const { pipelineDeps, companionConverse, petTurn, settingsPanelLink, mattersService, memoryNightly, stopMatterActivity, connections, phoneConnect } = buildPipelineDeps(opts, refs)
+  const { appPush, pipelineDeps, companionConverse, petTurn, settingsPanelLink, mattersService, memoryNightly, stopMatterActivity, connections, phoneConnect } = buildPipelineDeps(opts, refs)
   const lifecycleDeps = buildLifecycleDeps(opts, ticks)
   return {
+    appPush,
     pipelineDeps,
     companionConverse,
     petTurn,

@@ -6,6 +6,8 @@ export type PushRoute =
   | { kind: 'gone' }
   | { kind: 'approval'; id: string; request?: string }
   | { kind: 'matter'; id: string }
+  /** 终端会话(daemon 的 cli-app-push.ts):id 空 ⇒ 「一起做」里的终端列表。那页自己拍板、自己处理会话已不在。 */
+  | { kind: 'terminal'; id: string }
 
 /**
  * 旧通知(spec §3):先按 taskId 拉一次最新详情。事情不在 ⇒ gone;拉不到(离线 / 超时)⇒ 照样去目标页,
@@ -14,6 +16,7 @@ export type PushRoute =
 export async function resolvePushRoute(t: PushTarget | null, fetchDetail: (id: string) => Promise<unknown>, timeoutMs = 5000): Promise<PushRoute> {
   if (!t || !t.taskId) return { kind: 'home' }
   const id = t.taskId
+  if (id.startsWith('cli:')) return { kind: 'terminal', id: id.slice(4) }
   let timer: ReturnType<typeof setTimeout> | undefined
   try {
     await Promise.race([
@@ -32,6 +35,7 @@ export async function resolvePushRoute(t: PushTarget | null, fetchDetail: (id: s
 export function hrefFor(r: PushRoute): string {
   if (r.kind === 'approval') return `/approval/${encodeURIComponent(r.id)}${r.request ? `?request=${encodeURIComponent(r.request)}` : ''}`
   if (r.kind === 'matter') return `/matter/${encodeURIComponent(r.id)}`
+  if (r.kind === 'terminal') return r.id ? `/terminal/${encodeURIComponent(r.id)}` : '/together'
   return '/'
 }
 

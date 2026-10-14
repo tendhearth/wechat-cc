@@ -65,6 +65,7 @@ import { makeCliSessionStore } from '../core/cli-session-store'
 import { makeCliPermissionRelay } from '../core/cli-permission-relay'
 import { makeCliReplyHandler, makeCliReplyCore, makeHandReplyExecutor } from './cli-reply-handler'
 import { makeCliPhoneActions } from './cli-phone-actions'
+import { makeCliHubAppPush, makeCliPermissionAsk, type AppPushOutlet } from './cli-app-push'
 import { scopedSend } from './inbound/reply-scope'
 import { makeBrainForwarder } from './cli-brain-forward'
 import { makeRemoteReply } from './cli-remote-reply'
@@ -666,12 +667,16 @@ export async function bootDaemon(opts: BootDaemonOpts): Promise<DaemonHandle> {
     // 终端 claude / codex 会话的 hook 事件(spec 2026-09-09-cli-hook-push):压一段
     // 再推给主人,同会话再敲一句就撤。发到哪:与权限卡、A2A notify 同一个主人
     // chat;怎么发:boot.sendAssistantText(同一条外发,断线时它自己退避、这里不重试)。
+    // 手机 app 推送出口:pipeline-deps(wireMain)里才造,这里先占位、建完再接上(cli-app-push.ts)。
+    let cliAppPush: AppPushOutlet | null = null
     const cliEvents = makeCliEventHub({
       send: async (text) => {
         const owner = resolveAdminChatId(loadAccess(), loadCompanionConfig(stateDir), null)
         if (!owner || !boot.sendAssistantText) return 'no_target'
         return await boot.sendAssistantText(owner, text) ? 'sent' : 'rejected'
       },
+      // 第二个出口:同一批、同一套在场判断,微信拒了手机照样收到。
+      pushApp: makeCliHubAppPush({ push: () => cliAppPush, log: (t, l) => log(t, l) }),
       projectName: makeProjectNamer(() => ilink.projects.list()),
       log: (t, l) => log(t, l),
       // 在场的主信号:这台电脑上次键鼠输入距今多久。人在 ⇒ 系统通知;走了 ⇒ 微信。
@@ -691,11 +696,16 @@ export async function bootDaemon(opts: BootDaemonOpts): Promise<DaemonHandle> {
     // 终端会话的权限 → 微信 y/n(同 spec §6.3)。复用 ilink.askUser,所以微信「y 码」、
     // 桌宠权限卡都能拍板 —— 一个权限,几个呈现面。主人在场(3 分钟内敲过字)就不问。
     const cliPermissions = makeCliPermissionRelay({
-      ask: (prompt, hash, ms) => {
-        const owner = resolveAdminChatId(loadAccess(), loadCompanionConfig(stateDir), null)
-        if (!owner) return Promise.resolve('undelivered' as const)
-        return ilink.askUser(owner, prompt, hash, ms)
-      },
+      // 先推手机、再发微信卡;手机够得着 ⇒ 微信卡没送到(errcode=-2)也不作废码,手机照样拍板。
+      ask: makeCliPermissionAsk({
+        ownerChatId: () => resolveAdminChatId(loadAccess(), loadCompanionConfig(stateDir), null),
+        askUser: (c, p, h, ms, o) => ilink.askUser(c, p, h, ms, o),
+        registerPending: (h, ms, meta) => ilink.registerPendingPermission(h, ms, meta),
+        sweepPending: () => ilink.sweepPendingPermissions(),
+        push: () => cliAppPush,
+        localMachine: osHostname(),
+        log: (t, l) => log(t, l),
+      }),
       presence: (s, idle) => cliEvents.presence(s, idle),
       projectName: makeProjectNamer(() => ilink.projects.list()),
       onRelayed: (s) => cliEvents.notePermissionRelay(s),
@@ -834,6 +844,7 @@ export async function bootDaemon(opts: BootDaemonOpts): Promise<DaemonHandle> {
     // 同上,桌宠的「在做什么」—— 组装闭包在 pipeline-deps(那里才有 boot)。
     internalApi.setPetTurn(wired.petTurn)
     ticksRef = wired.ticks
+    cliAppPush = wired.appPush
     internalApi.setSettingsLink(wired.settingsPanelLink)
     internalApi.setConnections(wired.connections)
     internalApi.setPhoneConnect(wired.phoneConnect)

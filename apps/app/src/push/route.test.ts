@@ -51,6 +51,26 @@ describe('resolvePushRoute —— 旧通知先定位事项、拉最新详情再�
   })
 })
 
+describe('终端会话的推送(taskId = cli:<会话>,daemon cli-app-push.ts)', () => {
+  it('cli:<会话> ⇒ 终端会话页,不拉「一件事」详情;只有前缀 ⇒ 终端列表(一起做)', async () => {
+    const f = vi.fn(async () => ({}))
+    const one = await resolvePushRoute(targetFromParams({ kind: 'permission', taskId: 'cli:019a2b-ff_x', requestId: 'ab12c' }), f)
+    expect(one).toEqual({ kind: 'terminal', id: '019a2b-ff_x' })
+    expect(hrefFor(one)).toBe('/terminal/019a2b-ff_x')
+    const list = await resolvePushRoute(targetFromParams({ kind: 'task_done', taskId: 'cli:' }), f)
+    expect(hrefFor(list)).toBe('/together')
+    expect(f).not.toHaveBeenCalled()
+  })
+  it('cli: 后面不像样(斜杠、过长)⇒ 丢 taskId ⇒ 回此刻', async () => {
+    expect(targetFromParams({ kind: 'task_done', taskId: 'cli:../x' })).toEqual({ kind: 'task_done' })
+    expect(targetFromParams({ kind: 'task_done', taskId: 'cli:' + 'a'.repeat(57) })).toEqual({ kind: 'task_done' })
+  })
+  it('经 push-open 深链往返不丢', () => {
+    const t = { kind: 'permission', taskId: 'cli:S-1', requestId: 'ab12c' } as const
+    expect(targetFromParams(Object.fromEntries(new URLSearchParams(pushOpenHref(t).split('?')[1])))).toEqual(t)
+  })
+})
+
 describe('href', () => {
   it('hrefFor', () => {
     expect(hrefFor({ kind: 'approval', id: 'ab12cd34', request: 'perm 1' })).toBe('/approval/ab12cd34?request=perm%201')
