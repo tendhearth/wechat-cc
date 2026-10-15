@@ -29,9 +29,13 @@ describe('parseCliReply', () => {
 
 describe('resumeCommand', () => {
   it('claude:-p --resume;codex:exec resume;dangerously 各自的旗子', () => {
-    expect(resumeCommand('claude', 'sid', '继续', false)).toEqual({ cmd: 'claude', args: ['-p', '--resume', 'sid', '继续'] })
+    expect(resumeCommand('claude', 'sid', '继续', false)).toEqual({ cmd: 'claude', args: ['-p', '--resume', 'sid', '--', '继续'] })
     expect(resumeCommand('claude', 'sid', '继续', true).args).toContain('--dangerously-skip-permissions')
-    expect(resumeCommand('codex', 'tid', '继续', false)).toEqual({ cmd: 'codex', args: ['exec', '--skip-git-repo-check', 'resume', 'tid', '继续'] })
+    expect(resumeCommand('codex', 'tid', '继续', false)).toEqual({ cmd: 'codex', args: ['exec', '--skip-git-repo-check', 'resume', '--', 'tid', '继续'] })
+    // 以 - 开头的话不能被当成 CLI 选项(评审 10-15 #4)
+    const c = resumeCommand('claude', 'sid', '--help', true).args
+    expect(c.indexOf('--')).toBeLessThan(c.indexOf('--help'))
+    expect(c.indexOf('--dangerously-skip-permissions')).toBeLessThan(c.indexOf('--'))
     expect(resumeCommand('codex', 'tid', '继续', true).args).toContain('--dangerously-bypass-approvals-and-sandbox')
   })
 })

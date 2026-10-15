@@ -737,6 +737,8 @@ export async function bootDaemon(opts: BootDaemonOpts): Promise<DaemonHandle> {
     internalApi.setCliEvents({
       // 转给脑的事件本机登记处也记一笔(observe 只记不推):这台机自己的列表也看得到。
       ingest: (ev) => {
+        // 会话又有了动静(Stop / 新 prompt / 结束)⇒ 终端已自己答过,挂着的码作废(评审 10-15 #5)。
+        if (ev.kind === 'stop' || ev.kind === 'prompt' || ev.kind === 'session_end') cliPermissions.expireSession(ev.session_id)
         if (!forwarder?.brain()) return cliEvents.ingest(ev)
         cliEvents.observe(ev)
         return forwarder.event(ev)
@@ -746,8 +748,11 @@ export async function bootDaemon(opts: BootDaemonOpts): Promise<DaemonHandle> {
     internalApi.setCliPermissions({
       open: async (req) => {
         if (!forwarder?.brain()) return cliPermissions.open(req)
-        cliEvents.permissionAsked(req)
-        return (await forwarder.permissionOpen(req)) ?? cliPermissions.open(req)
+        const fwd = await forwarder.permissionOpen(req)
+        if (!fwd) return cliPermissions.open(req)
+        // 只有脑那边真开了码才记 waiting;主人在场(owner_present)就留给终端,不挂「等你批准」(评审 10-15 #1)。
+        if (fwd.status === 'pending') cliEvents.permissionAsked(req)
+        return fwd
       },
       status: (h) => cliPermissions.status(h),
       wait: (h, ms) => forwarder?.ownsHash(h) ? forwarder.permissionWait(h, ms) : cliPermissions.wait(h, ms),

@@ -111,7 +111,7 @@ describe('CliPermissionRelay → 终端会话登记处(v76)', () => {
   beforeEach(() => { vi.useFakeTimers() })
   afterEach(() => { vi.useRealTimers() })
 
-  it('onAsked 在场判断之前就报(在场也报);拍板后 onSettled 带会话 id 与结果', async () => {
+  it('onAsked 只在真开了码时报(主人在场 ⇒ 不报);拍板后 onSettled 带会话 id 与结果', async () => {
     const asked: string[] = []
     const settled: [string, string][] = []
     const mk = (presence: 'present' | 'away') => makeCliPermissionRelay({
@@ -127,7 +127,7 @@ describe('CliPermissionRelay → 终端会话登记处(v76)', () => {
     const relay = mk('away')
     const r = await relay.open(req({ session_id: 'away-1' }))
     expect(r.status).toBe('pending')
-    expect(asked).toEqual(['here-1', 'away-1'])
+    expect(asked).toEqual(['away-1'])
     await vi.advanceTimersByTimeAsync(500)
     expect(settled).toEqual([['away-1', 'deny']])
     relay.dispose()
@@ -141,6 +141,30 @@ describe('CliPermissionRelay → 终端会话登记处(v76)', () => {
     const r = await relay.open(req())
     await vi.advanceTimersByTimeAsync(0)
     expect(relay.status((r as { hash: string }).hash)).toBe('allow')
+    relay.dispose()
+  })
+})
+
+describe('CliPermissionRelay.expireSession(评审 10-15 #5)', () => {
+  beforeEach(() => { vi.useFakeTimers() })
+  afterEach(() => { vi.useRealTimers() })
+
+  it('会话又有了动静 ⇒ 挂着的码以 timeout 落定,手机再拍就不是「自己的」了', async () => {
+    const settled: [string, string][] = []
+    const relay = makeCliPermissionRelay({
+      ask: () => new Promise(() => {}), presence: async () => 'away', projectName: (c) => c, onRelayed: () => {}, log: () => {},
+      onSettled: (s, st) => settled.push([s, st]),
+    })
+    const a = await relay.open(req({ session_id: 'sess-a' })) as { hash: string }
+    const b = await relay.open(req({ session_id: 'sess-b' })) as { hash: string }
+    relay.expireSession('sess-a')
+    expect(relay.owns(a.hash)).toBe(false)
+    expect(relay.status(a.hash)).toBe('timeout')
+    expect(relay.pendingHash('sess-a')).toBeNull()
+    expect(relay.owns(b.hash)).toBe(true)
+    expect(settled).toEqual([['sess-a', 'timeout']])
+    relay.expireSession('sess-a')   // 幂等
+    expect(settled).toHaveLength(1)
     relay.dispose()
   })
 })

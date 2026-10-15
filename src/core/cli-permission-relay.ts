@@ -64,6 +64,8 @@ export interface CliPermissionRelay {
   pendingHash(sessionId: string): string | null
   /** 这个码是不是本中继开的、且还在等。手机拍板只认这些,不让它顺手批掉别的待批(自改、工作台)。 */
   owns(hash: string): boolean
+  /** 这条会话还挂着的码全部以 timeout 落定(会话又有了事件 ⇒ 终端已经自己答过)。 */
+  expireSession(sessionId: string): void
   dispose(): void
 }
 
@@ -103,11 +105,13 @@ export function makeCliPermissionRelay(deps: CliPermissionRelayDeps): CliPermiss
 
   return {
     async open(req) {
-      try { deps.onAsked?.(req) } catch { /* 登记处出错不影响中继 */ }
       if (await deps.presence(req.session_id, req.idle_s) === 'present') {
         deps.log('CLI_PERMISSION', `owner present for ${req.session_id.slice(0, 6)}: leave it to the terminal`)
         return { status: 'owner_present' }
       }
+      // 只在真开了码(主人不在、手机 / 微信能拍)时才记 waiting:主人在终端前自己答的那种,
+      // 不会再有事件告诉我们答完了,记了就会一直挂着「等你批准」(评审 10-15 #1)。
+      try { deps.onAsked?.(req) } catch { /* 登记处出错不影响中继 */ }
       let hash = newPermissionHash()
       while (entries.has(hash)) hash = newPermissionHash()
       entries.set(hash, { sessionId: req.session_id, status: 'pending', waiters: [] })
@@ -145,6 +149,11 @@ export function makeCliPermissionRelay(deps: CliPermissionRelayDeps): CliPermiss
     },
     owns(hash) {
       return entries.get(hash)?.status === 'pending'
+    },
+    expireSession(sessionId) {
+      // 这条会话又有了动静(Stop / 新 prompt / 结束):终端那头已经自己答过了,
+      // 还挂着的码作废 —— 否则手机点「允许」会回 ok,其实没人在等(评审 10-15 #5)。
+      for (const [h, e] of entries) if (e.sessionId === sessionId && e.status === 'pending') settle(h, 'timeout')
     },
     dispose() {
       for (const e of entries.values()) { if (e.retain) clearTimeout(e.retain); for (const w of e.waiters) w() }

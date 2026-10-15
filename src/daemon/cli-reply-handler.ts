@@ -270,6 +270,13 @@ export function makeCliReplyHandler(deps: CliReplyHandlerDeps): CliReplyHandler 
       await say(chatId, r.ok ? `收到,${describe(s)} 在那边接着跑…跑完那边会回一条。` : `${describe(s)}:那边没接上(${r.error ?? '未知'})。`)
       return
     }
+    // 终端那头这一轮还没完(在跑 / 等批准 / 30 分钟没动静可能是长构建):再起 resume 会和它抢同一条会话(评审 10-15 #2)。
+    let v: CliDigestView | undefined
+    try { v = deps.listSessions?.().find(x => x.session_id === s.session_id) } catch { v = undefined }
+    if (v && (v.status === 'running' || v.status === 'waiting' || v.stale)) {
+      await say(chatId, `${describe(s)} 终端那边这一轮还没完,等它停下再「@码」接着说。`)
+      return
+    }
     await say(chatId, `收到,${describe(s)} 接着跑…(最多等 ${Math.round(RESUME_TIMEOUT_MS / 60_000)} 分钟)`)
     void core.resume(s, text).then(async (r) => {
       if (r.kind === 'timeout') { await say(chatId, `${describe(s)} 跑了 ${Math.round(RESUME_TIMEOUT_MS / 60_000)} 分钟还没完,先停了。${r.text ? `\n目前的输出:\n${stripMarkdown(r.text).slice(0, INLINE_MAX)}` : ''}`); return }

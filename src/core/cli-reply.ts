@@ -47,10 +47,11 @@ export function parseCliReply(text: string): CliReply | null {
  * 接着原来的对话再说一句。两家都是「新进程 + 原会话 id」:Claude 写回同一份 transcript,
  * Codex 写回同一份 rollout。daemon 的 --dangerously 姿态原样带过去 —— 非交互模式下
  * 没人能在终端里点「允许」。
+ * 话术与会话 id 前面一律加 `--`:以 `-` 开头的话(如「--help」)不能被当成 CLI 选项(评审 10-15 #4)。
  */
 export function resumeCommand(source: CliSource, sessionId: string, text: string, dangerously: boolean): { cmd: string; args: string[] } {
   if (source === 'claude') {
-    return { cmd: 'claude', args: ['-p', '--resume', sessionId, ...(dangerously ? ['--dangerously-skip-permissions'] : []), text] }
+    return { cmd: 'claude', args: ['-p', '--resume', sessionId, ...(dangerously ? ['--dangerously-skip-permissions'] : []), '--', text] }
   }
-  return { cmd: 'codex', args: ['exec', '--skip-git-repo-check', ...(dangerously ? ['--dangerously-bypass-approvals-and-sandbox'] : []), 'resume', sessionId, text] }
+  return { cmd: 'codex', args: ['exec', '--skip-git-repo-check', ...(dangerously ? ['--dangerously-bypass-approvals-and-sandbox'] : []), 'resume', '--', sessionId, text] }
 }

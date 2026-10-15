@@ -36,9 +36,7 @@ describe('终端会话登记处:状态从已有 hook 事件推导(v76)', () => {
 
     clock += 1000
     h.permissionSettled(SID, 'timeout')
-    expect(h.list()[0]!.status).toBe('waiting')   // 过期 ⇒ 终端自己问,仍在等
-    h.permissionSettled(SID, 'allow')
-    ;[v] = h.list()
+    ;[v] = h.list()   // 过期 ⇒ 终端自己问,主人在终端前答不会再有事件 —— 不挂「等你批准」(评审 10-15 #1)
     expect(v!.status).toBe('running')
     expect(v!.pending).toBeNull()
 

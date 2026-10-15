@@ -399,7 +399,8 @@ export function makeCliEventHub(deps: CliEventHubDeps): CliEventHub {
       })
     },
     permissionSettled(sessionId, status) {
-      if (status !== 'allow' && status !== 'deny') return
+      // 任何结果都把 waiting 放回 running:timeout / undelivered 之后终端自己问,主人在终端前答,
+      // 不会再有事件,留着 waiting 就会一直挂「等你批准」(评审 10-15 #1)。
       persist(`permission settled ${short(sessionId)}`, (store) => {
         // 只从 waiting 回到 running:中间已经 Stop / 结束的,不倒回去。
         if (store.get(sessionId)?.status === 'waiting') store.setStatus(sessionId, 'running', now())
