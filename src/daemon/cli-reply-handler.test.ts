@@ -156,9 +156,27 @@ describe('cli-reply-handler', () => {
     expect(await a.h.handle('@a1b2c3 改成 X', 'c')).toBe(true)
     expect(a.sent[0]).toContain('接着跑')
     await tick(); await tick()
-    expect(calls[0]).toEqual({ cmd: 'claude', args: ['-p', '--resume', 'a1b2c3-full', '--dangerously-skip-permissions', '改成 X'], cwd: '/w/p', timeoutMs: RESUME_TIMEOUT_MS })
+    expect(calls[0]).toEqual({ cmd: 'claude', args: ['-p', '--resume', 'a1b2c3-full', '--dangerously-skip-permissions', '--', '改成 X'], cwd: '/w/p', timeoutMs: RESUME_TIMEOUT_MS })
     expect(a.sent[1]).toBe('🔔 claude · 会话 a1b2c3 回来了\n改好了\n· 一')
     expect(a.busy).toEqual(['+cli-resume:a1b2c3', '-cli-resume:a1b2c3'])
+  })
+
+  it('@码:终端那边这一轮还没完(在跑 / 等批准 / stale)⇒ 不起 resume,说明一句(评审 10-15 #2)', async () => {
+    const s = sess()
+    for (const view of [{ status: 'running', stale: false }, { status: 'waiting', stale: false }, { status: 'idle', stale: true }]) {
+      const sent: string[] = []
+      const run = vi.fn<Runner>(async () => ({ code: 0, stdout: 'x', stderr: '', timedOut: false }))
+      const h = makeCliReplyHandler({
+        hub: { lookup: () => s, sessions: () => [s] }, isOwner: () => true,
+        sendMessage: async (_c, t) => { sent.push(t) }, sharePage: async () => null, run,
+        log: () => {}, dangerously: false, localMachine: 'here',
+        listSessions: () => [{ session_id: s.session_id, ...view } as never],
+      })
+      expect(await h.handle('@a1b2c3 继续', 'c')).toBe(true)
+      await tick()
+      expect(sent[0]).toContain('这一轮还没完')
+      expect(run).not.toHaveBeenCalled()
+    }
   })
 
   it('跑失败 / 超时 / 超长输出各有说法', async () => {

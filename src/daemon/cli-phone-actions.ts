@@ -59,6 +59,9 @@ export function makeCliPhoneActions(deps: CliPhoneActionsDeps): CliPhoneActions 
       if (v.status === 'ended') return { ok: false, error: 'cli_session_ended' }
       // 在跑或在等批准:终端那头这一轮还没完,再起一个 resume 会和它抢同一条会话。
       if (v.status === 'running' || v.status === 'waiting') return { ok: false, error: 'cli_session_busy' }
+      // 30 分钟没事件被折算成 idle 的(stale):可能只是一步长构建 / 长工具调用还在跑,
+      // 这时 resume 会和终端那一轮抢同一条会话 —— 宁可拒(评审 10-15 #2)。
+      if (v.stale) return { ok: false, error: 'cli_session_busy' }
       const s = deps.hub.lookup(sessionId)
       if (!s || s.session_id !== sessionId) return { ok: false, error: 'not_found' }
       // 那边(别的机器)的会话:微信「@码」转给那只手,结果回微信;手机这一口 v1 不转。

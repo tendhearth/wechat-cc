@@ -70,13 +70,14 @@ describe('手机拍板终端会话的待批(同微信 y/n)', () => {
     expect(status('S1')).toBe('running')
     expect(a.permission({ hash: hash! }, 'deny')).toEqual({ ok: false, error: 'cli_permission_stale' })
   })
-  it('主人在场 ⇒ 终端自己问,没有码:waiting 但 not_actionable', async () => {
+  it('主人在场 ⇒ 终端自己问,没有码,也不挂「等你批准」(主人在终端前答完不会再有事件,评审 10-15 #1)', async () => {
+    hub.ingest({ source: 'claude', kind: 'prompt', session_id: 'S2', cwd: '/w/proj', machine: 'mac' })
     presence = 'present'
     await ask('S2')
     const a = actions()
-    expect(status('S2')).toBe('waiting')
+    expect(status('S2')).toBe('running')
     expect(a.pendingHash('S2')).toBeNull()
-    expect(a.permission({ session_id: 'S2' }, 'allow')).toEqual({ ok: false, error: 'cli_not_actionable' })
+    expect(a.permission({ session_id: 'S2' }, 'allow')).toEqual({ ok: false, error: 'not_found' })
     expect(a.permission({ session_id: 'nope' }, 'allow')).toEqual({ ok: false, error: 'not_found' })
   })
   it('只认终端中继开的码:别的待批(自改)手机这口批不了;码与会话对不上也不行', async () => {
@@ -103,6 +104,17 @@ describe('手机对终端会话说一句(同微信 @码)', () => {
     await vi.waitFor(() => expect(status('T1')).toBe('idle'))
     expect(hub.list().find(v => v.session_id === 'T1')!.last_summary).toBe('全绿 了')
   })
+  it('30 分钟没动静被折算成 idle(stale)⇒ 仍算 busy:可能只是一步长构建还在跑(评审 10-15 #2)', () => {
+    vi.useFakeTimers({ toFake: ['Date'] })
+    try {
+      vi.setSystemTime(new Date('2026-10-15T00:00:00Z'))
+      hub.ingest({ source: 'claude', kind: 'prompt', session_id: 'T9', cwd: '/w/proj', machine: 'mac' })
+      vi.setSystemTime(new Date('2026-10-15T00:31:00Z'))
+      expect(hub.list().find(v => v.session_id === 'T9')).toMatchObject({ status: 'idle', stale: true })
+      expect(actions().say('T9', 'x')).toEqual({ ok: false, error: 'cli_session_busy' })
+      expect(runs).toHaveLength(0)
+    } finally { vi.useRealTimers() }
+  })
   it('在等批准 ⇒ busy;结束 ⇒ ended;没见过 ⇒ not_found;那边的会话 ⇒ remote_session', async () => {
     await ask('T2')
     const a = actions()
@@ -122,8 +134,9 @@ describe('POST /m/api/cli/permission、/m/api/cli/say 与列表里的码', () =>
     const r = await mobileReadsRoute({ ...(cliActions ? { cliActions } : {}), cliSessions: () => hub.list({ limit: 50 }) }, new URL(url), new Request(url, { method, ...(method === 'POST' ? { body: JSON.stringify(body) } : {}) }))
     return { status: r!.status, body: await r!.json() as any }
   }
-  it('列表:开了码 ⇒ pending.hash + actionable;在场 ⇒ actionable:false;过 schema', async () => {
+  it('列表:开了码 ⇒ pending.hash + actionable;在场 ⇒ 不挂 pending;过 schema', async () => {
     await ask('L1')
+    hub.ingest({ source: 'claude', kind: 'prompt', session_id: 'L2', cwd: '/w/proj', machine: 'mac' })
     presence = 'present'
     await ask('L2')
     const a = actions()
@@ -131,7 +144,7 @@ describe('POST /m/api/cli/permission、/m/api/cli/say 与列表里的码', () =>
     PHONE_API_SCHEMAS['GET /m/api/cli/sessions']!.parse(r.body)
     const by = (id: string) => r.body.sessions.find((s: any) => s.session_id === id)
     expect(by('L1').pending).toMatchObject({ tool: 'Bash', hash: a.pendingHash('L1'), actionable: true })
-    expect(by('L2').pending).toMatchObject({ hash: null, actionable: false })
+    expect(by('L2')).toMatchObject({ status: 'running', pending: null })
   })
   it('拍板:200 / 409 / 404 / 400 / 405 / 503,过 schema', async () => {
     await ask('P1')
