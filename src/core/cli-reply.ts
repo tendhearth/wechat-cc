@@ -2,7 +2,7 @@
  * cli-reply.ts — 主人在微信里对某条终端会话说话(spec 2026-09-09-cli-hook-push §6.4)。
  *
  *   看 a1b2c3          → 把那条会话的尾巴渲染成页面发链接
- *   @a1b2c3 改成 X     → `claude -p --resume` / `codex exec resume` 接着原来的对话跑,结果回微信
+ *   @a1b2c3 改成 X     → `claude -p --resume` / `codex exec resume` / `cursor-agent --resume -p` 接着原来的对话跑,结果回微信
  *
  * 纯逻辑:解析 + 组命令行。跑与回都在 daemon/cli-reply-handler.ts。
  */
@@ -48,10 +48,16 @@ export function parseCliReply(text: string): CliReply | null {
  * Codex 写回同一份 rollout。daemon 的 --dangerously 姿态原样带过去 —— 非交互模式下
  * 没人能在终端里点「允许」。
  * 话术与会话 id 前面一律加 `--`:以 `-` 开头的话(如「--help」)不能被当成 CLI 选项(评审 10-15 #4)。
+ * Cursor:`cursor-agent --resume=<chatId> -p --trust`(id 用 `=` 粘住:`--resume [chatId]` 的参数可选,
+ * 分开写时以 `-` 开头的 id 会被当成选项);`--trust` 是因为 -p 下没人能点「信任这个文件夹」,而这正是主人
+ * 自己开过这条会话的文件夹;dangerously 对应 `--force`(命令除非明确拒绝一律放行)。
  */
 export function resumeCommand(source: CliSource, sessionId: string, text: string, dangerously: boolean): { cmd: string; args: string[] } {
   if (source === 'claude') {
     return { cmd: 'claude', args: ['-p', '--resume', sessionId, ...(dangerously ? ['--dangerously-skip-permissions'] : []), '--', text] }
+  }
+  if (source === 'cursor') {
+    return { cmd: 'cursor-agent', args: [`--resume=${sessionId}`, '-p', '--trust', ...(dangerously ? ['--force'] : []), '--', text] }
   }
   return { cmd: 'codex', args: ['exec', '--skip-git-repo-check', ...(dangerously ? ['--dangerously-bypass-approvals-and-sandbox'] : []), 'resume', '--', sessionId, text] }
 }

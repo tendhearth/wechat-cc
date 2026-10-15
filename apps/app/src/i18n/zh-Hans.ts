@@ -340,6 +340,7 @@ const zh: Record<keyof typeof en, string> = {
   'sessions.title': '电脑上的会话',
   'sessions.claude': 'Claude Code',
   'sessions.codex': 'Codex',
+  'sessions.cursor': 'Cursor',
   'sessions.active': '正在进行',
   'sessions.more': '继续查找',
   'sessions.readMore': '继续读取',

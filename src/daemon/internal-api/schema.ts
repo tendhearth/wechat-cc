@@ -712,7 +712,7 @@ export type A2ASendResponseT = z.infer<typeof A2ASendResponse>
 // ── POST /v1/cli/event ───────────────────────────────────────────────────────
 // 终端 claude / codex 会话的 hook 事件(spec 2026-09-09-cli-hook-push §6.1)。
 export const CliEventRequest = z.object({
-  source: z.enum(['claude', 'codex']),
+  source: z.enum(['claude', 'codex', 'cursor']),
   kind: z.enum(['stop', 'prompt', 'permission', 'session_end']),
   session_id: z.string().min(1).max(200),
   cwd: z.string().min(1).max(1000),
@@ -725,7 +725,7 @@ export const CliEventRequest = z.object({
 export type CliEventRequestT = z.infer<typeof CliEventRequest>
 
 export const CliPermissionRequest = z.object({
-  source: z.enum(['claude', 'codex']),
+  source: z.enum(['claude', 'codex', 'cursor']),
   session_id: z.string().min(1).max(200),
   cwd: z.string().min(1).max(1000),
   tool_name: z.string().min(1).max(200),
@@ -746,7 +746,7 @@ export const CliSessionsQuery = z.object({
 // ── POST /v1/cli/hooks/install|uninstall(接上 / 撤掉终端里的 Claude Code / Codex)──────────
 // sources 缺省:install = 这台机上有、还没接好的那几家;uninstall = 两家都撤。
 export const CliHooksRequest = z.object({
-  sources: z.array(z.enum(['claude', 'codex'])).min(1).max(2).optional(),
+  sources: z.array(z.enum(['claude', 'codex', 'cursor'])).min(1).max(3).optional(),
 })
 
 // ── Lookup tables ───────────────────────────────────────────────────────

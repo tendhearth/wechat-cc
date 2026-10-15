@@ -1110,23 +1110,33 @@ USAGE hook codex
 "
 `;
 
+exports[`cli.ts --help 快照(逐字节) > hook --help > hook cursor --help 1`] = `
+"cursor 的 hook 出口(stdin 收 hook JSON,转给本机 daemon) (hook cursor)
+
+USAGE hook cursor 
+
+
+"
+`;
+
 exports[`cli.ts --help 快照(逐字节) > hook --help > hook install --help 1`] = `
-"把 wechat-cc 的 hooks 写进 ~/.claude/settings.json 与 $CODEX_HOME/hooks.json(幂等;缺省两家都装) (hook install)
+"把 wechat-cc 的 hooks 写进 ~/.claude/settings.json 与 $CODEX_HOME/hooks.json(幂等;缺省装这两家);--cursor 写 ~/.cursor/hooks.json (hook install)
 
 USAGE hook install [OPTIONS] 
 
 OPTIONS
 
-  --claude    只装 Claude Code
-   --codex    只装 Codex CLI  
-    --json    JSON envelope 
+  --claude    只装 Claude Code                                                      
+   --codex    只装 Codex CLI                                                        
+  --cursor    装 Cursor(IDE 里的 agent 与 cursor-agent 共用 ~/.cursor/hooks.json;只在点名时装)
+    --json    JSON envelope                                                       
 
 
 "
 `;
 
 exports[`cli.ts --help 快照(逐字节) > hook --help > hook status --help 1`] = `
-"两家的 hook 装没装、命令行是什么 (hook status)
+"三家(Claude Code / Codex / Cursor)的 hook 装没装、命令行是什么 (hook status)
 
 USAGE hook status [OPTIONS] 
 
@@ -1145,26 +1155,28 @@ USAGE hook uninstall [OPTIONS]
 
 OPTIONS
 
-  --claude    只删 Claude Code 的
-   --codex    只删 Codex CLI 的  
-    --json    JSON envelope   
+  --claude    只删 Claude Code 的                
+   --codex    只删 Codex CLI 的                  
+  --cursor    删 Cursor 的(~/.cursor/hooks.json)
+    --json    JSON envelope                   
 
 
 "
 `;
 
 exports[`cli.ts --help 快照(逐字节) > hook --help 1`] = `
-"终端 claude / codex 会话的事件推到微信(hooks 出口):install / uninstall / status;claude / codex 由 hooks 自己调 (wechat-cc hook v1.7.6 (dev))
+"终端 claude / codex / cursor 会话的事件推到微信(hooks 出口):install / uninstall / status;claude / codex / cursor 由 hooks 自己调 (wechat-cc hook v1.7.6 (dev))
 
-USAGE wechat-cc hook claude|codex|install|uninstall|status
+USAGE wechat-cc hook claude|codex|cursor|install|uninstall|status
 
 COMMANDS
 
-     claude    claude 的 hook 出口(stdin 收 hook JSON,转给本机 daemon)                                   
-      codex    codex 的 hook 出口(stdin 收 hook JSON,转给本机 daemon)                                    
-    install    把 wechat-cc 的 hooks 写进 ~/.claude/settings.json 与 $CODEX_HOME/hooks.json(幂等;缺省两家都装)
-  uninstall    只删 wechat-cc 自己的 hook 条目,别人的原样保留                                                  
-     status    两家的 hook 装没装、命令行是什么                                                               
+     claude    claude 的 hook 出口(stdin 收 hook JSON,转给本机 daemon)                                                                   
+      codex    codex 的 hook 出口(stdin 收 hook JSON,转给本机 daemon)                                                                    
+     cursor    cursor 的 hook 出口(stdin 收 hook JSON,转给本机 daemon)                                                                   
+    install    把 wechat-cc 的 hooks 写进 ~/.claude/settings.json 与 $CODEX_HOME/hooks.json(幂等;缺省装这两家);--cursor 写 ~/.cursor/hooks.json
+  uninstall    只删 wechat-cc 自己的 hook 条目,别人的原样保留                                                                                  
+     status    三家(Claude Code / Codex / Cursor)的 hook 装没装、命令行是什么                                                                 
 
 Use wechat-cc hook <command> --help for more information about a command.
 

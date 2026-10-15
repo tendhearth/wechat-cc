@@ -43,7 +43,7 @@ export function withReplyRefs(
 }
 
 export function cliSourceLabel(source: CliSessionView['source']): string {
-  return source === 'codex' ? 'Codex' : 'Claude Code'
+  return source === 'codex' ? 'Codex' : source === 'cursor' ? 'Cursor' : 'Claude Code'
 }
 
 /** 「刚刚 / 3 分钟前 / 2 小时前 / 昨天 / 5 天前」。 */

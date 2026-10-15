@@ -338,6 +338,7 @@ const en = {
   'sessions.title': 'Sessions on your computer',
   'sessions.claude': 'Claude Code',
   'sessions.codex': 'Codex',
+  'sessions.cursor': 'Cursor',
   'sessions.active': 'In progress',
   'sessions.more': 'Load more',
   'sessions.readMore': 'Read more',

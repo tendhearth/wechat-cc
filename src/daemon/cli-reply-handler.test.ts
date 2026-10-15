@@ -257,6 +257,18 @@ it('守护 v2: a terminal Claude session behind a custom gateway (ANTHROPIC_BASE
  expect(r.kind).not.toBe('failed');expect(run).toHaveBeenCalled();expect(check).not.toHaveBeenCalled()
 })
 
+it('守护(2026-10-15):终端 Cursor 会话的模型登记处里没有 ⇒ 按需要保护;网络不安全不起 cursor-agent,安全就照常起',async()=>{
+ const {classifyCall}=await import('../lib/call-classifier')
+ const run=vi.fn(async()=>({code:0,stdout:'done',stderr:'',timedOut:false,closed:true}))
+ const unsafe=vi.fn(async()=>({safe:false,source:'bx' as const,detail:'bx 未保护'}))
+ const cur=sess({source:'cursor'})
+ const r=await makeCliReplyCore({hub:{lookup:()=>cur,sessions:()=>[cur]},run,reserveExecution:()=>()=>{},log:()=>{},dangerously:false,networkGate:{check:unsafe,classify:t=>classifyCall(t)}}).resume(cur,'go')
+ expect(r.kind).toBe('failed');expect(r.text).toContain('Cursor');expect(run).not.toHaveBeenCalled()
+ const safe=vi.fn(async()=>({safe:true,source:'bx' as const,detail:'ok'}))
+ const ok=await makeCliReplyCore({hub:{lookup:()=>cur,sessions:()=>[cur]},run,reserveExecution:()=>()=>{},log:()=>{},dangerously:true,networkGate:{check:safe,classify:t=>classifyCall(t)}}).resume(cur,'go')
+ expect(ok.kind).toBe('ok');expect(run).toHaveBeenCalledWith('cursor-agent',[`--resume=${cur.session_id}`,'-p','--trust','--force','--','go'],cur.cwd,expect.any(Number))
+})
+
 it('守护(2026-10-03):终端 Codex 会话按 codex 自己的配置判,不看 OPENAI_BASE_URL',async()=>{
  const {classifyCall}=await import('../lib/call-classifier')
  const {mkdirSync}=await import('node:fs')

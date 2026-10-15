@@ -6,7 +6,7 @@
 // 拍板走桌宠权限卡同一条路(pet_permission_resolve → POST /v1/permissions/resolve);没开码(主人在电脑前,
 // 终端自己在问)⇒ 只写「回终端处理」,不给按钮。
 
-/** @typedef {{session_id:string,code:string,source:'claude'|'codex',status:string,project:string,machine?:string|null,pending:{tool:string,summary:string|null,since:number,hash?:string|null}|null}} CliSession */
+/** @typedef {{session_id:string,code:string,source:'claude'|'codex'|'cursor',status:string,project:string,machine?:string|null,pending:{tool:string,summary:string|null,since:number,hash?:string|null}|null}} CliSession */
 /** @typedef {{id:string,title:string,detail:string,hash:string|null}} TerminalRow */
 
 const TITLE_MAX = 120
@@ -26,7 +26,7 @@ export function terminalWaitingRows(sessions) {
     if (!s || s.status !== 'waiting' || typeof s.session_id !== 'string' || !s.pending) continue
     const tool = s.pending.tool === 'permission' ? '' : String(s.pending.tool ?? '')
     const what = [tool, s.pending.summary ?? ''].filter(Boolean).join(': ')
-    const source = s.source === 'codex' ? 'Codex' : 'Claude Code'
+    const source = s.source === 'codex' ? 'Codex' : s.source === 'cursor' ? 'Cursor' : 'Claude Code'
     const hash = typeof s.pending.hash === 'string' && /^[a-z0-9]{5}$/.test(s.pending.hash) ? s.pending.hash : null
     rows.push({
       id: s.session_id,

@@ -1,23 +1,31 @@
 /**
- * hook.ts — `wechat-cc hook …`:终端 claude / codex 会话的 hooks 出口
+ * hook.ts — `wechat-cc hook …`:终端 claude / codex / cursor 会话的 hooks 出口
  * (spec docs/superpowers/specs/2026-09-09-cli-hook-push-design.md)。
  *
  * 三块纯逻辑,cli.ts 只做拼装:
  *   1. normalizeHookPayload:两家的 hook JSON → daemon 认的 CliEvent(不认的事件回 null)
  *   2. postCliEvent:读 internal-api-info.json,POST /v1/cli/event;任何失败都只是 ok:false
- *   3. installHooks / uninstallHooks / hookStatus:幂等写 ~/.claude/settings.json 与
- *      $CODEX_HOME/hooks.json;只动带自己标记的条目,别人的 hook 原样保留
+ *   3. installHooks / uninstallHooks / hookStatus:幂等写 ~/.claude/settings.json、
+ *      $CODEX_HOME/hooks.json 与 ~/.cursor/hooks.json;只动带自己标记的条目,别人的 hook 原样保留
+ *
+ * Cursor(2026-10-15):~/.cursor/hooks.json 是另一种形状(`{version:1,hooks:{<event>:[{command,timeout}]}}`,
+ * 没有 type / statusMessage),事件名也不同(stop / beforeSubmitPrompt / sessionEnd /
+ * beforeShellExecution / beforeMCPExecution);会话 id 是 conversation_id,目录是 workspace_roots[0]。
+ * IDE 里的 agent 和终端 cursor-agent 都会触发,所以「Cursor」= 两者。Cursor 的 hook 一律同步等输出,
+ * 权限类的答复是 `{"permission":"allow"|"deny"|"ask"}` —— 没拿到主人的决定一律 ask(让 Cursor 自己问,
+ * 绝不替主人放行)。
  *
  * 回环守卫:daemon 自己经 SDK 拉起的 claude / codex 继承 daemon 的环境,daemon 启动时
  * 置 WECHAT_CC_DAEMON_CHILD=1(daemon/main.ts);hook 看到就直接退出,不然 daemon 的每个
  * 回合都会被推回微信。
  */
-import { existsSync, readFileSync, writeFileSync, renameSync, mkdirSync } from 'node:fs'
+import { existsSync, readFileSync, writeFileSync, renameSync, mkdirSync, statSync, openSync, readSync, closeSync } from 'node:fs'
 import { dirname, join } from 'node:path'
 import { hostname } from 'node:os'
 import { readJsonFile } from '../lib/read-json-file'
 import { machineIdleSeconds } from '../lib/machine-idle'
 import type { CliEvent, CliSource } from '../core/cli-events'
+import { lastAssistantText } from '../core/cli-transcript'
 import type { CliPermissionRequest, CliPermissionStatus } from '../core/cli-permission-relay'
 
 export type HookSource = CliSource
@@ -74,6 +82,7 @@ export function summarizeToolInput(input: unknown): string {
  */
 export function normalizeHookPayload(source: HookSource, raw: unknown): CliEvent | null {
   if (!raw || typeof raw !== 'object') return null
+  if (source === 'cursor') return normalizeCursorPayload(raw as Raw)
   const r = raw as Raw
   if (str(r['agent_id'])) return null   // 子代理:主会话的 Stop 才是主人关心的
   const session_id = str(r['session_id'])
@@ -104,6 +113,7 @@ export function normalizeHookPayload(source: HookSource, raw: unknown): CliEvent
  */
 export function parsePermissionRequest(source: HookSource, raw: unknown): CliPermissionRequest | null {
   if (!raw || typeof raw !== 'object') return null
+  if (source === 'cursor') return parseCursorPermission(raw as Raw)
   const r = raw as Raw
   if (r['hook_event_name'] !== 'PermissionRequest') return null
   if (str(r['agent_id'])) return null
@@ -113,6 +123,101 @@ export function parsePermissionRequest(source: HookSource, raw: unknown): CliPer
   if (!session_id || !cwd || !tool_name) return null
   const summary = summarizeToolInput(r['tool_input'])
   return summary ? { source, session_id, cwd, tool_name, summary } : { source, session_id, cwd, tool_name }
+}
+
+// ── 1b. Cursor ────────────────────────────────────────────────────────────────
+
+/** Cursor 的会话 id 与目录:conversation_id(没有再看 session_id)、workspace_roots[0](没有再看 cwd)。 */
+function cursorIdent(r: Raw): Omit<CliEvent, 'kind'> | null {
+  const session_id = str(r['conversation_id']) ?? str(r['session_id'])
+  const roots = Array.isArray(r['workspace_roots']) ? r['workspace_roots'] : []
+  const cwd = str(roots[0]) ?? str(r['cwd'])
+  if (!session_id || !cwd) return null
+  const transcript = str(r['transcript_path'])
+  return transcript ? { source: 'cursor', session_id, cwd, transcript_path: transcript } : { source: 'cursor', session_id, cwd }
+}
+
+/**
+ * Cursor 的 hook JSON → CliEvent。stop 不带最后一句(Cursor 没有 last_assistant_message),
+ * 由 withCursorStopText 从 transcript 尾巴补;不认的事件 → null。
+ */
+export function normalizeCursorPayload(r: Raw): CliEvent | null {
+  const base = cursorIdent(r)
+  if (!base) return null
+  switch (str(r['hook_event_name'])) {
+    case 'stop':
+      return { ...base, kind: 'stop' }
+    case 'beforeSubmitPrompt':
+      return isAutomatedPrompt(str(r['prompt']) ?? '') ? { ...base, kind: 'prompt', automated: true } : { ...base, kind: 'prompt' }
+    case 'sessionEnd':
+      return { ...base, kind: 'session_end' }
+    default:
+      return null
+  }
+}
+
+/** beforeShellExecution / beforeMCPExecution → 中继请求;Shell 的摘要就是命令本身,MCP 的工具名带上 server。 */
+export function parseCursorPermission(r: Raw): CliPermissionRequest | null {
+  const event = str(r['hook_event_name'])
+  if (event !== 'beforeShellExecution' && event !== 'beforeMCPExecution') return null
+  const base = cursorIdent(r)
+  if (!base) return null
+  const { session_id, cwd } = base
+  if (event === 'beforeShellExecution') {
+    const command = str(r['command'])
+    if (!command) return null
+    return { source: 'cursor', session_id, cwd, tool_name: 'Shell', summary: summarizeToolInput(command) }
+  }
+  const tool = str(r['tool_name'])
+  if (!tool) return null
+  const server = str(r['mcp_server_name'])
+  let input: unknown = r['tool_input']
+  if (typeof input === 'string') { try { input = JSON.parse(input) } catch { /* 原样当文字 */ } }
+  const summary = summarizeToolInput(input)
+  const tool_name = server ? `${server}:${tool}` : tool
+  return summary ? { source: 'cursor', session_id, cwd, tool_name, summary } : { source: 'cursor', session_id, cwd, tool_name }
+}
+
+const CURSOR_TRANSCRIPT_READ_MAX = 256 * 1024
+
+function readTranscriptTail(path: string, max = CURSOR_TRANSCRIPT_READ_MAX): string {
+  const size = statSync(path).size
+  if (size <= max) return readFileSync(path, 'utf8')
+  const fd = openSync(path, 'r')
+  try {
+    const buf = Buffer.alloc(max)
+    readSync(fd, buf, 0, max, size - max)
+    const s = buf.toString('utf8')
+    return s.slice(s.indexOf('\n') + 1)
+  } finally { closeSync(fd) }
+}
+
+/**
+ * Cursor 的 stop:从 transcript 尾巴读最后一句助手的话补进 text。读不到 / 最后一行不是助手 ⇒ 原样
+ * (daemon 那头没有最后一句也照样推「完成了」)。只对 cursor 的 stop 动手。永远不抛。
+ */
+export function withCursorStopText(ev: CliEvent, readFile: (p: string) => string = readTranscriptTail): CliEvent {
+  if (ev.source !== 'cursor' || ev.kind !== 'stop' || ev.text || !ev.transcript_path) return ev
+  try {
+    const text = lastAssistantText(readFile(ev.transcript_path), 'cursor')
+    return text ? { ...ev, text } : ev
+  } catch { return ev }
+}
+
+/**
+ * Cursor 权限类 hook 的 stdout。拿到主人的 allow / deny 就照答;其他(主人在场、没答、超时、
+ * daemon 没跑……)一律 ask:让 Cursor 在本机问,绝不替主人放行。
+ */
+export function cursorPermissionOutput(decision: 'allow' | 'deny' | null): string {
+  if (decision === 'allow') return JSON.stringify({ permission: 'allow' })
+  if (decision === 'deny') return JSON.stringify({ permission: 'deny', user_message: '主人在微信里拒绝了这次操作', agent_message: 'The owner denied this action remotely (via WeChat). Do not retry it; ask the owner how to proceed.' })
+  return JSON.stringify({ permission: 'ask' })
+}
+
+/** Cursor 非权限类 hook 的 stdout:beforeSubmitPrompt 要明说放行;其余给个空对象。 */
+export function cursorEventOutput(raw: unknown): string {
+  const event = raw && typeof raw === 'object' ? (raw as Raw)['hook_event_name'] : undefined
+  return event === 'beforeSubmitPrompt' ? JSON.stringify({ continue: true }) : '{}'
 }
 
 /**
@@ -266,6 +371,11 @@ export function codexHooksPath(home: string, env: Record<string, string | undefi
   return join(env['CODEX_HOME'] || join(home, '.codex'), 'hooks.json')
 }
 
+/** Cursor 的用户级 hooks(IDE 与 cursor-agent 共用)。 */
+export function cursorHooksPath(home: string): string {
+  return join(home, '.cursor', 'hooks.json')
+}
+
 interface HookHandler { type: string; command?: string; statusMessage?: string; [k: string]: unknown }
 interface MatcherGroup { matcher?: string; hooks: HookHandler[]; [k: string]: unknown }
 interface HooksFile { hooks?: Record<string, MatcherGroup[]>; [k: string]: unknown }
@@ -277,7 +387,7 @@ const PERMISSION_HOOK_TIMEOUT_SEC = 150
  * 两家要挂的事件一样:三个事件 fire-and-forget(async),PermissionRequest 同步等微信。
  * Claude 的 Notification(permission_prompt)不挂 —— PermissionRequest 已经覆盖,再挂会重复提醒。
  */
-const EVENTS: Record<HookSource, { event: string; matcher?: string; sync?: boolean }[]> = {
+const EVENTS: Record<Exclude<HookSource, 'cursor'>, { event: string; matcher?: string; sync?: boolean }[]> = {
   claude: [
     { event: 'Stop' },
     { event: 'PermissionRequest', sync: true },
@@ -339,6 +449,7 @@ function stripOurs(cfg: HooksFile, source: HookSource): number {
 }
 
 export function installHooks(file: string, source: HookSource, command: string): { changed: boolean } {
+  if (source === 'cursor') return installCursorHooks(file, command)
   const cfg = readHooksFile(file)
   const before = JSON.stringify(cfg)
   stripOurs(cfg, source)
@@ -358,6 +469,7 @@ export function installHooks(file: string, source: HookSource, command: string):
 
 export function uninstallHooks(file: string, source: HookSource): { changed: boolean; removed: number } {
   if (!existsSync(file)) return { changed: false, removed: 0 }
+  if (source === 'cursor') return uninstallCursorHooks(file)
   const cfg = readHooksFile(file)
   const removed = stripOurs(cfg, source)
   if (removed === 0) return { changed: false, removed: 0 }
@@ -370,6 +482,12 @@ export function hookStatus(file: string, source: HookSource): { installed: boole
   if (!existsSync(file)) return { installed: false, command: null }
   let cfg: HooksFile
   try { cfg = readHooksFile(file) } catch { return { installed: false, command: null } }
+  if (source === 'cursor') {
+    for (const entries of Object.values((cfg.hooks ?? {}) as Record<string, unknown>)) {
+      for (const h of (Array.isArray(entries) ? entries : [])) if (isOursCursor(h)) return { installed: true, command: h.command ?? null }
+    }
+    return { installed: false, command: null }
+  }
   for (const groups of Object.values(cfg.hooks ?? {})) {
     if (!Array.isArray(groups)) continue
     for (const g of groups) {
@@ -379,4 +497,63 @@ export function hookStatus(file: string, source: HookSource): { installed: boole
     }
   }
   return { installed: false, command: null }
+}
+
+// ── 3b. Cursor 的 hooks.json ─────────────────────────────────────────────────
+
+/** `{ version: 1, hooks: { <event>: [{ command, timeout }] } }`;条目没有 type / statusMessage,只能认命令尾巴。 */
+interface CursorHookEntry { command?: string; timeout?: number; [k: string]: unknown }
+
+/**
+ * Cursor 先只「看」不「拍」(10-15 定):挂 stop / beforeSubmitPrompt / sessionEnd。
+ * beforeShellExecution / beforeMCPExecution 不挂 —— 它们对**每一条**命令都触发(不只 Cursor 本来要问的),
+ * 我们拿不到决定时只能回 ask,等于关掉 Cursor 自己的 auto-run / 白名单,离开时连 ls 都会发微信卡片。
+ * 转换与回话代码保留(cursorPermissionRequest / 决定映射),真机确认 Cursor 对空输出的行为后再开。
+ * beforeReadFile / afterFileEdit 之类也不挂:前者每读一个文件都会触发,后者不是主人关心的节点。
+ */
+const CURSOR_EVENTS: { event: string; sync?: boolean }[] = [
+  { event: 'stop' },
+  { event: 'beforeSubmitPrompt' },
+  { event: 'sessionEnd' },
+]
+
+function isOursCursor(h: unknown): h is CursorHookEntry {
+  return !!h && typeof h === 'object' && typeof (h as CursorHookEntry).command === 'string' && /(^|\s)hook cursor\s*$/.test((h as CursorHookEntry).command!)
+}
+
+function stripOursCursor(cfg: HooksFile): number {
+  if (!cfg.hooks || typeof cfg.hooks !== 'object') return 0
+  const hooks = cfg.hooks as Record<string, unknown>
+  let removed = 0
+  for (const [event, entries] of Object.entries(hooks)) {
+    if (!Array.isArray(entries)) continue
+    const kept = entries.filter(h => !isOursCursor(h))
+    removed += entries.length - kept.length
+    if (kept.length === entries.length) continue
+    if (kept.length > 0) hooks[event] = kept
+    else delete hooks[event]
+  }
+  return removed
+}
+
+function installCursorHooks(file: string, command: string): { changed: boolean } {
+  const cfg = readHooksFile(file)
+  const before = JSON.stringify(cfg)
+  stripOursCursor(cfg)
+  cfg['version'] ??= 1
+  const hooks = (cfg.hooks ??= {}) as unknown as Record<string, CursorHookEntry[]>
+  for (const { event, sync } of CURSOR_EVENTS) {
+    ;(hooks[event] ??= []).push({ command, timeout: sync ? PERMISSION_HOOK_TIMEOUT_SEC : HOOK_TIMEOUT_SEC })
+  }
+  if (JSON.stringify(cfg) === before) return { changed: false }
+  writeHooksFile(file, cfg)
+  return { changed: true }
+}
+
+function uninstallCursorHooks(file: string): { changed: boolean; removed: number } {
+  const cfg = readHooksFile(file)
+  const removed = stripOursCursor(cfg)
+  if (removed === 0) return { changed: false, removed: 0 }
+  writeHooksFile(file, cfg)
+  return { changed: true, removed }
 }

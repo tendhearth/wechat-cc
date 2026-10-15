@@ -509,7 +509,7 @@ export function makeDemoBackend(opts: { now?: () => number; setTimeout?: typeof 
       const n = now(), since = n - DAY
       const needsYou: OverseerTodayT['needsYou'] = [], done: TodayItemT[] = [], running: TodayItemT[] = [], stuck: OverseerTodayT['stuck'] = []
       for (const r of cli) {
-        const base: TodayItemT = { source: 'terminal', id: r.session_id, code: r.code, project: r.project, agent: r.source === 'codex' ? 'Codex' : 'Claude Code', title: null,
+        const base: TodayItemT = { source: 'terminal', id: r.session_id, code: r.code, project: r.project, agent: r.source === 'codex' ? 'Codex' : r.source === 'cursor' ? 'Cursor' : 'Claude Code', title: null,
           summary: r.summaryKey ? t(lastLang, r.summaryKey) : null, at: r.last_event_at, machine: null }
         if (r.status === 'waiting' && r.pending) needsYou.push({ ...base, kind: 'permission', count: 1, replyRef: r.pending.hash ?? null, at: r.pending.since, summary: `${r.pending.tool}: ${r.pending.summary ?? ''}` })
         else if (r.status === 'running') running.push(base)

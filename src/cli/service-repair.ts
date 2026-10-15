@@ -15,6 +15,7 @@
  * 一旦退出 launchd 就拉不起来了,早重载早安全。
  */
 import { planLaunchAgentRepair, unsafeSelfLocation, staleHookProgram, forwarderAction, forwarderScript, type LaunchAgentRepairPlan, type SelfLocation } from './app-relocation'
+import type { HookSource } from './hook'
 
 export interface ServiceRepairDeps {
   platform: NodeJS.Platform
@@ -23,13 +24,13 @@ export interface ServiceRepairDeps {
   plistPath: string
   /** ~/.local/bin/wechat-cc */
   forwarderPath: string
-  hookFiles: Array<{ source: 'claude' | 'codex'; file: string }>
+  hookFiles: Array<{ source: HookSource; file: string }>
   readFile: (p: string) => string | null
   exists: (p: string) => boolean
   /** 原子写(tmp + rename),mode 可选。 */
   writeFileAtomic: (p: string, content: string, mode?: number) => void
-  hookStatus: (file: string, source: 'claude' | 'codex') => { installed: boolean; command: string | null }
-  installHook: (file: string, source: 'claude' | 'codex', selfSidecar: string) => void
+  hookStatus: (file: string, source: HookSource) => { installed: boolean; command: string | null }
+  installHook: (file: string, source: HookSource, selfSidecar: string) => void
   /** bootout(容忍失败)+ bootstrap + enable + kickstart;返回失败信息或 null。 */
   reloadLaunchAgent: () => string | null
   dryRun: boolean
@@ -38,7 +39,7 @@ export interface ServiceRepairDeps {
 
 export interface ServiceRepairResult {
   launchAgent: { action: LaunchAgentRepairPlan['action']; reason: string; from?: string; to?: string; reloaded: boolean; reloadError?: string }
-  hooks: Array<{ source: 'claude' | 'codex'; from: string; to: string }>
+  hooks: Array<{ source: HookSource; from: string; to: string }>
   forwarder: { path: string; action: 'write' | 'ok' | 'foreign' | 'skipped' }
 }
 

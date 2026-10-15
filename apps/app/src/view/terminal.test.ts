@@ -19,6 +19,7 @@ describe('终端里的会话(手机视图)', () => {
   })
   it('一行:项目、哪家、多久前、等批准的那一项;只有中继开了码的才能拍', () => {
     expect(terminalRow(row({ source: 'codex' }), NOW, 'zh-Hans')).toMatchObject({ project: 'blog', source: 'Codex', status: 'idle', ago: '5 分钟前', pendingText: null, actionable: false })
+    expect(terminalRow(row({ source: 'cursor' }), NOW, 'zh-Hans').source).toBe('Cursor')
     expect(terminalRow(waiting(true), NOW, 'en')).toMatchObject({ pendingText: 'Bash: npm run deploy', actionable: true, hash: 'ab12c', source: 'Claude Code' })
     expect(terminalRow(waiting(false), NOW, 'en').actionable).toBe(false)
     // 老 daemon:pending 不带 hash / actionable ⇒ 不可拍

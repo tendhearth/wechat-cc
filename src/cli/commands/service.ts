@@ -13,7 +13,7 @@ import { buildServicePlan, installService, reloadService, startService, stopServ
 import { parseBoolValue } from '../flags'
 import { ServiceStatusOutput, ServiceInstallOutput, ServiceStartOutput, ServiceStopOutput, ServiceUninstallOutput, ServiceRepairOutput } from '../schema'
 import { runServiceRepair } from '../service-repair'
-import { claudeSettingsPath, codexHooksPath, hookCommandLine, hookStatus, installHooks } from '../hook'
+import { claudeSettingsPath, codexHooksPath, cursorHooksPath, hookCommandLine, hookStatus, installHooks } from '../hook'
 export const serviceCmd = defineCommand({
   meta: {
     name: 'service',
@@ -97,6 +97,7 @@ export const serviceCmd = defineCommand({
         hookFiles: [
           { source: 'claude', file: claudeSettingsPath(home) },
           { source: 'codex', file: codexHooksPath(home, process.env) },
+          { source: 'cursor', file: cursorHooksPath(home) },
         ],
         readFile,
         exists: existsSync,

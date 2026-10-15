@@ -418,7 +418,7 @@ export type NativeSessionRowT = z.infer<typeof NativeSessionRow>
  * 老 daemon 不带这两个字段,客户端当作不可拍。
  */
 export const CliSessionRow = z.object({
-  session_id: z.string(), code: z.string(), source: z.enum(['claude', 'codex']),
+  session_id: z.string(), code: z.string(), source: z.enum(['claude', 'codex', 'cursor']),
   status: z.enum(['running', 'waiting', 'idle', 'ended']), stale: z.boolean(),
   project: z.string(), machine: z.string().nullable(), last_summary: z.string().nullable(),
   last_event_at: z.number(), last_prompt_at: z.number().nullable(), created_at: z.number(),

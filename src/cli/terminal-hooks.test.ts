@@ -57,7 +57,7 @@ describe('状态判定', () => {
     expect(hookHealth({ installed: true, command: null }, exists)).toBe('stale')
   })
   it('readTerminalHooks:没装 / 装了指向自己 / 指向不在的位置 / 指向另一份还在的安装', () => {
-    expect(readTerminalHooks(deps()).map(s => [s.source, s.health, s.installed])).toEqual([['claude', 'missing', false], ['codex', 'missing', false]])
+    expect(readTerminalHooks(deps()).map(s => [s.source, s.health, s.installed])).toEqual([['claude', 'missing', false], ['codex', 'missing', false], ['cursor', 'missing', false]])
     installHooks(claudeFile(), 'claude', selfHookCommand('claude', deps().self))
     installHooks(codexFile(), 'codex', `"${join(home, 'Old.app', 'wechat-cc-cli')}" hook codex`)
     const [c, x] = readTerminalHooks(deps())
@@ -70,7 +70,7 @@ describe('状态判定', () => {
 })
 
 describe('connectTerminalHooks / disconnectTerminalHooks(幂等,只动自家条目)', () => {
-  const onlyClaude = (s: 'claude' | 'codex') => s === 'claude' ? '/usr/local/bin/claude' : null
+  const onlyClaude = (s: string) => s === 'claude' ? '/usr/local/bin/claude' : null
   it('缺省只接这台机上有、还没接好的;再点一次什么都不做', () => {
     const cmd = selfHookCommand('claude', deps().self)
     expect(connectTerminalHooks(deps({ locate: onlyClaude }))).toEqual([{ source: 'claude', ok: true, file: claudeFile(), changed: true, command: cmd }])
@@ -106,8 +106,26 @@ describe('connectTerminalHooks / disconnectTerminalHooks(幂等,只动自家条�
   it('撤掉:只删自家条目;再撤一次 changed:false', () => {
     connectTerminalHooks(deps())
     const r = disconnectTerminalHooks(deps())
-    expect(r.map(x => [x.source, x.ok, x.changed, (x.removed ?? 0) > 0])).toEqual([['claude', true, true, true], ['codex', true, true, true]])
-    expect(disconnectTerminalHooks(deps()).map(x => x.changed)).toEqual([false, false])
-    expect(readTerminalHooks(deps()).map(s => s.health)).toEqual(['missing', 'missing'])
+    expect(r.map(x => [x.source, x.ok, x.changed, (x.removed ?? 0) > 0])).toEqual([['claude', true, true, true], ['codex', true, true, true], ['cursor', true, true, true]])
+    expect(disconnectTerminalHooks(deps()).map(x => x.changed)).toEqual([false, false, false])
+    expect(readTerminalHooks(deps()).map(s => s.health)).toEqual(['missing', 'missing', 'missing'])
+  })
+})
+
+describe('Cursor(~/.cursor/hooks.json,临时 HOME)', () => {
+  const cursorFile = () => join(home, '.cursor', 'hooks.json')
+  it('hookFileFor:~/.cursor/hooks.json(不看 CODEX_HOME)', () => {
+    expect(hookFileFor('cursor', '/h', { CODEX_HOME: '/x' })).toBe(join('/h', '.cursor', 'hooks.json'))
+  })
+  it('没装 cursor-agent:有 ~/.cursor 目录(只有 IDE)也算有;两样都没有 ⇒ 没有,不写', () => {
+    const noCursor = (s: string) => s === 'cursor' ? null : `/usr/local/bin/${s}`
+    expect(readTerminalHooks(deps({ locate: noCursor }))[2]).toMatchObject({ source: 'cursor', cli: null })
+    expect(connectTerminalHooks(deps({ locate: noCursor }), ['cursor'])).toEqual([{ source: 'cursor', ok: false, file: cursorFile(), skipped: 'cli_not_found' }])
+    expect(existsSync(cursorFile())).toBe(false)
+    mkdirSync(join(home, '.cursor'), { recursive: true })
+    expect(readTerminalHooks(deps({ locate: noCursor }))[2]).toMatchObject({ source: 'cursor', cli: join(home, '.cursor'), health: 'missing' })
+    const [r] = connectTerminalHooks(deps({ locate: noCursor }), ['cursor'])
+    expect(r).toMatchObject({ source: 'cursor', ok: true, changed: true })
+    expect(hookStatus(cursorFile(), 'cursor')).toEqual({ installed: true, command: selfHookCommand('cursor', deps().self) })
   })
 })

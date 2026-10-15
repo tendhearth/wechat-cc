@@ -128,9 +128,13 @@ export function makeCliReplyCore(deps: CliReplyCoreDeps): CliReplyCore {
     // 守护 v2:按这条终端会话的来源分类(claude 看 ANTHROPIC_BASE_URL;codex 看它自己的配置层 ——
     // CODEX_HOME/config.toml + 这个目录的项目层,codex 不认 OPENAI_BASE_URL);需要保护且网络不安全才不起 CLI。
     if (deps.networkGate) {
+      // cursor:接着跑的是那条会话自己选的模型,登记处里没有 —— 不猜,按 unresolved(需要保护)走,
+      // 网络安全时照常放行,不安全时宁可不起(Cursor 只有 auto 才免保护)。
       const target = s.source === 'codex'
         ? codexCallTarget({ model: null, purpose: 'turn' }, { env: process.env, cwd: s.cwd })
-        : { provider: s.source, purpose: 'turn' as const }
+        : s.source === 'cursor'
+          ? { provider: 'cursor', purpose: 'turn' as const, unresolved: true }
+          : { provider: s.source, purpose: 'turn' as const }
       const d = await decideCall(deps.networkGate, target)
       if (!d.allowed) { deps.log('CLI_REPLY', `resume ${s.source}/${s.session_id.slice(0, 6)} refused — network unprotected [${d.verdict!.source}]`); return { kind: 'failed', text: unprotectedMessage(d.verdict!, d.cls.label) } }
     }

@@ -1,5 +1,5 @@
 /**
- * terminal-hooks.ts — 「把终端里的 Claude Code / Codex 接到 CC 上」的一份实现(2026-10-14)。
+ * terminal-hooks.ts — 「把终端里的 Claude Code / Codex / Cursor 接到 CC 上」的一份实现(2026-10-14;Cursor 10-15)。
  *
  * 终端会话只经 hooks 才到得了 CC(登记处、手机列表、推送、微信「终端」「日报」全靠它),以前只有
  * `wechat-cc hook install` 一个入口,新用户根本不知道。现在三处共用这里:
@@ -13,13 +13,13 @@
  */
 import { existsSync } from 'node:fs'
 import { homedir } from 'node:os'
-import { isAbsolute } from 'node:path'
+import { isAbsolute, join } from 'node:path'
 import { CLI_ENTRY } from './repo-root'
 import { isCompiledBundle } from '../lib/runtime-info'
 import { defaultLocate } from '../core/cli-upgrade/locate'
-import { claudeSettingsPath, codexHooksPath, hookCommandLine, hookStatus, installHooks, uninstallHooks, type HookSource } from './hook'
+import { claudeSettingsPath, codexHooksPath, cursorHooksPath, hookCommandLine, hookStatus, installHooks, uninstallHooks, type HookSource } from './hook'
 
-export const HOOK_SOURCES: readonly HookSource[] = ['claude', 'codex']
+export const HOOK_SOURCES: readonly HookSource[] = ['claude', 'codex', 'cursor']
 
 /** 写进 hook 的命令行指向谁:编译包 = sidecar 自己;源码模式 = bun + 仓库里的 cli.ts。 */
 export interface HookSelf { execPath: string; compiled: boolean; cliEntry: string }
@@ -34,7 +34,7 @@ export function selfHookCommand(source: HookSource, self: HookSelf = defaultHook
 }
 
 export function hookFileFor(source: HookSource, home: string, env: Record<string, string | undefined>): string {
-  return source === 'claude' ? claudeSettingsPath(home) : codexHooksPath(home, env)
+  return source === 'claude' ? claudeSettingsPath(home) : source === 'cursor' ? cursorHooksPath(home) : codexHooksPath(home, env)
 }
 
 export interface TerminalHooksDeps {
@@ -87,6 +87,8 @@ export function readTerminalHooks(deps: TerminalHooksDeps): HookSourceState[] {
     const st = hookStatus(file, source)
     let cli: string | null = null
     try { cli = deps.locate(source) } catch { cli = null }
+    // Cursor 的 IDE 自己也触发 ~/.cursor/hooks.json:没装 cursor-agent、只有 IDE 也算「有」(cli 记成那个目录)。
+    if (!cli && source === 'cursor') { const dir = join(deps.home, '.cursor'); if (deps.exists(dir)) cli = dir }
     return { source, cli, file, installed: st.installed, command: st.command, health: hookHealth(st, deps.exists), matchesSelf: st.command === selfHookCommand(source, deps.self) }
   })
 }
@@ -129,7 +131,7 @@ export function connectTerminalHooks(deps: TerminalHooksDeps, sources?: readonly
   })
 }
 
-/** 撤掉:只删自家条目;缺省两家都撤。幂等。 */
+/** 撤掉:只删自家条目;缺省三家都撤。幂等。 */
 export function disconnectTerminalHooks(deps: TerminalHooksDeps, sources: readonly HookSource[] = HOOK_SOURCES): HookChange[] {
   return sources.map(source => {
     const file = hookFileFor(source, deps.home, deps.env)
