@@ -358,13 +358,14 @@ describe('演示后端 · 额度用完交给另一位(spec continue-sessions §7
 })
 
 describe('演示后端:终端里的会话(2026-10-14)', () => {
-  it('一条等你批准(拍得了)、一条歇着;过 schema;允许 ⇒ 在跑 ⇒ 歇着并有回复;歇着的能说一句,在跑时说 ⇒ busy', async () => {
+  it('一条等你批准(拍得了)、一条在跑、一条歇着;过 schema;允许 ⇒ 在跑 ⇒ 歇着并有回复;歇着的能说一句,在跑时说 ⇒ busy', async () => {
     vi.useFakeTimers()
     try {
       const b = makeDemoBackend()
       const list = await b.cliSessions()
       expect(PHONE_API_SCHEMAS['GET /m/api/cli/sessions']!.safeParse({ ok: true, sessions: list }).success).toBe(true)
-      expect(list.map(s => s.status)).toEqual(['waiting', 'idle'])
+      expect(list.map(s => s.status)).toEqual(['waiting', 'running', 'idle'])
+      await expect(b.cliSay(list[1]!.session_id, 'x')).rejects.toMatchObject({ code: 'busy' })
       const w = list[0]!
       expect(w.pending?.actionable).toBe(true)
       await b.cliPermission({ sessionId: w.session_id, hash: w.pending!.hash!, decision: 'allow' })
@@ -390,6 +391,7 @@ describe('演示后端:今天(2026-10-14)', () => {
     expect(PHONE_API_SCHEMAS['GET /m/api/today']!.safeParse({ ok: true, today }).success).toBe(true)
     expect(today.needsYou.some(n => n.source === 'terminal' && n.replyRef === 'dm0a1')).toBe(true)
     expect(today.done.some(d => d.source === 'terminal' && d.project === 'api-server')).toBe(true)
+    expect(today.running.some(r => r.source === 'terminal' && r.project === 'docs')).toBe(true)
     expect(today.counts).toEqual({ needsYou: today.needsYou.length, done: today.done.length, running: today.running.length, stuck: today.stuck.length })
     expect(today.unavailable).toEqual([])
   })

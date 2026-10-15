@@ -48,7 +48,7 @@ export function makeDemoBackend(opts: { now?: () => number; setTimeout?: typeof 
   const demoMemory = [{ id: 'a1b2c3', text: '回复喜欢直接，先说结论' }, { id: 'd4e5f6', text: '周末不安排工作会议' }]
   let chatJobs = new Map<string, ChatJobT>()
   const subs = new Map<Topic, Set<(d: any) => void>>()
-  // 终端里的会话(演示):一条等你批准(能在手机上拍)、一条歇着(能接着说一句)。最后一句按语言读时生成。
+  // 终端里的会话(演示):一条等你批准(能在手机上拍)、一条在跑(说一句的框是灰的)、一条歇着(能接着说一句)。最后一句按语言读时生成。
   type CliRec = Omit<CliSessionRowT, 'last_summary'> & { summaryKey: Copy | null }
   const seedCli = (): CliRec[] => {
     const n = now()
@@ -56,6 +56,7 @@ export function makeDemoBackend(opts: { now?: () => number; setTimeout?: typeof 
     return [
       { ...base, session_id: 'demo-cli-blog', code: 'democl', source: 'claude', status: 'waiting', project: 'blog', summaryKey: 'cliBlogLast', last_event_at: n - 90_000, created_at: n - HOUR,
         pending: { tool: 'Bash', summary: 'npm run deploy', since: n - 90_000, hash: 'dm0a1', actionable: true } },
+      { ...base, session_id: 'demo-cli-docs', code: 'democr', source: 'claude', status: 'running', project: 'docs', summaryKey: 'cliDocsLast', last_event_at: n - 40_000, created_at: n - 2 * HOUR, last_prompt_at: n - 5 * 60_000, pending: null },
       { ...base, session_id: 'demo-cli-api', code: 'democx', source: 'codex', status: 'idle', project: 'api-server', summaryKey: 'cliApiLast', last_event_at: n - 25 * 60_000, created_at: n - 3 * HOUR, pending: null },
     ]
   }

@@ -88,7 +88,7 @@ export default function TerminalSession() {
         </ScrollView>
         {row && row.status !== 'ended' ? (
           <View style={{ paddingHorizontal: space.xl, paddingTop: space.m, paddingBottom: space.m, gap: space.s }}>
-            {!canSayTo(row.status) ? <Txt testID="terminal-say-busy" role="meta" tone="inkSoft">{t(lang, 'terminal.sayBusy')}</Txt> : null}
+            {!canSayTo(row.status) ? <Txt testID="terminal-say-busy" role="meta" tone="inkSoft">{t(lang, row.status === 'waiting' ? 'terminal.sayWaiting' : 'terminal.sayBusy')}</Txt> : null}
             <TextField
               testID="terminal-say-input"
               accessibilityLabel={t(lang, 'terminal.sayPlaceholder')}
