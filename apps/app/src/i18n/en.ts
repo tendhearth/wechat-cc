@@ -533,6 +533,7 @@ const en = {
   'terminal.sayPlaceholder': 'Tell it what to do next…',
   'terminal.send': 'Send',
   'terminal.sayBusy': 'It’s still working. You can send the next message when this round finishes.',
+  'terminal.sayWaiting': 'It’s waiting for your approval. Decide first, then send the next message.',
   'terminal.sayEnded': 'This session has ended.',
   'terminal.sent': 'Sent. Its reply will show up here.',
   'terminal.decided': 'Done. It’s carrying on in the terminal.',

@@ -84,6 +84,7 @@ export const copy = {
   // 终端里的会话(演示,2026-10-14)
   cliBlogLast: ['文章列表页加了分页，正准备发布。', 'Added paging to the post list; about to deploy.'],
   cliApiLast: ['测试全过了，改动在 src/api.ts。', 'All tests pass; the change is in src/api.ts.'],
+  cliDocsLast: ['在把 README 的安装步骤改成三步。', 'Rewriting the README install steps into three.'],
   cliDemoReply: ['好，按你说的改完了。（演示）', 'Done as you asked. (demo)'],
 } satisfies Record<string, Pair>
 

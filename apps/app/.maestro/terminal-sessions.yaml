@@ -1,0 +1,107 @@
+# 终端里的会话 + 今天(2026-10-15,演示模式):此刻页「过去 24 小时」卡在「N 件事等你」之上、终端那条等批准算进去(点进详情能拍)
+# → 一起做「终端里的会话」三行(等你批准 / 在跑 / 歇着)→ 在跑那条的详情:说一句是灰的
+# → 歇着那条的详情:说一句 → 收下 → 回到一起做,行内「允许」→ 那条转成在跑。每一步截图。
+appId: com.tendhearth.app
+---
+- runFlow: subflows/_start.yaml
+- tapOn:
+    id: welcome-look-first
+- extendedWaitUntil:
+    visible:
+      id: now-today
+    timeout: 10000
+- assertVisible:
+    id: now-waiting-title
+- takeScreenshot: t01-now-today
+# 终端那条等批准排在「N 件事等你」里;点进去是终端会话详情,能拍
+# iOS 把滚动区下沿被裁掉的行也报成可见 ⇒ scrollUntilVisible 不滚;先实打实滚一下,免得点到下面「跟 CC 说一句」
+- scroll
+- assertVisible:
+    id: now-terminal-demo-cli-blog
+- takeScreenshot: t01b-now-waiting-terminal
+- tapOn:
+    id: now-terminal-demo-cli-blog
+- extendedWaitUntil:
+    visible:
+      id: terminal-detail-allow
+    timeout: 5000
+- assertVisible:
+    id: terminal-detail-pending
+# 等批准时说一句框下的提示是「先拍板」,不是「还在跑」
+- assertVisible: "它在等你批准，先拍板再说下一句。|It’s waiting for your approval. Decide first, then send the next message."
+- takeScreenshot: t01c-terminal-waiting
+- tapOn:
+    id: topbar-back
+- retry:
+    maxRetries: 2
+    commands:
+      - tapOn:
+          id: tab-together
+      - extendedWaitUntil:
+          visible:
+            id: together-item-a1b2c3d4
+          timeout: 3000
+- scrollUntilVisible:
+    element:
+      id: together-terminal
+- scrollUntilVisible:
+    element:
+      id: terminal-item-demo-cli-api
+- assertVisible:
+    id: terminal-allow-demo-cli-blog
+- assertVisible:
+    id: terminal-item-demo-cli-docs
+- takeScreenshot: t02-together-terminal
+# 在跑那条:说一句的框是灰的,并说明为什么
+- tapOn:
+    id: terminal-open-demo-cli-docs
+- extendedWaitUntil:
+    visible:
+      id: terminal-detail-summary
+    timeout: 5000
+- assertVisible:
+    id: terminal-say-busy
+- assertVisible:
+    id: terminal-say-send
+    enabled: false
+- takeScreenshot: t03-terminal-running
+- tapOn:
+    id: topbar-back
+# 歇着那条:接着说一句
+- scrollUntilVisible:
+    element:
+      id: terminal-open-demo-cli-api
+- tapOn:
+    id: terminal-open-demo-cli-api
+- extendedWaitUntil:
+    visible:
+      id: terminal-detail-summary
+    timeout: 5000
+- assertNotVisible:
+    id: terminal-say-busy
+- takeScreenshot: t04-terminal-idle
+- tapOn:
+    id: terminal-say-input
+- inputText: "再加一条测试"
+- tapOn:
+    id: terminal-say-send
+- extendedWaitUntil:
+    visible:
+      id: terminal-detail-note
+    timeout: 5000
+- assertVisible:
+    id: terminal-say-busy
+- takeScreenshot: t05-terminal-sent
+- tapOn:
+    id: topbar-back
+# 行内允许:等批准那条转成在跑
+- scrollUntilVisible:
+    element:
+      id: terminal-allow-demo-cli-blog
+- tapOn:
+    id: terminal-allow-demo-cli-blog
+- extendedWaitUntil:
+    notVisible:
+      id: terminal-allow-demo-cli-blog
+    timeout: 5000
+- takeScreenshot: t06-together-allowed

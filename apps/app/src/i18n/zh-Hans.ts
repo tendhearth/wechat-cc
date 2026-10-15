@@ -536,6 +536,7 @@ const zh: Record<keyof typeof en, string> = {
   'terminal.sayPlaceholder': '接下来让它做什么…',
   'terminal.send': '发送',
   'terminal.sayBusy': '它还在跑，这一轮做完再说下一句。',
+  'terminal.sayWaiting': '它在等你批准，先拍板再说下一句。',
   'terminal.sayEnded': '这个会话已经结束了。',
   'terminal.sent': '收到，它接着跑了，回复会出现在这里。',
   'terminal.decided': '好了，它在终端里接着做。',
