@@ -158,6 +158,8 @@ export interface PipelineDepsOpts {
   cliActions?: import('../cli-phone-actions').CliPhoneActions
   /** 「今天」一眼看完(core/overseer-today.ts):手机 GET /m/api/today 读它。缺省 ⇒ 503。 */
   overseerToday?: () => import('../../core/overseer-today').OverseerToday
+  /** 「CC 现在怎么样」里「终端里的 Claude Code / Codex」那一行(2026-10-14)。缺省 ⇒ 那一行不出现。 */
+  terminalHooks?: Pick<import('../terminal-hooks').TerminalHooksService, 'capabilityInput'>
   /** 网络守护运行时(2026-10-02):微信入站闸门 + 每晚整理记忆的跳过判据。 */
   guardRuntime?: import('../guard/runtime').GuardRuntime
   /** 可选子系统的开机状态(SubsystemSupervisor.statuses;「CC 现在怎么样」用)。 */
@@ -665,6 +667,7 @@ export function buildPipelineDeps(opts: PipelineDepsOpts, refs: PipelineDepsRefs
         memory: loadCompanionConfig(stateDir).memory_nightly_enabled ? { failures: nightly.failures, firstRunDone: nightly.firstRunDone } : null,
         background: (() => { const h = boot.registry.cheapEvalHealth?.(); return h ? { failures: h.consecutiveFailures, lastError: h.lastError } : null })(),
         phone: { relay: relayV2Configured(stateDir), devices },
+        terminal: (() => { try { return opts.terminalHooks?.capabilityInput() ?? null } catch { return null } })(),
         subsystems: opts.subsystems?.() ?? [],
       })
     },

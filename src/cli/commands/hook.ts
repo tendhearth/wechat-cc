@@ -1,8 +1,6 @@
 // 从 cli.ts 逐字搬出(2026-09-27 cli 拆分,spec 2026-09-27-cli-split-design);行为、参数、文案不变。
 import { defineCommand } from 'citty'
 import { STATE_DIR } from '../../lib/config'
-import { CLI_ENTRY } from '../repo-root'
-import { isCompiledBundle } from '../../lib/runtime-info'
 import { readStdin } from '../stdin'
 // ── hook — 终端 claude / codex 会话的事件推到微信(spec 2026-09-09-cli-hook-push)──
 // 两家的 hooks 各拉起一个 `wechat-cc hook <source>` 子进程,stdin 是 hook JSON。
@@ -49,9 +47,9 @@ function hookTargets(args: { claude?: boolean; codex?: boolean }): ('claude' | '
 }
 
 async function hookFileFor(source: 'claude' | 'codex'): Promise<string> {
-  const { claudeSettingsPath, codexHooksPath } = await import('../hook.ts')
+  const { hookFileFor: fileFor } = await import('../terminal-hooks.ts')
   const { homedir } = await import('node:os')
-  return source === 'claude' ? claudeSettingsPath(homedir()) : codexHooksPath(homedir(), process.env)
+  return fileFor(source, homedir(), process.env)
 }
 
 const hookInstallCmd = defineCommand({
@@ -62,13 +60,13 @@ const hookInstallCmd = defineCommand({
     json: { type: 'boolean', description: 'JSON envelope' },
   },
   async run({ args }) {
-    const { installHooks, hookCommandLine } = await import('../hook.ts')
-    // 原来是 fileURLToPath(import.meta.url)(cli.ts 自己);搬进 src/cli/commands/ 后改从 repo-root 取。
-    const cliEntry = CLI_ENTRY
+    const { installHooks } = await import('../hook.ts')
+    // 命令行与 daemon 的 POST /v1/cli/hooks/install(桌面「接上」)同一个出处:terminal-hooks.ts selfHookCommand。
+    const { selfHookCommand } = await import('../terminal-hooks.ts')
     const out: Record<string, unknown> = {}
     for (const source of hookTargets(args)) {
       const file = await hookFileFor(source)
-      const command = hookCommandLine({ execPath: process.execPath, compiled: isCompiledBundle(), cliEntry, source })
+      const command = selfHookCommand(source)
       try {
         const { changed } = installHooks(file, source, command)
         out[source] = { ok: true, file, changed, command }

@@ -42,6 +42,8 @@ export interface WireMainOpts {
   cliActions?: import('../cli-phone-actions').CliPhoneActions
   /** 「今天」一眼看完(core/overseer-today.ts):手机 GET /m/api/today 读它。缺省 ⇒ 503。 */
   overseerToday?: () => import('../../core/overseer-today').OverseerToday
+  /** 「CC 现在怎么样」里「终端里的 Claude Code / Codex」那一行(2026-10-14)。缺省 ⇒ 那一行不出现。 */
+  terminalHooks?: Pick<import('../terminal-hooks').TerminalHooksService, 'capabilityInput'>
   /** 网络守护运行时(2026-10-02,main.ts 建):闸门 + 调度器 Ref + 后台任务跳过包装。缺省 = 老行为。 */
   guardRuntime?: import('../guard/runtime').GuardRuntime
   /** 可选子系统开机状态(SubsystemSupervisor.statuses)→「CC 现在怎么样」。 */
