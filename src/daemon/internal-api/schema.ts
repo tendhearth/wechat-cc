@@ -743,6 +743,11 @@ export const CliSessionsQuery = z.object({
   ended: z.enum(['0', '1']).optional(),
   limit: z.coerce.number().int().min(1).max(500).optional(),
 })
+// ── POST /v1/cli/hooks/install|uninstall(接上 / 撤掉终端里的 Claude Code / Codex)──────────
+// sources 缺省:install = 这台机上有、还没接好的那几家;uninstall = 两家都撤。
+export const CliHooksRequest = z.object({
+  sources: z.array(z.enum(['claude', 'codex'])).min(1).max(2).optional(),
+})
 
 // ── Lookup tables ───────────────────────────────────────────────────────
 // REQUEST_SCHEMAS includes both POST body schemas (most routes) and GET
@@ -807,6 +812,8 @@ export const REQUEST_SCHEMAS: Record<string, z.ZodTypeAny | undefined> = {
   'POST /v1/cli/permission': CliPermissionRequest,
   'GET /v1/cli/permission': CliPermissionQuery,
   'GET /v1/cli/sessions': CliSessionsQuery,
+  'POST /v1/cli/hooks/install': CliHooksRequest,
+  'POST /v1/cli/hooks/uninstall': CliHooksRequest,
 
   // conversation
   'POST /v1/conversation/set-mode': ConversationSetModeRequest,

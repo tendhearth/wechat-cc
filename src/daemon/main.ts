@@ -66,6 +66,8 @@ import { makeCliPermissionRelay } from '../core/cli-permission-relay'
 import { makeCliReplyHandler, makeCliReplyCore, makeHandReplyExecutor } from './cli-reply-handler'
 import { withReplyRefs } from '../core/cli-session-digest'
 import { makeOverseerTodaySource, TODAY_TERMINAL_LIMIT } from './overseer-today-source'
+import { makeTerminalHooksService } from './terminal-hooks'
+import { defaultTerminalHooksDeps } from '../cli/terminal-hooks'
 import { makeCliPhoneActions } from './cli-phone-actions'
 import { makeCliHubAppPush, makeCliPermissionAsk, type AppPushOutlet } from './cli-app-push'
 import { scopedSend } from './inbound/reply-scope'
@@ -793,6 +795,10 @@ export async function bootDaemon(opts: BootDaemonOpts): Promise<DaemonHandle> {
       log: (t, l) => log(t, l),
     })
     internalApi.setOverseerToday(overseerToday)
+    // 接上终端里的 Claude Code / Codex(2026-10-14):「CC 现在怎么样」那一行 + 桌面「接上」/「修复」的路由。
+    // 只在主人点了确认时写 hook 配置,绝不自动装。
+    const terminalHooks = makeTerminalHooksService({ deps: defaultTerminalHooksDeps, sessions: () => cliEvents.list({ includeEnded: true, limit: 500 }) })
+    internalApi.setCliHooks(terminalHooks)
     // 「看 码」「@码 文本」:主人对某条终端会话说话。只认主人;那边的会话 v1 先说明。
     const cliReplyHandler = makeCliReplyHandler({
       executionConflict,reserveExecution,
@@ -829,6 +835,7 @@ export async function bootDaemon(opts: BootDaemonOpts): Promise<DaemonHandle> {
       workbench,
       cliSessions: () => cliEvents.list({ limit: 50 }),
       overseerToday,
+      terminalHooks,
       // 手机拍板 / 说一句:拍板与微信「y/n 码」、桌宠权限卡同一份待批;说一句与微信「@码」同一个 core。
       cliActions: makeCliPhoneActions({
         hub: cliEvents, relay: cliPermissions, core: replyCore, localMachine: osHostname(), log: (t, l) => log(t, l),

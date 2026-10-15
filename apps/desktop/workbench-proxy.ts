@@ -18,6 +18,8 @@ const ROUTES = new Set([
   'POST /v1/phone/link','GET /v1/phone/devices',
   // 终端会话(2026-10-14):此刻「N 件事等你」里的终端行,只读。
   'GET /v1/cli/sessions',
+  // 接上 / 撤掉终端里的 Claude Code / Codex(2026-10-14):「CC 现在怎么样」与引导页的按钮,主人点了确认才调。
+  'POST /v1/cli/hooks/install','POST /v1/cli/hooks/uninstall',
 ])
 interface Options {
   stateDir:string; dryRun:boolean; allowWrites:boolean
@@ -45,7 +47,7 @@ export function createWorkbenchProxy(opts:Options) {
   return async (req:Request):Promise<Response|null> => {
     const url=new URL(req.url)
     // /v1/connections(此刻的连接浮层)、/v1/phone/*(连接手机)、/v1/cli/sessions(此刻里的终端会话)也走这里;mock 模式下交给 test-shim 的演示路由
-    const ownerSurface=url.pathname==='/v1/connections'||url.pathname.startsWith('/v1/phone/')||url.pathname==='/v1/cli/sessions'
+    const ownerSurface=url.pathname==='/v1/connections'||url.pathname.startsWith('/v1/phone/')||url.pathname==='/v1/cli/sessions'||url.pathname.startsWith('/v1/cli/hooks/')
     if(!ownerSurface&&url.pathname!=='/v1/workbench'&&!url.pathname.startsWith('/v1/workbench/'))return null
     if(ownerSurface&&opts.dryRun)return null
     if(!['127.0.0.1','localhost','[::1]'].includes(url.hostname))return Response.json({error:'forbidden'},{status:403})

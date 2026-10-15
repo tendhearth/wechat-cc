@@ -446,6 +446,10 @@ export function createInternalApi(deps: InternalApiDeps): InternalApi {
       deps.overseerToday = fn
     },
 
+    setCliHooks(svc) {
+      deps.cliHooks = svc
+    },
+
     getPresence() {
       return computePresence(deps)
     },

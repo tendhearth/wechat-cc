@@ -31,6 +31,12 @@
 .now-connections .nc-capability .nc-action-hint { grid-column: 2; justify-self: start; margin-top: 4px; font-size: var(--th-size-small); }
 .now-connections .nc-action { padding: 3px 10px; border: 1px solid var(--th-hair); border-radius: 6px; background: transparent; color: var(--th-ink); cursor: pointer; }
 .now-connections .nc-action-hint { color: var(--th-ink-soft); }
+/* 接上终端里的 Claude Code / Codex(2026-10-14):按钮 → 一句确认 + 确定 / 取消 */
+.now-connections .nc-capability .hooks-action { grid-column: 2; margin-top: 4px; font-size: var(--th-size-small); }
+.hooks-action .hooks-confirm, .hooks-action .hooks-status, .hooks-action .hooks-error { margin: 0 0 6px; font-size: var(--th-size-small); line-height: 1.5; color: var(--th-ink-soft); }
+.hooks-action .hooks-error { color: var(--th-bad); }
+.hooks-action .hooks-buttons { display: flex; gap: 8px; flex-wrap: wrap; }
+.hooks-action .nc-action { padding: 3px 10px; border: 1px solid var(--th-hair); border-radius: 6px; background: transparent; color: var(--th-ink); cursor: pointer; font-size: var(--th-size-small); }
 .now-connections .dot { width: 8px; height: 8px; border-radius: 50%; background: var(--th-unknown); align-self: center; }
 .now-connections .dot.ok { background: var(--th-ok); }
 .now-connections .dot.warn { background: var(--th-warn); }

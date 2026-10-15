@@ -15,6 +15,7 @@ export interface InternalApiLifecycle extends Lifecycle {
   setCliEvents(hub: NonNullable<InternalApiDeps['cliEvents']>): void
   setCliPermissions(relay: NonNullable<InternalApiDeps['cliPermissions']>): void
   setOverseerToday(fn: NonNullable<InternalApiDeps['overseerToday']>): void
+  setCliHooks(svc: NonNullable<InternalApiDeps['cliHooks']>): void
   getPresence(): Promise<import('../../core/companion-presence').Presence | null>
   setCustomerReview(service: NonNullable<InternalApiDeps['customerReview']>): void
   setA2A(a2a: NonNullable<InternalApiDeps['a2a']>): void
@@ -69,6 +70,7 @@ export async function registerInternalApi(deps: InternalApiDeps): Promise<Intern
     setCliEvents: (hub) => api.setCliEvents(hub),
     setCliPermissions: (relay) => api.setCliPermissions(relay),
     setOverseerToday: (fn) => api.setOverseerToday(fn),
+    setCliHooks: (svc) => api.setCliHooks(svc),
     getPresence: () => api.getPresence(),
     setCustomerReview: (service) => api.setCustomerReview(service),
     setA2A: (a2a) => api.setA2A(a2a),

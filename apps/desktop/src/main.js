@@ -27,6 +27,7 @@ import {
 } from "./modules/wizard.js"
 import { refreshQr, stopQr } from "./modules/qr.js"
 import { mountPhoneConnect, mountOnboardPhone } from "./modules/phone-connect.js"
+import { mountOnboardTerminal } from "./modules/terminal-hooks.js"
 import { serviceAction, forceKillDaemon } from "./modules/service.js"
 import { renderDashboard, renderRestartButton, setPending, setLastProbe, restartDaemon, stopDaemon, handleAccountRowClick, toggleProviderMenu, toggleUserProviderMenu, closeProviderMenu, checkIncidentsOnPoll, checkFsAccessOnPoll, checkGuardOnPoll, checkBrainHealthOnPoll, loadBrainHealth, runTroubleshoot, runBrainDial, closeTroubleshoot, renderNoBrain, openBrainSetup, saveBrainKey } from "./modules/dashboard.js"
 import { renderConversations } from "./modules/conversations.js"
@@ -171,7 +172,7 @@ presencePoller.subscribe(p => { lastPresence = p; renderRail() })
 // 右上角状态行打开的「CC 的连接」(GET /v1/connections,admin,走原生宿主的 operator 凭据)。
 // 只在浮层打开时读:打开时立刻读一次,开着时每 30 秒再读。
 const nowConnectionsHost = document.getElementById('now-connections')
-const nowConnections = nowConnectionsHost ? mountNowConnections({ host: nowConnectionsHost, call: (method, path) => invokeWorkbenchApi(method, path), openUrl: url => { if (!mock) void Promise.resolve(invoke('open_url', { url })).catch(err => showToast(`打不开：${formatInvokeError(err)}`)) } }) : null
+const nowConnections = nowConnectionsHost ? mountNowConnections({ host: nowConnectionsHost, call: (method, path, body) => invokeWorkbenchApi(method, path, body), openUrl: url => { if (!mock) void Promise.resolve(invoke('open_url', { url })).catch(err => showToast(`打不开：${formatInvokeError(err)}`)) } }) : null
 {
   const details = /** @type {HTMLDetailsElement|null} */ (document.querySelector('.cc-home-details'))
   /** @type {ReturnType<typeof setInterval>|null} */ let timer = null
@@ -424,9 +425,12 @@ function setMode(mode) {
 
 // 引导页最后一步的码(spec 2026-10-01-tendhearth-pairing-ux §5):在 #screen-service 且 daemon 活着才要码。
 /** @type {ReturnType<typeof mountOnboardPhone> | null} */ let onboardPhone = null
+// 同一步里可选的「接上终端里的 Claude Code / Codex」(2026-10-14):同样只在这一步且 daemon 活着时去问。
+/** @type {ReturnType<typeof mountOnboardTerminal> | null} */ let onboardTerminal = null
 function syncOnboardPhone(report = doctorPoller.current) {
   const active = document.documentElement.dataset.mode === "wizard" && !!document.getElementById("screen-service")?.classList.contains("active")
   onboardPhone?.sync({ active, alive: !!report?.checks?.daemon?.alive })
+  onboardTerminal?.sync({ active, alive: !!report?.checks?.daemon?.alive })
 }
 
 /** @param {string} name */
@@ -763,6 +767,8 @@ function wireEvents() {
     call: (method, path, body) => invokeWorkbenchApi(method, path, body),
     renderQr: text => /** @type {Promise<string>} */ (deps.invoke("render_qr_svg", { text })),
   })
+  const onboardTerminalHost = document.getElementById("onboard-terminal")
+  if (onboardTerminalHost) onboardTerminal = mountOnboardTerminal({ host: onboardTerminalHost, call: (method, path, body) => invokeWorkbenchApi(method, path, body) })
 
   // 大脑卡交互:测试连接(唯一的真实拨号入口)/ 接入表单 / 复制命令 / 保存 key / 重启
   document.getElementById("brain-selfcheck")?.addEventListener("click", () => {

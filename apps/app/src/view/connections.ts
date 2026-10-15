@@ -18,11 +18,17 @@ const HEADLINE = { ok: 'links.headlineOk', warn: 'links.headlineWarn', bad: 'lin
 type HeadlineKey = (typeof HEADLINE)[Dot] | 'links.headlineOffline' | 'links.headlineStarting' | 'links.headlineNeedsYou' | 'links.headlineFallback'
 type Capability = NonNullable<ConnectionsT['capabilities']>[number]
 const CAP_DOT: Record<Capability['state'], Dot> = { ok: 'ok', fallback: 'warn', needs_you: 'bad', off: 'unknown' }
-const CAP_NAMES = ['wechat', 'brain', 'guard', 'disk', 'knowledge', 'memory', 'background', 'phone'] as const
+const CAP_NAMES = ['wechat', 'brain', 'guard', 'disk', 'knowledge', 'memory', 'background', 'phone', 'terminal'] as const
 /** 能力行的人话:认得的原因码按本机语言说;认不出的(新 daemon 的新码)用 daemon 给的原文。 */
 function capabilityLabel(c: Capability, lang: Lang): string {
   const key = `cap.${c.code}`
   return hasMessage(lang, key) ? t(lang, key, c.params) : c.reason
+}
+
+/** 动作的字:认得的原因码有本地化的(cap.action.<code>)就用,否则用 daemon 给的原文。 */
+function actionLabel(c: Capability, lang: Lang): string {
+  const key = `cap.action.${c.code}`
+  return hasMessage(lang, key) ? t(lang, key) : c.action?.label ?? ''
 }
 
 /**
@@ -56,7 +62,8 @@ export function connectionsView(s: ConnectionsT, _now: number, lang: Lang, opts:
     name: (CAP_NAMES as readonly string[]).includes(c.id) ? t(lang, `cap.name.${c.id}` as Parameters<typeof t>[1]) : c.name,
     dot: CAP_DOT[c.state], label: capabilityLabel(c, lang),
     // 修只能在电脑上做:手机上把动作说成一句提示,不做成按钮。唯一的例外是在微信里回一句。
-    action: c.action && c.state !== 'ok' ? t(lang, c.action.where === 'wechat' ? 'cap.actionInWechat' : 'cap.actionOnComputer', { action: c.action.label }) : null,
+    // 带 run 的(接上终端里的 Claude Code / Codex)在 ok 行上也说(「接了一部分」),但手机不替电脑改配置。
+    action: c.action && (c.state !== 'ok' || c.action.run) ? t(lang, c.action.where === 'wechat' ? 'cap.actionInWechat' : 'cap.actionOnComputer', { action: actionLabel(c, lang) }) : null,
   }))
   const needsYou = caps.filter(c => c.state === 'needs_you').length, fallback = caps.filter(c => c.state === 'fallback').length
   const headline: { dot: Dot; key: HeadlineKey; n: number } = needsYou > 0

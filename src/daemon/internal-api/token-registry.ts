@@ -275,6 +275,10 @@ export function makeTokenRegistry(
           'GET /v1/cli/sessions',
           // 「今天」一眼看完(2026-10-14):同一份 operator 凭据,admin 档、只读。桌面暂不调(保持简单)。
           'GET /v1/overseer/today',
+          // 接上 / 撤掉终端里的 Claude Code / Codex(2026-10-14):桌面「CC 现在怎么样」与引导页的「接上」/「修复」。
+          // admin 档,同一份 operator 凭据;Tauri 宿主(lib.rs)与 workbench-proxy.ts 都已登记。
+          'POST /v1/cli/hooks/install',
+          'POST /v1/cli/hooks/uninstall',
         ]),
       })
     },

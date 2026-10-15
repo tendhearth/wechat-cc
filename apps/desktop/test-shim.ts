@@ -153,6 +153,9 @@ const __mockState: {
   // (都是最后一项一直回);没 seed ⇒ ready 码 + 空列表。phoneCalls 记 link 的请求正文(mock.phone-calls 读)。
   phone?: { link?: unknown[]; devices?: unknown[][] }
   phoneCalls: unknown[]
+  // 接上终端里的 Claude Code / Codex(POST /v1/cli/hooks/install,2026-10-14):dry-run 下记请求正文(mock.hook-calls 读),
+  // 并把演示快照里 id=terminal 的那一行翻成「已接上」—— 下一次 GET /v1/connections 就和真 daemon 一样。
+  hookCalls: unknown[]
   // 终端会话(GET /v1/cli/sessions,此刻「N 件事等你」里的终端行)。demo.seed { cliSessions: [...] };没 seed ⇒ 空列表。
   // 「允许 / 拒绝」走 pet_permission_resolve:dry-run 下记进 permissionResolves(mock.permission-resolves 读),
   // 并把带这个码的会话从 waiting 收回 running —— 下一拍列表就不再有它,与真 daemon 一致。
@@ -201,7 +204,7 @@ const __mockState: {
   /** 「跟 CC 说」演示:说过的话与「在访达中显示」交出去的 ref(mock.converse-calls 读)。 */
   converseCalls: string[]
   revealCalls: string[]
-} = { converseCalls: [], revealCalls: [], chats: [], observations: [], milestones: [], sessions: [], daemonAlive: true, installProgress: null, installSimulationStep: 0, conversations: null, presence: { presence: 'ok', activity: { kind: 'idle', label: '', since: null }, news: { unread: 0, latest_kind: null, latest_title: null } }, a2aAgents: [], a2aEvents: [], doctorOverride: null, doctorErrorOnce: false, serviceInvokes: [], healthProbeResult: true, logCalls: [], providerInvokes: [], dialogueMessages: [], dialogueThreads: [], dialoguePassphrase: '1234', dialogueUnlocked: false, connectionProbeState: 'taken_over', phoneCalls: [], permissionResolves: [] }
+} = { converseCalls: [], revealCalls: [], chats: [], observations: [], milestones: [], sessions: [], daemonAlive: true, installProgress: null, installSimulationStep: 0, conversations: null, presence: { presence: 'ok', activity: { kind: 'idle', label: '', since: null }, news: { unread: 0, latest_kind: null, latest_title: null } }, a2aAgents: [], a2aEvents: [], doctorOverride: null, doctorErrorOnce: false, serviceInvokes: [], healthProbeResult: true, logCalls: [], providerInvokes: [], dialogueMessages: [], dialogueThreads: [], dialoguePassphrase: '1234', dialogueUnlocked: false, connectionProbeState: 'taken_over', phoneCalls: [], hookCalls: [], permissionResolves: [] }
 
 // ─── A2A mock credentials ─────────────────────────────────────────────────────
 // The A2A routes (/v1/a2a/*) are served by the SAME Bun.serve instance as the
@@ -562,6 +565,9 @@ Bun.serve({
           if (hit) { hit.status = 'running'; hit.pending = null }
           return Response.json({ result: !!hit })
         }
+        if (body.command === 'mock.hook-calls') {
+          return Response.json({ result: { calls: __mockState.hookCalls } })
+        }
         if (body.command === 'mock.phone-calls') {
           return Response.json({ result: { calls: __mockState.phoneCalls } })
         }
@@ -648,6 +654,7 @@ Bun.serve({
           __mockState.connections = args && 'connections' in args ? args.connections : undefined
           __mockState.phone = args?.phone ? { link: [...(args.phone.link ?? [])], devices: [...(args.phone.devices ?? [])] } : undefined
           __mockState.phoneCalls = []
+          __mockState.hookCalls = []
           __mockState.cliSessions = args?.cliSessions ? args.cliSessions.map(x => ({ ...x })) : undefined
           __mockState.permissionResolves = []
           __mockState.presence = args?.presence ?? { presence: 'ok', activity: { kind: 'idle', label: '', since: null }, news: { unread: 0, latest_kind: null, latest_title: null } }
@@ -1569,6 +1576,15 @@ Bun.serve({
       const q = __mockState.phone?.devices
       if (q && q.length > 0) return Response.json({ ok: true, devices: q.length > 1 ? q.shift() : q[0] })
       return Response.json({ ok: true, devices: [] })
+    }
+    if (dryRun && url.pathname === '/v1/cli/hooks/install' && req.method === 'POST') {
+      let body: unknown = {}
+      try { body = await req.json() } catch { body = {} }
+      __mockState.hookCalls.push(body)
+      const snap = __mockState.connections as { capabilities?: Array<Record<string, unknown>> } | null | undefined
+      const row = snap?.capabilities?.find(c => c.id === 'terminal')
+      if (row) { row.state = 'ok'; row.code = 'terminal.ok'; row.reason = '已接上，最近 7 天 0 个终端会话。'; delete row.action }
+      return Response.json({ ok: true, results: [{ source: 'claude', ok: true, file: '/home/demo/.claude/settings.json', changed: true }], status: [] })
     }
     if (dryRun && url.pathname === '/v1/cli/sessions' && req.method === 'GET') {
       return Response.json({ ok: true, sessions: __mockState.cliSessions ?? [] })

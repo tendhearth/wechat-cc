@@ -398,7 +398,8 @@ export const Connections = z.object({
   capabilities: z.array(z.object({
     id: z.string(), name: z.string(), state: z.enum(['ok', 'fallback', 'needs_you', 'off']),
     code: z.string(), params: z.record(z.string(), z.union([z.string(), z.number()])).optional(), reason: z.string(),
-    action: z.object({ label: z.string(), where: z.enum(['desktop', 'settings', 'wechat']), url: z.string().optional() }).optional(),
+    // run(2026-10-14):桌面能当场做的动作(如 cli_hooks_install = 接上终端里的 Claude Code / Codex);手机只当提示。
+    action: z.object({ label: z.string(), where: z.enum(['desktop', 'settings', 'wechat']), url: z.string().optional(), run: z.string().optional() }).optional(),
   })).optional(),
 })
 export type ConnectionsT = z.infer<typeof Connections>
