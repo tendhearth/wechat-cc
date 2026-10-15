@@ -329,18 +329,19 @@ describe('Cursor — stop 从 transcript 补最后一句', () => {
 
 describe('Cursor — ~/.cursor/hooks.json 安装 / 卸载 / 状态(临时目录)', () => {
   const cmd = '"/A/tendhearth-cc-cli" hook cursor'
-  const EVENTS = ['beforeMCPExecution', 'beforeShellExecution', 'beforeSubmitPrompt', 'sessionEnd', 'stop']
+  // 先只看不拍(10-15):权限两件不挂,免得 Cursor 每条命令都要问(见 hook.ts CURSOR_EVENTS)
+  const EVENTS = ['beforeSubmitPrompt', 'sessionEnd', 'stop']
   it('路径', () => {
     expect(cursorHooksPath('/home/u')).toBe(join('/home/u', '.cursor', 'hooks.json'))
   })
-  it('文件不存在 → 建 {version:1,hooks};五个事件各一条;权限类 150s,其余 5s', () => {
+  it('文件不存在 → 建 {version:1,hooks};三个事件各一条(5s);不挂 beforeShellExecution / beforeMCPExecution', () => {
     const file = join(dir, '.cursor', 'hooks.json')
     expect(installHooks(file, 'cursor', cmd)).toEqual({ changed: true })
     const cfg = JSON.parse(readFileSync(file, 'utf8'))
     expect(cfg.version).toBe(1)
     expect(Object.keys(cfg.hooks).sort()).toEqual(EVENTS)
-    expect(cfg.hooks.beforeShellExecution).toEqual([{ command: cmd, timeout: 150 }])
-    expect(cfg.hooks.beforeMCPExecution).toEqual([{ command: cmd, timeout: 150 }])
+    expect(cfg.hooks.beforeShellExecution).toBeUndefined()
+    expect(cfg.hooks.beforeMCPExecution).toBeUndefined()
     expect(cfg.hooks.stop).toEqual([{ command: cmd, timeout: 5 }])
     expect(hookStatus(file, 'cursor')).toEqual({ installed: true, command: cmd })
     expect(hookStatus(file, 'claude')).toEqual({ installed: false, command: null })
@@ -361,7 +362,7 @@ describe('Cursor — ~/.cursor/hooks.json 安装 / 卸载 / 状态(临时目录)
     const cmd2 = '"/new/tendhearth-cc-cli" hook cursor'
     expect(installHooks(file, 'cursor', cmd2)).toEqual({ changed: true })
     expect(JSON.parse(readFileSync(file, 'utf8')).hooks.stop).toEqual([{ command: './audit.sh' }, { command: cmd2, timeout: 5 }])
-    expect(uninstallHooks(file, 'cursor')).toEqual({ changed: true, removed: 5 })
+    expect(uninstallHooks(file, 'cursor')).toEqual({ changed: true, removed: 3 })
     expect(JSON.parse(readFileSync(file, 'utf8'))).toEqual(foreign)
     expect(uninstallHooks(file, 'cursor')).toEqual({ changed: false, removed: 0 })
     expect(hookStatus(file, 'cursor')).toEqual({ installed: false, command: null })

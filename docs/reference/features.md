@@ -289,11 +289,12 @@ and Codex. Design: `docs/superpowers/specs/2026-09-09-cli-hook-push-design.md`.
 **Cursor** (IDE agent and `cursor-agent`, labelled 「Cursor」) uses its own
 `~/.cursor/hooks.json` contract: `stop` / `beforeSubmitPrompt` / `sessionEnd`
 are events (session id = `conversation_id`, project = `workspace_roots[0]`; the
-last assistant line is read from `transcript_path`), and `beforeShellExecution`
-/ `beforeMCPExecution` go through the same WeChat relay. The answer is
-`{"permission":"allow"|"deny"}` when you decided on WeChat, and `"ask"`
-otherwise (you're at the machine, timeout, not delivered, daemon down) — never
-an automatic allow. `@<code>` resumes with `cursor-agent --resume=<id> -p --trust`
+last assistant line is read from `transcript_path`). For now CC only *watches*
+Cursor: `beforeShellExecution` / `beforeMCPExecution` are **not** installed,
+because they fire for every command (not just the ones Cursor would ask about)
+and answering `ask` without a decision would switch off Cursor's own auto-run.
+The relay code for them (allow/deny from WeChat, `ask` otherwise, never an
+automatic allow) is kept and will be enabled once checked on a real Cursor. `@<code>` resumes with `cursor-agent --resume=<id> -p --trust`
 (`--force` only under `--dangerously`); because the session's model isn't
 known, the network guard treats a Cursor resume as needing protection.
 

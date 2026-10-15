@@ -505,13 +505,14 @@ export function hookStatus(file: string, source: HookSource): { installed: boole
 interface CursorHookEntry { command?: string; timeout?: number; [k: string]: unknown }
 
 /**
- * Cursor 的 hook 都是同步的(等 stdout)。权限两件要等微信,时限盖过 RELAY_TOTAL_MS;其余只报一声。
- * beforeReadFile / afterFileEdit 之类不挂:前者每读一个文件都会触发,后者不是主人关心的节点。
+ * Cursor 先只「看」不「拍」(10-15 定):挂 stop / beforeSubmitPrompt / sessionEnd。
+ * beforeShellExecution / beforeMCPExecution 不挂 —— 它们对**每一条**命令都触发(不只 Cursor 本来要问的),
+ * 我们拿不到决定时只能回 ask,等于关掉 Cursor 自己的 auto-run / 白名单,离开时连 ls 都会发微信卡片。
+ * 转换与回话代码保留(cursorPermissionRequest / 决定映射),真机确认 Cursor 对空输出的行为后再开。
+ * beforeReadFile / afterFileEdit 之类也不挂:前者每读一个文件都会触发,后者不是主人关心的节点。
  */
 const CURSOR_EVENTS: { event: string; sync?: boolean }[] = [
   { event: 'stop' },
-  { event: 'beforeShellExecution', sync: true },
-  { event: 'beforeMCPExecution', sync: true },
   { event: 'beforeSubmitPrompt' },
   { event: 'sessionEnd' },
 ]
