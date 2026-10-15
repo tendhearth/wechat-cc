@@ -13,7 +13,8 @@ const waiting={session_id:'s-wait',code:'s-wait',source:'claude',status:'waiting
 const local={...waiting,session_id:'s-local',project:'notes',pending:{...waiting.pending,hash:null,actionable:false}}
 const idle={...waiting,session_id:'s-idle',source:'codex',status:'idle',project:'api',last_summary:'测试全过了',pending:null}
 const ended={...idle,session_id:'s-end',status:'ended'}
-const LIST={ok:true,sessions:[waiting,local,idle,ended]}
+const viaCursor={...idle,session_id:'s-cur',source:'cursor',project:'site'}
+const LIST={ok:true,sessions:[waiting,local,idle,viaCursor,ended]}
 function load(api=vi.fn(async(path:string,_opts?:any)=>response(path==='/m/api/cli/sessions'?LIST:{ok:true,accepted:true}))){
  const window=new Window({url:'https://fixture.test/m'});windows.push(window)
  const document=window.document;document.body.innerHTML=assembleMobilePage(readMobileSource).phone
@@ -35,7 +36,7 @@ describe('phone page: terminal sessions in 一起做',()=>{
   expect(h.api).toHaveBeenCalledWith('/m/api/cli/sessions',undefined)
   const text=h.el('terminal-list').textContent!
   expect(h.el('terminal-root').hidden).toBe(false)
-  expect(text).toContain('blog');expect(text).toContain('等你批准');expect(text).toContain('Bash: npm run deploy');expect(text).toContain('Codex');expect(text).toContain('歇着')
+  expect(text).toContain('blog');expect(text).toContain('等你批准');expect(text).toContain('Bash: npm run deploy');expect(text).toContain('Codex');expect(text).toContain('Cursor');expect(text).toContain('歇着')
   expect(h.document.querySelector('[data-tm-row="s-end"]')).toBeNull()
   expect(h.document.querySelector('[data-tm-decide="allow"][data-tm-id="s-wait"]')).not.toBeNull()
   expect(h.document.querySelector('[data-tm-decide][data-tm-id="s-local"]')).toBeNull()

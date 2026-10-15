@@ -18,7 +18,7 @@ import type { Db } from '../lib/db'
 
 export type CliSessionStatus = 'running' | 'waiting' | 'idle' | 'ended'
 /** 同 cli-events.ts 的 CliSource;这里单写一份是为了不和 hub 互相 import(depcruise no-circular 连 type 也算)。 */
-type CliSource = 'claude' | 'codex'
+type CliSource = 'claude' | 'codex' | 'cursor'
 
 /** running / waiting 多久没事件就当 idle(读时判定,不跑定时器)。 */
 export const CLI_SESSION_STALE_MS = 30 * 60_000

@@ -39,7 +39,7 @@ export function terminalRow(s: CliSessionRowT, now: number, lang: Lang): Termina
   return {
     id: s.session_id,
     project: s.project,
-    source: t(lang, s.source === 'codex' ? 'sessions.codex' : 'sessions.claude'),
+    source: t(lang, s.source === 'codex' ? 'sessions.codex' : s.source === 'cursor' ? 'sessions.cursor' : 'sessions.claude'),
     status: s.status,
     stale: s.stale,
     summary: s.last_summary,

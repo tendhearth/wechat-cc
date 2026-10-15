@@ -6,10 +6,10 @@ var TM_STATUS = { waiting:'等你批准', running:'在跑', idle:'歇着', ended
 var TM_POLL_MS = 15000
 var TM_SAY_MAX = 4000
 function tmEl(id){return document.getElementById('terminal-'+id)}
-function tmSource(s){return s==='codex'?'Codex':'Claude Code'}
+function tmSource(s){return s==='codex'?'Codex':s==='cursor'?'Cursor':'Claude Code'}
 function tmAgo(at){var d=Math.max(0,Date.now()-at);if(d<60000)return '刚刚';if(d<3600000)return Math.floor(d/60000)+' 分钟前';if(d<86400000)return Math.floor(d/3600000)+' 小时前';return new Date(at).toLocaleString()}
 function tmActionable(r){return r.status==='waiting'&&!!r.pending&&r.pending.actionable===true&&typeof r.pending.hash==='string'}
-function tmValid(r){return r&&typeof r.session_id==='string'&&typeof r.project==='string'&&['claude','codex'].indexOf(r.source)>=0&&!!TM_STATUS[r.status]&&typeof r.last_event_at==='number'}
+function tmValid(r){return r&&typeof r.session_id==='string'&&typeof r.project==='string'&&['claude','codex','cursor'].indexOf(r.source)>=0&&!!TM_STATUS[r.status]&&typeof r.last_event_at==='number'}
 function tmError(code){
   var m={cli_permission_stale:'这一项已经处理过或过期了。',cli_not_actionable:'正在终端里问，回电脑上答。',cli_session_busy:'它还在跑，这一轮做完再说下一句。',cli_session_ended:'这个会话已经结束了。',cli_session_remote:'这个会话在另一台电脑上，暂时请在微信里回它。',not_found:'电脑上的列表里已经没有这个会话了。',invalid:'这句话没有被接受（空的或太长）。',timeout:'不确定送到没有，稍后再看一眼。'}
   return m[code]||'没送到电脑上，请稍后再试。'

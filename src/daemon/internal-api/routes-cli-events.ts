@@ -52,12 +52,12 @@ export function cliEventRoutes(deps: InternalApiDeps): RouteTable {
     // CliHooksRequest 校验过。回每一家的结果 + 新的状态(桌面据此刷新「CC 现在怎么样」)。
     'POST /v1/cli/hooks/install': async (_q, body) => {
       if (!deps.cliHooks) return { status: 503, body: { error: 'cli_hooks_not_wired' } }
-      const sources = (body as { sources?: Array<'claude' | 'codex'> } | undefined)?.sources
+      const sources = (body as { sources?: Array<'claude' | 'codex' | 'cursor'> } | undefined)?.sources
       return { status: 200, body: deps.cliHooks.install(sources) }
     },
     'POST /v1/cli/hooks/uninstall': async (_q, body) => {
       if (!deps.cliHooks) return { status: 503, body: { error: 'cli_hooks_not_wired' } }
-      const sources = (body as { sources?: Array<'claude' | 'codex'> } | undefined)?.sources
+      const sources = (body as { sources?: Array<'claude' | 'codex' | 'cursor'> } | undefined)?.sources
       return { status: 200, body: deps.cliHooks.uninstall(sources) }
     },
     // 「今天」一眼看完(2026-10-14):终端 + 一起做,过去 24 小时;等你 / 做完 / 在跑 / 可能卡住。

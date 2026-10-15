@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { parseTranscript, renderTranscriptTail } from './cli-transcript'
+import { parseTranscript, renderTranscriptTail, lastAssistantText } from './cli-transcript'
 
 const claudeLines = [
   { type: 'user', message: { content: '帮我看看' } },
@@ -36,6 +36,23 @@ describe('parseTranscript', () => {
       { role: 'assistant', text: '我先创建文件。' },
       { role: 'assistant', text: '已完成' },
     ])
+  })
+  it('cursor:{role,message} 行;user 只留 <user_query> 里的,turn_ended / 工具调用跳过;最后一句助手', () => {
+    const cursorLines = [
+      { role: 'user', message: { content: [{ type: 'text', text: '<timestamp>Tuesday, Aug 25, 2026</timestamp>\n<user_query>\n只回复两个字:收到\n</user_query>' }] } },
+      { role: 'assistant', message: { content: [{ type: 'text', text: '我先查' }, { type: 'tool_use', name: 'Read', input: {} }] } },
+      { role: 'assistant', message: { content: [{ type: 'tool_use', name: 'Shell', input: {} }] } },
+      { role: 'assistant', message: { content: [{ type: 'text', text: '收到' }] } },
+      { type: 'turn_ended', status: 'success' },
+    ].map(x => JSON.stringify(x)).join('\n')
+    expect(parseTranscript(cursorLines, 'cursor')).toEqual([
+      { role: 'user', text: '只回复两个字:收到' },
+      { role: 'assistant', text: '我先查' },
+      { role: 'assistant', text: '收到' },
+    ])
+    expect(lastAssistantText(cursorLines, 'cursor')).toBe('收到')
+    expect(lastAssistantText(JSON.stringify({ role: 'user', message: { content: [{ type: 'text', text: 'hi' }] } }), 'cursor')).toBeUndefined()
+    expect(lastAssistantText('', 'cursor')).toBeUndefined()
   })
 })
 

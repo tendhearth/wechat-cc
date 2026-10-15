@@ -3,6 +3,8 @@
  *
  * Claude:`~/.claude/projects/<dir>/<session>.jsonl`,行 = { type: user|assistant, message: { content } }。
  * Codex:`~/.codex/sessions/.../rollout-*.jsonl`,行 = { type: response_item, payload: { type: message, role, content } }。
+ * Cursor:`~/.cursor/projects/<dir>/agent-transcripts/<id>/<id>.jsonl`,行 = { role: user|assistant, message: { content } };
+ *   user 的文字包在 `<timestamp>…</timestamp>\n<user_query>…</user_query>` 里,只留 user_query;`{ type: turn_ended }` 跳过。
  * 两边都只取文字,工具调用、思考、harness 塞的东西(system-reminder / task-notification /
  * environment_context)全部跳过 —— 主人要看的是对话,不是机器的自言自语。
  */
@@ -49,6 +51,19 @@ function textOf(content: unknown, kinds: string[]): string {
     .join('\n')
 }
 
+/** Cursor 把主人那句包成 `<timestamp>…</timestamp>\n<user_query>…</user_query>`:只留 user_query 里面的。 */
+function cursorUserText(t: string): string {
+  const q = /<user_query>([\s\S]*?)<\/user_query>/.exec(t)
+  return q ? q[1]! : t.replace(/^\s*<timestamp>[\s\S]*?<\/timestamp>\s*/, '')
+}
+
+/** 最后一句助手的话(Cursor 的 stop hook 不带 last_assistant_message,只能从 transcript 尾巴读)。 */
+export function lastAssistantText(jsonl: string, source: CliSource): string | undefined {
+  const turns = parseTranscript(jsonl, source)
+  const last = turns[turns.length - 1]
+  return last && last.role === 'assistant' ? last.text : undefined
+}
+
 export function parseTranscript(jsonl: string, source: CliSource): TranscriptTurn[] {
   const turns: TranscriptTurn[] = []
   for (const line of jsonl.split('\n')) {
@@ -63,6 +78,12 @@ export function parseTranscript(jsonl: string, source: CliSource): TranscriptTur
       role = d['type'] as 'user' | 'assistant'
       const m = d['message'] as { content?: unknown } | undefined
       text = textOf(m?.content, ['text'])
+    } else if (source === 'cursor') {
+      if (d['role'] !== 'user' && d['role'] !== 'assistant') continue
+      role = d['role'] as 'user' | 'assistant'
+      const m = d['message'] as { content?: unknown } | undefined
+      text = textOf(m?.content, ['text'])
+      if (role === 'user') text = cursorUserText(text)
     } else {
       if (d['type'] !== 'response_item') continue
       const p = d['payload'] as { type?: string; role?: string; content?: unknown } | undefined

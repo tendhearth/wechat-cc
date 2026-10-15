@@ -1,11 +1,11 @@
 /**
- * terminal-hooks.ts(daemon 侧)— 「CC 现在怎么样」里「终端里的 Claude Code / Codex」那一行的数据,
+ * terminal-hooks.ts(daemon 侧)— 「CC 现在怎么样」里「终端里的 Claude Code / Codex / Cursor」那一行的数据,
  * 以及 POST /v1/cli/hooks/install|uninstall 的执行体(2026-10-14)。
  *
  * 判定与写文件都在 src/cli/terminal-hooks.ts(CLI `hook install` 同一份);这里只加两样:
  *   - 找 CLI 要 spawn `which`,能力表每 10 秒算一次 ⇒ 找到的结果缓存 LOCATE_TTL_MS,装 / 撤之后清掉;
  *   - 登记处里最近 7 天有动静的会话数。
- * 永远不自己装:只有主人在桌面上点了确认(路由)才写 ~/.claude/settings.json / $CODEX_HOME/hooks.json。
+ * 永远不自己装:只有主人在桌面上点了确认(路由)才写 ~/.claude/settings.json / $CODEX_HOME/hooks.json / ~/.cursor/hooks.json。
  */
 import {
   connectTerminalHooks, disconnectTerminalHooks, isPresent, readTerminalHooks,

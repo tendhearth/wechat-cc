@@ -38,4 +38,12 @@ describe('resumeCommand', () => {
     expect(c.indexOf('--dangerously-skip-permissions')).toBeLessThan(c.indexOf('--'))
     expect(resumeCommand('codex', 'tid', '继续', true).args).toContain('--dangerously-bypass-approvals-and-sandbox')
   })
+  it('cursor:cursor-agent --resume=<id> -p --trust [--force] -- 话;以 - 开头的话不会被当成选项', () => {
+    expect(resumeCommand('cursor', 'conv-1', '继续', false)).toEqual({ cmd: 'cursor-agent', args: ['--resume=conv-1', '-p', '--trust', '--', '继续'] })
+    expect(resumeCommand('cursor', 'conv-1', '继续', true)).toEqual({ cmd: 'cursor-agent', args: ['--resume=conv-1', '-p', '--trust', '--force', '--', '继续'] })
+    const a = resumeCommand('cursor', '-weird', '--help', false).args
+    expect(a[0]).toBe('--resume=-weird')
+    expect(a.indexOf('--')).toBe(a.length - 2)
+    expect(a[a.length - 1]).toBe('--help')
+  })
 })

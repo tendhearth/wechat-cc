@@ -44,6 +44,7 @@ describe('replyRefOf / cliSourceLabel', () => {
     expect(replyRefOf(view())).toBeNull()
     expect(cliSourceLabel('claude')).toBe('Claude Code')
     expect(cliSourceLabel('codex')).toBe('Codex')
+    expect(cliSourceLabel('cursor')).toBe('Cursor')
   })
 })
 

@@ -49,7 +49,7 @@ export interface CapabilityInputs {
    * sources 只列这台机上有的那几家(CLI 找得到或已装过 hook);空 / null ⇒ 不出现。
    * sessions7d = 登记处里最近 7 天有动静的终端会话数。
    */
-  terminal?: { sources: Array<{ source: 'claude' | 'codex'; health: 'missing' | 'stale' | 'ok' }>; sessions7d: number } | null
+  terminal?: { sources: Array<{ source: 'claude' | 'codex' | 'cursor'; health: 'missing' | 'stale' | 'ok' }>; sessions7d: number } | null
   subsystems: Array<{ name: string; state: 'ok' | 'degraded' | 'off'; error?: string }>
 }
 
@@ -115,7 +115,7 @@ export function buildCapabilities(i: CapabilityInputs): Capability[] {
   return out
 }
 
-const CLI_NAME: Record<'claude' | 'codex', string> = { claude: 'Claude Code', codex: 'Codex' }
+const CLI_NAME: Record<'claude' | 'codex' | 'cursor', string> = { claude: 'Claude Code', codex: 'Codex', cursor: 'Cursor' }
 const TERMINAL_RUN = 'cli_hooks_install' as const
 
 /**

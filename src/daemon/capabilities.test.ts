@@ -85,4 +85,9 @@ describe('终端里的 Claude Code / Codex(2026-10-14)', () => {
   it('都接上 ⇒ ok + 最近 7 天几个会话,没有动作;只装了一家就只说那一家', () => {
     expect(term([{ source: 'claude', health: 'ok' }], 12)).toEqual({ id: 'terminal', name: '终端里的 Claude Code', state: 'ok', code: 'terminal.ok', params: { n: 12 }, reason: '已接上，最近 7 天 12 个终端会话。' })
   })
+  it('Cursor 一起列:名字是「Cursor」,没接上的那家点名', () => {
+    expect(term([{ source: 'claude', health: 'ok' }, { source: 'codex', health: 'ok' }, { source: 'cursor', health: 'missing' }], 3))
+      .toMatchObject({ name: '终端里的 Claude Code / Codex / Cursor', state: 'ok', code: 'terminal.partial', params: { n: 3, names: 'Cursor' }, action: { label: '接上', run: 'cli_hooks_install' } })
+    expect(term([{ source: 'cursor', health: 'stale' }])).toMatchObject({ name: '终端里的 Cursor', state: 'needs_you', code: 'terminal.stale', params: { names: 'Cursor' } })
+  })
 })
