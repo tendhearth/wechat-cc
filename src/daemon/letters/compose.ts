@@ -84,7 +84,13 @@ function extractJson(raw: string): unknown {
   try { return JSON.parse(s.slice(a, b + 1)) } catch { return null }
 }
 
-const clean = (v: unknown): string => typeof v === 'string' ? v.replace(/\s+/g, ' ').trim() : ''
+/** 直引号成对换成「」(中文信纸上 "…" 很扎眼);落单的那个不动。 */
+export function cjkQuotes(s: string): string {
+  if ((s.match(/["“”]/g) ?? []).length % 2) return s
+  let open = true
+  return s.replace(/["“”]/g, () => { const q = open ? '「' : '」'; open = !open; return q })
+}
+const clean = (v: unknown): string => typeof v === 'string' ? cjkQuotes(v.replace(/\s+/g, ' ').trim()) : ''
 
 const SIGNATURE = /^[—\-–~\s]*(CC|你的\s*CC|CC\s*敬上)[。.\s]*$/i
 const SALUTATION = /^.{1,30}[:：]$/
