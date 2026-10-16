@@ -33,10 +33,11 @@ describe('provider 名单都以 provider-ids.ts 为准', () => {
     for (const id of PROVIDER_IDS) expect(providerDisplayName(id).length).toBeGreaterThan(0)
   })
 
-  it('桌面 dashboard.js 的 PROVIDER_LABELS 键集合 = provider-ids', () => {
-    const src = read('apps', 'desktop', 'src', 'modules', 'dashboard.js')
-    const m = /const PROVIDER_LABELS = \{([^}]+)\}/.exec(src)
-    expect(m, 'dashboard.js 里找不到 PROVIDER_LABELS').toBeTruthy()
+  it('桌面 view.js 的 PROVIDER_LABELS 键集合 = provider-ids', () => {
+    // 2026-10-16 起在 view.js(后厨与 dashboard 共用),不再在 dashboard.js
+    const src = read('apps', 'desktop', 'src', 'view.js')
+    const m = /const PROVIDER_LABELS = (?:\/\*\*[^*]*\*\/ )?\(?\{([^}]+)\}/.exec(src)
+    expect(m, 'view.js 里找不到 PROVIDER_LABELS').toBeTruthy()
     const keys = [...m![1]!.matchAll(/(\w+)\s*:/g)].map(x => x[1]!).sort()
     expect(keys).toEqual(IDS)
   })
