@@ -151,6 +151,7 @@ export function makeLetterRuntime(d: LetterDeps): LetterRuntime {
     try { raw = await withTimeout(ev(buildLetterPrompt(material)), EVAL_TIMEOUT_MS) }
     catch (e) { return { kind: 'failed', reason: e instanceof Error ? e.message : String(e) } }
     const r = parseLetter(raw)
+    if (r.kind !== 'letter' && (r.reason === 'empty' || r.reason === 'unparseable')) d.log('LETTERS', `model reply not a letter (${raw.length} chars): ${raw.slice(0, 80).replace(/\s+/g, ' ')}`)
     return r.kind === 'letter' ? r : { kind: 'skip', reason: r.reason }
   }
 

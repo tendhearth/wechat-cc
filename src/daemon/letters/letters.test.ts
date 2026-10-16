@@ -45,6 +45,13 @@ describe('compose', () => {
     expect(parseLetter('写不出来')).toEqual({ kind: 'skip', reason: 'unparseable' })
     expect(parseLetter('{"paragraphs":[]}')).toEqual({ kind: 'skip', reason: 'empty' })
   })
+  it('parses the plain-text letter format', () => {
+    const raw = '亲爱的你：\n\n周三晚上你说终于接上 Cursor 了。\n我替你高兴。\n\n这一个月你做了好多事。\n\n晚安。\n\n— CC'
+    expect(parseLetter(raw)).toEqual({ kind: 'letter', letter: { salutation: '亲爱的你：', paragraphs: ['周三晚上你说终于接上 Cursor 了。我替你高兴。', '这一个月你做了好多事。'], signoff: '晚安。' } })
+  })
+  it('reads SKIP in the plain format', () => {
+    expect(parseLetter('SKIP：这段时间没怎么聊')).toEqual({ kind: 'skip', reason: '这段时间没怎么聊' })
+  })
   it('caps a runaway letter at a paragraph boundary', () => {
     const long = '字'.repeat(400)
     const r = parseLetter(JSON.stringify({ salutation: '你好:', paragraphs: [long, long, long] }))
