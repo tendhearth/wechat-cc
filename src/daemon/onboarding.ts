@@ -274,7 +274,7 @@ export function makeOnboardingHandler(deps: OnboardingDeps): OnboardingHandler {
     // 平淡的「好的」(跟给用户起昵称时的「好的 大人!」保持同样的温度)。
     await deps.sendMessage(
       msg.chatId,
-      `好嘞,以后你就叫我「${proposed}」🐻 刚才你说「${aw.fromMessage.text}」, 回答下：`,
+      `好嘞,以后你就叫我「${proposed}」。刚才你说「${aw.fromMessage.text}」, 回答下：`,
     )
     void deps.dispatchInbound(aw.fromMessage).catch(err => {
       deps.log('ONBOARDING', `echo dispatch failed chat=${msg.chatId}: ${err}`)

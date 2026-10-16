@@ -40,7 +40,7 @@ describe('terminal_sessions', () => {
     expect((await h.mcp.listTools()).tools.map(t => t.name)).toContain('terminal_sessions')
     const text = await h.call()
     expect(h.calls).toEqual(['GET /v1/cli/sessions?limit=50'])
-    expect(text).toContain('✋ 等你批准 · p0 · Claude Code · 码 s0')
+    expect(text).toContain('· 等你批准 · p0 · Claude Code · 码 s0')
     expect(text).toContain('回「y 07」放行')
     expect(text).toContain('· 做完了 · p1 · Codex · 码 s1')
     expect(text).toContain('第 1 个做完了')
@@ -61,7 +61,7 @@ describe('terminal_sessions', () => {
     expect((await h.mcp.listTools()).tools.map(t => t.name)).toContain('today_digest')
     const res = await h.mcp.callTool({ name: 'today_digest', arguments: {} }) as { content: Array<{ text: string }> }
     expect(h.calls).toEqual(['GET /v1/overseer/today'])
-    expect(res.content[0]!.text).toContain('1 件等你')
+    expect(res.content[0]!.text).toContain('1 件事等你')
     expect(res.content[0]!.text).toContain('回「y 07」/「n 07」')
     const bad = await harness(() => { throw new InternalApiError('not wired', 503, '/v1/overseer/today', { error: 'overseer_today_not_wired' }) })
     const err = await bad.mcp.callTool({ name: 'today_digest', arguments: {} }) as { content: Array<{ text: string }> }

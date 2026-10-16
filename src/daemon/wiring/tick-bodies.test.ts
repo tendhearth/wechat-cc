@@ -1289,7 +1289,7 @@ describe('人类做客 —— 朋友来聊过、走了,伙伴跟主人提一句'
     expect(evalFn).toHaveBeenCalledOnce()
     expect(evalFn.mock.calls[0]![0]).toContain('小王')
     expect(evalFn.mock.calls[0]![0]).toContain('别复述原话')
-    expect(sent).toEqual(['🛎 刚才小王来过,问了工具的事。'])
+    expect(sent).toEqual(['刚才小王来过,问了工具的事。'])
     expect(recorded[0]!.peerLabel).toBe('小王来过')
     // 再跑一拍:水位挡住,不重复讲
     await ticks.pushTick({ nowIso: '2026-05-13T10:05:00.000Z' })
@@ -1328,7 +1328,7 @@ describe('人类做客 —— 朋友来聊过、走了,伙伴跟主人提一句'
     expect(existsSync(statePath) ? JSON.parse(readFileSync(statePath, 'utf8')).narrated['guest@im.wechat'] : undefined).toBeUndefined()
     await ticks.pushTick({ nowIso: '2026-05-13T10:05:00.000Z' })
     expect(evalFn).toHaveBeenCalledTimes(2)
-    expect(sent).toEqual(['🛎 刚才小王来过,问了工具的事。'])
+    expect(sent).toEqual(['刚才小王来过,问了工具的事。'])
   })
 
   it('第二位客人发给主人时断网 → 第一位已讲完的水位照样落盘,下一拍不重讲', async () => {
@@ -1370,7 +1370,7 @@ describe('人类做客 —— 朋友来聊过、走了,伙伴跟主人提一句'
     const { evalFn, sent } = armEval(s)
     await ticks.pushTick({ nowIso: '2026-05-13T10:20:00.000Z' })
     expect(evalFn).toHaveBeenCalledOnce()
-    expect(sent).toEqual(['🛎 刚才小王来过,问了工具的事。'])
+    expect(sent).toEqual(['刚才小王来过,问了工具的事。'])
   })
 
   it('只说了一句「在吗」→ 不算做客', async () => {

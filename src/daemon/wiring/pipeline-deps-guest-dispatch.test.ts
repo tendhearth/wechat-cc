@@ -171,7 +171,7 @@ describe('pipeline-deps guest-command dispatch seam (允许/拒绝/邀请码/待
       await pipelineDeps.dispatch.coordinator.dispatch(adminMsg(`允许 ${request.code}`))
 
       expect(readAllowFrom()).toContain('guest_chat')
-      expect(sendAssistantText).toHaveBeenCalledWith('admin_chat', '✅ 已允许 guest_chat')
+      expect(sendAssistantText).toHaveBeenCalledWith('admin_chat', '已允许 guest_chat')
       expect(sendMessage).toHaveBeenCalledWith('guest_chat', '主人同意啦!')
       expect(pipelineRun).toHaveBeenCalledTimes(1)
       const [ctx] = pipelineRun.mock.calls[0]!
@@ -203,7 +203,7 @@ describe('pipeline-deps guest-command dispatch seam (允许/拒绝/邀请码/待
     } finally { teardown(stateDir) }
   })
 
-  it('允许 <valid code>: a failed guest-welcome send is logged (owner already got their ✅, but the failure is not swallowed)', async () => {
+  it('允许 <valid code>: a failed guest-welcome send is logged (owner already got their , but the failure is not swallowed)', async () => {
     const logLines: string[] = []
     writeAccess(['admin_chat'])
     _clearCache(); _resetSnapshotForTest()
@@ -253,7 +253,7 @@ describe('pipeline-deps guest-command dispatch seam (允许/拒绝/邀请码/待
         chatId: 'guest_chat', firstMsg: guestFirstMsg, contextToken: 'ctx-tok', accountId: 'acct1',
       })
       await pipelineDeps.dispatch.coordinator.dispatch(adminMsg(`允许 ${request.code}`))
-      expect(sendAssistantText).toHaveBeenCalledWith('admin_chat', '✅ 已允许 guest_chat')   // owner still told
+      expect(sendAssistantText).toHaveBeenCalledWith('admin_chat', '已允许 guest_chat')   // owner still told
       expect(logLines.some(l => l.includes('session_timeout'))).toBe(true)   // but the failure is on record
     } finally { teardown(stateDir) }
   })
@@ -263,7 +263,7 @@ describe('pipeline-deps guest-command dispatch seam (允许/拒绝/邀请码/待
     try {
       await pipelineDeps.dispatch.coordinator.dispatch(adminMsg('允许 999999'))
       expect(readAllowFrom()).not.toContain('guest_chat')
-      expect(sendAssistantText).toHaveBeenCalledWith('admin_chat', '❌ 码不对或已过期(发「待批准」看当前请求)')
+      expect(sendAssistantText).toHaveBeenCalledWith('admin_chat', '码不对或已过期(发「待批准」看当前请求)')
       expect(pipelineRun).not.toHaveBeenCalled()
     } finally { teardown(stateDir) }
   })
@@ -288,7 +288,7 @@ describe('pipeline-deps guest-command dispatch seam (允许/拒绝/邀请码/待
     const { pipelineDeps, sendAssistantText, stateDir } = setup()
     try {
       await pipelineDeps.dispatch.coordinator.dispatch(adminMsg('拒绝 999999'))
-      expect(sendAssistantText).toHaveBeenCalledWith('admin_chat', '❌ 码不对或已过期(发「待批准」看当前请求)')
+      expect(sendAssistantText).toHaveBeenCalledWith('admin_chat', '码不对或已过期(发「待批准」看当前请求)')
     } finally { teardown(stateDir) }
   })
 

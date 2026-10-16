@@ -56,7 +56,7 @@ describe('memory-text', () => {
     d.sections['身边的人'] = [{ id: 'a3', text: '猪大哥 —— 女友,最亲', seen: '2026-09-26' }]
     const changes = viewChanges([{ kind: 'add', id: 'a1', section: '承诺', text: '周五回话(期限 2026-09-27)' }])
     expect(formatWeChatMemory({ doc: d, whenLabel: '今天凌晨 4 点', changes, failures: 0, today: '2026-09-26' })).toBe([
-      '这是我眼中的你 🌙',
+      '这是我眼中的你。',
       '今天凌晨 4 点整理的,改了 1 处。',
       '',
       '【昨晚】',
@@ -71,21 +71,21 @@ describe('memory-text', () => {
       '【身边的人】',
       '· 猪大哥 —— 女友,最亲',
       '',
-      '不对的地方直接跟我说。在「随身 CC」点一下我,能看到更好看的版本。',
+      '不对的地方直接跟我说。手机上也能看。',
     ].join('\n'))
   })
   it('says there is nothing new, caps 昨晚 at 3, and puts the failure warning first', () => {
     const d = emptyDoc()
     d.sections['偏好'] = [{ id: 'b1', text: '回复直接', seen: '2026-09-26' }]
     const quiet = formatWeChatMemory({ doc: d, whenLabel: '昨天凌晨 4 点', changes: [], failures: 0, today: '2026-09-26' })
-    expect(quiet.split('\n').slice(0, 3)).toEqual(['这是我眼中的你 🌙', '昨天凌晨 4 点整理的,最近没有新变化。', ''])
+    expect(quiet.split('\n').slice(0, 3)).toEqual(['这是我眼中的你。', '昨天凌晨 4 点整理的,最近没有新变化。', ''])
     expect(quiet).not.toContain('【昨晚】')
     const many = viewChanges(['一', '二', '三', '四'].map((t, i) => ({ kind: 'add' as const, id: `x${i}`, section: '偏好' as const, text: t })))
     const busy = formatWeChatMemory({ doc: d, whenLabel: null, changes: many, failures: 0, today: '2026-09-26' })
     expect(busy).toContain('· 记下:三\n· 还有 1 处')
     expect(busy.split('\n')[1]).toBe('改了 4 处。')
     expect(formatWeChatMemory({ doc: d, whenLabel: null, changes: [], failures: 3, today: '2026-09-26' }).split('\n')[0])
-      .toBe('⚠️ 最近 3 次整理都没成功,下面可能是旧的。')
+      .toBe('最近 3 次整理都没成功,下面可能是旧的。')
   })
   it('change texts carry no raw due marker, so phone and WeChat agree', () => {
     const v = viewChanges([

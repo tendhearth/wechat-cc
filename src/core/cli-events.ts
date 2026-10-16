@@ -12,6 +12,7 @@
  * 权限同理但压得短。发送失败只记日志、丢弃 —— 断线不重试。
  */
 
+import { cliSourceLabel } from './cli-session-digest'
 import { sortCliSessionViews, toCliSessionView, type CliSessionRow, type CliSessionStore, type CliSessionView } from './cli-session-store'
 
 export type CliSource = 'claude' | 'codex' | 'cursor'
@@ -481,9 +482,8 @@ export function stripMarkdown(text: string): string {
 /** 标题行:哪家 · 干了什么 · 哪台机(非本机才写)· 项目 · 会话短码。 */
 export function formatCliHeader(ev: CliEvent, projectName: string, localMachine?: string): string {
   const verb = ev.kind === 'permission' ? '等你批准' : '完成了'
-  const icon = ev.kind === 'permission' ? '✋' : '🔔'
   const remote = ev.machine && localMachine && ev.machine !== localMachine ? ` · 那边(${ev.machine})` : ''
-  return `${icon} ${ev.source} ${verb}${remote} · ${projectName} · 会话 ${short(ev.session_id)}`
+  return `${cliSourceLabel(ev.source)} ${verb}${remote} · ${projectName} · 码 ${short(ev.session_id)}`
 }
 
 /**

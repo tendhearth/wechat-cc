@@ -269,7 +269,7 @@ export function aggregateRanking(votes: PeerVote[], labels: LabeledOpenings): Ra
 /** 一行 footer —— 让「谁真的有用」看得见。空名次返回空串(不制造噪音)。 */
 export function formatRankingFooter(ranking: RankedSpeaker[]): string {
   if (ranking.length === 0) return ''
-  return `📊 互评（他评，不含自投）：${ranking.map(r => `${r.speaker} ${r.score}`).join(' · ')}`
+  return `互评（他评，不含自投）：${ranking.map(r => `${r.speaker} ${r.score}`).join(' · ')}`
 }
 
 // ── Beat ②c:收敛判定(保留) ────────────────────────────────────────────

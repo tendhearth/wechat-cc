@@ -127,7 +127,7 @@ describe('admin-commands', () => {
       expect(await cmds.handle(msg('/update'))).toBe(true)
 
       expect(updateSelf).toHaveBeenCalledOnce()
-      expect(sentBody()).toContain('开始更新 wechat-cc')
+      expect(sentBody()).toContain('开始更新 CC')
       expect(sentBody()).toContain('短暂重启')
       expect(sentBody()).toContain('pid=1234')
     })
@@ -139,7 +139,7 @@ describe('admin-commands', () => {
       expect(await cmds.handle(msg('/updata'))).toBe(true)
 
       expect(updateSelf).toHaveBeenCalledOnce()
-      expect(sentBody()).toContain('开始更新 wechat-cc')
+      expect(sentBody()).toContain('开始更新 CC')
     })
 
     it('reports updater startup failure without dispatching to the agent', async () => {
@@ -577,7 +577,7 @@ describe('admin-commands', () => {
       expect(await cmds.handle(msg('整理记忆'))).toBe(true)
       await vi.waitFor(() => expect(runMemoryNightlyNow).toHaveBeenCalled())
       await vi.waitFor(() => expect(sentBody(1)).toBe('没有新东西要整理,记忆保持原样。'))
-      expect(sentBody(0)).toBe('🧠 正在整理记忆…')
+      expect(sentBody(0)).toBe('正在整理记忆…')
     })
 
     // Fix round 1, F1: runSynthesize's runMemoryNightlyNow branch must not let
@@ -1185,7 +1185,7 @@ describe('粘配对码进微信 = 加一台手', () => {
   })
 })
 
-describe('🎒 背包(微信侧只读入口)', () => {
+describe('背包(微信侧只读入口)', () => {
   const bag = (rows: Array<{ title: string; url: string | null; ts: string; status: string }>) => {
     const sent: string[] = []
     const deps = {

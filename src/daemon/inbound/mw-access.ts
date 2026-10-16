@@ -101,7 +101,7 @@ export function previewText(text: string): string {
 }
 
 function ownerNotifyText(chatId: string, code: string, preview: string): string {
-  return `👋 ${chatId} 想和我聊天,ta 说:"${preview}"\n回「允许 ${code}」或「拒绝 ${code}」(48 小时内有效)`
+  return `${chatId} 想和我聊天,ta 说:"${preview}"\n回「允许 ${code}」或「拒绝 ${code}」(48 小时内有效)`
 }
 
 export interface AccessMwDeps {

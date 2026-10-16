@@ -123,11 +123,11 @@ describe('formatOverseerToday', () => {
       tasks: [task('a1b2c3d4', { title: '修好打包脚本', path: '/x/wechat-cc', updatedAt: NOW - 40 * MIN })],
     }))
     const lines = text.split('\n')
-    expect(lines[0]).toBe('今天(过去 24 小时):1 件等你 · 2 件做完 · 1 件在跑')
-    expect(lines[1]).toBe('✋ wechat-cc · Claude Code 码 ab12c3 · Bash: rm -rf dist · 2 分钟前 · 回「y 07」/「n 07」')
-    expect(lines[2]).toBe('✓ 修好打包脚本 · 一起做 a1b2c3d4 · 40 分钟前')
-    expect(lines[3]).toBe('✓ leni · Claude Code 码 1a2b3c · 2 小时前 · 登录页改好了, 测试也过了')
-    expect(lines[4]).toBe('⏳ melu · Codex 码 9f8e7d · 3 分钟前有动静')
+    expect(lines[0]).toBe('今天(过去 24 小时):1 件事等你 · 2 件做完 · 1 件在跑')
+    expect(lines[1]).toBe('等你 · wechat-cc · Claude Code · 码 ab12c3 · Bash: rm -rf dist · 2 分钟前 · 回「y 07」/「n 07」')
+    expect(lines[2]).toBe('做完 · 修好打包脚本 · 一起做 a1b2c3d4 · 40 分钟前')
+    expect(lines[3]).toBe('做完 · leni · Claude Code · 码 1a2b3c · 2 小时前 · 登录页改好了, 测试也过了')
+    expect(lines[4]).toBe('在跑 · melu · Codex · 码 9f8e7d · 3 分钟前有动静')
     expect(lines[5]).toBe('「看 码」看终端对话,「@码 话」接着说,「任务 编号」看一起做')
     expect(text).not.toMatch(/[*#`]/)
   })
@@ -139,10 +139,10 @@ describe('formatOverseerToday', () => {
       attention: [att('ffff0001', { pendingPermissionCount: 2 })],
     }))
     expect(text).toContain('· 回终端处理')
-    expect(text).toContain('✋ 任务 ffff0001 · 一起做 ffff0001(2 条) · Bash: npm publish · ')
+    expect(text).toContain('等你 · 任务 ffff0001 · 一起做(2 条) · Bash: npm publish · ')
     expect(text).toContain('回「任务 ffff0001」看详情')
-    expect(text).toContain('⚠ 任务 ffff0002 · 一起做 ffff0002 · 失败了 · tests failed')
-    expect(text).toContain('⚠ proj-q1 · Claude Code 码 q1 · 3 小时没动静')
+    expect(text).toContain('卡住 · 任务 ffff0002 · 一起做 ffff0002 · 失败了 · tests failed')
+    expect(text).toContain('卡住 · proj-q1 · Claude Code · 码 q1 · 3 小时没动静')
     expect(text.split('\n')[0]).toContain('2 件可能卡住')
   })
 
@@ -157,8 +157,8 @@ describe('formatOverseerToday', () => {
     const lines = text.split('\n')
     expect(lines.length).toBeLessThanOrEqual(TODAY_TEXT_MAX_LINES)
     expect(lines).toHaveLength(15)
-    expect(text).toContain('(没列出的:2 件等你、1 件可能卡住、5 件做完、2 件在跑)')
-    expect(lines[1]!.startsWith('✋')).toBe(true)
+    expect(text).toContain('(没列出的:2 件事等你、1 件可能卡住、5 件做完、2 件在跑)')
+    expect(lines[1]!.startsWith('等你 · ')).toBe(true)
   })
 
   it('什么都没有 / 一路读不到', () => {

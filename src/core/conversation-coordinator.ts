@@ -299,7 +299,7 @@ export function providerFailureReason(providerId: ProviderId, code: string | und
 }
 
 export function spawnFailedNotice(providerId: ProviderId, detail: string, code?: string): string {
-  const head = `❌ ${providerId} 这次没起来,这条我没接住。`
+  const head = `${providerId} 这次没起来,这条我没接住。`
   const reason = providerFailureReason(providerId, code)
   if (reason) return `${head}${reason.replace(/^这条没接住:/, '')}\n先 /cc 用 Claude 也行。`
   const d = detail.trim()
@@ -1001,7 +1001,7 @@ export function createConversationCoordinator(deps: ConversationCoordinatorDeps)
       const openings = await runBeat(msg, proj, tierProfile, participants, (p) => buildOpeningPrompt(question, participants, p), false, aborter.signal)
       if (aborter.signal.aborted) { deps.log('COORDINATOR_CHATROOM', `chat=${msg.chatId} aborted mid-debate`); return }
       if (openings.length === 0) {
-        await notice(msg.chatId, '⚠️ 这轮没有 AI 成功回应，请稍后重发一次。')
+        await notice(msg.chatId, '这轮没有 AI 成功回应，请稍后重发一次。')
         return
       }
 

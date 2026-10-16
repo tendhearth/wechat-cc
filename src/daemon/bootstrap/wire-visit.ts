@@ -228,7 +228,7 @@ export function makeVisit(deps: VisitDeps): Visit {
     const text = cleanSpeech(await deps.evalText(buildVisitNarrationPrompt({ ...me, transcript, peerLabel: s.peerLabel, hosting })))
     if (!text) throw new VisitAbort('narration_empty')
     s.beforeTell?.()
-    deps.notifyOwner(`${hosting ? '🛎' : '🚶'} ${text}`)
+    deps.notifyOwner(text)
     const title = hosting ? `${s.peerLabel}来过` : `去${s.peerLabel}家串门`
     let rowId: string | null = null
     try { rowId = deps.recordVisit?.({ text, peerLabel: title }) ?? null }
@@ -311,7 +311,7 @@ export function makeVisit(deps: VisitDeps): Visit {
       // 第一次去邻居家,先跟主人说清楚邻居是什么 —— 规则是明的,才不是骗。
       beforeTell: () => {
         if (mem.introduced) return
-        deps.notifyOwner(`🏘 附近有几户「邻居」—— 是 tendhearth 放在这儿的公共伙伴,让我没朋友的时候也有地方串门。等你有朋友配对了,我会优先去他们家。`)
+        deps.notifyOwner(`附近有几户「邻居」—— 是 tendhearth 放在这儿的公共伙伴,让我没朋友的时候也有地方串门。等你有朋友配对了,我会优先去他们家。`)
       },
       afterFinish: (tr) => {
         const tail = tr.slice(-2).map(t => `${t.who === 'me' ? deps.myName : nb.name}:${t.text}`).join(' / ')

@@ -83,7 +83,7 @@ export function registerDaemonTools(server: McpServer, client: InternalApiClient
     'terminal_sessions',
     {
       title: 'Terminal agent sessions',
-      description: '【管理员】列出主人自己在终端里开的 Claude Code / Codex 会话：等你批准的在前（附怎么在微信里回 y/n），其余按最近动静排，带项目、状态（在跑 / 做完了 / 没动静了）、最后一句、会话码。主人问「我终端里那几个在干嘛」「哪个在等我」时用。只读：你不能替主人批权限，告诉他回「y 码 / n 码」，或「看 码」「@码 话」。',
+      description: '【管理员】列出主人自己在终端里开的 Claude Code / Codex 会话：等你批准的在前（附怎么在微信里回 y/n），其余按最近动静排，带项目、状态（在跑 / 做完了 / 没动静了）、最后一句、会话码。主人问「我终端里那几个在干嘛」「哪个在等我」时用。只读：你不能替主人批权限，告诉主人回「y 码 / n 码」，或「看 码」「@码 话」。',
       inputSchema: {
         limit: z.number().int().min(1).max(50).optional().describe('最多几条，默认 8'),
       },

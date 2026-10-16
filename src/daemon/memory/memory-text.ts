@@ -87,9 +87,9 @@ function itemLine(section: Section, text: string, today: string): string {
 
 export function formatWeChatMemory(o: { doc: MemoryDoc; whenLabel: string | null; changes: readonly ViewChange[]; failures: number; today: string }): string {
   const out: string[] = []
-  if (o.failures >= 3) out.push(`⚠️ 最近 ${o.failures} 次整理都没成功,下面可能是旧的。`)
+  if (o.failures >= 3) out.push(`最近 ${o.failures} 次整理都没成功,下面可能是旧的。`)
   else {
-    out.push('这是我眼中的你 🌙')
+    out.push('这是我眼中的你。')
     const tail = o.changes.length ? `改了 ${o.changes.length} 处。` : '最近没有新变化。'
     out.push(o.whenLabel ? `${o.whenLabel}整理的,${tail}` : tail)
   }
@@ -103,7 +103,7 @@ export function formatWeChatMemory(o: { doc: MemoryDoc; whenLabel: string | null
     out.push('', `【${s}】`, ...items.map(e => itemLine(s, e.text, o.today)))
   }
   if (o.doc.extra.length) out.push('', '【其它】', ...o.doc.extra)
-  out.push('', '不对的地方直接跟我说。在「随身 CC」点一下我,能看到更好看的版本。')
+  out.push('', '不对的地方直接跟我说。手机上也能看。')
   return out.join('\n')
 }
 

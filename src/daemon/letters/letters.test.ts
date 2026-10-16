@@ -2,7 +2,8 @@ import { mkdtempSync, readFileSync, rmSync, writeFileSync, mkdirSync } from 'nod
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, describe, expect, it } from 'vitest'
-import { buildLetterPrompt, cjkQuotes, letterText, parseLetter, BODY_CAP } from './compose'
+import { buildLetterPrompt, cjkPunct, cjkQuotes, letterText, parseLetter, BODY_CAP } from './compose'
+import { color } from '../../../packages/design-tokens/src/index'
 import { chineseDate, letterSvgs, linesFor, paginate, SIZES } from './render'
 import { makeLetterRuntime, readLetterState, type LetterDeps } from './runtime'
 import { DAY_MS, GAP_DAYS, inEveningWindow, isLetterDue, nextDueAt } from './schedule'
@@ -38,7 +39,7 @@ describe('compose', () => {
   })
   it('parses a fenced JSON letter', () => {
     const r = parseLetter('```json\n{"salutation":"亲爱的你:","paragraphs":["一","二"],"signoff":"晚安"}\n```')
-    expect(r).toEqual({ kind: 'letter', letter: { salutation: '亲爱的你:', paragraphs: ['一', '二'], signoff: '晚安' } })
+    expect(r).toEqual({ kind: 'letter', letter: { salutation: '亲爱的你：', paragraphs: ['一', '二'], signoff: '晚安' } })
   })
   it('honours skip and rejects junk', () => {
     expect(parseLetter('{"skip":"素材太少"}')).toEqual({ kind: 'skip', reason: '素材太少' })
@@ -51,7 +52,20 @@ describe('compose', () => {
   })
   it('takes a short bare first line as the salutation and drops stray colons', () => {
     const r = parseLetter('时瑞\n\n：上次你说终于接上 Cursor 了,我替你高兴了好一阵。\n\n这一个月你做了好多事,我都看见了。')
-    expect(r).toMatchObject({ kind: 'letter', letter: { salutation: '时瑞:', paragraphs: ['上次你说终于接上 Cursor 了,我替你高兴了好一阵。', '这一个月你做了好多事,我都看见了。'] } })
+    expect(r).toMatchObject({ kind: 'letter', letter: { salutation: '时瑞：', paragraphs: ['上次你说终于接上 Cursor 了，我替你高兴了好一阵。', '这一个月你做了好多事，我都看见了。'] } })
+  })
+  it('turns ASCII punctuation next to CJK into full-width; leaves numbers and Latin text alone', () => {
+    expect(cjkPunct('你好,今天怎么样?')).toBe('你好，今天怎么样？')
+    expect(cjkPunct('装了 1.7.7, 感觉不错!')).toBe('装了 1.7.7，感觉不错！')
+    expect(cjkPunct('15:35 的时候(大概)你说: 好')).toBe('15:35 的时候（大概）你说：好')
+    expect(cjkPunct('他说 "Hello, world" (in English)')).toBe('他说 「Hello, world」 (in English)')
+    expect(cjkPunct('注意;别忘了')).toBe('注意；别忘了')
+    expect(parseLetter(JSON.stringify({ salutation: '', paragraphs: ['一'] })).kind === 'letter' && (parseLetter(JSON.stringify({ salutation: '', paragraphs: ['一'] })) as { letter: { salutation: string } }).letter.salutation).toBe('你好：')
+  })
+  it('the letter prompt itself uses full-width punctuation so the model copies it', () => {
+    const p = buildLetterPrompt({ ...material, memory: '', chat: [] })
+    expect(p).toContain('怎么写：')
+    expect(p).not.toMatch(/[\u4e00-\u9fff][,:;?!]|[,:;?!][\u4e00-\u9fff]/)
   })
   it('turns straight quotes into 「」 in pairs only', () => {
     expect(cjkQuotes('你发来"你好""在么"')).toBe('你发来「你好」「在么」')
@@ -97,6 +111,18 @@ describe('render', () => {
     expect(svg).not.toContain('<script>')
     expect(svg).toContain('二〇二六年十月十六日')
     expect(svg).toContain('— CC')
+  })
+  it('uses the shared design tokens: paper / ink / hair on the ground colour, Noto Serif SC first, a soft shadow', () => {
+    const [svg] = letterSvgs({ salutation: '你好：', paragraphs: ['一'], signoff: '' }, '2026-10-16')
+    expect(svg).toContain(`fill="${color.ground}"`)
+    expect(svg).toContain(`fill="${color.paper}"`)
+    expect(svg).toContain(`stroke="${color.hair}"`)
+    expect(svg).toContain(`color:${color.ink}`)
+    expect(svg).toContain(`fill="${color.inkSoft}"`)
+    expect(svg).toMatch(/font-family:'Noto Serif SC','Songti SC'/)
+    expect(Number(svg!.match(/flood-opacity="([\d.]+)"/)![1])).toBeLessThanOrEqual(0.1)
+    expect(svg).toMatch(/rotate\(-?\d/)
+    for (const old of ['#c9b08c', '#fbf6ec', '#3b2f25', '#8a7559', '#e2d4bc']) expect(svg).not.toContain(old)
   })
   it('counts ASCII as about half a character', () => {
     expect(linesFor('a'.repeat(40), false)).toBe(1)

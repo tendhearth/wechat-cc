@@ -168,11 +168,11 @@ export function makeModeCommands(deps: ModeCommandsDeps): ModeCommands {
   function parseParticipantsTail(tail: string, modeName: string): { ok: true; participants: ProviderId[] } | { ok: false; error: string } {
     const tokens = tail.split(/\s+/).filter(t => t.length > 0)
     if (tokens.length < 2) {
-      return { ok: false, error: `❓ /${modeName} 需要 ≥2 个 participants (你写的: ${tokens.length}). 例：/${modeName} ${deps.registry.list().slice(0, 2).join(' ')}` }
+      return { ok: false, error: `/${modeName} 需要 ≥2 个 participants (你写的: ${tokens.length}). 例：/${modeName} ${deps.registry.list().slice(0, 2).join(' ')}` }
     }
     const unknown = tokens.filter(t => !deps.registry.has(t))
     if (unknown.length > 0) {
-      return { ok: false, error: `❌ 未知的 provider: ${unknown.join(', ')}. 已注册: ${deps.registry.list().join(', ')}` }
+      return { ok: false, error: `未知的 provider: ${unknown.join(', ')}. 已注册: ${deps.registry.list().join(', ')}` }
     }
     // agy final-review CRITICAL 1: agy is registered (passes the unknown
     // check above) but rides a tier-C SHARED 'trusted' MCP token (spec §3)
@@ -182,7 +182,7 @@ export function makeModeCommands(deps: ModeCommandsDeps): ModeCommands {
     // before setMode is ever called, so the user gets copy instead of the
     // coordinator's thrown-error fallback.
     if (tokens.some(t => t.toLowerCase() === 'agy')) {
-      return { ok: false, error: '❌ agy 不能加入 both/chat 模式（共享工具通道），可用 /agy 单独使用（仅管理员/信任聊天）。' }
+      return { ok: false, error: 'agy 不能加入 both/chat 模式（共享工具通道），可用 /agy 单独使用（仅管理员/信任聊天）。' }
     }
     // Deduplicate while preserving order (operator typed the same provider twice → silent dedupe).
     const seen = new Set<string>()
@@ -191,7 +191,7 @@ export function makeModeCommands(deps: ModeCommandsDeps): ModeCommands {
     // 1 distinct provider, which would otherwise pass the raw-count check above
     // and silently collapse to a single-participant (solo-degraded) chatroom.
     if (dedup.length < 2) {
-      return { ok: false, error: `❓ /${modeName} 需要 ≥2 个不同的 participants（去重后只剩 ${dedup.length} 个）. 例：/${modeName} ${deps.registry.list().slice(0, 2).join(' ')}` }
+      return { ok: false, error: `/${modeName} 需要 ≥2 个不同的 participants（去重后只剩 ${dedup.length} 个）. 例：/${modeName} ${deps.registry.list().slice(0, 2).join(' ')}` }
     }
     return { ok: true, participants: dedup }
   }
@@ -249,9 +249,9 @@ export function makeModeCommands(deps: ModeCommandsDeps): ModeCommands {
     const cur = deps.coordinator.getMode(chatId)
     const pinned = cur.kind === 'solo' && cur.provider === 'openai' ? cur.model : undefined
     const lines: string[] = []
-    lines.push(`📋 /api 模型${cfg.openaiBaseUrl ? `(网关 ${cfg.openaiBaseUrl})` : ''}`)
+    lines.push(`/api 模型${cfg.openaiBaseUrl ? `(网关 ${cfg.openaiBaseUrl})` : ''}`)
     if (!deps.registry.has('openai')) {
-      lines.push('⚠️ openai provider 未注册 —— 要 WECHAT_OPENAI_API_KEY(daemon.env)+ openaiBaseUrl + openaiModel 三样,配好重启。')
+      lines.push('openai provider 未注册 —— 要 WECHAT_OPENAI_API_KEY(daemon.env)+ openaiBaseUrl + openaiModel 三样,配好重启。')
     }
     lines.push(`本对话当前:${pinned ?? (cfg.openaiModel ? `${cfg.openaiModel}(全局默认)` : '未设置')}${pinned && cfg.openaiModel ? `(全局默认 ${cfg.openaiModel})` : ''}`)
     const aliases = cfg.openaiAliases ?? {}
@@ -349,6 +349,8 @@ export function makeModeCommands(deps: ModeCommandsDeps): ModeCommands {
         '清理 <bot> / 清理 all-expired — 清理过期 bot',
         '整理记忆 / 看记忆 — 重新整理 / 查看 CC 对你的理解',
         '让<名字>执行 <任务> — 派活给已配对的「手」电脑（一个大脑多手）',
+        '「终端」·「日报」·「看 码」·「@码 话」— 终端里的 Claude Code / Codex：列会话 / 今天的情况 / 看最近的对话 / 接着说一句',
+        '「给我写封信」— CC 给你写一封信，排成信纸寄到微信',
       )
     }
     await reply(msg.chatId, lines.join('\n'))
@@ -390,12 +392,12 @@ export function makeModeCommands(deps: ModeCommandsDeps): ModeCommands {
         }
         if (tail === '') {
           if (!deps.registry.has(providerId)) {
-            await reply(msg.chatId, `❌ provider \`${providerId}\` 未注册。可用: ${deps.registry.list().join(', ')}`)
+            await reply(msg.chatId, `provider \`${providerId}\` 未注册。可用: ${deps.registry.list().join(', ')}`)
             return true
           }
           deps.coordinator.setMode(msg.chatId, { kind: 'solo', provider: providerId })
           const dn = deps.registry.get(providerId)?.opts.displayName ?? providerId
-          await reply(msg.chatId, `✅ 这个对话切到 ${dn} (solo)。下条消息开始生效。`)
+          await reply(msg.chatId, `这个对话切到 ${dn} (solo)。下条消息开始生效。`)
           deps.log('MODE_CMD', `chat=${msg.chatId} → solo+${providerId}`)
           return true
         }
@@ -405,11 +407,11 @@ export function makeModeCommands(deps: ModeCommandsDeps): ModeCommands {
           const peerSlash = peerMatch[1]!
           const peerProviderId = isProviderCommand(peerSlash)
           if (!peerProviderId) {
-            await reply(msg.chatId, `❓ 未知的 peer \`${peerSlash}\`。支持: cc, codex, cursor, gemini`)
+            await reply(msg.chatId, `未知的 peer \`${peerSlash}\`。支持: cc, codex, cursor, gemini`)
             return true
           }
           if (peerProviderId === providerId) {
-            await reply(msg.chatId, `❓ 主从模式两侧不能是同一个 provider (你写的是 ${peerSlash} + ${peerSlash})。`)
+            await reply(msg.chatId, `主从模式两侧不能是同一个 provider (你写的是 ${peerSlash} + ${peerSlash})。`)
             return true
           }
           // B2(spec §4):主提供方必须能委派出去,否则确认消息许诺的
@@ -417,7 +419,7 @@ export function makeModeCommands(deps: ModeCommandsDeps): ModeCommands {
           // delegateAvailable:false,cursor 无 delegate stdio 通道)。
           // Surface, don't paper over(RFC-05 §5)。
           if (!capabilitiesFor(providerId).supportsDelegation) {
-            await reply(msg.chatId, `❌ ${slashWord} 不支持主从模式(该 provider 的会话无法调用 delegate 工具),对话保持原模式。`)
+            await reply(msg.chatId, `${slashWord} 不支持主从模式(该 provider 的会话无法调用 delegate 工具),对话保持原模式。`)
             return true
           }
           const wiredPeer = defaultDelegatePeer(providerId)
@@ -425,21 +427,21 @@ export function makeModeCommands(deps: ModeCommandsDeps): ModeCommands {
             const wiredSlash = wiredPeer === 'claude' ? 'cc' : wiredPeer
             await reply(
               msg.chatId,
-              `❌ ${slashWord} 的 delegate peer 在 bootstrap 里写死成 ${wiredPeer}（不是 ${peerProviderId}）。如果你想 ${providerId} 主导 + ${wiredPeer} 当工具，写 \`/${slashWord} + ${wiredSlash}\`。`,
+              `${slashWord} 的 delegate peer 在 bootstrap 里写死成 ${wiredPeer}（不是 ${peerProviderId}）。如果你想 ${providerId} 主导 + ${wiredPeer} 当工具，写 \`/${slashWord} + ${wiredSlash}\`。`,
             )
             return true
           }
           try {
             deps.coordinator.setMode(msg.chatId, { kind: 'primary_tool', primary: providerId })
           } catch (err) {
-            await reply(msg.chatId, `❌ /${slashWord} + ${peerSlash} 启用失败: ${err instanceof Error ? err.message : String(err)}`)
+            await reply(msg.chatId, `/${slashWord} + ${peerSlash} 启用失败: ${err instanceof Error ? err.message : String(err)}`)
             return true
           }
           const primaryDn = deps.registry.get(providerId)?.opts.displayName ?? providerId
           const peerDn = deps.registry.get(peerProviderId)?.opts.displayName ?? peerProviderId
           await reply(
             msg.chatId,
-            `✅ 主从模式开启: ${primaryDn} 主导，需要时它会调 \`delegate_${peerProviderId}\` 工具去咨询 ${peerDn}（一次性，无对话历史）。`,
+            `主从模式开启: ${primaryDn} 主导，需要时它会调 \`delegate_${peerProviderId}\` 工具去咨询 ${peerDn}（一次性，无对话历史）。`,
           )
           deps.log('MODE_CMD', `chat=${msg.chatId} → primary_tool primary=${providerId} peer=${peerProviderId}`)
           return true
@@ -464,23 +466,23 @@ export function makeModeCommands(deps: ModeCommandsDeps): ModeCommands {
               return true
             }
             // 别名是全局配置(每个对话的 /api <短名> 都按它解析):和 /set provider 一样仅管理员可改(2026-10-10 评审)。
-            if (!(deps.isAdmin?.(msg.userId ?? msg.chatId) ?? false)) { await reply(msg.chatId, '❌ /api alias / unalias 是全局设置,仅管理员可改。/api list 和 /api <模型名> 照常可用。'); return true }
-            if (!deps.setOpenaiAlias) { await reply(msg.chatId, '❌ 别名功能未接线。'); return true }
+            if (!(deps.isAdmin?.(msg.userId ?? msg.chatId) ?? false)) { await reply(msg.chatId, '/api alias / unalias 是全局设置,仅管理员可改。/api list 和 /api <模型名> 照常可用。'); return true }
+            if (!deps.setOpenaiAlias) { await reply(msg.chatId, '别名功能未接线。'); return true }
             if (verb === 'unalias') {
               const aliases = deps.readConfig?.().openaiAliases ?? {}
-              if (!rest || !(rest in aliases)) { await reply(msg.chatId, `❓ 没有叫 \`${rest || '(空)'}\` 的别名。现有:${Object.keys(aliases).join(', ') || '无'}`); return true }
+              if (!rest || !(rest in aliases)) { await reply(msg.chatId, `没有叫 \`${rest || '(空)'}\` 的别名。现有:${Object.keys(aliases).join(', ') || '无'}`); return true }
               await deps.setOpenaiAlias(rest, null)
-              await reply(msg.chatId, `✅ 别名 \`${rest}\` 已删。`)
+              await reply(msg.chatId, `别名 \`${rest}\` 已删。`)
               deps.log('MODE_CMD', `chat=${msg.chatId} /api unalias ${rest}`)
               return true
             }
             // alias  a=b | a = b | a b
             const am = /^([A-Za-z0-9._-]{1,32})\s*(?:=|\s)\s*([A-Za-z0-9._/-]+)$/.exec(rest)
-            if (!am) { await reply(msg.chatId, '❓ 用法:/api alias <短名>=<网关模型名>,例如 /api alias ds=DeepSeek'); return true }
+            if (!am) { await reply(msg.chatId, '用法:/api alias <短名>=<网关模型名>,例如 /api alias ds=DeepSeek'); return true }
             const [, alias, target] = am as unknown as [string, string, string]
-            if (/^(list|alias|unalias)$/i.test(alias)) { await reply(msg.chatId, `❌ \`${alias}\` 是子命令,不能当别名。`); return true }
+            if (/^(list|alias|unalias)$/i.test(alias)) { await reply(msg.chatId, `\`${alias}\` 是子命令,不能当别名。`); return true }
             await deps.setOpenaiAlias(alias, target)
-            await reply(msg.chatId, `✅ 别名 \`${alias}\` → \`${target}\`。以后 /api ${alias} 就行。`)
+            await reply(msg.chatId, `别名 \`${alias}\` → \`${target}\`。以后 /api ${alias} 就行。`)
             deps.log('MODE_CMD', `chat=${msg.chatId} /api alias ${alias}=${target}`)
             return true
           }
@@ -494,11 +496,11 @@ export function makeModeCommands(deps: ModeCommandsDeps): ModeCommands {
           // version digit; these don't).
           const modelRe = /^[A-Za-z0-9._/-]+$/
           if (!modelRe.test(tail)) {
-            await reply(msg.chatId, `❌ 无效的模型名 \`${tail}\`（只支持字母/数字/. _ / - /，不能有空格）。`)
+            await reply(msg.chatId, `无效的模型名 \`${tail}\`（只支持字母/数字/. _ / - /，不能有空格）。`)
             return true
           }
           if (!deps.registry.has(providerId)) {
-            await reply(msg.chatId, `❌ provider \`${providerId}\` 未注册。可用: ${deps.registry.list().join(', ')}`)
+            await reply(msg.chatId, `provider \`${providerId}\` 未注册。可用: ${deps.registry.list().join(', ')}`)
             return true
           }
           // 别名先解(只对 openai):ds → DeepSeek。解不到再问网关:名字在网关列表里才切,
@@ -511,7 +513,7 @@ export function makeModeCommands(deps: ModeCommandsDeps): ModeCommands {
           if (providerId === 'openai' && !aliased) {
             const r = await resolveOpenaiModel(tail)
             if (r.kind === 'unknown') {
-              await reply(msg.chatId, `❓ 网关上没有 \`${tail}\`${r.suggestions.length ? `,你是不是想说:${r.suggestions.map(s => `\`${s}\``).join(' / ')}` : ''}。看全部:/api list`)
+              await reply(msg.chatId, `网关上没有 \`${tail}\`${r.suggestions.length ? `,你是不是想说:${r.suggestions.map(s => `\`${s}\``).join(' / ')}` : ''}。看全部:/api list`)
               return true
             }
             if (r.kind === 'ok') model = r.model
@@ -522,17 +524,17 @@ export function makeModeCommands(deps: ModeCommandsDeps): ModeCommands {
           deps.coordinator.setMode(msg.chatId, { kind: 'solo', provider: providerId, model })
           const dn = deps.registry.get(providerId)?.opts.displayName ?? providerId
           const shown = aliased ? `${model}(别名 ${tail})` : model !== tail ? `${model}(按网关拼法,你输的是 ${tail})` : model
-          await reply(msg.chatId, `✅ 这个对话切到 ${dn} (solo)，模型 = ${shown}（只对这个对话）。下条消息开始生效。${unverified ? '(网关列表拿不到,没核对这个名字;下条消息报错就换一个)' : ''}`)
+          await reply(msg.chatId, `这个对话切到 ${dn} (solo)，模型 = ${shown}（只对这个对话）。下条消息开始生效。${unverified ? '(网关列表拿不到,没核对这个名字;下条消息报错就换一个)' : ''}`)
           deps.log('MODE_CMD', `chat=${msg.chatId} → solo+${providerId} model=${model}`)
           return true
         }
-        await reply(msg.chatId, `❓ \`/${slashWord}\` 不支持参数 \`${tail}\`。试试 \`/${slashWord}\`、\`/${slashWord} + ${providerId === 'claude' ? 'codex' : 'cc'}\`、\`/solo\` 或 \`/mode\`。`)
+        await reply(msg.chatId, `\`/${slashWord}\` 不支持参数 \`${tail}\`。试试 \`/${slashWord}\`、\`/${slashWord} + ${providerId === 'claude' ? 'codex' : 'cc'}\`、\`/solo\` 或 \`/mode\`。`)
         return true
       }
 
       // /set — per-chat preferences (the settings layer's dials: split, care).
       if (slashWord.toLowerCase() === 'set') {
-        const SET_USAGE = '❓ 不认识这个设置。目前支持:\n· /set split on|off (别名: 拆分 开|关)\n· /set care off|low|high (别名: 关心 关|低|高)\n· /set stickers on|off (别名: 表情 开|关)\n· /set hunt on|off (别名: 打猎 开|关)\n· /set visit on|off (别名: 串门 开|关)\n· /set cheap auto|claude|agy|openai|… (管理员;后台评估用哪家)\n· /set providers claude,openai|all (管理员;非管理员对话能用哪些)\n· /set provider cc|agy|api|… (管理员;全局默认大脑,改完自动重启)'
+        const SET_USAGE = '不认识这个设置。目前支持:\n· /set split on|off (别名: 拆分 开|关)\n· /set care off|low|high (别名: 关心 关|低|高)\n· /set stickers on|off (别名: 表情 开|关)\n· /set hunt on|off (别名: 打猎 开|关)\n· /set visit on|off (别名: 串门 开|关)\n· /set cheap auto|claude|agy|openai|… (管理员;后台评估用哪家)\n· /set providers claude,openai|all (管理员;非管理员对话能用哪些)\n· /set provider cc|agy|api|… (管理员;全局默认大脑,改完自动重启)'
         const p = deps.chatPrefs.get(msg.chatId)
         if (tail === '') {
           const splitState = p.split === false ? 'off' : 'on'
@@ -548,7 +550,7 @@ export function makeModeCommands(deps: ModeCommandsDeps): ModeCommands {
           if (deps.isAdmin?.(msg.userId ?? msg.chatId) && deps.settingsPanelLink) {
             try {
               const url = await deps.settingsPanelLink()
-              if (url) panelLine = `\n\n📱 点开修改(10 分钟内有效):\n${url}`
+              if (url) panelLine = `\n\n点开修改(10 分钟内有效):\n${url}`
             } catch { /* fall through to usage lines */ }
           }
           const adminHere = deps.isAdmin?.(msg.userId ?? msg.chatId) ?? false
@@ -571,46 +573,46 @@ export function makeModeCommands(deps: ModeCommandsDeps): ModeCommands {
         // /set is where the owner already goes to「调档位」.
         // /set provider agy — 全局默认 provider(管理员)。开机捕获的,写完自己重启。
         if (key === 'provider' || key === '默认') {
-          if (!(deps.isAdmin?.(msg.userId ?? msg.chatId) ?? false)) { await reply(msg.chatId, '❌ /set provider 是全局设置,仅管理员可改。'); return true }
-          if (!deps.setConfig) { await reply(msg.chatId, '❌ 配置写入未接线。'); return true }
+          if (!(deps.isAdmin?.(msg.userId ?? msg.chatId) ?? false)) { await reply(msg.chatId, '/set provider 是全局设置,仅管理员可改。'); return true }
+          if (!deps.setConfig) { await reply(msg.chatId, '配置写入未接线。'); return true }
           const target = rawValue.toLowerCase() === 'cc' ? 'claude' : rawValue.toLowerCase() === 'api' ? 'openai' : rawValue.toLowerCase()
-          if (!deps.registry.has(target)) { await reply(msg.chatId, `❌ provider \`${target}\` 未注册。可用: ${deps.registry.list().join(', ')}`); return true }
+          if (!deps.registry.has(target)) { await reply(msg.chatId, `provider \`${target}\` 未注册。可用: ${deps.registry.list().join(', ')}`); return true }
           if (target === deps.defaultProviderId) { await reply(msg.chatId, `默认已经是 ${target},不用改。`); return true }
           const r = await deps.setConfig('provider', target)
-          if (!r.ok) { await reply(msg.chatId, `❌ 没改成:${r.detail ?? r.error}`); return true }
+          if (!r.ok) { await reply(msg.chatId, `没改成:${r.detail ?? r.error}`); return true }
           const dn = deps.registry.get(target)?.opts.displayName ?? target
           if (deps.requestRestart) {
-            await reply(msg.chatId, `✅ 默认大脑改为 ${dn}。我重启一下(十几秒),回来就生效。单个对话临时切换还是 /cc /api /agy。`)
+            await reply(msg.chatId, `默认大脑改为 ${dn}。我重启一下(十几秒),回来就生效。单个对话临时切换还是 /cc /api /agy。`)
             deps.log('MODE_CMD', `chat=${msg.chatId} /set provider=${target} → restart`)
             deps.requestRestart('provider-change')
           } else {
-            await reply(msg.chatId, `✅ 默认大脑改为 ${dn}(已写入配置)。要重启 daemon 才生效。`)
+            await reply(msg.chatId, `默认大脑改为 ${dn}(已写入配置)。要重启 daemon 才生效。`)
           }
           return true
         }
 
         // /set providers claude,openai | all — 非管理员对话可用的 provider(全局,管理员)
         if (key === 'providers') {
-          if (!(deps.isAdmin?.(msg.userId ?? msg.chatId) ?? false)) { await reply(msg.chatId, '❌ /set providers 是全局设置,仅管理员可改。'); return true }
-          if (!deps.setConfig) { await reply(msg.chatId, '❌ 配置写入未接线。'); return true }
+          if (!(deps.isAdmin?.(msg.userId ?? msg.chatId) ?? false)) { await reply(msg.chatId, '/set providers 是全局设置,仅管理员可改。'); return true }
+          if (!deps.setConfig) { await reply(msg.chatId, '配置写入未接线。'); return true }
           const r = await deps.setConfig('trusted_providers', rawValue)
-          if (!r.ok) { await reply(msg.chatId, `❌ 没改成:${r.detail ?? r.error}`); return true }
+          if (!r.ok) { await reply(msg.chatId, `没改成:${r.detail ?? r.error}`); return true }
           const now = deps.readConfig?.().trusted_providers
           await reply(msg.chatId, now
-            ? `✅ 非管理员对话现在只能用: ${now.join(', ') || '(无)'}。立即生效;guest 对 agy 无论如何不开放。`
-            : '✅ 非管理员对话可用全部已注册 provider(guest 对 agy 仍不开放)。')
+            ? `非管理员对话现在只能用: ${now.join(', ') || '(无)'}。立即生效;guest 对 agy 无论如何不开放。`
+            : '非管理员对话可用全部已注册 provider(guest 对 agy 仍不开放)。')
           deps.log('MODE_CMD', `chat=${msg.chatId} /set providers=${rawValue}`)
           return true
         }
 
         if (key === 'cheap') {
-          if (!(deps.isAdmin?.(msg.userId ?? msg.chatId) ?? false)) { await reply(msg.chatId, '❌ /set cheap 是全局设置,仅管理员可改。'); return true }
-          if (!deps.setConfig) { await reply(msg.chatId, '❌ 配置写入未接线。'); return true }
+          if (!(deps.isAdmin?.(msg.userId ?? msg.chatId) ?? false)) { await reply(msg.chatId, '/set cheap 是全局设置,仅管理员可改。'); return true }
+          if (!deps.setConfig) { await reply(msg.chatId, '配置写入未接线。'); return true }
           const r = await deps.setConfig('cheap_eval_provider', rawValue.toLowerCase())
-          if (!r.ok) { await reply(msg.chatId, `❌ 没改成:${r.detail ?? r.error}`); return true }
+          if (!r.ok) { await reply(msg.chatId, `没改成:${r.detail ?? r.error}`); return true }
           await reply(msg.chatId, rawValue.toLowerCase() === 'auto'
-            ? '✅ 后台评估回到偏好序(openai → agy → claude → codex → gemini,按已注册的来)。下一次评估生效。'
-            : `✅ 后台评估(记忆整理/辩论主持/introspect)改走 ${rawValue.toLowerCase()}。下一次评估生效,不用重启。`)
+            ? '后台评估回到偏好序(openai → agy → claude → codex → gemini,按已注册的来)。下一次评估生效。'
+            : `后台评估(记忆整理/辩论主持/introspect)改走 ${rawValue.toLowerCase()}。下一次评估生效,不用重启。`)
           deps.log('MODE_CMD', `chat=${msg.chatId} /set cheap=${rawValue.toLowerCase()}`)
           return true
         }
@@ -623,8 +625,8 @@ export function makeModeCommands(deps: ModeCommandsDeps): ModeCommands {
           const on = /^(on|开)$/i.test(rawValue)
           deps.chatPrefs.set(msg.chatId, { split: on })
           await reply(msg.chatId, on
-            ? '✅ 拆分回复已开启——回复会像真人一样分几条发。'
-            : '✅ 拆分回复已关闭——每次回复只发一条。')
+            ? '拆分回复已开启——回复会像真人一样分几条发。'
+            : '拆分回复已关闭——每次回复只发一条。')
           deps.log('MODE_CMD', `chat=${msg.chatId} /set split=${on}`)
           return true
         }
@@ -637,8 +639,8 @@ export function makeModeCommands(deps: ModeCommandsDeps): ModeCommands {
           const on = /^(on|开)$/i.test(rawValue)
           deps.chatPrefs.set(msg.chatId, { stickers: on })
           await reply(msg.chatId, on
-            ? '✅ 表情包已开启。'
-            : '✅ 表情包已关闭。')
+            ? '表情包已开启。'
+            : '表情包已关闭。')
           deps.log('MODE_CMD', `chat=${msg.chatId} /set stickers=${on}`)
           return true
         }
@@ -651,8 +653,8 @@ export function makeModeCommands(deps: ModeCommandsDeps): ModeCommands {
           const on = /^(on|开)$/i.test(rawValue)
           deps.chatPrefs.set(msg.chatId, { hunt: on })
           await reply(msg.chatId, on
-            ? '✅ 每日打猎已开启。'
-            : '✅ 每日打猎已关闭。')
+            ? '每日打猎已开启。'
+            : '每日打猎已关闭。')
           deps.log('MODE_CMD', `chat=${msg.chatId} /set hunt=${on}`)
           return true
         }
@@ -664,7 +666,7 @@ export function makeModeCommands(deps: ModeCommandsDeps): ModeCommands {
           }
           const on = /^(on|开)$/i.test(rawValue)
           deps.chatPrefs.set(msg.chatId, { visit: on })
-          await reply(msg.chatId, on ? '✅ 每日串门已开启。' : '✅ 每日串门已关闭。')
+          await reply(msg.chatId, on ? '每日串门已开启。' : '每日串门已关闭。')
           deps.log('MODE_CMD', `chat=${msg.chatId} /set visit=${on}`)
           return true
         }
@@ -684,10 +686,10 @@ export function makeModeCommands(deps: ModeCommandsDeps): ModeCommands {
         }
         deps.chatPrefs.set(msg.chatId, { care: careVal })
         const careConfirm = careVal === 'high'
-          ? '✅ 主动关心已设为 high——会更主动地问候和关心。'
+          ? '主动关心已设为 high——会更主动地问候和关心。'
           : careVal === 'low'
-            ? '✅ 主动关心已设为 low——偶尔主动问候。'
-            : '✅ 主动关心已设为 off——不会主动找你。'
+            ? '主动关心已设为 low——偶尔主动问候。'
+            : '主动关心已设为 off——不会主动找你。'
         await reply(msg.chatId, careConfirm)
         deps.log('MODE_CMD', `chat=${msg.chatId} /set care=${careVal}`)
         return true
@@ -701,7 +703,7 @@ export function makeModeCommands(deps: ModeCommandsDeps): ModeCommands {
         // but that exposes the daemon-default at a layer above the user.)
         deps.coordinator.setMode(msg.chatId, { kind: 'solo', provider: deps.defaultProviderId })
         const dn = deps.registry.get(deps.defaultProviderId)?.opts.displayName ?? deps.defaultProviderId
-        await reply(msg.chatId, `✅ 这个对话恢复默认 (solo · ${dn})。`)
+        await reply(msg.chatId, `这个对话恢复默认 (solo · ${dn})。`)
         deps.log('MODE_CMD', `chat=${msg.chatId} → reset to default ${deps.defaultProviderId}`)
         return true
       }
@@ -710,7 +712,7 @@ export function makeModeCommands(deps: ModeCommandsDeps): ModeCommands {
       if (slashWord.toLowerCase() === 'mode' && tail === '') {
         const cur = deps.coordinator.getMode(msg.chatId)
         const lines = [
-          `📍 当前对话模式: ${describeMode(cur)}`,
+          `当前对话模式: ${describeMode(cur)}`,
           `已注册 provider: ${deps.registry.list().join(', ')}`,
           `默认: ${deps.defaultProviderId}`,
           ...(deps.registry.list().some(id => id === 'agy')
@@ -734,10 +736,10 @@ export function makeModeCommands(deps: ModeCommandsDeps): ModeCommands {
           try {
             deps.coordinator.setMode(msg.chatId, { kind: 'parallel' })
           } catch (err) {
-            await reply(msg.chatId, `❌ /${slashWord} 启用失败: ${err instanceof Error ? err.message : String(err)}`)
+            await reply(msg.chatId, `/${slashWord} 启用失败: ${err instanceof Error ? err.message : String(err)}`)
             return true
           }
-          await reply(msg.chatId, '✅ 并行模式开启。下条消息开始 Claude 和 Codex 同时回复（每条会带 [Claude] / [Codex] 前缀）。')
+          await reply(msg.chatId, '并行模式开启。下条消息开始 Claude 和 Codex 同时回复（每条会带 [Claude] / [Codex] 前缀）。')
           deps.log('MODE_CMD', `chat=${msg.chatId} → parallel (no explicit participants)`)
           return true
         }
@@ -749,10 +751,10 @@ export function makeModeCommands(deps: ModeCommandsDeps): ModeCommands {
         try {
           deps.coordinator.setMode(msg.chatId, { kind: 'parallel', participants: parsed.participants })
         } catch (err) {
-          await reply(msg.chatId, `❌ /${slashWord} 启用失败: ${err instanceof Error ? err.message : String(err)}`)
+          await reply(msg.chatId, `/${slashWord} 启用失败: ${err instanceof Error ? err.message : String(err)}`)
           return true
         }
-        await reply(msg.chatId, `✅ 并行模式开启 (${parsed.participants.join(' + ')})。下条消息开始同时回复。`)
+        await reply(msg.chatId, `并行模式开启 (${parsed.participants.join(' + ')})。下条消息开始同时回复。`)
         deps.log('MODE_CMD', `chat=${msg.chatId} → parallel participants=${parsed.participants.join(',')}`)
         return true
       }
@@ -764,7 +766,7 @@ export function makeModeCommands(deps: ModeCommandsDeps): ModeCommands {
           try {
             deps.coordinator.setMode(msg.chatId, { kind: 'chatroom' })
           } catch (err) {
-            await reply(msg.chatId, `❌ /chat 启用失败: ${err instanceof Error ? err.message : String(err)}`)
+            await reply(msg.chatId, `/chat 启用失败: ${err instanceof Error ? err.message : String(err)}`)
             return true
           }
           const registeredList = deps.registry.list()
@@ -773,7 +775,7 @@ export function makeModeCommands(deps: ModeCommandsDeps): ModeCommands {
             .join(' + ')
           await reply(
             msg.chatId,
-            `✅ 聊天室开启。${registeredDisplay} 都"在场"了——后续消息会按上下文挑发言人。每条带 prefix。切走（/cc /codex /solo）会清空聊天室上下文。`,
+            `聊天室开启。${registeredDisplay} 都"在场"了——后续消息会按上下文挑发言人。每条带 prefix。切走（/cc /codex /solo）会清空聊天室上下文。`,
           )
           deps.log('MODE_CMD', `chat=${msg.chatId} → chatroom (no explicit participants)`)
           return true
@@ -786,10 +788,10 @@ export function makeModeCommands(deps: ModeCommandsDeps): ModeCommands {
         try {
           deps.coordinator.setMode(msg.chatId, { kind: 'chatroom', participants: parsed.participants })
         } catch (err) {
-          await reply(msg.chatId, `❌ /chat 启用失败: ${err instanceof Error ? err.message : String(err)}`)
+          await reply(msg.chatId, `/chat 启用失败: ${err instanceof Error ? err.message : String(err)}`)
           return true
         }
-        await reply(msg.chatId, `✅ 聊天室开启 (${parsed.participants.join(', ')})。每条回复带 prefix；切走会清空上下文。`)
+        await reply(msg.chatId, `聊天室开启 (${parsed.participants.join(', ')})。每条回复带 prefix；切走会清空上下文。`)
         deps.log('MODE_CMD', `chat=${msg.chatId} → chatroom participants=${parsed.participants.join(',')}`)
         return true
       }
@@ -807,7 +809,7 @@ export function makeModeCommands(deps: ModeCommandsDeps): ModeCommands {
         // preempt loop — a chatroom-specific message here would mislead solo
         // users into thinking they were in chatroom mode.
         const suffix = wasInFlight ? '；已请求中止 in-flight 回合（最多多收到 1 个 turn 的输出后停止）' : ''
-        await reply(msg.chatId, `✅ 已退出当前模式，恢复默认 (solo · ${dn})${suffix}。`)
+        await reply(msg.chatId, `已退出当前模式，恢复默认 (solo · ${dn})${suffix}。`)
         deps.log('MODE_CMD', `chat=${msg.chatId} → /stop reset to default${wasInFlight ? ' + cancel in-flight' : ''}`)
         return true
       }
@@ -826,11 +828,11 @@ export function makeModeCommands(deps: ModeCommandsDeps): ModeCommands {
           ? `WeChat: ${msg.userName} (${trunc(msg.userId, 12)})`
           : `WeChat: ${trunc(msg.userId, 12)}`
         const lines = [
-          `🪪 你: ${nick}`,
+          `你: ${nick}`,
           `   ${wxLine}`,
-          `🤖 bot account: ${trunc(msg.accountId, 12)}`,
+          `bot account: ${trunc(msg.accountId, 12)}`,
           `   当前回应: ${botNameStr} (${describeMode(cur)})`,
-          `💬 chat: ${trunc(msg.chatId, 12)}`,
+          `chat: ${trunc(msg.chatId, 12)}`,
         ]
         await reply(msg.chatId, lines.join('\n'))
         return true
@@ -839,7 +841,7 @@ export function makeModeCommands(deps: ModeCommandsDeps): ModeCommands {
       // /name <nick> — user renames themselves in this chat
       if (slashWord.toLowerCase() === 'name') {
         if (!tail) {
-          await reply(msg.chatId, '❓ 用法：/name <昵称>。例：/name 丸子')
+          await reply(msg.chatId, '用法：/name <昵称>。例：/name 丸子')
           return true
         }
         // Validate before persisting — same constraint onboarding + /botname
@@ -847,15 +849,15 @@ export function makeModeCommands(deps: ModeCommandsDeps): ModeCommands {
         // nickname that later gets interpolated into prompts.
         const nickErr = validateNickname(tail)
         if (nickErr === 'too_long') {
-          await reply(msg.chatId, `❌ 昵称太长（最多 ${NICKNAME_MAX_LEN} 字符）。`)
+          await reply(msg.chatId, `昵称太长（最多 ${NICKNAME_MAX_LEN} 字符）。`)
           return true
         }
         if (nickErr === 'bad_charset') {
-          await reply(msg.chatId, '❌ 昵称只支持中文 / 字母 / 数字 / 空格 / _ / -。')
+          await reply(msg.chatId, '昵称只支持中文 / 字母 / 数字 / 空格 / _ / -。')
           return true
         }
         await deps.setUserName(msg.chatId, tail)
-        await reply(msg.chatId, `✅ 好的，以后叫你 ${tail}。`)
+        await reply(msg.chatId, `好的，以后叫你 ${tail}。`)
         deps.log('MODE_CMD', `chat=${msg.chatId} → setUserName "${tail}"`)
         return true
       }
@@ -875,7 +877,7 @@ export function makeModeCommands(deps: ModeCommandsDeps): ModeCommands {
       // here nothing upstream claimed it).
       const trimmedText = msg.text.trim()
       if (UNKNOWN_SLASH_RE.test(trimmedText) && !KNOWN_SLASH_COMMANDS.has(slashWord.toLowerCase())) {
-        await reply(msg.chatId, `❓ 不认识 ${trimmedText}。看全部命令发 /help。`)
+        await reply(msg.chatId, `不认识 ${trimmedText}。看全部命令发 /help。`)
         deps.log('MODE_CMD', `chat=${msg.chatId} → unknown slash command ${trimmedText}`)
         return true
       }

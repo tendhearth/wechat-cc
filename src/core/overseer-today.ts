@@ -213,10 +213,11 @@ export const TODAY_TEXT_MAX_LINES = 15
 /** 每组最多列几条:1 行标题 + 4 + 2 + 4 + 2 + 1 行「没列出的」+ 1 行提示 = 15。 */
 const MAX_NEEDS = 4, MAX_STUCK = 2, MAX_DONE = 4, MAX_RUNNING = 2
 
-function where(i: TodayItem): string {
+/** withCode=false:那一行后面已经写了「回「任务 编号」」,一起做这里就不再重复编号。 */
+function where(i: TodayItem, withCode = true): string {
   const name = i.source === 'together' ? (i.title || i.project || '一件事') : (i.project || '终端')
   const remote = i.machine ? `(${i.machine})` : ''
-  return `${name}${remote} · ${i.source === 'together' ? `一起做 ${i.code}` : `${i.agent} 码 ${i.code}`}`
+  return `${name}${remote} · ${i.source === 'together' ? (withCode ? `一起做 ${i.code}` : '一起做') : `${i.agent} · 码 ${i.code}`}`
 }
 
 /** 「45 分钟 / 3 小时 / 2 天」—— 多久没动静。 */
@@ -233,7 +234,7 @@ function needLine(n: TodayNeed, now: number): string {
     ? (n.replyRef ? `回「y ${n.replyRef}」/「n ${n.replyRef}」` : '回终端处理')
     : `回「任务 ${n.code}」看详情`
   const many = n.count > 1 ? `(${n.count} 条)` : ''
-  return `✋ ${where(n)}${many}${what} · ${relativeTime(n.at, now)} · ${act}`
+  return `等你 · ${where(n, n.source !== 'together')}${many}${what} · ${relativeTime(n.at, now)} · ${act}`
 }
 
 /**
@@ -249,7 +250,8 @@ export function formatOverseerToday(t: OverseerToday, opts: { now?: number } = {
   if (c.needsYou + c.done + c.running + c.stuck === 0) {
     return `过去 24 小时没有新动静:终端和一起做都没有在跑、等你或做完的事。${gap}`
   }
-  const head = [`${c.needsYou} 件等你`, `${c.done} 件做完`, `${c.running} 件在跑`, ...(c.stuck ? [`${c.stuck} 件可能卡住`] : [])].join(' · ')
+  // 是 0 的不写;「N 件事等你」和桌面 / 手机「此刻」同一个说法。
+  const head = [c.needsYou ? `${c.needsYou} 件事等你` : '', c.done ? `${c.done} 件做完` : '', c.running ? `${c.running} 件在跑` : '', c.stuck ? `${c.stuck} 件可能卡住` : ''].filter(Boolean).join(' · ')
   const lines: string[] = [`今天(过去 24 小时):${head}${gap}`]
 
   const needs = t.needsYou.slice(0, MAX_NEEDS), stuck = t.stuck.slice(0, MAX_STUCK)
@@ -257,13 +259,13 @@ export function formatOverseerToday(t: OverseerToday, opts: { now?: number } = {
   for (const n of needs) lines.push(needLine(n, now))
   for (const s of stuck) {
     const why = s.reason === 'quiet' ? `${quietFor(now - s.at)}没动静` : s.reason === 'failed' ? '失败了' : '中断了'
-    lines.push(`⚠ ${where(s)} · ${why}${s.summary ? ` · ${s.summary}` : ''}`)
+    lines.push(`卡住 · ${where(s)} · ${why}${s.summary ? ` · ${s.summary}` : ''}`)
   }
-  for (const d of done) lines.push(`✓ ${where(d)} · ${relativeTime(d.at, now)}${d.summary ? ` · ${d.summary}` : ''}`)
-  for (const r of running) lines.push(`⏳ ${where(r)} · ${relativeTime(r.at, now)}有动静`)
+  for (const d of done) lines.push(`做完 · ${where(d)} · ${relativeTime(d.at, now)}${d.summary ? ` · ${d.summary}` : ''}`)
+  for (const r of running) lines.push(`在跑 · ${where(r)} · ${relativeTime(r.at, now)}有动静`)
 
   const left = [
-    [t.needsYou.length - needs.length, '等你'], [t.stuck.length - stuck.length, '可能卡住'],
+    [t.needsYou.length - needs.length, '事等你'], [t.stuck.length - stuck.length, '可能卡住'],
     [t.done.length - done.length, '做完'], [t.running.length - running.length, '在跑'],
   ].filter(([n]) => (n as number) > 0).map(([n, w]) => `${n} 件${w}`)
   if (left.length) lines.push(`(没列出的:${left.join('、')})`)

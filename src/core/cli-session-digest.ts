@@ -103,9 +103,8 @@ export function formatCliSessionDigest(views: readonly CliDigestView[], opts: Cl
   const lines: string[] = [`终端里 ${live.length} 个会话${counts ? `(${counts})` : ''}:`]
   for (const v of shown) {
     const remote = v.machine && opts.localMachine && v.machine !== opts.localMachine ? ` · 那边(${v.machine})` : ''
-    const icon = v.status === 'waiting' ? '✋' : v.status === 'running' ? '⏳' : '·'
     const when = v.status === 'waiting' && v.pending ? relativeTime(v.pending.since, opts.now) : relativeTime(v.last_event_at, opts.now)
-    lines.push(`${icon} ${statusWord(v)} · ${v.project}${remote} · ${cliSourceLabel(v.source)} · 码 ${v.code} · ${when}`)
+    lines.push(`· ${statusWord(v)} · ${v.project}${remote} · ${cliSourceLabel(v.source)} · 码 ${v.code} · ${when}`)
     if (v.status === 'waiting' && v.pending) {
       // hook 的 permission 事件只记了 tool='permission'(占位),那就只写摘要。
       const tool = v.pending.tool === 'permission' ? '' : v.pending.tool

@@ -67,7 +67,7 @@ describe('memory nightly runtime', () => {
     expect(rt.readCurated()).toBeNull()
     await rt.runNow()
     const text = rt.readCurated()!
-    expect(text.split('\n').slice(0, 2)).toEqual(['这是我眼中的你 🌙', '今天凌晨 4 点整理的,改了 1 处。'])
+    expect(text.split('\n').slice(0, 2)).toEqual(['这是我眼中的你。', '今天凌晨 4 点整理的,改了 1 处。'])
     expect(text).toContain('【承诺】\n· 周五前给 X 回话(明天)')
     const v = rt.curatedView()!
     expect(v.updated_at).toBe('2026-09-25T04:05:00.000Z')
@@ -77,7 +77,7 @@ describe('memory nightly runtime', () => {
     const rt = makeMemoryNightlyRuntime(deps())
     await rt.runNow()
     writeNightlyState(stateDir, { ...readNightlyState(stateDir), failures: 3 })
-    expect(rt.readCurated()!.split('\n')[0]).toBe('⚠️ 最近 3 次整理都没成功,下面可能是旧的。')
+    expect(rt.readCurated()!.split('\n')[0]).toBe('最近 3 次整理都没成功,下面可能是旧的。')
   })
   it('serializes concurrent runNow calls — the model is never called by two runs at once', async () => {
     let active = 0, maxActive = 0, calls = 0, msg = 0
@@ -167,7 +167,7 @@ describe('rich view + WeChat letter', () => {
     now = Date.parse('2026-09-27T20:00:00Z')   // > 36h later
     expect(rt.curatedView()!.mood).toBe('steady')
     const text = rt.readCurated()!
-    expect(text.split('\n')[0]).toBe('这是我眼中的你 🌙')
+    expect(text.split('\n')[0]).toBe('这是我眼中的你。')
     expect(text).toContain('最近没有新变化。')
     expect(text).toContain('【承诺】')
   })

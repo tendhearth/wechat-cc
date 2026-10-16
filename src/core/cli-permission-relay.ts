@@ -10,6 +10,7 @@
  */
 import { randomBytes } from 'node:crypto'
 import type { CliPresence, CliSource } from './cli-events'
+import { cliSourceLabel } from './cli-session-digest'
 
 export interface CliPermissionRequest {
   source: CliSource
@@ -81,7 +82,7 @@ export function newPermissionHash(): string {
 
 export function formatCliPermissionPrompt(req: CliPermissionRequest, projectName: string, hash: string, waitMs: number, localMachine?: string): string {
   const remote = req.machine && localMachine && req.machine !== localMachine ? ` · 那边(${req.machine})` : ''
-  const head = `✋ ${req.source} 等你批准${remote} · ${projectName} · 会话 ${req.session_id.slice(0, 6)}`
+  const head = `${cliSourceLabel(req.source)} 等你批准${remote} · ${projectName} · 码 ${req.session_id.slice(0, 6)}`
   const what = req.summary ? `${req.tool_name}: ${req.summary}` : req.tool_name
   // 「怎么回」那一行由 ilink-glue.askUser 统一加(两位数码在那里分配);这里只说过期后会怎样。
   void hash; void waitMs

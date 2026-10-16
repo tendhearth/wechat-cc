@@ -188,7 +188,7 @@ export function makeWish(deps: WishDeps): WishService {
 
   const answerWishInner = async (channelRowId: string, id: string, text: string, expiresAt: string, hop: Hop): Promise<void> => {
     const label = deps.peerLabel(channelRowId)
-    const asked = `🙋 ${label} 的伙伴来打听「${text}」`
+    const asked = `${label} 的伙伴来打听「${text}」`
     const verdict = await deps.judge(text)
     const blurb = verdict.match === 'yes' ? (verdict.blurb ?? '').trim() : ''
     if (!blurb) {
@@ -316,7 +316,7 @@ export function makeWish(deps: WishDeps): WishService {
     try { deps.recordPostcard({ text: p.text, peerLabel: label }) }
     catch (err) { log(`明信片入库失败(还是会跟主人说): ${errText(err)}`) }
     const tail = isRelayed ? `(想认识就回「认识 ${p.replyId!.slice(0, 6)}」)` : ''
-    deps.notifyOwner(`📮 ${label} 回了你的心愿「${r.wish.redacted.slice(0, 20)}」:${p.text}${tail}`)
+    deps.notifyOwner(`${label} 回了你的心愿「${r.wish.redacted.slice(0, 20)}」:${p.text}${tail}`)
     log(`postcard wish=${p.wishId} 收下了 replies=${r.wish.replies}`)
     return true
   }

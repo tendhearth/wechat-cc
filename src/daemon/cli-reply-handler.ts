@@ -16,7 +16,7 @@ import { readFileSync, statSync, openSync, readSync, closeSync } from 'node:fs'
 import { parseCliReply, resumeCommand } from '../core/cli-reply'
 import { renderTranscriptTail } from '../core/cli-transcript'
 import { stripMarkdown, INLINE_MAX, type CliEventHub, type CliSessionInfo } from '../core/cli-events'
-import { formatCliSessionDigest, type CliDigestView } from '../core/cli-session-digest'
+import { cliSourceLabel, formatCliSessionDigest, type CliDigestView } from '../core/cli-session-digest'
 import { formatOverseerToday, type OverseerToday } from '../core/overseer-today'
 
 export const RESUME_TIMEOUT_MS = 10 * 60_000
@@ -120,7 +120,7 @@ export function makeCliReplyCore(deps: CliReplyCoreDeps): CliReplyCore {
       const note = (ev: { kind: 'prompt' } | { kind: 'stop'; text: string }) => { try { deps.hub.observe?.({ ...ident, ...ev }) } catch { /* 登记处出错不影响接着跑 */ } }
       note({ kind: 'prompt' })
       const r = await resumeInner(s, text)
-      note({ kind: 'stop', text: r.kind === 'ok' ? r.text : r.kind === 'timeout' ? `跑了 ${Math.round(RESUME_TIMEOUT_MS / 60_000)} 分钟还没完,先停了。${r.text ? ` ${r.text}` : ''}` : `没跑起来(${r.text})` })
+      note({ kind: 'stop', text: r.kind === 'ok' ? r.text : r.kind === 'timeout' ? `跑了 ${Math.round(RESUME_TIMEOUT_MS / 60_000)} 分钟还没完,先停了。${r.text ? ` ${r.text}` : ''}` : `没跑起来：${r.text}` })
       return r
     },
   }
@@ -138,7 +138,7 @@ export function makeCliReplyCore(deps: CliReplyCoreDeps): CliReplyCore {
       const d = await decideCall(deps.networkGate, target)
       if (!d.allowed) { deps.log('CLI_REPLY', `resume ${s.source}/${s.session_id.slice(0, 6)} refused — network unprotected [${d.verdict!.source}]`); return { kind: 'failed', text: unprotectedMessage(d.verdict!, d.cls.label) } }
     }
-    if(deps.executionConflict?.(s))return{kind:'failed',text:'这条会话或文件夹已由 CC 工作台管理，请在那里继续。'}
+    if(deps.executionConflict?.(s))return{kind:'failed',text:'这条会话或文件夹正在「一起做」里，请在那里继续。'}
     let settle:((closed:boolean)=>void)|undefined,closed=false
     try{settle=deps.reserveExecution?.(s)}catch{return{kind:'failed',text:'这个文件夹有另一项任务正在执行，请稍后再试。'}}
     const { cmd, args } = resumeCommand(s.source, s.session_id, text, deps.dangerously)
@@ -149,7 +149,7 @@ export function makeCliReplyCore(deps: CliReplyCoreDeps): CliReplyCore {
       closed=r.closed===true
       const out = r.stdout.trim()
       if (r.timedOut) return { kind: 'timeout', text: out }
-      if (r.code !== 0 && !out) return { kind: 'failed', text: `exit ${r.code ?? '?'}:${r.stderr.trim().slice(0, 400) || '没有错误输出'}` }
+      if (r.code !== 0 && !out) return { kind: 'failed', text: `${r.stderr.trim().split('\n')[0]?.trim().slice(0, 200) || '没有错误输出'}` }
       return { kind: 'ok', text: out || '(没有输出)' }
     } catch (err) {
       return { kind: 'failed', text: err instanceof Error ? err.message : String(err) }
@@ -169,7 +169,7 @@ export function makeHandReplyExecutor(core: CliReplyCore, deps: {
   return async (req) => {
     const s = deps.hub.lookup(req.session_id)
     if (!s) return { ok: false, error: 'session_unknown' }
-    const label = `${s.source} · 会话 ${s.session_id.slice(0, 6)}`
+    const label = `${cliSourceLabel(s.source)} · 码 ${s.session_id.slice(0, 6)}`
     if (req.kind === 'view') {
       const v = core.viewMarkdown(s, label)
       return v.ok ? { ok: true, markdown: v.markdown } : { ok: false, error: v.error }
@@ -177,9 +177,9 @@ export function makeHandReplyExecutor(core: CliReplyCore, deps: {
     if (!req.text) return { ok: false, error: 'text_required' }
     void core.resume(s, req.text).then(async (r) => {
       const plain = stripMarkdown(r.text).slice(0, INLINE_MAX)
-      const msg = r.kind === 'ok' ? `🔔 ${label} 回来了\n${plain}`
+      const msg = r.kind === 'ok' ? `${label} 回来了\n${plain}`
         : r.kind === 'timeout' ? `${label} 跑了 ${Math.round(RESUME_TIMEOUT_MS / 60_000)} 分钟还没完,先停了。${plain ? `\n目前的输出:\n${plain}` : ''}`
-        : `${label} 没跑起来(${plain})`
+        : `${label} 没跑起来：${plain}`
       await deps.notifyBrain(msg).catch(err => deps.log('CLI_REPLY', `notify brain failed: ${err instanceof Error ? err.message : String(err)}`))
     })
     return { ok: true }
@@ -211,7 +211,7 @@ export function makeCliReplyHandler(deps: CliReplyHandlerDeps): CliReplyHandler 
   const say = (chatId: string, text: string) => deps.sendMessage(chatId, text).catch(err => deps.log('CLI_REPLY', `send failed: ${err instanceof Error ? err.message : String(err)}`))
 
   function describe(s: CliSessionInfo): string {
-    return `${s.source} · 会话 ${s.session_id.slice(0, 6)}${s.machine && deps.localMachine && s.machine !== deps.localMachine ? ` · 那边(${s.machine})` : ''}`
+    return `${cliSourceLabel(s.source)} · 码 ${s.session_id.slice(0, 6)}${s.machine && deps.localMachine && s.machine !== deps.localMachine ? ` · 那边(${s.machine})` : ''}`
   }
 
   function notFound(code: string): string {
@@ -256,7 +256,7 @@ export function makeCliReplyHandler(deps: CliReplyHandlerDeps): CliReplyHandler 
     if (isRemote(s)) {
       if (!deps.remote) { await say(chatId, `${describe(s)} 在别的机器上,这台机接不上它。`); return }
       const r = await deps.remote.view(s).catch(err => ({ ok: false as const, error: err instanceof Error ? err.message : String(err) }))
-      if (!r.ok) { await say(chatId, `${describe(s)}:那边说 ${r.error}`); return }
+      if (!r.ok) { await say(chatId, r.error === 'session_unknown' ? `${describe(s)}:那台机器上找不到这条会话了。` : `${describe(s)}:那边看不了(${r.error})。`); return }
       await sendMarkdown(chatId, describe(s), r.markdown)
       return
     }
@@ -284,13 +284,13 @@ export function makeCliReplyHandler(deps: CliReplyHandlerDeps): CliReplyHandler 
     await say(chatId, `收到,${describe(s)} 接着跑…(最多等 ${Math.round(RESUME_TIMEOUT_MS / 60_000)} 分钟)`)
     void core.resume(s, text).then(async (r) => {
       if (r.kind === 'timeout') { await say(chatId, `${describe(s)} 跑了 ${Math.round(RESUME_TIMEOUT_MS / 60_000)} 分钟还没完,先停了。${r.text ? `\n目前的输出:\n${stripMarkdown(r.text).slice(0, INLINE_MAX)}` : ''}`); return }
-      if (r.kind === 'failed') { await say(chatId, `${describe(s)} 没跑起来(${r.text})`); return }
+      if (r.kind === 'failed') { await say(chatId, `${describe(s)} 没跑起来：${r.text}`); return }
       const plain = stripMarkdown(r.text)
       if (plain.length > INLINE_MAX) {
         const url = await deps.sharePage(`${describe(s)} 的回复`, r.text, chatId).catch(() => null)
-        await say(chatId, `🔔 ${describe(s)} 回来了\n${plain.slice(0, INLINE_MAX - 1)}…${url ? `\n全文:${url}` : ''}`)
+        await say(chatId, `${describe(s)} 回来了\n${plain.slice(0, INLINE_MAX - 1)}…${url ? `\n全文:${url}` : ''}`)
       } else {
-        await say(chatId, `🔔 ${describe(s)} 回来了\n${plain}`)
+        await say(chatId, `${describe(s)} 回来了\n${plain}`)
       }
     })
   }

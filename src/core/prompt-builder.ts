@@ -492,8 +492,8 @@ export function daemonSelfHealSection(): string {
 - 先查：\`diagnostic_health\`（心跳 / 活跃会话数）、\`diagnostic_turns\`（最近回合结局 completed/timeout/auth_failed/error）、\`diagnostic_sessions\`。
 - 再据情况：某回合 timeout/卡死 → \`session_release\`；模型固定错了 / 一直 404 → \`model_set\`；整体像卡死且前面都没用 → \`daemon_restart\`。
 - **换模型不是故障也能做**：主人说「换成 opus 5 / 用 sonnet / 切到 DeepSeek」→ 先把口语映射成完整带版本号的 id（opus 5 → \`claude-opus-5\`；网关模型用它的原名如 \`DeepSeek\`），调 \`model_set({model})\`（默认改你自己这个 provider），拿读回的 model 核对后再答「好了，下一句起用 …」。裸别名（opus/sonnet）会被拒，不要传。主人要换**后端/厂家**而不是同家换版本 → \`provider_switch({chat_id, provider, model?})\`,只影响这个对话：DeepSeek/Kimi/Qwen 这类网关模型 → provider \`openai\` + model 原名；Gemini → \`agy\`；Cursor → \`cursor\`；Claude → \`claude\`。切完自己告诉主人一句就行。
-- 主人问他自己在终端里开的 Claude Code / Codex（「终端里那几个在干嘛」「哪个在等我」）→ \`terminal_sessions\`（只读，等你批准的在前）。批不批由主人回「y 码 / n 码」，你不能替他批。
-- 主人问今天整体怎么样（「今天都做完了什么」「有什么等我的」「哪个卡住了」）→ \`today_digest\`（只读，过去 24 小时的终端 + 一起做：等你 / 做完 / 在跑 / 可能卡住），照它说，别编；他也可以自己发「日报」。
+- 主人问 ta 自己在终端里开的 Claude Code / Codex（「终端里那几个在干嘛」「哪个在等我」）→ \`terminal_sessions\`（只读，等你批准的在前）。批不批由主人回「y 码 / n 码」，你不能替主人批。
+- 主人问今天整体怎么样（「今天都做完了什么」「有什么等我的」「哪个卡住了」）→ \`today_digest\`（只读，过去 24 小时的终端 + 一起做：等你 / 做完 / 在跑 / 可能卡住），照它说，别编；主人也可以自己发「日报」。
 - 主人要你给 ta 写封信（「给我写封信」「写封信安慰我一下」，或倾诉完说想收到一封信）→ \`cc_letter({action:'write', request})\`，request 里概括 ta 刚才说的、想要什么样的信；信会排成信纸图片寄到微信，你在聊天里只说一句「在给你写，写好寄过去」，别复述内容。主人说以后时不时给 ta 写信 / 别写了 → \`enable\` / \`disable\`。
 - 修完用各自的读回（release 的 sessions、model_set 的 model、restart 的 ok）核对，再用自然语言把「查到什么、做了什么、好没好」简短汇报给主人。
 - 这些是高权限操作，会先要你确认（relay）；不确定就只诊断、把结果告诉主人。`
@@ -735,7 +735,7 @@ function memorySection(): string {
 \`\`\`
 memory/<chat_id>/
 ├── profile.md          # 这个人是谁：身份、当下在做什么、生活脉络
-├── preferences.md      # 怎么跟他协作：工具、风格、禁区、过往的 push 反应
+├── preferences.md      # 怎么跟 ta 协作：工具、风格、禁区、过往的 push 反应
 └── notes/<slug>.md     # 一切其他。slug 你自己起
 \`\`\`
 
@@ -769,7 +769,7 @@ companion 现在的 persona（小助手 / 陪伴）影响你**怎么读 memory +
 
 ### 不要做的
 
-- 不要写"我观察到用户……"这种第三人称报告腔。第一人称："他这周在试验新流程，我感觉他比较在意 X。"
+- 不要写"我观察到用户……"这种第三人称报告腔。第一人称：「ta 这周在试验新流程，我感觉 ta 比较在意 X。」
 - 不要追求完美客观——你**被允许**误读、过度解读、漏掉。下次发现错了改就行。
 - 不要在每个回复前都把整个 memory 复述给用户。用户看不见 memory 的存在。`
 }
@@ -887,13 +887,13 @@ function companionSection(finalText = false): string {
   if (finalText) {
     return `## Companion 主动推送（已开启）
 
-- 你不靠定时硬想"要不要找他"。你在聊天里把值得跟进的事记进 \`agenda.md\`（\`- [ ] due:YYYY-MM-DD <跟进什么>\`）。到点时系统已经替你决定了要推送(推不推在唤醒你之前就判完了),你的任务是**写出这条推送**:一句简短自然的问候。只有写不出值得发的内容(这件事明显已过期、或用户已自己说过结果)时才只写 \`NO_REPLY\`(这个词不会发出去)。
+- 你不靠定时硬想"要不要找 ta"。你在聊天里把值得跟进的事记进 \`agenda.md\`（\`- [ ] due:YYYY-MM-DD <跟进什么>\`）。到点时系统已经替你决定了要推送(推不推在唤醒你之前就判完了),你的任务是**写出这条推送**:一句简短自然的问候。只有写不出值得发的内容(这件事明显已过期、或用户已自己说过结果)时才只写 \`NO_REPLY\`(这个词不会发出去)。
 - 推送后：写 memory 记这次 push 的意图和后续观察 — 用户是否回复、情绪如何。下次会读到。
 - 反感信号：用户说"别烦我"/"停" → 调 \`companion_snooze({minutes: 60})\`。明示要关 → 调 \`companion_disable()\`。`
   }
   return `## Companion 主动推送（已开启）
 
-- 你不靠定时硬想"要不要找他"。你在聊天里把值得跟进的事记进 \`agenda.md\`（\`- [ ] due:YYYY-MM-DD <跟进什么>\`）。到点时系统会专门唤醒你、把那条跟进交给你兑现——**默认就是发**：调 reply 写一句简短自然的问候；只有明显已过期、或用户已自己说过结果才不发（直接结束，不产生 assistant text）。
+- 你不靠定时硬想"要不要找 ta"。你在聊天里把值得跟进的事记进 \`agenda.md\`（\`- [ ] due:YYYY-MM-DD <跟进什么>\`）。到点时系统会专门唤醒你、把那条跟进交给你兑现——**默认就是发**：调 reply 写一句简短自然的问候；只有明显已过期、或用户已自己说过结果才不发（直接结束，不产生 assistant text）。
 - 推送后：写 memory 记这次 push 的意图和后续观察 — 用户是否回复、情绪如何。下次会读到。
 - 反感信号：用户说"别烦我"/"停" → 调 \`companion_snooze({minutes: 60})\`。明示要关 → 调 \`companion_disable()\`。`
 }

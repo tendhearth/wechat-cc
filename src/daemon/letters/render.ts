@@ -8,6 +8,7 @@ import { existsSync, mkdirSync, renameSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { spawnSync } from '../../lib/runtime/process'
 import type { LetterDraft } from './compose'
+import { color, fontFamily } from '../../../packages/design-tokens/src/index'
 
 const VIEW = 1200
 const PAPER = { x: 150, y: 70, w: 900, h: 1060 }
@@ -20,10 +21,14 @@ type Size = { font: number; line: number }
 /** 一行能放几个全角字;按少一个估,给标点避头尾留余地。 */
 const charsPerLine = (z: Size) => Math.floor(TEXT.w / z.font) - 1
 const linesPerPage = (z: Size) => Math.floor(TEXT.h / z.line)
-const INK = '#3b2f25'
-const FAINT = '#8a7559'
-const RULE = '#e2d4bc'
-const FONTS = `'Songti SC','STSong','Noto Serif CJK SC','Source Han Serif SC',serif`
+// 颜色与字体跟桌面 / 手机同一份 token(packages/design-tokens):纸 = paper,字 = ink,日期页码 = inkSoft,横线 = hair,桌面 = ground。
+const INK = color.ink
+const FAINT = color.inkSoft
+const RULE = color.hair
+const PAPER_FILL = color.paper
+const DESK = color.ground
+/** 先 Noto Serif SC(装了就用,和 app 一致);没装落到宋体。 */
+const FONTS = `'${fontFamily.serifCJK}','Songti SC','STSong','Noto Serif CJK SC','Source Han Serif SC',serif`
 
 export interface LetterLine { text: string; indent: boolean }
 export interface LetterPage { lines: LetterLine[]; first: boolean; last: boolean; size: Size }
@@ -121,10 +126,10 @@ export function letterPageSvg(page: LetterPage, o: { day: string; index: number;
     ? `<text x="${VIEW / 2}" y="${PAPER.y + PAPER.h - 28}" text-anchor="middle" font-family="${xml(FONTS)}" font-size="20" fill="${FAINT}">${o.index + 1} / ${o.total}</text>`
     : ''
   return `<svg xmlns="http://www.w3.org/2000/svg" width="${VIEW}" height="${VIEW}" viewBox="0 0 ${VIEW} ${VIEW}">
-<defs><filter id="sh" x="-10%" y="-10%" width="120%" height="120%"><feDropShadow dx="0" dy="10" stdDeviation="16" flood-color="#3b2a1a" flood-opacity="0.28"/></filter></defs>
-<rect width="${VIEW}" height="${VIEW}" fill="#c9b08c"/>
+<defs><filter id="sh" x="-10%" y="-10%" width="120%" height="120%"><feDropShadow dx="0" dy="10" stdDeviation="16" flood-color="${color.ink}" flood-opacity="0.10"/></filter></defs>
+<rect width="${VIEW}" height="${VIEW}" fill="${DESK}"/>
 <g transform="rotate(${o.index % 2 ? 1.2 : -1.6} ${VIEW / 2} ${VIEW / 2})">
-<rect x="${PAPER.x}" y="${PAPER.y}" width="${PAPER.w}" height="${PAPER.h}" rx="4" fill="#fbf6ec" filter="url(#sh)"/>
+<rect x="${PAPER.x}" y="${PAPER.y}" width="${PAPER.w}" height="${PAPER.h}" rx="4" fill="${PAPER_FILL}" filter="url(#sh)"/>
 ${rules.join('\n')}
 ${head}
 <foreignObject x="${TEXT.x}" y="${TEXT.y}" width="${TEXT.w}" height="${TEXT.h}">
