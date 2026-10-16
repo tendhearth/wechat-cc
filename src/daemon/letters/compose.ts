@@ -54,10 +54,10 @@ export function buildLetterPrompt(m: LetterMaterial): string {
     '- 别重复上几封信的开头和话题。',
     '- 称呼用主人在记忆里希望被叫的方式;没有就用「你」。',
     '',
-    '如果素材少到你写不出一件具体的事,就别硬写,只回:{"skip":"一句话说为什么"}',
+    '如果素材少到你写不出一件具体的事,就别硬写,只回一行:SKIP:一句话说为什么',
     '',
-    '否则只回一个 JSON,不要别的字:',
-    '{"salutation":"信的开头称呼,带冒号","paragraphs":["第一段","第二段","…"],"signoff":"落款前那一小句,可空"}',
+    '否则只回信本身,不要任何别的字(不要标题、不要解释、不要 markdown):',
+    '第一行是称呼,以冒号结尾;然后是正文,段与段之间空一行;最后可以有一小句落款前的话(比如「晚安。」)。不用写署名,信纸上会印「— CC」。',
     '',
     '## 你记得的(长期记忆)',
     m.memory.trim() ? m.memory.slice(0, MEMORY_CAP) : '(还没有整理过的长期记忆)',
@@ -79,11 +79,32 @@ function extractJson(raw: string): unknown {
 
 const clean = (v: unknown): string => typeof v === 'string' ? v.replace(/\s+/g, ' ').trim() : ''
 
-export function parseLetter(raw: string): ComposeResult {
-  const j = extractJson(raw) as Record<string, unknown> | null
-  if (!j || typeof j !== 'object') return { kind: 'skip', reason: 'unparseable' }
-  if (typeof j.skip === 'string' || j.skip === true) return { kind: 'skip', reason: clean(j.skip) || 'thin_material' }
-  const paras = Array.isArray(j.paragraphs) ? j.paragraphs.map(clean).filter(Boolean) : []
+const SIGNATURE = /^[—\-–~\s]*(CC|你的\s*CC|CC\s*敬上)[。.\s]*$/i
+const SALUTATION = /^.{1,30}[:：]$/
+
+/** 纯文本信:称呼一行 → 空行分段 → 末尾一小句(≤ 16 字)当落款前的话;署名行去掉。 */
+function parsePlain(raw: string): ComposeResult {
+  const text = raw.trim().replace(/^```\w*\s*/, '').replace(/\s*```$/, '').trim()
+  const skip = text.match(/^SKIP\s*[:：]\s*(.*)$/im)
+  if (skip && text.split('\n').length <= 2) return { kind: 'skip', reason: skip[1]!.trim() || 'thin_material' }
+  const lines = text.split('\n').map(l => l.trim())
+  while (lines.length && (!lines[lines.length - 1] || SIGNATURE.test(lines[lines.length - 1]!))) lines.pop()
+  const first = lines.findIndex(Boolean)
+  if (first < 0) return { kind: 'skip', reason: 'empty' }
+  const salutation = SALUTATION.test(lines[first]!) ? lines[first]! : ''
+  const bodyLines = lines.slice(salutation ? first + 1 : first)
+  // 空行分段;模型没空行、一行一段时也认
+  let paras = bodyLines.join('\n').split(/\n\s*\n/).map(p => p.replace(/\s*\n\s*/g, '')).map(p => p.trim()).filter(Boolean)
+  if (paras.length === 1 && bodyLines.filter(Boolean).length > 1) paras = bodyLines.filter(Boolean)
+  // 不像一封信(没称呼、又短)就别当信寄出去 —— 模型的一句闲话、报错都长这样
+  if (!salutation && paras.join('').length < 80) return { kind: 'skip', reason: 'unparseable' }
+  return finish({ salutation, paragraphs: paras, signoff: '' }, true)
+}
+
+function finish(j: { salutation: unknown; paragraphs: unknown; signoff: unknown }, guessSignoff: boolean): ComposeResult {
+  let paras = Array.isArray(j.paragraphs) ? j.paragraphs.map(clean).filter(Boolean) : []
+  let signoff = clean(j.signoff).slice(0, 60)
+  if (guessSignoff && !signoff && paras.length > 1 && paras[paras.length - 1]!.length <= 16) signoff = paras.pop()!
   if (paras.length === 0) return { kind: 'skip', reason: 'empty' }
   const kept: string[] = []
   let total = 0
@@ -92,14 +113,15 @@ export function parseLetter(raw: string): ComposeResult {
     kept.push(p.length > BODY_CAP ? p.slice(0, BODY_CAP) : p)
     total += p.length
   }
-  return {
-    kind: 'letter',
-    letter: {
-      salutation: clean(j.salutation).slice(0, 40) || '你好:',
-      paragraphs: kept,
-      signoff: clean(j.signoff).slice(0, 60),
-    },
-  }
+  paras = kept
+  return { kind: 'letter', letter: { salutation: clean(j.salutation).slice(0, 40) || '你好:', paragraphs: paras, signoff } }
+}
+
+export function parseLetter(raw: string): ComposeResult {
+  const j = extractJson(raw) as Record<string, unknown> | null
+  if (!j || typeof j !== 'object' || (!('paragraphs' in j) && !('skip' in j))) return parsePlain(raw)
+  if (typeof j.skip === 'string' || j.skip === true) return { kind: 'skip', reason: clean(j.skip) || 'thin_material' }
+  return finish({ salutation: j.salutation, paragraphs: j.paragraphs, signoff: j.signoff }, false)
 }
 
 /** 纯文本版:存档、非 macOS 发微信时用。 */
