@@ -38,6 +38,8 @@ export interface CompanionConfig {
   memory_nightly_enabled: boolean
   /** 每晚整理的时间点,主人时区的 HH:MM。 */
   memory_nightly_at: string
+  /** CC 不定期给主人写信(2026-10-16,letters/runtime.ts)。默认关:主人说要才开。 */
+  letters_enabled: boolean
   /**
    * WRITE-side knowledge ingestion loop (keeps wxgraph/wxsearch/wxfacts fresh
    * from decrypted messages). Optional; absent = ON when the companion is
@@ -74,6 +76,7 @@ export function defaultCompanionConfig(): CompanionConfig {
     import_local_history: false,
     memory_nightly_enabled: true,
     memory_nightly_at: '04:00',
+    letters_enabled: false,
     hearth_enabled: false,
     hearth_vault: null,
     hearth_cmd: null,
@@ -101,6 +104,7 @@ export function loadCompanionConfig(stateDir: string): CompanionConfig {
       import_local_history: typeof parsed.import_local_history === 'boolean' ? parsed.import_local_history : d.import_local_history,
       memory_nightly_enabled: typeof parsed.memory_nightly_enabled === 'boolean' ? parsed.memory_nightly_enabled : d.memory_nightly_enabled,
       memory_nightly_at: typeof parsed.memory_nightly_at === 'string' && /^([01]\d|2[0-3]):[0-5]\d$/.test(parsed.memory_nightly_at) ? parsed.memory_nightly_at : d.memory_nightly_at,
+      letters_enabled: typeof parsed.letters_enabled === 'boolean' ? parsed.letters_enabled : d.letters_enabled,
       ingest_enabled: typeof parsed.ingest_enabled === 'boolean' ? parsed.ingest_enabled : undefined,
       hearth_enabled: typeof parsed.hearth_enabled === 'boolean' ? parsed.hearth_enabled : d.hearth_enabled,
       hearth_vault: typeof parsed.hearth_vault === 'string' ? parsed.hearth_vault : null,

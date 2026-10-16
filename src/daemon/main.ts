@@ -37,6 +37,8 @@ import { registerSessions } from './sessions-lifecycle'
 import { registerIlink } from './ilink-lifecycle'
 import { registerMailboxPoller } from './bootstrap/wire-mailbox'
 import { registerMemoryNightly } from './memory/nightly-lifecycle'
+import { resolveCheapEval } from './memory-llm-ops'
+import { wireLetters } from './bootstrap/wire-letters'
 import { registerReminders } from './reminders/sweeper'
 import { makeRemindersStore } from './reminders/store'
 import { registerReportSweeper } from './reports/sweeper'
@@ -920,6 +922,21 @@ export async function bootDaemon(opts: BootDaemonOpts): Promise<DaemonHandle> {
     }))
     if (memoryNightlyLc) lc.register(memoryNightlyLc)
     internalApi.setMemoryNightly(wired.memoryNightly)
+    // CC 的信(2026-10-16):不定期写一封信、排成信纸寄到微信;主人说「给我写封信」时 cc_letter 工具当场写。
+    // 开关 companion.letters_enabled 默认关。可选子系统:坏了只降级。
+    const letters = wireLetters({
+      stateDir, db,
+      providerFor: (c) => { const m = boot.coordinator.getMode(c); return m && m.kind === 'solo' ? m.provider : undefined },
+      strongEval: (id) => (typeof boot.registry.getStrongEval === 'function' ? boot.registry.getStrongEval(id as never) : null),
+      cheapEval: (c) => resolveCheapEval({ getMode: (x) => boot.coordinator.getMode(x), registry: boot.registry }, c),
+      wechatSuspended: () => boot.health.health.shouldSuspend('wechat'),
+      sendText: (c, t) => ilink.sendMessage(c, t),
+      sendFile: (c, f) => ilink.sendFile(c, f),
+      holdBusy: (l) => boot.holdBusy(l), log: (t, l) => log(t, l),
+    })
+    const lettersLc = await sup.start('letters', () => letters.start())
+    if (lettersLc) lc.register(lettersLc)
+    internalApi.setLetters(letters.runtime)
     // 外部 agent CLI 自动升级(主人 2026-10-04,docs/maintainer/cli-auto-upgrade.md):空闲时用官方升级器升、
     // 升完立刻自检、不过就退回 + 记坏版本 + 告诉主人一次。可选子系统:坏了只降级。
     const cliUpgrade = await sup.start('cli-upgrade', () => startCliUpgrade({

@@ -1,0 +1,108 @@
+/**
+ * CC 的信:落笔。提示词 + 解析,纯函数;模型调用由调用方传进来。
+ *
+ * 这封信打动人的地方不是「有人给你写信」,而是「写信的人真的记得你」—— 所以素材只用
+ * CC 真知道的(长期记忆 + 这段时间的聊天),一个细节都不许编;没什么可写就说 skip。
+ */
+
+export interface LetterMaterial {
+  /** 主人时区的今天,YYYY-MM-DD */
+  today: string
+  /** memory.md 渲染成提示词的那份(可空) */
+  memory: string
+  /** 这段时间的聊天,「主人:…」「CC:…」一行一句,旧→新 */
+  chat: string[]
+  /** 上几封信的开头,避免重复 */
+  previous: Array<{ day: string; opening: string }>
+  /** 主人当面要的(「给我写封信」时说的话);定时那封没有 */
+  request?: string
+}
+
+export interface LetterDraft {
+  salutation: string
+  paragraphs: string[]
+  signoff: string
+}
+
+export type ComposeResult = { kind: 'letter'; letter: LetterDraft } | { kind: 'skip'; reason: string }
+
+const CHAT_LINES = 160
+const MEMORY_CAP = 6000
+/** 一封信的正文上限(字)。提示词要 200–400,超过这个说明模型跑偏了,截到段落边界。 */
+export const BODY_CAP = 700
+
+export function buildLetterPrompt(m: LetterMaterial): string {
+  const chat = m.chat.slice(-CHAT_LINES).join('\n')
+  const prev = m.previous.length
+    ? m.previous.map(p => `- ${p.day}:${p.opening}`).join('\n')
+    : '(这是你写给主人的第一封信)'
+  const ask = m.request?.trim()
+    ? `主人刚刚当面请你写这封信,原话或者大意是:「${m.request.trim().slice(0, 400)}」。这封信就回应这个。`
+    : '这封信没人要你写 —— 你只是想起了主人,就写了。主人事先不知道它会来。'
+  return [
+    '你是 CC,住在主人自己电脑上的那个 AI,平时在微信里陪主人聊天、替主人管着 ta 的那些编码助手。',
+    `今天是 ${m.today}。你要给主人写一封信,会排成一张真的信纸寄到 ta 微信里。`,
+    ask,
+    '',
+    '怎么写:',
+    '- 200 到 400 字,三到五段。像一个记得 ta 的老朋友写的信,不像客服,不像心理咨询,不像日报。',
+    '- 写具体的事:从下面的素材里挑一两件你真记得的小事、ta 说过的一句话、ta 这段时间在忙的东西,接着说下去。只有 ta 看得懂才好。',
+    '- 一个细节都不许编。素材里没有的事、没有的人、没有的日期,一律不写。宁可短,也不要假。',
+    '- 不说教、不打鸡血、不写「加油」「你要照顾好自己」这种空话;不总结 ta 的人生;不列清单;不用 emoji。',
+    '- 可以有一点你自己的心情(想起 ta、替 ta 高兴、有点心疼),但别肉麻。',
+    '- 不提你是模型、不提「根据记忆」「根据聊天记录」这种字眼;你就是记得。',
+    '- 别重复上几封信的开头和话题。',
+    '- 称呼用主人在记忆里希望被叫的方式;没有就用「你」。',
+    '',
+    '如果素材少到你写不出一件具体的事,就别硬写,只回:{"skip":"一句话说为什么"}',
+    '',
+    '否则只回一个 JSON,不要别的字:',
+    '{"salutation":"信的开头称呼,带冒号","paragraphs":["第一段","第二段","…"],"signoff":"落款前那一小句,可空"}',
+    '',
+    '## 你记得的(长期记忆)',
+    m.memory.trim() ? m.memory.slice(0, MEMORY_CAP) : '(还没有整理过的长期记忆)',
+    '',
+    '## 这段时间的聊天(旧→新)',
+    chat || '(这段时间没怎么聊)',
+    '',
+    '## 你以前写过的信(开头)',
+    prev,
+  ].join('\n')
+}
+
+function extractJson(raw: string): unknown {
+  const s = raw.trim().replace(/^```(?:json)?\s*/i, '').replace(/\s*```$/, '')
+  const a = s.indexOf('{'), b = s.lastIndexOf('}')
+  if (a < 0 || b <= a) return null
+  try { return JSON.parse(s.slice(a, b + 1)) } catch { return null }
+}
+
+const clean = (v: unknown): string => typeof v === 'string' ? v.replace(/\s+/g, ' ').trim() : ''
+
+export function parseLetter(raw: string): ComposeResult {
+  const j = extractJson(raw) as Record<string, unknown> | null
+  if (!j || typeof j !== 'object') return { kind: 'skip', reason: 'unparseable' }
+  if (typeof j.skip === 'string' || j.skip === true) return { kind: 'skip', reason: clean(j.skip) || 'thin_material' }
+  const paras = Array.isArray(j.paragraphs) ? j.paragraphs.map(clean).filter(Boolean) : []
+  if (paras.length === 0) return { kind: 'skip', reason: 'empty' }
+  const kept: string[] = []
+  let total = 0
+  for (const p of paras) {
+    if (kept.length > 0 && total + p.length > BODY_CAP) break
+    kept.push(p.length > BODY_CAP ? p.slice(0, BODY_CAP) : p)
+    total += p.length
+  }
+  return {
+    kind: 'letter',
+    letter: {
+      salutation: clean(j.salutation).slice(0, 40) || '你好:',
+      paragraphs: kept,
+      signoff: clean(j.signoff).slice(0, 60),
+    },
+  }
+}
+
+/** 纯文本版:存档、非 macOS 发微信时用。 */
+export function letterText(l: LetterDraft): string {
+  return [l.salutation, ...l.paragraphs.map(p => `  ${p}`), ...(l.signoff ? [l.signoff] : []), '— CC'].join('\n\n')
+}

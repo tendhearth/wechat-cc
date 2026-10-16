@@ -149,6 +149,10 @@ export const ROUTE_MIN_TIER: Record<string, UserTier> = {
   // 接上 / 撤掉终端里的 Claude Code / Codex(2026-10-14):改主人 ~/.claude/settings.json 与 $CODEX_HOME/hooks.json,admin。
   'POST /v1/cli/hooks/install': 'admin',
   'POST /v1/cli/hooks/uninstall': 'admin',
+  // CC 的信(2026-10-16):信是写给主人的私事;开关改主人的 companion 配置。admin。
+  'GET /v1/letters': 'admin',
+  'POST /v1/letters/write': 'admin',
+  'POST /v1/letters/settings': 'admin',
   'POST /v1/chat-prefs': 'trusted',
   // POST /v1/stickers writes an arbitrary sourcePath into the lib — same
   // trust class as send_file, so it's trusted not guest.
