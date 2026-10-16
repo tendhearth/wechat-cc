@@ -152,7 +152,9 @@ test('CC 现在怎么样:终端里的 Claude Code / Codex 没接上 ⇒「接上
   const row = page.locator('#now-connections .nc-capability')
   await expect(row).toContainText('还没接上')
   await row.getByRole('button', { name: '接上', exact: true }).click()
-  await expect(row.locator('.hooks-confirm')).toContainText('~/.claude/settings.json')
+  await expect(row.locator('.hooks-confirm')).toHaveText('只加 CC 自己的几条 hook，随时能撤掉。')
+  await row.locator('.hooks-detail > summary').click()
+  await expect(row.locator('.hooks-detail')).toContainText('~/.claude/settings.json')
   expect(((await shim.invoke('mock.hook-calls')) as { result: { calls: unknown[] } }).result.calls).toHaveLength(0)
   await row.getByRole('button', { name: '确定接上' }).click()
   await expect(row).toContainText('已接上')
@@ -160,7 +162,7 @@ test('CC 现在怎么样:终端里的 Claude Code / Codex 没接上 ⇒「接上
   expect(((await shim.invoke('mock.hook-calls')) as { result: { calls: unknown[] } }).result.calls).toEqual([{}])
 })
 
-test('此刻「N 件事等你」也列终端里等批准的会话:开了码的能当场允许,没开码的只说回终端处理', async ({ page, shimUrl, shim }) => {
+test('此刻「N 件事等你」也列终端里等批准的会话:开了码的点「看清楚」在小窗里允许,没开码的只说回终端处理', async ({ page, shimUrl, shim }) => {
   const now = Date.now()
   const base = { source: 'claude', stale: false, cwd: '/w/x', machine: null, origin_agent: null, last_summary: null, last_event_at: now, last_prompt_at: null, created_at: now }
   await shim.invoke('demo.seed', { chat_id: 'test_chat', cliSessions: [
@@ -174,12 +176,19 @@ test('此刻「N 件事等你」也列终端里等批准的会话:开了码的�
   await expect(waiting.locator('#now-waiting-title')).toHaveText(/^2 件事等你/)
   const rows = waiting.locator('.now-terminal')
   await expect(rows).toHaveCount(2)
-  await expect(rows.nth(0)).toContainText('Bash: npm publish')
-  await expect(rows.nth(0)).toContainText('wechat-cc · 终端 · Claude Code · 码 ab12c3')
+  await expect(rows.nth(0)).toContainText('想运行 npm publish')
+  await expect(rows.nth(0).locator('.d')).toHaveText('wechat-cc · Claude Code')
+  await expect(rows.nth(0).locator('button')).toHaveCount(1)
+  await expect(rows.nth(0).locator('.go')).toHaveText('看清楚 ›')
   await expect(rows.nth(1)).toContainText('要改 package.json')
   await expect(rows.nth(1)).toContainText('回终端处理')
   await expect(rows.nth(1).locator('button')).toHaveCount(0)
-  await rows.nth(0).getByRole('button', { name: /^允许/ }).click()
+  await rows.nth(0).locator('button').click()
+  const decide = page.locator('dialog.now-terminal-dialog')
+  await expect(decide).toBeVisible()
+  await expect(decide.locator('.now-terminal-command')).toHaveText('npm publish')
+  await decide.getByRole('button', { name: '允许', exact: true }).click()
+  await expect(decide).toHaveCount(0)
   await expect.poll(async () => ((await shim.invoke('mock.permission-resolves')) as { result: { calls: unknown[] } }).result.calls).toEqual([{ hash: 'k3x9z', decision: 'allow' }])
   // 拍完之后下一拍列表里就没有它了(shim 把它收回 running,与真 daemon 一致)。
   await expect(rows).toHaveCount(1)

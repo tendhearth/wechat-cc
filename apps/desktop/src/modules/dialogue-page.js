@@ -19,16 +19,11 @@
 // keeps a little module-scoped state (selected chat, current view, whether
 // the user has unlocked private threads this session).
 
-import { escapeHtml, showToast } from "../view.js"
+import { escapeHtml, showToast, providerShortLabel } from "../view.js"
 import { renderWorkbenchMarkdown, renderWorkbenchUserText, captureUserSources, restoreUserSources } from "./workbench-markdown.js"
 import { formatRelativeTimeShort } from "./observations.js"
 import { icon } from "./icons.js"
 import { showPageError } from "./page-status.js"
-// Shared, Tauri-safe helpers — single source of truth lives in sessions.js.
-// attachmentUrl routes through convertFileSrc in packaged Tauri (no
-// /attachment HTTP handler exists there); avatarInitial / avatarInfo were
-// duplicated here before this refactor.
-import { attachmentUrl, avatarInitial, avatarInfo } from "./sessions.js"
 
 /**
  * @typedef {{ invoke: (cmd: string, args: Record<string, unknown>) => Promise<unknown> }} Deps
@@ -94,21 +89,6 @@ async function cli(deps, args) {
 function humanName(chatId) {
   if (chatId && chatNames[chatId]) return chatNames[chatId]
   return "我"
-}
-
-/**
- * Render an avatar span — custom image when available, else a coloured
- * initial bubble. Reuses the mockup's dialogue-avatar / dialogue-avatar-*
- * classes so the existing CSS keeps working.
- *
- * @param {{ kind: 'user'|'ai', name: string, src?: string|null, avatarKey?: string|null }} arg0
- */
-function avatarHtml({ kind, name, src, avatarKey }) {
-  const cls = `dialogue-avatar dialogue-avatar-${kind} wechat-avatar`
-  if (src) {
-    return `<span class="${cls}"><img src="${escapeHtml(src)}" alt="${escapeHtml(name)}" /></span>`
-  }
-  return `<span class="${cls}">${escapeHtml(avatarInitial(name))}</span>`
 }
 
 // ── skeleton ───────────────────────────────────────────────────────────
@@ -200,7 +180,7 @@ async function loadChats(deps) {
  * Render sent user and assistant text as readable documents. Formatted user
  * text includes the original source; commands and media keep literal text.
  * @param {Message} m
- * @param {{ userName: string, userAvatar?: string|null, botAvatar?: string|null, userAvatarKey?: string|null, botAvatarKey?: string|null }} ctx
+ * @param {{ userName: string }} ctx
  */
 export function renderDialogueMessage(m, ctx) {
   if (m.kind === "command") {
@@ -208,26 +188,20 @@ export function renderDialogueMessage(m, ctx) {
   }
   const isUser = m.direction === "in"
   const name = isUser ? ctx.userName : (botLabel(m))
-  const avatar = avatarHtml({
-    kind: isUser ? "user" : "ai",
-    name,
-    src: isUser ? ctx.userAvatar : ctx.botAvatar,
-    avatarKey: isUser ? ctx.userAvatarKey : ctx.botAvatarKey,
-  })
   const time = formatTurnTime(m.ts)
   const author = `<div class="dialogue-author">${escapeHtml(name)}${time ? `<span class="dialogue-time">${escapeHtml(time)}</span>` : ""}</div>`
   const markdown = !isUser && m.kind === "text"
   const userText=isUser&&m.kind==='text'
   const body = `<div class="dialogue-message-text ${markdown ? 'cc-readable-markdown wb-markdown' : userText ? '' : 'dialogue-message-plain'}">${markdown ? renderWorkbenchMarkdown(m.text) : userText ? renderWorkbenchUserText(m.text,`dialogue:${m.chatId}:${m.id}`) : escapeHtml(m.text)}</div>`
+  // 只写名字 + 时间,不画头像圈 / 方块(2026-10-16:装饰头像是噪音)。
   return `<div class="dialogue-turn" data-msg-id="${escapeHtml(m.id)}">
-    ${avatar}
     <div class="dialogue-turn-body">${author}${body}</div>
   </div>`
 }
 
-/** Bot display label — provider-aware. @param {Message} m */
+/** Bot display label — provider-aware(「CC · Claude」,不是小写 id)。 @param {Message} m */
 function botLabel(m) {
-  return m.provider ? `CC · ${m.provider}` : "CC"
+  return m.provider ? `CC · ${providerShortLabel(m.provider)}` : "CC"
 }
 
 /** HH:MM for a message ts; a timeline without times isn't a timeline.
@@ -289,20 +263,7 @@ async function loadTimeline(deps, opts = {}) {
     return
   }
 
-  // Resolve avatars once (bot + the inbound human) — best-effort.
-  const userName = humanName(selectedChatId)
-  const [userInfo, botInfo] = await Promise.all([
-    selectedChatId ? avatarInfo(deps, selectedChatId) : Promise.resolve(null),
-    avatarInfo(deps, "claude"),
-  ])
-  if (seq !== loadSeq) return
-  const ctx = {
-    userName,
-    userAvatar: userInfo?.exists ? `${attachmentUrl(userInfo.path)}&v=${Date.now()}` : null,
-    botAvatar: botInfo?.exists ? `${attachmentUrl(botInfo.path)}&v=${Date.now()}` : null,
-    userAvatarKey: selectedChatId,
-    botAvatarKey: "claude",
-  }
+  const ctx = { userName: humanName(selectedChatId) }
 
   stage.innerHTML = messages.map(m => renderDialogueMessage(m, ctx)).join("")
   restoreUserSources(stage,open)
@@ -321,7 +282,7 @@ async function loadTimeline(deps, opts = {}) {
  * the top and older pages exist, fetch the prior page and prepend it,
  * preserving the visible scroll position.
  * @param {Deps} deps @param {HTMLElement} stage
- * @param {{ userName: string, userAvatar?: string|null, botAvatar?: string|null }} ctx
+ * @param {{ userName: string }} ctx
  */
 function wireUpwardPaging(deps, stage, ctx) {
   if (stage.dataset.pagingWired === "1") return
@@ -621,19 +582,7 @@ async function openThreadDetail(deps, threadId) {
   }
 
   const t = data.thread
-  const userName = humanName(selectedChatId)
-  const [userInfo, botInfo] = await Promise.all([
-    selectedChatId ? avatarInfo(deps, selectedChatId) : Promise.resolve(null),
-    avatarInfo(deps, "claude"),
-  ])
-  if (seq !== loadSeq) return
-  const ctx = {
-    userName,
-    userAvatar: userInfo?.exists ? `${attachmentUrl(userInfo.path)}&v=${Date.now()}` : null,
-    botAvatar: botInfo?.exists ? `${attachmentUrl(botInfo.path)}&v=${Date.now()}` : null,
-    userAvatarKey: selectedChatId,
-    botAvatarKey: "claude",
-  }
+  const ctx = { userName: humanName(selectedChatId) }
 
   const lastEpisode = data.episodes[data.episodes.length - 1] || null
   const anchorTs = lastEpisode ? lastEpisode.to_ts : ""

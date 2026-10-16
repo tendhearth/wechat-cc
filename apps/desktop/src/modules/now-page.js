@@ -11,7 +11,7 @@ function when(at, now) {
 }
 
 /**
- * onResolveTerminal:终端里等批准的那一行按了「允许 / 拒绝」(2026-10-14)。缺席 ⇒ 不给按钮。
+ * onResolveTerminal:终端里等批准的那一行点开小窗后按了「允许 / 拒绝」(2026-10-14)。缺席 ⇒ 行不能点。
  * 返回 true = 拍板了;false = 那一项已经不在(微信 / 桌宠刚拍过、过期);抛错 = 没送出去。
  * @param {{root:HTMLElement,presencePoller:{subscribe:(cb:(p:any)=>void)=>()=>void},onOpenTask:(id:string)=>unknown,onResolveTerminal?:(hash:string,decision:'allow'|'deny')=>Promise<boolean>,onModeChange?:(m:'home'|'chat')=>void,now?:()=>Date}} o
  */
@@ -30,33 +30,76 @@ export function mountNowPage({ root, presencePoller, onOpenTask, onResolveTermin
   const list = $('now-waiting-list')
   /** @type {any} */ let attention = null
   /** @type {import('./terminal-waiting.js').TerminalRow[]} */ let terminal = []
-  // 按下去之后到下一拍列表把它收走之前,别让 3 秒一次的重绘把按钮又放出来(hash → 行上那句话;'' = 正在送)。
+  // 按下去之后到下一拍列表把它收走之前,别让 3 秒一次的重绘把「看清楚」又放出来(hash → 行上那句话;'' = 正在送)。
   /** @type {Map<string,string>} */ const decided = new Map()
   list.addEventListener('click', e => {
     const target = /** @type {HTMLElement} */ (e.target)
-    const decide = /** @type {HTMLButtonElement|null} */ (target.closest('.now-terminal-decide'))
-    if (decide) { void resolveTerminal(decide); return }
+    const term = /** @type {HTMLElement|null} */ (target.closest('.now-terminal-row[data-hash]'))
+    if (term) { openDecide(/** @type {string} */ (term.dataset.hash)); return }
     const row = /** @type {HTMLElement|null} */ (target.closest('.now-waiting-row'))
     if (row?.dataset.taskId) void onOpenTask(row.dataset.taskId)
   })
-  /** @param {HTMLButtonElement} btn */
-  async function resolveTerminal(btn) {
-    const li = /** @type {HTMLElement} */ (btn.closest('.now-terminal'))
-    const hash = li?.dataset.hash, decision = /** @type {'allow'|'deny'} */ (btn.dataset.decision)
-    if (!hash || !onResolveTerminal || decided.has(hash)) return
+  // 终端那一行只给「看清楚 ›」(与工作台行一样一个动作);点开一个小窗看清命令,再「允许 / 拒绝」(2026-10-16)。
+  /** @type {{dialog:HTMLDialogElement,hash:string}|null} */ let decideView = null
+  /** @param {string} hash */
+  function openDecide(hash) {
+    const r = terminal.find(x => x.hash === hash)
+    if (!r || !onResolveTerminal || decided.has(hash)) return
+    decideView?.dialog.close()
+    const dialog = document.createElement('dialog')
+    dialog.className = 'wb-history-dialog wb-handoff-dialog now-terminal-dialog'
+    dialog.setAttribute('aria-label', r.title)
+    const head = document.createElement('header')
+    const hd = document.createElement('div')
+    const h = document.createElement('h2'); h.textContent = r.title
+    const sub = document.createElement('p'); sub.textContent = r.detail
+    hd.append(h, sub)
+    const close = document.createElement('button'); close.type = 'button'; close.className = 'now-terminal-close'; close.textContent = '关闭'
+    close.addEventListener('click', () => dialog.close())
+    head.append(hd, close)
+    const body = document.createElement('div'); body.className = 'wb-handoff-body'
+    if (r.command) {
+      const label = document.createElement('p'); label.className = 'wb-history-note'; label.textContent = r.commandLabel ?? '具体内容'
+      const pre = document.createElement('pre'); pre.className = 'now-terminal-command'; pre.textContent = r.command
+      body.append(label, pre)
+    } else {
+      const p = document.createElement('p'); p.className = 'wb-history-note'; p.textContent = r.tool ? `${r.tool} 没说具体要做什么。` : '它没说具体要做什么。'
+      body.append(p)
+    }
+    const foot = document.createElement('footer'); foot.className = 'wb-handoff-footer'
+    const note = document.createElement('span'); note.className = 'now-terminal-note'; note.setAttribute('aria-live', 'polite')
+    const actions = document.createElement('div'); actions.className = 'now-terminal-actions'
+    for (const [decision, label] of /** @type {const} */ ([['deny', '拒绝'], ['allow', '允许']])) {
+      const b = document.createElement('button')
+      b.type = 'button'; b.className = `wb-btn now-terminal-decide${decision === 'allow' ? ' wb-btn-primary' : ''}`; b.dataset.decision = decision; b.textContent = label
+      b.addEventListener('click', () => { void resolveTerminal(hash, decision) })
+      actions.append(b)
+    }
+    foot.append(note, actions)
+    dialog.append(head, body, foot)
+    dialog.addEventListener('close', () => { dialog.remove(); if (decideView?.dialog === dialog) decideView = null })
+    document.body.append(dialog)
+    decideView = { dialog, hash }
+    dialog.showModal()
+  }
+  /** @param {string} hash @param {'allow'|'deny'} decision */
+  async function resolveTerminal(hash, decision) {
+    if (!onResolveTerminal || decided.has(hash)) return
+    const box = decideView?.hash === hash ? decideView.dialog : null
+    const buttons = box ? [...box.querySelectorAll('button.now-terminal-decide')] : []
+    for (const b of buttons) /** @type {HTMLButtonElement} */ (b).disabled = true
     decided.set(hash, '')
     renderWaiting()
-    /** @type {string|null} */ let failed = null
     try {
       const ok = await onResolveTerminal(hash, decision)
       decided.set(hash, ok ? (decision === 'allow' ? '已允许' : '已拒绝') : '这一项已经处理过了')
+      renderWaiting()
+      if (box?.open) box.close()
     } catch {
       decided.delete(hash)
-      failed = hash
-    }
-    renderWaiting()
-    if (failed) {
-      const note = list.querySelector(`.now-terminal[data-hash="${failed}"] .now-terminal-note`)
+      renderWaiting()
+      for (const b of buttons) /** @type {HTMLButtonElement} */ (b).disabled = false
+      const note = box?.querySelector('.now-terminal-note')
       if (note) note.textContent = '没送出去，再试一次'
     }
   }
@@ -66,26 +109,19 @@ export function mountNowPage({ root, presencePoller, onOpenTask, onResolveTermin
     li.className = 'now-terminal'
     li.dataset.sessionId = r.id
     if (r.hash) li.dataset.hash = r.hash
-    const box = document.createElement('div'); box.className = 'now-waiting-row now-terminal-row'
+    const done = r.hash ? decided.get(r.hash) : undefined
+    const canDecide = Boolean(r.hash && onResolveTerminal && done === undefined)
+    const box = document.createElement(canDecide ? 'button' : 'div')
+    box.className = 'now-waiting-row now-terminal-row'
+    if (canDecide && r.hash) { /** @type {HTMLButtonElement} */ (box).type = 'button'; box.dataset.hash = r.hash }
     const text = document.createElement('div')
     const t = document.createElement('p'); t.className = 't'; t.textContent = r.title
     const d = document.createElement('p'); d.className = 'd'; d.textContent = r.detail
     text.append(t, d)
-    const actions = document.createElement('div'); actions.className = 'now-terminal-actions'
-    const done = r.hash ? decided.get(r.hash) : undefined
-    if (r.hash && onResolveTerminal && !done) {
-      for (const [decision, label] of /** @type {const} */ ([['allow', '允许'], ['deny', '拒绝']])) {
-        const b = document.createElement('button')
-        b.type = 'button'; b.className = 'now-terminal-decide'; b.dataset.decision = decision; b.textContent = label
-        b.disabled = done === ''
-        b.setAttribute('aria-label', `${label}：${r.title}`)
-        actions.append(b)
-      }
-    }
-    const note = document.createElement('span'); note.className = 'now-terminal-note'; note.setAttribute('aria-live', 'polite')
-    if (done) note.textContent = done
-    actions.append(note)
-    box.append(text, actions); li.append(box)
+    const go = document.createElement('span'); go.className = 'go'
+    go.textContent = canDecide ? '看清楚 ›' : done === '' ? '正在送…' : done ?? (r.hash ? '' : '回终端处理')
+    if (done !== undefined) go.setAttribute('aria-live', 'polite')
+    box.append(text, go); li.append(box)
     return li
   }
   function renderWaiting() {
@@ -129,8 +165,10 @@ export function mountNowPage({ root, presencePoller, onOpenTask, onResolveTermin
     setTerminal(rows) {
       terminal = rows
       for (const h of [...decided.keys()]) if (!rows.some(r => r.hash === h)) decided.delete(h)
+      // 小窗开着时那一项已经不在(微信 / 桌宠刚拍过)⇒ 关掉,别留一个按了也白按的窗。
+      if (decideView && !rows.some(r => r.hash === decideView?.hash)) decideView.dialog.close()
       renderWaiting()
     },
-    destroy() { unsub() },
+    destroy() { unsub(); decideView?.dialog.close() },
   }
 }

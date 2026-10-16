@@ -1,6 +1,6 @@
 // @vitest-environment happy-dom
 import { describe, it, expect, vi } from 'vitest'
-import { HOOKS_CONFIRM, HOOKS_INSTALL_PATH, makeHooksAction, mountOnboardTerminal, runHooksInstall } from './terminal-hooks.js'
+import { HOOKS_CONFIRM, HOOKS_DETAIL, HOOKS_INSTALL_PATH, makeHooksAction, mountOnboardTerminal, runHooksInstall } from './terminal-hooks.js'
 import { mountNowConnections } from './now-connections.js'
 
 const settle = () => new Promise(r => setTimeout(r, 0))
@@ -32,8 +32,13 @@ describe('makeHooksAction —— 先确认,点了确定才调路由', () => {
     h.replaceChildren(a.node('接上'))
     click(h, '接上')
     expect(h.querySelector('.hooks-confirm')!.textContent).toBe(HOOKS_CONFIRM)
-    expect(HOOKS_CONFIRM).toContain('~/.claude/settings.json')
     expect(HOOKS_CONFIRM).toContain('撤掉')
+    expect(HOOKS_CONFIRM).not.toContain('~/.claude')
+    // 改哪几个文件、怎么撤收在「详细」里
+    expect(h.querySelector('.hooks-detail > summary')!.textContent).toBe('详细')
+    expect(h.querySelector('.hooks-detail > p')!.textContent).toBe(HOOKS_DETAIL)
+    expect(HOOKS_DETAIL).toContain('~/.claude/settings.json')
+    expect(HOOKS_DETAIL).toContain('wechat-cc hook uninstall')
     click(h, '取消')
     expect(call).not.toHaveBeenCalled()
     click(h, '接上'); click(h, '确定接上')

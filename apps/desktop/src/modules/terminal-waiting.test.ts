@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, afterEach } from 'vitest'
-import { terminalWaitingRows, createTerminalWaitingPoller } from './terminal-waiting.js'
+import { terminalWaitingRows, terminalTitle, createTerminalWaitingPoller } from './terminal-waiting.js'
 
 const s = (over: Record<string, unknown> = {}) => ({
   session_id: 'ab12c3-full', code: 'ab12c3', source: 'claude', status: 'waiting', project: 'wechat-cc', machine: null,
@@ -7,24 +7,26 @@ const s = (over: Record<string, unknown> = {}) => ({
 })
 
 describe('terminalWaitingRows', () => {
-  it('只要等批准的;开了码 ⇒ hash,没开码 ⇒ 写回终端处理', () => {
+  it('只要等批准的;开了码 ⇒ hash;桌面只写「项目 · 来源」,不写「终端」和码', () => {
     expect(terminalWaitingRows([
       s(),
       s({ session_id: 'cd34e5-full', code: 'cd34e5', source: 'codex', project: 'melu', pending: { tool: 'permission', summary: '要改 package.json', since: 1, hash: null } }),
       s({ session_id: 'x', status: 'running', pending: null }),
       s({ session_id: 'y', status: 'idle' }),
     ])).toEqual([
-      { id: 'ab12c3-full', title: 'Bash: npm publish', detail: 'wechat-cc · 终端 · Claude Code · 码 ab12c3', hash: 'k3x9z' },
-      { id: 'cd34e5-full', title: '要改 package.json', detail: 'melu · 终端 · Codex · 码 cd34e5 · 回终端处理', hash: null },
+      { id: 'ab12c3-full', title: '想运行 npm publish', detail: 'wechat-cc · Claude Code', hash: 'k3x9z', tool: 'Bash', command: 'npm publish', commandLabel: '要运行的命令' },
+      { id: 'cd34e5-full', title: '要改 package.json', detail: 'melu · Codex', hash: null, tool: '', command: '要改 package.json', commandLabel: '具体内容' },
     ])
   })
 
   it('老 daemon 没带 hash / hash 形状不对 ⇒ 不给按钮;没摘要 ⇒ 兜底标题;长的截断;坏输入 ⇒ 空', () => {
-    expect(terminalWaitingRows([s({ pending: { tool: 'Bash', summary: null, since: 1 } })])[0]).toMatchObject({ title: 'Bash', hash: null })
+    expect(terminalWaitingRows([s({ pending: { tool: 'Bash', summary: null, since: 1 } })])[0]).toMatchObject({ title: '想用 Bash', hash: null })
     expect(terminalWaitingRows([s({ pending: { tool: 'Bash', summary: 'x', since: 1, hash: 'NOT A HASH' } })])[0]!.hash).toBeNull()
     expect(terminalWaitingRows([s({ pending: { tool: 'permission', summary: null, since: 1, hash: null } })])[0]!.title).toBe('Claude Code 要你批准')
     expect(terminalWaitingRows([s({ pending: { tool: 'Bash', summary: 'y'.repeat(300), since: 1, hash: null } })])[0]!.title.length).toBe(120)
     expect(terminalWaitingRows(undefined)).toEqual([])
+    expect(terminalTitle('Edit', 'src/a.ts', 'Claude Code')).toBe('想改 src/a.ts')
+    expect(terminalTitle('mcp__x__do', 'go', 'Claude Code')).toBe('想用 mcp__x__do：go')
     expect(terminalWaitingRows([null, 3, s({ pending: null })])).toEqual([])
   })
 })
