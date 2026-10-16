@@ -2,7 +2,7 @@ import { mkdtempSync, readFileSync, rmSync, writeFileSync, mkdirSync } from 'nod
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, describe, expect, it } from 'vitest'
-import { buildLetterPrompt, letterText, parseLetter, BODY_CAP } from './compose'
+import { buildLetterPrompt, cjkQuotes, letterText, parseLetter, BODY_CAP } from './compose'
 import { chineseDate, letterSvgs, linesFor, paginate, SIZES } from './render'
 import { makeLetterRuntime, readLetterState, type LetterDeps } from './runtime'
 import { DAY_MS, GAP_DAYS, inEveningWindow, isLetterDue, nextDueAt } from './schedule'
@@ -52,6 +52,11 @@ describe('compose', () => {
   it('takes a short bare first line as the salutation and drops stray colons', () => {
     const r = parseLetter('时瑞\n\n：上次你说终于接上 Cursor 了,我替你高兴了好一阵。\n\n这一个月你做了好多事,我都看见了。')
     expect(r).toMatchObject({ kind: 'letter', letter: { salutation: '时瑞:', paragraphs: ['上次你说终于接上 Cursor 了,我替你高兴了好一阵。', '这一个月你做了好多事,我都看见了。'] } })
+  })
+  it('turns straight quotes into 「」 in pairs only', () => {
+    expect(cjkQuotes('你发来"你好""在么"')).toBe('你发来「你好」「在么」')
+    expect(cjkQuotes('他说“好”')).toBe('他说「好」')
+    expect(cjkQuotes('一个"落单')).toBe('一个"落单')
   })
   it('reads SKIP in the plain format', () => {
     expect(parseLetter('SKIP：这段时间没怎么聊')).toEqual({ kind: 'skip', reason: '这段时间没怎么聊' })
