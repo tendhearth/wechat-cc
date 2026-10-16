@@ -1,6 +1,6 @@
 # Tendhearth CC desktop v1.7.7
 
-**Date**: 待主人定
+**Date**: 2026-10-15
 **Tag**: `desktop-v1.7.7`(配套 CLI 同号)
 **Scope**: CC 管起你在终端里开的 Claude Code / Codex,以及 Cursor 里的 agent —— 看得见、批得了、接得上，桌面、手机、微信三处都能用。
 
