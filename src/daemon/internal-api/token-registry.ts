@@ -269,6 +269,16 @@ export function makeTokenRegistry(
           // admin 档。桌面不调(状态从 /v1/health 的 cli_upgrade 读)。
           'POST /v1/cli/upgrade',
           'POST /v1/cli/rollback',
+          // 终端会话登记处(v76,2026-10-14):CC 统管主人所有终端 agent 会话的只读列表。admin 档,
+          // 同一份 operator 凭据。桌面「此刻」的等你行读它(2026-10-14):Tauri 宿主(lib.rs)与
+          // workbench-proxy.ts 都已登记;拍板不走这条,走 POST /v1/permissions/resolve。
+          'GET /v1/cli/sessions',
+          // 「今天」一眼看完(2026-10-14):同一份 operator 凭据,admin 档、只读。桌面暂不调(保持简单)。
+          'GET /v1/overseer/today',
+          // 接上 / 撤掉终端里的 Claude Code / Codex(2026-10-14):桌面「CC 现在怎么样」与引导页的「接上」/「修复」。
+          // admin 档,同一份 operator 凭据;Tauri 宿主(lib.rs)与 workbench-proxy.ts 都已登记。
+          'POST /v1/cli/hooks/install',
+          'POST /v1/cli/hooks/uninstall',
         ]),
       })
     },

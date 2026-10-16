@@ -1,7 +1,7 @@
 import { PHONE_SAY_MAX_CHARS } from '@wechat-cc/protocol'
 import { labelJoin, type Lang } from '../i18n'
 import { DEMO_STICKER, DEMO_STICKER_FILE, DEMO_VOICE } from './demo-media'
-import { BackendError, type Backend, type Connection, type MatterT, type MatterDetailT, type ApprovalExplanationT, type ChatJobT, type ChatMessageT, type SessionContinueT, type MatterSayResultT, type UploadStateT, type ChatModelViewT } from './types'
+import { BackendError, type Backend, type CliSessionRowT, type Connection, type MatterT, type MatterDetailT, type ApprovalExplanationT, type ChatJobT, type ChatMessageT, type SessionContinueT, type MatterSayResultT, type UploadStateT, type ChatModelViewT, type OverseerTodayT, type TodayItemT } from './types'
 import {
   copy, IDS, CHAT_ID, PERM_ID, QUESTION_ID, RUN_IDS, t, explanation, progress, changesTurn, entryOptions,
   demoConnections, demoSessions, demoSessionMessages, demoSessionTitleKey, DEMO_SESSION_MESSAGES, type Stage,
@@ -48,6 +48,20 @@ export function makeDemoBackend(opts: { now?: () => number; setTimeout?: typeof 
   const demoMemory = [{ id: 'a1b2c3', text: '回复喜欢直接，先说结论' }, { id: 'd4e5f6', text: '周末不安排工作会议' }]
   let chatJobs = new Map<string, ChatJobT>()
   const subs = new Map<Topic, Set<(d: any) => void>>()
+  // 终端里的会话(演示):一条等你批准(能在手机上拍)、一条在跑(说一句的框是灰的)、一条歇着(能接着说一句)。最后一句按语言读时生成。
+  type CliRec = Omit<CliSessionRowT, 'last_summary'> & { summaryKey: Copy | null }
+  const seedCli = (): CliRec[] => {
+    const n = now()
+    const base = { stale: false, machine: null, last_prompt_at: null }
+    return [
+      { ...base, session_id: 'demo-cli-blog', code: 'democl', source: 'claude', status: 'waiting', project: 'blog', summaryKey: 'cliBlogLast', last_event_at: n - 90_000, created_at: n - HOUR,
+        pending: { tool: 'Bash', summary: 'npm run deploy', since: n - 90_000, hash: 'dm0a1', actionable: true } },
+      { ...base, session_id: 'demo-cli-docs', code: 'democr', source: 'claude', status: 'running', project: 'docs', summaryKey: 'cliDocsLast', last_event_at: n - 40_000, created_at: n - 2 * HOUR, last_prompt_at: n - 5 * 60_000, pending: null },
+      { ...base, session_id: 'demo-cli-api', code: 'democx', source: 'codex', status: 'idle', project: 'api-server', summaryKey: 'cliApiLast', last_event_at: n - 25 * 60_000, created_at: n - 3 * HOUR, pending: null },
+    ]
+  }
+  let cli = seedCli()
+  const cliGet = (id: string) => { const r = cli.find(x => x.session_id === id); if (!r) throw new BackendError('not_found'); return r }
 
   function mkMatter(id: string, kind: MatterT['kind'], title: string, status: MatterT['status'], path: string | null, ts: number): MatterT {
     return { id, kind, title, projectPath: path, status, ownerChatId: null, originMatterId: null, originMessageId: null, createdAt: ts, updatedAt: ts }
@@ -486,8 +500,53 @@ export function makeDemoBackend(opts: { now?: () => number; setTimeout?: typeof 
     async registerPush() {},
     async testPush() { return { ok: false, code: 'demo' } },
     async unpair() {},
+    async cliSessions() {
+      const rows = cli.map(({ summaryKey, ...r }) => ({ ...r, last_summary: summaryKey ? t(lastLang, summaryKey) : null }))
+      return rows.sort((a, b) => (Number(b.status === 'waiting') - Number(a.status === 'waiting')) || b.last_event_at - a.last_event_at)
+    },
+    // 「今天」(演示):与 daemon 同一个分组口径 —— 终端演示会话 + 演示里的一起做,过去 24 小时。
+    async today() {
+      const n = now(), since = n - DAY
+      const needsYou: OverseerTodayT['needsYou'] = [], done: TodayItemT[] = [], running: TodayItemT[] = [], stuck: OverseerTodayT['stuck'] = []
+      for (const r of cli) {
+        const base: TodayItemT = { source: 'terminal', id: r.session_id, code: r.code, project: r.project, agent: r.source === 'codex' ? 'Codex' : r.source === 'cursor' ? 'Cursor' : 'Claude Code', title: null,
+          summary: r.summaryKey ? t(lastLang, r.summaryKey) : null, at: r.last_event_at, machine: null }
+        if (r.status === 'waiting' && r.pending) needsYou.push({ ...base, kind: 'permission', count: 1, replyRef: r.pending.hash ?? null, at: r.pending.since, summary: `${r.pending.tool}: ${r.pending.summary ?? ''}` })
+        else if (r.status === 'running') running.push(base)
+        else if (r.status === 'idle' && r.last_event_at >= since) done.push(base)
+      }
+      for (const e of list()) {
+        const d = localize(e, lastLang)
+        if (d.matter.kind !== 'task' || !d.task) continue
+        const base: TodayItemT = { source: 'together', id: d.matter.id, code: d.matter.id, project: (d.task.path.split('/').filter(Boolean).pop() ?? ''), agent: d.task.providerId === 'codex' ? 'Codex' : 'Claude',
+          title: d.matter.title, summary: null, at: d.task.updatedAt, machine: null }
+        const waiting = d.permissions.length + d.questions.length
+        if (waiting) needsYou.push({ ...base, kind: d.permissions.length ? 'permission' : 'question', count: waiting, replyRef: null })
+        else if (d.task.phase === 'working' || d.task.phase === 'queued') running.push(base)
+        else if (d.task.phase === 'replied' && d.task.updatedAt >= since) done.push(base)
+        else if ((d.task.phase === 'failed' || d.task.phase === 'interrupted') && d.task.updatedAt >= since) stuck.push({ ...base, reason: d.task.phase })
+      }
+      needsYou.sort((a, b) => a.at - b.at); done.sort((a, b) => b.at - a.at); running.sort((a, b) => b.at - a.at)
+      return { generatedAt: n, since, windowHours: 24, needsYou, done, running, stuck,
+        counts: { needsYou: needsYou.length, done: done.length, running: running.length, stuck: stuck.length }, unavailable: [] }
+    },
+    async cliPermission({ sessionId, hash, decision }) {
+      const r = cliGet(sessionId)
+      if (r.status !== 'waiting' || !r.pending || (hash && r.pending.hash !== hash)) throw new BackendError('stale')
+      r.status = 'running'; r.pending = null; r.last_event_at = now()
+      // 允许 ⇒ 接着跑完;拒绝 ⇒ 终端那边停下这一步
+      later(2000, () => { r.status = 'idle'; r.last_event_at = now(); if (decision === 'allow') r.summaryKey = 'cliDemoReply' })
+    },
+    async cliSay(sessionId, text) {
+      const r = cliGet(sessionId)
+      if (!text.trim()) throw new BackendError('invalid')
+      if (r.status === 'running' || r.status === 'waiting') throw new BackendError('busy')
+      if (r.status === 'ended') throw new BackendError('cli_ended')
+      r.status = 'running'; r.last_event_at = now(); r.last_prompt_at = now()
+      later(3000, () => { r.status = 'idle'; r.last_event_at = now(); r.summaryKey = 'cliDemoReply' })
+    },
     setActive() {},
     dispose() {},
-    reset() { epoch++; seq = 0; createdBy = new Map(); saidBy = new Map(); adopted = new Map(); handedBy = new Map(); deviceLabel = ''; seed(); publish([...order]) },
+    reset() { epoch++; seq = 0; cli = seedCli(); createdBy = new Map(); saidBy = new Map(); adopted = new Map(); handedBy = new Map(); deviceLabel = ''; seed(); publish([...order]) },
   }
 }

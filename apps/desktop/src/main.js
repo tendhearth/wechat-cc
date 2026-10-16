@@ -27,6 +27,7 @@ import {
 } from "./modules/wizard.js"
 import { refreshQr, stopQr } from "./modules/qr.js"
 import { mountPhoneConnect, mountOnboardPhone } from "./modules/phone-connect.js"
+import { mountOnboardTerminal } from "./modules/terminal-hooks.js"
 import { serviceAction, forceKillDaemon } from "./modules/service.js"
 import { renderDashboard, renderRestartButton, setPending, setLastProbe, restartDaemon, stopDaemon, handleAccountRowClick, toggleProviderMenu, toggleUserProviderMenu, closeProviderMenu, checkIncidentsOnPoll, checkFsAccessOnPoll, checkGuardOnPoll, checkBrainHealthOnPoll, loadBrainHealth, runTroubleshoot, runBrainDial, closeTroubleshoot, renderNoBrain, openBrainSetup, saveBrainKey } from "./modules/dashboard.js"
 import { renderConversations } from "./modules/conversations.js"
@@ -59,6 +60,7 @@ import { refreshPostcardAlbum } from "./modules/postcard-album.js"
 import { initWorkbenchPage, stopWorkbenchPolling, openWorkbenchTask, getActiveWorkbenchTaskId } from "./modules/workbench.js"
 import { createWorkbenchNavigation, isCurrentWorkbenchPane } from "./modules/workbench-navigation.js"
 import { createWorkbenchAttentionPoller } from "./modules/workbench-attention.js"
+import { createTerminalWaitingPoller } from "./modules/terminal-waiting.js"
 import { installExternalLinks } from "./modules/external-links.js"
 
 const state = {
@@ -147,6 +149,11 @@ const nowRoot = /** @type {HTMLElement|null} */ (document.querySelector('.cc-now
 const nowPage = nowRoot ? mountNowPage({
   root: nowRoot, presencePoller,
   onOpenTask: async (/** @type {string} */ id) => { switchPane('workbench'); await openWorkbenchTask(id) },
+  // 终端里等批准的会话:与桌宠权限卡、微信「y 码」同一条拍板路(POST /v1/permissions/resolve,凭据在原生宿主)。
+  onResolveTerminal: async (hash, decision) => {
+    try { return (await invoke('pet_permission_resolve', { hash, decision })) === true }
+    finally { void terminalWaiting.refresh() }
+  },
   onModeChange: m => {
     setConverseMode(m)
     if (m === 'chat') document.getElementById('converse-input')?.focus()
@@ -165,7 +172,7 @@ presencePoller.subscribe(p => { lastPresence = p; renderRail() })
 // 右上角状态行打开的「CC 的连接」(GET /v1/connections,admin,走原生宿主的 operator 凭据)。
 // 只在浮层打开时读:打开时立刻读一次,开着时每 30 秒再读。
 const nowConnectionsHost = document.getElementById('now-connections')
-const nowConnections = nowConnectionsHost ? mountNowConnections({ host: nowConnectionsHost, call: (method, path) => invokeWorkbenchApi(method, path), openUrl: url => { if (!mock) void Promise.resolve(invoke('open_url', { url })).catch(err => showToast(`打不开：${formatInvokeError(err)}`)) } }) : null
+const nowConnections = nowConnectionsHost ? mountNowConnections({ host: nowConnectionsHost, call: (method, path, body) => invokeWorkbenchApi(method, path, body), openUrl: url => { if (!mock) void Promise.resolve(invoke('open_url', { url })).catch(err => showToast(`打不开：${formatInvokeError(err)}`)) } }) : null
 {
   const details = /** @type {HTMLDetailsElement|null} */ (document.querySelector('.cc-home-details'))
   /** @type {ReturnType<typeof setInterval>|null} */ let timer = null
@@ -201,13 +208,28 @@ const conversationsPoller = createConversationsPoller({ invoke, intervalMs: 1000
 /** @type {ReturnType<typeof createWorkbenchAttentionPoller>|null} */
 let workbenchAttention = null
 const nowCount = document.getElementById('now-count')
+/** @type {{stale:boolean,tasks:unknown[]}|null} */ let lastAttention = null
+let terminalWaitingCount = 0
+function renderNowCount() {
+  if (!nowCount) return
+  const n = (lastAttention && !lastAttention.stale ? lastAttention.tasks.length : 0) + terminalWaitingCount
+  nowCount.textContent = n ? String(n) : ''
+}
+// 终端里等批准的 Claude Code / Codex(GET /v1/cli/sessions,admin,走原生宿主):接在「N 件事等你」后面,不另开一页。
+const terminalWaiting = createTerminalWaitingPoller({
+  call: (method, path) => invokeWorkbenchApi(method, path),
+  onChange: rows => { terminalWaitingCount = rows.length; nowPage?.setTerminal(rows); renderNowCount() },
+})
+terminalWaiting.start()
+window.addEventListener('pagehide', () => terminalWaiting.stop())
+window.addEventListener('pageshow', event => { if (event.persisted) terminalWaiting.start() })
 function startWorkbenchAttention() {
   if (workbenchAttention) return
   workbenchAttention = createWorkbenchAttentionPoller({
     invokeWorkbenchApi, invoke,
     onChange: snapshot => {
       careSheet.setAttention(snapshot); nowPage?.setAttention(snapshot)
-      if (nowCount) nowCount.textContent = !snapshot.stale && snapshot.tasks.length ? String(snapshot.tasks.length) : ''
+      lastAttention = snapshot; renderNowCount()
     },
     getContext: () => ({
       taskId: state.mode === 'dashboard' ? getActiveWorkbenchTaskId() : null,
@@ -403,9 +425,12 @@ function setMode(mode) {
 
 // 引导页最后一步的码(spec 2026-10-01-tendhearth-pairing-ux §5):在 #screen-service 且 daemon 活着才要码。
 /** @type {ReturnType<typeof mountOnboardPhone> | null} */ let onboardPhone = null
+// 同一步里可选的「接上终端里的 Claude Code / Codex」(2026-10-14):同样只在这一步且 daemon 活着时去问。
+/** @type {ReturnType<typeof mountOnboardTerminal> | null} */ let onboardTerminal = null
 function syncOnboardPhone(report = doctorPoller.current) {
   const active = document.documentElement.dataset.mode === "wizard" && !!document.getElementById("screen-service")?.classList.contains("active")
   onboardPhone?.sync({ active, alive: !!report?.checks?.daemon?.alive })
+  onboardTerminal?.sync({ active, alive: !!report?.checks?.daemon?.alive })
 }
 
 /** @param {string} name */
@@ -742,6 +767,8 @@ function wireEvents() {
     call: (method, path, body) => invokeWorkbenchApi(method, path, body),
     renderQr: text => /** @type {Promise<string>} */ (deps.invoke("render_qr_svg", { text })),
   })
+  const onboardTerminalHost = document.getElementById("onboard-terminal")
+  if (onboardTerminalHost) onboardTerminal = mountOnboardTerminal({ host: onboardTerminalHost, call: (method, path, body) => invokeWorkbenchApi(method, path, body) })
 
   // 大脑卡交互:测试连接(唯一的真实拨号入口)/ 接入表单 / 复制命令 / 保存 key / 重启
   document.getElementById("brain-selfcheck")?.addEventListener("click", () => {

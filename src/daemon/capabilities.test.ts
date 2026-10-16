@@ -61,3 +61,33 @@ describe('buildCapabilities (2026-10-06)', () => {
     expect(buildCapabilities(base({ brain: { provider: 'cursor', name: 'Cursor', registered: false, retrying: false } })).find(r => r.id === 'brain')).toMatchObject({ state: 'needs_you', action: { where: 'settings' } })
   })
 })
+
+describe('终端里的 Claude Code / Codex(2026-10-14)', () => {
+  const term = (sources: NonNullable<CapabilityInputs['terminal']>['sources'], sessions7d = 0) => buildCapabilities(base({ terminal: { sources, sessions7d } })).find(r => r.id === 'terminal')
+  it('这台机上一家都没有 ⇒ 不出现', () => {
+    expect(term([])).toBeUndefined()
+    expect(buildCapabilities(base({ terminal: null })).find(r => r.id === 'terminal')).toBeUndefined()
+    expect(buildCapabilities(base()).find(r => r.id === 'terminal')).toBeUndefined()
+  })
+  it('装了没接 ⇒ off + 「接上」(没开不是故障,不进 worst)', () => {
+    const r = term([{ source: 'claude', health: 'missing' }, { source: 'codex', health: 'missing' }])!
+    expect(r).toMatchObject({ name: '终端里的 Claude Code / Codex', state: 'off', code: 'terminal.not_connected', params: { names: 'Claude Code / Codex' }, action: { label: '接上', where: 'desktop', run: 'cli_hooks_install' } })
+    expect(worstCapability([r])).toBeNull()
+  })
+  it('接线指向不在的位置 ⇒ needs_you + 「修复」,点名坏的那家', () => {
+    const r = term([{ source: 'claude', health: 'ok' }, { source: 'codex', health: 'stale' }], 3)!
+    expect(r).toMatchObject({ state: 'needs_you', code: 'terminal.stale', params: { names: 'Codex' }, action: { label: '修复', run: 'cli_hooks_install' } })
+    expect(worstCapability([r])?.id).toBe('terminal')
+  })
+  it('接了一部分 ⇒ ok,带「接上」把剩下的接上', () => {
+    expect(term([{ source: 'claude', health: 'ok' }, { source: 'codex', health: 'missing' }], 4)).toMatchObject({ state: 'ok', code: 'terminal.partial', params: { n: 4, names: 'Codex' }, reason: '已接上，最近 7 天 4 个终端会话；Codex 还没接上。', action: { label: '接上' } })
+  })
+  it('都接上 ⇒ ok + 最近 7 天几个会话,没有动作;只装了一家就只说那一家', () => {
+    expect(term([{ source: 'claude', health: 'ok' }], 12)).toEqual({ id: 'terminal', name: '终端里的 Claude Code', state: 'ok', code: 'terminal.ok', params: { n: 12 }, reason: '已接上，最近 7 天 12 个终端会话。' })
+  })
+  it('Cursor 一起列:名字是「Cursor」,没接上的那家点名', () => {
+    expect(term([{ source: 'claude', health: 'ok' }, { source: 'codex', health: 'ok' }, { source: 'cursor', health: 'missing' }], 3))
+      .toMatchObject({ name: '终端里的 Claude Code / Codex / Cursor', state: 'ok', code: 'terminal.partial', params: { n: 3, names: 'Cursor' }, action: { label: '接上', run: 'cli_hooks_install' } })
+    expect(term([{ source: 'cursor', health: 'stale' }])).toMatchObject({ name: '终端里的 Cursor', state: 'needs_you', code: 'terminal.stale', params: { names: 'Cursor' } })
+  })
+})

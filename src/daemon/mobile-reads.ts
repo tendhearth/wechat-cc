@@ -1,6 +1,9 @@
 import { basename } from 'node:path'
 import { redactConnections, type ConnectionsSnapshot } from './connections'
 import { framedTooLarge } from './mobile-matter-response'
+import type { CliSessionView } from '../core/cli-session-store'
+import type { OverseerToday } from '../core/overseer-today'
+import { PHONE_CLI_SAY_MAX, type CliPhoneActions } from './cli-phone-actions'
 import type { NativeHistoryItem, NativeHistoryListInput, NativeHistoryPage, NativeHistoryPreview, NativeHistoryReadInput } from '../core/workbench/native-history'
 
 /**
@@ -20,7 +23,35 @@ export interface MobileSessionsDeps {
   read(key: string, input: NativeHistoryReadInput): Promise<NativeHistoryPreview>
   readRecent?(key: string, input: { limit: number }): Promise<NativeHistoryPreview>
 }
-export interface MobileReadsDeps { connections?: () => ConnectionsSnapshot; sessions?: MobileSessionsDeps }
+export interface MobileReadsDeps {
+  connections?: () => ConnectionsSnapshot; sessions?: MobileSessionsDeps; cliSessions?: () => CliSessionView[]; cliActions?: CliPhoneActions
+  /** 「今天」一眼看完(core/overseer-today.ts)。结构里只有目录名、没有完整路径,手机口径原样给。 */
+  today?: () => OverseerToday
+}
+/** 手机上终端会话列表最多给这么多条。 */
+export const PHONE_CLI_SESSIONS_MAX = 50
+/**
+ * 手机口径的终端会话:与上面原生会话同一条规矩 —— 项目只给目录名,不给完整路径。
+ * 其余字段同 GET /v1/cli/sessions(状态已折算 stale、等你批准的在前)。
+ */
+export function phoneCliSession(v: CliSessionView, pendingHash?: (sessionId: string) => string | null) {
+  // 等批准的那一项带上码:只有中继真开了码(主人不在、问到了微信)才能在手机上拍;
+  // 主人在场时留给终端自己问,没有码 ⇒ actionable:false,手机只显示「在终端里等你」。
+  let hash: string | null = null
+  if (v.pending && pendingHash) { try { hash = pendingHash(v.session_id) } catch { hash = null } }
+  return {
+    session_id: v.session_id, code: v.code, source: v.source, status: v.status, stale: v.stale,
+    project: v.project, machine: v.machine, last_summary: v.last_summary,
+    last_event_at: v.last_event_at, last_prompt_at: v.last_prompt_at, created_at: v.created_at,
+    pending: v.pending ? { ...v.pending, hash, actionable: hash !== null } : null,
+  }
+}
+/** 同 CliEventRequest:1–200 字的串;再挡掉控制字符。 */
+const SESSION_ID_RE = /^[^\u0000-\u001f]{1,200}$/
+const HASH_RE = /^[a-z0-9]{5}$/
+async function bodyOf(req: Request): Promise<Record<string, unknown> | null> {
+  try { const b = await req.json(); return b && typeof b === 'object' && !Array.isArray(b) ? b as Record<string, unknown> : null } catch { return null }
+}
 const json = (body: object, status = 200) => new Response(JSON.stringify(body), { status, headers: { 'content-type': 'application/json; charset=utf-8', 'cache-control': 'no-store' } })
 
 const row = (i: NativeHistoryItem, max = 200) => ({ key: i.key, provider: i.providerId, title: i.title.slice(0, max), project: i.cwd ? basename(i.cwd).slice(0, max) : null, updatedAt: i.updatedAt, active: i.observedState === 'active' })
@@ -92,6 +123,49 @@ export async function mobileReadsRoute(deps: MobileReadsDeps, url: URL, req: Req
     // 裁定 7:内部失败一律 503(客户端当作离线/不可用),不是 500。
     try { return json({ ok: true, ...redactConnections(deps.connections()) }) }
     catch { return json({ ok: false, error: 'unavailable' }, 503) }
+  }
+  if (url.pathname === '/m/api/cli/sessions') {
+    if (req.method !== 'GET') return json({ ok: false, error: 'method_not_allowed' }, 405)
+    if (!deps.cliSessions) return json({ ok: false, error: 'cli_sessions_not_wired' }, 503)
+    const ph = deps.cliActions ? (id: string) => deps.cliActions!.pendingHash(id) : undefined
+    try { return json({ ok: true, sessions: deps.cliSessions().slice(0, PHONE_CLI_SESSIONS_MAX).map(v => phoneCliSession(v, ph)) }) }
+    catch { return json({ ok: false, error: 'unavailable' }, 503) }
+  }
+  // 「今天」(2026-10-14):终端 + 一起做,过去 24 小时 —— 与微信「日报」同一份数据。
+  if (url.pathname === '/m/api/today') {
+    if (req.method !== 'GET') return json({ ok: false, error: 'method_not_allowed' }, 405)
+    if (!deps.today) return json({ ok: false, error: 'today_not_wired' }, 503)
+    try { return json({ ok: true, today: deps.today() }) }
+    catch { return json({ ok: false, error: 'unavailable' }, 503) }
+  }
+  // 拍板终端会话等批准的那一项 —— 与微信「y/n 码」同一条路(cli-phone-actions.ts)。
+  if (url.pathname === '/m/api/cli/permission') {
+    if (req.method !== 'POST') return json({ ok: false, error: 'method_not_allowed' }, 405)
+    if (!deps.cliActions) return json({ ok: false, error: 'cli_actions_not_wired' }, 503)
+    const b = await bodyOf(req)
+    const hash = b?.['hash'], sessionId = b?.['session_id'], decision = b?.['decision']
+    if (!b || (decision !== 'allow' && decision !== 'deny')
+      || (hash !== undefined && (typeof hash !== 'string' || !HASH_RE.test(hash)))
+      || (sessionId !== undefined && (typeof sessionId !== 'string' || !SESSION_ID_RE.test(sessionId)))
+      || (hash === undefined && sessionId === undefined)) return json({ ok: false, error: 'invalid' }, 400)
+    try {
+      const r = deps.cliActions.permission({ ...(typeof hash === 'string' ? { hash } : {}), ...(typeof sessionId === 'string' ? { session_id: sessionId } : {}) }, decision)
+      if (r.ok) return json({ ok: true })
+      return json({ ok: false, error: r.error }, r.error === 'not_found' ? 404 : 409)
+    } catch { return json({ ok: false, error: 'unavailable' }, 503) }
+  }
+  // 对终端会话接着说一句 —— 与微信「@码」同一个 core;收下即回,结果成为这条会话的下一句。
+  if (url.pathname === '/m/api/cli/say') {
+    if (req.method !== 'POST') return json({ ok: false, error: 'method_not_allowed' }, 405)
+    if (!deps.cliActions) return json({ ok: false, error: 'cli_actions_not_wired' }, 503)
+    const b = await bodyOf(req)
+    const sessionId = b?.['session_id'], text = typeof b?.['text'] === 'string' ? (b['text'] as string).trim() : ''
+    if (!b || typeof sessionId !== 'string' || !SESSION_ID_RE.test(sessionId) || !text || text.length > PHONE_CLI_SAY_MAX || text.includes('\0')) return json({ ok: false, error: 'invalid' }, 400)
+    try {
+      const r = deps.cliActions.say(sessionId, text)
+      if (r.ok) return json({ ok: true, accepted: true })
+      return json({ ok: false, error: r.error }, r.error === 'not_found' ? 404 : 409)
+    } catch { return json({ ok: false, error: 'unavailable' }, 503) }
   }
   if (url.pathname === '/m/api/sessions') {
     if (req.method !== 'GET') return json({ ok: false, error: 'method_not_allowed' }, 405)

@@ -398,7 +398,8 @@ export const Connections = z.object({
   capabilities: z.array(z.object({
     id: z.string(), name: z.string(), state: z.enum(['ok', 'fallback', 'needs_you', 'off']),
     code: z.string(), params: z.record(z.string(), z.union([z.string(), z.number()])).optional(), reason: z.string(),
-    action: z.object({ label: z.string(), where: z.enum(['desktop', 'settings', 'wechat']), url: z.string().optional() }).optional(),
+    // run(2026-10-14):桌面能当场做的动作(如 cli_hooks_install = 接上终端里的 Claude Code / Codex);手机只当提示。
+    action: z.object({ label: z.string(), where: z.enum(['desktop', 'settings', 'wechat']), url: z.string().optional(), run: z.string().optional() }).optional(),
   })).optional(),
 })
 export type ConnectionsT = z.infer<typeof Connections>
@@ -408,7 +409,45 @@ export const NativeSessionRow = z.object({ key: z.string(), provider: z.enum(['c
 export const NativeSessionMessage = z.object({ id: z.string(), role: z.enum(['user', 'assistant']), text: z.string(), truncated: z.boolean() })
 export const NativeSessionPage = z.object({ session: NativeSessionRow, messages: z.array(NativeSessionMessage), nextCursor: z.string().nullable(), managed: z.boolean(), window: z.enum(['recent', 'start']).optional() })
 export type NativeSessionRowT = z.infer<typeof NativeSessionRow>
+/**
+ * 终端会话登记处(GET /m/api/cli/sessions,v76,2026-10-14):主人在 CC 外面开的 claude / codex 会话。
+ * status 已折算:running / waiting 超过 30 分钟没事件 ⇒ idle + stale。waiting 在最前,其余按 last_event_at 倒序。
+ * code = 微信「看 码」「@码」用的短码。手机口径只给目录名(project),不给完整路径。
+ * pending.hash / actionable(2026-10-14):中继真在微信里开了码(主人不在)⇒ 有 hash、actionable=true,
+ * 手机可经 POST /m/api/cli/permission 拍板;主人在场、终端自己在问 ⇒ hash=null、actionable=false。
+ * 老 daemon 不带这两个字段,客户端当作不可拍。
+ */
+export const CliSessionRow = z.object({
+  session_id: z.string(), code: z.string(), source: z.enum(['claude', 'codex', 'cursor']),
+  status: z.enum(['running', 'waiting', 'idle', 'ended']), stale: z.boolean(),
+  project: z.string(), machine: z.string().nullable(), last_summary: z.string().nullable(),
+  last_event_at: z.number(), last_prompt_at: z.number().nullable(), created_at: z.number(),
+  pending: z.object({ tool: z.string(), summary: z.string().nullable(), since: z.number(), hash: z.string().nullable().optional(), actionable: z.boolean().optional() }).nullable(),
+})
+export type CliSessionRowT = z.infer<typeof CliSessionRow>
 export type NativeSessionPageT = z.infer<typeof NativeSessionPage>
+
+/**
+ * 「今天」一眼看完(GET /m/api/today,2026-10-14,daemon 的 core/overseer-today.ts):终端 + 一起做,
+ * 过去 24 小时(滚动窗)。一件事只在一组里:needsYou(等得最久的在前)/ done / running(新的在前)/
+ * stuck(失败、中断在前,再是 30 分钟没动静的)。source=terminal ⇒ id 是会话 id(进 /terminal/[id]);
+ * source=together ⇒ id 是 matter id(进 /matter/[id])。project 只是目录名。
+ * unavailable 非空 ⇒ 那一路读不到,数字不全,别当「没事」。
+ */
+export const TodayItem = z.object({
+  source: z.enum(['terminal', 'together']), id: z.string(), code: z.string(), project: z.string(), agent: z.string(),
+  title: z.string().nullable(), summary: z.string().nullable(), at: z.number(), machine: z.string().nullable(),
+})
+export const TodayNeed = TodayItem.extend({ kind: z.enum(['permission', 'question']), count: z.number(), replyRef: z.string().nullable() })
+export const TodayStuck = TodayItem.extend({ reason: z.enum(['quiet', 'failed', 'interrupted']) })
+export const OverseerToday = z.object({
+  generatedAt: z.number(), since: z.number(), windowHours: z.number(),
+  needsYou: z.array(TodayNeed), done: z.array(TodayItem), running: z.array(TodayItem), stuck: z.array(TodayStuck),
+  counts: z.object({ needsYou: z.number(), done: z.number(), running: z.number(), stuck: z.number() }),
+  unavailable: z.array(z.enum(['terminal', 'together'])),
+})
+export type TodayItemT = z.infer<typeof TodayItem>
+export type OverseerTodayT = z.infer<typeof OverseerToday>
 
 // ── 在手机上接着做电脑上的会话(spec 2026-10-01-tendhearth-continue-sessions §4.3):只给目录名,matterId 只在 managed 有 ──
 export const SESSION_CONTINUE_STATES = ['ready', 'managed', 'busy_session', 'busy_folder', 'provider_missing', 'folder_missing', 'quota', 'empty'] as const
@@ -459,6 +498,12 @@ export const PHONE_API_SCHEMAS: Readonly<Record<string, z.ZodTypeAny>> = {
   'GET /m/api/chat/voice': z.union([z.object({ ok: z.literal(true) }).extend(ChatVoice.shape), PhoneErrorResponse]),
   'GET /m/api/connections': z.union([z.object({ ok: z.literal(true) }).extend(Connections.shape), PhoneErrorResponse]),
   'GET /m/api/sessions': z.union([z.object({ ok: z.literal(true), items: z.array(NativeSessionRow), nextCursor: z.string().nullable() }), PhoneErrorResponse]),
+  'GET /m/api/cli/sessions': z.union([z.object({ ok: z.literal(true), sessions: z.array(CliSessionRow) }), PhoneErrorResponse]),
+  // 错误码:not_found 404;cli_not_actionable(终端自己在问,没开码)/ cli_permission_stale(码已失效)409。
+  'POST /m/api/cli/permission': z.union([z.object({ ok: z.literal(true) }), PhoneErrorResponse]),
+  // 收下即回;结果成为这条会话的下一句 last_summary。错误码:cli_session_busy(在跑 / 在等批准)/ cli_session_ended / cli_session_remote(在别的电脑上)409,not_found 404。
+  'POST /m/api/cli/say': z.union([z.object({ ok: z.literal(true), accepted: z.literal(true) }), PhoneErrorResponse]),
+  'GET /m/api/today': z.union([z.object({ ok: z.literal(true), today: OverseerToday }), PhoneErrorResponse]),
   'GET /m/api/session': z.union([z.object({ ok: z.literal(true) }).extend(NativeSessionPage.shape), PhoneErrorResponse]),
   'GET /m/api/session/continue': z.union([z.object({ ok: z.literal(true) }).extend(SessionContinue.shape), PhoneErrorResponse]),
   'POST /m/api/session/continue': z.union([z.object({ ok: z.literal(true) }).extend(SessionContinueResult.shape), PhoneErrorResponse]),

@@ -14,6 +14,8 @@
  */
 
 export type CapabilityState = 'ok' | 'fallback' | 'needs_you' | 'off'
+/** 桌面按钮直接能跑的动作。cli_hooks_install = POST /v1/cli/hooks/install(接上终端里的 Claude Code / Codex)。 */
+export type CapabilityRun = 'cli_hooks_install'
 export interface Capability {
   id: string
   name: string
@@ -22,7 +24,8 @@ export interface Capability {
   code: string
   params?: Record<string, string | number>
   reason: string
-  action?: { label: string; where: 'desktop' | 'settings' | 'wechat'; url?: string }
+  /** run:桌面能当场做的动作(点了先确认,再调对应路由);手机只把 label 说成一句提示。 */
+  action?: { label: string; where: 'desktop' | 'settings' | 'wechat'; url?: string; run?: CapabilityRun }
   detail?: string
 }
 
@@ -41,6 +44,12 @@ export interface CapabilityInputs {
   /** 后台判断(便宜模型)连续真失败的次数;null = 读不到(不出现)。 */
   background?: { failures: number; lastError: string | null } | null
   phone: { relay: boolean; devices: number }
+  /**
+   * 终端里的 Claude Code / Codex(2026-10-14):只有接了 hooks,终端会话才到得了 CC。
+   * sources 只列这台机上有的那几家(CLI 找得到或已装过 hook);空 / null ⇒ 不出现。
+   * sessions7d = 登记处里最近 7 天有动静的终端会话数。
+   */
+  terminal?: { sources: Array<{ source: 'claude' | 'codex' | 'cursor'; health: 'missing' | 'stale' | 'ok' }>; sessions7d: number } | null
   subsystems: Array<{ name: string; state: 'ok' | 'degraded' | 'off'; error?: string }>
 }
 
@@ -93,6 +102,8 @@ export function buildCapabilities(i: CapabilityInputs): Capability[] {
 
   if (i.background && i.background.failures >= BACKGROUND_FAILING_AFTER) out.push({ id: 'background', name: '后台判断', state: 'fallback', code: 'background.failing', params: { n: i.background.failures }, reason: `后台判断(整理聊天、记忆、提醒等)连续 ${i.background.failures} 次失败。`, action: { label: '在设置里换后台用的模型', where: 'settings' }, ...(i.background.lastError ? { detail: i.background.lastError } : {}) })
 
+  if (i.terminal && i.terminal.sources.length > 0) out.push(terminalCapability(i.terminal))
+
   if (!i.phone.relay) out.push({ id: 'phone', name: '手机', state: 'off', code: 'phone.relay_off', reason: '没开手机连接。' })
   else if (i.phone.devices === 0) out.push({ id: 'phone', name: '手机', state: 'off', code: 'phone.no_device', reason: '还没连接手机。', action: { label: '在电脑上连接手机', where: 'desktop' } })
   else out.push({ id: 'phone', name: '手机', state: 'ok', code: 'phone.ok', params: { n: i.phone.devices }, reason: `已连接 ${i.phone.devices} 台。` })
@@ -102,6 +113,25 @@ export function buildCapabilities(i: CapabilityInputs): Capability[] {
     out.push({ id: `subsystem:${s.name}`, name: SUBSYSTEM_NAMES[s.name] ?? s.name, state: 'fallback', code: 'subsystem.degraded', reason: '开机时没起来，其它功能照常。', ...(s.error ? { detail: s.error } : {}) })
   }
   return out
+}
+
+const CLI_NAME: Record<'claude' | 'codex' | 'cursor', string> = { claude: 'Claude Code', codex: 'Codex', cursor: 'Cursor' }
+const TERMINAL_RUN = 'cli_hooks_install' as const
+
+/**
+ * 四种样子:有接错位置的 ⇒ needs_you「修复」;一家都没接 ⇒ off「接上」(没开不是故障);
+ * 接了一部分 ⇒ ok,但带「接上」把剩下的接上;全接上 ⇒ ok + 最近 7 天几个会话。
+ */
+function terminalCapability(t: NonNullable<CapabilityInputs['terminal']>): Capability {
+  const names = (list: typeof t.sources) => list.map(s => CLI_NAME[s.source]).join(' / ')
+  const name = `终端里的 ${names(t.sources)}`
+  const stale = t.sources.filter(s => s.health === 'stale')
+  const missing = t.sources.filter(s => s.health === 'missing')
+  const base = { id: 'terminal', name }
+  if (stale.length > 0) return { ...base, state: 'needs_you', code: 'terminal.stale', params: { names: names(stale) }, reason: `${names(stale)} 的接线指向一个已经不在的位置（多半是 CC 换过位置），终端里的会话报不到 CC。`, action: { label: '修复', where: 'desktop', run: TERMINAL_RUN } }
+  if (missing.length === t.sources.length) return { ...base, state: 'off', code: 'terminal.not_connected', params: { names: names(missing) }, reason: `装了 ${names(missing)}，还没接上：终端里的会话 CC 看不到，做完、等你批准也不会通知你。`, action: { label: '接上', where: 'desktop', run: TERMINAL_RUN } }
+  if (missing.length > 0) return { ...base, state: 'ok', code: 'terminal.partial', params: { n: t.sessions7d, names: names(missing) }, reason: `已接上，最近 7 天 ${t.sessions7d} 个终端会话；${names(missing)} 还没接上。`, action: { label: '接上', where: 'desktop', run: TERMINAL_RUN } }
+  return { ...base, state: 'ok', code: 'terminal.ok', params: { n: t.sessions7d }, reason: `已接上，最近 7 天 ${t.sessions7d} 个终端会话。` }
 }
 
 const RANK: Record<CapabilityState, number> = { needs_you: 3, fallback: 2, off: 1, ok: 0 }

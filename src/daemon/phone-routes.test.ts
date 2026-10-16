@@ -17,8 +17,10 @@ describe('phoneRouteAllowed', () => {
     expect(phoneRouteAllowed(PHONE_ROUTES, 'GET', '/m/api/nope')).toBe(false)
     expect(phoneRouteAllowed(PHONE_ROUTES, 'GET', '/v1/health')).toBe(false)
   })
-  it('链接令牌与设备令牌同一套(裁决 1);只允局域网的三条', () => {
-    expect([...LINK_ROUTES].sort()).toEqual([...PHONE_ROUTES].sort())
+  it('链接令牌与设备令牌同一套(裁决 1),但终端会话的「接着说」「拍板」只给配好的设备(评审 10-15 #3);只允局域网的三条', () => {
+    const deviceOnly = ['POST /m/api/cli/permission', 'POST /m/api/cli/say']
+    expect([...LINK_ROUTES].sort()).toEqual([...PHONE_ROUTES].filter(r => !deviceOnly.includes(r)).sort())
+    for (const r of deviceOnly) { expect(PHONE_ROUTES.has(r)).toBe(true); expect(LINK_ROUTES.has(r)).toBe(false) }
     expect([...LAN_ONLY_OPS].sort()).toEqual(['forget_devices', 'revoke_device', 'set_remote'])
   })
 })

@@ -12,7 +12,9 @@
  * 权限同理但压得短。发送失败只记日志、丢弃 —— 断线不重试。
  */
 
-export type CliSource = 'claude' | 'codex'
+import { sortCliSessionViews, toCliSessionView, type CliSessionRow, type CliSessionStore, type CliSessionView } from './cli-session-store'
+
+export type CliSource = 'claude' | 'codex' | 'cursor'
 export type CliEventKind = 'stop' | 'prompt' | 'permission' | 'session_end'
 
 export interface CliEvent {
@@ -61,6 +63,8 @@ export const INLINE_MAX = 1200
 /** 多条会话先后完成,这段时间内的合成一条发。 */
 export const DIGEST_WINDOW_MS = 15_000
 const DESKTOP_BODY_MAX = 120
+/** 登记处里 Stop 那一句的长度上限(一行)。 */
+const SESSION_SUMMARY_MAX = 200
 const MAX_SESSION_STATES = 256
 
 export type CliPresence = 'present' | 'away' | 'unknown'
@@ -78,6 +82,12 @@ export interface CliSessionInfo {
 export interface CliEventHubDeps {
   /** 推到主人微信。sent = 送出去了;rejected = 微信那边拒了(如 errcode=-2);no_target = 没有主人 chat / 没接外发。 */
   send: (text: string) => Promise<'sent' | 'rejected' | 'no_target'>
+  /**
+   * 第二个出口:主人手机 app 的原生推送(中继 v2)。与微信并列、互不牵连 —— 同一批、同一套在场 /
+   * 快问快答 / 合并窗判断,合并窗到点时两边各发一次;微信拒了(errcode=-2)app 照样收到。
+   * 同步、只投不等:失败由调用方记日志丢弃,不重试。缺席 ⇒ 只有微信,同改造前。
+   */
+  pushApp?: (items: CliPushItem[]) => void
   projectName: (cwd: string) => string
   log: (tag: string, line: string) => void
   /** 人在电脑前时的面。缺席 ⇒ 在场时干脆不发(人就在终端前)。 */
@@ -90,6 +100,33 @@ export interface CliEventHubDeps {
   localMachine?: string
   holds?: { stop?: number; permission?: number }
   now?: () => number
+  /**
+   * 终端会话登记处(v76,cli-session-store.ts)。有它 ⇒ 状态落库、「看 码」「@码」按库找,
+   * daemon 重启也认得;缺席(老测试)⇒ 只用内存表,同改造前。
+   */
+  store?: CliSessionStore
+}
+
+/** 推给手机 app 的一条(结构化,措辞由 daemon 那头定;core 不碰推送协议)。 */
+export interface CliPushItem {
+  kind: 'stop' | 'permission'
+  source: CliSource
+  session_id: string
+  projectName: string
+  /** 「那边」的主机名;本机会话不带。 */
+  remoteMachine?: string
+  /** 最后一句 / 工具摘要压成的一行(去 markdown);可能为空串。 */
+  summary: string
+}
+
+/** 权限请求里登记处用得到的那几样(CliPermissionRequest 的子集,不 import 它免得成环)。 */
+export interface CliPermissionAsk {
+  source: CliSource
+  session_id: string
+  cwd: string
+  tool_name: string
+  summary?: string | undefined
+  machine?: string | undefined
 }
 
 export interface CliEventHub {
@@ -104,6 +141,14 @@ export interface CliEventHub {
   /** 见过的会话(「看 码」「@码」按前缀找)。 */
   lookup(codePrefix: string): CliSessionInfo | null
   sessions(): CliSessionInfo[]
+  /** 只登记、不推:手侧把事件转给脑时,本机登记处也记一笔。 */
+  observe(ev: CliEvent): void
+  /** 权限请求来了(中继 open 时,在场判断之前):登记处记 waiting + 等批准的那一项。 */
+  permissionAsked(req: CliPermissionAsk): void
+  /** 中继有了结果:allow / deny ⇒ 回到 running;过期 / 没送到 ⇒ 终端自己会问,仍是 waiting。 */
+  permissionSettled(sessionId: string, status: string): void
+  /** 登记处的列表(内部 API / 手机):等你批准的在前,其余按最近事件倒序;stale 已折算。 */
+  list(opts?: { includeEnded?: boolean; limit?: number }): CliSessionView[]
   pending(): { session_id: string; kind: CliEventKind }[]
   /** 把合并窗里攒着的立刻发掉(测试 / 关机用)。 */
   flush(): Promise<void>
@@ -126,7 +171,7 @@ export function makeCliEventHub(deps: CliEventHubDeps): CliEventHub {
   // Map 保持插入顺序 ⇒ 第一个就是最旧的。
   const pending = new Map<string, Pending>()
   const sessions = new Map<string, SessionState>()
-  let outbox: string[] = []
+  let outbox: { text: string; item: CliPushItem }[] = []
   let flushTimer: ReturnType<typeof setTimeout> | null = null
 
   function state(ev: Pick<CliEvent, 'session_id' | 'source' | 'cwd' | 'machine' | 'transcript_path' | 'origin_agent'>): SessionState {
@@ -146,6 +191,33 @@ export function makeCliEventHub(deps: CliEventHubDeps): CliEventHub {
     if (ev.transcript_path) st.info.transcript_path = ev.transcript_path
     if (ev.origin_agent) st.info.origin_agent = ev.origin_agent
     return st
+  }
+
+  /** 登记处写失败只记日志 —— 推送那条路不能因为库出错就断。 */
+  function persist(what: string, fn: (store: CliSessionStore) => void): void {
+    if (!deps.store) return
+    try { fn(deps.store) } catch (err) { deps.log('CLI_SESSIONS', `${what} failed: ${err instanceof Error ? err.message : String(err)}`) }
+  }
+
+  function record(ev: CliEvent, t: number): void {
+    persist(`record ${ev.kind} ${short(ev.session_id)}`, (store) => {
+      store.touch(ev, t)
+      switch (ev.kind) {
+        case 'prompt':
+          // harness 自己塞的 prompt 也是开始干活了(running),只是不算主人敲字。
+          store.setStatus(ev.session_id, 'running', t, ev.automated ? {} : { promptAt: t })
+          break
+        case 'stop':
+          store.setStatus(ev.session_id, 'idle', t, { summary: ev.text ? summarizeOneLine(stripMarkdown(ev.text), SESSION_SUMMARY_MAX) || null : null })
+          break
+        case 'permission':
+          store.setStatus(ev.session_id, 'waiting', t, { pending: { tool: 'permission', summary: ev.text ? summarizeOneLine(stripMarkdown(ev.text), SESSION_SUMMARY_MAX) : null } })
+          break
+        case 'session_end':
+          store.setStatus(ev.session_id, 'ended', t)
+          break
+      }
+    })
   }
 
   function isLocal(machine: string | undefined): boolean {
@@ -175,7 +247,12 @@ export function makeCliEventHub(deps: CliEventHubDeps): CliEventHub {
     if (outbox.length === 0) return
     const batch = outbox
     outbox = []
-    const text = batch.length === 1 ? batch[0]! : batch.join('\n\n— — —\n\n')
+    // app 先投(同步、只投不等):微信那边拒了 / 抛了都不影响手机这一路。
+    if (deps.pushApp) {
+      try { deps.pushApp(batch.map(b => b.item)) }
+      catch (err) { deps.log('CLI_PUSH', `app push failed (${batch.length} item(s)): ${err instanceof Error ? err.message : String(err)}`) }
+    }
+    const text = batch.length === 1 ? batch[0]!.text : batch.map(b => b.text).join('\n\n— — —\n\n')
     try {
       const outcome = await deps.send(text)
       // 服务端拒了(如 ilink errcode=-2)不能记成「已发」:那正是「出了错但没人知道」。
@@ -188,8 +265,8 @@ export function makeCliEventHub(deps: CliEventHubDeps): CliEventHub {
     }
   }
 
-  function enqueue(text: string): void {
-    outbox.push(text)
+  function enqueue(text: string, item: CliPushItem): void {
+    outbox.push({ text, item })
     if (!flushTimer) {
       flushTimer = setTimeout(() => { void flush() }, DIGEST_WINDOW_MS)
       ;(flushTimer as { unref?: () => void }).unref?.()
@@ -215,7 +292,13 @@ export function makeCliEventHub(deps: CliEventHubDeps): CliEventHub {
     if (full.length > INLINE_MAX && deps.sharePage) {
       try { link = await deps.sharePage(header, ev.text!) } catch { link = null }
     }
-    enqueue(formatCliPush(ev, projectName, { localMachine: deps.localMachine, link }))
+    const remote = ev.machine && deps.localMachine && ev.machine !== deps.localMachine ? ev.machine : undefined
+    enqueue(formatCliPush(ev, projectName, { localMachine: deps.localMachine, link }), {
+      kind: ev.kind === 'permission' ? 'permission' : 'stop',
+      source: ev.source, session_id: ev.session_id, projectName,
+      ...(remote ? { remoteMachine: remote } : {}),
+      summary: full ? summarizeOneLine(full, SESSION_SUMMARY_MAX) : '',
+    })
     deps.log('CLI_PUSH', `queued ${ev.source}/${ev.kind} ${short(ev.session_id)}${idle === null ? '' : ` (machine idle ${Math.round(idle)}s)`}`)
   }
 
@@ -235,6 +318,7 @@ export function makeCliEventHub(deps: CliEventHubDeps): CliEventHub {
   return {
     ingest(ev) {
       const t = now()
+      record(ev, t)
       const st = state(ev)
       if (typeof ev.idle_s === 'number') st.lastIdle = { s: ev.idle_s, at: t }
       switch (ev.kind) {
@@ -281,6 +365,12 @@ export function makeCliEventHub(deps: CliEventHubDeps): CliEventHub {
     lookup(codePrefix) {
       const p = codePrefix.trim().toLowerCase()
       if (!p) return null
+      if (deps.store) {
+        try {
+          const row = deps.store.findByPrefix(p)
+          if (row) return rowInfo(row)
+        } catch (err) { deps.log('CLI_SESSIONS', `lookup failed: ${err instanceof Error ? err.message : String(err)}`) }
+      }
       let best: CliSessionInfo | null = null
       for (const st of sessions.values()) {
         if (!st.info.session_id.toLowerCase().startsWith(p)) continue
@@ -289,7 +379,46 @@ export function makeCliEventHub(deps: CliEventHubDeps): CliEventHub {
       return best
     },
     sessions() {
+      if (deps.store) {
+        try { return deps.store.list({ limit: MAX_SESSION_STATES }).map(rowInfo) }
+        catch (err) { deps.log('CLI_SESSIONS', `list failed: ${err instanceof Error ? err.message : String(err)}`) }
+      }
       return [...sessions.values()].map(s => ({ ...s.info })).sort((a, b) => b.lastSeenAt - a.lastSeenAt)
+    },
+    observe(ev) {
+      record(ev, now())
+      if (ev.kind === 'session_end') sessions.delete(ev.session_id)
+      else state(ev)
+    },
+    permissionAsked(req) {
+      const t = now()
+      state({ session_id: req.session_id, source: req.source, cwd: req.cwd, machine: req.machine })
+      persist(`permission ${short(req.session_id)}`, (store) => {
+        store.touch(req, t)
+        store.setStatus(req.session_id, 'waiting', t, { pending: { tool: req.tool_name, summary: req.summary ? summarizeOneLine(req.summary, SESSION_SUMMARY_MAX) : null } })
+      })
+    },
+    permissionSettled(sessionId, status) {
+      // 任何结果都把 waiting 放回 running:timeout / undelivered 之后终端自己问,主人在终端前答,
+      // 不会再有事件,留着 waiting 就会一直挂「等你批准」(评审 10-15 #1)。
+      persist(`permission settled ${short(sessionId)}`, (store) => {
+        // 只从 waiting 回到 running:中间已经 Stop / 结束的,不倒回去。
+        if (store.get(sessionId)?.status === 'waiting') store.setStatus(sessionId, 'running', now())
+      })
+    },
+    list(opts) {
+      const t = now()
+      if (deps.store) {
+        try { return sortCliSessionViews(deps.store.list(opts).map(r => toCliSessionView(r, t))) }
+        catch (err) { deps.log('CLI_SESSIONS', `list failed: ${err instanceof Error ? err.message : String(err)}`); return [] }
+      }
+      // 没接登记处(老测试):内存表里没有状态,一律当 idle。
+      return sortCliSessionViews([...sessions.values()].filter(s => s.info.cwd).map(s => toCliSessionView({
+        session_id: s.info.session_id, source: s.info.source, cwd: s.info.cwd, machine: s.info.machine ?? null,
+        transcript_path: s.info.transcript_path ?? null, origin_agent: s.info.origin_agent ?? null, status: 'idle',
+        last_event_at: s.info.lastSeenAt, last_prompt_at: s.lastPromptAt ?? null, last_summary: null,
+        pending_tool: null, pending_summary: null, pending_at: null, created_at: s.info.lastSeenAt,
+      }, t))).slice(0, opts?.limit ?? MAX_SESSION_STATES)
     },
     pending() {
       return [...pending.entries()].map(([session_id, p]) => ({ session_id, kind: p.kind }))
@@ -302,6 +431,15 @@ export function makeCliEventHub(deps: CliEventHubDeps): CliEventHub {
       if (flushTimer) { clearTimeout(flushTimer); flushTimer = null }
       outbox = []
     },
+  }
+}
+
+function rowInfo(row: CliSessionRow): CliSessionInfo {
+  return {
+    session_id: row.session_id, source: row.source, cwd: row.cwd, lastSeenAt: row.last_event_at,
+    ...(row.machine ? { machine: row.machine } : {}),
+    ...(row.transcript_path ? { transcript_path: row.transcript_path } : {}),
+    ...(row.origin_agent ? { origin_agent: row.origin_agent } : {}),
   }
 }
 

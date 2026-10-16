@@ -36,6 +36,14 @@ import { existsSync, readFileSync } from 'node:fs'
 
 export interface WireMainOpts {
   workbench?: import('../../core/workbench/service').WorkbenchService
+  /** 终端会话登记处(v76):手机 GET /m/api/cli/sessions 读它。缺省 ⇒ 503。 */
+  cliSessions?: () => import('../../core/cli-session-store').CliSessionView[]
+  /** 终端会话的手机动作(拍板 / 说一句):POST /m/api/cli/permission、/m/api/cli/say。缺省 ⇒ 503。 */
+  cliActions?: import('../cli-phone-actions').CliPhoneActions
+  /** 「今天」一眼看完(core/overseer-today.ts):手机 GET /m/api/today 读它。缺省 ⇒ 503。 */
+  overseerToday?: () => import('../../core/overseer-today').OverseerToday
+  /** 「CC 现在怎么样」里「终端里的 Claude Code / Codex」那一行(2026-10-14)。缺省 ⇒ 那一行不出现。 */
+  terminalHooks?: Pick<import('../terminal-hooks').TerminalHooksService, 'capabilityInput'>
   /** 网络守护运行时(2026-10-02,main.ts 建):闸门 + 调度器 Ref + 后台任务跳过包装。缺省 = 老行为。 */
   guardRuntime?: import('../guard/runtime').GuardRuntime
   /** 可选子系统开机状态(SubsystemSupervisor.statuses)→「CC 现在怎么样」。 */
@@ -144,6 +152,8 @@ export interface WiredDeps {
   connections: () => import('../connections').ConnectionsSnapshot
   /** 桌面「连接手机」;main.ts setPhoneConnect 到 internal-api。 */
   phoneConnect: import('../internal-api/types').PhoneConnectDep
+  /** 手机 app 原生推送出口(pipeline-deps 造);main.ts 接给终端会话推送。 */
+  appPush: import('../cli-app-push').AppPushOutlet
   /** 每晚记忆整理运行时(pipeline-deps 造);main.ts 挂定时器 + setMemoryNightly。 */
   memoryNightly: import('../memory/nightly-runtime').MemoryNightlyRuntime
   mattersService: import('../../core/matters/service').MattersService | null
@@ -255,9 +265,10 @@ export function wireMain(opts: WireMainOpts): WiredDeps {
     health: opts.boot.health.health,
     runAtelierTick,
   })
-  const { pipelineDeps, companionConverse, petTurn, settingsPanelLink, mattersService, memoryNightly, stopMatterActivity, connections, phoneConnect } = buildPipelineDeps(opts, refs)
+  const { appPush, pipelineDeps, companionConverse, petTurn, settingsPanelLink, mattersService, memoryNightly, stopMatterActivity, connections, phoneConnect } = buildPipelineDeps(opts, refs)
   const lifecycleDeps = buildLifecycleDeps(opts, ticks)
   return {
+    appPush,
     pipelineDeps,
     companionConverse,
     petTurn,

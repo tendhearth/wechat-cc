@@ -249,7 +249,21 @@ export interface InternalApiDeps {
    * main.ts 在 bootstrap 之后 setCliEvents —— hub 要 boot.sendAssistantText。
    * 没设之前 POST /v1/cli/event 503。
    */
-  cliEvents?: { ingest(ev: import('../../core/cli-events').CliEvent): import('../../core/cli-events').CliEventAction | Promise<import('../../core/cli-events').CliEventAction> }
+  cliEvents?: {
+    ingest(ev: import('../../core/cli-events').CliEvent): import('../../core/cli-events').CliEventAction | Promise<import('../../core/cli-events').CliEventAction>
+    /** 终端会话登记处(v76):GET /v1/cli/sessions。缺席 ⇒ 那条路由 503。 */
+    list?(opts?: { includeEnded?: boolean; limit?: number }): import('../../core/cli-session-store').CliSessionView[]
+  }
+  /**
+   * 「今天」一眼看完(core/overseer-today.ts,2026-10-14):终端 + 一起做,过去 24 小时。
+   * main.ts setOverseerToday;没设之前 GET /v1/overseer/today 503。只读,只在被问时算。
+   */
+  overseerToday?: () => import('../../core/overseer-today').OverseerToday
+  /**
+   * 接上 / 撤掉终端里的 Claude Code / Codex(2026-10-14):POST /v1/cli/hooks/install|uninstall。
+   * main.ts setCliHooks;没设之前 503。只在主人点了确认时调,绝不自动装。
+   */
+  cliHooks?: Pick<import('../terminal-hooks').TerminalHooksService, 'install' | 'uninstall'>
   /** 终端会话权限 → 微信 y/n(spec 2026-09-09-cli-hook-push §6.3)。main.ts setCliPermissions。 */
   cliPermissions?: Pick<import('../../core/cli-permission-relay').CliPermissionRelay, 'open' | 'status' | 'wait'>
   /**
@@ -641,6 +655,8 @@ export interface InternalApi {
   setPetTurn(fn: NonNullable<InternalApiDeps['petTurn']>): void
   setCliEvents(hub: NonNullable<InternalApiDeps['cliEvents']>): void
   setCliPermissions(relay: NonNullable<InternalApiDeps['cliPermissions']>): void
+  setOverseerToday(fn: NonNullable<InternalApiDeps['overseerToday']>): void
+  setCliHooks(svc: NonNullable<InternalApiDeps['cliHooks']>): void
   /** 三轴 presence 的共用入口(随身 CC 手机页经此读,不自己拼输入)。null = journal 没接。 */
   getPresence(): Promise<import('../../core/companion-presence').Presence | null>
   /** Late-bind Customer Review after wxvault + an eval provider are ready. */

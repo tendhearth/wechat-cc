@@ -141,6 +141,51 @@ test('CC 的连接 never shows green when it cannot be read', async ({ page, shi
   await expect(card.locator('.dot.ok')).toHaveCount(0)
 })
 
+test('CC 现在怎么样:终端里的 Claude Code / Codex 没接上 ⇒「接上」先说会改什么,确定之后才调路由、行变成已接上', async ({ page, shimUrl, shim }) => {
+  const now = Date.now()
+  await shim.invoke('demo.seed', { chat_id: 'test_chat', connections: {
+    generatedAt: now, starting: false, sources: [], computers: [{ id: 'home', label: '这台电脑', online: true, since: now, version: '1.7.6' }], recent: [], outputs: [],
+    capabilities: [{ id: 'terminal', name: '终端里的 Claude Code / Codex', state: 'off', code: 'terminal.not_connected', reason: '装了 Claude Code / Codex，还没接上：终端里的会话 CC 看不到。', action: { label: '接上', where: 'desktop', run: 'cli_hooks_install' } }],
+  } })
+  await bootIntoDashboard(page, shimUrl)
+  await page.locator('.cc-home-details > summary').click()
+  const row = page.locator('#now-connections .nc-capability')
+  await expect(row).toContainText('还没接上')
+  await row.getByRole('button', { name: '接上', exact: true }).click()
+  await expect(row.locator('.hooks-confirm')).toContainText('~/.claude/settings.json')
+  expect(((await shim.invoke('mock.hook-calls')) as { result: { calls: unknown[] } }).result.calls).toHaveLength(0)
+  await row.getByRole('button', { name: '确定接上' }).click()
+  await expect(row).toContainText('已接上')
+  await expect(row.locator('button')).toHaveCount(0)
+  expect(((await shim.invoke('mock.hook-calls')) as { result: { calls: unknown[] } }).result.calls).toEqual([{}])
+})
+
+test('此刻「N 件事等你」也列终端里等批准的会话:开了码的能当场允许,没开码的只说回终端处理', async ({ page, shimUrl, shim }) => {
+  const now = Date.now()
+  const base = { source: 'claude', stale: false, cwd: '/w/x', machine: null, origin_agent: null, last_summary: null, last_event_at: now, last_prompt_at: null, created_at: now }
+  await shim.invoke('demo.seed', { chat_id: 'test_chat', cliSessions: [
+    { ...base, session_id: 'ab12c3-full', code: 'ab12c3', status: 'waiting', project: 'wechat-cc', pending: { tool: 'Bash', summary: 'npm publish', since: now, hash: 'k3x9z', reply_code: '07' } },
+    { ...base, session_id: 'cd34e5-full', code: 'cd34e5', source: 'codex', status: 'waiting', project: 'melu', pending: { tool: 'permission', summary: '要改 package.json', since: now, hash: null, reply_code: null } },
+    { ...base, session_id: 'ef56g7-full', code: 'ef56g7', status: 'running', project: 'leni', pending: null },
+  ] })
+  await bootIntoDashboard(page, shimUrl)
+  const waiting = page.locator('#now-waiting')
+  // mock 里工作台读不到(503)⇒ 标题后半句说那边不知道;终端这两条照样列出来。
+  await expect(waiting.locator('#now-waiting-title')).toHaveText(/^2 件事等你/)
+  const rows = waiting.locator('.now-terminal')
+  await expect(rows).toHaveCount(2)
+  await expect(rows.nth(0)).toContainText('Bash: npm publish')
+  await expect(rows.nth(0)).toContainText('wechat-cc · 终端 · Claude Code · 码 ab12c3')
+  await expect(rows.nth(1)).toContainText('要改 package.json')
+  await expect(rows.nth(1)).toContainText('回终端处理')
+  await expect(rows.nth(1).locator('button')).toHaveCount(0)
+  await rows.nth(0).getByRole('button', { name: /^允许/ }).click()
+  await expect.poll(async () => ((await shim.invoke('mock.permission-resolves')) as { result: { calls: unknown[] } }).result.calls).toEqual([{ hash: 'k3x9z', decision: 'allow' }])
+  // 拍完之后下一拍列表里就没有它了(shim 把它收回 running,与真 daemon 一致)。
+  await expect(rows).toHaveCount(1)
+  await expect(waiting.locator('#now-waiting-title')).toHaveText(/^1 件事等你/)
+})
+
 test('memory pane has sidebar + observations + milestones + content viewer', async ({ page, shimUrl, shim }) => {
   await shim.invoke('demo.seed', { chat_id: 'test_chat' })
   await bootIntoDashboard(page, shimUrl)

@@ -1175,6 +1175,12 @@ fn workbench_request_allowed(method: &str, path: &str) -> bool {
             | ("POST", "/v1/matter/say")
             // 「CC 的连接」(2026-10-01):此刻右上角的连接浮层,只读。
             | ("GET", "/v1/connections")
+            // 终端会话(2026-10-14):此刻「N 件事等你」里列出终端里等批准的 Claude Code / Codex,只读。
+            // 拍板不走这里,走 pet_permission_resolve(POST /v1/permissions/resolve)。
+            | ("GET", "/v1/cli/sessions")
+            // 接上 / 撤掉终端里的 Claude Code / Codex(2026-10-14):「CC 现在怎么样」与引导页的「接上」/「修复」,主人点了确认才调。
+            | ("POST", "/v1/cli/hooks/install")
+            | ("POST", "/v1/cli/hooks/uninstall")
             // 「连接手机」(plan 7a):出码(必要时打开远程隧道)与轮询已配对设备。
             | ("POST", "/v1/phone/link")
             | ("GET", "/v1/phone/devices")
@@ -1850,6 +1856,8 @@ mod workbench_proxy_tests {
             ("GET", "/v1/workbench?q=..&archived=all"),
             ("GET", "/v1/connections"),
             ("POST", "/v1/phone/link"), ("GET", "/v1/phone/devices"),
+            ("GET", "/v1/cli/sessions"), ("GET", "/v1/cli/sessions?limit=20"),
+            ("POST", "/v1/cli/hooks/install"), ("POST", "/v1/cli/hooks/uninstall"),
         ] {
             assert!(workbench_request_allowed(method, path), "expected {method} {path} to be allowed");
         }
@@ -1906,6 +1914,8 @@ mod workbench_proxy_tests {
             ("DELETE", "/v1/workbench/task?id=A1B2C3D4"),
             ("GET", "/v1/customer-review"),
             ("POST", "/v1/connections"),
+            ("POST", "/v1/cli/sessions"), ("GET", "/v1/cli/sessions/extra"), ("GET", "/v1/cli/event"), ("POST", "/v1/cli/permission"), ("GET", "/v1/cli/../connections"),
+            ("GET", "/v1/cli/hooks/install"), ("POST", "/v1/cli/hooks"), ("POST", "/v1/cli/hooks/install/extra"), ("POST", "/v1/cli/hooks/../event"),
             ("GET", "/v1/phone/link"), ("POST", "/v1/phone/devices"), ("POST", "/v1/phone/link/extra"), ("GET", "/v1/phone/../connections"),
         ] {
             assert!(!workbench_request_allowed(method, path), "expected {method} {path} to be refused");

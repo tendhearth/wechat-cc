@@ -99,6 +99,13 @@ describe('waitingHeader(终审 M3:读不到不等于没有)', () => {
     expect(waitingHeader({ tasks: [task], stale: true })).toEqual({ hidden: false, unknown: true, title: '暂时不知道有没有等你的事' })
     expect(waitingHeader({ tasks: [], stale: true })).toEqual({ hidden: false, unknown: true, title: '暂时不知道有没有等你的事' })
   })
+  it('终端里等批准的会话一起算(extra);工作台还没拉到也照样显示', () => {
+    expect(waitingHeader({ tasks: [task], stale: false }, 2)).toEqual({ hidden: false, unknown: false, title: '3 件事等你' })
+    expect(waitingHeader(null, 1)).toEqual({ hidden: false, unknown: false, title: '1 件事等你' })
+    expect(waitingHeader({ tasks: [], stale: false }, 0)).toEqual({ hidden: true, unknown: false, title: '' })
+    // 一起做那边读不到、终端有等你的 ⇒ 列终端的,标题说清楚另一半不知道(不是「暂时不知道」把终端的也藏掉)
+    expect(waitingHeader({ tasks: [task], stale: true }, 1)).toEqual({ hidden: false, unknown: false, title: '1 件事等你 · 一起做那边暂时读不到' })
+  })
 })
 
 describe('nowStatusLine', () => {

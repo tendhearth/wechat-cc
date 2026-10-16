@@ -1,12 +1,12 @@
 import type { z } from 'zod'
 import type {
   Matter, MatterDetail, ApprovalExplanation, ProgressSummary, PhoneChangesTurn, EntryOptions, DeviceRowT, PushPlatformT,
-  ChatPage, ChatJob, ChatMessage, ChatAttachment, EntryModelCatalog, ChatModelView, MemorySuccess, ChatSearchHit, Connections, NativeSessionRow, NativeSessionPage, SessionContinueT, MatterSayResult,
+  ChatPage, ChatJob, ChatMessage, ChatAttachment, EntryModelCatalog, ChatModelView, MemorySuccess, ChatSearchHit, Connections, NativeSessionRow, NativeSessionPage, SessionContinueT, MatterSayResult, CliSessionRowT, OverseerTodayT, TodayItemT,
 } from '@wechat-cc/protocol'
 import type { Lang } from '../i18n'
 
 // 协议包已导出这个类型,不再重推一份(裁决 R12)
-export type { SessionContinueT }
+export type { SessionContinueT, CliSessionRowT, OverseerTodayT, TodayItemT }
 export type MatterT = z.infer<typeof Matter>
 export type MatterDetailT = z.infer<typeof MatterDetail>
 export type ApprovalExplanationT = z.infer<typeof ApprovalExplanation>
@@ -47,6 +47,7 @@ export type BackendCode = 'stale' | 'busy' | 'offline' | 'revoked' | 'timeout' |
   | 'input_stale' | 'input_conflict'
   | 'too_large' | 'no_voice'
   | 'images_gone' | 'images_unsupported'
+  | 'cli_not_actionable' | 'cli_ended' | 'cli_remote'
 export type Unsubscribe = () => void
 
 export interface Backend {
@@ -123,6 +124,14 @@ export interface Backend {
   /** 执行者额度用完 ⇒ 把这件事交给确认卡上那位(providerId)继续,回新那件的 matterId。按 requestId 幂等;一件事只交一次(再交回已交出的那件)。
    *  电脑那边情况变了(额度恢复 / 接手人变了 / 没人能接)⇒ BackendError('handoff_changed')。 */
   handoff(p: { id: string; requestId: string; providerId: string }): Promise<{ matterId: string }>
+  /** 终端里的会话(GET /m/api/cli/sessions,2026-10-14):主人在 CC 外面开的 Claude Code / Codex。等你批准的在前。 */
+  cliSessions(): Promise<CliSessionRowT[]>
+  /** 拍板终端会话等批准的那一项(同微信「y/n 码」)。码已失效 ⇒ 'stale';终端自己在问(主人在电脑前)⇒ 'cli_not_actionable'。 */
+  cliPermission(p: { sessionId: string; hash?: string; decision: 'allow' | 'deny' }): Promise<void>
+  /** 对终端会话接着说一句(同微信「@码」):收下即回,结果成为这条会话的下一句。在跑 ⇒ 'busy';已结束 ⇒ 'cli_ended';在别的电脑上 ⇒ 'cli_remote'。 */
+  cliSay(sessionId: string, text: string): Promise<void>
+  /** 「今天」(GET /m/api/today,2026-10-14):终端 + 一起做,过去 24 小时 —— 等你 / 做完 / 在跑 / 可能卡住。与微信「日报」同一份。 */
+  today(): Promise<OverseerTodayT>
   /** 解除本机配对(daemon 撤掉本机令牌)。失败抛 BackendError;调用方无论成败都清本地令牌。 */
   unpair(): Promise<void>
   /** 前台 true / 后台 false:false 关连接;true 立刻新握手、订阅全部重挂。演示后端空操作。 */

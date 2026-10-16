@@ -21,7 +21,7 @@ import {
   type ApprovalExplanationT, type Backend, type Connection, type DeviceRowT, type EntryOptionsT,
   type MatterDetailT, type MatterT, type PhoneChangesTurnT, type ProgressSummaryT, type Unsubscribe,
   type ChatPageT, type ChatJobT, type ConnectionsT, type NativeSessionRowT, type NativeSessionPageT, type SessionContinueT,
-  type MatterSayResultT, type MatterInputT, type UploadStateT, type EntryModelCatalogT, type MemoryViewT, type ChatModelViewT, type ChatSearchHitT,
+  type MatterSayResultT, type MatterInputT, type CliSessionRowT, type OverseerTodayT, type UploadStateT, type EntryModelCatalogT, type MemoryViewT, type ChatModelViewT, type ChatSearchHitT,
 } from './types'
 
 type Topic = Parameters<Backend['subscribe']>[0]
@@ -292,6 +292,19 @@ export function makeLiveBackend(d: LiveDeps): Backend {
       // 幂等(requestId;一件事也只交一次):超时后协议客户端可以原样重发,daemon 回同一件。
       const r = await call<{ matterId: string; created: boolean }>('POST /m/api/matter/handoff', '/m/api/matter/handoff', { body: { id: p.id, requestId: p.requestId, providerId: p.providerId }, retry: true })
       return { matterId: r.matterId }
+    },
+    async cliSessions() {
+      return (await call<{ sessions: CliSessionRowT[] }>('GET /m/api/cli/sessions', '/m/api/cli/sessions')).sessions
+    },
+    async cliPermission(p) {
+      // 有码就带码:防止这期间换了一项待批,手机批到了没看过的那一项。
+      await call('POST /m/api/cli/permission', '/m/api/cli/permission', { body: { session_id: p.sessionId, ...(p.hash ? { hash: p.hash } : {}), decision: p.decision } })
+    },
+    async cliSay(sessionId, text) {
+      await call('POST /m/api/cli/say', '/m/api/cli/say', { body: { session_id: sessionId, text } })
+    },
+    async today() {
+      return (await call<{ today: OverseerTodayT }>('GET /m/api/today', '/m/api/today')).today
     },
     async decide(p) {
       await call('POST /m/api/matter/permission', '/m/api/matter/permission', { body: { id: p.id, runId: p.runId, requestId: p.requestId, decision: p.decision } })

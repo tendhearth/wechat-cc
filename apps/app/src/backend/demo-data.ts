@@ -81,6 +81,11 @@ export const copy = {
   sessQ1: ['帮我看看为什么手机上会横向滚动。', 'Can you see why it scrolls sideways on a phone?'],
   sessA1: ['是首屏图片的固定宽度撑出来的，我改成了按屏幕宽度缩放。', 'The hero image had a fixed width; I made it scale with the screen.'],
   sessQ2: ['好，顺便把标题字号也调小一点。', 'Great, make the heading a little smaller too.'],
+  // 终端里的会话(演示,2026-10-14)
+  cliBlogLast: ['文章列表页加了分页，正准备发布。', 'Added paging to the post list; about to deploy.'],
+  cliApiLast: ['测试全过了，改动在 src/api.ts。', 'All tests pass; the change is in src/api.ts.'],
+  cliDocsLast: ['在把 README 的安装步骤改成三步。', 'Rewriting the README install steps into three.'],
+  cliDemoReply: ['好，按你说的改完了。（演示）', 'Done as you asked. (demo)'],
 } satisfies Record<string, Pair>
 
 export const t = (lang: Lang, k: keyof typeof copy) => pick(lang, copy[k])

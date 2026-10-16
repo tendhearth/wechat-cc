@@ -6,6 +6,7 @@ import {
   normalizeHookPayload, shouldSkipHook, postCliEvent, hookCommandLine,
   installHooks, uninstallHooks, hookStatus, claudeSettingsPath, codexHooksPath, summarizeToolInput,
   parsePermissionRequest, relayPermission, permissionDecisionOutput, isAutomatedPrompt, withMachineContext,
+  cursorHooksPath, cursorPermissionOutput, cursorEventOutput, withCursorStopText,
 } from './hook'
 import { hostname } from 'node:os'
 
@@ -225,5 +226,156 @@ describe('installHooks / uninstallHooks / hookStatus', () => {
     expect(codexHooksPath('/home/u', {})).toBe(join('/home/u', '.codex', 'hooks.json'))
     expect(codexHooksPath('/home/u', { CODEX_HOME: '/x/codex' })).toBe(join('/x/codex', 'hooks.json'))
     expect(existsSync(dir)).toBe(true); mkdirSync(join(dir, 'z'))
+  })
+})
+
+// ── Cursor(~/.cursor/hooks.json;事件名 / 字段 / 答复都和另两家不同)──────────────
+describe('Cursor — payload 归一化', () => {
+  const cc = { conversation_id: 'conv-1', generation_id: 'gen-1', workspace_roots: ['/w/cur', '/w/other'], transcript_path: '/t/conv-1.jsonl', model: 'auto', cursor_version: '2026.10.01' }
+  it('stop → stop(会话 id = conversation_id,目录 = workspace_roots[0],带 transcript_path,不带 text)', () => {
+    expect(normalizeHookPayload('cursor', { ...cc, hook_event_name: 'stop', status: 'completed', loop_count: 0 }))
+      .toEqual({ source: 'cursor', kind: 'stop', session_id: 'conv-1', cwd: '/w/cur', transcript_path: '/t/conv-1.jsonl' })
+  })
+  it('beforeSubmitPrompt → prompt;harness 塞的标 automated', () => {
+    expect(normalizeHookPayload('cursor', { ...cc, hook_event_name: 'beforeSubmitPrompt', prompt: '改一下' })).toMatchObject({ kind: 'prompt', session_id: 'conv-1' })
+    expect(normalizeHookPayload('cursor', { ...cc, hook_event_name: 'beforeSubmitPrompt', prompt: '改一下' })!.automated).toBeUndefined()
+    expect(normalizeHookPayload('cursor', { ...cc, hook_event_name: 'beforeSubmitPrompt', prompt: '/loop 5m check' })).toMatchObject({ kind: 'prompt', automated: true })
+  })
+  it('sessionEnd → session_end(只有 session_id 也认)', () => {
+    expect(normalizeHookPayload('cursor', { ...cc, hook_event_name: 'sessionEnd', reason: 'user_close' })).toMatchObject({ kind: 'session_end', session_id: 'conv-1' })
+    expect(normalizeHookPayload('cursor', { session_id: 's9', workspace_roots: ['/w'], hook_event_name: 'sessionEnd' })).toEqual({ source: 'cursor', kind: 'session_end', session_id: 's9', cwd: '/w' })
+  })
+  it('权限类 / 不认的事件 / 缺会话或目录 → null', () => {
+    expect(normalizeHookPayload('cursor', { ...cc, hook_event_name: 'beforeShellExecution', command: 'ls' })).toBeNull()
+    expect(normalizeHookPayload('cursor', { ...cc, hook_event_name: 'afterFileEdit' })).toBeNull()
+    expect(normalizeHookPayload('cursor', { ...cc, conversation_id: undefined, hook_event_name: 'stop' })).toBeNull()
+    expect(normalizeHookPayload('cursor', { ...cc, workspace_roots: [], hook_event_name: 'stop' })).toBeNull()
+    // Claude 形状的 Stop 不会被 cursor 误认
+    expect(normalizeHookPayload('cursor', { ...common, hook_event_name: 'Stop' })).toBeNull()
+  })
+  it('beforeShellExecution → Shell 权限请求,摘要就是命令;目录用 workspace_roots[0](不是命令的 cwd)', () => {
+    expect(parsePermissionRequest('cursor', { ...cc, hook_event_name: 'beforeShellExecution', command: 'rm -rf build', cwd: '/w/cur/sub', sandbox: false }))
+      .toEqual({ source: 'cursor', session_id: 'conv-1', cwd: '/w/cur', tool_name: 'Shell', summary: 'rm -rf build' })
+    expect(parsePermissionRequest('cursor', { ...cc, workspace_roots: undefined, cwd: '/only/cwd', hook_event_name: 'beforeShellExecution', command: 'ls' }))
+      .toMatchObject({ cwd: '/only/cwd' })
+    expect(parsePermissionRequest('cursor', { ...cc, hook_event_name: 'beforeShellExecution' })).toBeNull()
+  })
+  it('beforeMCPExecution → server:tool,tool_input 是 JSON 字符串也拆得开', () => {
+    expect(parsePermissionRequest('cursor', { ...cc, hook_event_name: 'beforeMCPExecution', mcp_server_name: 'github', tool_name: 'create_issue', tool_input: '{"title":"bug"}' }))
+      .toEqual({ source: 'cursor', session_id: 'conv-1', cwd: '/w/cur', tool_name: 'github:create_issue', summary: '{"title":"bug"}' })
+    expect(parsePermissionRequest('cursor', { ...cc, hook_event_name: 'beforeMCPExecution', tool_name: 'run', tool_input: { command: ['make', 'test'] } }))
+      .toEqual({ source: 'cursor', session_id: 'conv-1', cwd: '/w/cur', tool_name: 'run', summary: 'make test' })
+    expect(parsePermissionRequest('cursor', { ...cc, hook_event_name: 'beforeMCPExecution' })).toBeNull()
+    expect(parsePermissionRequest('cursor', { ...cc, hook_event_name: 'stop' })).toBeNull()
+  })
+})
+
+describe('Cursor — 答复', () => {
+  it('allow / deny 照主人的;其余一律 ask,绝不放行', () => {
+    expect(JSON.parse(cursorPermissionOutput('allow'))).toEqual({ permission: 'allow' })
+    const d = JSON.parse(cursorPermissionOutput('deny'))
+    expect(d.permission).toBe('deny'); expect(d.user_message).toContain('拒绝'); expect(typeof d.agent_message).toBe('string')
+    expect(JSON.parse(cursorPermissionOutput(null))).toEqual({ permission: 'ask' })
+  })
+  it('relayPermission 回 owner_present / undelivered / timeout / daemon 没跑 → decision null → ask', async () => {
+    const tokenFile = join(dir, 'tok'); writeFileSync(tokenFile, 'secret')
+    writeFileSync(join(dir, 'internal-api-info.json'), JSON.stringify({ baseUrl: 'http://127.0.0.1:1', tokenFilePath: tokenFile }))
+    const req = { source: 'cursor' as const, session_id: 'conv-1', cwd: '/w', tool_name: 'Shell', summary: 'ls' }
+    for (const status of ['owner_present', 'undelivered']) {
+      const f = vi.fn(async () => new Response(JSON.stringify({ status }), { status: 200 }))
+      const r = await relayPermission(dir, req, { fetchImpl: f as unknown as typeof fetch })
+      expect(r.decision).toBeNull()
+      expect(JSON.parse(cursorPermissionOutput(r.decision))).toEqual({ permission: 'ask' })
+    }
+    let calls = 0
+    const f = vi.fn(async () => new Response(JSON.stringify(calls++ === 0 ? { status: 'pending', hash: 'h1' } : { status: 'timeout' }), { status: 200 }))
+    const r = await relayPermission(dir, req, { fetchImpl: f as unknown as typeof fetch })
+    expect(r).toEqual({ decision: null, status: 'timeout' })
+    expect(JSON.parse(cursorPermissionOutput(r.decision))).toEqual({ permission: 'ask' })
+    expect(JSON.parse(cursorPermissionOutput((await relayPermission(join(dir, 'none'), req)).decision))).toEqual({ permission: 'ask' })
+  })
+  it('beforeSubmitPrompt 回 continue:true;其余事件回 {}', () => {
+    expect(JSON.parse(cursorEventOutput({ hook_event_name: 'beforeSubmitPrompt' }))).toEqual({ continue: true })
+    expect(JSON.parse(cursorEventOutput({ hook_event_name: 'stop' }))).toEqual({})
+    expect(JSON.parse(cursorEventOutput(null))).toEqual({})
+  })
+})
+
+describe('Cursor — stop 从 transcript 补最后一句', () => {
+  const ev = { source: 'cursor' as const, kind: 'stop' as const, session_id: 'c', cwd: '/w', transcript_path: '/t.jsonl' }
+  const jsonl = [
+    { role: 'user', message: { content: [{ type: 'text', text: '<timestamp>Tue</timestamp>\n<user_query>\n改好\n</user_query>' }] } },
+    { role: 'assistant', message: { content: [{ type: 'text', text: '先看看' }, { type: 'tool_use', name: 'Read', input: {} }] } },
+    { role: 'assistant', message: { content: [{ type: 'text', text: '改好了,测试全过。' }] } },
+    { type: 'turn_ended', status: 'success' },
+  ].map(l => JSON.stringify(l)).join('\n') + '\n'
+  it('读到最后一句助手的话', () => {
+    expect(withCursorStopText(ev, () => jsonl)).toEqual({ ...ev, text: '改好了,测试全过。' })
+  })
+  it('真文件(临时目录)也读得到', () => {
+    const f = join(dir, 'conv.jsonl'); writeFileSync(f, jsonl)
+    expect(withCursorStopText({ ...ev, transcript_path: f }).text).toBe('改好了,测试全过。')
+  })
+  it('读不到 / 最后是 user / 没有路径 / 不是 cursor 的 stop / 已有 text → 原样', () => {
+    expect(withCursorStopText(ev, () => { throw new Error('ENOENT') })).toEqual(ev)
+    expect(withCursorStopText(ev, () => JSON.stringify({ role: 'user', message: { content: 'hi' } }))).toEqual(ev)
+    const { transcript_path: _t, ...noPath } = ev
+    expect(withCursorStopText(noPath, () => jsonl)).toEqual(noPath)
+    const claudeStop = { ...ev, source: 'claude' as const }
+    expect(withCursorStopText(claudeStop, () => jsonl)).toEqual(claudeStop)
+    expect(withCursorStopText({ ...ev, text: 'already' }, () => jsonl).text).toBe('already')
+  })
+})
+
+describe('Cursor — ~/.cursor/hooks.json 安装 / 卸载 / 状态(临时目录)', () => {
+  const cmd = '"/A/tendhearth-cc-cli" hook cursor'
+  // 先只看不拍(10-15):权限两件不挂,免得 Cursor 每条命令都要问(见 hook.ts CURSOR_EVENTS)
+  const EVENTS = ['beforeSubmitPrompt', 'sessionEnd', 'stop']
+  it('路径', () => {
+    expect(cursorHooksPath('/home/u')).toBe(join('/home/u', '.cursor', 'hooks.json'))
+  })
+  it('文件不存在 → 建 {version:1,hooks};三个事件各一条(5s);不挂 beforeShellExecution / beforeMCPExecution', () => {
+    const file = join(dir, '.cursor', 'hooks.json')
+    expect(installHooks(file, 'cursor', cmd)).toEqual({ changed: true })
+    const cfg = JSON.parse(readFileSync(file, 'utf8'))
+    expect(cfg.version).toBe(1)
+    expect(Object.keys(cfg.hooks).sort()).toEqual(EVENTS)
+    expect(cfg.hooks.beforeShellExecution).toBeUndefined()
+    expect(cfg.hooks.beforeMCPExecution).toBeUndefined()
+    expect(cfg.hooks.stop).toEqual([{ command: cmd, timeout: 5 }])
+    expect(hookStatus(file, 'cursor')).toEqual({ installed: true, command: cmd })
+    expect(hookStatus(file, 'claude')).toEqual({ installed: false, command: null })
+  })
+  it('幂等;别人的条目与别的键原样保留;命令变了会替换;卸载还原', () => {
+    const file = join(dir, '.cursor', 'hooks.json')
+    mkdirSync(join(dir, '.cursor'), { recursive: true })
+    const foreign = { version: 1, extra: 'keep', hooks: { stop: [{ command: './audit.sh' }], afterFileEdit: [{ command: 'prettier', timeout: 3 }] } }
+    writeFileSync(file, JSON.stringify(foreign))
+    installHooks(file, 'cursor', cmd)
+    const once = readFileSync(file, 'utf8')
+    expect(installHooks(file, 'cursor', cmd)).toEqual({ changed: false })
+    expect(readFileSync(file, 'utf8')).toBe(once)
+    const cfg = JSON.parse(once)
+    expect(cfg.extra).toBe('keep')
+    expect(cfg.hooks.afterFileEdit).toEqual([{ command: 'prettier', timeout: 3 }])
+    expect(cfg.hooks.stop).toEqual([{ command: './audit.sh' }, { command: cmd, timeout: 5 }])
+    const cmd2 = '"/new/tendhearth-cc-cli" hook cursor'
+    expect(installHooks(file, 'cursor', cmd2)).toEqual({ changed: true })
+    expect(JSON.parse(readFileSync(file, 'utf8')).hooks.stop).toEqual([{ command: './audit.sh' }, { command: cmd2, timeout: 5 }])
+    expect(uninstallHooks(file, 'cursor')).toEqual({ changed: true, removed: 3 })
+    expect(JSON.parse(readFileSync(file, 'utf8'))).toEqual(foreign)
+    expect(uninstallHooks(file, 'cursor')).toEqual({ changed: false, removed: 0 })
+    expect(hookStatus(file, 'cursor')).toEqual({ installed: false, command: null })
+  })
+  it('claude 的卸载不碰 cursor 的条目', () => {
+    const file = join(dir, '.cursor', 'hooks.json')
+    installHooks(file, 'cursor', cmd)
+    expect(uninstallHooks(file, 'claude')).toEqual({ changed: false, removed: 0 })
+    expect(hookStatus(file, 'cursor').installed).toBe(true)
+  })
+  it('hooks.json 坏了 → 抛错,不覆盖', () => {
+    const file = join(dir, 'hooks.json'); writeFileSync(file, '{ nope')
+    expect(() => installHooks(file, 'cursor', cmd)).toThrow(/parse/)
+    expect(readFileSync(file, 'utf8')).toBe('{ nope')
   })
 })

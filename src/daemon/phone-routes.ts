@@ -50,6 +50,13 @@ export const PHONE_ROUTES: ReadonlySet<string> = new Set([
   // 电脑上的原生会话(只读,spec 2026-10-01),项目只给目录名
   'GET /m/api/sessions',
   'GET /m/api/session',
+  // 终端会话登记处(v76,2026-10-14):主人在 CC 外面开的 claude / codex 会话 —— 谁在跑、谁在等批准
+  'GET /m/api/cli/sessions',
+  // 手机上拍板终端会话等批准的那一项(同微信「y/n 码」)、接着说一句(同微信「@码」)(2026-10-14)
+  'POST /m/api/cli/permission',
+  'POST /m/api/cli/say',
+  // 「今天」一眼看完(2026-10-14):终端 + 一起做,过去 24 小时;与微信「日报」同一份
+  'GET /m/api/today',
   // 在手机上接着做电脑上的会话(spec 2026-10-01-tendhearth-continue-sessions,mobile-workbench.ts):预览 + 接成一件事
   'GET /m/api/session/continue',
   'POST /m/api/session/continue',
@@ -82,7 +89,11 @@ export const PHONE_ROUTES: ReadonlySet<string> = new Set([
  * 链接令牌与设备令牌同一套(计划裁决 1):设置页链到 `/m`,`/m` 在配对之前就用链接令牌读
  * `/m/api/*`;收窄会让「从设置链接打开随身 CC」在配对前坏掉。10 分钟内同权,与改造前相同。
  */
-export const LINK_ROUTES: ReadonlySet<string> = PHONE_ROUTES
+/**
+ * /set 链接令牌(10 分钟,可能随 URL 外泄)能走的路由:手机那一套,但不含让终端会话「接着说」——
+ * 那会以 daemon 的 --dangerously 姿态起一个 agent 执行任意话术(评审 10-15 #3)。拍板同理一并拿掉。
+ */
+export const LINK_ROUTES: ReadonlySet<string> = new Set([...PHONE_ROUTES].filter(r => r !== 'POST /m/api/cli/say' && r !== 'POST /m/api/cli/permission'))
 
 /**
  * 经隧道(`_via=tunnel`)一律拒的 `/set/api/apply` 操作:开关远程访问会重启 daemon,

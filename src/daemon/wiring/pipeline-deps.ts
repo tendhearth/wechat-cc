@@ -58,7 +58,7 @@ import { wrapCheapEvalWithAuthFailCheck } from '../bootstrap/wire-coordinator'
 import { makePhoneEventsWiring } from '../phone-topic-sources'
 import { resolveRemoteRelays, mergeOnlineDevices } from '../remote-relay-config'
 import { makePhonePush } from '../phone-push'
-import { makePhoneNotifier } from '../phone-notifier'
+import { fanoutPush, makePhoneNotifier } from '../phone-notifier'
 import { deviceIdOf } from '../device-store'
 import { makeCommandRouter } from './command-router'
 import { ensureChatAndNote, makeMatterActivity, wireMatterActivity } from '../matter-activity'
@@ -152,6 +152,14 @@ export function makeDelegateToHand(deps: DelegateDeps) {
 
 export interface PipelineDepsOpts {
   workbench?: import('../../core/workbench/service').WorkbenchService
+  /** 终端会话登记处(v76):手机 GET /m/api/cli/sessions 读它。缺省 ⇒ 503。 */
+  cliSessions?: () => import('../../core/cli-session-store').CliSessionView[]
+  /** 终端会话的手机动作(拍板 / 说一句):POST /m/api/cli/permission、/m/api/cli/say。缺省 ⇒ 503。 */
+  cliActions?: import('../cli-phone-actions').CliPhoneActions
+  /** 「今天」一眼看完(core/overseer-today.ts):手机 GET /m/api/today 读它。缺省 ⇒ 503。 */
+  overseerToday?: () => import('../../core/overseer-today').OverseerToday
+  /** 「CC 现在怎么样」里「终端里的 Claude Code / Codex」那一行(2026-10-14)。缺省 ⇒ 那一行不出现。 */
+  terminalHooks?: Pick<import('../terminal-hooks').TerminalHooksService, 'capabilityInput'>
   /** 网络守护运行时(2026-10-02):微信入站闸门 + 每晚整理记忆的跳过判据。 */
   guardRuntime?: import('../guard/runtime').GuardRuntime
   /** 可选子系统的开机状态(SubsystemSupervisor.statuses;「CC 现在怎么样」用)。 */
@@ -256,6 +264,8 @@ export interface BuildPipelineDepsResult {
   petTurn: PetTurnDep
   /** 每晚记忆整理运行时;main.ts 挂定时器并接到 internal-api。 */
   memoryNightly: import('../memory/nightly-runtime').MemoryNightlyRuntime
+  /** 手机 app 原生推送出口(中继 v2);没开 v2 ⇒ 调用回 null。终端会话推送用(main.ts 懒绑定)。 */
+  appPush: import('../cli-app-push').AppPushOutlet
 }
 
 export function buildPipelineDeps(opts: PipelineDepsOpts, refs: PipelineDepsRefs): BuildPipelineDepsResult {
@@ -583,6 +593,12 @@ export function buildPipelineDeps(opts: PipelineDepsOpts, refs: PipelineDepsRefs
     log: (tag, line) => log(tag, line),
   }) : null
 
+  // 两条隧道合并(Review Focus 4):同一台手机从哪条连着都算在线。隧道没建 ⇒ 空。
+  const onlineDevices = () => mergeOnlineDevices([legacyTunnel?.subscribedDeviceTokens() ?? [], v2Tunnel?.subscribedDeviceTokens() ?? []], deviceIdOf)
+  // 终端会话的手机推送出口(cli-app-push.ts):与工作台通知同一套 fanout(在线的跳过、失败只记日志)。
+  const appPush: import('../cli-app-push').AppPushOutlet = (p) =>
+    phonePush ? fanoutPush({ push: phonePush, subscribedDevices: onlineDevices, log: (tag, line) => log(tag, line) }, p) : null
+
   // 主人的 chat:设置面板与微信管家都要,算一次(评审 2026-09-16 去重)。
   const ownerChatId = () => resolveAdminChatId(loadAccess(), loadCompanionConfig(stateDir), null)
   // 「一件事」的活动时间(spec 2026-10-01 §3):微信入站与工作台事件节流地推 updated_at。随 daemon 常驻。
@@ -651,6 +667,7 @@ export function buildPipelineDeps(opts: PipelineDepsOpts, refs: PipelineDepsRefs
         memory: loadCompanionConfig(stateDir).memory_nightly_enabled ? { failures: nightly.failures, firstRunDone: nightly.firstRunDone } : null,
         background: (() => { const h = boot.registry.cheapEvalHealth?.(); return h ? { failures: h.consecutiveFailures, lastError: h.lastError } : null })(),
         phone: { relay: relayV2Configured(stateDir), devices },
+        terminal: (() => { try { return opts.terminalHooks?.capabilityInput() ?? null } catch { return null } })(),
         subsystems: opts.subsystems?.() ?? [],
       })
     },
@@ -659,6 +676,9 @@ export function buildPipelineDeps(opts: PipelineDepsOpts, refs: PipelineDepsRefs
   const phoneSessions = opts.workbench ? cacheSessions({ list: (p, i) => opts.workbench!.listNativeHistory(p, i), read: (k, i) => opts.workbench!.readNativeHistory(k, i), readRecent: (k, i) => opts.workbench!.readRecentNativeHistory(k, i) }) : null
   const settingsPanel = makeSettingsPanel({
     connections,
+    ...(opts.cliSessions ? { cliSessions: opts.cliSessions } : {}),
+    ...(opts.cliActions ? { cliActions: opts.cliActions } : {}),
+    ...(opts.overseerToday ? { overseerToday: opts.overseerToday } : {}),
     ...(phoneSessions ? { sessions: phoneSessions } : {}),
     // 在手机上接着做电脑上的会话:预览不缓存(「正在跑」不能晚 15 秒才知道),接成一件事幂等。
     ...(opts.workbench ? { sessionContinue: { preview: (k: string) => opts.workbench!.previewNativeContinue(k), adopt: (k: string) => opts.workbench!.adoptNativeSession(k) } } : {}),
@@ -822,7 +842,7 @@ export function buildPipelineDeps(opts: PipelineDepsOpts, refs: PipelineDepsRefs
           events: phone.events,
           push: phonePush,
           // 两条隧道合并(Review Focus 4):同一台手机从哪条连着都算在线。
-          subscribedDevices: () => mergeOnlineDevices([legacyTunnel?.subscribedDeviceTokens() ?? [], v2Tunnel?.subscribedDeviceTokens() ?? []], deviceIdOf),
+          subscribedDevices: onlineDevices,
           taskInfo: (id) => { try { const d = wb.detail(id); return { title: d.task.title, status: d.task.status } } catch { return null } },
           log: (tag, line) => log(tag, line),
         })
@@ -1305,5 +1325,5 @@ export function buildPipelineDeps(opts: PipelineDepsOpts, refs: PipelineDepsRefs
     })
   }
 
-  return { pipelineDeps, companionConverse, petTurn, mattersService, memoryNightly, stopMatterActivity, settingsPanelLink: () => settingsPanel.linkUrl(), phoneChat, connections, phoneConnect: { link: (o) => settingsPanel.phoneLink(o), devices: () => settingsPanel.phoneDevices() } }
+  return { appPush, pipelineDeps, companionConverse, petTurn, mattersService, memoryNightly, stopMatterActivity, settingsPanelLink: () => settingsPanel.linkUrl(), phoneChat, connections, phoneConnect: { link: (o) => settingsPanel.phoneLink(o), devices: () => settingsPanel.phoneDevices() } }
 }

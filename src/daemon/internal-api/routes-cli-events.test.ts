@@ -23,7 +23,8 @@ describe('POST /v1/cli/event(spec 2026-09-09-cli-hook-push §6.1)', () => {
     expect(s.safeParse(body).success).toBe(true)
     expect(s.safeParse({ ...body, text: undefined }).success).toBe(true)
     expect(s.safeParse({ ...body, kind: 'prompt', automated: true }).success).toBe(true)
-    expect(s.safeParse({ ...body, source: 'cursor' }).success).toBe(false)
+    expect(s.safeParse({ ...body, source: 'cursor' }).success).toBe(true)
+    expect(s.safeParse({ ...body, source: 'gemini' }).success).toBe(false)
     expect(s.safeParse({ ...body, kind: 'idle' }).success).toBe(false)
     expect(s.safeParse({ ...body, session_id: '' }).success).toBe(false)
     expect(s.safeParse({ ...body, cwd: '' }).success).toBe(false)
@@ -59,5 +60,40 @@ describe('/v1/cli/permission(spec §6.3)', () => {
     expect(g.safeParse({}).success).toBe(false)
     expect(minTierFor('POST /v1/cli/permission')).toBe('trusted')
     expect(minTierFor('GET /v1/cli/permission')).toBe('trusted')
+  })
+})
+
+describe('GET /v1/cli/sessions(终端会话登记处,v76)', () => {
+  it('没接 list → 503;接了 → 转给 hub.list(默认 100 条、不含已结束;ended=1 / limit 封顶 500)', async () => {
+    const off = cliEventRoutes(deps({ ingest: vi.fn() }))['GET /v1/cli/sessions']!
+    expect(await off(qs(), undefined)).toEqual({ status: 503, body: { error: 'cli_sessions_not_wired' } })
+    const view = { session_id: 'abc123', code: 'abc123', status: 'waiting' }
+    const list = vi.fn(() => [view] as never)
+    const on = cliEventRoutes(deps({ ingest: vi.fn(), list }))['GET /v1/cli/sessions']!
+    expect(await on(qs(), undefined)).toEqual({ status: 200, body: { ok: true, sessions: [view] } })
+    expect(list).toHaveBeenLastCalledWith({ includeEnded: false, limit: 100 })
+    await on(new URLSearchParams({ ended: '1', limit: '9999' }), undefined)
+    expect(list).toHaveBeenLastCalledWith({ includeEnded: true, limit: 500 })
+  })
+  it('admin 档(列出主人所有终端会话的路径与命令);query schema', () => {
+    expect(minTierFor('GET /v1/cli/sessions')).toBe('admin')
+    const s = REQUEST_SCHEMAS['GET /v1/cli/sessions']!
+    expect(s.safeParse({}).success).toBe(true)
+    expect(s.safeParse({ ended: '1', limit: '20' }).success).toBe(true)
+    expect(s.safeParse({ ended: 'yes' }).success).toBe(false)
+    expect(s.safeParse({ limit: '0' }).success).toBe(false)
+  })
+})
+
+describe('GET /v1/overseer/today(「今天」一眼看完,2026-10-14)', () => {
+  it('没接 → 503;接了 → { ok, today };抛 → 503 unavailable;admin 档', async () => {
+    const off = cliEventRoutes(deps())['GET /v1/overseer/today']!
+    expect(await off(qs(), undefined)).toEqual({ status: 503, body: { error: 'overseer_today_not_wired' } })
+    const today = { generatedAt: 1, counts: { needsYou: 0, done: 0, running: 0, stuck: 0 } }
+    const on = cliEventRoutes({ overseerToday: () => today } as unknown as InternalApiDeps)['GET /v1/overseer/today']!
+    expect(await on(qs(), undefined)).toEqual({ status: 200, body: { ok: true, today } })
+    const broken = cliEventRoutes({ overseerToday: () => { throw new Error('db gone') } } as unknown as InternalApiDeps)['GET /v1/overseer/today']!
+    expect(await broken(qs(), undefined)).toEqual({ status: 503, body: { error: 'unavailable' } })
+    expect(minTierFor('GET /v1/overseer/today')).toBe('admin')
   })
 })

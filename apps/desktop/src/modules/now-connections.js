@@ -6,10 +6,14 @@
 //   - 电脑不在线并进最坏的严重度(红);
 //   - 来源行的日期是最新一条消息的时间(不是同步时间);
 //   - 读不到 ⇒ 只当「上次所知」:所有点变灰,电脑不说「在线」。
+//   - action.run(2026-10-14):桌面当场能做的动作(cli_hooks_install = 接上终端里的 Claude Code / Codex),
+//     点了先确认再调路由,做完重拉一次;这种动作在 ok 行上也给(「接了一部分」时把剩下的接上)。
+
+import { HOOKS_RUN, makeHooksAction } from './terminal-hooks.js'
 
 /** @typedef {'ok'|'warn'|'bad'|'unknown'} Dot */
 /** @typedef {'ready'|'behind'|'not_loaded'|'unknown'} State */
-/** @typedef {{id:string,name:string,state:'ok'|'fallback'|'needs_you'|'off',code:string,reason:string,action?:{label:string,where:string,url?:string}}} Capability */
+/** @typedef {{id:string,name:string,state:'ok'|'fallback'|'needs_you'|'off',code:string,reason:string,action?:{label:string,where:string,url?:string,run?:string}}} Capability */
 /** @typedef {{id:string,kind:string,name:string,state:State,latestAt:number|null,syncedAt:number|null}} Source */
 /** @typedef {{generatedAt:number,sources:Source[],starting?:boolean,computers:Array<{id:string,label:string,online:boolean,since:number|null,version:string|null}>,recent:Array<{matterId:string,title:string,phase:string,at:number}>,outputs:Array<{matterId:string,name:string,mime:string,at:number}>,capabilities?:Capability[]}} Connections */
 
@@ -36,7 +40,7 @@ export function connectionsView(s, opts = {}) {
     return { id: x.id, name, dot: DOT[x.state] ?? /** @type {Dot} */ ('unknown'), label }
   })
   // 「CC 现在怎么样」(2026-10-06):能力四态 —— 要你动手的排第一,退路(凑合着用)其次,没开的不算问题。
-  const capabilities = (s.capabilities ?? []).map(c => ({ id: c.id, name: c.name, dot: CAP_DOT[c.state] ?? /** @type {Dot} */ ('unknown'), label: c.reason, action: c.state !== 'ok' && c.action ? c.action : null }))
+  const capabilities = (s.capabilities ?? []).map(c => ({ id: c.id, name: c.name, dot: CAP_DOT[c.state] ?? /** @type {Dot} */ ('unknown'), label: c.reason, action: c.action && (c.state !== 'ok' || c.action.run === HOOKS_RUN) ? c.action : null }))
   const needsYou = (s.capabilities ?? []).filter(c => c.state === 'needs_you').length
   const fallback = (s.capabilities ?? []).filter(c => c.state === 'fallback').length
   const offline = s.computers.filter(c => !c.online).length
@@ -99,9 +103,11 @@ function row(cls, d, name, detail) {
 }
 
 /**
- * @param {{host:HTMLElement, call:(method:'GET', path:string)=>Promise<unknown>, now?:()=>number, openUrl?:(url:string)=>void}} o
+ * @param {{host:HTMLElement, call:(method:'GET'|'POST', path:string, body?:Record<string, unknown>)=>Promise<unknown>, now?:()=>number, openUrl?:(url:string)=>void}} o
  */
 export function mountNowConnections({ host, call, now = () => Date.now(), openUrl }) {
+  // 「接上」/「修复」的确认状态放在浮层外面:30 秒一次的刷新整块重画,也不会把「确认中」冲掉。
+  const hooks = makeHooksAction({ call, rerender: () => render(), onDone: () => { void refresh() } })
   /** @type {Connections|null} */ let data = null
   /** @type {number|null} */ let fetchedAt = null
   let failed = false
@@ -124,7 +130,8 @@ export function mountNowConnections({ host, call, now = () => Date.now(), openUr
       if (v.capabilities.length) parts.push(section('CC 现在怎么样', v.capabilities.map(x => {
         const li = row('nc-capability', x.dot, x.name, x.label)
         // 能当场打开的(系统设置)给按钮;别的动作在桌面别处做,写成一句提示。
-        if (x.action?.url && openUrl) { const b = el('button', 'nc-action', x.action.label); b.setAttribute('type', 'button'); b.addEventListener('click', () => openUrl(/** @type {string} */ (x.action?.url))); li.append(b) }
+        if (x.action?.run === HOOKS_RUN && !stale) li.append(hooks.node(x.action.label))
+        else if (x.action?.url && openUrl) { const b = el('button', 'nc-action', x.action.label); b.setAttribute('type', 'button'); b.addEventListener('click', () => openUrl(/** @type {string} */ (x.action?.url))); li.append(b) }
         else if (x.action) li.append(el('span', 'nc-action-hint', x.action.label))
         return li
       })))

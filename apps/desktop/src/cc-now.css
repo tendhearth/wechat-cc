@@ -31,6 +31,12 @@
 .now-connections .nc-capability .nc-action-hint { grid-column: 2; justify-self: start; margin-top: 4px; font-size: var(--th-size-small); }
 .now-connections .nc-action { padding: 3px 10px; border: 1px solid var(--th-hair); border-radius: 6px; background: transparent; color: var(--th-ink); cursor: pointer; }
 .now-connections .nc-action-hint { color: var(--th-ink-soft); }
+/* 接上终端里的 Claude Code / Codex(2026-10-14):按钮 → 一句确认 + 确定 / 取消 */
+.now-connections .nc-capability .hooks-action { grid-column: 2; margin-top: 4px; font-size: var(--th-size-small); }
+.hooks-action .hooks-confirm, .hooks-action .hooks-status, .hooks-action .hooks-error { margin: 0 0 6px; font-size: var(--th-size-small); line-height: 1.5; color: var(--th-ink-soft); }
+.hooks-action .hooks-error { color: var(--th-bad); }
+.hooks-action .hooks-buttons { display: flex; gap: 8px; flex-wrap: wrap; }
+.hooks-action .nc-action { padding: 3px 10px; border: 1px solid var(--th-hair); border-radius: 6px; background: transparent; color: var(--th-ink); cursor: pointer; font-size: var(--th-size-small); }
 .now-connections .dot { width: 8px; height: 8px; border-radius: 50%; background: var(--th-unknown); align-self: center; }
 .now-connections .dot.ok { background: var(--th-ok); }
 .now-connections .dot.warn { background: var(--th-warn); }
@@ -72,6 +78,16 @@
 .now-waiting-row .go { color: var(--th-ink-soft); font-size: var(--th-size-bubble); white-space: nowrap; }
 .now-waiting-row:hover .t, .now-waiting-row:focus-visible .t { color: var(--th-accent); }
 .now-waiting-row:focus-visible { outline: none; }
+/* 终端里等批准的会话(2026-10-14):整行不是按钮,只有「允许 / 拒绝」能按。 */
+.now-terminal-row { cursor: default; }
+.now-terminal-row:hover .t { color: var(--th-ink); }
+.now-terminal-actions { display: flex; align-items: center; gap: 8px; white-space: nowrap; }
+.now-terminal-decide { appearance: none; font: inherit; font-size: var(--th-size-meta); padding: 3px 12px; border: 1px solid var(--th-hair); border-radius: 6px; background: transparent; color: var(--th-ink); cursor: pointer; }
+.now-terminal-decide[data-decision="allow"] { border-color: var(--th-accent); color: var(--th-accent); }
+.now-terminal-decide:hover:not(:disabled), .now-terminal-decide:focus-visible { background: var(--th-hair); outline: none; }
+.now-terminal-decide:disabled { opacity: .5; cursor: default; }
+.now-terminal-note { color: var(--th-ink-soft); font-size: var(--th-size-meta); }
+.now-terminal-note:empty { display: none; }
 .now-back { appearance: none; border: 0; background: transparent; padding: 6px 0; font: inherit; cursor: pointer; align-self: flex-start; color: var(--th-ink-soft); font-size: var(--th-size-meta); }
 .now-back[hidden] { display: none; }
 .now-back:hover, .now-back:focus-visible { color: var(--th-ink); }

@@ -61,8 +61,15 @@ import { careLevel } from './companion/calibration'
 import { loadCompanionConfig } from './companion/config'
 import { makeSelfChangeGlue } from './self-change-glue'
 import { makeCliEventHub, makeProjectNamer } from '../core/cli-events'
+import { makeCliSessionStore } from '../core/cli-session-store'
 import { makeCliPermissionRelay } from '../core/cli-permission-relay'
 import { makeCliReplyHandler, makeCliReplyCore, makeHandReplyExecutor } from './cli-reply-handler'
+import { withReplyRefs } from '../core/cli-session-digest'
+import { makeOverseerTodaySource, TODAY_TERMINAL_LIMIT } from './overseer-today-source'
+import { makeTerminalHooksService } from './terminal-hooks'
+import { defaultTerminalHooksDeps } from '../cli/terminal-hooks'
+import { makeCliPhoneActions } from './cli-phone-actions'
+import { makeCliHubAppPush, makeCliPermissionAsk, type AppPushOutlet } from './cli-app-push'
 import { scopedSend } from './inbound/reply-scope'
 import { makeBrainForwarder } from './cli-brain-forward'
 import { makeRemoteReply } from './cli-remote-reply'
@@ -664,12 +671,16 @@ export async function bootDaemon(opts: BootDaemonOpts): Promise<DaemonHandle> {
     // 终端 claude / codex 会话的 hook 事件(spec 2026-09-09-cli-hook-push):压一段
     // 再推给主人,同会话再敲一句就撤。发到哪:与权限卡、A2A notify 同一个主人
     // chat;怎么发:boot.sendAssistantText(同一条外发,断线时它自己退避、这里不重试)。
+    // 手机 app 推送出口:pipeline-deps(wireMain)里才造,这里先占位、建完再接上(cli-app-push.ts)。
+    let cliAppPush: AppPushOutlet | null = null
     const cliEvents = makeCliEventHub({
       send: async (text) => {
         const owner = resolveAdminChatId(loadAccess(), loadCompanionConfig(stateDir), null)
         if (!owner || !boot.sendAssistantText) return 'no_target'
         return await boot.sendAssistantText(owner, text) ? 'sent' : 'rejected'
       },
+      // 第二个出口:同一批、同一套在场判断,微信拒了手机照样收到。
+      pushApp: makeCliHubAppPush({ push: () => cliAppPush, log: (t, l) => log(t, l) }),
       projectName: makeProjectNamer(() => ilink.projects.list()),
       log: (t, l) => log(t, l),
       // 在场的主信号:这台电脑上次键鼠输入距今多久。人在 ⇒ 系统通知;走了 ⇒ 微信。
@@ -682,19 +693,28 @@ export async function bootDaemon(opts: BootDaemonOpts): Promise<DaemonHandle> {
         return r.url
       },
       localMachine: osHostname(),
+      // 终端会话登记处(v76):状态落库,重启后「看 码」「@码」照样认得;GET /v1/cli/sessions、手机都读它。
+      store: makeCliSessionStore(db),
     })
     lc.register({ name: 'cli-events', stop: async () => cliEvents.dispose() })
     // 终端会话的权限 → 微信 y/n(同 spec §6.3)。复用 ilink.askUser,所以微信「y 码」、
     // 桌宠权限卡都能拍板 —— 一个权限,几个呈现面。主人在场(3 分钟内敲过字)就不问。
     const cliPermissions = makeCliPermissionRelay({
-      ask: (prompt, hash, ms) => {
-        const owner = resolveAdminChatId(loadAccess(), loadCompanionConfig(stateDir), null)
-        if (!owner) return Promise.resolve('undelivered' as const)
-        return ilink.askUser(owner, prompt, hash, ms)
-      },
+      // 先推手机、再发微信卡;手机够得着 ⇒ 微信卡没送到(errcode=-2)也不作废码,手机照样拍板。
+      ask: makeCliPermissionAsk({
+        ownerChatId: () => resolveAdminChatId(loadAccess(), loadCompanionConfig(stateDir), null),
+        askUser: (c, p, h, ms, o) => ilink.askUser(c, p, h, ms, o),
+        registerPending: (h, ms, meta) => ilink.registerPendingPermission(h, ms, meta),
+        sweepPending: () => ilink.sweepPendingPermissions(),
+        push: () => cliAppPush,
+        localMachine: osHostname(),
+        log: (t, l) => log(t, l),
+      }),
       presence: (s, idle) => cliEvents.presence(s, idle),
       projectName: makeProjectNamer(() => ilink.projects.list()),
       onRelayed: (s) => cliEvents.notePermissionRelay(s),
+      onAsked: (req) => cliEvents.permissionAsked(req),
+      onSettled: (s, status) => cliEvents.permissionSettled(s, status),
       log: (t, l) => log(t, l),
       localMachine: osHostname(),
     })
@@ -709,11 +729,31 @@ export async function bootDaemon(opts: BootDaemonOpts): Promise<DaemonHandle> {
       projectName: makeProjectNamer(() => ilink.projects.list()),
       log: (t, l) => log(t, l),
     }) : null
+    // 登记处列表 + 等批准那一项在微信里怎么回(中继开的 5 位码与卡片上的两位数码)。微信「终端」、
+    // GET /v1/cli/sessions(桌面「此刻」、CC 的只读工具 terminal_sessions)都读这一份。
+    let workbenchForToday: import('./overseer-today-source').TodayWorkbench | null = null
+    const cliSessionViews = (opts?: { includeEnded?: boolean; limit?: number }) =>
+      withReplyRefs(cliEvents.list(opts), (id) => cliPermissions.pendingHash(id), (h) => ilink.pendingPermissionCodeOf(h))
     internalApi.setCliEvents({
-      ingest: (ev) => forwarder?.brain() ? forwarder.event(ev) : cliEvents.ingest(ev),
+      // 转给脑的事件本机登记处也记一笔(observe 只记不推):这台机自己的列表也看得到。
+      ingest: (ev) => {
+        // 会话又有了动静(Stop / 新 prompt / 结束)⇒ 终端已自己答过,挂着的码作废(评审 10-15 #5)。
+        if (ev.kind === 'stop' || ev.kind === 'prompt' || ev.kind === 'session_end') cliPermissions.expireSession(ev.session_id)
+        if (!forwarder?.brain()) return cliEvents.ingest(ev)
+        cliEvents.observe(ev)
+        return forwarder.event(ev)
+      },
+      list: (opts) => cliSessionViews(opts),
     })
     internalApi.setCliPermissions({
-      open: async (req) => (forwarder?.brain() ? await forwarder.permissionOpen(req) : null) ?? cliPermissions.open(req),
+      open: async (req) => {
+        if (!forwarder?.brain()) return cliPermissions.open(req)
+        const fwd = await forwarder.permissionOpen(req)
+        if (!fwd) return cliPermissions.open(req)
+        // 只有脑那边真开了码才记 waiting;主人在场(owner_present)就留给终端,不挂「等你批准」(评审 10-15 #1)。
+        if (fwd.status === 'pending') cliEvents.permissionAsked(req)
+        return fwd
+      },
       status: (h) => cliPermissions.status(h),
       wait: (h, ms) => forwarder?.ownsHash(h) ? forwarder.permissionWait(h, ms) : cliPermissions.wait(h, ms),
     })
@@ -751,6 +791,19 @@ export async function bootDaemon(opts: BootDaemonOpts): Promise<DaemonHandle> {
       onPermissionWait: async (_agent, hash, waitMs) => ({ hash, status: await cliPermissions.wait(hash, waitMs) }),
       onReply: async (_agent, req) => handExecutor(req),
     })
+    // 「今天」一眼看完(2026-10-14):终端登记处 + 一起做,过去 24 小时。微信「日报」、GET /v1/overseer/today、
+    // 手机 /m/api/today 读同一个函数。工作台在下面才建 ⇒ 晚绑定(调用时它早已就绪)。只读,只在被问时算。
+    const overseerToday = makeOverseerTodaySource({
+      terminal: () => cliSessionViews({ includeEnded: true, limit: TODAY_TERMINAL_LIMIT }),
+      workbench: () => workbenchForToday,
+      localMachine: osHostname(),
+      log: (t, l) => log(t, l),
+    })
+    internalApi.setOverseerToday(overseerToday)
+    // 接上终端里的 Claude Code / Codex(2026-10-14):「CC 现在怎么样」那一行 + 桌面「接上」/「修复」的路由。
+    // 只在主人点了确认时写 hook 配置,绝不自动装。
+    const terminalHooks = makeTerminalHooksService({ deps: defaultTerminalHooksDeps, sessions: () => cliEvents.list({ includeEnded: true, limit: 500 }) })
+    internalApi.setCliHooks(terminalHooks)
     // 「看 码」「@码 文本」:主人对某条终端会话说话。只认主人;那边的会话 v1 先说明。
     const cliReplyHandler = makeCliReplyHandler({
       executionConflict,reserveExecution,
@@ -763,6 +816,8 @@ export async function bootDaemon(opts: BootDaemonOpts): Promise<DaemonHandle> {
       dangerously,
       networkGate: guardRt.gate,
       localMachine: osHostname(),
+      listSessions: () => cliSessionViews({ limit: 50 }),
+      today: overseerToday,
       ...(a2a ? { remote: makeRemoteReply({ registry: a2a.registry, client: a2a.client, selfId: boot.selfId }) } : {}),
     })
     // 「一件事」登记处:一份 store,工作台、微信入站、app 对话、内部 API 都用它(2026-09-16)。
@@ -777,11 +832,21 @@ export async function bootDaemon(opts: BootDaemonOpts): Promise<DaemonHandle> {
         (!!nativeId&&cliEvents.sessions().some(s=>s.source===providerId&&s.session_id===nativeId&&!!s.origin_agent)), askUser: ilink.askUser, log: (t,l) => log(t,l) })
     boot.sessionManager.setExecutionGuard((path,providerId,nativeId)=>workbench.conflictsExternal(path,providerId,nativeId))
     internalApi.setWorkbench(workbench)
+    workbenchForToday = workbench
     // 暂停在跑的任务(2026-10-03):health 的 guard 块 / `guard status` 列出被冻住的任务。
     guardRt.setSuspendedTasks(() => workbench.networkSuspended())
     lc.register({ name: 'workbench', stop: () => workbench.shutdown() })
     const wired = wireMain({
-      workbench, matters, guardRuntime: guardRt, subsystems: () => sup.statuses(),
+      workbench,
+      cliSessions: () => cliEvents.list({ limit: 50 }),
+      overseerToday,
+      terminalHooks,
+      // 手机拍板 / 说一句:拍板与微信「y/n 码」、桌宠权限卡同一份待批;说一句与微信「@码」同一个 core。
+      cliActions: makeCliPhoneActions({
+        hub: cliEvents, relay: cliPermissions, core: replyCore, localMachine: osHostname(), log: (t, l) => log(t, l),
+        resolve: (h, d) => { const ok = ilink.resolvePermission(h, d); if (ok) petSignals.noteContact(); return ok },
+      }),
+      matters, guardRuntime: guardRt, subsystems: () => sup.statuses(),
       panelTokens: internalApi.panelTokens,
       cliReply: cliReplyHandler,
       stickers: stickerLib,
@@ -811,6 +876,7 @@ export async function bootDaemon(opts: BootDaemonOpts): Promise<DaemonHandle> {
     // 同上,桌宠的「在做什么」—— 组装闭包在 pipeline-deps(那里才有 boot)。
     internalApi.setPetTurn(wired.petTurn)
     ticksRef = wired.ticks
+    cliAppPush = wired.appPush
     internalApi.setSettingsLink(wired.settingsPanelLink)
     internalApi.setConnections(wired.connections)
     internalApi.setPhoneConnect(wired.phoneConnect)

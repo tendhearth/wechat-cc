@@ -5,10 +5,13 @@
  * out of main.ts so the privileged surface lives in one auditable file.
  * Behavior verbatim from the original inline registrations.
  */
-import { z } from 'zod'
+import z from 'zod'   // 默认导入:vitest 下具名导入 z 是 undefined(同 tools-social.ts)
+import { hostname } from 'node:os'
 import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js'
 import type { InternalApiClient } from './client'
 import { passthroughErrorResult } from './tool-helpers'
+import { formatCliSessionDigest, type CliDigestView } from '../../core/cli-session-digest'
+import { formatOverseerToday, type OverseerToday } from '../../core/overseer-today'
 
 /** 本会话的 provider id —— daemon 在 spawn wechat-mcp 子进程时写进 env
  *  (mcp-specs.ts participantTag)。model_get/model_set 默认作用于它,这样
@@ -71,6 +74,47 @@ export function registerDaemonTools(server: McpServer, client: InternalApiClient
         return { content: [{ type: 'text', text: JSON.stringify(r) }] }
       } catch (err) {
         return passthroughErrorResult(err, 'diagnostic_health')
+      }
+    },
+  )
+
+  // 主人终端里的 Claude Code / Codex 会话(2026-10-14):与微信「终端」同一份列表、同一套措辞。只读。
+  server.registerTool(
+    'terminal_sessions',
+    {
+      title: 'Terminal agent sessions',
+      description: '【管理员】列出主人自己在终端里开的 Claude Code / Codex 会话：等你批准的在前（附怎么在微信里回 y/n），其余按最近动静排，带项目、状态（在跑 / 做完了 / 没动静了）、最后一句、会话码。主人问「我终端里那几个在干嘛」「哪个在等我」时用。只读：你不能替主人批权限，告诉他回「y 码 / n 码」，或「看 码」「@码 话」。',
+      inputSchema: {
+        limit: z.number().int().min(1).max(50).optional().describe('最多几条，默认 8'),
+      },
+    },
+    async ({ limit }) => {
+      try {
+        const r = await client.request<{ ok?: boolean; sessions?: CliDigestView[] }>('GET', '/v1/cli/sessions?limit=50')
+        const sessions = Array.isArray(r?.sessions) ? r.sessions : []
+        const text = formatCliSessionDigest(sessions, { now: Date.now(), localMachine: hostname(), max: limit ?? 8 })
+        return { content: [{ type: 'text', text }] }
+      } catch (err) {
+        return passthroughErrorResult(err, 'terminal_sessions')
+      }
+    },
+  )
+
+  // 「今天」一眼看完(2026-10-14):与微信「日报」同一份数据、同一套措辞。只读、确定性(不叫模型)。
+  server.registerTool(
+    'today_digest',
+    {
+      title: 'Today digest',
+      description: '【管理员】主人所有编码 agent 过去 24 小时的一眼看完：终端里的 Claude Code / Codex + CC 自己「一起做」的事，分成等你（附微信里怎么回）/ 做完 / 在跑 / 可能卡住（失败、中断、30 分钟没动静）。主人问「今天都做完了什么」「有什么等我的」「哪个卡住了」时用。只读：你不能替主人批权限。',
+      inputSchema: {},
+    },
+    async () => {
+      try {
+        const r = await client.request<{ ok?: boolean; today?: OverseerToday }>('GET', '/v1/overseer/today')
+        if (!r?.today) return { content: [{ type: 'text', text: '现在读不到今天的情况。' }], isError: true }
+        return { content: [{ type: 'text', text: formatOverseerToday(r.today, { now: Date.now() }) }] }
+      } catch (err) {
+        return passthroughErrorResult(err, 'today_digest')
       }
     },
   )

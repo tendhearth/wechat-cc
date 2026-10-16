@@ -253,6 +253,7 @@ the same treatment:
 
 ```bash
 wechat-cc hook install            # writes ~/.claude/settings.json + $CODEX_HOME/hooks.json (idempotent)
+wechat-cc hook install --cursor   # writes ~/.cursor/hooks.json (Cursor IDE agent + cursor-agent; only when named)
 wechat-cc hook status             # what's installed, which command line
 wechat-cc hook uninstall          # removes only wechat-cc's own entries
 ```
@@ -284,5 +285,17 @@ wechat-cc hook uninstall          # removes only wechat-cc's own entries
 Both CLIs speak the same hook contract (`Stop` / `UserPromptSubmit` /
 `SessionEnd` / `PermissionRequest`), so one implementation covers Claude Code
 and Codex. Design: `docs/superpowers/specs/2026-09-09-cli-hook-push-design.md`.
+
+**Cursor** (IDE agent and `cursor-agent`, labelled 「Cursor」) uses its own
+`~/.cursor/hooks.json` contract: `stop` / `beforeSubmitPrompt` / `sessionEnd`
+are events (session id = `conversation_id`, project = `workspace_roots[0]`; the
+last assistant line is read from `transcript_path`). For now CC only *watches*
+Cursor: `beforeShellExecution` / `beforeMCPExecution` are **not** installed,
+because they fire for every command (not just the ones Cursor would ask about)
+and answering `ask` without a decision would switch off Cursor's own auto-run.
+The relay code for them (allow/deny from WeChat, `ask` otherwise, never an
+automatic allow) is kept and will be enabled once checked on a real Cursor. `@<code>` resumes with `cursor-agent --resume=<id> -p --trust`
+(`--force` only under `--dangerously`); because the session's model isn't
+known, the network guard treats a Cursor resume as needing protection.
 
 ---

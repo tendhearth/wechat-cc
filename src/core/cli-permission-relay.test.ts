@@ -106,3 +106,87 @@ describe('formatCliPermissionPrompt', () => {
     expect((await relay.open(req({ idle_s: 900 }))).status).toBe('pending')
   })
 })
+
+describe('CliPermissionRelay → 终端会话登记处(v76)', () => {
+  beforeEach(() => { vi.useFakeTimers() })
+  afterEach(() => { vi.useRealTimers() })
+
+  it('onAsked 只在真开了码时报(主人在场 ⇒ 不报);拍板后 onSettled 带会话 id 与结果', async () => {
+    const asked: string[] = []
+    const settled: [string, string][] = []
+    const mk = (presence: 'present' | 'away') => makeCliPermissionRelay({
+      ask: () => new Promise((resolve) => { setTimeout(() => resolve('deny'), 500) }),
+      presence: async () => presence,
+      projectName: (c) => c,
+      onRelayed: () => {},
+      onAsked: (r) => asked.push(r.session_id),
+      onSettled: (s, st) => settled.push([s, st]),
+      log: () => {},
+    })
+    expect(await mk('present').open(req({ session_id: 'here-1' }))).toEqual({ status: 'owner_present' })
+    const relay = mk('away')
+    const r = await relay.open(req({ session_id: 'away-1' }))
+    expect(r.status).toBe('pending')
+    expect(asked).toEqual(['away-1'])
+    await vi.advanceTimersByTimeAsync(500)
+    expect(settled).toEqual([['away-1', 'deny']])
+    relay.dispose()
+  })
+
+  it('onAsked / onSettled 抛错不影响中继', async () => {
+    const relay = makeCliPermissionRelay({
+      ask: async () => 'allow', presence: async () => 'away', projectName: (c) => c, onRelayed: () => {}, log: () => {},
+      onAsked: () => { throw new Error('db gone') }, onSettled: () => { throw new Error('db gone') },
+    })
+    const r = await relay.open(req())
+    await vi.advanceTimersByTimeAsync(0)
+    expect(relay.status((r as { hash: string }).hash)).toBe('allow')
+    relay.dispose()
+  })
+})
+
+describe('CliPermissionRelay.expireSession(评审 10-15 #5)', () => {
+  beforeEach(() => { vi.useFakeTimers() })
+  afterEach(() => { vi.useRealTimers() })
+
+  it('会话又有了动静 ⇒ 挂着的码以 timeout 落定,手机再拍就不是「自己的」了', async () => {
+    const settled: [string, string][] = []
+    const relay = makeCliPermissionRelay({
+      ask: () => new Promise(() => {}), presence: async () => 'away', projectName: (c) => c, onRelayed: () => {}, log: () => {},
+      onSettled: (s, st) => settled.push([s, st]),
+    })
+    const a = await relay.open(req({ session_id: 'sess-a' })) as { hash: string }
+    const b = await relay.open(req({ session_id: 'sess-b' })) as { hash: string }
+    relay.expireSession('sess-a')
+    expect(relay.owns(a.hash)).toBe(false)
+    expect(relay.status(a.hash)).toBe('timeout')
+    expect(relay.pendingHash('sess-a')).toBeNull()
+    expect(relay.owns(b.hash)).toBe(true)
+    expect(settled).toEqual([['sess-a', 'timeout']])
+    relay.expireSession('sess-a')   // 幂等
+    expect(settled).toHaveLength(1)
+    relay.dispose()
+  })
+})
+
+describe('CliPermissionRelay.pendingHash / owns(手机拍板,2026-10-14)', () => {
+  beforeEach(() => { vi.useFakeTimers() })
+  afterEach(() => { vi.useRealTimers() })
+
+  it('开了码 ⇒ 按会话找得到、owns 认;拍完 / 在场没开码 ⇒ 都没有', async () => {
+    const { relay } = harness({ answer: 'allow', answerAfterMs: 1000 })
+    const r = await relay.open(req({ session_id: 'away-1' }))
+    const hash = (r as { hash: string }).hash
+    expect(relay.pendingHash('away-1')).toBe(hash)
+    expect(relay.owns(hash)).toBe(true)
+    expect(relay.owns('zzzzz')).toBe(false)
+    expect(relay.pendingHash('other')).toBeNull()
+    await vi.advanceTimersByTimeAsync(1000)
+    expect(relay.pendingHash('away-1')).toBeNull()
+    expect(relay.owns(hash)).toBe(false)
+    const here = harness({ presence: 'present' }).relay
+    await here.open(req({ session_id: 'here-1' }))
+    expect(here.pendingHash('here-1')).toBeNull()
+    relay.dispose(); here.dispose()
+  })
+})

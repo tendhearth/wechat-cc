@@ -52,6 +52,52 @@ describe('mountNowPage', () => {
     expect(row.querySelector('.d')!.textContent).toBe('作品集')
     expect(row.querySelector('.go')!.textContent).toBe('回答 ›')
   })
+  it('终端里等批准的会话接在工作台行后面;开了码给允许 / 拒绝,按下走 onResolveTerminal 且不打开任务', async () => {
+    const root = dom(); const open = vi.fn()
+    let settle!: (v: boolean) => void
+    const resolve = vi.fn(() => new Promise<boolean>(r => { settle = r }))
+    const page = mountNowPage({ root, presencePoller: poller(), onOpenTask: open, onResolveTerminal: resolve })
+    page.setAttention({ stale: false, tasks: [{ id: 'a', title: '作品集', providerId: 'c', pendingPermissionCount: 1, pendingQuestionCount: 0, attentionKey: '["r"]' }] } as any)
+    page.setTerminal([
+      { id: 's1', title: 'Bash: npm publish', detail: 'wechat-cc · 终端 · Claude Code · 码 ab12c3', hash: 'k3x9z' },
+      { id: 's2', title: '要改 <b>x</b>', detail: 'melu · 终端 · Codex · 码 cd34e5 · 回终端处理', hash: null },
+    ])
+    expect(document.getElementById('now-waiting-title')!.textContent).toBe('3 件事等你')
+    const items = document.querySelectorAll('#now-waiting-list > li')
+    expect(items.length).toBe(3)
+    const [t1, t2] = [...document.querySelectorAll<HTMLElement>('.now-terminal')]
+    expect(t1!.querySelectorAll('button').length).toBe(2)
+    expect(t2!.querySelectorAll('button').length).toBe(0)
+    expect(t2!.querySelector('b')).toBeNull()
+    ;(t1!.querySelector('[data-decision="allow"]') as HTMLButtonElement).click()
+    expect(resolve).toHaveBeenCalledWith('k3x9z', 'allow')
+    expect(open).not.toHaveBeenCalled()
+    // 送出途中重绘(工作台每 3 秒一拍)不把按钮放出来
+    page.setAttention({ stale: false, tasks: [] } as any)
+    expect((document.querySelector('.now-terminal[data-hash="k3x9z"] [data-decision="allow"]') as HTMLButtonElement).disabled).toBe(true)
+    settle(true); await new Promise(r => setTimeout(r, 0))
+    expect(document.querySelector('.now-terminal[data-hash="k3x9z"] .now-terminal-note')!.textContent).toBe('已允许')
+    expect(document.querySelectorAll('.now-terminal[data-hash="k3x9z"] button').length).toBe(0)
+    page.setTerminal([]); expect(document.getElementById('now-waiting')!.hidden).toBe(true)
+  })
+  it('终端拍板没送出去 ⇒ 按钮回来 + 说再试;那一项已不在 ⇒ 说处理过了;没有 onResolveTerminal ⇒ 不给按钮', async () => {
+    const root = dom()
+    const resolve = vi.fn().mockRejectedValueOnce(new Error('403')).mockResolvedValueOnce(false)
+    const page = mountNowPage({ root, presencePoller: poller(), onOpenTask: vi.fn(), onResolveTerminal: resolve })
+    page.setTerminal([{ id: 's1', title: 'Bash', detail: 'd', hash: 'k3x9z' }])
+    ;(document.querySelector('[data-decision="deny"]') as HTMLButtonElement).click()
+    await new Promise(r => setTimeout(r, 0))
+    expect(document.querySelector('.now-terminal-note')!.textContent).toBe('没送出去，再试一次')
+    expect((document.querySelector('[data-decision="deny"]') as HTMLButtonElement).disabled).toBe(false)
+    ;(document.querySelector('[data-decision="deny"]') as HTMLButtonElement).click()
+    await new Promise(r => setTimeout(r, 0))
+    expect(document.querySelector('.now-terminal-note')!.textContent).toBe('这一项已经处理过了')
+    const root2 = dom()
+    const page2 = mountNowPage({ root: root2, presencePoller: poller(), onOpenTask: vi.fn() })
+    page2.setTerminal([{ id: 's1', title: 'Bash', detail: 'd', hash: 'k3x9z' }])
+    expect(document.querySelectorAll('.now-terminal button').length).toBe(0)
+    void page
+  })
   it('escapes task titles', () => {
     const root = dom(); const page = mountNowPage({ root, presencePoller: poller(), onOpenTask: vi.fn() })
     page.setAttention({ stale: false, tasks: [{ id: 'x', title: '<img src=x onerror=1>', providerId: 'c', pendingPermissionCount: 1, pendingQuestionCount: 0, attentionKey: '["r"]' }] } as any)

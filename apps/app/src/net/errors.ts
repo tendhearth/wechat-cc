@@ -1,12 +1,12 @@
 import type { BackendCode } from '../backend/types'
 
-const STALE = new Set(['permission_stale', 'question_stale'])
+const STALE = new Set(['permission_stale', 'question_stale', 'cli_permission_stale'])
 /** daemon 的 409:这件事这一轮还在跑 / 上一条补充还没交付 / 会话正在回话。请求内容冲突另说,不能当排队。 */
-const BUSY = new Set(['workbench_busy', 'input_delivery_busy', 'reply_sink_busy', 'chat_busy'])
+const BUSY = new Set(['workbench_busy', 'input_delivery_busy', 'reply_sink_busy', 'chat_busy', 'cli_session_busy'])
 /** 找不到:事项不在 / 还没有主人那条对话(页面当空对话)/ 原生会话读不了。 */
 const NOT_FOUND = new Set(['matter_not_found', 'no_owner_chat', 'unsupported', 'not_found'])
 /** daemon 这一块没接上(503):推送 / 跟 CC 说 / 连接 / 原生会话。 */
-const UNAVAILABLE = new Set(['push_not_wired', 'chat_not_wired', 'connections_not_wired', 'sessions_not_wired', 'voice_not_wired'])
+const UNAVAILABLE = new Set(['push_not_wired', 'chat_not_wired', 'connections_not_wired', 'sessions_not_wired', 'voice_not_wired', 'cli_sessions_not_wired', 'cli_actions_not_wired'])
 /** 接着做电脑上的会话(spec 2026-10-01-tendhearth-continue-sessions D11):各有各的一句话,不能都说「没送到」。
  *  必须在 `invalid_` 前缀规则之前判(invalid_path ⇒ folder_missing)。后三个(裁决 R5):会话刚变(可重问预览再接)、
  *  没内容可带、已经接过了(不是错:页面重问预览、打开那件事)。 */
@@ -26,6 +26,8 @@ const SPECIFIC: ReadonlyMap<string, BackendCode> = new Map<string, BackendCode>(
   // 带图的一句 / 新事(2026-10-06):电脑上那几份暂存不在了(过期 / 已被用掉 / 不是这台手机传的)⇒ 请重新选图;
   // 电脑太旧、对话还不收图 ⇒ 说清楚要先更新电脑。必须在 `invalid_` 前缀规则之前判。
   ['invalid_attachment', 'images_gone'], ['images_not_supported', 'images_unsupported'],
+  // 终端里的会话(2026-10-14):终端自己在问(主人在电脑前,没开码)/ 会话已结束 / 在别的电脑上(手机这口 v1 不转)。
+  ['cli_not_actionable', 'cli_not_actionable'], ['cli_session_ended', 'cli_ended'], ['cli_session_remote', 'cli_remote'],
 ])
 const errOf = (body: unknown): string | null => {
   if (typeof body !== 'object' || body === null) return null
