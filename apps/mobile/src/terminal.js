@@ -1,7 +1,7 @@
 // 终端里的会话(2026-10-14):主人在 CC 外面开的 Claude Code / Codex,和 CC 自己的事并排放在「一起做」。
-// 等你批准且电脑在微信里开了码 ⇒ 这里能允许 / 拒绝(同微信「y/n 码」);歇着的能接着说一句(同微信「@码」),
+// 等你批准且电脑在微信里开了码 ⇒ 点开这一行能允许 / 拒绝(同微信「y/n 码」;列表行上只有「看清楚 ›」);歇着的能接着说一句(同微信「@码」),
 // 结果会成为它的「最后一句」。没有推送主题:看得见时每 15 秒拉一次。
-var tm = { active:false, rows:[], open:null, busy:{}, note:{}, timer:0, seq:0 }
+var tm = { active:false, rows:[], open:null, reveal:null, busy:{}, note:{}, timer:0, seq:0 }
 var TM_STATUS = { waiting:'等你批准', running:'在跑', idle:'歇着', ended:'结束了' }
 var TM_POLL_MS = 15000
 var TM_SAY_MAX = 4000
@@ -25,24 +25,36 @@ function tmRequest(path,opts){
 function tmPaint(){
   var root=tmEl('root'),list=tmEl('list')
   root.hidden=tm.rows.length===0
+  // 一行只有一个动作:点开 / 收起。能拍的那行写「看清楚 ›」;允许 / 拒绝只在展开后的详情里(看清楚了再拍)。
   list.innerHTML=tm.rows.map(function(r){
-    var id=esc(r.session_id),open=tm.open===r.session_id,busy=!!tm.busy[r.session_id],note=tm.note[r.session_id]||''
+    var id=esc(r.session_id),open=tm.open===r.session_id,busy=!!tm.busy[r.session_id],note=tm.note[r.session_id]||'',actionable=tmActionable(r)
     var pending=r.status==='waiting'&&r.pending?(r.pending.summary?r.pending.tool+': '+r.pending.summary:r.pending.tool):''
     var h='<div class="terminal-row" data-tm-row="'+id+'">'
       +'<button type="button" class="terminal-head" data-tm-open="'+id+'" aria-expanded="'+open+'"><strong>'+esc(r.project)+'</strong>'
       +'<small><span class="terminal-dot is-'+esc(r.status)+'" aria-hidden="true"></span>'+esc(TM_STATUS[r.status])+' · '+esc(tmSource(r.source))+' · '+esc(r.stale?'有一阵没动静了':tmAgo(r.last_event_at))+'</small>'
-      +(pending?'<span class="terminal-pending">'+esc(pending)+'</span>':r.last_summary&&!open?'<span class="terminal-summary">'+esc(r.last_summary)+'</span>':'')+'</button>'
-    if(tmActionable(r))h+='<div class="terminal-actions"><button type="button" class="sessions-primary" data-tm-decide="allow" data-tm-id="'+id+'"'+(busy?' disabled':'')+'>允许</button><button type="button" class="sessions-text-action" data-tm-decide="deny" data-tm-id="'+id+'"'+(busy?' disabled':'')+'>拒绝</button></div>'
-    else if(r.status==='waiting')h+='<p class="terminal-note">正在终端里问，回电脑上答。</p>'
+      +(pending?'<span class="terminal-pending">'+esc(pending)+'</span>':r.last_summary&&!open?'<span class="terminal-summary">'+esc(r.last_summary)+'</span>':'')
+      +(actionable&&!open?'<span class="terminal-review">看清楚 ›</span>':'')+'</button>'
+    if(r.status==='waiting'&&!actionable)h+='<p class="terminal-note">正在终端里问，回电脑上答。</p>'
     if(open){
       var canSay=r.status==='idle'
-      h+='<div class="terminal-detail"><p class="terminal-label">最后一句</p><p class="terminal-last">'+esc(r.last_summary||'还没有回复')+'</p>'
-        +(canSay?'':'<p class="terminal-note">它还在跑，这一轮做完再说下一句。</p>')
+      h+='<div class="terminal-detail">'
+      if(actionable)h+='<div class="terminal-actions"><button type="button" class="sessions-primary" data-tm-decide="allow" data-tm-id="'+id+'"'+(busy?' disabled':'')+'>允许</button><button type="button" class="sessions-text-action" data-tm-decide="deny" data-tm-id="'+id+'"'+(busy?' disabled':'')+'>拒绝</button></div>'
+      h+='<p class="terminal-label">最后一句</p><p class="terminal-last">'+esc(r.last_summary||'还没有回复')+'</p>'
+        +(canSay?'':'<p class="terminal-note">'+(r.status==='waiting'?'它在等你批准，先拍板再说下一句。':'它还在跑，这一轮做完再说下一句。')+'</p>')
         +'<textarea id="terminal-say-'+id+'" rows="2" maxlength="'+TM_SAY_MAX+'" placeholder="接下来让它做什么…"'+(canSay?'':' disabled')+'></textarea>'
         +'<button type="button" class="sessions-primary" data-tm-say="'+id+'"'+(canSay&&!busy?'':' disabled')+'>发送</button></div>'
     }
     return h+(note?'<p class="terminal-note" role="status">'+esc(note)+'</p>':'')+'</div>'
   }).join('')
+  if(tm.reveal){var want=tm.reveal,row=/** @type {HTMLElement|undefined} */(Array.prototype.find.call(list.querySelectorAll('[data-tm-row]'),function(/** @type {HTMLElement} */ e){return e.dataset.tmRow===want}));if(row){tm.reveal=null;if(row.scrollIntoView)row.scrollIntoView({block:'start'})}}
+}
+// 别处(此刻)点一条终端会话 ⇒ 到「一起做」并展开那一条。列表还没拉到时先记着,拉到后展开并滚过去。
+function tmOpenSession(id){
+  if(typeof id!=='string'||!id)return
+  // 一件事的详情开着时终端列表是藏起来的 ⇒ 先回到全部。
+  var detail=document.getElementById('m-detail'),back=document.getElementById('m-back')
+  if(detail&&!detail.hidden&&back)back.click()
+  tm.open=id;tm.reveal=id;tmPaint()
 }
 function tmLoad(){
   if(!tm.active||document.hidden)return Promise.resolve()

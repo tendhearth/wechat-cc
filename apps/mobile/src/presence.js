@@ -40,7 +40,7 @@ function renderPresenceHome(s,stale) {
     card.innerHTML='<summary>CC 留给你一张明信片 · '+esc(CCM.markdownPlainText(postcard.title))+'</summary><div>'+postcard.ref.image_svg+'</div><p>'+esc(CCM.markdownPlainText(postcard.note||''))+'</p>'
     result.appendChild(card)
   }
-  document.getElementById('home-context').textContent=stale?'这是上次留下的画面，当前活动尚未确认。':s.presence&&s.presence.presence==='ok'?'你可以在这里陪它一会儿。':'有些连接状态还需要确认。'
+  document.getElementById('home-context').textContent=stale?'这是上次留下的画面，当前活动尚未确认。':s.presence&&s.presence.presence==='ok'?'':'有些连接状态还需要确认。'
 }
 document.getElementById('home-entry').addEventListener('click',function(){void openEntry()})
 var homeCharacter = document.querySelector(".home-character")

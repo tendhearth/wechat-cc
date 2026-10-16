@@ -15,7 +15,8 @@ const hexes = (s: string) => new Set((s.toLowerCase().match(/#[0-9a-f]{6}\b/g) ?
 describe('one design language across the owner-facing web pages', () => {
   it('tokens define the palette, radii and fonts', () => {
     expect(MOBILE_TOKENS_CSS).toContain(renderTokensCss())
-    for (const v of ['--paper:#f9f7f1', '--ink:#483f35', '--soft:#7e7365', '--accent:#735b3e', '--line:#e5dfd3', '--r-m:14px', '--hand:'])
+    // 旧变量名一律指向 --th-*(与桌面、手机 app 同一套,2026-10-16):一个强调色、全衬线。
+    for (const v of ['--paper:var(--th-paper)', '--ink:var(--th-ink)', '--soft:var(--th-ink-soft)', '--accent:var(--th-accent)', '--line:var(--th-hair)', '--font:var(--th-font-serif)', '--r-m:14px', '--hand:'])
       expect(MOBILE_TOKENS_CSS.replace(/\s+/g, '')).toContain(v.replace(/\s+/g, ''))
   })
   it.each([
@@ -26,7 +27,8 @@ describe('one design language across the owner-facing web pages', () => {
   ])('%s uses the tokens and none of the legacy colours', (_name, render) => {
     const html = render().toLowerCase()
     for (const c of LEGACY) expect(html, c).not.toContain(c)
-    expect(html).toContain('--paper:#f9f7f1')
+    expect(html).toContain('--paper:var(--th-paper)')
+    expect(html).not.toContain('#735b3e')
   })
   it('the relay shell page only uses token colours', () => {
     const shell = readFileSync(new URL('../../relay/pset.html', import.meta.url), 'utf8')
@@ -47,6 +49,17 @@ describe('one design language across the owner-facing web pages', () => {
       const src = readFileSync(new URL(f, dir), 'utf8')
       expect(src.match(/border-radius:\s*\d+px/g) ?? [], f).toEqual([])
     }
+  })
+  it('phone page sources: no heavy weights (≤500), b/strong/headings capped, section headings not painted accent', () => {
+    const dir = new URL('../../apps/mobile/src/', import.meta.url)
+    for (const f of readdirSync(dir).filter(n => /\.(css|html|js)$/.test(n) && !n.includes('generated'))) {
+      const src = readFileSync(new URL(f, dir), 'utf8')
+      expect((src.match(/font-weight:\s*(\d+|bold|bolder)/g) ?? []).filter(w => !/:\s*[1-5]00$/.test(w)), f).toEqual([])
+    }
+    const phone = readFileSync(new URL('phone.html', dir), 'utf8')
+    expect(phone).toMatch(/b, strong, h1, h2, h3, h4, th \{ font-weight:500 \}/)
+    expect(phone).not.toMatch(/\.grp \{[^}]*color:var\(--accent\)/)
+    expect(phone).not.toMatch(/nav button\.on \{[^}]*color:var\(--accent\)/)
   })
   it('the CC entry is keyboard-friendly and themed on focus', () => {
     const presence = readFileSync(new URL('../../apps/mobile/src/presence.js', import.meta.url), 'utf8')

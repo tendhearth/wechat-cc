@@ -1,6 +1,8 @@
 // 「今天」(2026-10-14,GET /m/api/today):CC 统管的所有执行者过去 24 小时的几个数 + 最近做完的三件,
 // 与微信「日报」同一份数据。只在「此刻」看得见时拉,每 15 秒再拉一次;只读,不让电脑主动发任何东西。
-// 点一行:一起做的事 ⇒ 打开那件;终端会话 ⇒ 到「一起做」里的终端列表。老电脑没有这条路由 ⇒ 整段不显示。
+// 点一行:一起做的事 ⇒ 打开那件;终端会话 ⇒ 到「一起做」并展开那一条。老电脑没有这条路由 ⇒ 整段不显示。
+// 等你的不在「过去 24 小时」里数(同一个数不出现两次):终端里等你批准、手机拍得了的那几条(有码 = replyRef)
+// 直接列在此刻的等你的事下面,和手机 app 一样;一起做里等你的由上面那张卡(presence.js)管。
 var td = { active:true, timer:0, seq:0, data:null }
 var TD_POLL_MS = 15000
 var TD_DONE_ROWS = 3
@@ -10,16 +12,29 @@ function tdValid(t){return t&&t.counts&&typeof t.counts.done==='number'&&Array.i
 function tdPaint(){
   var root=tdEl('root'),t=td.data
   if(!root)return
-  var c=t&&t.counts,total=c?c.needsYou+c.done+c.running+c.stuck:0
+  tdPaintWaiting(t)
+  var c=t&&t.counts,total=c?c.done+c.running+c.stuck:0
   if(!t||(total===0&&!t.unavailable.length)){root.hidden=true;return}
   root.hidden=false
-  var counts=[c.needsYou+' 件等你',c.done+' 件做完',c.running+' 件在跑'].concat(c.stuck?[c.stuck+' 件可能卡住']:[]).join(' · ')
+  // 是 0 的不写;等你的不在这里数。
+  var counts=[].concat(c.done?[c.done+' 件做完']:[],c.running?[c.running+' 件在跑']:[],c.stuck?[c.stuck+' 件可能卡住']:[]).join(' · ')
   tdEl('counts').textContent=counts
+  tdEl('counts').hidden=!counts
   tdEl('partial').hidden=!t.unavailable.length
   tdEl('list').innerHTML=t.done.slice(0,TD_DONE_ROWS).map(function(i){
     var title=(i.source==='together'?(i.title||i.project):i.project)||i.agent
     return '<button type="button" class="today-row" data-td-source="'+esc(i.source)+'" data-td-id="'+esc(i.id)+'"><strong>'+esc(title)+'</strong>'
       +'<small>'+esc(i.agent)+(i.summary?' · '+esc(i.summary):'')+' · '+esc(tdAgo(i.at))+'</small></button>'
+  }).join('')
+}
+function tdPaintWaiting(t){
+  var slot=tdEl('waiting')
+  if(!slot)return
+  var needs=t&&Array.isArray(t.needsYou)?t.needsYou.filter(function(n){return n&&n.source==='terminal'&&typeof n.id==='string'&&typeof n.replyRef==='string'}):[]
+  slot.hidden=needs.length===0
+  slot.innerHTML=needs.map(function(n){
+    return '<button type="button" class="today-row today-need" data-td-source="terminal" data-td-id="'+esc(n.id)+'"><span class="today-need-text"><strong>'+esc(n.summary||n.project||n.agent)+'</strong>'
+      +'<small>等你批准 · '+esc(n.project||'')+' · '+esc(n.agent)+'</small></span><span class="today-need-go">看清楚 ›</span></button>'
   }).join('')
 }
 function tdLoad(){
@@ -33,12 +48,15 @@ function tdLoad(){
 }
 function tdSchedule(){clearTimeout(td.timer);if(td.active&&!document.hidden)td.timer=setTimeout(function(){tdLoad().finally(tdSchedule)},TD_POLL_MS)}
 tdEl('counts-open').addEventListener('click',function(){mobilePane('matters')})
-tdEl('list').addEventListener('click',function(ev){
+function tdOpenRow(ev){
   var t=/** @type {Element} */(ev.target),b=/** @type {HTMLElement|null} */(t.closest('[data-td-id]'))
   if(!b)return
   mobilePane('matters')
   if(b.dataset.tdSource==='together'&&/^[a-f0-9]{8}$/.test(b.dataset.tdId||''))openMatter(b.dataset.tdId)
-})
+  else if(b.dataset.tdSource==='terminal'&&typeof tmOpenSession==='function')tmOpenSession(b.dataset.tdId)
+}
+tdEl('list').addEventListener('click',tdOpenRow)
+tdEl('waiting').addEventListener('click',tdOpenRow)
 document.addEventListener('cc:pane',function(event){
   td.active=/** @type {CustomEvent} */(event).detail.pane==='today'
   if(td.active){tdLoad();tdSchedule()}else{clearTimeout(td.timer);td.seq++}

@@ -77,30 +77,6 @@ export default function Now() {
             </Pressable>
           </View>
         </View>
-        {today ? (
-          <View testID="now-today">
-            <Pressable testID="now-today-counts" accessibilityRole="button" accessibilityLabel={`${t(lang, 'today.title')}: ${today.counts}. ${t(lang, 'today.openAll')}`} onPress={() => router.push('/together')}
-              style={({ pressed }) => ({ gap: 2, marginBottom: space.s, opacity: pressed ? 0.7 : 1 })}>
-              <Txt role="meta" tone="inkSoft" accessibilityRole="header">{t(lang, 'today.title')}</Txt>
-              <Txt role="item">{today.counts}</Txt>
-              {today.partial ? <Txt testID="now-today-partial" role="caption" tone="inkSoft">{t(lang, 'today.partial')}</Txt> : null}
-            </Pressable>
-            {today.done.length ? (
-              <View style={{ borderTopWidth: 1, borderTopColor: c.hair }}>
-                {today.done.map(r => (
-                  <Pressable key={r.key} testID={`now-today-${r.key}`} accessibilityRole="button" onPress={() => router.push(r.href)}
-                    style={({ pressed }) => ({ flexDirection: 'row', alignItems: 'center', gap: space.l, minHeight: 56, paddingVertical: space.m, paddingHorizontal: space.xs, borderBottomWidth: 1, borderBottomColor: c.hair, opacity: pressed ? 0.7 : 1 })}>
-                    <View style={{ flex: 1, gap: 2 }}>
-                      <Txt role="item" content="user" numberOfLines={1}>{r.title}</Txt>
-                      <Txt role="meta" tone="inkSoft" content="user" numberOfLines={1}>{r.sub}</Txt>
-                    </View>
-                    <Txt role="caption" tone="inkSoft">{r.ago}</Txt>
-                  </Pressable>
-                ))}
-              </View>
-            ) : null}
-          </View>
-        ) : null}
         {v.waitingUnknown ? (
           <Txt testID="now-waiting-unknown" role="meta" tone="inkSoft">{t(lang, 'now.waitingUnknown')}</Txt>
         ) : null}
@@ -131,6 +107,31 @@ export default function Now() {
                 </Pressable>
               ))}
             </View>
+          </View>
+        ) : null}
+        {/* 过去 24 小时放在等你的事下面:先管要你管的,再看做了什么;等你的数不在这里重复。 */}
+        {today ? (
+          <View testID="now-today">
+            <Pressable testID="now-today-counts" accessibilityRole="button" accessibilityLabel={`${t(lang, 'today.title')}: ${today.counts}. ${t(lang, 'today.openAll')}`} onPress={() => router.push('/together')}
+              style={({ pressed }) => ({ gap: 2, marginBottom: space.s, opacity: pressed ? 0.7 : 1 })}>
+              <Txt role="meta" tone="inkSoft" accessibilityRole="header">{t(lang, 'today.title')}</Txt>
+              {today.counts ? <Txt role="item">{today.counts}</Txt> : null}
+              {today.partial ? <Txt testID="now-today-partial" role="caption" tone="inkSoft">{t(lang, 'today.partial')}</Txt> : null}
+            </Pressable>
+            {today.done.length ? (
+              <View style={{ borderTopWidth: 1, borderTopColor: c.hair }}>
+                {today.done.map(r => (
+                  <Pressable key={r.key} testID={`now-today-${r.key}`} accessibilityRole="button" onPress={() => router.push(r.href)}
+                    style={({ pressed }) => ({ flexDirection: 'row', alignItems: 'center', gap: space.l, minHeight: 56, paddingVertical: space.m, paddingHorizontal: space.xs, borderBottomWidth: 1, borderBottomColor: c.hair, opacity: pressed ? 0.7 : 1 })}>
+                    <View style={{ flex: 1, gap: 2 }}>
+                      <Txt role="item" content="user" numberOfLines={1}>{r.title}</Txt>
+                      <Txt role="meta" tone="inkSoft" content="user" numberOfLines={1}>{r.sub}</Txt>
+                    </View>
+                    <Txt role="caption" tone="inkSoft">{r.ago}</Txt>
+                  </Pressable>
+                ))}
+              </View>
+            ) : null}
           </View>
         ) : null}
       </ScrollView>

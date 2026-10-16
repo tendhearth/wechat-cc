@@ -1,6 +1,6 @@
 #entry-root{margin:22px 0 18px;scroll-margin-top:24px}
 .entry-card{padding:20px;background:var(--card);border:1px solid var(--line);border-radius:var(--r-l)}
-.entry-heading{display:block;font-size:1.14rem;font-weight:650;letter-spacing:.02em;color:var(--ink)}
+.entry-heading{display:block;font-size:1.14rem;font-weight:500;letter-spacing:.02em;color:var(--ink)}
 .entry-intro{margin:7px 0 15px;color:var(--soft);font-size:.93rem;line-height:1.6}
 #entry-text{display:block;box-sizing:border-box;width:100%;min-height:104px;resize:vertical;border:1px solid var(--line);border-radius:var(--r-s);padding:12px;background:var(--paper);color:var(--ink);font:inherit;line-height:1.65}
 #entry-text::placeholder{color:var(--soft)}
