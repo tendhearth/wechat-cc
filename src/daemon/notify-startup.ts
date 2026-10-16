@@ -31,7 +31,7 @@ const UNPLANNED_HISTORY_FILE = 'unplanned-restarts.json'
 /** 老版本的「补发」队列。新规矩不补发,开机见到就删。 */
 const LEGACY_PENDING_FILE = 'pending-notify.json'
 
-export const WARM_FIRST_STARTUP_TEXT = '我上线啦 👋 直接跟我说话就行;想看我能干嘛,发 /help。'
+export const WARM_FIRST_STARTUP_TEXT = '我上线啦。直接跟我说话就行;想看我能干嘛,发 /help。'
 
 export interface RestartNoticeSettings {
   /** false ⇒ 意外重启也不说(首次问候不受影响)。 */

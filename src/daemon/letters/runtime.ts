@@ -199,7 +199,7 @@ export function makeLetterRuntime(d: LetterDeps): LetterRuntime {
     try {
       if (p.pages.length) for (const page of p.pages) await d.sendFile(owner, page)
       else {
-        const r = await d.sendText(owner, `(一封信)\n\n${p.text}`)
+        const r = await d.sendText(owner, `（一封信）\n\n${p.text}`)
         if (r.error) throw new Error(r.error)
       }
     } catch (e) {

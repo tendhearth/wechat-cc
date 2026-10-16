@@ -579,7 +579,7 @@ describe('makeModeCommands', () => {
     const consumed = await cmds.handle(inbound('/agy'))
     expect(consumed).toBe(true)
     expect(set).not.toHaveBeenCalled()
-    expect(sentMessages[0]?.[1]).toBe('❌ /agy 目前仅管理员/信任聊天可用（工具通道暂无法按会话隔离权限）。')
+    expect(sentMessages[0]?.[1]).toBe('/agy 目前仅管理员/信任聊天可用（工具通道暂无法按会话隔离权限）。')
   })
 
   it('/agy <model> is rejected for a guest chat (model-pin form) — no pin, no switch', async () => {
@@ -588,7 +588,7 @@ describe('makeModeCommands', () => {
     expect(consumed).toBe(true)
     expect(pinModel).not.toHaveBeenCalled()
     expect(set).not.toHaveBeenCalled()
-    expect(sentMessages[0]?.[1]).toBe('❌ /agy 目前仅管理员/信任聊天可用（工具通道暂无法按会话隔离权限）。')
+    expect(sentMessages[0]?.[1]).toBe('/agy 目前仅管理员/信任聊天可用（工具通道暂无法按会话隔离权限）。')
   })
 
   it('/agy replies 未注册 when the agy provider is not configured (non-guest chat)', async () => {
@@ -619,7 +619,7 @@ describe('makeModeCommands', () => {
     const { cmds, sentMessages } = setup()
     const consumed = await cmds.handle(inbound('/health'))
     expect(consumed).toBe(true)
-    expect(sentMessages[0]?.[1]).toBe('❓ 不认识 /health。看全部命令发 /help。')
+    expect(sentMessages[0]?.[1]).toBe('不认识 /health。看全部命令发 /help。')
   })
 
   // ── unknown pure-slash commands (A3 — spec §A3) ───────────────────────
@@ -633,7 +633,7 @@ describe('makeModeCommands', () => {
     const { cmds, sentMessages } = setup()
     const consumed = await cmds.handle(inbound('/foobar'))
     expect(consumed).toBe(true)
-    expect(sentMessages[0]?.[1]).toBe('❓ 不认识 /foobar。看全部命令发 /help。')
+    expect(sentMessages[0]?.[1]).toBe('不认识 /foobar。看全部命令发 /help。')
   })
 
   it('/foobar with an argument falls through unchanged (not consumed)', async () => {
@@ -950,7 +950,7 @@ describe('makeModeCommands', () => {
       const consumed = await cmds.handle(inbound('/both claude agy'))
       expect(consumed).toBe(true)
       expect(set).not.toHaveBeenCalled()
-      expect(sentMessages[0]?.[1]).toBe('❌ agy 不能加入 both/chat 模式（共享工具通道），可用 /agy 单独使用（仅管理员/信任聊天）。')
+      expect(sentMessages[0]?.[1]).toBe('agy 不能加入 both/chat 模式（共享工具通道），可用 /agy 单独使用（仅管理员/信任聊天）。')
     })
 
     it('/chat codex agy is rejected — agy cannot join chatroom (shared-token channel)', async () => {
@@ -958,7 +958,7 @@ describe('makeModeCommands', () => {
       const consumed = await cmds.handle(inbound('/chat codex agy'))
       expect(consumed).toBe(true)
       expect(set).not.toHaveBeenCalled()
-      expect(sentMessages[0]?.[1]).toBe('❌ agy 不能加入 both/chat 模式（共享工具通道），可用 /agy 单独使用（仅管理员/信任聊天）。')
+      expect(sentMessages[0]?.[1]).toBe('agy 不能加入 both/chat 模式（共享工具通道），可用 /agy 单独使用（仅管理员/信任聊天）。')
     })
   })
 
@@ -1285,13 +1285,13 @@ describe('provider policy in slash commands', () => {
     const { cmds, set, sentMessages } = setup({ registered: ['claude', 'agy'], tier: 'guest' })
     await cmds.handle(inbound('/agy'))
     expect(set).not.toHaveBeenCalled()
-    expect(sentMessages[0]![1]).toBe('❌ /agy 目前仅管理员/信任聊天可用（工具通道暂无法按会话隔离权限）。')
+    expect(sentMessages[0]![1]).toBe('/agy 目前仅管理员/信任聊天可用（工具通道暂无法按会话隔离权限）。')
   })
   it('/cursor is refused for a guest chat — ACP Cursor edits the workspace without a permission card, so a guest tier cannot confine it (guestSafe:false)', async () => {
     const { cmds, set, sentMessages } = setup({ registered: ['claude', 'cursor'], tier: 'guest' })
     await cmds.handle(inbound('/cursor'))
     expect(set).not.toHaveBeenCalled()
-    expect(sentMessages[0]![1]).toBe('❌ Cursor 对访客不开放：它在工作区内的文件编辑不经过权限卡，访客的权限约束不到它。')
+    expect(sentMessages[0]![1]).toBe('Cursor 对访客不开放：它在工作区内的文件编辑不经过权限卡，访客的权限约束不到它。')
   })
   it('/cursor stays available to a trusted chat', async () => {
     const { cmds, set } = setup({ registered: ['claude', 'cursor'], tier: 'trusted' })

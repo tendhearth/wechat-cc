@@ -76,9 +76,9 @@ describe('心愿:两只伙伴对着问', () => {
     const s = await A.wish.send(p.id)
     expect(s).toEqual({ ok: true, sentTo: 1 })
     await flush()
-    expect(B.owner).toEqual(['🙋 阿一 的伙伴来打听「找周末爬山搭子」,我回了:我朋友周末常去,'])
+    expect(B.owner).toEqual(['阿一 的伙伴来打听「找周末爬山搭子」,我回了:我朋友周末常去,'])
     expect(A.journal).toEqual([{ text: '我朋友周末常去,', peerLabel: '阿二' }])
-    expect(A.owner).toEqual(['📮 阿二 回了你的心愿「找周末爬山搭子」:我朋友周末常去,'])
+    expect(A.owner).toEqual(['阿二 回了你的心愿「找周末爬山搭子」:我朋友周末常去,'])
     expect(readWishes(A.stateDir)[0]).toMatchObject({ status: 'open', sentTo: 1, replies: 1 })
     expect(A.letters.filter(l => l.direction === 'in').map(l => l.kind)).toEqual(['postcard'])
   })
@@ -94,7 +94,7 @@ describe('心愿:两只伙伴对着问', () => {
     const A = side('A'), B = side('B', { match: 'no' }); A.setPeer(B); B.setPeer(A)
     const p = await A.wish.propose('x'); if (!p.ok) throw new Error()
     await A.wish.send(p.id); await flush()
-    expect(B.owner).toEqual(['🙋 阿一 的伙伴来打听「x」,我说不知道'])
+    expect(B.owner).toEqual(['阿一 的伙伴来打听「x」,我说不知道'])
     expect(A.journal).toEqual([]); expect(A.owner).toEqual([])
   })
   it('B 的判官抛错 → 只记日志,不打扰任何人', async () => {
@@ -187,7 +187,7 @@ describe('心愿:两只伙伴对着问', () => {
     A.setPeer(B); B.setPeer(A)
     const p = await A.wish.propose('x'); if (!p.ok) throw new Error()
     await A.wish.send(p.id); await flush()
-    expect(B.owner).toEqual(['🙋 阿一 的伙伴来打听「x」,我想回但没寄出去(模型没响应)'])
+    expect(B.owner).toEqual(['阿一 的伙伴来打听「x」,我想回但没寄出去(模型没响应)'])
     expect(A.journal).toEqual([])
   })
   it('明信片寄不出去 → 答的那边的主人也要知道(不能只进日志)', async () => {
@@ -196,7 +196,7 @@ describe('心愿:两只伙伴对着问', () => {
     A.setPeer(B); B.setPeer(A)
     const p = await A.wish.propose('x'); if (!p.ok) throw new Error()
     await A.wish.send(p.id); await flush()
-    expect(B.owner).toEqual(['🙋 阿一 的伙伴来打听「x」,我想回但没寄出去'])
+    expect(B.owner).toEqual(['阿一 的伙伴来打听「x」,我想回但没寄出去'])
     expect(A.journal).toEqual([])
   })
   it('对面秒答:明信片在 send 还没返回时就回来了 —— 照样收下(open 先落盘,再广播)', async () => {
@@ -234,7 +234,7 @@ describe('心愿:两只伙伴对着问', () => {
     expect(B.wish.onInbound('ch', { kind: 'wish', payload: { id: 'far00000', text: 'x', expiresAt: '3000-01-01T00:00:00.000Z' } }, 'l1')).toBe(true)
     await flush()
     expect(B.logs.some(l => l.includes('超过 7 天上限'))).toBe(true)
-    expect(B.owner).toEqual(['🙋 阿一 的伙伴来打听「x」,我说不知道'])   // 夹了有效期,但心愿照常处理
+    expect(B.owner).toEqual(['阿一 的伙伴来打听「x」,我说不知道'])   // 夹了有效期,但心愿照常处理
   })
   it('不是 wish / postcard 的信封 → false', () => {
     expect(side('A').wish.onInbound('ch', { kind: 'letter', payload: {} }, 'x')).toBe(false)
@@ -252,12 +252,12 @@ describe('介绍:转问与回声原路返回(spec 2026-09-04-introduction §1/§
     B.judgeSays = { match: 'yes', blurb: '我朋友周末常去' }
     const id = await send(me)
     await flush3()
-    expect(A.owner).toEqual([`🙋 小我 的伙伴来打听「找周末爬山搭子」,我答不上,帮着问了 1 个朋友`])
+    expect(A.owner).toEqual([`小我 的伙伴来打听「找周末爬山搭子」,我答不上,帮着问了 1 个朋友`])
     expect(B.letters.filter(l => l.dir === 'in').map(l => (l.payload as { hop: number }).hop)).toEqual([2])
-    expect(B.owner).toEqual([`🙋 阿A 的伙伴来打听「找周末爬山搭子」,我回了:我朋友周末常去`])
+    expect(B.owner).toEqual([`阿A 的伙伴来打听「找周末爬山搭子」,我回了:我朋友周末常去`])
     expect(A.journal).toEqual([])
     expect(me.journal).toEqual([{ text: '我朋友周末常去', peerLabel: '阿A 的朋友' }])
-    expect(me.owner[0]).toMatch(/^📮 阿A 的朋友 回了你的心愿「找周末爬山搭子」:我朋友周末常去\(想认识就回「认识 [0-9a-z]{6}」\)$/)
+    expect(me.owner[0]).toMatch(/^阿A 的朋友 回了你的心愿「找周末爬山搭子」:我朋友周末常去\(想认识就回「认识 [0-9a-z]{6}」\)$/)
     const refs = me.wish.list().find(w => w.id === id)!.postcards!
     expect(refs).toHaveLength(1); expect(refs[0]).toMatchObject({ via: 'me>A', preview: '我朋友周末常去' })
   })
@@ -267,11 +267,11 @@ describe('介绍:转问与回声原路返回(spec 2026-09-04-introduction §1/§
     C!.judgeSays = { match: 'yes', blurb: '阿C 也知道一个' }
     const id = await send(me)
     await flush3()
-    expect(A.owner).toEqual([`🙋 小我 的伙伴来打听「找周末爬山搭子」,我答不上,帮着问了 2 个朋友`])
+    expect(A.owner).toEqual([`小我 的伙伴来打听「找周末爬山搭子」,我答不上,帮着问了 2 个朋友`])
     // 两张 hop 2 都走 me>A 这一条信道 —— 幂等键只按信道记的话,第二张会被吞掉
     expect(me.letters.filter(l => l.dir === 'in' && l.kind === 'postcard')).toHaveLength(2)
     expect(me.journal.map(j => j.text).sort()).toEqual(['阿B 知道一个', '阿C 也知道一个'])
-    expect(me.owner.filter(o => o.startsWith('📮'))).toHaveLength(2)
+    expect(me.owner.filter(o => o.includes('回了你的心愿'))).toHaveLength(2)
     const w = me.wish.list().find(x => x.id === id)!
     expect(w.replies).toBe(2)
     expect(w.postcards).toHaveLength(2)
@@ -312,7 +312,7 @@ describe('介绍:转问与回声原路返回(spec 2026-09-04-introduction §1/§
   it('B 收到 hop 2 后不再转(它自己判不能也只是说不知道)', async () => {
     const { me, A, B } = makeTrio()
     await send(me); await flush3()
-    expect(B.owner).toEqual([`🙋 阿A 的伙伴来打听「找周末爬山搭子」,我说不知道`])
+    expect(B.owner).toEqual([`阿A 的伙伴来打听「找周末爬山搭子」,我说不知道`])
     expect(B.letters.filter(l => l.dir === 'out')).toHaveLength(0)
     expect(A.owner[0]).toContain('帮着问了 1 个朋友')
   })
@@ -327,7 +327,7 @@ describe('介绍:转问与回声原路返回(spec 2026-09-04-introduction §1/§
     const { me, A, B } = makeTrio({ budgetOk: () => false })
     await send(me); await flush3()
     expect(B.letters).toHaveLength(0)
-    expect(A.owner).toEqual([`🙋 小我 的伙伴来打听「找周末爬山搭子」,我说不知道`])
+    expect(A.owner).toEqual([`小我 的伙伴来打听「找周末爬山搭子」,我说不知道`])
   })
   it('同一条心愿到 A 两次 → 只转一次;B 的明信片到 A 两次 → 只中继一次', async () => {
     const { me, A, B, deliver } = makeTrio()
@@ -343,7 +343,7 @@ describe('介绍:转问与回声原路返回(spec 2026-09-04-introduction §1/§
   it('没有 forwardBudget 依赖(老调用方)→ 永不转:用单信道夹具 side() 验证', async () => {
     const S = side('A'); const T = side('B'); S.setPeer(T); T.setPeer(S)
     const p = await S.wish.propose('x'); if (!p.ok) throw new Error(); await S.wish.send(p.id); await flush()
-    expect(T.owner).toEqual(['🙋 阿一 的伙伴来打听「x」,我说不知道'])
+    expect(T.owner).toEqual(['阿一 的伙伴来打听「x」,我说不知道'])
   })
   it('list() 的 postcards 带 viaLabel(桌面要显示「谁的朋友」)', async () => {
     const { me, B } = makeTrio()

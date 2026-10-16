@@ -93,6 +93,7 @@ import {randomUUID as claimUuid, randomBytes} from 'node:crypto'
 import { wireWorkbench } from './bootstrap/wire-workbench'
 import {wireWorkbenchNotifications} from './bootstrap/wire-workbench-notifications'
 import {wireWorkbenchArtifacts} from './bootstrap/wire-workbench-artifacts'
+import { SUBSYSTEM_NAMES } from './capabilities'
 
 function errorDetails(err: unknown): string {
   if (err instanceof Error) return err.stack || err.message
@@ -1013,12 +1014,13 @@ export async function bootDaemon(opts: BootDaemonOpts): Promise<DaemonHandle> {
       log('SUBSYS', `boot completed degraded: ${degradedSubsystems.map(d => `${d.name}(${d.error ?? '?'})`).join(', ')}`)
       const adminChatId = resolveAdminChatId(loadAccess(), loadCompanionConfig(stateDir), null)
       if (adminChatId) {
-        const lines = degradedSubsystems.map(d => `- ${d.name}:${d.error ?? 'unknown'}`).join('\n')
+        // 给主人看的是功能名(和「CC 现在怎么样」同一张表),原始错误只在上面那行日志里。
+        const names = [...new Set(degradedSubsystems.map(d => SUBSYSTEM_NAMES[d.name] ?? d.name))].join('、')
         // ilink.sendMessage resolves { error } instead of rejecting (ilink-glue
         // swallows assertChatRoutable etc.), so the failure signal is the
         // resolved error field; keep .catch as belt-and-suspenders only.
         void ilink.sendMessage(adminChatId,
-          `⚠️ 本次启动有 ${degradedSubsystems.length} 个子系统未能启动:\n${lines}\n核心收发不受影响;重启守护进程可重试。`,
+          `这次开机有几样没起来：${names}。其它功能照常。`,
         ).then(r => {
           if (r.error) log('SUBSYS', `admin degraded summary send failed: ${r.error}`)
         }).catch(err => log('SUBSYS', `admin degraded summary send failed: ${err instanceof Error ? err.message : String(err)}`))

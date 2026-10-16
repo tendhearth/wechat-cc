@@ -56,7 +56,7 @@ describe('mw-task-reference', () => {
     const r = await run('整理 TODO 那件,把下周那条也放进去')
     expect(r.nexted).toBe(false); expect(r.consumed).toBe('workbench')
     expect(commands).toEqual(['任务 a85aec02 补充 整理 TODO 那件,把下周那条也放进去'])
-    expect(sent[0]).toMatch(/^📁 sample-project · 读 NOTES\.md,整理成 TODO\.md · Claude/)
+    expect(sent[0]).toMatch(/^sample-project · 读 NOTES\.md,整理成 TODO\.md · Claude/)
     expect(sent[0]).toContain('任务 a85aec02：好的。')
   })
 

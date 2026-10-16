@@ -64,10 +64,10 @@ describe('formatCliSessionDigest', () => {
     ], { now: NOW, localMachine: 'here' })
     expect(t.split('\n')).toEqual([
       '终端里 3 个会话(1 个等你批准、1 个在跑):',
-      '✋ 等你批准 · wechat-cc · Claude Code · 码 ab12c3 · 2 分钟前',
+      '· 等你批准 · wechat-cc · Claude Code · 码 ab12c3 · 2 分钟前',
       '   Bash: rm -rf dist',
       '   —— 回「y 07」放行、「n 07」拒绝',
-      '⏳ 在跑 · melu · Codex · 码 9f8e7d · 3 分钟前',
+      '· 在跑 · melu · Codex · 码 9f8e7d · 3 分钟前',
       '· 做完了 · leni · Claude Code · 码 1a2b3c · 2 小时前',
       '   登录页改好了, 测试也过了',
       '「看 码」看最近的对话,「@码 话」接着说一句',

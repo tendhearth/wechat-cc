@@ -34,8 +34,8 @@ describe('providerDenialFor', () => {
     expect(providerDenialFor('bogus', 'guest', undefined)).toBeNull()
   })
   it('messages + slash words', () => {
-    expect(describeProviderDenial({ kind: 'shared_token_guest' }, 'agy')).toBe('❌ /agy 目前仅管理员/信任聊天可用（工具通道暂无法按会话隔离权限）。')
-    expect(describeProviderDenial({ kind: 'unconfined_guest' }, 'cursor')).toBe('❌ Cursor 对访客不开放：它在工作区内的文件编辑不经过权限卡，访客的权限约束不到它。')
+    expect(describeProviderDenial({ kind: 'shared_token_guest' }, 'agy')).toBe('/agy 目前仅管理员/信任聊天可用（工具通道暂无法按会话隔离权限）。')
+    expect(describeProviderDenial({ kind: 'unconfined_guest' }, 'cursor')).toBe('Cursor 对访客不开放：它在工作区内的文件编辑不经过权限卡，访客的权限约束不到它。')
     expect(describeProviderDenial({ kind: 'not_in_trusted_list', allowed: [] }, 'cursor')).toContain('(无)')
     expect(slashFor('claude')).toBe('cc'); expect(slashFor('agy')).toBe('agy')
   })

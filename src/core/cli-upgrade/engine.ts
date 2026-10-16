@@ -253,7 +253,8 @@ export function makeCliUpgrader(deps: CliUpgraderDeps): CliUpgrader {
         s.verify = 'failed'; s.verifyDetail = vr.detail; s.rollbackTo = null
         s.lastUpgrade = { from, to, at: iso(t), source, result: 'rollback_failed', detail: `${vr.detail};不知道该退回哪个版本` }
       })
-      await notifyOnce(id, `bad:${to}`, `⚠️ ${spec.label} 换到 ${to} 后自检没通过（${vr.detail}），找不到可以退回的旧版本。手动处理：${manualRollbackSteps(spec, null)}`)
+      log(`${id}: ${to} 自检失败(${vr.detail}),找不到可以退回的旧版本`)
+      await notifyOnce(id, `bad:${to}`, `${spec.label} 换到 ${to} 后自检没通过，找不到可以退回的旧版本。手动处理：${manualRollbackSteps(spec, null)}`)
       return { ok: false, result: 'rollback_failed', from, to, detail: vr.detail }
     }
     const rb = await applyRollback(spec, bin, layout, target)
@@ -264,8 +265,8 @@ export function makeCliUpgrader(deps: CliUpgraderDeps): CliUpgrader {
         s.installed = after; s.verify = 'failed'; s.verifyDetail = vr.detail; s.rollbackTo = null
         s.lastUpgrade = { from, to, at: iso(t), source, result: 'rollback_failed', detail: `${vr.detail};${why}` }
       })
-      log(`${id}: ${to} 自检失败,自动退回 ${target} 没做成:${why}`)
-      await notifyOnce(id, `bad:${to}`, `⚠️ ${spec.label} 换到 ${to} 后自检没通过（${vr.detail}），自动退回做不到（${why}）。手动退回：${manualRollbackSteps(spec, target)}`)
+      log(`${id}: ${to} 自检失败(${vr.detail}),自动退回 ${target} 没做成:${why}`)
+      await notifyOnce(id, `bad:${to}`, `${spec.label} 换到 ${to} 后自检没通过，自动退回做不到（${why}）。手动退回：${manualRollbackSteps(spec, target)}`)
       return { ok: false, result: 'rollback_failed', from, to, detail: why }
     }
     const vr2 = await safeVerify(spec)
@@ -276,9 +277,9 @@ export function makeCliUpgrader(deps: CliUpgraderDeps): CliUpgrader {
       s.pending = null
       s.lastUpgrade = { from, to, at: iso(t), source, result: 'rolled_back', detail: `${vr.detail};已退回 ${target}` }
     })
-    log(`${id}: ${to} 自检失败(${vr.detail}),已退回 ${target};退回后自检 ${vr2.status}`)
-    const tail = vr2.status === 'pass' ? '，退回后自检通过' : vr2.status === 'fail' ? `，但退回后自检仍没通过（${vr2.detail}），可能不是版本的问题` : `（退回后的自检暂缓：${vr2.detail}）`
-    await notifyOnce(id, `bad:${to}`, `⚠️ ${spec.label} 换到 ${to} 后自检没通过（${vr.detail}），已自动退回 ${target}${tail}。${to} 记为有问题的版本，出了更新的版本再自动升级。`)
+    log(`${id}: ${to} 自检失败(${vr.detail}),已退回 ${target};退回后自检 ${vr2.status}${vr2.status === 'pass' ? '' : `:${vr2.detail}`}`)
+    const tail = vr2.status === 'pass' ? '，退回后自检通过' : vr2.status === 'fail' ? '，但退回后自检仍没通过，可能不是版本的问题' : '（退回后的自检晚点再跑）'
+    await notifyOnce(id, `bad:${to}`, `${spec.label} 换到 ${to} 后自检没通过，已自动退回 ${target}${tail}。${to} 记为有问题的版本，出了更新的版本再自动升级。`)
     return { ok: true, result: 'rolled_back', from: to, to: target, detail: vr.detail }
   }
 

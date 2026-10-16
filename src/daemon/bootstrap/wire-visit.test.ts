@@ -78,8 +78,8 @@ describe('串门:两只伙伴对着聊', () => {
     expect(B.letters.filter(l => l.direction === 'out')).toHaveLength(3)
 
     // **两边各讲一次**,且是叙述,不是「📬 来信」。A 是去的(🚶),B 是被拜访的(🛎)
-    expect(A.owner).toEqual(['🚶 阿一回来说:聊得挺好'])
-    expect(B.owner).toEqual(['🛎 阿二回来说:聊得挺好'])
+    expect(A.owner).toEqual(['阿一回来说:聊得挺好'])
+    expect(B.owner).toEqual(['阿二回来说:聊得挺好'])
 
     // 收到的串门信全部立刻标已读 —— 伙伴之间的话不算主人的未读
     expect(A.letters.filter(l => l.direction === 'in').every(l => l.read_at !== null)).toBe(true)
@@ -217,7 +217,7 @@ describe('去邻居家串门 —— 没有真对端时也有地方可去', () =>
     expect((r as { channel: string }).channel).toMatch(/^neighbor:/)
     expect(e.calls).toHaveLength(7)
     // 叙述发给主人 + 进背包,标题带「邻居」
-    expect(owner.some(t => t.startsWith('🚶 今天去阿柚家'))).toBe(true)
+    expect(owner.some(t => t.startsWith('今天去阿柚家'))).toBe(true)
     expect(recorded).toHaveLength(1)
     expect(recorded[0]!.peerLabel).toMatch(/^去邻居「.+」家串门$/) // 标题给全,背包直接显示
   })
@@ -226,11 +226,11 @@ describe('去邻居家串门 —— 没有真对端时也有地方可去', () =>
     const e = evalCounting()
     const { visit, owner } = lonely(e.fn)
     await visit.startVisit()
-    expect(owner.filter(t => t.startsWith('🏘')).length).toBe(1)
-    expect(owner[0]!.startsWith('🏘')).toBe(true) // 说明在叙述之前
+    expect(owner.filter(t => t.startsWith('附近有几户')).length).toBe(1)
+    expect(owner[0]!.startsWith('附近有几户')).toBe(true) // 说明在叙述之前
     owner.length = 0
     await visit.startVisit()
-    expect(owner.filter(t => t.startsWith('🏘')).length).toBe(0)
+    expect(owner.filter(t => t.startsWith('附近有几户')).length).toBe(0)
   })
 
   it('两边视角对调:邻居那一轮的 prompt 里,「对方」是煞笔', async () => {
@@ -334,7 +334,7 @@ describe('明信片', () => {
     expect(composed).toContain('#343330')
     expect(attached).toEqual([['row-1', composed]])
     expect(sent).toEqual([composed])
-    expect(owner.some(t => t.startsWith('🚶'))).toBe(true)
+    expect(owner.some(t => t === '去了一趟。')).toBe(true)
   })
 
   it('**safeSvg 拒了 → 不发、不存,见闻照常**', async () => {
@@ -342,13 +342,13 @@ describe('明信片', () => {
     const { visit, owner } = mk(evalFor, { sanitize: () => null, attach: (a, b) => attached.push([a, b]), send: async (s) => { sent.push(s) } })
     expect((await visit.startVisit('邻居')).ok).toBe(true)
     expect(attached).toEqual([]); expect(sent).toEqual([])
-    expect(owner.some(t => t.startsWith('🚶'))).toBe(true)
+    expect(owner.some(t => t === '去了一趟。')).toBe(true)
   })
 
   it('画图抛异常 → 见闻已发出,串门仍算成功', async () => {
     const { visit, owner } = mk(evalFor, { sanitize: () => { throw new Error('boom') }, attach: () => {}, send: async () => {} })
     expect((await visit.startVisit('邻居')).ok).toBe(true)
-    expect(owner.some(t => t.startsWith('🚶'))).toBe(true)
+    expect(owner.some(t => t === '去了一趟。')).toBe(true)
   })
 })
 

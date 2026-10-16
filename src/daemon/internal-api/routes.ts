@@ -748,7 +748,7 @@ const onlineStickerCursor = new Map<string, number>()
       // `quiet`: an agent (wechat-mcp provider_switch) is the caller and will
       // tell the user itself — a second「来自控制台」line would be noise.
       if (deps.ilink && !quiet) {
-        deps.ilink.sendReply(chatId, `🎛 已切换到 ${humanName}（来自控制台）`).catch(err => {
+        deps.ilink.sendReply(chatId, `已切换到 ${humanName}（来自控制台）`).catch(err => {
           deps.log?.('SET_MODE', `wechat reply failed: ${errMsg(err)}`)
         })
       }

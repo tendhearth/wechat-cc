@@ -78,7 +78,7 @@ export function makeCommandRouter(deps: CommandRouterDeps): CommandRouter {
       if (deps.social && deps.isAdmin(msg.chatId)) {
         const v = parseVisitCommand(msg.text)
         if (v) {
-          say(msg.chatId, '🚶 出门了,聊完回来跟你说。')
+          say(msg.chatId, '出门了,聊完回来跟你说。')
           const r = await deps.social.penpal.startVisit(v.channel)
           if (!r.ok) {
             say(msg.chatId, r.reason === 'unknown_channel'
@@ -230,11 +230,11 @@ export function makeCommandRouter(deps: CommandRouterDeps): CommandRouter {
           if (guestCmd.kind === 'allow') {
             const request = deps.guestRequests.resolve(guestCmd.code, 'allowed')
             if (!request) {
-              say(msg.chatId, '❌ 码不对或已过期(发「待批准」看当前请求)')
+              say(msg.chatId, '码不对或已过期(发「待批准」看当前请求)')
               return true
             }
             deps.appendAllowFrom(request.chatId)
-            say(msg.chatId, `✅ 已允许 ${request.chatId}`)
+            say(msg.chatId, `已允许 ${request.chatId}`)
             // Hydrate BEFORE sending the guest welcome (fix round 1,
             // Important #3 — spec §3 calls for hydrate here too, same
             // as mw-access's own fresh/invite-accept paths): the
@@ -271,7 +271,7 @@ export function makeCommandRouter(deps: CommandRouterDeps): CommandRouter {
           if (guestCmd.kind === 'deny') {
             const request = deps.guestRequests.resolve(guestCmd.code, 'denied')
             if (!request) {
-              say(msg.chatId, '❌ 码不对或已过期(发「待批准」看当前请求)')
+              say(msg.chatId, '码不对或已过期(发「待批准」看当前请求)')
               return true
             }
             // The guest gets NOTHING — spec §3: "不替 owner 说难听话;

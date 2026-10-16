@@ -361,7 +361,7 @@ describe('mwAccess — guest branch (spec §2 as amended, fix round 1 ruling #8 
     expect(d.hydrateChatRoute).toHaveBeenCalledWith(expect.objectContaining({ chatId: 'guest_chat' }))
     expect(d.sendMessage).toHaveBeenCalledWith('guest_chat', '我需要主人确认一下,稍等哦~')
     expect(d.notifyOwner).toHaveBeenCalledWith(
-      '👋 guest_chat 想和我聊天,ta 说:"我想聊聊"\n回「允许 654321」或「拒绝 654321」(48 小时内有效)',
+      'guest_chat 想和我聊天,ta 说:"我想聊聊"\n回「允许 654321」或「拒绝 654321」(48 小时内有效)',
     )
     expect(guestRequests.markNotified).toHaveBeenCalledWith('guest_chat')
   })

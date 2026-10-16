@@ -1749,8 +1749,8 @@ describe('ConversationCoordinator', () => {
       })
       await c.dispatch(inbound('chat-1', 'q'))
       const verdict = sent.find(t => t.startsWith('🎯'))!
-      expect(verdict).toContain('📊')
-      expect(sent.filter(t => t.startsWith('📊')).length).toBe(0)   // 没有单独一条
+      expect(verdict).toContain('互评')
+      expect(sent.filter(t => t.startsWith('互评')).length).toBe(0)   // 没有单独一条
       // #RANK 那行是内部信号,不能出现在给用户看的发言里
       expect(sent.some(t => t.includes('#RANK'))).toBe(false)
     })
@@ -2486,7 +2486,7 @@ describe('ConversationCoordinator', () => {
       expect(acquire).not.toHaveBeenCalled()
       expect(sendAssistantText).toHaveBeenCalledWith(
         'chat-1',
-        '❌ /agy 目前仅管理员/信任聊天可用（工具通道暂无法按会话隔离权限）。',
+        '/agy 目前仅管理员/信任聊天可用（工具通道暂无法按会话隔离权限）。',
       )
     })
 

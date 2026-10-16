@@ -215,7 +215,7 @@ export async function wireSocial(deps: SocialDeps): Promise<SocialWiring> {
           case 'letter': {
             const op = resolveOperatorChatId()
             if (!op || !sendAssistantText) return
-            void sendAssistantText(op, `📬 ${peerLabel(channelRowId)}给你写信了:${plaintext.slice(0, 40)}\n(回信 ${channelRowId} <你的话>)`)
+            void sendAssistantText(op, `${peerLabel(channelRowId)}给你写信了:${plaintext.slice(0, 40)}\n(回信 ${channelRowId} <你的话>)`)
             return
           }
           case 'visit':

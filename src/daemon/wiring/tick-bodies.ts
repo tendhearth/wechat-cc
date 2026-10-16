@@ -250,7 +250,7 @@ export interface TickTextStyle {
 
 /** final_text 版推送提示里「哪些话会发出去」那半句,按执行者类型说。 */
 function tickVoice(style: TickTextStyle, last: string): string {
-  return style.allSegments ? '你这一轮写下的文字都会原样发出去,所以只写要发给他的话,不写过程' : last
+  return style.allSegments ? '你这一轮写下的文字都会原样发出去,所以只写要发给主人的话,不写过程' : last
 }
 /** 不发的说法:只写 NO_REPLY,别解释为什么不发(解释会被当成推送)。 */
 const TICK_SILENT = '只写 NO_REPLY,别的一个字都不写,也别解释为什么不发(这个词不会发出去)'
@@ -317,7 +317,7 @@ export function buildHuntText(opts: { nowIso: string }, style: TickTextStyle = {
   if (style.replyDelivery === 'final_text') {
     return (
       `<companion_tick ts="${opts.nowIso}" kind="hunt" />\n` +
-      `每日打猎时间——${TICK_DECIDED}：回顾你记忆里主人的兴趣和最近关注，用网络工具（搜索/抓取）找新鲜的、他真会感兴趣的内容；` +
+      `每日打猎时间——${TICK_DECIDED}：回顾你记忆里主人的兴趣和最近关注，用网络工具（搜索/抓取）找新鲜的、主人真会感兴趣的内容；` +
       `只挑真正值得的 1-2 条分享，每条一句"为什么你会感兴趣" + 链接，条与条之间空一行（${tickVoice(style, '你这一轮最后的话就是分享的内容')}）；` +
       `今天没猎到值得分享的就是写不出值得发的内容，${TICK_FALLBACK}；` +
       `别分享你们最近已经聊过的东西。`
@@ -325,7 +325,7 @@ export function buildHuntText(opts: { nowIso: string }, style: TickTextStyle = {
   }
   return (
     `<companion_tick ts="${opts.nowIso}" kind="hunt" />\n` +
-    `每日打猎时间——回顾你记忆里主人的兴趣和最近关注，用网络工具（搜索/抓取）找新鲜的、他真会感兴趣的内容；` +
+    `每日打猎时间——回顾你记忆里主人的兴趣和最近关注，用网络工具（搜索/抓取）找新鲜的、主人真会感兴趣的内容；` +
     `只挑真正值得的 1-2 条，用 reply 分享，每条一句"为什么你会感兴趣" + 链接；` +
     `如果今天没猎到值得分享的，可以不发（不调用 reply 直接结束）；` +
     `别分享你们最近已经聊过的东西。`
@@ -946,7 +946,7 @@ export function buildTickBodies(deps: TickDeps): TickBodies {
         }
         const text = raw.trim().replace(/^[「『"“]+|[」』"”]+$/g, '')
         if (!text) continue
-        try { await deps.ilink.sendMessage(ownerChat, `🛎 ${text}`) }
+        try { await deps.ilink.sendMessage(ownerChat, text) }
         catch (err) {
           // 发不出去(多半断网):这一位撤回水位,这一拍到此为止;已讲完的几位在 finally 里落盘
           unmark()

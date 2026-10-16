@@ -60,8 +60,8 @@ const TAKEOVER_TTL_MS = 30 * 60_000
 /** "你说的是哪一件"的作答窗口。真机 2026-09-16:主人 8 分钟后才回「2」,5 分钟窗口已过,那个「2」被当成了补充。 */
 const CHOICE_TTL_MS = 30 * 60_000
 
-export const header = (c: TaskCandidate) => `📁 ${c.project} · ${c.title} · ${providerDisplayName(c.providerId)} · ${PHASE_NAME[c.phase] ?? c.phase}`
-const option = (c: TaskCandidate) => `📁 ${c.project} · ${c.title}（${providerDisplayName(c.providerId)}，${PHASE_NAME[c.phase] ?? c.phase}）`
+export const header = (c: TaskCandidate) => `${c.project} · ${c.title} · ${providerDisplayName(c.providerId)} · ${PHASE_NAME[c.phase] ?? c.phase}`
+const option = (c: TaskCandidate) => `${c.project} · ${c.title}（${providerDisplayName(c.providerId)}，${PHASE_NAME[c.phase] ?? c.phase}）`
 
 function command(taskId: string, text: string): string {
   const t = text.trim()
@@ -202,7 +202,7 @@ export function makeMwTaskReference(deps: TaskReferenceMwDeps): TaskReferenceMw 
     if (d.kind === 'set_focus') {
       const c = d.candidates.find(x => x.id === d.taskId)!
       setFocus(msg.chatId, c.id)
-      await deps.sendMessage(msg.chatId, `好，接下来默认说「📁 ${c.project} · ${c.title}」（20 分钟内）。`)
+      await deps.sendMessage(msg.chatId, `好，接下来默认说「${c.project} · ${c.title}」（20 分钟内）。`)
       return
     }
     if (d.kind !== 'command') return

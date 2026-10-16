@@ -200,7 +200,7 @@ export function makeIlinkAdapter(opts: {
   //
   // PR5 Task 23: chat lookup migrated from in-memory accountChatIndex to
   // `WHERE account_id = ?` SQL — populated by mw-identity on every inbound.
-  const expiredNotifyText = `⚠️ 这个 WeChat 账号的绑定已被替换 —— 你或其他人在别处重新扫码绑了同一个账号到 wechat-cc / OpenClaw。
+  const expiredNotifyText = `这个 WeChat 账号的绑定已被替换 —— 你或其他人在别处重新扫码绑了同一个账号到 wechat-cc / OpenClaw。
 本机的旧 session 已失效，不会再收到新消息。
 要继续在这台机用，到桌面 dashboard 重新扫一次码。`
 

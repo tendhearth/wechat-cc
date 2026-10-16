@@ -201,7 +201,7 @@ export function makeIntro(deps: IntroDeps): IntroService {
     if (waiting >= FORWARD_PER_SENDER) { log(`forward replyId=${p.replyId} ${channelRowId} 压着 ${waiting} 笔没回话的邀约 — 丢(不再打扰主人)`); return true }
     save({ ...idx, offers: { ...idx.offers, [p.replyId]: { wishId: p.wishId, viaChannel: channelRowId, hint, at: nowIso() } } })
     const short = p.replyId.slice(0, 6)
-    deps.notifyOwner(`🤝 ${deps.peerLabel(channelRowId)} 的朋友(就是问「${hint}」那位)想认识你。回「同意 ${short}」或「不了 ${short}」`)
+    deps.notifyOwner(`${deps.peerLabel(channelRowId)} 的朋友(就是问「${hint}」那位)想认识你。回「同意 ${short}」或「不了 ${short}」`)
     return true
   }
 
@@ -224,7 +224,7 @@ export function makeIntro(deps: IntroDeps): IntroService {
     bg('交叉名片', async () => {
       await send(pd.requesterChannel, introEnvelope({ stage: 'card', replyId: p.replyId, wishId: pd.wishId, card: theirCard }), `card→请求方 replyId=${p.replyId}`)
       await send(pd.targetChannel, introEnvelope({ stage: 'card', replyId: p.replyId, wishId: pd.wishId, card: pd.requesterCard }), `card→被介绍方 replyId=${p.replyId}`)
-      deps.notifyOwner(`🤝 我把 ${deps.peerLabel(pd.requesterChannel)} 介绍给了 ${deps.peerLabel(pd.targetChannel)}`)
+      deps.notifyOwner(`我把 ${deps.peerLabel(pd.requesterChannel)} 介绍给了 ${deps.peerLabel(pd.targetChannel)}`)
     })
     return true
   }
@@ -270,7 +270,7 @@ export function makeIntro(deps: IntroDeps): IntroService {
     // 注册表已经写好了 = 朋友是交上了,信道没开成是另一回事(重新配对能补)。
     if (!r.channelOpened) log(`card replyId=${replyId} 注册表写好了但信道没开成`)
     clearClaim()
-    deps.notifyOwner(`🤝 你和 ${card.name} 成了朋友(经 ${deps.peerLabel(channelRowId)} 介绍)${r.channelOpened ? '' : ',信道稍后补'}`)
+    deps.notifyOwner(`你和 ${card.name} 成了朋友(经 ${deps.peerLabel(channelRowId)} 介绍)${r.channelOpened ? '' : ',信道稍后补'}`)
     log(`card replyId=${replyId} 成了 — ${card.self_id}`)
   }
 
