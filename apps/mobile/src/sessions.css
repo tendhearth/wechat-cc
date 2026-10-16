@@ -1,6 +1,6 @@
 .together-links{display:flex;justify-content:space-between;gap:16px;margin:0 0 14px;border-bottom:1px solid var(--line)}
 .together-links button,.sessions-text-action{border:0;background:none;color:var(--accent);font:inherit;font-size:13px;min-height:44px;padding:10px 0;text-align:left}
-#p-sessions{font-family:var(--th-font-serif);--sessions-action:var(--th-accent)}
+:root{--sessions-action:var(--th-accent)}#p-sessions{font-family:var(--th-font-serif)}
 .sessions-heading{margin:12px 0 6px;font-size:23px;font-weight:400}.sessions-intro,.sessions-meta{font-size:13px;color:var(--soft);margin:6px 0 16px;overflow-wrap:anywhere}
 .sessions-title{font-size:20px;line-height:1.5;font-weight:500;margin:16px 0 6px;overflow-wrap:anywhere}
 .sessions-search{display:flex;align-items:flex-end;gap:10px;margin:22px 0 0}.sessions-search label{display:block;color:var(--soft);font-size:12px}.sessions-search input,.sessions-search select{display:block;font:inherit;font-size:15px;min-height:44px;margin-top:4px;border:1px solid var(--line);border-radius:var(--r-s);padding:9px;background:var(--card);color:var(--ink);width:100%}.sessions-search-label{flex:1;min-width:0}

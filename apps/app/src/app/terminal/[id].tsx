@@ -40,7 +40,7 @@ export default function TerminalSession() {
     if (!s) return
     setNote(null)
     const err = await actions.decide(s, d)
-    setNote(err === null ? t(lang, 'terminal.decided') : err === 'busy' ? null : t(lang, terminalErrorKey(err)))
+    setNote(err === null ? t(lang, d === 'allow' ? 'terminal.decided' : 'terminal.denied') : err === 'busy' ? null : t(lang, terminalErrorKey(err)))
   }
   const send = async () => {
     const body = text.trim()

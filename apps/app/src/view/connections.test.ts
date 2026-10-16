@@ -89,17 +89,20 @@ describe('capabilities in the connections view (2026-10-06)', () => {
     const v = connectionsView(snap([
       { id: 'terminal', name: '终端里的 Claude Code / Codex', state: 'off', code: 'terminal.not_connected', params: { names: 'Claude Code / Codex' }, reason: 'x', action: run },
     ]), 1, 'en')
-    expect(v.capabilities[0]).toMatchObject({ name: 'Claude Code / Codex in the terminal', dot: 'unknown', action: 'On your computer: Connect' })
+    expect(v.capabilities[0]).toMatchObject({ name: 'Terminal sessions', dot: 'unknown', action: 'On your computer: Connect' })
     expect(v.capabilities[0]!.label).toContain('Claude Code / Codex is installed but not connected')
     const zh = connectionsView(snap([
       { id: 'terminal', name: 'x', state: 'needs_you', code: 'terminal.stale', params: { names: 'Codex' }, reason: 'x', action: { ...run, label: '修复' } },
     ]), 1, 'zh-Hans')
-    expect(zh.capabilities[0]).toMatchObject({ name: '终端里的 Claude Code / Codex', dot: 'bad', action: '在电脑上：修复' })
+    expect(zh.capabilities[0]).toMatchObject({ name: '终端里的会话', dot: 'bad', action: '在电脑上：修复' })
     const partial = connectionsView(snap([
       { id: 'terminal', name: 'x', state: 'ok', code: 'terminal.partial', params: { n: 3, names: 'Codex' }, reason: 'x', action: run },
       { id: 'terminal2', name: 'y', state: 'ok', code: 'terminal.ok', params: { n: 3 }, reason: 'y' },
     ]), 1, 'zh-Hans')
     expect(partial.capabilities[0]).toMatchObject({ label: '已接上，最近 7 天 3 个终端会话；Codex 还没接上。', action: '在电脑上：接上' })
     expect(partial.capabilities[1]!.action).toBeNull()
+    // 中英文同一个意思:部分接上时按钮也只是「接上」/ Connect
+    const partialEn = connectionsView(snap([{ id: 'terminal', name: 'x', state: 'ok', code: 'terminal.partial', params: { n: 3, names: 'Codex' }, reason: 'x', action: run }]), 1, 'en')
+    expect(partialEn.capabilities[0]).toMatchObject({ action: 'On your computer: Connect' })
   })
 })

@@ -22,9 +22,12 @@ describe('今天(手机视图)', () => {
   it('夹具过真 schema', () => {
     expect(PHONE_API_SCHEMAS['GET /m/api/today']!.safeParse({ ok: true, today: today() }).success).toBe(true)
   })
-  it('几个数一行;可能卡住为 0 不写;中英文', () => {
-    expect(todayView(today(), NOW, 'zh-Hans')!.counts).toBe('1 件等你 · 4 件做完 · 1 件在跑')
-    expect(todayView(today({ counts: { needsYou: 0, done: 2, running: 0, stuck: 3 } }), NOW, 'en')!.counts).toBe('0 need you · 2 done · 0 running · 3 may be stuck')
+  it('几个数一行;等你的不在这里数(下面「N 件事等你」已经列着);是 0 的不写;中英文', () => {
+    expect(todayView(today(), NOW, 'zh-Hans')!.counts).toBe('4 件做完 · 1 件在跑')
+    expect(todayView(today({ counts: { needsYou: 0, done: 2, running: 0, stuck: 3 } }), NOW, 'en')!.counts).toBe('2 done · 3 may be stuck')
+  })
+  it('只有等你的 ⇒ 不放这一段(等你的已经在下面列着)', () => {
+    expect(todayView(today({ done: [], running: [], counts: { needsYou: 2, done: 0, running: 0, stuck: 0 } }), NOW, 'zh-Hans')).toBeNull()
   })
   it('最近做完的前 3 件;点进现成页面:终端 ⇒ /terminal/[id],一起做 ⇒ /matter/[id]', () => {
     const v = todayView(today(), NOW, 'zh-Hans')!

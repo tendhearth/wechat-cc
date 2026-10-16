@@ -12,3 +12,5 @@
 .terminal-detail textarea{display:block;box-sizing:border-box;width:100%;font:inherit;font-size:15px;padding:8px;border:1px solid var(--line);border-radius:var(--r-s);background:var(--card);color:var(--ink);margin-bottom:8px}
 .terminal-detail textarea:disabled,#terminal-root button:disabled{opacity:.5}
 #terminal-root :is(button,textarea):focus-visible{outline:2px solid var(--accent);outline-offset:3px}
+.terminal-review{display:block;font-size:13px;color:var(--soft);margin-top:6px;text-align:right}
+.terminal-detail .terminal-actions{margin:4px 0 14px}

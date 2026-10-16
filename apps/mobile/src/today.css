@@ -7,3 +7,6 @@
 .today-row strong{display:block;font-weight:500;font-size:15px;overflow-wrap:anywhere}
 .today-row small{display:block;font-size:12px;color:var(--soft);margin-top:3px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 #today-root button:focus-visible{outline:2px solid var(--accent);outline-offset:3px}
+#today-waiting{margin:0 0 8px}#today-waiting .today-row:last-child{border-bottom:1px solid var(--line)}
+.today-need{display:flex;align-items:center;gap:12px}.today-need-text{flex:1;min-width:0}.today-need-go{flex:none;font-size:13px;color:var(--soft)}
+#today-waiting button:focus-visible{outline:2px solid var(--accent);outline-offset:3px}

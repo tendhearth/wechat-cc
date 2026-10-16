@@ -1,16 +1,17 @@
 
 <section class="home-scene" aria-label="CC 此刻">
-  <p class="home-eyebrow">此刻</p><h2 id="pres-txt">正在看看 CC…</h2>
-  <p id="home-context">你可以在这里陪它一会儿。</p>
+  <h2 id="pres-txt">正在看看 CC…</h2>
+  <p id="home-context"></p>
   <div class="home-character" role="button" tabindex="0" aria-label="看看 CC 眼中的你">
     <img class="home-dark" alt="">
     <img class="home-light" alt="">
   </div>
-  <p class="home-greeting">你来啦 · 点我看看我记得你什么</p>
 </section>
 <div id="home-focus" aria-live="polite"></div>
+<!-- 终端里等你批准的(today.js 从「今天」那份数据里挑出来),和上面那张卡一起是「等你的事」。 -->
+<div id="today-waiting" aria-label="终端里等你批准" hidden></div>
 <div id="home-result"></div>
-<!-- 今天(2026-10-14):终端 + 一起做,过去 24 小时的几个数与最近做完的三件;与微信「日报」同一份。 -->
+<!-- 今天(2026-10-14):终端 + 一起做,过去 24 小时的几个数(不含等你的)与最近做完的三件;与微信「日报」同一份。放在等你的事下面。 -->
 <section id="today-root" aria-label="过去 24 小时" hidden>
   <button id="today-counts-open" class="today-head" type="button"><small>过去 24 小时</small><strong id="today-counts"></strong><span id="today-partial" hidden>有一部分暂时读不到</span></button>
   <div id="today-list"></div>

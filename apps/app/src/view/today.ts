@@ -8,7 +8,7 @@ import { relAgo } from './terminal'
  */
 export type TodayRow = { key: string; href: string; title: string; sub: string; ago: string }
 export type TodayView = {
-  /** 「2 件等你 · 5 件做完 · 1 件在跑 · 1 件可能卡住」;可能卡住为 0 时不写。 */
+  /** 「5 件做完 · 1 件在跑 · 1 件可能卡住」;是 0 的不写。等你的不在这里数 —— 下面「N 件事等你」已经列着,同一个数不出现两次。 */
   counts: string
   /** 最近做完的前 3 件。 */
   done: TodayRow[]
@@ -33,16 +33,15 @@ export function todayRow(i: TodayItemT, now: number, lang: Lang): TodayRow {
   }
 }
 
-/** 没数据 / 什么都没有(且两路都读得到)⇒ null:此刻页不放一段空的。 */
+/** 没数据 / 除了等你的什么都没有(且两路都读得到)⇒ null:此刻页不放一段空的。 */
 export function todayView(today: OverseerTodayT | undefined, now: number, lang: Lang): TodayView | null {
   if (!today) return null
   const c = today.counts
   const partial = today.unavailable.length > 0
-  if (c.needsYou + c.done + c.running + c.stuck === 0 && !partial) return null
+  if (c.done + c.running + c.stuck === 0 && !partial) return null
   const parts = [
-    t(lang, 'today.needsYou', { n: c.needsYou }),
-    t(lang, 'today.done', { n: c.done }),
-    t(lang, 'today.running', { n: c.running }),
+    ...(c.done ? [t(lang, 'today.done', { n: c.done })] : []),
+    ...(c.running ? [t(lang, 'today.running', { n: c.running })] : []),
     ...(c.stuck ? [t(lang, 'today.stuck', { n: c.stuck })] : []),
   ]
   return { counts: parts.join(' · '), done: today.done.slice(0, TODAY_DONE_ROWS).map(i => todayRow(i, now, lang)), partial }

@@ -19,14 +19,14 @@ const BODY={ok:true,today:TODAY}
 function load(api=vi.fn(async(_path:string,_opts?:any)=>response(BODY))){
  const window=new Window({url:'https://fixture.test/m'});windows.push(window)
  const document=window.document;document.body.innerHTML=assembleMobilePage(readMobileSource).phone
- const panes:string[]=[],opened:string[]=[]
+ const panes:string[]=[],opened:string[]=[],terminals:string[]=[]
  const env={document,window,CustomEvent:window.CustomEvent,api,setTimeout:window.setTimeout.bind(window),clearTimeout:window.clearTimeout.bind(window),
-  mobilePane:(n:string)=>panes.push(n),openMatter:(id:string)=>opened.push(id),
+  mobilePane:(n:string)=>panes.push(n),openMatter:(id:string)=>opened.push(id),tmOpenSession:(id:string)=>terminals.push(id),
   esc:(text:unknown)=>String(text).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'})[c]!)}
  const fns=new Function(...Object.keys(env),`${readMobileSource('today.js')}\nreturn {tdLoad,state:function(){return td}}`)(...Object.values(env)) as any
  const pane=(name:string)=>document.dispatchEvent(new window.CustomEvent('cc:pane',{detail:{pane:name}}))
  const el=(id:string)=>document.getElementById(id)!
- return{...fns,window,document,api,pane,el,panes,opened}
+ return{...fns,window,document,api,pane,el,panes,opened,terminals}
 }
 const wait=()=>new Promise(resolve=>setTimeout(resolve,5))
 
@@ -36,21 +36,38 @@ describe('phone page: 今天 on 此刻',()=>{
   const h=load();await wait()
   expect(h.api).toHaveBeenCalledWith('/m/api/today')
   expect(h.el('today-root').hidden).toBe(false)
-  expect(h.el('today-counts').textContent).toBe('1 件等你 · 4 件做完 · 0 件在跑 · 1 件可能卡住')
-  const rows=h.document.querySelectorAll('.today-row')
+  // 等你的不在这里数(下面「等你的事」已经列着);是 0 的不写
+  expect(h.el('today-counts').textContent).toBe('4 件做完 · 1 件可能卡住')
+  const rows=h.document.querySelectorAll('#today-list .today-row')
   expect(rows.length).toBe(3)
   expect(rows[0]!.textContent).toContain('blog');expect(rows[0]!.textContent).toContain('Claude Code · 改好了')
   expect(rows[1]!.textContent).toContain('修打包')
   expect(h.el('today-partial').hidden).toBe(true)
  })
- it('点一起做的事 ⇒ 到一起做并打开那件;点终端 ⇒ 到一起做;点数字 ⇒ 到一起做',async()=>{
+ it('点一起做的事 ⇒ 到一起做并打开那件;点终端 ⇒ 到一起做并展开那一条;点数字 ⇒ 到一起做',async()=>{
   const h=load();await wait()
   ;(h.document.querySelector('[data-td-id="a1b2c3d4"]') as any).click()
   expect(h.panes).toEqual(['matters']);expect(h.opened).toEqual(['a1b2c3d4'])
-  ;(h.document.querySelector('[data-td-id="sess-1"]') as any).click()
-  expect(h.opened).toEqual(['a1b2c3d4'])
+  ;(h.document.querySelector('#today-list [data-td-id="sess-1"]') as any).click()
+  expect(h.opened).toEqual(['a1b2c3d4']);expect(h.terminals).toEqual(['sess-1'])
   ;(h.el('today-counts-open') as any).click()
   expect(h.panes).toEqual(['matters','matters','matters'])
+ })
+ it('终端里等你批准、手机拍得了的(有码)列在此刻的等你的事里;点「看清楚 ›」⇒ 展开那一条;没码的不列',async()=>{
+  const local={...TODAY.needsYou[0],id:'w-local',replyRef:null}
+  const together={...TODAY.needsYou[0],source:'together',id:'a1b2c3d4',replyRef:null}
+  const h=load(vi.fn(async()=>response({ok:true,today:{...TODAY,needsYou:[TODAY.needsYou[0],local,together],counts:{...TODAY.counts,needsYou:3}}})));await wait()
+  expect(h.el('today-waiting').hidden).toBe(false)
+  const rows=h.document.querySelectorAll('#today-waiting .today-row')
+  expect(rows.length).toBe(1)
+  expect(rows[0]!.textContent).toContain('改好了');expect(rows[0]!.textContent).toContain('等你批准 · blog · Claude Code');expect(rows[0]!.textContent).toContain('看清楚 ›')
+  ;(rows[0] as any).click()
+  expect(h.panes).toEqual(['matters']);expect(h.terminals).toEqual(['w'])
+ })
+ it('只有等你的 ⇒「过去 24 小时」不放(等你的已经列着)',async()=>{
+  const h=load(vi.fn(async()=>response({ok:true,today:{...TODAY,done:[],stuck:[],counts:{needsYou:1,done:0,running:0,stuck:0}}})));await wait()
+  expect(h.el('today-root').hidden).toBe(true)
+  expect(h.el('today-waiting').hidden).toBe(false)
  })
  it('什么都没有 / 老电脑没这条路由 ⇒ 整段不显示;有一路读不到 ⇒ 标出来;离开此刻不再拉',async()=>{
   const empty={...TODAY,needsYou:[],done:[],stuck:[],counts:{needsYou:0,done:0,running:0,stuck:0}}
