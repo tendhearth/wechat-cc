@@ -8,7 +8,7 @@
 // Subscribes to: doctorPoller (renderDashboard + renderRestartButton fire
 // on every successful poll automatically).
 
-import { dashboardHero, accountRows, formatRelativeTime, escapeHtml, restartButtonState, deleteAccountConfirmCopy, diagnose, guardLine } from "../view.js"
+import { dashboardHero, accountRows, formatRelativeTime, escapeHtml, restartButtonState, deleteAccountConfirmCopy, diagnose, guardLine, PROVIDER_LABELS } from "../view.js"
 import { icon } from "./icons.js"
 
 // provider 菜单的数据源 = 大脑区已注册列表(/v1/llm/health registered),
@@ -949,7 +949,6 @@ let _lastBrainCheckAt = 0
 let _troubleshootOpen = false
 let _lastNetRows = ""   // 第一步网络结果,留给用户点「叫醒大脑」时第二步复用
 
-const PROVIDER_LABELS = { claude: "Claude", codex: "Codex", cursor: "Cursor", agy: "Gemini · 账号连接", openai: "自定义 AI 服务", gemini: "Gemini · 密钥连接" }
 
 // 每个大脑自己的小图标(内联 SVG,自包含无外链)。不是像素级复刻官方 logo,
 // 而是用各家品牌色 + 简洁标记做到一眼可辨(Anthropic 珊瑚色星芒 / OpenAI 绿

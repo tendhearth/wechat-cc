@@ -8,7 +8,9 @@
 export const HOOKS_RUN = 'cli_hooks_install'
 const READ_TRIES = 3
 export const HOOKS_INSTALL_PATH = '/v1/cli/hooks/install'
-export const HOOKS_CONFIRM = '会在 Claude Code 的 ~/.claude/settings.json 和 Codex 的 hooks.json 里加几条 CC 的 hook，终端里的会话才报得到 CC。只动 CC 自己的条目，别的设置不碰；不想要了随时能撤掉（wechat-cc hook uninstall）。'
+// 确认只说一句(原因上一行已经说过);改哪几个文件、怎么撤,收在「详细」里(2026-10-16)。
+export const HOOKS_CONFIRM = '只加 CC 自己的几条 hook，随时能撤掉。'
+export const HOOKS_DETAIL = '改的是 Claude Code 的 ~/.claude/settings.json 和 Codex 的 hooks.json，别的设置不碰。想撤掉：在终端运行 wechat-cc hook uninstall。'
 
 /** @typedef {(method: 'GET' | 'POST', path: string, body?: Record<string, unknown>) => Promise<unknown>} Call */
 /** @typedef {{ phase: 'idle' | 'confirm' | 'busy' | 'error', error?: string }} HooksUi */
@@ -74,7 +76,9 @@ export function makeHooksAction(o) {
       else if (ui.phase === 'confirm') {
         const row = el('div', 'hooks-buttons')
         row.append(btn('nc-action hooks-confirm-yes', `确定${label}`, () => { void confirmInstall() }), btn('nc-action hooks-confirm-no', '取消', () => set({ phase: 'idle' })))
-        box.append(el('p', 'hooks-confirm', HOOKS_CONFIRM), row)
+        const more = el('details', 'hooks-detail')
+        more.append(el('summary', '', '详细'), el('p', '', HOOKS_DETAIL))
+        box.append(el('p', 'hooks-confirm', HOOKS_CONFIRM), more, row)
       } else if (ui.phase === 'busy') box.append(el('p', 'hooks-status', '正在接上…'))
       else {
         box.append(el('p', 'hooks-error', `没接上：${ui.error ?? ''}`), btn('nc-action', `再${label}一次`, () => set({ phase: 'confirm' })))

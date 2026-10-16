@@ -120,4 +120,10 @@ describe('capabilities (2026-10-06)', () => {
     expect(connectionsView({ ...base, capabilities: [{ id: 'memory', name: '记忆整理', state: 'fallback', code: 'memory.failing', reason: 'x' }] } as never).headline).toEqual({ dot: 'warn', text: '1 项在凑合着用' })
     expect(connectionsView(base as never).capabilities).toEqual([])
   })
+  it('「CC 现在怎么样」只出现一次:能力行不再挂同名小标题', async () => {
+    document.body.innerHTML = '<div id="h"></div>'; const h = document.getElementById('h') as HTMLElement
+    await mountNowConnections({ host: h, call: vi.fn().mockResolvedValue(snap([], { capabilities: [{ id: 'brain', name: '大脑', state: 'ok', code: 'brain.ok', reason: '在用 Claude。' }] })), now: () => NOW }).refresh()
+    expect(h.querySelectorAll('.nc-capability').length).toBe(1)
+    expect([...h.querySelectorAll('h2, h3')].filter(x => x.textContent === 'CC 现在怎么样').length).toBe(1)
+  })
 })

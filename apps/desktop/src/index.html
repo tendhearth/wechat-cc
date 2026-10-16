@@ -170,10 +170,7 @@
               <div class="bg-body">
                 <div class="desc" id="service-summary"></div>
                 <div class="bg-actions">
-                  <button id="service-install" class="btn primary">
-                    <span class="ic" data-hg-icon="play" data-hg-size="16"></span>
-                    安装并启动
-                  </button>
+                  <button id="service-install" class="btn primary">安装并启动</button>
                   <button id="service-recheck" class="btn ghost">重新检查</button>
                 </div>
 
@@ -196,19 +193,14 @@
                 <div class="toggle-row">
                   <div>
                     <div class="lab">网络守护</div>
-                    <div class="sub">装了 bx 就只看 bx 是否在保护；没装每 30 秒查公网 IP、变了探一次 google.com。网络未受保护时，只暂停用到 Claude 等需要保护接口的调用；国内模型、自建网关照常，命令和权限回复也照常。<span id="screen-guard-status-line" class="guard-status-line">—</span></div>
+                    <div class="sub">网络没受保护时，先停下需要保护的调用。<span id="screen-guard-status-line" class="guard-status-line">—</span></div>
                   </div>
                   <button class="toggle" id="screen-guard-toggle" data-toggle aria-pressed="false"></button>
                 </div>
-              </div>
-            </div>
 
-            <div class="card">
-              <div class="plan-h">
-                技术详情
-                <span class="chev" id="service-plan-toggle">▾</span>
+                <button id="service-plan-toggle" class="qr-raw-toggle service-plan-toggle" type="button">技术详情</button>
+                <pre id="service-plan"></pre>
               </div>
-              <pre id="service-plan"></pre>
             </div>
 
             <div id="post-stop-alert" class="post-stop-alert" hidden>
@@ -332,18 +324,18 @@
             <a id="license-upgrade-link" class="btn ghost" href="#" target="_blank" rel="noreferrer">升级到 Pro →</a>
             <button id="license-deactivate-btn" class="btn ghost" type="button" hidden>移除</button>
           </div>
-          <p class="drawer-section-help">插件为 agent 提供额外能力；激活后重启 daemon 生效。</p>
+          <p class="drawer-section-help">插件给 CC 加能力；装好后重启 CC 生效。</p>
         </section>
         <section class="drawer-section">
           <h3>后台服务</h3>
           <div class="toggle-row">
             <div>
               <div class="lab">开机自启</div>
-              <div class="sub">登录系统时自动启动 daemon。</div>
+              <div class="sub">登录系统时自动启动 CC。</div>
             </div>
             <button class="toggle" id="autostart-toggle" type="button" data-toggle aria-pressed="false" aria-label="开机自启" aria-describedby="autostart-toggle-feedback"></button><span class="setting-feedback" id="autostart-toggle-feedback" role="status"></span>
           </div>
-          <p class="drawer-section-help">默认配置：daemon 在系统启动时自动跑，关闭窗口不会影响接收消息。</p>
+          <p class="drawer-section-help">默认随系统启动，关掉窗口也照样收消息。</p>
         </section>
         <section class="drawer-section">
           <h3>行为</h3>
@@ -357,7 +349,7 @@
           <div class="toggle-row">
             <div>
               <div class="lab">网络守护</div>
-              <div class="sub">装了 bx 就只看 bx 是否在保护；没装每 30 秒探活。网络未受保护时，只暂停用到 Claude 等需要保护接口的调用。<span id="guard-status-line" class="guard-status-line">—</span></div>
+              <div class="sub">网络没受保护时，先停下需要保护的调用。<span id="guard-status-line" class="guard-status-line">—</span></div>
             </div>
             <button class="toggle" id="guard-toggle" type="button" data-toggle aria-pressed="false" aria-label="网络守护" aria-describedby="guard-toggle-feedback"></button><span class="setting-feedback" id="guard-toggle-feedback" role="status"></span>
           </div>

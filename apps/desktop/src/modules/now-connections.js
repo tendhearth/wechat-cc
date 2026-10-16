@@ -85,10 +85,10 @@ function el(tag, cls, text) {
 /** @param {Dot} d */
 const dot = d => { const n = el('span', `dot ${d}`); n.setAttribute('aria-hidden', 'true'); return n }
 
-/** @param {string} title @param {HTMLElement[]} rows */
+/** title 为空 ⇒ 不写小标题(浮层大标题已经说了是什么)。 @param {string} title @param {HTMLElement[]} rows */
 function section(title, rows) {
   const s = el('section', 'nc-section')
-  s.append(el('h3', 'nc-section-title', title))
+  if (title) s.append(el('h3', 'nc-section-title', title))
   const ul = el('ul', 'nc-list')
   ul.append(...rows)
   s.append(ul)
@@ -127,7 +127,8 @@ export function mountNowConnections({ host, call, now = () => Date.now(), openUr
       parts.push(el('p', 'nc-stale', failed ? `现在读不到连接情况，下面是 ${hm} 时的情况` : `正在更新，下面是 ${hm} 时的情况`))
     }
     if (v) {
-      if (v.capabilities.length) parts.push(section('CC 现在怎么样', v.capabilities.map(x => {
+      // 能力行就在大标题「CC 现在怎么样」下面,不再重复一遍同名小标题(2026-10-16)。
+      if (v.capabilities.length) parts.push(section('', v.capabilities.map(x => {
         const li = row('nc-capability', x.dot, x.name, x.label)
         // 能当场打开的(系统设置)给按钮;别的动作在桌面别处做,写成一句提示。
         if (x.action?.run === HOOKS_RUN && !stale) li.append(hooks.node(x.action.label))

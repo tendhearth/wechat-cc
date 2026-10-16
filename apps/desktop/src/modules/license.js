@@ -39,7 +39,7 @@ export async function refreshLicense() {
       if (deact) deact.hidden = true
     }
   } catch {
-    el.textContent = '状态未知（daemon 未启动？）'
+    el.textContent = '现在看不到（CC 可能没在运行）'
     el.className = 'license-status'
   }
 }
