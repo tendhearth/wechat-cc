@@ -98,10 +98,12 @@ function parsePlain(raw: string): ComposeResult {
   while (lines.length && (!lines[lines.length - 1] || SIGNATURE.test(lines[lines.length - 1]!))) lines.pop()
   const first = lines.findIndex(Boolean)
   if (first < 0) return { kind: 'skip', reason: 'empty' }
-  const salutation = SALUTATION.test(lines[first]!) ? lines[first]! : ''
+  // 称呼:以冒号结尾的一行;或一行很短、不像句子的(「时瑞」)—— 补上冒号
+  const head = lines[first]!
+  const salutation = SALUTATION.test(head) ? head : head.length <= 12 && !/[。,，!！?？]/.test(head) && lines.filter(Boolean).length > 2 ? `${head}:` : ''
   const bodyLines = lines.slice(salutation ? first + 1 : first)
   // 空行分段;模型没空行、一行一段时也认
-  let paras = bodyLines.join('\n').split(/\n\s*\n/).map(p => p.replace(/\s*\n\s*/g, '')).map(p => p.trim()).filter(Boolean)
+  let paras = bodyLines.join('\n').split(/\n\s*\n/).map(p => p.replace(/\s*\n\s*/g, '')).map(p => p.replace(/^[:：]\s*/, '').trim()).filter(Boolean)
   if (paras.length === 1 && bodyLines.filter(Boolean).length > 1) paras = bodyLines.filter(Boolean)
   // 不像一封信(没称呼、又短)就别当信寄出去 —— 模型的一句闲话、报错都长这样
   if (!salutation && paras.join('').length < 80) return { kind: 'skip', reason: 'unparseable' }

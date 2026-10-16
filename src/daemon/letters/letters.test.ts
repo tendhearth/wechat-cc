@@ -49,6 +49,10 @@ describe('compose', () => {
     const raw = '亲爱的你：\n\n周三晚上你说终于接上 Cursor 了。\n我替你高兴。\n\n这一个月你做了好多事。\n\n晚安。\n\n— CC'
     expect(parseLetter(raw)).toEqual({ kind: 'letter', letter: { salutation: '亲爱的你：', paragraphs: ['周三晚上你说终于接上 Cursor 了。我替你高兴。', '这一个月你做了好多事。'], signoff: '晚安。' } })
   })
+  it('takes a short bare first line as the salutation and drops stray colons', () => {
+    const r = parseLetter('时瑞\n\n：上次你说终于接上 Cursor 了,我替你高兴了好一阵。\n\n这一个月你做了好多事,我都看见了。')
+    expect(r).toMatchObject({ kind: 'letter', letter: { salutation: '时瑞:', paragraphs: ['上次你说终于接上 Cursor 了,我替你高兴了好一阵。', '这一个月你做了好多事,我都看见了。'] } })
+  })
   it('reads SKIP in the plain format', () => {
     expect(parseLetter('SKIP：这段时间没怎么聊')).toEqual({ kind: 'skip', reason: '这段时间没怎么聊' })
   })

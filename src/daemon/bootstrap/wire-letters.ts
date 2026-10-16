@@ -16,7 +16,8 @@ type Eval = (prompt: string) => Promise<string>
 export interface WireLettersDeps {
   stateDir: string
   db: Db
-  /** 主人当前对话的 provider(solo 模式);信要有性格 —— strongEval 优先,没有再退到 cheapEval */
+  /** 主人当前对话的 provider(solo 模式)。信一个月才一封、要有性格:先用 Claude 的主模型,
+   *  再用主人这家的 strongEval,最后才退到 cheapEval(真机 10-16:网关小模型写成了一串数字和四件不相干的事)。 */
   providerFor(chatId: string): string | undefined
   strongEval(providerId: string): Eval | null
   cheapEval(chatId: string): Eval | null
@@ -52,7 +53,7 @@ export function wireLetters(d: WireLettersDeps): { runtime: LetterRuntime; start
       const c = owner()
       if (!c) return null
       const p = d.providerFor(c)
-      return (p ? d.strongEval(p) : null) ?? d.cheapEval(c)
+      return d.strongEval('claude') ?? (p ? d.strongEval(p) : null) ?? d.cheapEval(c)
     },
     wechatSuspended: d.wechatSuspended,
     sendText: d.sendText,
