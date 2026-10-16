@@ -224,6 +224,19 @@ describe('runtime', () => {
     expect(t.sent[0]!.v).toContain('没写成')
   })
 
+  it('rewrites once when the draft sounds like reading a file', async () => {
+    const prompts: string[] = []
+    const drafts = [
+      JSON.stringify({ salutation: '你好:', paragraphs: ['刚才翻到那条消息,你说终于接上 Cursor 了。'], signoff: '' }),
+      JSON.stringify({ salutation: '你好:', paragraphs: ['你说终于接上 Cursor 了,我一直记得。'], signoff: '' }),
+    ]
+    const t = setup({ evalText: () => async (p) => { prompts.push(p); return drafts[prompts.length - 1]! } })
+    await t.rt.writeNow()
+    expect(prompts).toHaveLength(2)
+    expect(prompts[1]).toContain('「翻到」')
+    expect(t.rt.status().letters[0]!.opening).toContain('我一直记得')
+  })
+
   it('a requested letter works while scheduled letters are off', async () => {
     const t = setup()
     t.setEnabled(false)

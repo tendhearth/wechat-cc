@@ -14,7 +14,7 @@ import { existsSync, mkdirSync, readdirSync, renameSync, writeFileSync } from 'n
 import { join } from 'node:path'
 import { readJsonFile } from '../../lib/read-json-file'
 import { localParts } from '../memory/nightly-schedule'
-import { buildLetterPrompt, letterText, parseLetter, type LetterDraft, type LetterMaterial } from './compose'
+import { TELLTALE, buildLetterPrompt, letterText, parseLetter, type LetterDraft, type LetterMaterial } from './compose'
 import { letterSvgs } from './render'
 import { DAY_MS, FIRST_GAP_DAYS, GAP_DAYS, THIN_RETRY_DAYS, isLetterDue, nextDueAt } from './schedule'
 
@@ -147,9 +147,18 @@ export function makeLetterRuntime(d: LetterDeps): LetterRuntime {
       previous: records.slice(0, 3).map(r => ({ day: r.day, opening: opening(r) })),
       ...(request ? { request } : {}),
     }
+    const prompt = buildLetterPrompt(material)
     let raw: string
-    try { raw = await withTimeout(ev(buildLetterPrompt(material)), EVAL_TIMEOUT_MS) }
-    catch (e) { return { kind: 'failed', reason: e instanceof Error ? e.message : String(e) } }
+    try {
+      raw = await withTimeout(ev(prompt), EVAL_TIMEOUT_MS)
+      const first = parseLetter(raw)
+      const hit = first.kind === 'letter' ? letterText(first.letter).match(TELLTALE) : null
+      if (hit) {
+        // 露馅了(「翻到那条记录」):带着原稿重写一次;第二次还露馅也寄,不无限重试
+        d.log('LETTERS', `draft said 「${hit[0]}」; rewriting once`)
+        raw = await withTimeout(ev(`${prompt}\n\n## 你刚写的一稿\n${raw}\n\n这一稿里出现了「${hit[0]}」这种字眼,读起来像在翻档案。按同样的格式重写一遍:同样的事,写得像你自然记得。`), EVAL_TIMEOUT_MS)
+      }
+    } catch (e) { return { kind: 'failed', reason: e instanceof Error ? e.message : String(e) } }
     const r = parseLetter(raw)
     if (r.kind !== 'letter' && (r.reason === 'empty' || r.reason === 'unparseable')) d.log('LETTERS', `model reply not a letter (${raw.length} chars): ${raw.slice(0, 80).replace(/\s+/g, ' ')}`)
     return r.kind === 'letter' ? r : { kind: 'skip', reason: r.reason }
