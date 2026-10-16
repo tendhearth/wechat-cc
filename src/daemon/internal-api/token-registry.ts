@@ -279,6 +279,10 @@ export function makeTokenRegistry(
           // admin 档,同一份 operator 凭据;Tauri 宿主(lib.rs)与 workbench-proxy.ts 都已登记。
           'POST /v1/cli/hooks/install',
           'POST /v1/cli/hooks/uninstall',
+          // CC 的信(2026-10-16):`wechat-cc` 与维护者自检用同一份 operator 凭据看状态、当面写一封、开关。admin 档。
+          'GET /v1/letters',
+          'POST /v1/letters/write',
+          'POST /v1/letters/settings',
         ]),
       })
     },

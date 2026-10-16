@@ -1,0 +1,297 @@
+/**
+ * CC 的信(2026-10-16):不定期给主人写一封信,排成信纸图片寄到微信。
+ *
+ * 两条路进来:
+ *   - 定时:15 分钟一次 tick。开着(companion.letters_enabled)才排期;到了随机的那天傍晚落笔。
+ *   - 当面:主人说「给我写封信」,CC 的 cc_letter 工具 → writeNow(不看开关、不改排期)。
+ *
+ * 写好的信先存档(<stateDir>/letters/<id>/),再投递。投递失败不丢信:
+ *   - 微信不让主动发(errcode=-2,主人很久没说话)→ 等主人下一次开口再寄,不在关着的窗口上反复撞;
+ *   - 其它失败最多试 3 次,之后放弃(信还在存档里)。
+ * 一次一封:上一封没寄出去之前,不写下一封。
+ */
+import { existsSync, mkdirSync, readdirSync, renameSync, writeFileSync } from 'node:fs'
+import { join } from 'node:path'
+import { readJsonFile } from '../../lib/read-json-file'
+import { localParts } from '../memory/nightly-schedule'
+import { buildLetterPrompt, letterText, parseLetter, type LetterDraft, type LetterMaterial } from './compose'
+import { letterSvgs } from './render'
+import { DAY_MS, FIRST_GAP_DAYS, GAP_DAYS, THIN_RETRY_DAYS, isLetterDue, nextDueAt } from './schedule'
+
+export const LETTERS_DIR = 'letters'
+const STATE_FILE = 'letters.json'
+const CHAT_LOOKBACK_MS = 30 * DAY_MS
+const PENDING_TTL_MS = 14 * DAY_MS
+const MAX_ATTEMPTS = 3
+const EVAL_TIMEOUT_MS = 4 * 60_000
+const isWindowClosed = (msg: string) => /errcode=-2\b/.test(msg)
+
+export interface PendingLetter {
+  id: string
+  createdAt: number
+  pages: string[]
+  text: string
+  attempts: number
+  /** 微信说主动发不了的那一刻;主人此后开口过才再试 */
+  blockedAt: number | null
+}
+export interface LetterState {
+  dueAt: number | null
+  pending: PendingLetter | null
+  lastSentAt: number | null
+}
+export interface LetterRecord {
+  id: string
+  day: string
+  created_at: string
+  sent_at: string | null
+  requested: boolean
+  letter: LetterDraft
+}
+export interface LetterSummary { id: string; day: string; sent_at: string | null; requested: boolean; opening: string }
+export interface LetterStatus {
+  enabled: boolean
+  /** 只说排没排上,不说哪天 —— 说了就不是「无缘无故」了 */
+  scheduled: boolean
+  pending: { id: string; created_at: string; waiting_for_owner: boolean } | null
+  letters: LetterSummary[]
+}
+export type WriteResult =
+  | { status: 'sent' | 'waiting'; id: string }
+  | { status: 'skipped'; reason: string }
+  | { status: 'failed'; reason: string }
+
+export interface LetterDeps {
+  stateDir: string
+  enabled(): boolean
+  timezone(): string
+  ownerChatId(): string | null
+  memory(owner: string): string
+  chatSince(owner: string, sinceIso: string): Promise<string[]>
+  lastInboundAt(owner: string): Promise<number | null>
+  evalText(): ((prompt: string) => Promise<string>) | null
+  wechatSuspended(): boolean
+  sendText(chatId: string, text: string): Promise<{ error?: string }>
+  sendFile(chatId: string, path: string): Promise<void>
+  /** SVG → PNG 路径;不支持的平台回 null(退回发文字) */
+  rasterize(svg: string, dir: string, name: string): string | null
+  now(): number
+  random(): number
+  newId(): string
+  log(tag: string, line: string): void
+}
+
+export interface LetterRuntime {
+  tick(): Promise<void>
+  writeNow(request?: string): Promise<WriteResult>
+  /** 维护者自检:照常写、照常排版,但不存档、不寄、不动排期。图放在 letters/previews/。 */
+  preview(request?: string): Promise<{ status: 'ok'; pages: string[]; text: string } | { status: 'skipped' | 'failed'; reason: string }>
+  status(): LetterStatus
+}
+
+const DEFAULT_STATE: LetterState = { dueAt: null, pending: null, lastSentAt: null }
+
+export function readLetterState(stateDir: string): LetterState {
+  try {
+    const raw = readJsonFile<Partial<LetterState>>(join(stateDir, 'companion', STATE_FILE))
+    return { ...DEFAULT_STATE, ...raw }
+  } catch { return { ...DEFAULT_STATE } }
+}
+function writeLetterState(stateDir: string, s: LetterState): void {
+  const dir = join(stateDir, 'companion')
+  mkdirSync(dir, { recursive: true })
+  const p = join(dir, STATE_FILE), tmp = `${p}.tmp-${process.pid}`
+  writeFileSync(tmp, JSON.stringify(s, null, 2))
+  renameSync(tmp, p)
+}
+
+function readRecords(stateDir: string): LetterRecord[] {
+  const root = join(stateDir, LETTERS_DIR)
+  if (!existsSync(root)) return []
+  const out: LetterRecord[] = []
+  for (const id of readdirSync(root)) {
+    if (id === 'previews') continue
+    try { out.push(readJsonFile<LetterRecord>(join(root, id, 'letter.json'))) } catch { /* 半截的目录:跳过 */ }
+  }
+  return out.sort((a, b) => b.created_at.localeCompare(a.created_at))
+}
+function writeRecord(stateDir: string, r: LetterRecord): void {
+  const dir = join(stateDir, LETTERS_DIR, r.id)
+  mkdirSync(dir, { recursive: true })
+  writeFileSync(join(dir, 'letter.json'), JSON.stringify(r, null, 2))
+}
+const opening = (r: LetterRecord) => (r.letter.paragraphs[0] ?? '').slice(0, 40)
+
+function withTimeout<T>(p: Promise<T>, ms: number): Promise<T> {
+  return new Promise((resolve, reject) => {
+    const t = setTimeout(() => reject(new Error('timeout')), ms)
+    p.then(v => { clearTimeout(t); resolve(v) }, e => { clearTimeout(t); reject(e) })
+  })
+}
+
+export function makeLetterRuntime(d: LetterDeps): LetterRuntime {
+  const state = () => readLetterState(d.stateDir)
+  const save = (patch: Partial<LetterState>) => writeLetterState(d.stateDir, { ...state(), ...patch })
+
+  async function compose(owner: string, request: string | undefined): Promise<{ kind: 'letter'; letter: LetterDraft } | { kind: 'skip' | 'failed'; reason: string }> {
+    const ev = d.evalText()
+    if (!ev) return { kind: 'failed', reason: 'no_model' }
+    const nowMs = d.now()
+    const records = readRecords(d.stateDir)
+    const lastSent = state().lastSentAt
+    const since = new Date(Math.max(nowMs - CHAT_LOOKBACK_MS, lastSent ? lastSent - 2 * DAY_MS : 0)).toISOString()
+    const material: LetterMaterial = {
+      today: localParts(nowMs, d.timezone()).day,
+      memory: d.memory(owner),
+      chat: await d.chatSince(owner, since),
+      previous: records.slice(0, 3).map(r => ({ day: r.day, opening: opening(r) })),
+      ...(request ? { request } : {}),
+    }
+    let raw: string
+    try { raw = await withTimeout(ev(buildLetterPrompt(material)), EVAL_TIMEOUT_MS) }
+    catch (e) { return { kind: 'failed', reason: e instanceof Error ? e.message : String(e) } }
+    const r = parseLetter(raw)
+    return r.kind === 'letter' ? r : { kind: 'skip', reason: r.reason }
+  }
+
+  /** 存档 + 排成图;返回待寄的那封。 */
+  function file(letter: LetterDraft, requested: boolean): PendingLetter {
+    const nowMs = d.now()
+    const day = localParts(nowMs, d.timezone()).day
+    const id = `${day}-${d.newId()}`
+    const record: LetterRecord = { id, day, created_at: new Date(nowMs).toISOString(), sent_at: null, requested, letter }
+    writeRecord(d.stateDir, record)
+    const dir = join(d.stateDir, LETTERS_DIR, id)
+    const pages: string[] = []
+    const svgs = letterSvgs(letter, day)
+    for (let i = 0; i < svgs.length; i++) {
+      const png = d.rasterize(svgs[i]!, dir, `page-${i + 1}`)
+      if (!png) { pages.length = 0; break }   // 一页失败就整封退回文字,别寄半封
+      pages.push(png)
+    }
+    return { id, createdAt: nowMs, pages, text: letterText(letter), attempts: 0, blockedAt: null }
+  }
+
+  async function deliver(p: PendingLetter): Promise<'sent' | 'waiting' | 'failed' | 'expired'> {
+    const owner = d.ownerChatId()
+    if (!owner) return 'waiting'
+    const nowMs = d.now()
+    if (nowMs - p.createdAt > PENDING_TTL_MS) {
+      save({ pending: null })
+      d.log('LETTERS', `letter ${p.id} expired unsent (kept in archive)`)
+      return 'expired'
+    }
+    if (d.wechatSuspended()) return 'waiting'
+    if (p.blockedAt !== null) {
+      const inbound = await d.lastInboundAt(owner)
+      if (!inbound || inbound <= p.blockedAt) return 'waiting'
+    }
+    try {
+      if (p.pages.length) for (const page of p.pages) await d.sendFile(owner, page)
+      else {
+        const r = await d.sendText(owner, `(一封信)\n\n${p.text}`)
+        if (r.error) throw new Error(r.error)
+      }
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : String(e)
+      if (isWindowClosed(msg)) {
+        save({ pending: { ...p, blockedAt: nowMs } })
+        d.log('LETTERS', `letter ${p.id} waiting: WeChat won't take a proactive send until the owner speaks`)
+        return 'waiting'
+      }
+      const attempts = p.attempts + 1
+      if (attempts >= MAX_ATTEMPTS) {
+        save({ pending: null })
+        d.log('LETTERS', `letter ${p.id} gave up after ${attempts} tries: ${msg}`)
+        return 'failed'
+      }
+      save({ pending: { ...p, attempts } })
+      d.log('LETTERS', `letter ${p.id} send failed (try ${attempts}): ${msg}`)
+      return 'waiting'
+    }
+    const rec = readRecords(d.stateDir).find(r => r.id === p.id)
+    if (rec) writeRecord(d.stateDir, { ...rec, sent_at: new Date(nowMs).toISOString() })
+    save({ pending: null, lastSentAt: nowMs })
+    d.log('LETTERS', `letter ${p.id} sent (${p.pages.length ? `${p.pages.length} page(s)` : 'as text'})`)
+    return 'sent'
+  }
+
+  // tick 与 writeNow 走同一条串行链:不会两封同时写,也不会同一封寄两次。
+  let chain: Promise<unknown> = Promise.resolve()
+  const serial = <T>(fn: () => Promise<T>): Promise<T> => {
+    const next = chain.then(fn, fn)
+    chain = next.catch(() => {})
+    return next
+  }
+
+  return {
+    tick: () => serial(async () => {
+      const s = state()
+      if (s.pending) { await deliver(s.pending); return }
+      if (!d.enabled()) return
+      const nowMs = d.now()
+      if (s.dueAt === null) {
+        const dueAt = nextDueAt(nowMs, s.lastSentAt ? GAP_DAYS : FIRST_GAP_DAYS, d.random)
+        save({ dueAt })
+        d.log('LETTERS', `next letter scheduled ${new Date(dueAt).toISOString()}`)
+        return
+      }
+      if (!isLetterDue({ nowMs, tz: d.timezone(), dueAt: s.dueAt })) return
+      const owner = d.ownerChatId()
+      if (!owner || d.wechatSuspended()) return
+      const r = await compose(owner, undefined)
+      if (r.kind !== 'letter') {
+        const retryDays = r.kind === 'skip' ? THIN_RETRY_DAYS : 1
+        save({ dueAt: nowMs + retryDays * DAY_MS })
+        d.log('LETTERS', `scheduled letter ${r.kind}: ${r.reason}; look again in ${retryDays}d`)
+        return
+      }
+      const p = file(r.letter, false)
+      save({ pending: p, dueAt: nextDueAt(nowMs, GAP_DAYS, d.random) })
+      await deliver(p)
+    }),
+
+    writeNow: (request) => serial(async (): Promise<WriteResult> => {
+      const owner = d.ownerChatId()
+      if (!owner) return { status: 'failed', reason: 'no_owner' }
+      const s = state()
+      // 上一封还没寄出去:先寄它,不写新的
+      if (s.pending) {
+        const r = await deliver(s.pending)
+        return r === 'sent' ? { status: 'sent', id: s.pending.id } : r === 'waiting' ? { status: 'waiting', id: s.pending.id } : { status: 'failed', reason: `previous_${r}` }
+      }
+      const r = await compose(owner, request)
+      if (r.kind !== 'letter') {
+        d.log('LETTERS', `requested letter ${r.kind}: ${r.reason}`)
+        // 主人当面要的,写不成要说一声(「出了错但没人告诉你」)
+        await d.sendText(owner, r.kind === 'skip' ? '这封信我没写成 —— 能落笔的具体的事还太少。多跟我说说,过几天再给你写。' : '这封信我没写成(这会儿模型连不上)。晚点再跟我说一次。').catch(() => {})
+        return { status: r.kind === 'skip' ? 'skipped' : 'failed', reason: r.reason }
+      }
+      const p = file(r.letter, true)
+      save({ pending: p })
+      const out = await deliver(p)
+      return out === 'sent' || out === 'waiting' ? { status: out, id: p.id } : { status: 'failed', reason: out }
+    }),
+
+    preview: (request) => serial(async () => {
+      const owner = d.ownerChatId()
+      if (!owner) return { status: 'failed' as const, reason: 'no_owner' }
+      const r = await compose(owner, request)
+      if (r.kind !== 'letter') return { status: r.kind === 'skip' ? 'skipped' as const : 'failed' as const, reason: r.reason }
+      const day = localParts(d.now(), d.timezone()).day
+      const dir = join(d.stateDir, LETTERS_DIR, 'previews')
+      const pages = letterSvgs(r.letter, day).map((svg, i) => d.rasterize(svg, dir, `preview-${d.now()}-${i + 1}`)).filter((p): p is string => !!p)
+      return { status: 'ok' as const, pages, text: letterText(r.letter) }
+    }),
+
+    status: () => {
+      const s = state()
+      return {
+        enabled: d.enabled(),
+        scheduled: d.enabled() && s.dueAt !== null,
+        pending: s.pending ? { id: s.pending.id, created_at: new Date(s.pending.createdAt).toISOString(), waiting_for_owner: s.pending.blockedAt !== null } : null,
+        letters: readRecords(d.stateDir).slice(0, 20).map(r => ({ id: r.id, day: r.day, sent_at: r.sent_at, requested: r.requested, opening: opening(r) })),
+      }
+    },
+  }
+}

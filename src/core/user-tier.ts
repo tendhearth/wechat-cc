@@ -271,6 +271,8 @@ export function classifyToolUse(toolName: string, input: Record<string, unknown>
     // Config surface — admin-only read/write of the owner's daemon config
     // (whitelist-bounded in src/daemon/config-surface.ts).
     if (sub === 'config_get' || sub === 'config_set') return 'config_admin'
+    // cc_letter(2026-10-16):给主人写信 / 开关不定期的信 —— 用的是主人的记忆与聊天,开关改主人的配置。admin-only。
+    if (sub === 'cc_letter') return 'config_admin'
     // Per-chat provider/model switch — trusted+ (mirrors the slash commands).
     if (sub === 'provider_switch') return 'mode_switch'
     // Explicit write mapping — must NOT fall through to the fs_read default

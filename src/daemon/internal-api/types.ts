@@ -259,6 +259,8 @@ export interface InternalApiDeps {
    * main.ts setOverseerToday;没设之前 GET /v1/overseer/today 503。只读,只在被问时算。
    */
   overseerToday?: () => import('../../core/overseer-today').OverseerToday
+  /** CC 的信(2026-10-16,letters/runtime.ts)。main.ts setLetters;没设之前 /v1/letters* 503。 */
+  letters?: import('../letters/runtime').LetterRuntime
   /**
    * 接上 / 撤掉终端里的 Claude Code / Codex(2026-10-14):POST /v1/cli/hooks/install|uninstall。
    * main.ts setCliHooks;没设之前 503。只在主人点了确认时调,绝不自动装。
@@ -656,6 +658,7 @@ export interface InternalApi {
   setCliEvents(hub: NonNullable<InternalApiDeps['cliEvents']>): void
   setCliPermissions(relay: NonNullable<InternalApiDeps['cliPermissions']>): void
   setOverseerToday(fn: NonNullable<InternalApiDeps['overseerToday']>): void
+  setLetters(rt: NonNullable<InternalApiDeps['letters']>): void
   setCliHooks(svc: NonNullable<InternalApiDeps['cliHooks']>): void
   /** 三轴 presence 的共用入口(随身 CC 手机页经此读,不自己拼输入)。null = journal 没接。 */
   getPresence(): Promise<import('../../core/companion-presence').Presence | null>

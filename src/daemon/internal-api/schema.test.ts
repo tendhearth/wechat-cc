@@ -653,7 +653,7 @@ describe('schema lookup tables', () => {
     // (P4: social/seek's SocialSeekRequest was deleted — the propose/
     // confirm/cancel routes that replaced it are inline-validated, no
     // REQUEST_SCHEMAS entry, per the pair/inbound routes' precedent.)
-    expect(Object.keys(REQUEST_SCHEMAS).length).toBe(50)
+    expect(Object.keys(REQUEST_SCHEMAS).length).toBe(52)
   })
   it('RESPONSE_SCHEMAS has 36 entries (one per route)', () => {
     // 25 original + 2 a2a dashboard response schemas (preview, install)

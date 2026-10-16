@@ -119,6 +119,41 @@ export function registerDaemonTools(server: McpServer, client: InternalApiClient
     },
   )
 
+  // CC 的信(2026-10-16):主人当面要一封 / 开关不定期的信 / 看写过哪些。信由 daemon 写好排成信纸寄到微信。
+  server.registerTool(
+    'cc_letter',
+    {
+      title: 'Letters to the owner',
+      description: '【管理员】给主人写信。action=write:主人说「给我写封信」「写封信给我吧」或倾诉完想要一封信时用 —— daemon 会用你记得的事写一封、排成信纸图片寄到主人微信(要一两分钟,工具立刻返回);把主人刚才说的、想要什么样的信,概括进 request。action=enable / disable:主人说以后时不时给 ta 写信 / 别写了。action=status:看开没开、写过哪些。别把信的内容先在聊天里说出来,也别承诺哪天会收到下一封 —— 不定期的信本来就是突然到的。',
+      inputSchema: {
+        action: z.enum(['write', 'enable', 'disable', 'status']),
+        request: z.string().max(2000).optional().describe('action=write 时:主人想要的那封信,原话或大意'),
+      },
+    },
+    async ({ action, request }) => {
+      try {
+        if (action === 'write') {
+          await client.request('POST', '/v1/letters/write', request ? { request } : {})
+          return { content: [{ type: 'text', text: '在写了:一两分钟后信纸图片会直接寄到主人微信(写不成也会自己告诉主人)。你只说一句「在给你写,写好寄过去」,别在聊天里复述或预告信的内容。' }] }
+        }
+        if (action === 'enable' || action === 'disable') {
+          await client.request('POST', '/v1/letters/settings', { enabled: action === 'enable' })
+          return { content: [{ type: 'text', text: action === 'enable' ? '好了:以后会时不时给主人写一封信(大约一个月一封,哪天不定)。' : '好了:不再主动写信了;主人想要时仍然可以当面要。' }] }
+        }
+        const s = await client.request<{ enabled?: boolean; scheduled?: boolean; pending?: { waiting_for_owner: boolean } | null; letters?: Array<{ day: string; sent_at: string | null; requested: boolean; opening: string }> }>('GET', '/v1/letters')
+        const list = (s?.letters ?? []).slice(0, 8).map(l => `- ${l.day}${l.requested ? '(主人要的)' : ''}${l.sent_at ? '' : '(还没寄出)'}:${l.opening}…`).join('\n')
+        const text = [
+          s?.enabled ? '不定期的信:开着。' : '不定期的信:关着(主人说要才开)。',
+          s?.pending ? (s.pending.waiting_for_owner ? '有一封写好了在等寄:微信不让主动发,主人下次说话时寄出。' : '有一封写好了在等寄。') : '',
+          list ? `写过的信:\n${list}` : '还没写过信。',
+        ].filter(Boolean).join('\n')
+        return { content: [{ type: 'text', text }] }
+      } catch (err) {
+        return passthroughErrorResult(err, 'cc_letter')
+      }
+    },
+  )
+
   // ─── daemon remediation (admin-only, mutating) ────────────────────────────────
   // The "fix" half of the self-heal loop. Same admin gating (ToolKind
   // 'daemon_remediate', denied for trusted/guest). Each returns a verification

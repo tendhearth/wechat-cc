@@ -446,6 +446,10 @@ export function createInternalApi(deps: InternalApiDeps): InternalApi {
       deps.overseerToday = fn
     },
 
+    setLetters(rt) {
+      deps.letters = rt
+    },
+
     setCliHooks(svc) {
       deps.cliHooks = svc
     },

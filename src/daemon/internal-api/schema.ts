@@ -749,6 +749,13 @@ export const CliHooksRequest = z.object({
   sources: z.array(z.enum(['claude', 'codex', 'cursor'])).min(1).max(3).optional(),
 })
 
+// ── POST /v1/letters/write|settings(CC 的信,2026-10-16)────────────────────
+// request:主人当面要信时说的话(原话或大意),可空。
+export const LettersWriteRequest = z.object({ request: z.string().max(2000).optional(), preview: z.boolean().optional() })
+export type LettersWriteRequestT = z.infer<typeof LettersWriteRequest>
+export const LettersSettingsRequest = z.object({ enabled: z.boolean() })
+export type LettersSettingsRequestT = z.infer<typeof LettersSettingsRequest>
+
 // ── Lookup tables ───────────────────────────────────────────────────────
 // REQUEST_SCHEMAS includes both POST body schemas (most routes) and GET
 // query schemas (e.g. /v1/memory/list?dir=...). The validation step in
@@ -814,6 +821,10 @@ export const REQUEST_SCHEMAS: Record<string, z.ZodTypeAny | undefined> = {
   'GET /v1/cli/sessions': CliSessionsQuery,
   'POST /v1/cli/hooks/install': CliHooksRequest,
   'POST /v1/cli/hooks/uninstall': CliHooksRequest,
+
+  // CC 的信
+  'POST /v1/letters/write': LettersWriteRequest,
+  'POST /v1/letters/settings': LettersSettingsRequest,
 
   // conversation
   'POST /v1/conversation/set-mode': ConversationSetModeRequest,
