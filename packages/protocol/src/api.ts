@@ -417,6 +417,12 @@ export type NativeSessionRowT = z.infer<typeof NativeSessionRow>
  * 手机可经 POST /m/api/cli/permission 拍板;主人在场、终端自己在问 ⇒ hash=null、actionable=false。
  * 老 daemon 不带这两个字段,客户端当作不可拍。
  */
+/**
+ * 看着它跑(GET /m/api/cli/activity?session_id=,2026-10-17):最近几步,旧 → 新。
+ * you = 主人说的,said = 它说的,step = 它做的一步(已翻成一句人话:「运行 npm test」「改 main.ts」)。at 是记录里的时间(毫秒),读不到为 null。
+ */
+export const CliActivityItem = z.object({ kind: z.enum(['you', 'said', 'step']), text: z.string(), at: z.number().nullable() })
+export type CliActivityItemT = z.infer<typeof CliActivityItem>
 export const CliSessionRow = z.object({
   session_id: z.string(), code: z.string(), source: z.enum(['claude', 'codex', 'cursor']),
   status: z.enum(['running', 'waiting', 'idle', 'ended']), stale: z.boolean(),
@@ -503,6 +509,8 @@ export const PHONE_API_SCHEMAS: Readonly<Record<string, z.ZodTypeAny>> = {
   'POST /m/api/cli/permission': z.union([z.object({ ok: z.literal(true) }), PhoneErrorResponse]),
   // 收下即回;结果成为这条会话的下一句 last_summary。错误码:cli_session_busy(在跑 / 在等批准)/ cli_session_ended / cli_session_remote(在别的电脑上)409,not_found 404。
   'POST /m/api/cli/say': z.union([z.object({ ok: z.literal(true), accepted: z.literal(true) }), PhoneErrorResponse]),
+  // 错误码:not_found 404;cli_session_remote(记录在别的电脑上)/ no_transcript(没有可读的记录)409。
+  'GET /m/api/cli/activity': z.union([z.object({ ok: z.literal(true), items: z.array(CliActivityItem) }), PhoneErrorResponse]),
   'GET /m/api/today': z.union([z.object({ ok: z.literal(true), today: OverseerToday }), PhoneErrorResponse]),
   'GET /m/api/session': z.union([z.object({ ok: z.literal(true) }).extend(NativeSessionPage.shape), PhoneErrorResponse]),
   'GET /m/api/session/continue': z.union([z.object({ ok: z.literal(true) }).extend(SessionContinue.shape), PhoneErrorResponse]),

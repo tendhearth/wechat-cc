@@ -537,6 +537,13 @@ export function makeDemoBackend(opts: { now?: () => number; setTimeout?: typeof 
       // 允许 ⇒ 接着跑完;拒绝 ⇒ 终端那边停下这一步
       later(2000, () => { r.status = 'idle'; r.last_event_at = now(); if (decision === 'allow') r.summaryKey = 'cliDemoReply' })
     },
+    async cliActivity(sessionId) {
+      const r = cliGet(sessionId)
+      if (r.session_id !== 'demo-cli-docs') return []
+      const n = now(), at = (s: number) => n - s * 1000
+      return ([['you', 'cliActYou', 300], ['step', 'cliActRead', 280], ['said', 'cliActSaid', 250], ['step', 'cliActEdit', 120], ['step', 'cliActRun', 40]] as const)
+        .map(([kind, key, ago]) => ({ kind, text: t(lastLang, key), at: at(ago) }))
+    },
     async cliSay(sessionId, text) {
       const r = cliGet(sessionId)
       if (!text.trim()) throw new BackendError('invalid')

@@ -1,10 +1,21 @@
 // 终端里的会话(2026-10-14):主人在 CC 外面开的 Claude Code / Codex,和 CC 自己的事并排放在「一起做」。
 // 等你批准且电脑在微信里开了码 ⇒ 点开这一行能允许 / 拒绝(同微信「y/n 码」;列表行上只有「看清楚 ›」);歇着的能接着说一句(同微信「@码」),
 // 结果会成为它的「最后一句」。没有推送主题:看得见时每 15 秒拉一次。
-var tm = { active:false, rows:[], open:null, reveal:null, busy:{}, note:{}, timer:0, seq:0 }
+// 看着它跑(2026-10-17):展开的那一行另拉最近几步(GET /m/api/cli/activity),每 4 秒一次,只在看得见时。
+var tm = { active:false, rows:[], open:null, reveal:null, busy:{}, note:{}, timer:0, seq:0, act:{}, actTimer:0, actSeq:0 }
 var TM_STATUS = { waiting:'等你批准', running:'在跑', idle:'歇着', ended:'结束了' }
 var TM_POLL_MS = 15000
 var TM_SAY_MAX = 4000
+var TM_ACT_MS = 4000
+// 最近几步:you 主人说的、said 它说的、step 它做的一步。在跑时最后一步就是「正在做的」。
+function tmActivity(r){
+  var a=tm.act[r.session_id],running=r.status==='running'&&!r.stale,last=a.items.length-1
+  return '<div class="terminal-activity" id="terminal-act-'+esc(r.session_id)+'" aria-live="polite">'+a.items.map(function(i,n){
+    var when=typeof i.at==='number'?'<time>'+esc(tmAgo(i.at))+'</time>':''
+    if(i.kind==='step')return '<p class="ta-step'+(running&&n===last?' is-now':'')+'">'+esc(i.text)+when+'</p>'
+    return '<p class="ta-'+(i.kind==='you'?'you':'said')+'">'+(i.kind==='you'?'<span>你</span>':'')+esc(i.text)+'</p>'
+  }).join('')+'</div>'
+}
 function tmEl(id){return document.getElementById('terminal-'+id)}
 function tmSource(s){return s==='codex'?'Codex':s==='cursor'?'Cursor':'Claude Code'}
 function tmAgo(at){var d=Math.max(0,Date.now()-at);if(d<60000)return '刚刚';if(d<3600000)return Math.floor(d/60000)+' 分钟前';if(d<86400000)return Math.floor(d/3600000)+' 小时前';return new Date(at).toLocaleString()}
@@ -23,6 +34,8 @@ function tmRequest(path,opts){
   return Promise.race([request,new Promise(function(_resolve,reject){timer=setTimeout(function(){reject(new Error('timeout'))},15000)})]).finally(function(){clearTimeout(timer)})
 }
 function tmPaint(){
+  // 过程框:原来就在最底下(或第一次画)⇒ 画完继续贴底;主人往上翻着看 ⇒ 不跳。
+  var box=tm.open&&document.getElementById('terminal-act-'+tm.open),stick=!box||box.scrollTop+box.clientHeight>=box.scrollHeight-8,keep=box?box.scrollTop:0
   var root=tmEl('root'),list=tmEl('list')
   root.hidden=tm.rows.length===0
   // 一行只有一个动作:点开 / 收起。能拍的那行写「看清楚 ›」;允许 / 拒绝只在展开后的详情里(看清楚了再拍)。
@@ -39,13 +52,16 @@ function tmPaint(){
       var canSay=r.status==='idle'
       h+='<div class="terminal-detail">'
       if(actionable)h+='<div class="terminal-actions"><button type="button" class="sessions-primary" data-tm-decide="allow" data-tm-id="'+id+'"'+(busy?' disabled':'')+'>允许</button><button type="button" class="sessions-text-action" data-tm-decide="deny" data-tm-id="'+id+'"'+(busy?' disabled':'')+'>拒绝</button></div>'
-      h+='<p class="terminal-label">最后一句</p><p class="terminal-last">'+esc(r.last_summary||'还没有回复')+'</p>'
+      // 过程读到了 ⇒ 看过程(最后一句就在里面);还没读到 / 读不了(老电脑、别的电脑)⇒ 照旧给最后一句。
+      var act=tm.act[r.session_id],seeAct=!!act&&!act.error&&act.items.length>0
+      h+=(seeAct?'<p class="terminal-label">它在做的事</p>'+tmActivity(r):(act&&act.error==='cli_session_remote'?'<p class="terminal-note">这个会话在另一台电脑上，这里看不到过程。</p>':'')+'<p class="terminal-label">最后一句</p><p class="terminal-last">'+esc(r.last_summary||'还没有回复')+'</p>')
         +(canSay?'':'<p class="terminal-note">'+(r.status==='waiting'?'它在等你批准，先拍板再说下一句。':'它还在跑，这一轮做完再说下一句。')+'</p>')
         +'<textarea id="terminal-say-'+id+'" rows="2" maxlength="'+TM_SAY_MAX+'" placeholder="接下来让它做什么…"'+(canSay?'':' disabled')+'></textarea>'
         +'<button type="button" class="sessions-primary" data-tm-say="'+id+'"'+(canSay&&!busy?'':' disabled')+'>发送</button></div>'
     }
     return h+(note?'<p class="terminal-note" role="status">'+esc(note)+'</p>':'')+'</div>'
   }).join('')
+  var nb=tm.open&&document.getElementById('terminal-act-'+tm.open);if(nb)nb.scrollTop=stick?nb.scrollHeight:keep
   if(tm.reveal){var want=tm.reveal,row=/** @type {HTMLElement|undefined} */(Array.prototype.find.call(list.querySelectorAll('[data-tm-row]'),function(/** @type {HTMLElement} */ e){return e.dataset.tmRow===want}));if(row){tm.reveal=null;if(row.scrollIntoView)row.scrollIntoView({block:'start'})}}
 }
 // 别处(此刻)点一条终端会话 ⇒ 到「一起做」并展开那一条。列表还没拉到时先记着,拉到后展开并滚过去。
@@ -54,7 +70,7 @@ function tmOpenSession(id){
   // 一件事的详情开着时终端列表是藏起来的 ⇒ 先回到全部。
   var detail=document.getElementById('m-detail'),back=document.getElementById('m-back')
   if(detail&&!detail.hidden&&back)back.click()
-  tm.open=id;tm.reveal=id;tmPaint()
+  tm.open=id;tm.reveal=id;tmPaint();tmActStart()
 }
 function tmLoad(){
   if(!tm.active||document.hidden)return Promise.resolve()
@@ -63,13 +79,32 @@ function tmLoad(){
     if(seq!==tm.seq||!Array.isArray(body.sessions))return
     // 结束了的不占位置;等你批准的在前(daemon 已排好)。正在写的那条不重画(输入框会丢字)。
     var rows=body.sessions.filter(function(r){return tmValid(r)&&r.status!=='ended'})
-    var typing=tm.open&&/** @type {HTMLTextAreaElement|null} */(document.getElementById('terminal-say-'+tm.open))
-    var draft=typing?typing.value:''
-    tm.rows=rows;tmPaint()
-    var again=tm.open&&/** @type {HTMLTextAreaElement|null} */(document.getElementById('terminal-say-'+tm.open))
-    if(again&&draft)again.value=draft
+    tm.rows=rows;tmRepaint()
   }).catch(function(){/* 老电脑没有这条路由 / 连不上:整段不显示,不打扰一起做 */})
 }
+// 重画会丢输入框里的字:先记下、画完放回(列表刷新和过程刷新共用)。
+function tmRepaint(){
+  var typing=tm.open&&/** @type {HTMLTextAreaElement|null} */(document.getElementById('terminal-say-'+tm.open))
+  var draft=typing?typing.value:''
+  tmPaint()
+  var again=tm.open&&/** @type {HTMLTextAreaElement|null} */(document.getElementById('terminal-say-'+tm.open))
+  if(again&&draft)again.value=draft
+}
+function tmActLoad(){
+  var id=tm.open
+  if(!id||!tm.active||document.hidden)return Promise.resolve()
+  var seq=++tm.actSeq
+  return tmRequest('/m/api/cli/activity?session_id='+encodeURIComponent(id)).then(function(body){
+    if(seq!==tm.actSeq||tm.open!==id||!Array.isArray(body.items))return
+    tm.act[id]={items:body.items.filter(function(i){return i&&typeof i.text==='string'&&['you','said','step'].indexOf(i.kind)>=0})};tmRepaint()
+  },function(e){
+    if(seq!==tm.actSeq||tm.open!==id)return
+    // 老电脑没有这条路由(404 method/not_found 以外)⇒ 退回「最后一句」,不报错。
+    tm.act[id]={error:e.message||'unavailable',items:[]};tmRepaint()
+  })
+}
+function tmActSchedule(){clearTimeout(tm.actTimer);if(tm.open&&tm.active&&!document.hidden)tm.actTimer=setTimeout(function(){tmActLoad().finally(tmActSchedule)},TM_ACT_MS)}
+function tmActStart(){tm.actSeq++;tmActLoad();tmActSchedule()}
 function tmSchedule(){clearTimeout(tm.timer);if(tm.active&&!document.hidden)tm.timer=setTimeout(function(){tmLoad().finally(tmSchedule)},TM_POLL_MS)}
 function tmPost(id,path,body,onOk){
   if(tm.busy[id])return
@@ -91,13 +126,13 @@ function tmSay(id){
 tmEl('list').addEventListener('click',function(ev){
   var t=/** @type {Element} */(ev.target),b=/** @type {HTMLElement|null} */(t.closest('[data-tm-open],[data-tm-decide],[data-tm-say]'))
   if(!b)return
-  if(b.dataset.tmOpen){tm.open=tm.open===b.dataset.tmOpen?null:b.dataset.tmOpen;tmPaint();return}
+  if(b.dataset.tmOpen){tm.open=tm.open===b.dataset.tmOpen?null:b.dataset.tmOpen;tmPaint();if(tm.open)tmActStart();else clearTimeout(tm.actTimer);return}
   if(b.dataset.tmDecide)tmDecide(b.dataset.tmId,b.dataset.tmDecide)
   if(b.dataset.tmSay)tmSay(b.dataset.tmSay)
 })
 document.addEventListener('cc:pane',function(event){
   tm.active=/** @type {CustomEvent} */(event).detail.pane==='matters'
-  if(tm.active){tmLoad();tmSchedule()}else{clearTimeout(tm.timer);tm.seq++}
+  if(tm.active){tmLoad();tmSchedule();if(tm.open)tmActStart()}else{clearTimeout(tm.timer);clearTimeout(tm.actTimer);tm.seq++;tm.actSeq++}
 })
-document.addEventListener('visibilitychange',function(){if(tm.active&&!document.hidden){tmLoad();tmSchedule()}else clearTimeout(tm.timer)})
+document.addEventListener('visibilitychange',function(){if(tm.active&&!document.hidden){tmLoad();tmSchedule();if(tm.open)tmActStart()}else{clearTimeout(tm.timer);clearTimeout(tm.actTimer)}})
 window.addEventListener('online',function(){if(tm.active){tmLoad();tmSchedule()}})

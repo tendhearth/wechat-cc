@@ -15,10 +15,10 @@ const idle={...waiting,session_id:'s-idle',source:'codex',status:'idle',project:
 const ended={...idle,session_id:'s-end',status:'ended'}
 const viaCursor={...idle,session_id:'s-cur',source:'cursor',project:'site'}
 const LIST={ok:true,sessions:[waiting,local,idle,viaCursor,ended]}
-function load(api=vi.fn(async(path:string,_opts?:any)=>response(path==='/m/api/cli/sessions'?LIST:{ok:true,accepted:true}))){
+function load(api=vi.fn(async(path:string,_opts?:any)=>response(path==='/m/api/cli/sessions'?LIST:path.startsWith('/m/api/cli/activity')?{ok:true,items:[]}:{ok:true,accepted:true})),timers?:{setTimeout:any,clearTimeout:any}){
  const window=new Window({url:'https://fixture.test/m'});windows.push(window)
  const document=window.document;document.body.innerHTML=assembleMobilePage(readMobileSource).phone
- const env={document,window,CustomEvent:window.CustomEvent,api,setTimeout:window.setTimeout.bind(window),clearTimeout:window.clearTimeout.bind(window),
+ const env={document,window,CustomEvent:window.CustomEvent,api,setTimeout:timers?.setTimeout??window.setTimeout.bind(window),clearTimeout:timers?.clearTimeout??window.clearTimeout.bind(window),
   esc:(text:unknown)=>String(text).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'})[c]!)}
  const fns=new Function(...Object.keys(env),`${readMobileSource('terminal.js')}\nreturn {tmLoad,tmOpenSession,state:function(){return tm}}`)(...Object.values(env)) as any
  const pane=(name:string)=>document.dispatchEvent(new window.CustomEvent('cc:pane',{detail:{pane:name}}))
@@ -51,7 +51,7 @@ describe('phone page: terminal sessions in 一起做',()=>{
  })
  it('允许:带会话 id 与码 POST /m/api/cli/permission;码失效 ⇒ 说清楚',async()=>{
   let n=0
-  const api=vi.fn(async(path:string,_opts?:any)=>path==='/m/api/cli/sessions'?response(LIST):n++===0?response({ok:true}):response({ok:false,error:'cli_permission_stale'},409))
+  const api=vi.fn(async(path:string,_opts?:any)=>path==='/m/api/cli/sessions'?response(LIST):path.startsWith('/m/api/cli/activity')?response({ok:true,items:[]}):n++===0?response({ok:true}):response({ok:false,error:'cli_permission_stale'},409))
   const h=load(api);h.pane('matters');await wait()
   ;(h.document.querySelector('[data-tm-open="s-wait"]') as any).click()
   ;(h.document.querySelector('[data-tm-decide="allow"][data-tm-id="s-wait"]') as any).click();await wait()
@@ -92,5 +92,27 @@ describe('phone page: terminal sessions in 一起做',()=>{
   const h=load(api);h.pane('matters');await wait()
   expect(h.el('terminal-root').hidden).toBe(true)
   h.pane('today');const n=api.mock.calls.length;await h.tmLoad();expect(api.mock.calls.length).toBe(n)
+ })
+ it('看着它跑:展开一行 ⇒ 拉最近几步,在跑时最后一步标「正在」;每 4 秒再拉;收起就停;读不到 ⇒ 退回最后一句',async()=>{
+  vi.useFakeTimers({toFake:['setTimeout','clearTimeout']})
+  try{
+   const running={...idle,session_id:'s-run',status:'running',project:'web'}
+   const ACT={ok:true,items:[{kind:'you',text:'修测试',at:NOW},{kind:'said',text:'先跑一遍',at:NOW},{kind:'step',text:'运行 npm test',at:NOW}]}
+   expect(PHONE_API_SCHEMAS['GET /m/api/cli/activity']!.safeParse(ACT).success).toBe(true)
+   const api=vi.fn(async(path:string)=>path==='/m/api/cli/sessions'?response({ok:true,sessions:[running,idle]}):path.includes('s-run')?response(ACT):response({ok:false,error:'cli_session_remote'},409))
+   const h=load(api,{setTimeout:(f:any,ms:number)=>setTimeout(f,ms),clearTimeout:(t:any)=>clearTimeout(t)});h.pane('matters');await vi.advanceTimersByTimeAsync(5)
+   ;(h.document.querySelector('[data-tm-open="s-run"]') as any).click();await vi.advanceTimersByTimeAsync(5)
+   expect(api).toHaveBeenCalledWith('/m/api/cli/activity?session_id=s-run',undefined)
+   const row=h.document.querySelector('[data-tm-row="s-run"]')!
+   expect(row.textContent).toContain('它在做的事');expect(row.textContent).toContain('修测试');expect(row.textContent).toContain('先跑一遍')
+   expect(row.querySelector('.ta-step.is-now')!.textContent).toContain('运行 npm test')
+   const n=()=>api.mock.calls.filter(([p])=>String(p).startsWith('/m/api/cli/activity')).length
+   const before=n();await vi.advanceTimersByTimeAsync(4100);expect(n()).toBe(before+1)
+   ;(h.document.querySelector('[data-tm-open="s-run"]') as any).click()
+   const closed=n();await vi.advanceTimersByTimeAsync(12000);expect(n()).toBe(closed)
+   ;(h.document.querySelector('[data-tm-open="s-idle"]') as any).click();await vi.advanceTimersByTimeAsync(5)
+   const other=h.document.querySelector('[data-tm-row="s-idle"]')!.textContent!
+   expect(other).toContain('另一台电脑');expect(other).toContain('测试全过了')
+  }finally{vi.useRealTimers()}
  })
 })

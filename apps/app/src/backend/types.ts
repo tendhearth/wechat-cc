@@ -1,12 +1,12 @@
 import type { z } from 'zod'
 import type {
   Matter, MatterDetail, ApprovalExplanation, ProgressSummary, PhoneChangesTurn, EntryOptions, DeviceRowT, PushPlatformT,
-  ChatPage, ChatJob, ChatMessage, ChatAttachment, EntryModelCatalog, ChatModelView, MemorySuccess, ChatSearchHit, Connections, NativeSessionRow, NativeSessionPage, SessionContinueT, MatterSayResult, CliSessionRowT, OverseerTodayT, TodayItemT,
+  ChatPage, ChatJob, ChatMessage, ChatAttachment, EntryModelCatalog, ChatModelView, MemorySuccess, ChatSearchHit, Connections, NativeSessionRow, NativeSessionPage, SessionContinueT, MatterSayResult, CliSessionRowT, CliActivityItemT, OverseerTodayT, TodayItemT,
 } from '@wechat-cc/protocol'
 import type { Lang } from '../i18n'
 
 // 协议包已导出这个类型,不再重推一份(裁决 R12)
-export type { SessionContinueT, CliSessionRowT, OverseerTodayT, TodayItemT }
+export type { SessionContinueT, CliSessionRowT, CliActivityItemT, OverseerTodayT, TodayItemT }
 export type MatterT = z.infer<typeof Matter>
 export type MatterDetailT = z.infer<typeof MatterDetail>
 export type ApprovalExplanationT = z.infer<typeof ApprovalExplanation>
@@ -130,6 +130,8 @@ export interface Backend {
   cliPermission(p: { sessionId: string; hash?: string; decision: 'allow' | 'deny' }): Promise<void>
   /** 对终端会话接着说一句(同微信「@码」):收下即回,结果成为这条会话的下一句。在跑 ⇒ 'busy';已结束 ⇒ 'cli_ended';在别的电脑上 ⇒ 'cli_remote'。 */
   cliSay(sessionId: string, text: string): Promise<void>
+  /** 看着它跑(GET /m/api/cli/activity,2026-10-17):最近几步,旧 → 新。在别的电脑上 ⇒ 'cli_session_remote';没有记录 ⇒ 'no_transcript';老电脑 ⇒ 'not_found' 之类。 */
+  cliActivity(sessionId: string): Promise<CliActivityItemT[]>
   /** 「今天」(GET /m/api/today,2026-10-14):终端 + 一起做,过去 24 小时 —— 等你 / 做完 / 在跑 / 可能卡住。与微信「日报」同一份。 */
   today(): Promise<OverseerTodayT>
   /** 解除本机配对(daemon 撤掉本机令牌)。失败抛 BackendError;调用方无论成败都清本地令牌。 */

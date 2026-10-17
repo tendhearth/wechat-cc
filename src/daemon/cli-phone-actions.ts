@@ -8,12 +8,16 @@
  */
 import type { CliSessionInfo } from '../core/cli-events'
 import type { CliSessionView } from '../core/cli-session-store'
-import type { CliReplyCore } from './cli-reply-handler'
+import { readTail, type CliReplyCore } from './cli-reply-handler'
+import { parseActivity, type CliActivityItem } from '../core/cli-activity'
 
 /** 手机上说一句最多这么长(终端那头是一句 prompt,不是贴文件)。 */
 export const PHONE_CLI_SAY_MAX = 4000
 
 export type CliPhonePermissionResult = { ok: true } | { ok: false; error: 'not_found' | 'cli_not_actionable' | 'cli_permission_stale' }
+export type CliPhoneActivityResult = { ok: true; items: CliActivityItem[] } | { ok: false; error: 'not_found' | 'cli_session_remote' | 'no_transcript' }
+/** 「现在在干什么」只读记录尾巴这么多(一屏 40 步用不了更多;每 4 秒读一次,别读几 MB)。 */
+export const PHONE_ACTIVITY_READ_MAX = 256 * 1024
 export type CliPhoneSayResult = { ok: true } | { ok: false; error: 'not_found' | 'cli_session_busy' | 'cli_session_ended' | 'cli_session_remote' }
 
 export interface CliPhoneActions {
@@ -21,6 +25,8 @@ export interface CliPhoneActions {
   pendingHash(sessionId: string): string | null
   permission(target: { hash?: string; session_id?: string }, decision: 'allow' | 'deny'): CliPhonePermissionResult
   say(sessionId: string, text: string): CliPhoneSayResult
+  /** 最近几步(跑了什么、改了哪、说了什么)—— 从会话记录尾巴读,手机上看着它跑(2026-10-17)。 */
+  activity(sessionId: string): CliPhoneActivityResult
 }
 
 export interface CliPhoneActionsDeps {
@@ -31,6 +37,8 @@ export interface CliPhoneActionsDeps {
   core: Pick<CliReplyCore, 'resume'>
   localMachine?: string
   log: (tag: string, line: string) => void
+  /** 测试替身;默认读真文件尾巴。 */
+  readTail?: (path: string, max: number) => string
 }
 
 export function makeCliPhoneActions(deps: CliPhoneActionsDeps): CliPhoneActions {
@@ -69,6 +77,17 @@ export function makeCliPhoneActions(deps: CliPhoneActionsDeps): CliPhoneActions 
       deps.log('CLI_REPLY', `phone say → ${s.source}/${sessionId.slice(0, 6)}`)
       void deps.core.resume(s, text).catch(err => deps.log('CLI_REPLY', `phone resume failed: ${err instanceof Error ? err.message : String(err)}`))
       return { ok: true }
+    },
+    activity(sessionId) {
+      const s = deps.hub.lookup(sessionId)
+      if (!s || s.session_id !== sessionId) return { ok: false, error: 'not_found' }
+      // 那边的会话:记录在那台机器上,这里读不到(微信「看 码」会转过去;手机 v1 不转)。
+      if (s.origin_agent || (s.machine && deps.localMachine && s.machine !== deps.localMachine)) return { ok: false, error: 'cli_session_remote' }
+      if (!s.transcript_path) return { ok: false, error: 'no_transcript' }
+      let jsonl: string
+      try { jsonl = (deps.readTail ?? readTail)(s.transcript_path, PHONE_ACTIVITY_READ_MAX) }
+      catch { return { ok: false, error: 'no_transcript' } }
+      return { ok: true, items: parseActivity(jsonl, s.source) }
     },
   }
 }

@@ -131,6 +131,19 @@ export async function mobileReadsRoute(deps: MobileReadsDeps, url: URL, req: Req
     try { return json({ ok: true, sessions: deps.cliSessions().slice(0, PHONE_CLI_SESSIONS_MAX).map(v => phoneCliSession(v, ph)) }) }
     catch { return json({ ok: false, error: 'unavailable' }, 503) }
   }
+  // 看着它跑(2026-10-17):一条终端会话最近几步。手机展开那一行时每几秒拉一次;只读,和「看 码」同一份记录。
+  if (url.pathname === '/m/api/cli/activity') {
+    if (req.method !== 'GET') return json({ ok: false, error: 'method_not_allowed' }, 405)
+    if (!deps.cliActions) return json({ ok: false, error: 'cli_actions_not_wired' }, 503)
+    const id = url.searchParams.get('session_id')
+    if (!id || !SESSION_ID_RE.test(id) || url.searchParams.getAll('session_id').length > 1) return json({ ok: false, error: 'invalid' }, 400)
+    try {
+      const r = deps.cliActions.activity(id)
+      if (!r.ok) return json({ ok: false, error: r.error }, r.error === 'not_found' ? 404 : 409)
+      // 旧中继一帧 512 KiB:每步文字上限减半直到放得下(不删步)。
+      return fitted(max => ({ ok: true, items: r.items.map(i => ({ ...i, text: i.text.length > max ? i.text.slice(0, max - 1) + '…' : i.text })) }), 600)
+    } catch { return json({ ok: false, error: 'unavailable' }, 503) }
+  }
   // 「今天」(2026-10-14):终端 + 一起做,过去 24 小时 —— 与微信「日报」同一份数据。
   if (url.pathname === '/m/api/today') {
     if (req.method !== 'GET') return json({ ok: false, error: 'method_not_allowed' }, 405)
