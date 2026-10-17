@@ -46,7 +46,14 @@
 
 CC 要取代的是 **Paseo / Orca 这一层**(agent 之上的编排 + 多端),不取代 Codex / Claude Code 这些 agent 本身。据此的优先级:
 ① 并行独立工作区 —— **已做**,三端齐(#253–#256、#261、#263–#267,见下);② 能接的 agent 更多 —— **已做**通用 ACP 槽位(#257–#259);
-③ 多端真正到手(TestFlight / 安卓 / Windows 工作台)—— 卡主人凭据与 win-test 真机;④ 语音先靠系统听写。终端 / 编辑器 / PR 管理继续不做。
+③ 多端真正到手(TestFlight / 安卓 / Windows 工作台)—— TestFlight 10-17 已上传(见下);安卓、Windows 工作台仍卡;④ 语音先靠系统听写。终端 / 编辑器 / PR 管理继续不做。
+
+**10-17 对标 Paseo / OpenAI dots 的一轮(已合 dev、已 `self deploy`)**:
+- **看着它跑**:手机网页 / App 展开一条终端会话(Claude Code / Codex / Cursor),每 4 秒看最近几步 —— 跑了什么、改了哪个文件、说了什么,在跑的那步标「正在」;有内容的一步可点开看 diff 或命令输出尾巴,报错标「没成」(#372–#375,`GET /m/api/cli/activity`,解析在 `src/core/cli-activity.ts`)。App 英文界面按 verb + target 显示英文。
+- **一起做的活在手机上跟得上**:事件投影带工具那一步的 `activity{type,status,label}`;手机网页在跑时 1.2 秒一拉 +「正在 · …」;App 主题节流到 1 秒、进展 / 改动只在阶段变时拉(#376)。
+- **微信「看 码」**:对话之后补「这一轮做了什么」(只列说法,不放 diff / 输出,#377)。
+- **TestFlight**:App Store Connect 记录 `Tendhearth CC · Personal AI`(app 6824007352)已建;1.0.0 (1) 已上传、处理完、内部测试组已建;daemon `relay_v2_url` 切到生产 `wss://relay.tendhearth.com`,`selftest phone --relay v2` 通过。**待主人**:在 TestFlight 页回答一次出口合规(本 app 有自己的端到端加密,不照搬 leni/rici 的 false),之后装包、重新配对一次。出包要点见 [maintainer/release.md](maintainer/release.md) 与 apps/app README。
+- 与 dots 的差异与不做的:dots 那种「给目标后台一直推进」碰「无人值守自动外呼」红线,等主人定(同定时交办草案)。
 
 ## dev 上等 1.7.6 的(2026-10-06 核对,均已合 dev 并 `self deploy` 到主人机器)
 

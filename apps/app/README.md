@@ -208,6 +208,14 @@ CI:`app · native push vectors`(`.github/workflows/ci.yml`,仅 `apps/app/native/
 - **iPhone staging 已有真机记录**：2026-10-01 / 10-02 的 `bun run e2e:device` 通过配对(经深链，不经相机)、同码重用被拒、聊天、后台扩展解密后的 APNs 横幅与点开批准、撤销、收尾；当时 staging 已配 APNs、本机 daemon 已设 `relay_v2_url`。该记录对应当时的验收构建，后续补充持久恢复、附件和普通发布包需各自验收，不能据此宣称主人真手机已经更新。
 - **仍需人手的 iOS 验收**：系统相机扫码 / 通用链接、锁屏解密后的文字、进程被杀后点通知冷启动、系统设置拒绝再打开通知权限、撤销后再触发只显示中性占位、加密备份恢复，以及下节聊天 / 会话续接清单。物理 iPhone 的补充日志跨进程恢复仍未实测。
 - **TestFlight 发布条件**：按[中继手册](../../docs/maintainer/relay.md#8-上线前后必读--go-live-notes)经 `relay-production` 环境批准部署 production Worker，配置生产 APNs 并核对健康，再将 daemon 的 `relay_v2_url` 切到生产，打开 `RELAY_WATCH`。staging 的成功不代替生产验收。EAS 仍需 `eas init` 提交 projectId，再 `eas build --profile production --platform ios` 与 `eas submit`；App Store Connect 记录和商店提交另办。
+- **TestFlight 本机出包(2026-10-17 实走,不用 EAS)**:App Store Connect 记录 `Tendhearth CC · Personal AI`(app id 6824007352,API 建不了,网页建);
+  1. `TENDHEARTH_APNS_ENV=production bunx expo prebuild --platform ios --clean --no-install`,之后 `git checkout -- package.json`(prebuild 会改);
+  2. `cd ios && pod install`;
+  3. `xcodebuild archive -workspace Tendhearth.xcworkspace -scheme Tendhearth -configuration Release -destination generic/platform=iOS -allowProvisioningUpdates` + 团队 API key 三参数;
+  4. `xcodebuild -exportArchive`(ExportOptions:method `app-store-connect`、team 9Y6JAPDP7A、automatic);
+  5. `xcrun altool --upload-app --type ios -f <ipa> --apiKey … --apiIssuer …`。
+  - **Xcode 升级后报 `cannot find type '__ObjC::expo'` / SDK built with Swift 6.3.1**:expo-modules-jsi 的 `apple/Products/ExpoModulesJSI.xcframework` 是本机按源码 hash 缓存的,换编译器不会重建 —— 跑它的 `apple/scripts/clear-caches.sh` 并删 DerivedData 再 archive。
+  - 下次上传先把 build number 加 1;导出合规(ITSAppUsesNonExemptEncryption)等主人在 TestFlight 页答过一次后再写进 `app.config.js`。
 - **安卓 / 商店后置**：安卓需要 Firebase 项目、`google-services.json` / `FCM_SERVICE_ACCOUNT`、App Links 签名指纹、SDK / 设备与实际 APK 验收；Google Play 账号与生产构建另办。凭据步骤见[中继手册](../../docs/maintainer/relay.md)。
 - **旧欠账已关闭**：#165 配对码只配一台，成功配对即作废，重复码已有真机自动化断言；微信聊天那件事的说一句已按 `requestId` 去重(2026-10-01，`matter_say_receipts`，同 id 同文返回原回执，异文返回 `input_conflict`)。相机权限 en / zh-Hans 文案已由 #158 补齐。
 
