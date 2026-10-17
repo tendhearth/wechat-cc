@@ -20,8 +20,28 @@ export type CliActivityKind = 'you' | 'said' | 'step'
  * detail(2026-10-17,只在 step 上):点开这一步能看的 —— 改文件是 diff(`- 旧` / `+ 新`),跑命令是输出尾巴。
  * error:这一步的工具报错了(命令非零退出 / 工具 is_error)。
  */
-export interface CliActivityItem { kind: CliActivityKind; text: string; at: number | null; detail?: string; error?: boolean }
-interface Step { text: string; detail?: string; callId?: string; keepOutput?: boolean }
+export interface CliActivityItem { kind: CliActivityKind; text: string; at: number | null; detail?: string; error?: boolean; verb?: StepVerb; target?: string }
+/** free:这一句是模型自己写的(Claude 给命令写的说明),不是我们拼的固定说法 ⇒ 不拆 verb/target。 */
+interface Step { text: string; detail?: string; callId?: string; keepOutput?: boolean; free?: boolean }
+
+/**
+ * 一步 = 动作 + 对象(2026-10-17):text 是拼好的中文(手机网页、微信用);verb + target 给要按语言显示的端(App 英文界面)。
+ * 每个 verb 对应 text 里固定的一种说法,stepPhrase 从 text 反解 —— 说法只在 ZH 这一处定义。
+ */
+export type StepVerb = 'run' | 'edit' | 'write' | 'delete' | 'read' | 'search' | 'find' | 'subtask' | 'web' | 'websearch' | 'todo' | 'todos' | 'plan' | 'tend' | 'tool' | 'bgoutput'
+const ZH: Array<[StepVerb, string, string]> = [
+  // [verb, 前缀, 后缀]:target 在中间;前后缀都为空串以外的固定句(没有 target)写在前缀里、后缀放 '\0' 标记整句匹配。
+  ['bgoutput', '看后台命令的输出', '\0'], ['todos', '更新清单', '\0'], ['plan', '更新计划', '\0'], ['tend', '照看子任务', '\0'],
+  ['websearch', '上网搜「', '」'], ['search', '搜「', '」'], ['find', '找文件 ', ''], ['subtask', '派子任务:', ''], ['web', '看网页 ', ''],
+  ['todo', '清单:', ''], ['run', '运行 ', ''], ['edit', '改 ', ''], ['write', '写 ', ''], ['delete', '删 ', ''], ['read', '读 ', ''], ['tool', '用 ', ''],
+]
+export function stepPhrase(text: string): { verb: StepVerb; target: string } | null {
+  for (const [verb, pre, post] of ZH) {
+    if (post === '\0') { if (text === pre) return { verb, target: '' }; continue }
+    if (text.startsWith(pre) && text.endsWith(post) && text.length > pre.length + post.length) return { verb, target: text.slice(pre.length, text.length - post.length) }
+  }
+  return null
+}
 
 /** 手机一屏看得完的量:最多这么多步,每句最多这么多字。 */
 export const ACTIVITY_MAX_ITEMS = 40
@@ -83,12 +103,14 @@ function runStep(cmd: string): string {
   return `运行 ${oneLine(first)}${body.includes('\n') ? ' …' : ''}`
 }
 
+const claudeBashNote = (input: Record<string, unknown>) => oneLine(str(input['description']))
+
 /** Claude 的工具名 + 参数 → 一句人话。认不出的写「用 <名字>」。 */
 export function claudeStep(name: string, input: Record<string, unknown>): string {
   const file = str(input['file_path']) || str(input['notebook_path']) || str(input['path'])
   switch (name) {
     // Claude 自己给命令写的一句说明比命令本身好懂,有就用它。
-    case 'Bash': return oneLine(str(input['description'])) || runStep(str(input['command']))
+    case 'Bash': return claudeBashNote(input) || runStep(str(input['command']))
     case 'BashOutput': return '看后台命令的输出'
     case 'Edit': case 'MultiEdit': case 'NotebookEdit': return `改 ${baseName(file)}`
     case 'Write': return `写 ${baseName(file)}`
@@ -180,7 +202,7 @@ function stepsOf(d: Record<string, unknown>, source: CliSource): Step[] {
       .map(x => {
         const name = x.name ?? '?', input = x.input && typeof x.input === 'object' ? x.input : {}
         const detail = claudeDetail(name, input)
-        return { text: claudeStep(name, input), ...(detail ? { detail } : {}), ...(x.id ? { callId: x.id } : {}), keepOutput: CLAUDE_KEEP_OUTPUT.has(name) }
+        return { text: claudeStep(name, input), ...(detail ? { detail } : {}), ...(x.id ? { callId: x.id } : {}), keepOutput: CLAUDE_KEEP_OUTPUT.has(name), free: name === 'Bash' && !!claudeBashNote(input) }
       })
   }
   if (source === 'codex') {
@@ -283,7 +305,11 @@ export function parseActivity(jsonl: string, source: CliSource, max = ACTIVITY_M
       // 连续同一句、都没有可看的内容 ⇒ 合并成一条(一串「读 x」)。
       let item: CliActivityItem
       if (prev && prev.kind === 'step' && prev.text === text && !prev.detail && !detail) { prev.at = at ?? prev.at; item = prev }
-      else { item = { kind: 'step', text, at, ...(detail ? { detail } : {}) }; items.push(item) }
+      else {
+        const ph = s.free ? null : stepPhrase(text)
+        item = { kind: 'step', text, at, ...(detail ? { detail } : {}), ...(ph ? { verb: ph.verb, target: ph.target } : {}) }
+        items.push(item)
+      }
       if (s.callId) byCall.set(s.callId, { item, keepOutput: s.keepOutput === true })
     }
     for (const r of resultsOf(d, source)) {

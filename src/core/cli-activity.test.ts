@@ -16,8 +16,8 @@ describe('parseActivity —— 看着它跑', () => {
     expect(parseActivity(jsonl, 'claude')).toEqual([
       { kind: 'you', text: '把测试修好', at: Date.parse(T) },
       { kind: 'said', text: '先跑一遍', at: Date.parse(T) },
-      { kind: 'step', text: '运行 npm test', at: Date.parse(T) },
-      { kind: 'step', text: '改 main.ts', at: null },
+      { kind: 'step', text: '运行 npm test', at: Date.parse(T), verb: 'run', target: 'npm test' },
+      { kind: 'step', text: '改 main.ts', at: null, verb: 'edit', target: 'main.ts' },
     ])
   })
 
@@ -121,16 +121,34 @@ describe('parseActivity —— 看着它跑', () => {
     ].join('\n')
     const items = parseActivity(jsonl, 'codex')
     expect(items).toEqual([
-      { kind: 'step', text: '运行 cargo test', at: null, detail: 'test x ... FAILED', error: true },
-      { kind: 'step', text: '改 a.rs', at: null, detail: '- old\n+ new' },
-      { kind: 'step', text: '写 b.rs', at: null, detail: '+ fn b() {}' },
-      { kind: 'step', text: '用 exec', at: null, detail: 'not allowed', error: true },
-      { kind: 'step', text: '运行 ls', at: null, detail: 'a\nb' },
+      { kind: 'step', text: '运行 cargo test', at: null, detail: 'test x ... FAILED', error: true, verb: 'run', target: 'cargo test' },
+      { kind: 'step', text: '改 a.rs', at: null, detail: '- old\n+ new', verb: 'edit', target: 'a.rs' },
+      { kind: 'step', text: '写 b.rs', at: null, detail: '+ fn b() {}', verb: 'write', target: 'b.rs' },
+      { kind: 'step', text: '用 exec', at: null, detail: 'not allowed', error: true, verb: 'tool', target: 'exec' },
+      { kind: 'step', text: '运行 ls', at: null, detail: 'a\nb', verb: 'run', target: 'ls' },
     ])
   })
 
   it('textDiff 只留改了的那一截', () => {
     expect(textDiff('a\nb\nc', 'a\nB\nc')).toBe('- b\n+ B')
     expect(textDiff('', 'x')).toBe('- \n+ x')
+  })
+})
+
+describe('verb + target(给按语言显示的端)', () => {
+  it('固定说法都能反解;Claude 自己写的命令说明不拆', async () => {
+    const { stepPhrase } = await import('./cli-activity')
+    expect(stepPhrase('运行 npm test')).toEqual({ verb: 'run', target: 'npm test' })
+    expect(stepPhrase('上网搜「bun ffi」')).toEqual({ verb: 'websearch', target: 'bun ffi' })
+    expect(stepPhrase('搜「TODO」')).toEqual({ verb: 'search', target: 'TODO' })
+    expect(stepPhrase('更新清单')).toEqual({ verb: 'todos', target: '' })
+    expect(stepPhrase('派子任务:查 CI')).toEqual({ verb: 'subtask', target: '查 CI' })
+    expect(stepPhrase('Check CI status')).toBeNull()
+    const L = (o: object) => JSON.stringify(o)
+    const items = parseActivity([
+      L({ type: 'assistant', message: { content: [{ type: 'tool_use', name: 'Bash', input: { command: 'ls', description: '运行 测试' } }, { type: 'tool_use', name: 'Edit', input: { file_path: '/a/b.ts', old_string: 'a', new_string: 'b' } }] } }),
+    ].join('\n'), 'claude')
+    expect(items[0]).toMatchObject({ text: '运行 测试' }); expect(items[0]!.verb).toBeUndefined()
+    expect(items[1]).toMatchObject({ verb: 'edit', target: 'b.ts' })
   })
 })
