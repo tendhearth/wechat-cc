@@ -216,3 +216,28 @@ describe('看着它跑(GET /m/api/cli/activity)', () => {
     expect((await mobileReadsRoute({}, new URL('http://x/m/api/cli/activity?session_id=A'), new Request('http://x/m/api/cli/activity?session_id=A')))!.status).toBe(503)
   })
 })
+
+describe('列表一眼:在跑的会话带此刻那一步', () => {
+  it('currentStep 取最后一步(不带 detail);主人刚说完 ⇒ null;列表只给在跑的带 now', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'cli-now-'))
+    try {
+      const path = join(dir, 's.jsonl')
+      const tool = (id: string, name: string, input: object) => JSON.stringify({ type: 'assistant', message: { content: [{ type: 'tool_use', id, name, input }] } })
+      writeFileSync(path, [JSON.stringify({ type: 'user', message: { content: '跑' } }), tool('a', 'Edit', { file_path: '/p/a.ts', old_string: 'x', new_string: 'y' }), tool('b', 'Bash', { command: 'npm test' })].join('\n'))
+      hub.ingest({ source: 'claude', kind: 'prompt', session_id: 'N1', cwd: '/w/proj', machine: 'mac', transcript_path: path })
+      const a = actions()
+      expect(a.currentStep('N1')).toMatchObject({ kind: 'step', text: '运行 npm test', verb: 'run', target: 'npm test' })
+      expect(a.currentStep('N1')!.detail).toBeUndefined()
+      const r = await mobileReadsRoute({ cliActions: a, cliSessions: () => hub.list() }, new URL('http://x/m/api/cli/sessions'), new Request('http://x/m/api/cli/sessions'))
+      const body = await r!.json()
+      PHONE_API_SCHEMAS['GET /m/api/cli/sessions']!.parse(body)
+      expect(body.sessions.find((x: { session_id: string }) => x.session_id === 'N1').now.text).toBe('运行 npm test')
+      writeFileSync(path, JSON.stringify({ type: 'user', message: { content: '再来' } }))
+      expect(a.currentStep('N1')).toBeNull()
+      hub.ingest({ source: 'claude', kind: 'stop', session_id: 'N1', cwd: '/w/proj', machine: 'mac', text: '好了' })
+      writeFileSync(path, tool('c', 'Bash', { command: 'ls' }))
+      const idle = await (await mobileReadsRoute({ cliActions: a, cliSessions: () => hub.list() }, new URL('http://x/m/api/cli/sessions'), new Request('http://x/m/api/cli/sessions')))!.json()
+      expect(idle.sessions.find((x: { session_id: string }) => x.session_id === 'N1').now).toBeUndefined()
+    } finally { rmSync(dir, { recursive: true, force: true }) }
+  })
+})

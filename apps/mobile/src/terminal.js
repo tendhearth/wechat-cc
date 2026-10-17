@@ -54,7 +54,8 @@ function tmPaint(){
     var h='<div class="terminal-row" data-tm-row="'+id+'">'
       +'<button type="button" class="terminal-head" data-tm-open="'+id+'" aria-expanded="'+open+'"><strong>'+esc(r.project)+'</strong>'
       +'<small><span class="terminal-dot is-'+esc(r.status)+'" aria-hidden="true"></span>'+esc(TM_STATUS[r.status])+' · '+esc(tmSource(r.source))+' · '+esc(r.stale&&tmLastAt(r)===r.last_event_at?'有一阵没动静了':tmAgo(tmLastAt(r)))+'</small>'
-      +(pending?'<span class="terminal-pending">'+esc(pending)+'</span>':r.last_summary&&!open?'<span class="terminal-summary">'+esc(r.last_summary)+'</span>':'')
+      // 在跑的带「此刻那一步」⇒ 收起时显示它(比上一轮的最后一句新);否则照旧最后一句。
+      +(pending?'<span class="terminal-pending">'+esc(pending)+'</span>':!open&&r.status==='running'&&r.now&&typeof r.now.text==='string'?'<span class="terminal-summary is-now"><span>正在</span> '+esc(r.now.text)+'</span>':r.last_summary&&!open?'<span class="terminal-summary">'+esc(r.last_summary)+'</span>':'')
       +(actionable&&!open?'<span class="terminal-review">看清楚 ›</span>':'')+'</button>'
     if(r.status==='waiting'&&!actionable)h+='<p class="terminal-note">正在终端里问，回电脑上答。</p>'
     if(open){

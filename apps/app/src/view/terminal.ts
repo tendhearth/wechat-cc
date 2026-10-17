@@ -1,5 +1,5 @@
 import type { CliSessionRowT } from '../backend/types'
-import { t, type Lang, type MessageKey } from '../i18n'
+import { hasMessage, t, type Lang, type MessageKey } from '../i18n'
 import type { Dot } from './connections'
 import { formatSynced } from './connection'
 
@@ -21,6 +21,14 @@ export type TerminalRow = {
   /** 中继在微信里开了码(主人不在电脑前)⇒ 手机上能拍;终端自己在问 ⇒ false。 */
   actionable: boolean
   hash: string | null
+  /** 在跑的会话此刻那一步(按界面语言拼好);没有 ⇒ null。 */
+  nowText: string | null
+}
+
+/** 一步的说法:daemon 给了 verb + target 就按界面语言拼;认不出的 verb(更新的电脑)/ 没有 verb(模型自己写的说明)⇒ 用 daemon 的 text。 */
+export function stepLabel(it: { text: string; verb?: string; target?: string }, lang: Lang): string {
+  const key = `terminal.verb.${it.verb ?? ''}`
+  return it.verb && hasMessage(lang, key) ? t(lang, key, { target: it.target ?? '' }) : it.text
 }
 
 export const TERMINAL_DOT: Record<TerminalStatus, Dot> = { waiting: 'warn', running: 'unknown', idle: 'ok', ended: 'unknown' }
@@ -48,6 +56,7 @@ export function terminalRow(s: CliSessionRowT, now: number, lang: Lang): Termina
     // 老 daemon 不带 actionable ⇒ 当作不可拍
     actionable: s.status === 'waiting' && p?.actionable === true && typeof p.hash === 'string',
     hash: p?.hash ?? null,
+    nowText: s.status === 'running' && s.now ? stepLabel(s.now, lang) : null,
   }
 }
 

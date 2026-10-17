@@ -43,7 +43,9 @@ export function TerminalItem({ row, onOpen }: { row: TerminalRow; onOpen: () => 
             <Txt role="small" tone="inkSoft" numberOfLines={1}>{`· ${row.source} · ${row.stale ? t(lang, 'terminal.stale.hint') : row.ago}`}</Txt>
           </View>
           {row.pendingText ? <Txt role="small" content="user" numberOfLines={2}>{row.pendingText}</Txt> : null}
-          {row.summary && !row.pendingText ? <Txt role="small" tone="inkSoft" content="user" numberOfLines={2}>{row.summary}</Txt> : null}
+          {row.nowText && !row.pendingText
+            ? <Txt testID={`terminal-now-${row.id}`} role="small" content="user" numberOfLines={2}>{`${t(lang, 'progress.stepNow')} · ${row.nowText}`}</Txt>
+            : row.summary && !row.pendingText ? <Txt role="small" tone="inkSoft" content="user" numberOfLines={2}>{row.summary}</Txt> : null}
         </View>
         {review
           ? <Txt testID={`terminal-review-${row.id}`} role="bubble" tone="inkSoft">{`${t(lang, 'terminal.review')} ›`}</Txt>

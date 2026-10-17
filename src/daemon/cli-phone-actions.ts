@@ -18,6 +18,8 @@ export type CliPhonePermissionResult = { ok: true } | { ok: false; error: 'not_f
 export type CliPhoneActivityResult = { ok: true; items: CliActivityItem[] } | { ok: false; error: 'not_found' | 'cli_session_remote' | 'no_transcript' }
 /** 「现在在干什么」只读记录尾巴这么多(一屏 40 步用不了更多;每 4 秒读一次,别读几 MB)。 */
 export const PHONE_ACTIVITY_READ_MAX = 256 * 1024
+/** 列表里每条在跑的会话只读这么多尾巴(列表 15 秒一拉,一次可能好几条)。 */
+export const PHONE_NOW_READ_MAX = 64 * 1024
 export type CliPhoneSayResult = { ok: true } | { ok: false; error: 'not_found' | 'cli_session_busy' | 'cli_session_ended' | 'cli_session_remote' }
 
 export interface CliPhoneActions {
@@ -27,6 +29,8 @@ export interface CliPhoneActions {
   say(sessionId: string, text: string): CliPhoneSayResult
   /** 最近几步(跑了什么、改了哪、说了什么)—— 从会话记录尾巴读,手机上看着它跑(2026-10-17)。 */
   activity(sessionId: string): CliPhoneActivityResult
+  /** 列表一眼(2026-10-17):在跑的会话此刻在做的那一步;读记录尾巴 64KB。读不到 / 没有步骤 ⇒ null。 */
+  currentStep(sessionId: string): CliActivityItem | null
 }
 
 export interface CliPhoneActionsDeps {
@@ -88,6 +92,20 @@ export function makeCliPhoneActions(deps: CliPhoneActionsDeps): CliPhoneActions 
       try { jsonl = (deps.readTail ?? readTail)(s.transcript_path, PHONE_ACTIVITY_READ_MAX) }
       catch { return { ok: false, error: 'no_transcript' } }
       return { ok: true, items: parseActivity(jsonl, s.source) }
+    },
+    currentStep(sessionId) {
+      const s = deps.hub.lookup(sessionId)
+      if (!s || s.session_id !== sessionId || !s.transcript_path) return null
+      if (s.origin_agent || (s.machine && deps.localMachine && s.machine !== deps.localMachine)) return null
+      try {
+        const items = parseActivity((deps.readTail ?? readTail)(s.transcript_path, PHONE_NOW_READ_MAX), s.source, 20)
+        for (let i = items.length - 1; i >= 0; i--) {
+          const it = items[i]!
+          if (it.kind === 'you') return null   // 主人刚说完、还没动手
+          if (it.kind === 'step') { const { detail: _d, ...rest } = it; return rest }
+        }
+        return null
+      } catch { return null }
     },
   }
 }

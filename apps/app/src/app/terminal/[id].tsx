@@ -2,7 +2,7 @@ import { useLocalSearchParams, useRouter } from 'expo-router'
 import { useState } from 'react'
 import { KeyboardAvoidingView, Platform, Pressable, ScrollView, View } from 'react-native'
 import { SafeAreaView } from 'react-native-safe-area-context'
-import { hasMessage, t, type Lang } from '../../i18n'
+import { t } from '../../i18n'
 import { useLang } from '../../i18n/useLang'
 import { useTerminalActions, useTerminalActivity, useTerminalSessions } from '../../state/useTerminal'
 import { Button } from '../../ui/Button'
@@ -13,13 +13,7 @@ import { radius, space } from '../../ui/tokens'
 import { TopBar } from '../../ui/TopBar'
 import { Txt } from '../../ui/Txt'
 import { useTheme } from '../../ui/useTheme'
-import { canSayTo, relAgo, terminalErrorKey, terminalRow } from '../../view/terminal'
-
-/** 一步的说法:daemon 给了 verb + target 就按界面语言拼;认不出的 verb(更新的电脑)/ 没有 verb(模型自己写的说明)⇒ 用 daemon 的 text。 */
-function stepLabel(it: { text: string; verb?: string; target?: string }, lang: Lang): string {
-  const key = `terminal.verb.${it.verb ?? ''}`
-  return it.verb && hasMessage(lang, key) ? t(lang, key, { target: it.target ?? '' }) : it.text
-}
+import { canSayTo, relAgo, stepLabel, terminalErrorKey, terminalRow } from '../../view/terminal'
 
 /** 手机上说一句最多这么长(同 daemon 的 PHONE_CLI_SAY_MAX)。 */
 const SAY_MAX = 4000
