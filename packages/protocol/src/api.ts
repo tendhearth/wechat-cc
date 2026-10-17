@@ -422,7 +422,9 @@ export type NativeSessionRowT = z.infer<typeof NativeSessionRow>
  * you = 主人说的,said = 它说的,step = 它做的一步(已翻成一句人话:「运行 npm test」「改 main.ts」)。at 是记录里的时间(毫秒),读不到为 null。
  */
 // detail / error(2026-10-17):step 点开能看的 —— 改文件是 diff(`- 旧` / `+ 新` 行),跑命令是输出尾巴;error = 这一步的工具报错。老 daemon 不带。
-export const CliActivityItem = z.object({ kind: z.enum(['you', 'said', 'step']), text: z.string(), at: z.number().nullable(), detail: z.string().optional(), error: z.boolean().optional() })
+export const CliActivityItem = z.object({ kind: z.enum(['you', 'said', 'step']), text: z.string(), at: z.number().nullable(), detail: z.string().optional(), error: z.boolean().optional(),
+  // verb + target(2026-10-17):text 是中文成句;按语言显示的端(App)用这两个自己拼。free 文本(模型自己写的说明)没有。
+  verb: z.string().optional(), target: z.string().optional() })
 export type CliActivityItemT = z.infer<typeof CliActivityItem>
 export const CliSessionRow = z.object({
   session_id: z.string(), code: z.string(), source: z.enum(['claude', 'codex', 'cursor']),
