@@ -215,6 +215,7 @@ describe('看着它跑(GET /m/api/cli/activity)', () => {
     expect((await get('?session_id=R1')).status).toBe(409)
     expect((await mobileReadsRoute({}, new URL('http://x/m/api/cli/activity?session_id=A'), new Request('http://x/m/api/cli/activity?session_id=A')))!.status).toBe(503)
   })
+})
 
 describe('列表一眼:在跑的会话带此刻那一步', () => {
   it('currentStep 取最后一步(不带 detail);主人刚说完 ⇒ null;列表只给在跑的带 now', async () => {
