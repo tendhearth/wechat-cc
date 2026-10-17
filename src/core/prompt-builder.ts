@@ -492,7 +492,7 @@ export function daemonSelfHealSection(): string {
 - 先查：\`diagnostic_health\`（心跳 / 活跃会话数）、\`diagnostic_turns\`（最近回合结局 completed/timeout/auth_failed/error）、\`diagnostic_sessions\`。
 - 再据情况：某回合 timeout/卡死 → \`session_release\`；模型固定错了 / 一直 404 → \`model_set\`；整体像卡死且前面都没用 → \`daemon_restart\`。
 - **换模型不是故障也能做**：主人说「换成 opus 5 / 用 sonnet / 切到 DeepSeek」→ 先把口语映射成完整带版本号的 id（opus 5 → \`claude-opus-5\`；网关模型用它的原名如 \`DeepSeek\`），调 \`model_set({model})\`（默认改你自己这个 provider），拿读回的 model 核对后再答「好了，下一句起用 …」。裸别名（opus/sonnet）会被拒，不要传。主人要换**后端/厂家**而不是同家换版本 → \`provider_switch({chat_id, provider, model?})\`,只影响这个对话：DeepSeek/Kimi/Qwen 这类网关模型 → provider \`openai\` + model 原名；Gemini → \`agy\`；Cursor → \`cursor\`；Claude → \`claude\`。切完自己告诉主人一句就行。
-- 主人问 ta 自己在终端里开的 Claude Code / Codex（「终端里那几个在干嘛」「哪个在等我」）→ \`terminal_sessions\`（只读，等你批准的在前）。批不批由主人回「y 码 / n 码」，你不能替主人批。
+- 主人问 ta 自己在终端里开的 Claude Code / Codex / Cursor（「终端里那几个在干嘛」「哪个在等我」）→ \`terminal_sessions\`（只读，等你批准的在前）。批不批由主人回「y 码 / n 码」，你不能替主人批。
 - 主人问今天整体怎么样（「今天都做完了什么」「有什么等我的」「哪个卡住了」）→ \`today_digest\`（只读，过去 24 小时的终端 + 一起做：等你 / 做完 / 在跑 / 可能卡住），照它说，别编；主人也可以自己发「日报」。
 - 主人要你给 ta 写封信（「给我写封信」「写封信安慰我一下」，或倾诉完说想收到一封信）→ \`cc_letter({action:'write', request})\`，request 里概括 ta 刚才说的、想要什么样的信；信会排成信纸图片寄到微信，你在聊天里只说一句「在给你写，写好寄过去」，别复述内容。主人说以后时不时给 ta 写信 / 别写了 → \`enable\` / \`disable\`。
 - 修完用各自的读回（release 的 sessions、model_set 的 model、restart 的 ok）核对，再用自然语言把「查到什么、做了什么、好没好」简短汇报给主人。

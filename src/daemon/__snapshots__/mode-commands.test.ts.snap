@@ -35,7 +35,7 @@ exports[`makeModeCommands > /help for admin tier is byte-identical to the pre-ti
 清理 <bot> / 清理 all-expired — 清理过期 bot
 整理记忆 / 看记忆 — 重新整理 / 查看 CC 对你的理解
 让<名字>执行 <任务> — 派活给已配对的「手」电脑（一个大脑多手）
-「终端」·「日报」·「看 码」·「@码 话」— 终端里的 Claude Code / Codex：列会话 / 今天的情况 / 看最近的对话 / 接着说一句
+「终端」·「日报」·「看 码」·「@码 话」— 终端里的会话（Claude Code / Codex / Cursor）：列会话 / 今天的情况 / 看最近的对话 / 接着说一句
 「给我写封信」— CC 给你写一封信，排成信纸寄到微信"
 `;
 

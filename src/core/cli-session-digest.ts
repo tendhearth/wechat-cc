@@ -93,7 +93,7 @@ export interface CliDigestOptions {
 export function formatCliSessionDigest(views: readonly CliDigestView[], opts: CliDigestOptions): string {
   const live = views.filter(v => v.status !== 'ended')
   if (live.length === 0) {
-    return '终端里现在没有会话。\n装好 hook 的 Claude Code / Codex 会话开起来就会出现在这里(电脑上跑 wechat-cc hook install)。'
+    return '终端里现在没有会话。\n还没接上的话，在电脑上「CC 现在怎么样」里点「接上」；之后终端里的 Claude Code / Codex / Cursor 会话会出现在这里。'
   }
   const max = Math.max(1, opts.max ?? CLI_DIGEST_MAX_ROWS)
   const shown = live.slice(0, max)

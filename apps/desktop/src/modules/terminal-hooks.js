@@ -105,7 +105,7 @@ export function mountOnboardTerminal(deps) {
   function render() {
     if (!started || (!row && !done)) { host.hidden = true; return }
     /** @type {HTMLElement[]} */
-    const parts = [el('h3', 'onboard-terminal-title', '也接上终端里的 Claude Code / Codex（可选）')]
+    const parts = [el('h3', 'onboard-terminal-title', '也接上终端里的会话（可选）')]
     if (done) parts.push(el('p', 'onboard-terminal-note', '接上了。之后终端里的会话做完、等你批准，CC 都会告诉你。'))
     else if (row) parts.push(el('p', 'onboard-terminal-note', row.reason), action.node(row.label))
     host.replaceChildren(...parts)
