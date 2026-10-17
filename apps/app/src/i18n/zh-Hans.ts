@@ -479,6 +479,7 @@ const zh: Record<keyof typeof en, string> = {
   'input.detailUnavailable': '暂时没能核对最新进展，原文仍在。',
   'input.reload': '重新核对',
   'progress.conversation': '对话',
+  'progress.stepNow': '正在',
   'progress.stepsN': '做了 {n} 步',
   'progress.noSummary': '还没有概括',
   'compose.handoffTitle': '交给 CC 去做一件事',

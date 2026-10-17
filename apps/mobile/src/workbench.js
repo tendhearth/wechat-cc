@@ -336,8 +336,10 @@ function mRenderEvents(events) {
     return '<div class="card ev" data-m-row-key="'+rowIdentity+':'+rowOccurrence+'"><div class="k">'+(e.kind==='user'?'你':e.kind==='text'?'CC':'·')+'</div><div class="tx">'+body+mMaterialCards(e.attachments)+'<small data-m-event-time>'+esc(ago(new Date(e.createdAt).toISOString()))+'</small></div></div>'
   }).join('')
   var tools=events.filter(function(e){return e.kind==='tool_call'})
+  // 看着它跑(2026-10-17):最后一步还在跑 ⇒ 在折叠的工具记录外面单独一行「正在 · …」,不用点开就看得到。
+  var last=events[events.length-1],now=last&&last.kind==='tool_call'&&last.activity&&last.activity.status==='running'?'<p class="m-now" data-m-row-key="now"><span>正在</span> '+esc(last.activity.label||last.text)+'</p>':''
   var folded=tools.length?'<details class="m-tool-events" data-m-row-key="tools"'+(expanded?' open':'')+'><summary>工具记录（'+tools.length+'）</summary>'+tools.map(function(e){return '<div class="card"><pre class="m-description">'+esc(e.text)+'</pre><small data-m-event-time>'+esc(ago(new Date(e.createdAt).toISOString()))+'</small></div>'}).join('')+'</details>':''
-  mPatchEventRows(root,dialogue+folded||'<div class="empty" data-m-row-key="empty">还没有对话记录</div>')
+  mPatchEventRows(root,dialogue+folded+now||'<div class="empty" data-m-row-key="empty">还没有对话记录</div>')
 }
 function renderMatter(d) {
   mDetail=d;mTooLarge=false;mDetailFresh=true
@@ -358,7 +360,9 @@ function renderMatter(d) {
     if(mAutoPreview!==previewKey){mAutoPreview=previewKey;mArtifact(preview)}
   }
 }
-function mSchedule() { clearTimeout(mPoll);if(mActive&&mCurrent&&!document.hidden&&!mTooLarge&&!mBusy[mCurrent+':handoff'])mPoll=setTimeout(mRefresh,3000) }
+// 在跑的时候 1.2 秒一拉(文字一截截长出来);歇着 3 秒。
+function mWorking(){var t=mDetail&&mDetail.task;return !!t&&(t.phase==='working'||t.status==='running')}
+function mSchedule() { clearTimeout(mPoll);if(mActive&&mCurrent&&!document.hidden&&!mTooLarge&&!mBusy[mCurrent+':handoff'])mPoll=setTimeout(mRefresh,mWorking()?1200:3000) }
 function mRefresh() {
   clearTimeout(mPoll);if(!mActive||!mCurrent||document.hidden||mOffline)return Promise.resolve()
   var id=mCurrent,seq=++mSeq

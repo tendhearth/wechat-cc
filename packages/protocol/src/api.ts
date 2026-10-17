@@ -85,6 +85,8 @@ export const MatterEvent = z.object({
   kind: z.string(), text: z.string(), createdAt: z.number(),
   source: z.string().optional(), attachments: z.array(Attachment).optional(),
   errorCode: z.literal('execution_model_unsupported').optional(), diagnostic: z.string().optional(),
+  // 工具那一步(2026-10-17):status = running / completed / failed …,手机据此标「正在」。老 daemon 不带。
+  activity: z.object({ type: z.string(), status: z.string(), label: z.string() }).optional(),
 })
 
 export const MatterInput = z.object({

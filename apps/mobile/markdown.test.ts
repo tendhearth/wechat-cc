@@ -170,6 +170,15 @@ describe('phone reading format',()=>{
     expect(root.querySelector('td')?.textContent).toBe('最新')
   })
 
+  it('最后一步还在跑 ⇒ 折叠外面一行「正在 · …」;跑完就没有(2026-10-17)',()=>{
+    const h=setup(),run={kind:'tool_call',text:'npm test',createdAt:1,activity:{type:'command',status:'running',label:'跑测试'}}
+    h.mRenderEvents([{kind:'user',text:'修一下',createdAt:0},run])
+    const root=h.get('m-events')
+    expect(root.querySelector('.m-now')?.textContent).toBe('正在 跑测试')
+    h.mRenderEvents([run,{...run,createdAt:2,activity:{...run.activity,status:'completed'}}])
+    expect(root.querySelector('.m-now')).toBeNull()
+  })
+
   it('keeps expanded tool records intact and refreshes them after closing',()=>{
     const h=setup(),event={kind:'tool_call',text:'**工具原文**',createdAt:1}
     h.mRenderEvents([event])

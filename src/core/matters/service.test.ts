@@ -2,6 +2,7 @@ import {afterEach,beforeEach,describe,expect,it,vi} from 'vitest'
 import {openDb,type Db} from '../../lib/db'
 import {makeMatterStore,type MatterStore} from './store'
 import {makeMattersService} from './service'
+import {PHONE_API_SCHEMAS} from '@wechat-cc/protocol'
 
 let db:Db,store:MatterStore
 beforeEach(()=>{db=openDb({path:':memory:'});store=makeMatterStore(db,()=>1_000)})
@@ -114,5 +115,13 @@ describe('worktree on the phone (2026-10-07)',()=>{
     const withProjects=makeMattersService({store,workbench:{detail:()=>({task,events:[]}),continueTask:vi.fn(),worktreeAction,projects:()=>[{id:'p-1',path:'/Users/me/secret'}]} as never})
     const shown=(await withProjects.detail('deadbeef')).task?.worktree
     expect(shown).toEqual({branch:'cc/abcd1234',removed:false,merged:true,projectId:'p-1'});expect(JSON.stringify(shown)).not.toContain('/Users/me')
+  })
+  it('工具那一步只投影 type/status/label 给手机,不带命令输出与细节(2026-10-17)',async()=>{
+    store.create({id:'deadbeef',kind:'task',title:'任务',projectPath:'/work'})
+    const activity={id:'a1',type:'command',status:'running',label:'npm test',detail:'cd /secret && npm test',output:'TOKEN=abc'}
+    const workbench={detail:vi.fn(()=>({task:TASK,events:[{kind:'tool_call',text:'npm test',createdAt:3,activity},{kind:'text',text:'在跑',createdAt:4,activity}]})),continueTask:vi.fn()}
+    const detail=await makeMattersService({store,workbench} as never).detail('deadbeef')
+    expect(detail.events).toEqual([{kind:'tool_call',text:'npm test',createdAt:3,activity:{type:'command',status:'running',label:'npm test'}},{kind:'text',text:'在跑',createdAt:4}])
+    PHONE_API_SCHEMAS['GET /m/api/matter']!.parse({ok:true,...detail})
   })
 })
