@@ -20,4 +20,9 @@ describe('conversationView', () => {
     expect(conversationView([{ kind: 'error', text: '账号暂不能使用这个模型。', createdAt: 1, diagnostic, errorCode: 'execution_model_unsupported' }]))
       .toEqual([{ kind: 'error', text: '账号暂不能使用这个模型。', at: 1, diagnostic }])
   })
+  it('最后一步还在跑 ⇒ steps 带 running;跑完的不带', () => {
+    const tool = (text: string, at: number, status: string) => ({ kind: 'tool_call', text, createdAt: at, activity: { type: 'command', status, label: text } })
+    expect(conversationView([tool('npm test', 1, 'completed'), tool('npm run lint', 2, 'running')])).toEqual([{ kind: 'steps', text: 'npm run lint', at: 2, count: 2, running: true }])
+    expect(conversationView([tool('npm test', 1, 'running'), tool('npm run lint', 2, 'completed')])).toEqual([{ kind: 'steps', text: 'npm run lint', at: 2, count: 2 }])
+  })
 })

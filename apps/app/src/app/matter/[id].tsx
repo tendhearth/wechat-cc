@@ -37,6 +37,9 @@ const NO_INPUTS: readonly MatterInputT[] = []
 
 // 进展页:状态标签在「CC 的进展」概括之上;概括没到时用骨架占位;下面是这件事的真对话。
 // 主人自己那条聊天(只认它,Ruling 9)改道去 /chat;访客的聊天照常显示。
+/** 在跑时详情至多这么久拉一次(主题每 ~150ms 一跳)。 */
+const DETAIL_REFRESH_MS = 1000
+
 export default function Matter() {
   const { c } = useTheme()
   const lang = useLang()
@@ -80,13 +83,25 @@ export default function Matter() {
   const { refresh: refreshDetail } = detail
   const { refresh: refreshInsight } = insight
   const { refresh: refreshChanges } = changes
+  // 主题在跑的时候大约每 150ms 变一次(逐字流):详情至多 1 秒拉一次(最后一次一定拉到);
+  // 进展摘要和改动只在阶段变了(开始 / 停下 / 等你)时才重拉,免得每一截文字都多两个请求。
+  const lastPhase = useRef<unknown>(undefined)
+  const detailTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
+  const lastDetailAt = useRef(0)
+  useEffect(() => () => { if (detailTimer.current) clearTimeout(detailTimer.current) }, [])
   useEffect(() => {
     if (verKey === undefined) return
+    const phase = (ver as { phase?: unknown } | undefined)?.phase
     if (seen.current !== undefined && seen.current !== verKey) {
-      void refreshDetail(); void refreshInsight(); void refreshChanges()
+      const wait = Math.max(0, DETAIL_REFRESH_MS - (Date.now() - lastDetailAt.current))
+      if (!detailTimer.current) {
+        detailTimer.current = setTimeout(() => { detailTimer.current = null; lastDetailAt.current = Date.now(); void refreshDetail() }, wait)
+      }
+      if (phase !== lastPhase.current) { void refreshInsight(); void refreshChanges() }
     }
     seen.current = verKey
-  }, [verKey, refreshDetail, refreshInsight, refreshChanges])
+    lastPhase.current = phase
+  }, [verKey, ver, refreshDetail, refreshInsight, refreshChanges])
 
   const header = (
     <>
@@ -229,8 +244,8 @@ export default function Matter() {
           {conv.length === 0 ? <Txt role="meta" tone="inkSoft">{t(lang, 'progress.noEvents')}</Txt> : null}
           {conv.map((e, i) =>
             e.kind === 'steps' ? (
-              <Txt key={i} role="small" tone="inkSoft" numberOfLines={1}>
-                {t(lang, 'progress.stepsN', { n: e.count ?? 1 })} · {e.text}
+              <Txt key={i} testID={e.running && i === conv.length - 1 ? 'progress-step-now' : undefined} role="small" tone={e.running && i === conv.length - 1 ? 'ink' : 'inkSoft'} numberOfLines={1}>
+                {e.running && i === conv.length - 1 ? `${t(lang, 'progress.stepNow')} · ` : ''}{t(lang, 'progress.stepsN', { n: e.count ?? 1 })} · {e.text}
               </Txt>
             ) : e.kind === 'error' ? (
               <View key={i} style={{ flexDirection: 'row', gap: space.s, alignItems: 'flex-start' }}>

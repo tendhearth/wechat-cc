@@ -477,6 +477,7 @@ const en = {
   'input.detailUnavailable': 'Couldn’t check the latest progress yet. The original is still here.',
   'input.reload': 'Check again',
   'progress.conversation': 'Conversation',
+  'progress.stepNow': 'Now',
   'progress.stepsN': '{n} steps',
   'progress.noSummary': 'No summary yet',
   'compose.handoffTitle': 'Hand a task to CC',
