@@ -30,6 +30,8 @@ export interface MobileReadsDeps {
 }
 /** 手机上终端会话列表最多给这么多条。 */
 export const PHONE_CLI_SESSIONS_MAX = 50
+/** 列表里最多给这么多条在跑的会话读「此刻那一步」。 */
+export const PHONE_CLI_NOW_MAX = 8
 /**
  * 手机口径的终端会话:与上面原生会话同一条规矩 —— 项目只给目录名,不给完整路径。
  * 其余字段同 GET /v1/cli/sessions(状态已折算 stale、等你批准的在前)。
@@ -128,7 +130,19 @@ export async function mobileReadsRoute(deps: MobileReadsDeps, url: URL, req: Req
     if (req.method !== 'GET') return json({ ok: false, error: 'method_not_allowed' }, 405)
     if (!deps.cliSessions) return json({ ok: false, error: 'cli_sessions_not_wired' }, 503)
     const ph = deps.cliActions ? (id: string) => deps.cliActions!.pendingHash(id) : undefined
-    try { return json({ ok: true, sessions: deps.cliSessions().slice(0, PHONE_CLI_SESSIONS_MAX).map(v => phoneCliSession(v, ph)) }) }
+    try {
+      // 在跑的会话带上此刻那一步(列表一眼看到谁在做什么);最多前 PHONE_CLI_NOW_MAX 条,读不到就不带。
+      let budget = PHONE_CLI_NOW_MAX
+      const sessions = deps.cliSessions().slice(0, PHONE_CLI_SESSIONS_MAX).map(v => {
+        const row = phoneCliSession(v, ph)
+        if (v.status !== 'running' || v.stale || budget <= 0 || !deps.cliActions?.currentStep) return row
+        budget--
+        let now: ReturnType<CliPhoneActions['currentStep']> = null
+        try { now = deps.cliActions.currentStep(v.session_id) } catch { now = null }
+        return now ? { ...row, now } : row
+      })
+      return json({ ok: true, sessions })
+    }
     catch { return json({ ok: false, error: 'unavailable' }, 503) }
   }
   // 看着它跑(2026-10-17):一条终端会话最近几步。手机展开那一行时每几秒拉一次;只读,和「看 码」同一份记录。

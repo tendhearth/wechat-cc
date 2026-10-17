@@ -56,4 +56,11 @@ describe('终端里的会话(手机视图)', () => {
     expect(terminalErrorKey('uncertain')).toBe('terminal.uncertain')
     expect(terminalErrorKey('offline')).toBe('terminal.failed')
   })
+  it('在跑的会话带 now ⇒ nowText 按界面语言拼;不在跑 / 认不出的 verb 退回原文', () => {
+    const now = { kind: 'step' as const, text: '运行 npm test', at: NOW, verb: 'run', target: 'npm test' }
+    expect(terminalRow(row({ status: 'running', now }), NOW, 'en').nowText).toBe('Run npm test')
+    expect(terminalRow(row({ status: 'running', now }), NOW, 'zh-Hans').nowText).toBe('运行 npm test')
+    expect(terminalRow(row({ status: 'running', now: { ...now, verb: 'teleport' } }), NOW, 'en').nowText).toBe('运行 npm test')
+    expect(terminalRow(row({ status: 'idle', now }), NOW, 'en').nowText).toBeNull()
+  })
 })

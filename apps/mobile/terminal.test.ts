@@ -136,4 +136,12 @@ describe('phone page: terminal sessions in 一起做',()=>{
    expect(more()[0].open).toBe(true);expect(more()[1].open).toBe(false)
   }finally{vi.useRealTimers()}
  })
+ it('列表一眼:在跑的带 now ⇒ 收起时显示「正在 · …」代替上一句',async()=>{
+  const running={...idle,session_id:'s-run',status:'running',project:'web',last_summary:'上一轮的话',now:{kind:'step',text:'运行 npm test',at:NOW,verb:'run',target:'npm test'}}
+  expect(PHONE_API_SCHEMAS['GET /m/api/cli/sessions']!.safeParse({ok:true,sessions:[running]}).success).toBe(true)
+  const h=load(vi.fn(async(path:string)=>response(path==='/m/api/cli/sessions'?{ok:true,sessions:[running]}:{ok:true,items:[]})));h.pane('matters');await wait()
+  const row=h.document.querySelector('[data-tm-row="s-run"]')!
+  expect(row.querySelector('.terminal-summary.is-now')!.textContent).toBe('正在 运行 npm test')
+  expect(row.textContent).not.toContain('上一轮的话')
+ })
 })

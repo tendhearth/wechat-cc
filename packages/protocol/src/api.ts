@@ -434,6 +434,8 @@ export const CliSessionRow = z.object({
   project: z.string(), machine: z.string().nullable(), last_summary: z.string().nullable(),
   last_event_at: z.number(), last_prompt_at: z.number().nullable(), created_at: z.number(),
   pending: z.object({ tool: z.string(), summary: z.string().nullable(), since: z.number(), hash: z.string().nullable().optional(), actionable: z.boolean().optional() }).nullable(),
+  // now(2026-10-17):在跑的会话此刻那一步(同 /m/api/cli/activity 的一项,不带 detail)。老 daemon / 读不到不带。
+  now: CliActivityItem.optional(),
 })
 export type CliSessionRowT = z.infer<typeof CliSessionRow>
 export type NativeSessionPageT = z.infer<typeof NativeSessionPage>
