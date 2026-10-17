@@ -297,7 +297,7 @@ describe('手机交办页面接线', () => {
 
   it('assembles the visible entry and keeps public messages outside collapsed tool details', () => {
     const page=assembleMobilePage(readMobileSource).phone
-    expect(page.includes('id="home-entry"')).toBe(true)
+    expect(page.includes('id="home-entry"')).toBe(false) // 交办卡本来就在,顶上那个按钮重复(2026-10-17 去掉)
     expect(page.includes('id="entry-root"')).toBe(true)
     const ancestors:string[]=[]
     let eventsAncestors:string[]|undefined
@@ -336,9 +336,6 @@ describe('手机交办页面接线', () => {
     expect(calls.filter(c=>c.method==='POST')).toEqual([])
     expect(get('entry-text').value).toBe(input.text)
     expect(get('entry-text').focus).not.toHaveBeenCalled()
-    get('home-entry').fire('click');await vi.advanceTimersByTimeAsync(0)
-    expect(get('entry-text').focus).toHaveBeenCalledOnce()
-    expect(env.ccMobilePane).toHaveBeenCalledWith('matters') // 交办住在「一起做」(2026-10-05)
     expect(calls.filter(c=>c.method==='POST')).toEqual([])
     expect(env.openMatter).not.toHaveBeenCalled()
   })

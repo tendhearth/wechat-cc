@@ -107,7 +107,7 @@ export function guardLine(guard) {
     const label = first && typeof first.label === "string" && first.label ? first.label : "Claude"
     return { state: "down", text: `⚠ 网络未受保护：用到 ${label} 等的调用暂停`, detail }
   }
-  if (guard.source === "bx") return { state: "ok", text: "bx 保护中", detail }
+  if (guard.source === "bx") return { state: "ok", text: "网络已保护", detail }
   return { state: "ok", text: "网络守护 · 探测可达", detail }
 }
 

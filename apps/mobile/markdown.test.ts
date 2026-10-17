@@ -25,7 +25,7 @@ function setup(){
   // Run the production reading functions without starting homepage network polling.
   const home=readMobileSource('home.js'),presence=readMobileSource('presence.js')
   const feedSource=home.slice(home.indexOf('var KIND_ICON'),home.indexOf('function presenceTtlCheck'))
-  const presenceSource='var homeFocus=null\n'+presence.slice(presence.indexOf('function renderPresenceHome'),presence.indexOf("document.getElementById('home-entry')"))
+  const presenceSource='var homeFocus=null\n'+presence.slice(presence.indexOf('function renderPresenceHome'),presence.indexOf('var homeCharacter'))
   const fns=new Function(...Object.keys(env),`${readMobileSource('markdown.js')}\n${readMobileSource('workbench.js')}\n${presenceSource}\n${feedSource}\nreturn {mRenderEvents,mRenderTextArtifact,mArtifact,selectMatter:function(d){mCurrent=d.matter.id;renderMatter(d)},evHtml,renderPresenceHome}`)(...Object.values(env)) as {
     mRenderEvents:(events:unknown[])=>void
     mRenderTextArtifact:(preview:unknown,mime:string,text:string,truncated:boolean)=>void

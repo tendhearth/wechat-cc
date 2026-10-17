@@ -382,7 +382,7 @@ export async function buildBootstrap(deps: BootstrapDeps): Promise<Bootstrap> {
     codeHead: wiredSelfRestart?.loadedHead ?? null,
     providerNotes: () => {
       const out: Partial<Record<ProviderId, string>> = { ...baseProviderNotes() }
-      for (const [id, note] of anomalyNotes) out[id] = out[id] ? `${out[id]} · ⚠️ ${note}` : `⚠️ ${note}`
+      for (const [id, note] of anomalyNotes) out[id] = out[id] ? `${out[id]} · 注意:${note}` : `注意:${note}`
       return out
     },
     agentProviderKind: defaultProviderId,
