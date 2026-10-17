@@ -1138,8 +1138,8 @@ describe('diagnose — code 9 backend still on the old version', () => {
 })
 
 describe('guardLine (网络守护,2026-10-02)', () => {
-  it('bx protected → 「bx 保护中」 ok', () => {
-    expect(guardLine({ enabled: true, source: 'bx', safe: true, detail: 'bx 保护中' })).toEqual({ state: 'ok', text: 'bx 保护中', detail: 'bx 保护中' })
+  it('bx protected → 「网络已保护」 ok,bx 只留在悬停详情里', () => {
+    expect(guardLine({ enabled: true, source: 'bx', safe: true, detail: 'bx 保护中' })).toEqual({ state: 'ok', text: '网络已保护', detail: 'bx 保护中' })
   })
   it('unsafe (bx or probe) with protected providers in use → 「⚠ 网络未受保护：用到 Claude 等的调用暂停」 down, detail kept', () => {
     expect(guardLine({ enabled: true, source: 'bx', safe: false, detail: 'bx 未保护(protection_state=off)', protected_in_use: true, providers: [{ id: 'openai', protected: false, label: 'DeepSeek' }, { id: 'claude', protected: true, label: 'Claude' }] }))

@@ -42,7 +42,6 @@ function renderPresenceHome(s,stale) {
   }
   document.getElementById('home-context').textContent=stale?'这是上次留下的画面，当前活动尚未确认。':s.presence&&s.presence.presence==='ok'?'':'有些连接状态还需要确认。'
 }
-document.getElementById('home-entry').addEventListener('click',function(){void openEntry()})
 var homeCharacter = document.querySelector(".home-character")
 homeCharacter.addEventListener("click", function(){ openYou() })
 homeCharacter.addEventListener("keydown", function(/** @type {KeyboardEvent} */ ev){ if (ev.key === "Enter" || ev.key === " ") { ev.preventDefault(); openYou() } })

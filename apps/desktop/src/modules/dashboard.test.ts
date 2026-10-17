@@ -1637,7 +1637,7 @@ describe('loadGuardLine —— 网络未受保护时此刻页要说出来(2026-1
     globalThis.document = { getElementById: (id: string) => (id === 'dash-guard-line' ? el : null) }
     return el
   }
-  it('bx 不安全 → 显示红色一行,带原因;bx 保护中 → 绿色', async () => {
+  it('bx 不安全 → 显示红色一行,带原因;网络已保护 → 绿色', async () => {
     const el = mk()
     await loadGuardLine({ invokeApi: async () => ({ guard: { enabled: true, source: 'bx', safe: false, detail: 'bx 没在运行或读不出状态(exit 1)', ip: null, checked_at: null } }) })
     expect(el.hidden).toBe(false)
@@ -1646,7 +1646,7 @@ describe('loadGuardLine —— 网络未受保护时此刻页要说出来(2026-1
     expect(el.title).toContain('bx leakcheck')
     await loadGuardLine({ invokeApi: async () => ({ guard: { enabled: true, source: 'bx', safe: true, detail: 'bx 保护中', ip: null, checked_at: null } }) })
     expect(el.dataset.state).toBe('ok')
-    expect(el.textContent).toBe('bx 保护中')
+    expect(el.textContent).toBe('网络已保护')
   })
   it('守护 v2:信号不安全但没用到需要保护的接口 → 中性一行,不报红', async () => {
     const el = mk()
