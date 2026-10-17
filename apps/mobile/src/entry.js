@@ -117,8 +117,6 @@ function eMount() {
   if (!root) return
   root.innerHTML = '<form id="entry-form" class="entry-card"><label for="entry-text" class="entry-heading">有件事，想交给 CC</label><p class="entry-intro">说说你想做什么，我们从这里开始。</p><textarea id="entry-text" rows="3" placeholder="比如，帮我整理一份周末出游清单…" aria-describedby="entry-count entry-notice"></textarea><p id="entry-count" class="entry-hint"></p><div id="entry-attachments"></div><details class="entry-more"><summary>更多选择</summary><label for="entry-project">在哪儿做<select id="entry-project"></select></label><label for="entry-provider">交给谁<select id="entry-provider"></select></label><p id="entry-selection" class="entry-hint"></p></details><div class="entry-actions"><button id="entry-submit" type="submit">交给 CC</button><button id="entry-another" type="button" hidden>另写一件</button><button id="entry-refresh" type="button">刷新连接</button></div><p id="entry-notice" role="status" aria-live="polite"></p></form><div id="entry-history"></div>'
   eMounted = true
-  // 表单出来了,上面那个「交给 CC 做」入口就重复了(设计审查 10-16):收起来
-  var homeEntry = document.getElementById("home-entry"); if (homeEntry) homeEntry.hidden = true
   eText().value = eState.draft.text
   eText().addEventListener("input", function(){ eDetachMaterials(); eState.draft.text = eText().value; eState.draft.revision++; eSave(); eUpdate() })
   document.getElementById("entry-another").addEventListener("click", function(){ eDetachMaterials(); eState.draft.text = ""; eState.draft.requestId = null; eState.draft.revision++; eText().value = ""; eSave(); eUpdate(); eText().focus() })
