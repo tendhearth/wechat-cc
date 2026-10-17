@@ -20,3 +20,8 @@
 .terminal-activity time{margin-left:8px;font-size:11.5px;color:var(--soft)}
 .terminal-activity .ta-said{font-size:15px;line-height:1.6;white-space:pre-wrap;color:var(--ink)}
 .terminal-activity .ta-you{font-size:14px;line-height:1.6;white-space:pre-wrap;color:var(--ink)}.terminal-activity .ta-you span{color:var(--soft);font-size:12px;margin-right:8px}
+.terminal-activity .ta-more{margin:0 0 8px}.terminal-activity .ta-more>summary{cursor:pointer;list-style:none;margin:0}.terminal-activity .ta-more>summary::-webkit-details-marker{display:none}
+.terminal-activity .ta-more>summary::after{content:' ›';color:var(--soft)}.terminal-activity .ta-more[open]>summary::after{content:' ⌄'}
+.terminal-activity .ta-step.is-error{color:var(--th-bad)}.terminal-activity .ta-step.is-error::before{content:'没成 · '}
+.terminal-activity .ta-detail{margin:6px 0 0;padding:8px 10px;max-height:40vh;overflow:auto;background:var(--card);border:1px solid var(--line);border-radius:var(--r-s);font:12px/1.5 ui-monospace,SFMono-Regular,Menlo,monospace;color:var(--ink);white-space:pre-wrap;overflow-wrap:anywhere}
+.terminal-activity .ta-add{color:var(--th-ok)}.terminal-activity .ta-del{color:var(--th-bad)}

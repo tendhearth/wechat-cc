@@ -2,7 +2,7 @@
 // 等你批准且电脑在微信里开了码 ⇒ 点开这一行能允许 / 拒绝(同微信「y/n 码」;列表行上只有「看清楚 ›」);歇着的能接着说一句(同微信「@码」),
 // 结果会成为它的「最后一句」。没有推送主题:看得见时每 15 秒拉一次。
 // 看着它跑(2026-10-17):展开的那一行另拉最近几步(GET /m/api/cli/activity),每 4 秒一次,只在看得见时。
-var tm = { active:false, rows:[], open:null, reveal:null, busy:{}, note:{}, timer:0, seq:0, act:{}, actTimer:0, actSeq:0 }
+var tm = { active:false, rows:[], open:null, reveal:null, busy:{}, note:{}, timer:0, seq:0, act:{}, actTimer:0, actSeq:0, actOpen:{} }
 var TM_STATUS = { waiting:'等你批准', running:'在跑', idle:'歇着', ended:'结束了' }
 var TM_POLL_MS = 15000
 var TM_SAY_MAX = 4000
@@ -12,7 +12,14 @@ function tmActivity(r){
   var a=tm.act[r.session_id],running=r.status==='running'&&(!r.stale||tmLastAt(r)>r.last_event_at),last=a.items.length-1
   return '<div class="terminal-activity" id="terminal-act-'+esc(r.session_id)+'" aria-live="polite">'+a.items.map(function(i,n){
     var when=typeof i.at==='number'?'<time>'+esc(tmAgo(i.at))+'</time>':''
-    if(i.kind==='step')return '<p class="ta-step'+(running&&n===last?' is-now':'')+'">'+esc(i.text)+when+'</p>'
+    var cls='ta-step'+(running&&n===last?' is-now':'')+(i.error?' is-error':'')
+    if(i.kind==='step'&&typeof i.detail==='string'&&i.detail){
+      // 点开看:改文件 ⇒ diff(+ / - 行上色);命令 ⇒ 输出尾巴。展开状态按「会话|时间|这一步」记着,4 秒重画不收起。
+      var key=r.session_id+'|'+i.at+'|'+i.text,isDiff=/^(改|写|删) /.test(i.text)
+      var body=i.detail.split('\n').map(function(l){var c=isDiff&&l.slice(0,2)==='+ '?'ta-add':isDiff&&l.slice(0,2)==='- '?'ta-del':'';return c?'<span class="'+c+'">'+esc(l)+'</span>':esc(l)}).join('\n')
+      return '<details class="ta-more" data-ta-key="'+esc(key)+'"'+(tm.actOpen[key]?' open':'')+'><summary class="'+cls+'">'+esc(i.text)+when+'</summary><pre class="ta-detail">'+body+'</pre></details>'
+    }
+    if(i.kind==='step')return '<p class="'+cls+'">'+esc(i.text)+when+'</p>'
     return '<p class="ta-'+(i.kind==='you'?'you':'said')+'">'+(i.kind==='you'?'<span>你</span>':'')+esc(i.text)+'</p>'
   }).join('')+'</div>'
 }
@@ -125,6 +132,12 @@ function tmSay(id){
   if(!text||text.length>TM_SAY_MAX)return
   tmPost(id,'/m/api/cli/say',{session_id:id,text:text},function(){tm.note[id]='收到，它接着跑了，回复会出现在这里。'})
 }
+// <details> 的 toggle 不冒泡 ⇒ 捕获阶段记展开状态。
+tmEl('list').addEventListener('toggle',function(ev){
+  var d=/** @type {HTMLDetailsElement} */(ev.target)
+  if(!d||!d.dataset||!d.dataset.taKey)return
+  if(d.open)tm.actOpen[d.dataset.taKey]=true;else delete tm.actOpen[d.dataset.taKey]
+},true)
 tmEl('list').addEventListener('click',function(ev){
   var t=/** @type {Element} */(ev.target),b=/** @type {HTMLElement|null} */(t.closest('[data-tm-open],[data-tm-decide],[data-tm-say]'))
   if(!b)return

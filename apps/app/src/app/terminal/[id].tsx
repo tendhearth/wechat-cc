@@ -1,6 +1,6 @@
 import { useLocalSearchParams, useRouter } from 'expo-router'
 import { useState } from 'react'
-import { KeyboardAvoidingView, Platform, ScrollView, View } from 'react-native'
+import { KeyboardAvoidingView, Platform, Pressable, ScrollView, View } from 'react-native'
 import { SafeAreaView } from 'react-native-safe-area-context'
 import { t } from '../../i18n'
 import { useLang } from '../../i18n/useLang'
@@ -32,6 +32,8 @@ export default function TerminalSession() {
   const activity = useTerminalActivity(id)
   const [text, setText] = useState('')
   const [note, setNote] = useState<string | null>(null)
+  // 点开的那几步(按「时间|这一步」记,4 秒刷新不收起)
+  const [open, setOpen] = useState<Record<string, boolean>>({})
   const s = terminal.sessions.find(x => x.session_id === id)
   const row = s ? terminalRow(s, Date.now(), lang) : null
   // 登记处的时间只在 hook 事件时更新;一轮跑很久时过程里的时间更新 ⇒ 页头取较新的那个,也不算「有一阵没动静」。
@@ -90,9 +92,24 @@ export default function TerminalSession() {
                     {activity.items.map((it, i) => {
                       const now = row.status === 'running' && (!row.stale || fresher) && i === activity.items.length - 1 && it.kind === 'step'
                       const when = it.at === null ? '' : ` · ${relAgo(it.at, Date.now(), lang)}`
-                      return it.kind === 'step'
-                        ? <Txt key={i} testID={now ? 'terminal-activity-now' : undefined} role="small" content="user" tone={now ? 'ink' : 'inkSoft'}>{`${now ? `${t(lang, 'terminal.activityNow')} · ` : ''}${it.text}${when}`}</Txt>
-                        : <Txt key={i} role="bubble" content="user">{it.kind === 'you' ? `${t(lang, 'terminal.activityYou')}:${it.text}` : it.text}</Txt>
+                      if (it.kind !== 'step') return <Txt key={i} role="bubble" content="user">{it.kind === 'you' ? `${t(lang, 'terminal.activityYou')}:${it.text}` : it.text}</Txt>
+                      const label = `${now ? `${t(lang, 'terminal.activityNow')} · ` : ''}${it.error ? `${t(lang, 'terminal.activityFailed')} · ` : ''}${it.text}${when}`
+                      const line = <Txt testID={now ? 'terminal-activity-now' : undefined} role="small" content="user" tone={it.error ? 'bad' : now ? 'ink' : 'inkSoft'}>{it.detail ? `${label}  ${open[`${it.at}|${it.text}`] ? '⌄' : '›'}` : label}</Txt>
+                      if (!it.detail) return <View key={i}>{line}</View>
+                      // 改文件 ⇒ diff(+ / - 行上色);命令 ⇒ 输出尾巴
+                      const k = `${it.at}|${it.text}`, isDiff = /^(改|写|删) /.test(it.text)
+                      return (
+                        <View key={i} style={{ gap: space.s }}>
+                          <Pressable testID={`terminal-step-${i}`} accessibilityRole="button" accessibilityState={{ expanded: !!open[k] }} onPress={() => setOpen(o => ({ ...o, [k]: !o[k] }))}>{line}</Pressable>
+                          {open[k] ? (
+                            <View testID={`terminal-step-detail-${i}`} style={{ padding: space.m, borderWidth: 1, borderColor: c.hair, borderRadius: radius.control, backgroundColor: c.paper }}>
+                              {it.detail.split('\n').map((l, j) => (
+                                <Txt key={j} role="code" content="user" style={isDiff && l.startsWith('+ ') ? { color: c.ok } : isDiff && l.startsWith('- ') ? { color: c.bad } : undefined}>{l || ' '}</Txt>
+                              ))}
+                            </View>
+                          ) : null}
+                        </View>
+                      )
                     })}
                   </View>
                 </View>

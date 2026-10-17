@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { claudeStep, codexExecSteps, parseActivity } from './cli-activity'
+import { claudeStep, codexExecSteps, parseActivity, textDiff, DETAIL_MAX } from './cli-activity'
 
 const L = (o: object) => JSON.stringify(o)
 const T = '2026-10-17T10:00:00.000Z'
@@ -60,7 +60,7 @@ describe('parseActivity —— 看着它跑', () => {
   })
 
   it('codexExecSteps:多行命令只留第一行加省略', () => {
-    expect(codexExecSteps('tools.exec_command({cmd:"python3 - <<\'PY\'\\nprint(1)\\nPY"})')).toEqual(['运行 python3 - <<\'PY\' …'])
+    expect(codexExecSteps('tools.exec_command({cmd:"python3 - <<\'PY\'\\nprint(1)\\nPY"})').map(x => x.text)).toEqual(['运行 python3 - <<\'PY\' …'])
   })
 
   it('Cursor 只有文字;坏行跳过', () => {
@@ -70,5 +70,67 @@ describe('parseActivity —— 看着它跑', () => {
       L({ role: 'assistant', message: { content: [{ type: 'text', text: '改好了' }] } }),
     ].join('\n')
     expect(parseActivity(jsonl, 'cursor').map(i => `${i.kind}:${i.text}`)).toEqual(['you:改个颜色', 'said:改好了'])
+  })
+
+  it('点开一步:Claude 改文件 ⇒ diff;命令 ⇒ 输出尾巴;读文件不挂输出;报错 ⇒ error 且挂上原因', () => {
+    const jsonl = [
+      L({ type: 'assistant', message: { content: [
+        { type: 'tool_use', id: 'e1', name: 'Edit', input: { file_path: '/p/a.ts', old_string: 'const a = 1\nconst b = 2', new_string: 'const a = 1\nconst b = 3' } },
+        { type: 'tool_use', id: 'b1', name: 'Bash', input: { command: 'npm test' } },
+        { type: 'tool_use', id: 'r1', name: 'Read', input: { file_path: '/p/a.ts' } },
+        { type: 'tool_use', id: 'b2', name: 'Bash', input: { command: 'npm run lint' } },
+      ] } }),
+      L({ type: 'user', message: { content: [
+        { type: 'tool_result', tool_use_id: 'e1', content: 'The file has been updated.' },
+        { type: 'tool_result', tool_use_id: 'b1', content: [{ type: 'text', text: 'PASS a.test.ts\nTests 3 passed' }] },
+        { type: 'tool_result', tool_use_id: 'r1', content: 'const a = 1' },
+        { type: 'tool_result', tool_use_id: 'b2', content: 'error: unused var TOKEN=abcd1234zz', is_error: true },
+      ] } }),
+    ].join('\n')
+    const [edit, test, read, lint] = parseActivity(jsonl, 'claude')
+    expect(edit).toMatchObject({ text: '改 a.ts', detail: '- const b = 2\n+ const b = 3' })
+    expect(edit!.error).toBeUndefined()
+    expect(test).toMatchObject({ text: '运行 npm test', detail: 'PASS a.test.ts\nTests 3 passed' })
+    expect(read!.detail).toBeUndefined()
+    expect(lint).toMatchObject({ error: true, detail: 'error: unused var TOKEN=[已打码]' })
+  })
+
+  it('长输出只留结尾,长 diff 只留开头,都不超过上限', () => {
+    const out = Array.from({ length: 200 }, (_, i) => `line ${i}`).join('\n')
+    const jsonl = [
+      L({ type: 'assistant', message: { content: [{ type: 'tool_use', id: 'b', name: 'Bash', input: { command: 'x' } }, { type: 'tool_use', id: 'w', name: 'Write', input: { file_path: '/n.md', content: out } }] } }),
+      L({ type: 'user', message: { content: [{ type: 'tool_result', tool_use_id: 'b', content: out }] } }),
+    ].join('\n')
+    const [bash, write] = parseActivity(jsonl, 'claude')
+    expect(bash!.detail!.endsWith('line 199')).toBe(true)
+    expect(bash!.detail!.startsWith('…(前面还有 160 行)')).toBe(true)
+    expect(write!.detail!.startsWith('+ line 0')).toBe(true)
+    expect(write!.detail).toContain('还有 160 行')
+    for (const d of [bash!.detail!, write!.detail!]) expect(d.length).toBeLessThanOrEqual(DETAIL_MAX)
+  })
+
+  it('Codex:exec 的输出解开 JSON 只留 output;非零退出算报错;apply_patch 按文件出 diff', () => {
+    const jsonl = [
+      L({ type: 'response_item', payload: { type: 'custom_tool_call', call_id: 'c1', name: 'exec', input: 'text(await tools.exec_command({cmd:"cargo test"}))' } }),
+      L({ type: 'response_item', payload: { type: 'custom_tool_call_output', call_id: 'c1', output: [{ type: 'input_text', text: 'Script completed\nWall time 1.0 seconds\nOutput:\n' }, { type: 'input_text', text: JSON.stringify({ exit_code: 101, output: 'test x ... FAILED' }) }] } }),
+      L({ type: 'response_item', payload: { type: 'custom_tool_call', call_id: 'c2', name: 'exec', input: 'text(await tools.apply_patch("*** Begin Patch\\n*** Update File: /w/a.rs\\n@@\\n-old\\n+new\\n*** Add File: /w/b.rs\\n+fn b() {}\\n*** End Patch"))' } }),
+      L({ type: 'response_item', payload: { type: 'custom_tool_call', call_id: 'c4', name: 'exec', input: 'text(await tools.mcp_x({}))' } }),
+      L({ type: 'response_item', payload: { type: 'custom_tool_call_output', call_id: 'c4', output: 'Script failed\nOutput:\n' + JSON.stringify({ content: [{ type: 'text', text: 'not allowed' }] }) } }),
+      L({ type: 'response_item', payload: { type: 'function_call', call_id: 'c3', name: 'shell', arguments: JSON.stringify({ command: ['ls'] }) } }),
+      L({ type: 'response_item', payload: { type: 'function_call_output', call_id: 'c3', output: 'a\nb' } }),
+    ].join('\n')
+    const items = parseActivity(jsonl, 'codex')
+    expect(items).toEqual([
+      { kind: 'step', text: '运行 cargo test', at: null, detail: 'test x ... FAILED', error: true },
+      { kind: 'step', text: '改 a.rs', at: null, detail: '- old\n+ new' },
+      { kind: 'step', text: '写 b.rs', at: null, detail: '+ fn b() {}' },
+      { kind: 'step', text: '用 exec', at: null, detail: 'not allowed', error: true },
+      { kind: 'step', text: '运行 ls', at: null, detail: 'a\nb' },
+    ])
+  })
+
+  it('textDiff 只留改了的那一截', () => {
+    expect(textDiff('a\nb\nc', 'a\nB\nc')).toBe('- b\n+ B')
+    expect(textDiff('', 'x')).toBe('- \n+ x')
   })
 })

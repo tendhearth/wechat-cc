@@ -533,6 +533,7 @@ const zh: Record<keyof typeof en, string> = {
   'terminal.deny': '拒绝',
   'terminal.activity': '它在做的事',
   'terminal.activityNow': '正在',
+  'terminal.activityFailed': '没成',
   'terminal.activityYou': '你',
   'terminal.activityRemote': '这个会话在另一台电脑上，这里看不到过程。',
   'terminal.lastSaid': '最后一句',
