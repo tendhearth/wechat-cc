@@ -7,6 +7,9 @@ import { makeCliPermissionRelay, type CliPermissionRelay } from '../core/cli-per
 import { makeCliReplyCore, type RunResult } from './cli-reply-handler'
 import { makeCliPhoneActions, PHONE_CLI_SAY_MAX } from './cli-phone-actions'
 import { mobileReadsRoute } from './mobile-reads'
+import { mkdtempSync, writeFileSync, rmSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
 
 /**
  * 手机拍板 / 说一句,拿真的 hub + 登记处 + 中继 + core 拼起来:只把「微信」(askUser 与它的
@@ -176,5 +179,40 @@ describe('POST /m/api/cli/permission、/m/api/cli/say 与列表里的码', () =>
     await vi.waitFor(() => expect(runs).toHaveLength(1))
     expect(runs[0]!.args).toContain('接着做')
     runs[0]!.done({ code: 0, stdout: 'ok', stderr: '', timedOut: false })
+  })
+})
+
+describe('看着它跑(GET /m/api/cli/activity)', () => {
+  it('读本机记录尾巴 ⇒ 最近几步;过 schema', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'cli-activity-'))
+    try {
+      const path = join(dir, 's.jsonl')
+      writeFileSync(path, [
+        JSON.stringify({ type: 'user', message: { content: '跑测试' } }),
+        JSON.stringify({ type: 'assistant', message: { content: [{ type: 'tool_use', name: 'Bash', input: { command: 'bun test' } }] } }),
+      ].join('\n'))
+      hub.ingest({ source: 'claude', kind: 'prompt', session_id: 'A1', cwd: '/w/proj', machine: 'mac', transcript_path: path })
+      const r = await mobileReadsRoute({ cliActions: actions() }, new URL('http://x/m/api/cli/activity?session_id=A1'), new Request('http://x/m/api/cli/activity?session_id=A1'))
+      const body = await r!.json()
+      expect(r!.status).toBe(200)
+      PHONE_API_SCHEMAS['GET /m/api/cli/activity']!.parse(body)
+      expect(body.items.map((i: { text: string }) => i.text)).toEqual(['跑测试', '运行 bun test'])
+    } finally { rmSync(dir, { recursive: true, force: true }) }
+  })
+
+  it('不认识 ⇒ 404;别的机器 ⇒ remote;没有记录 ⇒ no_transcript;参数坏 ⇒ 400', async () => {
+    const a = actions()
+    expect(a.activity('nope')).toEqual({ ok: false, error: 'not_found' })
+    hub.ingest({ source: 'claude', kind: 'prompt', session_id: 'R1', cwd: '/w/proj', machine: 'pc', transcript_path: '/x.jsonl' })
+    expect(a.activity('R1')).toEqual({ ok: false, error: 'cli_session_remote' })
+    hub.ingest({ source: 'claude', kind: 'prompt', session_id: 'N1', cwd: '/w/proj', machine: 'mac' })
+    expect(a.activity('N1')).toEqual({ ok: false, error: 'no_transcript' })
+    hub.ingest({ source: 'claude', kind: 'prompt', session_id: 'G1', cwd: '/w/proj', machine: 'mac', transcript_path: '/definitely/not/here.jsonl' })
+    expect(a.activity('G1')).toEqual({ ok: false, error: 'no_transcript' })
+    const get = async (q: string) => (await mobileReadsRoute({ cliActions: a }, new URL('http://x/m/api/cli/activity' + q), new Request('http://x/m/api/cli/activity' + q)))!
+    expect((await get('')).status).toBe(400)
+    expect((await get('?session_id=nope')).status).toBe(404)
+    expect((await get('?session_id=R1')).status).toBe(409)
+    expect((await mobileReadsRoute({}, new URL('http://x/m/api/cli/activity?session_id=A'), new Request('http://x/m/api/cli/activity?session_id=A')))!.status).toBe(503)
   })
 })

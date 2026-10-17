@@ -85,6 +85,12 @@ export const copy = {
   cliBlogLast: ['文章列表页加了分页，正准备发布。', 'Added paging to the post list; about to deploy.'],
   cliApiLast: ['测试全过了，改动在 src/api.ts。', 'All tests pass; the change is in src/api.ts.'],
   cliDocsLast: ['在把 README 的安装步骤改成三步。', 'Rewriting the README install steps into three.'],
+  // 看着它跑(演示):docs 那条在跑
+  cliActYou: ['README 的安装太长了，改成三步', 'The README install section is too long, make it three steps'],
+  cliActRead: ['读 README.md', 'Read README.md'],
+  cliActSaid: ['现在是七步，其中三步可以合并。', 'It is seven steps now; three can be merged.'],
+  cliActEdit: ['改 README.md', 'Edit README.md'],
+  cliActRun: ['运行 npm run docs:check', 'Run npm run docs:check'],
   cliDemoReply: ['好，按你说的改完了。（演示）', 'Done as you asked. (demo)'],
 } satisfies Record<string, Pair>
 

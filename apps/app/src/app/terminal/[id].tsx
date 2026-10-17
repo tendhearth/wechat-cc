@@ -4,7 +4,7 @@ import { KeyboardAvoidingView, Platform, ScrollView, View } from 'react-native'
 import { SafeAreaView } from 'react-native-safe-area-context'
 import { t } from '../../i18n'
 import { useLang } from '../../i18n/useLang'
-import { useTerminalActions, useTerminalSessions } from '../../state/useTerminal'
+import { useTerminalActions, useTerminalActivity, useTerminalSessions } from '../../state/useTerminal'
 import { Button } from '../../ui/Button'
 import { ConnectionNotice } from '../../ui/ConnectionNotice'
 import { TerminalStatusPill } from '../../ui/TerminalItem'
@@ -13,13 +13,14 @@ import { radius, space } from '../../ui/tokens'
 import { TopBar } from '../../ui/TopBar'
 import { Txt } from '../../ui/Txt'
 import { useTheme } from '../../ui/useTheme'
-import { canSayTo, terminalErrorKey, terminalRow } from '../../view/terminal'
+import { canSayTo, relAgo, terminalErrorKey, terminalRow } from '../../view/terminal'
 
 /** 手机上说一句最多这么长(同 daemon 的 PHONE_CLI_SAY_MAX)。 */
 const SAY_MAX = 4000
 
 // 一条终端会话(2026-10-14):最后一句、等批准的那一项(能拍就拍),和「接着说一句」。
 // 说一句走的是微信「@码」同一条路:收下即回,跑完的结果成为这里的「最后一句」。在跑 / 在等批准时不能说。
+// 看着它跑(2026-10-17):读得到过程就显示最近几步(最后一句就在里面),在跑时最后一步标「正在」;读不到退回最后一句。
 export default function TerminalSession() {
   const { c } = useTheme()
   const lang = useLang()
@@ -28,6 +29,7 @@ export default function TerminalSession() {
   const id = decodeURIComponent(String(raw ?? ''))
   const terminal = useTerminalSessions()
   const actions = useTerminalActions()
+  const activity = useTerminalActivity(id)
   const [text, setText] = useState('')
   const [note, setNote] = useState<string | null>(null)
   const s = terminal.sessions.find(x => x.session_id === id)
@@ -78,10 +80,26 @@ export default function TerminalSession() {
                   ) : <Txt testID="terminal-detail-local" role="meta" tone="inkSoft">{t(lang, 'terminal.askedLocally')}</Txt>}
                 </View>
               ) : null}
-              <View style={{ gap: space.s }}>
-                <Txt role="meta" tone="inkSoft" accessibilityRole="header">{t(lang, 'terminal.lastSaid')}</Txt>
-                <Txt testID="terminal-detail-summary" role="bubble" content="user" tone={row.summary ? 'ink' : 'inkSoft'}>{row.summary ?? t(lang, 'terminal.noSummary')}</Txt>
-              </View>
+              {activity.items.length > 0 ? (
+                <View testID="terminal-activity" style={{ gap: space.m }}>
+                  <Txt role="meta" tone="inkSoft" accessibilityRole="header">{t(lang, 'terminal.activity')}</Txt>
+                  <View style={{ gap: space.m, borderLeftWidth: 1, borderLeftColor: c.hair, paddingLeft: space.l }}>
+                    {activity.items.map((it, i) => {
+                      const now = row.status === 'running' && !row.stale && i === activity.items.length - 1 && it.kind === 'step'
+                      const when = it.at === null ? '' : ` · ${relAgo(it.at, Date.now(), lang)}`
+                      return it.kind === 'step'
+                        ? <Txt key={i} testID={now ? 'terminal-activity-now' : undefined} role="small" content="user" tone={now ? 'ink' : 'inkSoft'}>{`${now ? `${t(lang, 'terminal.activityNow')} · ` : ''}${it.text}${when}`}</Txt>
+                        : <Txt key={i} role="bubble" content="user">{it.kind === 'you' ? `${t(lang, 'terminal.activityYou')}:${it.text}` : it.text}</Txt>
+                    })}
+                  </View>
+                </View>
+              ) : (
+                <View style={{ gap: space.s }}>
+                  {activity.error === 'cli_session_remote' ? <Txt testID="terminal-activity-remote" role="meta" tone="inkSoft">{t(lang, 'terminal.activityRemote')}</Txt> : null}
+                  <Txt role="meta" tone="inkSoft" accessibilityRole="header">{t(lang, 'terminal.lastSaid')}</Txt>
+                  <Txt testID="terminal-detail-summary" role="bubble" content="user" tone={row.summary ? 'ink' : 'inkSoft'}>{row.summary ?? t(lang, 'terminal.noSummary')}</Txt>
+                </View>
+              )}
               {note ? <Txt testID="terminal-detail-note" role="meta" tone="inkSoft" accessibilityLiveRegion="polite">{note}</Txt> : null}
             </>
           )}

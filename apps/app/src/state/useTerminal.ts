@@ -1,6 +1,6 @@
 import { useCallback, useState } from 'react'
 import { useFocusEffect } from 'expo-router'
-import type { CliSessionRowT } from '../backend/types'
+import type { CliActivityItemT, CliSessionRowT } from '../backend/types'
 import { useBackendCtx } from './BackendProvider'
 import { useConnection, useQuery } from './hooks'
 
@@ -26,6 +26,27 @@ export function useTerminalSessions(opts: { poll?: boolean } = {}) {
     return () => clearInterval(h)
   }, [poll, online, refresh]))
   return { sessions: q.data ?? NONE, loaded: q.data !== undefined, error: q.error, refresh, online }
+}
+
+/**
+ * 看着它跑(2026-10-17):一条终端会话最近几步。页面看得见、够得着电脑时每 TERMINAL_ACTIVITY_POLL_MS 拉一次。
+ * 读不了(老电脑没有这条路由、会话在别的电脑上)⇒ items 为空、error 带码,页面退回「最后一句」。
+ */
+export const TERMINAL_ACTIVITY_POLL_MS = 4_000
+const NO_ITEMS: CliActivityItemT[] = []
+export function useTerminalActivity(sessionId: string) {
+  const { backend } = useBackendCtx()
+  const conn = useConnection()
+  const online = backend.mode === 'demo' || conn.state === 'online'
+  const q = useQuery<CliActivityItemT[]>(`cli:activity:${sessionId}`, () => backend.cliActivity(sessionId))
+  const { refresh } = q
+  useFocusEffect(useCallback(() => {
+    if (!online || !sessionId) return
+    void refresh()
+    const h = setInterval(() => { void refresh() }, TERMINAL_ACTIVITY_POLL_MS)
+    return () => clearInterval(h)
+  }, [online, sessionId, refresh]))
+  return { items: q.data ?? NO_ITEMS, error: q.error }
 }
 
 /**
