@@ -542,7 +542,8 @@ export function makeDemoBackend(opts: { now?: () => number; setTimeout?: typeof 
       if (r.session_id !== 'demo-cli-docs') return []
       const n = now(), at = (s: number) => n - s * 1000
       return ([['you', 'cliActYou', 300], ['step', 'cliActRead', 280], ['said', 'cliActSaid', 250], ['step', 'cliActEdit', 120], ['step', 'cliActRun', 40]] as const)
-        .map(([kind, key, ago]) => ({ kind, text: t(lastLang, key), at: at(ago) }))
+        .map(([kind, key, ago]) => ({ kind, text: t(lastLang, key), at: at(ago),
+          ...(key === 'cliActEdit' ? { detail: '- ## 安装(七步)\n+ ## 安装(三步)' } : key === 'cliActRun' ? { detail: 'docs ok · 0 broken links' } : {}) }))
     },
     async cliSay(sessionId, text) {
       const r = cliGet(sessionId)

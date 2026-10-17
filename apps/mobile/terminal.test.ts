@@ -116,4 +116,24 @@ describe('phone page: terminal sessions in 一起做',()=>{
    expect(other).toContain('另一台电脑');expect(other).toContain('测试全过了')
   }finally{vi.useRealTimers()}
  })
+ it('点开一步:改文件看 diff(上色)、命令看输出;展开着的 4 秒重画后还开着;报错的标出来',async()=>{
+  vi.useFakeTimers({toFake:['setTimeout','clearTimeout']})
+  try{
+   const running={...idle,session_id:'s-run',status:'running',project:'web'}
+   const ACT={ok:true,items:[{kind:'step',text:'改 a.ts',at:NOW,detail:'- old\n+ new'},{kind:'step',text:'运行 npm test',at:NOW,detail:'1 failed',error:true}]}
+   expect(PHONE_API_SCHEMAS['GET /m/api/cli/activity']!.safeParse(ACT).success).toBe(true)
+   const api=vi.fn(async(path:string)=>path==='/m/api/cli/sessions'?response({ok:true,sessions:[running]}):response(ACT))
+   const h=load(api,{setTimeout:(f:any,ms:number)=>setTimeout(f,ms),clearTimeout:(t:any)=>clearTimeout(t)});h.pane('matters');await vi.advanceTimersByTimeAsync(5)
+   ;(h.document.querySelector('[data-tm-open="s-run"]') as any).click();await vi.advanceTimersByTimeAsync(5)
+   const more=()=>[...h.document.querySelectorAll('.ta-more')] as any[]
+   expect(more()).toHaveLength(2)
+   expect(more()[0].querySelector('.ta-add').textContent).toBe('+ new')
+   expect(more()[0].querySelector('.ta-del').textContent).toBe('- old')
+   expect(more()[1].querySelector('summary').className).toContain('is-error')
+   expect(more()[1].querySelector('.ta-add')).toBeNull() // 命令输出不上 diff 色
+   more()[0].open=true;more()[0].dispatchEvent(new h.window.Event('toggle'))
+   await vi.advanceTimersByTimeAsync(4100)
+   expect(more()[0].open).toBe(true);expect(more()[1].open).toBe(false)
+  }finally{vi.useRealTimers()}
+ })
 })

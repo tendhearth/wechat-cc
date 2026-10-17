@@ -530,6 +530,7 @@ const en = {
   'terminal.deny': 'Deny',
   'terminal.activity': "What it's doing",
   'terminal.activityNow': 'Now',
+  'terminal.activityFailed': 'Failed',
   'terminal.activityYou': 'You',
   'terminal.activityRemote': "This session is on another computer, so its steps aren't visible here.",
   'terminal.lastSaid': 'Last reply',

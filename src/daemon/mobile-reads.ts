@@ -141,7 +141,8 @@ export async function mobileReadsRoute(deps: MobileReadsDeps, url: URL, req: Req
       const r = deps.cliActions.activity(id)
       if (!r.ok) return json({ ok: false, error: r.error }, r.error === 'not_found' ? 404 : 409)
       // 旧中继一帧 512 KiB:每步文字上限减半直到放得下(不删步)。
-      return fitted(max => ({ ok: true, items: r.items.map(i => ({ ...i, text: i.text.length > max ? i.text.slice(0, max - 1) + '…' : i.text })) }), 600)
+      const cut = (t: string, max: number) => (t.length > max ? t.slice(0, max - 1) + '…' : t)
+      return fitted(max => ({ ok: true, items: r.items.map(i => ({ ...i, text: cut(i.text, max), ...(i.detail ? { detail: cut(i.detail, max * 3) } : {}) })) }), 600)
     } catch { return json({ ok: false, error: 'unavailable' }, 503) }
   }
   // 「今天」(2026-10-14):终端 + 一起做,过去 24 小时 —— 与微信「日报」同一份数据。
