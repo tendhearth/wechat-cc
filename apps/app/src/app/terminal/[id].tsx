@@ -104,7 +104,7 @@ export default function TerminalSession() {
                           {open[k] ? (
                             <View testID={`terminal-step-detail-${i}`} style={{ padding: space.m, borderWidth: 1, borderColor: c.hair, borderRadius: radius.control, backgroundColor: c.paper }}>
                               {it.detail.split('\n').map((l, j) => (
-                                <Txt key={j} role="code" content="user" style={isDiff && l.startsWith('+ ') ? { color: c.ok } : isDiff && l.startsWith('- ') ? { color: c.bad } : undefined}>{l || ' '}</Txt>
+                                <Txt key={j} role="code" content="user" style={isDiff && l.startsWith('+ ') ? { color: c.accent } : isDiff && l.startsWith('- ') ? { color: c.bad } : undefined}>{l || ' '}</Txt>
                               ))}
                             </View>
                           ) : null}

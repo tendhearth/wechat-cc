@@ -24,4 +24,4 @@
 .terminal-activity .ta-more>summary::after{content:' ›';color:var(--soft)}.terminal-activity .ta-more[open]>summary::after{content:' ⌄'}
 .terminal-activity .ta-step.is-error{color:var(--th-bad)}.terminal-activity .ta-step.is-error::before{content:'没成 · '}
 .terminal-activity .ta-detail{margin:6px 0 0;padding:8px 10px;max-height:40vh;overflow:auto;background:var(--card);border:1px solid var(--line);border-radius:var(--r-s);font:12px/1.5 ui-monospace,SFMono-Regular,Menlo,monospace;color:var(--ink);white-space:pre-wrap;overflow-wrap:anywhere}
-.terminal-activity .ta-add{color:var(--th-ok)}.terminal-activity .ta-del{color:var(--th-bad)}
+.terminal-activity .ta-add{color:var(--accent)}.terminal-activity .ta-del{color:var(--th-bad)}
