@@ -106,6 +106,7 @@ describe('phone page: terminal sessions in 一起做',()=>{
    const row=h.document.querySelector('[data-tm-row="s-run"]')!
    expect(row.textContent).toContain('它在做的事');expect(row.textContent).toContain('修测试');expect(row.textContent).toContain('先跑一遍')
    expect(row.querySelector('.ta-step.is-now')!.textContent).toContain('运行 npm test')
+   expect(row.textContent).toContain('刚刚') // 页头时间取过程里较新的那个
    const n=()=>api.mock.calls.filter(([p])=>String(p).startsWith('/m/api/cli/activity')).length
    const before=n();await vi.advanceTimersByTimeAsync(4100);expect(n()).toBe(before+1)
    ;(h.document.querySelector('[data-tm-open="s-run"]') as any).click()
