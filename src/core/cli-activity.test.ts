@@ -152,3 +152,25 @@ describe('verb + target(给按语言显示的端)', () => {
     expect(items[1]).toMatchObject({ verb: 'edit', target: 'b.ts' })
   })
 })
+
+describe('renderTurnSteps(「看 码」页面)', () => {
+  it('只列主人最后一句之后的步骤;不放 diff / 输出;报错标「没成」;超过上限只列最后几步', async () => {
+    const { renderTurnSteps, VIEW_STEPS_MAX } = await import('./cli-activity')
+    const L = (o: object) => JSON.stringify(o)
+    const tool = (id: string, name: string, input: object) => L({ type: 'assistant', message: { content: [{ type: 'tool_use', id, name, input }] } })
+    const jsonl = [
+      L({ type: 'user', message: { content: '上一件' } }), tool('o', 'Read', { file_path: '/old.ts' }),
+      L({ type: 'user', message: { content: '修测试' } }),
+      tool('a', 'Edit', { file_path: '/p/a.ts', old_string: 'SECRET_OLD', new_string: 'x' }),
+      tool('b', 'Bash', { command: 'npm test' }),
+      L({ type: 'user', message: { content: [{ type: 'tool_result', tool_use_id: 'b', content: '1 failed', is_error: true }] } }),
+    ].join('\n')
+    const md = renderTurnSteps(jsonl, 'claude')
+    expect(md).toBe('## 这一轮做了什么\n\n- 改 a.ts\n- 运行 npm test(没成)\n')
+    expect(md).not.toContain('SECRET_OLD'); expect(md).not.toContain('old.ts')
+    expect(renderTurnSteps(L({ type: 'user', message: { content: '在吗' } }), 'claude')).toBe('')
+    const many = [L({ type: 'user', message: { content: 'go' } }), ...Array.from({ length: 20 }, (_, i) => tool(`t${i}`, 'Bash', { command: `step${i}` }))].join('\n')
+    const m = renderTurnSteps(many, 'claude')
+    expect(m).toContain(`共 20 步,只列最后 ${VIEW_STEPS_MAX} 步`); expect(m).toContain('运行 step19'); expect(m).not.toContain('运行 step7\n')
+  })
+})
