@@ -323,3 +323,23 @@ export function parseActivity(jsonl: string, source: CliSource, max = ACTIVITY_M
   }
   return items.slice(-max)
 }
+
+/** 「看 码」页面上「这一轮做了什么」最多列这么多步(页面不用登录:只列说法,不放 diff / 输出)。 */
+export const VIEW_STEPS_MAX = 12
+
+/**
+ * 「看 码」(2026-10-17):对话尾巴之外,补一段这一轮(主人最后一句之后)做过的步骤。
+ * 页面是分享链接、不用登录 ⇒ 只放一句话的说法,不放 diff 和命令输出;报错的标「没成」。没有步骤 ⇒ 空串。
+ */
+export function renderTurnSteps(jsonl: string, source: CliSource): string {
+  const items = parseActivity(jsonl, source, 200)
+  let from = 0
+  for (let i = items.length - 1; i >= 0; i--) if (items[i]!.kind === 'you') { from = i + 1; break }
+  const steps = items.slice(from).filter(i => i.kind === 'step')
+  if (!steps.length) return ''
+  const shown = steps.slice(-VIEW_STEPS_MAX)
+  const lines = ['## 这一轮做了什么', '']
+  if (steps.length > shown.length) lines.push(`_(共 ${steps.length} 步,只列最后 ${shown.length} 步)_`, '')
+  for (const s of shown) lines.push(`- ${s.text.replace(/\n/g, ' ')}${s.error ? '(没成)' : ''}`)
+  return lines.join('\n') + '\n'
+}

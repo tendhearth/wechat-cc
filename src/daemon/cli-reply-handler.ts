@@ -15,6 +15,7 @@ import { wrapForProcessTree } from '../lib/jobspawn'
 import { readFileSync, statSync, openSync, readSync, closeSync } from 'node:fs'
 import { parseCliReply, resumeCommand } from '../core/cli-reply'
 import { renderTranscriptTail } from '../core/cli-transcript'
+import { renderTurnSteps } from '../core/cli-activity'
 import { stripMarkdown, INLINE_MAX, type CliEventHub, type CliSessionInfo } from '../core/cli-events'
 import { cliSourceLabel, formatCliSessionDigest, type CliDigestView } from '../core/cli-session-digest'
 import { formatOverseerToday, type OverseerToday } from '../core/overseer-today'
@@ -112,7 +113,12 @@ export function makeCliReplyCore(deps: CliReplyCoreDeps): CliReplyCore {
   return {
     viewMarkdown(s, title) {
       if (!s.transcript_path) return { ok: false, error: '没报过记录路径,看不了' }
-      try { return { ok: true, markdown: renderTranscriptTail(readFile(s.transcript_path), s.source, { title }) } }
+      try {
+        const jsonl = readFile(s.transcript_path)
+        // 对话之后补一段这一轮做过的步骤(看码 2026-10-17)。
+        const steps = renderTurnSteps(jsonl, s.source)
+        return { ok: true, markdown: renderTranscriptTail(jsonl, s.source, { title }) + (steps ? `\n${steps}` : '') }
+      }
       catch (err) { return { ok: false, error: `读不到记录:${err instanceof Error ? err.message : String(err)}` } }
     },
     async resume(s, text) {
