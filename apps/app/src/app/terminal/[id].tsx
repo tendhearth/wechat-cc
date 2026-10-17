@@ -34,6 +34,9 @@ export default function TerminalSession() {
   const [note, setNote] = useState<string | null>(null)
   const s = terminal.sessions.find(x => x.session_id === id)
   const row = s ? terminalRow(s, Date.now(), lang) : null
+  // 登记处的时间只在 hook 事件时更新;一轮跑很久时过程里的时间更新 ⇒ 页头取较新的那个,也不算「有一阵没动静」。
+  const newest = activity.items.reduce((m, i) => (i.at !== null && i.at > m ? i.at : m), s?.last_event_at ?? 0)
+  const fresher = !!s && newest > s.last_event_at
   const sayOpen = !!row && canSayTo(row.status) && terminal.online
   const sending = actions.pending === `cli:say:${id}`
   const deciding = actions.pending === `cli:decide:${id}`
@@ -67,7 +70,7 @@ export default function TerminalSession() {
             <>
               <View style={{ gap: space.s }}>
                 <TerminalStatusPill status={row.status} testID="terminal-detail-status" />
-                <Txt role="small" tone="inkSoft">{`${row.source} · ${row.stale ? t(lang, 'terminal.stale.hint') : row.ago}`}</Txt>
+                <Txt role="small" tone="inkSoft">{`${row.source} · ${row.stale && !fresher ? t(lang, 'terminal.stale.hint') : fresher ? relAgo(newest, Date.now(), lang) : row.ago}`}</Txt>
               </View>
               {row.pendingText ? (
                 <View style={{ gap: space.m }}>
@@ -85,7 +88,7 @@ export default function TerminalSession() {
                   <Txt role="meta" tone="inkSoft" accessibilityRole="header">{t(lang, 'terminal.activity')}</Txt>
                   <View style={{ gap: space.m, borderLeftWidth: 1, borderLeftColor: c.hair, paddingLeft: space.l }}>
                     {activity.items.map((it, i) => {
-                      const now = row.status === 'running' && !row.stale && i === activity.items.length - 1 && it.kind === 'step'
+                      const now = row.status === 'running' && (!row.stale || fresher) && i === activity.items.length - 1 && it.kind === 'step'
                       const when = it.at === null ? '' : ` · ${relAgo(it.at, Date.now(), lang)}`
                       return it.kind === 'step'
                         ? <Txt key={i} testID={now ? 'terminal-activity-now' : undefined} role="small" content="user" tone={now ? 'ink' : 'inkSoft'}>{`${now ? `${t(lang, 'terminal.activityNow')} · ` : ''}${it.text}${when}`}</Txt>

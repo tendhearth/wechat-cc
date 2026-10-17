@@ -9,7 +9,7 @@ var TM_SAY_MAX = 4000
 var TM_ACT_MS = 4000
 // 最近几步:you 主人说的、said 它说的、step 它做的一步。在跑时最后一步就是「正在做的」。
 function tmActivity(r){
-  var a=tm.act[r.session_id],running=r.status==='running'&&!r.stale,last=a.items.length-1
+  var a=tm.act[r.session_id],running=r.status==='running'&&(!r.stale||tmLastAt(r)>r.last_event_at),last=a.items.length-1
   return '<div class="terminal-activity" id="terminal-act-'+esc(r.session_id)+'" aria-live="polite">'+a.items.map(function(i,n){
     var when=typeof i.at==='number'?'<time>'+esc(tmAgo(i.at))+'</time>':''
     if(i.kind==='step')return '<p class="ta-step'+(running&&n===last?' is-now':'')+'">'+esc(i.text)+when+'</p>'
@@ -19,6 +19,8 @@ function tmActivity(r){
 function tmEl(id){return document.getElementById('terminal-'+id)}
 function tmSource(s){return s==='codex'?'Codex':s==='cursor'?'Cursor':'Claude Code'}
 function tmAgo(at){var d=Math.max(0,Date.now()-at);if(d<60000)return '刚刚';if(d<3600000)return Math.floor(d/60000)+' 分钟前';if(d<86400000)return Math.floor(d/3600000)+' 小时前';return new Date(at).toLocaleString()}
+// 登记处的时间只在 hook 事件(说一句 / 停下 / 等批准)时更新;一轮跑很久时过程里的时间更新 ⇒ 取较新的那个。
+function tmLastAt(r){var a=tm.act[r.session_id],t=r.last_event_at;if(a&&a.items)a.items.forEach(function(i){if(typeof i.at==='number'&&i.at>t)t=i.at});return t}
 function tmActionable(r){return r.status==='waiting'&&!!r.pending&&r.pending.actionable===true&&typeof r.pending.hash==='string'}
 function tmValid(r){return r&&typeof r.session_id==='string'&&typeof r.project==='string'&&['claude','codex','cursor'].indexOf(r.source)>=0&&!!TM_STATUS[r.status]&&typeof r.last_event_at==='number'}
 function tmError(code){
@@ -44,7 +46,7 @@ function tmPaint(){
     var pending=r.status==='waiting'&&r.pending?(r.pending.summary?r.pending.tool+': '+r.pending.summary:r.pending.tool):''
     var h='<div class="terminal-row" data-tm-row="'+id+'">'
       +'<button type="button" class="terminal-head" data-tm-open="'+id+'" aria-expanded="'+open+'"><strong>'+esc(r.project)+'</strong>'
-      +'<small><span class="terminal-dot is-'+esc(r.status)+'" aria-hidden="true"></span>'+esc(TM_STATUS[r.status])+' · '+esc(tmSource(r.source))+' · '+esc(r.stale?'有一阵没动静了':tmAgo(r.last_event_at))+'</small>'
+      +'<small><span class="terminal-dot is-'+esc(r.status)+'" aria-hidden="true"></span>'+esc(TM_STATUS[r.status])+' · '+esc(tmSource(r.source))+' · '+esc(r.stale&&tmLastAt(r)===r.last_event_at?'有一阵没动静了':tmAgo(tmLastAt(r)))+'</small>'
       +(pending?'<span class="terminal-pending">'+esc(pending)+'</span>':r.last_summary&&!open?'<span class="terminal-summary">'+esc(r.last_summary)+'</span>':'')
       +(actionable&&!open?'<span class="terminal-review">看清楚 ›</span>':'')+'</button>'
     if(r.status==='waiting'&&!actionable)h+='<p class="terminal-note">正在终端里问，回电脑上答。</p>'

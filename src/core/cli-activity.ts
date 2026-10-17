@@ -62,8 +62,9 @@ export function claudeStep(name: string, input: Record<string, unknown>): string
       return label ? `清单:${oneLine(label)}` : '更新清单'
     }
     default: {
-      const m = /^mcp__(.+?)__(.+)$/.exec(name)
-      return m ? `用 ${m[2]}(${m[1]})` : `用 ${name}`
+      // mcp__<服务>__<工具>:服务名常是 plugin_playwright_playwright 这种,对主人没意义 —— 只留工具名。
+      const m = /^mcp__.+?__(.+)$/.exec(name)
+      return `用 ${m ? m[1] : name}`
     }
   }
 }

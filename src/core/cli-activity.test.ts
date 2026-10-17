@@ -27,7 +27,8 @@ describe('parseActivity —— 看着它跑', () => {
     expect(claudeStep('Task', { description: '查 CI' })).toBe('派子任务:查 CI')
     expect(claudeStep('WebFetch', { url: 'https://example.com/a?b' })).toBe('看网页 example.com')
     expect(claudeStep('TodoWrite', { todos: [{ status: 'completed', content: 'a' }, { status: 'in_progress', content: 'b', activeForm: '在写测试' }] })).toBe('清单:在写测试')
-    expect(claudeStep('mcp__wechat__ping', {})).toBe('用 ping(wechat)')
+    expect(claudeStep('mcp__wechat__ping', {})).toBe('用 ping')
+    expect(claudeStep('mcp__plugin_playwright_playwright__browser_click', {})).toBe('用 browser_click')
     expect(claudeStep('Weird', {})).toBe('用 Weird')
   })
 
