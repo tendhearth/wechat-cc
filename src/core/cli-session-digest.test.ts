@@ -52,7 +52,7 @@ describe('formatCliSessionDigest', () => {
   it('没有会话 ⇒ 说清楚怎么让它们出现', () => {
     const t = formatCliSessionDigest([], { now: NOW })
     expect(t).toContain('终端里现在没有会话')
-    expect(t).toContain('wechat-cc hook install')
+    expect(t).toContain('点「接上」')
     expect(formatCliSessionDigest([view({ status: 'ended' })], { now: NOW })).toContain('没有会话')
   })
 
