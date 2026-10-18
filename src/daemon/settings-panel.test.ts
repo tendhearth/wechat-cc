@@ -802,6 +802,46 @@ describe('GET /m/api/matter/changes', () => {
   })
 })
 
+describe('POST /m/api/matter/review-mark|review-return', () => {
+  async function panelWith(review?: unknown) {
+    const panel = makeSettingsPanel({ stateDir: seedStateDir(), ownerChatId: () => OWNER, chatPrefs: { get: () => ({}), set: () => ({}) }, getUserName: () => null, setUserName: async () => {}, log: () => {}, ...(review ? { review } : {}) } as never)
+    const { port } = await panel.start(0)
+    const t = panel.issueToken()
+    const post = (path: string, body: unknown) => fetch(`http://127.0.0.1:${port}${path}?t=${t}`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body) })
+    return { panel, post }
+  }
+  it('没接线 ⇒ 503;参数不对 ⇒ 400 且不碰工作台', async () => {
+    const a = await panelWith()
+    expect((await a.post('/m/api/matter/review-mark', { id: 'deadbeef', artifactId: 'a1', path: 'a.ts', mark: 'accepted' })).status).toBe(503)
+    await a.panel.stop()
+    const review = { mark: vi.fn(), ret: vi.fn() }
+    const b = await panelWith(review)
+    expect((await b.post('/m/api/matter/review-mark', { id: 'nope', artifactId: 'a1', path: 'a.ts', mark: 'accepted' })).status).toBe(400)
+    expect((await b.post('/m/api/matter/review-mark', { id: 'deadbeef', artifactId: 'a1', path: 'a.ts', mark: 'maybe' })).status).toBe(400)
+    expect((await b.post('/m/api/matter/review-return', { id: 'deadbeef', artifactId: 'a1', paths: 'a.ts', comment: 'x' })).status).toBe(400)
+    expect(review.mark).not.toHaveBeenCalled()
+    expect(review.ret).not.toHaveBeenCalled()
+    await b.panel.stop()
+  })
+  it('标记与退回原样转给工作台;工作台的错误码按手机那套映射', async () => {
+    const review = { mark: vi.fn(), ret: vi.fn(async () => ({})) }
+    const p = await panelWith(review)
+    expect(await (await p.post('/m/api/matter/review-mark', { id: 'deadbeef', artifactId: 'a1', path: 'a.ts', mark: 'accepted' })).json()).toEqual({ ok: true })
+    expect(review.mark).toHaveBeenCalledWith('deadbeef', { artifactId: 'a1', path: 'a.ts', mark: 'accepted' })
+    expect(await (await p.post('/m/api/matter/review-return', { id: 'deadbeef', artifactId: 'a1', paths: ['a.ts'], comment: '变量名改回去' })).json()).toEqual({ ok: true })
+    expect(review.ret).toHaveBeenCalledWith('deadbeef', { artifactId: 'a1', paths: ['a.ts'], comment: '变量名改回去' })
+    review.ret.mockRejectedValueOnce(new Error('workbench_busy'))
+    expect(await (await p.post('/m/api/matter/review-return', { id: 'deadbeef', artifactId: 'a1', paths: ['a.ts'], comment: 'x' })).json()).toEqual({ ok: false, error: 'workbench_busy' })
+    review.mark.mockImplementationOnce(() => { throw new Error('review_file_unmarkable') })
+    expect((await p.post('/m/api/matter/review-mark', { id: 'deadbeef', artifactId: 'a1', path: 'big.bin', mark: 'accepted' })).status).toBe(400)
+    review.mark.mockImplementationOnce(() => { throw new Error('invalid_review_reference') })
+    expect((await p.post('/m/api/matter/review-mark', { id: 'deadbeef', artifactId: 'gone', path: 'a.ts', mark: 'accepted' })).status).toBe(400)
+    review.mark.mockImplementationOnce(() => { throw new Error('not_found') })
+    expect((await p.post('/m/api/matter/review-mark', { id: 'deadbeef', artifactId: 'a1', path: 'a.ts', mark: 'accepted' })).status).toBe(404)
+    await p.panel.stop()
+  })
+})
+
 describe('phone curated memory', () => {
   it('a throwing memory view answers 500 instead of leaving the phone waiting', async () => {
     const p = makeSettingsPanel({

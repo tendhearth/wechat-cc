@@ -85,6 +85,16 @@ describe('LiveBackend 读', () => {
     expect(await b.entryOptions('en')).toEqual(OPTIONS)
     expect(reqs.map(r => r.path)).toEqual(['/m/api/matters', `/m/api/matter?id=${ID}`, `/m/api/matter/insight?id=${ID}&lang=zh-Hans`, `/m/api/matter/changes?id=${ID}`, '/m/api/entry/options'])
   })
+  it('逐文件审阅:没问题 / 退回各走自己的路由,带 artifactId;忙 ⇒ busy', async () => {
+    const { b, reqs } = harness({
+      'POST /m/api/matter/review-mark': ok({ ok: true }),
+      'POST /m/api/matter/review-return': ok({ ok: false, error: 'workbench_busy' }, 409),
+    })
+    await b.reviewMark({ id: ID, artifactId: 'a1', path: 'src/a.ts' })
+    await expect(b.reviewReturn({ id: ID, artifactId: 'a1', paths: ['src/a.ts'], comment: '改回去' })).rejects.toMatchObject({ code: 'busy' })
+    expect(reqs.map(r => r.path)).toEqual(['/m/api/matter/review-mark', '/m/api/matter/review-return'])
+    expect(reqs[0]!.body).toEqual({ id: ID, artifactId: 'a1', path: 'src/a.ts', mark: 'accepted' })
+  })
   it('返回不合 schema ⇒ BackendError(unknown),记日志(不含令牌)', async () => {
     const { b, logs } = harness({ 'GET /m/api/matters': ok({ ok: true, matters: [{ id: 1 }] }) })
     await expect(b.matters('en')).rejects.toMatchObject({ code: 'unknown' })

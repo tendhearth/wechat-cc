@@ -224,6 +224,13 @@ export function makeLiveBackend(d: LiveDeps): Backend {
     async changes(id) {
       return (await call<{ turn: PhoneChangesTurnT | null }>('GET /m/api/matter/changes', `/m/api/matter/changes?${idq(id)}`)).turn
     },
+    async reviewMark(p) {
+      await call('POST /m/api/matter/review-mark', '/m/api/matter/review-mark', { body: { id: p.id, artifactId: p.artifactId, path: p.path, mark: 'accepted' } })
+    },
+    async reviewReturn(p) {
+      if (p.comment.length > PHONE_SAY_MAX_CHARS) throw new BackendError('invalid')
+      await call('POST /m/api/matter/review-return', '/m/api/matter/review-return', { body: { id: p.id, artifactId: p.artifactId, paths: p.paths, comment: p.comment } })
+    },
     async chat(p) {
       const q = [p.before ? `before=${encodeURIComponent(p.before)}` : '', p.limit !== undefined ? `limit=${p.limit}` : ''].filter(Boolean).join('&')
       return strip(await call<{ ok: true } & ChatPageT>('GET /m/api/chat', `/m/api/chat${q ? '?' + q : ''}`))

@@ -336,9 +336,14 @@ export const MatterSayResult = z.union([
   z.object({ kind: z.literal('chat'), reply: z.string() }),
 ])
 
+/** 主人对一个文件的标记(桌面「改动」面板同一张表):没问题 / 退回 + 退回时那句意见。 */
+export const PhoneReviewMark = z.object({ mark: z.enum(['accepted', 'returned']), comment: z.string(), createdAt: z.number() })
+
 export const PhoneChangesTurn = z.object({
+  /** 这一轮快照的 id;逐文件「没问题 / 退回」要带上它(2026-10-17)。 */
+  artifactId: z.string().optional(),
   createdAt: z.number(), status: z.enum(['complete', 'partial', 'unavailable']),
-  files: z.array(z.object({ path: z.string(), kind: z.enum(['added', 'deleted', 'modified', 'not_reviewed']), diff: z.string().optional(), reason: z.string().optional(), truncated: z.boolean() })),
+  files: z.array(z.object({ path: z.string(), kind: z.enum(['added', 'deleted', 'modified', 'not_reviewed']), diff: z.string().optional(), reason: z.string().optional(), truncated: z.boolean(), mark: PhoneReviewMark.optional() })),
   omittedFiles: z.number(),
   /** 本轮审阅的说明(为什么是 partial 等),至多 10 条、每条 ≤ 200 字。 */
   notes: z.array(z.string()),
@@ -499,6 +504,8 @@ export const PHONE_API_SCHEMAS: Readonly<Record<string, z.ZodTypeAny>> = {
     PhoneErrorResponse,
   ]),
   'GET /m/api/matter/changes': z.union([z.object({ ok: z.literal(true), turn: PhoneChangesTurn.nullable() }), PhoneErrorResponse]),
+  'POST /m/api/matter/review-mark': z.union([z.object({ ok: z.literal(true) }), PhoneErrorResponse]),
+  'POST /m/api/matter/review-return': z.union([z.object({ ok: z.literal(true) }), PhoneErrorResponse]),
   'GET /m/api/matter': z.union([z.object({ ok: z.literal(true) }).extend(MatterDetail.shape), PhoneErrorResponse]),
   'GET /m/api/matter/input-receipt': z.union([MatterInputReceiptResult, PhoneErrorResponse]),
   'POST /m/api/matter/say': z.union([z.object({ ok: z.literal(true), result: MatterSayResult }), PhoneErrorResponse]),

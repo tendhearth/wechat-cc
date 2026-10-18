@@ -59,6 +59,9 @@ export interface Backend {
   matter(id: string, lang: Lang): Promise<MatterDetailT>
   insight(id: string, lang: Lang): Promise<{ explanations: Record<string, ApprovalExplanationT>; progress: ProgressSummaryT | null }>
   changes(id: string): Promise<PhoneChangesTurnT | null>
+  /** 逐文件审阅(2026-10-17):这一份没问题 / 退回给执行者(comment 必填,走续接)。artifactId = changes 那一轮的。 */
+  reviewMark(p: { id: string; artifactId: string; path: string }): Promise<void>
+  reviewReturn(p: { id: string; artifactId: string; paths: string[]; comment: string }): Promise<void>
   decide(p: { id: string; runId: string; requestId: string; decision: 'allow' | 'deny' }): Promise<void>
   /** answers 形状与 daemon validateUserInputAnswers 一致:每题一个 string[](单选 1 个;多选 1–8 个、不重复;每条 ≤ 4000 字)。null = 不回答。 */
   answer(p: { id: string; runId: string; requestId: string; answers: Record<string, string[]> | null }): Promise<void>

@@ -32,6 +32,9 @@ export const PHONE_ROUTES: ReadonlySet<string> = new Set([
   'GET /m/api/matter/input-receipt',
   'GET /m/api/matter/insight',
   'GET /m/api/matter/changes',
+  // 手机逐文件审阅(2026-10-17):没问题 / 退回(同桌面 review-mark / review-return)
+  'POST /m/api/matter/review-mark',
+  'POST /m/api/matter/review-return',
   'POST /m/api/matter/say',
   // 跟 CC 说(spec 2026-10-01,mobile-chat.ts):主人对话一页 + 收下即回的说一句
   'GET /m/api/chat',

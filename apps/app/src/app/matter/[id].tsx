@@ -6,6 +6,7 @@ import type { MatterInputT } from '../../backend/types'
 import { t } from '../../i18n'
 import { useLang } from '../../i18n/useLang'
 import { Artifacts } from '../../ui/Artifacts'
+import { ChangeReview } from '../../ui/ChangeReview'
 import { useBackendCtx } from '../../state/BackendProvider'
 import { useConnection, useQuery, useSubmit, useTopic } from '../../state/hooks'
 import { getDraft, setDraft } from '../../state/drafts'
@@ -317,6 +318,10 @@ export default function Matter() {
                   </ScrollView>
                 ) : f.reason ? (
                   <Txt role="small" tone="inkSoft">{f.reason}</Txt>
+                ) : null}
+                {changes.data?.artifactId && f.kind !== 'not_reviewed' && !f.path.startsWith('…') ? (
+                  <ChangeReview matterId={id} artifactId={changes.data.artifactId} path={f.path} {...(f.mark ? { mark: f.mark } : {})}
+                    backend={backend} lang={lang} online={online} onDone={() => { void refreshChanges(); void refreshDetail() }} />
                 ) : null}
               </View>
             ))}

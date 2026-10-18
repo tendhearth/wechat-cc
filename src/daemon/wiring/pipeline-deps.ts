@@ -702,6 +702,10 @@ export function buildPipelineDeps(opts: PipelineDepsOpts, refs: PipelineDepsRefs
       }) }
     })() : {}),
     ...(opts.workbench ? { changes: (id: string) => opts.workbench!.reviewList(id) } : {}),
+    ...(opts.workbench ? { review: {
+      mark: (id: string, input: { artifactId: string; path: string; mark: 'accepted' | 'returned' }) => opts.workbench!.markReviewFile(id, input),
+      ret: (id: string, input: { artifactId: string; paths: string[]; comment: string }) => opts.workbench!.returnReviewFiles(id, input),
+    } } : {}),
     ...(opts.workbench?{uploads:{
       chunk:(input:Parameters<typeof opts.workbench.uploadAttachmentChunk>[0])=>opts.workbench!.uploadAttachmentChunk(input,{ownerKey:ownerChatId()??'',surface:'phone'}),
       status:(input:{id:string;draftId:string})=>opts.workbench!.attachmentUploadStatus(input,{ownerKey:ownerChatId()??'',surface:'phone'}),

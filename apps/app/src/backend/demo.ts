@@ -204,6 +204,7 @@ export function makeDemoBackend(opts: { now?: () => number; setTimeout?: typeof 
   const later = (ms: number, fn: () => void) => { const ep = epoch; schedule(() => { if (ep === epoch) fn() }, ms) }
   const ev = (e: Entry, kind: string, key: Copy, extra?: string) => { e.evs = [...e.evs, { kind, key, extra, createdAt: now() }] }
   const evText = (e: Entry, kind: string, text: string) => { e.evs = [...e.evs, { kind, text, createdAt: now() }] }
+  const reviewMarks = new Map<string, { mark: 'accepted' | 'returned'; comment: string; createdAt: number }>()
   const get = (id: string) => { const e = entries.get(id); if (!e) throw new BackendError('not_found'); return e }
 
   /** 演示里三条会话能不能接:进行中的那条看得见在跑;另两条一条能恢复、一条只能带记录新开。 */
@@ -236,7 +237,18 @@ export function makeDemoBackend(opts: { now?: () => number; setTimeout?: typeof 
       const explanations: Record<string, ApprovalExplanationT> = e.detail.permissions.some(p => p.id === PERM_ID) ? { [PERM_ID]: explanation(l) } : {}
       return { explanations, progress: progress(l, id, e.stage) }
     },
-    async changes(id) { get(id); return id === IDS.portfolio ? changesTurn(now()) : null },
+    async changes(id) {
+      get(id)
+      if (id !== IDS.portfolio) return null
+      const turn = changesTurn(now())
+      return { ...turn, files: turn.files.map(f => { const m = reviewMarks.get(f.path); return m ? { ...f, mark: m } : f }) }
+    },
+    async reviewMark({ id, path }) { get(id); reviewMarks.set(path, { mark: 'accepted', comment: '', createdAt: now() }) },
+    async reviewReturn({ id, paths, comment }) {
+      const e = get(id)
+      for (const path of paths) reviewMarks.set(path, { mark: 'returned', comment, createdAt: now() })
+      evText(e, 'user', comment); publish([id])
+    },
     async chat(_p) {
       const l = lastLang
       return {
