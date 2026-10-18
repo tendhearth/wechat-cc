@@ -21,7 +21,7 @@ import {
   type ApprovalExplanationT, type Backend, type Connection, type DeviceRowT, type EntryOptionsT,
   type MatterDetailT, type MatterT, type PhoneChangesTurnT, type ProgressSummaryT, type Unsubscribe,
   type ChatPageT, type ChatJobT, type ConnectionsT, type NativeSessionRowT, type NativeSessionPageT, type SessionContinueT,
-  type MatterSayResultT, type MatterInputT, type CliSessionRowT, type CliActivityItemT, type OverseerTodayT, type CompanionHomeT, type FeedEventT, type PresenceT, type UploadStateT, type EntryModelCatalogT, type MemoryViewT, type ChatModelViewT, type ChatSearchHitT,
+  type MatterSayResultT, type MatterInputT, type CliSessionRowT, type CliActivityItemT, type OverseerTodayT, type CompanionHomeT, type FeedEventT, type PresenceT, type UploadStateT, type EntryModelCatalogT, type MemoryViewT, type ChatModelViewT, type ChatSearchHitT, type LetterSummaryT, type FileChunkT,
 } from './types'
 
 type Topic = Parameters<Backend['subscribe']>[0]
@@ -268,6 +268,13 @@ export function makeLiveBackend(d: LiveDeps): Backend {
     async chatFileChunk(p) {
       return strip(await call<{ ok: true; name: string; mime: string; size: number; sha256: string; offset: number; nextOffset: number; contentBase64: string }>('GET /m/api/chat/file',
         `/m/api/chat/file?id=${encodeURIComponent(p.messageId)}&i=${p.index}&offset=${p.offset}`))
+    },
+    async letters() {
+      return (await call<{ letters: LetterSummaryT[] }>('GET /m/api/letters', '/m/api/letters')).letters
+    },
+    async letterPageChunk(p) {
+      return strip(await call<{ ok: true } & FileChunkT>('GET /m/api/letters/page',
+        `/m/api/letters/page?id=${encodeURIComponent(p.id)}&p=${p.page}&offset=${p.offset}`))
     },
     async chatVoice(messageId, index) {
       return strip(await call<{ ok: true; mime: string; data: string }>('GET /m/api/chat/voice', `/m/api/chat/voice?id=${encodeURIComponent(messageId)}&i=${index}`))

@@ -160,6 +160,8 @@ export interface WiredDeps {
    * 伙伴的 tick 已经接上;main.ts 接给提醒。
    */
   proactive: ProactiveOutbound
+  /** App 那条路本身(没开中继 v2 / 没配对 ⇒ null);main.ts 接给信(微信不通时寄到 App)。 */
+  companionApp: import('../companion/proactive-channel').AppChannel | null
   /** 每晚记忆整理运行时(pipeline-deps 造);main.ts 挂定时器 + setMemoryNightly。 */
   memoryNightly: import('../memory/nightly-runtime').MemoryNightlyRuntime
   mattersService: import('../../core/matters/service').MattersService | null
@@ -285,6 +287,7 @@ export function wireMain(opts: WireMainOpts): WiredDeps {
   return {
     appPush,
     proactive,
+    companionApp,
     pipelineDeps,
     companionConverse,
     petTurn,

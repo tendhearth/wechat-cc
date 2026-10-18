@@ -642,3 +642,24 @@ describe('此刻页的伙伴(2026-10-18)', () => {
     await expect(off.b.markSeen('2026-10-18T03:00:00.000Z')).rejects.toBeTruthy()
   })
 })
+
+describe('CC 的信(2026-10-18)', () => {
+  const L = { id: '2026-10-16-abc123', day: '2026-10-16', sentAt: 1, requested: true, via: 'app', opening: '终于接上 Cursor 了', pages: 2 }
+  it('letters:过 schema、只回列表;letterPageChunk 拼 id / p / offset、去掉 ok', async () => {
+    const { b, reqs } = harness({
+      'GET /m/api/letters': ok({ ok: true, letters: [L] }),
+      'GET /m/api/letters/page': ok({ ok: true, name: 'x.png', mime: 'image/png', size: 3, sha256: 'a'.repeat(64), offset: 0, nextOffset: 3, contentBase64: 'AAAA' }),
+    })
+    expect(await b.letters()).toEqual([L])
+    const c = await b.letterPageChunk({ id: L.id, page: 2, offset: 131072 })
+    expect(reqs.at(-1)!.path).toBe('/m/api/letters/page?id=2026-10-16-abc123&p=2&offset=131072')
+    expect('ok' in c).toBe(false)
+    expect(c.size).toBe(3)
+  })
+  it('页不在了 ⇒ not_found;形状不对 ⇒ unknown(不当成功)', async () => {
+    const gone = harness({ 'GET /m/api/letters/page': ok({ ok: false, error: 'not_found' }, 404) })
+    await expect(gone.b.letterPageChunk({ id: L.id, page: 1, offset: 0 })).rejects.toMatchObject({ code: 'not_found' })
+    const bad = harness({ 'GET /m/api/letters': ok({ ok: true, letters: [{ id: 1 }] }) })
+    await expect(bad.b.letters()).rejects.toMatchObject({ code: 'unknown' })
+  })
+})

@@ -6,7 +6,9 @@
  *   - 当面:主人说「给我写封信」,CC 的 cc_letter 工具 → writeNow(不看开关、不改排期)。
  *
  * 写好的信先存档(<stateDir>/letters/<id>/),再投递。投递失败不丢信:
- *   - 微信不让主动发(errcode=-2,主人很久没说话)→ 等主人下一次开口再寄,不在关着的窗口上反复撞;
+ *   - 微信不让主动发(errcode=-2,主人很久没说话)/ 微信断着 → App 收得到(手机伙伴第 2 步,2026-10-18)就寄到 App
+ *     (几页图记成主人对话里 CC 的一行 + 一条「CC 给你写了一封信」推送);收不到 ⇒ 等主人下一次开口再寄,
+ *     不在关着的窗口上反复撞;
  *   - 其它失败最多试 3 次,之后放弃(信还在存档里)。
  * 一次一封:上一封没寄出去之前,不写下一封。
  */
@@ -46,6 +48,8 @@ export interface LetterRecord {
   created_at: string
   sent_at: string | null
   requested: boolean
+  /** 寄到哪了(2026-10-18 起才记;老信没有这个字段 = 微信)。 */
+  sent_via?: 'wechat' | 'app'
   letter: LetterDraft
 }
 export interface LetterSummary { id: string; day: string; sent_at: string | null; requested: boolean; opening: string }
@@ -73,12 +77,25 @@ export interface LetterDeps {
   wechatSuspended(): boolean
   sendText(chatId: string, text: string): Promise<{ error?: string }>
   sendFile(chatId: string, path: string): Promise<void>
+  /**
+   * App 那条路(手机伙伴第 2 步):微信断着 / 主动发的窗口关了时,App 收得到就寄到 App。
+   * 没接 / 回 null ⇒ 只有微信(改造前:等主人开口)。
+   */
+  app?(): LetterApp | null
+  /** 微信寄出之后:这几页记成主人对话里 CC 的一行(App 对话页看得见)。sendFile 本身不再逐页记。 */
+  mirror?(chatId: string, pages: string[]): void
   /** SVG → PNG 路径;不支持的平台回 null(退回发文字) */
   rasterize(svg: string, dir: string, name: string): string | null
   now(): number
   random(): number
   newId(): string
   log(tag: string, line: string): void
+}
+
+export interface LetterApp {
+  deliverable(chatId: string): boolean
+  /** 记进主人对话 + 推一条;成功 ⇒ true。 */
+  deliver(chatId: string, letter: { id: string; pages: string[]; text: string }): Promise<boolean>
 }
 
 export interface LetterRuntime {
@@ -90,6 +107,9 @@ export interface LetterRuntime {
 }
 
 const DEFAULT_STATE: LetterState = { dueAt: null, pending: null, lastSentAt: null }
+
+/** 存档里的信,新的在前(手机「CC 的信」也读这个,letters/archive.ts)。 */
+export function readLetterRecords(stateDir: string): LetterRecord[] { return readRecords(stateDir) }
 
 export function readLetterState(stateDir: string): LetterState {
   try {
@@ -191,10 +211,31 @@ export function makeLetterRuntime(d: LetterDeps): LetterRuntime {
       d.log('LETTERS', `letter ${p.id} expired unsent (kept in archive)`)
       return 'expired'
     }
-    if (d.wechatSuspended()) return 'waiting'
+    const markSent = (via: 'wechat' | 'app') => {
+      const rec = readRecords(d.stateDir).find(r => r.id === p.id)
+      if (rec) writeRecord(d.stateDir, { ...rec, sent_at: new Date(nowMs).toISOString(), sent_via: via })
+      save({ pending: null, lastSentAt: nowMs })
+    }
+    // 微信不通时寄到 App:收得到且记上了 ⇒ 'sent';否则 null(照旧等)。
+    const toApp = async (why: string): Promise<'sent' | null> => {
+      let ok = false
+      try {
+        const a = d.app?.() ?? null
+        if (!a || !a.deliverable(owner)) return null
+        ok = await a.deliver(owner, { id: p.id, pages: p.pages, text: p.text })
+      } catch (e) {
+        d.log('LETTERS', `letter ${p.id} app delivery threw: ${e instanceof Error ? e.message : String(e)}`)
+        return null
+      }
+      if (!ok) return null
+      markSent('app')
+      d.log('LETTERS', `letter ${p.id} delivered to the app (${why})`)
+      return 'sent'
+    }
+    if (d.wechatSuspended()) return (await toApp('wechat degraded')) ?? 'waiting'
     if (p.blockedAt !== null) {
       const inbound = await d.lastInboundAt(owner)
-      if (!inbound || inbound <= p.blockedAt) return 'waiting'
+      if (!inbound || inbound <= p.blockedAt) return (await toApp('wechat window closed')) ?? 'waiting'
     }
     try {
       if (p.pages.length) for (const page of p.pages) await d.sendFile(owner, page)
@@ -205,6 +246,7 @@ export function makeLetterRuntime(d: LetterDeps): LetterRuntime {
     } catch (e) {
       const msg = e instanceof Error ? e.message : String(e)
       if (isWindowClosed(msg)) {
+        if (await toApp('wechat window closed')) return 'sent'
         save({ pending: { ...p, blockedAt: nowMs } })
         d.log('LETTERS', `letter ${p.id} waiting: WeChat won't take a proactive send until the owner speaks`)
         return 'waiting'
@@ -219,9 +261,8 @@ export function makeLetterRuntime(d: LetterDeps): LetterRuntime {
       d.log('LETTERS', `letter ${p.id} send failed (try ${attempts}): ${msg}`)
       return 'waiting'
     }
-    const rec = readRecords(d.stateDir).find(r => r.id === p.id)
-    if (rec) writeRecord(d.stateDir, { ...rec, sent_at: new Date(nowMs).toISOString() })
-    save({ pending: null, lastSentAt: nowMs })
+    if (p.pages.length) { try { d.mirror?.(owner, p.pages) } catch { /* 只是让 App 也看得见 */ } }
+    markSent('wechat')
     d.log('LETTERS', `letter ${p.id} sent (${p.pages.length ? `${p.pages.length} page(s)` : 'as text'})`)
     return 'sent'
   }

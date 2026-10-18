@@ -1,6 +1,6 @@
 /** CC 的信(2026-10-16):把 letters/runtime 接到真库、真微信、真模型,并挂 15 分钟一次的 tick。 */
 import { randomBytes } from 'node:crypto'
-import { join } from 'node:path'
+import { basename, join } from 'node:path'
 import type { Db } from '../../lib/db'
 import type { Lifecycle } from '../../lib/lifecycle'
 import { makeMessagesStore } from '../../lib/messages-store'
@@ -8,7 +8,8 @@ import { loadCompanionConfig } from '../companion/config'
 import { startCompanionScheduler } from '../companion/scheduler'
 import { MEMORY_FILENAME, parseMemoryDoc, renderForPrompt } from '../memory/curated-doc'
 import { makeMemoryFS } from '../memory/fs-api'
-import { makeLetterRuntime, type LetterRuntime } from '../letters/runtime'
+import { makeLetterRuntime, type LetterApp, type LetterRuntime } from '../letters/runtime'
+import type { AppChannel } from '../companion/proactive-channel'
 import { rasterizeLetterPage } from '../letters/render'
 
 type Eval = (prompt: string) => Promise<string>
@@ -23,9 +24,34 @@ export interface WireLettersDeps {
   cheapEval(chatId: string): Eval | null
   wechatSuspended(): boolean
   sendText(chatId: string, text: string): Promise<{ error?: string }>
+  /** 逐页发;这里发的页不该再被媒体镜像逐页记(main.ts 传 mirror:false),整封由 `mirror` 记成一行。 */
   sendFile(chatId: string, path: string): Promise<void>
+  /** 微信寄出之后整封记进 App 对话页(几页一行)。 */
+  mirror?(chatId: string, pages: string[]): void
+  /** CC 主动找你的 App 那条路(proactive-channel 的 AppChannel);没开中继 v2 / 没配对 ⇒ null。 */
+  app?(): AppChannel | null
   holdBusy(label: string): () => void
   log(tag: string, line: string): void
+}
+
+/** 推送正文(daemon 的推送正文本来就是中文,同伙伴推送)。 */
+export const LETTER_PUSH_BODY = 'CC 给你写了一封信'
+
+/**
+ * 一封信寄到 App:几页图记成主人对话里 CC 的一行(附件 = 存档里那几张 PNG 的引用,手机按块读),
+ * 排不成图的退回文字(同微信那头的「(一封信)」);记上了再推一条。
+ */
+export function letterToApp(app: AppChannel): LetterApp {
+  return {
+    deliverable: (chatId) => app.deliverable(chatId),
+    async deliver(chatId, letter) {
+      const ok = letter.pages.length
+        ? await app.record(chatId, '', letter.pages.map(p => ({ kind: 'file' as const, name: basename(p), path: p })))
+        : await app.record(chatId, `（一封信）\n\n${letter.text}`)
+      if (ok) app.push(LETTER_PUSH_BODY)
+      return ok
+    },
+  }
 }
 
 export function wireLetters(d: WireLettersDeps): { runtime: LetterRuntime; start(): Lifecycle } {
@@ -58,6 +84,8 @@ export function wireLetters(d: WireLettersDeps): { runtime: LetterRuntime; start
     wechatSuspended: d.wechatSuspended,
     sendText: d.sendText,
     sendFile: d.sendFile,
+    ...(d.mirror ? { mirror: d.mirror } : {}),
+    ...(d.app ? { app: () => { const a = d.app!(); return a ? letterToApp(a) : null } } : {}),
     rasterize: rasterizeLetterPage,
     now: () => Date.now(),
     random: Math.random,

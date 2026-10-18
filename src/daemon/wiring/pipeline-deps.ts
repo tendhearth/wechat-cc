@@ -47,7 +47,7 @@ import { buildConnections, cacheConnections } from '../connections'
 import { makeRemoteToggle, relayV2Configured } from '../remote-toggle'
 import { cacheSessions } from '../mobile-reads'
 import { maxDecryptedMtime } from '../companion/ingest/cycle'
-import { hostname } from 'node:os'
+import { hostname, tmpdir } from 'node:os'
 import { APP_VERSION } from '../../lib/app-version'
 import { makePhoneChatId, makePhoneOwner } from '../mobile-chat'
 import { makePhoneChat } from '../phone-chat'
@@ -60,6 +60,8 @@ import { resolveRemoteRelays, mergeOnlineDevices } from '../remote-relay-config'
 import { makePhonePush } from '../phone-push'
 import { fanoutPush, makePhoneNotifier } from '../phone-notifier'
 import { makeAppChannel } from '../companion/app-channel'
+import { makeMediaMirror } from '../companion/media-mirror'
+import { letterPagePath, listLetters } from '../letters/archive'
 import { deviceIdOf } from '../device-store'
 import { makeCommandRouter } from './command-router'
 import { ensureChatAndNote, makeMatterActivity, wireMatterActivity } from '../matter-activity'
@@ -620,7 +622,8 @@ export function buildPipelineDeps(opts: PipelineDepsOpts, refs: PipelineDepsRefs
     chat: {
       ownerChatId,
       say: (text: string, surface?: 'desktop' | 'phone') => companionConverse(text, surface ?? 'desktop'),
-      recent: async (chatId: string, limit: number) => (await messagesStore.listRange(chatId, { limit })).map(r => ({ kind: r.direction === 'in' ? 'user' : 'text', text: r.text, createdAt: Date.parse(r.ts), source: r.source })),
+      // 只有附件的行(媒体镜像 / 只发了表情的回复,text 为空)在「一件事」的文字时间线里没东西可显示 —— 跳过;App 对话页另读整行。
+      recent: async (chatId: string, limit: number) => (await messagesStore.listRange(chatId, { limit })).filter(r => r.text.trim() !== '').map(r => ({ kind: r.direction === 'in' ? 'user' : 'text', text: r.text, createdAt: Date.parse(r.ts), source: r.source })),
       search: async (chatId: string, query: string, limit: number) => (await messagesStore.search(chatId, query, limit)).map(r => ({ id: r.id, kind: r.direction === 'in' ? 'user' as const : 'text' as const, text: r.text, createdAt: Date.parse(r.ts), source: r.source })),
     },
     // 手机对聊天那件事「说一句」按 requestId 去重(v70,与工作台输入回执同一规矩)。
@@ -653,8 +656,23 @@ export function buildPipelineDeps(opts: PipelineDepsOpts, refs: PipelineDepsRefs
     append: (rec) => messagesStore.append(rec),
     touched: () => { const m = phoneOwner.peek(); if (m) matterActivity?.note(m.matterId); phoneEvents?.poke() },
     push: (p) => fanoutPush({ push: phonePush, subscribedDevices: onlineDevices, log: (tag, line) => log(tag, line) }, p),
+    ...(opts.stickers ? { stickerFile: (tag: string) => opts.stickers!.resolve(tag) } : {}),
     log: (tag, line) => log(tag, line),
   }) : null
+  // 媒体镜像(手机伙伴第 2 步,2026-10-18):CC 在微信上发给主人的图 / 表情 / 语音 / 文件,App 对话页也看得见 ——
+  // 主人那条记一行 CC,附件放 extras(只存引用)。只认 App 镜像的那条主人对话;别的 chat 不记。
+  if (phoneOwner) {
+    const mirror = makeMediaMirror({
+      ownerChatId: () => phoneOwner.peek()?.chatId ?? null,
+      stickerDir: opts.stickers ? join(stateDir, 'stickers') : null,
+      stickerLabel: (file) => opts.stickers?.list().find(e => e.file === file)?.tags[0] ?? null,
+      scratchRoots: [tmpdir(), join(stateDir, 'tts-tmp')],
+      append: (rec) => messagesStore.append(rec),
+      touched: () => { const m = phoneOwner.peek(); if (m) matterActivity?.note(m.matterId); phoneEvents?.poke() },
+      log: (tag, line) => log(tag, line),
+    })
+    ilink.onMediaSent?.((chatId, m) => mirror.noteSent(chatId, m))
+  }
   // 「CC 的连接」(spec 2026-10-01):插件快照 / 解密库时间 / 知识库 / 工作台。裁定 8:缓存 10 s、最多 3 次 detail()。
   // wechatSyncedAt = wxvault 解密库的最近落盘时间(同步时间),不是最新微信消息时间。
   const startedAt = Date.now() - Math.round(process.uptime() * 1000)
@@ -738,6 +756,8 @@ export function buildPipelineDeps(opts: PipelineDepsOpts, refs: PipelineDepsRefs
     curatedMemory: () => memoryNightly.curatedView(),
     correctMemory: (id: string, verdict: import('../memory/nightly-runtime').MemoryVerdict) => memoryNightly.correct(id, verdict),
     ...(mattersService && opts.matters ? { matters: { list: (f) => mattersService.list(f), detail: (id) => mattersService.detail(id), inputReceipt:mattersService.inputReceipt, say: (id, text, input) => mattersService.say(id, text, 'phone',input), permission:mattersService.permission,answer:mattersService.answer,stop:mattersService.stop,worktree:mattersService.worktree,artifactChunk:mattersService.artifactChunk,handoff:mattersService.handoff,seenOnPhone: (id) => opts.matters!.bind(id, 'phone', 'pwa') } } : {}),
+    // 「CC 的信」(2026-10-18):只读存档,寄出去了的才列。
+    letters: { list: () => listLetters(stateDir), pagePath: (id: string, page: number) => letterPagePath(stateDir, id, page) },
     ...(phoneOwner && phoneChat ? { chat: {
       owner: () => phoneOwner.peek(),
       history: (chatId: string, o: { beforeTs?: string; limit: number }) => messagesStore.listRange(chatId, o),

@@ -111,6 +111,11 @@ export interface ReplyDeliveryPort {
 export interface TurnOutbound {
   sendText(chatId: string, text: string): Promise<{ msgId: string; error?: string }>
   textOnly?(): boolean
+  /**
+   * `textOnly()` 为真时附件交给它(手机伙伴第 2 步:落到 App 的那一轮,表情 / 文件 / 语音记进 App 对话页,不碰微信)。
+   * 收下 ⇒ true;没有它或回 false ⇒ 照第 1 步:语音改发同样的字、别的不发。
+   */
+  sendAttachment?(chatId: string, a: TurnAttachment): Promise<boolean>
 }
 
 // ─── 「最后的话」 ─────────────────────────────────────────────────────────

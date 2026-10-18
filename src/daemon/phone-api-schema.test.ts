@@ -35,6 +35,7 @@ import { makeProgressSummarizer } from './phone-progress'
 import { makePhoneOwner } from './mobile-chat'
 import { makePhoneChat } from './phone-chat'
 import { makeMessagesStore } from '../lib/messages-store'
+import { letterPagePath, listLetters } from './letters/archive'
 
 // ── 1) 守卫:PHONE_ROUTES ↔ (PHONE_API_SCHEMAS ∪ PHONE_HTML_ROUTES) 双向核对 ──
 
@@ -300,6 +301,13 @@ describe('真实返回校验 — 首页 / 设置页 / 记忆 / 贴纸', () => {
     writeFileSync(join(dir, 'agent-config.json'), JSON.stringify({ provider: 'claude', bot_name: 'CC' }))
     writeFileSync(join(dir, 'memory', OWNER, 'portrait.svg'), '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 320 320"><circle cx="1" cy="1" r="1" fill="none" stroke="#5a3f2d"/></svg>')
     writeFileSync(join(dir, 'stickers', 'bear.png'), 'png-bytes')
+    // 一封寄出去了的信(两页)+ 一封还没寄出的(不该被看见)
+    for (const [id, sent] of [['2026-10-16-abc123', '2026-10-16T12:00:00.000Z'], ['2026-10-17-def456', null]] as const) {
+      mkdirSync(join(dir, 'letters', id), { recursive: true })
+      writeFileSync(join(dir, 'letters', id, 'letter.json'), JSON.stringify({ id, day: id.slice(0, 10), created_at: `${id.slice(0, 10)}T11:00:00.000Z`, sent_at: sent, requested: true, letter: { salutation: '你好：', paragraphs: ['终于接上 Cursor 了。'], signoff: '' } }))
+      writeFileSync(join(dir, 'letters', id, 'page-1.png'), Buffer.alloc(200 * 1024, 7))
+      writeFileSync(join(dir, 'letters', id, 'page-2.png'), 'p2')
+    }
     panel = makeSettingsPanel({
       stateDir: dir, ownerChatId: () => OWNER,
       chatPrefs: { get: () => ({}), set: (_c, p) => p },
@@ -313,6 +321,7 @@ describe('真实返回校验 — 首页 / 设置页 / 记忆 / 贴纸', () => {
         names: () => [{ username: 'wx_f', display: '小飞' }],
       },
       stickers: { list: () => [{ file: 'bear.png', tags: ['开心'] }], dir: join(dir, 'stickers') },
+      letters: { list: () => listLetters(dir), pagePath: (id, page) => letterPagePath(dir, id, page) },
       feed: {
         journal: { list: () => [{ id: 'j1', ts: '2026-09-06T02:43:36.412Z', chat_id: OWNER, title: '好玩的东西', url: 'https://x', note: '', status: 'new', kind: 'hunt', image_svg: null, matter_id: null }] },
         planLogDays: () => [{ at: '2026-09-06T03:03:55.347Z', chatId: OWNER, candidates: ['visit'], decision: 'none', why: '没朋友,在家歇着。', source: 'model' }],
@@ -391,6 +400,33 @@ describe('真实返回校验 — 首页 / 设置页 / 记忆 / 贴纸', () => {
     const t = await (await post('/m/api/push/test', {}, dt)).json()
     expect(t).toEqual({ ok: true, result: { ok: true, code: 'ok' } })
     parseAs('POST /m/api/push/test', t)
+  })
+
+  // CC 的信(2026-10-18):只给设备令牌;只列寄出去了的;一页按块读、拼起来与磁盘上同一份。
+  it('m/api/letters、m/api/letters/page 真实返回符合 schema,链接令牌够不着', async () => {
+    expect((await get('/m/api/letters')).status).toBe(403)   // 链接令牌(10 分钟、可能随 URL 外泄)
+    expect((await get('/m/api/letters/page?id=2026-10-16-abc123&p=1')).status).toBe(403)
+    const paired = await (await post('/set/api/pair', {})).json() as { device_token: string }
+    const dt = paired.device_token
+    const list = parseAs('GET /m/api/letters', await (await get('/m/api/letters', dt)).json()) as { letters: Array<{ id: string; pages: number }> }
+    expect(list.letters.map(l => [l.id, l.pages])).toEqual([['2026-10-16-abc123', 2]])
+    const parts: Buffer[] = []
+    let offset = 0, size = -1, sha = ''
+    for (let i = 0; i < 5 && offset !== size; i++) {
+      const res = await get(`/m/api/letters/page?id=2026-10-16-abc123&p=1&offset=${offset}`, dt)
+      const c = parseAs('GET /m/api/letters/page', await res.json()) as { size: number; sha256: string; nextOffset: number; contentBase64: string; mime: string }
+      expect(c.mime).toBe('image/png')
+      size = c.size; sha = c.sha256; offset = c.nextOffset
+      parts.push(Buffer.from(c.contentBase64, 'base64'))
+    }
+    expect(parts.length).toBe(2)   // 200 KiB ⇒ 两块(每块 128 KiB)
+    expect(createHash('sha256').update(Buffer.concat(parts)).digest('hex')).toBe(sha)
+    for (const q of ['id=2026-10-17-def456&p=1', 'id=2026-10-16-abc123&p=3', 'id=..%2Fx&p=1']) {
+      const r = await get(`/m/api/letters/page?${q}`, dt)
+      expect(r.status).toBe(404)
+      parseAs('GET /m/api/letters/page', await r.json())
+    }
+    expect((await get('/m/api/letters/page?id=2026-10-16-abc123', dt)).status).toBe(400)
   })
 
   it('m/api/memory、m/api/todo、m/api/sticker(b64) 真实返回符合 schema', async () => {

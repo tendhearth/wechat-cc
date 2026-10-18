@@ -17,16 +17,25 @@
  * shouldSpeak 管,这里只管「往哪儿送」。投递不是模型调用,网络守护不管这一段。
  */
 
+import type { TurnAttachment } from '../../core/turn-reply'
+import type { AppAttachment } from '../app-reply'
+
 export type ProactiveChannel = 'wechat' | 'app'
 
 /** App 那条路(pipeline-deps 里接线:消息库 + 手机主题 + 中继 v2 推送)。 */
 export interface AppChannel {
   /** 这个 chat 的话 App 收得到:是主人那条对话,且至少一台配对设备登记了推送(或正连着)。 */
   deliverable(chatId: string): boolean
-  /** 记成主人对话里 CC 的一行 + 捅一下主题(App 对话页会刷新)。成功 ⇒ true。 */
-  record(chatId: string, text: string): Promise<boolean>
+  /** 记成主人对话里 CC 的一行 + 捅一下主题(App 对话页会刷新)。带附件 ⇒ 放 extras(信的几页)。成功 ⇒ true。 */
+  record(chatId: string, text: string, attachments?: readonly AppAttachment[]): Promise<boolean>
   /** 一条 `companion` 推送(在线的设备跳过)。只投不等,失败只记日志。 */
   push(text: string): void
+  /**
+   * 一轮里的一个附件(表情 / 文件 / 语音)记成主人对话里 CC 的一行(附件在 extras,App 对话页照常画)。
+   * 成功 ⇒ 推送里替它说的那几个字(语音 = 那段字;表情 / 文件 = 「[表情:开心]」这样的一小段);失败 ⇒ null。
+   * 没有 ⇒ 第 1 步的样子(附件不发,语音改发字)。
+   */
+  recordAttachment?(chatId: string, a: TurnAttachment): Promise<string | null>
 }
 
 export interface ProactiveChannelDeps {
@@ -52,8 +61,10 @@ export interface ProactiveTurn {
   sendText(chatId: string, text: string): Promise<{ msgId: string; error?: string }>
   /** 已经落在哪条路上;还没送出过 ⇒ null。 */
   channel(): ProactiveChannel | null
-  /** 落在 App 上 ⇒ 附件不发(这一步只做文字;语音改发同样的字)。 */
+  /** 落在 App 上 ⇒ 附件不进微信(第 2 步起由 sendAttachment 记进 App 对话页;记不了才退回语音改发字)。 */
   textOnly(): boolean
+  /** 落在 App 上的这一轮的附件:记进 App 对话页。没落在 App / 记不了 ⇒ false(调用方退回第 1 步)。 */
+  sendAttachment(chatId: string, a: TurnAttachment): Promise<boolean>
   /** 这一轮收尾:落在 App ⇒ 整轮的文字合成一条推送。没落在 App ⇒ 什么都不做。 */
   finish(): void
 }
@@ -124,6 +135,14 @@ export function makeProactiveOutbound(deps: ProactiveChannelDeps): ProactiveOutb
       },
       channel: () => sticky,
       textOnly: () => sticky === 'app',
+      async sendAttachment(_c, a) {
+        if (sticky !== 'app' || !app?.recordAttachment) return false
+        let said: string | null = null
+        try { said = await app.recordAttachment(chatId, a) } catch (e) { deps.log('COMPANION_APP', `chat=${chatId} record attachment threw: ${errMsg(e)}`) }
+        if (said === null) return false
+        if (said.trim()) appTexts.push(said)
+        return true
+      },
       finish() {
         if (sticky !== 'app' || !app || appTexts.length === 0) return
         const body = appTexts.join('\n\n')

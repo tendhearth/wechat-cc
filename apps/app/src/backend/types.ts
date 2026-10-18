@@ -2,7 +2,7 @@ import type { z } from 'zod'
 import type {
   Matter, MatterDetail, ApprovalExplanation, ProgressSummary, PhoneChangesTurn, EntryOptions, DeviceRowT, PushPlatformT,
   FeedEvent, Presence,
-  ChatPage, ChatJob, ChatMessage, ChatAttachment, EntryModelCatalog, ChatModelView, MemorySuccess, ChatSearchHit, Connections, NativeSessionRow, NativeSessionPage, SessionContinueT, MatterSayResult, CliSessionRowT, CliActivityItemT, OverseerTodayT, TodayItemT,
+  ChatPage, ChatJob, ChatMessage, ChatAttachment, LetterSummary, EntryModelCatalog, ChatModelView, MemorySuccess, ChatSearchHit, Connections, NativeSessionRow, NativeSessionPage, SessionContinueT, MatterSayResult, CliSessionRowT, CliActivityItemT, OverseerTodayT, TodayItemT,
 } from '@wechat-cc/protocol'
 import type { Lang } from '../i18n'
 
@@ -18,6 +18,10 @@ export type ChatPageT = z.infer<typeof ChatPage>
 export type ChatJobT = z.infer<typeof ChatJob>
 export type ChatMessageT = z.infer<typeof ChatMessage>
 export type ChatAttachmentT = z.infer<typeof ChatAttachment>
+/** 「CC 的信」里的一封(2026-10-18):寄出去了的;pages=0 ⇒ 按文字寄的,全文在 text。 */
+export type LetterSummaryT = z.infer<typeof LetterSummary>
+/** 电脑上一份文件的一块(chat/file 与 letters/page 同一个形状):size + sha256 是整份的,拼完核对。 */
+export type FileChunkT = { name: string; mime: string; size: number; sha256: string; offset: number; nextOffset: number; contentBase64: string }
 export type EntryModelCatalogT = z.infer<typeof EntryModelCatalog>
 /** 交办时指定的模型 / 思考强度;不给 ⇒ 用执行者自己的默认。 */
 export type EntryExecution = { model?: string; reasoningEffort?: string }
@@ -122,7 +126,11 @@ export interface Backend {
   chatModel(): Promise<ChatModelViewT>
   /** 钉这条对话的后端 / 模型(只影响主人这条对话,下一句生效);model=null ⇒ 用全局设置。 */
   setChatModel(provider: string, model: string | null): Promise<ChatModelViewT>
-  chatFileChunk(p: { messageId: string; index: number; offset: number }): Promise<{ name: string; mime: string; size: number; sha256: string; offset: number; nextOffset: number; contentBase64: string }>
+  chatFileChunk(p: { messageId: string; index: number; offset: number }): Promise<FileChunkT>
+  /** CC 的信(GET /m/api/letters,2026-10-18):寄出去了的信,新的在前。只给配过对的手机(链接令牌 403 ⇒ BackendError)。 */
+  letters(): Promise<LetterSummaryT[]>
+  /** 一封信的第 page 页(1 起)按块读(GET /m/api/letters/page);不在了 ⇒ BackendError('not_found')。 */
+  letterPageChunk(p: { id: string; page: number; offset: number }): Promise<FileChunkT>
   /** 表情库里的一张图(GET /m/api/sticker/<file>?b64=1)。不在库里 ⇒ BackendError('not_found')。 */
   sticker(file: string): Promise<{ mime: string; data: string }>
   /** CC 的连接快照(手机版,没有 detail)。 */

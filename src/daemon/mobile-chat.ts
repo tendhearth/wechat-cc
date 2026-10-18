@@ -42,6 +42,22 @@ function readWholeFile(path: string): Buffer {
 }
 
 /**
+ * 磁盘上的一份文件按块回给手机(chat/file 与 letters/page 共用,2026-10-18 抽出来):每块 128 KiB(base64 后
+ * 远小于中继一帧 512 KiB),带整份的 size + sha256,手机拼完核对。offset 由调用方先验成非负整数。
+ */
+export function fileChunkResponse(path: string, name: string, offset: number): Response {
+  let file: { bytes: Buffer; sha256: string }
+  try { file = readChatFile(path) } catch (e) {
+    const m = e instanceof Error ? e.message : ''
+    return m === 'too_large' ? err('too_large', 413) : err('not_found', 404)
+  }
+  const { bytes, sha256 } = file
+  if (offset > bytes.length) return err('invalid', 400)
+  const end = Math.min(bytes.length, offset + CHAT_FILE_CHUNK_BYTES)
+  return json({ ok: true, name, mime: mimeOf(name), size: bytes.length, sha256, offset, nextOffset: end, contentBase64: bytes.subarray(offset, end).toString('base64') })
+}
+
+/**
  * mobile-chat.ts — 手机「跟 CC 说」的两条路由(spec 2026-10-01 §3)。路由字面量被
  * scripts/phone-routes.guard.test.ts 扫描,新增 / 改名要同步 PHONE_ROUTES 与 PHONE_API_SCHEMAS。
  *
@@ -231,16 +247,7 @@ export async function mobileChatRoute(deps: MobileChatDeps | undefined, url: URL
     try { row = await deps.message(owner.chatId, id) } catch { return err('unavailable', 503) }
     const att = row && row.direction === 'out' ? parseExtras(row.extras)?.attachments[Number(rawIdx)] : undefined
     if (!att || att.kind !== 'file') return err('not_found', 404)
-    let file: { bytes: Buffer; sha256: string }
-    try { file = readChatFile(att.path) } catch (e) {
-      const m = e instanceof Error ? e.message : ''
-      return m === 'too_large' ? err('too_large', 413) : err('not_found', 404)
-    }
-    const { bytes, sha256 } = file
-    const offset = Number(rawOffset)
-    if (offset > bytes.length) return err('invalid', 400)
-    const end = Math.min(bytes.length, offset + CHAT_FILE_CHUNK_BYTES)
-    return json({ ok: true, name: att.name, mime: mimeOf(att.name), size: bytes.length, sha256, offset, nextOffset: end, contentBase64: bytes.subarray(offset, end).toString('base64') })
+    return fileChunkResponse(att.path, att.name, Number(rawOffset))
   }
   if (url.pathname === '/m/api/chat/voice') {
     if (req.method !== 'GET') return err('method_not_allowed', 405)

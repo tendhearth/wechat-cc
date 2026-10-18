@@ -382,3 +382,61 @@ describe('makeReplyDeliveryRuntime — 这一轮另有出口(outbound)', () => {
     expect(h.sent).toEqual(['在忙吗今天'])
   })
 })
+
+// 手机伙伴第 2 步(2026-10-18):出口收得下附件 ⇒ 表情 / 文件 / 语音交给它记进 App 对话页(语音保留成语音);
+// 收不下(回 false / 抛错)⇒ 退回第 1 步:语音改发字、别的不发。
+describe('makeReplyDeliveryRuntime — textOnly 出口收附件(sendAttachment)', () => {
+  it('收下 ⇒ 不碰微信、语音不改发字、记成已送附件', async () => {
+    const h = harness()
+    const rt = makeReplyDeliveryRuntime(h.deps)
+    const via: string[] = []
+    const took: string[] = []
+    const outbound = {
+      sendText: async (_c: string, t: string) => { via.push(t); return { msgId: 'app' } },
+      textOnly: () => true,
+      sendAttachment: vi.fn(async (_c: string, a: { kind: string }) => { took.push(a.kind); return true }),
+    }
+    const handle = rt.begin('c1', { mode: 'daemon', context: 'tick', providerId: 'claude', outbound })
+    const sticker = pending({ kind: 'sticker', ref: { tag: '开心' } })
+    const voice = pending({ kind: 'voice', text: '晚安呀' })
+    rt.attach('c1', sticker)
+    rt.attach('c1', voice)
+    const r = await handle.deliver({ finalText: '今天辛苦了,早点休息', narration: [] })
+    expect(sticker.send).not.toHaveBeenCalled()
+    expect(voice.send).not.toHaveBeenCalled()
+    expect(h.sent).toEqual([])
+    expect(via).toEqual(['今天辛苦了,早点休息'])
+    expect(took).toEqual(['sticker', 'voice'])
+    expect(r.attachmentsSent).toBe(2)
+  })
+
+  it('收不下(false / 抛错)⇒ 退回第 1 步:语音改发同样的字,表情跳过', async () => {
+    const h = harness()
+    const rt = makeReplyDeliveryRuntime(h.deps)
+    const via: string[] = []
+    const outbound = {
+      sendText: async (_c: string, t: string) => { via.push(t); return { msgId: 'app' } },
+      textOnly: () => true,
+      sendAttachment: vi.fn(async (_c: string, a: { kind: string }) => { if (a.kind === 'voice') throw new Error('db'); return false }),
+    }
+    const handle = rt.begin('c1', { mode: 'daemon', context: 'tick', providerId: 'claude', outbound })
+    rt.attach('c1', pending({ kind: 'sticker', ref: { tag: '开心' } }))
+    rt.attach('c1', pending({ kind: 'voice', text: '晚安呀' }))
+    const r = await handle.deliver({ finalText: '今天辛苦了', narration: [] })
+    expect(via).toEqual(['今天辛苦了', '晚安呀'])
+    expect(r.attachmentsSent).toBe(0)
+    expect(h.logs.some(l => l.includes('REPLY_ATTACHMENT_SKIPPED') && l.includes('outbound threw'))).toBe(true)
+  })
+
+  it('不是 textOnly(落在微信)⇒ 附件照常发微信,不交给出口', async () => {
+    const h = harness()
+    const rt = makeReplyDeliveryRuntime(h.deps)
+    const outbound = { sendText: async () => ({ msgId: 'w' }), textOnly: () => false, sendAttachment: vi.fn(async () => true) }
+    const handle = rt.begin('c1', { mode: 'daemon', context: 'tick', providerId: 'claude', outbound })
+    const sticker = pending({ kind: 'sticker', ref: { tag: '开心' } })
+    rt.attach('c1', sticker)
+    await handle.deliver({ finalText: '嗨', narration: [] })
+    expect(sticker.send).toHaveBeenCalledOnce()
+    expect(outbound.sendAttachment).not.toHaveBeenCalled()
+  })
+})

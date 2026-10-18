@@ -187,3 +187,39 @@ describe('提醒 sweeper 接 sendOnce(main.ts 的接法)—— 微信不通时�
     }
   })
 })
+
+// 手机伙伴第 2 步(2026-10-18):落在 App 的那一轮,附件也记进 App 对话页;推送替附件说几个字。
+describe('一轮的出口 —— 附件(sendAttachment)', () => {
+  function withMedia(o: Parameters<typeof setup>[0], said: string | null = '[表情:开心]') {
+    const s = setup(o)
+    s.app.recordAttachment = vi.fn(async () => said)
+    return s
+  }
+  it('落在 App ⇒ 附件交给 App 记;推送带上它替附件说的话', async () => {
+    const s = withMedia({ closed: true, app: 'deliverable' })
+    const t = s.out.open(OWNER)
+    await t.sendText(OWNER, '想你了')
+    expect(await t.sendAttachment(OWNER, { kind: 'sticker', ref: { tag: '开心' } })).toBe(true)
+    t.finish()
+    expect(s.app.recordAttachment).toHaveBeenCalledWith(OWNER, { kind: 'sticker', ref: { tag: '开心' } })
+    expect(s.app.push).toHaveBeenCalledWith('想你了\n\n[表情:开心]')
+  })
+  it('落在微信 / 还没落定 / App 不认附件 / 记失败 ⇒ false(调用方退回第 1 步)', async () => {
+    const w = withMedia({ app: 'deliverable' })
+    const tw = w.out.open(OWNER)
+    expect(await tw.sendAttachment(OWNER, { kind: 'voice', text: 'x' })).toBe(false)
+    await tw.sendText(OWNER, 'hi')
+    expect(await tw.sendAttachment(OWNER, { kind: 'voice', text: 'x' })).toBe(false)
+    expect(w.app.recordAttachment).not.toHaveBeenCalled()
+    const plain = setup({ closed: true, app: 'deliverable' })
+    const tp = plain.out.open(OWNER)
+    await tp.sendText(OWNER, 'hi')
+    expect(await tp.sendAttachment(OWNER, { kind: 'voice', text: 'x' })).toBe(false)
+    const failed = withMedia({ closed: true, app: 'deliverable' }, null)
+    const tf = failed.out.open(OWNER)
+    await tf.sendText(OWNER, 'hi')
+    expect(await tf.sendAttachment(OWNER, { kind: 'voice', text: 'x' })).toBe(false)
+    tf.finish()
+    expect(failed.app.push).toHaveBeenCalledWith('hi')
+  })
+})

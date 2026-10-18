@@ -75,6 +75,11 @@ export interface InternalApiIlinkDep {
   sendReply(chatId: string, text: string): Promise<{ msgId: string; error?: string }>
   /** Push a local file (absolute path) to a chat. */
   sendFile(chatId: string, path: string): Promise<void>
+  /**
+   * 报一样已经送出去的东西给媒体镜像(2026-10-18,companion/media-mirror.ts):联网表情发的是临时下载,
+   * 存进表情库之后按库里的文件名报,App 对话页才取得到图。没接 ⇒ 不报。
+   */
+  noteSentMedia?(chatId: string, m: { kind: 'sticker'; file: string; label: string }): void
   /** Edit a previously-sent message. */
   editMessage(chatId: string, msgId: string, text: string): Promise<void>
   /** Broadcast text to all online users; returns success/failure counts. */

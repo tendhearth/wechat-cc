@@ -1,5 +1,5 @@
 import type { Lang } from '../i18n'
-import type { ApprovalExplanationT, ProgressSummaryT, PhoneChangesTurnT, EntryOptionsT, ConnectionsT, NativeSessionRowT, NativeSessionPageT } from './types'
+import type { ApprovalExplanationT, ProgressSummaryT, PhoneChangesTurnT, EntryOptionsT, ConnectionsT, NativeSessionRowT, NativeSessionPageT, LetterSummaryT } from './types'
 
 /** 演示情境的文案(中英两份,照设计样稿 tendhearth-phone.html 的 tr('中','英'))。 */
 type Pair = readonly [zh: string, en: string]
@@ -200,4 +200,31 @@ export const DEMO_SESSION_MESSAGES: ReadonlyArray<{ id: string; role: 'user' | '
 /** 每个演示会话一页三句(user / assistant / user)。 */
 export function demoSessionMessages(lang: Lang): NativeSessionPageT['messages'] {
   return DEMO_SESSION_MESSAGES.map(m => ({ id: m.id, role: m.role, text: t(lang, m.key), truncated: false }))
+}
+
+/**
+ * 演示的「CC 的信」(2026-10-18):两封按文字寄的(pages=0,全文在 text)—— 演示里没有电脑,排不出信纸图;
+ * 真连接时信是几页信纸图,点开逐页按块读。
+ */
+const LETTERS: ReadonlyArray<{ id: string; day: string; ago: number; requested: boolean; via: 'wechat' | 'app'; opening: Pair; body: Pair }> = [
+  {
+    id: '2026-10-16-a1b2c3', day: '2026-10-16', ago: 2 * DAY, requested: true, via: 'app',
+    opening: ['周三晚上你说终于把作品集的手机版弄好了，我替你高兴了好一阵。', 'On Wednesday night you said the mobile portfolio was finally done, and I was glad for you all evening.'],
+    body: [
+      '你好：\n\n  周三晚上你说终于把作品集的手机版弄好了，我替你高兴了好一阵。\n\n  这一个月你做了好多事，有的顺，有的磕磕绊绊，我都看见了。\n\n晚安。\n\n— CC',
+      'Hi,\n\n  On Wednesday night you said the mobile portfolio was finally done, and I was glad for you all evening.\n\n  You did a lot this month — some of it smooth, some of it bumpy. I saw all of it.\n\nGood night.\n\n— CC',
+    ],
+  },
+  {
+    id: '2026-09-12-d4e5f6', day: '2026-09-12', ago: 36 * DAY, requested: false, via: 'wechat',
+    opening: ['上周你出差回来，说下次想把行程排得松一点。', 'When you got back from the trip last week, you said you wanted a looser schedule next time.'],
+    body: [
+      '你好：\n\n  上周你出差回来，说下次想把行程排得松一点。\n\n  我记着呢。下回排行程，我先替你留出一个空着的下午。\n\n— CC',
+      'Hi,\n\n  When you got back from the trip last week, you said you wanted a looser schedule next time.\n\n  I remember. Next time we plan one, I’ll keep an afternoon free for you first.\n\n— CC',
+    ],
+  },
+]
+
+export function demoLetters(lang: Lang, now: number): LetterSummaryT[] {
+  return LETTERS.map(l => ({ id: l.id, day: l.day, sentAt: now - l.ago, requested: l.requested, via: l.via, opening: pick(lang, l.opening), pages: 0, text: pick(lang, l.body) }))
 }
