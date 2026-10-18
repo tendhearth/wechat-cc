@@ -4,11 +4,13 @@
 // - GOOGLE_SERVICES_JSON:EAS 的文件型环境变量,或本地 apps/app/google-services.json(都不进 git);没有 ⇒ 安卓拿不到 FCM token(显示「不可用」)
 // - 通用链接 / App Links:开发构建(apnsEnv=development)多认 staging 中继(plugins/with-app-links.js)
 // - TENDHEARTH_UITESTS=1:加真机验收的 XCUITest target(plugins/with-ios-uitests.js,只给 scripts/device-e2e.ts 用;平常构建没有它)
+// - 分享给 CC:expo-share-intent 的参数与 EAS 扩展登记在 plugins/share-intent.js(iOS 分享扩展 + App Group;安卓 SEND intent-filter)
 // keychain-access-groups 只在 plugins/with-ios-notify.js 声明(裁决 C7),这里不写 ios.entitlements。
 const fs = require('fs')
 const path = require('path')
 const { TARGET, SHARED_GROUP, extensionKeychainGroups } = require('./plugins/with-ios-notify')
 const { androidIntentFilters } = require('./plugins/with-app-links')
+const share = require('./plugins/share-intent')
 
 module.exports = ({ config }) => {
   const team = process.env.APPLE_TEAM_ID || '9Y6JAPDP7A'
@@ -29,6 +31,7 @@ module.exports = ({ config }) => {
       // iOS 27 要求 UIScene 生命周期(否则启动即崩);接上 expo 自带的场景委托
       './plugins/with-ios-scene',
       ['./plugins/with-app-links', { dev }],
+      ['expo-share-intent', share.shareIntentParams(bundleId)],
       ...(process.env.TENDHEARTH_UITESTS === '1' ? [['./plugins/with-ios-uitests', { teamId: team }]] : []),
     ],
     extra: {
@@ -43,7 +46,7 @@ module.exports = ({ config }) => {
           targetName: TARGET,
           bundleIdentifier: `${bundleId}.notify`,
           entitlements: { 'keychain-access-groups': extensionKeychainGroups() },
-        }] } } },
+        }, share.easAppExtension(bundleId)] } } },
       },
     },
   }

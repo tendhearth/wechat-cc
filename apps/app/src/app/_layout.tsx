@@ -14,6 +14,7 @@ import { PushProvider } from '../push/PushProvider'
 import { PushRouter } from '../push/PushRouter'
 import { BackendProvider } from '../state/BackendProvider'
 import { SessionProvider, useSession } from '../state/session'
+import { ShareGate } from '../state/ShareGate'
 import { useLang } from '../i18n/useLang'
 import { FONT_FILES } from '../ui/font-files'
 import { palette } from '../ui/tokens'
@@ -47,8 +48,10 @@ function Themed() {
             <Stack.Screen name="(tabs)" />
             <Stack.Screen name="welcome" options={{ gestureEnabled: false }} />
             <Stack.Screen name="push-open" options={{ gestureEnabled: false }} />
+            <Stack.Screen name="share" options={{ gestureEnabled: false }} />
           </Stack>
           <PushRouter />
+          <ShareGate />
         </ThemeProvider>
       </PushProvider>
     </BackendProvider>

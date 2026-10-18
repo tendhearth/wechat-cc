@@ -33,6 +33,15 @@ describe('rewriteSystemPath —— 深链进 app 之前先洗一遍(不可信输
     expect(stash).toEqual(['https://relay-staging.tendhearth.com/pset/#id=r1&t=t2'])
     expect(rewriteSystemPath('tendhearth://relay-staging.tendhearth.com/pset/#id=r1&t=t2', false, s => stash.push(s), false)).toBe('/')
   })
+  it('分享扩展开的 dataUrl=… ⇒ 分享页(内容由 ShareGate 从原生模块取,链接里只有键与 nonce);不进暂存格', () => {
+    const stash: string[] = []
+    for (const type of ['text', 'weburl', 'media', 'file']) {
+      expect(rewriteSystemPath(`tendhearth://dataUrl=tendhearthShareKey?nonce=9F2C-11#${type}`, false, s => stash.push(s))).toBe('/share')
+    }
+    expect(rewriteSystemPath('tendhearth://dataUrl=tendhearthShareKey', true, s => stash.push(s))).toBe('/share')
+    expect(rewriteSystemPath('/dataUrl=tendhearthShareKey?nonce=1#text', false, s => stash.push(s))).toBe('/share')
+    expect(stash).toEqual([])
+  })
   it('别的路径原样放行(交给路由自己)', () => {
     expect(rewriteSystemPath('tendhearth://settings', false)).toBe('tendhearth://settings')
     expect(rewriteSystemPath('/matter/a1b2c3d4', false)).toBe('/matter/a1b2c3d4')

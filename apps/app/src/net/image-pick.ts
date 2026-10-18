@@ -19,14 +19,20 @@ export async function pickImages(max: number): Promise<{ images: PickedImage[]; 
   let skipped: Exclude<ImageCheck, 'ok'> | null = null
   for (const a of r.assets.slice(0, max)) {
     if (!a.base64) { skipped = 'unsupported'; continue }
-    const bytes = base64ToBytes(a.base64)
-    const mime = a.mimeType ?? 'image/jpeg'
-    const check = checkImage({ mime, size: bytes.length })
-    if (check !== 'ok') { skipped = check; continue }
-    const digest = await Crypto.digest(Crypto.CryptoDigestAlgorithm.SHA256, bytes as Uint8Array<ArrayBuffer>)
-    const sha256 = Array.from(new Uint8Array(digest), b => b.toString(16).padStart(2, '0')).join('')
-    const ext = mime === 'image/png' ? 'png' : mime === 'image/gif' ? 'gif' : mime === 'image/webp' ? 'webp' : 'jpg'
-    images.push({ id: uuid(), name: a.fileName?.replace(/[\\/\u0000-\u001f]/g, '').slice(0, 120) || `photo.${ext}`, mime, size: bytes.length, sha256, bytes, uri: a.uri })
+    const img = await toPickedImage({ bytes: base64ToBytes(a.base64), mime: a.mimeType ?? 'image/jpeg', name: a.fileName, uri: a.uri })
+    if (typeof img === 'string') { skipped = img; continue }
+    images.push(img)
   }
   return { images, skipped }
+}
+
+/** 读到手的一张图 ⇒ PickedImage(相册选图与分享进来的共用):过同一道 5MB / 格式检查,id 在这一刻定下,算好 sha256。 */
+export async function toPickedImage(p: { bytes: Uint8Array; mime: string; name?: string | null; uri: string }): Promise<PickedImage | Exclude<ImageCheck, 'ok'>> {
+  const { bytes, mime, uri } = p
+  const check = checkImage({ mime, size: bytes.length })
+  if (check !== 'ok') return check
+  const digest = await Crypto.digest(Crypto.CryptoDigestAlgorithm.SHA256, bytes as Uint8Array<ArrayBuffer>)
+  const sha256 = Array.from(new Uint8Array(digest), b => b.toString(16).padStart(2, '0')).join('')
+  const ext = mime === 'image/png' ? 'png' : mime === 'image/gif' ? 'gif' : mime === 'image/webp' ? 'webp' : 'jpg'
+  return { id: uuid(), name: p.name?.replace(/[\\/\u0000-\u001f]/g, '').slice(0, 120) || `photo.${ext}`, mime, size: bytes.length, sha256, bytes, uri }
 }

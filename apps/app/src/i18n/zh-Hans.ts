@@ -585,6 +585,16 @@ const zh: Record<keyof typeof en, string> = {
   'terminal.justNow': '刚刚',
   'terminal.minutesAgo': '{n} 分钟前',
   'terminal.hoursAgo': '{n} 小时前',
+  // 分享给 CC(2026-10-18):系统分享面板进来的那一页
+  'share.title': '分享给 CC',
+  'share.receiving': '正在接收…',
+  'share.hint': '先放进输入框，你看过再发。',
+  'share.toChat': '跟 CC 说',
+  'share.toMatter': '交给 CC 做一件事',
+  'share.dismiss': '算了',
+  'share.onlyTextLinksImages': '这一版只收文字、链接和图片，别的没加进来。',
+  'share.needsPairTitle': '还没连上你的电脑',
+  'share.needsPairBody': '连好之后，这份分享还在，回来接着选。',
 }
 
 export default zh

@@ -108,7 +108,7 @@ src/i18n/         en 与 zh-Hans 文案表(两份键一致有测试)+ useLang(�
 src/ui/           组件与色板(tokens.ts,复用共享 design-tokens;固定暖纸,CC 明暗由真实信号决定)
 src/push/         推送:key-store(钥匙串里的推送密钥记录)、target / route(点通知去哪)、register(登记生命周期)、PushProvider / PushRouter、前台横幅、开发用 dev-token
 native/           原生通知核心:ios-notify(Swift 通知服务扩展 + `swift test`)、android-push(Kotlin 消息服务 + JVM 单测 `test.sh`)、push-strings.json(原生端标题文案)
-plugins/          Expo config plugin:with-ios-notify(扩展 target + 共享钥匙串)、with-android-push(FCM 服务 + 读 expo-secure-store)、with-ios-scene(iOS 27 场景委托)、with-ios-uitests(真机验收的 XCUITest target,只在 TENDHEARTH_UITESTS=1)及其测试
+plugins/          Expo config plugin:with-ios-notify(扩展 target + 共享钥匙串)、share-intent(分享给 CC:expo-share-intent 的参数)、with-android-push(FCM 服务 + 读 expo-secure-store)、with-ios-scene(iOS 27 场景委托)、with-ios-uitests(真机验收的 XCUITest target,只在 TENDHEARTH_UITESTS=1)及其测试
 native/ios-e2e/   真机验收的 XCUITest 步骤(scripts/device-e2e.ts 逐步调用)
 locales/          iOS InfoPlist 本地化(相机说明 + 显示名,en 与 zh-Hans)
 scripts/          sim-push.ts:模拟器推送工具(合成开发令牌 + simctl push)
@@ -218,6 +218,24 @@ CI:`app · native push vectors`(`.github/workflows/ci.yml`,仅 `apps/app/native/
   - 下次上传先把 build number 加 1。导出合规已答(10-17):只用标准算法(@noble 的 X25519/Ed25519、HKDF-SHA256、AES-256-GCM)+ iOS 自带 TLS,无自研密码,暂不上法区 ⇒ 无需文件,`app.json` 的 `ios.config.usesNonExemptEncryption: false`。上法国区前要重答并交法国申报。
 - **安卓 / 商店后置**：安卓需要 Firebase 项目、`google-services.json` / `FCM_SERVICE_ACCOUNT`、App Links 签名指纹、SDK / 设备与实际 APK 验收；Google Play 账号与生产构建另办。凭据步骤见[中继手册](../../docs/maintainer/relay.md)。
 - **旧欠账已关闭**：#165 配对码只配一台，成功配对即作废，重复码已有真机自动化断言；微信聊天那件事的说一句已按 `requestId` 去重(2026-10-01，`matter_say_receipts`，同 id 同文返回原回执，异文返回 `input_conflict`)。相机权限 en / zh-Hans 文案已由 #158 补齐。
+
+## 分享给 CC(2026-10-18)
+
+别的 app(Safari、照片、备忘录…)的系统分享面板里出现 **Tendhearth CC**:文字、一个链接、最多 4 张图(`PHONE_CHAT_MAX_IMAGES`)。分享进来先到 `/share`(`src/app/share.tsx`),摆出内容,三个选择:「跟 CC 说」⇒ 对话页、「交给 CC 做一件事」⇒ 新交办,两条都**只预填输入框、带上图,不自动发**;「算了」清掉。
+
+- **取内容**:`src/state/ShareGate.tsx`(挂在根布局)直接听 expo-share-intent 原生模块的 `onChange`,不用它的 `useShareIntent` —— 那个的 `parseShareIntent` 把安卓的 `content://` 换成文件路径,安卓 13 起没媒体权限读不了。iOS:分享扩展把内容写进 App Group,开 `tendhearth://dataUrl=tendhearthShareKey?nonce=…#类型`,`push/open.ts` 把它改写到 `/share`,ShareGate 拿这个链接去取;安卓:启动与每次回前台问一次(取走即清)。
+- **纯逻辑** `src/view/share.ts`(有测试):原始内容 ⇒ `{text, images, overMax, unsupported, tooLarge}`;链接只当文字(网页标题有就放在链接前一行);去处 `shareRoute`;没配对的门 `shareGate`;并进已有草稿 `mergeDraftText`(原来写的留着,另起一行)。
+- **图**:`src/net/share-read.ts` 和相册选图得到同样的 `PickedImage`:除 GIF 外都按 0.8 重编成 JPEG(HEIC 也转,expo-image-manipulator),再过同一道 5MB / 格式检查;超过 4 张多出来的不收,页面说「一次最多 4 张」。视频、PDF 等:iOS 上分享面板本来就不列出我们,混在一起的那几样不收,页面说一句「这一版只收文字、链接和图片」。
+- **交接**:选了去处 ⇒ 文字进 `drafts`(`chat` / `new` 草稿),图放在草稿旁(`putDraftImages`),对话页 / 交办页挂载时接过来;换配对一起清。还没选去处的那份在 `state/share-inbox.ts`,**不**随换配对清。
+- **没配对**:分享页先请主人「连接我的电脑」或「先看看示例」,分享留着;配好(配对页跳回此刻)或选了先看看之后,ShareGate 把分享页重新打开。演示模式照常能用。
+
+**原生**:用 `expo-share-intent`(**钉死 8.0.1**,peer expo ^57),参数与 EAS 扩展登记在 `plugins/share-intent.js`,`plugins/share-intent.test.ts` 钉住参数、插件在我们配置上的产出(App Links 那条 intent-filter 原样留着、钥匙串组与关联域名不动)和我们依赖的它的实现细节(链接格式、`AppGroupIdentifier`、安卓 `contentUri`)。它与自己的插件共存:扩展 target `TendhearthCC`(显示名 Tendhearth CC,bundle id `com.tendhearth.app.share`)与通知扩展 `TendhearthNotify` 并列;主 app 多一个 `com.apple.security.application-groups = group.com.tendhearth.app`。安卓 `MainActivity` 多两条 intent-filter:`SEND`(`text/*`、`image/*`)与 `SEND_MULTIPLE`(`image/*`)。
+
+**签名 / App Group(下一次 TestFlight 要注意)**:App Group 是新的能力,开发者账号里要有 `group.com.tendhearth.app`,主 app 的 App ID 与新 App ID `com.tendhearth.app.share` 都要勾上它,两份描述文件都要重新生成。上面「TestFlight 本机出包」那条 `xcodebuild archive … -allowProvisioningUpdates` 走自动签名,**按理会**自动登记扩展的 App ID、App Group 并更新描述文件 —— **还没实际验证过**(没上传过带分享扩展的包);若报错,到 developer.apple.com 手动建 App Group 与 `com.tendhearth.app.share` 的 App ID 再重跑。EAS 走 `extra.eas.build.experimental.ios.appExtensions` 里的第二条。
+
+**验过什么(2026-10-18,自建模拟器 iOS 27.0,development build)**:`expo prebuild --platform ios --clean` 产出 `TendhearthCC` 与 `TendhearthNotify` 两个扩展 target,构建出的 app 与扩展都带 App Group(模拟器 simulated entitlements);安卓 prebuild 的 manifest 里 App Links 与两条 SEND 并存。没有点系统分享面板本身:用 `simctl spawn defaults write <App Group>/Library/Preferences/group.com.tendhearth.app tendhearthShareKey …` 写入扩展会写的内容,再 `simctl openurl tendhearth://dataUrl=tendhearthShareKey?nonce=…#text|#media` 模拟扩展跳回 —— 文字:没配对 ⇒ 配对提示 →「先看看示例」→「跟 CC 说」⇒ 输入框里是那段字、没发;HEIC 图:转成 JPEG 显示在分享页 →「交给 CC 做一件事」⇒ 交办页带着那张图。**未验**:真的从 Safari / 照片点分享(扩展本身跑起来、跳回 app)、安卓真机、真机签名。交办页照旧要有字才能交(只有图时先写一句)。
+
+**旧的 development build 没有这个原生模块** ⇒ ShareGate 整个不生效(不崩);要重新 `bunx expo run:ios`。
 
 ## 硬要求(改界面前先对一遍)
 
