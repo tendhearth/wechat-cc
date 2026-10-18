@@ -172,7 +172,7 @@ presencePoller.subscribe(p => { lastPresence = p; renderRail() })
 // 右上角状态行打开的「CC 的连接」(GET /v1/connections,admin,走原生宿主的 operator 凭据)。
 // 只在浮层打开时读:打开时立刻读一次,开着时每 30 秒再读。
 const nowConnectionsHost = document.getElementById('now-connections')
-const nowConnections = nowConnectionsHost ? mountNowConnections({ host: nowConnectionsHost, call: (method, path, body) => invokeWorkbenchApi(method, path, body), openUrl: url => { if (!mock) void Promise.resolve(invoke('open_url', { url })).catch(err => showToast(`打不开：${formatInvokeError(err)}`)) } }) : null
+const nowConnections = nowConnectionsHost ? mountNowConnections({ host: nowConnectionsHost, call: (method, path, body) => invokeWorkbenchApi(method, path, body), openUrl: url => { if (!mock) void Promise.resolve(invoke('open_url', { url })).catch(err => showToast(`打不开：${formatInvokeError(err)}`)) }, openPlace: openCapabilityPlace }) : null
 {
   const details = /** @type {HTMLDetailsElement|null} */ (document.querySelector('.cc-home-details'))
   /** @type {ReturnType<typeof setInterval>|null} */ let timer = null
@@ -396,6 +396,19 @@ async function refreshGuardStatus() {
 
 // ─── mode router ──────────────────────────────────────────────────────
 let wizardNavigation = 0
+
+/**
+ * 「CC 现在怎么样」里一行的动作 ⇒ 带到桌面上做这件事的地方(2026-10-17,上手门槛)。认不出 ⇒ false,那一行照旧只写提示。
+ * @param {string} id @param {string} where
+ */
+function openCapabilityPlace(id, where) {
+  /** @type {HTMLDetailsElement|null} */ const details = document.querySelector('.cc-home-details')
+  const go = (/** @type {() => void} */ fn) => { if (details) details.open = false; fn(); return true }
+  if (id === 'wechat') return go(() => deps.routeToWizardBind())
+  if (id === 'phone') { const b = document.getElementById('open-phone-settings'); return b ? go(() => b.click()) : false }
+  if (where === 'settings' || id === 'guard') return go(() => openSettingsDrawer())
+  return false
+}
 
 /** @param {string} mode */
 function setMode(mode) {

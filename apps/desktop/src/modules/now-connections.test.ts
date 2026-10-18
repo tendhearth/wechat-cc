@@ -120,6 +120,23 @@ describe('capabilities (2026-10-06)', () => {
     expect(connectionsView({ ...base, capabilities: [{ id: 'memory', name: '记忆整理', state: 'fallback', code: 'memory.failing', reason: 'x' }] } as never).headline).toEqual({ dot: 'warn', text: '1 项在凑合着用' })
     expect(connectionsView(base as never).capabilities).toEqual([])
   })
+  it('去桌面 / 设置做的动作是按钮,点了交给宿主带过去;宿主认不出 ⇒ 变回提示;在微信里做的照旧只是提示', async () => {
+    document.body.innerHTML = '<div id="h"></div>'; const h = document.getElementById('h') as HTMLElement
+    const openPlace = vi.fn((id: string) => id !== 'guard')
+    await mountNowConnections({ host: h, now: () => NOW, openPlace, call: vi.fn().mockResolvedValue(snap([], { capabilities: [
+      { id: 'phone', name: '手机', state: 'off', code: 'phone.no_device', reason: '还没连接手机。', action: { label: '在电脑上连接手机', where: 'desktop' } },
+      { id: 'brain', name: '大脑', state: 'needs_you', code: 'brain.unavailable', reason: '用不了', action: { label: '在设置里换一个大脑', where: 'settings' } },
+      { id: 'guard', name: '网络守护', state: 'needs_you', code: 'guard.unsafe', reason: '没保护', action: { label: '连上 bx', where: 'desktop' } },
+      { id: 'wechat', name: '微信', state: 'needs_you', code: 'wechat.window_closed', reason: 'x', action: { label: '在微信里随便回 CC 一句', where: 'wechat' } },
+    ] })) }).refresh()
+    const buttons = [...h.querySelectorAll('button.nc-action')] as HTMLButtonElement[]
+    expect(buttons.map(b => b.textContent)).toEqual(['在电脑上连接手机', '在设置里换一个大脑', '连上 bx'])
+    buttons[0]!.click(); buttons[1]!.click()
+    expect(openPlace.mock.calls).toEqual([['phone', 'desktop'], ['brain', 'settings']])
+    buttons[2]!.click()
+    expect(h.querySelectorAll('button.nc-action').length).toBe(2)
+    expect([...h.querySelectorAll('.nc-action-hint')].map(x => x.textContent)).toEqual(['连上 bx', '在微信里随便回 CC 一句'])
+  })
   it('「CC 现在怎么样」只出现一次:能力行不再挂同名小标题', async () => {
     document.body.innerHTML = '<div id="h"></div>'; const h = document.getElementById('h') as HTMLElement
     await mountNowConnections({ host: h, call: vi.fn().mockResolvedValue(snap([], { capabilities: [{ id: 'brain', name: '大脑', state: 'ok', code: 'brain.ok', reason: '在用 Claude。' }] })), now: () => NOW }).refresh()

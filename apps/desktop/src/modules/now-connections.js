@@ -8,6 +8,8 @@
 //   - 读不到 ⇒ 只当「上次所知」:所有点变灰,电脑不说「在线」。
 //   - action.run(2026-10-14):桌面当场能做的动作(cli_hooks_install = 接上终端里的 Claude Code / Codex),
 //     点了先确认再调路由,做完重拉一次;这种动作在 ok 行上也给(「接了一部分」时把剩下的接上)。
+//   - openPlace(2026-10-17,上手门槛):where 是 desktop / settings 的动作也给按钮,点了直接带到那个地方
+//     (重新扫码 / 连接手机 / 设置抽屉),不再只写一句「去哪做」让人自己找。宿主认不出的 ⇒ 照旧只写提示。
 
 import { HOOKS_RUN, makeHooksAction } from './terminal-hooks.js'
 
@@ -103,9 +105,10 @@ function row(cls, d, name, detail) {
 }
 
 /**
- * @param {{host:HTMLElement, call:(method:'GET'|'POST', path:string, body?:Record<string, unknown>)=>Promise<unknown>, now?:()=>number, openUrl?:(url:string)=>void}} o
+ * @param {{host:HTMLElement, call:(method:'GET'|'POST', path:string, body?:Record<string, unknown>)=>Promise<unknown>, now?:()=>number, openUrl?:(url:string)=>void, openPlace?:(capabilityId:string, where:string)=>boolean}} o
+ *   openPlace:能把人带到那个地方 ⇒ 带过去并返回 true;认不出 ⇒ false(这一行照旧只写提示)。
  */
-export function mountNowConnections({ host, call, now = () => Date.now(), openUrl }) {
+export function mountNowConnections({ host, call, now = () => Date.now(), openUrl, openPlace }) {
   // 「接上」/「修复」的确认状态放在浮层外面:30 秒一次的刷新整块重画,也不会把「确认中」冲掉。
   const hooks = makeHooksAction({ call, rerender: () => render(), onDone: () => { void refresh() } })
   /** @type {Connections|null} */ let data = null
@@ -133,6 +136,12 @@ export function mountNowConnections({ host, call, now = () => Date.now(), openUr
         // 能当场打开的(系统设置)给按钮;别的动作在桌面别处做,写成一句提示。
         if (x.action?.run === HOOKS_RUN && !stale) li.append(hooks.node(x.action.label))
         else if (x.action?.url && openUrl) { const b = el('button', 'nc-action', x.action.label); b.setAttribute('type', 'button'); b.addEventListener('click', () => openUrl(/** @type {string} */ (x.action?.url))); li.append(b) }
+        else if (x.action && openPlace && (x.action.where === 'desktop' || x.action.where === 'settings')) {
+          const b = el('button', 'nc-action', x.action.label); b.setAttribute('type', 'button')
+          const where = x.action.where
+          b.addEventListener('click', () => { if (!openPlace(x.id, where)) b.replaceWith(el('span', 'nc-action-hint', b.textContent ?? '')) })
+          li.append(b)
+        }
         else if (x.action) li.append(el('span', 'nc-action-hint', x.action.label))
         return li
       })))
