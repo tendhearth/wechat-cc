@@ -92,7 +92,13 @@ export const copy = {
   cliActEdit: ['改 README.md', 'Edit README.md'],
   cliActRun: ['运行 npm run docs:check', 'Run npm run docs:check'],
   cliDemoReply: ['好，按你说的改完了。（演示）', 'Done as you asked. (demo)'],
+  // 此刻页那张「带回来的东西」(演示):CC 出门打猎找到的一篇
+  huntTitle: ['一篇讲手机排版留白的文章', 'An essay on whitespace in mobile typography'],
+  huntNote: ['你上周改作品集时说留白总调不好，这篇讲得很实在，顺手带回来了。', 'You said last week the portfolio spacing never felt right. This one is practical, so I brought it back.'],
 } satisfies Record<string, Pair>
+
+/** 演示猎物的链接:只是一个真实存在、内容无害的页面。 */
+export const DEMO_HUNT_URL = 'https://en.wikipedia.org/wiki/White_space_(visual_arts)'
 
 export const t = (lang: Lang, k: keyof typeof copy) => pick(lang, copy[k])
 

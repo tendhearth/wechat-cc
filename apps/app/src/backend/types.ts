@@ -1,6 +1,7 @@
 import type { z } from 'zod'
 import type {
   Matter, MatterDetail, ApprovalExplanation, ProgressSummary, PhoneChangesTurn, EntryOptions, DeviceRowT, PushPlatformT,
+  FeedEvent, Presence,
   ChatPage, ChatJob, ChatMessage, ChatAttachment, EntryModelCatalog, ChatModelView, MemorySuccess, ChatSearchHit, Connections, NativeSessionRow, NativeSessionPage, SessionContinueT, MatterSayResult, CliSessionRowT, CliActivityItemT, OverseerTodayT, TodayItemT,
 } from '@wechat-cc/protocol'
 import type { Lang } from '../i18n'
@@ -34,6 +35,10 @@ export type NativeSessionRowT = z.infer<typeof NativeSessionRow>
 export type NativeSessionPageT = z.infer<typeof NativeSessionPage>
 export type MatterInputT = MatterDetailT['inputs'][number]
 export type MatterSayResultT = z.infer<typeof MatterSayResult>
+export type FeedEventT = z.infer<typeof FeedEvent>
+export type PresenceT = z.infer<typeof Presence>
+/** 随身 CC 首屏(GET /m/api/home)里此刻页用得到的几样:CC 在干什么、伙伴最近的动态(新的在前)、主人看到哪了(与桌面觅食台同一个水位)。 */
+export type CompanionHomeT = { presence: PresenceT | null; seenUntil: string | null; unread: number; events: FeedEventT[] }
 export type { HomeTopicT, ApprovalItemT, AgentsTopicT, MatterTopicT, DeviceRowT } from '@wechat-cc/protocol'
 
 export type ConnState = 'connecting' | 'online' | 'offline' | 'revoked'
@@ -137,6 +142,10 @@ export interface Backend {
   cliActivity(sessionId: string): Promise<CliActivityItemT[]>
   /** 「今天」(GET /m/api/today,2026-10-14):终端 + 一起做,过去 24 小时 —— 等你 / 做完 / 在跑 / 可能卡住。与微信「日报」同一份。 */
   today(): Promise<OverseerTodayT>
+  /** 随身 CC 首屏(GET /m/api/home?limit=20):CC 此刻在干什么 + 最近的动态 + 看到哪了。lang 只给演示用。 */
+  home(lang: Lang): Promise<CompanionHomeT>
+  /** 看到这里了(POST /m/api/seen):电脑把水位夹到现在、只前进不后退;回生效后的水位。 */
+  markSeen(until: string): Promise<string>
   /** 解除本机配对(daemon 撤掉本机令牌)。失败抛 BackendError;调用方无论成败都清本地令牌。 */
   unpair(): Promise<void>
   /** 前台 true / 后台 false:false 关连接;true 立刻新握手、订阅全部重挂。演示后端空操作。 */

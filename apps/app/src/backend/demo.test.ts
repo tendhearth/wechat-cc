@@ -1,5 +1,5 @@
 import { describe, it, expect, vi } from 'vitest'
-import { Connections, NativeSessionPage, ChatPage, ChatJob, MatterTopic, Matter, MatterDetail, SessionContinue, PHONE_API_SCHEMAS } from '@wechat-cc/protocol'
+import { FeedEvent, Connections, NativeSessionPage, ChatPage, ChatJob, MatterTopic, Matter, MatterDetail, SessionContinue, PHONE_API_SCHEMAS } from '@wechat-cc/protocol'
 import { DEMO_CHAT_REPLY_MS, makeDemoBackend } from './demo'
 
 describe('演示后端', () => {
@@ -394,5 +394,43 @@ describe('演示后端:今天(2026-10-14)', () => {
     expect(today.running.some(r => r.source === 'terminal' && r.project === 'docs')).toBe(true)
     expect(today.counts).toEqual({ needsYou: today.needsYou.length, done: today.done.length, running: today.running.length, stuck: today.stuck.length })
     expect(today.unavailable).toEqual([])
+  })
+})
+
+describe('演示:此刻页的伙伴', () => {
+  it('带回来一篇没看过的打猎;看过之后主题未读归零、首屏也不再算新的', async () => {
+    const b = makeDemoBackend()
+    const home: any[] = []
+    b.subscribe('home', d => home.push(d))
+    const h = await b.home('zh-Hans')
+    for (const e of h.events) expect(() => FeedEvent.parse(e)).not.toThrow()
+    expect(h.events).toHaveLength(1)
+    expect(h.events[0]).toMatchObject({ kind: 'hunt', title: '一篇讲手机排版留白的文章' })
+    expect(h.events[0]!.ref?.url).toMatch(/^https:\/\//)
+    expect(h.seenUntil).toBeNull()
+    expect(h.unread).toBe(1)
+    expect(h.presence?.activity.kind).toBe('idle')
+    expect(home.at(-1)).toMatchObject({ unread: 1, presenceState: { activity: 'idle' } })
+    expect((await b.home('en')).events[0]!.title).toBe('An essay on whitespace in mobile typography')
+    const until = await b.markSeen(h.events[0]!.ts)
+    expect(until).toBe(h.events[0]!.ts)
+    await Promise.resolve()
+    expect(home.at(-1)).toMatchObject({ unread: 0 })
+    expect((await b.home('en')).unread).toBe(0)
+    // 只前进不后退;不是时间 ⇒ invalid
+    expect(await b.markSeen('2020-01-01T00:00:00.000Z')).toBe(until)
+    await expect(b.markSeen('nope')).rejects.toMatchObject({ code: 'invalid' })
+    b.reset()
+    expect((await b.home('en')).unread).toBe(1)
+  })
+  it('有执行者正在写 ⇒ activity working(演示不演别的状态)', async () => {
+    vi.useFakeTimers()
+    try {
+      const b = makeDemoBackend()
+      await b.decide({ id: 'a1b2c3d4', runId: (await b.matter('a1b2c3d4', 'en')).runId!, requestId: 'perm-demo-1', decision: 'allow' })
+      expect((await b.home('en')).presence?.activity.kind).toBe('working')
+      await vi.advanceTimersByTimeAsync(2000)
+      expect((await b.home('en')).presence?.activity.kind).toBe('idle')
+    } finally { vi.useRealTimers() }
   })
 })

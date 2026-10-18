@@ -9,7 +9,9 @@ import { useWork } from '../../state/useWork'
 import { useTerminalSessions } from '../../state/useTerminal'
 import { useToday } from '../../state/useToday'
 import { useAwaySince } from '../../state/useAway'
+import { useCompanion } from '../../state/useCompanion'
 import { CCFigure } from '../../ui/CCFigure'
+import { CompanionCard } from '../../ui/CompanionCard'
 import { ConnectionNotice } from '../../ui/ConnectionNotice'
 import { DemoBanner } from '../../ui/DemoBanner'
 import { SayBar } from '../../ui/SayBar'
@@ -17,6 +19,7 @@ import { radius, space } from '../../ui/tokens'
 import { TopBar } from '../../ui/TopBar'
 import { Txt } from '../../ui/Txt'
 import { useTheme } from '../../ui/useTheme'
+import { companionCard, companionStatus } from '../../view/companion'
 import { formatSynced } from '../../view/connection'
 import { latestCCLine, nowView } from '../../view/now'
 import { ccPresence } from '../../view/presence'
@@ -31,7 +34,7 @@ function WaitingTitle({ taskId, requestId, fallback, fetch }: { taskId: string; 
   return <Txt role="item" content="user">{title || fallback}</Txt>
 }
 
-// 「此刻」照稿(desktop-redesign-now.html 窄屏):问候、CC(明暗看连接)与它最近一句真话、「N 件事等你」、底部说一句。
+// 「此刻」照稿(desktop-redesign-now.html 窄屏):问候、CC(明暗看连接)与它最近一句真话、它在干什么、它带回来的一样、「N 件事等你」、底部说一句。
 // 只有一层:没有卡片套卡片;一起做的列表在「一起做」页,这里不重复;连接状态只在顶栏。
 export default function Now() {
   const { c } = useTheme()
@@ -39,12 +42,17 @@ export default function Now() {
   const router = useRouter()
   const conn = useConnection()
   const { backend } = useBackendCtx()
-  const { approvals, matters, demo } = useWork()
+  const { approvals, agents, matters, demo } = useWork()
   const v = nowView({ approvals, matters, hour: new Date().getHours(), known: demo || conn.state === 'online' })
   const chat = useQuery('chat:latest', () => backend.chat({})) // 与 /chat 同一个键、同一份缓存
   const line = latestCCLine(chat.data)
   const presence = ccPresence(conn, { demo }) // 演示:暗(不是真信号)
   const openChat = () => router.push('/chat')
+  // CC 下面一行「在干什么」+ 一张它带回来的东西:都只从电脑上的真信号来(home 主题 / agents 主题 / 首屏动态),没信号就不出现。
+  const companion = useCompanion()
+  const statusKey = companionStatus({ known: demo || presence === 'here', activity: companion.activity, running: agents.running })
+  const status = statusKey ? t(lang, statusKey) : null
+  const card = companion.home ? companionCard(companion.home.events, companion.home.seenUntil, Date.now(), companion.localSeen) : null
   // 终端里等你批准的(手机拍得了的那些)和 CC 自己的事排在同一个「N 件事等你」里。
   const terminal = useTerminalSessions()
   const termWaiting = terminalNeedsYou(terminal.sessions, !v.waitingUnknown).map(s => terminalRow(s, Date.now(), lang))
@@ -75,10 +83,12 @@ export default function Now() {
             {/* 问候一行放下:英文「Good evening」在 iPhone 17 Pro 上挨着 CC 会折行 ⇒ 允许缩到 0.7 倍,不换行 */}
             <Txt role="display" accessibilityRole="header" numberOfLines={1} adjustsFontSizeToFit minimumFontScale={0.7} style={{ flex: 1, paddingBottom: space.s }}>{t(lang, v.greetingKey)}</Txt>
             <Pressable testID="now-cc" accessibilityRole="button" accessibilityLabel={t(lang, 'now.openChat')} onPress={openChat} style={{ marginRight: space.s }}>
-              <CCFigure size={120} presence={presence} />
+              <CCFigure size={120} presence={presence} mood={status ?? undefined} />
             </Pressable>
           </View>
+          {status ? <Txt testID="now-cc-status" role="meta" tone="inkSoft" numberOfLines={1} style={{ alignSelf: 'flex-end', marginTop: -space.s }}>{status}</Txt> : null}
         </View>
+        <CompanionCard card={card} onSeen={companion.markSeen} />
         {v.waitingUnknown ? (
           <Txt testID="now-waiting-unknown" role="meta" tone="inkSoft">{t(lang, 'now.waitingUnknown')}</Txt>
         ) : null}
