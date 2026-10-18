@@ -33,6 +33,13 @@ describe('nowView', () => {
 })
 
 describe('latestCCLine', () => {
+  it('跳过系统通知(重启 / 终端完成 / 命令回执),打猎与串门照常算', () => {
+    expect(latestCCLine(page([msg('1', 'cc', '行程整理好了', 1), msg('2', 'cc', '🔄 wechat-cc daemon 已重启 pid=1', 2), msg('3', 'cc', '🔔 codex 完成了 · x', 3), msg('4', 'cc', '✅ 这个对话切到 Codex', 4)])))
+      .toEqual({ text: '行程整理好了', at: 1 })
+    expect(latestCCLine(page([msg('1', 'cc', '🎯 今日猎物：x', 1)]))?.text).toBe('🎯 今日猎物：x')
+    expect(latestCCLine(page([msg('1', 'cc', '🔄 已重启', 1)]))).toBeNull()
+  })
+
   const msg = (id: string, role: 'me' | 'cc', text: string, at: number) => ({ id, role, text, at, source: 'wechat', truncated: false }) as any
   const page = (messages: any[]) => ({ matterId: 'c', title: 'CC', messages, hasMore: false, nextBefore: null, pending: null, failed: null }) as any
   it('取最近一条 CC 说的、非空的话', () => {
