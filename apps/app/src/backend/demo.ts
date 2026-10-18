@@ -4,7 +4,7 @@ import { DEMO_STICKER, DEMO_STICKER_FILE, DEMO_VOICE } from './demo-media'
 import { BackendError, type Backend, type CliSessionRowT, type Connection, type MatterT, type MatterDetailT, type ApprovalExplanationT, type ChatJobT, type ChatMessageT, type SessionContinueT, type MatterSayResultT, type UploadStateT, type ChatModelViewT, type OverseerTodayT, type TodayItemT, type CompanionHomeT, type FeedEventT } from './types'
 import {
   copy, IDS, CHAT_ID, DEMO_HUNT_URL, PERM_ID, QUESTION_ID, RUN_IDS, t, explanation, progress, changesTurn, entryOptions,
-  demoConnections, demoSessions, demoSessionMessages, demoSessionTitleKey, DEMO_SESSION_MESSAGES, type Stage,
+  demoConnections, demoLetters, demoSessions, demoSessionMessages, demoSessionTitleKey, DEMO_SESSION_MESSAGES, type Stage,
 } from './demo-data'
 
 type Topic = 'home' | 'approvals' | 'agents' | `matter/${string}`
@@ -315,6 +315,11 @@ export function makeDemoBackend(opts: { now?: () => number; setTimeout?: typeof 
     },
     async chatFileChunk() {
       // 演示里的文件只是一个名字(放在电脑上的那份不存在)
+      throw new BackendError('not_found')
+    },
+    async letters() { return demoLetters(lastLang, now()) },
+    async letterPageChunk() {
+      // 演示里的信按文字寄(pages=0),没有信纸图可读
       throw new BackendError('not_found')
     },
     async chatVoice(messageId, index) {

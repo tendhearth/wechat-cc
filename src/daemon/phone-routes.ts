@@ -48,6 +48,9 @@ export const PHONE_ROUTES: ReadonlySet<string> = new Set([
   'POST /m/api/chat/transcribe',
   // CC 回复里的文件按块读(2026-10-06)
   'GET /m/api/chat/file',
+  // CC 的信(2026-10-18,mobile-letters.ts):寄出去了的信 + 一页 PNG 按块读。信是私事:链接令牌不在册(见 LINK_ROUTES)
+  'GET /m/api/letters',
+  'GET /m/api/letters/page',
   // 主人对话用哪个后端 / 模型:读与钉(2026-10-06)
   'GET /m/api/chat/model',
   'POST /m/api/chat/model',
@@ -100,8 +103,10 @@ export const PHONE_ROUTES: ReadonlySet<string> = new Set([
 /**
  * /set 链接令牌(10 分钟,可能随 URL 外泄)能走的路由:手机那一套,但不含让终端会话「接着说」——
  * 那会以 daemon 的 --dangerously 姿态起一个 agent 执行任意话术(评审 10-15 #3)。拍板同理一并拿掉。
+ * 「CC 的信」也拿掉(2026-10-18):信是写给主人的私事,只给配过对的设备。
  */
-export const LINK_ROUTES: ReadonlySet<string> = new Set([...PHONE_ROUTES].filter(r => r !== 'POST /m/api/cli/say' && r !== 'POST /m/api/cli/permission'))
+const LINK_EXCLUDED: ReadonlySet<string> = new Set(['POST /m/api/cli/say', 'POST /m/api/cli/permission', 'GET /m/api/letters', 'GET /m/api/letters/page'])
+export const LINK_ROUTES: ReadonlySet<string> = new Set([...PHONE_ROUTES].filter(r => !LINK_EXCLUDED.has(r)))
 
 /**
  * 经隧道(`_via=tunnel`)一律拒的 `/set/api/apply` 操作:开关远程访问会重启 daemon,

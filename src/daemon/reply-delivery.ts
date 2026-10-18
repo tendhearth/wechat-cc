@@ -42,6 +42,8 @@ export interface DeliverDeps {
   observe?(chatId: string, text: string): void
   /** 为真 ⇒ 附件不发(这一轮落在只收文字的出口上,如伙伴落到 App);语音改发同样的字。 */
   textOnly?(): boolean
+  /** textOnly 时附件先交给它(出口自己收得下:伙伴落到 App 的那一轮,第 2 步);收下 ⇒ true。 */
+  sendAttachment?(chatId: string, a: TurnAttachment): Promise<boolean>
   chatPrefs?(chatId: string): { split?: boolean } | undefined
   log(tag: string, line: string, fields?: Record<string, unknown>): void
 }
@@ -137,7 +139,15 @@ export async function deliverTurnReply(input: DeliverInput, deps: DeliverDeps): 
   // 8. 附件:按调用顺序;语音失败 ⇒ daemon 自己改发文字。
   for (const a of attachments) {
     if (deps.textOnly?.()) {
-      // 只收文字的出口(伙伴落到 App,第 1 步只做文字):语音改发同样的字,别的附件不发也不去碰微信。
+      // 出口收得下附件(伙伴落到 App,第 2 步:App 对话页画得出表情 / 图 / 语音)⇒ 记进去,不碰微信。
+      if (deps.sendAttachment) {
+        let took = false
+        try { took = await deps.sendAttachment(chatId, a.attachment) } catch (err) {
+          deps.log('REPLY_ATTACHMENT_SKIPPED', `chat=${chatId} kind=${a.attachment.kind} outbound threw: ${err instanceof Error ? err.message : String(err)}`)
+        }
+        if (took) { attachmentsSent++; continue }
+      }
+      // 收不下(或只收文字的出口):语音改发同样的字,别的附件不发也不去碰微信。
       if (a.attachment.kind === 'voice' && (await sendOne(a.attachment.text))) bubbles++
       else deps.log('REPLY_ATTACHMENT_SKIPPED', `chat=${chatId} kind=${a.attachment.kind} — text-only outbound`)
       continue
@@ -251,7 +261,10 @@ export function makeReplyDeliveryRuntime(deps: ReplyDeliveryRuntimeDeps): ReplyD
     trackDaemon(opts.providerId, chatId, 1)
     // 这一轮另有出口(伙伴主动找你)⇒ 文字、进度都走它;其余(接收器、旁听、分条)照旧。
     const out: DeliverDeps = opts.outbound
-      ? { ...deps, sendText: (c, t) => opts.outbound!.sendText(c, t), textOnly: () => opts.outbound!.textOnly?.() ?? false }
+      ? {
+          ...deps, sendText: (c, t) => opts.outbound!.sendText(c, t), textOnly: () => opts.outbound!.textOnly?.() ?? false,
+          ...(opts.outbound.sendAttachment ? { sendAttachment: (c: string, a: TurnAttachment) => opts.outbound!.sendAttachment!(c, a) } : {}),
+        }
       : deps
     const finishDaemon = () => { if (!done) trackDaemon(opts.providerId, chatId, -1); finish() }
     return {

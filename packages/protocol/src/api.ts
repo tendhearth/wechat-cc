@@ -369,7 +369,8 @@ export const CHAT_TEXT_MAX = 4000
  * - voice:要读出来的那句。手机点了才经 `GET /m/api/chat/voice` 合成(不预先合成、不进回包)。
  * - sticker:`label` 是标签或情绪;`file` 是表情库里的文件名(经 `GET /m/api/sticker/<file>?b64=1` 取图)。
  *   联网表情没有 `file`,只显示 label —— daemon 不替 app 去外网取图。
- * - file:只给名字。文件在电脑上;手机没有取文件的路由(不为它新开一条)。
+ * - file:只给名字;手机经 `GET /m/api/chat/file` 按块读(2026-10-06)。图片(png / jpg / gif / webp)App 直接画成图(2026-10-18:
+ *   CC 在微信上发给主人的图、信纸也记成这样的一行)。
  */
 /** 搜主人对话的一条结果(GET /m/api/chat/search,2026-10-06)。 */
 export const ChatSearchHit = z.object({ id: z.string(), role: z.enum(['me', 'cc']), text: z.string(), truncated: z.boolean(), at: z.number(), source: z.string().nullable() })
@@ -395,6 +396,15 @@ export const ChatMessage = z.object({
   attachments: ChatAttachments.optional(),
   narration: z.array(z.string()).optional(),
 })
+/**
+ * 「CC 的信」里的一封(GET /m/api/letters,2026-10-18):只列寄出去了的,新的在前。pages = 几页信纸图
+ * (经 GET /m/api/letters/page 按块读);0 ⇒ 这封排不成图、按文字寄的,全文在 text。
+ */
+export const LetterSummary = z.object({
+  id: z.string(), day: z.string(), sentAt: z.number(), requested: z.boolean(), via: z.enum(['wechat', 'app']),
+  opening: z.string(), pages: z.number(), text: z.string().optional(),
+})
+export type LetterSummaryT = z.infer<typeof LetterSummary>
 /** 语音附件合成出来的声音(base64)。太长装不进中继一帧 ⇒ 413 too_large(手机提示去电脑上听)。 */
 export const ChatVoice = z.object({ mime: z.string(), data: z.string() })
 export const ChatJob = z.object({ requestId: z.string(), text: z.string(), status: z.enum(['pending', 'replied', 'failed']), since: z.number(), error: z.enum(['busy', 'unavailable', 'not_configured']).optional() })
@@ -524,6 +534,8 @@ export const PHONE_API_SCHEMAS: Readonly<Record<string, z.ZodTypeAny>> = {
   'GET /m/api/chat/model': z.union([ChatModelView, PhoneErrorResponse]),
   'POST /m/api/chat/model': z.union([ChatModelView, PhoneErrorResponse]),
   'GET /m/api/chat/file': z.union([z.object({ ok: z.literal(true), name: z.string(), mime: z.string(), size: z.number(), sha256: z.string(), offset: z.number(), nextOffset: z.number(), contentBase64: z.string() }), PhoneErrorResponse]),
+  'GET /m/api/letters': z.union([z.object({ ok: z.literal(true), letters: z.array(LetterSummary) }), PhoneErrorResponse]),
+  'GET /m/api/letters/page': z.union([z.object({ ok: z.literal(true), name: z.string(), mime: z.string(), size: z.number(), sha256: z.string(), offset: z.number(), nextOffset: z.number(), contentBase64: z.string() }), PhoneErrorResponse]),
   'GET /m/api/chat/voice': z.union([z.object({ ok: z.literal(true) }).extend(ChatVoice.shape), PhoneErrorResponse]),
   // 按住说话(2026-10-18):GET 只问电脑上配没配语音转文字;POST 回转好的字(不自动发)。
   // 错误码:stt_not_configured 422 / no_speech 422 / audio_too_large 413 / stt_blocked(网络守护拦下)503 / stt_failed 502 / stt_timeout 504。

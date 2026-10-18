@@ -979,6 +979,7 @@ const onlineStickerCursor = new Map<string, number>()
         onlineSent = true
         const saved = deps.stickers.save(path, [mood], `CC 联网找的「${mood}」表情`)
         deps.stickerFeedback?.remember(chatId, saved.file)
+        deps.ilink.noteSentMedia?.(chatId, { kind: 'sticker', file: saved.file, label: mood })
         return { status: 200, body: { ok: true, source: 'online', file: saved.file } }
       } catch (err) {
         return { status: 200, body: { ok: false, error: errMsg(err) } }
@@ -1023,6 +1024,7 @@ const onlineStickerCursor = new Map<string, number>()
           await deps.ilink.sendFile(b.chat_id.trim(), path)
           const saved = deps.stickers.save(path, [b.mood.trim()], `CC 联网筛选的「${b.mood.trim()}」表情`)
           deps.stickerFeedback?.remember(b.chat_id.trim(), saved.file)
+          deps.ilink.noteSentMedia?.(b.chat_id.trim(), { kind: 'sticker', file: saved.file, label: b.mood.trim() })
           return { status: 200, body: { ok: true, source: 'online', file: saved.file } }
         } finally { rmSync(scratch, { recursive: true, force: true }) }
       } catch (err) { return { status: 200, body: { ok: false, error: errMsg(err) } } }

@@ -368,7 +368,7 @@ export async function bootDaemon(opts: BootDaemonOpts): Promise<DaemonHandle> {
       voice: { replyVoice: (c, t) => ilink.voice.replyVoice(c, t), saveConfig: (i) => ilink.voice.saveConfig(i), configStatus: () => ilink.voice.configStatus(), synthesizeSpeech: (t) => ilink.voice.synthesizeSpeech(t), transcribe: (a, m) => ilink.voice.transcribe!(a, m), saveSTTConfig: (i) => ilink.voice.saveSTTConfig!(i), sttStatus: () => ilink.voice.sttStatus!() },
       sharePage: (t, c, o) => ilink.sharePage(t, c, o), resurfacePage: (q) => ilink.resurfacePage(q),
       companion: { enable: () => ilink.companion.enable(), disable: () => ilink.companion.disable(), status: () => ilink.companion.status(), snooze: (m) => ilink.companion.snooze(m), setImportLocal: (e) => ilink.companion.setImportLocal(e) },
-      ilink: { sendReply: (c, t) => ilink.sendMessage(c, t).then(r => r as { msgId: string; error?: string }), sendFile: (c, p) => ilink.sendFile(c, p), editMessage: (c, m, t) => ilink.editMessage(c, m, t), broadcast: (t, a) => ilink.broadcast(t, a) },
+      ilink: { sendReply: (c, t) => ilink.sendMessage(c, t).then(r => r as { msgId: string; error?: string }), sendFile: (c, p) => ilink.sendFile(c, p), noteSentMedia: (c, m) => ilink.noteSentMedia?.(c, m), editMessage: (c, m, t) => ilink.editMessage(c, m, t), broadcast: (t, a) => ilink.broadcast(t, a) },
       prefix: { conversationStore, providerDisplayName, permissionMode: dangerously ? 'dangerously' as const : 'strict' as const },
       turns: turnRecordStore,
       // Live-session lister + heartbeat probe back the admin self-diagnosis
@@ -932,7 +932,10 @@ export async function bootDaemon(opts: BootDaemonOpts): Promise<DaemonHandle> {
       cheapEval: (c) => resolveCheapEval({ getMode: (x) => boot.coordinator.getMode(x), registry: boot.registry }, c),
       wechatSuspended: () => boot.health.health.shouldSuspend('wechat'),
       sendText: (c, t) => ilink.sendMessage(c, t),
-      sendFile: (c, f) => ilink.sendFile(c, f),
+      // 逐页发不逐页记;寄出之后整封记成主人对话里的一行(App 对话页看得见),微信不通时寄到 App(2026-10-18)。
+      sendFile: (c, f) => ilink.sendFile(c, f, { mirror: false }),
+      mirror: (c, pages) => ilink.noteSentMedia?.(c, pages.map(path => ({ kind: 'file' as const, path }))),
+      app: () => wired.companionApp,
       holdBusy: (l) => boot.holdBusy(l), log: (t, l) => log(t, l),
     })
     const lettersLc = await sup.start('letters', () => letters.start())

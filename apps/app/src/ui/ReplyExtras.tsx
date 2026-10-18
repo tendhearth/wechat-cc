@@ -1,12 +1,14 @@
 // CC 回复的过程与附件(回复交付,2026-10-04)。过程:灰、默认收起,说清没发到微信;
 // 附件:语音(点了才向电脑要声音再放)、表情(本地表情从电脑表情库取图;联网表情只写情绪,不替你去外网取图)、
-// 文件(2026-10-06 起点一下按块读下来、在手机上打开;以前只有名字)。
+// 文件(2026-10-06 起点一下按块读下来、在手机上打开;以前只有名字)。图片文件(2026-10-18:CC 在微信上发给你的图、
+// 信纸也记进对话)直接画成图,点一下放大;读不到 / 太大 ⇒ 退回可点的文件名。
 import { useEffect, useState, type ReactNode } from 'react'
 import { ActivityIndicator, Image, Pressable, View } from 'react-native'
 import { t, type Lang } from '../i18n'
 import { useBackendCtx } from '../state/BackendProvider'
 import type { ChatAttachmentT } from '../backend/types'
-import { voiceFailureKey } from '../view/chat'
+import { INLINE_IMAGE_MAX_BYTES, inlineImageMime, isInlineImage, voiceFailureKey } from '../view/chat'
+import { bytesToBase64 } from '../state/image-upload'
 import { radius, space } from './tokens'
 import { Txt } from './Txt'
 import { useTheme } from './useTheme'
@@ -49,7 +51,8 @@ export function ReplyAttachments({ messageId, items, lang }: { messageId: string
       {items.map((a, i) =>
         a.kind === 'voice' ? <VoiceChip key={i} messageId={messageId} index={i} text={a.text} lang={lang} />
           : a.kind === 'sticker' ? (a.file ? <StickerImage key={i} file={a.file} label={a.label} lang={lang} /> : <Chip key={i} testID="chat-att-sticker-label"><Txt role="small" tone="inkSoft">{t(lang, 'chat.stickerOnline', { label: a.label })}</Txt></Chip>)
-            : <FileChip key={i} messageId={messageId} index={i} name={a.name} lang={lang} />
+            : isInlineImage(a.name) ? <InlineImage key={i} messageId={messageId} index={i} name={a.name} lang={lang} />
+              : <FileChip key={i} messageId={messageId} index={i} name={a.name} lang={lang} />
       )}
     </View>
   )
@@ -112,6 +115,41 @@ function StickerImage({ file, label, lang }: { file: string; label: string; lang
   return (
     <View testID="chat-att-sticker" accessible accessibilityRole="image" accessibilityLabel={t(lang, 'chat.sticker', { label })} style={{ width: 120, height: 120, alignItems: 'center', justifyContent: 'center' }}>
       {uri ? <Image source={{ uri }} style={{ width: 120, height: 120 }} resizeMode="contain" /> : <ActivityIndicator size="small" />}
+    </View>
+  )
+}
+
+/** CC 发来的图(2026-10-18):进对话页就按块读下来画成图(至多 INLINE_IMAGE_MAX_BYTES);点一下全屏看。读不到 ⇒ 文件名。 */
+function InlineImage({ messageId, index, name, lang }: { messageId: string; index: number; name: string; lang: Lang }) {
+  const { backend } = useBackendCtx()
+  const { c } = useTheme()
+  const opener = useFileOpener(lang)
+  const [img, setImg] = useState<{ bytes: Uint8Array; uri: string } | null>(null)
+  const [ratio, setRatio] = useState(3 / 4)
+  const [missing, setMissing] = useState(false)
+  const mime = inlineImageMime(name)
+  useEffect(() => {
+    let alive = true
+    downloadReplyFile(backend, messageId, index, sha256Hex, INLINE_IMAGE_MAX_BYTES).then(
+      bytes => {
+        if (!alive) return
+        const uri = `data:${mime};base64,${bytesToBase64(bytes)}`
+        setImg({ bytes, uri })
+        Image.getSize(uri, (w, h) => { if (alive && w > 0 && h > 0) setRatio(w / h) }, () => {})
+      },
+      () => { if (alive) setMissing(true) },
+    )
+    return () => { alive = false }
+  }, [backend, messageId, index, mime])
+  if (missing) return <FileChip messageId={messageId} index={index} name={name} lang={lang} />
+  return (
+    <View style={{ width: 240, maxWidth: '100%' }}>
+      <Pressable testID="chat-att-image" accessibilityRole="imagebutton" accessibilityLabel={t(lang, 'chat.image', { name })} disabled={!img}
+        onPress={() => { if (img) void opener.open({ id: `${messageId}:${index}`, name, mime }, async () => img.bytes) }}
+        style={{ width: '100%', aspectRatio: ratio, borderRadius: radius.bubble, borderWidth: 1, borderColor: c.hair, overflow: 'hidden', alignItems: 'center', justifyContent: 'center' }}>
+        {img ? <Image source={{ uri: img.uri }} style={{ width: '100%', height: '100%' }} resizeMode="cover" /> : <ActivityIndicator size="small" color={c.inkSoft} accessibilityLabel={t(lang, 'progress.loading')} />}
+      </Pressable>
+      {opener.viewer}
     </View>
   )
 }

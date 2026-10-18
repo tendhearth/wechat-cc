@@ -2,6 +2,7 @@ import { describe, it, expect, vi } from 'vitest'
 import { PushPlaintext } from '@wechat-cc/protocol'
 import { openTestDb } from '../../lib/db'
 import { makeMessagesStore } from '../../lib/messages-store'
+import { phoneExtrasFields } from '../app-reply'
 import { companionPushPayload, COMPANION_PUSH_BODY_MAX, makeAppChannel, type AppChannelDeps } from './app-channel'
 
 function setup(o: { owner?: string | null; pushDevices?: string[]; online?: string[]; push?: AppChannelDeps['push'] } = {}) {
@@ -75,5 +76,38 @@ describe('companion 推送', () => {
     expect(s.push).toHaveBeenCalledWith({ kind: 'companion', title: 'CC', body: '秘密内容' })
     expect(s.logs.join('\n')).not.toContain('秘密内容')
     expect(s.logs.some(l => l.includes('sent to 1'))).toBe(true)
+  })
+})
+
+// 手机伙伴第 2 步(2026-10-18):附件记成一行(extras 同 App 轮的回复行),推送替它说几个字。
+describe('makeAppChannel —— 附件', () => {
+  it('recordAttachment:表情按标签解析成库里的文件名;语音保留成语音;文件只给名字上线', async () => {
+    const s = setup()
+    const db2 = openTestDb()
+    const store = makeMessagesStore(db2)
+    const ch = makeAppChannel({
+      ownerChatId: () => 'owner_chat', pushDevices: () => ['d1'], onlineDevices: () => new Set(),
+      append: r => store.append(r), touched: s.touched, push: s.push,
+      stickerFile: tag => (tag === '开心' ? '/state/stickers/bear.png' : null),
+      now: (() => { let t = Date.parse('2026-10-18T09:00:00.000Z'); return () => t++ })(), log: () => {},
+    })
+    expect(await ch.recordAttachment!('owner_chat', { kind: 'sticker', ref: { tag: '开心' } })).toBe('[表情:开心]')
+    expect(await ch.recordAttachment!('owner_chat', { kind: 'voice', text: '晚安' })).toBe('晚安')
+    expect(await ch.recordAttachment!('owner_chat', { kind: 'file', path: '/Users/me/周报.pdf' })).toBe('[周报.pdf]')
+    const rows = await store.listRange('owner_chat', { limit: 10 })
+    expect(rows.map(r => [r.kind, r.text, r.source])).toEqual([['sticker', '', 'phone'], ['voice', '', 'phone'], ['file', '', 'phone']])
+    expect(rows.map(r => phoneExtrasFields(r.extras).attachments)).toEqual([
+      [{ kind: 'sticker', label: '开心', file: 'bear.png' }], [{ kind: 'voice', text: '晚安' }], [{ kind: 'file', name: '周报.pdf' }],
+    ])
+    expect(JSON.stringify(rows.map(r => phoneExtrasFields(r.extras)))).not.toContain('/Users/me')
+  })
+  it('record 带附件 ⇒ 同一行(信的几页);写库失败 ⇒ null', async () => {
+    const s = setup()
+    expect(await s.ch.record('owner_chat', '', [{ kind: 'file', name: 'page-1.png', path: '/s/l/page-1.png' }, { kind: 'file', name: 'page-2.png', path: '/s/l/page-2.png' }])).toBe(true)
+    const rows = await s.store.listRange('owner_chat', { limit: 10 })
+    expect(rows).toHaveLength(1)
+    expect(phoneExtrasFields(rows[0]!.extras)).toEqual({ attachments: [{ kind: 'file', name: 'page-1.png' }, { kind: 'file', name: 'page-2.png' }] })
+    s.db.close()
+    expect(await s.ch.recordAttachment!('owner_chat', { kind: 'voice', text: 'x' })).toBeNull()
   })
 })

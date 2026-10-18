@@ -37,6 +37,7 @@ import blinkArt from './mobile-blink-art.json'
 import presenceArt from './mobile-presence-art.json'
 import { MOBILE_BRAND_ICON_PNG, MOBILE_BRAND_ICON_SIZES } from './mobile-brand-icon'
 import { mobileChatRoute, type MobileChatDeps } from './mobile-chat'
+import { mobileLettersRoute } from './mobile-letters'
 import { mobileReadsRoute } from './mobile-reads'
 import {mobileSessionContinueRoute,mobileWorkbenchRoute,mobileMatterError,mobileSayInput,type MobileMatterActions,type MobileEntryActions,type MobileUploadActions,type MobileSessionContinueActions} from './mobile-workbench'
 import {mobileMatterDetailResponse} from './mobile-matter-response'
@@ -117,6 +118,8 @@ export interface SettingsPanelDeps {
   }
   /** 跟 CC 说(spec 2026-10-01):主人对话一页 + 说一句。缺省 ⇒ /m/api/chat* 503。 */
   chat?: MobileChatDeps
+  /** 「CC 的信」(2026-10-18,只读存档)。缺省 ⇒ /m/api/letters* 503。 */
+  letters?: import('./mobile-letters').MobileLettersDeps
   /** 「CC 的连接」快照(spec 2026-10-01)。缺省 ⇒ /m/api/connections 503。 */
   connections?: () => import('./connections').ConnectionsSnapshot
   /** 电脑上的原生会话(只读)。缺省 ⇒ /m/api/sessions 503。 */
@@ -796,6 +799,9 @@ export function makeSettingsPanel(deps: SettingsPanelDeps): SettingsPanel {
           // 跟 CC 说(spec 2026-10-01):主人对话一页 + 收下即回的说一句。
           const chatResponse = await mobileChatRoute(deps.chat, url, req)
           if (chatResponse) return chatResponse
+          // CC 的信(2026-10-18):寄出去了的信 + 某一页按块读。链接令牌不在册(phone-routes.ts LINK_ROUTES)。
+          const lettersResponse = await mobileLettersRoute(deps.letters, url, req)
+          if (lettersResponse) return lettersResponse
           const readResponse = await mobileReadsRoute({ ...(deps.connections ? { connections: deps.connections } : {}), ...(deps.sessions ? { sessions: deps.sessions } : {}), ...(deps.cliSessions ? { cliSessions: deps.cliSessions } : {}), ...(deps.cliActions ? { cliActions: deps.cliActions } : {}), ...(deps.overseerToday ? { today: deps.overseerToday } : {}) }, url, req)
           if (readResponse) return readResponse
           if (url.pathname === '/m/api/matters' && req.method === 'GET') {

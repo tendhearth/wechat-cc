@@ -39,6 +39,7 @@ import type { Db } from '../lib/db'
 import type { ConversationStore } from '../core/conversation-store'
 import { makeMessagesStore } from '../lib/messages-store'
 import { readJsonFile } from '../lib/read-json-file'
+import type { SentMedia } from './companion/media-mirror'
 
 /**
  * Monotonic counter to keep same-millisecond outbound IDs unique. Module
@@ -53,7 +54,15 @@ export type IlinkAccount = import('./ilink/context').Account
 
 export interface IlinkAdapter {
   sendMessage(chatId: string, text: string, metadata?: {source:'workbench'}): Promise<{ msgId: string; error?: string }>
-  sendFile(chatId: string, path: string): Promise<void>
+  /** `mirror: false` ⇒ 成功之后不报给媒体镜像(调用方自己记,如一封信的几页记成一行)。 */
+  sendFile(chatId: string, path: string, opts?: { mirror?: boolean }): Promise<void>
+  /**
+   * 发给某个 chat 的媒体(文件 / 表情 / 语音)成功之后报给谁(2026-10-18,companion/media-mirror.ts:主人那条记进
+   * App 对话页读的消息库)。pipeline-deps 接一次;没接 ⇒ 不报。
+   */
+  onMediaSent?(fn: ((chatId: string, m: SentMedia | readonly SentMedia[]) => void) | null): void
+  /** 路由自己报一样已经送出去的东西(联网表情存进表情库之后、信的几页一起)。没接 ⇒ 什么都不做。 */
+  noteSentMedia?(chatId: string, m: SentMedia | readonly SentMedia[]): void
   /** Passive outbound link health (spec 2026-08-22-outbound-health). */
   outboundHealth(): OutboundHealth
   /**
@@ -186,7 +195,22 @@ export function makeIlinkAdapter(opts: {
   const messagesStore = makeMessagesStore(opts.db)
   const { stateDir, accounts, ctxStore, conversationStore, acctStore, sessionState, pending, sweepTimer, projectsFile, resolveAccount, assertChatRoutable } = ctx
 
-  const voice = gateVoice(makeVoice(ctx), opts.networkGate)
+  // 媒体镜像(2026-10-18):发给主人的图 / 表情 / 语音也进 App 对话页。报不出去只记日志,绝不影响发送结果。
+  let mediaSent: ((chatId: string, m: SentMedia | readonly SentMedia[]) => void) | null = null
+  const reportMedia = (chatId: string, m: SentMedia | readonly SentMedia[]) => {
+    if (!mediaSent) return
+    try { mediaSent(chatId, m) } catch (err) { log('MESSAGES', `media mirror threw: ${err instanceof Error ? err.message : err}`) }
+  }
+  const gatedVoice = gateVoice(makeVoice(ctx), opts.networkGate)
+  const voice: WechatVoiceDep = {
+    ...gatedVoice,
+    async replyVoice(chatId, text) {
+      const r = await gatedVoice.replyVoice(chatId, text)
+      // 不存音频:手机点了再按这段字合成(GET /m/api/chat/voice)。
+      if (r.ok) reportMedia(chatId, { kind: 'voice', text })
+      return r
+    },
+  }
   const companion = makeCompanion(ctx)
   const outbound = makeOutboundHealthTracker({ log: (t, l) => log(t, l) })
   const windowClosed = new Map<string, string>()
@@ -273,7 +297,10 @@ export function makeIlinkAdapter(opts: {
     outboundHealth: () => outbound.snapshot(),
     proactiveClosedSince: (chatId) => windowClosed.get(chatId) ?? null,
 
-    async sendFile(chatId, filePath) {
+    onMediaSent(fn) { mediaSent = fn },
+    noteSentMedia: (chatId, m) => reportMedia(chatId, m),
+
+    async sendFile(chatId, filePath, sendOpts) {
       assertSendable(filePath)
       // Fail before the CDN upload — without on-disk routing state, the
       // subsequent ilink/sendmessage will fail anyway with a less helpful
@@ -289,6 +316,7 @@ export function makeIlinkAdapter(opts: {
         item_list: [item],
         context_token: ctxToken,
       })
+      if (sendOpts?.mirror !== false) reportMedia(chatId, { kind: 'file', path: filePath })
     },
 
     // ilink has no true edit API. We send a new message prefixed with
