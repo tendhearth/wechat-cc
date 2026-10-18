@@ -17,8 +17,11 @@ const MIN = 60_000
 const full = { ts: NOW - 1000, kind: 'permission', title: '需要你批准', body: '任务「整理下载文件夹」想执行一条命令', taskId: 't-42', requestId: 'r-7' }
 // ok 用例的载荷必须过 PushPlaintext(原生端照着它写解析),kind 只用协议包里的 PushKind。
 const late = { ts: NOW - 50 * MIN, kind: 'task_done', title: '任务完成了', body: '整理下载文件夹' }
+// CC 主动找你、落到 App 的那一句(2026-10-18):没有 taskId,点开去对话页;原生端按 kind 认 category / 渠道 / 深链。
+const companion = { ts: NOW - 3000, kind: 'companion', title: 'CC', body: '前两天说的那个面试,后来怎么样了?' }
 PushPlaintext.parse(full)
 PushPlaintext.parse(late)
+PushPlaintext.parse(companion)
 const seal = (payload: { ts: number; [k: string]: unknown }, n: number) => sealPush(key, payload, iv(n))
 
 // 能解开、但明文不合 PushPlaintext(kind 不认识)⇒ 原生端必须按「解不开」处理(显示占位)。
@@ -37,6 +40,7 @@ const edgePast = seal(edgePastP, 8)
 const edgeFuture = seal(edgeFutureP, 10)
 const okFull = seal(full, 1)
 const okLate = seal(late, 2)
+const okCompanion = seal(companion, 12)
 const cases = [
   { name: 'ok', now: NOW, sealed: okFull, expect: 'ok', payload: full, dedupeKey: pushDedupeKey(full.ts, okFull.ct) },
   { name: 'ok-late-50min', now: NOW, sealed: okLate, expect: 'ok', payload: late, dedupeKey: pushDedupeKey(late.ts, okLate.ct) },
@@ -51,6 +55,7 @@ const cases = [
   { name: 'stale-edge-past-plus1ms', now: NOW, sealed: seal({ ts: NOW - PUSH_MAX_AGE_MS - 1 }, 9), expect: 'stale' },
   { name: 'ok-edge-future-exact', now: NOW, sealed: edgeFuture, expect: 'ok', payload: edgeFutureP, dedupeKey: pushDedupeKey(NOW + PUSH_MAX_SKEW_MS, edgeFuture.ct) },
   { name: 'stale-edge-future-plus1ms', now: NOW, sealed: seal({ ts: NOW + PUSH_MAX_SKEW_MS + 1 }, 11), expect: 'stale' },
+  { name: 'ok-companion', now: NOW, sealed: okCompanion, expect: 'ok', payload: companion, dedupeKey: pushDedupeKey(companion.ts, okCompanion.ct) },
 ]
 const k1 = pushDedupeKey(full.ts, okFull.ct)
 const k2 = pushDedupeKey(late.ts, okLate.ct)

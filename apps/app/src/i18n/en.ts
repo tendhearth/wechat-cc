@@ -279,7 +279,7 @@ const en = {
   'push.placeholderTitle': 'CC',
   'push.placeholder': 'CC has news',
   'push.channelDecide': 'Needs your decision',
-  'push.channelUpdates': 'Done and didn’t finish',
+  'push.channelUpdates': 'Updates from CC',
   'push.opening': 'Opening…',
   'push.gone': 'That item is no longer on your computer.',
   'push.goNow': 'Go to Now',

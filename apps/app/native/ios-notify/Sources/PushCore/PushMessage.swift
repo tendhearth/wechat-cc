@@ -2,7 +2,7 @@ import Foundation
 
 /// 解开之后的明文,与 packages/protocol 的 PushPlaintext(zod)同一形状:多余字段忽略;可选字段出现就必须是字符串(null 也拒)。
 public struct PushMessage: Equatable {
-  public enum Kind: String { case permission, question, task_done, task_failed, test }
+  public enum Kind: String { case permission, question, task_done, task_failed, test, companion }
   public let ts: Double
   public let kind: Kind
   public let title: String
@@ -31,6 +31,7 @@ public struct PushMessage: Equatable {
     case .task_done: return "th.done"
     case .task_failed: return "th.failed"
     case .test: return "th.test"
+    case .companion: return "th.companion"   // CC 主动找你(微信不通时落到 App);点开去对话页
     }
   }
 }

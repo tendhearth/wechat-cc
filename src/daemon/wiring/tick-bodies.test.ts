@@ -15,6 +15,8 @@ import { readPlanLog } from '../companion/plan-memory'
 import { formatLocal, PLAN_EVAL_TIMEOUT_MS } from '../../core/companion-plan'
 import { NetworkUnprotectedError } from '../../lib/network-gate'
 import { loadCompanionConfig } from '../companion/config'
+import { makeProactiveOutbound } from '../companion/proactive-channel'
+import { makeReplyDeliveryRuntime } from '../reply-delivery'
 
 /** Minimal in-memory fake of the structural chatPrefs subset TickDeps needs. */
 function makeFakeChatPrefs(
@@ -1860,5 +1862,122 @@ describe('伙伴推送 × 回复交付(spec 2026-10-03 §4.4 / 已定 ③)', () 
     await buildTickBodies(s.deps).pushTick({ nowIso: '2026-05-13T10:00:00.000Z' })
     expect(d.begun).toEqual([])
     expect((s.dispatch.mock.calls[0] as unknown[])[0]).toContain('不调用 reply')
+  })
+})
+
+// CC 主动找你的第二条路(2026-10-18,companion/proactive-channel.ts):微信不能用 / 发失败 ⇒ 落到 App。
+// 用真的回复交付运行时 + 真的选路,只假微信发送与 App 那头。
+describe('伙伴推送 × App 第二条路(2026-10-18)', () => {
+  let cleanup: string[]
+  beforeEach(() => { cleanup = [] })
+  afterEach(() => { for (const d of cleanup) rmSync(d, { recursive: true, force: true }) })
+
+  function wire(s: Setup, o: { degraded: boolean; closed?: boolean; wechatError?: string; app: boolean; mode?: 'daemon' | 'legacy' }) {
+    s.dispatch.mockImplementation(() => ({ async *[Symbol.asyncIterator]() {
+      yield { kind: 'text', text: '前两天说的面试,后来怎么样了?' }
+      yield { kind: 'result', sessionId: 's', numTurns: 1, durationMs: 1 }
+    } }))
+    const sendWechat = vi.fn(async (_c: string, _t: string) => (o.wechatError ? { msgId: 'err', error: o.wechatError } : { msgId: 'sent' }))
+    const app = { deliverable: vi.fn((c: string) => o.app && c === 'chat-1'), record: vi.fn(async () => true), push: vi.fn() }
+    const proactive = makeProactiveOutbound({
+      wechatDegraded: () => o.degraded, wechatClosedSince: () => (o.closed ? '2026-05-13T00:00:00.000Z' : null),
+      sendWechat, app: () => app, log: (t, l) => { s.logs.push(`${t}|${l}`) },
+    })
+    const replyDelivery = makeReplyDeliveryRuntime({ sendText: sendWechat, sleep: async () => {}, log: (t, l) => { s.logs.push(`${t}|${l}`) } })
+    const deps: TickDeps = { ...s.deps, health: { shouldSuspend: () => o.degraded }, proactive, replyDelivery, replyDeliveryModeFor: () => o.mode ?? 'daemon' }
+    return { deps, sendWechat, app }
+  }
+  const agenda = '- [ ] due:2026-05-13 check in on project'
+
+  it('微信 degraded + App 收得到 ⇒ 这一拍照跑:模型写的话记进主人对话、推一条 companion;微信一次都不碰', async () => {
+    const s = setupDeps({ defaultChatId: 'chat-1', inFlight: false, agendaMd: agenda })
+    cleanup.push(s.stateDir)
+    const w = wire(s, { degraded: true, app: true })
+    await buildTickBodies(w.deps).pushTick({ nowIso: '2026-05-13T10:00:00.000Z' })
+    expect(s.dispatch).toHaveBeenCalledOnce()
+    expect(w.sendWechat).not.toHaveBeenCalled()
+    expect(w.app.record).toHaveBeenCalledWith('chat-1', '前两天说的面试,后来怎么样了?')
+    expect(w.app.push).toHaveBeenCalledOnce()
+    // App 送达和微信主动发一样进台账:无回复计数 +1(学到的暂停照常生效)
+    expect(s.careLedgerEntries['chat-1']).toMatchObject({ noReplyCount: 1, lastProactiveAtIso: '2026-05-13T10:00:00.000Z' })
+    expect(s.logs.some(l => l.includes('delivered to the app'))).toBe(true)
+  })
+
+  it('微信 degraded + App 收不到 ⇒ 同以前:模型之前就停手,不调模型、不进台账', async () => {
+    const s = setupDeps({ defaultChatId: 'chat-1', inFlight: false, agendaMd: agenda })
+    cleanup.push(s.stateDir)
+    const w = wire(s, { degraded: true, app: false })
+    await buildTickBodies(w.deps).pushTick({ nowIso: '2026-05-13T10:00:00.000Z' })
+    expect(s.dispatch).not.toHaveBeenCalled()
+    expect(w.app.record).not.toHaveBeenCalled()
+    expect(s.careLedgerEntries['chat-1']).toBeUndefined()
+    expect(s.logs.some(l => l.includes('COMPANION') && l.includes('degraded'))).toBe(true)
+  })
+
+  it('微信 degraded + App 收得到,但当轮是 legacy(reply 工具直连微信,改不了道)⇒ 照旧停手', async () => {
+    const s = setupDeps({ defaultChatId: 'chat-1', inFlight: false, agendaMd: agenda })
+    cleanup.push(s.stateDir)
+    const w = wire(s, { degraded: true, app: true, mode: 'legacy' })
+    await buildTickBodies(w.deps).pushTick({ nowIso: '2026-05-13T10:00:00.000Z' })
+    expect(s.dispatch).not.toHaveBeenCalled()
+  })
+
+  it('微信能用、发成功 ⇒ 只走微信,App 不记不推(不响两次)', async () => {
+    const s = setupDeps({ defaultChatId: 'chat-1', inFlight: false, agendaMd: agenda })
+    cleanup.push(s.stateDir)
+    const w = wire(s, { degraded: false, app: true })
+    await buildTickBodies(w.deps).pushTick({ nowIso: '2026-05-13T10:00:00.000Z' })
+    expect(w.sendWechat).toHaveBeenCalledOnce()
+    expect(w.app.record).not.toHaveBeenCalled()
+    expect(w.app.push).not.toHaveBeenCalled()
+  })
+
+  it('微信看着能用但发失败(-2)+ App 收得到 ⇒ 微信只试一次,同一句落到 App', async () => {
+    const s = setupDeps({ defaultChatId: 'chat-1', inFlight: false, agendaMd: agenda })
+    cleanup.push(s.stateDir)
+    const w = wire(s, { degraded: false, wechatError: 'ilink/sendmessage errcode=-2: prepare failed', app: true })
+    await buildTickBodies(w.deps).pushTick({ nowIso: '2026-05-13T10:00:00.000Z' })
+    expect(w.sendWechat).toHaveBeenCalledOnce()
+    expect(w.app.record).toHaveBeenCalledOnce()
+    expect(w.app.push).toHaveBeenCalledOnce()
+    expect(s.careLedgerEntries['chat-1']?.noReplyCount).toBe(1)
+  })
+
+  it('推送窗口已知关闭 + App 收得到 ⇒ 不碰微信,直接落 App', async () => {
+    const s = setupDeps({ defaultChatId: 'chat-1', inFlight: false, agendaMd: agenda })
+    cleanup.push(s.stateDir)
+    const w = wire(s, { degraded: false, closed: true, app: true })
+    await buildTickBodies(w.deps).pushTick({ nowIso: '2026-05-13T10:00:00.000Z' })
+    expect(w.sendWechat).not.toHaveBeenCalled()
+    expect(w.app.push).toHaveBeenCalledOnce()
+  })
+
+  it('两条都不通(发失败、App 收不到)⇒ 同以前:登记保留、不重试', async () => {
+    const s = setupDeps({ defaultChatId: 'chat-1', inFlight: false, agendaMd: agenda })
+    cleanup.push(s.stateDir)
+    const w = wire(s, { degraded: false, wechatError: 'errcode=-2', app: false })
+    await buildTickBodies(w.deps).pushTick({ nowIso: '2026-05-13T10:00:00.000Z' })
+    expect(w.sendWechat).toHaveBeenCalledOnce()
+    expect(w.app.record).not.toHaveBeenCalled()
+    expect(s.logs.some(l => l.includes('claim kept, not retried'))).toBe(true)
+  })
+
+  it('学到的暂停对 App 送达同样生效:连着 2 条没回 ⇒ 问候不再发(shouldSpeak 仍是唯一关口)', async () => {
+    const s = setupDeps({ defaultChatId: 'chat-1', inFlight: false, careLedgerEntries: { 'chat-1': { noReplyCount: 2, lastProactiveAtIso: '2026-05-01T10:00:00.000Z' } } })
+    cleanup.push(s.stateDir)
+    const w = wire(s, { degraded: true, app: true })
+    await buildTickBodies(w.deps).pushTick({ nowIso: '2026-05-13T10:00:00.000Z' })
+    expect(s.dispatch).not.toHaveBeenCalled()
+    expect(w.app.record).not.toHaveBeenCalled()
+  })
+
+  it('日程判断前的预判闸:微信 degraded 但 App 收得到 ⇒ 问候 / 打猎仍是候选(不再只剩串门)', async () => {
+    const s = setupDeps({ defaultChatId: 'chat-1', inFlight: false })
+    cleanup.push(s.stateDir)
+    const w = wire(s, { degraded: true, app: true })
+    const planEval = vi.fn(async () => '{"action":"none","why":"测试"}')
+    await buildTickBodies({ ...w.deps, planEval }).pushTick({ nowIso: '2026-05-13T10:00:00.000Z' })
+    expect(planEval).toHaveBeenCalledOnce()
+    expect(s.logs.some(l => l.startsWith('PLAN|skip') && l.includes('wechat_degraded'))).toBe(false)
   })
 })

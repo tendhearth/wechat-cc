@@ -10,7 +10,7 @@ const obj = (x: unknown): Record<string, unknown> | null => (typeof x === 'objec
 /**
  * 系统交给 app 的深链(安卓的点通知、任何别的 app 发的 tendhearth://…)在进路由之前洗一遍(Review Focus 5):
  * push-open ⇒ 用 URLSearchParams 解析(安卓 Kotlin 把空格编成 +),字段过 targetFromParams,重新拼成规范的 /push-open;
- * 洗完没有 taskId(伪造、畸形、解码失败)⇒ 直接回此刻,中转页一个请求都不发。
+ * 洗完没有 taskId(伪造、畸形、解码失败)⇒ 直接回此刻,中转页一个请求都不发(companion 例外:它本来就没有 taskId,去对话页)。
  * dev-push-key 只在开发构建可达;dev-e2e 只在开发构建与真机验收构建可达。配对链接 ⇒ 原链接进暂存格、去 /pair?from=link;这个构建不认的 …/pset ⇒ 此刻;
  * 外面来的 /pair ⇒ 去掉查询串的 /pair。分享扩展的 dataUrl=… ⇒ /share。其余路径原样放行。
  */
@@ -43,7 +43,8 @@ export function rewriteSystemPath(path: string, dev: boolean, stash: (raw: strin
   } catch {
     return '/'
   }
-  return target?.taskId ? pushOpenHref(target) : '/'
+  // companion(CC 主动找你)本来就不带 taskId:去对话页。
+  return target?.taskId || target?.kind === 'companion' ? pushOpenHref(target) : '/'
 }
 
 /** expo-notifications 的 Notification.date:iOS 是秒,安卓是毫秒(Task 7 核对)⇒ 毫秒。 */

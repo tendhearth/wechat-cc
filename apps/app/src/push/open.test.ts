@@ -14,6 +14,9 @@ describe('rewriteSystemPath —— 深链进 app 之前先洗一遍(不可信输
     expect(rewriteSystemPath('tendhearth://push-open?kind=rm-rf&taskId=a1b2c3d4', false)).toBe('/')
     expect(rewriteSystemPath('tendhearth://push-open?kind=permission&taskId=%E0%A4%A', false)).toBe('/')
     expect(rewriteSystemPath('tendhearth://push-open', false)).toBe('/')
+    // companion(CC 主动找你)本来就不带 taskId ⇒ 照样进中转页(它去对话页);带了畸形 taskId 也只是丢掉
+    expect(rewriteSystemPath('tendhearth://push-open?kind=companion', false)).toBe('/push-open?kind=companion')
+    expect(rewriteSystemPath('tendhearth://push-open?kind=companion&taskId=..%2Fx', false)).toBe('/push-open?kind=companion')
     expect(rewriteSystemPath('tendhearth://push-open?kind=task_done&kind=permission&taskId=a1b2c3d4&taskId=ffffffff', false)).toBe('/push-open?kind=task_done&taskId=a1b2c3d4')
   })
   it('开发用密钥页只在开发构建里可达;发布构建 ⇒ 此刻', () => {

@@ -59,6 +59,7 @@ import { makePhoneEventsWiring } from '../phone-topic-sources'
 import { resolveRemoteRelays, mergeOnlineDevices } from '../remote-relay-config'
 import { makePhonePush } from '../phone-push'
 import { fanoutPush, makePhoneNotifier } from '../phone-notifier'
+import { makeAppChannel } from '../companion/app-channel'
 import { deviceIdOf } from '../device-store'
 import { makeCommandRouter } from './command-router'
 import { ensureChatAndNote, makeMatterActivity, wireMatterActivity } from '../matter-activity'
@@ -266,6 +267,11 @@ export interface BuildPipelineDepsResult {
   memoryNightly: import('../memory/nightly-runtime').MemoryNightlyRuntime
   /** 手机 app 原生推送出口(中继 v2);没开 v2 ⇒ 调用回 null。终端会话推送用(main.ts 懒绑定)。 */
   appPush: import('../cli-app-push').AppPushOutlet
+  /**
+   * CC 主动找你的 App 那条路(2026-10-18,companion/app-channel.ts):记进主人对话 + companion 推送。
+   * 没开中继 v2 / 没有「一件事」库(手机对话不存在)⇒ null,伙伴与提醒只走微信。
+   */
+  companionApp: import('../companion/proactive-channel').AppChannel | null
 }
 
 export function buildPipelineDeps(opts: PipelineDepsOpts, refs: PipelineDepsRefs): BuildPipelineDepsResult {
@@ -635,6 +641,18 @@ export function buildPipelineDeps(opts: PipelineDepsOpts, refs: PipelineDepsRefs
     ...(opts.workbench ? { takeImages: (m: { draftId: string; attachmentIds: string[] }) => opts.workbench!.takeChatImages(m, { ownerKey: ownerChatId() ?? '', surface: 'phone' }) } : {}),
     ownerMatterId: () => phoneOwner.ensure(),
     onSettled: id => { matterActivity?.note(id); phoneEvents?.poke() },
+    log: (tag, line) => log(tag, line),
+  }) : null
+  // CC 主动找你的第二条路(2026-10-18):微信不通时伙伴推送 / 提醒落到 App —— 记进手机对话读的同一条主人
+  // chat、捅主题、推一条 companion。「送得到」只认还配对着的推送登记,或正连着的设备。
+  const companionApp = phonePush && phoneOwner ? makeAppChannel({
+    // App 对话页认的那条(主人 chat matter 已经在):还没有 ⇒ 点开通知也没有对话可看,当送不到。
+    ownerChatId: () => phoneOwner.peek()?.chatId ?? null,
+    pushDevices: () => { const paired = new Set(settingsPanel.deviceTokens().map(deviceIdOf)); return phonePush.registered().filter(id => paired.has(id)) },
+    onlineDevices,
+    append: (rec) => messagesStore.append(rec),
+    touched: () => { const m = phoneOwner.peek(); if (m) matterActivity?.note(m.matterId); phoneEvents?.poke() },
+    push: (p) => fanoutPush({ push: phonePush, subscribedDevices: onlineDevices, log: (tag, line) => log(tag, line) }, p),
     log: (tag, line) => log(tag, line),
   }) : null
   // 「CC 的连接」(spec 2026-10-01):插件快照 / 解密库时间 / 知识库 / 工作台。裁定 8:缓存 10 s、最多 3 次 detail()。
@@ -1166,6 +1184,9 @@ export function buildPipelineDeps(opts: PipelineDepsOpts, refs: PipelineDepsRefs
     opts.petSignals?.noteContact()
     const ownerChatId = loadCompanionConfig(stateDir).default_chat_id
     if (!ownerChatId) throw new Error('companion_owner_chat_not_configured')
+    // 主人在 App 里说话也是「回了」:清掉伙伴的无回复计数(微信那边由 mw 的 resetCareNoReply 清)。
+    // 否则 CC 落到 App 的问候,主人在 App 里回了,学到的暂停(连着 2 条没回 ⇒ 安静)照样会触发。
+    try { careLedger.resetNoReply(ownerChatId) } catch { /* 记账失败不打断轮次 */ }
     // 「一件事」:app 里对 CC 说的话属于主人那条 chat matter,并且它现在在桌面表面露过面。
     try { const m = opts.matters?.ensureChat(ownerChatId); if (m) opts.matters!.bind(m.id, 'desktop', 'app') } catch { /* 登记失败不打断轮次 */ }
     // D3 review follow-up: app-converse captures the reply through a sink, but a
@@ -1332,5 +1353,5 @@ export function buildPipelineDeps(opts: PipelineDepsOpts, refs: PipelineDepsRefs
     })
   }
 
-  return { appPush, pipelineDeps, companionConverse, petTurn, mattersService, memoryNightly, stopMatterActivity, settingsPanelLink: () => settingsPanel.linkUrl(), phoneChat, connections, phoneConnect: { link: (o) => settingsPanel.phoneLink(o), devices: () => settingsPanel.phoneDevices() } }
+  return { appPush, companionApp, pipelineDeps, companionConverse, petTurn, mattersService, memoryNightly, stopMatterActivity, settingsPanelLink: () => settingsPanel.linkUrl(), phoneChat, connections, phoneConnect: { link: (o) => settingsPanel.phoneLink(o), devices: () => settingsPanel.phoneDevices() } }
 }

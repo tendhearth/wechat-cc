@@ -99,7 +99,18 @@ export interface ReplyDeliveryPort {
     participantLabel?: string
     /** 哪些文字算回复;缺省 last_segment。 */
     textStrategy?: ReplyTextStrategy
+    /**
+     * 这一轮的文字改走别的出口(伙伴主动找你:微信不通时落到 App,daemon/companion/proactive-channel.ts)。
+     * 缺省 ⇒ 运行时自己的 sendText(微信)。`textOnly()` 为真 ⇒ 附件不发,语音改发同样的字。
+     */
+    outbound?: TurnOutbound
   }): TurnDeliveryHandle
+}
+
+/** 一轮的文字出口(见 ReplyDeliveryPort.begin 的 `outbound`)。 */
+export interface TurnOutbound {
+  sendText(chatId: string, text: string): Promise<{ msgId: string; error?: string }>
+  textOnly?(): boolean
 }
 
 // ─── 「最后的话」 ─────────────────────────────────────────────────────────

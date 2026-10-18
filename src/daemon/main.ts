@@ -967,11 +967,14 @@ export async function bootDaemon(opts: BootDaemonOpts): Promise<DaemonHandle> {
     // between a successful send and the markSent that follows it: at-least-
     // once delivery — the reminder is re-sent on the next sweep because the
     // row is still 'pending' — not a delay.
+    // 2026-10-18:与伙伴推送同一条规矩 —— 微信能用走微信;不能用 / 发失败且 App 收得到(主人那条)⇒ 落到
+    // App(记进对话 + 推一条 companion)。都不通 ⇒ 微信的错误原样回给 sweeper,退避照旧。
     const remindersLc = await sup.start('reminders', () => registerReminders({
       store: makeRemindersStore(db),
       send: async (chatId, text) => {
-        const r = await ilink.sendMessage(chatId, text) as { msgId?: string; error?: string }
-        return r.error ? { ok: false, error: r.error } : { ok: true }
+        const r = await wired.proactive.sendOnce(chatId, text)
+        if (r.ok && r.channel === 'app') log('REMINDERS', `chat=${chatId} delivered to the app (wechat not usable)`)
+        return r.ok ? { ok: true } : { ok: false, ...(r.error ? { error: r.error } : {}) }
       },
       log: (t, l) => log(t, l),
     }))

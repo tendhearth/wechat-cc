@@ -40,6 +40,8 @@ export interface DeliverDeps {
   sink?: { captureReply(chatId: string, reply: TurnReply): boolean }
   /** 旁听(打猎记账)。 */
   observe?(chatId: string, text: string): void
+  /** 为真 ⇒ 附件不发(这一轮落在只收文字的出口上,如伙伴落到 App);语音改发同样的字。 */
+  textOnly?(): boolean
   chatPrefs?(chatId: string): { split?: boolean } | undefined
   log(tag: string, line: string, fields?: Record<string, unknown>): void
 }
@@ -134,6 +136,12 @@ export async function deliverTurnReply(input: DeliverInput, deps: DeliverDeps): 
 
   // 8. 附件:按调用顺序;语音失败 ⇒ daemon 自己改发文字。
   for (const a of attachments) {
+    if (deps.textOnly?.()) {
+      // 只收文字的出口(伙伴落到 App,第 1 步只做文字):语音改发同样的字,别的附件不发也不去碰微信。
+      if (a.attachment.kind === 'voice' && (await sendOne(a.attachment.text))) bubbles++
+      else deps.log('REPLY_ATTACHMENT_SKIPPED', `chat=${chatId} kind=${a.attachment.kind} — text-only outbound`)
+      continue
+    }
     let r: { ok: boolean; error?: string }
     try { r = await a.send() } catch (err) { r = { ok: false, error: err instanceof Error ? err.message : String(err) } }
     if (r.ok) { attachmentsSent++; continue }
@@ -241,6 +249,10 @@ export function makeReplyDeliveryRuntime(deps: ReplyDeliveryRuntimeDeps): ReplyD
     }
 
     trackDaemon(opts.providerId, chatId, 1)
+    // 这一轮另有出口(伙伴主动找你)⇒ 文字、进度都走它;其余(接收器、旁听、分条)照旧。
+    const out: DeliverDeps = opts.outbound
+      ? { ...deps, sendText: (c, t) => opts.outbound!.sendText(c, t), textOnly: () => opts.outbound!.textOnly?.() ?? false }
+      : deps
     const finishDaemon = () => { if (!done) trackDaemon(opts.providerId, chatId, -1); finish() }
     return {
       mode: 'daemon',
@@ -248,7 +260,7 @@ export function makeReplyDeliveryRuntime(deps: ReplyDeliveryRuntimeDeps): ReplyD
         if (done || text.trim() === '') return
         if (deps.isSinkOpen?.(chatId)) return // app 这一轮:旁白在 app 里本来就看得见,不进微信
         try {
-          const r = await deps.sendText(chatId, text)
+          const r = await out.sendText(chatId, text)
           deps.log('REPLY_PROGRESS', `chat=${chatId} provider=${opts.providerId}${r.error ? ` err=${r.error}` : ''}`)
         } catch (err) {
           deps.log('REPLY_PROGRESS', `chat=${chatId} provider=${opts.providerId} threw: ${err instanceof Error ? err.message : String(err)}`)
@@ -270,7 +282,7 @@ export function makeReplyDeliveryRuntime(deps: ReplyDeliveryRuntimeDeps): ReplyD
           chatId, reply: built.reply, attachments: pending, context: opts.context,
           ...(opts.participantLabel ? { participantLabel: opts.participantLabel } : {}),
           messagedOwner,
-        }, deps)
+        }, out)
         deps.log('REPLY', `chat=${chatId} provider=${opts.providerId} context=${opts.context} target=${report.target} delivery=${report.delivery} bubbles=${report.bubbles} attachments=${report.attachmentsSent}/${pending.length} narration=${built.reply.narration.length}${report.failures.length ? ` failures=${report.failures.length}` : ''}`)
         return report
       },
