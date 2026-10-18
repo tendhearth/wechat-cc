@@ -4,7 +4,7 @@ import { AccessibilityInfo, ActivityIndicator, Animated, Easing, FlatList, Keybo
 import { SafeAreaView } from 'react-native-safe-area-context'
 import { t, type Lang } from '../i18n'
 import { useLang } from '../i18n/useLang'
-import { getDraft, setDraft } from '../state/drafts'
+import { dropDraftImages, getDraft, peekDraftImages, setDraft } from '../state/drafts'
 import { useBackendCtx } from '../state/BackendProvider'
 import { useConnection, useQuery } from '../state/hooks'
 import { useChat, type ChatSendOutcome } from '../state/useChat'
@@ -46,7 +46,9 @@ export default function Chat() {
   const [outcome, setOutcome] = useState<Exclude<ChatSendOutcome, 'ok'> | null>(null)
   const lock = useRef(false)
   // 待发的图(2026-10-06):只在这一屏里;发成功就清,没发出去留着再点就是重发同一句。
-  const [images, setImages] = useState<PickedImage[]>([])
+  // 分享进来的图(分享页放在草稿旁边)在这里接过来;挂载后就是这一屏自己的
+  const [images, setImages] = useState<PickedImage[]>(() => peekDraftImages('chat'))
+  useEffect(() => { dropDraftImages('chat') }, [])
   const [imageNote, setImageNote] = useState<string | null>(null)
   const addImages = async () => {
     // 用到才加载:相册与哈希是原生模块,不进页面的静态依赖(测试与首屏都不需要它)

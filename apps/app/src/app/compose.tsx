@@ -5,7 +5,7 @@ import { SafeAreaView } from 'react-native-safe-area-context'
 import { BackendError, type MatterInputT } from '../backend/types'
 import { t, type Lang } from '../i18n'
 import { useLang } from '../i18n/useLang'
-import { deleteDraft, getDraft, materialDraftId, pairingGen, requestIdFor, setDraft } from '../state/drafts'
+import { deleteDraft, dropDraftImages, getDraft, materialDraftId, pairingGen, peekDraftImages, requestIdFor, setDraft } from '../state/drafts'
 import { AddImageButton, ImageTray } from '../ui/ImageTray'
 import { bytesToBase64, uploadImages, type PickedImage } from '../state/image-upload'
 import { PHONE_CHAT_MAX_IMAGES as MAX_IMAGES } from '@wechat-cc/protocol'
@@ -40,8 +40,15 @@ export default function Compose() {
   const router = useRouter()
   const conn = useConnection()
   const submit = useSubmit()
+  const params = useLocalSearchParams<{ matter?: string; focus?: string; fork?: string; project?: string; exclude?: string }>()
+  const matter = one(params.matter) || undefined
+  // 「另做一份」(2026-10-08):从一件独立工作区的事进来 —— 同一个项目、独立工作区、换一位执行者;草稿单独存,不盖掉「新的一件」的草稿
+  const fork = matter ? undefined : one(params.fork) || undefined
   // 新交办带的图(2026-10-06;补充一句暂不带图)。只在这一屏里,交出去才清。
-  const [images, setImages] = useState<PickedImage[]>([])
+  // 分享进来的图(2026-10-18)只给「新的一件」(分享页放在 'new' 草稿旁边);补一句 / 另做一份不接
+  const takesShared = !matter && !fork
+  const [images, setImages] = useState<PickedImage[]>(() => (takesShared ? peekDraftImages('new') : []))
+  useEffect(() => { if (takesShared) dropDraftImages('new') }, [takesShared])
   const [imageNote, setImageNote] = useState<string | null>(null)
   const addImages = async () => {
     // 用到才加载:相册与哈希是原生模块,不进页面的静态依赖(测试与首屏都不需要它)
@@ -54,10 +61,6 @@ export default function Compose() {
   const { backend } = useBackendCtx()
   const session = useSession()
   const recovery = useInputRecovery()
-  const params = useLocalSearchParams<{ matter?: string; focus?: string; fork?: string; project?: string; exclude?: string }>()
-  const matter = one(params.matter) || undefined
-  // 「另做一份」(2026-10-08):从一件独立工作区的事进来 —— 同一个项目、独立工作区、换一位执行者;草稿单独存,不盖掉「新的一件」的草稿
-  const fork = matter ? undefined : one(params.fork) || undefined
   const excludeProvider = one(params.exclude) || null
   // 从「接着做」进来:输入框直接聚焦,主人接着打字(spec §4.4)
   const focus = one(params.focus) === '1'

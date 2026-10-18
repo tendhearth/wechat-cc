@@ -37,10 +37,15 @@ describe('app.config.js', () => {
     expect(c.android.intentFilters).toEqual(require('./with-app-links.js').androidIntentFilters(true))
     expect(c.ios.associatedDomains).toBeUndefined()   // 关联域名只由插件写(与钥匙串组同一约定)
     expect(c.android.googleServicesFile).toBeUndefined()
+    // 分享给 CC(2026-10-18):第二个扩展是分享扩展,只带 App Group;expo-share-intent 插件按同名找到它,只合并 entitlements(plugins/share-intent.test.ts)
     expect(c.extra.eas.build.experimental.ios.appExtensions).toEqual([{
       targetName: 'TendhearthNotify', bundleIdentifier: 'com.tendhearth.app.notify',
       entitlements: { 'keychain-access-groups': ['$(AppIdentifierPrefix)com.tendhearth.app.shared'] },
+    }, {
+      targetName: 'TendhearthCC', bundleIdentifier: 'com.tendhearth.app.share',
+      entitlements: { 'com.apple.security.application-groups': ['group.com.tendhearth.app'] },
     }])
+    expect(c.plugins).toContainEqual(['expo-share-intent', require('./share-intent.js').shareIntentParams('com.tendhearth.app')])
   })
   it('TENDHEARTH_APNS_ENV=production(TestFlight / 商店);GOOGLE_SERVICES_JSON 指到文件', () => {
     process.env.TENDHEARTH_APNS_ENV = 'production'

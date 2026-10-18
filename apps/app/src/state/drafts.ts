@@ -1,4 +1,5 @@
 import type { PairingRecord } from '../net/pairing'
+import type { PickedImage } from './image-upload'
 import { uuid } from '../net/uuid'
 
 // 交办草稿只存内存,按 matter 参数分开('new' = 新事项)。
@@ -14,10 +15,15 @@ const requestIds = new Map<string, { text: string; id: string }>()
 // 带图时那份草稿的材料草稿 id(2026-10-06):选图起就定下,发成功(deleteDraft)才换 —— 重发 / 续传都落在同一个草稿下。
 const materialDrafts = new Map<string, string>()
 export const materialDraftId = (key: string): string => { let id = materialDrafts.get(key); if (!id) { id = uuid(); materialDrafts.set(key, id) } return id }
+// 分享进来的图(2026-10-18):分享页读好放这里,对话页 / 交办页挂载时取走,接着就是那一屏自己的图。换配对一起清。
+const draftImages = new Map<string, PickedImage[]>()
+export const putDraftImages = (key: string, images: PickedImage[]) => { if (images.length) draftImages.set(key, images); else draftImages.delete(key) }
+export const peekDraftImages = (key: string): PickedImage[] => draftImages.get(key) ?? []
+export const dropDraftImages = (key: string) => { draftImages.delete(key) }
 export const getDraft = (key: string) => drafts.get(key) ?? ''
 export const setDraft = (key: string, v: string) => { drafts.set(key, v); revisions.set(key, ++revision) }
 export const deleteDraft = (key: string) => { drafts.delete(key); requestIds.delete(key); materialDrafts.delete(key); revisions.set(key, ++revision) }
-export const clearDrafts = () => { gen++; revision++; drafts.clear(); revisions.clear(); requestIds.clear(); materialDrafts.clear(); replied.clear(); clearReceipts() }
+export const clearDrafts = () => { gen++; revision++; drafts.clear(); revisions.clear(); requestIds.clear(); materialDrafts.clear(); draftImages.clear(); replied.clear(); clearReceipts() }
 
 /**
  * 这些都只对「当前这台电脑」有意义(复评):换配对(配上 / 解除 / 换电脑 / 演示↔真连)⇒ 全清,配对代 +1。
@@ -36,7 +42,7 @@ export function setPairingScope(key: string): void {
   if (first) return
   gen++
   revision++; revisions.clear()
-  drafts.clear(); requestIds.clear(); materialDrafts.clear(); replied.clear()
+  drafts.clear(); requestIds.clear(); materialDrafts.clear(); draftImages.clear(); replied.clear()
   if (receipts.length) { receipts = []; queueMicrotask(notifyReceipts) }
 }
 

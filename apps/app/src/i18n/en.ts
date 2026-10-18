@@ -582,6 +582,16 @@ const en = {
   'terminal.justNow': 'just now',
   'terminal.minutesAgo': '{n} min ago',
   'terminal.hoursAgo': '{n} h ago',
+  // 分享给 CC(2026-10-18):系统分享面板进来的那一页
+  'share.title': 'Share with CC',
+  'share.receiving': 'Receiving…',
+  'share.hint': "It goes into the text box first — you send it when you're ready.",
+  'share.toChat': 'Talk to CC',
+  'share.toMatter': 'Hand CC a task',
+  'share.dismiss': 'Never mind',
+  'share.onlyTextLinksImages': 'For now only text, links and photos come through; the rest was left out.',
+  'share.needsPairTitle': "You're not connected to your computer yet",
+  'share.needsPairBody': "Once you connect, this share will still be here to pick up.",
 } as const
 
 export default en
