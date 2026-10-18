@@ -27,6 +27,8 @@ const SPECIFIC: ReadonlyMap<string, BackendCode> = new Map<string, BackendCode>(
   // 电脑太旧、对话还不收图 ⇒ 说清楚要先更新电脑。必须在 `invalid_` 前缀规则之前判。
   ['invalid_attachment', 'images_gone'], ['images_not_supported', 'images_unsupported'],
   // 终端里的会话(2026-10-14):终端自己在问(主人在电脑前,没开码)/ 会话已结束 / 在别的电脑上(手机这口 v1 不转)。
+  // 按住说话(2026-10-18):电脑上没配语音转文字 / 网络守护没放行 / 服务失败或太慢 / 没听出字 / 录音太大。
+  ['stt_not_configured', 'stt_not_configured'], ['stt_blocked', 'stt_blocked'], ['stt_failed', 'stt_failed'], ['stt_timeout', 'stt_failed'], ['no_speech', 'no_speech'], ['audio_too_large', 'too_large'],
   ['cli_not_actionable', 'cli_not_actionable'], ['cli_session_ended', 'cli_ended'], ['cli_session_remote', 'cli_remote'],
 ])
 const errOf = (body: unknown): string | null => {

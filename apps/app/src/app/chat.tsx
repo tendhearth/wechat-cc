@@ -14,6 +14,8 @@ import { MessageText } from '../ui/Markdown'
 import { ReplyAttachments, ReplyProcess } from '../ui/ReplyExtras'
 import { TextField } from '../ui/TextField'
 import { AddImageButton, ImageTray } from '../ui/ImageTray'
+import { TalkButton, TalkStatus, useHoldToTalk } from '../ui/HoldToTalk'
+import { mergeTranscript } from '../view/hold-to-talk'
 import type { PickedImage } from '../state/image-upload'
 import { PHONE_CHAT_MAX_IMAGES as CHAT_MAX_IMAGES } from '@wechat-cc/protocol'
 import { radius, space } from '../ui/tokens'
@@ -84,6 +86,13 @@ export default function Chat() {
 
   // 这条对话现在用谁(2026-10-06):一眼看见,点进去换。
   const chatModel = useQuery('chatModel', () => backend.chatModel(), { refreshOnMount: true })
+  // 按住说话(2026-10-18):转出来的字接在输入框后面,主人看过再点发送 —— 永不自动发。电脑上没配语音转文字 ⇒ 按钮先说清楚。
+  const sttStatus = useQuery('transcribeStatus', () => backend.transcribeStatus(), { refreshOnMount: true })
+  const talk = useHoldToTalk({
+    transcribe: p => backend.transcribe(p),
+    onText: s => setText(mergeTranscript(textRef.current, s)),
+    configured: sttStatus.data?.configured ?? null,
+  })
   const data = [...chat.bubbles].reverse()
   const loadFailed = !chat.page && chat.error !== undefined && !chat.noOwner
 
@@ -158,12 +167,14 @@ export default function Chat() {
           </View>
           <ImageTray testID="chat-images" images={images} lang={lang} onRemove={id => { setImages(cur => cur.filter(i => i.id !== id)); setImageNote(null) }} />
           {imageNote ? <Txt testID="chat-image-note" role="meta" tone="inkSoft">{imageNote}</Txt> : null}
+          <TalkStatus view={talk.view} elapsedMs={talk.elapsedMs} lang={lang} testID="chat-talk" />
           <View style={{ flexDirection: 'row', alignItems: 'flex-end', gap: space.s }}>
+            <TalkButton ctl={talk.ctl} view={talk.view} elapsedMs={talk.elapsedMs} lang={lang} disabled={!online || sending} testID="chat-talk" />
             <TextField
               testID="chat-input"
               accessibilityLabel={t(lang, 'chat.placeholder')}
               value={text}
-              onChangeText={setText}
+              onChangeText={v => { setText(v); talk.ctl.clearNote() }}
               multiline
               placeholder={t(lang, 'chat.placeholder')}
               style={{ flex: 1, minHeight: 48, maxHeight: 140, paddingHorizontal: space.l, paddingTop: space.m, paddingBottom: space.m, borderRadius: radius.sheet, borderWidth: 1, borderColor: c.hair, backgroundColor: c.paper }}

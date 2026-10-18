@@ -82,6 +82,15 @@ describe('app.config.js', () => {
     const cam = base.expo.plugins.find((p: unknown) => Array.isArray(p) && p[0] === 'expo-camera') as [string, { cameraPermission: string }]
     expect(en.NSCameraUsageDescription).toBe(cam[1].cameraPermission)
   })
+  it('麦克风(按住说话,2026-10-18):三个插件给同一句说明、没有一个写 false(false 会删掉 iOS 说明 / 在安卓屏蔽 RECORD_AUDIO);不开后台录放', () => {
+    const en = require('../locales/en.json'), zh = require('../locales/zh-Hans.json')
+    expect(en.NSMicrophoneUsageDescription).toMatch(/only while you hold the talk button/)
+    expect(zh.NSMicrophoneUsageDescription).toContain('按住说话')
+    const opts = (name: string) => (base.expo.plugins.find((p: unknown) => Array.isArray(p) && p[0] === name) as [string, Record<string, unknown>])[1]
+    for (const name of ['expo-camera', 'expo-image-picker', 'expo-audio']) expect(opts(name).microphonePermission, name).toBe(en.NSMicrophoneUsageDescription)
+    expect(opts('expo-audio')).toMatchObject({ recordAudioAndroid: true, enableBackgroundPlayback: false, enableBackgroundRecording: false })
+    expect(opts('expo-camera').recordAudioAndroid).toBe(false)
+  })
 })
 
 describe('with-ios-notify(钥匙串组的唯一来源)', () => {

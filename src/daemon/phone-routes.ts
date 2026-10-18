@@ -43,6 +43,9 @@ export const PHONE_ROUTES: ReadonlySet<string> = new Set([
   'GET /m/api/chat/search',
   // 回复里的语音附件按需合成(2026-10-04):只念库里那一行真有的那段
   'GET /m/api/chat/voice',
+  // 按住说话(2026-10-18):配没配语音转文字 + 一段录音转成字(只回字,不发、不执行;链接令牌也能用)
+  'GET /m/api/chat/transcribe',
+  'POST /m/api/chat/transcribe',
   // CC 回复里的文件按块读(2026-10-06)
   'GET /m/api/chat/file',
   // 主人对话用哪个后端 / 模型:读与钉(2026-10-06)

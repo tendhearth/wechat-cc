@@ -266,3 +266,66 @@ describe('/m/api/chat/model (2026-10-06)', () => {
     expect((await call(deps(), get('/model'))).status).toBe(503)
   })
 })
+
+describe('/m/api/chat/transcribe 按住说话(2026-10-18)', () => {
+  const AUDIO = Buffer.from('fake-m4a-bytes').toString('base64')
+  const postT = (body: unknown) => new Request('http://x/m/api/chat/transcribe', { method: 'POST', headers: { 'content-type': 'application/json' }, body: typeof body === 'string' ? body : JSON.stringify(body) })
+  const getT = () => new Request('http://x/m/api/chat/transcribe')
+  const sttDeps = (impl: (a: Buffer, m: string) => Promise<{ text: string }>, configured = true) => deps({ transcribe: vi.fn(impl), transcribeStatus: () => ({ configured }) })
+
+  it('GET 只说配没配;POST 把录音交给 STT,回去掉首尾空白的字;过 schema', async () => {
+    const d = sttDeps(async () => ({ text: '  明天提醒我交周报 \n' }))
+    const st = await call(d, getT())
+    expect(st).toEqual({ status: 200, body: { ok: true, configured: true } })
+    PHONE_API_SCHEMAS['GET /m/api/chat/transcribe']!.parse(st.body)
+    const r = await call(d, postT({ mime: 'audio/mp4', audioBase64: AUDIO }))
+    expect(r).toEqual({ status: 200, body: { ok: true, text: '明天提醒我交周报' } })
+    PHONE_API_SCHEMAS['POST /m/api/chat/transcribe']!.parse(r.body)
+    expect(d.transcribe).toHaveBeenCalledWith(Buffer.from('fake-m4a-bytes'), 'audio/mp4')
+    expect((await call(sttDeps(async () => ({ text: '' }), false), getT())).body).toEqual({ ok: true, configured: false })
+  })
+
+  it('电脑上没配 ⇒ 422 stt_not_configured;网络守护拦下 ⇒ stt_blocked;别的失败 ⇒ stt_failed;转出来是空 ⇒ no_speech', async () => {
+    const notSet = await call(sttDeps(async () => { throw new Error('no_stt_config') }), postT({ mime: 'audio/mp4', audioBase64: AUDIO }))
+    expect(notSet).toEqual({ status: 422, body: { ok: false, error: 'stt_not_configured' } })
+    PHONE_API_SCHEMAS['POST /m/api/chat/transcribe']!.parse(notSet.body)
+    const { NetworkUnprotectedError } = await import('../lib/network-gate')
+    expect((await call(sttDeps(async () => { throw new NetworkUnprotectedError({ safe: false, source: 'bx', detail: 'x' }, '语音') }), postT({ mime: 'audio/mp4', audioBase64: AUDIO }))).body.error).toBe('stt_blocked')
+    expect((await call(sttDeps(async () => { throw new Error('HTTP STT 500: boom') }), postT({ mime: 'audio/mp4', audioBase64: AUDIO }))).body).toEqual({ ok: false, error: 'stt_failed' })
+    expect((await call(sttDeps(async () => { throw new Error('The operation timed out.') }), postT({ mime: 'audio/mp4', audioBase64: AUDIO }))).body.error).toBe('stt_timeout')
+    expect((await call(sttDeps(async () => ({ text: '   ' })), postT({ mime: 'audio/mp4', audioBase64: AUDIO }))).body).toEqual({ ok: false, error: 'no_speech' })
+  })
+
+  it('STT 一直不回 ⇒ 12 秒后 504 stt_timeout(手机那口 15 秒之前)', async () => {
+    vi.useFakeTimers()
+    try {
+      const pending = call(sttDeps(() => new Promise(() => {})), postT({ mime: 'audio/mp4', audioBase64: AUDIO }))
+      await vi.advanceTimersByTimeAsync(12_000)
+      expect(await pending).toEqual({ status: 504, body: { ok: false, error: 'stt_timeout' } })
+    } finally { vi.useRealTimers() }
+  })
+
+  it('超过 200 KiB ⇒ 413 audio_too_large,不交给 STT;刚好上限照收', async () => {
+    const { PHONE_TRANSCRIBE_MAX_BYTES } = await import('@wechat-cc/protocol')
+    const d = sttDeps(async () => ({ text: 'ok' }))
+    const over = await call(d, postT({ mime: 'audio/mp4', audioBase64: Buffer.alloc(PHONE_TRANSCRIBE_MAX_BYTES + 3).toString('base64') }))
+    expect(over).toEqual({ status: 413, body: { ok: false, error: 'audio_too_large' } })
+    const huge = await call(d, postT('x'.repeat(2 * 1024 * 1024)))
+    expect(huge.status).toBe(413)
+    expect(d.transcribe).not.toHaveBeenCalled()
+    expect((await call(d, postT({ mime: 'audio/mp4', audioBase64: Buffer.alloc(PHONE_TRANSCRIBE_MAX_BYTES).toString('base64') }))).status).toBe(200)
+  })
+
+  it('坏输入 ⇒ 400;没接 ⇒ 503;方法不对 ⇒ 405', async () => {
+    const d = sttDeps(async () => ({ text: 'ok' }))
+    for (const body of [{ mime: 'audio/mp4' }, { mime: 'video/mp4', audioBase64: AUDIO }, { mime: 'audio/mp4', audioBase64: 'not base64!' }, { mime: 'audio/mp4', audioBase64: 'abc' },
+      { mime: 'audio/mp4', audioBase64: '' }, { mime: 'audio/mp4', audioBase64: AUDIO, extra: 1 }, [AUDIO]])
+      expect((await call(d, postT(body))).status, JSON.stringify(body)).toBe(400)
+    expect((await call(d, postT('{nope'))).body).toEqual({ ok: false, error: 'bad_json' })
+    expect(d.transcribe).not.toHaveBeenCalled()
+    expect((await call(deps(), postT({ mime: 'audio/mp4', audioBase64: AUDIO }))).body).toEqual({ ok: false, error: 'voice_not_wired' })
+    expect((await call(deps(), getT())).status).toBe(503)
+    expect((await call(undefined, postT({ mime: 'audio/mp4', audioBase64: AUDIO }))).status).toBe(503)
+    expect((await call(d, new Request('http://x/m/api/chat/transcribe', { method: 'PUT' }))).status).toBe(405)
+  })
+})

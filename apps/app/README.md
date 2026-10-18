@@ -34,6 +34,7 @@ maestro test .maestro/           # 模拟器上跑演示流程(要先有 develop
 ```
 
 - 加了 `expo-crypto` / `expo-camera`、以及 2026-10-04 的 `expo-audio` / `expo-file-system`(回复里的语音附件)之后要重新 `bunx expo run:ios` 生成 development build,模拟器才有这些原生模块。
+- 2026-10-18「按住说话」给 `expo-audio` 加了配置插件(麦克风说明 + 安卓 RECORD_AUDIO,不开后台录放),相机 / 相册插件的 `microphonePermission` 也改成同一句(写 `false` 会删掉 iOS 说明、在安卓屏蔽 RECORD_AUDIO)。要重新 `bunx expo run:ios` 生成 development build 才有麦克风权限。录音 16 kHz 单声道 AAC 24 kbps,60 秒封顶,送到电脑上用它配的语音转文字(与微信语音同一个),字填进输入框、不自动发。
 - `ios/`、`android/` **不进 git**(`.gitignore` 已列);原生部分以后走 Expo config plugin,保持「预构建可重生」。
 - `expo start` / `expo prebuild` 可能改写 `tsconfig.json` / `package.json`,别把这些改动提交。
 - 换过 bundle 相关的东西后用 `bunx expo start --clear`,免得模拟器拿到旧 bundle。

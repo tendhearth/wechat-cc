@@ -1,4 +1,4 @@
-import { PHONE_SAY_MAX_CHARS } from '@wechat-cc/protocol'
+import { PHONE_SAY_MAX_CHARS, PHONE_TRANSCRIBE_MAX_BYTES } from '@wechat-cc/protocol'
 import { labelJoin, type Lang } from '../i18n'
 import { DEMO_STICKER, DEMO_STICKER_FILE, DEMO_VOICE } from './demo-media'
 import { BackendError, type Backend, type CliSessionRowT, type Connection, type MatterT, type MatterDetailT, type ApprovalExplanationT, type ChatJobT, type ChatMessageT, type SessionContinueT, type MatterSayResultT, type UploadStateT, type ChatModelViewT, type OverseerTodayT, type TodayItemT, type CompanionHomeT, type FeedEventT } from './types'
@@ -321,6 +321,13 @@ export function makeDemoBackend(opts: { now?: () => number; setTimeout?: typeof 
       const a = chatMsgs.find(m => m.id === messageId)?.atts?.[index]
       if (!a || a.kind !== 'voice') throw new BackendError('not_found')
       return { ...DEMO_VOICE }
+    },
+    // 按住说话:演示里不送去任何地方,回一句写好的话(只填进输入框,和真连接一样不自动发)。
+    async transcribeStatus() { return { configured: true } },
+    async transcribe(p) {
+      if (!p.audioBase64) throw new BackendError('invalid')
+      if (p.audioBase64.length > Math.ceil(PHONE_TRANSCRIBE_MAX_BYTES / 3) * 4) throw new BackendError('too_large')
+      return lastLang === 'zh-Hans' ? '明天上午提醒我把周报发出去。' : 'Remind me tomorrow morning to send the weekly report.'
     },
     async sticker(file) {
       if (file !== DEMO_STICKER_FILE) throw new BackendError('not_found')

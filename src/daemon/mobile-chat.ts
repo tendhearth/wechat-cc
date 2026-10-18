@@ -1,4 +1,5 @@
-import { CHAT_PAGE_MAX, CHAT_TEXT_MAX, PHONE_CHAT_MAX_IMAGES, PHONE_SAY_MAX_CHARS } from '@wechat-cc/protocol'
+import { CHAT_PAGE_MAX, CHAT_TEXT_MAX, PHONE_CHAT_MAX_IMAGES, PHONE_SAY_MAX_CHARS, PHONE_TRANSCRIBE_MAX_BYTES, PHONE_TRANSCRIBE_MIMES } from '@wechat-cc/protocol'
+import { isNetworkUnprotectedError } from '../lib/network-gate'
 import type { MessageRecord } from '../lib/messages-store'
 import type { MatterStore } from '../core/matters/store'
 import type { ChatJob, PhoneChat } from './phone-chat'
@@ -64,6 +65,10 @@ export interface MobileChatDeps {
   search?(chatId: string, query: string, limit: number): Promise<MessageRecord[]>
   /** 合成语音(与桌面 agent_speak 同一个 synthesizeSpeech)。没接 ⇒ 语音路由 503。 */
   speak?(text: string): Promise<{ audio: Buffer; mime: string }>
+  /** 按住说话(2026-10-18):与微信语音同一个语音转文字(stt-config.json)。没配抛 `no_stt_config`。没接 ⇒ 503。 */
+  transcribe?(audio: Buffer, mime: string): Promise<{ text: string }>
+  /** 只读:电脑上配没配语音转文字(手机按钮先说清楚,不等录完才失败)。 */
+  transcribeStatus?(): { configured: boolean }
   /** 主人对话用哪个后端 / 模型(2026-10-06,与微信 `/api <模型>` 同一处:按对话钉 Mode.solo)。没接 ⇒ 503。 */
   model?: {
     current(chatId: string): ChatModelView
@@ -126,6 +131,10 @@ export function makePhoneChatId(d: { ownerChatId(): string | null; converseChatI
   }
 }
 
+/** 手机这一口等不过协议客户端的 15 秒:电脑这边 12 秒没转完就如实说「太慢」,不让手机误报「没送到」。 */
+export const TRANSCRIBE_TIMEOUT_MS = 12_000
+const B64 = /^[A-Za-z0-9+/]*={0,2}$/
+const TRANSCRIBE_B64_MAX = Math.ceil(PHONE_TRANSCRIBE_MAX_BYTES / 3) * 4
 const UUID = /^[a-f0-9]{8}-[a-f0-9]{4}-[1-5][a-f0-9]{3}-[89ab][a-f0-9]{3}-[a-f0-9]{12}$/i
 const json = (body: object, status = 200) => new Response(JSON.stringify(body), { status, headers: { 'content-type': 'application/json; charset=utf-8', 'cache-control': 'no-store' } })
 const err = (error: string, status: number) => json({ ok: false, error }, status)
@@ -254,6 +263,48 @@ export async function mobileChatRoute(deps: MobileChatDeps | undefined, url: URL
     // 一帧装不下(很长的一段)⇒ 413,手机提示去电脑上听;不切片(语音附件本来就 ≤ 500 字)。
     if (framedTooLarge(body)) return err('too_large', 413)
     return new Response(body, { status: 200, headers: { 'content-type': 'application/json; charset=utf-8', 'cache-control': 'no-store' } })
+  }
+  // 按住说话(2026-10-18):一段录音 → 电脑上配的语音转文字 → 字回手机,填进输入框、不自动发。
+  // GET 只问配没配;POST 至多 PHONE_TRANSCRIBE_MAX_BYTES(一帧装得下)。录音与转出来的字都不进日志、不落盘。
+  if (url.pathname === '/m/api/chat/transcribe') {
+    if (req.method === 'GET') {
+      if (!deps?.transcribeStatus) return err('voice_not_wired', 503)
+      try { return json({ ok: true, configured: deps.transcribeStatus().configured === true }) } catch { return err('unavailable', 503) }
+    }
+    if (req.method !== 'POST') return err('method_not_allowed', 405)
+    if (!deps?.transcribe) return err('voice_not_wired', 503)
+    // 先量长度再解析:局域网直连没有中继那一帧的上限
+    let raw: string
+    try { raw = await req.text() } catch { return err('bad_json', 400) }
+    if (raw.length > TRANSCRIBE_B64_MAX + 1024) return err('audio_too_large', 413)
+    let body: unknown
+    try { body = JSON.parse(raw) } catch { return err('bad_json', 400) }
+    if (!body || typeof body !== 'object' || Array.isArray(body)) return err('invalid', 400)
+    const b = body as Record<string, unknown>
+    if (Object.keys(b).some(k => k !== 'mime' && k !== 'audioBase64')) return err('invalid', 400)
+    if (typeof b.mime !== 'string' || !(PHONE_TRANSCRIBE_MIMES as readonly string[]).includes(b.mime)) return err('invalid', 400)
+    if (typeof b.audioBase64 !== 'string' || !b.audioBase64 || b.audioBase64.length % 4 !== 0 || !B64.test(b.audioBase64)) return err('invalid', 400)
+    if (b.audioBase64.length > TRANSCRIBE_B64_MAX) return err('audio_too_large', 413)
+    const audio = Buffer.from(b.audioBase64, 'base64')
+    if (!audio.length) return err('invalid', 400)
+    if (audio.length > PHONE_TRANSCRIBE_MAX_BYTES) return err('audio_too_large', 413)
+    let text: string
+    let timer: ReturnType<typeof setTimeout> | undefined
+    try {
+      const r = await Promise.race([
+        deps.transcribe(audio, b.mime),
+        new Promise<never>((_, rej) => { timer = setTimeout(() => rej(new Error('stt_timeout')), TRANSCRIBE_TIMEOUT_MS) }),
+      ])
+      text = typeof r?.text === 'string' ? r.text.trim() : ''
+    } catch (e) {
+      const m = e instanceof Error ? e.message : ''
+      if (/no.?stt.?config/i.test(m)) return err('stt_not_configured', 422)
+      if (isNetworkUnprotectedError(e)) return err('stt_blocked', 503)
+      if (m === 'stt_timeout' || /timed out|timeout|aborted/i.test(m)) return err('stt_timeout', 504)
+      return err('stt_failed', 502)
+    } finally { if (timer) clearTimeout(timer) }
+    if (!text) return err('no_speech', 422)
+    return json({ ok: true, text: text.slice(0, PHONE_SAY_MAX_CHARS) })
   }
   if (url.pathname === '/m/api/chat/say') {
     if (req.method !== 'POST') return err('method_not_allowed', 405)

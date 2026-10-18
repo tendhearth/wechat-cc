@@ -43,7 +43,9 @@ export function makeHttpSTTProvider(opts: HttpSTTProviderOptions, deps?: HttpSTT
     const form = new FormData()
     // `.` extension is fine — whisper servers sniff the content; the mime type
     // on the Blob is what matters. Name it by a rough type for server logs.
-    const ext = mime.includes('webm') ? 'webm' : mime.includes('ogg') ? 'ogg' : mime.includes('mp3') || mime.includes('mpeg') ? 'mp3' : 'wav'
+    // 手机按住说话录的是 m4a(audio/mp4 / aac):OpenAI 按文件名后缀认格式,不能叫 .wav。
+    const ext = mime.includes('webm') ? 'webm' : mime.includes('ogg') ? 'ogg' : mime.includes('mp3') || mime.includes('mpeg') ? 'mp3'
+      : mime.includes('mp4') || mime.includes('m4a') || mime.includes('aac') ? 'm4a' : 'wav'
     form.append('file', new Blob([new Uint8Array(audio)], { type: mime }), `audio.${ext}`)
     form.append('model', opts.model)
     const headers: Record<string, string> = {}

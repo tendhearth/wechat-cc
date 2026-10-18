@@ -1,5 +1,6 @@
 {
   "CFBundleDisplayName": "Tendhearth",
   "NSCameraUsageDescription": "Tendhearth 只用相机扫描电脑上显示的配对码。",
-  "NSPhotoLibraryUsageDescription": "Tendhearth 只在你选择要发给 CC 的图片时读取相册。"
+  "NSPhotoLibraryUsageDescription": "Tendhearth 只在你选择要发给 CC 的图片时读取相册。",
+  "NSMicrophoneUsageDescription": "Tendhearth 只在你按住说话按钮时使用麦克风，把你的话转成文字。"
 }

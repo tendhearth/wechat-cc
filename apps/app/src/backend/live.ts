@@ -10,7 +10,7 @@
  * 钩子期间对客户端的一切调用(请求、挂订阅、退订、关)都推到微任务之后。
  */
 import {
-  makeProtocolClient, PHONE_API_SCHEMAS, PHONE_ANSWER_MAX_JSON, PHONE_SAY_MAX_CHARS,
+  makeProtocolClient, PHONE_API_SCHEMAS, PHONE_ANSWER_MAX_JSON, PHONE_SAY_MAX_CHARS, PHONE_TRANSCRIBE_MAX_BYTES, PHONE_TRANSCRIBE_MIMES,
   HomeTopic, ApprovalsTopic, AgentsTopic, MatterTopic,
   type ClientOpts, type ProtocolClient, type ProtocolSocket,
 } from '@wechat-cc/protocol'
@@ -271,6 +271,15 @@ export function makeLiveBackend(d: LiveDeps): Backend {
     },
     async chatVoice(messageId, index) {
       return strip(await call<{ ok: true; mime: string; data: string }>('GET /m/api/chat/voice', `/m/api/chat/voice?id=${encodeURIComponent(messageId)}&i=${index}`))
+    },
+    async transcribeStatus() {
+      return { configured: (await call<{ configured: boolean }>('GET /m/api/chat/transcribe', '/m/api/chat/transcribe')).configured }
+    },
+    async transcribe(p) {
+      // 一帧装不下的在手机上就拦,不白传;不自动重发(转一次就够,重发会让电脑再转一遍)。
+      if (p.audioBase64.length > Math.ceil(PHONE_TRANSCRIBE_MAX_BYTES / 3) * 4) throw new BackendError('too_large')
+      if (!p.audioBase64 || !(PHONE_TRANSCRIBE_MIMES as readonly string[]).includes(p.mime)) throw new BackendError('invalid')
+      return (await call<{ text: string }>('POST /m/api/chat/transcribe', '/m/api/chat/transcribe', { body: { mime: p.mime, audioBase64: p.audioBase64 } })).text
     },
     async sticker(file) {
       return strip(await call<{ ok: true; mime: string; data: string }>('GET /m/api/sticker/', `/m/api/sticker/${encodeURIComponent(file)}?b64=1`))

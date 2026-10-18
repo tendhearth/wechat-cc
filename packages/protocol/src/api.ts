@@ -34,6 +34,15 @@ export const PHONE_SAY_MAX_CHARS = 20_000
 export const PHONE_CHAT_MAX_IMAGES = 4
 /** 回答问题:answers 的 JSON 序列化长度上限(mobile-workbench.ts 的 POST /m/api/matter/answer)。app 在手机上就拦。 */
 export const PHONE_ANSWER_MAX_JSON = 20_000
+/**
+ * 按住说话(POST /m/api/chat/transcribe,2026-10-18):一段录音最长 60 秒、至多 200 KiB。
+ * 手机按 16 kHz 单声道 AAC 24 kbps 录:60 s ≈ 180 KB + m4a 封装几 KB,装得下。
+ * 200 KiB 的 base64 是 273 KB,经 v2 密封再 base64 约 364 KB,离中继一帧 512 KiB 还有余量(api-transcribe.test.ts 实测)。
+ */
+export const PHONE_TRANSCRIBE_MAX_SECONDS = 60
+export const PHONE_TRANSCRIBE_MAX_BYTES = 200 * 1024
+/** 收哪几种录音(whisper 一类网关都认);手机录的是 audio/mp4(m4a)。 */
+export const PHONE_TRANSCRIBE_MIMES = ['audio/mp4', 'audio/m4a', 'audio/aac', 'audio/wav', 'audio/webm', 'audio/mpeg', 'audio/ogg'] as const
 
 // ── 手机端 HTML 页(没有 JSON 形状,守卫要显式排除)───────────────────────
 
@@ -516,6 +525,10 @@ export const PHONE_API_SCHEMAS: Readonly<Record<string, z.ZodTypeAny>> = {
   'POST /m/api/chat/model': z.union([ChatModelView, PhoneErrorResponse]),
   'GET /m/api/chat/file': z.union([z.object({ ok: z.literal(true), name: z.string(), mime: z.string(), size: z.number(), sha256: z.string(), offset: z.number(), nextOffset: z.number(), contentBase64: z.string() }), PhoneErrorResponse]),
   'GET /m/api/chat/voice': z.union([z.object({ ok: z.literal(true) }).extend(ChatVoice.shape), PhoneErrorResponse]),
+  // 按住说话(2026-10-18):GET 只问电脑上配没配语音转文字;POST 回转好的字(不自动发)。
+  // 错误码:stt_not_configured 422 / no_speech 422 / audio_too_large 413 / stt_blocked(网络守护拦下)503 / stt_failed 502 / stt_timeout 504。
+  'GET /m/api/chat/transcribe': z.union([z.object({ ok: z.literal(true), configured: z.boolean() }), PhoneErrorResponse]),
+  'POST /m/api/chat/transcribe': z.union([z.object({ ok: z.literal(true), text: z.string() }), PhoneErrorResponse]),
   'GET /m/api/connections': z.union([z.object({ ok: z.literal(true) }).extend(Connections.shape), PhoneErrorResponse]),
   'GET /m/api/sessions': z.union([z.object({ ok: z.literal(true), items: z.array(NativeSessionRow), nextCursor: z.string().nullable() }), PhoneErrorResponse]),
   'GET /m/api/cli/sessions': z.union([z.object({ ok: z.literal(true), sessions: z.array(CliSessionRow) }), PhoneErrorResponse]),
