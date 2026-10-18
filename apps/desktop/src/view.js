@@ -94,6 +94,13 @@ export function daemonStatusLine(daemon) {
   return daemon.alive ? { cls: "ok", text: "CC 在家 · 运行中" } : { cls: "bad", text: "CC 没在运行" }
 }
 
+// 网络守护开关显不显示(主人 2026-10-18):装了 bx 或守护已经开着才显示。没装 bx 的新用户先用起来,
+// 不用一上来弄懂 bx 是什么;已经开着的人照常看得到、关得掉。`r` = `guard status --json`。
+/** @param {{ enabled?: boolean, bx_installed?: boolean } | null | undefined} r */
+export function guardRowVisible(r) {
+  return !!r && (r.enabled === true || r.bx_installed === true)
+}
+
 // 网络守护一行(2026-10-02,守护 v2 按调用判):/v1/health.guard 或 `guard status --json` 的
 // {enabled, source, safe, detail, protected_in_use?, providers?}。
 // 守护关着 / 老 daemon 没这个字段 → null(不显示,不制造假警报)。不安全时:有需要保护的接口在用 → 红;

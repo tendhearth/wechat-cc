@@ -824,6 +824,8 @@ export const GuardStatusOutput = z.object({
   safe: z.boolean().optional(),
   detail: z.string().optional(),
   bx_path: z.string().nullable().optional(),
+  // 2026-10-18:本机装没装 bx(守护关着也报)。桌面:没装又没开 ⇒ 不显示守护开关。老 CLI 没有。
+  bx_installed: z.boolean().optional(),
   // 守护 v2(按调用判):信号来源设置 + 已配置 provider 各自的分类。老 CLI 没有。
   signal_source: z.enum(['auto', 'probe']).optional(),
   protected_in_use: z.boolean().optional(),

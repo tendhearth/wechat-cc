@@ -191,11 +191,16 @@ test('drawer toggle: 持久化失败时回滚,不静默撒谎(v1.6.4 契约)', a
   // guard 开关要落盘;shim 的 mutations=blocked 让这次写必然失败。开关必须
   // 退回原状,而不是停在乐观的"已开启"上骗人。这条契约此前没有 e2e 覆盖 ——
   // 恰恰是它让上面那条老测试红了七周。
+  // 2026-10-18 起没装 bx 又没开守护时这一行隐藏(CI 机器上就是这样);这里测的是回滚契约,
+  // 等打开抽屉那次刷新落定后再把行亮出来。
+  await expect(page.locator('#guard-status-line')).not.toHaveText(/—|查询中/)
+  await page.evaluate(() => { (document.getElementById('guard-row') as HTMLElement).hidden = false })
+  // 打开抽屉会读回真实状态(shim 的状态目录里可能是开着的),所以按读回的初值断言「点了也不变」。
   const toggle = page.locator('#guard-toggle')
-  await expect(toggle).not.toHaveClass(/\bon\b/)
+  const before = await toggle.getAttribute('aria-pressed')
   await toggle.click()
-  await expect(toggle).not.toHaveClass(/\bon\b/)
-  await expect(toggle).toHaveAttribute('aria-pressed', 'false')
+  await expect(toggle).toHaveAttribute('aria-pressed', before ?? 'false')
+  await expect(toggle).toHaveClass(before === 'true' ? /\bon\b/ : /^(?!.*\bon\b)/)
 })
 
 test('drawer and wizard step-4 toggles are independent (duplicate-ID fix regression guard)', async ({ page, shimUrl, shim }) => {

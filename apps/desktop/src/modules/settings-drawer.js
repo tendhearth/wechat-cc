@@ -14,6 +14,8 @@ import { icon } from "./icons.js"
 let listenersAttached = false
 /** @type {{ invoke: (cmd: string, args: Record<string, unknown>) => Promise<unknown> }|null} */
 let projectsDeps = null
+/** @type {(() => void)|null} */
+let onDrawerOpen = null
 // Two-step inline delete confirm — alias armed on first click, committed on
 // second click within 3s (no native confirm() popups, per design language).
 /** @type {string|null} */
@@ -27,6 +29,8 @@ export function openSettingsDrawer() {
   drawer.classList.add("is-open")
   // Refresh the 项目管理 list each open so favorites / new projects show.
   if (projectsDeps) loadProjectsAdmin(projectsDeps).catch(err => console.error("projects admin load failed", err))
+  // 网络守护那一行每次打开都重读(装没装 bx / 开没开决定它显不显示)。
+  if (onDrawerOpen) onDrawerOpen()
 }
 
 /**
@@ -129,11 +133,12 @@ export function closeSettingsDrawer() {
  * Attach drawer event handlers. Safe to call multiple times — only
  * the first call wires.
  *
- * @param {{ onToggleChange: (id: string, on: boolean) => void | boolean | Promise<void | boolean>, deps?: { invoke: (cmd: string, args: Record<string, unknown>) => Promise<unknown> } }} opts
+ * @param {{ onToggleChange: (id: string, on: boolean) => void | boolean | Promise<void | boolean>, onOpen?: () => void, deps?: { invoke: (cmd: string, args: Record<string, unknown>) => Promise<unknown> } }} opts
  */
 export function wireSettingsDrawer(opts) {
   if (listenersAttached) return
   listenersAttached = true
+  onDrawerOpen = opts.onOpen ?? null
 
   // Capture deps for the 项目管理 list (loaded lazily on drawer open).
   projectsDeps = opts.deps ?? null
