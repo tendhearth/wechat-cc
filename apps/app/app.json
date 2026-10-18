@@ -12,7 +12,8 @@
       "zh-Hans": "./locales/zh-Hans.json"
     },
     "ios": {
-      "bundleIdentifier": "com.tendhearth.app"
+      "bundleIdentifier": "com.tendhearth.app",
+      "config": { "usesNonExemptEncryption": false }
     },
     "android": {
       "package": "com.tendhearth.app",

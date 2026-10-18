@@ -215,7 +215,7 @@ CI:`app · native push vectors`(`.github/workflows/ci.yml`,仅 `apps/app/native/
   4. `xcodebuild -exportArchive`(ExportOptions:method `app-store-connect`、team 9Y6JAPDP7A、automatic);
   5. `xcrun altool --upload-app --type ios -f <ipa> --apiKey … --apiIssuer …`。
   - **Xcode 升级后报 `cannot find type '__ObjC::expo'` / SDK built with Swift 6.3.1**:expo-modules-jsi 的 `apple/Products/ExpoModulesJSI.xcframework` 是本机按源码 hash 缓存的,换编译器不会重建 —— 跑它的 `apple/scripts/clear-caches.sh` 并删 DerivedData 再 archive。
-  - 下次上传先把 build number 加 1;导出合规(ITSAppUsesNonExemptEncryption)等主人在 TestFlight 页答过一次后再写进 `app.config.js`。
+  - 下次上传先把 build number 加 1。导出合规已答(10-17):只用标准算法(@noble 的 X25519/Ed25519、HKDF-SHA256、AES-256-GCM)+ iOS 自带 TLS,无自研密码,暂不上法区 ⇒ 无需文件,`app.json` 的 `ios.config.usesNonExemptEncryption: false`。上法国区前要重答并交法国申报。
 - **安卓 / 商店后置**：安卓需要 Firebase 项目、`google-services.json` / `FCM_SERVICE_ACCOUNT`、App Links 签名指纹、SDK / 设备与实际 APK 验收；Google Play 账号与生产构建另办。凭据步骤见[中继手册](../../docs/maintainer/relay.md)。
 - **旧欠账已关闭**：#165 配对码只配一台，成功配对即作废，重复码已有真机自动化断言；微信聊天那件事的说一句已按 `requestId` 去重(2026-10-01，`matter_say_receipts`，同 id 同文返回原回执，异文返回 `input_conflict`)。相机权限 en / zh-Hans 文案已由 #158 补齐。
 
