@@ -8,6 +8,7 @@ import { useConnection, useQuery } from '../../state/hooks'
 import { useWork } from '../../state/useWork'
 import { useTerminalSessions } from '../../state/useTerminal'
 import { useToday } from '../../state/useToday'
+import { useAwaySince } from '../../state/useAway'
 import { CCFigure } from '../../ui/CCFigure'
 import { ConnectionNotice } from '../../ui/ConnectionNotice'
 import { DemoBanner } from '../../ui/DemoBanner'
@@ -49,7 +50,8 @@ export default function Now() {
   const termWaiting = terminalNeedsYou(terminal.sessions, !v.waitingUnknown).map(s => terminalRow(s, Date.now(), lang))
   const waitingTotal = v.waiting.length + termWaiting.length
   // 「今天」:CC 统管的所有执行者过去 24 小时的几个数 + 最近做完的三件(与微信「日报」同一份)。
-  const today = todayView(useToday().today, Date.now(), lang)
+  // 离开 App 一小时以上 ⇒ 这一段先说「你不在的这 N 小时」做完了什么(只在本机记离开的时间)。
+  const today = todayView(useToday().today, Date.now(), lang, useAwaySince())
 
   return (
     <SafeAreaView edges={['top']} style={{ flex: 1, backgroundColor: c.paper }}>
@@ -112,9 +114,9 @@ export default function Now() {
         {/* 过去 24 小时放在等你的事下面:先管要你管的,再看做了什么;等你的数不在这里重复。 */}
         {today ? (
           <View testID="now-today">
-            <Pressable testID="now-today-counts" accessibilityRole="button" accessibilityLabel={`${t(lang, 'today.title')}: ${today.counts}. ${t(lang, 'today.openAll')}`} onPress={() => router.push('/together')}
+            <Pressable testID="now-today-counts" accessibilityRole="button" accessibilityLabel={`${today.title}: ${today.counts}. ${t(lang, 'today.openAll')}`} onPress={() => router.push('/together')}
               style={({ pressed }) => ({ gap: 2, marginBottom: space.s, opacity: pressed ? 0.7 : 1 })}>
-              <Txt role="meta" tone="inkSoft" accessibilityRole="header">{t(lang, 'today.title')}</Txt>
+              <Txt role="meta" tone="inkSoft" accessibilityRole="header">{today.title}</Txt>
               {today.counts ? <Txt role="item">{today.counts}</Txt> : null}
               {today.partial ? <Txt testID="now-today-partial" role="caption" tone="inkSoft">{t(lang, 'today.partial')}</Txt> : null}
             </Pressable>

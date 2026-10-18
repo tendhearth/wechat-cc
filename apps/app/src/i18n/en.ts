@@ -31,6 +31,7 @@ const en = {
   'now.openChat': 'Talk to CC',
   // 「今天」(GET /m/api/today):过去 24 小时,终端 + 一起做
   'today.title': 'Last 24 hours',
+  'today.whileAway': 'While you were away · {n}h',
   'today.done': '{n} done',
   'today.running': '{n} running',
   'today.stuck': '{n} may be stuck',

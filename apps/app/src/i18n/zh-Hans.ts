@@ -33,6 +33,7 @@ const zh: Record<keyof typeof en, string> = {
   'now.openChat': '跟 CC 说',
   // 「今天」(GET /m/api/today):过去 24 小时,终端 + 一起做
   'today.title': '过去 24 小时',
+  'today.whileAway': '你不在的这 {n} 小时',
   'today.done': '{n} 件做完',
   'today.running': '{n} 件在跑',
   'today.stuck': '{n} 件可能卡住',
