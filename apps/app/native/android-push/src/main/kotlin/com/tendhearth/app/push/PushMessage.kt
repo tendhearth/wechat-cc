@@ -5,7 +5,7 @@ import java.net.URLEncoder
 
 /** 与 packages/protocol 的 PushPlaintext(zod)同一形状:多余字段忽略;可选字段出现就必须是字符串(JSON null 也拒)。 */
 data class PushMessage(val ts: Double, val kind: String, val title: String, val body: String, val taskId: String?, val requestId: String?) {
-  /** 安卓通知渠道:需要你决定(批准 / 问题)与 完成与失败(其余)。 */
+  /** 安卓通知渠道:需要你决定(批准 / 问题)与 CC 的动态(完成 / 失败 / 主动找你 / 测试)。 */
   val channel: String get() = if (kind == "permission" || kind == "question") "decide" else "updates"
 
   /** 点通知的深链,交给 app 的 src/app/push-open.tsx(参数在那边校验)。 */
@@ -17,7 +17,8 @@ data class PushMessage(val ts: Double, val kind: String, val title: String, val 
   }
 
   companion object {
-    val KINDS = setOf("permission", "question", "task_done", "task_failed", "test")
+    /** companion:CC 主动找你(微信不通时落到 App),没有 taskId,点开去对话页;渠道沿用 updates。 */
+    val KINDS = setOf("permission", "question", "task_done", "task_failed", "test", "companion")
 
     fun parse(o: JSONObject): PushMessage? {
       val ts = o.opt("ts") as? Number ?: return null

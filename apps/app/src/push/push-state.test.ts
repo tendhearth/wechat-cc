@@ -177,8 +177,8 @@ describe('native.ts 的钥匙串 / category 选项(源码守卫:native.ts 引 ex
     expect(shared).toContain('keychainAccessible: SecureStore.AFTER_FIRST_UNLOCK')
     expect(shared).toMatch(/Platform\.OS === 'ios'[^\n]*accessGroup: extra\.keychainGroup/)
   })
-  it('五个 category 都注册,且不带任何动作', () => {
-    expect(src).toContain("['th.approval', 'th.question', 'th.done', 'th.failed', 'th.test']")
+  it('六个 category 都注册(含 th.companion),且不带任何动作', () => {
+    expect(src).toContain("['th.approval', 'th.question', 'th.done', 'th.failed', 'th.test', 'th.companion']")
     expect(src).toContain('setNotificationCategoryAsync(id, [])')
   })
   it('解除 / 撤销:清密钥的同时向系统注销推送', () => {

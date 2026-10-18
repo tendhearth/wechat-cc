@@ -16,6 +16,15 @@ describe('resolvePushRoute —— 旧通知先定位事项、拉最新详情再�
     expect(await resolvePushRoute({ kind: 'task_done', taskId: 'ab12cd34' }, ok)).toEqual({ kind: 'matter', id: 'ab12cd34' })
     expect(await resolvePushRoute({ kind: 'task_failed', taskId: 'ab12cd34' }, ok)).toEqual({ kind: 'matter', id: 'ab12cd34' })
   })
+  it('CC 主动找你(companion)⇒ 对话页 /chat,不拉详情;带了 taskId 也一样', async () => {
+    const f = vi.fn(async () => ({}))
+    expect(await resolvePushRoute({ kind: 'companion' }, f)).toEqual({ kind: 'chat' })
+    expect(await resolvePushRoute({ kind: 'companion', taskId: 'ab12cd34' }, f)).toEqual({ kind: 'chat' })
+    expect(f).not.toHaveBeenCalled()
+    expect(hrefFor({ kind: 'chat' })).toBe('/chat')
+    expect(pushOpenHref({ kind: 'companion' })).toBe('/push-open?kind=companion')
+    expect(targetFromParams({ kind: 'companion' })).toEqual({ kind: 'companion' })
+  })
   it('事情在电脑上已经不在(not_found)⇒ gone,回此刻', async () => {
     const r = await resolvePushRoute({ kind: 'permission', taskId: 'ab12cd34', requestId: 'p' }, async () => { throw new BackendError('not_found') })
     expect(r).toEqual({ kind: 'gone' })

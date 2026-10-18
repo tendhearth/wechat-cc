@@ -176,6 +176,7 @@ scripts/          sim-push.ts:模拟器推送工具(合成开发令牌 + simctl 
 ### 规矩
 
 - 通知从不执行操作(category 无动作):点开只进 app,批准在批准页里做。
+- `companion`(2026-10-18):CC 主动找你、微信不通时落到 App 的那一句(daemon `src/daemon/companion/proactive-channel.ts`)。没有 taskId;iOS category `th.companion`,安卓渠道 `updates`;点开去对话页 `/chat`。微信送到了就不推(那一行 App 对话页本来就看得见)。
 - 扩展 / 消息服务**只拿推送密钥记录** `{v,key,lang}`,拿不到设备令牌(令牌能以这台手机的身份操作电脑,扩展只需要解密)。主 app 的 `keychain-access-groups` 把自己的组排第一,保证不带 accessGroup 的写入(配对记录)不落进共享组。
 - 令牌、推送密钥、token 不进日志。解不开 ⇒ 中性占位(「CC / CC 有新动态」);标题按 `kind` 在原生端本地化(`native/push-strings.json`,改文案两种语言一起改),正文是用户自己的数据原样显示。
 - 重复推送 iOS 只能静音(`interruptionLevel = .passive`,丢弃要 Apple 特批权限),中继的 `apns-collapse-id`(= taskId)让同一件事只留最新一条;安卓服务直接不发。

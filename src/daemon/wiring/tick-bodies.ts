@@ -125,6 +125,12 @@ export interface TickDeps {
    */
   health?: { shouldSuspend(dep: 'wechat'): boolean }
   /**
+   * CC 主动找你的第二条路(2026-10-18,daemon/companion/proactive-channel.ts):微信不能用 / 发失败时
+   * 落到 App。缺省 ⇒ 只有微信(即改造前)。微信 degraded 时,这一拍只在 App 收得到、且当轮走 daemon
+   * 交付(文字由 daemon 送,才改得了道)时才照跑;否则同以前,在模型之前就停手。
+   */
+  proactive?: import('../companion/proactive-channel').ProactiveOutbound
+  /**
    * Testing seams for the optional hearth push (memory-infra Phase 1, HI W3).
    * Production omits these — distillAndPushOwnerKnowledge falls back to the
    * real `connectHearth`/`buildHearthPlan`. Tests inject fakes so the push
@@ -449,10 +455,11 @@ export function buildTickBodies(deps: TickDeps): TickBodies {
   type DispatchGate =
     | { blocked: 'wechat_degraded' }
     | { blocked: 'session_in_flight' | null; proj: { alias: string; path: string }; tier: ReturnType<typeof resolveEffectiveTier>; providerId: typeof deps.boot.defaultProviderId }
+  const deliveryModeOf = (providerId: string): ReplyDeliveryMode => (deps.replyDeliveryModeFor ?? replyDeliveryFor)(providerId)
+  /** 微信断了还能不能照跑:App 收得到这个 chat,且当轮走 daemon 交付(legacy 的 reply 工具直连微信,改不了道)。 */
+  const appCarries = (chatId: string, providerId: string): boolean =>
+    !!deps.proactive && !!deps.replyDelivery && deliveryModeOf(providerId) === 'daemon' && deps.proactive.appDeliverable(chatId)
   function resolveDispatch(chatId: string): DispatchGate {
-    // 在 LLM 生成之前就拦下:degraded 时这条消息既发不出去,生成它也是白烧
-    // token,而且等链路恢复后内容早已过时 —— 所以直接丢弃,不排队。
-    if (deps.health?.shouldSuspend('wechat')) return { blocked: 'wechat_degraded' }
     const snapshot = deps.ilink.loadProjects()
     const currentAlias = snapshot.current && snapshot.projects[snapshot.current] ? snapshot.current : null
     const proj = currentAlias
@@ -468,6 +475,10 @@ export function buildTickBodies(deps: TickDeps): TickBodies {
       mode.kind === 'solo' ? mode.provider
       : mode.kind === 'primary_tool' ? mode.primary
       : (mode.participants?.[0] ?? deps.boot.defaultProviderId)
+    // 在 LLM 生成之前就拦下:degraded 时这条消息既发不出去,生成它也是白烧
+    // token,而且等链路恢复后内容早已过时 —— 所以直接丢弃,不排队。
+    // 例外(2026-10-18):App 收得到 ⇒ 这一拍照跑,文字落到 App(「有一条路送得到」才是闸)。
+    if (deps.health?.shouldSuspend('wechat') && !appCarries(chatId, providerId)) return { blocked: 'wechat_degraded' }
     // Proactive fast-skip (TOCTOU-prone on its own, kept ABOVE the mutex
     // deliberately): avoids waiting on the lock in the common case where a
     // user session is obviously already busy. The runExclusive below closes
@@ -536,10 +547,12 @@ export function buildTickBodies(deps: TickDeps): TickBodies {
       const undo = args.claim()
       // 回复交付(spec 2026-10-03,已定 ③):当轮 provider 走 daemon ⇒ 推送也是一轮,最后的话就是推送,
       // `NO_REPLY` = 这次不发(撤回登记);legacy ⇒ 照旧只认 reply 工具。
-      const delivery = deps.replyDelivery && (deps.replyDeliveryModeFor ?? replyDeliveryFor)(providerId) === 'daemon' ? deps.replyDelivery : undefined
+      const delivery = deps.replyDelivery && deliveryModeOf(providerId) === 'daemon' ? deps.replyDelivery : undefined
       const allSegments = replyTextStrategyFor(providerId) === 'all_segments'
       const tickText = args.buildText({ replyDelivery: delivery ? 'final_text' : 'tool', allSegments })
-      const turn = delivery?.begin(chatId, { mode: 'daemon', context: 'tick', providerId, textStrategy: replyTextStrategyFor(providerId) })
+      // 往哪儿送(微信能用走微信,不能用 / 发失败落到 App)由 proactive-channel 定,一轮粘住一条路。
+      const outbound = delivery ? deps.proactive?.open(chatId) : undefined
+      const turn = delivery?.begin(chatId, { mode: 'daemon', context: 'tick', providerId, textStrategy: replyTextStrategyFor(providerId), ...(outbound ? { outbound } : {}) })
       try {
         if (turn) {
           const summary = await collectTurn(handle.dispatch(tickText))
@@ -548,6 +561,9 @@ export function buildTickBodies(deps: TickDeps): TickBodies {
             turn.abandon(summary.errorCode ?? 'error')
           } else {
             const report = await turn.deliver({ finalText: summary.finalText ?? '', narration: summary.narration ?? [] })
+            // 落在 App ⇒ 整轮一条 companion 推送;落在微信 ⇒ 什么都不做(App 对话页已经看得见那一行)。
+            outbound?.finish()
+            if (outbound?.channel() === 'app') deps.log('COMPANION', `chat=${chatId} tick delivered to the app (wechat not usable)`)
             if (report.failures.length > 0 && report.bubbles === 0 && report.attachmentsSent === 0) {
               // 发了但没发出去(断线 / 风控):登记保留,不在下一拍重跑模型再发一次(2026-10-10)。
               // 「失败」也可能其实送到了(超时之后服务端已收),重发就是重复;断线时每拍一轮模型也违背「断线时停掉外发与模型轮次」。

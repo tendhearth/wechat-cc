@@ -241,8 +241,8 @@ describe('PushPlaintext —— 解开之后的明文形状(daemon 与原生端�
     expect(index.PushPlaintext).toBe(PushPlaintext)
     expect(index.PushKind).toBe(PushKind)
   })
-  it('kind 只有五种', () => {
-    expect(PushKind.options).toEqual(['permission', 'question', 'task_done', 'task_failed', 'test'])
+  it('kind 只有六种', () => {
+    expect(PushKind.options).toEqual(['permission', 'question', 'task_done', 'task_failed', 'test', 'companion'])
   })
   it('合法载荷 seal → open → parse 通过;缺 title / 未知 kind / ts 非数字 ⇒ 拒', () => {
     const key = derivePushKey('schema-token')

@@ -10,7 +10,7 @@
  * - 权限中继:中继 open 时已判过在场;这里先推手机,手机够得着 ⇒ 微信卡片没送到也不作废码
  *   (askUser keepOnUndelivered),手机经 /m/api/cli/permission 拍板;谁都够不着 ⇒ 'undelivered',同改造前。
  *
- * 推送载荷沿用协议包的 PushPlaintext(原生两端只认那五种 kind,新 kind 老 app 会丢):
+ * 推送载荷沿用协议包的 PushPlaintext(原生两端只认协议包 PushKind 里那几种,新 kind 老 app 会丢):
  * kind 用 permission / task_done,taskId 写成 `cli:<session_id>` —— app 认这个前缀就去
  * /terminal/[id](那页能拍板、能接着说);同一会话的通知按它折叠(collapse-id / 线程)。
  * 失败只记日志、丢弃 —— 断线不重试。

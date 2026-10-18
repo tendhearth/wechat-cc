@@ -281,7 +281,7 @@ const zh: Record<keyof typeof en, string> = {
   'push.placeholderTitle': 'CC',
   'push.placeholder': 'CC 有新动态',
   'push.channelDecide': '需要你决定',
-  'push.channelUpdates': '完成与失败',
+  'push.channelUpdates': 'CC 的动态',
   'push.opening': '正在打开…',
   'push.gone': '这件事在电脑上已经不在了。',
   'push.goNow': '回到此刻',

@@ -24,6 +24,7 @@ import type { ReplySinks } from '../reply-sinks'
 import { buildPipelineDeps } from './pipeline-deps'
 import { buildLifecycleDeps } from './lifecycle-deps'
 import { buildTickBodies, type TickBodies } from './tick-bodies'
+import { makeProactiveOutbound, type ProactiveOutbound } from '../companion/proactive-channel'
 import { makeMemoryLlmOps } from '../memory-llm-ops'
 import { makeAtelierStore } from '../atelier-store'
 import { makeJsonAtelierPlanner } from '../atelier-planner'
@@ -154,6 +155,11 @@ export interface WiredDeps {
   phoneConnect: import('../internal-api/types').PhoneConnectDep
   /** 手机 app 原生推送出口(pipeline-deps 造);main.ts 接给终端会话推送。 */
   appPush: import('../cli-app-push').AppPushOutlet
+  /**
+   * CC 主动找你的出口(2026-10-18,companion/proactive-channel.ts):微信能用走微信,不能用 / 发失败落到 App。
+   * 伙伴的 tick 已经接上;main.ts 接给提醒。
+   */
+  proactive: ProactiveOutbound
   /** 每晚记忆整理运行时(pipeline-deps 造);main.ts 挂定时器 + setMemoryNightly。 */
   memoryNightly: import('../memory/nightly-runtime').MemoryNightlyRuntime
   mattersService: import('../../core/matters/service').MattersService | null
@@ -254,8 +260,18 @@ export function wireMain(opts: WireMainOpts): WiredDeps {
       ? `cycle created record=${result.recordId} shared=${result.shared}`
       : `cycle ${result.status}`)
   }
+  // pipeline-deps 先造:App 那条路(companionApp)在它里面,伙伴的 tick 要用。buildTickBodies 构造时只是闭包。
+  const { appPush, companionApp, pipelineDeps, companionConverse, petTurn, settingsPanelLink, mattersService, memoryNightly, stopMatterActivity, connections, phoneConnect } = buildPipelineDeps(opts, refs)
+  const proactive = makeProactiveOutbound({
+    wechatDegraded: () => opts.boot.health.health.shouldSuspend('wechat'),
+    wechatClosedSince: (chatId) => opts.ilink.proactiveClosedSince(chatId),
+    sendWechat: (chatId, text) => opts.ilink.sendMessage(chatId, text),
+    app: () => companionApp,
+    log: (tag, line) => opts.log(tag, line),
+  })
   const ticks = buildTickBodies({
     ...opts,
+    proactive,
     permissionMode: opts.dangerously ? 'dangerously' : 'strict',
     generatePortrait: (chatId) => tickMemoryLlm.generatePortrait(chatId),
     // Connection-health gate (Task 7) — companion ticks read
@@ -265,10 +281,10 @@ export function wireMain(opts: WireMainOpts): WiredDeps {
     health: opts.boot.health.health,
     runAtelierTick,
   })
-  const { appPush, pipelineDeps, companionConverse, petTurn, settingsPanelLink, mattersService, memoryNightly, stopMatterActivity, connections, phoneConnect } = buildPipelineDeps(opts, refs)
   const lifecycleDeps = buildLifecycleDeps(opts, ticks)
   return {
     appPush,
+    proactive,
     pipelineDeps,
     companionConverse,
     petTurn,

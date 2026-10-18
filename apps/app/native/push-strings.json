@@ -7,9 +7,10 @@
     "title.task_done": "Done",
     "title.task_failed": "Didn’t finish",
     "title.test": "Test notification",
+    "title.companion": "CC",
     "body.test": "Notifications reach this phone.",
     "channel.decide": "Needs your decision",
-    "channel.updates": "Done and didn’t finish"
+    "channel.updates": "Updates from CC"
   },
   "zh-Hans": {
     "placeholder.title": "CC",
@@ -19,8 +20,9 @@
     "title.task_done": "做完了",
     "title.task_failed": "没做成",
     "title.test": "测试通知",
+    "title.companion": "CC",
     "body.test": "通知能送到这台手机。",
     "channel.decide": "需要你决定",
-    "channel.updates": "完成与失败"
+    "channel.updates": "CC 的动态"
   }
 }

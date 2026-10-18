@@ -341,3 +341,44 @@ describe('deliverTurnReply — 聊天型模型的多段(每段按 ④ 各自分�
     expect(h.sent).toEqual(['第一条:出门走走晒太阳', '第二条:做一顿好吃的', '第三条:早点睡觉吧'])
   })
 })
+
+// 伙伴主动找你(2026-10-18):一轮可以另有出口(微信不通时落到 App);出口说只收文字 ⇒ 附件不发、语音改发同样的字。
+describe('makeReplyDeliveryRuntime — 这一轮另有出口(outbound)', () => {
+  it('文字与进度都走 outbound,不碰运行时自己的 sendText', async () => {
+    const h = harness()
+    const rt = makeReplyDeliveryRuntime(h.deps)
+    const via: string[] = []
+    const outbound = { sendText: vi.fn(async (_c: string, t: string) => { via.push(t); return { msgId: 'app:1' } }) }
+    const handle = rt.begin('c1', { mode: 'daemon', context: 'tick', providerId: 'claude', outbound })
+    await handle.progress('我去搜一下')
+    const r = await handle.deliver({ finalText: '前两天那个面试怎么样了', narration: [] })
+    expect(h.sent).toEqual([])
+    expect(via).toEqual(['我去搜一下', '前两天那个面试怎么样了'])
+    expect(r).toMatchObject({ delivery: 'text', bubbles: 1, msgIds: ['app:1'] })
+  })
+
+  it('textOnly ⇒ 表情 / 文件不发也不去碰微信;语音改发同样的字', async () => {
+    const h = harness()
+    const rt = makeReplyDeliveryRuntime(h.deps)
+    const via: string[] = []
+    const outbound = { sendText: async (_c: string, t: string) => { via.push(t); return { msgId: 'app' } }, textOnly: () => true }
+    const handle = rt.begin('c1', { mode: 'daemon', context: 'tick', providerId: 'claude', outbound })
+    const sticker = pending({ kind: 'sticker', ref: { tag: '开心' } })
+    const voice = pending({ kind: 'voice', text: '晚安呀' })
+    rt.attach('c1', sticker)
+    rt.attach('c1', voice)
+    const r = await handle.deliver({ finalText: '今天辛苦了,早点休息', narration: [] })
+    expect(sticker.send).not.toHaveBeenCalled()
+    expect(voice.send).not.toHaveBeenCalled()
+    expect(via).toEqual(['今天辛苦了,早点休息', '晚安呀'])
+    expect(r.attachmentsSent).toBe(0)
+    expect(h.logs.some(l => l.includes('REPLY_ATTACHMENT_SKIPPED') && l.includes('sticker'))).toBe(true)
+  })
+
+  it('没有 outbound ⇒ 照旧走运行时自己的 sendText', async () => {
+    const h = harness()
+    const rt = makeReplyDeliveryRuntime(h.deps)
+    await rt.begin('c1', { mode: 'daemon', context: 'tick', providerId: 'claude' }).deliver({ finalText: '在忙吗今天', narration: [] })
+    expect(h.sent).toEqual(['在忙吗今天'])
+  })
+})

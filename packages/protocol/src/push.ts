@@ -28,8 +28,12 @@ import { gcm } from '@noble/ciphers/aes.js'
 import z from 'zod'
 import { b64uEncode, b64uDecode } from './b64u'
 
-/** 推送的种类 —— daemon 发什么、原生端认什么,都以这里为准。 */
-export const PushKind = z.enum(['permission', 'question', 'task_done', 'task_failed', 'test'])
+/**
+ * 推送的种类 —— daemon 发什么、原生端认什么,都以这里为准。
+ * `companion`(2026-10-18):CC 主动找你、微信不通时落到 App 的那一句(daemon/companion/app-channel.ts);
+ * 没有 taskId,点开去对话页。老版本 app 不认它 ⇒ 显示中性占位。
+ */
+export const PushKind = z.enum(['permission', 'question', 'task_done', 'task_failed', 'test', 'companion'])
 export type PushKindT = z.infer<typeof PushKind>
 
 /**

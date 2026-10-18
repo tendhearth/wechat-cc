@@ -189,8 +189,16 @@ describe('companionConverse in-flight guard (buildPipelineDeps)', () => {
       },
     )
 
-    return { companionConverse, pipelineDeps, ilink, dispatch, dispatchInner, runExclusive, isInFlight, replySinksOpen, markInboundActivity }
+    return { companionConverse, pipelineDeps, ilink, dispatch, dispatchInner, runExclusive, isInFlight, replySinksOpen, markInboundActivity, careLedger }
   }
+
+  // 2026-10-18:CC 主动找你可以落到 App,主人在 App(或桌面)里回话也算「回了」—— 清掉伙伴的无回复计数,
+  // 不然学到的暂停(连着 2 条没回 ⇒ 安静)会把在 App 里聊着的主人当成不理人。
+  it('主人在 App 里说话 ⇒ 清掉主人 chat 的无回复计数(与微信入站同一个记账)', async () => {
+    const { companionConverse, careLedger } = setup({ inFlight: false })
+    await companionConverse('还在面试呢', 'phone')
+    expect(careLedger.resetNoReply).toHaveBeenCalledWith('owner_chat')
+  })
 
   // 回复交付(spec 2026-10-03 §4.10「app 接收器」):daemon 模式的 provider 把整个 TurnReply 交给接收器;
   // 附件与旁白随回复一起交还给桌面 / 手机(不再漏到微信)。旧路径没有 extras ⇒ 返回值形状不变。

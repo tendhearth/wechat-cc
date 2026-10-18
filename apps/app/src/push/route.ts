@@ -8,12 +8,15 @@ export type PushRoute =
   | { kind: 'matter'; id: string }
   /** 终端会话(daemon 的 cli-app-push.ts):id 空 ⇒ 「一起做」里的终端列表。那页自己拍板、自己处理会话已不在。 */
   | { kind: 'terminal'; id: string }
+  /** CC 主动找你(companion,微信不通时落到 App 的那一句):去对话页,那页自己拉最新历史。 */
+  | { kind: 'chat' }
 
 /**
  * 旧通知(spec §3):先按 taskId 拉一次最新详情。事情不在 ⇒ gone;拉不到(离线 / 超时)⇒ 照样去目标页,
  * 那页自己显示离线提示。批准页与进展页打开时还会再拉新(refreshOnMount),请求已处理 ⇒ 批准页显示「已处理」。
  */
 export async function resolvePushRoute(t: PushTarget | null, fetchDetail: (id: string) => Promise<unknown>, timeoutMs = 5000): Promise<PushRoute> {
+  if (t?.kind === 'companion') return { kind: 'chat' }   // 不带 taskId、不拉详情
   if (!t || !t.taskId) return { kind: 'home' }
   const id = t.taskId
   if (id.startsWith('cli:')) return { kind: 'terminal', id: id.slice(4) }
@@ -36,6 +39,7 @@ export function hrefFor(r: PushRoute): string {
   if (r.kind === 'approval') return `/approval/${encodeURIComponent(r.id)}${r.request ? `?request=${encodeURIComponent(r.request)}` : ''}`
   if (r.kind === 'matter') return `/matter/${encodeURIComponent(r.id)}`
   if (r.kind === 'terminal') return r.id ? `/terminal/${encodeURIComponent(r.id)}` : '/together'
+  if (r.kind === 'chat') return '/chat'
   return '/'
 }
 
