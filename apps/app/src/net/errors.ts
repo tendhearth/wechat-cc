@@ -6,7 +6,7 @@ const BUSY = new Set(['workbench_busy', 'input_delivery_busy', 'reply_sink_busy'
 /** 找不到:事项不在 / 还没有主人那条对话(页面当空对话)/ 原生会话读不了。 */
 const NOT_FOUND = new Set(['matter_not_found', 'no_owner_chat', 'unsupported', 'not_found'])
 /** daemon 这一块没接上(503):推送 / 跟 CC 说 / 连接 / 原生会话。 */
-const UNAVAILABLE = new Set(['push_not_wired', 'chat_not_wired', 'connections_not_wired', 'sessions_not_wired', 'voice_not_wired', 'cli_sessions_not_wired', 'cli_actions_not_wired'])
+const UNAVAILABLE = new Set(['push_not_wired', 'chat_not_wired', 'connections_not_wired', 'sessions_not_wired', 'voice_not_wired', 'cli_sessions_not_wired', 'cli_actions_not_wired', 'review_not_wired'])
 /** 接着做电脑上的会话(spec 2026-10-01-tendhearth-continue-sessions D11):各有各的一句话,不能都说「没送到」。
  *  必须在 `invalid_` 前缀规则之前判(invalid_path ⇒ folder_missing)。后三个(裁决 R5):会话刚变(可重问预览再接)、
  *  没内容可带、已经接过了(不是错:页面重问预览、打开那件事)。 */

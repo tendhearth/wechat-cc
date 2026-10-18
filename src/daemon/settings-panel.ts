@@ -103,6 +103,11 @@ export interface SettingsPanelDeps {
   insight?: import('./phone-insight').PhoneInsight
   /** 手机看改动(§5.3):一件事的复盘轮次(工作台 reviewList);未知任务应抛。缺省 ⇒ /m/api/matter/changes 503。 */
   changes?: (id: string) => readonly import('./phone-changes').ReviewTurnLike[]
+  /** 手机逐文件审阅(2026-10-17):同桌面 review-mark / review-return。缺省 ⇒ 两条路由 503。 */
+  review?: {
+    mark(id: string, input: { artifactId: string; path: string; mark: 'accepted' | 'returned' }): unknown
+    ret(id: string, input: { artifactId: string; paths: string[]; comment: string }): unknown
+  }
   /** 「一件事」(2026-09-16):手机看同一份 matter 列表 / 详情,并能往里说话。seenOnPhone 记「在手机露过面」。 */
   matters?: MobileMatterActions & {
     list(filter: { kind?: 'chat' | 'task' | 'companion'; statuses?: Array<'open' | 'replied' | 'done' | 'archived'>; limit?: number }): unknown[]
@@ -840,6 +845,28 @@ export function makeSettingsPanel(deps: SettingsPanelDeps): SettingsPanel {
             catch (e) {
               const notFound = e instanceof Error && e.message === 'not_found'
               return json({ ok: false, error: notFound ? 'matter_not_found' : 'unavailable' }, notFound ? 404 : 500)
+            }
+          }
+          if ((url.pathname === '/m/api/matter/review-mark' || url.pathname === '/m/api/matter/review-return') && req.method === 'POST') {
+            if (!deps.review) return json({ ok: false, error: 'review_not_wired' }, 503)
+            let body: unknown
+            try { body = await req.json() } catch { return json({ ok: false, error: 'bad_json' }, 400) }
+            const b = (body ?? {}) as Record<string, unknown>
+            if (typeof b.id !== 'string' || !/^[a-f0-9]{8}$/.test(b.id) || typeof b.artifactId !== 'string' || !b.artifactId) return json({ ok: false, error: 'invalid' }, 400)
+            try {
+              if (url.pathname === '/m/api/matter/review-mark') {
+                if (typeof b.path !== 'string' || !b.path || (b.mark !== 'accepted' && b.mark !== 'returned')) return json({ ok: false, error: 'invalid' }, 400)
+                deps.review.mark(b.id, { artifactId: b.artifactId, path: b.path, mark: b.mark })
+              } else {
+                if (!Array.isArray(b.paths) || typeof b.comment !== 'string' || b.comment.length > PHONE_SAY_MAX_CHARS) return json({ ok: false, error: 'invalid' }, 400)
+                // 打回走续接:还在跑的会话里补一句 / 已结算的接着做;结果都靠刷新详情看到
+                await deps.review.ret(b.id, { artifactId: b.artifactId, paths: b.paths as string[], comment: b.comment })
+              }
+              return json({ ok: true })
+            } catch (e) {
+              const code = e instanceof Error ? e.message : ''
+              if (code === 'review_file_unmarkable') return json({ ok: false, error: code }, 400)
+              return mobileMatterError(e)
             }
           }
           if (url.pathname === '/m/api/matter/say' && req.method === 'POST') {

@@ -6,6 +6,15 @@ const turn = (createdAt: number, files: Array<{ path: string; kind: 'added' | 'd
   ({ artifactId: `a${createdAt}`, sha256: 's', name: 'n', createdAt, status: 'complete' as const, headBefore: null, headAfter: null, preexistingPaths: [], notes, files: files.map(f => ({ preexisting: false, ...f })) })
 
 describe('latestChanges', () => {
+  it('带上轮次的 artifactId 与文件已有的标记(手机逐文件审阅要用)', () => {
+    const t = turn(3, [{ path: 'a.ts', kind: 'modified', diff: '+1' }, { path: 'b.ts', kind: 'modified', diff: '+2' }])
+    const marked = { ...t, files: [{ ...t.files[0]!, mark: { mark: 'returned' as const, comment: '改回去', createdAt: 7 } }, t.files[1]!] }
+    const r = latestChanges([marked])!
+    expect(r.artifactId).toBe('a3')
+    expect(r.files[0]!.mark).toEqual({ mark: 'returned', comment: '改回去', createdAt: 7 })
+    expect(r.files[1]!.mark).toBeUndefined()
+    expect(PhoneChangesTurn.parse(r)).toEqual(r)
+  })
   it('没有轮次 ⇒ null', () => { expect(latestChanges([])).toBeNull() })
   it('取最近一轮;diff 原样;not_reviewed 无 diff', () => {
     const r = latestChanges([turn(1, [{ path: 'old', kind: 'modified', diff: '@@ -1 +1 @@\n-a\n+b' }]), turn(5, [

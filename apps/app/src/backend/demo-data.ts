@@ -124,7 +124,7 @@ export function progress(lang: Lang, id: string, stage: Stage): ProgressSummaryT
 
 export function changesTurn(now: number): PhoneChangesTurnT {
   return {
-    createdAt: now, status: 'complete', omittedFiles: 0, notes: [],
+    artifactId: 'demo-review', createdAt: now, status: 'complete', omittedFiles: 0, notes: [],
     files: [
       { path: 'src/pages/home.css', kind: 'modified', truncated: false, diff: '-  padding: 64px 48px;\n+  padding: 32px 20px;\n+  max-width: 100%;' },
       { path: 'src/pages/home.tsx', kind: 'modified', truncated: false, diff: '-<h1>My portfolio</h1>\n+<h1>A little of what I make.</h1>' },
