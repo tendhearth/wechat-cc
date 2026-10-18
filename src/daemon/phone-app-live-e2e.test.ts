@@ -286,6 +286,18 @@ describe('手机 app LiveBackend 对着进程内真 daemon', () => {
     await release(task)
   })
 
+  it('此刻页的伙伴:真 /m/api/home 过 LiveBackend 的 schema(没接 presence ⇒ null,不编);home 主题订得到;没接水位 ⇒ markSeen 抛', async () => {
+    const b = live()
+    const home: unknown[] = []
+    b.subscribe('home', d => home.push(d))
+    await expect.poll(() => b.connection().state, P).toBe('online')
+    const h = await b.home('en')
+    expect(h.presence).toBeNull()
+    expect(Array.isArray(h.events)).toBe(true)
+    await expect.poll(() => home.length, P).toBeGreaterThan(0)
+    await expect(b.markSeen(new Date().toISOString())).rejects.toBeInstanceOf(Error)
+  })
+
   it('批准:允许一次成功;同一条再提交 ⇒ stale', async () => {
     const b = live()
     const task = createTask('needs-ask')

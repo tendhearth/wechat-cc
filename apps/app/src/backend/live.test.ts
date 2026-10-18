@@ -607,3 +607,23 @@ describe('终端里的会话(2026-10-14)', () => {
     await expect(bad.b.today()).rejects.toBeTruthy()
   })
 })
+
+describe('此刻页的伙伴(2026-10-18)', () => {
+  const EVENT = { id: 'journal:7', ts: '2026-10-18T03:00:00.000Z', kind: 'hunt', title: 'An essay', note: null, day: '2026-10-18', hhmm: '11:00', ref: { url: 'https://example.com', image_svg: null, status: 'new' } }
+  const PRESENCE = { presence: 'ok', activity: { kind: 'foraging', label: '觅食中', since: null }, news: { unread: 1, latest_kind: 'hunt', latest_title: 'An essay' } }
+  const HOME = { ok: true, synced_at: '2026-10-18T04:00:00.000Z', today: '2026-10-18', presence: PRESENCE, unread: 1, seen_until: null, events: [EVENT], next_cursor: null, sources_degraded: [] }
+  it('首屏:GET /m/api/home?limit=20,只留此刻页用得到的四样;过 schema', async () => {
+    const { b, reqs } = harness({ 'GET /m/api/home': ok(HOME) })
+    expect(await b.home('en')).toEqual({ presence: PRESENCE, seenUntil: null, unread: 1, events: [EVENT] })
+    expect(reqs.at(-1)).toMatchObject({ key: 'GET /m/api/home', path: '/m/api/home?limit=20' })
+    const bad = harness({ 'GET /m/api/home': ok({ ...HOME, events: [{ ...EVENT, kind: 'nope' }] }) })
+    await expect(bad.b.home('en')).rejects.toMatchObject({ code: 'unknown' })
+  })
+  it('看到这里了:POST /m/api/seen {until},回电脑上生效后的水位;没接 ⇒ 抛', async () => {
+    const { b, reqs } = harness({ 'POST /m/api/seen': ok({ ok: true, seen_until: '2026-10-18T03:00:00.000Z' }) })
+    expect(await b.markSeen('2026-10-18T03:00:00.000Z')).toBe('2026-10-18T03:00:00.000Z')
+    expect(reqs.at(-1)).toMatchObject({ key: 'POST /m/api/seen', body: { until: '2026-10-18T03:00:00.000Z' } })
+    const off = harness({ 'POST /m/api/seen': ok({ ok: false, error: 'seen_not_wired' }, 503) })
+    await expect(off.b.markSeen('2026-10-18T03:00:00.000Z')).rejects.toBeTruthy()
+  })
+})

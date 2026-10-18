@@ -31,6 +31,18 @@ const zh: Record<keyof typeof en, string> = {
   'now.goAnswer': '回答',
   'now.ccBubble': 'CC 最近说的话，点开进对话',
   'now.openChat': '跟 CC 说',
+  // CC 在干什么(只从真信号来,见 view/companion.ts)+ 它带回来的东西
+  'companion.chatting': '在跟你聊',
+  'companion.hostingHuman': '在招呼一位客人',
+  'companion.working': '在帮你做事',
+  'companion.visiting': '出门串门了',
+  'companion.hostingPeer': '有朋友的 CC 来串门',
+  'companion.foraging': '出门打猎了',
+  'companion.busy': '在忙一件事',
+  'companion.hunt': '打猎带回来的',
+  'companion.postcard': '一张明信片',
+  'companion.openLink': '打开',
+  'companion.cardLabel': '{kind}：{title}',
   // 「今天」(GET /m/api/today):过去 24 小时,终端 + 一起做
   'today.title': '过去 24 小时',
   'today.whileAway': '你不在的这 {n} 小时',

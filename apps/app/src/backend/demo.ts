@@ -1,9 +1,9 @@
 import { PHONE_SAY_MAX_CHARS } from '@wechat-cc/protocol'
 import { labelJoin, type Lang } from '../i18n'
 import { DEMO_STICKER, DEMO_STICKER_FILE, DEMO_VOICE } from './demo-media'
-import { BackendError, type Backend, type CliSessionRowT, type Connection, type MatterT, type MatterDetailT, type ApprovalExplanationT, type ChatJobT, type ChatMessageT, type SessionContinueT, type MatterSayResultT, type UploadStateT, type ChatModelViewT, type OverseerTodayT, type TodayItemT } from './types'
+import { BackendError, type Backend, type CliSessionRowT, type Connection, type MatterT, type MatterDetailT, type ApprovalExplanationT, type ChatJobT, type ChatMessageT, type SessionContinueT, type MatterSayResultT, type UploadStateT, type ChatModelViewT, type OverseerTodayT, type TodayItemT, type CompanionHomeT, type FeedEventT } from './types'
 import {
-  copy, IDS, CHAT_ID, PERM_ID, QUESTION_ID, RUN_IDS, t, explanation, progress, changesTurn, entryOptions,
+  copy, IDS, CHAT_ID, DEMO_HUNT_URL, PERM_ID, QUESTION_ID, RUN_IDS, t, explanation, progress, changesTurn, entryOptions,
   demoConnections, demoSessions, demoSessionMessages, demoSessionTitleKey, DEMO_SESSION_MESSAGES, type Stage,
 } from './demo-data'
 
@@ -132,7 +132,11 @@ export function makeDemoBackend(opts: { now?: () => number; setTimeout?: typeof 
     chatPending = null
     chatJobs = new Map()
   }
-  function seed() { const b = buildSeed(); entries = b.map; order = b.ids; seedChat() }
+  // 伙伴的动态(演示):40 分钟前打猎带回来一篇;主人还没看过(水位 = null 与 daemon 一致:全算没看)
+  let huntAt = 0
+  let seenUntil: string | null = null
+  function seedCompanion() { huntAt = now() - 40 * 60_000; seenUntil = null }
+  function seed() { const b = buildSeed(); entries = b.map; order = b.ids; seedChat(); seedCompanion() }
   const chatText = (m: ChatRec, l: Lang) => (m.key ? t(l, m.key) : m.text ?? '')
   const chatExtras = (m: ChatRec, l: Lang): Pick<ChatMessageT, 'attachments' | 'narration'> => ({
     ...(m.narr?.length ? { narration: m.narr.map(k => t(l, k)) } : {}),
@@ -178,13 +182,23 @@ export function makeDemoBackend(opts: { now?: () => number; setTimeout?: typeof 
       return { running: tasks.filter(x => x.phase === 'working').length, waiting, tasks }
     }
     if (topic === 'home') {
-      const unread = list().reduce((s, e) => s + e.detail.permissions.length + e.detail.questions.length, 0)
-      return { unread, presenceState: { level: 'ok', activity: unread > 0 ? 'waiting' : 'idle' }, nextCursor: null }
+      // 与 daemon 同口径:未读 = 水位之后的动态条数;activity 只用真有的那几种(演示里只会是在忙 / 歇着)
+      return { unread: companionEvents(lastLang).filter(e => seenUntil === null || e.ts > seenUntil).length, presenceState: { level: 'ok', activity: activityKind() }, nextCursor: null }
     }
     const id = topic.slice('matter/'.length)
     const e = entries.get(id)
     if (e && id === CHAT_ID) return { found: true, kind: 'chat', version: e.version, phase: chatPending ? 'working' : e.detail.matter.status }
     return e ? { found: true, kind: e.detail.matter.kind, version: e.version, phase: phaseOf(e) } : { found: false }
+  }
+  /** 演示里 CC 在干什么:有执行者正在写 ⇒ working,否则 idle(不演别的状态)。 */
+  function activityKind(): 'working' | 'idle' {
+    return list().some(e => e.detail.task && phaseOf(e) === 'working' && !e.detail.permissions.length && !e.detail.questions.length) ? 'working' : 'idle'
+  }
+  function companionEvents(l: Lang): FeedEventT[] {
+    const ts = new Date(huntAt).toISOString()
+    const hhmm = new Date(huntAt).toTimeString().slice(0, 5)
+    return [{ id: 'journal:demo-hunt-1', ts, kind: 'hunt', title: t(l, 'huntTitle'), note: t(l, 'huntNote'), day: ts.slice(0, 10), hhmm,
+      ref: { url: DEMO_HUNT_URL, image_svg: null, status: 'new' } }]
   }
   function publish(ids: string[]) {
     for (const id of ids) { const e = entries.get(id); if (e) e.version++ }
@@ -541,6 +555,24 @@ export function makeDemoBackend(opts: { now?: () => number; setTimeout?: typeof 
       needsYou.sort((a, b) => a.at - b.at); done.sort((a, b) => b.at - a.at); running.sort((a, b) => b.at - a.at)
       return { generatedAt: n, since, windowHours: 24, needsYou, done, running, stuck,
         counts: { needsYou: needsYou.length, done: done.length, running: running.length, stuck: stuck.length }, unavailable: [] }
+    },
+    async home(l): Promise<CompanionHomeT> {
+      noteLang(l)
+      const events = companionEvents(l)
+      const unseen = events.filter(e => seenUntil === null || e.ts > seenUntil)
+      return {
+        presence: { presence: 'ok', activity: { kind: activityKind(), label: '', since: null },
+          news: { unread: unseen.length, latest_kind: unseen[0]?.kind ?? null, latest_title: unseen[0]?.title ?? null } },
+        seenUntil, unread: unseen.length, events,
+      }
+    },
+    async markSeen(until) {
+      // 与 daemon 同:夹到现在、只前进
+      const ms = Date.parse(until)
+      if (!Number.isFinite(ms)) throw new BackendError('invalid')
+      const clamped = new Date(Math.min(ms, now())).toISOString()
+      if (seenUntil === null || clamped > seenUntil) { seenUntil = clamped; queueMicrotask(() => publish([])) }
+      return seenUntil
     },
     async cliPermission({ sessionId, hash, decision }) {
       const r = cliGet(sessionId)

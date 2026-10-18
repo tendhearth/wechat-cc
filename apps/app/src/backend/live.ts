@@ -21,12 +21,14 @@ import {
   type ApprovalExplanationT, type Backend, type Connection, type DeviceRowT, type EntryOptionsT,
   type MatterDetailT, type MatterT, type PhoneChangesTurnT, type ProgressSummaryT, type Unsubscribe,
   type ChatPageT, type ChatJobT, type ConnectionsT, type NativeSessionRowT, type NativeSessionPageT, type SessionContinueT,
-  type MatterSayResultT, type MatterInputT, type CliSessionRowT, type CliActivityItemT, type OverseerTodayT, type UploadStateT, type EntryModelCatalogT, type MemoryViewT, type ChatModelViewT, type ChatSearchHitT,
+  type MatterSayResultT, type MatterInputT, type CliSessionRowT, type CliActivityItemT, type OverseerTodayT, type CompanionHomeT, type FeedEventT, type PresenceT, type UploadStateT, type EntryModelCatalogT, type MemoryViewT, type ChatModelViewT, type ChatSearchHitT,
 } from './types'
 
 type Topic = Parameters<Backend['subscribe']>[0]
 /** 常驻订阅:没人用时协议客户端不连,状态机就不知道电脑在不在。approvals 最轻,也是「此刻」最要紧的那份。 */
 const LIVENESS: Topic = 'approvals'
+/** 此刻页读首屏动态的条数(daemon 默认 30、上限 100)。 */
+const HOME_LIMIT = 20
 
 export type LiveDeps = {
   open: () => ProtocolSocket
@@ -315,6 +317,14 @@ export function makeLiveBackend(d: LiveDeps): Backend {
     },
     async today() {
       return (await call<{ today: OverseerTodayT }>('GET /m/api/today', '/m/api/today')).today
+    },
+    async home() {
+      // 此刻页只要 CC 在干什么 + 最近一张带回来的东西;20 条够盖住一天里的想法 / 聊天日摘要。
+      const r = await call<{ presence: PresenceT | null; seen_until: string | null; unread: number; events: FeedEventT[] }>('GET /m/api/home', `/m/api/home?limit=${HOME_LIMIT}`)
+      return { presence: r.presence, seenUntil: r.seen_until, unread: r.unread, events: r.events }
+    },
+    async markSeen(until) {
+      return (await call<{ seen_until: string }>('POST /m/api/seen', '/m/api/seen', { body: { until } })).seen_until
     },
     async decide(p) {
       await call('POST /m/api/matter/permission', '/m/api/matter/permission', { body: { id: p.id, runId: p.runId, requestId: p.requestId, decision: p.decision } })

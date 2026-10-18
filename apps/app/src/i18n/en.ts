@@ -29,6 +29,18 @@ const en = {
   'now.goAnswer': 'Answer',
   'now.ccBubble': 'CC’s latest words — open the chat',
   'now.openChat': 'Talk to CC',
+  // CC 在干什么(只从真信号来,见 view/companion.ts)+ 它带回来的东西
+  'companion.chatting': 'Talking with you',
+  'companion.hostingHuman': 'Has a guest to look after',
+  'companion.working': 'Working on things for you',
+  'companion.visiting': 'Out visiting a friend',
+  'companion.hostingPeer': 'A friend’s CC dropped by',
+  'companion.foraging': 'Out foraging',
+  'companion.busy': 'Busy with something',
+  'companion.hunt': 'Brought back from a hunt',
+  'companion.postcard': 'A postcard',
+  'companion.openLink': 'Open',
+  'companion.cardLabel': '{kind}: {title}',
   // 「今天」(GET /m/api/today):过去 24 小时,终端 + 一起做
   'today.title': 'Last 24 hours',
   'today.whileAway': 'While you were away · {n}h',
