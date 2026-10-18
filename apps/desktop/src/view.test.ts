@@ -4,7 +4,7 @@ import {
   initialMode, afterScanTarget, dashboardHero, accountRows, formatRelativeTime,
   hasUsableProvider, providerReady,
   updateProbeLine, updateApplyLine, restartButtonState, deleteAccountConfirmCopy,
-  UPDATE_REASON_COPY, modeBadge, conversationRows, diagnose, guardLine,
+  UPDATE_REASON_COPY, modeBadge, conversationRows, diagnose, guardLine, guardRowVisible,
 } from './view.js'
 
 // Single source of truth for UpdateReason union — must stay in sync with
@@ -1163,5 +1163,15 @@ describe('guardLine (网络守护,2026-10-02)', () => {
   })
   it('probe safe → 探测可达', () => {
     expect(guardLine({ enabled: true, source: 'probe', safe: true, detail: '探测可达' })?.text).toBe('网络守护 · 探测可达')
+  })
+})
+
+describe('guardRowVisible (网络守护开关显不显示,2026-10-18)', () => {
+  it('没装 bx 又没开 ⇒ 不显示;装了 bx 或已开 ⇒ 显示', () => {
+    expect(guardRowVisible({ enabled: false, bx_installed: false })).toBe(false)
+    expect(guardRowVisible({ enabled: false })).toBe(false)
+    expect(guardRowVisible(null)).toBe(false)
+    expect(guardRowVisible({ enabled: false, bx_installed: true })).toBe(true)
+    expect(guardRowVisible({ enabled: true, bx_installed: false })).toBe(true)
   })
 })

@@ -190,7 +190,7 @@
                   <button class="toggle on" id="screen-unattended-toggle" data-toggle aria-pressed="true"></button>
                 </div>
 
-                <div class="toggle-row">
+                <div class="toggle-row" id="screen-guard-row" hidden>
                   <div>
                     <div class="lab">网络守护</div>
                     <div class="sub">网络没受保护时，先停下需要保护的调用。<span id="screen-guard-status-line" class="guard-status-line">—</span></div>
@@ -346,7 +346,7 @@
             </div>
             <button class="toggle on" id="unattended-toggle" type="button" data-toggle aria-pressed="true" aria-label="自动同意工具调用" aria-describedby="unattended-toggle-feedback"></button><span class="setting-feedback" id="unattended-toggle-feedback" role="status"></span>
           </div>
-          <div class="toggle-row">
+          <div class="toggle-row" id="guard-row" hidden>
             <div>
               <div class="lab">网络守护</div>
               <div class="sub">网络没受保护时，先停下需要保护的调用。<span id="guard-status-line" class="guard-status-line">—</span></div>

@@ -30,6 +30,9 @@ const guardStatusCmd = defineCommand({
     // 装了 bx 且守护开着:只认 bx(本机 socket,只读,不发流量),不再探 google。guard.json
     // signal_source='probe' ⇒ 装着 bx 也走探测。守护关着时不碰 bx —— 开关关了就什么都不判。
     const bxPath = cfg.enabled && cfg.signal_source !== 'probe' ? findBx() : null
+    // 装没装 bx(只看文件在不在,不碰 bx、不发流量)—— 桌面据此决定显不显示守护开关:
+    // 没装 bx 又没开守护的新用户不必先弄懂 bx 是什么(主人 2026-10-18)。
+    const bxInstalled = bxPath !== null || findBx() !== null
     // 守护 v2:按调用判 —— 列出已配置 provider 各自要不要保护(只读配置,不发流量)。
     const providers = classifyConfiguredForCli(STATE_DIR)
     const protectedInUse = providers.some(p => p.protected)
@@ -47,7 +50,7 @@ const guardStatusCmd = defineCommand({
       out = {
         enabled: cfg.enabled, ip: ipRes.ip, reachable: v.safe, probe_url: cfg.probe_url,
         ip_error: ipRes.error ?? null, probe_error: v.safe ? null : v.detail, probe_ms: null,
-        source: 'bx' as const, safe: v.safe, detail: v.detail, bx_path: bxPath,
+        source: 'bx' as const, safe: v.safe, detail: v.detail, bx_path: bxPath, bx_installed: bxInstalled,
         signal_source: cfg.signal_source, protected_in_use: protectedInUse, providers, ...suspendedOut,
       }
     } else {
@@ -57,7 +60,7 @@ const guardStatusCmd = defineCommand({
         ip_error: ipRes.error ?? null, probe_error: probeRes.error ?? null, probe_ms: probeRes.ms,
         source: 'probe' as const, safe: probeRes.reachable,
         detail: probeRes.reachable ? '探测可达' : `探测失败${probeRes.error ? `(${probeRes.error})` : ''}`,
-        bx_path: null,
+        bx_path: null, bx_installed: bxInstalled,
         signal_source: cfg.signal_source, protected_in_use: protectedInUse, providers, ...suspendedOut,
       }
     }

@@ -16,7 +16,7 @@
 
 import { invoke as ipcInvoke, formatInvokeError } from "./ipc.js"
 import { invokeApi, invokeWorkbenchApi } from "./api.js"
-import { initialMode, restartButtonState, afterScanTarget , showToast, guardLine, hasUsableProvider, providerReady } from "./view.js"
+import { initialMode, restartButtonState, afterScanTarget , showToast, guardLine, guardRowVisible, hasUsableProvider, providerReady } from "./view.js"
 import { createDoctorPoller } from "./doctor-poller.js"
 import { createPresencePoller } from "./presence-poller.js"
 import { createConversationsPoller } from "./conversations-poller.js"
@@ -364,6 +364,10 @@ async function refreshGuardStatus() {
   for (const el of statusEls) el.textContent = "查询中…"
   try {
     const r = /** @type {GuardStatus} */ (await invoke("wechat_cli_json", { args: ["guard", "status", "--json"] }))
+    for (const id of ["guard-row", "screen-guard-row"]) {
+      const row = document.getElementById(id)
+      if (row) row.hidden = !guardRowVisible(r)
+    }
     for (const toggle of toggleEls) {
       if (r.enabled) toggle.classList.add("on")
       else toggle.classList.remove("on")
@@ -950,6 +954,7 @@ function wireEvents() {
 
   wireSettingsDrawer({
     deps: { invoke },
+    onOpen: () => { void refreshGuardStatus() },
     onToggleChange: async (id, on) => {
       // 返回 false → 持久化失败,让 settings-drawer 回滚开关(别让 UI 撒谎)。
       if (id === "unattended-toggle") {
