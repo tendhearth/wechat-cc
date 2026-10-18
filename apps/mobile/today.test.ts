@@ -16,12 +16,13 @@ const TODAY={generatedAt:NOW,since:NOW-86_400_000,windowHours:24,
  running:[],stuck:[item({id:'q'}) as any].map(s=>({...s,reason:'quiet'})),
  counts:{needsYou:1,done:4,running:0,stuck:1},unavailable:[]}
 const BODY={ok:true,today:TODAY}
-function load(api=vi.fn(async(_path:string,_opts?:any)=>response(BODY))){
+function load(api=vi.fn(async(_path:string,_opts?:any)=>response(BODY)),leftAt?:number){
  const window=new Window({url:'https://fixture.test/m'});windows.push(window)
+ if(leftAt!==undefined)window.localStorage.setItem('cc.lastLeft',String(leftAt))
  const document=window.document;document.body.innerHTML=assembleMobilePage(readMobileSource).phone
  const panes:string[]=[],opened:string[]=[],terminals:string[]=[]
  const env={document,window,CustomEvent:window.CustomEvent,api,setTimeout:window.setTimeout.bind(window),clearTimeout:window.clearTimeout.bind(window),
-  mobilePane:(n:string)=>panes.push(n),openMatter:(id:string)=>opened.push(id),tmOpenSession:(id:string)=>terminals.push(id),
+  localStorage:window.localStorage,mobilePane:(n:string)=>panes.push(n),openMatter:(id:string)=>opened.push(id),tmOpenSession:(id:string)=>terminals.push(id),
   esc:(text:unknown)=>String(text).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'})[c]!)}
  const fns=new Function(...Object.keys(env),`${readMobileSource('today.js')}\nreturn {tdLoad,state:function(){return td}}`)(...Object.values(env)) as any
  const pane=(name:string)=>document.dispatchEvent(new window.CustomEvent('cc:pane',{detail:{pane:name}}))
@@ -43,6 +44,18 @@ describe('phone page: 今天 on 此刻',()=>{
   expect(rows[0]!.textContent).toContain('blog');expect(rows[0]!.textContent).toContain('Claude Code · 改好了')
   expect(rows[1]!.textContent).toContain('修打包')
   expect(h.el('today-partial').hidden).toBe(true)
+ })
+ it('离开一小时以上、这期间有做完的 ⇒「你不在的这 N 小时」只数只列这段;页面藏起来时记下离开时间',async()=>{
+  const fresh=item({id:'new',project:'fresh',at:NOW-10*60_000}),old=item({id:'old',project:'old',at:NOW-5*3_600_000})
+  const h=load(vi.fn(async()=>response({ok:true,today:{...TODAY,done:[fresh,old],counts:{...TODAY.counts,done:2}}})),NOW-3*3_600_000);await wait()
+  expect(h.el('today-title').textContent).toBe('你不在的这 3 小时')
+  expect(h.el('today-counts').textContent).toBe('1 件做完 · 1 件可能卡住')
+  expect(h.document.querySelectorAll('#today-list .today-row').length).toBe(1)
+  const h2=load(vi.fn(async()=>response({ok:true,today:{...TODAY,done:[old],counts:{...TODAY.counts,done:1}}})),NOW-3*3_600_000);await wait()
+  expect(h2.el('today-title').textContent).toBe('过去 24 小时')
+  Object.defineProperty(h2.document,'hidden',{configurable:true,get:()=>true})
+  h2.document.dispatchEvent(new h2.window.Event('visibilitychange'))
+  expect(Number(h2.window.localStorage.getItem('cc.lastLeft'))).toBeGreaterThanOrEqual(NOW)
  })
  it('点一起做的事 ⇒ 到一起做并打开那件;点终端 ⇒ 到一起做并展开那一条;点数字 ⇒ 到一起做',async()=>{
   const h=load();await wait()

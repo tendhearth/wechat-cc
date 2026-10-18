@@ -8,6 +8,8 @@ import { relAgo } from './terminal'
  */
 export type TodayRow = { key: string; href: string; title: string; sub: string; ago: string }
 export type TodayView = {
+  /** 「过去 24 小时」;离开手机一小时以上、这期间有做完的 ⇒ 「你不在的这 N 小时」(只数这段)。 */
+  title: string
   /** 「5 件做完 · 1 件在跑 · 1 件可能卡住」;是 0 的不写。等你的不在这里数 —— 下面「N 件事等你」已经列着,同一个数不出现两次。 */
   counts: string
   /** 最近做完的前 3 件。 */
@@ -17,6 +19,8 @@ export type TodayView = {
 }
 
 export const TODAY_DONE_ROWS = 3
+/** 离开多久才算「不在」:短于这个(切个应用又回来)照旧看 24 小时。 */
+export const AWAY_MIN_MS = 3_600_000
 
 export function todayHref(i: Pick<TodayItemT, 'source' | 'id'>): string {
   return i.source === 'terminal' ? `/terminal/${encodeURIComponent(i.id)}` : `/matter/${encodeURIComponent(i.id)}`
@@ -33,16 +37,23 @@ export function todayRow(i: TodayItemT, now: number, lang: Lang): TodayRow {
   }
 }
 
-/** 没数据 / 除了等你的什么都没有(且两路都读得到)⇒ null:此刻页不放一段空的。 */
-export function todayView(today: OverseerTodayT | undefined, now: number, lang: Lang): TodayView | null {
+/**
+ * 没数据 / 除了等你的什么都没有(且两路都读得到)⇒ null:此刻页不放一段空的。
+ * away = 上次把 App 放到后台的时间(2026-10-17,「你不在的时候」):离开 ≥ 1 小时、还在 24 小时窗口里、这期间有做完的
+ * ⇒ 标题换成「你不在的这 N 小时」,做完的只数、只列这段;在跑 / 可能卡住是此刻的状态,照旧。
+ */
+export function todayView(today: OverseerTodayT | undefined, now: number, lang: Lang, away?: number | null): TodayView | null {
   if (!today) return null
   const c = today.counts
   const partial = today.unavailable.length > 0
   if (c.done + c.running + c.stuck === 0 && !partial) return null
+  const sinceAway = away && now - away >= AWAY_MIN_MS && away >= today.since ? today.done.filter(i => i.at > away) : []
+  const done = sinceAway.length ? sinceAway : today.done
+  const title = sinceAway.length ? t(lang, 'today.whileAway', { n: Math.round((now - away!) / 3_600_000) }) : t(lang, 'today.title')
   const parts = [
-    ...(c.done ? [t(lang, 'today.done', { n: c.done })] : []),
+    ...(sinceAway.length || c.done ? [t(lang, 'today.done', { n: sinceAway.length || c.done })] : []),
     ...(c.running ? [t(lang, 'today.running', { n: c.running })] : []),
     ...(c.stuck ? [t(lang, 'today.stuck', { n: c.stuck })] : []),
   ]
-  return { counts: parts.join(' · '), done: today.done.slice(0, TODAY_DONE_ROWS).map(i => todayRow(i, now, lang)), partial }
+  return { title, counts: parts.join(' · '), done: done.slice(0, TODAY_DONE_ROWS).map(i => todayRow(i, now, lang)), partial }
 }

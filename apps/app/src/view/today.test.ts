@@ -1,7 +1,7 @@
 import { describe, it, expect } from 'vitest'
 import { PHONE_API_SCHEMAS } from '@wechat-cc/protocol'
 import type { OverseerTodayT, TodayItemT } from '../backend/types'
-import { todayHref, todayRow, todayView, TODAY_DONE_ROWS } from './today'
+import { AWAY_MIN_MS, todayHref, todayRow, todayView, TODAY_DONE_ROWS } from './today'
 
 const NOW = 10_000_000
 const item = (over: Partial<TodayItemT> = {}): TodayItemT => ({
@@ -25,6 +25,22 @@ describe('今天(手机视图)', () => {
   it('几个数一行;等你的不在这里数(下面「N 件事等你」已经列着);是 0 的不写;中英文', () => {
     expect(todayView(today(), NOW, 'zh-Hans')!.counts).toBe('4 件做完 · 1 件在跑')
     expect(todayView(today({ counts: { needsYou: 0, done: 2, running: 0, stuck: 3 } }), NOW, 'en')!.counts).toBe('2 done · 3 may be stuck')
+  })
+  it('离开 App 一小时以上、这期间有做完的 ⇒「你不在的这 N 小时」,只数只列这段;在跑照旧', () => {
+    const t = today({ done: [item({ id: 'new', at: NOW - 30 * 60_000 }), item({ id: 'old', at: NOW - 5 * 3_600_000 })], counts: { needsYou: 1, done: 2, running: 1, stuck: 0 } })
+    const v = todayView(t, NOW, 'zh-Hans', NOW - 3 * 3_600_000)!
+    expect(v.title).toBe('你不在的这 3 小时')
+    expect(v.counts).toBe('1 件做完 · 1 件在跑')
+    expect(v.done.map(r => r.key)).toEqual(['terminal:new'])
+    expect(todayView(t, NOW, 'en', NOW - 3 * 3_600_000)!.title).toBe('While you were away · 3h')
+  })
+  it('离开不到一小时 / 超出 24 小时窗口 / 这期间什么都没做完 / 不知道 ⇒ 照旧「过去 24 小时」', () => {
+    const t = today({ done: [item({ id: 'old', at: NOW - 5 * 3_600_000 })], counts: { needsYou: 1, done: 1, running: 1, stuck: 0 } })
+    for (const away of [NOW - AWAY_MIN_MS + 1, NOW - 30 * 3_600_000, NOW - 2 * 3_600_000, null, undefined]) {
+      const v = todayView(t, NOW, 'zh-Hans', away)!
+      expect(v.title).toBe('过去 24 小时')
+      expect(v.counts).toBe('1 件做完 · 1 件在跑')
+    }
   })
   it('只有等你的 ⇒ 不放这一段(等你的已经在下面列着)', () => {
     expect(todayView(today({ done: [], running: [], counts: { needsYou: 2, done: 0, running: 0, stuck: 0 } }), NOW, 'zh-Hans')).toBeNull()
