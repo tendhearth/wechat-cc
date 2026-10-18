@@ -192,6 +192,16 @@ describe('演示后端', () => {
     await expect(b.registerPush('apns_sandbox', 'a1'.repeat(32))).resolves.toBeUndefined()
     expect(await b.testPush()).toEqual({ ok: false, code: 'demo' })
   })
+  it('按住说话(演示):配好了;回一句写好的话(按语言),不进对话、不发;空的 / 太大的拒', async () => {
+    const b = makeDemoBackend({ lang: 'zh-Hans' })
+    expect(await b.transcribeStatus()).toEqual({ configured: true })
+    const before = (await b.chat({})).messages.length
+    expect(await b.transcribe({ mime: 'audio/mp4', audioBase64: 'QUFBQQ==' })).toBe('明天上午提醒我把周报发出去。')
+    expect((await b.chat({})).messages.length).toBe(before)
+    await expect(b.transcribe({ mime: 'audio/mp4', audioBase64: '' })).rejects.toMatchObject({ code: 'invalid' })
+    await expect(b.transcribe({ mime: 'audio/mp4', audioBase64: 'A'.repeat(300_000) })).rejects.toMatchObject({ code: 'too_large' })
+    expect(await makeDemoBackend({ lang: 'en' }).transcribe({ mime: 'audio/mp4', audioBase64: 'QUFBQQ==' })).toMatch(/weekly report/)
+  })
   it('演示聊天:说一句 ⇒ pending;几秒后主题唤醒、历史里多了一问一答;同一 requestId 不重复', async () => {
     vi.useFakeTimers()
     try {

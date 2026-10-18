@@ -33,6 +33,16 @@ describe('makeHttpSTTProvider', () => {
     expect((seen.init!.headers as Record<string, string>)['Content-Type']).toBeUndefined()
   })
 
+  it('names an m4a clip (phone hold-to-talk) audio.m4a, not .wav', async () => {
+    let form: FormData | undefined
+    const fetchMock = vi.fn(async (_url: string, init: RequestInit) => { form = init.body as FormData; return okResponse('ok') })
+    const p = makeHttpSTTProvider({ baseUrl: 'http://vps', model: 'm' }, { fetch: fetchMock as unknown as typeof fetch })
+    await p.transcribe(Buffer.from('a'), 'audio/mp4')
+    expect((form!.get('file') as File).name).toBe('audio.m4a')
+    await p.transcribe(Buffer.from('a'), 'audio/amr')
+    expect((form!.get('file') as File).name).toBe('audio.wav')
+  })
+
   it('throws with a mapped reason on non-2xx', async () => {
     const p = makeHttpSTTProvider({ baseUrl: 'http://vps', model: 'm' }, { fetch: (async () => errResponse(404, 'nope')) as unknown as typeof fetch })
     await expect(p.transcribe(Buffer.from('a'), 'audio/wav')).rejects.toThrow(/HTTP STT 404/)

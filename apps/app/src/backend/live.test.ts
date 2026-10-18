@@ -453,6 +453,21 @@ describe('跟 CC 说 / 连接 / 原生会话', () => {
     const down = harness({ 'POST /m/api/chat/say': ok({ ok: false, error: 'unavailable' }, 503) })
     await expect(down.b.chatSay('hi', SAY_REQ2)).rejects.toMatchObject({ code: 'unavailable' })
   })
+  it('按住说话(2026-10-18):GET 读配没配;POST 只带 mime + audioBase64、不自动重发;太大在手机上就拦;错误码各归各', async () => {
+    const { b, reqs } = harness({ 'GET /m/api/chat/transcribe': ok({ ok: true, configured: false }), 'POST /m/api/chat/transcribe': ok({ ok: true, text: '明天提醒我' }) })
+    expect(await b.transcribeStatus()).toEqual({ configured: false })
+    expect(await b.transcribe({ mime: 'audio/mp4', audioBase64: 'QUFBQQ==' })).toBe('明天提醒我')
+    expect(reqs.at(-1)).toMatchObject({ key: 'POST /m/api/chat/transcribe', body: { mime: 'audio/mp4', audioBase64: 'QUFBQQ==' } })
+    expect(reqs.at(-1)!.retry).toBeUndefined()
+    const n = reqs.length
+    await expect(b.transcribe({ mime: 'audio/mp4', audioBase64: 'A'.repeat(Math.ceil(200 * 1024 / 3) * 4 + 4) })).rejects.toMatchObject({ code: 'too_large' })
+    await expect(b.transcribe({ mime: 'video/mp4', audioBase64: 'QUFBQQ==' })).rejects.toMatchObject({ code: 'invalid' })
+    expect(reqs).toHaveLength(n)
+    for (const [status, error, code] of [[422, 'stt_not_configured', 'stt_not_configured'], [422, 'no_speech', 'no_speech'], [503, 'stt_blocked', 'stt_blocked'], [504, 'stt_timeout', 'stt_failed'], [413, 'audio_too_large', 'too_large']] as const) {
+      const h = harness({ 'POST /m/api/chat/transcribe': ok({ ok: false, error }, status) })
+      await expect(h.b.transcribe({ mime: 'audio/mp4', audioBase64: 'QUFBQQ==' })).rejects.toMatchObject({ code })
+    }
+  })
   it('chatSay 带图(2026-10-06):draftId + attachmentIds 进正文;电脑上图不在了 ⇒ images_gone;老电脑 ⇒ images_unsupported', async () => {
     const D = '11111111-1111-4111-8111-111111111111', A = '22222222-2222-4222-8222-222222222222'
     const { b, reqs } = harness({ 'POST /m/api/chat/say': ok({ ok: true, matterId: 'c0ffee01', job: { requestId: SAY_REQ, text: '', status: 'pending', since: 1 } }, 202) })

@@ -24,6 +24,14 @@ describe('mapPhoneError(HTTP 状态 + 正文 → BackendCode)', () => {
     [503, { ok: false, error: 'insight_not_wired' }, 'unknown'],
     [500, null, 'unknown'],
     [403, { error: 'route_not_allowed' }, 'unknown'],
+    // 按住说话(2026-10-18)
+    [422, { ok: false, error: 'stt_not_configured' }, 'stt_not_configured'],
+    [503, { ok: false, error: 'stt_blocked' }, 'stt_blocked'],
+    [502, { ok: false, error: 'stt_failed' }, 'stt_failed'],
+    [504, { ok: false, error: 'stt_timeout' }, 'stt_failed'],
+    [422, { ok: false, error: 'no_speech' }, 'no_speech'],
+    [413, { ok: false, error: 'audio_too_large' }, 'too_large'],
+    [503, { ok: false, error: 'voice_not_wired' }, 'unavailable'],
   ])('%s %j ⇒ %s', (status, body, want) => {
     expect(mapPhoneError(status, body)).toBe(want)
   })
