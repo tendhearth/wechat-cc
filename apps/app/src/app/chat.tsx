@@ -14,7 +14,7 @@ import { MessageText } from '../ui/Markdown'
 import { ReplyAttachments, ReplyProcess } from '../ui/ReplyExtras'
 import { TextField } from '../ui/TextField'
 import { AddImageButton, ImageTray } from '../ui/ImageTray'
-import { TalkButton, TalkStatus, useHoldToTalk } from '../ui/HoldToTalk'
+import { SendTalkButton, TalkStatus, useHoldToTalk } from '../ui/HoldToTalk'
 import { mergeTranscript } from '../view/hold-to-talk'
 import type { PickedImage } from '../state/image-upload'
 import { PHONE_CHAT_MAX_IMAGES as CHAT_MAX_IMAGES } from '@wechat-cc/protocol'
@@ -86,7 +86,7 @@ export default function Chat() {
 
   // 这条对话现在用谁(2026-10-06):一眼看见,点进去换。
   const chatModel = useQuery('chatModel', () => backend.chatModel(), { refreshOnMount: true })
-  // 按住说话(2026-10-18):转出来的字接在输入框后面,主人看过再点发送 —— 永不自动发。电脑上没配语音转文字 ⇒ 按钮先说清楚。
+  // 按住说话(2026-10-18):转出来的字接在输入框后面,主人看过再点发送 —— 永不自动发。发送和说话是同一颗按钮(有字点一下发、按住说;空着一按就说)。电脑上没配语音转文字 ⇒ 按钮先说清楚。
   const sttStatus = useQuery('transcribeStatus', () => backend.transcribeStatus(), { refreshOnMount: true })
   const talk = useHoldToTalk({
     transcribe: p => backend.transcribe(p),
@@ -169,7 +169,6 @@ export default function Chat() {
           {imageNote ? <Txt testID="chat-image-note" role="meta" tone="inkSoft">{imageNote}</Txt> : null}
           <TalkStatus view={talk.view} elapsedMs={talk.elapsedMs} lang={lang} testID="chat-talk" />
           <View style={{ flexDirection: 'row', alignItems: 'flex-end', gap: space.s }}>
-            <TalkButton ctl={talk.ctl} view={talk.view} elapsedMs={talk.elapsedMs} lang={lang} disabled={!online || sending} testID="chat-talk" />
             <TextField
               testID="chat-input"
               accessibilityLabel={t(lang, 'chat.placeholder')}
@@ -179,17 +178,7 @@ export default function Chat() {
               placeholder={t(lang, 'chat.placeholder')}
               style={{ flex: 1, minHeight: 48, maxHeight: 140, paddingHorizontal: space.l, paddingTop: space.m, paddingBottom: space.m, borderRadius: radius.sheet, borderWidth: 1, borderColor: c.hair, backgroundColor: c.paper }}
             />
-            <Pressable
-              testID="chat-send"
-              accessibilityRole="button"
-              accessibilityLabel={t(lang, 'chat.send')}
-              accessibilityState={{ disabled: !canSend, busy: sending }}
-              disabled={!canSend}
-              onPress={send}
-              style={({ pressed }) => ({ minHeight: 48, paddingHorizontal: space.l, borderRadius: radius.control, justifyContent: 'center', backgroundColor: c.accent, opacity: !canSend ? 0.55 : pressed ? 0.85 : 1 })}
-            >
-              {sending ? <ActivityIndicator color={c.onAccent} /> : <Txt role="body" tone="onAccent">{t(lang, 'chat.send')}</Txt>}
-            </Pressable>
+            <SendTalkButton ctl={talk.ctl} view={talk.view} elapsedMs={talk.elapsedMs} lang={lang} sendable={canSend} talkable={online && !sending} sending={sending} onTap={send} testID="chat-send" />
           </View>
         </View>
       </KeyboardAvoidingView>

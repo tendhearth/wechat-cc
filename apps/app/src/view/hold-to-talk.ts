@@ -72,3 +72,24 @@ export const TALK_NOTE_KEY = {
   hint: 'talk.hint', micDenied: 'talk.micDenied', micReady: 'talk.micReady', micFailed: 'talk.micFailed', notConfigured: 'talk.notConfigured', blocked: 'talk.blocked',
   noSpeech: 'talk.noSpeech', tooLarge: 'talk.tooLarge', offline: 'talk.offline', sttFailed: 'talk.sttFailed', failed: 'talk.failed',
 } as const satisfies Record<TalkNote, string>
+
+/**
+ * 发送与说话合成一颗(2026-10-18 主人):有东西可发 ⇒ 点一下发、按住 LONG_PRESS_MS 才开始说;
+ * 输入框空着 ⇒ 一按就开始说(同微信)。
+ */
+export const LONG_PRESS_MS = 350
+export type PressPlan = 'tapOrHold' | 'talk' | 'none'
+export function pressPlan(p: { sendable: boolean; talkable: boolean }): PressPlan {
+  if (p.sendable) return 'tapOrHold'
+  return p.talkable ? 'talk' : 'none'
+}
+
+/** 这颗按钮现在长什么样。 */
+export type ButtonFace = 'sending' | 'transcribing' | 'recording' | 'cancel' | 'send' | 'talk' | 'noSetup'
+export function buttonFace(p: { sending: boolean; sendable: boolean; phase: TalkPhase['phase']; cancel: boolean; configured: boolean | null }): ButtonFace {
+  if (p.sending) return 'sending'
+  if (p.phase === 'transcribing') return 'transcribing'
+  if (p.phase === 'recording' || p.phase === 'arming') return p.cancel ? 'cancel' : 'recording'
+  if (p.sendable) return 'send'
+  return p.configured === false ? 'noSetup' : 'talk'
+}

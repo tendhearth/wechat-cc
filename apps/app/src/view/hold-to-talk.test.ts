@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import { PHONE_TRANSCRIBE_MAX_BYTES } from '@wechat-cc/protocol'
 import { t } from '../i18n'
-import { CANCEL_DY, MIN_HOLD_MS, TALK_NOTE_KEY, elapsedLabel, isCancelDrag, isTalkProblem, mergeTranscript, recordingFits, releaseAction, secondsLeft, transcribeNote, type TalkNote } from './hold-to-talk'
+import { CANCEL_DY, LONG_PRESS_MS, MIN_HOLD_MS, TALK_NOTE_KEY, buttonFace, pressPlan, elapsedLabel, isCancelDrag, isTalkProblem, mergeTranscript, recordingFits, releaseAction, secondsLeft, transcribeNote, type TalkNote } from './hold-to-talk'
 
 describe('按住说话:视图小件', () => {
   it('松开:不到 0.5 秒只提示;滑开了就丢;够长才转', () => {
@@ -54,5 +54,26 @@ describe('按住说话:视图小件', () => {
     expect(isTalkProblem('hint' as TalkNote)).toBe(false)
     expect(isTalkProblem('micReady')).toBe(false)
     expect(isTalkProblem('micDenied')).toBe(true)
+  })
+})
+
+describe('发送兼说话一颗按钮', () => {
+  it('有东西可发 ⇒ 点发、按住说;空着能说 ⇒ 一按就说;都不行 ⇒ 不接手势', () => {
+    expect(pressPlan({ sendable: true, talkable: true })).toBe('tapOrHold')
+    expect(pressPlan({ sendable: false, talkable: true })).toBe('talk')
+    expect(pressPlan({ sendable: false, talkable: false })).toBe('none')
+    expect(LONG_PRESS_MS).toBeLessThan(MIN_HOLD_MS)
+  })
+  it('样子:发送中 > 转写中 > 在录(上滑 = 取消)> 发送 > 说话 / 语音未配', () => {
+    const base = { sending: false, sendable: false, phase: 'idle' as const, cancel: false, configured: null }
+    expect(buttonFace({ ...base, sending: true, sendable: true })).toBe('sending')
+    expect(buttonFace({ ...base, phase: 'transcribing', sendable: true })).toBe('transcribing')
+    expect(buttonFace({ ...base, phase: 'recording', sendable: true })).toBe('recording')
+    expect(buttonFace({ ...base, phase: 'arming' })).toBe('recording')
+    expect(buttonFace({ ...base, phase: 'recording', cancel: true })).toBe('cancel')
+    expect(buttonFace({ ...base, sendable: true })).toBe('send')
+    expect(buttonFace(base)).toBe('talk')
+    expect(buttonFace({ ...base, configured: false })).toBe('noSetup')
+    expect(buttonFace({ ...base, configured: false, sendable: true })).toBe('send')
   })
 })
