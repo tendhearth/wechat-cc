@@ -42,15 +42,18 @@ afterEach(() => { relay.dispose(); hub.dispose(); db.close() })
 
 let windows: Map<string, string>
 let relayed: { name: string; text: string }[]
-beforeEach(() => { windows = new Map(); relayed = [] })
+let relayResult: { ok: true } | { ok: false; error: string }
+let busy: string[]
+beforeEach(() => { windows = new Map(); relayed = []; relayResult = { ok: true }; busy = [] })
 
 function actions() {
   const core = makeCliReplyCore({
     hub, log: () => {}, dangerously: false,
+    holdBusy: (l) => { busy.push(`+${l}`); return () => busy.push(`-${l}`) },
     run: (_cmd, args) => new Promise(done => { runs.push({ args, done }) }),
     liveWindow: {
       find: (s) => windows.has(s.session_id) ? { pid: 1, name: windows.get(s.session_id)!, kind: 'interactive' } : null,
-      relay: async (w, text) => { relayed.push({ name: w.name, text }); return { ok: true } },
+      relay: async (w, text) => { relayed.push({ name: w.name, text }); return relayResult },
     },
     startCwd: () => '/w/start',
   })
@@ -150,6 +153,27 @@ describe('开在电脑窗口里的 Claude 会话(2026-10-18):话送进窗口,不
     expect(runs).toHaveLength(0)
     expect(status('W1')).toBe('running')
     expect(a.say('W1', '又一句')).toEqual({ ok: true })   // 不排他:窗口按顺序读
+  })
+  it('发信小进程跑着时登记 busy,完了就放(空闲自动重启别杀在半路,评审 10-19 #2)', async () => {
+    hub.ingest({ source: 'claude', kind: 'stop', session_id: 'W5', cwd: '/w/proj', machine: 'mac', text: '上一轮' })
+    windows.set('W5', 'proj-w5')
+    expect(actions().say('W5', '一句')).toEqual({ ok: true })
+    await vi.waitFor(() => expect(busy).toEqual(['+cli-relay:W5', '-cli-relay:W5']))
+  })
+  it('没送进窗口 ⇒ 歇着的会话下一句写明没送到;在跑的不改状态(评审 10-19 #3)', async () => {
+    relayResult = { ok: false, error: 'no RELAY_SENT' }
+    hub.ingest({ source: 'claude', kind: 'stop', session_id: 'W6', cwd: '/w/proj', machine: 'mac', text: '上一轮' })
+    windows.set('W6', 'proj-w6')
+    expect(actions().say('W6', '一句')).toEqual({ ok: true })
+    await vi.waitFor(() => expect(hub.list({ includeEnded: true }).find(v => v.session_id === 'W6')?.last_summary).toContain('手机上那句没送到'))
+    expect(status('W6')).toBe('idle')
+    hub.ingest({ source: 'claude', kind: 'prompt', session_id: 'W7', cwd: '/w/proj', machine: 'mac' })
+    windows.set('W7', 'proj-w7')
+    expect(actions().say('W7', '一句')).toEqual({ ok: true })
+    await vi.waitFor(() => expect(relayed.map(r => r.name)).toContain('proj-w7'))
+    await flush(); await flush()
+    expect(status('W7')).toBe('running')
+    expect(hub.list({ includeEnded: true }).find(v => v.session_id === 'W7')?.last_summary ?? '').not.toContain('没送到')
   })
   it('窗口关了 ⇒ 照旧 resume,而且在会话起点的文件夹里起', async () => {
     hub.ingest({ source: 'claude', kind: 'stop', session_id: 'W2', cwd: '/w/proj/.claude/worktrees/x', machine: 'mac', text: '上一轮' })

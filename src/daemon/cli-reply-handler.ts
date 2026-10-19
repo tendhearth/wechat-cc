@@ -151,14 +151,20 @@ export function makeCliReplyCore(deps: CliReplyCoreDeps): CliReplyCore {
       return r
     },
   }
-  /** 送进开着的窗口:发信小进程也是一次 Claude 调用,同样过网络闸门;不登记 busy / 执行占用(跑的是那个窗口)。 */
+  /**
+   * 送进开着的窗口:发信小进程也是一次 Claude 调用,同样过网络闸门;不登记执行占用(跑的是那个窗口)。
+   * 但发信小进程本身要跑到 90 秒,要登记 busy —— 否则空闲自动重启会把它杀在半路,话就丢了(评审 10-19 #2)。
+   */
   async function relayInner(s: CliSessionInfo, w: LiveWindow, text: string): Promise<ResumeOutcome> {
     if (deps.networkGate) {
       const d = await decideCall(deps.networkGate, { provider: 'claude', purpose: 'turn' as const })
       if (!d.allowed) { deps.log('CLI_REPLY', `relay ${s.session_id.slice(0, 6)} refused — network unprotected [${d.verdict!.source}]`); return { kind: 'failed', text: unprotectedMessage(d.verdict!, d.cls.label) } }
     }
     deps.log('CLI_REPLY', `relay → live window ${w.name} (pid ${w.pid}) for claude/${s.session_id.slice(0, 6)}`)
-    const r = await deps.liveWindow!.relay(w, text).catch(err => ({ ok: false as const, error: err instanceof Error ? err.message : String(err) }))
+    const release = deps.holdBusy?.(`cli-relay:${s.session_id.slice(0, 6)}`) ?? (() => {})
+    const r = await deps.liveWindow!.relay(w, text)
+      .catch(err => ({ ok: false as const, error: err instanceof Error ? err.message : String(err) }))
+      .finally(release)
     if (!r.ok) { deps.log('CLI_REPLY', `relay ${s.session_id.slice(0, 6)} failed: ${r.error}`); return { kind: 'failed', text: `没送进电脑上开着的窗口(${r.error})` } }
     return { kind: 'relayed', text: w.name }
   }

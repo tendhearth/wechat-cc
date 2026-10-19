@@ -6,7 +6,7 @@
  * 网络闸门、工作台冲突、busy 登记、10 分钟上限)。结果不回推,而是成为这条会话的下一句
  * last_summary(core 自己记 running → idle)。
  */
-import type { CliSessionInfo } from '../core/cli-events'
+import type { CliEventHub, CliSessionInfo } from '../core/cli-events'
 import type { CliSessionView } from '../core/cli-session-store'
 import { readTail, type CliReplyCore } from './cli-reply-handler'
 import { parseActivity, type CliActivityItem } from '../core/cli-activity'
@@ -36,7 +36,7 @@ export interface CliPhoneActions {
 }
 
 export interface CliPhoneActionsDeps {
-  hub: { lookup(code: string): CliSessionInfo | null; list(opts?: { includeEnded?: boolean; limit?: number }): CliSessionView[] }
+  hub: { lookup(code: string): CliSessionInfo | null; list(opts?: { includeEnded?: boolean; limit?: number }): CliSessionView[] } & Partial<Pick<CliEventHub, 'observe'>>
   relay: { pendingHash(sessionId: string): string | null; owns(hash: string): boolean }
   /** = ilink.resolvePermission(微信「y/n 码」、桌宠权限卡用的同一个)。 */
   resolve(hash: string, decision: 'allow' | 'deny'): boolean
@@ -80,7 +80,15 @@ export function makeCliPhoneActions(deps: CliPhoneActionsDeps): CliPhoneActions 
       const w = local0 ? deps.core.live?.(s0!) ?? null : null
       if (w) {
         deps.log('CLI_REPLY', `phone say → live window ${w.name} for ${s0!.source}/${sessionId.slice(0, 6)}`)
-        void deps.core.resume(s0!, text).catch(err => deps.log('CLI_REPLY', `phone relay failed: ${err instanceof Error ? err.message : String(err)}`))
+        // 已经回了「收下」:没送进去(网络闸门 / 超时 / 窗口名失效)不能只进日志 —— 会话歇着就记成这条会话的下一句,
+        // 手机列表上看得见(同非窗口那条路的「没跑起来」);在跑 / 在等批准就不记,免得把它说成歇着(评审 10-19 #3)。
+        void deps.core.resume(s0!, text).then(r => {
+          if (r.kind !== 'failed') return
+          deps.log('CLI_REPLY', `phone relay failed for ${s0!.source}/${sessionId.slice(0, 6)}: ${r.text}`)
+          const now = view(sessionId)
+          if (!now || now.status === 'running' || now.status === 'waiting') return
+          try { deps.hub.observe?.({ source: s0!.source, session_id: s0!.session_id, cwd: s0!.cwd, ...(s0!.machine ? { machine: s0!.machine } : {}), kind: 'stop', text: `手机上那句没送到:${r.text}` }) } catch { /* 登记处出错只少一行提示 */ }
+        }, err => deps.log('CLI_REPLY', `phone relay failed: ${err instanceof Error ? err.message : String(err)}`))
         return { ok: true }
       }
       if (v.status === 'ended') return { ok: false, error: 'cli_session_ended' }
