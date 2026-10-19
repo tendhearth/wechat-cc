@@ -21,7 +21,21 @@ export type EntryInput = {
   attachmentIds?: string[]
   context?: {source: 'owner-chat'; excerpts: EntryExcerpt[]}
 }
-export type EntryContext = {ownerKey: string; surface: 'desktop' | 'phone'}
+/**
+ * surface:这件事在哪个表面露面(matter_bindings);origin:谁亲手建的(matters.origin_surface,只写一次)。
+ * origin 只由 daemon 从鉴权来源填 —— 桌面 = operator 令牌;手机 = 中继 v2 密封帧(原生 App)或
+ * 局域网直连 / v1 隧道(浏览器 /m)—— 永不来自请求正文或请求头。不知道 ⇒ 不给,不画来源。
+ */
+export type EntryOrigin = 'desktop' | 'app' | 'web'
+export type EntryContext = {ownerKey: string; surface: 'desktop' | 'phone'; origin?: EntryOrigin | null}
+/** 每个表面只认自己那几种出生地:桌面只能是 desktop,手机只能是 app / web。 */
+export const ENTRY_ORIGINS: Readonly<Record<EntryContext['surface'], readonly EntryOrigin[]>> = Object.freeze({desktop: Object.freeze(['desktop'] as const), phone: Object.freeze(['app', 'web'] as const)})
+/** 校验并取出出生地:不在这个表面的取值里 ⇒ invalid_entry_owner(与 requireEntryOwner 同一个错)。 */
+export function entryOrigin(context: EntryContext): EntryOrigin | null {
+  const origin = context.origin ?? null
+  if (origin !== null && !(ENTRY_ORIGINS[context.surface] ?? []).includes(origin)) throw Error('invalid_entry_owner')
+  return origin
+}
 export type EntryReceipt = {
   requestId: string
   taskId: string

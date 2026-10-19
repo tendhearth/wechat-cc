@@ -236,6 +236,7 @@ import { makeDeviceCredentials, makeDeviceStore, type DeviceRow } from './device
 import { normalizeLang } from './phone-insight-llm'
 import { latestChanges } from './phone-changes'
 import { LAN_ONLY_OPS, LINK_ROUTES, PHONE_ROUTES, phoneRouteAllowed } from './phone-routes'
+import { phoneClientOf, withPhoneClient } from './phone-client'
 import { phoneLinkState, psetUrl, type PhoneLinkResult } from './phone-link'
 
 /**
@@ -410,7 +411,8 @@ export function makeSettingsPanel(deps: SettingsPanelDeps): SettingsPanel {
   const handleRequest = async (req: Request): Promise<Response> => {
     const url = new URL(req.url)
     const t = url.searchParams.get('d') ?? url.searchParams.get('t')
-    return await routeRequest(url, t, req)
+    // 原生 App(中继 v2 帧)还是浏览器(直连 / v1 隧道):只看传输,见 phone-client.ts。下游建一件事时取它当出生地。
+    return await withPhoneClient(phoneClientOf(req), () => routeRequest(url, t, req))
   }
 
   const panel: SettingsPanel = {

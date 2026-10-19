@@ -17,6 +17,7 @@ import type { TaskWaitingFor } from '../wechat-types'
 import type { WorkbenchPhase, WorkbenchTaskView } from './types'
 import type { Active } from './state'
 import type { ServiceCtx } from './ctx'
+import type { MatterOrigin } from '../../matters/store'
 import type { PendingWorkbenchPermission } from '../permissions'
 import type { PendingUserInput } from '../user-input'
 import type { QuotaHandoffView } from './types'
@@ -115,10 +116,15 @@ export function makeViewDomain(ctx:ServiceCtx, queries?:{quotaHandoff(id:string)
     return store.addProject({...input,path:canonicalProject(input.path)})
   }
   /** 每件事有哪些执行者参与过(matter.agents 同一个出处;一次查一页)。没接 matters / 查不出来 ⇒ 不带,桌面退回任务自己那一家。 */
-  function agentsOf(ids:string[]):Map<string,string[]> {
-    try{return ctx.deps.matters?.agents(ids)??new Map()}catch{return new Map()}
+  // 出生地(2026-10-19)同一个出处:matters.origin_surface;不知道的不带,桌面就不画来源字形。
+  type Marks={agents:Map<string,string[]>;origins:Map<string,MatterOrigin>}
+  function agentsOf(ids:string[]):Marks {
+    let agents=new Map<string,string[]>(),origins=new Map<string,MatterOrigin>()
+    try{agents=ctx.deps.matters?.agents(ids)??agents}catch{/* 见上 */}
+    try{origins=ctx.deps.matters?.origins(ids)??origins}catch{/* 见上 */}
+    return {agents,origins}
   }
-  const withAgents=(view:WorkbenchTaskView,agents:Map<string,string[]>):WorkbenchTaskView=>{const a=agents.get(view.id);return a?.length?{...view,agents:a}:view}
+  const withAgents=(view:WorkbenchTaskView,marks:Marks):WorkbenchTaskView=>{const a=marks.agents.get(view.id),origin=marks.origins.get(view.id);return a?.length||origin?{...view,...(a?.length?{agents:a}:{}),...(origin?{origin}:{})}:view}
   function list(query:WorkbenchListQuery={}) {
     const providers=ctx.deps.registry.list().flatMap(id=>{const p=ctx.deps.registry.get(id);return isWorkbenchProviderId(id)&&p&&isWorkbenchExecutorCapabilities(p.opts.workbench)?[{id,displayName:p.opts.displayName,capabilities:structuredClone(p.opts.workbench),quota:ctx.actions.deref('view').quotaExhausted(id),usage:ctx.deps.usage?.(id)??null}]:[]})
     const result=store.listPage(query)

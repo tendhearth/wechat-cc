@@ -7,7 +7,7 @@
 import { ensureWorktree, planWorktree, repoRootOf } from '../worktree-workspaces'
 import { createHash, randomUUID } from 'node:crypto'
 import type { AgentEvent, AgentSession, AgentExecutionChoice } from '../../agent-provider'
-import type { MatterStore } from '../../matters/store'
+import type { MatterOrigin, MatterStore } from '../../matters/store'
 import { classifyProviderError } from '../../provider-quota'
 import { decideCall, isNetworkUnprotectedError } from '../../../lib/network-gate'
 import { providerCallTarget } from '../../provider-registry'
@@ -27,7 +27,7 @@ import { normalizeInputRequestId, sameAttachments } from '../live-inputs'
 import type { AcceptedNativeResume } from '../native-adoption'
 import { makeRunPermissions, WORKBENCH_PERMISSION_TIMEOUT_MS } from '../permissions'
 import { publicTask, type StoredTask, type TaskStatus } from '../store'
-import type { EntryContext } from '../task-entry'
+import { entryOrigin, type EntryContext } from '../task-entry'
 import { makeRunUserInput } from '../user-input'
 import type { CreateWechatTask } from '../wechat-types'
 import { checkedText } from './checked-text'
@@ -477,9 +477,9 @@ export function makeExecuteDomain(ctx:ServiceCtx, domains:ExecuteDomains) {
   /** 出生地也不能打断创建:没有 matter store、或那个 chat 的 matter 建不出来,就没有出生地,任务照建。
    *  但「算出生地时出错」不能悄悄退化成「这件事本来就没有出生地」——没接 matters 是老接线的正常状态、
    *  不留痕;`ensureChat` 真的抛错则是信号,留一条能查到的痕迹(评审 2026-09-23 修复轮 1)。 */
-  function safeOriginMatterId(ownerChatId:string):string|null {
+  function safeOriginMatterId(ownerChatId:string,origin:MatterOrigin|null='wechat'):string|null {
     if(!ctx.deps.matters)return null
-    try{return ctx.deps.matters.ensureChat(ownerChatId).id}
+    try{return ctx.deps.matters.ensureChat(ownerChatId,undefined,origin).id}
     catch(err){ctx.log?.('MATTER_ORIGIN',`ensureChat failed for ${ownerChatId}: ${err instanceof Error?err.message:err} — origin left null, task still created`);return null}
   }
   function createTask(input:CreateTask,onAccepted?:(task:StoredTask,runId:string)=>void,origin?:{matterId:string|null;messageId:string|null},entry?:{context:EntryContext;workspaceKind:'managed'|'project';registerProject?:boolean;fromChat:boolean;materials:Attachment[];beforeCreate:()=>void;verifyDirectory:(path:string,identity:string)=>void}):WorkbenchTaskView {
@@ -498,13 +498,15 @@ export function makeExecuteDomain(ctx:ServiceCtx, domains:ExecuteDomains) {
       const task=store.create({title:input.title?.trim()??(text.slice(0,40)||attachments[0]!.name.slice(0,40)),path,providerId:input.providerId,ownerChatId:entry?.context.ownerKey??ctx.deps.ownerChatId(),workspaceKind:entry?.workspaceKind,registerProject:input.registerProject??entry?.registerProject??entry?.workspaceKind!=='managed'})
       if(entry){
         const m=ctx.deps.matters;if(!m)throw Error('entry_not_wired')
-        const chat=entry.fromChat?m.ensureChat(entry.context.ownerKey):null
+        // 出生地:从鉴权来源来的(桌面 operator / 手机 v2 帧或浏览器),不认请求里自报的;不知道 ⇒ null,不画。
+        const origin=entryOrigin(entry.context)
+        const chat=entry.fromChat?m.ensureChat(entry.context.ownerKey,undefined,origin):null
         if(chat&&chat.ownerChatId!==entry.context.ownerKey)throw Error('invalid_entry_owner')
-        m.create({id:task.id,kind:'task',title:task.title,projectPath:path,ownerChatId:entry.context.ownerKey,originMatterId:chat?.id??null,originMessageId:null})
+        m.create({id:task.id,kind:'task',title:task.title,projectPath:path,ownerChatId:entry.context.ownerKey,originMatterId:chat?.id??null,originMessageId:null,origin})
         m.linkTask(task.id)
         if(store.taskMatterId(task.id)!==task.id)throw Error('entry_matter_link_failed')
         m.bind(task.id,entry.context.surface,entry.context.ownerKey)
-      }else matterSync(m=>{m.create({id:task.id,kind:'task',title:task.title,projectPath:path,ownerChatId:task.ownerChatId??null,originMatterId:origin?.matterId??null,originMessageId:origin?.messageId??null});m.linkTask(task.id);if(task.ownerChatId)m.bind(task.id,'wechat',task.ownerChatId)})
+      }else matterSync(m=>{m.create({id:task.id,kind:'task',title:task.title,projectPath:path,ownerChatId:task.ownerChatId??null,originMatterId:origin?.matterId??null,originMessageId:origin?.messageId??null,origin:input.origin??null});m.linkTask(task.id);if(task.ownerChatId)m.bind(task.id,'wechat',task.ownerChatId)})
       return start(task,text,acceptedDirectoryIdentity,undefined,undefined,undefined,undefined,undefined,attachments,input.draftId,execution,{
         persist:runId=>onAccepted?.(task,runId),activate:fn=>{activate=fn},scope:entry?.context,
       })
@@ -537,13 +539,15 @@ export function makeExecuteDomain(ctx:ServiceCtx, domains:ExecuteDomains) {
       return {plan,path:ensureWorktree(plan)}
     })():null
     let receipt!:CreationReceipt
-    createTask({path:tree?.path??project.path,providerId,text:input.text,...(tree?{registerProject:false}:{})},(task,runId)=>{
+    // 出生地:微信入站省略 ⇒ wechat;App 一轮里的「任务」命令由 daemon 填(不知道 ⇒ null)。
+    const origin=input.origin===undefined?'wechat':input.origin
+    createTask({path:tree?.path??project.path,providerId,text:input.text,origin,...(tree?{registerProject:false}:{})},(task,runId)=>{
       if(tree)store.worktrees.record({taskId:task.id,projectPath:tree.plan.projectPath,repoRoot:tree.plan.repoRoot,root:tree.plan.root,branch:tree.plan.branch})
       store.wechatNotifications.watch(task.id,input.ownerChatId,input.accountId,true)
       receipt=store.creationReceipts.add({id,accountId:input.accountId,ownerChatId:input.ownerChatId,commandHash:input.commandHash,projectId:input.projectId,path:task.path,providerId:task.providerId,taskId:task.id,runId,
         reply:`已接下这件事 · ${task.id}\n${task.providerId} · ${task.path}\n\n${task.title}\n\n完成或需要你处理时，会在这里提醒。\n查看：任务 ${task.id}\n补充：任务 ${task.id} 补充 <要求>\n关闭提醒：任务 ${task.id} 静音${tree?`\n\n在独立分支 ${tree.plan.branch} 上做。做完：任务 ${task.id} 提交 → 任务 ${task.id} 合回`:''}`,
       })
-    },{matterId:safeOriginMatterId(input.ownerChatId),messageId:input.originMessageId??null})
+    },{matterId:safeOriginMatterId(input.ownerChatId,origin),messageId:input.originMessageId??null})
     return receipt
   }
   // 不标 async:内部 wechatControl(见文件末尾)按同步 Actions 接口拿它,标了 async 会把

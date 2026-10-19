@@ -13,17 +13,28 @@ export type MatterKind='chat'|'task'|'companion'
 export type MatterStatus='open'|'replied'|'done'|'archived'
 export type MatterSurface='wechat'|'desktop'|'phone'|'cli'
 export type MatterSessionRole='main'|'review'|'handoff'
-export interface Matter {id:string;kind:MatterKind;title:string;projectPath:string|null;status:MatterStatus;ownerChatId:string|null;originMatterId:string|null;originMessageId:string|null;createdAt:number;updatedAt:number;/** 参与过这件事的执行者(列表才带):正在做的在前,其余按最近 —— 手机/桌面画成叠在一起的圆头像。 */agents?:string[]}
+/**
+ * 一件事从哪个表面来的(v77,2026-10-19):创建时写一次,此后永不更新(库里有触发器拦着)。
+ * 与 MatterSurface(在哪露过面,matter_bindings)不是一回事:app = 原生手机 App(中继 v2 密封帧),
+ * web = 浏览器 /m 页(局域网直连或 v1 隧道),cli = 从终端会话导入,companion = CC 自己起的。
+ * 不知道 ⇒ 不写(null),界面就不画 —— 旧行一律 null,不回填、不猜。
+ */
+export type MatterOrigin='wechat'|'desktop'|'app'|'web'|'cli'|'companion'
+export const MATTER_ORIGINS:readonly MatterOrigin[]=Object.freeze(['wechat','desktop','app','web','cli','companion'])
+export interface Matter {id:string;kind:MatterKind;title:string;projectPath:string|null;status:MatterStatus;ownerChatId:string|null;originMatterId:string|null;originMessageId:string|null;createdAt:number;updatedAt:number;/** 出生地(只在知道时带)。 */origin?:MatterOrigin;/** 参与过这件事的执行者(列表才带):正在做的在前,其余按最近 —— 手机/桌面画成叠在一起的圆头像。 */agents?:string[]}
 export interface MatterBinding {matterId:string;surface:MatterSurface;surfaceKey:string;lastSeenAt:number}
 export interface MatterSession {matterId:string;providerId:string;sessionId:string;role:MatterSessionRole;createdAt:number}
-export interface CreateMatter {id?:string;kind:MatterKind;title:string;projectPath?:string|null;ownerChatId?:string|null;status?:MatterStatus;originMatterId?:string|null;originMessageId?:string|null}
+export interface CreateMatter {id?:string;kind:MatterKind;title:string;projectPath?:string|null;ownerChatId?:string|null;status?:MatterStatus;originMatterId?:string|null;originMessageId?:string|null;/** 出生地:只在建行时写这一次;不知道就别给(null)。 */origin?:MatterOrigin|null}
 export interface ListMatters {kind?:MatterKind;statuses?:MatterStatus[];since?:number;limit?:number;/** 只要在这个表面露过面的 */surface?:MatterSurface}
 
+const ORIGINS=new Set<string>(MATTER_ORIGINS)
 const KINDS=new Set<string>(['chat','task','companion']),STATUSES=new Set<string>(['open','replied','done','archived']),SURFACES=new Set<string>(['wechat','desktop','phone','cli']),ROLES=new Set<string>(['main','review','handoff'])
 const ID=/^[a-f0-9]{8}$/
-type Row={id:string;kind:MatterKind;title:string;project_path:string|null;status:MatterStatus;owner_chat_id:string|null;origin_matter_id:string|null;origin_message_id:string|null;created_at:number;updated_at:number}
-const SELECT='SELECT id,kind,title,project_path,status,owner_chat_id,origin_matter_id,origin_message_id,created_at,updated_at FROM matters'
-const toMatter=(r:Row):Matter=>({id:r.id,kind:r.kind,title:r.title,projectPath:r.project_path,status:r.status,ownerChatId:r.owner_chat_id,originMatterId:r.origin_matter_id,originMessageId:r.origin_message_id,createdAt:r.created_at,updatedAt:r.updated_at})
+type Row={id:string;kind:MatterKind;title:string;project_path:string|null;status:MatterStatus;owner_chat_id:string|null;origin_matter_id:string|null;origin_message_id:string|null;origin_surface:string|null;created_at:number;updated_at:number}
+const SELECT='SELECT id,kind,title,project_path,status,owner_chat_id,origin_matter_id,origin_message_id,origin_surface,created_at,updated_at FROM matters'
+/** 库里读出来的出生地也要在册才认(手改过库 / 未来的新值 ⇒ 当没有,不画)。 */
+export const matterOrigin=(value:unknown):MatterOrigin|null=>typeof value==='string'&&ORIGINS.has(value)?value as MatterOrigin:null
+const toMatter=(r:Row):Matter=>{const origin=matterOrigin(r.origin_surface);return {id:r.id,kind:r.kind,title:r.title,projectPath:r.project_path,status:r.status,ownerChatId:r.owner_chat_id,originMatterId:r.origin_matter_id,originMessageId:r.origin_message_id,createdAt:r.created_at,updatedAt:r.updated_at,...(origin?{origin}:{})}}
 
 export interface MatterStore {
   create(input:CreateMatter):Matter
@@ -39,12 +50,14 @@ export interface MatterStore {
   sessions(id:string):MatterSession[]
   /** ensureChat 的只读半边:只查这个微信 chat 的 kind='chat' matter,不建、不刷新露面时间(读路径用)。 */
   findChat(chatId:string):Matter|null
-  /** 一个微信 chat 对应一条 kind='chat' 的 matter:有就刷新露面时间,没有就建。 */
-  ensureChat(chatId:string,title?:string):Matter
+  /** 一个微信 chat 对应一条 kind='chat' 的 matter:有就刷新露面时间,没有就建(origin 只在这次建行时写)。 */
+  ensureChat(chatId:string,title?:string,origin?:MatterOrigin|null):Matter
   /** 工作台任务与 matter 一对一、id 相同:把 workbench_tasks.matter_id 补上(新任务;存量靠 v60 回填)。 */
   linkTask(taskId:string):void
   /** 每件事有哪些执行者参与过(2026-10-19 头像叠):任务本身的执行者在前,再按最近的审阅 / 返工交接、会话。没有的 id 不出现。 */
   agents(ids:string[]):Map<string,string[]>
+  /** 一页里每件事的出生地(工作台列表一次查完);不知道的 id 不出现。 */
+  origins(ids:string[]):Map<string,MatterOrigin>
 }
 
 export function makeMatterStore(db:Db,now:()=>number=()=>Date.now()):MatterStore {
@@ -55,8 +68,9 @@ export function makeMatterStore(db:Db,now:()=>number=()=>Date.now()):MatterStore
     const status=input.status??'open';if(!STATUSES.has(status))throw new Error('invalid_matter_status')
     if(typeof input.title!=='string')throw new Error('invalid_matter_title')
     const id=input.id??randomBytes(4).toString('hex');if(!ID.test(id))throw new Error('invalid_matter_id')
+    const origin=input.origin??null;if(origin!==null&&!ORIGINS.has(origin))throw new Error('invalid_matter_origin')
     const ts=now()
-    db.query('INSERT INTO matters(id,kind,title,project_path,status,owner_chat_id,origin_matter_id,origin_message_id,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?,?,?)').run(id,input.kind,input.title,input.projectPath??null,status,input.ownerChatId??null,input.originMatterId??null,input.originMessageId??null,ts,ts)
+    db.query('INSERT INTO matters(id,kind,title,project_path,status,owner_chat_id,origin_matter_id,origin_message_id,origin_surface,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?,?,?,?)').run(id,input.kind,input.title,input.projectPath??null,status,input.ownerChatId??null,input.originMatterId??null,input.originMessageId??null,origin,ts,ts)
     return require(id)
   }
   function list(filter:ListMatters={}):Matter[] {
@@ -109,10 +123,19 @@ export function makeMatterStore(db:Db,now:()=>number=()=>Date.now()):MatterStore
       for(const r of peers.sort((a,b)=>b.at-a.at))add(r.mid,r.provider_id)
       return out
     },
+    origins(ids){
+      const out=new Map<string,MatterOrigin>()
+      const want=[...new Set(ids.filter(id=>ID.test(id)))]
+      if(!want.length)return out
+      for(const r of db.query<{id:string;origin_surface:string|null},string[]>(`SELECT id,origin_surface FROM matters WHERE origin_surface IS NOT NULL AND id IN (${want.map(()=>'?').join(',')})`).all(...want)){
+        const origin=matterOrigin(r.origin_surface);if(origin)out.set(r.id,origin)
+      }
+      return out
+    },
     linkTask(taskId){require(taskId);db.query('UPDATE workbench_tasks SET matter_id=? WHERE id=? AND matter_id IS NULL').run(taskId,taskId)},
     findChat,
-    ensureChat(chatId,title){
-      const matter=findChat(chatId)??create({kind:'chat',title:title??'聊天',ownerChatId:chatId})
+    ensureChat(chatId,title,origin){
+      const matter=findChat(chatId)??create({kind:'chat',title:title??'聊天',ownerChatId:chatId,origin:origin??null})
       db.query('INSERT INTO matter_bindings(matter_id,surface,surface_key,last_seen_at) VALUES(?,?,?,?) ON CONFLICT(matter_id,surface,surface_key) DO UPDATE SET last_seen_at=excluded.last_seen_at').run(matter.id,'wechat',chatId,now())
       return matter
     },

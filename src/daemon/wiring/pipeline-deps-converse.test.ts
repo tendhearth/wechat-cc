@@ -21,6 +21,7 @@ import type { AppTurn } from '../inbound/build'
 import { scopedReply } from '../inbound/reply-scope'
 import { makeMessagesStore } from '../../lib/messages-store'
 import type { StickerLib } from '../stickers'
+import { withPhoneClient } from '../phone-client'
 
 // Task 2 HIGH-severity fix (app-conversation-channel spec §3): companionConverse
 // must refuse to start an app turn while a WeChat turn is already in flight on
@@ -284,13 +285,18 @@ describe('companionConverse in-flight guard (buildPipelineDeps)', () => {
   it('第四步(d):App 说的话先过消费表 —— 消费者吃了就把截住的回话交还 App,不进会话、不开 sink', async () => {
     const appTurn = new Ref<AppTurn>('appTurn')
     const seen: string[] = []
-    appTurn.set(async (ctx) => { seen.push(ctx.msg.text); if (ctx.msg.text === '/帮助') { scopedReply()!.push('这里是帮助'); scopedReply()!.push('第二段'); ctx.consumedBy = 'mode'; return { consumed: true } } return { consumed: false } })
+    const origins: unknown[] = []
+    appTurn.set(async (ctx) => { seen.push(ctx.msg.text); origins.push(ctx.origin); if (ctx.msg.text === '/帮助') { scopedReply()!.push('这里是帮助'); scopedReply()!.push('第二段'); ctx.consumedBy = 'mode'; return { consumed: true } } return { consumed: false } })
     const { companionConverse, dispatchInner, replySinksOpen, ilink } = setup({ inFlight: false, appTurn })
     await expect(companionConverse('/帮助', 'phone')).resolves.toEqual({ reply: '这里是帮助\n第二段' })
     expect(dispatchInner).not.toHaveBeenCalled(); expect(replySinksOpen).not.toHaveBeenCalled(); expect(ilink.sendMessage).not.toHaveBeenCalled()
     // 没人吃 ⇒ 照常进会话
     await expect(companionConverse('how are you')).resolves.toEqual({ reply: 'reply text' })
     expect(dispatchInner).toHaveBeenCalledTimes(1); expect(seen).toEqual(['/帮助', 'how are you'])
+    // App 一轮带出生地(这一轮里「任务」命令建的事不是微信来的):桌面 = desktop;手机在面板请求之外 ⇒ 分不清 = null
+    expect(origins).toEqual([null, 'desktop'])
+    await withPhoneClient('app', () => companionConverse('/帮助', 'phone'))
+    expect(origins.at(-1)).toBe('app')
   })
 
   it('refuses the app turn (reply_sink_busy) when the owner session is already in flight (e.g. a WeChat turn), WITHOUT dispatching, locking, or opening a reply sink', async () => {

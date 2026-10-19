@@ -43,6 +43,33 @@ it('从微信交办的事记住出生地;桌面亲手派的不记',async()=>{
   expect(logs).toEqual([])
 })
 
+it('表面出生地(v77):微信交办 ⇒ wechat(任务与首建的主人对话);桌面亲手派的看调用方给不给',async()=>{
+  const projectId=service.projects()[0]!.id
+  const receipt=service.createWechat({ownerChatId:'chat-1',accountId:'acct-1',requestId:randomUUID(),commandHash:createHash('sha256').update('改首页').digest('hex'),projectId,providerId:'claude',text:'改首页'})
+  expect(matters.get(receipt.taskId)?.origin).toBe('wechat')
+  expect(matters.ensureChat('chat-1').origin).toBe('wechat')
+  expect(service.create({path:project,providerId:'claude',text:'桌面派的',origin:'desktop'}).id).toBeTruthy()
+  const desktop=service.list().tasks.find(t=>t.title==='桌面派的')!
+  expect(matters.get(desktop.id)?.origin).toBe('desktop')
+  expect(desktop.origin).toBe('desktop')
+  const unknown=service.create({path:project,providerId:'claude',text:'不知道谁派的'})
+  expect(matters.get(unknown.id)).not.toHaveProperty('origin')
+})
+
+it('App 一轮里的「任务」命令:出生地是 daemon 给的表面,不是微信;分不清 ⇒ null(连首建的主人对话也不写)',async()=>{
+  const projectId=service.projects()[0]!.id
+  const text=`任务 新建 ${projectId} 改首页`
+  await service.handleWechat('chat-1',text,{accountId:'acct-1',userId:'chat-1',msgId:'app-1',createTimeMs:1,origin:'app'})
+  const fromApp=service.list().tasks[0]!
+  expect(matters.get(fromApp.id)?.origin).toBe('app')
+  expect(matters.ensureChat('chat-1').origin).toBe('app')
+  await service.handleWechat('chat-1',`任务 新建 ${projectId} 再改`,{accountId:'acct-1',userId:'chat-1',msgId:'app-2',createTimeMs:2,origin:null})
+  const unknown=service.list().tasks.find(t=>t.id!==fromApp.id)!
+  expect(matters.get(unknown.id)).not.toHaveProperty('origin')
+  // 主人对话已经建了:之后谁再露面都不改它的出生地
+  expect(matters.ensureChat('chat-1',undefined,'wechat').origin).toBe('app')
+})
+
 it('没有 msgId 时不拦创建,origin message 存 null',async()=>{
   const projectId=service.projects()[0]!.id
   const receipt=service.createWechat({ownerChatId:'chat-1',accountId:'acct-1',requestId:randomUUID(),commandHash:createHash('sha256').update('无锚点').digest('hex'),projectId,providerId:'claude',text:'无锚点'})

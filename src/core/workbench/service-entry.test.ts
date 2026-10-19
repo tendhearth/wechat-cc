@@ -128,6 +128,36 @@ it('accepts only current owner catalog IDs and explicitly selected discussion',a
   expect(service.entryReceipt(request.requestId,{ownerKey:'new-owner',surface:'phone'})).toBeNull()
 })
 
+it('records where an entry was born (2026-10-19): desktop / app / web from the trusted context; unknown ⇒ null; a retry from elsewhere never rewrites it',async()=>{
+  const matters=makeMatterStore(db)
+  const desktop=service.createEntry(input(),{...context,origin:'desktop'});await settle(desktop.receipt.taskId)
+  expect(matters.get(desktop.receipt.matterId)?.origin).toBe('desktop')
+  expect(service.detail(desktop.receipt.taskId).task.origin).toBe('desktop')
+  expect(service.list().tasks.find(t=>t.id===desktop.receipt.taskId)?.origin).toBe('desktop')
+  const app=input(),fromApp=service.createEntry(app,{ownerKey:'owner',surface:'phone',origin:'app'});await settle(fromApp.receipt.taskId)
+  expect(matters.get(fromApp.receipt.matterId)?.origin).toBe('app')
+  // 同一个 requestId 从浏览器重发:回同一张回执,出生地不变
+  expect(service.createEntry(app,{ownerKey:'owner',surface:'phone',origin:'web'}).receipt).toEqual(fromApp.receipt)
+  expect(matters.get(fromApp.receipt.matterId)?.origin).toBe('app')
+  const web=service.createEntry(input(),{ownerKey:'owner',surface:'phone',origin:'web'});await settle(web.receipt.taskId)
+  expect(matters.get(web.receipt.matterId)?.origin).toBe('web')
+  // 手机请求分不清 App / 浏览器(不在手机面板里调)⇒ 不写
+  const unknown=service.createEntry(input(),{ownerKey:'owner',surface:'phone'});await settle(unknown.receipt.taskId)
+  expect(matters.get(unknown.receipt.matterId)).not.toHaveProperty('origin')
+  expect(service.detail(unknown.receipt.taskId).task).not.toHaveProperty('origin')
+  // 从主人对话里交办:首建的那条主人对话也记同一个出生地
+  const withChat=service.createEntry(input({context:{source:'owner-chat',excerpts:[{role:'user',text:'这一段'}]}}),{ownerKey:'owner',surface:'phone',origin:'app'});await settle(withChat.receipt.taskId)
+  expect(matters.get(matters.get(withChat.receipt.matterId)!.originMatterId!)?.origin).toBe('app')
+})
+
+it('keeps the entry surface strict: an origin that does not belong to the surface is refused like a wrong owner',()=>{
+  for(const bad of [{surface:'desktop',origin:'app'},{surface:'desktop',origin:'web'},{surface:'phone',origin:'desktop'},{surface:'phone',origin:'wechat'},{surface:'phone',origin:'cli'},{surface:'phone',origin:'phone'}] as const){
+    expect(()=>service.createEntry(input(),{ownerKey:'owner',...bad} as never)).toThrow('invalid_entry_owner')
+    expect(()=>service.entryReceipt(randomUUID(),{ownerKey:'owner',...bad} as never)).toThrow('invalid_entry_owner')
+  }
+  expect(store.list()).toEqual([])
+})
+
 it('keeps missing identity/provider and unconfirmed unattended choices explicit',async()=>{
   owner=null;expect(service.entryOptions(context).status).toBe('needs_connection')
   expect(()=>service.createEntry(input(),context)).toThrow('invalid_entry_owner')

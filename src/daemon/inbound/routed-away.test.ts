@@ -54,4 +54,14 @@ describe('六个消费者按 intent 早退', () => {
     expect(mine.consumed).toBe('workbench'); expect(handleWechat).toHaveBeenCalledOnce()
     expect((await run(mw, ctxOf(undefined, '任务 列表'))).consumed).toBe('workbench')
   })
+  it('workbench(任务命令):微信入站不带出生地(⇒ wechat);App 一轮把 daemon 给的出生地(含 null)交下去(2026-10-19)', async () => {
+    const handleWechat = vi.fn(async () => '好的')
+    const mw = makeMwWorkbench({ handleWechat, sendMessage: async () => ({}) })
+    await run(mw, ctxOf(undefined, '任务 列表'))
+    expect((handleWechat.mock.calls[0] as unknown[])[2]).not.toHaveProperty('origin')
+    for (const origin of ['desktop', 'app', 'web', null] as const) {
+      await run(mw, { ...ctxOf(undefined, '任务 列表'), origin })
+      expect((handleWechat.mock.calls.at(-1) as unknown[])[2]).toMatchObject({ origin })
+    }
+  })
 })

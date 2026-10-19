@@ -18,6 +18,7 @@ import { V2ClientMessage, SealedV2Frame, b64Encode, b64Decode, deriveV2Keys, mak
 import type { V2Channel, V2ServerMessageT, ReqMsgT, SubMsgT } from '@wechat-cc/protocol'
 import type { PhoneEvents } from './phone-events'
 import { phoneTopicAllowed } from './phone-routes'
+import { markAppRequest } from './phone-client'
 
 /** 一条流上最多同时挂多少个订阅(同 sid 替换不算新增)。 */
 export const MAX_SUBS_PER_STREAM = 32
@@ -135,7 +136,8 @@ export function makeV2Stream(deps: V2StreamDeps): V2Stream {
       if (!Object.keys(headers).some(k => k.toLowerCase() === 'content-type')) headers['content-type'] = 'application/json'
     }
     let req: Request
-    try { init.headers = headers; req = new Request(url.toString(), init) }
+    // 标成原生 App 来的(phone-client.ts):v2 密封帧只有 App 的协议客户端会说,浏览器 /m 走直连或 v1。
+    try { init.headers = headers; req = markAppRequest(new Request(url.toString(), init)) }
     catch { sendMsg({ t: 'err', rid: m.rid, code: 'bad_request' }); return }
     let res: Response
     let bytes: Uint8Array

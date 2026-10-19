@@ -87,18 +87,20 @@ function mappedError(err: unknown,entry=false): ReturnType<RouteHandler> {
 
 export function workbenchRoutes(deps: InternalApiDeps): RouteTable {
   const entryContext=()=>({ownerKey:deps.resolveAdminChatId?.()??'',surface:'desktop' as const})
+  // 出生地(2026-10-19):只有桌面 app 的 operator 令牌才算「从电脑来的」;别的 admin 令牌(会话 / 未来的调用方)不知道 ⇒ 不写。
+  const desktopOrigin=(caller?:{origin:string})=>caller?.origin==='operator'?{origin:'desktop' as const}:{}
   return {
     'GET /v1/workbench/entry-options':async query=>{
       if(query.size)return invalid()
       if(!deps.workbench)return{status:503,body:{error:'workbench_not_wired'}}
       try{return{status:200,body:deps.workbench.entryOptions(entryContext())}}catch(error){return mappedError(error)}
     },
-    'POST /v1/workbench/create-entry':async(query,body)=>{
+    'POST /v1/workbench/create-entry':async(query,body,caller)=>{
       if(query.size)return invalid()
       try{
         const input=parseEntryInput(body)
         if(!deps.workbench)return{status:503,body:{error:'workbench_not_wired'}}
-        return{status:202,body:deps.workbench.createEntry(input,entryContext())}
+        return{status:202,body:deps.workbench.createEntry(input,{...entryContext(),...desktopOrigin(caller)})}
       }catch(error){return mappedError(error,true)}
     },
     'GET /v1/workbench/entry-receipt':async query=>{
@@ -268,7 +270,7 @@ export function workbenchRoutes(deps: InternalApiDeps): RouteTable {
       }
     },
 
-    'POST /v1/workbench/create': async (_query, body) => {
+    'POST /v1/workbench/create': async (_query, body, caller) => {
       const value = objectBody(body)
       if (!value) return invalid()
       const title = typeof value.title === 'string' ? value.title.trim() : undefined
@@ -280,7 +282,7 @@ export function workbenchRoutes(deps: InternalApiDeps): RouteTable {
           !files || !path || !isAbsolute(path) || !isWorkbenchProviderId(providerId) || (!text&&!files.attachmentIds?.length) || text.length > 20_000) return invalid()
       if (!deps.workbench) return { status: 503, body: { error: 'workbench_not_wired' } }
       try {
-        const task = await deps.workbench.create({ ...(title ? { title } : {}), path, providerId, text,...files,...execution(value) })
+        const task = await deps.workbench.create({ ...(title ? { title } : {}), path, providerId, text,...files,...execution(value),...desktopOrigin(caller) })
         return { status: 202, body: { task } }
       } catch (err) {
         return mappedError(err)

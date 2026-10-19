@@ -60,3 +60,30 @@ describe('执行者头像(桌面 / 手机网页共用)', () => {
     expect(factory).toContain('The above copyright notice and this permission notice shall be included in all')
   })
 })
+
+describe('出生地小字形(2026-10-19)', () => {
+  it('六种出生地各一个单色线条字形,读屏 / title 念「从哪来的」', () => {
+    expect(A.MATTER_ORIGINS).toEqual(['wechat', 'desktop', 'app', 'web', 'cli', 'companion'])
+    const labels = Object.fromEntries(A.MATTER_ORIGINS.map(o => [o, A.originLabel(o)]))
+    expect(labels).toEqual({ wechat: '从微信来的', desktop: '从电脑来的', app: '从手机 App 来的', web: '从浏览器来的', cli: '从终端来的', companion: 'CC 自己起的' })
+    for (const o of A.MATTER_ORIGINS) {
+      const html = A.originMarkHtml(o)
+      expect(html).toContain(`role="img" aria-label="${A.originLabel(o)}" title="${A.originLabel(o)}" data-origin="${o}"`)
+      expect(html).toContain('stroke="currentColor"')
+      // 同一支笔:不带任何颜色值
+      expect(html).not.toMatch(/#[0-9a-f]{3,6}|rgb\(|fill="(?!none)/i)
+    }
+  })
+
+  it('不知道 ⇒ 什么都不画(老的事是 null,老 daemon 不带;认不出的新值、原型链上的名字都当不知道)', () => {
+    for (const o of [undefined, null, '', 'phone', 'toString', '__proto__', 42, {}]) {
+      expect(A.originMarkHtml(o)).toBe('')
+      expect(A.originLabel(o)).toBe('')
+      expect(A.matterOrigin(o)).toBeNull()
+    }
+  })
+
+  it('cls 转义', () => {
+    expect(A.originMarkHtml('cli', { cls: 'a"b' })).toContain('class="th-origin a&quot;b"')
+  })
+})

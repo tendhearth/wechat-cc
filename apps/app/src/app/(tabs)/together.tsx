@@ -14,6 +14,8 @@ import { StatusPill } from '../../ui/StatusPill'
 import { TerminalItem } from '../../ui/TerminalItem'
 import { AgentAvatars } from '../../ui/AgentAvatars'
 import { agentsLabel } from '../../view/agents'
+import { OriginMark } from '../../ui/OriginMark'
+import { originKey } from '../../view/origin'
 import { space } from '../../ui/tokens'
 import { TopBar } from '../../ui/TopBar'
 import { Txt } from '../../ui/Txt'
@@ -72,7 +74,7 @@ export default function Together() {
           <Pressable
             testID={`together-item-${item.id}`}
             accessibilityRole="button"
-            accessibilityLabel={`${item.title}, ${t(lang, `status.${item.status}`)}${item.agents.length ? `, ${agentsLabel(item.agents)}` : ''}`}
+            accessibilityLabel={`${item.title}, ${t(lang, `status.${item.status}`)}${item.agents.length ? `, ${agentsLabel(item.agents)}` : ''}${item.origin ? `, ${t(lang, originKey(item.origin))}` : ''}`}
             onPress={() => router.push(`/matter/${encodeURIComponent(item.id)}`)}
             style={({ pressed }) => ({
               flexDirection: 'row',
@@ -89,6 +91,8 @@ export default function Together() {
               <StatusPill status={item.status} />
               {item.subtitle ? <Txt role="small" tone="inkSoft" content="user" numberOfLines={1}>{item.subtitle}</Txt> : null}
             </View>
+            {/* 出生地(2026-10-19):头像组旁边一个小字形,只画出生地;不知道就不画 */}
+            <OriginMark origin={item.origin} testID={`together-origin-${item.id}`} />
             <AgentAvatars ids={item.agents} testID={`together-agents-${item.id}`} />
             <Txt role="title" tone="inkSoft">›</Txt>
           </Pressable>

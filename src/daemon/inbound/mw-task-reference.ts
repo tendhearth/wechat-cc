@@ -30,7 +30,8 @@ export interface TaskReferenceMwDeps {
   /** 额度用完时"交给谁继续";null = 没有可接的。 */
   fallbackExecutor?(providerId: string): string | null
   /** 在同一文件夹给另一位新开一件(接管)。 */
-  createTask?(input: { path: string; providerId: string; text: string }): Promise<{ id: string }>
+  /** fromTaskId:被接手的那件(新那件的出生地跟着它走,同工作台的额度交接)。 */
+  createTask?(input: { path: string; providerId: string; text: string; fromTaskId?: string }): Promise<{ id: string }>
   /** 主人从微信点名某件事时顺手开提醒。直调服务,不走 handleWechat —— 后者按消息身份记回执,
    *  两条命令同一个 msgId 会撞成 control_conflict(评审 2026-09-16)。 */
   watchTask?(taskId: string, accountId: string): Promise<void>
@@ -115,7 +116,7 @@ export function makeMwTaskReference(deps: TaskReferenceMwDeps): TaskReferenceMw 
   }
   async function doTakeover(chatId: string, t: { task: TaskCandidate; to: string; request: string }): Promise<void> {
     const text = quotaTakeoverText(t.task.providerId, t.task.title, t.request)
-    const created = await deps.createTask!({ path: t.task.path, providerId: t.to, text })
+    const created = await deps.createTask!({ path: t.task.path, providerId: t.to, text, fromTaskId: t.task.id })
     const next: TaskCandidate = { ...t.task, id: created.id, providerId: t.to, phase: 'queued', updatedAt: now(), error: null }
     takenOver.set(t.task.id, next)
     setFocus(chatId, next.id)

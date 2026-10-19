@@ -160,6 +160,8 @@ describe('额度止损:执行者额度用完时,不再往它送,直接问"交给
     await run('是')
     expect(created).toHaveLength(1)
     expect(created[0]).toMatchObject({ path: '/s/project-b', providerId: 'claude' })
+    // 新那件的出生地跟着被接手的那件走(接线方按 fromTaskId 查),不按这一轮从哪说的
+    expect(typeof (created[0] as { fromTaskId?: string }).fromTaskId).toBe('string')
     expect(created[0]!.text).toContain('读 DATA.md,哪三个模型在 1 秒以内'); expect(created[0]!.text).toContain('再加一列百分比'); expect(created[0]!.text).toMatch(/接替 Codex/)
     expect(sent.at(-1)).toMatch(/已交给 Claude/); expect(sent.at(-1)).toMatch(/c0ffee00/)
   })

@@ -9,7 +9,8 @@ export interface WorkbenchMwDeps {
 export function makeMwWorkbench(deps:WorkbenchMwDeps):Middleware{
   return async(ctx,next)=>{
     if(routedAway(ctx,'task-command')||!isWechatTaskCommand(ctx.msg.text)){await next();return}
-    const reply=await deps.handleWechat(ctx.msg.chatId,ctx.msg.text,ctx.msg)
+    // App 一轮里的「任务」命令:出生地是桌面 / 手机,不是微信(origin 只由 daemon 在 appTurn 里填)。
+    const reply=await deps.handleWechat(ctx.msg.chatId,ctx.msg.text,ctx.origin!==undefined?{...ctx.msg,origin:ctx.origin}:ctx.msg)
     ctx.consumedBy='workbench'
     if(reply!==null&&typeof reply==='object')return
     const sent=await deps.sendMessage(ctx.msg.chatId,reply??'任务控制仅对已绑定的主人开放。')

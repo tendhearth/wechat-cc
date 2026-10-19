@@ -12,6 +12,7 @@ import { makeTunnelClient } from './tunnel-client'
 import { MAX_SUBS_PER_STREAM, MAX_INFLIGHT_REQS_PER_STREAM } from './tunnel-v2-stream'
 import { generateTunnelKeypair, exportPublicKeyB64, importPublicKeyB64, deriveSharedKey, sealFrame, openFrame } from '../lib/tunnel-crypto'
 import { makePhoneEvents, type PhoneEvents, type TopicSource } from './phone-events'
+import { phoneClientOf } from './phone-client'
 
 const DTOK = 'dtest0000'
 
@@ -132,9 +133,10 @@ describe('tunnel-client v2', () => {
     let seen: URL | null = null
     let seenBody = ''
     let seenCT: string | null = null
+    let seenClient: string | null = null
     client(sock, {
       handleRequest: async (req) => {
-        seen = new URL(req.url); seenBody = await req.text(); seenCT = req.headers.get('content-type')
+        seen = new URL(req.url); seenBody = await req.text(); seenCT = req.headers.get('content-type'); seenClient = phoneClientOf(req)
         return new Response(JSON.stringify({ ok: 1 }), { status: 201, headers: { 'Content-Type': 'application/json; charset=utf-8', 'X-Custom': 'yes' } })
       },
     })
@@ -150,6 +152,8 @@ describe('tunnel-client v2', () => {
     expect(seen!.searchParams.get('_via')).toBe('tunnel')
     expect(seenBody).toBe('{"a":1}')
     expect(seenCT).toBe('application/json')
+    // 中继 v2 密封帧只有原生 App 说(2026-10-19 出生地):daemon 合成的 Request 打上标记
+    expect(seenClient).toBe('app')
   })
 
   it('二进制(贴纸):image/png 响应 ⇒ base64;base64 请求正文按字节交给面板', async () => {

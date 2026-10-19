@@ -66,6 +66,19 @@ describe('ownerChat (三个入口看同一段对话)',()=>{
     expect((await service.ownerChat('phone'))?.matter.id).toBe(d?.matter.id)
     expect(await makeMattersService({store,chat:{ownerChatId:()=>null,say:async()=>({reply:'x'})}}).ownerChat('desktop')).toBeNull()
   })
+  it('the owner chat remembers the surface that first created it, and only that one (2026-10-19)',async()=>{
+    const chat={ownerChatId:()=>'owner-chat',say:async()=>({reply:'x'})}
+    // 没接 originOf:桌面首建 ⇒ desktop
+    const d=await makeMattersService({store,chat}).ownerChat('desktop')
+    expect(d?.matter.origin).toBe('desktop')
+    // 之后从手机看,不改
+    expect((await makeMattersService({store,chat,originOf:()=>'app'}).ownerChat('phone'))?.matter.origin).toBe('desktop')
+    // 别的主人:手机首建,没接 originOf ⇒ 不知道;接了就按它
+    const other={ownerChatId:()=>'owner-2',say:async()=>({reply:'x'})}
+    expect((await makeMattersService({store,chat:other}).ownerChat('phone'))?.matter).not.toHaveProperty('origin')
+    const third={ownerChatId:()=>'owner-3',say:async()=>({reply:'x'})}
+    expect((await makeMattersService({store,chat:third,originOf:s=>s==='phone'?'web':'desktop'}).ownerChat('phone'))?.matter.origin).toBe('web')
+  })
 })
 
 describe('matters service — search the owner chat (2026-10-06)',()=>{

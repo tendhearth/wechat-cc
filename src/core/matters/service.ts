@@ -1,4 +1,4 @@
-import type {ListMatters,Matter,MatterBinding,MatterSession,MatterStore} from './store'
+import type {ListMatters,Matter,MatterBinding,MatterOrigin,MatterSession,MatterStore} from './store'
 import {randomUUID} from 'node:crypto'
 import type {PendingWorkbenchPermission,PermissionDecision} from '../workbench/permissions'
 import type {PendingUserInput} from '../workbench/user-input'
@@ -68,6 +68,8 @@ export interface MattersServiceDeps {
   chat?:{ownerChatId():string|null;say(text:string,surface?:'desktop'|'phone'):Promise<{reply:string}>;recent?(chatId:string,limit:number):Promise<MatterEvent[]>;search?(chatId:string,query:string,limit:number):Promise<(MatterEvent&{id:string})[]>}
   /** 聊天那件事「说一句」的 requestId 回执(v70);没接 ⇒ 不去重(老行为)。 */
   sayReceipts?:SayReceipts
+  /** 主人对话要是在这里首建,出生地记成什么(daemon 按鉴权来源算:桌面 = desktop,手机 = App / 浏览器)。没接 ⇒ 桌面记 desktop,手机不知道就不写。 */
+  originOf?:(surface:'desktop'|'phone')=>MatterOrigin|null
   now?:()=>number
 }
 export interface MattersService {
@@ -162,7 +164,8 @@ export function makeMattersService(deps:MattersServiceDeps):MattersService {
     },
     async ownerChat(surface){
       const owner=deps.chat?.ownerChatId();if(!owner)return null
-      const m=deps.store.ensureChat(owner);deps.store.bind(m.id,surface,surface==='desktop'?'app':'pwa')
+      const origin=deps.originOf?deps.originOf(surface):surface==='desktop'?'desktop':null
+      const m=deps.store.ensureChat(owner,undefined,origin);deps.store.bind(m.id,surface,surface==='desktop'?'app':'pwa')
       return this.detail(m.id)
     },
     async say(id,text,surface,input){

@@ -92,6 +92,7 @@ import type { ExecResult } from '../../core/a2a-server'
 import type { Mode, ProviderId } from '../../core/conversation'
 import { makeMattersService } from '../../core/matters/service'
 import { makeSayReceipts } from '../../core/matters/say-receipts'
+import { currentPhoneClient, surfaceOrigin } from '../phone-client'
 
 export interface DelegateDeps {
   listHands: () => readonly A2AAgentRecord[]
@@ -628,12 +629,13 @@ export function buildPipelineDeps(opts: PipelineDepsOpts, refs: PipelineDepsRefs
     },
     // 手机对聊天那件事「说一句」按 requestId 去重(v70,与工作台输入回执同一规矩)。
     sayReceipts: makeSayReceipts(db),
+    originOf: surfaceOrigin,
   }) : null
   // 手机「跟 CC 说」(spec 2026-10-01):主人对话一页(只读)+ 收下即回的说一句。
   // 对话 chat 必须就是 companionConverse 写进去的那条(它认 companion 的 default_chat_id):
   // 两者不一致(default_chat_id 不是 admin)⇒ 当作没有主人对话,免得手机看 A 却说进 B。
   const phoneChatId = makePhoneChatId({ ownerChatId, converseChatId: () => loadCompanionConfig(stateDir).default_chat_id ?? null, log: (tag, line) => log(tag, line) })
-  const phoneOwner = opts.matters ? makePhoneOwner({ ownerChatId: phoneChatId, matters: opts.matters }) : null
+  const phoneOwner = opts.matters ? makePhoneOwner({ ownerChatId: phoneChatId, matters: opts.matters, origin: currentPhoneClient }) : null
   let phoneEvents: import('../phone-events').PhoneEvents | null = null
   // converse 必须是回合串行入口 companionConverse(与微信 / 桌面「跟 CC 说」同一条:
   // isInFlight 前置拒 + coordinator.submitTurn 持每 chat 锁),手机一句不会和微信一轮在主人会话上并跑。
@@ -750,7 +752,8 @@ export function buildPipelineDeps(opts: PipelineDepsOpts, refs: PipelineDepsRefs
     ...(opts.workbench?{entry:{
       entryOptions:()=>opts.workbench!.entryOptions({ownerKey:ownerChatId()??'',surface:'phone'}),
       entryModels:(input:{providerId:string;projectId?:string})=>opts.workbench!.entryModels(input,{ownerKey:ownerChatId()??'',surface:'phone'}),
-      createEntry:(input:import('../../core/workbench/task-entry').EntryInput)=>opts.workbench!.createEntry(input,{ownerKey:ownerChatId()??'',surface:'phone'}),
+      // 出生地:原生 App(中继 v2 帧)/ 浏览器 /m,只按传输判(phone-client.ts);不在手机请求里 ⇒ null。
+      createEntry:(input:import('../../core/workbench/task-entry').EntryInput)=>opts.workbench!.createEntry(input,{ownerKey:ownerChatId()??'',surface:'phone',origin:currentPhoneClient()}),
       entryReceipt:(requestId:string)=>opts.workbench!.entryReceipt(requestId,{ownerKey:ownerChatId()??'',surface:'phone'}),
     }}:{}),
     curatedMemory: () => memoryNightly.curatedView(),
@@ -1008,7 +1011,7 @@ export function buildPipelineDeps(opts: PipelineDepsOpts, refs: PipelineDepsRefs
       onContextAvailable:(c,a)=>opts.workbench?.contextAvailable(c,a),
     },
     typing: { sendTyping: (c, a) => ilink.sendTyping(c, a) },
-    ...(opts.matters?{matter:{ensureChat:ensureChatAndNote((c:string)=>opts.matters!.ensureChat(c),matterActivity),log:(t:string,l:string)=>log(t,l)}}:{}),
+    ...(opts.matters?{matter:{ensureChat:ensureChatAndNote((c:string)=>opts.matters!.ensureChat(c,undefined,'wechat'),matterActivity),log:(t:string,l:string)=>log(t,l)}}:{}),
     ...(opts.workbench?{taskReference:{
       ownerChatId,
       // 可指称的候选:七天内动过、未归档的任务,包括失败 / 中断的 —— 主人问"那件怎么了"
@@ -1029,7 +1032,12 @@ export function buildPipelineDeps(opts: PipelineDepsOpts, refs: PipelineDepsRefs
       quotaExhausted:(id:string)=>opts.workbench!.quotaExhausted(id),
       fallbackExecutor:(id:string)=>opts.workbench!.fallbackExecutor(id),
       watchTask:async(taskId:string,accountId:string)=>{opts.workbench!.setWechatWatch(taskId,accountId,true)},
-      createTask:async(input:{path:string;providerId:string;text:string})=>{const task=await opts.workbench!.create(input);return {id:task.id}},
+      // 换人接着做:新那件的出生地跟着被接手的那件走(同 service/quota-handoff);那件不知道 ⇒ 也不写。
+      createTask:async({fromTaskId,...input}:{path:string;providerId:string;text:string;fromTaskId?:string})=>{
+        let origin:import('../../core/matters/store').MatterOrigin|null=null
+        try{origin=fromTaskId?opts.matters?.get(fromTaskId)?.origin??null:null}catch{/* 查不到就不写 */}
+        const task=await opts.workbench!.create({...input,origin});return {id:task.id}
+      },
       handleWechat:opts.workbench.handleWechat,
       sendMessage:(chatId:string,text:string)=>send(chatId,text,{source:'workbench'}),
       // 便宜模型只在名称命中多件 / 零命中且无焦点时被问,且只能选编号或说 0。没配就只走确定性各层。
@@ -1208,7 +1216,8 @@ export function buildPipelineDeps(opts: PipelineDepsOpts, refs: PipelineDepsRefs
     // 否则 CC 落到 App 的问候,主人在 App 里回了,学到的暂停(连着 2 条没回 ⇒ 安静)照样会触发。
     try { careLedger.resetNoReply(ownerChatId) } catch { /* 记账失败不打断轮次 */ }
     // 「一件事」:app 里对 CC 说的话属于主人那条 chat matter,并且它现在在桌面表面露过面。
-    try { const m = opts.matters?.ensureChat(ownerChatId); if (m) opts.matters!.bind(m.id, 'desktop', 'app') } catch { /* 登记失败不打断轮次 */ }
+    // 出生地只在这次首建时写:桌面说的 ⇒ desktop;手机说的 ⇒ App / 浏览器(按传输判,不知道 ⇒ null)。
+    try { const m = opts.matters?.ensureChat(ownerChatId, undefined, surfaceOrigin(origin)); if (m) opts.matters!.bind(m.id, 'desktop', 'app') } catch { /* 登记失败不打断轮次 */ }
     // D3 review follow-up: app-converse captures the reply through a sink, but a
     // chatroom-mode chat is preempt-policy (submitTurn runs the turn BARE, no
     // per-chat lock) AND chatroom forbids the `reply` tool — so an app turn on a
@@ -1279,7 +1288,8 @@ export function buildPipelineDeps(opts: PipelineDepsOpts, refs: PipelineDepsRefs
     // 最小嵌入)⇒ 跳过。
     const appTurn = refs.appTurn?.current
     if (appTurn) {
-      const ctx: InboundCtx = { msg: synthetic, receivedAtMs: synthetic.createTimeMs, requestId: `app:${origin}:${synthetic.createTimeMs}` }
+      // origin:这一轮里「任务」命令 / 交给 X 继续建出来的事记在哪个表面(不是微信)。
+      const ctx: InboundCtx = { msg: synthetic, receivedAtMs: synthetic.createTimeMs, requestId: `app:${origin}:${synthetic.createTimeMs}`, origin: surfaceOrigin(origin) }
       const front = await withReplyScope(() => appTurn(ctx))
       log('APP_INBOUND', `origin=${origin} intent=${ctx.intent?.kind ?? '-'} consumed=${front.result.consumed ? (ctx.consumedBy ?? 'yes') : 'dispatched'}`)
       if (front.result.consumed) {
