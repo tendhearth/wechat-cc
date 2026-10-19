@@ -19,6 +19,7 @@ import { renderTurnSteps } from '../core/cli-activity'
 import { stripMarkdown, INLINE_MAX, type CliEventHub, type CliSessionInfo } from '../core/cli-events'
 import { cliSourceLabel, formatCliSessionDigest, type CliDigestView } from '../core/cli-session-digest'
 import { formatOverseerToday, type OverseerToday } from '../core/overseer-today'
+import type { LiveWindow, RelayResult } from './claude-live-window'
 
 export const RESUME_TIMEOUT_MS = 10 * 60_000
 const TRANSCRIPT_READ_MAX = 512 * 1024
@@ -74,6 +75,16 @@ export interface CliReplyCoreDeps {
   readFile?: (path: string) => string
   /** 网络闸门(2026-10-02):起 `claude -p --resume` / `codex exec resume` 之前问一次。 */
   networkGate?: NetworkGate
+  /**
+   * 开着的窗口(2026-10-18):这条会话还开在电脑的终端窗口里 ⇒ 把话送进那个窗口(claude-live-window.ts),
+   * 不另起 resume 副本。缺席(老测试 / 不是 Claude)⇒ 照旧 resume。
+   */
+  liveWindow?: {
+    find(s: CliSessionInfo): LiveWindow | null
+    relay(w: LiveWindow, text: string): Promise<RelayResult>
+  }
+  /** Claude 的 resume 要在会话开始时的文件夹里起(从记录开头读);缺席 / 读不到 ⇒ 用登记处的 cwd。 */
+  startCwd?: (s: CliSessionInfo) => string | null
 }
 
 export interface CliReplyHandlerDeps extends CliReplyCoreDeps {
@@ -99,18 +110,26 @@ export interface CliReplyHandlerDeps extends CliReplyCoreDeps {
   now?: () => number
 }
 
-export type ResumeOutcome = { kind: 'ok' | 'timeout' | 'failed'; text: string }
+/** relayed = 送进了开着的窗口(text 是窗口名),结果由那个窗口自己的 hooks 照常报。 */
+export type ResumeOutcome = { kind: 'ok' | 'timeout' | 'failed' | 'relayed'; text: string }
 
 /** 「看」「说」的本机执行,不知道微信;WeChat 面与手侧 A2A 面都用它。 */
 export interface CliReplyCore {
   viewMarkdown(s: CliSessionInfo, title: string): { ok: true; markdown: string } | { ok: false; error: string }
   resume(s: CliSessionInfo, text: string): Promise<ResumeOutcome>
+  /** 这条会话开在电脑的窗口里(话会送进窗口,所以它在跑也能说)。 */
+  live(s: CliSessionInfo): LiveWindow | null
 }
 
 export function makeCliReplyCore(deps: CliReplyCoreDeps): CliReplyCore {
   const run = deps.run ?? defaultRunner
   const readFile = deps.readFile ?? readTail
+  const live = (s: CliSessionInfo): LiveWindow | null => {
+    if (s.source !== 'claude' || !deps.liveWindow) return null
+    try { return deps.liveWindow.find(s) } catch { return null }
+  }
   return {
+    live,
     viewMarkdown(s, title) {
       if (!s.transcript_path) return { ok: false, error: '没报过记录路径,看不了' }
       try {
@@ -122,6 +141,8 @@ export function makeCliReplyCore(deps: CliReplyCoreDeps): CliReplyCore {
       catch (err) { return { ok: false, error: `读不到记录:${err instanceof Error ? err.message : String(err)}` } }
     },
     async resume(s, text) {
+      const w = live(s)
+      if (w) return relayInner(s, w, text)
       const ident = { source: s.source, session_id: s.session_id, cwd: s.cwd, ...(s.machine ? { machine: s.machine } : {}), ...(s.transcript_path ? { transcript_path: s.transcript_path } : {}), ...(s.origin_agent ? { origin_agent: s.origin_agent } : {}) }
       const note = (ev: { kind: 'prompt' } | { kind: 'stop'; text: string }) => { try { deps.hub.observe?.({ ...ident, ...ev }) } catch { /* 登记处出错不影响接着跑 */ } }
       note({ kind: 'prompt' })
@@ -129,6 +150,17 @@ export function makeCliReplyCore(deps: CliReplyCoreDeps): CliReplyCore {
       note({ kind: 'stop', text: r.kind === 'ok' ? r.text : r.kind === 'timeout' ? `跑了 ${Math.round(RESUME_TIMEOUT_MS / 60_000)} 分钟还没完,先停了。${r.text ? ` ${r.text}` : ''}` : `没跑起来：${r.text}` })
       return r
     },
+  }
+  /** 送进开着的窗口:发信小进程也是一次 Claude 调用,同样过网络闸门;不登记 busy / 执行占用(跑的是那个窗口)。 */
+  async function relayInner(s: CliSessionInfo, w: LiveWindow, text: string): Promise<ResumeOutcome> {
+    if (deps.networkGate) {
+      const d = await decideCall(deps.networkGate, { provider: 'claude', purpose: 'turn' as const })
+      if (!d.allowed) { deps.log('CLI_REPLY', `relay ${s.session_id.slice(0, 6)} refused — network unprotected [${d.verdict!.source}]`); return { kind: 'failed', text: unprotectedMessage(d.verdict!, d.cls.label) } }
+    }
+    deps.log('CLI_REPLY', `relay → live window ${w.name} (pid ${w.pid}) for claude/${s.session_id.slice(0, 6)}`)
+    const r = await deps.liveWindow!.relay(w, text).catch(err => ({ ok: false as const, error: err instanceof Error ? err.message : String(err) }))
+    if (!r.ok) { deps.log('CLI_REPLY', `relay ${s.session_id.slice(0, 6)} failed: ${r.error}`); return { kind: 'failed', text: `没送进电脑上开着的窗口(${r.error})` } }
+    return { kind: 'relayed', text: w.name }
   }
   async function resumeInner(s: CliSessionInfo, text: string): Promise<ResumeOutcome> {
     // 守护 v2:按这条终端会话的来源分类(claude 看 ANTHROPIC_BASE_URL;codex 看它自己的配置层 ——
@@ -149,9 +181,11 @@ export function makeCliReplyCore(deps: CliReplyCoreDeps): CliReplyCore {
     try{settle=deps.reserveExecution?.(s)}catch{return{kind:'failed',text:'这个文件夹有另一项任务正在执行，请稍后再试。'}}
     const { cmd, args } = resumeCommand(s.source, s.session_id, text, deps.dangerously)
     const release = deps.holdBusy?.(`cli-resume:${s.session_id.slice(0, 6)}`) ?? (() => {})
+    let cwd = s.cwd
+    if (s.source === 'claude' && deps.startCwd) { try { cwd = deps.startCwd(s) ?? s.cwd } catch { cwd = s.cwd } }
     try {
-      deps.log('CLI_REPLY', `resume ${s.source}/${s.session_id.slice(0, 6)} in ${s.cwd}`)
-      const r = await run(cmd, args, s.cwd, RESUME_TIMEOUT_MS)
+      deps.log('CLI_REPLY', `resume ${s.source}/${s.session_id.slice(0, 6)} in ${cwd}`)
+      const r = await run(cmd, args, cwd, RESUME_TIMEOUT_MS)
       closed=r.closed===true
       const out = r.stdout.trim()
       if (r.timedOut) return { kind: 'timeout', text: out }
@@ -183,13 +217,24 @@ export function makeHandReplyExecutor(core: CliReplyCore, deps: {
     if (!req.text) return { ok: false, error: 'text_required' }
     void core.resume(s, req.text).then(async (r) => {
       const plain = stripMarkdown(r.text).slice(0, INLINE_MAX)
-      const msg = r.kind === 'ok' ? `${label} 回来了\n${plain}`
+      const msg = r.kind === 'relayed' ? `${label} 开在电脑的窗口里,话已经送进去了;它做完会照常报。`
+        : r.kind === 'ok' ? `${label} 回来了\n${plain}`
         : r.kind === 'timeout' ? `${label} 跑了 ${Math.round(RESUME_TIMEOUT_MS / 60_000)} 分钟还没完,先停了。${plain ? `\n目前的输出:\n${plain}` : ''}`
         : `${label} 没跑起来：${plain}`
       await deps.notifyBrain(msg).catch(err => deps.log('CLI_REPLY', `notify brain failed: ${err instanceof Error ? err.message : String(err)}`))
     })
     return { ok: true }
   }
+}
+
+/** 只读文件开头(找会话起点的 cwd)。 */
+export function readHead(path: string, max: number): string {
+  const fd = openSync(path, 'r')
+  try {
+    const buf = Buffer.alloc(max)
+    const n = readSync(fd, buf, 0, max, 0)
+    return buf.subarray(0, n).toString('utf8')
+  } finally { closeSync(fd) }
 }
 
 /** 只读文件尾巴,transcript 可能有几十 MB。 */
@@ -280,6 +325,14 @@ export function makeCliReplyHandler(deps: CliReplyHandlerDeps): CliReplyHandler 
       await say(chatId, r.ok ? `收到,${describe(s)} 在那边接着跑…跑完那边会回一条。` : `${describe(s)}:那边没接上(${r.error ?? '未知'})。`)
       return
     }
+    // 开在电脑的窗口里:话送进窗口(它在跑也行,下一步就读到),不起副本。
+    if (core.live(s)) {
+      await say(chatId, `收到,${describe(s)} 开在电脑的窗口里,这就把话送进去…`)
+      void core.resume(s, text).then(async (r) => {
+        await say(chatId, r.kind === 'relayed' ? `${describe(s)}:已送进窗口「${r.text}」,它做完会照常推给你。` : `${describe(s)} ${r.text}`)
+      })
+      return
+    }
     // 终端那头这一轮还没完(在跑 / 等批准 / 30 分钟没动静可能是长构建):再起 resume 会和它抢同一条会话(评审 10-15 #2)。
     let v: CliDigestView | undefined
     try { v = deps.listSessions?.().find(x => x.session_id === s.session_id) } catch { v = undefined }
@@ -291,6 +344,7 @@ export function makeCliReplyHandler(deps: CliReplyHandlerDeps): CliReplyHandler 
     void core.resume(s, text).then(async (r) => {
       if (r.kind === 'timeout') { await say(chatId, `${describe(s)} 跑了 ${Math.round(RESUME_TIMEOUT_MS / 60_000)} 分钟还没完,先停了。${r.text ? `\n目前的输出:\n${stripMarkdown(r.text).slice(0, INLINE_MAX)}` : ''}`); return }
       if (r.kind === 'failed') { await say(chatId, `${describe(s)} 没跑起来：${r.text}`); return }
+      if (r.kind === 'relayed') { await say(chatId, `${describe(s)}:已送进窗口「${r.text}」,它做完会照常推给你。`); return }
       const plain = stripMarkdown(r.text)
       if (plain.length > INLINE_MAX) {
         const url = await deps.sharePage(`${describe(s)} 的回复`, r.text, chatId).catch(() => null)

@@ -460,6 +460,8 @@ export const CliSessionRow = z.object({
   pending: z.object({ tool: z.string(), summary: z.string().nullable(), since: z.number(), hash: z.string().nullable().optional(), actionable: z.boolean().optional() }).nullable(),
   // now(2026-10-17):在跑的会话此刻那一步(同 /m/api/cli/activity 的一项,不带 detail)。老 daemon / 读不到不带。
   now: CliActivityItem.optional(),
+  // live_window(2026-10-18):这条 Claude 会话开在电脑的终端窗口里 ⇒ 说一句会送进那个窗口,在跑时也能说。老 daemon 不带。
+  live_window: z.boolean().optional(),
 })
 export type CliSessionRowT = z.infer<typeof CliSessionRow>
 export type NativeSessionPageT = z.infer<typeof NativeSessionPage>

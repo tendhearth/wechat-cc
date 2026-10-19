@@ -614,6 +614,8 @@ const zh: Record<keyof typeof en, string> = {
   'terminal.sayWaiting': '它在等你批准，先拍板再说下一句。',
   'terminal.sayEnded': '这个会话已经结束了。',
   'terminal.sent': '收到，它接着跑了，回复会出现在这里。',
+  'terminal.liveWindow': '它开在电脑的终端窗口里，你说的话会直接送进那个窗口。',
+  'terminal.sentLive': '已送进电脑上的窗口，它读到就接着做。',
   'terminal.decided': '好了，它在终端里接着做。',
   'terminal.denied': '已拒绝。',
   'terminal.review': '看清楚',

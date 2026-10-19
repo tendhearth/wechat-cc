@@ -39,7 +39,7 @@ export default function TerminalSession() {
   // 登记处的时间只在 hook 事件时更新;一轮跑很久时过程里的时间更新 ⇒ 页头取较新的那个,也不算「有一阵没动静」。
   const newest = activity.items.reduce((m, i) => (i.at !== null && i.at > m ? i.at : m), s?.last_event_at ?? 0)
   const fresher = !!s && newest > s.last_event_at
-  const sayOpen = !!row && canSayTo(row.status) && terminal.online
+  const sayOpen = !!row && canSayTo(row.status, row.live) && terminal.online
   const sending = actions.pending === `cli:say:${id}`
   const deciding = actions.pending === `cli:decide:${id}`
 
@@ -54,7 +54,7 @@ export default function TerminalSession() {
     if (!body || body.length > SAY_MAX || !sayOpen || sending) return
     setNote(null)
     const err = await actions.say(id, body)
-    if (err === null) { setText(''); setNote(t(lang, 'terminal.sent')) }
+    if (err === null) { setText(''); setNote(t(lang, row?.live ? 'terminal.sentLive' : 'terminal.sent')) }
     else if (err !== 'busy') setNote(t(lang, terminalErrorKey(err)))
   }
 
@@ -126,7 +126,8 @@ export default function TerminalSession() {
         </ScrollView>
         {row && row.status !== 'ended' ? (
           <View style={{ paddingHorizontal: space.xl, paddingTop: space.m, paddingBottom: space.m, gap: space.s }}>
-            {!canSayTo(row.status) ? <Txt testID="terminal-say-busy" role="meta" tone="inkSoft">{t(lang, row.status === 'waiting' ? 'terminal.sayWaiting' : 'terminal.sayBusy')}</Txt> : null}
+            {row.live ? <Txt testID="terminal-say-live" role="meta" tone="inkSoft">{t(lang, 'terminal.liveWindow')}</Txt> : null}
+            {!canSayTo(row.status, row.live) ? <Txt testID="terminal-say-busy" role="meta" tone="inkSoft">{t(lang, row.status === 'waiting' ? 'terminal.sayWaiting' : 'terminal.sayBusy')}</Txt> : null}
             <TextField
               testID="terminal-say-input"
               accessibilityLabel={t(lang, 'terminal.sayPlaceholder')}

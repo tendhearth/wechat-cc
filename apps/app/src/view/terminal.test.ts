@@ -38,6 +38,11 @@ describe('终端里的会话(手机视图)', () => {
   it('只有歇着的能接着说', () => {
     expect(canSayTo('idle')).toBe(true)
     for (const s of ['running', 'waiting', 'ended', undefined] as const) expect(canSayTo(s)).toBe(false)
+    // 开在电脑窗口里:在跑也能说(送进窗口);等批准仍要先拍板
+    expect(canSayTo('running', true)).toBe(true)
+    expect(canSayTo('idle', true)).toBe(true)
+    expect(canSayTo('waiting', true)).toBe(false)
+    expect(canSayTo(undefined, true)).toBe(false)
   })
   it('多久前:刚刚 / 分钟 / 小时 / 日期', () => {
     expect(relAgo(NOW - 10_000, NOW, 'en')).toBe('just now')
