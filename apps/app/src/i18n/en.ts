@@ -476,6 +476,7 @@ const en = {
   'talk.release': 'Release {t}',
   'talk.releaseCancel': 'Release to cancel',
   'talk.noSetup': 'No voice',
+  'talk.a11ySendHint': 'Tap to send. Keep holding to talk instead — release to add what you said to the message.',
   'talk.a11yHint': 'Hold to record. Release to turn it into text in the message box — it is not sent automatically. Slide up to cancel.',
   'talk.listening': 'Listening · {t} · slide up to cancel',
   'talk.left': '{n}s left',

@@ -477,6 +477,7 @@ const zh: Record<keyof typeof en, string> = {
   'talk.release': '松开 {t}',
   'talk.releaseCancel': '松开取消',
   'talk.noSetup': '语音未配',
+  'talk.a11ySendHint': '点一下发送；按住不放就改成说话，松开把这段话转成文字接在后面。',
   'talk.a11yHint': '按住录音，松开把这段话转成文字填进输入框，不会自动发送；往上滑取消。',
   'talk.listening': '正在听 · {t} · 上滑取消',
   'talk.left': '还剩 {n} 秒',
