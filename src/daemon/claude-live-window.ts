@@ -11,6 +11,7 @@
  *
  * 只读登记文件,不写 ~/.claude 下任何东西。
  */
+import { execFileSync } from 'node:child_process'
 import { readdirSync } from 'node:fs'
 import { homedir } from 'node:os'
 import { join } from 'node:path'
@@ -27,14 +28,16 @@ export const RELAY_SENDER_NAME = 'tendhearth-phone'
 export const RELAY_TIMEOUT_MS = 90_000
 const SENT = 'RELAY_SENT'
 
-type Entry = { pid?: unknown; sessionId?: unknown; name?: unknown; kind?: unknown; status?: unknown }
+type Entry = { pid?: unknown; sessionId?: unknown; name?: unknown; kind?: unknown; status?: unknown; procStart?: unknown }
+/** 进程活着吗;procStart = 登记里记的进程启动时间(`ps -o lstart` 的格式),给了就要对得上。 */
+type Alive = (pid: number, procStart?: string) => boolean
 
 /**
  * 从登记里挑出这条会话开着的窗口。要求:sessionId 对得上、进程活着、有名字,
  * 而且这个名字在活着的会话里只有一个(SendMessage 按名字投递,重名就可能送错窗口 ⇒ 不送)。
  */
-export function pickLiveWindow(entries: Entry[], sessionId: string, alive: (pid: number) => boolean): LiveWindow | null {
-  const live = entries.filter((e): e is Entry & { pid: number } => typeof e.pid === 'number' && e.pid > 0 && alive(e.pid))
+export function pickLiveWindow(entries: Entry[], sessionId: string, alive: Alive): LiveWindow | null {
+  const live = entries.filter((e): e is Entry & { pid: number } => typeof e.pid === 'number' && e.pid > 0 && alive(e.pid, typeof e.procStart === 'string' ? e.procStart : undefined))
   const me = live.find(e => e.sessionId === sessionId)
   if (!me || typeof me.name !== 'string' || !me.name.trim()) return null
   if (live.filter(e => e.name === me.name).length > 1) return null
@@ -45,17 +48,39 @@ export function claudeConfigDir(env: NodeJS.ProcessEnv = process.env): string {
   return env.CLAUDE_CONFIG_DIR?.trim() || join(homedir(), '.claude')
 }
 
-function pidAlive(pid: number): boolean {
-  try { process.kill(pid, 0); return true }
-  catch (err) { return (err as NodeJS.ErrnoException).code === 'EPERM' }
+/**
+ * 只看 kill(pid,0) 不够:窗口被 kill -9 / 崩掉时登记文件留下,pid 被别的进程复用后会一直被当成「窗口开着」,
+ * 话只往一个不存在的名字送、永远说不进去(评审 10-19 #4)。登记里有 procStart 就再跟 ps 报的启动时间对一次;
+ * ps 不可用(Windows)/ 读不出 ⇒ 退回只看 kill。
+ */
+export function pidAlive(pid: number, procStart?: string, lstart: (pid: number) => string | null = psStart): boolean {
+  try { process.kill(pid, 0) }
+  catch (err) { if ((err as NodeJS.ErrnoException).code !== 'EPERM') return false }
+  if (!procStart) return true
+  const actual = lstart(pid)
+  return actual === null || squash(actual) === squash(procStart)
+}
+const squash = (t: string) => t.trim().replace(/\s+/g, ' ')
+function psStart(pid: number): string | null {
+  if (process.platform === 'win32') return null
+  // Claude Code 记的 procStart 是 UTC + C 区域格式;ps 默认按本机时区与语言打(中文系统是「一 10月/19 …」),
+  // 不钉死就会把每个开着的窗口都判成「换了进程」。
+  try { return execFileSync('ps', ['-o', 'lstart=', '-p', String(pid)], { encoding: 'utf8', timeout: 2000, stdio: ['ignore', 'pipe', 'ignore'], env: { ...process.env, TZ: 'UTC', LC_ALL: 'C' } }).trim() || null }
+  catch { return null }
+}
+/** 一次读登记里每个 pid 只问一遍(liveSessionIds 对每条都挑一次,不缓存就是 n² 次 ps)。 */
+function once(alive: Alive): Alive {
+  const seen = new Map<string, boolean>()
+  return (pid, procStart) => { const k = `${pid}|${procStart ?? ''}`; let v = seen.get(k); if (v === undefined) { v = alive(pid, procStart); seen.set(k, v) } return v }
 }
 
 /** 开着窗口的会话 id(同样要求进程活着、名字唯一)—— 手机列表一次读一遍,不逐条读。 */
-export function liveSessionIds(opts: { dir?: string; alive?: (pid: number) => boolean } = {}): Set<string> {
+export function liveSessionIds(opts: { dir?: string; alive?: Alive } = {}): Set<string> {
   const entries = readEntries(opts.dir)
   const out = new Set<string>()
+  const alive = once(opts.alive ?? pidAlive)
   for (const e of entries) {
-    if (typeof e.sessionId === 'string' && pickLiveWindow(entries, e.sessionId, opts.alive ?? pidAlive)) out.add(e.sessionId)
+    if (typeof e.sessionId === 'string' && pickLiveWindow(entries, e.sessionId, alive)) out.add(e.sessionId)
   }
   return out
 }
@@ -71,8 +96,8 @@ function readEntries(dirOpt?: string): Entry[] {
   return entries
 }
 
-export function findLiveWindow(sessionId: string, opts: { dir?: string; alive?: (pid: number) => boolean } = {}): LiveWindow | null {
-  return pickLiveWindow(readEntries(opts.dir), sessionId, opts.alive ?? pidAlive)
+export function findLiveWindow(sessionId: string, opts: { dir?: string; alive?: Alive } = {}): LiveWindow | null {
+  return pickLiveWindow(readEntries(opts.dir), sessionId, once(opts.alive ?? pidAlive))
 }
 
 /** 转进窗口的那段话:第一行说清楚是谁、从哪来(对方窗口折叠时只露第一行)。 */
@@ -82,11 +107,13 @@ export function relayMessage(text: string): string {
 
 /** 给发信小进程的指令:只许调一次 SendMessage、原样转、成功回 RELAY_SENT。 */
 export function relayPrompt(windowName: string, text: string): string {
+  // 原话里的 </relay> 会提前合上包裹、让后面的字被小进程当指令读(评审 10-19 #5):拆开那个标签,其余一字不动。
+  const body = relayMessage(text).replace(/<\/?relay\b/gi, m => m.replace('<', '‹'))
   return [
     `Call the SendMessage tool exactly once with to = ${JSON.stringify(windowName)} and message = the text inside <relay> below, copied exactly (same characters, same line breaks).`,
     `Do not call any other tool. If the send succeeds, reply with exactly ${SENT}. Otherwise reply with RELAY_FAILED followed by the error.`,
     '<relay>',
-    relayMessage(text),
+    body,
     '</relay>',
   ].join('\n')
 }
@@ -110,7 +137,8 @@ export async function relayToWindow(w: LiveWindow, text: string, deps: { run: Ru
   const { cmd, args } = relayCommand(w.name, text, deps.dangerously)
   const r = await deps.run(cmd, args, deps.cwd, RELAY_TIMEOUT_MS)
   if (r.timedOut) return { ok: false, error: '送进窗口超时' }
-  if (r.stdout.includes(SENT)) return { ok: true }
+  // 只认最后一行就是 RELAY_SENT:「RELAY_FAILED … not RELAY_SENT」之类的回显不能算送到。
+  if (r.stdout.trim().split('\n').pop()?.trim() === SENT) return { ok: true }
   const why = (r.stdout.trim() || r.stderr.trim()).split('\n')[0]?.slice(0, 200)
   return { ok: false, error: why || `exit ${r.code ?? '?'}` }
 }
