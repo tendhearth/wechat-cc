@@ -3,6 +3,7 @@ import { ScrollView } from 'react-native'
 import { SafeAreaView } from 'react-native-safe-area-context'
 import { t } from '../i18n'
 import { useLang } from '../i18n/useLang'
+import { ICON_LICENCE_TEXT } from '../ui/icon-licence'
 import { OFL_TEXT } from '../ui/ofl-text'
 import { space } from '../ui/tokens'
 import { TopBar } from '../ui/TopBar'
@@ -11,6 +12,7 @@ import { useTheme } from '../ui/useTheme'
 import { reflowLicence } from '../view/licences'
 
 // 设置 → 开源字体许可:随包的 OFL.txt 原文(Noto Serif SC / Source Serif 4 / Geist Mono)。OFL 要求再分发时附上许可证。
+// 下面再附执行者头像图形的 MIT 许可(LobeHub Icons)。
 export default function Licences() {
   const { c } = useTheme()
   const lang = useLang()
@@ -21,6 +23,8 @@ export default function Licences() {
       <ScrollView contentContainerStyle={{ paddingHorizontal: space.xl, paddingBottom: space.xxl, gap: space.l }}>
         <Txt testID="licences-intro" role="meta" tone="inkSoft">{t(lang, 'licences.intro')}</Txt>
         <Txt testID="licences-text" role="small" selectable>{reflowLicence(OFL_TEXT)}</Txt>
+        <Txt testID="licences-icons" role="meta" tone="inkSoft" style={{ paddingTop: space.l }}>{t(lang, 'licences.icons')}</Txt>
+        <Txt testID="licences-icons-text" role="small" selectable>{reflowLicence(ICON_LICENCE_TEXT)}</Txt>
       </ScrollView>
     </SafeAreaView>
   )

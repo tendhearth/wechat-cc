@@ -200,6 +200,7 @@ const en = {
   'settings.notifTestSent': 'Sent. It should arrive in a few seconds.',
   'settings.notifTestFailed': 'Couldn’t send it ({code}).',
   'settings.fontLicences': 'Font licences',
+  'licences.icons': 'The agent avatars (Claude Code, Codex and others) are drawn from LobeHub Icons under the MIT License; the marks belong to their respective owners.',
   'licences.intro': 'The fonts in this app are free software under the SIL Open Font License 1.1.',
   'settings.about': 'About',
   'demo.banner': 'Demo · example data, nothing is sent',

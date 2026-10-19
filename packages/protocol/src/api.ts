@@ -69,6 +69,8 @@ export const Matter = z.object({
   originMessageId: z.string().nullable(),
   createdAt: z.number(),
   updatedAt: z.number(),
+  /** 参与过的执行者(2026-10-19):正在做的在前。只有列表带;老 daemon 不带。 */
+  agents: z.array(z.string()).optional(),
 })
 
 export const MatterBinding = z.object({

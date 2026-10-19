@@ -91,4 +91,18 @@ describe('matters',()=>{
     const handmade=store.create({kind:'task',title:'手动派的'})
     expect(store.get(handmade.id)).toMatchObject({originMatterId:null,originMessageId:null})
   })
+  it('agents:任务自己的执行者在前,审阅交接与会话按新到旧跟在后面,同一家只算一次',()=>{
+    const task=(id:string,provider:string)=>db.query('INSERT INTO workbench_tasks(id,title,path,provider_id,status,created_at,updated_at) VALUES(?,?,?,?,?,?,?)').run(id,'t','/w',provider,'completed',1,1)
+    for(const [id,p] of [['aaaaaaaa','claude'],['bbbbbbbb','codex'],['cccccccc','cursor']] as const){task(id,p);store.create({id,kind:'task',title:'t'})}
+    const handoff=(id:string,src:string,dst:string,at:number)=>db.query("INSERT INTO workbench_handoffs(id,source_task_id,target_task_id,purpose,request,packet_sha256,artifact_refs_json,created_at,packet_json,token_hash) VALUES(?,?,?,'review','r','x','[]',?,'{}',?)").run(id,src,dst,at,id)
+    handoff('h1','aaaaaaaa','bbbbbbbb',10)
+    handoff('h2','aaaaaaaa','cccccccc',20)
+    store.addSession('aaaaaaaa','claude','s1','main')
+    store.create({id:'dddddddd',kind:'chat',title:'聊天'})
+    const got=store.agents(['aaaaaaaa','bbbbbbbb','dddddddd','not-an-id'])
+    expect(got.get('aaaaaaaa')).toEqual(['claude','cursor','codex'])
+    expect(got.get('bbbbbbbb')).toEqual(['codex','claude'])
+    expect(got.has('dddddddd')).toBe(false)
+    expect(store.agents([]).size).toBe(0)
+  })
 })

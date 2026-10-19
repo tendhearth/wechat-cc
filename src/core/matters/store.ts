@@ -13,7 +13,7 @@ export type MatterKind='chat'|'task'|'companion'
 export type MatterStatus='open'|'replied'|'done'|'archived'
 export type MatterSurface='wechat'|'desktop'|'phone'|'cli'
 export type MatterSessionRole='main'|'review'|'handoff'
-export interface Matter {id:string;kind:MatterKind;title:string;projectPath:string|null;status:MatterStatus;ownerChatId:string|null;originMatterId:string|null;originMessageId:string|null;createdAt:number;updatedAt:number}
+export interface Matter {id:string;kind:MatterKind;title:string;projectPath:string|null;status:MatterStatus;ownerChatId:string|null;originMatterId:string|null;originMessageId:string|null;createdAt:number;updatedAt:number;/** 参与过这件事的执行者(列表才带):正在做的在前,其余按最近 —— 手机/桌面画成叠在一起的圆头像。 */agents?:string[]}
 export interface MatterBinding {matterId:string;surface:MatterSurface;surfaceKey:string;lastSeenAt:number}
 export interface MatterSession {matterId:string;providerId:string;sessionId:string;role:MatterSessionRole;createdAt:number}
 export interface CreateMatter {id?:string;kind:MatterKind;title:string;projectPath?:string|null;ownerChatId?:string|null;status?:MatterStatus;originMatterId?:string|null;originMessageId?:string|null}
@@ -43,6 +43,8 @@ export interface MatterStore {
   ensureChat(chatId:string,title?:string):Matter
   /** 工作台任务与 matter 一对一、id 相同:把 workbench_tasks.matter_id 补上(新任务;存量靠 v60 回填)。 */
   linkTask(taskId:string):void
+  /** 每件事有哪些执行者参与过(2026-10-19 头像叠):任务本身的执行者在前,再按最近的审阅 / 返工交接、会话。没有的 id 不出现。 */
+  agents(ids:string[]):Map<string,string[]>
 }
 
 export function makeMatterStore(db:Db,now:()=>number=()=>Date.now()):MatterStore {
@@ -90,6 +92,23 @@ export function makeMatterStore(db:Db,now:()=>number=()=>Date.now()):MatterStore
       db.query('INSERT OR IGNORE INTO matter_sessions(matter_id,provider_id,session_id,role,created_at) VALUES(?,?,?,?,?)').run(id,providerId,sessionId,role,now())
     },
     sessions:id=>db.query<{matter_id:string;provider_id:string;session_id:string;role:MatterSessionRole;created_at:number},[string]>('SELECT matter_id,provider_id,session_id,role,created_at FROM matter_sessions WHERE matter_id=? ORDER BY created_at, provider_id, session_id').all(id).map(s=>({matterId:s.matter_id,providerId:s.provider_id,sessionId:s.session_id,role:s.role,createdAt:s.created_at})),
+    agents(ids){
+      const out=new Map<string,string[]>()
+      const want=[...new Set(ids.filter(id=>ID.test(id)))]
+      if(!want.length)return out
+      const marks=want.map(()=>'?').join(',')
+      // 一条一条往里放:先放的排前;同一家只记一次。
+      const add=(id:string,provider:string)=>{const list=out.get(id)??[];if(provider&&!list.includes(provider))list.push(provider);out.set(id,list)}
+      const rows=<T,>(sql:string,params:string[]):T[]=>{try{return db.query<T,string[]>(sql).all(...params)}catch{return[]}}
+      for(const r of rows<{mid:string;provider_id:string}>(`SELECT COALESCE(matter_id,id) AS mid,provider_id FROM workbench_tasks WHERE id IN (${marks}) OR matter_id IN (${marks})`,[...want,...want]))add(r.mid,r.provider_id)
+      // 审阅 / 返工:两头的任务互相算参与者(谁交给谁都一样),新的在前
+      const peers=rows<{mid:string;provider_id:string;at:number}>(
+        `SELECT h.source_task_id AS mid,t.provider_id,h.created_at AS at FROM workbench_handoffs h JOIN workbench_tasks t ON t.id=h.target_task_id WHERE h.source_task_id IN (${marks})
+         UNION ALL SELECT h.target_task_id AS mid,t.provider_id,h.created_at AS at FROM workbench_handoffs h JOIN workbench_tasks t ON t.id=h.source_task_id WHERE h.target_task_id IN (${marks})
+         UNION ALL SELECT matter_id AS mid,provider_id,created_at AS at FROM matter_sessions WHERE matter_id IN (${marks})`,[...want,...want,...want])
+      for(const r of peers.sort((a,b)=>b.at-a.at))add(r.mid,r.provider_id)
+      return out
+    },
     linkTask(taskId){require(taskId);db.query('UPDATE workbench_tasks SET matter_id=? WHERE id=? AND matter_id IS NULL').run(taskId,taskId)},
     findChat,
     ensureChat(chatId,title){
