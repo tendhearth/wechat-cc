@@ -17,6 +17,8 @@
   .todo { display:flex; align-items:center; gap:10px }
   .todo .tx { flex:1; min-width:0 } .todo .tx b { font-size:14px; font-weight:500; display:block }
   .todo .tx small { color:var(--soft) }
+  .todo .th-agents { --th-agent-ring:var(--card) }
+  .m-agents { display:flex; align-items:center; gap:8px; margin:-2px 2px 8px; color:var(--soft); font-size:13px } .m-agents[hidden] { display:none }
   .todo button { font:inherit; font-size:12.5px; padding:5px 12px; border:1.5px solid var(--line); border-radius:var(--r-pill); background:var(--card); color:var(--ink) }
   .todo button.done-btn { background:var(--accent); border-color:var(--accent); color:var(--on-accent) }
   .grp { color:var(--ink); font-size:13px; font-weight:500; margin:14px 2px 6px }
@@ -92,6 +94,7 @@
   <div id="m-detail" hidden>
     <button id="m-back" class="more" type="button">← 全部</button>
     <div class="grp" id="m-title"></div>
+    <div class="m-agents" id="m-agents" hidden></div>
     <div id="m-notice" role="status" aria-live="polite"></div>
     <div id="m-controls"><div id="m-permissions"></div><div id="m-questions"></div></div>
     <div id="m-artifacts"></div><div id="m-artifact-preview"></div><div id="m-inputs"></div>
@@ -145,6 +148,7 @@
 <style>{{>markdown.css}}</style>
 <style>{{>sessions.css}}</style>
 <style>{{>terminal.css}}</style>
+<style>{{>agent-avatars.css}}</style>
 <style>{{>today.css}}</style>
 <div id="toast"></div>
 <script>

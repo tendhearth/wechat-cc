@@ -16,7 +16,7 @@ function element() {
     querySelectorAll: () => [], replaceChildren() { this.innerHTML = '' } }
 }
 function load(storage = new Map<string, string>()) {
-  const els = new Map(['m-list', 'm-detail', 'm-back', 'm-title', 'm-notice', 'm-controls', 'm-permissions', 'm-questions', 'm-events',
+  const els = new Map(['m-list', 'm-detail', 'm-back', 'm-title', 'm-agents', 'm-notice', 'm-controls', 'm-permissions', 'm-questions', 'm-events',
     'm-artifacts', 'm-artifact-preview', 'm-inputs', 'm-say-box', 'm-say', 'm-send', 'm-conn', 'm-task-status'].map(id => [id, element()]))
   const get = (id: string) => { const value = els.get(id); if (!value) throw Error('missing element: ' + id); return value }
   const documentEvents: Record<string, (...args: any[]) => any> = {}, windowEvents: Record<string, (...args: any[]) => any> = {}

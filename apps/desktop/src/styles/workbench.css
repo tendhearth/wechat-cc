@@ -65,7 +65,7 @@
 .wb-task:hover { background:var(--th-ground); }
 .wb-task.is-selected { border-color:var(--th-hair); background:var(--th-ground); }
 .wb-task-title { display:-webkit-box; overflow:hidden; -webkit-box-orient:vertical; -webkit-line-clamp:2; font-size:14px; line-height:1.5; font-weight:400; overflow-wrap:anywhere; }
-.wb-task-meta { display:flex; align-items:center; justify-content:space-between; gap:8px; margin-top:5px; color:var(--wb-muted); font-size:11px; line-height:1.4; }
+.wb-task-meta { display:flex; align-items:center; justify-content:flex-start; gap:8px; margin-top:5px; color:var(--wb-muted); font-size:11px; line-height:1.4; }
 .wb-task-provider { min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
 .wb-task-waiting { max-width:60%; overflow:hidden; color:var(--th-ink-soft); text-overflow:ellipsis; white-space:nowrap; }
 .wb-status { display:inline-flex; align-items:center; gap:6px; flex:none; color:var(--wb-muted); font-size:var(--th-size-caption); line-height:1.5; font-weight:400; white-space:nowrap; }

@@ -184,8 +184,24 @@ describe('workbench rendering', () => {
     const html=renderWorkbench({tasks:[task],providers:[{id:'codex',displayName:'Codex'}],defaultProvider:'codex',canWechat:false,selectedId:null,detail:null,selectedArtifactId:null,error:'',preview:null})
     expect(html).toMatch(/data-task-id="TASK"[^>]*aria-label="[^"]*A complete task title[^"]*Codex[^"]*进行中[^"]*更新于[^"]*"/)
     expect(html).toMatch(/class="wb-task-title"[^>]*title="A complete task title"/)
-    expect(html).toMatch(/class="wb-task-meta"[\s\S]*class="wb-task-provider"[\s\S]*class="wb-status"[\s\S]*<\/span>\s*<\/button>/)
+    // 执行者不再写成文字:状态在前,行尾一组圆头像(2026-10-19),名字只在读屏标签 / title
+    expect(html).toMatch(/class="wb-task-meta"[\s\S]*class="wb-status"[\s\S]*class="th-agents"[^>]*aria-label="Codex"[\s\S]*<\/span>\s*<\/button>/)
+    expect(html).not.toContain('class="wb-task-provider"')
     expect(html).not.toMatch(/class="wb-task-meta"[\s\S]*?<time>/)
+  })
+
+  it('draws the agents who took part as an overlapping avatar stack, current one first, folding past four into +N', async () => {
+    const { renderWorkbench } = await import('./workbench.js')
+    const task=(id:string,agents?:string[])=>({id,title:`Task ${id}`,path:'/work',providerId:'codex',status:'completed',createdAt:1,updatedAt:2,error:null,...(agents?{agents}:{})})
+    const html=renderWorkbench({tasks:[task('OLD'),task('MANY',['codex','claude','cursor','my-acp','kimi'])],providers:[{id:'codex',displayName:'Codex'},{id:'my-acp',displayName:'My Agent'}],defaultProvider:'codex',canWechat:false,selectedId:null,detail:null,selectedArtifactId:null,error:'',preview:null})
+    const row=(id:string)=>html.slice(html.indexOf(`data-task-id="${id}"`),html.indexOf('</button>',html.indexOf(`data-task-id="${id}"`)))
+    // 老 daemon 不带 agents ⇒ 任务自己那一家
+    expect(row('OLD').match(/class="th-agent"/g)).toHaveLength(1)
+    expect(row('OLD')).toContain('data-agent="codex"')
+    expect(row('MANY')).toMatch(/aria-label="Task MANY，Codex、Claude Code、Cursor、My Agent、Kimi，/)
+    expect(row('MANY').match(/data-agent="/g)).toHaveLength(3)
+    expect(row('MANY')).toMatch(/data-agent="codex"[^>]*>[\s\S]*data-agent="claude"[\s\S]*data-agent="cursor"[\s\S]*>\+2</)
+    expect(row('MANY')).toMatch(/style="z-index:4" data-agent="codex"/)
   })
 
   it('shows an escaped same-folder blocker without changing the queued task status', async () => {
@@ -319,7 +335,9 @@ describe('workbench rendering', () => {
     expect(html).toMatch(/<header class="wb-task-head">[\s\S]*?<details id="wb-task-info" class="wb-task-info">/)
     expect(html).not.toMatch(/<details id="wb-task-info"[^>]* open/)
     expect(html).toContain('<summary>任务详情</summary>')
-    expect(html).toContain('class="wb-task-context">project · Codex')
+    expect(html).toContain('class="wb-task-context">project</p>')
+    // 标题下一组头像 + 名字(同手机 app 的详情页)
+    expect(html).toMatch(/<p class="wb-task-agents"><span class="th-agents" role="img" aria-label="Codex"[\s\S]*?<span>Codex<\/span><\/p>/)
     expect(html).toContain('/clients/alpha/project')
     expect(html).toContain('TASK1234')
     expect(html).toContain('在微信继续')

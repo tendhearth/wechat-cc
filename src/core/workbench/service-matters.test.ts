@@ -69,5 +69,14 @@ it('works without a matter store (older wiring) — nothing else changes',async(
   try{
     const task=plain.create({path:project,providerId:'claude',text:'x'})
     expect(matters.get(task.id)).toBeNull()
+    // 没接 matters ⇒ 不带 agents,桌面退回任务自己那一家
+    expect(plain.list().tasks.find(t=>t.id===task.id)?.agents).toBeUndefined()
   }finally{await plain.shutdown()}
+})
+
+it('list and detail carry the matter agents for the desktop avatar stack (2026-10-19)',async()=>{
+  const task=service.create({path:project,providerId:'claude',text:'整理周报'})
+  matters.addSession(task.id,'codex','s-review','review')
+  expect(service.list().tasks.find(t=>t.id===task.id)?.agents).toEqual(['claude','codex'])
+  expect(service.detail(task.id).task.agents).toEqual(['claude','codex'])
 })

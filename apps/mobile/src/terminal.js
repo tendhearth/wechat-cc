@@ -2,6 +2,7 @@
 // 等你批准且电脑在微信里开了码 ⇒ 点开这一行能允许 / 拒绝(同微信「y/n 码」;列表行上只有「看清楚 ›」);歇着的能接着说一句(同微信「@码」),
 // 结果会成为它的「最后一句」。没有推送主题:看得见时每 15 秒拉一次。
 // 看着它跑(2026-10-17):展开的那一行另拉最近几步(GET /m/api/cli/activity),每 4 秒一次,只在看得见时。
+// 哪家(2026-10-19,同手机 app):行里不写「Claude Code」,状态行尾一个圆头像(mAgents,在 workbench.js),名字给读屏。
 var tm = { active:false, rows:[], open:null, reveal:null, busy:{}, note:{}, timer:0, seq:0, act:{}, actTimer:0, actSeq:0, actOpen:{} }
 var TM_STATUS = { waiting:'等你批准', running:'在跑', idle:'歇着', ended:'结束了' }
 var TM_POLL_MS = 15000
@@ -24,7 +25,6 @@ function tmActivity(r){
   }).join('')+'</div>'
 }
 function tmEl(id){return document.getElementById('terminal-'+id)}
-function tmSource(s){return s==='codex'?'Codex':s==='cursor'?'Cursor':'Claude Code'}
 function tmAgo(at){var d=Math.max(0,Date.now()-at);if(d<60000)return '刚刚';if(d<3600000)return Math.floor(d/60000)+' 分钟前';if(d<86400000)return Math.floor(d/3600000)+' 小时前';return new Date(at).toLocaleString()}
 // 登记处的时间只在 hook 事件(说一句 / 停下 / 等批准)时更新;一轮跑很久时过程里的时间更新 ⇒ 取较新的那个。
 function tmLastAt(r){var a=tm.act[r.session_id],t=r.last_event_at;if(a&&a.items)a.items.forEach(function(i){if(typeof i.at==='number'&&i.at>t)t=i.at});return t}
@@ -53,7 +53,7 @@ function tmPaint(){
     var pending=r.status==='waiting'&&r.pending?(r.pending.summary?r.pending.tool+': '+r.pending.summary:r.pending.tool):''
     var h='<div class="terminal-row" data-tm-row="'+id+'">'
       +'<button type="button" class="terminal-head" data-tm-open="'+id+'" aria-expanded="'+open+'"><strong>'+esc(r.project)+'</strong>'
-      +'<small><span class="terminal-dot is-'+esc(r.status)+'" aria-hidden="true"></span>'+esc(TM_STATUS[r.status])+' · '+esc(tmSource(r.source))+' · '+esc(r.stale&&tmLastAt(r)===r.last_event_at?'有一阵没动静了':tmAgo(tmLastAt(r)))+'</small>'
+      +'<small><span class="terminal-dot is-'+esc(r.status)+'" aria-hidden="true"></span>'+esc(TM_STATUS[r.status])+' · '+esc(r.stale&&tmLastAt(r)===r.last_event_at?'有一阵没动静了':tmAgo(tmLastAt(r)))+mAgents.agentAvatarsHtml([r.source])+'</small>'
       // 在跑的带「此刻那一步」⇒ 收起时显示它(比上一轮的最后一句新);否则照旧最后一句。
       +(pending?'<span class="terminal-pending">'+esc(pending)+'</span>':!open&&r.status==='running'&&r.now&&typeof r.now.text==='string'?'<span class="terminal-summary is-now"><span>正在</span> '+esc(r.now.text)+'</span>':r.last_summary&&!open?'<span class="terminal-summary">'+esc(r.last_summary)+'</span>':'')
       +(actionable&&!open?'<span class="terminal-review">看清楚 ›</span>':'')+'</button>'

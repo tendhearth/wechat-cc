@@ -7,15 +7,15 @@ const s = (over: Record<string, unknown> = {}) => ({
 })
 
 describe('terminalWaitingRows', () => {
-  it('只要等批准的;开了码 ⇒ hash;桌面只写「项目 · 来源」,不写「终端」和码', () => {
+  it('只要等批准的;开了码 ⇒ hash;桌面只写「项目」(哪家画头像,名字给读屏和小窗),不写「终端」和码', () => {
     expect(terminalWaitingRows([
       s(),
       s({ session_id: 'cd34e5-full', code: 'cd34e5', source: 'codex', project: 'melu', pending: { tool: 'permission', summary: '要改 package.json', since: 1, hash: null } }),
       s({ session_id: 'x', status: 'running', pending: null }),
       s({ session_id: 'y', status: 'idle' }),
     ])).toEqual([
-      { id: 'ab12c3-full', title: '想运行 npm publish', detail: 'wechat-cc · Claude Code', hash: 'k3x9z', tool: 'Bash', command: 'npm publish', commandLabel: '要运行的命令' },
-      { id: 'cd34e5-full', title: '要改 package.json', detail: 'melu · Codex', hash: null, tool: '', command: '要改 package.json', commandLabel: '具体内容' },
+      { id: 'ab12c3-full', title: '想运行 npm publish', detail: 'wechat-cc', agent: 'claude', source: 'Claude Code', hash: 'k3x9z', tool: 'Bash', command: 'npm publish', commandLabel: '要运行的命令' },
+      { id: 'cd34e5-full', title: '要改 package.json', detail: 'melu', agent: 'codex', source: 'Codex', hash: null, tool: '', command: '要改 package.json', commandLabel: '具体内容' },
     ])
   })
 

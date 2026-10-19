@@ -3,6 +3,7 @@ import {Window} from 'happy-dom'
 import {PHONE_API_SCHEMAS} from '../../packages/protocol/src/index'
 import {assembleMobilePage} from './assemble'
 import {readMobileSource} from './sources'
+import {createAgentAvatars} from '../desktop/src/shared/agent-avatars.js'
 
 // 「一起做」里的终端会话(2026-10-14):列表、允许 / 拒绝(同微信 y/n)、接着说一句(同微信 @码)。
 const windows:Window[]=[]
@@ -18,7 +19,8 @@ const LIST={ok:true,sessions:[waiting,local,idle,viaCursor,ended]}
 function load(api=vi.fn(async(path:string,_opts?:any)=>response(path==='/m/api/cli/sessions'?LIST:path.startsWith('/m/api/cli/activity')?{ok:true,items:[]}:{ok:true,accepted:true})),timers?:{setTimeout:any,clearTimeout:any}){
  const window=new Window({url:'https://fixture.test/m'});windows.push(window)
  const document=window.document;document.body.innerHTML=assembleMobilePage(readMobileSource).phone
- const env={document,window,CustomEvent:window.CustomEvent,api,setTimeout:timers?.setTimeout??window.setTimeout.bind(window),clearTimeout:timers?.clearTimeout??window.clearTimeout.bind(window),
+ // mAgents 在页面里由 workbench.js 顶上内联的那份工厂给(sources.ts);这里只载 terminal.js,直接给一份。
+ const env={document,window,CustomEvent:window.CustomEvent,api,mAgents:createAgentAvatars(),setTimeout:timers?.setTimeout??window.setTimeout.bind(window),clearTimeout:timers?.clearTimeout??window.clearTimeout.bind(window),
   esc:(text:unknown)=>String(text).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'})[c]!)}
  const fns=new Function(...Object.keys(env),`${readMobileSource('terminal.js')}\nreturn {tmLoad,tmOpenSession,state:function(){return tm}}`)(...Object.values(env)) as any
  const pane=(name:string)=>document.dispatchEvent(new window.CustomEvent('cc:pane',{detail:{pane:name}}))
@@ -36,7 +38,13 @@ describe('phone page: terminal sessions in 一起做',()=>{
   expect(h.api).toHaveBeenCalledWith('/m/api/cli/sessions',undefined)
   const text=h.el('terminal-list').textContent!
   expect(h.el('terminal-root').hidden).toBe(false)
-  expect(text).toContain('blog');expect(text).toContain('等你批准');expect(text).toContain('Bash: npm run deploy');expect(text).toContain('Codex');expect(text).toContain('Cursor');expect(text).toContain('歇着')
+  expect(text).toContain('blog');expect(text).toContain('等你批准');expect(text).toContain('Bash: npm run deploy');expect(text).toContain('歇着')
+  // 哪家:行里不写名字,状态行尾一个圆头像,名字在读屏标签里(2026-10-19)
+  expect(text).not.toContain('Claude Code');expect(text).not.toContain('Codex')
+  expect(h.document.querySelector('[data-tm-row="s-wait"] small [role="img"]')!.getAttribute('aria-label')).toBe('Claude Code')
+  expect(h.document.querySelector('[data-tm-row="s-idle"] small [role="img"]')!.getAttribute('aria-label')).toBe('Codex')
+  expect(h.document.querySelector('[data-tm-row="s-cur"] small [role="img"]')!.getAttribute('aria-label')).toBe('Cursor')
+  expect(h.document.querySelector('[data-tm-row="s-cur"] .th-agent svg')).not.toBeNull()
   expect(h.document.querySelector('[data-tm-row="s-end"]')).toBeNull()
   expect(h.document.querySelector('[data-tm-decide]')).toBeNull()
   expect(h.document.querySelector('[data-tm-row="s-wait"] .terminal-review')!.textContent).toBe('看清楚 ›')
