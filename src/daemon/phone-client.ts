@@ -14,6 +14,7 @@ import { AsyncLocalStorage } from 'node:async_hooks'
  *
  * 面板的 handleRequest 在路由外面包一层 `withPhoneClient`:下游(建一件事、主人对话首建)用
  * `currentPhoneClient()` 取,不必把它一层层传进各个接口。只在手机面板的请求里有值,别处一律 null。
+ * 别在 withPhoneClient 里头次起常驻的循环 / 队列 / 定时器:AsyncLocalStorage 会把这次请求的 app/web 带进它以后做的每件事。
  */
 export type PhoneClient = 'app' | 'web'
 
