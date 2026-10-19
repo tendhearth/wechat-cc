@@ -63,14 +63,14 @@ export function makeDemoBackend(opts: { now?: () => number; setTimeout?: typeof 
   let cli = seedCli()
   const cliGet = (id: string) => { const r = cli.find(x => x.session_id === id); if (!r) throw new BackendError('not_found'); return r }
 
-  function mkMatter(id: string, kind: MatterT['kind'], title: string, status: MatterT['status'], path: string | null, ts: number): MatterT {
-    return { id, kind, title, projectPath: path, status, ownerChatId: null, originMatterId: null, originMessageId: null, createdAt: ts, updatedAt: ts }
+  function mkMatter(id: string, kind: MatterT['kind'], title: string, status: MatterT['status'], path: string | null, ts: number, agents?: string[]): MatterT {
+    return { id, kind, title, projectPath: path, status, ownerChatId: null, originMatterId: null, originMessageId: null, createdAt: ts, updatedAt: ts, ...(agents ? { agents } : {}) }
   }
   function mkDetail(m: MatterT, task: MatterDetailT['task'], extra: Partial<MatterDetailT> = {}): MatterDetailT {
     return { matter: m, bindings: [], sessions: [], task, events: [], permissions: [], questions: [], artifacts: [], inputs: [], ...extra }
   }
-  const taskOf = (id: string, title: string, path: string, phase: string, ts: number) =>
-    ({ id, title, status: phase === 'working' ? 'running' : 'completed', phase, providerId: 'claude', path, error: null, updatedAt: ts })
+  const taskOf = (id: string, title: string, path: string, phase: string, ts: number, providerId = 'claude') =>
+    ({ id, title, status: phase === 'working' ? 'running' : 'completed', phase, providerId, path, error: null, updatedAt: ts })
 
   const tripQuestion = (l: Lang, createdAt: number): MatterDetailT['questions'][number] => ({
     id: QUESTION_ID, taskId: IDS.trip, createdAt,
@@ -89,7 +89,7 @@ export function makeDemoBackend(opts: { now?: () => number; setTimeout?: typeof 
       map.set(d.matter.id, e); ids.push(d.matter.id)
     }
     const pTitle = t(lastLang, 'portfolioTitle')
-    add(mkDetail(mkMatter(IDS.portfolio, 'task', pTitle, 'open', '~/Projects/portfolio', n - 600_000),
+    add(mkDetail(mkMatter(IDS.portfolio, 'task', pTitle, 'open', '~/Projects/portfolio', n - 600_000, ['claude', 'codex']),
       taskOf(IDS.portfolio, pTitle, '~/Projects/portfolio', 'working', n - 60_000), {
         runId: RUN_IDS[IDS.portfolio], inputMode: 'steer',
         permissions: [{ id: PERM_ID, taskId: IDS.portfolio, tool: 'Bash', description: 'npm install sharp', createdAt: n - 60_000 }],
@@ -98,19 +98,19 @@ export function makeDemoBackend(opts: { now?: () => number; setTimeout?: typeof 
       { kind: 'tool_call', key: 'ev2', createdAt: n - 300_000 },
     ], 'portfolioTitle')
     const tTitle = t(lastLang, 'tripTitle')
-    add(mkDetail(mkMatter(IDS.trip, 'task', tTitle, 'open', '~/Projects/trip', n - 400_000),
-      taskOf(IDS.trip, tTitle, '~/Projects/trip', 'working', n - 30_000), {
+    add(mkDetail(mkMatter(IDS.trip, 'task', tTitle, 'open', '~/Projects/trip', n - 400_000, ['codex']),
+      taskOf(IDS.trip, tTitle, '~/Projects/trip', 'working', n - 30_000, 'codex'), {
         runId: RUN_IDS[IDS.trip], inputMode: 'steer',
         questions: [tripQuestion(lastLang, n - 30_000)],
       }), 'ask', [{ kind: 'tool_call', key: 'stepTrip1', createdAt: n - 200_000 }], 'tripTitle')
     const nTitle = t(lastLang, 'notesTitle')
-    add(mkDetail(mkMatter(IDS.notes, 'task', nTitle, 'replied', '~/Projects/notes', n - DAY),
+    add(mkDetail(mkMatter(IDS.notes, 'task', nTitle, 'replied', '~/Projects/notes', n - DAY, ['claude']),
       // 演示独立工作区(2026-10-08):提交 / 合回 / 删除 / 重开 / 另做一份 都有地方点
       { ...taskOf(IDS.notes, nTitle, '~/Projects/notes', 'replied', n - DAY), worktree: { branch: 'cc/notes001', removed: false, projectId: 'portfolio' } }), 'replied',
       [{ kind: 'user', key: 'notesTitle', createdAt: n - DAY - 60_000 }], 'notesTitle')
     // 额度用完的一件(spec continue-sessions §7-3):Claude Code 没做完,电脑说可以交给 Codex 继续
     const rTitle = t(lastLang, 'reportTitle')
-    add(mkDetail(mkMatter(IDS.report, 'task', rTitle, 'done', '~/Projects/notes', n - 2 * HOUR),
+    add(mkDetail(mkMatter(IDS.report, 'task', rTitle, 'done', '~/Projects/notes', n - 2 * HOUR, ['claude']),
       { id: IDS.report, title: rTitle, status: 'failed', phase: 'failed', providerId: 'claude', path: '~/Projects/notes', error: 'provider_quota_exhausted', updatedAt: n - 2 * HOUR }, {
         quotaHandoff: { state: 'offer', from: 'claude', to: 'codex', kind: 'quota', resetAt: n + 40 * 60_000 },
       }), 'replied', [

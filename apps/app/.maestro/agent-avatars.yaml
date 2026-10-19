@@ -1,0 +1,34 @@
+# 执行者头像(2026-10-19)验收出图:「一起做」列表行尾的头像叠 + 一件事详情页标题下那一组。演示模式,不进 CI。
+appId: com.tendhearth.app
+---
+- runFlow: subflows/_start.yaml
+- tapOn:
+    id: welcome-look-first
+- extendedWaitUntil:
+    visible:
+      id: now-cc
+    timeout: 10000
+- tapOn:
+    id: tab-together
+- extendedWaitUntil:
+    visible:
+      id: together-item-a1b2c3d4
+    timeout: 5000
+- waitForAnimationToEnd
+- takeScreenshot: a01-together
+- scrollUntilVisible:
+    element:
+      id: together-terminal
+    direction: DOWN
+- takeScreenshot: a02-terminal
+- scrollUntilVisible:
+    element:
+      id: together-item-a1b2c3d4
+    direction: UP
+- tapOn:
+    id: together-item-a1b2c3d4
+- extendedWaitUntil:
+    visible:
+      id: progress-agents
+    timeout: 5000
+- takeScreenshot: a03-detail

@@ -11,7 +11,8 @@ describe('togetherView', () => {
     expect(v[0]).toMatchObject({ status: 'waiting', subtitle: 'Bash: ls' })
   })
   it('subtitle 无待批准时用项目路径', () => {
-    expect(togetherView([m('a', 1, 'open', '/p')], [], agents)[0]).toMatchObject({ subtitle: '/p', status: 'working' })
+    expect(togetherView([m('a', 1, 'open', '/p')], [], agents)[0]).toMatchObject({ subtitle: '/p', status: 'working', agents: [] })
+    expect(togetherView([{ ...m('b', 1, 'open', '/p'), agents: ['codex', 'claude'] }], [], agents)[0]!.agents).toEqual(['codex', 'claude'])
   })
   it('归档的不出现,不改动入参顺序', () => {
     const input = [m('a', 1), m('b', 2, 'archived')]

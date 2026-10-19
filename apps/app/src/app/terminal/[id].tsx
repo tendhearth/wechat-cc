@@ -13,6 +13,7 @@ import { radius, space } from '../../ui/tokens'
 import { TopBar } from '../../ui/TopBar'
 import { Txt } from '../../ui/Txt'
 import { useTheme } from '../../ui/useTheme'
+import { AgentAvatars } from '../../ui/AgentAvatars'
 import { canSayTo, relAgo, stepLabel, terminalErrorKey, terminalRow } from '../../view/terminal'
 
 /** 手机上说一句最多这么长(同 daemon 的 PHONE_CLI_SAY_MAX)。 */
@@ -72,7 +73,10 @@ export default function TerminalSession() {
             <>
               <View style={{ gap: space.s }}>
                 <TerminalStatusPill status={row.status} testID="terminal-detail-status" />
-                <Txt role="small" tone="inkSoft">{`${row.source} · ${row.stale && !fresher ? t(lang, 'terminal.stale.hint') : fresher ? relAgo(newest, Date.now(), lang) : row.ago}`}</Txt>
+                <View style={{ flexDirection: 'row', alignItems: 'center', gap: space.s }}>
+                  <AgentAvatars ids={[row.agent]} size={20} testID="terminal-detail-agent" />
+                  <Txt role="small" tone="inkSoft" style={{ flex: 1 }}>{`${row.source} · ${row.stale && !fresher ? t(lang, 'terminal.stale.hint') : fresher ? relAgo(newest, Date.now(), lang) : row.ago}`}</Txt>
+                </View>
               </View>
               {row.pendingText ? (
                 <View style={{ gap: space.m }}>

@@ -117,7 +117,11 @@ export function makeMattersService(deps:MattersServiceDeps):MattersService {
     return task
   }
   return {
-    list:filter=>deps.store.list(filter),
+    list(filter){
+      // 列表每行行尾画参与过的执行者(一次查完整页)
+      const matters=deps.store.list(filter),agents=deps.store.agents(matters.map(m=>m.id))
+      return matters.map(m=>{const a=agents.get(m.id);return a?.length?{...m,agents:a}:m})
+    },
     inputReceipt(id,requestId){
       if(!ID.test(id))throw Error('invalid_matter_id')
       const key=normalizeInputRequestId(requestId),matter=deps.store.get(id)
@@ -152,7 +156,9 @@ export function makeMattersService(deps:MattersServiceDeps):MattersService {
         catch{/* 任务记录不在了也不让详情整个失败:matter 本身还在 */}
         try{quotaHandoff=deps.workbench.quotaHandoff?.(matter.id)??undefined}catch{/* 算不出来就不给这一块,详情照旧 */}
       }
-      return {matter,bindings:deps.store.bindings(id),sessions:deps.store.sessions(id),task,events,...controls,...(nativeStart?{nativeStart}:{}),...(quotaHandoff?{quotaHandoff}:{})}
+      // 详情页标题下那组头像:跟列表同一个出处
+      const agents=deps.store.agents([matter.id]).get(matter.id)
+      return {matter:agents?.length?{...matter,agents}:matter,bindings:deps.store.bindings(id),sessions:deps.store.sessions(id),task,events,...controls,...(nativeStart?{nativeStart}:{}),...(quotaHandoff?{quotaHandoff}:{})}
     },
     async ownerChat(surface){
       const owner=deps.chat?.ownerChatId();if(!owner)return null

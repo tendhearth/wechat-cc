@@ -39,7 +39,7 @@ vi.mock('react-native', async () => {
     'aria-expanded': accessibilityState?.expanded, 'aria-disabled': accessibilityState?.disabled,
   }, children)
   const Modal = ({ children, visible }: any) => visible ? createElement('div', null, children) : null
-  return { View, Text, TextInput, Pressable, Modal, ScrollView: View, KeyboardAvoidingView: View, ActivityIndicator: View, Linking: { openURL: vi.fn() }, Platform: { OS: 'ios', select: (options: any) => options.ios ?? options.default } }
+  return { View, Image: () => null, Text, TextInput, Pressable, Modal, ScrollView: View, KeyboardAvoidingView: View, ActivityIndicator: View, Linking: { openURL: vi.fn() }, Platform: { OS: 'ios', select: (options: any) => options.ios ?? options.default } }
 })
 vi.mock('react-native-safe-area-context', async () => {
   const { createElement } = await import('react')

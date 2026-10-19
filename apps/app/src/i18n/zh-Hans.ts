@@ -202,6 +202,7 @@ const zh: Record<keyof typeof en, string> = {
   'settings.notifTestSent': '已发出，几秒内应该会到。',
   'settings.notifTestFailed': '没发出去（{code}）。',
   'settings.fontLicences': '开源字体许可',
+  'licences.icons': '执行者头像(Claude Code、Codex 等)的图形来自 LobeHub Icons，按 MIT 许可使用；这些标志归各自的公司所有。',
   'licences.intro': '这个 app 里的字体都是开源字体，按 SIL 开放字体许可证 1.1 使用。',
   'settings.about': '关于',
   'demo.banner': '演示 · 示例数据，操作不会发出',

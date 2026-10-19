@@ -23,6 +23,8 @@ import { Sheet } from '../../ui/Sheet'
 import { StatusPill } from '../../ui/StatusPill'
 import { radius, space } from '../../ui/tokens'
 import { TopBar } from '../../ui/TopBar'
+import { AgentAvatars } from '../../ui/AgentAvatars'
+import { agentsLabel, matterAgents } from '../../view/agents'
 import { Txt } from '../../ui/Txt'
 import { useTheme } from '../../ui/useTheme'
 import { isOwnerChatMatter } from '../../view/chat'
@@ -124,6 +126,7 @@ export default function Matter() {
   }
   const d = detail.data
   const v = progressView(d, insight.data ?? null, changes.data ?? null, !!insight.error && !insight.data)
+  const agents = matterAgents(d)
   const files = changes.data?.files ?? []
   const conv = conversationView(d.events)
   const hb = handoffBlock(d.quotaHandoff, lang, Date.now())
@@ -202,6 +205,12 @@ export default function Matter() {
       <ScrollView contentContainerStyle={{ paddingHorizontal: space.xl, paddingBottom: space.xl, gap: space.l }}>
         <Txt role="small" tone="inkSoft">{t(lang, 'progress.breadcrumb')}</Txt>
         <Txt role="title" content="user" accessibilityRole="header">{v.title}</Txt>
+        {agents.length ? (
+          <View testID="progress-agents" style={{ flexDirection: 'row', alignItems: 'center', gap: space.s }}>
+            <AgentAvatars ids={agents} size={28} />
+            <Txt role="small" tone="inkSoft" style={{ flex: 1 }} numberOfLines={1}>{agentsLabel(agents)}</Txt>
+          </View>
+        ) : null}
         <View testID="progress-status"><StatusPill status={v.status} /></View>
         {d.task?.error === 'execution_model_unsupported' ? <Txt testID="progress-model-guidance" role="meta" tone="inkSoft">{t(lang, 'progress.modelUnavailable')}</Txt> : null}
         {d.nativeStart ? (
