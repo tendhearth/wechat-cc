@@ -128,6 +128,8 @@ export function makeCliReplyCore(deps: CliReplyCoreDeps): CliReplyCore {
     if (s.source !== 'claude' || !deps.liveWindow) return null
     try { return deps.liveWindow.find(s) } catch { return null }
   }
+  /** 每条会话一条发信队列(在 return 之前建:relayInner 是提升的函数,但这个 Map 不是)。 */
+  const relayChains = new Map<string, Promise<unknown>>()
   return {
     live,
     viewMarkdown(s, title) {
@@ -162,9 +164,14 @@ export function makeCliReplyCore(deps: CliReplyCoreDeps): CliReplyCore {
     }
     deps.log('CLI_REPLY', `relay → live window ${w.name} (pid ${w.pid}) for claude/${s.session_id.slice(0, 6)}`)
     const release = deps.holdBusy?.(`cli-relay:${s.session_id.slice(0, 6)}`) ?? (() => {})
-    const r = await deps.liveWindow!.relay(w, text)
+    // 同一条会话连着说两句:发信小进程排队,一句送完再送下一句 —— 并行跑时谁先到不一定(评审 10-19 #8)。
+    const prev = relayChains.get(s.session_id) ?? Promise.resolve()
+    const mine = prev.then(() => deps.liveWindow!.relay(w, text))
       .catch(err => ({ ok: false as const, error: err instanceof Error ? err.message : String(err) }))
       .finally(release)
+    relayChains.set(s.session_id, mine)
+    void mine.finally(() => { if (relayChains.get(s.session_id) === mine) relayChains.delete(s.session_id) })
+    const r = await mine
     if (!r.ok) { deps.log('CLI_REPLY', `relay ${s.session_id.slice(0, 6)} failed: ${r.error}`); return { kind: 'failed', text: `没送进电脑上开着的窗口(${r.error})` } }
     return { kind: 'relayed', text: w.name }
   }

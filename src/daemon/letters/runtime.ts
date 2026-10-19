@@ -34,6 +34,8 @@ export interface PendingLetter {
   pages: string[]
   text: string
   attempts: number
+  /** 已经寄到微信的页数(中途失败下一次从这里接着寄,不把前几页再发一遍;旧状态文件没有 ⇒ 0) */
+  sentPages?: number
   /** 微信说主动发不了的那一刻;主人此后开口过才再试 */
   blockedAt: number | null
 }
@@ -237,8 +239,9 @@ export function makeLetterRuntime(d: LetterDeps): LetterRuntime {
       const inbound = await d.lastInboundAt(owner)
       if (!inbound || inbound <= p.blockedAt) return (await toApp('wechat window closed')) ?? 'waiting'
     }
+    let sentPages = Math.min(Math.max(0, p.sentPages ?? 0), p.pages.length)
     try {
-      if (p.pages.length) for (const page of p.pages) await d.sendFile(owner, page)
+      if (p.pages.length) for (; sentPages < p.pages.length; sentPages++) await d.sendFile(owner, p.pages[sentPages]!)
       else {
         const r = await d.sendText(owner, `（一封信）\n\n${p.text}`)
         if (r.error) throw new Error(r.error)
@@ -247,7 +250,7 @@ export function makeLetterRuntime(d: LetterDeps): LetterRuntime {
       const msg = e instanceof Error ? e.message : String(e)
       if (isWindowClosed(msg)) {
         if (await toApp('wechat window closed')) return 'sent'
-        save({ pending: { ...p, blockedAt: nowMs } })
+        save({ pending: { ...p, sentPages, blockedAt: nowMs } })
         d.log('LETTERS', `letter ${p.id} waiting: WeChat won't take a proactive send until the owner speaks`)
         return 'waiting'
       }
@@ -257,7 +260,7 @@ export function makeLetterRuntime(d: LetterDeps): LetterRuntime {
         d.log('LETTERS', `letter ${p.id} gave up after ${attempts} tries: ${msg}`)
         return 'failed'
       }
-      save({ pending: { ...p, attempts } })
+      save({ pending: { ...p, sentPages, attempts } })
       d.log('LETTERS', `letter ${p.id} send failed (try ${attempts}): ${msg}`)
       return 'waiting'
     }
