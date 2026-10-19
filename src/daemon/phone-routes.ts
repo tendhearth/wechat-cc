@@ -105,7 +105,9 @@ export const PHONE_ROUTES: ReadonlySet<string> = new Set([
  * 那会以 daemon 的 --dangerously 姿态起一个 agent 执行任意话术(评审 10-15 #3)。拍板同理一并拿掉。
  * 「CC 的信」也拿掉(2026-10-18):信是写给主人的私事,只给配过对的设备。
  */
-const LINK_EXCLUDED: ReadonlySet<string> = new Set(['POST /m/api/cli/say', 'POST /m/api/cli/permission', 'GET /m/api/letters', 'GET /m/api/letters/page'])
+// chat/file 也只给设备(评审 10-19 #1):寄出去的信每一页都镜像成主人对话里的一行文件,链接令牌能从这里读出整封信,
+// 等于绕过上面「信是私事」;手机网页 /m 不用这条(只有原生 App 按块下载回复里的文件)。
+const LINK_EXCLUDED: ReadonlySet<string> = new Set(['POST /m/api/cli/say', 'POST /m/api/cli/permission', 'GET /m/api/letters', 'GET /m/api/letters/page', 'GET /m/api/chat/file'])
 export const LINK_ROUTES: ReadonlySet<string> = new Set([...PHONE_ROUTES].filter(r => !LINK_EXCLUDED.has(r)))
 
 /**
