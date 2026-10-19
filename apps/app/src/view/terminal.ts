@@ -23,6 +23,8 @@ export type TerminalRow = {
   hash: string | null
   /** 在跑的会话此刻那一步(按界面语言拼好);没有 ⇒ null。 */
   nowText: string | null
+  /** 开在电脑的终端窗口里:说的话直接送进那个窗口,在跑时也能说。 */
+  live: boolean
 }
 
 /** 一步的说法:daemon 给了 verb + target 就按界面语言拼;认不出的 verb(更新的电脑)/ 没有 verb(模型自己写的说明)⇒ 用 daemon 的 text。 */
@@ -57,6 +59,7 @@ export function terminalRow(s: CliSessionRowT, now: number, lang: Lang): Termina
     actionable: s.status === 'waiting' && p?.actionable === true && typeof p.hash === 'string',
     hash: p?.hash ?? null,
     nowText: s.status === 'running' && s.now ? stepLabel(s.now, lang) : null,
+    live: s.live_window === true,
   }
 }
 
@@ -74,9 +77,13 @@ export function terminalNeedsYou(sessions: CliSessionRowT[] | undefined, known: 
   return (sessions ?? []).filter(s => s.status === 'waiting' && s.pending?.actionable === true && typeof s.pending.hash === 'string')
 }
 
-/** 能不能接着说一句:只有歇着的能(在跑 / 在等批准 ⇒ 这一轮还没完;结束了 ⇒ 接不上)。 */
-export function canSayTo(status: TerminalStatus | undefined): boolean {
-  return status === 'idle'
+/**
+ * 能不能接着说一句:歇着的能;开在电脑窗口里的(live)在跑时也能 —— 话送进那个窗口,它下一步就读到。
+ * 在等批准 ⇒ 先拍板;结束了且窗口没开 ⇒ 接不上。
+ */
+export function canSayTo(status: TerminalStatus | undefined, live = false): boolean {
+  if (status === 'idle') return true
+  return live && status !== 'waiting' && status !== undefined
 }
 
 /** 提交失败的一句话。 */

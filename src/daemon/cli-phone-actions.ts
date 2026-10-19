@@ -31,6 +31,8 @@ export interface CliPhoneActions {
   activity(sessionId: string): CliPhoneActivityResult
   /** 列表一眼(2026-10-17):在跑的会话此刻在做的那一步;读记录尾巴 64KB。读不到 / 没有步骤 ⇒ null。 */
   currentStep(sessionId: string): CliActivityItem | null
+  /** 开在电脑窗口里的 Claude 会话 id(2026-10-18);没接 ⇒ 空。 */
+  liveWindows(): Set<string>
 }
 
 export interface CliPhoneActionsDeps {
@@ -38,11 +40,13 @@ export interface CliPhoneActionsDeps {
   relay: { pendingHash(sessionId: string): string | null; owns(hash: string): boolean }
   /** = ilink.resolvePermission(微信「y/n 码」、桌宠权限卡用的同一个)。 */
   resolve(hash: string, decision: 'allow' | 'deny'): boolean
-  core: Pick<CliReplyCore, 'resume'>
+  core: Pick<CliReplyCore, 'resume'> & Partial<Pick<CliReplyCore, 'live'>>
   localMachine?: string
   log: (tag: string, line: string) => void
   /** 测试替身;默认读真文件尾巴。 */
   readTail?: (path: string, max: number) => string
+  /** 开着窗口的会话 id(claude-live-window.ts liveSessionIds);缺席 ⇒ 空。 */
+  liveIds?: () => Set<string>
 }
 
 export function makeCliPhoneActions(deps: CliPhoneActionsDeps): CliPhoneActions {
@@ -51,6 +55,7 @@ export function makeCliPhoneActions(deps: CliPhoneActionsDeps): CliPhoneActions 
 
   return {
     pendingHash: (sessionId) => deps.relay.pendingHash(sessionId),
+    liveWindows() { try { return deps.liveIds?.() ?? new Set() } catch { return new Set() } },
     permission(target, decision) {
       const hash = target.hash ?? (target.session_id ? deps.relay.pendingHash(target.session_id) : null)
       if (!hash) {
@@ -68,6 +73,16 @@ export function makeCliPhoneActions(deps: CliPhoneActionsDeps): CliPhoneActions 
     say(sessionId, text) {
       const v = view(sessionId)
       if (!v) return { ok: false, error: 'not_found' }
+      // 开在电脑的窗口里(2026-10-18):话送进那个窗口 —— 在跑也能说(它下一步就读到),
+      // 登记处说 ended 也以窗口还开着为准。
+      const s0 = deps.hub.lookup(sessionId)
+      const local0 = !!s0 && s0.session_id === sessionId && !s0.origin_agent && !(s0.machine && deps.localMachine && s0.machine !== deps.localMachine)
+      const w = local0 ? deps.core.live?.(s0!) ?? null : null
+      if (w) {
+        deps.log('CLI_REPLY', `phone say → live window ${w.name} for ${s0!.source}/${sessionId.slice(0, 6)}`)
+        void deps.core.resume(s0!, text).catch(err => deps.log('CLI_REPLY', `phone relay failed: ${err instanceof Error ? err.message : String(err)}`))
+        return { ok: true }
+      }
       if (v.status === 'ended') return { ok: false, error: 'cli_session_ended' }
       // 在跑或在等批准:终端那头这一轮还没完,再起一个 resume 会和它抢同一条会话。
       if (v.status === 'running' || v.status === 'waiting') return { ok: false, error: 'cli_session_busy' }

@@ -133,8 +133,11 @@ export async function mobileReadsRoute(deps: MobileReadsDeps, url: URL, req: Req
     try {
       // 在跑的会话带上此刻那一步(列表一眼看到谁在做什么);最多前 PHONE_CLI_NOW_MAX 条,读不到就不带。
       let budget = PHONE_CLI_NOW_MAX
+      // 开在电脑窗口里的 Claude 会话(2026-10-18):手机上在跑时也能接着说(话送进那个窗口)。
+      const live = deps.cliActions?.liveWindows?.() ?? new Set<string>()
       const sessions = deps.cliSessions().slice(0, PHONE_CLI_SESSIONS_MAX).map(v => {
-        const row = phoneCliSession(v, ph)
+        const base = phoneCliSession(v, ph)
+        const row = v.source === 'claude' && live.has(v.session_id) ? { ...base, live_window: true } : base
         if (v.status !== 'running' || v.stale || budget <= 0 || !deps.cliActions?.currentStep) return row
         budget--
         let now: ReturnType<CliPhoneActions['currentStep']> = null

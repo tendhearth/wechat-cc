@@ -613,6 +613,8 @@ const en = {
   'terminal.sayWaiting': 'It’s waiting for your approval. Decide first, then send the next message.',
   'terminal.sayEnded': 'This session has ended.',
   'terminal.sent': 'Sent. Its reply will show up here.',
+  'terminal.liveWindow': 'This session is open in a terminal window on your computer — what you say goes straight into that window.',
+  'terminal.sentLive': 'Sent into the window on your computer. It picks it up on its next step.',
   'terminal.decided': 'Done. It’s carrying on in the terminal.',
   'terminal.denied': 'Denied.',
   'terminal.review': 'Review',

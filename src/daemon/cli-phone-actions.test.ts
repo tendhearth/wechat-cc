@@ -40,13 +40,22 @@ beforeEach(() => {
 })
 afterEach(() => { relay.dispose(); hub.dispose(); db.close() })
 
+let windows: Map<string, string>
+let relayed: { name: string; text: string }[]
+beforeEach(() => { windows = new Map(); relayed = [] })
+
 function actions() {
   const core = makeCliReplyCore({
     hub, log: () => {}, dangerously: false,
     run: (_cmd, args) => new Promise(done => { runs.push({ args, done }) }),
+    liveWindow: {
+      find: (s) => windows.has(s.session_id) ? { pid: 1, name: windows.get(s.session_id)!, kind: 'interactive' } : null,
+      relay: async (w, text) => { relayed.push({ name: w.name, text }); return { ok: true } },
+    },
+    startCwd: () => '/w/start',
   })
   return makeCliPhoneActions({
-    hub, relay, core, localMachine: 'mac', log: () => {},
+    hub, relay, core, localMachine: 'mac', log: () => {}, liveIds: () => new Set(windows.keys()),
     // = ilink.resolvePermission:consume 一条待批(哪一种都行),回 true/false
     resolve: (h, d) => {
       const w = waiting.get(h)
@@ -128,6 +137,38 @@ describe('手机对终端会话说一句(同微信 @码)', () => {
     hub.ingest({ source: 'claude', kind: 'stop', session_id: 'T4', cwd: '/w/proj', machine: 'win-test' })
     expect(a.say('T4', 'x')).toEqual({ ok: false, error: 'cli_session_remote' })
     expect(runs).toHaveLength(0)
+  })
+})
+
+describe('开在电脑窗口里的 Claude 会话(2026-10-18):话送进窗口,不起 resume 副本', () => {
+  it('在跑也能说;送进窗口;不改登记处状态(窗口自己的 hooks 报)', async () => {
+    hub.ingest({ source: 'claude', kind: 'prompt', session_id: 'W1', cwd: '/w/proj/.claude/worktrees/x', machine: 'mac' })
+    windows.set('W1', 'proj-fd')
+    const a = actions()
+    expect(a.say('W1', '手机上的一句')).toEqual({ ok: true })
+    await vi.waitFor(() => expect(relayed).toEqual([{ name: 'proj-fd', text: '手机上的一句' }]))
+    expect(runs).toHaveLength(0)
+    expect(status('W1')).toBe('running')
+    expect(a.say('W1', '又一句')).toEqual({ ok: true })   // 不排他:窗口按顺序读
+  })
+  it('窗口关了 ⇒ 照旧 resume,而且在会话起点的文件夹里起', async () => {
+    hub.ingest({ source: 'claude', kind: 'stop', session_id: 'W2', cwd: '/w/proj/.claude/worktrees/x', machine: 'mac', text: '上一轮' })
+    const a = actions()
+    expect(a.say('W2', '接着')).toEqual({ ok: true })
+    await vi.waitFor(() => expect(runs).toHaveLength(1))
+    expect(relayed).toHaveLength(0)
+    runs[0]!.done({ code: 0, stdout: 'ok', stderr: '', timedOut: false })
+  })
+  it('列表里带 live_window(只给 Claude 会话),过 schema', async () => {
+    hub.ingest({ source: 'claude', kind: 'stop', session_id: 'W3', cwd: '/w/proj' })
+    hub.ingest({ source: 'codex', kind: 'stop', session_id: 'W4', cwd: '/w/proj' })
+    windows.set('W3', 'a'); windows.set('W4', 'b')
+    const r = await mobileReadsRoute({ cliSessions: () => hub.list(), cliActions: actions() }, new URL('http://x/m/api/cli/sessions'), new Request('http://x/m/api/cli/sessions'))
+    const body = await r!.json()
+    PHONE_API_SCHEMAS['GET /m/api/cli/sessions']!.parse(body)
+    const by = (id: string) => body.sessions.find((s: { session_id: string }) => s.session_id === id)
+    expect(by('W3').live_window).toBe(true)
+    expect(by('W4').live_window).toBeUndefined()
   })
 })
 
