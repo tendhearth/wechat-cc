@@ -245,6 +245,22 @@ describe('runtime', () => {
     expect(t.rt.status().letters[0]!.sent_at).toBeNull()
   })
 
+  it('a send that fails part-way resumes from the page it stopped at (no repeated pages, review 10-19)', async () => {
+    const long = JSON.stringify({ salutation: '你好:', paragraphs: Array.from({ length: 8 }, (_, i) => `第${i}段。` + '字'.repeat(90) + '。'), signoff: '' })
+    const files: string[] = []
+    let failOnce = true
+    const t = setup({
+      evalText: () => async () => long,
+      sendFile: async (_c, p) => { if (files.length === 1 && failOnce) { failOnce = false; throw new Error('upload failed') } files.push(p) },
+    })
+    expect(await t.rt.writeNow()).toMatchObject({ status: 'waiting' })
+    expect(readLetterState(t.stateDir).pending?.sentPages).toBe(1)
+    await t.rt.tick()
+    expect(readLetterState(t.stateDir).pending).toBeNull()
+    expect(files.length).toBeGreaterThan(1)
+    expect(new Set(files).size).toBe(files.length)
+  })
+
   it('falls back to text when the page cannot be rendered', async () => {
     const t = setup({ rasterize: () => null })
     await t.rt.writeNow()
