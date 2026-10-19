@@ -204,6 +204,23 @@ describe('workbench rendering', () => {
     expect(row('MANY')).toMatch(/style="z-index:4" data-agent="codex"/)
   })
 
+  it('draws where a task came from beside the avatar stack — only when known, never for old rows (2026-10-19)', async () => {
+    const { renderWorkbench } = await import('./workbench.js')
+    const task=(id:string,origin?:string)=>({id,title:`Task ${id}`,path:'/work',providerId:'codex',status:'completed',createdAt:1,updatedAt:2,error:null,...(origin?{origin}:{})})
+    const state=(tasks:ReturnType<typeof task>[],detail:ReturnType<typeof task>|null=null)=>({tasks,providers:[{id:'codex',displayName:'Codex'}],defaultProvider:'codex',canWechat:false,selectedId:detail?.id??null,detail:detail?{task:detail,events:[],artifacts:[]}:null,selectedArtifactId:null,error:'',preview:null})
+    const html=renderWorkbench(state([task('WX','wechat'),task('OLD'),task('ODD','phone')]))
+    const row=(id:string)=>html.slice(html.indexOf(`data-task-id="${id}"`),html.indexOf('</button>',html.indexOf(`data-task-id="${id}"`)))
+    // 字形在头像组前面,同一组里;读屏标签里也念出来
+    expect(row('WX')).toMatch(/<span class="wb-task-marks"><span class="th-origin" role="img" aria-label="从微信来的" title="从微信来的" data-origin="wechat">[\s\S]*?<\/span><span class="th-agents"/)
+    expect(row('WX')).toMatch(/aria-label="Task WX，Codex，从微信来的，/)
+    // 老的事(null ⇒ 不带)与认不出的值:不画、不念
+    for(const id of ['OLD','ODD']){expect(row(id)).not.toContain('th-origin');expect(row(id)).not.toContain('wb-task-marks');expect(row(id)).not.toContain('来的')}
+    const detail=renderWorkbench(state([task('APP','app')],task('APP','app')))
+    expect(detail).toMatch(/<p class="wb-task-agents"><span class="th-origin" role="img" aria-label="从手机 App 来的"[\s\S]*?<span class="th-agents"[\s\S]*?<span>Codex · 从手机 App 来的<\/span><\/p>/)
+    const oldDetail=renderWorkbench(state([task('OLD')],task('OLD')))
+    expect(oldDetail).toMatch(/<p class="wb-task-agents"><span class="th-agents"[\s\S]*?<span>Codex<\/span><\/p>/)
+  })
+
   it('shows an escaped same-folder blocker without changing the queued task status', async () => {
     const { renderWorkbench } = await import('./workbench.js')
     const waitingFor={taskId:'BLOCKER',title:'Build <unsafe>',reason:'same_path'} as const

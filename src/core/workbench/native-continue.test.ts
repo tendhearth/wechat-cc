@@ -122,6 +122,8 @@ describe('adoptNativeSession:接成一件事',()=>{
     expect(task.sessionId).toBe('original');expect(task.status).toBe('interrupted');expect(f.store.source(one.taskId)?.firstDispatchedAt).toBeNull()
     expect(matters.get(one.taskId)).toMatchObject({id:one.taskId,kind:'task',title:'Original task',projectPath:f.project,ownerChatId:'owner',status:'open'})
     expect(matters.bindings(one.taskId).map(b=>[b.surface,b.surfaceKey])).toEqual([['wechat','owner']])
+    // 出生地(2026-10-19):从终端会话接过来的 ⇒ cli(手机按的「接着做」只是露面,不是出生地)
+    expect(matters.get(one.taskId)?.origin).toBe('cli')
     expect(service!.detail(one.taskId).events.map(e=>e.text)).toEqual(['original request','original answer'])
     expect(await service!.adoptNativeSession(f.item.key)).toEqual({taskId:one.taskId,created:false})
     expect(service!.list().tasks).toHaveLength(1)
@@ -134,6 +136,7 @@ describe('adoptNativeSession:接成一件事',()=>{
     expect(matters.get(desk.task.id)).toBeNull()
     expect(await service!.adoptNativeSession(f.item.key)).toEqual({taskId:desk.task.id,created:false})
     expect(matters.get(desk.task.id)?.kind).toBe('task');expect(service!.list().tasks).toHaveLength(1)
+    expect(matters.get(desk.task.id)?.origin).toBe('cli')
   })
   it('读与导入之间会话变了一次 ⇒ 重读重导成功',async()=>{
     const f=fixture();f.changeOnRead(2)

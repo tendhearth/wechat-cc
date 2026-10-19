@@ -58,6 +58,10 @@ export const Attachment = z.object({
   id: z.string(), name: z.string(), mime: z.string(), size: z.number(), sha256: z.string(),
 })
 
+/** 一件事的出生地取值(与 daemon 的 matters.origin_surface 同一组)。 */
+export const MATTER_ORIGINS = ['wechat', 'desktop', 'app', 'web', 'cli', 'companion'] as const
+export type MatterOriginT = typeof MATTER_ORIGINS[number]
+
 export const Matter = z.object({
   id: z.string(),
   kind: z.enum(['chat', 'task', 'companion']),
@@ -71,6 +75,11 @@ export const Matter = z.object({
   updatedAt: z.number(),
   /** 参与过的执行者(2026-10-19):正在做的在前。只有列表带;老 daemon 不带。 */
   agents: z.array(z.string()).optional(),
+  /**
+   * 这件事从哪个表面来的(2026-10-19,建时写一次,永不改):微信 / 电脑 / 手机 App / 浏览器 / 终端 / CC 自己。
+   * 老 daemon 不带、老的事不知道 ⇒ 省略,界面就不画。认不出的新值当没有(不让整行解析失败)。
+   */
+  origin: z.enum(MATTER_ORIGINS).optional().catch(undefined),
 })
 
 export const MatterBinding = z.object({

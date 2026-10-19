@@ -14,7 +14,7 @@ import { isWorkbenchExecutorCapabilities, isWorkbenchProviderId } from '../execu
 import { normalizeInputRequestId, sameAttachments } from '../live-inputs'
 import { createManagedWorkspaces, type ManagedWorkspaces } from '../managed-workspaces'
 import { publicTask } from '../store'
-import { canonicalEntryHash, composeEntryPrompt, parseEntryInput, type EntryContext, type EntryInput, type EntryOptions } from '../task-entry'
+import { canonicalEntryHash, composeEntryPrompt, entryOrigin, parseEntryInput, type EntryContext, type EntryInput, type EntryOptions } from '../task-entry'
 import { directoryIdentity } from './directory-identity'
 import { baseBranchExists, ensureWorktree, planWorktree, repoRootOf, type WorktreePlan } from '../worktree-workspaces'
 import type { ServiceCtx } from './ctx'
@@ -39,6 +39,7 @@ export function makeEntryDomain(ctx:ServiceCtx, domains:EntryDomains) {
   }
   const requireEntryOwner=(context:EntryContext)=>{
     if(!context.ownerKey||context.ownerKey!==ctx.deps.ownerChatId()||!['desktop','phone'].includes(context.surface))throw Error('invalid_entry_owner')
+    entryOrigin(context)
   }
   const entryResult=(record:EntryRecord):EntryResult=>{
     if(record.phase!=='accepted')throw Error('entry_not_accepted')

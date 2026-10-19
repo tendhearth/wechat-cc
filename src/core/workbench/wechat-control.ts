@@ -5,6 +5,7 @@ import type {LiveInput} from './live-inputs'
 import type {PendingWorkbenchPermission,PermissionDecision} from './permissions'
 import type {AgentRuntimeSnapshot} from '../agent-provider'
 import type {CreateWechatTask,SendWechatArtifact,TaskWaitingFor} from './wechat-types'
+import type {MatterOrigin} from '../matters/store'
 import type {ArtifactDeliveryReceipt} from './artifact-deliveries'
 import type {CreationReceipt} from './creation-receipts'
 import type {ProjectCatalogEntry} from './project-catalog'
@@ -13,7 +14,8 @@ import {resultCommandHelp,resultToken,wechatResultPage} from './wechat-results'
 import {isWorkbenchProviderId} from './executor-capabilities'
 import type {ReviewTurn} from './review'
 
-export interface WechatMessageIdentity {accountId:string;userId:string;msgId?:string;createTimeMs:number}
+/** origin(2026-10-19):只在 App 一轮(桌面 / 手机说的话过同一张消费者表)时由 daemon 填;省略 ⇒ 真的是微信入站。不进回执身份。 */
+export interface WechatMessageIdentity {accountId:string;userId:string;msgId?:string;createTimeMs:number;origin?:MatterOrigin|null}
 export type WechatWorkbenchReply=string|{kind:'artifact_delivered';receiptId:string}
 type Detail=ReturnType<WorkbenchStore['detail']>&{runId?:string;runtime?:AgentRuntimeSnapshot;inputMode?:'steer'|'send'|'queue';inputs:LiveInput[];permissions:PendingWorkbenchPermission[];questions:PendingUserInput[];wechatNotifications?:{enabled:boolean;notices:Array<{status:string}>};task:Task&{waitingFor?:TaskWaitingFor|null;networkSuspended?:{since:number}}}
 interface Actions {
@@ -267,7 +269,7 @@ export function makeWechatWorkbenchControl(opts:{store:WorkbenchStore;ownerChatI
       // wechatTaskMessageKey(v'workbench:'+requestId),不是 identity.msgId。
       // 今天只写不读,不坏事,但留着就是给第一个写 join 的人埋雷。
       const originMessageId=wechatTaskMessageKey({...identity,chatId,text})
-      try{return opts.actions.createWechat({ownerChatId:chatId,accountId:identity.accountId,requestId:inputId(chatId,'',text,identity),commandHash:createHash('sha256').update(text).digest('hex'),projectId:match[1]!.toLowerCase(),...(isolated?{isolation:true}:{}),...(base!==undefined?{base}:{}),...(choice?{providerId:choice[1]!.toLowerCase()}:{}),...(originMessageId?{originMessageId}:{}),text:choice?choice[2]!:body}).reply}
+      try{return opts.actions.createWechat({ownerChatId:chatId,accountId:identity.accountId,requestId:inputId(chatId,'',text,identity),commandHash:createHash('sha256').update(text).digest('hex'),projectId:match[1]!.toLowerCase(),...(isolated?{isolation:true}:{}),...(base!==undefined?{base}:{}),...(choice?{providerId:choice[1]!.toLowerCase()}:{}),...(originMessageId?{originMessageId}:{}),...(identity.origin!==undefined?{origin:identity.origin}:{}),text:choice?choice[2]!:body}).reply}
       catch(error){return failure(error,'')}
     }
     if(!command||command==='列表'){

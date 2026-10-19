@@ -122,7 +122,7 @@ function mSetButtons() {
 }
 function loadMatters() {
   mApi("/m/api/matters?status=open,replied,done").then(function(r){
-    document.getElementById("m-list").innerHTML=r.matters.filter(function(m){return m.kind!=="companion"}).map(function(m){return '<button type="button" class="card todo" data-mid="'+esc(m.id)+'"><span class="tx"><b>'+esc(m.title)+'</b><small>'+esc(M_KIND[m.kind]||m.kind)+' · '+esc(m.networkSuspended?"已暂停(网络未受保护)":(M_STATUS[m.status]||m.status))+(m.projectPath?' · '+esc(m.projectPath.split(/[\\/]/).filter(Boolean).pop()||m.projectPath):'')+'</small></span>'+mAgents.agentAvatarsHtml(m.agents)+'</button>'}).join("") || '<div class="empty">还没有事，微信或桌面上交代一件就会出现在这里</div>'
+    document.getElementById("m-list").innerHTML=r.matters.filter(function(m){return m.kind!=="companion"}).map(function(m){return '<button type="button" class="card todo" data-mid="'+esc(m.id)+'"><span class="tx"><b>'+esc(m.title)+'</b><small>'+esc(M_KIND[m.kind]||m.kind)+' · '+esc(m.networkSuspended?"已暂停(网络未受保护)":(M_STATUS[m.status]||m.status))+(m.projectPath?' · '+esc(m.projectPath.split(/[\\/]/).filter(Boolean).pop()||m.projectPath):'')+'</small></span>'+mAgents.originMarkHtml(m.origin)+mAgents.agentAvatarsHtml(m.agents)+'</button>'}).join("") || '<div class="empty">还没有事，微信或桌面上交代一件就会出现在这里</div>'
   }).catch(function(e){document.getElementById("m-list").textContent=mError(e.message)})
 }
 function mQuestionDraft(request) { return mRead(mCurrent+":question:"+request.id) || {} }
@@ -348,8 +348,9 @@ function renderMatter(d) {
   mDetail=d;mTooLarge=false;mDetailFresh=true
   document.getElementById("m-title").textContent=d.matter.title+" · "+(M_STATUS[d.matter.status]||d.matter.status)
   // 标题下一组头像 + 名字:任务那一家在前,老 daemon 不带 agents 也有
-  var agents=mAgents.matterAgents(d.task&&d.task.providerId,d.matter.agents),who=document.getElementById("m-agents")
-  who.hidden=!agents.length;who.innerHTML=agents.length?mAgents.agentAvatarsHtml(agents)+'<span>'+esc(mAgents.agentsLabel(agents))+'</span>':''
+  // 出生地(2026-10-19):字形在头像组前面,名字后面写一句「从哪来的」;不知道 ⇒ 不画
+  var agents=mAgents.matterAgents(d.task&&d.task.providerId,d.matter.agents),who=document.getElementById("m-agents"),from=mAgents.originLabel(d.matter.origin)
+  who.hidden=!agents.length&&!from;who.innerHTML=agents.length||from?mAgents.originMarkHtml(d.matter.origin)+mAgents.agentAvatarsHtml(agents)+'<span>'+esc([mAgents.agentsLabel(agents),from].filter(Boolean).join(" · "))+'</span>':''
   mRenderEvents(d.events||[])
   document.getElementById("m-permissions").innerHTML=(d.permissions||[]).filter(function(p){return p.taskId===d.matter.id}).map(function(p){return '<div class="card"><b>需要你允许这一次</b><p>'+esc(p.tool)+'</p><pre class="m-description">'+esc(p.description)+'</pre><button type="button" class="done-btn" data-control="allow" data-task="'+esc(d.matter.id)+'" data-request="'+esc(p.id)+'">允许这一次</button> <button type="button" class="more" data-control="deny" data-task="'+esc(d.matter.id)+'" data-request="'+esc(p.id)+'">拒绝</button></div>'}).join("")
   mRenderQuestions(d)

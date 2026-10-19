@@ -4984,6 +4984,10 @@ b, strong { font-weight: 500; }
 .wb-sidebar .th-agents { --th-agent-ring: var(--wb-sidebar); --th-agent-fill: var(--th-paper); }
 .wb-task:hover .th-agents, .wb-task.is-selected .th-agents { --th-agent-ring: var(--th-ground); }
 .wb-task-meta .th-agents { margin: -3px 0 -3px auto; --th-agent-size: 20px; }
+/* 出生地字形(2026-10-19)跟头像组挨着,一起推到行尾。 */
+.wb-task-marks { display: inline-flex; align-items: center; gap: 6px; margin-left: auto; }
+.wb-task-marks .th-agents { margin-left: 0; }
+.wb-task-meta .th-origin { --th-origin-size: 14px; }
 .wb-task-agents { display: flex; align-items: center; gap: 8px; margin: 6px 0 0; color: var(--wb-muted); font-size: 12px; line-height: 1.5; }
 .wb-task-agents > span:last-child { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .now-waiting-row.now-terminal-row { grid-template-columns: minmax(0, 1fr) auto auto; }

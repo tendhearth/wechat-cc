@@ -43,6 +43,21 @@ function service(overrides: Record<string, unknown> = {}) {
 }
 
 describe('Workbench internal HTTP API', () => {
+  it('marks a task as born on the desktop only for the desktop app operator token; other admin callers leave it unknown (2026-10-19)',async()=>{
+    const input={requestId:crypto.randomUUID(),text:'Draft this',target:{kind:'managed'}}
+    const result={receipt:{requestId:input.requestId,taskId:TASK.id,matterId:TASK.id,runId:crypto.randomUUID(),acceptedAt:1},task:TASK}
+    const createEntry=vi.fn(()=>result),workbench=service({createEntry}),{request,operatorToken,adminToken}=await start(workbench)
+    const post=(path:string,body:unknown,token:string)=>request(path,{method:'POST',body:JSON.stringify(body)},token)
+    expect((await post('/v1/workbench/create-entry',input,operatorToken)).status).toBe(202)
+    expect((await post('/v1/workbench/create-entry',{...input,requestId:crypto.randomUUID()},adminToken)).status).toBe(202)
+    expect(createEntry.mock.calls.map(c=>(c as unknown[])[1])).toEqual([expect.objectContaining({surface:'desktop',origin:'desktop'}),expect.not.objectContaining({origin:expect.anything()})])
+    // 请求体里自报出生地是不认的字段 ⇒ 400
+    expect((await post('/v1/workbench/create-entry',{...input,origin:'app'},operatorToken)).status).toBe(400)
+    expect((await post('/v1/workbench/create',{path:'/tmp/project',providerId:'codex',text:'new'},adminToken)).status).toBe(202)
+    expect(workbench.create).toHaveBeenLastCalledWith({path:'/tmp/project',providerId:'codex',text:'new'})
+    expect((await post('/v1/workbench/create',{path:'/tmp/project',providerId:'codex',text:'new',origin:'cli'},operatorToken)).status).toBe(202)
+    expect(workbench.create).toHaveBeenLastCalledWith({path:'/tmp/project',providerId:'codex',text:'new',origin:'desktop'})
+  })
   it('serves task entry only to operator and admin sessions with the configured owner context',async()=>{
     const input={requestId:crypto.randomUUID(),text:'Draft this',target:{kind:'managed'}},options={status:'ready',defaultProviderId:'codex',providers:[],projects:[]}
     const result={receipt:{requestId:input.requestId,taskId:TASK.id,matterId:TASK.id,runId:crypto.randomUUID(),acceptedAt:1},task:TASK}
@@ -217,7 +232,7 @@ describe('Workbench internal HTTP API', () => {
     expect(modelCatalog).toHaveBeenCalledExactlyOnceWith(providerId,'/tmp/project')
     const created=await request('/v1/workbench/create',{method:'POST',body:JSON.stringify({path:'/tmp/project',providerId,text:'new'})},operatorToken)
     expect(created.status).toBe(202)
-    expect(workbench.create).toHaveBeenCalledWith({path:'/tmp/project',providerId,text:'new'})
+    expect(workbench.create).toHaveBeenCalledWith({path:'/tmp/project',providerId,text:'new',origin:'desktop'})
   })
   it('lets the service classify a valid but unavailable provider',async()=>{
     const create=vi.fn(()=>{throw Error('unavailable_provider')}),modelCatalog=vi.fn(()=>{throw Error('unavailable_provider')}),{request,operatorToken}=await start(service({create,modelCatalog}))
@@ -231,7 +246,7 @@ describe('Workbench internal HTTP API', () => {
     const workbench=service({prepareNativeResume,continueNativeTask}),{request,operatorToken}=await start(workbench)
     const execution={defaults:'native',model:null,reasoningEffort:'high'},post=(path:string,body:unknown)=>request(path,{method:'POST',body:JSON.stringify(body)},operatorToken)
     expect((await post('/v1/workbench/create',{path:'/tmp/project',providerId:'codex',text:'new',execution})).status).toBe(202)
-    expect(workbench.create).toHaveBeenCalledWith({path:'/tmp/project',providerId:'codex',text:'new',execution})
+    expect(workbench.create).toHaveBeenCalledWith({path:'/tmp/project',providerId:'codex',text:'new',execution,origin:'desktop'})
     expect((await post('/v1/workbench/continue',{id:TASK.id,text:'next',execution})).status).toBe(202)
     expect(workbench.continueTask).toHaveBeenCalledWith(TASK.id,'next',{execution})
     expect((await post('/v1/workbench/prepare-resume',{id:TASK.id,execution})).status).toBe(200)

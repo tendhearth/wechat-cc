@@ -1,7 +1,7 @@
 import { CHAT_PAGE_MAX, CHAT_TEXT_MAX, PHONE_CHAT_MAX_IMAGES, PHONE_SAY_MAX_CHARS, PHONE_TRANSCRIBE_MAX_BYTES, PHONE_TRANSCRIBE_MIMES } from '@wechat-cc/protocol'
 import { isNetworkUnprotectedError } from '../lib/network-gate'
 import type { MessageRecord } from '../lib/messages-store'
-import type { MatterStore } from '../core/matters/store'
+import type { MatterOrigin, MatterStore } from '../core/matters/store'
 import type { ChatJob, PhoneChat } from './phone-chat'
 import { framedTooLarge } from './mobile-matter-response'
 import { parseExtras, phoneExtrasFields } from './app-reply'
@@ -108,6 +108,8 @@ const MODEL_ID = /^[A-Za-z0-9._/:[\]-]{1,120}$/
 export function makePhoneOwner(d: {
   ownerChatId(): string | null
   matters: Pick<MatterStore, 'findChat' | 'ensureChat' | 'bind'>
+  /** 主人对话要是在手机上首建:出生地(原生 App / 浏览器,按传输判)。没给 / 不知道 ⇒ 不写。 */
+  origin?: () => MatterOrigin | null
 }): { peek(): { matterId: string; chatId: string; title: string } | null; ensure(): string | null } {
   return {
     peek() {
@@ -119,7 +121,7 @@ export function makePhoneOwner(d: {
     ensure() {
       const chatId = d.ownerChatId()
       if (!chatId) return null
-      const m = d.matters.ensureChat(chatId)
+      const m = d.matters.ensureChat(chatId, undefined, d.origin?.() ?? null)
       try { d.matters.bind(m.id, 'phone', 'pwa') } catch { /* 只是露面登记 */ }
       return m.id
     },

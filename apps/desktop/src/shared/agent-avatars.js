@@ -116,5 +116,39 @@ export function createAgentAvatars() {
     if (more) items.push(`<span class="th-agent th-agent-more" style="z-index:0" aria-hidden="true">+${more}</span>`)
     return `<span class="th-agents${o.cls ? ` ${esc(o.cls)}` : ''}" role="img" aria-label="${label}" title="${label}">${items.join('')}</span>`
   }
-  return Object.freeze({ AGENT_GLYPHS, agentName, agentGlyph, agentMonogram, agentStack, agentsLabel, matterAgents, agentAvatarHtml, agentAvatarsHtml })
+  // 出生地(2026-10-19):这件事从哪个表面来的,头像组旁边一个单色小字形,跟头像同一支笔(currentColor)。
+  // 只画出生地(建时写一次),不画露过面的多端;不知道(老的事 / 老 daemon)⇒ 空串,什么都不画。
+  // 字形是自己画的通用线条图(两个气泡 / 显示器 / 手机 / 地球 / >_ / 一颗心;不用星芒 —— 那是 Claude 的头像),不是任何一家的商标。
+  // 跟 apps/app 的 view/origin.ts + assets/origins 同一组(App 那边是同一份路径渲成的 PNG)。
+  /** @type {Readonly<Record<string,string>>} */
+  const ORIGIN_GLYPHS = Object.freeze({
+    wechat: '<path d="M10 4.5c-4.1 0-7.5 2.7-7.5 6 0 1.8 1 3.5 2.6 4.6L4.5 18l3.1-1.6c.8.2 1.6.3 2.4.3"/><path d="M15.5 9.5c3.3 0 6 2.2 6 5 0 1.5-.8 2.9-2.1 3.8l.5 2.2-2.5-1.3c-.6.2-1.2.3-1.9.3-3.3 0-6-2.2-6-5s2.7-5 6-5z"/>',
+    desktop: '<rect x="3" y="4" width="18" height="12" rx="2"/><path d="M8.5 20h7M12 16v4"/>',
+    app: '<rect x="7" y="2.5" width="10" height="19" rx="2.5"/><path d="M11 18.5h2"/>',
+    web: '<circle cx="12" cy="12" r="9"/><path d="M3 12h18M12 3c2.4 2.5 3.6 5.5 3.6 9s-1.2 6.5-3.6 9c-2.4-2.5-3.6-5.5-3.6-9S9.6 5.5 12 3z"/>',
+    cli: '<path d="M5 7l5 5-5 5M12.5 17.5H19"/>',
+    companion: '<path d="M12 20s-7.5-4.6-7.5-10A4.1 4.1 0 0 1 12 7.7 4.1 4.1 0 0 1 19.5 10c0 5.4-7.5 10-7.5 10z"/>',
+  })
+  /** 读屏与 title 念的那一句。 @type {Readonly<Record<string,string>>} */
+  const ORIGIN_LABELS = Object.freeze({
+    wechat: '从微信来的', desktop: '从电脑来的', app: '从手机 App 来的', web: '从浏览器来的', cli: '从终端来的', companion: 'CC 自己起的',
+  })
+  const MATTER_ORIGINS = Object.freeze(Object.keys(ORIGIN_GLYPHS))
+  /** 认得的出生地才算;别的(空的 / 未来的新值)当不知道。 @param {unknown} origin @returns {string|null} */
+  function matterOrigin(origin) {
+    return typeof origin === 'string' && Object.prototype.hasOwnProperty.call(ORIGIN_GLYPHS, origin) ? origin : null
+  }
+  /** @param {unknown} origin */
+  function originLabel(origin) {
+    const o = matterOrigin(origin)
+    return o ? ORIGIN_LABELS[o] ?? '' : ''
+  }
+  /** 一个小字形;不知道 ⇒ 空串。 @param {unknown} origin @param { {cls?:string} } [o] */
+  function originMarkHtml(origin, o = {}) {
+    const key = matterOrigin(origin)
+    if (!key) return ''
+    const label = esc(ORIGIN_LABELS[key] ?? '')
+    return `<span class="th-origin${o.cls ? ` ${esc(o.cls)}` : ''}" role="img" aria-label="${label}" title="${label}" data-origin="${esc(key)}"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false">${ORIGIN_GLYPHS[key]}</svg></span>`
+  }
+  return Object.freeze({ AGENT_GLYPHS, agentName, agentGlyph, agentMonogram, agentStack, agentsLabel, matterAgents, agentAvatarHtml, agentAvatarsHtml, MATTER_ORIGINS, matterOrigin, originLabel, originMarkHtml })
 }

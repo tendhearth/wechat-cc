@@ -25,6 +25,8 @@ import { radius, space } from '../../ui/tokens'
 import { TopBar } from '../../ui/TopBar'
 import { AgentAvatars } from '../../ui/AgentAvatars'
 import { agentsLabel, matterAgents } from '../../view/agents'
+import { OriginMark } from '../../ui/OriginMark'
+import { matterOrigin, originKey } from '../../view/origin'
 import { Txt } from '../../ui/Txt'
 import { useTheme } from '../../ui/useTheme'
 import { isOwnerChatMatter } from '../../view/chat'
@@ -127,6 +129,8 @@ export default function Matter() {
   const d = detail.data
   const v = progressView(d, insight.data ?? null, changes.data ?? null, !!insight.error && !insight.data)
   const agents = matterAgents(d)
+  // 出生地(2026-10-19):只画建这件事的那个表面;不知道 ⇒ 不画
+  const origin = matterOrigin(d.matter.origin)
   const files = changes.data?.files ?? []
   const conv = conversationView(d.events)
   const hb = handoffBlock(d.quotaHandoff, lang, Date.now())
@@ -205,10 +209,11 @@ export default function Matter() {
       <ScrollView contentContainerStyle={{ paddingHorizontal: space.xl, paddingBottom: space.xl, gap: space.l }}>
         <Txt role="small" tone="inkSoft">{t(lang, 'progress.breadcrumb')}</Txt>
         <Txt role="title" content="user" accessibilityRole="header">{v.title}</Txt>
-        {agents.length ? (
+        {agents.length || origin ? (
           <View testID="progress-agents" style={{ flexDirection: 'row', alignItems: 'center', gap: space.s }}>
+            <OriginMark origin={origin} size={18} testID="progress-origin" />
             <AgentAvatars ids={agents} size={28} />
-            <Txt role="small" tone="inkSoft" style={{ flex: 1 }} numberOfLines={1}>{agentsLabel(agents)}</Txt>
+            <Txt role="small" tone="inkSoft" style={{ flex: 1 }} numberOfLines={1}>{[agentsLabel(agents), origin ? t(lang, originKey(origin)) : ''].filter(Boolean).join(' · ')}</Txt>
           </View>
         ) : null}
         <View testID="progress-status"><StatusPill status={v.status} /></View>

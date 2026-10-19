@@ -21,6 +21,7 @@ import { makeNoticesDomain } from './notices'
 import { makeArtifactsDomain } from './artifacts'
 import { makeExecuteDomain } from './execute'
 import { makeQuotaHandoffDomain } from './quota-handoff'
+import { makeMatterStore } from '../../matters/store'
 import type { ServiceActions, ServiceCtx } from './ctx'
 
 const dbs: Db[] = []; const dirs: string[] = []; const shutdowns: Array<() => Promise<void>> = []
@@ -32,18 +33,19 @@ const QUOTA_TEXT = "You've hit your usage limit. Try again at 10:00"
 const hanging: AgentProvider = { async spawn() { throw new Error('not spawned') } }
 
 /** 迷你组装(同 entry.test.ts):claude + codex 两家原生执行者,主人 owner。 */
-function setup() {
+function setup(withMatters = false) {
   const root = realpathSync(mkdtempSync(join(tmpdir(), 'wb-quota-handoff-'))); dirs.push(root)
   const stateDir = join(root, 'state'), project = join(root, 'project')
   mkdirSync(stateDir, { recursive: true }); mkdirSync(project, { recursive: true })
   const db = openTestDb(); dbs.push(db)
   const store: WorkbenchStore = makeWorkbenchStore(db)
+  const matters = makeMatterStore(db)
   const registry = createProviderRegistry()
   registry.register('claude', hanging, { displayName: 'Claude', canResume: () => true, workbench: MANAGED_NATIVE_CAPABILITIES })
   registry.register('codex', hanging, { displayName: 'Codex', canResume: () => true, workbench: MANAGED_NATIVE_CAPABILITIES })
   const state = makeRuntimeState()
   const actions = new Ref<ServiceActions>('t')
-  const ctx: ServiceCtx = { store, stateDir, state, hub: { touched: vi.fn(), bumped: vi.fn(), dispose: vi.fn() }, deps: { ownerChatId: () => 'owner', registry }, ensureAccepting: () => { if (state.stopping) throw new Error('workbench_stopping') }, now: Date.now, actions }
+  const ctx: ServiceCtx = { store, stateDir, state, hub: { touched: vi.fn(), bumped: vi.fn(), dispose: vi.fn() }, deps: { ownerChatId: () => 'owner', registry, ...(withMatters ? { matters } : {}) }, ensureAccepting: () => { if (state.stopping) throw new Error('workbench_stopping') }, now: Date.now, actions }
   const attachments = makeAttachmentsDomain(ctx), quota = makeQuotaDomain(ctx), admission = makeAdmissionDomain(ctx), view = makeViewDomain(ctx), native = makeNativeDomain(ctx), inputs = makeInputsDomain(ctx), lifecycle = makeLifecycleDomain(ctx), notices = makeNoticesDomain(ctx), artifacts = makeArtifactsDomain(ctx)
   const execute = makeExecuteDomain(ctx, { admission, attachments, quota, view, native, inputs, lifecycle, notices, artifacts })
   const handoff = makeQuotaHandoffDomain(ctx, { execute, quota })
@@ -56,7 +58,7 @@ function setup() {
   }
   const exhaust = (id = 'claude') => quota.quota.note(id, QUOTA_TEXT)
   const tasks = () => store.listPage({ limit: 50 }).tasks
-  return { store, state, handoff, quota, project, failed, exhaust, tasks }
+  return { store, state, handoff, quota, project, failed, exhaust, tasks, matters }
 }
 
 describe('quotaHandoff:这件事要不要、能不能交给另一位继续(只读)', () => {
@@ -98,6 +100,17 @@ describe('handOff:在同一个文件夹交给另一位新开一件(幂等)', () 
     const made = store.get(r.taskId)
     expect(made).toMatchObject({ providerId: 'codex', path: project, title: '修登录页', ownerChatId: 'owner' })
     expect(handoff.quotaHandoff(t.id)).toEqual({ state: 'handed', from: 'claude', to: 'codex', matterId: r.taskId })
+  })
+  it('出生地(2026-10-19)跟着原来那件走 —— 是同一件事换人接着做;原来那件不知道 ⇒ 新那件也不写', () => {
+    const { handoff, failed, exhaust, matters } = setup(true)
+    const t = failed(); exhaust()
+    matters.create({ id: t.id, kind: 'task', title: t.title, origin: 'web' }); matters.linkTask(t.id)
+    const r = handoff.handOff(t.id, { requestId: REQ, providerId: 'codex' })
+    expect(matters.get(r.taskId)?.origin).toBe('web')
+    const u = failed()
+    matters.create({ id: u.id, kind: 'task', title: u.title }); matters.linkTask(u.id)
+    const r2 = handoff.handOff(u.id, { requestId: REQ2, providerId: 'codex' })
+    expect(matters.get(r2.taskId)).not.toHaveProperty('origin')
   })
   it('同一个 requestId 重发 ⇒ 同一件、不建第二件(即使额度已恢复)', () => {
     const { handoff, failed, exhaust, tasks, quota } = setup()

@@ -371,7 +371,8 @@ export function makeNativeDomain(ctx:ServiceCtx) {
     // 三步同一事务;且只有 create 看「已有」—— linkTask / bind 都幂等,每次都跑:哪一步中途失败,下次再点都能补齐。
     // 状态与 execute 的终态登记一致:完成 / 失败 / 取消 ⇒ done;interrupted 与仍在跑的 ⇒ open。
     store.atomic(()=>{
-      if(!m.get(task.id))m.create({id:task.id,kind:'task',title:task.title,projectPath:task.path,ownerChatId:task.ownerChatId??null,status:task.status==='completed'||task.status==='failed'||task.status==='cancelled'?'done':'open'})
+      // 出生地:从终端会话导入的(有原会话记录)⇒ cli;CC 自己的老任务补行 ⇒ 不知道当初从哪来,不写。
+      if(!m.get(task.id))m.create({id:task.id,kind:'task',title:task.title,projectPath:task.path,ownerChatId:task.ownerChatId??null,status:task.status==='completed'||task.status==='failed'||task.status==='cancelled'?'done':'open',origin:store.source(task.id)?'cli':null})
       m.linkTask(task.id)
       if(task.ownerChatId)m.bind(task.id,'wechat',task.ownerChatId)
     })

@@ -48,3 +48,33 @@ describe('phone page: 执行者头像',()=>{
     expect(who.innerHTML).toBe('')
   })
 })
+
+describe('phone page: 出生地(2026-10-19)',()=>{
+  const from=(id:string,origin?:string,agents?:string[])=>({...matter(id,agents),...(origin?{origin}:{})})
+  it('列表:头像组前面一个小字形,读屏念「从哪来的」;老的事(不带)与认不出的值都不画',async()=>{
+    const h=load([from('w','web',['codex']),from('o',undefined,['codex']),from('x','phone',['codex'])])
+    h.loadMatters();await wait()
+    const row=(id:string)=>h.document.querySelector(`[data-mid="${id}"]`)!
+    const mark=row('w').querySelector('.th-origin')!
+    expect(mark.getAttribute('role')).toBe('img')
+    expect(mark.getAttribute('aria-label')).toBe('从浏览器来的')
+    expect(mark.getAttribute('title')).toBe('从浏览器来的')
+    expect(mark.nextElementSibling!.classList.contains('th-agents')).toBe(true)
+    expect(row('o').querySelector('.th-origin')).toBeNull()
+    expect(row('x').querySelector('.th-origin')).toBeNull()
+  })
+  it('详情:字形 + 头像 + 「名字 · 从哪来的」;没有执行者但知道出生地(主人对话)也显示;都没有就藏起来',()=>{
+    const h=load([])
+    const base={bindings:[],sessions:[],events:[],permissions:[],questions:[],artifacts:[],inputs:[]}
+    const who=h.document.getElementById('m-agents') as unknown as HTMLElement
+    h.renderMatter({...base,matter:from('a','app'),task:{providerId:'codex'}})
+    expect(who.querySelector('.th-origin')!.getAttribute('aria-label')).toBe('从手机 App 来的')
+    expect(who.querySelector(':scope > span:last-child')!.textContent).toBe('Codex · 从手机 App 来的')
+    h.renderMatter({...base,matter:{...from('c','wechat'),kind:'chat'},task:null})
+    expect(who.hidden).toBe(false)
+    expect(who.querySelector('.th-agents')).toBeNull()
+    expect(who.querySelector(':scope > span:last-child')!.textContent).toBe('从微信来的')
+    h.renderMatter({...base,matter:{...from('n'),kind:'chat'},task:null})
+    expect(who.hidden).toBe(true)
+  })
+})

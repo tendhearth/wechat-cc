@@ -15,6 +15,7 @@ import {saveArtifactSnapshot} from '../core/workbench/artifacts'
 import {makeSettingsPanel,type SettingsPanel} from './settings-panel'
 import {makeTunnelHub} from '../../relay/tunnel'
 import {makeTunnelClient,type TunnelWS} from './tunnel-client'
+import {currentPhoneClient,markAppRequest} from './phone-client'
 import {generateTunnelKeypair,exportPublicKeyB64,importPublicKeyB64,deriveSharedKey,sealFrame,openFrame} from '../lib/tunnel-crypto'
 import {AsyncQueue} from '../core/async-queue'
 import type {AgentEvent} from '../core/agent-provider'
@@ -49,7 +50,7 @@ beforeEach(async()=>{
   }},{displayName:'Claude',canResume:()=>true,workbench:MANAGED_NATIVE_CAPABILITIES})
   workbench=makeWorkbenchService({store,registry,stateDir:root,managedWorkspaceRoot:managedRoot,ownerChatId:()=>'owner',defaultProvider:'claude',matters})
   const service=makeMattersService({store:matters,workbench})
-  panel=makeSettingsPanel({stateDir:root,ownerChatId:()=>'owner',chatPrefs:{get:()=>({}),set:()=>({})},getUserName:()=>null,setUserName:async()=>{},log:()=>{},uploads:{chunk:input=>workbench.uploadAttachmentChunk(input,{ownerKey:'owner',surface:'phone'}),status:input=>workbench.attachmentUploadStatus(input,{ownerKey:'owner',surface:'phone'}),discard:input=>workbench.discardAttachmentUpload(input,{ownerKey:'owner',surface:'phone'})},entry:{entryOptions:()=>workbench.entryOptions({ownerKey:'owner',surface:'phone'}),createEntry:input=>workbench.createEntry(input,{ownerKey:'owner',surface:'phone'}),entryReceipt:id=>workbench.entryReceipt(id,{ownerKey:'owner',surface:'phone'})},matters:{...service,say:(id,text,input)=>service.say(id,text,'phone',input),seenOnPhone:id=>{matters.bind(id,'phone','pwa')}}})
+  panel=makeSettingsPanel({stateDir:root,ownerChatId:()=>'owner',chatPrefs:{get:()=>({}),set:()=>({})},getUserName:()=>null,setUserName:async()=>{},log:()=>{},uploads:{chunk:input=>workbench.uploadAttachmentChunk(input,{ownerKey:'owner',surface:'phone'}),status:input=>workbench.attachmentUploadStatus(input,{ownerKey:'owner',surface:'phone'}),discard:input=>workbench.discardAttachmentUpload(input,{ownerKey:'owner',surface:'phone'})},entry:{entryOptions:()=>workbench.entryOptions({ownerKey:'owner',surface:'phone'}),createEntry:input=>workbench.createEntry(input,{ownerKey:'owner',surface:'phone',origin:currentPhoneClient()}),entryReceipt:id=>workbench.entryReceipt(id,{ownerKey:'owner',surface:'phone'})},matters:{...service,say:(id,text,input)=>service.say(id,text,'phone',input),seenOnPhone:id=>{matters.bind(id,'phone','pwa')}}})
   const {port}=await panel.start(0);base=`http://127.0.0.1:${port}`;token=panel.issueToken()
 })
 // 用 removeTempDir 而不是裸 rmSync:Windows 上 daemon 刚关、句柄还没落地时
@@ -74,6 +75,28 @@ describe('phone unified task entry',()=>{
     expect((await request('/m/api/matter/create',{...body,text:'different'})).status).toBe(409)
     expect(store.list()).toHaveLength(1);expect(matters.get(first.receipt.matterId)?.ownerChatId).toBe('owner')
     expect(matters.bindings(first.receipt.matterId)).toEqual([expect.objectContaining({surface:'phone',surfaceKey:'owner'})])
+  })
+  it('records the birthplace from the transport, never from what the client says (2026-10-19)',async()=>{
+    const create=(text:string)=>({requestId:randomUUID(),text,target:{kind:'managed'}})
+    // 局域网直连 = 浏览器 /m;自报 App 的请求头、伪造的 _via 都不算
+    const direct=await(await request('/m/api/matter/create',create('浏览器'))).json()
+    expect(matters.get(direct.receipt.matterId)?.origin).toBe('web')
+    const spoofBody=create('冒充 App')
+    const spoof=await(await fetch(base+'/m/api/matter/create?_via=tunnel&client=app&t='+encodeURIComponent(token),{method:'POST',headers:{'content-type':'application/json','x-cc-client':'app','user-agent':'TendhearthApp'},body:JSON.stringify(spoofBody)})).json()
+    expect(matters.get(spoof.receipt.matterId)?.origin).toBe('web')
+    // 只有 daemon 自己在中继 v2 帧上合成的 Request(tunnel-v2-stream 打的标记)才是 App
+    const appBody=create('App')
+    const res=await panel.handleRequest(markAppRequest(new Request('http://127.0.0.1/m/api/matter/create?_via=tunnel&t='+encodeURIComponent(token),{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify(appBody)})))
+    expect(res.status).toBe(202)
+    const app=await res.json() as {receipt:{matterId:string}}
+    expect(matters.get(app.receipt.matterId)?.origin).toBe('app')
+    // 列表 / 详情带出来
+    const list=await(await request('/m/api/matters?status=open,replied,done')).json() as {matters:{id:string;origin?:string}[]}
+    expect(Object.fromEntries(list.matters.map(m=>[m.id,m.origin]))).toMatchObject({[direct.receipt.matterId]:'web',[app.receipt.matterId]:'app'})
+    const detail=await(await request('/m/api/matter?id='+app.receipt.matterId)).json() as {matter:{origin?:string}}
+    expect(detail.matter.origin).toBe('app')
+    // 请求之外没有手机客户端
+    expect(currentPhoneClient()).toBeNull()
   })
   it('rejects body identity/path injection, malformed receipts, and unsupported methods',async()=>{
     const body={requestId:randomUUID(),text:'保留草稿',target:{kind:'managed'}}

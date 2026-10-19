@@ -2,6 +2,7 @@ import { describe, expect, it, vi } from 'vitest'
 import { generateTunnelKeypair, deriveSharedKey, sealFrame, openFrame, exportPublicKeyB64 } from '../lib/tunnel-crypto'
 const DTOK = 'dtest0000'
 import { makeTunnelClient, handshakePlaintext, MAX_QUEUED_FRAMES_PER_STREAM } from './tunnel-client'
+import { phoneClientOf } from './phone-client'
 
 // A fake WS pair: daemon-side socket the client drives; test plays the relay+phone.
 function fakeSocket() {
@@ -75,11 +76,14 @@ describe('tunnel-client (daemon side)', () => {
     const phone = await generateTunnelKeypair()
     const sock = fakeSocket()
     let seenPath = ''
+    let seenClient = ''
     const client = makeTunnelClient({
       daemonId: 'cc-1',
       knownDeviceTokens: () => [DTOK],
       handleRequest: async (req) => {
         seenPath = new URL(req.url).pathname
+        // v1 隧道是浏览器 /m(transport.js / 中继壳页)走的那条,不是原生 App(2026-10-19 出生地)
+        seenClient = phoneClientOf(req)
         return new Response(JSON.stringify({ ok: true, echo: await req.text() }), { headers: { 'content-type': 'application/json' } })
       },
       connect: () => sock.ws as never,
@@ -103,6 +107,7 @@ describe('tunnel-client (daemon side)', () => {
     for (let i = 0; i < 20 && sock.sent.length < 2; i++) await new Promise(r => setTimeout(r, 5))
 
     expect(seenPath).toBe('/m/api/state')
+    expect(seenClient).toBe('web')
     // the reply frame is sealed; phone opens it
     const replyMsg = JSON.parse(sock.sent.at(-1)!)
     expect(replyMsg.stream).toBe('sA')

@@ -1,5 +1,6 @@
 import {afterEach,beforeEach,describe,expect,it} from 'vitest'
-import {openDb,type Db} from '../../lib/db'
+import {migrations,openDb,runMigrations,type Db} from '../../lib/db'
+import {openSqlite} from '../../lib/runtime/sqlite'
 import {makeMatterStore,type MatterStore} from './store'
 
 /**
@@ -104,5 +105,71 @@ describe('matters',()=>{
     expect(got.get('bbbbbbbb')).toEqual(['codex','claude'])
     expect(got.has('dddddddd')).toBe(false)
     expect(store.agents([]).size).toBe(0)
+  })
+})
+
+describe('matter origin (v77, 2026-10-19)',()=>{
+  it('records where a matter was born once, at creation; unknown ⇒ no field at all',()=>{
+    const m=store.create({id:'aaaaaaaa',kind:'task',title:'从手机来的',origin:'app'})
+    expect(m.origin).toBe('app')
+    expect(store.get('aaaaaaaa')?.origin).toBe('app')
+    const old=store.create({id:'bbbbbbbb',kind:'task',title:'不知道'})
+    expect(old).not.toHaveProperty('origin')
+    expect(store.create({id:'cccccccc',kind:'task',title:'显式 null',origin:null})).not.toHaveProperty('origin')
+    expect(store.list().find(x=>x.id==='aaaaaaaa')?.origin).toBe('app')
+  })
+
+  it('rejects values outside the six surfaces (strict at the store and at the column)',()=>{
+    expect(()=>store.create({kind:'task',title:'x',origin:'phone' as never})).toThrow('invalid_matter_origin')
+    expect(()=>db.query("INSERT INTO matters(id,kind,title,status,origin_surface,created_at,updated_at) VALUES('dddddddd','task','x','open','phone',1,1)").run()).toThrow()
+  })
+
+  it('never changes afterwards — status / rename / touch / bind keep it, and the column itself refuses any update (even NULL → value)',()=>{
+    store.create({id:'aaaaaaaa',kind:'task',title:'微信',origin:'wechat'})
+    store.setStatus('aaaaaaaa','done');store.rename('aaaaaaaa','改名');store.touch('aaaaaaaa');store.bind('aaaaaaaa','phone','pwa')
+    expect(store.get('aaaaaaaa')?.origin).toBe('wechat')
+    expect(()=>db.query("UPDATE matters SET origin_surface='desktop' WHERE id='aaaaaaaa'").run()).toThrow('matter_origin_immutable')
+    store.create({id:'bbbbbbbb',kind:'task',title:'老的'})
+    // 不回填:老行永远是 NULL
+    expect(()=>db.query("UPDATE matters SET origin_surface='wechat' WHERE id='bbbbbbbb'").run()).toThrow('matter_origin_immutable')
+    // 别的列照样能改
+    db.query("UPDATE matters SET title='还能改标题' WHERE id='bbbbbbbb'").run()
+    expect(store.get('bbbbbbbb')?.title).toBe('还能改标题')
+  })
+
+  it('ensureChat writes the origin only when it creates the row, never on a later sighting from another surface',()=>{
+    const a=store.ensureChat('chat-1',undefined,'desktop')
+    expect(a.origin).toBe('desktop')
+    expect(store.ensureChat('chat-1',undefined,'wechat').origin).toBe('desktop')
+    expect(store.ensureChat('chat-2')).not.toHaveProperty('origin')
+    expect(store.ensureChat('chat-2',undefined,'app')).not.toHaveProperty('origin')
+  })
+
+  it('origins() answers one page at once, leaving unknown ids out; a hand-edited odd value reads as unknown',()=>{
+    store.create({id:'aaaaaaaa',kind:'task',title:'a',origin:'cli'})
+    store.create({id:'bbbbbbbb',kind:'task',title:'b'})
+    const got=store.origins(['aaaaaaaa','bbbbbbbb','cccccccc','not-an-id'])
+    expect([...got]).toEqual([['aaaaaaaa','cli']])
+    expect(store.origins([]).size).toBe(0)
+  })
+
+  it('migrates an existing v76 database: old rows stay NULL (no backfill, no guessing)',()=>{
+    const legacy=openSqlite(':memory:')
+    try{
+      legacy.exec('PRAGMA foreign_keys = ON;')
+      // 跑到 v76 为止,塞一行老的事,再按正常开机的路径升级到最新
+      for(let i=0;i<76;i++)migrations[i]!(legacy)
+      legacy.exec('PRAGMA user_version = 76;')
+      legacy.query("INSERT INTO matters(id,kind,title,status,owner_chat_id,created_at,updated_at) VALUES('eeeeeeee','task','老的事','open','owner',1,1)").run()
+      runMigrations(legacy)
+      expect((legacy.query('PRAGMA user_version').get() as {user_version:number}).user_version).toBe(migrations.length)
+      const old=makeMatterStore(legacy).get('eeeeeeee')
+      expect(old?.title).toBe('老的事')
+      expect(old).not.toHaveProperty('origin')
+      expect(legacy.query<{o:string|null},[]>("SELECT origin_surface AS o FROM matters WHERE id='eeeeeeee'").get()?.o).toBeNull()
+      // 再跑一遍迁移也不碰它(幂等)
+      migrations[76]!(legacy)
+      expect(makeMatterStore(legacy).get('eeeeeeee')).not.toHaveProperty('origin')
+    }finally{legacy.close()}
   })
 })

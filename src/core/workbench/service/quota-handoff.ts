@@ -10,6 +10,7 @@ import { createHash } from 'node:crypto'
 import { isWorkbenchProviderId } from '../executor-capabilities'
 import { normalizeInputRequestId } from '../live-inputs'
 import { quotaTakeoverText, QUOTA_TAKEOVER_DEFAULT_REQUEST } from '../quota-takeover'
+import type { MatterOrigin } from '../../matters/store'
 import type { ServiceCtx } from './ctx'
 import type { ExecuteDomain } from './execute'
 import type { QuotaDomain } from './quota'
@@ -79,8 +80,12 @@ export function makeQuotaHandoffDomain(ctx: ServiceCtx, domains: QuotaHandoffDom
     if (!to) throw Error('quota_handoff_unavailable')
     if (to !== input.providerId) throw Error('quota_handoff_changed')
     const source = task
+    // 出生地跟着原来那件走(是同一件事换人接着做,不是在按按钮的那个表面新起的);原来那件不知道 ⇒ 也不知道。
+    const sourceMatterId = store.taskMatterId(source.id)
+    let origin: MatterOrigin | null = null
+    try { origin = sourceMatterId ? ctx.deps.matters?.get(sourceMatterId)?.origin ?? null : null } catch { /* 查不到就不写 */ }
     const made = createTask(
-      { path: source.path, providerId: to, text: quotaTakeoverText(source.providerId, source.title, QUOTA_TAKEOVER_DEFAULT_REQUEST), title: source.title.slice(0, 120) },
+      { path: source.path, providerId: to, text: quotaTakeoverText(source.providerId, source.title, QUOTA_TAKEOVER_DEFAULT_REQUEST), title: source.title.slice(0, 120), origin },
       (next, runId) => {
         store.creationReceipts.add({ id: requestId, accountId: RECEIPT_ACCOUNT, ownerChatId: source.ownerChatId!, commandHash: createHash('sha256').update(key).digest('hex'), projectId: key, path: next.path, providerId: to, taskId: next.id, runId, reply: '' })
       },
