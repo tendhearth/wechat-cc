@@ -1,6 +1,6 @@
 # Tendhearth CC 现行 roadmap
 
-> 2026-10-13 状态核对 · **这份只说「往哪走 / 卡在哪」。**
+> 2026-10-19 状态核对(版本号一节;其余各节日期见节内) · **这份只说「往哪走 / 卡在哪」。**
 > 「定了什么 / 为什么这样定」在 [全景导图](全景导图.md);「某件事的文档在哪」在 [文档索引](INDEX.md);
 > `docs/rfc/02-post-v1.1-roadmap.md` 是 2026-04 的历史版本(v1.2 时代),已被本文取代。
 
@@ -8,17 +8,17 @@
 
 命名已统一为 **Tendhearth CC**，角色称呼为 **CC**；技术兼容边界见[产品命名规范](reference/product-naming.md)。手机端的实现、真机验收和商店发布是不同交付状态，以 [apps/app](../apps/app/README.md) 及各批验证记录为准。
 
-## 现状:最新公开版本 1.7.5
+## 现状:最新公开版本 1.7.7
 
 | 事实 | 怎么看(别写死数字,每次改这页先跑) |
 |---|---|
-| 最近一次**公开**发版 | `gh release list --limit 1`(2026-10-05:`desktop-v1.7.5`;[发版说明](releases/desktop-v1.7.5.md);1.7.1 起 macOS 包都是 Developer ID 签名 + 公证) |
-| 自动更新源 | `curl -s https://dl.tendhearth.com/wechat-cc/latest.json \| grep version`(2026-10-05:1.7.5,与 GitHub 一致) |
+| 最近一次**公开**发版 | `gh release list --limit 1`(2026-10-16:`desktop-v1.7.7`;[发版说明](releases/desktop-v1.7.7.md);1.7.1 起 macOS 包都是 Developer ID 签名 + 公证) |
+| 自动更新源 | `curl -s https://dl.tendhearth.com/wechat-cc/latest.json \| grep version`(2026-10-19:1.7.7,与 GitHub 一致) |
 | `dev` 领先 master | `git rev-list --count origin/master..origin/dev`(簿记合并之后是真实差值) |
 
 1.7.0 是发版链 09-03 改造后第一次真跑,一路踩到五个「加进去后没在真 tag 上跑过」的坑,全部修在 dev 并有守卫/手册条目:dev→master 簿记合并(#121)、e2e 作业装浏览器(#122)、sd.cpp 子模块(#119)、公证变量空串(#123)、R2 令牌失效还报绿(#125)。**发版从此全自动**:合 PR、打 tag、两道 `release-signing` 审批(助手用主人 gh 凭据经 API)、Publish、核对更新源,主人不用点;细则 [maintainer/release.md](maintainer/release.md)。
 
-版本号已统一(2026-09-22):此前四处各说各话(发版认 `tauri.conf.json` 的 1.6.6、`--version` 报根 `package.json` 的 0.6.4、`apps/desktop/package.json` 写 0.5.18、ACP 的 clientInfo 还硬编码 `'0.6.4'`),此后四处 + `Cargo.toml` 随发版保持同号(当前 **1.7.5**),由 `scripts/version-consistency.guard.test.ts` 钉住;`--version` 同时带构建的 git 短 sha(`1.7.0 (a1b2c3d)`),否则 `self deploy` 的健康门打出来的数字两次发版之间永远一样、看不出新构建起没起来。发版说明:`docs/releases/desktop-v1.7.0.md`。
+版本号已统一(2026-09-22):此前四处各说各话(发版认 `tauri.conf.json` 的 1.6.6、`--version` 报根 `package.json` 的 0.6.4、`apps/desktop/package.json` 写 0.5.18、ACP 的 clientInfo 还硬编码 `'0.6.4'`),此后四处 + `Cargo.toml` 随发版保持同号(当前 **1.7.7**),由 `scripts/version-consistency.guard.test.ts` 钉住;`--version` 同时带构建的 git 短 sha(`1.7.0 (a1b2c3d)`),否则 `self deploy` 的健康门打出来的数字两次发版之间永远一样、看不出新构建起没起来。发版说明:`docs/releases/desktop-v1.7.0.md`。
 
 **⇒ 发版节奏的教训:三周不发、发版链改了不真跑,代价是一天修五个坑。** 之后每合一批就发一版 patch。
 
@@ -55,9 +55,9 @@ CC 要取代的是 **Paseo / Orca 这一层**(agent 之上的编排 + 多端),�
 - **TestFlight**:App Store Connect 记录 `Tendhearth CC · Personal AI`(app 6824007352)已建;1.0.0 (1) 已上传、处理完、内部测试组已建;daemon `relay_v2_url` 切到生产 `wss://relay.tendhearth.com`,`selftest phone --relay v2` 通过。**待主人**:在 TestFlight 页回答一次出口合规(本 app 有自己的端到端加密,不照搬 leni/rici 的 false),之后装包、重新配对一次。出包要点见 [maintainer/release.md](maintainer/release.md) 与 apps/app README。
 - 与 dots 的差异与不做的:dots 那种「给目标后台一直推进」碰「无人值守自动外呼」红线,等主人定(同定时交办草案)。
 
-## dev 上等 1.7.6 的(2026-10-06 核对,均已合 dev 并 `self deploy` 到主人机器)
+## 1.7.6 / 1.7.7 里交付的(10-14 / 10-16 已发)
 
-桌面界面与 iPhone app 的改动要随 **1.7.6 发版 / 装新包**才到用户手里(`self deploy` 只换 sidecar);daemon 侧已在主人机器上跑。发版待主人点头。
+> 这一节原名「dev 上等 1.7.6 的」;下列桌面改动已随 1.7.6(#349)/ 1.7.7(#360)发出。iPhone app 的改动仍要装新包(TestFlight)才到手。
 
 - **桌面**:此刻 / 一起做层级(#225、#227);此刻里拖图 / 贴图 / 拖文档进对话(#229、#234);WKWebView 静默失败四处修复 —— 弹窗、外链、下载、拖放(#230);搜对话(#235);一起做任务回复了 / 停下了弹系统通知(#245);「改动」面板逐文件撤销(#246);「没确认退出」按进程组判退出 + 旧记录「我确认它已经结束」(#228、#242)。
 - **iPhone app**(装新包才有):发图(#232)、停一轮(#233)、搜对话(#235)、看成果(#236)、补一句带图(#237)、交办选模型(#238)、「CC 记得你」与逐条纠错(#239、#240)、打开 CC 回复里的文件(#241)、换「跟 CC 说」的后端 / 模型(#244)。
@@ -136,7 +136,7 @@ CC 要取代的是 **Paseo / Orca 这一层**(agent 之上的编排 + 多端),�
 
 ## 已定未做(按价值排)
 
-- **持续执行发版节奏** —— 09-27 后已恢复公开 patch 发版，当前到 1.7.5；每批整合、验收后按[发版手册](maintainer/release.md)交付。09 月积压三周的教训保留在上文，不能再当作当前停发状态。
+- **持续执行发版节奏** —— 09-27 后已恢复公开 patch 发版，当前到 1.7.7；每批整合、验收后按[发版手册](maintainer/release.md)交付。09 月积压三周的教训保留在上文，不能再当作当前停发状态。
 - 安卓凭据恢复走 Google Block Store(配对体验 7a 之后)。
 - ~~iCloud 钥匙串同步(`kSecAttrSynchronizable`)~~ ⟨2026-10-01 主人定:不同步。换机重扫一次码,守住「一个码只配一台」⟩
 - ~~**e2e 只在 master 相关的分支跑**~~ 口径过时:09-18 起 dev 推送动了 `apps/desktop/**` 就跑 desktop-e2e(`changes` 作业);只剩重型 `e2e` 作业按 base_ref 限 master,这是有意的成本取舍。
@@ -162,6 +162,7 @@ CC 要取代的是 **Paseo / Orca 这一层**(agent 之上的编排 + 多端),�
 
 以下是各批当时的证据与取舍，当前默认值和下一步以上文及权威手册为准。
 
+- 2026-10-19:版本号一节同步到 1.7.7(GitHub 与更新源一致);「dev 上等 1.7.6 的」改为已发。同日两路协作:评审 #385–#393 修 7 条(#395、#396);来源标记 #398;放行规则设计稿 #397 待主人。
 - 2026-10-05:同步 GitHub / updater 1.7.5、macOS 改名已发布状态；合并重复手机进展，移出已修欠账，分开既有 iPhone 自动化、待补真机项与 TestFlight 生产条件。
 - 2026-10-05:1.7.5 发版(版本号 + `docs/releases/desktop-v1.7.5.md`):macOS 改名 Tendhearth CC.app + 进程名、桌面字体、产物预览。
 - 2026-10-04:1.7.4 发版(版本号 + `docs/releases/desktop-v1.7.4.md`):桌面显示名 Tendhearth CC、重启通知按证据、后台不再触发「访问其他 App 数据」、桌面麦克风权限。
