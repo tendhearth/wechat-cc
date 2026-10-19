@@ -175,6 +175,30 @@ describe('开在电脑窗口里的 Claude 会话(2026-10-18):话送进窗口,不
     expect(status('W7')).toBe('running')
     expect(hub.list({ includeEnded: true }).find(v => v.session_id === 'W7')?.last_summary ?? '').not.toContain('没送到')
   })
+  it('同一条会话连着两句 ⇒ 一句送完才送下一句(评审 10-19 #8)', async () => {
+    hub.ingest({ source: 'claude', kind: 'stop', session_id: 'W8', cwd: '/w/proj', machine: 'mac', text: '上一轮' })
+    windows.set('W8', 'proj-w8')
+    let inFlight = 0, maxInFlight = 0
+    const gates: (() => void)[] = []
+    const core = makeCliReplyCore({
+      hub, log: () => {}, dangerously: false, run: async () => ({ code: 0, stdout: '', stderr: '', timedOut: false }),
+      liveWindow: {
+        find: (s) => windows.has(s.session_id) ? { pid: 1, name: windows.get(s.session_id)!, kind: 'interactive' } : null,
+        relay: async (_w, text) => { inFlight++; maxInFlight = Math.max(maxInFlight, inFlight); relayed.push({ name: 'w8', text }); await new Promise<void>(r => gates.push(r)); inFlight--; return { ok: true } },
+      },
+    })
+    const s = hub.lookup('W8')!
+    const one = core.resume(s, '第一句'), two = core.resume(s, '第二句')
+    await vi.waitFor(() => expect(gates).toHaveLength(1))
+    await flush()
+    expect(relayed.map(r => r.text)).toEqual(['第一句'])
+    gates.shift()!()
+    await vi.waitFor(() => expect(gates).toHaveLength(1))
+    gates.shift()!()
+    await Promise.all([one, two])
+    expect(relayed.map(r => r.text)).toEqual(['第一句', '第二句'])
+    expect(maxInFlight).toBe(1)
+  })
   it('窗口关了 ⇒ 照旧 resume,而且在会话起点的文件夹里起', async () => {
     hub.ingest({ source: 'claude', kind: 'stop', session_id: 'W2', cwd: '/w/proj/.claude/worktrees/x', machine: 'mac', text: '上一轮' })
     const a = actions()
