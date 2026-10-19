@@ -1,6 +1,6 @@
 # Tendhearth CC 现行 roadmap
 
-> 2026-10-13 状态核对 · **这份只说「往哪走 / 卡在哪」。**
+> 2026-10-19 状态核对(版本号一节;其余各节日期见节内) · **这份只说「往哪走 / 卡在哪」。**
 > 「定了什么 / 为什么这样定」在 [全景导图](全景导图.md);「某件事的文档在哪」在 [文档索引](INDEX.md);
 > `docs/rfc/02-post-v1.1-roadmap.md` 是 2026-04 的历史版本(v1.2 时代),已被本文取代。
 
@@ -8,17 +8,17 @@
 
 命名已统一为 **Tendhearth CC**，角色称呼为 **CC**；技术兼容边界见[产品命名规范](reference/product-naming.md)。手机端的实现、真机验收和商店发布是不同交付状态，以 [apps/app](../apps/app/README.md) 及各批验证记录为准。
 
-## 现状:最新公开版本 1.7.5
+## 现状:最新公开版本 1.7.7
 
 | 事实 | 怎么看(别写死数字,每次改这页先跑) |
 |---|---|
-| 最近一次**公开**发版 | `gh release list --limit 1`(2026-10-05:`desktop-v1.7.5`;[发版说明](releases/desktop-v1.7.5.md);1.7.1 起 macOS 包都是 Developer ID 签名 + 公证) |
-| 自动更新源 | `curl -s https://dl.tendhearth.com/wechat-cc/latest.json \| grep version`(2026-10-05:1.7.5,与 GitHub 一致) |
+| 最近一次**公开**发版 | `gh release list --limit 1`(2026-10-16:`desktop-v1.7.7`;[发版说明](releases/desktop-v1.7.7.md);1.7.1 起 macOS 包都是 Developer ID 签名 + 公证) |
+| 自动更新源 | `curl -s https://dl.tendhearth.com/wechat-cc/latest.json \| grep version`(2026-10-19:1.7.7,与 GitHub 一致) |
 | `dev` 领先 master | `git rev-list --count origin/master..origin/dev`(簿记合并之后是真实差值) |
 
 1.7.0 是发版链 09-03 改造后第一次真跑,一路踩到五个「加进去后没在真 tag 上跑过」的坑,全部修在 dev 并有守卫/手册条目:dev→master 簿记合并(#121)、e2e 作业装浏览器(#122)、sd.cpp 子模块(#119)、公证变量空串(#123)、R2 令牌失效还报绿(#125)。**发版从此全自动**:合 PR、打 tag、两道 `release-signing` 审批(助手用主人 gh 凭据经 API)、Publish、核对更新源,主人不用点;细则 [maintainer/release.md](maintainer/release.md)。
 
-版本号已统一(2026-09-22):此前四处各说各话(发版认 `tauri.conf.json` 的 1.6.6、`--version` 报根 `package.json` 的 0.6.4、`apps/desktop/package.json` 写 0.5.18、ACP 的 clientInfo 还硬编码 `'0.6.4'`),此后四处 + `Cargo.toml` 随发版保持同号(当前 **1.7.5**),由 `scripts/version-consistency.guard.test.ts` 钉住;`--version` 同时带构建的 git 短 sha(`1.7.0 (a1b2c3d)`),否则 `self deploy` 的健康门打出来的数字两次发版之间永远一样、看不出新构建起没起来。发版说明:`docs/releases/desktop-v1.7.0.md`。
+版本号已统一(2026-09-22):此前四处各说各话(发版认 `tauri.conf.json` 的 1.6.6、`--version` 报根 `package.json` 的 0.6.4、`apps/desktop/package.json` 写 0.5.18、ACP 的 clientInfo 还硬编码 `'0.6.4'`),此后四处 + `Cargo.toml` 随发版保持同号(当前 **1.7.7**),由 `scripts/version-consistency.guard.test.ts` 钉住;`--version` 同时带构建的 git 短 sha(`1.7.0 (a1b2c3d)`),否则 `self deploy` 的健康门打出来的数字两次发版之间永远一样、看不出新构建起没起来。发版说明:`docs/releases/desktop-v1.7.0.md`。
 
 **⇒ 发版节奏的教训:三周不发、发版链改了不真跑,代价是一天修五个坑。** 之后每合一批就发一版 patch。
 
