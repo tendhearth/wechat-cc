@@ -1,4 +1,7 @@
 
+// 执行者头像(2026-10-19,同手机 app):跟桌面共用 apps/desktop/src/shared/agent-avatars.js,构建期在这上面内联并调一次。
+/** @type {ReturnType<typeof import('../../desktop/src/shared/agent-avatars.js').createAgentAvatars>} */
+var mAgents
 var M_STATUS = { open: "进行中", replied: "已答复", done: "已了结", archived: "已归档" }
 var M_KIND = { task: "任务", chat: "对话", companion: "陪伴" }
 var M_INPUT_STATUS={pending:"补充已保存，等待执行者接收。",sending:"补充正在发送，等待执行者确认。",delivered:"这条补充已送达。",held:"未确认送达，请先查看任务记录。原文已保留。",withdrawn:"这条补充已撤回，原文已保留。"},mInputStates={}
@@ -119,7 +122,7 @@ function mSetButtons() {
 }
 function loadMatters() {
   mApi("/m/api/matters?status=open,replied,done").then(function(r){
-    document.getElementById("m-list").innerHTML=r.matters.filter(function(m){return m.kind!=="companion"}).map(function(m){return '<button type="button" class="card todo" data-mid="'+esc(m.id)+'"><span class="tx"><b>'+esc(m.title)+'</b><small>'+esc(M_KIND[m.kind]||m.kind)+' · '+esc(m.networkSuspended?"已暂停(网络未受保护)":(M_STATUS[m.status]||m.status))+(m.projectPath?' · '+esc(m.projectPath.split(/[\\/]/).filter(Boolean).pop()||m.projectPath):'')+'</small></span></button>'}).join("") || '<div class="empty">还没有事，微信或桌面上交代一件就会出现在这里</div>'
+    document.getElementById("m-list").innerHTML=r.matters.filter(function(m){return m.kind!=="companion"}).map(function(m){return '<button type="button" class="card todo" data-mid="'+esc(m.id)+'"><span class="tx"><b>'+esc(m.title)+'</b><small>'+esc(M_KIND[m.kind]||m.kind)+' · '+esc(m.networkSuspended?"已暂停(网络未受保护)":(M_STATUS[m.status]||m.status))+(m.projectPath?' · '+esc(m.projectPath.split(/[\\/]/).filter(Boolean).pop()||m.projectPath):'')+'</small></span>'+mAgents.agentAvatarsHtml(m.agents)+'</button>'}).join("") || '<div class="empty">还没有事，微信或桌面上交代一件就会出现在这里</div>'
   }).catch(function(e){document.getElementById("m-list").textContent=mError(e.message)})
 }
 function mQuestionDraft(request) { return mRead(mCurrent+":question:"+request.id) || {} }
@@ -344,6 +347,9 @@ function mRenderEvents(events) {
 function renderMatter(d) {
   mDetail=d;mTooLarge=false;mDetailFresh=true
   document.getElementById("m-title").textContent=d.matter.title+" · "+(M_STATUS[d.matter.status]||d.matter.status)
+  // 标题下一组头像 + 名字:任务那一家在前,老 daemon 不带 agents 也有
+  var agents=mAgents.matterAgents(d.task&&d.task.providerId,d.matter.agents),who=document.getElementById("m-agents")
+  who.hidden=!agents.length;who.innerHTML=agents.length?mAgents.agentAvatarsHtml(agents)+'<span>'+esc(mAgents.agentsLabel(agents))+'</span>':''
   mRenderEvents(d.events||[])
   document.getElementById("m-permissions").innerHTML=(d.permissions||[]).filter(function(p){return p.taskId===d.matter.id}).map(function(p){return '<div class="card"><b>需要你允许这一次</b><p>'+esc(p.tool)+'</p><pre class="m-description">'+esc(p.description)+'</pre><button type="button" class="done-btn" data-control="allow" data-task="'+esc(d.matter.id)+'" data-request="'+esc(p.id)+'">允许这一次</button> <button type="button" class="more" data-control="deny" data-task="'+esc(d.matter.id)+'" data-request="'+esc(p.id)+'">拒绝</button></div>'}).join("")
   mRenderQuestions(d)

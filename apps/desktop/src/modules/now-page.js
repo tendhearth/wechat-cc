@@ -1,6 +1,9 @@
 // @ts-check
 // now-page.js — 「此刻」页(spec 2026-10-01 §6.3):问候、CC(明暗来自 presence)、最近一句真话的气泡、等你的事、home/chat 两态。
 import { greetingFor, ccPresence, waitingRows, waitingHeader, ccBubblePreview } from './now-home.js'
+import { createAgentAvatars } from '../shared/agent-avatars.js'
+
+const AGENTS = createAgentAvatars()
 
 const pad = (/** @type {number} */ n) => String(n).padStart(2, '0')
 /** @param {number} at @param {Date} now */
@@ -52,7 +55,7 @@ export function mountNowPage({ root, presencePoller, onOpenTask, onResolveTermin
     const head = document.createElement('header')
     const hd = document.createElement('div')
     const h = document.createElement('h2'); h.textContent = r.title
-    const sub = document.createElement('p'); sub.textContent = r.detail
+    const sub = document.createElement('p'); sub.textContent = [r.detail, r.source].filter(Boolean).join(' · ')
     hd.append(h, sub)
     const close = document.createElement('button'); close.type = 'button'; close.className = 'now-terminal-close'; close.textContent = '关闭'
     close.addEventListener('click', () => dialog.close())
@@ -118,10 +121,13 @@ export function mountNowPage({ root, presencePoller, onOpenTask, onResolveTermin
     const t = document.createElement('p'); t.className = 't'; t.textContent = r.title
     const d = document.createElement('p'); d.className = 'd'; d.textContent = r.detail
     text.append(t, d)
+    // 哪家:行尾一个圆头像(名字在读屏标签与 title 里,小窗标题下也写)。
+    const who = document.createElement('span'); who.className = 'now-terminal-agent'
+    who.innerHTML = AGENTS.agentAvatarsHtml([r.agent], { cls: 'now-agents' })
     const go = document.createElement('span'); go.className = 'go'
     go.textContent = canDecide ? '看清楚 ›' : done === '' ? '正在送…' : done ?? (r.hash ? '' : '回终端处理')
     if (done !== undefined) go.setAttribute('aria-live', 'polite')
-    box.append(text, go); li.append(box)
+    box.append(text, who, go); li.append(box)
     return li
   }
   function renderWaiting() {

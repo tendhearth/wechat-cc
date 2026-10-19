@@ -37,12 +37,14 @@ describe('production phone presence',()=>{
   // 到 /m/api/art/presence 按需拉取(不再进页面);这里留出明显的余量
   // (<400KB,而不是刚好卡在 512KB 线上)防止将来再有人往页面里塞大字节的东西
   // 而没人注意到跟中继帧预算的关系。
-  it('has real presence art comfortably under the relay frame budget with headroom to spare (<400KB framed)',()=>{
+  // 2026-10-19 从 400KB 抬到 420KB:执行者头像(九家 LobeHub 单色路径 + MIT 声明,跟桌面共用一份)
+  // 进页面约 +18KB(framed),源码注释已在内联时剥掉;离 512KB 帧上限仍有约 95KB。
+  it('has real presence art comfortably under the relay frame budget with headroom to spare (<420KB framed)',()=>{
     const html=phoneHtml('d'.repeat(128),{relay:'wss://relay.example',id:'test-device'})
     const framed=Math.ceil(Buffer.byteLength(html)*4/3)+4096
     expect(html).not.toContain(art.unlit.base64)
     expect(html).not.toContain(art.lit.base64)
-    expect(framed).toBeLessThan(400*1024)
+    expect(framed).toBeLessThan(420*1024)
   })
   it('embeds syntax-valid scripts and escapes a hostile token',()=>{
     const html=phoneHtml('</script><script>evil()</script>',null)

@@ -114,6 +114,11 @@ export function makeViewDomain(ctx:ServiceCtx, queries?:{quotaHandoff(id:string)
     ctx.actions.deref('view').provider(input.providerId)
     return store.addProject({...input,path:canonicalProject(input.path)})
   }
+  /** 每件事有哪些执行者参与过(matter.agents 同一个出处;一次查一页)。没接 matters / 查不出来 ⇒ 不带,桌面退回任务自己那一家。 */
+  function agentsOf(ids:string[]):Map<string,string[]> {
+    try{return ctx.deps.matters?.agents(ids)??new Map()}catch{return new Map()}
+  }
+  const withAgents=(view:WorkbenchTaskView,agents:Map<string,string[]>):WorkbenchTaskView=>{const a=agents.get(view.id);return a?.length?{...view,agents:a}:view}
   function list(query:WorkbenchListQuery={}) {
     const providers=ctx.deps.registry.list().flatMap(id=>{const p=ctx.deps.registry.get(id);return isWorkbenchProviderId(id)&&p&&isWorkbenchExecutorCapabilities(p.opts.workbench)?[{id,displayName:p.opts.displayName,capabilities:structuredClone(p.opts.workbench),quota:ctx.actions.deref('view').quotaExhausted(id),usage:ctx.deps.usage?.(id)??null}]:[]})
     const result=store.listPage(query)
@@ -122,14 +127,15 @@ export function makeViewDomain(ctx:ServiceCtx, queries?:{quotaHandoff(id:string)
     const active=store.activeTaskPaths()
     const projects=store.projects().filter(project=>active.has(project.path)||existsSync(project.path))
     const projectProviders=Object.fromEntries(projects.map(project=>[project.path,store.projectProvider(project.path)??project.providerId]))
-    return {projects,tasks:result.tasks.map(task => taskView(task,true)),page:result.page,projectProviders,providers,historyProviders:Object.keys(ctx.deps.nativeHistory??{}),defaultProvider:providers.find(p=>p.id===ctx.deps.defaultProvider)?.id ?? providers[0]?.id ?? null,canWechat:!!ctx.deps.ownerChatId(),unattendedAcknowledgedAt:ctx.deps.unattendedAck?.get()??null}
+    const agents=agentsOf(result.tasks.map(task=>task.id))
+    return {projects,tasks:result.tasks.map(task => withAgents(taskView(task,true),agents)),page:result.page,projectProviders,providers,historyProviders:Object.keys(ctx.deps.nativeHistory??{}),defaultProvider:providers.find(p=>p.id===ctx.deps.defaultProvider)?.id ?? providers[0]?.id ?? null,canWechat:!!ctx.deps.ownerChatId(),unattendedAcknowledgedAt:ctx.deps.unattendedAck?.get()??null}
   }
   function detail(id:string,options:{since?:number}={}) {
     const detail=store.detail(id,options),running=state.runsByTask.get(id)
     const runtime=runtimeSnapshot(running)
     const subscription=store.wechatNotifications.subscription(id)
     const wechatNotifications={enabled:!!subscription?.enabled,notices:store.wechatNotifications.list(id).slice(-10).map(({id,runId,kind,status,reason,createdAt})=>({id,runId,kind,status,reason,createdAt}))}
-    const result={...detail,events:detail.events.map(readableExecutionEvent),wechatNotifications,quotaHandoff:queries?.quotaHandoff(id)??null,...(runtime?{runtime}:{}),execution:store.execution.choice(id),lastExecution:store.execution.last(id),attachments:store.attachments.list(id),task:taskView(detail.task,true),inputs:store.liveInputs.list(id),questions:running?.questions.pending()??[],
+    const result={...detail,events:detail.events.map(readableExecutionEvent),wechatNotifications,quotaHandoff:queries?.quotaHandoff(id)??null,...(runtime?{runtime}:{}),execution:store.execution.choice(id),lastExecution:store.execution.last(id),attachments:store.attachments.list(id),task:withAgents(taskView(detail.task,true),agentsOf([id])),inputs:store.liveInputs.list(id),questions:running?.questions.pending()??[],
       // The timeline stays live through cancellation and process cleanup;
       // accepting supplemental input is a separate, narrower capability.
       ...(running?{runId:running.identity}:{}),

@@ -59,8 +59,8 @@ describe('mountNowPage', () => {
     const page = mountNowPage({ root, presencePoller: poller(), onOpenTask: open, onResolveTerminal: resolve })
     page.setAttention({ stale: false, tasks: [{ id: 'a', title: '作品集', providerId: 'c', pendingPermissionCount: 1, pendingQuestionCount: 0, attentionKey: '["r"]' }] } as any)
     page.setTerminal([
-      { id: 's1', title: '想运行 npm publish', detail: 'wechat-cc · Claude Code', hash: 'k3x9z', tool: 'Bash', command: 'npm publish' },
-      { id: 's2', title: '要改 <b>x</b>', detail: 'melu · Codex', hash: null, tool: '', command: '要改 <b>x</b>' },
+      { id: 's1', title: '想运行 npm publish', detail: 'wechat-cc', agent: 'claude', source: 'Claude Code', hash: 'k3x9z', tool: 'Bash', command: 'npm publish' },
+      { id: 's2', title: '要改 <b>x</b>', detail: 'melu', agent: 'codex', source: 'Codex', hash: null, tool: '', command: '要改 <b>x</b>' },
     ])
     expect(document.getElementById('now-waiting-title')!.textContent).toBe('3 件事等你')
     expect(document.querySelectorAll('#now-waiting-list > li').length).toBe(3)
@@ -70,10 +70,16 @@ describe('mountNowPage', () => {
     expect(t2!.querySelectorAll('button').length).toBe(0)
     expect(t2!.querySelector('.go')!.textContent).toBe('回终端处理')
     expect(t2!.querySelector('b')).toBeNull()
+    // 行里只写项目;哪家是行尾的圆头像,名字在读屏标签里(2026-10-19)
+    expect(t1!.querySelector('.d')!.textContent).toBe('wechat-cc')
+    expect(t1!.querySelector('.th-agents')!.getAttribute('aria-label')).toBe('Claude Code')
+    expect(t1!.querySelector('.th-agent svg')).not.toBeNull()
+    expect(t2!.querySelector('.th-agents')!.getAttribute('aria-label')).toBe('Codex')
     ;(t1!.querySelector('button') as HTMLButtonElement).click()
     const dlg = document.querySelector('dialog.now-terminal-dialog') as HTMLDialogElement
     expect(dlg).not.toBeNull()
     expect(dlg.querySelector('h2')!.textContent).toBe('想运行 npm publish')
+    expect(dlg.querySelector('header p')!.textContent).toBe('wechat-cc · Claude Code')
     expect(dlg.querySelector('.now-terminal-command')!.textContent).toBe('npm publish')
     ;(dlg.querySelector('[data-decision="allow"]') as HTMLButtonElement).click()
     expect(resolve).toHaveBeenCalledWith('k3x9z', 'allow')
@@ -91,7 +97,7 @@ describe('mountNowPage', () => {
     const root = dom()
     const resolve = vi.fn().mockRejectedValueOnce(new Error('403')).mockResolvedValueOnce(false)
     const page = mountNowPage({ root, presencePoller: poller(), onOpenTask: vi.fn(), onResolveTerminal: resolve })
-    page.setTerminal([{ id: 's1', title: '想用 Bash', detail: 'd', hash: 'k3x9z', tool: 'Bash', command: '' }])
+    page.setTerminal([{ id: 's1', title: '想用 Bash', detail: 'd', agent: 'claude', source: 'Claude Code', hash: 'k3x9z', tool: 'Bash', command: '' }])
     ;(document.querySelector('.now-terminal button') as HTMLButtonElement).click()
     const dlg = () => document.querySelector('dialog.now-terminal-dialog') as HTMLDialogElement
     ;(dlg().querySelector('[data-decision="deny"]') as HTMLButtonElement).click()
@@ -104,14 +110,14 @@ describe('mountNowPage', () => {
     expect(document.querySelector('.now-terminal .go')!.textContent).toBe('这一项已经处理过了')
     const root2 = dom()
     const page2 = mountNowPage({ root: root2, presencePoller: poller(), onOpenTask: vi.fn() })
-    page2.setTerminal([{ id: 's1', title: 'Bash', detail: 'd', hash: 'k3x9z', tool: 'Bash', command: '' }])
+    page2.setTerminal([{ id: 's1', title: 'Bash', detail: 'd', agent: 'claude', source: 'Claude Code', hash: 'k3x9z', tool: 'Bash', command: '' }])
     expect(document.querySelectorAll('.now-terminal button').length).toBe(0)
     void page
   })
   it('小窗开着时那一项被别处拍掉(列表里没了)⇒ 小窗自己关掉', () => {
     const root = dom()
     const page = mountNowPage({ root, presencePoller: poller(), onOpenTask: vi.fn(), onResolveTerminal: vi.fn(async () => true) })
-    page.setTerminal([{ id: 's1', title: '想运行 ls', detail: 'd', hash: 'k3x9z', tool: 'Bash', command: 'ls' }])
+    page.setTerminal([{ id: 's1', title: '想运行 ls', detail: 'd', agent: 'claude', source: 'Claude Code', hash: 'k3x9z', tool: 'Bash', command: 'ls' }])
     ;(document.querySelector('.now-terminal button') as HTMLButtonElement).click()
     expect(document.querySelector('dialog.now-terminal-dialog')).not.toBeNull()
     page.setTerminal([])

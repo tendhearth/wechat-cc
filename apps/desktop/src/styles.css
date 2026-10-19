@@ -4979,3 +4979,12 @@ b, strong { font-weight: 500; }
 .onboard-phone .qr-svg svg { width: 180px; height: 180px; }
 .onboard-phone .qr-note { margin: 0; color: var(--th-ink); }
 .onboard-phone .qr-sub { margin: 0; font-size: var(--th-size-small); color: var(--th-ink-soft); }
+
+/* 执行者头像放在哪儿(图形与半叠的画法在 shared/agent-avatars.css):描边色跟着所在行的底色。 */
+.wb-sidebar .th-agents { --th-agent-ring: var(--wb-sidebar); --th-agent-fill: var(--th-paper); }
+.wb-task:hover .th-agents, .wb-task.is-selected .th-agents { --th-agent-ring: var(--th-ground); }
+.wb-task-meta .th-agents { margin: -3px 0 -3px auto; --th-agent-size: 20px; }
+.wb-task-agents { display: flex; align-items: center; gap: 8px; margin: 6px 0 0; color: var(--wb-muted); font-size: 12px; line-height: 1.5; }
+.wb-task-agents > span:last-child { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.now-waiting-row.now-terminal-row { grid-template-columns: minmax(0, 1fr) auto auto; }
+.now-terminal-agent { display: inline-flex; }

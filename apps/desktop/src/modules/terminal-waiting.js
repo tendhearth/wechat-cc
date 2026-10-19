@@ -5,10 +5,11 @@
 // 那几条,接在工作台的等你行后面。中继在微信里开了码(主人不在、问到了微信 / 手机)⇒ 行上给「看清楚 ›」,
 // 点开小窗看清命令再「允许 / 拒绝」,拍板走桌宠权限卡同一条路(pet_permission_resolve → POST /v1/permissions/resolve);
 // 没开码(主人在电脑前,终端自己在问)⇒ 只写「回终端处理」,不给按钮。
-// 桌面上只写「项目 · 来源」:「终端」和微信回话用的码是微信那头的东西,桌面用不上(2026-10-16)。
+// 桌面上只写「项目」,哪家画成行尾的圆头像(2026-10-19,同手机 app;名字进读屏标签和小窗):
+// 「终端」和微信回话用的码是微信那头的东西,桌面用不上(2026-10-16)。
 
 /** @typedef {{session_id:string,code:string,source:'claude'|'codex'|'cursor',status:string,project:string,machine?:string|null,pending:{tool:string,summary:string|null,since:number,hash?:string|null}|null}} CliSession */
-/** @typedef {{id:string,title:string,detail:string,hash:string|null,tool:string,command:string,commandLabel?:string}} TerminalRow */
+/** @typedef {{id:string,title:string,detail:string,agent:string,source:string,hash:string|null,tool:string,command:string,commandLabel?:string}} TerminalRow */
 
 const TITLE_MAX = 120
 
@@ -44,12 +45,13 @@ export function terminalWaitingRows(sessions) {
     if (!s || s.status !== 'waiting' || typeof s.session_id !== 'string' || !s.pending) continue
     const tool = s.pending.tool === 'permission' ? '' : String(s.pending.tool ?? '')
     const summary = String(s.pending.summary ?? '').trim()
-    const source = s.source === 'codex' ? 'Codex' : s.source === 'cursor' ? 'Cursor' : 'Claude Code'
+    const agent = s.source === 'codex' || s.source === 'cursor' ? s.source : 'claude'
+    const source = agent === 'codex' ? 'Codex' : agent === 'cursor' ? 'Cursor' : 'Claude Code'
     const hash = typeof s.pending.hash === 'string' && /^[a-z0-9]{5}$/.test(s.pending.hash) ? s.pending.hash : null
     rows.push({
       id: s.session_id,
       title: terminalTitle(tool, summary, source),
-      detail: [s.project, source].filter(Boolean).join(' · '),
+      detail: String(s.project ?? ''), agent, source,
       hash, tool, command: summary,
       commandLabel: VERB[tool] === '想运行' ? '要运行的命令' : tool ? `${tool} 要做的是` : '具体内容',
     })

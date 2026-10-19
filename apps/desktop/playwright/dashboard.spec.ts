@@ -177,7 +177,10 @@ test('此刻「N 件事等你」也列终端里等批准的会话:开了码的�
   const rows = waiting.locator('.now-terminal')
   await expect(rows).toHaveCount(2)
   await expect(rows.nth(0)).toContainText('想运行 npm publish')
-  await expect(rows.nth(0).locator('.d')).toHaveText('wechat-cc · Claude Code')
+  await expect(rows.nth(0).locator('.d')).toHaveText('wechat-cc')
+  // 哪家是行尾的圆头像(2026-10-19),名字给读屏
+  await expect(rows.nth(0).getByRole('img', { name: 'Claude Code' })).toBeVisible()
+  await expect(rows.nth(1).getByRole('img', { name: 'Codex' })).toBeVisible()
   await expect(rows.nth(0).locator('button')).toHaveCount(1)
   await expect(rows.nth(0).locator('.go')).toHaveText('看清楚 ›')
   await expect(rows.nth(1)).toContainText('要改 package.json')

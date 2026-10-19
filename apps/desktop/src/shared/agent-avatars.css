@@ -1,0 +1,9 @@
+/* 执行者头像(2026-10-19,agent-avatars.js 画的那组;同手机 app):桌面 index.html 直接引,手机生成页整段内联。
+   单色图按 ink 着色,不带各家的品牌色。几个就往左半叠(露 64%),外圈一道底色描边把后面那个切开;
+   --th-agent-ring 跟着所在行的底色走,--th-agent-size 由用的地方定。 */
+.th-agents { --th-agent-size: 22px; --th-agent-ring: var(--th-paper); --th-agent-fill: var(--th-rail); display: inline-flex; flex: none; align-items: center; padding: 2px; }
+.th-agent { position: relative; box-sizing: border-box; display: inline-grid; place-items: center; flex: none; width: var(--th-agent-size); height: var(--th-agent-size); border-radius: 50%; border: 1px solid var(--th-hair); background: var(--th-agent-fill); box-shadow: 0 0 0 2px var(--th-agent-ring); color: var(--th-ink); }
+.th-agent + .th-agent { margin-left: calc((var(--th-agent-size) + 4px) * -0.36); }
+.th-agent svg { width: 60%; height: 60%; }
+.th-agent-mono, .th-agent-more { font-size: calc(var(--th-agent-size) * 0.5); line-height: 1; }
+.th-agent-more { color: var(--th-ink-soft); }
