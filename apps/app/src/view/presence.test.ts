@@ -15,12 +15,14 @@ describe('CC 的明暗只看够不够得着家里的电脑', () => {
 describe('顶栏状态行', () => {
   const now = at(21, 0)
   it('在线:绿点', () => expect(statusLine(conn('online', 1), now, 'zh-Hans')).toEqual({ dot: 'ok', text: '家里的电脑 · 在线', label: '家里的电脑 · 在线' }))
-  it('离线:红点;顶栏只写短句,上次同步时间只进无障碍标签(连接页另有完整时间)', () =>
-    expect(statusLine(conn('offline', at(20, 34)), now, 'zh-Hans')).toEqual({ dot: 'bad', text: '家里的电脑 · 不在线', label: '家里的电脑 · 不在线 · 20:34 同步' }))
-  it('离线且从没同步过:不编时间', () => expect(statusLine(conn('offline'), now, 'zh-Hans')).toEqual({ dot: 'bad', text: '家里的电脑 · 不在线', label: '家里的电脑 · 不在线' }))
+  it('离线 = 先停着,不是出错:灰点不上红;顶栏只写短句,「你看到的是 HH:MM 的样子」只进无障碍标签', () => {
+    expect(statusLine(conn('offline', at(20, 34)), now, 'zh-Hans')).toEqual({ dot: 'unknown', text: '电脑歇了，事情先停着', label: '电脑歇了，事情先停着 · 你看到的是 20:34 的样子' })
+    expect(statusLine(conn('offline', at(20, 34)), now, 'en').dot).toBe('unknown')
+  })
+  it('离线且从没同步过:不编时间', () => expect(statusLine(conn('offline'), now, 'zh-Hans')).toEqual({ dot: 'unknown', text: '电脑歇了，事情先停着', label: '电脑歇了，事情先停着' }))
   it('握手了但这次还没同步成功:灰点「正在连接」,不绿(恢复回来的配对可能已失效)', () => expect(statusLine(conn('online'), now, 'en')).toEqual({ dot: 'unknown', text: 'Home computer · connecting', label: 'Home computer · connecting' }))
   it('连接中:灰点(不知道),绝不绿', () => expect(statusLine(conn('connecting'), now, 'en')).toEqual({ dot: 'unknown', text: 'Home computer · connecting', label: 'Home computer · connecting' }))
-  it('已撤销:红点', () => expect(statusLine(conn('revoked'), now, 'zh-Hans')).toEqual({ dot: 'bad', text: '家里的电脑 · 已解除配对', label: '家里的电脑 · 已解除配对' }))
+  it('已撤销:红点(这才是真要你处理的)', () => expect(statusLine(conn('revoked'), now, 'zh-Hans')).toEqual({ dot: 'bad', text: '这台手机已经不能连了', label: '这台手机已经不能连了' }))
 })
 
 describe('演示模式的状态行不冒充真电脑', () => {
@@ -31,7 +33,7 @@ describe('演示模式的状态行不冒充真电脑', () => {
   })
 })
 
-describe('状态行要不要按时刷新(30 秒钟只为「HH:MM 同步」)', () => {
+describe('状态行要不要按时刷新(30 秒钟只为「你看到的是 HH:MM 的样子」)', () => {
   it('只有离线且同步过、又不是演示时才需要', () => {
     expect(statusLineTicks(conn('offline', at(20, 34)))).toBe(true)
     expect(statusLineTicks(conn('offline'))).toBe(false)

@@ -8,7 +8,7 @@ import { space } from './tokens'
 import { Txt } from './Txt'
 import { useTheme } from './useTheme'
 
-/** 状态词 + 点:等你批准 / 在跑 / 歇着 / 结束了。颜色只上点。 */
+/** 状态词 + 点:等你决定 / 在做 / 歇着 / 结束了(用词表)。颜色只上点。 */
 export function TerminalStatusPill({ status, testID }: { status: TerminalStatus; testID?: string }) {
   const lang = useLang()
   return (
@@ -21,7 +21,7 @@ export function TerminalStatusPill({ status, testID }: { status: TerminalStatus;
 
 /**
  * 「一起做」里终端会话的一行:项目、状态、最后一句、多久前,行尾一个圆头像说是哪家(名字只进读屏标签)。整行只有一个动作:点进详情。
- * 等你批准且手机拍得了 ⇒ 右边写「看清楚 ›」,允许 / 拒绝只在详情里(看清楚了再拍);终端自己在问 ⇒ 说一句「回电脑上答」。
+ * 等你批准且手机拍得了 ⇒ 右边写「看清楚 ›」,允许这一步 / 先不做只在详情里(看清楚了再拍);终端自己在问 ⇒ 说一句「回电脑上答」。
  */
 export function TerminalItem({ row, onOpen }: { row: TerminalRow; onOpen: () => void }) {
   const { c } = useTheme()

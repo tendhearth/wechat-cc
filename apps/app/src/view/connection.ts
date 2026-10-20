@@ -12,10 +12,10 @@ export function formatSynced(ts: number, now: number, lang: Lang): string {
   return lang === 'zh-Hans' ? `${d.getMonth() + 1}月${d.getDate()}日 ${hm}` : `${d.getMonth() + 1}/${d.getDate()} ${hm}`
 }
 
-/** spec §3:离线显示上次同步时间;撤销与离线分开表达;在线不提示。 */
+/** spec §3:离线显示上次同步时间;撤销与离线分开表达;在线不提示。离线说「电脑歇了,事情先停着」(用词表 B3),不说出错。 */
 export function connectionNotice(c: Connection, now: number, lang: Lang): null | { kind: 'connecting' | 'offline' | 'revoked'; text: string } {
   if (c.state === 'online') return null
-  if (c.state === 'revoked') return { kind: 'revoked', text: t(lang, 'conn.revokedBody') }
+  if (c.state === 'revoked') return { kind: 'revoked', text: t(lang, 'conn.revokedTitle') }
   if (c.state === 'connecting') return { kind: 'connecting', text: t(lang, 'conn.connecting') }
   return {
     kind: 'offline',

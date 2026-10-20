@@ -29,7 +29,7 @@ appId: com.tendhearth.app
 - assertVisible:
     id: terminal-detail-pending
 # 等批准时说一句框下的提示是「先拍板」,不是「还在跑」
-- assertVisible: "它在等你批准，先拍板再说下一句。|It’s waiting for your approval. Decide first, then send the next message."
+- assertVisible: "它在等你决定，先拍板再说下一句。|It’s waiting for your approval. Decide first, then send the next message."
 - takeScreenshot: t01c-terminal-waiting
 - tapOn:
     id: topbar-back

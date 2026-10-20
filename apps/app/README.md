@@ -46,7 +46,7 @@ maestro test .maestro/           # 模拟器上跑演示流程(要先有 develop
 
 | 流程 | 走什么 |
 |---|---|
-| `.maestro/approve.yaml` | 先看看 → 此刻第一张「等你决定」卡 → 批准页**原始命令直接可见** → 允许 → 进展页 → 2 秒后「这一轮已回复」 |
+| `.maestro/approve.yaml` | 先看看 → 此刻第一张「等你决定」卡 → 批准页**原始命令直接可见** → 允许 → 进展页 → 2 秒后「这一轮做完了」 |
 | `.maestro/chat.yaml` | 此刻 → 跟 CC 说一句 → 对话页 → 发一句 → 「在想…」→ 演示回复出现 → 一起做的置顶「和 CC 的对话」回到对话页 |
 | `.maestro/chat-extras.yaml` | 跟 CC 说 → 发一句 → 演示回复带「过程 · 2 段」(默认收起)、语音、本地表情(图)、联网表情(只写情绪)→ 展开过程看到「没有发到微信」→ 点语音不报错(2026-10-04) |
 | `.maestro/connections.yaml` | 设置 → CC 的连接卡(演示数据)→ 各项状态词 → 电脑上的会话列表(只读) |
@@ -81,7 +81,7 @@ bun scripts/device-e2e.ts --only chat,push   # 只跑部分(配对与收尾总�
 | a'' 推送登记 | 测试设备把 APNs 令牌登记到 daemon(`phone-push.json` 只读键名) |
 | b 跟 CC 说 | 此刻 → 说一句 → 打字发送 ⇒ 自己的气泡 ⇒ 一条发送前没有的 CC 气泡 |
 | c 真推送 + 批准 | app 退后台 → 派一个要删探针文件的工作台任务 → SpringBoard 上出现**扩展解密后**的横幅(标题「需要你批准」+ 任务名;占位「CC 有新动态」不算)→ 点开 → 批准页 → 允许 → 进展页;daemon 那头权限清空、任务答完、探针被删 |
-| d 撤销 | 局域网 `revoke_device`(设置页「忘掉」同一个 op)⇒ app 此刻页「这台手机已不再配对」 |
+| d 撤销 | 局域网 `revoke_device`(设置页「忘掉」同一个 op)⇒ app 此刻页「这台手机已经不能连了,在电脑上重新配对」 |
 | e 收尾(无论成败) | 取消 + 归档任务、删 scratch、测试设备还在就撤、`dev-e2e?op=restore` 放回主人的配对、冷启动确认主人那台重新在线 |
 
 **为什么用 XCUITest 不用 Maestro**:Maestro 2.11 对这台 iOS 27 真机直接报 `Device … is not connected`(它这版只认模拟器);XCUITest 能接管正在跑的 app(`XCUIApplication(bundleIdentifier:)`,步骤之间不重启)、能点 SpringBoard 的通知横幅 / 通知中心 / 权限框。UI 测试 target 由 `plugins/with-ios-uitests.js` 在 `TENDHEARTH_UITESTS=1` 的 prebuild 时加进工程(源码 `native/ios-e2e/`),平常的 prebuild / EAS 构建里没有它;每一步是一次 `xcodebuild test-without-building -only-testing:…`,参数走 `TEST_RUNNER_*` 环境变量,结果是 stdout 里的 `E2E_OUT 键=值`。
@@ -244,7 +244,8 @@ CI:`app · native push vectors`(`.github/workflows/ci.yml`,仅 `apps/app/native/
 
 - **批准页**:说明来自模型(`source === 'model'`)时,原始命令第一行与工作目录**不折叠、直接可见**(`approval-raw-inline`,Maestro 断言它);完整原始命令在「查看具体操作」里;提交中锁定按钮;以返回结果为准,不做乐观成功;超时 ⇒ 当「不确定」并重新拉详情。
 - **进展页**:状态标签在「CC 的进展」概括之上。
-- **状态词**只用:正在整理 / 等你决定 / 这一轮已回复 / 事情完成 / 没做成 / 已停下(Working on it / Waiting for you / Replied this round / Done / Didn't finish / Stopped),不显示百分比。
+- **状态词**按手机端用词表(`docs/reference/phone-wording.md`):在做 / 等你决定 / 这一轮做完了 / 完成 / 没做成 / 停下了(Working / Waiting on you / Done for this round / Done / Didn't finish / Stopped),不显示百分比。「一起做」按等你 / 在做 / 做完分组,只有「等你」的小标题上强调色。
+- **电脑够不着**(合盖 / 中继不在)是「电脑歇了,事情先停着」:CC 变暗、灰点,不上红;只有撤销是红点。
 - **主动作是跟 CC 说**,交办是显式选项(此刻页入口、发送框默认都是说一句,不是建任务;一次一句,等回复时发送锁住并保留草稿)。
 - **导航**:底部「此刻 / 一起做」;右上角头像进设置,旁边是「家里的电脑」状态点;说一句的入口随处可见。
 - **语言**:`en` 与 `zh-Hans`,跟随系统、设置里可改;所有面向用户的字符串进文案表。

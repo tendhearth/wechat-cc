@@ -10,7 +10,7 @@ export type TodayRow = { key: string; href: string; title: string; sub: string; 
 export type TodayView = {
   /** 「过去 24 小时」;离开手机一小时以上、这期间有做完的 ⇒ 「你不在的这 N 小时」(只数这段)。 */
   title: string
-  /** 「5 件做完 · 1 件在跑 · 1 件可能卡住」;是 0 的不写。等你的不在这里数 —— 下面「N 件事等你」已经列着,同一个数不出现两次。 */
+  /** 「5 件做完 · 1 件在做 · 1 件可能卡住」;是 0 的不写。等你的不在这里数 —— 下面「N 件事等你」已经列着,同一个数不出现两次。 */
   counts: string
   /** 最近做完的前 3 件。 */
   done: TodayRow[]

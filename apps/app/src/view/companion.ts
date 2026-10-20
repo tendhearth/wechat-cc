@@ -21,7 +21,7 @@ const ACTIVITY = new Map<string, MessageKey>([
 /**
  * CC 下面那一行。known = 这份数据是真的、现在的(真连接且令牌被认过 / 演示);否则一个字都不说。
  * 优先级:在跟人说话 > 执行者正在写(running > 0,agents 主题)> 串门 / 来客 / 打猎 > 别的忙。
- * running 不写数:「过去 24 小时」那段已经有「N 件在跑」(口径还不同,两个数会打架)。
+ * running 不写数:「过去 24 小时」那段已经有「N 件在做」(口径还不同,两个数会打架)。
  */
 export function companionStatus(i: { known: boolean; activity: string | null | undefined; running: number }): MessageKey | null {
   if (!i.known) return null
