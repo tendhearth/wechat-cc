@@ -455,3 +455,30 @@ it('the independent-workspace checkbox (2026-10-07) only appears for a project a
   dialog.submit(); await settle(); await pending
   expect(drafts.at(-1)).toMatchObject({target: {kind: 'project', projectId: 'p-0123456789abcdef0123', isolation: 'worktree'}})
 })
+
+it('until (对标 #9) only shows with an independent workspace and goes out as {command,maxRounds}; unticking drops it', async () => {
+  const {createTaskEntry} = await import('./task-entry.js')
+  const entry = createTaskEntry({invokeWorkbenchApi: api(), storage})
+  const pending = entry.open({text: '修到测试通过'}); await settle()
+  dialog.choose('project', 'p-0123456789abcdef0123')
+  expect(dialog.innerHTML).not.toContain('name="until"')
+  dialog.event('change', {name: 'isolation', checked: true})
+  expect(dialog.innerHTML).toContain('name="until"')
+  expect(dialog.innerHTML).toContain('没开放行规则时，执行者每一步照样要你点')
+  dialog.event('change', {name: 'untilRounds', value: '5'})
+  dialog.event('change', {name: 'until', value: ' bun run test '})
+  dialog.submit(); await settle(); await pending
+  expect(drafts.at(-1)).toMatchObject({until: {command: 'bun run test', maxRounds: 5}})
+})
+
+it('until is dropped when the independent workspace is unticked', async () => {
+  const {createTaskEntry} = await import('./task-entry.js')
+  const entry = createTaskEntry({invokeWorkbenchApi: api(), storage})
+  const pending = entry.open({text: '修'}); await settle()
+  dialog.choose('project', 'p-0123456789abcdef0123')
+  dialog.event('change', {name: 'isolation', checked: true})
+  dialog.event('change', {name: 'until', value: 'bun run test'})
+  dialog.event('change', {name: 'isolation', checked: false})
+  dialog.submit(); await settle(); await pending
+  expect(drafts.at(-1)).not.toHaveProperty('until')
+})

@@ -99,6 +99,8 @@ export const MatterTaskView = z.object({
   // 独立工作区(2026-10-07):分支名 + 工作区删了没;手机据此给「提交到分支 / 删除工作区」。
   // projectId(10-08):源项目编号,手机「另做一份」交到同一个项目;不给路径。
   worktree: z.object({ branch: z.string(), removed: z.boolean(), merged: z.boolean().optional(), projectId: z.string().optional() }).optional(),
+  // 做到条件成立为止(v80,2026-10-20):命令原文(主人建任务时写的,手机要整条等宽显示)+ 进度。老 daemon 不带。
+  until: z.object({ command: z.string(), maxRounds: z.number(), rounds: z.number(), status: z.enum(['active', 'passed', 'exhausted', 'stopped']), lastExit: z.number().nullable(), stopReason: z.string().nullable() }).optional(),
 })
 
 export const MatterEvent = z.object({

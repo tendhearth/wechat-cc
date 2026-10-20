@@ -30,7 +30,7 @@ function setup(deps: Partial<ServiceDeps> = {}, over: Partial<ServiceActions> = 
   const actions = new Ref<ServiceActions>('t')
   const spies = {
     execute: vi.fn(async () => {}), hasUndeliveredInput: vi.fn(() => false), holdInputs: vi.fn(), collect: vi.fn(async () => {}), collectTurnArtifacts: vi.fn(), captureCodeChanges: vi.fn(async () => {}),
-    stageFinishedNotice: vi.fn(), publishFinishedNotices: vi.fn(), matterSync: vi.fn(), isReplied: vi.fn(() => true), runtimeSnapshot: vi.fn(() => idle() as AgentRuntimeSnapshot | undefined),
+    stageFinishedNotice: vi.fn(), publishFinishedNotices: vi.fn(), untilAfterTurn: vi.fn(), untilStop: vi.fn(), matterSync: vi.fn(), isReplied: vi.fn(() => true), runtimeSnapshot: vi.fn(() => idle() as AgentRuntimeSnapshot | undefined),
   }
   actions.set({ submitInput: vi.fn(), continueTask: vi.fn(), fallbackExecutor: () => null, artifact: unused, quotaExhausted: () => null, continuation: () => ({ mode: 'new' }), provider: unused, requireInput: unused, canResume: () => false, taskVersion: () => 'v', selectAttachments: () => [], combinedAttachments: c => [...c], handoffAttachments: () => [], taskView: t => ({ ...t, phase: 'replied', canArchive: true, waitingFor: null }) as never, start: unused, continuationAttachmentScope: () => undefined, inputMode: () => 'queue', armIdleClose: unused, cancelIdleClose: unused, settleAfterDecision: unused, held: () => [...state.reservations.values()], ...spies, ...over })
   const ctx: ServiceCtx = { store, stateDir, state, hub, deps: { ownerChatId: () => 'owner', registry: createProviderRegistry(), ...deps }, ensureAccepting: () => { if (state.stopping) throw new Error('workbench_stopping') }, log, now: Date.now, actions }

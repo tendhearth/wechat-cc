@@ -4,6 +4,7 @@
  * 跨域依赖用已建好的域对象显式注入(同 execute.ts):createTask 来自 execute,projects / taskView 来自 view,
  * requireInput / requireEntryInput 来自 admission,quota 来自 quota。
  */
+import { isUnattendedExecutor } from '../executor-capabilities'
 import { mkdirSync } from 'node:fs'
 import { randomUUID } from 'node:crypto'
 import { readdirAnchored } from '../anchored-fs'
@@ -92,6 +93,9 @@ export function makeEntryDomain(ctx:ServiceCtx, domains:EntryDomains) {
       if(!providerId)throw Error('unavailable_provider')
       const execution=normalizeExecutionChoice(input.execution,PROVIDER_EXECUTION_CHOICE)
       requireEntryInput(providerId,materialSnapshot,execution,text)
+      // 免审执行者不收 until:没人看着的循环 + 免审 = 两道都没了(设计 §不做)。
+      const caps=ctx.deps.registry.get(providerId as never)?.opts.workbench
+      if(input.until&&caps&&isUnattendedExecutor(caps))throw Error('until_unattended_unsupported')
       const isolated=input.target.kind==='project'&&input.target.isolation==='worktree'
       // 独立工作区(2026-10-07):不是 git 仓库就当场拒绝,不留一条半截的预约。路径留空到建好工作区再定:
       // 预约时算出的路径和建好后的真实路径在 Windows 上写法可能不同(8.3 短名 / 长名),先写死会被当成冲突。
@@ -139,6 +143,8 @@ export function makeEntryDomain(ctx:ServiceCtx, domains:EntryDomains) {
         if(tree)createdId=task.id
         store.entryRequests.accept(context.ownerKey,input.requestId,{taskId:task.id,matterId:task.id,runId,acceptedAt:Date.now(),resolvedPath:path,directoryIdentity:identity})
         if(tree)store.worktrees.record({taskId:task.id,projectPath:tree.plan.projectPath,repoRoot:tree.plan.repoRoot,root:tree.plan.root,branch:tree.plan.branch,scriptSha:pinnedScriptSha(tree.plan.root)})
+        // 做到条件成立为止(v80):命令在这里写一次就定死(parseEntryInput 已保证只在独立工作区上出现)。
+        if(input.until)store.goals.create(task.id,input.until)
       },undefined,{
         // 独立工作区的目录不登记成项目:它属于源项目,侧栏按源项目归组(2026-10-07)。
         context,workspaceKind:frozen.target.kind==='managed'?'managed':'project',...(tree?{registerProject:false}:{}),fromChat:!!input.context,materials:current,
