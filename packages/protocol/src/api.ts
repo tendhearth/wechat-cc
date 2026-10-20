@@ -290,10 +290,12 @@ const CuratedItem = z.object({
   // 出处(2026-10-20):这条是从哪几句聊天里记下的;老 daemon 没有。
   sources: z.array(z.object({ ts: z.string(), excerpt: z.string() })).optional(),
 })
-const PhoneJob = z.object({
+/** 手机上的一条定时(GET /m/api/jobs,2026-10-20);label 已带时区,如「每天 08:00(上海)」。 */
+export const PhoneJob = z.object({
   id: z.string(), label: z.string(), text: z.string(), brief: z.boolean(), paused: z.boolean(),
   last: z.object({ day: z.string(), status: z.string(), label: z.string() }).nullable(),
 })
+export type PhoneJobT = z.infer<typeof PhoneJob>
 export const MemorySuccess = z.object({
   ok: z.literal(true), updated_at: z.string().nullable(), when_label: z.string().nullable(),
   mood: z.enum(['changed', 'steady', 'first']), failures: z.number(), changes: z.array(ViewChange),

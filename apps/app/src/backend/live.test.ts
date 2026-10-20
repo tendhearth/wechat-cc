@@ -663,3 +663,25 @@ describe('CC 的信(2026-10-18)', () => {
     await expect(bad.b.letters()).rejects.toMatchObject({ code: 'unknown' })
   })
 })
+
+describe('定时(2026-10-20)', () => {
+  const JOB = { id: 'j1', label: '每天 08:00(上海)', text: '早报', brief: true, paused: false, last: { day: '2026-10-20', status: 'sent', label: '说了' } }
+  it('jobs:过 schema、去掉 ok;jobsAction 正文恰好 { id, action }', async () => {
+    const { b, reqs } = harness({
+      'GET /m/api/jobs': ok({ ok: true, timezone: 'Asia/Shanghai', executor: null, jobs: [JOB] }),
+      'POST /m/api/jobs/action': ok({ ok: true }),
+    })
+    const v = await b.jobs()
+    expect('ok' in v).toBe(false)
+    expect(v).toEqual({ timezone: 'Asia/Shanghai', executor: null, jobs: [JOB] })
+    await b.jobsAction('j1', 'pause')
+    expect(reqs.at(-1)).toMatchObject({ key: 'POST /m/api/jobs/action' })
+    expect(reqs.at(-1)!.body).toEqual({ id: 'j1', action: 'pause' })
+  })
+  it('不在了 ⇒ not_found;形状不对 ⇒ unknown(不当成功)', async () => {
+    const gone = harness({ 'POST /m/api/jobs/action': ok({ ok: false, error: 'not_found' }, 404) })
+    await expect(gone.b.jobsAction('j9', 'remove')).rejects.toMatchObject({ code: 'not_found' })
+    const bad = harness({ 'GET /m/api/jobs': ok({ ok: true, timezone: 'UTC', executor: 'claude', jobs: [{ id: 'j1' }] }) })
+    await expect(bad.b.jobs()).rejects.toMatchObject({ code: 'unknown' })
+  })
+})
