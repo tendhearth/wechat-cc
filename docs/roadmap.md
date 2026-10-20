@@ -175,7 +175,8 @@ CC 要取代的是 **Paseo / Orca 这一层**(agent 之上的编排 + 多端),�
 | 项目经验(微信 / 手机 / 「任务 N 记成经验」;哪家执行者来都照着做) | Devin Knowledge | #443 #447 #454 |
 | 从 GitHub issue 开工(gh 只读;外部材料围栏;不走便宜模型初审、不给免审) | Devin、Codex | #446 |
 | 两家对比 + 并排看改动 | Codex best-of-N、Orca | #451 #452 |
-| 回到某一轮 / 行评论 + 按块撤回(wechat-cc-2a) | Conductor、Claude Code rewind、Codex iOS | #427–#434 #439 #444 #448–#453 |
+| 回到某一轮(wechat-cc-2a) | Conductor checkpoints、Claude Code rewind | #427(设计)#428 #433 #439 #444 |
+| 行评论 + 按块撤回(wechat-cc-2a) | Codex iOS、Orca、Vibe Kanban | #448(设计)#449 #450 #453,手机那片在做 |
 
 还没做、留给以后:打回时顺手记成经验(wechat-cc-2a 在做)、换一家来审改动(要给微信开受管工作区的建法)、录音 → 笔记(STT 本地化 / 隐私要主人定)、Siri / 快捷指令(App)。
 
