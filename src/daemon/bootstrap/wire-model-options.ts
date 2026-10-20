@@ -5,6 +5,11 @@
  * 只参数化:deps.stateDir → ctx.stateDir;wire-plugins 的三个 spec、permissionMode /
  * buildCanUseTool(wire-permissions)、claudeBin 走 parts.*。
  */
+import { homedir } from 'node:os'
+import { isAbsolute, join } from 'node:path'
+import { floorReason } from '../../core/permission-rules/floor'
+import { pathsUnder } from '../../core/permission-rules/paths'
+import { toolInputFacts } from '../../core/permission-rules/facts'
 import type { Options } from '@anthropic-ai/claude-agent-sdk'
 import type { ProviderId } from '../../core/conversation'
 import { TIER_PROFILES, classifyToolUse, type TierProfile } from '../../core/user-tier'
@@ -124,7 +129,7 @@ export function wireModelOptions(
     // Build canUseTool with this session's chatId baked in. Done per-call
     // (not once at bootstrap) so concurrent sessions on different chats
     // each get a closure resolving tier/mode for their OWN chatId.
-    const canUseTool = standardTier ? parts.buildCanUseTool(chatId) : profileGate(tierProfile)
+    const canUseTool = standardTier ? parts.buildCanUseTool(chatId) : profileGate(tierProfile, { root: path, stateDir: ctx.stateDir })
     return {
       ...common,
       permissionMode: tierOpts.permissionMode,
@@ -136,12 +141,31 @@ export function wireModelOptions(
   return { readAgentConfig, currentClaudeModel, currentModelFor, sdkOptionsForProject }
 }
 
-/** 只按这一档判的 canUseTool:分类落在 allow 里才放,其余一律拒、不弹卡(没人看着)。未知工具分类为 subagent ⇒ 被拒。 */
-function profileGate(tp: TierProfile): NonNullable<Options['canUseTool']> {
+/**
+ * 只按这一档判的 canUseTool(定时任务的只读档):分类落在 allow 里才放,其余一律拒、不弹卡(没人看着)。
+ * 未知工具分类为 subagent ⇒ 被拒。再加两条(wechat-cc-2a 审 #408:无人看着 + 私密数据 + 外传通道):
+ *   - 读文件只限这一轮的项目目录,碰到放行规则的红线(密钥、CC 的状态目录)一律拒;
+ *   - 污点:这一轮一旦读过本机的东西(文件 / 记忆 / 观察),之后就不再上网 —— 被注入的网页没法把读到的拼进 URL 带走。
+ * 每次 spawn 一个新闸门,污点不跨轮。
+ */
+function profileGate(tp: TierProfile, scope: { root: string; stateDir: string }): NonNullable<Options['canUseTool']> {
+  let tainted = false
+  const deny = (toolName: string, why: string) => ({ behavior: 'deny' as const, message: `这一轮是只读的定时任务,不能用 ${toolName}(${why})。` })
   return async (toolName, input) => {
-    const kind = classifyToolUse(toolName, (input ?? {}) as Record<string, unknown>)
-    return tp.allow.has(kind)
-      ? { behavior: 'allow', updatedInput: input }
-      : { behavior: 'deny', message: `这一轮是只读的定时任务,不能用 ${toolName}。` }
+    const args = (input ?? {}) as Record<string, unknown>
+    const kind = classifyToolUse(toolName, args)
+    if (!tp.allow.has(kind)) return deny(toolName, '不在只读档里')
+    if (kind === 'network' && tainted) return deny(toolName, '这一轮已经读过本机的东西,不再上网')
+    if (kind === 'fs_read') {
+      const facts = toolInputFacts(args)
+      const glob = typeof args.pattern === 'string' && isAbsolute(args.pattern) ? [args.pattern] : []
+      const paths = [...facts.paths, ...glob].map(p => (isAbsolute(p) ? p : join(scope.root, p)))
+      if (toolName.startsWith('mcp__') && paths.length === 0) return deny(toolName, '没有路径')
+      if (paths.length && !pathsUnder(paths, scope.root)) return deny(toolName, '只能读这个项目目录里的文件')
+      const red = floorReason({ surface: 'workbench', provider: 'job', tool: 'Read', paths, cwd: scope.root, project: scope.root, isolatedWorktree: false, tier: 'admin', scope: 'job' }, homedir(), { stateDir: scope.stateDir })
+      if (red) return deny(toolName, red)
+    }
+    if (kind === 'fs_read' || kind === 'memory_read' || kind === 'observations_read') tainted = true
+    return { behavior: 'allow', updatedInput: input }
   }
 }

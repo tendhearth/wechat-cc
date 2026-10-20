@@ -65,12 +65,33 @@ describe('wireModelOptions', () => {
     expect(o.canUseTool).not.toBe(owner)
     const gate = o.canUseTool!
     const sig = { signal: new AbortController().signal } as any
-    expect((await gate('Read', { file_path: '/p/a' }, sig)).behavior).toBe('allow')
     expect((await gate('WebSearch', { query: 'x' }, sig)).behavior).toBe('allow')
+    expect((await gate('Read', { file_path: '/p/a' }, sig)).behavior).toBe('allow')
     expect((await gate('mcp__wechat__memory_read', {}, sig)).behavior).toBe('allow')
     for (const t of ['Bash', 'Write', 'Agent', 'Monitor', 'mcp__wechat__memory_write', 'mcp__wechat__message', 'mcp__wxvault__sync_wechat_data', 'mcp__wechat__config_set'])
       expect((await gate(t, { command: 'ls' }, sig)).behavior, t).toBe('deny')
     // 主人 / 访客这些标准档照旧用 buildCanUseTool
     expect(s.sdkOptionsForProject('P', '/p', TIER_PROFILES.admin, 'owner').canUseTool).toBe(owner)
+  })
+
+  // 2a 审 #408:无人看着 + 私密数据 + 外传通道 ⇒ 读只限项目目录、碰红线拒;读过本地文件后这一轮不再上网。
+  it('JOB_PROFILE gate: reads stay in the project, red lines deny, and no network after a local read', async () => {
+    const { JOB_PROFILE } = await import('../../core/user-tier')
+    const { homedir } = await import('node:os')
+    const state = dir()
+    const s = wireModelOptions({ stateDir: state }, { plugins: noPlugins, permissionMode: 'dangerously', buildCanUseTool: () => (async () => ({ behavior: 'allow' })) as any, claudeBin: undefined })
+    const sig = { signal: new AbortController().signal } as any
+    const fresh = () => s.sdkOptionsForProject('job:j1', '/w/proj', JOB_PROFILE, 'owner', undefined, undefined, { permissionMode: 'strict' }).canUseTool!
+    const g1 = fresh()
+    for (const input of [{ file_path: `${homedir()}/.ssh/id_rsa` }, { file_path: '/etc/passwd' }, { file_path: '/w/proj/../other/x' }, { file_path: `${state}/agent-config.json` }, { file_path: '/w/proj/.env' }])
+      expect((await g1('Read', input, sig)).behavior, JSON.stringify(input)).toBe('deny')
+    expect((await g1('Grep', { pattern: 'x', path: homedir() }, sig)).behavior).toBe('deny')
+    expect((await g1('WebSearch', { query: 'issue' }, sig)).behavior).toBe('allow')
+    expect((await g1('Read', { file_path: '/w/proj/README.md' }, sig)).behavior).toBe('allow')
+    expect((await g1('Grep', { pattern: 'TODO' }, sig)).behavior).toBe('allow')          // 没写路径 = 项目目录
+    expect((await g1('WebFetch', { url: 'https://x.example/?q=secret' }, sig)).behavior).toBe('deny')
+    expect((await g1('WebSearch', { query: 'x' }, sig)).behavior).toBe('deny')
+    // 每次 spawn 一个新闸门:污点不跨轮
+    expect((await fresh()('WebFetch', { url: 'https://x.example/' }, sig)).behavior).toBe('allow')
   })
 })
