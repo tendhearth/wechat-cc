@@ -240,7 +240,7 @@ window.__TAURI__ = window.__TAURI__ ?? { core: {
       const text = await res.text()
       if (!res.ok) {
         let msg = "HTTP " + res.status
-        try { msg = JSON.parse(text).error ?? msg } catch (e) { /* keep */ }
+        try { const j = JSON.parse(text); msg = j.error ? (typeof j.reason === "string" ? j.error + ":" + j.reason : j.error) : msg } catch (e) { /* keep */ }
         throw new Error(msg)
       }
       return text

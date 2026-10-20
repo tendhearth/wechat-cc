@@ -449,6 +449,7 @@ describe('Workbench internal HTTP API', () => {
       'GET /v1/workbench/artifact', 'POST /v1/workbench/approve',
       'POST /v1/workbench/permission', 'POST /v1/workbench/unattended-ack',
       'GET /v1/workbench/review', 'POST /v1/workbench/review-mark', 'POST /v1/workbench/review-return',
+      'GET /v1/workbench/rewind-preview', 'POST /v1/workbench/rewind', 'POST /v1/workbench/rewind-resolve',
     ]
     for (const key of keys) expect(minTierFor(key)).toBe('admin')
     const response = await request('/v1/workbench', {}, trustedToken)
@@ -698,6 +699,61 @@ describe('Workbench internal HTTP API', () => {
     // 请求体只认 {id, hash}
     for(const bad of [{id:'deadbeef'},{id:'deadbeef',hash:'xyz'},{id:'bad',hash},{id:'deadbeef',hash,extra:1}])expect((await body('/v1/workbench/script-approve',bad)).status).toBe(400)
     expect(approveScripts).toHaveBeenCalledTimes(2)
+  })
+
+  it('rewind (2026-10-21): preview / confirm / undo / resolve; exact bodies; 409 conflicts, 422 with reason, 502 with backup; agents denied',async()=>{
+    const workbench=service(),{request,operatorToken,trustedToken}=await start(workbench)
+    const ART='11111111-1111-4111-8111-111111111111',TOKEN='c'.repeat(64),UNDO='22222222-2222-4222-8222-222222222222'
+    const preview={token:TOKEN,target:{artifactId:ART,to:'end',round:1},discarded:[]}
+    const fail=(code:string,extra:Record<string,unknown>={})=>Object.assign(new Error(code),extra)
+    const rewindPreview=vi.fn(async(id:string,_input:unknown)=>{
+      if(id==='cafebabe')throw fail('rewind_unavailable',{reason:'branch_moved',detail:'x',steps:['secret']})
+      if(id==='feedface')throw fail('rewind_needs_owner')
+      if(id==='0badf00d')throw fail('rewind_noop')
+      return preview
+    })
+    const rewind=vi.fn(async(id:string,_input:unknown)=>{
+      if(id==='cafebabe')throw fail('rewind_confirmation_stale')
+      if(id==='feedface')throw fail('rewind_failed',{rolledBack:true,backupRef:'refs/tendhearth/rewind/feedface/1',reason:'rewind_verify_file',path:'a.txt',steps:[{step:'branch'}]})
+      if(id==='0badf00d')throw fail('rewind_ignored_conflict',{paths:['config/local.json']})
+      return {rewindId:UNDO,backupRef:'refs/tendhearth/rewind/deadbeef/1',head:'p',discarded:[]}
+    })
+    const undoRewind=vi.fn(async(id:string,_expected?:string)=>{if(id==='cafebabe')throw fail('rewind_undo_stale');return {rewindId:'u',backupRef:'b',head:'h',discarded:[]}})
+    const rewindResolve=vi.fn(async(id:string,choice:string)=>{if(id==='cafebabe')throw fail('rewind_not_blocked');return {resolution:choice}})
+    Object.assign(workbench as object,{rewindPreview,rewind,undoRewind,rewindResolve})
+    for(const key of ['GET /v1/workbench/rewind-preview','POST /v1/workbench/rewind','POST /v1/workbench/rewind-resolve'])expect(minTierFor(key)).toBe('admin')
+    const get=(q:string,token=operatorToken)=>request(`/v1/workbench/rewind-preview?${q}`,{},token)
+    const post=(path:string,value:unknown,token=operatorToken)=>request(path,{method:'POST',body:JSON.stringify(value)},token)
+    expect((await get(`id=deadbeef&artifactId=${ART}&to=end`,trustedToken)).status).toBe(403)
+    expect((await post('/v1/workbench/rewind',{id:'deadbeef',artifactId:ART,to:'end',token:TOKEN},trustedToken)).status).toBe(403)
+    expect((await post('/v1/workbench/rewind-resolve',{id:'deadbeef',choice:'keep'},trustedToken)).status).toBe(403)
+    expect(rewindPreview).not.toHaveBeenCalled();expect(rewind).not.toHaveBeenCalled();expect(rewindResolve).not.toHaveBeenCalled()
+    const ok=await get(`id=deadbeef&artifactId=${ART}&to=end`)
+    expect(ok.status).toBe(200);expect(await ok.json()).toEqual({preview})
+    expect(rewindPreview).toHaveBeenCalledWith('deadbeef',{artifactId:ART,to:'end'})
+    const unavailable=await get(`id=cafebabe&artifactId=${ART}&to=start`)
+    expect(unavailable.status).toBe(422);expect(await unavailable.json()).toEqual({error:'rewind_unavailable',reason:'branch_moved',detail:'x'})
+    expect((await get(`id=feedface&artifactId=${ART}&to=end`)).status).toBe(409)
+    expect((await get(`id=0badf00d&artifactId=${ART}&to=end`)).status).toBe(422)
+    for(const q of [`id=deadbeef&artifactId=${ART}`,`id=deadbeef&artifactId=${ART}&to=middle`,`id=bad&artifactId=${ART}&to=end`,`id=deadbeef&artifactId=${ART}&to=end&x=1`,`id=deadbeef&id=deadbeef&artifactId=${ART}&to=end`])expect((await get(q)).status).toBe(400)
+    const done=await post('/v1/workbench/rewind',{id:'deadbeef',artifactId:ART,to:'end',token:TOKEN})
+    expect(done.status).toBe(200);expect(await done.json()).toMatchObject({rewind:{rewindId:UNDO}})
+    expect(rewind).toHaveBeenCalledWith('deadbeef',{artifactId:ART,to:'end',token:TOKEN})
+    expect((await post('/v1/workbench/rewind',{id:'cafebabe',artifactId:ART,to:'end',token:TOKEN})).status).toBe(409)
+    const failed=await post('/v1/workbench/rewind',{id:'feedface',artifactId:ART,to:'end',token:TOKEN})
+    expect(failed.status).toBe(502);expect(await failed.json()).toEqual({error:'rewind_failed',rolledBack:true,backupRef:'refs/tendhearth/rewind/feedface/1',reason:'rewind_verify_file',path:'a.txt'})
+    const ignored=await post('/v1/workbench/rewind',{id:'0badf00d',artifactId:ART,to:'end',token:TOKEN})
+    expect(ignored.status).toBe(409);expect(await ignored.json()).toEqual({error:'rewind_ignored_conflict',paths:['config/local.json']})
+    expect((await post('/v1/workbench/rewind',{id:'deadbeef',undo:UNDO})).status).toBe(200)
+    expect(undoRewind).toHaveBeenCalledWith('deadbeef',UNDO)
+    expect((await post('/v1/workbench/rewind',{id:'cafebabe',undo:UNDO})).status).toBe(409)
+    // 请求体只认那两种形状
+    for(const bad of [{id:'deadbeef',artifactId:ART,to:'end'},{id:'deadbeef',artifactId:ART,to:'end',token:'xyz'},{id:'deadbeef',artifactId:ART,to:'end',token:TOKEN,undo:UNDO},{id:'deadbeef',undo:'nope'},{id:'deadbeef',undo:UNDO,x:1},{id:'bad',undo:UNDO},{id:'deadbeef',artifactId:ART,to:'later',token:TOKEN}])expect((await post('/v1/workbench/rewind',bad)).status).toBe(400)
+    expect(rewind).toHaveBeenCalledTimes(4);expect(undoRewind).toHaveBeenCalledTimes(2)
+    for(const choice of ['keep','restore_backup']){const r=await post('/v1/workbench/rewind-resolve',{id:'deadbeef',choice});expect(r.status).toBe(200);expect(await r.json()).toEqual({resolved:{resolution:choice}})}
+    expect((await post('/v1/workbench/rewind-resolve',{id:'cafebabe',choice:'keep'})).status).toBe(409)
+    for(const bad of [{id:'deadbeef'},{id:'deadbeef',choice:'drop'},{id:'deadbeef',choice:'keep',x:1},{id:'bad',choice:'keep'}])expect((await post('/v1/workbench/rewind-resolve',bad)).status).toBe(400)
+    expect(rewindResolve).toHaveBeenCalledTimes(3)
   })
 
   it('acknowledges an unattended executor only for the desktop operator credential',async()=>{

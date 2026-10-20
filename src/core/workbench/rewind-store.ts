@@ -25,6 +25,26 @@ const parse = ({ discardedJson, ...row }: Row): RewindRow => {
 }
 export const isUndoRow = (row: Pick<RewindRow, 'targetArtifactId'>) => row.targetArtifactId.startsWith(UNDO)
 export const undoTargetId = (rowId: string) => `${UNDO}${rowId}`
+export const RESTORE_PREFIX = 'restore:'
+/** 主人拍板「恢复到回退之前」做成的那一行(target_artifact_id = `restore:<停住的那一行>`)。 */
+export const isRestoreRow = (row: Pick<RewindRow, 'targetArtifactId'>) => row.targetArtifactId.startsWith(RESTORE_PREFIX)
+
+/**
+ * 详情里给桌面的回退状态(切片 3):undo = 最近一次还能撤销的回退(之后没有新的审阅轮);
+ * blocked = 停住等主人拍板的那一行 + 时间线里那句原因。两样都没有 ⇒ null(详情不带这个字段)。
+ */
+export interface RewindView {
+  undo: { rewindId: string; createdAt: number } | null
+  blocked: { rewindId: string; backupRef: string; reason: string | null } | null
+}
+export function rewindView(rewinds: Pick<RewindStore, 'latest' | 'blocker'>, taskId: string, reviewTimes: readonly number[], reasonSince: (at: number) => string | null): RewindView | null {
+  let latest: RewindRow | null = null, blocker: RewindRow | null = null
+  try { latest = rewinds.latest(taskId); blocker = rewinds.blocker(taskId) } catch { return null /* 表不在 */ }
+  const undo = latest && !isUndoRow(latest) && !isRestoreRow(latest) && latest.undoneAt === null && !reviewTimes.some(t => t > latest!.createdAt)
+    ? { rewindId: latest.id, createdAt: latest.createdAt } : null
+  const blocked = blocker?.state === 'needs_owner' ? { rewindId: blocker.id, backupRef: blocker.backupRef, reason: reasonSince(blocker.createdAt) } : null
+  return undo || blocked ? { undo, blocked } : null
+}
 
 /** 这件事被回退停住了吗:applying(正在做 / 开机还没对完账)⇒ workbench_busy;needs_owner ⇒ rewind_needs_owner。 */
 export function assertNotRewindBlocked(rewinds: { blocking(taskId: string): 'applying' | 'needs_owner' | null }, taskId: string): void {

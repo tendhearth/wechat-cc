@@ -95,12 +95,16 @@ describe('预览 + 令牌 + 执行 + 撤销', () => {
     expect(after[1]!.discarded).toBe(true);expect(after[1]!.rewindable).toEqual({start:false,end:false});expect(after[0]!.discarded).toBeUndefined()
     expect(service.detail(id).events.map(e=>e.text)).toContain('已回到第 1 轮结束时，撤掉了第 2 轮（已备份，可撤销）。')
     expect(store.rewinds.get(done.rewindId)!.state).toBe('done')
+    // 详情给桌面「撤销回退」用的那一次(切片 3);桌面看到的不是最近那次 ⇒ stale
+    expect((service.detail(id) as {rewind?:unknown}).rewind).toEqual({undo:{rewindId:done.rewindId,createdAt:expect.any(Number)},blocked:null})
+    await expect(service.undoRewind(id,randomUUID())).rejects.toThrow('rewind_undo_stale')
     // 撤销回退:回到回退前的样子,一个字节不差
-    await service.undoRewind(id)
+    await service.undoRewind(id,done.rewindId)
     expect(read(id,'a.txt')).toBe(before.a);expect(read(id,'r2.txt')).toBe(before.r2);expect(read(id,'extra.txt')).toBe(before.extra);expect(has(id,'r1.txt')).toBe(false)
     expect(g(wt.root,'rev-parse','HEAD')).toBe(oldHead)
     expect(rounds(id).every(r=>!r.discarded)).toBe(true)
     await expect(service.undoRewind(id)).rejects.toThrow('rewind_undo_unavailable')
+    expect((service.detail(id) as {rewind?:unknown}).rewind).toBeUndefined()
   })
 
   it('to:start of round 1 undoes the first round too; a changed workspace makes the token stale', async () => {
@@ -121,6 +125,7 @@ describe('预览 + 令牌 + 执行 + 撤销', () => {
     const [r1]=rounds(id),p=await service.rewindPreview(id,{artifactId:r1!.artifactId,to:'end'})
     await service.rewind(id,{artifactId:r1!.artifactId,to:'end',token:p.token})
     await next(id,p=>writeFileSync(join(p,'a.txt'),'r3\n'))
+    expect((service.detail(id) as {rewind?:unknown}).rewind).toBeUndefined()
     await expect(service.undoRewind(id)).rejects.toThrow('rewind_undo_stale')
   })
 })
@@ -219,6 +224,7 @@ describe('执行段失败与开机对账', () => {
     await expect.poll(()=>store.rewinds.get(done.rewindId)!.state,{timeout:20_000}).toBe('needs_owner')
     expect(service.detail(id).task).toMatchObject({status:'interrupted',error:'rewind_needs_owner'})
     expect(service.detail(id).events.at(-1)!.text).toContain(done.backupRef)
+    expect((service.detail(id) as {rewind?:{blocked:unknown}}).rewind?.blocked).toEqual({rewindId:done.rewindId,backupRef:done.backupRef,reason:expect.stringContaining('保留现在的样子')})
     // 持久的闸:派发 / 工作区动作 / 回退一律拒绝,直到主人拍板
     expect(()=>service.continueTask(id,'接着做',{inputRequestId:randomUUID()})).toThrow('rewind_needs_owner')
     expect(()=>service.worktreeAction(id,'commit')).toThrow('rewind_needs_owner')

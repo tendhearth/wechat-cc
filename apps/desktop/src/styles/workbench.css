@@ -249,6 +249,20 @@
 .wb-review-return-paths { display:grid; gap:4px; margin:0; padding:0; list-style:none; font:11px/1.6 var(--mono); overflow-wrap:anywhere; }
 .wb-review-return-paths label { display:flex; align-items:baseline; gap:7px; }
 .wb-review-return-form textarea { width:100%; min-height:56px; border:1px solid var(--wb-line); border-radius:7px; padding:7px 9px; background:var(--th-paper); color:var(--wb-text); font-family:inherit; font-size:13px; line-height:1.6; resize:vertical; }
+/* 回到某一轮(2026-10-21):一轮一个按钮 + 预览确认块;撤掉的轮灰掉;停住时详情最上面一条提示。只有「确认」用强调色,不用红 */
+.wb-review-turn>header { display:flex; flex-wrap:wrap; align-items:center; gap:8px; }
+.wb-review-turn>header .wb-rewind-open { margin-left:auto; }
+.wb-review-turn.is-discarded { opacity:.55; }
+.wb-rewind-confirm,.wb-rewind-blocked { display:grid; gap:6px; margin:10px 0 4px; border:1px solid var(--th-hair); border-radius:10px; padding:11px 13px; background:var(--th-paper); color:var(--wb-text); font-size:12px; line-height:1.6; }
+.wb-rewind-confirm p,.wb-rewind-blocked p { margin:0; }
+.wb-rewind-title { font-weight:500; }
+.wb-rewind-warn { color:var(--th-ink-soft); border-left:2px solid var(--th-hair); padding-left:9px; }
+.wb-rewind-paths { display:grid; gap:2px; margin:0; padding:0; list-style:none; max-height:30vh; overflow:auto; }
+.wb-rewind-paths li { display:flex; align-items:baseline; gap:8px; }
+.wb-rewind-blocked { margin:0 0 14px; }
+.wb-rewind-choice { display:flex; flex-wrap:wrap; align-items:baseline; gap:8px; }
+.wb-rewind-choice small { color:var(--wb-secondary); font-size:11px; }
+.wb-rewind-undo { display:flex; flex-wrap:wrap; align-items:center; gap:8px; }
 .wb-review-paths { margin:10px 0; padding-left:18px; font:11px/1.7 var(--mono); overflow-wrap:anywhere; }
 .wb-code-review dl { display:grid; grid-template-columns:auto minmax(0,1fr); gap:5px 15px; margin:12px 0 0; font-size:11px; }
 .wb-code-review dt { color:var(--wb-muted); }

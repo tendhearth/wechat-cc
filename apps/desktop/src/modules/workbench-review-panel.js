@@ -7,7 +7,10 @@
 /** @typedef {import('../../../../src/core/workbench/review').ReviewTurn} ReviewTurn */
 /** @typedef {import('../../../../src/core/workbench/review').ReviewTurnFile} ReviewTurnFile */
 /** @typedef {{artifactId:string,paths:string[],comment?:string,notice?:string,restartToken?:string}} ReviewReturnOpen */
-/** @typedef {{escapeHtml:(value:unknown)=>string,formatTime:(value:number)=>string,renderDiff:(file:ReviewTurnFile)=>string,returnOpen?:ReviewReturnOpen|null,error?:boolean,budget?:{limited:boolean}}} ReviewPanelOptions */
+/** @typedef {{open?:import('./workbench-rewind.js').RewindOpen|null,view?:import('./workbench-rewind.js').RewindView|null,busy?:boolean}} ReviewRewindOptions */
+/** @typedef {{escapeHtml:(value:unknown)=>string,formatTime:(value:number)=>string,renderDiff:(file:ReviewTurnFile)=>string,returnOpen?:ReviewReturnOpen|null,error?:boolean,budget?:{limited:boolean},rewind?:ReviewRewindOptions}} ReviewPanelOptions */
+
+import { renderRewindConfirm, rewindButtonHtml, rewindUndoHtml } from './workbench-rewind.js'
 
 const KIND_LABEL = /** @type {Record<string,string>} */ ({ added: '新增', deleted: '删除', modified: '修改', not_reviewed: '未展开' })
 const STATUS_LABEL = /** @type {Record<string,string>} */ ({ complete: '完整', partial: '部分', unavailable: '不可用' })
@@ -39,6 +42,8 @@ export function reviewSummary(reviews) {
 export function reviewsSignature(reviews) {
   return JSON.stringify((reviews ?? []).map(turn => [
     turn.sha256 ?? '', turn.status ?? '',
+    // 回退(2026-10-21):撤掉了 / 能不能回退变了也要重画;老后台不带这两个字段 ⇒ 与以前同值
+    ...(turn.discarded || turn.rewindable ? [turn.discarded === true, turn.rewindable?.start ?? null, turn.rewindable?.end ?? null] : []),
     (turn.files ?? []).map(file => [file.path, file.mark?.mark ?? null, file.mark?.comment ?? '']),
   ]))
 }
@@ -47,9 +52,11 @@ export function reviewsSignature(reviews) {
  * @param {ReviewTurn} turn @param {number} index */
 const turnKey = (turn, index) => (String(turn.sha256 ?? '').match(/[a-f0-9]+/i)?.[0] ?? '').slice(0, 8).toLowerCase() || `t${index}`
 
-/** @param {ReviewTurn} turn @param {number} round @param {number} index @param {ReviewPanelOptions} options */
-function renderTurn(turn, round, index, options) {
+/** @param {ReviewTurn} turn @param {number} round @param {number} index @param {ReviewPanelOptions} options @param {boolean} [latest] 最新一轮没撤掉的那一轮 */
+export function renderTurn(turn, round, index, options, latest = index === 0) {
   const inline = index < INLINE_TURNS
+  // 已撤掉的一轮(回退):灰掉、标「已撤掉」,不再给接受 / 打回 / 撤销(后台也会拒:review_round_discarded)
+  const gone = turn.discarded === true
   const esc = options.escapeHtml
   const key = turnKey(turn, index)
   const cut = (/** @type {string} */ text) => esc(String(text ?? '').slice(0, MAX_TEXT))
@@ -60,7 +67,7 @@ function renderTurn(turn, round, index, options) {
     const badge = mark ? `<span class="wb-review-badge" data-mark="${mark.mark}">${mark.mark === 'accepted' ? '已接受' : '已打回'}</span>` : ''
     const comment = mark?.comment ? `<p class="wb-review-note">意见：${cut(mark.comment)}</p>` : ''
     const reason = file.reason ? `<p class="wb-review-note">${cut(file.reason)}</p>` : ''
-    const actions = markable(file)
+    const actions = !gone && markable(file)
       ? `<div class="wb-review-file-actions"><button type="button" class="wb-new" data-action="review-accept" data-artifact-id="${esc(turn.artifactId)}" data-path="${esc(file.path)}">${mark?.mark === 'accepted' ? '已接受' : '接受'}</button><button type="button" class="wb-new" data-action="review-return" data-artifact-id="${esc(turn.artifactId)}" data-path="${esc(file.path)}">打回</button>${file.diff ? `<button type="button" class="wb-new" data-action="review-revert" data-artifact-id="${esc(turn.artifactId)}" data-path="${esc(file.path)}">撤销改动</button>` : ''}</div>`
       : ''
     return `<div class="wb-review-file-row"><details id="wb-review-${key}-${fileIndex}" class="wb-review-file" data-review-disclosure data-review-file-path="${esc(file.path)}"><summary><span class="wb-review-kind" data-kind="${esc(file.kind)}">${KIND_LABEL[file.kind] ?? esc(file.kind)}</span><span class="wb-review-path">${esc(file.path)}</span>${file.preexisting ? '<small>开始时已有修改</small>' : ''}${file.risk?.length ? `<span class="wb-review-risk">注意 · ${esc(file.risk.join('、'))}</span>` : ''}${badge}</summary>${reason}${!inline && file.diff ? OLDER_TURN : options.renderDiff(file)}</details>${comment}${actions}</div>`
@@ -68,12 +75,16 @@ function renderTurn(turn, round, index, options) {
   const open = options.returnOpen && options.returnOpen.artifactId === turn.artifactId ? options.returnOpen : null
   const checked = new Set(open?.paths ?? [])
   const choices = (turn.files ?? []).filter(markable)
-  const form = open && choices.length
+  const form = !gone && open && choices.length
     ? `<form class="wb-review-return-form" data-action="review-return-submit" data-artifact-id="${esc(turn.artifactId)}"><p>选择要打回的文件，并写一句要怎么改。</p>${open.notice ? `<p class="wb-review-note" role="status">${cut(open.notice)}</p>` : ''}<ul class="wb-review-return-paths">${choices.map(file => `<li><label><input type="checkbox" name="paths" value="${esc(file.path)}"${checked.has(file.path) ? ' checked' : ''}><span>${esc(file.path)}</span></label></li>`).join('')}</ul><label class="wb-sr-only" for="wb-review-comment">修改意见</label><textarea id="wb-review-comment" name="comment" rows="3" maxlength="${MAX_TEXT}" placeholder="说明要怎么改…">${esc(open.comment ?? '')}</textarea><div class="wb-control-actions"><button type="button" class="wb-new" data-action="review-return-cancel">取消</button><button type="submit" class="wb-btn wb-btn-primary">${open.restartToken ? '带记录重新开始并发回' : '发回'}</button></div></form>`
     : ''
   const status = STATUS_LABEL[turn.status] ?? esc(String(turn.status ?? ''))
   const empty = files ? '' : '<p class="wb-review-note">这一轮没有列出可展开的文件。</p>'
-  return `<section class="wb-review-turn" data-review-turn="${esc(turn.sha256)}"><header><h4>第 ${round} 轮 · ${esc(options.formatTime(turn.createdAt))} · ${status}</h4></header>${notes}${preexisting}${files}${empty}${form}</section>`
+  const rewindOpen = options.rewind?.open && options.rewind.open.artifactId === turn.artifactId ? options.rewind.open : null
+  const rewindButton = rewindOpen ? '' : rewindButtonHtml(turn, round, latest, esc)
+  const rewind = rewindOpen ? renderRewindConfirm(rewindOpen, esc, !!options.rewind?.busy) : ''
+  const discardedBadge = gone ? '<span class="wb-review-badge" data-mark="discarded">已撤掉</span>' : ''
+  return `<section class="wb-review-turn${gone ? ' is-discarded' : ''}" data-review-turn="${esc(turn.sha256)}"><header><h4>第 ${round} 轮 · ${esc(options.formatTime(turn.createdAt))} · ${status}</h4>${discardedBadge}${rewindButton}</header>${rewind}${notes}${preexisting}${files}${empty}${form}</section>`
 }
 
 /** 新的一轮排在最前面(后台按新→旧给)。没有任何一轮、也没出错时不占地方。
@@ -83,8 +94,11 @@ export function renderReviewPanel(reviews, options) {
   if (!list.length && !options.error) return ''
   const counts = reviewSummary(list)
   const unavailable = options.error ? '<p class="wb-review-note" role="status">改动记录暂时读不到，稍后再看。已有的改动不受影响。</p>' : ''
-  const turns = list.map((turn, index) => renderTurn(turn, list.length - index, index, options)).join('')
+  // 「最新一轮」= 最新一轮没撤掉的(撤掉的轮之上那一轮给「撤掉这一轮」)
+  const latest = list.findIndex(turn => !turn.discarded)
+  const turns = list.map((turn, index) => renderTurn(turn, list.length - index, index, options, index === latest)).join('')
+  const undo = rewindUndoHtml(options.rewind?.view, options.escapeHtml)
   // 额度是渲染时才知道有没有用完的,所以这句只能在所有回合都渲完之后问,而且只说一次。
   const limited = options.budget?.limited ? '<p class="wb-review-limit">预览已限量显示，请在「成果」里打开这份变更记录看完整差异。</p>' : ''
-  return `<details id="wb-review" class="wb-disclosure wb-review" data-review-disclosure><summary><span>改动</span><small>${counts.turns} 轮 · ${counts.files} 个文件 · 已接受 ${counts.accepted} · 已打回 ${counts.returned}</small></summary>${unavailable}${turns}${limited}</details>`
+  return `<details id="wb-review" class="wb-disclosure wb-review" data-review-disclosure><summary><span>改动</span><small>${counts.turns} 轮 · ${counts.files} 个文件 · 已接受 ${counts.accepted} · 已打回 ${counts.returned}</small></summary>${unavailable}${undo}${turns}${limited}</details>`
 }

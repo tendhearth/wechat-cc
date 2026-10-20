@@ -1159,6 +1159,10 @@ fn workbench_request_allowed(method: &str, path: &str) -> bool {
             | ("POST", "/v1/workbench/review-revert")
             | ("POST", "/v1/workbench/worktree")
             | ("POST", "/v1/workbench/script-approve")
+            // 回到某一轮(2026-10-21):预览、执行 / 撤销、停住后主人拍板
+            | ("GET", "/v1/workbench/rewind-preview")
+            | ("POST", "/v1/workbench/rewind")
+            | ("POST", "/v1/workbench/rewind-resolve")
             | ("POST", "/v1/workbench/import")
             | ("POST", "/v1/workbench/prepare-resume")
             | ("POST", "/v1/workbench/prepare-continuation")
@@ -1247,8 +1251,12 @@ async fn workbench_api(method: String, path: String, body: Option<String>) -> Re
     let status = response.status();
     let response_body = response.text().await.map_err(|e| format!("failed to read response body ({status}): {e}"))?;
     if !status.is_success() {
+        // 带 reason 的错误(回退的 rewind_unavailable 这类)拼成 `code:reason`,桌面才说得出为什么。
         let message = serde_json::from_str::<Value>(&response_body).ok()
-            .and_then(|v| v.get("error").and_then(Value::as_str).map(str::to_owned))
+            .and_then(|v| v.get("error").and_then(Value::as_str).map(|error| match v.get("reason").and_then(Value::as_str) {
+                Some(reason) => format!("{error}:{reason}"),
+                None => error.to_owned(),
+            }))
             .unwrap_or_else(|| format!("HTTP {status}"));
         return Err(message);
     }
@@ -1844,6 +1852,9 @@ mod workbench_proxy_tests {
             ("POST", "/v1/workbench/review-revert"),
             ("POST", "/v1/workbench/worktree"),
             ("POST", "/v1/workbench/script-approve"),
+            ("GET", "/v1/workbench/rewind-preview?id=a1b2c3d4&artifactId=a1b2c3d4&to=end"),
+            ("POST", "/v1/workbench/rewind"),
+            ("POST", "/v1/workbench/rewind-resolve"),
             ("POST", "/v1/workbench/import"),
             ("POST", "/v1/workbench/prepare-resume"),
             ("POST", "/v1/workbench/prepare-continuation"),
@@ -1891,6 +1902,10 @@ mod workbench_proxy_tests {
             ("POST", "/v1/workbench/prepare-continuation/extra"),
             ("POST", "/v1/workbench/import/extra"),
             ("GET", "/v1/workbench/task/extra"),
+            ("POST", "/v1/workbench/rewind-preview"),
+            ("GET", "/v1/workbench/rewind"),
+            ("GET", "/v1/workbench/rewind-resolve"),
+            ("POST", "/v1/workbench/rewind/extra"),
             ("POST", "/v1/workbench/sessions"),
             ("POST", "/v1/workbench/models"),
             ("GET", "/v1/workbench/models/extra"),

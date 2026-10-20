@@ -40,8 +40,28 @@ function errorCode(err: unknown): string {
   return err instanceof Error ? err.message : ''
 }
 
+const REWIND_409=new Set(['rewind_confirmation_required','rewind_confirmation_stale','review_round_discarded','rewind_needs_owner','rewind_shared_folder','rewind_merged','rewind_ignored_conflict','rewind_undo_stale','rewind_undo_unavailable','rewind_not_blocked'])
+function rewindStatus(code:string):number|null{
+  if(REWIND_409.has(code))return 409
+  if(code==='rewind_unavailable'||code==='rewind_noop')return 422
+  if(code==='rewind_failed')return 502
+  return null
+}
+/** 只带这几个字段出去(service 挂在 Error 上的);别的(steps 原文这类)不外泄。 */
+function rewindExtra(err:unknown):JsonObject{
+  if(!err||typeof err!=='object')return{}
+  const e=err as JsonObject,out:JsonObject={}
+  for(const key of ['reason','detail','backupRef','path'])if(typeof e[key]==='string')out[key]=e[key]
+  if(typeof e.rolledBack==='boolean')out.rolledBack=e.rolledBack
+  if(Array.isArray(e.paths))out.paths=e.paths.filter(p=>typeof p==='string').slice(0,50)
+  return out
+}
+
 function mappedError(err: unknown,entry=false): ReturnType<RouteHandler> {
   const code = errorCode(err)
+  // 回到某一轮(2026-10-21):冲突 / 要再确认 ⇒ 409;这件事回不了 ⇒ 422(带 reason / detail);切换失败 ⇒ 502(带备份 ref)。
+  const rewind=rewindStatus(code)
+  if(rewind)return{status:rewind,body:{error:code,...rewindExtra(err)}}
   // Existing task APIs keep their established unattended 428 response.
   const entryStatus=entryErrorStatus(code)
   if(entryStatus!==undefined&&(entry||code!=='unattended_ack_required'))return{status:entryStatus,body:{error:code}}
@@ -458,6 +478,38 @@ export function workbenchRoutes(deps: InternalApiDeps): RouteTable {
       if (!TASK_ID.test(id) || !ARTIFACT_ID.test(artifactId) || typeof path !== 'string' || !path || path.length > 4096 || Object.keys(value ?? {}).some(k => !['id', 'artifactId', 'path'].includes(k))) return invalid()
       if (!deps.workbench) return { status: 503, body: { error: 'workbench_not_wired' } }
       try { return { status: 200, body: { reverted: deps.workbench.revertReviewFile(id, { artifactId, path }) } } }
+      catch (err) { return mappedError(err) }
+    },
+
+    // 回到某一轮(2026-10-21):先预览(拿 token),再带 token 执行;{id, undo} = 撤销最近一次回退;rewind-resolve = 停住后主人拍板。
+    'GET /v1/workbench/rewind-preview': async query => {
+      const id = query.get('id'), artifactId = query.get('artifactId'), to = query.get('to')
+      if (query.size !== 3 || query.getAll('id').length !== 1 || query.getAll('artifactId').length !== 1 || query.getAll('to').length !== 1 ||
+          !id || !TASK_ID.test(id) || !artifactId || !ARTIFACT_ID.test(artifactId) || (to !== 'start' && to !== 'end')) return invalid()
+      if (!deps.workbench) return { status: 503, body: { error: 'workbench_not_wired' } }
+      try { return { status: 200, body: { preview: await deps.workbench.rewindPreview(id, { artifactId, to }) } } }
+      catch (err) { return mappedError(err) }
+    },
+    'POST /v1/workbench/rewind': async (query, body) => {
+      const value = objectBody(body), keys = Object.keys(value ?? {}).sort().join(',')
+      if (query.size || !value || typeof value.id !== 'string' || !TASK_ID.test(value.id)) return invalid()
+      if (!deps.workbench) return { status: 503, body: { error: 'workbench_not_wired' } }
+      if (keys === 'id,undo') {
+        if (typeof value.undo !== 'string' || !REQUEST_ID.test(value.undo)) return invalid()
+        try { return { status: 200, body: { rewind: await deps.workbench.undoRewind(value.id, value.undo) } } }
+        catch (err) { return mappedError(err) }
+      }
+      if (keys !== 'artifactId,id,to,token' || typeof value.artifactId !== 'string' || !ARTIFACT_ID.test(value.artifactId) ||
+          (value.to !== 'start' && value.to !== 'end') || typeof value.token !== 'string' || !SHA256.test(value.token)) return invalid()
+      try { return { status: 200, body: { rewind: await deps.workbench.rewind(value.id, { artifactId: value.artifactId, to: value.to, token: value.token }) } } }
+      catch (err) { return mappedError(err) }
+    },
+    'POST /v1/workbench/rewind-resolve': async (query, body) => {
+      const value = objectBody(body)
+      if (query.size || !value || Object.keys(value).sort().join(',') !== 'choice,id' || typeof value.id !== 'string' || !TASK_ID.test(value.id) ||
+          (value.choice !== 'keep' && value.choice !== 'restore_backup')) return invalid()
+      if (!deps.workbench) return { status: 503, body: { error: 'workbench_not_wired' } }
+      try { return { status: 200, body: { resolved: await deps.workbench.rewindResolve(value.id, value.choice) } } }
       catch (err) { return mappedError(err) }
     },
 

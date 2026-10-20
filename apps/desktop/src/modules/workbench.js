@@ -22,6 +22,7 @@ import { escapeWorkbenchHtml, renderWorkbenchMarkdown, renderWorkbenchUserText }
 export { escapeWorkbenchHtml, renderWorkbenchMarkdown } from './workbench-markdown.js'
 import { WORKBENCH_CODE_REVIEW_MIME, createReviewDiffBudget, renderReviewFileDiff, renderWorkbenchCodeReview } from './workbench-code-review.js'
 import { renderReviewPanel, reviewsSignature } from './workbench-review-panel.js'
+import { REWIND_STALE_NOTICE, isRewindStale, renderRewindBlocked, rewindErrorMessage } from './workbench-rewind.js'
 /** @typedef {import('../../../../src/core/workbench/review').ReviewTurn} ReviewTurn */
 import { createWorkbenchInteractions, captureWorkbenchQuestionDrafts, syncWorkbenchQuestionChoice, renderWorkbenchQuestions, renderWorkbenchInputs } from './workbench-interaction.js'
 import { renderWorkbenchTimeline, workbenchTimelineEventId, renderWorkbenchOperation, captureWorkbenchTimelineAnchor, restoreWorkbenchTimelineAnchor } from './workbench-timeline.js'
@@ -92,13 +93,13 @@ function providerLabel(p) {
 /** @typedef {import('../../../../src/core/workbench/native-adoption').NativeSource} NativeSource */
 /** @typedef {import('../../../../src/core/workbench/native-adoption').NativeResumeDecision} NativeResume */
 /** @typedef {import('../../../../src/core/workbench/handoff').HandoffView} Handoff */
-/** @typedef {{quotaHandoff?:import('./workbench-quota-handoff.js').Offer|null,execution?:ExecutionChoice,lastExecution?:import('./workbench-execution.js').RunExecution|null,attachments?:import('./workbench-attachments.js').Attachment[],handoffs?:Handoff[],requiresExternalClose?:boolean,source?:NativeSource,task:Task,events:WorkbenchEvent[],artifacts:Artifact[],permissions?:Permission[],continuation?:Continuation,runId?:string,inputMode?:'steer'|'send'|'queue',runtime?:RuntimeSnapshot,questions?:import('./workbench-interaction.js').QuestionRequest[],inputs?:import('./workbench-interaction.js').LiveInput[],version?:number}} Detail */
+/** @typedef {{quotaHandoff?:import('./workbench-quota-handoff.js').Offer|null,execution?:ExecutionChoice,lastExecution?:import('./workbench-execution.js').RunExecution|null,attachments?:import('./workbench-attachments.js').Attachment[],handoffs?:Handoff[],requiresExternalClose?:boolean,source?:NativeSource,task:Task,events:WorkbenchEvent[],artifacts:Artifact[],permissions?:Permission[],continuation?:Continuation,runId?:string,inputMode?:'steer'|'send'|'queue',runtime?:RuntimeSnapshot,questions?:import('./workbench-interaction.js').QuestionRequest[],inputs?:import('./workbench-interaction.js').LiveInput[],version?:number,rewind?:import('./workbench-rewind.js').RewindView}} Detail */
 /** @typedef {{q:string,archived:'exclude'|'only'|'all'}} TaskQuery */
 /** @typedef {{limit:number,total:number,hasMore:boolean,nextCursor:string|null}} TaskPage */
 /** @typedef {{tasks:Task[],providers:Provider[],defaultProvider:string|null,canWechat:boolean,historyProviders?:string[],page?:TaskPage,projects?:Array<{id:string,name:string,path:string,providerId:string}>,projectProviders?:Record<string,string>}} ListResult */
 /** @typedef {import('./workbench-artifact-preview.js').ArtifactPreview|null} Preview */
 /** @typedef {{artifactId:string,paths:string[],comment?:string,notice?:string,restartToken?:string}} ReviewReturnOpen */
-/** @typedef {{tasks:Task[],providers:Provider[],defaultProvider:string|null,canWechat:boolean,nativeResume?:NativeResume|null,historyProviders?:string[],selectedId:string|null,loadingId?:string|null,detail:Detail|null,selectedArtifactId:string|null,error:string,detailDisconnected?:boolean,preview:Preview,previewOpen?:boolean,query?:TaskQuery,page?:TaskPage,projects?:Array<{id:string,name:string,path:string,providerId:string}>,projectProviders?:Record<string,string>,loadingMore?:boolean,newScope?:string,version?:number,reviews?:ReviewTurn[],reviewsSignature?:string,reviewsError?:boolean,reviewReturnOpen?:ReviewReturnOpen|null}} WorkbenchState */
+/** @typedef {{tasks:Task[],providers:Provider[],defaultProvider:string|null,canWechat:boolean,nativeResume?:NativeResume|null,historyProviders?:string[],selectedId:string|null,loadingId?:string|null,detail:Detail|null,selectedArtifactId:string|null,error:string,detailDisconnected?:boolean,preview:Preview,previewOpen?:boolean,query?:TaskQuery,page?:TaskPage,projects?:Array<{id:string,name:string,path:string,providerId:string}>,projectProviders?:Record<string,string>,loadingMore?:boolean,newScope?:string,version?:number,reviews?:ReviewTurn[],reviewsSignature?:string,reviewsError?:boolean,reviewReturnOpen?:ReviewReturnOpen|null,rewindOpen?:import('./workbench-rewind.js').RewindOpen|null,rewindRestoreConfirm?:boolean}} WorkbenchState */
 /** @typedef {import('./workbench-window-state.js').Draft} Draft */
 /** @typedef {{invokeWorkbenchApi:(method:'GET'|'POST',path:string,body?:Record<string,unknown>)=>Promise<unknown>,invoke?:(command:string,args:Record<string,unknown>)=>Promise<unknown>,pollMs?:number,confirmUnattended?:()=>Promise<boolean>,confirmScripts?:(config:import('./workbench-scripts-approve.js').ScriptsConfig)=>Promise<boolean>,onDelegate?:(draft:import('./task-entry.js').Draft)=>Promise<import('./task-entry.js').EntryResult|null>}} WorkbenchDeps */
 /** @typedef {{path:string,text:string,providerId?:string}} IncomingDraft */
@@ -373,7 +374,10 @@ export function renderWorkbench(state, interactions, draft, attachmentError='',e
   // 整块面板共用一份预览额度(和「成果」里那份报告同样的 256KiB / 4000 行):
   // 十几轮 × 几十个文件不能各渲各的,不然这一页会被 diff 压垮。
   const reviewBudget = createReviewDiffBudget()
-  const reviewHtml = detail ? renderReviewPanel(state.reviews ?? [], { escapeHtml: escapeWorkbenchHtml, formatTime: time, renderDiff: file => renderReviewFileDiff(file, escapeWorkbenchHtml, reviewBudget), budget: reviewBudget, returnOpen: state.reviewReturnOpen ?? null, error: !!state.reviewsError }) : ''
+  // 回到某一轮(2026-10-21):确认块 / 撤销回退只在有这些字段时才画,老后台照旧
+  const rewindOptions = detail && (state.rewindOpen || detail.rewind) ? { rewind: { open: state.rewindOpen ?? null, view: detail.rewind ?? null, busy: !!executionView.busy } } : {}
+  const reviewHtml = detail ? renderReviewPanel(state.reviews ?? [], { escapeHtml: escapeWorkbenchHtml, formatTime: time, renderDiff: file => renderReviewFileDiff(file, escapeWorkbenchHtml, reviewBudget), budget: reviewBudget, returnOpen: state.reviewReturnOpen ?? null, error: !!state.reviewsError, ...rewindOptions }) : ''
+  const rewindBlocked = detail ? renderRewindBlocked(detail, !!state.rewindRestoreConfirm, escapeWorkbenchHtml, !!executionView.busy) : ''
   const artifactHtml = detail?.artifacts?.length && !artifactPanel ? `<details id="wb-artifacts" class="wb-disclosure wb-artifacts"><summary><span>成果</span><small>${detail.artifacts.length} 件</small></summary><div class="wb-artifact-list">${artifacts}</div><button type="button" class="wb-new" data-action="back-to-dialogue">回到对话</button></details>` : ''
   const execution=draft?.execution??detail?.execution??{defaults:/** @type {const} */('provider'),model:null,reasoningEffort:null}
   const executionDisabled=!!executionView.busy||!!(detail&&(detail.task.archivedAt!=null||['running','queued','cancelling'].includes(detail.task.status)))
@@ -388,12 +392,13 @@ export function renderWorkbench(state, interactions, draft, attachmentError='',e
   const taskHeader = detail ? `<header class="wb-task-head"><div><p class="wb-task-context">${detail.task.workspaceKind==='managed'?'随手交办':escapeWorkbenchHtml(state.projects?.find(project => project.path === projectPathOf(detail.task))?.name ?? pathParts(projectPathOf(detail.task)).name)}</p><h2 title="${escapeWorkbenchHtml(detail.task.title || '未命名任务')}">${escapeWorkbenchHtml(detail.task.title || '未命名任务')}</h2>${detailAgents}${worktreeHtml(detail.task, state.providers)}${untilHtml(detail.task)}${progress}${isUnattendedProvider(state.providers.find(p => p.id === detail.task.providerId)) ? '<p class="wb-task-unattended">免审执行者 · 看不到单步,只能停止</p>' : ''}</div><div class="wb-task-head-actions">${detail.artifacts.length ? `<button type="button" class="wb-new" data-action="show-artifacts">成果 · ${detail.artifacts.length}</button>` : ''}<details id="wb-task-info" class="wb-task-info"><summary>任务详情</summary><div class="wb-task-info-body"><dl><div><dt>完整路径</dt><dd class="wb-path">${escapeWorkbenchHtml(detail.task.path)}${detail.task.workspaceKind==='managed'?'<button type="button" class="wb-new" data-action="open-task-folder">打开工作位置</button>':''}</dd></div><div><dt>任务编号</dt><dd><code>${escapeWorkbenchHtml(detail.task.id)}</code></dd></div><div><dt>执行者</dt><dd>${escapeWorkbenchHtml(helper)}</dd></div><div><dt>更新时间</dt><dd>${escapeWorkbenchHtml(time(detail.task.updatedAt))}</dd></div>${detail.source?`<div><dt>原会话</dt><dd>${escapeWorkbenchHtml(detail.source.providerId)} · <code>${escapeWorkbenchHtml(detail.source.nativeId)}</code></dd></div><div><dt>已保存的原记录</dt><dd>${detail.source.selectedMessageCount} 段${detail.source.truncated?' · 部分文字':''}</dd></div>`:''}</dl><section class="wb-task-execution"><h3>下一轮使用</h3>${executionControls}${renderExecutionObservation(detail.lastExecution)}</section>${detail.task.archivedAt != null ? '<div class="wb-task-organization"><button type="button" class="wb-btn" data-action="restore-task">恢复任务</button></div>' : detail.task.canArchive === true ? `<div class="wb-task-organization"><button type="button" class="wb-btn" data-action="archive-task">归档任务</button>${detail.task.worktree && !detail.task.worktree.removed ? '<small>独立工作区没有没提交的改动时会一起删掉（分支保留）。</small>' : ''}</div>` : ''}${state.canWechat && detail.task.archivedAt == null ? `<div class="wb-wechat"><span>在微信继续</span><code>任务 ${escapeWorkbenchHtml(detail.task.id)}</code><button type="button" class="wb-btn" data-action="copy-wechat-command">复制</button></div>` : ''}</div></details></div></header>` : ''
   const modelErrorInTimeline=detail?.task.error==='execution_model_unsupported'&&detail.events.filter(event=>event.kind==='error').at(-1)?.errorCode==='execution_model_unsupported'
   const content = detail ? `
+    ${rewindBlocked}
     ${related}
     <section class="wb-dialogue" aria-live="polite">${dialogueHtml}</section>
     ${queuedGuidance}
     ${renderWorkbenchInputs(detail.task.id, detail.inputs ?? [], interactions,!!detail.runtime?.retained)}
     ${renderQuotaHandoff(detail,state.providers,executionView.quotaAttempt)}
-    ${detail.task.error&&(!detail.quotaHandoff||!['provider_quota_exhausted','provider_rate_limited'].includes(detail.task.error)) ? `<div class="wb-error" role="alert">${modelErrorInTimeline?'':escapeWorkbenchHtml(executionErrorMessage(detail.task.error)??detail.task.error)}${detail.task.error==='execution_model_unsupported'&&!executionDisabled?'<button type="button" class="wb-new" data-action="choose-task-model">为这件事选择模型</button>':''}${writerExitHtml(detail.task)}</div>` : ''}
+    ${detail.task.error&&detail.task.error!=='rewind_needs_owner'&&(!detail.quotaHandoff||!['provider_quota_exhausted','provider_rate_limited'].includes(detail.task.error)) ? `<div class="wb-error" role="alert">${modelErrorInTimeline?'':escapeWorkbenchHtml(executionErrorMessage(detail.task.error)??detail.task.error)}${detail.task.error==='execution_model_unsupported'&&!executionDisabled?'<button type="button" class="wb-new" data-action="choose-task-model">为这件事选择模型</button>':''}${writerExitHtml(detail.task)}</div>` : ''}
     ${reviewHtml}
     ${artifactHtml}` : !state.loadingId && state.projects && !activeProject && state.newScope !== 'new:add-project' && !draft?.text.trim() ? `
     <div class="wb-welcome"><p class="wb-kicker">交办一件事</p><h1>希望 CC 帮你做什么？</h1><p>写下要求、加上材料，再确认工作位置。</p><button type="button" class="wb-btn wb-btn-primary" data-action="task-entry">交给 CC 做</button></div>` : !detail && !state.loadingId && state.projects && !activeProject && (state.newScope === 'new:add-project' || !!draft?.text.trim()) ? `
@@ -456,7 +461,7 @@ export function createWorkbenchController(deps) {
   // 增量补丁已经把变过的行写进 DOM 了:把重画基准对齐,免得下一次 paint() 为同一批
   // 事件再整页重画一次(那会打断输入和滚动)。
   const syncPaintSnapshot = () => { lastPaint = paintKey() }
-  const forgetReviews = () => { state.reviews = []; state.reviewsSignature = EMPTY_REVIEWS; state.reviewsError = false; state.reviewReturnOpen = null }
+  const forgetReviews = () => { state.reviews = []; state.reviewsSignature = EMPTY_REVIEWS; state.reviewsError = false; state.reviewReturnOpen = null; state.rewindOpen = null; state.rewindRestoreConfirm = false }
   /** 改动记录跟详情并行拉:读不到只在面板上照实说一句,详情照旧。
    * 标记可能是别的面(微信)改的,所以每次长轮询回来都再问一次;签名没变就不重画。
    * @param {string} id */
@@ -988,6 +993,36 @@ export function initWorkbenchPage(deps) {
       return false
     } finally { busy.delete(key);if(alive)controller.paint(true) }
   }
+  let rewindRequest = 0
+  /** 拉一遍回退预览,结果放进确认块;换了任务 / 点了「算了」就丢掉。
+   * @param {{artifactId:string,to:'start'|'end',round:number}} target @param {string} [notice] */
+  const loadRewindPreview = async (target, notice) => {
+    const id = controller.state.selectedId
+    if (!id || !alive) return
+    const request = ++rewindRequest
+    const keep = notice ? { notice } : {}
+    controller.state.rewindOpen = { ...target, status: 'loading', ...keep }
+    controller.paint(true)
+    /** @type {import('./workbench-rewind.js').RewindOpen} */
+    let next
+    try {
+      const result = /** @type {{preview?:import('./workbench-rewind.js').RewindPreview}} */ (await deps.invokeWorkbenchApi('GET', `/v1/workbench/rewind-preview?id=${encodeURIComponent(id)}&artifactId=${encodeURIComponent(target.artifactId)}&to=${target.to}`))
+      next = result?.preview ? { ...target, status: 'ready', preview: result.preview, ...keep } : { ...target, status: 'error', error: '暂时读不到回退预览，请稍后再试。' }
+    } catch (error) {
+      next = { ...target, status: 'error', error: rewindErrorMessage(error) ?? String(error instanceof Error ? error.message : error) }
+    }
+    if (!alive || request !== rewindRequest || controller.state.selectedId !== id) return
+    controller.state.rewindOpen = next
+    controller.paint(true)
+  }
+  /** 撤销回退 / 拍板被拒:认得的码说成人话放进全局那条错误;认不出交给 fail。
+   * @param {unknown} e */
+  const rewindFailure = e => {
+    const message = rewindErrorMessage(e)
+    if (!message) return false
+    fail(new Error(message))
+    return true
+  }
   const openTask = async (/** @type {string} */ id) => {
     if (!alive || !id) return
     captureDraft();quotaHandoffCleanup?.();quotaHandoffCleanup=null; artifactRequest++
@@ -1132,6 +1167,37 @@ export function initWorkbenchPage(deps) {
         fail(new Error(code === 'workbench_busy' ? '这个工作区还有会话占着，先收工再操作。' : executionErrorMessage(code) ?? code))
         return true
       })
+    }
+    // 回到某一轮(2026-10-21):点按钮先拉预览(后台先打备份 B、回 token),确认块里看清再带 token 执行;
+    // 工作区在那之后变了(409 stale)⇒ 重新拉一遍预览、提示再看一眼。
+    if (action === 'rewind-open' && controller.state.selectedId && target.dataset.artifactId && (target.dataset.to === 'start' || target.dataset.to === 'end')) {
+      return loadRewindPreview({ artifactId: target.dataset.artifactId, to: target.dataset.to, round: Number(target.dataset.round) || 0 })
+    }
+    if (action === 'rewind-cancel') { rewindRequest++; controller.state.rewindOpen = null; controller.paint(true); return }
+    if (action === 'rewind-confirm' && controller.state.selectedId && controller.state.rewindOpen?.status === 'ready' && controller.state.rewindOpen.preview) {
+      const open = controller.state.rewindOpen, preview = open.preview
+      if (!preview) return
+      const { artifactId, to, round } = open
+      const done = await mutate('POST', '/v1/workbench/rewind', { id: controller.state.selectedId, artifactId, to, token: preview.token }, e => {
+        if (isRewindStale(e)) { void loadRewindPreview({ artifactId, to, round }, REWIND_STALE_NOTICE); return true }
+        controller.state.rewindOpen = { artifactId, to, round, status: 'error', error: rewindErrorMessage(e) ?? String(e instanceof Error ? e.message : e) }
+        controller.paint(true)
+        return true
+      })
+      if (done) { controller.state.rewindOpen = null; controller.paint(true) }
+      return
+    }
+    if (action === 'rewind-undo' && controller.state.selectedId && target.dataset.rewindId) {
+      if (!armConfirm(target, '再点一次：撤销回退')) return
+      return mutate('POST', '/v1/workbench/rewind', { id: controller.state.selectedId, undo: target.dataset.rewindId }, rewindFailure)
+    }
+    // 回退停住了:保留现在的样子(直接)/ 恢复到回退之前(再确认一次)
+    if (action === 'rewind-keep' && controller.state.selectedId) return mutate('POST', '/v1/workbench/rewind-resolve', { id: controller.state.selectedId, choice: 'keep' }, rewindFailure)
+    if (action === 'rewind-restore' || action === 'rewind-restore-cancel') { controller.state.rewindRestoreConfirm = action === 'rewind-restore'; controller.paint(true); return }
+    if (action === 'rewind-restore-confirm' && controller.state.selectedId) {
+      const done = await mutate('POST', '/v1/workbench/rewind-resolve', { id: controller.state.selectedId, choice: 'restore_backup' }, rewindFailure)
+      if (done) { controller.state.rewindRestoreConfirm = false; controller.paint(true) }
+      return
     }
     // 逐文件撤销(2026-10-06):点两下才算;被拒的原因说成人话(daemon 那边全是拒绝条件,没有「尽量」)。
     if (action === 'review-revert' && controller.state.selectedId && target.dataset.artifactId && target.dataset.path) {

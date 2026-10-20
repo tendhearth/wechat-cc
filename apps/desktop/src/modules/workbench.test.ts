@@ -2399,6 +2399,83 @@ describe('workbench mutations', () => {
     module.stopWorkbenchPolling()
   })
 
+  it('回到某一轮(2026-10-21):点按钮拉预览 → 确认带 token;工作区刚变过(409 stale)⇒ 重拉预览再看一眼;算了就收起', async () => {
+    const page = installFakePage()
+    const TOKEN1 = '1'.repeat(64), TOKEN2 = '2'.repeat(64)
+    let previews = 0, stale = true
+    const reviews = [reviewTurn({ artifactId: 'ART-2', sha256: 'b'.repeat(64), rewindable: { start: true, end: true } }), reviewTurn({ rewindable: { start: true, end: true } })]
+    const { api, calls } = reviewPage(reviews, (method, path) => {
+      if (path.startsWith('/v1/workbench/rewind-preview')) { previews++; return { preview: { token: previews === 1 ? TOKEN1 : TOKEN2, target: { artifactId: 'ART-1', to: 'end', round: 1 }, discarded: [{ artifactId: 'ART-2', round: 2 }], files: { count: 1, paths: [{ status: 'M', path: 'src/app.ts' }] }, extraChanges: null, droppedCommits: { count: 0, elsewhere: false }, ignoredUntouched: true, rebuildHint: '先重新构建', session: 'none', devServer: false, goal: null } } }
+      if (method === 'POST' && path === '/v1/workbench/rewind') { if (stale) { stale = false; throw new Error('rewind_confirmation_stale') } return { rewind: { rewindId: 'R', backupRef: 'b', head: 'h', discarded: ['ART-2'] } } }
+      return null
+    })
+    const module = await import('./workbench.js')
+    const controller = module.initWorkbenchPage({ invokeWorkbenchApi: api, pollMs: 60_000 })!
+    await vi.waitFor(() => expect(controller.state.reviews).toHaveLength(2))
+    expect(page.innerHTML).toContain('撤掉这一轮'); expect(page.innerHTML).toContain('回到这一轮结束时')
+    const click = [...page.listeners.get('click')!][0]!
+    const open = new FakeElement(); open.dataset = { action: 'rewind-open', artifactId: 'ART-1', to: 'end', round: '1' }
+    await click({ target: open })
+    await vi.waitFor(() => expect(controller.state.rewindOpen?.status).toBe('ready'))
+    expect(api).toHaveBeenCalledWith('GET', '/v1/workbench/rewind-preview?id=REVIEW&artifactId=ART-1&to=end')
+    expect(page.innerHTML).toContain('会撤掉第 2 轮。'); expect(page.innerHTML).toContain('data-action="rewind-confirm"')
+    const confirm = new FakeElement(); confirm.dataset = { action: 'rewind-confirm' }
+    await click({ target: confirm })
+    expect(api).toHaveBeenCalledWith('POST', '/v1/workbench/rewind', { id: 'REVIEW', artifactId: 'ART-1', to: 'end', token: TOKEN1 })
+    await vi.waitFor(() => expect(controller.state.rewindOpen).toMatchObject({ status: 'ready', notice: '工作区刚变过，请再看一眼。', preview: { token: TOKEN2 } }))
+    expect(page.innerHTML).toContain('工作区刚变过，请再看一眼。')
+    expect(controller.state.error).toBe('')
+    await click({ target: confirm })
+    expect(api).toHaveBeenLastCalledWith('GET', '/v1/workbench/review?id=REVIEW')
+    expect(calls.filter(([method]) => method === 'POST').map(([, , body]) => body)).toEqual([
+      { id: 'REVIEW', artifactId: 'ART-1', to: 'end', token: TOKEN1 },
+      { id: 'REVIEW', artifactId: 'ART-1', to: 'end', token: TOKEN2 },
+    ])
+    expect(controller.state.rewindOpen).toBe(null)
+    // 算了:不发任何东西
+    await click({ target: open })
+    await vi.waitFor(() => expect(controller.state.rewindOpen?.status).toBe('ready'))
+    const cancel = new FakeElement(); cancel.dataset = { action: 'rewind-cancel' }
+    await click({ target: cancel })
+    expect(controller.state.rewindOpen).toBe(null)
+    expect(calls.filter(([method]) => method === 'POST')).toHaveLength(2)
+    module.stopWorkbenchPolling()
+  })
+
+  it('回退被拒的原因说在确认块里;停住时拍板:保留直接发,恢复先确认', async () => {
+    const page = installFakePage()
+    const blockedTask = { ...reviewTask, status: 'interrupted', error: 'rewind_needs_owner' }
+    const { api, calls } = reviewPage([reviewTurn({ rewindable: { start: true, end: true } })], (method, path) => {
+      if (path.startsWith('/v1/workbench/rewind-preview')) throw new Error('rewind_unavailable:git_in_progress')
+      if (path.startsWith('/v1/workbench/task')) return { task: blockedTask, events: [], artifacts: [], rewind: { undo: null, blocked: { rewindId: 'R', backupRef: 'refs/tendhearth/rewind/REVIEW/1', reason: '回退没做成，也没能完整恢复原样。' } } }
+      if (method === 'POST' && path === '/v1/workbench/rewind-resolve') return { resolved: { resolution: 'keep' } }
+      return null
+    })
+    const module = await import('./workbench.js')
+    const controller = module.initWorkbenchPage({ invokeWorkbenchApi: api, pollMs: 60_000 })!
+    await vi.waitFor(() => expect(controller.state.reviews).toHaveLength(1))
+    expect(page.innerHTML).toContain('data-rewind-blocked'); expect(page.innerHTML).toContain('回退没做成，也没能完整恢复原样。')
+    expect(page.innerHTML).not.toContain('>rewind_needs_owner<')
+    const click = [...page.listeners.get('click')!][0]!
+    const open = new FakeElement(); open.dataset = { action: 'rewind-open', artifactId: 'ART-1', to: 'start', round: '1' }
+    await click({ target: open })
+    await vi.waitFor(() => expect(controller.state.rewindOpen?.status).toBe('error'))
+    expect(page.innerHTML).toContain('合并或 rebase')
+    const restore = new FakeElement(); restore.dataset = { action: 'rewind-restore' }
+    await click({ target: restore })
+    expect(controller.state.rewindRestoreConfirm).toBe(true)
+    expect(page.innerHTML).toContain('data-action="rewind-restore-confirm"')
+    expect(calls.filter(([method]) => method === 'POST')).toHaveLength(0)
+    const restoreConfirm = new FakeElement(); restoreConfirm.dataset = { action: 'rewind-restore-confirm' }
+    await click({ target: restoreConfirm })
+    expect(api).toHaveBeenCalledWith('POST', '/v1/workbench/rewind-resolve', { id: 'REVIEW', choice: 'restore_backup' })
+    expect(controller.state.rewindRestoreConfirm).toBe(false)
+    const keep = new FakeElement(); keep.dataset = { action: 'rewind-keep' }
+    await click({ target: keep })
+    expect(api).toHaveBeenCalledWith('POST', '/v1/workbench/rewind-resolve', { id: 'REVIEW', choice: 'keep' })
+    module.stopWorkbenchPolling()
+  })
+
   it('打回:点开表单、勾选的路径和意见一起发回,成功后收起表单', async () => {
     const page = installFakePage()
     const { api } = reviewPage([reviewTurn()])
