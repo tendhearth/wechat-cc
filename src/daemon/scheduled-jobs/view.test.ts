@@ -18,8 +18,8 @@ describe('手机上的定时列表(B7)', () => {
     expect(v).toMatchObject({ ok: true, timezone: 'Asia/Shanghai', executor: 'claude' })
     if (!v.ok) throw new Error('x')
     expect(v.jobs).toEqual([
-      { id: 'j1', label: '每周一 09:00(上海)', text: '看 issue', brief: false, paused: false, last: { day: '2026-10-20', status: 'silent', label: '没说话(没新东西)' } },
-      { id: 'j2', label: '每天 08:00(上海)', text: '早报', brief: true, paused: true, last: null },
+      { id: 'j1', label: '每周一 09:00(上海)', text: '看 issue', brief: false, recap: false, paused: false, last: { day: '2026-10-20', status: 'silent', label: '没说话(没新东西)' } },
+      { id: 'j2', label: '每天 08:00(上海)', text: '早报', brief: true, recap: false, paused: true, last: null },
     ])
   })
   it('a broken jobs file is an error, not an empty list', () => {

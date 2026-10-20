@@ -10,7 +10,8 @@ import { agendaReplyText, appBundleHasCalendarUsage, makeCalendar, makeCalendarC
 import { makeActivityLog } from './activity-log'
 import { listLetters } from './letters/archive'
 import { collectActivity } from './cc-activity-source'
-import { ACTIVITY_WINDOW_MS } from '../core/cc-activity'
+import { makeRecapTurn } from './scheduled-jobs/recap'
+import { ACTIVITY_WINDOW_MS, buildActivity, type ActivityItem } from '../core/cc-activity'
 import { makeFileStateStore as makeCliUpgradeStateStore } from '../core/cli-upgrade/state'
 import { MEMORY_LOG_FILE, ownerMemoryRoot } from './memory/nightly'
 import { pickJobExecutor } from './wiring/tick-bodies'
@@ -1121,6 +1122,22 @@ export async function bootDaemon(opts: BootDaemonOpts): Promise<DaemonHandle> {
       prefs: () => briefPrefs.read(),
       claim: (c, iso) => { careLedger.claim(c, iso) },
     })
+    // 周报(B9 之上):这一周「CC 做过的事」—— 与手机时间线同一组来源,翻几页收齐(最多 300 条)。
+    const recapTurn = makeRecapTurn({
+      runJobTurn: (a) => wired.ticks.runJobTurn(a),
+      ownerChatId: briefOwner, now: () => Date.now(), timeZone: briefTz,
+      activity: () => {
+        const src = activity.sources(), now = Date.now(), out: ActivityItem[] = []
+        let cursor: string | null = null
+        for (let page = 0; page < 3; page++) {
+          const r = buildActivity(src, { now, limit: 100, cursor })
+          out.push(...r.items)
+          if (!r.next) break
+          cursor = r.next
+        }
+        return out
+      },
+    })
     const jobsLc = await sup.start('scheduled-jobs', () => registerScheduledJobs({
       store: jobsStore,
       activityLog,
@@ -1128,6 +1145,7 @@ export async function bootDaemon(opts: BootDaemonOpts): Promise<DaemonHandle> {
       now: () => Date.now(),
       runTurn: async (job, nowIso) => {
         if (job.brief) return briefTurn(job, nowIso)
+        if (job.recap) return recapTurn(job, nowIso)
         const owner = resolveAdminChatId(loadAccess(), loadCompanionConfig(stateDir), null)
         if (!owner) return 'skipped:no_owner'
         return wired.ticks.runJobTurn({ chatId: owner, jobId: job.id, text: job.text, nowIso })

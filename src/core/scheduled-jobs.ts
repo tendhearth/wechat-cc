@@ -6,10 +6,10 @@
  */
 export type Weekday = 1 | 2 | 3 | 4 | 5 | 6 | 7
 export type JobSchedule = { kind: 'daily'; at: string } | { kind: 'weekly'; at: string; weekday: Weekday } | { kind: 'weekdays'; at: string }
-/** brief = 早报(对标 #7):正文由 CC 自己拼,同时只能有一个。 */
-export interface ScheduledJob { id: string; schedule: JobSchedule; text: string; createdAt: string; paused: boolean; brief?: boolean }
+/** brief = 早报(对标 #7):正文由 CC 自己拼,同时只能有一个。recap = 周报(CC 这一周替主人做过的事),同理。 */
+export interface ScheduledJob { id: string; schedule: JobSchedule; text: string; createdAt: string; paused: boolean; brief?: boolean; recap?: boolean }
 export type JobCommand =
-  | { kind: 'add'; schedule: JobSchedule; text: string; brief?: boolean }
+  | { kind: 'add'; schedule: JobSchedule; text: string; brief?: boolean; recap?: boolean }
   | { kind: 'list' }
   | { kind: 'pause' | 'resume' | 'remove'; id: string }
   | { kind: 'usage'; error: string }
@@ -19,7 +19,7 @@ export const JOB_DUE_WINDOW_MIN = 10
 const WEEKDAY_CHARS: Record<string, Weekday> = { 一: 1, 二: 2, 三: 3, 四: 4, 五: 5, 六: 6, 日: 7, 天: 7 }
 const WEEKDAY_NAMES = ['', '一', '二', '三', '四', '五', '六', '日']
 
-export const JOB_USAGE = '定时的写法:\n· 定时 每天 8:30 <要做的事>\n· 定时 每周一 9:00 <要做的事>\n· 定时 工作日 18:00 <要做的事>\n· 定时(看列表)· 定时 停 / 开 / 删 <编号>\n定时那一轮只读:能看、能查,不改东西、不给别人发消息;没新东西就不吭声。'
+export const JOB_USAGE = '定时的写法:\n· 定时 每天 8:30 <要做的事>\n· 定时 每周一 9:00 <要做的事>\n· 定时 工作日 18:00 <要做的事>\n· 定时 早报 8:00 · 定时 周报 20:00(每周日回顾 CC 这一周替你做了什么)\n· 定时(看列表)· 定时 停 / 开 / 删 <编号>\n定时那一轮只读:能看、能查,不改东西、不给别人发消息;没新东西就不吭声。'
 
 function parseAt(raw: string): string | null {
   const m = /^(\d{1,2})[:：](\d{2})$/.exec(raw)
@@ -40,6 +40,13 @@ export function parseJobCommand(text: string): JobCommand | null {
     const at = brief[2] ? parseAt(brief[2]) : null
     if (!at) return { kind: 'usage', error: `早报的写法:定时 早报 8:00(每天)/ 定时 早报 工作日 8:00。\n\n${JOB_USAGE}` }
     return { kind: 'add', schedule: brief[1] ? { kind: 'weekdays', at } : { kind: 'daily', at }, text: '早报', brief: true }
+  }
+  // 周报:定时 周报 [周X] HH:MM(缺省周日)—— 「CC 做过的事」这一周的回顾
+  const recap = /^周报(?:\s+周([一二三四五六日天]))?(?:\s+(\S+))?$/.exec(rest)
+  if (recap) {
+    const at = recap[2] ? parseAt(recap[2]) : null
+    if (!at) return { kind: 'usage', error: `周报的写法:定时 周报 20:00(每周日)/ 定时 周报 周五 18:30。\n\n${JOB_USAGE}` }
+    return { kind: 'add', schedule: { kind: 'weekly', at, weekday: WEEKDAY_CHARS[recap[1] ?? '日']! }, text: '周报', recap: true }
   }
   const ctl = /^(停|开|删)\s+(j\d+)$/i.exec(rest)
   if (ctl) return { kind: ctl[1] === '停' ? 'pause' : ctl[1] === '开' ? 'resume' : 'remove', id: ctl[2]!.toLowerCase() }
