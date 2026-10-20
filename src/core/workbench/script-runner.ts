@@ -120,8 +120,8 @@ export function startScript(input: {
   const finish = (error: string | null) => {
     if (finished) return
     finished = true
-    // 主 shell 退了就不再发 SIGKILL(组号可能已被复用);hardTimer 自己会看 shellAlive,这里一并清掉
-    for (const timer of [emitTimer, timeoutTimer, closeTimer, hardTimer]) if (timer) clearTimeout(timer)
+    // hardTimer 不清:主 shell 退了,组里不理 SIGTERM 的后台进程(`… &` 起的开发服务)照样要收掉,不然端口一直被占
+    for (const timer of [emitTimer, timeoutTimer, closeTimer]) if (timer) clearTimeout(timer)
     emitTimer = null
     if (input.onOutput && tail) emit()
     const exit: ScriptExit = { code: exitInfo?.code ?? null, signal: exitInfo?.signal ?? null, timedOut, stopped, error, tail }
@@ -159,7 +159,8 @@ export function startScript(input: {
     finish(null)
   })
 
-  // 主 shell 还没退(没被收走)⇒ 它的 pid 还占着,组号不会被复用;退了以后组号可能已经是别人的 ⇒ 不再发信号(PR-A 评审)。
+  // 组里只要还有一个进程活着,POSIX 就不会把这个组号分给别人 ⇒ kill(-pgid, 0) 成功本身就说明组还是我们的(#409 评审)。
+  // 组空了 ⇒ 一个信号都不发。win32 没有进程组:只在主进程还在时 child.kill。
   const shellAlive = () => exitInfo === null && !finished
   const killGroup = (sig: NodeJS.Signals): void => {
     // 已经退干净 ⇒ ESRCH,吞掉
@@ -169,14 +170,14 @@ export function startScript(input: {
     } catch { /* ESRCH / 组已空 */ }
   }
   const groupExists = (): boolean => {
-    if (!pgid) return true
+    if (!pgid) return shellAlive()
     try { process.kill(-pgid, 0); return true } catch (error) { return (error as NodeJS.ErrnoException).code === 'EPERM' }
   }
   const terminate = () => {
-    if (!shellAlive()) return
+    if (!groupExists()) return
     killGroup('SIGTERM')
     if (!hardTimer) {
-      hardTimer = setTimeout(() => { if (shellAlive() && groupExists()) killGroup('SIGKILL') }, KILL_GRACE_MS)
+      hardTimer = setTimeout(() => { if (groupExists()) killGroup('SIGKILL') }, KILL_GRACE_MS)
       hardTimer.unref?.()
     }
   }

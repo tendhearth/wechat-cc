@@ -76,15 +76,19 @@ describe.skipIf(process.platform === 'win32')('startScript (real process)', () =
     expect(outputs[1]).toBe(exit.tail)
   }, 15_000)
 
-  it('stop() after a normal exit resolves immediately', async () => {
+  it('stop() after a normal exit resolves immediately; an empty group gets no signal', async () => {
     const cwd = area()
     const run = startScript({ kind: 'setup', script: 'true', cwd, env: vars(cwd), baseEnv: BASE, shell: '/bin/sh' })
     expect((await run.done).code).toBe(0)
-    await run.stop()
+    const kill = vi.spyOn(process, 'kill')
+    try {
+      await run.stop()
+      expect(kill.mock.calls.filter(([pid, sig]) => typeof pid === 'number' && pid < 0 && sig !== 0)).toEqual([])
+    } finally { kill.mockRestore() }
   })
 
-  // 主 shell 退了(被收走)以后组号可能已被复用 ⇒ 一个信号都不发(PR-A 评审)
-  it('stop() after the main shell exited sends no signal, even with a background child still around', async () => {
+  // 主 shell 退了、组里还剩后台进程 ⇒ 组号还是我们的,照样收掉(#409 评审:不然 `… &` 起的开发服务一直占着端口)
+  it('stop() after the main shell exited still reaps a background child left in the group', async () => {
     const cwd = area()
     const pidFile = join(cwd, 'bg.pid')
     let bg: number | undefined
@@ -95,15 +99,15 @@ describe.skipIf(process.platform === 'win32')('startScript (real process)', () =
       bg = Number(readFileSync(pidFile, 'utf8').trim())
       kill.mockClear()
       await run.stop()
-      expect(kill.mock.calls.filter(([pid, sig]) => typeof pid === 'number' && pid < 0 && sig !== 0)).toEqual([])
-      expect(alive(bg)).toBe(true)
+      expect(kill.mock.calls.filter(([pid, sig]) => typeof pid === 'number' && pid < 0 && sig !== 0).map(([, sig]) => sig)).toEqual(['SIGTERM'])
+      await expect.poll(() => alive(bg!), { timeout: 3000, interval: 50 }).toBe(false)
     } finally {
       kill.mockRestore()
       if (bg) { try { process.kill(bg, 'SIGKILL') } catch { /* 已经没了 */ } }
     }
   }, 10_000)
 
-  it('the deferred SIGKILL is skipped once the main shell has exited on SIGTERM', async () => {
+  it('a background child that ignores SIGTERM still gets SIGKILL after the main shell exited', async () => {
     const cwd = area()
     const pidFile = join(cwd, 'stubborn.pid')
     let stubborn: number | undefined
@@ -116,7 +120,8 @@ describe.skipIf(process.platform === 'win32')('startScript (real process)', () =
       await run.stop()
       await new Promise(resolve => setTimeout(resolve, KILL_GRACE_MS + 500))
       const signals = kill.mock.calls.filter(([pid, sig]) => typeof pid === 'number' && pid < 0 && sig !== 0).map(([, sig]) => sig)
-      expect(signals).toEqual(['SIGTERM'])
+      expect(signals).toEqual(['SIGTERM', 'SIGKILL'])
+      expect(alive(stubborn)).toBe(false)
     } finally {
       kill.mockRestore()
       if (stubborn) { try { process.kill(stubborn, 'SIGKILL') } catch { /* 已经没了 */ } }
