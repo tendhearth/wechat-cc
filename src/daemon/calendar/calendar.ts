@@ -40,7 +40,7 @@ export function appBundleHasCalendarUsage(execPath: string): boolean {
     const raw = readFileSync(plist)
     if (raw.subarray(0, 6).toString() !== 'bplist') { const t = raw.toString('utf8'); return keys.every(k => t.includes(`<key>${k}</key>`)) }
     // 二进制 plist:交给 plutil
-    return keys.every(k => spawnSync('plutil', ['-extract', k, 'raw', '-o', '-', plist], { stdio: 'ignore' }).status === 0)
+    return keys.every(k => spawnSync('plutil', ['-extract', k, 'raw', '-o', '-', plist], { stdio: 'ignore', windowsHide: true }).status === 0)
   } catch { return false }
 }
 
