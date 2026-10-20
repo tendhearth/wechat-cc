@@ -287,6 +287,8 @@ const ViewChange = z.object({
 const CuratedItem = z.object({
   id: z.string().nullable(), text: z.string(), display: z.string(), due: z.string().nullable(),
   due_label: z.string().nullable(), person: z.object({ name: z.string(), rel: z.string() }).nullable(), changed: z.boolean(),
+  // 出处(2026-10-20):这条是从哪几句聊天里记下的;老 daemon 没有。
+  sources: z.array(z.object({ ts: z.string(), excerpt: z.string() })).optional(),
 })
 export const MemorySuccess = z.object({
   ok: z.literal(true), updated_at: z.string().nullable(), when_label: z.string().nullable(),

@@ -3,6 +3,7 @@
  * 素材 → 指纹(没新东西不调模型)→ 便宜模型出改动清单 → 程序校验执行 → 修订检查(主人正在改就作废)
  * → 备份旧版、原子写、追加日志、更新状态。任何失败都不写文件;同一天不再自动重试。
  */
+import { nextSources, readSources, writeSources, SOURCE_EXCERPT_MAX, type SourceRef } from './sources'
 import { appendFileSync, copyFileSync, existsSync, mkdirSync, readFileSync, readdirSync, renameSync, rmSync, statSync, writeFileSync } from 'node:fs'
 import { createHash } from 'node:crypto'
 import { join } from 'node:path'
@@ -16,10 +17,13 @@ import { composeNotice, noticeItems, type NightlyRunResult } from './nightly-not
 import { isDue, localParts } from './nightly-schedule'
 import { TODAY_DRAFT_FILENAME, consumeDraft } from './today-draft'
 
+export interface SourcedLine { text: string; id: string; ts: string }
+
 export interface NightlySources {
   observationsSince(sinceIso: string | null): Promise<string[]>
   milestonesSince(sinceIso: string | null): Promise<string[]>
-  messagesSince(sinceIso: string | null): Promise<string[]>
+  /** 带 id / ts 的行会编上记号 [cN],模型可以引用它记出处;纯字符串照旧(2026-10-20)。 */
+  messagesSince(sinceIso: string | null): Promise<Array<string | SourcedLine>>
   projectMemory(): string
 }
 export interface NightlyConfig { enabled: boolean; at: string; timezone: string }
@@ -147,12 +151,20 @@ const CHAT_BLOCK = '这段时间的聊天'
  * BLOCK_CAP;预算不够时最后一块截到剩余额度(聊天留尾、其余留头),之后的块不再装。否则笔记一多,
  * 提示词无限长,便宜模型一拒就天天失败。
  */
-export async function gatherMaterial(root: string, sources: NightlySources, sinceIso: string | null, firstRun: boolean): Promise<{ text: string; truncated: boolean }> {
+export async function gatherMaterial(root: string, sources: NightlySources, sinceIso: string | null, firstRun: boolean): Promise<{ text: string; truncated: boolean; refs: Record<string, SourceRef> }> {
   const blocks: Array<[string, string]> = [['CC 白天的草稿 profile.md', readIf(join(root, 'profile.md'))]]
   if (firstRun) blocks.push(['旧的整体理解 _overview.md', readIf(join(root, '_overview.md'))])
   // Chat keeps the TAIL (newest messages) — sinceIso only advances, so the
   // oldest text is the part a previous night's tidy already covered.
-  blocks.push([CHAT_BLOCK, (await sources.messagesSince(sinceIso)).join('\n')])
+  const refs: Record<string, SourceRef> = {}
+  let n = 0
+  const chat = (await sources.messagesSince(sinceIso)).map(l => {
+    if (typeof l === 'string') return l
+    const token = `c${++n}`
+    refs[token] = { id: l.id, ts: l.ts, excerpt: [...l.text].slice(0, SOURCE_EXCERPT_MAX).join('') }
+    return `[${token}] ${l.text}`
+  })
+  blocks.push([CHAT_BLOCK, chat.join('\n')])
   blocks.push(['观察', (await sources.observationsSince(sinceIso)).join('\n')])
   blocks.push(['里程碑', (await sources.milestonesSince(sinceIso)).join('\n')])
   blocks.push(['待办 agenda.md', readIf(join(root, 'agenda.md'))])
@@ -180,7 +192,7 @@ export async function gatherMaterial(root: string, sources: NightlySources, sinc
     left -= body.length
     out.push(`### ${k}\n${body}`)
   }
-  return { text: out.join('\n\n'), truncated }
+  return { text: out.join('\n\n'), truncated, refs }
 }
 
 export function buildNightlyPrompt(a: { today: string; current: string; material: string }): string {
@@ -196,8 +208,10 @@ export function buildNightlyPrompt(a: { today: string; current: string; material
     '- 欠别人的、别人欠主人的、约好的事放进「承诺」,有日期就在正文写「(期限 YYYY-MM-DD)」。',
     '- 当前记忆里一条写了好几件事时,把它拆开:用 update 把原条目改成其中一件(reversal=false),其余用 add。',
     '- 单条不超过 200 字,全文不超过 3000 字;宁可合并,不要堆砌。',
+    `- 条目里说的将来的事,如果那个日子已经过了(早于 ${a.today}):改成过去式(update,reversal=false),或者已经没意义就删。别让「下周去日本」在回来以后还挂着。`,
+    '- 聊天行前面的 [c3] 是记号:add / update 依据了哪几行聊天,就在那条里加 "src":["c3"](最多 3 个),没有就不写。',
     '只输出一个 JSON 对象,不要任何别的文字。四个键都必须出现,没有就给空数组:',
-    '{"add":[{"section":"承诺","text":"…"}],"update":[{"id":"7f3a","text":"…","reversal":false}],"confirm":["91c2"],"remove":[{"id":"4d7c","reason":"…"}]}',
+    '{"add":[{"section":"承诺","text":"…","src":["c3"]}],"update":[{"id":"7f3a","text":"…","reversal":false}],"confirm":["91c2"],"remove":[{"id":"4d7c","reason":"…"}]}',
     '',
     '## 当前记忆(每条尾注里的 m:xxxx 是编号;JSON 里的 id 只写 m: 后面那部分)',
     a.current,
@@ -234,7 +248,7 @@ export async function runMemoryNightly(deps: NightlyRunDeps, opts: { force: bool
   const memPath = join(root, MEMORY_FILENAME)
   const firstRun = !existsSync(memPath)
   const currentText = readIf(memPath)
-  const { text: rest, truncated } = await gatherMaterial(root, deps.sources, state.lastRunIso, firstRun)
+  const { text: rest, truncated, refs } = await gatherMaterial(root, deps.sources, state.lastRunIso, firstRun)
   if (truncated) deps.log('MEMORY_NIGHTLY', `material over budget (${MATERIAL_BUDGET} chars) — lower-priority blocks dropped/truncated`)
   // 今天的草稿(同日失忆修复,2026-10-01):放最前面,不占素材预算(本身封顶 600 字)。它的每一行都
   // 来自 profile.md 的新增,profile 变了指纹自然会变 —— 所以指纹不算草稿,否则清掉草稿第二晚就会
@@ -324,6 +338,9 @@ export async function runMemoryNightly(deps: NightlyRunDeps, opts: { force: bool
   } catch (e) {
     return fail(`write_error:${e instanceof Error ? e.message : String(e)}`)
   }
+  // 出处是附带的:写不进去只记一笔,不让整晚判失败(memory.md 已经换好了)。
+  try { writeSources(root, nextSources(readSources(root), ops, res.applied, refs)) }
+  catch (e) { deps.log('MEMORY_NIGHTLY', `sources not saved: ${e instanceof Error ? e.message : String(e)}`) }
 
   consumeDraftFile(root, draft, deps.log)
 
