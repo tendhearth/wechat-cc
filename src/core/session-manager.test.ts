@@ -816,6 +816,28 @@ describe('SessionManager', () => {
       await mgr.shutdown()
     })
 
+    it('forget releases the session and drops its resume record (定时任务 10-20)', async () => {
+      const store = makeMockStore({
+        compass: { session_id: 'sid-abc', last_used_at: new Date().toISOString() },
+      })
+      const mgr = new SessionManager({
+        maxConcurrent: 4,
+        idleEvictMs: 60_000,
+        registry: singleClaudeRegistry((_alias, path) => ({ cwd: path } as Options), () => true),
+        sessionStore: store,
+      })
+      const k = { alias: 'compass', path: '/p', providerId: 'claude' as const, chatId: '_legacy', tierProfile: TIER_PROFILES.admin, permissionMode: 'strict' as const }
+      await mgr.acquire(k)
+      await mgr.forget({ alias: 'compass', providerId: 'claude', chatId: '_legacy' })
+      expect(store.get({ alias: 'compass', provider: 'claude', chatId: '_legacy' })).toBeNull()
+      await mgr.acquire(k)
+      expect(fakeQuery).toHaveBeenCalledTimes(2)
+      expect(firstQueryArgs().options.resume).toBe('sid-abc')
+      const second = (fakeQuery.mock.calls[1] as unknown as [{ options: { resume?: string } }])[0]
+      expect(second.options.resume).toBeUndefined()
+      await mgr.shutdown()
+    })
+
     it('skips resume + deletes stale record past TTL', async () => {
       const ancient = new Date(Date.now() - 8 * 24 * 60 * 60_000).toISOString()
       const store = makeMockStore({

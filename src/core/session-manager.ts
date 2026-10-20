@@ -331,6 +331,15 @@ export class SessionManager {
     return handle
   }
 
+  /**
+   * 释放并且忘掉:关会话、再删它的续接记录 —— 下一次同一个 key 是全新的对话(定时任务每次一轮,
+   * 不该续上上一次的,2026-10-20)。普通 release 留着续接记录,给主人的对话下次接着聊。
+   */
+  async forget(k: InFlightKey): Promise<void> {
+    await this.release(k)
+    this.opts.sessionStore?.deleteOne({ alias: k.alias, provider: k.providerId, chatId: k.chatId })
+  }
+
   async release(k: InFlightKey): Promise<void> {
     const key = sessionKey(k)
     const s = this.sessions.get(key)
