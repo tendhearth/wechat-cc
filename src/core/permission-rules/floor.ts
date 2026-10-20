@@ -9,7 +9,7 @@
  * 出现 push 就算推送 —— 不去理解 git 的全局选项,宁可多拦。
  */
 import { homedir } from 'node:os'
-import { resolve, sep } from 'node:path'
+import { canonPath, canonText, pathsUnder, type Platform } from './paths'
 import { isDestructiveBash } from '../user-tier'
 import type { PermissionAsk } from './types'
 
@@ -28,13 +28,7 @@ export function toolClass(tool: string): ToolClass {
   return 'other'
 }
 
-/** 每一条都在 root 下(`..` 先归一;按分隔符边界)。空 ⇒ false。调用方负责先 realpath(含软链)。 */
-export function pathsUnder(paths: readonly string[], root: string): boolean {
-  if (!paths.length) return false
-  const r = resolve(root)
-  const prefix = r.endsWith(sep) ? r : r + sep
-  return paths.every(p => { const a = resolve(r, p); return a === r || a.startsWith(prefix) })
-}
+export { pathsUnder } from './paths'
 
 /** 按 shell 操作符切段;每个词去引号 / 反斜杠、取 basename。 */
 export function commandSegments(cmd: string): string[][] {
@@ -77,20 +71,27 @@ const CC_CONFIG = /(?:permission-rules|agent-config|access)\.json\b|\.claude\/ch
 const GIT_INTERNALS = /(?:^|\/)\.git\//
 
 /** 命中红线 ⇒ 一句中文理由;否则 null。stateDir = CC 自己的状态目录(整个算密钥 + 配置)。 */
-export function floorReason(ask: PermissionAsk, home: string = homedir(), extra: { stateDir?: string } = {}): string | null {
+export function floorReason(ask: PermissionAsk, home: string = homedir(), extra: { stateDir?: string; platform?: Platform } = {}): string | null {
+  const platform = extra.platform ?? process.platform
   const cmd = ask.command ?? ''
   const paths = ask.paths ?? []
-  const text = [cmd, ...paths].join('\n').replaceAll(home, '~')
+  const homeC = canonText(home, platform)
+  // 子串比对一律在归一后的文本上做(win32:分隔符统一 + 小写),否则 C:\Users 与 c:/users 对不上。
+  const text = canonText([cmd, ...paths.map(p => canonPath(p, platform))].join('\n'), platform).replaceAll(homeC, '~')
   const segs = cmd ? commandSegments(cmd) : []
-  const project = ask.project && resolve(ask.project) !== resolve(home) && resolve(ask.project) !== '/' ? ask.project : null
+  const projC = ask.project ? canonPath(ask.project, platform) : null
+  const project = projC && projC !== canonPath(home, platform) && !/^(?:[a-z]:)?\/?$/.test(projC) ? ask.project : null
   if (toolClass(ask.tool) === 'write' && paths.length) {
-    if (!project || !pathsUnder(paths, project)) return '写到了项目目录之外'
+    if (!project || !pathsUnder(paths, project, platform)) return '写到了项目目录之外'
     if (paths.some(p => GIT_INTERNALS.test(p))) return '改 .git 里面的东西'
   }
   if (cmd && (isDestructiveBash(cmd) || segs.some(s => s[0] === 'rm' || s.includes('rm') || (s.includes('dd') && s.some(w => /^(?:if|of)=/.test(w)))))) return '破坏性命令'
   if (segs.some(publishes)) return '推送 / 发布 / 部署'
   if (segs.some(s => s.some(w => SYSTEM_WORDS.has(w))) || SHELL_RC.test(text)) return '改系统或 shell 配置'
-  if (extra.stateDir && (text.includes(extra.stateDir) || text.includes(extra.stateDir.replaceAll(home, '~')))) return '碰到 CC 自己的状态目录'
+  if (extra.stateDir) {
+    const sd = canonText(canonPath(extra.stateDir, platform), platform)
+    if (text.includes(sd) || text.includes(sd.replaceAll(homeC, '~'))) return '碰到 CC 自己的状态目录'
+  }
   if (SECRETS.some(r => r.test(text))) return '碰到密钥'
   if (CC_CONFIG.test(text)) return '改 CC 自己的配置'
   if (GIT_INTERNALS.test(cmd)) return '碰 .git 里面的东西'
@@ -113,6 +114,8 @@ export function isLowRisk(ask: PermissionAsk): boolean {
       const c = ask.command?.trim()
       if (!c || COMPOUND.test(c) || RISKY_FLAGS.test(c)) return false
       const words = c.split(/\s+/)
+      // 参数里出现绝对路径、~、..、盘符 ⇒ 读到项目外去了,不算低风险(2a 10-20:`cat ~/Library/Messages/chat.db`)。
+      if (words.slice(1).some(w => /^['"]?(?:\/|~|[A-Za-z]:[\\/]|\\)/.test(w) || /(?:^|[\\/'"])\.\.(?:[\\/]|$)/.test(w))) return false
       if (words[0] === 'git') return GIT_READ_VERBS.has(words[1] ?? '')
       return READ_ONLY_HEADS.has(words[0]!)
     }

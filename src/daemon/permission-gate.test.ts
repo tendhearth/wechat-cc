@@ -120,17 +120,21 @@ describe('makePermissionGate × 终审', () => {
   })
   it('a path through a symlink that leaves the worktree is outside', async () => {
     const { mkdirSync, symlinkSync, realpathSync } = await import('node:fs')
-    const base = realpathSync(mkdtempSync(join(tmpdir(), 'perm-link-')))
+    const base = realpathSync.native(mkdtempSync(join(tmpdir(), 'perm-link-')))
     mkdirSync(join(base, 'tree')); mkdirSync(join(base, 'outside'))
-    symlinkSync(join(base, 'outside'), join(base, 'tree', 'link'))
+    symlinkSync(join(base, 'outside'), join(base, 'tree', 'link'), 'junction')
     const { gate, cheap } = setup({ version: 1, enabled: true, review: 'low_risk', rules: [] })
     const d = await gate.decide(ask({ surface: 'workbench', tool: 'Edit', command: undefined, paths: [join(base, 'tree', 'link', 'x.plist')], project: join(base, 'tree'), isolatedWorktree: true }))
     expect(d).toMatchObject({ verdict: 'ask', by: 'floor' })
     expect(cheap).not.toHaveBeenCalled()
   })
   it('relative paths resolve against the project', async () => {
-    const { gate } = setup({ version: 1, enabled: true, rules: [{ id: 'src', when: { paths: '/w/src/**' }, then: 'allow' }] })
-    expect((await gate.decide(ask({ surface: 'workbench', tool: 'Edit', command: undefined, paths: ['src/a.ts'], project: '/w', isolatedWorktree: true }))).verdict).toBe('allow')
+    const { realpathSync, mkdirSync } = await import('node:fs')
+    const proj = realpathSync.native(mkdtempSync(join(tmpdir(), 'perm-rel-')))
+    mkdirSync(join(proj, 'src'))
+    const glob = `${proj.replace(/\\/g, '/')}/src/**`
+    const { gate } = setup({ version: 1, enabled: true, rules: [{ id: 'src', when: { paths: glob }, then: 'allow' }] })
+    expect((await gate.decide(ask({ surface: 'workbench', tool: 'Edit', command: undefined, paths: ['src/a.ts'], project: proj, isolatedWorktree: true }))).verdict).toBe('allow')
   })
   it('parallel reviews cannot overshoot the runaway cap', async () => {
     let release!: () => void

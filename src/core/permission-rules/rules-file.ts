@@ -6,7 +6,7 @@
  * 正则限 200 字、匹配只看命令前 2000 字 —— 主人手写的 `(a+)+$` 也拖不垮一次拍板。
  */
 import { homedir } from 'node:os'
-import { resolve } from 'node:path'
+import { canonPath, canonText, isUnder, type Platform } from './paths'
 import type { PermissionAsk, Rule, RuleWhen, RulesFile, Verdict } from './types'
 
 export const RULES_FILE = 'permission-rules.json'
@@ -89,14 +89,6 @@ export function serializeRulesFile(f: RulesFile): string {
 }
 
 const expandHome = (p: string) => (p === '~' ? homedir() : p.startsWith('~/') ? homedir() + p.slice(1) : p)
-const stripSlash = (p: string) => (p.length > 1 ? p.replace(/[\\/]+$/, '') : p)
-
-/** `child` 是 `root` 本身或在它下面(按分隔符边界,`/a/b` 不算在 `/a/bc` 下)。 */
-function underPrefix(child: string, root: string): boolean {
-  const c = stripSlash(child), r = stripSlash(root)
-  return c === r || c.startsWith(r.endsWith('/') ? r : r + '/')
-}
-
 const globCache = new Map<string, RegExp>()
 function globRe(glob: string): RegExp {
   let re = globCache.get(glob)
@@ -113,10 +105,10 @@ function globRe(glob: string): RegExp {
   return re
 }
 
-function matches(when: RuleWhen, ask: PermissionAsk): boolean {
+function matches(when: RuleWhen, ask: PermissionAsk, platform: Platform): boolean {
   if (when.surface && when.surface !== ask.surface) return false
   if (when.provider && when.provider !== ask.provider) return false
-  if (when.project && (!ask.project || !underPrefix(ask.project, expandHome(when.project)))) return false
+  if (when.project && (!ask.project || !isUnder(ask.project, expandHome(when.project), platform))) return false
   if (when.tool) {
     if (when.tool.endsWith('*')) { if (!ask.tool.startsWith(when.tool.slice(0, -1))) return false }
     else if (when.tool !== ask.tool) return false
@@ -127,15 +119,15 @@ function matches(when: RuleWhen, ask: PermissionAsk): boolean {
   }
   if (when.paths) {
     if (!ask.paths?.length) return false
-    const re = globRe(expandHome(when.paths))
-    if (!ask.paths.every(p => re.test(resolve(p)))) return false
+    const re = globRe(canonText(expandHome(when.paths), platform))
+    if (!ask.paths.every(p => re.test(canonPath(p, platform)))) return false
   }
   return true
 }
 
 /** deny 规则先于一切;其余按表内顺序第一条命中。没命中 ⇒ null。 */
-export function matchRule(rules: readonly Rule[], ask: PermissionAsk): Rule | null {
-  const deny = rules.find(r => r.then === 'deny' && matches(r.when, ask))
+export function matchRule(rules: readonly Rule[], ask: PermissionAsk, platform: Platform = process.platform): Rule | null {
+  const deny = rules.find(r => r.then === 'deny' && matches(r.when, ask, platform))
   if (deny) return deny
-  return rules.find(r => r.then !== 'deny' && matches(r.when, ask)) ?? null
+  return rules.find(r => r.then !== 'deny' && matches(r.when, ask, platform)) ?? null
 }

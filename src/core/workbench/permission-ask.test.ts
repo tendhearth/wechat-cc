@@ -5,7 +5,7 @@ import { join } from 'node:path'
 import { workbenchAsk } from './permission-ask'
 
 describe('workbenchAsk', () => {
-  const base = realpathSync(mkdtempSync(join(tmpdir(), 'wb-ask-')))
+  const base = realpathSync.native(mkdtempSync(join(tmpdir(), 'wb-ask-')))
   const proj = join(base, 'proj'), tree = join(base, 'tree')
   mkdirSync(proj); mkdirSync(tree)
 
@@ -18,7 +18,7 @@ describe('workbenchAsk', () => {
     expect(workbenchAsk({ id: 't', path: proj, providerId: 'claude' }, { root: tree, removedAt: 5 }, null, { tool: 'Bash' })).toMatchObject({ project: proj, isolatedWorktree: false })
   })
   it('the project root is realpath-ed (a symlinked task path)', () => {
-    const link = join(base, 'link'); symlinkSync(proj, link)
+    const link = join(base, 'link'); symlinkSync(proj, link, 'junction')
     expect(workbenchAsk({ id: 't', path: link, providerId: 'claude' }, null, null, { tool: 'Read' }).project).toBe(proj)
   })
   it('a vanished project path ⇒ null project', () => {

@@ -61,6 +61,9 @@ const errMsg = (e: unknown) => (e instanceof Error ? e.message : String(e))
 export function makePermissionGate(deps: PermissionGateDeps): PermissionGate {
   const now = deps.now ?? (() => Date.now())
   const file = join(deps.stateDir, RULES_FILE)
+  // 红线比对用真路径(Windows 上临时目录常是 8.3 短名,请求里的路径经 realpath.native 是长名 —— 两边得一致)。
+  let stateDirReal = deps.stateDir
+  try { stateDirReal = realpathSync.native(deps.stateDir) } catch { /* 目录还没建:按原样 */ }
   let cache: { key: string; rules: RulesFile; errors: string[] } | null = null
   const reviewAllows = new Map<string, number[]>()
   const notified = new Set<string>()
@@ -130,7 +133,7 @@ export function makePermissionGate(deps: PermissionGateDeps): PermissionGate {
         const { rules } = load()
         if (!rules.enabled) return OFF
         const ask = normalizePaths(typeof source === 'function' ? await source() : source)
-        const d = await decideCore(ask, rules, { review: review(), reviewBlocked: (scope) => { const b = reviewBlocked(scope); if (!b) reserved = scope; return b }, stateDir: deps.stateDir })
+        const d = await decideCore(ask, rules, { review: review(), reviewBlocked: (scope) => { const b = reviewBlocked(scope); if (!b) reserved = scope; return b }, stateDir: stateDirReal })
         if (!record(ask, d)) return ASK
         if (d.by === 'review' && d.verdict === 'allow') reviewAllows.set(ask.scope, [...recent(ask.scope), now()])
         // 日志不写命令原文。
