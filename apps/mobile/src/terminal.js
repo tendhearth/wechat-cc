@@ -4,7 +4,7 @@
 // 看着它跑(2026-10-17):展开的那一行另拉最近几步(GET /m/api/cli/activity),每 4 秒一次,只在看得见时。
 // 哪家(2026-10-19,同手机 app):行里不写「Claude Code」,状态行尾一个圆头像(mAgents,在 workbench.js),名字给读屏。
 var tm = { active:false, rows:[], open:null, reveal:null, busy:{}, note:{}, timer:0, seq:0, act:{}, actTimer:0, actSeq:0, actOpen:{} }
-var TM_STATUS = { waiting:'等你批准', running:'在跑', idle:'歇着', ended:'结束了' }
+var TM_STATUS = { waiting:'等你决定', running:'在做', idle:'歇着', ended:'结束了' }
 var TM_POLL_MS = 15000
 var TM_SAY_MAX = 4000
 var TM_ACT_MS = 4000
@@ -61,11 +61,12 @@ function tmPaint(){
     if(open){
       var canSay=r.status==='idle'
       h+='<div class="terminal-detail">'
-      if(actionable)h+='<div class="terminal-actions"><button type="button" class="sessions-primary" data-tm-decide="allow" data-tm-id="'+id+'"'+(busy?' disabled':'')+'>允许</button><button type="button" class="sessions-text-action" data-tm-decide="deny" data-tm-id="'+id+'"'+(busy?' disabled':'')+'>拒绝</button></div>'
+      // 用词表(docs/reference/phone-wording.md):先不做在左、允许这一步在右(主按钮),下面一行「只对这一次请求」。
+      if(actionable)h+='<div class="terminal-actions"><button type="button" class="sessions-text-action" data-tm-decide="deny" data-tm-id="'+id+'"'+(busy?' disabled':'')+'>先不做</button><button type="button" class="sessions-primary" data-tm-decide="allow" data-tm-id="'+id+'"'+(busy?' disabled':'')+'>允许这一步</button></div><p class="terminal-note">只对这一次请求</p>'
       // 过程读到了 ⇒ 看过程(最后一句就在里面);还没读到 / 读不了(老电脑、别的电脑)⇒ 照旧给最后一句。
       var act=tm.act[r.session_id],seeAct=!!act&&!act.error&&act.items.length>0
       h+=(seeAct?'<p class="terminal-label">它在做的事</p>'+tmActivity(r):(act&&act.error==='cli_session_remote'?'<p class="terminal-note">这个会话在另一台电脑上，这里看不到过程。</p>':'')+'<p class="terminal-label">最后一句</p><p class="terminal-last">'+esc(r.last_summary||'还没有回复')+'</p>')
-        +(canSay?'':'<p class="terminal-note">'+(r.status==='waiting'?'它在等你批准，先拍板再说下一句。':'它还在跑，这一轮做完再说下一句。')+'</p>')
+        +(canSay?'':'<p class="terminal-note">'+(r.status==='waiting'?'它在等你决定，先拍板再说下一句。':'它还在跑，这一轮做完再说下一句。')+'</p>')
         +'<textarea id="terminal-say-'+id+'" rows="2" maxlength="'+TM_SAY_MAX+'" placeholder="接下来让它做什么…"'+(canSay?'':' disabled')+'></textarea>'
         +'<button type="button" class="sessions-primary" data-tm-say="'+id+'"'+(canSay&&!busy?'':' disabled')+'>发送</button></div>'
     }

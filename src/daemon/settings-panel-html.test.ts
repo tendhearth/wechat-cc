@@ -11,7 +11,7 @@ import { pageHtml, phoneHtml } from './settings-panel-html'
  */
 describe('phoneHtml 的 KIND_ICON', () => {
   it('recollection 有自己的图标,不退化成 •', () => {
-    expect(phoneHtml('token', null)).toContain('recollection: "📖"')
+    expect(phoneHtml('token', null)).toContain('recollection: "忆"')
   })
 })
 

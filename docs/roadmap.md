@@ -159,6 +159,27 @@ CC 要取代的是 **Paseo / Orca 这一层**(agent 之上的编排 + 多端),�
 
 **记下、暂不做**:一次派给 N 个执行者再挑最好的(Orca、Codex best-of-N,额度翻倍,等主人要);CC 自己写技能文件(Hermes、OpenClaw ClawHub;只能主人批准安装);浏览器代操作(Manus、Claude in Chrome,红线边,至少等放行规则跑稳);入站 webhook(OpenClaw;新攻击面);PR / CI 状态一键(Conductor Checks;定位说不做 PR 管理,最多一个「推上去开 PR」按钮);全双工语音(Sesame、Tolan;STT 本地化之后再说);一键「记住屏幕」(豆包;分享扩展已覆盖大半)。
 
+## 手机端界面:对标别家(2026-10-20,主人「整体手机端的界面设计别忘了,借鉴下其他家产品」)
+
+对标:ChatGPT(对话内语音、Scheduled、Pulse)、Claude(Remote Control 机器卡、Dispatch)、Gemini Daily Brief、GitHub Mobile Copilot(Live Activities 单一状态词)、Cursor 手机 diff、Codex iOS(行评论、Mac 睡着显示暂停)、Happy / Omnara / Paseo(四类推送、Ready to review / Working / Done)、Linear 收件箱、Things「今晚」。不照搬的:彩色状态徽章、图片卡流、语音光球动画、滑动铺色 —— 都违反「一个强调色、页面不变色」。
+
+**用词表** [reference/phone-wording.md](reference/phone-wording.md)(App 与网页共用):允许这一步 / 先不做(先不做在左)、等你决定 / 在做 / 这一轮做完了 / 完成 / 没做成 / 停下了、家里的电脑暂时连不上。三组(等你 / 在做 / 做完)用在「一起做」列表上;「此刻」照 10-05「每样东西只有一个家」只放「等你」。
+
+| # | 做什么 | 借鉴 | 归属 |
+|---|---|---|---|
+| A | 网页端不一致收口:CC 只在真连着时亮(之前 800ms 后无条件点亮,违反规矩 9)、拍板与状态按用词表、去 emoji、强调色不上状态字、断线文案 | 现状盘点 | 我(本 PR) |
+| B1 | 「一起做」列表分三组 等你 / 在做 / 做完 | Paseo、GitHub Live | wechat-cc-2a |
+| B2 | 通知上直接「允许这一步 / 先不做」+ 锁屏一行 Live Activity | Happy、Claude Remote Control、GitHub | wechat-cc-2a(要新 build + 真机) |
+| B3 | Mac 睡着 / 中继不在 ⇒「电脑歇了,事情先停着」,CC 变暗,不用红 | Codex iOS、Dispatch | wechat-cc-2a |
+| B4 | 早报放在此刻顶部,结尾「就这些」 | Gemini Daily Brief、Pulse | 我(对标 #7) |
+| B5 | diff 点一行写意见送回执行者 | Codex iOS | wechat-cc-2a(对标 3) |
+| B6 | diff / 拍板里标出有风险的文件(鉴权、删测试、迁移):一个强调色「注意」,不用红黄绿 | Cursor 评测里被要的 | 我,之后 |
+| B7 | 定时在 App 里看得见:对话里一个小签 + 设置里一张列表 | ChatGPT Tasks、Gemini | 我,之后 |
+| B8 | 对话里说话、实时出字 | ChatGPT、Paseo | 等 STT 本地化 |
+| B9 | 「CC 做过的事」时间线 | Meta Muse | 之后 |
+
+记下未做:网页没带自己的衬线字体(装进页面会顶到中继 512KB 帧预算)、几处 1.5px 边框与 12.5px 这类不在 token 里的尺寸、网页额度接手还用 `window.confirm`(三份测试按同步 confirm 写,单独改)。
+
 ## 已定未做(按价值排)
 
 - **持续执行发版节奏** —— 09-27 后已恢复公开 patch 发版，当前到 1.7.7；每批整合、验收后按[发版手册](maintainer/release.md)交付。09 月积压三周的教训保留在上文，不能再当作当前停发状态。
@@ -189,6 +210,7 @@ CC 要取代的是 **Paseo / Orca 这一层**(agent 之上的编排 + 多端),�
 
 - 2026-10-19:版本号一节同步到 1.7.7(GitHub 与更新源一致);「dev 上等 1.7.6 的」改为已发。同日两路协作:评审 #385–#393 修 7 条(#395、#396);来源标记 #398;放行规则设计稿 #397 三问主人交我定(初审做、默认关;写文件只限独立工作区;只进日报),v1 实现(规则表 + 红线 + 初审 + 留痕 v78 + 日报一行 + `wechat-cc rules`)#402 已合 dev,默认关;微信改规则 / 卡片「以后不用问」/ 学 在下一个 PR。评审 #6 定:中继离线时 App 不算送得到(#401)。
 - 2026-10-20:早报(对标 #7):「定时 早报 [工作日] HH:MM」+「早报 少点 / 多点 / 偏好」;素材本机拼(日报、今天到期提醒、agenda、口味),发出去记一次主动消息,取代当天问候。
+- 2026-10-20:加「手机端界面:对标别家」一节与用词表 reference/phone-wording.md;网页端不一致收口(CC 只在真连着时亮等)。
 - 2026-10-20:加「对标三类产品挖出的任务」一节(三路调研;先做 5 项、接着做 4 项、记下暂不做 7 项,标了归属);#4 记忆出处 = #405、#5 别主动聊 = #404。
 - 2026-10-20:定时任务(只读版)实现:微信「定时」/ `wechat-cc jobs`、独立只读会话 `job:<id>`、每天合计 5 次、错过不补、连 3 次失败自动停;设计 `docs/superpowers/specs/2026-10-20-scheduled-jobs-design.md`。
 - 2026-10-05:同步 GitHub / updater 1.7.5、macOS 改名已发布状态；合并重复手机进展，移出已修欠账，分开既有 iPhone 自动化、待补真机项与 TestFlight 生产条件。

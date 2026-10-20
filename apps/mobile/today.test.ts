@@ -73,7 +73,7 @@ describe('phone page: 今天 on 此刻',()=>{
   expect(h.el('today-waiting').hidden).toBe(false)
   const rows=h.document.querySelectorAll('#today-waiting .today-row')
   expect(rows.length).toBe(1)
-  expect(rows[0]!.textContent).toContain('改好了');expect(rows[0]!.textContent).toContain('等你批准 · blog · Claude Code');expect(rows[0]!.textContent).toContain('看清楚 ›')
+  expect(rows[0]!.textContent).toContain('改好了');expect(rows[0]!.textContent).toContain('等你决定 · blog · Claude Code');expect(rows[0]!.textContent).toContain('看清楚 ›')
   ;(rows[0] as any).click()
   expect(h.panes).toEqual(['matters']);expect(h.terminals).toEqual(['w'])
  })

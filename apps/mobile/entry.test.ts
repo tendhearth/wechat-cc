@@ -598,6 +598,6 @@ describe('stale 401/403 from the token used before pairing', () => {
     const api: Api = async path => path.endsWith('/options') ? response(ready) : response({ error: 'unauthorized' }, 401)
     const phone = load(api)
     await phone.openEntry(); phone.edit('整理清单'); await phone.submitEntry()
-    expect(phone.get('entry-notice').textContent).toContain('手机连接已失效')
+    expect(phone.get('entry-notice').textContent).toContain('这台手机已经不能连了')
   })
 })

@@ -40,10 +40,16 @@ function renderPresenceHome(s,stale) {
     card.innerHTML='<summary>CC 留给你一张明信片 · '+esc(CCM.markdownPlainText(postcard.title))+'</summary><div>'+postcard.ref.image_svg+'</div><p>'+esc(CCM.markdownPlainText(postcard.note||''))+'</p>'
     result.appendChild(card)
   }
-  document.getElementById('home-context').textContent=stale?'这是上次留下的画面，当前活动尚未确认。':s.presence&&s.presence.presence==='ok'?'':'有些连接状态还需要确认。'
+  setPresenceLit(!stale&&!!s.presence&&s.presence.presence==='ok')
+  document.getElementById('home-context').textContent=stale?'你看到的是上次的样子，现在在做什么还没确认。':s.presence&&s.presence.presence==='ok'?'':'有些连接状态还需要确认。'
+}
+// CC 亮 = 真的在身边(设计原则规矩 9):只在拿到新鲜、presence=ok 的状态时点亮;旧画面 / 断线 / 不对劲 ⇒ 暗。
+// 以前这里 800ms 后不看连接就点亮(手机端盘点 10-20);渐亮仍走 CSS 的 0.8s 过渡。
+function setPresenceLit(on) {
+  var scene = document.querySelector('.home-scene')
+  if (!scene) return
+  if (on) scene.classList.add('home-arrived'); else scene.classList.remove('home-arrived')
 }
 var homeCharacter = document.querySelector(".home-character")
 homeCharacter.addEventListener("click", function(){ openYou() })
 homeCharacter.addEventListener("keydown", function(/** @type {KeyboardEvent} */ ev){ if (ev.key === "Enter" || ev.key === " ") { ev.preventDefault(); openYou() } })
-// Arrival is a local attention event, not a network status or theme switch.
-setTimeout(function(){document.querySelector('.home-scene').classList.add('home-arrived')},800)

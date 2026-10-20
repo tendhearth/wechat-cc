@@ -2,7 +2,7 @@
 // 执行者头像(2026-10-19,同手机 app):跟桌面共用 apps/desktop/src/shared/agent-avatars.js,构建期在这上面内联并调一次。
 /** @type {ReturnType<typeof import('../../desktop/src/shared/agent-avatars.js').createAgentAvatars>} */
 var mAgents
-var M_STATUS = { open: "进行中", replied: "已答复", done: "已了结", archived: "已归档" }
+var M_STATUS = { open: "在做", replied: "这一轮做完了", done: "完成", archived: "已归档" }
 var M_KIND = { task: "任务", chat: "对话", companion: "陪伴" }
 var M_INPUT_STATUS={pending:"补充已保存，等待执行者接收。",sending:"补充正在发送，等待执行者确认。",delivered:"这条补充已送达。",held:"未确认送达，请先查看任务记录。原文已保留。",withdrawn:"这条补充已撤回，原文已保留。"},mInputStates={}
 var mCurrent = null, mDetail = null, mPoll = null, mSeq = 0, mActive = false, mBusy = {}, mQuestionKey = "", mObjectUrls = [], mTooLarge = false
@@ -74,7 +74,7 @@ function mClock(ts) { var d = new Date(ts); return String(d.getHours()).padStart
 function mConn() {
   var el = document.getElementById("m-conn"), stale = mMisses >= M_STALE_MISSES
   el.hidden = !stale
-  el.textContent = stale ? (mLastOkAt===null?"还没有连上 CC，请检查电脑连接。":"连不上 CC —— 你看到的是 " + mClock(mLastOkAt) + " 的样子") : ""
+  el.textContent = stale ? (mLastOkAt===null?"家里的电脑暂时连不上，看看它开着没。":"家里的电脑暂时连不上 —— 你看到的是 " + mClock(mLastOkAt) + " 的样子") : ""
 }
 function mError(code) {
   if (code === "provider_quota_exhausted") return "这位执行者的额度暂时用完了。你的补充已保留，可以查看任务中的接手选择，或等额度恢复后再继续。"
@@ -88,7 +88,7 @@ function mError(code) {
   if (code === "invalid_path") return "电脑上找不到这个任务的文件夹了，请到桌面检查后继续。"
   if (code === "unavailable_provider") return "电脑上的执行者暂不可用，请到桌面检查连接后继续。"
   if (code === "detail_too_large") return "完整内容过长，请到桌面查看。草稿已保留，这里暂时不能提交判断或补充。"
-  if (code === "unauthorized") return "这台手机的连接已失效，请从微信重新打开随身 CC。"
+  if (code === "unauthorized") return "这台手机已经不能连了，在电脑上重新配对。"
   if (/stale|artifact_changed/.test(code || "")) return "内容已变化或已经处理，请查看刷新后的任务。"
   if (/restart_confirmation|external_close_confirmation/.test(code || "")) return "这次续接需要确认恢复方式，请到桌面工作台处理。你的补充仍保留在这里。"
   if (code === "workbench_busy") return "任务还在运行或文件夹正在使用，请刷新后再试。"
@@ -352,7 +352,7 @@ function renderMatter(d) {
   var agents=mAgents.matterAgents(d.task&&d.task.providerId,d.matter.agents),who=document.getElementById("m-agents"),from=mAgents.originLabel(d.matter.origin)
   who.hidden=!agents.length&&!from;who.innerHTML=agents.length||from?mAgents.originMarkHtml(d.matter.origin)+mAgents.agentAvatarsHtml(agents)+'<span>'+esc([mAgents.agentsLabel(agents),from].filter(Boolean).join(" · "))+'</span>':''
   mRenderEvents(d.events||[])
-  document.getElementById("m-permissions").innerHTML=(d.permissions||[]).filter(function(p){return p.taskId===d.matter.id}).map(function(p){return '<div class="card"><b>需要你允许这一次</b><p>'+esc(p.tool)+'</p><pre class="m-description">'+esc(p.description)+'</pre><button type="button" class="done-btn" data-control="allow" data-task="'+esc(d.matter.id)+'" data-request="'+esc(p.id)+'">允许这一次</button> <button type="button" class="more" data-control="deny" data-task="'+esc(d.matter.id)+'" data-request="'+esc(p.id)+'">拒绝</button></div>'}).join("")
+  document.getElementById("m-permissions").innerHTML=(d.permissions||[]).filter(function(p){return p.taskId===d.matter.id}).map(function(p){return '<div class="card"><b>等你决定</b><p>'+esc(p.tool)+'</p><pre class="m-description">'+esc(p.description)+'</pre><button type="button" class="more" data-control="deny" data-task="'+esc(d.matter.id)+'" data-request="'+esc(p.id)+'">先不做</button> <button type="button" class="done-btn" data-control="allow" data-task="'+esc(d.matter.id)+'" data-request="'+esc(p.id)+'">允许这一步</button><p class="m-note">只对这一次请求</p></div>'}).join("")
   mRenderQuestions(d)
   mRenderInputs(d)
   mSettleUnsure(d)

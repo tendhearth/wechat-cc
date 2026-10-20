@@ -66,7 +66,7 @@ function eCurrentRecord() {
   return pending || (eState.last && eState.last.input.requestId === eState.draft.requestId ? eState.last : null)
 }
 function eSelectionError() {
-  if (!eOptions) return "暂时连不上 CC。草稿留在这里，连接恢复后再试。"
+  if (!eOptions) return "家里的电脑暂时连不上。草稿留在这里，连接恢复后再试。"
   if (eOptions.reason && eOptions.reason.code === "invalid_entry_owner") return "草稿已保留。请先在桌面配置主人身份，再回来交给 CC。"
   var draft = eState.draft
   var project = draft.target.kind === "project" && eOptions.projects.find(function(p){ return p.id === draft.target.projectId })
@@ -224,7 +224,7 @@ function eFailure(record, error, creating, sentAs) {
   var message = "正在确认是否收到。原文已保留，连接恢复后点“确认是否收到”，会继续核对同一件事。"
   if (error.message === "draft_storage") message = "这台手机暂时无法保存草稿，请先留好原文，恢复存储后再交办。"
   // 单次配对(plan 7a):这一趟在飞时刚配上、换了令牌,旧短令牌回 401/403 不说明连接失效 —— 保持「正在确认」,下一次核对用新令牌。
-  else if (error.status === 401 || error.status === 403) { if (sentAs === T) message = "手机连接已失效，请从微信重新打开随身 CC。草稿与待确认交办已保留。" }
+  else if (error.status === 401 || error.status === 403) { if (sentAs === T) message = "这台手机已经不能连了，在电脑上重新配对。草稿与待确认交办已保留。" }
   else if (error.message === "creation_conflict") message = "这件交办的内容与先前不同，请先确认原交办；原文已保留。"
   else if (error.status >= 400 && error.status < 500) message = "这次交办尚未确认。请检查要求和更多选择，原文已保留。"
   record.error = message; eSave(); eNotice(message); eHistory()

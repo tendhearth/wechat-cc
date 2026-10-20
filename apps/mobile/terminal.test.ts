@@ -38,7 +38,7 @@ describe('phone page: terminal sessions in 一起做',()=>{
   expect(h.api).toHaveBeenCalledWith('/m/api/cli/sessions',undefined)
   const text=h.el('terminal-list').textContent!
   expect(h.el('terminal-root').hidden).toBe(false)
-  expect(text).toContain('blog');expect(text).toContain('等你批准');expect(text).toContain('Bash: npm run deploy');expect(text).toContain('歇着')
+  expect(text).toContain('blog');expect(text).toContain('等你决定');expect(text).toContain('Bash: npm run deploy');expect(text).toContain('歇着')
   // 哪家:行里不写名字,状态行尾一个圆头像,名字在读屏标签里(2026-10-19)
   expect(text).not.toContain('Claude Code');expect(text).not.toContain('Codex')
   expect(h.document.querySelector('[data-tm-row="s-wait"] small [role="img"]')!.getAttribute('aria-label')).toBe('Claude Code')
@@ -74,7 +74,7 @@ describe('phone page: terminal sessions in 一起做',()=>{
   ;(h.document.querySelector('[data-tm-open="s-wait"]') as any).click()
   expect((h.document.getElementById('terminal-say-s-wait') as any).disabled).toBe(true)
   // 等批准时说的是「先拍板」,不是「还在跑」
-  expect(h.document.querySelector('[data-tm-row="s-wait"]')!.textContent).toContain('它在等你批准，先拍板再说下一句。')
+  expect(h.document.querySelector('[data-tm-row="s-wait"]')!.textContent).toContain('它在等你决定，先拍板再说下一句。')
   expect(h.document.querySelector('[data-tm-row="s-wait"]')!.textContent).not.toContain('它还在跑')
   ;(h.document.querySelector('[data-tm-open="s-idle"]') as any).click()
   expect(h.document.querySelector('[data-tm-row="s-idle"]')!.textContent).toContain('测试全过了')
