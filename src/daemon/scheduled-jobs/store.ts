@@ -4,7 +4,8 @@
  *   scheduled-jobs-state.json  每个定时上次跑的结果(只有 runner 写)
  * 原子写;定时文件坏了 ⇒ 当没有定时并报错,任何写入都拒(不把主人手改了一半的东西冲掉)。
  */
-import { existsSync, readFileSync, renameSync, writeFileSync } from 'node:fs'
+import { existsSync, renameSync, writeFileSync } from 'node:fs'
+import { readJsonFile } from '../../lib/read-json-file'
 import { join } from 'node:path'
 import type { JobSchedule, ScheduledJob } from '../../core/scheduled-jobs'
 
@@ -31,7 +32,7 @@ export function makeJobsStore(stateDir: string) {
   function readJobs(): { jobs: ScheduledJob[]; error: string | null } {
     if (!existsSync(jobsPath)) return { jobs: [], error: null }
     try {
-      const v = JSON.parse(readFileSync(jobsPath, 'utf8')) as { jobs?: unknown }
+      const v = readJsonFile<{ jobs?: unknown }>(jobsPath)
       if (!v || !Array.isArray(v.jobs)) return { jobs: [], error: `${JOBS_FILE} 的形状不对` }
       return { jobs: v.jobs as ScheduledJob[], error: null }
     } catch (e) {
@@ -42,7 +43,7 @@ export function makeJobsStore(stateDir: string) {
 
   function readState(): Record<string, JobRunState> {
     try {
-      const v = JSON.parse(readFileSync(statePath, 'utf8')) as { jobs?: Record<string, JobRunState> }
+      const v = readJsonFile<{ jobs?: Record<string, JobRunState> }>(statePath)
       return v && v.jobs && typeof v.jobs === 'object' ? v.jobs : {}
     } catch { return {} }
   }

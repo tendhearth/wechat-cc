@@ -1,4 +1,6 @@
 #!/usr/bin/env bun
+import { makeJobsStore } from './scheduled-jobs/store'
+import { registerScheduledJobs } from './scheduled-jobs/runner'
 import { makeMatterStore } from '../core/matters/store'
 if (!process.env.CLAUDE_CODE_ENTRYPOINT) { process.env.CLAUDE_CODE_ENTRYPOINT = 'sdk-ts' }
 // 回环守卫(spec 2026-09-09-cli-hook-push §3):daemon 经 SDK 拉起的 claude / codex
@@ -1007,6 +1009,26 @@ export async function bootDaemon(opts: BootDaemonOpts): Promise<DaemonHandle> {
       log: (t, l) => log(t, l),
     }))
     if (remindersLc) lc.register(remindersLc)
+    // 主人亲手写的定时任务(spec 2026-10-20-scheduled-jobs-design):每分钟一拍,到点在只读的独立会话里跑一轮,
+    // 走伙伴主动消息的出口;只给主人那条对话。坏了只降级,不挡启动。
+    const jobsStore = makeJobsStore(stateDir)
+    const jobsLc = await sup.start('scheduled-jobs', () => registerScheduledJobs({
+      store: jobsStore,
+      timezone: () => loadCompanionConfig(stateDir).timezone ?? 'Asia/Shanghai',
+      now: () => Date.now(),
+      runTurn: async (job, nowIso) => {
+        const owner = resolveAdminChatId(loadAccess(), loadCompanionConfig(stateDir), null)
+        if (!owner) return 'skipped:no_owner'
+        return wired.ticks.runJobTurn({ chatId: owner, jobId: job.id, text: job.text, nowIso })
+      },
+      notifyOwner: (text) => {
+        const owner = resolveAdminChatId(loadAccess(), loadCompanionConfig(stateDir), null)
+        if (owner) void wired.proactive.sendOnce(owner, text)
+      },
+      holdBusy: (l) => boot.holdBusy(l),
+      log: (t, l) => log(t, l),
+    }))
+    if (jobsLc) lc.register(jobsLc)
     // 回报投递(task-3,2026-09-23):每轮答复回原对话说一声,人不在就等人回来
     // 再送(errcode=-2 不计入放弃窗口,保持 pending 退避重试)。同样是可选子
     // 系统:sweeper 坏了只降级,不挡启动。
