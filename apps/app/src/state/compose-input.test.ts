@@ -385,3 +385,54 @@ describe('real Compose durable send boundary', () => {
     expect(ui.byId('progress-error-raw-0').querySelector('a,strong')).toBeNull()
   })
 })
+
+// 直到这条命令通过(2026-10-20,安全 6):提交前主屏整条等宽显示命令原文;带出去的就是这一条。
+describe('compose until: full command shown before submit', () => {
+  const setField = async (ui: Awaited<ReturnType<typeof mount>>, id: string, value: string) => { await act(() => {
+    const el = ui.byId<HTMLTextAreaElement>(id); el.value = value; el.dispatchEvent(new Event('input', { bubbles: true }))
+  }) }
+  const creates = (h: ReturnType<typeof harness>) => h.requests.filter(r => r.path === '/m/api/matter/create')
+  it('collapsed by default, only with a separate workspace; the 300-char command appears verbatim and is what gets sent', async () => {
+    const h = harness(); host.params = {}
+    const ui = await mount(); await ui.type('让测试通过')
+    await ui.click('compose-adjust')
+    expect(ui.byId('compose-until')).toBeNull()
+    await ui.click('compose-isolation')
+    expect(ui.byId('compose-until-section')).toBeNull()
+    await ui.click('compose-until')
+    expect(ui.byId('compose-until-section').textContent).toContain('没开放行规则时，执行者每一步照样要你点。')
+    const head = 'cd pkg && bun run test -- --grep "a b" | tee out.log; '
+    const cmd = head + 'x'.repeat(300 - head.length)
+    await setField(ui, 'compose-until-command', cmd)
+    await ui.click('compose-until-more')
+    expect(ui.byId('compose-until-rounds').textContent).toBe('4 轮')
+    expect(ui.byId('compose-until-confirm-command').textContent).toBe(cmd)
+    expect(host.sources).toContainEqual({ text: cmd, selectable: true, id: 'compose-until-confirm-command' })
+    expect(ui.byId('compose-until-confirm').textContent).toContain('最多 4 轮')
+    await ui.click('compose-send')
+    expect(creates(h)[0]?.body).toMatchObject({ target: { kind: 'project', isolation: 'worktree' }, until: { command: cmd, maxRounds: 4 } })
+  })
+  it('a bad command locks submit instead of silently dropping it; turning the workspace off hides it and sends none', async () => {
+    const h = harness(); host.params = {}
+    const ui = await mount(); await ui.type('让测试通过')
+    await ui.click('compose-adjust'); await ui.click('compose-isolation'); await ui.click('compose-until')
+    await setField(ui, 'compose-until-command', 'x'.repeat(301))
+    expect(ui.byId('compose-until-error').textContent).toBe('命令最多 300 字。')
+    expect(ui.byId('compose-until-confirm')).toBeNull()
+    expect(ui.byId<HTMLButtonElement>('compose-send').disabled).toBe(true)
+    await ui.click('compose-isolation')
+    expect(ui.byId('compose-until')).toBeNull()
+    expect(ui.byId<HTMLButtonElement>('compose-send').disabled).toBe(false)
+    await ui.click('compose-send')
+    expect(creates(h)[0]?.body).not.toHaveProperty('until')
+  })
+  it('until_requires_worktree ⇒ its own plain sentence', async () => {
+    const h = harness(); host.params = {}
+    h.setCreate(() => ok({ ok: false, error: 'until_requires_worktree' }, 422))
+    const ui = await mount(); await ui.type('让测试通过')
+    await ui.click('compose-adjust'); await ui.click('compose-isolation'); await ui.click('compose-until')
+    await setField(ui, 'compose-until-command', 'bun run test')
+    await ui.click('compose-send')
+    expect(ui.byId('compose-untilNeedsWorktree').textContent).toContain('只能用在独立工作区里')
+  })
+})

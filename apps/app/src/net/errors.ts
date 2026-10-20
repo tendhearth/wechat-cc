@@ -29,6 +29,8 @@ const SPECIFIC: ReadonlyMap<string, BackendCode> = new Map<string, BackendCode>(
   // 终端里的会话(2026-10-14):终端自己在问(主人在电脑前,没开码)/ 会话已结束 / 在别的电脑上(手机这口 v1 不转)。
   // 按住说话(2026-10-18):电脑上没配语音转文字 / 网络守护没放行 / 服务失败或太慢 / 没听出字 / 录音太大。
   ['stt_not_configured', 'stt_not_configured'], ['stt_blocked', 'stt_blocked'], ['stt_failed', 'stt_failed'], ['stt_timeout', 'stt_failed'], ['no_speech', 'no_speech'], ['audio_too_large', 'too_large'],
+  // 做到条件成立为止(2026-10-20):检查命令格式不对 / 没开独立工作区 / 免审执行者不收。invalid_until 必须在 `invalid_` 前缀规则之前判。
+  ['invalid_until', 'until_invalid'], ['until_requires_worktree', 'until_requires_worktree'], ['until_unattended_unsupported', 'until_unattended'],
   ['cli_not_actionable', 'cli_not_actionable'], ['cli_session_ended', 'cli_ended'], ['cli_session_remote', 'cli_remote'],
 ])
 const errOf = (body: unknown): string | null => {

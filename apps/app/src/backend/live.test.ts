@@ -159,6 +159,14 @@ describe('LiveBackend 提交', () => {
     expect(reqs[0]).toMatchObject({ retry: true, body: { requestId: REQ, text: 't', target: { kind: 'project', projectId: 'p-0123456789abcdef0123' }, providerId: 'claude' } })
     expect(reqs[1]?.body.target).toEqual({ kind: 'managed' })
   })
+  it('交办带 until(10-20):只随独立工作区发,命令原文原样;没开独立工作区 ⇒ 不发', async () => {
+    const { b, reqs } = harness({ 'POST /m/api/matter/create': ok({ ok: true, receipt: RECEIPT, task: WB_TASK }, 202) })
+    const until = { command: 'bun run test -- --grep "a b"', maxRounds: 4 }
+    await b.create({ requestId: REQ, text: 't', projectId: 'p-0123456789abcdef0123', isolation: true, until })
+    await b.create({ requestId: REQ, text: 't', projectId: 'p-0123456789abcdef0123', until })
+    expect(reqs[0]?.body).toMatchObject({ target: { kind: 'project', isolation: 'worktree' }, until })
+    expect(reqs[1]?.body).not.toHaveProperty('until')
+  })
   it('交办超时 ⇒ 按 requestId 查一次回执:查到当成功,查不到仍是 timeout', async () => {
     const found = harness({ 'POST /m/api/matter/create': new Error('timeout'), 'GET /m/api/matter/create-receipt': ok({ ok: true, receipt: RECEIPT, task: WB_TASK }) })
     expect(await found.b.create({ requestId: REQ, text: 't' })).toEqual({ matterId: ID })

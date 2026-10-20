@@ -32,13 +32,16 @@ export function composeOutcome(error: string): Exclude<ComposeOutcome, 'busy' | 
     case 'images_unsupported': return 'imagesUnsupported'
     case 'worktree_not_git': return 'notGit'
     case 'worktree_base_missing': return 'baseMissing'
+    case 'until_invalid': return 'untilInvalid'
+    case 'until_requires_worktree': return 'untilNeedsWorktree'
+    case 'until_unattended': return 'untilUnattended'
     default: return 'refused'
   }
 }
 
 export type ComposeOutcome = 'failed' | 'refused' | 'uncertain' | 'busy' | 'ccBusy' | 'tooLong' | 'revoked'
   | 'sessionBusy' | 'folderBusy' | 'providerMissing' | 'folderMissing' | 'quota' | 'sessionChanged' | 'sessionEmpty'
-  | 'imagesGone' | 'imagesUnsupported' | 'notGit' | 'baseMissing'
+  | 'imagesGone' | 'imagesUnsupported' | 'notGit' | 'baseMissing' | 'untilInvalid' | 'untilNeedsWorktree' | 'untilUnattended'
 
 /** 页内提示前面的状态点:没送到 / 送不了 ⇒ 红;不知道送没送到 ⇒ 灰;只是要等一等 ⇒ 琥珀。文字本身一律 inkSoft。 */
 export function composeOutcomeDot(o: ComposeOutcome): 'bad' | 'unknown' | 'warn' {
@@ -70,5 +73,8 @@ export function composeOutcomeText(o: ComposeOutcome, lang: Lang, provider: stri
     case 'imagesUnsupported': return t(lang, 'chat.imagesUnsupported')
     case 'notGit': return t(lang, 'compose.notGit')
     case 'baseMissing': return t(lang, 'compose.baseMissing')
+    case 'untilInvalid': return t(lang, 'compose.untilInvalid')
+    case 'untilNeedsWorktree': return t(lang, 'compose.untilNeedsWorktree')
+    case 'untilUnattended': return t(lang, 'compose.untilUnattended')
   }
 }

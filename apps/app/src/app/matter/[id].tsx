@@ -37,6 +37,7 @@ import { HANDOFF_RECHECK, handoffBlock, handoffErrorDot, handoffErrorText, hando
 import { uuid } from '../../net/uuid'
 import { progressView, canStop } from '../../view/progress'
 import { inputRows } from '../../view/matter-input'
+import { untilLine } from '../../view/until'
 
 const NO_INPUTS: readonly MatterInputT[] = []
 
@@ -128,6 +129,7 @@ export default function Matter() {
   }
   const d = detail.data
   const v = progressView(d, insight.data ?? null, changes.data ?? null, !!insight.error && !insight.data)
+  const untilRow = d.task?.until ? untilLine(d.task.until, lang) : null
   const agents = matterAgents(d)
   // 出生地(2026-10-19):只画建这件事的那个表面;不知道 ⇒ 不画
   const origin = matterOrigin(d.matter.origin)
@@ -217,6 +219,15 @@ export default function Matter() {
           </View>
         ) : null}
         <View testID="progress-status"><StatusPill status={v.status} /></View>
+        {untilRow ? (
+          // 直到…通过(10-20):状态在前、不截(命令再长也看得见结果);命令等宽,这里不是确认处,可以截;整句给读屏
+          <View testID="progress-until" accessible accessibilityLabel={untilRow.accessibilityLabel} style={{ gap: 2 }}>
+            <Txt testID="progress-until-status" role="meta" tone="inkSoft">{untilRow.status}</Txt>
+            <Txt role="meta" tone="inkSoft" numberOfLines={2}>
+              {untilRow.before}<Txt role="code" tone="ink" content="user">{untilRow.command}</Txt>{untilRow.after}
+            </Txt>
+          </View>
+        ) : null}
         {d.task?.error === 'execution_model_unsupported' ? <Txt testID="progress-model-guidance" role="meta" tone="inkSoft">{t(lang, 'progress.modelUnavailable')}</Txt> : null}
         {d.nativeStart ? (
           // 接过来、还没发第一句的电脑会话(spec D12):第一句会怎样 + 先让原来那个停下;发过第一句就没有了
