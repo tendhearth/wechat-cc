@@ -6,7 +6,7 @@ import { formatOverseerToday } from '../core/overseer-today'
 import { makeJobsStore, summarizeJobs } from '../core/scheduled-jobs-store'
 import { registerScheduledJobs } from './scheduled-jobs/runner'
 import { makeJobsCommand, chainReplyHandlers } from './scheduled-jobs/command'
-import { appBundleHasCalendarUsage, makeCalendar, makeCalendarCommand } from './calendar/calendar'
+import { agendaReplyText, appBundleHasCalendarUsage, makeCalendar, makeCalendarCommand } from './calendar/calendar'
 import { pickJobExecutor } from './wiring/tick-bodies'
 import { makeMatterStore } from '../core/matters/store'
 if (!process.env.CLAUDE_CODE_ENTRYPOINT) { process.env.CLAUDE_CODE_ENTRYPOINT = 'sdk-ts' }
@@ -861,13 +861,15 @@ export async function bootDaemon(opts: BootDaemonOpts): Promise<DaemonHandle> {
       briefPrefs,
     })
     // 读日历和提醒(只读,spec 2026-10-20-calendar-read-design):默认关;「日历 开」才请求授权(Mac 上弹框)。
-    // 只进主人的轮次:早报素材 + 「日历」命令(都只认主人);不给访客 / 定时会话工具面 / 社交。
+    // 只进主人的轮次:早报素材 + 「日历」命令 + admin 档的 calendar_agenda 工具;不给访客 / trusted / 定时会话工具面 / 社交。
     const calendar = makeCalendar({
       stateDir, run: defaultRunner, platform: process.platform,
       bundleHasUsage: () => appBundleHasCalendarUsage(process.execPath),
       now: () => Date.now(), timezone: () => loadCompanionConfig(stateDir).timezone ?? 'Asia/Shanghai',
       log: (t, l) => log(t, l),
     })
+    // CC 的 calendar_agenda 工具(admin 档,只读):与「日历」命令同一段话。
+    internalApi.setCalendarAgenda((offset) => agendaReplyText(calendar, offset))
     const calendarCommand = makeCalendarCommand({
       calendar,
       isOwner: (chatId) => resolveAdminChatId(loadAccess(), loadCompanionConfig(stateDir), null) === chatId,

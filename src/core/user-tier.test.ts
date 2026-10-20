@@ -225,6 +225,8 @@ describe('classifyToolUse', () => {
     // 终端会话列表读的是主人的私事:admin-only,不能落到 fs_read 默认值(trusted 也有 fs_read)。
     expect(classifyToolUse('mcp__wechat__terminal_sessions', {})).toBe('daemon_introspect')
     expect(classifyToolUse('mcp__wechat__today_digest', {})).toBe('daemon_introspect')
+    // 读日历(对标 #8):日程是主人的私事,同理 admin-only(trusted / guest / 定时会话都拿不到)。
+    expect(classifyToolUse('mcp__wechat__calendar_agenda', {})).toBe('daemon_introspect')
   })
   it('session_release / model_set / daemon_restart → daemon_remediate', () => {
     expect(classifyToolUse('mcp__wechat__session_release', {})).toBe('daemon_remediate')

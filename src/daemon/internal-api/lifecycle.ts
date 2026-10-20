@@ -15,6 +15,7 @@ export interface InternalApiLifecycle extends Lifecycle {
   setCliEvents(hub: NonNullable<InternalApiDeps['cliEvents']>): void
   setCliPermissions(relay: NonNullable<InternalApiDeps['cliPermissions']>): void
   setOverseerToday(fn: NonNullable<InternalApiDeps['overseerToday']>): void
+  setCalendarAgenda(fn: NonNullable<InternalApiDeps['calendarAgenda']>): void
   setLetters(rt: NonNullable<InternalApiDeps['letters']>): void
   setCliHooks(svc: NonNullable<InternalApiDeps['cliHooks']>): void
   getPresence(): Promise<import('../../core/companion-presence').Presence | null>
@@ -71,6 +72,7 @@ export async function registerInternalApi(deps: InternalApiDeps): Promise<Intern
     setCliEvents: (hub) => api.setCliEvents(hub),
     setCliPermissions: (relay) => api.setCliPermissions(relay),
     setOverseerToday: (fn) => api.setOverseerToday(fn),
+    setCalendarAgenda: (fn) => api.setCalendarAgenda(fn),
     setLetters: (rt) => api.setLetters(rt),
     setCliHooks: (svc) => api.setCliHooks(svc),
     getPresence: () => api.getPresence(),

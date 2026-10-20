@@ -132,6 +132,13 @@ const REASON_TEXT: Record<Exclude<AgendaResult, { ok: true }>['reason'], string>
   read_failed: '这次没读出来,过一会儿再试。',
 }
 
+/** 某一天的安排说成一段话(「日历」命令与 CC 的 calendar_agenda 工具共用):没开 / 没授权 / 读失败照实说,不说成没安排。 */
+export async function agendaReplyText(calendar: Calendar, offset: 0 | 1): Promise<string> {
+  const day = offset === 0 ? '今天' : '明天'
+  const a = await calendar.agenda(offset)
+  return a.ok ? (a.text ? `${day}的安排:\n${a.text}` : `${day}日历和提醒事项里都没有安排。`) : REASON_TEXT[a.reason]
+}
+
 /** 微信 / 桌面文本命令「日历 [今天|明天|开|关|状态]」:只认主人。 */
 export function makeCalendarCommand(deps: { calendar: Calendar; isOwner: (chatId: string) => boolean; say: (chatId: string, text: string) => Promise<unknown> }): ReplyHandler {
   return {
@@ -147,9 +154,7 @@ export function makeCalendarCommand(deps: { calendar: Calendar; isOwner: (chatId
         await deps.say(chatId, `日历:${deps.calendar.enabled() ? '开着' : '关着'};系统权限:${word}。`)
         return true
       }
-      const day = c.offset === 0 ? '今天' : '明天'
-      const a = await deps.calendar.agenda(c.offset)
-      await deps.say(chatId, a.ok ? (a.text ? `${day}的安排:\n${a.text}` : `${day}日历和提醒事项里都没有安排。`) : REASON_TEXT[a.reason])
+      await deps.say(chatId, await agendaReplyText(deps.calendar, c.offset))
       return true
     },
   }

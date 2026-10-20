@@ -91,7 +91,9 @@ export function wireInstructions(
       peerProviderId: capabilitiesFor(providerId).defaultPeer ?? parts.defaultProviderId,
       companionEnabled: deps.ilink.companion.status().enabled,
       delegateAvailable: !!parts.plugins.delegateStdioByProvider[providerId],
-      daemonOpsAvailable: tierProfile.allow.has('daemon_introspect'),
+      // 同 socialAvailable:agy 的 wechat MCP 钉死 trusted,diagnostic_* / today_digest / calendar_agenda 都没注册 ——
+      // 提示词里不能写着有(执行者会以为工具坏了反复去试,或跟主人说「查不到」)。
+      daemonOpsAvailable: tierProfile.allow.has('daemon_introspect') && capabilitiesFor(providerId).adminMcpTools,
       fileLocateAvailable: tierProfile.allow.has('file_locate'),
       // Tracks tool registration exactly, same posture as fileLocateAvailable:
       // `social_act` is ADMIN_ONLY (user-tier.ts), matching wechat-mcp/main.ts's
