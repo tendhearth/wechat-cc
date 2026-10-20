@@ -23,12 +23,18 @@ export default function Activity() {
   const router = useRouter()
   const { backend } = useBackendCtx()
   const q = useQuery('activity', () => backend.activity(), { refreshOnMount: true })
-  // 「再早一点」翻到的页:第一页一换(重拉了)就作废,从新的游标重新翻
+  // 「再早一点」翻到的页:老的那几页不会变,第一页重拉(重连 / 回前台)时留着 —— mergeActivity 按 id 去重再排序,
+  // 不把主人翻到的地方冲掉。只有换了后端(换配对 / 撤销 / 演示)才清空,并让旧配对在飞的结果作废。
   const [older, setOlder] = useState<{ items: ActivityItemT[]; next: string | null } | null>(null)
   const [loadingMore, setLoadingMore] = useState(false)
   const [moreFailed, setMoreFailed] = useState(false)
   const gen = useRef(0)
-  useEffect(() => { gen.current += 1; setOlder(null); setMoreFailed(false); setLoadingMore(false) }, [q.data])
+  const seenBackend = useRef(backend)
+  useEffect(() => {
+    if (seenBackend.current === backend) return
+    seenBackend.current = backend
+    gen.current += 1; setOlder(null); setMoreFailed(false); setLoadingMore(false)
+  }, [backend])
 
   const first = q.data
   const items = first ? mergeActivity([first.items, older?.items ?? []]) : []

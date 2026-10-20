@@ -56,6 +56,31 @@ describe('CC 做过的事 视图', () => {
   })
 })
 
+// 新 daemon 加了 App 不认得的 kind / ref.type(PR 436 把协议里这两个改成 z.string()):不能整页失败,
+// 不认得的 kind ⇒ 照样一行字;不认得的 ref.type ⇒ 不能点。协议还是 enum 时(436 未合)跳过解析那一半。
+const MIXED = { ok: true, next: null, degraded: [], items: [
+  { id: 'n1', kind: 'brand_new_kind', at: NOW - 1000, title: '新的一类事' },
+  { id: 'n2', kind: 'together', at: NOW - 2000, title: '一起做「x」做完了', ref: { type: 'brand_new_ref', id: 'r1' } },
+  { id: 'n3', kind: 'letter', at: NOW - 3000, title: '给你寄了一封信:…', ref: { type: 'letter', id: 'l1' } },
+] }
+const tolerant = PHONE_API_SCHEMAS['GET /m/api/activity']!.safeParse(MIXED).success
+
+describe('CC 做过的事 不认得的 kind / ref.type', () => {
+  it('视图:不认得的 kind 照样一行;不认得的 ref.type 不能点;认得的照常', () => {
+    const rows = activityGroups(MIXED.items as unknown as ActivityItemT[], NOW, 'zh-Hans').flatMap(g => g.rows)
+    expect(rows.map(r => [r.id, r.title, r.href])).toEqual([
+      ['n1', '新的一类事', null], ['n2', '一起做「x」做完了', null], ['n3', '给你寄了一封信:…', '/letters/l1'],
+    ])
+  })
+  it.skipIf(!tolerant)('过真的 PHONE_API_SCHEMAS(z.string() 之后)再进视图,同样的结果', () => {
+    const p = PHONE_API_SCHEMAS['GET /m/api/activity']!.safeParse(MIXED)
+    expect(p.success).toBe(true)
+    const data = p.data as { items: ActivityItemT[] }
+    const rows = activityGroups(data.items, NOW, 'zh-Hans').flatMap(g => g.rows)
+    expect(rows.map(r => r.href)).toEqual([null, null, '/letters/l1'])
+  })
+})
+
 describe('CC 做过的事 演示后端', () => {
   it('九类都有、过 GET /m/api/activity schema;有一条没发出去的主动说话;ref 指向演示里真有的东西', async () => {
     const b = makeDemoBackend({ lang: 'zh-Hans' })

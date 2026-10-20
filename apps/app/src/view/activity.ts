@@ -10,9 +10,10 @@ export type ActivityView = { groups: ActivityGroup[]; empty: string | null; part
 const pad = (n: number) => String(n).padStart(2, '0')
 const dayKey = (d: Date) => `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`
 
-/** 点一行去哪:一起做 ⇒ 那件事;终端 ⇒ 那条会话;信 ⇒ 那封信。别的(或 id 空)不能点。 */
-export function activityHref(ref: ActivityItemT['ref']): string | null {
-  if (!ref || !ref.id) return null
+/** 点一行去哪:一起做 ⇒ 那件事;终端 ⇒ 那条会话;信 ⇒ 那封信。别的(新 daemon 的新 ref.type、或 id 空)不能点。
+ * 入参按 string 认:协议以后放宽成 z.string(),这里不靠 App 侧的枚举。 */
+export function activityHref(ref: { type: string; id: string } | undefined): string | null {
+  if (!ref || typeof ref.id !== 'string' || !ref.id) return null
   const id = encodeURIComponent(ref.id)
   if (ref.type === 'task') return `/matter/${id}`
   if (ref.type === 'terminal') return `/terminal/${id}`
