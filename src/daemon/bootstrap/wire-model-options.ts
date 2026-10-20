@@ -65,7 +65,7 @@ export function wireModelOptions(
     return undefined
   }
 
-  const sdkOptionsForProject = (_alias: string, path: string, tierProfile: TierProfile, chatId: string, mcpEnv?: Record<string, string>, appendInstructions?: string): Options => {
+  const sdkOptionsForProject = (_alias: string, path: string, tierProfile: TierProfile, chatId: string, mcpEnv?: Record<string, string>, appendInstructions?: string, spawnContext?: { permissionMode: PermissionMode }): Options => {
     // The per-session system prompt is assembled by the daemon's
     // `buildInstructions` thunk (see SessionManager wiring below) and arrives
     // here via SpawnContext — this builder no longer calls buildSystemPrompt,
@@ -114,7 +114,10 @@ export function wireModelOptions(
     // matrix's per-tool askUser flag asks for. Under bypassPermissions the
     // SDK won't fire canUseTool; under default mode canUseTool is what
     // gates everything not statically excluded via disallowedTools.
-    const tierOpts = tierProfileToClaudeSdkOpts(tierProfile, parts.permissionMode)
+    // 用**这一次** spawn 的权限模式(安全 10-20):session-manager 传进来的是 effectivePermissionMode 压过的
+    // (访客 / 定时任务 ⇒ strict);以前这里读的是开机时的全局模式,访客在 dangerously 的 daemon 下照样拿到
+    // bypassPermissions —— canUseTool 不触发、也没有 disallowedTools。没有 spawnContext(老调用点)⇒ 全局模式。
+    const tierOpts = tierProfileToClaudeSdkOpts(tierProfile, spawnContext?.permissionMode ?? parts.permissionMode)
     // Build canUseTool with this session's chatId baked in. Done per-call
     // (not once at bootstrap) so concurrent sessions on different chats
     // each get a closure resolving tier/mode for their OWN chatId.

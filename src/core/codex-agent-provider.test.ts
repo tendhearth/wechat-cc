@@ -817,3 +817,17 @@ describe('回复交付第 4 步:codex 的「最后的话」分段边界(每个�
     expect(CODEX_CAPABILITIES.replyText).toBe('last_segment')
   })
 })
+
+// 安全(10-20):daemon 跑 dangerously 时,本次 spawn 被压成 strict(访客 / 定时任务)⇒ 不许带 bypass 开关,
+// 否则 codex 的 dangerously_bypass_approvals_and_sandbox 会盖掉 tier 给的 read-only 沙箱。
+it('the bypass config is only set when THIS spawn is dangerously', async () => {
+  const f = makeFakeCodex()
+  const seen: Array<{ config?: Record<string, unknown> }> = []
+  const factory: CodexFactory = (cfg) => { seen.push(cfg as { config?: Record<string, unknown> }); return f.codex }
+  const p = createCodexAgentProvider({ codexFactory: factory, dangerouslyBypassApprovalsAndSandbox: true })
+  seen.length = 0   // 构造时那一个是 cheapEval 共用的实例,不算 spawn
+  await p.spawn({ alias: 'a', path: '/p' }, { tierProfile: TIER_PROFILES.guest, permissionMode: 'strict', chatId: 'guest' })
+  await p.spawn({ alias: 'b', path: '/p' }, { tierProfile: TIER_PROFILES.admin, permissionMode: 'dangerously', chatId: 'owner' })
+  expect(seen[0]?.config?.dangerously_bypass_approvals_and_sandbox).toBeUndefined()
+  expect(seen[1]?.config?.dangerously_bypass_approvals_and_sandbox).toBe(true)
+})
