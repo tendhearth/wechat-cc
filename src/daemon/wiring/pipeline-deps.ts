@@ -1046,6 +1046,8 @@ export function buildPipelineDeps(opts: PipelineDepsOpts, refs: PipelineDepsRefs
       // 额度止损:这家耗尽就不再往它送,问"交给另一位继续?";「是」就在同一文件夹给另一位新开一件。
       quotaExhausted:(id:string)=>opts.workbench!.quotaExhausted(id),
       fallbackExecutor:(id:string)=>opts.workbench!.fallbackExecutor(id),
+      // 额度恢复后接着做(2026-10-20):主人回「等恢复」⇒ 排一次,只试一次。
+      quotaResume:(id:string)=>opts.workbench!.quotaResume(id),
       watchTask:async(taskId:string,accountId:string)=>{opts.workbench!.setWechatWatch(taskId,accountId,true)},
       // 换人接着做:新那件的出生地跟着被接手的那件走(同 service/quota-handoff);那件不知道 ⇒ 也不写。
       createTask:async({fromTaskId,...input}:{path:string;providerId:string;text:string;fromTaskId?:string})=>{

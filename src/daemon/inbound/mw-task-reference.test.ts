@@ -173,6 +173,26 @@ describe('额度止损:执行者额度用完时,不再往它送,直接问"交给
     const r = await run('是')
     expect(created).toEqual([]); expect(r.nexted).toBe(true)
   })
+  it('额度恢复后接着做(2026-10-20):接管邀请里多一句「等恢复」;回「等恢复」⇒ 排一次,回话写清时刻与只试一次', async () => {
+    const asked: string[] = []
+    const { run, sent, created } = quotaOn({ quotaResume: (id) => { asked.push(id); return { ok: true as const, at: T + 27 * 60_000 } } })
+    await run('project-b 那个 codex 做的,再加一列百分比')
+    expect(sent.at(-1)).toMatch(/回「等恢复」/)
+    await run('等恢复')
+    expect(asked).toHaveLength(1)
+    expect(created).toEqual([])
+    expect(sent.at(-1)).toMatch(/额度恢复/); expect(sent.at(-1)).toMatch(/只试一次/)
+    // 之后的「是」不再算接管(已经选了等)
+    const r = await run('是')
+    expect(created).toEqual([]); expect(r.nexted).toBe(true)
+  })
+  it('没有接手的执行者时也能「等恢复」;排不了就照实说', async () => {
+    const { run, sent } = quotaOn({ fallbackExecutor: () => null, quotaResume: () => ({ ok: false as const, error: 'quota_reset_too_far' as const }) })
+    await run('project-b 那个 codex 做的,再加一列百分比')
+    expect(sent.at(-1)).toMatch(/回「等恢复」/)
+    await run('等恢复')
+    expect(sent.at(-1)).toMatch(/排不了/)
+  })
   it('没有可接的执行者(两家都没额度)⇒ 说清楚,不新开', async () => {
     const { run, sent, created } = quotaOn({ fallbackExecutor: () => null })
     await run('project-b 那个 codex 做的,再加一列百分比')

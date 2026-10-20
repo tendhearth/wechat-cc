@@ -44,11 +44,11 @@ interface Options {
   /** 变更信号中心(长轮询);不传就自建。 */
   changes?: TaskChangeHub
   /** 免审执行者的一次性确认(daemon 侧持久化);不传 ⇒ 免审执行者永远要求确认。 */
-  unattendedAck?: { get(): number | null; set(at: number): void }; scripts?: ScriptsOptions; until?: UntilOptions; rewind?: RewindOptions   // scripts / until / rewind:工作区脚本、检查命令(2026-10-20)与回退(2026-10-21)的测试旋钮,生产不传
+  unattendedAck?: { get(): number | null; set(at: number): void }; scripts?: ScriptsOptions; until?: UntilOptions; rewind?: RewindOptions; quotaResume?: QuotaResumeOptions   // scripts / until / rewind:工作区脚本、检查命令(2026-10-20)与回退(2026-10-21)的测试旋钮,生产不传;quotaResume.notify:到点没接上时告诉主人一句
 }
 import { makeRuntimeState } from './service/state'
 import { Ref } from '../../lib/lifecycle'
-import { makeReviewDomain } from './service/review'; import { makeWorktreeDomain } from './service/worktree'; import { makeScriptsDomain, type ScriptsOptions } from './service/scripts'; import { makeUntilDomain, type UntilOptions } from './service/until'; import { makeRewindDomain, type RewindOptions } from './service/rewind'
+import { makeReviewDomain } from './service/review'; import { makeWorktreeDomain } from './service/worktree'; import { makeScriptsDomain, type ScriptsOptions } from './service/scripts'; import { makeUntilDomain, type UntilOptions } from './service/until'; import { makeRewindDomain, type RewindOptions } from './service/rewind'; import { makeQuotaResumeDomain, type QuotaResumeOptions } from './service/quota-resume'
 import { makeAttachmentsDomain } from './service/attachments'
 import { makeQuotaDomain } from './service/quota'
 import { makeNoticesDomain } from './service/notices'
@@ -75,7 +75,7 @@ export function makeWorkbenchService(opts: Options) {
   const state=makeRuntimeState()
   const actions=new Ref<ServiceActions>('workbench-actions')
   const ctx:ServiceCtx={store,stateDir:opts.stateDir,state,hub:{touched,bumped,dispose:()=>changes.dispose()},deps:{ownerChatId:opts.ownerChatId,registry:opts.registry,...(opts.usage?{usage:opts.usage}:{}),...(opts.permissionTimeoutMs!==undefined?{permissionTimeoutMs:opts.permissionTimeoutMs}:{}),...(opts.permissionDecide?{permissionDecide:opts.permissionDecide}:{}),...(opts.unattendedAck?{unattendedAck:opts.unattendedAck}:{}),...(opts.nativeHistory?{nativeHistory:opts.nativeHistory}:{}),...(opts.registeredProjects?{registeredProjects:opts.registeredProjects}:{}),...(opts.defaultProvider!==undefined?{defaultProvider:opts.defaultProvider}:{}),...(opts.executionConflict?{executionConflict:opts.executionConflict}:{}),...(opts.reports?{reports:opts.reports}:{}),...(opts.recollect?{recollect:opts.recollect}:{}),...(opts.revokeSessionToken?{revokeSessionToken:opts.revokeSessionToken}:{}),...(opts.retainedIdleCloseMs!==undefined?{retainedIdleCloseMs:opts.retainedIdleCloseMs}:{}),...(opts.handoffGraceMs!==undefined?{handoffGraceMs:opts.handoffGraceMs}:{}),...(opts.matters?{matters:opts.matters}:{}),...(opts.mintSessionToken?{mintSessionToken:opts.mintSessionToken}:{}),...(opts.timeoutMs!==undefined?{timeoutMs:opts.timeoutMs}:{}),...(opts.closeTimeoutMs!==undefined?{closeTimeoutMs:opts.closeTimeoutMs}:{}),...(opts.holdBusy?{holdBusy:opts.holdBusy}:{}),...(opts.onTurnError?{onTurnError:opts.onTurnError}:{}),...(opts.writerGroupAlive?{writerGroupAlive:opts.writerGroupAlive}:{}),...(opts.bootTimeMs?{bootTimeMs:opts.bootTimeMs}:{}),...(opts.writerWatchMs!==undefined?{writerWatchMs:opts.writerWatchMs}:{}),...(opts.managedWorkspaceRoot!==undefined?{managedWorkspaceRoot:opts.managedWorkspaceRoot}:{}),...(opts.networkGate?{networkGate:opts.networkGate}:{})},ensureAccepting,...(opts.log?{log:opts.log}:{}),now:Date.now,actions}
-  const scriptsDomain=makeScriptsDomain(ctx,opts.scripts),untilDomain=makeUntilDomain(ctx,opts.until),review=makeReviewDomain(ctx),worktreeDomain=makeWorktreeDomain(ctx,{scripts:scriptsDomain})
+  const scriptsDomain=makeScriptsDomain(ctx,opts.scripts),untilDomain=makeUntilDomain(ctx,opts.until),quotaResumeDomain=makeQuotaResumeDomain(ctx,opts.quotaResume),review=makeReviewDomain(ctx),worktreeDomain=makeWorktreeDomain(ctx,{scripts:scriptsDomain})
   const attachmentsDomain=makeAttachmentsDomain(ctx)
   const {continuationAttachmentScope,selectAttachments,combinedAttachments,handoffAttachments}=attachmentsDomain
   const quotaDomain=makeQuotaDomain(ctx)
@@ -96,7 +96,7 @@ export function makeWorkbenchService(opts: Options) {
   const executeDomain=makeExecuteDomain(ctx,{admission:admissionDomain,attachments:attachmentsDomain,quota:quotaDomain,view:viewDomain,native:nativeDomain,inputs:inputsDomain,lifecycle:lifecycleDomain,notices:noticesDomain,artifacts:artifactsDomain,scripts:scriptsDomain,rewind:rewindDomain})
   const entryDomain=makeEntryDomain(ctx,{execute:executeDomain,view:viewDomain,admission:admissionDomain,quota:quotaDomain,scripts:scriptsDomain}),quotaHandoffDomain=makeQuotaHandoffDomain(ctx,{execute:executeDomain,quota:quotaDomain})
   store.recover()
-  store.liveInputs.recover();lifecycleDomain.adoptWriters();scriptsDomain.recover();void rewindDomain.recover()
+  store.liveInputs.recover();lifecycleDomain.adoptWriters();scriptsDomain.recover();void rewindDomain.recover();quotaResumeDomain.recover()
 
   function ensureAccepting() {
     if (state.stopping) throw new Error('workbench_stopping')
@@ -113,7 +113,7 @@ export function makeWorkbenchService(opts: Options) {
     providerQuota:quotaDomain.providerQuota,
     quotaExhausted:quotaDomain.quotaExhausted,
     /** 额度耗尽时"交给谁继续"的默认人选;null = 没有可接的。quotaHandoff / handOff:手机确认卡把一件事交出去(service/quota-handoff.ts)。 */
-    fallbackExecutor(exhaustedId:string):string|null{return fallbackExecutor(exhaustedId)},...quotaHandoffDomain.api,
+    fallbackExecutor(exhaustedId:string):string|null{return fallbackExecutor(exhaustedId)},...quotaHandoffDomain.api,...quotaResumeDomain.api,   // api:额度恢复后接着做(service/quota-resume.ts)
     contextAvailable:noticesDomain.contextAvailable,
     notificationEligible:noticesDomain.notificationEligible,
     setWechatWatch:noticesDomain.setWechatWatch,
@@ -151,7 +151,7 @@ export function makeWorkbenchService(opts: Options) {
     returnReviewFiles:review.returnReviewFiles,revertReviewFile:review.revertReviewFile,worktreeAction:worktreeDomain.worktreeAction,rewindPreview:rewindDomain.rewindPreview,rewind:rewindDomain.rewind,undoRewind:rewindDomain.undoRewind,rewindResolve:rewindDomain.rewindResolve,pruneRewindRefs:rewindDomain.pruneRefs,scriptAction:scriptsDomain.scriptAction,approveScripts:scriptsDomain.approveScripts,   // 工作区脚本(2026-10-20):运行 / 停下 / 批准
     resolvePermission:inputsDomain.resolvePermission,
     async handleWechat(chatId:string,text:string,identity?:WechatMessageIdentity):Promise<WechatWorkbenchReply|null>{return wechatControl(chatId,text,identity)},
-    shutdown:()=>Promise.all([rewindDomain.shutdown(),scriptsDomain.shutdown(),untilDomain.shutdown(),lifecycleDomain.shutdown()]).then(()=>{}),   // 工作区脚本和会话一起停(TERM → 宽限 → KILL)
+    shutdown:()=>Promise.all([rewindDomain.shutdown(),scriptsDomain.shutdown(),untilDomain.shutdown(),Promise.resolve(quotaResumeDomain.shutdown()),lifecycleDomain.shutdown()]).then(()=>{}),   // 工作区脚本和会话一起停(TERM → 宽限 → KILL)
     changes: { onChange: (cb: (taskId: string, seq: number) => void) => changes.onChange(cb),
       /** store.version 才是权威:hub 缓存可能因为一笔回滚的事务而"幻影提前",落库的 seq 从不会。
        * 提前发现(persisted>since)时也顺手 publish 一下,把挂在旧值上的 waiter 一并叫醒,

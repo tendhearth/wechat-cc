@@ -104,7 +104,8 @@ export function makeNoticesDomain(ctx:ServiceCtx):NoticesDomain {
     if(running.stopNotice)reply=running.stopNotice
     else if(status==='failed'&&(error==='provider_quota_exhausted'||error==='provider_rate_limited')){
       const code=error,other=ctx.actions.deref('notices').fallbackExecutor(running.task.providerId)
-      reply=`${executionFailureMessage(code)}${other?`\n交给 ${providerDisplayName(other)} 继续？回「是」我就把这件事交给它。`:''}`
+      // 额度恢复后接着做(2026-10-20):多一个选项「等恢复」—— 主人回这三个字,微信管家就排一次(只试一次)。
+      reply=`${executionFailureMessage(code)}${other?`\n交给 ${providerDisplayName(other)} 继续？回「是」我就把这件事交给它。`:''}\n或者回「等恢复」，额度恢复后我自己接着做（只试一次）。`
     }else if(status==='failed'&&error&&PROVIDER_FAILURE_NOTICE.has(error)){
       // 认证 / 网络 / 服务端:微信里说老实的原因,而不是最后一段(可能是半截的)回复正文。
       reply=executionFailureMessage(error)

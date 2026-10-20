@@ -62,6 +62,8 @@ it('已订阅时,失败通知带原因和"交给另一位继续?"',async()=>{
   expect(notices[0]!.kind).toBe('failed')
   expect(notices[0]!.text).toMatch(/额度/)
   expect(notices[0]!.text).toMatch(/交给 Claude 继续/)
+  // 额度恢复后接着做(2026-10-20):多一个「等恢复」(只试一次)
+  expect(notices[0]!.text).toMatch(/回「等恢复」/)
 })
 
 it('评审 #5:额度错误到达时就登记,不等结算;之后任何成功回合即清除',async()=>{

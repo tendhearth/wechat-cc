@@ -35,6 +35,8 @@ export interface TaskReferenceMwDeps {
   /** 主人从微信点名某件事时顺手开提醒。直调服务,不走 handleWechat —— 后者按消息身份记回执,
    *  两条命令同一个 msgId 会撞成 control_conflict(评审 2026-09-16)。 */
   watchTask?(taskId: string, accountId: string): Promise<void>
+  /** 额度恢复后接着做(2026-10-20):主人回「等恢复」⇒ 排一次(只试一次)。缺省 ⇒ 不提这个选项。 */
+  quotaResume?(taskId: string): { ok: true; at: number } | { ok: false; error: string }
 }
 
 const PHASE_NAME: Record<string, string> = { queued: '排队中', working: '进行中', replied: '已答复', failed: '需要处理', cancelled: '已停止', interrupted: '已中断' }
@@ -49,10 +51,13 @@ const YES = /^\s*(是|是的|好|好的|可以|行|嗯|交给\s*\S{1,12}|换\s*\
 const NO = /^\s*(不用|不要|算了|不了|先不|先放着)\s*[。.!！]?\s*$/
 const BARE_ACK = /^\s*(是|是的|好|好的|可以|行|嗯)\s*[。.!！]?\s*$/
 const QUOTA_CODES = new Set(['provider_quota_exhausted', 'provider_rate_limited'])
+const WAIT = /^\s*(等恢复|恢复后接着做|等额度恢复|等它恢复)(吧)?\s*[。.!！]?\s*$/
+const WAIT_REFUSED: Record<string, string> = { quota_reset_too_far: '要一天以后才恢复', quota_reset_unknown: '不知道什么时候恢复', not_quota_failure: '它现在不是因为额度停下的' }
 type Offer = { task: TaskCandidate; to: string; request: string; expiresAt: number }
 /** 管家的只读判定结果(decide 算,mw 执行;路由阶段可以提前算好随 intent.data 带过来)。 */
 export type Decision =
   | { kind: 'takeover-yes' | 'takeover-no' | 'takeover-bare'; candidates: TaskCandidate[]; offer: Offer }
+  | { kind: 'quota-wait'; candidates: TaskCandidate[]; task: TaskCandidate }
   | { kind: 'choice-invalid' | 'choice-expired'; candidates: TaskCandidate[] }
   | { kind: 'ambiguous'; candidates: TaskCandidate[]; options: TaskCandidate[]; text: string }
   | { kind: 'set_focus'; candidates: TaskCandidate[]; taskId: string }
@@ -92,6 +97,8 @@ export function makeMwTaskReference(deps: TaskReferenceMwDeps): TaskReferenceMw 
   const watched = new Set<string>()
   /** 已经问过"交给 X 继续?"、等主人一个字的接管。 */
   const takeover = new Map<string, { task: TaskCandidate; to: string; request: string; expiresAt: number }>()
+  /** 上一句问过「等恢复?」:哪一件、到什么时候还算数。 */
+  const waitOffer = new Map<string, { task: TaskCandidate; expiresAt: number }>()
   /** 已接管:源任务 → 新任务(评审 #4:不落账就会重开、焦点还留在死任务上)。 */
   const takenOver = new Map<string, TaskCandidate>()
 
@@ -105,14 +112,16 @@ export function makeMwTaskReference(deps: TaskReferenceMwDeps): TaskReferenceMw 
       return
     }
     const to = deps.fallbackExecutor?.(task.providerId) ?? null
+    const wait = deps.quotaResume ? '回「等恢复」,额度恢复后我自己接着做(只试一次)。' : ''
+    if (deps.quotaResume) waitOffer.set(chatId, { task, expiresAt: now() + TAKEOVER_TTL_MS })
     const reason = q.kind === 'quota' ? `${providerName(task.providerId)} 的额度已用完（约 ${minutesLeft(q)} 分钟后恢复）` : `${providerName(task.providerId)} 暂时限流（约 ${minutesLeft(q)} 分钟）`
     if (!to || !deps.createTask) {
       takeover.delete(chatId)
-      await deps.sendMessage(chatId, `${header(task)}\n${reason}，这一轮没送出去。现在没有可以接手的执行者，等它恢复后再说一次就行。`)
+      await deps.sendMessage(chatId, `${header(task)}\n${reason}，这一轮没送出去。现在没有可以接手的执行者，${wait || '等它恢复后再说一次就行。'}`)
       return
     }
     takeover.set(chatId, { task, to, request, expiresAt: now() + TAKEOVER_TTL_MS })
-    await deps.sendMessage(chatId, `${header(task)}\n${reason}，这一轮没送出去。\n交给 ${providerName(to)} 继续？回「是」我就把这件事交给它；回「不用」就先放着。`)
+    await deps.sendMessage(chatId, `${header(task)}\n${reason}，这一轮没送出去。\n交给 ${providerName(to)} 继续？回「是」我就把这件事交给它；回「不用」就先放着。${wait ? `\n或者${wait}` : ''}`)
   }
   async function doTakeover(chatId: string, t: { task: TaskCandidate; to: string; request: string }): Promise<void> {
     const text = quotaTakeoverText(t.task.providerId, t.task.title, t.request)
@@ -153,6 +162,12 @@ export function makeMwTaskReference(deps: TaskReferenceMwDeps): TaskReferenceMw 
     // 上一句问了"交给 X 继续?",这句回了一个字。
     const offer = takeover.get(msg.chatId)
     const offerLive = !!offer && offer.expiresAt > now()
+    const wo = waitOffer.get(msg.chatId)
+    if (WAIT.test(text) && deps.quotaResume) {
+      if (wo && wo.expiresAt > now()) return { kind: 'quota-wait', candidates, task: wo.task }
+      const recent = candidates.filter(c => QUOTA_CODES.has(c.error ?? '') && c.updatedAt >= now() - TAKEOVER_TTL_MS && !takenOver.has(c.id))
+      if (recent.length === 1) return { kind: 'quota-wait', candidates, task: recent[0]! }
+    }
     if (offerLive) {
       if (YES.test(text)) return { kind: 'takeover-yes', candidates, offer: offer! }
       if (NO.test(text)) return { kind: 'takeover-no', candidates, offer: offer! }
@@ -190,8 +205,17 @@ export function makeMwTaskReference(deps: TaskReferenceMwDeps): TaskReferenceMw 
     if (!d) { await next(); return }
     const identity: WechatMessageIdentity = { accountId: msg.accountId, userId: msg.userId, msgId: msg.msgId, createTimeMs: msg.createTimeMs }
     ctx.consumedBy = 'workbench'
-    if (d.kind === 'takeover-yes') { takeover.delete(msg.chatId); await doTakeover(msg.chatId, d.offer); return }
-    if (d.kind === 'takeover-no') { takeover.delete(msg.chatId); await deps.sendMessage(msg.chatId, '好，先放着。等额度恢复再说一声就行。'); return }
+    if (d.kind === 'quota-wait') {
+      takeover.delete(msg.chatId); waitOffer.delete(msg.chatId)
+      const r = deps.quotaResume!(d.task.id)
+      const at = r.ok ? new Date(r.at).toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit', hour12: false }) : ''
+      await deps.sendMessage(msg.chatId, r.ok
+        ? `${header(d.task)}\n好,约 ${at} 额度恢复,我到时候接着做(只试一次;没接上会告诉你,不会反复试)。`
+        : `${header(d.task)}\n这件现在排不了(${WAIT_REFUSED[r.error] ?? r.error}),等它恢复后再说一声就行。`)
+      return
+    }
+    if (d.kind === 'takeover-yes') { takeover.delete(msg.chatId); waitOffer.delete(msg.chatId); await doTakeover(msg.chatId, d.offer); return }
+    if (d.kind === 'takeover-no') { takeover.delete(msg.chatId); waitOffer.delete(msg.chatId); await deps.sendMessage(msg.chatId, '好，先放着。等额度恢复再说一声就行。'); return }
     if (d.kind === 'takeover-bare') { await doTakeover(msg.chatId, d.offer); return }
     if (d.kind === 'choice-invalid') { pending.delete(msg.chatId); ctx.consumedBy = undefined; await next(); return }
     if (d.kind === 'choice-expired') { pending.delete(msg.chatId); await deps.sendMessage(msg.chatId, '刚才那个选择已经过期了。你指的是哪件事？说项目名或标题就行。'); return }
