@@ -139,7 +139,10 @@ export function makeCliPermissionRelay(deps: CliPermissionRelayDeps): CliPermiss
       }
       const local = !req.machine || !deps.localMachine || req.machine === deps.localMachine
       if (!deps.decide || opts?.forwarded || !local) { askOwner(); return { status: 'pending', hash } }
-      void deps.decide(req).catch(() => 'ask' as const).then((verdict) => {
+      // 下一个宏任务才开始判:hook 的 POST 先拿到 pending,判规则里哪怕有同步的活也不压在这一路上(终审 10-19)。
+      const decide = deps.decide
+      void new Promise<void>(res => { const t = setTimeout(res, 0); (t as { unref?: () => void }).unref?.() })
+        .then(() => (entries.get(hash)?.status === 'pending' ? decide(req) : 'ask' as const)).catch(() => 'ask' as const).then((verdict) => {
         if (entries.get(hash)?.status !== 'pending') return   // 等规则期间码已作废(会话又有了动静)
         if (verdict === 'allow' || verdict === 'deny') {
           deps.log('CLI_PERMISSION', `${verdict} by rules hash=${hash}`)

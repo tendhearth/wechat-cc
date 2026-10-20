@@ -256,10 +256,31 @@ describe('CliPermissionRelay × 放行规则', () => {
     let release!: (v: 'allow') => void
     const { relay, settled } = withDecide(() => new Promise(r => { release = r }))
     const r = await relay.open(req()) as { hash: string }
+    await flush()
     relay.expireSession('abc123-xyz')
     release('allow')
     await flush()
     expect(relay.status(r.hash)).toBe('timeout')
     expect(settled).toEqual(['timeout'])
+  })
+})
+
+describe('CliPermissionRelay × 放行规则 × 终审', () => {
+  it('decide starts only after open() has returned pending (nothing synchronous on the hook path)', async () => {
+    const decide = vi.fn(async () => 'ask' as const)
+    const relay = makeCliPermissionRelay({ ask: vi.fn(async () => 'allow' as const), presence: async () => 'away', projectName: c => c, onRelayed: () => {}, log: () => {}, decide })
+    const r = await relay.open(req())
+    expect(r.status).toBe('pending')
+    expect(decide).not.toHaveBeenCalled()
+    await new Promise(res => setTimeout(res, 5))
+    expect(decide).toHaveBeenCalledTimes(1)
+  })
+  it('code already void before the rules start ⇒ decide is not even called', async () => {
+    const decide = vi.fn(async () => 'allow' as const)
+    const relay = makeCliPermissionRelay({ ask: vi.fn(async () => 'allow' as const), presence: async () => 'away', projectName: c => c, onRelayed: () => {}, log: () => {}, decide })
+    await relay.open(req())
+    relay.expireSession('abc123-xyz')
+    await new Promise(res => setTimeout(res, 5))
+    expect(decide).not.toHaveBeenCalled()
   })
 })

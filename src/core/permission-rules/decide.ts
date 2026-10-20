@@ -8,6 +8,9 @@
  *   - 模型只能回 allow / ask,而且只在低风险类里被问;超时 / 抛错 / 别的回答 ⇒ ask。
  */
 import { floorReason, isLowRisk, toolClass } from './floor'
+
+/** 复合 / 重定向 / 子命令替换:allow 规则一律不放(`^git status` 放不了 `git status && python3 -c …`)。 */
+const COMPOUND = /[;&|><\x60\n\r]|\$\(/
 import { COMMAND_MATCH_MAX, matchRule } from './rules-file'
 import type { Decision, PermissionAsk, RulesFile } from './types'
 
@@ -21,18 +24,19 @@ function missingFacts(ask: PermissionAsk): string | null {
   const cls = toolClass(ask.tool)
   if (cls === 'shell' && !ask.command?.trim()) return '请求没带命令原文'
   if (cls === 'write' && !ask.paths?.length) return '请求没带文件路径'
+  if (ask.command && COMPOUND.test(ask.command)) return '复合命令(带 ; && | > $( 之类),规则不替你放'
   return null
 }
 
 export async function decide(
   ask: PermissionAsk,
   file: RulesFile,
-  opts: { review?: Review; reviewBlocked?: (scope: string) => boolean; timeoutMs?: number },
+  opts: { review?: Review; reviewBlocked?: (scope: string) => boolean; timeoutMs?: number; stateDir?: string },
 ): Promise<Decision> {
   if (!file.enabled || ask.tier !== 'admin') return ASK_DEFAULT
   const rule = matchRule(file.rules, ask)
   if (rule?.then === 'deny') return { verdict: 'deny', by: 'rule', ruleId: rule.id, reason: rule.note ?? '规则拒绝' }
-  const floor = floorReason(ask)
+  const floor = floorReason(ask, undefined, opts.stateDir ? { stateDir: opts.stateDir } : {})
   if (floor) return { verdict: 'ask', by: 'floor', reason: floor }
   if (rule?.then === 'ask') return { verdict: 'ask', by: 'rule', ruleId: rule.id, reason: rule.note ?? '规则要求问你' }
   const missing = missingFacts(ask)
@@ -72,6 +76,7 @@ export function reviewPrompt(ask: PermissionAsk, notes: string[]): string {
     ask.paths?.length ? `文件:${ask.paths.slice(0, 50).join(', ')}` : null,
     ask.project ? `项目目录:${ask.project}` : null,
     ask.intent ? `主人交代这件事时说的:${ask.intent.slice(0, COMMAND_MATCH_MAX)}` : null,
+    ask.description ? `执行者给的说明 / 改动:\n${ask.description.slice(0, 4000)}` : null,
   ].filter(Boolean).map(l => defuse(l!)).join('\n')
   return [
     '你在替主人初审一个 AI 执行者的权限请求。这条请求已经被代码判为低风险类(只读,或只在这件事自己的独立工作区里写文件)。',

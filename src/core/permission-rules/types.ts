@@ -20,6 +20,8 @@ export interface PermissionAsk {
   isolatedWorktree: boolean
   /** 这件事主人最初交代的那句话(一起做有;终端 v1 没有)。 */
   intent?: string
+  /** 执行者给主人看的那段说明(Codex 的 diff、ACP 的标题……);只给初审看,规则不匹配它。 */
+  description?: string
   tier: Tier
   /** 防一路放行的计数单位:任务 id / 终端 session_id。 */
   scope: string
@@ -49,3 +51,6 @@ export interface RuleWhen {
 export interface Rule { id: string; when: RuleWhen; then: Verdict; note?: string }
 
 export interface RulesFile { version: 1; enabled: boolean; review: 'off' | 'low_risk'; rules: Rule[] }
+
+/** 请求本身,或造它的函数 —— 规则关着时不造(终端要跑 git、一起做要 realpath 和翻时间线,关着就一样都不做)。 */
+export type AskSource = PermissionAsk | (() => PermissionAsk | Promise<PermissionAsk>)

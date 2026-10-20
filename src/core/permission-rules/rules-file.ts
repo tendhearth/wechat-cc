@@ -6,6 +6,7 @@
  * 正则限 200 字、匹配只看命令前 2000 字 —— 主人手写的 `(a+)+$` 也拖不垮一次拍板。
  */
 import { homedir } from 'node:os'
+import { resolve } from 'node:path'
 import type { PermissionAsk, Rule, RuleWhen, RulesFile, Verdict } from './types'
 
 export const RULES_FILE = 'permission-rules.json'
@@ -13,8 +14,24 @@ export const EMPTY_RULES: RulesFile = { version: 1, enabled: false, review: 'off
 export const PATTERN_MAX = 200
 export const COMMAND_MATCH_MAX = 2000
 
-/** 量词套量词(`(a+)+`、`(x*)*`、`(a|b+){2,}`)—— JS 正则掐不了超时,这类直接不收。粗判,宁可错杀。 */
-const NESTED_QUANTIFIER = /\((?:[^()\\]|\\.)*[+*}](?:[^()\\]|\\.)*\)[+*{]/
+/**
+ * 正则的安全子集(终审 10-19:只拦「量词套量词」挡不住 `(a|a)+`、`\w*\w*$`、`a?a?a?…`,而 JS 正则掐不了超时、
+ * 跑在 daemon 主线程上)。收的形状:分组后面只许跟 `?`、且组里没有量词;无界量词(* + {n,})最多 1 个;量词总数 ≤ 4。
+ * 这样最坏是 O(n²)(命令截 2000 字),主人写的 `^git (status|diff)\b.*`、`^(npm|bun) test$` 都在里面。
+ */
+export function unsafePattern(src: string): string | null {
+  const flat = src.replace(/\\./g, 'x').replace(/\[(?:\\.|[^\]])*\]/g, 'x')   // 转义与字符类各当一个字符
+  const groupQ = /\(([^()]*)\)([*+{?])/g
+  for (let m; (m = groupQ.exec(flat));) {
+    if (m[2] !== '?' || /[*+?{]/.test(m[1]!.replace(/^\?[:=!]/, ''))) return '分组后面跟了量词'
+  }
+  if (/\([^()]*\([^()]*\)[^()]*\)[*+?{]/.test(flat)) return '分组后面跟了量词'
+  const quants = flat.replace(/\(\?[:=!<]/g, '(').match(/[*+?]|\{\d+,?\d*\}/g) ?? []
+  const unbounded = quants.filter(q => q === '*' || q === '+' || /^\{\d+,\}$/.test(q)).length
+  if (unbounded > 1) return '无界量词(* / +)超过 1 个'
+  if (quants.length > 4) return '量词超过 4 个'
+  return null
+}
 
 const VERDICTS: readonly Verdict[] = ['allow', 'ask', 'deny']
 const WHEN_KEYS: readonly (keyof RuleWhen)[] = ['surface', 'provider', 'project', 'tool', 'command', 'paths']
@@ -57,7 +74,8 @@ function parseRule(item: unknown, i: number): Rule | string {
     if (k === 'surface' && val !== 'terminal' && val !== 'workbench') return `规则 ${id}:when.surface 只能是 terminal / workbench,已丢弃`
     if (k === 'command') {
       try { new RegExp(val) } catch (e) { return `规则 ${id}:command 正则编不过(${errMsg(e)}),已丢弃` }
-      if (NESTED_QUANTIFIER.test(val)) return `规则 ${id}:command 里有量词套量词(可能卡死),已丢弃`
+      const unsafe = unsafePattern(val)
+      if (unsafe) return `规则 ${id}:command 正则可能卡死(${unsafe}),已丢弃`
     }
     ;(when as Record<string, string>)[k] = val
   }
@@ -100,7 +118,7 @@ function matches(when: RuleWhen, ask: PermissionAsk): boolean {
   if (when.provider && when.provider !== ask.provider) return false
   if (when.project && (!ask.project || !underPrefix(ask.project, expandHome(when.project)))) return false
   if (when.tool) {
-    if (when.tool.endsWith(':*')) { if (!ask.tool.startsWith(when.tool.slice(0, -1))) return false }
+    if (when.tool.endsWith('*')) { if (!ask.tool.startsWith(when.tool.slice(0, -1))) return false }
     else if (when.tool !== ask.tool) return false
   }
   if (when.command) {
@@ -110,7 +128,7 @@ function matches(when: RuleWhen, ask: PermissionAsk): boolean {
   if (when.paths) {
     if (!ask.paths?.length) return false
     const re = globRe(expandHome(when.paths))
-    if (!ask.paths.every(p => re.test(p))) return false
+    if (!ask.paths.every(p => re.test(resolve(p)))) return false
   }
   return true
 }

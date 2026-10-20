@@ -29,6 +29,7 @@ export function workbenchAsk(
   }
   if (facts.command) ask.command = facts.command
   if (facts.paths?.length) ask.paths = facts.paths
+  if (facts.description) ask.description = facts.description
   const said = intent?.trim()
   if (said) ask.intent = said.slice(0, INTENT_MAX)
   return ask

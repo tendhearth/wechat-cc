@@ -660,6 +660,16 @@ describe('workbench Codex app-server', () => {
     completed(next.child); await run2.done
   })
 
+  it('a moving file change reports both the source and the destination', async () => {
+    const requestPermission = vi.fn(async (_request: { tool: string; description: string }, _signal?: AbortSignal) => true)
+    const { session, child } = await start({ requestPermission }); const run = collect(session); await begun(child)
+    child.notify('item/started', { threadId: 'thread-1', turnId: 'turn-1', item: { type: 'fileChange', id: 'item-1', changes: [{ path: '/project/a.txt', kind: { type: 'update', move_path: '/outside/a.txt' }, diff: '-a\n+b' }] } })
+    approval(child, 'mv', 'item/fileChange/requestApproval')
+    await expect.poll(() => requestPermission.mock.calls.length).toBe(1)
+    expect(requestPermission.mock.calls[0]![0]).toMatchObject({ paths: ['/project/a.txt', '/outside/a.txt'] })
+    completed(child); await run.done
+  })
+
   it('withholds the raw facts when the approval carries extra permissions (a rule allowing the command must not grant them)', async () => {
     const requestPermission = vi.fn(async (_request: { tool: string; description: string }, _signal?: AbortSignal) => true)
     const { session, child } = await start({ requestPermission }); const run = collect(session); await begun(child)

@@ -28,4 +28,7 @@ describe('workbenchAsk', () => {
     expect(workbenchAsk({ id: 't', path: proj, providerId: 'claude' }, null, 'x'.repeat(3000), { tool: 'Read' }).intent!.length).toBe(2000)
     expect(workbenchAsk({ id: 't', path: proj, providerId: 'claude' }, null, '  ', { tool: 'Read' })).not.toHaveProperty('intent')
   })
+  it('carries the executor description for the reviewer', () => {
+    expect(workbenchAsk({ id: 't', path: proj, providerId: 'codex' }, null, null, { tool: 'fileChange', description: '-a\n+b', paths: [join(proj, 'a')] }).description).toBe('-a\n+b')
+  })
 })

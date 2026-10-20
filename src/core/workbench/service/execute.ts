@@ -457,7 +457,7 @@ export function makeExecuteDomain(ctx:ServiceCtx, domains:ExecuteDomains) {
           requestNotice(task,runId,'permission',event.permission.id,`${event.permission.tool} · ${event.permission.description}`)
         }else addRunEvent('system',`权限结果：${event.permission.tool} · ${event.outcome}${event.by?`(${RULE_BY_LABEL[event.by]})`:''} · ${event.permission.id}`)
       },
-      ...(ruleDecide?{decide:(facts:PermissionFacts)=>ruleDecide(workbenchAsk(task,store.worktrees.get(task.id),store.events(task.id).find(e=>e.kind==='user')?.text??null,facts))}:{}),
+      ...(ruleDecide?{decide:(facts:PermissionFacts)=>ruleDecide(()=>workbenchAsk(task,store.worktrees.get(task.id),store.events(task.id).find(e=>e.kind==='user')?.text??null,facts))}:{}),
     })
     const questions=makeRunUserInput({taskId:task.id,audit:event=>{
       if(event.type==='request'){

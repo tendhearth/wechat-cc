@@ -94,7 +94,7 @@ describe('isLowRisk', () => {
     expect(isLowRisk(ask({ surface: 'terminal', tool: 'Grep', command: undefined }))).toBe(true)
   })
   it('plain read-only commands', () => {
-    for (const c of ['ls -la', 'cat README.md', 'git status', 'git diff HEAD', 'rg foo src', 'npm test', 'bun run typecheck', 'bunx tsc --noEmit', 'find . -name x'])
+    for (const c of ['ls -la', 'cat README.md', 'git status', 'git diff HEAD', 'rg foo src', 'find . -name x', 'wc -l src/a.ts'])
       expect(isLowRisk(sh(c)), c).toBe(true)
   })
   it('compound commands and other shells are never low risk', () => {
@@ -114,5 +114,45 @@ describe('isLowRisk', () => {
   })
   it('other tools (MCP, fetch) are not low risk', () => {
     expect(isLowRisk(ask({ tool: 'mcp:github:create_issue', command: undefined }))).toBe(false)
+  })
+})
+
+// 终审 10-19:红线绕过 / 低风险里混进能执行或写东西的。
+describe('floor × 终审绕过', () => {
+  const hit = (a: PermissionAsk, extra?: { stateDir?: string }) => expect(floorReason(a, HOME, extra), a.command ?? a.paths?.join(' ')).not.toBeNull()
+  it('git global options, escapes, quotes and absolute binaries do not hide the verb', () => {
+    for (const c of ['git -C x push', 'git -c a=b push origin', 'git --git-dir=.git push', '\\git push', '"git" push', "'git' push", 'git\tpush', '/usr/bin/git push', 'git -c x=y reset --hard HEAD~5', 'git --no-pager clean -fd', '/usr/bin/sudo ls', 'doas ls', 'env sudo ls', 'command git push', 'gh pr merge 3'])
+      hit(sh(c))
+  })
+  it('.git internals are a red line for writes', () => {
+    hit(edit(['/w/.git/hooks/pre-commit']))
+    hit(edit(['/w/.git/config']))
+  })
+  it('wider secrets', () => {
+    for (const p of [`${HOME}/.aws/credentials`, `${HOME}/.netrc`, `${HOME}/.npmrc`, `${HOME}/.config/gh/hosts.yml`, `${HOME}/.docker/config.json`, '/w/.envrc', '/w/keys/id_rsa', `${HOME}/.git-credentials`, `${HOME}/.kube/config`, `${HOME}/.gnupg/x`])
+      hit(ask({ tool: 'Read', command: undefined, paths: [p] }))
+  })
+  it("CC's whole state directory", () => {
+    const stateDir = `${HOME}/.claude/channels/wechat`
+    hit(ask({ tool: 'Read', command: undefined, paths: [`${stateDir}/internal-operator-token`] }), { stateDir })
+    hit(sh(`cat ${stateDir}/daemon.env`), { stateDir })
+    hit(sh('cat ~/.claude/channels/wechat/mailbox-key.json'), { stateDir })
+  })
+  it('a project at the home directory gives no inside-project treatment', () => {
+    hit(edit([`${HOME}/Library/LaunchAgents/x.plist`], { project: HOME }))
+  })
+})
+
+describe('isLowRisk × 终审', () => {
+  it('flags that execute or write are not low risk', () => {
+    for (const c of ['rg --pre sh x', 'rg --pre=./evil x', 'git diff --output=/tmp/x', 'git log --output /tmp/x', 'git diff --ext-diff', 'git log --textconv', 'git diff --no-index a b', 'npm test', 'bun run test', 'pnpm run lint', 'yarn test', 'git -c core.pager=sh log'])
+      expect(isLowRisk(sh(c)), c).toBe(false)
+  })
+  it('reads: paths must be inside the project; pathless only for cwd-scoped search tools', () => {
+    expect(isLowRisk(ask({ tool: 'Read', command: undefined, paths: [`${HOME}/.aws/x`] }))).toBe(false)
+    expect(isLowRisk(ask({ tool: 'Read', command: undefined, paths: ['/w/src/a.ts'] }))).toBe(true)
+    expect(isLowRisk(ask({ tool: 'Grep', command: undefined }))).toBe(true)
+    expect(isLowRisk(ask({ tool: 'read', command: undefined }))).toBe(false)
+    expect(isLowRisk(ask({ tool: 'Read', command: undefined }))).toBe(false)
   })
 })

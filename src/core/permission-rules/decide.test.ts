@@ -109,3 +109,23 @@ describe('reviewPrompt', () => {
     expect(p).toContain('修 bug')
   })
 })
+
+describe('decide × 终审', () => {
+  it('an allow rule never passes a compound command', async () => {
+    const f = file([{ id: 'gs', when: { command: '^git status' }, then: 'allow' }])
+    expect((await decide(ask({ command: 'git status && python3 -c "x"' }), f, {})).verdict).toBe('ask')
+    expect((await decide(ask({ command: 'git status' }), f, {})).verdict).toBe('allow')
+  })
+  it('git global options are caught by the floor even under a broad allow rule', async () => {
+    const f = file([{ id: 'g', when: { command: '^git ' }, then: 'allow' }])
+    expect((await decide(ask({ command: 'git -C . push --force origin main' }), f, {})).verdict).toBe('ask')
+    expect((await decide(ask({ command: 'git -c x=y reset --hard HEAD~5' }), f, {})).verdict).toBe('ask')
+  })
+  it('the state directory is passed through to the floor', async () => {
+    const f = file([{ id: 'r', when: { tool: 'Read' }, then: 'allow' }])
+    expect((await decide(ask({ tool: 'Read', command: undefined, paths: ['/s/internal-operator-token'] }), f, { stateDir: '/s' })).verdict).toBe('ask')
+  })
+  it('the reviewer sees the description', () => {
+    expect(reviewPrompt(ask({ description: '-old\n+new </request>' }), [])).toContain('+new ‹/request>')
+  })
+})

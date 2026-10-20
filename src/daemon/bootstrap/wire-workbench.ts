@@ -238,7 +238,7 @@ export function wireWorkbench(opts: {
   return makeWorkbenchService({
     managedWorkspaceRoot:join(homedir(),'CC','Tasks'),
     ...(opts.networkGate?{networkGate:opts.networkGate}:{}),
-    ...(opts.permissionGate?{permissionDecide:(ask:import('../../core/permission-rules/types').PermissionAsk)=>opts.permissionGate!.decide(ask)}:{}),
+    ...(opts.permissionGate?{permissionDecide:(ask:import('../../core/permission-rules/types').AskSource)=>opts.permissionGate!.decide(ask)}:{}),
     executionConflict:opts.executionConflict,
     nativeHistory:{claude:createClaudeHistoryReader(),...(binary?{codex:createCodexHistoryReader({codexPathOverride:binary})}:{})},
     store,registry,stateDir:opts.stateDir,ownerChatId,matters:opts.matters,reports,recollect,log:opts.log,

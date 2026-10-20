@@ -148,6 +148,6 @@ describe('Workbench permissions × 放行规则', () => {
     const p = makeRunPermissions({ taskId: 't', timeoutMs: 1000, decide })
     void p.request({ tool: 'Edit', description: 'edit a', paths: ['/w/a'], cwd: '/w' })
     await flush()
-    expect(decide).toHaveBeenCalledWith({ tool: 'Edit', paths: ['/w/a'], cwd: '/w' })
+    expect(decide).toHaveBeenCalledWith({ tool: 'Edit', description: 'edit a', paths: ['/w/a'], cwd: '/w' })
   })
 })

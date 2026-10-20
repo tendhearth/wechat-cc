@@ -65,7 +65,7 @@ import { makeSelfChangeGlue } from './self-change-glue'
 import { makeCliEventHub, makeProjectNamer } from '../core/cli-events'
 import { makeCliSessionStore } from '../core/cli-session-store'
 import { makeCliPermissionRelay } from '../core/cli-permission-relay'
-import { makePermissionGate, terminalAsk } from './permission-gate'
+import { makePermissionGate, terminalAskAsync } from './permission-gate'
 import { makePermissionDecisionsStore } from './permission-decisions-store'
 import { defaultRunner, makeCliReplyHandler, makeCliReplyCore, makeHandReplyExecutor, readHead } from './cli-reply-handler'
 import { withReplyRefs } from '../core/cli-session-digest'
@@ -736,7 +736,7 @@ export async function bootDaemon(opts: BootDaemonOpts): Promise<DaemonHandle> {
       onSettled: (s, status) => cliEvents.permissionSettled(s, status),
       log: (t, l) => log(t, l),
       localMachine: osHostname(),
-      decide: async (req) => (await permissionGate.decide(terminalAsk(req))).verdict,
+      decide: async (req) => (await permissionGate.decide(() => terminalAskAsync(req))).verdict,
     })
     lc.register({ name: 'cli-permissions', stop: async () => cliPermissions.dispose() })
     // 这边 / 那边(§6.5)。手侧:配对时脑留了回叫的 url + key ⇒ 本机终端事件与权限请求

@@ -111,3 +111,29 @@ describe('matchRule', () => {
     expect(matchRule(rules, ask({ surface: 'workbench', provider: 'codex' }))).not.toBeNull()
   })
 })
+
+describe('rules-file × 终审', () => {
+  it('rejects every pattern shape that can blow up, keeps simple ones', () => {
+    const r = parseRulesFile(JSON.stringify({ version: 1, rules: [
+      { id: 'a', when: { command: '((a+))+$' }, then: 'allow' },
+      { id: 'b', when: { command: '(a|a)+$' }, then: 'allow' },
+      { id: 'c', when: { command: '(?:a|aa)+$' }, then: 'allow' },
+      { id: 'd', when: { command: '\\w*\\w*$' }, then: 'allow' },
+      { id: 'e', when: { command: '(a?){25}a{25}' }, then: 'allow' },
+      { id: 'f', when: { command: 'a?a?a?a?a?a?' }, then: 'allow' },
+      { id: 'ok1', when: { command: '^(npm|bun) (test|run build)$' }, then: 'allow' },
+      { id: 'ok2', when: { command: '^git (status|diff)\\b.*' }, then: 'allow' },
+    ] }))
+    expect(r.file.rules.map(x => x.id)).toEqual(['ok1', 'ok2'])
+  })
+  it('paths are normalised before the glob', () => {
+    const rules = [rule({ when: { paths: '/p/docs/**' } })]
+    expect(matchRule(rules, ask({ paths: ['/p/docs/../src/main.ts'] }))).toBeNull()
+    expect(matchRule(rules, ask({ paths: ['/p/docs/./a.md'] }))).not.toBeNull()
+  })
+  it('any tool pattern ending in * is a prefix (Claude mcp__server__*)', () => {
+    const rules = [rule({ when: { tool: 'mcp__github__*' } })]
+    expect(matchRule(rules, ask({ tool: 'mcp__github__create_issue' }))).not.toBeNull()
+    expect(matchRule(rules, ask({ tool: 'mcp__gitlab__x' }))).toBeNull()
+  })
+})

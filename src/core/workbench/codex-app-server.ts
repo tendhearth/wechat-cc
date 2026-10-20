@@ -435,7 +435,11 @@ export function createWorkbenchCodexProvider(options: Options): AgentProvider {
         // 会顺手把那些授权也批掉 —— 没有原文,allow 规则与初审都放不了它,只能问主人。
         const extraGrant = params.additionalPermissions != null || params.networkApprovalContext != null
         const ruleFacts: { command?: string; paths?: string[]; cwd?: string } = extraGrant ? {} : file
-          ? (validChanges ? { paths: item!.changes.map((change: ObjectValue) => String(change.path)) } : {})
+          ? (validChanges ? { paths: item!.changes.flatMap((change: ObjectValue) => {
+              // 改名 / 挪走:目的地也算它碰的路径(终审 10-19:只看源路径会把挪到项目外的写当成项目内)。
+              const to = object(change.kind) ? (change.kind.move_path ?? change.kind.movePath) : undefined
+              return typeof to === 'string' && to ? [String(change.path), to] : [String(change.path)]
+            }) } : {})
           : (typeof command === 'string' && command.trim() ? { command: command.slice(0, 2000), ...(typeof params.cwd === 'string' && params.cwd ? { cwd: params.cwd } : {}) } : {})
         if (!supported) {
           send({ id, result: { decision: entry.rejection } })

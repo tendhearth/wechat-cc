@@ -98,11 +98,62 @@ describe('terminalAsk / projectRootOf', () => {
     const a = terminalAsk({ source: 'codex', session_id: 's9', cwd: '/w/p/sub', tool_name: 'Bash', command: 'ls', paths: ['/w/p/a'] }, () => '/w/p')
     expect(a).toEqual({ surface: 'terminal', provider: 'codex', tool: 'Bash', command: 'ls', paths: ['/w/p/a'], cwd: '/w/p/sub', project: '/w/p', isolatedWorktree: false, tier: 'admin', scope: 's9' })
     expect(terminalAsk({ source: 'claude', session_id: 's', cwd: '/x', tool_name: 'Read' }, () => null)).not.toHaveProperty('command')
+    expect(terminalAsk({ source: 'claude', session_id: 's', cwd: '/x', tool_name: 'Bash', summary: 'ls -la' }, () => null).description).toBe('ls -la')
   })
   it('projectRootOf: a real repo resolves, a plain dir is null', async () => {
     const { projectRootOf } = await import('./permission-gate')
     const { realpathSync } = await import('node:fs')
     expect(projectRootOf(process.cwd())).toBe(realpathSync(process.cwd()))
     expect(projectRootOf(mkdtempSync(join(tmpdir(), 'not-a-repo-')))).toBeNull()
+  })
+})
+
+describe('makePermissionGate × 终审', () => {
+  it('rules off ⇒ the request is never even built (no git, no realpath)', async () => {
+    const { gate } = setup({ version: 1, enabled: false, rules: [] })
+    const build = vi.fn(() => ask())
+    expect((await gate.decide(build)).verdict).toBe('ask')
+    expect(build).not.toHaveBeenCalled()
+    const none = setup(null)
+    await none.gate.decide(build)
+    expect(build).not.toHaveBeenCalled()
+  })
+  it('a path through a symlink that leaves the worktree is outside', async () => {
+    const { mkdirSync, symlinkSync, realpathSync } = await import('node:fs')
+    const base = realpathSync(mkdtempSync(join(tmpdir(), 'perm-link-')))
+    mkdirSync(join(base, 'tree')); mkdirSync(join(base, 'outside'))
+    symlinkSync(join(base, 'outside'), join(base, 'tree', 'link'))
+    const { gate, cheap } = setup({ version: 1, enabled: true, review: 'low_risk', rules: [] })
+    const d = await gate.decide(ask({ surface: 'workbench', tool: 'Edit', command: undefined, paths: [join(base, 'tree', 'link', 'x.plist')], project: join(base, 'tree'), isolatedWorktree: true }))
+    expect(d).toMatchObject({ verdict: 'ask', by: 'floor' })
+    expect(cheap).not.toHaveBeenCalled()
+  })
+  it('relative paths resolve against the project', async () => {
+    const { gate } = setup({ version: 1, enabled: true, rules: [{ id: 'src', when: { paths: '/w/src/**' }, then: 'allow' }] })
+    expect((await gate.decide(ask({ surface: 'workbench', tool: 'Edit', command: undefined, paths: ['src/a.ts'], project: '/w', isolatedWorktree: true }))).verdict).toBe('allow')
+  })
+  it('parallel reviews cannot overshoot the runaway cap', async () => {
+    let release!: () => void
+    const gateOpen = new Promise<void>(r => { release = r })
+    const cheap = vi.fn(async () => { await gateOpen; return 'allow' })
+    const { gate } = setup({ version: 1, enabled: true, review: 'low_risk', rules: [] }, { cheap })
+    const all = Array.from({ length: 30 }, () => gate.decide(ask()))
+    release()
+    const verdicts = (await Promise.all(all)).map(d => d.verdict)
+    expect(verdicts.filter(v => v === 'allow').length).toBe(RUNAWAY_MAX)
+  })
+  it("CC's state directory is a red line", async () => {
+    const { gate, stateDir } = setup({ version: 1, enabled: true, rules: [{ id: 'r', when: { tool: 'Read' }, then: 'allow' }] })
+    expect((await gate.decide(ask({ tool: 'Read', command: undefined, paths: [join(stateDir, 'internal-operator-token')] }))).verdict).toBe('ask')
+  })
+})
+
+describe('terminalAskAsync', () => {
+  it('finds the git root without blocking', async () => {
+    const { terminalAskAsync } = await import('./permission-gate')
+    const { realpathSync } = await import('node:fs')
+    const a = await terminalAskAsync({ source: 'claude', session_id: 's', cwd: process.cwd(), tool_name: 'Bash', command: 'ls' })
+    expect(a.project).toBe(realpathSync(process.cwd()))
+    expect((await terminalAskAsync({ source: 'claude', session_id: 's', cwd: mkdtempSync(join(tmpdir(), 'nr-')), tool_name: 'Bash' })).project).toBeNull()
   })
 })

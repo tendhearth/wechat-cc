@@ -22,7 +22,7 @@ export type WorkbenchPermissionAudit =
 /** 放行规则(2026-10-19)谁拿的主意:规则表 / 初审 / 红线。 */
 export type RuleDecider = 'rule' | 'review' | 'floor'
 /** 执行者能给的原文(拿不到就不给,规则不猜)。 */
-export interface PermissionFacts { tool: string; command?: string; paths?: string[]; cwd?: string }
+export interface PermissionFacts { tool: string; description?: string; command?: string; paths?: string[]; cwd?: string }
 export type PermissionDecide = (facts: PermissionFacts) => Promise<{ verdict: 'allow' | 'deny' | 'ask'; by: string }>
 
 interface Entry {
@@ -59,7 +59,7 @@ export function makeRunPermissions(opts: {
     if (!tool || !description || tool.length > WORKBENCH_PERMISSION_TOOL_MAX ||
         description.length > WORKBENCH_PERMISSION_DESCRIPTION_MAX || signal?.aborted) return Promise.resolve(false)
     if (!opts.decide) return register(tool, description, signal)
-    const facts: PermissionFacts = { tool }
+    const facts: PermissionFacts = { tool, description }
     if (typeof raw.command === 'string' && raw.command.trim()) facts.command = raw.command
     if (Array.isArray(raw.paths) && raw.paths.length && raw.paths.every(p => typeof p === 'string' && p)) facts.paths = [...raw.paths]
     if (typeof raw.cwd === 'string' && raw.cwd) facts.cwd = raw.cwd
