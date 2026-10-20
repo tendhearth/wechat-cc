@@ -7,14 +7,25 @@ import { createServer } from 'node:net'
 export const PORT_MIN = 47100
 export const PORT_MAX = 48999
 
-/** 本机这个端口现在绑不绑得上。绑上立刻放掉。 */
-export function probePort(port: number): Promise<boolean> {
+/** 本机没有 IPv6 时绑 '::' 会报的两种错:不算占用。 */
+const NO_IPV6 = new Set(['EAFNOSUPPORT', 'EADDRNOTAVAIL'])
+function bindOnce(port: number, host: string): Promise<'free' | 'busy' | 'unsupported'> {
   return new Promise(resolve => {
     const server = createServer()
     server.unref()
-    server.once('error', () => resolve(false))
-    server.listen({ port, host: '127.0.0.1', exclusive: true }, () => server.close(() => resolve(true)))
+    server.once('error', (error: NodeJS.ErrnoException) => resolve(host === '::' && NO_IPV6.has(error.code ?? '') ? 'unsupported' : 'busy'))
+    server.listen({ port, host, exclusive: true }, () => server.close(() => resolve('free')))
   })
+}
+/**
+ * 本机这个端口现在绑不绑得上。绑上立刻放掉。三个地址都试:开发服务常绑通配地址(0.0.0.0 / ::),
+ * macOS 上 SO_REUSEADDR 让 127.0.0.1 照样绑得上 —— 只探 127.0.0.1 会把被占的端口当成空的(PR-A 评审)。
+ */
+export async function probePort(port: number): Promise<boolean> {
+  for (const host of ['127.0.0.1', '0.0.0.0', '::']) {
+    if ((await bindOnce(port, host)) === 'busy') return false
+  }
+  return true
 }
 
 /**

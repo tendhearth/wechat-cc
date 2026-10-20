@@ -39,6 +39,17 @@ function parseGroups(raw:string|null):{groups:number[]|null;boot:number|null} {
   } catch { /* 下面 */ }
   return {groups:null,boot:null}
 }
+/** script_groups:同 writer_groups 的 {boot, groups},外加 starts(组长启动时刻,与 groups 等长;不齐 ⇒ null)。 */
+function parseScriptGroups(raw:string|null):{groups:number[]|null;boot:number|null;starts:number[]|null} {
+  const base=parseGroups(raw)
+  let starts:number[]|null=null
+  try {
+    const v:unknown=raw?JSON.parse(raw):null
+    const s=v&&typeof v==='object'&&!Array.isArray(v)?(v as {starts?:unknown}).starts:undefined
+    if(Array.isArray(s)&&base.groups&&s.length===base.groups.length&&s.every(x=>typeof x==='number'&&Number.isFinite(x)))starts=s as number[]
+  } catch { /* 没有 starts */ }
+  return {...base,starts}
+}
 export interface StoredTask extends Task { ownerChatId: string | null; sessionId: string | null }
 export type {TaskEvent} from './timeline-events'
 export interface Artifact { id: string; taskId: string; name: string; mime: string; size: number; sha256: string; createdAt: number; approvedAt: number | null }
@@ -245,16 +256,22 @@ export function makeWorkbenchStore(db: Db) {
       usedPorts():Set<number> {
         return new Set(db.query<{port:number},[]>('SELECT port FROM workbench_worktrees WHERE port IS NOT NULL').all().map(row=>row.port))
       },
-      /** 在跑脚本的进程组,格式同 writer_groups;空 ⇒ 清掉。 */
-      setScriptGroups(taskId:string,groups:readonly number[],bootMs?:number) {
-        db.query('UPDATE workbench_worktrees SET script_groups=? WHERE task_id=?').run(groups.length?JSON.stringify(bootMs===undefined?groups:{boot:Math.round(bootMs),groups}):null,taskId)
+      /** 在跑脚本的进程组,格式同 writer_groups;starts = 各组组长的启动时刻(毫秒,与 groups 一一对应;重启后核对用)。空 ⇒ 清掉。 */
+      setScriptGroups(taskId:string,groups:readonly number[],bootMs?:number,starts?:readonly number[]) {
+        const value=bootMs===undefined?groups:{boot:Math.round(bootMs),groups,...(starts&&starts.length===groups.length?{starts:starts.map(Math.round)}:{})}
+        db.query('UPDATE workbench_worktrees SET script_groups=? WHERE task_id=?').run(groups.length?JSON.stringify(value):null,taskId)
       },
-      scriptGroups(taskId:string):{groups:number[]|null;boot:number|null} {
-        return parseGroups(db.query<{g:string|null},[string]>('SELECT script_groups AS g FROM workbench_worktrees WHERE task_id=?').get(taskId)?.g??null)
+      scriptGroups(taskId:string):{groups:number[]|null;boot:number|null;starts:number[]|null} {
+        return parseScriptGroups(db.query<{g:string|null},[string]>('SELECT script_groups AS g FROM workbench_worktrees WHERE task_id=?').get(taskId)?.g??null)
+      },
+      /** 记着进程组的那些行(重启后核对)。 */
+      scriptGroupRows():Array<{taskId:string;groups:number[]|null;boot:number|null;starts:number[]|null}> {
+        return db.query<{taskId:string;g:string},[]>('SELECT task_id AS taskId,script_groups AS g FROM workbench_worktrees WHERE script_groups IS NOT NULL').all().map(row=>({taskId:row.taskId,...parseScriptGroups(row.g)}))
       },
       /** setup 跑完了(只记第一次)。 */
       markSetup(taskId:string,at=Date.now()) { db.query('UPDATE workbench_worktrees SET setup_at=COALESCE(setup_at,?) WHERE task_id=?').run(at,taskId) },
-      markReopened(taskId:string) { db.query('UPDATE workbench_worktrees SET removed_at=NULL WHERE task_id=?').run(taskId) },
+      /** 重新打开:目录是新检出的,setup 装的东西跟着旧目录没了 ⇒ setup_at 一起清掉,下次照样先跑 setup。 */
+      markReopened(taskId:string) { db.query('UPDATE workbench_worktrees SET removed_at=NULL,setup_at=NULL WHERE task_id=?').run(taskId) },
       markRemoved(taskId:string) { db.query('UPDATE workbench_worktrees SET removed_at=COALESCE(removed_at,?) WHERE task_id=?').run(Date.now(),taskId) },
       clearMerged(taskId:string) { db.query('UPDATE workbench_worktrees SET merged_at=NULL WHERE task_id=?').run(taskId) },
       markMerged(taskId:string) { db.query('UPDATE workbench_worktrees SET merged_at=COALESCE(merged_at,?) WHERE task_id=?').run(Date.now(),taskId) },

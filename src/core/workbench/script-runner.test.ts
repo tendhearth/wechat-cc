@@ -1,9 +1,9 @@
-import { afterEach, describe, expect, it } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 import { existsSync, mkdtempSync, readFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { removeTempDir } from '../../lib/test-temp'
-import { OUTPUT_TAIL_CHARS, scriptEnv, startScript } from './script-runner'
+import { KILL_GRACE_MS, OUTPUT_TAIL_CHARS, scriptEnv, startScript } from './script-runner'
 
 const dirs: string[] = []
 afterEach(() => { for (const d of dirs.splice(0)) removeTempDir(d) })
@@ -82,6 +82,57 @@ describe.skipIf(process.platform === 'win32')('startScript (real process)', () =
     expect((await run.done).code).toBe(0)
     await run.stop()
   })
+
+  // 主 shell 退了(被收走)以后组号可能已被复用 ⇒ 一个信号都不发(PR-A 评审)
+  it('stop() after the main shell exited sends no signal, even with a background child still around', async () => {
+    const cwd = area()
+    const pidFile = join(cwd, 'bg.pid')
+    let bg: number | undefined
+    const kill = vi.spyOn(process, 'kill')
+    try {
+      const run = startScript({ kind: 'run', script: `sleep 30 & echo $! > ${JSON.stringify(pidFile)}; exit 0`, cwd, env: vars(cwd), baseEnv: BASE, shell: '/bin/sh' })
+      await run.done
+      bg = Number(readFileSync(pidFile, 'utf8').trim())
+      kill.mockClear()
+      await run.stop()
+      expect(kill.mock.calls.filter(([pid, sig]) => typeof pid === 'number' && pid < 0 && sig !== 0)).toEqual([])
+      expect(alive(bg)).toBe(true)
+    } finally {
+      kill.mockRestore()
+      if (bg) { try { process.kill(bg, 'SIGKILL') } catch { /* 已经没了 */ } }
+    }
+  }, 10_000)
+
+  it('the deferred SIGKILL is skipped once the main shell has exited on SIGTERM', async () => {
+    const cwd = area()
+    const pidFile = join(cwd, 'stubborn.pid')
+    let stubborn: number | undefined
+    const kill = vi.spyOn(process, 'kill')
+    try {
+      // 后台那个不理 SIGTERM;主 shell 收到 SIGTERM 就退
+      const run = startScript({ kind: 'run', script: `(trap '' TERM; sleep 30) & echo $! > ${JSON.stringify(pidFile)}; wait`, cwd, env: vars(cwd), baseEnv: BASE, shell: '/bin/sh' })
+      await expect.poll(() => existsSync(pidFile) && readFileSync(pidFile, 'utf8').trim().length > 0, { timeout: 5000, interval: 50 }).toBe(true)
+      stubborn = Number(readFileSync(pidFile, 'utf8').trim())
+      await run.stop()
+      await new Promise(resolve => setTimeout(resolve, KILL_GRACE_MS + 500))
+      const signals = kill.mock.calls.filter(([pid, sig]) => typeof pid === 'number' && pid < 0 && sig !== 0).map(([, sig]) => sig)
+      expect(signals).toEqual(['SIGTERM'])
+    } finally {
+      kill.mockRestore()
+      if (stubborn) { try { process.kill(stubborn, 'SIGKILL') } catch { /* 已经没了 */ } }
+    }
+  }, 15_000)
+
+  it('a main shell that ignores SIGTERM still gets SIGKILL after the grace period', async () => {
+    const cwd = area()
+    const ready = join(cwd, 'ready')
+    const run = startScript({ kind: 'run', script: `trap '' TERM; touch ${JSON.stringify(ready)}; while :; do sleep 1; done`, cwd, env: vars(cwd), baseEnv: BASE, shell: '/bin/sh' })
+    await expect.poll(() => existsSync(ready), { timeout: 5000, interval: 50 }).toBe(true)
+    const started = Date.now()
+    await run.stop()
+    expect((await run.done).signal).toBe('SIGKILL')
+    expect(Date.now() - started).toBeGreaterThanOrEqual(KILL_GRACE_MS - 100)
+  }, 15_000)
 
   it('missing shell ⇒ error, no throw', async () => {
     const cwd = area()

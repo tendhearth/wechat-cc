@@ -2,10 +2,10 @@ import { describe, expect, it } from 'vitest'
 import { createServer, type Server } from 'node:net'
 import { allocatePort, PORT_MAX, PORT_MIN, probePort } from './worktree-ports'
 
-const listen = (port: number) => new Promise<Server>((resolve, reject) => {
+const listen = (port: number, host = '127.0.0.1') => new Promise<Server>((resolve, reject) => {
   const server = createServer()
   server.once('error', reject)
-  server.listen({ port, host: '127.0.0.1' }, () => resolve(server))
+  server.listen({ port, host }, () => resolve(server))
 })
 const close = (server: Server) => new Promise<void>(resolve => server.close(() => resolve()))
 
@@ -20,6 +20,21 @@ describe('worktree ports', () => {
     expect(await probePort(port)).toBe(false)
     await close(server)
     expect(await probePort(port)).toBe(true)
+  })
+
+  // 开发服务常绑通配地址;macOS 上 127.0.0.1 照样绑得上,所以必须连通配地址一起探(PR-A 评审)
+  it('probePort: a listener on 0.0.0.0 counts as busy', async () => {
+    const server = await listen(0, '0.0.0.0')
+    const port = (server.address() as { port: number }).port
+    try { expect(await probePort(port)).toBe(false) } finally { await close(server) }
+    expect(await probePort(port)).toBe(true)
+  })
+
+  it('probePort: a listener on :: counts as busy (skipped when the machine has no IPv6)', async () => {
+    let server: Server
+    try { server = await listen(0, '::') } catch { return }
+    const port = (server.address() as { port: number }).port
+    try { expect(await probePort(port)).toBe(false) } finally { await close(server) }
   })
 
   it('picks the lowest port that is free in the DB and probes free', async () => {

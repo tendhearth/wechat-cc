@@ -32,7 +32,7 @@ interface Actions {
   /** 变更快照(新→旧);没接就没有「改动」这条命令。 */
   reviewList?(id:string):ReviewTurn[]
   /** 独立工作区三个动作(2026-10-08 微信也能做);没接就回「在桌面上做」。 */
-  worktreeAction?(id:string,action:'commit'|'remove'|'merge'|'reopen'):{branch:string;committed?:boolean;sha?:string;mergeHint?:string;removed?:boolean;merged?:boolean;into?:string;reopened?:boolean}
+  worktreeAction?(id:string,action:'commit'|'remove'|'merge'|'reopen'):{branch:string;committed?:boolean;sha?:string;mergeHint?:string;removed?:boolean;removing?:boolean;merged?:boolean;into?:string;reopened?:boolean}
 }
 const UUID='[a-f0-9]{8}-[a-f0-9]{4}-[1-5][a-f0-9]{3}-[89ab][a-f0-9]{3}-[a-f0-9]{12}'
 const requestCommand=new RegExp(`^(权限|问题|允许|拒绝|回答)\\s+(${UUID})(?:\\s+([\\s\\S]+))?$`,'i')
@@ -172,6 +172,8 @@ function worktreeReply(id:string,verb:'提交'|'合回'|'删除工作区'|'重�
     if(verb==='重开工作区')return `任务 ${id}：已从分支 ${r.branch} 重新打开独立工作区，可以接着做了。\n补充：任务 ${id} 补充 <要求>`
     if(verb==='提交')return r.committed?`任务 ${id}：已提交到分支 ${r.branch}（${(r.sha??'').slice(0,7)}）。\n合回项目：任务 ${id} 合回`:`任务 ${id}：分支 ${r.branch} 上没有新的改动要提交。`
     if(verb==='合回')return r.merged?`任务 ${id}：分支 ${r.branch} 已合进项目的 ${r.into??'当前分支'}。\n不再需要工作区：任务 ${id} 删除工作区`:`任务 ${id}：分支 ${r.branch} 上没有项目里还没有的提交，不用合。没提交的改动要先发「任务 ${id} 提交」。`
+    // 有工作区脚本(2026-10-20):先停在跑的、跑完收尾脚本再删,结果进时间线
+    if(r.removing)return `任务 ${id}：正在收尾（停掉在跑的脚本、运行收尾脚本），完了会删除独立工作区，分支 ${r.branch} 保留在项目里。`
     return `任务 ${id}：独立工作区已删除，分支 ${r.branch} 保留在项目里。`
   }catch(error){
     const code=error instanceof Error?error.message:''

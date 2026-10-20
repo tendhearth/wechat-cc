@@ -140,13 +140,20 @@ describe('worktree scripts and ports (v79)',()=>{
   })
   it('script groups round-trip like writer_groups; markSetup keeps the first time',()=>{
     rec('a')
-    expect(store.worktrees.scriptGroups('a')).toEqual({groups:null,boot:null})
+    expect(store.worktrees.scriptGroups('a')).toEqual({groups:null,boot:null,starts:null})
     store.worktrees.setScriptGroups('a',[123,456],1000.4)
-    expect(store.worktrees.scriptGroups('a')).toEqual({groups:[123,456],boot:1000})
+    expect(store.worktrees.scriptGroups('a')).toEqual({groups:[123,456],boot:1000,starts:null})
+    store.worktrees.setScriptGroups('a',[123,456],1000,[7.6,8])
+    expect(store.worktrees.scriptGroups('a')).toEqual({groups:[123,456],boot:1000,starts:[8,8]})
+    expect(store.worktrees.scriptGroupRows()).toEqual([{taskId:'a',groups:[123,456],boot:1000,starts:[8,8]}])
     store.worktrees.setScriptGroups('a',[])
-    expect(store.worktrees.scriptGroups('a')).toEqual({groups:null,boot:null})
+    expect(store.worktrees.scriptGroups('a')).toEqual({groups:null,boot:null,starts:null})
+    expect(store.worktrees.scriptGroupRows()).toEqual([])
     store.worktrees.markSetup('a',5);store.worktrees.markSetup('a',9)
     expect(store.worktrees.get('a')?.setupAt).toBe(5)
+    // 重新打开 = 新检出的目录 ⇒ setup 要重跑
+    store.worktrees.markRemoved('a');store.worktrees.markReopened('a')
+    expect(store.worktrees.get('a')).toMatchObject({removedAt:null,setupAt:null})
   })
   it('script approvals are keyed by (repo, hash)',()=>{
     expect(store.scriptApprovals.has('/repo','h1')).toBe(false)

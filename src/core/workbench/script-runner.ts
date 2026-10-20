@@ -4,6 +4,7 @@
  *
  * POSIX:`$SHELL -l -c <脚本>`(登录 shell,主人在终端里能用的 PATH / nvm / asdf 这里也能用),detached 自成进程组,
  * 停 = 整组 SIGTERM → KILL_GRACE_MS → SIGKILL(同 self-change 的 spawnCollect),脚本后台起的开发服务一起带走。
+ * 信号只在主 shell 还活着时发:它一退(被收走),组号就可能被别的进程复用 —— 宁可漏掉不理 SIGTERM 的孤儿,也不打错人。
  * Windows:`%ComSpec% /d /s /c <脚本>`,套 cc-jobspawn(wrapForProcessTree),杀它内核收整棵树。
  * 输出:stdout + stderr 合并,只留最后 32KB;onOutput 至多每秒一次,退出前再推最后一次。
  */
@@ -119,8 +120,8 @@ export function startScript(input: {
   const finish = (error: string | null) => {
     if (finished) return
     finished = true
-    // hardTimer 不清:主进程退了,组里不理 SIGTERM 的后台进程照样要被 SIGKILL 收掉
-    for (const timer of [emitTimer, timeoutTimer, closeTimer]) if (timer) clearTimeout(timer)
+    // 主 shell 退了就不再发 SIGKILL(组号可能已被复用);hardTimer 自己会看 shellAlive,这里一并清掉
+    for (const timer of [emitTimer, timeoutTimer, closeTimer, hardTimer]) if (timer) clearTimeout(timer)
     emitTimer = null
     if (input.onOutput && tail) emit()
     const exit: ScriptExit = { code: exitInfo?.code ?? null, signal: exitInfo?.signal ?? null, timedOut, stopped, error, tail }
@@ -158,6 +159,8 @@ export function startScript(input: {
     finish(null)
   })
 
+  // 主 shell 还没退(没被收走)⇒ 它的 pid 还占着,组号不会被复用;退了以后组号可能已经是别人的 ⇒ 不再发信号(PR-A 评审)。
+  const shellAlive = () => exitInfo === null && !finished
   const killGroup = (sig: NodeJS.Signals): void => {
     // 已经退干净 ⇒ ESRCH,吞掉
     try {
@@ -165,9 +168,17 @@ export function startScript(input: {
       else child.kill(sig)
     } catch { /* ESRCH / 组已空 */ }
   }
+  const groupExists = (): boolean => {
+    if (!pgid) return true
+    try { process.kill(-pgid, 0); return true } catch (error) { return (error as NodeJS.ErrnoException).code === 'EPERM' }
+  }
   const terminate = () => {
+    if (!shellAlive()) return
     killGroup('SIGTERM')
-    if (!hardTimer) { hardTimer = setTimeout(() => killGroup('SIGKILL'), KILL_GRACE_MS); hardTimer.unref?.() }
+    if (!hardTimer) {
+      hardTimer = setTimeout(() => { if (shellAlive() && groupExists()) killGroup('SIGKILL') }, KILL_GRACE_MS)
+      hardTimer.unref?.()
+    }
   }
   if (input.timeoutMs !== undefined) timeoutTimer = setTimeout(() => { timedOut = true; terminate() }, input.timeoutMs)
 
@@ -175,8 +186,7 @@ export function startScript(input: {
     pgid,
     async stop() {
       if (!finished) stopped = true
-      // 主进程退了也扫一遍组里留下的后台进程(dev server 常见 `… &`);win32 退了就没有可扫的
-      if (!finished || pgid) terminate()
+      terminate()
       await done
     },
     done,

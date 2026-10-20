@@ -670,6 +670,36 @@ describe('Workbench internal HTTP API', () => {
     for(const bad of [body('deadbeef','rebase'),body('bad','commit'),body('deadbeef','commit',{x:1})])expect((await request('/v1/workbench/worktree',bad,operatorToken)).status).toBe(400)
   })
 
+  it('worktree run/stop + script-approve (2026-10-20): unapproved 428, busy 409, no run script 422, hash checked, agents denied',async()=>{
+    const workbench=service(),{request,operatorToken,trustedToken}=await start(workbench)
+    const scriptAction=vi.fn(async(id:string,action:string)=>{
+      if(id==='cafebabe')throw new Error('script_approval_required')
+      if(id==='feedface')throw new Error(action==='run'?'script_setup_running':'script_running')
+      if(id==='0badf00d')throw new Error('no_scripts')
+      return {branch:'cc/abcd1234',scripts:null,port:47100}
+    })
+    const approveScripts=vi.fn((id:string,_hash:string)=>{if(id==='feedface')throw new Error('script_config_changed');return null})
+    Object.assign(workbench as object,{scriptAction,approveScripts})
+    const body=(path:string,value:Record<string,unknown>)=>request(path,{method:'POST',body:JSON.stringify(value)},operatorToken)
+    expect(minTierFor('POST /v1/workbench/script-approve')).toBe('admin')
+    expect((await request('/v1/workbench/worktree',{method:'POST',body:JSON.stringify({id:'deadbeef',action:'run'})},trustedToken)).status).toBe(403)
+    const ok=await body('/v1/workbench/worktree',{id:'deadbeef',action:'run'})
+    expect(ok.status).toBe(200);expect(await ok.json()).toEqual({worktree:{branch:'cc/abcd1234',scripts:null,port:47100}})
+    expect(scriptAction).toHaveBeenCalledWith('deadbeef','run')
+    expect((await body('/v1/workbench/worktree',{id:'deadbeef',action:'stop'})).status).toBe(200)
+    expect((await body('/v1/workbench/worktree',{id:'cafebabe',action:'run'})).status).toBe(428)
+    expect((await body('/v1/workbench/worktree',{id:'feedface',action:'run'})).status).toBe(409)
+    expect((await body('/v1/workbench/worktree',{id:'0badf00d',action:'run'})).status).toBe(422)
+    const hash='a'.repeat(64)
+    expect((await request('/v1/workbench/script-approve',{method:'POST',body:JSON.stringify({id:'deadbeef',hash})},trustedToken)).status).toBe(403)
+    expect((await body('/v1/workbench/script-approve',{id:'deadbeef',hash})).status).toBe(200)
+    expect(approveScripts).toHaveBeenCalledWith('deadbeef',hash)
+    expect((await body('/v1/workbench/script-approve',{id:'feedface',hash})).status).toBe(409)
+    // 请求体只认 {id, hash}
+    for(const bad of [{id:'deadbeef'},{id:'deadbeef',hash:'xyz'},{id:'bad',hash},{id:'deadbeef',hash,extra:1}])expect((await body('/v1/workbench/script-approve',bad)).status).toBe(400)
+    expect(approveScripts).toHaveBeenCalledTimes(2)
+  })
+
   it('acknowledges an unattended executor only for the desktop operator credential',async()=>{
     const workbench=service(),{request,operatorToken,trustedToken}=await start(workbench)
     expect(minTierFor('POST /v1/workbench/unattended-ack')).toBe('admin')

@@ -407,3 +407,30 @@ it('a project added on the desktop is offered for hand-off before it has any tas
   const done=service.createEntry(input({target:{kind:'project',projectId:offered!.id}}),context)
   await settle(done.receipt.taskId)
 })
+
+it.skipIf(process.platform==='win32')('worktree scripts (2026-10-20): desktop and WeChat checkouts say 待确认 until the owner approves the exact content; then setup runs once',async()=>{
+  const {execFileSync}=await import('node:child_process'),{readFileSync}=await import('node:fs')
+  const g=(...a:string[])=>execFileSync('git',a,{cwd:project,stdio:'pipe'}).toString().trim()
+  const log=join(area,'setup.log')
+  g('init','-q','-b','main');g('config','user.email','t@t');g('config','user.name','t')
+  writeFileSync(join(project,'tendhearth.json'),JSON.stringify({scripts:{setup:`echo "$TENDHEARTH_BRANCH" >> ${JSON.stringify(log)}`,run:'sleep 30'}}));g('add','-A');g('commit','-q','-m','init')
+  const registry=createProviderRegistry()
+  registry.register('claude',{async spawn(){return{async *dispatch(){yield{kind:'result' as const,sessionId:'n',numTurns:1,durationMs:1}},async close(){}}}},{displayName:'claude',canResume:()=>true,workbench:MANAGED_NATIVE_CAPABILITIES})
+  await service.shutdown();store=makeWorkbenchStore(db)
+  service=makeWorkbenchService({store,registry,stateDir,ownerChatId:()=>owner,defaultProvider:'claude',registeredProjects:()=>[{alias:'project',path:project}],matters:makeMatterStore(db),changes:makeTaskChangeHub(),mintSessionToken:()=>'t',scripts:{shell:'/bin/sh',probe:async()=>true}})
+  const projectId=service.projects()[0]!.id
+  const one=service.createEntry(input({target:{kind:'project',projectId,isolation:'worktree'}}),context).receipt.taskId
+  const viaWechat=service.createWechat({ownerChatId:'owner',accountId:'acc',requestId:randomUUID(),commandHash:'a'.repeat(64),projectId,text:'并行整理',isolation:true}).taskId
+  for(const id of [one,viaWechat])expect(service.detail(id).events.some(e=>e.kind==='system'&&e.text.includes('待确认'))).toBe(true)
+  const scripts=service.detail(one).task.worktree?.scripts
+  expect(scripts).toMatchObject({configured:true,approved:false,setup:'pending',run:'idle',config:{run:'sleep 30'}})
+  // 列表不读脚本(要跑 git)
+  expect(service.list().tasks.find(t=>t.id===one)?.worktree?.scripts).toBeUndefined()
+  await expect(service.scriptAction(one,'run')).rejects.toThrow('script_approval_required')
+  expect(existsSync(log)).toBe(false)
+  if(!scripts?.configured)throw new Error('unreachable')
+  service.approveScripts(one,scripts.hash)
+  await expect.poll(()=>existsSync(log)?readFileSync(log,'utf8').trim():'',{timeout:8000}).toBe(service.detail(one).task.worktree!.branch)
+  // 同一个仓库、同一份内容 ⇒ 另一个工作区不用再批
+  expect(service.detail(viaWechat).task.worktree?.scripts).toMatchObject({approved:true})
+})

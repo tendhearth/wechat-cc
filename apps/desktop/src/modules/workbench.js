@@ -17,6 +17,7 @@ import { mountHandoffDialog, mountHandoffRecord, defaultReviewArtifacts } from '
 import {createQuotaHandoffAttempts,mountQuotaHandoffDialog,renderQuotaHandoff} from './workbench-quota-handoff.js'
 import { mountHistoryDialog } from './workbench-history.js'
 import { isAckRequiredError, isUnattendedProvider, mountUnattendedDialog, unattendedLabelSuffix } from './workbench-unattended.js'
+import { isScriptApprovalRequired, mountScriptsApproveDialog, scriptErrorMessage, worktreeScriptsHtml } from './workbench-scripts-approve.js'
 import { escapeWorkbenchHtml, renderWorkbenchMarkdown, renderWorkbenchUserText } from './workbench-markdown.js'
 export { escapeWorkbenchHtml, renderWorkbenchMarkdown } from './workbench-markdown.js'
 import { WORKBENCH_CODE_REVIEW_MIME, createReviewDiffBudget, renderReviewFileDiff, renderWorkbenchCodeReview } from './workbench-code-review.js'
@@ -45,14 +46,15 @@ function writerExitHtml(task) {
 /**
  * 独立工作区那一行(2026-10-07):分支名 + 「提交到分支」「合回项目」(10-08,只快进;别的情况留给主人,时间线里有合并命令)「删除工作区」。
  * 「也交给 X 做一份」(10-08,对标 Conductor / Orca 的多执行者并行):同一个要求在另一个独立工作区里交给另一位执行者,做完挑好的那份合回。
- * @param {{providerId:string,worktree?:{branch:string,projectPath:string,removed:boolean,merged?:boolean}}} task @param {Provider[]} [providers]
+ * 工作区脚本(10-20):tendhearth.json 配了脚本才多一行状态 + 一个「运行 / 停下」(见 workbench-scripts-approve.js)。
+ * @param {{providerId:string,worktree?:{branch:string,projectPath:string,removed:boolean,merged?:boolean,port?:number,scripts?:import('./workbench-scripts-approve.js').ScriptsView}}} task @param {Provider[]} [providers]
  */
 function worktreeHtml(task, providers = []) {
   const wt = task.worktree
   if (!wt) return ''
   if (wt.removed) return `<p class="wb-worktree">在分支 <code>${escapeWorkbenchHtml(wt.branch)}</code> 上做过，工作区已删除（分支还在项目里）。<button type="button" class="wb-new" data-action="worktree-reopen">重新打开工作区</button></p>`
   const status = wt.merged ? '，已合回项目' : '，不影响项目目录本身'
-  return `<p class="wb-worktree">在独立分支 <code>${escapeWorkbenchHtml(wt.branch)}</code> 上做${status}。<button type="button" class="wb-new" data-action="worktree-commit">提交到分支</button><button type="button" class="wb-new" data-action="worktree-merge" title="只做快进合并；项目有没提交的改动或已经往前走时不动">合回项目</button><button type="button" class="wb-new" data-action="worktree-remove">删除工作区</button></p>${forkHtml(task, providers)}`
+  return `<p class="wb-worktree">在独立分支 <code>${escapeWorkbenchHtml(wt.branch)}</code> 上做${status}。<button type="button" class="wb-new" data-action="worktree-commit">提交到分支</button><button type="button" class="wb-new" data-action="worktree-merge" title="只做快进合并；项目有没提交的改动或已经往前走时不动">合回项目</button><button type="button" class="wb-new" data-action="worktree-remove">删除工作区</button></p>${worktreeScriptsHtml(wt)}${forkHtml(task, providers)}`
 }
 /** @param {{providerId:string}} task @param {Provider[]} providers */
 function forkHtml(task, providers) {
@@ -60,7 +62,7 @@ function forkHtml(task, providers) {
   if (!others.length) return ''
   return `<p class="wb-worktree wb-fork"><label>同样的要求也交给 <select id="wb-fork-provider" aria-label="另一位执行者">${others.map(p => `<option value="${escapeWorkbenchHtml(p.id)}">${escapeWorkbenchHtml(p.displayName)}</option>`).join('')}</select></label><button type="button" class="wb-new" data-action="worktree-fork">另做一份</button><small>在另一个独立工作区里做，做完挑好的那份合回项目。</small></p>`
 }
-/** @typedef {{id:string,title:string,path:string,workspaceKind?:'managed'|'project',providerId:string,agents?:string[],origin?:string,status:string,createdAt:number,updatedAt:number,error:string|null,writerExit?:'alive'|'unconfirmed',worktree?:{branch:string,projectPath:string,removed:boolean},phase?:string,archivedAt?:number|null,canArchive?:boolean,pendingPermissionCount?:number,pendingQuestionCount?:number,waitingFor?:WaitingFor|null,importedOnly?:boolean,runtime?:RuntimeSnapshot,networkSuspended?:{since:number}|null}} Task */
+/** @typedef {{id:string,title:string,path:string,workspaceKind?:'managed'|'project',providerId:string,agents?:string[],origin?:string,status:string,createdAt:number,updatedAt:number,error:string|null,writerExit?:'alive'|'unconfirmed',worktree?:{branch:string,projectPath:string,removed:boolean,merged?:boolean,port?:number,scripts?:import('./workbench-scripts-approve.js').ScriptsView},phase?:string,archivedAt?:number|null,canArchive?:boolean,pendingPermissionCount?:number,pendingQuestionCount?:number,waitingFor?:WaitingFor|null,importedOnly?:boolean,runtime?:RuntimeSnapshot,networkSuspended?:{since:number}|null}} Task */
 /** @typedef {{id:string,type:'command'|'read'|'edit'|'search'|'tool'|'agent',status:'running'|'completed'|'failed'|'cancelled'|'interrupted',label:string,detail?:string,output?:string,parentId?:string,agentIds?:string[]}} WorkbenchActivity */
 /** @typedef {{id:string,taskId:string,kind:'user'|'text'|'tool_call'|'system'|'error',text:string,createdAt:number,attachments?:import('./workbench-attachments.js').Attachment[],sourceId?:string|null,runId?:string,activity?:WorkbenchActivity,errorCode?:'execution_model_unsupported',diagnostic?:string}} WorkbenchEvent */
 /** @typedef {{id:string,taskId:string,name:string,mime:string,size:number,sha256:string,createdAt:number,approvedAt:number|null}} Artifact */
@@ -88,7 +90,7 @@ function providerLabel(p) {
 /** @typedef {{artifactId:string,paths:string[],comment?:string,notice?:string,restartToken?:string}} ReviewReturnOpen */
 /** @typedef {{tasks:Task[],providers:Provider[],defaultProvider:string|null,canWechat:boolean,nativeResume?:NativeResume|null,historyProviders?:string[],selectedId:string|null,loadingId?:string|null,detail:Detail|null,selectedArtifactId:string|null,error:string,detailDisconnected?:boolean,preview:Preview,previewOpen?:boolean,query?:TaskQuery,page?:TaskPage,projects?:Array<{id:string,name:string,path:string,providerId:string}>,projectProviders?:Record<string,string>,loadingMore?:boolean,newScope?:string,version?:number,reviews?:ReviewTurn[],reviewsSignature?:string,reviewsError?:boolean,reviewReturnOpen?:ReviewReturnOpen|null}} WorkbenchState */
 /** @typedef {import('./workbench-window-state.js').Draft} Draft */
-/** @typedef {{invokeWorkbenchApi:(method:'GET'|'POST',path:string,body?:Record<string,unknown>)=>Promise<unknown>,invoke?:(command:string,args:Record<string,unknown>)=>Promise<unknown>,pollMs?:number,confirmUnattended?:()=>Promise<boolean>,onDelegate?:(draft:import('./task-entry.js').Draft)=>Promise<import('./task-entry.js').EntryResult|null>}} WorkbenchDeps */
+/** @typedef {{invokeWorkbenchApi:(method:'GET'|'POST',path:string,body?:Record<string,unknown>)=>Promise<unknown>,invoke?:(command:string,args:Record<string,unknown>)=>Promise<unknown>,pollMs?:number,confirmUnattended?:()=>Promise<boolean>,confirmScripts?:(config:import('./workbench-scripts-approve.js').ScriptsConfig)=>Promise<boolean>,onDelegate?:(draft:import('./task-entry.js').Draft)=>Promise<import('./task-entry.js').EntryResult|null>}} WorkbenchDeps */
 /** @typedef {{path:string,text:string,providerId?:string}} IncomingDraft */
 
 // 一件事都没改过的任务:签名从一开始就是「空」,免得第一次拉回来白重画一整页。
@@ -935,6 +937,7 @@ export function initWorkbenchPage(deps) {
     }
   }
   const confirmUnattended = deps.confirmUnattended ?? (() => mountUnattendedDialog())
+  const confirmScripts = deps.confirmScripts ?? (config => mountScriptsApproveDialog(config))
   /** 第一次把事交给免审执行者时后台回 428。当面确认一次,登记下来,再把同一份请求
    * 原样重发;主人说「先不用」就到此为止,不当成出错。
    * @param {'GET'|'POST'} method @param {string} path @param {Record<string,unknown>} body */
@@ -1082,6 +1085,32 @@ export function initWorkbenchPage(deps) {
         fail(code ? new Error(executionErrorMessage(code) ?? code) : error)
       } finally { forking = false;target.removeAttribute('disabled') }
       return
+    }
+    // 工作区脚本(2026-10-20):运行 / 停下;没批过 ⇒ 后台回 428,当面给主人看三条原文,批了再原样重发一次。
+    if ((action === 'worktree-run' || action === 'worktree-stop' || action === 'worktree-approve-scripts') && controller.state.selectedId && controller.state.detail?.task.worktree?.scripts?.configured) {
+      const id = controller.state.selectedId, scripts = controller.state.detail.task.worktree.scripts
+      /** 主人看过原文、点了确认 ⇒ 按他看到的那份(hash)登记;取消 ⇒ false。 */
+      const approve = async () => {
+        if (!(await confirmScripts(scripts.config)) || !alive) return false
+        await deps.invokeWorkbenchApi('POST', '/v1/workbench/script-approve', { id, hash: scripts.hash })
+        return true
+      }
+      const explain = (/** @type {unknown} */ error) => { const message = scriptErrorMessage(error); fail(message ? new Error(message) : error) }
+      if (action === 'worktree-approve-scripts') {
+        try { if (await approve()) await controller.refresh({ force: true }) } catch (error) { explain(error); await controller.refresh({ force: true }).catch(() => {}) }
+        return
+      }
+      return mutate('POST', '/v1/workbench/worktree', { id, action: action.slice('worktree-'.length) }, async e => {
+        if (isScriptApprovalRequired(e)) {
+          try { if (await approve()) { await deps.invokeWorkbenchApi('POST', '/v1/workbench/worktree', { id, action: 'run' }); await controller.refresh({ force: true }) } }
+          catch (error) { explain(error); await controller.refresh({ force: true }).catch(() => {}) }
+          return true
+        }
+        const message = scriptErrorMessage(e)
+        if (!message) return false
+        fail(new Error(message))
+        return true
+      })
     }
     // 独立工作区(2026-10-07):提交到分支 / 合回项目(10-08,只快进)/ 删除工作区(合回、删除都点两下才算)。
     if ((action === 'worktree-commit' || action === 'worktree-merge' || action === 'worktree-remove' || action === 'worktree-reopen') && controller.state.selectedId && controller.state.detail?.task.worktree && controller.state.detail.task.worktree.removed === (action === 'worktree-reopen')) {
