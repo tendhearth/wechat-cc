@@ -16,4 +16,13 @@
   <button id="today-counts-open" class="today-head" type="button"><small id="today-title">过去 24 小时</small><strong id="today-counts"></strong><span id="today-partial" hidden>有一部分暂时读不到</span></button>
   <div id="today-list"></div>
 </section>
+<!-- CC 做过的事(B9,2026-10-20):点开才拉,activity.js。 -->
+<section id="activity-root" aria-label="CC 做过的事">
+  <button id="activity-open" class="today-head" type="button" aria-expanded="false"><small>CC 做过的事 ›</small></button>
+  <div id="activity-body" hidden>
+    <span id="activity-partial" class="m-note" hidden>有一部分暂时读不到</span>
+    <div id="activity-list"></div>
+    <button id="activity-more" class="home-quiet" type="button" hidden>再早一点</button>
+  </div>
+</section>
 <button id="memory-open" class="home-quiet" type="button">回忆 ↗</button>
