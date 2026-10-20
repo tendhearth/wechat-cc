@@ -2509,6 +2509,68 @@ describe('workbench mutations', () => {
     module.stopWorkbenchPolling()
   })
 
+  it('打回时勾上「同时记成这个项目的经验」:带 asLesson 发回,收起表单后说记没记上;随手交办不带', async () => {
+    const page = installFakePage()
+    let lesson: unknown = { ok: true }
+    const { api } = reviewPage([reviewTurn()], (method, path) => method === 'POST' && path === '/v1/workbench/review-return' ? { task: reviewTask, lesson } : null)
+    const module = await import('./workbench.js')
+    const controller = module.initWorkbenchPage({ invokeWorkbenchApi: api, pollMs: 60_000 })!
+    await vi.waitFor(() => expect(controller.state.reviews).toHaveLength(1))
+    const click = [...page.listeners.get('click')!][0]!
+    const submit = [...page.listeners.get('submit')!][0]!
+    const box = new FakeElement(); box.value = 'src/app.ts'; (box as any).checked = true
+    const comment = new FakeElement(); comment.value = '测试用 bun run test'
+    const asLesson = new FakeElement(); (asLesson as any).checked = true
+    const form = new FakeElement(); form.tagName = 'FORM'; form.dataset = { action: 'review-return-submit', artifactId: 'ART-1' }
+    form.querySelector = (selector: string) => selector.includes('textarea') ? comment : selector.includes('asLesson') ? asLesson : null
+    ;(form as any).querySelectorAll = () => [box]
+    const open = new FakeElement(); open.dataset = { action: 'review-return', artifactId: 'ART-1', path: 'src/app.ts' }
+    await click({ target: open })
+    expect(page.innerHTML).toContain('同时记成这个项目的经验')
+    await submit({ preventDefault() {}, target: form })
+    expect(api).toHaveBeenCalledWith('POST', '/v1/workbench/review-return', { id: 'REVIEW', artifactId: 'ART-1', paths: ['src/app.ts'], comment: '测试用 bun run test', asLesson: true })
+    expect(controller.state.reviewReturnOpen).toBe(null)
+    expect(page.innerHTML).toContain('已发回。已记成这个项目的经验。')
+    // 记不上:打回照样算发出去了,只说原因
+    lesson = { ok: false, error: 'full' }
+    await click({ target: open })
+    expect(page.innerHTML).not.toContain('已记成这个项目的经验。')
+    await submit({ preventDefault() {}, target: form })
+    expect(controller.state.reviewReturnOpen).toBe(null)
+    expect(controller.state.error).toBe('')
+    expect(page.innerHTML).toContain('已发回。经验没记上：这个项目的经验已经满 10 条。')
+    // 不勾 ⇒ 不带 asLesson,也不多说那一句
+    ;(asLesson as any).checked = false
+    await click({ target: open })
+    await submit({ preventDefault() {}, target: form })
+    expect(api.mock.calls.filter(([method]) => method === 'POST').at(-1)).toEqual(['POST', '/v1/workbench/review-return', { id: 'REVIEW', artifactId: 'ART-1', paths: ['src/app.ts'], comment: '测试用 bun run test' }])
+    expect(page.innerHTML).not.toContain('data-review-return-result')
+    module.stopWorkbenchPolling()
+  })
+
+  it('随手交办的打回表单没有「记成经验」,就算表单里有勾也不带 asLesson', async () => {
+    const page = installFakePage()
+    const managed = { ...reviewTask, workspaceKind: 'managed' }
+    const { api } = reviewPage([reviewTurn()], (method, path) => path.startsWith('/v1/workbench/task') ? { task: managed, events: [], artifacts: [] } : path === '/v1/workbench/tasks' || path.startsWith('/v1/workbench/tasks?') ? { tasks: [managed], providers: [{ id: 'codex', displayName: 'Codex' }], defaultProvider: 'codex', canWechat: false } : null)
+    const module = await import('./workbench.js')
+    const controller = module.initWorkbenchPage({ invokeWorkbenchApi: api, pollMs: 60_000 })!
+    await vi.waitFor(() => expect(controller.state.reviews).toHaveLength(1))
+    await vi.waitFor(() => expect(controller.state.detail?.task.workspaceKind).toBe('managed'))
+    const open = new FakeElement(); open.dataset = { action: 'review-return', artifactId: 'ART-1', path: 'src/app.ts' }
+    await [...page.listeners.get('click')!][0]!({ target: open })
+    expect(page.innerHTML).toContain('data-action="review-return-submit"')
+    expect(page.innerHTML).not.toContain('同时记成这个项目的经验')
+    const box = new FakeElement(); box.value = 'src/app.ts'; (box as any).checked = true
+    const comment = new FakeElement(); comment.value = '改'
+    const stray = new FakeElement(); (stray as any).checked = true
+    const form = new FakeElement(); form.tagName = 'FORM'; form.dataset = { action: 'review-return-submit', artifactId: 'ART-1' }
+    form.querySelector = (selector: string) => selector.includes('textarea') ? comment : selector.includes('asLesson') ? stray : null
+    ;(form as any).querySelectorAll = () => [box]
+    await [...page.listeners.get('submit')!][0]!({ preventDefault() {}, target: form })
+    expect(api).toHaveBeenCalledWith('POST', '/v1/workbench/review-return', { id: 'REVIEW', artifactId: 'ART-1', paths: ['src/app.ts'], comment: '改' })
+    module.stopWorkbenchPolling()
+  })
+
   it('重画不会把勾上的文件弄丢:勾选与草稿一起发回', async () => {
     const page = installFakePage()
     const { api } = reviewPage([reviewTurn({ files: [reviewFile(), reviewFile({ path: 'src/b.ts' })] })])

@@ -5,6 +5,7 @@ import {fileURLToPath} from 'node:url'
 // 行评论 + 按块撤回(2026-10-21,切片 3):生产模块 + 合成 API,不连 daemon。
 // 点一行、Shift 点扩到同一块 ⇒「评论」⇒ 存草稿 ⇒ 行下出现草稿、底部「1 条评论待发出」;
 // 「撤回这一块」点两下 ⇒ 小签「已撤回」+「恢复这一块」;发出遇上原会话不可恢复 ⇒ 换成「带记录重新开始并发回」再发。
+// 打回表单勾「同时记成这个项目的经验」⇒ 带 asLesson 发回,收起后说「已记成」。
 const source=fileURLToPath(new URL('../src/',import.meta.url))
 const fixture=`<!doctype html><html lang="zh"><head><meta charset="utf-8"><link rel="stylesheet" href="/tokens.css"><link rel="stylesheet" href="/styles.css"><link rel="stylesheet" href="/styles/workbench.css"></head><body><div id="workbench-root"></div><script type="module">
 import {initWorkbenchPage} from '/modules/workbench.js'
@@ -36,6 +37,7 @@ const invokeWorkbenchApi=async(method,path,body)=>{
     for(const c of comments){c.state='sent';c.sentAt=9}
     return{task:task(),sent:comments.length,remaining:0,skippedDiscarded:0}
   }
+  if(path==='/v1/workbench/review-return')return{task:task(),...(body.asLesson?{lesson:{ok:true}}:{})}
   if(path.startsWith('/v1/workbench/task?'))return path.includes('since=')?new Promise(()=>{}):{task:task(),version:1,events:[],artifacts:[],permissions:[],...(restartAsked?{continuation:{mode:'restart_required',restart:{token:TOKEN,context:'记录',eventCount:1,includedEventCount:1,truncated:false}}}:{})}
   if(path.startsWith('/v1/workbench/review?'))return{reviews:reviews()}
   if(path.startsWith('/v1/matters?'))return{matters:[]}
@@ -117,4 +119,22 @@ test('a busy folder refuses the hunk revert in plain words',async({page})=>{
  await revert.click();await revert.click()
  await expect(page.locator('.wb-error')).toContainText('这个文件夹还有会话或检查在跑，等它停下再撤回。')
  await expect(panel.locator('[data-mark="reverted"]')).toHaveCount(0)
+})
+
+test('return form: also record the comment as a project lesson',async({page})=>{
+ await serve(page)
+ await page.goto('http://localhost:4199')
+ const panel=await openFile(page)
+ await panel.locator('[data-action="review-return"]').click()
+ const form=panel.locator('.wb-review-return-form')
+ const lesson=form.getByLabel('同时记成这个项目的经验')
+ await expect(lesson).not.toBeChecked()
+ await form.locator('textarea[name="comment"]').fill('改完跑 bun run test')
+ await lesson.check()
+ await form.locator('button[type="submit"]').click()
+ await expect(panel.locator('[data-review-return-result]')).toHaveText('已发回。已记成这个项目的经验。')
+ await expect(panel.locator('.wb-review-return-form')).toHaveCount(0)
+ expect((await posts(page)).filter(([path]:[string])=>path==='/v1/workbench/review-return')).toEqual([
+  ['/v1/workbench/review-return',{id:'aaaa1111',artifactId:'11111111',paths:['src/app.ts'],comment:'改完跑 bun run test',asLesson:true}],
+ ])
 })

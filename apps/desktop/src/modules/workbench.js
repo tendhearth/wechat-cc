@@ -21,7 +21,7 @@ import { isScriptApprovalRequired, mountScriptsApproveDialog, scriptErrorMessage
 import { escapeWorkbenchHtml, renderWorkbenchMarkdown, renderWorkbenchUserText } from './workbench-markdown.js'
 export { escapeWorkbenchHtml, renderWorkbenchMarkdown } from './workbench-markdown.js'
 import { WORKBENCH_CODE_REVIEW_MIME, createReviewDiffBudget, renderReviewFileDiff, renderWorkbenchCodeReview } from './workbench-code-review.js'
-import { renderReviewPanel, reviewsSignature } from './workbench-review-panel.js'
+import { renderReviewPanel, returnLessonText, reviewsSignature } from './workbench-review-panel.js'
 import { REWIND_STALE_NOTICE, isRewindStale, renderRewindBlocked, rewindErrorMessage } from './workbench-rewind.js'
 /** @typedef {import('../../../../src/core/workbench/review').ReviewTurn} ReviewTurn */
 import { createWorkbenchInteractions, captureWorkbenchQuestionDrafts, syncWorkbenchQuestionChoice, renderWorkbenchQuestions, renderWorkbenchInputs } from './workbench-interaction.js'
@@ -98,8 +98,8 @@ function providerLabel(p) {
 /** @typedef {{limit:number,total:number,hasMore:boolean,nextCursor:string|null}} TaskPage */
 /** @typedef {{tasks:Task[],providers:Provider[],defaultProvider:string|null,canWechat:boolean,historyProviders?:string[],page?:TaskPage,projects?:Array<{id:string,name:string,path:string,providerId:string}>,projectProviders?:Record<string,string>}} ListResult */
 /** @typedef {import('./workbench-artifact-preview.js').ArtifactPreview|null} Preview */
-/** @typedef {{artifactId:string,paths:string[],comment?:string,notice?:string,restartToken?:string}} ReviewReturnOpen */
-/** @typedef {{tasks:Task[],providers:Provider[],defaultProvider:string|null,canWechat:boolean,nativeResume?:NativeResume|null,historyProviders?:string[],selectedId:string|null,loadingId?:string|null,detail:Detail|null,selectedArtifactId:string|null,error:string,detailDisconnected?:boolean,preview:Preview,previewOpen?:boolean,query?:TaskQuery,page?:TaskPage,projects?:Array<{id:string,name:string,path:string,providerId:string}>,projectProviders?:Record<string,string>,loadingMore?:boolean,newScope?:string,version?:number,reviews?:ReviewTurn[],reviewsSignature?:string,reviewsError?:boolean,reviewReturnOpen?:ReviewReturnOpen|null,rewindOpen?:import('./workbench-rewind.js').RewindOpen|null,rewindRestoreConfirm?:boolean,lineSelect?:import('./workbench-review-panel.js').LineSelect|null,lineCompose?:import('./workbench-review-panel.js').LineCompose|null,commentsSend?:import('./workbench-review-panel.js').CommentsSend|null}} WorkbenchState */
+/** @typedef {{artifactId:string,paths:string[],comment?:string,notice?:string,restartToken?:string,asLesson?:boolean}} ReviewReturnOpen */
+/** @typedef {{tasks:Task[],providers:Provider[],defaultProvider:string|null,canWechat:boolean,nativeResume?:NativeResume|null,historyProviders?:string[],selectedId:string|null,loadingId?:string|null,detail:Detail|null,selectedArtifactId:string|null,error:string,detailDisconnected?:boolean,preview:Preview,previewOpen?:boolean,query?:TaskQuery,page?:TaskPage,projects?:Array<{id:string,name:string,path:string,providerId:string}>,projectProviders?:Record<string,string>,loadingMore?:boolean,newScope?:string,version?:number,reviews?:ReviewTurn[],reviewsSignature?:string,reviewsError?:boolean,reviewReturnOpen?:ReviewReturnOpen|null,reviewReturnResult?:import('./workbench-review-panel.js').ReviewReturnResult|null,rewindOpen?:import('./workbench-rewind.js').RewindOpen|null,rewindRestoreConfirm?:boolean,lineSelect?:import('./workbench-review-panel.js').LineSelect|null,lineCompose?:import('./workbench-review-panel.js').LineCompose|null,commentsSend?:import('./workbench-review-panel.js').CommentsSend|null}} WorkbenchState */
 /** @typedef {import('./workbench-window-state.js').Draft} Draft */
 /** @typedef {{invokeWorkbenchApi:(method:'GET'|'POST',path:string,body?:Record<string,unknown>)=>Promise<unknown>,invoke?:(command:string,args:Record<string,unknown>)=>Promise<unknown>,pollMs?:number,confirmUnattended?:()=>Promise<boolean>,confirmScripts?:(config:import('./workbench-scripts-approve.js').ScriptsConfig)=>Promise<boolean>,onDelegate?:(draft:import('./task-entry.js').Draft)=>Promise<import('./task-entry.js').EntryResult|null>}} WorkbenchDeps */
 /** @typedef {{path:string,text:string,providerId?:string}} IncomingDraft */
@@ -398,7 +398,7 @@ export function renderWorkbench(state, interactions, draft, attachmentError='',e
   const reviewBudget = createReviewDiffBudget()
   // 回到某一轮(2026-10-21):确认块 / 撤销回退只在有这些字段时才画,老后台照旧
   const rewindOptions = detail && (state.rewindOpen || detail.rewind) ? { rewind: { open: state.rewindOpen ?? null, view: detail.rewind ?? null, busy: !!executionView.busy } } : {}
-  const reviewHtml = detail ? renderReviewPanel(state.reviews ?? [], { escapeHtml: escapeWorkbenchHtml, formatTime: time, renderDiff: (file, lines) => renderReviewFileDiff(file, escapeWorkbenchHtml, reviewBudget, lines), budget: reviewBudget, returnOpen: state.reviewReturnOpen ?? null, error: !!state.reviewsError, ...rewindOptions, lines: { select: state.lineSelect ?? null, compose: state.lineCompose ?? null, send: state.commentsSend ?? null } }) : ''
+  const reviewHtml = detail ? renderReviewPanel(state.reviews ?? [], { escapeHtml: escapeWorkbenchHtml, formatTime: time, renderDiff: (file, lines) => renderReviewFileDiff(file, escapeWorkbenchHtml, reviewBudget, lines), budget: reviewBudget, returnOpen: state.reviewReturnOpen ?? null, returnResult: state.reviewReturnResult ?? null, lesson: detail.task.workspaceKind !== 'managed', error: !!state.reviewsError, ...rewindOptions, lines: { select: state.lineSelect ?? null, compose: state.lineCompose ?? null, send: state.commentsSend ?? null } }) : ''
   const rewindBlocked = detail ? renderRewindBlocked(detail, !!state.rewindRestoreConfirm, escapeWorkbenchHtml, !!executionView.busy) : ''
   const artifactHtml = detail?.artifacts?.length && !artifactPanel ? `<details id="wb-artifacts" class="wb-disclosure wb-artifacts"><summary><span>成果</span><small>${detail.artifacts.length} 件</small></summary><div class="wb-artifact-list">${artifacts}</div><button type="button" class="wb-new" data-action="back-to-dialogue">回到对话</button></details>` : ''
   const execution=draft?.execution??detail?.execution??{defaults:/** @type {const} */('provider'),model:null,reasoningEffort:null}
@@ -483,7 +483,7 @@ export function createWorkbenchController(deps) {
   // 增量补丁已经把变过的行写进 DOM 了:把重画基准对齐,免得下一次 paint() 为同一批
   // 事件再整页重画一次(那会打断输入和滚动)。
   const syncPaintSnapshot = () => { lastPaint = paintKey() }
-  const forgetReviews = () => { state.reviews = []; state.reviewsSignature = EMPTY_REVIEWS; state.reviewsError = false; state.reviewReturnOpen = null; state.rewindOpen = null; state.rewindRestoreConfirm = false; state.lineSelect = null; state.lineCompose = null; state.commentsSend = null }
+  const forgetReviews = () => { state.reviews = []; state.reviewsSignature = EMPTY_REVIEWS; state.reviewsError = false; state.reviewReturnOpen = null; state.reviewReturnResult = null; state.rewindOpen = null; state.rewindRestoreConfirm = false; state.lineSelect = null; state.lineCompose = null; state.commentsSend = null }
   /** 改动记录跟详情并行拉:读不到只在面板上照实说一句,详情照旧。
    * 标记可能是别的面(微信)改的,所以每次长轮询回来都再问一次;签名没变就不重画。
    * @param {string} id */
@@ -759,6 +759,8 @@ export function initWorkbenchPage(deps) {
       if (field) open.comment = field.value
       const boxes = /** @type {HTMLInputElement[]} */ (Array.from(returnForm.querySelectorAll?.('input[name="paths"]') ?? []))
       if (boxes.length) open.paths = [...new Set(boxes.filter(box => box.checked).map(box => box.value))]
+      const lesson = /** @type {HTMLInputElement|null} */ (returnForm.querySelector?.('input[name="asLesson"]'))
+      if (lesson) open.asLesson = lesson.checked
     }
     // 行评论的输入框 / 发出栏里那句总的意见:同理先收回 state
     const compose = controller.state.lineCompose
@@ -1333,6 +1335,7 @@ export function initWorkbenchPage(deps) {
         const paths = open.paths.includes(path) ? open.paths.filter(item => item !== path) : [...open.paths, path]
         controller.state.reviewReturnOpen = paths.length ? { ...open, paths } : null
       } else controller.state.reviewReturnOpen = { artifactId, paths: [path], comment: '' }
+      controller.state.reviewReturnResult = null
       controller.paint(true)
       return
     }
@@ -1647,11 +1650,13 @@ export function initWorkbenchPage(deps) {
       const comment = (/** @type {HTMLTextAreaElement|null} */ (form.querySelector?.('textarea[name="comment"]'))?.value ?? '').trim()
       if (!paths.length) return fail(new Error('请先勾选要打回的文件。'))
       if (!comment) return fail(new Error('请写一句要怎么改，再发回。'))
+      // 同时记成这个项目的经验:随手交办没有项目,框不画;记没记上只是附带的一句,不影响「已发回」
+      const asLesson = controller.state.detail?.task.workspaceKind !== 'managed' && !!(/** @type {HTMLInputElement|null} */ (form.querySelector?.('input[name="asLesson"]'))?.checked)
       // 这一笔没发出去的话,勾选、意见和「为什么没发出去」都得留在 state 里 —— 表单本体活在会被重画冲掉的 DOM。
       const keep = (/** @type {string} */ notice, /** @type {string|undefined} */ token) => {
         const current = controller.state.reviewReturnOpen
         if (!current || current.artifactId !== artifactId) return
-        current.paths = paths; current.comment = comment; current.notice = notice
+        current.paths = paths; current.comment = comment; current.notice = notice; current.asLesson = asLesson
         if (token === undefined) delete current.restartToken
         else current.restartToken = token
         controller.paint(true)
@@ -1663,7 +1668,9 @@ export function initWorkbenchPage(deps) {
       // 但「已答复」的保留会话状态也是 running(会话留着等续接):这时打回是送得出去的,
       // 后台会把它当作续接投给同一条会话(评审 2026-09-21 #7),别在这儿先把它挡了。
       if (controller.state.detail?.task.phase !== 'replied' && ['running', 'queued', 'cancelling'].includes(controller.state.detail?.task.status ?? '')) return keep('这项任务正在跑，等它答复后再打回。', restartToken)
-      const done = await mutate('POST', '/v1/workbench/review-return', { id: taskId, artifactId, paths, comment, ...(restartToken ? { restartToken } : {}) }, async error => {
+      /** @type {unknown} */
+      let lesson
+      const done = await mutate('POST', '/v1/workbench/review-return', { id: taskId, artifactId, paths, comment, ...(restartToken ? { restartToken } : {}), ...(asLesson ? { asLesson: true } : {}) }, async error => {
         const recovery = recoveryCode(error)
         if (!recovery) return false
         // 令牌过期:丢掉它,重新走一遍「先确认再发」。fail() 那句「记录已更新」照常说。
@@ -1674,9 +1681,10 @@ export function initWorkbenchPage(deps) {
         if (typeof token !== 'string' || !/^[a-f0-9]{64}$/.test(token)) return false
         keep('原会话无法恢复。点「带记录重新开始并发回」，CC 会带上这段记录重新开始，再把这几处交回去。', token)
         return true
-      })
+      }, result => { lesson = /** @type {{lesson?:unknown}} */ (result)?.lesson })
       if (done) {
         controller.state.reviewReturnOpen = null
+        controller.state.reviewReturnResult = asLesson ? { artifactId, text: returnLessonText(lesson) } : null
         controller.paint(true)
       }
       return

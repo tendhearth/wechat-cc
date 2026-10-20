@@ -26,11 +26,17 @@ import type { ScriptsDomain } from './scripts'
 import type { UntilDomain } from './until'
 import { makeReviewLines, MERGED_NOTE, type HunkActionInput, type HunkActionResult, type ReviewCommentInput, type ReviewCommentResult, type SendCommentsResult } from './review-lines'
 import { atomicReplace, readCurrentText } from './review-write'
+import { LESSON_MAX_CHARS, lessonSourcePath } from '../project-lessons'
+
+/** 打回时顺手记成经验的结果;不影响打回本身。 */
+export type ReturnLesson = {ok:true}|{ok:false;error:'no_project'|'too_long'|'invalid'|'duplicate'|'full'|'not_wired'|'failed'}
+type LessonPart = {lesson?:ReturnLesson}
+type ReturnInput = {artifactId:string;paths:string[];comment:string;inputRequestId?:string;restartToken?:string;asLesson?:true}
 
 export interface ReviewDomain {
   reviewList(id:string):ReviewTurn[]
   markReviewFile(id:string,input:{artifactId:string;path:string;mark:'accepted'|'returned';comment?:string}):ReviewMark
-  returnReviewFiles(id:string,input:{artifactId:string;paths:string[];comment:string;inputRequestId?:string;restartToken?:string}):WorkbenchTaskView|Promise<LiveInput>
+  returnReviewFiles(id:string,input:ReturnInput):(WorkbenchTaskView&LessonPart)|Promise<LiveInput&LessonPart>
   /** 把一个文件恢复成这一轮开始前的样子(2026-10-06,对标 Codex 的逐文件撤销)。见实现处的门。 */
   revertReviewFile(id:string,input:{artifactId:string;path:string}):{path:string;restored:'content'|'removed'}
   /** 行评论(v83):建 / 改 / 删草稿;锚点与引用由服务端从快照算。 */
@@ -115,6 +121,18 @@ export function makeReviewDomain(ctx:ServiceCtx,domains:{scripts:Pick<ScriptsDom
     return file
   }
 
+  /** 打回意见收成一行记成源项目的经验;任何失败只回原因,绝不抛(打回已经发出去了)。 */
+  function recordLesson(id:string,comment:string):ReturnLesson {
+    try{
+      const path=lessonSourcePath(store,id)
+      if(!path)return {ok:false,error:'no_project'}
+      if(!ctx.deps.addLesson)return {ok:false,error:'not_wired'}
+      const text=comment.replace(/\s+/g,' ').trim()
+      if([...text].length>LESSON_MAX_CHARS)return {ok:false,error:'too_long'}
+      return ctx.deps.addLesson(path,text)
+    }catch{return {ok:false,error:'failed'}}
+  }
+
   const lines=makeReviewLines(ctx,{reviewTarget,markableFile,readReviewSnapshot,text:reviewComment,hunksOf,writeGate,deliver})
 
   return {
@@ -171,7 +189,7 @@ export function makeReviewDomain(ctx:ServiceCtx,domains:{scripts:Pick<ScriptsDom
      * 打回就不再是死胡同。
      * 重发同一个 inputRequestId 时 continueTask 走幂等分支,再写一遍同样的标记无妨。
      */
-    returnReviewFiles(id:string,input:{artifactId:string;paths:string[];comment:string;inputRequestId?:string;restartToken?:string}):WorkbenchTaskView|Promise<LiveInput> {
+    returnReviewFiles(id:string,input:ReturnInput):(WorkbenchTaskView&LessonPart)|Promise<LiveInput&LessonPart> {
       if(!Array.isArray(input.paths)||!input.paths.length||input.paths.length>20||input.paths.some(path=>typeof path!=='string'||!path))throw new Error('invalid_review_reference')
       const comment=reviewComment(input.comment,true)
       // 请求 id 先验,免得为一个畸形请求留下标记。
@@ -181,14 +199,20 @@ export function makeReviewDomain(ctx:ServiceCtx,domains:{scripts:Pick<ScriptsDom
       // 排序是为了跟派生 id 对齐 —— id 不看顺序,文本要是看,换个勾选顺序重发就会撞 `input_conflict`。
       const files=[...new Set(input.paths)].sort().map(path=>markableFile(review,path))
       const text=composeReturnText(files.map(({path,diff})=>({path,diff})),comment)
+      let lesson:ReturnLesson|undefined
       const marks=()=>{
         for(const file of files)store.reviewMarks.set({taskId:id,artifactSha256:artifact.sha256,path:file.path,afterSha256:file.afterSha256??null,mark:'returned',comment})
         ctx.hub.touched(id)
+        if(input.asLesson===true)lesson=recordLesson(id,comment)
       }
       // 回合中间打回 = 抢跑 ⇒ workbench_busy;请求 id 没给就从这笔打回本身派生(带上 run 的 identity:
       // 会话重开之后是另一次投递)。标记仍在投递成功之后才落:投不出去就不该让主人看到「已打回」。
       // 结束了的走 continueTask,没给 id 就随机一个(同改造前)。
-      return deliver(id,text,{...(given?{given}:{}),derive:scope=>derivedReturnRequestId(artifact.sha256,files.map(file=>file.path),comment,scope),continueId:randomUUID(),...(input.restartToken!==undefined?{restartToken:input.restartToken}:{})},marks)
+      const result=deliver(id,text,{...(given?{given}:{}),derive:scope=>derivedReturnRequestId(artifact.sha256,files.map(file=>file.path),comment,scope),continueId:randomUUID(),...(input.restartToken!==undefined?{restartToken:input.restartToken}:{})},marks)
+      if(input.asLesson!==true)return result
+      // 经验只在投递成功之后记(marks 里);成败只附在结果上,不改打回本身
+      const withLesson=<T extends object>(r:T):T&LessonPart=>({...r,lesson:lesson??{ok:false,error:'failed'}})
+      return result instanceof Promise?result.then(withLesson):withLesson(result)
     },
     /**
      * 逐文件撤销(2026-10-06):把这个文件恢复成快照里「这一轮开始前」的内容。全部是拒绝条件,没有「尽量」:
