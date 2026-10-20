@@ -5,6 +5,7 @@
  * (Windows 走 .native),目录没了 ⇒ null(没有任何「项目内」待遇)。一起做的任务都是主人建的 —— 建任务的路由全是
  * admin、微信建任务只认主人那条对话 —— 所以 tier 一律 admin。
  */
+import { isIssueIntent } from './issue-intake'
 import { realpathSync } from 'node:fs'
 import type { PermissionAsk } from '../permission-rules/types'
 import type { PermissionFacts } from './permissions'
@@ -32,5 +33,6 @@ export function workbenchAsk(
   if (facts.description) ask.description = facts.description
   const said = intent?.trim()
   if (said) ask.intent = said.slice(0, INTENT_MAX)
+  if (isIssueIntent(intent)) ask.untrustedIntent = true
   return ask
 }

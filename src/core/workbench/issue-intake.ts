@@ -20,6 +20,11 @@ export function parseIssueRef(text: string): number | null {
 const clip = (s: string, max: number) => ([...s].length > max ? [...s].slice(0, max).join('') + '\n(后面截掉了)' : s)
 const line = (s: string) => s.replace(/\s+/g, ' ').trim().slice(0, 120)
 
+/** 这件事的要求是不是从 issue 来的(包装时写的随机围栏)。主人手写同样的标记只会让自己更严,不会更松。 */
+export function isIssueIntent(text: string | null | undefined): boolean {
+  return !!text && /<issue-[0-9a-f]{12}>/.test(text)
+}
+
 export function issueTaskText(issue: IssueData): string {
   const fence = randomBytes(6).toString('hex')
   const strip = (s: string) => s.replaceAll(`issue-${fence}`, '')

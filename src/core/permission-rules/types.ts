@@ -20,6 +20,8 @@ export interface PermissionAsk {
   isolatedWorktree: boolean
   /** 这件事主人最初交代的那句话(一起做有;终端 v1 没有)。 */
   intent?: string
+  /** 交代这件事的话来自外部(GitHub issue 等)⇒ 不交给便宜模型初审,只认主人手写的放行规则(评审 #446)。 */
+  untrustedIntent?: true
   /** 执行者给主人看的那段说明(Codex 的 diff、ACP 的标题……);只给初审看,规则不匹配它。 */
   description?: string
   tier: Tier

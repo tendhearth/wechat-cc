@@ -22,3 +22,12 @@ describe('issue intake', () => {
     expect(t).toContain('https://github.com/o/r/issues/9')
   })
 })
+
+describe('issue-sourced tasks are marked by the fence the wrapper writes', () => {
+  it('isIssueIntent: our wrapper ⇒ true; ordinary text ⇒ false', async () => {
+    const { isIssueIntent } = await import('./issue-intake')
+    expect(isIssueIntent(issueTaskText({ number: 1, title: 't', body: 'b', url: 'u', state: 'OPEN', comments: [] }))).toBe(true)
+    expect(isIssueIntent('修一下 issue 12')).toBe(false)
+    expect(isIssueIntent(null)).toBe(false)
+  })
+})

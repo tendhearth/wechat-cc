@@ -31,6 +31,7 @@ describe('WeChat task control through the shared service',()=>{
     ['workbench_execution_unsupported','自动设置'],
     ['workbench_resume_unsupported','桌面'],
     ['unattended_ack_required','免审'],
+    ['issue_unattended_unsupported','换一位执行者'],
     ['unavailable_provider','连接或管理'],
   ])('translates executor admission failure %s into an actionable reply',async(code,hint)=>{
     setup({async spawn(){return{async *dispatch(){yield result},async close(){}}}})
