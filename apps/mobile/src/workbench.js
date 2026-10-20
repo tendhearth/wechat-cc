@@ -2,7 +2,7 @@
 // 执行者头像(2026-10-19,同手机 app):跟桌面共用 apps/desktop/src/shared/agent-avatars.js,构建期在这上面内联并调一次。
 /** @type {ReturnType<typeof import('../../desktop/src/shared/agent-avatars.js').createAgentAvatars>} */
 var mAgents
-var M_STATUS = { open: "进行中", replied: "已答复", done: "已了结", archived: "已归档" }
+var M_STATUS = { open: "在做", replied: "这一轮做完了", done: "完成", archived: "已归档" }
 var M_KIND = { task: "任务", chat: "对话", companion: "陪伴" }
 var M_INPUT_STATUS={pending:"补充已保存，等待执行者接收。",sending:"补充正在发送，等待执行者确认。",delivered:"这条补充已送达。",held:"未确认送达，请先查看任务记录。原文已保留。",withdrawn:"这条补充已撤回，原文已保留。"},mInputStates={}
 var mCurrent = null, mDetail = null, mPoll = null, mSeq = 0, mActive = false, mBusy = {}, mQuestionKey = "", mObjectUrls = [], mTooLarge = false
@@ -352,7 +352,7 @@ function renderMatter(d) {
   var agents=mAgents.matterAgents(d.task&&d.task.providerId,d.matter.agents),who=document.getElementById("m-agents"),from=mAgents.originLabel(d.matter.origin)
   who.hidden=!agents.length&&!from;who.innerHTML=agents.length||from?mAgents.originMarkHtml(d.matter.origin)+mAgents.agentAvatarsHtml(agents)+'<span>'+esc([mAgents.agentsLabel(agents),from].filter(Boolean).join(" · "))+'</span>':''
   mRenderEvents(d.events||[])
-  document.getElementById("m-permissions").innerHTML=(d.permissions||[]).filter(function(p){return p.taskId===d.matter.id}).map(function(p){return '<div class="card"><b>需要你允许这一次</b><p>'+esc(p.tool)+'</p><pre class="m-description">'+esc(p.description)+'</pre><button type="button" class="done-btn" data-control="allow" data-task="'+esc(d.matter.id)+'" data-request="'+esc(p.id)+'">允许这一次</button> <button type="button" class="more" data-control="deny" data-task="'+esc(d.matter.id)+'" data-request="'+esc(p.id)+'">拒绝</button></div>'}).join("")
+  document.getElementById("m-permissions").innerHTML=(d.permissions||[]).filter(function(p){return p.taskId===d.matter.id}).map(function(p){return '<div class="card"><b>等你决定</b><p>'+esc(p.tool)+'</p><pre class="m-description">'+esc(p.description)+'</pre><button type="button" class="more" data-control="deny" data-task="'+esc(d.matter.id)+'" data-request="'+esc(p.id)+'">先不做</button> <button type="button" class="done-btn" data-control="allow" data-task="'+esc(d.matter.id)+'" data-request="'+esc(p.id)+'">允许这一步</button><p class="m-note">只对这一次请求</p></div>'}).join("")
   mRenderQuestions(d)
   mRenderInputs(d)
   mSettleUnsure(d)

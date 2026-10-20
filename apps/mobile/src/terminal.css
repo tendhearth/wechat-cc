@@ -27,3 +27,4 @@
 .terminal-activity .ta-add{color:var(--accent)}.terminal-activity .ta-del{color:var(--th-bad)}
 .terminal-summary.is-now{color:var(--ink)}.terminal-summary.is-now>span{color:var(--accent);margin-right:2px}
 .terminal-head small .th-agents{margin-left:auto;--th-agent-size:20px}
+.m-note{font-size:13px;color:var(--soft);margin:6px 0 0}

@@ -25,7 +25,7 @@ function tdPaint(){
   var since=away&&now-away>=TD_AWAY_MIN_MS&&away>=t.since?t.done.filter(function(i){return i.at>away}):[]
   var done=since.length?since:t.done,nDone=since.length||c.done
   tdEl('title').textContent=since.length?'你不在的这 '+Math.round((now-away)/3600000)+' 小时':'过去 24 小时'
-  var counts=[].concat(nDone?[nDone+' 件做完']:[],c.running?[c.running+' 件在跑']:[],c.stuck?[c.stuck+' 件可能卡住']:[]).join(' · ')
+  var counts=[].concat(nDone?[nDone+' 件做完']:[],c.running?[c.running+' 件在做']:[],c.stuck?[c.stuck+' 件可能卡住']:[]).join(' · ')
   tdEl('counts').textContent=counts
   tdEl('counts').hidden=!counts
   tdEl('partial').hidden=!t.unavailable.length
@@ -42,7 +42,7 @@ function tdPaintWaiting(t){
   slot.hidden=needs.length===0
   slot.innerHTML=needs.map(function(n){
     return '<button type="button" class="today-row today-need" data-td-source="terminal" data-td-id="'+esc(n.id)+'"><span class="today-need-text"><strong>'+esc(n.summary||n.project||n.agent)+'</strong>'
-      +'<small>等你批准 · '+esc(n.project||'')+' · '+esc(n.agent)+'</small></span><span class="today-need-go">看清楚 ›</span></button>'
+      +'<small>等你决定 · '+esc(n.project||'')+' · '+esc(n.agent)+'</small></span><span class="today-need-go">看清楚 ›</span></button>'
   }).join('')
 }
 function tdLoad(){
