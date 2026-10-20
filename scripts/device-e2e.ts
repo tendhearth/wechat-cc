@@ -2,7 +2,7 @@
 /**
  * device-e2e — Tendhearth iPhone 真机全自动验收(没人点屏幕)。见 apps/app/README.md「真机全自动验收」与 docs/maintainer/verify.md。
  *
- *   bun scripts/device-e2e.ts [--udid <UDID>] [--executor claude|codex|cursor] [--skip-build] [--prebuild] [--out <dir>] [--derived-data <dir>] [--only chat,push,revoke] [--build-only]
+ *   bun scripts/device-e2e.ts [--udid <UDID>] [--executor claude|codex|cursor] [--skip-build] [--prebuild] [--out <dir>] [--derived-data <dir>] [--only chat,push,revoke,terminal] [--terminal-name <窗口名>] [--build-only]
  *
  * 一条命令:构建(Release 配置 + 真机验收标记 e2eBuild,JS 打进包里、不靠 Metro;沙盒 APNs;自动签名 + ASC API key 自动登记设备 / 描述文件)→ devicectl 安装 →
  * 逐步跑 XCUITest(native/ios-e2e/DeviceE2ETests.swift,每步接管正在跑的 app),步骤之间在 daemon 那头铸码 / 查设备 / 派任务 / 撤销:
@@ -10,6 +10,8 @@
  *   a. 配对:POST /v1/phone/link(= 桌面「连接手机」)→ 自定义 scheme 链接经 devicectl --payload-url 送进 app → 确认卡核对码 = daemon 给的 → 连接 → 此刻在线
  *      同一链接再开 ⇒「已经用过或过期」,daemon 设备数不变
  *   b. 跟 CC 说一句,等新的 CC 气泡
+ *   b'. (只在 --only 带 terminal 且给了 --terminal-name 时)一起做 → 终端里的会话 → 那个开着的 Claude 窗口 → 说一句 ⇒ 目标窗口的会话记录里出现
+ *      来自 tendhearth-phone、带这次 nonce 的会话间消息(#392 的真机端到端;窗口名见 ~/.claude/sessions/<pid>.json 的 name)
  *   c. app 退后台 → 派一个会要权限的工作台任务(默认 claude:删探针文件走删除审批;codex 带原生提权提示;cursor ACP 的命令卡)→ 真 APNs 横幅(通知服务扩展解密后的标题 + 任务名)→ 点开 → 批准页 → 允许 → daemon 那头任务继续、探针文件被删
  *   d. 局域网 revoke_device 撤销测试设备 ⇒ app「这台手机已不再配对」
  *   e. 收尾(无论成败):归档任务、删 scratch、测试设备还在就撤、放回主人的配对(dev-e2e?op=restore)、冷启动确认主人那台重新在线
@@ -23,7 +25,7 @@ import { homedir, tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'
 import { readApiInfo, type ApiInfo } from '../src/lib/api-info'
 import { classifyLink, redactLinkUrl } from '../src/cli/selftest-phone'
-import { customSchemeLink, humanBlocker, newDeviceIds, parseE2EOut, parseEnvFile, renderReport, type StepRecord } from './device-e2e-lib'
+import { customSchemeLink, humanBlocker, newDeviceIds, parseE2EOut, parseEnvFile, phoneRelayArrived, pickLiveWindow, renderReport, type SessionFileRow, type StepRecord } from './device-e2e-lib'
 
 // ── args ────────────────────────────────────────────────────────────
 const argv = process.argv.slice(2)
@@ -35,6 +37,7 @@ const IOS_DIR = join(APP_DIR, 'ios')
 const BUNDLE_ID = 'com.tendhearth.app'
 const STATE_DIR = process.env.WECHAT_CC_STATE_DIR || join(homedir(), '.claude', 'channels', 'wechat')
 const EXECUTOR = opt('executor', 'claude')!
+const TERMINAL_NAME = opt('terminal-name')
 const ONLY = new Set((opt('only', 'pair,chat,push,revoke') ?? '').split(',').filter(Boolean))
 const startedAt = new Date()
 const OUT = resolve(opt('out') ?? join(tmpdir(), 'tendhearth-device-e2e', startedAt.toISOString().replace(/[:.]/g, '-')))
@@ -305,6 +308,31 @@ async function main(): Promise<number> {
         const text = `device-e2e ${nonce}: reply with one short sentence`
         const o = await uiStep('testChat', { E2E_CHAT_TEXT: text }, 400_000)
         return `CC: ${o.reply_label ?? '?'}`
+      })
+    }
+
+    if (paired && ONLY.has('terminal')) {
+      await step('b2_terminal_say', async () => {
+        if (!TERMINAL_NAME) throw new Error('--only 带了 terminal 但没给 --terminal-name(要送进哪个开着的 Claude 窗口)')
+        const dir = join(homedir(), '.claude', 'sessions')
+        const rows: SessionFileRow[] = readdirSync(dir).filter(f => f.endsWith('.json')).flatMap(f => { try { return [JSON.parse(readFileSync(join(dir, f), 'utf8')) as SessionFileRow] } catch { return [] } })
+        const alive = (pid: number) => { try { process.kill(pid, 0); return true } catch { return false } }
+        const target = pickLiveWindow(rows, TERMINAL_NAME, alive)
+        if (!target) throw new Error(`没有唯一一个叫 ${TERMINAL_NAME} 的开着的 Claude 窗口`)
+        const listed = await call('GET', '/v1/cli/sessions')
+        const row = (listed.json?.sessions ?? []).find((x: { session_id?: string }) => x.session_id === target.sessionId)
+        if (!row) throw new Error(`daemon 的终端登记处里没有 ${TERMINAL_NAME}(${target.sessionId.slice(0, 8)}):那个窗口还没触发过 hook`)
+        if (row.status === 'waiting' || row.status === 'ended') throw new Error(`${TERMINAL_NAME} 现在是 ${row.status},手机说不了`)
+        const transcript = readdirSync(join(homedir(), '.claude', 'projects')).map(d => join(homedir(), '.claude', 'projects', d, `${target.sessionId}.jsonl`)).find(f => existsSync(f))
+        if (!transcript) throw new Error(`找不到 ${TERMINAL_NAME} 的会话记录`)
+        const text = `device-e2e ${nonce}: 这是手机真机自动验收发来的一句,读到就行,不用做别的。`
+        const t0 = Date.now()
+        const o = await uiStep('testTerminalSay', { E2E_TERMINAL_ID: target.sessionId, E2E_TERMINAL_TEXT: text }, 300_000)
+        if (o.live_window !== 'yes') throw new Error(`手机上没显示「开在电脑的终端窗口里」(live_window=${o.live_window})`)
+        if (!/已送进/.test(o.note ?? '')) throw new Error(`发出后的提示不对:${o.note ?? '(没有)'}`)
+        const arrived = await waitFor(120_000, () => phoneRelayArrived(readFileSync(transcript, 'utf8'), nonce) || null, 2000)
+        if (!arrived) throw new Error(`120 秒内 ${TERMINAL_NAME} 的会话记录里没出现那句(看 channel.log 的 [CLI_REPLY])`)
+        return `送进窗口 ${TERMINAL_NAME}:从点发送到进记录约 ${Math.round((Date.now() - t0) / 1000)} 秒;手机提示「${o.note}」`
       })
     }
 

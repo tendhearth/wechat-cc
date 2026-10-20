@@ -180,6 +180,42 @@ final class DeviceE2ETests: XCTestCase {
     if back.exists { back.tap() }
   }
 
+  /// b'. 对终端会话说一句(#392):一起做 → 终端里的会话 → 指定那一条 → 说 → 「已送进电脑上的窗口」。
+  /// 送没送进窗口由编排脚本看目标窗口的会话记录判;这里只断言 app 这头:行在、是开着的窗口、发得出去、提示对。
+  func testTerminalSay() {
+    let id = param("E2E_TERMINAL_ID")
+    let text = param("E2E_TERMINAL_TEXT")
+    foreground()
+    let tab = byId("tab-together")
+    until(timeout("E2E_WAIT", 30), "tab-together") { tab.exists }
+    tab.tap()
+    let row = byId("terminal-open-\(id)")
+    // 终端区在列表最底下(ListFooterComponent):没看见就往上划,最多几下;列表 15 秒拉一次,给它时间
+    until(timeout("E2E_WAIT", 60), "terminal row \(id.prefix(8))") {
+      if row.exists && row.isHittable { return true }
+      self.app.swipeUp()
+      return false
+    }
+    out("terminal_row_label", row.label)
+    row.tap()
+    let input = byId("terminal-say-input")
+    until(timeout("E2E_WAIT", 30), "terminal-say-input") { input.exists }
+    out("live_window", byId("terminal-say-live").exists ? "yes" : "no")
+    out("say_busy", byId("terminal-say-busy").exists ? "yes" : "no")
+    attachScreenshot("terminal-detail")
+    input.tap()
+    input.typeText(text)
+    let send = byId("terminal-say-send")
+    until(10, "terminal-say-send enabled") { send.exists && send.isEnabled }
+    send.tap()
+    let note = byId("terminal-detail-note")
+    until(timeout("E2E_WAIT", 30), "terminal-detail-note") { note.exists }
+    out("note", note.label)
+    attachScreenshot("terminal-sent")
+    let back = byId("topbar-back")
+    if back.exists { back.tap() }
+  }
+
   /// c-1. 把 app 放到后台(回主屏幕)。之后 daemon 发出的推送走 APNs + 通知服务扩展。
   func testBackground() {
     foreground()

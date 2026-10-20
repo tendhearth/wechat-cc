@@ -34,3 +34,29 @@ describe('device-e2e-lib', () => {
     expect(md).toContain('| pair | ✗ | 1.5s | a\\|b (截图 pair.png) |')
   })
 })
+
+describe('device-e2e-lib · 对终端会话说一句(#392 真机)', () => {
+  it('pickLiveWindow: by unique name among live pids; ambiguous or dead ⇒ null', async () => {
+    const { pickLiveWindow } = await import('./device-e2e-lib')
+    const rows = [
+      { pid: 1, name: 'wechat-cc-23', sessionId: 'aaa', kind: 'interactive' },
+      { pid: 2, name: 'wechat-cc-2a', sessionId: 'bbb', kind: 'interactive' },
+      { pid: 3, name: 'dup', sessionId: 'c1' }, { pid: 4, name: 'dup', sessionId: 'c2' },
+      { pid: 5, name: 'dead', sessionId: 'ddd' },
+    ]
+    const alive = (pid: number) => pid !== 5
+    expect(pickLiveWindow(rows, 'wechat-cc-23', alive)).toEqual({ pid: 1, name: 'wechat-cc-23', sessionId: 'aaa' })
+    expect(pickLiveWindow(rows, 'dup', alive)).toBeNull()
+    expect(pickLiveWindow(rows, 'dead', alive)).toBeNull()
+    expect(pickLiveWindow(rows, 'nope', alive)).toBeNull()
+  })
+  it('phoneRelayArrived: a cross-session message from tendhearth-phone carrying the nonce', async () => {
+    const { phoneRelayArrived } = await import('./device-e2e-lib')
+    const hit = JSON.stringify({ type: 'queue-operation', operation: 'enqueue', content: '<cross-session-message from="uds:/tmp/x" from-name="tendhearth-phone">主人从手机发来一句话(Tendhearth CC 转达,原话如下):\ndevice-e2e k3j9: 只回一句</cross-session-message>' })
+    expect(phoneRelayArrived(`{"type":"user"}\n${hit}\n`, 'k3j9')).toBe(true)
+    expect(phoneRelayArrived(hit, 'zzzz')).toBe(false)
+    const other = hit.replace('tendhearth-phone', 'someone-else')
+    expect(phoneRelayArrived(other, 'k3j9')).toBe(false)
+    expect(phoneRelayArrived('not json\n', 'k3j9')).toBe(false)
+  })
+})
