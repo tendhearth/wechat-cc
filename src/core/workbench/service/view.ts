@@ -82,6 +82,7 @@ export function makeViewDomain(ctx:ServiceCtx, queries?:{quotaHandoff(id:string)
       canArchive:TERMINAL_TASK_STATUSES.includes(task.status) && !running && task.error!=='writer_not_closed',
       // 独立工作区(2026-10-07):分支、源项目、目录删了没;桌面按源项目归组、给「提交到分支」。
       // port(2026-10-20):脚本拿到的 TENDHEARTH_PORT,用到时才分配。
+      ...(()=>{const u=store.usage.totals(task.id);return u.turns?{usage:u}:{}})(),
       ...(()=>{const g=store.goals.get(task.id);return g?{until:{command:g.command,maxRounds:g.maxRounds,rounds:g.rounds,status:g.status,lastExit:g.lastExit,stopReason:g.stopReason}}:{}})(),
       ...(()=>{const wt=store.worktrees.get(task.id);return wt?{worktree:{branch:wt.branch,projectPath:wt.projectPath,removed:wt.removedAt!==null,merged:wt.mergedAt!==null,...(wt.port!==null?{port:wt.port}:{})}}:{}})(),
       // 「没确认退出」:进程组还活着 ⇒ 'alive'(先结束它);没有相反证据 ⇒ 'unconfirmed'(主人可以确认已经结束)。

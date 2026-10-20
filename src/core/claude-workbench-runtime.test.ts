@@ -69,6 +69,16 @@ describe('Claude workbench retained runtime', () => {
     await run.session.close(); await run.drained
   })
 
+  it('per-task usage (2026-10-20): result carries the tokens Claude reported; cost is never taken', async () => {
+    const run = await open(); run.runtime.start('start'); init()
+    assistant('done')
+    native.emit({ type: 'result', subtype: 'success', session_id: 'native-parent', num_turns: 1, duration_ms: 10, result: 'done', total_cost_usd: 0.42, usage: { input_tokens: 120, output_tokens: 30, cache_read_input_tokens: 900, cache_creation_input_tokens: 15 } })
+    await expect.poll(() => run.events.filter(e => e.kind === 'result')).toHaveLength(1)
+    const r = run.events.find(e => e.kind === 'result') as Extract<AgentEvent, { kind: 'result' }>
+    expect(r.usage).toEqual({ input: 120, output: 30, cacheRead: 900, cacheWrite: 15 })
+    await run.session.close(); await run.drained
+  })
+
   it('keeps child lifecycle distinct from launch acknowledgement and child text out of parent replies', async () => {
     const run = await open(); run.runtime.start('start'); init()
     native.emit({ type: 'assistant', uuid: 'launch-message', parent_tool_use_id: null, message: { model: 'parent-model', content: [{ type: 'tool_use', name: 'Agent', id: 'launch-A', input: { run_in_background: true, prompt: 'PRIVATE PROMPT' } }] } })

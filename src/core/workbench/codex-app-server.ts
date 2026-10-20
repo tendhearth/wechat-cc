@@ -1,4 +1,5 @@
 import { makePausableTimers, type PausableTimer } from '../../lib/pausable-timers'
+import { codexBreakdown, sumTurnUsage, type TurnUsage } from '../turn-usage'
 import { makeProcessTreeFreezer } from '../../lib/process-tree-freeze'
 import { spawn } from 'node:child_process'
 import type { AgentAttachment, AgentEvent, AgentExecutionModel, AgentProvider, AgentWorkbenchRuntime } from '../agent-provider'
@@ -30,7 +31,7 @@ interface Options {
 }
 interface Approval { controller: AbortController; turn: Turn; rejection: 'decline' | 'cancel'; mcp?: boolean }
 interface UserQuestion { controller: AbortController; turn: Turn }
-interface Turn { terminal?: boolean; watchdog?: PausableTimer; watchdogKind?: 'first_event' | 'connect'; lastRetry?: ObjectValue; threadId: string; occurrence?: CodexChildOccurrence; id: string | null; cancelled: boolean; rejectedOperation: boolean; events: EventQueue; early: Message[]; items: Map<string, ObjectValue>; completedItems: Set<string>; questionIds: Set<RpcId>; startedAt: number }
+interface Turn { terminal?: boolean; watchdog?: PausableTimer; watchdogKind?: 'first_event' | 'connect'; lastRetry?: ObjectValue; threadId: string; occurrence?: CodexChildOccurrence; id: string | null; cancelled: boolean; rejectedOperation: boolean; events: EventQueue; early: Message[]; items: Map<string, ObjectValue>; completedItems: Set<string>; questionIds: Set<RpcId>; startedAt: number; usage?: TurnUsage }
 
 function turnInput(text: string, attachments: readonly AgentAttachment[] = []) {
   const input: Array<{ type: 'text'; text: string; text_elements: [] } | { type: 'image'; url: string; detail: 'high' }> = text || !attachments.length ? [{ type: 'text', text, text_elements: [] }] : []
@@ -639,6 +640,12 @@ export function createWorkbenchCodexProvider(options: Options): AgentProvider {
             send({id:message.id,result:rejectedRequest(message)}); fatal('codex_duplicate_server_request'); return
           }
           if (isRequest) { if (isMcpRequest(message)) onMcpApproval(message, turn); else if (isUserQuestion(message)) onQuestion(message, turn); else onApproval(message, turn); return }
+          // 用量(每件事花了多少,2026-10-20):一轮里每次模型调用的 `last` 加起来;total 是整条线程累计的(续接后含历史),不用。
+          if (!turn.occurrence && message.method === 'thread/tokenUsage/updated') {
+            const last = codexBreakdown(params.tokenUsage?.last)
+            if (last) turn.usage = sumTurnUsage(turn.usage, last)
+            return
+          }
           if (!turn.occurrence && message.method === 'model/rerouted' && nativeModelId(params.toModel)) {
             context.reportExecution?.({model:params.toModel,sessionId:threadId,source:'native_reroute'})
           }
@@ -688,7 +695,7 @@ export function createWorkbenchCodexProvider(options: Options): AgentProvider {
               dropPendingRequests(turn); retainUnfinishedCommands(turn); turn.occurrence.finish(params.turn?.status)
               turn.events.push(turn.occurrence.event()); childTurns.delete(turn.threadId); pruneFinishedTurn(turn); return
             }
-            if (params.turn?.status === 'completed' && !turn.cancelled) finish(turn, { kind: 'result', sessionId: threadId, numTurns: 1, durationMs: typeof params.turn.durationMs === 'number' ? params.turn.durationMs : Date.now() - turn.startedAt })
+            if (params.turn?.status === 'completed' && !turn.cancelled) finish(turn, { kind: 'result', sessionId: threadId, numTurns: 1, durationMs: typeof params.turn.durationMs === 'number' ? params.turn.durationMs : Date.now() - turn.startedAt, ...(turn.usage ? { usage: turn.usage } : {}) })
             else if (params.turn?.status === 'interrupted') finish(turn, { kind: 'error', message: turn.cancelled ? 'Codex 本轮已停止。' : turn.rejectedOperation ? '这次操作已被拒绝，Codex 已结束本轮。可以补充要求后继续。' : 'Codex 本轮已中断，未能确认完成。可以补充要求后继续。' })
             else { const message=typeof params.turn?.error?.message==='string'?params.turn?.error.message:'Codex 本轮未能完成，可以补充要求后重试。'
             const event=codexErrorEvent(message)

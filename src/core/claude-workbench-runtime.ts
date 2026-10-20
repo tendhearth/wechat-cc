@@ -1,4 +1,5 @@
 import { randomUUID } from 'node:crypto'
+import { claudeResultUsage } from './turn-usage'
 import { query, type Options, type SDKUserMessage } from '@anthropic-ai/claude-agent-sdk'
 import type { AgentActivity, AgentAttachment, AgentEvent, AgentRuntimeSnapshot, AgentSession, SpawnContext } from './agent-provider'
 import { AsyncQueue } from './async-queue'
@@ -257,7 +258,9 @@ export function createClaudeWorkbenchSession(baseOptions: Options, context: Spaw
       if (pendingApiError) { finish(apiFailure(typeof message.api_error_status === 'number' ? message.api_error_status : null)); return }
       foreground = 'idle'
       streamMessageId = null; streamed.clear(); suppressedStream.clear() // a turn boundary bounds streamed-text lifetime explicitly
-      output.push({ kind: 'result', sessionId: typeof message.session_id === 'string' ? message.session_id : sessionId ?? '', numTurns: typeof message.num_turns === 'number' ? message.num_turns : 0, durationMs: typeof message.duration_ms === 'number' ? message.duration_ms : 0 })
+      // 用量(每件事花了多少,2026-10-20):只取 token;total_cost_usd 在常驻会话里可能是累计的,不记钱。
+      const usage = claudeResultUsage(message.usage)
+      output.push({ kind: 'result', sessionId: typeof message.session_id === 'string' ? message.session_id : sessionId ?? '', numTurns: typeof message.num_turns === 'number' ? message.num_turns : 0, durationMs: typeof message.duration_ms === 'number' ? message.duration_ms : 0, ...(usage ? { usage } : {}) })
       if (message.subtype && message.subtype !== 'success') finish(new Error(`claude_runtime_result_${message.subtype}`))
       else if (!retained && registrationKnown) finish()
       else if (!registrationKnown) retained = true
