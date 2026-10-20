@@ -26,8 +26,8 @@ const REWIND_409=new Set(['rewind_confirmation_required','rewind_confirmation_st
 export function mobileMatterError(error:unknown):Response {
   const code=error instanceof Error?error.message:'internal'
   if(REWIND_409.has(code))return json({ok:false,error:code},409)
-  // 这件事回不了:只带 reason(一个短码),不带 detail / 路径
-  if(code==='rewind_unavailable'||code==='rewind_noop'){const reason=(error as {reason?:unknown}).reason;return json({ok:false,error:code,...(typeof reason==='string'?{reason}:{})},422)}
+  // 这件事回不了:只带 reason,而且只认短码(/^[a-z_]{1,40}$/)—— 以后谁往 reason 里塞了细节也漏不出去(#444 评审)
+  if(code==='rewind_unavailable'||code==='rewind_noop'){const reason=(error as {reason?:unknown}).reason;return json({ok:false,error:code,...(typeof reason==='string'&&/^[a-z_]{1,40}$/.test(reason)?{reason}:{})},422)}
   // 切换失败:rolledBack=true ⇒ 已恢复原样;false ⇒ 这件事停住了(随后详情里 task.rewind.blocked)
   if(code==='rewind_failed'){const rolledBack=(error as {rolledBack?:unknown}).rolledBack;return json({ok:false,error:code,...(typeof rolledBack==='boolean'?{rolledBack}:{})},502)}
   const entryStatus=entryErrorStatus(code)
