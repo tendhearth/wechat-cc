@@ -727,7 +727,11 @@ describe('CC 做过的事(B9,2026-10-20)', () => {
     expect(reqs.at(-1)!.path).toBe('/m/api/activity?cursor=a%2Fb%2Bc')
   })
   it('链接令牌 403 ⇒ 抛错;形状不对 ⇒ unknown(不当成功)', async () => {
-    const bad = harness({ 'GET /m/api/activity': ok({ ok: true, items: [{ id: 'x', kind: 'nope', at: 1, title: 't' }], next: null, degraded: [] }) })
+    // 认不得的 kind 不算坏形状(#436 改成 z.string():daemon 多一类时老包照样能看)
+    const unknownKind = harness({ 'GET /m/api/activity': ok({ ok: true, items: [{ id: 'x', kind: 'nope', at: 1, title: 't' }], next: null, degraded: [] }) })
+    await expect(unknownKind.b.activity()).resolves.toMatchObject({ items: [{ id: 'x', kind: 'nope' }] })
+    // 真坏的形状(缺 id、at 不是数)⇒ unknown,不当成功
+    const bad = harness({ 'GET /m/api/activity': ok({ ok: true, items: [{ kind: 'job', at: 'x', title: 't' }], next: null, degraded: [] }) })
     await expect(bad.b.activity()).rejects.toMatchObject({ code: 'unknown' })
     const denied = harness({ 'GET /m/api/activity': ok({ ok: false, error: 'forbidden' }, 403) })
     await expect(denied.b.activity()).rejects.toBeInstanceOf(Error)
