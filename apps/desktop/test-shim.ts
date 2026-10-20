@@ -28,6 +28,7 @@ import { thoughtRoutes } from '../../src/daemon/internal-api/routes-thoughts'
 
 import { spawn } from 'bun'
 import { createWorkbenchProxy } from './workbench-proxy'
+import { invokeErrorMessage } from './shim-invoke-error.js'
 import { createHtmlPreviewHost, htmlPreviewParentCsp } from './html-preview'
 import { join, resolve, relative, isAbsolute } from 'node:path'
 import { guardCliInvoke } from './dev-guard'
@@ -227,6 +228,7 @@ const A2A_TOKEN = 'fake-shim-token'
 // banner promise "只放行已知只读的命令" inside `tauri dev`, where a click on
 // 删除子用户 really does rmSync the account dir (2026-07-27 review A3).
 const POLYFILL_BODY = `
+${invokeErrorMessage.toString()}
 window.__WECHAT_CC_SHIM__ = window.__TAURI__ === undefined
 window.__TAURI__ = window.__TAURI__ ?? { core: {
   invoke: async (command, args) => {
@@ -238,11 +240,7 @@ window.__TAURI__ = window.__TAURI__ ?? { core: {
         ...(args.method === "POST" ? { headers: { "content-type": "application/json" }, body: args.body ?? "{}" } : {})
       })
       const text = await res.text()
-      if (!res.ok) {
-        let msg = "HTTP " + res.status
-        try { const j = JSON.parse(text); msg = j.error ? (typeof j.reason === "string" ? j.error + ":" + j.reason : j.error) : msg } catch (e) { /* keep */ }
-        throw new Error(msg)
-      }
+      if (!res.ok) throw new Error(invokeErrorMessage(command, res.status, text))
       return text
     }
     if (command === "choose_workbench_folder") return null

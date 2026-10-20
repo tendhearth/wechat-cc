@@ -30,6 +30,13 @@ export const RESTORE_PREFIX = 'restore:'
 export const isRestoreRow = (row: Pick<RewindRow, 'targetArtifactId'>) => row.targetArtifactId.startsWith(RESTORE_PREFIX)
 
 /**
+ * 停住时写进时间线那句的固定结尾(park 一律带上)。详情里的停住原因只认带它的那条 system 事件 ——
+ * 之后别的 system 事件(会话收工、goal 停了这类)不会顶掉它。不加迁移(v81 已发,v82 别人占着)。
+ */
+export const REWIND_PARK_NOTE_TAIL = '(要选「恢复」时,如果工作区里留着上次崩溃的 .git 锁文件 index.lock / HEAD.lock,先删掉它。)'
+export const isRewindParkNote = (text: string) => text.endsWith(REWIND_PARK_NOTE_TAIL)
+
+/**
  * 详情里给桌面的回退状态(切片 3):undo = 最近一次还能撤销的回退(之后没有新的审阅轮);
  * blocked = 停住等主人拍板的那一行 + 时间线里那句原因。两样都没有 ⇒ null(详情不带这个字段)。
  */

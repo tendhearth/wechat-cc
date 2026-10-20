@@ -14,6 +14,8 @@ export const RUN_IDS = { [IDS.portfolio]: 'run-demo-1', [IDS.trip]: 'run-demo-3'
 
 export const copy = {
   portfolioTitle: ['让作品集在手机上更好看', 'A better portfolio on mobile'],
+  rewindRebuild: ['被 ignore 的构建产物(dist/、node_modules 这类)不会跟着回退,用之前先重新构建。', 'Ignored build output (dist/, node_modules and the like) is not rolled back; rebuild before using it.'],
+  rewindDone: ['已回到第 1 轮开始前，撤掉了第 1 轮（已备份，可撤销）。', 'Back to before round 1; round 1 was undone (backed up, can be restored).'],
   notesTitle: ['把零散想法收一收', 'A home for loose ideas'],
   tripTitle: ['整理下周出差安排', 'Plan next week’s trip'],
   // 额度用完、等你决定交不交给另一位(spec continue-sessions §7-3)
@@ -128,9 +130,12 @@ export function progress(lang: Lang, id: string, stage: Stage): ProgressSummaryT
   return null
 }
 
+/** 演示「撤掉这一轮」的确认码(真 daemon 是 sha256)。 */
+export const DEMO_REWIND_TOKEN = 'd'.repeat(64)
+
 export function changesTurn(now: number): PhoneChangesTurnT {
   return {
-    artifactId: 'demo-review', createdAt: now, status: 'complete', omittedFiles: 0, notes: [],
+    artifactId: 'demo-review', createdAt: now, rewindable: true, status: 'complete', omittedFiles: 0, notes: [],
     files: [
       { path: 'src/pages/home.css', kind: 'modified', truncated: false, diff: '-  padding: 64px 48px;\n+  padding: 32px 20px;\n+  max-width: 100%;' },
       { path: 'src/pages/home.tsx', kind: 'modified', truncated: false, diff: '-<h1>My portfolio</h1>\n+<h1>A little of what I make.</h1>' },

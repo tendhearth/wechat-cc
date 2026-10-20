@@ -14,7 +14,7 @@ import {sayTextHash,type SayReceipts} from './say-receipts'
  * (工作台任务从 workbench 详情取),这里不复制数据。`say` 按 kind 路由:
  * task → 工作台续接;chat → 现有的 app 对话通道(只对主人的 chat)。
  */
-export interface MatterTaskView {id:string;title:string;status:string;phase?:string;providerId:string;path:string;error:string|null;updatedAt:number;archivedAt?:number|null;worktree?:{branch:string;removed:boolean;merged?:boolean;projectId?:string};until?:{command:string;maxRounds:number;rounds:number;status:'active'|'passed'|'exhausted'|'stopped';lastExit:number|null;stopReason:string|null}}
+export interface MatterTaskView {id:string;title:string;status:string;phase?:string;providerId:string;path:string;error:string|null;updatedAt:number;archivedAt?:number|null;worktree?:{branch:string;removed:boolean;merged?:boolean;projectId?:string};until?:{command:string;maxRounds:number;rounds:number;status:'active'|'passed'|'exhausted'|'stopped';lastExit:number|null;stopReason:string|null};rewind?:{blocked:boolean}}
 // activity(2026-10-17):工具那一步在跑还是做完了 —— 手机看着它跑要知道「正在」哪一步。只给 type/status/label,不给命令输出。
 export interface MatterEvent {kind:string;text:string;createdAt:number;source?:string;attachments?:Attachment[];errorCode?:'execution_model_unsupported';diagnostic?:string;activity?:{type:string;status:string;label:string}}
 export type MatterInput=Pick<LiveInput,'id'|'taskId'|'runId'|'text'|'status'|'attachments'>&Partial<Pick<LiveInput,'error'>>
@@ -44,7 +44,7 @@ export interface MattersServiceDeps {
   /** Trusted owner resolver for narrow phone receipt reads; no identity comes from the request. */
   ownerChatId?:()=>string|null
   workbench?:{
-    detail(id:string):{task:MatterTaskView;events:MatterEvent[]}&Partial<MatterTaskControls>&{requiresExternalClose?:boolean;continuation?:{mode:string}}
+    detail(id:string):{task:MatterTaskView;events:MatterEvent[]}&Partial<MatterTaskControls>&{requiresExternalClose?:boolean;continuation?:{mode:string};rewind?:{blocked:unknown}|null}
     /** 手机说第一句给「导入了、还没发过第一句」的任务(spec D5);没接 ⇒ 手机也走 continueTask(409)。 */
     continueImported?(id:string,text:string,options:{inputRequestId?:string}&MatterMaterials,attachmentPolicy?:'owner'):Promise<MatterTaskView>
     continueTask(id:string,text:string,options?:{inputRequestId?:string}&MatterMaterials,attachmentPolicy?:'owner'):MatterTaskView
@@ -63,6 +63,10 @@ export interface MattersServiceDeps {
     quotaHandoff?(id:string):MatterQuotaHandoff|null
     /** 交出去(按 requestId 幂等、一件事只交一次);回新那件的任务 id。 */
     handOff?(id:string,input:{requestId:string;providerId:string}):{taskId:string;created:boolean}
+    /** 回到某一轮(切片 4,手机只用 to:'start' 撤掉最新那一轮):各轮(找最新没撤的)、预览、带 token 执行。没接 ⇒ 手机没有这个按钮。 */
+    reviewList?(id:string):ReadonlyArray<{artifactId:string;createdAt:number;discarded?:boolean}>
+    rewindPreview?(id:string,input:{artifactId:string;to:'start'|'end'}):Promise<WorkbenchRewindPreview>
+    rewind?(id:string,input:{artifactId:string;to:'start'|'end';token:string}):Promise<{discarded:string[]}>
   }
   /** 对主人的 chat 说话(app 对话通道),surface 记这句是从哪个表面来的;recent 读该 chat 的消息流(微信 / 桌面 / 手机三处进同一条)。 */
   chat?:{ownerChatId():string|null;say(text:string,surface?:'desktop'|'phone'):Promise<{reply:string}>;recent?(chatId:string,limit:number):Promise<MatterEvent[]>;search?(chatId:string,query:string,limit:number):Promise<(MatterEvent&{id:string})[]>}
@@ -91,7 +95,25 @@ export interface MattersService {
   searchOwnerChat(query:string,limit?:number):Promise<{hits:(MatterEvent&{id:string})[]}|null>
   /** 额度用完 ⇒ 交给确认卡上那位继续(同一文件夹新开一件);从手机来的,新那件记手机露面。 */
   handoff(id:string,input:{requestId:string;providerId:string},surface?:'desktop'|'phone'):Promise<{matterId:string;created:boolean}>
+  /** 手机「撤掉这一轮」的预览(切片 4):只认最新那一轮没撤的、只回到它开始之前;不是最新那轮 ⇒ rewind_not_latest。 */
+  rewindPreview(id:string,artifactId:string):Promise<PhoneRewindPreview>
+  /** 带预览给的 token 撤掉(同一轮);回撤掉了哪几轮(制品 id)。 */
+  rewind(id:string,artifactId:string,token:string):Promise<{discarded:string[]}>
 }
+/** 工作台预览里手机用得到的那几样(service/rewind.ts 的 RewindPreview;不依赖它,免得 matters 反向依赖工作台域)。 */
+export interface WorkbenchRewindPreview {
+  token:string;target:{round:number};discarded:Array<{round:number}>
+  files:{count:number;paths:Array<{status:string;path:string}>};extraChanges:{count:number;paths:Array<{status:string;path:string}>}|null
+  droppedCommits:{count:number;elsewhere:boolean};rebuildHint:string;session:string;devServer:boolean;goal:{status:string;willStop:boolean}|null
+}
+/** 手机确认页的预览:撤掉第几轮、多少文件(至多 50 个路径)、之后的额外改动、丢掉的提交、先重新构建、会话 / 开发服务 / goal 怎么样。 */
+export interface PhoneRewindPreview {
+  token:string;round:number;rounds:number[]
+  files:{count:number;paths:Array<{status:string;path:string}>};extraChanges:{count:number;paths:Array<{status:string;path:string}>}|null
+  droppedCommits:{count:number;elsewhere:boolean};rebuildHint:string;session:string;devServer:boolean;goalWillStop:boolean
+}
+const PHONE_REWIND_PATHS=50
+const phonePaths=(l:{count:number;paths:Array<{status:string;path:string}>})=>({count:l.count,paths:l.paths.slice(0,PHONE_REWIND_PATHS).map(({status,path})=>({status,path}))})
 const ID=/^[a-f0-9]{8}$/
 
 export function makeMattersService(deps:MattersServiceDeps):MattersService {
@@ -117,6 +139,14 @@ export function makeMattersService(deps:MattersServiceDeps):MattersService {
     // interpreting every successful request as a new running turn.
     deps.store.setStatus(id,task.archivedAt!=null?'archived':task.status==='interrupted'?'open':['completed','failed','cancelled'].includes(task.status)?'done':task.phase==='replied'?'replied':'open')
     return task
+  }
+  /** 手机只撤最新那一轮(没撤掉的里最新的);换了一轮 / 已撤掉 ⇒ rewind_not_latest(页面重拉再看一眼)。 */
+  const latestRound=(id:string,artifactId:string)=>{
+    if(require(id).kind!=='task')throw Error('matter_task_required')
+    if(!deps.workbench?.reviewList||!deps.workbench.rewindPreview||!deps.workbench.rewind)throw Error('workbench_not_wired')
+    const live=deps.workbench.reviewList(id).filter(r=>!r.discarded)
+    const latest=live.reduce<(typeof live)[number]|null>((a,b)=>!a||b.createdAt>a.createdAt?b:a,null)
+    if(!latest||latest.artifactId!==artifactId)throw Error('rewind_not_latest')
   }
   return {
     list(filter){
@@ -146,7 +176,7 @@ export function makeMattersService(deps:MattersServiceDeps):MattersService {
       }
       if(matter.kind==='task'&&deps.workbench){
         try{
-          const d=taskDetail(matter.id);const wt=(d.task as {worktree?:{branch:string;projectPath?:string;removed:boolean;merged?:boolean}}).worktree;const projectId=wt?.projectPath?deps.workbench.projects?.().find(p=>p.path===wt.projectPath)?.id:undefined;task={...d.task,...(wt?{worktree:{branch:wt.branch,removed:wt.removed,...(wt.merged?{merged:true}:{}),...(projectId?{projectId}:{})}}:{})};events=d.events.slice(-50).map(publicEvent)
+          const d=taskDetail(matter.id);const wt=(d.task as {worktree?:{branch:string;projectPath?:string;removed:boolean;merged?:boolean}}).worktree;const projectId=wt?.projectPath?deps.workbench.projects?.().find(p=>p.path===wt.projectPath)?.id:undefined;task={...d.task,...(wt?{worktree:{branch:wt.branch,removed:wt.removed,...(wt.merged?{merged:true}:{}),...(projectId?{projectId}:{})}}:{}),...(d.rewind?.blocked?{rewind:{blocked:true}}:{})};events=d.events.slice(-50).map(publicEvent)
           controls={...(d.runId?{runId:d.runId}:{}),...(d.inputMode?{inputMode:d.inputMode}:{}),
             permissions:(d.permissions??[]).filter(p=>p.taskId===id).map(({id,taskId,tool,description,createdAt})=>({id,taskId,tool,description,createdAt})),
             questions:(d.questions??[]).filter(q=>q.taskId===id).map(({id,taskId,createdAt,questions})=>({id,taskId,createdAt,questions:questions.map(({id,header,question,options,multiSelect,allowOther})=>({id,header,question,options:options.map(({label,description})=>({label,description})),multiSelect,allowOther}))})),
@@ -259,6 +289,17 @@ export function makeMattersService(deps:MattersServiceDeps):MattersService {
       if(!deps.workbench?.worktreeAction)throw Error('workbench_not_wired')
       const r=deps.workbench.worktreeAction(id,action)
       return {branch:r.branch,...(r.committed!==undefined?{committed:r.committed}:{}),...(r.removed?{removed:true}:{}),...(r.removing?{removing:true}:{}),...(r.merged!==undefined?{merged:r.merged}:{}),...(r.reopened?{reopened:true}:{})}
+    },
+    async rewindPreview(id,artifactId){
+      latestRound(id,artifactId)
+      const p=await deps.workbench!.rewindPreview!(id,{artifactId,to:'start'})
+      return {token:p.token,round:p.target.round,rounds:p.discarded.map(r=>r.round),files:phonePaths(p.files),extraChanges:p.extraChanges?phonePaths(p.extraChanges):null,
+        droppedCommits:{count:p.droppedCommits.count,elsewhere:p.droppedCommits.elsewhere},rebuildHint:p.rebuildHint,session:p.session,devServer:p.devServer,goalWillStop:!!p.goal?.willStop}
+    },
+    async rewind(id,artifactId,token){
+      latestRound(id,artifactId)
+      const r=await deps.workbench!.rewind!(id,{artifactId,to:'start',token})
+      return {discarded:[...r.discarded]}
     },
     async stop(id,runId){
       const detail=taskDetail(id)

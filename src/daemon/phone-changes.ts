@@ -4,6 +4,7 @@
  * 每个文件的 reason(为什么没审 / 被截)与本轮 notes 也带上:没有 diff 时手机至少能说清原因。各裁到 200 字、notes 至多 10 条。
  * 逐文件审阅(2026-10-17):带上轮次的 artifactId 与每个文件已有的标记,手机才能逐个「没问题 / 退回」(同桌面 review-mark / review-return)。
  * 该多看一眼的原因(B6,review-risk.ts):每个文件的 risk 原样带上(至多 6 条、各裁到 200 字);没有就不带。
+ * 撤掉这一轮(回退切片 4):已撤掉的轮不给;这一轮能撤 ⇒ rewindable;比它新、已撤掉的有几轮 ⇒ discardedAfter。
  */
 export const CHANGES_FILE_DIFF_MAX = 24 * 1024
 export const CHANGES_TOTAL_DIFF_MAX = 200 * 1024
@@ -15,9 +16,10 @@ export const CHANGES_MAX_RISKS = 6
 
 type Kind = 'added' | 'deleted' | 'modified' | 'not_reviewed'
 type Mark = { mark: 'accepted' | 'returned'; comment: string; createdAt: number }
-export interface ReviewTurnLike { artifactId?: string; createdAt: number; discarded?: boolean; status: 'complete' | 'partial' | 'unavailable'; notes?: readonly string[]; files: ReadonlyArray<{ path: string; kind: Kind; diff?: string; reason?: string; mark?: Mark; risk?: readonly string[] }> }
+export interface ReviewTurnLike { artifactId?: string; createdAt: number; discarded?: boolean; rewindable?: { start: boolean; end: boolean }; status: 'complete' | 'partial' | 'unavailable'; notes?: readonly string[]; files: ReadonlyArray<{ path: string; kind: Kind; diff?: string; reason?: string; mark?: Mark; risk?: readonly string[] }> }
 export interface PhoneChangeFile { path: string; kind: Kind; diff?: string; reason?: string; truncated: boolean; mark?: Mark; risk?: string[] }
-export interface PhoneChangesTurn { artifactId?: string; createdAt: number; status: 'complete' | 'partial' | 'unavailable'; files: PhoneChangeFile[]; omittedFiles: number; notes: string[] }
+/** rewindable:这一轮能「撤掉」(有开始前的回退点);discardedAfter:比这一轮新、已撤掉的轮数(手机灰着说一句)。都只在为真 / >0 时带。 */
+export interface PhoneChangesTurn { artifactId?: string; createdAt: number; rewindable?: true; discardedAfter?: number; status: 'complete' | 'partial' | 'unavailable'; files: PhoneChangeFile[]; omittedFiles: number; notes: string[] }
 
 const enc = new TextEncoder()
 
@@ -59,5 +61,6 @@ export function latestChanges(all: readonly ReviewTurnLike[]): PhoneChangesTurn 
     files.push({ path, kind: f.kind, diff: f.diff, ...reason, truncated: false })
   }
   const notes = (Array.isArray(t.notes) ? t.notes : []).filter((n): n is string => typeof n === 'string').slice(0, CHANGES_MAX_NOTES).map(clipText)
-  return { ...(typeof t.artifactId === 'string' ? { artifactId: t.artifactId } : {}), createdAt: t.createdAt, status: t.status, files, omittedFiles: Math.max(0, t.files.length - CHANGES_MAX_FILES), notes }
+  const discardedAfter = all.filter(x => x.discarded && x.createdAt > t.createdAt).length
+  return { ...(typeof t.artifactId === 'string' ? { artifactId: t.artifactId } : {}), createdAt: t.createdAt, ...(t.rewindable?.start === true && typeof t.artifactId === 'string' ? { rewindable: true as const } : {}), ...(discardedAfter ? { discardedAfter } : {}), status: t.status, files, omittedFiles: Math.max(0, t.files.length - CHANGES_MAX_FILES), notes }
 }

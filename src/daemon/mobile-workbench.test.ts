@@ -224,3 +224,14 @@ describe('phone worktree actions (2026-10-07)',()=>{
     }
   })
 })
+
+describe('mobileMatterError · 回退的 reason 只放短码(#444 评审)', () => {
+  it('短码照给;带空格 / 路径 / 大写的整条不给', async () => {
+    const { mobileMatterError } = await import('./mobile-workbench')
+    const mk = (reason: unknown) => Object.assign(new Error('rewind_unavailable'), { reason })
+    expect(await mobileMatterError(mk('branch_moved')).json()).toEqual({ ok: false, error: 'rewind_unavailable', reason: 'branch_moved' })
+    for (const bad of ['/Users/x/secret.txt', 'git said: fatal', 'Branch_Moved', 'a'.repeat(41), 3]) {
+      expect(await mobileMatterError(mk(bad)).json()).toEqual({ ok: false, error: 'rewind_unavailable' })
+    }
+  })
+})

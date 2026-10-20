@@ -2,7 +2,7 @@ import type { z } from 'zod'
 import type {
   Matter, MatterDetail, ApprovalExplanation, ProgressSummary, PhoneChangesTurn, EntryOptions, DeviceRowT, PushPlatformT,
   FeedEvent, Presence,
-  ChatPage, ChatJob, ChatMessage, ChatAttachment, LetterSummary, EntryModelCatalog, ChatModelView, MemorySuccess, ChatSearchHit, PhoneJobT as ProtocolPhoneJobT, PhoneActivityItemT, Connections, NativeSessionRow, NativeSessionPage, SessionContinueT, MatterSayResult, CliSessionRowT, CliActivityItemT, OverseerTodayT, TodayItemT,
+  ChatPage, ChatJob, ChatMessage, ChatAttachment, LetterSummary, EntryModelCatalog, ChatModelView, MemorySuccess, ChatSearchHit, PhoneJobT as ProtocolPhoneJobT, PhoneRewindPreviewT, PhoneActivityItemT, Connections, NativeSessionRow, NativeSessionPage, SessionContinueT, MatterSayResult, CliSessionRowT, CliActivityItemT, OverseerTodayT, TodayItemT,
 } from '@wechat-cc/protocol'
 import type { Lang } from '../i18n'
 
@@ -13,6 +13,8 @@ export type MatterDetailT = z.infer<typeof MatterDetail>
 export type ApprovalExplanationT = z.infer<typeof ApprovalExplanation>
 export type ProgressSummaryT = z.infer<typeof ProgressSummary>
 export type PhoneChangesTurnT = z.infer<typeof PhoneChangesTurn>
+/** 撤掉这一轮的预览(GET /m/api/matter/rewind,回退切片 4)。 */
+export type RewindPreviewT = PhoneRewindPreviewT
 export type EntryOptionsT = z.infer<typeof EntryOptions>
 export type ChatPageT = z.infer<typeof ChatPage>
 export type ChatJobT = z.infer<typeof ChatJob>
@@ -68,6 +70,8 @@ export type BackendCode = 'stale' | 'busy' | 'offline' | 'revoked' | 'timeout' |
   | 'cli_not_actionable' | 'cli_ended' | 'cli_remote'
   | 'stt_not_configured' | 'stt_blocked' | 'stt_failed' | 'no_speech'
   | 'until_invalid' | 'until_requires_worktree' | 'until_unattended'
+  // 撤掉这一轮(回退切片 4):工作区刚变过 / 停住等电脑上处理 / 共用文件夹 / 已合回 / 会盖掉被忽略的文件 / 这件事回不了 / 没东西可撤 / 切换失败
+  | 'rewind_stale' | 'rewind_needs_owner' | 'rewind_shared' | 'rewind_merged' | 'rewind_ignored' | 'rewind_unavailable' | 'rewind_noop' | 'rewind_failed'
 export type Unsubscribe = () => void
 
 export interface Backend {
@@ -85,6 +89,10 @@ export interface Backend {
   decide(p: { id: string; runId: string; requestId: string; decision: 'allow' | 'deny' }): Promise<void>
   /** answers 形状与 daemon validateUserInputAnswers 一致:每题一个 string[](单选 1 个;多选 1–8 个、不重复;每条 ≤ 4000 字)。null = 不回答。 */
   answer(p: { id: string; runId: string; requestId: string; answers: Record<string, string[]> | null }): Promise<void>
+  /** 撤掉这一轮的预览(GET /m/api/matter/rewind,回退切片 4):固定回到最新那一轮开始之前;artifactId = changes 那一轮的。只给配过对的手机。 */
+  rewindPreview(p: { id: string; artifactId: string }): Promise<RewindPreviewT>
+  /** 带预览给的 token 撤掉(POST /m/api/matter/rewind)。工作区之后又变了 ⇒ BackendError('rewind_stale'),要重拉预览。 */
+  rewind(p: { id: string; artifactId: string; token: string }): Promise<void>
   /** 停下正在跑的这一轮(POST /m/api/matter/stop,2026-10-06)。runId = 手机看到的那一轮;已经换了一轮 ⇒ BackendError('input_stale')。 */
   stop(p: { id: string; runId: string }): Promise<void>
   /** 独立工作区:提交到分支 / 删除工作区(2026-10-07)/ 合回项目(10-08,只快进;快进不了 ⇒ BackendError('merge_manual'),回电脑上合)。 */

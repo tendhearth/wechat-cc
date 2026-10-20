@@ -3,7 +3,7 @@ import { labelJoin, type Lang } from '../i18n'
 import { DEMO_STICKER, DEMO_STICKER_FILE, DEMO_VOICE } from './demo-media'
 import { BackendError, type Backend, type CliSessionRowT, type Connection, type MatterT, type MatterDetailT, type ApprovalExplanationT, type ChatJobT, type ChatMessageT, type SessionContinueT, type MatterSayResultT, type UploadStateT, type ChatModelViewT, type OverseerTodayT, type TodayItemT, type CompanionHomeT, type FeedEventT } from './types'
 import {
-  copy, IDS, CHAT_ID, DEMO_HUNT_URL, PERM_ID, QUESTION_ID, RUN_IDS, t, explanation, progress, changesTurn, entryOptions,
+  copy, IDS, CHAT_ID, DEMO_HUNT_URL, PERM_ID, QUESTION_ID, RUN_IDS, t, explanation, progress, changesTurn, DEMO_REWIND_TOKEN, entryOptions,
   demoActivity, demoConnections, demoJobs, demoLetters, demoSessions, demoSessionMessages, demoSessionTitleKey, DEMO_SESSION_MESSAGES, type Stage,
 } from './demo-data'
 
@@ -96,7 +96,8 @@ export function makeDemoBackend(opts: { now?: () => number; setTimeout?: typeof 
     }
     const pTitle = t(lastLang, 'portfolioTitle')
     add(mkDetail(mkMatter(IDS.portfolio, 'task', pTitle, 'open', '~/Projects/portfolio', n - 600_000, ['claude', 'codex']),
-      taskOf(IDS.portfolio, pTitle, '~/Projects/portfolio', 'working', n - 60_000), {
+      // 用了多少额度(#437):演示给一行合计;cache 这类这家没报 ⇒ null(界面写「不报」)
+      { ...taskOf(IDS.portfolio, pTitle, '~/Projects/portfolio', 'working', n - 60_000), usage: { turns: 3, input: 48_210, output: 6_120, cacheRead: null, cacheWrite: null, reasoning: null, costUsd: null } }, {
         runId: RUN_IDS[IDS.portfolio], inputMode: 'steer',
         permissions: [{ id: PERM_ID, taskId: IDS.portfolio, tool: 'Bash', description: 'npm install sharp', createdAt: n - 60_000 }],
       }), 'pending', [
@@ -227,6 +228,7 @@ export function makeDemoBackend(opts: { now?: () => number; setTimeout?: typeof 
   const ev = (e: Entry, kind: string, key: Copy, extra?: string) => { e.evs = [...e.evs, { kind, key, extra, createdAt: now() }] }
   const evText = (e: Entry, kind: string, text: string) => { e.evs = [...e.evs, { kind, text, createdAt: now() }] }
   const reviewMarks = new Map<string, { mark: 'accepted' | 'returned'; comment: string; createdAt: number }>()
+  let rewound = false
   const get = (id: string) => { const e = entries.get(id); if (!e) throw new BackendError('not_found'); return e }
 
   /** 演示里三条会话能不能接:进行中的那条看得见在跑;另两条一条能恢复、一条只能带记录新开。 */
@@ -261,9 +263,23 @@ export function makeDemoBackend(opts: { now?: () => number; setTimeout?: typeof 
     },
     async changes(id) {
       get(id)
-      if (id !== IDS.portfolio) return null
+      if (id !== IDS.portfolio || rewound) return null
       const turn = changesTurn(now())
       return { ...turn, files: turn.files.map(f => { const m = reviewMarks.get(f.path); return m ? { ...f, mark: m } : f }) }
+    },
+    // 撤掉这一轮(回退切片 4):演示只有作品集那件有一轮可撤;撤了之后改动面板空了、时间线多一句
+    async rewindPreview({ id, artifactId }) {
+      get(id)
+      if (id !== IDS.portfolio || rewound || artifactId !== 'demo-review') throw new BackendError('rewind_stale')
+      const files = changesTurn(now()).files.map(f => ({ status: 'M', path: f.path }))
+      return { token: DEMO_REWIND_TOKEN, round: 1, rounds: [1], files: { count: files.length, paths: files }, extraChanges: null, droppedCommits: { count: 0, elsewhere: false },
+        rebuildHint: t(lastLang, 'rewindRebuild'), session: 'none', devServer: false, goalWillStop: false }
+    },
+    async rewind({ id, artifactId, token }) {
+      const e = get(id)
+      if (id !== IDS.portfolio || rewound || artifactId !== 'demo-review' || token !== DEMO_REWIND_TOKEN) throw new BackendError('rewind_stale')
+      rewound = true
+      evText(e, 'system', t(lastLang, 'rewindDone')); publish([id])
     },
     async reviewMark({ id, path }) { get(id); reviewMarks.set(path, { mark: 'accepted', comment: '', createdAt: now() }) },
     async reviewReturn({ id, paths, comment }) {
@@ -639,6 +655,6 @@ export function makeDemoBackend(opts: { now?: () => number; setTimeout?: typeof 
     },
     setActive() {},
     dispose() {},
-    reset() { epoch++; seq = 0; cli = seedCli(); createdBy = new Map(); saidBy = new Map(); adopted = new Map(); handedBy = new Map(); jobPaused = new Map(); jobRemoved = new Set(); deviceLabel = ''; seed(); publish([...order]) },
+    reset() { epoch++; seq = 0; cli = seedCli(); createdBy = new Map(); saidBy = new Map(); adopted = new Map(); handedBy = new Map(); jobPaused = new Map(); jobRemoved = new Set(); deviceLabel = ''; rewound = false; reviewMarks.clear(); seed(); publish([...order]) },
   }
 }

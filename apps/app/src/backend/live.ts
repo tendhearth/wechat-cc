@@ -21,7 +21,7 @@ import {
   type ApprovalExplanationT, type Backend, type Connection, type DeviceRowT, type EntryOptionsT,
   type MatterDetailT, type MatterT, type PhoneChangesTurnT, type ProgressSummaryT, type Unsubscribe,
   type ChatPageT, type ChatJobT, type ConnectionsT, type NativeSessionRowT, type NativeSessionPageT, type SessionContinueT,
-  type MatterSayResultT, type MatterInputT, type CliSessionRowT, type CliActivityItemT, type OverseerTodayT, type CompanionHomeT, type FeedEventT, type PresenceT, type UploadStateT, type EntryModelCatalogT, type MemoryViewT, type ChatModelViewT, type ChatSearchHitT, type LetterSummaryT, type FileChunkT, type JobsViewT, type ActivityPageT,
+  type MatterSayResultT, type MatterInputT, type CliSessionRowT, type CliActivityItemT, type OverseerTodayT, type CompanionHomeT, type FeedEventT, type PresenceT, type UploadStateT, type EntryModelCatalogT, type MemoryViewT, type ChatModelViewT, type ChatSearchHitT, type LetterSummaryT, type FileChunkT, type JobsViewT, type ActivityPageT, type RewindPreviewT,
 } from './types'
 
 type Topic = Parameters<Backend['subscribe']>[0]
@@ -232,6 +232,13 @@ export function makeLiveBackend(d: LiveDeps): Backend {
     async reviewReturn(p) {
       if (p.comment.length > PHONE_SAY_MAX_CHARS) throw new BackendError('invalid')
       await call('POST /m/api/matter/review-return', '/m/api/matter/review-return', { body: { id: p.id, artifactId: p.artifactId, paths: p.paths, comment: p.comment } })
+    },
+    async rewindPreview(p) {
+      return (await call<{ preview: RewindPreviewT }>('GET /m/api/matter/rewind', `/m/api/matter/rewind?${idq(p.id)}&artifactId=${encodeURIComponent(p.artifactId)}`)).preview
+    },
+    async rewind(p) {
+      // 不自动重发:超时 ⇒ 不确定(页面说「过一会儿看看」),重发要主人自己再点 —— 那时 token 多半已过期,会重拉预览
+      await call('POST /m/api/matter/rewind', '/m/api/matter/rewind', { body: { id: p.id, artifactId: p.artifactId, token: p.token } })
     },
     async chat(p) {
       const q = [p.before ? `before=${encodeURIComponent(p.before)}` : '', p.limit !== undefined ? `limit=${p.limit}` : ''].filter(Boolean).join('&')

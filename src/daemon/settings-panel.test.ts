@@ -842,6 +842,78 @@ describe('POST /m/api/matter/review-mark|review-return', () => {
   })
 })
 
+describe('GET|POST /m/api/matter/rewind(撤掉这一轮,回退切片 4)', () => {
+  const TOKEN = 'f'.repeat(64)
+  const PREVIEW = { token: TOKEN, round: 2, rounds: [2], files: { count: 1, paths: [{ status: 'M', path: 'a.ts' }] }, extraChanges: null, droppedCommits: { count: 0, elsewhere: false }, rebuildHint: '先重新构建', session: 'none', devServer: false, goalWillStop: false }
+  async function up(matters: Record<string, unknown>) {
+    const panel = makeSettingsPanel({ stateDir: seedStateDir(), ownerChatId: () => OWNER, chatPrefs: { get: () => ({}), set: () => ({}) }, getUserName: () => null, setUserName: async () => {}, log: () => {}, matters: { list: () => [], detail: async () => ({}), say: async () => ({}), seenOnPhone: () => {}, ...matters } } as never)
+    const { port } = await panel.start(0)
+    const base = `http://127.0.0.1:${port}`
+    const paired = await (await fetch(`${base}/set/api/pair?t=${panel.issueToken()}`, { method: 'POST' })).json() as { device_token: string }
+    const link = panel.issueToken()
+    const get = (q: string, tok = paired.device_token) => fetch(`${base}/m/api/matter/rewind?${q}&t=${tok}`)
+    const post = (body: unknown, tok = paired.device_token) => fetch(`${base}/m/api/matter/rewind?t=${tok}`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body) })
+    return { panel, get, post, link }
+  }
+  it('设备令牌:预览与执行原样转给 matters,回包过协议', async () => {
+    const { PHONE_API_SCHEMAS } = await import('@wechat-cc/protocol')
+    const rewindPreview = vi.fn(async () => PREVIEW), rewind = vi.fn(async () => ({ discarded: ['a2'] }))
+    const p = await up({ rewindPreview, rewind })
+    const g = await (await p.get('id=deadbeef&artifactId=abcdef12')).json()
+    expect(g).toEqual({ ok: true, preview: PREVIEW }); PHONE_API_SCHEMAS['GET /m/api/matter/rewind']!.parse(g)
+    expect(rewindPreview).toHaveBeenCalledWith('deadbeef', 'abcdef12')
+    const r = await (await p.post({ id: 'deadbeef', artifactId: 'abcdef12', token: TOKEN })).json()
+    expect(r).toEqual({ ok: true, discarded: ['a2'] }); PHONE_API_SCHEMAS['POST /m/api/matter/rewind']!.parse(r)
+    expect(rewind).toHaveBeenCalledWith('deadbeef', 'abcdef12', TOKEN)
+    await p.panel.stop()
+  })
+  it('链接令牌(10 分钟、可能随 URL 外泄)够不着:403 route_not_allowed,不碰 matters', async () => {
+    const rewindPreview = vi.fn(async () => PREVIEW), rewind = vi.fn(async () => ({ discarded: [] }))
+    const p = await up({ rewindPreview, rewind })
+    expect((await p.get('id=deadbeef&artifactId=abcdef12', p.link)).status).toBe(403)
+    const r = await p.post({ id: 'deadbeef', artifactId: 'abcdef12', token: TOKEN }, p.link)
+    expect(r.status).toBe(403); expect(await r.json()).toEqual({ error: 'route_not_allowed' })
+    expect(rewindPreview).not.toHaveBeenCalled(); expect(rewind).not.toHaveBeenCalled()
+    await p.panel.stop()
+  })
+  it('正文恰好 {id, artifactId, token};查询串多了 / 少了 / to 不许带 ⇒ 400', async () => {
+    const rewindPreview = vi.fn(async () => PREVIEW), rewind = vi.fn(async () => ({ discarded: [] }))
+    const p = await up({ rewindPreview, rewind })
+    for (const q of ['id=deadbeef', 'id=nope&artifactId=abcdef12', 'id=deadbeef&artifactId=abcdef12&to=end', 'id=deadbeef&artifactId=..%2Fx'])
+      expect((await p.get(q)).status, q).toBe(400)
+    for (const b of [{ id: 'deadbeef', artifactId: 'abcdef12' }, { id: 'deadbeef', artifactId: 'abcdef12', token: 'x' }, { id: 'deadbeef', artifactId: 'abcdef12', token: TOKEN, to: 'end' }, { id: 'nope', artifactId: 'abcdef12', token: TOKEN }])
+      expect((await p.post(b)).status, JSON.stringify(b)).toBe(400)
+    expect(rewindPreview).not.toHaveBeenCalled(); expect(rewind).not.toHaveBeenCalled()
+    await p.panel.stop()
+  })
+  it('工作台的回退码按手机那套映射:409 一组原样;422 只带 reason;502 带 rolledBack;没接 ⇒ 503', async () => {
+    const { PHONE_API_SCHEMAS } = await import('@wechat-cc/protocol')
+    const err = (code: string, extra: Record<string, unknown> = {}) => Object.assign(new Error(code), extra)
+    const rewindPreview = vi.fn(), rewind = vi.fn()
+    const p = await up({ rewindPreview, rewind })
+    const cases: Array<[Error, number, Record<string, unknown>]> = [
+      [err('rewind_needs_owner'), 409, { ok: false, error: 'rewind_needs_owner' }],
+      [err('rewind_confirmation_stale'), 409, { ok: false, error: 'rewind_confirmation_stale' }],
+      [err('rewind_not_latest'), 409, { ok: false, error: 'rewind_not_latest' }],
+      [err('rewind_ignored_conflict', { paths: ['/secret/x'] }), 409, { ok: false, error: 'rewind_ignored_conflict' }],
+      [err('workbench_busy'), 409, { ok: false, error: 'workbench_busy' }],
+      [err('rewind_unavailable', { reason: 'no_checkpoint', detail: '/secret' }), 422, { ok: false, error: 'rewind_unavailable', reason: 'no_checkpoint' }],
+      [err('rewind_failed', { rolledBack: false, backupRef: 'refs/tendhearth/x' }), 502, { ok: false, error: 'rewind_failed', rolledBack: false }],
+      [err('not_worktree'), 422, { ok: false, error: 'not_worktree' }],
+    ]
+    for (const [e, status, body] of cases) {
+      rewind.mockRejectedValueOnce(e)
+      const r = await p.post({ id: 'deadbeef', artifactId: 'abcdef12', token: TOKEN })
+      expect(r.status, e.message).toBe(status)
+      const j = await r.json(); expect(j).toEqual(body); PHONE_API_SCHEMAS['POST /m/api/matter/rewind']!.parse(j)
+    }
+    await p.panel.stop()
+    const q = await up({})
+    expect((await q.get('id=deadbeef&artifactId=abcdef12')).status).toBe(503)
+    await q.panel.stop()
+  })
+})
+
 describe('phone curated memory', () => {
   it('a throwing memory view answers 500 instead of leaving the phone waiting', async () => {
     const p = makeSettingsPanel({

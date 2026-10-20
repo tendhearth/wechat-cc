@@ -108,6 +108,26 @@ describe('演示后端', () => {
     b.reset()
     expect((await b.matter('a1b2c3d4', 'en')).permissions.length).toBe(1)
   })
+  it('撤掉这一轮(回退切片 4):作品集那件能撤;预览过协议;token 不对 ⇒ rewind_stale;撤了之后改动面板空了、时间线多一句;reset 还原', async () => {
+    const { PHONE_API_SCHEMAS } = await import('@wechat-cc/protocol')
+    const b = makeDemoBackend()
+    const turn = (await b.changes('a1b2c3d4'))!
+    expect(turn.rewindable).toBe(true)
+    const p = await b.rewindPreview({ id: 'a1b2c3d4', artifactId: turn.artifactId! })
+    PHONE_API_SCHEMAS['GET /m/api/matter/rewind']!.parse({ ok: true, preview: p })
+    expect(p.files.count).toBe(2)
+    await expect(b.rewind({ id: 'a1b2c3d4', artifactId: turn.artifactId!, token: '0'.repeat(64) })).rejects.toMatchObject({ code: 'rewind_stale' })
+    await b.rewind({ id: 'a1b2c3d4', artifactId: turn.artifactId!, token: p.token })
+    expect(await b.changes('a1b2c3d4')).toBeNull()
+    expect((await b.matter('a1b2c3d4', 'zh-Hans')).events.at(-1)?.text).toContain('round 1 was undone')
+    await expect(b.rewindPreview({ id: 'a1b2c3d4', artifactId: turn.artifactId! })).rejects.toMatchObject({ code: 'rewind_stale' })
+    b.reset()
+    expect((await b.changes('a1b2c3d4'))?.rewindable).toBe(true)
+  })
+  it('用了多少额度:作品集那件带合计;没报的项是 null(不是 0)', async () => {
+    const b = makeDemoBackend()
+    expect((await b.matter('a1b2c3d4', 'en')).task?.usage).toMatchObject({ turns: 3, input: 48_210, output: 6_120, cacheRead: null })
+  })
   it('所有返回都符合协议包的 schema', async () => {
     const { MatterDetail, Matter, ApprovalsTopic, AgentsTopic, HomeTopic, MatterTopic, EntryOptions, DeviceRow, PhoneChangesTurn, ApprovalExplanation, ProgressSummary } = await import('@wechat-cc/protocol')
     const b = makeDemoBackend()

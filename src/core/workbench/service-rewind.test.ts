@@ -225,6 +225,9 @@ describe('执行段失败与开机对账', () => {
     expect(service.detail(id).task).toMatchObject({status:'interrupted',error:'rewind_needs_owner'})
     expect(service.detail(id).events.at(-1)!.text).toContain(done.backupRef)
     expect((service.detail(id) as {rewind?:{blocked:unknown}}).rewind?.blocked).toEqual({rewindId:done.rewindId,backupRef:done.backupRef,reason:expect.stringContaining('保留现在的样子')})
+    // 停住之后又来一条无关的 system 事件:横幅原因仍是停住那一句(评审 #439)
+    store.addEvent(id,'system','回退之前先收工:这件事安静着的会话已关掉,下一句会按原会话恢复。')
+    expect((service.detail(id) as {rewind?:{blocked:{reason:string}}}).rewind?.blocked.reason).toContain(done.backupRef)
     // 持久的闸:派发 / 工作区动作 / 回退一律拒绝,直到主人拍板
     expect(()=>service.continueTask(id,'接着做',{inputRequestId:randomUUID()})).toThrow('rewind_needs_owner')
     expect(()=>service.worktreeAction(id,'commit')).toThrow('rewind_needs_owner')

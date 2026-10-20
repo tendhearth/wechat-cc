@@ -32,6 +32,10 @@ const SPECIFIC: ReadonlyMap<string, BackendCode> = new Map<string, BackendCode>(
   // 做到条件成立为止(2026-10-20):检查命令格式不对 / 没开独立工作区 / 免审执行者不收。invalid_until 必须在 `invalid_` 前缀规则之前判。
   ['invalid_until', 'until_invalid'], ['until_requires_worktree', 'until_requires_worktree'], ['until_unattended_unsupported', 'until_unattended'],
   ['cli_not_actionable', 'cli_not_actionable'], ['cli_session_ended', 'cli_ended'], ['cli_session_remote', 'cli_remote'],
+  // 撤掉这一轮(回退切片 4):确认过期 / 不是最新那轮 / 那轮已撤掉 ⇒ 都是「工作区刚变过」,重拉预览;停住 ⇒ 只读一句,回电脑上处理。
+  ['rewind_confirmation_required', 'rewind_stale'], ['rewind_confirmation_stale', 'rewind_stale'], ['rewind_not_latest', 'rewind_stale'], ['review_round_discarded', 'rewind_stale'],
+  ['rewind_needs_owner', 'rewind_needs_owner'], ['rewind_shared_folder', 'rewind_shared'], ['rewind_merged', 'rewind_merged'], ['rewind_ignored_conflict', 'rewind_ignored'],
+  ['rewind_unavailable', 'rewind_unavailable'], ['not_worktree', 'rewind_unavailable'], ['rewind_noop', 'rewind_noop'], ['rewind_failed', 'rewind_failed'],
 ])
 const errOf = (body: unknown): string | null => {
   if (typeof body !== 'object' || body === null) return null

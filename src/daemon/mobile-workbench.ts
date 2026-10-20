@@ -5,7 +5,7 @@ import type {MattersService,MatterSayInput} from '../core/matters/service'
 import {entryErrorStatus,parseEntryInput,type EntryInput,type EntryOptions} from '../core/workbench/task-entry'
 import type {NativeContinuePreview} from '../core/workbench/native-adoption'
 
-export type MobileMatterActions=Partial<Pick<MattersService,'permission'|'answer'|'artifactChunk'|'handoff'|'inputReceipt'|'stop'|'worktree'>>
+export type MobileMatterActions=Partial<Pick<MattersService,'permission'|'answer'|'artifactChunk'|'handoff'|'inputReceipt'|'stop'|'worktree'|'rewindPreview'|'rewind'>>
 export interface MobileEntryActions {
   entryOptions():EntryOptions
   /** 交办时可选的模型(2026-10-06):手机只给执行者 id 与项目目录 id,路径在电脑上解析。没接 ⇒ 手机不显示模型选择。 */
@@ -17,10 +17,19 @@ export interface MobileUploadActions {chunk(input:UploadChunk):UploadState;statu
 const ID=/^[a-f0-9]{8}$/
 const UUID=/^[a-f0-9]{8}-[a-f0-9]{4}-[1-5][a-f0-9]{3}-[89ab][a-f0-9]{3}-[a-f0-9]{12}$/i
 const SHA=/^[a-f0-9]{64}$/
+/** 制品 id(同 internal-api 的 ARTIFACT_ID)。 */
+const ARTIFACT=/^[a-f0-9-]{8,64}$/
 const object=(v:unknown):v is Record<string,unknown>=>!!v&&typeof v==='object'&&!Array.isArray(v)
 const json=(body:object,status=200)=>new Response(JSON.stringify(body),{status,headers:{'content-type':'application/json; charset=utf-8','cache-control':'no-store'}})
+/** 回到某一轮(切片 4):工作台的回退码原样给手机(App 认得的各有一句话,认不得的按「没做成」说)。 */
+const REWIND_409=new Set(['rewind_confirmation_required','rewind_confirmation_stale','rewind_not_latest','review_round_discarded','rewind_needs_owner','rewind_shared_folder','rewind_merged','rewind_ignored_conflict'])
 export function mobileMatterError(error:unknown):Response {
   const code=error instanceof Error?error.message:'internal'
+  if(REWIND_409.has(code))return json({ok:false,error:code},409)
+  // 这件事回不了:只带 reason,而且只认短码(/^[a-z_]{1,40}$/)—— 以后谁往 reason 里塞了细节也漏不出去(#444 评审)
+  if(code==='rewind_unavailable'||code==='rewind_noop'){const reason=(error as {reason?:unknown}).reason;return json({ok:false,error:code,...(typeof reason==='string'&&/^[a-z_]{1,40}$/.test(reason)?{reason}:{})},422)}
+  // 切换失败:rolledBack=true ⇒ 已恢复原样;false ⇒ 这件事停住了(随后详情里 task.rewind.blocked)
+  if(code==='rewind_failed'){const rolledBack=(error as {rolledBack?:unknown}).rolledBack;return json({ok:false,error:code,...(typeof rolledBack==='boolean'?{rolledBack}:{})},502)}
   const entryStatus=entryErrorStatus(code)
   if(entryStatus!==undefined)return json({ok:false,error:code},entryStatus)
   if(code==='upload_invalid_content')return json({ok:false,error:code},400)
@@ -126,6 +135,23 @@ export async function mobileWorkbenchRoute(actions:MobileMatterActions|undefined
       if(!object(b)||Object.keys(b).some(k=>k!=='id'&&k!=='action')||typeof b.id!=='string'||!ID.test(b.id)||(b.action!=='commit'&&b.action!=='remove'&&b.action!=='merge'&&b.action!=='reopen'))throw Error('invalid_request')
       if(!actions?.worktree)throw Error('workbench_not_wired')
       return json({ok:true,...actions.worktree(b.id,b.action)})
+    }catch(error){return mobileMatterError(error)}
+  }
+  // 撤掉这一轮(回退切片 4):GET 预览(固定回到最新那一轮开始之前)、POST 正文恰好 {id, artifactId, token}。只给设备令牌(LINK_EXCLUDED)。
+  if(url.pathname==='/m/api/matter/rewind'){
+    if(req.method!=='GET'&&req.method!=='POST')return json({ok:false,error:'method_not_allowed'},405)
+    try{
+      if(req.method==='GET'){
+        const q=url.searchParams,id=q.get('id'),artifactId=q.get('artifactId')
+        if(q.getAll('id').length!==1||q.getAll('artifactId').length!==1||[...q.keys()].some(key=>!['id','artifactId','t','d','_via'].includes(key))||!id||!ID.test(id)||!artifactId||!ARTIFACT.test(artifactId))throw Error('invalid_request')
+        if(!actions?.rewindPreview)throw Error('workbench_not_wired')
+        return json({ok:true,preview:await actions.rewindPreview(id,artifactId)})
+      }
+      let b:unknown
+      try{b=await req.json()}catch{throw Error('invalid_request')}
+      if(!object(b)||Object.keys(b).sort().join(',')!=='artifactId,id,token'||typeof b.id!=='string'||!ID.test(b.id)||typeof b.artifactId!=='string'||!ARTIFACT.test(b.artifactId)||typeof b.token!=='string'||!SHA.test(b.token))throw Error('invalid_request')
+      if(!actions?.rewind)throw Error('workbench_not_wired')
+      return json({ok:true,...await actions.rewind(b.id,b.artifactId,b.token)})
     }catch(error){return mobileMatterError(error)}
   }
   // 停下正在跑的这一轮(2026-10-06):正文恰好 id + runId;runId 必须是手机看到的那一轮。

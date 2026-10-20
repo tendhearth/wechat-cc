@@ -138,3 +138,44 @@ describe('worktree on the phone (2026-10-07)',()=>{
     PHONE_API_SCHEMAS['GET /m/api/matter']!.parse({ok:true,...detail})
   })
 })
+
+describe('撤掉这一轮(回退切片 4)',()=>{
+  const PREVIEW={token:'f'.repeat(64),target:{artifactId:'a2',to:'start',round:2},discarded:[{artifactId:'a2',round:2}],
+    files:{count:60,paths:Array.from({length:60},(_,i)=>({status:'M',path:`f${i}.ts`,extra:'x'}))},extraChanges:{count:1,paths:[{status:'A',path:'note.txt'}]},
+    droppedCommits:{count:1,elsewhere:true},ignoredUntouched:true,rebuildHint:'先重新构建',refsNote:'refs/tendhearth/ 在 /Users/me/secret',session:'will_close',devServer:false,goal:{status:'passed',willStop:true}}
+  function setup(over:Record<string,unknown>={}){
+    store.create({id:'deadbeef',kind:'task',title:'回退',projectPath:'/work',ownerChatId:'owner'})
+    const rounds=[{artifactId:'a1',createdAt:1},{artifactId:'a2',createdAt:2},{artifactId:'a3',createdAt:3,discarded:true}]
+    const wb={detail:vi.fn(()=>({task:TASK,events:[]})),continueTask:vi.fn(),reviewList:vi.fn(()=>rounds),rewindPreview:vi.fn(async()=>PREVIEW),rewind:vi.fn(async()=>({rewindId:'r',backupRef:'refs/x',head:'h',discarded:['a2']})),...over}
+    return {wb,service:makeMattersService({store,workbench:wb as never})}
+  }
+  it('只认最新那一轮没撤的、固定 to:start;预览只给手机要的几样(路径至多 50 个),过协议',async()=>{
+    const {wb,service}=setup()
+    const p=await service.rewindPreview('deadbeef','a2')
+    expect(wb.rewindPreview).toHaveBeenCalledWith('deadbeef',{artifactId:'a2',to:'start'})
+    expect(p).toMatchObject({token:'f'.repeat(64),round:2,rounds:[2],extraChanges:{count:1,paths:[{status:'A',path:'note.txt'}]},droppedCommits:{count:1,elsewhere:true},session:'will_close',goalWillStop:true})
+    expect(p.files.count).toBe(60);expect(p.files.paths).toHaveLength(50);expect(p.files.paths[0]).toEqual({status:'M',path:'f0.ts'})
+    expect(JSON.stringify(p)).not.toContain('/Users/me')
+    PHONE_API_SCHEMAS['GET /m/api/matter/rewind']!.parse({ok:true,preview:p})
+    await expect(service.rewindPreview('deadbeef','a1')).rejects.toThrow('rewind_not_latest')
+    await expect(service.rewindPreview('deadbeef','a3')).rejects.toThrow('rewind_not_latest')
+    await expect(service.rewind('deadbeef','a2','f'.repeat(64))).resolves.toEqual({discarded:['a2']})
+    expect(wb.rewind).toHaveBeenCalledWith('deadbeef',{artifactId:'a2',to:'start',token:'f'.repeat(64)})
+    await expect(service.rewind('deadbeef','a1','f'.repeat(64))).rejects.toThrow('rewind_not_latest')
+    expect(wb.rewind).toHaveBeenCalledTimes(1)
+  })
+  it('没接 ⇒ workbench_not_wired;聊天那件 ⇒ matter_task_required',async()=>{
+    const {service}=setup({rewind:undefined})
+    await expect(service.rewindPreview('deadbeef','a2')).rejects.toThrow('workbench_not_wired')
+    const chat=store.ensureChat('owner-chat')
+    await expect(service.rewindPreview(chat.id,'a2')).rejects.toThrow('matter_task_required')
+  })
+  it('停住等主人拍板 ⇒ 详情的 task.rewind.blocked(手机只读一句);没停住不带',async()=>{
+    const {wb,service}=setup()
+    expect((await service.detail('deadbeef')).task).not.toHaveProperty('rewind')
+    wb.detail.mockReturnValue({task:TASK,events:[],rewind:{undo:null,blocked:{rewindId:'r',backupRef:'refs/tendhearth/rewind/x',reason:'停住了'}}} as never)
+    const d=await service.detail('deadbeef')
+    expect(d.task?.rewind).toEqual({blocked:true});expect(JSON.stringify(d)).not.toContain('refs/tendhearth')
+    PHONE_API_SCHEMAS['GET /m/api/matter']!.parse({ok:true,...d})
+  })
+})

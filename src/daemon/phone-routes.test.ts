@@ -19,7 +19,7 @@ describe('phoneRouteAllowed', () => {
   })
   it('链接令牌与设备令牌同一套(裁决 1),但终端会话的「接着说」「拍板」(评审 10-15 #3)与「CC 的信」(2026-10-18,私事;连同能读出信页的 chat/file)只给配好的设备;只允局域网的三条', () => {
     // chat/file:信的每一页也镜像进对话,链接令牌不能从这里读出信(评审 10-19 #1)
-    const deviceOnly = ['GET /m/api/letters', 'GET /m/api/letters/page', 'GET /m/api/chat/file', 'POST /m/api/cli/permission', 'POST /m/api/cli/say', 'GET /m/api/jobs', 'POST /m/api/jobs/action', 'GET /m/api/activity']
+    const deviceOnly = ['GET /m/api/letters', 'GET /m/api/letters/page', 'GET /m/api/chat/file', 'POST /m/api/cli/permission', 'POST /m/api/cli/say', 'GET /m/api/jobs', 'POST /m/api/jobs/action', 'GET /m/api/activity', 'GET /m/api/matter/rewind', 'POST /m/api/matter/rewind']
     expect([...LINK_ROUTES].sort()).toEqual([...PHONE_ROUTES].filter(r => !deviceOnly.includes(r)).sort())
     for (const r of deviceOnly) { expect(PHONE_ROUTES.has(r)).toBe(true); expect(LINK_ROUTES.has(r)).toBe(false) }
     expect([...LAN_ONLY_OPS].sort()).toEqual(['forget_devices', 'revoke_device', 'set_remote'])

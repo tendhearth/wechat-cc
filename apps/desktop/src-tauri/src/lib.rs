@@ -1251,18 +1251,22 @@ async fn workbench_api(method: String, path: String, body: Option<String>) -> Re
     let status = response.status();
     let response_body = response.text().await.map_err(|e| format!("failed to read response body ({status}): {e}"))?;
     if !status.is_success() {
-        // 带 reason 的错误(回退的 rewind_unavailable 这类)拼成 `code:reason`,桌面才说得出为什么。
-        let message = serde_json::from_str::<Value>(&response_body).ok()
-            .and_then(|v| v.get("error").and_then(Value::as_str).map(|error| match v.get("reason").and_then(Value::as_str) {
-                Some(reason) => format!("{error}:{reason}"),
-                None => error.to_owned(),
-            }))
-            .unwrap_or_else(|| format!("HTTP {status}"));
-        return Err(message);
+        return Err(workbench_error_message(&response_body, &status.to_string()));
     }
     serde_json::from_str::<Value>(&response_body)
         .map_err(|e| format!("invalid JSON response ({status}): {e}"))?;
     Ok(response_body)
+}
+
+/// 工作台代理的错误串:只有回退一族(`rewind_*`)带 reason 时拼成 `code:reason`,桌面才说得出为什么;
+/// 别的码一律原样(workbench.js / workbench-execution.js / workbench-attachments.js 按整串精确比对)。
+fn workbench_error_message(body: &str, status: &str) -> String {
+    serde_json::from_str::<Value>(body).ok()
+        .and_then(|v| v.get("error").and_then(Value::as_str).map(|error| match v.get("reason").and_then(Value::as_str) {
+            Some(reason) if error.starts_with("rewind_") => format!("{error}:{reason}"),
+            _ => error.to_owned(),
+        }))
+        .unwrap_or_else(|| format!("HTTP {status}"))
 }
 
 #[tauri::command]
@@ -1738,7 +1742,22 @@ mod converse_reply_tests {
 
 #[cfg(test)]
 mod workbench_proxy_tests {
-    use super::workbench_request_allowed;
+    use super::{workbench_error_message, workbench_request_allowed};
+
+    #[test]
+    fn workbench_error_message_appends_reason_only_for_rewind_codes() {
+        for (body, expected) in [
+            (r#"{"error":"rewind_unavailable","reason":"no_checkpoint"}"#, "rewind_unavailable:no_checkpoint"),
+            (r#"{"error":"rewind_noop"}"#, "rewind_noop"),
+            // 非回退的码哪怕带了 reason 也原样:前端按整串比对
+            (r#"{"error":"workbench_busy","reason":"x"}"#, "workbench_busy"),
+            (r#"{"error":"unattended_ack_required","reason":"y"}"#, "unattended_ack_required"),
+            (r#"{"error":"attachment_limit"}"#, "attachment_limit"),
+            ("not json", "HTTP 500 Internal Server Error"),
+        ] {
+            assert_eq!(workbench_error_message(body, "500 Internal Server Error"), expected, "{body}");
+        }
+    }
     static ENVIRONMENT_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
 
     #[test]
