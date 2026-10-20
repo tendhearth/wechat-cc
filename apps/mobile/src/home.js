@@ -51,7 +51,7 @@ document.getElementById("todos").addEventListener("click", function(ev) {
     .catch(function(){ toast("网络不通") })
 })
 var HOME_KEY = "cc.home.v2:" + (REMOTE ? REMOTE.id : location.host) + ":" + T.slice(-12)
-// 不用 emoji(#369;用词表):每类一个衬线字作记号。
+// 不用 emoji(PR 369;用词表):每类一个衬线字作记号。
 var KIND_ICON = { hunt: "觅", visit: "访", postcard: "信", recollection: "忆", thought: "想", chat_day: "聊" }
 var homeState = null, homeSeq = 0
 // 配对换了令牌(plan 7a):旧令牌那一趟的失败(在飞的 401、resetTunnel 关掉旧隧道的 closed)
