@@ -50,7 +50,7 @@ export function makeJobsCommand(deps: {
   const line = (j: ScheduledJob) => {
     const st = deps.store.state(j.id)
     const last = st.lastRunAt ? `上次 ${st.lastRunDay?.slice(5)} ${statusWord(st.lastStatus)}` : '还没跑过'
-    return `${j.id} · ${describeSchedule(j.schedule, deps.timezone())}${j.paused ? ' · 停着' : ''} · ${j.brief ? '早报' : head(j.text)} · ${last}`
+    return `${j.id} · ${describeSchedule(j.schedule, deps.timezone())}${j.paused ? ' · 停着' : ''} · ${j.brief ? '早报' : j.recap ? '周报' : head(j.text)} · ${last}`
   }
   return {
     probe: (text, chatId) => (parseJobCommand(text) !== null || (!!deps.briefPrefs && parseBriefPref(text) !== null)) && deps.isOwner(chatId),
@@ -81,10 +81,14 @@ export function makeJobsCommand(deps: {
           const existing = deps.store.list().jobs.find(j => j.brief)
           if (existing) { await reply(`已经有一份早报了(${existing.id} · ${describeSchedule(existing.schedule, deps.timezone())})。要改时间就先「定时 删 ${existing.id}」再建。`); return true }
         }
-        const r = deps.store.add(cmd.schedule, cmd.text, new Date(deps.now()), cmd.brief ? { brief: true } : {})
+        if (cmd.recap) {
+          const existing = deps.store.list().jobs.find(j => j.recap)
+          if (existing) { await reply(`已经有一份周报了(${existing.id} · ${describeSchedule(existing.schedule, deps.timezone())})。要改时间就先「定时 删 ${existing.id}」再建。`); return true }
+        }
+        const r = deps.store.add(cmd.schedule, cmd.text, new Date(deps.now()), cmd.brief ? { brief: true } : cmd.recap ? { recap: true } : {})
         if (!r.ok) { await reply(r.error); return true }
         deps.log('JOBS', `owner added ${r.job.id} ${describeSchedule(r.job.schedule)}`)
-        await reply(`记下了(${r.job.id}):${describeSchedule(r.job.schedule, deps.timezone())} ${r.job.brief ? '早报 —— 今天到期的事、昨天各执行者做了什么、等你拍板的;没东西就不发。「早报 少点 / 多点 …」调口味' : head(r.job.text)}\n下次:${nextRunLabel(r.job.schedule, local())}。到时候我只看、只查,有值得说的才找你,没新东西就不吭声。${execNote()}`)
+        await reply(`记下了(${r.job.id}):${describeSchedule(r.job.schedule, deps.timezone())} ${r.job.brief ? '早报 —— 今天到期的事、昨天各执行者做了什么、等你拍板的;没东西就不发。「早报 少点 / 多点 …」调口味' : r.job.recap ? '周报 —— CC 这一周替你做了什么、哪些卡住了、下周值得留意的;没东西就不发' : head(r.job.text)}\n下次:${nextRunLabel(r.job.schedule, local())}。到时候我只看、只查,有值得说的才找你,没新东西就不吭声。${execNote()}`)
         return true
       }
       const exists = deps.store.list().jobs.some(j => j.id === cmd.id)

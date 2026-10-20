@@ -294,7 +294,7 @@ const CuratedItem = z.object({
 })
 /** 手机上的一条定时(GET /m/api/jobs,2026-10-20);label 已带时区,如「每天 08:00(上海)」。 */
 export const PhoneJob = z.object({
-  id: z.string(), label: z.string(), text: z.string(), brief: z.boolean(), paused: z.boolean(),
+  id: z.string(), label: z.string(), text: z.string(), brief: z.boolean(), recap: z.boolean().optional(), paused: z.boolean(),
   last: z.object({ day: z.string(), status: z.string(), label: z.string() }).nullable(),
 })
 export type PhoneJobT = z.infer<typeof PhoneJob>

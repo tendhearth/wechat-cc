@@ -91,3 +91,12 @@ describe('早报(对标 #7)', () => {
     expect(parseBriefPref('今天早报呢')).toBeNull()
   })
 })
+
+describe('周报(定时 周报 [周X] HH:MM)', () => {
+  it('defaults to Sunday; a weekday can be given; bad time ⇒ usage', () => {
+    expect(parseJobCommand('定时 周报 20:00')).toEqual({ kind: 'add', schedule: { kind: 'weekly', at: '20:00', weekday: 7 }, text: '周报', recap: true })
+    expect(parseJobCommand('定时 周报 周五 18:30')).toEqual({ kind: 'add', schedule: { kind: 'weekly', at: '18:30', weekday: 5 }, text: '周报', recap: true })
+    expect(parseJobCommand('定时 周报')).toMatchObject({ kind: 'usage' })
+    expect(parseJobCommand('定时 周报 周八 9:00')).toMatchObject({ kind: 'usage' })
+  })
+})

@@ -12,6 +12,8 @@ export interface PhoneJob {
   label: string
   text: string
   brief: boolean
+  /** 周报(CC 这一周做过的事)。 */
+  recap?: boolean
   paused: boolean
   last: { day: string; status: string; label: string } | null
 }
@@ -27,7 +29,7 @@ export function jobsView(o: { store: JobsStore; timezone: string; executor: stri
     jobs: jobs.map(j => {
       const st = o.store.state(j.id)
       return {
-        id: j.id, label: describeSchedule(j.schedule, o.timezone), text: j.text, brief: !!j.brief, paused: j.paused,
+        id: j.id, label: describeSchedule(j.schedule, o.timezone), text: j.text, brief: !!j.brief, recap: !!j.recap, paused: j.paused,
         last: st.lastRunDay && st.lastStatus ? { day: st.lastRunDay, status: st.lastStatus, label: statusWord(st.lastStatus) } : null,
       }
     }),

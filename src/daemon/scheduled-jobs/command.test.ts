@@ -141,3 +141,24 @@ describe('早报 × 微信', () => {
     expect(m.said.at(-1)).toContain('早报')
   })
 })
+
+describe('周报 × 微信', () => {
+  it('adds one recap (Sunday by default); a second is refused; the list labels it 周报; the phone view flags it', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'recap-cmd-'))
+    const store = makeJobsStore(dir)
+    const said: string[] = []
+    const cmd = makeJobsCommand({ store, isOwner: (c) => c === 'owner', say: async (_c, t) => { said.push(t) }, timezone: () => 'Asia/Shanghai', now: () => Date.parse('2026-10-20T00:00:00Z'), log: () => {}, jobExecutor: () => 'claude' })
+    await cmd.handle('定时 周报 20:00', 'owner')
+    expect(store.list().jobs).toMatchObject([{ id: 'j1', recap: true, schedule: { kind: 'weekly', weekday: 7, at: '20:00' } }])
+    expect(said[0]).toContain('周报')
+    expect(said[0]).toContain('这一周')
+    await cmd.handle('定时 周报 周五 18:00', 'owner')
+    expect(store.list().jobs).toHaveLength(1)
+    expect(said[1]).toContain('已经有一份周报了(j1')
+    await cmd.handle('定时', 'owner')
+    expect(said[2]).toContain('j1 · 每周日 20:00(上海) · 周报')
+    const { jobsView } = await import('./view')
+    const v = jobsView({ store, timezone: 'Asia/Shanghai', executor: 'claude' })
+    expect(v.ok && v.jobs[0]).toMatchObject({ recap: true, brief: false })
+  })
+})
