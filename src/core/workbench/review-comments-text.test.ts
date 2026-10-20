@@ -94,11 +94,13 @@ describe('composeCommentsText · 切片 2 补(评审 #449)', () => {
     expect(out.sent).toEqual(['a'])
     expect(out.remaining).toBe(1)
     expect(out.text.length).toBeLessThanOrEqual(600)
-    expect(out.text).toMatch(/意…$/)
+    expect(out.text).toMatch(/意…\(已截断\)$/)
+    expect(out.text).toContain('```')
     // 连引用也装不下 ⇒ 去掉引用再截正文
     const tiny = composeCommentsText([c({ id: 'a', quote: Array.from({ length: 12 }, () => '+' + 'q'.repeat(300)).join('\n'), body: '意'.repeat(50) })], { maxChars: 120 })
     expect(tiny.sent).toEqual(['a'])
     expect(tiny.text).not.toContain('```')
+    expect(tiny.text).toContain('(引用太长,略去)\n意见:')
     expect(tiny.text.length).toBeLessThanOrEqual(120)
   })
   it('paths with newlines / control chars are collapsed to one JSON line, in comments and in the revert list', () => {

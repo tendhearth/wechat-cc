@@ -15,12 +15,18 @@ export function makeReviewHunkLog(db: Db, bump: (taskId: string) => number) {
   const tx = <T>(fn: () => T) => db.transaction(fn)()
   return {
     list: (taskId: string): ReviewHunkEntry[] => db.query<ReviewHunkEntry, [string]>(`${SELECT} WHERE task_id=? ORDER BY created_at,rowid`).all(taskId),
-    /** 记一次撤回 / 恢复;状态变了就重新算「没告知过」。 */
+    /**
+     * 记一次撤回 / 恢复(upsert)。同一块、同一状态再记一次(崩溃后重试、幂等分支补记)⇒ 原行不动,
+     * 保留 created_at 与 notified_at,不会让执行者被重复告知;状态或块 sha 变了 ⇒ 重新算「没告知过」。
+     */
     set(input: Omit<ReviewHunkEntry, 'notifiedAt' | 'createdAt'> & { createdAt?: number }): ReviewHunkEntry {
       return tx(() => {
         const row = db.query<ReviewHunkEntry, [string, string, string, number, string, string, number]>(
           `INSERT INTO workbench_review_hunks(task_id,artifact_sha256,path,hunk_index,hunk_sha256,state,created_at) VALUES(?,?,?,?,?,?,?)
-           ON CONFLICT(task_id,artifact_sha256,path,hunk_index) DO UPDATE SET hunk_sha256=excluded.hunk_sha256,state=excluded.state,created_at=excluded.created_at,notified_at=NULL
+           ON CONFLICT(task_id,artifact_sha256,path,hunk_index) DO UPDATE SET
+             created_at=CASE WHEN state=excluded.state AND hunk_sha256=excluded.hunk_sha256 THEN created_at ELSE excluded.created_at END,
+             notified_at=CASE WHEN state=excluded.state AND hunk_sha256=excluded.hunk_sha256 THEN notified_at ELSE NULL END,
+             hunk_sha256=excluded.hunk_sha256,state=excluded.state
            RETURNING task_id AS taskId,artifact_sha256 AS artifactSha256,path,hunk_index AS hunkIndex,hunk_sha256 AS hunkSha256,state,notified_at AS notifiedAt,created_at AS createdAt`,
         ).get(input.taskId, input.artifactSha256, input.path, input.hunkIndex, input.hunkSha256, input.state, input.createdAt ?? Date.now())!
         bump(input.taskId)

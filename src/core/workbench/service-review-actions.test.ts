@@ -309,6 +309,42 @@ describe('revertReviewHunk', () => {
     expect(f.service.detail(f.id).events.length).toBe(events)
   })
 
+  it('crash window: written but not recorded ⇒ the retry (unchanged) still records it; same-state upsert keeps notified_at', async () => {
+    const t = twoHunks()
+    const f = await real({ 'src/a.ts': { before: t.before, after: t.after } })
+    const set = f.store.reviewHunks.set
+    f.store.reviewHunks.set = () => { throw new Error('crash') }
+    expect(() => f.act('src/a.ts', 0, 'revert')).toThrow()
+    f.store.reviewHunks.set = set
+    expect(f.disk('src/a.ts').toString()).toBe(t.firstReverted)
+    expect(f.store.reviewHunks.list(f.id)).toEqual([])
+    expect(f.act('src/a.ts', 0, 'revert')).toMatchObject({ unchanged: true, state: 'reverted' })
+    const [row] = f.store.reviewHunks.list(f.id)
+    expect(row).toMatchObject({ hunkIndex: 0, state: 'reverted', notifiedAt: null })
+    expect(f.service.reviewList(f.id)[0]!.files[0]!.hunks!.map(h => !!h.reverted)).toEqual([true, false])
+    // 告知过之后再幂等重试 ⇒ 不清 notified_at、不改 created_at
+    f.store.reviewHunks.markNotified(f.id, [row!])
+    const notified = f.store.reviewHunks.list(f.id)[0]!
+    f.act('src/a.ts', 0, 'revert')
+    expect(f.store.reviewHunks.list(f.id)[0]).toEqual(notified)
+    // 状态真变了 ⇒ 重新算没告知
+    f.act('src/a.ts', 0, 'restore')
+    expect(f.store.reviewHunks.list(f.id)[0]).toMatchObject({ state: 'restored', notifiedAt: null })
+  })
+
+  it('crash window for whole-file revert: the retry records every hunk as reverted (and still reports review_file_changed)', async () => {
+    const t = twoHunks()
+    const f = await real({ 'src/a.ts': { before: t.before, after: t.after } })
+    const set = f.store.reviewHunks.set
+    f.store.reviewHunks.set = () => { throw new Error('crash') }
+    expect(() => f.service.revertReviewFile(f.id, { artifactId: f.art.id, path: 'src/a.ts' })).toThrow('crash')
+    f.store.reviewHunks.set = set
+    expect(f.disk('src/a.ts').toString()).toBe(t.before)
+    expect(f.store.reviewHunks.list(f.id)).toEqual([])
+    expect(() => f.service.revertReviewFile(f.id, { artifactId: f.art.id, path: 'src/a.ts' })).toThrow('review_file_changed')
+    expect(f.store.reviewHunks.list(f.id).map(e => [e.hunkIndex, e.state])).toEqual([[0, 'reverted'], [1, 'reverted']])
+  })
+
   it('whole-file revert still works after partial hunk reverts, and marks every hunk reverted', async () => {
     const t = twoHunks()
     const f = await real({ 'src/a.ts': { before: t.before, after: t.after } })

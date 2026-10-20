@@ -142,11 +142,13 @@ export function makeReviewLines(ctx: ServiceCtx, deps: ReviewLineDeps) {
       const composed = composeCommentsText(items, { summary, reverts })
       const chosen = items.filter(c => composed.sent.includes(c.id))
       const told = reverts.filter(r => composed.reverts.includes(r.key))
+      const composedRows = new Map(drafts.filter(c => composed.sent.includes(c.id)).map(c => [c.id, { body: c.body, updatedAt: c.updatedAt }]))
       const counts = { sent: chosen.length, remaining: composed.remaining, skippedDiscarded }
       const derive = (scope: string) => derivedCommentsRequestId(chosen, summary, composed.reverts, scope)
       const done = (requestId: string) => {
         store.atomic(() => {
-          store.reviewComments.markSent(id, composed.sent, requestId)
+          // 只记拼进文本的那一版:投递途中又改过的那条留在草稿里(发出去的是旧正文)
+          store.reviewComments.markSent(id, composed.sent, requestId, Date.now(), composedRows)
           store.reviewHunks.markNotified(id, told.map(r => { const [artifactSha256, path, index] = r.key.split('\0'); return { artifactSha256: artifactSha256!, path: path!, hunkIndex: Number(index) } }))
           store.addEvent(id, 'system', `已把 ${chosen.length} 条行评论发给执行者。`)
         })
@@ -183,8 +185,11 @@ export function makeReviewLines(ctx: ServiceCtx, deps: ReviewLineDeps) {
       try {
         const state = locate(current, hunks, file.afterSha256)
         if (!state) throw new Error('review_file_changed')
-        // 6. 已经是目标 ⇒ 什么都不写
-        if (state[h] === want) return { path: file.path, hunk: h, state: input.action === 'revert' ? 'reverted' : 'restored', unchanged: true }
+        // 6. 已经是目标 ⇒ 文件不写;留痕照样补一笔(上次写完盘、没来得及记就崩了的那种),同状态的 upsert 不动原行
+        if (state[h] === want) {
+          store.reviewHunks.set({ taskId: id, artifactSha256: artifact.sha256, path: file.path, hunkIndex: h, hunkSha256: hunk.sha256, state: input.action === 'revert' ? 'reverted' : 'restored' })
+          return { path: file.path, hunk: h, state: input.action === 'revert' ? 'reverted' : 'restored', unchanged: true }
+        }
         // 7. 翻这一块,再证一遍
         const target = state.map((s, i) => i === h ? want : s)
         next = switchHunks(current, hunks, state, target)

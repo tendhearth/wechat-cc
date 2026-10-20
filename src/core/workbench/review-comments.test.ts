@@ -81,6 +81,13 @@ describe('review comments (v83)', () => {
     expect(store.reviewHunks.list(t.id)).toEqual([{ taskId: t.id, ...key, hunkSha256: H, state: 'reverted', notifiedAt: 20, createdAt: 10 }])
     store.reviewHunks.set({ taskId: t.id, ...key, hunkSha256: H, state: 'restored', createdAt: 40 })
     expect(store.reviewHunks.list(t.id)).toEqual([{ taskId: t.id, ...key, hunkSha256: H, state: 'restored', notifiedAt: null, createdAt: 40 }])
+    // 同一状态再记(崩溃后重试 / 幂等补记)⇒ 原行不动
+    expect(store.reviewHunks.markNotified(t.id, [key], 50)).toBe(1)
+    store.reviewHunks.set({ taskId: t.id, ...key, hunkSha256: H, state: 'restored', createdAt: 60 })
+    expect(store.reviewHunks.list(t.id)).toEqual([{ taskId: t.id, ...key, hunkSha256: H, state: 'restored', notifiedAt: 50, createdAt: 40 }])
+    // 块 sha 变了 ⇒ 当新的一笔
+    store.reviewHunks.set({ taskId: t.id, ...key, hunkSha256: 'f'.repeat(64), state: 'restored', createdAt: 70 })
+    expect(store.reviewHunks.list(t.id)[0]).toMatchObject({ notifiedAt: null, createdAt: 70 })
   })
 
   it('deleting the task cascades both tables', () => {
@@ -90,5 +97,16 @@ describe('review comments (v83)', () => {
     db.query('DELETE FROM workbench_tasks WHERE id=?').run(t.id)
     expect(db.query('SELECT * FROM workbench_review_comments').all()).toEqual([])
     expect(db.query('SELECT * FROM workbench_review_hunks').all()).toEqual([])
+  })
+
+  it('markSent with expected bodies only marks rows still at the composed version', () => {
+    const { store, t, base } = setup()
+    const c1 = store.reviewComments.create({ ...base, id: 'c1', body: '旧', createdAt: 1 })
+    const c2 = store.reviewComments.create({ ...base, id: 'c2', body: 'b', createdAt: 1 })
+    const expected = new Map([[c1.id, { body: c1.body, updatedAt: c1.updatedAt }], [c2.id, { body: c2.body, updatedAt: c2.updatedAt }]])
+    store.reviewComments.edit(t.id, 'c1', '新')
+    expect(store.reviewComments.markSent(t.id, ['c1', 'c2', 'c3'], 'req', 100, expected)).toBe(1)
+    expect(store.reviewComments.get('c1')).toMatchObject({ state: 'draft', body: '新' })
+    expect(store.reviewComments.get('c2')).toMatchObject({ state: 'sent', sentRequestId: 'req' })
   })
 })

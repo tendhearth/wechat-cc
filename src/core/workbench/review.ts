@@ -137,6 +137,8 @@ export interface CommentForText {
   quote: string; body: string
   /** 之后没撤掉的轮里又改过这个文件 ⇒ 标「第 N 轮时的样子,之后可能又改过」。 */
   laterTouched?: boolean
+  /** 只给截短用:引用装不下整段去掉了(服务端不传)。 */
+  quoteDropped?: boolean
 }
 /** 一块被主人撤回的改动(下一批评论里告诉执行者)。key 由调用方定,原样回给它记 notified。 */
 export interface RevertedHunkForText { key: string; round: number; path: string; hunkIndex: number; oldStart: number; oldCount: number }
@@ -156,7 +158,7 @@ function lineLabel(c: CommentForText) {
 function renderComment(c: CommentForText, n: number) {
   const head = `${n}. ${oneLinePath(c.path)} ${lineLabel(c)}${c.laterTouched ? `(第 ${c.round} 轮时的样子,之后可能又改过)` : ''}`
   const all = c.quote ? c.quote.split('\n') : []
-  if (!all.length) return `${head}\n意见:${c.body}`
+  if (!all.length) return `${head}${c.quoteDropped ? `\n${QUOTE_DROPPED}` : ''}\n意见:${c.body}`
   const kept = all.slice(0, COMMENT_QUOTE_LINES).map(l => l.length > COMMENT_QUOTE_LINE_CHARS ? `${l.slice(0, COMMENT_QUOTE_LINE_CHARS)}…` : l)
   const quoted = kept.join('\n'), fence = fenceFor(quoted)
   const cut = all.length > kept.length ? `\n(引用只截了前 ${COMMENT_QUOTE_LINES} 行,其余 ${all.length - kept.length} 行没引)` : ''
@@ -174,10 +176,15 @@ function renderAll(comments: CommentForText[], summary: string, reverts: Reverte
   return parts.join('\n')
 }
 
+const CUT_BODY = '…(已截断)', QUOTE_DROPPED = '(引用太长,略去)'
+/** 截短的地方都写明:正文截了 ⇒ 「(已截断)」;引用整段去掉 ⇒ 「(引用太长,略去)」。 */
 function shrinkToFit(c: CommentForText, summary: string, max: number): CommentForText | null {
-  for (const quote of [c.quote, '']) {
-    const room = max - renderAll([{ ...c, quote, body: '' }], summary, []).length - 1
-    if (room >= 0) return { ...c, quote, body: room >= c.body.length ? c.body : `${c.body.slice(0, room)}…` }
+  for (const dropped of [false, true]) {
+    const base: CommentForText = { ...c, ...(dropped ? { quote: '', quoteDropped: true } : {}) }
+    const full = renderAll([base], summary, []).length
+    if (full <= max) return base
+    const room = max - renderAll([{ ...base, body: '' }], summary, []).length - CUT_BODY.length
+    if (room >= 0) return { ...base, body: `${c.body.slice(0, room)}${CUT_BODY}` }
   }
   return null
 }

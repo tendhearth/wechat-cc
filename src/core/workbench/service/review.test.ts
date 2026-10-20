@@ -161,4 +161,25 @@ describe('makeReviewDomain', () => {
     expect(domain.sendReviewComments(task.id, { summary: '总的' })).toMatchObject({ task: { id: task.id }, sent: 1 })
     expect((actions.deref().continueTask as ReturnType<typeof vi.fn>).mock.calls[0]![2]).toEqual({ inputRequestId: derivedCommentsRequestId([{ id: id2, body: '再改' }], '总的', [], 'continue') })
   })
+
+  it('sendReviewComments:投递途中主人改了某条草稿 ⇒ 那条不记已发出(发出去的是旧正文),别的照记', async () => {
+    const { domain, task, good, store, state, stub } = setup()
+    const diff = '@@ -1 +1 @@\n-老 src/a.ts\n+新 src/a.ts'
+    const hunkSha256 = createHash('sha256').update(diff, 'utf8').digest('hex')
+    const a = '44444444-4444-4444-8444-444444444444', b = '55555555-5555-4555-8555-555555555555'
+    for (const [commentId, body] of [[a, '旧的 a'], [b, '旧的 b']]) domain.reviewComment(task.id, { commentId: commentId!, artifactId: good, path: 'src/a.ts', hunk: 0, hunkSha256, body: body! })
+    state.runsByTask.set(task.id, { identity: 'run-1' } as unknown as Active)
+    let sent = ''
+    stub({ isReplied: () => true, submitInput: vi.fn(async (_id: string, input: { text: string }) => {
+      sent = input.text
+      await Promise.resolve()
+      domain.reviewComment(task.id, { commentId: a, body: '新的 a' })   // 投递还没回来时主人改了
+      return { id: 'li' } as never
+    }) })
+    const out = await domain.sendReviewComments(task.id, {})
+    expect(out).toMatchObject({ sent: 2 })
+    expect(sent).toContain('意见:旧的 a')
+    expect(store.reviewComments.get(a)).toMatchObject({ state: 'draft', body: '新的 a' })
+    expect(store.reviewComments.get(b)!.state).toBe('sent')
+  })
 })

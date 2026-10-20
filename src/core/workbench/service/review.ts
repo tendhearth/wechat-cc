@@ -219,7 +219,9 @@ export function makeReviewDomain(ctx:ServiceCtx,domains:{scripts:Pick<ScriptsDom
         let state:ReturnType<typeof lines.locate>
         try{state=lines.locate(current,hunks,file.afterSha256)}catch{throw new Error(fail)}
         // 对不上 / 每块都已经是旧的(撤过了)⇒ 同改造前:之后又被改过
-        if(!state||state.every(s=>s==='old'))throw new Error('review_file_changed')
+        if(!state)throw new Error('review_file_changed')
+        // 每块都已经是旧的(撤过了)⇒ 同改造前回 review_file_changed;但先把留痕补齐(写完盘没来得及记就崩了的那种)
+        if(state.every(s=>s==='old')){lines.logAllReverted(id,artifact.sha256,file.path,hunks);throw new Error('review_file_changed')}
         try{before=switchHunks(current,hunks,state,hunks.map(()=>'old' as const))}catch{throw new Error(fail)}
       } else {
         if(file.kind==='deleted'?current!==null:current===null||!file.afterSha256||sha(current)!==file.afterSha256)throw new Error('review_file_changed')
