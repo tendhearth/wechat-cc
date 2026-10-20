@@ -19,7 +19,8 @@ export function chainReplyHandlers(handlers: readonly ReplyHandler[]): ReplyHand
 }
 
 const STATUS_WORDS: Record<string, string> = { sent: '说了', silent: '没说话(没新东西)' }
-function statusWord(s: string | null): string {
+/** 上次结果的人话(微信列表与手机列表共用)。 */
+export function statusWord(s: string | null): string {
   if (!s) return '还没跑过'
   if (STATUS_WORDS[s]) return STATUS_WORDS[s]!
   if (s.startsWith('skipped:')) return { 'skipped:network': '跳过(网络不安全)', 'skipped:cap': '跳过(当天定时满了)', 'skipped:executor': '跳过(当前执行者不支持)', 'skipped:degraded': '跳过(发不出去)' }[s] ?? '跳过'
