@@ -69,6 +69,7 @@ CREATE TABLE IF NOT EXISTS workbench_rewinds (
   target_commit TEXT NOT NULL, prior_head TEXT NOT NULL,
   backup_ref TEXT NOT NULL, backup_commit TEXT NOT NULL,
   discarded_json TEXT NOT NULL,
+  state TEXT NOT NULL CHECK(state IN ('applying','done','failed')),
   notice_sent_at INTEGER, created_at INTEGER NOT NULL, undone_at INTEGER
 ) STRICT;
 CREATE INDEX IF NOT EXISTS workbench_rewinds_task ON workbench_rewinds(task_id, created_at);
