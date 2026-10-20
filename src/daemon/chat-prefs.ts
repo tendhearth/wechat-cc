@@ -6,6 +6,7 @@
  */
 import { join } from 'node:path'
 import { makeStateStore, type StateStore } from './state-store'
+import type { AvoidTopic } from '../core/companion-topics'
 
 export interface ChatPrefs {
   /** Reply splitting (活人感 bubbles). undefined ⇒ ON (default); false ⇒ off. */
@@ -22,6 +23,8 @@ export interface ChatPrefs {
   hunt?: boolean
   /** 每日串门开关。undefined ⇒ ON;false ⇒ off。 */
   visit?: boolean
+  /** 主人不希望 CC 主动提起的话题(core/companion-topics);空 / undefined ⇒ 都可以。 */
+  avoid?: AvoidTopic[]
 }
 
 export interface ChatPrefsStore {

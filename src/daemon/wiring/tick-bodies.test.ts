@@ -92,6 +92,18 @@ describe('buildGapCheckinText', () => {
   })
 })
 
+describe('主动消息 × 别主动聊的话题(10-20)', () => {
+  it('each proactive envelope carries the avoid line when set, and nothing when not', () => {
+    const avoid = ['health', 'money'] as const
+    for (const style of [{}, { replyDelivery: 'final_text' as const }]) {
+      expect(buildPushTickText({ nowIso: 't', defaultChatId: 'c', intention: 'x', avoid: [...avoid] }, style)).toContain('健康、钱')
+      expect(buildGapCheckinText({ nowIso: 't', chatId: 'c', daysSinceContact: 2, avoid: [...avoid] }, style)).toContain('健康、钱')
+      expect(buildHuntText({ nowIso: 't', avoid: [...avoid] }, style)).toContain('健康、钱')
+      expect(buildGapCheckinText({ nowIso: 't', chatId: 'c', daysSinceContact: 2 }, style)).not.toContain('别主动提')
+    }
+  })
+})
+
 describe('buildHuntText', () => {
   it('formats a daily-hunt envelope with the supplied nowIso', () => {
     const out = buildHuntText({ nowIso: '2026-05-16T01:30:00.000Z' })
