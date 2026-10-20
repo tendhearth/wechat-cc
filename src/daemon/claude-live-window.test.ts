@@ -112,3 +112,14 @@ describe('不开着时 resume 的文件夹', () => {
     expect(transcriptStartCwd('')).toBeNull()
   })
 })
+
+describe('relay uses the resolved claude binary (device-e2e 10-20)', () => {
+  // 真机:daemon 由 launchd 起,PATH 里没有 ~/.local/bin ⇒ 裸 `claude` 起不来(Executable not found in $PATH)
+  it('relayCommand / relayToWindow take the binary the daemon resolved at boot', async () => {
+    expect(relayCommand('w', 'x', false, '/Users/u/.local/bin/claude').cmd).toBe('/Users/u/.local/bin/claude')
+    expect(relayCommand('w', 'x', false).cmd).toBe('claude')
+    const seen: string[] = []
+    await relayToWindow({ pid: 1, name: 'w', sessionId: 's' } as never, 'x', { run: async (cmd) => { seen.push(cmd); return { code: 0, stdout: 'RELAY_SENT', stderr: '', timedOut: false } as never }, cwd: '/tmp', dangerously: false, bin: '/opt/claude' })
+    expect(seen).toEqual(['/opt/claude'])
+  })
+})

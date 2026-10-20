@@ -123,9 +123,10 @@ export function relayPrompt(windowName: string, text: string): string {
  * 权限模式跟 daemon 的 --dangerously 姿态走:主人的终端窗口多半是免审的,两边模式不同时
  * 对方会先把这句话扣下等主人在终端点头 —— 那样也送到了,只是慢一步。
  */
-export function relayCommand(windowName: string, text: string, dangerously: boolean): { cmd: string; args: string[] } {
+export function relayCommand(windowName: string, text: string, dangerously: boolean, bin = 'claude'): { cmd: string; args: string[] } {
   return {
-    cmd: 'claude',
+    // bin = daemon 启动时解析出的 claude(device-e2e 10-20 真机:launchd 的 PATH 里没有 ~/.local/bin,裸 `claude` 起不来)
+    cmd: bin,
     args: ['-p', '--model', 'haiku', '--name', RELAY_SENDER_NAME, '--no-session-persistence', '--tools', 'SendMessage',
       ...(dangerously ? ['--permission-mode', 'bypassPermissions'] : ['--allowedTools', 'SendMessage']), '--', relayPrompt(windowName, text)],
   }
@@ -133,8 +134,8 @@ export function relayCommand(windowName: string, text: string, dangerously: bool
 
 export type RelayResult = { ok: true } | { ok: false; error: string }
 
-export async function relayToWindow(w: LiveWindow, text: string, deps: { run: Runner; cwd: string; dangerously: boolean }): Promise<RelayResult> {
-  const { cmd, args } = relayCommand(w.name, text, deps.dangerously)
+export async function relayToWindow(w: LiveWindow, text: string, deps: { run: Runner; cwd: string; dangerously: boolean; bin?: string }): Promise<RelayResult> {
+  const { cmd, args } = relayCommand(w.name, text, deps.dangerously, deps.bin)
   const r = await deps.run(cmd, args, deps.cwd, RELAY_TIMEOUT_MS)
   if (r.timedOut) return { ok: false, error: '送进窗口超时' }
   // 只认最后一行就是 RELAY_SENT:「RELAY_FAILED … not RELAY_SENT」之类的回显不能算送到。

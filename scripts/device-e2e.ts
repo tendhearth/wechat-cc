@@ -305,7 +305,7 @@ async function main(): Promise<number> {
 
     if (paired && ONLY.has('chat')) {
       await step('b_chat', async () => {
-        const text = `device-e2e ${nonce}: reply with one short sentence`
+        const text = `device-e2e ${nonce} reply with one short sentence`   // 不放标点:手机若是拼音键盘,: 会被换成全角,找不到自己那条气泡
         const o = await uiStep('testChat', { E2E_CHAT_TEXT: text }, 400_000)
         return `CC: ${o.reply_label ?? '?'}`
       })
@@ -325,7 +325,7 @@ async function main(): Promise<number> {
         if (row.status === 'waiting' || row.status === 'ended') throw new Error(`${TERMINAL_NAME} 现在是 ${row.status},手机说不了`)
         const transcript = readdirSync(join(homedir(), '.claude', 'projects')).map(d => join(homedir(), '.claude', 'projects', d, `${target.sessionId}.jsonl`)).find(f => existsSync(f))
         if (!transcript) throw new Error(`找不到 ${TERMINAL_NAME} 的会话记录`)
-        const text = `device-e2e ${nonce}: 这是手机真机自动验收发来的一句,读到就行,不用做别的。`
+        const text = `device-e2e ${nonce} 这是手机真机自动验收发来的一句 读到就行 不用做别的`
         const t0 = Date.now()
         const o = await uiStep('testTerminalSay', { E2E_TERMINAL_ID: target.sessionId, E2E_TERMINAL_TEXT: text }, 300_000)
         if (o.live_window !== 'yes') throw new Error(`手机上没显示「开在电脑的终端窗口里」(live_window=${o.live_window})`)
@@ -410,7 +410,21 @@ async function cleanup(): Promise<void> {
       if (!a.ok) throw new Error(notes.join('; '))
     }
     if (scratch) { rmSync(scratch, { recursive: true, force: true }); notes.push('scratch removed') }
-    if (testDeviceId) { await revoke(testDeviceId); notes.push(`revoked leftover test device ${testDeviceId}`); testDeviceId = undefined }
+    if (testDeviceId) {
+      await revoke(testDeviceId); notes.push(`revoked leftover test device ${testDeviceId}`); testDeviceId = undefined
+      // 先等 app 自己处理完「被撤了」再放回(10-20 真机事故):app 认出撤销后会删掉钥匙串里的配对,
+      // 这一下要是落在放回之后,删掉的就是刚放回的主人那份。等它显示撤销卡,再核对钥匙串里只剩收纳格。
+      if (stashAttempted) {
+        try { await uiStep('testRevokedNotice') } catch { notes.push('revoked notice not seen') }
+        const settled = await waitFor(30_000, async () => {
+          await launch('tendhearth://dev-e2e?op=status', 'launch-status')
+          const st = (await uiStep('testDevE2EResult')).dev_e2e
+          return st === 'status-stash-only' || st === 'status-empty' ? st : null
+        }, 3000)
+        if (!settled) throw new Error(`${notes.join('; ')}; 测试设备的配对还在钥匙串里,不敢放回(会被 app 当成被撤的那份删掉)。手动放回:xcrun devicectl device process launch --device ${UDID} --terminate-existing --payload-url 'tendhearth://dev-e2e?op=restore' ${BUNDLE_ID}`)
+        notes.push(`app dropped the revoked pairing (${settled})`)
+      }
+    }
     if (stashAttempted) {
       const t0 = new Date()
       await launch('tendhearth://dev-e2e?op=restore', 'launch-restore')
