@@ -1974,6 +1974,21 @@ describe('伙伴推送 × App 第二条路(2026-10-18)', () => {
     expect(s.logs.some(l => l.includes('claim kept, not retried'))).toBe(true)
   })
 
+  it('「CC 做过的事」(B9):说出去了 ⇒ proactive/sent;两条都不通 ⇒ proactive/deferred;只记主人那条、不记正文', async () => {
+    const s = setupDeps({ defaultChatId: 'chat-1', inFlight: false, agendaMd: agenda })
+    cleanup.push(s.stateDir)
+    const w = wire(s, { degraded: false, app: true })
+    const rows: unknown[] = []
+    await buildTickBodies({ ...w.deps, activityLog: { append: (e) => { rows.push(e) } } }).pushTick({ nowIso: '2026-05-13T10:00:00.000Z' })
+    expect(rows).toEqual([{ kind: 'proactive', status: 'sent' }])
+    const s2 = setupDeps({ defaultChatId: 'chat-1', inFlight: false, agendaMd: agenda })
+    cleanup.push(s2.stateDir)
+    const w2 = wire(s2, { degraded: false, wechatError: 'errcode=-2', app: false })
+    const rows2: unknown[] = []
+    await buildTickBodies({ ...w2.deps, activityLog: { append: (e) => { rows2.push(e) } } }).pushTick({ nowIso: '2026-05-13T10:00:00.000Z' })
+    expect(rows2).toEqual([{ kind: 'proactive', status: 'deferred' }])
+  })
+
   it('学到的暂停对 App 送达同样生效:连着 2 条没回 ⇒ 问候不再发(shouldSpeak 仍是唯一关口)', async () => {
     const s = setupDeps({ defaultChatId: 'chat-1', inFlight: false, careLedgerEntries: { 'chat-1': { noReplyCount: 2, lastProactiveAtIso: '2026-05-01T10:00:00.000Z' } } })
     cleanup.push(s.stateDir)

@@ -101,6 +101,8 @@ export interface TickDeps {
    * `huntStore` 把它拆成条目落库。两者都可选:没接就是旧行为(发了不记)。
    */
   outboundTaps?: { tap(chatId: string): { close(): string[] } }
+  /** 「CC 做过的事」补记(B9):只记发生了什么 + 状态,不记正文;只记主人那条对话。缺省 ⇒ 不记。 */
+  activityLog?: { append(e: { kind: 'proactive' | 'job'; status: string; ref?: string }): void }
   huntStore?: {
     recordHunt(a: { chatId: string; text: string; nowIso?: string }): number
     recordVisit?(a: { chatId: string; text: string; peerLabel: string; nowIso?: string }): string | null
@@ -605,6 +607,11 @@ export function buildTickBodies(deps: TickDeps): TickBodies {
             turn.abandon(summary.errorCode ?? 'error')
           } else {
             const report = await turn.deliver({ finalText: summary.finalText ?? '', narration: summary.narration ?? [] })
+            // 「CC 做过的事」(B9):说出去了 / 想说没发出去 分开记;静默是一个决定,不算做了什么。只记主人。
+            const said = report.bubbles > 0 || report.attachmentsSent > 0
+            if ((said || report.failures.length > 0) && chatId === loadCompanionConfig(deps.stateDir).default_chat_id) {
+              try { deps.activityLog?.append({ kind: 'proactive', status: said ? 'sent' : 'deferred' }) } catch { /* 记不上不影响发 */ }
+            }
             // 落在 App ⇒ 整轮一条 companion 推送;落在微信 ⇒ 什么都不做(App 对话页已经看得见那一行)。
             outbound?.finish()
             if (outbound?.channel() === 'app') deps.log('COMPANION', `chat=${chatId} tick delivered to the app (wechat not usable)`)

@@ -62,6 +62,9 @@ export interface SweepDeps {
   retryWindowMs?: number
   /** Override the per-sweep send-attempt budget. Defaults to MAX_SENDS_PER_SWEEP. */
   maxSendsPerSweep?: number
+  /** 「CC 做过的事」补记(B9):主人的提醒送到了 ⇒ 记一行(只有提醒 id,不记原文)。 */
+  activityLog?: { append(e: { kind: 'reminder'; status: string; ref?: string }): void }
+  isOwner?: (chatId: string) => boolean
 }
 
 export interface SweepResult {
@@ -131,6 +134,7 @@ export async function runReminderSweep(deps: SweepDeps): Promise<SweepResult> {
     if (outcome.ok) {
       await deps.store.markSent(rec.id)
       result.delivered++
+      if (deps.isOwner?.(rec.chat_id)) { try { deps.activityLog?.append({ kind: 'reminder', status: 'sent', ref: rec.id }) } catch { /* 记不上不影响提醒 */ } }
       deps.log('REMINDERS', `delivered ${rec.id} → ${rec.chat_id}`)
       continue
     }
@@ -171,6 +175,8 @@ export interface ReminderSchedulerDeps {
   log: (tag: string, line: string) => void
   /** Override sweep interval (ms). Defaults to 60s. */
   intervalMs?: number
+  activityLog?: SweepDeps['activityLog']
+  isOwner?: SweepDeps['isOwner']
 }
 
 /**
@@ -195,6 +201,8 @@ export function registerReminders(deps: ReminderSchedulerDeps): Lifecycle {
           send: deps.send,
           nowIso: new Date().toISOString(),
           log: deps.log,
+          ...(deps.activityLog ? { activityLog: deps.activityLog } : {}),
+          ...(deps.isOwner ? { isOwner: deps.isOwner } : {}),
         })
       } catch (err) {
         deps.log('REMINDERS', `sweep failed: ${err instanceof Error ? err.message : String(err)}`)

@@ -22,7 +22,12 @@ export interface ScheduledJobsDeps {
   holdBusy: (label: string) => () => void
   log: (tag: string, line: string) => void
   intervalMs?: number
+  /** 「CC 做过的事」补记(B9):每次记完结果写一行(只有状态码 + 定时编号,失败原因不进)。 */
+  activityLog?: { append(e: { kind: 'job'; status: string; ref?: string }): void }
 }
+
+/** 进时间线的状态码:failed:<原因> 只留 failed(原因可能带供应商原话)。 */
+const activityStatus = (s: string) => s.startsWith('failed:') ? 'failed' : s
 
 function withTimeout(p: Promise<string>, ms: number): Promise<string> {
   return new Promise(resolve => {
@@ -54,7 +59,9 @@ export function registerScheduledJobs(deps: ScheduledJobsDeps): Lifecycle & { ti
           // 窗口过了还没跑:记一笔这一天为什么没跑(终审 I4)。今天窗口之后才建的不算错过。
           const dueMs = nowMs - (Number(local.hhmm.slice(0, 2)) * 60 + Number(local.hhmm.slice(3)) - (Number(job.schedule.at.slice(0, 2)) * 60 + Number(job.schedule.at.slice(3)))) * 60_000
           if (Date.parse(job.createdAt) <= dueMs + JOB_DUE_WINDOW_MIN * 60_000) {
-            deps.store.record(job.id, local.day, new Date(nowMs).toISOString(), busyOn.get(job.id) === local.day ? 'skipped:busy' : 'skipped:missed', false)
+            const skipped = busyOn.get(job.id) === local.day ? 'skipped:busy' : 'skipped:missed'
+            deps.store.record(job.id, local.day, new Date(nowMs).toISOString(), skipped, false)
+            try { deps.activityLog?.append({ kind: 'job', status: skipped, ref: job.id }) } catch { /* 记不上不影响定时 */ }
           }
           continue
         }
@@ -62,6 +69,7 @@ export function registerScheduledJobs(deps: ScheduledJobsDeps): Lifecycle & { ti
         const nowIso = new Date(nowMs).toISOString()
         if (deps.store.ranToday(local.day) >= JOBS_DAILY_CAP) {
           deps.store.record(job.id, local.day, nowIso, 'skipped:cap', false)
+          try { deps.activityLog?.append({ kind: 'job', status: 'skipped:cap', ref: job.id }) } catch { /* 记不上不影响定时 */ }
           deps.log('JOBS', `job ${job.id} skipped: daily cap ${JOBS_DAILY_CAP} reached`)
           continue
         }
@@ -73,6 +81,7 @@ export function registerScheduledJobs(deps: ScheduledJobsDeps): Lifecycle & { ti
         if (status === 'skipped:busy') { busyOn.set(job.id, local.day); deps.log('JOBS', `job ${job.id} waiting: owner is mid-conversation`); continue }
         const failed = status.startsWith('failed:')
         const st = deps.store.record(job.id, local.day, nowIso, status, failed)
+        try { deps.activityLog?.append({ kind: 'job', status: activityStatus(status), ref: job.id }) } catch { /* 记不上不影响定时 */ }
         if (failed && st.failStreak >= JOB_FAIL_PAUSE) {
           deps.store.setPaused(job.id, true)
           const head = [...job.text].slice(0, 20).join('')
