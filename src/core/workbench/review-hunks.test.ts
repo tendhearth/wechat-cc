@@ -196,3 +196,22 @@ describe('anchorFromDiff', () => {
     expect(() => anchorFromDiff(undefined, 0, h0!.sha256)).toThrow('invalid_review_reference')
   })
 })
+
+describe('huge gaps (评审 #449)', () => {
+  it('switchHunks / locateHunks / whole-hunk anchors survive hundreds of thousands of lines without RangeError', () => {
+    const n = 300_000
+    const before = Array.from({ length: n }, (_, i) => `l${i}\n`)
+    const after = [...before]; after[0] = 'L0\n'; after[n - 1] = `L${n - 1}\n`
+    const diff = `@@ -1,4 +1,4 @@\n-l0\n+L0\n l1\n l2\n l3\n@@ -${n - 2},3 +${n - 2},3 @@\n l${n - 3}\n l${n - 2}\n-l${n - 1}\n+L${n - 1}\n`
+    const hunks = parseHunks(diff)!
+    expect(hunks).toHaveLength(2)
+    const current = after.join('')
+    const state = locateHunks(current, hunks)!
+    expect(state).toEqual(['new', 'new'])
+    const back = switchHunks(current, hunks, state, ['old', 'old'])!
+    expect(back).toBe(before.join(''))
+    expect(switchHunks(current, hunks, state, ['old', 'new'])!.startsWith('l0\nl1\n')).toBe(true)
+    const wide = parseHunks(`@@ -0,0 +1,${n} @@\n${before.map(l => `+${l}`).join('')}`)![0]!
+    expect(deriveCommentAnchor(wide)).toMatchObject({ lineStart: 1, lineEnd: n })
+  })
+})

@@ -1,4 +1,4 @@
-import { parseHunks } from './review-hunks'
+import { parseHunks, type Hunk } from './review-hunks'
 import type { ReviewComment } from './review-comments'
 import type { ReviewHunkEntry } from './review-hunk-log'
 
@@ -23,9 +23,9 @@ export interface ReviewCommentView {
 }
 
 /** 块清单:只给 diff 解析得了的文件;解析不了 ⇒ undefined(界面照旧显示整段)。 */
-export function hunkViews(diff: string | undefined, revertedAt: (index: number, sha256: string) => number | undefined): ReviewHunkView[] | undefined {
+export function hunkViews(diff: string | undefined, revertedAt: (index: number, sha256: string) => number | undefined, parse: (diff: string) => Hunk[] | null = parseHunks): ReviewHunkView[] | undefined {
   if (!diff) return undefined
-  const hunks = parseHunks(diff)
+  const hunks = parse(diff)
   if (!hunks) return undefined
   return hunks.map(h => {
     const at = revertedAt(h.index, h.sha256)

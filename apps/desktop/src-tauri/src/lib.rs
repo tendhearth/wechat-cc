@@ -1157,6 +1157,10 @@ fn workbench_request_allowed(method: &str, path: &str) -> bool {
             | ("POST", "/v1/workbench/review-mark")
             | ("POST", "/v1/workbench/review-return")
             | ("POST", "/v1/workbench/review-revert")
+            // 行评论 / 按块撤回(2026-10-21)
+            | ("POST", "/v1/workbench/review-comment")
+            | ("POST", "/v1/workbench/review-comments-send")
+            | ("POST", "/v1/workbench/review-hunk")
             | ("POST", "/v1/workbench/worktree")
             | ("POST", "/v1/workbench/script-approve")
             // 回到某一轮(2026-10-21):预览、执行 / 撤销、停住后主人拍板
@@ -1869,6 +1873,9 @@ mod workbench_proxy_tests {
             ("POST", "/v1/workbench/review-mark"),
             ("POST", "/v1/workbench/review-return"),
             ("POST", "/v1/workbench/review-revert"),
+            ("POST", "/v1/workbench/review-comment"),
+            ("POST", "/v1/workbench/review-comments-send"),
+            ("POST", "/v1/workbench/review-hunk"),
             ("POST", "/v1/workbench/worktree"),
             ("POST", "/v1/workbench/script-approve"),
             ("GET", "/v1/workbench/rewind-preview?id=a1b2c3d4&artifactId=a1b2c3d4&to=end"),
@@ -1922,6 +1929,13 @@ mod workbench_proxy_tests {
             ("POST", "/v1/workbench/import/extra"),
             ("GET", "/v1/workbench/task/extra"),
             ("POST", "/v1/workbench/rewind-preview"),
+            ("GET", "/v1/workbench/review-comment"),
+            ("GET", "/v1/workbench/review-comments-send"),
+            ("GET", "/v1/workbench/review-hunk"),
+            ("POST", "/v1/workbench/review-comment/extra"),
+            ("POST", "/v1/workbench/review-comments"),
+            ("POST", "/v1/workbench/review-hunk/"),
+            ("POST", "/v1/workbench/review-hunks"),
             ("GET", "/v1/workbench/rewind"),
             ("GET", "/v1/workbench/rewind-resolve"),
             ("POST", "/v1/workbench/rewind/extra"),

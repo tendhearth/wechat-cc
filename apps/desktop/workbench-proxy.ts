@@ -6,7 +6,7 @@ const ROUTES = new Set([
   'POST /v1/workbench/attachment','GET /v1/workbench/attachment','POST /v1/workbench/discard-attachment',
   'GET /v1/workbench/models','GET /v1/workbench','GET /v1/workbench/sessions','GET /v1/workbench/session','GET /v1/workbench/task','GET /v1/workbench/artifact',
   'POST /v1/workbench/project','POST /v1/workbench/create','POST /v1/workbench/continue','POST /v1/workbench/cancel','POST /v1/workbench/approve','POST /v1/workbench/permission','POST /v1/workbench/archive','POST /v1/workbench/writer-exited','POST /v1/workbench/unattended-ack',
-  'GET /v1/workbench/review','POST /v1/workbench/review-mark','POST /v1/workbench/review-return','POST /v1/workbench/review-revert','POST /v1/workbench/worktree','POST /v1/workbench/script-approve',
+  'GET /v1/workbench/review','POST /v1/workbench/review-mark','POST /v1/workbench/review-return','POST /v1/workbench/review-revert','POST /v1/workbench/review-comment','POST /v1/workbench/review-comments-send','POST /v1/workbench/review-hunk','POST /v1/workbench/worktree','POST /v1/workbench/script-approve',
   // 回到某一轮(2026-10-21)
   'GET /v1/workbench/rewind-preview','POST /v1/workbench/rewind','POST /v1/workbench/rewind-resolve',
   'POST /v1/workbench/import',

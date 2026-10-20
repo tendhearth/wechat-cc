@@ -73,13 +73,22 @@ export function makeReviewCommentStore(db: Db, bump: (taskId: string) => number)
         bump(taskId)
       })
     },
-    /** 投递成功后把这一批记成已发出:只动这件事的草稿;返回实际改了几条。 */
-    markSent(taskId: string, ids: readonly string[], requestId: string, at = Date.now()): number {
+    /**
+     * 投递成功后把这一批记成已发出:只动这件事的草稿;返回实际改了几条。
+     * expected(id ⇒ 拼文本时的正文 + updated_at):投递途中主人又改了的那条不算发出 ——
+     * 发出去的是旧正文,新正文留在草稿里下次再发。
+     */
+    markSent(taskId: string, ids: readonly string[], requestId: string, at = Date.now(), expected?: ReadonlyMap<string, { body: string; updatedAt: number }>): number {
       if (!ids.length) return 0
       return tx(() => {
         let changed = 0
         const update = db.query("UPDATE workbench_review_comments SET state='sent',sent_request_id=?,sent_at=?,updated_at=? WHERE id=? AND task_id=? AND state='draft'")
-        for (const id of ids) changed += update.run(requestId, at, at, id, taskId).changes
+        const guarded = db.query("UPDATE workbench_review_comments SET state='sent',sent_request_id=?,sent_at=?,updated_at=? WHERE id=? AND task_id=? AND state='draft' AND body=? AND updated_at=?")
+        for (const id of ids) {
+          const want = expected?.get(id)
+          if (expected && !want) continue
+          changed += (want ? guarded.run(requestId, at, at, id, taskId, want.body, want.updatedAt) : update.run(requestId, at, at, id, taskId)).changes
+        }
         if (changed) bump(taskId)
         return changed
       })

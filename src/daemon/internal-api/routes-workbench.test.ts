@@ -651,6 +651,80 @@ describe('Workbench internal HTTP API', () => {
     for(const bad of [body(''),body('a.ts',{extra:1}),{method:'POST',body:JSON.stringify({id:'bad',artifactId:'x',path:'a'})}])expect((await request('/v1/workbench/review-revert',bad,operatorToken)).status).toBe(400)
   })
 
+  it('line review routes (2026-10-21): exact key sets, status mapping, agents denied',async()=>{
+    const workbench=service(),{request,operatorToken,trustedToken}=await start(workbench)
+    const comment=vi.fn((_id:string,input:Record<string,unknown>)=>{
+      if(input.body==='stale')throw new Error('review_hunk_stale')
+      if(input.body==='sent')throw new Error('review_comment_sent')
+      if(input.body==='dup')throw new Error('review_comment_conflict')
+      if(input.body==='full')throw new Error('review_comment_limit')
+      if(input.body==='gone')throw new Error('review_comment_not_found')
+      if(input.body==='old')throw new Error('review_round_discarded')
+      return 'delete' in input?{deleted:input.commentId}:{comment:{id:input.commentId,hunk:0,body:input.body,state:'draft'}}
+    })
+    const send=vi.fn(async(id:string,_input:Record<string,unknown>)=>{
+      if(id==='cafebabe')throw new Error('workbench_busy')
+      if(id==='0badf00d')throw new Error('restart_confirmation_required')
+      if(id==='feedface')throw new Error('review_comment_not_found')
+      return {task:{id},sent:2,remaining:1,skippedDiscarded:0}
+    })
+    const hunk=vi.fn((_id:string,input:Record<string,unknown>)=>{
+      if(input.path==='stale.ts')throw new Error('review_hunk_stale')
+      if(input.path==='changed.ts')throw new Error('review_file_changed')
+      if(input.path==='added.ts')throw new Error('review_revert_unavailable')
+      if(input.path==='busy.ts')throw new Error('workbench_busy')
+      return {path:input.path,hunk:input.hunk,state:'reverted'}
+    })
+    Object.assign(workbench as object,{reviewComment:comment,sendReviewComments:send,revertReviewHunk:hunk})
+    const post=(route:string,value:Record<string,unknown>,token=operatorToken)=>request(route,{method:'POST',body:JSON.stringify(value)},token)
+    const cid='22222222-2222-4222-8222-222222222222',art='11111111-1111-4111-8111-111111111111',sha='a'.repeat(64)
+    const create={id:'deadbeef',commentId:cid,artifactId:art,path:'src/a.ts',hunk:1,hunkSha256:sha,body:'判空'}
+    // 代理只认 operator
+    for(const route of ['/v1/workbench/review-comment','/v1/workbench/review-comments-send','/v1/workbench/review-hunk'])expect((await post(route,{id:'deadbeef'},trustedToken)).status).toBe(403)
+    expect(comment).not.toHaveBeenCalled()
+    // 建 / 改 / 删
+    let res=await post('/v1/workbench/review-comment',create)
+    expect(res.status).toBe(200);expect(await res.json()).toEqual({comment:{id:cid,hunk:0,body:'判空',state:'draft'}})
+    expect(comment).toHaveBeenLastCalledWith('deadbeef',{commentId:cid,artifactId:art,path:'src/a.ts',hunk:1,hunkSha256:sha,body:'判空'})
+    await post('/v1/workbench/review-comment',{...create,rowStart:0,rowEnd:2})
+    expect(comment).toHaveBeenLastCalledWith('deadbeef',expect.objectContaining({rowStart:0,rowEnd:2}))
+    expect((await post('/v1/workbench/review-comment',{id:'deadbeef',commentId:cid,body:'改'})).status).toBe(200)
+    expect(comment).toHaveBeenLastCalledWith('deadbeef',{commentId:cid,body:'改'})
+    res=await post('/v1/workbench/review-comment',{id:'deadbeef',commentId:cid,delete:true})
+    expect(await res.json()).toEqual({deleted:cid})
+    const calls=comment.mock.calls.length
+    for(const bad of [
+      {...create,rowStart:0},{...create,rowEnd:1},{...create,quote:'x'},{...create,side:'new'},{...create,extra:1},
+      {...create,hunk:-1},{...create,hunk:1.5},{...create,hunk:'1'},{...create,hunkSha256:'x'},{...create,artifactId:'bad'},{...create,path:''},
+      {...create,body:''},{...create,body:'  '},{...create,body:'x'.repeat(2001)},{...create,commentId:'not-uuid'},{...create,id:'bad'},
+      {...create,rowStart:-1,rowEnd:0},{...create,rowStart:0,rowEnd:'1'},
+      {id:'deadbeef',commentId:cid,delete:false},{id:'deadbeef',commentId:cid,delete:'true'},{id:'deadbeef',commentId:cid,delete:true,body:'x'},
+      {id:'deadbeef',commentId:cid},{id:'deadbeef',commentId:cid,body:'x',artifactId:art},
+    ])expect((await post('/v1/workbench/review-comment',bad)).status,JSON.stringify(bad)).toBe(400)
+    expect(comment.mock.calls.length).toBe(calls)
+    for(const [body,status] of [['stale',409],['sent',409],['dup',409],['full',409],['gone',404],['old',409]] as const){
+      res=await post('/v1/workbench/review-comment',{id:'deadbeef',commentId:cid,body})
+      expect(res.status,body).toBe(status);expect(await res.json()).toEqual({error:`review_${({stale:'hunk_stale',sent:'comment_sent',dup:'comment_conflict',full:'comment_limit',gone:'comment_not_found',old:'round_discarded'})[body]}`})
+    }
+    // 发出
+    res=await post('/v1/workbench/review-comments-send',{id:'deadbeef',summary:'整体',inputRequestId:cid,restartToken:sha})
+    expect(res.status).toBe(202);expect(await res.json()).toEqual({task:{id:'deadbeef'},sent:2,remaining:1,skippedDiscarded:0})
+    expect(send).toHaveBeenLastCalledWith('deadbeef',{summary:'整体',inputRequestId:cid,restartToken:sha})
+    expect((await post('/v1/workbench/review-comments-send',{id:'deadbeef'})).status).toBe(202)
+    expect(send).toHaveBeenLastCalledWith('deadbeef',{})
+    for(const [id,status] of [['cafebabe',409],['0badf00d',409],['feedface',404]] as const)expect((await post('/v1/workbench/review-comments-send',{id})).status).toBe(status)
+    for(const bad of [{id:'deadbeef',summary:'x'.repeat(2001)},{id:'deadbeef',summary:1},{id:'deadbeef',inputRequestId:'x'},{id:'deadbeef',restartToken:'x'},{id:'deadbeef',extra:1},{id:'bad'}])expect((await post('/v1/workbench/review-comments-send',bad)).status).toBe(400)
+    // 按块撤回
+    const h={id:'deadbeef',artifactId:art,path:'src/a.ts',hunk:0,hunkSha256:sha,action:'revert'}
+    res=await post('/v1/workbench/review-hunk',h)
+    expect(res.status).toBe(200);expect(await res.json()).toEqual({hunk:{path:'src/a.ts',hunk:0,state:'reverted'}})
+    expect(hunk).toHaveBeenLastCalledWith('deadbeef',{artifactId:art,path:'src/a.ts',hunk:0,hunkSha256:sha,action:'revert'})
+    for(const [path,status] of [['stale.ts',409],['changed.ts',409],['added.ts',422],['busy.ts',409]] as const)expect((await post('/v1/workbench/review-hunk',{...h,path})).status,path).toBe(status)
+    const n=hunk.mock.calls.length
+    for(const bad of [{...h,action:'accept'},{...h,extra:1},{...h,hunk:-1},{...h,hunk:'0'},{...h,hunkSha256:'x'},{...h,path:''},{id:'deadbeef',artifactId:art,path:'a',hunk:0,action:'revert'}])expect((await post('/v1/workbench/review-hunk',bad)).status).toBe(400)
+    expect(hunk.mock.calls.length).toBe(n)
+  })
+
   it('worktree commit/remove for the desktop owner; dirty is 409, plain task 422, agents denied (2026-10-07)',async()=>{
     const workbench=service(),{request,operatorToken,trustedToken}=await start(workbench)
     const act=vi.fn((id:string,action:string)=>{

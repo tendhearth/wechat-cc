@@ -132,13 +132,15 @@ export function switchHunks(current: string, hunks: readonly Hunk[], state: read
   for (const [i, hunk] of hunks.entries()) {
     const pos = at + hunk.gap, have = sideLines(hunk, state[i]!)
     if (!matchesAt(lines, pos, have)) return null
-    out.push(...lines.slice(at, pos), ...sideLines(hunk, target[i]!))
+    // 不用展开:间隔几万行时 push(...) 会爆参数个数(RangeError)
+    for (let k = at; k < pos; k++) out.push(lines[k]!)
+    for (const line of sideLines(hunk, target[i]!)) out.push(line)
     at = pos + have.length
   }
   const last = hunks.at(-1)
   if (last && at < lines.length && (target.at(-1) === 'old' ? last.oldNoEol : last.newNoEol)) return null
   if (last && at !== lines.length && (state.at(-1) === 'old' ? last.oldNoEol : last.newNoEol)) return null
-  out.push(...lines.slice(at))
+  for (let k = at; k < lines.length; k++) out.push(lines[k]!)
   return out.join('')
 }
 
@@ -165,7 +167,9 @@ export function deriveCommentAnchor(hunk: Hunk, rowStart?: number, rowEnd?: numb
   const numbers = (fresh.length ? fresh.map(r => r.newLine!) : rows.map(r => r.oldLine!))
   const sign = { context: ' ', add: '+', del: '-' } as const
   const quote = rows.slice(0, MAX_QUOTE_ROWS).map(r => `${sign[r.kind]}${r.text}`).join('\n')
-  return { side, lineStart: Math.min(...numbers), lineEnd: Math.max(...numbers), quote }
+  // 整块评论可能有几万行:别用 Math.min(...)
+  const lineStart = numbers.reduce((a, b) => Math.min(a, b)), lineEnd = numbers.reduce((a, b) => Math.max(a, b))
+  return { side, lineStart, lineEnd, quote }
 }
 
 /**

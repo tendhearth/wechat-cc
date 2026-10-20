@@ -58,6 +58,10 @@ export const ROUTE_MIN_TIER: Record<string, UserTier> = {
   'POST /v1/workbench/review-mark': 'admin',
   'POST /v1/workbench/review-return': 'admin',
   'POST /v1/workbench/review-revert': 'admin',
+  // 行评论 / 按块撤回(2026-10-21)
+  'POST /v1/workbench/review-comment': 'admin',
+  'POST /v1/workbench/review-comments-send': 'admin',
+  'POST /v1/workbench/review-hunk': 'admin',
   'POST /v1/workbench/worktree': 'admin',
   'POST /v1/workbench/script-approve': 'admin',
   // 回到某一轮(2026-10-21):预览 / 执行 + 撤销 / 停住后主人拍板
