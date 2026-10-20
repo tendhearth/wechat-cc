@@ -4,7 +4,7 @@ const STALE = new Set(['permission_stale', 'question_stale', 'cli_permission_sta
 /** daemon 的 409:这件事这一轮还在跑 / 上一条补充还没交付 / 会话正在回话。请求内容冲突另说,不能当排队。 */
 const BUSY = new Set(['workbench_busy', 'input_delivery_busy', 'reply_sink_busy', 'chat_busy', 'cli_session_busy'])
 /** 找不到:事项不在 / 还没有主人那条对话(页面当空对话)/ 原生会话读不了。 */
-const NOT_FOUND = new Set(['matter_not_found', 'no_owner_chat', 'unsupported', 'not_found'])
+const NOT_FOUND = new Set(['matter_not_found', 'no_owner_chat', 'unsupported', 'not_found', 'review_comment_not_found'])
 /** daemon 这一块没接上(503):推送 / 跟 CC 说 / 连接 / 原生会话。 */
 const UNAVAILABLE = new Set(['push_not_wired', 'chat_not_wired', 'connections_not_wired', 'sessions_not_wired', 'voice_not_wired', 'cli_sessions_not_wired', 'cli_actions_not_wired', 'review_not_wired'])
 /** 接着做电脑上的会话(spec 2026-10-01-tendhearth-continue-sessions D11):各有各的一句话,不能都说「没送到」。
@@ -36,6 +36,8 @@ const SPECIFIC: ReadonlyMap<string, BackendCode> = new Map<string, BackendCode>(
   ['rewind_confirmation_required', 'rewind_stale'], ['rewind_confirmation_stale', 'rewind_stale'], ['rewind_not_latest', 'rewind_stale'], ['review_round_discarded', 'rewind_stale'],
   ['rewind_needs_owner', 'rewind_needs_owner'], ['rewind_shared_folder', 'rewind_shared'], ['rewind_merged', 'rewind_merged'], ['rewind_ignored_conflict', 'rewind_ignored'],
   ['rewind_unavailable', 'rewind_unavailable'], ['not_worktree', 'rewind_unavailable'], ['rewind_noop', 'rewind_noop'], ['rewind_failed', 'rewind_failed'],
+  // 行评论(切片 4):块变了 / 已发出 / 同 id 内容不同 / 草稿满了;评论不在了 ⇒ not_found(下面 NOT_FOUND)
+  ['review_hunk_stale', 'hunk_stale'], ['review_comment_sent', 'comment_sent'], ['review_comment_conflict', 'comment_conflict'], ['review_comment_limit', 'comment_limit'],
 ])
 const errOf = (body: unknown): string | null => {
   if (typeof body !== 'object' || body === null) return null

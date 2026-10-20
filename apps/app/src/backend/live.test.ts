@@ -95,6 +95,48 @@ describe('LiveBackend 读', () => {
     expect(reqs.map(r => r.path)).toEqual(['/m/api/matter/review-mark', '/m/api/matter/review-return'])
     expect(reqs[0]!.body).toEqual({ id: ID, artifactId: 'a1', path: 'src/a.ts', mark: 'accepted' })
   })
+  it('行评论(切片 4):建 / 删自动重发(按 commentId 幂等)、发出不自动重发;正文恰好那几个键;发出回三个数', async () => {
+    const CID = '11111111-1111-4111-8111-111111111111', RID = '22222222-2222-4222-8222-222222222222'
+    const { b, reqs } = harness({
+      'POST /m/api/matter/review-comment': ok({ ok: true, commentId: CID }),
+      'POST /m/api/matter/review-comments-send': ok({ ok: true, sent: 2, remaining: 1, skippedDiscarded: 0 }),
+    })
+    await b.reviewComment({ id: ID, commentId: CID, artifactId: 'a1', path: 'src/a.ts', hunk: 0, hunkSha256: 'a'.repeat(64), body: '改名' })
+    await b.reviewCommentDelete({ id: ID, commentId: CID })
+    expect(await b.reviewCommentsSend({ id: ID, requestId: RID, summary: '整体还行' })).toEqual({ sent: 2, remaining: 1, skippedDiscarded: 0 })
+    expect(await b.reviewCommentsSend({ id: ID, requestId: RID })).toEqual({ sent: 2, remaining: 1, skippedDiscarded: 0 })
+    expect(reqs.map(r => [r.path, r.retry])).toEqual([['/m/api/matter/review-comment', true], ['/m/api/matter/review-comment', true], ['/m/api/matter/review-comments-send', false], ['/m/api/matter/review-comments-send', false]])
+    expect(reqs[0]!.body).toEqual({ id: ID, commentId: CID, artifactId: 'a1', path: 'src/a.ts', hunk: 0, hunkSha256: 'a'.repeat(64), body: '改名' })
+    expect(reqs[1]!.body).toEqual({ id: ID, commentId: CID, delete: true })
+    expect(reqs[2]!.body).toEqual({ id: ID, inputRequestId: RID, summary: '整体还行' })
+    expect(reqs[3]!.body).toEqual({ id: ID, inputRequestId: RID })
+    // 老 daemon / 少了字段 ⇒ 按 0
+    const thin = harness({ 'POST /m/api/matter/review-comments-send': ok({ ok: true }) })
+    expect(await thin.b.reviewCommentsSend({ id: ID, requestId: RID })).toEqual({ sent: 0, remaining: 0, skippedDiscarded: 0 })
+    await expect(b.reviewComment({ id: ID, commentId: CID, artifactId: 'a1', path: 'a', hunk: 0, hunkSha256: 'a'.repeat(64), body: 'x'.repeat(2001) })).rejects.toMatchObject({ code: 'invalid' })
+  })
+  it('行评论的错误码:块变了 / 已发出 / 冲突 / 满了 / 不在了 / 原会话接不上 / 在写;认不得的码 ⇒ unknown', async () => {
+    const cases: Array<[string, number, string]> = [
+      ['review_hunk_stale', 409, 'hunk_stale'], ['review_comment_sent', 409, 'comment_sent'], ['review_comment_conflict', 409, 'comment_conflict'], ['review_comment_limit', 409, 'comment_limit'],
+      ['review_comment_not_found', 404, 'not_found'], ['review_round_discarded', 409, 'rewind_stale'], ['restart_confirmation_required', 409, 'session_changed'], ['workbench_busy', 409, 'busy'],
+      ['review_something_new', 409, 'unknown'],
+    ]
+    for (const [error, status, code] of cases) {
+      const h = harness({ 'POST /m/api/matter/review-comment': ok({ ok: false, error }, status), 'POST /m/api/matter/review-comments-send': ok({ ok: false, error }, status) })
+      await expect(h.b.reviewComment({ id: ID, commentId: '11111111-1111-4111-8111-111111111111', artifactId: 'a1', path: 'a', hunk: 0, hunkSha256: 'a'.repeat(64), body: 'x' }), error).rejects.toMatchObject({ code })
+      await expect(h.b.reviewCommentsSend({ id: ID, requestId: '22222222-2222-4222-8222-222222222222' }), error).rejects.toMatchObject({ code })
+    }
+  })
+  it('改动里的块与评论:认不得的评论状态照样解析(不让老 App 整页读不出)', async () => {
+    const turn = { artifactId: 'a1', createdAt: 1, status: 'complete', omittedFiles: 0, notes: [], pendingComments: 1,
+      files: [{ path: 'a.ts', kind: 'modified', diff: '@@ -1 +1 @@\n-a\n+b', truncated: false, hunks: [{ index: 0, sha256: 'a'.repeat(64), header: '@@ -1 +1 @@' }],
+        comments: [{ id: 'c1', hunk: 0, body: '改', state: 'draft' }, { id: 'c2', hunk: 0, body: '以后', state: 'resolved', sentAt: 5, extra: 1 }] }] }
+    const { b } = harness({ 'GET /m/api/matter/changes': ok({ ok: true, turn }) })
+    const got = (await b.changes(ID))!
+    expect(got.pendingComments).toBe(1)
+    expect(got.files[0]!.comments!.map(c => c.state)).toEqual(['draft', 'resolved'])
+    expect(got.files[0]!.hunks).toEqual([{ index: 0, sha256: 'a'.repeat(64), header: '@@ -1 +1 @@' }])
+  })
   it('撤掉这一轮:预览 GET 带 id + artifactId(不带 to);执行正文恰好 {id, artifactId, token};回退码各有各的', async () => {
     const preview = { token: 'f'.repeat(64), round: 2, rounds: [2], files: { count: 1, paths: [{ status: 'M', path: 'a.ts' }] }, extraChanges: null, droppedCommits: { count: 0, elsewhere: false }, rebuildHint: 'x', session: 'none', devServer: false, goalWillStop: false }
     const { b, reqs } = harness({

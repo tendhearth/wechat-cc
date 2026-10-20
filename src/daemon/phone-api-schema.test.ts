@@ -27,6 +27,7 @@ import { makeWorkbenchStore } from '../core/workbench/store'
 import { makeWorkbenchService, type WorkbenchService } from '../core/workbench/service'
 import { MANAGED_NATIVE_CAPABILITIES } from '../core/workbench/executor-capabilities'
 import { saveArtifactSnapshot } from '../core/workbench/artifacts'
+import { GIT_REVIEW_MIME, serializeGitReview, type GitReview } from '../core/workbench/git-review'
 import { makeSettingsPanel, type SettingsPanel } from './settings-panel'
 import { PHONE_ROUTES } from './phone-routes'
 import { makePhoneInsight } from './phone-insight'
@@ -106,6 +107,10 @@ describe('真实返回校验 — workbench + matters', () => {
       },
       insight: makePhoneInsight({ detail: id => service.detail(id), explainer: makeApprovalExplainer({ cheapEval: () => null, budgetMs: () => 1000, log: () => {} }), summarizer: makeProgressSummarizer({ cheapEval: () => null, budgetMs: () => 1000, now: () => Date.now(), log: () => {} }) }),
       changes: id => workbench.reviewList(id),
+      review: {
+        mark: (id, input) => workbench.markReviewFile(id, input), ret: (id, input) => workbench.returnReviewFiles(id, input),
+        comment: (id, input) => workbench.reviewComment(id, input), sendComments: (id, input) => workbench.sendReviewComments(id, input),
+      },
       matters: { ...service, say: (id, text, input) => service.say(id, text, 'phone', input), seenOnPhone: id => { matters.bind(id, 'phone', 'pwa') } },
       connections: () => buildConnections({ plugins: () => null, wechatSyncedAt: () => null, knowledge: () => ({ enabled: false, built: false, latestAt: null, syncedAt: null }), computer: () => ({ label: 'test', since: null, version: null }), workbench }),
       sessions: { list: async () => ({ items: [], nextCursor: null, coverage: 'native_supported_history' as const }), read: async () => { throw new Error('native_history_unsupported') } },
@@ -285,6 +290,37 @@ describe('真实返回校验 — workbench + matters', () => {
     const missing = await request('/m/api/matter/changes?id=deadbeef')
     expect(missing.status).toBe(404)
     parseAs('GET /m/api/matter/changes', await missing.json())
+  })
+
+  it('行评论(切片 4)真实返回符合 schema:changes 带块与评论;建 / 删;执行者还在写 ⇒ 发出 409 workbench_busy;没有草稿 ⇒ 404', async () => {
+    const task = create('lc')
+    await ready(task.id)
+    const diff = '@@ -1 +1 @@\n-老\n+新'
+    const review: GitReview = { version: 1, scope: 'working-tree-before-after', startedAt: 1, finishedAt: 2, headBefore: 'h1', headAfter: 'h2', status: 'complete', preexistingPaths: [], notes: [],
+      files: [{ path: 'src/a.ts', preexisting: false, kind: 'modified', beforeSha256: 'a'.repeat(64), afterSha256: 'b'.repeat(64), diff }] }
+    saveArtifactSnapshot(store, task.id, { name: '代码变更-run1.json', mime: GIT_REVIEW_MIME, bytes: serializeGitReview(review) }, root)
+    const read = async () => parseAs('GET /m/api/matter/changes', await (await request(`/m/api/matter/changes?id=${task.id}`)).json()) as { turn: { artifactId: string; pendingComments?: number; files: Array<{ hunks?: Array<{ sha256: string; header: string }>; comments?: Array<{ id: string; state: string }> }> } }
+    const before = await read()
+    expect(before.turn.files[0]!.hunks).toEqual([{ index: 0, sha256: createHash('sha256').update(diff, 'utf8').digest('hex'), header: '@@ -1 +1 @@' }])
+    const commentId = randomUUID()
+    const made = await request('/m/api/matter/review-comment', { id: task.id, commentId, artifactId: before.turn.artifactId, path: 'src/a.ts', hunk: 0, hunkSha256: before.turn.files[0]!.hunks![0]!.sha256, body: '这里换个名字' })
+    expect(made.status).toBe(200)
+    expect(parseAs('POST /m/api/matter/review-comment', await made.json())).toEqual({ ok: true, commentId })
+    const after = await read()
+    expect(after.turn.pendingComments).toBe(1)
+    expect(after.turn.files[0]!.comments).toMatchObject([{ id: commentId, state: 'draft' }])
+    const stale = await request('/m/api/matter/review-comment', { id: task.id, commentId: randomUUID(), artifactId: before.turn.artifactId, path: 'src/a.ts', hunk: 0, hunkSha256: 'c'.repeat(64), body: 'x' })
+    expect(stale.status).toBe(409)
+    expect(parseAs('POST /m/api/matter/review-comment', await stale.json())).toEqual({ ok: false, error: 'review_hunk_stale' })
+    const busy = await request('/m/api/matter/review-comments-send', { id: task.id, summary: '整体' })
+    expect(busy.status).toBe(409)
+    expect(parseAs('POST /m/api/matter/review-comments-send', await busy.json())).toEqual({ ok: false, error: 'workbench_busy' })
+    const del = await request('/m/api/matter/review-comment', { id: task.id, commentId, delete: true })
+    expect(parseAs('POST /m/api/matter/review-comment', await del.json())).toEqual({ ok: true, deleted: true })
+    expect((await read()).turn.pendingComments).toBeUndefined()
+    const none = await request('/m/api/matter/review-comments-send', { id: task.id })
+    expect(none.status).toBe(404)
+    expect(parseAs('POST /m/api/matter/review-comments-send', await none.json())).toEqual({ ok: false, error: 'review_comment_not_found' })
   })
 
   it('matter/rewind 真实返回符合 schema:链接令牌 403;没有可撤的轮 ⇒ 409 rewind_not_latest;不认识的事 ⇒ 404', async () => {

@@ -842,6 +842,81 @@ describe('POST /m/api/matter/review-mark|review-return', () => {
   })
 })
 
+describe('POST /m/api/matter/review-comment|review-comments-send(行评论,切片 4)', () => {
+  const CID = '22222222-2222-4222-8222-222222222222', SHA = 'a'.repeat(64), ART = 'abcdef12'
+  const create = { id: 'deadbeef', commentId: CID, artifactId: ART, path: 'src/a.ts', hunk: 0, hunkSha256: SHA, body: '这块别动' }
+  async function panelWith(review?: unknown) {
+    const panel = makeSettingsPanel({ stateDir: seedStateDir(), ownerChatId: () => OWNER, chatPrefs: { get: () => ({}), set: () => ({}) }, getUserName: () => null, setUserName: async () => {}, log: () => {}, ...(review ? { review } : {}) } as never)
+    const { port } = await panel.start(0)
+    const t = panel.issueToken()
+    const post = (path: string, body: unknown) => fetch(`http://127.0.0.1:${port}${path}?t=${t}`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: typeof body === 'string' ? body : JSON.stringify(body) })
+    return { panel, post }
+  }
+  it('没接线(老接线只有 mark / ret)⇒ 503;参数不对 ⇒ 400 且不碰工作台', async () => {
+    const a = await panelWith({ mark: vi.fn(), ret: vi.fn() })
+    expect((await a.post('/m/api/matter/review-comment', create)).status).toBe(503)
+    expect((await a.post('/m/api/matter/review-comments-send', { id: 'deadbeef' })).status).toBe(503)
+    await a.panel.stop()
+    const review = { mark: vi.fn(), ret: vi.fn(), comment: vi.fn(), sendComments: vi.fn() }
+    const b = await panelWith(review)
+    const bad: unknown[] = [
+      { ...create, id: 'nope' }, { ...create, commentId: 'x' }, { ...create, hunk: -1 }, { ...create, hunk: 1.5 }, { ...create, hunkSha256: 'z' },
+      { ...create, body: '  ' }, { ...create, body: 'x'.repeat(2001) }, { ...create, artifactId: 'A!' }, { ...create, path: '' },
+      // 手机只评论整块:带行号 / 改正文 / 多余的键一律 400
+      { ...create, rowStart: 0, rowEnd: 1 }, { id: 'deadbeef', commentId: CID, body: '改' }, { ...create, quote: '+x' },
+      { id: 'deadbeef', commentId: CID, delete: 'yes' }, [create],
+    ]
+    for (const body of bad) expect((await b.post('/m/api/matter/review-comment', body)).status, JSON.stringify(body)).toBe(400)
+    expect((await b.post('/m/api/matter/review-comment', '{坏')).status).toBe(400)
+    for (const body of [{ id: 'nope' }, { id: 'deadbeef', summary: 3 }, { id: 'deadbeef', summary: 'x'.repeat(2001) }, { id: 'deadbeef', inputRequestId: 'x' }, { id: 'deadbeef', restartToken: SHA }])
+      expect((await b.post('/m/api/matter/review-comments-send', body)).status, JSON.stringify(body)).toBe(400)
+    expect(review.comment).not.toHaveBeenCalled(); expect(review.sendComments).not.toHaveBeenCalled()
+    await b.panel.stop()
+  })
+  it('建 / 删原样转给工作台(id 转小写);发出只回三个数(回执与任务视图不给手机)', async () => {
+    const { PHONE_API_SCHEMAS } = await import('@wechat-cc/protocol')
+    const review = { mark: vi.fn(), ret: vi.fn(), comment: vi.fn(() => ({ comment: { id: CID } })), sendComments: vi.fn(async () => ({ input: { id: 'li', text: '秘密' }, sent: 2, remaining: 1, skippedDiscarded: 0 })) }
+    const p = await panelWith(review)
+    const r1 = await (await p.post('/m/api/matter/review-comment', { ...create, commentId: CID.toUpperCase() })).json()
+    expect(r1).toEqual({ ok: true, commentId: CID }); PHONE_API_SCHEMAS['POST /m/api/matter/review-comment']!.parse(r1)
+    expect(review.comment).toHaveBeenCalledWith('deadbeef', { commentId: CID, artifactId: ART, path: 'src/a.ts', hunk: 0, hunkSha256: SHA, body: '这块别动' })
+    const r2 = await (await p.post('/m/api/matter/review-comment', { id: 'deadbeef', commentId: CID, delete: true })).json()
+    expect(r2).toEqual({ ok: true, deleted: true }); PHONE_API_SCHEMAS['POST /m/api/matter/review-comment']!.parse(r2)
+    expect(review.comment).toHaveBeenLastCalledWith('deadbeef', { commentId: CID, delete: true })
+    const RID = '33333333-3333-4333-8333-333333333333'
+    const r3 = await (await p.post('/m/api/matter/review-comments-send', { id: 'deadbeef', summary: '整体还行', inputRequestId: RID })).json()
+    expect(r3).toEqual({ ok: true, sent: 2, remaining: 1, skippedDiscarded: 0 }); PHONE_API_SCHEMAS['POST /m/api/matter/review-comments-send']!.parse(r3)
+    expect(review.sendComments).toHaveBeenCalledWith('deadbeef', { summary: '整体还行', inputRequestId: RID })
+    await p.panel.stop()
+  })
+  it('错误码按手机那套映射:只带短码,不带细节', async () => {
+    const { PHONE_API_SCHEMAS } = await import('@wechat-cc/protocol')
+    const review = { mark: vi.fn(), ret: vi.fn(), comment: vi.fn(), sendComments: vi.fn() }
+    const p = await panelWith(review)
+    const cases: Array<[string, number]> = [
+      ['review_hunk_stale', 409], ['review_comment_sent', 409], ['review_comment_conflict', 409], ['review_comment_limit', 409], ['review_round_discarded', 409],
+      ['review_comment_not_found', 404], ['review_file_unmarkable', 400], ['invalid_review_reference', 400], ['not_found', 404], ['workbench_busy', 409],
+    ]
+    for (const [code, status] of cases) {
+      review.comment.mockImplementationOnce(() => { throw Object.assign(new Error(code), { detail: '/Users/me/secret' }) })
+      const res = await p.post('/m/api/matter/review-comment', create)
+      expect(res.status, code).toBe(status)
+      const body = await res.json()
+      expect(body, code).toEqual({ ok: false, error: code === 'not_found' ? 'matter_not_found' : code })
+      PHONE_API_SCHEMAS['POST /m/api/matter/review-comment']!.parse(body)
+    }
+    for (const [code, status] of [['restart_confirmation_required', 409], ['workbench_busy', 409], ['review_comment_not_found', 404], ['rewind_needs_owner', 409], ['boom /Users/x', 500]] as const) {
+      review.sendComments.mockRejectedValueOnce(new Error(code))
+      const res = await p.post('/m/api/matter/review-comments-send', { id: 'deadbeef' })
+      expect(res.status, code).toBe(status)
+      const body = await res.json()
+      expect(body).toEqual({ ok: false, error: status === 500 ? 'unavailable' : code })
+      PHONE_API_SCHEMAS['POST /m/api/matter/review-comments-send']!.parse(body)
+    }
+    await p.panel.stop()
+  })
+})
+
 describe('GET|POST /m/api/matter/rewind(撤掉这一轮,回退切片 4)', () => {
   const TOKEN = 'f'.repeat(64)
   const PREVIEW = { token: TOKEN, round: 2, rounds: [2], files: { count: 1, paths: [{ status: 'M', path: 'a.ts' }] }, extraChanges: null, droppedCommits: { count: 0, elsewhere: false }, rebuildHint: '先重新构建', session: 'none', devServer: false, goalWillStop: false }

@@ -3,7 +3,7 @@ import { labelJoin, type Lang } from '../i18n'
 import { DEMO_STICKER, DEMO_STICKER_FILE, DEMO_VOICE } from './demo-media'
 import { BackendError, type Backend, type CliSessionRowT, type Connection, type MatterT, type MatterDetailT, type ApprovalExplanationT, type ChatJobT, type ChatMessageT, type SessionContinueT, type MatterSayResultT, type UploadStateT, type ChatModelViewT, type OverseerTodayT, type TodayItemT, type CompanionHomeT, type FeedEventT } from './types'
 import {
-  copy, IDS, CHAT_ID, DEMO_HUNT_URL, PERM_ID, QUESTION_ID, RUN_IDS, t, explanation, progress, changesTurn, DEMO_REWIND_TOKEN, entryOptions,
+  copy, IDS, CHAT_ID, DEMO_HUNT_URL, PERM_ID, QUESTION_ID, RUN_IDS, t, explanation, progress, changesTurn, DEMO_REWIND_TOKEN, DEMO_HUNK_SHA, entryOptions,
   demoActivity, demoConnections, demoJobs, demoLetters, demoSessions, demoSessionMessages, demoSessionTitleKey, DEMO_SESSION_MESSAGES, type Stage,
 } from './demo-data'
 
@@ -229,6 +229,8 @@ export function makeDemoBackend(opts: { now?: () => number; setTimeout?: typeof 
   const evText = (e: Entry, kind: string, text: string) => { e.evs = [...e.evs, { kind, text, createdAt: now() }] }
   const reviewMarks = new Map<string, { mark: 'accepted' | 'returned'; comment: string; createdAt: number }>()
   let rewound = false
+  // 行评论(切片 4):演示里的草稿 / 已发出,按评论 id
+  const reviewComments = new Map<string, { path: string; hunk: number; body: string; state: 'draft' | 'sent'; sentAt?: number }>()
   const get = (id: string) => { const e = entries.get(id); if (!e) throw new BackendError('not_found'); return e }
 
   /** 演示里三条会话能不能接:进行中的那条看得见在跑;另两条一条能恢复、一条只能带记录新开。 */
@@ -265,7 +267,12 @@ export function makeDemoBackend(opts: { now?: () => number; setTimeout?: typeof 
       get(id)
       if (id !== IDS.portfolio || rewound) return null
       const turn = changesTurn(now())
-      return { ...turn, files: turn.files.map(f => { const m = reviewMarks.get(f.path); return m ? { ...f, mark: m } : f }) }
+      const pending = [...reviewComments.values()].filter(c => c.state === 'draft').length
+      return { ...turn, ...(pending ? { pendingComments: pending } : {}), files: turn.files.map(f => {
+        const m = reviewMarks.get(f.path)
+        const notes = [...reviewComments.entries()].filter(([, c]) => c.path === f.path).map(([cid, c]) => ({ id: cid, hunk: c.hunk, body: c.body, state: c.state, ...(c.sentAt ? { sentAt: c.sentAt } : {}) }))
+        return { ...f, ...(m ? { mark: m } : {}), ...(notes.length ? { comments: notes } : {}) }
+      }) }
     },
     // 撤掉这一轮(回退切片 4):演示只有作品集那件有一轮可撤;撤了之后改动面板空了、时间线多一句
     async rewindPreview({ id, artifactId }) {
@@ -282,6 +289,29 @@ export function makeDemoBackend(opts: { now?: () => number; setTimeout?: typeof 
       evText(e, 'system', t(lastLang, 'rewindDone')); publish([id])
     },
     async reviewMark({ id, path }) { get(id); reviewMarks.set(path, { mark: 'accepted', comment: '', createdAt: now() }) },
+    async reviewComment({ id, commentId, artifactId, path, hunk, hunkSha256, body }) {
+      get(id)
+      const i = changesTurn(now()).files.findIndex(f => f.path === path)
+      if (rewound || artifactId !== 'demo-review' || i < 0 || hunk !== 0 || hunkSha256 !== DEMO_HUNK_SHA[i]) throw new BackendError('hunk_stale')
+      const had = reviewComments.get(commentId)
+      if (had) { if (had.body !== body || had.path !== path) throw new BackendError('comment_conflict'); return }
+      reviewComments.set(commentId, { path, hunk, body, state: 'draft' })
+    },
+    async reviewCommentDelete({ id, commentId }) {
+      get(id)
+      const had = reviewComments.get(commentId)
+      if (!had) throw new BackendError('not_found')
+      if (had.state === 'sent') throw new BackendError('comment_sent')
+      reviewComments.delete(commentId)
+    },
+    async reviewCommentsSend({ id, summary }) {
+      const e = get(id)
+      const drafts = [...reviewComments.values()].filter(c => c.state === 'draft')
+      if (!drafts.length) throw new BackendError('not_found')
+      for (const c of drafts) { c.state = 'sent'; c.sentAt = now() }
+      evText(e, 'user', [summary, ...drafts.map(c => `${c.path}: ${c.body}`)].filter(Boolean).join('\n')); publish([id])
+      return { sent: drafts.length, remaining: 0, skippedDiscarded: 0 }
+    },
     async reviewReturn({ id, paths, comment }) {
       const e = get(id)
       for (const path of paths) reviewMarks.set(path, { mark: 'returned', comment, createdAt: now() })
@@ -655,6 +685,6 @@ export function makeDemoBackend(opts: { now?: () => number; setTimeout?: typeof 
     },
     setActive() {},
     dispose() {},
-    reset() { epoch++; seq = 0; cli = seedCli(); createdBy = new Map(); saidBy = new Map(); adopted = new Map(); handedBy = new Map(); jobPaused = new Map(); jobRemoved = new Set(); deviceLabel = ''; rewound = false; reviewMarks.clear(); seed(); publish([...order]) },
+    reset() { epoch++; seq = 0; cli = seedCli(); createdBy = new Map(); saidBy = new Map(); adopted = new Map(); handedBy = new Map(); jobPaused = new Map(); jobRemoved = new Set(); deviceLabel = ''; rewound = false; reviewMarks.clear(); reviewComments.clear(); seed(); publish([...order]) },
   }
 }

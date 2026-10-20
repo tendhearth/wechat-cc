@@ -124,6 +124,30 @@ describe('演示后端', () => {
     b.reset()
     expect((await b.changes('a1b2c3d4'))?.rewindable).toBe(true)
   })
+  it('行评论(切片 4):每个文件一块、块对得上;存草稿幂等、同 id 不同内容 ⇒ comment_conflict;发出之后标已发出、删不了;reset 清掉', async () => {
+    const { PhoneChangesTurn } = await import('@wechat-cc/protocol')
+    const { fileHunks } = await import('../view/review-comments')
+    const b = makeDemoBackend()
+    const turn = (await b.changes('a1b2c3d4'))!
+    const f = turn.files[0]!
+    const piece = fileHunks(f)![0]!
+    const p = { id: 'a1b2c3d4', commentId: '11111111-1111-4111-8111-111111111111', artifactId: turn.artifactId!, path: f.path, hunk: 0, hunkSha256: piece.sha256, body: '留白再多一点' }
+    await b.reviewComment(p); await b.reviewComment(p)
+    await expect(b.reviewComment({ ...p, body: '别的' })).rejects.toMatchObject({ code: 'comment_conflict' })
+    await expect(b.reviewComment({ ...p, commentId: '22222222-2222-4222-8222-222222222222', hunkSha256: '0'.repeat(64) })).rejects.toMatchObject({ code: 'hunk_stale' })
+    const after = (await b.changes('a1b2c3d4'))!
+    expect(after.pendingComments).toBe(1)
+    expect(after.files[0]!.comments).toEqual([{ id: p.commentId, hunk: 0, body: '留白再多一点', state: 'draft' }])
+    expect(() => PhoneChangesTurn.parse(after)).not.toThrow()
+    expect(await b.reviewCommentsSend({ id: 'a1b2c3d4', requestId: '33333333-3333-4333-8333-333333333333' })).toEqual({ sent: 1, remaining: 0, skippedDiscarded: 0 })
+    const sent = (await b.changes('a1b2c3d4'))!
+    expect(sent.pendingComments).toBeUndefined()
+    expect(sent.files[0]!.comments![0]).toMatchObject({ state: 'sent', sentAt: expect.any(Number) })
+    await expect(b.reviewCommentDelete({ id: 'a1b2c3d4', commentId: p.commentId })).rejects.toMatchObject({ code: 'comment_sent' })
+    await expect(b.reviewCommentsSend({ id: 'a1b2c3d4', requestId: '44444444-4444-4444-8444-444444444444' })).rejects.toMatchObject({ code: 'not_found' })
+    b.reset()
+    expect((await b.changes('a1b2c3d4'))!.files[0]!.comments).toBeUndefined()
+  })
   it('用了多少额度:作品集那件带合计;没报的项是 null(不是 0)', async () => {
     const b = makeDemoBackend()
     expect((await b.matter('a1b2c3d4', 'en')).task?.usage).toMatchObject({ turns: 3, input: 48_210, output: 6_120, cacheRead: null })

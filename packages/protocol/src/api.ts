@@ -386,6 +386,14 @@ export const MatterSayResult = z.union([
 /** 主人对一个文件的标记(桌面「改动」面板同一张表):没问题 / 退回 + 退回时那句意见。 */
 export const PhoneReviewMark = z.object({ mark: z.enum(['accepted', 'returned']), comment: z.string(), createdAt: z.number() })
 
+/** 行评论(切片 4):一块改动的序号 / sha / 块头(@@ … @@)。客户端按 `^(?=@@ )` 切 diff,对上块数与块头才给「评论这一块」。 */
+export const PhoneReviewHunk = z.object({ index: z.number(), sha256: z.string(), header: z.string() })
+/** 一条行评论;state 开放(draft / sent / 以后的新值),认不得的按只读显示。 */
+export const PhoneReviewComment = z.object({
+  id: z.string(), hunk: z.number(), rowStart: z.number().optional(), rowEnd: z.number().optional(),
+  body: z.string(), state: z.string(), sentAt: z.number().optional(),
+})
+
 export const PhoneChangesTurn = z.object({
   /** 这一轮快照的 id;逐文件「没问题 / 退回」要带上它(2026-10-17)。 */
   artifactId: z.string().optional(),
@@ -393,7 +401,11 @@ export const PhoneChangesTurn = z.object({
    *  discardedAfter:比这一轮新、已撤掉的轮数。老 daemon 都不带。 */
   rewindable: z.boolean().optional(), discarded: z.boolean().optional(), discardedAfter: z.number().optional(),
   createdAt: z.number(), status: z.enum(['complete', 'partial', 'unavailable']),
-  files: z.array(z.object({ path: z.string(), kind: z.enum(['added', 'deleted', 'modified', 'not_reviewed']), diff: z.string().optional(), reason: z.string().optional(), truncated: z.boolean(), mark: PhoneReviewMark.optional(), /** 该多看一眼的原因(B6);老 daemon 没有。 */ risk: z.array(z.string()).max(6).optional() })),
+  /** 行评论(切片 4):这件事没撤掉的各轮上还没发出的评论数;老 daemon 不带。 */
+  pendingComments: z.number().optional(),
+  files: z.array(z.object({ path: z.string(), kind: z.enum(['added', 'deleted', 'modified', 'not_reviewed']), diff: z.string().optional(), reason: z.string().optional(), truncated: z.boolean(), mark: PhoneReviewMark.optional(), /** 该多看一眼的原因(B6);老 daemon 没有。 */ risk: z.array(z.string()).max(6).optional(),
+    /** 块清单(带了 diff 且路径没裁才有)与已有评论;都是 optional,老 daemon 没有。 */
+    hunks: z.array(PhoneReviewHunk).optional(), comments: z.array(PhoneReviewComment).optional() })),
   omittedFiles: z.number(),
   /** 本轮审阅的说明(为什么是 partial 等),至多 10 条、每条 ≤ 200 字。 */
   notes: z.array(z.string()),
@@ -585,6 +597,10 @@ export const PHONE_API_SCHEMAS: Readonly<Record<string, z.ZodTypeAny>> = {
   'GET /m/api/matter/changes': z.union([z.object({ ok: z.literal(true), turn: PhoneChangesTurn.nullable() }), PhoneErrorResponse]),
   'POST /m/api/matter/review-mark': z.union([z.object({ ok: z.literal(true) }), PhoneErrorResponse]),
   'POST /m/api/matter/review-return': z.union([z.object({ ok: z.literal(true) }), PhoneErrorResponse]),
+  // 行评论(切片 4):建 / 删草稿;发出这件事的所有草稿。错误码开放(z.string()):409 review_hunk_stale / review_comment_sent /
+  // review_comment_conflict / review_comment_limit / review_round_discarded / workbench_busy / restart_confirmation_required;404 review_comment_not_found。
+  'POST /m/api/matter/review-comment': z.union([z.object({ ok: z.literal(true), commentId: z.string().optional(), deleted: z.boolean().optional() }), PhoneErrorResponse]),
+  'POST /m/api/matter/review-comments-send': z.union([z.object({ ok: z.literal(true), sent: z.number().optional(), remaining: z.number().optional(), skippedDiscarded: z.number().optional() }), PhoneErrorResponse]),
   // 撤掉这一轮(回退切片 4):只给设备令牌。错误码:409 rewind_confirmation_required / rewind_confirmation_stale / rewind_not_latest /
   // review_round_discarded / rewind_needs_owner / rewind_shared_folder / rewind_merged / rewind_ignored_conflict / workbench_busy;
   // 422 rewind_unavailable(带 reason)/ rewind_noop / not_worktree;502 rewind_failed(带 rolledBack)。

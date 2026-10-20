@@ -35,6 +35,9 @@ export const PHONE_ROUTES: ReadonlySet<string> = new Set([
   // 手机逐文件审阅(2026-10-17):没问题 / 退回(同桌面 review-mark / review-return)
   'POST /m/api/matter/review-mark',
   'POST /m/api/matter/review-return',
+  // 行评论(切片 4,2026-10-21):整块评论建 / 删 + 发出;同 review-return 链接令牌也能用(只给执行者递话,不写主人的文件)
+  'POST /m/api/matter/review-comment',
+  'POST /m/api/matter/review-comments-send',
   // 撤掉这一轮(回退切片 4,2026-10-21):预览 + 带 token 执行;只给设备(见 LINK_EXCLUDED)
   'GET /m/api/matter/rewind',
   'POST /m/api/matter/rewind',

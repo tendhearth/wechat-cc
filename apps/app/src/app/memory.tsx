@@ -8,6 +8,7 @@ import { useLang } from '../i18n/useLang'
 import { useBackendCtx } from '../state/BackendProvider'
 import { useConnection, useQuery } from '../state/hooks'
 import { canSubmit } from '../view/connection'
+import { memoryImportLine } from '../view/memory'
 import { TopBar } from '../ui/TopBar'
 import { radius, space } from '../ui/tokens'
 import { Txt } from '../ui/Txt'
@@ -57,6 +58,8 @@ export default function Memory() {
                   onPress={() => { setOpen(open === it.id ? null : it.id); setNote(null) }}>
                   <Txt role="bubble" content="user">{it.person ? `${it.person.name} · ${it.person.rel}` : it.display}{it.due_label ? `  ${it.due_label}` : ''}</Txt>
                 </Pressable>
+                {/* 从别的助手导入的(PR 440):点开才显示出处 */}
+                {open !== null && open === it.id && memoryImportLine(it.sources, lang) ? <Txt testID="memory-source" role="caption" tone="inkSoft">{memoryImportLine(it.sources, lang)}</Txt> : null}
                 {it.id && open === it.id ? (
                   <View testID="memory-fix" style={{ flexDirection: 'row', flexWrap: 'wrap', gap: space.s }}>
                     {VERDICTS.map(vd => (
