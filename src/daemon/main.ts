@@ -707,9 +707,10 @@ export async function bootDaemon(opts: BootDaemonOpts): Promise<DaemonHandle> {
     // 桌宠权限卡都能拍板 —— 一个权限,几个呈现面。主人在场(3 分钟内敲过字)就不问。
     // 放行规则(spec 2026-10-19-permission-rules-design):终端会话与一起做在问主人之前先问它。
     // 规则文件默认没有 / 关着 ⇒ 每条都是 ask,两处入口照旧。初审走 registry 的 cheapEval(自带网络守护)。
+    const permissionDecisions = makePermissionDecisionsStore(db)
     const permissionGate = makePermissionGate({
       stateDir,
-      store: makePermissionDecisionsStore(db),
+      store: permissionDecisions,
       cheapEval: () => boot.registry.getCheapEval(),
       notifyOwner: (text) => {
         const owner = resolveAdminChatId(loadAccess(), loadCompanionConfig(stateDir), null)
@@ -821,6 +822,7 @@ export async function bootDaemon(opts: BootDaemonOpts): Promise<DaemonHandle> {
     const overseerToday = makeOverseerTodaySource({
       terminal: () => cliSessionViews({ includeEnded: true, limit: TODAY_TERMINAL_LIMIT }),
       workbench: () => workbenchForToday,
+      ccDecided: (since) => ({ ...permissionDecisions.countsSince(since), recent: permissionDecisions.since(since, 20) }),
       localMachine: osHostname(),
       log: (t, l) => log(t, l),
     })

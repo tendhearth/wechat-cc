@@ -175,6 +175,7 @@ More subcommands (each has its own --help):
   wechat-cc hand add|accept|invite|join|list|ping  一个大脑多手: hand invite → hand join <code>
   wechat-cc license status|activate|deactivate  Manage the Pro license
   wechat-cc mode set …              Conversation mode management (via running daemon)
+  wechat-cc rules list|add|rm|enable|disable|review  放行规则:哪些权限请求 CC 可以替你批
   wechat-cc pair [<6-digit code>]   配对码 — 和朋友的 bot 建边(需运行中的 daemon)
   wechat-cc install-progress        Read service-install progress (JSON; desktop wizard polls it)
   wechat-cc mcp-server <wechat|delegate>   Internal — stdio MCP server entrypoint (spawned by the daemon)

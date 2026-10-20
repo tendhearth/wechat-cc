@@ -20,6 +20,7 @@ import { eventsCmd, observationsCmd, milestonesCmd, conversationsCmd } from './s
 import { logsCmd, logCmd } from './src/cli/commands/logs'
 import { avatarCmd } from './src/cli/commands/avatar'
 import { guardCmd } from './src/cli/commands/guard'
+import { rulesCmd } from './src/cli/commands/rules'
 import { providerCmd } from './src/cli/commands/provider'
 import { accountCmd } from './src/cli/commands/account'
 import { accessCmd } from './src/cli/commands/access'
@@ -80,6 +81,7 @@ const SUBCOMMANDS = {
   sessions: sessionsCmd,
   avatar: avatarCmd,
   guard: guardCmd,
+  rules: rulesCmd,
   provider: providerCmd,
   // PR4 batch 3b — memory / account / daemon / demo namespaces.
   memory: memoryCmd,

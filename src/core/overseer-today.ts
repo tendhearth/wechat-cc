@@ -72,7 +72,13 @@ export interface OverseerToday {
   counts: { needsYou: number; done: number; running: number; stuck: number }
   /** 读不到的来源(登记处 / 工作台没接或出错)—— 数字不全,别当「没事」。 */
   unavailable: TodaySource[]
+  /** 放行规则(2026-10-19):CC 替主人批了几条(规则 / 初审)+ 最近几条;null ⇒ 读不到 / 没接,不画。 */
+  ccDecided: TodayCcDecided | null
 }
+
+/** 一条 CC 替主人拿的权限决定(daemon 侧留痕表的那几列)。 */
+export interface TodayCcDecision { at: number; surface: 'terminal' | 'workbench'; provider: string; tool: string; summary: string; verdict: 'allow' | 'deny'; by: 'rule' | 'review' | 'floor'; ruleId: string | null }
+export interface TodayCcDecided { rule: number; review: number; recent: TodayCcDecision[] }
 
 /** 工作台任务视图里用得到的那几个字段(WorkbenchTaskView 结构上满足)。 */
 export interface TodayTaskInput {
@@ -106,6 +112,8 @@ export interface OverseerTodayInput {
   attention: readonly TodayAttentionInput[] | null
   /** daemon 所在机器;终端会话不在这台 ⇒ 标机器名。 */
   localMachine?: string | undefined
+  /** 放行规则的留痕(窗口内);缺省 / null ⇒ 读不到。 */
+  ccDecided?: TodayCcDecided | null
 }
 
 
@@ -203,6 +211,7 @@ export function buildOverseerToday(input: OverseerTodayInput): OverseerToday {
     needsYou, done, running, stuck,
     counts: { needsYou: needsYou.length, done: done.length, running: running.length, stuck: stuck.length },
     unavailable,
+    ccDecided: input.ccDecided ?? null,
   }
 }
 
@@ -237,6 +246,13 @@ function needLine(n: TodayNeed, now: number): string {
   return `等你 · ${where(n, n.source !== 'together')}${many}${what} · ${relativeTime(n.at, now)} · ${act}`
 }
 
+/** 「CC 替你批了 3 条(规则 2、初审 1)」;全 0 / 读不到 ⇒ ''。 */
+function ccLine(d: TodayCcDecided | null): string {
+  if (!d || d.rule + d.review === 0) return ''
+  const parts = [d.rule ? `规则 ${d.rule}` : '', d.review ? `初审 ${d.review}` : ''].filter(Boolean).join('、')
+  return `CC 替你批了 ${d.rule + d.review} 条(${parts})`
+}
+
 /**
  * 主人发「日报」时回的那条:纯文本(微信不认 markdown),等你的在最前,≤ 15 行。
  * 第一行是几个数;每组只列前几条,没列出的合成一行;最后一行是怎么接着操作(只提列出来的那几种)。
@@ -247,11 +263,12 @@ export function formatOverseerToday(t: OverseerToday, opts: { now?: number } = {
   const gap = t.unavailable.length
     ? `(${t.unavailable.map(s => (s === 'terminal' ? '终端' : '一起做')).join('、')}暂时读不到)`
     : ''
+  const cc = ccLine(t.ccDecided)
   if (c.needsYou + c.done + c.running + c.stuck === 0) {
-    return `过去 24 小时没有新动静:终端和一起做都没有在跑、等你或做完的事。${gap}`
+    return `过去 24 小时没有新动静:终端和一起做都没有在跑、等你或做完的事。${gap}${cc ? `\n${cc}` : ''}`
   }
-  // 是 0 的不写;「N 件事等你」和桌面 / 手机「此刻」同一个说法。
-  const head = [c.needsYou ? `${c.needsYou} 件事等你` : '', c.done ? `${c.done} 件做完` : '', c.running ? `${c.running} 件在跑` : '', c.stuck ? `${c.stuck} 件可能卡住` : ''].filter(Boolean).join(' · ')
+  // 是 0 的不写;「N 件事等你」和桌面 / 手机「此刻」同一个说法。CC 替你批的并进第一行(整条仍 ≤ 15 行)。
+  const head = [c.needsYou ? `${c.needsYou} 件事等你` : '', c.done ? `${c.done} 件做完` : '', c.running ? `${c.running} 件在跑` : '', c.stuck ? `${c.stuck} 件可能卡住` : '', cc].filter(Boolean).join(' · ')
   const lines: string[] = [`今天(过去 24 小时):${head}${gap}`]
 
   const needs = t.needsYou.slice(0, MAX_NEEDS), stuck = t.stuck.slice(0, MAX_STUCK)

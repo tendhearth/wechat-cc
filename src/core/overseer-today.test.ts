@@ -167,3 +167,25 @@ describe('formatOverseerToday', () => {
     expect(formatOverseerToday(build({ terminal: [term('a')], tasks: null })).split('\n')[0]).toContain('(一起做暂时读不到)')
   })
 })
+
+// 放行规则(2026-10-19):CC 替主人批过的,日报里看得见。
+describe('日报 × CC 替你批了', () => {
+  const withCc = (cc: { rule: number; review: number } | null, o: Parameters<typeof build>[0] = {}) =>
+    buildOverseerToday({ now: NOW, terminal: o.terminal ?? [], tasks: o.tasks ?? [], attention: o.attention ?? [], localMachine: 'here', ccDecided: cc === null ? null : { ...cc, recent: [] } })
+  it('有数 ⇒ 第一行带「CC 替你批了 N 条(规则 M、初审 K)」', () => {
+    const t = withCc({ rule: 2, review: 1 }, { terminal: [term('d1')] })
+    expect(t.ccDecided).toMatchObject({ rule: 2, review: 1 })
+    expect(formatOverseerToday(t).split('\n')[0]).toContain('CC 替你批了 3 条(规则 2、初审 1)')
+  })
+  it('只有规则 ⇒ 不写初审', () => {
+    expect(formatOverseerToday(withCc({ rule: 4, review: 0 }, { terminal: [term('d1')] }))).toContain('CC 替你批了 4 条(规则 4)')
+  })
+  it('全 0 / 读不到 ⇒ 不出现', () => {
+    expect(formatOverseerToday(withCc({ rule: 0, review: 0 }, { terminal: [term('d1')] }))).not.toContain('替你批了')
+    expect(formatOverseerToday(withCc(null, { terminal: [term('d1')] }))).not.toContain('替你批了')
+    expect(build({}).ccDecided).toBeNull()
+  })
+  it('别的都没动静、只有 CC 批过 ⇒ 也说', () => {
+    expect(formatOverseerToday(withCc({ rule: 0, review: 2 }))).toContain('CC 替你批了 2 条(初审 2)')
+  })
+})
