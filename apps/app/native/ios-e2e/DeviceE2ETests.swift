@@ -214,9 +214,12 @@ final class DeviceE2ETests: XCTestCase {
     tab.tap()
     let row = byId("terminal-open-\(id)")
     // 终端区在列表最底下(ListFooterComponent):没看见就往上划,最多几下;列表 15 秒拉一次,给它时间
-    until(timeout("E2E_WAIT", 60), "terminal row \(id.prefix(8))") {
+    // 慢慢往上划(整页快划会一下跳过去);划到底还没看见就往回划(10-20 真机:行在终端区靠上,快划直接越过了它)
+    var swipes = 0
+    until(timeout("E2E_WAIT", 90), "terminal row \(id.prefix(8))") {
       if row.exists && row.isHittable { return true }
-      self.app.swipeUp()
+      if swipes < 8 { self.app.swipeUp(velocity: .slow) } else { self.app.swipeDown(velocity: .slow) }
+      swipes = (swipes + 1) % 16
       return false
     }
     out("terminal_row_label", row.label)
