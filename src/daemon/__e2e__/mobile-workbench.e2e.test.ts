@@ -125,7 +125,7 @@ describe('mobile task page in a real browser',()=>{
     detail.permissions=[permission,{...permission,id:'foreign',taskId:OTHER,description:'OTHER SECRET'}]
     detail.questions=[question]
     await open()
-    const allow=page.getByRole('button',{name:'允许这一次',exact:true})
+    const allow=page.getByRole('button',{name:'允许这一步',exact:true})
     await expect.poll(()=>allow.count()).toBe(1)
     expect(await page.locator('#m-detail').textContent()).not.toContain('OTHER SECRET')
     if(process.env.MOBILE_WORKBENCH_SCREENSHOT)await page.screenshot({path:process.env.MOBILE_WORKBENCH_SCREENSHOT,fullPage:true})
@@ -200,7 +200,7 @@ describe('mobile task page in a real browser',()=>{
     await page.route('http://localhost/m/api/matter?**',route=>route.fulfill({status:413,json:{ok:false,error:'detail_too_large'}}))
     await page.evaluate(()=>document.dispatchEvent(new Event('visibilitychange')))
     await expect.poll(()=>page.locator('#m-notice').textContent()).toContain('完整内容过长，请到桌面查看')
-    expect(await page.getByRole('button',{name:'允许这一次',exact:true}).count()).toBe(0)
+    expect(await page.getByRole('button',{name:'允许这一步',exact:true}).count()).toBe(0)
     expect(await page.locator('#m-send').evaluate((el:any)=>el.disabled)).toBe(true)
     expect(await page.locator('#m-say').inputValue()).toBe('保留的补充')
     const saved=await page.evaluate(()=>Object.keys(localStorage).filter(k=>k.startsWith('cc.phone.matter.v1:')).map(k=>localStorage.getItem(k)).join('\n'))
