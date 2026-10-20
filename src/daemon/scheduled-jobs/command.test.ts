@@ -98,3 +98,46 @@ describe('定时 × 执行者(真机核对 10-20)', () => {
     expect(m.said[1]).toContain('现在跑不了')
   })
 })
+
+describe('早报 × 微信', () => {
+  function mk() {
+    const dir = mkdtempSync(join(tmpdir(), 'brief-cmd-'))
+    const store = makeJobsStore(dir)
+    const said: string[] = []
+    const prefs: string[] = []
+    const cmd = makeJobsCommand({
+      store, isOwner: (c) => c === 'owner', say: async (_c, t) => { said.push(t) }, timezone: () => 'Asia/Shanghai',
+      now: () => Date.parse('2026-10-20T00:00:00Z'), log: () => {}, jobExecutor: () => 'claude',
+      briefPrefs: { read: () => [...prefs], add: (l) => { prefs.push(l); while (prefs.length > 10) prefs.shift() }, clear: () => { prefs.length = 0 } },
+    })
+    return { store, said, prefs, cmd }
+  }
+  it('adds one brief; a second one is refused with the existing id', async () => {
+    const m = mk()
+    await m.cmd.handle('定时 早报 8:00', 'owner')
+    expect(m.store.list().jobs).toMatchObject([{ id: 'j1', brief: true, schedule: { at: '08:00' } }])
+    expect(m.said[0]).toContain('早报')
+    await m.cmd.handle('定时 早报 工作日 7:00', 'owner')
+    expect(m.store.list().jobs).toHaveLength(1)
+    expect(m.said[1]).toContain('j1')
+  })
+  it('口味: add / show / clear; non-owner falls through', async () => {
+    const m = mk()
+    expect(m.cmd.probe('早报 少点 技术细节', 'owner')).toBe(true)
+    await m.cmd.handle('早报 少点 技术细节', 'owner')
+    await m.cmd.handle('早报 多点 天气', 'owner')
+    expect(m.prefs).toEqual(['少点:技术细节', '多点:天气'])
+    await m.cmd.handle('早报 偏好', 'owner')
+    expect(m.said.at(-1)).toContain('少点:技术细节')
+    await m.cmd.handle('早报 偏好 清空', 'owner')
+    expect(m.prefs).toEqual([])
+    expect(m.cmd.probe('早报 少点 x', 'guest')).toBe(false)
+    expect(await m.cmd.handle('早报 少点 x', 'guest')).toBe(false)
+  })
+  it('the list marks the brief', async () => {
+    const m = mk()
+    await m.cmd.handle('定时 早报 8:00', 'owner')
+    await m.cmd.handle('定时', 'owner')
+    expect(m.said.at(-1)).toContain('早报')
+  })
+})

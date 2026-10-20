@@ -1,4 +1,8 @@
 #!/usr/bin/env bun
+import { makeBriefPrefs, makeBriefTurn } from './scheduled-jobs/brief'
+import { parseAgenda, selectDue } from './companion/agenda'
+import { localParts } from './memory/nightly-schedule'
+import { formatOverseerToday } from '../core/overseer-today'
 import { makeJobsStore, summarizeJobs } from '../core/scheduled-jobs-store'
 import { registerScheduledJobs } from './scheduled-jobs/runner'
 import { makeJobsCommand, chainReplyHandlers } from './scheduled-jobs/command'
@@ -839,6 +843,9 @@ export async function bootDaemon(opts: BootDaemonOpts): Promise<DaemonHandle> {
     // 「看 码」「@码 文本」:主人对某条终端会话说话。只认主人;那边的会话 v1 先说明。
     // 定时任务的文件(spec 2026-10-20-scheduled-jobs-design):微信「定时」与每分钟一拍的 runner 共用一份。
     const jobsStore = makeJobsStore(stateDir)
+    // 早报的口味(对标 #7):memory/<主人>/brief-prefs.md,「早报 少点 / 多点 …」写它。
+    const briefOwner = () => resolveAdminChatId(loadAccess(), loadCompanionConfig(stateDir), null)
+    const briefPrefs = makeBriefPrefs(() => { const o = briefOwner(); return o ? join(stateDir, 'memory', o) : null })
     const jobsCommand = makeJobsCommand({
       store: jobsStore,
       isOwner: (chatId) => resolveAdminChatId(loadAccess(), loadCompanionConfig(stateDir), null) === chatId,
@@ -847,6 +854,7 @@ export async function bootDaemon(opts: BootDaemonOpts): Promise<DaemonHandle> {
       now: () => Date.now(),
       log: (t, l) => log(t, l),
       jobExecutor: () => pickJobExecutor(id => boot.registry.has(id as never)),
+      briefPrefs,
     })
     const cliReplyHandler = makeCliReplyHandler({
       executionConflict,reserveExecution,
@@ -1025,11 +1033,40 @@ export async function bootDaemon(opts: BootDaemonOpts): Promise<DaemonHandle> {
     if (remindersLc) lc.register(remindersLc)
     // 主人亲手写的定时任务(spec 2026-10-20-scheduled-jobs-design):每分钟一拍,到点在只读的独立会话里跑一轮,
     // 走伙伴主动消息的出口;只给主人那条对话。坏了只降级,不挡启动。
+    // 早报(spec 2026-10-20-morning-brief-design):素材在本机拼好 —— 日报原文、今天到期的提醒、agenda、口味;
+    // 发出去了就记一次主动消息(careLedger.claim),当天的问候按它冷却,取代而不是叠加。
+    const briefTz = () => loadCompanionConfig(stateDir).timezone ?? 'Asia/Shanghai'
+    const briefTurn = makeBriefTurn({
+      runJobTurn: (a) => wired.ticks.runJobTurn(a),
+      ownerChatId: briefOwner,
+      today: () => {
+        const t = overseerToday()
+        const c = t.counts
+        return c.needsYou + c.done + c.running + c.stuck === 0 ? null : formatOverseerToday(t)
+      },
+      reminders: async () => {
+        const o = briefOwner()
+        if (!o) return []
+        const tz = briefTz(), today = localParts(Date.now(), tz).day
+        return (await makeRemindersStore(db).list(o))
+          .filter(r => r.status === 'pending' && localParts(Date.parse(r.due_at), tz).day === today)
+          .map(r => ({ at: localParts(Date.parse(r.due_at), tz).hhmm, text: r.text }))
+      },
+      agenda: () => {
+        const o = briefOwner()
+        const f = o ? join(stateDir, 'memory', o, 'agenda.md') : null
+        if (!f || !fsExistsSync(f)) return []
+        return selectDue(parseAgenda(fsReadFileSync(f, 'utf8')), localParts(Date.now(), briefTz()).day).map(i => `${i.body}(期限 ${i.due})`)
+      },
+      prefs: () => briefPrefs.read(),
+      claim: (c, iso) => { careLedger.claim(c, iso) },
+    })
     const jobsLc = await sup.start('scheduled-jobs', () => registerScheduledJobs({
       store: jobsStore,
       timezone: () => loadCompanionConfig(stateDir).timezone ?? 'Asia/Shanghai',
       now: () => Date.now(),
       runTurn: async (job, nowIso) => {
+        if (job.brief) return briefTurn(job, nowIso)
         const owner = resolveAdminChatId(loadAccess(), loadCompanionConfig(stateDir), null)
         if (!owner) return 'skipped:no_owner'
         return wired.ticks.runJobTurn({ chatId: owner, jobId: job.id, text: job.text, nowIso })

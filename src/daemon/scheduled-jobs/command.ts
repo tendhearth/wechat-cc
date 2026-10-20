@@ -1,7 +1,7 @@
 /**
  * 微信「定时」(spec 2026-10-20-scheduled-jobs-design):只认主人那条对话;不是主人 ⇒ 不当命令,落回普通聊天。
  */
-import { describeSchedule, JOB_USAGE, nextRunLabel, parseJobCommand, type ScheduledJob } from '../../core/scheduled-jobs'
+import { BRIEF_PREF_USAGE, describeSchedule, JOB_USAGE, nextRunLabel, parseBriefPref, parseJobCommand, type ScheduledJob } from '../../core/scheduled-jobs'
 import { localParts } from '../memory/nightly-schedule'
 import type { JobsStore } from '../../core/scheduled-jobs-store'
 
@@ -35,6 +35,8 @@ export function makeJobsCommand(deps: {
   log: (tag: string, line: string) => void
   /** 定时那一轮会用哪个执行者(tick-bodies 的 pickJobExecutor);null ⇒ 这台跑不了。缺省 ⇒ 不提。 */
   jobExecutor?: () => string | null
+  /** 早报的口味(memory/<owner>/brief-prefs.md);缺省 ⇒ 「早报 …」不当命令。 */
+  briefPrefs?: { read(): string[]; add(line: string): void; clear(): void }
 }): ReplyHandler {
   const EXEC_NAME: Record<string, string> = { claude: 'Claude', codex: 'Codex' }
   const execNote = (): string => {
@@ -47,11 +49,21 @@ export function makeJobsCommand(deps: {
   const line = (j: ScheduledJob) => {
     const st = deps.store.state(j.id)
     const last = st.lastRunAt ? `上次 ${st.lastRunDay?.slice(5)} ${statusWord(st.lastStatus)}` : '还没跑过'
-    return `${j.id} · ${describeSchedule(j.schedule, deps.timezone())}${j.paused ? ' · 停着' : ''} · ${head(j.text)} · ${last}`
+    return `${j.id} · ${describeSchedule(j.schedule, deps.timezone())}${j.paused ? ' · 停着' : ''} · ${j.brief ? '早报' : head(j.text)} · ${last}`
   }
   return {
-    probe: (text, chatId) => parseJobCommand(text) !== null && deps.isOwner(chatId),
+    probe: (text, chatId) => (parseJobCommand(text) !== null || (!!deps.briefPrefs && parseBriefPref(text) !== null)) && deps.isOwner(chatId),
     async handle(text, chatId) {
+      const pref = deps.briefPrefs ? parseBriefPref(text) : null
+      if (pref && deps.briefPrefs) {
+        if (!deps.isOwner(chatId)) return false
+        const say = (t: string) => deps.say(chatId, t)
+        if (pref.kind === 'usage') await say(BRIEF_PREF_USAGE)
+        else if (pref.kind === 'show') { const l = deps.briefPrefs.read(); await say(l.length ? `早报的口味:\n${l.map(x => `· ${x}`).join('\n')}` : `早报还没有口味。\n\n${BRIEF_PREF_USAGE}`) }
+        else if (pref.kind === 'clear') { deps.briefPrefs.clear(); await say('早报的口味清空了。') }
+        else { deps.briefPrefs.add(pref.line); await say(`记下了,下一份早报${pref.line.replace(':', '')}。`) }
+        return true
+      }
       const cmd = parseJobCommand(text)
       if (!cmd || !deps.isOwner(chatId)) return false
       const reply = (t: string) => deps.say(chatId, t)
@@ -64,10 +76,14 @@ export function makeJobsCommand(deps: {
         return true
       }
       if (cmd.kind === 'add') {
-        const r = deps.store.add(cmd.schedule, cmd.text, new Date(deps.now()))
+        if (cmd.brief) {
+          const existing = deps.store.list().jobs.find(j => j.brief)
+          if (existing) { await reply(`已经有一份早报了(${existing.id} · ${describeSchedule(existing.schedule, deps.timezone())})。要改时间就先「定时 删 ${existing.id}」再建。`); return true }
+        }
+        const r = deps.store.add(cmd.schedule, cmd.text, new Date(deps.now()), cmd.brief ? { brief: true } : {})
         if (!r.ok) { await reply(r.error); return true }
         deps.log('JOBS', `owner added ${r.job.id} ${describeSchedule(r.job.schedule)}`)
-        await reply(`记下了(${r.job.id}):${describeSchedule(r.job.schedule, deps.timezone())} ${head(r.job.text)}\n下次:${nextRunLabel(r.job.schedule, local())}。到时候我只看、只查,有值得说的才找你,没新东西就不吭声。${execNote()}`)
+        await reply(`记下了(${r.job.id}):${describeSchedule(r.job.schedule, deps.timezone())} ${r.job.brief ? '早报 —— 今天到期的事、昨天各执行者做了什么、等你拍板的;没东西就不发。「早报 少点 / 多点 …」调口味' : head(r.job.text)}\n下次:${nextRunLabel(r.job.schedule, local())}。到时候我只看、只查,有值得说的才找你,没新东西就不吭声。${execNote()}`)
         return true
       }
       const exists = deps.store.list().jobs.some(j => j.id === cmd.id)

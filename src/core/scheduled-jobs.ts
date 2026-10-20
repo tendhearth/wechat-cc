@@ -6,9 +6,10 @@
  */
 export type Weekday = 1 | 2 | 3 | 4 | 5 | 6 | 7
 export type JobSchedule = { kind: 'daily'; at: string } | { kind: 'weekly'; at: string; weekday: Weekday } | { kind: 'weekdays'; at: string }
-export interface ScheduledJob { id: string; schedule: JobSchedule; text: string; createdAt: string; paused: boolean }
+/** brief = 早报(对标 #7):正文由 CC 自己拼,同时只能有一个。 */
+export interface ScheduledJob { id: string; schedule: JobSchedule; text: string; createdAt: string; paused: boolean; brief?: boolean }
 export type JobCommand =
-  | { kind: 'add'; schedule: JobSchedule; text: string }
+  | { kind: 'add'; schedule: JobSchedule; text: string; brief?: boolean }
   | { kind: 'list' }
   | { kind: 'pause' | 'resume' | 'remove'; id: string }
   | { kind: 'usage'; error: string }
@@ -33,6 +34,13 @@ export function parseJobCommand(text: string): JobCommand | null {
   if (t !== '定时' && !/^定时\s/.test(t)) return null
   const rest = t.slice(2).trim()
   if (rest === '' || rest === '列表') return { kind: 'list' }
+  // 早报:定时 早报 [工作日] HH:MM
+  const brief = /^早报(?:\s+(工作日))?(?:\s+(\S+))?$/.exec(rest)
+  if (brief) {
+    const at = brief[2] ? parseAt(brief[2]) : null
+    if (!at) return { kind: 'usage', error: `早报的写法:定时 早报 8:00(每天)/ 定时 早报 工作日 8:00。\n\n${JOB_USAGE}` }
+    return { kind: 'add', schedule: brief[1] ? { kind: 'weekdays', at } : { kind: 'daily', at }, text: '早报', brief: true }
+  }
   const ctl = /^(停|开|删)\s+(j\d+)$/i.exec(rest)
   if (ctl) return { kind: ctl[1] === '停' ? 'pause' : ctl[1] === '开' ? 'resume' : 'remove', id: ctl[2]!.toLowerCase() }
   const m = /^(每天|工作日|每周([一二三四五六日天]))\s+(\S+)(?:\s+([\s\S]+))?$/.exec(rest)
@@ -101,4 +109,22 @@ export function nextRunLabel(s: JobSchedule, local: { day: string; hhmm: string 
     return `${Number(day.slice(5, 7))}月${Number(day.slice(8, 10))}日(周${WEEKDAY_NAMES[weekdayOf(day)]})${s.at}`
   }
   return s.at
+}
+
+export type BriefPref = { kind: 'add'; line: string } | { kind: 'show' } | { kind: 'clear' } | { kind: 'usage' }
+export const BRIEF_PREF_MAX = 80
+export const BRIEF_PREF_USAGE = '早报的口味:\n· 早报 少点 <什么>\n· 早报 多点 <什么>\n· 早报 偏好(看)· 早报 偏好 清空'
+
+/** 「早报 少点 X / 多点 X / 偏好 / 偏好 清空」;不以「早报」整词开头 ⇒ null。 */
+export function parseBriefPref(text: string): BriefPref | null {
+  const t = text.trim()
+  if (t !== '早报' && !/^早报\s/.test(t)) return null
+  const rest = t.slice(2).trim()
+  if (rest === '' || rest === '偏好') return { kind: 'show' }
+  if (rest === '偏好 清空') return { kind: 'clear' }
+  const m = /^(少点|多点)(?:\s+([\s\S]+))?$/.exec(rest)
+  if (!m) return { kind: 'usage' }
+  const what = (m[2] ?? '').trim()
+  if (!what || [...what].length > BRIEF_PREF_MAX) return { kind: 'usage' }
+  return { kind: 'add', line: `${m[1]}:${what}` }
 }

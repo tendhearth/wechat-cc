@@ -60,12 +60,12 @@ export function makeJobsStore(stateDir: string) {
 
   return {
     list: readJobs,
-    add(schedule: JobSchedule, text: string, now: Date): { ok: true; job: ScheduledJob } | { ok: false; error: string } {
+    add(schedule: JobSchedule, text: string, now: Date, extra: { brief?: boolean } = {}): { ok: true; job: ScheduledJob } | { ok: false; error: string } {
       const r = readJobs()
       if (r.error) return { ok: false, error: `${r.error};先把它修好再加。` }
       if (r.jobs.length >= JOBS_MAX) return { ok: false, error: `定时最多 ${JOBS_MAX} 个,先删掉一个再加。` }
       const max = Math.max(0, ...r.jobs.map(j => Number(/^j(\d+)$/.exec(j.id)?.[1] ?? 0)), ...Object.keys(readState()).map(k => Number(/^j(\d+)$/.exec(k)?.[1] ?? 0)))
-      const job: ScheduledJob = { id: `j${max + 1}`, schedule, text, createdAt: now.toISOString(), paused: false }
+      const job: ScheduledJob = { id: `j${max + 1}`, schedule, text, createdAt: now.toISOString(), paused: false, ...(extra.brief ? { brief: true } : {}) }
       writeJobs([...r.jobs, job])
       return { ok: true, job }
     },
