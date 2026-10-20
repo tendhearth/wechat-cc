@@ -18,7 +18,7 @@ export interface ActivitySourceDeps {
   tasks?: () => Array<{ id: string; title: string; status: string; updatedAt: number; ownerChatId: string | null }>
   terminal?: () => Array<{ session_id: string; status: string; project: string; last_event_at: number }>
   letters?: () => Array<{ id: string; sentAt: number; opening: string; via: string }>
-  memoryLog?: () => Array<{ at: string; ops: Array<{ op: string }> }>
+  memoryLog?: () => Array<{ at: string; ops: Array<{ kind?: string }> }>
   log?: () => ActivityLogEntry[]
   jobs?: () => Array<{ id: string; text: string; brief?: boolean }>
   /** 提醒原文:只回主人那条对话里的(别人的 ⇒ null)。 */
@@ -57,8 +57,9 @@ export function collectActivity(deps: ActivitySourceDeps): ActivitySources {
   put('memory', safe(deps.memoryLog, rows => rows.flatMap(r => {
     const at = Date.parse(r.at)
     if (!Number.isFinite(at) || !Array.isArray(r.ops) || r.ops.length === 0) return []
-    const n = (op: string) => r.ops.filter(o => o?.op === op).length
-    const parts = [n('add') && `新增 ${n('add')} 条`, n('update') && `改 ${n('update')} 条`, n('delete') && `删 ${n('delete')} 条`].filter(Boolean)
+    // memory-log.jsonl 里每一项是 AppliedOp:kind = add / update / remove / expire(过期也算删掉)
+    const n = (...kinds: string[]) => r.ops.filter(o => kinds.includes(o?.kind ?? '')).length
+    const parts = [n('add') && `新增 ${n('add')} 条`, n('update') && `改 ${n('update')} 条`, n('remove', 'expire') && `删 ${n('remove', 'expire')} 条`].filter(Boolean)
     return [item('memory', r.at, at, `整理了记忆:${parts.length ? parts.join('、') : `动了 ${r.ops.length} 处`}`)]
   })))
   put('log', safe(deps.log, rows => {

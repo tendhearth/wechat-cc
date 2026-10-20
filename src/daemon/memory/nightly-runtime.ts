@@ -5,11 +5,11 @@
 import { readSources, writeSources } from './sources'
 import { appendFileSync, existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
-import { MEMORY_FILENAME, SECTIONS, parseDue, parseMemoryDoc, serializeMemoryDoc, type Section } from './curated-doc'
+import { MEMORY_CAP_CHARS, MEMORY_FILENAME, SECTIONS, assignMissingIds, docChars, parseDue, parseMemoryDoc, serializeMemoryDoc, type Section } from './curated-doc'
 import { DISPLAY_ORDER, dueLabel, formatWeChatMemory, splitPerson, spokenTime, stripDue, viewChanges, type ViewChange } from './memory-text'
-import { CORRECTIONS_FILENAME, MEMORY_LOG_FILE, ownerMemoryRoot, readNightlyState, runMemoryNightly, writeNightlyState, type NightlyRunDeps } from './nightly'
+import { CORRECTIONS_FILENAME, MEMORY_LOG_FILE, ownerMemoryRoot, readCorrections, readNightlyState, runMemoryNightly, writeNightlyState, type NightlyRunDeps } from './nightly'
 import type { NightlyRunResult } from './nightly-notify'
-import type { AppliedOp } from './nightly-ops'
+import { MAX_ENTRY_CHARS, type AppliedOp } from './nightly-ops'
 import { localParts, noticeTiming } from './nightly-schedule'
 
 export interface NoticeDeps {
@@ -20,7 +20,7 @@ export interface NoticeDeps {
 }
 export interface CuratedItem {
   /** 这条是从哪几句聊天里来的(时间 + 摘一段;10-20 起每晚整理才记,老条目为空)。 */
-  sources: Array<{ ts: string; excerpt: string }>
+  sources: Array<{ ts: string; excerpt: string; kind?: 'import' }>
   id: string | null
   text: string
   display: string
@@ -45,7 +45,11 @@ export interface MemoryNightlyRuntime {
   /** 主人逐条纠错(2026-10-06,步骤 A):不对 / 过时 / 删掉。立刻从 memory.md 拿掉,并在 profile.md 记一行
    *  (当天的会话经「今天的草稿」就看得到;当晚整理把它当素材,不再写回)。过时的另抄进归档。 */
   correct(id: string, verdict: MemoryVerdict): Promise<{ text: string }>
+  /** 从别的助手导入(2026-10-20,第二轮对标 #7):主人点过头的那几条写进记忆,出处记成「从 X 导入」。
+   *  与每晚整理同一条串行链;重复的、主人纠正过的、太长的、超出总长的都跳过。 */
+  importEntries(items: ReadonlyArray<{ section: Section; text: string }>, label: string): Promise<ImportResult>
 }
+export interface ImportResult { added: number; skipped: { duplicate: number; corrected: number; invalid: number; cap: number } }
 export type MemoryVerdict = 'wrong' | 'outdated' | 'delete'
 const VERDICT_LINE: Record<MemoryVerdict, string> = {
   wrong: '主人说这条记错了,整理时不要再写回',
@@ -151,6 +155,44 @@ export function makeMemoryNightlyRuntime(deps: NightlyRunDeps & NoticeDeps): Mem
       deps.log('MEMORY_NIGHTLY', `owner ${verdict} ${id}`)
       return { text: hit.text }
     }),
+    importEntries: (items, label) => serial(async (): Promise<ImportResult> => {
+      const r = root()
+      if (!r) throw new Error('no_owner')
+      mkdirSync(r, { recursive: true })
+      const memPath = join(r, MEMORY_FILENAME)
+      const nowMs = deps.now(), nowIso = new Date(nowMs).toISOString(), day = localParts(nowMs, deps.config().timezone).day
+      const doc = assignMissingIds(parseMemoryDoc(existsSync(memPath) ? readFileSync(memPath, 'utf8') : ''), deps.newId, day)
+      const norm = (t: string) => t.replace(/\s+/g, ' ').trim()
+      const have = new Set(SECTIONS.flatMap(s => doc.sections[s].map(e => norm(e.text))))
+      const rejected = readCorrections(r).texts
+      const skipped = { duplicate: 0, corrected: 0, invalid: 0, cap: 0 }
+      const added: Array<{ id: string; section: Section; text: string }> = []
+      for (const it of items) {
+        const text = norm(it.text)
+        if (!SECTIONS.includes(it.section) || !text || [...text].length > MAX_ENTRY_CHARS) { skipped.invalid++; continue }
+        if (have.has(text)) { skipped.duplicate++; continue }
+        if (rejected.has(text)) { skipped.corrected++; continue }
+        const id = deps.newId()
+        doc.sections[it.section].push({ id, text, seen: day })
+        if (docChars(doc) > MEMORY_CAP_CHARS) { doc.sections[it.section].pop(); skipped.cap++; continue }
+        have.add(text); added.push({ id, section: it.section, text })
+      }
+      if (added.length) {
+        const tmp = `${memPath}.tmp-${process.pid}`
+        writeFileSync(tmp, serializeMemoryDoc(doc, nowIso))
+        renameSync(tmp, memPath)
+        // 「CC 做过的事」里的记忆那一行读这份日志;出处标成导入(手机「CC 眼中的你」显示「从 X 导入」)
+        try { appendFileSync(join(r, MEMORY_LOG_FILE), JSON.stringify({ at: nowIso, ops: added.map(a => ({ kind: 'add', ...a })), source: 'import' }) + '\n') } catch { /* 日志是附带的 */ }
+        try {
+          const src = readSources(r)
+          const excerpt = `从 ${label.replace(/[\r\n]+/g, ' ').slice(0, 40)} 导入`
+          for (const a of added) src[a.id] = [{ id: 'import', ts: nowIso, excerpt, kind: 'import' }]
+          writeSources(r, src)
+        } catch { /* 出处是附带的 */ }
+      }
+      deps.log('MEMORY_NIGHTLY', `import: added ${added.length}, skipped ${JSON.stringify(skipped)}`)
+      return { added: added.length, skipped }
+    }),
     readCurated() {
       const got = readDoc()
       if (!got) return null
@@ -189,7 +231,7 @@ export function makeMemoryNightlyRuntime(deps: NightlyRunDeps & NoticeDeps): Mem
             const due = parseDue(e.text.replace(/[\uff08]/, '(').replace(/[\uff09]/, ')'))
             return {
               id: e.id, text: e.text, display: stripDue(e.text), due,
-              sources: (e.id ? src[e.id] ?? [] : []).map(r => ({ ts: r.ts, excerpt: r.excerpt })),
+              sources: (e.id ? src[e.id] ?? [] : []).map(r => ({ ts: r.ts, excerpt: r.excerpt, ...(r.kind ? { kind: r.kind } : {}) })),
               due_label: due ? dueLabel(due, today) : null,
               person: name === '身边的人' ? splitPerson(e.text) : null,
               changed: !!e.id && changed.has(e.id),

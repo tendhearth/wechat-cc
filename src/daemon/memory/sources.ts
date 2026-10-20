@@ -14,7 +14,7 @@ export const SOURCES_FILE = 'memory-sources.json'
 export const SOURCE_EXCERPT_MAX = 80
 export const SOURCES_PER_ENTRY = 3
 
-export interface SourceRef { id: string; ts: string; excerpt: string }
+export interface SourceRef { id: string; ts: string; excerpt: string; /** 'import' = 主人从别的助手导入的(2026-10-20);缺省 = 聊天里来的。 */ kind?: 'import' }
 export type SourceMap = Record<string, SourceRef[]>
 
 export function readSources(root: string): SourceMap {

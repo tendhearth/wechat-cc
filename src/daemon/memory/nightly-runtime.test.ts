@@ -230,3 +230,33 @@ describe('出处 × 手机视图与纠错(10-20)', () => {
     expect(rt.curatedView().sections.flatMap(s => s.items)[0]!.sources).toEqual([])
   })
 })
+
+describe('导入记忆(第二轮对标 #7)', () => {
+  it('adds confirmed facts under the right sections with an import source; skips dupes and facts the owner rejected', async () => {
+    writeFileSync(join(root, 'memory.md'), '## 关于你\n- 你住在上海 <!-- m:aaaa · 2026-09-20 -->\n')
+    writeFileSync(join(root, 'corrections.md'), '- 2026-09-21 主人说这条记错了,整理时不要再写回:[偏好] 你喜欢香菜\n')
+    const rt = makeMemoryNightlyRuntime(deps())
+    const r = await rt.importEntries([
+      { section: '关于你', text: '你住在上海' },
+      { section: '偏好', text: '你喜欢香菜' },
+      { section: '偏好', text: '你喜欢喝美式' },
+      { section: '身边的人', text: '你的女儿叫小满' },
+    ], 'ChatGPT')
+    expect(r).toEqual({ added: 2, skipped: { duplicate: 1, corrected: 1, invalid: 0, cap: 0 } })
+    const md = (await import('node:fs')).readFileSync(join(root, 'memory.md'), 'utf8')
+    expect(md).toContain('你喜欢喝美式')
+    expect(md).toContain('你的女儿叫小满')
+    expect(md).not.toContain('香菜')
+    const v = rt.curatedView()
+    const item = v.sections.flatMap(s => s.items).find(i => i.text === '你喜欢喝美式')!
+    expect(item.sources?.[0]).toMatchObject({ kind: 'import', excerpt: '从 ChatGPT 导入' })
+  })
+  it('works with no memory.md yet (creates it); stops at the size cap', async () => {
+    const rt = makeMemoryNightlyRuntime(deps())
+    const big = Array.from({ length: 30 }, (_, i) => ({ section: '关于你' as const, text: `事实 ${i} ${'字'.repeat(150)}` }))
+    const r = await rt.importEntries(big, 'Gemini')
+    expect(r.added).toBeGreaterThan(0)
+    expect(r.skipped.cap).toBeGreaterThan(0)
+    expect(r.added + r.skipped.cap).toBe(30)
+  })
+})

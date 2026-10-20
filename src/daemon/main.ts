@@ -8,6 +8,7 @@ import { registerScheduledJobs } from './scheduled-jobs/runner'
 import { makeJobsCommand, chainReplyHandlers } from './scheduled-jobs/command'
 import { makeProjectLessonsCommand } from './project-lessons-command'
 import { makeProjectLessons } from '../core/workbench/project-lessons'
+import { makeMemoryImportCommand } from './memory/import-command'
 import { agendaReplyText, appBundleHasCalendarUsage, makeCalendar, makeCalendarCommand } from './calendar/calendar'
 import { makeActivityLog } from './activity-log'
 import { makeActivityCommand } from './activity/command'
@@ -906,6 +907,14 @@ export async function bootDaemon(opts: BootDaemonOpts): Promise<DaemonHandle> {
       projects: () => workbenchRef.current ? workbenchRef.current.projects().map(p => ({ name: p.name, path: p.path })) : null,
       lessons: makeProjectLessons(stateDir),
     })
+    // 微信「导入记忆」(第二轮对标 #7):主人把别的助手对他的了解贴回来,点头的才写进记忆。只认主人。
+    // wired 在下面才建好;这里只在主人真用时才调,那时早已就绪。
+    const memoryImportCommand = makeMemoryImportCommand({
+      isOwner: (chatId) => resolveAdminChatId(loadAccess(), loadCompanionConfig(stateDir), null) === chatId,
+      say: (c, t) => ilink.sendMessage(c, t),
+      now: () => Date.now(),
+      importEntries: (items, label) => wired.memoryNightly.importEntries(items, label),
+    })
     const jobsCommand = makeJobsCommand({
       store: jobsStore,
       isOwner: (chatId) => resolveAdminChatId(loadAccess(), loadCompanionConfig(stateDir), null) === chatId,
@@ -977,7 +986,7 @@ export async function bootDaemon(opts: BootDaemonOpts): Promise<DaemonHandle> {
       }),
       matters, guardRuntime: guardRt, subsystems: () => sup.statuses(),
       panelTokens: internalApi.panelTokens,
-      cliReply: chainReplyHandlers([jobsCommand, calendarCommand, activityCommand, lessonsCommand, cliReplyHandler]),
+      cliReply: chainReplyHandlers([jobsCommand, calendarCommand, activityCommand, lessonsCommand, memoryImportCommand, cliReplyHandler]),
       stickers: stickerLib,
       requestRestart: (reason) => requestRestart(reason),
       llmHealth,
