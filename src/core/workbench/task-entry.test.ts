@@ -264,3 +264,15 @@ describe('canonicalEntryHash', () => {
     expect(canonicalEntryHash({...valid, text: '', attachmentIds: [imageId]})).toMatch(/^[a-f0-9]{64}$/)
   })
 })
+
+describe('entry × until(对标 #9)', () => {
+  const base = { requestId: '11111111-1111-4111-8111-111111111111', text: '修测试', target: { kind: 'project', projectId: 'p-0123456789abcdef0123', isolation: 'worktree' } }
+  it('accepts until only on an independent worktree; validates it; enters the hash', () => {
+    expect(parseEntryInput({ ...base, until: { command: 'bun run test', maxRounds: 2 } }).until).toEqual({ command: 'bun run test', maxRounds: 2 })
+    expect(() => parseEntryInput({ ...base, until: { command: '' } })).toThrow('invalid_until')
+    expect(() => parseEntryInput({ ...base, target: { kind: 'project', projectId: 'p-0123456789abcdef0123' }, until: { command: 'x' } })).toThrow('until_requires_worktree')
+    expect(() => parseEntryInput({ ...base, target: { kind: 'managed' }, until: { command: 'x' } })).toThrow('until_requires_worktree')
+    expect(canonicalEntryHash(parseEntryInput({ ...base, until: { command: 'a' } }))).not.toBe(canonicalEntryHash(parseEntryInput({ ...base, until: { command: 'b' } })))
+    expect(parseEntryInput(base)).not.toHaveProperty('until')
+  })
+})

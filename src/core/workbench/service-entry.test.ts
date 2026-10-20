@@ -328,6 +328,10 @@ it('isolated worktree tasks (2026-10-07): run in parallel on one project, stay o
   expect(readFileSync(join(a.path,'a.txt'),'utf8')).toBe('one\n')
   // 脚本钉在建工作区时的提交(v79)
   expect(store.worktrees.get(one.receipt.taskId)?.scriptSha).toBe(g('rev-parse','HEAD'))
+  // 做到条件成立为止(v80):带 until 的,建好时 goal 落库、命令原样;不带的没有 goal
+  const three=service.createEntry(input({target:{kind:'project',projectId,isolation:'worktree'},until:{command:'bun run test',maxRounds:2}} as never),context)
+  expect(store.goals.get(three.receipt.taskId)).toMatchObject({command:'bun run test',maxRounds:2,rounds:0,status:'active'})
+  expect(store.goals.get(one.receipt.taskId)).toBeNull()
   gate.resolve();await settle(one.receipt.taskId);await settle(two.receipt.taskId)
   // 不登记成项目
   expect(store.projects().some(p=>p.path.startsWith(join(wtRoot,'worktrees')))).toBe(false);expect(store.ownedProjects('owner').some(p=>p.path.startsWith(join(wtRoot,'worktrees')))).toBe(false)

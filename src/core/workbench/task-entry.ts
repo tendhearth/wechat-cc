@@ -1,4 +1,5 @@
 import {createHash} from 'node:crypto'
+import { parseUntil, type UntilSpec } from './until'
 import type {WorkbenchExecutorCapabilities} from './executor-capabilities'
 import {isWorkbenchProviderId} from './executor-capabilities'
 import {normalizeExecutionChoice, PROVIDER_EXECUTION_CHOICE} from './execution-settings'
@@ -20,6 +21,8 @@ export type EntryInput = {
   draftId?: string
   attachmentIds?: string[]
   context?: {source: 'owner-chat'; excerpts: EntryExcerpt[]}
+  /** 做到条件成立为止(对标 #9):主人亲手写的检查命令 + 最多几轮;只在独立工作区上收。 */
+  until?: UntilSpec
 }
 /**
  * surface:这件事在哪个表面露面(matter_bindings);origin:谁亲手建的(matters.origin_surface,只写一次)。
@@ -59,7 +62,7 @@ export type EntryOptions = {
 
 // Match the existing attachment UUID contract; new clients generate v4 IDs.
 const UUID = /^[a-f0-9]{8}-[a-f0-9]{4}-[1-5][a-f0-9]{3}-[89ab][a-f0-9]{3}-[a-f0-9]{12}$/i
-const ENTRY_KEYS = ['requestId', 'text', 'title', 'target', 'providerId', 'execution', 'draftId', 'attachmentIds', 'context']
+const ENTRY_KEYS = ['requestId', 'text', 'title', 'target', 'providerId', 'execution', 'draftId', 'attachmentIds', 'context', 'until']
 const EXECUTION_KEYS = ['defaults', 'model', 'reasoningEffort'] as const
 
 function record(value: unknown, keys: readonly string[], error: string): Record<string, unknown> {
@@ -137,6 +140,13 @@ export function parseEntryInput(value: unknown): EntryInput {
   }
   if (!parsed.text.trim() && !parsed.attachmentIds?.length) throw Error('invalid_text')
   if (input.context !== undefined) parsed.context = context(input.context)
+  if (input.until !== undefined) {
+    const u = parseUntil(input.until)
+    if (!u.ok) throw Error('invalid_until')
+    // 检查命令只在独立工作区里跑(设计 §安全 2):没开独立工作区的不收。
+    if (parsed.target.kind !== 'project' || parsed.target.isolation !== 'worktree') throw Error('until_requires_worktree')
+    parsed.until = u.until
+  }
   const contentError = entryContentError(parsed)
   if (contentError) throw Error(contentError)
   return parsed

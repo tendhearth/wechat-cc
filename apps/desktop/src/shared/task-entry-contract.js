@@ -35,6 +35,10 @@ export function createEntryContract() {
     invalid_provider:{status:400,phone:true},
     invalid_attachment:{status:400,phone:true},
     invalid_path:{status:400,phone:true},
+    // 做到条件成立为止(对标 #9):检查命令格式不对 / 没开独立工作区 / 免审执行者不收。
+    invalid_until:{status:400,phone:true},
+    until_requires_worktree:{status:422,phone:true},
+    until_unattended_unsupported:{status:422,phone:true},
     api_task_input_invalid:{status:400,phone:true},
     api_task_attachment_invalid:{status:400,phone:true},
     api_task_attachment_unsupported:{status:422,phone:true},
