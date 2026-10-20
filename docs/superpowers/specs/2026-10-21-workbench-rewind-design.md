@@ -26,7 +26,8 @@ v62 的每轮「快照」是一份 JSON diff 报告(`finishGitReview` → `GIT_R
 4. `commit-tree <tree> -p HEAD --no-gpg-sign -m "cc checkpoint"`,身份用 `-c user.name=Tendhearth CC -c user.email=cc@localhost`。
 5. `update-ref refs/tendhearth/checkpoints/<taskId>/<commit12> <commit>`(有 ref 才不会被 gc)。树与上一个 checkpoint 相同 ⇒ 复用。
 6. 环境:`git-review.ts` 的 `gitEnv()`(摘 GIT_*、不读系统 / 全局配置)+ `GIT_INDEX_FILE`;`-c core.hooksPath=/dev/null -c core.fsmonitor=false -c core.autocrlf=false`;沿用 `GitReader.configure` 的过滤器中和(LFS clean/smudge 不跑)。**不跑钩子、不跑过滤器。**
-7. 体积上限:`add` 前按 `status --porcelain -z --untracked-files=all` 估算;未跟踪 + 修改合计 > 200MB、单文件 > 50MB、路径 > 20k ⇒ 跳过并记原因,那一轮不可回退。
+7. **LFS / 必需过滤器的仓库不打 checkpoint**(评审 3):过滤器关着时,stat 过期的 LFS 文件会以原始字节入树、没动过的还是指针,回退到那棵树会把指针文本写到盘上,校验还能过。仓库有效配置里有 `filter.<x>.required=true` 或 `filter.lfs.*`,或 attributes 里有 `filter=` ⇒ 跳过(`filter_repo`),这件事不可回退。
+8. 体积上限:`add` 前按 `status --porcelain -z --untracked-files=all` 估算;未跟踪 + 修改合计 > 200MB、单文件 > 50MB、路径 > 20k ⇒ 跳过并记原因,那一轮不可回退。
 
 挂点:`GitBaseline.checkpoint`(这一轮开始)、`GitReview.checkpointBefore/After`;`parseGitReviewSnapshot` 保留并校验 40/64 位 hex。`service/artifacts.ts` 新 `takeBaseline(running)` 统一三处取基线(execute / inputs / retakeBaseline),只对有 worktree 记录的任务打 checkpoint。只有 not_reviewed 文件变了但 checkpoint 树变了也存制品(二进制轮不再隐身)。
 
@@ -40,14 +41,16 @@ v62 的每轮「快照」是一份 JSON diff 报告(`finishGitReview` → `GIT_R
 3. 没有别的动作在碰工作区:setup / archive 没在跑、没在删(scripts 域加 `busy(id)`);run 开发服务允许但提示;until 检查没在跑(until 域加 `checking(id)`);没有未送达的 live input。
 4. 目标有效:checkpoint 在(`cat-file -e C^{commit}`)、没被撤过、确实有东西可撤。
 5. 不共用文件夹:还有别的未归档任务 `pathsConflict(task.path, wt.root)` 且有比 C 新的制品 ⇒ `rewind_shared_folder`(额度接手会在 source.path 上建兄弟任务)。
-6. 要丢的提交没合回过项目:`P..HEAD` 里任何一个是主人项目 HEAD 的祖先 ⇒ `rewind_merged`;在 `refs/remotes/*` 里只在预览里提示。
+6. 要丢的提交没合回过项目:`P..HEAD` 里任何一个是主人项目 HEAD 的祖先 ⇒ `rewind_merged`;在 `refs/remotes/*` 或别的本地分支里能找到 ⇒ 只在预览里提示(评审 9:不丢数据,但要说)。
+7. **不覆盖被 ignore 的文件**(评审 6):git 2.34 起 `read-tree -m -u` 会把 ignored 文件当成可覆盖。切换前查:T 里有、TB 里没有、磁盘上存在且被 ignore 的路径(典型:后来某一轮把 `config/local.json` 加进了 .gitignore,主人又改过它)⇒ 有就拒绝(`rewind_ignored_conflict`,列出路径),因为备份 B 里没有它。
 
-**预览 + 确认**(同 restartToken 的两步):预览先把当前完整状态打成 checkpoint B(树 TB、父 = 当前 HEAD),回 `token = sha256({taskId, C, TB, HEAD, discardedIds})`、会撤掉的轮次、`diff-tree -r --name-status T TB` 的文件摘要(计数 + 至多 50 个路径)、`extraChanges`(TB 相对最后一轮 checkpointAfter:主人手改 / 检查输出这类)、`ignoredUntouched: true`、会话怎么处理、goal 状态。没带 / 过期 token ⇒ 409 `rewind_confirmation_required` / `rewind_confirmation_stale`。最后一轮之后的额外改动**不拒绝**:预览里列出、要 token、备份进 B。
+**预览 + 确认**(同 restartToken 的两步):预览先把当前完整状态打成 checkpoint B(树 TB、父 = 当前 HEAD),回 `token = sha256({taskId, C, TB, HEAD, discardedIds})`、会撤掉的轮次、`diff-tree -r --name-status T TB` 的文件摘要(计数 + 至多 50 个路径)、`extraChanges`(TB 相对最后一轮 checkpointAfter:主人手改 / 检查输出这类)、`ignoredUntouched: true`、会话怎么处理、goal 状态;并写一句「被 ignore 的构建产物(dist/、node_modules 这类)不会跟着回退,用之前先重新构建」(评审 10)。没带 / 过期 token ⇒ 409 `rewind_confirmation_required` / `rewind_confirmation_stale`。最后一轮之后的额外改动**不拒绝**:预览里列出、要 token、备份进 B。
 
-**执行**(同步段,保原子,同 worktreeAction):
+**执行**(同步段,保原子,同 worktreeAction;**这一段一律用同步 git**,不混进 checkpoint 模块的异步调用 —— 评审):
+0. **先写意图**(评审 4):`workbench_rewinds` 先插一行 `state='applying'`(带目标、旧 HEAD、备份 ref);完成改 `done`,回滚改 `failed`。开机对账:见到 `applying` ⇒ 按记下的旧 HEAD 与备份核对现场,能确认就补完 / 回滚,确认不了就停住这件事并写一条事件,让主人在桌面看。
 1. 重查前置,重算 TB 对 token。
 2. 备份:`update-ref refs/tendhearth/rewind/<taskId>/<ms> B`(B 的父保住旧 HEAD)。
-3. 工作区:临时 index `read-tree TB` 后 `read-tree -m -u TB T`(两树切换:增删、模式、软链都对;ignored 与 .cc-workbench* 不在两棵树里 ⇒ 不碰)。
+3. 工作区:临时 index `read-tree TB`,**再 `update-index -q --refresh`**(评审 2:新读出来的 index 没有 stat 信息,不 refresh 的话每个有差的路径都报 not uptodate;git stash 同样这么做),然后 `read-tree -m -u TB T`(两树切换:增删、模式、软链都对;ignored 与 .cc-workbench* 不在两棵树里 ⇒ 不碰)。
 4. 分支:`update-ref refs/heads/<branch> P <oldHEAD>`(CAS);真 index `read-tree P`(不带 -u)。
 5. 校验:新临时 index 重建工作区树必须 = T;快照里列出的文件对 afterSha256。
 6. 第 2 步之后任何失败 ⇒ 反向切回(`read-tree -m -u <current> TB` + update-ref 回旧 HEAD),报 `rewind_failed`,事件里写备份 ref。
@@ -74,11 +77,11 @@ CREATE INDEX IF NOT EXISTS workbench_rewinds_task ON workbench_rewinds(task_id, 
 
 - 制品与审阅标记不动(不可变,可能已推到微信)。`reviewList` 每轮加 `discarded?`、`rewindable:{start,end}`;对已撤掉的轮 mark / return / revert ⇒ `review_round_discarded`。
 - 时间线加一条 system 事件「已回到第 N 轮结束时,撤掉了第 N+1–M 轮(可撤销)」。
-- **执行者(v1)保留原会话,下一轮开头告诉它**:`execute.ts` 拼请求处前置「【工作区已被主人回到第 N 轮结束时】第 N+1–M 轮的文件改动已撤销、分支回到 <P7>;那几轮你做过的改动都不在了,以磁盘现状为准,先重新查看再继续。」dispatch 返回后 markNoticed;派发失败 ⇒ 下次还带。回退总是在没有活会话时完成 ⇒ 下一句一定走 start → execute。
-- until-goal:状态不动、不退还轮数(上限是安全预算);passed 的那一轮被撤 ⇒ 只加一条说明;检查在跑 ⇒ 拒绝回退。
+- **执行者(v1)保留原会话,下一轮开头告诉它**:`execute.ts` 拼请求处前置「【工作区已被主人回到第 N 轮结束时】第 N+1–M 轮的文件改动已撤销、分支回到 <P7>;那几轮你做过的改动都不在了,以磁盘现状为准,先重新查看再继续。」另加一句「被撤掉的那几轮的做法,除非主人要求,别重做」(评审 8:原会话历史里还有那几轮)。这句告知也要走 until 的 continueTask 那条路。dispatch 返回后 markNoticed;派发失败 ⇒ 下次还带。以后可换成 Claude SDK 的 resumeSessionAt / Codex app-server 的 thread rollback,把会话本身截到那一轮。回退总是在没有活会话时完成 ⇒ 下一句一定走 start → execute。
+- until-goal:不退还轮数(上限是安全预算);检查在跑 ⇒ 拒绝回退。**回退掉了通过的那一轮,或者 goal 还是 active** ⇒ 改成 `stopped`,原因「工作区回退过,要再检查请重新建」(评审 7:否则通过的代码已经没了还显示 passed;active 的会在主人下一轮做完时自动续接)。
 - 额度接手:由「不共用文件夹」拒掉;接手的目标任务没有 worktree 记录,不提供回退。
 - 微信 `changesReply` 与手机 `latestChanges` 跳过已撤掉的轮。
-- 删工作区时清 `refs/tendhearth/checkpoints/<taskId>/*` 与 `refs/tendhearth/rewind/<taskId>/*`。
+- **ref 的去留**(评审 1、5):**删工作区时不清**(归档时 tidyOnArchive 会自动删干净的工作区,一并清掉就把唯一的备份删了,gc 之后找不回)。保留规则:`cc/<id>` 分支本身被删时一起清;否则任务归档 30 天后清(daemon 每天的维护里做)。checkpoint 会带上没被 ignore 的未跟踪文件(草稿、乱放的 credentials.json),通过 `refs/tendhearth/*` 挂在主人仓库里、`log --all` 看得见、`push --mirror` 会推出去 ⇒ 预览与设计说明里写清,`wechat-cc doctor` 列出每个项目里 `refs/tendhearth/*` 的数量与最老日期,并能一键清。until 每多一轮就多一个 checkpoint,复用相同的树,数量有上限(每件事至多保留最近 50 个,更老的随裁)。
 
 ## 入口
 
@@ -94,9 +97,13 @@ CREATE INDEX IF NOT EXISTS workbench_rewinds_task ON workbench_rewinds(task_id, 
 3. **桌面**:路由五处 + 面板。
 4. **手机**:路由、协议、App。
 
+## 评审(10-21,wechat-cc-23)
+
+十条都已写进上文:删工作区不再删备份(1)、两树切换前 refresh(2)、LFS / 必需过滤器仓库不打 checkpoint(3)、先写意图 + 开机对账(4)、ref 保留期限 + doctor(5)、不覆盖被 ignore 的文件(6)、until 回退后改 stopped(7)、告知里「别重做」并走 continueTask(8)、别的分支 / remote 里有就提示(9)、提醒重新构建(10)。执行段一律同步 git。
+
 ## 待主人确认(先按推荐做)
 
-1. checkpoint / 备份放主人仓库的 `refs/tendhearth/…`(同 `cc/<id>` 分支所在;gc 安全,`git log --all` 看得见)—— 推荐;删工作区时一并清。
+1. checkpoint / 备份放主人仓库的 `refs/tendhearth/…`(同 `cc/<id>` 分支所在;gc 安全,`git log --all` 看得见)—— 推荐;分支删了一起清、否则归档 30 天后清。
 2. 回退自动关掉这件事自己那条安静的保留会话 —— 推荐(否则手机要等 ~10 分钟)。
 3. 最后一轮之后的额外改动:确认后撤掉、先备份 —— 推荐(不拒绝)。
 4. 执行者:保留原会话 + 一句告知 —— 推荐(另起会话以后再说)。
