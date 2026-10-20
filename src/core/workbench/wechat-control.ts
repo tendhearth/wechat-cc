@@ -52,7 +52,7 @@ const REQUEST_MAX=6000
 const unavailable='没有找到这个任务，请在桌面工作台核对编号。'
 const stale='这条请求已失效或不属于这个任务。请重新查询任务，使用当前请求编号。'
 const stopUnconfirmed='这条停止请求已记录，但尚未确认执行结果。请查询任务状态；如需停止当前轮次，请发送一条新的停止消息。'
-const usage=(id='<任务编号>')=>`用法：\n项目：任务 项目\n新建：任务 新建 <项目编号> <要求>\n并行：任务 新建 <项目编号> 独立 <要求>（从某个分支开始：独立@<分支>）\n从 GitHub issue 开工：任务 新建 <项目编号> issue <编号>\n两家对比：任务 新建 <项目编号> 对比 @claude @codex <要求>（并排看：任务 对比 <编号> <编号>）\n查看：任务 ${id}\n补充：任务 ${id} 补充 <要求>\n改动：任务 ${id} 改动\n独立工作区：任务 ${id} 提交 / 合回 / 删除工作区 / 重开工作区\n停止：任务 ${id} 停止\n处理待办时，请复制任务消息中的完整请求编号。`
+const usage=(id='<任务编号>')=>`用法：\n项目：任务 项目\n新建：任务 新建 <项目编号> <要求>\n并行：任务 新建 <项目编号> 独立 <要求>（从某个分支开始：独立@<分支>）\n从 GitHub issue 开工：任务 新建 <项目编号> issue <编号>\n两家对比：任务 新建 <项目编号> 对比 @claude @codex <要求>（并排看：任务 对比 <编号> <编号>）\n查看：任务 ${id}\n补充：任务 ${id} 补充 <要求>\n改动：任务 ${id} 改动\n记成经验：任务 ${id} 记成经验 <一句话>\n独立工作区：任务 ${id} 提交 / 合回 / 删除工作区 / 重开工作区\n停止：任务 ${id} 停止\n处理待办时，请复制任务消息中的完整请求编号。`
 const clip=(value:string,max:number)=>value.length>max?value.slice(0,max)+'…':value
 const singleLine=(value:string,max=100)=>clip(value.replace(/[\r\n]+/g,' '),max)
 export const isWechatTaskCommand=(text:string)=>/^(?:任务|\/task)(?:\s|$)/i.test(text.trim())
@@ -243,7 +243,7 @@ function changesReply(id:string,turns:ReviewTurn[]|null):string {
 
 const ISSUE_FAIL:Record<string,string>={gh_missing:'这台电脑上没找到 gh(GitHub 命令行)。装好并登录后再试:brew install gh,然后 gh auth login。',gh_auth:'gh 还没登录 GitHub。在电脑上跑一次 gh auth login 再试。',not_found:'这个项目的仓库里没有这个编号的 issue。',not_github:'这个项目的 git remote 不是 GitHub,没法按编号取 issue。',timeout:'取 issue 超时了,过一会儿再试。',failed:'没取到这个 issue,过一会儿再试。'}
 
-export function makeWechatWorkbenchControl(opts:{store:WorkbenchStore;ownerChatId:()=>string|null;actions:Actions;hasExecutor?:(id:string)=>boolean;fetchIssue?:(projectPath:string,n:number)=>Promise<{ok:true;issue:IssueData}|{ok:false;reason:string}>}){
+export function makeWechatWorkbenchControl(opts:{store:WorkbenchStore;ownerChatId:()=>string|null;actions:Actions;hasExecutor?:(id:string)=>boolean;addLesson?:(projectPath:string,text:string)=>{ok:true}|{ok:false;error:'invalid'|'duplicate'|'full'};fetchIssue?:(projectPath:string,n:number)=>Promise<{ok:true;issue:IssueData}|{ok:false;reason:string}>}){
   return async(chatId:string,text:string,identity?:WechatMessageIdentity):Promise<WechatWorkbenchReply|null>=>{
     if(!isWechatTaskCommand(text))return null
     if(!opts.ownerChatId()||chatId!==opts.ownerChatId()||(identity&&identity.userId!==chatId))return null
@@ -376,6 +376,18 @@ export function makeWechatWorkbenchControl(opts:{store:WorkbenchStore;ownerChatI
         return '文件暂未发送，保存的成果版本未变。请稍后重新发送获取命令。'
       }
       if(suffix==='改动')return changesReply(id,opts.actions.reviewList?.(id)??null)
+      // 「任务 <编号> 记成经验 <一句>」(10-20,接 #443):记到这件事的源项目(独立工作区算源项目),不用报项目名
+      if(/^记成经验(?:\s|$)/.test(suffix)&&opts.addLesson){
+        const said=suffix.replace(/^记成经验\s*/,'').trim()
+        if(!said)return `写法：任务 ${id} 记成经验 <一句话>（以后不管哪家执行者做这个项目都会照着做）`
+        const stored=opts.store.get(id)
+        let source:string|null=null
+        try{source=opts.store.worktrees.get(id)?.projectPath??(stored.workspaceKind==='managed'?null:stored.path)}catch{source=null}
+        if(!source)return '这件事是随手交办的，没有项目，经验没处记。到某个项目里做的事才能记成经验。'
+        const r=opts.addLesson(source,said)
+        if(r.ok)return `记下了：以后不管哪家执行者做这个项目，都会照这条做 —— ${singleLine(said,200)}\n看全部：经验 <项目名>`
+        return r.error==='duplicate'?'这条已经记着了。':r.error==='full'?'这个项目已经有 10 条经验了，先删一条（经验 <项目名> 删 <编号>）。':'每条一行、200 字以内，不要带尖括号。'
+      }
       // 独立工作区(2026-10-08):以前这三句会落到下面「补充」,当成要求发给执行者
       if(suffix==='提交'||suffix==='合回'||suffix==='删除工作区'||suffix==='重开工作区')return worktreeReply(id,suffix,opts.actions.worktreeAction)
       if(/^正文(?:\s|$)/.test(suffix)){
