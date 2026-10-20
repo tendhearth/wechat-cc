@@ -139,6 +139,8 @@ export function makeUntilDomain(ctx: ServiceCtx, opts: UntilOptions = {}) {
   return {
     afterTurn,
     stop,
+    /** 回退用(2026-10-21):这件事的检查在跑 / 已排上 ⇒ 不许回退。 */
+    checking: (id: string): boolean => inFlight.has(id) || recheck.has(id),
     /** 测试 / 停机用:等这件事在跑的检查结束。 */
     idle: (id: string) => inFlight.get(id)?.promise ?? Promise.resolve(),
     shutdown: async () => { await Promise.all([...inFlight.values()].map(f => f.stop().catch(() => {}))) },

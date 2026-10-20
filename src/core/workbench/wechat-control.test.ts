@@ -141,6 +141,17 @@ describe('WeChat task control through the shared service',()=>{
     expect(await noReview('owner',`任务 ${task.id} 改动`,identity)).toContain('桌面工作台的「改动」面板')
     expect(await control('owner',`任务 ${task.id} 改动 a.ts`,identity)).toContain('用法')
   })
+  it('任务 <编号> 改动 skips rounds a rewind discarded (v81)',async()=>{
+    setup({async spawn(){return{async *dispatch(){yield result},async close(){}}}})
+    const task=create();await settled(task.id)
+    const turn=(path:string,createdAt:number,discarded?:true)=>({artifactId:path,sha256:'s',name:'n',createdAt,status:'complete' as const,headBefore:null,headAfter:null,preexistingPaths:[],notes:[],files:[{path,kind:'added' as const,preexisting:false,diff:'@@ -0,0 +1 @@\n+x\n'}],...(discarded?{discarded}:{})})
+    let turns=[turn('gone.ts',2,true),turn('kept.ts',1)]
+    const control=makeWechatWorkbenchControl({store,ownerChatId:()=>owner,actions:{...service,reviewList:()=>turns}})
+    const reply=await control('owner',`任务 ${task.id} 改动`,identity) as string
+    expect(reply).toContain('kept.ts');expect(reply).not.toContain('gone.ts');expect(reply).not.toContain('共 2 轮')
+    turns=[turn('gone.ts',2,true)]
+    expect(await control('owner',`任务 ${task.id} 改动`,identity)).toContain('还没有改动记录')
+  })
 
   it('任务 新建 <项目> 独立@<分支> passes the start branch; a bad name is usage, not git (2026-10-08)',async()=>{
     setup({async spawn(){return{async *dispatch(){yield result},async close(){}}}})

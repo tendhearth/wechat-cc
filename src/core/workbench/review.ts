@@ -8,6 +8,10 @@ export interface ReviewTurn {
   artifactId: string; sha256: string; name: string; createdAt: number
   status: GitReview['status']; headBefore: string | null; headAfter: string | null
   preexistingPaths: string[]; notes: string[]; files: ReviewTurnFile[]
+  /** 回退撤掉了这一轮(v81;制品不动,只是标记)。 */
+  discarded?: true
+  /** 独立工作区才有:这一轮开始前 / 结束时的 checkpoint 还在,能回到那里(回退设计稿)。 */
+  rewindable?: { start: boolean; end: boolean }
 }
 
 const KINDS = new Set<ReviewFile['kind']>(['added', 'deleted', 'modified', 'not_reviewed'])

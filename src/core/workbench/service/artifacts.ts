@@ -5,7 +5,7 @@
  */
 import { ArtifactSnapshotError, canonicalProject, collectArtifacts, readArtifactSnapshot, saveArtifactSnapshot } from '../artifacts'
 import { captureGitBaseline, finishGitReview, serializeGitReview, GIT_REVIEW_MIME, type GitBaseline } from '../git-review'
-import { takeCheckpoint } from '../checkpoints'
+import { pruneCheckpoints, takeCheckpoint } from '../checkpoints'
 import { directoryIdentity } from './directory-identity'
 import type { Active } from './state'
 import type { ServiceCtx } from './ctx'
@@ -38,6 +38,8 @@ async function checkpointNow(ctx:ServiceCtx,running:Active,root:string,prev:stri
     const result=await takeCheckpoint({root,taskId:running.taskId,stateDir:ctx.stateDir,...(prev?{prev}:{}),...(signal?{signal}:{})})
     if('skipped' in result){ctx.log?.('workbench',`checkpoint skipped task=${running.taskId} reason=${result.skipped}`);return undefined}
     running.checkpointTip=result.commit
+    // 每件事至多留 CHECKPOINT_KEEP 个(设计稿「ref 的去留」),旧的随裁
+    void pruneCheckpoints(root,running.taskId)
     return result.commit
   } catch { return undefined }
 }
@@ -138,7 +140,7 @@ export function makeArtifactsDomain(ctx:ServiceCtx):ArtifactsDomain {
         const root=baseline.checkpoint?liveWorktreeRoot(ctx,running.taskId):null
         let sameTree=false
         const [report,after]=await Promise.all([finishGitReview(baseline),root?takeCheckpoint({root,taskId:running.taskId,stateDir:ctx.stateDir,prev:baseline.checkpoint!,signal:stopSignalOf(running)}).catch(()=>null):Promise.resolve(null)])
-        if(after&&!('skipped' in after)){running.checkpointTip=after.commit;sameTree=after.sameTree}
+        if(after&&!('skipped' in after)){running.checkpointTip=after.commit;sameTree=after.sameTree;void pruneCheckpoints(root!,running.taskId)}
         if(state.shutdownComplete)return
         if(canonicalProject(running.path)!==running.path || directoryIdentity(running.path)!==running.directoryIdentity)throw new Error('invalid_path')
         if(!report)return

@@ -16,6 +16,7 @@ import {makeWechatNotificationStore} from './wechat-notifications'
 import {makeArtifactDeliveryStore} from './artifact-deliveries'
 import {makeTimelineEvents,type TaskEvent} from './timeline-events'
 import {makeReviewMarkStore} from './review-marks'
+import {makeRewindStore} from './rewind-store'
 
 export type TaskStatus = 'queued' | 'running' | 'cancelling' | 'completed' | 'failed' | 'cancelled' | 'interrupted'
 export interface Task {
@@ -147,6 +148,8 @@ export function makeWorkbenchStore(db: Db) {
         return row
       })(),
     },
+    /** 回退记录(v81):意图 / 已撤掉的轮 / 待告知执行者 / 撤销回退。 */
+    rewinds:makeRewindStore(db,bump),
     get, artifacts, events, addEvent,recordAgentEvent,finishRunActivities,source,sourceByIdentity,handoffs,bump,version,
     recordHandoffNative:(id:string,nativeId:string):{sourceTaskId:string;targetTaskId:string}|null=>db.transaction(()=>{
       const row=db.query<{sourceTaskId:string;targetTaskId:string},[string,string]>('UPDATE workbench_handoffs SET target_native_id=? WHERE id=? AND target_native_id IS NULL RETURNING source_task_id AS sourceTaskId,target_task_id AS targetTaskId').get(nativeId,id)
@@ -276,6 +279,10 @@ export function makeWorkbenchStore(db: Db) {
       markRemoved(taskId:string) { db.query('UPDATE workbench_worktrees SET removed_at=COALESCE(removed_at,?) WHERE task_id=?').run(Date.now(),taskId) },
       clearMerged(taskId:string) { db.query('UPDATE workbench_worktrees SET merged_at=NULL WHERE task_id=?').run(taskId) },
       markMerged(taskId:string) { db.query('UPDATE workbench_worktrees SET merged_at=COALESCE(merged_at,?) WHERE task_id=?').run(Date.now(),taskId) },
+      /** ref 保留期的清理用(service/rewind.ts):每个工作区行 + 任务的归档时刻。 */
+      all():Array<{taskId:string;repoRoot:string;branch:string;archivedAt:number|null}> {
+        return db.query<{taskId:string;repoRoot:string;branch:string;archivedAt:number|null},[]>('SELECT w.task_id AS taskId,w.repo_root AS repoRoot,w.branch,t.archived_at AS archivedAt FROM workbench_worktrees w JOIN workbench_tasks t ON t.id=w.task_id').all()
+      },
     },
     /** 做到条件成立为止(v80):命令只在建任务时写一次 —— 这里没有、也不许有改命令的方法。 */
     goals: {
@@ -294,6 +301,11 @@ export function makeWorkbenchStore(db: Db) {
       /** 结束(passed / exhausted / stopped + 原因)。结束过的不再变。 */
       finish(taskId:string,status:'passed'|'exhausted'|'stopped',reason?:string) {
         db.query("UPDATE workbench_goals SET status=?,stop_reason=?,updated_at=? WHERE task_id=? AND status='active'").run(status,reason??null,Date.now(),taskId)
+        bump(taskId)
+      },
+      /** 回退撤掉了通过的那一轮(评审 7):passed 也改成 stopped —— 通过的代码已经没了。 */
+      revokePassed(taskId:string,reason:string) {
+        db.query("UPDATE workbench_goals SET status='stopped',stop_reason=?,updated_at=? WHERE task_id=? AND status='passed'").run(reason,Date.now(),taskId)
         bump(taskId)
       },
     },

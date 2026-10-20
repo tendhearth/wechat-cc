@@ -808,3 +808,19 @@ it('v79 adds worktree script/port columns, a unique port index and the script ap
     expect(db.query('SELECT * FROM workbench_script_approvals').all()).toEqual([])
   }finally{db.close()}
 })
+
+it('v81 creates workbench_rewinds with the applying/done/failed state check and a task index',()=>{
+  const db=openTestDb()
+  try{
+    db.query("INSERT INTO workbench_tasks(id,title,path,provider_id,status,created_at,updated_at) VALUES('t1','t','/p','claude','completed',1,1)").run()
+    const add=(id:string,state:string,point='end')=>db.query("INSERT INTO workbench_rewinds(id,task_id,target_artifact_id,target_point,target_commit,prior_head,backup_ref,backup_commit,discarded_json,state,created_at) VALUES(?,'t1','a',?,'c','h','refs/tendhearth/rewind/t1/1','b','[]',?,1)").run(id,point,state)
+    add('r1','applying');add('r2','done');add('r3','failed')
+    expect(()=>add('r4','undone')).toThrow()
+    expect(()=>add('r5','done','middle')).toThrow()
+    const cols=(db.query("PRAGMA table_info('workbench_rewinds')").all() as {name:string;notnull:number}[])
+    for(const name of ['notice_sent_at','undone_at'])expect(cols.find(c=>c.name===name)).toMatchObject({notnull:0})
+    expect((db.query("PRAGMA index_list('workbench_rewinds')").all() as {name:string}[]).map(i=>i.name)).toContain('workbench_rewinds_task')
+    db.query("DELETE FROM workbench_tasks WHERE id='t1'").run()
+    expect(db.query('SELECT * FROM workbench_rewinds').all()).toEqual([])
+  }finally{db.close()}
+})

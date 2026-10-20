@@ -162,6 +162,10 @@ export function makeScriptsDomain(ctx: ServiceCtx, opts: ScriptsOptions = {}) {
 
   return {
     status,
+    /** 回退用(2026-10-21):setup / archive 在跑、或正在收尾删除 ⇒ 正碰着工作区。开发服务(run)不算,只提示。 */
+    busy: (id: string): boolean => removing.has(id) || !!liveOf(id, 'setup') || !!liveOf(id, 'archive'),
+    /** 开发服务在跑(回退照做,预览里提示一句)。 */
+    serving: (id: string): boolean => !!liveOf(id, 'run'),
     /** 建好工作区 / 重新打开之后:批过 ⇒ 跑 setup;没批 ⇒ 说一句「待确认」,什么都不跑。从不抛(不拦建任务)。 */
     afterCheckout(id: string): void {
       try {
