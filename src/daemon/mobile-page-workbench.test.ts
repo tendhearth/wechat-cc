@@ -319,8 +319,8 @@ describe('手机交办页面接线', () => {
   })
 
   it('starts by checking saved receipts and opens entry only on an explicit tap, without resending', async () => {
-    const els=new Map<string,ReturnType<typeof fakeEl>&{focus:ReturnType<typeof vi.fn>;scrollIntoView:()=>void;appendChild:()=>void;click:()=>void;classList:{contains:()=>boolean;add:()=>void}}>()
-    const get=(id:string)=>{if(!els.has(id))els.set(id,{...fakeEl(id),focus:vi.fn(),scrollIntoView(){},appendChild(){},click(){this.fire('click')},classList:{contains:()=>false,add(){}}});return els.get(id)!}
+    const els=new Map<string,ReturnType<typeof fakeEl>&{focus:ReturnType<typeof vi.fn>;scrollIntoView:()=>void;appendChild:()=>void;click:()=>void;classList:{contains:()=>boolean;add:()=>void;remove:()=>void}}>()
+    const get=(id:string)=>{if(!els.has(id))els.set(id,{...fakeEl(id),focus:vi.fn(),scrollIntoView(){},appendChild(){},click(){this.fire('click')},classList:{contains:()=>false,add(){},remove(){}}});return els.get(id)!}
     const requestId='123e4567-e89b-42d3-a456-426614174000',input={requestId,text:'已经送出，不能再送一遍',target:{kind:'managed'}}
     const saved=new Map([['cc.phone.entry.v1:fixture',JSON.stringify({version:1,draft:{...input,providerId:'',revision:1},pending:[{input,revision:1}],last:null})]])
     const calls:Array<{path:string;method:string}>=[]
