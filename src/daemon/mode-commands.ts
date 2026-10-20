@@ -22,8 +22,6 @@
  * gate) — this is per-chat user preference, not a system-wide change.
  */
 import { parseAvoidTopics, topicLabels, type AvoidTopic } from '../core/companion-topics'
-
-type ModeChatPrefs = { split?: boolean; care?: 'off' | 'low' | 'high'; stickers?: boolean; hunt?: boolean; visit?: boolean; avoid?: AvoidTopic[] }
 import type { ConversationCoordinator } from '../core/conversation-coordinator'
 import type { ProviderRegistry } from '../core/provider-registry'
 import type { Mode, ProviderId } from '../core/conversation'
@@ -35,6 +33,9 @@ import type { AgentConfig } from '../lib/agent-config'
 import type { UserTier } from '../core/user-tier'
 import { providerDenialFor, describeProviderDenial } from '../core/provider-policy'
 import { PROVIDER_IDS } from '../lib/provider-ids'
+
+/** /set 读写的这一对话的偏好(chat-prefs 的子集)。 */
+type ModeChatPrefs = { split?: boolean; care?: 'off' | 'low' | 'high'; stickers?: boolean; hunt?: boolean; visit?: boolean; avoid?: AvoidTopic[] }
 
 export interface ModeCommandsDeps {
   coordinator: Pick<ConversationCoordinator, 'getMode' | 'setMode' | 'cancel'>
