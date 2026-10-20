@@ -8,7 +8,7 @@
 // 桌面上只写「项目」,哪家画成行尾的圆头像(2026-10-19,同手机 app;名字进读屏标签和小窗):
 // 「终端」和微信回话用的码是微信那头的东西,桌面用不上(2026-10-16)。
 
-/** @typedef {{session_id:string,code:string,source:'claude'|'codex'|'cursor',status:string,project:string,machine?:string|null,pending:{tool:string,summary:string|null,since:number,hash?:string|null}|null}} CliSession */
+/** @typedef {{session_id:string,code:string,source:string,status:string,project:string,machine?:string|null,pending:{tool:string,summary:string|null,since:number,hash?:string|null}|null}} CliSession */
 /** @typedef {{id:string,title:string,detail:string,agent:string,source:string,hash:string|null,tool:string,command:string,commandLabel?:string}} TerminalRow */
 
 const TITLE_MAX = 120
@@ -30,6 +30,9 @@ export function terminalTitle(tool, summary, source) {
   return `${source} 要你批准`
 }
 
+/** @type {Readonly<Record<string,string>>} */
+const SOURCE_NAME = Object.freeze({ claude: 'Claude Code', codex: 'Codex', cursor: 'Cursor' })
+
 /** @param {string} s */
 const oneLine = s => { const t = s.replace(/\s+/g, ' ').trim(); return t.length <= TITLE_MAX ? t : `${t.slice(0, TITLE_MAX - 1)}…` }
 
@@ -45,8 +48,10 @@ export function terminalWaitingRows(sessions) {
     if (!s || s.status !== 'waiting' || typeof s.session_id !== 'string' || !s.pending) continue
     const tool = s.pending.tool === 'permission' ? '' : String(s.pending.tool ?? '')
     const summary = String(s.pending.summary ?? '').trim()
-    const agent = s.source === 'codex' || s.source === 'cursor' ? s.source : 'claude'
-    const source = agent === 'codex' ? 'Codex' : agent === 'cursor' ? 'Cursor' : 'Claude Code'
+    // 没写 source 的是老 daemon(那时只有 Claude);写了个不认识的 ⇒ 照它的名字画首字母,别冒充 Claude。
+    const said = typeof s.source === 'string' ? s.source.trim() : ''
+    const agent = said || 'claude'
+    const source = SOURCE_NAME[agent] ?? agent
     const hash = typeof s.pending.hash === 'string' && /^[a-z0-9]{5}$/.test(s.pending.hash) ? s.pending.hash : null
     rows.push({
       id: s.session_id,
