@@ -1,4 +1,5 @@
 import {createClaudeHistoryReader} from '../../core/workbench/native-claude-history'
+import { makeIssueFetcher } from '../issue-fetch'
 import { lessonsBlock, makeProjectLessons } from '../../core/workbench/project-lessons'
 import { decideCall } from '../../lib/network-gate'
 import {createCodexHistoryReader} from '../../core/workbench/native-codex-history'
@@ -241,6 +242,8 @@ export function wireWorkbench(opts: {
     ...(opts.networkGate?{networkGate:opts.networkGate}:{}),
     // 项目经验(第二轮对标 ★2):主人在微信「经验 <项目> …」写的,每家执行者的指令里都带上
     projectLessons:(p)=>p?lessonsBlock(makeProjectLessons(opts.stateDir).list(p)):null,
+    // 「任务 新建 <项目> issue N」:gh 只读取 issue(10-20)
+    fetchIssue:makeIssueFetcher(),
     ...(opts.permissionGate?{permissionDecide:(ask:import('../../core/permission-rules/types').AskSource)=>opts.permissionGate!.decide(ask)}:{}),
     executionConflict:opts.executionConflict,
     nativeHistory:{claude:createClaudeHistoryReader(),...(binary?{codex:createCodexHistoryReader({codexPathOverride:binary})}:{})},
