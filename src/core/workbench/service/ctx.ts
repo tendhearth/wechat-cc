@@ -78,6 +78,9 @@ export interface ServiceActions {
   runtimeSnapshot(running:Active|undefined):AgentRuntimeSnapshot|undefined
   held():Active[]
   stageFinishedNotice(running:Active,status:TaskStatus,error?:string|null,suppressCompleted?:boolean):void
+  // ---- until 域(做到条件成立为止,v80):一轮成功做完排一次检查;停下 / 失败 ⇒ 结束并写原因。
+  untilAfterTurn(running:Active):void
+  untilStop(id:string,reason:string):void
   publishFinishedNotices():void
   /** 网络守护暂停时给订了微信提醒的任务发一条「已暂停(网络未受保护)」(lifecycle 域用)。 */
   enqueueNotice?(task:StoredTask,runId:string,kind:import('../wechat-notifications').WechatNoticeKind,text:string,requestId?:string|null):void

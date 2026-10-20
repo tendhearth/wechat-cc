@@ -68,7 +68,7 @@ function posixShell(env: NodeJS.ProcessEnv): string {
 }
 
 export function startScript(input: {
-  kind: ScriptKind
+  kind: ScriptKind | 'check'
   script: string
   cwd: string
   env: ScriptVars

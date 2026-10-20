@@ -375,6 +375,34 @@ it('isolated worktree tasks (2026-10-07): run in parallel on one project, stay o
   expect(g('rev-parse','--verify',b.worktree!.branch)).toMatch(/^[0-9a-f]{40}$/)
 })
 
+it('until (v80): check fails ⇒ CC continues with the wrapped output; next turn makes it pass ⇒ goal passed; unattended executors refuse until',async()=>{
+  const {execFileSync}=await import('node:child_process')
+  const g=(...a:string[])=>execFileSync('git',a,{cwd:project,stdio:'pipe'}).toString().trim()
+  g('init','-q','-b','main');g('config','user.email','t@t');g('config','user.name','t')
+  writeFileSync(join(project,'a.txt'),'one\n');g('add','-A');g('commit','-q','-m','init')
+  const prompts:string[]=[]
+  const registry=createProviderRegistry()
+  registry.register('claude',{async spawn(p){return{async *dispatch(text:string){prompts.push(text);if(prompts.length>=2)writeFileSync(join(p.path,'done.txt'),'ok\n');yield{kind:'text' as const,text:'改好了'};yield{kind:'result' as const,sessionId:'native',numTurns:1,durationMs:1}},async close(){}}}},{displayName:'claude',canResume:()=>true,workbench:MANAGED_NATIVE_CAPABILITIES})
+  registry.register('agy',{async spawn(){return{async *dispatch(){yield{kind:'result' as const,sessionId:'n',numTurns:1,durationMs:1}},async close(){}}}},{displayName:'agy',canResume:()=>true,workbench:UNATTENDED_CAPABILITIES})
+  await service.shutdown();store=makeWorkbenchStore(db)
+  service=makeWorkbenchService({store,registry,stateDir,managedWorkspaceRoot:join(area,'Tasks'),ownerChatId:()=>owner,defaultProvider:'claude',registeredProjects:()=>[{alias:'project',path:project}],matters:makeMatterStore(db),changes:makeTaskChangeHub(),mintSessionToken:()=>'t',unattendedAck:{get:()=>1,set:()=>{}}})
+  const projectId=service.projects()[0]!.id
+  expect(()=>service.createEntry(input({providerId:'agy',target:{kind:'project',projectId,isolation:'worktree'},until:{command:'true'}} as never),context)).toThrow('until_unattended_unsupported')
+  const r=service.createEntry(input({target:{kind:'project',projectId,isolation:'worktree'},until:{command:'test -f done.txt && echo PASSED',maxRounds:3}} as never),context)
+  const id=r.receipt.taskId
+  await expect.poll(()=>store.goals.get(id)?.status,{timeout:15_000}).toBe('passed')
+  expect(prompts).toHaveLength(2)
+  expect(prompts[1]).toContain('第 1/3 轮')
+  expect(prompts[1]).toContain('<check_output>')
+  expect(prompts[1]).toContain('`test -f done.txt && echo PASSED`')
+  expect(store.goals.get(id)).toMatchObject({rounds:2,lastExit:0})
+  expect(service.detail(id).task.until).toEqual({command:'test -f done.txt && echo PASSED',maxRounds:3,rounds:2,status:'passed',lastExit:0,stopReason:null})
+  const texts=store.events(id).map(e=>e.text)
+  expect(texts.some(t=>t.includes('检查没过(第 1/3 轮'))).toBe(true)
+  expect(texts.some(t=>t.includes('检查通过(第 2 轮)'))).toBe(true)
+  await settle(id)
+})
+
 it('an isolated task on a non-git project is refused before anything is reserved; a plain task is not a worktree',async()=>{
   const projectId=service.projects()[0]!.id
   expect(()=>service.createEntry(input({target:{kind:'project',projectId,isolation:'worktree'}}),context)).toThrow('worktree_not_git')

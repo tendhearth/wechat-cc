@@ -410,6 +410,12 @@ export function makeExecuteDomain(ctx:ServiceCtx, domains:ExecuteDomains) {
       } catch { /* never unlock an uncertain writer for a status failure */ }
       running.publicFinished=true; running.resolveDone()
       if (!running.uncertain) releaseReservation(running)
+      // 做到条件成立为止(v80):不保留会话的执行者只走这里。成功做完 ⇒ 排检查(先于 drainInputs:主人有排队的,
+      // until 自己让路);失败 ⇒ 停并写原因(额度 / 限流也在这里)。retained 的那一轮 settleQuiet 已经排过,按轮去重。
+      try {
+        if(terminalCommitted&&finalStatus==='completed'&&!running.cancelled&&!running.uncertain&&!state.stopping)ctx.actions.deref('execute').untilAfterTurn(running)
+        else if(terminalCommitted&&finalStatus==='failed')ctx.actions.deref('execute').untilStop(task.id,finalError==='provider_quota_exhausted'?'额度用完了':finalError==='provider_rate_limited'?'被限流了':'这一轮出错了')
+      } catch { /* 检查排不上不影响收尾 */ }
       if(terminalCommitted&&finalStatus==='completed'&&!running.cancelled&&!running.uncertain&&!state.stopping)drainInputs(task.id,running.directoryIdentity)
       else holdInputs(task.id,'任务已停止或未正常完成；这条补充尚未发送。')
     }

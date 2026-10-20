@@ -160,6 +160,8 @@ export function makeLifecycleDomain(ctx:ServiceCtx) {
     // 那条路没了)。续接会先 await 这份在途的快照再取新基线,所以不会把下一轮的改动算进来。
     void act().captureCodeChanges(running).catch(()=>{})
     armIdleClose(running)
+    // 做到条件成立为止(v80):这一轮安静了 ⇒ 排一次检查(按 run+turnSeq 去重,不阻塞)。
+    try { act().untilAfterTurn(running) } catch (err) { ctx.log?.('WORKBENCH_UNTIL',`afterTurn failed for ${running.taskId}: ${err instanceof Error?err.message:err}`) }
   }
   /**
    * 拍完板重新评估一次安静:请求**自己超时**(权限 5 分钟)那一下既没有事件也不走 resolvePermission,
@@ -386,6 +388,7 @@ export function makeLifecycleDomain(ctx:ServiceCtx) {
     for (const running of [...state.runsByTask.values()]) {
       if (!running.networkSuspended) continue
       running.stopNotice=message
+      try { act().untilStop(running.taskId,'网络一直没恢复,任务停了') } catch { /* 停照停 */ }
       try { store.addEvent(running.taskId,'system',message,null,running.identity); ctx.hub.touched(running.taskId) } catch { /* 停仍然要停 */ }
       try { cancelRun(running); n++ } catch { /* 下一个照停 */ }
     }
@@ -410,6 +413,8 @@ export function makeLifecycleDomain(ctx:ServiceCtx) {
     if(expectedRunId!==undefined&&running?.identity!==expectedRunId)throw new Error('control_stale')
     // cancelRun 落库时自己 touched;没有 running(任务不在跑)时这里兜底一下,
     // 停止请求本身也算一次「详情可能变了」。
+    // 主人亲手停 ⇒「直到检查通过」也停,不再自己接着改(写清原因)。
+    try { act().untilStop(id,'你停下了这件事') } catch { /* 停照停 */ }
     if (running) cancelRun(running)
     else ctx.hub.bumped(id)
     return act().taskView(publicTask(store.get(id)))
