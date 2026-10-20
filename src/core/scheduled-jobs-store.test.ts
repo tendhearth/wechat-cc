@@ -53,3 +53,18 @@ describe('jobs store', () => {
     expect(makeJobsStore(d).state('j1').lastStatus).toBe('sent')
   })
 })
+
+describe('summarizeJobs (日报)', () => {
+  it('counts runs in the window, those that spoke, and auto-paused jobs', async () => {
+    const { summarizeJobs } = await import('./scheduled-jobs-store')
+    const s = makeJobsStore(dir())
+    for (const t of ['a', 'b', 'c', 'd']) s.add(daily, t, now)
+    s.record('j1', '2026-10-20', '2026-10-20T01:00:00.000Z', 'sent', false)
+    s.record('j2', '2026-10-20', '2026-10-20T01:00:00.000Z', 'silent', false)
+    s.record('j3', '2026-10-20', '2026-10-20T01:00:00.000Z', 'skipped:network', false)
+    s.record('j4', '2026-10-18', '2026-10-18T01:00:00.000Z', 'sent', false)
+    for (let i = 0; i < 3; i++) s.record('j2', '2026-10-20', '2026-10-20T02:00:00.000Z', 'failed:quota', true)
+    s.setPaused('j2', true)
+    expect(summarizeJobs(s, Date.parse('2026-10-19T12:00:00Z'))).toEqual({ ran: 2, spoke: 1, paused: [{ id: 'j2', text: 'b' }] })
+  })
+})

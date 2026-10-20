@@ -189,3 +189,17 @@ describe('日报 × CC 替你批了', () => {
     expect(formatOverseerToday(withCc({ rule: 0, review: 2 }))).toContain('CC 替你批了 2 条(初审 2)')
   })
 })
+
+describe('日报 × 定时任务(10-20)', () => {
+  const withJobs = (jobs: { ran: number; spoke: number; paused: Array<{ id: string; text: string }> } | null, o: { terminal?: CliDigestView[] } = {}) =>
+    buildOverseerToday({ now: NOW, terminal: o.terminal ?? [], tasks: [], attention: [], localMachine: 'here', jobs })
+  it('head carries 定时 N 个(说了 M 个); zero runs ⇒ nothing', () => {
+    expect(formatOverseerToday(withJobs({ ran: 3, spoke: 1, paused: [] }, { terminal: [term('d1')] })).split('\n')[0]).toContain('定时 3 个(说了 1 个)')
+    expect(formatOverseerToday(withJobs({ ran: 0, spoke: 0, paused: [] }, { terminal: [term('d1')] }))).not.toContain('定时')
+    expect(formatOverseerToday(withJobs(null, { terminal: [term('d1')] }))).not.toContain('定时')
+  })
+  it('auto-paused jobs get their own line, even on a quiet day', () => {
+    const t = formatOverseerToday(withJobs({ ran: 0, spoke: 0, paused: [{ id: 'j3', text: '看 issue' }] }))
+    expect(t).toContain('定时 j3「看 issue」连着没跑成,停了')
+  })
+})

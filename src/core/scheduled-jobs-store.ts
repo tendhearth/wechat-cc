@@ -93,3 +93,19 @@ export function makeJobsStore(stateDir: string) {
 }
 
 export type JobsStore = ReturnType<typeof makeJobsStore>
+
+/** 日报那一行:since 之后真跑了的(不算跳过)、其中说了话的、因为连着失败被停掉的。 */
+export function summarizeJobs(store: JobsStore, sinceMs: number): { ran: number; spoke: number; paused: Array<{ id: string; text: string }> } {
+  const { jobs } = store.list()
+  let ran = 0, spoke = 0
+  const paused: Array<{ id: string; text: string }> = []
+  for (const j of jobs) {
+    const st = store.state(j.id)
+    if (st.lastRunAt && Date.parse(st.lastRunAt) >= sinceMs && st.lastStatus && !st.lastStatus.startsWith('skipped')) {
+      ran++
+      if (st.lastStatus === 'sent') spoke++
+    }
+    if (j.paused && st.failStreak >= 3) paused.push({ id: j.id, text: j.text })
+  }
+  return { ran, spoke, paused }
+}

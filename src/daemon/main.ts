@@ -1,5 +1,5 @@
 #!/usr/bin/env bun
-import { makeJobsStore } from '../core/scheduled-jobs-store'
+import { makeJobsStore, summarizeJobs } from '../core/scheduled-jobs-store'
 import { registerScheduledJobs } from './scheduled-jobs/runner'
 import { makeJobsCommand, chainReplyHandlers } from './scheduled-jobs/command'
 import { makeMatterStore } from '../core/matters/store'
@@ -826,6 +826,7 @@ export async function bootDaemon(opts: BootDaemonOpts): Promise<DaemonHandle> {
       terminal: () => cliSessionViews({ includeEnded: true, limit: TODAY_TERMINAL_LIMIT }),
       workbench: () => workbenchForToday,
       ccDecided: (since) => ({ ...permissionDecisions.countsSince(since), recent: permissionDecisions.since(since, 20) }),
+      jobs: (since) => summarizeJobs(jobsStore, since),
       localMachine: osHostname(),
       log: (t, l) => log(t, l),
     })
