@@ -1,14 +1,18 @@
 /**
  * 独立工作区的动作(2026-10-07):提交到分支、删工作区目录;10-08 加「合回项目」(只快进,别的交给主人,给一行可复制的命令)。
  * 都要求没有会话占着这个目录(执行者随时可能再写),和逐文件撤销同一道门;合回还要求源项目目录没被别的任务占着。
+ * 10-20 工作区脚本(service/scripts.ts):删之前先停在跑的脚本、跑批过的 archive ⇒ 这时删除是异步的,回 `removing:true`;重新打开后照样跑 setup。
  */
+import { existsSync } from 'node:fs'
 import { pathsConflict } from '../scheduler'
-import { commitWorktree, mergeHint, mergeWorktree, removeWorktree, reopenWorktree } from '../worktree-workspaces'
+import { commitWorktree, mergeHint, mergeWorktree, removeWorktree, reopenWorktree, worktreeDirty } from '../worktree-workspaces'
 import type { ServiceCtx } from './ctx'
+import type { ScriptsDomain } from './scripts'
 
 type Action = 'commit' | 'remove' | 'merge' | 'reopen'
+export type WorktreeActionResult = { branch: string; committed?: boolean; sha?: string; mergeHint?: string; removed?: boolean; removing?: boolean; merged?: boolean; into?: string; reopened?: boolean }
 
-export function makeWorktreeDomain(ctx: ServiceCtx) {
+export function makeWorktreeDomain(ctx: ServiceCtx, domains: { scripts?: Pick<ScriptsDomain, 'beforeRemove' | 'afterCheckout' | 'stopRun'> } = {}) {
   const { store, state } = ctx
   /**
    * 提交只是给文件拍快照(之后又写的,最坏是没进这次提交,不会弄坏东西)⇒ 这件事自己保留的会话已经答复、安静着,
@@ -33,7 +37,7 @@ export function makeWorktreeDomain(ctx: ServiceCtx) {
     return { task, wt }
   }
   const domain = {
-    worktreeAction(id: string, action: Action): { branch: string; committed?: boolean; sha?: string; mergeHint?: string; removed?: boolean; merged?: boolean; into?: string; reopened?: boolean } {
+    worktreeAction(id: string, action: Action): WorktreeActionResult {
       if (action !== 'commit' && action !== 'remove' && action !== 'merge' && action !== 'reopen') throw new Error('invalid_request')
       // 重新打开(10-08):删掉的工作区从保留的分支重新检出到原位置,任务路径不变,可以接着做
       if (action === 'reopen') {
@@ -45,6 +49,7 @@ export function makeWorktreeDomain(ctx: ServiceCtx) {
         store.worktrees.markReopened(id)
         store.addEvent(id, 'system', `已从分支 ${wt.branch} 重新打开独立工作区，可以接着做了。`)
         ctx.hub.touched(id)
+        domains.scripts?.afterCheckout(id)
         return { branch: wt.branch, reopened: true }
       }
       const { task, wt } = target(id, action as Exclude<Action, 'reopen'>)
@@ -65,10 +70,19 @@ export function makeWorktreeDomain(ctx: ServiceCtx) {
         ctx.hub.touched(id)
         return { branch: wt.branch, merged: result.merged, into: result.into }
       }
-      removeWorktree(wt.repoRoot, wt.root)
-      store.worktrees.markRemoved(id)
-      store.addEvent(id, 'system', `独立工作区已删除，分支 ${wt.branch} 保留在项目里。`)
-      ctx.hub.touched(id)
+      const finish = () => {
+        removeWorktree(wt.repoRoot, wt.root)
+        store.worktrees.markRemoved(id)
+        store.addEvent(id, 'system', `独立工作区已删除，分支 ${wt.branch} 保留在项目里。`)
+        ctx.hub.touched(id)
+      }
+      if (domains.scripts) {
+        // 有改动的先拒(和同步删除同一个判定),免得白跑一遍 archive
+        if (existsSync(wt.root) && worktreeDirty(wt.root)) throw new Error('worktree_dirty')
+        // 收尾跑完时再核对一遍:那段时间里主人可能又让执行者进来了
+        if (domains.scripts.beforeRemove(id, () => { target(id, 'remove'); finish() }) === 'async') return { branch: wt.branch, removing: true }
+      }
+      finish()
       return { branch: wt.branch, removed: true }
     },
     /**
@@ -78,6 +92,8 @@ export function makeWorktreeDomain(ctx: ServiceCtx) {
     tidyOnArchive(id: string): void {
       const wt = store.worktrees.get(id)
       if (!wt || wt.removedAt !== null) return
+      // 归档了 ⇒ 开发服务也停掉(删不掉工作区时它不该接着跑)
+      void domains.scripts?.stopRun(id)
       try { domain.worktreeAction(id, 'remove') }
       catch (error) {
         const code = error instanceof Error ? error.message : ''

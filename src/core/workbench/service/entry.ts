@@ -24,8 +24,9 @@ import type { AdmissionDomain } from './admission'
 import type { ExecuteDomain } from './execute'
 import type { QuotaDomain } from './quota'
 import type { ViewDomain } from './view'
+import type { ScriptsDomain } from './scripts'
 
-export interface EntryDomains { execute: ExecuteDomain; view: ViewDomain; admission: AdmissionDomain; quota: QuotaDomain }
+export interface EntryDomains { execute: ExecuteDomain; view: ViewDomain; admission: AdmissionDomain; quota: QuotaDomain; /** 工作区脚本(2026-10-20):建好独立工作区后跑 setup;老测试不传。 */ scripts?: Pick<ScriptsDomain,'afterCheckout'> }
 
 export function makeEntryDomain(ctx:ServiceCtx, domains:EntryDomains) {
   const { store } = ctx
@@ -132,8 +133,10 @@ export function makeEntryDomain(ctx:ServiceCtx, domains:EntryDomains) {
         }
         else if(canonicalProject(path)!==path||directoryIdentity(path)!==identity)throw Error('invalid_path')
       }
+      let createdId:string|null=null
       createTask({path,providerId:frozen.providerId,text,title:input.title??(input.text.trim().slice(0,40)||current[0]!.name.slice(0,40)),execution:frozen.execution,draftId:input.draftId,attachmentIds:input.attachmentIds},(task,runId)=>{
         verify()
+        if(tree)createdId=task.id
         store.entryRequests.accept(context.ownerKey,input.requestId,{taskId:task.id,matterId:task.id,runId,acceptedAt:Date.now(),resolvedPath:path,directoryIdentity:identity})
         if(tree)store.worktrees.record({taskId:task.id,projectPath:tree.plan.projectPath,repoRoot:tree.plan.repoRoot,root:tree.plan.root,branch:tree.plan.branch,scriptSha:pinnedScriptSha(tree.plan.root)})
       },undefined,{
@@ -148,6 +151,8 @@ export function makeEntryDomain(ctx:ServiceCtx, domains:EntryDomains) {
         },
         verifyDirectory:(acceptedPath,acceptedIdentity)=>{if(acceptedPath!==path||acceptedIdentity!==identity)throw Error('invalid_path');verify()},
       })
+      // 建任务的事务提交之后才起 setup(回滚了就不该有进程在跑);setup 与第一轮并行
+      if(createdId)domains.scripts?.afterCheckout(createdId)
       return entryResult(store.entryRequests.get(context.ownerKey,input.requestId)!)
     }catch(error){
       // A racing winner is authoritative, but never commit a losing task along with it.

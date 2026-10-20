@@ -16,7 +16,7 @@ export interface CreateTask extends InputMaterials { title?: string; path: strin
  * 是「本轮做完没有、还能不能接着说」—— 那是 replied,与进程留不留无关。
  */
 export type WorkbenchPhase='queued'|'working'|'replied'|'failed'|'cancelled'|'interrupted'
-export interface WorkbenchTaskView extends Task { phase:WorkbenchPhase; importedOnly?:boolean; canArchive:boolean; writerExit?:'alive'|'unconfirmed'; worktree?:{branch:string;projectPath:string;removed:boolean;merged:boolean}; waitingFor: TaskWaitingFor | null; pendingPermissionCount?: number; pendingQuestionCount?:number; runtime?:AgentRuntimeSnapshot; networkSuspended?:{since:number}; /** 参与过的执行者(2026-10-19,同 matter.agents):桌面行尾画成叠在一起的圆头像。只有列表 / 详情带。 */ agents?:string[]; /** 出生地(同 matter.origin,2026-10-19):行尾头像组旁边一个小字形。不知道 ⇒ 不带。 */ origin?:MatterOrigin }
+export interface WorkbenchTaskView extends Task { phase:WorkbenchPhase; importedOnly?:boolean; canArchive:boolean; writerExit?:'alive'|'unconfirmed'; worktree?:{branch:string;projectPath:string;removed:boolean;merged:boolean;port?:number;/** 工作区脚本(2026-10-20):只有详情带。 */scripts?:ScriptsView}; waitingFor: TaskWaitingFor | null; pendingPermissionCount?: number; pendingQuestionCount?:number; runtime?:AgentRuntimeSnapshot; networkSuspended?:{since:number}; /** 参与过的执行者(2026-10-19,同 matter.agents):桌面行尾画成叠在一起的圆头像。只有列表 / 详情带。 */ agents?:string[]; /** 出生地(同 matter.origin,2026-10-19):行尾头像组旁边一个小字形。不知道 ⇒ 不带。 */ origin?:MatterOrigin }
 export type EntryResult = {receipt: EntryReceipt; task: WorkbenchTaskView}
 
 /** 已准入的执行者登记项:登记处的条目 + 一定带 workbench 能力(admission.provider 的返回;放这里是为了 ctx.ts 能引用而不 import admission 成环)。 */
@@ -28,3 +28,17 @@ export type QuotaHandoffView =
   | { state: 'offer'; from: string; to: string; kind: QuotaKind; resetAt: number }
   | { state: 'none'; from: string; kind: QuotaKind; resetAt: number }
   | { state: 'handed'; from: string; to: string; matterId: string }
+/** 工作区脚本(2026-10-20,service/scripts.ts)在详情里的样子;放这里免得 types ↔ scripts 绕圈。 */
+export type ScriptsView =
+  | { configured: false; invalid: string }
+  | {
+    configured: true
+    approved: boolean
+    hash: string
+    /** 三条脚本原文:只进桌面详情(确认框要逐字给主人看)。 */
+    config: import('../worktree-scripts').ScriptsConfig
+    setup: 'none' | 'pending' | 'running' | 'done' | 'failed'
+    run: 'none' | 'idle' | 'queued' | 'running'
+    archiving: boolean
+  }
+

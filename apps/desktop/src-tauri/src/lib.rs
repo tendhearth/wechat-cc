@@ -1158,6 +1158,7 @@ fn workbench_request_allowed(method: &str, path: &str) -> bool {
             | ("POST", "/v1/workbench/review-return")
             | ("POST", "/v1/workbench/review-revert")
             | ("POST", "/v1/workbench/worktree")
+            | ("POST", "/v1/workbench/script-approve")
             | ("POST", "/v1/workbench/import")
             | ("POST", "/v1/workbench/prepare-resume")
             | ("POST", "/v1/workbench/prepare-continuation")
@@ -1842,6 +1843,7 @@ mod workbench_proxy_tests {
             ("POST", "/v1/workbench/review-return"),
             ("POST", "/v1/workbench/review-revert"),
             ("POST", "/v1/workbench/worktree"),
+            ("POST", "/v1/workbench/script-approve"),
             ("POST", "/v1/workbench/import"),
             ("POST", "/v1/workbench/prepare-resume"),
             ("POST", "/v1/workbench/prepare-continuation"),

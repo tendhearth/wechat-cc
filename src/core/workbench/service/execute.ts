@@ -48,6 +48,7 @@ import type { InputsDomain } from './inputs'
 import type { LifecycleDomain } from './lifecycle'
 import type { NoticesDomain } from './notices'
 import type { ArtifactsDomain } from './artifacts'
+import type { ScriptsDomain } from './scripts'
 
 const RECOVERY_MESSAGE='原执行会话暂时无法恢复。请打开桌面工作台，查看恢复选项并确认是否带此前记录重新开始。'
 
@@ -92,6 +93,8 @@ async function collectWorkbenchTurn(events: AsyncIterable<AgentEvent>, stop: Pro
 export interface ExecuteDomains {
   admission: AdmissionDomain; attachments: AttachmentsDomain; quota: QuotaDomain; view: ViewDomain; native: NativeDomain
   inputs: InputsDomain; lifecycle: LifecycleDomain; notices: NoticesDomain; artifacts: ArtifactsDomain
+  /** 工作区脚本(2026-10-20):微信建的独立工作区也跑 setup;老测试不传。 */
+  scripts?: Pick<ScriptsDomain,'afterCheckout'>
 }
 
 export function makeExecuteDomain(ctx:ServiceCtx, domains:ExecuteDomains) {
@@ -555,6 +558,8 @@ export function makeExecuteDomain(ctx:ServiceCtx, domains:ExecuteDomains) {
         reply:`已接下这件事 · ${task.id}\n${task.providerId} · ${task.path}\n\n${task.title}\n\n完成或需要你处理时，会在这里提醒。\n查看：任务 ${task.id}\n补充：任务 ${task.id} 补充 <要求>\n关闭提醒：任务 ${task.id} 静音${tree?`\n\n在独立分支 ${tree.plan.branch} 上做。做完：任务 ${task.id} 提交 → 任务 ${task.id} 合回`:''}`,
       })
     },{matterId:safeOriginMatterId(input.ownerChatId,origin),messageId:input.originMessageId??null})
+    // 事务提交之后才起 setup(同 entry)
+    if(tree)domains.scripts?.afterCheckout(receipt.taskId)
     return receipt
   }
   // 不标 async:内部 wechatControl(见文件末尾)按同步 Actions 接口拿它,标了 async 会把

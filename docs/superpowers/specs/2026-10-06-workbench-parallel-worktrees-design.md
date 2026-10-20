@@ -38,6 +38,16 @@
 
 不问，直接按规则办：工作区干净（提交过的都在分支上）⇒ 归档时删目录、分支保留；有没提交的改动 / 会话还开着 ⇒ 留着，时间线说一句，不拦归档。
 
+## 工作区脚本（2026-10-20，对标 Conductor）
+
+**规矩变了**：以前一律不执行仓库里的东西（git 钩子关掉、`.worktreeinclude` 只复制）。现在 CC 会跑仓库根 `tendhearth.json` 里的 `{"scripts":{"setup","run","archive"}}`——**但只跑主人当面批准过的那一份内容**：按（仓库，内容哈希）批，改一个字就要重批；没批就只在时间线说一句「待确认」，什么都不跑。git 钩子照旧不跑。
+
+- 脚本从建工作区时的提交读（`git cat-file`，不读工作树），执行者改文件、提交到分支都改不了要跑的内容。
+- setup：建好 / 重新打开工作区后跑一次，批准那一刻补跑；run：主人点「运行」（setup 没跑成先跑 setup）；archive：删工作区前跑，限时 2 分钟，没跑成照删并留一句。
+- 每个工作区一个端口（47100–48999），脚本里拿 `TENDHEARTH_PORT`；另有 `TENDHEARTH_WORKSPACE_PATH / ROOT_PATH / BRANCH`。
+- 输出进时间线（先打码）；只有 setup / archive 挡空闲自重启，run 不挡；CC 退出时停掉所有脚本，崩了重启后按开机时刻 + 进程组 + 组长启动时刻核对再停。
+- 批准只在桌面（确认框逐字给出三条脚本）。代码：`src/core/workbench/{worktree-scripts,worktree-ports,script-runner}.ts`、`service/scripts.ts`。
+
 ## 拒绝与边界
 
 - 项目不是 git 仓库，或有未完成的 rebase/merge（`.git/MERGE_HEAD` 等）：开关不出现，或拒绝并说明原因。

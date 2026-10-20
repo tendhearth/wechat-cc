@@ -438,6 +438,10 @@
 .wb-unattended-dialog { height:auto; max-height:min(560px,calc(100vh - 48px)); }
 .wb-unattended-notes { margin:0; padding-left:20px; color:var(--th-ink); font-size:13px; line-height:1.9; }
 .wb-unattended-actions { display:flex; flex:none; gap:10px; }
+/* 工作区脚本确认框(2026-10-20):三条命令逐字给主人看。 */
+.wb-scripts-item h3 { margin:12px 0 4px; font-size:13px; color:var(--th-ink); }
+.wb-scripts-item h3 small { margin-left:8px; font-weight:normal; font-size:11px; color:var(--th-ink-soft); }
+.wb-scripts-text { margin:0; padding:8px 10px; border:1px solid var(--th-hair); border-radius:6px; }
 
 /* Latest updates stay optional while the user reads earlier work. */
 .wb-reading-bar { position:relative; height:0; flex:none; z-index:2; }

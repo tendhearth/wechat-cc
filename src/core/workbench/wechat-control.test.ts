@@ -173,6 +173,10 @@ describe('WeChat task control through the shared service',()=>{
     expect(await control('owner',`任务 ${task.id} 提交 一下`,identity)).toContain('用法')
     const plain=makeWechatWorkbenchControl({store,ownerChatId:()=>owner,actions:{...service,worktreeAction:()=>{throw new Error('not_worktree')}}})
     expect(await plain('owner',`任务 ${task.id} 合回`,identity)).toContain('不在独立工作区里')
+    // 有工作区脚本(2026-10-20):先收尾再删 ⇒ 回「正在收尾」,不说「已删除」
+    const removing=makeWechatWorkbenchControl({store,ownerChatId:()=>owner,actions:{...service,worktreeAction:()=>({branch:'cc/abcd1234',removing:true})}})
+    const reply=await removing('owner',`任务 ${task.id} 删除工作区`,identity)
+    expect(reply).toContain('正在收尾');expect(reply).not.toContain('已删除')
   })
 
   it('lists only the current owner original tasks and keeps ordinary conversation out of the workbench',async()=>{

@@ -10,6 +10,8 @@
  *
  * git 一律:清掉继承的 GIT_* 环境、不读全局配置、不跑仓库钩子(无人值守时不执行仓库里的脚本;
  * 代价是 LFS 之类靠钩子的内容不会自动展开,设计稿已写明)。每条命令有超时。
+ * 2026-10-20 规矩改了一处:仓库根 tendhearth.json 里的工作区脚本会跑 —— 但只跑主人当面批准过的那一份内容
+ * (按仓库 + 内容哈希,改一个字就要重批),别的一律不跑。见 worktree-scripts.ts / service/scripts.ts;钩子照旧不跑。
  */
 import { execFileSync } from 'node:child_process'
 import { copyFileSync, existsSync, lstatSync, mkdirSync, realpathSync, rmSync } from 'node:fs'

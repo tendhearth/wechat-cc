@@ -15,6 +15,7 @@ import { TERMINAL_TASK_STATUSES, type Task, type WorkbenchListQuery } from '../s
 import type { AgentRuntimeSnapshot } from '../../agent-provider'
 import type { TaskWaitingFor } from '../wechat-types'
 import type { WorkbenchPhase, WorkbenchTaskView } from './types'
+import type { ScriptsView } from './scripts'
 import type { Active } from './state'
 import type { ServiceCtx } from './ctx'
 import type { MatterOrigin } from '../../matters/store'
@@ -35,7 +36,7 @@ function firstPending(permissions:readonly PendingWorkbenchPermission[],question
   return text?{kind:'question',text}:null
 }
 
-export function makeViewDomain(ctx:ServiceCtx, queries?:{quotaHandoff(id:string):QuotaHandoffView|null}) {
+export function makeViewDomain(ctx:ServiceCtx, queries?:{quotaHandoff(id:string):QuotaHandoffView|null;scripts?(id:string):ScriptsView|null}) {
   const { store, state } = ctx
   /** 当前占着文件夹的 run。 */
   const held=()=>[...state.reservations.values()]
@@ -80,7 +81,8 @@ export function makeViewDomain(ctx:ServiceCtx, queries?:{quotaHandoff(id:string)
       ...(!running&&TERMINAL_TASK_STATUSES.includes(task.status)&&store.source(task.id)?.firstDispatchedAt===null?{importedOnly:true}:{}),
       canArchive:TERMINAL_TASK_STATUSES.includes(task.status) && !running && task.error!=='writer_not_closed',
       // 独立工作区(2026-10-07):分支、源项目、目录删了没;桌面按源项目归组、给「提交到分支」。
-      ...(()=>{const wt=store.worktrees.get(task.id);return wt?{worktree:{branch:wt.branch,projectPath:wt.projectPath,removed:wt.removedAt!==null,merged:wt.mergedAt!==null}}:{}})(),
+      // port(2026-10-20):脚本拿到的 TENDHEARTH_PORT,用到时才分配。
+      ...(()=>{const wt=store.worktrees.get(task.id);return wt?{worktree:{branch:wt.branch,projectPath:wt.projectPath,removed:wt.removedAt!==null,merged:wt.mergedAt!==null,...(wt.port!==null?{port:wt.port}:{})}}:{}})(),
       // 「没确认退出」:进程组还活着 ⇒ 'alive'(先结束它);没有相反证据 ⇒ 'unconfirmed'(主人可以确认已经结束)。
       ...(task.error==='writer_not_closed'?{writerExit:writerAlive(ctx,task.id)?'alive' as const:'unconfirmed' as const}:{}),
       waitingFor:running ? waitingFor(running) : null,
@@ -141,7 +143,9 @@ export function makeViewDomain(ctx:ServiceCtx, queries?:{quotaHandoff(id:string)
     const runtime=runtimeSnapshot(running)
     const subscription=store.wechatNotifications.subscription(id)
     const wechatNotifications={enabled:!!subscription?.enabled,notices:store.wechatNotifications.list(id).slice(-10).map(({id,runId,kind,status,reason,createdAt})=>({id,runId,kind,status,reason,createdAt}))}
-    const result={...detail,events:detail.events.map(readableExecutionEvent),wechatNotifications,quotaHandoff:queries?.quotaHandoff(id)??null,...(runtime?{runtime}:{}),execution:store.execution.choice(id),lastExecution:store.execution.last(id),attachments:store.attachments.list(id),task:withAgents(taskView(detail.task,true),agentsOf([id])),inputs:store.liveInputs.list(id),questions:running?.questions.pending()??[],
+    // 工作区脚本(2026-10-20)只进详情:读 tendhearth.json 要跑 git,列表不背这个;原文给桌面的确认框。
+    const view=taskView(detail.task,true),scripts=view.worktree?queries?.scripts?.(id)??null:null
+    const result={...detail,events:detail.events.map(readableExecutionEvent),wechatNotifications,quotaHandoff:queries?.quotaHandoff(id)??null,...(runtime?{runtime}:{}),execution:store.execution.choice(id),lastExecution:store.execution.last(id),attachments:store.attachments.list(id),task:withAgents(scripts&&view.worktree?{...view,worktree:{...view.worktree,scripts}}:view,agentsOf([id])),inputs:store.liveInputs.list(id),questions:running?.questions.pending()??[],
       // The timeline stays live through cancellation and process cleanup;
       // accepting supplemental input is a separate, narrower capability.
       ...(running?{runId:running.identity}:{}),

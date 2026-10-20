@@ -76,6 +76,10 @@ function mappedError(err: unknown,entry=false): ReturnType<RouteHandler> {
   if (['worktree_uncommitted', 'project_dirty', 'project_detached', 'worktree_not_ff', 'project_busy', 'worktree_branch_missing', 'worktree_open'].includes(code)) return { status: 409, body: { error: code } }
   if (code === 'not_worktree' || code === 'worktree_not_git' || code === 'worktree_base_missing') return { status: 422, body: { error: code } }
   if (code === 'worktree_git_failed') return { status: 502, body: { error: code } }
+  // 工作区脚本(2026-10-20):没批 ⇒ 428(桌面弹确认框给主人看原文);在跑 / 内容变了 ⇒ 409;这个工作区没有 run 脚本 ⇒ 422
+  if (code === 'script_approval_required') return { status: 428, body: { error: code } }
+  if (code === 'script_setup_running' || code === 'script_running' || code === 'script_config_changed') return { status: 409, body: { error: code } }
+  if (code === 'no_scripts') return { status: 422, body: { error: code } }
   if (code === 'matter_not_found') return { status: 404, body: { error: code } }
   if (code === 'not_found') return { status: 404, body: { error: code } }
   if (code === 'unavailable_provider') return { status: 422, body: { error: code } }
@@ -426,12 +430,23 @@ export function workbenchRoutes(deps: InternalApiDeps): RouteTable {
 
     // 逐文件撤销(2026-10-06):恢复成这一轮开始前的内容。文件夹还被占着 ⇒ 409 workbench_busy;之后又改过 ⇒ 409 review_file_changed。
     // 独立工作区(2026-10-07):commit = 提交到分支(回合并命令),remove = 删工作区目录(分支保留);merge(10-08)= 快进合回项目。
+    // 工作区脚本(2026-10-20):run = 起 run 脚本(setup 没跑成先跑 setup),stop = 停下;没批 ⇒ 428 script_approval_required。
     'POST /v1/workbench/worktree': async (_query, body) => {
       const value = objectBody(body)
       const id = typeof value?.id === 'string' ? value.id : '', action = value?.action
-      if (!TASK_ID.test(id) || (action !== 'commit' && action !== 'remove' && action !== 'merge' && action !== 'reopen') || Object.keys(value ?? {}).some(k => k !== 'id' && k !== 'action')) return invalid()
+      if (!TASK_ID.test(id) || (action !== 'commit' && action !== 'remove' && action !== 'merge' && action !== 'reopen' && action !== 'run' && action !== 'stop') || Object.keys(value ?? {}).some(k => k !== 'id' && k !== 'action')) return invalid()
       if (!deps.workbench) return { status: 503, body: { error: 'workbench_not_wired' } }
-      try { return { status: 200, body: { worktree: deps.workbench.worktreeAction(id, action) } } }
+      try { return { status: 200, body: { worktree: action === 'run' || action === 'stop' ? await deps.workbench.scriptAction(id, action) : deps.workbench.worktreeAction(id, action) } } }
+      catch (err) { return mappedError(err) }
+    },
+
+    // 批准工作区脚本:hash = 主人在确认框里看到的那份内容;对不上 ⇒ 409 script_config_changed(重新拉详情再看)。
+    'POST /v1/workbench/script-approve': async (_query, body) => {
+      const value = objectBody(body)
+      const id = typeof value?.id === 'string' ? value.id : '', hash = typeof value?.hash === 'string' ? value.hash : ''
+      if (!TASK_ID.test(id) || !SHA256.test(hash) || Object.keys(value ?? {}).some(k => k !== 'id' && k !== 'hash')) return invalid()
+      if (!deps.workbench) return { status: 503, body: { error: 'workbench_not_wired' } }
+      try { return { status: 200, body: { scripts: deps.workbench.approveScripts(id, hash) } } }
       catch (err) { return mappedError(err) }
     },
 

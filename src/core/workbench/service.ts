@@ -44,11 +44,11 @@ interface Options {
   /** 变更信号中心(长轮询);不传就自建。 */
   changes?: TaskChangeHub
   /** 免审执行者的一次性确认(daemon 侧持久化);不传 ⇒ 免审执行者永远要求确认。 */
-  unattendedAck?: { get(): number | null; set(at: number): void }
+  unattendedAck?: { get(): number | null; set(at: number): void }; scripts?: ScriptsOptions   // scripts:工作区脚本(2026-10-20)的测试旋钮,生产不传
 }
 import { makeRuntimeState } from './service/state'
 import { Ref } from '../../lib/lifecycle'
-import { makeReviewDomain } from './service/review'; import { makeWorktreeDomain } from './service/worktree'
+import { makeReviewDomain } from './service/review'; import { makeWorktreeDomain } from './service/worktree'; import { makeScriptsDomain, type ScriptsOptions } from './service/scripts'
 import { makeAttachmentsDomain } from './service/attachments'
 import { makeQuotaDomain } from './service/quota'
 import { makeNoticesDomain } from './service/notices'
@@ -75,14 +75,14 @@ export function makeWorkbenchService(opts: Options) {
   const state=makeRuntimeState()
   const actions=new Ref<ServiceActions>('workbench-actions')
   const ctx:ServiceCtx={store,stateDir:opts.stateDir,state,hub:{touched,bumped,dispose:()=>changes.dispose()},deps:{ownerChatId:opts.ownerChatId,registry:opts.registry,...(opts.usage?{usage:opts.usage}:{}),...(opts.permissionTimeoutMs!==undefined?{permissionTimeoutMs:opts.permissionTimeoutMs}:{}),...(opts.permissionDecide?{permissionDecide:opts.permissionDecide}:{}),...(opts.unattendedAck?{unattendedAck:opts.unattendedAck}:{}),...(opts.nativeHistory?{nativeHistory:opts.nativeHistory}:{}),...(opts.registeredProjects?{registeredProjects:opts.registeredProjects}:{}),...(opts.defaultProvider!==undefined?{defaultProvider:opts.defaultProvider}:{}),...(opts.executionConflict?{executionConflict:opts.executionConflict}:{}),...(opts.reports?{reports:opts.reports}:{}),...(opts.recollect?{recollect:opts.recollect}:{}),...(opts.revokeSessionToken?{revokeSessionToken:opts.revokeSessionToken}:{}),...(opts.retainedIdleCloseMs!==undefined?{retainedIdleCloseMs:opts.retainedIdleCloseMs}:{}),...(opts.handoffGraceMs!==undefined?{handoffGraceMs:opts.handoffGraceMs}:{}),...(opts.matters?{matters:opts.matters}:{}),...(opts.mintSessionToken?{mintSessionToken:opts.mintSessionToken}:{}),...(opts.timeoutMs!==undefined?{timeoutMs:opts.timeoutMs}:{}),...(opts.closeTimeoutMs!==undefined?{closeTimeoutMs:opts.closeTimeoutMs}:{}),...(opts.holdBusy?{holdBusy:opts.holdBusy}:{}),...(opts.onTurnError?{onTurnError:opts.onTurnError}:{}),...(opts.writerGroupAlive?{writerGroupAlive:opts.writerGroupAlive}:{}),...(opts.bootTimeMs?{bootTimeMs:opts.bootTimeMs}:{}),...(opts.writerWatchMs!==undefined?{writerWatchMs:opts.writerWatchMs}:{}),...(opts.managedWorkspaceRoot!==undefined?{managedWorkspaceRoot:opts.managedWorkspaceRoot}:{}),...(opts.networkGate?{networkGate:opts.networkGate}:{})},ensureAccepting,...(opts.log?{log:opts.log}:{}),now:Date.now,actions}
-  const review=makeReviewDomain(ctx);const worktreeDomain=makeWorktreeDomain(ctx)
+  const scriptsDomain=makeScriptsDomain(ctx,opts.scripts),review=makeReviewDomain(ctx),worktreeDomain=makeWorktreeDomain(ctx,{scripts:scriptsDomain})
   const attachmentsDomain=makeAttachmentsDomain(ctx)
   const {continuationAttachmentScope,selectAttachments,combinedAttachments,handoffAttachments}=attachmentsDomain
   const quotaDomain=makeQuotaDomain(ctx)
   const {fallbackExecutor}=quotaDomain
   const admissionDomain=makeAdmissionDomain(ctx)
   const {provider,requireInput,canResume,continuation,taskVersion}=admissionDomain
-  const viewDomain=makeViewDomain(ctx,{quotaHandoff:id=>quotaHandoffDomain.quotaHandoff(id)})
+  const viewDomain=makeViewDomain(ctx,{quotaHandoff:id=>quotaHandoffDomain.quotaHandoff(id),scripts:scriptsDomain.status})
   const {held,runtimeSnapshot,inputMode,isReplied,taskView}=viewDomain
   const nativeDomain=makeNativeDomain(ctx)
   const inputsDomain=makeInputsDomain(ctx)
@@ -93,10 +93,10 @@ export function makeWorkbenchService(opts: Options) {
   const {stageFinishedNotice,publishFinishedNotices,enqueueNotice}=noticesDomain
   const artifactsDomain=makeArtifactsDomain(ctx)
   const {collect,collectTurnArtifacts,captureCodeChanges}=artifactsDomain
-  const executeDomain=makeExecuteDomain(ctx,{admission:admissionDomain,attachments:attachmentsDomain,quota:quotaDomain,view:viewDomain,native:nativeDomain,inputs:inputsDomain,lifecycle:lifecycleDomain,notices:noticesDomain,artifacts:artifactsDomain})
-  const entryDomain=makeEntryDomain(ctx,{execute:executeDomain,view:viewDomain,admission:admissionDomain,quota:quotaDomain}),quotaHandoffDomain=makeQuotaHandoffDomain(ctx,{execute:executeDomain,quota:quotaDomain})
+  const executeDomain=makeExecuteDomain(ctx,{admission:admissionDomain,attachments:attachmentsDomain,quota:quotaDomain,view:viewDomain,native:nativeDomain,inputs:inputsDomain,lifecycle:lifecycleDomain,notices:noticesDomain,artifacts:artifactsDomain,scripts:scriptsDomain})
+  const entryDomain=makeEntryDomain(ctx,{execute:executeDomain,view:viewDomain,admission:admissionDomain,quota:quotaDomain,scripts:scriptsDomain}),quotaHandoffDomain=makeQuotaHandoffDomain(ctx,{execute:executeDomain,quota:quotaDomain})
   store.recover()
-  store.liveInputs.recover();lifecycleDomain.adoptWriters()
+  store.liveInputs.recover();lifecycleDomain.adoptWriters();scriptsDomain.recover()
 
   function ensureAccepting() {
     if (state.stopping) throw new Error('workbench_stopping')
@@ -148,10 +148,10 @@ export function makeWorkbenchService(opts: Options) {
     /** 这个任务的所有变更快照,新→旧,每个文件附上当前标记。坏的那一轮单独 unavailable,不牵连别轮。 */
     reviewList:review.reviewList,
     markReviewFile:review.markReviewFile,
-    returnReviewFiles:review.returnReviewFiles,revertReviewFile:review.revertReviewFile,worktreeAction:worktreeDomain.worktreeAction,
+    returnReviewFiles:review.returnReviewFiles,revertReviewFile:review.revertReviewFile,worktreeAction:worktreeDomain.worktreeAction,scriptAction:scriptsDomain.scriptAction,approveScripts:scriptsDomain.approveScripts,   // 工作区脚本(2026-10-20):运行 / 停下 / 批准
     resolvePermission:inputsDomain.resolvePermission,
     async handleWechat(chatId:string,text:string,identity?:WechatMessageIdentity):Promise<WechatWorkbenchReply|null>{return wechatControl(chatId,text,identity)},
-    shutdown:lifecycleDomain.shutdown,
+    shutdown:()=>Promise.all([scriptsDomain.shutdown(),lifecycleDomain.shutdown()]).then(()=>{}),   // 工作区脚本和会话一起停(TERM → 宽限 → KILL)
     changes: { onChange: (cb: (taskId: string, seq: number) => void) => changes.onChange(cb),
       /** store.version 才是权威:hub 缓存可能因为一笔回滚的事务而"幻影提前",落库的 seq 从不会。
        * 提前发现(persisted>since)时也顺手 publish 一下,把挂在旧值上的 waiter 一并叫醒,
