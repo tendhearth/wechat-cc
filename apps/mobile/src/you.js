@@ -29,6 +29,8 @@ var youOpenId = null, youBusy = false
 function youSrc(it) {
   var src = (it.sources || [])[0]
   if (!src) return ""
+  // 从别的助手导入的(2026-10-20):excerpt 就是「从 X 导入」,不说「聊到」
+  if (src.kind === "import") return '<p class="you-src">' + esc(src.excerpt) + "</p>"
   var d = new Date(src.ts)
   var when = isNaN(d.getTime()) ? "" : (d.getMonth() + 1) + "月" + d.getDate() + "日"
   return '<p class="you-src">' + (when ? esc(when) + "聊到:" : "聊到:") + "「" + esc(src.excerpt) + "」</p>"

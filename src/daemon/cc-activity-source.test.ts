@@ -19,7 +19,7 @@ describe('collectActivity', () => {
       ],
       terminal: () => [{ session_id: 's1', status: 'idle', project: 'rici', last_event_at: m(4) }, { session_id: 's2', status: 'running', project: 'x', last_event_at: m(4) }],
       letters: () => [{ id: '2026-10-19-abcdef', sentAt: m(5), opening: '最近天凉了,早上出门记得多穿一件。还有一件事想跟你说', via: 'wechat' }],
-      memoryLog: () => [{ at: new Date(m(6)).toISOString(), ops: [{ op: 'add' }, { op: 'add' }, { op: 'update' }] }],
+      memoryLog: () => [{ at: new Date(m(6)).toISOString(), ops: [{ kind: 'add' }, { kind: 'add' }, { kind: 'update' }, { kind: 'expire' }] }],   // memory-log.jsonl 里真实的形状:AppliedOp.kind
       log: () => [
         { at: m(7), kind: 'proactive', status: 'sent' }, { at: m(8), kind: 'proactive', status: 'deferred' },
         { at: m(9), kind: 'job', status: 'sent', ref: 'j2' }, { at: m(10), kind: 'job', status: 'sent', ref: 'j3' },
@@ -36,7 +36,7 @@ describe('collectActivity', () => {
       '一起做「修测试」做完了',
       '终端 rici 这一轮做完了',
       '给你寄了一封信:最近天凉了,早上出门记得多穿一件。还有一件事想跟…',
-      '整理了记忆:新增 2 条、改 1 条',
+      '整理了记忆:新增 2 条、改 1 条、删 1 条',
       '主动跟你说了一句',
       '想跟你说一句,没发出去',
       '定时 j2「看一下 rici 的 issue」:说了',

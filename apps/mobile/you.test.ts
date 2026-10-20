@@ -120,4 +120,16 @@ describe('CC 眼中的你', () => {
     click({ target: target({ 'data-mem-id': 'def456' }) })
     expect(body.innerHTML).not.toContain('you-src')
   })
+
+  it('an imported entry says where it was imported from, not 「聊到」(10-20)', async () => {
+    const item = { id: 'imp001', text: '你喜欢美式', display: '你喜欢美式', due: null, due_label: null, person: null, changed: false, sources: [{ ts: '2026-10-20T10:00:00Z', excerpt: '从 ChatGPT 导入', kind: 'import' }] }
+    const view = { ok: true, ...base, mood: 'steady', changes: [], sections: [{ name: '偏好', items: [item] }] }
+    const y = load((async () => ({ json: async () => view })) as never)
+    await y.loadYou()
+    const body = y.els['you-body']!
+    const click = (body.addEventListener as unknown as { mock: { calls: [string, (e: unknown) => void][] } }).mock.calls.find(c => c[0] === 'click')![1]
+    click({ target: { closest: (sel: string) => sel === '[data-mem-id]' ? { getAttribute: () => 'imp001' } : null } })
+    expect(body.innerHTML).toContain('从 ChatGPT 导入')
+    expect(body.innerHTML).not.toContain('聊到')
+  })
 })
