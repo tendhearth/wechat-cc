@@ -29,6 +29,11 @@ describe('terminalWaitingRows', () => {
     expect(terminalTitle('mcp__x__do', 'go', 'Claude Code')).toBe('想用 mcp__x__do：go')
     expect(terminalWaitingRows([null, 3, s({ pending: null })])).toEqual([])
   })
+
+  it('哪家:没写 source(老 daemon)⇒ Claude;不认识的 ⇒ 照名字来,不冒充 Claude', () => {
+    expect(terminalWaitingRows([s({ source: undefined })])[0]).toMatchObject({ agent: 'claude', source: 'Claude Code' })
+    expect(terminalWaitingRows([s({ source: 'kimi', pending: { tool: 'permission', summary: null, since: 1, hash: null } })])[0]).toMatchObject({ agent: 'kimi', source: 'kimi', title: 'kimi 要你批准' })
+  })
 })
 
 describe('createTerminalWaitingPoller', () => {
