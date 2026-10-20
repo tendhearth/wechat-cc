@@ -154,6 +154,8 @@ export function makeExecuteDomain(ctx:ServiceCtx, domains:ExecuteDomains) {
         '最后分别说明改动或交付文件的位置、实际完成的验证和未完成的验证。执行者结束回复不代表验证通过；工具失败或检查未运行时明确说明，不声称已验收。',
         '回复直接输出文本。不要调用微信发消息、发文件、记忆或社交工具，不替用户发布或发送成果。',
         '不要声称完成没有做过的检查。缺依赖、权限或信息时说明具体缺项。',
+        // 项目经验(第二轮对标 ★2):按源项目(独立工作区算它的源项目)取主人写的那几句,哪家执行者都带上
+        ...(()=>{try{const b=ctx.deps.projectLessons?.(store.worktrees.get(task.id)?.projectPath??(task.workspaceKind==='managed'?null:task.path));return b?[b]:[]}catch{return []}})(),
       ].join('\n')
       const reviewStop=new AbortController()
       void running.stop.then(()=>reviewStop.abort())

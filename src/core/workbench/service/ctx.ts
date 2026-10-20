@@ -135,6 +135,8 @@ export interface ServiceDeps {
   managedWorkspaceRoot?: string
   /** 网络闸门(2026-10-02):起执行者 / 投补充之前问一次,不安全 ⇒ `network_unprotected`。不传 = 不拦。 */
   networkGate?: NetworkGate
+  /** 项目经验(2026-10-20):源项目路径 ⇒ 要放进执行者指令的那一段;没有 ⇒ null。 */
+  projectLessons?: (projectPath: string | null) => string | null
 }
 export interface ServiceCtx {
   store: WorkbenchStore
