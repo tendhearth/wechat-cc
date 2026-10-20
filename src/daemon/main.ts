@@ -7,6 +7,12 @@ import { makeJobsStore, summarizeJobs } from '../core/scheduled-jobs-store'
 import { registerScheduledJobs } from './scheduled-jobs/runner'
 import { makeJobsCommand, chainReplyHandlers } from './scheduled-jobs/command'
 import { agendaReplyText, appBundleHasCalendarUsage, makeCalendar, makeCalendarCommand } from './calendar/calendar'
+import { makeActivityLog } from './activity-log'
+import { listLetters } from './letters/archive'
+import { collectActivity } from './cc-activity-source'
+import { ACTIVITY_WINDOW_MS } from '../core/cc-activity'
+import { makeFileStateStore as makeCliUpgradeStateStore } from '../core/cli-upgrade/state'
+import { MEMORY_LOG_FILE, ownerMemoryRoot } from './memory/nightly'
 import { pickJobExecutor } from './wiring/tick-bodies'
 import { makeMatterStore } from '../core/matters/store'
 if (!process.env.CLAUDE_CODE_ENTRYPOINT) { process.env.CLAUDE_CODE_ENTRYPOINT = 'sdk-ts' }
@@ -847,6 +853,36 @@ export async function bootDaemon(opts: BootDaemonOpts): Promise<DaemonHandle> {
     // 「看 码」「@码 文本」:主人对某条终端会话说话。只认主人;那边的会话 v1 先说明。
     // 定时任务的文件(spec 2026-10-20-scheduled-jobs-design):微信「定时」与每分钟一拍的 runner 共用一份。
     const jobsStore = makeJobsStore(stateDir)
+    // 「CC 做过的事」(B9,spec 2026-10-20-cc-activity-design):没留记录的动作(主动说话 / 定时 / 提醒)补记一行,
+    // 只记状态 + id;手机时间线把它和已有记录(规则批 / 一起做 / 终端 / 信 / 记忆 / CLI 升级)合起来。只算主人。
+    const activityLog = makeActivityLog({ stateDir, now: () => Date.now(), log: (t, l) => log(t, l) })
+    const activityOwner = () => resolveAdminChatId(loadAccess(), loadCompanionConfig(stateDir), null)
+    const activity = {
+      now: () => Date.now(),
+      sources: () => {
+        const since = Date.now() - ACTIVITY_WINDOW_MS
+        return collectActivity({
+          now: () => Date.now(), ownerChatId: activityOwner,
+          decisions: () => permissionDecisions.since(since, 200),
+          tasks: () => db.query<{ id: string; title: string; status: string; updatedAt: number; ownerChatId: string | null }, [number]>('SELECT id,title,status,updated_at AS updatedAt,owner_chat_id AS ownerChatId FROM workbench_tasks WHERE updated_at>=? ORDER BY updated_at DESC LIMIT 200').all(since),
+          terminal: () => cliEvents.list({ includeEnded: true, limit: 200 }).filter(v => v.last_event_at >= since),
+          letters: () => listLetters(stateDir),
+          memoryLog: () => {
+            const o = activityOwner(), root = o ? ownerMemoryRoot(stateDir, o) : null
+            const f = root ? join(root, MEMORY_LOG_FILE) : null
+            if (!f || !fsExistsSync(f)) return []
+            return fsReadFileSync(f, 'utf8').split('\n').slice(-200).flatMap((l: string) => { try { const r = JSON.parse(l); return r && typeof r.at === 'string' ? [r] : [] } catch { return [] } })
+          },
+          log: () => activityLog.read(since),
+          jobs: () => jobsStore.list().jobs,
+          reminderText: (id) => {
+            const o = activityOwner()
+            return o ? db.query<{ text: string }, [string, string]>('SELECT text FROM reminders WHERE id=? AND chat_id=?').get(id, o)?.text ?? null : null
+          },
+          cliUpgrades: () => Object.entries(makeCliUpgradeStateStore(stateDir).load()).map(([cli, s]) => ({ cli, last: s.lastUpgrade ?? null })),
+        })
+      },
+    }
     // 早报的口味(对标 #7):memory/<主人>/brief-prefs.md,「早报 少点 / 多点 …」写它。
     const briefOwner = () => resolveAdminChatId(loadAccess(), loadCompanionConfig(stateDir), null)
     const briefPrefs = makeBriefPrefs(() => { const o = briefOwner(); return o ? join(stateDir, 'memory', o) : null })
@@ -910,6 +946,7 @@ export async function bootDaemon(opts: BootDaemonOpts): Promise<DaemonHandle> {
     const wired = wireMain({
       workbench,
       cliSessions: () => cliEvents.list({ limit: 50 }),
+      activity, activityLog,
       overseerToday,
       terminalHooks,
       // 手机拍板 / 说一句:拍板与微信「y/n 码」、桌宠权限卡同一份待批;说一句与微信「@码」同一个 core。
@@ -1048,6 +1085,8 @@ export async function bootDaemon(opts: BootDaemonOpts): Promise<DaemonHandle> {
         return r.ok ? { ok: true } : { ok: false, ...(r.error ? { error: r.error } : {}) }
       },
       log: (t, l) => log(t, l),
+      activityLog,
+      isOwner: (chatId: string) => resolveAdminChatId(loadAccess(), loadCompanionConfig(stateDir), null) === chatId,
     }))
     if (remindersLc) lc.register(remindersLc)
     // 主人亲手写的定时任务(spec 2026-10-20-scheduled-jobs-design):每分钟一拍,到点在只读的独立会话里跑一轮,
@@ -1084,6 +1123,7 @@ export async function bootDaemon(opts: BootDaemonOpts): Promise<DaemonHandle> {
     })
     const jobsLc = await sup.start('scheduled-jobs', () => registerScheduledJobs({
       store: jobsStore,
+      activityLog,
       timezone: () => loadCompanionConfig(stateDir).timezone ?? 'Asia/Shanghai',
       now: () => Date.now(),
       runTurn: async (job, nowIso) => {

@@ -39,6 +39,8 @@ export interface WireMainOpts {
   workbench?: import('../../core/workbench/service').WorkbenchService
   /** 终端会话登记处(v76):手机 GET /m/api/cli/sessions 读它。缺省 ⇒ 503。 */
   cliSessions?: () => import('../../core/cli-session-store').CliSessionView[]
+  /** 「CC 做过的事」(B9):透传给手机面板。 */
+  activity?: import('../mobile-activity').MobileActivityDeps
   /** 终端会话的手机动作(拍板 / 说一句):POST /m/api/cli/permission、/m/api/cli/say。缺省 ⇒ 503。 */
   cliActions?: import('../cli-phone-actions').CliPhoneActions
   /** 「今天」一眼看完(core/overseer-today.ts):手机 GET /m/api/today 读它。缺省 ⇒ 503。 */
@@ -105,6 +107,8 @@ export interface WireMainOpts {
    * 透传进 buildTickBodies。
    */
   outboundTaps?: { tap(chatId: string): { close(): string[] } }
+  /** 「CC 做过的事」补记(B9);tick-bodies 拿它记主动说话。 */
+  activityLog?: import('./tick-bodies').TickDeps['activityLog']
   /**
    * 回复交付(spec 2026-10-03):main.ts 里那**同一个** runtime。经 `...opts` 透传进 buildTickBodies ——
    * 当轮 provider 走 daemon 时,伙伴推送的最后的话经它送达。缺省 ⇒ 推送照旧只认 reply 工具。

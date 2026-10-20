@@ -161,6 +161,8 @@ export interface PipelineDepsOpts {
   workbench?: import('../../core/workbench/service').WorkbenchService
   /** 终端会话登记处(v76):手机 GET /m/api/cli/sessions 读它。缺省 ⇒ 503。 */
   cliSessions?: () => import('../../core/cli-session-store').CliSessionView[]
+  /** 「CC 做过的事」(B9):main 拼好来源,这里只透传给手机面板。 */
+  activity?: import('../mobile-activity').MobileActivityDeps
   /** 终端会话的手机动作(拍板 / 说一句):POST /m/api/cli/permission、/m/api/cli/say。缺省 ⇒ 503。 */
   cliActions?: import('../cli-phone-actions').CliPhoneActions
   /** 「今天」一眼看完(core/overseer-today.ts):手机 GET /m/api/today 读它。缺省 ⇒ 503。 */
@@ -764,6 +766,7 @@ export function buildPipelineDeps(opts: PipelineDepsOpts, refs: PipelineDepsRefs
     correctMemory: (id: string, verdict: import('../memory/nightly-runtime').MemoryVerdict) => memoryNightly.correct(id, verdict),
     ...(mattersService && opts.matters ? { matters: { list: (f) => mattersService.list(f), detail: (id) => mattersService.detail(id), inputReceipt:mattersService.inputReceipt, say: (id, text, input) => mattersService.say(id, text, 'phone',input), permission:mattersService.permission,answer:mattersService.answer,stop:mattersService.stop,worktree:mattersService.worktree,artifactChunk:mattersService.artifactChunk,handoff:mattersService.handoff,seenOnPhone: (id) => opts.matters!.bind(id, 'phone', 'pwa') } } : {}),
     // 「CC 的信」(2026-10-18):只读存档,寄出去了的才列。
+    ...(opts.activity ? { activity: opts.activity } : {}),
     letters: { list: () => listLetters(stateDir), pagePath: (id: string, page: number) => letterPagePath(stateDir, id, page) },
     // 定时在手机上看得见(对标 B7):与微信「定时」、runner 读写同一个 scheduled-jobs.json。
     jobs: (() => {

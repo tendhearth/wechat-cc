@@ -175,6 +175,8 @@ export interface ReminderSchedulerDeps {
   log: (tag: string, line: string) => void
   /** Override sweep interval (ms). Defaults to 60s. */
   intervalMs?: number
+  activityLog?: SweepDeps['activityLog']
+  isOwner?: SweepDeps['isOwner']
 }
 
 /**
@@ -199,6 +201,8 @@ export function registerReminders(deps: ReminderSchedulerDeps): Lifecycle {
           send: deps.send,
           nowIso: new Date().toISOString(),
           log: deps.log,
+          ...(deps.activityLog ? { activityLog: deps.activityLog } : {}),
+          ...(deps.isOwner ? { isOwner: deps.isOwner } : {}),
         })
       } catch (err) {
         deps.log('REMINDERS', `sweep failed: ${err instanceof Error ? err.message : String(err)}`)

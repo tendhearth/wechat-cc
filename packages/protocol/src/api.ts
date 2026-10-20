@@ -298,6 +298,16 @@ export const PhoneJob = z.object({
   last: z.object({ day: z.string(), status: z.string(), label: z.string() }).nullable(),
 })
 export type PhoneJobT = z.infer<typeof PhoneJob>
+
+/** 「CC 做过的事」(B9,2026-10-20):一行一句,新的在前;ref 指向能点开的那件事。 */
+export const PhoneActivityItem = z.object({
+  id: z.string(),
+  kind: z.enum(['decision', 'together', 'terminal', 'letter', 'memory', 'proactive', 'job', 'reminder', 'cli_upgrade']),
+  at: z.number(),
+  title: z.string(),
+  ref: z.object({ type: z.enum(['task', 'terminal', 'letter']), id: z.string() }).optional(),
+})
+export type PhoneActivityItemT = z.infer<typeof PhoneActivityItem>
 export const MemorySuccess = z.object({
   ok: z.literal(true), updated_at: z.string().nullable(), when_label: z.string().nullable(),
   mood: z.enum(['changed', 'steady', 'first']), failures: z.number(), changes: z.array(ViewChange),
@@ -561,6 +571,7 @@ export const PHONE_API_SCHEMAS: Readonly<Record<string, z.ZodTypeAny>> = {
   'GET /m/api/chat/file': z.union([z.object({ ok: z.literal(true), name: z.string(), mime: z.string(), size: z.number(), sha256: z.string(), offset: z.number(), nextOffset: z.number(), contentBase64: z.string() }), PhoneErrorResponse]),
   'GET /m/api/letters': z.union([z.object({ ok: z.literal(true), letters: z.array(LetterSummary) }), PhoneErrorResponse]),
   // 定时在手机上看得见(对标 B7,2026-10-20):列表 + 停 / 开 / 删;新建仍在微信「定时」。只给设备令牌。
+  'GET /m/api/activity': z.union([z.object({ ok: z.literal(true), items: z.array(PhoneActivityItem), next: z.string().nullable(), degraded: z.array(z.string()) }), PhoneErrorResponse]),
   'GET /m/api/jobs': z.union([z.object({ ok: z.literal(true), timezone: z.string(), executor: z.string().nullable(), jobs: z.array(PhoneJob) }), PhoneErrorResponse]),
   'POST /m/api/jobs/action': z.union([z.object({ ok: z.literal(true) }), PhoneErrorResponse]),
   'GET /m/api/letters/page': z.union([z.object({ ok: z.literal(true), name: z.string(), mime: z.string(), size: z.number(), sha256: z.string(), offset: z.number(), nextOffset: z.number(), contentBase64: z.string() }), PhoneErrorResponse]),

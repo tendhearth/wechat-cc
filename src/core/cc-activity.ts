@@ -17,7 +17,7 @@ export interface ActivityItem {
   title: string
   ref?: { type: 'task' | 'terminal' | 'letter'; id: string }
 }
-export type ActivitySourceName = 'decisions' | 'together' | 'terminal' | 'letters' | 'memory' | 'log' | 'jobs'
+export type ActivitySourceName = 'decisions' | 'together' | 'terminal' | 'letters' | 'memory' | 'log' | 'upgrades'
 export type ActivitySources = Partial<Record<ActivitySourceName, ActivityItem[] | null>>
 
 const encode = (at: number, id: string) => Buffer.from(`${at}|${id}`, 'utf8').toString('base64url')
