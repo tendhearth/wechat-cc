@@ -319,6 +319,8 @@ export default function Matter() {
             {files.map((f, i) => (
               <View key={i} style={{ paddingVertical: space.s, gap: space.xs }}>
                 <Txt role="code">{f.path}</Txt>
+                {/* 该多看一眼的原因(B6):一个强调色的「注意 · 原因」,只是提醒,不拦操作 */}
+                {f.risk?.length ? <Txt role="caption" tone="accent" testID={`review-risk-${f.path}`}>{t(lang, 'review.risk', { why: f.risk.join('、') })}</Txt> : null}
                 {f.kind === 'not_reviewed' ? (
                   <>
                     <Txt role="small" tone="inkSoft">{t(lang, 'progress.notReviewed')}</Txt>
