@@ -1,4 +1,5 @@
 import {createOpenAICompatible} from '@ai-sdk/openai-compatible'
+import {aiSdkUsage,type TurnUsage} from '../turn-usage'
 import {makeThinkFilter} from '../think-tags'
 import {makeTimeoutFetch,openaiFetchTimeoutsFromEnv,type FetchTimeouts} from '../../lib/timeout-fetch'
 import {jsonSchema,streamText,tool,type LanguageModel,type ModelMessage} from 'ai'
@@ -9,7 +10,7 @@ export type TurnDelta={kind:'text';text:string}|{kind:'tool_call';id:string;name
 export interface APIModel{
   stream(messages:ChatMessage[],tools:ToolSpec[],signal:AbortSignal):{
     deltas:AsyncIterable<TurnDelta>
-    finished:Promise<{messages:ChatMessage[];toolCalls:{id:string;name:string;input:unknown}[];finishReason:string;model:string|null}>
+    finished:Promise<{messages:ChatMessage[];toolCalls:{id:string;name:string;input:unknown}[];finishReason:string;model:string|null;usage?:TurnUsage}>
   }
 }
 
@@ -41,7 +42,7 @@ export function createApiModel(options:APIModelOptions,languageModelFactory?:Lan
       const result=streamText({model,system,messages:input,tools,maxOutputTokens,maxRetries:0,abortSignal:signal})
       const responsePromise=result.response
       void responsePromise.catch(()=>undefined)
-      const completion=deferred<{messages:ChatMessage[];toolCalls:{id:string;name:string;input:unknown}[];finishReason:string;model:string|null}>()
+      const completion=deferred<{messages:ChatMessage[];toolCalls:{id:string;name:string;input:unknown}[];finishReason:string;model:string|null;usage?:TurnUsage}>()
       // A stream can fail before its owner reaches `finished`; attach a handler
       // immediately while preserving the original rejecting promise for callers.
       void completion.promise.catch(()=>undefined)
@@ -50,7 +51,7 @@ export function createApiModel(options:APIModelOptions,languageModelFactory?:Lan
         if(consumed)throw Error('api_model_stream_already_consumed')
         consumed=true
         const toolCalls:{id:string;name:string;input:unknown}[]=[]
-        let finishReason:string|undefined,responseModel:string|null=null,complete=false
+        let finishReason:string|undefined,responseModel:string|null=null,complete=false,usage:TurnUsage|undefined
         // 内联在 content 里的思维链不给主人看 —— 见 think-tags.ts。
         const think=makeThinkFilter()
         try{
@@ -65,6 +66,8 @@ export function createApiModel(options:APIModelOptions,languageModelFactory?:Lan
             }else if(part.type==='finish-step'){
               finishReason=part.finishReason
               responseModel=part.response.modelId||null
+              // 端点报的这一步用量(v82 逐回合用量);不报 ⇒ 不写
+              usage=aiSdkUsage(part.usage)
             }else if(part.type==='finish'){
               finishReason=part.finishReason
             }else if(part.type==='error'){
@@ -83,7 +86,7 @@ export function createApiModel(options:APIModelOptions,languageModelFactory?:Lan
           // explicitly undefined. Normalize to their JSON wire representation;
           // retain actual reasoning/signature values for private continuation.
           const messages=JSON.parse(JSON.stringify(response.messages)) as ChatMessage[]
-          completion.resolve({messages,toolCalls,finishReason,model:finishReason==='unknown'?null:responseModel})
+          completion.resolve({messages,toolCalls,finishReason,model:finishReason==='unknown'?null:responseModel,...(usage?{usage}:{})})
         }catch(error){complete=true;completion.reject(error);throw error}
         finally{if(!complete)completion.reject(Error('api_model_stream_incomplete'))}
       }

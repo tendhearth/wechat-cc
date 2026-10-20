@@ -27,6 +27,13 @@ export function codexBreakdown(b: unknown): TurnUsage | undefined {
 }
 
 /** 累计值 ⇒ 这一段的量。任何一项变小(会话重启 / 续接从 0 算起)⇒ 新的一段,直接用新的总数,不记负数。 */
+/** openai 兼容(AI SDK v5 的 LanguageModelV2Usage):每一步(一次请求)自己的用量。 */
+export function aiSdkUsage(u: unknown): TurnUsage | undefined {
+  if (!u || typeof u !== 'object') return undefined
+  const o = u as Record<string, unknown>
+  return clean({ input: n(o.inputTokens), output: n(o.outputTokens), cacheRead: n(o.cachedInputTokens), reasoning: n(o.reasoningTokens) } as TurnUsage)
+}
+
 export function usageDelta(before: TurnUsage | undefined, after: TurnUsage | undefined): TurnUsage | undefined {
   if (!after) return undefined
   if (!before) return clean(after)
