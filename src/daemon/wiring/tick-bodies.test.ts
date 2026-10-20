@@ -220,7 +220,7 @@ function setupDeps(opts: {
       coordinator: { getMode, runExclusive } as never,
       // Default: no provider has cheapEval. Introspect-specific tests
       // override via deps.boot.registry directly.
-      registry: { getCheapEval: () => null } as never,
+      registry: { getCheapEval: () => null, has: (id: string) => id === 'claude' } as never,
     } as never,
     loadAccess: () => access,
     permissionMode: 'strict',
@@ -2041,11 +2041,24 @@ describe('runJobTurn', () => {
     expect(await buildTickBodies(s.deps).runJobTurn({ chatId: 'owner', jobId: 'j1', text: 'x', nowIso: 't' })).toBe('silent')
     expect(forget).toHaveBeenCalled()
   })
-  it('executors other than claude / codex are skipped without a session', async () => {
-    const s = setupDeps({ defaultChatId: 'owner', inFlight: false, mode: { kind: 'solo', provider: 'agy' } })
-    job(s, ok)
-    expect(await buildTickBodies(s.deps).runJobTurn({ chatId: 'owner', jobId: 'j1', text: 'x', nowIso: 't' })).toBe('skipped:executor')
-    expect(s.acquire).not.toHaveBeenCalled()
+  // 真机核对 10-20:主人对话用的是 openai(Kimi / DeepSeek)⇒ 定时天天 skipped:executor。定时不跟对话的执行者走:
+  // 装着 claude 就用 claude,没有再 codex;都没有才跳过。
+  it('uses claude (else codex) no matter which executor the chat uses; neither installed ⇒ skipped:executor', async () => {
+    const withRegistry = (ids: string[], provider: string) => {
+      const s = setupDeps({ defaultChatId: 'owner', inFlight: false, mode: { kind: 'solo', provider } })
+      ;(s.deps.boot as unknown as { registry: Record<string, unknown> }).registry = { getCheapEval: () => null, has: (id: string) => ids.includes(id) }
+      job(s, ok)
+      return s
+    }
+    const a = withRegistry(['openai', 'claude', 'codex'], 'openai')
+    expect(await buildTickBodies(a.deps).runJobTurn({ chatId: 'owner', jobId: 'j1', text: 'x', nowIso: 't' })).toBe('sent')
+    expect(a.acquire).toHaveBeenCalledWith(expect.objectContaining({ providerId: 'claude', alias: 'job:j1' }))
+    const b = withRegistry(['agy', 'codex'], 'agy')
+    await buildTickBodies(b.deps).runJobTurn({ chatId: 'owner', jobId: 'j1', text: 'x', nowIso: 't' })
+    expect(b.acquire).toHaveBeenCalledWith(expect.objectContaining({ providerId: 'codex' }))
+    const c = withRegistry(['openai', 'agy'], 'openai')
+    expect(await buildTickBodies(c.deps).runJobTurn({ chatId: 'owner', jobId: 'j1', text: 'x', nowIso: 't' })).toBe('skipped:executor')
+    expect(c.acquire).not.toHaveBeenCalled()
   })
   it('owner mid-conversation ⇒ skipped:busy, no session', async () => {
     const s = setupDeps({ defaultChatId: 'owner', inFlight: true })

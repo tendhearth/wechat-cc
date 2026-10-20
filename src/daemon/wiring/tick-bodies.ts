@@ -242,7 +242,12 @@ export function buildJobText(o: { jobId: string; nowIso: string; text: string },
   ].join('\n')
 }
 
-const JOB_PROVIDERS = new Set(['claude', 'codex'])
+/** 定时那一轮用谁:装着 claude 就 claude,没有再 codex —— 不跟主人对话的执行者走(真机核对 10-20:对话用 openai 的主人,
+ *  定时天天 skipped:executor)。只有这两家的只读档靠得住(Claude 走 profileGate,Codex 走只读沙箱)。 */
+export const JOB_PROVIDERS = ['claude', 'codex'] as const
+export function pickJobExecutor(has: (id: string) => boolean): (typeof JOB_PROVIDERS)[number] | null {
+  return JOB_PROVIDERS.find(id => { try { return has(id) } catch { return false } }) ?? null
+}
 /** 定时那一轮最多跑多久(比 runner 的 5 分钟兜底短):不说话超过它 ⇒ turn_timeout;一直在说也到点就 cancel。 */
 export const JOB_TURN_MAX_MS = 4 * 60_000
 
@@ -636,8 +641,10 @@ export function buildTickBodies(deps: TickDeps): TickBodies {
     const { chatId, jobId } = args
     const gate = resolveDispatch(chatId)
     if (gate.blocked === 'wechat_degraded') return 'skipped:degraded'
-    const { proj, providerId } = gate
-    if (!JOB_PROVIDERS.has(providerId) || !deps.replyDelivery || deliveryModeOf(providerId) !== 'daemon') return 'skipped:executor'
+    const { proj } = gate
+    const registry = deps.boot.registry as { has?: (id: string) => boolean }
+    const providerId = pickJobExecutor(id => registry.has?.(id) ?? false)
+    if (!providerId || !deps.replyDelivery || deliveryModeOf(providerId) !== 'daemon') return 'skipped:executor'
     if (gate.blocked === 'session_in_flight') return 'skipped:busy'
     const key = { alias: `job:${jobId}`, providerId, chatId }
     const sm = deps.boot.sessionManager as typeof deps.boot.sessionManager & { forget?: (k: typeof key) => Promise<void> }
