@@ -54,3 +54,16 @@ describe('wireInstructions × 回复交付(spec 2026-10-03 §4.11)', () => {
     expect(build()('openai', TIER_PROFILES.admin, 'c')).toContain('`reply(chat_id, text)`')
   })
 })
+
+describe('wireInstructions × 管理员工具段(daemonOpsAvailable)', () => {
+  // agy 的 wechat MCP 钉死 trusted(agy-mcp-config.ts),today_digest / calendar_agenda 这些 admin 工具根本没注册 ——
+  // 提示词里写着有、实际调不到,执行者会以为工具坏了反复去试,或者跟主人说「查不到」。
+  const build = () => { const ref = new Ref<boolean>('socialWired'); ref.set(false); return wireInstructions(deps(), parts(ref)) }
+  it('claude admin ⇒ advertises today_digest / calendar_agenda; agy admin ⇒ does not; trusted ⇒ does not', () => {
+    expect(build()('claude', TIER_PROFILES.admin, 'c')).toContain('calendar_agenda')
+    expect(build()('claude', TIER_PROFILES.admin, 'c')).toContain('today_digest')
+    expect(build()('agy', TIER_PROFILES.admin, 'c')).not.toContain('today_digest')
+    expect(build()('agy', TIER_PROFILES.admin, 'c')).not.toContain('calendar_agenda')
+    expect(build()('claude', TIER_PROFILES.trusted, 'c')).not.toContain('today_digest')
+  })
+})
