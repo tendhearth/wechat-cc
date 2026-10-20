@@ -8,6 +8,7 @@ import { registerScheduledJobs } from './scheduled-jobs/runner'
 import { makeJobsCommand, chainReplyHandlers } from './scheduled-jobs/command'
 import { agendaReplyText, appBundleHasCalendarUsage, makeCalendar, makeCalendarCommand } from './calendar/calendar'
 import { makeActivityLog } from './activity-log'
+import { makeActivityCommand } from './activity/command'
 import { listLetters } from './letters/archive'
 import { collectActivity } from './cc-activity-source'
 import { makeRecapTurn } from './scheduled-jobs/recap'
@@ -887,6 +888,13 @@ export async function bootDaemon(opts: BootDaemonOpts): Promise<DaemonHandle> {
     // 早报的口味(对标 #7):memory/<主人>/brief-prefs.md,「早报 少点 / 多点 …」写它。
     const briefOwner = () => resolveAdminChatId(loadAccess(), loadCompanionConfig(stateDir), null)
     const briefPrefs = makeBriefPrefs(() => { const o = briefOwner(); return o ? join(stateDir, 'memory', o) : null })
+    // 微信「做过的事 [今天|本周]」(B9 在微信上):与手机时间线同一组来源,只认主人。
+    const activityCommand = makeActivityCommand({
+      isOwner: (chatId) => resolveAdminChatId(loadAccess(), loadCompanionConfig(stateDir), null) === chatId,
+      say: (c, t) => ilink.sendMessage(c, t),
+      now: () => Date.now(), timeZone: () => loadCompanionConfig(stateDir).timezone ?? 'Asia/Shanghai',
+      items: () => { const r = buildActivity(activity.sources(), { now: Date.now(), limit: 100 }); return { items: r.items, degraded: r.degraded } },
+    })
     const jobsCommand = makeJobsCommand({
       store: jobsStore,
       isOwner: (chatId) => resolveAdminChatId(loadAccess(), loadCompanionConfig(stateDir), null) === chatId,
@@ -957,7 +965,7 @@ export async function bootDaemon(opts: BootDaemonOpts): Promise<DaemonHandle> {
       }),
       matters, guardRuntime: guardRt, subsystems: () => sup.statuses(),
       panelTokens: internalApi.panelTokens,
-      cliReply: chainReplyHandlers([jobsCommand, calendarCommand, cliReplyHandler]),
+      cliReply: chainReplyHandlers([jobsCommand, calendarCommand, activityCommand, cliReplyHandler]),
       stickers: stickerLib,
       requestRestart: (reason) => requestRestart(reason),
       llmHealth,
