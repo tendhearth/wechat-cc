@@ -110,7 +110,7 @@ describe('手机对终端会话说一句(同微信 @码)', () => {
     hub.ingest({ source: 'claude', kind: 'prompt', session_id: 'T1', cwd: '/w/proj', machine: 'mac' })
     hub.ingest({ source: 'claude', kind: 'stop', session_id: 'T1', cwd: '/w/proj', machine: 'mac', text: '上一轮' })
     const a = actions()
-    expect(a.say('T1', '再跑一次测试')).toEqual({ ok: true })
+    expect(a.say('T1', '再跑一次测试')).toMatchObject({ ok: true })
     expect(status('T1')).toBe('running')
     expect(a.say('T1', '又一句')).toEqual({ ok: false, error: 'cli_session_busy' })
     await vi.waitFor(() => expect(runs).toHaveLength(1))
@@ -148,28 +148,28 @@ describe('开在电脑窗口里的 Claude 会话(2026-10-18):话送进窗口,不
     hub.ingest({ source: 'claude', kind: 'prompt', session_id: 'W1', cwd: '/w/proj/.claude/worktrees/x', machine: 'mac' })
     windows.set('W1', 'proj-fd')
     const a = actions()
-    expect(a.say('W1', '手机上的一句')).toEqual({ ok: true })
+    expect(a.say('W1', '手机上的一句')).toMatchObject({ ok: true })
     await vi.waitFor(() => expect(relayed).toEqual([{ name: 'proj-fd', text: '手机上的一句' }]))
     expect(runs).toHaveLength(0)
     expect(status('W1')).toBe('running')
-    expect(a.say('W1', '又一句')).toEqual({ ok: true })   // 不排他:窗口按顺序读
+    expect(a.say('W1', '又一句')).toMatchObject({ ok: true })   // 不排他:窗口按顺序读
   })
   it('发信小进程跑着时登记 busy,完了就放(空闲自动重启别杀在半路,评审 10-19 #2)', async () => {
     hub.ingest({ source: 'claude', kind: 'stop', session_id: 'W5', cwd: '/w/proj', machine: 'mac', text: '上一轮' })
     windows.set('W5', 'proj-w5')
-    expect(actions().say('W5', '一句')).toEqual({ ok: true })
+    expect(actions().say('W5', '一句')).toMatchObject({ ok: true })
     await vi.waitFor(() => expect(busy).toEqual(['+cli-relay:W5', '-cli-relay:W5']))
   })
   it('没送进窗口 ⇒ 歇着的会话下一句写明没送到;在跑的不改状态(评审 10-19 #3)', async () => {
     relayResult = { ok: false, error: 'no RELAY_SENT' }
     hub.ingest({ source: 'claude', kind: 'stop', session_id: 'W6', cwd: '/w/proj', machine: 'mac', text: '上一轮' })
     windows.set('W6', 'proj-w6')
-    expect(actions().say('W6', '一句')).toEqual({ ok: true })
+    expect(actions().say('W6', '一句')).toMatchObject({ ok: true })
     await vi.waitFor(() => expect(hub.list({ includeEnded: true }).find(v => v.session_id === 'W6')?.last_summary).toContain('手机上那句没送到'))
     expect(status('W6')).toBe('idle')
     hub.ingest({ source: 'claude', kind: 'prompt', session_id: 'W7', cwd: '/w/proj', machine: 'mac' })
     windows.set('W7', 'proj-w7')
-    expect(actions().say('W7', '一句')).toEqual({ ok: true })
+    expect(actions().say('W7', '一句')).toMatchObject({ ok: true })
     await vi.waitFor(() => expect(relayed.map(r => r.name)).toContain('proj-w7'))
     await flush(); await flush()
     expect(status('W7')).toBe('running')
@@ -202,7 +202,7 @@ describe('开在电脑窗口里的 Claude 会话(2026-10-18):话送进窗口,不
   it('窗口关了 ⇒ 照旧 resume,而且在会话起点的文件夹里起', async () => {
     hub.ingest({ source: 'claude', kind: 'stop', session_id: 'W2', cwd: '/w/proj/.claude/worktrees/x', machine: 'mac', text: '上一轮' })
     const a = actions()
-    expect(a.say('W2', '接着')).toEqual({ ok: true })
+    expect(a.say('W2', '接着')).toMatchObject({ ok: true })
     await vi.waitFor(() => expect(runs).toHaveLength(1))
     expect(relayed).toHaveLength(0)
     runs[0]!.done({ code: 0, stdout: 'ok', stderr: '', timedOut: false })
@@ -328,5 +328,34 @@ describe('列表一眼:在跑的会话带此刻那一步', () => {
       const idle = await (await mobileReadsRoute({ cliActions: a, cliSessions: () => hub.list() }, new URL('http://x/m/api/cli/sessions'), new Request('http://x/m/api/cli/sessions')))!.json()
       expect(idle.sessions.find((x: { session_id: string }) => x.session_id === 'N1').now).toBeUndefined()
     } finally { rmSync(dir, { recursive: true, force: true }) }
+  })
+})
+
+describe('送进窗口的结果(10-20 真机:手机先说「已送进」,其实没送到)', () => {
+  it('say 回一个 say_id;lastSay 先是 sending,送到 ⇒ sent', async () => {
+    hub.ingest({ source: 'claude', kind: 'prompt', session_id: 'R1', cwd: '/w/proj', machine: 'mac' })
+    windows.set('R1', 'proj-r1')
+    const a = actions()
+    const r = a.say('R1', '一句') as { ok: true; say_id?: string }
+    expect(r.say_id).toMatch(/^[a-z0-9]{8,}$/)
+    expect(a.lastSay!('R1')).toMatchObject({ id: r.say_id, state: 'sending' })
+    await vi.waitFor(() => expect(a.lastSay!('R1')).toMatchObject({ id: r.say_id, state: 'sent' }))
+  })
+  it('没送进去 ⇒ failed + 原因(在跑的会话也看得见,不再只进日志)', async () => {
+    hub.ingest({ source: 'claude', kind: 'prompt', session_id: 'R2', cwd: '/w/proj', machine: 'mac' })
+    windows.set('R2', 'proj-r2')
+    relayResult = { ok: false, error: 'Executable not found in $PATH: "claude"' }
+    const a = actions()
+    const r = a.say('R2', '一句') as { ok: true; say_id?: string }
+    await vi.waitFor(() => expect(a.lastSay!('R2')).toMatchObject({ id: r.say_id, state: 'failed' }))
+    expect(a.lastSay!('R2')!.error).toContain('没送进电脑上开着的窗口')
+  })
+  it('不是开着的窗口(resume 那条路)不带 say_id,也没有 lastSay', () => {
+    hub.ingest({ source: 'claude', kind: 'stop', session_id: 'R3', cwd: '/w/proj', machine: 'mac', text: '上一轮' })
+    const a = actions()
+    const r = a.say('R3', '一句') as { ok: true; say_id?: string }
+    expect(r.ok).toBe(true)
+    expect(r.say_id).toBeUndefined()
+    expect(a.lastSay!('R3')).toBeNull()
   })
 })

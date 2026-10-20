@@ -47,3 +47,11 @@ describe('resumeCommand', () => {
     expect(a[a.length - 1]).toBe('--help')
   })
 })
+
+describe('resumeCommand × resolved binary (device-e2e 10-20)', () => {
+  it('claude resume uses the resolved binary when given', () => {
+    expect(resumeCommand('claude', 'sid', 'hi', false, { claude: '/Users/u/.local/bin/claude' }).cmd).toBe('/Users/u/.local/bin/claude')
+    expect(resumeCommand('claude', 'sid', 'hi', false).cmd).toBe('claude')
+    expect(resumeCommand('codex', 'sid', 'hi', false, { claude: '/x' }).cmd).toBe('codex')
+  })
+})

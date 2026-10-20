@@ -47,6 +47,7 @@ import { registerMailboxPoller } from './bootstrap/wire-mailbox'
 import { registerMemoryNightly } from './memory/nightly-lifecycle'
 import { resolveCheapEval } from './memory-llm-ops'
 import { wireLetters } from './bootstrap/wire-letters'
+import { resolveClaudeBinary } from './bootstrap/claude-env'
 import { registerReminders } from './reminders/sweeper'
 import { makeRemindersStore } from './reminders/store'
 import { registerReportSweeper } from './reports/sweeper'
@@ -793,12 +794,14 @@ export async function bootDaemon(opts: BootDaemonOpts): Promise<DaemonHandle> {
       return(closed:boolean)=>{if(closed)release()}
     }
     // 开在电脑窗口里的 Claude 会话(2026-10-18):说一句送进那个窗口,不另起 resume 副本;不开着时 resume 在会话起点的文件夹里起。
+    // daemon 由 launchd 起,PATH 里没有 ~/.local/bin:发信小进程 / resume 用启动时解析出的 claude(device-e2e 10-20 真机)
+    const claudeCli = resolveClaudeBinary()
     const liveWindow = {
       find: (s: import('../core/cli-events').CliSessionInfo) => findLiveWindow(s.session_id),
-      relay: (w: import('./claude-live-window').LiveWindow, text: string) => relayToWindow(w, text, { run: defaultRunner, cwd: stateDir, dangerously }),
+      relay: (w: import('./claude-live-window').LiveWindow, text: string) => relayToWindow(w, text, { run: defaultRunner, cwd: stateDir, dangerously, ...(claudeCli ? { bin: claudeCli } : {}) }),
     }
     const startCwd = (s: import('../core/cli-events').CliSessionInfo) => s.transcript_path ? transcriptStartCwd(readHead(s.transcript_path, 64 * 1024)) : null
-    const replyCore = makeCliReplyCore({ executionConflict,reserveExecution,hub: cliEvents, holdBusy: (l) => boot.holdBusy(l), log: (t, l) => log(t, l), dangerously, networkGate: guardRt.gate, liveWindow, startCwd })
+    const replyCore = makeCliReplyCore({ executionConflict,reserveExecution,hub: cliEvents, holdBusy: (l) => boot.holdBusy(l), log: (t, l) => log(t, l), dangerously, ...(claudeCli ? { claudeBin: claudeCli } : {}), networkGate: guardRt.gate, liveWindow, startCwd })
     const handExecutor = makeHandReplyExecutor(replyCore, {
       hub: cliEvents,
       notifyBrain: async (text) => {

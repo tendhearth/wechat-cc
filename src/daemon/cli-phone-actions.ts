@@ -6,6 +6,7 @@
  * 网络闸门、工作台冲突、busy 登记、10 分钟上限)。结果不回推,而是成为这条会话的下一句
  * last_summary(core 自己记 running → idle)。
  */
+import { randomBytes } from 'node:crypto'
 import type { CliEventHub, CliSessionInfo } from '../core/cli-events'
 import type { CliSessionView } from '../core/cli-session-store'
 import { readTail, type CliReplyCore } from './cli-reply-handler'
@@ -20,13 +21,18 @@ export type CliPhoneActivityResult = { ok: true; items: CliActivityItem[] } | { 
 export const PHONE_ACTIVITY_READ_MAX = 256 * 1024
 /** 列表里每条在跑的会话只读这么多尾巴(列表 15 秒一拉,一次可能好几条)。 */
 export const PHONE_NOW_READ_MAX = 64 * 1024
-export type CliPhoneSayResult = { ok: true } | { ok: false; error: 'not_found' | 'cli_session_busy' | 'cli_session_ended' | 'cli_session_remote' }
+/** 送进开着的窗口那一句的结果(10-20 真机:手机先说「已送进」,其实 relay 在后台、失败了也没人告诉它)。只记每条会话最近一句。 */
+export interface CliPhoneSayState { id: string; state: 'sending' | 'sent' | 'failed'; error?: string; at: number }
+/** say_id 只在送进开着的窗口时给(那条路是后台的,要回头看结果);resume 那条路收下就是开跑了。 */
+export type CliPhoneSayResult = { ok: true; say_id?: string } | { ok: false; error: 'not_found' | 'cli_session_busy' | 'cli_session_ended' | 'cli_session_remote' }
 
 export interface CliPhoneActions {
   /** 这条会话挂着的、手机能拍的码(中继开出去的那个);没有 ⇒ null。 */
   pendingHash(sessionId: string): string | null
   permission(target: { hash?: string; session_id?: string }, decision: 'allow' | 'deny'): CliPhonePermissionResult
   say(sessionId: string, text: string): CliPhoneSayResult
+  /** 这条会话最近一句送进窗口的结果;没有 ⇒ null。 */
+  lastSay?(sessionId: string): CliPhoneSayState | null
   /** 最近几步(跑了什么、改了哪、说了什么)—— 从会话记录尾巴读,手机上看着它跑(2026-10-17)。 */
   activity(sessionId: string): CliPhoneActivityResult
   /** 列表一眼(2026-10-17):在跑的会话此刻在做的那一步;读记录尾巴 64KB。读不到 / 没有步骤 ⇒ null。 */
@@ -50,6 +56,11 @@ export interface CliPhoneActionsDeps {
 }
 
 export function makeCliPhoneActions(deps: CliPhoneActionsDeps): CliPhoneActions {
+  const lastSays = new Map<string, CliPhoneSayState>()
+  const settleSay = (sessionId: string, id: string, next: Omit<CliPhoneSayState, 'id' | 'at'>) => {
+    // 同一条会话又说了一句:旧的那句的结果不覆盖新的
+    if (lastSays.get(sessionId)?.id === id) lastSays.set(sessionId, { id, at: Date.now(), ...next })
+  }
   const view = (sessionId: string): CliSessionView | null =>
     deps.hub.list({ includeEnded: true }).find(v => v.session_id === sessionId) ?? null
 
@@ -80,16 +91,23 @@ export function makeCliPhoneActions(deps: CliPhoneActionsDeps): CliPhoneActions 
       const w = local0 ? deps.core.live?.(s0!) ?? null : null
       if (w) {
         deps.log('CLI_REPLY', `phone say → live window ${w.name} for ${s0!.source}/${sessionId.slice(0, 6)}`)
+        const sayId = randomBytes(6).toString('hex')
+        lastSays.set(sessionId, { id: sayId, state: 'sending', at: Date.now() })
+        if (lastSays.size > 200) lastSays.delete(lastSays.keys().next().value!)
         // 已经回了「收下」:没送进去(网络闸门 / 超时 / 窗口名失效)不能只进日志 —— 会话歇着就记成这条会话的下一句,
         // 手机列表上看得见(同非窗口那条路的「没跑起来」);在跑 / 在等批准就不记,免得把它说成歇着(评审 10-19 #3)。
         void deps.core.resume(s0!, text).then(r => {
-          if (r.kind !== 'failed') return
+          if (r.kind !== 'failed') { settleSay(sessionId, sayId, { state: 'sent' }); return }
+          settleSay(sessionId, sayId, { state: 'failed', error: r.text })
           deps.log('CLI_REPLY', `phone relay failed for ${s0!.source}/${sessionId.slice(0, 6)}: ${r.text}`)
           const now = view(sessionId)
           if (!now || now.status === 'running' || now.status === 'waiting') return
           try { deps.hub.observe?.({ source: s0!.source, session_id: s0!.session_id, cwd: s0!.cwd, ...(s0!.machine ? { machine: s0!.machine } : {}), kind: 'stop', text: `手机上那句没送到:${r.text}` }) } catch { /* 登记处出错只少一行提示 */ }
-        }, err => deps.log('CLI_REPLY', `phone relay failed: ${err instanceof Error ? err.message : String(err)}`))
-        return { ok: true }
+        }, err => {
+          settleSay(sessionId, sayId, { state: 'failed', error: '没送进电脑上开着的窗口' })
+          deps.log('CLI_REPLY', `phone relay failed: ${err instanceof Error ? err.message : String(err)}`)
+        })
+        return { ok: true, say_id: sayId }
       }
       if (v.status === 'ended') return { ok: false, error: 'cli_session_ended' }
       // 在跑或在等批准:终端那头这一轮还没完,再起一个 resume 会和它抢同一条会话。
@@ -105,6 +123,7 @@ export function makeCliPhoneActions(deps: CliPhoneActionsDeps): CliPhoneActions 
       void deps.core.resume(s, text).catch(err => deps.log('CLI_REPLY', `phone resume failed: ${err instanceof Error ? err.message : String(err)}`))
       return { ok: true }
     },
+    lastSay(sessionId) { return lastSays.get(sessionId) ?? null },
     activity(sessionId) {
       const s = deps.hub.lookup(sessionId)
       if (!s || s.session_id !== sessionId) return { ok: false, error: 'not_found' }

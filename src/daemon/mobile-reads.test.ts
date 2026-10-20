@@ -220,6 +220,30 @@ describe('GET /m/api/cli/sessions(终端会话登记处,v76)', () => {
   })
 })
 
+describe('送进窗口的结果(10-20 真机)', () => {
+  const view = {
+    session_id: 'abc123-xyz', code: 'abc123', source: 'claude' as const, status: 'running' as const, stale: false,
+    project: 'wechat-cc', cwd: '/w', machine: 'mac', origin_agent: null, last_summary: null,
+    last_event_at: 5, last_prompt_at: 3, created_at: 1, pending: null,
+  }
+  it('会话行带 last_say、过 schema;say 回 say_id、过 schema;没有就都不带', async () => {
+    const cliActions = {
+      pendingHash: () => null, liveWindows: () => new Set(['abc123-xyz']),
+      lastSay: (id: string) => id === 'abc123-xyz' ? { id: 'a1b2c3d4e5f6', state: 'failed' as const, error: '没送进电脑上开着的窗口(x)', at: 9 } : null,
+      say: () => ({ ok: true as const, say_id: 'a1b2c3d4e5f6' }),
+    } as never
+    const r = await run({ cliSessions: () => [view, { ...view, session_id: 'other-1' }], cliActions }, '/m/api/cli/sessions')
+    PHONE_API_SCHEMAS['GET /m/api/cli/sessions']!.parse(r!.body)
+    expect(r!.body.sessions[0].last_say).toEqual({ id: 'a1b2c3d4e5f6', state: 'failed', error: '没送进电脑上开着的窗口(x)', at: 9 })
+    expect(r!.body.sessions[1].last_say).toBeUndefined()
+    const u = 'http://x/m/api/cli/say'
+    const res = await mobileReadsRoute({ cliActions }, new URL(u), new Request(u, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ session_id: 'abc123-xyz', text: '一句' }) }))
+    const said = { body: await res!.json() as any }
+    expect(said.body).toEqual({ ok: true, accepted: true, say_id: 'a1b2c3d4e5f6' })
+    PHONE_API_SCHEMAS['POST /m/api/cli/say']!.parse(said.body)
+  })
+})
+
 describe('GET /m/api/today(「今天」一眼看完,2026-10-14)', () => {
   it('原样给结构(只有目录名),过 schema;没接 ⇒ 503;抛 ⇒ 503;非 GET ⇒ 405', async () => {
     const now = 1_800_000_000_000

@@ -72,6 +72,8 @@ export interface CliReplyCoreDeps {
   holdBusy?: (label: string) => () => void
   log: (tag: string, line: string) => void
   dangerously: boolean
+  /** daemon 启动时解析出的 claude(resolveClaudeBinary);没给 ⇒ 裸名字。 */
+  claudeBin?: string
   readFile?: (path: string) => string
   /** 网络闸门(2026-10-02):起 `claude -p --resume` / `codex exec resume` 之前问一次。 */
   networkGate?: NetworkGate
@@ -192,7 +194,7 @@ export function makeCliReplyCore(deps: CliReplyCoreDeps): CliReplyCore {
     if(deps.executionConflict?.(s))return{kind:'failed',text:'这条会话或文件夹正在「一起做」里，请在那里继续。'}
     let settle:((closed:boolean)=>void)|undefined,closed=false
     try{settle=deps.reserveExecution?.(s)}catch{return{kind:'failed',text:'这个文件夹有另一项任务正在执行，请稍后再试。'}}
-    const { cmd, args } = resumeCommand(s.source, s.session_id, text, deps.dangerously)
+    const { cmd, args } = resumeCommand(s.source, s.session_id, text, deps.dangerously, deps.claudeBin ? { claude: deps.claudeBin } : {})
     const release = deps.holdBusy?.(`cli-resume:${s.session_id.slice(0, 6)}`) ?? (() => {})
     let cwd = s.cwd
     if (s.source === 'claude' && deps.startCwd) { try { cwd = deps.startCwd(s) ?? s.cwd } catch { cwd = s.cwd } }

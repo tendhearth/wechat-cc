@@ -52,9 +52,10 @@ export function parseCliReply(text: string): CliReply | null {
  * 分开写时以 `-` 开头的 id 会被当成选项);`--trust` 是因为 -p 下没人能点「信任这个文件夹」,而这正是主人
  * 自己开过这条会话的文件夹;dangerously 对应 `--force`(命令除非明确拒绝一律放行)。
  */
-export function resumeCommand(source: CliSource, sessionId: string, text: string, dangerously: boolean): { cmd: string; args: string[] } {
+/** bins:daemon 启动时解析出的可执行文件(launchd 起的 daemon PATH 里没有 ~/.local/bin,裸名字起不来)。 */
+export function resumeCommand(source: CliSource, sessionId: string, text: string, dangerously: boolean, bins: { claude?: string } = {}): { cmd: string; args: string[] } {
   if (source === 'claude') {
-    return { cmd: 'claude', args: ['-p', '--resume', sessionId, ...(dangerously ? ['--dangerously-skip-permissions'] : []), '--', text] }
+    return { cmd: bins.claude ?? 'claude', args: ['-p', '--resume', sessionId, ...(dangerously ? ['--dangerously-skip-permissions'] : []), '--', text] }
   }
   if (source === 'cursor') {
     return { cmd: 'cursor-agent', args: [`--resume=${sessionId}`, '-p', '--trust', ...(dangerously ? ['--force'] : []), '--', text] }
