@@ -137,7 +137,10 @@ export async function mobileReadsRoute(deps: MobileReadsDeps, url: URL, req: Req
       const live = deps.cliActions?.liveWindows?.() ?? new Set<string>()
       const sessions = deps.cliSessions().slice(0, PHONE_CLI_SESSIONS_MAX).map(v => {
         const base = phoneCliSession(v, ph)
-        const row = v.source === 'claude' && live.has(v.session_id) ? { ...base, live_window: true } : base
+        const lw = v.source === 'claude' && live.has(v.session_id) ? { ...base, live_window: true } : base
+        let said: ReturnType<NonNullable<CliPhoneActions['lastSay']>> = null
+        try { said = deps.cliActions?.lastSay?.(v.session_id) ?? null } catch { said = null }
+        const row = said ? { ...lw, last_say: said } : lw
         if (v.status !== 'running' || v.stale || budget <= 0 || !deps.cliActions?.currentStep) return row
         budget--
         let now: ReturnType<CliPhoneActions['currentStep']> = null
@@ -194,7 +197,7 @@ export async function mobileReadsRoute(deps: MobileReadsDeps, url: URL, req: Req
     if (!b || typeof sessionId !== 'string' || !SESSION_ID_RE.test(sessionId) || !text || text.length > PHONE_CLI_SAY_MAX || text.includes('\0')) return json({ ok: false, error: 'invalid' }, 400)
     try {
       const r = deps.cliActions.say(sessionId, text)
-      if (r.ok) return json({ ok: true, accepted: true })
+      if (r.ok) return json({ ok: true, accepted: true, ...(r.say_id ? { say_id: r.say_id } : {}) })
       return json({ ok: false, error: r.error }, r.error === 'not_found' ? 404 : 409)
     } catch { return json({ ok: false, error: 'unavailable' }, 503) }
   }

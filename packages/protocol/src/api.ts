@@ -479,6 +479,8 @@ export const CliSessionRow = z.object({
   now: CliActivityItem.optional(),
   // live_window(2026-10-18):这条 Claude 会话开在电脑的终端窗口里 ⇒ 说一句会送进那个窗口,在跑时也能说。老 daemon 不带。
   live_window: z.boolean().optional(),
+  // last_say(2026-10-20):最近一句送进窗口的结果 —— 送进窗口是后台的,手机发出后看这里改说法(sending → sent / failed)。老 daemon 不带。
+  last_say: z.object({ id: z.string(), state: z.enum(['sending', 'sent', 'failed']), error: z.string().optional(), at: z.number() }).optional(),
 })
 export type CliSessionRowT = z.infer<typeof CliSessionRow>
 export type NativeSessionPageT = z.infer<typeof NativeSessionPage>
@@ -569,7 +571,8 @@ export const PHONE_API_SCHEMAS: Readonly<Record<string, z.ZodTypeAny>> = {
   // 错误码:not_found 404;cli_not_actionable(终端自己在问,没开码)/ cli_permission_stale(码已失效)409。
   'POST /m/api/cli/permission': z.union([z.object({ ok: z.literal(true) }), PhoneErrorResponse]),
   // 收下即回;结果成为这条会话的下一句 last_summary。错误码:cli_session_busy(在跑 / 在等批准)/ cli_session_ended / cli_session_remote(在别的电脑上)409,not_found 404。
-  'POST /m/api/cli/say': z.union([z.object({ ok: z.literal(true), accepted: z.literal(true) }), PhoneErrorResponse]),
+  // say_id:只在送进开着的窗口时给,对上会话行的 last_say.id 才是这一句的结果
+  'POST /m/api/cli/say': z.union([z.object({ ok: z.literal(true), accepted: z.literal(true), say_id: z.string().optional() }), PhoneErrorResponse]),
   // 错误码:not_found 404;cli_session_remote(记录在别的电脑上)/ no_transcript(没有可读的记录)409。
   'GET /m/api/cli/activity': z.union([z.object({ ok: z.literal(true), items: z.array(CliActivityItem) }), PhoneErrorResponse]),
   'GET /m/api/today': z.union([z.object({ ok: z.literal(true), today: OverseerToday }), PhoneErrorResponse]),
