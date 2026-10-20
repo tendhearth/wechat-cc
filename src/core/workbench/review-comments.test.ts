@@ -62,12 +62,14 @@ describe('review comments (v83)', () => {
     expect(store.reviewComments.markSent(t.id, [], 'r')).toBe(0)
   })
 
-  it('remove deletes a draft', () => {
+  it('remove deletes a draft; removing an id that exists nowhere is a no-op (idempotent retry)', () => {
     const { store, t, base } = setup()
     store.reviewComments.create({ ...base, id: 'c1', body: 'x' })
-    store.reviewComments.remove(t.id, 'c1')
+    expect(store.reviewComments.remove(t.id, 'c1')).toBe(true)
     expect(store.reviewComments.list(t.id)).toEqual([])
-    expect(() => store.reviewComments.remove(t.id, 'c1')).toThrow('review_comment_not_found')
+    // 重发同一个删(回包丢了)⇒ 不报错、什么都不动
+    expect(store.reviewComments.remove(t.id, 'c1')).toBe(false)
+    expect(store.reviewComments.remove(t.id, 'never-existed')).toBe(false)
   })
 
   it('hunk log: set overwrites per hunk and resets notified; markNotified once', () => {

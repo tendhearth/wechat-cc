@@ -233,6 +233,20 @@ export function makeLiveBackend(d: LiveDeps): Backend {
       if (p.comment.length > PHONE_SAY_MAX_CHARS) throw new BackendError('invalid')
       await call('POST /m/api/matter/review-return', '/m/api/matter/review-return', { body: { id: p.id, artifactId: p.artifactId, paths: p.paths, comment: p.comment } })
     },
+    // 行评论(切片 4):建按 commentId 幂等(同内容回原行);删也幂等(哪儿都没有这个 id ⇒ daemon 当已删过)⇒ 超时可自动重发。
+    // 发出不自动重发(retry:false,协议客户端超时只拒不重发):重发时草稿多半已记成已发出,会回「没有草稿」。
+    async reviewComment(p) {
+      if (p.body.length > 2000) throw new BackendError('invalid')
+      await call('POST /m/api/matter/review-comment', '/m/api/matter/review-comment', { body: { id: p.id, commentId: p.commentId, artifactId: p.artifactId, path: p.path, hunk: p.hunk, hunkSha256: p.hunkSha256, body: p.body }, retry: true })
+    },
+    async reviewCommentDelete(p) {
+      await call('POST /m/api/matter/review-comment', '/m/api/matter/review-comment', { body: { id: p.id, commentId: p.commentId, delete: true }, retry: true })
+    },
+    async reviewCommentsSend(p) {
+      if ((p.summary?.length ?? 0) > 2000) throw new BackendError('invalid')
+      const r = await call<{ sent?: number; remaining?: number; skippedDiscarded?: number }>('POST /m/api/matter/review-comments-send', '/m/api/matter/review-comments-send', { body: { id: p.id, inputRequestId: p.requestId, ...(p.summary ? { summary: p.summary } : {}) }, retry: false })
+      return { sent: r.sent ?? 0, remaining: r.remaining ?? 0, skippedDiscarded: r.skippedDiscarded ?? 0 }
+    },
     async rewindPreview(p) {
       return (await call<{ preview: RewindPreviewT }>('GET /m/api/matter/rewind', `/m/api/matter/rewind?${idq(p.id)}&artifactId=${encodeURIComponent(p.artifactId)}`)).preview
     },

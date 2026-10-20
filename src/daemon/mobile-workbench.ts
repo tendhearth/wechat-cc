@@ -38,6 +38,9 @@ export function mobileMatterError(error:unknown):Response {
   if(['upload_discarded','upload_expired'].includes(code))return json({ok:false,error:code},410)
   if(['attachment_storage_limit','attachment_limit','upload_limit','upload_unfinished_limit','invalid_attachment_size'].includes(code))return json({ok:false,error:code},413)
   if(['upload_conflict','upload_changed','upload_offset','attachment_in_use'].includes(code))return json({ok:false,error:code},409)
+  // 行评论(切片 4):块变了 / 已发出不能改 / 同 id 内容不同 / 草稿满了 ⇒ 409;评论不在(或没有可发的草稿)⇒ 404
+  if(['review_hunk_stale','review_comment_sent','review_comment_conflict','review_comment_limit'].includes(code))return json({ok:false,error:code},409)
+  if(code==='review_comment_not_found')return json({ok:false,error:code},404)
   if(code==='invalid_entry_owner')return json({ok:false,error:code},403)
   // 独立工作区(2026-10-07):项目不是 Git 仓库 / 同名分支或目录已占 / git 自己失败。
   if(code==='worktree_not_git'||code==='worktree_base_missing')return json({ok:false,error:code},422)

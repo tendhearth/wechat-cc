@@ -806,9 +806,12 @@ describe('POST /m/api/matter/review-mark|review-return', () => {
   async function panelWith(review?: unknown) {
     const panel = makeSettingsPanel({ stateDir: seedStateDir(), ownerChatId: () => OWNER, chatPrefs: { get: () => ({}), set: () => ({}) }, getUserName: () => null, setUserName: async () => {}, log: () => {}, ...(review ? { review } : {}) } as never)
     const { port } = await panel.start(0)
-    const t = panel.issueToken()
-    const post = (path: string, body: unknown) => fetch(`http://127.0.0.1:${port}${path}?t=${t}`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body) })
-    return { panel, post }
+    const base = `http://127.0.0.1:${port}`
+    // 退回只给设备令牌(#456 评审):先配对拿设备令牌;link 是 /set 链接令牌
+    const paired = await (await fetch(`${base}/set/api/pair?t=${panel.issueToken()}`, { method: 'POST' })).json() as { device_token: string }
+    const link = panel.issueToken()
+    const post = (path: string, body: unknown, tok = paired.device_token) => fetch(`${base}${path}?t=${tok}`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body) })
+    return { panel, post, link }
   }
   it('没接线 ⇒ 503;参数不对 ⇒ 400 且不碰工作台', async () => {
     const a = await panelWith()
@@ -822,6 +825,16 @@ describe('POST /m/api/matter/review-mark|review-return', () => {
     expect(review.mark).not.toHaveBeenCalled()
     expect(review.ret).not.toHaveBeenCalled()
     await b.panel.stop()
+  })
+  it('链接令牌:退回 403(不碰工作台);标记照旧能用', async () => {
+    const review = { mark: vi.fn(), ret: vi.fn(async () => ({})) }
+    const p = await panelWith(review)
+    const r = await p.post('/m/api/matter/review-return', { id: 'deadbeef', artifactId: 'a1', paths: ['a.ts'], comment: '改回去' }, p.link)
+    expect(r.status).toBe(403)
+    expect(review.ret).not.toHaveBeenCalled()
+    expect((await p.post('/m/api/matter/review-mark', { id: 'deadbeef', artifactId: 'a1', path: 'a.ts', mark: 'accepted' }, p.link)).status).toBe(200)
+    expect(review.mark).toHaveBeenCalledTimes(1)
+    await p.panel.stop()
   })
   it('标记与退回原样转给工作台;工作台的错误码按手机那套映射', async () => {
     const review = { mark: vi.fn(), ret: vi.fn(async () => ({})) }
@@ -838,6 +851,93 @@ describe('POST /m/api/matter/review-mark|review-return', () => {
     expect((await p.post('/m/api/matter/review-mark', { id: 'deadbeef', artifactId: 'gone', path: 'a.ts', mark: 'accepted' })).status).toBe(400)
     review.mark.mockImplementationOnce(() => { throw new Error('not_found') })
     expect((await p.post('/m/api/matter/review-mark', { id: 'deadbeef', artifactId: 'a1', path: 'a.ts', mark: 'accepted' })).status).toBe(404)
+    await p.panel.stop()
+  })
+})
+
+describe('POST /m/api/matter/review-comment|review-comments-send(行评论,切片 4)', () => {
+  const CID = '22222222-2222-4222-8222-222222222222', SHA = 'a'.repeat(64), ART = 'abcdef12'
+  const create = { id: 'deadbeef', commentId: CID, artifactId: ART, path: 'src/a.ts', hunk: 0, hunkSha256: SHA, body: '这块别动' }
+  async function panelWith(review?: unknown) {
+    const panel = makeSettingsPanel({ stateDir: seedStateDir(), ownerChatId: () => OWNER, chatPrefs: { get: () => ({}), set: () => ({}) }, getUserName: () => null, setUserName: async () => {}, log: () => {}, ...(review ? { review } : {}) } as never)
+    const { port } = await panel.start(0)
+    const base = `http://127.0.0.1:${port}`
+    // 送给执行者的话就是指令 ⇒ 只给设备令牌(#456 评审);link 是 /set 链接令牌
+    const paired = await (await fetch(`${base}/set/api/pair?t=${panel.issueToken()}`, { method: 'POST' })).json() as { device_token: string }
+    const link = panel.issueToken()
+    const post = (path: string, body: unknown, tok = paired.device_token) => fetch(`${base}${path}?t=${tok}`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: typeof body === 'string' ? body : JSON.stringify(body) })
+    return { panel, post, link }
+  }
+  it('没接线(老接线只有 mark / ret)⇒ 503;参数不对 ⇒ 400 且不碰工作台', async () => {
+    const a = await panelWith({ mark: vi.fn(), ret: vi.fn() })
+    expect((await a.post('/m/api/matter/review-comment', create)).status).toBe(503)
+    expect((await a.post('/m/api/matter/review-comments-send', { id: 'deadbeef' })).status).toBe(503)
+    await a.panel.stop()
+    const review = { mark: vi.fn(), ret: vi.fn(), comment: vi.fn(), sendComments: vi.fn() }
+    const b = await panelWith(review)
+    const bad: unknown[] = [
+      { ...create, id: 'nope' }, { ...create, commentId: 'x' }, { ...create, hunk: -1 }, { ...create, hunk: 1.5 }, { ...create, hunkSha256: 'z' },
+      { ...create, body: '  ' }, { ...create, body: 'x'.repeat(2001) }, { ...create, artifactId: 'A!' }, { ...create, path: '' },
+      // 手机只评论整块:带行号 / 改正文 / 多余的键一律 400
+      { ...create, rowStart: 0, rowEnd: 1 }, { id: 'deadbeef', commentId: CID, body: '改' }, { ...create, quote: '+x' },
+      { id: 'deadbeef', commentId: CID, delete: 'yes' }, [create],
+    ]
+    for (const body of bad) expect((await b.post('/m/api/matter/review-comment', body)).status, JSON.stringify(body)).toBe(400)
+    expect((await b.post('/m/api/matter/review-comment', '{坏')).status).toBe(400)
+    for (const body of [{ id: 'nope' }, { id: 'deadbeef', summary: 3 }, { id: 'deadbeef', summary: 'x'.repeat(2001) }, { id: 'deadbeef', inputRequestId: 'x' }, { id: 'deadbeef', restartToken: SHA }])
+      expect((await b.post('/m/api/matter/review-comments-send', body)).status, JSON.stringify(body)).toBe(400)
+    expect(review.comment).not.toHaveBeenCalled(); expect(review.sendComments).not.toHaveBeenCalled()
+    await b.panel.stop()
+  })
+  it('链接令牌:建 / 删 / 发出都 403,不碰工作台', async () => {
+    const review = { mark: vi.fn(), ret: vi.fn(), comment: vi.fn(), sendComments: vi.fn() }
+    const p = await panelWith(review)
+    expect((await p.post('/m/api/matter/review-comment', create, p.link)).status).toBe(403)
+    expect((await p.post('/m/api/matter/review-comment', { id: 'deadbeef', commentId: CID, delete: true }, p.link)).status).toBe(403)
+    expect((await p.post('/m/api/matter/review-comments-send', { id: 'deadbeef' }, p.link)).status).toBe(403)
+    expect(review.comment).not.toHaveBeenCalled(); expect(review.sendComments).not.toHaveBeenCalled()
+    await p.panel.stop()
+  })
+  it('建 / 删原样转给工作台(id 转小写);发出只回三个数(回执与任务视图不给手机)', async () => {
+    const { PHONE_API_SCHEMAS } = await import('@wechat-cc/protocol')
+    const review = { mark: vi.fn(), ret: vi.fn(), comment: vi.fn(() => ({ comment: { id: CID } })), sendComments: vi.fn(async () => ({ input: { id: 'li', text: '秘密' }, sent: 2, remaining: 1, skippedDiscarded: 0 })) }
+    const p = await panelWith(review)
+    const r1 = await (await p.post('/m/api/matter/review-comment', { ...create, commentId: CID.toUpperCase() })).json()
+    expect(r1).toEqual({ ok: true, commentId: CID }); PHONE_API_SCHEMAS['POST /m/api/matter/review-comment']!.parse(r1)
+    expect(review.comment).toHaveBeenCalledWith('deadbeef', { commentId: CID, artifactId: ART, path: 'src/a.ts', hunk: 0, hunkSha256: SHA, body: '这块别动' })
+    const r2 = await (await p.post('/m/api/matter/review-comment', { id: 'deadbeef', commentId: CID, delete: true })).json()
+    expect(r2).toEqual({ ok: true, deleted: true }); PHONE_API_SCHEMAS['POST /m/api/matter/review-comment']!.parse(r2)
+    expect(review.comment).toHaveBeenLastCalledWith('deadbeef', { commentId: CID, delete: true })
+    const RID = '33333333-3333-4333-8333-333333333333'
+    const r3 = await (await p.post('/m/api/matter/review-comments-send', { id: 'deadbeef', summary: '整体还行', inputRequestId: RID })).json()
+    expect(r3).toEqual({ ok: true, sent: 2, remaining: 1, skippedDiscarded: 0 }); PHONE_API_SCHEMAS['POST /m/api/matter/review-comments-send']!.parse(r3)
+    expect(review.sendComments).toHaveBeenCalledWith('deadbeef', { summary: '整体还行', inputRequestId: RID })
+    await p.panel.stop()
+  })
+  it('错误码按手机那套映射:只带短码,不带细节', async () => {
+    const { PHONE_API_SCHEMAS } = await import('@wechat-cc/protocol')
+    const review = { mark: vi.fn(), ret: vi.fn(), comment: vi.fn(), sendComments: vi.fn() }
+    const p = await panelWith(review)
+    const cases: Array<[string, number]> = [
+      ['review_hunk_stale', 409], ['review_comment_sent', 409], ['review_comment_conflict', 409], ['review_comment_limit', 409], ['review_round_discarded', 409],
+      ['review_comment_not_found', 404], ['review_file_unmarkable', 400], ['invalid_review_reference', 400], ['not_found', 404], ['workbench_busy', 409],
+    ]
+    for (const [code, status] of cases) {
+      review.comment.mockImplementationOnce(() => { throw Object.assign(new Error(code), { detail: '/Users/me/secret' }) })
+      const res = await p.post('/m/api/matter/review-comment', create)
+      expect(res.status, code).toBe(status)
+      const body = await res.json()
+      expect(body, code).toEqual({ ok: false, error: code === 'not_found' ? 'matter_not_found' : code })
+      PHONE_API_SCHEMAS['POST /m/api/matter/review-comment']!.parse(body)
+    }
+    for (const [code, status] of [['restart_confirmation_required', 409], ['workbench_busy', 409], ['review_comment_not_found', 404], ['rewind_needs_owner', 409], ['boom /Users/x', 500]] as const) {
+      review.sendComments.mockRejectedValueOnce(new Error(code))
+      const res = await p.post('/m/api/matter/review-comments-send', { id: 'deadbeef' })
+      expect(res.status, code).toBe(status)
+      const body = await res.json()
+      expect(body).toEqual({ ok: false, error: status === 500 ? 'unavailable' : code })
+      PHONE_API_SCHEMAS['POST /m/api/matter/review-comments-send']!.parse(body)
+    }
     await p.panel.stop()
   })
 })

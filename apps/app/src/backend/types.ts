@@ -72,6 +72,8 @@ export type BackendCode = 'stale' | 'busy' | 'offline' | 'revoked' | 'timeout' |
   | 'until_invalid' | 'until_requires_worktree' | 'until_unattended'
   // 撤掉这一轮(回退切片 4):工作区刚变过 / 停住等电脑上处理 / 共用文件夹 / 已合回 / 会盖掉被忽略的文件 / 这件事回不了 / 没东西可撤 / 切换失败
   | 'rewind_stale' | 'rewind_needs_owner' | 'rewind_shared' | 'rewind_merged' | 'rewind_ignored' | 'rewind_unavailable' | 'rewind_noop' | 'rewind_failed'
+  // 行评论(切片 4):这一块已经变了 / 评论已发出(不能删)/ 同一个 id 内容不同 / 草稿满了
+  | 'hunk_stale' | 'comment_sent' | 'comment_conflict' | 'comment_limit'
 export type Unsubscribe = () => void
 
 export interface Backend {
@@ -86,6 +88,12 @@ export interface Backend {
   /** 逐文件审阅(2026-10-17):这一份没问题 / 退回给执行者(comment 必填,走续接)。artifactId = changes 那一轮的。 */
   reviewMark(p: { id: string; artifactId: string; path: string }): Promise<void>
   reviewReturn(p: { id: string; artifactId: string; paths: string[]; comment: string }): Promise<void>
+  /** 行评论(切片 4):整块评论存成草稿。commentId 由手机生成(UUID),同一条重试幂等;hunkSha256 来自 changes 的 hunks。 */
+  reviewComment(p: { id: string; commentId: string; artifactId: string; path: string; hunk: number; hunkSha256: string; body: string }): Promise<void>
+  /** 删一条草稿(已发出的删不了 ⇒ comment_sent)。 */
+  reviewCommentDelete(p: { id: string; commentId: string }): Promise<void>
+  /** 把这件事所有草稿一起发给执行者;requestId 同一批重点沿用。不自动重发:超时 ⇒ 不确定。 */
+  reviewCommentsSend(p: { id: string; requestId: string; summary?: string }): Promise<{ sent: number; remaining: number; skippedDiscarded: number }>
   decide(p: { id: string; runId: string; requestId: string; decision: 'allow' | 'deny' }): Promise<void>
   /** answers 形状与 daemon validateUserInputAnswers 一致:每题一个 string[](单选 1 个;多选 1–8 个、不重复;每条 ≤ 4000 字)。null = 不回答。 */
   answer(p: { id: string; runId: string; requestId: string; answers: Record<string, string[]> | null }): Promise<void>

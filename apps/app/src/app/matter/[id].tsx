@@ -6,7 +6,7 @@ import type { MatterInputT } from '../../backend/types'
 import { t } from '../../i18n'
 import { useLang } from '../../i18n/useLang'
 import { Artifacts } from '../../ui/Artifacts'
-import { ChangeReview } from '../../ui/ChangeReview'
+import { ChangeReview, CommentsSend, HunkComments } from '../../ui/ChangeReview'
 import { useBackendCtx } from '../../state/BackendProvider'
 import { useConnection, useQuery, useSubmit, useTopic } from '../../state/hooks'
 import { getDraft, setDraft } from '../../state/drafts'
@@ -41,6 +41,7 @@ import { untilLine } from '../../view/until'
 import { usageLine } from '../../view/usage'
 import { canOfferRewind, discardedLines, rewindBlockedNotice } from '../../view/rewind'
 import { RewindSheet } from '../../ui/RewindSheet'
+import { canComment, fileHunks, sendBlock } from '../../view/review-comments'
 
 const NO_INPUTS: readonly MatterInputT[] = []
 
@@ -87,11 +88,13 @@ export default function Matter() {
   // 撤掉这一轮(回退切片 4):确认页开着没有、确认之后那一句(成了 / 不确定 / 停住)
   const [rewindOpen, setRewindOpen] = useState(false)
   const [rewindNote, setRewindNote] = useState<string | null>(null)
+  // 行评论(切片 4):「发出评论」之后那一句(发成后发出那一块会消失,这句留着)
+  const [commentsNote, setCommentsNote] = useState<{ text: string; ok: boolean } | null>(null)
   useEffect(() => { if (!stopArmed) return; const tm = setTimeout(() => setStopArmed(false), 3000); return () => clearTimeout(tm) }, [stopArmed])
   const handoffReq = useRef('')
   const idRef = useRef(id)
   idRef.current = id
-  useEffect(() => { setSheet(false); setFailure(null); setInputNotice(null); setOpenErrors(new Set()); setStopArmed(false); setStopNote(null); setRewindOpen(false); setRewindNote(null) }, [id])
+  useEffect(() => { setSheet(false); setFailure(null); setInputNotice(null); setOpenErrors(new Set()); setStopArmed(false); setStopNote(null); setRewindOpen(false); setRewindNote(null); setCommentsNote(null) }, [id])
   const { refresh: refreshDetail } = detail
   const { refresh: refreshInsight } = insight
   const { refresh: refreshChanges } = changes
@@ -144,6 +147,7 @@ export default function Matter() {
   // 出生地(2026-10-19):只画建这件事的那个表面;不知道 ⇒ 不画
   const origin = matterOrigin(d.matter.origin)
   const files = changes.data?.files ?? []
+  const sendRow = sendBlock(turn, lang)
   const conv = conversationView(d.events)
   const hb = handoffBlock(d.quotaHandoff, lang, Date.now())
   const online = canSubmit(conn)
@@ -366,6 +370,10 @@ export default function Matter() {
                   </>
                 ) : f.truncated ? (
                   <Txt role="small" tone="inkSoft">{t(lang, 'progress.tooBig')}</Txt>
+                ) : f.diff && turn?.artifactId && canComment(turn, f) ? (
+                  // 行评论(切片 4):块对得上 ⇒ 按块显示,每块「评论这一块」;对不上 ⇒ 照旧整段
+                  <HunkComments matterId={id} artifactId={turn.artifactId} file={f} pieces={fileHunks(f)!} backend={backend} lang={lang} online={online}
+                    onDone={() => { void refreshChanges() }} />
                 ) : f.diff ? (
                   <ScrollView nestedScrollEnabled style={{ maxHeight: 320 }}>
                     <Txt role="code" tone="inkSoft">{f.diff}</Txt>
@@ -379,6 +387,11 @@ export default function Matter() {
                 ) : null}
               </View>
             ))}
+            {sendRow && turn ? (
+              <CommentsSend matterId={id} block={sendRow}
+                backend={backend} lang={lang} online={online} onNote={setCommentsNote} onDone={() => { void refreshChanges(); void refreshDetail() }} />
+            ) : null}
+            {commentsNote ? <Txt testID="line-comments-note" role="caption" tone={commentsNote.ok ? 'inkSoft' : 'bad'} accessibilityLiveRegion="polite">{commentsNote.text}</Txt> : null}
           </Sheet>
 
         <Sheet testID="progress-process" title={t(lang, 'progress.viewProcess')}>

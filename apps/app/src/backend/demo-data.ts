@@ -133,12 +133,18 @@ export function progress(lang: Lang, id: string, stage: Stage): ProgressSummaryT
 /** 演示「撤掉这一轮」的确认码(真 daemon 是 sha256)。 */
 export const DEMO_REWIND_TOKEN = 'd'.repeat(64)
 
+/** 演示改动每个文件那一块的「sha」(假值,只给演示后端对一下)。 */
+export const DEMO_HUNK_SHA = ['d'.repeat(63) + '0', 'd'.repeat(63) + '1']
+
 export function changesTurn(now: number): PhoneChangesTurnT {
   return {
     artifactId: 'demo-review', createdAt: now, rewindable: true, status: 'complete', omittedFiles: 0, notes: [],
     files: [
-      { path: 'src/pages/home.css', kind: 'modified', truncated: false, diff: '-  padding: 64px 48px;\n+  padding: 32px 20px;\n+  max-width: 100%;' },
-      { path: 'src/pages/home.tsx', kind: 'modified', truncated: false, diff: '-<h1>My portfolio</h1>\n+<h1>A little of what I make.</h1>' },
+      // 行评论(切片 4):演示的 diff 带块头,每块一个「评论这一块」;sha 是演示用的假值(演示后端自己认)
+      { path: 'src/pages/home.css', kind: 'modified', truncated: false, diff: '@@ -12 +12,2 @@ .hero\n-  padding: 64px 48px;\n+  padding: 32px 20px;\n+  max-width: 100%;',
+        hunks: [{ index: 0, sha256: DEMO_HUNK_SHA[0]!, header: '@@ -12 +12,2 @@ .hero' }] },
+      { path: 'src/pages/home.tsx', kind: 'modified', truncated: false, diff: '@@ -3 +3 @@\n-<h1>My portfolio</h1>\n+<h1>A little of what I make.</h1>',
+        hunks: [{ index: 0, sha256: DEMO_HUNK_SHA[1]!, header: '@@ -3 +3 @@' }] },
     ],
   }
 }

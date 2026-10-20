@@ -70,6 +70,9 @@ const MODEL_NAME_RE = /^[A-Za-z0-9._/:-]{1,100}$/
 const PREF_KEYS = new Set(['split', 'care', 'stickers', 'hunt'])
 const PERSONA_MAX_CHARS = 8000
 
+/** 客户端生成的评论 id / 投递 id(同 internal-api 的 REQUEST_ID)。 */
+const UUID_RE = /^[a-f0-9]{8}-[a-f0-9]{4}-[1-5][a-f0-9]{3}-[89ab][a-f0-9]{3}-[a-f0-9]{12}$/i
+
 export interface SettingsPanelDeps {
   stateDir: string
   ownerChatId: () => string | null
@@ -111,6 +114,10 @@ export interface SettingsPanelDeps {
   review?: {
     mark(id: string, input: { artifactId: string; path: string; mark: 'accepted' | 'returned' }): unknown
     ret(id: string, input: { artifactId: string; paths: string[]; comment: string }): unknown
+    /** 行评论(切片 4):手机只建整块评论 / 删草稿。缺省 ⇒ review-comment 503。 */
+    comment?(id: string, input: { commentId: string; artifactId: string; path: string; hunk: number; hunkSha256: string; body: string } | { commentId: string; delete: true }): unknown
+    /** 发出这件事所有草稿;回 sent / remaining / skippedDiscarded(回执与任务视图不给手机)。缺省 ⇒ 503。 */
+    sendComments?(id: string, input: { summary?: string; inputRequestId?: string }): unknown
   }
   /** 「一件事」(2026-09-16):手机看同一份 matter 列表 / 详情,并能往里说话。seenOnPhone 记「在手机露过面」。 */
   matters?: MobileMatterActions & {
@@ -892,6 +899,47 @@ export function makeSettingsPanel(deps: SettingsPanelDeps): SettingsPanel {
               if (code === 'review_file_unmarkable') return json({ ok: false, error: code }, 400)
               return mobileMatterError(e)
             }
+          }
+          // 行评论(切片 4):建 {id, commentId, artifactId, path, hunk, hunkSha256, body}(整块,不带行)/ 删 {id, commentId, delete:true},按键集合精确校验。
+          if (url.pathname === '/m/api/matter/review-comment' && req.method === 'POST') {
+            if (!deps.review?.comment) return json({ ok: false, error: 'review_not_wired' }, 503)
+            let body: unknown
+            try { body = await req.json() } catch { return json({ ok: false, error: 'bad_json' }, 400) }
+            const b = (body && typeof body === 'object' && !Array.isArray(body) ? body : {}) as Record<string, unknown>
+            const keys = Object.keys(b).sort().join(',')
+            if (typeof b.id !== 'string' || !/^[a-f0-9]{8}$/.test(b.id) || typeof b.commentId !== 'string' || !UUID_RE.test(b.commentId)) return json({ ok: false, error: 'invalid' }, 400)
+            const commentId = b.commentId.toLowerCase()
+            let input: Parameters<NonNullable<NonNullable<SettingsPanelDeps['review']>['comment']>>[1]
+            if (keys === 'commentId,delete,id') { if (b.delete !== true) return json({ ok: false, error: 'invalid' }, 400); input = { commentId, delete: true } }
+            else if (keys === 'artifactId,body,commentId,hunk,hunkSha256,id,path') {
+              if (typeof b.artifactId !== 'string' || !/^[a-f0-9-]{8,64}$/.test(b.artifactId) || typeof b.path !== 'string' || !b.path || b.path.length > 4096 ||
+                  typeof b.hunk !== 'number' || !Number.isInteger(b.hunk) || b.hunk < 0 || b.hunk > 1_000_000 || typeof b.hunkSha256 !== 'string' || !/^[a-f0-9]{64}$/.test(b.hunkSha256) ||
+                  typeof b.body !== 'string' || !b.body.trim() || b.body.length > 2000) return json({ ok: false, error: 'invalid' }, 400)
+              input = { commentId, artifactId: b.artifactId, path: b.path, hunk: b.hunk, hunkSha256: b.hunkSha256, body: b.body }
+            } else return json({ ok: false, error: 'invalid' }, 400)
+            try {
+              deps.review.comment(b.id, input)
+              return json({ ok: true, ...('delete' in input ? { deleted: true } : { commentId }) })
+            } catch (e) {
+              const code = e instanceof Error ? e.message : ''
+              if (code === 'review_file_unmarkable') return json({ ok: false, error: code }, 400)
+              return mobileMatterError(e)
+            }
+          }
+          // 发出评论 {id, summary?, inputRequestId?}:投递同 review-return;原会话接不上 ⇒ 409 restart_confirmation_required(手机不带 restartToken,回电脑上确认)。
+          if (url.pathname === '/m/api/matter/review-comments-send' && req.method === 'POST') {
+            if (!deps.review?.sendComments) return json({ ok: false, error: 'review_not_wired' }, 503)
+            let body: unknown
+            try { body = await req.json() } catch { return json({ ok: false, error: 'bad_json' }, 400) }
+            const b = (body && typeof body === 'object' && !Array.isArray(body) ? body : {}) as Record<string, unknown>
+            if (typeof b.id !== 'string' || !/^[a-f0-9]{8}$/.test(b.id) || Object.keys(b).some(k => !['id', 'summary', 'inputRequestId'].includes(k)) ||
+                (b.summary !== undefined && (typeof b.summary !== 'string' || b.summary.length > 2000)) ||
+                (b.inputRequestId !== undefined && (typeof b.inputRequestId !== 'string' || !UUID_RE.test(b.inputRequestId)))) return json({ ok: false, error: 'invalid' }, 400)
+            try {
+              const r = await deps.review.sendComments(b.id, { ...(typeof b.summary === 'string' ? { summary: b.summary } : {}), ...(typeof b.inputRequestId === 'string' ? { inputRequestId: b.inputRequestId.toLowerCase() } : {}) }) as Record<string, unknown> | undefined
+              const n = (v: unknown) => typeof v === 'number' && Number.isFinite(v) ? v : 0
+              return json({ ok: true, sent: n(r?.sent), remaining: n(r?.remaining), skippedDiscarded: n(r?.skippedDiscarded) })
+            } catch (e) { return mobileMatterError(e) }
           }
           if (url.pathname === '/m/api/matter/say' && req.method === 'POST') {
             if (!deps.matters) return json({ ok: false, error: 'matters_not_wired' }, 503)
