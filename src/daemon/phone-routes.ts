@@ -50,6 +50,9 @@ export const PHONE_ROUTES: ReadonlySet<string> = new Set([
   'GET /m/api/chat/file',
   // CC 的信(2026-10-18,mobile-letters.ts):寄出去了的信 + 一页 PNG 按块读。信是私事:链接令牌不在册(见 LINK_ROUTES)
   'GET /m/api/letters',
+  // 定时(对标 B7,2026-10-20):只给设备
+  'GET /m/api/jobs',
+  'POST /m/api/jobs/action',
   'GET /m/api/letters/page',
   // 主人对话用哪个后端 / 模型:读与钉(2026-10-06)
   'GET /m/api/chat/model',
@@ -107,7 +110,7 @@ export const PHONE_ROUTES: ReadonlySet<string> = new Set([
  */
 // chat/file 也只给设备(评审 10-19 #1):寄出去的信每一页都镜像成主人对话里的一行文件,链接令牌能从这里读出整封信,
 // 等于绕过上面「信是私事」;手机网页 /m 不用这条(只有原生 App 按块下载回复里的文件)。
-const LINK_EXCLUDED: ReadonlySet<string> = new Set(['POST /m/api/cli/say', 'POST /m/api/cli/permission', 'GET /m/api/letters', 'GET /m/api/letters/page', 'GET /m/api/chat/file'])
+const LINK_EXCLUDED: ReadonlySet<string> = new Set(['POST /m/api/cli/say', 'POST /m/api/cli/permission', 'GET /m/api/letters', 'GET /m/api/letters/page', 'GET /m/api/chat/file', 'GET /m/api/jobs', 'POST /m/api/jobs/action'])
 export const LINK_ROUTES: ReadonlySet<string> = new Set([...PHONE_ROUTES].filter(r => !LINK_EXCLUDED.has(r)))
 
 /**

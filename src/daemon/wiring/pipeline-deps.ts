@@ -4,6 +4,9 @@
  *
  * Refs are passed in for late-bound polling/guard access from closures.
  */
+import { makeJobsStore } from '../../core/scheduled-jobs-store'
+import { jobsView, jobsAction } from '../scheduled-jobs/view'
+import { pickJobExecutor } from './tick-bodies'
 import type { SinkExtras } from '../reply-sinks'
 import { encodeExtras, hasExtras, projectReplyExtras, stickerDataUri, withStickerImages, type AppReplyExtras, type ConverseResult, CONVERSE_IMAGE_LIMITS, converseFileStem, isConverseImageMime, type ConverseImage } from '../app-reply'
 import { join } from 'node:path'
@@ -762,6 +765,14 @@ export function buildPipelineDeps(opts: PipelineDepsOpts, refs: PipelineDepsRefs
     ...(mattersService && opts.matters ? { matters: { list: (f) => mattersService.list(f), detail: (id) => mattersService.detail(id), inputReceipt:mattersService.inputReceipt, say: (id, text, input) => mattersService.say(id, text, 'phone',input), permission:mattersService.permission,answer:mattersService.answer,stop:mattersService.stop,worktree:mattersService.worktree,artifactChunk:mattersService.artifactChunk,handoff:mattersService.handoff,seenOnPhone: (id) => opts.matters!.bind(id, 'phone', 'pwa') } } : {}),
     // 「CC 的信」(2026-10-18):只读存档,寄出去了的才列。
     letters: { list: () => listLetters(stateDir), pagePath: (id: string, page: number) => letterPagePath(stateDir, id, page) },
+    // 定时在手机上看得见(对标 B7):与微信「定时」、runner 读写同一个 scheduled-jobs.json。
+    jobs: (() => {
+      const store = makeJobsStore(stateDir)
+      return {
+        view: () => jobsView({ store, timezone: loadCompanionConfig(stateDir).timezone ?? 'Asia/Shanghai', executor: pickJobExecutor(id => boot.registry.has(id as never)) }),
+        action: (id: string, action: import('../scheduled-jobs/view').JobsActionKind) => jobsAction(store, id, action),
+      }
+    })(),
     ...(phoneOwner && phoneChat ? { chat: {
       owner: () => phoneOwner.peek(),
       history: (chatId: string, o: { beforeTs?: string; limit: number }) => messagesStore.listRange(chatId, o),

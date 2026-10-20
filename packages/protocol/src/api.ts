@@ -290,6 +290,10 @@ const CuratedItem = z.object({
   // 出处(2026-10-20):这条是从哪几句聊天里记下的;老 daemon 没有。
   sources: z.array(z.object({ ts: z.string(), excerpt: z.string() })).optional(),
 })
+const PhoneJob = z.object({
+  id: z.string(), label: z.string(), text: z.string(), brief: z.boolean(), paused: z.boolean(),
+  last: z.object({ day: z.string(), status: z.string(), label: z.string() }).nullable(),
+})
 export const MemorySuccess = z.object({
   ok: z.literal(true), updated_at: z.string().nullable(), when_label: z.string().nullable(),
   mood: z.enum(['changed', 'steady', 'first']), failures: z.number(), changes: z.array(ViewChange),
@@ -550,6 +554,9 @@ export const PHONE_API_SCHEMAS: Readonly<Record<string, z.ZodTypeAny>> = {
   'POST /m/api/chat/model': z.union([ChatModelView, PhoneErrorResponse]),
   'GET /m/api/chat/file': z.union([z.object({ ok: z.literal(true), name: z.string(), mime: z.string(), size: z.number(), sha256: z.string(), offset: z.number(), nextOffset: z.number(), contentBase64: z.string() }), PhoneErrorResponse]),
   'GET /m/api/letters': z.union([z.object({ ok: z.literal(true), letters: z.array(LetterSummary) }), PhoneErrorResponse]),
+  // 定时在手机上看得见(对标 B7,2026-10-20):列表 + 停 / 开 / 删;新建仍在微信「定时」。只给设备令牌。
+  'GET /m/api/jobs': z.union([z.object({ ok: z.literal(true), timezone: z.string(), executor: z.string().nullable(), jobs: z.array(PhoneJob) }), PhoneErrorResponse]),
+  'POST /m/api/jobs/action': z.union([z.object({ ok: z.literal(true) }), PhoneErrorResponse]),
   'GET /m/api/letters/page': z.union([z.object({ ok: z.literal(true), name: z.string(), mime: z.string(), size: z.number(), sha256: z.string(), offset: z.number(), nextOffset: z.number(), contentBase64: z.string() }), PhoneErrorResponse]),
   'GET /m/api/chat/voice': z.union([z.object({ ok: z.literal(true) }).extend(ChatVoice.shape), PhoneErrorResponse]),
   // 按住说话(2026-10-18):GET 只问电脑上配没配语音转文字;POST 回转好的字(不自动发)。
