@@ -296,7 +296,8 @@ export function classifyToolUse(toolName: string, input: Record<string, unknown>
     // terminal_sessions(2026-10-14):主人终端里的 claude / codex 会话列表(项目、最后一句、待批)——
     // 只读,但读的是主人的私事,与 diagnostic_* 同为 admin-only。不加这一行会落到下面的 fs_read 默认值。
     // today_digest(2026-10-14):「今天」一眼看完 —— 终端 + 一起做的标题、待批、最后一句,同理 admin-only。
-    if (sub.startsWith('diagnostic_') || sub === 'model_get' || sub === 'terminal_sessions' || sub === 'today_digest') return 'daemon_introspect'
+    // calendar_agenda(读日历,对标 #8):主人的日程,同理 admin-only —— 不能落到 fs_read 默认值(trusted 也有)。
+    if (sub.startsWith('diagnostic_') || sub === 'model_get' || sub === 'terminal_sessions' || sub === 'today_digest' || sub === 'calendar_agenda') return 'daemon_introspect'
     if (sub.startsWith('daemon_') || sub.startsWith('session_') || sub === 'model_set') return 'daemon_remediate'
     // File-locate family — admin-only, classified by PREFIX so a sibling
     // (locate_dir, …) fails CLOSED into file_locate, not the fs_read default.

@@ -446,6 +446,10 @@ export function createInternalApi(deps: InternalApiDeps): InternalApi {
       deps.overseerToday = fn
     },
 
+    setCalendarAgenda(fn) {
+      deps.calendarAgenda = fn
+    },
+
     setLetters(rt) {
       deps.letters = rt
     },

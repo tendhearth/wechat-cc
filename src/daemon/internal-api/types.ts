@@ -264,6 +264,8 @@ export interface InternalApiDeps {
    * main.ts setOverseerToday;没设之前 GET /v1/overseer/today 503。只读,只在被问时算。
    */
   overseerToday?: () => import('../../core/overseer-today').OverseerToday
+  /** 读日历(对标 #8):今天 / 明天的安排说成一段话(与「日历」命令同一段);main.ts setCalendarAgenda。没设 ⇒ 503。 */
+  calendarAgenda?: (offset: 0 | 1) => Promise<string>
   /** CC 的信(2026-10-16,letters/runtime.ts)。main.ts setLetters;没设之前 /v1/letters* 503。 */
   letters?: import('../letters/runtime').LetterRuntime
   /**
@@ -663,6 +665,7 @@ export interface InternalApi {
   setCliEvents(hub: NonNullable<InternalApiDeps['cliEvents']>): void
   setCliPermissions(relay: NonNullable<InternalApiDeps['cliPermissions']>): void
   setOverseerToday(fn: NonNullable<InternalApiDeps['overseerToday']>): void
+  setCalendarAgenda(fn: NonNullable<InternalApiDeps['calendarAgenda']>): void
   setLetters(rt: NonNullable<InternalApiDeps['letters']>): void
   setCliHooks(svc: NonNullable<InternalApiDeps['cliHooks']>): void
   /** 三轴 presence 的共用入口(随身 CC 手机页经此读,不自己拼输入)。null = journal 没接。 */
