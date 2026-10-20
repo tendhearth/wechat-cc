@@ -244,7 +244,7 @@ export function wireWorkbench(opts: {
     projectLessons:(p)=>p?lessonsBlock(makeProjectLessons(opts.stateDir).list(p)):null,
     // 「任务 新建 <项目> issue N」:gh 只读取 issue(10-20)
     fetchIssue:makeIssueFetcher(),
-    // 「任务 <编号> 记成经验 <一句>」:跟微信「经验」命令、手机同一个文件
+    // 「任务 <编号> 记成经验 <一句>」与打回时「同时记成这个项目的经验」:跟微信「经验」命令、手机同一个文件
     addLesson:(p,t)=>{const r=makeProjectLessons(opts.stateDir).add(p,t);return r.ok?{ok:true}:r},
     ...(opts.permissionGate?{permissionDecide:(ask:import('../../core/permission-rules/types').AskSource)=>opts.permissionGate!.decide(ask)}:{}),
     executionConflict:opts.executionConflict,

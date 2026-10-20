@@ -55,13 +55,13 @@ function tempRoot(prefix: string) {
 const file = (path: string, over: Partial<ReviewFile> = {}): ReviewFile => ({ path, preexisting: false, kind: 'modified', beforeSha256: 'a'.repeat(64), afterSha256: 'b'.repeat(64), diff: `@@ -1 +1 @@\n-老 ${path}\n+新 ${path}`, ...over })
 const review = (files: ReviewFile[], over: Partial<GitReview> = {}): GitReview => ({ version: 1, scope: 'working-tree-before-after', startedAt: 1, finishedAt: 2, headBefore: 'h1', headAfter: 'h2', status: 'complete', preexistingPaths: [], notes: [], files, ...over })
 
-function setup(canResume = true) {
+function setup(canResume = true, extra: Partial<Parameters<typeof makeWorkbenchService>[0]> = {}) {
   const { stateDir, project } = tempRoot('wb-review-')
   const db = openTestDb(); dbs.push(db)
   const store = makeWorkbenchStore(db)
   const registry = createProviderRegistry()
   registry.register('claude', fakeProvider(), { displayName: 'Claude', canResume: () => canResume, workbench: MANAGED_NATIVE_CAPABILITIES })
-  const service = makeWorkbenchService({ store, registry, stateDir, ownerChatId: () => 'owner' })
+  const service = makeWorkbenchService({ store, registry, stateDir, ownerChatId: () => 'owner', ...extra })
   services.push(service)
   return { service, store, stateDir, project }
 }
@@ -78,8 +78,8 @@ function plant(store: WorkbenchStore, taskId: string, stateDir: string, name: st
 }
 
 /** 三轮:两份合法快照 + 一份坏 JSON(mime 对、内容坏)。 */
-async function planted(canResume = true) {
-  const fixture = setup(canResume)
+async function planted(canResume = true, extra: Partial<Parameters<typeof makeWorkbenchService>[0]> = {}) {
+  const fixture = setup(canResume, extra)
   const task = await completedTask(fixture.service, fixture.project)
   const first = plant(fixture.store, task.id, fixture.stateDir, '代码变更-run1.json', serializeGitReview(review([file('src/a.ts'), file('src/big.bin', { kind: 'not_reviewed', reason: '二进制文件未展开', beforeSha256: undefined, afterSha256: undefined, diff: undefined })])))
   const second = plant(fixture.store, task.id, fixture.stateDir, '代码变更-run2.json', serializeGitReview(review([file('src/a.ts'), file('src/b.ts')], { status: 'partial', notes: ['读取超时，其余文件尚未检查。'] })))
@@ -261,14 +261,14 @@ class RetainedRuntime {
 }
 
 /** 一条还活着的保留会话 + 一份可打回的变更快照。 */
-async function retained() {
+async function retained(extra: Partial<Parameters<typeof makeWorkbenchService>[0]> = {}) {
   const { stateDir, project } = tempRoot('wb-review-live-')
   const db = openTestDb(); dbs.push(db)
   const store = makeWorkbenchStore(db)
   const registry = createProviderRegistry()
   const runtimes: RetainedRuntime[] = []
   registry.register('claude', { async spawn() { const r = new RetainedRuntime(); runtimes.push(r); return r.session } }, { displayName: 'Claude', canResume: () => true, workbench: MANAGED_NATIVE_CAPABILITIES })
-  const service = makeWorkbenchService({ store, registry, stateDir, ownerChatId: () => 'owner' })
+  const service = makeWorkbenchService({ store, registry, stateDir, ownerChatId: () => 'owner', ...extra })
   services.push(service)
   const task = service.create({ path: project, providerId: 'claude', text: '做点事' })
   await vi.waitFor(() => expect(service.detail(task.id).events.some(e => e.kind === 'text')).toBe(true))
@@ -454,5 +454,74 @@ describe('独立工作区:自己保留的会话安静着时可以提交(2026-10-
     expect(service.worktreeAction(task.id, 'commit')).toMatchObject({ committed: true, branch: plan.branch })
     expect(g('log', '-1', '--format=%s', plan.branch)).toBe(task.title)
     expect(() => service.worktreeAction(task.id, 'remove')).toThrow('workbench_busy')
+  })
+})
+
+describe('returnReviewFiles · asLesson(同时记成这个项目的经验)', () => {
+  const lessons = () => {
+    const added: Array<[string, string]> = []
+    const addLesson = vi.fn((path: string, text: string) => { added.push([path, text]); return text.includes('重复') ? { ok: false as const, error: 'duplicate' as const } : text.includes('满') ? { ok: false as const, error: 'full' as const } : { ok: true as const } })
+    return { added, addLesson }
+  }
+
+  it('投递成功后把意见收成一行记到源项目;结果带 lesson:{ok:true}', async () => {
+    const { added, addLesson } = lessons()
+    const { service, id, second, project } = await planted(true, { addLesson })
+    const view = await service.returnReviewFiles(id, { artifactId: second, paths: ['src/a.ts'], comment: '  判空\n要先做 \t 再取值 ', asLesson: true })
+    expect(view.id).toBe(id)
+    expect(view.lesson).toEqual({ ok: true })
+    expect(added).toEqual([[project, '判空 要先做 再取值']])
+    expect(marksOf(service, id, second)[0]).toBe('returned')
+    await vi.waitFor(() => expect(service.detail(id).task.status).toBe('completed'))
+  })
+
+  it('经验那边失败(重复 / 满 / 太长 / 尖括号)只回原因,打回照常发出、标记照落', async () => {
+    const { addLesson } = lessons()
+    const { service, id, second } = await planted(true, { addLesson })
+    const dup = await service.returnReviewFiles(id, { artifactId: second, paths: ['src/a.ts'], comment: '重复的', asLesson: true })
+    expect(dup.lesson).toEqual({ ok: false, error: 'duplicate' })
+    await vi.waitFor(() => expect(service.detail(id).task.status).toBe('completed'))
+    const full = await service.returnReviewFiles(id, { artifactId: second, paths: ['src/b.ts'], comment: '已经满了', asLesson: true })
+    expect(full.lesson).toEqual({ ok: false, error: 'full' })
+    await vi.waitFor(() => expect(service.detail(id).task.status).toBe('completed'))
+    const long = await service.returnReviewFiles(id, { artifactId: second, paths: ['src/a.ts'], comment: '长'.repeat(201), asLesson: true })
+    expect(long.lesson).toEqual({ ok: false, error: 'too_long' })
+    expect(addLesson).toHaveBeenCalledTimes(2)
+    expect(marksOf(service, id, second)).toEqual(['returned', 'returned'])
+    expect(service.detail(id).events.filter(e => e.kind === 'user').at(-1)!.text).toContain('长'.repeat(201))
+    await vi.waitFor(() => expect(service.detail(id).task.status).toBe('completed'))
+    // 真的 add 会拒尖括号:抛出来也只是 failed,打回不受影响
+    addLesson.mockImplementationOnce(() => { throw new Error('boom') })
+    const thrown = await service.returnReviewFiles(id, { artifactId: second, paths: ['src/a.ts'], comment: '<b>别这样</b>', asLesson: true })
+    expect(thrown.lesson).toEqual({ ok: false, error: 'failed' })
+  })
+
+  it('没接 addLesson ⇒ not_wired;不带 asLesson ⇒ 结果里没有 lesson、也不去记', async () => {
+    const plain = await planted()
+    const r = await plain.service.returnReviewFiles(plain.id, { artifactId: plain.second, paths: ['src/a.ts'], comment: '改', asLesson: true })
+    expect(r.lesson).toEqual({ ok: false, error: 'not_wired' })
+    const { addLesson } = lessons()
+    const wired = await planted(true, { addLesson })
+    const view = await wired.service.returnReviewFiles(wired.id, { artifactId: wired.second, paths: ['src/a.ts'], comment: '改' })
+    expect('lesson' in view).toBe(false)
+    expect(addLesson).not.toHaveBeenCalled()
+  })
+
+  it('投递被拒(已归档)⇒ 原样抛错,经验也不记', async () => {
+    const { addLesson } = lessons()
+    const { service, id, second } = await planted(true, { addLesson })
+    service.setArchived(id, true)
+    expect(() => service.returnReviewFiles(id, { artifactId: second, paths: ['src/a.ts'], comment: '改', asLesson: true })).toThrow('workbench_archived')
+    expect(addLesson).not.toHaveBeenCalled()
+  })
+
+  it('保留会话走回执:回执上带 lesson,投递之后才记', async () => {
+    const { added, addLesson } = lessons()
+    const { service, id, artifactId, runtime } = await retained({ addLesson })
+    runtime.finishTurn()
+    await vi.waitFor(() => expect(service.detail(id).task.phase).toBe('replied'))
+    const receipt = await service.returnReviewFiles(id, { artifactId, paths: ['src/a.ts'], comment: '测试用 bun', asLesson: true }) as LiveInput & { lesson?: unknown }
+    expect(receipt).toMatchObject({ taskId: id, status: 'sending', lesson: { ok: true } })
+    expect(added.map(a => a[1])).toEqual(['测试用 bun'])
   })
 })

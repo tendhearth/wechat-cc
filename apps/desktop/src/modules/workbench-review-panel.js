@@ -6,7 +6,10 @@
 
 /** @typedef {import('../../../../src/core/workbench/review').ReviewTurn} ReviewTurn */
 /** @typedef {import('../../../../src/core/workbench/review').ReviewTurnFile} ReviewTurnFile */
-/** @typedef {{artifactId:string,paths:string[],comment?:string,notice?:string,restartToken?:string}} ReviewReturnOpen */
+/** asLesson:「同时记成这个项目的经验」勾没勾(10-20)。
+ * @typedef {{artifactId:string,paths:string[],comment?:string,notice?:string,restartToken?:string,asLesson?:boolean}} ReviewReturnOpen */
+/** 打回发出去之后那一句(只在顺手记经验时出现):记上了,或者为什么没记上。
+ * @typedef {{artifactId:string,text:string}} ReviewReturnResult */
 /** @typedef {{open?:import('./workbench-rewind.js').RewindOpen|null,view?:import('./workbench-rewind.js').RewindView|null,busy?:boolean}} ReviewRewindOptions */
 /** @typedef {import('../../../../src/core/workbench/review-annotations').ReviewCommentView} ReviewCommentView */
 /** @typedef {import('../../../../src/core/workbench/review-annotations').ReviewHunkView} ReviewHunkView */
@@ -15,7 +18,7 @@
  * @typedef {{artifactId:string,path:string,hunk:number,hunkSha256?:string,rowStart?:number,rowEnd?:number,commentId:string,body:string,edit?:boolean,notice?:string}} LineCompose
  * @typedef {{summary?:string,notice?:string,result?:string,restartToken?:string}} CommentsSend
  * @typedef {{select?:LineSelect|null,compose?:LineCompose|null,send?:CommentsSend|null}} ReviewLineOptions */
-/** @typedef {{escapeHtml:(value:unknown)=>string,formatTime:(value:number)=>string,renderDiff:(file:ReviewTurnFile,lines?:import('./workbench-code-review.js').LineView)=>string,returnOpen?:ReviewReturnOpen|null,error?:boolean,budget?:{limited:boolean},rewind?:ReviewRewindOptions,lines?:ReviewLineOptions,track?:{composePlaced:boolean}}} ReviewPanelOptions */
+/** @typedef {{escapeHtml:(value:unknown)=>string,formatTime:(value:number)=>string,renderDiff:(file:ReviewTurnFile,lines?:import('./workbench-code-review.js').LineView)=>string,returnOpen?:ReviewReturnOpen|null,returnResult?:ReviewReturnResult|null,lesson?:boolean,error?:boolean,budget?:{limited:boolean},rewind?:ReviewRewindOptions,lines?:ReviewLineOptions,track?:{composePlaced:boolean}}} ReviewPanelOptions */
 
 import { renderRewindConfirm, rewindButtonHtml, rewindUndoHtml } from './workbench-rewind.js'
 import { splitDiffHunks } from './workbench-code-review.js'
@@ -27,6 +30,14 @@ const MAX_TEXT = 2000
 // 就地展开差异的回合数。再往前的回合照样能接受 / 打回,只是不把 diff 铺进这一页 ——
 // 一个跑了十几轮的任务,把每一轮的每个文件都渲出来会把整页压垮。
 const INLINE_TURNS = 3
+const LESSON_FAIL = /** @type {Record<string,string>} */ ({ no_project: '这件事没有项目，记不了。', too_long: '太长了（最多 200 字）。', full: '这个项目的经验已经满 10 条。', duplicate: '已经有一样的了。', invalid: '经验里不能带尖括号。' })
+/** 打回成功后那一句:打回本身总是「已发回」,经验记没记上另说。
+ * @param {unknown} lesson 后台回的 {ok:true} | {ok:false,error} */
+export function returnLessonText(lesson) {
+  const l = /** @type {{ok?:unknown,error?:unknown}|null} */ (lesson && typeof lesson === 'object' ? lesson : null)
+  if (l?.ok === true) return '已发回。已记成这个项目的经验。'
+  return `已发回。经验没记上：${LESSON_FAIL[String(l?.error ?? '')] ?? '稍后再试一次。'}`
+}
 const OLDER_TURN = '<p class="wb-review-note">较早的一轮：请在「成果」里打开这份变更记录查看差异。</p>'
 
 /** 未展开的文件没有可判断的差异,接受 / 打回都无从谈起(后台也会拒:review_file_unmarkable)。
@@ -170,8 +181,8 @@ export function renderTurn(turn, round, index, options, latest = index === 0) {
   const checked = new Set(open?.paths ?? [])
   const choices = (turn.files ?? []).filter(markable)
   const form = !gone && open && choices.length
-    ? `<form class="wb-review-return-form" data-action="review-return-submit" data-artifact-id="${esc(turn.artifactId)}"><p>选择要打回的文件，并写一句要怎么改。</p>${open.notice ? `<p class="wb-review-note" role="status">${cut(open.notice)}</p>` : ''}<ul class="wb-review-return-paths">${choices.map(file => `<li><label><input type="checkbox" name="paths" value="${esc(file.path)}"${checked.has(file.path) ? ' checked' : ''}><span>${esc(file.path)}</span></label></li>`).join('')}</ul><label class="wb-sr-only" for="wb-review-comment">修改意见</label><textarea id="wb-review-comment" name="comment" rows="3" maxlength="${MAX_TEXT}" placeholder="说明要怎么改…">${esc(open.comment ?? '')}</textarea><div class="wb-control-actions"><button type="button" class="wb-new" data-action="review-return-cancel">取消</button><button type="submit" class="wb-btn wb-btn-primary">${open.restartToken ? '带记录重新开始并发回' : '发回'}</button></div></form>`
-    : ''
+    ? `<form class="wb-review-return-form" data-action="review-return-submit" data-artifact-id="${esc(turn.artifactId)}"><p>选择要打回的文件，并写一句要怎么改。</p>${open.notice ? `<p class="wb-review-note" role="status">${cut(open.notice)}</p>` : ''}<ul class="wb-review-return-paths">${choices.map(file => `<li><label><input type="checkbox" name="paths" value="${esc(file.path)}"${checked.has(file.path) ? ' checked' : ''}><span>${esc(file.path)}</span></label></li>`).join('')}</ul><label class="wb-sr-only" for="wb-review-comment">修改意见</label><textarea id="wb-review-comment" name="comment" rows="3" maxlength="${MAX_TEXT}" placeholder="说明要怎么改…">${esc(open.comment ?? '')}</textarea>${options.lesson ? `<label class="wb-review-return-lesson"><input type="checkbox" name="asLesson"${open.asLesson ? ' checked' : ''}><span>同时记成这个项目的经验</span></label>` : ''}<div class="wb-control-actions"><button type="button" class="wb-new" data-action="review-return-cancel">取消</button><button type="submit" class="wb-btn wb-btn-primary">${open.restartToken ? '带记录重新开始并发回' : '发回'}</button></div></form>`
+    : !gone && options.returnResult?.artifactId === turn.artifactId ? `<p class="wb-review-note" role="status" data-review-return-result>${cut(options.returnResult.text)}</p>` : ''
   const status = STATUS_LABEL[turn.status] ?? esc(String(turn.status ?? ''))
   const empty = files ? '' : '<p class="wb-review-note">这一轮没有列出可展开的文件。</p>'
   const rewindOpen = options.rewind?.open && options.rewind.open.artifactId === turn.artifactId ? options.rewind.open : null

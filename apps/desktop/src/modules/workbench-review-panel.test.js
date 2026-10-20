@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import { createHash } from 'node:crypto'
-import { renderReviewPanel, reviewSummary, reviewsSignature } from './workbench-review-panel.js'
+import { renderReviewPanel, returnLessonText, reviewSummary, reviewsSignature } from './workbench-review-panel.js'
 import { createReviewDiffBudget, renderReviewFileDiff } from './workbench-code-review.js'
 
 /** @param {string} value */
@@ -78,6 +78,31 @@ describe('改动面板', () => {
     expect(html).toContain('把命名改回来')
     expect(html).toContain('data-action="review-return-cancel"')
     expect(html.match(/review-return-submit/g)).toHaveLength(1)
+  })
+
+  it('「同时记成这个项目的经验」:有项目才画、默认不勾、勾过的重画留住;发出后那一句只在那一轮出现', () => {
+    const open = { artifactId: 'ART-1', paths: ['src/app.ts'], comment: '改' }
+    expect(renderReviewPanel([turn()], options({ returnOpen: open }))).not.toContain('name="asLesson"')
+    const off = renderReviewPanel([turn()], options({ returnOpen: open, lesson: true }))
+    expect(off).toContain('<input type="checkbox" name="asLesson"><span>同时记成这个项目的经验</span>')
+    expect(renderReviewPanel([turn()], options({ returnOpen: { ...open, asLesson: true }, lesson: true }))).toContain('name="asLesson" checked')
+    const reviews = [turn(), turn({ artifactId: 'ART-2', sha256: 'b'.repeat(64) })]
+    const done = renderReviewPanel(reviews, options({ returnResult: { artifactId: 'ART-1', text: '已发回。<已记成>' } }))
+    expect(done.match(/data-review-return-result/g)).toHaveLength(1)
+    expect(done).toContain('已发回。&lt;已记成&gt;')
+    // 表单又点开了就不再显示上一笔的那句
+    expect(renderReviewPanel([turn()], options({ returnOpen: open, returnResult: { artifactId: 'ART-1', text: '旧的' } }))).not.toContain('旧的')
+  })
+
+  it('经验记没记上的说法:打回总是「已发回」,原因说人话', () => {
+    expect(returnLessonText({ ok: true })).toBe('已发回。已记成这个项目的经验。')
+    expect(returnLessonText({ ok: false, error: 'no_project' })).toBe('已发回。经验没记上：这件事没有项目，记不了。')
+    expect(returnLessonText({ ok: false, error: 'too_long' })).toBe('已发回。经验没记上：太长了（最多 200 字）。')
+    expect(returnLessonText({ ok: false, error: 'full' })).toBe('已发回。经验没记上：这个项目的经验已经满 10 条。')
+    expect(returnLessonText({ ok: false, error: 'duplicate' })).toBe('已发回。经验没记上：已经有一样的了。')
+    expect(returnLessonText({ ok: false, error: 'failed' })).toBe('已发回。经验没记上：稍后再试一次。')
+    // 老后台不认 asLesson ⇒ 响应里没有 lesson
+    expect(returnLessonText(undefined)).toBe('已发回。经验没记上：稍后再试一次。')
   })
 
   it('读不到改动记录时照实说,不把空当成没改动', () => {

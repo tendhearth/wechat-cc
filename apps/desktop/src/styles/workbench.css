@@ -248,6 +248,7 @@
 .wb-review-return-form p { margin:0; color:var(--wb-secondary); font-size:11px; }
 .wb-review-return-paths { display:grid; gap:4px; margin:0; padding:0; list-style:none; font:11px/1.6 var(--mono); overflow-wrap:anywhere; }
 .wb-review-return-paths label { display:flex; align-items:baseline; gap:7px; }
+.wb-review-return-lesson { display:flex; align-items:baseline; gap:7px; color:var(--wb-secondary); font-size:12px; }
 .wb-review-return-form textarea { width:100%; min-height:56px; border:1px solid var(--wb-line); border-radius:7px; padding:7px 9px; background:var(--th-paper); color:var(--wb-text); font-family:inherit; font-size:13px; line-height:1.6; resize:vertical; }
 /* 行评论 + 按块撤回(2026-10-21):每块一个块头;点行选中(墨色描边,不用强调色);评论 / 输入框插在两段 pre 之间。强调色只给「存为草稿」「发出评论」 */
 .wb-review-hunks { display:grid; gap:8px; margin:9px 0 0; }

@@ -15,6 +15,8 @@ import {makeTaskChangeHub} from './task-changes'
 import {REWIND_GOAL_REASON,REWIND_RETAIN_MS,type RewindOptions} from './service/rewind'
 import type {AgentEvent,AgentRuntimeSnapshot,AgentSession,AgentWorkbenchRuntime} from '../agent-provider'
 import type {EntryInput} from './task-entry'
+import {saveArtifactSnapshot} from './artifacts'
+import {GIT_REVIEW_MIME,serializeGitReview} from './git-review'
 
 /**
  * 回退核心(切片 2,2026-10-21):真临时仓库 + 独立工作区(linked worktree),假执行者每轮按脚本改文件。
@@ -387,5 +389,30 @@ describe('ref 的去留', () => {
     g(repo,'worktree','remove','--force',wtB.root);g(repo,'branch','-D',wtB.branch)
     expect(await service.pruneRewindRefs()).toBeGreaterThan(0)
     expect(refs(a)).toBe(0);expect(refs(b)).toBe(0)
+  })
+})
+
+describe('打回时同时记成经验:记到哪个项目', () => {
+  it('独立工作区 ⇒ 记到源项目(不是工作区路径);随手交办 ⇒ no_project,打回照常发出', async () => {
+    const added:Array<[string,string]>=[]
+    await service.shutdown()
+    service=make(undefined,{addLesson:(p,t)=>{added.push([p,t]);return {ok:true}}})
+    const id=await start(p=>writeFileSync(join(p,'a.txt'),'r1\n'))
+    expect(service.detail(id).task.path).not.toBe(project)
+    const [r1]=rounds(id)
+    const view=await service.returnReviewFiles(id,{artifactId:r1!.artifactId,paths:[r1!.files[0]!.path],comment:'改完跑 bun run test',asLesson:true})
+    expect(view.lesson).toEqual({ok:true})
+    expect(added).toEqual([[project,'改完跑 bun run test']])
+    await settle(id)
+    const managed=service.createEntry({requestId:randomUUID(),text:'整理一下',target:{kind:'managed'}} as EntryInput,context).receipt.taskId
+    await settle(managed)
+    saveArtifactSnapshot(store,managed,{name:'代码变更-m.json',mime:GIT_REVIEW_MIME,bytes:serializeGitReview({version:1,scope:'working-tree-before-after',startedAt:1,finishedAt:2,headBefore:null,headAfter:null,status:'complete',preexistingPaths:[],notes:[],files:[{path:'x.md',preexisting:false,kind:'modified',beforeSha256:'a'.repeat(64),afterSha256:'b'.repeat(64),diff:'@@ -1 +1 @@\n-a\n+b'}]})},stateDir)
+    const aid=store.artifacts(managed).find(a=>a.name==='代码变更-m.json')!.id
+    turns.push(()=>{})
+    const m=await service.returnReviewFiles(managed,{artifactId:aid,paths:['x.md'],comment:'再改',asLesson:true})
+    expect(m.lesson).toEqual({ok:false,error:'no_project'})
+    expect(added).toHaveLength(1)
+    expect(service.detail(managed).events.some(e=>e.kind==='user'&&e.text.includes('再改'))).toBe(true)
+    await settle(managed)
   })
 })

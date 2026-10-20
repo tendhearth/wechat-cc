@@ -1096,10 +1096,29 @@ describe('Workbench internal HTTP API', () => {
         { id: 'deadbeef', artifactId: validArtifactId, paths: ['src/a.ts'], comment: '   ' },
         { id: 'deadbeef', artifactId: validArtifactId, paths: ['src/a.ts'], comment: '长'.repeat(2001) },
         { id: 'deadbeef', artifactId: validArtifactId, paths: ['src/a.ts'], comment: '改', inputRequestId: 'not-a-uuid' },
+        { id: 'deadbeef', artifactId: validArtifactId, paths: ['src/a.ts'], comment: '改', asLesson: 'yes' },
+        { id: 'deadbeef', artifactId: validArtifactId, paths: ['src/a.ts'], comment: '改', asLesson: 1 },
       ]) {
         expect((await request('/v1/workbench/review-return', { method: 'POST', body: JSON.stringify(bad) })).status).toBe(400)
       }
       expect((await request('/v1/workbench/review-return', { method: 'POST', body: JSON.stringify(body) }, trustedToken)).status).toBe(403)
+    })
+
+    it('POST review-return 透传 asLesson:true(false 不传);lesson 单独放在响应体上', async () => {
+      const returnReviewFiles = vi.fn((_id: string, input: { asLesson?: true }) => input.asLesson ? { ...TASK, lesson: { ok: false, error: 'full' } } : TASK)
+      const { request } = await start(service({ returnReviewFiles }))
+      const body = { id: 'deadbeef', artifactId: validArtifactId, paths: ['src/a.ts'], comment: '改' }
+      const response = await request('/v1/workbench/review-return', { method: 'POST', body: JSON.stringify({ ...body, asLesson: true }) })
+      expect(response.status).toBe(202)
+      expect(await response.json()).toEqual({ task: TASK, lesson: { ok: false, error: 'full' } })
+      expect(returnReviewFiles).toHaveBeenLastCalledWith('deadbeef', { artifactId: validArtifactId, paths: ['src/a.ts'], comment: '改', asLesson: true })
+      const off = await request('/v1/workbench/review-return', { method: 'POST', body: JSON.stringify({ ...body, asLesson: false }) })
+      expect(await off.json()).toEqual({ task: TASK })
+      expect(returnReviewFiles).toHaveBeenLastCalledWith('deadbeef', { artifactId: validArtifactId, paths: ['src/a.ts'], comment: '改' })
+      const receipt = { id: '123e4567-e89b-42d3-a456-426614174001', taskId: 'deadbeef', runId: 'run-1', text: '打回', status: 'sending', createdAt: 1, error: null }
+      returnReviewFiles.mockImplementationOnce(() => ({ ...receipt, lesson: { ok: true } }) as never)
+      const live = await request('/v1/workbench/review-return', { method: 'POST', body: JSON.stringify({ ...body, asLesson: true }) })
+      expect(await live.json()).toEqual({ input: receipt, lesson: { ok: true } })
     })
 
     // 评审 2026-09-21 #7:保留会话还活着时,打回走的是 submitInput,回的是一张投递回执而不是任务视图。

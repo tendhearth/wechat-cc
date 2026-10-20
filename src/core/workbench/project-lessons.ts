@@ -7,6 +7,7 @@ import { existsSync, mkdirSync, renameSync, writeFileSync } from 'node:fs'
 import { readJsonFile } from '../../lib/read-json-file'
 import { join } from 'node:path'
 import { randomBytes } from 'node:crypto'
+import type { WorkbenchStore } from './store'
 
 export const LESSONS_FILE = 'project-lessons.json'
 export const LESSONS_MAX = 10
@@ -17,6 +18,11 @@ type All = Record<string, Lesson[]>
 
 export function lessonsBlock(lessons: readonly Lesson[]): string | null {
   return lessons.length ? `这个项目的经验(主人写的,所有执行者都照着做):\n${lessons.map(l => `- ${l.text}`).join('\n')}` : null
+}
+
+/** 一件事的源项目:独立工作区算它的源项目;随手交办(managed)没有项目 ⇒ null。读不到任务也 ⇒ null。 */
+export function lessonSourcePath(store: Pick<WorkbenchStore, 'get' | 'worktrees'>, taskId: string): string | null {
+  try { const task = store.get(taskId); return store.worktrees.get(taskId)?.projectPath ?? (task.workspaceKind === 'managed' ? null : task.path) } catch { return null }
 }
 
 export function makeProjectLessons(stateDir: string, now: () => number = Date.now) {
