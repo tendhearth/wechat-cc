@@ -2,7 +2,7 @@ import { describe, it, expect } from 'vitest'
 import { mkdtempSync, readFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { buildBriefMaterial, buildBriefText, makeBriefPrefs, BRIEF_MATERIAL_MAX } from './brief'
+import { buildBriefMaterial, buildBriefText, makeBriefPrefs, makeBriefTurn, BRIEF_MATERIAL_MAX } from './brief'
 
 describe('早报素材', () => {
   it('omits empty blocks, keeps the order today → reminders → agenda → prefs', () => {
@@ -81,5 +81,21 @@ describe('makeBriefTurn', () => {
     const { makeBriefTurn } = await import('./brief')
     const turn = makeBriefTurn({ runJobTurn: async () => 'sent', ownerChatId: () => null, today: () => null, reminders: () => [], agenda: () => [], prefs: () => [], claim: () => {} })
     expect(await turn({ id: 'j1', schedule: { kind: 'daily', at: '08:00' }, text: '早报', createdAt: 'x', paused: false, brief: true }, 't')).toBe('skipped:no_owner')
+  })
+})
+
+describe('早报 × 日历(对标 #8)', () => {
+  it('calendar block shows when present, is omitted when null', () => {
+    const m = buildBriefMaterial({ today: null, reminders: [], agenda: [], prefs: [], calendar: '- 10:00–11:00 设计评审(工作)' })
+    expect(m).toContain('### 今天的日程和提醒事项(日历)\n- 10:00–11:00 设计评审(工作)')
+    expect(buildBriefMaterial({ today: null, reminders: [], agenda: [], prefs: [], calendar: null })).toBe('')
+  })
+  it('the brief turn asks the calendar; a failing calendar never blocks the brief', async () => {
+    const seen: string[] = []
+    const base = { runJobTurn: async (a: { buildText?: (s: object) => string }) => { seen.push(a.buildText!({})); return 'sent' as const }, ownerChatId: () => 'owner', today: () => null, reminders: () => [], agenda: () => [], prefs: () => [], claim: () => {} }
+    const job = { id: 'j1', schedule: { kind: 'daily' as const, at: '08:00' }, text: '早报', createdAt: 'x', paused: false, brief: true }
+    await makeBriefTurn({ ...base, calendar: async () => '- 全天 妈妈生日(家)' } as never)(job, 't')
+    expect(seen[0]).toContain('妈妈生日')
+    expect(await makeBriefTurn({ ...base, calendar: async () => { throw new Error('osascript') } } as never)(job, 't')).toBe('sent')
   })
 })
