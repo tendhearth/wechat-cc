@@ -1,4 +1,4 @@
-// 「定时」(2026-10-20,对标 B7)的纯视图模型:一行 = 什么时候(label,电脑写好、带时区)+ 做什么(早报 / 正文)+ 上次结果。
+// 「定时」(2026-10-20,对标 B7)的纯视图模型:一行 = 什么时候(label,电脑写好、带时区)+ 做什么(早报 / 周报 / 正文)+ 上次结果。
 // 新建仍在微信「定时」里说;手机上只看与停 / 开 / 删。纯 TS,不碰 react / expo。
 import type { JobsAction, JobsViewT, PhoneJobT } from '../backend/types'
 import { t, type Lang, type MessageKey } from '../i18n'
@@ -39,7 +39,7 @@ export function jobRow(j: PhoneJobT, lang: Lang): JobRow {
   return {
     id: j.id,
     title: j.label,
-    body: j.brief ? t(lang, 'jobs.brief') : j.text,
+    body: j.brief ? t(lang, 'jobs.brief') : j.recap === true ? t(lang, 'jobs.recap') : j.text,
     last: j.last ? t(lang, 'jobs.last', { day: lastDay(j.last.day, lang), result: lastResult(j.last, lang) }) : t(lang, 'jobs.neverRun'),
     paused: j.paused ? t(lang, 'jobs.paused') : null,
     toggle: j.paused ? 'resume' : 'pause',

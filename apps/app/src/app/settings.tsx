@@ -108,6 +108,7 @@ export default function Settings() {
             <LinkRow testID="settings-memory" label={t(lang, 'memory.title')} onPress={() => router.push('/memory')} />
             <LinkRow testID="settings-letters" label={t(lang, 'letters.title')} onPress={() => router.push('/letters')} />
             <LinkRow testID="settings-jobs" label={t(lang, 'settings.jobs')} onPress={() => router.push('/jobs')} />
+            <LinkRow testID="settings-activity" label={t(lang, 'activity.title')} onPress={() => router.push('/activity')} />
             <LinkRow testID="settings-connections" label={t(lang, 'settings.connections')} onPress={() => router.push('/connections')} />
             <LinkRow testID="settings-sessions" label={t(lang, 'settings.sessions')} onPress={() => router.push('/sessions')} />
           </View>

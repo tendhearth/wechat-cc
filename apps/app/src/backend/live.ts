@@ -21,7 +21,7 @@ import {
   type ApprovalExplanationT, type Backend, type Connection, type DeviceRowT, type EntryOptionsT,
   type MatterDetailT, type MatterT, type PhoneChangesTurnT, type ProgressSummaryT, type Unsubscribe,
   type ChatPageT, type ChatJobT, type ConnectionsT, type NativeSessionRowT, type NativeSessionPageT, type SessionContinueT,
-  type MatterSayResultT, type MatterInputT, type CliSessionRowT, type CliActivityItemT, type OverseerTodayT, type CompanionHomeT, type FeedEventT, type PresenceT, type UploadStateT, type EntryModelCatalogT, type MemoryViewT, type ChatModelViewT, type ChatSearchHitT, type LetterSummaryT, type FileChunkT, type JobsViewT,
+  type MatterSayResultT, type MatterInputT, type CliSessionRowT, type CliActivityItemT, type OverseerTodayT, type CompanionHomeT, type FeedEventT, type PresenceT, type UploadStateT, type EntryModelCatalogT, type MemoryViewT, type ChatModelViewT, type ChatSearchHitT, type LetterSummaryT, type FileChunkT, type JobsViewT, type ActivityPageT,
 } from './types'
 
 type Topic = Parameters<Backend['subscribe']>[0]
@@ -275,6 +275,10 @@ export function makeLiveBackend(d: LiveDeps): Backend {
     async jobsAction(id, action) {
       // 正文恰好 { id, action }(daemon 多一个键就 400)
       await call('POST /m/api/jobs/action', '/m/api/jobs/action', { body: { id, action } })
+    },
+    async activity(p) {
+      const q = p?.cursor ? `?cursor=${encodeURIComponent(p.cursor)}` : ''
+      return strip(await call<{ ok: true } & ActivityPageT>('GET /m/api/activity', `/m/api/activity${q}`))
     },
     async letters() {
       return (await call<{ letters: LetterSummaryT[] }>('GET /m/api/letters', '/m/api/letters')).letters

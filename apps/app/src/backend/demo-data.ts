@@ -1,5 +1,5 @@
 import type { Lang } from '../i18n'
-import type { ApprovalExplanationT, ProgressSummaryT, PhoneChangesTurnT, EntryOptionsT, ConnectionsT, NativeSessionRowT, NativeSessionPageT, LetterSummaryT, PhoneJobT } from './types'
+import type { ApprovalExplanationT, ProgressSummaryT, PhoneChangesTurnT, EntryOptionsT, ConnectionsT, NativeSessionRowT, NativeSessionPageT, LetterSummaryT, PhoneJobT, ActivityItemT } from './types'
 
 /** 演示情境的文案(中英两份,照设计样稿 tendhearth-phone.html 的 tr('中','英'))。 */
 type Pair = readonly [zh: string, en: string]
@@ -233,15 +233,37 @@ export function demoLetters(lang: Lang, now: number): LetterSummaryT[] {
  * 演示的定时(2026-10-20):一条早报、一条每周提醒、一条停着的。真连接时 label 是电脑按自己的时区写的中文;
  * 演示里按语言给,last.label 同微信「定时」列表的说法。
  */
-const JOBS: ReadonlyArray<{ id: string; label: Pair; text: Pair; brief: boolean; paused: boolean; last: { ago: number; status: string; label: Pair } | null }> = [
+const JOBS: ReadonlyArray<{ id: string; label: Pair; text: Pair; brief: boolean; recap?: boolean; paused: boolean; last: { ago: number; status: string; label: Pair } | null }> = [
   { id: 'j1', label: ['每天 08:00(上海)', 'Daily 08:00 (Shanghai)'], text: ['早报', 'Morning brief'], brief: true, paused: false, last: { ago: 0, status: 'sent', label: ['说了', 'Sent'] } },
   { id: 'j2', label: ['每周五 18:00(上海)', 'Fridays 18:00 (Shanghai)'], text: ['提醒我把这周的周报发出去', 'Remind me to send this week’s report'], brief: false, paused: false, last: { ago: 4 * DAY, status: 'silent', label: ['没说话(没新东西)', 'Stayed quiet (nothing new)'] } },
+  { id: 'j4', label: ['每周日 20:00(上海)', 'Sundays 20:00 (Shanghai)'], text: ['周报', 'Weekly recap'], brief: false, recap: true, paused: false, last: { ago: 2 * DAY, status: 'sent', label: ['说了', 'Sent'] } },
   { id: 'j3', label: ['工作日 09:30(上海)', 'Weekdays 09:30 (Shanghai)'], text: ['看一眼 GitHub 上有没有新的 issue', 'Check GitHub for new issues'], brief: false, paused: true, last: null },
 ]
 
 export function demoJobs(lang: Lang, now: number): PhoneJobT[] {
   return JOBS.map(j => ({
-    id: j.id, label: pick(lang, j.label), text: pick(lang, j.text), brief: j.brief, paused: j.paused,
+    id: j.id, label: pick(lang, j.label), text: pick(lang, j.text), brief: j.brief, ...(j.recap ? { recap: true } : {}), paused: j.paused,
     last: j.last ? { day: new Date(now - j.last.ago).toISOString().slice(0, 10), status: j.last.status, label: pick(lang, j.last.label) } : null,
   }))
+}
+
+/**
+ * 演示的「CC 做过的事」(B9,2026-10-20):九类各来一两条,跨今天 / 昨天 / 更早;一起做 / 终端 / 信带 ref 能点开。
+ * 句子照电脑那边 cc-activity-source 的说法(中文);主动说话有一条「没发出去」,时间线不把它算成说了。
+ */
+const ACTIVITY: ReadonlyArray<{ id: string; kind: ActivityItemT['kind']; ago: number; title: Pair; ref?: ActivityItemT['ref'] }> = [
+  { id: 'decision:d1', kind: 'decision', ago: 20 * 60_000, title: ['按规则替你批了 Bash:npm run build(规则 1)', 'Approved Bash by your rule: npm run build (rule 1)'] },
+  { id: 'proactive:p1', kind: 'proactive', ago: 2 * HOUR, title: ['想跟你说一句,没发出去', 'Wanted to say something, but it didn’t go out'] },
+  { id: 'job:j1', kind: 'job', ago: 3 * HOUR, title: ['早报:说了', 'Morning brief: sent'] },
+  { id: 'terminal:demo-cli-api:1', kind: 'terminal', ago: 5 * HOUR, title: ['终端 api-server 这一轮做完了', 'Terminal api-server: this round is done'], ref: { type: 'terminal', id: 'demo-cli-api' } },
+  { id: 'together:notes', kind: 'together', ago: DAY, title: ['一起做「把零散想法收一收」做完了', 'Together: “A home for loose ideas” is done'], ref: { type: 'task', id: IDS.notes } },
+  { id: 'memory:m1', kind: 'memory', ago: DAY + 6 * HOUR, title: ['整理了记忆:新增 2 条、改 1 条', 'Tidied memory: 2 added, 1 changed'] },
+  { id: 'reminder:r1', kind: 'reminder', ago: DAY + 9 * HOUR, title: ['提醒了你:给妈妈打电话', 'Reminded you: call Mum'] },
+  { id: 'letter:2026-10-16-a1b2c3', kind: 'letter', ago: 2 * DAY, title: ['给你寄了一封信:周三晚上你说终于把作品集的手机版弄好了…', 'Sent you a letter: On Wednesday night you said the mobile portfolio was finally done…'], ref: { type: 'letter', id: '2026-10-16-a1b2c3' } },
+  { id: 'proactive:p0', kind: 'proactive', ago: 3 * DAY, title: ['主动跟你说了一句', 'Said something to you first'] },
+  { id: 'cli_upgrade:u1', kind: 'cli_upgrade', ago: 4 * DAY, title: ['Codex 升级到 0.160.0,自检通过', 'Codex upgraded to 0.160.0, self-check passed'] },
+]
+
+export function demoActivity(lang: Lang, now: number): ActivityItemT[] {
+  return ACTIVITY.map(a => ({ id: a.id, kind: a.kind, at: now - a.ago, title: pick(lang, a.title), ...(a.ref ? { ref: a.ref } : {}) }))
 }
