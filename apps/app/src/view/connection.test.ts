@@ -19,17 +19,17 @@ describe('connectionNotice', () => {
   const now = at(14, 0)
   it('在线 ⇒ 不提示', () => { expect(connectionNotice({ state: 'online', lastSyncedAt: now, epoch: 1 }, now, 'en')).toBeNull() })
   it('连接中', () => { expect(connectionNotice({ state: 'connecting', lastSyncedAt: null, epoch: 0 }, now, 'en')?.kind).toBe('connecting') })
-  it('离线且同步过 ⇒「电脑歇了,事情先停着」+「你看到的是 HH:MM 的样子」', () => {
+  it('离线且同步过 ⇒「家里的电脑暂时连不上」+「你看到的是 HH:MM 的样子」', () => {
     const n = connectionNotice({ state: 'offline', lastSyncedAt: at(13, 42), epoch: 1 }, now, 'en')
     expect(n).toEqual({ kind: 'offline', text: expect.stringContaining('13:42') })
     const zh = connectionNotice({ state: 'offline', lastSyncedAt: at(13, 42), epoch: 1 }, now, 'zh-Hans')
-    expect(zh?.text).toContain('电脑歇了，事情先停着')
+    expect(zh?.text).toContain('家里的电脑暂时连不上')
     expect(zh?.text).toContain('你看到的是 13:42 的样子')
   })
-  it('冷启动就离线(从没同步过)⇒ 只说先停着,不编时间;不说出错', () => {
+  it('冷启动就离线(从没同步过)⇒ 只说连不上,不编时间;不说出错', () => {
     const n = connectionNotice({ state: 'offline', lastSyncedAt: null, epoch: 0 }, now, 'zh-Hans')
     expect(n?.kind).toBe('offline')
-    expect(n?.text).toContain('电脑歇了，事情先停着')
+    expect(n?.text).toContain('家里的电脑暂时连不上')
     expect(n?.text).not.toContain('你看到的是')
     expect(n?.text).not.toMatch(/出错|失败/)
   })

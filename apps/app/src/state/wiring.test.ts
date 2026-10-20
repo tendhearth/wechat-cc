@@ -122,7 +122,7 @@ describe('watchConnection', () => {
     const off = watchConnection(b as unknown as Backend, store, () => {})
     const n = connectionNotice(b.connection(), Date.now(), 'zh-Hans')
     expect(n?.kind).toBe('offline')
-    expect(n?.text).toContain('电脑歇了，事情先停着')
+    expect(n?.text).toContain('家里的电脑暂时连不上')
     expect(n?.text).not.toMatch(/你看到的是|\d\d:\d\d/)
     expect(canSubmit(b.connection())).toBe(false)
     setDraft('new', '帮我把作品集的图压一下')

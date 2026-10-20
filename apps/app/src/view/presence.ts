@@ -16,7 +16,7 @@ export function ccPresence(c: Connection, opts?: { demo?: boolean }): CCPresence
 
 /** 顶栏状态行:`text` 是看得见的短句(窄屏放得下);`label` 给读屏,离线时带上「你看到的是 HH:MM 的样子」(连接页也写着)。
  * 演示模式:演示后端永远「在线」,但根本没有电脑 ⇒ 灰点 +「演示 · 没有连电脑」,界面不说它不知道的事。
- * 离线(电脑合盖 / 中继不在)是「先停着」不是出错(用词表 B3):灰点,不上红;只有撤销才是红点。 */
+ * 离线 = 「家里的电脑暂时连不上」,不是出错:灰点,不上红;只有撤销才是红点。分不出原因 ⇒ 不说「事情先停着」(可能是假话)。 */
 export function statusLine(c: Connection, now: number, lang: Lang, opts?: { demo?: boolean }): { dot: 'ok' | 'bad' | 'unknown'; text: string; label: string } {
   const home = t(lang, 'common.computerHome')
   const same = (dot: 'ok' | 'bad' | 'unknown', text: string) => ({ dot, text, label: text })
