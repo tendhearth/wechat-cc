@@ -1,4 +1,5 @@
 import { existsSync } from 'node:fs'
+import { sumUsage, type TurnUsage, type UsageTotals } from '../turn-usage'
 import { createHash, randomBytes, randomUUID } from 'node:crypto'
 import { basename, join } from 'node:path'
 import type {StoredHandoff,HandoffView} from './handoff-record'
@@ -286,6 +287,22 @@ export function makeWorkbenchStore(db: Db) {
       /** ref 保留期的清理用(service/rewind.ts):每个工作区行 + 任务的归档时刻。 */
       all():Array<{taskId:string;repoRoot:string;branch:string;archivedAt:number|null}> {
         return db.query<{taskId:string;repoRoot:string;branch:string;archivedAt:number|null},[]>('SELECT w.task_id AS taskId,w.repo_root AS repoRoot,w.branch,t.archived_at AS archivedAt FROM workbench_worktrees w JOIN workbench_tasks t ON t.id=w.task_id').all()
+      },
+    },
+    /** 每件事花了多少额度(v82):执行者自己报的,一轮一行;重放不重复。 */
+    usage: {
+      record(r:{taskId:string;runId:string;turnSeq:number;providerId:string;usage:TurnUsage;durationMs?:number}) {
+        const u=r.usage
+        db.query('INSERT OR IGNORE INTO workbench_turn_usage(task_id,run_id,turn_seq,provider_id,input_tokens,output_tokens,cache_read_tokens,cache_write_tokens,reasoning_tokens,cost_usd,duration_ms,at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?)')
+          .run(r.taskId,r.runId,r.turnSeq,r.providerId,u.input??null,u.output??null,u.cacheRead??null,u.cacheWrite??null,u.reasoning??null,u.costUsd??null,r.durationMs??null,Date.now())
+      },
+      totals(taskId:string):UsageTotals {
+        const rows=db.query<{i:number|null;o:number|null;cr:number|null;cw:number|null;r:number|null;c:number|null},[string]>('SELECT input_tokens AS i,output_tokens AS o,cache_read_tokens AS cr,cache_write_tokens AS cw,reasoning_tokens AS r,cost_usd AS c FROM workbench_turn_usage WHERE task_id=?').all(taskId)
+        return sumUsage(rows.map(x=>({...(x.i!==null?{input:x.i}:{}),...(x.o!==null?{output:x.o}:{}),...(x.cr!==null?{cacheRead:x.cr}:{}),...(x.cw!==null?{cacheWrite:x.cw}:{}),...(x.r!==null?{reasoning:x.r}:{}),...(x.c!==null?{costUsd:x.c}:{})})))
+      },
+      /** 某个时刻以来各执行者用了多少(周报用)。 */
+      sinceByProvider(at:number):Array<{providerId:string;turns:number;input:number|null;output:number|null}> {
+        return db.query<{providerId:string;turns:number;input:number|null;output:number|null},[number]>('SELECT provider_id AS providerId,COUNT(*) AS turns,SUM(input_tokens) AS input,SUM(output_tokens) AS output FROM workbench_turn_usage WHERE at>=? GROUP BY provider_id ORDER BY provider_id').all(at)
       },
     },
     /** 做到条件成立为止(v80):命令只在建任务时写一次 —— 这里没有、也不许有改命令的方法。 */

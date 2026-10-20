@@ -101,6 +101,8 @@ export const MatterTaskView = z.object({
   worktree: z.object({ branch: z.string(), removed: z.boolean(), merged: z.boolean().optional(), projectId: z.string().optional() }).optional(),
   // 做到条件成立为止(v80,2026-10-20):命令原文(主人建任务时写的,手机要整条等宽显示)+ 进度。老 daemon 不带。
   until: z.object({ command: z.string(), maxRounds: z.number(), rounds: z.number(), status: z.enum(['active', 'passed', 'exhausted', 'stopped']), lastExit: z.number().nullable(), stopReason: z.string().nullable() }).optional(),
+  // 每件事花了多少额度(v82,2026-10-20):执行者自己报的合计;某项 null = 这家不报(界面写「这家不报」,不写 0)。老 daemon 不带。
+  usage: z.object({ turns: z.number(), input: z.number().nullable(), output: z.number().nullable(), cacheRead: z.number().nullable(), cacheWrite: z.number().nullable(), reasoning: z.number().nullable(), costUsd: z.number().nullable() }).optional(),
 })
 
 export const MatterEvent = z.object({

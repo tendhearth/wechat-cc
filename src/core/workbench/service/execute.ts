@@ -101,6 +101,8 @@ export interface ExecuteDomains {
 }
 
 export function makeExecuteDomain(ctx:ServiceCtx, domains:ExecuteDomains) {
+  /** 每条 run 里第几个带用量的 result(v82 主键的第二段)。 */
+  const usageSeq=new WeakMap<Active,number>()
   const { store, state } = ctx
   const {runsByTask,queue,runningText}=state
   const {requireInput,canResume,continuation,provider}=domains.admission
@@ -285,6 +287,8 @@ export function makeExecuteDomain(ctx:ServiceCtx, domains:ExecuteDomains) {
             // 任何一个成功回合(result)即视为这家恢复。
             if (ev.kind==='error') quota.note(task.providerId,ev.message,ev.code)
             if (ev.kind==='result') quota.clear(task.providerId)
+            // 每件事花了多少额度(v82):执行者报了用量就落一行;一条 run 里按 result 数编号(常驻会话自己醒来也算一轮)。
+            if (ev.kind==='result'&&ev.usage){const seq=(usageSeq.get(running)??0)+1;usageSeq.set(running,seq);try{store.usage.record({taskId:task.id,runId:running.identity,turnSeq:seq,providerId:task.providerId,usage:ev.usage,durationMs:ev.durationMs})}catch{/* 记不上只少一行用量 */}}
             if (ev.kind==='result') settleQuiet(running)
             // observe 是**故意**会往外抛的(身份不符那条),所以探测器自己抛出会把整轮带走。
             // 落定漏一次会被下一个事件补上,抛出去却不可逆 —— 吞掉,只记一次(终审 M5)。
