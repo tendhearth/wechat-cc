@@ -249,6 +249,32 @@
 .wb-review-return-paths { display:grid; gap:4px; margin:0; padding:0; list-style:none; font:11px/1.6 var(--mono); overflow-wrap:anywhere; }
 .wb-review-return-paths label { display:flex; align-items:baseline; gap:7px; }
 .wb-review-return-form textarea { width:100%; min-height:56px; border:1px solid var(--wb-line); border-radius:7px; padding:7px 9px; background:var(--th-paper); color:var(--wb-text); font-family:inherit; font-size:13px; line-height:1.6; resize:vertical; }
+/* 行评论 + 按块撤回(2026-10-21):每块一个块头;点行选中(墨色描边,不用强调色);评论 / 输入框插在两段 pre 之间。强调色只给「存为草稿」「发出评论」 */
+.wb-review-hunks { display:grid; gap:8px; margin:9px 0 0; }
+.wb-review-hunk { border:1px solid var(--wb-line); border-radius:7px; background:var(--th-paper); overflow:hidden; }
+.wb-review-hunk[data-reverted] { background:var(--th-rail); }
+.wb-review-hunk-head { display:flex; flex-wrap:wrap; align-items:center; gap:8px; padding:4px 8px 4px 12px; background:var(--th-rail); color:var(--th-ink-soft); }
+.wb-review-hunk-head code { min-width:0; overflow-wrap:anywhere; font:11px/1.7 var(--mono); }
+.wb-review-hunk-actions { display:flex; gap:6px; margin-left:auto; }
+.wb-review-hunk-actions .wb-new { font-size:11px; }
+.wb-review .wb-review-hunk pre.wb-review-diff { margin:0; max-height:none; border:0; border-radius:0; padding:0; }
+.wb-review-hunk [data-row] { cursor:pointer; border-left:2px solid transparent; padding-left:10px; }
+.wb-review-hunk [data-row].is-selected { border-left-color:var(--th-ink); background:color-mix(in srgb, var(--th-ink) 8%, var(--th-paper)); }
+.wb-line-select,.wb-line-comment,.wb-line-compose { margin:0; padding:7px 12px; border-top:1px solid var(--wb-line); border-bottom:1px solid var(--wb-line); background:var(--th-paper); font-size:12px; line-height:1.6; }
+.wb-line-select { display:flex; align-items:center; gap:8px; color:var(--wb-secondary); }
+.wb-line-comment p { margin:0; }
+.wb-line-comment-meta { display:flex; flex-wrap:wrap; gap:8px; color:var(--wb-secondary); font-size:11px; }
+.wb-line-comment-body { white-space:pre-wrap; overflow-wrap:anywhere; color:var(--wb-text); }
+.wb-line-comment-later { color:var(--wb-muted); font-size:11px; }
+.wb-line-comment-actions { display:flex; gap:8px; margin-top:4px; }
+.wb-line-compose { display:grid; gap:6px; }
+.wb-line-compose .wb-review-note { margin:0; }
+.wb-line-compose textarea,.wb-review-send textarea { width:100%; min-height:48px; border:1px solid var(--wb-line); border-radius:7px; padding:7px 9px; background:var(--th-paper); color:var(--wb-text); font-family:inherit; font-size:13px; line-height:1.6; resize:vertical; }
+.wb-line-comments { display:grid; gap:6px; margin:8px 0 0; }
+.wb-line-comments .wb-line-comment { border:1px solid var(--wb-line); border-radius:7px; }
+.wb-review-send { display:grid; gap:8px; margin:14px 0 4px; border:1px solid var(--th-hair); border-radius:10px; padding:11px 13px; background:var(--th-paper); }
+.wb-review-send p { margin:0; }
+.wb-review-send-count { font-size:12px; font-weight:500; color:var(--wb-text); }
 /* 回到某一轮(2026-10-21):一轮一个按钮 + 预览确认块;撤掉的轮灰掉;停住时详情最上面一条提示。只有「确认」用强调色,不用红 */
 .wb-review-turn>header { display:flex; flex-wrap:wrap; align-items:center; gap:8px; }
 .wb-review-turn>header .wb-rewind-open { margin-left:auto; }

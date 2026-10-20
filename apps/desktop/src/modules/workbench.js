@@ -99,13 +99,35 @@ function providerLabel(p) {
 /** @typedef {{tasks:Task[],providers:Provider[],defaultProvider:string|null,canWechat:boolean,historyProviders?:string[],page?:TaskPage,projects?:Array<{id:string,name:string,path:string,providerId:string}>,projectProviders?:Record<string,string>}} ListResult */
 /** @typedef {import('./workbench-artifact-preview.js').ArtifactPreview|null} Preview */
 /** @typedef {{artifactId:string,paths:string[],comment?:string,notice?:string,restartToken?:string}} ReviewReturnOpen */
-/** @typedef {{tasks:Task[],providers:Provider[],defaultProvider:string|null,canWechat:boolean,nativeResume?:NativeResume|null,historyProviders?:string[],selectedId:string|null,loadingId?:string|null,detail:Detail|null,selectedArtifactId:string|null,error:string,detailDisconnected?:boolean,preview:Preview,previewOpen?:boolean,query?:TaskQuery,page?:TaskPage,projects?:Array<{id:string,name:string,path:string,providerId:string}>,projectProviders?:Record<string,string>,loadingMore?:boolean,newScope?:string,version?:number,reviews?:ReviewTurn[],reviewsSignature?:string,reviewsError?:boolean,reviewReturnOpen?:ReviewReturnOpen|null,rewindOpen?:import('./workbench-rewind.js').RewindOpen|null,rewindRestoreConfirm?:boolean}} WorkbenchState */
+/** @typedef {{tasks:Task[],providers:Provider[],defaultProvider:string|null,canWechat:boolean,nativeResume?:NativeResume|null,historyProviders?:string[],selectedId:string|null,loadingId?:string|null,detail:Detail|null,selectedArtifactId:string|null,error:string,detailDisconnected?:boolean,preview:Preview,previewOpen?:boolean,query?:TaskQuery,page?:TaskPage,projects?:Array<{id:string,name:string,path:string,providerId:string}>,projectProviders?:Record<string,string>,loadingMore?:boolean,newScope?:string,version?:number,reviews?:ReviewTurn[],reviewsSignature?:string,reviewsError?:boolean,reviewReturnOpen?:ReviewReturnOpen|null,rewindOpen?:import('./workbench-rewind.js').RewindOpen|null,rewindRestoreConfirm?:boolean,lineSelect?:import('./workbench-review-panel.js').LineSelect|null,lineCompose?:import('./workbench-review-panel.js').LineCompose|null,commentsSend?:import('./workbench-review-panel.js').CommentsSend|null}} WorkbenchState */
 /** @typedef {import('./workbench-window-state.js').Draft} Draft */
 /** @typedef {{invokeWorkbenchApi:(method:'GET'|'POST',path:string,body?:Record<string,unknown>)=>Promise<unknown>,invoke?:(command:string,args:Record<string,unknown>)=>Promise<unknown>,pollMs?:number,confirmUnattended?:()=>Promise<boolean>,confirmScripts?:(config:import('./workbench-scripts-approve.js').ScriptsConfig)=>Promise<boolean>,onDelegate?:(draft:import('./task-entry.js').Draft)=>Promise<import('./task-entry.js').EntryResult|null>}} WorkbenchDeps */
 /** @typedef {{path:string,text:string,providerId?:string}} IncomingDraft */
 
 // 一件事都没改过的任务:签名从一开始就是「空」,免得第一次拉回来白重画一整页。
 const EMPTY_REVIEWS = reviewsSignature([])
+// 行评论 / 按块撤回(2026-10-21):一次至多选 40 行(同服务端 MAX_COMMENT_ROWS);拒绝码 ⇒ 人话
+const LINE_MAX_ROWS = 40
+/** 发完照实说:发了几条、几条太长留在草稿、几条在撤掉的轮上没发。
+ * @param {{sent?:number,remaining?:number,skippedDiscarded?:number}} counts */
+export function sentResultText(counts) {
+  const parts = [`已发出 ${Number(counts.sent) || 0} 条评论。`]
+  if (Number(counts.remaining) > 0) parts.push(`还有 ${counts.remaining} 条装不下，留在草稿里，下次再发。`)
+  if (Number(counts.skippedDiscarded) > 0) parts.push(`撤掉的轮上有 ${counts.skippedDiscarded} 条草稿，没有发出。`)
+  return parts.join('')
+}
+const LINE_ERRORS = /** @type {Record<string,string>} */ ({
+  review_file_changed: '这个文件之后又被改过，不能按块撤回。',
+  review_hunk_stale: '这块已经变了，刷新再试。',
+  review_revert_unavailable: '这一块没法自动撤回（新增或删除的文件、内容不是快照里的样子，或工作区已经不在），请手动处理。',
+  review_comment_limit: '评论太多了：每件事最多 50 条草稿，每一轮最多 200 条。',
+  workbench_busy: '这个文件夹还有会话或检查在跑，等它停下再撤回。',
+  review_round_discarded: '这一轮已经撤掉了，不能再改。',
+  rewind_needs_owner: '回退停住了，先在上面拍板再继续。',
+  review_comment_sent: '这条评论已经发出，不能再改。',
+  review_comment_conflict: '这条评论和已存的对不上，刷新再试。',
+  review_comment_not_found: '这条评论已经不在了，刷新看看。',
+})
 /** 改动记录只跟着成果走:哪几件、各是什么内容。
  * @param {Detail|null|undefined} detail */
 const artifactsSignature = detail => JSON.stringify((detail?.artifacts ?? []).map(a => [a.id, a.sha256]))
@@ -376,7 +398,7 @@ export function renderWorkbench(state, interactions, draft, attachmentError='',e
   const reviewBudget = createReviewDiffBudget()
   // 回到某一轮(2026-10-21):确认块 / 撤销回退只在有这些字段时才画,老后台照旧
   const rewindOptions = detail && (state.rewindOpen || detail.rewind) ? { rewind: { open: state.rewindOpen ?? null, view: detail.rewind ?? null, busy: !!executionView.busy } } : {}
-  const reviewHtml = detail ? renderReviewPanel(state.reviews ?? [], { escapeHtml: escapeWorkbenchHtml, formatTime: time, renderDiff: file => renderReviewFileDiff(file, escapeWorkbenchHtml, reviewBudget), budget: reviewBudget, returnOpen: state.reviewReturnOpen ?? null, error: !!state.reviewsError, ...rewindOptions }) : ''
+  const reviewHtml = detail ? renderReviewPanel(state.reviews ?? [], { escapeHtml: escapeWorkbenchHtml, formatTime: time, renderDiff: (file, lines) => renderReviewFileDiff(file, escapeWorkbenchHtml, reviewBudget, lines), budget: reviewBudget, returnOpen: state.reviewReturnOpen ?? null, error: !!state.reviewsError, ...rewindOptions, lines: { select: state.lineSelect ?? null, compose: state.lineCompose ?? null, send: state.commentsSend ?? null } }) : ''
   const rewindBlocked = detail ? renderRewindBlocked(detail, !!state.rewindRestoreConfirm, escapeWorkbenchHtml, !!executionView.busy) : ''
   const artifactHtml = detail?.artifacts?.length && !artifactPanel ? `<details id="wb-artifacts" class="wb-disclosure wb-artifacts"><summary><span>成果</span><small>${detail.artifacts.length} 件</small></summary><div class="wb-artifact-list">${artifacts}</div><button type="button" class="wb-new" data-action="back-to-dialogue">回到对话</button></details>` : ''
   const execution=draft?.execution??detail?.execution??{defaults:/** @type {const} */('provider'),model:null,reasoningEffort:null}
@@ -461,7 +483,7 @@ export function createWorkbenchController(deps) {
   // 增量补丁已经把变过的行写进 DOM 了:把重画基准对齐,免得下一次 paint() 为同一批
   // 事件再整页重画一次(那会打断输入和滚动)。
   const syncPaintSnapshot = () => { lastPaint = paintKey() }
-  const forgetReviews = () => { state.reviews = []; state.reviewsSignature = EMPTY_REVIEWS; state.reviewsError = false; state.reviewReturnOpen = null; state.rewindOpen = null; state.rewindRestoreConfirm = false }
+  const forgetReviews = () => { state.reviews = []; state.reviewsSignature = EMPTY_REVIEWS; state.reviewsError = false; state.reviewReturnOpen = null; state.rewindOpen = null; state.rewindRestoreConfirm = false; state.lineSelect = null; state.lineCompose = null; state.commentsSend = null }
   /** 改动记录跟详情并行拉:读不到只在面板上照实说一句,详情照旧。
    * 标记可能是别的面(微信)改的,所以每次长轮询回来都再问一次;签名没变就不重画。
    * @param {string} id */
@@ -738,6 +760,13 @@ export function initWorkbenchPage(deps) {
       const boxes = /** @type {HTMLInputElement[]} */ (Array.from(returnForm.querySelectorAll?.('input[name="paths"]') ?? []))
       if (boxes.length) open.paths = [...new Set(boxes.filter(box => box.checked).map(box => box.value))]
     }
+    // 行评论的输入框 / 发出栏里那句总的意见:同理先收回 state
+    const compose = controller.state.lineCompose
+    // 只认同一条的输入框:刚换成另一条时,旧框还在 DOM 里,不能把它的字抄过去
+    const composeField = compose ? /** @type {HTMLTextAreaElement|null} */ (root.querySelector('.wb-line-compose textarea[name="body"]')) : null
+    if (compose && composeField && composeField.dataset.commentId === compose.commentId) compose.body = composeField.value
+    const summaryField = /** @type {HTMLTextAreaElement|null} */ (root.querySelector('.wb-review-send textarea[name="summary"]'))
+    if (summaryField && summaryField.value !== (controller.state.commentsSend?.summary ?? '')) controller.state.commentsSend = { ...(controller.state.commentsSend ?? {}), summary: summaryField.value }
     if (!document.getElementById('wb-create-form') && !document.getElementById('wb-project-form') && !input('wb-followup-text')) return
     const model=input('wb-model'),effort=input('wb-reasoning-effort'),draft=pageDrafts.get(renderedScope)
     const execution=model&&effort?{defaults:/** @type {'provider'|'native'} */(model.dataset.executionDefaults??draft.execution?.defaults??controller.state.detail?.execution?.defaults??'provider'),model:model.value||null,reasoningEffort:effort.value||null}:undefined
@@ -968,8 +997,8 @@ export function initWorkbenchPage(deps) {
   /** onError 让调用方自己接住一类错误(打回遇上「要重开」就是这样):回 true 表示这一笔已经
    * 当场交代清楚了,别再往全局那条错误里塞一句看不懂的话。
    * @param {'GET'|'POST'} method @param {string} path @param {Record<string,unknown>} body
-   * @param {(error:unknown)=>boolean|Promise<boolean>} [onError] */
-  const mutate = async (method, path, body, onError) => {
+   * @param {(error:unknown)=>boolean|Promise<boolean>} [onError] @param {(result:unknown)=>void} [onResult] 成功时先看一眼回来的结果(发评论要报发了几条) */
+  const mutate = async (method, path, body, onError, onResult) => {
     const key = path === '/v1/workbench/create' ? 'create' : `task:${String(body.id ?? '')}`
     if (busy.has(key) || !alive) return false
     busy.add(key);controller.paint(true)
@@ -977,6 +1006,7 @@ export function initWorkbenchPage(deps) {
     try {
       const result = await sendMutation(method, path, body)
       if (!alive || !result) return false
+      onResult?.(result)
       const id = result.task?.id ?? controller.state.selectedId
       await controller.refresh({ force: true })
       if (alive && path === '/v1/workbench/create' && navigation === navigationGeneration && id && controller.state.selectedId !== id) await controller.selectTask(id)
@@ -1043,6 +1073,84 @@ export function initWorkbenchPage(deps) {
     const navigation = navigationGeneration
     if (await interactions.answer(request, decline)) await refreshInteraction(taskId, navigation)
   }
+  /** 行评论 / 按块撤回被拒:认得的码说成人话。
+   * @param {unknown} error @returns {string|null} */
+  const lineErrorMessage = error => {
+    const code = String(error instanceof Error ? error.message : error).match(/\b(review_file_changed|review_hunk_stale|review_revert_unavailable|review_comment_limit|workbench_busy|review_round_discarded|rewind_needs_owner|review_comment_sent|review_comment_conflict|review_comment_not_found)\b/)?.[1]
+    return code ? LINE_ERRORS[code] ?? null : null
+  }
+  /** @param {HTMLElement} row @param {boolean} extend */
+  const selectLine = (row, extend) => {
+    const box = /** @type {HTMLElement|null} */ (row.closest('[data-review-lines]'))
+    const block = /** @type {HTMLElement|null} */ (row.closest('[data-review-hunk]'))
+    const artifactId = box?.dataset.artifactId, path = box?.dataset.path
+    const hunk = Number(row.dataset.hunk), at = Number(row.dataset.row)
+    if (!artifactId || !path || !Number.isInteger(hunk) || !Number.isInteger(at)) return
+    const view = controller.state.reviews?.find(turn => turn.artifactId === artifactId)?.files.find(file => file.path === path)?.hunks?.find(h => h.index === hunk)
+    if (!view || (block && block.dataset.reviewHunk !== String(hunk))) return
+    captureDraft()
+    const current = controller.state.lineSelect
+    const same = current && current.artifactId === artifactId && current.path === path && current.hunk === hunk
+    if (extend && same) {
+      // Shift 点会顺手拉出一段文字选区:清掉,只留行选区
+      try { window.getSelection?.()?.removeAllRanges() } catch { /* 没有选区可清 */ }
+      const anchor = current.anchor
+      let start = Math.min(anchor, at), end = Math.max(anchor, at)
+      if (end - start + 1 > LINE_MAX_ROWS) { if (at > anchor) end = anchor + LINE_MAX_ROWS - 1; else start = anchor - LINE_MAX_ROWS + 1 }
+      controller.state.lineSelect = { ...current, rowStart: start, rowEnd: end }
+    } else if (same && current.rowStart === at && current.rowEnd === at) controller.state.lineSelect = null
+    else controller.state.lineSelect = { artifactId, path, hunk, hunkSha256: view.sha256, anchor: at, rowStart: at, rowEnd: at }
+    controller.paint(true)
+  }
+  /** 打开行下的输入框;正在写的那条还有字 ⇒ 不顶掉它。
+   * @param {import('./workbench-review-panel.js').LineCompose} next */
+  const openCompose = next => {
+    captureDraft()
+    const current = controller.state.lineCompose
+    if (current && current.body.trim() && current.commentId !== next.commentId) return fail(new Error('先存好或取消正在写的那条评论。'))
+    controller.state.lineCompose = next
+    controller.paint(true)
+    input('wb-line-compose-body')?.focus({ preventScroll: true })
+  }
+  /** @param {string} action @param {HTMLElement} target */
+  const onLineAction = async (action, target) => {
+    const id = controller.state.selectedId
+    if (!id) return
+    if (action === 'line-select-clear') { controller.state.lineSelect = null; controller.paint(true); return }
+    if (action === 'line-comment-cancel') { controller.state.lineCompose = null; controller.paint(true); return }
+    if (action === 'line-comment-open') {
+      const select = controller.state.lineSelect
+      if (!select) return
+      controller.state.lineSelect = null
+      // id 在客户端生成:网络断了重存一次 ⇒ 同一个 id,后台按幂等回原行
+      return openCompose({ artifactId: select.artifactId, path: select.path, hunk: select.hunk, hunkSha256: select.hunkSha256, rowStart: select.rowStart, rowEnd: select.rowEnd, commentId: crypto.randomUUID(), body: '' })
+    }
+    const { artifactId, path } = target.dataset, hunk = Number(target.dataset.hunk), hunkSha256 = target.dataset.hunkSha
+    if (action === 'line-comment-hunk' && artifactId && path && Number.isInteger(hunk) && hunkSha256) return openCompose({ artifactId, path, hunk, hunkSha256, commentId: crypto.randomUUID(), body: '' })
+    const commentId = target.dataset.commentId
+    if ((action === 'line-comment-edit' || action === 'line-comment-delete') && commentId) {
+      /** @type {{turn:ReviewTurn,file:import('../../../../src/core/workbench/review').ReviewTurnFile,comment:import('./workbench-review-panel.js').ReviewCommentView}|null} */
+      let found = null
+      for (const turn of controller.state.reviews ?? []) for (const file of turn.files ?? []) for (const comment of file.comments ?? []) if (comment.id === commentId) found = { turn, file, comment }
+      if (!found || found.comment.state !== 'draft') return
+      if (action === 'line-comment-edit') return openCompose({ artifactId: found.turn.artifactId, path: found.file.path, hunk: found.comment.hunk, commentId, body: found.comment.body, edit: true })
+      if (!armConfirm(target, '再点一次：删掉这条')) return
+      const done = await mutate('POST', '/v1/workbench/review-comment', { id, commentId, delete: true }, e => { const message = lineErrorMessage(e); if (!message) return false; fail(new Error(message)); return true })
+      if (done && controller.state.lineCompose?.commentId === commentId) { controller.state.lineCompose = null; controller.paint(true) }
+      return
+    }
+    // 按块撤回 / 恢复:点两下才算(恢复就是退路);被拒的原因说成人话
+    const hunkAction = target.dataset.hunkAction
+    if (action === 'review-hunk' && artifactId && path && Number.isInteger(hunk) && hunkSha256 && (hunkAction === 'revert' || hunkAction === 'restore')) {
+      if (!armConfirm(target, hunkAction === 'revert' ? '再点一次：撤回这一块' : '再点一次：恢复这一块')) return
+      return mutate('POST', '/v1/workbench/review-hunk', { id, artifactId, path, hunk, hunkSha256, action: hunkAction }, e => {
+        const message = lineErrorMessage(e)
+        if (!message) return false
+        fail(new Error(message))
+        return true
+      })
+    }
+  }
   /** @param {Event} event */
   const onClick = async event => {
     // Capture before the summary's default toggle, including keyboard activation.
@@ -1052,6 +1160,9 @@ export function initWorkbenchPage(deps) {
     // 只靠它放掉的话,收起后紧接着的那次滚动仍算「在翻成果」⇒ 停在底部也不跟新回复。
     else if(summary&&summary.parentElement?.hasAttribute('open'))resultReturnPositions.delete(renderedScope)
     const target = event.target instanceof Element ? event.target.closest('button') : null
+    // 行评论(2026-10-21):点一行选中,Shift 点扩到同一块里(≤ 40 行);再点同一行取消
+    const lineRow = !target && event.target instanceof Element ? /** @type {HTMLElement|null} */ (event.target.closest('[data-row]')) : null
+    if (lineRow) return selectLine(lineRow, !!(/** @type {MouseEvent} */ (event).shiftKey))
     if (!target) return
     if (target.dataset.taskId) return openTask(target.dataset.taskId)
     let action = target.dataset.action
@@ -1105,6 +1216,7 @@ export function initWorkbenchPage(deps) {
     if (action === 'review-accept' && controller.state.selectedId && target.dataset.artifactId && target.dataset.path) {
       return mutate('POST', '/v1/workbench/review-mark', { id: controller.state.selectedId, artifactId: target.dataset.artifactId, path: target.dataset.path, mark: 'accepted' })
     }
+    if (action?.startsWith('line-') || action === 'review-hunk') return onLineAction(action, target)
     // 也交给另一位做一份(10-08):原样的第一句要求 + 同一个源项目 + 独立工作区,走普通交办入口;成了就打开新的那件。
     if (action === 'worktree-fork' && controller.state.detail?.task.worktree && !forking) {
       const detail = controller.state.detail, task = detail.task
@@ -1467,6 +1579,63 @@ export function initWorkbenchPage(deps) {
     const form = event.target instanceof Element && event.target.tagName === 'FORM' ? /** @type {HTMLFormElement} */ (event.target) : null
     if (!form) return
     if (form.dataset.action === 'answer-question') return answerQuestion(form.dataset.ownerTask, form.dataset.requestId)
+    // 行评论:存草稿(新建带客户端 id,改只带 id + 正文);被拒的原因留在输入框里,字不丢
+    if (form.dataset.action === 'line-comment-save') {
+      const taskId = controller.state.selectedId, compose = controller.state.lineCompose
+      if (!taskId || !compose || controller.getTargetTaskId() !== taskId) return
+      captureDraft()
+      const body = compose.body.trim()
+      const keep = (/** @type {string} */ notice) => { if (controller.state.lineCompose === compose) { compose.notice = notice; controller.paint(true) } }
+      if (!body) return keep('先写一句再存。')
+      compose.notice = ''
+      const payload = compose.edit ? { id: taskId, commentId: compose.commentId, body }
+        : { id: taskId, commentId: compose.commentId, artifactId: compose.artifactId, path: compose.path, hunk: compose.hunk, hunkSha256: compose.hunkSha256, ...(compose.rowStart !== undefined && compose.rowEnd !== undefined ? { rowStart: compose.rowStart, rowEnd: compose.rowEnd } : {}), body }
+      const done = await mutate('POST', '/v1/workbench/review-comment', payload, e => { const message = lineErrorMessage(e); if (!message) return false; keep(message); return true })
+      if (done && controller.state.lineCompose === compose) { controller.state.lineCompose = null; controller.paint(true) }
+      return
+    }
+    // 发出行评论:投递同打回 —— 执行者在写 ⇒ 等它答复;原会话不可恢复 ⇒ 当面确认一次,带重开令牌再发
+    if (form.dataset.action === 'line-comments-send') {
+      const taskId = controller.state.selectedId
+      if (!taskId || controller.getTargetTaskId() !== taskId) return
+      captureDraft()
+      const summary = (controller.state.commentsSend?.summary ?? '').trim()
+      const restartToken = controller.state.commentsSend?.restartToken
+      const keep = (/** @type {string} */ notice, /** @type {string|undefined} */ token) => {
+        const next = { ...(controller.state.commentsSend ?? {}), notice }
+        delete next.result
+        if (token === undefined) delete next.restartToken
+        else next.restartToken = token
+        controller.state.commentsSend = next
+        controller.paint(true)
+      }
+      if (controller.state.detail?.task.phase !== 'replied' && ['running', 'queued', 'cancelling'].includes(controller.state.detail?.task.status ?? '')) return keep('执行者还在写，等它答复后再发出评论。', restartToken)
+      /** @type {{sent?:number,remaining?:number,skippedDiscarded?:number}} */
+      let counts = {}
+      const done = await mutate('POST', '/v1/workbench/review-comments-send', { id: taskId, ...(summary ? { summary } : {}), ...(restartToken ? { restartToken } : {}) }, async error => {
+        const recovery = recoveryCode(error)
+        if (recovery === 'stale') { keep('', undefined); return false }
+        if (recovery === 'required') {
+          let token = controller.state.detail?.continuation?.restart?.token
+          if (typeof token !== 'string') { try { await controller.refresh({ force: true }) } catch { /* 让 fail() 照实报 */ } token = controller.state.detail?.continuation?.restart?.token }
+          if (typeof token !== 'string' || !/^[a-f0-9]{64}$/.test(token)) return false
+          keep('原会话无法恢复。点「带记录重新开始并发回」，CC 会带上这段记录重新开始，再把这几条评论交回去。', token)
+          return true
+        }
+        const code = String(error instanceof Error ? error.message : error).match(/\b(workbench_busy|review_comment_not_found|rewind_needs_owner)\b/)?.[1]
+        if (!code) return false
+        keep(code === 'workbench_busy' ? '执行者还在写，等它答复后再发出评论。' : code === 'review_comment_not_found' ? '没有能发出的草稿。' : LINE_ERRORS[code] ?? code, restartToken)
+        return true
+      }, result => { counts = /** @type {typeof counts} */ (result) ?? {} })
+      if (done) {
+        // 旧的发出栏还在 DOM 里:先清掉那句,免得重画时又被抄回来
+        const field = /** @type {HTMLTextAreaElement|null} */ (root.querySelector('.wb-review-send textarea[name="summary"]'))
+        if (field) field.value = ''
+        controller.state.commentsSend = { summary: '', result: sentResultText(counts) }
+        controller.paint(true)
+      }
+      return
+    }
     if (form.dataset.action === 'review-return-submit') {
       const taskId = controller.state.selectedId, artifactId = form.dataset.artifactId
       if (!taskId || !artifactId || controller.getTargetTaskId() !== taskId) return
