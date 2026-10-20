@@ -74,7 +74,7 @@ function mClock(ts) { var d = new Date(ts); return String(d.getHours()).padStart
 function mConn() {
   var el = document.getElementById("m-conn"), stale = mMisses >= M_STALE_MISSES
   el.hidden = !stale
-  el.textContent = stale ? (mLastOkAt===null?"还没有连上 CC，请检查电脑连接。":"连不上 CC —— 你看到的是 " + mClock(mLastOkAt) + " 的样子") : ""
+  el.textContent = stale ? (mLastOkAt===null?"家里的电脑暂时连不上，看看它开着没。":"家里的电脑暂时连不上 —— 你看到的是 " + mClock(mLastOkAt) + " 的样子") : ""
 }
 function mError(code) {
   if (code === "provider_quota_exhausted") return "这位执行者的额度暂时用完了。你的补充已保留，可以查看任务中的接手选择，或等额度恢复后再继续。"
@@ -88,7 +88,7 @@ function mError(code) {
   if (code === "invalid_path") return "电脑上找不到这个任务的文件夹了，请到桌面检查后继续。"
   if (code === "unavailable_provider") return "电脑上的执行者暂不可用，请到桌面检查连接后继续。"
   if (code === "detail_too_large") return "完整内容过长，请到桌面查看。草稿已保留，这里暂时不能提交判断或补充。"
-  if (code === "unauthorized") return "这台手机的连接已失效，请从微信重新打开随身 CC。"
+  if (code === "unauthorized") return "这台手机已经不能连了，在电脑上重新配对。"
   if (/stale|artifact_changed/.test(code || "")) return "内容已变化或已经处理，请查看刷新后的任务。"
   if (/restart_confirmation|external_close_confirmation/.test(code || "")) return "这次续接需要确认恢复方式，请到桌面工作台处理。你的补充仍保留在这里。"
   if (code === "workbench_busy") return "任务还在运行或文件夹正在使用，请刷新后再试。"

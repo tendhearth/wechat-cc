@@ -150,8 +150,8 @@ function loadHome() {
     if(seq!==homeSeq)return
     if (sent !== T) { loadHome(); return }
     var previous=homeState||cached
-    if (previous) {renderFeed(previous,true);showBanner("连不上家里的 CC · 上次更新 " + new Date(previous.synced_at).toLocaleString())}
-    else {renderPresenceHome({work:{focus:null,partial:true}},true);showBanner('暂时连不上家里的 CC，请检查电脑连接。');document.getElementById("feed").innerHTML = '<div class="empty">连不上家里的 CC<br><small>看看电脑开着没</small></div>'; document.getElementById("pres-txt").textContent = "暂时不知道 CC 在做什么" }
+    if (previous) {renderFeed(previous,true);showBanner("家里的电脑暂时连不上 · 你看到的是 " + new Date(previous.synced_at).toLocaleString() + " 的样子")}
+    else {renderPresenceHome({work:{focus:null,partial:true}},true);showBanner('家里的电脑暂时连不上，看看它开着没。');document.getElementById("feed").innerHTML = '<div class="empty">家里的电脑暂时连不上<br><small>看看它开着没</small></div>'; document.getElementById("pres-txt").textContent = "暂时不知道 CC 在做什么" }
   })
 }
 function markMemoriesSeen(){

@@ -16,7 +16,7 @@
 .terminal-detail .terminal-actions{margin:4px 0 14px}
 .terminal-activity{max-height:46vh;overflow-y:auto;margin:0 0 12px;padding:2px 0;border-left:1px solid var(--line);padding-left:12px}
 .terminal-activity p{margin:0 0 8px;overflow-wrap:anywhere}
-.terminal-activity .ta-step{font-size:13px;color:var(--soft)}.terminal-activity .ta-step.is-now{color:var(--ink)}.terminal-activity .ta-step.is-now::before{content:'正在 · ';color:var(--accent)}
+.terminal-activity .ta-step{font-size:13px;color:var(--soft)}.terminal-activity .ta-step.is-now{color:var(--ink)}.terminal-activity .ta-step.is-now::before{content:'正在 · ';color:var(--ink);font-weight:500}
 .terminal-activity time{margin-left:8px;font-size:11.5px;color:var(--soft)}
 .terminal-activity .ta-said{font-size:15px;line-height:1.6;white-space:pre-wrap;color:var(--ink)}
 .terminal-activity .ta-you{font-size:14px;line-height:1.6;white-space:pre-wrap;color:var(--ink)}.terminal-activity .ta-you span{color:var(--soft);font-size:12px;margin-right:8px}
@@ -25,6 +25,6 @@
 .terminal-activity .ta-step.is-error{color:var(--th-bad)}.terminal-activity .ta-step.is-error::before{content:'没成 · '}
 .terminal-activity .ta-detail{margin:6px 0 0;padding:8px 10px;max-height:40vh;overflow:auto;background:var(--card);border:1px solid var(--line);border-radius:var(--r-s);font:12px/1.5 ui-monospace,SFMono-Regular,Menlo,monospace;color:var(--ink);white-space:pre-wrap;overflow-wrap:anywhere}
 .terminal-activity .ta-add{color:var(--accent)}.terminal-activity .ta-del{color:var(--th-bad)}
-.terminal-summary.is-now{color:var(--ink)}.terminal-summary.is-now>span{color:var(--accent);margin-right:2px}
+.terminal-summary.is-now{color:var(--ink)}.terminal-summary.is-now>span{color:var(--ink);font-weight:500;margin-right:2px}
 .terminal-head small .th-agents{margin-left:auto;--th-agent-size:20px}
 .m-note{font-size:13px;color:var(--soft);margin:6px 0 0}

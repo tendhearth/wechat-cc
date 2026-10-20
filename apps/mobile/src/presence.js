@@ -41,7 +41,7 @@ function renderPresenceHome(s,stale) {
     result.appendChild(card)
   }
   setPresenceLit(!stale&&!!s.presence&&s.presence.presence==='ok')
-  document.getElementById('home-context').textContent=stale?'这是上次留下的画面，当前活动尚未确认。':s.presence&&s.presence.presence==='ok'?'':'有些连接状态还需要确认。'
+  document.getElementById('home-context').textContent=stale?'你看到的是上次的样子，现在在做什么还没确认。':s.presence&&s.presence.presence==='ok'?'':'有些连接状态还需要确认。'
 }
 // CC 亮 = 真的在身边(设计原则规矩 9):只在拿到新鲜、presence=ok 的状态时点亮;旧画面 / 断线 / 不对劲 ⇒ 暗。
 // 以前这里 800ms 后不看连接就点亮(手机端盘点 10-20);渐亮仍走 CSS 的 0.8s 过渡。
