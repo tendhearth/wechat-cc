@@ -122,6 +122,20 @@ describe('ACP provider — chat-side options', () => {
     expect(resumed.child.sent.find(m => m.method === 'session/load')!.params).toEqual({ sessionId: 'sess-old', cwd: '/project', mcpServers: servers })
     expect(resumed.child.sent.some(m => m.method === 'session/set_config_option')).toBe(false)
   })
+  it('bridge permissions hand the rules rawInput.command and locations, never the display title', async () => {
+    const requestPermission = vi.fn(async (_r: { tool: string; description: string; command?: string; paths?: string[] }) => true)
+    const { session, child } = await start({ requestPermission }, undefined, { text: 'append', permissions: 'bridge' })
+    const { done } = collect(session); await prompted(child)
+    permission(child, 'b1')
+    permission(child, 'b2', { toolCall: { toolCallId: 'c2', title: 'Edit a.ts', kind: 'edit', status: 'pending', locations: [{ path: '/project/a.ts' }, { path: '/project/b.ts', line: 3 }] } })
+    permission(child, 'b3', { toolCall: { toolCallId: 'c3', title: '`git push`', kind: 'execute', status: 'pending' } })
+    await expect.poll(() => requestPermission.mock.calls.length).toBe(3)
+    const byTool = requestPermission.mock.calls.map(c => c[0])
+    expect(byTool[0]).toMatchObject({ tool: 'execute', command: 'uname -a' })
+    expect(byTool[1]).toMatchObject({ tool: 'edit', paths: ['/project/a.ts', '/project/b.ts'] })
+    expect(byTool[2]).not.toHaveProperty('command')
+    child.finishPrompt(); await done
+  })
   it('mode permissions: dangerously ⇒ allow-once, strict ⇒ reject-once, never calls the bridge, unverifiable ⇒ cancelled without stopping', async () => {
     const requestPermission = vi.fn(async () => true)
     const { session, child } = await start({ permissionMode: 'dangerously', requestPermission })

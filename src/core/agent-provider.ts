@@ -280,7 +280,8 @@ export interface SpawnContext {
   /** A task-local approval bridge. It is bound to one active run and fails
    * closed after that run is cancelled, completed, or restarted. */
   requestPermission?: (
-    request: { tool: string; description: string },
+    /** command / paths / cwd:放行规则要的原文(2026-10-19),执行者拿得到就给,拿不到就不给。 */
+    request: { tool: string; description: string; command?: string; paths?: string[]; cwd?: string },
     signal?: AbortSignal,
   ) => Promise<boolean>
   requestUserInput?: (request: AgentUserInputRequest, signal?: AbortSignal) => Promise<AgentUserInputAnswers | null>

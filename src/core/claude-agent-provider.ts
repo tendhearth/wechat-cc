@@ -1,4 +1,5 @@
 import { query, type CanUseTool, type Options, type PermissionResult, type SDKMessage, type SDKUserMessage } from '@anthropic-ai/claude-agent-sdk'
+import { toolInputFacts } from './permission-rules/facts'
 import type { AgentActivity, AgentAttachment, AgentEvent, AgentProject, AgentProvider, AgentSession, PermissionMode, SpawnContext } from './agent-provider'
 import { classifyToolUse, TIER_PROFILES, type TierProfile, type ToolKind } from './user-tier'
 import { WORKBENCH_PERMISSION_DESCRIPTION_MAX, WORKBENCH_PERMISSION_TOOL_MAX } from './workbench/permissions'
@@ -225,9 +226,13 @@ export function makeWorkbenchClaudeCanUseTool(
     }
     let allowed = false
     try {
+      // 放行规则(2026-10-19)要原文:命令、文件路径(拿不到就不给)。
+      const facts = toolInputFacts(input)
       allowed = await requestPermission({
         tool: toolName.slice(0, WORKBENCH_PERMISSION_TOOL_MAX),
         description,
+        ...(facts.command ? { command: facts.command } : {}),
+        ...(facts.paths.length ? { paths: facts.paths } : {}),
       }, options.signal)
     } catch {
       allowed = false

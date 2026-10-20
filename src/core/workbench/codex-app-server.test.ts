@@ -562,7 +562,7 @@ describe('workbench Codex app-server', () => {
     const { session, child } = await start({ requestPermission })
     const run = collect(session); await begun(child); approval(child, 42)
     await expect.poll(() => child.sent.find(m => m.id === 42)?.result).toEqual({ decision: allow ? 'accept' : 'decline' })
-    expect(requestPermission).toHaveBeenCalledWith({ tool: 'commandExecution', description: expect.stringContaining('rm report.txt') }, expect.any(AbortSignal))
+    expect(requestPermission).toHaveBeenCalledWith({ tool: 'commandExecution', description: expect.stringContaining('rm report.txt'), command: 'rm report.txt', cwd: '/project' }, expect.any(AbortSignal))
     completed(child); await run.done
   })
 
@@ -655,8 +655,19 @@ describe('workbench Codex app-server', () => {
     next.child.notify('item/started', { threadId: 'thread-1', turnId: 'turn-1', item: { type: 'fileChange', id: 'item-1', changes: [{ path: '/project/report.txt', kind: { type: 'update' }, diff: '-old\n+new' }] } })
     approval(next.child, 'patch', 'item/fileChange/requestApproval')
     await expect.poll(() => requestPermission.mock.calls.length).toBe(1)
-    expect(requestPermission.mock.calls[0]![0]).toMatchObject({ tool: 'fileChange', description: expect.stringContaining('-old\n+new') })
+    expect(requestPermission.mock.calls[0]![0]).toMatchObject({ tool: 'fileChange', description: expect.stringContaining('-old\n+new'), paths: ['/project/report.txt'] })
+    expect(requestPermission.mock.calls[0]![0]).not.toHaveProperty('command')
     completed(next.child); await run2.done
+  })
+
+  it('withholds the raw facts when the approval carries extra permissions (a rule allowing the command must not grant them)', async () => {
+    const requestPermission = vi.fn(async (_request: { tool: string; description: string }, _signal?: AbortSignal) => true)
+    const { session, child } = await start({ requestPermission }); const run = collect(session); await begun(child)
+    approval(child, 'net', undefined, { additionalPermissions: { network: { enabled: true } }, availableDecisions: ['accept', 'decline'] })
+    approval(child, 'host', undefined, { networkApprovalContext: { host: 'x.example', protocol: 'https' }, availableDecisions: ['accept', 'decline'] })
+    await expect.poll(() => requestPermission.mock.calls.length).toBe(2)
+    for (const call of requestPermission.mock.calls) { expect(call[0]).not.toHaveProperty('command'); expect(call[0]).not.toHaveProperty('paths') }
+    completed(child); await run.done
   })
 
   it('uses the latest file patch notification in the actionable preview', async () => {

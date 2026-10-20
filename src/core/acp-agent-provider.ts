@@ -62,6 +62,21 @@ export function acpCurrentModel(result: unknown): string | null {
   return null
 }
 
+/**
+ * 放行规则(2026-10-19)要的原文:只认结构化字段 —— rawInput.command 与 locations[].path。
+ * title 是给人看的(Cursor 把命令包在反引号里),不从它猜命令:拿不到原文的请求,规则放不了,照旧问主人。
+ */
+export function acpRuleFacts(toolCall: Record<string, unknown>): { command?: string; paths?: string[] } {
+  const out: { command?: string; paths?: string[] } = {}
+  const raw = toolCall.rawInput
+  if (object(raw) && typeof raw.command === 'string' && raw.command.trim()) out.command = raw.command.slice(0, 2000)
+  if (Array.isArray(toolCall.locations)) {
+    const paths = toolCall.locations.flatMap((l: unknown) => object(l) && typeof l.path === 'string' && l.path ? [l.path] : [])
+    if (paths.length && paths.length === toolCall.locations.length) out.paths = paths.slice(0, 50)
+  }
+  return out
+}
+
 export interface AcpMcpServer { name: string; command: string; args: string[]; env: Array<{ name: string; value: string }> }
 export interface AcpProviderOptions extends AcpProviderBaseOptions {
   /** 'bridge':逐工具转给 context.requestPermission(工作台任务桥);
@@ -244,7 +259,7 @@ export function createAcpProvider(options: AcpProviderOptions): AgentProvider {
             const key = id
             const entry: PendingPermission = { controller, respond: resolve }
             permissions.set(key, entry)
-            void Promise.resolve().then(() => context.requestPermission ? context.requestPermission({ tool, description }, controller.signal) : false)
+            void Promise.resolve().then(() => context.requestPermission ? context.requestPermission({ tool, description, ...acpRuleFacts(toolCall) }, controller.signal) : false)
               .catch(() => false)
               .then(allow => {
                 if (permissions.get(key) !== entry) return

@@ -3,6 +3,7 @@
  * 显式、只读、不含 service 对象本身:域需要「别的域 / service 的动作」一律 ctx.actions.deref() 在**调用时**取
  * —— Ref 由 service.ts 在 public 对象建好后 set 一次;工厂体里不许 deref(那时还没 set)。
  */
+import type { PermissionAsk } from '../../permission-rules/types'
 import type { NetworkGate } from '../../../lib/network-gate'
 import type { Ref } from '../../../lib/lifecycle'
 import type { ProviderRegistry } from '../../provider-registry'
@@ -91,6 +92,8 @@ export interface ServiceDeps {
   usage?: (providerId: string) => UsageSnapshot | null
   /** 权限卡的等待上限(ms);缺省 WORKBENCH_PERMISSION_TIMEOUT_MS。 */
   permissionTimeoutMs?: number
+  /** 放行规则(2026-10-19):权限卡登记之前先问;不传 ⇒ 每条都问主人(改造前)。 */
+  permissionDecide?: (ask: PermissionAsk) => Promise<{ verdict: 'allow' | 'deny' | 'ask'; by: string }>
   /** 免审执行者的一次性确认(daemon 侧持久化);不传 ⇒ 免审执行者永远要求确认。 */
   unattendedAck?: { get(): number | null; set(at: number): void }
   /** 原生历史读取器(claude / codex):list 只报名字,native 域真读。 */

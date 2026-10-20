@@ -17,7 +17,13 @@ export interface PendingWorkbenchPermission {
 
 export type WorkbenchPermissionAudit =
   | { type: 'request'; permission: PendingWorkbenchPermission }
-  | { type: 'outcome'; permission: PendingWorkbenchPermission; outcome: PermissionOutcome }
+  | { type: 'outcome'; permission: PendingWorkbenchPermission; outcome: PermissionOutcome; /** 放行规则替主人拿的主意(没有 = 主人 / 到期 / 取消)。 */ by?: RuleDecider }
+
+/** 放行规则(2026-10-19)谁拿的主意:规则表 / 初审 / 红线。 */
+export type RuleDecider = 'rule' | 'review' | 'floor'
+/** 执行者能给的原文(拿不到就不给,规则不猜)。 */
+export interface PermissionFacts { tool: string; command?: string; paths?: string[]; cwd?: string }
+export type PermissionDecide = (facts: PermissionFacts) => Promise<{ verdict: 'allow' | 'deny' | 'ask'; by: string }>
 
 interface Entry {
   permission: PendingWorkbenchPermission
@@ -32,6 +38,8 @@ export function makeRunPermissions(opts: {
   taskId: string
   timeoutMs?: number
   audit?: (event: WorkbenchPermissionAudit) => void
+  /** 放行规则:登记之前先问。allow / deny ⇒ 不登记、不发 request 审计(主人收不到通知),只记 outcome 带 by。 */
+  decide?: PermissionDecide
 }) {
   const entries = new Map<string, Entry>()
   let closed = false
@@ -42,7 +50,7 @@ export function makeRunPermissions(opts: {
   }
 
   function request(
-    raw: { tool: string; description: string },
+    raw: { tool: string; description: string; command?: string; paths?: string[]; cwd?: string },
     signal?: AbortSignal,
   ): Promise<boolean> {
     if (closed || typeof raw?.tool !== 'string' || typeof raw?.description !== 'string') return Promise.resolve(false)
@@ -50,7 +58,23 @@ export function makeRunPermissions(opts: {
     const description = raw.description.trim()
     if (!tool || !description || tool.length > WORKBENCH_PERMISSION_TOOL_MAX ||
         description.length > WORKBENCH_PERMISSION_DESCRIPTION_MAX || signal?.aborted) return Promise.resolve(false)
+    if (!opts.decide) return register(tool, description, signal)
+    const facts: PermissionFacts = { tool }
+    if (typeof raw.command === 'string' && raw.command.trim()) facts.command = raw.command
+    if (Array.isArray(raw.paths) && raw.paths.length && raw.paths.every(p => typeof p === 'string' && p)) facts.paths = [...raw.paths]
+    if (typeof raw.cwd === 'string' && raw.cwd) facts.cwd = raw.cwd
+    return opts.decide(facts).catch(() => ({ verdict: 'ask' as const, by: 'default' })).then(d => {
+      if (closed || signal?.aborted) return false
+      if ((d.verdict === 'allow' || d.verdict === 'deny') && (d.by === 'rule' || d.by === 'review' || d.by === 'floor')) {
+        const permission: PendingWorkbenchPermission = { id: randomUUID(), taskId: opts.taskId, tool, description, createdAt: Date.now() }
+        const audited = audit({ type: 'outcome', permission, outcome: d.verdict, by: d.by })
+        return audited && d.verdict === 'allow'
+      }
+      return register(tool, description, signal)
+    })
+  }
 
+  function register(tool: string, description: string, signal?: AbortSignal): Promise<boolean> {
     const permission: PendingWorkbenchPermission = {
       id: randomUUID(),
       taskId: opts.taskId,

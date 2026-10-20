@@ -410,7 +410,7 @@ describe('claude-agent-provider', () => {
 
     await expect(gate('Read', { file_path: '/tmp/report.md' }, { signal } as never)).resolves.toEqual({ behavior: 'allow' })
     await expect(gate('Bash', { command: 'rm -rf build' }, { signal, title: 'Remove build output' } as never)).resolves.toEqual({ behavior: 'allow' })
-    expect(requestPermission).toHaveBeenCalledWith({ tool: 'Bash', description: 'Remove build output\ncommand=rm -rf build' }, signal)
+    expect(requestPermission).toHaveBeenCalledWith({ tool: 'Bash', description: 'Remove build output\ncommand=rm -rf build', command: 'rm -rf build' }, signal)
   })
 
   it('denies task MCP tools and relay requests without an active callback', async () => {
