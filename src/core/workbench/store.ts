@@ -23,6 +23,8 @@ export interface Task {
   workspaceKind: 'project' | 'managed'
   createdAt: number; updatedAt: number; error: string | null; archivedAt: number | null
 }
+/** 独立工作区一行(v74;scriptSha / port / setupAt 是 v79)。 */
+export interface WorktreeRecord { taskId:string;projectPath:string;repoRoot:string;root:string;branch:string;createdAt:number;removedAt:number|null;mergedAt:number|null;scriptSha:string|null;port:number|null;setupAt:number|null }
 export interface WorkbenchProject { id:string; path:string; name:string; providerId:string; createdAt:number }
 const PROJECT_SELECT='SELECT id,path,name,provider_id AS providerId,created_at AS createdAt FROM workbench_projects'
 const projectName=(project:WorkbenchProject):WorkbenchProject=>({...project,name:project.name||basename(project.path)||project.path})
@@ -224,16 +226,47 @@ export function makeWorkbenchStore(db: Db) {
     },
     /** 独立工作区(v74,2026-10-07):这件事在哪个 worktree、源项目、分支;removedAt 非空 = 目录已删(分支保留)。 */
     worktrees: {
-      record(input:{taskId:string;projectPath:string;repoRoot:string;root:string;branch:string}) {
-        db.query('INSERT OR IGNORE INTO workbench_worktrees(task_id,project_path,repo_root,root,branch,created_at) VALUES(?,?,?,?,?,?)').run(input.taskId,input.projectPath,input.repoRoot,input.root,input.branch,Date.now())
+      /** scriptSha = 建工作区时的 HEAD(v79):脚本从这个提交读;git 读不出来 ⇒ null(这个工作区就没有脚本)。 */
+      record(input:{taskId:string;projectPath:string;repoRoot:string;root:string;branch:string;scriptSha?:string|null}) {
+        db.query('INSERT OR IGNORE INTO workbench_worktrees(task_id,project_path,repo_root,root,branch,created_at,script_sha) VALUES(?,?,?,?,?,?,?)').run(input.taskId,input.projectPath,input.repoRoot,input.root,input.branch,Date.now(),input.scriptSha??null)
       },
-      get(taskId:string):{taskId:string;projectPath:string;repoRoot:string;root:string;branch:string;createdAt:number;removedAt:number|null;mergedAt:number|null}|null {
-        return db.query<{taskId:string;projectPath:string;repoRoot:string;root:string;branch:string;createdAt:number;removedAt:number|null;mergedAt:number|null},[string]>('SELECT task_id AS taskId,project_path AS projectPath,repo_root AS repoRoot,root,branch,created_at AS createdAt,removed_at AS removedAt,merged_at AS mergedAt FROM workbench_worktrees WHERE task_id=?').get(taskId)??null
+      get(taskId:string):WorktreeRecord|null {
+        return db.query<WorktreeRecord,[string]>('SELECT task_id AS taskId,project_path AS projectPath,repo_root AS repoRoot,root,branch,created_at AS createdAt,removed_at AS removedAt,merged_at AS mergedAt,script_sha AS scriptSha,port,setup_at AS setupAt FROM workbench_worktrees WHERE task_id=?').get(taskId)??null
       },
+      /** 端口(v79,部分唯一索引):别的工作区已经占了这个端口 ⇒ false(allocatePort 接着找下一个)。null = 放掉。 */
+      setPort(taskId:string,port:number|null):boolean {
+        try { return db.query('UPDATE workbench_worktrees SET port=? WHERE task_id=?').run(port,taskId).changes>0 }
+        catch(error) { if(/UNIQUE/i.test(String((error as Error).message)))return false; throw error }
+      },
+      getPort(taskId:string):number|null {
+        return db.query<{port:number|null},[string]>('SELECT port FROM workbench_worktrees WHERE task_id=?').get(taskId)?.port??null
+      },
+      /** 所有工作区已经拿着的端口(删了目录的也算,重新打开还用同一个)。 */
+      usedPorts():Set<number> {
+        return new Set(db.query<{port:number},[]>('SELECT port FROM workbench_worktrees WHERE port IS NOT NULL').all().map(row=>row.port))
+      },
+      /** 在跑脚本的进程组,格式同 writer_groups;空 ⇒ 清掉。 */
+      setScriptGroups(taskId:string,groups:readonly number[],bootMs?:number) {
+        db.query('UPDATE workbench_worktrees SET script_groups=? WHERE task_id=?').run(groups.length?JSON.stringify(bootMs===undefined?groups:{boot:Math.round(bootMs),groups}):null,taskId)
+      },
+      scriptGroups(taskId:string):{groups:number[]|null;boot:number|null} {
+        return parseGroups(db.query<{g:string|null},[string]>('SELECT script_groups AS g FROM workbench_worktrees WHERE task_id=?').get(taskId)?.g??null)
+      },
+      /** setup 跑完了(只记第一次)。 */
+      markSetup(taskId:string,at=Date.now()) { db.query('UPDATE workbench_worktrees SET setup_at=COALESCE(setup_at,?) WHERE task_id=?').run(at,taskId) },
       markReopened(taskId:string) { db.query('UPDATE workbench_worktrees SET removed_at=NULL WHERE task_id=?').run(taskId) },
       markRemoved(taskId:string) { db.query('UPDATE workbench_worktrees SET removed_at=COALESCE(removed_at,?) WHERE task_id=?').run(Date.now(),taskId) },
       clearMerged(taskId:string) { db.query('UPDATE workbench_worktrees SET merged_at=NULL WHERE task_id=?').run(taskId) },
       markMerged(taskId:string) { db.query('UPDATE workbench_worktrees SET merged_at=COALESCE(merged_at,?) WHERE task_id=?').run(Date.now(),taskId) },
+    },
+    /** 主人批过的工作区脚本(v79):按 (仓库键, 脚本内容哈希),内容一变就不算批过。 */
+    scriptApprovals: {
+      has(repoKey:string,hash:string):boolean {
+        return db.query('SELECT 1 FROM workbench_script_approvals WHERE repo_key=? AND config_hash=?').get(repoKey,hash)!=null
+      },
+      add(repoKey:string,hash:string,at=Date.now()) {
+        db.query('INSERT OR IGNORE INTO workbench_script_approvals(repo_key,config_hash,approved_at) VALUES(?,?,?)').run(repoKey,hash,at)
+      },
     },
     /** 关不掉的执行程序的进程组(v73,2026-10-06):退出证据从这里查,见 lifecycle 的 writer 守望。 */
     setWriterGroups(id:string,groups:readonly number[],bootMs?:number) {

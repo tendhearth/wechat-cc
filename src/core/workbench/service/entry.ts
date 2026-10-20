@@ -17,6 +17,7 @@ import { publicTask } from '../store'
 import { canonicalEntryHash, composeEntryPrompt, entryOrigin, parseEntryInput, type EntryContext, type EntryInput, type EntryOptions } from '../task-entry'
 import { directoryIdentity } from './directory-identity'
 import { baseBranchExists, ensureWorktree, planWorktree, repoRootOf, type WorktreePlan } from '../worktree-workspaces'
+import { pinnedScriptSha } from '../worktree-scripts'
 import type { ServiceCtx } from './ctx'
 import type { EntryResult } from './types'
 import type { AdmissionDomain } from './admission'
@@ -134,7 +135,7 @@ export function makeEntryDomain(ctx:ServiceCtx, domains:EntryDomains) {
       createTask({path,providerId:frozen.providerId,text,title:input.title??(input.text.trim().slice(0,40)||current[0]!.name.slice(0,40)),execution:frozen.execution,draftId:input.draftId,attachmentIds:input.attachmentIds},(task,runId)=>{
         verify()
         store.entryRequests.accept(context.ownerKey,input.requestId,{taskId:task.id,matterId:task.id,runId,acceptedAt:Date.now(),resolvedPath:path,directoryIdentity:identity})
-        if(tree)store.worktrees.record({taskId:task.id,projectPath:tree.plan.projectPath,repoRoot:tree.plan.repoRoot,root:tree.plan.root,branch:tree.plan.branch})
+        if(tree)store.worktrees.record({taskId:task.id,projectPath:tree.plan.projectPath,repoRoot:tree.plan.repoRoot,root:tree.plan.root,branch:tree.plan.branch,scriptSha:pinnedScriptSha(tree.plan.root)})
       },undefined,{
         // 独立工作区的目录不登记成项目:它属于源项目,侧栏按源项目归组(2026-10-07)。
         context,workspaceKind:frozen.target.kind==='managed'?'managed':'project',...(tree?{registerProject:false}:{}),fromChat:!!input.context,materials:current,

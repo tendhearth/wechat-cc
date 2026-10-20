@@ -326,6 +326,8 @@ it('isolated worktree tasks (2026-10-07): run in parallel on one project, stay o
   expect(a.waitingFor).toBeNull();expect(b.waitingFor).toBeNull()
   expect(a.worktree).toMatchObject({branch:expect.stringMatching(/^cc\/[a-f0-9]{8}$/),projectPath:project,removed:false})
   expect(readFileSync(join(a.path,'a.txt'),'utf8')).toBe('one\n')
+  // 脚本钉在建工作区时的提交(v79)
+  expect(store.worktrees.get(one.receipt.taskId)?.scriptSha).toBe(g('rev-parse','HEAD'))
   gate.resolve();await settle(one.receipt.taskId);await settle(two.receipt.taskId)
   // 不登记成项目
   expect(store.projects().some(p=>p.path.startsWith(join(wtRoot,'worktrees')))).toBe(false);expect(store.ownedProjects('owner').some(p=>p.path.startsWith(join(wtRoot,'worktrees')))).toBe(false)
@@ -392,6 +394,7 @@ it('WeChat 「任务 新建 <项目> 独立」 (2026-10-07): runs in a worktree,
   expect(task.path.startsWith(join(realpathSync.native(stateDir),'worktrees'))).toBe(true)
   expect(task.worktree).toMatchObject({projectPath:project,removed:false})
   expect(store.projects().some(p=>p.path===task.path)).toBe(false)
+  expect(store.worktrees.get(first.taskId)?.scriptSha).toBe(g('rev-parse','HEAD'))
   await settle(first.taskId)
 })
 
