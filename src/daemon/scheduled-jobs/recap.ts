@@ -17,7 +17,17 @@ const COUNT_WORD: Record<ActivityKind, (n: number) => string> = {
   letter: n => `寄信 ${n} 封`, memory: n => `整理记忆 ${n} 次`, cli_upgrade: n => `CLI 升级 ${n} 次`,
 }
 
-export function buildRecapMaterial(items: ActivityItem[], o: { now: number; timeZone: string }): string {
+export interface RecapUsageRow { providerId: string; turns: number; input: number | null; output: number | null }
+const EXEC_NAME: Record<string, string> = { claude: 'Claude Code', codex: 'Codex', cursor: 'Cursor', agy: 'agy', openai: 'OpenAI 兼容' }
+const tokens = (n: number) => n >= 10_000 ? `${Math.round(n / 10_000)} 万` : String(n)
+/** 这一周各执行者自己报的用量(v82);一项没报 ⇒ 写「不报」,不写 0。 */
+function usageBlock(rows: RecapUsageRow[]): string {
+  if (!rows.length) return ''
+  const line = (r: RecapUsageRow) => `- ${EXEC_NAME[r.providerId] ?? r.providerId} ${r.turns} 轮:${r.input === null && r.output === null ? '不报 token' : `输入 ${r.input === null ? '不报' : tokens(r.input) + ' token'},输出 ${r.output === null ? '不报' : tokens(r.output) + ' token'}`}`
+  return `### 这一周各执行者用了多少(执行者自己报的)\n${rows.map(line).join('\n')}`
+}
+
+export function buildRecapMaterial(items: ActivityItem[], o: { now: number; timeZone: string; usage?: RecapUsageRow[] }): string {
   const week = items.filter(i => i.at <= o.now && i.at > o.now - WEEK_MS).sort((a, b) => b.at - a.at)
   if (!week.length) return ''
   const counts = new Map<ActivityKind, number>()
@@ -27,6 +37,8 @@ export function buildRecapMaterial(items: ActivityItem[], o: { now: number; time
   const lines = week.slice(0, RECAP_LINES_MAX).map(i => `- ${md(i.at)} ${i.title}`)
   let text = `${head}\n\n### 一条条(新的在前)\n${lines.join('\n')}`
   if (week.length > RECAP_LINES_MAX) text += `\n(还有 ${week.length - RECAP_LINES_MAX} 条没列)`
+  const usage = usageBlock(o.usage ?? [])
+  if (usage) text = `${head}\n\n${usage}\n\n${text.slice(head.length + 2)}`
   return text.length <= RECAP_MATERIAL_MAX ? text : text.slice(0, RECAP_MATERIAL_MAX - 1) + '…'
 }
 
@@ -52,6 +64,8 @@ export interface RecapTurnDeps {
   timeZone: () => string
   /** 「CC 做过的事」的条目(只算主人的);读不到 ⇒ 抛,这里当空。 */
   activity: () => ActivityItem[]
+  /** 这一周各执行者的用量(store.usage.sinceByProvider);读不到 ⇒ 不写这一块。 */
+  usage?: (sinceMs: number) => RecapUsageRow[]
 }
 
 export function makeRecapTurn(deps: RecapTurnDeps): (job: ScheduledJob, nowIso: string) => Promise<string> {
@@ -60,7 +74,9 @@ export function makeRecapTurn(deps: RecapTurnDeps): (job: ScheduledJob, nowIso: 
     if (!owner) return 'skipped:no_owner'
     let items: ActivityItem[] = []
     try { items = deps.activity() } catch { /* 读不到就是空的一周 */ }
-    const material = buildRecapMaterial(items, { now: deps.now(), timeZone: deps.timeZone() })
+    let usage: RecapUsageRow[] = []
+    try { usage = deps.usage?.(deps.now() - WEEK_MS) ?? [] } catch { /* 读不到就不写 */ }
+    const material = buildRecapMaterial(items, { now: deps.now(), timeZone: deps.timeZone(), usage })
     return deps.runJobTurn({ chatId: owner, jobId: job.id, text: job.text, nowIso, buildText: (style) => buildRecapText({ jobId: job.id, nowIso, material }, style) })
   }
 }
