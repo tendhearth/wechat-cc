@@ -51,7 +51,7 @@ const REQUEST_MAX=6000
 const unavailable='没有找到这个任务，请在桌面工作台核对编号。'
 const stale='这条请求已失效或不属于这个任务。请重新查询任务，使用当前请求编号。'
 const stopUnconfirmed='这条停止请求已记录，但尚未确认执行结果。请查询任务状态；如需停止当前轮次，请发送一条新的停止消息。'
-const usage=(id='<任务编号>')=>`用法：\n项目：任务 项目\n新建：任务 新建 <项目编号> <要求>\n并行：任务 新建 <项目编号> 独立 <要求>（从某个分支开始：独立@<分支>）\n从 GitHub issue 开工：任务 新建 <项目编号> issue <编号>\n查看：任务 ${id}\n补充：任务 ${id} 补充 <要求>\n改动：任务 ${id} 改动\n独立工作区：任务 ${id} 提交 / 合回 / 删除工作区 / 重开工作区\n停止：任务 ${id} 停止\n处理待办时，请复制任务消息中的完整请求编号。`
+const usage=(id='<任务编号>')=>`用法：\n项目：任务 项目\n新建：任务 新建 <项目编号> <要求>\n并行：任务 新建 <项目编号> 独立 <要求>（从某个分支开始：独立@<分支>）\n从 GitHub issue 开工：任务 新建 <项目编号> issue <编号>\n两家对比：任务 新建 <项目编号> 对比 @claude @codex <要求>\n查看：任务 ${id}\n补充：任务 ${id} 补充 <要求>\n改动：任务 ${id} 改动\n独立工作区：任务 ${id} 提交 / 合回 / 删除工作区 / 重开工作区\n停止：任务 ${id} 停止\n处理待办时，请复制任务消息中的完整请求编号。`
 const clip=(value:string,max:number)=>value.length>max?value.slice(0,max)+'…':value
 const singleLine=(value:string,max=100)=>clip(value.replace(/[\r\n]+/g,' '),max)
 export const isWechatTaskCommand=(text:string)=>/^(?:任务|\/task)(?:\s|$)/i.test(text.trim())
@@ -242,7 +242,7 @@ function changesReply(id:string,turns:ReviewTurn[]|null):string {
 
 const ISSUE_FAIL:Record<string,string>={gh_missing:'这台电脑上没找到 gh(GitHub 命令行)。装好并登录后再试:brew install gh,然后 gh auth login。',gh_auth:'gh 还没登录 GitHub。在电脑上跑一次 gh auth login 再试。',not_found:'这个项目的仓库里没有这个编号的 issue。',not_github:'这个项目的 git remote 不是 GitHub,没法按编号取 issue。',timeout:'取 issue 超时了,过一会儿再试。',failed:'没取到这个 issue,过一会儿再试。'}
 
-export function makeWechatWorkbenchControl(opts:{store:WorkbenchStore;ownerChatId:()=>string|null;actions:Actions;fetchIssue?:(projectPath:string,n:number)=>Promise<{ok:true;issue:IssueData}|{ok:false;reason:string}>}){
+export function makeWechatWorkbenchControl(opts:{store:WorkbenchStore;ownerChatId:()=>string|null;actions:Actions;hasExecutor?:(id:string)=>boolean;fetchIssue?:(projectPath:string,n:number)=>Promise<{ok:true;issue:IssueData}|{ok:false;reason:string}>}){
   return async(chatId:string,text:string,identity?:WechatMessageIdentity):Promise<WechatWorkbenchReply|null>=>{
     if(!isWechatTaskCommand(text))return null
     if(!opts.ownerChatId()||chatId!==opts.ownerChatId()||(identity&&identity.userId!==chatId))return null
@@ -261,6 +261,30 @@ export function makeWechatWorkbenchControl(opts:{store:WorkbenchStore;ownerChatI
     }
     if(/^新建(?:\s|$)/.test(command)){
       if(!identity?.accountId?.trim())return failure(Error('invalid_wechat_identity'),'')
+      // 「任务 新建 <项目> 对比 @a @b <要求>」(10-20,对标 Codex best-of-N):同一件事交给两家,各在自己的独立工作区里做,做完看两份改动
+      const compare=/^新建\s+(p-[a-f0-9]{20})\s+对比\s+@(\S+)\s+@(\S+)\s+([\s\S]+)$/i.exec(command)
+      if(compare){
+        const projectId=compare[1]!.toLowerCase(),a=compare[2]!.toLowerCase(),b=compare[3]!.toLowerCase()
+        // 两家都先认准了再建,别建了一份才发现另一家不存在
+        if(a===b||!isWorkbenchProviderId(a)||!isWorkbenchProviderId(b)||(opts.hasExecutor&&(!opts.hasExecutor(a)||!opts.hasExecutor(b))))return usage()
+        let compareText=compare[4]!.trim()
+        const compareIssue=opts.fetchIssue?parseIssueRef(compareText):null
+        if(compareIssue!==null){
+          const project=opts.actions.projects().find(p=>p.id===projectId)
+          if(!project)return usage()
+          const got=await opts.fetchIssue!(project.path,compareIssue)
+          if(!got.ok)return ISSUE_FAIL[got.reason]??ISSUE_FAIL.failed!
+          compareText=issueTaskText(got.issue)
+        }
+        const commandHash=createHash('sha256').update(text).digest('hex'),originMessageId=wechatTaskMessageKey({...identity,chatId,text})
+        const replies:string[]=[]
+        for(const providerId of [a,b]){
+          // 每家一个确定的请求编号:同一条消息重发 ⇒ 两件都按原样回放,不会多建
+          try{replies.push(opts.actions.createWechat({ownerChatId:chatId,accountId:identity.accountId,requestId:inputId(chatId,`compare:${providerId}`,text,identity),commandHash,projectId,isolation:true,providerId,...(originMessageId?{originMessageId}:{}),...(identity.origin!==undefined?{origin:identity.origin}:{}),text:compareText}).reply)}
+          catch(error){replies.push(`交给 ${providerId} 的那一份没开始:${failure(error,'')}`)}
+        }
+        return `同一件事交给了 ${a} 和 ${b},各在自己的独立工作区里做,互不影响。\n\n${replies.join('\n\n')}\n\n两份都做完以后对比改动:「任务 <任务编号> 改动」;留下好的那份「合回」,另一份「删除工作区」。`
+      }
       // 「任务 新建 <项目> 独立 <要求>」:在这个项目的独立工作区里做(2026-10-07),可以和别的任务同时进行。
       // 「独立@<分支>」(10-08):独立工作区从这个本地分支开始
       const isolated=/^新建\s+p-[a-f0-9]{20}\s+独立(?:@\S+)?\s+\S/i.test(command)
