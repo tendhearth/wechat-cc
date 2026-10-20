@@ -23,7 +23,7 @@ function load(api=vi.fn(async(path:string)=>response(path.includes('cursor=')?P2
   tdAgo:(at:number)=>`${Math.round((Date.now()-at)/60000)} 分钟前`,
   esc:(text:unknown)=>String(text).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'})[c]!)}
  new Function(...Object.keys(env),readMobileSource('activity.js'))(...Object.values(env))
- const el=(id:string)=>document.getElementById(id)!
+ const el=(id:string)=>document.getElementById(id)! as any
  return{window,document,api,el,panes,opened,terminals}
 }
 const wait=()=>new Promise(resolve=>setTimeout(resolve,5))
