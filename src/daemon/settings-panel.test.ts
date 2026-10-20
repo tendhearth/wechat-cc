@@ -15,6 +15,12 @@ function seedStateDir(): string {
   return dir
 }
 
+// 审计 10-20:送话给执行者的写操作只给设备令牌。测试里先配对拿一枚设备令牌(配对会用掉链接令牌,之后再发一枚)。
+async function deviceOf(p: { issueToken(): string }, base: string): Promise<string> {
+  const link = p.issueToken()
+  return ((await (await fetch(`${base}/set/api/pair?t=${link}`, { method: 'POST' })).json()) as { device_token: string }).device_token
+}
+
 describe('settings panel', () => {
   let stateDir: string
   let panel: SettingsPanel
@@ -260,13 +266,13 @@ describe('随身 CC (phone PWA + device pairing)', () => {
       expect(push.register).toHaveBeenCalledWith(id, 'apns', TOK)
       await p.stop()
     })
-    it('链接令牌不许登记 ⇒ 403 device_only', async () => {
+    it('链接令牌不许登记 ⇒ 403(先挡在路由表那道门,审计 10-20)', async () => {
       const push = mkPush()
       const p = mkPanel(push)
       const { link, call } = await up(p)
       const r = await call('/m/api/push/register', link, { platform: 'apns', token: TOK })
       expect(r.status).toBe(403)
-      expect(await r.json()).toEqual({ ok: false, error: 'device_only' })
+      expect(await r.json()).toEqual({ error: 'route_not_allowed' })
       await p.stop()
     })
     it('平台 / token 不合法 ⇒ 400 invalid;没接线 ⇒ 503', async () => {
@@ -681,18 +687,20 @@ describe('「一件事」手机路由(2026-09-16)', () => {
 
   it('lists, details and says — same data as the desktop, and every look marks the phone surface', async () => {
     panel = make(true)
-    const { port } = await panel.start(0), base = `http://127.0.0.1:${port}`, t = panel.issueToken()
+    const { port } = await panel.start(0), base = `http://127.0.0.1:${port}`, d = await deviceOf(panel, base), t = panel.issueToken()
     const list = await (await fetch(`${base}/m/api/matters?status=open,replied&t=${t}`)).json() as { ok: boolean; matters: unknown[] }
     expect(list).toEqual({ ok: true, matters: [MATTER] })
     expect(matters.list).toHaveBeenCalledWith({ statuses: ['open', 'replied'], limit: 200 })
     expect(matters.seenOnPhone).toHaveBeenCalledWith('deadbeef')
     const detail = await (await fetch(`${base}/m/api/matter?id=deadbeef&t=${t}`)).json() as { ok: boolean; matter: { id: string }; events: unknown[] }
     expect(detail.ok).toBe(true); expect(detail.matter.id).toBe('deadbeef'); expect(detail.events).toHaveLength(1)
-    const said = await (await fetch(`${base}/m/api/matter/say?t=${t}`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ id: 'deadbeef', text: '再改一版' }) })).json() as { ok: boolean }
+    // 链接令牌不能送话给执行者(审计 10-20)
+    expect((await fetch(`${base}/m/api/matter/say?t=${t}`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ id: 'deadbeef', text: '再改一版' }) })).status).toBe(403)
+    const said = await (await fetch(`${base}/m/api/matter/say?t=${d}`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ id: 'deadbeef', text: '再改一版' }) })).json() as { ok: boolean }
     expect(said.ok).toBe(true); expect(matters.say).toHaveBeenCalledWith('deadbeef', '再改一版')
     expect((await fetch(`${base}/m/api/matters?status=weird&t=${t}`)).status).toBe(400)
     expect((await fetch(`${base}/m/api/matter?id=nope&t=${t}`)).status).toBe(400)
-    expect((await fetch(`${base}/m/api/matter/say?t=${t}`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ id: 'deadbeef', text: ' ' }) })).status).toBe(400)
+    expect((await fetch(`${base}/m/api/matter/say?t=${d}`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ id: 'deadbeef', text: ' ' }) })).status).toBe(400)
     expect((await fetch(`${base}/m/api/matters`)).status).toBe(401)
   })
   it('不带 status ⇒ 默认只要 open / replied / done(归档的自检噪声不占前 50)', async () => {
@@ -735,11 +743,11 @@ describe('「一件事」手机路由(2026-09-16)', () => {
     expect((await fetch(`${base}/m/api/matters?t=${t}`)).status).toBe(503)
     await panel.stop()
     panel = make(true)
-    const again = await panel.start(0), b2 = `http://127.0.0.1:${again.port}`, t2 = panel.issueToken()
+    const again = await panel.start(0), b2 = `http://127.0.0.1:${again.port}`, d2 = await deviceOf(panel, b2), t2 = panel.issueToken()
     matters.detail.mockImplementationOnce(() => { throw new Error('matter_not_found') })
     expect((await fetch(`${b2}/m/api/matter?id=00000000&t=${t2}`)).status).toBe(404)
     matters.say.mockImplementationOnce(async () => { throw new Error('workbench_busy') })
-    expect((await fetch(`${b2}/m/api/matter/say?t=${t2}`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ id: 'deadbeef', text: 'x' }) })).status).toBe(409)
+    expect((await fetch(`${b2}/m/api/matter/say?t=${d2}`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ id: 'deadbeef', text: 'x' }) })).status).toBe(409)
   })
 })
 

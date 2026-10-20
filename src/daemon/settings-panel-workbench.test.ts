@@ -1,4 +1,5 @@
 import {afterEach,beforeEach,describe,expect,it} from 'vitest'
+import {linkCannot,pairDevice} from './test-device-auth'
 import {createHash,randomUUID} from 'node:crypto'
 import {mkdirSync,mkdtempSync,realpathSync,readFileSync} from 'node:fs'
 import {tmpdir} from 'node:os'
@@ -51,14 +52,20 @@ beforeEach(async()=>{
   workbench=makeWorkbenchService({store,registry,stateDir:root,managedWorkspaceRoot:managedRoot,ownerChatId:()=>'owner',defaultProvider:'claude',matters})
   const service=makeMattersService({store:matters,workbench})
   panel=makeSettingsPanel({stateDir:root,ownerChatId:()=>'owner',chatPrefs:{get:()=>({}),set:()=>({})},getUserName:()=>null,setUserName:async()=>{},log:()=>{},uploads:{chunk:input=>workbench.uploadAttachmentChunk(input,{ownerKey:'owner',surface:'phone'}),status:input=>workbench.attachmentUploadStatus(input,{ownerKey:'owner',surface:'phone'}),discard:input=>workbench.discardAttachmentUpload(input,{ownerKey:'owner',surface:'phone'})},entry:{entryOptions:()=>workbench.entryOptions({ownerKey:'owner',surface:'phone'}),createEntry:input=>workbench.createEntry(input,{ownerKey:'owner',surface:'phone',origin:currentPhoneClient()}),entryReceipt:id=>workbench.entryReceipt(id,{ownerKey:'owner',surface:'phone'})},matters:{...service,say:(id,text,input)=>service.say(id,text,'phone',input),seenOnPhone:id=>{matters.bind(id,'phone','pwa')}}})
-  const {port}=await panel.start(0);base=`http://127.0.0.1:${port}`;token=panel.issueToken()
+  const {port}=await panel.start(0);base=`http://127.0.0.1:${port}`;token=panel.issueToken();device=null
 })
 // 用 removeTempDir 而不是裸 rmSync:Windows 上 daemon 刚关、句柄还没落地时
 // rm 会抛 EBUSY,而这里是 afterEach ⇒ 抛出来就把整块 9 条用例判红。helper 会
 // 重试 20 次再降级成一条 warning(仓库约定,见 AGENTS.md 的临时目录那条)。
 afterEach(async()=>{await panel?.stop();await workbench?.shutdown();db?.close();removeTempDir(root);removeTempDir(managedRoot)})
 function create(name:string){const path=join(root,name);mkdirSync(path);return workbench.create({path,providerId:'claude',text:name})}
-function request(path:string,body?:unknown,auth=token){return fetch(base+path+(path.includes('?')?'&':'?')+'t='+encodeURIComponent(auth),body===undefined?{}:{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify(body)})}
+// 送话给执行者的写操作只给设备令牌(审计 10-20):默认令牌碰到这类路由时先配一次对,再发一枚新的链接令牌给其余调用
+let device:string|null=null
+async function deviceAuth(){if(!device){device=await pairDevice(base,token);token=panel.issueToken()}return device}
+async function request(path:string,body?:unknown,auth?:string){
+  if(auth===undefined){auth=token;if(linkCannot(path)){if(!device){device=await pairDevice(base,token);token=panel.issueToken()}auth=device}}
+  return fetch(base+path+(path.includes('?')?'&':'?')+'t='+encodeURIComponent(auth),body===undefined?{}:{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify(body)})
+}
 async function ready(id:string){await expect.poll(()=>workbench.detail(id).permissions.length).toBe(1);return workbench.detail(id)}
 
 describe('phone unified task entry',()=>{
@@ -82,11 +89,11 @@ describe('phone unified task entry',()=>{
     const direct=await(await request('/m/api/matter/create',create('浏览器'))).json()
     expect(matters.get(direct.receipt.matterId)?.origin).toBe('web')
     const spoofBody=create('冒充 App')
-    const spoof=await(await fetch(base+'/m/api/matter/create?_via=tunnel&client=app&t='+encodeURIComponent(token),{method:'POST',headers:{'content-type':'application/json','x-cc-client':'app','user-agent':'TendhearthApp'},body:JSON.stringify(spoofBody)})).json()
+    const spoof=await(await fetch(base+'/m/api/matter/create?_via=tunnel&client=app&t='+encodeURIComponent(await deviceAuth()),{method:'POST',headers:{'content-type':'application/json','x-cc-client':'app','user-agent':'TendhearthApp'},body:JSON.stringify(spoofBody)})).json()
     expect(matters.get(spoof.receipt.matterId)?.origin).toBe('web')
     // 只有 daemon 自己在中继 v2 帧上合成的 Request(tunnel-v2-stream 打的标记)才是 App
     const appBody=create('App')
-    const res=await panel.handleRequest(markAppRequest(new Request('http://127.0.0.1/m/api/matter/create?_via=tunnel&t='+encodeURIComponent(token),{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify(appBody)})))
+    const res=await panel.handleRequest(markAppRequest(new Request('http://127.0.0.1/m/api/matter/create?_via=tunnel&t='+encodeURIComponent(await deviceAuth()),{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify(appBody)})))
     expect(res.status).toBe(202)
     const app=await res.json() as {receipt:{matterId:string}}
     expect(matters.get(app.receipt.matterId)?.origin).toBe('app')

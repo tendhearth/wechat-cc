@@ -3,6 +3,7 @@
  * 执行者真报额度错误 ⇒ 详情带 offer ⇒ POST /m/api/matter/handoff 在同一文件夹给另一位新开一件 ⇒ 详情变 handed;
  * 同一 requestId / 另一个 requestId 都不建第二件;每个回包过协议 schema。
  */
+import { linkCannot, pairDevice } from './test-device-auth'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import { randomUUID } from 'node:crypto'
 import { mkdirSync, mkdtempSync, realpathSync } from 'node:fs'
@@ -59,12 +60,17 @@ describe('手机 · 额度用完交给另一位(真面板 + 真工作台)', () =
     })
     const started = await panel.start(0)
     base = `http://127.0.0.1:${started.port}`
-    token = panel.issueToken()
+    token = panel.issueToken(); device = null
   })
   afterEach(async () => { await panel?.stop(); await workbench?.shutdown(); db?.close(); removeTempDir(root) })
 
-  const request = (path: string, body?: unknown) =>
-    fetch(base + path + (path.includes('?') ? '&' : '?') + 't=' + encodeURIComponent(token), body === undefined ? {} : { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body) })
+  // 交给另一位是送话给执行者 ⇒ 只给设备令牌(审计 10-20):碰到这类路由时先配一次对
+  let device: string | null = null
+  const request = async (path: string, body?: unknown) => {
+    let auth = token
+    if (linkCannot(path)) { if (!device) { device = await pairDevice(base, token); token = panel.issueToken() } auth = device }
+    return fetch(base + path + (path.includes('?') ? '&' : '?') + 't=' + encodeURIComponent(auth), body === undefined ? {} : { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body) })
+  }
   const parseAs = (key: string, body: unknown) => PHONE_API_SCHEMAS[key]!.parse(body) as Record<string, unknown>
   const detail = async (id: string) => parseAs('GET /m/api/matter', await (await request(`/m/api/matter?id=${id}`)).json())
 

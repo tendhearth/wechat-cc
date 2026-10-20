@@ -116,6 +116,7 @@ function ssCheck(){
 }
 function ssOpenMatter(id){ss.confirm=null;ccMobilePane('matters');return openMatter(id)}
 function ssAdopt(){
+  if(typeof ccLinkSession==='function'&&ccLinkSession()){ss.notice='配对过的手机才能把会话接成一件事。';ssPaintContinue();return Promise.resolve()}
   var confirmation=ss.confirm,key=ss.key,generation=ss.generation
   if(!confirmation||confirmation.key!==key||confirmation.preview!==ss.preview||confirmation.generation!==generation||!ss.previewFresh||ss.preview.state!=='ready'||!ssOnline()||ss.busy[key])return Promise.resolve()
   ss.busy[key]=true;ss.confirm=null;ss.notice='正在接入，请稍候…';ssPaintContinue()

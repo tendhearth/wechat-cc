@@ -244,6 +244,7 @@ function mHandoffSend(path,opts) {
   return fetch(q(path),Object.assign({signal:ctrl.signal},opts)).catch(function(e){if(REMOTE)preferTunnel=true;throw e}).finally(function(){clearTimeout(timer)})
 }
 async function mHandoff(action,shown) {
+  if(action==='confirm'){if(typeof ccLinkSession==='function'&&ccLinkSession()){mNotice('配对过的手机才能做这一步。');return}}
   var id=mCurrent,epoch=mHandoffViewEpoch,key=id+':handoff',post=false
   if(!id||!mDetail||mDetail.matter.id!==id||!mDetailFresh||mTooLarge||mOffline||mBusy[key])return
   mBusy[key]=true;clearTimeout(mPoll);++mSeq;mSetButtons();mNotice('正在核对接手情况…')
@@ -389,6 +390,7 @@ function openMatter(id) {
   return mRefresh()
 }
 function mDecision(control,request) {
+  if(typeof ccLinkSession==='function'&&ccLinkSession()){mNotice('配对过的手机才能做这一步。');return}
   var id=mCurrent,runId=mDetail&&mDetail.runId,key=id+":"+request.id
   if(!id||!runId||!mDetailFresh||request.taskId!==id||mBusy[key])return
   var answers=null
@@ -423,6 +425,7 @@ document.getElementById("m-say").addEventListener("input",function(){
   mSetButtons()
 })
 document.getElementById("m-send").addEventListener("click",function(){
+  if(typeof ccLinkSession==='function'&&ccLinkSession()){mNotice('配对过的手机才能做这一步。');return}
   var id=mCurrent,text=/** @type {HTMLTextAreaElement} */ (document.getElementById('m-say')).value.trim(),key=id+':say'
   if(!id||!mDetail||!mDetailFresh||mBusy[key]||mTooLarge)return
   var materials=mMaterials&&mMaterials.taskId===id?mMaterials.control:null

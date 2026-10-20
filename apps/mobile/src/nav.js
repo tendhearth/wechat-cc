@@ -5,6 +5,7 @@ document.getElementById("pairbtn").addEventListener("click", function() {
     if (r.ok && r.device_token) {
       try { localStorage.setItem("deviceToken", r.device_token); if (window.__CC_SHELL__) localStorage.setItem("deviceTokenId", window.__CC_SHELL__.id) } catch (e) {}
       T = r.device_token; isDevice = true
+      if (document.body) document.body.classList.remove("link-session")
       resetTunnel()
       document.getElementById("pairbar").hidden = true
       toast("配好了,这台手机以后点链接不会再过期")

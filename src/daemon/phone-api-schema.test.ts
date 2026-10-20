@@ -10,6 +10,7 @@
  *      请求,拿真实 JSON 对着 schema `parse`(不是手写 fixture)。少一个必需字段
  *      或类型不对,`parse` 会抛,测试就红。
  */
+import { linkCannot, pairDevice } from './test-device-auth'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import { createHash, randomUUID } from 'node:crypto'
 import { mkdirSync, mkdtempSync, realpathSync, writeFileSync } from 'node:fs'
@@ -128,12 +129,15 @@ describe('真实返回校验 — workbench + matters', () => {
     })
     const started = await panel.start(0)
     base = `http://127.0.0.1:${started.port}`
-    token = panel.issueToken()
+    token = panel.issueToken(); device = null
   })
   afterEach(async () => { await panel?.stop(); await workbench?.shutdown(); db?.close(); removeTempDir(root); removeTempDir(managedRoot) })
 
   function create(name: string) { const path = join(root, name); mkdirSync(path); return workbench.create({ path, providerId: 'claude', text: name }) }
-  function request(path: string, body?: unknown, auth = token) {
+  // 送话给执行者的写操作只给设备令牌(审计 10-20):默认令牌碰到这类路由时先配一次对
+  let device: string | null = null
+  async function request(path: string, body?: unknown, auth?: string) {
+    if (auth === undefined) { auth = token; if (linkCannot(path)) { if (!device) { device = await pairDevice(base, token); token = panel.issueToken() } auth = device } }
     return fetch(base + path + (path.includes('?') ? '&' : '?') + 't=' + encodeURIComponent(auth), body === undefined ? {} : { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body) })
   }
   async function ready(id: string) { await expect.poll(() => workbench.detail(id).permissions.length).toBe(1); return workbench.detail(id) }
@@ -336,7 +340,7 @@ describe('真实返回校验 — workbench + matters', () => {
 
   it('matter/rewind 真实返回符合 schema:链接令牌 403;没有可撤的轮 ⇒ 409 rewind_not_latest;不认识的事 ⇒ 404', async () => {
     const task = create('rw')
-    expect((await request(`/m/api/matter/rewind?id=${task.id}&artifactId=abcdef12`)).status).toBe(403)
+    expect((await request(`/m/api/matter/rewind?id=${task.id}&artifactId=abcdef12`, undefined, token)).status).toBe(403)
     const dt = (await (await request('/set/api/pair', {})).json() as { device_token: string }).device_token
     const none = await request(`/m/api/matter/rewind?id=${task.id}&artifactId=abcdef12`, undefined, dt)
     expect(none.status).toBe(409)
@@ -458,7 +462,8 @@ describe('真实返回校验 — 首页 / 设置页 / 记忆 / 贴纸', () => {
     token = panel.issueToken()   // 链接令牌一次性(plan 7a):配对后用新码继续
     const dt = paired.device_token
     parseAs('POST /m/api/push/register', await (await post('/m/api/push/register', { platform: 'apns', token: 'ab'.repeat(32) }, dt)).json())
-    parseAs('POST /m/api/push/register', await (await post('/m/api/push/register', { platform: 'apns', token: 'ab'.repeat(32) })).json())   // 链接令牌 ⇒ device_only
+    // 链接令牌 ⇒ 先挡在路由表那道门(审计 10-20),处理器里那道 device_only 成了第二道
+    expect((await post('/m/api/push/register', { platform: 'apns', token: 'ab'.repeat(32) })).status).toBe(403)
     const t = await (await post('/m/api/push/test', {}, dt)).json()
     expect(t).toEqual({ ok: true, result: { ok: true, code: 'ok' } })
     parseAs('POST /m/api/push/test', t)
