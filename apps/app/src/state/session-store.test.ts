@@ -1,7 +1,7 @@
 import { describe, it, expect, vi } from 'vitest'
 import type { CredentialStore } from '../net/credentials'
 import type { PairingRecord } from '../net/pairing'
-import { loadSession, quietly } from './session-store'
+import { clearStoredIfRevoked, loadSession, quietly } from './session-store'
 
 const REC: PairingRecord = { v: 1, daemonId: 'r' + 'a'.repeat(26), relayHost: 'relay.tendhearth.com', relayUrl: 'wss://relay.tendhearth.com/v2/phone?id=r' + 'a'.repeat(26), deviceToken: 'd' + '1'.repeat(48), deviceId: 'aa11bb22', pairedAt: 1 }
 const store = (o: Partial<CredentialStore>): CredentialStore => ({
@@ -78,5 +78,34 @@ describe('stillClearPushKey —— 等同步停下后再清,清之前再看一�
   it('冷启动 / 解除后没配对(记下的是 null):仍没配对 ⇒ 清;已配上 ⇒ 不清', () => {
     expect(stillClearPushKey(null, { pairing: null, revoked: false })).toBe(true)
     expect(stillClearPushKey(null, { pairing: A, revoked: false })).toBe(false)
+  })
+})
+
+describe('clearStoredIfRevoked(只清被撤的那份;device-e2e 10-20 删掉了刚放回的主人配对)', () => {
+  const OTHER: PairingRecord = { ...REC, deviceToken: 'd' + '2'.repeat(48), deviceId: 'cc33dd44' }
+  const mk = (now: PairingRecord | null | 'throw') => {
+    const clear = vi.fn(async () => {}), pushClear = vi.fn(async () => {})
+    const s = store({ load: async () => { if (now === 'throw') throw new Error('keychain'); return now }, clear })
+    return { s, clear, push: { clear: pushClear }, pushClear }
+  }
+  it('钥匙串里就是被撤的那份 ⇒ 配对与推送密钥一起清', async () => {
+    const m = mk(REC)
+    expect(await clearStoredIfRevoked(m.s, m.push, REC, () => {})).toBe('cleared')
+    expect(m.clear).toHaveBeenCalledOnce(); expect(m.pushClear).toHaveBeenCalledOnce()
+  })
+  it('钥匙串里已经换成别的配对 ⇒ 一样都不碰', async () => {
+    const m = mk(OTHER), log = vi.fn()
+    expect(await clearStoredIfRevoked(m.s, m.push, REC, log)).toBe('kept')
+    expect(m.clear).not.toHaveBeenCalled(); expect(m.pushClear).not.toHaveBeenCalled()
+    expect(log.mock.calls.flat().join(' ')).not.toContain(OTHER.deviceToken)
+  })
+  it('钥匙串读不出来 ⇒ 宁可不清', async () => {
+    const m = mk('throw')
+    expect(await clearStoredIfRevoked(m.s, m.push, REC, () => {})).toBe('kept')
+    expect(m.clear).not.toHaveBeenCalled()
+  })
+  it('钥匙串已经空了 / 没记下是哪一份 ⇒ 照旧清(推送密钥也清)', async () => {
+    const a = mk(null); expect(await clearStoredIfRevoked(a.s, a.push, REC, () => {})).toBe('cleared'); expect(a.pushClear).toHaveBeenCalledOnce()
+    const b = mk(OTHER); expect(await clearStoredIfRevoked(b.s, b.push, null, () => {})).toBe('cleared')
   })
 })

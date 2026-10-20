@@ -3,7 +3,7 @@ import type { Lang } from '../i18n'
 import { LangOverrideCtx } from '../i18n/useLang'
 import type { CredentialStore } from '../net/credentials'
 import type { PairingRecord } from '../net/pairing'
-import { clearStored, loadSession, quietly } from './session-store'
+import { clearStored, clearStoredIfRevoked, loadSession, quietly } from './session-store'
 import { matterInputState } from './matter-inputs'
 import type { InputJournal } from './input-journal'
 import { setPairingScope } from './drafts'
@@ -107,7 +107,8 @@ export function SessionProvider({ children, store, push, inputs }: { children: R
       if (captured !== intendedPairing.current || epoch !== operation.current || pairingTransition) return
       const at = ++operation.current
       setPairingScope('revoked'); setInputScope(null)
-      quietly(Promise.all([matterInputState.clear(), serialize(async () => { if (operation.current === at) await clearStored(store, push) })]), 'clear')
+      // 只清被撤的那份:钥匙串里已经换成别的配对 ⇒ 不碰(见 clearStoredIfRevoked)
+      quietly(Promise.all([matterInputState.clear(), serialize(async () => { if (operation.current === at) await clearStoredIfRevoked(store, push, captured) })]), 'clear')
     },
     async forgetPairing() {
       const at = ++operation.current; intendedPairing.current = null
@@ -121,7 +122,7 @@ export function SessionProvider({ children, store, push, inputs }: { children: R
       if (captured !== intendedPairing.current || epoch !== operation.current || pairingTransition) return
       const at = ++operation.current; intendedPairing.current = null
       setPairingScope('none'); setInputScope(null)
-      quietly(Promise.all([matterInputState.clear(), serialize(async () => { if (operation.current === at) await clearStored(store, push) })]), 'clear')
+      quietly(Promise.all([matterInputState.clear(), serialize(async () => { if (operation.current === at) await clearStoredIfRevoked(store, push, captured) })]), 'clear')
       setPairing(null); setSeen(false); setStale(true); setEpoch(at); setTransition(false)
     },
     staleNotice,
