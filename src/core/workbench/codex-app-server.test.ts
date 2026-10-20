@@ -106,6 +106,16 @@ describe('workbench Codex app-server', () => {
     expect(child.sent.some(message=>message.method==='turn/steer')).toBe(false)
     completed(child);await run.done
   })
+  it('per-task usage (2026-10-20): sums the per-call `last` usage of this turn onto the result; total is ignored',async()=>{
+    const {session,child}=await start()
+    const run=collect(session);await begun(child)
+    const b=(i:number,o:number)=>({totalTokens:i+o,inputTokens:i,cachedInputTokens:1,cacheWriteInputTokens:0,outputTokens:o,reasoningOutputTokens:2})
+    child.notify('thread/tokenUsage/updated',{threadId:'thread-1',turnId:'turn-1',tokenUsage:{total:b(9000,900),last:b(100,10),modelContextWindow:null}})
+    child.notify('thread/tokenUsage/updated',{threadId:'thread-1',turnId:'turn-1',tokenUsage:{total:b(9050,920),last:b(50,20),modelContextWindow:null}})
+    completed(child);await run.done
+    const result=run.events.find((e:AgentEvent)=>e.kind==='result') as Extract<AgentEvent,{kind:'result'}>
+    expect(result.usage).toEqual({input:150,output:30,cacheRead:2,cacheWrite:0,reasoning:4})
+  })
   it('discovers models without starting a thread or admitting MCPs',async()=>{
     const provider=createWorkbenchCodexProvider({codexPathOverride:'/codex',rpcTimeoutMs:200,closeTimeoutMs:250})
     expect(typeof provider.modelCatalog).toBe('function')

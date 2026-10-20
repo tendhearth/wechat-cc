@@ -87,7 +87,9 @@ export type AgentEvent =
    * 只用来**核对**分段算出来的最后的话(collectTurn → TurnSummary.providerFinalText,协调器记
    * `[REPLY_FINAL_CHECK]`),交付永远用分段的结果(回复交付第 5 步定案,spec 修订记录)。
    */
-  | { kind: 'result'; sessionId: string; numTurns: number; durationMs: number; finalText?: string }
+  | { kind: 'result'; sessionId: string; numTurns: number; durationMs: number; finalText?: string
+      /** 这一轮执行者自己报的用量(core/turn-usage.ts);不报 ⇒ 不带。不估。 */
+      usage?: import('./turn-usage').TurnUsage }
   /** `code`:provider 边界产的结构化码 —— lib/provider-error-code 的闭集(另有
    *  collectTurn 自己的 `turn_timeout`)。下游有码就只看码;`message` 只给人/日志看,
    *  **永远不当回复发出去**。 */
