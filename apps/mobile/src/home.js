@@ -11,7 +11,7 @@ function render(s) {
            '<button class="done-btn" data-id="' + r.id + '" data-st="resolved">完成</button></div>'
     })
   })
-  if (!s.todos.active.length) h = '<div class="empty">都了结了 ✨<br><small>聊天里出现新约定会自己长出来</small></div>'
+  if (!s.todos.active.length) h = '<div class="empty">都了结了<br><small>聊天里出现新约定会自己长出来</small></div>'
   if (s.todos.settled.length) {
     h += '<div class="grp">最近了结</div>'
     s.todos.settled.forEach(function(r) {
@@ -22,7 +22,7 @@ function render(s) {
   t.innerHTML = h
   document.getElementById("portrait").innerHTML = s.portrait
     ? '<figure class="frame">' + s.portrait + '<figcaption>CC 画的你</figcaption></figure>'
-    : '<div class="empty">CC 还在慢慢认识你 🖍<br><small>聊得多了,它会自己给你画一张</small></div>'
+    : '<div class="empty">CC 还在慢慢认识你<br><small>聊得多了,它会自己给你画一张</small></div>'
   var sg = document.getElementById("stickers")
   if (!s.stickers.length) { sg.innerHTML = '<div class="empty">表情库还空着</div>' }
   else if (!preferTunnel) {
@@ -47,11 +47,12 @@ document.getElementById("todos").addEventListener("click", function(ev) {
   // 走隧道感知的 api()(在家直连,出门/壳模式走隧道)—— 不能用裸 fetch,
   // 否则出门时待办勾选打不到家里的 daemon。
   api("/m/api/todo", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ id: Number(b.dataset.id), status: b.dataset.st }) })
-    .then(function(r){ return r.json() }).then(function(r) { if (r.ok) { toast(b.dataset.st === "active" ? "捞回来了" : "划掉了 ✓"); load() } else toast("没改成") })
+    .then(function(r){ return r.json() }).then(function(r) { if (r.ok) { toast(b.dataset.st === "active" ? "捞回来了" : "划掉了"); load() } else toast("没改成") })
     .catch(function(){ toast("网络不通") })
 })
 var HOME_KEY = "cc.home.v2:" + (REMOTE ? REMOTE.id : location.host) + ":" + T.slice(-12)
-var KIND_ICON = { hunt: "🎯", visit: "🏡", postcard: "💌", recollection: "📖", thought: "💭", chat_day: "💬" }
+// 不用 emoji(#369;用词表):每类一个衬线字作记号。
+var KIND_ICON = { hunt: "觅", visit: "访", postcard: "信", recollection: "忆", thought: "想", chat_day: "聊" }
 var homeState = null, homeSeq = 0
 // 配对换了令牌(plan 7a):旧令牌那一趟的失败(在飞的 401、resetTunnel 关掉旧隧道的 closed)
 // 不是「连不上」,也不是本机令牌失效 —— 标成 HOME_STALE / 走 catch 里的 sent !== T,拿新令牌重拉一次。
