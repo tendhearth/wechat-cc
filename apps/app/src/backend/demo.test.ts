@@ -382,15 +382,41 @@ describe('演示后端:终端里的会话(2026-10-14)', () => {
       await b.cliPermission({ sessionId: w.session_id, hash: w.pending!.hash!, decision: 'allow' })
       expect((await b.cliSessions()).find(s => s.session_id === w.session_id)!.status).toBe('running')
       await expect(b.cliPermission({ sessionId: w.session_id, decision: 'allow' })).rejects.toMatchObject({ code: 'stale' })
-      await expect(b.cliSay(w.session_id, 'x')).rejects.toMatchObject({ code: 'busy' })
       await vi.advanceTimersByTimeAsync(2000)
       const done = (await b.cliSessions()).find(s => s.session_id === w.session_id)!
       expect(done.status).toBe('idle')
-      await b.cliSay(w.session_id, 'next')
-      expect((await b.cliSessions()).find(s => s.session_id === w.session_id)!.status).toBe('running')
+      const api = list[2]!
+      expect(await b.cliSay(api.session_id, 'next')).toEqual({ sayId: null })
+      expect((await b.cliSessions()).find(s => s.session_id === api.session_id)!.status).toBe('running')
       await expect(b.cliSay('nope', 'x')).rejects.toMatchObject({ code: 'not_found' })
       b.reset()
       expect((await b.cliSessions())[0]!.status).toBe('waiting')
+    } finally { vi.useRealTimers() }
+  })
+})
+
+describe('演示后端:送进开着的窗口(2026-10-20)', () => {
+  it('等批准那条开在窗口里:等批准时不能说;拍完在跑也能说 ⇒ 回 say_id,先在送、一会儿送到;再说一句 ⇒ 新 id 盖掉旧的', async () => {
+    vi.useFakeTimers()
+    try {
+      const b = makeDemoBackend()
+      const w = (await b.cliSessions())[0]!
+      expect(w.live_window).toBe(true)
+      await expect(b.cliSay(w.session_id, 'x')).rejects.toMatchObject({ code: 'busy' })
+      await b.cliPermission({ sessionId: w.session_id, hash: w.pending!.hash!, decision: 'allow' })
+      const { sayId } = await b.cliSay(w.session_id, '顺手把标题也改了')
+      expect(sayId).toBeTruthy()
+      const row = async () => (await b.cliSessions()).find(s => s.session_id === w.session_id)!
+      expect((await row()).last_say).toMatchObject({ id: sayId, state: 'sending' })
+      const list = await b.cliSessions()
+      expect(PHONE_API_SCHEMAS['GET /m/api/cli/sessions']!.safeParse({ ok: true, sessions: list }).success).toBe(true)
+      await vi.advanceTimersByTimeAsync(1500)
+      expect((await row()).last_say).toMatchObject({ id: sayId, state: 'sent' })
+      const again = await b.cliSay(w.session_id, '再一句')
+      expect(again.sayId).not.toBe(sayId)
+      expect((await row()).last_say).toMatchObject({ id: again.sayId, state: 'sending' })
+      b.reset()
+      expect((await b.cliSessions())[0]!.last_say).toBeUndefined()
     } finally { vi.useRealTimers() }
   })
 })

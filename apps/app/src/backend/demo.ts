@@ -53,18 +53,20 @@ export function makeDemoBackend(opts: { now?: () => number; setTimeout?: typeof 
   const demoJobList = () => demoJobs(lastLang, now()).filter(j => !jobRemoved.has(j.id)).map(j => ({ ...j, paused: jobPaused.get(j.id) ?? j.paused }))
   const subs = new Map<Topic, Set<(d: any) => void>>()
   // 终端里的会话(演示):一条等你批准(能在手机上拍)、一条在跑(说一句的框是灰的)、一条歇着(能接着说一句)。最后一句按语言读时生成。
+  // 等批准那条开在电脑窗口里:拍完在跑时也能说,说了先「在送」、一会儿「送到」(同 daemon 的 say_id / last_say)。
   type CliRec = Omit<CliSessionRowT, 'last_summary'> & { summaryKey: Copy | null }
   const seedCli = (): CliRec[] => {
     const n = now()
     const base = { stale: false, machine: null, last_prompt_at: null }
     return [
-      { ...base, session_id: 'demo-cli-blog', code: 'democl', source: 'claude', status: 'waiting', project: 'blog', summaryKey: 'cliBlogLast', last_event_at: n - 90_000, created_at: n - HOUR,
+      { ...base, session_id: 'demo-cli-blog', code: 'democl', source: 'claude', status: 'waiting', project: 'blog', summaryKey: 'cliBlogLast', last_event_at: n - 90_000, created_at: n - HOUR, live_window: true,
         pending: { tool: 'Bash', summary: 'npm run deploy', since: n - 90_000, hash: 'dm0a1', actionable: true } },
       { ...base, session_id: 'demo-cli-docs', code: 'democr', source: 'claude', status: 'running', project: 'docs', summaryKey: 'cliDocsLast', last_event_at: n - 40_000, created_at: n - 2 * HOUR, last_prompt_at: n - 5 * 60_000, pending: null },
       { ...base, session_id: 'demo-cli-api', code: 'democx', source: 'codex', status: 'idle', project: 'api-server', summaryKey: 'cliApiLast', last_event_at: n - 25 * 60_000, created_at: n - 3 * HOUR, pending: null },
     ]
   }
   let cli = seedCli()
+  let saySeq = 0
   const cliGet = (id: string) => { const r = cli.find(x => x.session_id === id); if (!r) throw new BackendError('not_found'); return r }
 
   function mkMatter(id: string, kind: MatterT['kind'], title: string, status: MatterT['status'], path: string | null, ts: number, agents?: string[]): MatterT {
@@ -619,10 +621,20 @@ export function makeDemoBackend(opts: { now?: () => number; setTimeout?: typeof 
     async cliSay(sessionId, text) {
       const r = cliGet(sessionId)
       if (!text.trim()) throw new BackendError('invalid')
+      if (r.live_window && r.status !== 'waiting') {
+        // 开着窗口:收下即回 say_id,后台「送进窗口」;同一条又说一句 ⇒ 旧那句的结果不覆盖新的
+        const id = `demo-say-${++saySeq}`
+        r.last_say = { id, state: 'sending', at: now() }
+        later(1500, () => { if (r.last_say?.id === id) r.last_say = { id, state: 'sent', at: now() } })
+        if (r.status !== 'running') { r.status = 'running'; r.last_event_at = now(); r.last_prompt_at = now() }
+        later(3000, () => { r.status = 'idle'; r.last_event_at = now(); r.summaryKey = 'cliDemoReply' })
+        return { sayId: id }
+      }
       if (r.status === 'running' || r.status === 'waiting') throw new BackendError('busy')
       if (r.status === 'ended') throw new BackendError('cli_ended')
       r.status = 'running'; r.last_event_at = now(); r.last_prompt_at = now()
       later(3000, () => { r.status = 'idle'; r.last_event_at = now(); r.summaryKey = 'cliDemoReply' })
+      return { sayId: null }
     },
     setActive() {},
     dispose() {},
