@@ -121,7 +121,8 @@ describe('日历 command', () => {
   })
 })
 
-describe('appBundleHasCalendarUsage', () => {
+// 读日历只在 macOS 上有(.app 包路径是 POSIX 的):Windows 上不跑这两组
+describe.skipIf(process.platform === 'win32')('appBundleHasCalendarUsage', () => {
   it('reads Contents/Info.plist next to the running binary; missing key / not in a bundle ⇒ false', async () => {
     const { appBundleHasCalendarUsage } = await import('./calendar')
     const { mkdirSync, writeFileSync } = await import('node:fs')
@@ -137,7 +138,7 @@ describe('appBundleHasCalendarUsage', () => {
   })
 })
 
-describe('appBundleHasCalendarUsage × 真的 Info.plist', () => {
+describe.skipIf(process.platform === 'win32')('appBundleHasCalendarUsage × 真的 Info.plist', () => {
   it('the Info.plist we ship passes the daemon check (the two cannot drift apart)', async () => {
     const { appBundleHasCalendarUsage } = await import('./calendar')
     const { mkdirSync, copyFileSync } = await import('node:fs')
