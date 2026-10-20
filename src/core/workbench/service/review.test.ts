@@ -8,7 +8,8 @@ import { createProviderRegistry } from '../../provider-registry'
 import { makeWorkbenchStore, type WorkbenchStore } from '../store'
 import { saveArtifactSnapshot } from '../artifacts'
 import { GIT_REVIEW_MIME, serializeGitReview, type GitReview, type ReviewFile } from '../git-review'
-import { derivedReturnRequestId } from '../review'
+import { derivedCommentsRequestId, derivedReturnRequestId } from '../review'
+import { createHash } from 'node:crypto'
 import { removeTempDir } from '../../../lib/test-temp'
 import { makeRuntimeState, type Active } from './state'
 import { makeReviewDomain } from './review'
@@ -32,13 +33,14 @@ function setup() {
   const hub = { touched: vi.fn(), bumped: vi.fn(), dispose: vi.fn() }
   const actions = new Ref<ServiceActions>('test-actions')
   const ctx: ServiceCtx = { store, stateDir, state, hub, deps: { ownerChatId: () => 'owner', registry: createProviderRegistry() }, ensureAccepting: () => { if (state.stopping) throw new Error('workbench_stopping') }, now: Date.now, actions }
-  const domain = makeReviewDomain(ctx)
+  const gates = { busy: false, checking: false }
+  const domain = makeReviewDomain(ctx, { scripts: { busy: () => gates.busy }, until: { checking: () => gates.checking } })
   const plant = (name: string, bytes: Buffer) => { saveArtifactSnapshot(store, task.id, { name, mime: GIT_REVIEW_MIME, bytes }, stateDir); return store.artifacts(task.id).find(a => a.name === name)!.id }
   const good = plant('代码变更-run1.json', serializeGitReview(review([file('src/a.ts'), file('src/big.bin', { kind: 'not_reviewed', reason: '二进制文件未展开', beforeSha256: undefined, afterSha256: undefined, diff: undefined })])))
   const broken = plant('代码变更-坏.json', Buffer.from('{这不是 JSON'))
   const view = { id: task.id } as never
   const stub = (over: Partial<ServiceActions> = {}) => actions.set({ submitInput: vi.fn(async () => ({ id: 'li' } as never)), continueTask: vi.fn(() => view), isReplied: () => false, fallbackExecutor: () => null, artifact: () => { throw new Error('unused') }, quotaExhausted: () => null, continuation: () => ({ mode: 'new' }), provider: () => { throw new Error('unused') }, requireInput: () => { throw new Error('unused') }, canResume: () => false, taskVersion: () => 'v', selectAttachments: () => [], combinedAttachments: () => [], handoffAttachments: () => [], taskView: () => { throw new Error('unused') }, matterSync: () => {}, start: () => { throw new Error('unused') }, continuationAttachmentScope: () => undefined, inputMode: () => 'queue' as const, armIdleClose: () => {}, cancelIdleClose: () => {}, settleAfterDecision: () => {}, execute: () => { throw new Error('unused') }, hasUndeliveredInput: () => false, holdInputs: () => {}, collect: async () => {}, collectTurnArtifacts: () => {}, captureCodeChanges: async () => {}, runtimeSnapshot: () => undefined, held: () => [], stageFinishedNotice: () => {}, publishFinishedNotices: () => {}, untilAfterTurn: () => {}, untilStop: () => {}, ...over })
-  return { store, task, state, hub, actions, domain, good, broken, stub }
+  return { store, task, state, hub, actions, domain, good, broken, stub, gates, project }
 }
 
 describe('makeReviewDomain', () => {
@@ -114,5 +116,49 @@ describe('makeReviewDomain', () => {
     expect(() => domain.returnReviewFiles(task.id, { artifactId: good, paths: [], comment: '再改改' })).toThrow('invalid_review_reference')
     expect(() => domain.returnReviewFiles(task.id, { artifactId: good, paths: ['src/a.ts'], comment: '   ' })).toThrow('invalid_review_reference')
     expect(store.reviewMarks.list(task.id)).toEqual([])
+  })
+
+  it('撤回类写动作(整文件 / 按块):检查命令或工作区脚本在跑 ⇒ workbench_busy,不读不写', () => {
+    const { domain, task, good, gates } = setup()
+    const hunkSha = createHash('sha256').update('@@ -1 +1 @@\n-老 src/a.ts\n+新 src/a.ts', 'utf8').digest('hex')
+    const hunk = () => domain.revertReviewHunk(task.id, { artifactId: good, path: 'src/a.ts', hunk: 0, hunkSha256: hunkSha, action: 'revert' })
+    const file = () => domain.revertReviewFile(task.id, { artifactId: good, path: 'src/a.ts' })
+    for (const key of ['checking', 'busy'] as const) {
+      gates[key] = true
+      expect(hunk).toThrow('workbench_busy'); expect(file).toThrow('workbench_busy')
+      gates[key] = false
+    }
+    // 门都开着:文件不在盘上 ⇒ 之后又被改过
+    expect(hunk).toThrow('review_file_changed'); expect(file).toThrow('review_file_changed')
+  })
+
+  it('sendReviewComments 走同一个 deliver:在写 ⇒ busy;答复过 ⇒ submitInput(派生 id 带 run identity);结束了 ⇒ continueTask;成功后才记已发出', async () => {
+    const { domain, task, good, store, state, actions, stub } = setup()
+    const sha256 = store.artifact(task.id, good).sha256
+    const diff = '@@ -1 +1 @@\n-老 src/a.ts\n+新 src/a.ts'
+    const hunkSha256 = createHash('sha256').update(diff, 'utf8').digest('hex')
+    const id = '22222222-2222-4222-8222-222222222222'
+    domain.reviewComment(task.id, { commentId: id, artifactId: good, path: 'src/a.ts', hunk: 0, hunkSha256, body: '改' })
+    expect(store.reviewComments.get(id)).toMatchObject({ artifactSha256: sha256, quote: '-老 src/a.ts\n+新 src/a.ts', side: 'new', lineStart: 1, lineEnd: 1 })
+    state.runsByTask.set(task.id, { identity: 'run-1' } as unknown as Active)
+    let replied = false
+    const submit = vi.fn(async () => ({ id: 'li' } as never))
+    stub({ isReplied: () => replied, submitInput: submit })
+    expect(() => domain.sendReviewComments(task.id, {})).toThrow('workbench_busy')
+    replied = true
+    submit.mockImplementationOnce(async () => { throw new Error('input_limit') })
+    await expect(domain.sendReviewComments(task.id, {})).rejects.toThrow('input_limit')
+    expect(store.reviewComments.get(id)!.state).toBe('draft')
+    const out = await domain.sendReviewComments(task.id, {})
+    expect(out).toMatchObject({ input: { id: 'li' }, sent: 1, remaining: 0, skippedDiscarded: 0 })
+    const call = submit.mock.calls[1]! as unknown[]
+    expect(call[1]).toMatchObject({ runId: 'run-1', requestId: derivedCommentsRequestId([{ id, body: '改' }], '', [], 'run-1') })
+    expect(store.reviewComments.get(id)).toMatchObject({ state: 'sent', sentRequestId: derivedCommentsRequestId([{ id, body: '改' }], '', [], 'run-1') })
+    // 结束了 ⇒ continueTask,派生 id 的 scope 是 continue;给了 inputRequestId 就用它
+    state.runsByTask.delete(task.id)
+    const id2 = '33333333-3333-4333-8333-333333333333'
+    domain.reviewComment(task.id, { commentId: id2, artifactId: good, path: 'src/a.ts', hunk: 0, hunkSha256, body: '再改' })
+    expect(domain.sendReviewComments(task.id, { summary: '总的' })).toMatchObject({ task: { id: task.id }, sent: 1 })
+    expect((actions.deref().continueTask as ReturnType<typeof vi.fn>).mock.calls[0]![2]).toEqual({ inputRequestId: derivedCommentsRequestId([{ id: id2, body: '再改' }], '总的', [], 'continue') })
   })
 })

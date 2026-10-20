@@ -92,6 +92,9 @@ function mappedError(err: unknown,entry=false): ReturnType<RouteHandler> {
   if (code === 'input_storage_unavailable') return {status:503,body:{error:code}}
   if (code === 'writer_alive' || code === 'invalid_state' || code === 'review_file_changed') return { status: 409, body: { error: code } }
   if (code === 'review_revert_unavailable') return { status: 422, body: { error: code } }
+  // 行评论 / 按块撤回(2026-10-21):块变了 / 已发出不能改 / 同 id 不同内容 / 超上限 ⇒ 409;评论不在(或没有能发的草稿)⇒ 404
+  if (['review_hunk_stale', 'review_comment_sent', 'review_comment_conflict', 'review_comment_limit'].includes(code)) return { status: 409, body: { error: code } }
+  if (code === 'review_comment_not_found') return { status: 404, body: { error: code } }
   if (code === 'worktree_dirty' || code === 'worktree_removed' || code === 'worktree_conflict' || code === 'worktree_branch_exists') return { status: 409, body: { error: code } }
   if (['worktree_uncommitted', 'project_dirty', 'project_detached', 'worktree_not_ff', 'project_busy', 'worktree_branch_missing', 'worktree_open'].includes(code)) return { status: 409, body: { error: code } }
   if (code === 'not_worktree' || code === 'worktree_not_git' || code === 'worktree_base_missing') return { status: 422, body: { error: code } }
@@ -478,6 +481,54 @@ export function workbenchRoutes(deps: InternalApiDeps): RouteTable {
       if (!TASK_ID.test(id) || !ARTIFACT_ID.test(artifactId) || typeof path !== 'string' || !path || path.length > 4096 || Object.keys(value ?? {}).some(k => !['id', 'artifactId', 'path'].includes(k))) return invalid()
       if (!deps.workbench) return { status: 503, body: { error: 'workbench_not_wired' } }
       try { return { status: 200, body: { reverted: deps.workbench.revertReviewFile(id, { artifactId, path }) } } }
+      catch (err) { return mappedError(err) }
+    },
+
+    // 行评论(2026-10-21):按键集合精确分三种 —— 建 {id, commentId, artifactId, path, hunk, hunkSha256, rowStart?, rowEnd?, body} /
+    // 改 {id, commentId, body} / 删 {id, commentId, delete:true}。引用与行号由服务端算,客户端给了别的键一律 400。
+    'POST /v1/workbench/review-comment': async (query, body) => {
+      const value = objectBody(body)
+      if (query.size || !value || typeof value.id !== 'string' || !TASK_ID.test(value.id) || typeof value.commentId !== 'string' || !REQUEST_ID.test(value.commentId)) return invalid()
+      const keys = Object.keys(value).sort().join(',')
+      const text = (v: unknown) => typeof v === 'string' && !!v.trim() && v.length <= 2000
+      const row = (v: unknown) => typeof v === 'number' && Number.isInteger(v) && v >= 0 && v <= 1_000_000
+      let input: Parameters<NonNullable<InternalApiDeps['workbench']>['reviewComment']>[1]
+      if (keys === 'commentId,delete,id') { if (value.delete !== true) return invalid(); input = { commentId: value.commentId, delete: true } }
+      else if (keys === 'body,commentId,id') { if (!text(value.body)) return invalid(); input = { commentId: value.commentId, body: value.body as string } }
+      else if (keys === 'artifactId,body,commentId,hunk,hunkSha256,id,path' || keys === 'artifactId,body,commentId,hunk,hunkSha256,id,path,rowEnd,rowStart') {
+        if (typeof value.artifactId !== 'string' || !ARTIFACT_ID.test(value.artifactId) || typeof value.path !== 'string' || !value.path || value.path.length > 4096 ||
+            !row(value.hunk) || typeof value.hunkSha256 !== 'string' || !SHA256.test(value.hunkSha256) || !text(value.body) ||
+            (keys.includes('rowStart') && (!row(value.rowStart) || !row(value.rowEnd)))) return invalid()
+        input = { commentId: value.commentId, artifactId: value.artifactId, path: value.path, hunk: value.hunk as number, hunkSha256: value.hunkSha256, body: value.body as string,
+          ...(keys.includes('rowStart') ? { rowStart: value.rowStart as number, rowEnd: value.rowEnd as number } : {}) }
+      } else return invalid()
+      if (!deps.workbench) return { status: 503, body: { error: 'workbench_not_wired' } }
+      try { return { status: 200, body: deps.workbench.reviewComment(value.id, input) } }
+      catch (err) { return mappedError(err) }
+    },
+    // 发出行评论:投递同 review-return(202,{input}|{task} + sent / remaining / skippedDiscarded);restartToken 同那道门。
+    'POST /v1/workbench/review-comments-send': async (query, body) => {
+      const value = objectBody(body)
+      if (query.size || !value || typeof value.id !== 'string' || !TASK_ID.test(value.id) || Object.keys(value).some(k => !['id', 'summary', 'inputRequestId', 'restartToken'].includes(k))) return invalid()
+      const { summary, inputRequestId, restartToken } = value
+      if (summary !== undefined && (typeof summary !== 'string' || summary.length > 2000)) return invalid()
+      if (inputRequestId !== undefined && (typeof inputRequestId !== 'string' || !REQUEST_ID.test(inputRequestId))) return invalid()
+      if (restartToken !== undefined && (typeof restartToken !== 'string' || !SHA256.test(restartToken))) return invalid()
+      if (!deps.workbench) return { status: 503, body: { error: 'workbench_not_wired' } }
+      try {
+        const result = await deps.workbench.sendReviewComments(value.id, { ...(summary !== undefined ? { summary: summary as string } : {}), ...(inputRequestId !== undefined ? { inputRequestId: inputRequestId as string } : {}), ...(restartToken !== undefined ? { restartToken: restartToken as string } : {}) })
+        return { status: 202, body: result }
+      } catch (err) { return mappedError(err) }
+    },
+    // 按块撤回 / 恢复:这件事有会话(哪怕答复过)/ 检查 / 脚本在跑 ⇒ 409 workbench_busy;块变了 ⇒ 409 review_hunk_stale;之后又改过 ⇒ 409 review_file_changed。
+    'POST /v1/workbench/review-hunk': async (query, body) => {
+      const value = objectBody(body)
+      if (query.size || !value || Object.keys(value).sort().join(',') !== 'action,artifactId,hunk,hunkSha256,id,path' ||
+          typeof value.id !== 'string' || !TASK_ID.test(value.id) || typeof value.artifactId !== 'string' || !ARTIFACT_ID.test(value.artifactId) ||
+          typeof value.path !== 'string' || !value.path || value.path.length > 4096 || typeof value.hunk !== 'number' || !Number.isInteger(value.hunk) || value.hunk < 0 ||
+          typeof value.hunkSha256 !== 'string' || !SHA256.test(value.hunkSha256) || (value.action !== 'revert' && value.action !== 'restore')) return invalid()
+      if (!deps.workbench) return { status: 503, body: { error: 'workbench_not_wired' } }
+      try { return { status: 200, body: { hunk: deps.workbench.revertReviewHunk(value.id, { artifactId: value.artifactId, path: value.path, hunk: value.hunk, hunkSha256: value.hunkSha256, action: value.action }) } } }
       catch (err) { return mappedError(err) }
     },
 
