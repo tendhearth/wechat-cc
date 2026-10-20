@@ -4,7 +4,7 @@ import { DEMO_STICKER, DEMO_STICKER_FILE, DEMO_VOICE } from './demo-media'
 import { BackendError, type Backend, type CliSessionRowT, type Connection, type MatterT, type MatterDetailT, type ApprovalExplanationT, type ChatJobT, type ChatMessageT, type SessionContinueT, type MatterSayResultT, type UploadStateT, type ChatModelViewT, type OverseerTodayT, type TodayItemT, type CompanionHomeT, type FeedEventT } from './types'
 import {
   copy, IDS, CHAT_ID, DEMO_HUNT_URL, PERM_ID, QUESTION_ID, RUN_IDS, t, explanation, progress, changesTurn, entryOptions,
-  demoConnections, demoJobs, demoLetters, demoSessions, demoSessionMessages, demoSessionTitleKey, DEMO_SESSION_MESSAGES, type Stage,
+  demoActivity, demoConnections, demoJobs, demoLetters, demoSessions, demoSessionMessages, demoSessionTitleKey, DEMO_SESSION_MESSAGES, type Stage,
 } from './demo-data'
 
 type Topic = 'home' | 'approvals' | 'agents' | `matter/${string}`
@@ -331,6 +331,7 @@ export function makeDemoBackend(opts: { now?: () => number; setTimeout?: typeof 
       if (action === 'remove') jobRemoved.add(id)
       else jobPaused.set(id, action === 'pause')
     },
+    async activity() { return { items: demoActivity(lastLang, now()), next: null, degraded: [] } },
     async letters() { return demoLetters(lastLang, now()) },
     async letterPageChunk() {
       // 演示里的信按文字寄(pages=0),没有信纸图可读

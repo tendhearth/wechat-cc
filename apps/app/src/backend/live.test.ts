@@ -711,3 +711,25 @@ describe('定时(2026-10-20)', () => {
     await expect(bad.b.jobs()).rejects.toMatchObject({ code: 'unknown' })
   })
 })
+
+describe('CC 做过的事(B9,2026-10-20)', () => {
+  const ITEMS = [
+    { id: 'together:e5f6a7b8', kind: 'together', at: 1_760_000_000_000, title: '一起做「整理笔记」做完了', ref: { type: 'task', id: 'e5f6a7b8' } },
+    { id: 'log:1:', kind: 'proactive', at: 1_759_999_000_000, title: '想跟你说一句,没发出去' },
+  ]
+  it('activity:过 schema、去掉 ok;ref / degraded / next 都留着(zod 没剥);游标进查询串', async () => {
+    const { b, reqs } = harness({ 'GET /m/api/activity': ok({ ok: true, items: ITEMS, next: 'MTIzfGE', degraded: ['letters'] }) })
+    const v = await b.activity()
+    expect(reqs.at(-1)!.path).toBe('/m/api/activity')
+    expect('ok' in v).toBe(false)
+    expect(v).toEqual({ items: ITEMS, next: 'MTIzfGE', degraded: ['letters'] })
+    await b.activity({ cursor: 'a/b+c' })
+    expect(reqs.at(-1)!.path).toBe('/m/api/activity?cursor=a%2Fb%2Bc')
+  })
+  it('链接令牌 403 ⇒ 抛错;形状不对 ⇒ unknown(不当成功)', async () => {
+    const bad = harness({ 'GET /m/api/activity': ok({ ok: true, items: [{ id: 'x', kind: 'nope', at: 1, title: 't' }], next: null, degraded: [] }) })
+    await expect(bad.b.activity()).rejects.toMatchObject({ code: 'unknown' })
+    const denied = harness({ 'GET /m/api/activity': ok({ ok: false, error: 'forbidden' }, 403) })
+    await expect(denied.b.activity()).rejects.toBeInstanceOf(Error)
+  })
+})

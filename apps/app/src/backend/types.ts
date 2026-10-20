@@ -2,12 +2,12 @@ import type { z } from 'zod'
 import type {
   Matter, MatterDetail, ApprovalExplanation, ProgressSummary, PhoneChangesTurn, EntryOptions, DeviceRowT, PushPlatformT,
   FeedEvent, Presence,
-  ChatPage, ChatJob, ChatMessage, ChatAttachment, LetterSummary, EntryModelCatalog, ChatModelView, MemorySuccess, ChatSearchHit, PhoneJobT, Connections, NativeSessionRow, NativeSessionPage, SessionContinueT, MatterSayResult, CliSessionRowT, CliActivityItemT, OverseerTodayT, TodayItemT,
+  ChatPage, ChatJob, ChatMessage, ChatAttachment, LetterSummary, EntryModelCatalog, ChatModelView, MemorySuccess, ChatSearchHit, PhoneJobT as ProtocolPhoneJobT, PhoneActivityItemT, Connections, NativeSessionRow, NativeSessionPage, SessionContinueT, MatterSayResult, CliSessionRowT, CliActivityItemT, OverseerTodayT, TodayItemT,
 } from '@wechat-cc/protocol'
 import type { Lang } from '../i18n'
 
 // 协议包已导出这个类型,不再重推一份(裁决 R12)
-export type { SessionContinueT, CliSessionRowT, CliActivityItemT, OverseerTodayT, TodayItemT, PhoneJobT }
+export type { SessionContinueT, CliSessionRowT, CliActivityItemT, OverseerTodayT, TodayItemT }
 export type MatterT = z.infer<typeof Matter>
 export type MatterDetailT = z.infer<typeof MatterDetail>
 export type ApprovalExplanationT = z.infer<typeof ApprovalExplanation>
@@ -29,6 +29,12 @@ export type MemoryViewT = Omit<z.infer<typeof MemorySuccess>, 'ok'>
 /** 主人对话用哪个后端 / 模型(2026-10-06);model=null ⇒ 用这个后端的全局设置 globalModel。 */
 export type ChatModelViewT = Omit<z.infer<typeof ChatModelView>, 'ok'>
 export type MemoryVerdict = 'wrong' | 'outdated' | 'delete'
+/** 一条定时;recap = 周报(PR 431 的 daemon 才给,协议包还没有这个字段 ⇒ App 这边先按可选认,老 daemon 不带)。 */
+export type PhoneJobT = ProtocolPhoneJobT & { recap?: boolean }
+/** 「CC 做过的事」的一条(GET /m/api/activity,B9):title 是电脑写好的一句(含成没成),ref 指向能点开的那件。 */
+export type ActivityItemT = PhoneActivityItemT
+/** 一页时间线:next = 再早一点的游标;degraded = 这次读不到的来源名(其余照出)。 */
+export type ActivityPageT = { items: ActivityItemT[]; next: string | null; degraded: string[] }
 /** 定时列表(GET /m/api/jobs,2026-10-20):executor=null ⇒ 这台电脑上没有能跑定时的执行者。 */
 export type JobsViewT = { timezone: string; executor: string | null; jobs: PhoneJobT[] }
 export type JobsAction = 'pause' | 'resume' | 'remove'
@@ -135,6 +141,8 @@ export interface Backend {
   jobs(): Promise<JobsViewT>
   /** 停 / 开 / 删一条定时(POST /m/api/jobs/action);不在了 ⇒ BackendError('not_found')。 */
   jobsAction(id: string, action: JobsAction): Promise<void>
+  /** CC 做过的事(GET /m/api/activity,B9):新的在前,最多两周;cursor ⇒ 接着上一页往下翻。只给配过对的手机。 */
+  activity(p?: { cursor?: string | null }): Promise<ActivityPageT>
   /** CC 的信(GET /m/api/letters,2026-10-18):寄出去了的信,新的在前。只给配过对的手机(链接令牌 403 ⇒ BackendError)。 */
   letters(): Promise<LetterSummaryT[]>
   /** 一封信的第 page 页(1 起)按块读(GET /m/api/letters/page);不在了 ⇒ BackendError('not_found')。 */

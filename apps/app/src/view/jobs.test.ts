@@ -12,6 +12,11 @@ describe('定时 视图', () => {
     expect(jobRow(job({ brief: true, text: '早报正文不显示' }), 'zh-Hans').body).toBe('早报')
     expect(jobRow(job({ brief: true }), 'en').body).toBe('Morning brief')
   })
+  it('周报(recap,可选字段;老 daemon 不带)⇒「周报」,不显示正文', () => {
+    expect(jobRow(job({ recap: true, text: '周报正文不显示' }), 'zh-Hans').body).toBe('周报')
+    expect(jobRow(job({ recap: true }), 'en').body).toBe('Weekly recap')
+    expect(jobRow(job({ recap: false }), 'zh-Hans').body).toBe('看看天气')
+  })
   it('上次结果:中文用电脑给的那句 + 日期;没跑过 ⇒「还没跑过」', () => {
     expect(jobRow(job(), 'zh-Hans').last).toBe('还没跑过')
     expect(jobRow(job(), 'en').last).toBe("Hasn't run yet")
@@ -44,11 +49,12 @@ describe('定时 视图', () => {
 })
 
 describe('定时 演示后端', () => {
-  it('三条(一条早报、一条停着),过 GET /m/api/jobs schema;中英文各一份', async () => {
+  it('四条(一条早报、一条周报、一条停着),过 GET /m/api/jobs schema;中英文各一份', async () => {
     const b = makeDemoBackend({ lang: 'zh-Hans' })
     const v = await b.jobs()
     expect(PHONE_API_SCHEMAS['GET /m/api/jobs']!.safeParse({ ok: true, ...v }).success).toBe(true)
     expect(v.jobs.filter(j => j.brief)).toHaveLength(1)
+    expect(v.jobs.filter(j => j.recap)).toHaveLength(1)
     expect(v.jobs.filter(j => j.paused)).toHaveLength(1)
     expect(v.jobs[0]!.label).toMatch(/[一-鿿]/)
     expect((await makeDemoBackend({ lang: 'en' }).jobs()).jobs[0]!.label).not.toMatch(/[一-鿿]/)
