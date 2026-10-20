@@ -15,7 +15,7 @@ export const CHANGES_MAX_RISKS = 6
 
 type Kind = 'added' | 'deleted' | 'modified' | 'not_reviewed'
 type Mark = { mark: 'accepted' | 'returned'; comment: string; createdAt: number }
-export interface ReviewTurnLike { artifactId?: string; createdAt: number; status: 'complete' | 'partial' | 'unavailable'; notes?: readonly string[]; files: ReadonlyArray<{ path: string; kind: Kind; diff?: string; reason?: string; mark?: Mark; risk?: readonly string[] }> }
+export interface ReviewTurnLike { artifactId?: string; createdAt: number; discarded?: boolean; status: 'complete' | 'partial' | 'unavailable'; notes?: readonly string[]; files: ReadonlyArray<{ path: string; kind: Kind; diff?: string; reason?: string; mark?: Mark; risk?: readonly string[] }> }
 export interface PhoneChangeFile { path: string; kind: Kind; diff?: string; reason?: string; truncated: boolean; mark?: Mark; risk?: string[] }
 export interface PhoneChangesTurn { artifactId?: string; createdAt: number; status: 'complete' | 'partial' | 'unavailable'; files: PhoneChangeFile[]; omittedFiles: number; notes: string[] }
 
@@ -37,7 +37,9 @@ function riskOf(risk: unknown): { risk?: string[] } {
   return list.length ? { risk: list } : {}
 }
 
-export function latestChanges(turns: readonly ReviewTurnLike[]): PhoneChangesTurn | null {
+export function latestChanges(all: readonly ReviewTurnLike[]): PhoneChangesTurn | null {
+  // 回退撤掉的轮不算(v81)
+  const turns = all.filter(t => !t.discarded)
   if (turns.length === 0) return null
   const t = turns.reduce((a, b) => (b.createdAt > a.createdAt ? b : a))
   let total = 0

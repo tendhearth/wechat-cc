@@ -18,6 +18,7 @@ import type { ReviewMark } from '../review-marks'
 import type { ServiceCtx } from './ctx'
 import type { WorkbenchTaskView } from './types'
 import { fileRisk } from '../review-risk'
+import { checkpointRefSet } from '../rewind'
 
 export interface ReviewDomain {
   reviewList(id:string):ReviewTurn[]
@@ -37,6 +38,8 @@ export function makeReviewDomain(ctx:ServiceCtx):ReviewDomain {
   /** 标记的落点:成果必须属于该任务(否则 store.artifact 抛 not_found)且真是一份读得出的快照。 */
   function reviewTarget(id:string,artifactId:string) {
     const artifact=store.artifact(id,artifactId)
+    // 回退撤掉的轮:看得见,不能再标 / 打回 / 撤销(v81)
+    if(store.rewinds.discarded(id).has(artifactId))throw new Error('review_round_discarded')
     const review=readReviewSnapshot(artifact)
     if(!review)throw new Error('invalid_review_reference')
     return {artifact,review}
@@ -58,14 +61,19 @@ export function makeReviewDomain(ctx:ServiceCtx):ReviewDomain {
 
   return {
     reviewList(id:string):ReviewTurn[] {
-      store.get(id)
+      const task=store.get(id)
+      const discarded=store.rewinds.discarded(id),wt=store.worktrees.get(id)
+      // 独立工作区才有「可回退」;checkpoint ref 一次读全(读不了 ⇒ 都不可回退)
+      const refs=wt&&wt.removedAt===null&&task.archivedAt===null?checkpointRefSet(wt.root,id):null
+      const rewindable=(r:{checkpointBefore?:string;checkpointAfter?:string}|null,gone:boolean)=>wt?{rewindable:{start:!gone&&!!refs&&!!r?.checkpointBefore&&refs.has(r.checkpointBefore),end:!gone&&!!refs&&!!r?.checkpointAfter&&refs.has(r.checkpointAfter)}}:{}
       const marks=new Map<string,ReviewMark>()
       for(const mark of store.reviewMarks.list(id))marks.set(`${mark.artifactSha256}\0${mark.path}`,mark)
       return store.artifacts(id).filter(a=>a.mime===GIT_REVIEW_MIME).map(a=>{
-        const head={artifactId:a.id,sha256:a.sha256,name:a.name,createdAt:a.createdAt}
+        const gone=discarded.has(a.id)
+        const head={artifactId:a.id,sha256:a.sha256,name:a.name,createdAt:a.createdAt,...(gone?{discarded:true as const}:{})}
         const review=readReviewSnapshot(a)
-        if(!review)return {...head,status:'unavailable' as const,headBefore:null,headAfter:null,preexistingPaths:[],notes:['快照无法读取或已损坏'],files:[]}
-        return {...head,status:review.status,headBefore:review.headBefore,headAfter:review.headAfter,preexistingPaths:review.preexistingPaths,notes:review.notes,
+        if(!review)return {...head,status:'unavailable' as const,headBefore:null,headAfter:null,preexistingPaths:[],notes:['快照无法读取或已损坏'],files:[],...rewindable(null,gone)}
+        return {...head,...rewindable(review,gone),status:review.status,headBefore:review.headBefore,headAfter:review.headAfter,preexistingPaths:review.preexistingPaths,notes:review.notes,
           files:review.files.map(file=>{
             const mark=marks.get(`${a.sha256}\0${file.path}`)
             const risk=fileRisk(file)

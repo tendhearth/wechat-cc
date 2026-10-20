@@ -16,6 +16,12 @@ describe('latestChanges', () => {
     expect(PhoneChangesTurn.parse(r)).toEqual(r)
   })
   it('没有轮次 ⇒ null', () => { expect(latestChanges([])).toBeNull() })
+  it('回退撤掉的轮不算(v81):取没撤掉的最近一轮;全撤了 ⇒ null', () => {
+    const r = latestChanges([turn(1, [{ path: 'kept', kind: 'modified', diff: '+k' }]), { ...turn(5, [{ path: 'gone', kind: 'added', diff: '+g' }]), discarded: true as const }])!
+    expect(r.createdAt).toBe(1)
+    expect(r.files.map(f => f.path)).toEqual(['kept'])
+    expect(latestChanges([{ ...turn(5, []), discarded: true as const }])).toBeNull()
+  })
   it('取最近一轮;diff 原样;not_reviewed 无 diff', () => {
     const r = latestChanges([turn(1, [{ path: 'old', kind: 'modified', diff: '@@ -1 +1 @@\n-a\n+b' }]), turn(5, [
       { path: 'src/a.ts', kind: 'modified', diff: '@@ -1 +1 @@\n-x\n+y' },

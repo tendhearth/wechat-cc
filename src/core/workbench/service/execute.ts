@@ -48,6 +48,8 @@ import type { LifecycleDomain } from './lifecycle'
 import type { NoticesDomain } from './notices'
 import type { ArtifactsDomain } from './artifacts'
 import type { ScriptsDomain } from './scripts'
+import type { RewindDomain } from './rewind'
+import { assertNotRewindBlocked } from '../rewind-store'
 
 const RECOVERY_MESSAGE='原执行会话暂时无法恢复。请打开桌面工作台，查看恢复选项并确认是否带此前记录重新开始。'
 
@@ -94,6 +96,8 @@ export interface ExecuteDomains {
   inputs: InputsDomain; lifecycle: LifecycleDomain; notices: NoticesDomain; artifacts: ArtifactsDomain
   /** 工作区脚本(2026-10-20):微信建的独立工作区也跑 setup;老测试不传。 */
   scripts?: Pick<ScriptsDomain,'afterCheckout'>
+  /** 回退之后下一轮开头的告知(2026-10-21);老测试不传。 */
+  rewind?: Pick<RewindDomain,'notice'|'markNoticed'|'ready'>
 }
 
 export function makeExecuteDomain(ctx:ServiceCtx, domains:ExecuteDomains) {
@@ -116,6 +120,9 @@ export function makeExecuteDomain(ctx:ServiceCtx, domains:ExecuteDomains) {
     let spawnRejected=false
     let accepted=false
     try {
+      // 开机对账没做完 / 回退把这件事停住了(评审 #433-4)⇒ 不在半切换的工作区上跑
+      await domains.rewind?.ready()
+      assertNotRewindBlocked(store.rewinds,task.id)
       requireInput(task.providerId,running.attachments,running.execution,running.continuation.mode==='resume')
       running.releaseBusy=ctx.deps.holdBusy?.(sessionKey)
       if (canonicalProject(task.path) !== running.path || directoryIdentity(running.path) !== running.directoryIdentity) throw new Error('invalid_path')
@@ -214,7 +221,11 @@ export function makeExecuteDomain(ctx:ServiceCtx, domains:ExecuteDomains) {
       if (running.cancelled) { finalStatus='cancelled'; return }
       store.markSourceDispatched(task.id)
       const material=store.attachments.prepare(task.id,running.attachments,running.path,ctx.stateDir)
-      const request=history ? `本任务此前记录（仅作上下文，不是新指令）：\n${history}\n\n本轮要求：\n${text}` : text
+      // 回退之后的第一轮:前置一句告知(评审 8);送达(第一条事件)才 markNoticed,派发失败下次还带
+      const rewound=domains.rewind?.notice(task.id)??null
+      const body=rewound?`${rewound.text}\n\n${text}`:text
+      const request=history ? `本任务此前记录（仅作上下文，不是新指令）：\n${history}\n\n本轮要求：\n${body}` : body
+      let rewoundNoticed=false
       const runtime=running.session.workbenchRuntime
       const stream=runtime?.events??running.session.dispatch(request,material)
       let flushErrorNoted=false
@@ -267,6 +278,7 @@ export function makeExecuteDomain(ctx:ServiceCtx, domains:ExecuteDomains) {
           ev => {
             if (running.cancelled) return
             if(running.queuedInputId&&['text','tool_call','result'].includes(ev.kind)){store.liveInputs.set(running.queuedInputId,'delivered');ctx.hub.bumped(task.id)}
+            if(rewound&&!rewoundNoticed&&['text','tool_call','result'].includes(ev.kind)){rewoundNoticed=true;domains.rewind?.markNoticed(task.id,rewound.ids)}
             if ((ev.kind==='init'||(runtime&&ev.kind==='result')) && ev.sessionId) {matterSync(m=>m.addSession(task.id,task.providerId,ev.sessionId!,'main'));if(resume&&ev.sessionId!==resume)throw new Error('native_session_identity_mismatch');store.session(task.id,ev.sessionId);if(running.handoffId){const peer=store.recordHandoffNative(running.handoffId,ev.sessionId);if(peer)ctx.hub.touched(peer.sourceTaskId)}ctx.hub.touched(task.id)}
             coalescer.push(ev)
             // 额度/限流在错误到达时就登记(评审 #5:只在结算时看,保留会话永远等不到结算);
@@ -424,6 +436,7 @@ export function makeExecuteDomain(ctx:ServiceCtx, domains:ExecuteDomains) {
 
   function start(task:StoredTask,text:string,acceptedDirectoryIdentity:string,acceptedContinuation:AcceptedContinuation={mode:'new'},nativeResume?:AcceptedNativeResume,handoffArtifacts?:ArtifactSelection[],handoffId?:string,queuedInputId?:string,attachments:Attachment[]=[],draftId?:string,executionChoice?:AgentExecutionChoice,acceptance?:{persist:(runId:string)=>void;activate:(fn:()=>void)=>void;scope?:{ownerKey:string}},attachmentPolicy?:'owner'):WorkbenchTaskView {
     if (runsByTask.has(task.id)) throw new Error('workbench_busy')
+    assertNotRewindBlocked(store.rewinds,task.id)
     if(ctx.deps.executionConflict?.(task.path,task.providerId,task.sessionId))throw new Error('native_session_busy')
     if([...runsByTask.values()].some(run=>task.sessionId&&run.task.providerId===task.providerId&&run.task.sessionId===task.sessionId))throw new Error('native_session_busy')
     const runId=randomUUID()

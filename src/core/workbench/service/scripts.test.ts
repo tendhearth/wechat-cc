@@ -59,6 +59,14 @@ function setup(scripts: Record<string, string> | null, deps: Partial<ServiceDeps
 const until = (fn: () => unknown, timeout = 8000) => expect.poll(fn, { timeout, interval: 30 })
 
 describe.skipIf(process.platform === 'win32')('workbench scripts domain (real git + /bin/sh)', () => {
+  it('busy / serving(回退用,2026-10-21):setup 在跑 ⇒ busy;只有 run 在跑 ⇒ 不 busy、serving', async () => {
+    const t = setup({ setup: 'sleep 30', run: 'sleep 30' })
+    t.approve()
+    expect(t.scripts.busy(t.task.id)).toBe(false)
+    t.scripts.afterCheckout(t.task.id)
+    await until(() => t.scripts.busy(t.task.id)).toBe(true)
+    expect(t.scripts.serving(t.task.id)).toBe(false)
+  })
   it('not approved ⇒ afterCheckout only says 待确认; run refuses with 428 code; nothing runs', async () => {
     const t = setup({ setup: 'echo s > $LOG/setup', run: 'echo r > $LOG/run' })
     t.scripts.afterCheckout(t.task.id)

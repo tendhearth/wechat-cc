@@ -11,8 +11,8 @@
  *   - 体积超限(未跟踪 + 修改合计 / 单文件 / 路径数)⇒ 跳过,那一轮不可回退。
  *   - 仓库用 LFS / 任何 required 过滤器 / 任何 `filter=` 属性 ⇒ 整个不打(`filter_repo`):过滤器中和后,
  *     stat 过期的 LFS 文件会以原始字节入树、没动的仍是指针,回退时会把指针文本写回去(设计评审 10-21)。
- *   - ref 只增不删:删工作区(归档时自动删干净的工作区)**不清** ref —— 那是仅有的备份。
- *     `deleteCheckpointRefs` 先留着给切片 2 的保留 / 清理策略(cc/<id> 分支删了才删,或按 TTL)。
+ *   - 删工作区(归档时自动删干净的工作区)**不清** ref —— 那是仅有的备份。保留策略(切片 2):每件事至多
+ *     CHECKPOINT_KEEP 个(pruneCheckpoints,旧的随裁);cc/<id> 分支没了或归档满 30 天 ⇒ deleteCheckpointRefs(service/rewind.ts)。
  * 只给独立工作区用(调用方挡);任何 git 失败都回 `{skipped}`,从不抛 —— checkpoint 失败绝不能拖垮一轮。
  * 全程异步子进程,不卡事件循环。
  */
@@ -35,8 +35,8 @@ export const REWIND_REF_PREFIX = 'refs/tendhearth/rewind/'
 
 // hooksPath 指向空设备:git 在那下面找不到任何钩子(Windows 同 self-change/git.ts 用 NUL)
 const NULL_DEVICE = process.platform === 'win32' ? 'NUL' : '/dev/null'
-const SAFE = ['--no-pager', '--no-optional-locks', '-c', 'core.fsmonitor=false', '-c', `core.hooksPath=${NULL_DEVICE}`, '-c', 'core.autocrlf=false', '-c', 'gc.auto=0', '-c', 'maintenance.auto=false']
-const EXCLUDE = [':(exclude,glob)**/.cc-workbench/**', ':(exclude,glob)**/.cc-workbench-inputs/**']
+export const SAFE = ['--no-pager', '--no-optional-locks', '-c', 'core.fsmonitor=false', '-c', `core.hooksPath=${NULL_DEVICE}`, '-c', 'core.autocrlf=false', '-c', 'gc.auto=0', '-c', 'maintenance.auto=false']
+export const EXCLUDE = [':(exclude,glob)**/.cc-workbench/**', ':(exclude,glob)**/.cc-workbench-inputs/**']
 const IDENTITY = ['-c', 'user.name=Tendhearth CC', '-c', 'user.email=cc@localhost', '-c', 'commit.gpgSign=false']
 const TASK = /^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$/
 const OID = /^[0-9a-f]{40}([0-9a-f]{24})?$/
@@ -227,7 +227,7 @@ async function checkpoint(input: CheckpointInput, signal: AbortSignal): Promise<
   }
 }
 
-/** 删工作区时清掉这件事的 checkpoint 与回退备份 ref(尽力而为,不抛)。root 是仓库里任一目录(ref 在公共目录)。 */
+/** 清掉这件事的 checkpoint 与回退备份 ref(保留期满 / 分支没了,service/rewind.ts;尽力而为,不抛)。root 是仓库里任一目录(ref 在公共目录)。 */
 export async function deleteCheckpointRefs(root: string, taskId: string): Promise<number> {
   if (!TASK.test(taskId)) return 0
   try {
@@ -237,4 +237,63 @@ export async function deleteCheckpointRefs(root: string, taskId: string): Promis
     await run(['update-ref', '--stdin'], { input: refs.map(ref => `delete ${ref}\n`).join('') })
     return refs.length
   } catch { return 0 }
+}
+
+/** 每件事至多留这么多个 checkpoint(更老的随裁;回退备份 refs/tendhearth/rewind/ 不算在内)。 */
+export const CHECKPOINT_KEEP = 50
+/** 只留最近 keep 个 checkpoint ref(按提交时间,新的在后),多的删掉。尽力而为,不抛;回删了几个。 */
+export async function pruneCheckpoints(root: string, taskId: string, keep = CHECKPOINT_KEEP): Promise<number> {
+  if (!TASK.test(taskId)) return 0
+  try {
+    const { run } = runner(root)
+    const refs = (await run(['for-each-ref', '--sort=committerdate', '--format=%(refname)', `${CHECKPOINT_REF_PREFIX}${taskId}/`])).toString('utf8').split('\n').filter(Boolean)
+    const drop = refs.slice(0, Math.max(0, refs.length - keep))
+    if (!drop.length) return 0
+    await run(['update-ref', '--stdin'], { input: drop.map(ref => `delete ${ref}\n`).join('') })
+    return drop.length
+  } catch { return 0 }
+}
+
+/**
+ * 回退的同步段要用的 git 参数(全局忽略 + 过滤器中和),和 checkpoint 打树时完全一致 —— 两边算出的树才对得上。
+ * 过滤器仓库 ⇒ `{skipped:'filter_repo'}`(不可回退)。
+ */
+export async function checkpointGitArgs(root: string): Promise<{ top: string; filters: string[] } | { skipped: CheckpointSkip }> {
+  try {
+    const top = line(await runner(root).run(['rev-parse', '--show-toplevel']))
+    if (!top) return { skipped: 'git_error' }
+    const { run, filters } = runner(top)
+    filters.push(...await globalExcludes(run))
+    if (await usesFilters(run, top)) return { skipped: 'filter_repo' }
+    filters.push(...await filterOverrides(args => run(args)))
+    return { top, filters }
+  } catch (error) {
+    return { skipped: String((error as { stderr?: Buffer }).stderr ?? '').includes('not a git repository') ? 'not_git' : 'git_error' }
+  }
+}
+
+/** doctor 用:这个仓库里 refs/tendhearth/* 有几个、最老的是哪天(提交时间,毫秒)。读不了 ⇒ null。 */
+export async function listTendhearthRefs(root: string): Promise<{ count: number; oldest: number | null } | null> {
+  try {
+    const rows = (await runner(root).run(['for-each-ref', '--format=%(committerdate:unix)', 'refs/tendhearth/'])).toString('utf8').split('\n').filter(Boolean)
+    const times = rows.map(Number).filter(n => Number.isFinite(n) && n > 0)
+    return { count: rows.length, oldest: times.length ? Math.min(...times) * 1000 : null }
+  } catch { return null }
+}
+/** doctor 的「一键清」:删掉这个仓库里所有 refs/tendhearth/*。回删了几个;出错 ⇒ 0。 */
+export async function clearTendhearthRefs(root: string): Promise<number> {
+  try {
+    const { run } = runner(root)
+    const refs = (await run(['for-each-ref', '--format=%(refname)', 'refs/tendhearth/'])).toString('utf8').split('\n').filter(Boolean)
+    if (!refs.length) return 0
+    await run(['update-ref', '--stdin'], { input: refs.map(ref => `delete ${ref}\n`).join('') })
+    return refs.length
+  } catch { return 0 }
+}
+
+/** 这个本地分支还在不在;读不了仓库 ⇒ null(别据此清 ref)。 */
+export async function branchExists(root: string, branch: string): Promise<boolean | null> {
+  try { await runner(root).run(['rev-parse', '--git-dir']) } catch { return null }
+  try { await runner(root).run(['rev-parse', '--verify', '-q', `refs/heads/${branch}`]); return true }
+  catch (error) { return (error as { code?: number }).code === 1 ? false : null }
 }

@@ -4,7 +4,7 @@ import { promisify } from 'node:util'
 import { chmodSync, existsSync, utimesSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, symlinkSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'
-import { CHECKPOINT_DEADLINE_MS, deleteCheckpointRefs, takeCheckpoint, type GitExec } from './checkpoints'
+import { branchExists, CHECKPOINT_DEADLINE_MS, clearTendhearthRefs, deleteCheckpointRefs, listTendhearthRefs, pruneCheckpoints, takeCheckpoint, type GitExec } from './checkpoints'
 import { parseGitReviewSnapshot } from './review'
 import { removeTempDir } from '../../lib/test-temp'
 
@@ -258,5 +258,30 @@ describe('inside a real linked worktree (production shape)', () => {
     // 拿错(主仓库 index / read-tree HEAD)就会是新内容。这也是已知限制:稀疏 / skip-worktree 的文件按 index 记。
     git('update-index', '--skip-worktree', 'app.ts'); file('app.ts', 'edited\n')
     expect(treeOf((await ok()).commit).get('app.ts')?.text).toBe('one')
+  })
+})
+
+describe('ref 的去留(回退切片 2)', () => {
+  it('pruneCheckpoints keeps only the newest N; list / clear report and remove refs/tendhearth/*', async () => {
+    const made: string[] = []
+    for (let i = 0; i < 4; i++) {
+      file('app.ts', `v${i}\n`)
+      const r = await ok()
+      made.push(r.commit)
+    }
+    const listing = await listTendhearthRefs(root)
+    expect(listing?.count).toBe(4); expect(listing?.oldest).toBeGreaterThan(0)
+    expect(await pruneCheckpoints(root, 'abcd1234', 10)).toBe(0)
+    expect(await pruneCheckpoints(root, 'abcd1234', 2)).toBe(2)
+    expect(git('for-each-ref', '--format=%(refname)', 'refs/tendhearth/checkpoints/abcd1234/').split('\n')).toHaveLength(2)
+    git('update-ref', 'refs/tendhearth/rewind/abcd1234/1', made[0]!)
+    expect(await clearTendhearthRefs(root)).toBe(3)
+    expect(await listTendhearthRefs(root)).toEqual({ count: 0, oldest: null })
+  })
+  it('branchExists: true / false / null (not a repo)', async () => {
+    const branch = git('symbolic-ref', '--short', 'HEAD')
+    expect(await branchExists(root, branch)).toBe(true)
+    expect(await branchExists(root, 'cc/nope0000')).toBe(false)
+    expect(await branchExists(join(stateDir, 'nowhere'), branch)).toBeNull()
   })
 })

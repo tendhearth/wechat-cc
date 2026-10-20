@@ -225,6 +225,8 @@ function lineCounts(diff:string|undefined):string {
  */
 function changesReply(id:string,turns:ReviewTurn[]|null):string {
   if(!turns)return '这里看不了改动，请在桌面工作台的「改动」面板查看。'
+  // 回退撤掉的轮不算(v81)
+  turns=turns.filter(t=>!t.discarded)
   const latest=turns.find(t=>t.status!=='unavailable')
   if(!latest)return turns.length?`任务 ${id}：改动记录读不出来，请在桌面工作台查看。`:`任务 ${id}：还没有改动记录（不是 Git 项目，或还没跑完一轮）。`
   if(!latest.files.length)return `任务 ${id}：最近一轮没有改动文件。`

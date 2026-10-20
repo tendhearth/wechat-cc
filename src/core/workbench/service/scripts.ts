@@ -9,6 +9,7 @@
  * holdBusy 只给 setup / archive(有时限);run 是开发服务,可能一直开着,不能挡空闲自重启 —— 停机时一并停掉,重启后核对。
  * 输出:时间线里一条 command 活动(run_id = script-<uuid>),尾巴先过 redactSecrets 再落库。
  */
+import { assertNotRewindBlocked } from '../rewind-store'
 import { randomUUID } from 'node:crypto'
 import { execFileSync } from 'node:child_process'
 import { redactSecrets } from '../../cli-transcript'
@@ -162,6 +163,10 @@ export function makeScriptsDomain(ctx: ServiceCtx, opts: ScriptsOptions = {}) {
 
   return {
     status,
+    /** 回退用(2026-10-21):setup / archive 在跑、或正在收尾删除 ⇒ 正碰着工作区。开发服务(run)不算,只提示。 */
+    busy: (id: string): boolean => removing.has(id) || !!liveOf(id, 'setup') || !!liveOf(id, 'archive'),
+    /** 开发服务在跑(回退照做,预览里提示一句)。 */
+    serving: (id: string): boolean => !!liveOf(id, 'run'),
     /** 建好工作区 / 重新打开之后:批过 ⇒ 跑 setup;没批 ⇒ 说一句「待确认」,什么都不跑。从不抛(不拦建任务)。 */
     afterCheckout(id: string): void {
       try {
@@ -191,6 +196,7 @@ export function makeScriptsDomain(ctx: ServiceCtx, opts: ScriptsOptions = {}) {
       if (task.archivedAt !== null) throw new Error('workbench_archived')
       if (wt.removedAt !== null) throw new Error('worktree_removed')
       if (scripts?.kind !== 'ok' || !scripts.config.run) throw new Error('no_scripts')
+      assertNotRewindBlocked(store.rewinds, id)
       if (!approved(wt, scripts.hash)) throw new Error('script_approval_required')
       if (removing.has(id)) throw new Error('workbench_busy')
       if (liveOf(id, 'run') || (runAfterSetup.has(id) && !liveOf(id, 'setup'))) throw new Error('script_running')
