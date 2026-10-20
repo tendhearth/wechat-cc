@@ -13,12 +13,17 @@ describe('quiet hours', () => {
   it('inQuietHours handles windows that cross midnight, in the owner timezone', () => {
     const w = { from: '23:00', to: '08:00' }
     const at = (hhmm: string) => Date.parse(`2026-10-20T${hhmm}:00+08:00`)
+    expect(inQuietHours(w, at('22:59'), 'Asia/Shanghai')).toBe(false)
+    expect(inQuietHours(w, at('23:00'), 'Asia/Shanghai')).toBe(true)   // 起点整点算在里面
     expect(inQuietHours(w, at('23:30'), 'Asia/Shanghai')).toBe(true)
     expect(inQuietHours(w, at('03:00'), 'Asia/Shanghai')).toBe(true)
     expect(inQuietHours(w, at('07:59'), 'Asia/Shanghai')).toBe(true)
     expect(inQuietHours(w, at('08:00'), 'Asia/Shanghai')).toBe(false)
     expect(inQuietHours(w, at('12:00'), 'Asia/Shanghai')).toBe(false)
+    expect(inQuietHours({ from: '13:00', to: '14:00' }, at('12:59'), 'Asia/Shanghai')).toBe(false)
+    expect(inQuietHours({ from: '13:00', to: '14:00' }, at('13:00'), 'Asia/Shanghai')).toBe(true)
     expect(inQuietHours({ from: '13:00', to: '14:00' }, at('13:30'), 'Asia/Shanghai')).toBe(true)
+    expect(inQuietHours({ from: '13:00', to: '14:00' }, at('14:00'), 'Asia/Shanghai')).toBe(false)   // 终点整点算在外面
     expect(inQuietHours(undefined, at('03:00'), 'Asia/Shanghai')).toBe(false)
   })
   it('label and when it ends', () => {
