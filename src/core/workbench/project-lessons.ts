@@ -40,6 +40,15 @@ export function makeProjectLessons(stateDir: string, now: () => number = Date.no
       all[projectPath] = [...cur, lesson]; write(all)
       return { ok: true, lesson }
     },
+    /** 按 id 删(手机:列表可能是旧的,按编号会删错)。 */
+    removeById(projectPath: string, id: string): boolean {
+      const all = read(), cur = all[projectPath] ?? []
+      const i = cur.findIndex(l => l.id === id)
+      if (i < 0) return false
+      cur.splice(i, 1)
+      if (cur.length) all[projectPath] = cur; else delete all[projectPath]
+      write(all); return true
+    },
     /** 按编号删(从 1 开始,同 list 的顺序)。 */
     remove(projectPath: string, n: number): boolean {
       const all = read(), cur = all[projectPath] ?? []

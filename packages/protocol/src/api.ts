@@ -601,6 +601,9 @@ export const PHONE_API_SCHEMAS: Readonly<Record<string, z.ZodTypeAny>> = {
   'GET /m/api/chat/file': z.union([z.object({ ok: z.literal(true), name: z.string(), mime: z.string(), size: z.number(), sha256: z.string(), offset: z.number(), nextOffset: z.number(), contentBase64: z.string() }), PhoneErrorResponse]),
   'GET /m/api/letters': z.union([z.object({ ok: z.literal(true), letters: z.array(LetterSummary) }), PhoneErrorResponse]),
   // 定时在手机上看得见(对标 B7,2026-10-20):列表 + 停 / 开 / 删;新建仍在微信「定时」。只给设备令牌。
+  'GET /m/api/lessons': z.union([z.object({ ok: z.literal(true), projects: z.array(z.object({ id: z.string(), name: z.string(), lessons: z.array(z.object({ id: z.string(), text: z.string() })) })), choices: z.array(z.object({ id: z.string(), name: z.string() })) }), PhoneErrorResponse]),
+  'POST /m/api/lessons/add': z.union([z.object({ ok: z.literal(true), id: z.string() }), PhoneErrorResponse]),
+  'POST /m/api/lessons/remove': z.union([z.object({ ok: z.literal(true) }), PhoneErrorResponse]),
   'GET /m/api/activity': z.union([z.object({ ok: z.literal(true), items: z.array(PhoneActivityItem), next: z.string().nullable(), degraded: z.array(z.string()) }), PhoneErrorResponse]),
   'GET /m/api/jobs': z.union([z.object({ ok: z.literal(true), timezone: z.string(), executor: z.string().nullable(), jobs: z.array(PhoneJob) }), PhoneErrorResponse]),
   'POST /m/api/jobs/action': z.union([z.object({ ok: z.literal(true) }), PhoneErrorResponse]),

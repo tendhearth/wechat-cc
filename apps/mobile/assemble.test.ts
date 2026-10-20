@@ -51,3 +51,20 @@ describe('assembleMobilePage', () => {
     expect(serializeMobilePage(assembleMobilePage(files()))).toBe(text)
   })
 })
+
+describe('inlined scripts drop whole-line // comments (page budget, 10-20)', () => {
+  it('strips full-line // comments from included .js, keeps code, trailing comments, strings with //, and files with template literals', async () => {
+    const { assembleMobilePage } = await import('./assemble')
+    const files: Record<string, string> = {
+      'phone.html': '<script>{{>a.js}}{{>markdown-generated.js}}</script>', 'sw.js': '', 'bootstrap.html': '', 'tokens.css': '', 'transport.js': '', 'workbench.js': '', 'presence.js': '',
+      'a.js': '// 中文注释\n  // 缩进的注释\nvar u="https://x"//行尾\nvar k=1\n',
+      'markdown-generated.js': 'var t=`\n// 这是字符串里的一行\n`\n',
+    }
+    const p = assembleMobilePage(n => files[n]!).phone
+    expect(p).not.toContain('中文注释')
+    expect(p).not.toContain('缩进的注释')
+    expect(p).toContain('var u="https://x"//行尾')
+    expect(p).toContain('var k=1')
+    expect(p).toContain('// 这是字符串里的一行')
+  })
+})

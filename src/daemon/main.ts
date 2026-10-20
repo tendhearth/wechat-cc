@@ -901,11 +901,12 @@ export async function bootDaemon(opts: BootDaemonOpts): Promise<DaemonHandle> {
     // 微信「经验 <项目> …」(第二轮对标 ★2):项目经验,每家执行者都照着做。只认主人;项目按名字认。
     // 工作台在后面才接上(wireWorkbench);启动中途来的「经验」命令读到空的持有者 ⇒ 回「还在启动」,不碰 TDZ(评审 #443)
     const workbenchRef: { current: ReturnType<typeof wireWorkbench> | null } = { current: null }
+    const projectLessons = makeProjectLessons(stateDir)
     const lessonsCommand = makeProjectLessonsCommand({
       isOwner: (chatId) => resolveAdminChatId(loadAccess(), loadCompanionConfig(stateDir), null) === chatId,
       say: (c, t) => ilink.sendMessage(c, t),
       projects: () => workbenchRef.current ? workbenchRef.current.projects().map(p => ({ name: p.name, path: p.path })) : null,
-      lessons: makeProjectLessons(stateDir),
+      lessons: projectLessons,
     })
     // 微信「导入记忆」(第二轮对标 #7):主人把别的助手对他的了解贴回来,点头的才写进记忆。只认主人。
     // wired 在下面才建好;这里只在主人真用时才调,那时早已就绪。
@@ -977,6 +978,8 @@ export async function bootDaemon(opts: BootDaemonOpts): Promise<DaemonHandle> {
       workbench,
       cliSessions: () => cliEvents.list({ limit: 50 }),
       activity, activityLog,
+      // 手机上看 / 加 / 删项目经验(只给设备令牌);工作台没接上时回 503
+      lessons: { projects: () => workbenchRef.current ? workbenchRef.current.projects().map(p => ({ id: p.id, name: p.name, path: p.path })) : null, lessons: projectLessons },
       overseerToday,
       terminalHooks,
       // 手机拍板 / 说一句:拍板与微信「y/n 码」、桌宠权限卡同一份待批;说一句与微信「@码」同一个 core。
