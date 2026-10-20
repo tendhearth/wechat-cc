@@ -25,9 +25,9 @@ const LIST_MAX = 8
 const list = (paths: string[]) => paths.slice(0, LIST_MAX).join('、') + (paths.length > LIST_MAX ? ` 等 ${paths.length} 个` : '')
 const line = (s: string) => s.replace(/[\r\n]+/g, ' ').slice(0, 100)
 
-export function compareReply(a: { id: string; title: string; status: string; turns: readonly ReviewTurn[] | null }, b: typeof a): string {
+export function compareReply(a: { id: string; title: string; status: string; turns: readonly ReviewTurn[] | null; note?: string }, b: typeof a): string {
   const sa = a.turns ? compareSide(a.turns) : null, sb = b.turns ? compareSide(b.turns) : null
-  const block = (x: typeof a, s: CompareSide | null) => `${line(x.title)} · ${x.id}\n${x.status}${s && s.turns ? ` · ${s.turns} 轮 · ${s.files.length} 个文件 · +${s.added} −${s.removed}` : ' · 还没有改动可比'}`
+  const block = (x: typeof a, s: CompareSide | null) => `${line(x.title)} · ${x.id}\n${x.status}${s && s.turns ? ` · ${s.turns} 轮 · ${s.files.length} 个文件 · +${s.added} −${s.removed}` : ' · 还没有改动可比'}${x.note ? `\n(${x.note})` : ''}`
   const out = [block(a, sa), block(b, sb)]
   if (sa?.turns && sb?.turns) {
     const inB = new Set(sb.files), inA = new Set(sa.files)

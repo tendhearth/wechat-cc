@@ -22,3 +22,14 @@ describe('两家对比的对照', () => {
     expect(compareReply({ id: 'aaaa1111', title: 't', status: 's', turns: null }, { id: 'bbbb2222', title: 't', status: 's', turns: [] })).toContain('还没有改动可比')
   })
 })
+
+describe('一件已经归档 / 工作区删了(评审 #452)', () => {
+  it('a side with a note still renders; unreadable review ⇒ 还没有改动可比, not an error', () => {
+    const r = compareReply(
+      { id: 'aaaa1111', title: 'x · @claude', status: '已完成', turns: null, note: '独立工作区已删除' },
+      { id: 'bbbb2222', title: 'x · @codex', status: '已完成', turns: [] })
+    expect(r).toContain('x · @claude · aaaa1111')
+    expect(r).toContain('独立工作区已删除')
+    expect(r).toContain('还没有改动可比')
+  })
+})

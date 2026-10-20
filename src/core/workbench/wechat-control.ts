@@ -323,7 +323,16 @@ export function makeWechatWorkbenchControl(opts:{store:WorkbenchStore;ownerChatI
     const pair=/^对比\s+([a-f0-9]{8})\s+([a-f0-9]{8})$/i.exec(command)
     if(pair){
       const sides=[pair[1]!.toLowerCase(),pair[2]!.toLowerCase()].map(id=>{
-        try{const stored=opts.store.get(id);if(stored.ownerChatId!==chatId)return null;const d=opts.actions.detail(id);return{id,title:stored.title,status:runtimeStatus(stored.status,d.runtime,d.task.networkSuspended),turns:opts.actions.reviewList?.(id)??null}}catch{return null}
+        let stored:ReturnType<typeof opts.store.get>
+        try{stored=opts.store.get(id);if(stored.ownerChatId!==chatId)return null}catch{return null}
+        // 各读各的:归档了 / 工作区删了 / 快照读不出,都照常说,不让整条命令报「没找到」(评审 #452)
+        let status=STATUS[stored.status]??stored.status
+        try{const d=opts.actions.detail(id);status=runtimeStatus(stored.status,d.runtime,d.task.networkSuspended)}catch{}
+        let turns:ReviewTurn[]|null=null
+        try{turns=opts.actions.reviewList?.(id)??null}catch{}
+        let note:string|undefined
+        try{const wt=opts.store.worktrees.get(id);if(wt&&wt.removedAt!=null)note='独立工作区已删除'}catch{}
+        return{id,title:stored.title,status,turns,...(note?{note}:{})}
       })
       if(!sides[0]||!sides[1])return unavailable
       return compareReply(sides[0],sides[1])
