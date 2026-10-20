@@ -133,7 +133,6 @@ export const cittyRoot = defineCommand({
   subCommands: SUBCOMMANDS,
 })
 
-
 async function main() {
   const argv = process.argv.slice(2)
   const first = argv[0]
@@ -152,7 +151,6 @@ async function main() {
   // subcommand and prints citty's auto-generated usage on unknown commands.
   await runMain(cittyRoot, { rawArgs: argv })
 }
-
 
 if (import.meta.main) {
   main().catch((e) => { console.error(e); process.exit(1) })

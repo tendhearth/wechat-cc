@@ -33,9 +33,7 @@ interface Options {
   holdBusy?: (label: string) => () => void; onTurnError?: ServiceCtx['deps']['onTurnError']; writerGroupAlive?: ServiceCtx['deps']['writerGroupAlive']; bootTimeMs?: ServiceCtx['deps']['bootTimeMs']; writerWatchMs?: number   // onTurnError:错误通道 → CLI 自动升级的报错触发(见 ctx.ts)
   timeoutMs?: number
   closeTimeoutMs?: number
-  permissionTimeoutMs?: number
-  /** 放行规则(2026-10-19);不传 ⇒ 每条权限都问主人。 */
-  permissionDecide?: ServiceCtx['deps']['permissionDecide']
+  permissionTimeoutMs?: number; permissionDecide?: ServiceCtx['deps']['permissionDecide']   // 放行规则(2026-10-19);不传 ⇒ 每条权限都问主人
   /** 保留会话安静下来、**没人等这个文件夹**时的空闲自动收工时长(ms;缺省 10 分钟)。
    *  纯粹是别让一个闲着的原生进程占着资源。允许 0(=立刻关)与很大的数(封顶约 24.8 天,即
    *  setTimeout 的合法上限 2³¹−1ms;超界不会当「永不武装」,而是被钳到这个上限);

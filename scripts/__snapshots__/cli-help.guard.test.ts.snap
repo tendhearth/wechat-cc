@@ -2016,6 +2016,7 @@ More subcommands (each has its own --help):
   wechat-cc hand add|accept|invite|join|list|ping  一个大脑多手: hand invite → hand join <code>
   wechat-cc license status|activate|deactivate  Manage the Pro license
   wechat-cc mode set …              Conversation mode management (via running daemon)
+  wechat-cc rules list|add|rm|enable|disable|review  放行规则:哪些权限请求 CC 可以替你批
   wechat-cc pair [<6-digit code>]   配对码 — 和朋友的 bot 建边(需运行中的 daemon)
   wechat-cc install-progress        Read service-install progress (JSON; desktop wizard polls it)
   wechat-cc mcp-server <wechat|delegate>   Internal — stdio MCP server entrypoint (spawned by the daemon)
@@ -2027,6 +2028,102 @@ Notes for 0.x users:
     subprocesses internally, per-project session pool.
   * /restart from WeChat is removed. Use /project switch or restart
     the daemon process.
+
+"
+`;
+
+exports[`cli.ts --help 快照(逐字节) > rules --help > rules add --help 1`] = `
+"Add a rule at the top (newest first) (rules add)
+
+USAGE rules add [OPTIONS] --then=<then>
+
+OPTIONS
+
+          --then=<then>    allow | ask | deny (Required)           
+          --tool=<tool>    Exact tool name, or mcp:<server>:*      
+    --command=<command>    Regex on the raw command (≤200 chars)   
+    --project=<project>    Project path prefix (~ ok)              
+        --paths=<paths>    Glob every touched path must match      
+    --surface=<surface>    terminal | workbench                    
+  --provider=<provider>    claude | codex | cursor | …             
+          --note=<note>    Why (the cheap-model review reads these)
+
+
+"
+`;
+
+exports[`cli.ts --help 快照(逐字节) > rules --help > rules disable --help 1`] = `
+"Turn the permission rules off (every request asks you, as before) (rules disable)
+
+USAGE rules disable 
+
+
+"
+`;
+
+exports[`cli.ts --help 快照(逐字节) > rules --help > rules enable --help 1`] = `
+"Turn the permission rules on (rules enable)
+
+USAGE rules enable 
+
+
+"
+`;
+
+exports[`cli.ts --help 快照(逐字节) > rules --help > rules list --help 1`] = `
+"Show the permission rules, their state and any errors in the file (rules list)
+
+USAGE rules list [OPTIONS] 
+
+OPTIONS
+
+  --json    JSON (the parsed file)
+
+
+"
+`;
+
+exports[`cli.ts --help 快照(逐字节) > rules --help > rules review --help 1`] = `
+"Cheap-model first-pass review: off | low_risk (rules review)
+
+USAGE rules review [OPTIONS] <MODE>
+
+ARGUMENTS
+
+  MODE    off | low_risk (Required)
+
+
+"
+`;
+
+exports[`cli.ts --help 快照(逐字节) > rules --help > rules rm --help 1`] = `
+"Remove a rule by id (rules rm)
+
+USAGE rules rm [OPTIONS] <ID>
+
+ARGUMENTS
+
+  ID    Rule id (see rules list) (Required)
+
+
+"
+`;
+
+exports[`cli.ts --help 快照(逐字节) > rules --help 1`] = `
+"Permission rules: what CC may approve for you (terminal sessions + 一起做) (wechat-cc rules v1.7.7 (dev))
+
+USAGE wechat-cc rules list|add|rm|enable|disable|review
+
+COMMANDS
+
+     list    Show the permission rules, their state and any errors in the file
+      add    Add a rule at the top (newest first)                             
+       rm    Remove a rule by id                                              
+   enable    Turn the permission rules on                                     
+  disable    Turn the permission rules off (every request asks you, as before)
+   review    Cheap-model first-pass review: off | low_risk                    
+
+Use wechat-cc rules <command> --help for more information about a command.
 
 "
 `;
