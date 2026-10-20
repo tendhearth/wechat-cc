@@ -86,6 +86,34 @@ for (const step of ['backup', 'switched', 'branch', 'verify'] as const) {
   })
 }
 
+it('rollback never overwrites a file edited inside the window: conflict reported, unrelated edits kept', async () => {
+  writeFileSync(join(wt, 'same.txt'), 'same\n'); run(wt, 'add', 'same.txt'); run(wt, 'commit', '-qm', 'same')
+  const { P, C, B, oldHead } = await twoRounds()
+  const P2 = run(wt, 'rev-parse', `${C.commit}^`)
+  expect(P2).toBe(P)
+  // 只改了两树都一样的文件 ⇒ 回滚照做,那处改动留着
+  let r = apply({ commit: C.commit, parent: P }, B, oldHead, s => { if (s === 'branch') put('same.txt', 'autosave\n') })
+  expect(r).toMatchObject({ ok: false, error: 'rewind_verify_tree', rolledBack: true, conflicts: [], kept: ['same.txt'] })
+  expect(read('same.txt').toString()).toBe('autosave\n'); expect(head()).toBe(oldHead)
+  put('same.txt', 'same\n')
+  // 改了两树有差的文件 ⇒ 不覆盖,报冲突;分支照样回去
+  const B2 = await cp()
+  r = apply({ commit: C.commit, parent: P }, B2, oldHead, s => { if (s === 'branch') put('a.txt', 'formatter\n') })
+  expect(r).toMatchObject({ ok: false, rolledBack: false, conflicts: ['a.txt'] })
+  expect(read('a.txt').toString()).toBe('formatter\n'); expect(head()).toBe(oldHead)
+  if (!r.ok) expect(r.steps).toEqual(expect.arrayContaining([{ step: 'branch', ok: true }, expect.objectContaining({ step: 'worktree', ok: false })]))
+})
+
+it('a directory that becomes a file again: ignored files inside it count as a conflict', async () => {
+  put('cache', 'file\n')
+  const C = await cp()
+  rmSync(join(wt, 'cache')); put('cache/keep.txt', 'k\n'); put('.gitignore', 'dist/\n*.log\n'); put('cache/secret.log', 'mine\n')
+  const B = await cp()
+  expect(ignoredConflicts(g, C.tree, B.tree)).toEqual(['cache/secret.log'])
+  rmSync(join(wt, 'cache/secret.log'))
+  expect(ignoredConflicts(g, C.tree, (await cp()).tree)).toEqual([])
+})
+
 it('refuses to clobber an ignored file the target tree would recreate', async () => {
   put('local.json', '{"v":1}\n')
   const C = await cp()

@@ -49,6 +49,7 @@ import type { NoticesDomain } from './notices'
 import type { ArtifactsDomain } from './artifacts'
 import type { ScriptsDomain } from './scripts'
 import type { RewindDomain } from './rewind'
+import { assertNotRewindBlocked } from '../rewind-store'
 
 const RECOVERY_MESSAGE='原执行会话暂时无法恢复。请打开桌面工作台，查看恢复选项并确认是否带此前记录重新开始。'
 
@@ -96,7 +97,7 @@ export interface ExecuteDomains {
   /** 工作区脚本(2026-10-20):微信建的独立工作区也跑 setup;老测试不传。 */
   scripts?: Pick<ScriptsDomain,'afterCheckout'>
   /** 回退之后下一轮开头的告知(2026-10-21);老测试不传。 */
-  rewind?: Pick<RewindDomain,'notice'|'markNoticed'>
+  rewind?: Pick<RewindDomain,'notice'|'markNoticed'|'ready'>
 }
 
 export function makeExecuteDomain(ctx:ServiceCtx, domains:ExecuteDomains) {
@@ -119,6 +120,9 @@ export function makeExecuteDomain(ctx:ServiceCtx, domains:ExecuteDomains) {
     let spawnRejected=false
     let accepted=false
     try {
+      // 开机对账没做完 / 回退把这件事停住了(评审 #433-4)⇒ 不在半切换的工作区上跑
+      await domains.rewind?.ready()
+      assertNotRewindBlocked(store.rewinds,task.id)
       requireInput(task.providerId,running.attachments,running.execution,running.continuation.mode==='resume')
       running.releaseBusy=ctx.deps.holdBusy?.(sessionKey)
       if (canonicalProject(task.path) !== running.path || directoryIdentity(running.path) !== running.directoryIdentity) throw new Error('invalid_path')
@@ -432,6 +436,7 @@ export function makeExecuteDomain(ctx:ServiceCtx, domains:ExecuteDomains) {
 
   function start(task:StoredTask,text:string,acceptedDirectoryIdentity:string,acceptedContinuation:AcceptedContinuation={mode:'new'},nativeResume?:AcceptedNativeResume,handoffArtifacts?:ArtifactSelection[],handoffId?:string,queuedInputId?:string,attachments:Attachment[]=[],draftId?:string,executionChoice?:AgentExecutionChoice,acceptance?:{persist:(runId:string)=>void;activate:(fn:()=>void)=>void;scope?:{ownerKey:string}},attachmentPolicy?:'owner'):WorkbenchTaskView {
     if (runsByTask.has(task.id)) throw new Error('workbench_busy')
+    assertNotRewindBlocked(store.rewinds,task.id)
     if(ctx.deps.executionConflict?.(task.path,task.providerId,task.sessionId))throw new Error('native_session_busy')
     if([...runsByTask.values()].some(run=>task.sessionId&&run.task.providerId===task.providerId&&run.task.sessionId===task.sessionId))throw new Error('native_session_busy')
     const runId=randomUUID()

@@ -98,7 +98,11 @@ export function ignoredConflicts(g: RewindGit, target: string, backup: string): 
       if (st && !st.isDirectory() && !tbFiles.has(prefix)) out.add(prefix)
     }
     const st = stat(path)
-    if (st && (!st.isDirectory() || !tbDirs.has(path))) out.add(path)
+    if (!st) continue
+    if (!st.isDirectory() || !tbDirs.has(path)) { out.add(path); continue }
+    // 目录要换成文件:git 会连里面被 ignore 的东西一起删(评审 #433-5)。同一套忽略规则(含全局 excludesFile)查一遍
+    const ignored = z(git(g, ['ls-files', '-z', '-o', '-i', '--exclude-standard', '--directory', '--', path]))
+    for (const p of ignored) out.add(p.replace(/\/$/, ''))
   }
   return [...out].sort()
 }
@@ -151,21 +155,31 @@ export interface ApplyInput {
   backupRef: string
   /** 预检那份临时 index:从 TB 起、已和磁盘对齐(workTree 给的)。 */
   index: string
-  /** 切过去之后的额外核对(快照列出的文件对 afterSha256);回不对的那个路径,null = 都对。 */
-  verify?: () => string | null
+  /** 切过去之后的额外核对(快照列出的文件对 afterSha256):对不上的那个路径 + 是不是只差换行(eol);null = 都对。 */
+  verify?: () => { path: string; eol: boolean } | null
   /** 测试注入:某一步之后抛,看回滚。 */
   inject?: (step: ApplyStep) => void
 }
-export type ApplyResult = { ok: true } | { ok: false; error: string; rolledBack: boolean }
+/** 回滚的每一步各自的结果(评审 #433-2:一步失败不跳过后面的)。 */
+export interface RollbackStep { step: 'branch' | 'index' | 'worktree'; ok: boolean; detail?: string }
+export interface RollbackReport {
+  ok: boolean
+  steps: RollbackStep[]
+  /** 切换窗口里又被改过、挡住回滚的路径(没覆盖,原样留着)。 */
+  conflicts: string[]
+  /** 窗口里改过、但不在两树差异里的路径(没碰,留着)。 */
+  kept: string[]
+}
+export type ApplyResult = { ok: true } | ({ ok: false; error: string; rolledBack: boolean; path?: string } & Omit<RollbackReport, 'ok'>)
 
 /**
  * 执行段第 2–6 步(调用方先写好意图行、重查过前置):备份 ref → 两树切换 → CAS 挪分支 → 真 index 读 P → 校验。
- * 第 2 步之后任何失败 ⇒ 反向切回(分支 CAS 回旧 HEAD、真 index 原字节放回、工作区强制回到 TB)。
+ * 第 2 步之后任何失败 ⇒ 反向切回(见 rollback:分支 CAS 回旧 HEAD、真 index 原字节放回、工作区两树切回 TB)。
  */
 export function applyRewind(input: ApplyInput): ApplyResult {
   const { g, target, backup } = input
   const realIndex = resolve(g.root, str(g, ['rev-parse', '--git-path', 'index']))
-  let realCopy: string | null = null, touched = false, moved = false, step = 'backup'
+  let realCopy: string | null = null, touched = false, moved = false, step = 'backup', path: string | undefined
   try {
     if (revParse(g, input.backupRef)) throw new Error('rewind_backup_exists')
     git(g, ['update-ref', input.backupRef, backup.commit])
@@ -184,37 +198,76 @@ export function applyRewind(input: ApplyInput): ApplyResult {
     dropIndex(now.index)
     if (now.tree !== target.tree) throw new Error('rewind_verify_tree')
     const bad = input.verify?.()
-    if (bad) throw new Error('rewind_verify_file')
+    if (bad) { path = bad.path; throw new Error(bad.eol ? 'rewind_verify_eol' : 'rewind_verify_file') }
     input.inject?.('verify')
     if (realCopy) dropIndex(realCopy)
     return { ok: true }
   } catch (error) {
     const code = error instanceof Error && /^rewind_/.test(error.message) ? error.message : `rewind_${step}_failed`
-    const rolledBack = rollback({ g, branchRef: input.branchRef, oldHead: input.oldHead, parent: target.parent, from: target.tree, to: backup.tree, moved, touched, realIndex, realCopy })
-    if (realCopy) dropIndex(realCopy)
-    return { ok: false, error: code, rolledBack }
+    const report = rollback({ g, branchRef: input.branchRef, oldHead: input.oldHead, parent: target.parent, from: target.tree, to: backup.tree, moved, touched, realIndex, realCopy })
+    if (realCopy && report.ok) dropIndex(realCopy)
+    const { ok: rolledBack, ...rest } = report
+    return { ok: false, error: code, rolledBack, ...(path ? { path } : {}), ...rest }
   }
 }
 
-/** 反向切回:分支 CAS 回旧 HEAD,真 index 原字节放回,工作区从 from 强制回到 to(只动两树不同的路径)并核对。 */
-export function rollback(input: { g: RewindGit; branchRef: string; oldHead: string; parent: string; from: string; to: string; moved: boolean; touched: boolean; realIndex?: string; realCopy?: string | null }): boolean {
+const detailOf = (error: unknown) => String((error as { stderr?: unknown }).stderr ?? (error instanceof Error ? error.message : error)).trim().split('\n')[0]!.slice(0, 200)
+
+/**
+ * 反向切回,每步各自 try、各自记结果(一步失败不跳过后面的):
+ *   branch:分支 CAS 回旧 HEAD;index:真 index 原字节放回(没拷成就读旧 HEAD);
+ *   worktree:先看磁盘是不是本来就是 to(切换本身就失败的情况)⇒ 什么都不写;否则临时 index 读 from、**refresh**、
+ *   两树 `read-tree -m -u from to` —— 窗口里被别人改过的路径它拒绝,不覆盖(评审 #433-1:不用 --reset)。
+ * ok = 三步都成、且两树有差的路径都回到了 to。
+ */
+export function rollback(input: { g: RewindGit; branchRef: string; oldHead: string; parent: string; from: string; to: string; moved: boolean; touched: boolean; realIndex?: string; realCopy?: string | null }): RollbackReport {
   const { g } = input
-  try {
-    if (input.moved) git(g, ['update-ref', input.branchRef, input.oldHead, input.parent])
-    if (input.realIndex && input.realCopy) copyFileSync(input.realCopy, input.realIndex)
-    else if (input.moved) git(g, ['read-tree', input.oldHead])
-    if (input.touched) {
-      const index = tempIndex(g)
-      try {
-        git(g, ['read-tree', input.from], { index })
-        git(g, ['read-tree', '--reset', '-u', input.to], { index })
-      } finally { dropIndex(index) }
-      const now = workTree(g, input.to)
-      dropIndex(now.index)
-      if (now.tree !== input.to) return false
-    }
-    return true
-  } catch { return false }
+  const steps: RollbackStep[] = [], conflicts: string[] = [], kept: string[] = []
+  if (input.moved) {
+    try { git(g, ['update-ref', input.branchRef, input.oldHead, input.parent]); steps.push({ step: 'branch', ok: true }) }
+    catch (error) { steps.push({ step: 'branch', ok: false, detail: detailOf(error) }) }
+  }
+  if (input.moved || input.realCopy) {
+    try {
+      if (input.realIndex && input.realCopy) copyFileSync(input.realCopy, input.realIndex)
+      else git(g, ['read-tree', input.oldHead])
+      steps.push({ step: 'index', ok: true })
+    } catch (error) { steps.push({ step: 'index', ok: false, detail: detailOf(error) }) }
+  }
+  if (input.touched) {
+    try {
+      const diff = new Set(nameStatus(g, input.from, input.to).map(e => e.path))
+      const before = workTree(g, input.to); dropIndex(before.index)
+      if (before.tree !== input.to) {
+        const index = tempIndex(g)
+        try {
+          git(g, ['read-tree', input.from], { index })
+          refresh(g, index)
+          try { git(g, ['read-tree', '-m', '-u', input.from, input.to], { index }) }
+          catch (error) {
+            // 被改过的路径(磁盘 ≠ from)里落在两树差异上的,就是挡路的
+            for (const e of nameStatus(g, input.from, before.tree)) if (diff.has(e.path)) conflicts.push(e.path)
+            if (!conflicts.length) throw error
+          }
+        } finally { dropIndex(index) }
+      }
+      const after = workTree(g, input.to); dropIndex(after.index)
+      const off = after.tree === input.to ? [] : nameStatus(g, input.to, after.tree).map(e => e.path)
+      for (const p of off) if (!diff.has(p)) kept.push(p)
+      const left = off.filter(p => diff.has(p))
+      steps.push(left.length ? { step: 'worktree', ok: false, detail: `没回到回退前:${left.slice(0, 10).join('、')}` } : { step: 'worktree', ok: true })
+    } catch (error) { steps.push({ step: 'worktree', ok: false, detail: detailOf(error) }) }
+  }
+  return { ok: steps.every(s => s.ok), steps, conflicts: [...new Set(conflicts)].sort(), kept: kept.sort() }
+}
+
+/** 给时间线的一句:回滚每一步怎么样了。 */
+export function rollbackText(r: Pick<RollbackReport, 'steps' | 'conflicts' | 'kept'>): string {
+  const name = { branch: '分支', index: '暂存区', worktree: '工作区文件' } as const
+  const parts = r.steps.map(s => `${name[s.step]}${s.ok ? '已恢复' : `没恢复${s.detail ? `(${s.detail})` : ''}`}`)
+  if (r.conflicts.length) parts.push(`这些文件在回退途中又被改过,没有覆盖:${r.conflicts.slice(0, 10).join('、')}`)
+  if (r.kept.length) parts.push(`途中改过的 ${r.kept.slice(0, 10).join('、')} 原样留着`)
+  return parts.join(';')
 }
 
 /**

@@ -148,7 +148,7 @@ export function makeWorkbenchService(opts: Options) {
     /** 这个任务的所有变更快照,新→旧,每个文件附上当前标记。坏的那一轮单独 unavailable,不牵连别轮。 */
     reviewList:review.reviewList,
     markReviewFile:review.markReviewFile,
-    returnReviewFiles:review.returnReviewFiles,revertReviewFile:review.revertReviewFile,worktreeAction:worktreeDomain.worktreeAction,rewindPreview:rewindDomain.rewindPreview,rewind:rewindDomain.rewind,undoRewind:rewindDomain.undoRewind,pruneRewindRefs:rewindDomain.pruneRefs,scriptAction:scriptsDomain.scriptAction,approveScripts:scriptsDomain.approveScripts,   // 工作区脚本(2026-10-20):运行 / 停下 / 批准
+    returnReviewFiles:review.returnReviewFiles,revertReviewFile:review.revertReviewFile,worktreeAction:worktreeDomain.worktreeAction,rewindPreview:rewindDomain.rewindPreview,rewind:rewindDomain.rewind,undoRewind:rewindDomain.undoRewind,rewindResolve:rewindDomain.rewindResolve,pruneRewindRefs:rewindDomain.pruneRefs,scriptAction:scriptsDomain.scriptAction,approveScripts:scriptsDomain.approveScripts,   // 工作区脚本(2026-10-20):运行 / 停下 / 批准
     resolvePermission:inputsDomain.resolvePermission,
     async handleWechat(chatId:string,text:string,identity?:WechatMessageIdentity):Promise<WechatWorkbenchReply|null>{return wechatControl(chatId,text,identity)},
     shutdown:()=>Promise.all([rewindDomain.shutdown(),scriptsDomain.shutdown(),untilDomain.shutdown(),lifecycleDomain.shutdown()]).then(()=>{}),   // 工作区脚本和会话一起停(TERM → 宽限 → KILL)

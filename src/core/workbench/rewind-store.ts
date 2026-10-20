@@ -5,15 +5,18 @@ import type { Db } from '../../lib/db'
  * 回退记录(v81,回退设计稿):一次回退 / 撤销回退一行。先插 `applying`(意图),做完改 `done`,回滚改 `failed`。
  * 撤销回退也是一行:target_artifact_id = `undo:<被撤的那一行>`,目标 = 那一行的备份 B,discarded 为空。
  * 制品与审阅标记从不动 —— 「已撤掉」只靠这里的 discarded_json 标。
+ * needs_owner(评审 #433-4):回滚没回干净 / 开机对账说不清 ⇒ 这件事停住(派发、补充、工作区动作一律 rewind_needs_owner),
+ * 直到主人选 resolution(keep / restore_backup);选完行变 failed,但告知照样要送到执行者(pendingNotice 认 resolution)。
  */
 export interface RewindRow {
   id: string; taskId: string; targetArtifactId: string; targetPoint: 'start' | 'end'
   targetCommit: string; priorHead: string; backupRef: string; backupCommit: string
-  discarded: string[]; state: 'applying' | 'done' | 'failed'
+  discarded: string[]; state: 'applying' | 'done' | 'failed' | 'needs_owner'
+  resolution: 'keep' | 'restore_backup' | null
   noticeSentAt: number | null; createdAt: number; undoneAt: number | null
 }
 type Row = Omit<RewindRow, 'discarded'> & { discardedJson: string }
-const SELECT = 'SELECT id,task_id AS taskId,target_artifact_id AS targetArtifactId,target_point AS targetPoint,target_commit AS targetCommit,prior_head AS priorHead,backup_ref AS backupRef,backup_commit AS backupCommit,discarded_json AS discardedJson,state,notice_sent_at AS noticeSentAt,created_at AS createdAt,undone_at AS undoneAt FROM workbench_rewinds'
+const SELECT = 'SELECT id,task_id AS taskId,target_artifact_id AS targetArtifactId,target_point AS targetPoint,target_commit AS targetCommit,prior_head AS priorHead,backup_ref AS backupRef,backup_commit AS backupCommit,discarded_json AS discardedJson,state,resolution,notice_sent_at AS noticeSentAt,created_at AS createdAt,undone_at AS undoneAt FROM workbench_rewinds'
 const UNDO = 'undo:'
 const parse = ({ discardedJson, ...row }: Row): RewindRow => {
   let discarded: string[] = []
@@ -23,6 +26,14 @@ const parse = ({ discardedJson, ...row }: Row): RewindRow => {
 export const isUndoRow = (row: Pick<RewindRow, 'targetArtifactId'>) => row.targetArtifactId.startsWith(UNDO)
 export const undoTargetId = (rowId: string) => `${UNDO}${rowId}`
 
+/** 这件事被回退停住了吗:applying(正在做 / 开机还没对完账)⇒ workbench_busy;needs_owner ⇒ rewind_needs_owner。 */
+export function assertNotRewindBlocked(rewinds: { blocking(taskId: string): 'applying' | 'needs_owner' | null }, taskId: string): void {
+  let state: 'applying' | 'needs_owner' | null = null
+  try { state = rewinds.blocking(taskId) } catch { return /* 表不在(老测试只建了几张表) */ }
+  if (state === 'needs_owner') throw new Error('rewind_needs_owner')
+  if (state === 'applying') throw new Error('workbench_busy')
+}
+
 export function makeRewindStore(db: Db, bump: (taskId: string) => number) {
   const get = (id: string) => { const row = db.query<Row, [string]>(`${SELECT} WHERE id=?`).get(id); return row ? parse(row) : null }
   const rows = (taskId: string) => db.query<Row, [string]>(`${SELECT} WHERE task_id=? ORDER BY created_at,rowid`).all(taskId).map(parse)
@@ -31,7 +42,7 @@ export function makeRewindStore(db: Db, bump: (taskId: string) => number) {
     get,
     list: rows,
     /** 写意图(state='applying')。 */
-    record(input: Omit<RewindRow, 'id' | 'state' | 'noticeSentAt' | 'createdAt' | 'undoneAt'> & { createdAt?: number }): RewindRow {
+    record(input: Omit<RewindRow, 'id' | 'state' | 'resolution' | 'noticeSentAt' | 'createdAt' | 'undoneAt'> & { createdAt?: number }): RewindRow {
       const id = randomUUID()
       tx(() => {
         db.query("INSERT INTO workbench_rewinds(id,task_id,target_artifact_id,target_point,target_commit,prior_head,backup_ref,backup_commit,discarded_json,state,created_at) VALUES(?,?,?,?,?,?,?,?,?,'applying',?)")
@@ -40,12 +51,26 @@ export function makeRewindStore(db: Db, bump: (taskId: string) => number) {
       })
       return get(id)!
     },
-    setState(id: string, state: 'done' | 'failed') {
+    /** applying ⇒ done / failed / needs_owner。 */
+    setState(id: string, state: 'done' | 'failed' | 'needs_owner') {
       const row = get(id); if (!row) return
       tx(() => { db.query("UPDATE workbench_rewinds SET state=? WHERE id=? AND state='applying'").run(state, id); bump(row.taskId) })
     },
+    /** 主人拍板了停住的那一行:needs_owner ⇒ failed + resolution(告知随后送达执行者)。 */
+    resolve(id: string, resolution: 'keep' | 'restore_backup') {
+      const row = get(id); if (!row) return
+      tx(() => { db.query("UPDATE workbench_rewinds SET state='failed',resolution=?,notice_sent_at=NULL WHERE id=? AND state='needs_owner'").run(resolution, id); bump(row.taskId) })
+    },
     /** 所有还卡在 applying 的(开机对账)。 */
     applying: () => db.query<Row, []>(`${SELECT} WHERE state='applying' ORDER BY created_at,rowid`).all().map(parse),
+    /** 停住这件事的那一行(needs_owner 优先);没有 ⇒ null。 */
+    blocker(taskId: string): RewindRow | null {
+      const row = db.query<Row, [string]>(`${SELECT} WHERE task_id=? AND state IN ('applying','needs_owner') ORDER BY CASE state WHEN 'needs_owner' THEN 0 ELSE 1 END,created_at DESC LIMIT 1`).get(taskId)
+      return row ? parse(row) : null
+    },
+    blocking(taskId: string): 'applying' | 'needs_owner' | null {
+      return db.query<{ state: 'applying' | 'needs_owner' }, [string]>("SELECT state FROM workbench_rewinds WHERE task_id=? AND state IN ('applying','needs_owner') ORDER BY CASE state WHEN 'needs_owner' THEN 0 ELSE 1 END LIMIT 1").get(taskId)?.state ?? null
+    },
     /** 最近一次做成的回退 / 撤销回退。 */
     latest(taskId: string): RewindRow | null { return rows(taskId).filter(r => r.state === 'done').at(-1) ?? null },
     /** 已撤掉的轮次(制品 id):做成、没被撤销的回退里 discarded 的并集。 */
@@ -54,8 +79,8 @@ export function makeRewindStore(db: Db, bump: (taskId: string) => number) {
       for (const r of rows(taskId)) if (r.state === 'done' && r.undoneAt === null && !isUndoRow(r)) for (const id of r.discarded) out.add(id)
       return out
     },
-    /** 还没告诉执行者的(做成、notice_sent_at 为空),旧 → 新。 */
-    pendingNotice: (taskId: string) => rows(taskId).filter(r => r.state === 'done' && r.noticeSentAt === null),
+    /** 还没告诉执行者的(做成的,或主人拍板过的停住行;notice_sent_at 为空),旧 → 新。 */
+    pendingNotice: (taskId: string) => rows(taskId).filter(r => (r.state === 'done' || r.resolution !== null) && r.noticeSentAt === null),
     markNoticed(taskId: string, ids: readonly string[], at = Date.now()) {
       if (!ids.length) return
       tx(() => { for (const id of ids) db.query('UPDATE workbench_rewinds SET notice_sent_at=COALESCE(notice_sent_at,?) WHERE id=? AND task_id=?').run(at, id, taskId); bump(taskId) })

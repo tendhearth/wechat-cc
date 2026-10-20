@@ -8,6 +8,7 @@ import { pathsConflict } from '../scheduler'
 import { commitWorktree, mergeHint, mergeWorktree, removeWorktree, reopenWorktree, worktreeDirty } from '../worktree-workspaces'
 import type { ServiceCtx } from './ctx'
 import type { ScriptsDomain } from './scripts'
+import { assertNotRewindBlocked } from '../rewind-store'
 
 type Action = 'commit' | 'remove' | 'merge' | 'reopen'
 export type WorktreeActionResult = { branch: string; committed?: boolean; sha?: string; mergeHint?: string; removed?: boolean; removing?: boolean; merged?: boolean; into?: string; reopened?: boolean }
@@ -39,6 +40,8 @@ export function makeWorktreeDomain(ctx: ServiceCtx, domains: { scripts?: Pick<Sc
   const domain = {
     worktreeAction(id: string, action: Action): WorktreeActionResult {
       if (action !== 'commit' && action !== 'remove' && action !== 'merge' && action !== 'reopen') throw new Error('invalid_request')
+      // 回退停住 / 开机还没对完账:工作区可能是半切换的,提交 / 合回 / 删都不做(评审 #433-4)
+      assertNotRewindBlocked(store.rewinds, id)
       // 重新打开(10-08):删掉的工作区从保留的分支重新检出到原位置,任务路径不变,可以接着做
       if (action === 'reopen') {
         const task = store.get(id), wt = store.worktrees.get(id)

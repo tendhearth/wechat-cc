@@ -216,9 +216,64 @@ describe('执行段失败与开机对账', () => {
     db.query("UPDATE workbench_rewinds SET state='applying' WHERE id=?").run(done.rewindId)
     writeFileSync(join(wt.root,'pkg','a.txt'),'someone\n')
     await service.shutdown();service=make()
-    await expect.poll(()=>store.rewinds.get(done.rewindId)!.state,{timeout:20_000}).toBe('failed')
-    expect(service.detail(id).task).toMatchObject({status:'interrupted',error:'rewind_interrupted'})
+    await expect.poll(()=>store.rewinds.get(done.rewindId)!.state,{timeout:20_000}).toBe('needs_owner')
+    expect(service.detail(id).task).toMatchObject({status:'interrupted',error:'rewind_needs_owner'})
     expect(service.detail(id).events.at(-1)!.text).toContain(done.backupRef)
+    // 持久的闸:派发 / 工作区动作 / 回退一律拒绝,直到主人拍板
+    expect(()=>service.continueTask(id,'接着做',{inputRequestId:randomUUID()})).toThrow('rewind_needs_owner')
+    expect(()=>service.worktreeAction(id,'commit')).toThrow('rewind_needs_owner')
+    await expect(service.rewindPreview(id,{artifactId:r1!.artifactId,to:'start'})).rejects.toThrow('rewind_needs_owner')
+    await service.rewindResolve(id,'keep')
+    expect(service.detail(id).task.error).toBeNull()
+    await next(id,()=>{})
+    expect(requests.at(-1)).toContain('主人确认保留现在的样子')
+  })
+
+  it('boot: a reconcile that itself errors (branch ref locked during files_only) parks the task instead of failing quietly', async () => {
+    const {id,wt}=await twoRounds()
+    const [r1]=rounds(id),p=await service.rewindPreview(id,{artifactId:r1!.artifactId,to:'end'})
+    const done=await service.rewind(id,{artifactId:r1!.artifactId,to:'end',token:p.token})
+    db.query("UPDATE workbench_rewinds SET state='applying' WHERE id=?").run(done.rewindId)
+    g(wt.root,'update-ref',`refs/heads/${wt.branch}`,store.rewinds.get(done.rewindId)!.priorHead)
+    const lock=join(repo,'.git','refs','heads',`${wt.branch}.lock`);writeFileSync(lock,'')
+    await service.shutdown();service=make()
+    await expect.poll(()=>store.rewinds.get(done.rewindId)!.state,{timeout:20_000}).toBe('needs_owner')
+    expect(service.detail(id).events.at(-1)!.text).toContain('停住')
+    rmSync(lock)
+  })
+})
+
+describe('回滚没回干净 ⇒ 停住,主人拍板', () => {
+  it('a file edited inside the switch window is not overwritten; the task parks until restore_backup', async () => {
+    let wtRoot='',once=true
+    await service.shutdown();service=make({inject:s=>{if(s==='branch'&&once){once=false;writeFileSync(join(wtRoot,'pkg','a.txt'),'edited mid-rewind\n');throw new Error('boom')}}})
+    const {id,wt,oldHead}=await twoRounds();wtRoot=wt.root
+    const [r1]=rounds(id),p=await service.rewindPreview(id,{artifactId:r1!.artifactId,to:'end'})
+    await expect(service.rewind(id,{artifactId:r1!.artifactId,to:'end',token:p.token})).rejects.toMatchObject({message:'rewind_failed',rolledBack:false,conflicts:['pkg/a.txt']})
+    expect(read(id,'a.txt')).toBe('edited mid-rewind\n')
+    const [row]=store.rewinds.list(id)
+    expect(row!.state).toBe('needs_owner')
+    const text=service.detail(id).events.at(-1)!.text
+    expect(text).toContain('分支已恢复');expect(text).toContain('pkg/a.txt');expect(text).toContain(row!.backupRef)
+    expect(()=>service.continueTask(id,'接着做',{inputRequestId:randomUUID()})).toThrow('rewind_needs_owner')
+    await service.rewindResolve(id,'restore_backup')
+    expect(read(id,'a.txt')).toBe('r2\n');expect(read(id,'r2.txt')).toBe('two\n')
+    expect(g(wt.root,'rev-parse','HEAD')).toBe(oldHead)
+    expect(store.rewinds.get(row!.id)).toMatchObject({state:'failed',resolution:'restore_backup'})
+    await expect(service.rewindResolve(id,'keep')).rejects.toThrow('rewind_not_blocked')
+    await next(id,()=>{})
+    expect(requests.at(-1)).toContain('主人把它恢复成了回退之前的样子')
+  })
+
+  it.skipIf(win)('an eol attribute that changes checked-out bytes is reported as a line-ending issue and rolled back', async () => {
+    writeFileSync(join(repo,'.gitattributes'),'*.txt text eol=crlf\n');g(repo,'add','-A');g(repo,'commit','-q','-m','attrs')
+    const {id,oldHead}=await twoRounds()
+    const before=read(id,'a.txt')
+    const [r1]=rounds(id),p=await service.rewindPreview(id,{artifactId:r1!.artifactId,to:'end'})
+    await expect(service.rewind(id,{artifactId:r1!.artifactId,to:'end',token:p.token})).rejects.toMatchObject({message:'rewind_failed',rolledBack:true,reason:'eol_mismatch',path:'a.txt'})
+    // 回滚只保证 git 等价:eol 属性下检出的换行跟着属性走(已知限制,设计稿)
+    expect(read(id,'a.txt').replace(/\r\n/g,'\n')).toBe(before.replace(/\r\n/g,'\n'));expect(g(store.worktrees.get(id)!.root,'rev-parse','HEAD')).toBe(oldHead)
+    expect(service.detail(id).events.at(-1)!.text).toContain('换行')
   })
 })
 

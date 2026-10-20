@@ -236,6 +236,10 @@ export function makeWorkbenchStore(db: Db) {
       } else db.query('UPDATE workbench_tasks SET archived_at=NULL WHERE id=?').run(id)
       return get(id)
     },
+    /** 只清这一种错误码(回退停住被主人拍板之后,2026-10-21)。 */
+    clearError(id:string,code:string) {
+      db.transaction(()=>{if(db.query('UPDATE workbench_tasks SET error=NULL WHERE id=? AND error=?').run(id,code).changes)bump(id)})()
+    },
     clearWriterError(id:string) {
       db.query("UPDATE workbench_tasks SET error=NULL,writer_groups=NULL WHERE id=? AND error='writer_not_closed'").run(id)
     },

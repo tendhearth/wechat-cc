@@ -8,6 +8,7 @@
  */
 import { canonicalProject } from '../artifacts'
 import { takeBaselineFor } from './artifacts'
+import { assertNotRewindBlocked } from '../rewind-store'
 import { normalizeInputRequestId, sameAttachments, type LiveInput } from '../live-inputs'
 import type { PermissionDecision } from '../permissions'
 import { checkedText } from './checked-text'
@@ -116,6 +117,7 @@ export function makeInputsDomain(ctx:ServiceCtx) {
     ctx.hub.bumped(id)
   }
   async function submitInput(id:string,input:{runId:string;requestId:string;text:string}&InputMaterials,attachmentPolicy?:'owner'){
+    assertNotRewindBlocked(store.rewinds,id)   // 回退停住的事不收补充(评审 #433-4)
     ctx.ensureAccepting()
     if(Object.hasOwn(input,'execution'))throw Error('invalid_execution')
     const attachments=act().selectAttachments(input,id,attachmentPolicy),text=checkedText(input.text,attachments)
