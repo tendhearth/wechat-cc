@@ -28,7 +28,8 @@ export function makeNightlySources(o: { db: Db; stateDir: string; ownerChatId: (
       // listRange 取最新 400 条(升序),再按 from 截 —— 素材超额时保留最新的聊天,而不是最旧的
       // (listSince 是 ASC LIMIT,会丢掉最新的;sinceIso 只前进,丢了就永远看不到)。
       const rows = (await makeMessagesStore(o.db).listRange(c, { limit: 400 })).filter(m => m.ts > from)
-      return rows.filter(m => m.kind === 'text' && m.text.trim()).map(m => `${m.direction === 'in' ? '主人' : 'CC'}:${m.text.slice(0, 300)}`).slice(-200)
+      // 带上消息 id 与时间:整理时编成记号 [cN],记忆条目据此记出处(2026-10-20)。
+      return rows.filter(m => m.kind === 'text' && m.text.trim()).map(m => ({ text: `${m.direction === 'in' ? '主人' : 'CC'}:${m.text.slice(0, 300)}`, id: m.id, ts: m.ts })).slice(-200)
     },
     projectMemory() {
       if (!loadCompanionConfig(o.stateDir).import_local_history) return ''

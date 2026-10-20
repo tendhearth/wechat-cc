@@ -16,8 +16,11 @@ describe('makeNightlySources.messagesSince', () => {
     }
     const lines = await makeNightlySources({ db, stateDir: '/nonexistent', ownerChatId: () => 'owner' }).messagesSince(from)
     expect(lines).toHaveLength(200)
-    expect(lines[0]).toContain('msg#250#')
-    expect(lines[199]).toContain('msg#449#')
-    expect(lines.some(l => l.includes('before-from'))).toBe(false)
+    const text = (l: string | { text: string }) => (typeof l === 'string' ? l : l.text)
+    expect(text(lines[0]!)).toContain('msg#250#')
+    expect(text(lines[199]!)).toContain('msg#449#')
+    expect(lines.some(l => text(l).includes('before-from'))).toBe(false)
+    // 出处(10-20):每行带消息 id 与时间
+    expect(lines[0]).toMatchObject({ id: 'm250', ts: new Date(base + 250 * 60_000).toISOString() })
   })
 })

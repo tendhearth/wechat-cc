@@ -5,8 +5,9 @@
 import { SECTIONS, MEMORY_CAP_CHARS, docChars, parseDue, type MemoryDoc, type MemoryEntry, type Section } from './curated-doc'
 
 export interface NightlyOps {
-  add: Array<{ section: Section; text: string }>
-  update: Array<{ id: string; text: string; reversal: boolean }>
+  /** src:这条依据的素材记号(`c3` = 聊天第 3 行),最多 3 个;只用来记出处,不参与校验(2026-10-20)。 */
+  add: Array<{ section: Section; text: string; src?: string[] }>
+  update: Array<{ id: string; text: string; reversal: boolean; src?: string[] }>
   confirm: string[]
   remove: Array<{ id: string; reason: string }>
 }
@@ -52,6 +53,11 @@ function extractJsonObjectText(raw: string): string | null {
  * 那一条明明在 memory.md 里 —— 整晚因此判失败、连败四次)。这里把开头的「m:」去掉;别的照旧严格校验。
  */
 const bareId = (id: string) => id.trim().replace(/^m:/i, '')
+/** 出处记号:字符串数组才收,取前 3 个;别的形状当没给(不让出处把整晚判失败)。 */
+const srcOf = (v: unknown): { src?: string[] } => {
+  const list = Array.isArray(v) ? v.filter(isStr).map(t => t.trim()).filter(Boolean).slice(0, 3) : []
+  return list.length ? { src: list } : {}
+}
 
 export function parseOps(raw: string): NightlyOps | null {
   const text = extractJsonObjectText(raw)
@@ -65,13 +71,13 @@ export function parseOps(raw: string): NightlyOps | null {
   for (const a of o.add as unknown[]) {
     const x = a as Record<string, unknown>
     if (!x || !isSection(x.section) || !isStr(x.text)) return null
-    add.push({ section: x.section, text: x.text.trim() })
+    add.push({ section: x.section, text: x.text.trim(), ...srcOf(x.src) })
   }
   const update: NightlyOps['update'] = []
   for (const u of o.update as unknown[]) {
     const x = u as Record<string, unknown>
     if (!x || !isStr(x.id) || !isStr(x.text)) return null
-    update.push({ id: bareId(x.id), text: x.text.trim(), reversal: x.reversal === true })
+    update.push({ id: bareId(x.id), text: x.text.trim(), reversal: x.reversal === true, ...srcOf(x.src) })
   }
   if (!(o.confirm as unknown[]).every(isStr)) return null
   const confirm = (o.confirm as string[]).map(bareId)

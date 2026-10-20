@@ -2,6 +2,7 @@
  * 每晚记忆整理的运行时:15 分钟一次 tick(该跑就跑一次整理、再看看待发通知),
  * 「整理记忆」的立即运行,以及给微信(文本)与手机(结构)的只读视图。
  */
+import { readSources, writeSources } from './sources'
 import { appendFileSync, existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { MEMORY_FILENAME, SECTIONS, parseDue, parseMemoryDoc, serializeMemoryDoc, type Section } from './curated-doc'
@@ -18,6 +19,8 @@ export interface NoticeDeps {
   send(chatId: string, text: string): Promise<{ error?: string }>
 }
 export interface CuratedItem {
+  /** 这条是从哪几句聊天里来的(时间 + 摘一段;10-20 起每晚整理才记,老条目为空)。 */
+  sources: Array<{ ts: string; excerpt: string }>
   id: string | null
   text: string
   display: string
@@ -129,12 +132,14 @@ export function makeMemoryNightlyRuntime(deps: NightlyRunDeps & NoticeDeps): Mem
         if (i >= 0) { hit = { section: name, text: got.doc.sections[name][i]!.text }; got.doc.sections[name].splice(i, 1); break }
       }
       if (!hit) throw new Error('memory_entry_not_found')
+      const src = readSources(got.root)
       const nowMs = deps.now(), nowIso = new Date(nowMs).toISOString(), day = localParts(nowMs, deps.config().timezone).day
       const memPath = join(got.root, MEMORY_FILENAME), tmp = `${memPath}.tmp-${process.pid}`
       writeFileSync(tmp, serializeMemoryDoc(got.doc, nowIso))
       renameSync(tmp, memPath)
       // 改名成功后才记:失败了 memory.md 没动,也不留一行假的纠正
       appendFileSync(join(got.root, CORRECTIONS_FILENAME), `- ${day} ${VERDICT_LINE[verdict]}:[${hit.section}] ${hit.text}\n`)
+      if (src[id]) { delete src[id]; try { writeSources(got.root, src) } catch { /* 出处是附带的 */ } }
       if (verdict === 'outdated') {
         const owner = deps.ownerChatId()
         if (owner) {
@@ -171,6 +176,7 @@ export function makeMemoryNightlyRuntime(deps: NightlyRunDeps & NoticeDeps): Mem
       const fresh = !!log && deps.now() - Date.parse(log.at) < CHANGED_WINDOW_MS
       const changes: ViewChange[] = fresh ? viewChanges(log!.ops) : []
       const changed = new Set(fresh ? log!.ops.filter(o => o.kind === 'add' || o.kind === 'update').map(o => o.id) : [])
+      const src = readSources(got.root)
       return {
         updated_at: state.lastRunIso,
         when_label: state.lastRunIso ? spokenTime(Date.parse(state.lastRunIso), tz, deps.now()) : null,
@@ -183,6 +189,7 @@ export function makeMemoryNightlyRuntime(deps: NightlyRunDeps & NoticeDeps): Mem
             const due = parseDue(e.text.replace(/[\uff08]/, '(').replace(/[\uff09]/, ')'))
             return {
               id: e.id, text: e.text, display: stripDue(e.text), due,
+              sources: (e.id ? src[e.id] ?? [] : []).map(r => ({ ts: r.ts, excerpt: r.excerpt })),
               due_label: due ? dueLabel(due, today) : null,
               person: name === '身边的人' ? splitPerson(e.text) : null,
               changed: !!e.id && changed.has(e.id),

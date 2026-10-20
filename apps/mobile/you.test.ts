@@ -103,4 +103,21 @@ describe('CC 眼中的你', () => {
     expect(post.opts?.method).toBe('POST')
     expect(JSON.parse(post.opts!.body!)).toEqual({ id: 'abc123', verdict: 'wrong' })
   })
+
+  it('an opened entry shows where CC learned it (10-20); none ⇒ no line', async () => {
+    const item = { id: 'abc123', text: '回复直接', display: '回复直接', due: null, due_label: null, person: null, changed: false, sources: [{ ts: '2026-09-24T10:00:00Z', excerpt: '主人:回复别绕弯子 <b>' }] }
+    const view = { ok: true, ...base, mood: 'steady', changes: [], sections: [{ name: '偏好', items: [item, { ...item, id: 'def456', sources: [] }] }] }
+    const y = load((async () => ({ json: async () => view })) as never)
+    await y.loadYou()
+    const body = y.els['you-body']!
+    expect(body.innerHTML).not.toContain('you-src')
+    const click = (body.addEventListener as unknown as { mock: { calls: [string, (e: unknown) => void][] } }).mock.calls.find(c => c[0] === 'click')![1]
+    const target = (attrs: Record<string, string>) => ({ closest: (sel: string) => { const k = sel.slice(1, -1); return k in attrs ? { getAttribute: (n: string) => attrs[n] ?? null } : null } })
+    click({ target: target({ 'data-mem-id': 'abc123' }) })
+    expect(body.innerHTML).toContain('you-src')
+    expect(body.innerHTML).toContain('9月24日')
+    expect(body.innerHTML).toContain('回复别绕弯子 &lt;b&gt;')
+    click({ target: target({ 'data-mem-id': 'def456' }) })
+    expect(body.innerHTML).not.toContain('you-src')
+  })
 })

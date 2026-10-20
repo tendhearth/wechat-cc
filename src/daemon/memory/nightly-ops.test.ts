@@ -98,3 +98,13 @@ describe('applyNightly', () => {
       .toEqual({ ok: false, reason: 'duplicate_update' })
   })
 })
+
+describe('parseOps × src(10-20)', () => {
+  it('keeps up to 3 string tokens per add / update; junk is dropped, never fatal', async () => {
+    const { parseOps } = await import('./nightly-ops')
+    const o = parseOps(JSON.stringify({ add: [{ section: '偏好', text: 'x', src: ['c1', 'c2', 'c3', 'c4'] }, { section: '偏好', text: 'y', src: 'c1' }], update: [{ id: 'ab', text: 'z', src: ['c2', 5] }], confirm: [], remove: [] }))!
+    expect(o.add[0]!.src).toEqual(['c1', 'c2', 'c3'])
+    expect(o.add[1]!.src).toBeUndefined()
+    expect(o.update[0]!.src).toEqual(['c2'])
+  })
+})

@@ -211,3 +211,22 @@ describe('owner corrections, step A (2026-10-06)', () => {
     expect(rt.curatedView().sections.flatMap(s => s.items)).toEqual([])
   })
 })
+
+describe('出处 × 手机视图与纠错(10-20)', () => {
+  it('curatedView carries each entry’s sources; correcting an entry drops them', async () => {
+    const rt = makeMemoryNightlyRuntime(deps())
+    await rt.runNow()
+    const id = rt.curatedView().sections.flatMap(s => s.items)[0]!.id!
+    const { writeFileSync: w, readFileSync: r } = await import('node:fs')
+    w(join(root, 'memory-sources.json'), JSON.stringify({ [id]: [{ id: 'm-1', ts: '2026-09-24T10:00:00Z', excerpt: '主人:周五前给 X 回话' }] }))
+    const item = rt.curatedView().sections.flatMap(s => s.items).find(i => i.id === id)!
+    expect(item.sources).toEqual([{ ts: '2026-09-24T10:00:00Z', excerpt: '主人:周五前给 X 回话' }])
+    await rt.correct(id, 'wrong')
+    expect(JSON.parse(r(join(root, 'memory-sources.json'), 'utf8'))[id]).toBeUndefined()
+  })
+  it('no sources file ⇒ items have an empty list', async () => {
+    const rt = makeMemoryNightlyRuntime(deps())
+    await rt.runNow()
+    expect(rt.curatedView().sections.flatMap(s => s.items)[0]!.sources).toEqual([])
+  })
+})

@@ -272,3 +272,47 @@ describe('buildNightlyPrompt granularity rules', () => {
     expect(p).toContain('- 当前记忆里一条写了好几件事时,把它拆开:用 update 把原条目改成其中一件(reversal=false),其余用 add。')
   })
 })
+
+// 记忆带出处 + 过期改写(对标 Claude / ChatGPT Dreaming,2026-10-20)
+describe('记忆带出处', () => {
+  const sourced = [
+    { text: '主人:周五前我得给 X 回话', id: 'm-1', ts: '2026-09-24T10:00:00Z' },
+    { text: 'CC:好的,记下了', id: 'm-2', ts: '2026-09-24T10:00:05Z' },
+  ]
+  it('chat lines get [cN] tokens and a ref table', async () => {
+    const r = await gatherMaterial(root, { observationsSince: async () => [], milestonesSince: async () => [], messagesSince: async () => sourced, projectMemory: () => '' }, null, false)
+    expect(r.text).toContain('[c1] 主人:周五前我得给 X 回话')
+    expect(r.text).toContain('[c2] CC:好的')
+    expect(r.refs).toEqual({ c1: { id: 'm-1', ts: '2026-09-24T10:00:00Z', excerpt: '主人:周五前我得给 X 回话' }, c2: { id: 'm-2', ts: '2026-09-24T10:00:05Z', excerpt: 'CC:好的,记下了' } })
+  })
+  it('plain string lines still work (no token)', async () => {
+    const r = await gatherMaterial(root, { observationsSince: async () => [], milestonesSince: async () => [], messagesSince: async () => ['主人:hi'], projectMemory: () => '' }, null, false)
+    expect(r.text).toContain('主人:hi')
+    expect(r.refs).toEqual({})
+  })
+  it('the prompt explains the tokens and the past-date rule', () => {
+    const p = buildNightlyPrompt({ today: '2026-10-20', current: '', material: '' })
+    expect(p).toContain('"src"')
+    expect(p).toContain('已经过了')
+  })
+  it('a run records where each added / updated entry came from; unknown tokens are ignored', async () => {
+    reply = JSON.stringify({ add: [{ section: '承诺', text: '周五前给 X 回话(期限 2026-09-26)', src: ['c1', 'c9'] }, { section: '关于你', text: '做 wechat-cc' }], update: [], confirm: [], remove: [] })
+    const r = await runMemoryNightly(deps({ sources: { observationsSince: async () => [], milestonesSince: async () => [], messagesSince: async () => sourced, projectMemory: () => '' } }), { force: false })
+    expect(r.status).toBe('written')
+    const src = JSON.parse(readFileSync(join(root, 'memory-sources.json'), 'utf8')) as Record<string, Array<{ id: string }>>
+    const doc = parseMemoryDoc(readFileSync(join(root, 'memory.md'), 'utf8'))
+    const promiseId = doc.sections['承诺'][0]!.id!
+    expect(src[promiseId]).toEqual([{ id: 'm-1', ts: '2026-09-24T10:00:00Z', excerpt: '主人:周五前我得给 X 回话' }])
+    expect(src[doc.sections['关于你'][0]!.id!]).toBeUndefined()
+  })
+  it('removed entries drop their sources', async () => {
+    reply = JSON.stringify({ add: [{ section: '关于你', text: '做 wechat-cc', src: ['c1'] }], update: [], confirm: [], remove: [] })
+    await runMemoryNightly(deps({ sources: { observationsSince: async () => [], milestonesSince: async () => [], messagesSince: async () => sourced, projectMemory: () => '' } }), { force: false })
+    const id = parseMemoryDoc(readFileSync(join(root, 'memory.md'), 'utf8')).sections['关于你'][0]!.id!
+    reply = JSON.stringify({ add: [], update: [], confirm: [], remove: [{ id, reason: '主人说不对' }] })
+    now += 86_400_000
+    await runMemoryNightly(deps({ sources: { observationsSince: async () => [], milestonesSince: async () => [], messagesSince: async () => [{ text: '主人:新的一句', id: 'm-3', ts: '2026-09-25T09:00:00Z' }], projectMemory: () => '' } }), { force: false })
+    const src = JSON.parse(readFileSync(join(root, 'memory-sources.json'), 'utf8')) as Record<string, unknown>
+    expect(src[id]).toBeUndefined()
+  })
+})

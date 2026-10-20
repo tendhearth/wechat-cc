@@ -25,9 +25,17 @@ function youNote(v) {
 }
 // 逐条纠错(步骤 A,2026-10-06):点一条 ⇒ 下面出三个选择;选了立刻从记忆里拿掉,CC 记下这次纠正、当晚整理不再写回。
 var youOpenId = null, youBusy = false
+// 出处(2026-10-20):这条是从哪句聊天里记下的 —— 只在点开时露一行,平时不占地方。
+function youSrc(it) {
+  var src = (it.sources || [])[0]
+  if (!src) return ""
+  var d = new Date(src.ts)
+  var when = isNaN(d.getTime()) ? "" : (d.getMonth() + 1) + "月" + d.getDate() + "日"
+  return '<p class="you-src">' + (when ? esc(when) + "聊到:" : "聊到:") + "「" + esc(src.excerpt) + "」</p>"
+}
 function youFix(it) {
   if (!it.id || it.id !== youOpenId) return ""
-  return '<div class="you-fix" role="group" aria-label="这条怎么了">' +
+  return youSrc(it) + '<div class="you-fix" role="group" aria-label="这条怎么了">' +
     '<button type="button" data-fix="wrong">记错了</button><button type="button" data-fix="outdated">过时了</button>' +
     '<button type="button" data-fix="delete">不用记</button><button type="button" data-fix="cancel" class="you-fix-cancel">算了</button></div>'
 }
