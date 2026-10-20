@@ -2105,3 +2105,15 @@ describe('runJobTurn', () => {
     } finally { vi.useRealTimers() }
   })
 })
+
+describe('runJobTurn × 预先拼好的信封(早报)', () => {
+  it('buildText overrides the default owner-words envelope', async () => {
+    const s = setupDeps({ defaultChatId: 'owner', inFlight: false })
+    s.dispatch.mockImplementation(() => ({ async *[Symbol.asyncIterator]() { yield { kind: 'text', text: '早上好' }; yield { kind: 'result', sessionId: 's', numTurns: 1, durationMs: 1 } } }))
+    ;(s.deps.boot as unknown as { sessionManager: Record<string, unknown> }).sessionManager.forget = vi.fn(async () => {})
+    ;(s.deps as TickDeps).replyDelivery = { begin: () => ({ mode: 'daemon', progress: async () => {}, deliver: async () => ({ target: 'wechat', bubbles: 1, attachmentsSent: 0, failures: [], msgIds: [], delivery: 'text' }), abandon: () => {} }) }
+    ;(s.deps as TickDeps).replyDeliveryModeFor = () => 'daemon'
+    await buildTickBodies(s.deps).runJobTurn({ chatId: 'owner', jobId: 'j1', text: '早报', nowIso: 't', buildText: () => 'BRIEF-ENVELOPE' })
+    expect((s.dispatch.mock.calls[0] as unknown as [string])[0]).toBe('BRIEF-ENVELOPE')
+  })
+})

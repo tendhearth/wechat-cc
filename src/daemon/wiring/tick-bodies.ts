@@ -263,7 +263,7 @@ export interface TickBodies {
    * 定时任务的一轮(spec 2026-10-20-scheduled-jobs-design):独立会话 `job:<id>`、只读档、strict,
    * 走伙伴主动消息的出口;跑完 forget(不续接、不占位)。只给 claude / codex。
    */
-  runJobTurn(args: { chatId: string; jobId: string; text: string; nowIso: string }): Promise<JobTurnResult>
+  runJobTurn(args: { chatId: string; jobId: string; text: string; nowIso: string; buildText?: (style: TickTextStyle) => string }): Promise<JobTurnResult>
 }
 
 export interface BuildPushTickTextOpts {
@@ -637,7 +637,7 @@ export function buildTickBodies(deps: TickDeps): TickBodies {
     return true
   }
 
-  async function runJobTurn(args: { chatId: string; jobId: string; text: string; nowIso: string }): Promise<JobTurnResult> {
+  async function runJobTurn(args: { chatId: string; jobId: string; text: string; nowIso: string; buildText?: (style: TickTextStyle) => string }): Promise<JobTurnResult> {
     const { chatId, jobId } = args
     const gate = resolveDispatch(chatId)
     if (gate.blocked === 'wechat_degraded') return 'skipped:degraded'
@@ -655,7 +655,9 @@ export function buildTickBodies(deps: TickDeps): TickBodies {
         // 先忘一次:上次若崩在半路(没走到 finally),留下的续接记录会让这次接着上次的对话(终审 minor)。
         try { await sm.forget?.(key) } catch { /* 没有就没有 */ }
         const handle = await deps.boot.sessionManager.acquire({ alias: key.alias, path: proj.path, providerId, chatId, tierProfile: JOB_PROFILE, permissionMode: 'strict' })
-        const text = buildJobText({ jobId, nowIso: args.nowIso, text: args.text }, { replyDelivery: 'final_text', allSegments: replyTextStrategyFor(providerId) === 'all_segments' })
+        const style: TickTextStyle = { replyDelivery: 'final_text', allSegments: replyTextStrategyFor(providerId) === 'all_segments' }
+        // 早报(对标 #7)自己拼好信封(素材 + 写法);其余定时用主人的原话包一层。
+        const text = args.buildText ? args.buildText(style) : buildJobText({ jobId, nowIso: args.nowIso, text: args.text }, style)
         const outbound = deps.proactive?.open(chatId)
         const turn = deps.replyDelivery!.begin(chatId, { mode: 'daemon', context: 'tick', providerId, textStrategy: replyTextStrategyFor(providerId), ...(outbound ? { outbound } : {}) })
         // 到点就 cancel(终审 I3):不然一轮卡住就一直占着主人那条对话的锁,晚到的回复还会照发。

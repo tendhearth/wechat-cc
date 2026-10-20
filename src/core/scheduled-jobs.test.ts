@@ -70,3 +70,24 @@ describe('时区标在回显里(10-20 真机核对踩到:--at 按主人时区)',
     expect(describeSchedule({ kind: 'daily', at: '18:10' })).toBe('每天 18:10')
   })
 })
+
+describe('早报(对标 #7)', () => {
+  it('定时 早报 [工作日] HH:MM is a brief job', () => {
+    expect(parseJobCommand('定时 早报 8:00')).toEqual({ kind: 'add', schedule: { kind: 'daily', at: '08:00' }, text: '早报', brief: true })
+    expect(parseJobCommand('定时 早报 工作日 7:30')).toEqual({ kind: 'add', schedule: { kind: 'weekdays', at: '07:30' }, text: '早报', brief: true })
+    expect(parseJobCommand('定时 早报')?.kind).toBe('usage')
+    expect(parseJobCommand('定时 早报 25:00')?.kind).toBe('usage')
+  })
+  it('早报 口味 commands', async () => {
+    const { parseBriefPref } = await import('./scheduled-jobs')
+    expect(parseBriefPref('早报 少点 技术细节')).toEqual({ kind: 'add', line: '少点:技术细节' })
+    expect(parseBriefPref('早报 多点 天气')).toEqual({ kind: 'add', line: '多点:天气' })
+    expect(parseBriefPref('早报 偏好')).toEqual({ kind: 'show' })
+    expect(parseBriefPref('早报 偏好 清空')).toEqual({ kind: 'clear' })
+    expect(parseBriefPref('早报')).toEqual({ kind: 'show' })
+    expect(parseBriefPref('早报 少点')).toEqual({ kind: 'usage' })
+    expect(parseBriefPref(`早报 少点 ${'字'.repeat(81)}`)).toEqual({ kind: 'usage' })
+    expect(parseBriefPref('早报来了吗')).toBeNull()
+    expect(parseBriefPref('今天早报呢')).toBeNull()
+  })
+})
