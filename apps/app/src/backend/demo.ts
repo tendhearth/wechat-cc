@@ -110,7 +110,9 @@ export function makeDemoBackend(opts: { now?: () => number; setTimeout?: typeof 
     const nTitle = t(lastLang, 'notesTitle')
     add(mkDetail(mkMatter(IDS.notes, 'task', nTitle, 'replied', '~/Projects/notes', n - DAY, ['claude']),
       // 演示独立工作区(2026-10-08):提交 / 合回 / 删除 / 重开 / 另做一份 都有地方点
-      { ...taskOf(IDS.notes, nTitle, '~/Projects/notes', 'replied', n - DAY), worktree: { branch: 'cc/notes001', removed: false, projectId: 'portfolio' } }), 'replied',
+      { ...taskOf(IDS.notes, nTitle, '~/Projects/notes', 'replied', n - DAY), worktree: { branch: 'cc/notes001', removed: false, projectId: 'portfolio' },
+        // 演示「直到…通过」(10-20):第 2 轮检查通过
+        until: { command: 'bun run test', maxRounds: 3, rounds: 2, status: 'passed', lastExit: 0, stopReason: null } }), 'replied',
       [{ kind: 'user', key: 'notesTitle', createdAt: n - DAY - 60_000 }], 'notesTitle')
     // 额度用完的一件(spec continue-sessions §7-3):Claude Code 没做完,电脑说可以交给 Codex 继续
     const rTitle = t(lastLang, 'reportTitle')
@@ -521,7 +523,7 @@ export function makeDemoBackend(opts: { now?: () => number; setTimeout?: typeof 
       return { ...cur }
     },
     async discardUpload(id) { uploads.delete(id) },
-    async create({ requestId, text, projectId }) {
+    async create({ requestId, text, projectId, isolation, until }) {
       const dup = createdBy.get(requestId)
       if (dup) return { matterId: dup }
       const projectPath = projectId ? entryOptions(lastLang).projects.find(p => p.id === projectId)?.path ?? null : null
@@ -533,7 +535,10 @@ export function makeDemoBackend(opts: { now?: () => number; setTimeout?: typeof 
         stage: 'working', version: 1, seeded: false,
         evs: [{ kind: 'user', text, createdAt: ts }, { kind: 'tool_call', key: 'creating', createdAt: ts }],
         detail: mkDetail(mkMatter(matterId, 'task', title, 'open', projectPath ?? null, ts),
-          taskOf(matterId, title, projectPath ?? '~/Projects/portfolio', 'working', ts),
+          // 独立工作区 + until(10-20):演示里也带上,进展页那一行看得见
+          { ...taskOf(matterId, title, projectPath ?? '~/Projects/portfolio', 'working', ts),
+            ...(projectId && isolation ? { worktree: { branch: `cc/${matterId}`, removed: false, projectId } } : {}),
+            ...(projectId && isolation && until ? { until: { command: until.command, maxRounds: until.maxRounds, rounds: 0, status: 'active' as const, lastExit: null, stopReason: null } } : {}) },
           { runId: `run-${matterId}`, inputMode: 'steer' }),
       }
       entries.set(matterId, e); order.unshift(matterId); publish([matterId])

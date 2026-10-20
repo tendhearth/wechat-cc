@@ -71,6 +71,7 @@ describe('演示后端', () => {
   it('演示独立工作区:合回 / 删除 / 重开会翻任务页上的状态(2026-10-08)', async () => {
     const b = makeDemoBackend()
     expect((await b.matter('e5f6a7b8', 'en')).task?.worktree).toMatchObject({ branch: 'cc/notes001', removed: false, projectId: 'portfolio' })
+    expect((await b.matter('e5f6a7b8', 'en')).task?.until).toMatchObject({ command: 'bun run test', status: 'passed', rounds: 2, maxRounds: 3 })
     await b.worktree({ id: 'e5f6a7b8', action: 'merge' })
     expect((await b.matter('e5f6a7b8', 'en')).task?.worktree?.merged).toBe(true)
     await b.worktree({ id: 'e5f6a7b8', action: 'remove' })

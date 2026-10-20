@@ -61,6 +61,7 @@ export type BackendCode = 'stale' | 'busy' | 'offline' | 'revoked' | 'timeout' |
   | 'images_gone' | 'images_unsupported'
   | 'cli_not_actionable' | 'cli_ended' | 'cli_remote'
   | 'stt_not_configured' | 'stt_blocked' | 'stt_failed' | 'no_speech'
+  | 'until_invalid' | 'until_requires_worktree' | 'until_unattended'
 export type Unsubscribe = () => void
 
 export interface Backend {
@@ -91,7 +92,7 @@ export interface Backend {
   entryOptions(lang: Lang): Promise<EntryOptionsT>
   /** requestId:同一份草稿、同样的正文重发用同一个(daemon 据此去重、超时后查回执)。projectId 缺省 ⇒ 由 CC 安排(managed)。 */
   /** isolation:在这个项目的独立工作区(git worktree)里做,同一项目可以并行(2026-10-07)。 */
-  create(p: { requestId: string; text: string; projectId?: string; providerId?: string; execution?: EntryExecution; isolation?: boolean; /** 独立工作区从哪个本地分支开始(10-08) */ base?: string } & Partial<PhoneMaterials>): Promise<{ matterId: string }>
+  create(p: { requestId: string; text: string; projectId?: string; providerId?: string; execution?: EntryExecution; isolation?: boolean; /** 独立工作区从哪个本地分支开始(10-08) */ base?: string; /** 做到这条命令通过为止(10-20);只随独立工作区带 */ until?: { command: string; maxRounds: number } } & Partial<PhoneMaterials>): Promise<{ matterId: string }>
   /** 交办时可选的模型(GET /m/api/entry/models,2026-10-06);执行者不带模型目录 ⇒ BackendError。 */
   entryModels(providerId: string, projectId?: string): Promise<EntryModelCatalogT>
   /** 材料分块上传(POST /m/api/attachment/chunk,2026-10-06 起手机 app 也用):每块 128 KiB、按 offset 续传;最后一块后 status=ready。 */

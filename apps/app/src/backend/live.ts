@@ -385,6 +385,8 @@ export function makeLiveBackend(d: LiveDeps): Backend {
         ...(p.providerId ? { providerId: p.providerId } : {}),
         ...(p.attachmentIds?.length && p.draftId ? { draftId: p.draftId, attachmentIds: p.attachmentIds } : {}),
         ...(p.execution && (p.execution.model || p.execution.reasoningEffort) ? { execution: { ...(p.execution.model ? { model: p.execution.model } : {}), ...(p.execution.reasoningEffort ? { reasoningEffort: p.execution.reasoningEffort } : {}) } } : {}),
+        // 做到条件成立为止(10-20):只跟独立工作区一起带;daemon 没开独立工作区会回 until_requires_worktree
+        ...(p.until && p.projectId && p.isolation ? { until: { command: p.until.command, maxRounds: p.until.maxRounds } } : {}),
       }
       try {
         const r = await call<{ receipt: { matterId: string } }>('POST /m/api/matter/create', '/m/api/matter/create', { body, retry: true })
