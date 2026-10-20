@@ -1,4 +1,4 @@
-# 交办:此刻 → 跟 CC 说 → 交给 CC 去做一件事 → 输入 → 交给 CC → 进展页 2 秒后「这一轮已回复」→ 一起做里出现这件新事。
+# 交办:此刻 → 跟 CC 说 → 交给 CC 去做一件事 → 输入 → 交给 CC → 进展页 2 秒后「这一轮做完了」→ 一起做里出现这件新事。
 appId: com.tendhearth.app
 ---
 - runFlow: subflows/_start.yaml
@@ -31,7 +31,7 @@ appId: com.tendhearth.app
     timeout: 10000
 - assertVisible: "Maestro demo task"
 - extendedWaitUntil:
-    visible: "这一轮已回复|Replied this round"
+    visible: "这一轮做完了|Done for this round"
     timeout: 8000
 - tapOn:
     id: topbar-back
@@ -52,4 +52,4 @@ appId: com.tendhearth.app
           visible:
             id: together-item-demo0001
           timeout: 3000
-- assertVisible: "Maestro demo task, (这一轮已回复|Replied this round)"
+- assertVisible: "Maestro demo task, (这一轮做完了|Done for this round)"

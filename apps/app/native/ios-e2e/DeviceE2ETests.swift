@@ -255,7 +255,7 @@ final class DeviceE2ETests: XCTestCase {
     out("progress_status", progress.label)
   }
 
-  /// d. daemon 撤销了这台测试设备 ⇒ app 显示「这台手机已不再配对」。
+  /// d. daemon 撤销了这台测试设备 ⇒ app 显示「这台手机已经不能连了,在电脑上重新配对」。
   func testRevokedNotice() {
     foreground()
     // 回到此刻(撤销卡在此刻页);从进展页 / 对话页最多返回三次
@@ -266,7 +266,7 @@ final class DeviceE2ETests: XCTestCase {
     }
     let notice = byId("conn-notice-revoked")
     until(timeout("E2E_WAIT", 90), "conn-notice-revoked") { notice.exists }
-    let title = anyLabel(["这台手机已不再配对", "no longer paired"])
+    let title = anyLabel(["这台手机已经不能连了", "can't connect anymore"])
     XCTAssertTrue(title.exists, "revoked title text")
     out("revoked_label", title.label)
     attachScreenshot("revoked")

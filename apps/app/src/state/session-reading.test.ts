@@ -30,7 +30,8 @@ vi.mock('react-native', async () => {
   const Pressable = ({ children, onPress, disabled, testID, accessibilityLabel, accessibilityRole, accessibilityState }: any) => createElement('button', { onClick: onPress, disabled, 'data-testid': testID, 'aria-label': accessibilityLabel, role: accessibilityRole, 'aria-expanded': accessibilityState?.expanded, 'aria-disabled': accessibilityState?.disabled }, children)
   const Modal = ({ visible, children }: any) => visible ? createElement('div', null, children) : null
   const FlatList = ({ data, renderItem, ListHeaderComponent, ListEmptyComponent, ListFooterComponent }: any) => createElement('div', null, ListHeaderComponent, data.length ? data.map((item: any) => createElement('div', { key: item.id }, renderItem({ item }))) : ListEmptyComponent, ListFooterComponent)
-  return { View, Text, TextInput, Pressable, Modal, FlatList, ScrollView: View, ActivityIndicator: View, Linking: { openURL: vi.fn() }, Platform: { OS: 'ios', select: (options: any) => options.ios ?? options.default } }
+  const SectionList = ({ sections, renderItem, renderSectionHeader, ListHeaderComponent, ListEmptyComponent, ListFooterComponent }: any) => createElement('div', null, ListHeaderComponent, sections.length ? sections.map((section: any) => createElement('section', { key: section.key }, renderSectionHeader?.({ section }), section.data.map((item: any) => createElement('div', { key: item.id }, renderItem({ item, section }))))) : ListEmptyComponent, ListFooterComponent)
+  return { View, Text, TextInput, Pressable, Modal, FlatList, SectionList, ScrollView: View, ActivityIndicator: View, Linking: { openURL: vi.fn() }, Platform: { OS: 'ios', select: (options: any) => options.ios ?? options.default } }
 })
 vi.mock('react-native-safe-area-context', async () => {
   const { createElement } = await import('react')

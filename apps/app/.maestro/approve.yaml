@@ -1,5 +1,5 @@
 # 批准:首次打开 → 先看看 → 此刻第一张「等你决定」卡(作品集,模型说明)→ 看一下再决定
-# → 原始命令直接可见(硬要求)→ 允许 → 回到进展页 → 2 秒后「这一轮已回复」。
+# → 原始命令直接可见(硬要求)→ 允许 → 回到进展页 → 2 秒后「这一轮做完了」。
 appId: com.tendhearth.app
 ---
 - runFlow: subflows/_start.yaml
@@ -36,5 +36,5 @@ appId: com.tendhearth.app
       id: progress-status
     timeout: 10000
 - extendedWaitUntil:
-    visible: "这一轮已回复|Replied this round"
+    visible: "这一轮做完了|Done for this round"
     timeout: 8000

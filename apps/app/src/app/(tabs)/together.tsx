@@ -1,5 +1,5 @@
 import { useRouter } from 'expo-router'
-import { FlatList, Pressable, View } from 'react-native'
+import { Pressable, SectionList, View } from 'react-native'
 import { SafeAreaView } from 'react-native-safe-area-context'
 import { t } from '../../i18n'
 import { useLang } from '../../i18n/useLang'
@@ -20,20 +20,21 @@ import { space } from '../../ui/tokens'
 import { TopBar } from '../../ui/TopBar'
 import { Txt } from '../../ui/Txt'
 import { useTheme } from '../../ui/useTheme'
-import { togetherView } from '../../view/together'
+import { togetherGroups, togetherView } from '../../view/together'
 import { terminalRows } from '../../view/terminal'
 
-// 「一起做」:交给 CC 的事(全部没归档的;等你决定的排前面)。每行标题 + 状态词 + 副标题,点进进展页。
+// 「一起做」:交给 CC 的事(全部没归档的),分三组:等你 / 在做 / 做完(手机端用词表)。每组一个衬线小标题,只有「等你」上强调色。
+// 每行标题 + 状态词 + 副标题,点进进展页。三组只在这里,「此刻」只列等你的那几件(同一件东西只有一个家)。
 // 和 CC 的对话只住在「此刻」(2026-10-05,同一件东西只有一个家);这里底部是「交办」,不是「跟 CC 说」。
 // 「电脑上的会话」是把电脑上已有的会话接进来,放在列表末尾,不和事情抢第一眼。
 // 「终端里的会话」(2026-10-14):主人在 CC 外面开的 Claude Code / Codex,和 CC 自己的事并排 —— CC 是所有执行者的总管。
-// 一行只有一个动作(点进详情);允许 / 拒绝只在详情里。
+// 一行只有一个动作(点进详情);允许这一步 / 先不做只在详情里。
 export default function Together() {
   const { c } = useTheme()
   const lang = useLang()
   const router = useRouter()
   const { approvals, agents, matters } = useWork()
-  const rows = togetherView(matters, approvals, agents)
+  const sections = togetherGroups(togetherView(matters, approvals, agents)).map(g => ({ key: g.key, data: g.rows }))
   const saved = useAllMatterInputs().filter(inputNeedsChecking).length
   const recovery = useInputRecovery()
   const terminal = useTerminalSessions()
@@ -57,9 +58,17 @@ export default function Together() {
         onAvatar={() => router.push('/settings')}
       />
       <View style={{ paddingHorizontal: space.xl }}><ConnectionNotice /></View>
-      <FlatList
-        data={rows}
+      <SectionList
+        sections={sections}
         keyExtractor={(r) => r.id}
+        stickySectionHeadersEnabled={false}
+        renderSectionHeader={({ section }) => (
+          <View style={{ paddingTop: space.xl, paddingBottom: space.s, borderBottomWidth: 1, borderBottomColor: c.hair }}>
+            <Txt testID={`together-group-${section.key}`} role="meta" tone={section.key === 'waiting' ? 'accent' : 'inkSoft'} accessibilityRole="header">
+              {t(lang, `together.group.${section.key}`)}
+            </Txt>
+          </View>
+        )}
         contentContainerStyle={{ paddingHorizontal: space.xl, paddingBottom: space.xl, flexGrow: 1 }}
         ListHeaderComponent={saved || recovery.phase !== 'ready' ? <LinkRow testID="together-saved-inputs" label={`${t(lang, 'input.savedTitle')}${saved ? ` · ${saved}` : ''}`} onPress={() => router.push('/inputs')} /> : null}
         ListFooterComponent={<>{terminalSection}<LinkRow testID="together-sessions" label={t(lang, 'sessions.title')} onPress={() => router.push('/sessions')} /></>}

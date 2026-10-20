@@ -23,14 +23,14 @@ describe('今天(手机视图)', () => {
     expect(PHONE_API_SCHEMAS['GET /m/api/today']!.safeParse({ ok: true, today: today() }).success).toBe(true)
   })
   it('几个数一行;等你的不在这里数(下面「N 件事等你」已经列着);是 0 的不写;中英文', () => {
-    expect(todayView(today(), NOW, 'zh-Hans')!.counts).toBe('4 件做完 · 1 件在跑')
+    expect(todayView(today(), NOW, 'zh-Hans')!.counts).toBe('4 件做完 · 1 件在做')
     expect(todayView(today({ counts: { needsYou: 0, done: 2, running: 0, stuck: 3 } }), NOW, 'en')!.counts).toBe('2 done · 3 may be stuck')
   })
   it('离开 App 一小时以上、这期间有做完的 ⇒「你不在的这 N 小时」,只数只列这段;在跑照旧', () => {
     const t = today({ done: [item({ id: 'new', at: NOW - 30 * 60_000 }), item({ id: 'old', at: NOW - 5 * 3_600_000 })], counts: { needsYou: 1, done: 2, running: 1, stuck: 0 } })
     const v = todayView(t, NOW, 'zh-Hans', NOW - 3 * 3_600_000)!
     expect(v.title).toBe('你不在的这 3 小时')
-    expect(v.counts).toBe('1 件做完 · 1 件在跑')
+    expect(v.counts).toBe('1 件做完 · 1 件在做')
     expect(v.done.map(r => r.key)).toEqual(['terminal:new'])
     expect(todayView(t, NOW, 'en', NOW - 3 * 3_600_000)!.title).toBe('While you were away · 3h')
   })
@@ -39,7 +39,7 @@ describe('今天(手机视图)', () => {
     for (const away of [NOW - AWAY_MIN_MS + 1, NOW - 30 * 3_600_000, NOW - 2 * 3_600_000, null, undefined]) {
       const v = todayView(t, NOW, 'zh-Hans', away)!
       expect(v.title).toBe('过去 24 小时')
-      expect(v.counts).toBe('1 件做完 · 1 件在跑')
+      expect(v.counts).toBe('1 件做完 · 1 件在做')
     }
   })
   it('只有等你的 ⇒ 不放这一段(等你的已经在下面列着)', () => {

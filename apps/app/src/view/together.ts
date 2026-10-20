@@ -20,3 +20,16 @@ export function togetherView(matters: MatterT[], approvals: ApprovalItemT[], age
     .sort((a, b) => (Number(b.status === 'waiting') - Number(a.status === 'waiting')) || b.m.updatedAt - a.m.updatedAt)
     .map(({ m, status, subtitle }) => ({ id: m.id, title: m.title, status, subtitle, agents: m.agents ?? [], origin: matterOrigin(m.origin) }))
 }
+
+export type TogetherRow = ReturnType<typeof togetherView>[number]
+export type TogetherGroupKey = 'waiting' | 'working' | 'done'
+
+/** 状态 ⇒ 组(手机端用词表):等你决定 ⇒ 等你;在做 ⇒ 在做;这一轮做完了 / 完成 / 没做成 / 停下了 ⇒ 做完。 */
+export const GROUP_OF: Record<StatusKey, TogetherGroupKey> = { waiting: 'waiting', working: 'working', replied: 'done', done: 'done', failed: 'done', stopped: 'done' }
+
+/** 「一起做」分三组:等你 / 在做 / 做完,顺序固定;空组不出;组内沿用 togetherView 的顺序(updatedAt 倒序)。
+ * 归档的已在 togetherView 里滤掉;终端会话另成一段,不进这三组。 */
+export function togetherGroups(rows: TogetherRow[]): Array<{ key: TogetherGroupKey; rows: TogetherRow[] }> {
+  const order: TogetherGroupKey[] = ['waiting', 'working', 'done']
+  return order.map(key => ({ key, rows: rows.filter(r => GROUP_OF[r.status] === key) })).filter(g => g.rows.length > 0)
+}

@@ -62,7 +62,7 @@ describe('接着做电脑会话的失败码(spec D11)', () => {
     expect(composeOutcomeText('providerMissing', 'zh-Hans', null, true)).toBe('电脑上没装这个执行者')
     expect(composeOutcomeText('sessionBusy', 'zh-Hans', null, true)).toBe('这个会话正在电脑上跑，停下后才能接着做')
     expect(composeOutcomeText('ccBusy', 'zh-Hans', null, true)).toBe('CC 还在忙这件事，等这一轮做完再说。')
-    expect(composeOutcomeText('revoked', 'zh-Hans', null, true)).toBe('这台手机已不再配对')
+    expect(composeOutcomeText('revoked', 'zh-Hans', null, true)).toBe('这台手机已经不能连了，在电脑上重新配对')
     expect(composeOutcomeText('failed', 'en', null, true)).toBe('This didn’t reach your computer. Please try again in a moment.')
   })
 })

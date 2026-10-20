@@ -82,9 +82,13 @@ export default function TerminalSession() {
                 <View style={{ gap: space.m }}>
                   <Txt testID="terminal-detail-pending" role="body" content="user">{row.pendingText}</Txt>
                   {row.actionable ? (
-                    <View style={{ flexDirection: 'row', gap: space.m }}>
-                      <View style={{ flex: 1 }}><Button kind="primary" testID="terminal-detail-allow" label={t(lang, 'terminal.allow')} busy={deciding} disabled={!terminal.online} onPress={() => void decide('allow')} /></View>
-                      <View style={{ flex: 1 }}><Button kind="secondary" testID="terminal-detail-deny" label={t(lang, 'terminal.deny')} disabled={!terminal.online || deciding} onPress={() => void decide('deny')} /></View>
+                    // 用词表:先不做在左(次要),允许这一步在右(主按钮),下面一行「只对这一次请求」
+                    <View style={{ gap: space.s }}>
+                      <View style={{ flexDirection: 'row', gap: space.m }}>
+                        <View style={{ flex: 1 }}><Button kind="secondary" testID="terminal-detail-deny" label={t(lang, 'terminal.deny')} disabled={!terminal.online || deciding} onPress={() => void decide('deny')} /></View>
+                        <View style={{ flex: 1 }}><Button kind="primary" testID="terminal-detail-allow" label={t(lang, 'terminal.allow')} busy={deciding} disabled={!terminal.online} onPress={() => void decide('allow')} /></View>
+                      </View>
+                      <Txt role="small" tone="inkSoft" style={{ textAlign: 'center' }}>{t(lang, 'approval.onlyThisRequest')}</Txt>
                     </View>
                   ) : <Txt testID="terminal-detail-local" role="meta" tone="inkSoft">{t(lang, 'terminal.askedLocally')}</Txt>}
                 </View>
