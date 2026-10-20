@@ -30,7 +30,9 @@
 
 1. **闸门**(都不过 ⇒ 这次跳过,记一行原因,**不补跑**):`care=off` 不管(定时是主人明说要的);网络守护说这一轮要用的执行者不安全;上一次这个定时还没跑完;今天全部定时合计已满 **5** 次;daemon 不在线错过的那一刻 ⇒ 醒来不补,只记「错过了」。
 2. 一轮普通的 agent turn,信封 `<scheduled_job id=… />` + 主人的原话 + 「没有值得说的就只写 NO_REPLY」。复用伙伴主动消息的那条路(`dispatchToChat` 的出口:微信能用走微信,否则 App;NO_REPLY 不发)。
-3. **只读档**:这一轮的工具只留 `reply`、`share_page`、`memory_read`、`observations_read`、`fs_read`、`network`(网页搜索 / 读取)、`knowledge_search`、`daemon_introspect`;其余一律拒(不弹权限卡 —— 没人看着)。**必须在一个独立会话里跑**(alias `job:<id>`),不能借主人对话那条已经活着的会话 —— 否则那条会话的权限档会带过来,只读就保证不了。
+3. **只读档**:这一轮的工具只留 `reply`、`share_page`、`memory_read`、`observations_read`、`fs_read`、`network`(网页搜索 / 读取);其余一律拒(不弹权限卡 —— 没人看着)。**必须在一个独立会话里跑**(alias `job:<id>`),不能借主人对话那条已经活着的会话 —— 否则那条会话的权限档会带过来,只读就保证不了。
+   - 实现上的三处(10-20 勘察):① 档里拒了 `fs_write` ⇒ 会话令牌按 guest 档铸,wechat MCP 只注册读类工具(不靠 canUseTool —— 它按 chatId 取档,对主人永远是 admin);② 这一轮强制 `permissionMode:'strict'`(`dangerously` 下 Claude 不给 disallowedTools、也不调 canUseTool),内置的 Bash / Write / Edit 由 disallowedTools 拿掉;Codex 在缺 fs_write / shell 时本来就是只读沙箱;③ **v1 只给 Claude 与 Codex 跑**,免审执行者(agy / Cursor)和 API 执行者跳过并说明原因。
+   - 会话用完就释放并清掉续接记录(否则下一次会续上上次的对话,也会占容量把主人的会话挤掉)。仍要拿 `coordinator.runExclusive(ownerChatId)`(回复交付按 chatId 记账),主人正在对话时这一次跳过,下一分钟再看(只在到点后 10 分钟内重试)。
 4. 失败(模型报错、超时 5 分钟):这一次算失败,不重试;**连续 3 次失败 ⇒ 自动暂停,告诉主人一次**。
 
 ## 存在哪
@@ -46,11 +48,11 @@
 - 解析:三种写法、中文星期、非法时间 / 非法写法回用法;非主人对话说「定时」不认。
 - 到点判断:时区、跨日、同一天不跑两次、错过不补。
 - 闸门:网络不安全跳过不补;每日合计 5;上一次没完跳过;连续 3 次失败暂停 + 只通知一次。
-- 只读:定时那一轮拿到的工具档里没有 `fs_write` / `shell` / `memory_write` / `message_other` / `a2a_send` / `config_admin`;它跑在独立会话里。
+- 只读:定时那一轮 acquire 时 alias 是 `job:<id>`、permissionMode 是 strict、档的 tier 名是 guest、档里没有 `fs_write` / `shell` / `memory_write` / `message_other` / `a2a_send` / `config_admin`;跑完会话被释放、续接记录被清。
 - NO_REPLY ⇒ 不发、记 silent;有内容 ⇒ 走主动出口。
 - CLI 与微信写同一个文件;坏文件不覆盖。
 
 ## 留给实现者定的
 
-- 独立会话怎么开:`sessionManager.acquire` 用 `job:<id>` alias 还是一次性 spawn(看哪个不会和主人对话抢同一把锁、用完能释放)。
-- 执行者用主人对话当前的默认执行者;网络守护按它判。
+- 执行者用主人对话当前的默认执行者;网络守护按它判(`decideCall` 预检,不安全记 `skipped:network`)。
+- 主人正在对话时的等待窗口(上面写 10 分钟)可以按实际调。
