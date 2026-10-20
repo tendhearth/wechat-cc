@@ -2776,6 +2776,62 @@ describe('workbench mutations', () => {
     module.stopWorkbenchPolling()
   })
 
+  it('存草稿时同一件事上还有一笔没回来:输入框里说一声,字留着,不发', async () => {
+    const page = installFakePage()
+    const fields = lineFields(page)
+    let release: (value: unknown) => void = () => {}
+    const { api, posts } = linePage((method, path) => method === 'POST' && path === '/v1/workbench/review-hunk' ? new Promise(resolve => { release = resolve }) : null)
+    const module = await import('./workbench.js')
+    const controller = module.initWorkbenchPage({ invokeWorkbenchApi: api, pollMs: 60_000 })!
+    await vi.waitFor(() => expect(controller.state.reviews).toHaveLength(1))
+    const click = [...page.listeners.get('click')!][0]!
+    const revert = armable({ action: 'review-hunk', hunkAction: 'revert', artifactId: 'ART-1', path: 'src/app.ts', hunk: '0', hunkSha: H0 }, '撤回这一块')
+    await click({ target: revert })
+    const pending = click({ target: revert })
+    await vi.waitFor(() => expect(posts.map(([path]) => path)).toEqual(['/v1/workbench/review-hunk']))
+    const whole = new FakeElement(); whole.dataset = { action: 'line-comment-hunk', artifactId: 'ART-1', path: 'src/app.ts', hunk: '1', hunkSha: H1 }
+    await click({ target: whole })
+    const commentId = controller.state.lineCompose!.commentId
+    fields.body.dataset.commentId = commentId
+    fields.body.value = '这一块整个不要'
+    const form = new FakeElement(); form.tagName = 'FORM'; form.dataset = { action: 'line-comment-save' }
+    const submit = [...page.listeners.get('submit')!][0]!
+    await submit({ preventDefault() {}, target: form })
+    expect(posts).toHaveLength(1)
+    expect(controller.state.lineCompose).toMatchObject({ commentId, body: '这一块整个不要', notice: '上一个操作还没完成，稍等再存。' })
+    expect(page.innerHTML).toContain('上一个操作还没完成，稍等再存。')
+    release({ hunk: { path: 'src/app.ts', hunk: 0, state: 'reverted' } }); await pending
+    await submit({ preventDefault() {}, target: form })
+    expect(posts.at(-1)).toEqual(['/v1/workbench/review-comment', { id: 'REVIEW', commentId, artifactId: 'ART-1', path: 'src/app.ts', hunk: 1, hunkSha256: H1, body: '这一块整个不要' }])
+    expect(controller.state.lineCompose).toBeNull()
+    module.stopWorkbenchPolling()
+  })
+
+  it('正在写的那条显示不了 ⇒「放弃这条」清掉它,新评论又能开', async () => {
+    const page = installFakePage()
+    let mismatch = false
+    const { api } = linePage((_method, path) => mismatch && path.startsWith('/v1/workbench/review?') ? { reviews: [reviewTurn({ files: [reviewFile({ diff: LINE_DIFF, hunks: lineHunks().map(h => ({ ...h, rows: 9 })) })] })] } : null)
+    const module = await import('./workbench.js')
+    const controller = module.initWorkbenchPage({ invokeWorkbenchApi: api, pollMs: 60_000 })!
+    await vi.waitFor(() => expect(controller.state.reviews).toHaveLength(1))
+    const click = [...page.listeners.get('click')!][0]!
+    const whole = new FakeElement(); whole.dataset = { action: 'line-comment-hunk', artifactId: 'ART-1', path: 'src/app.ts', hunk: '0', hunkSha: H0 }
+    await click({ target: whole })
+    controller.state.lineCompose!.body = '写了一半'
+    mismatch = true
+    await controller.refresh({ force: true })
+    // 快照内容寻址:块清单不会在同一个 sha 下变,这里只是造一个「切块对不上」,所以手动重画一次
+    await vi.waitFor(() => expect(controller.state.reviews?.[0]?.files[0]?.hunks?.[0]?.rows).toBe(9))
+    controller.paint(true)
+    expect(page.innerHTML).toContain('有一条没写完的评论（那段改动现在显示不了）')
+    expect(page.innerHTML).not.toContain('<form class="wb-line-compose"')
+    const cancel = new FakeElement(); cancel.dataset = { action: 'line-comment-cancel' }
+    await click({ target: cancel })
+    expect(controller.state.lineCompose).toBeNull()
+    expect(page.innerHTML).not.toContain('wb-line-orphan')
+    module.stopWorkbenchPolling()
+  })
+
   it('发出评论:原会话不可恢复 ⇒ 确认后带重开令牌再发;发完照实说发了几条', async () => {
     const page = installFakePage()
     const fields = lineFields(page)

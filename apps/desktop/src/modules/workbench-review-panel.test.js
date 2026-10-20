@@ -302,6 +302,37 @@ describe('行评论 + 按块撤回', () => {
     expect(after).not.toContain('data-action="line-comments-send"')
   })
 
+  it('整块评论:服务端不带 rowStart / rowEnd(实际如此)或带 null,都落在块尾', () => {
+    for (const rows of [{ rowStart: undefined, rowEnd: undefined }, { rowStart: null, rowEnd: null }]) {
+      const c = draft({ ...rows, hunk: 1, lineStart: null, lineEnd: null, body: '整块不要' })
+      if (rows.rowStart === undefined) { delete c.rowStart; delete c.rowEnd; delete c.lineStart; delete c.lineEnd }
+      const html = renderReviewPanel([turn({ files: [lineFile({ comments: [c] })] })], real())
+      expect(html).toMatch(/\+y<\/span><\/code><\/pre><div class="wb-line-comment"[^>]*><p class="wb-line-comment-meta"><span>草稿<\/span><span>第 2 块<\/span>/)
+      expect(html).not.toContain('<div class="wb-line-comments">')
+    }
+  })
+
+  it('正在写的那条落不到页面上 ⇒ 说一句并给「放弃这条」', () => {
+    const compose = { artifactId: 'ART-1', path: 'src/app.ts', hunk: 0, hunkSha256: '1'.repeat(64), rowStart: 1, rowEnd: 1, commentId: 'x', body: '写了一半' }
+    // 显示得了:不说
+    expect(renderReviewPanel([turn({ files: [lineFile()] })], real({ lines: { compose } }))).not.toContain('wb-line-orphan')
+    // 切块对不上 / 额度用完 / 那一轮撤掉了 / 改的那条不在了
+    const cases = [
+      renderReviewPanel([turn({ files: [lineFile({ hunks: hunks([{ rows: 9 }, {}]) })] })], real({ lines: { compose } })),
+      (() => { const budget = { charsLeft: 1000, linesLeft: 2, limited: false }; return renderReviewPanel([turn({ files: [lineFile()] })], options({ budget, renderDiff: (/** @type {any} */ f, /** @type {any} */ l) => renderReviewFileDiff(f, escapeHtml, budget, l), lines: { compose } })) })(),
+      renderReviewPanel([turn({ discarded: true, files: [lineFile()] })], real({ lines: { compose } })),
+      renderReviewPanel([turn({ files: [lineFile()] })], real({ lines: { compose: { ...compose, edit: true, commentId: 'gone' } } })),
+    ]
+    for (const html of cases) {
+      expect(html).not.toContain('<form class="wb-line-compose"')
+      expect(html).toContain('有一条没写完的评论（那段改动现在显示不了）<button type="button" class="wb-new" data-action="line-comment-cancel">放弃这条</button>')
+    }
+    // 改的那条还在(哪怕列在差异下面)⇒ 输入框在,不说
+    const listed = renderReviewPanel([turn({ files: [lineFile({ hunks: hunks([{ rows: 9 }, {}]), comments: [draft()] })] })], real({ lines: { compose: { ...compose, edit: true, commentId: draft().id } } }))
+    expect(listed).toContain('<form class="wb-line-compose"')
+    expect(listed).not.toContain('wb-line-orphan')
+  })
+
   it('签名跟着块的撤回小签与评论的 id / 状态 / 正文走', () => {
     const sig = (/** @type {Record<string,unknown>} */ o) => reviewsSignature([turn({ files: [lineFile(o)] })])
     const base = sig({})

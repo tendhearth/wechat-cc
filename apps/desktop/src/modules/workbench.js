@@ -1587,6 +1587,8 @@ export function initWorkbenchPage(deps) {
       const body = compose.body.trim()
       const keep = (/** @type {string} */ notice) => { if (controller.state.lineCompose === compose) { compose.notice = notice; controller.paint(true) } }
       if (!body) return keep('先写一句再存。')
+      // 同一件事上还有一笔没回来(撤回 / 删 / 别的存)⇒ mutate 会直接回 false;说一声,字留着
+      if (busy.has(`task:${taskId}`)) return keep('上一个操作还没完成，稍等再存。')
       compose.notice = ''
       const payload = compose.edit ? { id: taskId, commentId: compose.commentId, body }
         : { id: taskId, commentId: compose.commentId, artifactId: compose.artifactId, path: compose.path, hunk: compose.hunk, hunkSha256: compose.hunkSha256, ...(compose.rowStart !== undefined && compose.rowEnd !== undefined ? { rowStart: compose.rowStart, rowEnd: compose.rowEnd } : {}), body }

@@ -270,6 +270,7 @@
 .wb-line-compose { display:grid; gap:6px; }
 .wb-line-compose .wb-review-note { margin:0; }
 .wb-line-compose textarea,.wb-review-send textarea { width:100%; min-height:48px; border:1px solid var(--wb-line); border-radius:7px; padding:7px 9px; background:var(--th-paper); color:var(--wb-text); font-family:inherit; font-size:13px; line-height:1.6; resize:vertical; }
+.wb-line-orphan { display:flex; flex-wrap:wrap; align-items:center; gap:8px; }
 .wb-line-comments { display:grid; gap:6px; margin:8px 0 0; }
 .wb-line-comments .wb-line-comment { border:1px solid var(--wb-line); border-radius:7px; }
 .wb-review-send { display:grid; gap:8px; margin:14px 0 4px; border:1px solid var(--th-hair); border-radius:10px; padding:11px 13px; background:var(--th-paper); }

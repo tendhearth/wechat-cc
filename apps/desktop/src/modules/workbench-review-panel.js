@@ -15,7 +15,7 @@
  * @typedef {{artifactId:string,path:string,hunk:number,hunkSha256?:string,rowStart?:number,rowEnd?:number,commentId:string,body:string,edit?:boolean,notice?:string}} LineCompose
  * @typedef {{summary?:string,notice?:string,result?:string,restartToken?:string}} CommentsSend
  * @typedef {{select?:LineSelect|null,compose?:LineCompose|null,send?:CommentsSend|null}} ReviewLineOptions */
-/** @typedef {{escapeHtml:(value:unknown)=>string,formatTime:(value:number)=>string,renderDiff:(file:ReviewTurnFile,lines?:import('./workbench-code-review.js').LineView)=>string,returnOpen?:ReviewReturnOpen|null,error?:boolean,budget?:{limited:boolean},rewind?:ReviewRewindOptions,lines?:ReviewLineOptions}} ReviewPanelOptions */
+/** @typedef {{escapeHtml:(value:unknown)=>string,formatTime:(value:number)=>string,renderDiff:(file:ReviewTurnFile,lines?:import('./workbench-code-review.js').LineView)=>string,returnOpen?:ReviewReturnOpen|null,error?:boolean,budget?:{limited:boolean},rewind?:ReviewRewindOptions,lines?:ReviewLineOptions,track?:{composePlaced:boolean}}} ReviewPanelOptions */
 
 import { renderRewindConfirm, rewindButtonHtml, rewindUndoHtml } from './workbench-rewind.js'
 import { splitDiffHunks } from './workbench-code-review.js'
@@ -66,8 +66,8 @@ const turnKey = (turn, index) => (String(turn.sha256 ?? '').match(/[a-f0-9]+/i)?
  * @param {ReviewCommentView} c */
 function lineLabel(c) {
   const a = c.lineStart, b = c.lineEnd ?? a
-  if (a === undefined) return `第 ${c.hunk + 1} 块`
-  const range = b !== undefined && b !== a ? `${a}–${b}` : `${a}`
+  if (a == null) return `第 ${c.hunk + 1} 块`
+  const range = b != null && b !== a ? `${a}–${b}` : `${a}`
   return c.side === 'old' ? `原第 ${range} 行（已删）` : `第 ${range} 行`
 }
 
@@ -79,10 +79,10 @@ function composeForm(compose, esc) {
 }
 
 /** 一条已有的评论:草稿可改 / 删;已发出只读,外加「之后改没改过这个文件」(从不说「已解决」)。
- * @param {ReviewCommentView} c @param {{esc:(value:unknown)=>string,formatTime:(value:number)=>string,gone:boolean,compose:LineCompose|null}} ctx */
+ * @param {ReviewCommentView} c @param {{esc:(value:unknown)=>string,formatTime:(value:number)=>string,gone:boolean,compose:LineCompose|null,track?:{composePlaced:boolean}}} ctx */
 function renderComment(c, ctx) {
   const { esc, gone, compose } = ctx
-  if (!gone && c.state === 'draft' && compose?.edit && compose.commentId === c.id) return composeForm(compose, esc)
+  if (!gone && c.state === 'draft' && compose?.edit && compose.commentId === c.id) { if (ctx.track) ctx.track.composePlaced = true; return composeForm(compose, esc) }
   const meta = c.state === 'sent' ? `已发出 · ${esc(ctx.formatTime(c.sentAt ?? 0))}` : gone ? '草稿 · 这一轮已撤掉，草稿不会发出' : '草稿'
   const later = c.state === 'sent' ? `<p class="wb-line-comment-later">${c.laterTouched ? `之后第 ${c.laterTouched} 轮又改过这个文件` : '之后没再动过这个文件'}</p>` : ''
   const actions = c.state === 'draft' && !gone ? `<div class="wb-line-comment-actions"><button type="button" class="wb-new" data-action="line-comment-edit" data-comment-id="${esc(c.id)}">改</button><button type="button" class="wb-new" data-action="line-comment-delete" data-comment-id="${esc(c.id)}">删</button></div>` : ''
@@ -99,7 +99,7 @@ function renderFileDiff(turn, file, inline, gone, options) {
   const own = (/** @type {{artifactId:string,path:string}|null|undefined} */ item) => item && item.artifactId === turn.artifactId && item.path === file.path ? item : null
   const select = /** @type {LineSelect|null} */ (gone ? null : own(lo?.select))
   const compose = /** @type {LineCompose|null} */ (gone ? null : own(lo?.compose))
-  const ctx = { esc, formatTime: options.formatTime, gone, compose }
+  const ctx = { esc, formatTime: options.formatTime, gone, compose, track: options.track }
   /** @type {Set<string>} */
   const shown = new Set()
   let diff
@@ -107,7 +107,7 @@ function renderFileDiff(turn, file, inline, gone, options) {
   else if (lo && file.diff && Array.isArray(file.hunks) && file.hunks.length && splitDiffHunks(file.diff, file.hunks)) {
     const base = ` data-artifact-id="${esc(turn.artifactId)}" data-path="${esc(file.path)}"`
     const canRevert = file.kind === 'modified'
-    const newHere = (/** @type {number} */ h, /** @type {number|null} */ r) => !!compose && !compose.edit && compose.hunk === h && (r === null ? compose.rowEnd === undefined : compose.rowEnd === r)
+    const newHere = (/** @type {number} */ h, /** @type {number|null} */ r) => !!compose && !compose.edit && compose.hunk === h && (r === null ? compose.rowEnd == null : compose.rowEnd === r)
     diff = options.renderDiff(file, {
       hunks: file.hunks, attrs: base, actions: !gone,
       head: (hunk, complete) => {
@@ -120,8 +120,8 @@ function renderFileDiff(turn, file, inline, gone, options) {
       selected: (h, r) => !!select && select.hunk === h && r >= select.rowStart && r <= select.rowEnd,
       after: (h, r) => {
         let out = ''
-        for (const c of comments) if (c.hunk === h && (r === null ? c.rowEnd === undefined : c.rowEnd === r) && !shown.has(c.id)) { shown.add(c.id); out += renderComment(c, ctx) }
-        if (newHere(h, r)) out += composeForm(/** @type {LineCompose} */ (compose), esc)
+        for (const c of comments) if (c.hunk === h && (r === null ? c.rowEnd == null : c.rowEnd === r) && !shown.has(c.id)) { shown.add(c.id); out += renderComment(c, ctx) }
+        if (newHere(h, r)) { if (options.track) options.track.composePlaced = true; out += composeForm(/** @type {LineCompose} */ (compose), esc) }
         else if (select && r !== null && select.hunk === h && select.rowEnd === r) {
           const n = select.rowEnd - select.rowStart + 1
           out += `<div class="wb-line-select" data-line-select><span>已选 ${n} 行</span><button type="button" class="wb-new" data-action="line-comment-open">评论</button><button type="button" class="wb-new" data-action="line-select-clear">取消</button></div>`
@@ -190,10 +190,13 @@ export function renderReviewPanel(reviews, options) {
   const unavailable = options.error ? '<p class="wb-review-note" role="status">改动记录暂时读不到，稍后再看。已有的改动不受影响。</p>' : ''
   // 「最新一轮」= 最新一轮没撤掉的(撤掉的轮之上那一轮给「撤掉这一轮」)
   const latest = list.findIndex(turn => !turn.discarded)
-  const turns = list.map((turn, index) => renderTurn(turn, list.length - index, index, options, index === latest)).join('')
+  // 正在写的那条落不到页面上(那段改动退回整段显示 / 额度用完 / 那一轮没了)⇒ 说一句并给「放弃这条」,不然新评论永远开不了
+  const track = { composePlaced: false }
+  const turns = list.map((turn, index) => renderTurn(turn, list.length - index, index, { ...options, track }, index === latest)).join('')
+  const orphan = options.lines?.compose && !track.composePlaced ? '<p class="wb-review-note wb-line-orphan" role="status">有一条没写完的评论（那段改动现在显示不了）<button type="button" class="wb-new" data-action="line-comment-cancel">放弃这条</button></p>' : ''
   const undo = rewindUndoHtml(options.rewind?.view, options.escapeHtml)
   // 额度是渲染时才知道有没有用完的,所以这句只能在所有回合都渲完之后问,而且只说一次。
   const limited = options.budget?.limited ? '<p class="wb-review-limit">预览已限量显示，请在「成果」里打开这份变更记录看完整差异。</p>' : ''
   const send = renderSendBar(list, options.lines?.send, options.escapeHtml)
-  return `<details id="wb-review" class="wb-disclosure wb-review" data-review-disclosure><summary><span>改动</span><small>${counts.turns} 轮 · ${counts.files} 个文件 · 已接受 ${counts.accepted} · 已打回 ${counts.returned}</small></summary>${unavailable}${undo}${turns}${send}${limited}</details>`
+  return `<details id="wb-review" class="wb-disclosure wb-review" data-review-disclosure><summary><span>改动</span><small>${counts.turns} 轮 · ${counts.files} 个文件 · 已接受 ${counts.accepted} · 已打回 ${counts.returned}</small></summary>${unavailable}${undo}${turns}${orphan}${send}${limited}</details>`
 }
