@@ -495,6 +495,7 @@ describe('任务 新建 <项目> 对比 @a @b <要求>(同一件事交给两家,
     const reply=String(await control('owner',`任务 新建 ${projectId} 对比 @claude @codex 修登录`,identity))
     const calls=createWechat.mock.calls.map(c=>c[0] as {providerId:string;isolation:boolean;text:string;requestId:string})
     expect(calls.map(c=>[c.providerId,c.isolation,c.text])).toEqual([['claude',true,'修登录'],['codex',true,'修登录']])
+    expect(createWechat.mock.calls.map(c=>(c[0] as {title?:string}).title)).toEqual(['修登录 · @claude','修登录 · @codex'])
     expect(new Set(calls.map(c=>c.requestId)).size).toBe(2)
     expect(reply).toContain('已交给 claude');expect(reply).toContain('已交给 codex');expect(reply).toContain('对比')
     await control('owner',`任务 新建 ${projectId} 对比 @claude @codex 修登录`,identity)

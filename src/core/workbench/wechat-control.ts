@@ -280,7 +280,7 @@ export function makeWechatWorkbenchControl(opts:{store:WorkbenchStore;ownerChatI
         const replies:string[]=[]
         for(const providerId of [a,b]){
           // 每家一个确定的请求编号:同一条消息重发 ⇒ 两件都按原样回放,不会多建
-          try{replies.push(opts.actions.createWechat({ownerChatId:chatId,accountId:identity.accountId,requestId:inputId(chatId,`compare:${providerId}`,text,identity),commandHash,projectId,isolation:true,providerId,...(originMessageId?{originMessageId}:{}),...(identity.origin!==undefined?{origin:identity.origin}:{}),text:compareText}).reply)}
+          try{replies.push(opts.actions.createWechat({ownerChatId:chatId,accountId:identity.accountId,requestId:inputId(chatId,`compare:${providerId}`,text,identity),commandHash,projectId,isolation:true,providerId,title:`${singleLine(compareText.split('\n')[0]!,40).replace(/…$/,'')} · @${providerId}`.slice(0,120),...(originMessageId?{originMessageId}:{}),...(identity.origin!==undefined?{origin:identity.origin}:{}),text:compareText}).reply)}
           catch(error){replies.push(`交给 ${providerId} 的那一份没开始:${failure(error,'')}`)}
         }
         return `同一件事交给了 ${a} 和 ${b},各在自己的独立工作区里做,互不影响。\n\n${replies.join('\n\n')}\n\n两份都做完以后对比改动:「任务 <任务编号> 改动」;留下好的那份「合回」,另一份「删除工作区」。`

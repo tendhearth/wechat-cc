@@ -576,7 +576,7 @@ export function makeExecuteDomain(ctx:ServiceCtx, domains:ExecuteDomains) {
     let receipt!:CreationReceipt
     // 出生地:微信入站省略 ⇒ wechat;App 一轮里的「任务」命令由 daemon 填(不知道 ⇒ null)。
     const origin=input.origin===undefined?'wechat':input.origin
-    createTask({path:tree?.path??project.path,providerId,text:input.text,origin,...(tree?{registerProject:false}:{})},(task,runId)=>{
+    createTask({path:tree?.path??project.path,providerId,text:input.text,origin,...(input.title!==undefined?{title:input.title}:{}),...(tree?{registerProject:false}:{})},(task,runId)=>{
       if(tree)store.worktrees.record({taskId:task.id,projectPath:tree.plan.projectPath,repoRoot:tree.plan.repoRoot,root:tree.plan.root,branch:tree.plan.branch,scriptSha:pinnedScriptSha(tree.plan.root)})
       store.wechatNotifications.watch(task.id,input.ownerChatId,input.accountId,true)
       receipt=store.creationReceipts.add({id,accountId:input.accountId,ownerChatId:input.ownerChatId,commandHash:input.commandHash,projectId:input.projectId,path:task.path,providerId:task.providerId,taskId:task.id,runId,

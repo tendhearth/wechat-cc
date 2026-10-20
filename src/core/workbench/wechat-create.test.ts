@@ -136,3 +136,19 @@ describe('create one shared workbench task from WeChat',()=>{
     expect(matters.get(task.id)?.originMessageId).not.toBe(message.msgId)
   })
 })
+
+describe('两家对比 through the real service (10-20)',()=>{
+  it('creates two isolated tasks, titled with their executor, on two different worktree paths',async()=>{
+    const {execFileSync}=await import('node:child_process'),{writeFileSync}=await import('node:fs')
+    const g=(...a:string[])=>execFileSync('git',a,{cwd:project,stdio:'pipe'}).toString().trim()
+    g('init','-q','-b','main');g('config','user.email','t@t');g('config','user.name','t')
+    writeFileSync(join(project,'a.txt'),'one\n');g('add','-A');g('commit','-q','-m','init')
+    const reply=await service.handleWechat('owner',command('对比 @claude @codex 修登录'),{...message,msgId:'compare-1'})
+    expect(String(reply)).toContain('同一件事交给了 claude 和 codex')
+    const tasks=service.list().tasks
+    expect(tasks.map(t=>t.title).sort()).toEqual(['修登录 · @claude','修登录 · @codex'])
+    expect(new Set(tasks.map(t=>t.path)).size).toBe(2)
+    expect(tasks.every(t=>t.path!==project)).toBe(true)
+    for(const t of tasks)await settle(t.id)
+  })
+})
