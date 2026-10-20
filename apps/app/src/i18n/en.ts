@@ -437,6 +437,8 @@ const en = {
   'jobs.removeConfirm': 'Tap again to delete',
   'jobs.gone': 'This job is already gone.',
   'jobs.failed': "Didn't work. Try again in a moment.",
+  'jobs.uncertain': "Not sure your computer got that. Check the list in a moment.",
+  'jobs.stale': "This list may be out of date.",
   'letters.title': 'Letters from CC',
   'letters.empty': 'CC hasn’t written you a letter yet.',
   'letters.unavailable': 'Couldn’t load the letters right now.',

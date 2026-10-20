@@ -438,6 +438,8 @@ const zh: Record<keyof typeof en, string> = {
   'jobs.removeConfirm': '再点一次，删掉这条',
   'jobs.gone': '这条定时已经不在了。',
   'jobs.failed': '没改成，稍后再试。',
+  'jobs.uncertain': '不确定电脑收到没有，过一会儿看看列表。',
+  'jobs.stale': '列表可能不是最新的。',
   'letters.title': 'CC 的信',
   'letters.empty': 'CC 还没给你写过信。',
   'letters.unavailable': '暂时读不到信。',

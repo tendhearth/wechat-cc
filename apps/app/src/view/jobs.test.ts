@@ -67,3 +67,22 @@ describe('定时 演示后端', () => {
     expect((await b.jobs()).jobs.map(j => j.id)).toContain('j2')
   })
 })
+
+describe('定时动作:点两下删 + 结果那句话(#418 评审)', () => {
+  it('删:第一下只 arm,同一条再点才 run;停 / 开 一下就 run;arm 着别的那条 ⇒ 这条重新 arm', async () => {
+    const { jobsTap } = await import('./jobs')
+    expect(jobsTap(null, 'j1', 'remove')).toBe('arm')
+    expect(jobsTap('j1', 'j1', 'remove')).toBe('run')
+    expect(jobsTap('j2', 'j1', 'remove')).toBe('arm')
+    expect(jobsTap(null, 'j1', 'pause')).toBe('run')
+    expect(jobsTap(null, 'j1', 'resume')).toBe('run')
+  })
+  it('超时不说「没改成」:uncertain ⇒ 不确定;not_found ⇒ 不在了;别的 ⇒ 没改成;ok / busy ⇒ 不说', async () => {
+    const { jobsActionNote } = await import('./jobs')
+    expect(jobsActionNote('ok')).toBeNull()
+    expect(jobsActionNote('busy')).toBeNull()
+    expect(jobsActionNote({ error: 'uncertain' })).toBe('jobs.uncertain')
+    expect(jobsActionNote({ error: 'not_found' })).toBe('jobs.gone')
+    expect(jobsActionNote({ error: 'offline' })).toBe('jobs.failed')
+  })
+})

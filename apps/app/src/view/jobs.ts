@@ -1,7 +1,7 @@
 // 「定时」(2026-10-20,对标 B7)的纯视图模型:一行 = 什么时候(label,电脑写好、带时区)+ 做什么(早报 / 正文)+ 上次结果。
 // 新建仍在微信「定时」里说;手机上只看与停 / 开 / 删。纯 TS,不碰 react / expo。
 import type { JobsAction, JobsViewT, PhoneJobT } from '../backend/types'
-import { t, type Lang } from '../i18n'
+import { t, type Lang, type MessageKey } from '../i18n'
 
 export type JobRow = {
   id: string
@@ -55,4 +55,18 @@ export function jobsPage(v: JobsViewT, lang: Lang): JobsPage {
     empty: rows.length === 0 ? t(lang, 'jobs.empty') : null,
     hint: rows.length > 0 ? t(lang, 'jobs.addHint') : null,
   }
+}
+
+/** 点了「删」之后:第一下只是「再点一次」(没在等的这一条 ⇒ armed),第二下才真删;停 / 开 一下就做。 */
+export function jobsTap(armed: string | null, id: string, action: JobsAction): 'arm' | 'run' {
+  return action === 'remove' && armed !== id ? 'arm' : 'run'
+}
+
+/** 动作的结果 → 那一句灰字;ok / busy(同一条正在做)⇒ 不说。
+ * 超时(uncertain)不能说「没改成」—— 也许已经改了只是回执丢了(定时页评审 10-20),单独说「不确定」。 */
+export function jobsActionNote(r: 'ok' | 'busy' | { error: string }): MessageKey | null {
+  if (r === 'ok' || r === 'busy') return null
+  if (r.error === 'not_found') return 'jobs.gone'
+  if (r.error === 'uncertain') return 'jobs.uncertain'
+  return 'jobs.failed'
 }

@@ -1,5 +1,5 @@
 import { useRouter } from 'expo-router'
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { Pressable, ScrollView, View } from 'react-native'
 import { SafeAreaView } from 'react-native-safe-area-context'
 import type { JobsAction } from '../backend/types'
@@ -14,7 +14,7 @@ import { TopBar } from '../ui/TopBar'
 import { Txt } from '../ui/Txt'
 import { useTheme } from '../ui/useTheme'
 import { canSubmit } from '../view/connection'
-import { jobsPage } from '../view/jobs'
+import { jobsActionNote, jobsPage, jobsTap } from '../view/jobs'
 
 // 「定时」(2026-10-20,对标 B7):电脑上的定时,每条能停 / 开 / 删;新建仍在微信「定时」里说。从设置进来,不占标签页。
 // 删点两下(3 秒内,同进展页的「停下」),只在在线时能点;做完重新拉一次列表。
@@ -28,18 +28,26 @@ export default function Jobs() {
   const q = useQuery('jobs', () => backend.jobs(), { refreshOnMount: true })
   const [armed, setArmed] = useState<string | null>(null)
   const [busy, setBusy] = useState<string | null>(null)
+  // 同一帧连点两下:state 还没更新,靠 ref 挡住第二下(定时页评审 10-20)
+  const inFlight = useRef(false)
   const [note, setNote] = useState<string | null>(null)
   useEffect(() => { if (!armed) return; const tm = setTimeout(() => setArmed(null), 3000); return () => clearTimeout(tm) }, [armed])
   const page = q.data ? jobsPage(q.data, lang) : null
 
   const act = async (id: string, action: JobsAction) => {
-    if (busy || !online) return
-    if (action === 'remove' && armed !== id) { setArmed(id); setNote(null); return }
+    if (inFlight.current || busy || !online) return
+    if (jobsTap(armed, id, action) === 'arm') { setArmed(id); setNote(null); return }
+    inFlight.current = true
     setArmed(null); setBusy(id); setNote(null)
-    const r = await submit(`jobs:${id}`, () => backend.jobsAction(id, action))
-    setBusy(null)
-    if (r !== 'ok' && r !== 'busy') setNote(t(lang, r.error === 'not_found' ? 'jobs.gone' : 'jobs.failed'))
-    void q.refresh()
+    try {
+      const r = await submit(`jobs:${id}`, () => backend.jobsAction(id, action))
+      const key = jobsActionNote(r)
+      if (key) setNote(t(lang, key))
+      await q.refresh().catch(() => {})   // 失败会落在 q.error ⇒ 下面那句「可能不是最新的」
+    } finally {
+      inFlight.current = false
+      setBusy(null)
+    }
   }
   const pill = (testID: string, key: MessageKey, onPress: () => void, off: boolean) => (
     <Pressable testID={testID} accessibilityRole="button" accessibilityState={{ disabled: off }} disabled={off} onPress={onPress}
@@ -82,6 +90,8 @@ export default function Jobs() {
               </View>
             )}
             {note ? <Txt testID="jobs-note" role="meta" tone="inkSoft" accessibilityLiveRegion="polite">{note}</Txt> : null}
+            {/* 手上有列表、但最近一次重拉失败了 ⇒ 别让人以为这就是现在的样子 */}
+            {q.error ? <Txt testID="jobs-stale" role="meta" tone="inkSoft">{t(lang, 'jobs.stale')}</Txt> : null}
             {page.hint ? <Txt role="meta" tone="inkSoft">{page.hint}</Txt> : null}
           </>
         )}
