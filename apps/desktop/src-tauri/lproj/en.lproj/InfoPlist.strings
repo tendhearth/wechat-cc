@@ -16,3 +16,9 @@
 
 /* Shown by macOS when Tendhearth CC asks for microphone access (desktop Voice Input). */
 "NSMicrophoneUsageDescription" = "Tendhearth CC uses the microphone to turn your Voice Input into text. It only records while you use Voice Input.";
+
+/* Calendar / Reminders, read-only (morning brief, 2026-10-20). */
+"NSCalendarsFullAccessUsageDescription" = "Tendhearth CC reads your calendar (read-only: titles, times, calendar names) to put today’s schedule in your morning brief and answer questions about it. It never creates, changes or deletes events.";
+"NSCalendarsUsageDescription" = "Tendhearth CC reads your calendar (read-only: titles, times, calendar names) to put today’s schedule in your morning brief and answer questions about it. It never creates, changes or deletes events.";
+"NSRemindersFullAccessUsageDescription" = "Tendhearth CC reads your reminders (read-only: titles and due times) to put what’s due today in your morning brief. It never creates, changes or completes reminders.";
+"NSRemindersUsageDescription" = "Tendhearth CC reads your reminders (read-only: titles and due times) to put what’s due today in your morning brief. It never creates, changes or completes reminders.";
