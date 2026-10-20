@@ -4,7 +4,7 @@ import { BackendError, type Backend, type PhoneChangesTurnT } from '../backend/t
 import { t, type Lang } from '../i18n'
 import { uuid } from '../net/uuid'
 import { useSubmit } from '../state/hooks'
-import { COMMENT_MAX, commentFailure, hunkComments, sendOutcome, type HunkPiece } from '../view/review-comments'
+import { batchRequestId, COMMENT_MAX, commentFailure, hunkComments, sendOutcome, type HunkPiece, type SendBlock } from '../view/review-comments'
 import { Button } from './Button'
 import { TextField } from './TextField'
 import { space } from './tokens'
@@ -147,36 +147,38 @@ export function HunkComments({ matterId, artifactId, file, pieces, backend, lang
 
 /**
  * 「发出 N 条评论」+ 可选「整体说一句」(切片 4):这件事所有草稿一起发给执行者。
- * requestId 一批一个:没发成 / 不确定时重点沿用(daemon 按它去重),发成了才换。
+ * 投递 id 一批一个:同一批没发成 / 不确定时重点沿用(daemon 按它去重);草稿变了(batchKey 不同)或发成了才换。
  * 结果那一句交给 onNote(发成后这一块会消失,那句话由页面留着)。
  */
-export function CommentsSend({ matterId, label, olderDrafts, backend, lang, online, onNote, onDone }: {
-  matterId: string; label: string; olderDrafts: boolean
+export function CommentsSend({ matterId, block, backend, lang, online, onNote, onDone }: {
+  matterId: string; block: SendBlock
   backend: Pick<Backend, 'reviewCommentsSend'>; lang: Lang; online: boolean; onNote: (note: { text: string; ok: boolean } | null) => void; onDone: () => void
 }) {
   const { c } = useTheme()
   const submit = useSubmit()
   const [summary, setSummary] = useState('')
   const [busy, setBusy] = useState(false)
-  const requestId = useRef(uuid())
+  const batch = useRef<{ id: string; key: string } | null>(null)
   const send = async () => {
     if (busy) return
     setBusy(true); onNote(null)
     let counts: { sent: number; remaining: number; skippedDiscarded: number } | null = null
     const s = summary.trim()
-    const r = await submit(`review-send:${matterId}`, async () => { counts = await backend.reviewCommentsSend({ id: matterId, requestId: requestId.current, ...(s ? { summary: s } : {}) }) })
+    const req = batch.current = batchRequestId(batch.current, block.key, uuid)
+    const r = await submit(`review-send:${matterId}`, async () => { counts = await backend.reviewCommentsSend({ id: matterId, requestId: req.id, ...(s ? { summary: s } : {}) }) })
     setBusy(false)
     const out = sendOutcome(r, counts, lang)
     onNote(out)
-    if (out.ok) { requestId.current = uuid(); setSummary('') }
+    if (out.ok) { batch.current = null; setSummary('') }
+    // 不确定 ⇒ 刷新;刷新后草稿变了,下一次 batchRequestId 自然换新 id
     onDone()
   }
   return (
     <View testID="line-comments-send" style={{ gap: space.s, paddingTop: space.s }}>
       <TextField testID="line-comments-summary" value={summary} onChangeText={setSummary} placeholder={t(lang, 'lineReview.summary')} multiline maxLength={COMMENT_MAX}
         style={{ paddingVertical: space.s, borderBottomWidth: 1, borderBottomColor: c.hair }} />
-      {olderDrafts ? <Txt role="caption" tone="inkSoft">{t(lang, 'lineReview.olderDrafts')}</Txt> : null}
-      <Button kind="primary" testID="line-comments-send-button" label={label} busy={busy} disabled={!online} onPress={() => void send()} />
+      {block.notes.map(n => <Txt key={n} role="caption" tone="inkSoft">{n}</Txt>)}
+      <Button kind="primary" testID="line-comments-send-button" label={block.label} busy={busy} disabled={!online} onPress={() => void send()} />
     </View>
   )
 }

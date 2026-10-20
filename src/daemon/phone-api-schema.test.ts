@@ -295,30 +295,41 @@ describe('真实返回校验 — workbench + matters', () => {
   it('行评论(切片 4)真实返回符合 schema:changes 带块与评论;建 / 删;执行者还在写 ⇒ 发出 409 workbench_busy;没有草稿 ⇒ 404', async () => {
     const task = create('lc')
     await ready(task.id)
+    // 只给设备令牌(#456 评审):链接令牌 403
+    const dt = (await (await request('/set/api/pair', {})).json() as { device_token: string }).device_token
     const diff = '@@ -1 +1 @@\n-老\n+新'
     const review: GitReview = { version: 1, scope: 'working-tree-before-after', startedAt: 1, finishedAt: 2, headBefore: 'h1', headAfter: 'h2', status: 'complete', preexistingPaths: [], notes: [],
       files: [{ path: 'src/a.ts', preexisting: false, kind: 'modified', beforeSha256: 'a'.repeat(64), afterSha256: 'b'.repeat(64), diff }] }
     saveArtifactSnapshot(store, task.id, { name: '代码变更-run1.json', mime: GIT_REVIEW_MIME, bytes: serializeGitReview(review) }, root)
-    const read = async () => parseAs('GET /m/api/matter/changes', await (await request(`/m/api/matter/changes?id=${task.id}`)).json()) as { turn: { artifactId: string; pendingComments?: number; files: Array<{ hunks?: Array<{ sha256: string; header: string }>; comments?: Array<{ id: string; state: string }> }> } }
+    const read = async () => parseAs('GET /m/api/matter/changes', await (await request(`/m/api/matter/changes?id=${task.id}`, undefined, dt)).json()) as { turn: { artifactId: string; pendingComments?: number; files: Array<{ hunks?: Array<{ sha256: string; header: string }>; comments?: Array<{ id: string; state: string }> }> } }
     const before = await read()
     expect(before.turn.files[0]!.hunks).toEqual([{ index: 0, sha256: createHash('sha256').update(diff, 'utf8').digest('hex'), header: '@@ -1 +1 @@' }])
     const commentId = randomUUID()
-    const made = await request('/m/api/matter/review-comment', { id: task.id, commentId, artifactId: before.turn.artifactId, path: 'src/a.ts', hunk: 0, hunkSha256: before.turn.files[0]!.hunks![0]!.sha256, body: '这里换个名字' })
+    // 配对会作废旧链接令牌 ⇒ 另开一个新的来试
+    const link = panel.issueToken()
+    const denied = await request('/m/api/matter/review-comment', { id: task.id, commentId, artifactId: before.turn.artifactId, path: 'src/a.ts', hunk: 0, hunkSha256: before.turn.files[0]!.hunks![0]!.sha256, body: 'x' }, link)
+    expect(denied.status).toBe(403)
+    expect((await request('/m/api/matter/review-comments-send', { id: task.id }, link)).status).toBe(403)
+    const made = await request('/m/api/matter/review-comment', { id: task.id, commentId, artifactId: before.turn.artifactId, path: 'src/a.ts', hunk: 0, hunkSha256: before.turn.files[0]!.hunks![0]!.sha256, body: '这里换个名字' }, dt)
     expect(made.status).toBe(200)
     expect(parseAs('POST /m/api/matter/review-comment', await made.json())).toEqual({ ok: true, commentId })
     const after = await read()
     expect(after.turn.pendingComments).toBe(1)
     expect(after.turn.files[0]!.comments).toMatchObject([{ id: commentId, state: 'draft' }])
-    const stale = await request('/m/api/matter/review-comment', { id: task.id, commentId: randomUUID(), artifactId: before.turn.artifactId, path: 'src/a.ts', hunk: 0, hunkSha256: 'c'.repeat(64), body: 'x' })
+    const stale = await request('/m/api/matter/review-comment', { id: task.id, commentId: randomUUID(), artifactId: before.turn.artifactId, path: 'src/a.ts', hunk: 0, hunkSha256: 'c'.repeat(64), body: 'x' }, dt)
     expect(stale.status).toBe(409)
     expect(parseAs('POST /m/api/matter/review-comment', await stale.json())).toEqual({ ok: false, error: 'review_hunk_stale' })
-    const busy = await request('/m/api/matter/review-comments-send', { id: task.id, summary: '整体' })
+    const busy = await request('/m/api/matter/review-comments-send', { id: task.id, summary: '整体' }, dt)
     expect(busy.status).toBe(409)
     expect(parseAs('POST /m/api/matter/review-comments-send', await busy.json())).toEqual({ ok: false, error: 'workbench_busy' })
-    const del = await request('/m/api/matter/review-comment', { id: task.id, commentId, delete: true })
+    const del = await request('/m/api/matter/review-comment', { id: task.id, commentId, delete: true }, dt)
     expect(parseAs('POST /m/api/matter/review-comment', await del.json())).toEqual({ ok: true, deleted: true })
+    // 删成了但回包丢了 ⇒ App 自动重发同一个删:照样成功,不说「没了」
+    const again = await request('/m/api/matter/review-comment', { id: task.id, commentId, delete: true }, dt)
+    expect(again.status).toBe(200)
+    expect(parseAs('POST /m/api/matter/review-comment', await again.json())).toEqual({ ok: true, deleted: true })
     expect((await read()).turn.pendingComments).toBeUndefined()
-    const none = await request('/m/api/matter/review-comments-send', { id: task.id })
+    const none = await request('/m/api/matter/review-comments-send', { id: task.id }, dt)
     expect(none.status).toBe(404)
     expect(parseAs('POST /m/api/matter/review-comments-send', await none.json())).toEqual({ ok: false, error: 'review_comment_not_found' })
   })

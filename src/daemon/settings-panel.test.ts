@@ -806,9 +806,12 @@ describe('POST /m/api/matter/review-mark|review-return', () => {
   async function panelWith(review?: unknown) {
     const panel = makeSettingsPanel({ stateDir: seedStateDir(), ownerChatId: () => OWNER, chatPrefs: { get: () => ({}), set: () => ({}) }, getUserName: () => null, setUserName: async () => {}, log: () => {}, ...(review ? { review } : {}) } as never)
     const { port } = await panel.start(0)
-    const t = panel.issueToken()
-    const post = (path: string, body: unknown) => fetch(`http://127.0.0.1:${port}${path}?t=${t}`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body) })
-    return { panel, post }
+    const base = `http://127.0.0.1:${port}`
+    // 退回只给设备令牌(#456 评审):先配对拿设备令牌;link 是 /set 链接令牌
+    const paired = await (await fetch(`${base}/set/api/pair?t=${panel.issueToken()}`, { method: 'POST' })).json() as { device_token: string }
+    const link = panel.issueToken()
+    const post = (path: string, body: unknown, tok = paired.device_token) => fetch(`${base}${path}?t=${tok}`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body) })
+    return { panel, post, link }
   }
   it('没接线 ⇒ 503;参数不对 ⇒ 400 且不碰工作台', async () => {
     const a = await panelWith()
@@ -822,6 +825,16 @@ describe('POST /m/api/matter/review-mark|review-return', () => {
     expect(review.mark).not.toHaveBeenCalled()
     expect(review.ret).not.toHaveBeenCalled()
     await b.panel.stop()
+  })
+  it('链接令牌:退回 403(不碰工作台);标记照旧能用', async () => {
+    const review = { mark: vi.fn(), ret: vi.fn(async () => ({})) }
+    const p = await panelWith(review)
+    const r = await p.post('/m/api/matter/review-return', { id: 'deadbeef', artifactId: 'a1', paths: ['a.ts'], comment: '改回去' }, p.link)
+    expect(r.status).toBe(403)
+    expect(review.ret).not.toHaveBeenCalled()
+    expect((await p.post('/m/api/matter/review-mark', { id: 'deadbeef', artifactId: 'a1', path: 'a.ts', mark: 'accepted' }, p.link)).status).toBe(200)
+    expect(review.mark).toHaveBeenCalledTimes(1)
+    await p.panel.stop()
   })
   it('标记与退回原样转给工作台;工作台的错误码按手机那套映射', async () => {
     const review = { mark: vi.fn(), ret: vi.fn(async () => ({})) }
@@ -848,9 +861,12 @@ describe('POST /m/api/matter/review-comment|review-comments-send(行评论,切�
   async function panelWith(review?: unknown) {
     const panel = makeSettingsPanel({ stateDir: seedStateDir(), ownerChatId: () => OWNER, chatPrefs: { get: () => ({}), set: () => ({}) }, getUserName: () => null, setUserName: async () => {}, log: () => {}, ...(review ? { review } : {}) } as never)
     const { port } = await panel.start(0)
-    const t = panel.issueToken()
-    const post = (path: string, body: unknown) => fetch(`http://127.0.0.1:${port}${path}?t=${t}`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: typeof body === 'string' ? body : JSON.stringify(body) })
-    return { panel, post }
+    const base = `http://127.0.0.1:${port}`
+    // 送给执行者的话就是指令 ⇒ 只给设备令牌(#456 评审);link 是 /set 链接令牌
+    const paired = await (await fetch(`${base}/set/api/pair?t=${panel.issueToken()}`, { method: 'POST' })).json() as { device_token: string }
+    const link = panel.issueToken()
+    const post = (path: string, body: unknown, tok = paired.device_token) => fetch(`${base}${path}?t=${tok}`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: typeof body === 'string' ? body : JSON.stringify(body) })
+    return { panel, post, link }
   }
   it('没接线(老接线只有 mark / ret)⇒ 503;参数不对 ⇒ 400 且不碰工作台', async () => {
     const a = await panelWith({ mark: vi.fn(), ret: vi.fn() })
@@ -872,6 +888,15 @@ describe('POST /m/api/matter/review-comment|review-comments-send(行评论,切�
       expect((await b.post('/m/api/matter/review-comments-send', body)).status, JSON.stringify(body)).toBe(400)
     expect(review.comment).not.toHaveBeenCalled(); expect(review.sendComments).not.toHaveBeenCalled()
     await b.panel.stop()
+  })
+  it('链接令牌:建 / 删 / 发出都 403,不碰工作台', async () => {
+    const review = { mark: vi.fn(), ret: vi.fn(), comment: vi.fn(), sendComments: vi.fn() }
+    const p = await panelWith(review)
+    expect((await p.post('/m/api/matter/review-comment', create, p.link)).status).toBe(403)
+    expect((await p.post('/m/api/matter/review-comment', { id: 'deadbeef', commentId: CID, delete: true }, p.link)).status).toBe(403)
+    expect((await p.post('/m/api/matter/review-comments-send', { id: 'deadbeef' }, p.link)).status).toBe(403)
+    expect(review.comment).not.toHaveBeenCalled(); expect(review.sendComments).not.toHaveBeenCalled()
+    await p.panel.stop()
   })
   it('建 / 删原样转给工作台(id 转小写);发出只回三个数(回执与任务视图不给手机)', async () => {
     const { PHONE_API_SCHEMAS } = await import('@wechat-cc/protocol')

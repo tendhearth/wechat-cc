@@ -233,7 +233,8 @@ export function makeLiveBackend(d: LiveDeps): Backend {
       if (p.comment.length > PHONE_SAY_MAX_CHARS) throw new BackendError('invalid')
       await call('POST /m/api/matter/review-return', '/m/api/matter/review-return', { body: { id: p.id, artifactId: p.artifactId, paths: p.paths, comment: p.comment } })
     },
-    // 行评论(切片 4):建 / 删按 commentId 幂等 ⇒ 断线可自动重发;发出不重发(重发时草稿多半已记成已发出,会回「没有草稿」)
+    // 行评论(切片 4):建按 commentId 幂等(同内容回原行);删也幂等(哪儿都没有这个 id ⇒ daemon 当已删过)⇒ 超时可自动重发。
+    // 发出不自动重发(retry:false,协议客户端超时只拒不重发):重发时草稿多半已记成已发出,会回「没有草稿」。
     async reviewComment(p) {
       if (p.body.length > 2000) throw new BackendError('invalid')
       await call('POST /m/api/matter/review-comment', '/m/api/matter/review-comment', { body: { id: p.id, commentId: p.commentId, artifactId: p.artifactId, path: p.path, hunk: p.hunk, hunkSha256: p.hunkSha256, body: p.body }, retry: true })

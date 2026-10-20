@@ -32,10 +32,10 @@ export const PHONE_ROUTES: ReadonlySet<string> = new Set([
   'GET /m/api/matter/input-receipt',
   'GET /m/api/matter/insight',
   'GET /m/api/matter/changes',
-  // 手机逐文件审阅(2026-10-17):没问题 / 退回(同桌面 review-mark / review-return)
+  // 手机逐文件审阅(2026-10-17):没问题 / 退回(同桌面 review-mark / review-return);退回只给设备(见 LINK_EXCLUDED)
   'POST /m/api/matter/review-mark',
   'POST /m/api/matter/review-return',
-  // 行评论(切片 4,2026-10-21):整块评论建 / 删 + 发出;同 review-return 链接令牌也能用(只给执行者递话,不写主人的文件)
+  // 行评论(切片 4,2026-10-21):整块评论建 / 删 + 发出;只给设备(见 LINK_EXCLUDED)
   'POST /m/api/matter/review-comment',
   'POST /m/api/matter/review-comments-send',
   // 撤掉这一轮(回退切片 4,2026-10-21):预览 + 带 token 执行;只给设备(见 LINK_EXCLUDED)
@@ -121,7 +121,8 @@ export const PHONE_ROUTES: ReadonlySet<string> = new Set([
 // chat/file 也只给设备(评审 10-19 #1):寄出去的信每一页都镜像成主人对话里的一行文件,链接令牌能从这里读出整封信,
 // 等于绕过上面「信是私事」;手机网页 /m 不用这条(只有原生 App 按块下载回复里的文件)。
 // 撤掉这一轮(2026-10-21)也只给设备:会丢掉工作区里的改动,不能让 10 分钟、可能外泄的链接令牌做。
-const LINK_EXCLUDED: ReadonlySet<string> = new Set(['POST /m/api/cli/say', 'POST /m/api/cli/permission', 'GET /m/api/letters', 'GET /m/api/letters/page', 'GET /m/api/chat/file', 'GET /m/api/jobs', 'POST /m/api/jobs/action', 'GET /m/api/activity', 'GET /m/api/lessons', 'POST /m/api/lessons/add', 'POST /m/api/lessons/remove', 'GET /m/api/matter/rewind', 'POST /m/api/matter/rewind'])
+// 退回 / 行评论(#456 评审):送给执行者的话就是指令 ⇒ 只给设备。review-mark 只记标记、不给执行者递话,留给链接令牌。
+const LINK_EXCLUDED: ReadonlySet<string> = new Set(['POST /m/api/matter/review-return', 'POST /m/api/matter/review-comment', 'POST /m/api/matter/review-comments-send', 'POST /m/api/cli/say', 'POST /m/api/cli/permission', 'GET /m/api/letters', 'GET /m/api/letters/page', 'GET /m/api/chat/file', 'GET /m/api/jobs', 'POST /m/api/jobs/action', 'GET /m/api/activity', 'GET /m/api/lessons', 'POST /m/api/lessons/add', 'POST /m/api/lessons/remove', 'GET /m/api/matter/rewind', 'POST /m/api/matter/rewind'])
 export const LINK_ROUTES: ReadonlySet<string> = new Set([...PHONE_ROUTES].filter(r => !LINK_EXCLUDED.has(r)))
 
 /**

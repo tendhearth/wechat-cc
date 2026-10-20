@@ -244,6 +244,7 @@ const zh: Record<keyof typeof en, string> = {
   'lineReview.sendOne': '发出 1 条评论',
   'lineReview.summary': '整体说一句（可不写）',
   'lineReview.olderDrafts': '更早几轮上的草稿也会一起发出。',
+  'lineReview.hiddenDrafts': '其中 {n} 条所在的改动这里显示不全，照样会发出。',
   'lineReview.sentDone': '发出了 {n} 条，它会照着改。',
   'lineReview.remaining': '还有 {n} 条装不下，留在草稿里，再发一次。',
   'lineReview.skipped': '{n} 条在已撤掉的轮上，没有发出。',

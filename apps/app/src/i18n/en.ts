@@ -242,6 +242,7 @@ const en = {
   'lineReview.sendOne': 'Send 1 comment',
   'lineReview.summary': 'One overall note (optional)',
   'lineReview.olderDrafts': 'Drafts on earlier rounds go out too.',
+  'lineReview.hiddenDrafts': "{n} of them are on changes this page can't show in full. They still go out.",
   'lineReview.sentDone': 'Sent {n}. It will work through them.',
   'lineReview.remaining': "{n} more didn't fit and stay as drafts. Send again.",
   'lineReview.skipped': "{n} on undone rounds weren't sent.",

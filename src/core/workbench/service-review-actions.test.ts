@@ -146,7 +146,7 @@ describe('reviewComment', () => {
     expect(service.reviewComment(id, { commentId: kept.comment.id, delete: true })).toEqual({ deleted: kept.comment.id })
   })
 
-  it('edits and deletes drafts only; sent ones are frozen; unknown ids are not found', async () => {
+  it('edits and deletes drafts only; sent ones are frozen; unknown ids are not found for edits, deleting one is a no-op', async () => {
     const { service, store, id, r1 } = await planted()
     const { comment } = create(service, id, r1.id) as { comment: { id: string } }
     expect(service.reviewComment(id, { commentId: comment.id, body: '换个说法' })).toMatchObject({ comment: { body: '换个说法', state: 'draft' } })
@@ -154,7 +154,9 @@ describe('reviewComment', () => {
     expect(() => service.reviewComment(id, { commentId: comment.id, body: '再改' })).toThrow('review_comment_sent')
     expect(() => service.reviewComment(id, { commentId: comment.id, delete: true })).toThrow('review_comment_sent')
     expect(() => service.reviewComment(id, { commentId: randomUUID(), body: 'x' })).toThrow('review_comment_not_found')
-    expect(() => service.reviewComment(id, { commentId: randomUUID(), delete: true })).toThrow('review_comment_not_found')
+    // 删是幂等的:哪儿都没有这个 id ⇒ 照样回 deleted(删成了但回包丢了的重发)
+    const gone = randomUUID()
+    expect(service.reviewComment(id, { commentId: gone, delete: true })).toEqual({ deleted: gone })
   })
 
   it('caps drafts per task at 50 and comments per round at 200 (review_comment_limit); a retry of an existing id is not counted', async () => {

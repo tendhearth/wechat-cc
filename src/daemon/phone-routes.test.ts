@@ -19,11 +19,11 @@ describe('phoneRouteAllowed', () => {
   })
   it('链接令牌与设备令牌同一套(裁决 1),但终端会话的「接着说」「拍板」(评审 10-15 #3)与「CC 的信」(2026-10-18,私事;连同能读出信页的 chat/file)只给配好的设备;只允局域网的三条', () => {
     // chat/file:信的每一页也镜像进对话,链接令牌不能从这里读出信(评审 10-19 #1)
-    const deviceOnly = ['GET /m/api/letters', 'GET /m/api/letters/page', 'GET /m/api/chat/file', 'POST /m/api/cli/permission', 'POST /m/api/cli/say', 'GET /m/api/jobs', 'POST /m/api/jobs/action', 'GET /m/api/activity', 'GET /m/api/lessons', 'POST /m/api/lessons/add', 'POST /m/api/lessons/remove', 'GET /m/api/matter/rewind', 'POST /m/api/matter/rewind']
+    const deviceOnly = ['GET /m/api/letters', 'GET /m/api/letters/page', 'GET /m/api/chat/file', 'POST /m/api/cli/permission', 'POST /m/api/cli/say', 'GET /m/api/jobs', 'POST /m/api/jobs/action', 'GET /m/api/activity', 'GET /m/api/lessons', 'POST /m/api/lessons/add', 'POST /m/api/lessons/remove', 'GET /m/api/matter/rewind', 'POST /m/api/matter/rewind', 'POST /m/api/matter/review-return', 'POST /m/api/matter/review-comment', 'POST /m/api/matter/review-comments-send']
     expect([...LINK_ROUTES].sort()).toEqual([...PHONE_ROUTES].filter(r => !deviceOnly.includes(r)).sort())
     for (const r of deviceOnly) { expect(PHONE_ROUTES.has(r)).toBe(true); expect(LINK_ROUTES.has(r)).toBe(false) }
-    // 行评论(切片 4)同 review-return:只给执行者递话、不写主人的文件 ⇒ 链接令牌也能用
-    for (const r of ['POST /m/api/matter/review-comment', 'POST /m/api/matter/review-comments-send', 'POST /m/api/matter/review-return']) { expect(PHONE_ROUTES.has(r)).toBe(true); expect(LINK_ROUTES.has(r)).toBe(true) }
+    // 退回 / 行评论给执行者的话是指令 ⇒ 只给设备(#456 评审);review-mark 只记标记,链接令牌照旧能用
+    expect(LINK_ROUTES.has('POST /m/api/matter/review-mark')).toBe(true)
     expect([...LAN_ONLY_OPS].sort()).toEqual(['forget_devices', 'revoke_device', 'set_remote'])
   })
 })

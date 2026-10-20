@@ -66,11 +66,17 @@ export function makeReviewCommentStore(db: Db, bump: (taskId: string) => number)
         return get(id)!
       })
     },
-    remove(taskId: string, id: string): void {
-      tx(() => {
+    /**
+     * 删草稿;回是否真删了一行。删是幂等的(#456 评审):哪儿都没有这个 id ⇒ 当已经删过,不报错(删成了但回包丢了,重发不能说「没了」)。
+     * 这个 id 是别的任务的 ⇒ review_comment_not_found(不碰别人的);已发出 ⇒ review_comment_sent。
+     */
+    remove(taskId: string, id: string): boolean {
+      return tx(() => {
+        if (!get(id)) return false
         draft(taskId, id)
         db.query("DELETE FROM workbench_review_comments WHERE id=? AND state='draft'").run(id)
         bump(taskId)
+        return true
       })
     },
     /**

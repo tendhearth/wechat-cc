@@ -388,7 +388,7 @@ export default function Matter() {
               </View>
             ))}
             {sendRow && turn ? (
-              <CommentsSend matterId={id} label={sendRow.label} olderDrafts={sendRow.n > files.reduce((n, f) => n + (f.comments ?? []).filter(x => x.state === 'draft').length, 0)}
+              <CommentsSend matterId={id} block={sendRow}
                 backend={backend} lang={lang} online={online} onNote={setCommentsNote} onDone={() => { void refreshChanges(); void refreshDetail() }} />
             ) : null}
             {commentsNote ? <Txt testID="line-comments-note" role="caption" tone={commentsNote.ok ? 'inkSoft' : 'bad'} accessibilityLiveRegion="polite">{commentsNote.text}</Txt> : null}

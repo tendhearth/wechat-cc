@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest'
 import type { PhoneChangesTurnT } from '../backend/types'
-import { canComment, commentFailure, commentRow, fileHunks, hunkComments, sendBlock, sendOutcome } from './review-comments'
+import { batchRequestId, canComment, commentFailure, commentRow, fileHunks, hunkComments, sendBlock, sendOutcome } from './review-comments'
 
 const SHA = (n: number) => String(n).repeat(64).slice(0, 64)
 const diff = '@@ -1,2 +1,2 @@ fn a\n-x\n+y\n ctx\n@@ -10 +10 @@\n-p\n+q'
@@ -55,8 +55,8 @@ describe('评论显示', () => {
     expect(hunkComments(file(), 0, NOW, 'en')).toEqual([])
   })
   it('「发出 N 条评论」:有草稿、没撤掉才给', () => {
-    expect(sendBlock(turn({ pendingComments: 3 }), 'zh-Hans')).toEqual({ n: 3, label: '发出 3 条评论' })
-    expect(sendBlock(turn({ pendingComments: 1 }), 'en')).toEqual({ n: 1, label: 'Send 1 comment' })
+    expect(sendBlock(turn({ pendingComments: 3 }), 'zh-Hans')).toMatchObject({ n: 3, label: '发出 3 条评论' })
+    expect(sendBlock(turn({ pendingComments: 1 }), 'en')).toMatchObject({ n: 1, label: 'Send 1 comment' })
     expect(sendBlock(turn(), 'en')).toBeNull()
     expect(sendBlock(turn({ pendingComments: 2, discarded: true }), 'en')).toBeNull()
     expect(sendBlock(null, 'en')).toBeNull()
@@ -87,5 +87,35 @@ describe('结果那一句', () => {
     expect(sendOutcome({ error: 'not_found' }, null, 'zh-Hans').ok).toBe(false)
     expect(sendOutcome({ error: 'rewind_needs_owner' }, null, 'zh-Hans').text).toBe('这件事回退时出了状况，请在电脑上处理')
     expect(sendOutcome({ error: 'whatever' }, null, 'en')).toEqual({ ok: false, text: "Didn't send. Try again." })
+  })
+})
+
+describe('发出那一块的说明与投递 id', () => {
+  const d = (id: string, state = 'draft') => ({ id, hunk: 0, body: 'x', state })
+  it('显示不全的文件(被截 / 块对不上)上的草稿照样数进去,并说一句;更早几轮的草稿另说一句', () => {
+    const t1 = turn({ pendingComments: 4, files: [
+      file({ comments: [d('a'), d('s', 'sent')] }),
+      file({ path: 'big.ts', diff: undefined, truncated: true, hunks: undefined, comments: [d('b')] }),
+      file({ path: 'odd.ts', hunks: hunks.slice(0, 1), comments: [d('c')] }),
+    ] })
+    const b = sendBlock(t1, 'zh-Hans')!
+    expect(b.n).toBe(4)
+    expect(b.notes).toEqual(['更早几轮上的草稿也会一起发出。', '其中 2 条所在的改动这里显示不全，照样会发出。'])
+    expect(sendBlock(turn({ pendingComments: 1, files: [file({ comments: [d('a')] })] }), 'zh-Hans')!.notes).toEqual([])
+    expect(sendBlock(turn({ pendingComments: 1, files: [file({ path: 'x', truncated: true, diff: undefined, comments: [d('a')] })] }), 'en')!.notes).toEqual(["1 of them are on changes this page can't show in full. They still go out."])
+  })
+  it('key 跟着草稿变:同一批不变,换了草稿 / 数目就变', () => {
+    const k = (ids: string[], n = ids.length) => sendBlock(turn({ pendingComments: n, files: [file({ comments: ids.map(i => d(i)) })] }), 'en')!.key
+    expect(k(['b', 'a'])).toBe(k(['a', 'b']))
+    expect(k(['a', 'b'])).not.toBe(k(['a', 'c']))
+    expect(k(['a'], 1)).not.toBe(k(['a'], 2))
+  })
+  it('batchRequestId:同一批(不确定之后重点)沿用旧 id;草稿变了 ⇒ 新 id', () => {
+    let n = 0
+    const mint = () => `id-${++n}`
+    const first = batchRequestId(null, 'k1', mint)
+    expect(first).toEqual({ id: 'id-1', key: 'k1' })
+    expect(batchRequestId(first, 'k1', mint)).toBe(first)
+    expect(batchRequestId(first, 'k2', mint)).toEqual({ id: 'id-2', key: 'k2' })
   })
 })

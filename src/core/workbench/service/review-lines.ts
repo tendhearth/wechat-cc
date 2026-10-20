@@ -73,8 +73,8 @@ export function makeReviewLines(ctx: ServiceCtx, deps: ReviewLineDeps) {
       assertNotRewindBlocked(store.rewinds, id)
       if ('delete' in input) {
         if (input.delete !== true) throw new Error('invalid_review_reference')
-        store.reviewComments.remove(id, commentId)
-        ctx.hub.touched(id)
+        // 幂等:已经不在了(删过一次、回包丢了)⇒ 照样回 deleted,什么都不动
+        if (store.reviewComments.remove(id, commentId)) ctx.hub.touched(id)
         return { deleted: commentId }
       }
       const body = deps.text(input.body, true)

@@ -58,11 +58,29 @@ export function hunkComments(f: Pick<File, 'comments'>, hunk: number, now: numbe
   return (f.comments ?? []).filter(c => c.hunk === hunk).map(c => commentRow(c, now, lang))
 }
 
-/** 「发出 N 条评论」那一块给不给:这件事有草稿、这一轮没撤掉。在不在线另算(按钮置灰)。 */
-export function sendBlock(turn: PhoneChangesTurnT | null | undefined, lang: Lang): { label: string; n: number } | null {
+/**
+ * 「发出 N 条评论」那一块给不给:这件事有草稿、这一轮没撤掉。在不在线另算(按钮置灰)。
+ * notes:更早几轮上也有草稿 / 其中 K 条所在的改动这里显示不全(照样会发出)。
+ * key:这一批草稿的样子(总数 + 看得见的草稿 id);变了就该换一个投递 id。
+ */
+export type SendBlock = { label: string; n: number; notes: string[]; key: string }
+export function sendBlock(turn: PhoneChangesTurnT | null | undefined, lang: Lang): SendBlock | null {
   const n = turn?.pendingComments ?? 0
   if (!turn || turn.discarded === true || n <= 0) return null
-  return { n, label: n === 1 ? t(lang, 'lineReview.sendOne') : t(lang, 'lineReview.send', { n }) }
+  const drafts = turn.files.flatMap(f => (f.comments ?? []).filter(c => c.state === 'draft').map(c => ({ id: c.id, shown: canComment(turn, f) })))
+  const hidden = drafts.filter(d => !d.shown).length
+  const notes: string[] = []
+  if (n > drafts.length) notes.push(t(lang, 'lineReview.olderDrafts'))
+  if (hidden > 0) notes.push(t(lang, 'lineReview.hiddenDrafts', { n: hidden }))
+  return { n, label: n === 1 ? t(lang, 'lineReview.sendOne') : t(lang, 'lineReview.send', { n }), notes, key: `${n}|${drafts.map(d => d.id).sort().join(',')}` }
+}
+
+/**
+ * 投递 id:同一批重点沿用(daemon 按它去重,不确定之后重发不会发两次);
+ * 草稿变了(刷新后 key 不同)⇒ 换新的,免得新的一批撞上旧 id(input_conflict)。
+ */
+export function batchRequestId(prev: { id: string; key: string } | null, key: string, mint: () => string): { id: string; key: string } {
+  return prev && prev.key === key ? prev : { id: mint(), key }
 }
 
 /** 建 / 删一条评论失败的那一句。 */
