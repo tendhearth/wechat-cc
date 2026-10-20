@@ -1,14 +1,17 @@
-import { afterEach, beforeEach, expect, it } from 'vitest'
-import { execFileSync } from 'node:child_process'
+import { afterEach, beforeEach, describe, expect, it } from 'vitest'
+import { execFile, execFileSync } from 'node:child_process'
+import { promisify } from 'node:util'
 import { chmodSync, existsSync, utimesSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, symlinkSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
-import { join } from 'node:path'
-import { deleteCheckpointRefs, takeCheckpoint } from './checkpoints'
+import { join, resolve } from 'node:path'
+import { CHECKPOINT_DEADLINE_MS, deleteCheckpointRefs, takeCheckpoint, type GitExec } from './checkpoints'
 import { parseGitReviewSnapshot } from './review'
 import { removeTempDir } from '../../lib/test-temp'
 
 let root: string, stateDir: string, marker: string
 const win = process.platform === 'win32'
+/** 临时 index 一个都不剩(叫停得早时 tmp 目录可能还没建)。 */
+const leftovers = () => existsSync(join(stateDir, 'tmp')) ? readdirSync(join(stateDir, 'tmp')) : []
 function git(...args: string[]) { return execFileSync('git', args, { cwd: root, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] }).trim() }
 function file(name: string, text: string | Buffer) { mkdirSync(join(root, name, '..'), { recursive: true }); writeFileSync(join(root, name), text) }
 /** checkpoint 树里的条目:path → [mode, blob 内容]。 */
@@ -149,9 +152,9 @@ it('returns skipped instead of throwing when git cannot do it', async () => {
   rmSync(join(root, '.git/objects'), { recursive: true, force: true }); mkdirSync(join(root, '.git/objects'))
   file('app.ts', 'z')
   expect(await takeCheckpoint({ root, taskId: 'abcd1234', stateDir })).toEqual({ skipped: 'git_error' })
-  expect(existsSync(join(stateDir, 'tmp')) ? readdirSync(join(stateDir, 'tmp')) : []).toEqual([])
+  expect(leftovers()).toEqual([])
   const aborted = new AbortController(); aborted.abort()
-  expect(await takeCheckpoint({ root, taskId: 'abcd1234', stateDir, signal: aborted.signal })).toEqual({ skipped: 'cancelled' })
+  expect(await takeCheckpoint({ root, taskId: 'abcd1234', stateDir, signal: aborted.signal })).toEqual({ skipped: 'aborted' })
 })
 
 it('deleteCheckpointRefs removes only that task\'s refs', async () => {
@@ -171,4 +174,89 @@ it('parseGitReviewSnapshot keeps valid checkpoint ids and drops anything else', 
   const bad = parseGitReviewSnapshot(Buffer.from(JSON.stringify({ ...base, checkpointBefore: 'HEAD', checkpointAfter: 'A'.repeat(40) })))!
   expect('checkpointBefore' in bad).toBe(false); expect('checkpointAfter' in bad).toBe(false)
   expect('checkpointBefore' in parseGitReviewSnapshot(Buffer.from(JSON.stringify({ ...base, checkpointBefore: 'a'.repeat(50) })))!).toBe(false)
+})
+
+describe('the owner\'s global ignore rules still apply (review #428)', () => {
+  let home: string, saved: { HOME?: string; XDG_CONFIG_HOME?: string }
+  beforeEach(() => { home = mkdtempSync(join(tmpdir(), 'cc-cp-home-')); saved = { HOME: process.env.HOME, XDG_CONFIG_HOME: process.env.XDG_CONFIG_HOME }; process.env.HOME = home; delete process.env.XDG_CONFIG_HOME })
+  afterEach(() => { for (const [k, v] of Object.entries(saved)) { if (v === undefined) delete process.env[k]; else process.env[k] = v } removeTempDir(home) })
+  it('core.excludesFile from ~/.gitconfig (with ~ expanded)', async () => {
+    writeFileSync(join(home, '.gitconfig'), '[core]\n\texcludesFile = ~/my-ignore\n'); writeFileSync(join(home, 'my-ignore'), '*.secret\nnode_modules/\n')
+    file('a.secret', 'k'); file('keep.txt', 'k'); file('node_modules/x/.gitattributes', '* filter=lfs\n'); file('node_modules/x/i.js', 'x')
+    const paths = [...treeOf((await ok()).commit).keys()]
+    expect(paths).toContain('keep.txt'); expect(paths.filter(p => /secret|node_modules/.test(p))).toEqual([])
+  })
+  it('git\'s default ~/.config/git/ignore when nothing is configured, and $XDG_CONFIG_HOME', async () => {
+    mkdirSync(join(home, '.config/git'), { recursive: true }); writeFileSync(join(home, '.config/git/ignore'), '*.secret\n')
+    file('a.secret', 'k'); file('b.xdg', 'x')
+    expect(treeOf((await ok()).commit).has('a.secret')).toBe(false)
+    const xdg = join(home, 'xdg'); mkdirSync(join(xdg, 'git'), { recursive: true }); writeFileSync(join(xdg, 'git/ignore'), '*.xdg\n'); process.env.XDG_CONFIG_HOME = xdg
+    const tree = treeOf((await ok()).commit)
+    expect(tree.has('b.xdg')).toBe(false); expect(tree.has('a.secret')).toBe(true)
+  })
+  it('a repo-local core.excludesFile wins over the global one', async () => {
+    writeFileSync(join(home, '.gitconfig'), '[core]\n\texcludesFile = ~/my-ignore\n'); writeFileSync(join(home, 'my-ignore'), '*.secret\n')
+    writeFileSync(join(stateDir, 'local-ignore'), '*.local\n'); git('config', 'core.excludesFile', join(stateDir, 'local-ignore'))
+    file('a.secret', 'k'); file('b.local', 'l')
+    const tree = treeOf((await ok()).commit)
+    expect(tree.has('b.local')).toBe(false); expect(tree.has('a.secret')).toBe(true)
+  })
+})
+
+describe('one overall deadline; the caller can stop it (review #428)', () => {
+  const run = promisify(execFile)
+  const real: GitExec = async (args, opts) => Buffer.from((await run('git', args, { cwd: opts.cwd, env: opts.env, encoding: 'buffer', maxBuffer: opts.maxBuffer, ...(opts.signal ? { signal: opts.signal } : {}) })).stdout)
+  /** add 永远不回,只认 abort(同真 execFile:abort ⇒ 杀掉、reject)。 */
+  const stuckAdd: GitExec = (args, opts) => args.includes('add') ? new Promise((_, fail) => opts.signal?.addEventListener('abort', () => fail(new Error('killed')), { once: true })) : real(args, opts)
+  it('exports a 15 s budget', () => { expect(CHECKPOINT_DEADLINE_MS).toBe(15_000) })
+  it('times out within the deadline and cleans up', async () => {
+    file('app.ts', 'slow\n')
+    const started = Date.now()
+    expect(await takeCheckpoint({ root, taskId: 'abcd1234', stateDir, exec: stuckAdd, deadlineMs: 400 })).toEqual({ skipped: 'timeout' })
+    expect(Date.now() - started).toBeLessThan(5_000)
+    expect(leftovers()).toEqual([]); expect(git('for-each-ref', 'refs/tendhearth/')).toBe('')
+  })
+  it('stops promptly when the caller aborts', async () => {
+    file('app.ts', 'slow\n')
+    const stop = new AbortController(), started = Date.now()
+    setTimeout(() => stop.abort(), 100)
+    expect(await takeCheckpoint({ root, taskId: 'abcd1234', stateDir, exec: stuckAdd, signal: stop.signal })).toEqual({ skipped: 'aborted' })
+    expect(Date.now() - started).toBeLessThan(5_000)
+    expect(leftovers()).toEqual([])
+  })
+})
+
+describe('inside a real linked worktree (production shape)', () => {
+  let main: string
+  beforeEach(() => {
+    main = root; root = join(stateDir, 'wt'); execFileSync('git', ['worktree', 'add', '-q', '-b', 'cc/abcd1234', root], { cwd: main, stdio: 'pipe' })
+  })
+  afterEach(() => { root = main })
+  it('captures the worktree, not the main checkout, and leaves both indexes alone', async () => {
+    file('app.ts', 'in worktree\n'); file('new.md', 'n'); rmSync(join(root, 'gone.txt'))
+    writeFileSync(join(main, 'main-only.txt'), 'm')
+    const indexes = [resolve(root, git('rev-parse', '--git-path', 'index')), join(main, '.git/index')].map(p => readFileSync(p))
+    const cp = await ok()
+    const tree = treeOf(cp.commit)
+    expect(tree.get('app.ts')?.text).toBe('in worktree'); expect(tree.has('new.md')).toBe(true); expect(tree.has('gone.txt')).toBe(false); expect(tree.has('main-only.txt')).toBe(false)
+    expect(git('rev-parse', `${cp.commit}^`)).toBe(git('rev-parse', 'HEAD'))
+    // ref 在公共目录:主仓库看得见
+    expect(execFileSync('git', ['for-each-ref', '--format=%(objectname)', 'refs/tendhearth/checkpoints/abcd1234/'], { cwd: main, encoding: 'utf8' }).trim()).toBe(cp.commit)
+    const after = [resolve(root, git('rev-parse', '--git-path', 'index')), join(main, '.git/index')].map(p => readFileSync(p))
+    expect(after).toEqual(indexes)
+  })
+  it('excludes ignored files and task output folders; runs no hooks', async () => {
+    const hooks = join(main, '.git/hooks'), script = `#!/bin/sh\necho ran >> "${marker.replace(/\\/g, '/')}"\n`
+    for (const name of ['pre-commit', 'post-checkout', 'reference-transaction', 'post-index-change']) { writeFileSync(join(hooks, name), script); chmodSync(join(hooks, name), 0o755) }
+    file('.gitignore', 'secret.env\n'); file('secret.env', 'x'); file('.cc-workbench/r.md', 'r'); file('keep.ts', 'k')
+    const paths = [...treeOf((await ok()).commit).keys()]
+    expect(paths).toContain('keep.ts'); expect(paths.filter(p => /secret|cc-workbench/.test(p))).toEqual([])
+    expect(existsSync(marker)).toBe(false)
+  })
+  it('seeds the temp index from the worktree\'s own index (--git-path)', async () => {
+    // 只有工作区自己的 index 带 skip-worktree:拿它当种子 ⇒ add -A 不碰这个文件、树里还是旧内容;
+    // 拿错(主仓库 index / read-tree HEAD)就会是新内容。这也是已知限制:稀疏 / skip-worktree 的文件按 index 记。
+    git('update-index', '--skip-worktree', 'app.ts'); file('app.ts', 'edited\n')
+    expect(treeOf((await ok()).commit).get('app.ts')?.text).toBe('one')
+  })
 })

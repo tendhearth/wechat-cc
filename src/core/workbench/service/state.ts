@@ -31,6 +31,8 @@ export interface Active extends PathReservation {
   baselineRetaking?: boolean
   /** 最近一次打成的 checkpoint(独立工作区;下一次树没变就复用它,checkpoints.ts)。 */
   checkpointTip?: string
+  /** running.stop 的 AbortSignal 版(checkpoint 用,artifacts.ts 懒建)。 */
+  stopSignal?: AbortSignal
   continuation: AcceptedContinuation
   task: StoredTask
   directoryIdentity: string

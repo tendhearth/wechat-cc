@@ -5,6 +5,9 @@
  *     主人的真 index、HEAD、分支一个字节不动。
  *   - `add -A` 不收 .cc-workbench / .cc-workbench-inputs;ignored 文件本来就不进。
  *   - 不跑钩子、不跑过滤器(LFS clean 之类)、不签名、不读系统 / 全局配置;身份写死。
+ *     唯一例外:全局配置里的 core.excludesFile(缺省 ~/.config/git/ignore)单独读出来再 `-c` 传回 ——
+ *     主人全局忽略的 .env / *.pem / node_modules 不能被扫进 ref(评审 #428)。
+ *   - 整个 checkpoint 一个总期限(CHECKPOINT_DEADLINE_MS):到点杀掉在跑的 git、回 `timeout`;调用方的 signal ⇒ `aborted`。
  *   - 体积超限(未跟踪 + 修改合计 / 单文件 / 路径数)⇒ 跳过,那一轮不可回退。
  *   - 仓库用 LFS / 任何 required 过滤器 / 任何 `filter=` 属性 ⇒ 整个不打(`filter_repo`):过滤器中和后,
  *     stat 过期的 LFS 文件会以原始字节入树、没动的仍是指针,回退时会把指针文本写回去(设计评审 10-21)。
@@ -16,6 +19,7 @@
 import { execFile } from 'node:child_process'
 import { randomBytes } from 'node:crypto'
 import { copyFile, lstat, mkdir, readFile, rm, stat, utimes } from 'node:fs/promises'
+import { homedir } from 'node:os'
 import { join, resolve, sep } from 'node:path'
 import { promisify } from 'node:util'
 import { filterOverrides, gitEnv } from './git-review'
@@ -23,7 +27,7 @@ import { filterOverrides, gitEnv } from './git-review'
 const execute = promisify(execFile)
 export const CHECKPOINT_LIMITS = { maxTotalBytes: 200 * 1024 * 1024, maxFileBytes: 50 * 1024 * 1024, maxPaths: 20_000 }
 export type CheckpointLimits = typeof CHECKPOINT_LIMITS
-export type CheckpointSkip = 'filter_repo' | 'not_git' | 'git_error' | 'cancelled' | 'invalid_task' | 'too_many_paths' | 'file_too_large' | 'too_large'
+export type CheckpointSkip = 'filter_repo' | 'not_git' | 'git_error' | 'timeout' | 'aborted' | 'invalid_task' | 'too_many_paths' | 'file_too_large' | 'too_large'
 /** sameTree = 树和 prev 的一样(这一段里工作区没变;HEAD 动过时 commit 仍是新的)。 */
 export type CheckpointResult = { commit: string; tree: string; sameTree: boolean } | { skipped: CheckpointSkip }
 export const CHECKPOINT_REF_PREFIX = 'refs/tendhearth/checkpoints/'
@@ -37,11 +41,19 @@ const IDENTITY = ['-c', 'user.name=Tendhearth CC', '-c', 'user.email=cc@localhos
 const TASK = /^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$/
 const OID = /^[0-9a-f]{40}([0-9a-f]{24})?$/
 const TIMEOUT_MS = 60_000
+/** 一次 checkpoint 的总期限(和差异基线的 15 秒同档):回合起点 / 续接 / 轮末收尾都在等它。 */
+export const CHECKPOINT_DEADLINE_MS = 15_000
 
 class Cancelled extends Error {}
 type Run = (args: string[], opts?: { index?: string; maxBuffer?: number; input?: string }) => Promise<Buffer>
+/** 跑一条 git 的底层(测试注入慢 git 用);必须认 signal:abort ⇒ 杀进程、reject。 */
+export type GitExec = (args: string[], opts: { cwd: string; env: NodeJS.ProcessEnv; maxBuffer: number; signal?: AbortSignal }) => Promise<Buffer>
+const realExec: GitExec = async (args, opts) => {
+  const { stdout } = await execute('git', args, { cwd: opts.cwd, env: opts.env, encoding: 'buffer', maxBuffer: opts.maxBuffer, timeout: TIMEOUT_MS, windowsHide: true, ...(opts.signal ? { signal: opts.signal } : {}) })
+  return Buffer.from(stdout)
+}
 
-function runner(cwd: string, signal?: AbortSignal): { run: Run; filters: string[] } {
+function runner(cwd: string, signal?: AbortSignal, exec: GitExec = realExec): { run: Run; filters: string[] } {
   const filters: string[] = []
   const base = gitEnv()
   const run: Run = async (args, opts = {}) => {
@@ -49,11 +61,27 @@ function runner(cwd: string, signal?: AbortSignal): { run: Run; filters: string[
     const env = opts.index ? { ...base, GIT_INDEX_FILE: opts.index } : base
     try {
       if (opts.input !== undefined) return await withInput([...SAFE, ...filters, ...args], cwd, env, opts.input, signal)
-      const { stdout } = await execute('git', [...SAFE, ...filters, ...args], { cwd, env, encoding: 'buffer', maxBuffer: opts.maxBuffer ?? 4 * 1024 * 1024, timeout: TIMEOUT_MS, windowsHide: true, ...(signal ? { signal } : {}) })
-      return Buffer.from(stdout)
+      return await exec([...SAFE, ...filters, ...args], { cwd, env, maxBuffer: opts.maxBuffer ?? 4 * 1024 * 1024, ...(signal ? { signal } : {}) })
     } catch (error) { if (signal?.aborted) throw new Cancelled(); throw error }
   }
   return { run, filters }
+}
+const notSet = (error: unknown) => { if (error instanceof Cancelled || (error as { code?: number }).code !== 1) throw error }
+/**
+ * 主人全局配置里的 core.excludesFile(gitEnv 不读全局配置,只把这一项捞回来)。仓库自己配了 ⇒ git 会读它,不插手。
+ * 顺序同 git:$XDG_CONFIG_HOME/git/config,再 ~/.gitconfig(后者优先);都没配 ⇒ git 的缺省 $XDG_CONFIG_HOME/git/ignore。
+ */
+async function globalExcludes(run: Run): Promise<string[]> {
+  try { if (line(await run(['config', '--get', 'core.excludesFile']))) return [] } catch (error) { notSet(error) }
+  const home = process.env.HOME || homedir()
+  if (!home) return []
+  const xdg = process.env.XDG_CONFIG_HOME ? join(process.env.XDG_CONFIG_HOME, 'git') : join(home, '.config', 'git')
+  let path = ''
+  for (const file of [join(xdg, 'config'), join(home, '.gitconfig')]) {
+    try { await stat(file) } catch { continue }
+    try { path = line(await run(['config', '--file', file, '--includes', '--path', '--get', 'core.excludesFile'])) || path } catch (error) { notSet(error) }
+  }
+  return ['-c', `core.excludesFile=${path || join(xdg, 'ignore')}`]
 }
 function withInput(args: string[], cwd: string, env: NodeJS.ProcessEnv, input: string, signal?: AbortSignal): Promise<Buffer> {
   return new Promise((done, fail) => {
@@ -113,21 +141,38 @@ async function oversize(run: Run, top: string, limits: CheckpointLimits): Promis
   return null
 }
 
-export async function takeCheckpoint(input: { root: string; taskId: string; stateDir: string; prev?: string; signal?: AbortSignal; limits?: Partial<CheckpointLimits> }): Promise<CheckpointResult> {
+export interface CheckpointInput { root: string; taskId: string; stateDir: string; prev?: string; signal?: AbortSignal; limits?: Partial<CheckpointLimits>; deadlineMs?: number; exec?: GitExec }
+export async function takeCheckpoint(input: CheckpointInput): Promise<CheckpointResult> {
   if (!TASK.test(input.taskId)) return { skipped: 'invalid_task' }
+  if (input.signal?.aborted) return { skipped: 'aborted' }
+  const control = new AbortController()
+  let timedOut = false
+  const timer = setTimeout(() => { timedOut = true; control.abort() }, input.deadlineMs ?? CHECKPOINT_DEADLINE_MS)
+  const onAbort = () => control.abort()
+  input.signal?.addEventListener('abort', onAbort, { once: true })
+  try {
+    const result = await checkpoint(input, control.signal)
+    // 到点和调用方叫停走同一条 abort;没成的那一份才按原因改判(碰巧已经成了就是成了)
+    return 'skipped' in result && result.skipped === 'aborted' && timedOut ? { skipped: 'timeout' } : result
+  } finally { clearTimeout(timer); input.signal?.removeEventListener('abort', onAbort) }
+}
+async function checkpoint(input: CheckpointInput, signal: AbortSignal): Promise<CheckpointResult> {
   const limits = { ...CHECKPOINT_LIMITS, ...input.limits }
   let index: string | undefined
   try {
     let top: string, realIndex: string
     try {
-      const [a, b] = (await runner(input.root, input.signal).run(['rev-parse', '--show-toplevel', '--git-path', 'index'])).toString('utf8').split('\n')
+      // --git-path index:独立工作区(linked worktree)拿到的是它自己的 .git/worktrees/<名>/index
+      const [a, b] = (await runner(input.root, signal, input.exec).run(['rev-parse', '--show-toplevel', '--git-path', 'index'])).toString('utf8').split('\n')
       if (!a || !b) return { skipped: 'git_error' }
       top = a; realIndex = resolve(input.root, b)
     } catch (error) {
-      if (error instanceof Cancelled) return { skipped: 'cancelled' }
+      if (error instanceof Cancelled) return { skipped: 'aborted' }
       return { skipped: String((error as { stderr?: Buffer }).stderr ?? '').includes('not a git repository') ? 'not_git' : 'git_error' }
     }
-    const { run, filters } = runner(top, input.signal)
+    const { run, filters } = runner(top, signal, input.exec)
+    // 先挂全局忽略:被忽略目录里的 .gitattributes 不该把仓库判成 filter_repo,status / add 也照它
+    filters.push(...await globalExcludes(run))
     if (await usesFilters(run, top)) return { skipped: 'filter_repo' }
     filters.push(...await filterOverrides(args => run(args)))
     let head: string | null = null
@@ -176,7 +221,7 @@ export async function takeCheckpoint(input: { root: string; taskId: string; stat
     await run(['update-ref', `${CHECKPOINT_REF_PREFIX}${input.taskId}/${commit.slice(0, 12)}`, commit])
     return { commit, tree, sameTree }
   } catch (error) {
-    return { skipped: error instanceof Cancelled || input.signal?.aborted ? 'cancelled' : 'git_error' }
+    return { skipped: error instanceof Cancelled || signal.aborted ? 'aborted' : 'git_error' }
   } finally {
     if (index) await Promise.all([rm(index, { force: true }), rm(`${index}.lock`, { force: true })]).catch(() => {})
   }
