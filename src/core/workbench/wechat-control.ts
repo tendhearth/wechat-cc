@@ -1,4 +1,5 @@
 import {validBaseBranch} from './worktree-workspaces'
+import {compareReply} from './wechat-compare'
 import {issueTaskText,parseIssueRef,type IssueData} from './issue-intake'
 import {createHash,randomUUID} from 'node:crypto'
 import type {WorkbenchStore,Task} from './store'
@@ -51,7 +52,7 @@ const REQUEST_MAX=6000
 const unavailable='没有找到这个任务，请在桌面工作台核对编号。'
 const stale='这条请求已失效或不属于这个任务。请重新查询任务，使用当前请求编号。'
 const stopUnconfirmed='这条停止请求已记录，但尚未确认执行结果。请查询任务状态；如需停止当前轮次，请发送一条新的停止消息。'
-const usage=(id='<任务编号>')=>`用法：\n项目：任务 项目\n新建：任务 新建 <项目编号> <要求>\n并行：任务 新建 <项目编号> 独立 <要求>（从某个分支开始：独立@<分支>）\n从 GitHub issue 开工：任务 新建 <项目编号> issue <编号>\n两家对比：任务 新建 <项目编号> 对比 @claude @codex <要求>\n查看：任务 ${id}\n补充：任务 ${id} 补充 <要求>\n改动：任务 ${id} 改动\n独立工作区：任务 ${id} 提交 / 合回 / 删除工作区 / 重开工作区\n停止：任务 ${id} 停止\n处理待办时，请复制任务消息中的完整请求编号。`
+const usage=(id='<任务编号>')=>`用法：\n项目：任务 项目\n新建：任务 新建 <项目编号> <要求>\n并行：任务 新建 <项目编号> 独立 <要求>（从某个分支开始：独立@<分支>）\n从 GitHub issue 开工：任务 新建 <项目编号> issue <编号>\n两家对比：任务 新建 <项目编号> 对比 @claude @codex <要求>（并排看：任务 对比 <编号> <编号>）\n查看：任务 ${id}\n补充：任务 ${id} 补充 <要求>\n改动：任务 ${id} 改动\n独立工作区：任务 ${id} 提交 / 合回 / 删除工作区 / 重开工作区\n停止：任务 ${id} 停止\n处理待办时，请复制任务消息中的完整请求编号。`
 const clip=(value:string,max:number)=>value.length>max?value.slice(0,max)+'…':value
 const singleLine=(value:string,max=100)=>clip(value.replace(/[\r\n]+/g,' '),max)
 export const isWechatTaskCommand=(text:string)=>/^(?:任务|\/task)(?:\s|$)/i.test(text.trim())
@@ -277,13 +278,13 @@ export function makeWechatWorkbenchControl(opts:{store:WorkbenchStore;ownerChatI
           compareText=issueTaskText(got.issue)
         }
         const commandHash=createHash('sha256').update(text).digest('hex'),originMessageId=wechatTaskMessageKey({...identity,chatId,text})
-        const replies:string[]=[]
+        const replies:string[]=[],started:string[]=[]
         for(const providerId of [a,b]){
           // 每家一个确定的请求编号:同一条消息重发 ⇒ 两件都按原样回放,不会多建
-          try{replies.push(opts.actions.createWechat({ownerChatId:chatId,accountId:identity.accountId,requestId:inputId(chatId,`compare:${providerId}`,text,identity),commandHash,projectId,isolation:true,providerId,title:`${singleLine(compareText.split('\n')[0]!,40).replace(/…$/,'')} · @${providerId}`.slice(0,120),...(originMessageId?{originMessageId}:{}),...(identity.origin!==undefined?{origin:identity.origin}:{}),text:compareText}).reply)}
+          try{const receipt=opts.actions.createWechat({ownerChatId:chatId,accountId:identity.accountId,requestId:inputId(chatId,`compare:${providerId}`,text,identity),commandHash,projectId,isolation:true,providerId,title:`${singleLine(compareText.split('\n')[0]!,40).replace(/…$/,'')} · @${providerId}`.slice(0,120),...(originMessageId?{originMessageId}:{}),...(identity.origin!==undefined?{origin:identity.origin}:{}),text:compareText});started.push(receipt.taskId);replies.push(receipt.reply)}
           catch(error){replies.push(`交给 ${providerId} 的那一份没开始:${failure(error,'')}`)}
         }
-        return `同一件事交给了 ${a} 和 ${b},各在自己的独立工作区里做,互不影响。\n\n${replies.join('\n\n')}\n\n两份都做完以后对比改动:「任务 <任务编号> 改动」;留下好的那份「合回」,另一份「删除工作区」。`
+        return `同一件事交给了 ${a} 和 ${b},各在自己的独立工作区里做,互不影响。\n\n${replies.join('\n\n')}\n\n两份都做完以后并排看改动:${started.length===2?`「任务 对比 ${started[0]} ${started[1]}」`:'「任务 <任务编号> 改动」'};留下好的那份「合回」,另一份「删除工作区」。`
       }
       // 「任务 新建 <项目> 独立 <要求>」:在这个项目的独立工作区里做(2026-10-07),可以和别的任务同时进行。
       // 「独立@<分支>」(10-08):独立工作区从这个本地分支开始
@@ -317,6 +318,15 @@ export function makeWechatWorkbenchControl(opts:{store:WorkbenchStore;ownerChatI
     if(!command||command==='列表'){
       const tasks=opts.store.listOwned(chatId,8)
       return tasks.length?'最近的任务：\n'+tasks.map(t=>`${t.id} · ${singleLine(t.title)} · ${(()=>{const d=opts.actions.detail(t.id);return runtimeStatus(t.status,d.runtime,d.task.networkSuspended)})()}`).join('\n')+'\n\n查看或选择：任务 <任务编号>\n新建任务：先发送「任务 项目」':'还没有属于你的工作任务。发送「任务 项目」选择文件夹并交代任务。'
+    }
+    // 「任务 对比 <编号> <编号>」(10-20):两件事的改动并排看,只读
+    const pair=/^对比\s+([a-f0-9]{8})\s+([a-f0-9]{8})$/i.exec(command)
+    if(pair){
+      const sides=[pair[1]!.toLowerCase(),pair[2]!.toLowerCase()].map(id=>{
+        try{const stored=opts.store.get(id);if(stored.ownerChatId!==chatId)return null;const d=opts.actions.detail(id);return{id,title:stored.title,status:runtimeStatus(stored.status,d.runtime,d.task.networkSuspended),turns:opts.actions.reviewList?.(id)??null}}catch{return null}
+      })
+      if(!sides[0]||!sides[1])return unavailable
+      return compareReply(sides[0],sides[1])
     }
     const match=/^([a-f0-9]{8})(?:\s+([\s\S]+))?$/i.exec(command)
     if(!match)return usage()
