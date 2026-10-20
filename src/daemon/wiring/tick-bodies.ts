@@ -58,6 +58,7 @@ import {
 import { readPlanLog, appendPlanLog } from '../companion/plan-memory'
 import { readJournalSeen } from '../../core/journal-seen'
 import { isNetworkUnprotectedError, NETWORK_UNPROTECTED_REASON } from '../../lib/network-gate'
+import { avoidTopicsLine, type AvoidTopic } from '../../core/companion-topics'
 
 function errMsg(err: unknown): string { return err instanceof Error ? err.message : String(err) }
 
@@ -94,7 +95,7 @@ export interface TickDeps {
    * chat. Typed as a structural subset of ChatPrefsStore so tests can fake
    * it without a full store.
    */
-  chatPrefs: { get(chatId: string): { care?: 'off' | 'low' | 'high'; hunt?: boolean; visit?: boolean }; list(): string[] }
+  chatPrefs: { get(chatId: string): { care?: 'off' | 'low' | 'high'; hunt?: boolean; visit?: boolean; avoid?: AvoidTopic[] }; list(): string[] }
   /**
    * 打猎战利品(2026-09-03)。`outboundTaps` 旁听打猎那一拍发出去的文本,
    * `huntStore` 把它拆成条目落库。两者都可选:没接就是旧行为(发了不记)。
@@ -240,6 +241,8 @@ export interface BuildPushTickTextOpts {
   defaultChatId: string
   /** The due intention body the tick is firing — the concrete reason to reach out. */
   intention: string
+  /** 主人不希望 CC 主动提起的话题(chat-prefs.avoid)。 */
+  avoid?: AvoidTopic[]
 }
 
 /**
@@ -268,6 +271,9 @@ const TICK_DECIDED = '已决定要推送,请写出这条推送'
 const TICK_FALLBACK = `只有写不出值得发的内容时才不发——那就${TICK_SILENT}`
 
 export function buildPushTickText(opts: BuildPushTickTextOpts, style: TickTextStyle = {}): string {
+  return pushTickBody(opts, style) + avoidTopicsLine(opts.avoid)
+}
+function pushTickBody(opts: BuildPushTickTextOpts, style: TickTextStyle): string {
   if (style.replyDelivery === 'final_text') {
     return (
       `<companion_tick ts="${opts.nowIso}" default_chat_id="${opts.defaultChatId}" />\n` +
@@ -290,6 +296,8 @@ export interface BuildGapCheckinTextOpts {
   chatId: string
   /** Days since the last INBOUND message in this chat, floor'd. */
   daysSinceContact: number
+  /** 主人不希望 CC 主动提起的话题(chat-prefs.avoid)。 */
+  avoid?: AvoidTopic[]
 }
 
 /**
@@ -298,6 +306,9 @@ export interface BuildGapCheckinTextOpts {
  * Mirrors buildPushTickText's structure/extraction rationale.
  */
 export function buildGapCheckinText(opts: BuildGapCheckinTextOpts, style: TickTextStyle = {}): string {
+  return gapCheckinBody(opts, style) + avoidTopicsLine(opts.avoid)
+}
+function gapCheckinBody(opts: BuildGapCheckinTextOpts, style: TickTextStyle): string {
   if (style.replyDelivery === 'final_text') {
     return (
       `<companion_tick ts="${opts.nowIso}" chat_id="${opts.chatId}" kind="gap" />\n` +
@@ -319,7 +330,10 @@ export function buildGapCheckinText(opts: BuildGapCheckinTextOpts, style: TickTe
  * the calibration gate decided a hunt is due for the owner's chat instead).
  * Mirrors buildGapCheckinText's structure/extraction rationale.
  */
-export function buildHuntText(opts: { nowIso: string }, style: TickTextStyle = {}): string {
+export function buildHuntText(opts: { nowIso: string; avoid?: AvoidTopic[] }, style: TickTextStyle = {}): string {
+  return huntBody(opts, style) + avoidTopicsLine(opts.avoid)
+}
+function huntBody(opts: { nowIso: string }, style: TickTextStyle): string {
   if (style.replyDelivery === 'final_text') {
     return (
       `<companion_tick ts="${opts.nowIso}" kind="hunt" />\n` +
@@ -644,7 +658,7 @@ export function buildTickBodies(deps: TickDeps): TickBodies {
             deps.careLedger.unclaim(chatId, ticket)
           }
         },
-        buildText: (style) => buildPushTickText({ nowIso, defaultChatId: chatId, intention: item.body }, style),
+        buildText: (style) => buildPushTickText({ nowIso, defaultChatId: chatId, intention: item.body, avoid: prefs.avoid }, style),
       })
       return
     }
@@ -669,7 +683,7 @@ export function buildTickBodies(deps: TickDeps): TickBodies {
       try {
         return await dispatchToChat(chatId, {
           claim: () => { const ticket = deps.careLedger.claimHunt(chatId, nowIso); return () => deps.careLedger.unclaim(chatId, ticket) },
-          buildText: (style) => buildHuntText({ nowIso }, style),
+          buildText: (style) => buildHuntText({ nowIso, avoid: prefs.avoid }, style),
         })
       } finally {
         try { releaseHunt?.() } catch { /* release 永不抛 */ }
@@ -714,7 +728,7 @@ export function buildTickBodies(deps: TickDeps): TickBodies {
         : 0
       return await dispatchToChat(chatId, {
         claim: () => { const ticket = deps.careLedger.claim(chatId, nowIso); return () => deps.careLedger.unclaim(chatId, ticket) },
-        buildText: (style) => buildGapCheckinText({ nowIso, chatId, daysSinceContact }, style),
+        buildText: (style) => buildGapCheckinText({ nowIso, chatId, daysSinceContact, avoid: prefs.avoid }, style),
       })
     }
 

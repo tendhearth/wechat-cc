@@ -1095,6 +1095,29 @@ describe('makeModeCommands', () => {
 
   // ── /set hunt|打猎 — daily hunt toggle (Task 2) ────────────────────────
 
+  // ── /set avoid|别聊 — 主人不希望 CC 主动提起的话题(10-20)──────────
+  it('/set 别聊 健康,家人 persists the topics and confirms with labels', async () => {
+    const { cmds, sentMessages, prefsData } = setup()
+    expect(await cmds.handle(inbound('/set 别聊 健康,家人'))).toBe(true)
+    expect(prefsData.get('chat-1')).toEqual({ avoid: ['health', 'family'] })
+    expect(sentMessages[0]?.[1]).toContain('健康、家人')
+  })
+  it('/set avoid none clears; unknown topic explains the choices and stores nothing', async () => {
+    const { cmds, sentMessages, prefsData } = setup()
+    await cmds.handle(inbound('/set avoid money'))
+    await cmds.handle(inbound('/set avoid none'))
+    expect(prefsData.get('chat-1')).toEqual({ avoid: [] })
+    await cmds.handle(inbound('/set avoid 星座'))
+    expect(prefsData.get('chat-1')).toEqual({ avoid: [] })
+    expect(sentMessages.at(-1)?.[1]).toContain('星座')
+  })
+  it('bare /set shows the avoided topics', async () => {
+    const { cmds, sentMessages } = setup()
+    await cmds.handle(inbound('/set avoid 钱'))
+    await cmds.handle(inbound('/set'))
+    expect(sentMessages.at(-1)?.[1]).toContain('别主动聊: 钱')
+  })
+
   it('/set hunt off persists {hunt:false} and confirms', async () => {
     const { cmds, sentMessages, prefsData } = setup()
     expect(await cmds.handle(inbound('/set hunt off'))).toBe(true)
