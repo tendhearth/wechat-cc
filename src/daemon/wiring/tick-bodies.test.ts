@@ -2029,6 +2029,8 @@ describe('runJobTurn', () => {
     expect(s.acquire).toHaveBeenCalledWith(expect.objectContaining({ alias: 'job:j3', chatId: 'owner', tierProfile: JOB_PROFILE, permissionMode: 'strict' }))
     expect(delivered).toHaveLength(1)
     expect(forget).toHaveBeenCalledWith({ alias: 'job:j3', providerId: 'claude', chatId: 'owner' })
+    // 起会话之前也先 forget 一次:上次崩在半路留下的续接记录不能被续上(终审 minor)
+    expect(forget.mock.invocationCallOrder[0]!).toBeLessThan(s.acquire.mock.invocationCallOrder[0]!)
     const sent = (s.dispatch.mock.calls[0] as unknown as [string])[0]
     expect(sent).toContain('<scheduled_job id="j3"')
     expect(sent).toContain('看 issue')
@@ -2059,7 +2061,7 @@ describe('runJobTurn', () => {
     expect(await buildTickBodies(s.deps).runJobTurn({ chatId: 'owner', jobId: 'j1', text: 'x', nowIso: 't' })).toBe('skipped:network')
     s.dispatch.mockImplementation(() => ({ async *[Symbol.asyncIterator]() { yield { kind: 'error', code: 'quota', message: 'out of quota' } } }))
     expect(await buildTickBodies(s.deps).runJobTurn({ chatId: 'owner', jobId: 'j1', text: 'x', nowIso: 't' })).toBe('failed:quota')
-    expect(forget).toHaveBeenCalledTimes(2)
+    expect(forget).toHaveBeenCalledTimes(4)   // 每次两回:起会话前一回、收尾一回
   })
   it('the owner’s words are wrapped and a forged closing tag is defused', async () => {
     const s = setupDeps({ defaultChatId: 'owner', inFlight: false })
@@ -2069,5 +2071,24 @@ describe('runJobTurn', () => {
     expect(sent.split('\n').filter(l => l.trim() === '</request>')).toHaveLength(1)
     expect(sent).toContain('‹/request>')
     expect(sent).toContain('只读')
+  })
+  it('a turn that goes silent times out, is cancelled, delivers nothing and frees the owner’s lock (终审 I3)', async () => {
+    vi.useFakeTimers()
+    try {
+      const s = setupDeps({ defaultChatId: 'owner', inFlight: false })
+      const { forget, delivered } = job(s, ok)
+      const cancel = vi.fn(async () => {})
+      s.dispatch.mockImplementation(() => ({ async *[Symbol.asyncIterator]() { await new Promise(() => {}) } }))
+      s.acquire.mockResolvedValueOnce({ alias: 'job:j1', path: '/p', providerId: 'claude', lastUsedAt: 0, dispatch: s.dispatch, close: async () => {}, cancel } as never)
+      const { JOB_TURN_MAX_MS } = await import('./tick-bodies')
+      const p = buildTickBodies(s.deps).runJobTurn({ chatId: 'owner', jobId: 'j1', text: 'x', nowIso: 't' })
+      await vi.advanceTimersByTimeAsync(JOB_TURN_MAX_MS)
+      expect(await p).toBe('failed:turn_timeout')
+      expect(delivered).toEqual([])
+      expect(forget).toHaveBeenCalled()
+      let ran = false
+      await s.coordinatorMutex.runExclusive('owner', async () => { ran = true })
+      expect(ran).toBe(true)
+    } finally { vi.useRealTimers() }
   })
 })

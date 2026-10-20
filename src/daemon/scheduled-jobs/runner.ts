@@ -4,7 +4,7 @@
  * 连续 3 次失败 ⇒ 暂停 + 告诉主人一次。
  */
 import type { Lifecycle } from '../../lib/lifecycle'
-import { isJobDue, type ScheduledJob } from '../../core/scheduled-jobs'
+import { isJobDue, windowPassed, JOB_DUE_WINDOW_MIN, type ScheduledJob } from '../../core/scheduled-jobs'
 import { localParts } from '../memory/nightly-schedule'
 import { JOBS_DAILY_CAP, type JobsStore } from '../../core/scheduled-jobs-store'
 
@@ -35,6 +35,8 @@ export function registerScheduledJobs(deps: ScheduledJobsDeps): Lifecycle & { ti
   let stopped = false
   let running = false
   let timer: ReturnType<typeof setTimeout> | null = null
+  /** 今天被「主人正在对话」挡过的定时(只在内存里;窗口过了据此记 skipped:busy,否则记 skipped:missed)。 */
+  const busyOn = new Map<string, string>()
 
   async function tickOnce(): Promise<void> {
     if (running) return
@@ -47,7 +49,16 @@ export function registerScheduledJobs(deps: ScheduledJobsDeps): Lifecycle & { ti
         if (job.paused) continue
         const nowMs = deps.now()
         const local = localParts(nowMs, deps.timezone())
-        if (!isJobDue(job.schedule, local, deps.store.state(job.id).lastRunDay)) continue
+        const lastRunDay = deps.store.state(job.id).lastRunDay
+        if (windowPassed(job.schedule, local, lastRunDay)) {
+          // 窗口过了还没跑:记一笔这一天为什么没跑(终审 I4)。今天窗口之后才建的不算错过。
+          const dueMs = nowMs - (Number(local.hhmm.slice(0, 2)) * 60 + Number(local.hhmm.slice(3)) - (Number(job.schedule.at.slice(0, 2)) * 60 + Number(job.schedule.at.slice(3)))) * 60_000
+          if (Date.parse(job.createdAt) <= dueMs + JOB_DUE_WINDOW_MIN * 60_000) {
+            deps.store.record(job.id, local.day, new Date(nowMs).toISOString(), busyOn.get(job.id) === local.day ? 'skipped:busy' : 'skipped:missed', false)
+          }
+          continue
+        }
+        if (!isJobDue(job.schedule, local, lastRunDay)) continue
         const nowIso = new Date(nowMs).toISOString()
         if (deps.store.ranToday(local.day) >= JOBS_DAILY_CAP) {
           deps.store.record(job.id, local.day, nowIso, 'skipped:cap', false)
@@ -59,7 +70,7 @@ export function registerScheduledJobs(deps: ScheduledJobsDeps): Lifecycle & { ti
         let status: string
         try { status = await withTimeout(deps.runTurn(job, nowIso), JOB_TURN_TIMEOUT_MS) }
         finally { try { release?.() } catch { /* release 永不抛 */ } }
-        if (status === 'skipped:busy') { deps.log('JOBS', `job ${job.id} waiting: owner is mid-conversation`); continue }
+        if (status === 'skipped:busy') { busyOn.set(job.id, local.day); deps.log('JOBS', `job ${job.id} waiting: owner is mid-conversation`); continue }
         const failed = status.startsWith('failed:')
         const st = deps.store.record(job.id, local.day, nowIso, status, failed)
         if (failed && st.failStreak >= JOB_FAIL_PAUSE) {

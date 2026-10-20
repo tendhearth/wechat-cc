@@ -106,4 +106,26 @@ describe('registerScheduledJobs', () => {
     expect(s.runTurn).toHaveBeenCalledTimes(1)
     await s.rt.stop()
   })
+  it('a day the job could not run is recorded: busy all window ⇒ skipped:busy; daemon away ⇒ skipped:missed (终审 I4)', async () => {
+    const busy = setup({ results: Array(10).fill('skipped:busy') })
+    busy.store.add(at9, 'x', new Date('2026-10-19T00:00:00Z'))
+    for (let m = 0; m < 10; m++) { await busy.rt.tickOnce(); busy.tick(60_000) }
+    await busy.rt.tickOnce()
+    expect(busy.store.state('j1')).toMatchObject({ lastRunDay: '2026-10-20', lastStatus: 'skipped:busy' })
+    const away = setup()
+    away.store.add(at9, 'x', new Date('2026-10-19T00:00:00Z'))
+    away.tick(30 * 60_000)                                    // 09:30,窗口早过了,这期间 daemon 不在
+    await away.rt.tickOnce()
+    expect(away.runTurn).not.toHaveBeenCalled()
+    expect(away.store.state('j1')).toMatchObject({ lastRunDay: '2026-10-20', lastStatus: 'skipped:missed' })
+    await busy.rt.stop(); await away.rt.stop()
+  })
+  it('a job created after today’s window is not marked missed', async () => {
+    const s = setup()
+    s.tick(30 * 60_000)
+    s.store.add(at9, 'x', new Date(Date.parse('2026-10-20T01:30:00Z')))
+    await s.rt.tickOnce()
+    expect(s.store.state('j1').lastStatus).toBeNull()
+    await s.rt.stop()
+  })
 })

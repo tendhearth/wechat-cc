@@ -53,6 +53,8 @@ describe('labels', () => {
     expect(describeSchedule({ kind: 'weekdays', at: '18:00' })).toBe('工作日 18:00')
     expect(nextRunLabel({ kind: 'daily', at: '09:00' }, { day: '2026-10-20', hhmm: '08:00' })).toBe('今天 09:00')
     expect(nextRunLabel({ kind: 'daily', at: '09:00' }, { day: '2026-10-20', hhmm: '10:00' })).toBe('明天 09:00')
+    // 窗口里建的:马上就会跑,别说「明天」(终审 minor)
+    expect(nextRunLabel({ kind: 'daily', at: '09:00' }, { day: '2026-10-20', hhmm: '09:05' })).toBe('马上(今天 09:00 这次)')
     expect(nextRunLabel({ kind: 'weekly', at: '09:00', weekday: 1 }, { day: '2026-10-20', hhmm: '10:00' })).toBe('10月26日(周一)09:00')
     expect(nextRunLabel({ kind: 'weekdays', at: '09:00' }, { day: '2026-10-23', hhmm: '10:00' })).toBe('10月26日(周一)09:00')
   })

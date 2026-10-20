@@ -66,6 +66,12 @@ export function isJobDue(s: JobSchedule, local: { day: string; hhmm: string }, l
   return late >= 0 && late < JOB_DUE_WINDOW_MIN
 }
 
+/** 今天该跑、还没跑、窗口已经过了 —— 这一天就算错过了(记一笔,不补跑)。 */
+export function windowPassed(s: JobSchedule, local: { day: string; hhmm: string }, lastRunDay: string | null): boolean {
+  if (lastRunDay === local.day || !dayMatches(s, local.day)) return false
+  return minutes(local.hhmm) - minutes(s.at) >= JOB_DUE_WINDOW_MIN
+}
+
 export function describeSchedule(s: JobSchedule): string {
   return s.kind === 'daily' ? `每天 ${s.at}` : s.kind === 'weekdays' ? `工作日 ${s.at}` : `每周${WEEKDAY_NAMES[s.weekday]} ${s.at}`
 }
@@ -76,8 +82,13 @@ const addDays = (day: string, n: number) => new Date(Date.parse(`${day}T00:00:00
 export function nextRunLabel(s: JobSchedule, local: { day: string; hhmm: string }): string {
   for (let i = 0; i < 8; i++) {
     const day = addDays(local.day, i)
-    if (!dayMatches(s, day) || (i === 0 && local.hhmm >= s.at)) continue
-    if (i === 0) return `今天 ${s.at}`
+    if (!dayMatches(s, day)) continue
+    if (i === 0) {
+      const late = minutes(local.hhmm) - minutes(s.at)
+      if (late < 0) return `今天 ${s.at}`
+      if (late < JOB_DUE_WINDOW_MIN) return `马上(今天 ${s.at} 这次)`
+      continue
+    }
     if (i === 1) return `明天 ${s.at}`
     return `${Number(day.slice(5, 7))}月${Number(day.slice(8, 10))}日(周${WEEKDAY_NAMES[weekdayOf(day)]})${s.at}`
   }

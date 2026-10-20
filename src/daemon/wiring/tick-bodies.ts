@@ -21,7 +21,7 @@ import { dueGuestVisit, guestLabel, type GuestVisitState } from '../companion/gu
 import { buildGuestVisitNarrationPrompt } from '../../core/visit'
 import type { Access } from '../../lib/access'
 import { replyDeliveryFor, replyTextStrategyFor, type PermissionMode } from '../../core/capability-matrix'
-import { collectTurn } from '../../core/agent-provider'
+import { collectTurn, TURN_TIMEOUT_CODE } from '../../core/agent-provider'
 import type { ReplyDeliveryMode, ReplyDeliveryPort } from '../../core/turn-reply'
 import { makeMemoryFS } from '../memory/fs-api'
 import { parseAgenda, selectDue, markResolved, unmarkResolved } from '../companion/agenda'
@@ -243,6 +243,8 @@ export function buildJobText(o: { jobId: string; nowIso: string; text: string },
 }
 
 const JOB_PROVIDERS = new Set(['claude', 'codex'])
+/** 定时那一轮最多跑多久(比 runner 的 5 分钟兜底短):不说话超过它 ⇒ turn_timeout;一直在说也到点就 cancel。 */
+export const JOB_TURN_MAX_MS = 4 * 60_000
 
 export interface TickBodies {
   /** WRITE-side knowledge ingestion (25m interval + new-message nudge). */
@@ -643,13 +645,19 @@ export function buildTickBodies(deps: TickDeps): TickBodies {
     try {
       // 回复交付按 chatId 记账 ⇒ 与主人的对话串行,不然两轮的回复会混在一起。
       await deps.boot.coordinator.runExclusive(chatId, async () => {
+        // 先忘一次:上次若崩在半路(没走到 finally),留下的续接记录会让这次接着上次的对话(终审 minor)。
+        try { await sm.forget?.(key) } catch { /* 没有就没有 */ }
         const handle = await deps.boot.sessionManager.acquire({ alias: key.alias, path: proj.path, providerId, chatId, tierProfile: JOB_PROFILE, permissionMode: 'strict' })
         const text = buildJobText({ jobId, nowIso: args.nowIso, text: args.text }, { replyDelivery: 'final_text', allSegments: replyTextStrategyFor(providerId) === 'all_segments' })
         const outbound = deps.proactive?.open(chatId)
         const turn = deps.replyDelivery!.begin(chatId, { mode: 'daemon', context: 'tick', providerId, textStrategy: replyTextStrategyFor(providerId), ...(outbound ? { outbound } : {}) })
+        // 到点就 cancel(终审 I3):不然一轮卡住就一直占着主人那条对话的锁,晚到的回复还会照发。
+        const deadline = setTimeout(() => { void handle.cancel?.().catch(() => {}) }, JOB_TURN_MAX_MS)
+        ;(deadline as { unref?: () => void }).unref?.()
         try {
-          const summary = await collectTurn(handle.dispatch(text))
+          const summary = await collectTurn(handle.dispatch(text), { timeoutMs: JOB_TURN_MAX_MS })
           if (summary.error) {
+            if (summary.errorCode === TURN_TIMEOUT_CODE) { try { await handle.cancel?.() } catch { /* 已经停了 */ } }
             turn.abandon(summary.errorCode ?? 'error')
             result = `failed:${summary.errorCode ?? 'error'}`
             return
@@ -661,6 +669,8 @@ export function buildTickBodies(deps: TickDeps): TickBodies {
         } catch (err) {
           turn.abandon('threw')
           throw err
+        } finally {
+          clearTimeout(deadline)
         }
       })
     } catch (err) {
