@@ -272,7 +272,7 @@ export interface Bootstrap {
   coordinator: ConversationCoordinator
   resolve: (chatId: string) => { alias: string; path: string } | null
   formatInbound: typeof formatInbound
-  sdkOptionsForProject: (alias: string, path: string, tierProfile: TierProfile, chatId: string, mcpEnv?: Record<string, string>, appendInstructions?: string) => Options
+  sdkOptionsForProject: (alias: string, path: string, tierProfile: TierProfile, chatId: string, mcpEnv?: Record<string, string>, appendInstructions?: string, spawnContext?: { permissionMode: import('../../core/capability-matrix').PermissionMode }) => Options
   /**
    * The single provider-agnostic system-prompt assembler. SessionManager calls
    * it once per spawn and forwards the result via SpawnContext.appendInstructions;

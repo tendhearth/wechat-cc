@@ -37,4 +37,15 @@ describe('wireModelOptions', () => {
     const s = wireModelOptions({ stateDir: dir() }, { plugins: noPlugins, permissionMode: 'dangerously', buildCanUseTool: () => (() => {}) as any, claudeBin: '/bin/claude' })
     expect(s.sdkOptionsForProject('P', '/p', TIER_PROFILES.admin, 'c').pathToClaudeCodeExecutable).toBe('/bin/claude')
   })
+
+  // 安全(10-20):daemon 是 dangerously,但这次 spawn 被压成 strict(访客 / 定时任务)⇒ SDK 选项必须跟着这次 spawn 走。
+  it('honours the spawn’s own permissionMode over the daemon-wide one', () => {
+    const s = wireModelOptions({ stateDir: dir() }, { plugins: noPlugins, permissionMode: 'dangerously', buildCanUseTool: () => (() => {}) as any, claudeBin: undefined })
+    const strict = s.sdkOptionsForProject('P', '/p', TIER_PROFILES.guest, 'guest-chat', undefined, undefined, { permissionMode: 'strict' })
+    expect(strict.permissionMode).toBe('default')
+    expect(strict.disallowedTools).toEqual(expect.arrayContaining(['Bash', 'Write', 'Edit']))
+    const owner = s.sdkOptionsForProject('P', '/p', TIER_PROFILES.admin, 'owner', undefined, undefined, { permissionMode: 'dangerously' })
+    expect(owner.permissionMode).toBe('bypassPermissions')
+    expect(s.sdkOptionsForProject('P', '/p', TIER_PROFILES.admin, 'owner').permissionMode).toBe('bypassPermissions')
+  })
 })

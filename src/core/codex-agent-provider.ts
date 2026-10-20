@@ -266,7 +266,9 @@ export function createCodexAgentProvider(opts: CodexAgentProviderOptions = {}): 
         // children so this is safe at runtime.
         config.mcp_servers = withEnv as unknown as Record<string, never>
       }
-      if (opts.dangerouslyBypassApprovalsAndSandbox) {
+      // 只在**这一次** spawn 是 dangerously 时才开(安全 10-20):daemon 全局 dangerously,但访客 / 定时任务的会话
+      // 被压成了 strict —— 这时再开 bypass 会把 tier 给的 read-only 沙箱整个盖掉。
+      if (opts.dangerouslyBypassApprovalsAndSandbox && spawnOpts.permissionMode === 'dangerously') {
         config.dangerously_bypass_approvals_and_sandbox = true
       }
       const codex = factory({
