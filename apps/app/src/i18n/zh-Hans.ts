@@ -675,7 +675,6 @@ const zh: Record<keyof typeof en, string> = {
   'terminal.liveWindow': '它开在电脑的终端窗口里，你说的话会直接送进那个窗口。',
   'terminal.sentLive': '已送进电脑上的窗口，它读到就接着做。',
   'terminal.sayLiveSending': '正在送进电脑上的窗口…',
-  'terminal.sayLiveFailed': '没送进去：',
   'terminal.sayLiveFailedBare': '没送进电脑上的窗口，请稍后再试。',
   'terminal.sayLiveUnconfirmed': '还没确认送到，过一会儿再看看。',
   'terminal.sayLiveAccepted': '收下了。送没送进窗口这里看不到，可以看一眼电脑。',

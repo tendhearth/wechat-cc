@@ -54,7 +54,8 @@ export function sayNote(v: SayView, lang: Lang): string {
   switch (v.kind) {
     case 'sending': return t(lang, 'terminal.sayLiveSending')
     case 'sent': return t(lang, 'terminal.sentLive')
-    case 'failed': return v.error ? `${t(lang, 'terminal.sayLiveFailed')}${v.error}` : t(lang, 'terminal.sayLiveFailedBare')
+    // daemon 给的 error 本来就是一句人话(「没送进电脑上开着的窗口(…)」),原样显示,不再加前缀(重复)
+    case 'failed': return v.error ? v.error : t(lang, 'terminal.sayLiveFailedBare')
     case 'unconfirmed': return t(lang, 'terminal.sayLiveUnconfirmed')
     case 'superseded':
     case 'acceptedUnknown': return t(lang, 'terminal.sayLiveAccepted')

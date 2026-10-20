@@ -673,7 +673,6 @@ const en = {
   'terminal.liveWindow': 'This session is open in a terminal window on your computer — what you say goes straight into that window.',
   'terminal.sentLive': 'Sent into the window on your computer. It picks it up on its next step.',
   'terminal.sayLiveSending': 'Sending into the window on your computer…',
-  'terminal.sayLiveFailed': 'Didn’t get in: ',
   'terminal.sayLiveFailedBare': 'Didn’t get into the window on your computer. Please try again in a moment.',
   'terminal.sayLiveUnconfirmed': 'Not confirmed yet. Check again in a bit.',
   'terminal.sayLiveAccepted': 'Received. This phone can’t tell whether it reached the window — take a look at your computer.',

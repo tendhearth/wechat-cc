@@ -24,11 +24,11 @@ describe('送进窗口那行小字(2026-10-20)', () => {
     expect(sayNote({ kind: 'sending' }, 'zh-Hans')).toBe('正在送进电脑上的窗口…')
     expect(sayNote({ kind: 'sent' }, 'zh-Hans')).toBe('已送进电脑上的窗口，它读到就接着做。')
   })
-  it('对上同一个 id、没送进去 ⇒ 照抄 daemon 的原话,前面加「没送进去」;没给原话也不说送到', () => {
+  it('对上同一个 id、没送进去 ⇒ 照抄 daemon 的原话(它本来就以「没送进…」开头,不再加前缀);没给原话也不说送到', () => {
     const v = nextSayView(null, track(), last({ state: 'failed', error: '没送进电脑上开着的窗口(超时)' }), T0 + 2000)
     expect(v).toEqual({ kind: 'failed', error: '没送进电脑上开着的窗口(超时)' })
-    expect(sayNote(v, 'zh-Hans')).toBe('没送进去：没送进电脑上开着的窗口(超时)')
-    expect(sayNote(v, 'en')).toBe('Didn’t get in: 没送进电脑上开着的窗口(超时)')
+    expect(sayNote(v, 'zh-Hans')).toBe('没送进电脑上开着的窗口(超时)')
+    expect(sayNote(v, 'en')).toBe('没送进电脑上开着的窗口(超时)')
     const bare = nextSayView(null, track(), last({ state: 'failed' }), T0)
     expect(sayNote(bare, 'zh-Hans')).not.toMatch(/已送进/)
   })
