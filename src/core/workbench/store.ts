@@ -50,6 +50,7 @@ function parseScriptGroups(raw:string|null):{groups:number[]|null;boot:number|nu
   } catch { /* 没有 starts */ }
   return {...base,starts}
 }
+export interface GoalRecord { taskId:string; command:string; maxRounds:number; rounds:number; status:'active'|'passed'|'exhausted'|'stopped'; lastExit:number|null; stopReason:string|null; checkedTurn:string|null; updatedAt:number }
 export interface StoredTask extends Task { ownerChatId: string | null; sessionId: string | null }
 export type {TaskEvent} from './timeline-events'
 export interface Artifact { id: string; taskId: string; name: string; mime: string; size: number; sha256: string; createdAt: number; approvedAt: number | null }
@@ -275,6 +276,26 @@ export function makeWorkbenchStore(db: Db) {
       markRemoved(taskId:string) { db.query('UPDATE workbench_worktrees SET removed_at=COALESCE(removed_at,?) WHERE task_id=?').run(Date.now(),taskId) },
       clearMerged(taskId:string) { db.query('UPDATE workbench_worktrees SET merged_at=NULL WHERE task_id=?').run(taskId) },
       markMerged(taskId:string) { db.query('UPDATE workbench_worktrees SET merged_at=COALESCE(merged_at,?) WHERE task_id=?').run(Date.now(),taskId) },
+    },
+    /** 做到条件成立为止(v80):命令只在建任务时写一次 —— 这里没有、也不许有改命令的方法。 */
+    goals: {
+      create(taskId:string,input:{command:string;maxRounds:number}) {
+        db.query("INSERT INTO workbench_goals(task_id,command,max_rounds,status,updated_at) VALUES(?,?,?,'active',?)").run(taskId,input.command,input.maxRounds,Date.now())
+        bump(taskId)
+      },
+      get(taskId:string):GoalRecord|null {
+        return db.query<GoalRecord,[string]>('SELECT task_id AS taskId,command,max_rounds AS maxRounds,rounds,status,last_exit AS lastExit,stop_reason AS stopReason,checked_turn AS checkedTurn,updated_at AS updatedAt FROM workbench_goals WHERE task_id=?').get(taskId)??null
+      },
+      /** 一次检查跑完:记退出码、这是第几轮、检查的是哪一轮(去重用)。只改还在进行的。 */
+      recordCheck(taskId:string,input:{checkedTurn:string;exit:number|null;rounds:number}) {
+        db.query("UPDATE workbench_goals SET checked_turn=?,last_exit=?,rounds=?,updated_at=? WHERE task_id=? AND status='active'").run(input.checkedTurn,input.exit,input.rounds,Date.now(),taskId)
+        bump(taskId)
+      },
+      /** 结束(passed / exhausted / stopped + 原因)。结束过的不再变。 */
+      finish(taskId:string,status:'passed'|'exhausted'|'stopped',reason?:string) {
+        db.query("UPDATE workbench_goals SET status=?,stop_reason=?,updated_at=? WHERE task_id=? AND status='active'").run(status,reason??null,Date.now(),taskId)
+        bump(taskId)
+      },
     },
     /** 主人批过的工作区脚本(v79):按 (仓库键, 脚本内容哈希),内容一变就不算批过。 */
     scriptApprovals: {
