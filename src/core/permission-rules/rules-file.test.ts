@@ -1,0 +1,113 @@
+import { describe, it, expect } from 'vitest'
+import { homedir } from 'node:os'
+import { parseRulesFile, matchRule, serializeRulesFile, EMPTY_RULES } from './rules-file'
+import type { PermissionAsk, Rule } from './types'
+
+const ask = (over: Partial<PermissionAsk> = {}): PermissionAsk => ({
+  surface: 'terminal', provider: 'claude', tool: 'Bash', command: 'npm test', cwd: '/p', project: '/p',
+  isolatedWorktree: false, tier: 'admin', scope: 's1', ...over,
+})
+const rule = (over: Partial<Rule>): Rule => ({ id: 'r', when: {}, then: 'allow', ...over })
+
+describe('parseRulesFile', () => {
+  it('broken JSON ⇒ empty, disabled, one error', () => {
+    const r = parseRulesFile('not json')
+    expect(r.file).toEqual(EMPTY_RULES)
+    expect(r.errors.length).toBe(1)
+  })
+  it('missing enabled / review ⇒ false / off', () => {
+    const r = parseRulesFile(JSON.stringify({ version: 1, rules: [] }))
+    expect(r.file.enabled).toBe(false)
+    expect(r.file.review).toBe('off')
+    expect(r.errors).toEqual([])
+  })
+  it('drops an over-long pattern and keeps the rest', () => {
+    const r = parseRulesFile(JSON.stringify({ version: 1, enabled: true, rules: [
+      { id: 'ok', when: { command: '^(npm|bun) test\\b' }, then: 'allow' },
+      { id: 'long', when: { command: 'a'.repeat(201) }, then: 'allow' },
+    ] }))
+    expect(r.file.rules.map(x => x.id)).toEqual(['ok'])
+    expect(r.errors.join('\n')).toContain('long')
+  })
+  it('drops nested quantifiers (catastrophic backtracking) and the pathological input stays fast', () => {
+    const r = parseRulesFile(JSON.stringify({ version: 1, rules: [
+      { id: 'n1', when: { command: '(a+)+$' }, then: 'allow' },
+      { id: 'n2', when: { command: '(x*y?)*z' }, then: 'allow' },
+      { id: 'n3', when: { command: '(?:a|b+){2,}' }, then: 'allow' },
+      { id: 'fine', when: { command: '^(ls|cat)( -la)?$' }, then: 'allow' },
+    ] }))
+    expect(r.file.rules.map(x => x.id)).toEqual(['fine'])
+    expect(r.errors.length).toBe(3)
+  })
+  it('drops a pattern that does not compile', () => {
+    const r = parseRulesFile(JSON.stringify({ version: 1, rules: [
+      { id: 'bad', when: { command: '[' }, then: 'allow' },
+      { id: 'good', when: { tool: 'Read' }, then: 'allow' },
+    ] }))
+    expect(r.file.rules.map(x => x.id)).toEqual(['good'])
+    expect(r.errors.join('\n')).toContain('bad')
+  })
+  it('drops a rule whose then is not allow/ask/deny', () => {
+    const r = parseRulesFile(JSON.stringify({ version: 1, rules: [{ id: 'x', when: {}, then: 'maybe' }] }))
+    expect(r.file.rules).toEqual([])
+    expect(r.errors.length).toBe(1)
+  })
+  it('gives missing ids r<n>', () => {
+    const r = parseRulesFile(JSON.stringify({ version: 1, rules: [{ when: {}, then: 'ask' }, { when: {}, then: 'ask' }] }))
+    expect(r.file.rules.map(x => x.id)).toEqual(['r1', 'r2'])
+  })
+  it('round-trips through serialize', () => {
+    const f = { ...EMPTY_RULES, enabled: true, rules: [rule({ id: 'a', when: { tool: 'Read' } })] }
+    const s = serializeRulesFile(f)
+    expect(s.endsWith('\n')).toBe(true)
+    expect(parseRulesFile(s).file).toEqual(f)
+  })
+})
+
+describe('matchRule', () => {
+  it('a deny anywhere beats an earlier allow', () => {
+    const rules = [rule({ id: 'r1', when: { tool: 'Bash' }, then: 'allow' }), rule({ id: 'r2', when: { command: 'npm' }, then: 'deny' })]
+    expect(matchRule(rules, ask())?.id).toBe('r2')
+  })
+  it('otherwise first match in order', () => {
+    const rules = [rule({ id: 'r1', when: { tool: 'Read' } }), rule({ id: 'r2', when: { tool: 'Bash' }, then: 'ask' }), rule({ id: 'r3', when: { tool: 'Bash' } })]
+    expect(matchRule(rules, ask())?.id).toBe('r2')
+  })
+  it('mcp tool wildcard', () => {
+    const rules = [rule({ when: { tool: 'mcp:github:*' } })]
+    expect(matchRule(rules, ask({ tool: 'mcp:github:create_issue' }))).not.toBeNull()
+    expect(matchRule(rules, ask({ tool: 'mcp:githubx:a' }))).toBeNull()
+  })
+  it('project is a path prefix on separator boundaries, ~ expands', () => {
+    const rules = [rule({ when: { project: '/a/b' } })]
+    expect(matchRule(rules, ask({ project: '/a/b/c' }))).not.toBeNull()
+    expect(matchRule(rules, ask({ project: '/a/b' }))).not.toBeNull()
+    expect(matchRule(rules, ask({ project: '/a/bc' }))).toBeNull()
+    expect(matchRule(rules, ask({ project: null }))).toBeNull()
+    expect(matchRule([rule({ when: { project: '~/x' } })], ask({ project: `${homedir()}/x/y` }))).not.toBeNull()
+  })
+  it('a command rule never matches a request without a command', () => {
+    expect(matchRule([rule({ when: { command: '.*' } })], ask({ command: undefined }))).toBeNull()
+  })
+  it('paths glob must cover every path', () => {
+    const rules = [rule({ when: { paths: '/p/src/**' } })]
+    expect(matchRule(rules, ask({ tool: 'Edit', paths: ['/p/src/a.ts', '/p/README.md'] }))).toBeNull()
+    expect(matchRule(rules, ask({ tool: 'Edit', paths: ['/p/src/a.ts', '/p/src/deep/b.ts'] }))).not.toBeNull()
+    expect(matchRule(rules, ask({ tool: 'Edit', paths: undefined }))).toBeNull()
+    expect(matchRule(rules, ask({ tool: 'Edit', paths: [] }))).toBeNull()
+  })
+  it('single * stays inside one segment', () => {
+    const rules = [rule({ when: { paths: '/p/*.ts' } })]
+    expect(matchRule(rules, ask({ paths: ['/p/a.ts'] }))).not.toBeNull()
+    expect(matchRule(rules, ask({ paths: ['/p/d/a.ts'] }))).toBeNull()
+  })
+  it('command is matched on its first 2000 chars only', () => {
+    const rules = [rule({ when: { command: 'TAIL' } })]
+    expect(matchRule(rules, ask({ command: 'x'.repeat(2000) + 'TAIL' }))).toBeNull()
+  })
+  it('surface and provider are exact', () => {
+    const rules = [rule({ when: { surface: 'workbench', provider: 'codex' } })]
+    expect(matchRule(rules, ask())).toBeNull()
+    expect(matchRule(rules, ask({ surface: 'workbench', provider: 'codex' }))).not.toBeNull()
+  })
+})
