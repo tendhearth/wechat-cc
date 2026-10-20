@@ -52,13 +52,92 @@ function fallback(message, source) {
  * @returns {DiffBudget} */
 export function createReviewDiffBudget() { return { charsLeft: MAX_DIFF_CHARS, linesLeft: MAX_LINES, limited: false } }
 
+/** 按块渲染时调用方(改动面板)递进来的东西。没有它 ⇒ 照旧整段 `<pre>`。
+ * @typedef {import('../../../../src/core/workbench/review-annotations').ReviewHunkView} ReviewHunkView
+ * @typedef {{hunks:ReviewHunkView[],attrs:string,actions:boolean,head:(hunk:ReviewHunkView,complete:boolean)=>string,selected?:(hunk:number,row:number)=>boolean,after?:(hunk:number,row:number|null)=>string}} LineView */
+
+/** @param {string} line */
+const lineKind = line => line.startsWith('@@') ? 'hunk' : line.startsWith('+') ? 'added' : line.startsWith('-') ? 'deleted' : 'context'
+
+/** 一行进预览:扣额度,回这一行的 html 正文;额度用完 ⇒ null。
+ * @param {string} line @param {DiffBudget} limits @param {(value:string)=>string} escapeHtml */
+function takeLine(line, limits, escapeHtml) {
+  if (limits.charsLeft <= 0 || limits.linesLeft <= 0) return null
+  const shown = Math.min(line.length, limits.charsLeft, 4000)
+  const truncated = shown < line.length
+  if (truncated) limits.limited = true
+  limits.charsLeft -= shown + 1
+  limits.linesLeft--
+  return `${escapeHtml(line.slice(0, shown))}${truncated ? '…' : ''}`
+}
+
+/** 客户端照服务端的切法(`^(?=@@ )`)切块,再和块清单对:块数、块头、块体行数(不算 `\ No newline`)。
+ * 对不上 ⇒ null,调用方退回整段显示、不给动作。
+ * @param {string|undefined} diff @param {ReviewHunkView[]|undefined} hunks @returns {Array<{header:string,lines:string[]}>|null} */
+export function splitDiffHunks(diff, hunks) {
+  if (!diff || !Array.isArray(hunks) || !hunks.length) return null
+  const parts = diff.split(/^(?=@@ )/m)
+  if (parts[0] !== '' && !parts[0]?.startsWith('@@ ')) return null
+  const raw = parts.filter(part => part.startsWith('@@ '))
+  if (raw.length !== hunks.length) return null
+  const out = []
+  for (const [index, part] of raw.entries()) {
+    const lines = part.split('\n')
+    if (lines.at(-1) === '') lines.pop()
+    const header = lines.shift() ?? ''
+    const view = hunks[index]
+    if (!view || view.index !== index || view.header !== header || lines.filter(line => !line.startsWith('\\')).length !== view.rows) return null
+    out.push({ header, lines })
+  }
+  return out
+}
+
+/** 按块渲染:每块一个块头 + 若干段 `<pre>`,行下的评论 / 输入框插在两段之间。
+ * 额度在块中间用完 ⇒ 那一块只读(不给 data-row、块头不给按钮),后面的块不再渲。
+ * @param {Array<{header:string,lines:string[]}>} split @param {LineView} view @param {(value:string)=>string} escapeHtml @param {DiffBudget} limits */
+function renderHunks(split, view, escapeHtml, limits) {
+  const blocks = []
+  for (const [index, part] of split.entries()) {
+    const hunk = view.hunks[index]
+    const header = hunk ? takeLine(part.header, limits, escapeHtml) : null
+    if (!hunk || header === null) { limits.limited = true; break }
+    /** @type {Array<{kind:string,html:string,row:number|null}>} */
+    const rows = []
+    let row = 0, complete = true
+    for (const line of part.lines) {
+      const html = takeLine(line, limits, escapeHtml)
+      if (html === null) { complete = false; limits.limited = true; break }
+      const marker = line.startsWith('\\')
+      rows.push({ kind: marker ? 'context' : lineKind(line), html, row: marker ? null : row })
+      if (!marker) row++
+    }
+    const live = complete && view.actions
+    const segments = []
+    let open = []
+    for (const item of rows) {
+      const selected = live && item.row !== null && !!view.selected?.(index, item.row)
+      open.push(`<span data-line="${item.kind}"${live && item.row !== null ? ` data-hunk="${index}" data-row="${item.row}"` : ''}${selected ? ' class="is-selected"' : ''}>${item.html}</span>`)
+      const extra = complete && item.row !== null ? view.after?.(index, item.row) ?? '' : ''
+      if (extra) { segments.push(`<pre class="wb-review-diff"><code>${open.join('')}</code></pre>`, extra); open = [] }
+    }
+    if (open.length) segments.push(`<pre class="wb-review-diff"><code>${open.join('')}</code></pre>`)
+    if (complete) segments.push(view.after?.(index, null) ?? '')
+    blocks.push(`<div class="wb-review-hunk" data-review-hunk="${index}"${hunk.reverted ? ' data-reverted' : ''}><div class="wb-review-hunk-head"><code>${header}</code>${view.head(hunk, complete)}</div>${segments.join('')}</div>`)
+    if (!complete) break
+  }
+  return blocks.length ? `<div class="wb-review-hunks" data-review-lines${view.attrs} aria-label="文件差异">${blocks.join('')}</div>` : '<p class="wb-review-note">此文件的差异未在预览中展开，请下载完整记录。</p>'
+}
+
 /** 一个文件的差异正文:整份快照共用一份预览额度(`budget`),单独渲染一个文件时自己开一份。
  * 输出只有 `<pre class="wb-review-diff">` 或一句照实的说明 —— diff 内容永远只当文本。
- * @param {ReviewFile} file @param {(value:string)=>string} [escapeHtml] @param {DiffBudget} [budget] */
-export function renderReviewFileDiff(file, escapeHtml = escape, budget) {
+ * 给了 `lines` 且客户端切块与服务端块清单对得上 ⇒ 按块渲染(改动面板的行评论 / 按块撤回);否则照旧。
+ * @param {ReviewFile} file @param {(value:string)=>string} [escapeHtml] @param {DiffBudget} [budget] @param {LineView} [lines] */
+export function renderReviewFileDiff(file, escapeHtml = escape, budget, lines) {
   const limits = budget ?? { charsLeft: MAX_DIFF_CHARS, linesLeft: MAX_LINES, limited: false }
   const diff = file.diff
   if (!diff) return file.reason ? '' : '<p class="wb-review-note">这项记录没有可展开的文本差异。</p>'
+  const split = lines ? splitDiffHunks(diff, lines.hunks) : null
+  if (split && lines) return renderHunks(split, lines, escapeHtml, limits)
   const rows = []
   let offset = 0
   while (offset < diff.length && limits.charsLeft > 0 && limits.linesLeft > 0) {
@@ -67,7 +146,7 @@ export function renderReviewFileDiff(file, escapeHtml = escape, budget) {
     const length = end - offset
     const shown = Math.min(length, limits.charsLeft, 4000)
     const line = diff.slice(offset, offset + shown)
-    const kind = line.startsWith('@@') ? 'hunk' : line.startsWith('+') ? 'added' : line.startsWith('-') ? 'deleted' : 'context'
+    const kind = lineKind(line)
     const truncated = shown < length
     if (truncated) limits.limited = true
     rows.push(`<span data-line="${kind}">${escapeHtml(line)}${truncated ? '…' : ''}</span>`)

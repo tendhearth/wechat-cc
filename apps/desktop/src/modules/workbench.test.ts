@@ -2636,6 +2636,286 @@ describe('workbench mutations', () => {
     expect(controller.state.error).toBe('')
     module.stopWorkbenchPolling()
   })
+
+  // 行评论 + 按块撤回(2026-10-21,切片 3)
+  const LINE_DIFF = '@@ -1,3 +1,3 @@\n a\n-b\n+c\n d\n@@ -10 +10 @@\n-x\n+y'
+  const H0 = '1'.repeat(64), H1 = '2'.repeat(64)
+  const lineHunks = () => [
+    { index: 0, sha256: H0, header: '@@ -1,3 +1,3 @@', oldStart: 1, oldCount: 3, newStart: 1, newCount: 3, rows: 4 },
+    { index: 1, sha256: H1, header: '@@ -10 +10 @@', oldStart: 10, oldCount: 1, newStart: 10, newCount: 1, rows: 2 },
+  ]
+  /** 一个有状态的假后台:评论按请求真的建 / 改 / 删,reviewList 照着回。 */
+  const linePage = (handle: (method: string, path: string, body: any) => unknown = () => null, detail: Record<string, unknown> = {}) => {
+    const comments: any[] = []
+    const posts: Array<[string, unknown]> = []
+    const api = vi.fn(async (method: string, path: string, body?: any) => {
+      if (method === 'POST') posts.push([path, body])
+      const custom = handle(method, path, body)
+      if (custom) return custom
+      if (path.startsWith('/v1/matters')) return { matters: [] }
+      if (path.startsWith('/v1/workbench/review?')) return { reviews: [reviewTurn({ files: [reviewFile({ diff: LINE_DIFF, hunks: lineHunks(), comments: comments.map(c => ({ ...c })) })] })] }
+      if (method === 'POST' && path === '/v1/workbench/review-comment') {
+        if (body.delete) { comments.splice(comments.findIndex(c => c.id === body.commentId), 1); return { deleted: body.commentId } }
+        const existing = comments.find(c => c.id === body.commentId)
+        if (existing) { existing.body = body.body; return { comment: existing } }
+        const comment = { id: body.commentId, hunk: body.hunk, rowStart: body.rowStart, rowEnd: body.rowEnd, side: 'new', lineStart: 2, lineEnd: 2, body: body.body, state: 'draft' }
+        comments.push(comment)
+        return { comment }
+      }
+      if (method === 'POST') return { task: reviewTask }
+      if (path.startsWith('/v1/workbench/task')) return { task: reviewTask, events: [{ id: 'e1', taskId: 'REVIEW', kind: 'text', text: '做完了', createdAt: 1 }], artifacts: [], ...detail }
+      return { tasks: [reviewTask], providers: [{ id: 'codex', displayName: 'Codex' }], defaultProvider: 'codex', canWechat: false }
+    })
+    return { api, posts, comments }
+  }
+  /** 一行 diff:closest 认得出它在哪一块、哪个文件。 */
+  const lineRow = (row: number, hunk = 0) => {
+    const box = new FakeElement(); box.dataset = { artifactId: 'ART-1', path: 'src/app.ts' }
+    const block = new FakeElement(); block.dataset = { reviewHunk: String(hunk) }
+    const el = new FakeElement(); el.dataset = { hunk: String(hunk), row: String(row) }
+    el.closest = ((selector: string) => selector === '[data-row]' ? el : selector === '[data-review-lines]' ? box : selector === '[data-review-hunk]' ? block : null) as any
+    return el
+  }
+  const armable = (dataset: Record<string, string>, label: string) => {
+    const el = new FakeElement(); el.dataset = dataset
+    Object.assign(el, { textContent: label, classList: { add() {}, remove() {} } })
+    return el
+  }
+  /** 页面上的两个文本框(行评论输入框 / 发出栏的总意见):captureDraft 从这里读。 */
+  const lineFields = (page: FakeElement) => {
+    const body = new FakeElement(), summary = new FakeElement()
+    page.querySelector = (selector: string) => selector === '.wb-line-compose textarea[name="body"]' ? body : selector === '.wb-review-send textarea[name="summary"]' ? summary : null
+    return { body, summary }
+  }
+
+  it('行评论:点行选中、Shift 扩选 → 评论 → 存草稿(客户端 id)→ 改 → 点两下删', async () => {
+    const page = installFakePage()
+    const fields = lineFields(page)
+    const { api, posts, comments } = linePage()
+    const module = await import('./workbench.js')
+    const controller = module.initWorkbenchPage({ invokeWorkbenchApi: api, pollMs: 60_000 })!
+    await vi.waitFor(() => expect(controller.state.reviews).toHaveLength(1))
+    expect(page.innerHTML).toContain('data-action="line-comment-hunk"')
+    const click = [...page.listeners.get('click')!][0]!
+    await click({ target: lineRow(1) })
+    expect(controller.state.lineSelect).toMatchObject({ hunk: 0, hunkSha256: H0, rowStart: 1, rowEnd: 1 })
+    await click({ target: lineRow(2), shiftKey: true })
+    expect(controller.state.lineSelect).toMatchObject({ rowStart: 1, rowEnd: 2 })
+    expect(page.innerHTML.match(/class="is-selected"/g)).toHaveLength(2)
+    expect(page.innerHTML).toContain('已选 2 行')
+    // 别的块里 Shift 点不扩选,重新选
+    await click({ target: lineRow(0, 1), shiftKey: true })
+    expect(controller.state.lineSelect).toMatchObject({ hunk: 1, rowStart: 0, rowEnd: 0 })
+    await click({ target: lineRow(1) }); await click({ target: lineRow(2), shiftKey: true })
+    const open = new FakeElement(); open.dataset = { action: 'line-comment-open' }
+    await click({ target: open })
+    const commentId = controller.state.lineCompose?.commentId
+    expect(commentId).toMatch(/^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/)
+    expect(controller.state.lineSelect).toBeNull()
+    expect(page.innerHTML).toContain('placeholder="这几行要怎么改…"')
+    const submit = [...page.listeners.get('submit')!][0]!
+    const form = new FakeElement(); form.tagName = 'FORM'; form.dataset = { action: 'line-comment-save' }
+    fields.body.dataset.commentId = commentId!
+    fields.body.value = '   '
+    await submit({ preventDefault() {}, target: form })
+    expect(posts).toEqual([])
+    expect(page.innerHTML).toContain('先写一句再存。')
+    fields.body.value = '  这里改成常量  '
+    await submit({ preventDefault() {}, target: form })
+    expect(posts.at(-1)).toEqual(['/v1/workbench/review-comment', { id: 'REVIEW', commentId, artifactId: 'ART-1', path: 'src/app.ts', hunk: 0, hunkSha256: H0, rowStart: 1, rowEnd: 2, body: '这里改成常量' }])
+    expect(controller.state.lineCompose).toBeNull()
+    fields.body.dataset = {} // 存好之后输入框已经从页面上消失
+    await vi.waitFor(() => expect(page.innerHTML).toContain('data-action="line-comment-edit"'))
+    expect(page.innerHTML).toContain('1 条评论待发出')
+    // 改:输入框里是原来的正文;只带 id + 正文
+    const edit = new FakeElement(); edit.dataset = { action: 'line-comment-edit', commentId: commentId! }
+    await click({ target: edit })
+    expect(controller.state.lineCompose).toMatchObject({ commentId, body: '这里改成常量', edit: true })
+    expect(page.innerHTML).toContain('>这里改成常量</textarea>')
+    fields.body.dataset.commentId = commentId!
+    fields.body.value = '改成常量,名字叫 LIMIT'
+    await submit({ preventDefault() {}, target: form })
+    expect(posts.at(-1)).toEqual(['/v1/workbench/review-comment', { id: 'REVIEW', commentId, body: '改成常量,名字叫 LIMIT' }])
+    await vi.waitFor(() => expect(page.innerHTML).toContain('改成常量,名字叫 LIMIT'))
+    // 删:点两下才算
+    const del = armable({ action: 'line-comment-delete', commentId: commentId! }, '删')
+    await click({ target: del })
+    expect((del as any).textContent).toBe('再点一次：删掉这条')
+    expect(posts).toHaveLength(2)
+    await click({ target: del })
+    expect(posts.at(-1)).toEqual(['/v1/workbench/review-comment', { id: 'REVIEW', commentId, delete: true }])
+    expect(comments).toHaveLength(0)
+    await vi.waitFor(() => expect(page.innerHTML).not.toContain('条评论待发出'))
+    module.stopWorkbenchPolling()
+  })
+
+  it('存草稿被拒:原因写在输入框里,字不丢;整块评论不带行', async () => {
+    const page = installFakePage()
+    const fields = lineFields(page)
+    let stale = true
+    const { api, posts } = linePage((method, path) => { if (method === 'POST' && path === '/v1/workbench/review-comment' && stale) { stale = false; throw new Error('HTTP 409: {"error":"review_hunk_stale"}') } return null })
+    const module = await import('./workbench.js')
+    const controller = module.initWorkbenchPage({ invokeWorkbenchApi: api, pollMs: 60_000 })!
+    await vi.waitFor(() => expect(controller.state.reviews).toHaveLength(1))
+    const click = [...page.listeners.get('click')!][0]!
+    const whole = new FakeElement(); whole.dataset = { action: 'line-comment-hunk', artifactId: 'ART-1', path: 'src/app.ts', hunk: '1', hunkSha: H1 }
+    await click({ target: whole })
+    const commentId = controller.state.lineCompose?.commentId
+    fields.body.dataset.commentId = commentId!
+    fields.body.value = '这一块整个不要'
+    const form = new FakeElement(); form.tagName = 'FORM'; form.dataset = { action: 'line-comment-save' }
+    await [...page.listeners.get('submit')!][0]!({ preventDefault() {}, target: form })
+    expect(posts.at(-1)).toEqual(['/v1/workbench/review-comment', { id: 'REVIEW', commentId, artifactId: 'ART-1', path: 'src/app.ts', hunk: 1, hunkSha256: H1, body: '这一块整个不要' }])
+    expect(controller.state.lineCompose).toMatchObject({ commentId, body: '这一块整个不要', notice: '这块已经变了，刷新再试。' })
+    expect(page.innerHTML).toContain('这块已经变了，刷新再试。')
+    expect(controller.state.error).toBe('')
+    // 重存一次:同一个 id(后台按幂等认)
+    await [...page.listeners.get('submit')!][0]!({ preventDefault() {}, target: form })
+    expect((posts.at(-1)![1] as any).commentId).toBe(commentId)
+    expect(controller.state.lineCompose).toBeNull()
+    module.stopWorkbenchPolling()
+  })
+
+  it('存草稿时同一件事上还有一笔没回来:输入框里说一声,字留着,不发', async () => {
+    const page = installFakePage()
+    const fields = lineFields(page)
+    let release: (value: unknown) => void = () => {}
+    const { api, posts } = linePage((method, path) => method === 'POST' && path === '/v1/workbench/review-hunk' ? new Promise(resolve => { release = resolve }) : null)
+    const module = await import('./workbench.js')
+    const controller = module.initWorkbenchPage({ invokeWorkbenchApi: api, pollMs: 60_000 })!
+    await vi.waitFor(() => expect(controller.state.reviews).toHaveLength(1))
+    const click = [...page.listeners.get('click')!][0]!
+    const revert = armable({ action: 'review-hunk', hunkAction: 'revert', artifactId: 'ART-1', path: 'src/app.ts', hunk: '0', hunkSha: H0 }, '撤回这一块')
+    await click({ target: revert })
+    const pending = click({ target: revert })
+    await vi.waitFor(() => expect(posts.map(([path]) => path)).toEqual(['/v1/workbench/review-hunk']))
+    const whole = new FakeElement(); whole.dataset = { action: 'line-comment-hunk', artifactId: 'ART-1', path: 'src/app.ts', hunk: '1', hunkSha: H1 }
+    await click({ target: whole })
+    const commentId = controller.state.lineCompose!.commentId
+    fields.body.dataset.commentId = commentId
+    fields.body.value = '这一块整个不要'
+    const form = new FakeElement(); form.tagName = 'FORM'; form.dataset = { action: 'line-comment-save' }
+    const submit = [...page.listeners.get('submit')!][0]!
+    await submit({ preventDefault() {}, target: form })
+    expect(posts).toHaveLength(1)
+    expect(controller.state.lineCompose).toMatchObject({ commentId, body: '这一块整个不要', notice: '上一个操作还没完成，稍等再存。' })
+    expect(page.innerHTML).toContain('上一个操作还没完成，稍等再存。')
+    release({ hunk: { path: 'src/app.ts', hunk: 0, state: 'reverted' } }); await pending
+    await submit({ preventDefault() {}, target: form })
+    expect(posts.at(-1)).toEqual(['/v1/workbench/review-comment', { id: 'REVIEW', commentId, artifactId: 'ART-1', path: 'src/app.ts', hunk: 1, hunkSha256: H1, body: '这一块整个不要' }])
+    expect(controller.state.lineCompose).toBeNull()
+    module.stopWorkbenchPolling()
+  })
+
+  it('正在写的那条显示不了 ⇒「放弃这条」清掉它,新评论又能开', async () => {
+    const page = installFakePage()
+    let mismatch = false
+    const { api } = linePage((_method, path) => mismatch && path.startsWith('/v1/workbench/review?') ? { reviews: [reviewTurn({ files: [reviewFile({ diff: LINE_DIFF, hunks: lineHunks().map(h => ({ ...h, rows: 9 })) })] })] } : null)
+    const module = await import('./workbench.js')
+    const controller = module.initWorkbenchPage({ invokeWorkbenchApi: api, pollMs: 60_000 })!
+    await vi.waitFor(() => expect(controller.state.reviews).toHaveLength(1))
+    const click = [...page.listeners.get('click')!][0]!
+    const whole = new FakeElement(); whole.dataset = { action: 'line-comment-hunk', artifactId: 'ART-1', path: 'src/app.ts', hunk: '0', hunkSha: H0 }
+    await click({ target: whole })
+    controller.state.lineCompose!.body = '写了一半'
+    mismatch = true
+    await controller.refresh({ force: true })
+    // 快照内容寻址:块清单不会在同一个 sha 下变,这里只是造一个「切块对不上」,所以手动重画一次
+    await vi.waitFor(() => expect(controller.state.reviews?.[0]?.files[0]?.hunks?.[0]?.rows).toBe(9))
+    controller.paint(true)
+    expect(page.innerHTML).toContain('有一条没写完的评论（那段改动现在显示不了）')
+    expect(page.innerHTML).not.toContain('<form class="wb-line-compose"')
+    const cancel = new FakeElement(); cancel.dataset = { action: 'line-comment-cancel' }
+    await click({ target: cancel })
+    expect(controller.state.lineCompose).toBeNull()
+    expect(page.innerHTML).not.toContain('wb-line-orphan')
+    module.stopWorkbenchPolling()
+  })
+
+  it('发出评论:原会话不可恢复 ⇒ 确认后带重开令牌再发;发完照实说发了几条', async () => {
+    const page = installFakePage()
+    const fields = lineFields(page)
+    const restartToken = 'c'.repeat(64)
+    let first = true
+    const { api, posts } = linePage((method, path) => {
+      if (method === 'POST' && path === '/v1/workbench/review-comments-send') {
+        if (first) { first = false; throw new Error('HTTP 409: {"error":"restart_confirmation_required"}') }
+        return { task: reviewTask, sent: 2, remaining: 1, skippedDiscarded: 1 }
+      }
+      return null
+    }, { continuation: { mode: 'restart_required', restart: { token: restartToken, context: '记录', eventCount: 1, includedEventCount: 1, truncated: false } } })
+    const module = await import('./workbench.js')
+    const controller = module.initWorkbenchPage({ invokeWorkbenchApi: api, pollMs: 60_000 })!
+    await vi.waitFor(() => expect(controller.state.reviews).toHaveLength(1))
+    const form = new FakeElement(); form.tagName = 'FORM'; form.dataset = { action: 'line-comments-send' }
+    const submit = [...page.listeners.get('submit')!][0]!
+    fields.summary.value = '  整体再收一收  '
+    await submit({ preventDefault() {}, target: form })
+    expect(posts.at(-1)).toEqual(['/v1/workbench/review-comments-send', { id: 'REVIEW', summary: '整体再收一收' }])
+    expect(controller.state.commentsSend).toMatchObject({ restartToken, summary: '  整体再收一收  ' })
+    expect(controller.state.commentsSend?.notice).toContain('原会话无法恢复')
+    await submit({ preventDefault() {}, target: form })
+    expect(posts.at(-1)).toEqual(['/v1/workbench/review-comments-send', { id: 'REVIEW', summary: '整体再收一收', restartToken }])
+    expect(controller.state.commentsSend).toEqual({ summary: '', result: '已发出 2 条评论。还有 1 条装不下，留在草稿里，下次再发。撤掉的轮上有 1 条草稿，没有发出。' })
+    expect(module.sentResultText({ sent: 3, remaining: 0, skippedDiscarded: 0 })).toBe('已发出 3 条评论。')
+    module.stopWorkbenchPolling()
+  })
+
+  it('发出评论:执行者在写 ⇒ 不发,发出栏里说明', async () => {
+    const page = installFakePage()
+    lineFields(page)
+    const running = { ...reviewTask, status: 'running' }
+    const { api, posts } = linePage((_method, path) => path.startsWith('/v1/workbench/task') ? { task: running, events: [], artifacts: [] } : null)
+    const module = await import('./workbench.js')
+    const controller = module.initWorkbenchPage({ invokeWorkbenchApi: api, pollMs: 60_000 })!
+    await vi.waitFor(() => expect(controller.state.detail?.task.status).toBe('running'))
+    const form = new FakeElement(); form.tagName = 'FORM'; form.dataset = { action: 'line-comments-send' }
+    await [...page.listeners.get('submit')!][0]!({ preventDefault() {}, target: form })
+    expect(posts).toEqual([])
+    expect(controller.state.commentsSend?.notice).toBe('执行者还在写，等它答复后再发出评论。')
+    module.stopWorkbenchPolling()
+  })
+
+  it('按块撤回:点两下才发;成功刷新', async () => {
+    const page = installFakePage()
+    const { api, posts } = linePage((method, path) => method === 'POST' && path === '/v1/workbench/review-hunk' ? { hunk: { path: 'src/app.ts', hunk: 0, state: 'reverted' } } : null)
+    const module = await import('./workbench.js')
+    const controller = module.initWorkbenchPage({ invokeWorkbenchApi: api, pollMs: 60_000 })!
+    await vi.waitFor(() => expect(controller.state.reviews).toHaveLength(1))
+    expect(page.innerHTML).toContain('>撤回这一块<')
+    const click = [...page.listeners.get('click')!][0]!
+    const button = armable({ action: 'review-hunk', hunkAction: 'revert', artifactId: 'ART-1', path: 'src/app.ts', hunk: '0', hunkSha: H0 }, '撤回这一块')
+    await click({ target: button })
+    expect((button as any).textContent).toBe('再点一次：撤回这一块')
+    expect(posts).toEqual([])
+    await click({ target: button })
+    expect(posts).toEqual([['/v1/workbench/review-hunk', { id: 'REVIEW', artifactId: 'ART-1', path: 'src/app.ts', hunk: 0, hunkSha256: H0, action: 'revert' }]])
+    expect(controller.state.error).toBe('')
+    expect(api).toHaveBeenLastCalledWith('GET', '/v1/workbench/review?id=REVIEW')
+    module.stopWorkbenchPolling()
+  })
+
+  it.each([
+    ['review_file_changed', '这个文件之后又被改过，不能按块撤回。'],
+    ['review_hunk_stale', '这块已经变了，刷新再试。'],
+    ['review_revert_unavailable', '这一块没法自动撤回（新增或删除的文件、内容不是快照里的样子，或工作区已经不在），请手动处理。'],
+    ['review_comment_limit', '评论太多了：每件事最多 50 条草稿，每一轮最多 200 条。'],
+    ['workbench_busy', '这个文件夹还有会话或检查在跑，等它停下再撤回。'],
+    ['review_round_discarded', '这一轮已经撤掉了，不能再改。'],
+    ['rewind_needs_owner', '回退停住了，先在上面拍板再继续。'],
+  ])('按块撤回被拒(%s)⇒ 人话', async (code, wording) => {
+    const page = installFakePage()
+    const { api } = linePage((method, path) => { if (method === 'POST' && path === '/v1/workbench/review-hunk') throw new Error(`HTTP 409: {"error":"${code}"}`); return null })
+    const module = await import('./workbench.js')
+    const controller = module.initWorkbenchPage({ invokeWorkbenchApi: api, pollMs: 60_000 })!
+    await vi.waitFor(() => expect(controller.state.reviews).toHaveLength(1))
+    const click = [...page.listeners.get('click')!][0]!
+    const button = armable({ action: 'review-hunk', hunkAction: 'restore', artifactId: 'ART-1', path: 'src/app.ts', hunk: '1', hunkSha: H1 }, '恢复这一块')
+    await click({ target: button }); await click({ target: button })
+    expect(api).toHaveBeenCalledWith('POST', '/v1/workbench/review-hunk', { id: 'REVIEW', artifactId: 'ART-1', path: 'src/app.ts', hunk: 1, hunkSha256: H1, action: 'restore' })
+    expect(controller.state.error).toBe(wording)
+    module.stopWorkbenchPolling()
+  })
 })
 
 describe('workbench lifecycle', () => {

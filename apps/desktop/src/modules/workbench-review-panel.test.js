@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest'
+import { createHash } from 'node:crypto'
 import { renderReviewPanel, reviewSummary, reviewsSignature } from './workbench-review-panel.js'
 import { createReviewDiffBudget, renderReviewFileDiff } from './workbench-code-review.js'
 
@@ -141,5 +142,207 @@ describe('改动面板', () => {
     expect(reviewsSignature(base)).not.toBe(reviewsSignature([turn({ sha256: 'c'.repeat(64) })]))
     expect(reviewsSignature(base)).not.toBe(reviewsSignature([...base, turn({ artifactId: 'ART-2', sha256: 'd'.repeat(64) })]))
     expect(reviewsSignature([])).toBe(reviewsSignature([]))
+  })
+
+  // 行评论(2026-10-21)之前的输出,逐字节钉住:不带 hunks / comments 的数据,带不带 lines 都一样
+  it('不带块清单 / 评论的数据渲染得与以前逐字节相同', () => {
+    const budgetFor = () => { const budget = createReviewDiffBudget(); return { budget, renderDiff: (/** @type {any} */ f, /** @type {any} */ l) => renderReviewFileDiff(f, escapeHtml, budget, l) } }
+    const pinned = (/** @type {Record<string,unknown>} */ o = {}) => ({ path: 'src/app.ts', preexisting: false, kind: 'modified', diff: '@@ -1,3 +1,3 @@\n a\n-b\n+c\n d\n@@ -10 +10 @@\n-x\n+y', ...o })
+    const pinnedTurn = (/** @type {Record<string,unknown>} */ o = {}) => ({ artifactId: 'ART-1', sha256: 'a'.repeat(64), name: 'n.json', createdAt: 100, status: 'complete', headBefore: null, headAfter: null, preexistingPaths: [], notes: ['n1'], files: [pinned()], ...o })
+    const reviews = [
+      pinnedTurn({ artifactId: 'ART-3', sha256: 'c'.repeat(64), discarded: true, rewindable: { start: true, end: false } }),
+      pinnedTurn({ artifactId: 'ART-2', sha256: 'b'.repeat(64), files: [pinned({ mark: { mark: 'returned', comment: '再改', createdAt: 1 }, risk: ['鉴权'] }), pinned({ path: 'big.bin', kind: 'not_reviewed', diff: undefined, reason: '二进制' })] }),
+      pinnedTurn({ files: [pinned({ kind: 'added', diff: '@@ -0,0 +1 @@\n+z\n\\ No newline at end of file' })] }),
+    ]
+    const sha = (/** @type {string} */ html) => createHash('sha256').update(html).digest('hex')
+    const base = { escapeHtml, formatTime, returnOpen: { artifactId: 'ART-2', paths: ['src/app.ts'], comment: 'x' } }
+    const before = 'd3f469a264b8ec1b32e03e853fcf89444092ebdafd164902698f55ea37110816'
+    expect(sha(renderReviewPanel(reviews, { ...base, ...budgetFor() }))).toBe(before)
+    expect(sha(renderReviewPanel(reviews, { ...base, ...budgetFor(), lines: { select: null, compose: null, send: null } }))).toBe(before)
+    expect(reviewsSignature(reviews)).toBe('[["' + 'c'.repeat(64) + '","complete",true,true,false,[["src/app.ts",null,""]]],["' + 'b'.repeat(64) + '","complete",[["src/app.ts","returned","再改"],["big.bin",null,""]]],["' + 'a'.repeat(64) + '","complete",[["src/app.ts",null,""]]]]')
+  })
+})
+
+describe('行评论 + 按块撤回', () => {
+  const DIFF = '@@ -1,3 +1,3 @@\n a\n-b\n+c\n d\n@@ -10 +10 @@\n-x\n+y'
+  const hunks = (/** @type {Record<string,unknown>[]} */ extra = [{}, {}]) => [
+    { index: 0, sha256: '1'.repeat(64), header: '@@ -1,3 +1,3 @@', oldStart: 1, oldCount: 3, newStart: 1, newCount: 3, rows: 4, ...extra[0] },
+    { index: 1, sha256: '2'.repeat(64), header: '@@ -10 +10 @@', oldStart: 10, oldCount: 1, newStart: 10, newCount: 1, rows: 2, ...extra[1] },
+  ]
+  const lineFile = (/** @type {Record<string,unknown>} */ o = {}) => file({ diff: DIFF, hunks: hunks(), ...o })
+  const real = (/** @type {Record<string,unknown>} */ extra = {}) => { const budget = createReviewDiffBudget(); return options({ budget, renderDiff: (/** @type {any} */ f, /** @type {any} */ l) => renderReviewFileDiff(f, escapeHtml, budget, l), lines: {}, ...extra }) }
+  const draft = (/** @type {Record<string,unknown>} */ o = {}) => ({ id: 'c0ffee00-0000-4000-8000-000000000001', hunk: 0, rowStart: 1, rowEnd: 2, side: 'new', lineStart: 2, lineEnd: 2, body: '这里改成常量', state: 'draft', ...o })
+
+  it('块清单对得上 ⇒ 每块一个块头 + 两个按钮,行带 data-hunk / data-row', () => {
+    const html = renderReviewPanel([turn({ files: [lineFile()] })], real())
+    expect(html.match(/class="wb-review-hunk"/g)).toHaveLength(2)
+    expect(html).toContain('<code>@@ -1,3 +1,3 @@</code>')
+    expect(html.match(/data-action="line-comment-hunk"/g)).toHaveLength(2)
+    expect(html.match(/data-action="review-hunk" data-hunk-action="revert"/g)).toHaveLength(2)
+    expect(html).toContain('>撤回这一块<')
+    expect(html).toContain('data-hunk-sha="' + '1'.repeat(64) + '"')
+    expect(html).toContain('<span data-line="deleted" data-hunk="0" data-row="1">-b</span>')
+    expect(html).toContain('<span data-line="added" data-hunk="1" data-row="1">+y</span>')
+    expect(html).toContain('data-review-lines data-artifact-id="ART-1" data-path="src/app.ts"')
+    // 块头不再当一行出现在 pre 里
+    expect(html).not.toContain('data-line="hunk"')
+  })
+
+  it('撤回过的块:小签「已撤回」+「恢复这一块」;新增的文件只能评论不能按块撤回', () => {
+    const html = renderReviewPanel([turn({ files: [lineFile({ hunks: hunks([{ reverted: { at: 5 } }, {}]) })] })], real())
+    expect(html).toContain('<span class="wb-review-badge" data-mark="reverted">已撤回</span>')
+    expect(html).toContain('data-hunk-action="restore"')
+    expect(html).toContain('>恢复这一块<')
+    expect(html).toContain('data-reverted')
+    const added = renderReviewPanel([turn({ files: [lineFile({ kind: 'added' })] })], real())
+    expect(added).toContain('data-action="line-comment-hunk"')
+    expect(added).not.toContain('data-action="review-hunk"')
+  })
+
+  it('客户端切块对不上 ⇒ 退回整段 pre,不给动作', () => {
+    for (const bad of [hunks([{ rows: 3 }, {}]), hunks().slice(0, 1), hunks([{ header: '@@ -1,3 +1,4 @@' }, {}])]) {
+      const html = renderReviewPanel([turn({ files: [lineFile({ hunks: bad })] })], real())
+      expect(html).toContain('<pre class="wb-review-diff" aria-label="文件差异">')
+      expect(html).toContain('<span data-line="hunk">@@ -1,3 +1,3 @@</span>')
+      expect(html).not.toContain('data-row=')
+      expect(html).not.toContain('data-action="line-comment-hunk"')
+      expect(html).not.toContain('data-action="review-hunk"')
+    }
+    // 没给 lines(老调用方)也一样
+    const budget = createReviewDiffBudget()
+    expect(renderReviewPanel([turn({ files: [lineFile()] })], options({ renderDiff: (/** @type {any} */ f, /** @type {any} */ l) => renderReviewFileDiff(f, escapeHtml, budget, l) }))).not.toContain('data-row=')
+  })
+
+  it('撤掉的轮灰显只读:块头只剩小签,行不能选,草稿写明不会发出', () => {
+    const html = renderReviewPanel([turn({ discarded: true, files: [lineFile({ hunks: hunks([{ reverted: { at: 1 } }, {}]), comments: [draft()] })] })], real({ lines: { select: { artifactId: 'ART-1', path: 'src/app.ts', hunk: 0, hunkSha256: '1'.repeat(64), anchor: 1, rowStart: 1, rowEnd: 1 } } }))
+    expect(html).toContain('class="wb-review-hunk"')
+    expect(html).toContain('已撤回')
+    expect(html).not.toContain('data-row=')
+    expect(html).not.toContain('data-action="line-comment-hunk"')
+    expect(html).not.toContain('data-action="review-hunk"')
+    expect(html).not.toContain('is-selected')
+    expect(html).toContain('草稿 · 这一轮已撤掉，草稿不会发出')
+    expect(html).not.toContain('data-action="line-comment-edit"')
+    expect(html).not.toContain('data-action="line-comment-delete"')
+    // 撤掉的轮上的草稿不算「待发出」
+    expect(html).not.toContain('条评论待发出')
+  })
+
+  it('较早的一轮不就地展开,评论列在下面;额度用完的那一块只读', () => {
+    const reviews = Array.from({ length: 4 }, (_, i) => turn({ artifactId: `ART-${i}`, sha256: String(i).repeat(64), files: [lineFile({ comments: i === 3 ? [draft()] : [] })] }))
+    const html = renderReviewPanel(reviews, real())
+    const older = html.split('<section class="wb-review-turn"').slice(1)[3] ?? ''
+    expect(older).toContain('较早的一轮')
+    expect(older).not.toContain('data-row=')
+    expect(older).toContain('<div class="wb-line-comments">')
+    expect(older).toContain('这里改成常量')
+    // 额度只够第一块的块头 + 两行:那一块不给动作,后面的块不渲
+    const budget = { charsLeft: 1000, linesLeft: 3, limited: false }
+    const cut = renderReviewPanel([turn({ files: [lineFile({ comments: [draft()] })] })], options({ budget, renderDiff: (/** @type {any} */ f, /** @type {any} */ l) => renderReviewFileDiff(f, escapeHtml, budget, l), lines: {} }))
+    expect(budget.limited).toBe(true)
+    expect(cut.match(/class="wb-review-hunk"/g)).toHaveLength(1)
+    expect(cut).not.toContain('data-row=')
+    expect(cut).not.toContain('data-action="line-comment-hunk"')
+    expect(cut).toContain('<div class="wb-line-comments">')
+  })
+
+  it('选中的行高亮,选区下给「评论」;点开后是就地输入框', () => {
+    const select = { artifactId: 'ART-1', path: 'src/app.ts', hunk: 0, hunkSha256: '1'.repeat(64), anchor: 1, rowStart: 1, rowEnd: 2 }
+    const html = renderReviewPanel([turn({ files: [lineFile()] })], real({ lines: { select } }))
+    expect(html.match(/class="is-selected"/g)).toHaveLength(2)
+    expect(html).toMatch(/data-row="2" class="is-selected">\+c<\/span><\/code><\/pre><div class="wb-line-select" data-line-select><span>已选 2 行<\/span><button type="button" class="wb-new" data-action="line-comment-open">评论<\/button>/)
+    const compose = { artifactId: 'ART-1', path: 'src/app.ts', hunk: 0, hunkSha256: '1'.repeat(64), rowStart: 1, rowEnd: 2, commentId: 'x', body: '<b>草</b>' }
+    const open = renderReviewPanel([turn({ files: [lineFile()] })], real({ lines: { compose } }))
+    expect(open).toContain('<form class="wb-line-compose" data-action="line-comment-save">')
+    expect(open).toContain('placeholder="这几行要怎么改…"')
+    expect(open).toContain('>存为草稿</button>')
+    expect(open).toContain('data-action="line-comment-cancel">取消</button>')
+    expect(open).toContain('&lt;b&gt;草&lt;/b&gt;')
+    // 整块评论的输入框落在块尾
+    const whole = renderReviewPanel([turn({ files: [lineFile()] })], real({ lines: { compose: { ...compose, rowStart: undefined, rowEnd: undefined, hunk: 1 } } }))
+    expect(whole).toMatch(/\+y<\/span><\/code><\/pre><form class="wb-line-compose"/)
+  })
+
+  it('评论就地显示:草稿给改 / 删,已发出写时间与之后改没改过', () => {
+    const comments = [
+      draft(),
+      draft({ id: 'c0ffee00-0000-4000-8000-000000000002', state: 'sent', sentAt: 77, laterTouched: 3, hunk: 1, rowStart: 0, rowEnd: 0, side: 'old', lineStart: 10, lineEnd: 10, body: '别删这行' }),
+      draft({ id: 'c0ffee00-0000-4000-8000-000000000003', state: 'sent', sentAt: 78, rowStart: undefined, rowEnd: undefined, lineStart: 1, lineEnd: 3, body: '<script>x()</script>' }),
+    ]
+    const html = renderReviewPanel([turn({ files: [lineFile({ comments })] })], real())
+    expect(html).toMatch(/data-row="2">\+c<\/span><\/code><\/pre><div class="wb-line-comment" data-comment-id="c0ffee00-0000-4000-8000-000000000001" data-state="draft"><p class="wb-line-comment-meta"><span>草稿<\/span><span>第 2 行<\/span>/)
+    expect(html).toContain('data-action="line-comment-edit" data-comment-id="c0ffee00-0000-4000-8000-000000000001">改</button>')
+    expect(html).toContain('data-action="line-comment-delete" data-comment-id="c0ffee00-0000-4000-8000-000000000001">删</button>')
+    expect(html).toContain('<span>已发出 · T77</span><span>原第 10 行（已删）</span>')
+    expect(html).toContain('之后第 3 轮又改过这个文件')
+    expect(html).toContain('<span>已发出 · T78</span><span>第 1–3 行</span>')
+    expect(html).toContain('之后没再动过这个文件')
+    expect(html).toContain('&lt;script&gt;x()&lt;/script&gt;')
+    expect(html).not.toContain('<script>')
+    expect(html.match(/data-action="line-comment-edit"/g)).toHaveLength(1)
+    // 改一条:输入框顶替那条评论
+    const editing = renderReviewPanel([turn({ files: [lineFile({ comments })] })], real({ lines: { compose: { artifactId: 'ART-1', path: 'src/app.ts', hunk: 0, commentId: 'c0ffee00-0000-4000-8000-000000000001', body: '改过的', edit: true } } }))
+    expect(editing).toContain('>改过的</textarea>')
+    expect(editing).not.toContain('data-comment-id="c0ffee00-0000-4000-8000-000000000001" data-state="draft"')
+  })
+
+  it('发出栏:N 条待发出、撤掉的轮另说、要重开时换按钮、发完照实说', () => {
+    const reviews = [turn({ files: [lineFile({ comments: [draft(), draft({ id: 'b', state: 'sent', sentAt: 1 })] })] }), turn({ artifactId: 'ART-0', sha256: 'f'.repeat(64), discarded: true, files: [lineFile({ comments: [draft({ id: 'z' })] })] })]
+    const html = renderReviewPanel(reviews, real({ lines: { send: { summary: '整体再收一收', notice: '执行者还在写' } } }))
+    expect(html).toContain('<form class="wb-review-send" data-action="line-comments-send"><p class="wb-review-send-count">1 条评论待发出</p>')
+    expect(html).toContain('另有 1 条草稿在撤掉的轮上，不会发出。')
+    expect(html).toContain('placeholder="整体说一句（可不写）">整体再收一收</textarea>')
+    expect(html).toContain('执行者还在写')
+    expect(html).toContain('>发出评论</button>')
+    expect(renderReviewPanel(reviews, real({ lines: { send: { restartToken: 'c'.repeat(64) } } }))).toContain('>带记录重新开始并发回</button>')
+    const sent = [turn({ files: [lineFile({ comments: [draft({ state: 'sent', sentAt: 1 })] })] })]
+    expect(renderReviewPanel(sent, real())).not.toContain('wb-review-send')
+    const after = renderReviewPanel(sent, real({ lines: { send: { result: '已发出 1 条评论。' } } }))
+    expect(after).toContain('<div class="wb-review-send"><p class="wb-review-note" role="status">已发出 1 条评论。</p></div>')
+    expect(after).not.toContain('data-action="line-comments-send"')
+  })
+
+  it('整块评论:服务端不带 rowStart / rowEnd(实际如此)或带 null,都落在块尾', () => {
+    for (const rows of [{ rowStart: undefined, rowEnd: undefined }, { rowStart: null, rowEnd: null }]) {
+      const c = draft({ ...rows, hunk: 1, lineStart: null, lineEnd: null, body: '整块不要' })
+      if (rows.rowStart === undefined) { delete c.rowStart; delete c.rowEnd; delete c.lineStart; delete c.lineEnd }
+      const html = renderReviewPanel([turn({ files: [lineFile({ comments: [c] })] })], real())
+      expect(html).toMatch(/\+y<\/span><\/code><\/pre><div class="wb-line-comment"[^>]*><p class="wb-line-comment-meta"><span>草稿<\/span><span>第 2 块<\/span>/)
+      expect(html).not.toContain('<div class="wb-line-comments">')
+    }
+  })
+
+  it('正在写的那条落不到页面上 ⇒ 说一句并给「放弃这条」', () => {
+    const compose = { artifactId: 'ART-1', path: 'src/app.ts', hunk: 0, hunkSha256: '1'.repeat(64), rowStart: 1, rowEnd: 1, commentId: 'x', body: '写了一半' }
+    // 显示得了:不说
+    expect(renderReviewPanel([turn({ files: [lineFile()] })], real({ lines: { compose } }))).not.toContain('wb-line-orphan')
+    // 切块对不上 / 额度用完 / 那一轮撤掉了 / 改的那条不在了
+    const cases = [
+      renderReviewPanel([turn({ files: [lineFile({ hunks: hunks([{ rows: 9 }, {}]) })] })], real({ lines: { compose } })),
+      (() => { const budget = { charsLeft: 1000, linesLeft: 2, limited: false }; return renderReviewPanel([turn({ files: [lineFile()] })], options({ budget, renderDiff: (/** @type {any} */ f, /** @type {any} */ l) => renderReviewFileDiff(f, escapeHtml, budget, l), lines: { compose } })) })(),
+      renderReviewPanel([turn({ discarded: true, files: [lineFile()] })], real({ lines: { compose } })),
+      renderReviewPanel([turn({ files: [lineFile()] })], real({ lines: { compose: { ...compose, edit: true, commentId: 'gone' } } })),
+    ]
+    for (const html of cases) {
+      expect(html).not.toContain('<form class="wb-line-compose"')
+      expect(html).toContain('有一条没写完的评论（那段改动现在显示不了）<button type="button" class="wb-new" data-action="line-comment-cancel">放弃这条</button>')
+    }
+    // 改的那条还在(哪怕列在差异下面)⇒ 输入框在,不说
+    const listed = renderReviewPanel([turn({ files: [lineFile({ hunks: hunks([{ rows: 9 }, {}]), comments: [draft()] })] })], real({ lines: { compose: { ...compose, edit: true, commentId: draft().id } } }))
+    expect(listed).toContain('<form class="wb-line-compose"')
+    expect(listed).not.toContain('wb-line-orphan')
+  })
+
+  it('签名跟着块的撤回小签与评论的 id / 状态 / 正文走', () => {
+    const sig = (/** @type {Record<string,unknown>} */ o) => reviewsSignature([turn({ files: [lineFile(o)] })])
+    const base = sig({})
+    expect(sig({})).toBe(base)
+    expect(sig({ hunks: hunks([{ reverted: { at: 5 } }, {}]) })).not.toBe(base)
+    expect(sig({ hunks: hunks([{ reverted: { at: 5 } }, {}]) })).not.toBe(sig({ hunks: hunks([{ reverted: { at: 6 } }, {}]) }))
+    const one = sig({ comments: [draft()] })
+    expect(one).not.toBe(base)
+    expect(sig({ comments: [draft({ body: '换了' })] })).not.toBe(one)
+    expect(sig({ comments: [draft({ state: 'sent', sentAt: 1 })] })).not.toBe(one)
+    expect(sig({ comments: [draft({ id: 'other' })] })).not.toBe(one)
   })
 })
