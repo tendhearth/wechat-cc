@@ -236,6 +236,12 @@ final class DeviceE2ETests: XCTestCase {
     send.tap()
     let note = byId("terminal-detail-note")
     until(timeout("E2E_WAIT", 30), "terminal-detail-note") { note.exists }
+    // 新 App(#423)先说「正在送进…」,对上电脑给的结果才改口:等到定下来的那句(老 App 一上来就是「已送进」)
+    let settledWords = ["已送进", "没送进", "收下了", "还没确认"]
+    until(timeout("E2E_WAIT_SAY", 90), "terminal-detail-note settled") {
+      let l = note.label
+      return settledWords.contains { l.contains($0) } && !l.contains("正在送进")
+    }
     out("note", note.label)
     attachScreenshot("terminal-sent")
     let back = byId("topbar-back")
