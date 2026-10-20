@@ -4,6 +4,7 @@
  * 跨域依赖用「已建好的域对象显式注入」(domains),工厂顶部解构成与 service.ts 同名的局部量,函数体只做机械替换(opts.x → ctx.deps.x、touched → ctx.hub.touched 等);
  * 真正需要晚绑定的只有 lifecycle.pump → ctx.actions.execute(那头由 lifecycle 走 Ref)。
  */
+import {isIssueIntent} from '../issue-intake'
 import { ensureWorktree, planWorktree, repoRootOf } from '../worktree-workspaces'
 import { pinnedScriptSha } from '../worktree-scripts'
 import { createHash, randomUUID } from 'node:crypto'
@@ -448,7 +449,7 @@ export function makeExecuteDomain(ctx:ServiceCtx, domains:ExecuteDomains) {
     const runId=randomUUID()
     const execution=normalizeExecutionChoice(executionChoice,store.execution.choice(task.id))
     const dispatchAttachments=combinedAttachments(attachments,acceptedContinuation.mode==='restart'?acceptedContinuation.preview.attachments:[])
-    requireInput(task.providerId,dispatchAttachments,execution,acceptedContinuation.mode==='resume')
+    requireInput(task.providerId,dispatchAttachments,execution,acceptedContinuation.mode==='resume',isIssueIntent(store.events(task.id).find(e=>e.kind==='user')?.text))
     // addRunEvent 自己 touched:权限/提问审计在 atomic 块外单独发生,不能漏。
     // 事务里面(下面 store.atomic 块内)绝不能用它——半路抛错时 bump 跟着回滚,但 touched 已经
     // 把 hub 拱到了那个从没真正落库的 seq,之后 wait 会把这个"幻影 seq"当成已经发生过的事,
@@ -521,7 +522,7 @@ export function makeExecuteDomain(ctx:ServiceCtx, domains:ExecuteDomains) {
     const execution=normalizeExecutionChoice(input.execution,PROVIDER_EXECUTION_CHOICE)
     const attachments=entry?entry.materials:selectAttachments(input)
     const checked=checkedText(input.text,attachments),text=entry?input.text:checked
-    requireInput(input.providerId,attachments,execution)
+    requireInput(input.providerId,attachments,execution,false,isIssueIntent(input.text))
     if(input.title!==undefined&&(typeof input.title!=='string'||!input.title.trim()||input.title.length>120))throw Error('invalid_title')
     const path=canonicalProject(input.path),acceptedDirectoryIdentity=directoryIdentity(path)
     entry?.verifyDirectory(path,acceptedDirectoryIdentity)

@@ -12,6 +12,12 @@ const allowAll: Rule = { id: 'all', when: {}, then: 'allow' }
 afterEach(() => { vi.useRealTimers() })
 
 describe('decide', () => {
+  it('an ask whose intent came from outside (GitHub issue) never goes to review; only owner allow rules pass it (评审 #446)', async () => {
+    const review = vi.fn(async () => 'allow' as const)
+    expect(await decide(ask({ untrustedIntent: true }), file(), { review })).toMatchObject({ verdict: 'ask', by: 'default' })
+    expect(review).not.toHaveBeenCalled()
+    expect(await decide(ask({ untrustedIntent: true }), file([allowAll]), { review })).toMatchObject({ verdict: 'allow', by: 'rule' })
+  })
   it('disabled ⇒ ask by default, never reviews', async () => {
     const review = vi.fn(async () => 'allow' as const)
     expect(await decide(ask(), file([allowAll], { enabled: false }), { review })).toMatchObject({ verdict: 'ask', by: 'default' })

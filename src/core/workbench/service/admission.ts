@@ -17,7 +17,7 @@ import type { AdmittedProvider } from './types'
 
 export interface AdmissionDomain {
   provider(id:string): AdmittedProvider
-  requireInput(providerId:string,attachments:readonly unknown[],execution:AgentExecutionChoice,resume?:boolean): AdmittedProvider
+  requireInput(providerId:string,attachments:readonly unknown[],execution:AgentExecutionChoice,resume?:boolean,untrustedIntent?:boolean): AdmittedProvider
   requireEntryInput(providerId:string,attachments:readonly Attachment[],execution:AgentExecutionChoice,text:string): void
   canResume(task:StoredTask): boolean
   continuation(task:StoredTask,execution?:AgentExecutionChoice): Continuation
@@ -34,8 +34,10 @@ export function makeAdmissionDomain(ctx:ServiceCtx):AdmissionDomain {
     if(!entry||!isWorkbenchExecutorCapabilities(entry.opts.workbench))throw new Error('unavailable_provider')
     return entry as typeof entry&{opts:typeof entry.opts&{workbench:WorkbenchExecutorCapabilities}}
   }
-  function requireInput(providerId:string,attachments:readonly unknown[],execution:AgentExecutionChoice,resume=false){
+  function requireInput(providerId:string,attachments:readonly unknown[],execution:AgentExecutionChoice,resume=false,untrustedIntent=false){
     const entry=provider(providerId)
+    // 从 issue 建的任务不给免审执行者:没人看着 + 外来文字(评审 #446,同 until 拒免审)
+    if(untrustedIntent&&isUnattendedExecutor(entry.opts.workbench))throw new Error('issue_unattended_unsupported')
     if(isUnattendedExecutor(entry.opts.workbench)&&(ctx.deps.unattendedAck?.get()??null)===null)throw new Error('unattended_ack_required')
     requireWorkbenchInput(entry.opts.workbench,{attachments,execution,resume})
     return entry

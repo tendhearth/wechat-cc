@@ -44,7 +44,8 @@ export async function decide(
     if (missing) return { verdict: 'ask', by: 'default', reason: missing }
     return { verdict: 'allow', by: 'rule', ruleId: rule.id, reason: rule.note ?? '规则放行' }
   }
-  if (file.review !== 'low_risk' || !opts.review || missing || !isLowRisk(ask) || opts.reviewBlocked?.(ask.scope)) return ASK_DEFAULT
+  // 交代的话来自外部(issue)⇒ 初审的模型读 intent,正好能被注入左右,不审(评审 #446)
+  if (file.review !== 'low_risk' || !opts.review || missing || ask.untrustedIntent || !isLowRisk(ask) || opts.reviewBlocked?.(ask.scope)) return ASK_DEFAULT
   const notes = file.rules.map(r => r.note).filter((n): n is string => !!n)
   let timer: ReturnType<typeof setTimeout> | undefined
   try {

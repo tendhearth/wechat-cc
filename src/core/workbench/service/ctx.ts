@@ -52,7 +52,7 @@ export interface ServiceActions {
   /** admission 域:已准入的执行者登记项(view 的 addProject 用);没登记 / 没能力 ⇒ 抛 unavailable_provider。 */
   provider(id:string):AdmittedProvider
   // ---- 以下九个是 native/handoff 域的跨域依赖(PR 7);查询类也走这里只为保持「只此一种晚绑定」。
-  requireInput(providerId:string,attachments:readonly unknown[],execution:AgentExecutionChoice,resume?:boolean):AdmittedProvider
+  requireInput(providerId:string,attachments:readonly unknown[],execution:AgentExecutionChoice,resume?:boolean,untrustedIntent?:boolean):AdmittedProvider
   canResume(task:StoredTask):boolean
   taskVersion(task:StoredTask):string
   selectAttachments(input?:InputMaterials,taskId?:string,policy?:'owner'):Attachment[]
