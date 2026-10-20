@@ -33,13 +33,21 @@ export function makeJobsCommand(deps: {
   timezone: () => string
   now: () => number
   log: (tag: string, line: string) => void
+  /** 定时那一轮会用哪个执行者(tick-bodies 的 pickJobExecutor);null ⇒ 这台跑不了。缺省 ⇒ 不提。 */
+  jobExecutor?: () => string | null
 }): ReplyHandler {
+  const EXEC_NAME: Record<string, string> = { claude: 'Claude', codex: 'Codex' }
+  const execNote = (): string => {
+    if (!deps.jobExecutor) return ''
+    const e = deps.jobExecutor()
+    return e ? `定时用 ${EXEC_NAME[e] ?? e} 跑(只读)。` : '注意:这台电脑上没有 Claude 或 Codex,定时现在跑不了(只有这两家能保证只读)。装上或登录其中一个就会照常跑。'
+  }
   const local = () => localParts(deps.now(), deps.timezone())
   const head = (t: string) => { const a = [...t]; return a.length <= 30 ? t : a.slice(0, 29).join('') + '…' }
   const line = (j: ScheduledJob) => {
     const st = deps.store.state(j.id)
     const last = st.lastRunAt ? `上次 ${st.lastRunDay?.slice(5)} ${statusWord(st.lastStatus)}` : '还没跑过'
-    return `${j.id} · ${describeSchedule(j.schedule)}${j.paused ? ' · 停着' : ''} · ${head(j.text)} · ${last}`
+    return `${j.id} · ${describeSchedule(j.schedule, deps.timezone())}${j.paused ? ' · 停着' : ''} · ${head(j.text)} · ${last}`
   }
   return {
     probe: (text, chatId) => parseJobCommand(text) !== null && deps.isOwner(chatId),
@@ -51,14 +59,15 @@ export function makeJobsCommand(deps: {
       if (cmd.kind === 'list') {
         const { jobs, error } = deps.store.list()
         if (error) { await reply(`定时文件读不了:${error}`); return true }
-        await reply(jobs.length ? `定时(${jobs.length} 个):\n${jobs.map(line).join('\n')}\n\n「定时 停 / 开 / 删 <编号>」` : `还没有定时。\n\n${JOB_USAGE}`)
+        const note = execNote()
+        await reply(jobs.length ? `定时(${jobs.length} 个):\n${jobs.map(line).join('\n')}\n\n「定时 停 / 开 / 删 <编号>」${note && !note.startsWith('定时用') ? `\n${note}` : ''}` : `还没有定时。\n\n${JOB_USAGE}`)
         return true
       }
       if (cmd.kind === 'add') {
         const r = deps.store.add(cmd.schedule, cmd.text, new Date(deps.now()))
         if (!r.ok) { await reply(r.error); return true }
         deps.log('JOBS', `owner added ${r.job.id} ${describeSchedule(r.job.schedule)}`)
-        await reply(`记下了(${r.job.id}):${describeSchedule(r.job.schedule)} ${head(r.job.text)}\n下次:${nextRunLabel(r.job.schedule, local())}。到时候我只看、只查,有值得说的才找你,没新东西就不吭声。`)
+        await reply(`记下了(${r.job.id}):${describeSchedule(r.job.schedule, deps.timezone())} ${head(r.job.text)}\n下次:${nextRunLabel(r.job.schedule, local())}。到时候我只看、只查,有值得说的才找你,没新东西就不吭声。${execNote()}`)
         return true
       }
       const exists = deps.store.list().jobs.some(j => j.id === cmd.id)

@@ -2,6 +2,7 @@
 import { makeJobsStore, summarizeJobs } from '../core/scheduled-jobs-store'
 import { registerScheduledJobs } from './scheduled-jobs/runner'
 import { makeJobsCommand, chainReplyHandlers } from './scheduled-jobs/command'
+import { pickJobExecutor } from './wiring/tick-bodies'
 import { makeMatterStore } from '../core/matters/store'
 if (!process.env.CLAUDE_CODE_ENTRYPOINT) { process.env.CLAUDE_CODE_ENTRYPOINT = 'sdk-ts' }
 // 回环守卫(spec 2026-09-09-cli-hook-push §3):daemon 经 SDK 拉起的 claude / codex
@@ -845,6 +846,7 @@ export async function bootDaemon(opts: BootDaemonOpts): Promise<DaemonHandle> {
       timezone: () => loadCompanionConfig(stateDir).timezone ?? 'Asia/Shanghai',
       now: () => Date.now(),
       log: (t, l) => log(t, l),
+      jobExecutor: () => pickJobExecutor(id => boot.registry.has(id as never)),
     })
     const cliReplyHandler = makeCliReplyHandler({
       executionConflict,reserveExecution,

@@ -59,3 +59,14 @@ describe('labels', () => {
     expect(nextRunLabel({ kind: 'weekdays', at: '09:00' }, { day: '2026-10-23', hhmm: '10:00' })).toBe('10月26日(周一)09:00')
   })
 })
+
+describe('时区标在回显里(10-20 真机核对踩到:--at 按主人时区)', () => {
+  it('tzLabel and describeSchedule with a timezone', async () => {
+    const { tzLabel } = await import('./scheduled-jobs')
+    expect(tzLabel('Asia/Shanghai')).toBe('上海')
+    expect(tzLabel('America/Los_Angeles')).toBe('Los Angeles')
+    expect(tzLabel('UTC')).toBe('UTC')
+    expect(describeSchedule({ kind: 'daily', at: '18:10' }, 'Asia/Shanghai')).toBe('每天 18:10(上海)')
+    expect(describeSchedule({ kind: 'daily', at: '18:10' })).toBe('每天 18:10')
+  })
+})

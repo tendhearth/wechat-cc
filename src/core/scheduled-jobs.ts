@@ -72,8 +72,16 @@ export function windowPassed(s: JobSchedule, local: { day: string; hhmm: string 
   return minutes(local.hhmm) - minutes(s.at) >= JOB_DUE_WINDOW_MIN
 }
 
-export function describeSchedule(s: JobSchedule): string {
-  return s.kind === 'daily' ? `每天 ${s.at}` : s.kind === 'weekdays' ? `工作日 ${s.at}` : `每周${WEEKDAY_NAMES[s.weekday]} ${s.at}`
+const TZ_NAMES: Record<string, string> = { 'Asia/Shanghai': '上海', 'Asia/Chongqing': '上海', 'Asia/Hong_Kong': '香港', 'Asia/Taipei': '台北', 'Asia/Tokyo': '东京', 'Asia/Singapore': '新加坡' }
+/** 时区的短名:常见的写中文城市名,其余取 IANA 名的最后一段(下划线换空格)。 */
+export function tzLabel(tz: string): string {
+  return TZ_NAMES[tz] ?? (tz.split('/').pop() ?? tz).replace(/_/g, ' ')
+}
+
+/** 「每周一 09:00」;给了时区 ⇒「每周一 09:00(上海)」—— --at 按主人时区,回显里要看得见(10-20 真机核对)。 */
+export function describeSchedule(s: JobSchedule, tz?: string): string {
+  const base = s.kind === 'daily' ? `每天 ${s.at}` : s.kind === 'weekdays' ? `工作日 ${s.at}` : `每周${WEEKDAY_NAMES[s.weekday]} ${s.at}`
+  return tz ? `${base}(${tzLabel(tz)})` : base
 }
 
 const addDays = (day: string, n: number) => new Date(Date.parse(`${day}T00:00:00Z`) + n * 86_400_000).toISOString().slice(0, 10)

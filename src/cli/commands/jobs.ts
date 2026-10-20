@@ -2,7 +2,8 @@
 import { defineCommand } from 'citty'
 import { STATE_DIR } from '../../lib/config'
 import { makeJobsStore } from '../../core/scheduled-jobs-store'
-import { cliAddJob, cliFormatJobs } from '../jobs'
+import { cliAddJob, cliFormatJobs, ownerTimezone } from '../jobs'
+import { describeSchedule } from '../../core/scheduled-jobs'
 
 const fail = (error: string): never => { console.error(error); process.exit(1) }
 const idArg = { id: { type: 'positional' as const, required: true, description: 'Job id (see jobs list), e.g. j1' } }
@@ -22,18 +23,18 @@ const toggle = (name: 'pause' | 'resume' | 'rm') => defineCommand({
 export const jobsCmd = defineCommand({
   meta: { name: 'jobs', description: 'Owner-written scheduled jobs (read-only turns; same as WeChat「定时」)' },
   subCommands: {
-    list: defineCommand({ meta: { name: 'list', description: 'List scheduled jobs' }, run() { console.log(cliFormatJobs(STATE_DIR)) } }),
+    list: defineCommand({ meta: { name: 'list', description: 'List scheduled jobs' }, run() { console.log(cliFormatJobs(STATE_DIR, ownerTimezone(STATE_DIR))) } }),
     add: defineCommand({
       meta: { name: 'add', description: 'Add a scheduled job' },
       args: {
         every: { type: 'string', required: true, description: 'daily | weekdays | mon … sun' },
-        at: { type: 'string', required: true, description: 'HH:MM (owner timezone)' },
+        at: { type: 'string', required: true, description: 'HH:MM in the owner timezone (companion config; shown in the reply)' },
         text: { type: 'string', required: true, description: 'What CC should look into' },
       },
       run({ args }) {
         const r = cliAddJob(STATE_DIR, { every: String(args.every), at: String(args.at), text: String(args.text) }, new Date())
         if (!r.ok) return fail(r.error)
-        console.log(`已加 ${r.job.id}`)
+        console.log(`已加 ${r.job.id}:${describeSchedule(r.job.schedule, ownerTimezone(STATE_DIR))}`)
       },
     }),
     rm: toggle('rm'),

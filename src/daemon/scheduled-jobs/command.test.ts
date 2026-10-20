@@ -23,7 +23,7 @@ describe('定时 (WeChat)', () => {
     expect(s.store.list().jobs).toMatchObject([{ id: 'j1', text: '看 issue', schedule: { kind: 'weekly', weekday: 1, at: '09:00' } }])
     const reply = s.said[0]![1]
     expect(reply).toContain('j1')
-    expect(reply).toContain('每周一 09:00')
+    expect(reply).toContain('每周一 09:00(上海)')
     expect(reply).toContain('10月26日(周一)09:00')
     expect(reply).toContain('不吭声')
   })
@@ -35,7 +35,7 @@ describe('定时 (WeChat)', () => {
     await s.cmd.handle('定时', 'owner')
     const t = s.said[0]![1]
     expect(t).toContain('j1')
-    expect(t).toContain('每天 09:00')
+    expect(t).toContain('每天 09:00(上海)')
     expect(t).toContain('看一下今天的天气')
     expect(t).toContain('没说话')
     expect(t).toContain('停着')
@@ -75,5 +75,26 @@ describe('chainReplyHandlers', () => {
     expect(a.handle).not.toHaveBeenCalled()
     expect(await c.handle('z', 'x')).toBe(false)
     expect(b.handle).toHaveBeenCalledTimes(1)
+  })
+})
+
+describe('定时 × 执行者(真机核对 10-20)', () => {
+  function mk(executor: string | null) {
+    const store = makeJobsStore(mkdtempSync(join(tmpdir(), 'jobs-exec-')))
+    const said: string[] = []
+    const cmd = makeJobsCommand({ store, isOwner: () => true, say: async (_c, t) => { said.push(t) }, timezone: () => 'Asia/Shanghai', now: () => Date.parse('2026-10-20T00:00:00Z'), log: () => {}, jobExecutor: () => executor })
+    return { cmd, said }
+  }
+  it('says which executor runs it', async () => {
+    const m = mk('claude')
+    await m.cmd.handle('定时 每天 9:00 x', 'owner')
+    expect(m.said[0]).toContain('用 Claude 跑')
+  })
+  it('no usable executor ⇒ says so right away, at add and in the list', async () => {
+    const m = mk(null)
+    await m.cmd.handle('定时 每天 9:00 x', 'owner')
+    expect(m.said[0]).toContain('现在跑不了')
+    await m.cmd.handle('定时', 'owner')
+    expect(m.said[1]).toContain('现在跑不了')
   })
 })
