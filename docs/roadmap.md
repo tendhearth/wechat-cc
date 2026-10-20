@@ -174,7 +174,7 @@ CC 要取代的是 **Paseo / Orca 这一层**(agent 之上的编排 + 多端),�
 | B4 | ✅ #414(先是一条普通消息)早报放在此刻顶部,结尾「就这些」 | Gemini Daily Brief、Pulse | 我(对标 #7) |
 | B5 | diff 点一行写意见送回执行者 | Codex iOS | wechat-cc-2a(对标 3) |
 | B6 | ✅ #415 #416 diff / 拍板里标出有风险的文件(鉴权、删测试、迁移):一个强调色「注意」,不用红黄绿 | Cursor 评测里被要的 | 我,之后 |
-| B7 | ✅ #417 #418 定时在 App 里看得见:对话里一个小签 + 设置里一张列表 | ChatGPT Tasks、Gemini | 我,之后 |
+| B7 | ✅ #417 #418 设置里的列表;对话小签暂不做 —— 定时在 App 里看得见:对话里一个小签 + 设置里一张列表 | ChatGPT Tasks、Gemini | 我,之后 |
 | B8 | 对话里说话、实时出字 | ChatGPT、Paseo | 等 STT 本地化 |
 | B9 | 「CC 做过的事」时间线 | Meta Muse | 之后 |
 
