@@ -25,7 +25,10 @@ import { captureGitBaseline } from '../git-review'
 import { handoffArtifactText, type ArtifactSelection } from '../handoff'
 import { normalizeInputRequestId, sameAttachments } from '../live-inputs'
 import type { AcceptedNativeResume } from '../native-adoption'
-import { makeRunPermissions, WORKBENCH_PERMISSION_TIMEOUT_MS } from '../permissions'
+import { makeRunPermissions, WORKBENCH_PERMISSION_TIMEOUT_MS, type PermissionFacts, type RuleDecider } from '../permissions'
+import { workbenchAsk } from '../permission-ask'
+
+const RULE_BY_LABEL:Record<RuleDecider,string>={rule:'CC 按规则',review:'CC 初审',floor:'红线'}
 import { publicTask, type StoredTask, type TaskStatus } from '../store'
 import { entryOrigin, type EntryContext } from '../task-entry'
 import { makeRunUserInput } from '../user-input'
@@ -444,14 +447,17 @@ export function makeExecuteDomain(ctx:ServiceCtx, domains:ExecuteDomains) {
     let signalStop!:()=>void,resolveDone!:()=>void
     const stop=new Promise<null>(resolve => { signalStop=() => resolve(null) })
     const done=new Promise<void>(resolve => { resolveDone=resolve })
+    // 放行规则(2026-10-19):问主人之前先问它;规则拿了主意的那条不发通知,时间线里写明是谁批的。
+    const ruleDecide=ctx.deps.permissionDecide
     const permissions=makeRunPermissions({
       taskId:task.id,timeoutMs:ctx.deps.permissionTimeoutMs ?? WORKBENCH_PERMISSION_TIMEOUT_MS,
       audit:event => {
         if(event.type==='request'){
           addRunEvent('system',`权限请求：${event.permission.tool} · ${event.permission.description} · ${event.permission.id}`)
           requestNotice(task,runId,'permission',event.permission.id,`${event.permission.tool} · ${event.permission.description}`)
-        }else addRunEvent('system',`权限结果：${event.permission.tool} · ${event.outcome} · ${event.permission.id}`)
+        }else addRunEvent('system',`权限结果：${event.permission.tool} · ${event.outcome}${event.by?`(${RULE_BY_LABEL[event.by]})`:''} · ${event.permission.id}`)
       },
+      ...(ruleDecide?{decide:(facts:PermissionFacts)=>ruleDecide(()=>workbenchAsk(task,store.worktrees.get(task.id),store.events(task.id).find(e=>e.kind==='user')?.text??null,facts))}:{}),
     })
     const questions=makeRunUserInput({taskId:task.id,audit:event=>{
       if(event.type==='request'){

@@ -5,7 +5,7 @@
  * 任一路读不到(没接 / 抛)⇒ 记为 unavailable,另一路照算 —— 整张不因一路出错而挂。
  * 微信「日报」、GET /v1/overseer/today、手机 /m/api/today 都调同一个函数。只读,只在被问时算。
  */
-import { buildOverseerToday, type OverseerToday, type TodayAttentionInput, type TodayTaskInput } from '../core/overseer-today'
+import { buildOverseerToday, TODAY_WINDOW_MS, type OverseerToday, type TodayAttentionInput, type TodayCcDecided, type TodayTaskInput } from '../core/overseer-today'
 import type { CliDigestView } from '../core/cli-session-digest'
 
 /** 工作台里用得到的两个只读入口(WorkbenchService 结构上满足;测试可给假的)。 */
@@ -20,6 +20,8 @@ export interface OverseerTodaySourceDeps {
   /** 工作台;晚绑定(main.ts 里它在微信处理器之后才建)。缺省 / 返回 null ⇒ 一起做读不到。 */
   workbench?: () => TodayWorkbench | null | undefined
   localMachine?: string
+  /** 放行规则的留痕:从 since 起 CC 替主人批了几条 + 最近几条。缺省 / 抛 ⇒ 不画那一行。 */
+  ccDecided?: (since: number) => TodayCcDecided
   now?: () => number
   log?: (tag: string, line: string) => void
 }
@@ -35,8 +37,10 @@ export function makeOverseerTodaySource(deps: OverseerTodaySourceDeps): () => Ov
   }
   return () => {
     const wb = deps.workbench?.() ?? null
+    const now = (deps.now ?? Date.now)()
     return buildOverseerToday({
-      now: (deps.now ?? Date.now)(),
+      now,
+      ccDecided: deps.ccDecided ? read('permission decisions', () => deps.ccDecided!(now - TODAY_WINDOW_MS)) : null,
       terminal: deps.terminal ? read('terminal', deps.terminal) : null,
       tasks: wb ? read('workbench list', () => wb.list({ archived: 'exclude', limit: TODAY_TASK_LIMIT }).tasks) : null,
       attention: wb ? read('workbench attention', () => wb.attention().tasks) : null,

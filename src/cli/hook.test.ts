@@ -68,12 +68,22 @@ describe('normalizeHookPayload — codex', () => {
 describe('parsePermissionRequest', () => {
   it('两家形状相同:tool_name + tool_input 摘要;子代理 / 别的事件 / 缺字段 → null', () => {
     expect(parsePermissionRequest('claude', { ...common, hook_event_name: 'PermissionRequest', tool_name: 'Bash', tool_input: { command: 'rm -rf ./tmp' }, permission_suggestions: [] }))
-      .toEqual({ source: 'claude', session_id: 'abc-123', cwd: '/w/p', tool_name: 'Bash', summary: 'rm -rf ./tmp' })
+      .toEqual({ source: 'claude', session_id: 'abc-123', cwd: '/w/p', tool_name: 'Bash', summary: 'rm -rf ./tmp', command: 'rm -rf ./tmp' })
     expect(parsePermissionRequest('codex', { ...common, turn_id: 't', hook_event_name: 'PermissionRequest', tool_name: 'apply_patch', tool_input: null }))
       .toEqual({ source: 'codex', session_id: 'abc-123', cwd: '/w/p', tool_name: 'apply_patch' })
     expect(parsePermissionRequest('claude', { ...common, hook_event_name: 'PermissionRequest', tool_name: 'Bash', agent_id: 'sub' })).toBeNull()
     expect(parsePermissionRequest('claude', { ...common, hook_event_name: 'Stop' })).toBeNull()
     expect(parsePermissionRequest('claude', { ...common, hook_event_name: 'PermissionRequest' })).toBeNull()
+  })
+  it('放行规则要的原文:命令(数组拼空格,截 2000)与文件路径', () => {
+    const p = (tool_name: string, tool_input: unknown) => parsePermissionRequest('claude', { ...common, hook_event_name: 'PermissionRequest', tool_name, tool_input })
+    expect(p('Bash', { command: 'x'.repeat(5000) })!.command!.length).toBe(2000)
+    expect(parsePermissionRequest('codex', { ...common, hook_event_name: 'PermissionRequest', tool_name: 'shell', tool_input: { command: ['git', 'status'] } })!.command).toBe('git status')
+    expect(p('Edit', { file_path: '/w/p/a.ts', old_string: 'a', new_string: 'b' })).toMatchObject({ paths: ['/w/p/a.ts'] })
+    expect(p('Edit', { file_path: '/w/p/a.ts' })!.command).toBeUndefined()
+    expect(p('NotebookEdit', { notebook_path: '/w/p/n.ipynb' })).toMatchObject({ paths: ['/w/p/n.ipynb'] })
+    expect(p('Read', { path: '/w/p/x' })).toMatchObject({ paths: ['/w/p/x'] })
+    expect(p('Read', { file_path: 3 })!.paths).toBeUndefined()
   })
 })
 

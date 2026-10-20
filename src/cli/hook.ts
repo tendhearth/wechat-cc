@@ -19,6 +19,7 @@
  * 置 WECHAT_CC_DAEMON_CHILD=1(daemon/main.ts);hook 看到就直接退出,不然 daemon 的每个
  * 回合都会被推回微信。
  */
+import { toolInputFacts } from '../core/permission-rules/facts'
 import { existsSync, readFileSync, writeFileSync, renameSync, mkdirSync, statSync, openSync, readSync, closeSync } from 'node:fs'
 import { dirname, join } from 'node:path'
 import { hostname } from 'node:os'
@@ -122,8 +123,14 @@ export function parsePermissionRequest(source: HookSource, raw: unknown): CliPer
   const tool_name = str(r['tool_name'])
   if (!session_id || !cwd || !tool_name) return null
   const summary = summarizeToolInput(r['tool_input'])
-  return summary ? { source, session_id, cwd, tool_name, summary } : { source, session_id, cwd, tool_name }
+  const req: CliPermissionRequest = summary ? { source, session_id, cwd, tool_name, summary } : { source, session_id, cwd, tool_name }
+  // 放行规则(2026-10-19)要原文:命令不压缩(截 2000),文件路径单列。拿不到就不给,daemon 那头不猜。
+  const facts = toolInputFacts(r['tool_input'])
+  if (facts.command) req.command = facts.command
+  if (facts.paths.length) req.paths = facts.paths
+  return req
 }
+
 
 // ── 1b. Cursor ────────────────────────────────────────────────────────────────
 

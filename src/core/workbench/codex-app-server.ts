@@ -431,13 +431,23 @@ export function createWorkbenchCodexProvider(options: Options): AgentProvider {
         // Stdin grants and unknown approval variants lack a reviewed command;
         // do not turn them into blanket/session policy grants.
         const supported = scope !== null && description.length <= 20_000 && (file ? validChanges : (typeof command === 'string' && !!command.trim() && (!params.kind || params.kind === 'command')))
+        // 放行规则(2026-10-19)要的原文。带了额外授权(网络 / 项目外读写)的请求不给:否则一条放行「ls」的规则
+        // 会顺手把那些授权也批掉 —— 没有原文,allow 规则与初审都放不了它,只能问主人。
+        const extraGrant = params.additionalPermissions != null || params.networkApprovalContext != null
+        const ruleFacts: { command?: string; paths?: string[]; cwd?: string } = extraGrant ? {} : file
+          ? (validChanges ? { paths: item!.changes.flatMap((change: ObjectValue) => {
+              // 改名 / 挪走:目的地也算它碰的路径(终审 10-19:只看源路径会把挪到项目外的写当成项目内)。
+              const to = object(change.kind) ? (change.kind.move_path ?? change.kind.movePath) : undefined
+              return typeof to === 'string' && to ? [String(change.path), to] : [String(change.path)]
+            }) } : {})
+          : (typeof command === 'string' && command.trim() ? { command: command.slice(0, 2000), ...(typeof params.cwd === 'string' && params.cwd ? { cwd: params.cwd } : {}) } : {})
         if (!supported) {
           send({ id, result: { decision: entry.rejection } })
           fatal('无法核实或完整显示本次 Codex 权限请求，工作台已停止任务。')
           return
         }
         void Promise.resolve().then(() => !controller.signal.aborted && current(turn) && supported && context.requestPermission
-          ? context.requestPermission({ tool: file ? 'fileChange' : 'commandExecution', description }, controller.signal)
+          ? context.requestPermission({ tool: file ? 'fileChange' : 'commandExecution', description, ...ruleFacts }, controller.signal)
           : false,
         ).catch(() => false).then(allow => {
           if (approvals.get(id) !== entry || controller.signal.aborted || !current(turn)) return

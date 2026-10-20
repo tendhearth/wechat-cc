@@ -146,6 +146,8 @@ export function wireWorkbench(opts: {
   networkGate?: import('../../lib/network-gate').NetworkGate
   /** 执行者一轮失败时的错误通道 —— CLI 自动升级的报错触发(2026-10-04)。 */
   onTurnError?: (providerId: string, code: string | undefined, message: string) => void
+  /** 放行规则(2026-10-19):与终端会话共用同一个闸门。不传 ⇒ 每条权限都问主人。 */
+  permissionGate?: import('../permission-gate').PermissionGate
 }) {
   // 额度查询带着账号凭据直连供应商(守护 v2:按真正连到的端点分类 —— Claude 的 usage 接口永远是
   // api.anthropic.com,哪怕会话走的是自定义网关;Codex 的额度是 ChatGPT 账号的,永远是 OpenAI 官方,
@@ -236,6 +238,7 @@ export function wireWorkbench(opts: {
   return makeWorkbenchService({
     managedWorkspaceRoot:join(homedir(),'CC','Tasks'),
     ...(opts.networkGate?{networkGate:opts.networkGate}:{}),
+    ...(opts.permissionGate?{permissionDecide:(ask:import('../../core/permission-rules/types').AskSource)=>opts.permissionGate!.decide(ask)}:{}),
     executionConflict:opts.executionConflict,
     nativeHistory:{claude:createClaudeHistoryReader(),...(binary?{codex:createCodexHistoryReader({codexPathOverride:binary})}:{})},
     store,registry,stateDir:opts.stateDir,ownerChatId,matters:opts.matters,reports,recollect,log:opts.log,

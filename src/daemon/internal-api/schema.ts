@@ -730,6 +730,9 @@ export const CliPermissionRequest = z.object({
   cwd: z.string().min(1).max(1000),
   tool_name: z.string().min(1).max(200),
   summary: z.string().max(2000).optional(),
+  /** 放行规则用的原文(2026-10-19):命令截 2000;文件路径最多 50 条。老 hook 不带 ⇒ allow 规则与初审放不了它。 */
+  command: z.string().max(2000).optional(),
+  paths: z.array(z.string().min(1).max(1000)).max(50).optional(),
   idle_s: z.number().min(0).optional(),
   machine: z.string().max(200).optional(),
 })

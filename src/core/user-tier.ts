@@ -227,7 +227,7 @@ const DESTRUCTIVE_BASH_PATTERNS: ReadonlyArray<RegExp> = [
   new RegExp(`${TRIGGER}dd\\s+(?:if|of)=`),              // dd if=… of=…
 ]
 
-function isDestructiveBash(command: string): boolean {
+export function isDestructiveBash(command: string): boolean {
   return DESTRUCTIVE_BASH_PATTERNS.some(re => re.test(command))
 }
 

@@ -82,3 +82,72 @@ describe('run-bound Workbench permissions', () => {
     }
   })
 })
+
+// 放行规则(2026-10-19):登记之前先问 decide;规则拿主意的那条不进 pending、不发 request 审计(= 不通知主人)。
+describe('Workbench permissions × 放行规则', () => {
+  const flush = () => new Promise(r => setTimeout(r, 0))
+  it('decide allow ⇒ true, never pending, one outcome audit with by', async () => {
+    const audit = vi.fn()
+    const p = makeRunPermissions({ taskId: 't', timeoutMs: 1000, audit, decide: async () => ({ verdict: 'allow', by: 'rule' }) })
+    const answer = p.request({ tool: 'Bash', description: 'ls', command: 'ls' })
+    expect(p.pending()).toEqual([])
+    await expect(answer).resolves.toBe(true)
+    expect(audit.mock.calls.map(c => c[0])).toEqual([expect.objectContaining({ type: 'outcome', outcome: 'allow', by: 'rule' })])
+  })
+  it('decide deny ⇒ false with by', async () => {
+    const audit = vi.fn()
+    const p = makeRunPermissions({ taskId: 't', timeoutMs: 1000, audit, decide: async () => ({ verdict: 'deny', by: 'rule' }) })
+    await expect(p.request({ tool: 'Bash', description: 'git push', command: 'git push' })).resolves.toBe(false)
+    expect(audit.mock.calls.map(c => c[0])).toEqual([expect.objectContaining({ type: 'outcome', outcome: 'deny', by: 'rule' })])
+  })
+  it('while decide is pending: nothing pending, no request audit', async () => {
+    const audit = vi.fn()
+    const p = makeRunPermissions({ taskId: 't', timeoutMs: 1000, audit, decide: () => new Promise(() => {}) })
+    void p.request({ tool: 'Bash', description: 'ls' })
+    await flush()
+    expect(p.pending()).toEqual([])
+    expect(audit).not.toHaveBeenCalled()
+  })
+  it('decide ask ⇒ the same audit sequence as without decide', async () => {
+    const audit = vi.fn()
+    const p = makeRunPermissions({ taskId: 't', timeoutMs: 1000, audit, decide: async () => ({ verdict: 'ask', by: 'default' }) })
+    const answer = p.request({ tool: 'Bash', description: 'ls' })
+    await flush()
+    const [pending] = p.pending()
+    expect(p.resolve(pending!.id, 'allow')).toBe(true)
+    await expect(answer).resolves.toBe(true)
+    expect(audit.mock.calls.map(c => c[0].type)).toEqual(['request', 'outcome'])
+    expect(audit.mock.calls[1]![0].by).toBeUndefined()
+  })
+  it('decide throwing ⇒ asks', async () => {
+    const p = makeRunPermissions({ taskId: 't', timeoutMs: 1000, decide: async () => { throw new Error('x') } })
+    void p.request({ tool: 'Bash', description: 'ls' })
+    await flush()
+    expect(p.pending().length).toBe(1)
+  })
+  it('abort during decide ⇒ false and never registered', async () => {
+    let release!: (v: { verdict: 'allow'; by: string }) => void
+    const controller = new AbortController()
+    const p = makeRunPermissions({ taskId: 't', timeoutMs: 1000, decide: () => new Promise(r => { release = r }) })
+    const answer = p.request({ tool: 'Bash', description: 'ls' }, controller.signal)
+    controller.abort()
+    release({ verdict: 'allow', by: 'rule' })
+    await expect(answer).resolves.toBe(false)
+    expect(p.pending()).toEqual([])
+  })
+  it('run ended during decide ⇒ false', async () => {
+    let release!: (v: { verdict: 'allow'; by: string }) => void
+    const p = makeRunPermissions({ taskId: 't', timeoutMs: 1000, decide: () => new Promise(r => { release = r }) })
+    const answer = p.request({ tool: 'Bash', description: 'ls' })
+    p.rejectAll()
+    release({ verdict: 'allow', by: 'rule' })
+    await expect(answer).resolves.toBe(false)
+  })
+  it('decide gets the facts the executor supplied', async () => {
+    const decide = vi.fn(async () => ({ verdict: 'ask' as const, by: 'default' }))
+    const p = makeRunPermissions({ taskId: 't', timeoutMs: 1000, decide })
+    void p.request({ tool: 'Edit', description: 'edit a', paths: ['/w/a'], cwd: '/w' })
+    await flush()
+    expect(decide).toHaveBeenCalledWith({ tool: 'Edit', description: 'edit a', paths: ['/w/a'], cwd: '/w' })
+  })
+})

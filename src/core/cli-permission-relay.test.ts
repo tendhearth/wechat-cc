@@ -190,3 +190,97 @@ describe('CliPermissionRelay.pendingHash / owns(手机拍板,2026-10-14)', () =>
     relay.dispose(); here.dispose()
   })
 })
+
+// 放行规则(2026-10-19):hook 的 POST 只等 5 秒、非 pending 当没决定 ⇒ open() 先回 pending,规则在后台落定。
+describe('CliPermissionRelay × 放行规则', () => {
+  function withDecide(decide: (r: CliPermissionRequest) => Promise<'allow' | 'deny' | 'ask'>, localMachine = 'mac') {
+    const ask = vi.fn(async () => 'allow' as const)
+    const relayed: string[] = []
+    const settled: string[] = []
+    const relay = makeCliPermissionRelay({
+      ask, presence: async () => 'away', projectName: (c) => c, onRelayed: (s) => relayed.push(s),
+      onSettled: (_s, st) => settled.push(st), log: () => {}, decide: vi.fn(decide), localMachine,
+    })
+    return { relay, ask, relayed, settled }
+  }
+  const flush = () => new Promise(r => setTimeout(r, 0))
+
+  it('decide 挂着不回 ⇒ open() 照样立刻回 pending,不去问主人', async () => {
+    const { relay, ask } = withDecide(() => new Promise(() => {}))
+    const r = await relay.open(req())
+    expect(r.status).toBe('pending')
+    await flush()
+    expect(ask).not.toHaveBeenCalled()
+  })
+  it('规则 allow ⇒ 码直接落定 allow,不发卡片、不记「已转」', async () => {
+    const { relay, ask, relayed, settled } = withDecide(async () => 'allow')
+    const r = await relay.open(req()) as { hash: string }
+    expect(await relay.wait(r.hash, 1000)).toBe('allow')
+    expect(ask).not.toHaveBeenCalled()
+    expect(relayed).toEqual([])
+    expect(settled).toEqual(['allow'])
+  })
+  it('规则 deny ⇒ 落定 deny', async () => {
+    const { relay, ask } = withDecide(async () => 'deny')
+    const r = await relay.open(req()) as { hash: string }
+    expect(await relay.wait(r.hash, 1000)).toBe('deny')
+    expect(ask).not.toHaveBeenCalled()
+  })
+  it('ask ⇒ 走老路问主人一次', async () => {
+    const { relay, ask, relayed } = withDecide(async () => 'ask')
+    await relay.open(req())
+    await flush()
+    expect(ask).toHaveBeenCalledTimes(1)
+    expect(relayed).toEqual(['abc123-xyz'])
+  })
+  it('decide 抛 ⇒ 当 ask', async () => {
+    const { relay, ask } = withDecide(async () => { throw new Error('boom') })
+    await relay.open(req())
+    await flush()
+    expect(ask).toHaveBeenCalledTimes(1)
+  })
+  it('脑手转发进来的 / 别的机器报的 ⇒ 不进规则表', async () => {
+    const a = withDecide(async () => 'allow')
+    await a.relay.open(req(), { forwarded: true })
+    await flush()
+    expect(a.ask).toHaveBeenCalledTimes(1)
+    const b = withDecide(async () => 'allow')
+    await b.relay.open(req({ machine: 'other-host' }))
+    await flush()
+    expect(b.ask).toHaveBeenCalledTimes(1)
+    const c = withDecide(async () => 'allow')
+    const r = await c.relay.open(req({ machine: 'mac' })) as { hash: string }
+    expect(await c.relay.wait(r.hash, 1000)).toBe('allow')
+  })
+  it('decide 还没回、会话先有了动静(码已作废)⇒ 规则结果不再改写', async () => {
+    let release!: (v: 'allow') => void
+    const { relay, settled } = withDecide(() => new Promise(r => { release = r }))
+    const r = await relay.open(req()) as { hash: string }
+    await flush()
+    relay.expireSession('abc123-xyz')
+    release('allow')
+    await flush()
+    expect(relay.status(r.hash)).toBe('timeout')
+    expect(settled).toEqual(['timeout'])
+  })
+})
+
+describe('CliPermissionRelay × 放行规则 × 终审', () => {
+  it('decide starts only after open() has returned pending (nothing synchronous on the hook path)', async () => {
+    const decide = vi.fn(async () => 'ask' as const)
+    const relay = makeCliPermissionRelay({ ask: vi.fn(async () => 'allow' as const), presence: async () => 'away', projectName: c => c, onRelayed: () => {}, log: () => {}, decide })
+    const r = await relay.open(req())
+    expect(r.status).toBe('pending')
+    expect(decide).not.toHaveBeenCalled()
+    await new Promise(res => setTimeout(res, 5))
+    expect(decide).toHaveBeenCalledTimes(1)
+  })
+  it('code already void before the rules start ⇒ decide is not even called', async () => {
+    const decide = vi.fn(async () => 'allow' as const)
+    const relay = makeCliPermissionRelay({ ask: vi.fn(async () => 'allow' as const), presence: async () => 'away', projectName: c => c, onRelayed: () => {}, log: () => {}, decide })
+    await relay.open(req())
+    relay.expireSession('abc123-xyz')
+    await new Promise(res => setTimeout(res, 5))
+    expect(decide).not.toHaveBeenCalled()
+  })
+})

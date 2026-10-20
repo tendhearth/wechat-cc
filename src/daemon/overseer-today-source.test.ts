@@ -37,3 +37,15 @@ describe('makeOverseerTodaySource', () => {
     expect(noAttention.counts.running).toBe(1)
   })
 })
+
+describe('makeOverseerTodaySource × 放行规则留痕', () => {
+  it('reads CC decisions over the same 24h window; a throwing reader ⇒ null, the rest still renders', () => {
+    const since: number[] = []
+    const ok = makeOverseerTodaySource({ terminal: () => [], now: () => 1_000_000_000, ccDecided: (from) => { since.push(from); return { rule: 1, review: 0, recent: [] } } })()
+    expect(ok.ccDecided).toEqual({ rule: 1, review: 0, recent: [] })
+    expect(since).toEqual([1_000_000_000 - 24 * 3600_000])
+    const bad = makeOverseerTodaySource({ terminal: () => [], ccDecided: () => { throw new Error('x') }, log: () => {} })()
+    expect(bad.ccDecided).toBeNull()
+    expect(makeOverseerTodaySource({ terminal: () => [] })().ccDecided).toBeNull()
+  })
+})
