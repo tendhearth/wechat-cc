@@ -18,6 +18,8 @@ import {makeArtifactDeliveryStore} from './artifact-deliveries'
 import {makeTimelineEvents,type TaskEvent} from './timeline-events'
 import {makeReviewMarkStore} from './review-marks'
 import {makeRewindStore} from './rewind-store'
+import {makeReviewCommentStore} from './review-comments'
+import {makeReviewHunkLog} from './review-hunk-log'
 
 export type TaskStatus = 'queued' | 'running' | 'cancelling' | 'completed' | 'failed' | 'cancelled' | 'interrupted'
 export interface Task {
@@ -149,6 +151,9 @@ export function makeWorkbenchStore(db: Db) {
         return row
       })(),
     },
+    /** 行评论 / 按块撤回留痕(v83);每次写都在同一事务里 bump。 */
+    reviewComments:makeReviewCommentStore(db,bump),
+    reviewHunks:makeReviewHunkLog(db,bump),
     /** 回退记录(v81):意图 / 已撤掉的轮 / 待告知执行者 / 撤销回退。 */
     rewinds:makeRewindStore(db,bump),
     get, artifacts, events, addEvent,recordAgentEvent,finishRunActivities,source,sourceByIdentity,handoffs,bump,version,

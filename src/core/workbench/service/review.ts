@@ -19,6 +19,8 @@ import type { ServiceCtx } from './ctx'
 import type { WorkbenchTaskView } from './types'
 import { fileRisk } from '../review-risk'
 import { checkpointRefSet } from '../rewind'
+import { commentView, hunkViews, laterTouchLookup, revertedLookup } from '../review-annotations'
+import type { ReviewComment } from '../review-comments'
 
 export interface ReviewDomain {
   reviewList(id:string):ReviewTurn[]
@@ -68,16 +70,26 @@ export function makeReviewDomain(ctx:ServiceCtx):ReviewDomain {
       const rewindable=(r:{checkpointBefore?:string;checkpointAfter?:string}|null,gone:boolean)=>wt?{rewindable:{start:!gone&&!!refs&&!!r?.checkpointBefore&&refs.has(r.checkpointBefore),end:!gone&&!!refs&&!!r?.checkpointAfter&&refs.has(r.checkpointAfter)}}:{}
       const marks=new Map<string,ReviewMark>()
       for(const mark of store.reviewMarks.list(id))marks.set(`${mark.artifactSha256}\0${mark.path}`,mark)
-      return store.artifacts(id).filter(a=>a.mime===GIT_REVIEW_MIME).map(a=>{
+      // v83 行评论 / 按块撤回留痕(只读暴露);表不在(老测试只建了几张表)⇒ 当没有
+      const comments=new Map<string,ReviewComment[]>()
+      let reverted=revertedLookup([],0)
+      try{
+        for(const c of store.reviewComments.list(id)){const k=`${c.artifactId}\0${c.path}`;comments.set(k,[...comments.get(k)??[],c])}
+        reverted=revertedLookup(store.reviewHunks.list(id),store.rewinds.latest(id)?.createdAt??0)
+      }catch{/* 表不在 */}
+      const turns=store.artifacts(id).filter(a=>a.mime===GIT_REVIEW_MIME).map(a=>({a,review:readReviewSnapshot(a)}))
+      const later=laterTouchLookup([...turns].reverse().map(({a,review})=>({artifactId:a.id,discarded:discarded.has(a.id),paths:new Set(review?.files.map(f=>f.path)??[])})))
+      return turns.map(({a,review})=>{
         const gone=discarded.has(a.id)
         const head={artifactId:a.id,sha256:a.sha256,name:a.name,createdAt:a.createdAt,...(gone?{discarded:true as const}:{})}
-        const review=readReviewSnapshot(a)
         if(!review)return {...head,status:'unavailable' as const,headBefore:null,headAfter:null,preexistingPaths:[],notes:['快照无法读取或已损坏'],files:[],...rewindable(null,gone)}
         return {...head,...rewindable(review,gone),status:review.status,headBefore:review.headBefore,headAfter:review.headAfter,preexistingPaths:review.preexistingPaths,notes:review.notes,
           files:review.files.map(file=>{
             const mark=marks.get(`${a.sha256}\0${file.path}`)
             const risk=fileRisk(file)
-            return {...file,...(mark?{mark:{mark:mark.mark,comment:mark.comment,createdAt:mark.createdAt}}:{}),...(risk.length?{risk}:{})}
+            const hunks=file.kind==='not_reviewed'?undefined:hunkViews(file.diff,reverted(a.sha256,file.path))
+            const notes=(comments.get(`${a.id}\0${file.path}`)??[]).filter(c=>c.artifactSha256===a.sha256).map(c=>commentView(c,later(a.id,file.path)))
+            return {...file,...(mark?{mark:{mark:mark.mark,comment:mark.comment,createdAt:mark.createdAt}}:{}),...(risk.length?{risk}:{}),...(hunks?{hunks}:{}),...(notes.length?{comments:notes}:{})}
           })}
       })
     },
