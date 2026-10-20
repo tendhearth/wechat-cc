@@ -134,6 +134,31 @@ CC 要取代的是 **Paseo / Orca 这一层**(agent 之上的编排 + 多端),�
   7. iOS 加密备份恢复到另一台 ⇒ 配对仍在、启动核验通过;电脑上撤掉后再恢复 ⇒ 回欢迎页「这台手机和电脑的配对已经失效了。」。
   8. pset 中继壳 401 → /m 404(主人事项 8)。
 
+## 对标三类产品挖出的任务(2026-10-20)
+
+三路调研:① 聊天软件里的常驻个人 agent(OpenClaw、Hermes Agent、Poke、Manus、Lindy、OpenAI dots、Meta Muse、ChatGPT / Claude / Gemini 的定时与 Dispatch);② 编码 agent 的编排与遥控(Paseo、Orca、Conductor、Vibe Kanban、Claude Squad、Sculptor、Claude Code agent view / `/goal` / Routines、Codex Automations、Cursor、Agent HQ、Jules、Devin);③ 主动 / 记忆 / 陪伴(ChatGPT Dreaming 与定时、Claude 记忆、Gemini Daily Brief、Muse、Bee / Plaud、Screenpipe、Tolan / Sesame、元宝 / 豆包 / Kimi)。已核对代码:下列都是 dev 上**还没有**的;已有的(STT 网关、看着它跑、额度交接、权限卡多端、记忆纠错)不列。
+
+**先做(不用主人拍板,不碰红线)**
+
+| # | 任务 | 谁有 | 为什么 | 归属 |
+|---|---|---|---|---|
+| 1 | **独立工作区的 setup / run 脚本 + 每区一个端口**(仓库里主人提交的脚本,每仓库首次跑前问一次;输出进事件流;桌面 / 手机一个「跑起来」) | Conductor、Paseo、Jules、Vibe Kanban | 并行工作区开出来没装依赖、起不来服务 = 定位第 ① 条只做了一半 | wechat-cc-2a |
+| 2 | **回到某一轮**(复用 v62 的每轮快照 sha,重置工作区、截掉后面的轮) | Conductor checkpoints、Claude Code rewind | 手机上撤一轮坏改动,不用整个丢工作区 | wechat-cc-2a |
+| 3 | **diff 行评论送回执行者 + 按块接受**(审阅面板从「整文件退回」细到行) | Orca、Vibe Kanban、Nimbalyst | 已在逐文件审阅的后续里 | wechat-cc-2a |
+| 4 | **记忆带出处 + 过期改写**(#405)(每晚整理时给每条记上来源对话 / 消息;带日期的记忆过期后改成过去时或归档;手机「CC 从哪知道的」) | Claude、ChatGPT Dreaming、Plaud | 信任与纠错;「下周去日本」一直挂着显得傻 | 我 |
+| 5 | **「CC 可以主动聊的话题」开关**(#404)(健康 / 家人 / 钱…,`/set` 里改,便宜模型闸门读它) | ChatGPT | 主动消息不越界;Google 自己承认 Gemini 过度个性化 | 我 |
+
+**接着做(我按授权定了边界,先只读)**
+
+| # | 任务 | 谁有 | 边界 |
+|---|---|---|---|
+| 6 | **主人亲手写的定时任务**(微信「定时 每周一 9:00 看一下 X 告诉我」/ CLI;没事就不说话;10-08 草案的扩展:先只读——对话侧只读工具 + 一起做只读执行) | ChatGPT 定时、Gemini、OpenClaw heartbeat、Hermes、Paseo、Codex Automations、Claude Routines | 只能主人建;网络守护不安全就跳过、不补跑、不重试;每天合计上限;写文件的定时等放行规则真机跑一段再开。归属:我(设计 → 实现) |
+| 7 | **早上一张卡**(记忆 + 到期提醒 + 昨天各执行者做了什么 + 没收尾的事;👍/👎 调第二天的挑选;**取代**而不是叠加零散问候) | Gemini Daily Brief、ChatGPT Pulse→定时、Lindy、Muse | 走现有频率闸门与无回复暂停;依赖 #6 的调度 |
+| 8 | **读本机日历 / 提醒事项**(EventKit,macOS 隐私授权;只读,不接云 OAuth) | Poke、Lindy、Muse | 给 #7 和「日程冲突」用;从不代主人发东西 |
+| 9 | **做到条件成立为止**(任务带一个检查命令或条件,每轮后判,不满足就「继续」;轮数封顶、额度与断网即停) | Claude Code `/goal`、Devin | 依赖放行规则,否则每轮都要人点 |
+
+**记下、暂不做**:一次派给 N 个执行者再挑最好的(Orca、Codex best-of-N,额度翻倍,等主人要);CC 自己写技能文件(Hermes、OpenClaw ClawHub;只能主人批准安装);浏览器代操作(Manus、Claude in Chrome,红线边,至少等放行规则跑稳);入站 webhook(OpenClaw;新攻击面);PR / CI 状态一键(Conductor Checks;定位说不做 PR 管理,最多一个「推上去开 PR」按钮);全双工语音(Sesame、Tolan;STT 本地化之后再说);一键「记住屏幕」(豆包;分享扩展已覆盖大半)。
+
 ## 已定未做(按价值排)
 
 - **持续执行发版节奏** —— 09-27 后已恢复公开 patch 发版，当前到 1.7.7；每批整合、验收后按[发版手册](maintainer/release.md)交付。09 月积压三周的教训保留在上文，不能再当作当前停发状态。
@@ -162,7 +187,8 @@ CC 要取代的是 **Paseo / Orca 这一层**(agent 之上的编排 + 多端),�
 
 以下是各批当时的证据与取舍，当前默认值和下一步以上文及权威手册为准。
 
-- 2026-10-19:版本号一节同步到 1.7.7(GitHub 与更新源一致);「dev 上等 1.7.6 的」改为已发。同日两路协作:评审 #385–#393 修 7 条(#395、#396);来源标记 #398;放行规则设计稿 #397 三问主人交我定(初审做、默认关;写文件只限独立工作区;只进日报),v1 实现(规则表 + 红线 + 初审 + 留痕 v78 + 日报一行 + `wechat-cc rules`)在 PR 里,默认关;微信改规则 / 卡片「以后不用问」/ 学 在下一个 PR。评审 #6 定:中继离线时 App 不算送得到(#401)。
+- 2026-10-19:版本号一节同步到 1.7.7(GitHub 与更新源一致);「dev 上等 1.7.6 的」改为已发。同日两路协作:评审 #385–#393 修 7 条(#395、#396);来源标记 #398;放行规则设计稿 #397 三问主人交我定(初审做、默认关;写文件只限独立工作区;只进日报),v1 实现(规则表 + 红线 + 初审 + 留痕 v78 + 日报一行 + `wechat-cc rules`)#402 已合 dev,默认关;微信改规则 / 卡片「以后不用问」/ 学 在下一个 PR。评审 #6 定:中继离线时 App 不算送得到(#401)。
+- 2026-10-20:加「对标三类产品挖出的任务」一节(三路调研;先做 5 项、接着做 4 项、记下暂不做 7 项,标了归属);#4 记忆出处 = #405、#5 别主动聊 = #404。
 - 2026-10-05:同步 GitHub / updater 1.7.5、macOS 改名已发布状态；合并重复手机进展，移出已修欠账，分开既有 iPhone 自动化、待补真机项与 TestFlight 生产条件。
 - 2026-10-05:1.7.5 发版(版本号 + `docs/releases/desktop-v1.7.5.md`):macOS 改名 Tendhearth CC.app + 进程名、桌面字体、产物预览。
 - 2026-10-04:1.7.4 发版(版本号 + `docs/releases/desktop-v1.7.4.md`):桌面显示名 Tendhearth CC、重启通知按证据、后台不再触发「访问其他 App 数据」、桌面麦克风权限。
