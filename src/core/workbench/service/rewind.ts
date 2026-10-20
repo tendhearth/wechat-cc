@@ -355,7 +355,8 @@ export function makeRewindDomain(ctx: ServiceCtx, domains: { lifecycle: Pick<Lif
     try { domains.until.stop(id, REWIND_GOAL_REASON) } catch { /* 没有 goal */ }
     try { if (store.goals.get(id)?.status === 'passed') store.goals.revokePassed(id, REWIND_GOAL_REASON) } catch { /* 同上 */ }
     try { const t = store.get(id); if (!['queued', 'running', 'cancelling'].includes(t.status)) store.update(id, 'interrupted', 'rewind_needs_owner') } catch { /* 任务没了 */ }
-    note(id, text)
+    // 崩溃留下的 git 锁会让「恢复」被当成 git 正在进行中而拒掉 —— 先说清楚(评审 #433 小点)
+    note(id, `${text}(要选「恢复」时,如果工作区里留着上次崩溃的 .git 锁文件 index.lock / HEAD.lock,先删掉它。)`)
   }
   function failureText(code: string, path?: string): string {
     if (code === 'rewind_verify_eol') return `${path} 检出后的换行和那一刻不一样 —— 项目的 .gitattributes 里有换行设置(eol / text),这件事不能按字节回退`
@@ -370,7 +371,8 @@ export function makeRewindDomain(ctx: ServiceCtx, domains: { lifecycle: Pick<Lif
     try { rows = store.worktrees.all() } catch { return 0 }
     const applying = new Set(store.rewinds.applying().map(r => r.taskId))
     for (const w of rows) {
-      if (applying.has(w.taskId) || inflight.has(w.taskId)) continue
+      // 停住等主人拍板的(needs_owner)也不清:restore_backup 要用的就是这份备份(评审 #433 小点)
+      if (applying.has(w.taskId) || inflight.has(w.taskId) || store.rewinds.blocking(w.taskId) === 'needs_owner') continue
       const expired = w.archivedAt !== null && now - w.archivedAt > REWIND_RETAIN_MS
       const gone = expired ? false : (await branchExists(w.repoRoot, w.branch)) === false
       if (expired || gone) removed += await deleteCheckpointRefs(w.repoRoot, w.taskId)

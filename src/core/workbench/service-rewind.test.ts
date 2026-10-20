@@ -354,6 +354,18 @@ describe('自己那条安静的保留会话', () => {
 })
 
 describe('ref 的去留', () => {
+  it('pruneRefs: a task waiting for the owner (needs_owner) keeps its refs even after 30 days archived', async () => {
+    const a=await start(p=>writeFileSync(join(p,'a.txt'),'a\n'))
+    const refs=()=>g(repo,'for-each-ref','--format=%(refname)',`refs/tendhearth/checkpoints/${a}/`).split('\n').filter(Boolean).length
+    const before=refs(); expect(before).toBeGreaterThan(0)
+    const row=store.rewinds.record({taskId:a,targetArtifactId:'x',targetPoint:'end',targetCommit:'0'.repeat(40),priorHead:'0'.repeat(40),backupRef:`refs/tendhearth/rewind/${a}/1`,backupCommit:'0'.repeat(40),discarded:[]})
+    store.rewinds.setState(row.id,'needs_owner')
+    service.setArchived(a,true)
+    db.query('UPDATE workbench_tasks SET archived_at=? WHERE id=?').run(Date.now()-REWIND_RETAIN_MS-1000,a)
+    expect(await service.pruneRewindRefs()).toBe(0)
+    expect(refs()).toBe(before)
+  })
+
   it('pruneRefs: archived for 30 days, or the cc/ branch gone ⇒ refs cleared; otherwise kept', async () => {
     const a=await start(p=>writeFileSync(join(p,'a.txt'),'a\n'))
     const b=await start(p=>writeFileSync(join(p,'a.txt'),'b\n'))
