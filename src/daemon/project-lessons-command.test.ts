@@ -45,4 +45,11 @@ describe('经验 (WeChat)', () => {
     expect(s.said.at(-1)).toContain('经验 <项目> <一句话>')
     expect(await s.send('经验真好')).toBe(false)
   })
+  it('workbench not wired yet (daemon still starting) ⇒ says so, writes nothing (评审 #443)', async () => {
+    const lessons = makeProjectLessons(mkdtempSync(join(tmpdir(), 'pl-')))
+    const said: string[] = []
+    const cmd = makeProjectLessonsCommand({ isOwner: () => true, say: async (_c, t) => { said.push(t) }, projects: () => null, lessons })
+    expect(await cmd.handle('经验 wechat-cc 用 bun', 'owner')).toBe(true)
+    expect(said[0]).toContain('还在启动')
+  })
 })

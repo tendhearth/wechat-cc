@@ -898,10 +898,12 @@ export async function bootDaemon(opts: BootDaemonOpts): Promise<DaemonHandle> {
       items: () => { const r = buildActivity(activity.sources(), { now: Date.now(), limit: 100 }); return { items: r.items, degraded: r.degraded } },
     })
     // 微信「经验 <项目> …」(第二轮对标 ★2):项目经验,每家执行者都照着做。只认主人;项目按名字认。
+    // 工作台在后面才接上(wireWorkbench);启动中途来的「经验」命令读到空的持有者 ⇒ 回「还在启动」,不碰 TDZ(评审 #443)
+    const workbenchRef: { current: ReturnType<typeof wireWorkbench> | null } = { current: null }
     const lessonsCommand = makeProjectLessonsCommand({
       isOwner: (chatId) => resolveAdminChatId(loadAccess(), loadCompanionConfig(stateDir), null) === chatId,
       say: (c, t) => ilink.sendMessage(c, t),
-      projects: () => workbench?.projects().map(p => ({ name: p.name, path: p.path })) ?? [],
+      projects: () => workbenchRef.current ? workbenchRef.current.projects().map(p => ({ name: p.name, path: p.path })) : null,
       lessons: makeProjectLessons(stateDir),
     })
     const jobsCommand = makeJobsCommand({
@@ -958,6 +960,7 @@ export async function bootDaemon(opts: BootDaemonOpts): Promise<DaemonHandle> {
     boot.sessionManager.setExecutionGuard((path,providerId,nativeId)=>workbench.conflictsExternal(path,providerId,nativeId))
     internalApi.setWorkbench(workbench)
     workbenchForToday = workbench
+    workbenchRef.current = workbench
     // 暂停在跑的任务(2026-10-03):health 的 guard 块 / `guard status` 列出被冻住的任务。
     guardRt.setSuspendedTasks(() => workbench.networkSuspended())
     lc.register({ name: 'workbench', stop: () => workbench.shutdown() })

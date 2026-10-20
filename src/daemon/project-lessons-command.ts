@@ -11,7 +11,8 @@ const USAGE = `项目经验的写法:\n· 经验 <项目> <一句话>(比如「�
 export function makeProjectLessonsCommand(deps: {
   isOwner: (chatId: string) => boolean
   say: (chatId: string, text: string) => Promise<unknown>
-  projects: () => Array<{ name: string; path: string }>
+  /** 工作台还没接上(daemon 还在启动)⇒ null。 */
+  projects: () => Array<{ name: string; path: string }> | null
   lessons: ProjectLessons
 }): ReplyHandler {
   return {
@@ -22,7 +23,9 @@ export function makeProjectLessonsCommand(deps: {
       const say = (t: string) => deps.say(chatId, t)
       if (!m[1]) { await say(USAGE); return true }
       const name = m[1], rest = m[2]?.trim() ?? ''
-      const hits = deps.projects().filter(p => p.name.toLowerCase() === name.toLowerCase())
+      const all = deps.projects()
+      if (!all) { await say('CC 还在启动,稍后再试一次。'); return true }
+      const hits = all.filter(p => p.name.toLowerCase() === name.toLowerCase())
       if (!hits.length) { await say(`没找到叫 ${name} 的项目。发「任务 项目」看看有哪些。`); return true }
       // 大小写都对得上的那一个优先;还是分不清 ⇒ 问清楚,什么都不写
       const exact = hits.filter(h => h.name === name)
