@@ -6,7 +6,7 @@
 import type { Lifecycle } from '../../lib/lifecycle'
 import { isJobDue, type ScheduledJob } from '../../core/scheduled-jobs'
 import { localParts } from '../memory/nightly-schedule'
-import { JOBS_DAILY_CAP, type JobsStore } from './store'
+import { JOBS_DAILY_CAP, type JobsStore } from '../../core/scheduled-jobs-store'
 
 export const JOB_TURN_TIMEOUT_MS = 5 * 60_000
 export const JOB_FAIL_PAUSE = 3

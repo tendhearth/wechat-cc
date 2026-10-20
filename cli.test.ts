@@ -78,6 +78,7 @@ describe('citty migrated commands', () => {
       'hook',
       'install',
       'install-progress',
+      'jobs',
       'license',
       'list',
       'log',

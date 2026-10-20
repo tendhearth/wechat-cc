@@ -5,9 +5,9 @@
  * 原子写;定时文件坏了 ⇒ 当没有定时并报错,任何写入都拒(不把主人手改了一半的东西冲掉)。
  */
 import { existsSync, renameSync, writeFileSync } from 'node:fs'
-import { readJsonFile } from '../../lib/read-json-file'
+import { readJsonFile } from '../lib/read-json-file'
 import { join } from 'node:path'
-import type { JobSchedule, ScheduledJob } from '../../core/scheduled-jobs'
+import type { JobSchedule, ScheduledJob } from './scheduled-jobs'
 
 export const JOBS_FILE = 'scheduled-jobs.json'
 export const JOBS_STATE_FILE = 'scheduled-jobs-state.json'

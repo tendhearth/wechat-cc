@@ -1,0 +1,71 @@
+/**
+ * 微信「定时」(spec 2026-10-20-scheduled-jobs-design):只认主人那条对话;不是主人 ⇒ 不当命令,落回普通聊天。
+ */
+import { describeSchedule, JOB_USAGE, nextRunLabel, parseJobCommand, type ScheduledJob } from '../../core/scheduled-jobs'
+import { localParts } from '../memory/nightly-schedule'
+import type { JobsStore } from '../../core/scheduled-jobs-store'
+
+export interface ReplyHandler { probe(text: string, chatId: string): boolean; handle(text: string, chatId: string): Promise<boolean> }
+
+/** 几个文本命令处理器串起来:probe 任一认;handle 交给第一个 probe 认、且真处理了的。 */
+export function chainReplyHandlers(handlers: readonly ReplyHandler[]): ReplyHandler {
+  return {
+    probe: (t, c) => handlers.some(h => h.probe(t, c)),
+    async handle(t, c) {
+      for (const h of handlers) if (h.probe(t, c) && await h.handle(t, c)) return true
+      return false
+    },
+  }
+}
+
+const STATUS_WORDS: Record<string, string> = { sent: '说了', silent: '没说话(没新东西)' }
+function statusWord(s: string | null): string {
+  if (!s) return '还没跑过'
+  if (STATUS_WORDS[s]) return STATUS_WORDS[s]!
+  if (s.startsWith('skipped:')) return { 'skipped:network': '跳过(网络不安全)', 'skipped:cap': '跳过(当天定时满了)', 'skipped:executor': '跳过(当前执行者不支持)', 'skipped:degraded': '跳过(发不出去)' }[s] ?? '跳过'
+  return `没跑成(${s.replace(/^failed:/, '')})`
+}
+
+export function makeJobsCommand(deps: {
+  store: JobsStore
+  isOwner: (chatId: string) => boolean
+  say: (chatId: string, text: string) => Promise<unknown>
+  timezone: () => string
+  now: () => number
+  log: (tag: string, line: string) => void
+}): ReplyHandler {
+  const local = () => localParts(deps.now(), deps.timezone())
+  const head = (t: string) => { const a = [...t]; return a.length <= 30 ? t : a.slice(0, 29).join('') + '…' }
+  const line = (j: ScheduledJob) => {
+    const st = deps.store.state(j.id)
+    const last = st.lastRunAt ? `上次 ${st.lastRunDay?.slice(5)} ${statusWord(st.lastStatus)}` : '还没跑过'
+    return `${j.id} · ${describeSchedule(j.schedule)}${j.paused ? ' · 停着' : ''} · ${head(j.text)} · ${last}`
+  }
+  return {
+    probe: (text, chatId) => parseJobCommand(text) !== null && deps.isOwner(chatId),
+    async handle(text, chatId) {
+      const cmd = parseJobCommand(text)
+      if (!cmd || !deps.isOwner(chatId)) return false
+      const reply = (t: string) => deps.say(chatId, t)
+      if (cmd.kind === 'usage') { await reply(cmd.error); return true }
+      if (cmd.kind === 'list') {
+        const { jobs, error } = deps.store.list()
+        if (error) { await reply(`定时文件读不了:${error}`); return true }
+        await reply(jobs.length ? `定时(${jobs.length} 个):\n${jobs.map(line).join('\n')}\n\n「定时 停 / 开 / 删 <编号>」` : `还没有定时。\n\n${JOB_USAGE}`)
+        return true
+      }
+      if (cmd.kind === 'add') {
+        const r = deps.store.add(cmd.schedule, cmd.text, new Date(deps.now()))
+        if (!r.ok) { await reply(r.error); return true }
+        deps.log('JOBS', `owner added ${r.job.id} ${describeSchedule(r.job.schedule)}`)
+        await reply(`记下了(${r.job.id}):${describeSchedule(r.job.schedule)} ${head(r.job.text)}\n下次:${nextRunLabel(r.job.schedule, local())}。到时候我只看、只查,有值得说的才找你,没新东西就不吭声。`)
+        return true
+      }
+      const exists = deps.store.list().jobs.some(j => j.id === cmd.id)
+      if (!exists) { await reply(`没有定时 ${cmd.id}。发「定时」看列表。`); return true }
+      const ok = cmd.kind === 'remove' ? deps.store.remove(cmd.id) : deps.store.setPaused(cmd.id, cmd.kind === 'pause')
+      await reply(!ok ? '没改成(定时文件读不了),稍后再试。' : cmd.kind === 'remove' ? `删了 ${cmd.id}。` : cmd.kind === 'pause' ? `${cmd.id} 先停了。` : `${cmd.id} 开了。`)
+      return true
+    },
+  }
+}

@@ -1,6 +1,7 @@
 #!/usr/bin/env bun
-import { makeJobsStore } from './scheduled-jobs/store'
+import { makeJobsStore } from '../core/scheduled-jobs-store'
 import { registerScheduledJobs } from './scheduled-jobs/runner'
+import { makeJobsCommand, chainReplyHandlers } from './scheduled-jobs/command'
 import { makeMatterStore } from '../core/matters/store'
 if (!process.env.CLAUDE_CODE_ENTRYPOINT) { process.env.CLAUDE_CODE_ENTRYPOINT = 'sdk-ts' }
 // 回环守卫(spec 2026-09-09-cli-hook-push §3):daemon 经 SDK 拉起的 claude / codex
@@ -834,6 +835,16 @@ export async function bootDaemon(opts: BootDaemonOpts): Promise<DaemonHandle> {
     const terminalHooks = makeTerminalHooksService({ deps: defaultTerminalHooksDeps, sessions: () => cliEvents.list({ includeEnded: true, limit: 500 }) })
     internalApi.setCliHooks(terminalHooks)
     // 「看 码」「@码 文本」:主人对某条终端会话说话。只认主人;那边的会话 v1 先说明。
+    // 定时任务的文件(spec 2026-10-20-scheduled-jobs-design):微信「定时」与每分钟一拍的 runner 共用一份。
+    const jobsStore = makeJobsStore(stateDir)
+    const jobsCommand = makeJobsCommand({
+      store: jobsStore,
+      isOwner: (chatId) => resolveAdminChatId(loadAccess(), loadCompanionConfig(stateDir), null) === chatId,
+      say: (c, t) => ilink.sendMessage(c, t),
+      timezone: () => loadCompanionConfig(stateDir).timezone ?? 'Asia/Shanghai',
+      now: () => Date.now(),
+      log: (t, l) => log(t, l),
+    })
     const cliReplyHandler = makeCliReplyHandler({
       executionConflict,reserveExecution,
       hub: cliEvents,
@@ -878,7 +889,7 @@ export async function bootDaemon(opts: BootDaemonOpts): Promise<DaemonHandle> {
       }),
       matters, guardRuntime: guardRt, subsystems: () => sup.statuses(),
       panelTokens: internalApi.panelTokens,
-      cliReply: cliReplyHandler,
+      cliReply: chainReplyHandlers([jobsCommand, cliReplyHandler]),
       stickers: stickerLib,
       requestRestart: (reason) => requestRestart(reason),
       llmHealth,
@@ -1011,7 +1022,6 @@ export async function bootDaemon(opts: BootDaemonOpts): Promise<DaemonHandle> {
     if (remindersLc) lc.register(remindersLc)
     // 主人亲手写的定时任务(spec 2026-10-20-scheduled-jobs-design):每分钟一拍,到点在只读的独立会话里跑一轮,
     // 走伙伴主动消息的出口;只给主人那条对话。坏了只降级,不挡启动。
-    const jobsStore = makeJobsStore(stateDir)
     const jobsLc = await sup.start('scheduled-jobs', () => registerScheduledJobs({
       store: jobsStore,
       timezone: () => loadCompanionConfig(stateDir).timezone ?? 'Asia/Shanghai',

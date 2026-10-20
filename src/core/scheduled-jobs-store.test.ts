@@ -2,7 +2,7 @@ import { describe, it, expect } from 'vitest'
 import { mkdtempSync, writeFileSync, readFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { makeJobsStore, JOBS_FILE, JOBS_MAX } from './store'
+import { makeJobsStore, JOBS_FILE, JOBS_MAX } from './scheduled-jobs-store'
 
 const dir = () => mkdtempSync(join(tmpdir(), 'jobs-'))
 const now = new Date('2026-10-20T01:00:00Z')
