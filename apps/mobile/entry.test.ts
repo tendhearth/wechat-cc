@@ -27,7 +27,7 @@ function element() {
     setAttribute: vi.fn(),
   }
 }
-function load(api: Api, storage = new Map<string, string>(), transport?: { fetch: Api; send: Api }) {
+function load(api: Api, storage = new Map<string, string>(), transport?: { fetch: Api; send: Api }, extra: Record<string, unknown> = {}) {
   const els: Record<string, ReturnType<typeof element>> = {}
   const get = (id: string) => (els[id] ??= element())
   const nav = element()
@@ -43,6 +43,7 @@ function load(api: Api, storage = new Map<string, string>(), transport?: { fetch
     mSha256: async (bytes: Uint8Array) => createHash('sha256').update(bytes).digest('hex'), URL: { createObjectURL: () => 'blob:entry-preview', revokeObjectURL: vi.fn() },
     fetch: transport?.fetch, tunnelSend: transport?.send, q: (p: string) => p,
     esc: (s: unknown) => String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;'),
+    ...extra,
   }
   const transportSource = transport ? readMobileSource('transport.js') + '\ntunnel = function(){ return Promise.resolve(tunnelSend) }\n' : ''
   const fns = new Function(...Object.keys(env), `var mCurrent = null, mSeq = 0;\n${transportSource}\n${readMobileSource('attachments.js')}\n${readMobileSource('entry.js')}
@@ -599,5 +600,18 @@ describe('stale 401/403 from the token used before pairing', () => {
     const phone = load(api)
     await phone.openEntry(); phone.edit('整理清单'); await phone.submitEntry()
     expect(phone.get('entry-notice').textContent).toContain('这台手机已经不能连了')
+  })
+})
+
+describe('链接会话不能交办(审计 10-20)', () => {
+  it('a /set link session never posts create; it says pairing is needed', async () => {
+    const api = vi.fn<Api>(async (path, opts) => path.endsWith('/options') ? response(ready) : response(accepted(JSON.parse(opts!.body!).requestId)))
+    const toast = vi.fn()
+    const phone = load(api, new Map(), undefined, { ccLinkSession: () => true, toast })
+    await phone.openEntry()
+    phone.edit('帮我整理周末出游清单')
+    await phone.submitEntry()
+    expect(api.mock.calls.some(([p]) => p === '/m/api/matter/create')).toBe(false)
+    expect(toast.mock.calls[0]?.[0]).toContain('配对')
   })
 })

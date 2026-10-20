@@ -6,6 +6,8 @@ try {
   else { var rr = localStorage.getItem("ccRemote"); if (rr) REMOTE = JSON.parse(rr) }
 } catch (e) {}
 var isDevice = T.charAt(0) === "d"
+function ccLinkSession() { return !isDevice }
+document.body.classList.toggle("link-session", !isDevice)
 if (!isDevice) document.getElementById("pairbar").hidden = false
 if ("serviceWorker" in navigator) { navigator.serviceWorker.register("/m/sw.js", { scope: "/m" }).catch(function(){}) }
 function toast(m) { var t = document.getElementById("toast"); t.textContent = m; t.classList.add("show"); setTimeout(function(){ t.classList.remove("show") }, 1800) }

@@ -122,7 +122,26 @@ export const PHONE_ROUTES: ReadonlySet<string> = new Set([
 // 等于绕过上面「信是私事」;手机网页 /m 不用这条(只有原生 App 按块下载回复里的文件)。
 // 撤掉这一轮(2026-10-21)也只给设备:会丢掉工作区里的改动,不能让 10 分钟、可能外泄的链接令牌做。
 // 退回 / 行评论(#456 评审):送给执行者的话就是指令 ⇒ 只给设备。review-mark 只记标记、不给执行者递话,留给链接令牌。
-const LINK_EXCLUDED: ReadonlySet<string> = new Set(['POST /m/api/matter/review-return', 'POST /m/api/matter/review-comment', 'POST /m/api/matter/review-comments-send', 'POST /m/api/cli/say', 'POST /m/api/cli/permission', 'GET /m/api/letters', 'GET /m/api/letters/page', 'GET /m/api/chat/file', 'GET /m/api/jobs', 'POST /m/api/jobs/action', 'GET /m/api/activity', 'GET /m/api/lessons', 'POST /m/api/lessons/add', 'POST /m/api/lessons/remove', 'GET /m/api/matter/rewind', 'POST /m/api/matter/rewind'])
+// 审计(2026-10-20,与 wechat-cc-2a 定):会把话 / 批准 / 新任务送到执行者那里、或会丢改动的写操作 ⇒ 只给设备。
+// 主人那条 CC(chat/say)是 admin 档、默认 dangerously,能跑 shell、能委派 —— 链接一转发谁都能指挥它。推送两条处理器里本来就只认设备,这里对齐。
+const LINK_EXCLUDED: ReadonlySet<string> = new Set(['POST /m/api/matter/say', 'POST /m/api/matter/create', 'POST /m/api/matter/permission', 'POST /m/api/matter/answer', 'POST /m/api/matter/handoff', 'POST /m/api/session/continue', 'POST /m/api/matter/worktree', 'POST /m/api/chat/say', 'POST /m/api/push/register', 'POST /m/api/push/test', 'POST /m/api/matter/review-return', 'POST /m/api/matter/review-comment', 'POST /m/api/matter/review-comments-send', 'POST /m/api/cli/say', 'POST /m/api/cli/permission', 'GET /m/api/letters', 'GET /m/api/letters/page', 'GET /m/api/chat/file', 'GET /m/api/jobs', 'POST /m/api/jobs/action', 'GET /m/api/activity', 'GET /m/api/lessons', 'POST /m/api/lessons/add', 'POST /m/api/lessons/remove', 'GET /m/api/matter/rewind', 'POST /m/api/matter/rewind'])
+/**
+ * 链接令牌还能做的写操作,每条一句理由(审计 2026-10-20)。`phone-routes.test.ts` 要求每条 POST 要么在
+ * LINK_EXCLUDED、要么在这里 —— 新加写路由必须想清楚归哪边。
+ */
+export const LINK_WRITE_OK: Readonly<Record<string, string>> = {
+  'POST /set/api/apply': '设置页本身;开关远程 / 撤设备这类在 LAN_ONLY_OPS 另有一道',
+  'POST /set/api/pair': '用链接换设备令牌,就是配对这一步',
+  'POST /m/api/memory/correct': '只把一条记忆标成不对 / 过时,不给执行者下令',
+  'POST /m/api/seen': '只记哪些消息已经看过',
+  'POST /m/api/todo': '只改待办状态',
+  'POST /m/api/matter/review-mark': '只记「没问题」标记,不往执行者送话',
+  'POST /m/api/matter/stop': '停下是安全方向:能停,不能让它多做什么',
+  'POST /m/api/chat/model': '改用哪个后端 / 模型,有费用影响但不是指令',
+  'POST /m/api/chat/transcribe': '录音转成字,只回字,不发、不执行',
+  'POST /m/api/attachment/chunk': '只是材料;没有 create / say 就送不出去',
+  'POST /m/api/attachment/discard': '丢掉自己传的材料',
+}
 export const LINK_ROUTES: ReadonlySet<string> = new Set([...PHONE_ROUTES].filter(r => !LINK_EXCLUDED.has(r)))
 
 /**

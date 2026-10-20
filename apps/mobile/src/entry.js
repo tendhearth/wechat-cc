@@ -253,6 +253,7 @@ function openEntry() {
   return eLoadOptions()
 }
 function submitEntry() {
+  if (typeof ccLinkSession === "function" && ccLinkSession()) { toast("配对过的手机才能交办新的事,点上面「把 CC 带在身上」。"); return Promise.resolve() }
   eMount()
   var record = eCurrentRecord()
   if (record && eSame(record)) return eSend(record, true, true)
