@@ -33,3 +33,14 @@ describe('project lessons', () => {
     expect(makeProjectLessons(d).list('/p/a').map(x => x.text)).toEqual(['用 bun'])
   })
 })
+
+describe('removeById (phone: a stale list cannot delete the wrong one)', () => {
+  it('removes by id; unknown id ⇒ false', () => {
+    const l = makeProjectLessons(dir())
+    const a = l.add('/p/a', '用 bun'), b = l.add('/p/a', '测试用 bun run test')
+    if (!a.ok || !b.ok) throw Error('add')
+    expect(l.removeById('/p/a', 'nope')).toBe(false)
+    expect(l.removeById('/p/a', a.lesson.id)).toBe(true)
+    expect(l.list('/p/a').map(x => x.id)).toEqual([b.lesson.id])
+  })
+})

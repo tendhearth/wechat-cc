@@ -7,3 +7,4 @@
 - 存在 `<stateDir>/project-lessons.json`,按**源项目路径**(独立工作区算它的源项目;随手交办的没有项目就不带)。v1 不写进主人的仓库(要不要也写进 AGENTS.md 留给主人定)。
 - 每次派发执行者时,工作台指令末尾加一段「这个项目的经验(主人写的,所有执行者都照着做)」—— Claude 的 append 系统提示、Codex 的 developerInstructions、ACP / agy / codex exec 的首条前缀都走同一个数组。已知缺口:openai 兼容那家续接时沿用建会话时的系统消息,新加的经验要新会话才看到。
 - 以后:打回 / 行评论时便宜模型建议一条经验、手机上看和删。
+- 手机网页(10-20):「一起做」底下「项目经验 ›」一行,点开才拉 `GET /m/api/lessons`(有经验的项目:目录 id + 名字 + 经验,外加可选项目;不回路径);加一条 `POST /m/api/lessons/add {project,text}`;删 `POST /m/api/lessons/remove {project,id}`,按经验 id(旧列表按编号会删错),要点两下(不弹系统确认框)。三条都只给设备令牌:经验进每家执行者的指令,分享链接不能碰。

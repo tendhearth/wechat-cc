@@ -110,6 +110,14 @@
     <h2 class="terminal-heading">终端里的会话</h2>
     <div id="terminal-list" aria-live="polite"></div>
   </section>
+  <section id="lessons-root" aria-label="项目经验">
+    <button id="lessons-open" class="today-head" type="button" aria-expanded="false"><small>项目经验 ›</small></button>
+    <div id="lessons-body" hidden>
+      <div id="lessons-list"></div>
+      <form id="lessons-form" hidden><select id="lessons-project" aria-label="项目"></select><input id="lessons-text" maxlength="200" placeholder="比如:这个仓库用 bun,不要 npm" autocomplete="off"><button type="submit" class="done-btn">加一条</button></form>
+      <p id="lessons-note" class="m-note" role="status" aria-live="polite"></p>
+    </div>
+  </section>
 </div>
 <div class="pane" id="p-sessions">
   <button id="sessions-back" class="sessions-text-action" type="button">← 一起做</button>
@@ -149,6 +157,7 @@
 <style>{{>markdown.css}}</style>
 <style>{{>sessions.css}}</style>
 <style>{{>terminal.css}}</style>
+<style>{{>lessons.css}}</style>
 <style>{{>agent-avatars.css}}</style>
 <style>{{>today.css}}</style>
 <div id="toast"></div>
@@ -156,4 +165,4 @@
 var T = {{TOKEN_JSON}}
 var REMOTE = {{REMOTE_JSON}}{{>boot.js}}{{>transport.js}}{{>nav.js}}{{>markdown.js}}{{>workbench.js}}
 {{>attachments.js}}{{>entry.js}}
-{{>presence.js}}{{>you.js}}{{>home.js}}{{>sessions.js}}{{>terminal.js}}{{>today.js}}{{>activity.js}}</script></body></html>
+{{>presence.js}}{{>you.js}}{{>home.js}}{{>sessions.js}}{{>terminal.js}}{{>today.js}}{{>activity.js}}{{>lessons.js}}</script></body></html>
