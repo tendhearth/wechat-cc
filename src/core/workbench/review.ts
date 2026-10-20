@@ -2,7 +2,7 @@ import { createHash } from 'node:crypto'
 import type { GitReview, ReviewFile } from './git-review'
 
 /** 一个文件加上它在这一轮里的当前标记(`store.reviewMarks`,按 快照 sha + 路径 键)。 */
-export interface ReviewTurnFile extends ReviewFile { mark?: { mark: 'accepted' | 'returned'; comment: string; createdAt: number } }
+export interface ReviewTurnFile extends ReviewFile { mark?: { mark: 'accepted' | 'returned'; comment: string; createdAt: number }; /** 该多看一眼的原因(review-risk.ts,B6);没有就不带。 */ risk?: string[] }
 /** 一轮变更快照 = 一件 `GIT_REVIEW_MIME` 成果。解析不出来的那一轮是 `status:'unavailable'` 加一条说明,不是抛错。 */
 export interface ReviewTurn {
   artifactId: string; sha256: string; name: string; createdAt: number

@@ -34,6 +34,12 @@ describe('改动面板', () => {
     expect(renderReviewPanel([], options())).toBe('')
   })
 
+  it('有风险的文件标「注意 · 原因」(B6),普通文件不标', () => {
+    const html = renderReviewPanel([turn({ files: [file({ path: 'src/auth/session.ts', risk: ['鉴权 / 权限'] }), file({ path: 'src/ui.ts' })] })], options())
+    expect(html).toContain('<span class="wb-review-risk">注意 · 鉴权 / 权限</span>')
+    expect(html.match(/wb-review-risk/g)).toHaveLength(1)
+  })
+
   it('逐文件展开 diff:种类徽章、开始时已有修改、稳定的展开 id', () => {
     const html = renderReviewPanel([turn({ preexistingPaths: ['src/app.ts'], notes: ['读取数量超过限制'], files: [file({ preexisting: true, kind: 'added' })] })], options())
     expect(html).toContain('新增')
