@@ -99,7 +99,7 @@ describe('改动面板', () => {
     expect(returnLessonText({ ok: false, error: 'no_project' })).toBe('已发回。经验没记上：这件事没有项目，记不了。')
     expect(returnLessonText({ ok: false, error: 'too_long' })).toBe('已发回。经验没记上：太长了（最多 200 字）。')
     expect(returnLessonText({ ok: false, error: 'full' })).toBe('已发回。经验没记上：这个项目的经验已经满 10 条。')
-    expect(returnLessonText({ ok: false, error: 'duplicate' })).toBe('已发回。经验没记上：已经有一样的了。')
+    expect(returnLessonText({ ok: false, error: 'duplicate' })).toBe('已发回。这个项目的经验里本来就有这一条。')
     expect(returnLessonText({ ok: false, error: 'failed' })).toBe('已发回。经验没记上：稍后再试一次。')
     // 老后台不认 asLesson ⇒ 响应里没有 lesson
     expect(returnLessonText(undefined)).toBe('已发回。经验没记上：稍后再试一次。')

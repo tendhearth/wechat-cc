@@ -30,12 +30,14 @@ const MAX_TEXT = 2000
 // 就地展开差异的回合数。再往前的回合照样能接受 / 打回,只是不把 diff 铺进这一页 ——
 // 一个跑了十几轮的任务,把每一轮的每个文件都渲出来会把整页压垮。
 const INLINE_TURNS = 3
-const LESSON_FAIL = /** @type {Record<string,string>} */ ({ no_project: '这件事没有项目，记不了。', too_long: '太长了（最多 200 字）。', full: '这个项目的经验已经满 10 条。', duplicate: '已经有一样的了。', invalid: '经验里不能带尖括号。' })
+const LESSON_FAIL = /** @type {Record<string,string>} */ ({ no_project: '这件事没有项目，记不了。', too_long: '太长了（最多 200 字）。', full: '这个项目的经验已经满 10 条。', invalid: '经验里不能带尖括号。' })
 /** 打回成功后那一句:打回本身总是「已发回」,经验记没记上另说。
  * @param {unknown} lesson 后台回的 {ok:true} | {ok:false,error} */
 export function returnLessonText(lesson) {
   const l = /** @type {{ok?:unknown,error?:unknown}|null} */ (lesson && typeof lesson === 'object' ? lesson : null)
   if (l?.ok === true) return '已发回。已记成这个项目的经验。'
+  // 一样的已经在了 = 这条经验确实记着(重试时第一次其实已经记上),不当失败说(#458 评审)
+  if (l?.error === 'duplicate') return '已发回。这个项目的经验里本来就有这一条。'
   return `已发回。经验没记上：${LESSON_FAIL[String(l?.error ?? '')] ?? '稍后再试一次。'}`
 }
 const OLDER_TURN = '<p class="wb-review-note">较早的一轮：请在「成果」里打开这份变更记录查看差异。</p>'
