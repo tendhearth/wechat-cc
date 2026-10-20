@@ -15,10 +15,14 @@ type FileState={kind:'missing'}|{kind:'skipped';reason:string;hash?:string;mode?
 export interface GitBaseline {
   project:string;startedAt:number;head:string|null;limits:Limits
   kind:'git'|'not_git'|'unavailable';paths:Set<string>;initial:Map<string,FileState>;preexistingPaths:string[];notes:string[]
+  /** 这一轮开始时的 checkpoint commit(checkpoints.ts;只有独立工作区才有,2026-10-21)。 */
+  checkpoint?:string
 }
 export interface ReviewFile {path:string;preexisting:boolean;kind:'added'|'deleted'|'modified'|'not_reviewed';beforeSha256?:string;afterSha256?:string;diff?:string;reason?:string;/** 开始时是不是可执行;撤销时还原执行位(2026-10-10)。旧快照没有。 */beforeExecutable?:boolean}
-export interface GitReview {version:1;scope:'working-tree-before-after';startedAt:number;finishedAt:number;headBefore:string|null;headAfter:string|null;status:'complete'|'partial'|'unavailable';preexistingPaths:string[];notes:string[];files:ReviewFile[]}
-function gitEnv() {
+export interface GitReview {version:1;scope:'working-tree-before-after';startedAt:number;finishedAt:number;headBefore:string|null;headAfter:string|null;status:'complete'|'partial'|'unavailable';preexistingPaths:string[];notes:string[];files:ReviewFile[]
+  /** 这一轮前后整个工作区的 checkpoint commit(回退用;只有独立工作区、且打成了才有,2026-10-21)。 */
+  checkpointBefore?:string;checkpointAfter?:string}
+export function gitEnv() {
   const env:NodeJS.ProcessEnv={...process.env}
   for(const key of Object.keys(env))if(key.startsWith('GIT_'))delete env[key]
   return {...env,LC_ALL:'C',GIT_OPTIONAL_LOCKS:'0',GIT_TERMINAL_PROMPT:'0',GIT_CONFIG_NOSYSTEM:'1',GIT_CONFIG_GLOBAL:'/dev/null',GIT_PAGER:'cat',GIT_NO_LAZY_FETCH:'1',GIT_NO_REPLACE_OBJECTS:'1'}
@@ -37,15 +41,19 @@ class GitReader {
     const {stdout}=await execute('git',[...this.safe,...this.filters,...args],{cwd:project,env:gitEnv(),encoding:'buffer',maxBuffer,timeout,signal:this.signal})
     return Buffer.from(stdout)
   }
-  async configure(project:string) {
-    let keys:Buffer
-    try{keys=await this.run(project,['config','--null','--name-only','--get-regexp','^filter\\..*\\.(clean|smudge|process|required)$'])}
-    catch(error){if((error as {code?:number}).code===1)return;throw error}
-    for(const key of paths(keys)) {
-      if(!/^filter\.[^\0\r\n]+\.(clean|smudge|process|required)$/i.test(key))throw new Error('invalid_filter_config')
-      this.filters.push('-c',`${key}=${key.toLowerCase().endsWith('.required')?'false':''}`)
-    }
+  async configure(project:string) {this.filters.push(...await filterOverrides(args=>this.run(project,args)))}
+}
+/** 仓库里配的 clean / smudge / process 一律置空、required 置 false(LFS 之类不跑);checkpoints.ts 也用这一份。 */
+export async function filterOverrides(run:(args:string[])=>Promise<Buffer>):Promise<string[]> {
+  let keys:Buffer
+  try{keys=await run(['config','--null','--name-only','--get-regexp','^filter\\..*\\.(clean|smudge|process|required)$'])}
+  catch(error){if((error as {code?:number}).code===1)return [];throw error}
+  const out:string[]=[]
+  for(const key of paths(keys)) {
+    if(!/^filter\.[^\0\r\n]+\.(clean|smudge|process|required)$/i.test(key))throw new Error('invalid_filter_config')
+    out.push('-c',`${key}=${key.toLowerCase().endsWith('.required')?'false':''}`)
   }
+  return out
 }
 function paths(bytes:Buffer){return new TextDecoder('utf-8',{fatal:true,ignoreBOM:true}).decode(bytes).split('\0').filter(Boolean)}
 function inScope(path:string){return !isAbsolute(path) && !path.split('/').some(p=>p==='..'||p==='.git'||p==='.cc-workbench'||p==='.cc-workbench-inputs') && !path.includes('\0') && !path.includes('\\')}

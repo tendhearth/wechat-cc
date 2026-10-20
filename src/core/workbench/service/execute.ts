@@ -22,7 +22,6 @@ import { CodexExecutionError } from '../codex-execution-error'
 import { executionFailureMessage, normalizeExecutionChoice, PROVIDER_EXECUTION_CHOICE, sameExecutionChoice, taskErrorForProviderCode } from '../execution-settings'
 import { isProviderErrorCode, providerErrorCodeOf } from '../../../lib/provider-error-code'
 import { isUnattendedExecutor } from '../executor-capabilities'
-import { captureGitBaseline } from '../git-review'
 import { handoffArtifactText, type ArtifactSelection } from '../handoff'
 import { normalizeInputRequestId, sameAttachments } from '../live-inputs'
 import type { AcceptedNativeResume } from '../native-adoption'
@@ -108,7 +107,7 @@ export function makeExecuteDomain(ctx:ServiceCtx, domains:ExecuteDomains) {
   const {holdInputs,drainInputs,settleRuntimeInput}=domains.inputs
   const {revokeCredentials,cancelIdleClose,reportOnce,recollectOnce,settleQuiet,settleAfterDecision,releaseReservation,confirmLateClose,markUncertain,pump}=domains.lifecycle
   const {requestNotice,terminalReportBody,stageFinishedNotice,publishFinishedNotices}=domains.notices
-  const {collect,retakeBaseline}=domains.artifacts
+  const {collect,retakeBaseline,takeBaseline}=domains.artifacts
   async function execute(task:StoredTask,text:string,running:Active) {
     const sessionKey=`workbench/${task.id}`
     let finalStatus:TaskStatus='failed'
@@ -150,7 +149,7 @@ export function makeExecuteDomain(ctx:ServiceCtx, domains:ExecuteDomains) {
       const reviewStop=new AbortController()
       void running.stop.then(()=>reviewStop.abort())
       if(running.cancelled){finalStatus='cancelled';return}
-      running.reviewBaseline=await captureGitBaseline(running.path,{},reviewStop.signal)
+      running.reviewBaseline=await takeBaseline(running,reviewStop.signal)
       if(running.cancelled){finalStatus='cancelled';return}
       if(canonicalProject(running.path)!==running.path || directoryIdentity(running.path)!==running.directoryIdentity)throw new Error('invalid_path')
       if(running.nativeResume)await validateNativeDecision(store.get(task.id),running.nativeResume,true)

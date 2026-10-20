@@ -17,6 +17,8 @@ const stringList = (value: unknown): string[] => Array.isArray(value) ? value.fi
 const text = (value: unknown): string | undefined => typeof value === 'string' ? value : undefined
 const head = (value: unknown): string | null => typeof value === 'string' ? value : null
 const at = (value: unknown): number => typeof value === 'number' && Number.isFinite(value) ? value : 0
+/** checkpoint commit:sha1 40 位 / sha256 64 位小写 hex,别的一律丢(回退拿它当 git 参数)。 */
+const commit = (value: unknown): string | undefined => typeof value === 'string' && /^[0-9a-f]{40}([0-9a-f]{24})?$/.test(value) ? value : undefined
 
 /**
  * 存下来的快照字节 ⇒ `GitReview`。只有能确认是这份格式(version/scope/status/files 与每个文件的
@@ -44,11 +46,15 @@ export function parseGitReviewSnapshot(bytes: Buffer): GitReview | null {
     if (typeof entry.beforeExecutable === 'boolean') file.beforeExecutable = entry.beforeExecutable
     files.push(file)
   }
-  return {
+  const review: GitReview = {
     version: 1, scope: 'working-tree-before-after', startedAt: at(raw.startedAt), finishedAt: at(raw.finishedAt),
     headBefore: head(raw.headBefore), headAfter: head(raw.headAfter), status: raw.status as GitReview['status'],
     preexistingPaths: stringList(raw.preexistingPaths), notes: stringList(raw.notes), files,
   }
+  const before = commit(raw.checkpointBefore), after = commit(raw.checkpointAfter)
+  if (before) review.checkpointBefore = before
+  if (after) review.checkpointAfter = after
+  return review
 }
 
 const TRUNCATED = '(已截断)'

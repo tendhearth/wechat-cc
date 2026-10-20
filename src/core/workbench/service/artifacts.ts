@@ -4,7 +4,8 @@
  * collect 的 promise 登记在 state.collections —— shutdown 靠它等收尾,必须是同一个 Set。
  */
 import { ArtifactSnapshotError, canonicalProject, collectArtifacts, readArtifactSnapshot, saveArtifactSnapshot } from '../artifacts'
-import { captureGitBaseline, finishGitReview, serializeGitReview, GIT_REVIEW_MIME } from '../git-review'
+import { captureGitBaseline, finishGitReview, serializeGitReview, GIT_REVIEW_MIME, type GitBaseline } from '../git-review'
+import { takeCheckpoint } from '../checkpoints'
 import { directoryIdentity } from './directory-identity'
 import type { Active } from './state'
 import type { ServiceCtx } from './ctx'
@@ -17,8 +18,39 @@ export interface ArtifactsDomain {
   captureOutputs(running:Active): Promise<void>
   captureCodeChanges(running:Active): Promise<void>
   retakeBaseline(running:Active): Promise<void>
+  takeBaseline(running:Active,signal?:AbortSignal): Promise<GitBaseline>
   artifact(id:string,artifactId:string): {name:string;mime:string;size:number;sha256:string;contentBase64:string}
   approve(id:string,artifactId:string,sha256:string): void
+}
+
+/** 这件事有没删的独立工作区 ⇒ 它的根;否则 null(checkpoint 只给独立工作区打,别的任务一个 git 子进程都不多跑)。 */
+function liveWorktreeRoot(ctx:ServiceCtx,taskId:string):string|null {
+  try { const wt=ctx.store.worktrees.get(taskId); return wt&&wt.removedAt===null?wt.root:null } catch { return null }
+}
+/** running.stop 的 AbortSignal 版:取消 / 关机时叫停在跑的 checkpoint(总期限之外的第二道)。每条 run 只建一个。 */
+function stopSignalOf(running:Active):AbortSignal {
+  if(!running.stopSignal){const control=new AbortController();running.stopSignal=control.signal;void running.stop.then(()=>control.abort())}
+  return running.stopSignal
+}
+/** 给这一轮打个 checkpoint;打不成就是 undefined(那一轮不可回退),从不抛。打成了记下来给下一次复用。 */
+async function checkpointNow(ctx:ServiceCtx,running:Active,root:string,prev:string|undefined,signal?:AbortSignal):Promise<string|undefined> {
+  try {
+    const result=await takeCheckpoint({root,taskId:running.taskId,stateDir:ctx.stateDir,...(prev?{prev}:{}),...(signal?{signal}:{})})
+    if('skipped' in result){ctx.log?.('workbench',`checkpoint skipped task=${running.taskId} reason=${result.skipped}`);return undefined}
+    running.checkpointTip=result.commit
+    return result.commit
+  } catch { return undefined }
+}
+/**
+ * 取一轮的起点(execute / submitInput / retakeBaseline 三处共用):差异基线;独立工作区再并行打一个 checkpoint
+ * (整个 wt.root),挂在 baseline.checkpoint 上。两者都异步,并行跑只多一点点等待。
+ */
+export async function takeBaselineFor(ctx:ServiceCtx,running:Active,signal?:AbortSignal):Promise<GitBaseline> {
+  const root=liveWorktreeRoot(ctx,running.taskId)
+  // 差异基线的 signal 照旧(只有 execute 给);checkpoint 总有一个:调用方的,或这条 run 的停止信号
+  const [baseline,checkpoint]=await Promise.all([captureGitBaseline(running.path,{},signal),root?checkpointNow(ctx,running,root,running.checkpointTip,signal??stopSignalOf(running)):Promise.resolve(undefined)])
+  if(checkpoint)baseline.checkpoint=checkpoint
+  return baseline
 }
 
 export function makeArtifactsDomain(ctx:ServiceCtx):ArtifactsDomain {
@@ -102,10 +134,21 @@ export function makeArtifactsDomain(ctx:ServiceCtx):ArtifactsDomain {
       if (!baseline || !running.session) return
       running.reviewBaseline=undefined
       try {
-        const report=await finishGitReview(baseline)
+        // 独立工作区:这一轮结束时的 checkpoint 和差异并行打(只有起点打成了才打终点 —— 单个终点回退不了什么)
+        const root=baseline.checkpoint?liveWorktreeRoot(ctx,running.taskId):null
+        let sameTree=false
+        const [report,after]=await Promise.all([finishGitReview(baseline),root?takeCheckpoint({root,taskId:running.taskId,stateDir:ctx.stateDir,prev:baseline.checkpoint!,signal:stopSignalOf(running)}).catch(()=>null):Promise.resolve(null)])
+        if(after&&!('skipped' in after)){running.checkpointTip=after.commit;sameTree=after.sameTree}
         if(state.shutdownComplete)return
         if(canonicalProject(running.path)!==running.path || directoryIdentity(running.path)!==running.directoryIdentity)throw new Error('invalid_path')
-        if(!report||!report.files.some(f=>f.kind!=='not_reviewed'))return
+        if(!report)return
+        // 起点单独也有用(回退「撤掉这一轮」只要它);终点打不成(超时 / 被取消)就只缺终点
+        if(baseline.checkpoint)report.checkpointBefore=baseline.checkpoint
+        if(after&&'skipped' in after)ctx.log?.('workbench',`checkpoint skipped task=${running.taskId} reason=${after.skipped}`)
+        else if(after)report.checkpointAfter=after.commit
+        // 没有可审的文本改动也存:只有二进制 / 点文件这类 not_reviewed 变了、但工作区树确实变了 ⇒ 这一轮不该隐身
+        const treeChanged=!!report.checkpointAfter&&!sameTree
+        if(!report.files.some(f=>f.kind!=='not_reviewed')&&!(treeChanged&&report.files.length))return
         const seq=(running.reviewSeq??0)+1; running.reviewSeq=seq
         saveArtifactSnapshot(store,running.taskId,{name:`代码变更-${running.identity.slice(0,8)}${seq>1?`-${seq}`:''}.json`,mime:GIT_REVIEW_MIME,bytes:serializeGitReview(report)},ctx.stateDir)
         ctx.hub.touched(running.taskId)
@@ -124,7 +167,7 @@ export function makeArtifactsDomain(ctx:ServiceCtx):ArtifactsDomain {
     if (running.baselineRetaking||running.reviewBaseline||running.cancelled||running.finishing||running.uncertain) return
     running.baselineRetaking=true
     try {
-      const baseline=await captureGitBaseline(running.path,{})
+      const baseline=await takeBaselineFor(ctx,running)
       if (!running.reviewBaseline&&!running.cancelled&&!running.finishing&&!running.uncertain) running.reviewBaseline=baseline
     } catch { /* 没基线就没有这一轮的代码对比,其他成果照收 */ }
     finally { running.baselineRetaking=false }
@@ -136,5 +179,5 @@ export function makeArtifactsDomain(ctx:ServiceCtx):ArtifactsDomain {
   }
   function approve(id:string,artifactId:string,sha256:string) { artifact(id,artifactId); store.approve(id,artifactId,sha256); ctx.hub.touched(id) }
 
-  return { collect,collectTurnArtifacts,noteWarnings,captureTaskArtifacts,captureOutputs,captureCodeChanges,retakeBaseline,artifact,approve }
+  return { collect,collectTurnArtifacts,noteWarnings,captureTaskArtifacts,captureOutputs,captureCodeChanges,retakeBaseline,takeBaseline:(running,signal)=>takeBaselineFor(ctx,running,signal),artifact,approve }
 }

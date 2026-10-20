@@ -7,7 +7,7 @@
  * autoContinueBlocked 在 state 上,与 execute 共享同一个 Set。
  */
 import { canonicalProject } from '../artifacts'
-import { captureGitBaseline } from '../git-review'
+import { takeBaselineFor } from './artifacts'
 import { normalizeInputRequestId, sameAttachments, type LiveInput } from '../live-inputs'
 import type { PermissionDecision } from '../permissions'
 import { checkedText } from './checked-text'
@@ -141,7 +141,7 @@ export function makeInputsDomain(ctx:ServiceCtx) {
       if(running.reviewCapture)await running.reviewCapture.catch(()=>{})
       // 续接 = 新一轮差异的起点:重新取基线。回合中间补一句话时上一轮还没截过快照
       // (基线还没被消费)—— 那一份要留着,起点提交不动,否则这条 run 的代码变更会丢。
-      if(!running.reviewBaseline){try{running.reviewBaseline=await captureGitBaseline(running.path,{})}catch{/* 没基线就没有这一轮的代码对比,其他成果照收 */}}
+      if(!running.reviewBaseline){try{running.reviewBaseline=await takeBaselineFor(ctx,running)}catch{/* 没基线就没有这一轮的代码对比,其他成果照收 */}}
       // 上面两处 await 可能等十几秒。这期间一轮自动续作可以正常收尾(新不变式下那是合法工作),
       // `settleQuiet` 就会重新武装让位计时;计时到点 `closeForIdle` 把会话收工、文件夹交给 B。
       // 所以醒过来必须把入口那道守卫再跑一遍,否则这句话会投给一条已经关掉的会话 —— 坏的那头是
