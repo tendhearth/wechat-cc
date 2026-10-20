@@ -60,6 +60,10 @@ export const ROUTE_MIN_TIER: Record<string, UserTier> = {
   'POST /v1/workbench/review-revert': 'admin',
   'POST /v1/workbench/worktree': 'admin',
   'POST /v1/workbench/script-approve': 'admin',
+  // 回到某一轮(2026-10-21):预览 / 执行 + 撤销 / 停住后主人拍板
+  'GET /v1/workbench/rewind-preview': 'admin',
+  'POST /v1/workbench/rewind': 'admin',
+  'POST /v1/workbench/rewind-resolve': 'admin',
   'POST /v1/workbench/import': 'admin',
   'POST /v1/workbench/prepare-resume': 'admin',
   'POST /v1/workbench/prepare-continuation': 'admin',

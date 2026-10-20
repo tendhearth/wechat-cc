@@ -11,7 +11,7 @@ import { branchExists, checkpointGitArgs, deleteCheckpointRefs, REWIND_REF_PREFI
 import { GIT_REVIEW_MIME, type GitReview } from '../git-review'
 import { parseGitReviewSnapshot } from '../review'
 import { applyRewind, rollbackText, checkpointRefSet, commitOf, droppedCommits, dropIndex, fileSha256, git, ignoredConflicts, inspectApplying, nameStatus, revParse, workTree, worktreeState, type ApplyStep, type RewindGit } from '../rewind'
-import { assertNotRewindBlocked, isUndoRow, undoTargetId, type RewindRow } from '../rewind-store'
+import { assertNotRewindBlocked, isRestoreRow, RESTORE_PREFIX, isUndoRow, undoTargetId, type RewindRow } from '../rewind-store'
 import { pathsConflict } from '../scheduler'
 import type { StoredTask, WorktreeRecord } from '../store'
 import type { ServiceCtx } from './ctx'
@@ -55,8 +55,6 @@ export interface RewindPreview {
   goal: { status: string; willStop: boolean } | null
 }
 export interface RewindResult { rewindId: string; backupRef: string; head: string; discarded: string[] }
-const RESTORE = 'restore:'
-const isRestoreRow = (row: Pick<RewindRow, 'targetArtifactId'>) => row.targetArtifactId.startsWith(RESTORE)
 const sha = (bytes: Buffer) => createHash('sha256').update(bytes).digest('hex')
 
 const fail = (code: string, extra: Record<string, unknown> = {}) => Object.assign(new Error(code), extra)
@@ -262,7 +260,7 @@ export function makeRewindDomain(ctx: ServiceCtx, domains: { lifecycle: Pick<Lif
       const row = how.row
       const info = commitOf(sc.g, row.backupCommit)
       if (!info || info.parents.length !== 1 || revParse(sc.g, row.backupRef) !== row.backupCommit) throw fail('rewind_unavailable', { reason: 'backup_missing' })
-      target = { commit: row.backupCommit, tree: info.tree, parent: info.parents[0]! }; artifactId = how.kind === 'restore' ? `${RESTORE}${row.id}` : undoTargetId(row.id)
+      target = { commit: row.backupCommit, tree: info.tree, parent: info.parents[0]! }; artifactId = how.kind === 'restore' ? `${RESTORE_PREFIX}${row.id}` : undoTargetId(row.id)
       let projectHead: string | null = null
       try { projectHead = revParse({ ...sc.g, root: real(sc.wt.repoRoot) }, 'HEAD') } catch { /* 不判 */ }
       if (droppedCommits(sc.g, target.parent, sc.head, sc.wt.branch, projectHead).merged) throw fail('rewind_merged')
@@ -284,7 +282,7 @@ export function makeRewindDomain(ctx: ServiceCtx, domains: { lifecycle: Pick<Lif
         if (result.rolledBack) {
           store.rewinds.setState(row.id, 'failed')
           note(id, `回退没做成（${why}），已经恢复原样${steps ? `：${steps}` : ''}。回退前的完整状态另有备份：${backupRef}。`)
-        } else park(row, `回退没做成（${why}），也没能完整恢复原样：${steps}。这件事先停住了，请在桌面查看后选「保留现状」或「恢复备份」。回退前的完整状态备份在 ${backupRef}。`)
+        } else park(row, `回退没做成（${why}），也没能完整恢复原样：${steps}。这件事先停住了，请在桌面查看后选「保留现在的样子」或「恢复到回退之前」。回退前的完整状态备份在 ${backupRef}。`)
         throw fail('rewind_failed', { rolledBack: result.rolledBack, backupRef, reason: result.error === 'rewind_verify_eol' ? 'eol_mismatch' : result.error, ...(result.path ? { path: result.path } : {}), steps: result.steps, conflicts: result.conflicts })
       }
       store.rewinds.setState(row.id, 'done')
@@ -300,10 +298,11 @@ export function makeRewindDomain(ctx: ServiceCtx, domains: { lifecycle: Pick<Lif
     inflight.add(id)
     try { return await fn() } finally { inflight.delete(id) }
   }
-  /** 最近一次可撤销的回退;之后又有新的审阅轮 ⇒ rewind_undo_stale(备份 ref 留着手工恢复)。 */
-  function undoable(id: string): RewindRow {
+  /** 最近一次可撤销的回退;之后又有新的审阅轮 ⇒ rewind_undo_stale(备份 ref 留着手工恢复)。expected = 桌面看到的那一次,换了 ⇒ stale。 */
+  function undoable(id: string, expected?: string): RewindRow {
     const latest = store.rewinds.latest(id)
-    if (!latest || isUndoRow(latest) || isRestoreRow(latest) || latest.undoneAt !== null) throw fail('rewind_undo_unavailable')
+    if (!latest || isUndoRow(latest) || isRestoreRow(latest) || latest.undoneAt !== null) throw fail(expected ? 'rewind_undo_stale' : 'rewind_undo_unavailable')
+    if (expected !== undefined && latest.id !== expected) throw fail('rewind_undo_stale')
     if (rounds(id).some(r => r.createdAt > latest.createdAt)) throw fail('rewind_undo_stale')
     return latest
   }
@@ -311,7 +310,7 @@ export function makeRewindDomain(ctx: ServiceCtx, domains: { lifecycle: Pick<Lif
   /** 开机对账一行(评审 4):能确认就补完 / 回滚,确认不了就停住这件事并写一条事件。 */
   async function reconcile(row: RewindRow) {
     const id = row.taskId
-    const unknown = () => park(row, `上次回退中途被打断，现场核对不上，CC 没有再动它。这件事先停住了，请在桌面查看后选「保留现状」或「恢复备份」。回退前的完整状态备份在 ${row.backupRef}。`)
+    const unknown = () => park(row, `上次回退中途被打断，现场核对不上，CC 没有再动它。这件事先停住了，请在桌面查看后选「保留现在的样子」或「恢复到回退之前」。回退前的完整状态备份在 ${row.backupRef}。`)
     try { await reconcileOne(row, unknown) } catch (error) {
       // 对账自己出错(超时 / 锁 / CAS 失败)也一样停住,不悄悄当 failed(评审 #433-3)
       ctx.log?.('workbench', `rewind reconcile error task=${id}: ${error instanceof Error ? error.message : error}`)
@@ -425,14 +424,14 @@ export function makeRewindDomain(ctx: ServiceCtx, domains: { lifecycle: Pick<Lif
       })
     },
     /** 撤销最近一次回退:同一套流程,目标 = 那次的备份 B;撤销本身也先备份。 */
-    async undoRewind(id: string): Promise<RewindResult> {
+    async undoRewind(id: string, expected?: string): Promise<RewindResult> {
       return guarded(id, async () => {
         const first = scene(id, [], true)
-        undoable(id)
+        undoable(id, expected)
         if (first.quietOwn) await closeQuiet(id, first.quietOwn)
         const root = first.quietOwn ? scene(id, [], false).root : first.root
         const B = await backupNow(id, root)
-        return applySync(id, B, { kind: 'undo', row: undoable(id) })
+        return applySync(id, B, { kind: 'undo', row: undoable(id, expected) })
       })
     },
     /**

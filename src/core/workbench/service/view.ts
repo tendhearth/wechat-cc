@@ -10,6 +10,8 @@ import { readableExecutionEvent } from '../codex-execution-error'
 import { isWorkbenchExecutorCapabilities, isWorkbenchProviderId } from '../executor-capabilities'
 import { makeProjectCatalog } from '../project-catalog'
 import { writerAlive } from './writer-exit'
+import { GIT_REVIEW_MIME } from '../git-review'
+import { rewindView } from '../rewind-store'
 import { findPathBlocker } from '../scheduler'
 import { TERMINAL_TASK_STATUSES, type Task, type WorkbenchListQuery } from '../store'
 import type { AgentRuntimeSnapshot } from '../../agent-provider'
@@ -139,6 +141,10 @@ export function makeViewDomain(ctx:ServiceCtx, queries?:{quotaHandoff(id:string)
     const agents=agentsOf(result.tasks.map(task=>task.id))
     return {projects,tasks:result.tasks.map(task => withAgents(taskView(task,true),agents)),page:result.page,projectProviders,providers,historyProviders:Object.keys(ctx.deps.nativeHistory??{}),defaultProvider:providers.find(p=>p.id===ctx.deps.defaultProvider)?.id ?? providers[0]?.id ?? null,canWechat:!!ctx.deps.ownerChatId(),unattendedAcknowledgedAt:ctx.deps.unattendedAck?.get()??null}
   }
+  function rewindOf(id:string){
+    const times=store.artifacts(id).filter(a=>a.mime===GIT_REVIEW_MIME).map(a=>a.createdAt)
+    return rewindView(store.rewinds,id,times,at=>store.events(id).filter(e=>e.kind==='system'&&e.createdAt>=at).at(-1)?.text??null)
+  }
   function detail(id:string,options:{since?:number}={}) {
     const detail=store.detail(id,options),running=state.runsByTask.get(id)
     const runtime=runtimeSnapshot(running)
@@ -151,6 +157,8 @@ export function makeViewDomain(ctx:ServiceCtx, queries?:{quotaHandoff(id:string)
       // accepting supplemental input is a separate, narrower capability.
       ...(running?{runId:running.identity}:{}),
       ...(running&&!running.cancelled&&!running.finishing&&!running.uncertain?{inputMode:inputMode(running)}:{}),
+      // 回到某一轮(切片 3):只给独立工作区;能撤销的那一次 / 停住等拍板的那一行,都没有就不带。
+      ...(()=>{if(!view.worktree)return{};const r=rewindOf(id);return r?{rewind:r}:{}})(),
       permissions:running?.permissions.pending() ?? [],...(!running ? {continuation:ctx.actions.deref('view').continuation(store.get(id)),...(store.source(id)?.firstDispatchedAt===null?{requiresExternalClose:true}:{})} : {})}
     ctx.hub.touched(id,detail.version)
     return result
