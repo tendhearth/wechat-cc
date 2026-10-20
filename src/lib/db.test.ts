@@ -796,3 +796,15 @@ it('v72 adds the nullable extras column to messages (app reply attachments + nar
     expect(cols.find(c=>c.name==='extras')).toMatchObject({notnull:0})
   }finally{db.close()}
 })
+
+it('v79 adds worktree script/port columns, a unique port index and the script approvals table',()=>{
+  const db=openTestDb()
+  try{
+    const cols=(db.query("PRAGMA table_info('workbench_worktrees')").all() as {name:string;notnull:number}[])
+    for(const name of ['script_sha','port','script_groups','setup_at'])expect(cols.find(c=>c.name===name)).toMatchObject({notnull:0})
+    const add=(id:string,port:number|null)=>db.query('INSERT INTO workbench_worktrees(task_id,project_path,repo_root,root,branch,created_at,port) VALUES(?,?,?,?,?,?,?)').run(id,'/p','/p','/r/'+id,'cc/'+id,1,port)
+    add('a',null);add('b',null);add('c',47100)
+    expect(()=>add('d',47100)).toThrow()
+    expect(db.query('SELECT * FROM workbench_script_approvals').all()).toEqual([])
+  }finally{db.close()}
+})

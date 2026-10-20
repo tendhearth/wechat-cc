@@ -144,6 +144,11 @@ export function copyIncludedFiles(repoRoot: string, root: string): number {
   return files
 }
 
+/** 这个工作区当前的提交号(40 位)。读不了 ⇒ 抛 `worktree_git_failed`,调用方自己决定吞不吞。 */
+export function headSha(root: string): string {
+  return git(root, ['rev-parse', '--verify', 'HEAD^{commit}'])
+}
+
 /** 工作区里有没有没提交的改动(含未跟踪的文件)。 */
 export function worktreeDirty(root: string): boolean {
   return git(root, ['status', '--porcelain', '--untracked-files=normal']).length > 0
