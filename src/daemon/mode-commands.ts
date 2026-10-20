@@ -21,6 +21,7 @@
  * admin-commands, EVERY user can flip their own chat's mode (no admin
  * gate) — this is per-chat user preference, not a system-wide change.
  */
+import { parseQuietHours, quietLabel } from '../core/quiet-hours'
 import { parseAvoidTopics, topicLabels, type AvoidTopic } from '../core/companion-topics'
 import type { ConversationCoordinator } from '../core/conversation-coordinator'
 import type { ProviderRegistry } from '../core/provider-registry'
@@ -35,7 +36,7 @@ import { providerDenialFor, describeProviderDenial } from '../core/provider-poli
 import { PROVIDER_IDS } from '../lib/provider-ids'
 
 /** /set 读写的这一对话的偏好(chat-prefs 的子集)。 */
-type ModeChatPrefs = { split?: boolean; care?: 'off' | 'low' | 'high'; stickers?: boolean; hunt?: boolean; visit?: boolean; avoid?: AvoidTopic[] }
+type ModeChatPrefs = { split?: boolean; care?: 'off' | 'low' | 'high'; stickers?: boolean; hunt?: boolean; visit?: boolean; avoid?: AvoidTopic[]; quiet?: import('../core/quiet-hours').QuietWindow }
 
 export interface ModeCommandsDeps {
   coordinator: Pick<ConversationCoordinator, 'getMode' | 'setMode' | 'cancel'>
@@ -538,7 +539,7 @@ export function makeModeCommands(deps: ModeCommandsDeps): ModeCommands {
 
       // /set — per-chat preferences (the settings layer's dials: split, care).
       if (slashWord.toLowerCase() === 'set') {
-        const SET_USAGE = '不认识这个设置。目前支持:\n· /set split on|off (别名: 拆分 开|关)\n· /set care off|low|high (别名: 关心 关|低|高)\n· /set stickers on|off (别名: 表情 开|关)\n· /set hunt on|off (别名: 打猎 开|关)\n· /set visit on|off (别名: 串门 开|关)\n· /set avoid 健康,家人|无 (别名: 别聊;CC 不主动提的话题:健康、家人、钱、工作、感情、外貌)\n· /set cheap auto|claude|agy|openai|… (管理员;后台评估用哪家)\n· /set providers claude,openai|all (管理员;非管理员对话能用哪些)\n· /set provider cc|agy|api|… (管理员;全局默认大脑,改完自动重启)'
+        const SET_USAGE = '不认识这个设置。目前支持:\n· /set split on|off (别名: 拆分 开|关)\n· /set care off|low|high (别名: 关心 关|低|高)\n· /set stickers on|off (别名: 表情 开|关)\n· /set hunt on|off (别名: 打猎 开|关)\n· /set visit on|off (别名: 串门 开|关)\n· /set avoid 健康,家人|无 (别名: 别聊;CC 不主动提的话题:健康、家人、钱、工作、感情、外貌)\n· /set quiet 23:00-8:00|off (别名: 免打扰;这段时间 CC 不主动找你,提醒 / 定时照常)\n· /set cheap auto|claude|agy|openai|… (管理员;后台评估用哪家)\n· /set providers claude,openai|all (管理员;非管理员对话能用哪些)\n· /set provider cc|agy|api|… (管理员;全局默认大脑,改完自动重启)'
         const p = deps.chatPrefs.get(msg.chatId)
         if (tail === '') {
           const splitState = p.split === false ? 'off' : 'on'
@@ -560,12 +561,12 @@ export function makeModeCommands(deps: ModeCommandsDeps): ModeCommands {
           const adminHere = deps.isAdmin?.(msg.userId ?? msg.chatId) ?? false
           const cheapLine = adminHere && deps.readConfig ? `\n· 默认大脑(全局): ${deps.defaultProviderId}\n· 后台评估(全局): ${deps.readConfig().cheapEvalProvider ?? 'auto'}\n· 非管理员可用 provider(全局): ${deps.readConfig().trusted_providers?.join(', ') ?? '全部'}` : ''
           const avoidState = p.avoid?.length ? topicLabels(p.avoid) : '无'
-          const values = `本对话设置:\n· 拆分回复: ${splitState}\n· 主动关心: ${careState}\n· 表情包: ${stickersState}\n· 每日打猎: ${huntState}\n· 每日串门: ${visitState}\n· 别主动聊: ${avoidState}${cheapLine}`
+          const values = `本对话设置:\n· 拆分回复: ${splitState}\n· 主动关心: ${careState}\n· 表情包: ${stickersState}\n· 每日打猎: ${huntState}\n· 每日串门: ${visitState}\n· 别主动聊: ${avoidState}\n· 免打扰: ${quietLabel(p.quiet)}${cheapLine}`
           const usage = panelLine ? '' : `\n\n改法: /set split|care|stickers|hunt|visit <值>(别名: 拆分/关心/表情/打猎/串门 开|关);/set 别聊 健康,家人|无`
           await reply(msg.chatId, values + panelLine + usage)
           return true
         }
-        const m2 = /^(split|拆分|care|关心|stickers|表情|hunt|打猎|visit|串门|avoid|别聊|cheap|providers|provider|默认)\s+(\S+)$/i.exec(tail)
+        const m2 = /^(split|拆分|care|关心|stickers|表情|hunt|打猎|visit|串门|avoid|别聊|quiet|免打扰|cheap|providers|provider|默认)\s+(\S+)$/i.exec(tail)
         if (!m2) {
           await reply(msg.chatId, SET_USAGE)
           return true
@@ -661,6 +662,15 @@ export function makeModeCommands(deps: ModeCommandsDeps): ModeCommands {
             ? '每日打猎已开启。'
             : '每日打猎已关闭。')
           deps.log('MODE_CMD', `chat=${msg.chatId} /set hunt=${on}`)
+          return true
+        }
+
+        if (key === 'quiet' || key === '免打扰') {
+          const r = parseQuietHours(rawValue)
+          if (!r.ok) { await reply(msg.chatId, r.error); return true }
+          deps.chatPrefs.set(msg.chatId, { quiet: r.window ?? undefined })
+          await reply(msg.chatId, r.window ? `记下了:每天 ${quietLabel(r.window)} 我不主动找你(问候、打猎、串门、信都等到之后)。你设的提醒、定时和一起做的通知照常。` : '免打扰关了。')
+          deps.log('MODE_CMD', `chat=${msg.chatId} /set quiet=${r.window ? quietLabel(r.window) : 'off'}`)
           return true
         }
 

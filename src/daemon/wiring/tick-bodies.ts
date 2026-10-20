@@ -4,6 +4,7 @@
  * Both have real branching logic (config gates, project resolution, store access),
  * so they earn their own file vs side-effects.ts which is pure helper factories.
  */
+import { inQuietHours } from '../../core/quiet-hours'
 import { join } from 'node:path'
 import { mkdirSync, writeFileSync, readFileSync } from 'node:fs'
 import { loadAgentConfig } from '../../lib/agent-config'
@@ -95,7 +96,7 @@ export interface TickDeps {
    * chat. Typed as a structural subset of ChatPrefsStore so tests can fake
    * it without a full store.
    */
-  chatPrefs: { get(chatId: string): { care?: 'off' | 'low' | 'high'; hunt?: boolean; visit?: boolean; avoid?: AvoidTopic[] }; list(): string[] }
+  chatPrefs: { get(chatId: string): { care?: 'off' | 'low' | 'high'; hunt?: boolean; visit?: boolean; avoid?: AvoidTopic[]; quiet?: import('../../core/quiet-hours').QuietWindow }; list(): string[] }
   /**
    * 打猎战利品(2026-09-03)。`outboundTaps` 旁听打猎那一拍发出去的文本,
    * `huntStore` 把它拆成条目落库。两者都可选:没接就是旧行为(发了不记)。
@@ -715,6 +716,12 @@ export function buildTickBodies(deps: TickDeps): TickBodies {
     const prefs = deps.chatPrefs.get(chatId)
     const level = careLevel(chatId, prefs, defaultChatId)
     if (level === 'off') return // care off = master proactive kill-switch: no agenda/gap/hunt sends (別烦我 silences everything); hunt's own pref only gates hunt within a care-enabled chat
+    // 免打扰时段(第二轮对标 #5):主人设的这段时间 CC 不主动找他(agenda / 问候 / 打猎 / 串门 / 记忆都等到之后)。
+    // 在任何登记之前拦 —— 到期的 agenda 不打勾,时段过了照常发。
+    if (inQuietHours(prefs.quiet, Date.parse(nowIso), loadCompanionConfig(deps.stateDir).timezone ?? 'Asia/Shanghai')) {
+      deps.log('CARE', `skip chat=${chatId} reason=quiet_hours`)
+      return
+    }
 
     const lastInboundAtIso = (await messagesStore.latestInboundTs(chatId)) ?? undefined
     const ledger = deps.careLedger.get(chatId)
