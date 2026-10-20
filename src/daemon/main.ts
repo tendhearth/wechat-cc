@@ -65,6 +65,8 @@ import { makeSelfChangeGlue } from './self-change-glue'
 import { makeCliEventHub, makeProjectNamer } from '../core/cli-events'
 import { makeCliSessionStore } from '../core/cli-session-store'
 import { makeCliPermissionRelay } from '../core/cli-permission-relay'
+import { makePermissionGate, terminalAsk } from './permission-gate'
+import { makePermissionDecisionsStore } from './permission-decisions-store'
 import { defaultRunner, makeCliReplyHandler, makeCliReplyCore, makeHandReplyExecutor, readHead } from './cli-reply-handler'
 import { withReplyRefs } from '../core/cli-session-digest'
 import { makeOverseerTodaySource, TODAY_TERMINAL_LIMIT } from './overseer-today-source'
@@ -703,6 +705,18 @@ export async function bootDaemon(opts: BootDaemonOpts): Promise<DaemonHandle> {
     lc.register({ name: 'cli-events', stop: async () => cliEvents.dispose() })
     // 终端会话的权限 → 微信 y/n(同 spec §6.3)。复用 ilink.askUser,所以微信「y 码」、
     // 桌宠权限卡都能拍板 —— 一个权限,几个呈现面。主人在场(3 分钟内敲过字)就不问。
+    // 放行规则(spec 2026-10-19-permission-rules-design):终端会话与一起做在问主人之前先问它。
+    // 规则文件默认没有 / 关着 ⇒ 每条都是 ask,两处入口照旧。初审走 registry 的 cheapEval(自带网络守护)。
+    const permissionGate = makePermissionGate({
+      stateDir,
+      store: makePermissionDecisionsStore(db),
+      cheapEval: () => boot.registry.getCheapEval(),
+      notifyOwner: (text) => {
+        const owner = resolveAdminChatId(loadAccess(), loadCompanionConfig(stateDir), null)
+        if (owner) void ilink.sendMessage(owner, text)
+      },
+      log: (t, l) => log(t, l),
+    })
     const cliPermissions = makeCliPermissionRelay({
       // 先推手机、再发微信卡;手机够得着 ⇒ 微信卡没送到(errcode=-2)也不作废码,手机照样拍板。
       ask: makeCliPermissionAsk({
@@ -721,6 +735,7 @@ export async function bootDaemon(opts: BootDaemonOpts): Promise<DaemonHandle> {
       onSettled: (s, status) => cliEvents.permissionSettled(s, status),
       log: (t, l) => log(t, l),
       localMachine: osHostname(),
+      decide: async (req) => (await permissionGate.decide(terminalAsk(req))).verdict,
     })
     lc.register({ name: 'cli-permissions', stop: async () => cliPermissions.dispose() })
     // 这边 / 那边(§6.5)。手侧:配对时脑留了回叫的 url + key ⇒ 本机终端事件与权限请求
@@ -796,7 +811,7 @@ export async function bootDaemon(opts: BootDaemonOpts): Promise<DaemonHandle> {
         const parsed = CliPermissionRequest.safeParse(raw)
         if (!parsed.success) return { error: 'invalid_body' }
         const req: CliPermissionRequestT = { ...parsed.data, machine: parsed.data.machine || agent.name }
-        return cliPermissions.open(req)
+        return cliPermissions.open(req, { forwarded: true })
       },
       onPermissionWait: async (_agent, hash, waitMs) => ({ hash, status: await cliPermissions.wait(hash, waitMs) }),
       onReply: async (_agent, req) => handExecutor(req),

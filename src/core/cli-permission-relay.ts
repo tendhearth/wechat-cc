@@ -19,6 +19,9 @@ export interface CliPermissionRequest {
   tool_name: string
   /** 工具参数摘要(hook 侧已压好)。 */
   summary?: string
+  /** 命令原文(截 2000)与涉及的文件 —— 放行规则只认这两样,不从 summary 猜(2026-10-19)。 */
+  command?: string
+  paths?: string[]
   /** hook 那头探到的本机空闲秒数(在场判断的主信号)。 */
   idle_s?: number
   /** hook 那头的主机名;与 daemon 不同 ⇒ 卡片写「那边」。 */
@@ -51,10 +54,16 @@ export interface CliPermissionRelayDeps {
   onSettled?: (sessionId: string, status: CliPermissionStatus) => void
   waitMs?: number
   localMachine?: string
+  /**
+   * 放行规则(2026-10-19):开码之后、问主人之前先问它。allow / deny ⇒ 码直接落定,不发卡片;ask / 抛 ⇒ 老路。
+   * 在后台跑 —— hook 的 POST 只等 5 秒,初审最多 8 秒,所以 open() 不等它。没接 ⇒ 与改造前逐字节相同。
+   */
+  decide?: (req: CliPermissionRequest) => Promise<'allow' | 'deny' | 'ask'>
 }
 
 export interface CliPermissionRelay {
-  open(req: CliPermissionRequest): Promise<CliPermissionOpen>
+  /** forwarded = 经 a2a 从别的机器转进来的 —— 不进放行规则(只认本机主人的会话)。 */
+  open(req: CliPermissionRequest, opts?: { forwarded?: boolean }): Promise<CliPermissionOpen>
   status(hash: string): CliPermissionStatus
   /** 等到状态离开 pending 或 maxMs 到点;返回当时的状态。 */
   wait(hash: string, maxMs: number): Promise<CliPermissionStatus>
@@ -105,7 +114,7 @@ export function makeCliPermissionRelay(deps: CliPermissionRelayDeps): CliPermiss
   }
 
   return {
-    async open(req) {
+    async open(req, opts) {
       if (await deps.presence(req.session_id, req.idle_s) === 'present') {
         deps.log('CLI_PERMISSION', `owner present for ${req.session_id.slice(0, 6)}: leave it to the terminal`)
         return { status: 'owner_present' }
@@ -116,15 +125,27 @@ export function makeCliPermissionRelay(deps: CliPermissionRelayDeps): CliPermiss
       let hash = newPermissionHash()
       while (entries.has(hash)) hash = newPermissionHash()
       entries.set(hash, { sessionId: req.session_id, status: 'pending', waiters: [] })
-      let projectName: string
-      try { projectName = deps.projectName(req.cwd) } catch { projectName = req.cwd }
-      const prompt = formatCliPermissionPrompt(req, projectName, hash, waitMs, deps.localMachine)
-      deps.onRelayed(req.session_id)
-      deps.log('CLI_PERMISSION', `asking wechat for ${req.source}/${req.session_id.slice(0, 6)} ${req.tool_name} hash=${hash}`)
-      deps.ask(prompt, hash, waitMs, { req, projectName }).then(
-        (answer) => { deps.log('CLI_PERMISSION', `${answer} hash=${hash}`); settle(hash, answer) },
-        (err) => { deps.log('CLI_PERMISSION', `ask failed hash=${hash}: ${err instanceof Error ? err.message : String(err)}`); settle(hash, 'undelivered') },
-      )
+      const askOwner = () => {
+        if (entries.get(hash)?.status !== 'pending') return
+        let projectName: string
+        try { projectName = deps.projectName(req.cwd) } catch { projectName = req.cwd }
+        const prompt = formatCliPermissionPrompt(req, projectName, hash, waitMs, deps.localMachine)
+        deps.onRelayed(req.session_id)
+        deps.log('CLI_PERMISSION', `asking wechat for ${req.source}/${req.session_id.slice(0, 6)} ${req.tool_name} hash=${hash}`)
+        deps.ask(prompt, hash, waitMs, { req, projectName }).then(
+          (answer) => { deps.log('CLI_PERMISSION', `${answer} hash=${hash}`); settle(hash, answer) },
+          (err) => { deps.log('CLI_PERMISSION', `ask failed hash=${hash}: ${err instanceof Error ? err.message : String(err)}`); settle(hash, 'undelivered') },
+        )
+      }
+      const local = !req.machine || !deps.localMachine || req.machine === deps.localMachine
+      if (!deps.decide || opts?.forwarded || !local) { askOwner(); return { status: 'pending', hash } }
+      void deps.decide(req).catch(() => 'ask' as const).then((verdict) => {
+        if (entries.get(hash)?.status !== 'pending') return   // 等规则期间码已作废(会话又有了动静)
+        if (verdict === 'allow' || verdict === 'deny') {
+          deps.log('CLI_PERMISSION', `${verdict} by rules hash=${hash}`)
+          settle(hash, verdict)
+        } else askOwner()
+      })
       return { status: 'pending', hash }
     },
     status(hash) {

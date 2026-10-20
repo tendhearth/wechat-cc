@@ -35,6 +35,8 @@ export const DAEMON_CHILD_ENV = 'WECHAT_CC_DAEMON_CHILD'
 export const HOOK_STATUS_MESSAGE = 'wechat-cc → 微信'
 const HOOK_TIMEOUT_SEC = 5
 const TOOL_SUMMARY_MAX = 200
+/** 送给放行规则的命令原文上限(daemon 侧 schema 同值)。 */
+const PERMISSION_COMMAND_MAX = 2000
 
 export function shouldSkipHook(env: Record<string, string | undefined>): boolean {
   return env[DAEMON_CHILD_ENV] === '1'
@@ -122,7 +124,22 @@ export function parsePermissionRequest(source: HookSource, raw: unknown): CliPer
   const tool_name = str(r['tool_name'])
   if (!session_id || !cwd || !tool_name) return null
   const summary = summarizeToolInput(r['tool_input'])
-  return summary ? { source, session_id, cwd, tool_name, summary } : { source, session_id, cwd, tool_name }
+  const req: CliPermissionRequest = summary ? { source, session_id, cwd, tool_name, summary } : { source, session_id, cwd, tool_name }
+  // 放行规则(2026-10-19)要原文:命令不压缩(截 2000),文件路径单列。拿不到就不给,daemon 那头不猜。
+  const facts = toolInputFacts(r['tool_input'])
+  if (facts.command) req.command = facts.command
+  if (facts.paths.length) req.paths = facts.paths
+  return req
+}
+
+/** 工具参数里的命令原文与文件路径(Claude / Codex 的 tool_input)。 */
+export function toolInputFacts(input: unknown): { command?: string; paths: string[] } {
+  if (!input || typeof input !== 'object' || Array.isArray(input)) return { paths: [] }
+  const o = input as Raw
+  const cmd = o['command']
+  const command = typeof cmd === 'string' ? cmd : Array.isArray(cmd) ? cmd.map(String).join(' ') : undefined
+  const paths = ['file_path', 'notebook_path', 'path'].map(k => o[k]).filter((v): v is string => typeof v === 'string' && v.length > 0 && v.length <= 1000)
+  return command?.trim() ? { command: command.slice(0, PERMISSION_COMMAND_MAX), paths } : { paths }
 }
 
 // ── 1b. Cursor ────────────────────────────────────────────────────────────────
