@@ -28,3 +28,10 @@ describe('GET /m/api/activity', () => {
     expect(await run({ sources: () => ({}), now: () => NOW }, '/m/api/other')).toBeNull()
   })
 })
+
+describe('GET /m/api/activity · 向前兼容', () => {
+  it('a newer daemon adding a kind / ref type still passes the schema (old apps keep drawing the page)', () => {
+    const body = { ok: true, items: [{ id: 'x:1', kind: 'future_kind', at: NOW, title: '新的一类', ref: { type: 'future_ref', id: 'z' } }], next: null, degraded: [] }
+    expect(PHONE_API_SCHEMAS['GET /m/api/activity']!.safeParse(body).success).toBe(true)
+  })
+})

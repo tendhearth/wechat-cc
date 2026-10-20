@@ -302,10 +302,12 @@ export type PhoneJobT = z.infer<typeof PhoneJob>
 /** 「CC 做过的事」(B9,2026-10-20):一行一句,新的在前;ref 指向能点开的那件事。 */
 export const PhoneActivityItem = z.object({
   id: z.string(),
-  kind: z.enum(['decision', 'together', 'terminal', 'letter', 'memory', 'proactive', 'job', 'reminder', 'cli_upgrade']),
+  // 不用 enum:新 daemon 多一种 kind 时,老 App 也得照样把整页画出来(只当一行字),不能整页 schema 失败。
+  kind: z.string(),
   at: z.number(),
   title: z.string(),
-  ref: z.object({ type: z.enum(['task', 'terminal', 'letter']), id: z.string() }).optional(),
+  // ref 同理:认不得的 type 由 App 当成不能点,不让整页失败。
+  ref: z.object({ type: z.string(), id: z.string() }).optional(),
 })
 export type PhoneActivityItemT = z.infer<typeof PhoneActivityItem>
 export const MemorySuccess = z.object({
