@@ -11,7 +11,7 @@ import { isWorkbenchExecutorCapabilities, isWorkbenchProviderId } from '../execu
 import { makeProjectCatalog } from '../project-catalog'
 import { writerAlive } from './writer-exit'
 import { GIT_REVIEW_MIME } from '../git-review'
-import { rewindView } from '../rewind-store'
+import { isRewindParkNote, rewindView } from '../rewind-store'
 import { findPathBlocker } from '../scheduler'
 import { TERMINAL_TASK_STATUSES, type Task, type WorkbenchListQuery } from '../store'
 import type { AgentRuntimeSnapshot } from '../../agent-provider'
@@ -144,7 +144,7 @@ export function makeViewDomain(ctx:ServiceCtx, queries?:{quotaHandoff(id:string)
   }
   function rewindOf(id:string){
     const times=store.artifacts(id).filter(a=>a.mime===GIT_REVIEW_MIME).map(a=>a.createdAt)
-    return rewindView(store.rewinds,id,times,at=>store.events(id).filter(e=>e.kind==='system'&&e.createdAt>=at).at(-1)?.text??null)
+    return rewindView(store.rewinds,id,times,at=>store.events(id).filter(e=>e.kind==='system'&&e.createdAt>=at&&isRewindParkNote(e.text)).at(-1)?.text??null)
   }
   function detail(id:string,options:{since?:number}={}) {
     const detail=store.detail(id,options),running=state.runsByTask.get(id)

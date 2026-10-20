@@ -286,6 +286,21 @@ describe('真实返回校验 — workbench + matters', () => {
     expect(missing.status).toBe(404)
     parseAs('GET /m/api/matter/changes', await missing.json())
   })
+
+  it('matter/rewind 真实返回符合 schema:链接令牌 403;没有可撤的轮 ⇒ 409 rewind_not_latest;不认识的事 ⇒ 404', async () => {
+    const task = create('rw')
+    expect((await request(`/m/api/matter/rewind?id=${task.id}&artifactId=abcdef12`)).status).toBe(403)
+    const dt = (await (await request('/set/api/pair', {})).json() as { device_token: string }).device_token
+    const none = await request(`/m/api/matter/rewind?id=${task.id}&artifactId=abcdef12`, undefined, dt)
+    expect(none.status).toBe(409)
+    expect(parseAs('GET /m/api/matter/rewind', await none.json())).toEqual({ ok: false, error: 'rewind_not_latest' })
+    const post = await request('/m/api/matter/rewind', { id: task.id, artifactId: 'abcdef12', token: 'a'.repeat(64) }, dt)
+    expect(post.status).toBe(409)
+    parseAs('POST /m/api/matter/rewind', await post.json())
+    const missing = await request('/m/api/matter/rewind?id=deadbeef&artifactId=abcdef12', undefined, dt)
+    expect(missing.status).toBe(404)
+    parseAs('GET /m/api/matter/rewind', await missing.json())
+  })
 })
 
 // ── 3) 真实返回:随身 CC 首页 / 设置页 / 记忆 / 贴纸(settings-panel.ts 自带的 deps 分支）──

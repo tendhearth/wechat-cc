@@ -38,6 +38,9 @@ import { uuid } from '../../net/uuid'
 import { progressView, canStop } from '../../view/progress'
 import { inputRows } from '../../view/matter-input'
 import { untilLine } from '../../view/until'
+import { usageLine } from '../../view/usage'
+import { canOfferRewind, discardedLines, rewindBlockedNotice } from '../../view/rewind'
+import { RewindSheet } from '../../ui/RewindSheet'
 
 const NO_INPUTS: readonly MatterInputT[] = []
 
@@ -81,11 +84,14 @@ export default function Matter() {
   const [wtArmed, setWtArmed] = useState<'remove' | 'merge' | null>(null)
   const [wtBusy, setWtBusy] = useState(false)
   const [wtNote, setWtNote] = useState<string | null>(null)
+  // 撤掉这一轮(回退切片 4):确认页开着没有、确认之后那一句(成了 / 不确定 / 停住)
+  const [rewindOpen, setRewindOpen] = useState(false)
+  const [rewindNote, setRewindNote] = useState<string | null>(null)
   useEffect(() => { if (!stopArmed) return; const tm = setTimeout(() => setStopArmed(false), 3000); return () => clearTimeout(tm) }, [stopArmed])
   const handoffReq = useRef('')
   const idRef = useRef(id)
   idRef.current = id
-  useEffect(() => { setSheet(false); setFailure(null); setInputNotice(null); setOpenErrors(new Set()); setStopArmed(false); setStopNote(null) }, [id])
+  useEffect(() => { setSheet(false); setFailure(null); setInputNotice(null); setOpenErrors(new Set()); setStopArmed(false); setStopNote(null); setRewindOpen(false); setRewindNote(null) }, [id])
   const { refresh: refreshDetail } = detail
   const { refresh: refreshInsight } = insight
   const { refresh: refreshChanges } = changes
@@ -130,6 +136,10 @@ export default function Matter() {
   const d = detail.data
   const v = progressView(d, insight.data ?? null, changes.data ?? null, !!insight.error && !insight.data)
   const untilRow = d.task?.until ? untilLine(d.task.until, lang) : null
+  const usage = usageLine(d.task?.usage, lang)
+  const rewindBlocked = rewindBlockedNotice(d.task, lang)
+  const turn = changes.data ?? null
+  const gone = discardedLines(turn, lang)
   const agents = matterAgents(d)
   // 出生地(2026-10-19):只画建这件事的那个表面;不知道 ⇒ 不画
   const origin = matterOrigin(d.matter.origin)
@@ -226,6 +236,14 @@ export default function Matter() {
             <Txt role="meta" tone="inkSoft" numberOfLines={2}>
               {untilRow.before}<Txt role="code" tone="ink" content="user">{untilRow.command}</Txt>{untilRow.after}
             </Txt>
+          </View>
+        ) : null}
+        {usage ? <Txt testID="progress-usage" role="small" tone="inkSoft">{usage}</Txt> : null}
+        {rewindBlocked ? (
+          // 回退停住(needs_owner):只读一句,没有按钮 —— 拍板只在电脑上
+          <View testID="progress-rewind-blocked" style={{ flexDirection: 'row', alignItems: 'center', gap: space.s }}>
+            <Dot kind="warn" size={8} />
+            <Txt role="meta" tone="inkSoft" style={{ flex: 1 }}>{rewindBlocked}</Txt>
           </View>
         ) : null}
         {d.task?.error === 'execution_model_unsupported' ? <Txt testID="progress-model-guidance" role="meta" tone="inkSoft">{t(lang, 'progress.modelUnavailable')}</Txt> : null}
@@ -326,9 +344,18 @@ export default function Matter() {
         {d.artifacts.length ? <Artifacts matterId={id} artifacts={d.artifacts} backend={backend} lang={lang} online={online} /> : null}
 
         <Sheet testID="progress-changes" title={t(lang, 'progress.viewChangesN', { n: v.changedFiles })}>
+            {gone.discarded ? <Txt testID="progress-changes-discarded" role="meta" tone="inkSoft">{gone.discarded}</Txt> : null}
+            {gone.after ? <Txt testID="progress-changes-discarded-after" role="small" tone="inkSoft">{gone.after}</Txt> : null}
+            {canOfferRewind(turn, !!rewindBlocked) ? (
+              <View style={{ paddingBottom: space.s }}>
+                <Button kind="secondary" testID="progress-rewind" label={t(lang, 'rewind.button')} disabled={!online} onPress={() => { setRewindNote(null); setRewindOpen(true) }} />
+              </View>
+            ) : null}
+            {rewindNote ? <Txt testID="progress-rewind-note" role="meta" tone="inkSoft" accessibilityLiveRegion="polite">{rewindNote}</Txt> : null}
             {files.length === 0 ? <Txt role="meta" tone="inkSoft">{t(lang, 'progress.noChanges')}</Txt> : null}
             {files.map((f, i) => (
-              <View key={i} style={{ paddingVertical: space.s, gap: space.xs }}>
+              // 已撤掉的那一轮灰着(没有审阅按钮)
+              <View key={i} style={{ paddingVertical: space.s, gap: space.xs, opacity: turn?.discarded ? 0.55 : 1 }}>
                 <Txt role="code">{f.path}</Txt>
                 {/* 该多看一眼的原因(B6):一个强调色的「注意 · 原因」,只是提醒,不拦操作 */}
                 {f.risk?.length ? <Txt role="caption" tone="accent" testID={`review-risk-${f.path}`}>{t(lang, 'review.risk', { why: f.risk.join('、') })}</Txt> : null}
@@ -346,7 +373,7 @@ export default function Matter() {
                 ) : f.reason ? (
                   <Txt role="small" tone="inkSoft">{f.reason}</Txt>
                 ) : null}
-                {changes.data?.artifactId && f.kind !== 'not_reviewed' && !f.path.startsWith('…') ? (
+                {changes.data?.artifactId && !changes.data.discarded && f.kind !== 'not_reviewed' && !f.path.startsWith('…') ? (
                   <ChangeReview matterId={id} artifactId={changes.data.artifactId} path={f.path} {...(f.mark ? { mark: f.mark } : {})}
                     backend={backend} lang={lang} online={online} onDone={() => { void refreshChanges(); void refreshDetail() }} />
                 ) : null}
@@ -391,6 +418,11 @@ export default function Matter() {
         <SayBar testID="progress-say" placeholder={t(lang, 'progress.continueSay')} onPress={() => router.push(`/compose?matter=${encodeURIComponent(id)}`)} />
       </View>
 
+      {rewindOpen && turn?.artifactId ? (
+        <RewindSheet matterId={id} artifactId={turn.artifactId} backend={backend} lang={lang} online={online} submit={submit}
+          onClose={() => setRewindOpen(false)} onStale={() => void refreshChanges()}
+          onSettled={o => { setRewindOpen(false); setRewindNote(o.text); void refreshChanges(); void refreshDetail() }} />
+      ) : null}
       <Modal visible={sheet} transparent animationType="slide" onRequestClose={() => setSheet(false)}>
         <Pressable accessibilityLabel={t(lang, 'handoff.later')} style={{ flex: 1, backgroundColor: c.scrim }} onPress={() => setSheet(false)} />
         <View testID="handoff-sheet" style={{ backgroundColor: c.paper, padding: space.xl, gap: space.m, borderTopLeftRadius: radius.sheet, borderTopRightRadius: radius.sheet }}>

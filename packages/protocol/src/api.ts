@@ -103,6 +103,8 @@ export const MatterTaskView = z.object({
   until: z.object({ command: z.string(), maxRounds: z.number(), rounds: z.number(), status: z.enum(['active', 'passed', 'exhausted', 'stopped']), lastExit: z.number().nullable(), stopReason: z.string().nullable() }).optional(),
   // 每件事花了多少额度(v82,2026-10-20):执行者自己报的合计;某项 null = 这家不报(界面写「这家不报」,不写 0)。老 daemon 不带。
   usage: z.object({ turns: z.number(), input: z.number().nullable(), output: z.number().nullable(), cacheRead: z.number().nullable(), cacheWrite: z.number().nullable(), reasoning: z.number().nullable(), costUsd: z.number().nullable() }).optional(),
+  // 回到某一轮(切片 4,2026-10-21):回退中途出了状况、这件事停住等主人在电脑上拍板。手机只读一句,没有按钮。老 daemon 不带。
+  rewind: z.object({ blocked: z.boolean() }).optional(),
 })
 
 export const MatterEvent = z.object({
@@ -386,12 +388,30 @@ export const PhoneReviewMark = z.object({ mark: z.enum(['accepted', 'returned'])
 export const PhoneChangesTurn = z.object({
   /** 这一轮快照的 id;逐文件「没问题 / 退回」要带上它(2026-10-17)。 */
   artifactId: z.string().optional(),
+  /** 撤掉这一轮(回退切片 4):这一轮能撤(有开始前的回退点)。discarded:这一轮已撤掉(灰着,没有按钮)。
+   *  discardedAfter:比这一轮新、已撤掉的轮数。老 daemon 都不带。 */
+  rewindable: z.boolean().optional(), discarded: z.boolean().optional(), discardedAfter: z.number().optional(),
   createdAt: z.number(), status: z.enum(['complete', 'partial', 'unavailable']),
   files: z.array(z.object({ path: z.string(), kind: z.enum(['added', 'deleted', 'modified', 'not_reviewed']), diff: z.string().optional(), reason: z.string().optional(), truncated: z.boolean(), mark: PhoneReviewMark.optional(), /** 该多看一眼的原因(B6);老 daemon 没有。 */ risk: z.array(z.string()).max(6).optional() })),
   omittedFiles: z.number(),
   /** 本轮审阅的说明(为什么是 partial 等),至多 10 条、每条 ≤ 200 字。 */
   notes: z.array(z.string()),
 })
+
+const RewindPaths = z.object({ count: z.number(), paths: z.array(z.object({ status: z.string(), path: z.string() })) })
+/** 手机「撤掉这一轮」的预览(GET /m/api/matter/rewind,回退切片 4):回到最新那一轮开始之前。
+ *  round = 撤掉的是第几轮;rounds = 会撤掉的轮次;files = 要撤掉的改动(至多 50 个路径,status 是 git 的 A/M/D/R…);
+ *  extraChanges = 最后一轮之后又有的改动(主人手改等,一并撤掉、先备份;null = 比不了);droppedCommits.elsewhere = 别的分支 / remote 里还有;
+ *  session / 状态码一律 z.string():新值不能让老 App 解析失败。 */
+export const PhoneRewindPreview = z.object({
+  token: z.string(), round: z.number(), rounds: z.array(z.number()),
+  files: RewindPaths, extraChanges: RewindPaths.nullable(),
+  droppedCommits: z.object({ count: z.number(), elsewhere: z.boolean() }),
+  rebuildHint: z.string(), session: z.string(), devServer: z.boolean(), goalWillStop: z.boolean(),
+})
+export type PhoneRewindPreviewT = z.infer<typeof PhoneRewindPreview>
+/** 回退失败的错误体多带的(回退切片 4):reason = rewind_unavailable / rewind_noop 的短码;rolledBack = rewind_failed 时恢复原样了没有。 */
+export const PhoneRewindError = z.object({ ok: z.literal(false), error: z.string(), reason: z.string().optional(), rolledBack: z.boolean().optional() })
 
 // ── 跟 CC 说(spec 2026-10-01):主人对话一页 + 收下即回的说一句 ──────────
 
@@ -564,6 +584,11 @@ export const PHONE_API_SCHEMAS: Readonly<Record<string, z.ZodTypeAny>> = {
   'GET /m/api/matter/changes': z.union([z.object({ ok: z.literal(true), turn: PhoneChangesTurn.nullable() }), PhoneErrorResponse]),
   'POST /m/api/matter/review-mark': z.union([z.object({ ok: z.literal(true) }), PhoneErrorResponse]),
   'POST /m/api/matter/review-return': z.union([z.object({ ok: z.literal(true) }), PhoneErrorResponse]),
+  // 撤掉这一轮(回退切片 4):只给设备令牌。错误码:409 rewind_confirmation_required / rewind_confirmation_stale / rewind_not_latest /
+  // review_round_discarded / rewind_needs_owner / rewind_shared_folder / rewind_merged / rewind_ignored_conflict / workbench_busy;
+  // 422 rewind_unavailable(带 reason)/ rewind_noop / not_worktree;502 rewind_failed(带 rolledBack)。
+  'GET /m/api/matter/rewind': z.union([z.object({ ok: z.literal(true), preview: PhoneRewindPreview }), PhoneRewindError]),
+  'POST /m/api/matter/rewind': z.union([z.object({ ok: z.literal(true), discarded: z.array(z.string()) }), PhoneRewindError]),
   'GET /m/api/matter': z.union([z.object({ ok: z.literal(true) }).extend(MatterDetail.shape), PhoneErrorResponse]),
   'GET /m/api/matter/input-receipt': z.union([MatterInputReceiptResult, PhoneErrorResponse]),
   'POST /m/api/matter/say': z.union([z.object({ ok: z.literal(true), result: MatterSayResult }), PhoneErrorResponse]),

@@ -11,7 +11,7 @@ import { branchExists, checkpointGitArgs, deleteCheckpointRefs, REWIND_REF_PREFI
 import { GIT_REVIEW_MIME, type GitReview } from '../git-review'
 import { parseGitReviewSnapshot } from '../review'
 import { applyRewind, rollbackText, checkpointRefSet, commitOf, droppedCommits, dropIndex, fileSha256, git, ignoredConflicts, inspectApplying, nameStatus, revParse, workTree, worktreeState, type ApplyStep, type RewindGit } from '../rewind'
-import { assertNotRewindBlocked, isRestoreRow, RESTORE_PREFIX, isUndoRow, undoTargetId, type RewindRow } from '../rewind-store'
+import { assertNotRewindBlocked, isRestoreRow, REWIND_PARK_NOTE_TAIL, RESTORE_PREFIX, isUndoRow, undoTargetId, type RewindRow } from '../rewind-store'
 import { pathsConflict } from '../scheduler'
 import type { StoredTask, WorktreeRecord } from '../store'
 import type { ServiceCtx } from './ctx'
@@ -355,7 +355,7 @@ export function makeRewindDomain(ctx: ServiceCtx, domains: { lifecycle: Pick<Lif
     try { if (store.goals.get(id)?.status === 'passed') store.goals.revokePassed(id, REWIND_GOAL_REASON) } catch { /* 同上 */ }
     try { const t = store.get(id); if (!['queued', 'running', 'cancelling'].includes(t.status)) store.update(id, 'interrupted', 'rewind_needs_owner') } catch { /* 任务没了 */ }
     // 崩溃留下的 git 锁会让「恢复」被当成 git 正在进行中而拒掉 —— 先说清楚(评审 #433 小点)
-    note(id, `${text}(要选「恢复」时,如果工作区里留着上次崩溃的 .git 锁文件 index.lock / HEAD.lock,先删掉它。)`)
+    note(id, `${text}${REWIND_PARK_NOTE_TAIL}`)
   }
   function failureText(code: string, path?: string): string {
     if (code === 'rewind_verify_eol') return `${path} 检出后的换行和那一刻不一样 —— 项目的 .gitattributes 里有换行设置(eol / text),这件事不能按字节回退`

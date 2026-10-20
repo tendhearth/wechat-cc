@@ -22,6 +22,19 @@ describe('latestChanges', () => {
     expect(r.files.map(f => f.path)).toEqual(['kept'])
     expect(latestChanges([{ ...turn(5, []), discarded: true as const }])).toBeNull()
   })
+  it('撤掉这一轮(切片 4):能撤 ⇒ rewindable;比它新、已撤掉的轮数 ⇒ discardedAfter;都过协议', () => {
+    const r = latestChanges([
+      { ...turn(1, []), rewindable: { start: true, end: true } },
+      { ...turn(4, [], []), discarded: true as const, rewindable: { start: false, end: false } },
+      { ...turn(5, []), discarded: true as const, rewindable: { start: false, end: false } },
+    ])!
+    expect(r).toMatchObject({ artifactId: 'a1', rewindable: true, discardedAfter: 2 })
+    expect(PhoneChangesTurn.parse(r)).toEqual(r)
+    // 没有开始前的回退点(老轮次 / 不是独立工作区)⇒ 不带;也没撤过 ⇒ 不带 discardedAfter
+    const plain = latestChanges([{ ...turn(2, []), rewindable: { start: false, end: true } }])!
+    expect('rewindable' in plain).toBe(false); expect('discardedAfter' in plain).toBe(false)
+    expect('rewindable' in latestChanges([turn(3, [])])!).toBe(false)
+  })
   it('取最近一轮;diff 原样;not_reviewed 无 diff', () => {
     const r = latestChanges([turn(1, [{ path: 'old', kind: 'modified', diff: '@@ -1 +1 @@\n-a\n+b' }]), turn(5, [
       { path: 'src/a.ts', kind: 'modified', diff: '@@ -1 +1 @@\n-x\n+y' },

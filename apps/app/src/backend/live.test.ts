@@ -95,6 +95,40 @@ describe('LiveBackend 读', () => {
     expect(reqs.map(r => r.path)).toEqual(['/m/api/matter/review-mark', '/m/api/matter/review-return'])
     expect(reqs[0]!.body).toEqual({ id: ID, artifactId: 'a1', path: 'src/a.ts', mark: 'accepted' })
   })
+  it('撤掉这一轮:预览 GET 带 id + artifactId(不带 to);执行正文恰好 {id, artifactId, token};回退码各有各的', async () => {
+    const preview = { token: 'f'.repeat(64), round: 2, rounds: [2], files: { count: 1, paths: [{ status: 'M', path: 'a.ts' }] }, extraChanges: null, droppedCommits: { count: 0, elsewhere: false }, rebuildHint: 'x', session: 'none', devServer: false, goalWillStop: false }
+    const { b, reqs } = harness({
+      'GET /m/api/matter/rewind': ok({ ok: true, preview }),
+      'POST /m/api/matter/rewind': ({ body }) => body.token === 'f'.repeat(64) ? ok({ ok: true, discarded: ['a2'] }) : ok({ ok: false, error: 'rewind_confirmation_stale' }, 409),
+    })
+    expect(await b.rewindPreview({ id: ID, artifactId: 'abcdef12' })).toEqual(preview)
+    await b.rewind({ id: ID, artifactId: 'abcdef12', token: 'f'.repeat(64) })
+    await expect(b.rewind({ id: ID, artifactId: 'abcdef12', token: 'e'.repeat(64) })).rejects.toMatchObject({ code: 'rewind_stale' })
+    expect(reqs.map(r => r.path)).toEqual([`/m/api/matter/rewind?id=${ID}&artifactId=abcdef12`, '/m/api/matter/rewind', '/m/api/matter/rewind'])
+    expect(reqs[1]!.body).toEqual({ id: ID, artifactId: 'abcdef12', token: 'f'.repeat(64) })
+    expect(reqs[1]!.retry).toBeFalsy()
+    // 新电脑多给的码 / 字段:老 App 照样解析(code、reason 都是字符串)
+    const cases: Array<[unknown, number, string]> = [
+      [{ ok: false, error: 'rewind_needs_owner' }, 409, 'rewind_needs_owner'],
+      [{ ok: false, error: 'rewind_not_latest' }, 409, 'rewind_stale'],
+      [{ ok: false, error: 'rewind_unavailable', reason: 'some_new_reason' }, 422, 'rewind_unavailable'],
+      [{ ok: false, error: 'rewind_failed', rolledBack: false }, 502, 'rewind_failed'],
+      [{ ok: false, error: 'rewind_merged' }, 409, 'rewind_merged'],
+      [{ ok: false, error: 'workbench_busy' }, 409, 'busy'],
+      [{ ok: false, error: 'rewind_something_new' }, 409, 'unknown'],
+    ]
+    for (const [json, status, code] of cases) {
+      const h = harness({ 'GET /m/api/matter/rewind': ok(json, status) })
+      await expect(h.b.rewindPreview({ id: ID, artifactId: 'abcdef12' }), code).rejects.toMatchObject({ code })
+    }
+    // 新 session 值 / 新状态码不让老 App 解析失败
+    const odd = harness({ 'GET /m/api/matter/rewind': ok({ ok: true, preview: { ...preview, session: 'will_handoff', files: { count: 1, paths: [{ status: 'T', path: 'l' }] } } }) })
+    expect((await odd.b.rewindPreview({ id: ID, artifactId: 'abcdef12' })).session).toBe('will_handoff')
+  })
+  it('撤掉这一轮超时 ⇒ timeout(页面说不确定,不说成了)', async () => {
+    const { b } = harness({ 'POST /m/api/matter/rewind': new Error('timeout') })
+    await expect(b.rewind({ id: ID, artifactId: 'abcdef12', token: 'f'.repeat(64) })).rejects.toMatchObject({ code: 'timeout' })
+  })
   it('返回不合 schema ⇒ BackendError(unknown),记日志(不含令牌)', async () => {
     const { b, logs } = harness({ 'GET /m/api/matters': ok({ ok: true, matters: [{ id: 1 }] }) })
     await expect(b.matters('en')).rejects.toMatchObject({ code: 'unknown' })

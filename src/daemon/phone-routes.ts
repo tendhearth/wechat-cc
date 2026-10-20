@@ -35,6 +35,9 @@ export const PHONE_ROUTES: ReadonlySet<string> = new Set([
   // 手机逐文件审阅(2026-10-17):没问题 / 退回(同桌面 review-mark / review-return)
   'POST /m/api/matter/review-mark',
   'POST /m/api/matter/review-return',
+  // 撤掉这一轮(回退切片 4,2026-10-21):预览 + 带 token 执行;只给设备(见 LINK_EXCLUDED)
+  'GET /m/api/matter/rewind',
+  'POST /m/api/matter/rewind',
   'POST /m/api/matter/say',
   // 跟 CC 说(spec 2026-10-01,mobile-chat.ts):主人对话一页 + 收下即回的说一句
   'GET /m/api/chat',
@@ -111,7 +114,8 @@ export const PHONE_ROUTES: ReadonlySet<string> = new Set([
  */
 // chat/file 也只给设备(评审 10-19 #1):寄出去的信每一页都镜像成主人对话里的一行文件,链接令牌能从这里读出整封信,
 // 等于绕过上面「信是私事」;手机网页 /m 不用这条(只有原生 App 按块下载回复里的文件)。
-const LINK_EXCLUDED: ReadonlySet<string> = new Set(['POST /m/api/cli/say', 'POST /m/api/cli/permission', 'GET /m/api/letters', 'GET /m/api/letters/page', 'GET /m/api/chat/file', 'GET /m/api/jobs', 'POST /m/api/jobs/action', 'GET /m/api/activity'])
+// 撤掉这一轮(2026-10-21)也只给设备:会丢掉工作区里的改动,不能让 10 分钟、可能外泄的链接令牌做。
+const LINK_EXCLUDED: ReadonlySet<string> = new Set(['POST /m/api/cli/say', 'POST /m/api/cli/permission', 'GET /m/api/letters', 'GET /m/api/letters/page', 'GET /m/api/chat/file', 'GET /m/api/jobs', 'POST /m/api/jobs/action', 'GET /m/api/activity', 'GET /m/api/matter/rewind', 'POST /m/api/matter/rewind'])
 export const LINK_ROUTES: ReadonlySet<string> = new Set([...PHONE_ROUTES].filter(r => !LINK_EXCLUDED.has(r)))
 
 /**
