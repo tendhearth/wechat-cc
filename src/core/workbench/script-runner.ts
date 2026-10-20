@@ -20,6 +20,7 @@ export const OUTPUT_TAIL_CHARS = 32 * 1024
 const OUTPUT_INTERVAL_MS = 1_000
 /** 主进程退了但管道还被漏网的子孙拿着:最多再等这么久就当结束。 */
 const CLOSE_AFTER_EXIT_MS = 2_000
+const GROUP_WATCH_MS = 2_000
 
 /** 给脚本的四个变量;port=null ⇒ 不设 TENDHEARTH_PORT。 */
 export interface ScriptVars { port: number | null; workspacePath: string; rootPath: string; branch: string }
@@ -91,6 +92,11 @@ export function startScript(input: {
   let lastEmit = 0
   let emitTimer: ReturnType<typeof setTimeout> | null = null
   let hardTimer: ReturnType<typeof setTimeout> | null = null
+  /** 盯孤儿的定时器:主 shell 退了、组里还有进程时每 2 秒看一眼,组空了就停。 */
+  let watchTimer: ReturnType<typeof setInterval> | null = null
+  let groupGone = false
+  /** 起成功、pgid 定下来之后才为真;起都没起来就 finish 的那条路不碰进程组。 */
+  let spawned = false
   let timeoutTimer: ReturnType<typeof setTimeout> | null = null
   let closeTimer: ReturnType<typeof setTimeout> | null = null
   let exitInfo: { code: number | null; signal: NodeJS.Signals | null } | null = null
@@ -123,6 +129,13 @@ export function startScript(input: {
     // hardTimer 不清:主 shell 退了,组里不理 SIGTERM 的后台进程(`… &` 起的开发服务)照样要收掉,不然端口一直被占
     for (const timer of [emitTimer, timeoutTimer, closeTimer]) if (timer) clearTimeout(timer)
     emitTimer = null
+    // 组空了就记死(groupGone),以后这个号码可能被主人别的进程组拿走;还有孤儿 ⇒ 盯到它们退为止(#410 评审)
+    if (!spawned || !pgid) { /* 没有进程组可盯 */ }
+    else if (!groupExists()) groupGone = true
+    else if (!watchTimer) {
+      watchTimer = setInterval(() => { if (!groupExists()) { groupGone = true; if (watchTimer) clearInterval(watchTimer); watchTimer = null } }, GROUP_WATCH_MS)
+      watchTimer.unref?.()
+    }
     if (input.onOutput && tail) emit()
     const exit: ScriptExit = { code: exitInfo?.code ?? null, signal: exitInfo?.signal ?? null, timedOut, stopped, error, tail }
     try { input.onExit?.(exit) } catch { /* 同上 */ }
@@ -144,6 +157,7 @@ export function startScript(input: {
     return { pgid: null, stop: async () => { await done }, done }
   }
   const pgid = !win && child.pid ? child.pid : null
+  spawned = true
 
   child.stdout?.setEncoding('utf8')
   child.stderr?.setEncoding('utf8')
@@ -159,8 +173,8 @@ export function startScript(input: {
     finish(null)
   })
 
-  // 组里只要还有一个进程活着,POSIX 就不会把这个组号分给别人 ⇒ kill(-pgid, 0) 成功本身就说明组还是我们的(#409 评审)。
-  // 组空了 ⇒ 一个信号都不发。win32 没有进程组:只在主进程还在时 child.kill。
+  // 组里只要还有一个进程活着,POSIX 就不会把这个组号分给别人 ⇒ 组没空过时 kill(-pgid, 0) 成功说明组还是我们的(#409 评审)。
+  // 组一旦空过,号码就可能被别人复用 ⇒ groupGone 记死,之后一个信号都不发(#410 评审)。win32 没有进程组:只在主进程还在时 child.kill。
   const shellAlive = () => exitInfo === null && !finished
   const killGroup = (sig: NodeJS.Signals): void => {
     // 已经退干净 ⇒ ESRCH,吞掉
@@ -171,6 +185,7 @@ export function startScript(input: {
   }
   const groupExists = (): boolean => {
     if (!pgid) return shellAlive()
+    if (groupGone) return false
     try { process.kill(-pgid, 0); return true } catch (error) { return (error as NodeJS.ErrnoException).code === 'EPERM' }
   }
   const terminate = () => {

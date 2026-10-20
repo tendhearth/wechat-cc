@@ -87,6 +87,18 @@ describe.skipIf(process.platform === 'win32')('startScript (real process)', () =
     } finally { kill.mockRestore() }
   })
 
+  // 组空过一次,号码就可能被别人复用 ⇒ 即便 kill(-pgid, 0) 又成功了,也一个信号都不发(#410 评审)
+  it('once the group has emptied, stop() sends nothing even if the pgid probes alive again (reused)', async () => {
+    const cwd = area()
+    const run = startScript({ kind: 'setup', script: 'true', cwd, env: vars(cwd), baseEnv: BASE, shell: '/bin/sh' })
+    await run.done
+    const kill = vi.spyOn(process, 'kill').mockImplementation(() => true)
+    try {
+      await run.stop()
+      expect(kill.mock.calls.filter(([pid, sig]) => typeof pid === 'number' && pid < 0 && sig !== 0)).toEqual([])
+    } finally { kill.mockRestore() }
+  })
+
   // 主 shell 退了、组里还剩后台进程 ⇒ 组号还是我们的,照样收掉(#409 评审:不然 `… &` 起的开发服务一直占着端口)
   it('stop() after the main shell exited still reaps a background child left in the group', async () => {
     const cwd = area()
