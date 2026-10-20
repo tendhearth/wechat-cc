@@ -826,3 +826,27 @@ it('v81 creates workbench_rewinds with the applying/done/failed/needs_owner stat
     expect(db.query('SELECT * FROM workbench_rewinds').all()).toEqual([])
   }finally{db.close()}
 })
+
+it('v83 creates review comment + hunk tables with state checks, a task index and task cascade',()=>{
+  const db=openTestDb()
+  try{
+    db.query("INSERT INTO workbench_tasks(id,title,path,provider_id,status,created_at,updated_at) VALUES('t1','t','/p','claude','completed',1,1)").run()
+    const comment=(id:string,state:string)=>db.query("INSERT INTO workbench_review_comments(id,task_id,artifact_id,artifact_sha256,path,hunk_index,hunk_sha256,quote,body,state,created_at,updated_at) VALUES(?,'t1','a','s','f.ts',0,'h','q','b',?,1,1)").run(id,state)
+    comment('c1','draft');comment('c2','sent')
+    expect(()=>comment('c3','resolved')).toThrow()
+    expect(()=>comment('c1','draft')).toThrow()
+    const hunk=(i:number,state:string)=>db.query("INSERT INTO workbench_review_hunks(task_id,artifact_sha256,path,hunk_index,hunk_sha256,state,created_at) VALUES('t1','s','f.ts',?,'h',?,1)").run(i,state)
+    hunk(0,'reverted');hunk(1,'restored')
+    expect(()=>hunk(2,'accepted')).toThrow()
+    expect(()=>hunk(0,'restored')).toThrow()
+    // STRICT:整数列不收文本
+    expect(()=>db.query("INSERT INTO workbench_review_hunks(task_id,artifact_sha256,path,hunk_index,hunk_sha256,state,created_at) VALUES('t1','s','f.ts','x','h','reverted',1)").run()).toThrow()
+    const cols=(db.query("PRAGMA table_info('workbench_review_comments')").all() as {name:string;notnull:number}[])
+    for(const name of ['row_start','row_end','side','line_start','line_end','sent_request_id','sent_at','resolved_at'])expect(cols.find(c=>c.name===name)).toMatchObject({notnull:0})
+    expect((db.query("PRAGMA index_list('workbench_review_comments')").all() as {name:string}[]).map(i=>i.name)).toContain('workbench_review_comments_task')
+    expect(()=>db.query("INSERT INTO workbench_review_hunks(task_id,artifact_sha256,path,hunk_index,hunk_sha256,state,created_at) VALUES('nope','s','f.ts',0,'h','reverted',1)").run()).toThrow()
+    db.query("DELETE FROM workbench_tasks WHERE id='t1'").run()
+    expect(db.query('SELECT * FROM workbench_review_comments').all()).toEqual([])
+    expect(db.query('SELECT * FROM workbench_review_hunks').all()).toEqual([])
+  }finally{db.close()}
+})
