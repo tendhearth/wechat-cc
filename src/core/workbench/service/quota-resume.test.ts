@@ -93,3 +93,21 @@ describe('quota resume', () => {
     expect(m.events().some(x => x.includes('错过了'))).toBe(true)
   })
 })
+
+describe('quota resume · review #435', () => {
+  it('skipping because the task changed leaves a note saying why (owner must not think CC forgot)', () => {
+    const s = setup()
+    s.qr.request(s.t.id)
+    s.store.update(s.t.id, 'completed')
+    s.setNow(s.reset! + QUOTA_RESUME_MARGIN_MS); s.timers[0]!.fn()
+    expect(s.continueTask).not.toHaveBeenCalled()
+    expect(s.events().some(x => x.includes('没有再接着做'))).toBe(true)
+  })
+  it('a timer that fires very late (Mac slept) ⇒ counted as missed, not continued', () => {
+    const s = setup()
+    s.qr.request(s.t.id)
+    s.setNow(s.reset! + QUOTA_RESUME_MARGIN_MS + QUOTA_RESUME_MISSED_MS + 60_000); s.timers[0]!.fn()
+    expect(s.continueTask).not.toHaveBeenCalled()
+    expect(s.events().some(x => x.includes('错过了'))).toBe(true)
+  })
+})

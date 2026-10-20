@@ -59,7 +59,14 @@ export function makeQuotaResumeDomain(ctx: ServiceCtx, opts: QuotaResumeOptions 
     const e = read()[id]
     if (!e) return
     drop(id)
-    if (!stillWaiting(id, e)) { ctx.log?.('WORKBENCH_QUOTA_RESUME', `${id}: skipped (task changed meanwhile)`); return }
+    // Mac 睡着时计时器会晚到:晚太多就当错过了,不照续(评审 #435)
+    if (ctx.now() - e.at > QUOTA_RESUME_MISSED_MS) { note(id, '额度恢复那会儿电脑没醒着,错过了,没有接着做。要接着做就再说一声。'); return }
+    if (!stillWaiting(id, e)) {
+      ctx.log?.('WORKBENCH_QUOTA_RESUME', `${id}: skipped (task changed meanwhile)`)
+      // 写清为什么没续,免得主人以为 CC 忘了(评审 #435)
+      note(id, '到点了,但这件事期间已经变了(你说过话、它又跑过,或者归档了),所以没有再接着做。')
+      return
+    }
     try {
       ctx.actions.deref('quota-resume').continueTask(id, QUOTA_RESUME_TEXT, { inputRequestId: derivedId(id, e.requestedAt) })
       note(id, '额度恢复了,按你说的接着做了(只试这一次)。')
