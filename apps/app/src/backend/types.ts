@@ -158,8 +158,9 @@ export interface Backend {
   cliSessions(): Promise<CliSessionRowT[]>
   /** 拍板终端会话等批准的那一项(同微信「y/n 码」)。码已失效 ⇒ 'stale';终端自己在问(主人在电脑前)⇒ 'cli_not_actionable'。 */
   cliPermission(p: { sessionId: string; hash?: string; decision: 'allow' | 'deny' }): Promise<void>
-  /** 对终端会话接着说一句(同微信「@码」):收下即回,结果成为这条会话的下一句。在跑 ⇒ 'busy';已结束 ⇒ 'cli_ended';在别的电脑上 ⇒ 'cli_remote'。 */
-  cliSay(sessionId: string, text: string): Promise<void>
+  /** 对终端会话接着说一句(同微信「@码」):收下即回,结果成为这条会话的下一句。在跑 ⇒ 'busy';已结束 ⇒ 'cli_ended';在别的电脑上 ⇒ 'cli_remote'。 
+   *  sayId:送进开着的窗口时 daemon 给的,对上会话行 last_say.id 才知道送没送到;不开窗口的那条路 / 老 daemon ⇒ null。 */
+  cliSay(sessionId: string, text: string): Promise<{ sayId: string | null }>
   /** 看着它跑(GET /m/api/cli/activity,2026-10-17):最近几步,旧 → 新。在别的电脑上 ⇒ 'cli_session_remote';没有记录 ⇒ 'no_transcript';老电脑 ⇒ 'not_found' 之类。 */
   cliActivity(sessionId: string): Promise<CliActivityItemT[]>
   /** 「今天」(GET /m/api/today,2026-10-14):终端 + 一起做,过去 24 小时 —— 等你 / 做完 / 在跑 / 可能卡住。与微信「日报」同一份。 */

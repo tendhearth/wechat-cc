@@ -621,6 +621,24 @@ describe('终端里的会话(2026-10-14)', () => {
     await expect(b.cliSay('sess-1', 'x')).rejects.toMatchObject({ code: 'cli_ended' })
     await expect(b.cliSay('sess-1', 'x')).rejects.toMatchObject({ code: 'cli_remote' })
   })
+  it('送进窗口(2026-10-20):say_id 与会话行的 last_say 过 schema 后还在;老 daemon 不带 ⇒ sayId null、没有 last_say', async () => {
+    const LAST = { id: 'a1b2c3d4e5f6', state: 'failed', error: '没送进电脑上开着的窗口(x)', at: 9 }
+    const replies: Reply[] = [ok({ ok: true, accepted: true, say_id: 'a1b2c3d4e5f6' }), ok({ ok: true, accepted: true })]
+    const { b } = harness({
+      'POST /m/api/cli/say': () => replies.shift()!,
+      'GET /m/api/cli/sessions': ok({ ok: true, sessions: [{ ...CLI, status: 'running', pending: null, live_window: true, last_say: LAST }, { ...CLI, session_id: 'sess-2', code: 'sess-2', status: 'idle', pending: null }] }),
+    })
+    expect(await b.cliSay('sess-1', 'go on')).toEqual({ sayId: 'a1b2c3d4e5f6' })
+    expect(await b.cliSay('sess-1', 'again')).toEqual({ sayId: null })
+    const list = await b.cliSessions()
+    expect(list[0]!.last_say).toEqual(LAST)
+    expect(list[0]!.live_window).toBe(true)
+    expect(list[1]!.last_say).toBeUndefined()
+  })
+  it('last_say 形状不对(state 认不出)⇒ 整份不收,不会拿去说送到', async () => {
+    const { b } = harness({ 'GET /m/api/cli/sessions': ok({ ok: true, sessions: [{ ...CLI, last_say: { id: 'x', state: 'delivered', at: 1 } }] }) })
+    await expect(b.cliSessions()).rejects.toMatchObject({ code: 'unknown' })
+  })
   it('今天:GET /m/api/today 回结构里的 today;读不到 ⇒ 抛', async () => {
     const today = { generatedAt: 1, since: 0, windowHours: 24, needsYou: [], done: [], running: [], stuck: [], counts: { needsYou: 0, done: 0, running: 0, stuck: 0 }, unavailable: ['terminal'] }
     const { b, reqs } = harness({ 'GET /m/api/today': ok({ ok: true, today }) })

@@ -333,7 +333,8 @@ export function makeLiveBackend(d: LiveDeps): Backend {
       await call('POST /m/api/cli/permission', '/m/api/cli/permission', { body: { session_id: p.sessionId, ...(p.hash ? { hash: p.hash } : {}), decision: p.decision } })
     },
     async cliSay(sessionId, text) {
-      await call('POST /m/api/cli/say', '/m/api/cli/say', { body: { session_id: sessionId, text } })
+      const r = await call<{ say_id?: string }>('POST /m/api/cli/say', '/m/api/cli/say', { body: { session_id: sessionId, text } })
+      return { sayId: r.say_id ?? null }
     },
     async cliActivity(sessionId) {
       return (await call<{ items: CliActivityItemT[] }>('GET /m/api/cli/activity', `/m/api/cli/activity?session_id=${encodeURIComponent(sessionId)}`)).items

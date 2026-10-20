@@ -12,19 +12,21 @@ import { useConnection, useQuery } from './hooks'
 export const TERMINAL_POLL_MS = 15_000
 const NONE: CliSessionRowT[] = []
 
-export function useTerminalSessions(opts: { poll?: boolean } = {}) {
+export function useTerminalSessions(opts: { poll?: boolean; fastMs?: number } = {}) {
   const { backend } = useBackendCtx()
   const conn = useConnection()
   const online = backend.mode === 'demo' || conn.state === 'online'
   const q = useQuery<CliSessionRowT[]>('cli:sessions', () => backend.cliSessions())
   const { refresh } = q
   const poll = opts.poll !== false
+  // fastMs:刚说的一句还在送进窗口时,页面临时要快拉(有上限,由页面收)
+  const every = opts.fastMs ?? TERMINAL_POLL_MS
   useFocusEffect(useCallback(() => {
     if (!poll || !online) return
     void refresh()
-    const h = setInterval(() => { void refresh() }, TERMINAL_POLL_MS)
+    const h = setInterval(() => { void refresh() }, every)
     return () => clearInterval(h)
-  }, [poll, online, refresh]))
+  }, [poll, online, refresh, every]))
   return { sessions: q.data ?? NONE, loaded: q.data !== undefined, error: q.error, refresh, online }
 }
 
@@ -68,6 +70,11 @@ export function useTerminalActions() {
     pending,
     decide: (s: Pick<CliSessionRowT, 'session_id' | 'pending'>, decision: 'allow' | 'deny') =>
       run(`cli:decide:${s.session_id}`, () => backend.cliPermission({ sessionId: s.session_id, ...(s.pending?.hash ? { hash: s.pending.hash } : {}), decision })),
-    say: (sessionId: string, text: string) => run(`cli:say:${sessionId}`, () => backend.cliSay(sessionId, text)),
+    /** 说一句:error 同上;sayId 只在送进开着的窗口时有(对上会话行的 last_say 才知道送没送到)。 */
+    say: async (sessionId: string, text: string): Promise<{ error: string | null; sayId: string | null }> => {
+      let sayId: string | null = null
+      const error = await run(`cli:say:${sessionId}`, async () => { sayId = (await backend.cliSay(sessionId, text)).sayId })
+      return { error, sayId: error === null ? sayId : null }
+    },
   }
 }
