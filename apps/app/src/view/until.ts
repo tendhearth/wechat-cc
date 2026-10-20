@@ -51,17 +51,17 @@ export type UntilRejection = 'until_invalid' | 'until_requires_worktree' | 'unti
 
 type UntilState = NonNullable<NonNullable<MatterDetailT['task']>['until']>
 
-/** 任务详情顶上那一行:「直到 `cmd` 通过 · 第 n/m 轮 · 没过 / 通过 / 停了(原因)」。命令单独给,页面用等宽画。 */
-export function untilLine(u: UntilState, lang: Lang): { before: string; command: string; after: string; accessibilityLabel: string } {
-  // 进行中 ⇒ 正在做的那一轮(已查过的轮数 + 1);结束了 ⇒ 实际查过的轮数
-  const n = u.status === 'active' ? Math.min(u.rounds + 1, u.maxRounds) : u.rounds
-  const round = n > 0 ? t(lang, 'until.round', { n, m: u.maxRounds }) : null
-  const state = u.status === 'passed' ? t(lang, 'until.passed')
-    : u.status === 'exhausted' ? t(lang, 'until.exhausted')
+/** 任务详情顶上那两行:先状态(不截,命令再长也看得见结果),再「直到 `cmd` 通过」(命令单独给,页面用等宽画,可截)。
+ * 进行中写清是哪一轮没过、哪一轮在改(「第 2/3 轮 · 没过」容易读成第 2 轮没过 —— 定时页评审 10-20)。 */
+export function untilLine(u: UntilState, lang: Lang): { status: string; before: string; command: string; after: string; accessibilityLabel: string } {
+  const m = u.maxRounds
+  const status = u.status === 'passed' ? t(lang, 'until.passedAt', { n: u.rounds, m })
+    : u.status === 'exhausted' ? t(lang, 'until.exhaustedAt', { m })
     : u.status === 'stopped' ? (u.stopReason ? t(lang, 'until.stoppedWhy', { why: u.stopReason }) : t(lang, 'until.stopped'))
-    : u.rounds > 0 ? t(lang, 'until.notYet') : t(lang, 'until.pending')
+    : u.rounds > 0 ? t(lang, 'until.activeFailed', { k: u.rounds, n: Math.min(u.rounds + 1, m), m })
+    : t(lang, 'until.activeFirst', { m })
   // 中英文都在命令两边留一个空格:命令是拉丁字,贴着中文不好认
   const before = `${t(lang, 'until.lineBefore')} `
-  const after = ` ${[t(lang, 'until.lineAfter'), round, state].filter(Boolean).join(' · ')}`
-  return { before, command: u.command, after, accessibilityLabel: `${before}${u.command}${after}` }
+  const after = ` ${t(lang, 'until.lineAfter')}`
+  return { status, before, command: u.command, after, accessibilityLabel: `${status}。${before}${u.command}${after}` }
 }

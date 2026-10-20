@@ -53,26 +53,29 @@ describe('untilConfirmation:提交前整条显示的命令 = 带出去的那条'
   })
 })
 
-describe('untilLine:任务详情那一行', () => {
+describe('untilLine:任务详情那两行', () => {
   type U = Parameters<typeof untilLine>[0]
   const u: U = { command: 'bun run test', maxRounds: 3, rounds: 0, status: 'active', lastExit: null, stopReason: null }
-  const line = (x: Partial<U>, lang: 'zh-Hans' | 'en' = 'zh-Hans') => {
-    const l = untilLine({ ...u, ...x }, lang); return `${l.before}${l.command}${l.after}`
-  }
-  it('进行中:正在做的那一轮', () => {
-    expect(line({})).toBe('直到 bun run test 通过 · 第 1/3 轮 · 还没检查')
-    expect(line({ rounds: 1, lastExit: 1 })).toBe('直到 bun run test 通过 · 第 2/3 轮 · 没过')
+  const st = (x: Partial<U>, lang: 'zh-Hans' | 'en' = 'zh-Hans') => untilLine({ ...u, ...x }, lang).status
+  it('进行中:写清哪一轮没过、哪一轮在改', () => {
+    expect(st({})).toBe('第 1/3 轮在做，还没检查')
+    expect(st({ rounds: 1, lastExit: 1 })).toBe('第 1 轮没过，第 2/3 轮在改')
+    expect(st({ rounds: 2, lastExit: 1 }, 'en')).toBe("Round 2 didn't pass; working on round 3/3")
   })
-  it('结束了:实际查过的轮数 + 结果', () => {
-    expect(line({ rounds: 2, status: 'passed', lastExit: 0 })).toBe('直到 bun run test 通过 · 第 2/3 轮 · 通过了')
-    expect(line({ rounds: 3, status: 'exhausted', lastExit: 1 })).toBe('直到 bun run test 通过 · 第 3/3 轮 · 到上限还没过')
-    expect(line({ rounds: 1, status: 'stopped', stopReason: '这件事归档了' })).toBe('直到 bun run test 通过 · 第 1/3 轮 · 停了（这件事归档了）')
-    expect(line({ rounds: 0, status: 'stopped' })).toBe('直到 bun run test 通过 · 停了')
-    expect(line({ rounds: 2, status: 'passed' }, 'en')).toBe('Until bun run test passes · round 2/3 · passed')
+  it('结束了:结果在前', () => {
+    expect(st({ rounds: 2, status: 'passed', lastExit: 0 })).toBe('通过了（第 2/3 轮）')
+    expect(st({ rounds: 3, status: 'exhausted', lastExit: 1 })).toBe('到上限还没过（3 轮）')
+    expect(st({ rounds: 1, status: 'stopped', stopReason: '这件事归档了' })).toBe('停了（这件事归档了）')
+    expect(st({ rounds: 0, status: 'stopped' })).toBe('停了')
   })
-  it('读屏拿到整条命令', () => {
+  it('命令那一行与状态分开:300 字命令不进状态行,结果不会被省略号吃掉;读屏拿到整句', () => {
     const cmd = 'x'.repeat(300)
-    expect(untilLine({ ...u, command: cmd }, 'en').accessibilityLabel).toContain(cmd)
+    const l = untilLine({ ...u, command: cmd, rounds: 3, status: 'exhausted' }, 'zh-Hans')
+    expect(l.status).toBe('到上限还没过（3 轮）')
+    expect(l.status).not.toContain('x')
+    expect(`${l.before}${l.command}${l.after}`).toBe(`直到 ${cmd} 通过`)
+    expect(l.accessibilityLabel).toContain(cmd)
+    expect(l.accessibilityLabel.startsWith('到上限还没过')).toBe(true)
   })
 })
 

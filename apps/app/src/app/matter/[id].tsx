@@ -220,10 +220,13 @@ export default function Matter() {
         ) : null}
         <View testID="progress-status"><StatusPill status={v.status} /></View>
         {untilRow ? (
-          // 直到…通过(10-20):命令等宽,这里不是确认处,可以截;整句给读屏
-          <Txt testID="progress-until" role="meta" tone="inkSoft" numberOfLines={2} accessibilityLabel={untilRow.accessibilityLabel}>
-            {untilRow.before}<Txt role="code" tone="ink" content="user">{untilRow.command}</Txt>{untilRow.after}
-          </Txt>
+          // 直到…通过(10-20):状态在前、不截(命令再长也看得见结果);命令等宽,这里不是确认处,可以截;整句给读屏
+          <View testID="progress-until" accessible accessibilityLabel={untilRow.accessibilityLabel} style={{ gap: 2 }}>
+            <Txt testID="progress-until-status" role="meta" tone="inkSoft">{untilRow.status}</Txt>
+            <Txt role="meta" tone="inkSoft" numberOfLines={2}>
+              {untilRow.before}<Txt role="code" tone="ink" content="user">{untilRow.command}</Txt>{untilRow.after}
+            </Txt>
+          </View>
         ) : null}
         {d.task?.error === 'execution_model_unsupported' ? <Txt testID="progress-model-guidance" role="meta" tone="inkSoft">{t(lang, 'progress.modelUnavailable')}</Txt> : null}
         {d.nativeStart ? (
