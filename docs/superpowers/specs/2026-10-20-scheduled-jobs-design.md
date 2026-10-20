@@ -1,0 +1,58 @@
+# 主人亲手写的定时任务(只读版)—— 设计
+
+> 2026-10-20 · 状态:**定稿,可以开工**。方向「定时交办」10-19 主人交我定(「这几个你可以决定的」),当时定的是「放行规则落地后再做,先只读」;放行规则 #402 已合。本稿是 [10-08 定时交办草案](2026-10-08-workbench-scheduled-tasks-design.md) 的第一步:**对话侧、只读**;一起做里改文件的定时等放行规则真机跑一段再开(那份草案的提议保持不变,留作第二步)。
+
+## 为什么
+
+对标调研(roadmap「对标三类产品挖出的任务」)里,三类产品都有「主人写一句话,定期替他看一眼」:ChatGPT Scheduled tasks、Gemini Scheduled Actions(最多 10 个)、OpenClaw heartbeat(没事就不说话)、Hermes 定时、Paseo / Codex Automations / Claude Routines。CC 已有的零件:提醒(定时 + 退避)、伙伴主动消息(一轮 agent turn → 微信 / App,NO_REPLY 不发)、每晚整理(无人值守的模型调用先例)、网络守护。
+
+**成功的样子**:主人说「定时 每周一 9:00 看一下 wechat-cc 的 issue,有新的告诉我」,之后每周一 CC 自己看一眼,有新的发一条,没有就不吭声;主人随时在微信里列出、暂停、删掉。
+
+## 不做 / 反目标
+
+- 不做:CC 自己建 / 改定时;事件触发(「有新 PR 就…」);改文件、跑命令、发消息给别人的定时;一起做里的定时(第二步)。
+- 反目标:定时在网络不安全时去调官方端点;错过了一口气补跑;失败了反复重试;定时里的一句话让 CC 拿到比聊天更大的权限。
+
+## 怎么用
+
+微信(只认主人那条对话)与 CLI 两个入口,不加桌面面板:
+
+- `定时 每天 8:30 <要求>` / `定时 每周一 9:00 <要求>` / `定时 工作日 18:00 <要求>`(周一到周五)。时间按主人时区(同每晚整理的 timezone)。v1 只收这三种,不收「每小时」「每 N 分钟」。
+- `定时`(或 `定时 列表`):列出编号、时间、要求前 30 字、上次跑的时间与结果、暂停与否。
+- `定时 停 <编号>` / `定时 开 <编号>` / `定时 删 <编号>`。
+- CLI `wechat-cc jobs list|add|rm|pause|resume`,写同一个文件。
+
+建好回一句确认,写明下次什么时候跑、「没新东西就不吭声」。
+
+## 跑的时候
+
+每分钟一拍(同提醒 sweeper 的节奏),到点的定时:
+
+1. **闸门**(都不过 ⇒ 这次跳过,记一行原因,**不补跑**):`care=off` 不管(定时是主人明说要的);网络守护说这一轮要用的执行者不安全;上一次这个定时还没跑完;今天全部定时合计已满 **5** 次;daemon 不在线错过的那一刻 ⇒ 醒来不补,只记「错过了」。
+2. 一轮普通的 agent turn,信封 `<scheduled_job id=… />` + 主人的原话 + 「没有值得说的就只写 NO_REPLY」。复用伙伴主动消息的那条路(`dispatchToChat` 的出口:微信能用走微信,否则 App;NO_REPLY 不发)。
+3. **只读档**:这一轮的工具只留 `reply`、`share_page`、`memory_read`、`observations_read`、`fs_read`、`network`(网页搜索 / 读取);其余一律拒(不弹权限卡 —— 没人看着)。**必须在一个独立会话里跑**(alias `job:<id>`),不能借主人对话那条已经活着的会话 —— 否则那条会话的权限档会带过来,只读就保证不了。
+   - 实现上的三处(10-20 勘察):① 档里拒了 `fs_write` ⇒ 会话令牌按 guest 档铸,wechat MCP 只注册读类工具(不靠 canUseTool —— 它按 chatId 取档,对主人永远是 admin);② 这一轮强制 `permissionMode:'strict'`(`dangerously` 下 Claude 不给 disallowedTools、也不调 canUseTool),内置的 Bash / Write / Edit 由 disallowedTools 拿掉;Codex 在缺 fs_write / shell 时本来就是只读沙箱;③ **v1 只给 Claude 与 Codex 跑**,免审执行者(agy / Cursor)和 API 执行者跳过并说明原因。
+   - 会话用完就释放并清掉续接记录(否则下一次会续上上次的对话,也会占容量把主人的会话挤掉)。仍要拿 `coordinator.runExclusive(ownerChatId)`(回复交付按 chatId 记账),主人正在对话时这一次跳过,下一分钟再看(只在到点后 10 分钟内重试)。
+4. 失败(模型报错、超时 5 分钟):这一次算失败,不重试;**连续 3 次失败 ⇒ 自动暂停,告诉主人一次**。
+
+## 存在哪
+
+状态目录 `scheduled-jobs.json`(原子写):`{ version:1, jobs:[{ id, schedule:{kind:'daily'|'weekly'|'weekdays', at:'HH:MM', weekday?:1-7}, text, createdAt, paused }] }` + `scheduled-jobs-state.json`:每个 id 的 `lastRunAt / lastStatus('sent'|'silent'|'skipped:<原因>'|'failed:<码>') / failStreak` 和当天合计。用 JSON 不用表:定时很少、要能被主人直接读、不和别人抢迁移号。
+
+## 日报
+
+`日报` 里多一行「定时:今天跑了 N 个(说了 M 个)」;有被自动暂停的,单列一行。
+
+## 测试要钉住的
+
+- 解析:三种写法、中文星期、非法时间 / 非法写法回用法;非主人对话说「定时」不认。
+- 到点判断:时区、跨日、同一天不跑两次、错过不补。
+- 闸门:网络不安全跳过不补;每日合计 5;上一次没完跳过;连续 3 次失败暂停 + 只通知一次。
+- 只读:定时那一轮 acquire 时 alias 是 `job:<id>`、permissionMode 是 strict、档的 tier 名是 guest、档里没有 `fs_write` / `shell` / `memory_write` / `message_other` / `a2a_send` / `config_admin`;跑完会话被释放、续接记录被清。
+- NO_REPLY ⇒ 不发、记 silent;有内容 ⇒ 走主动出口。
+- CLI 与微信写同一个文件;坏文件不覆盖。
+
+## 留给实现者定的
+
+- 执行者用主人对话当前的默认执行者;网络守护按它判(`decideCall` 预检,不安全记 `skipped:network`)。
+- 主人正在对话时的等待窗口(上面写 10 分钟)可以按实际调。

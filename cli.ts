@@ -21,6 +21,7 @@ import { logsCmd, logCmd } from './src/cli/commands/logs'
 import { avatarCmd } from './src/cli/commands/avatar'
 import { guardCmd } from './src/cli/commands/guard'
 import { rulesCmd } from './src/cli/commands/rules'
+import { jobsCmd } from './src/cli/commands/jobs'
 import { providerCmd } from './src/cli/commands/provider'
 import { accountCmd } from './src/cli/commands/account'
 import { accessCmd } from './src/cli/commands/access'
@@ -59,7 +60,6 @@ import { cliCmd } from './src/cli/commands/cli'
 // unknown>` cast needed (which would have hidden a future Resolvable<>
 // refactor — citty's type allows lazy / promise forms — from typecheck).
 
-
 const SUBCOMMANDS = {
   backup: backupCmd,
   status: statusCmd,
@@ -81,7 +81,7 @@ const SUBCOMMANDS = {
   sessions: sessionsCmd,
   avatar: avatarCmd,
   guard: guardCmd,
-  rules: rulesCmd,
+  rules: rulesCmd, jobs: jobsCmd,
   provider: providerCmd,
   // PR4 batch 3b — memory / account / daemon / demo namespaces.
   memory: memoryCmd,

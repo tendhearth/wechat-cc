@@ -40,6 +40,7 @@ describe('buildLifecycleDeps — holdBusy forwarding', () => {
       resolveUserName: () => null,
     } as unknown as IlinkAdapter
     const ticks: TickBodies = {
+      runJobTurn: async () => 'silent',
       ingestTick: async () => {},
       pushTick: async () => {},
       introspectTick: async () => {},
@@ -88,7 +89,7 @@ describe('buildLifecycleDeps — network guard suspends running tasks', () => {
     const shutdownProtected = vi.fn(async () => 1)
     const boot = { holdBusy: vi.fn(), sessionManager: { shutdownProtected }, sessionStore: {}, conversationStore: {}, health: { onSuccess: vi.fn(), onFailure: vi.fn() } } as unknown as Bootstrap
     const ilink = { flush: async () => {}, getUpdatesForLoop: async () => ({ ok: true, updates: [] }), resolveUserName: () => null } as unknown as IlinkAdapter
-    const ticks: TickBodies = { ingestTick: async () => {}, pushTick: async () => {}, introspectTick: async () => {} }
+    const ticks: TickBodies = { ingestTick: async () => {}, pushTick: async () => {}, introspectTick: async () => {}, runJobTurn: async () => 'silent' }
     const seen: Array<{ protected: string | null }> = []
     const workbench = {
       suspendForNetwork: vi.fn((select: (run: { providerId: string; model: string | null; target: CallTarget }) => string | null) => {

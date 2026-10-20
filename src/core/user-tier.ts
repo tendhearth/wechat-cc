@@ -120,6 +120,17 @@ export const TIER_PROFILES: Record<UserTier, TierProfile> = {
 }
 
 /**
+ * 定时任务那一轮的只读档(spec 2026-10-20-scheduled-jobs-design):能看、能查、能回主人,别的一律拒、不弹卡
+ * (没人看着)。拒了 fs_write ⇒ `tierNameFromProfile` 算出 guest ⇒ 会话令牌按 guest 铸,wechat MCP 只注册读类工具。
+ */
+const JOB_ALLOW = new Set<ToolKind>(['reply', 'share_page', 'memory_read', 'observations_read', 'fs_read', 'network'])
+export const JOB_PROFILE: TierProfile = {
+  allow: JOB_ALLOW,
+  relay: new Set(),
+  deny: difference(ALL_KINDS, JOB_ALLOW),
+}
+
+/**
  * Recover the tier NAME from a resolved TierProfile. Used by providers to bake
  * `WECHAT_SESSION_TIER` into MCP child env (the non-secret companion to the
  * per-session token). Keys on capability, not object identity: admin is the

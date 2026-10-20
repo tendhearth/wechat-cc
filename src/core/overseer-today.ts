@@ -74,7 +74,11 @@ export interface OverseerToday {
   unavailable: TodaySource[]
   /** 放行规则(2026-10-19):CC 替主人批了几条(规则 / 初审)+ 最近几条;null ⇒ 读不到 / 没接,不画。 */
   ccDecided: TodayCcDecided | null
+  /** 定时任务(2026-10-20):过去 24 小时跑了几个、其中说了话的几个、被自动暂停的;null ⇒ 读不到 / 没接。 */
+  jobs: TodayJobs | null
 }
+
+export interface TodayJobs { ran: number; spoke: number; paused: Array<{ id: string; text: string }> }
 
 /** 一条 CC 替主人拿的权限决定(daemon 侧留痕表的那几列)。 */
 export interface TodayCcDecision { at: number; surface: 'terminal' | 'workbench'; provider: string; tool: string; summary: string; verdict: 'allow' | 'deny'; by: 'rule' | 'review' | 'floor'; ruleId: string | null }
@@ -114,6 +118,7 @@ export interface OverseerTodayInput {
   localMachine?: string | undefined
   /** 放行规则的留痕(窗口内);缺省 / null ⇒ 读不到。 */
   ccDecided?: TodayCcDecided | null
+  jobs?: TodayJobs | null
 }
 
 
@@ -212,6 +217,7 @@ export function buildOverseerToday(input: OverseerTodayInput): OverseerToday {
     counts: { needsYou: needsYou.length, done: done.length, running: running.length, stuck: stuck.length },
     unavailable,
     ccDecided: input.ccDecided ?? null,
+    jobs: input.jobs ?? null,
   }
 }
 
@@ -264,12 +270,15 @@ export function formatOverseerToday(t: OverseerToday, opts: { now?: number } = {
     ? `(${t.unavailable.map(s => (s === 'terminal' ? '终端' : '一起做')).join('、')}暂时读不到)`
     : ''
   const cc = ccLine(t.ccDecided)
+  const jobsRan = t.jobs && t.jobs.ran > 0 ? `定时 ${t.jobs.ran} 个(说了 ${t.jobs.spoke} 个)` : ''
+  const jobsPaused = t.jobs?.paused.length ? t.jobs.paused.map(p => `定时 ${p.id}「${[...p.text].slice(0, 12).join('')}」连着没跑成,停了`).join(';') + '(发「定时 开 编号」再开)' : ''
   if (c.needsYou + c.done + c.running + c.stuck === 0) {
-    return `过去 24 小时没有新动静:终端和一起做都没有在跑、等你或做完的事。${gap}${cc ? `\n${cc}` : ''}`
+    return `过去 24 小时没有新动静:终端和一起做都没有在跑、等你或做完的事。${gap}${[cc, jobsRan, jobsPaused].filter(Boolean).map(l => `\n${l}`).join('')}`
   }
   // 是 0 的不写;「N 件事等你」和桌面 / 手机「此刻」同一个说法。CC 替你批的并进第一行(整条仍 ≤ 15 行)。
-  const head = [c.needsYou ? `${c.needsYou} 件事等你` : '', c.done ? `${c.done} 件做完` : '', c.running ? `${c.running} 件在跑` : '', c.stuck ? `${c.stuck} 件可能卡住` : '', cc].filter(Boolean).join(' · ')
+  const head = [c.needsYou ? `${c.needsYou} 件事等你` : '', c.done ? `${c.done} 件做完` : '', c.running ? `${c.running} 件在跑` : '', c.stuck ? `${c.stuck} 件可能卡住` : '', cc, jobsRan].filter(Boolean).join(' · ')
   const lines: string[] = [`今天(过去 24 小时):${head}${gap}`]
+  if (jobsPaused) lines.push(jobsPaused)
 
   const needs = t.needsYou.slice(0, MAX_NEEDS), stuck = t.stuck.slice(0, MAX_STUCK)
   const done = t.done.slice(0, MAX_DONE), running = t.running.slice(0, MAX_RUNNING)

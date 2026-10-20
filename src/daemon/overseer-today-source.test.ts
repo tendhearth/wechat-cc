@@ -49,3 +49,13 @@ describe('makeOverseerTodaySource × 放行规则留痕', () => {
     expect(makeOverseerTodaySource({ terminal: () => [] })().ccDecided).toBeNull()
   })
 })
+
+describe('makeOverseerTodaySource × 定时任务', () => {
+  it('passes the 24h window to the jobs reader; a throwing reader ⇒ null', () => {
+    const since: number[] = []
+    const ok = makeOverseerTodaySource({ terminal: () => [], now: () => 1_000_000_000, jobs: (from) => { since.push(from); return { ran: 1, spoke: 1, paused: [] } } })()
+    expect(ok.jobs).toEqual({ ran: 1, spoke: 1, paused: [] })
+    expect(since).toEqual([1_000_000_000 - 24 * 3600_000])
+    expect(makeOverseerTodaySource({ terminal: () => [], jobs: () => { throw new Error('x') }, log: () => {} })().jobs).toBeNull()
+  })
+})
