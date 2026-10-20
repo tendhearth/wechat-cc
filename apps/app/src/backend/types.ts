@@ -2,12 +2,12 @@ import type { z } from 'zod'
 import type {
   Matter, MatterDetail, ApprovalExplanation, ProgressSummary, PhoneChangesTurn, EntryOptions, DeviceRowT, PushPlatformT,
   FeedEvent, Presence,
-  ChatPage, ChatJob, ChatMessage, ChatAttachment, LetterSummary, EntryModelCatalog, ChatModelView, MemorySuccess, ChatSearchHit, Connections, NativeSessionRow, NativeSessionPage, SessionContinueT, MatterSayResult, CliSessionRowT, CliActivityItemT, OverseerTodayT, TodayItemT,
+  ChatPage, ChatJob, ChatMessage, ChatAttachment, LetterSummary, EntryModelCatalog, ChatModelView, MemorySuccess, ChatSearchHit, PhoneJobT, Connections, NativeSessionRow, NativeSessionPage, SessionContinueT, MatterSayResult, CliSessionRowT, CliActivityItemT, OverseerTodayT, TodayItemT,
 } from '@wechat-cc/protocol'
 import type { Lang } from '../i18n'
 
 // 协议包已导出这个类型,不再重推一份(裁决 R12)
-export type { SessionContinueT, CliSessionRowT, CliActivityItemT, OverseerTodayT, TodayItemT }
+export type { SessionContinueT, CliSessionRowT, CliActivityItemT, OverseerTodayT, TodayItemT, PhoneJobT }
 export type MatterT = z.infer<typeof Matter>
 export type MatterDetailT = z.infer<typeof MatterDetail>
 export type ApprovalExplanationT = z.infer<typeof ApprovalExplanation>
@@ -29,6 +29,9 @@ export type MemoryViewT = Omit<z.infer<typeof MemorySuccess>, 'ok'>
 /** 主人对话用哪个后端 / 模型(2026-10-06);model=null ⇒ 用这个后端的全局设置 globalModel。 */
 export type ChatModelViewT = Omit<z.infer<typeof ChatModelView>, 'ok'>
 export type MemoryVerdict = 'wrong' | 'outdated' | 'delete'
+/** 定时列表(GET /m/api/jobs,2026-10-20):executor=null ⇒ 这台电脑上没有能跑定时的执行者。 */
+export type JobsViewT = { timezone: string; executor: string | null; jobs: PhoneJobT[] }
+export type JobsAction = 'pause' | 'resume' | 'remove'
 export type ChatSearchHitT = z.infer<typeof ChatSearchHit>
 /** 一句话 / 一件新事带的材料:同一个草稿 id 下先传好的几份(2026-10-06)。 */
 export type PhoneMaterials = { draftId: string; attachmentIds: string[] }
@@ -127,6 +130,10 @@ export interface Backend {
   /** 钉这条对话的后端 / 模型(只影响主人这条对话,下一句生效);model=null ⇒ 用全局设置。 */
   setChatModel(provider: string, model: string | null): Promise<ChatModelViewT>
   chatFileChunk(p: { messageId: string; index: number; offset: number }): Promise<FileChunkT>
+  /** 定时(GET /m/api/jobs,2026-10-20):只看与停 / 开 / 删,新建仍在微信「定时」里说。只给配过对的手机。 */
+  jobs(): Promise<JobsViewT>
+  /** 停 / 开 / 删一条定时(POST /m/api/jobs/action);不在了 ⇒ BackendError('not_found')。 */
+  jobsAction(id: string, action: JobsAction): Promise<void>
   /** CC 的信(GET /m/api/letters,2026-10-18):寄出去了的信,新的在前。只给配过对的手机(链接令牌 403 ⇒ BackendError)。 */
   letters(): Promise<LetterSummaryT[]>
   /** 一封信的第 page 页(1 起)按块读(GET /m/api/letters/page);不在了 ⇒ BackendError('not_found')。 */

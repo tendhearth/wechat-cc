@@ -1,5 +1,5 @@
 import type { Lang } from '../i18n'
-import type { ApprovalExplanationT, ProgressSummaryT, PhoneChangesTurnT, EntryOptionsT, ConnectionsT, NativeSessionRowT, NativeSessionPageT, LetterSummaryT } from './types'
+import type { ApprovalExplanationT, ProgressSummaryT, PhoneChangesTurnT, EntryOptionsT, ConnectionsT, NativeSessionRowT, NativeSessionPageT, LetterSummaryT, PhoneJobT } from './types'
 
 /** 演示情境的文案(中英两份,照设计样稿 tendhearth-phone.html 的 tr('中','英'))。 */
 type Pair = readonly [zh: string, en: string]
@@ -227,4 +227,21 @@ const LETTERS: ReadonlyArray<{ id: string; day: string; ago: number; requested: 
 
 export function demoLetters(lang: Lang, now: number): LetterSummaryT[] {
   return LETTERS.map(l => ({ id: l.id, day: l.day, sentAt: now - l.ago, requested: l.requested, via: l.via, opening: pick(lang, l.opening), pages: 0, text: pick(lang, l.body) }))
+}
+
+/**
+ * 演示的定时(2026-10-20):一条早报、一条每周提醒、一条停着的。真连接时 label 是电脑按自己的时区写的中文;
+ * 演示里按语言给,last.label 同微信「定时」列表的说法。
+ */
+const JOBS: ReadonlyArray<{ id: string; label: Pair; text: Pair; brief: boolean; paused: boolean; last: { ago: number; status: string; label: Pair } | null }> = [
+  { id: 'j1', label: ['每天 08:00(上海)', 'Daily 08:00 (Shanghai)'], text: ['早报', 'Morning brief'], brief: true, paused: false, last: { ago: 0, status: 'sent', label: ['说了', 'Sent'] } },
+  { id: 'j2', label: ['每周五 18:00(上海)', 'Fridays 18:00 (Shanghai)'], text: ['提醒我把这周的周报发出去', 'Remind me to send this week’s report'], brief: false, paused: false, last: { ago: 4 * DAY, status: 'silent', label: ['没说话(没新东西)', 'Stayed quiet (nothing new)'] } },
+  { id: 'j3', label: ['工作日 09:30(上海)', 'Weekdays 09:30 (Shanghai)'], text: ['看一眼 GitHub 上有没有新的 issue', 'Check GitHub for new issues'], brief: false, paused: true, last: null },
+]
+
+export function demoJobs(lang: Lang, now: number): PhoneJobT[] {
+  return JOBS.map(j => ({
+    id: j.id, label: pick(lang, j.label), text: pick(lang, j.text), brief: j.brief, paused: j.paused,
+    last: j.last ? { day: new Date(now - j.last.ago).toISOString().slice(0, 10), status: j.last.status, label: pick(lang, j.last.label) } : null,
+  }))
 }

@@ -4,7 +4,7 @@ import { DEMO_STICKER, DEMO_STICKER_FILE, DEMO_VOICE } from './demo-media'
 import { BackendError, type Backend, type CliSessionRowT, type Connection, type MatterT, type MatterDetailT, type ApprovalExplanationT, type ChatJobT, type ChatMessageT, type SessionContinueT, type MatterSayResultT, type UploadStateT, type ChatModelViewT, type OverseerTodayT, type TodayItemT, type CompanionHomeT, type FeedEventT } from './types'
 import {
   copy, IDS, CHAT_ID, DEMO_HUNT_URL, PERM_ID, QUESTION_ID, RUN_IDS, t, explanation, progress, changesTurn, entryOptions,
-  demoConnections, demoLetters, demoSessions, demoSessionMessages, demoSessionTitleKey, DEMO_SESSION_MESSAGES, type Stage,
+  demoConnections, demoJobs, demoLetters, demoSessions, demoSessionMessages, demoSessionTitleKey, DEMO_SESSION_MESSAGES, type Stage,
 } from './demo-data'
 
 type Topic = 'home' | 'approvals' | 'agents' | `matter/${string}`
@@ -47,6 +47,10 @@ export function makeDemoBackend(opts: { now?: () => number; setTimeout?: typeof 
   // 演示用的几条记忆(只在内存里;纠错会真的拿掉)
   const demoMemory = [{ id: 'a1b2c3', text: '回复喜欢直接，先说结论' }, { id: 'd4e5f6', text: '周末不安排工作会议' }]
   let chatJobs = new Map<string, ChatJobT>()
+  // 定时(演示):停 / 开 / 删只改内存里这两样,reset() 还原
+  let jobPaused = new Map<string, boolean>()
+  let jobRemoved = new Set<string>()
+  const demoJobList = () => demoJobs(lastLang, now()).filter(j => !jobRemoved.has(j.id)).map(j => ({ ...j, paused: jobPaused.get(j.id) ?? j.paused }))
   const subs = new Map<Topic, Set<(d: any) => void>>()
   // 终端里的会话(演示):一条等你批准(能在手机上拍)、一条在跑(说一句的框是灰的)、一条歇着(能接着说一句)。最后一句按语言读时生成。
   type CliRec = Omit<CliSessionRowT, 'last_summary'> & { summaryKey: Copy | null }
@@ -316,6 +320,12 @@ export function makeDemoBackend(opts: { now?: () => number; setTimeout?: typeof 
     async chatFileChunk() {
       // 演示里的文件只是一个名字(放在电脑上的那份不存在)
       throw new BackendError('not_found')
+    },
+    async jobs() { return { timezone: 'Asia/Shanghai', executor: 'claude', jobs: demoJobList() } },
+    async jobsAction(id, action) {
+      if (!demoJobList().some(j => j.id === id)) throw new BackendError('not_found')
+      if (action === 'remove') jobRemoved.add(id)
+      else jobPaused.set(id, action === 'pause')
     },
     async letters() { return demoLetters(lastLang, now()) },
     async letterPageChunk() {
@@ -611,6 +621,6 @@ export function makeDemoBackend(opts: { now?: () => number; setTimeout?: typeof 
     },
     setActive() {},
     dispose() {},
-    reset() { epoch++; seq = 0; cli = seedCli(); createdBy = new Map(); saidBy = new Map(); adopted = new Map(); handedBy = new Map(); deviceLabel = ''; seed(); publish([...order]) },
+    reset() { epoch++; seq = 0; cli = seedCli(); createdBy = new Map(); saidBy = new Map(); adopted = new Map(); handedBy = new Map(); jobPaused = new Map(); jobRemoved = new Set(); deviceLabel = ''; seed(); publish([...order]) },
   }
 }
