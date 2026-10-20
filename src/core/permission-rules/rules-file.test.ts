@@ -91,15 +91,15 @@ describe('matchRule', () => {
   })
   it('paths glob must cover every path', () => {
     const rules = [rule({ when: { paths: '/p/src/**' } })]
-    expect(matchRule(rules, ask({ tool: 'Edit', paths: ['/p/src/a.ts', '/p/README.md'] }))).toBeNull()
-    expect(matchRule(rules, ask({ tool: 'Edit', paths: ['/p/src/a.ts', '/p/src/deep/b.ts'] }))).not.toBeNull()
-    expect(matchRule(rules, ask({ tool: 'Edit', paths: undefined }))).toBeNull()
-    expect(matchRule(rules, ask({ tool: 'Edit', paths: [] }))).toBeNull()
+    expect(matchRule(rules, ask({ tool: 'Edit', paths: ['/p/src/a.ts', '/p/README.md'] }), 'darwin')).toBeNull()
+    expect(matchRule(rules, ask({ tool: 'Edit', paths: ['/p/src/a.ts', '/p/src/deep/b.ts'] }), 'darwin')).not.toBeNull()
+    expect(matchRule(rules, ask({ tool: 'Edit', paths: undefined }), 'darwin')).toBeNull()
+    expect(matchRule(rules, ask({ tool: 'Edit', paths: [] }), 'darwin')).toBeNull()
   })
   it('single * stays inside one segment', () => {
     const rules = [rule({ when: { paths: '/p/*.ts' } })]
-    expect(matchRule(rules, ask({ paths: ['/p/a.ts'] }))).not.toBeNull()
-    expect(matchRule(rules, ask({ paths: ['/p/d/a.ts'] }))).toBeNull()
+    expect(matchRule(rules, ask({ paths: ['/p/a.ts'] }), 'darwin')).not.toBeNull()
+    expect(matchRule(rules, ask({ paths: ['/p/d/a.ts'] }), 'darwin')).toBeNull()
   })
   it('command is matched on its first 2000 chars only', () => {
     const rules = [rule({ when: { command: 'TAIL' } })]
@@ -128,8 +128,8 @@ describe('rules-file × 终审', () => {
   })
   it('paths are normalised before the glob', () => {
     const rules = [rule({ when: { paths: '/p/docs/**' } })]
-    expect(matchRule(rules, ask({ paths: ['/p/docs/../src/main.ts'] }))).toBeNull()
-    expect(matchRule(rules, ask({ paths: ['/p/docs/./a.md'] }))).not.toBeNull()
+    expect(matchRule(rules, ask({ paths: ['/p/docs/../src/main.ts'] }), 'darwin')).toBeNull()
+    expect(matchRule(rules, ask({ paths: ['/p/docs/./a.md'] }), 'darwin')).not.toBeNull()
   })
   it('any tool pattern ending in * is a prefix (Claude mcp__server__*)', () => {
     const rules = [rule({ when: { tool: 'mcp__github__*' } })]
