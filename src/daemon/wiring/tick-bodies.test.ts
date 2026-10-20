@@ -14,7 +14,7 @@ import { makeChatMutex, type ChatMutex } from '../../core/async-mutex'
 import { readPlanLog } from '../companion/plan-memory'
 import { formatLocal, PLAN_EVAL_TIMEOUT_MS } from '../../core/companion-plan'
 import { NetworkUnprotectedError } from '../../lib/network-gate'
-import { loadCompanionConfig } from '../companion/config'
+import { loadCompanionConfig, saveCompanionConfig } from '../companion/config'
 import { makeProactiveOutbound } from '../companion/proactive-channel'
 import { makeReplyDeliveryRuntime } from '../reply-delivery'
 
@@ -166,7 +166,7 @@ function setupDeps(opts: {
   db?: Db
   /** Task 6 — chat-prefs entries. Keys double as chatPrefs.list() — i.e.
    * every chat that has ever set a preference (not just non-default ones). */
-  chatPrefsEntries?: Record<string, { care?: 'off' | 'low' | 'high'; hunt?: boolean; visit?: boolean }>
+  chatPrefsEntries?: Record<string, { care?: 'off' | 'low' | 'high'; hunt?: boolean; visit?: boolean; quiet?: { from: string; to: string } }>
   /** Task 6 — care-ledger entries, keyed by chatId. */
   careLedgerEntries?: Record<string, CareLedgerEntry>
 }): Setup {
@@ -618,6 +618,22 @@ describe('buildTickBodies / pushTick — multi-chat care sweep (Task 6)', () => 
     expect(s.dispatch).toHaveBeenCalledOnce()
     expect(readFileSync(agendaPath(s.stateDir, 'chat-1'), 'utf8')).toContain('- [x] done:2026-05-13 check in on project')
     expect(s.careLedgerEntries['chat-1']?.lastProactiveAtIso).toBe('2026-05-13T10:00:00.000Z')
+  })
+
+  it('免打扰(10-20):主人设的时段里不主动找他 —— 到期的 agenda 也不发、不登记;时段外照常', async () => {
+    // 10:00Z = 上海 18:00
+    const s = setupDeps({ defaultChatId: 'chat-1', inFlight: false, agendaMd: '- [ ] due:2026-05-13 check in on project', chatPrefsEntries: { 'chat-1': { quiet: { from: '17:00', to: '19:00' } } } })
+    cleanup.push(s.stateDir)
+    saveCompanionConfig(s.stateDir, { ...loadCompanionConfig(s.stateDir), timezone: 'Asia/Shanghai' })
+    await buildTickBodies(s.deps).pushTick({ nowIso: '2026-05-13T10:00:00.000Z' })
+    expect(s.dispatch).not.toHaveBeenCalled()
+    expect(s.careLedgerEntries['chat-1']).toBeUndefined()
+    expect(s.logs.some(l => l.includes('quiet_hours'))).toBe(true)
+    const t = setupDeps({ defaultChatId: 'chat-1', inFlight: false, agendaMd: '- [ ] due:2026-05-13 check in on project', chatPrefsEntries: { 'chat-1': { quiet: { from: '23:00', to: '08:00' } } } })
+    cleanup.push(t.stateDir)
+    saveCompanionConfig(t.stateDir, { ...loadCompanionConfig(t.stateDir), timezone: 'Asia/Shanghai' })
+    await buildTickBodies(t.deps).pushTick({ nowIso: '2026-05-13T10:00:00.000Z' })
+    expect(t.dispatch).toHaveBeenCalledOnce()
   })
 
   it('(b) care:high chat with no agenda + lastInbound 3 days ago + no prior proactive ⇒ gap dispatched, text contains 天', async () => {

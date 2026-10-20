@@ -111,6 +111,28 @@ describe('信:微信不通时寄到 App', () => {
   })
 })
 
+describe('免打扰(10-20):不定期的信在主人的免打扰时段里不写不寄,时段过了照常;当面要的照常', () => {
+  it('quiet ⇒ a due letter waits (no compose, still due); after the window it goes', async () => {
+    let quiet = true
+    const t = setup({ quiet: () => quiet })
+    await t.rt.tick()   // 第一次只排期
+    const due = readLetterState(t.stateDir).dueAt!
+    t.setNow(due + 60_000)
+    await t.rt.tick()
+    expect(t.wechat).toEqual([])
+    expect(readLetterState(t.stateDir).dueAt).toBe(due)
+    quiet = false
+    await t.rt.tick()
+    expect(t.wechat.length).toBeGreaterThan(0)
+  })
+  it('a letter the owner asked for is not held back', async () => {
+    const t = setup({ quiet: () => true })
+    const r = await t.rt.writeNow('给我写封信')
+    expect(r.status).not.toBe('failed')
+    expect(t.wechat.length).toBeGreaterThan(0)
+  })
+})
+
 describe('letterToApp —— 几页图记成一行 + 一条推送', () => {
   function fakeApp(ok = true) {
     const app: AppChannel = { deliverable: () => true, record: vi.fn(async () => ok), push: vi.fn() }

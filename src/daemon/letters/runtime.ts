@@ -34,6 +34,8 @@ export interface PendingLetter {
   pages: string[]
   text: string
   attempts: number
+  /** 主人当面要的(免打扰时段不拦);旧状态文件没有 ⇒ 当成不定期的。 */
+  requested?: boolean
   /** 已经寄到微信的页数(中途失败下一次从这里接着寄,不把前几页再发一遍;旧状态文件没有 ⇒ 0) */
   sentPages?: number
   /** 微信说主动发不了的那一刻;主人此后开口过才再试 */
@@ -77,6 +79,8 @@ export interface LetterDeps {
   lastInboundAt(owner: string): Promise<number | null>
   evalText(): ((prompt: string) => Promise<string>) | null
   wechatSuspended(): boolean
+  /** 主人的免打扰时段(core/quiet-hours):为真 ⇒ 不定期的信这一拍不写不寄,到点照常;当面要的不受影响。缺省 ⇒ 不拦。 */
+  quiet?(): boolean
   sendText(chatId: string, text: string): Promise<{ error?: string }>
   sendFile(chatId: string, path: string): Promise<void>
   /**
@@ -201,7 +205,7 @@ export function makeLetterRuntime(d: LetterDeps): LetterRuntime {
       if (!png) { pages.length = 0; break }   // 一页失败就整封退回文字,别寄半封
       pages.push(png)
     }
-    return { id, createdAt: nowMs, pages, text: letterText(letter), attempts: 0, blockedAt: null }
+    return { id, createdAt: nowMs, pages, text: letterText(letter), attempts: 0, blockedAt: null, ...(requested ? { requested: true } : {}) }
   }
 
   async function deliver(p: PendingLetter): Promise<'sent' | 'waiting' | 'failed' | 'expired'> {
@@ -281,7 +285,8 @@ export function makeLetterRuntime(d: LetterDeps): LetterRuntime {
   return {
     tick: () => serial(async () => {
       const s = state()
-      if (s.pending) { await deliver(s.pending); return }
+      // 免打扰时段:不定期的信等到时段过了(写好没寄的也等);当面要的(requested)照常寄
+      if (s.pending) { if (!s.pending.requested && d.quiet?.()) return; await deliver(s.pending); return }
       if (!d.enabled()) return
       const nowMs = d.now()
       if (s.dueAt === null) {
@@ -291,6 +296,7 @@ export function makeLetterRuntime(d: LetterDeps): LetterRuntime {
         return
       }
       if (!isLetterDue({ nowMs, tz: d.timezone(), dueAt: s.dueAt })) return
+      if (d.quiet?.()) return
       const owner = d.ownerChatId()
       if (!owner || d.wechatSuspended()) return
       const r = await compose(owner, undefined)

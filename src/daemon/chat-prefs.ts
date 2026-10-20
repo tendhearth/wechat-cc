@@ -25,6 +25,8 @@ export interface ChatPrefs {
   visit?: boolean
   /** 主人不希望 CC 主动提起的话题(core/companion-topics);空 / undefined ⇒ 都可以。 */
   avoid?: AvoidTopic[]
+  /** 免打扰时段(core/quiet-hours):这段时间 CC 不主动找他;undefined ⇒ 没设(默认不拦)。 */
+  quiet?: import('../core/quiet-hours').QuietWindow
 }
 
 export interface ChatPrefsStore {

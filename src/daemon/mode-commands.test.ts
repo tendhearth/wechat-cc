@@ -1118,6 +1118,25 @@ describe('makeModeCommands', () => {
     expect(sentMessages.at(-1)?.[1]).toContain('别主动聊: 钱')
   })
 
+  // ── /set 免打扰 — 主人定的一段时间里 CC 不主动找他(10-20,第二轮对标 #5)──
+  it('/set 免打扰 23:00-8:00 persists the window; /set 免打扰 关 clears it; junk explains the syntax', async () => {
+    const { cmds, sentMessages, prefsData } = setup()
+    expect(await cmds.handle(inbound('/set 免打扰 23:00-8:00'))).toBe(true)
+    expect(prefsData.get('chat-1')).toEqual({ quiet: { from: '23:00', to: '08:00' } })
+    expect(sentMessages.at(-1)?.[1]).toContain('23:00–08:00')
+    expect(sentMessages.at(-1)?.[1]).toContain('提醒')
+    await cmds.handle(inbound('/set quiet off'))
+    expect(prefsData.get('chat-1')).toEqual({})
+    await cmds.handle(inbound('/set 免打扰 晚上'))
+    expect(sentMessages.at(-1)?.[1]).toContain('/set 免打扰 23:00-8:00')
+  })
+  it('bare /set shows the quiet window', async () => {
+    const { cmds, sentMessages } = setup()
+    await cmds.handle(inbound('/set 免打扰 22-7'))
+    await cmds.handle(inbound('/set'))
+    expect(sentMessages.at(-1)?.[1]).toContain('免打扰: 22:00–07:00')
+  })
+
   it('/set hunt off persists {hunt:false} and confirms', async () => {
     const { cmds, sentMessages, prefsData } = setup()
     expect(await cmds.handle(inbound('/set hunt off'))).toBe(true)
