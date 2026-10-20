@@ -220,3 +220,14 @@ describe('runReminderSweep', () => {
     expect(late.endsWith('记得吃药')).toBe(true)
   })
 })
+describe('「CC 做过的事」(B9)', () => {
+  it('a delivered reminder is appended with its id — only for the owner chat, never the text', async () => {
+    const db = openTestDb()
+    const store = makeRemindersStore(db)
+    const mine = await store.schedule({ chat_id: 'owner', due_at: '2026-06-18T10:00:00Z', text: '吃药' })
+    await store.schedule({ chat_id: 'guest', due_at: '2026-06-18T10:00:00Z', text: '别人的' })
+    const rows: unknown[] = []
+    await runReminderSweep({ store, send: vi.fn().mockResolvedValue({ ok: true }), nowIso: '2026-06-18T10:01:00Z', log: () => {}, activityLog: { append: (e) => { rows.push(e) } }, isOwner: (c) => c === 'owner' })
+    expect(rows).toEqual([{ kind: 'reminder', status: 'sent', ref: mine }])
+  })
+})

@@ -129,3 +129,23 @@ describe('registerScheduledJobs', () => {
     await s.rt.stop()
   })
 })
+
+describe('「CC 做过的事」(B9)', () => {
+  it('every recorded run (sent / skipped / failed) is appended with its job id; failure text never goes in', async () => {
+    const store = makeJobsStore(mkdtempSync(join(tmpdir(), 'jobs-')))
+    const rows: Array<{ kind: string; status: string; ref?: string }> = []
+    let t = Date.parse('2026-10-20T01:00:00Z')
+    const results = ['failed:OpenAI said: rate limited for org-xyz']
+    const rt = registerScheduledJobs({
+      store, timezone: () => 'Asia/Shanghai', now: () => t, runTurn: async () => results.shift() ?? 'sent', notifyOwner: () => {},
+      holdBusy: () => () => {}, log: () => {}, intervalMs: 3_600_000, activityLog: { append: (e) => { rows.push(e) } },
+    })
+    store.add({ kind: 'daily', at: '09:00' }, '看天气', new Date())
+    await rt.tickOnce()
+    expect(rows).toEqual([{ kind: 'job', status: 'failed', ref: 'j1' }])
+    t += 86_400_000
+    await rt.tickOnce()
+    expect(rows.at(-1)).toEqual({ kind: 'job', status: 'sent', ref: 'j1' })
+    await rt.stop()
+  })
+})
