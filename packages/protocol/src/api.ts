@@ -365,7 +365,7 @@ export const PhoneChangesTurn = z.object({
   /** 这一轮快照的 id;逐文件「没问题 / 退回」要带上它(2026-10-17)。 */
   artifactId: z.string().optional(),
   createdAt: z.number(), status: z.enum(['complete', 'partial', 'unavailable']),
-  files: z.array(z.object({ path: z.string(), kind: z.enum(['added', 'deleted', 'modified', 'not_reviewed']), diff: z.string().optional(), reason: z.string().optional(), truncated: z.boolean(), mark: PhoneReviewMark.optional() })),
+  files: z.array(z.object({ path: z.string(), kind: z.enum(['added', 'deleted', 'modified', 'not_reviewed']), diff: z.string().optional(), reason: z.string().optional(), truncated: z.boolean(), mark: PhoneReviewMark.optional(), /** 该多看一眼的原因(B6);老 daemon 没有。 */ risk: z.array(z.string()).max(6).optional() })),
   omittedFiles: z.number(),
   /** 本轮审阅的说明(为什么是 partial 等),至多 10 条、每条 ≤ 200 字。 */
   notes: z.array(z.string()),

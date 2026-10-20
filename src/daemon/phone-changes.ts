@@ -3,6 +3,7 @@
  * 裁剪到能放进中继一帧 —— 单文件 diff ≤ 24 KiB、累计 ≤ 200 KiB、至多 100 个文件;超出的只给路径与种类。只读。
  * 每个文件的 reason(为什么没审 / 被截)与本轮 notes 也带上:没有 diff 时手机至少能说清原因。各裁到 200 字、notes 至多 10 条。
  * 逐文件审阅(2026-10-17):带上轮次的 artifactId 与每个文件已有的标记,手机才能逐个「没问题 / 退回」(同桌面 review-mark / review-return)。
+ * 该多看一眼的原因(B6,review-risk.ts):每个文件的 risk 原样带上(至多 6 条、各裁到 200 字);没有就不带。
  */
 export const CHANGES_FILE_DIFF_MAX = 24 * 1024
 export const CHANGES_TOTAL_DIFF_MAX = 200 * 1024
@@ -10,11 +11,12 @@ export const CHANGES_MAX_FILES = 100
 export const CHANGES_PATH_MAX = 512
 export const CHANGES_TEXT_MAX = 200
 export const CHANGES_MAX_NOTES = 10
+export const CHANGES_MAX_RISKS = 6
 
 type Kind = 'added' | 'deleted' | 'modified' | 'not_reviewed'
 type Mark = { mark: 'accepted' | 'returned'; comment: string; createdAt: number }
-export interface ReviewTurnLike { artifactId?: string; createdAt: number; status: 'complete' | 'partial' | 'unavailable'; notes?: readonly string[]; files: ReadonlyArray<{ path: string; kind: Kind; diff?: string; reason?: string; mark?: Mark }> }
-export interface PhoneChangeFile { path: string; kind: Kind; diff?: string; reason?: string; truncated: boolean; mark?: Mark }
+export interface ReviewTurnLike { artifactId?: string; createdAt: number; status: 'complete' | 'partial' | 'unavailable'; notes?: readonly string[]; files: ReadonlyArray<{ path: string; kind: Kind; diff?: string; reason?: string; mark?: Mark; risk?: readonly string[] }> }
+export interface PhoneChangeFile { path: string; kind: Kind; diff?: string; reason?: string; truncated: boolean; mark?: Mark; risk?: string[] }
 export interface PhoneChangesTurn { artifactId?: string; createdAt: number; status: 'complete' | 'partial' | 'unavailable'; files: PhoneChangeFile[]; omittedFiles: number; notes: string[] }
 
 const enc = new TextEncoder()
@@ -30,6 +32,11 @@ function clipText(s: string): string {
   return cps.length <= CHANGES_TEXT_MAX ? s : cps.slice(0, CHANGES_TEXT_MAX - 1).join('') + '…'
 }
 
+function riskOf(risk: unknown): { risk?: string[] } {
+  const list = Array.isArray(risk) ? risk.filter((r): r is string => typeof r === 'string' && r !== '').slice(0, CHANGES_MAX_RISKS).map(clipText) : []
+  return list.length ? { risk: list } : {}
+}
+
 export function latestChanges(turns: readonly ReviewTurnLike[]): PhoneChangesTurn | null {
   if (turns.length === 0) return null
   const t = turns.reduce((a, b) => (b.createdAt > a.createdAt ? b : a))
@@ -40,6 +47,7 @@ export function latestChanges(turns: readonly ReviewTurnLike[]): PhoneChangesTur
     const reason = {
       ...(typeof f.reason === 'string' && f.reason ? { reason: clipText(f.reason) } : {}),
       ...(f.mark ? { mark: { mark: f.mark.mark, comment: clipText(f.mark.comment), createdAt: f.mark.createdAt } } : {}),
+      ...riskOf(f.risk),
     }
     if (f.kind === 'not_reviewed' || typeof f.diff !== 'string') { files.push({ path, kind: f.kind, ...reason, truncated: false }); continue }
     // 按 JSON 序列化后的字节计(引号/换行/控制字符会膨胀),而不是原始字节

@@ -220,6 +220,7 @@ const zh: Record<keyof typeof en, string> = {
   'progress.tooBig': '太大了，回电脑上看。',
   'progress.noChanges': '还没有文件改动。',
   'review.accept': '没问题',
+  'review.risk': '注意 · {why}',
   'review.return': '退回',
   'review.send': '发回去',
   'review.cancel': '算了',

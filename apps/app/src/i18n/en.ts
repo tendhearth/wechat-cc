@@ -218,6 +218,7 @@ const en = {
   'progress.tooBig': 'Too large to show here. Check it on your computer.',
   'progress.noChanges': 'No file changes yet.',
   'review.accept': 'Looks good',
+  'review.risk': 'Worth a closer look · {why}',
   'review.return': 'Send back',
   'review.send': 'Send',
   'review.cancel': 'Cancel',

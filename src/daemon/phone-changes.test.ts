@@ -2,7 +2,7 @@ import { describe, it, expect } from 'vitest'
 import { PhoneChangesTurn } from '@wechat-cc/protocol'
 import { latestChanges, CHANGES_TEXT_MAX, CHANGES_MAX_NOTES, CHANGES_FILE_DIFF_MAX, CHANGES_TOTAL_DIFF_MAX, CHANGES_MAX_FILES, CHANGES_PATH_MAX } from './phone-changes'
 
-const turn = (createdAt: number, files: Array<{ path: string; kind: 'added' | 'deleted' | 'modified' | 'not_reviewed'; diff?: string; reason?: string }>, notes: string[] = []) =>
+const turn = (createdAt: number, files: Array<{ path: string; kind: 'added' | 'deleted' | 'modified' | 'not_reviewed'; diff?: string; reason?: string; risk?: string[] }>, notes: string[] = []) =>
   ({ artifactId: `a${createdAt}`, sha256: 's', name: 'n', createdAt, status: 'complete' as const, headBefore: null, headAfter: null, preexistingPaths: [], notes, files: files.map(f => ({ preexisting: false, ...f })) })
 
 describe('latestChanges', () => {
@@ -63,6 +63,19 @@ describe('latestChanges', () => {
     expect(total).toBeLessThanOrEqual(CHANGES_TOTAL_DIFF_MAX)
     expect(r.files.at(-1)).toEqual({ path: 'huge', kind: 'modified', truncated: true })
     expect(JSON.stringify(r).length).toBeLessThan(CHANGES_TOTAL_DIFF_MAX + 64 * 1024)
+  })
+  it('risk(B6)原样带上:空的不带、非字符串剔掉、至多 6 条、各裁到 200 字', () => {
+    const r = latestChanges([turn(1, [
+      { path: 'src/auth.ts', kind: 'modified' as const, diff: '+1', risk: ['鉴权 / 权限'] },
+      { path: 'a.ts', kind: 'added' as const, diff: '+1', risk: [] },
+      { path: 'b.ts', kind: 'not_reviewed' as const, risk: ['x'.repeat(300), 3 as never, '', 'b', 'c', 'd', 'e', 'f', 'g'] },
+    ])])!
+    expect(r.files[0]!.risk).toEqual(['鉴权 / 权限'])
+    expect(r.files[1]).not.toHaveProperty('risk')
+    expect(r.files[2]!.risk).toHaveLength(6)
+    expect([...r.files[2]!.risk![0]!].length).toBe(CHANGES_TEXT_MAX)
+    // 协议 schema 不剥掉它(App 那头才看得见)
+    expect(PhoneChangesTurn.parse(r).files[0]!.risk).toEqual(['鉴权 / 权限'])
   })
   it('文件数超上限 ⇒ 计入 omittedFiles', () => {
     const files = Array.from({ length: CHANGES_MAX_FILES + 7 }, (_, i) => ({ path: `f${i}`, kind: 'added' as const, diff: '+1' }))
