@@ -12,7 +12,7 @@ interface Options {
   store: WorkbenchStore
   registry: ProviderRegistry
   stateDir: string
-  managedWorkspaceRoot?: string; networkGate?: import('../../lib/network-gate').NetworkGate; projectLessons?: ServiceCtx['deps']['projectLessons']; fetchIssue?: Parameters<typeof makeWechatWorkbenchControl>[0]['fetchIssue']  // 网络闸门(2026-10-02)/ 项目经验 / issue 开工(2026-10-20),见 ServiceDeps
+  managedWorkspaceRoot?: string; networkGate?: import('../../lib/network-gate').NetworkGate; projectLessons?: ServiceCtx['deps']['projectLessons']; fetchIssue?: Parameters<typeof makeWechatWorkbenchControl>[0]['fetchIssue']; addLesson?: Parameters<typeof makeWechatWorkbenchControl>[0]['addLesson']  // 网络闸门(2026-10-02)/ 项目经验 / issue 开工(2026-10-20),见 ServiceDeps
   ownerChatId: () => string | null
   /** 「一件事」登记处:任务与 matter 一对一同 id,生命周期同步(docs/cc-workbench.md「一件事」)。可选,老接线不传。 */
   matters?: MatterStore
@@ -165,7 +165,7 @@ export function makeWorkbenchService(opts: Options) {
     },
   }
   actions.set({submitInput:(id,input,policy)=>service.submitInput(id,input,policy),continueTask:(id,text,options,policy)=>service.continueTask(id,text,options,policy),isReplied,fallbackExecutor,artifact:(id,artifactId)=>service.artifact(id,artifactId),quotaExhausted:quotaDomain.quotaExhausted,continuation,provider,requireInput,canResume,taskVersion,selectAttachments,combinedAttachments,handoffAttachments,taskView,matterSync:executeDomain.matterSync,start:executeDomain.start,continuationAttachmentScope,inputMode,armIdleClose:lifecycleDomain.armIdleClose,cancelIdleClose,settleAfterDecision,execute:executeDomain.execute,hasUndeliveredInput,holdInputs,collect,collectTurnArtifacts,captureCodeChanges,runtimeSnapshot,held,stageFinishedNotice,publishFinishedNotices,enqueueNotice,untilAfterTurn:untilDomain.afterTurn,untilStop:untilDomain.stop})
-  const wechatControl=makeWechatWorkbenchControl({store,ownerChatId:opts.ownerChatId,actions:service,hasExecutor:(id)=>{try{provider(id);return true}catch{return false}},...(opts.fetchIssue?{fetchIssue:opts.fetchIssue}:{})})
+  const wechatControl=makeWechatWorkbenchControl({store,ownerChatId:opts.ownerChatId,actions:service,hasExecutor:(id)=>{try{provider(id);return true}catch{return false}},...(opts.fetchIssue?{fetchIssue:opts.fetchIssue}:{}),...(opts.addLesson?{addLesson:opts.addLesson}:{})})
   return service
 }
 export type WorkbenchService=ReturnType<typeof makeWorkbenchService>

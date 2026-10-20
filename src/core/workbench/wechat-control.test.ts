@@ -513,3 +513,17 @@ describe('任务 新建 <项目> 对比 @a @b <要求>(同一件事交给两家,
     expect(r).toContain('第一份开始了');expect(r).toContain('agy')
   })
 })
+
+describe('任务 <编号> 记成经验 <一句>(10-20,接 #443)',()=>{
+  it('adds the lesson to the task source project; managed task ⇒ says it has no project; refusals explained',async()=>{
+    setup({async spawn(){return{async *dispatch(){yield result},async close(){}}}})
+    const added:Array<[string,string]>=[]
+    const addLesson=vi.fn((p:string,t:string)=>{added.push([p,t]);return t==='重复'?{ok:false as const,error:'duplicate' as const}:{ok:true as const}})
+    const control=makeWechatWorkbenchControl({store,ownerChatId:()=>owner,addLesson,actions:service})
+    const task=create();await settled(task.id)
+    expect(String(await control('owner',`任务 ${task.id} 记成经验 测试用 bun run test`,{...identity,msgId:'l1'}))).toContain('记下了')
+    expect(added).toEqual([[project,'测试用 bun run test']])
+    expect(String(await control('owner',`任务 ${task.id} 记成经验 重复`,{...identity,msgId:'l2'}))).toContain('已经记着')
+    expect(String(await control('owner',`任务 ${task.id} 记成经验`,{...identity,msgId:'l3'}))).toContain('记成经验 <一句话>')
+  })
+})
