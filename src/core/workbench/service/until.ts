@@ -29,11 +29,16 @@ export function makeUntilDomain(ctx: ServiceCtx, opts: UntilOptions = {}) {
   const inFlight = new Map<string, { promise: Promise<void>; stop: () => Promise<void> }>()
   /** 这一轮已经排过检查(内存去重:settleQuiet 同一轮会触发不止一次;库里的 checked_turn 管跑完之后)。 */
   const queued = new Set<string>()
+  /** 检查跑着时又做完了一轮(评审 #419 ①):记下最新那一轮,在跑的结果作废,跑完补查这一轮 —— 不然最后的代码没人查。 */
+  const recheck = new Map<string, Active>()
 
   function note(id: string, text: string) {
     try { store.addEvent(id, 'system', text); ctx.hub.touched(id) } catch { /* 记不上不影响检查 */ }
   }
   function stop(id: string, reason: string) {
+    // 在跑的检查一起停(评审 #419 ②):不然它在主人停了 / 工作区要删的时候还跑最长 10 分钟,还挂着 busy 挡自重启
+    recheck.delete(id)
+    void inFlight.get(id)?.stop().catch(() => {})
     const g = store.goals.get(id)
     if (!g || g.status !== 'active') return
     store.goals.finish(id, 'stopped', reason)
@@ -58,7 +63,8 @@ export function makeUntilDomain(ctx: ServiceCtx, opts: UntilOptions = {}) {
     const goal = store.goals.get(id)
     if (!goal || goal.status !== 'active' || ctx.state.stopping) return
     const turn = `${running.identity}:${running.turnSeq}`
-    if (goal.checkedTurn === turn || queued.has(turn) || inFlight.has(id)) return
+    if (goal.checkedTurn === turn || queued.has(turn)) return
+    if (inFlight.has(id)) { recheck.set(id, running); return }
     // 主人有排队的话 ⇒ 让主人的先;这一轮的检查作废,等下一轮做完再查(设计 §跑的时候 1)。
     if (store.liveInputs.next(id)) return
     const why = blocked(id, running)
@@ -82,7 +88,11 @@ export function makeUntilDomain(ctx: ServiceCtx, opts: UntilOptions = {}) {
     })
     const promise = script.done.then(exit => settle(running, turn, round, exit)).catch(err => {
       ctx.log?.('WORKBENCH_UNTIL', `${id}: ${err instanceof Error ? err.message : err}`)
-    }).finally(() => { inFlight.delete(id); queued.delete(turn); release?.() })
+    }).finally(() => {
+      inFlight.delete(id); queued.delete(turn); release?.()
+      const next = recheck.get(id)
+      if (next) { recheck.delete(id); try { afterTurn(next) } catch { /* 下一轮做完再查 */ } }
+    })
     inFlight.set(id, { promise, stop: script.stop })
 
     async function settle(r: Active, turnKey: string, n: number, exit: ScriptExit) {
@@ -90,7 +100,9 @@ export function makeUntilDomain(ctx: ServiceCtx, opts: UntilOptions = {}) {
       record(exit.stopped ? 'cancelled' : ok ? 'completed' : 'failed', exit.tail || exit.error || '')
       const g = store.goals.get(id)
       if (!g || g.status !== 'active' || ctx.state.stopping || exit.stopped) return
-      // 跑完重新核对:这一轮之后开始了新的一轮 / 换了一条 run ⇒ 结果作废(那一轮做完会再查)。
+      // 检查期间又做完了一轮(保留会话 / 不保留会话都一样走 afterTurn)⇒ 这个结果是旧代码的,作废;finally 里补查新的那一轮。
+      if (recheck.has(id)) return
+      // 跑完重新核对:这一轮之后开始了新的一轮 / 换了一条 run ⇒ 结果作废(那一轮做完时会排检查)。
       const current = ctx.state.runsByTask.get(id)
       if (current && (current !== r || r.turnSeq !== Number(turnKey.split(':').pop()) || !ctx.actions.deref('until').isReplied(current))) return
       const why = blocked(id, r)

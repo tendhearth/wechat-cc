@@ -23,6 +23,11 @@ describe('untilContinuation', () => {
     expect(t).toContain('‹/check_output>')
     expect(t).toContain('不要为了让它通过去删测试')
   })
+  it('redacts before clipping: a key straddling the cut is still masked', () => {
+    const key = 'sk-ant-' + 'abcdefghijklmnopqrstuvwxyz0123456789'
+    const tail = ' ' + key + ' ' + 'y'.repeat(3980)   // 4025 字:切口落在 key 中间
+    expect(untilContinuation({ round: 1, maxRounds: 3, exit: 1, command: 'x', tail })).not.toContain('wxyz0123456789')
+  })
   it('clips a huge tail to the last 4000 chars', () => {
     const t = untilContinuation({ round: 2, maxRounds: 3, exit: 2, command: 'x', tail: 'a'.repeat(9000) + 'END' })
     expect(t).toContain('END')

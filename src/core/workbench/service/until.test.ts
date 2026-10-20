@@ -35,7 +35,7 @@ function setup(o: { exit?: ScriptExit; maxRounds?: number; retained?: boolean; c
   const start = vi.fn((input: { cwd: string; script: string; kind: string; timeoutMs?: number }) => { starts.push(input); return { pgid: 1, stop: async () => {}, done: Promise.resolve(result) } })
   const until = makeUntilDomain(ctx, { start: start as never, isUnattended: c => (c as { attended?: boolean }).attended === false })
   const events = () => store.events(t.id).map(e => e.text).filter(Boolean)
-  return { store, t, running, runsByTask, until, submitInput, continueTask, starts, released, events, setExit: (e: ScriptExit) => { result = e } }
+  return { ctx, store, t, running, runsByTask, until, submitInput, continueTask, starts, released, events, setExit: (e: ScriptExit) => { result = e } }
 }
 
 describe('until domain', () => {
@@ -132,5 +132,59 @@ describe('until domain', () => {
     s.until.stop(s.t.id, '又一次')
     expect(s.store.goals.get(s.t.id)).toMatchObject({ status: 'stopped', stopReason: '这一轮出错了' })
     expect(s.events().filter(x => x.includes('停了')).length).toBe(1)
+  })
+})
+
+describe('until domain · review #419', () => {
+  function deferredSetup() {
+    const s = setup()
+    const gates: Array<{ resolve: (e: ScriptExit) => void; stopped: boolean }> = []
+    const start = vi.fn(() => {
+      let resolve!: (e: ScriptExit) => void
+      const done = new Promise<ScriptExit>(r => { resolve = r })
+      const g = { resolve, stopped: false }
+      gates.push(g)
+      return { pgid: 1, stop: async () => { g.stopped = true; resolve({ ...exit(null), stopped: true }) }, done }
+    })
+    return { s, gates, start }
+  }
+  it('a turn that finishes while an older check runs is checked afterwards (never dropped)', async () => {
+    const { s, gates, start } = deferredSetup()
+    // 用同一个 ctx 重建域,换成可控的 start
+    const u = makeUntilDomain(s.ctx, { start: start as never, isUnattended: () => false })
+    u.afterTurn(s.running)                                   // 第 1 轮做完,检查开跑
+    ;(s.running as { turnSeq: number }).turnSeq = 2          // 主人说了一句,第 2 轮也做完了
+    u.afterTurn(s.running)                                   // 撞上在跑的检查:记下要补
+    expect(start).toHaveBeenCalledTimes(1)
+    gates[0]!.resolve(exit(1, 'old'))                        // 第 1 次的结果作废
+    await vi.waitFor(() => expect(start).toHaveBeenCalledTimes(2))
+    gates[1]!.resolve(exit(1, 'FAIL new'))
+    await u.idle(s.t.id)
+    await vi.waitFor(() => expect(s.submitInput).toHaveBeenCalledTimes(1))
+    expect((s.submitInput.mock.calls[0] as unknown as [string, { text: string }])[1].text).toContain('FAIL new')
+    expect(s.store.goals.get(s.t.id)).toMatchObject({ rounds: 1, checkedTurn: 'run-1:2' })
+  })
+  it('settled path: a newer turn that ended during the check discards the stale result', async () => {
+    const { s, gates, start } = deferredSetup()
+    s.runsByTask.clear()
+    const u = makeUntilDomain(s.ctx, { start: start as never, isUnattended: () => false })
+    u.afterTurn(s.running)
+    const r2 = { ...s.running, identity: 'run-2', turnSeq: 0 } as Active
+    u.afterTurn(r2)
+    gates[0]!.resolve(exit(1, 'old'))
+    await vi.waitFor(() => expect(start).toHaveBeenCalledTimes(2))
+    expect(s.continueTask).not.toHaveBeenCalled()
+    gates[1]!.resolve(exit(0, 'ok'))
+    await vi.waitFor(() => expect(s.store.goals.get(s.t.id)?.status).toBe('passed'))
+  })
+  it('stop() kills the running check and releases busy', async () => {
+    const { s, gates, start } = deferredSetup()
+    const u = makeUntilDomain(s.ctx, { start: start as never, isUnattended: () => false })
+    u.afterTurn(s.running)
+    u.stop(s.t.id, '你停下了这件事')
+    expect(gates[0]!.stopped).toBe(true)
+    await u.idle(s.t.id)
+    expect(s.released).toEqual([`wt-check:${s.t.id}`])
+    expect(s.submitInput).not.toHaveBeenCalled()
   })
 })
