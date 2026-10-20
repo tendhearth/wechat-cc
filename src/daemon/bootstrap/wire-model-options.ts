@@ -7,7 +7,7 @@
  */
 import type { Options } from '@anthropic-ai/claude-agent-sdk'
 import type { ProviderId } from '../../core/conversation'
-import type { TierProfile } from '../../core/user-tier'
+import { TIER_PROFILES, classifyToolUse, type TierProfile } from '../../core/user-tier'
 import type { PermissionMode } from '../../core/capability-matrix'
 import { tierProfileToClaudeSdkOpts, DEFAULT_CLAUDE_MODEL } from '../../core/claude-agent-provider'
 import { DEFAULT_AGY_MODEL } from '../../core/agy-agent-provider'
@@ -78,6 +78,9 @@ export function wireModelOptions(
     // every provider merges the same overlay, so the route layer enforces a
     // consistent tier across claude/codex/cursor.
     const sessionEnv = mcpEnv ?? {}
+    // 非标准档(目前只有定时任务的只读档 JOB_PROFILE):不挂第三方插件与 delegate,canUseTool 按这一档判 ——
+    // buildCanUseTool 是按 chatId 取档的,对主人永远是 admin(定时任务 10-20 终审)。
+    const standardTier = (Object.values(TIER_PROFILES) as TierProfile[]).includes(tierProfile)
     const wechatEnv = parts.plugins.wechatStdioForClaude ? { ...parts.plugins.wechatStdioForClaude.env, ...sessionEnv } : undefined
     const delegateEnv = parts.plugins.delegateStdioForClaude ? { ...parts.plugins.delegateStdioForClaude.env, ...sessionEnv } : undefined
     const common: Options = {
@@ -85,8 +88,8 @@ export function wireModelOptions(
       model: currentClaudeModel(),
       mcpServers: {
         ...(parts.plugins.wechatStdioForClaude ? { wechat: { type: 'stdio' as const, ...parts.plugins.wechatStdioForClaude, env: wechatEnv! } } : {}),
-        ...(parts.plugins.delegateStdioForClaude ? { delegate: { type: 'stdio' as const, ...parts.plugins.delegateStdioForClaude, env: delegateEnv! } } : {}),
-        ...parts.plugins.pluginMcpForClaude,
+        ...(standardTier && parts.plugins.delegateStdioForClaude ? { delegate: { type: 'stdio' as const, ...parts.plugins.delegateStdioForClaude, env: delegateEnv! } } : {}),
+        ...(standardTier ? parts.plugins.pluginMcpForClaude : {}),
       },
       // Using preset+append (instead of raw string) keeps MCP tools inline in
       // the system prompt — otherwise they're deferred behind ToolSearch,
@@ -121,7 +124,7 @@ export function wireModelOptions(
     // Build canUseTool with this session's chatId baked in. Done per-call
     // (not once at bootstrap) so concurrent sessions on different chats
     // each get a closure resolving tier/mode for their OWN chatId.
-    const canUseTool = parts.buildCanUseTool(chatId)
+    const canUseTool = standardTier ? parts.buildCanUseTool(chatId) : profileGate(tierProfile)
     return {
       ...common,
       permissionMode: tierOpts.permissionMode,
@@ -131,4 +134,14 @@ export function wireModelOptions(
   }
 
   return { readAgentConfig, currentClaudeModel, currentModelFor, sdkOptionsForProject }
+}
+
+/** 只按这一档判的 canUseTool:分类落在 allow 里才放,其余一律拒、不弹卡(没人看着)。未知工具分类为 subagent ⇒ 被拒。 */
+function profileGate(tp: TierProfile): NonNullable<Options['canUseTool']> {
+  return async (toolName, input) => {
+    const kind = classifyToolUse(toolName, (input ?? {}) as Record<string, unknown>)
+    return tp.allow.has(kind)
+      ? { behavior: 'allow', updatedInput: input }
+      : { behavior: 'deny', message: `这一轮是只读的定时任务,不能用 ${toolName}。` }
+  }
 }
