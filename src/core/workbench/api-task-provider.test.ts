@@ -183,3 +183,28 @@ it.each([
   const events=await collect(s.dispatch('go'));await s.close()
   expect(events.at(-1)).toMatchObject({kind:'error',message:'api_task_request_failed',code})
 })
+
+it('a resumed session sees the current task instructions (e.g. project lessons added since), not the ones saved at creation (10-20)',async()=>{
+  const fixture=scripted([{text:'one'},{text:'two'}]),p=provider(fixture.model)
+  const s=await p.spawn({alias:`workbench:${taskId}`,path:project},ctx({appendInstructions:'old instructions'}))
+  const events=await collect(s.dispatch('first'));await s.close()
+  const id=events.find(e=>e.kind==='init')!;if(id.kind!=='init')throw Error('init')
+  const r=await p.spawn({alias:`workbench:${taskId}`,path:project},ctx({resumeSessionId:id.sessionId,appendInstructions:'new instructions\n- 用 bun'}))
+  await collect(r.dispatch('second'));await r.close()
+  expect(fixture.seen[1]?.[0]).toMatchObject({role:'system'})
+  expect(JSON.stringify(fixture.seen[1]?.[0])).toContain('- 用 bun')
+  expect(JSON.stringify(fixture.seen[1]?.[0])).not.toContain('old instructions')
+  expect(fixture.seen[1]?.filter(m=>m.role==='system')).toHaveLength(1)
+})
+
+it('reports the turn usage the endpoint returned, summed over steps; none reported ⇒ no usage (10-20)',async()=>{
+  const base=scripted([{text:'I will save.',call:{id:'w1',name:'SaveArtifact',input:{name:'a.md',content:'x'}}},{text:'Saved.'}])
+  const usages=[{input:100,output:10},{input:150,output:20,cacheRead:90}]
+  const model:APIModel={stream(m,t,s){const turn=base.model.stream(m,t,s);const u=usages.shift();return{deltas:turn.deltas,finished:turn.finished.then(r=>({...r,usage:u}))}}}
+  const p=provider(model),s=await p.spawn({alias:`workbench:${taskId}`,path:project},ctx())
+  const events=await collect(s.dispatch('go'));await s.close()
+  expect(events.find(e=>e.kind==='result')).toMatchObject({usage:{input:250,output:30,cacheRead:90}})
+  const quiet=scripted([{text:'ok'}]),q=provider(quiet.model),s2=await q.spawn({alias:`workbench:${taskId}`,path:project},ctx())
+  const ev2=await collect(s2.dispatch('go'));await s2.close()
+  expect((ev2.find(e=>e.kind==='result') as {usage?:unknown}).usage).toBeUndefined()
+})

@@ -35,6 +35,7 @@ describe('APIModel transport',()=>{
     expect(JSON.stringify(seen)).not.toContain('hidden chain')
     const finished=await turn.finished
     expect(finished).toMatchObject({toolCalls:[{id:'call-1',name:'save',input:{name:'out.md'}}],finishReason:'tool-calls',model:'mock-model-id'})
+    expect(finished.usage).toEqual({input:1,output:2})   // 端点报的用量(10-20)
     expect(JSON.stringify(finished.messages)).toContain('hidden chain')
     expect(JSON.stringify(finished.messages)).toContain('Visible')
     expect(capture.maxOutputTokens).toBe(321)

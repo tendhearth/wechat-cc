@@ -21,3 +21,12 @@ describe('turn usage', () => {
     expect(sumUsage([])).toEqual({ turns: 0, input: null, output: null, cacheRead: null, cacheWrite: null, reasoning: null, costUsd: null })
   })
 })
+
+describe('aiSdkUsage (openai-compatible, AI SDK v5 LanguageModelV2Usage)', () => {
+  it('maps inputTokens/outputTokens/cachedInputTokens/reasoningTokens; drops undefined/NaN; empty ⇒ undefined', async () => {
+    const { aiSdkUsage } = await import('./turn-usage')
+    expect(aiSdkUsage({ inputTokens: 100, outputTokens: 10, totalTokens: 110, cachedInputTokens: 40, reasoningTokens: 3 })).toEqual({ input: 100, output: 10, cacheRead: 40, reasoning: 3 })
+    expect(aiSdkUsage({ inputTokens: undefined, outputTokens: NaN })).toBeUndefined()
+    expect(aiSdkUsage(null)).toBeUndefined()
+  })
+})

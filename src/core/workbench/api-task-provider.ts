@@ -1,4 +1,5 @@
 import {createHash} from 'node:crypto'
+import {sumTurnUsage,type TurnUsage} from '../turn-usage'
 import {lstatSync} from 'node:fs'
 import {relative,sep} from 'node:path'
 import type {AgentAttachment,AgentEvent,AgentProvider,AgentSession,SpawnContext} from '../agent-provider'
@@ -129,11 +130,13 @@ export function createApiTaskProvider(options:Options):AgentProvider&{canResume(
       let closed=false,active:Promise<void>|null=null,controller:AbortController|null=null,dispatched=false
       const persist=(messages:ChatMessage[],state:'active'|'ready'|'interrupted'='active')=>{saved=options.sessions.save(saved.id,saved.revision,messages,state)}
       const ensureScope=()=>{if(identity(binding.path)!==binding.directoryIdentity)fail('api_task_scope_changed')}
+      // 续接时用这一次派发的指令换掉建会话时存下的那条系统消息:之后加的项目经验等,续接的会话也看得到(10-20)
+      if(ctx.resumeSessionId&&saved.messages[0]?.role==='system'&&JSON.stringify(saved.messages[0])!==JSON.stringify(initial[0]))persist([initial[0]!,...saved.messages.slice(1)])
       ctx.reportNotice?.(NOTES)
 
       async function run(text:string,attachments:readonly AgentAttachment[],queue:AsyncQueue<AgentEvent>,signal:AbortSignal){
         const started=Date.now();queue.push({kind:'init',sessionId:saved.id})
-        let outputBytes=0
+        let outputBytes=0,usage:TurnUsage|undefined
         try{
           check(signal);ensureScope()
           const request=requestMessage(text,attachments,binding)
@@ -153,6 +156,7 @@ export function createApiTaskProvider(options:Options):AgentProvider&{canResume(
               }
             }
             const result=await turn.finished;check(signal);ensureScope()
+            if(result.usage)usage=sumTurnUsage(usage,result.usage)
             if(!['stop','tool-calls'].includes(result.finishReason))fail('api_task_incomplete')
             if(!result.messages.length)fail('api_task_response_invalid')
             // AI SDK may append its own error result for an unknown tool.
@@ -177,7 +181,7 @@ export function createApiTaskProvider(options:Options):AgentProvider&{canResume(
             if(result.model)ctx.reportExecution?.({model:result.model,sessionId:saved.id,source:'native_response'})
             if(!result.toolCalls.length){
               persist(saved.messages,'ready')
-              queue.push({kind:'result',sessionId:saved.id,numTurns:step+1,durationMs:Date.now()-started});return
+              queue.push({kind:'result',sessionId:saved.id,numTurns:step+1,durationMs:Date.now()-started,...(usage?{usage}:{})});return
             }
             for(const call of result.toolCalls){
               check(signal);ensureScope()
