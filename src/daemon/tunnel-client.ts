@@ -95,6 +95,8 @@ export interface TunnelClient {
   stop(): void
   /** 发一条控制帧;v2 模式要已登录,否则 false。 */
   sendControl(msg: object): boolean
+  /** 此刻连着中继(v2 要已登录)= 控制帧(推送)发得出去。 */
+  connected(): boolean
   /** 有活订阅的已识别流对应的设备令牌(= 在线设备)。 */
   subscribedDeviceTokens(): Set<string>
 }
@@ -409,6 +411,9 @@ export function makeTunnelClient(deps: TunnelClientDeps): TunnelClient {
     sendControl(msg) {
       if (!ws || (deps.login && !loggedIn)) return false
       try { ws.send(JSON.stringify(msg)); return true } catch { return false }
+    },
+    connected() {
+      return !!ws && ws.readyState === 1 && (!deps.login || loggedIn)
     },
     subscribedDeviceTokens() {
       const out = new Set<string>()

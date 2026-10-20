@@ -3,6 +3,8 @@ import { chooseChannel, makeProactiveOutbound, type AppChannel, type ProactiveCh
 import { openTestDb } from '../../lib/db'
 import { makeRemindersStore } from '../reminders/store'
 import { runReminderSweep } from '../reminders/sweeper'
+import { makeMessagesStore } from '../../lib/messages-store'
+import { makeAppChannel } from './app-channel'
 
 const OWNER = 'owner_chat'
 
@@ -185,6 +187,33 @@ describe('提醒 sweeper 接 sendOnce(main.ts 的接法)—— 微信不通时�
       expect(s.sendWechat).toHaveBeenCalledOnce()
       db.close()
     }
+  })
+})
+
+// 评审 #6(2026-10-19):中继断着、只有登记推送的设备 ⇒ App 送不到 —— 不再「记进 App 历史、没推送、却标 sent」。
+describe('提醒 sweeper × 真 App 通道 —— 中继离线 + 微信也不通', () => {
+  it('只有推送设备、中继断着 ⇒ ok:false,不记进 App、不推、提醒留 pending', async () => {
+    const db = openTestDb()
+    const store = makeRemindersStore(db)
+    const messages = makeMessagesStore(db)
+    await store.schedule({ chat_id: OWNER, due_at: '2026-10-18T10:00:00Z', text: '吃药' })
+    const push = vi.fn(() => ({ sent: 0, online: 0 }))
+    const app = makeAppChannel({
+      ownerChatId: () => OWNER, pushDevices: () => ['d1'], onlineDevices: () => new Set(), relayOnline: () => false,
+      append: r => messages.append(r), touched: () => {}, push, log: () => {},
+    })
+    const sendWechat = vi.fn(async () => ({ msgId: 'err:1', error: 'ilink/sendmessage errcode=-2: prepare failed' }))
+    const out = makeProactiveOutbound({ wechatDegraded: () => false, wechatClosedSince: () => null, sendWechat, app: () => app, log: () => {} })
+    const send = async (c: string, t: string) => {
+      const r = await out.sendOnce(c, t)
+      return r.ok ? { ok: true } : { ok: false, ...(r.error ? { error: r.error } : {}) }
+    }
+    const res = await runReminderSweep({ store, send, nowIso: '2026-10-18T10:01:00Z', log: () => {} })
+    expect(res.deferred).toBe(1)
+    expect((await store.list(OWNER))[0]!.status).toBe('pending')
+    expect(await messages.listRange(OWNER, { limit: 10 })).toEqual([])
+    expect(push).not.toHaveBeenCalled()
+    db.close()
   })
 })
 

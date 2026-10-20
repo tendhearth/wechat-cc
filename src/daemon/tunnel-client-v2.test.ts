@@ -332,6 +332,18 @@ describe('tunnel-client v2', () => {
     hub.dispose()
   })
 
+  it('connected:中继 v2 要等 login_ok 才算连着;断开 ⇒ false;stop ⇒ false', () => {
+    const sock = fakeSocket()
+    const c = client(sock, { login: { sign: () => ({ pub: 'P', sig: 'S' }) } })
+    expect(c.connected()).toBe(false)          // socket 开了,还没登录:推送发不出去
+    sock.emit({ login_ok: true })
+    expect(c.connected()).toBe(true)
+    sock.emitClose()
+    expect(c.connected()).toBe(false)
+    c.stop()
+    expect(c.connected()).toBe(false)
+  })
+
   it('subscribedDeviceTokens:有订阅的已识别流才算在线', async () => {
     const { hub } = countedHub([{ match: () => true, snapshot: async () => ({}) }])
     const sock = fakeSocket()
