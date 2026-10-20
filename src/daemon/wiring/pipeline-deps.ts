@@ -655,6 +655,7 @@ export function buildPipelineDeps(opts: PipelineDepsOpts, refs: PipelineDepsRefs
     ownerChatId: () => phoneOwner.peek()?.chatId ?? null,
     pushDevices: () => { const paired = new Set(settingsPanel.deviceTokens().map(deviceIdOf)); return phonePush.registered().filter(id => paired.has(id)) },
     onlineDevices,
+    relayOnline: () => v2Tunnel?.connected() ?? false,
     append: (rec) => messagesStore.append(rec),
     touched: () => { const m = phoneOwner.peek(); if (m) matterActivity?.note(m.matterId); phoneEvents?.poke() },
     push: (p) => fanoutPush({ push: phonePush, subscribedDevices: onlineDevices, log: (tag, line) => log(tag, line) }, p),

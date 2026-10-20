@@ -9,8 +9,10 @@
  *   2. 整轮一条 `companion` 推送(协议包 PushKind;iOS category th.companion,安卓渠道 updates),
  *      点开去对话页。正在连着的设备跳过推送(它正看着主题,与其它推送同一规矩)。
  *
- * 「送得到」= 这是主人那条对话(手机对话认的同一个 chat),且至少一台**还配对着**的设备登记了推送,
- * 或者此刻正连着。没开中继 v2 / 没配对 ⇒ 这里根本不接线(proactive-channel 只剩微信)。
+ * 「送得到」= 这是主人那条对话(手机对话认的同一个 chat),且至少一台设备此刻正连着,
+ * 或者至少一台**还配对着**的设备登记了推送**而且中继此刻在线**(推送是经中继发的;中继断着时
+ * 只记进 App 历史、推不出去,不能算送到 —— 评审 #6,2026-10-19)。
+ * 没开中继 v2 / 没配对 ⇒ 这里根本不接线(proactive-channel 只剩微信)。
  */
 import type { MessageRecord } from '../../lib/messages-store'
 import type { TurnAttachment } from '../../core/turn-reply'
@@ -35,6 +37,8 @@ export interface AppChannelDeps {
   pushDevices(): string[]
   /** 此刻连着(订阅着主题)的设备 id。 */
   onlineDevices(): Set<string>
+  /** 中继此刻连着(推送发得出去)。 */
+  relayOnline(): boolean
   append(rec: MessageRecord): Promise<number>
   /** 记了一行之后:「一件事」活动时间 + 手机主题重算。 */
   touched(): void
@@ -78,7 +82,7 @@ export function makeAppChannel(deps: AppChannelDeps): AppChannel {
     deliverable(chatId) {
       const owner = deps.ownerChatId()
       if (!owner || owner !== chatId) return false
-      return deps.pushDevices().length > 0 || deps.onlineDevices().size > 0
+      return deps.onlineDevices().size > 0 || (deps.pushDevices().length > 0 && deps.relayOnline())
     },
     record,
     async recordAttachment(chatId, a) {

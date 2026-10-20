@@ -5,7 +5,7 @@ import { makeMessagesStore } from '../../lib/messages-store'
 import { phoneExtrasFields } from '../app-reply'
 import { companionPushPayload, COMPANION_PUSH_BODY_MAX, makeAppChannel, type AppChannelDeps } from './app-channel'
 
-function setup(o: { owner?: string | null; pushDevices?: string[]; online?: string[]; push?: AppChannelDeps['push'] } = {}) {
+function setup(o: { owner?: string | null; pushDevices?: string[]; online?: string[]; relay?: boolean; push?: AppChannelDeps['push'] } = {}) {
   const db = openTestDb()
   const store = makeMessagesStore(db)
   const touched = vi.fn()
@@ -15,6 +15,7 @@ function setup(o: { owner?: string | null; pushDevices?: string[]; online?: stri
     ownerChatId: () => (o.owner === undefined ? 'owner_chat' : o.owner),
     pushDevices: () => o.pushDevices ?? ['d1'],
     onlineDevices: () => new Set(o.online ?? []),
+    relayOnline: () => o.relay ?? true,
     append: (r) => store.append(r),
     touched,
     push,
@@ -31,6 +32,11 @@ describe('makeAppChannel —— 送得到吗', () => {
     expect(setup({ owner: null }).ch.deliverable('owner_chat')).toBe(false)
     expect(setup({ pushDevices: [] }).ch.deliverable('owner_chat')).toBe(false)
     expect(setup({ pushDevices: [], online: ['d2'] }).ch.deliverable('owner_chat')).toBe(true)
+  })
+
+  it('中继断着:只有登记推送的设备 ⇒ 推不出去,不算送得到;有设备正连着 ⇒ 照样送得到', () => {
+    expect(setup({ relay: false }).ch.deliverable('owner_chat')).toBe(false)
+    expect(setup({ relay: false, online: ['d1'] }).ch.deliverable('owner_chat')).toBe(true)
   })
 })
 
@@ -86,7 +92,7 @@ describe('makeAppChannel —— 附件', () => {
     const db2 = openTestDb()
     const store = makeMessagesStore(db2)
     const ch = makeAppChannel({
-      ownerChatId: () => 'owner_chat', pushDevices: () => ['d1'], onlineDevices: () => new Set(),
+      ownerChatId: () => 'owner_chat', pushDevices: () => ['d1'], onlineDevices: () => new Set(), relayOnline: () => true,
       append: r => store.append(r), touched: s.touched, push: s.push,
       stickerFile: tag => (tag === '开心' ? '/state/stickers/bear.png' : null),
       now: (() => { let t = Date.parse('2026-10-18T09:00:00.000Z'); return () => t++ })(), log: () => {},
