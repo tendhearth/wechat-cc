@@ -208,3 +208,16 @@ it('reports the turn usage the endpoint returned, summed over steps; none report
   const ev2=await collect(s2.dispatch('go'));await s2.close()
   expect((ev2.find(e=>e.kind==='result') as {usage?:unknown}).usage).toBeUndefined()
 })
+
+it('the swapped-in system message is the one computed for THIS spawn: owner-tier instructions at create, read-only tier on resume ⇒ only the read-only one (评审 #445)',async()=>{
+  const fixture=scripted([{text:'one'},{text:'two'}]),p=provider(fixture.model)
+  const s=await p.spawn({alias:`workbench:${taskId}`,path:project},ctx({tierProfile:TIER_PROFILES.admin,permissionMode:'dangerously',appendInstructions:'OWNER-TIER: full tools'}))
+  const events=await collect(s.dispatch('first'));await s.close()
+  const id=events.find(e=>e.kind==='init')!;if(id.kind!=='init')throw Error('init')
+  const r=await p.spawn({alias:`workbench:${taskId}`,path:project},ctx({resumeSessionId:id.sessionId,tierProfile:TIER_PROFILES.trusted,permissionMode:'strict',appendInstructions:'READ-ONLY-TIER: no writes'}))
+  await collect(r.dispatch('second'));await r.close()
+  const systems=fixture.seen[1]!.filter(m=>m.role==='system')
+  expect(systems).toHaveLength(1)
+  expect(JSON.stringify(systems[0])).toContain('READ-ONLY-TIER')
+  expect(JSON.stringify(fixture.seen[1])).not.toContain('OWNER-TIER')
+})
