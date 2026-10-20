@@ -169,7 +169,8 @@ export function makeMemoryNightlyRuntime(deps: NightlyRunDeps & NoticeDeps): Mem
       const added: Array<{ id: string; section: Section; text: string }> = []
       for (const it of items) {
         const text = norm(it.text)
-        if (!SECTIONS.includes(it.section) || !text || [...text].length > MAX_ENTRY_CHARS) { skipped.invalid++; continue }
+        // 再守一道:一行、不带 memory.md 的注释语法 / 尖括号(评审 #440)
+        if (!SECTIONS.includes(it.section) || !text || [...text].length > MAX_ENTRY_CHARS || /[<>]|-->|<!--/.test(text)) { skipped.invalid++; continue }
         if (have.has(text)) { skipped.duplicate++; continue }
         if (rejected.has(text)) { skipped.corrected++; continue }
         const id = deps.newId()

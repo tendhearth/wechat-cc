@@ -28,7 +28,21 @@ function sectionOf(t: string): ImportSection {
   return '关于你'
 }
 
-export function splitImportedMemory(raw: string): ImportCandidate[] {
+// 注入防护(评审 #440):memory.md 每一轮都进提示词,导入 = 把外来的字长期放进系统提示。
+// 像在给 CC 下命令的、带链接的、要求执行什么的,一律不收,单独列给主人看。
+const INSTRUCTION = /(忽略|无视|不要理会|以后你|从现在起|你必须|你应该|你要记得|回复时|回答时|每次回复|总是先|系统提示|提示词|指令|执行|运行|调用工具|ignore (all |any )?(previous|prior|above)|disregard|you must|you should|always (respond|reply|answer)|system prompt|run |execute|curl |rm -rf)/i
+const LINK = /(https?:\/\/|www\.|\b[a-z0-9-]+\.(com|net|org|io|cn|ai|dev)\b)/i
+/** 拆掉标签、HTML 注释、markdown 记号:一条事实不能伪造 memory.md 的 `<!-- m:… -->` 之类的语法。 */
+const scrub = (t: string) => t.replace(/<!--[\s\S]*?-->/g, ' ').replace(/<\/?[a-z][^>]*>/gi, ' ').replace(/[<>]/g, ' ').replace(/[*_`~]+/g, '').replace(/^#+\s*/, '').replace(/\s+/g, ' ').trim()
+
+/** 拆分 + 筛:收下的候选,和不收的(像指令 / 带链接的,原样列给主人)。 */
+export function screenImportedMemory(raw: string): { items: ImportCandidate[]; held: string[] } {
+  const held: string[] = []
+  const items = splitImportedMemory(raw, held)
+  return { items, held }
+}
+
+export function splitImportedMemory(raw: string, held: string[] = []): ImportCandidate[] {
   const lines = raw.replace(/\r/g, '').split('\n').map(l => l.trim()).filter(Boolean)
   const bulleted = lines.filter(l => /^([-*•·]|\d{1,2}[.)、])\s*/.test(l))
   // 有列表就只认列表行(开头那句「以下是…」和小标题都不要);没有就按句号切成句子
@@ -38,8 +52,10 @@ export function splitImportedMemory(raw: string): ImportCandidate[] {
   const seen = new Set<string>()
   const out: ImportCandidate[] = []
   for (const p of pieces) {
-    const t = p.replace(/\s+/g, ' ').replace(/[。.;;]+$/, '').trim()
-    if (!t || [...t].length > ENTRY_MAX || /^#/.test(t) || SECRET.test(t) || seen.has(t)) continue
+    if (/^\s*#/.test(p)) continue   // markdown 标题行
+    const t = scrub(p).replace(/[。.;;]+$/, '').trim()
+    if (!t || [...t].length > ENTRY_MAX || SECRET.test(t) || seen.has(t)) continue
+    if (INSTRUCTION.test(t) || LINK.test(t)) { if (held.length < IMPORT_MAX_ITEMS) held.push(p.trim().slice(0, ENTRY_MAX)); continue }
     seen.add(t)
     out.push({ section: sectionOf(t), text: t })
     if (out.length >= IMPORT_MAX_ITEMS) break

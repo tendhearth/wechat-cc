@@ -4,7 +4,7 @@
  * 3) 主人回「全部 / 1,3 / 不要」⇒ 只写他点过头的。写之前什么都不存。只认主人;30 分钟不回就作废。
  * 等粘贴时收到的不像清单(拆不出两条)⇒ 当普通聊天放过去,不吞主人的话。
  */
-import { IMPORT_PROMPT, splitImportedMemory, type ImportCandidate } from '../../core/memory-import'
+import { IMPORT_PROMPT, screenImportedMemory, splitImportedMemory, type ImportCandidate } from '../../core/memory-import'
 import type { ReplyHandler } from '../scheduled-jobs/command'
 import type { ImportResult } from './nightly-runtime'
 
@@ -58,9 +58,11 @@ export function makeMemoryImportCommand(deps: {
       }
       const s = live(chatId)!
       if (s.kind === 'paste') {
-        const items = splitImportedMemory(text)
+        const { items, held } = screenImportedMemory(text)
         stages.set(chatId, { kind: 'pick', label: s.label, items, expiresAt: deps.now() + TTL_MS })
-        await deps.say(chatId, `从 ${s.label} 那边认出 ${items.length} 条:\n${items.map((it, i) => `${i + 1}. [${it.section}] ${it.text}`).join('\n')}\n\n回「全部」都记;回编号(比如「1,3」)只记那几条;回「不要」就一条都不记。`)
+        // 像在给 CC 下指令 / 带链接的不收:原样列出来让主人看见(记忆每一轮都进提示词,评审 #440)
+        const heldNote = held.length ? `\n\n这几条像是在给 CC 下指令或带链接,没收:\n${held.map(h => `· ${h}`).join('\n')}` : ''
+        await deps.say(chatId, `从 ${s.label} 那边认出 ${items.length} 条:\n${items.map((it, i) => `${i + 1}. [${it.section}] ${it.text}`).join('\n')}${heldNote}\n\n回「全部」都记;回编号(比如「1,3」)只记那几条;回「不要」就一条都不记。`)
         return true
       }
       const picks = parsePick(text, s.items.length)!
