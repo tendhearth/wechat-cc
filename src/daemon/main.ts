@@ -6,6 +6,8 @@ import { formatOverseerToday } from '../core/overseer-today'
 import { makeJobsStore, summarizeJobs } from '../core/scheduled-jobs-store'
 import { registerScheduledJobs } from './scheduled-jobs/runner'
 import { makeJobsCommand, chainReplyHandlers } from './scheduled-jobs/command'
+import { makeProjectLessonsCommand } from './project-lessons-command'
+import { makeProjectLessons } from '../core/workbench/project-lessons'
 import { agendaReplyText, appBundleHasCalendarUsage, makeCalendar, makeCalendarCommand } from './calendar/calendar'
 import { makeActivityLog } from './activity-log'
 import { makeActivityCommand } from './activity/command'
@@ -895,6 +897,13 @@ export async function bootDaemon(opts: BootDaemonOpts): Promise<DaemonHandle> {
       now: () => Date.now(), timeZone: () => loadCompanionConfig(stateDir).timezone ?? 'Asia/Shanghai',
       items: () => { const r = buildActivity(activity.sources(), { now: Date.now(), limit: 100 }); return { items: r.items, degraded: r.degraded } },
     })
+    // 微信「经验 <项目> …」(第二轮对标 ★2):项目经验,每家执行者都照着做。只认主人;项目按名字认。
+    const lessonsCommand = makeProjectLessonsCommand({
+      isOwner: (chatId) => resolveAdminChatId(loadAccess(), loadCompanionConfig(stateDir), null) === chatId,
+      say: (c, t) => ilink.sendMessage(c, t),
+      projects: () => workbench?.projects().map(p => ({ name: p.name, path: p.path })) ?? [],
+      lessons: makeProjectLessons(stateDir),
+    })
     const jobsCommand = makeJobsCommand({
       store: jobsStore,
       isOwner: (chatId) => resolveAdminChatId(loadAccess(), loadCompanionConfig(stateDir), null) === chatId,
@@ -965,7 +974,7 @@ export async function bootDaemon(opts: BootDaemonOpts): Promise<DaemonHandle> {
       }),
       matters, guardRuntime: guardRt, subsystems: () => sup.statuses(),
       panelTokens: internalApi.panelTokens,
-      cliReply: chainReplyHandlers([jobsCommand, calendarCommand, activityCommand, cliReplyHandler]),
+      cliReply: chainReplyHandlers([jobsCommand, calendarCommand, activityCommand, lessonsCommand, cliReplyHandler]),
       stickers: stickerLib,
       requestRestart: (reason) => requestRestart(reason),
       llmHealth,

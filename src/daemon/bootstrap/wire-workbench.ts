@@ -1,4 +1,5 @@
 import {createClaudeHistoryReader} from '../../core/workbench/native-claude-history'
+import { lessonsBlock, makeProjectLessons } from '../../core/workbench/project-lessons'
 import { decideCall } from '../../lib/network-gate'
 import {createCodexHistoryReader} from '../../core/workbench/native-codex-history'
 import type { Options, CanUseTool } from '@anthropic-ai/claude-agent-sdk'
@@ -238,6 +239,8 @@ export function wireWorkbench(opts: {
   return makeWorkbenchService({
     managedWorkspaceRoot:join(homedir(),'CC','Tasks'),
     ...(opts.networkGate?{networkGate:opts.networkGate}:{}),
+    // 项目经验(第二轮对标 ★2):主人在微信「经验 <项目> …」写的,每家执行者的指令里都带上
+    projectLessons:(p)=>p?lessonsBlock(makeProjectLessons(opts.stateDir).list(p)):null,
     ...(opts.permissionGate?{permissionDecide:(ask:import('../../core/permission-rules/types').AskSource)=>opts.permissionGate!.decide(ask)}:{}),
     executionConflict:opts.executionConflict,
     nativeHistory:{claude:createClaudeHistoryReader(),...(binary?{codex:createCodexHistoryReader({codexPathOverride:binary})}:{})},
