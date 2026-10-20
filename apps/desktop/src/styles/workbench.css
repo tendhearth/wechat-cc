@@ -227,6 +227,8 @@
 .wb-review-kind[data-kind=deleted] { color:var(--th-bad); }
 .wb-review-kind[data-kind=not_reviewed] { color:var(--th-ink-soft); }
 .wb-review-path { min-width:0; overflow-wrap:anywhere; font:12px/1.6 var(--mono); }
+/* 该多看一眼的文件(B6):一个强调色的「注意 · 原因」,不用红黄绿 */
+.wb-review-risk { flex:none; font-size:12px; color:var(--wb-accent); white-space:nowrap; }
 .wb-review-file>summary small { flex:none; margin-left:auto; color:var(--wb-muted); font-size:10px; }
 .wb-preview pre.wb-review-diff { margin:10px 0 0; padding:8px 0; white-space:pre; overflow:auto; font:11px/1.7 var(--mono); }
 .wb-review-diff code { display:block; min-width:100%; width:max-content; }

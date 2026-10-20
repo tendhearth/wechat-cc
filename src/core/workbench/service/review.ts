@@ -17,6 +17,7 @@ import { composeReturnText, derivedReturnRequestId, parseGitReviewSnapshot, type
 import type { ReviewMark } from '../review-marks'
 import type { ServiceCtx } from './ctx'
 import type { WorkbenchTaskView } from './types'
+import { fileRisk } from '../review-risk'
 
 export interface ReviewDomain {
   reviewList(id:string):ReviewTurn[]
@@ -67,7 +68,8 @@ export function makeReviewDomain(ctx:ServiceCtx):ReviewDomain {
         return {...head,status:review.status,headBefore:review.headBefore,headAfter:review.headAfter,preexistingPaths:review.preexistingPaths,notes:review.notes,
           files:review.files.map(file=>{
             const mark=marks.get(`${a.sha256}\0${file.path}`)
-            return mark?{...file,mark:{mark:mark.mark,comment:mark.comment,createdAt:mark.createdAt}}:{...file}
+            const risk=fileRisk(file)
+            return {...file,...(mark?{mark:{mark:mark.mark,comment:mark.comment,createdAt:mark.createdAt}}:{}),...(risk.length?{risk}:{})}
           })}
       })
     },

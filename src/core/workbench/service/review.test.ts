@@ -53,6 +53,8 @@ describe('makeReviewDomain', () => {
     expect(list.map(t => t.artifactId)).toEqual([broken, good])
     expect(list[0]).toMatchObject({ status: 'unavailable', files: [] })
     expect(list[1]!.files.map(f => f.kind)).toEqual(['modified', 'not_reviewed'])
+    // 风险标记(B6):普通文件不带 risk 字段
+    expect(list[1]!.files[0]).not.toHaveProperty('risk')
   })
 
   it('markReviewFile:落标记并 touched;not_reviewed 拒绝;超长意见拒绝', () => {
