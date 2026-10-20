@@ -22,6 +22,9 @@ describe('paths on win32', () => {
     expect(matchRule([{ id: 'g', when: { paths: 'C:/Work/Proj/src/**' }, then: 'allow' }], ask({ paths: ['c:\\work\\proj\\src\\deep\\a.ts'] }), 'win32')).not.toBeNull()
     expect(matchRule([{ id: 'g', when: { paths: 'C:/Work/Proj/src/*' }, then: 'allow' }], ask({ paths: ['C:\\Work\\Proj\\src\\deep\\a.ts'] }), 'win32')).toBeNull()
     expect(matchRule([{ id: 'p', when: { project: 'c:\\work' }, then: 'allow' }], ask({ paths: ['C:\\Work\\Proj\\a'] }), 'win32')).not.toBeNull()
+    // 没写盘符的 glob 在 win32 上任何盘都算(主人从 Mac 习惯写 /…)
+    expect(matchRule([{ id: 'nd', when: { paths: '/Work/Proj/src/**' }, then: 'allow' }], ask({ paths: ['D:\\Work\\Proj\\src\\a.ts'] }), 'win32')).not.toBeNull()
+    expect(matchRule([{ id: 'nd', when: { paths: '/Work/Proj/src/**' }, then: 'allow' }], ask({ paths: ['D:\\Work\\Other\\a.ts'] }), 'win32')).toBeNull()
   })
   it("the state directory red line holds across case and separators", () => {
     const stateDir = 'C:\\Users\\Me\\.claude\\channels\\wechat'

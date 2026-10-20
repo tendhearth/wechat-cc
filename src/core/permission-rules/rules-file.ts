@@ -119,8 +119,11 @@ function matches(when: RuleWhen, ask: PermissionAsk, platform: Platform): boolea
   }
   if (when.paths) {
     if (!ask.paths?.length) return false
-    const re = globRe(canonText(expandHome(when.paths), platform))
-    if (!ask.paths.every(p => re.test(canonPath(p, platform)))) return false
+    const glob = canonText(expandHome(when.paths), platform)
+    const re = globRe(glob)
+    // win32 上没写盘符的 glob(`/Work/…`)对任何盘都算:比对前把路径的盘符去掉。
+    const anyDrive = platform === 'win32' && glob.startsWith('/') && !glob.startsWith('//')
+    if (!ask.paths.every(p => { const c = canonPath(p, platform); return re.test(anyDrive ? c.replace(/^[a-z]:/, '') : c) })) return false
   }
   return true
 }
