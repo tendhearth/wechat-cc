@@ -165,7 +165,7 @@ export function makeWorkbenchService(opts: Options) {
     },
   }
   actions.set({submitInput:(id,input,policy)=>service.submitInput(id,input,policy),continueTask:(id,text,options,policy)=>service.continueTask(id,text,options,policy),isReplied,fallbackExecutor,artifact:(id,artifactId)=>service.artifact(id,artifactId),quotaExhausted:quotaDomain.quotaExhausted,continuation,provider,requireInput,canResume,taskVersion,selectAttachments,combinedAttachments,handoffAttachments,taskView,matterSync:executeDomain.matterSync,start:executeDomain.start,continuationAttachmentScope,inputMode,armIdleClose:lifecycleDomain.armIdleClose,cancelIdleClose,settleAfterDecision,execute:executeDomain.execute,hasUndeliveredInput,holdInputs,collect,collectTurnArtifacts,captureCodeChanges,runtimeSnapshot,held,stageFinishedNotice,publishFinishedNotices,enqueueNotice,untilAfterTurn:untilDomain.afterTurn,untilStop:untilDomain.stop})
-  const wechatControl=makeWechatWorkbenchControl({store,ownerChatId:opts.ownerChatId,actions:service,...(opts.fetchIssue?{fetchIssue:opts.fetchIssue}:{})})
+  const wechatControl=makeWechatWorkbenchControl({store,ownerChatId:opts.ownerChatId,actions:service,hasExecutor:(id)=>{try{provider(id);return true}catch{return false}},...(opts.fetchIssue?{fetchIssue:opts.fetchIssue}:{})})
   return service
 }
 export type WorkbenchService=ReturnType<typeof makeWorkbenchService>

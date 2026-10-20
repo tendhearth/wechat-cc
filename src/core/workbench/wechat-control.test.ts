@@ -485,3 +485,31 @@ describe('任务 新建 <项目> issue N (从 GitHub issue 开工)',()=>{
     expect(createWechat.mock.lastCall![0].text).toBe('修一下第 12 个问题')
   })
 })
+
+describe('任务 新建 <项目> 对比 @a @b <要求>(同一件事交给两家,各自独立工作区)',()=>{
+  const projectId='p-'+'c'.repeat(20)
+  it('creates two isolated tasks, one per executor, with distinct deterministic request ids; a retry replays the same ids',async()=>{
+    setup({async spawn(){return{async *dispatch(){yield result},async close(){}}}})
+    const createWechat=vi.fn((input:{providerId?:string}):never=>({reply:`已交给 ${input.providerId}`}) as never)
+    const control=makeWechatWorkbenchControl({store,ownerChatId:()=>owner,actions:{...service,projects:()=>[{id:projectId,name:'project',path:project,providerId:'claude'}],createWechat}})
+    const reply=String(await control('owner',`任务 新建 ${projectId} 对比 @claude @codex 修登录`,identity))
+    const calls=createWechat.mock.calls.map(c=>c[0] as {providerId:string;isolation:boolean;text:string;requestId:string})
+    expect(calls.map(c=>[c.providerId,c.isolation,c.text])).toEqual([['claude',true,'修登录'],['codex',true,'修登录']])
+    expect(createWechat.mock.calls.map(c=>(c[0] as {title?:string}).title)).toEqual(['修登录 · @claude','修登录 · @codex'])
+    expect(new Set(calls.map(c=>c.requestId)).size).toBe(2)
+    expect(reply).toContain('已交给 claude');expect(reply).toContain('已交给 codex');expect(reply).toContain('对比')
+    await control('owner',`任务 新建 ${projectId} 对比 @claude @codex 修登录`,identity)
+    expect(createWechat.mock.calls.slice(2).map(c=>(c[0] as {requestId:string}).requestId)).toEqual(calls.map(c=>c.requestId))
+  })
+  it('same executor twice / unknown executor ⇒ usage, nothing created; second failing ⇒ says the first one started',async()=>{
+    setup({async spawn(){return{async *dispatch(){yield result},async close(){}}}})
+    let n=0
+    const createWechat=vi.fn(():never=>{if(++n===2)throw Error('unattended_ack_required');return{reply:'第一份开始了'} as never})
+    const control=makeWechatWorkbenchControl({store,ownerChatId:()=>owner,hasExecutor:(id)=>['claude','codex','agy'].includes(id),actions:{...service,projects:()=>[{id:projectId,name:'project',path:project,providerId:'claude'}],createWechat}})
+    expect(String(await control('owner',`任务 新建 ${projectId} 对比 @claude @claude 修登录`,{...identity,msgId:'x1'}))).toContain('用法')
+    expect(String(await control('owner',`任务 新建 ${projectId} 对比 @claude @nope 修登录`,{...identity,msgId:'x2'}))).toContain('用法')
+    expect(createWechat).not.toHaveBeenCalled()
+    const r=String(await control('owner',`任务 新建 ${projectId} 对比 @claude @agy 修登录`,{...identity,msgId:'x3'}))
+    expect(r).toContain('第一份开始了');expect(r).toContain('agy')
+  })
+})
