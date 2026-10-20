@@ -1133,6 +1133,8 @@ export async function bootDaemon(opts: BootDaemonOpts): Promise<DaemonHandle> {
     // 周报(B9 之上):这一周「CC 做过的事」—— 与手机时间线同一组来源,翻几页收齐(最多 300 条)。
     const recapTurn = makeRecapTurn({
       runJobTurn: (a) => wired.ticks.runJobTurn(a),
+      // 这一周各执行者自己报的用量(v82):「这周额度花在哪了」
+      usage: (since) => makeWorkbenchStore(db).usage.sinceByProvider(since),
       ownerChatId: briefOwner, now: () => Date.now(), timeZone: briefTz,
       activity: () => {
         const src = activity.sources(), now = Date.now(), out: ActivityItem[] = []
