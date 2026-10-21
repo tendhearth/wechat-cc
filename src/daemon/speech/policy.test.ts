@@ -136,3 +136,53 @@ describe('tell / flushPending —— 推后的 report 落盘待说,补说走 say
     expect(await policy.tell('upgrade_notice', OWNER, '升好了')).toBe(true)
   })
 })
+
+describe('待说队列不丢话(9d 评审 #531)', () => {
+  const mk = async (o: { sendErr: () => string | undefined; onSend?: () => void | Promise<void> }) => {
+    const { makePendingNotices } = await import('./pending-notices')
+    const { mkdtempSync } = await import('node:fs'); const { tmpdir } = await import('node:os'); const { join } = await import('node:path')
+    const sent: string[] = []
+    let now = Date.parse('2026-10-21T10:00:00.000Z')
+    const outbound = { appDeliverable: () => false, canDeliver: () => true, sendOnce: async () => ({ ok: true }),
+      open: () => ({ sendText: async (_c: string, t: string) => { await o.onSend?.(); const e = o.sendErr(); if (e) return { msgId: '', error: e }; sent.push(t); return { msgId: 'm' } }, channel: () => 'wechat' as const, textOnly: () => false, sendAttachment: async () => false, sendSticker: async () => false, finish: () => {} }) }
+    const pending = makePendingNotices({ stateDir: mkdtempSync(join(tmpdir(), 'pend-')), log: () => {} })
+    const policy = makeSpeechPolicy({ care: () => 'low', quietEndsAt: () => null, outbound, log: () => {}, pending, now: () => now })
+    return { policy, pending, sent, advance: (ms: number) => { now += ms } }
+  }
+  it('① 门放行、发失败(回 error)⇒ 入队;下一拍说出来;外层照旧拿到 false', async () => {
+    let err: string | undefined = 'network down'
+    const t = await mk({ sendErr: () => err })
+    expect(await t.policy.tell('job_notice', OWNER, '定时 j1 停了')).toBe(false)
+    expect(t.pending.groups()[0]!.items.map(i => i.text)).toEqual(['定时 j1 停了'])
+    err = undefined
+    t.advance(10 * 60_000)
+    await t.policy.flushPending()
+    expect(t.sent).toEqual(['定时 j1 停了'])
+  })
+  it('① initiative 发失败 ⇒ 不入队', async () => {
+    const t = await mk({ sendErr: () => 'down' })
+    await t.policy.tell('sticker', OWNER, '新表情')
+    expect(t.pending.groups()).toEqual([])
+  })
+  it('② flush 发送途中又进来一条 ⇒ 那条留在队列里,下一拍说', async () => {
+    let addDuringSend: (() => void) | null = null
+    const t = await mk({ sendErr: () => undefined, onSend: () => { addDuringSend?.(); addDuringSend = null } })
+    t.pending.add({ id: 'a', kind: 'job_notice', chatId: OWNER, text: '第一条', at: 'x' })
+    addDuringSend = () => t.pending.add({ id: 'b', kind: 'boot_notice', chatId: OWNER, text: '路上进来的', at: 'y' })
+    await t.policy.flushPending()
+    expect(t.sent).toEqual(['第一条'])
+    expect(t.pending.groups()[0]!.items.map(i => i.text)).toEqual(['路上进来的'])
+    await t.policy.flushPending()
+    expect(t.sent).toEqual(['第一条', '路上进来的'])
+  })
+  it('补说一直失败 ⇒ 按对话指数退避(5 → 10 → 20 分钟 …),不每拍都撞', async () => {
+    let tries = 0
+    const t = await mk({ sendErr: () => { tries++; return 'still down' } })
+    t.pending.add({ id: 'a', kind: 'job_notice', chatId: OWNER, text: 'x', at: 'x' })
+    await t.policy.flushPending(); expect(tries).toBe(1)
+    t.advance(4 * 60_000); await t.policy.flushPending(); expect(tries).toBe(1)   // 退避中
+    t.advance(2 * 60_000); await t.policy.flushPending(); expect(tries).toBe(2)   // 过了 5 分钟
+    t.advance(6 * 60_000); await t.policy.flushPending(); expect(tries).toBe(2)   // 第二次退避 10 分钟
+    t.advance(5 * 60_000); await t.policy.flushPending(); expect(tries).toBe(3)
+  })
+})

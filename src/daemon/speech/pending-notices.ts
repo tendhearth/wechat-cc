@@ -12,16 +12,17 @@ import { join } from 'node:path'
 import { readJsonFile } from '../../lib/read-json-file'
 import type { SpeechKind } from '../../core/speech/kinds'
 
-export interface PendingNotice { kind: SpeechKind; chatId: string; text: string; at: string }
+/** id:入队时给,说完只删这次真说了的那几条(flush 发送途中又进来的不会被一并删掉;9d 评审 #531)。 */
+export interface PendingNotice { id: string; kind: SpeechKind; chatId: string; text: string; at: string }
 
 export const MAX_PENDING_PER_CHAT = 20
 
 export interface PendingNotices {
-  add(n: PendingNotice): void
+  add(n: Omit<PendingNotice, 'id'> & { id?: string }): void
   /** 按对话分组;每组带上因为超过上限丢掉的条数。 */
   groups(): Array<{ chatId: string; items: PendingNotice[]; dropped: number }>
-  /** 这条对话说完了:清掉它的条目和丢弃计数。 */
-  clear(chatId: string): void
+  /** 这几条说完了:只删这几个 id;丢弃计数减掉这次说出去的那部分(说的时候已经提过)。 */
+  remove(chatId: string, ids: readonly string[], droppedTold: number): void
 }
 
 type Store = { items: PendingNotice[]; dropped: Record<string, number> }
@@ -43,7 +44,8 @@ export function makePendingNotices(o: { stateDir: string; log: (tag: string, lin
     renameSync(tmp, path)
   }
   return {
-    add(n) {
+    add(input) {
+      const n: PendingNotice = { ...input, id: input.id ?? `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}` }
       const s = read()
       const mine = [...s.items.filter(i => i.chatId === n.chatId), n]
       const over = Math.max(0, mine.length - MAX_PENDING_PER_CHAT)
@@ -58,10 +60,12 @@ export function makePendingNotices(o: { stateDir: string; log: (tag: string, lin
       const chats = [...new Set(s.items.map(i => i.chatId))]
       return chats.map(chatId => ({ chatId, items: s.items.filter(i => i.chatId === chatId), dropped: s.dropped[chatId] ?? 0 }))
     },
-    clear(chatId) {
+    remove(chatId, ids, droppedTold) {
       const s = read()
-      const { [chatId]: _gone, ...dropped } = s.dropped
-      write({ items: s.items.filter(i => i.chatId !== chatId), dropped })
+      const gone = new Set(ids)
+      const left = Math.max(0, (s.dropped[chatId] ?? 0) - droppedTold)
+      const { [chatId]: _old, ...rest } = s.dropped
+      write({ items: s.items.filter(i => !(i.chatId === chatId && gone.has(i.id))), dropped: left > 0 ? { ...rest, [chatId]: left } : rest })
     },
   }
 }
