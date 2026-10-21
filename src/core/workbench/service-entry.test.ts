@@ -309,7 +309,8 @@ it('isolated worktree tasks (2026-10-07): run in parallel on one project, stay o
   // 两个独立工作区的任务开在同一个项目:路径不同,谁也不等谁
   const gate=Promise.withResolvers<void>()
   const registry=createProviderRegistry()
-  registry.register('claude',{async spawn(p){spawnCount++;return{async *dispatch(){await gate.promise;writeFileSync(join(p.path,'out.txt'),'done\n');yield{kind:'text' as const,text:'完成'};yield{kind:'result' as const,sessionId:'native',numTurns:1,durationMs:1}},async close(){}}}},{displayName:'claude',canResume:()=>true,workbench:MANAGED_NATIVE_CAPABILITIES})
+  // 会话号按工作区分:两件并行的事共用 'native' 时,一件留着的会话会让另一件续做撞 native_session_busy(Windows 收尾慢时偶发);同一件续做仍是同一个号
+  registry.register('claude',{async spawn(p){spawnCount++;const sid=`native:${p.path}`;return{async *dispatch(){await gate.promise;writeFileSync(join(p.path,'out.txt'),'done\n');yield{kind:'text' as const,text:'完成'};yield{kind:'result' as const,sessionId:sid,numTurns:1,durationMs:1}},async close(){}}}},{displayName:'claude',canResume:()=>true,workbench:MANAGED_NATIVE_CAPABILITIES})
   await service.shutdown();store=makeWorkbenchStore(db)
   service=makeWorkbenchService({store,registry,stateDir,managedWorkspaceRoot:join(area,'Tasks'),ownerChatId:()=>owner,defaultProvider:'claude',registeredProjects:()=>[{alias:'project',path:project}],matters:makeMatterStore(db),changes:makeTaskChangeHub(),mintSessionToken:()=>'t'})
   const projectId=service.projects()[0]!.id
