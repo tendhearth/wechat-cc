@@ -755,7 +755,10 @@ async function bootDaemonInner(opts: BootDaemonOpts, undo: Array<() => void>): P
       stateDir, db, ilink, boot, sup, lc, jobsStore, activityLog, activity, calendar, overseerToday, careLedger,
       // async:没就绪时是一个被拒的 promise,不是同步抛 —— requestReview 的 .catch 接得住,照实告诉主人「没审成」
       runJobTurn: async (a) => { if (!wiredRef.current) throw new Error('jobs_not_wired'); return wiredRef.current.ticks.runJobTurn(a) },
-      sendProactive: (chatId, text) => { if (wiredRef.current) void wiredRef.current.proactive.sendOnce(chatId, text) },
+      sendProactive: (chatId, text) => {
+        if (!wiredRef.current) { log('JOBS', `proactive send dropped (not wired yet) chat=${chatId}`); return }
+        void wiredRef.current.proactive.sendOnce(chatId, text)
+      },
     })
     const jobsCommand = jobs.command
     const cliReplyHandler = makeCliReplyHandler({
