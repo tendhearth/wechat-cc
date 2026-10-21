@@ -52,7 +52,7 @@ const BASELINE: Record<string, [Tag, number]> = {
   // —— 要迁进 policy.say 的(盘点见设计稿第 2 步) ——
   'src/daemon/main.ts': ['migrate', 15],                 // 提醒、回报、升级、开机降级汇总、重启 …
   'src/daemon/internal-api/routes.ts': ['migrate', 6],   // 画作分享、广播 …
-  'src/daemon/wiring/pipeline-deps.ts': ['migrate', 6],  // 访客申请 …;其中 1 处是 proactive 的微信出口(say 背后的那条路,10-21 从 wiring/index.ts 搬来)
+  'src/daemon/wiring/pipeline-deps.ts': ['migrate', 7],  // 访客申请 …;其中 2 处是 proactive 的微信出口(发字、发文件;say 背后的那条路)
   'src/daemon/bootstrap/wire-social.ts': ['migrate', 5], // 来信、心愿、介绍、明信片
   'src/daemon/bootstrap/wire-jobs.ts': ['migrate', 3],   // 没审成的通知
   'src/daemon/bootstrap/wire-cli-sessions.ts': ['migrate', 3],

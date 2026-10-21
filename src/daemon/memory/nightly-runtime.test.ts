@@ -15,7 +15,7 @@ let n = 0
 function speechFor(o: { deliverable?: boolean; care?: 'off' | 'low'; quietEnds?: number | null } = {}): SpeechPolicy {
   const outbound: ProactiveOutbound = {
     appDeliverable: () => false, canDeliver: () => o.deliverable ?? true, sendOnce: async () => ({ ok: true }),
-    open: () => ({ sendText: async (_c, t) => { sent.push(t); return { msgId: 'm' } }, channel: () => 'wechat', textOnly: () => false, sendAttachment: async () => false, finish: () => {} }),
+    open: () => ({ sendText: async (_c, t) => { sent.push(t); return { msgId: 'm' } }, channel: () => 'wechat', textOnly: () => false, sendAttachment: async () => false, sendSticker: async () => false, finish: () => {} }),
   }
   return makeSpeechPolicy({ care: () => o.care ?? 'low', quietEndsAt: () => o.quietEnds ?? null, outbound, log: () => {}, now: () => now })
 }
