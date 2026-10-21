@@ -38,7 +38,22 @@ function linkSection(file: string, open: string, end: string): string {
   const src = read(...file.split('/'))
   const start = src.indexOf(open), stop = src.indexOf(end, start)
   if (start < 0 || stop < 0) throw new Error(`${file}: 找不到链接令牌那一段(${open} … ${end}),写法变了`)
-  return src.slice(start, stop)
+  const section = src.slice(start, stop)
+  assertLinkClientUsesOnly(section, file)
+  return section
+}
+
+/**
+ * 段内的 linkClient 只许三种用法:声明(`linkClient = …`)、`.request(`、`.close(`。
+ * 传给别的函数(`pairOnce(linkClient)`)、存进变量、解构 —— 那里面的调用扫不到,守卫就会瞎,所以一律当认不出的形状(#519 评审)。
+ */
+export function assertLinkClientUsesOnly(section: string, where: string): void {
+  for (const m of section.matchAll(/\blinkClient\b/g)) {
+    const after = section.slice(m.index! + 'linkClient'.length)
+    if (/^\s*=(?!=)/.test(after) || /^\.(request|close)\(/.test(after)) continue
+    const line = section.slice(0, m.index!).split('\n').length
+    throw new Error(`${where}: 链接令牌段第 ${line} 行 linkClient 的用法认不出(只许 .request( / .close( / 声明);传给别的函数会让守卫扫不到里面的调用`)
+  }
 }
 
 /** 读 `.linkToken` 的源码文件就这两份;别处也拿链接令牌建连 ⇒ 红,把那一处加进 SOURCES。 */
@@ -118,6 +133,10 @@ describe('扫描器的失败方式(人造源码)', () => {
     expect(() => keys(`api("/m/api/seen", { method: m })`)).toThrow(/认不出请求方法/)
     expect(() => keys(`fetch("https://example.com/x")`)).toThrow(/不是面板路由/)
     expect(() => keys(`linkClient.request(opts)`)).toThrow(/linkClient/)
+    // 链接令牌段里 linkClient 只许 .request( / .close( / 声明(#519 评审)
+    expect(() => assertLinkClientUsesOnly(`const linkClient = deps.connect(a, b)\nawait linkClient.request({ method: 'POST', path: '/set/api/pair' })\nlinkClient.close()`, 't')).not.toThrow()
+    expect(() => assertLinkClientUsesOnly(`const linkClient = deps.connect(a, b)\nawait pairOnce(linkClient)`, 't')).toThrow(/认不出/)
+    expect(() => assertLinkClientUsesOnly(`const linkClient = deps.connect(a, b)\nconst c = linkClient`, 't')).toThrow(/认不出/)
   })
   it('对不上路由表的调用报错(拼错 / 方法不对 / 拼接却没有前缀路由)', () => {
     expect(() => keys(`api("/m/api/nope")`)).toThrow(/对不上路由表/)
