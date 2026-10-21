@@ -69,7 +69,12 @@ async function getApiCredentials() {
  * @param {Record<string, unknown>} [body]
  * @returns {Promise<unknown>}
  */
-const OWNER_WORKSPACE_PATHS = new Set([
+/**
+ * 交给宿主的那几条 = 路由表 packages/protocol/src/routes.ts 里 `desktop.ownerWorkspace` 的行(gen:routes 写进
+ * src-tauri/generated/workbench-routes.json,lib.rs 读同一份)。webview 只能加载 src/ 里的文件、引不到那份 JSON,
+ * 所以这里照抄一份路径;scripts/route-registry.guard.test.ts 核对两边相等,改表忘了改这里 ⇒ 红。
+ */
+export const OWNER_WORKSPACE_PATHS = new Set([
   '/v1/knowledge/facts/find_facts',
   '/v1/llm/keys',
   '/v1/companion/thoughts',
