@@ -35,7 +35,7 @@ import type { PluginsSlice } from './wire-plugins'
 const KNOWLEDGE_EMBED_MODEL_VERSION = '1'
 
 export function wireKnowledge(
-  ctx: Pick<BootstrapCtx, 'sup' | 'log' | 'stateDir' | 'configuredAgent'>,
+  ctx: Pick<BootstrapCtx, 'sup' | 'log' | 'stateDir' | 'configuredAgent' | 'teardown'>,
   loadedPlugins: PluginsSlice['loadedPlugins'],
 ): Promise<Bootstrap['knowledge']> {
   // Knowledge Kernel Phase 01 (T5) — daemon-owned KnowledgeStore + the
@@ -206,6 +206,8 @@ export function wireKnowledge(
       if (embedder) setTimeout(() => { void embedder.warm() }, 0)
       const knowledgeAdapterTimer = setInterval(() => { void runKnowledgeAdapter(false) }, 5 * 60_000)
       knowledgeAdapterTimer.unref()
+      // 要在 store.close() 之前停(shutdown 先跑收尾清单再关知识库),不然关机后这个定时器还会对着关掉的 store 跑
+      ctx.teardown.add('KNOWLEDGE', 'adapter timer', () => clearInterval(knowledgeAdapterTimer))
       return {
         store: knowledgeStore,
         search: semanticSearch,

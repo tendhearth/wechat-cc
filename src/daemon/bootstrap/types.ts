@@ -262,6 +262,11 @@ export interface BootstrapDeps {
    * undefined,类型上等同"未配置"。核心块不经它。
    */
   supervisor: import('../subsystems').SubsystemSupervisor
+  /**
+   * bootstrap 起的定时器 / 连接在这里登记,shutdown 倒序停(./teardown.ts)。main.ts 建好传进来,
+   * 启动半路失败也停得到;缺省 = 本次 buildBootstrap 自建一张(测试)。
+   */
+  teardown?: import('./teardown').Teardown
 }
 
 export interface Bootstrap {
@@ -513,4 +518,6 @@ export interface BootstrapCtx {
   stateDir: string
   db: Db
   configuredAgent: AgentConfig
+  /** 谁起谁登记:定时器 / 端口 / 出站连接起在哪,就在那一行旁边 `teardown.add`(./teardown.ts)。 */
+  teardown: import('./teardown').Teardown
 }

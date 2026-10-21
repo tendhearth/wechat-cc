@@ -19,7 +19,7 @@ import type { BootstrapCtx } from './types'
 const HAND_ONLY = Symbol('yi-hand-only')
 
 export async function wireYi(
-  ctx: Pick<BootstrapCtx, 'sup' | 'log' | 'configuredAgent'>,
+  ctx: Pick<BootstrapCtx, 'sup' | 'log' | 'configuredAgent' | 'teardown'>,
   parts: { a2aRegistry: A2ARegistry; dispatchDelegate: DelegateDispatch },
 ): Promise<YiHub | undefined> {
   const { a2aRegistry, dispatchDelegate } = parts
@@ -42,6 +42,8 @@ export async function wireYi(
         verify: (id, tok) => !!a2aRegistry.verifyBearer(id, tok),
       })
       await yiServer.start()
+      const server = yiServer
+      ctx.teardown.add('YI', 'hub server', () => server.stop())
       ctx.log('YI', `hub listening on ws://${cfg.host}:${yiServer.port()}`)
     }
 
@@ -62,6 +64,7 @@ export async function wireYi(
           log: (m) => ctx.log('YI', m),
         })
         yiClient.start()
+        ctx.teardown.add('YI', 'hand client', () => yiClient.stop())
         handStarted = true
         ctx.log('YI', `hand connecting to brain at ${cfg.url}`)
       }
