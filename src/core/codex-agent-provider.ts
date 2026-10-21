@@ -37,6 +37,15 @@ export function codexItemToolCall(item: { type: string; server?: unknown; tool?:
   return { kind: 'tool_call', tool: CODEX_BUILTIN_TOOL_NAMES[item.type] ?? item.type }
 }
 
+/**
+ * 档里不给网(审查轮 REVIEW_PROFILE、访客)⇒ 线程上把联网搜索关掉,不沿用主人 codex 配置里的默认(评审 #460)。
+ * 沙箱网络不在这里设:不给网的档都是 read-only 沙箱,shell 本来就上不了网;而且会话不带 networkAccessEnabled
+ * 是 e2e 假 codex 认出「这不是 cheapEval」的那根钉。
+ */
+export function codexNetworkOpts(tp: TierProfile): { webSearchEnabled?: false; webSearchMode?: 'disabled' } {
+  return tp.deny.has('network') ? { webSearchEnabled: false, webSearchMode: 'disabled' } : {}
+}
+
 export interface CodexTierSdkOpts {
   sandboxMode: 'read-only' | 'workspace-write' | 'danger-full-access'
   approvalPolicy: 'untrusted' | 'on-request' | 'never'
@@ -287,6 +296,7 @@ export function createCodexAgentProvider(opts: CodexAgentProviderOptions = {}): 
         skipGitRepoCheck: true,
         sandboxMode: tierOpts.sandboxMode,
         approvalPolicy: tierOpts.approvalPolicy,
+        ...codexNetworkOpts(spawnOpts.tierProfile),
         ...(model ? { model } : {}),
       } as const
 

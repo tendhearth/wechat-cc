@@ -2104,6 +2104,14 @@ describe('runJobTurn', () => {
     expect(await buildTickBodies(m.deps).runJobTurn({ chatId: 'owner', jobId: 'r1', text: 'x', nowIso: 't', provider: 'codex' })).toBe('skipped:executor')
     expect(m.acquire).not.toHaveBeenCalled()
   })
+  it('profile:review ⇒ the session gets REVIEW_PROFILE (no network) instead of JOB_PROFILE (评审 #460)', async () => {
+    const s = setupDeps({ defaultChatId: 'owner', inFlight: false })
+    ;(s.deps.boot as unknown as { registry: Record<string, unknown> }).registry = { getCheapEval: () => null, has: (id: string) => id === 'claude' }
+    job(s, ok)
+    const { REVIEW_PROFILE } = await import('../../core/user-tier')
+    await buildTickBodies(s.deps).runJobTurn({ chatId: 'owner', jobId: 'r2', text: 'x', nowIso: 't', provider: 'claude', profile: 'review' })
+    expect(s.acquire).toHaveBeenCalledWith(expect.objectContaining({ tierProfile: REVIEW_PROFILE, permissionMode: 'strict' }))
+  })
   it('owner mid-conversation ⇒ skipped:busy, no session', async () => {
     const s = setupDeps({ defaultChatId: 'owner', inFlight: true })
     job(s, ok)

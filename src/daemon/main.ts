@@ -1134,7 +1134,7 @@ export async function bootDaemon(opts: BootDaemonOpts): Promise<DaemonHandle> {
     reviewRef.current = (r) => {
       const owner = briefOwner()
       if (!owner || (r.providerId !== 'claude' && r.providerId !== 'codex')) return false
-      void wired.ticks.runJobTurn({ chatId: owner, jobId: `review-${r.taskId}`, text: '', nowIso: new Date().toISOString(), provider: r.providerId, buildText: (style) => buildReviewText(r.material, style) })
+      void wired.ticks.runJobTurn({ chatId: owner, jobId: `review-${r.taskId}`, text: '', nowIso: new Date().toISOString(), provider: r.providerId, profile: 'review', buildText: (style) => buildReviewText(r.material, style) })
         .then(res => {
           log('REVIEW', `task=${r.taskId} by=${r.providerId} → ${res}`)
           // 答应了「看完发给你」:没发成就老实说一句,不让主人干等(规矩:CC 不撒谎)
