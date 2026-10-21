@@ -5,7 +5,7 @@
  * 真正需要晚绑定的只有 lifecycle.pump → ctx.actions.execute(那头由 lifecycle 走 Ref)。
  */
 import {isIssueIntent} from '../issue-intake'
-import { ensureWorktree, planWorktree, repoRootOf } from '../worktree-workspaces'
+import { ensureWorktree, planWorktree, repoRootOrFail } from '../worktree-workspaces'
 import { pinnedScriptSha } from '../worktree-scripts'
 import { createHash, randomUUID } from 'node:crypto'
 import type { AgentEvent, AgentSession, AgentExecutionChoice } from '../../agent-provider'
@@ -568,7 +568,7 @@ export function makeExecuteDomain(ctx:ServiceCtx, domains:ExecuteDomains) {
     if(!providerId)throw Error('unavailable_provider')
     // 独立工作区:编号从请求编号派生,重试 ⇒ 同一个工作区同一个分支(建好了没接下也不会多建一个)。
     const tree=input.isolation?(()=>{
-      const repoRoot=repoRootOf(project.path)
+      const repoRoot=repoRootOrFail(project.path)
       if(!repoRoot)throw Error('worktree_not_git')
       const plan=planWorktree({stateDir:ctx.stateDir,projectId:project.id,projectPath:project.path,repoRoot,id:createHash('sha256').update(id).digest('hex').slice(0,8),...(input.base!==undefined?{base:input.base}:{})})
       return {plan,path:ensureWorktree(plan)}

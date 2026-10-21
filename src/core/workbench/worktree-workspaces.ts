@@ -38,7 +38,10 @@ export function git(cwd: string, args: string[], opts: { ownerConfig?: boolean; 
     return execFileSync('git', [...SAFE, ...args], { cwd, env: gitEnv(opts.ownerConfig), encoding: 'utf8', timeout: TIMEOUT_MS, maxBuffer: 16 * 1024 * 1024, ...(opts.input !== undefined ? { input: opts.input } : { stdio: ['ignore', 'pipe', 'pipe'] }) }).trim()
   } catch (error) {
     const stderr = String((error as { stderr?: unknown }).stderr ?? '').trim().split('\n').slice(0, 3).join(' | ')
-    throw Object.assign(new Error('worktree_git_failed'), { detail: stderr })
+    // exitStatus:git 自己退出的码(128 = 不是仓库 / 不让用);超时被杀、起不来时没有 —— repoRootOrFail 靠它分「是不是仓库」和「这次没问成」
+    const status = (error as { status?: unknown }).status
+    const timedOut = (error as { code?: unknown }).code === 'ETIMEDOUT' || (error as { signal?: unknown }).signal === 'SIGTERM'
+    throw Object.assign(new Error('worktree_git_failed'), { detail: stderr, ...(typeof status === 'number' ? { exitStatus: status } : {}), ...(timedOut ? { timedOut: true } : {}) })
   }
 }
 
@@ -48,6 +51,27 @@ export function repoRootOf(projectPath: string): string | null {
     const top = git(projectPath, ['rev-parse', '--show-toplevel'])
     return top ? real(top) : null
   } catch { return null }
+}
+/**
+ * 同上,但分清「git 说不是仓库」和「这次没问成」(10-21):机器很忙时 rev-parse 撞上超时,repoRootOf 会把它当成不是仓库,
+ * 主人就收到一句假话「这个项目不是 Git 仓库」。这里:目录不在 / git 自己退出(128 等)⇒ null;超时 ⇒ 直接抛 worktree_git_failed
+ * (「git 操作没成功」)—— git() 是同步的,再等一轮 30 秒等于把整个 daemon 再堵 30 秒(#490 评审);起不来(EAGAIN / EMFILE 这类,
+ * 几乎是瞬时的)⇒ 再问一次,还不行再抛。工作台建独立工作区用它;终端的权限闸门仍用 repoRootOf(读不到就当项目外,偏保守)。
+ */
+export function repoRootOrFail(projectPath: string): string | null {
+  if (!existsSync(projectPath)) return null
+  let last: unknown
+  for (let attempt = 0; attempt < 2; attempt++) {
+    try {
+      const top = git(projectPath, ['rev-parse', '--show-toplevel'])
+      return top ? real(top) : null
+    } catch (error) {
+      if (typeof (error as { exitStatus?: unknown }).exitStatus === 'number') return null
+      if ((error as { timedOut?: unknown }).timedOut) throw error
+      last = error
+    }
+  }
+  throw last
 }
 /**
  * 同一个目录的唯一写法:git 在 Windows 上回 `C:/…` 正斜杠 + 长名,临时目录可能是 8.3 短名(`RUNNER~1`)——
