@@ -10,8 +10,7 @@
  *   /mode                  → show current effective mode + registered providers
  *
  * Reserved for later (parsed but rejected with "not yet implemented"):
- *   /both                  → parallel (P3)
- *   /chat                  → chatroom (P5)
+ *   /both /parallel /chat  → 告诉主人「多模型讨论在桌面上开」(10-21 起微信不再开这两种模式)
  *   /cc + codex            → primary_tool with claude primary (P4)
  *   /codex + cc            → primary_tool with codex primary (P4)
  *
@@ -132,6 +131,9 @@ function editDistance(a: string, b: string): number {
   return dp[b.length]!
 }
 
+/** 微信里发 /both /chat 时的回话(主人 10-21 定:多 agent 交给软件)。 */
+export const MULTI_MODEL_ON_DESKTOP = '多模型讨论(几家一起回 / 圆桌)现在在桌面上开:桌面「对话」里切换模式。微信这边用 /cc /codex 这些单家模式,或 /cc + codex 让一家主答、另一家当工具。'
+
 export function makeModeCommands(deps: ModeCommandsDeps): ModeCommands {
   // 斜杠词表只有一份(core/provider-policy 的 PROVIDER_SLASH):/cc ⇒ claude、/api ⇒ openai(「主人自己的 API」,
   // 不绑哪家厂商;openai 没注册时下面 registry.has() 那道回「未注册」)…… 拒绝语报词也读同一张表。
@@ -155,41 +157,6 @@ export function makeModeCommands(deps: ModeCommandsDeps): ModeCommands {
     return capabilitiesFor(primary).defaultPeer ?? null
   }
 
-  /**
-   * Parse a token list (space-separated provider ids) into a validated
-   * ProviderId[] or an error message describing why it's invalid. Used
-   * by /chat <p...> and /parallel <p...>.
-   */
-  function parseParticipantsTail(tail: string, modeName: string): { ok: true; participants: ProviderId[] } | { ok: false; error: string } {
-    const tokens = tail.split(/\s+/).filter(t => t.length > 0)
-    if (tokens.length < 2) {
-      return { ok: false, error: `/${modeName} 需要 ≥2 个 participants (你写的: ${tokens.length}). 例：/${modeName} ${deps.registry.list().slice(0, 2).join(' ')}` }
-    }
-    const unknown = tokens.filter(t => !deps.registry.has(t))
-    if (unknown.length > 0) {
-      return { ok: false, error: `未知的 provider: ${unknown.join(', ')}. 已注册: ${deps.registry.list().join(', ')}` }
-    }
-    // agy final-review CRITICAL 1: agy is registered (passes the unknown
-    // check above) but rides a tier-C SHARED 'trusted' MCP token (spec §3)
-    // — putting it in parallel/chatroom would let a guest chat's turn
-    // reach that trusted-token tool channel, and spec §7 declares
-    // parallel/chatroom participation an explicit non-goal. Reject here,
-    // before setMode is ever called, so the user gets copy instead of the
-    // coordinator's thrown-error fallback.
-    if (tokens.some(t => t.toLowerCase() === 'agy')) {
-      return { ok: false, error: 'agy 不能加入 both/chat 模式（共享工具通道），可用 /agy 单独使用（仅管理员/信任聊天）。' }
-    }
-    // Deduplicate while preserving order (operator typed the same provider twice → silent dedupe).
-    const seen = new Set<string>()
-    const dedup = tokens.filter(t => seen.has(t) ? false : (seen.add(t), true))
-    // Re-check the minimum AFTER dedup: `/chat claude claude` is 2 raw tokens but
-    // 1 distinct provider, which would otherwise pass the raw-count check above
-    // and silently collapse to a single-participant (solo-degraded) chatroom.
-    if (dedup.length < 2) {
-      return { ok: false, error: `/${modeName} 需要 ≥2 个不同的 participants（去重后只剩 ${dedup.length} 个）. 例：/${modeName} ${deps.registry.list().slice(0, 2).join(' ')}` }
-    }
-    return { ok: true, participants: dedup }
-  }
 
   function describeMode(m: Mode): string {
     switch (m.kind) {
@@ -311,8 +278,7 @@ export function makeModeCommands(deps: ModeCommandsDeps): ModeCommands {
           '/agy 是订阅 CLI:所有对话共用一把钥匙,guest 不可用。/cursor 同为订阅 CLI,按对话分权限,但它在工作区内的文件编辑不经过权限卡,guest 同样不可用。',
           '/api list — 看网关上有哪些模型;/api <别名|模型> 切换(只对本对话);/api alias ds=DeepSeek 起短名',
           '/cc + codex — Claude 主答，Codex 当工具 (primary_tool)',
-          '/both [p1 p2 …] — 并行回复（裸=全部 provider）',
-          '/chat [p1 p2 …] — 圆桌讨论',
+          '多模型讨论(并行 / 圆桌)在桌面上开',
           '/solo /stop /mode — 回到默认 / 退出 / 显示当前模式',
           '/set — 本对话偏好(拆分回复、主动关心档位、表情包、每日打猎);/set cheap 后台评估用哪家、/set providers 非管理员能用哪些(管理员)',
           '改配置直接说就行 — 例如"换成 gemini flash"、"把知识内核打开"(管理员)',
@@ -736,77 +702,17 @@ export function makeModeCommands(deps: ModeCommandsDeps): ModeCommands {
           ...Object.entries(deps.providerNotes?.() ?? {}).map(([id, note]) => `${id}: ${note}`),
           '',
           // Provider checklist: keep this list in sync with /help's mode-switch line above (~:174).
-          '可用命令: /cc /codex /cursor /api /gemini /agy /both [p...] /chat [p...] /cc + codex /codex + cc /solo /stop /mode',
+          '可用命令: /cc /codex /cursor /api /gemini /agy /cc + codex /codex + cc /solo /stop /mode(多模型讨论在桌面上开)',
         ]
         await reply(msg.chatId, lines.join('\n'))
         return true
       }
 
-      // /both — parallel mode (RFC 03 P3). Bare form uses all registered
-      // providers; explicit form (/both <p1> <p2> ...) takes participants.
-      // /parallel is a synonym for /both.
-      if (slashWord.toLowerCase() === 'both' || slashWord.toLowerCase() === 'parallel') {
-        if (tail === '') {
-          try {
-            deps.coordinator.setMode(msg.chatId, { kind: 'parallel' })
-          } catch (err) {
-            await reply(msg.chatId, `/${slashWord} 启用失败: ${err instanceof Error ? err.message : String(err)}`)
-            return true
-          }
-          await reply(msg.chatId, '并行模式开启。下条消息开始 Claude 和 Codex 同时回复（每条会带 [Claude] / [Codex] 前缀）。')
-          deps.log('MODE_CMD', `chat=${msg.chatId} → parallel (no explicit participants)`)
-          return true
-        }
-        const parsed = parseParticipantsTail(tail, slashWord.toLowerCase())
-        if (!parsed.ok) {
-          await reply(msg.chatId, parsed.error)
-          return true
-        }
-        try {
-          deps.coordinator.setMode(msg.chatId, { kind: 'parallel', participants: parsed.participants })
-        } catch (err) {
-          await reply(msg.chatId, `/${slashWord} 启用失败: ${err instanceof Error ? err.message : String(err)}`)
-          return true
-        }
-        await reply(msg.chatId, `并行模式开启 (${parsed.participants.join(' + ')})。下条消息开始同时回复。`)
-        deps.log('MODE_CMD', `chat=${msg.chatId} → parallel participants=${parsed.participants.join(',')}`)
-        return true
-      }
-
-      // /chat — chatroom mode (v0.5.9: persistent session, moderator-driven).
-      // Bare form uses all registered providers; explicit form takes participants.
-      if (slashWord.toLowerCase() === 'chat') {
-        if (tail === '') {
-          try {
-            deps.coordinator.setMode(msg.chatId, { kind: 'chatroom' })
-          } catch (err) {
-            await reply(msg.chatId, `/chat 启用失败: ${err instanceof Error ? err.message : String(err)}`)
-            return true
-          }
-          const registeredList = deps.registry.list()
-          const registeredDisplay = registeredList
-            .map(id => deps.registry.get(id)?.opts.displayName ?? id)
-            .join(' + ')
-          await reply(
-            msg.chatId,
-            `聊天室开启。${registeredDisplay} 都"在场"了——后续消息会按上下文挑发言人。每条带 prefix。切走（/cc /codex /solo）会清空聊天室上下文。`,
-          )
-          deps.log('MODE_CMD', `chat=${msg.chatId} → chatroom (no explicit participants)`)
-          return true
-        }
-        const parsed = parseParticipantsTail(tail, 'chat')
-        if (!parsed.ok) {
-          await reply(msg.chatId, parsed.error)
-          return true
-        }
-        try {
-          deps.coordinator.setMode(msg.chatId, { kind: 'chatroom', participants: parsed.participants })
-        } catch (err) {
-          await reply(msg.chatId, `/chat 启用失败: ${err instanceof Error ? err.message : String(err)}`)
-          return true
-        }
-        await reply(msg.chatId, `聊天室开启 (${parsed.participants.join(', ')})。每条回复带 prefix；切走会清空上下文。`)
-        deps.log('MODE_CMD', `chat=${msg.chatId} → chatroom participants=${parsed.participants.join(',')}`)
+      // /both /parallel /chat:多模型讨论(并行 / 圆桌)不在微信里开 —— 主人 10-21 定:微信是聊天和简单做事,多 agent 交给软件。
+      // 已经处在这两种模式里的对话照常;桌面的对话模式里照旧能选(set-mode 路由,协调器自己也守着 agy 不能加入)。
+      if (['both', 'parallel', 'chat'].includes(slashWord.toLowerCase())) {
+        await reply(msg.chatId, MULTI_MODEL_ON_DESKTOP)
+        deps.log('MODE_CMD', `chat=${msg.chatId} /${slashWord.toLowerCase()} → told to use the desktop`)
         return true
       }
 

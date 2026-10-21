@@ -123,9 +123,11 @@ describe('buildSystemPrompt', () => {
     const p = buildSystemPrompt(defaults())
     // Core per-chat mode switches are present (compact form since prompt-builder
     // update; full command list is in /help, not the system prompt)
-    for (const cmd of ['/cc', '/codex', '/both', '/chat', '/solo', '/stop']) {
+    for (const cmd of ['/cc', '/codex', '/solo', '/stop']) {
       expect(p, `missing slash command in mode awareness: ${cmd}`).toContain(cmd)
     }
+    // 10-21 起并行 / 圆桌只在桌面上开:提示词要告诉 CC 别叫用户在微信里打 /both /chat(否则它会推荐一个已经不开的命令)
+    expect(p).toContain('只在桌面上开')
     // primary_tool pattern present (compact /<p> + <peer> form)
     expect(p).toContain('/<p> + <peer>')
     // Also tells the agent that chatroom envelopes will explain themselves

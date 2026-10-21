@@ -123,7 +123,7 @@ cd ~/.local/share/wechat-cc && bun install
 | **双向聊** | 微信进,电脑上的 Claude Code / Codex / Cursor 出——agent 跑在你自己的机器、你自己的仓库里 |
 | **`share_page`** | 长内容变成一个网页,手机上也读得下去 |
 | **多项目切换** | 一个 bot 管多个仓库(桌面上登记文件夹,或说「切到 <alias>」) |
-| **多 agent** | `/cc` `/codex` `/cursor` `/api` `/agy` `/both` `/chat`——几家大脑在同一个对话里,还能开一场匿名辩论 |
+| **多 agent** | `/cc` `/codex` `/cursor` `/api` `/agy` 选哪家大脑;几家一起回、开一场匿名辩论,在桌面上开 |
 | **Companion** | 会反过来找你的 Claude;记忆存在 daemon 里,换哪家大脑都不丢 |
 | **双面镜子** | dashboard:你做过什么,以及 CC 注意到了什么 |
 | **Hearth 集成** | 在手机上做 markdown 笔记库的治理 |
@@ -159,7 +159,7 @@ cd ~/.local/share/wechat-cc && bun install
 | 命令 | 效果 |
 |:---|:---|
 | `/help` `/帮助` · `/whoami` | 按你的档位列命令 · 你是谁 + 当前模式 |
-| `/cc` `/codex` `/cursor` `/api` `/agy` · `/both` · `/chat` | 哪家大脑回答,或全部一起 |
+| `/cc` `/codex` `/cursor` `/api` `/agy` | 哪家大脑回答(几家一起:在桌面上开) |
 | `/set` | 图形设置面板(不用背命令) |
 | `/health` · `/reset` | 大脑通不通 · 本对话从头来 (admin) |
 | `任务 …` | 手机上管工作台任务(见 [docs/cc-workbench.md](docs/cc-workbench.md)) |

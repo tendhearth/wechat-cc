@@ -46,6 +46,8 @@ nothing is eagerly copied across projects.
 
 ## 4 · Multi-agent (`/cc` `/codex` `/both` `/chat`) — Claude × Codex on the same chat
 
+> **2026-10-21:** parallel (`/both`) and chatroom (`/chat`) are no longer started from WeChat — typing them there replies "start multi-model discussion on the desktop". Pick them in the desktop conversation's mode selector; chats already in these modes keep working. WeChat keeps the single-brain modes and `/cc + codex`. The rest of this section describes how the two modes behave once on.
+
 Pick the **conversation mode** per chat with a slash command. Each chat
 remembers its choice across daemon restarts (`conversations.json`).
 

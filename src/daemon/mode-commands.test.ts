@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest'
-import { makeModeCommands } from './mode-commands'
+import { MULTI_MODEL_ON_DESKTOP, makeModeCommands } from './mode-commands'
 import type { Mode, ProviderId } from '../core/conversation'
 import type { InboundMsg } from '../core/prompt-format'
 import type { UserTier } from '../core/user-tier'
@@ -238,89 +238,15 @@ describe('makeModeCommands', () => {
     expect(text).toContain('默认: codex')      // default
   })
 
-  it('/both switches to parallel mode (RFC 03 P3)', async () => {
-    const { cmds, set, sentMessages } = setup({ registered: ['claude', 'codex'] })
-    const consumed = await cmds.handle(inbound('/both'))
-    expect(consumed).toBe(true)
-    expect(set).toHaveBeenCalledWith('chat-1', { kind: 'parallel' })
-    expect(sentMessages[0]?.[1]).toContain('并行模式开启')
-    expect(sentMessages[0]?.[1]).toContain('[Claude]')
-    expect(sentMessages[0]?.[1]).toContain('[Codex]')
-  })
+  // ── /both /parallel /chat:10-21 起不在微信里开(主人定:多 agent 交给软件) ──
 
-  it('/both surfaces validation error when one provider missing', async () => {
-    // Mock setMode to throw — simulates coordinator's validateMode rejecting
-    const sentMessages: Array<[string, string]> = []
-    const sendMessage = vi.fn(async (chatId: string, text: string) => {
-      sentMessages.push([chatId, text]); return { msgId: 'm' }
-    })
-    const cmds = makeModeCommands({
-      coordinator: {
-        getMode: () => ({ kind: 'solo', provider: 'claude' }),
-        setMode: () => { throw new Error("mode 'parallel' requires providers claude, codex; missing: codex") },
-        cancel: () => false,
-      },
-      registry: {
-        has: (id: string) => id === 'claude',
-        get: () => ({ provider: {} as never, opts: { displayName: 'Claude', canResume: () => true } }),
-        list: () => ['claude'],
-      },
-      defaultProviderId: 'claude',
-      agentConfig: { provider: 'claude' as const, dangerouslySkipPermissions: true, autoStart: true, closeStopsDaemon: false },
-      sendMessage: sendMessage as unknown as Parameters<typeof makeModeCommands>[0]['sendMessage'],
-      setUserName: async () => {},
-      getUserName: () => null,
-      chatPrefs: { get: () => ({}), set: (_c: string, p: { split?: boolean }) => p },
-      log: () => {},
-      resolveTier: () => 'admin' as const,
-    })
-    await cmds.handle(inbound('/both'))
-    expect(sentMessages[0]?.[1]).toContain('启用失败')
-    expect(sentMessages[0]?.[1]).toContain('missing: codex')
-  })
-
-  // ── /chat — chatroom mode (RFC 03 P5) ─────────────────────────────────
-
-  it('/chat switches to chatroom mode', async () => {
-    const { cmds, set, sentMessages } = setup({ registered: ['claude', 'codex'] })
-    const consumed = await cmds.handle(inbound('/chat'))
-    expect(consumed).toBe(true)
-    expect(set).toHaveBeenCalledWith('chat-1', { kind: 'chatroom' })
-    // v0.5.10 — confirmation describes persistent chatroom (no longer
-    // mentions 4-round limit / @-tag protocol; that was v0.5.7-era).
-    expect(sentMessages[0]?.[1]).toContain('聊天室')
-    expect(sentMessages[0]?.[1]).toContain('Claude')
-    expect(sentMessages[0]?.[1]).toContain('Codex')
-  })
-
-  it('/chat surfaces validation error when one provider missing', async () => {
-    const sentMessages: Array<[string, string]> = []
-    const sendMessage = vi.fn(async (chatId: string, text: string) => {
-      sentMessages.push([chatId, text]); return { msgId: 'm' }
-    })
-    const cmds = makeModeCommands({
-      coordinator: {
-        getMode: () => ({ kind: 'solo', provider: 'claude' }),
-        setMode: () => { throw new Error("mode 'chatroom' requires providers claude, codex; missing: codex") },
-        cancel: () => false,
-      },
-      registry: {
-        has: (id: string) => id === 'claude',
-        get: () => ({ provider: {} as never, opts: { displayName: 'Claude', canResume: () => true } }),
-        list: () => ['claude'],
-      },
-      defaultProviderId: 'claude',
-      agentConfig: { provider: 'claude' as const, dangerouslySkipPermissions: true, autoStart: true, closeStopsDaemon: false },
-      sendMessage: sendMessage as unknown as Parameters<typeof makeModeCommands>[0]['sendMessage'],
-      setUserName: async () => {},
-      getUserName: () => null,
-      chatPrefs: { get: () => ({}), set: (_c: string, p: { split?: boolean }) => p },
-      log: () => {},
-      resolveTier: () => 'admin' as const,
-    })
-    await cmds.handle(inbound('/chat'))
-    expect(sentMessages[0]?.[1]).toContain('启用失败')
-    expect(sentMessages[0]?.[1]).toContain('missing: codex')
+  it('/both /parallel /chat — with or without participants — are consumed with the "open it on the desktop" copy, and never switch the mode', async () => {
+    for (const text of ['/both', '/parallel', '/chat', '/chat claude codex', '/both claude cursor', '/CHAT']) {
+      const { cmds, set, sentMessages } = setup({ registered: ['claude', 'codex', 'cursor'] })
+      expect(await cmds.handle(inbound(text))).toBe(true)
+      expect(set).not.toHaveBeenCalled()
+      expect(sentMessages[0]?.[1]).toBe(MULTI_MODEL_ON_DESKTOP)
+    }
   })
 
   // ── /stop — exit any mode, revert to default ──────────────────────────
@@ -398,19 +324,15 @@ describe('makeModeCommands', () => {
     expect(sentMessages[0]?.[1]).not.toContain('已中止')
   })
 
-  it('/mode lists /chat and /stop as available now', async () => {
+  it('/mode lists /stop and /cc + codex, and says multi-model discussion is on the desktop (no /both /chat to type)', async () => {
     const { cmds, sentMessages } = setup()
     await cmds.handle(inbound('/mode'))
-    expect(sentMessages[0]?.[1]).toContain('/chat')
-    expect(sentMessages[0]?.[1]).toContain('/stop')
-  })
-
-  it('/mode lists /both and /cc + codex as available', async () => {
-    const { cmds, sentMessages } = setup()
-    await cmds.handle(inbound('/mode'))
-    expect(sentMessages[0]?.[1]).toContain('/both')
-    expect(sentMessages[0]?.[1]).toContain('/cc + codex')
-    expect(sentMessages[0]?.[1]).toContain('/codex + cc')
+    const text = sentMessages[0]?.[1] ?? ''
+    expect(text).toContain('/stop')
+    expect(text).toContain('/cc + codex')
+    expect(text).toContain('/codex + cc')
+    expect(text).toContain('多模型讨论在桌面上开')
+    expect(text).not.toMatch(/\/both|\/chat\b/)
   })
 
   // ── /cc + codex / /codex + cc — primary_tool (RFC 03 P4) ─────────────
@@ -847,119 +769,6 @@ describe('makeModeCommands', () => {
     // output plus the appended admin section.
     expect(adminText.startsWith(trustedText)).toBe(true)
     expect(adminText.slice(trustedText.length)).toContain('管理员命令')
-  })
-
-  describe('N-way grammar', () => {
-    it('/chat claude codex cursor sets chatroom with 3 participants', async () => {
-      const { cmds, set, sentMessages } = setup({ registered: ['claude', 'codex', 'cursor'] })
-      const consumed = await cmds.handle(inbound('/chat claude codex cursor'))
-      expect(consumed).toBe(true)
-      expect(set).toHaveBeenCalledWith('chat-1', {
-        kind: 'chatroom', participants: ['claude', 'codex', 'cursor'],
-      })
-      expect(sentMessages[0]?.[1]).toContain('claude')
-      expect(sentMessages[0]?.[1]).toContain('cursor')
-    })
-
-    it('/chat claude codex sets explicit 2-way chatroom', async () => {
-      const { cmds, set } = setup({ registered: ['claude', 'codex', 'cursor'] })
-      await cmds.handle(inbound('/chat claude codex'))
-      expect(set).toHaveBeenCalledWith('chat-1', {
-        kind: 'chatroom', participants: ['claude', 'codex'],
-      })
-    })
-
-    it('/parallel claude cursor sets parallel with explicit participants', async () => {
-      const { cmds, set } = setup({ registered: ['claude', 'codex', 'cursor'] })
-      await cmds.handle(inbound('/parallel claude cursor'))
-      expect(set).toHaveBeenCalledWith('chat-1', {
-        kind: 'parallel', participants: ['claude', 'cursor'],
-      })
-    })
-
-    it('/both claude cursor also sets parallel with explicit participants (alias)', async () => {
-      const { cmds, set } = setup({ registered: ['claude', 'codex', 'cursor'] })
-      await cmds.handle(inbound('/both claude cursor'))
-      expect(set).toHaveBeenCalledWith('chat-1', {
-        kind: 'parallel', participants: ['claude', 'cursor'],
-      })
-    })
-
-    it('/chat with no args remains bare chatroom (no participants property)', async () => {
-      const { cmds, set } = setup({ registered: ['claude', 'codex', 'cursor'] })
-      await cmds.handle(inbound('/chat'))
-      expect(set).toHaveBeenCalledWith('chat-1', { kind: 'chatroom' })
-    })
-
-    it('/both with no args remains bare parallel (no participants property)', async () => {
-      const { cmds, set } = setup({ registered: ['claude', 'codex', 'cursor'] })
-      await cmds.handle(inbound('/both'))
-      expect(set).toHaveBeenCalledWith('chat-1', { kind: 'parallel' })
-    })
-
-    it('/chat with single arg is rejected (≥2 required) — does NOT call setMode', async () => {
-      const { cmds, set, sentMessages } = setup({ registered: ['claude', 'codex', 'cursor'] })
-      await cmds.handle(inbound('/chat claude'))
-      expect(set).not.toHaveBeenCalled()
-      expect(sentMessages[0]?.[1]).toMatch(/≥2|至少|need.*2/)
-    })
-
-    it('/chat with the same provider twice is rejected (dedupes below the ≥2 minimum)', async () => {
-      // Regression: the ≥2 check ran on the RAW token count, but dedup happened
-      // after — so `/chat claude claude` (2 tokens, 1 distinct) passed the check
-      // then collapsed to a single-participant chatroom, violating the advertised
-      // ≥2 contract (it silently degraded to solo).
-      const { cmds, set, sentMessages } = setup({ registered: ['claude', 'codex', 'cursor'] })
-      await cmds.handle(inbound('/chat claude claude'))
-      expect(set).not.toHaveBeenCalled()
-      expect(sentMessages[0]?.[1]).toMatch(/≥2|至少|不同|distinct/)
-    })
-
-    it('/chat with unknown provider is rejected with helpful message', async () => {
-      const { cmds, set, sentMessages } = setup({ registered: ['claude', 'codex', 'cursor'] })
-      await cmds.handle(inbound('/chat claude gemini'))
-      expect(set).not.toHaveBeenCalled()
-      expect(sentMessages[0]?.[1]).toContain('gemini')
-      // Registered list is surfaced.
-      expect(sentMessages[0]?.[1]).toContain('claude')
-    })
-
-    it('/parallel with single arg is rejected (≥2 required)', async () => {
-      const { cmds, set, sentMessages } = setup({ registered: ['claude', 'codex', 'cursor'] })
-      await cmds.handle(inbound('/parallel claude'))
-      expect(set).not.toHaveBeenCalled()
-      expect(sentMessages[0]?.[1]).toMatch(/≥2|至少|need.*2/)
-    })
-
-    it('/chat dedupes repeated tokens silently', async () => {
-      const { cmds, set } = setup({ registered: ['claude', 'codex', 'cursor'] })
-      await cmds.handle(inbound('/chat claude claude codex'))
-      expect(set).toHaveBeenCalledWith('chat-1', {
-        kind: 'chatroom', participants: ['claude', 'codex'],
-      })
-    })
-
-    // ── agy final-review CRITICAL 1 — agy excluded from parallel/chatroom
-    // (shared tier-C 'trusted' MCP token, spec §7 non-goal). Must be
-    // rejected with user-facing copy BEFORE setMode is ever called, from
-    // ANY chat (mode commands are deliberately ungated — this is not the
-    // /agy admin/trusted gate, it's a structural exclusion).
-
-    it('/both claude agy is rejected — agy cannot join parallel (shared-token channel)', async () => {
-      const { cmds, set, sentMessages } = setup({ registered: ['claude', 'codex', 'agy'], tier: 'admin' })
-      const consumed = await cmds.handle(inbound('/both claude agy'))
-      expect(consumed).toBe(true)
-      expect(set).not.toHaveBeenCalled()
-      expect(sentMessages[0]?.[1]).toBe('agy 不能加入 both/chat 模式（共享工具通道），可用 /agy 单独使用（仅管理员/信任聊天）。')
-    })
-
-    it('/chat codex agy is rejected — agy cannot join chatroom (shared-token channel)', async () => {
-      const { cmds, set, sentMessages } = setup({ registered: ['claude', 'codex', 'agy'], tier: 'admin' })
-      const consumed = await cmds.handle(inbound('/chat codex agy'))
-      expect(consumed).toBe(true)
-      expect(set).not.toHaveBeenCalled()
-      expect(sentMessages[0]?.[1]).toBe('agy 不能加入 both/chat 模式（共享工具通道），可用 /agy 单独使用（仅管理员/信任聊天）。')
-    })
   })
 
   // ── /set — per-chat preferences (settings layer seed) ────────────────
