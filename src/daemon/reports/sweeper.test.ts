@@ -2,7 +2,9 @@ import {afterEach, beforeEach, describe, expect, it} from 'vitest'
 import {openDb, type Db} from '../../lib/db'
 import {makeMatterStore, type MatterStore} from '../../core/matters/store'
 import {makeReportOutboxStore, type ReportOutboxStore} from './outbox'
-import {runReportSweep, HELD_OVERRIDE_MS} from './sweeper'
+import {runReportSweep, sendReportVia, HELD_OVERRIDE_MS} from './sweeper'
+import {makeSpeechPolicy} from '../speech/policy'
+import type {ProactiveOutbound} from '../companion/proactive-channel'
 import {RETRY_WINDOW_MS} from '../reminders/sweeper'
 
 /**
@@ -47,6 +49,28 @@ describe('runReportSweep', () => {
     matters.bind(TASK, 'wechat', 'not-the-chat') // 任务自己的绑定不该被用来找 chat——投递器要看 origin 的绑定
   })
   afterEach(() => db.close())
+
+  it('**门说推后(免打扰 / 两条路都送不到)⇒ 留在 outbox,不算一次尝试、不退避、不写 first_fail_at;恢复后只送达一次**(SpeechPolicy 第 2 步,9d 的条件)', async () => {
+    matters.bind(CHAT, 'wechat', 'user-1')
+    await outbox.insert({matterId: TASK, originMatterId: CHAT, originMessageId: 'msg-7', text: '首页调整 · 已答复。'}, 1_000)
+    const sent: string[] = []
+    let reachable = false
+    const send = async (_c: string, t: string) => {
+      if (!reachable) return {ok: false, deferred: 'undeliverable'}
+      sent.push(t); return {ok: true}
+    }
+    for (const nowMs of [1_000, 2_000, 3_000]) {
+      const r = await runReportSweep({store: outbox, matters, send, nowMs, log: (t, l) => logs.push([t, l])})
+      expect(r).toEqual({delivered: 0, retried: 0, dropped: 0, deferred: 0, held: 1})
+    }
+    const [row] = await outbox.listDue(3_000)
+    expect(row).toMatchObject({status: 'pending', attempts: 0, firstFailAt: null})
+    reachable = true
+    expect(await runReportSweep({store: outbox, matters, send, nowMs: 4_000, log: (t, l) => logs.push([t, l])})).toEqual({delivered: 1, retried: 0, dropped: 0, deferred: 0, held: 0})
+    expect(await runReportSweep({store: outbox, matters, send, nowMs: 5_000, log: (t, l) => logs.push([t, l])})).toEqual({delivered: 0, retried: 0, dropped: 0, deferred: 0, held: 0})
+    expect(sent).toEqual(['首页调整 · 已答复。'])
+    expect(logs.some(([, l]) => l.includes('deferred by speech policy: undeliverable'))).toBe(true)
+  })
 
   it('按 origin_matter_id 的 wechat 绑定发送成功 → markSent', async () => {
     matters.bind(CHAT, 'wechat', 'user-1')
@@ -295,5 +319,27 @@ describe('runReportSweep', () => {
     expect(summary).toBeDefined()
     expect(summary![1]).toContain('held-override=1')
     expect(summary![1]).toContain('held=0')
+  })
+})
+
+describe('sendReportVia —— sweeper 的 send 接到 SpeechPolicy 上', () => {
+  const speechWith = (decision: 'allow' | 'quiet' | 'undeliverable', wechat: {error?: string} = {}) => {
+    const outbound: ProactiveOutbound = {
+      appDeliverable: () => false, canDeliver: () => decision !== 'undeliverable', sendOnce: async () => ({ok: true}),
+      open: () => ({ sendText: async () => ({msgId: 'm', ...wechat}), channel: () => 'wechat', textOnly: () => false, sendAttachment: async () => false, sendSticker: async () => false, finish: () => {} }),
+    }
+    return makeSpeechPolicy({care: () => 'low', quietEndsAt: () => (decision === 'quiet' ? Date.now() + 60_000 : null), outbound, log: () => {}})
+  }
+  it('放行 ⇒ 送成功 {ok:true};送失败把 error 原样交回(-2 那条分路靠它)', async () => {
+    expect(await sendReportVia(speechWith('allow'))('c', 't')).toEqual({ok: true})
+    expect(await sendReportVia(speechWith('allow', {error: 'errcode=-2'}))('c', 't')).toEqual({ok: false, error: 'errcode=-2'})
+  })
+  it('免打扰 / 两条都送不到 ⇒ deferred(不是 error,sweeper 不算失败)', async () => {
+    expect(await sendReportVia(speechWith('quiet'))('c', 't')).toEqual({ok: false, deferred: 'quiet_hours'})
+    expect(await sendReportVia(speechWith('undeliverable'))('c', 't')).toEqual({ok: false, deferred: 'undeliverable'})
+  })
+  it('即使主人说了别烦我,回报也照发(它是主人交办的事的结果)', async () => {
+    const outbound: ProactiveOutbound = { appDeliverable: () => false, canDeliver: () => true, sendOnce: async () => ({ok: true}), open: () => ({ sendText: async () => ({msgId: 'm'}), channel: () => 'wechat', textOnly: () => false, sendAttachment: async () => false, sendSticker: async () => false, finish: () => {} }) }
+    expect(await sendReportVia(makeSpeechPolicy({care: () => 'off', quietEndsAt: () => null, outbound, log: () => {}}))('c', 't')).toEqual({ok: true})
   })
 })

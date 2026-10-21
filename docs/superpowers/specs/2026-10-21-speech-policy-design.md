@@ -56,7 +56,7 @@ export const SPEECH_KINDS = {
   letter:          { origin: 'initiative', label: '信' },
   companion:       { origin: 'initiative', label: '伙伴' },      // 到点的事 / 打猎 / 问候 / 串门
   guest_visit:     { origin: 'initiative', label: '来访' },
-  sticker:         { origin: 'initiative', label: '新贴纸' },
+  sticker:         { origin: 'initiative', label: '新贴纸' },   // 一次性:defer 即丢(9d 评审 #520)
   memory_notice:   { origin: 'initiative', label: '整理记忆' },
 } as const satisfies Record<string, { origin: SpeechOrigin; label: string }>
 ```
@@ -90,6 +90,7 @@ decide(req: { kind; chatId; nowIso }, ctx: { care: CareLevel; inQuiet: boolean; 
   **这一条推翻了一个旧决定,明写在这里**:`core/quiet-hours.ts` 的文件头(10-20 第二轮对标 #5)写的是「主人自己定的(提醒、定时、早报)……照常」,也就是晨报当时被归成主人要的、免打扰不拦。现在按上面那条准绳改成 initiative:晨报的内容是 CC 挑的。主人这台没设免打扰,所以没有实际变化;会受影响的只是以后「既设了晨报又设了免打扰、两者还重叠」的人,这种情况由下面的当场提醒告诉他。第 3 步落地时,把 quiet-hours.ts 的文件头一起改掉。
   **当场提醒**(9d):主人设晨报 / 周报的时间,或者设免打扰时段时,要是两者重叠,当场回一句「晨报时间落在免打扰里,会天天跳过」。别让他过几天才从列表里发现。
 - **defer 只是不风暴,不是不送**(9d):report 和 blocking 被 defer 时不能丢。一件事的回报现在有落了盘的 report outbox,带指数退避,它继续当持久层:两条通道都送不到 ⇒ 留在 outbox 里,通道恢复后按指数退避补发。只有 initiative 被 defer 才是「下一拍再问」,因为它的内容本来就该按当时的情况重新挑。
+- **一次性的 initiative**(新贴纸那一句:只在画好的那一刻触发一次)没有「下一拍」,被推后就等于丢了。可以接受的前提是它只是个小报告(贴纸已经进库,照样会用到)。以后加别的一次性 initiative 照这条判:要么接受 defer 即丢,要么自己留个待发标记(9d 评审 #520)。
 - **care off 时,initiative 的内容算看过**:来访推进水位,到点的事不打勾也不补发。打开之后不翻旧账,跟 #506 一致。
 - 频率仍由每种自己的规则判(`perKind`),表里不重写那些冷却。这一步只把「哪几道闸适用」收成一处,不改每种的节奏。
 
