@@ -50,15 +50,16 @@ export function renderConversations(report, deps) {
     const userCell = row.userName
       ? `${escapeHtml(row.userName)} <span class="dim" title="${escapeHtml(row.userId || "")}">(${escapeHtml(userIdShort)})</span>`
       : `<span class="dim" title="${escapeHtml(row.userId || "")}">(等待识别) ${escapeHtml(userIdShort)}</span>`
+    // 模式选项用人话,不写斜杠命令:多家同答 / 圆桌从 10-21 起只在桌面上开(微信去掉了 /both /chat)
     return `
     <tr title="chat: ${escapeHtml(row.chatId)}">
       <td class="name">${userCell}</td>
       <td>
         <select class="mode-select mode-${row.badge.tone}" data-chat-id="${escapeHtml(row.chatId)}" data-current="${escapeHtml(currentShorthand)}">
-          <option value="cc"${currentShorthand === "cc" ? " selected" : ""}>/cc (Claude solo)</option>
-          <option value="codex"${currentShorthand === "codex" ? " selected" : ""}>/codex (Codex solo)</option>
-          <option value="both"${currentShorthand === "both" ? " selected" : ""}>/both (Parallel)</option>
-          <option value="chat"${currentShorthand === "chat" ? " selected" : ""}>/chat (Chatroom)</option>
+          <option value="cc"${currentShorthand === "cc" ? " selected" : ""}>Claude 单独回</option>
+          <option value="codex"${currentShorthand === "codex" ? " selected" : ""}>Codex 单独回</option>
+          <option value="both"${currentShorthand === "both" ? " selected" : ""}>两家同时回</option>
+          <option value="chat"${currentShorthand === "chat" ? " selected" : ""}>几家一起讨论</option>
         </select>${row.badge.tone === "solo" ? "" : `
         <span class="mode-detail">${escapeHtml(row.badge.detail)}</span>`}
       </td>
