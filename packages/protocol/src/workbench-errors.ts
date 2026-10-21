@@ -118,7 +118,7 @@ export const WORKBENCH_ERRORS: Readonly<Record<string, WorkbenchErrorSpec>> = Ob
   external_close_confirmation_stale: {desktop: 409, phone: 409},
   handoff_artifact_unsupported: {desktop: 422},
   handoff_changed: {desktop: 409},
-  native_folder_busy: {phone: 409},
+  native_folder_busy: {desktop: 409, phone: 409},
   native_history_changed: {desktop: 409, phone: 409},
   native_history_unavailable: {desktop: 503},
   native_history_unsupported: {desktop: 422},
@@ -126,7 +126,8 @@ export const WORKBENCH_ERRORS: Readonly<Record<string, WorkbenchErrorSpec>> = Ob
   native_session_already_managed: {desktop: 409},
   native_session_busy: {desktop: 409, phone: 409},
   native_session_identity_mismatch: {desktop: 409},
-  provider_quota_exhausted: {phone: 503},
+  // 桌面以前回 500 internal,「另做一份」那句额度人话出不来(#465 盘点时发现)
+  provider_quota_exhausted: {desktop: 503, phone: 503},
   quota_handoff_changed: {desktop: 409, phone: 409},
   quota_handoff_not_needed: {desktop: 409, phone: 409},
   quota_handoff_unavailable: {desktop: 503, phone: 503},

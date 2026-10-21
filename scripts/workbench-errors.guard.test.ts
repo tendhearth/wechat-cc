@@ -79,3 +79,11 @@ describe('桌面 modules/workbench*.js 认的码都还在', () => {
     expect(desktopCodes(join(MODULES, file)).filter(c => !known(c)), file).toEqual([])
   })
 })
+
+describe('桌面路由能回的、桌面 UI 在等的码(#465 盘点发现)', () => {
+  it('额度用完 / 文件夹正被占着 ⇒ 桌面带码回,不再是 500 internal', async () => {
+    const { workbenchErrorHttp } = await import('../packages/protocol/src/workbench-errors')
+    expect(workbenchErrorHttp('provider_quota_exhausted', 'desktop')).toEqual({ status: 503, error: 'provider_quota_exhausted' })
+    expect(workbenchErrorHttp('native_folder_busy', 'desktop')).toEqual({ status: 409, error: 'native_folder_busy' })
+  })
+})
