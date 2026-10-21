@@ -229,6 +229,8 @@ async function bootDaemonInner(opts: BootDaemonOpts, undo: Array<() => void>): P
 
   // bootstrap 起的定时器 / 连接的收尾清单(bootstrap/teardown.ts):在这里建、直接交给 shutdown,启动半路失败也停得到。
   const bootTeardown = makeTeardown()
+  // CC 开口那道门在 wireMain 里才造;bootstrap 里的社交通知比它早接线、晚发 ⇒ 用 Ref 交过去(只 set 一次)。
+  const speechRef = new Ref<import('./speech/policy').SpeechPolicy>('speech')
   // 收尾(重构第二批步 6a,runtime/shutdown.ts):不管启动有没有走完,都按倒序停已登记的子系统。
   const shutdown = makeDaemonShutdown({
     log: (t, l) => log(t, l),
@@ -451,7 +453,7 @@ async function bootDaemonInner(opts: BootDaemonOpts, undo: Array<() => void>): P
     lc.register(internalApi)
     // 2. bootstrap composes provider registry / session manager / coordinator
     const boot = await buildBootstrap({
-      stateDir, db, ilink, loadProjects: ilink.loadProjects, networkGate: guardRt.gate, teardown: bootTeardown,
+      stateDir, db, ilink, loadProjects: ilink.loadProjects, networkGate: guardRt.gate, teardown: bootTeardown, speech: () => speechRef.current,
       lastActiveChatId: ilink.lastActiveChatId, log: (t, l, f) => log(t, l, f),
       fallbackProject: () => ({ alias: '_default', path: process.cwd() }),
       dangerouslySkipPermissions: dangerously, conversationStore,
@@ -795,6 +797,7 @@ async function bootDaemonInner(opts: BootDaemonOpts, undo: Array<() => void>): P
     internalApi.provide({ connections: wired.connections })
     internalApi.provide({ phoneConnect: wired.phoneConnect })
     wiredRef.current = wired
+    speechRef.set(wired.speech)
     const pipeline = buildInboundPipeline(wired.pipelineDeps)
     wireRef(wired.refs.pipeline, pipeline)
     wireRef(wired.refs.appTurn, pipeline.appTurn)

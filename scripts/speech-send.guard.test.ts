@@ -43,6 +43,9 @@ const BASELINE: Record<string, [Tag, number]> = {
   // 信自己的一套投递(多页、断了续发、App 那条路)。能不能写 / 寄已经走 policy.say(第三批 3a),发送只在 say 的生产者里。
   'src/daemon/letters/runtime.ts': ['primitive', 2],
   'src/daemon/bootstrap/wire-letters.ts': ['primitive', 1],
+  // 社交那几条通知:判定走 policy.say(social-tell.ts,经 sendAssistantText 发 —— 它管 App 回话截获与旁听,不换);
+  // 剩下这一处是明信片的 sendFile,也只在 say 的生产者里。
+  'src/daemon/bootstrap/wire-social.ts': ['primitive', 1],
   // —— 回答对方刚发来的那一句 ——
   'src/daemon/admin-commands.ts': ['reply', 69],
   'src/daemon/onboarding.ts': ['reply', 16],
@@ -56,7 +59,6 @@ const BASELINE: Record<string, [Tag, number]> = {
   'src/daemon/main.ts': ['migrate', 13],                 // 升级、开机降级汇总、重启 …(回报、提醒已迁,10-21)
   'src/daemon/internal-api/routes.ts': ['migrate', 6],   // 画作分享、广播 …
   'src/daemon/wiring/pipeline-deps.ts': ['migrate', 7],  // 访客申请 …;其中 2 处是 proactive 的微信出口(发字、发文件;say 背后的那条路)
-  'src/daemon/bootstrap/wire-social.ts': ['migrate', 5], // 来信、心愿、介绍、明信片
   'src/daemon/bootstrap/wire-jobs.ts': ['migrate', 3],   // 没审成的通知
   'src/daemon/bootstrap/wire-cli-sessions.ts': ['migrate', 3],
   'src/daemon/wiring/wire-phone.ts': ['migrate', 2],

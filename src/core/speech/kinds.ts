@@ -35,6 +35,12 @@ export const SPEECH_KINDS = {
   // 一次性:只在画好的那一刻触发一次,没有「下一拍」—— 被推后就等于这一句丢了(贴纸已经进库,照样会用到)。
   // 以后加别的一次性 initiative 照这条判:要么接受 defer 即丢,要么自己留个待发标记(9d 评审 #520)。
   sticker: { origin: 'initiative', label: '新贴纸' },
+  // 社交(笔友 / 心愿 / 介绍 / 串门)。这几条通知都只发一次;推后就等于这一句丢了 —— 可以接受的前提是**内容本身另有地方留着**
+  // (信在信箱、心愿的答复在心愿记录、介绍的结果在注册表、见闻在背包 / 觅食台),主人回头看得到(第三批 3a)。
+  social_ask: { origin: 'blocking', label: '有人想认识你' },        // 介绍:等主人回「同意 / 不了」
+  social_result: { origin: 'report', label: '社交的结果' },          // 心愿的答复、介绍成没成、替主人回了谁
+  social_mail: { origin: 'report', label: '笔友来信' },               // 信在信箱里留着
+  social_story: { origin: 'initiative', label: '串门见闻' },          // 串门回来讲、邻居、明信片
   memory_notice: { origin: 'initiative', label: '整理记忆' },
 } as const satisfies Record<string, { origin: SpeechOrigin; label: string }>
 
@@ -43,3 +49,6 @@ export type SpeechKind = keyof typeof SPEECH_KINDS
 export function originOf(kind: SpeechKind): SpeechOrigin {
   return SPEECH_KINDS[kind].origin
 }
+
+/** 社交那几条通知的种类(wire-wish / wire-intro / wire-visit 的 notifyOwner 必填)。 */
+export type SocialNotice = 'social_ask' | 'social_result' | 'social_story' | 'social_mail'

@@ -267,6 +267,11 @@ export interface BootstrapDeps {
    * 启动半路失败也停得到;缺省 = 本次 buildBootstrap 自建一张(测试)。
    */
   teardown?: import('./teardown').Teardown
+  /**
+   * CC 开口那道门(第三批 3a)。门在 wireMain 里才造(它要 App 那条路),比 bootstrap 晚;社交那几条通知都在运行时才发,
+   * 所以这里给懒取(main.ts 的 Ref,只 set 一次)。取不到 ⇒ 那句通知不发、记一行,**不退回直接发**。
+   */
+  speech?: () => import('../speech/policy').SpeechPolicy | null
 }
 
 export interface Bootstrap {

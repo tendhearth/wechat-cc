@@ -54,7 +54,8 @@ export interface VisitDeps {
   myName: string
   disclosurePolicy: string
   /** 给主人发一句话;没有主人 chat 时是 no-op。 */
-  notifyOwner(text: string): void
+  /** 告诉主人一句(经 CC 开口那道门:kind 决定别烦我 / 免打扰拦不拦,见 core/speech/kinds 的 social_*)。 */
+  notifyOwner(text: string, kind: import('../../core/speech/kinds').SocialNotice): void
   /**
    * busy 登记处(Bootstrap['holdBusy'])。串门的两条腿都**脱离用户会话**跑
    * 模型:出门(startVisit)和每一轮回程(onInbound → onPeerTurn)。不登记
@@ -228,7 +229,7 @@ export function makeVisit(deps: VisitDeps): Visit {
     const text = cleanSpeech(await deps.evalText(buildVisitNarrationPrompt({ ...me, transcript, peerLabel: s.peerLabel, hosting })))
     if (!text) throw new VisitAbort('narration_empty')
     s.beforeTell?.()
-    deps.notifyOwner(text)
+    deps.notifyOwner(text, 'social_story')
     const title = hosting ? `${s.peerLabel}来过` : `去${s.peerLabel}家串门`
     let rowId: string | null = null
     try { rowId = deps.recordVisit?.({ text, peerLabel: title }) ?? null }
@@ -311,7 +312,7 @@ export function makeVisit(deps: VisitDeps): Visit {
       // 第一次去邻居家,先跟主人说清楚邻居是什么 —— 规则是明的,才不是骗。
       beforeTell: () => {
         if (mem.introduced) return
-        deps.notifyOwner(`附近有几户「邻居」—— 是 tendhearth 放在这儿的公共伙伴,让我没朋友的时候也有地方串门。等你有朋友配对了,我会优先去他们家。`)
+        deps.notifyOwner(`附近有几户「邻居」—— 是 tendhearth 放在这儿的公共伙伴,让我没朋友的时候也有地方串门。等你有朋友配对了,我会优先去他们家。`, 'social_story')
       },
       afterFinish: (tr) => {
         const tail = tr.slice(-2).map(t => `${t.who === 'me' ? deps.myName : nb.name}:${t.text}`).join(' / ')
