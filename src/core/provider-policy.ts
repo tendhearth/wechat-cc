@@ -20,7 +20,8 @@
  *    (缺省 = 全部已注册)。admin 不受限。
  */
 import type { ProviderId } from './conversation'
-import type { KnownProviderId } from '../lib/provider-ids'
+import { PROVIDER_IDS, type KnownProviderId } from '../lib/provider-ids'
+import { EXECUTOR_FACTS } from '../lib/executor-facts'
 import type { UserTier } from './user-tier'
 import { capabilitiesFor } from './capability-matrix'
 
@@ -62,9 +63,8 @@ export function describeProviderDenial(d: ProviderDenial, slash: string): string
  * claude 是 /cc;OpenAI 兼容后端是 /api(是「主人自己的 API」,不绑哪家厂商);其余同名。
  * 10-21:以前这里只特判了 claude,拒绝语会叫访客发「/openai」—— 没有这个命令。
  */
-export const PROVIDER_SLASH: Readonly<Record<KnownProviderId, string>> = {
-  claude: 'cc', codex: 'codex', cursor: 'cursor', openai: 'api', gemini: 'gemini', agy: 'agy',
-}
+export const PROVIDER_SLASH: Readonly<Record<KnownProviderId, string>> =
+  Object.fromEntries(PROVIDER_IDS.map(id => [id, EXECUTOR_FACTS[id].slash])) as Record<KnownProviderId, string>
 
 /** provider id → 斜杠词。不在表里的(自定义执行者)⇒ 同名。 */
 export function slashFor(providerId: ProviderId): string {

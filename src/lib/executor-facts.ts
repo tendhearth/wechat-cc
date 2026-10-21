@@ -1,0 +1,33 @@
+/**
+ * 每家执行者的「是什么」—— 只写一处(重构第二批步 7,设计稿 docs/superpowers/specs/2026-10-21-executor-descriptor-design.md)。
+ *
+ * lib 层、零依赖,只有数据:斜杠词、读哪个模型字段、怎么装 / 登录、要哪些密钥环境变量。能力行 / 档位缺口这些带 core 类型的,
+ * 由 core 那一层按同一个 id 拼上去(lib 是依赖树的底,不能反过来 import core)。
+ * 以前这些散在 provider-policy(斜杠词)、agent-config(模型字段 if 链)、llm-health(安装提示)、llm-keys(密钥名)几处,
+ * 写两处的地方已经对不上过(拒绝语叫人发 /openai;agy 换模型写错字段)。
+ */
+import type { KnownProviderId } from './provider-ids'
+
+export type ModelField = 'model' | 'cursorModel' | 'openaiModel' | 'geminiModel' | 'agyModel'
+
+export interface ExecutorFacts {
+  id: KnownProviderId
+  /** 微信里切到它的词(/cc、/api …)。 */
+  slash: string
+  /** agent-config 里它读的模型字段。claude / codex 共用 `model`(只在它是全局默认时才算它的)。 */
+  modelField: ModelField
+  /** 没接上时告诉主人怎么装 / 登录(中文)。 */
+  setupHint: string
+  /** 「配齐了才注册」要的密钥环境变量(第一个是写入 daemon.env 时用的名字)。 */
+  credentialEnv?: readonly string[]
+}
+
+export const EXECUTOR_FACTS: Readonly<Record<KnownProviderId, ExecutorFacts>> = {
+  claude: { id: 'claude', slash: 'cc', modelField: 'model', setupHint: '安装 Claude Code 并在终端登录一次(claude)' },
+  codex: { id: 'codex', slash: 'codex', modelField: 'model', setupHint: '安装 codex CLI 并登录一次' },
+  cursor: { id: 'cursor', slash: 'cursor', modelField: 'cursorModel', setupHint: '终端跑:curl https://cursor.com/install -fsS | bash,然后 cursor-agent login(用 Cursor 订阅账号)' },
+  // 「/api」不是 /openai:这是主人自己的 API 端点(DeepSeek / Kimi / Qwen …),不绑哪家厂商。
+  openai: { id: 'openai', slash: 'api', modelField: 'openaiModel', setupHint: '把 WECHAT_OPENAI_API_KEY 写进 ~/.claude/channels/wechat/daemon.env,并配置 openaiBaseUrl/openaiModel', credentialEnv: ['WECHAT_OPENAI_API_KEY'] },
+  gemini: { id: 'gemini', slash: 'gemini', modelField: 'geminiModel', setupHint: '把 GEMINI_API_KEY 写进 ~/.claude/channels/wechat/daemon.env', credentialEnv: ['GEMINI_API_KEY', 'GOOGLE_API_KEY'] },
+  agy: { id: 'agy', slash: 'agy', modelField: 'agyModel', setupHint: '安装 Antigravity CLI(agy)并登录一次(Google AI Pro 订阅)' },
+}

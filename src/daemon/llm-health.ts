@@ -22,6 +22,8 @@
  */
 import type { ProviderId } from '../core/conversation'
 import { looksLikeAuthFailure } from '../lib/auth-failure'
+import { EXECUTOR_FACTS } from '../lib/executor-facts'
+import type { KnownProviderId } from '../lib/provider-ids'
 import { providerErrorCodeOf } from '../lib/provider-error-code'
 import { classifyFailure } from './health/classify'
 
@@ -65,14 +67,10 @@ export interface LlmHealth {
 
 /** 人话 setup hints for providers that are NOT registered — surfaces in the
  *  desktop 大脑 card so「桌面版不知道在哪里配置」has an answer per provider. */
-export const PROVIDER_SETUP_HINTS: Record<string, string> = {
-  claude: '安装 Claude Code 并在终端登录一次(claude)',
-  codex: '安装 codex CLI 并登录一次',
-  cursor: '终端跑:curl https://cursor.com/install -fsS | bash,然后 cursor-agent login(用 Cursor 订阅账号)',
-  agy: '安装 Antigravity CLI(agy)并登录一次(Google AI Pro 订阅)',
-  openai: '把 WECHAT_OPENAI_API_KEY 写进 ~/.claude/channels/wechat/daemon.env,并配置 openaiBaseUrl/openaiModel',
-  gemini: '把 GEMINI_API_KEY 写进 ~/.claude/channels/wechat/daemon.env',
-}
+// 文案在 lib/executor-facts(每家只写一处);这里只定展示顺序 —— 订阅登录的几家在前,填密钥的在后。
+const SETUP_HINT_ORDER = ['claude', 'codex', 'cursor', 'agy', 'openai', 'gemini'] as const satisfies readonly KnownProviderId[]
+export const PROVIDER_SETUP_HINTS: Record<string, string> =
+  Object.fromEntries(SETUP_HINT_ORDER.map(id => [id, EXECUTOR_FACTS[id].setupHint]))
 
 /** Known providers not currently registered, each with its setup hint. */
 export function unconfiguredHints(registered: string[]): Array<{ provider: string; how: string }> {
