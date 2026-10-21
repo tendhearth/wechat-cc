@@ -98,7 +98,14 @@ export const MatterTaskView = z.object({
   archivedAt: z.number().nullable().optional(),
   // 独立工作区(2026-10-07):分支名 + 工作区删了没;手机据此给「提交到分支 / 删除工作区」。
   // projectId(10-08):源项目编号,手机「另做一份」交到同一个项目;不给路径。
-  worktree: z.object({ branch: z.string(), removed: z.boolean(), merged: z.boolean().optional(), projectId: z.string().optional() }).optional(),
+  // 工作区脚本(2026-10-20,tendhearth.json):配了才带。setup / run 是状态字符串(none/pending/running/done/failed、none/idle/queued/running;
+  // 不用 enum:以后多一种,老 App 当「不确定」而不是整页解析失败);approved = 这份内容主人在电脑上批过;
+  // lastLines = 最近那条脚本输出的最后几行(已打码、去路径);脚本原文与路径永远不到手机。
+  worktree: z.object({
+    branch: z.string(), removed: z.boolean(), merged: z.boolean().optional(), projectId: z.string().optional(),
+    port: z.number().int().optional(), setup: z.string().optional(), run: z.string().optional(), approved: z.boolean().optional(),
+    lastLines: z.array(z.string()).max(20).optional(),
+  }).optional(),
   // 做到条件成立为止(v80,2026-10-20):命令原文(主人建任务时写的,手机要整条等宽显示)+ 进度。老 daemon 不带。
   until: z.object({ command: z.string(), maxRounds: z.number(), rounds: z.number(), status: z.enum(['active', 'passed', 'exhausted', 'stopped']), lastExit: z.number().nullable(), stopReason: z.string().nullable() }).optional(),
   // 每件事花了多少额度(v82,2026-10-20):执行者自己报的合计;某项 null = 这家不报(界面写「这家不报」,不写 0)。老 daemon 不带。
@@ -654,7 +661,9 @@ export const PHONE_API_SCHEMAS: Readonly<Record<string, z.ZodTypeAny>> = {
   'GET /m/api/matter/create-receipt': z.union([z.object({ ok: z.literal(true) }).extend(EntryResult.shape), PhoneErrorResponse]),
   'POST /m/api/matter/permission': z.union([z.object({ ok: z.literal(true) }), PhoneErrorResponse]),
   'POST /m/api/matter/stop': z.union([z.object({ ok: z.literal(true) }), PhoneErrorResponse]),
-  'POST /m/api/matter/worktree': z.union([z.object({ ok: z.literal(true), branch: z.string(), committed: z.boolean().optional(), removed: z.boolean().optional(), merged: z.boolean().optional(), reopened: z.boolean().optional() }), PhoneErrorResponse]),
+  // run / stop(2026-10-20)回分支 + 脚本状态 + 端口;没批 ⇒ 428 script_needs_computer(批准只在电脑上),在跑 409,没有 run 脚本 422 no_scripts。
+  'POST /m/api/matter/worktree': z.union([z.object({ ok: z.literal(true), branch: z.string(), committed: z.boolean().optional(), removed: z.boolean().optional(), merged: z.boolean().optional(), reopened: z.boolean().optional(),
+    port: z.number().int().optional(), setup: z.string().optional(), run: z.string().optional(), approved: z.boolean().optional() }), PhoneErrorResponse]),
   'POST /m/api/matter/answer': z.union([z.object({ ok: z.literal(true) }), PhoneErrorResponse]),
   'GET /m/api/matter/artifact': z.union([z.object({ ok: z.literal(true) }).extend(MatterArtifactChunk.shape), PhoneErrorResponse]),
   'POST /m/api/matter/handoff': z.union([z.object({ ok: z.literal(true) }).extend(MatterHandoffResult.shape), PhoneErrorResponse]),

@@ -5,7 +5,7 @@ import type {MattersService,MatterSayInput} from '../core/matters/service'
 import {entryErrorStatus,parseEntryInput,type EntryInput,type EntryOptions} from '../core/workbench/task-entry'
 import type {NativeContinuePreview} from '../core/workbench/native-adoption'
 
-export type MobileMatterActions=Partial<Pick<MattersService,'permission'|'answer'|'artifactChunk'|'handoff'|'inputReceipt'|'stop'|'worktree'|'rewindPreview'|'rewind'>>
+export type MobileMatterActions=Partial<Pick<MattersService,'permission'|'answer'|'artifactChunk'|'handoff'|'inputReceipt'|'stop'|'worktree'|'worktreeScript'|'rewindPreview'|'rewind'>>
 export interface MobileEntryActions {
   entryOptions():EntryOptions
   /** 交办时可选的模型(2026-10-06):手机只给执行者 id 与项目目录 id,路径在电脑上解析。没接 ⇒ 手机不显示模型选择。 */
@@ -47,6 +47,10 @@ export function mobileMatterError(error:unknown):Response {
   if(['worktree_branch_exists','worktree_conflict','worktree_dirty','worktree_removed','worktree_uncommitted','project_dirty','project_detached','worktree_not_ff','project_busy','worktree_branch_missing','worktree_open'].includes(code))return json({ok:false,error:code},409)
   if(code==='not_worktree')return json({ok:false,error:code},422)
   if(code==='worktree_git_failed')return json({ok:false,error:code},502)
+  // 工作区脚本(2026-10-20):批准只在电脑上 ⇒ 手机拿到的是「请先在电脑上确认」(script_needs_computer);在跑 409;没有 run 脚本 422
+  if(code==='script_approval_required')return json({ok:false,error:'script_needs_computer'},428)
+  if(code==='script_setup_running'||code==='script_running')return json({ok:false,error:code},409)
+  if(code==='no_scripts')return json({ok:false,error:code},422)
   if(['creation_conflict','managed_workspace_changed','attachment_scope','attachment_conflict'].includes(code))return json({ok:false,error:code},409)
   if(['entry_not_wired','managed_workspace_unavailable','invalid_managed_workspace','workbench_stopping','unavailable_provider','provider_quota_exhausted','quota_handoff_unavailable','network_unprotected'].includes(code))return json({ok:false,error:code},503)
   if(['permission_stale','question_stale','input_stale','input_conflict','input_delivery_busy','workbench_busy','reply_sink_busy','workbench_archived','artifact_changed','restart_confirmation_required','restart_confirmation_stale','external_close_confirmation_required','external_close_confirmation_stale','native_session_busy','native_folder_busy','native_history_changed','quota_handoff_not_needed','quota_handoff_changed'].includes(code))return json({ok:false,error:code},409)
@@ -130,12 +134,17 @@ export async function mobileWorkbenchRoute(actions:MobileMatterActions|undefined
     }catch(error){return mobileMatterError(error)}
   }
   // 独立工作区(2026-10-07):提交到分支 / 删除工作区 / 合回项目(10-08);正文恰好 id + action。
+  // run / stop(2026-10-20):工作区脚本,会在电脑上跑命令 ⇒ 只给设备令牌(LINK_EXCLUDED);批准不在这里。
   if(url.pathname==='/m/api/matter/worktree'){
     if(req.method!=='POST')return json({ok:false,error:'method_not_allowed'},405)
     try{
       let b:unknown
       try{b=await req.json()}catch{throw Error('invalid_request')}
-      if(!object(b)||Object.keys(b).some(k=>k!=='id'&&k!=='action')||typeof b.id!=='string'||!ID.test(b.id)||(b.action!=='commit'&&b.action!=='remove'&&b.action!=='merge'&&b.action!=='reopen'))throw Error('invalid_request')
+      if(!object(b)||Object.keys(b).some(k=>k!=='id'&&k!=='action')||typeof b.id!=='string'||!ID.test(b.id)||(b.action!=='commit'&&b.action!=='remove'&&b.action!=='merge'&&b.action!=='reopen'&&b.action!=='run'&&b.action!=='stop'))throw Error('invalid_request')
+      if(b.action==='run'||b.action==='stop'){
+        if(!actions?.worktreeScript)throw Error('workbench_not_wired')
+        return json({ok:true,...await actions.worktreeScript(b.id,b.action)})
+      }
       if(!actions?.worktree)throw Error('workbench_not_wired')
       return json({ok:true,...actions.worktree(b.id,b.action)})
     }catch(error){return mobileMatterError(error)}

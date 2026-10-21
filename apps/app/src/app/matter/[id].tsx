@@ -38,6 +38,7 @@ import { uuid } from '../../net/uuid'
 import { progressView, canStop } from '../../view/progress'
 import { inputRows } from '../../view/matter-input'
 import { untilLine } from '../../view/until'
+import { scriptOutcome, scriptsBlock } from '../../view/worktree-scripts'
 import { usageLine } from '../../view/usage'
 import { canOfferRewind, discardedLines, rewindBlockedNotice } from '../../view/rewind'
 import { RewindSheet } from '../../ui/RewindSheet'
@@ -85,6 +86,9 @@ export default function Matter() {
   const [wtArmed, setWtArmed] = useState<'remove' | 'merge' | null>(null)
   const [wtBusy, setWtBusy] = useState(false)
   const [wtNote, setWtNote] = useState<string | null>(null)
+  // 工作区脚本(2026-10-20):运行 / 停下之后那一句
+  const [scriptBusy, setScriptBusy] = useState(false)
+  const [scriptNote, setScriptNote] = useState<string | null>(null)
   // 撤掉这一轮(回退切片 4):确认页开着没有、确认之后那一句(成了 / 不确定 / 停住)
   const [rewindOpen, setRewindOpen] = useState(false)
   const [rewindNote, setRewindNote] = useState<string | null>(null)
@@ -94,7 +98,7 @@ export default function Matter() {
   const handoffReq = useRef('')
   const idRef = useRef(id)
   idRef.current = id
-  useEffect(() => { setSheet(false); setFailure(null); setInputNotice(null); setOpenErrors(new Set()); setStopArmed(false); setStopNote(null); setRewindOpen(false); setRewindNote(null); setCommentsNote(null) }, [id])
+  useEffect(() => { setSheet(false); setFailure(null); setInputNotice(null); setOpenErrors(new Set()); setStopArmed(false); setStopNote(null); setRewindOpen(false); setRewindNote(null); setCommentsNote(null); setScriptNote(null) }, [id])
   const { refresh: refreshDetail } = detail
   const { refresh: refreshInsight } = insight
   const { refresh: refreshChanges } = changes
@@ -139,6 +143,7 @@ export default function Matter() {
   const d = detail.data
   const v = progressView(d, insight.data ?? null, changes.data ?? null, !!insight.error && !insight.data)
   const untilRow = d.task?.until ? untilLine(d.task.until, lang) : null
+  const scripts = scriptsBlock(d.task?.worktree, lang)
   const usage = usageLine(d.task?.usage, lang)
   const rewindBlocked = rewindBlockedNotice(d.task, lang)
   const turn = changes.data ?? null
@@ -177,6 +182,16 @@ export default function Matter() {
     else if (err === 'project_busy') setWtNote(t(lang, 'progress.wtProjectBusy'))
     else if (err === 'worktree_branch_missing') setWtNote(t(lang, 'progress.wtBranchMissing'))
     else setWtNote(t(lang, r === 'busy' || err === 'busy' ? (action === 'remove' ? 'progress.wtBusyRemove' : 'progress.wtBusyCommit') : 'progress.wtFailed'))
+    void refreshDetail()
+  }
+  // 工作区脚本(2026-10-20):运行不用点两下(批准已在电脑上做过);停下本来就安全。超时 ⇒ 不说成了。
+  const scriptAct = async (action: 'run' | 'stop') => {
+    if (scriptBusy) return
+    setScriptBusy(true); setScriptNote(null)
+    const box: { run?: string } = {}
+    const r = await submit(`worktree-script:${id}`, async () => { box.run = (await backend.worktreeScript({ id, action })).run })
+    setScriptBusy(false)
+    setScriptNote(scriptOutcome(action, r, box, lang))
     void refreshDetail()
   }
   // 另做一份(2026-10-08):同样的要求、同一个项目、独立工作区,交给另一位执行者;最初那句要求在最近的记录里就带上,不在就留给主人写
@@ -329,6 +344,23 @@ export default function Matter() {
         {d.task?.worktree ? (
           <View testID="progress-worktree" style={{ gap: space.s }}>
             <Txt role="meta" tone="inkSoft">{t(lang, d.task.worktree.removed ? 'progress.wtGone' : d.task.worktree.merged ? 'progress.wtOnMerged' : 'progress.wtOn', { branch: d.task.worktree.branch })}</Txt>
+            {scripts ? (
+              <View testID="progress-scripts" style={{ gap: space.s }}>
+                <Txt testID="progress-scripts-status" role="meta" tone="inkSoft">{scripts.status}</Txt>
+                {scripts.note ? <Txt testID="progress-scripts-note" role="meta" tone="inkSoft">{scripts.note}</Txt> : null}
+                {scripts.lines.length ? (
+                  <View testID="progress-scripts-output" accessible accessibilityLabel={`${t(lang, 'scripts.outputLabel')}: ${scripts.lines.join('\n')}`}
+                    style={{ padding: space.s, borderRadius: radius.nav, borderWidth: 1, borderColor: c.hair }}>
+                    <Txt role="code" tone="inkSoft" numberOfLines={scripts.lines.length * 2}>{scripts.lines.join('\n')}</Txt>
+                  </View>
+                ) : null}
+                {scripts.button ? (
+                  <Button kind="secondary" testID={`progress-scripts-${scripts.button}`} label={t(lang, scripts.button === 'run' ? 'scripts.run' : 'scripts.stop')}
+                    onPress={() => void scriptAct(scripts.button!)} disabled={!online} busy={scriptBusy} />
+                ) : null}
+                {scriptNote ? <Txt testID="progress-scripts-result" role="meta" tone="inkSoft" accessibilityLiveRegion="polite">{scriptNote}</Txt> : null}
+              </View>
+            ) : null}
             {d.task.worktree.removed ? <Button kind="secondary" testID="progress-wt-reopen" label={t(lang, 'progress.wtReopen')} onPress={() => void worktreeAct('reopen')} disabled={!online} busy={wtBusy} /> : null}
             {!d.task.worktree.removed ? (
               <View style={{ flexDirection: 'row', gap: space.s, flexWrap: 'wrap' }}>

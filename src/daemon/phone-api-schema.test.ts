@@ -296,6 +296,23 @@ describe('真实返回校验 — workbench + matters', () => {
     parseAs('GET /m/api/matter/changes', await missing.json())
   })
 
+  it('工作区脚本 run / stop(2026-10-20):只给设备令牌;不是独立工作区 ⇒ 422 not_worktree;成功的样子过 schema', async () => {
+    const task = create('scr')
+    const res = await request('/m/api/matter/worktree', { id: task.id, action: 'run' })
+    expect(res.status).toBe(422)
+    expect(parseAs('POST /m/api/matter/worktree', await res.json())).toEqual({ ok: false, error: 'not_worktree' })
+    // 配对会作废旧链接令牌 ⇒ 配过之后另开一个来试
+    const link = panel.issueToken()
+    for (const action of ['run', 'stop']) expect((await request('/m/api/matter/worktree', { id: task.id, action }, link)).status, action).toBe(403)
+    parseAs('POST /m/api/matter/worktree', { ok: true, branch: 'cc/abcd1234', port: 47100, setup: 'done', run: 'running', approved: true })
+    parseAs('POST /m/api/matter/worktree', { ok: false, error: 'script_needs_computer' })
+    // 详情里 worktree 的新字段:状态是字符串(老 App 认不得的照样能解析),最后几行至多 20
+    const wt = { branch: 'cc/x', removed: false, port: 47100, setup: 'someday_new_state', run: 'idle', approved: false, lastLines: ['ready'] }
+    const detail = await (await request(`/m/api/matter?id=${task.id}`, undefined, link)).json() as { task: Record<string, unknown> }
+    parseAs('GET /m/api/matter', { ...detail, task: { ...detail.task, worktree: wt } })
+    expect(() => parseAs('GET /m/api/matter', { ...detail, task: { ...detail.task, worktree: { ...wt, lastLines: Array(21).fill('x') } } })).toThrow()
+  })
+
   it('行评论(切片 4)真实返回符合 schema:changes 带块与评论;建 / 删;执行者还在写 ⇒ 发出 409 workbench_busy;没有草稿 ⇒ 404', async () => {
     const task = create('lc')
     await ready(task.id)

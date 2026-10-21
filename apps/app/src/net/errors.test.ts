@@ -24,6 +24,11 @@ describe('mapPhoneError(HTTP 状态 + 正文 → BackendCode)', () => {
     [503, { ok: false, error: 'insight_not_wired' }, 'unknown'],
     [500, null, 'unknown'],
     [403, { error: 'route_not_allowed' }, 'unknown'],
+    // 工作区脚本(2026-10-20):批准只在电脑上 / 在跑 / setup 跑完接着运行 / 没有 run 脚本
+    [428, { ok: false, error: 'script_needs_computer' }, 'scripts_unapproved'],
+    [409, { ok: false, error: 'script_running' }, 'script_running'],
+    [409, { ok: false, error: 'script_setup_running' }, 'script_queued'],
+    [422, { ok: false, error: 'no_scripts' }, 'no_scripts'],
     // 做到条件成立为止(2026-10-20):不能落到 invalid_ 前缀规则里
     [400, { ok: false, error: 'invalid_until' }, 'until_invalid'],
     [422, { ok: false, error: 'until_requires_worktree' }, 'until_requires_worktree'],

@@ -113,7 +113,7 @@ export function makeDemoBackend(opts: { now?: () => number; setTimeout?: typeof 
     const nTitle = t(lastLang, 'notesTitle')
     add(mkDetail(mkMatter(IDS.notes, 'task', nTitle, 'replied', '~/Projects/notes', n - DAY, ['claude']),
       // 演示独立工作区(2026-10-08):提交 / 合回 / 删除 / 重开 / 另做一份 都有地方点
-      { ...taskOf(IDS.notes, nTitle, '~/Projects/notes', 'replied', n - DAY), worktree: { branch: 'cc/notes001', removed: false, projectId: 'portfolio' },
+      { ...taskOf(IDS.notes, nTitle, '~/Projects/notes', 'replied', n - DAY), worktree: { branch: 'cc/notes001', removed: false, projectId: 'portfolio', port: 47100, setup: 'done', run: 'idle', approved: true },
         // 演示「直到…通过」(10-20):第 2 轮检查通过
         until: { command: 'bun run test', maxRounds: 3, rounds: 2, status: 'passed', lastExit: 0, stopReason: null } }), 'replied',
       [{ kind: 'user', key: 'notesTitle', createdAt: n - DAY - 60_000 }], 'notesTitle')
@@ -487,6 +487,16 @@ export function makeDemoBackend(opts: { now?: () => number; setTimeout?: typeof 
         e.version++; publish([id])
       }
       return action === 'commit' ? { branch: 'cc/demo1234', committed: true } : action === 'merge' ? { branch: 'cc/demo1234', merged: true } : action === 'reopen' ? { branch: 'cc/demo1234', reopened: true } : { branch: 'cc/demo1234', removed: true }
+    },
+    async worktreeScript({ id, action }) {
+      // 演示里不真起进程:运行 / 停下只翻状态,运行时给两行输出
+      const e = entries.get(id), wt = e?.detail.task?.worktree
+      if (!e?.detail.task || !wt || wt.removed || wt.run === undefined) throw new BackendError('no_scripts')
+      const running = action === 'run'
+      e.detail.task = { ...e.detail.task, worktree: { ...wt, run: running ? 'running' : 'idle', ...(running ? { lastLines: ['$ bun run dev', `ready on http://localhost:${wt.port ?? 47100}`] } : {}) } }
+      e.version++; publish([id])
+      const { branch, port, setup, run, approved } = e.detail.task.worktree!
+      return { branch, ...(port !== undefined ? { port } : {}), ...(setup !== undefined ? { setup } : {}), ...(run !== undefined ? { run } : {}), ...(approved !== undefined ? { approved } : {}) }
     },
     async stop({ id, runId }) {
       const e = entries.get(id)
