@@ -75,6 +75,7 @@ wechat-cc ci triage --sha <sha> --json      # 给机器看的一份
 | `reminders/reminders.e2e` | `waitForReplyTo` 缺省 5s 要盖一次真 daemon 启动 | 30s |
 | `bootstrap/openai-plugin-stall` | 3s 启动预算同时管卡住的插件和必需的 wechat MCP | 10s(生产是 20s) |
 | `workbench/wechat-create`、`workbench/service-entry` | `settle` 用缺省 10s poll 等真 git 整轮 | 同 `service-one-session`:testTimeout 60s、settle 30s、until 45s |
+| e2e(`__e2e__/*`,每个文件第一条) | 冷启动 import 整个 daemon 超过 e2e 的 10s;boot-failure-lock 还因此串台(上一条超时后迟到的 finally 改回环境变量) | e2e testTimeout 30s;boot-failure-lock 预热放 beforeAll、环境变量在 afterEach 还原 |
 | `scripts/cli-help.guard`(`plugin --help` 等) | 一条测试里同步冷启 1 + 子命令个 `bun cli.ts` | 每族 60s(每次 spawn 仍 15s 上限) |
 | `workbench/codex-app-server`(两条) | **生产 bug**:关闭循环先查期限再发 SIGKILL,一次卡顿就抛 `codex_process_not_exited` 而一次 SIGKILL 都没发 | 单独 PR 修生产代码 |
 | `workbench/service-one-session`(f99.txt) | **生产**:`git-review.ts` 的审阅期限写死 15s,忙时报告悄悄缺文件 | 交工作台那一路:做成可注入 |
