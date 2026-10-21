@@ -616,25 +616,25 @@ async function bootDaemonInner(opts: BootDaemonOpts, undo: Array<() => void>): P
         (id) => providerCallTarget(boot.registry.get(id)?.provider, id, 'session'),
       ))
     }
-    internalApi.setDelegate({ dispatchOneShot: boot.dispatchDelegate, knownPeers: () => boot.registry.list() })
+    internalApi.provide({ delegate: { dispatchOneShot: boot.dispatchDelegate, knownPeers: () => boot.registry.list() } })
     // Wire conversation dep now that coordinator is available. Routes access
     // deps.conversation at request time, so this late assignment is safe.
-    internalApi.setConversation({ setMode: (chatId, mode) => boot.coordinator.setMode(chatId, mode) })
+    internalApi.provide({ conversation: { setMode: (chatId, mode) => boot.coordinator.setMode(chatId, mode) } })
     // Wire A2A deps — registry, client, recordEvent — so POST /v1/a2a/send works.
     // Undefined ⇔ a2a-server subsystem degraded (wireA2aServer threw) — setA2A
     // stays unwired and POST /v1/a2a/send keeps 503ing, same posture as any
     // other never-configured subsystem.
-    if (boot.a2aDeps) internalApi.setA2A(boot.a2aDeps)
+    if (boot.a2aDeps) internalApi.provide({ a2a: boot.a2aDeps })
     // Wire the social surface (笔友信道 + 心愿) — only present when
     // social_enabled + social_disclosure_policy are both configured. So
     // POST /v1/social/wish{,/send,/cancel} work when the feature is on.
-    if (boot.social) internalApi.setSocial(boot.social)
+    if (boot.social) internalApi.provide({ social: boot.social })
     // Wire the Knowledge Kernel store + semanticSearch (Phase 01 T5) — only
     // present when knowledge_enabled is configured. Without this, every
     // /v1/knowledge/* route 503s knowledge_not_wired even though boot
     // already constructed the store (review finding: this call was missing
     // entirely — no setKnowledge existed on internalApi at all).
-    if (boot.knowledge) internalApi.setKnowledge(boot.knowledge)
+    if (boot.knowledge) internalApi.provide({ knowledge: boot.knowledge })
     // Customer Review is optional: a missing/unready wxvault or eval provider
     // leaves the daemon healthy and its owner-only routes return 503.
     const customerReview = await sup.start('customer-review', () => startCustomerReviewRuntime({
@@ -645,25 +645,25 @@ async function bootDaemonInner(opts: BootDaemonOpts, undo: Array<() => void>): P
       log: (tag, line) => log(tag, line),
     }))
     if (customerReview) {
-      internalApi.setCustomerReview(customerReview.service)
+      internalApi.provide({ customerReview: customerReview.service })
       lc.register(customerReview)
     }
     // Wire the 配对码 engine (spec §7) — only present when mailbox_relays is
     // configured. So POST /v1/pair/start + /v1/pair/accept work when wired.
-    if (boot.pairing) internalApi.setPairing(boot.pairing)
+    if (boot.pairing) internalApi.provide({ pairing: boot.pairing })
     // Wire the daemon-owned LLM memory ops (spec 2026-07-23-daemon-owns-llm-
     // memory-ops, Task 1's makeMemoryLlmOps) now that the coordinator +
     // provider registry are available. So POST /v1/memory/{synthesize,
     // profile/generate} work — this is now the ONLY place LLM memory ops
     // run (never the compiled CLI sidecar).
-    internalApi.setMemory(makeMemoryLlmOps({
+    internalApi.provide({ memoryLlm: makeMemoryLlmOps({
       stateDir, db, getMode: (c) => boot.coordinator.getMode(c), registry: boot.registry,
-    }))
+    }) })
     // Wire the incident store (Task 8) — same live instance `wireHealth`
     // constructed inside buildBootstrap, so GET /v1/health/incidents (the
     // desktop's "last incident" banner + notification) reads what the
     // health runtime actually wrote, not a second stale copy.
-    internalApi.setIncidents(boot.health.incidents)
+    internalApi.provide({ incidents: boot.health.incidents })
     // LLM 通道体检 (llm-health.ts) — needs the registry, so late-bound like
     // setMemory above. NO boot probe and no timer (owner ruling 2026-08-25):
     // dialing happens ONLY when the user clicks 测试连接 — unprompted
@@ -679,14 +679,14 @@ async function bootDaemonInner(opts: BootDaemonOpts, undo: Array<() => void>): P
         hintFor: (id) => capabilitiesFor(id).authFailHint,
         log,
       })
-      internalApi.setLlmHealth(llmHealth, () => boot.registry.list(), () => {
+      internalApi.provide({ llmHealth: llmHealth, llmRegistered: () => boot.registry.list(), llmEndpoints: () => {
         // 自配 base_url:目前只有 openai-compatible 端点可指向国内/本地服务。
         // 网络体检据此探真实端点,而非硬编码的 api.openai.com。
         const eps: Record<string, string> = {}
         const b = boot.agentConfig.openaiBaseUrl
         if (b) eps.openai = b
         return eps
-      })
+      } })
     }
     // 3. main-wiring builds all deps for pipeline + lifecycles
     // 终端 claude / codex 会话的 hook 事件(spec 2026-09-09-cli-hook-push):压一段
@@ -769,7 +769,7 @@ async function bootDaemonInner(opts: BootDaemonOpts, undo: Array<() => void>): P
     let workbenchForToday: import('./overseer-today-source').TodayWorkbench | null = null
     const cliSessionViews = (opts?: { includeEnded?: boolean; limit?: number }) =>
       withReplyRefs(cliEvents.list(opts), (id) => cliPermissions.pendingHash(id), (h) => ilink.pendingPermissionCodeOf(h))
-    internalApi.setCliEvents({
+    internalApi.provide({ cliEvents: {
       // 转给脑的事件本机登记处也记一笔(observe 只记不推):这台机自己的列表也看得到。
       ingest: (ev) => {
         // 会话又有了动静(Stop / 新 prompt / 结束)⇒ 终端已自己答过,挂着的码作废(评审 10-15 #5)。
@@ -779,8 +779,8 @@ async function bootDaemonInner(opts: BootDaemonOpts, undo: Array<() => void>): P
         return forwarder.event(ev)
       },
       list: (opts) => cliSessionViews(opts),
-    })
-    internalApi.setCliPermissions({
+    } })
+    internalApi.provide({ cliPermissions: {
       open: async (req) => {
         if (!forwarder?.brain()) return cliPermissions.open(req)
         const fwd = await forwarder.permissionOpen(req)
@@ -791,7 +791,7 @@ async function bootDaemonInner(opts: BootDaemonOpts, undo: Array<() => void>): P
       },
       status: (h) => cliPermissions.status(h),
       wait: (h, ms) => forwarder?.ownsHash(h) ? forwarder.permissionWait(h, ms) : cliPermissions.wait(h, ms),
-    })
+    } })
     // 工作台在后面才接上(wireWorkbench):经持有者取,没就绪时各处按「还没有」处理(TDZ,评审 #443 / 重构第二批步 6a)
     const workbenchRef: { current: ReturnType<typeof wireWorkbench> | null } = { current: null }
     // wireMain 在后面;导入记忆写入要它的 memoryNightly ⇒ 同样经持有者取(没就绪 ⇒ 这次没记上)
@@ -851,11 +851,11 @@ async function bootDaemonInner(opts: BootDaemonOpts, undo: Array<() => void>): P
       localMachine: osHostname(),
       log: (t, l) => log(t, l),
     })
-    internalApi.setOverseerToday(overseerToday)
+    internalApi.provide({ overseerToday: overseerToday })
     // 接上终端里的 Claude Code / Codex(2026-10-14):「CC 现在怎么样」那一行 + 桌面「接上」/「修复」的路由。
     // 只在主人点了确认时写 hook 配置,绝不自动装。
     const terminalHooks = makeTerminalHooksService({ deps: defaultTerminalHooksDeps, sessions: () => cliEvents.list({ includeEnded: true, limit: 500 }) })
-    internalApi.setCliHooks(terminalHooks)
+    internalApi.provide({ cliHooks: terminalHooks })
     // 「看 码」「@码 文本」:主人对某条终端会话说话。只认主人;那边的会话 v1 先说明。
     // 定时任务的文件(spec 2026-10-20-scheduled-jobs-design):微信「定时」与每分钟一拍的 runner 共用一份。
     // 「CC 做过的事」(B9,spec 2026-10-20-cc-activity-design):没留记录的动作(主动说话 / 定时 / 提醒)补记一行,
@@ -933,7 +933,7 @@ async function bootDaemonInner(opts: BootDaemonOpts, undo: Array<() => void>): P
       log: (t, l) => log(t, l),
     })
     // CC 的 calendar_agenda 工具(admin 档,只读):与「日历」命令同一段话。
-    internalApi.setCalendarAgenda((offset) => agendaReplyText(calendar, offset))
+    internalApi.provide({ calendarAgenda: (offset) => agendaReplyText(calendar, offset) })
     const calendarCommand = makeCalendarCommand({
       calendar,
       isOwner: (chatId) => resolveAdminChatId(loadAccess(), loadCompanionConfig(stateDir), null) === chatId,
@@ -968,7 +968,7 @@ async function bootDaemonInner(opts: BootDaemonOpts, undo: Array<() => void>): P
         legacyClaims.conflicts({owner:'workbench',path,providerId,nativeId})||
         (!!nativeId&&cliEvents.sessions().some(s=>s.source===providerId&&s.session_id===nativeId&&!!s.origin_agent)), askUser: ilink.askUser, log: (t,l) => log(t,l) })
     boot.sessionManager.setExecutionGuard((path,providerId,nativeId)=>workbench.conflictsExternal(path,providerId,nativeId))
-    internalApi.setWorkbench(workbench)
+    internalApi.provide({ workbench: workbench })
     workbenchForToday = workbench
     workbenchRef.current = workbench
     // 暂停在跑的任务(2026-10-03):health 的 guard 块 / `guard status` 列出被冻住的任务。
@@ -1010,18 +1010,18 @@ async function bootDaemonInner(opts: BootDaemonOpts, undo: Array<() => void>): P
     // Wire companion-converse dep now that the coordinator (via boot) and
     // the pipeline wiring are available. Routes access deps.companionConverse
     // at request time, so this late assignment is safe (mirrors setConversation).
-    internalApi.setCompanionConverse(wired.companionConverse)
+    internalApi.provide({ companionConverse: wired.companionConverse })
     // 「一件事」活动时间:先于工作台停(LIFO),退订 changes + 清节流定时器。
     lc.register({ name: 'matter-activity', stop: async () => wired.stopMatterActivity() })
     // 与手机页共用同一个「一件事」读写面(pipeline-deps 里建的那一个)。
-    if (wired.mattersService) internalApi.setMatters(wired.mattersService)
+    if (wired.mattersService) internalApi.provide({ matters: wired.mattersService })
     // 同上,桌宠的「在做什么」—— 组装闭包在 pipeline-deps(那里才有 boot)。
-    internalApi.setPetTurn(wired.petTurn)
+    internalApi.provide({ petTurn: wired.petTurn })
     ticksRef = wired.ticks
     cliAppPush = wired.appPush
-    internalApi.setSettingsLink(wired.settingsPanelLink)
-    internalApi.setConnections(wired.connections)
-    internalApi.setPhoneConnect(wired.phoneConnect)
+    internalApi.provide({ settingsLink: wired.settingsPanelLink })
+    internalApi.provide({ connections: wired.connections })
+    internalApi.provide({ phoneConnect: wired.phoneConnect })
     wiredRef.current = wired
     const pipeline = buildInboundPipeline(wired.pipelineDeps)
     wireRef(wired.refs.pipeline, pipeline)
@@ -1062,7 +1062,7 @@ async function bootDaemonInner(opts: BootDaemonOpts, undo: Array<() => void>): P
       runtime: wired.memoryNightly, holdBusy: (l) => boot.holdBusy(l), log: (t, l) => log(t, l),
     }))
     if (memoryNightlyLc) lc.register(memoryNightlyLc)
-    internalApi.setMemoryNightly(wired.memoryNightly)
+    internalApi.provide({ memoryNightly: wired.memoryNightly })
     // CC 的信(2026-10-16):不定期写一封信、排成信纸寄到微信;主人说「给我写封信」时 cc_letter 工具当场写。
     // 开关 companion.letters_enabled 默认关。可选子系统:坏了只降级。
     const letters = wireLetters({
@@ -1080,7 +1080,7 @@ async function bootDaemonInner(opts: BootDaemonOpts, undo: Array<() => void>): P
     })
     const lettersLc = await sup.start('letters', () => letters.start())
     if (lettersLc) lc.register(lettersLc)
-    internalApi.setLetters(letters.runtime)
+    internalApi.provide({ letters: letters.runtime })
     // 外部 agent CLI 自动升级(主人 2026-10-04,docs/maintainer/cli-auto-upgrade.md):空闲时用官方升级器升、
     // 升完立刻自检、不过就退回 + 记坏版本 + 告诉主人一次。可选子系统:坏了只降级。
     const cliUpgrade = await sup.start('cli-upgrade', () => startCliUpgrade({
@@ -1099,7 +1099,7 @@ async function bootDaemonInner(opts: BootDaemonOpts, undo: Array<() => void>): P
       notifyDesktop: (t, b) => notifyDesktop(t, b),
       log: (t, l) => log(t, l),
     }))
-    if (cliUpgrade) { lc.register(cliUpgrade.lifecycle); wireRef(cliUpgradeRef, cliUpgrade.upgrader); internalApi.setCliUpgrade(cliUpgrade.upgrader) }
+    if (cliUpgrade) { lc.register(cliUpgrade.lifecycle); wireRef(cliUpgradeRef, cliUpgrade.upgrader); internalApi.provide({ cliUpgrade: cliUpgrade.upgrader }) }
     // Reminder sweeper (spec 2026-08-20-reminders-port) — multi-user
     // precise-time delivery. Optional subsystem: a broken sweeper degrades,
     // never blocks boot. Store is db-backed so pending reminders survive

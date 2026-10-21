@@ -177,7 +177,7 @@ describe('internal-api', () => {
       expect(off.status).toBe(503)
       expect(await off.json()).toEqual({ error: 'cli_events_not_wired' })
 
-      api.setCliEvents({ ingest })
+      api.provide({ cliEvents: { ingest } })
       const on = await post(body)
       expect(on.status).toBe(200)
       expect(await on.json()).toEqual({ ok: true, action: 'scheduled' })
@@ -2571,7 +2571,7 @@ describe('internal-api', () => {
         }))
         api = createInternalApi({ stateDir, daemonPid: 1 })
         const { port, tokenFilePath } = await api.start()
-        api.setDelegate({ dispatchOneShot, knownPeers: () => ['claude', 'codex'] })
+        api.provide({ delegate: { dispatchOneShot, knownPeers: () => ['claude', 'codex'] } })
         const token = readFileSync(tokenFilePath, 'utf8').trim()
         const resp = await fetch(`http://127.0.0.1:${port}/v1/delegate`, {
           method: 'POST',
@@ -2592,7 +2592,7 @@ describe('internal-api', () => {
         }))
         api = createInternalApi({ stateDir, daemonPid: 1 })
         const { port, tokenFilePath } = await api.start()
-        api.setDelegate({ dispatchOneShot, knownPeers: () => ['claude', 'codex'] })
+        api.provide({ delegate: { dispatchOneShot, knownPeers: () => ['claude', 'codex'] } })
         const token = readFileSync(tokenFilePath, 'utf8').trim()
         await fetch(`http://127.0.0.1:${port}/v1/delegate`, {
           method: 'POST',
@@ -2612,7 +2612,7 @@ describe('internal-api', () => {
       it('returns 400 on missing peer/prompt', async () => {
         api = createInternalApi({ stateDir, daemonPid: 1 })
         const { port, tokenFilePath } = await api.start()
-        api.setDelegate({ dispatchOneShot: async () => ({ ok: true, response: '', duration_ms: 0 }), knownPeers: () => ['claude', 'codex'] })
+        api.provide({ delegate: { dispatchOneShot: async () => ({ ok: true, response: '', duration_ms: 0 }), knownPeers: () => ['claude', 'codex'] } })
         const token = readFileSync(tokenFilePath, 'utf8').trim()
 
         const r1 = await fetch(`http://127.0.0.1:${port}/v1/delegate`, {
@@ -2636,10 +2636,10 @@ describe('internal-api', () => {
       it('returns 400 on unknown peer with allowed list', async () => {
         api = createInternalApi({ stateDir, daemonPid: 1 })
         const { port, tokenFilePath } = await api.start()
-        api.setDelegate({
+        api.provide({ delegate: {
           dispatchOneShot: async () => ({ ok: true, response: '', duration_ms: 0 }),
           knownPeers: () => ['claude', 'codex'],
-        })
+        } })
         const token = readFileSync(tokenFilePath, 'utf8').trim()
         const resp = await fetch(`http://127.0.0.1:${port}/v1/delegate`, {
           method: 'POST',
@@ -2655,10 +2655,10 @@ describe('internal-api', () => {
       it('passes ok:false from dispatchOneShot through verbatim', async () => {
         api = createInternalApi({ stateDir, daemonPid: 1 })
         const { port, tokenFilePath } = await api.start()
-        api.setDelegate({
+        api.provide({ delegate: {
           dispatchOneShot: async () => ({ ok: false, reason: 'codex CLI not authenticated' }),
           knownPeers: () => ['claude', 'codex'],
-        })
+        } })
         const token = readFileSync(tokenFilePath, 'utf8').trim()
         const resp = await fetch(`http://127.0.0.1:${port}/v1/delegate`, {
           method: 'POST',
@@ -2673,7 +2673,7 @@ describe('internal-api', () => {
         api = createInternalApi({ stateDir, daemonPid: 1 })
         const { port, tokenFilePath } = await api.start()
         const dispatchOneShot = vi.fn(async () => ({ ok: true as const, response: 'should not be called', duration_ms: 0 }))
-        api.setDelegate({ dispatchOneShot, knownPeers: () => ['claude', 'codex'] })
+        api.provide({ delegate: { dispatchOneShot, knownPeers: () => ['claude', 'codex'] } })
         const token = readFileSync(tokenFilePath, 'utf8').trim()
         const resp = await fetch(`http://127.0.0.1:${port}/v1/delegate`, {
           method: 'POST',
@@ -2694,7 +2694,7 @@ describe('internal-api', () => {
         const dispatchOneShot = vi.fn(async (_peer: string, _prompt: string, _cwd?: string) => ({
           ok: true as const, response: 'ok', duration_ms: 0,
         }))
-        api.setDelegate({ dispatchOneShot, knownPeers: () => ['claude', 'codex'] })
+        api.provide({ delegate: { dispatchOneShot, knownPeers: () => ['claude', 'codex'] } })
         const token = readFileSync(tokenFilePath, 'utf8').trim()
         await fetch(`http://127.0.0.1:${port}/v1/delegate`, {
           method: 'POST',
@@ -2707,10 +2707,10 @@ describe('internal-api', () => {
       it('rejects non-absolute cwd as 400 — RFC 03 review #10 path safety', async () => {
         api = createInternalApi({ stateDir, daemonPid: 1 })
         const { port, tokenFilePath } = await api.start()
-        api.setDelegate({
+        api.provide({ delegate: {
           dispatchOneShot: async () => ({ ok: true, response: 'x', duration_ms: 0 }),
           knownPeers: () => ['claude', 'codex'],
-        })
+        } })
         const token = readFileSync(tokenFilePath, 'utf8').trim()
         const resp = await fetch(`http://127.0.0.1:${port}/v1/delegate`, {
           method: 'POST',
@@ -2725,10 +2725,10 @@ describe('internal-api', () => {
       it('catches dispatchOneShot throw and returns ok:false', async () => {
         api = createInternalApi({ stateDir, daemonPid: 1 })
         const { port, tokenFilePath } = await api.start()
-        api.setDelegate({
+        api.provide({ delegate: {
           dispatchOneShot: async () => { throw new Error('SDK exploded') },
           knownPeers: () => ['claude', 'codex'],
-        })
+        } })
         const token = readFileSync(tokenFilePath, 'utf8').trim()
         const resp = await fetch(`http://127.0.0.1:${port}/v1/delegate`, {
           method: 'POST',
@@ -2943,7 +2943,7 @@ describe('internal-api', () => {
       try {
         api = createInternalApi({ stateDir, daemonPid: 1 })
         const { port } = await api.start()
-        api.setKnowledge({ store, search: semanticSearch })
+        api.provide({ knowledge: { store, search: semanticSearch } })
         const token = api.mintSessionToken('admin', 'claude/a/knowledge-test')
         const resp = await fetch(`http://127.0.0.1:${port}/v1/knowledge/semantic/status`, {
           headers: { Authorization: `Bearer ${token}` },

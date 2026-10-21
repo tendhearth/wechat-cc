@@ -31,9 +31,9 @@ import type { UserTier } from '../../core/user-tier'
 import type { AddressInfo } from 'node:net'
 import {
   errMsg,
+  LATE_KEYS,
   type InternalApi,
   type InternalApiDeps,
-  type InternalApiDelegateDep,
 } from './types'
 import { makeMaybePrefix, makeRoutes } from './routes'
 import { computePresence } from './routes-presence'
@@ -47,6 +47,8 @@ export type {
   InternalApiDelegateDep,
   InternalApiIlinkDep,
   InternalApiPrefixDeps,
+  LateDeps,
+  LateKey,
 } from './types'
 
 const TOKEN_FILE = 'internal-token'
@@ -64,8 +66,6 @@ export function createInternalApi(deps: InternalApiDeps): InternalApi {
   let server: Server | null = null
   let boundPort: number | null = null
   let token: Buffer | null = null
-  // RFC 03 P4 late binding — main.ts wires this in after bootstrap returns.
-  let lateDelegate: InternalApiDelegateDep | null = deps.delegate ?? null
   // Late binding for conversation controller — wired after buildBootstrap() returns.
   // Routes access deps.conversation at request time; we update the same deps object.
   // (deps is passed by reference to makeRoutes which closes over it, so mutations
@@ -113,7 +113,7 @@ export function createInternalApi(deps: InternalApiDeps): InternalApi {
   const maybePrefix = makeMaybePrefix(deps)
   const ROUTES = makeRoutes({
     deps,
-    getDelegate: () => lateDelegate,
+    getDelegate: () => deps.delegate ?? null,
     maybePrefix,
   })
 
@@ -411,94 +411,15 @@ export function createInternalApi(deps: InternalApiDeps): InternalApi {
       return tokenPath
     },
 
-    setDelegate(d) {
-      lateDelegate = d
-    },
-
-    setWorkbench(service) {
-      deps.workbench = service
-    },
-    setMatters(service) {
-      deps.matters = service
-    },
-
-    setConversation(c) {
-      deps.conversation = c
-    },
-
-    setCompanionConverse(fn) {
-      deps.companionConverse = fn
-    },
-
-    setPetTurn(fn) {
-      deps.petTurn = fn
-    },
-
-    setCliEvents(hub) {
-      deps.cliEvents = hub
-    },
-
-    setCliPermissions(relay) {
-      deps.cliPermissions = relay
-    },
-
-    setOverseerToday(fn) {
-      deps.overseerToday = fn
-    },
-
-    setCalendarAgenda(fn) {
-      deps.calendarAgenda = fn
-    },
-
-    setLetters(rt) {
-      deps.letters = rt
-    },
-
-    setCliHooks(svc) {
-      deps.cliHooks = svc
+    provide(patch) {
+      for (const k of LATE_KEYS) {
+        const v = patch[k]
+        if (v !== undefined) (deps as unknown as Record<string, unknown>)[k] = v
+      }
     },
 
     getPresence() {
       return computePresence(deps)
-    },
-
-    setCustomerReview(service) {
-      deps.customerReview = service
-    },
-
-    setA2A(a2a) {
-      deps.a2a = a2a
-    },
-    setSocial(social) {
-      deps.social = social
-    },
-    setKnowledge(knowledge) {
-      deps.knowledge = knowledge
-    },
-    setPairing(pairing) {
-      deps.pairing = pairing
-    },
-    setMemory(memory) {
-      deps.memoryLlm = memory
-    },
-    setIncidents(incidents) {
-      deps.incidents = incidents
-    },
-    setLlmHealth(h, registered, endpoints) {
-      deps.llmHealth = h
-      if (registered) deps.llmRegistered = registered
-      if (endpoints) deps.llmEndpoints = endpoints
-    },
-    setSettingsLink(fn) {
-      deps.settingsLink = fn
-    },
-    setConnections(fn) { deps.connections = fn },
-    setPhoneConnect(p) { deps.phoneConnect = p },
-    setMemoryNightly(r) {
-      deps.memoryNightly = r
-    },
-    setCliUpgrade(u) {
-      deps.cliUpgrade = u
     },
     mintSessionToken,
     invalidateSession(sessionKey: string) {
