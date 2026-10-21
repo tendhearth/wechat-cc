@@ -182,8 +182,8 @@ describe('真实返回校验 — workbench + matters', () => {
     parseAs('GET /m/api/entry/options', await res.json())
   })
 
-  // apps/mobile/src/entry.js:80 读 provider.capabilities.features.attachments 来决定
-  // 能不能带材料交办 —— schema 必须收得住这个字段的类型漂移,不能是 z.unknown()。
+  // provider.capabilities.features.attachments 决定能不能带材料交办(原网页 entry.js 读它,收敛 5b 删了那页)
+  // —— schema 必须收得住这个字段的类型漂移,不能是 z.unknown()。
   it('entry/options 的 capabilities.features.attachments 类型漂移会被 schema 挡住', async () => {
     const body = await (await request('/m/api/entry/options')).json() as { providers: Array<{ capabilities: { features: { attachments: boolean } } }> }
     expect(body.providers[0]!.capabilities.features.attachments).toBe(true)
@@ -452,14 +452,13 @@ describe('真实返回校验 — 首页 / 设置页 / 记忆 / 贴纸', () => {
     parseAs('POST /set/api/apply', await applied.json())
   })
 
-  it('m/api/state、art/blink、art/presence 真实返回符合 schema', async () => {
+  it('m/api/state、art/presence 真实返回符合 schema', async () => {
     const st = parseAs('GET /m/api/state', await (await get('/m/api/state')).json()) as { portraitPng?: string }
     expect(st.portraitPng).toBe('iVBORw0KGgo=')
-    parseAs('GET /m/api/art/blink', await (await get('/m/api/art/blink')).json())
     parseAs('GET /m/api/art/presence', await (await get('/m/api/art/presence')).json())
   })
 
-  // apps/mobile/src/home.js:10 直接把 r.time_ref 拼进 innerHTML —— schema 必须收得住
+  // 手机 App(apps/app 的待办页)直接显示 r.time_ref —— schema 必须收得住
   // 这个字段的类型漂移(真实类型是 string|null,src/core/knowledge/store.ts 的 FactRow),
   // 不能是 z.unknown()。
   it('m/api/state 的 todos.active[].time_ref 类型漂移会被 schema 挡住', async () => {
@@ -477,9 +476,8 @@ describe('真实返回校验 — 首页 / 设置页 / 记忆 / 贴纸', () => {
     expect(() => parseAs('GET /m/api/state', { ...body, portraitPng: 42 })).toThrow()
   })
 
-  it('m/api/home、m/api/feed、m/api/seen 真实返回符合 schema', async () => {
+  it('m/api/home、m/api/seen 真实返回符合 schema', async () => {
     parseAs('GET /m/api/home', await (await get('/m/api/home')).json())
-    parseAs('GET /m/api/feed', await (await get('/m/api/feed')).json())
     parseAs('POST /m/api/seen', await (await post('/m/api/seen', { until: '2026-09-06T07:00:00.000Z' })).json())
   })
 
@@ -523,7 +521,10 @@ describe('真实返回校验 — 首页 / 设置页 / 记忆 / 贴纸', () => {
   })
 
   it('m/api/memory、m/api/todo、m/api/sticker(b64) 真实返回符合 schema', async () => {
-    parseAs('GET /m/api/memory', await (await get('/m/api/memory')).json())
+    // 收敛 5b:记忆只给设备令牌
+    const dt = (await (await post('/set/api/pair', {})).json() as { device_token: string }).device_token
+    token = panel.issueToken()
+    parseAs('GET /m/api/memory', await (await fetch(`${base}/m/api/memory?d=${dt}`)).json())
     parseAs('POST /m/api/todo', await (await post('/m/api/todo', { id: 7, status: 'resolved' })).json())
     parseAs('GET /m/api/sticker/', await (await get('/m/api/sticker/bear.png?b64=1')).json())
   })

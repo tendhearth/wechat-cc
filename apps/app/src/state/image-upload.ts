@@ -1,6 +1,6 @@
 import { BackendError, type Backend } from '../backend/types'
 
-/** 与 daemon 的分块上传同一个块大小(apps/mobile/src/attachments.js 的 PA_CHUNK_BYTES):续传时 nextOffset 必须是它的整数倍。 */
+/** 与 daemon 的分块上传同一个块大小(原网页 attachments.js 的 PA_CHUNK_BYTES,收敛 5b 删了网页那份):续传时 nextOffset 必须是它的整数倍。 */
 export const UPLOAD_CHUNK_BYTES = 128 * 1024
 /** daemon 认的图片上限(core/workbench/attachments.ts 的 MAX_IMAGE_ATTACHMENT_BYTES)。超了在手机上就拦下,不白传。 */
 export const IMAGE_MAX_BYTES = 5 * 1024 * 1024

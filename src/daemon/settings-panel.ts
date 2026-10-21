@@ -33,15 +33,13 @@ import { saveLlmKey } from './llm-keys'
 import { PROVIDER_SETUP_HINTS, type LlmHealthReport } from './llm-health'
 import { capabilitiesFor } from '../core/capability-matrix'
 import { PROVIDER_IDS } from '../lib/provider-ids'
-import { buildFeed, decodeCursor, FEED_DEFAULT_LIMIT, dayKey, type FeedSources, type TurnLite } from './mobile-feed'
-import blinkArt from './mobile-blink-art.json'
+import { buildFeed, FEED_DEFAULT_LIMIT, dayKey, type FeedSources, type TurnLite } from './mobile-feed'
 import presenceArt from './mobile-presence-art.json'
 import { MOBILE_BRAND_ICON_PNG, MOBILE_BRAND_ICON_SIZES } from './mobile-brand-icon'
 import { mobileChatRoute, type MobileChatDeps } from './mobile-chat'
 import { mobileLettersRoute } from './mobile-letters'
 import { mobileJobsRoute } from './mobile-jobs'
 import { mobileActivityRoute } from './mobile-activity'
-import { mobileLessonsRoute } from './mobile-lessons'
 import { mobileReadsRoute } from './mobile-reads'
 import {mobileSessionContinueRoute,mobileWorkbenchRoute,mobileMatterError,mobileSayInput,type MobileMatterActions,type MobileEntryActions,type MobileUploadActions,type MobileSessionContinueActions} from './mobile-workbench'
 import {mobileMatterDetailResponse} from './mobile-matter-response'
@@ -137,7 +135,6 @@ export interface SettingsPanelDeps {
   jobs?: import('./mobile-jobs').MobileJobsDeps
   /** 「CC 做过的事」(B9):只给设备令牌。 */
   activity?: import('./mobile-activity').MobileActivityDeps
-  lessons?: import('./mobile-lessons').MobileLessonsDeps
   /** 「CC 的连接」快照(spec 2026-10-01)。缺省 ⇒ /m/api/connections 503。 */
   connections?: () => import('./connections').ConnectionsSnapshot
   /** 电脑上的原生会话(只读)。缺省 ⇒ /m/api/sessions 503。 */
@@ -751,9 +748,6 @@ export function makeSettingsPanel(deps: SettingsPanelDeps): SettingsPanel {
             const png = s.portrait ? await portraitPng(s.portrait).catch(() => null) : null
             return json(png ? { ...s, portraitPng: png } : s)
           }
-          if (url.pathname === '/m/api/art/blink' && req.method === 'GET') {
-            return json({ ok: true, mime: 'image/png', half: blinkArt.half.base64, closed: blinkArt.closed.base64 })
-          }
           // 「此刻」形象画(手机协议包 v2 Task 4 fix round 1,2026-09-29):按需拉,
           // 不再内联进 /m 页 —— 两张 PNG base64 加起来 ~257KB,是页面撑爆中继
           // 512KB 帧预算的大头。apps/mobile/src/presence.js 的 loadPresenceArt() 调这个。
@@ -781,12 +775,6 @@ export function makeSettingsPanel(deps: SettingsPanelDeps): SettingsPanel {
           }
           if (url.pathname === '/m/api/home' && req.method === 'GET') {
             return json(await home(parseLimit(url)))
-          }
-          if (url.pathname === '/m/api/feed' && req.method === 'GET') {
-            const cursor = url.searchParams.get('cursor')
-            if (cursor !== null && !decodeCursor(cursor)) return json({ ok: false, error: 'invalid_cursor' }, 400)
-            const r = buildFeed(collectSources(), { ownerChatId: deps.ownerChatId(), timezone: feedTimezone(), limit: parseLimit(url), cursor, seenUntil: readSeen() })
-            return json({ ok: true, events: r.events, next_cursor: r.next_cursor, sources_degraded: r.sources_degraded })
           }
           if (url.pathname === '/m/api/seen' && req.method === 'POST') {
             if (!deps.seen) return json({ ok: false, error: 'seen_not_wired' }, 503)
@@ -832,8 +820,6 @@ export function makeSettingsPanel(deps: SettingsPanelDeps): SettingsPanel {
           // CC 做过的事(B9):只读时间线。链接令牌不在册。
           const activityResponse = await mobileActivityRoute(deps.activity, url, req)
           if (activityResponse) return activityResponse
-          const lessonsResponse = await mobileLessonsRoute(deps.lessons, url, req)
-          if (lessonsResponse) return lessonsResponse
           const readResponse = await mobileReadsRoute({ ...(deps.connections ? { connections: deps.connections } : {}), ...(deps.sessions ? { sessions: deps.sessions } : {}), ...(deps.cliSessions ? { cliSessions: deps.cliSessions } : {}), ...(deps.cliActions ? { cliActions: deps.cliActions } : {}), ...(deps.overseerToday ? { today: deps.overseerToday } : {}) }, url, req)
           if (readResponse) return readResponse
           if (url.pathname === '/m/api/matters' && req.method === 'GET') {

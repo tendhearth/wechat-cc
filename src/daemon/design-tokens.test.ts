@@ -61,12 +61,13 @@ describe('one design language across the owner-facing web pages', () => {
     expect(phone).not.toMatch(/\.grp \{[^}]*color:var\(--accent\)/)
     expect(phone).not.toMatch(/nav button\.on \{[^}]*color:var\(--accent\)/)
   })
-  it('the CC entry is keyboard-friendly and themed on focus', () => {
-    const presence = readFileSync(new URL('../../apps/mobile/src/presence.js', import.meta.url), 'utf8')
+  // 收敛 5b(2026-10-21):「CC 眼中的你」那页去了 App,网页上的 CC 只是形象,不再是一个能点的入口 —— 别让它看着像按钮。
+  it('the CC character on the phone page is decoration, not a control', () => {
+    const html = readFileSync(new URL('../../apps/mobile/src/presence.html', import.meta.url), 'utf8')
     const css = readFileSync(new URL('../../apps/mobile/src/presence.css', import.meta.url), 'utf8')
-    expect(presence).toMatch(/preventDefault\(\)/)
-    expect(css).toMatch(/\.home-character:focus-visible\{[^}]*outline:2px solid var\(--accent\)/)
-    expect(css).toContain('.home-character{cursor:pointer')
+    expect(html).toContain('<div class="home-character" aria-hidden="true">')
+    expect(html).not.toMatch(/home-character"[^>]*(role|tabindex)=/)
+    expect(css).not.toContain('.home-character{cursor:pointer')
   })
   it('--faint is decorative only: no page sets text colour to it (fails AA on paper/card)', () => {
     const dir = new URL('../../apps/mobile/src/', import.meta.url)

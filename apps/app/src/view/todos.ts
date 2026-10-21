@@ -1,5 +1,5 @@
 // 「待办」(收敛清单 ④,2026-10-21,从手机网页搬来)的纯视图模型:在办的每条带「完成」,最近了结的收起、每条带「捞回」。
-// 文字照网页(apps/mobile/src/home.js):空 ⇒「都了结了」+ 小字;了结那一组叫「最近了结」;改成了 ⇒「划掉了 / 捞回来了」。
+// 文字照原网页(home.js 的待办,收敛 5b 删了网页那页):空 ⇒「都了结了」+ 小字;了结那一组叫「最近了结」;改成了 ⇒「划掉了 / 捞回来了」。
 // 超时不说「没改成」—— 也许已经改了只是回执丢了,单独说「不确定」。纯 TS,不碰 react / expo。
 import type { PocketT, TodoRowT, TodoStatus } from '../backend/types'
 import { t, type Lang, type MessageKey } from '../i18n'

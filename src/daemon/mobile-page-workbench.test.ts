@@ -7,7 +7,8 @@
  * 注册的直接抛** —— 比浏览器更严,元素不存在这类 bug 不会溜过去。
  *
  * 钉的是连接状态那组行为(2026-09-23):断线时说清"你看到的是几点的样子"、
- * 恢复即撤、回前台按当前页分路刷新、断网期间点的那一下重连后核对(绝不自动重发)。
+ * 恢复即撤、回前台按当前页分路刷新;以及收敛 5b(2026-10-21)之后详情只看状态:
+ * 没有对话记录、成果、接着说、批准 / 回答,只剩「停下」。
  */
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 import { MOBILE_WORKBENCH_JS } from './mobile-page'
@@ -15,8 +16,7 @@ import { phoneHtml } from './settings-panel-html'
 import { assembleMobilePage } from '../../apps/mobile/assemble'
 import { readMobileSource } from '../../apps/mobile/sources'
 
-const IDS = ['m-list', 'm-detail', 'm-back', 'm-title', 'm-agents', 'm-notice', 'm-controls', 'm-permissions',
-  'm-questions', 'm-events', 'm-artifacts', 'm-artifact-preview', 'm-inputs', 'm-say-box', 'm-say', 'm-send', 'm-conn', 'm-task-status']
+const IDS = ['m-list', 'm-detail', 'm-back', 'm-title', 'm-agents', 'm-notice', 'm-status', 'm-conn']
 
 type Handler = (ev: unknown) => void
 interface FakeEl {
@@ -87,12 +87,19 @@ function harness(source = MOBILE_WORKBENCH_JS) {
     return Promise.resolve(response)
   }
 
-  const boot = new Function('document', 'window', 'localStorage', 'REMOTE', 'api', 'esc', 'URL', 'ago', readMobileSource('markdown.js')+'\n'+source)
+  // 「停下」走 mPostOnce:一次只选一条通道,直连就是 fetch(q(path))
+  const fetchStub = (path: string, opts?: { method?: string; body?: string }) => {
+    calls.push({ path, ...(opts ? { opts } : {}) })
+    if (mode === 'down') return Promise.reject(new Error('network down'))
+    return Promise.resolve({ status: 200, json: () => Promise.resolve({ ok: true }) })
+  }
+  const ccPlain = new Function(`${readMobileSource('boot.js').slice(readMobileSource('boot.js').indexOf('function ccPlain'))}\nreturn ccPlain`)()
+  const boot = new Function('document', 'window', 'localStorage', 'REMOTE', 'api', 'esc', 'fetch', 'q', 'tunnel', 'preferTunnel', 'ccPlain', 'ccSelectMobilePane', source)
   boot(doc, win, {
     getItem: (k: string) => store.get(k) ?? null,
     setItem: (k: string, v: string) => { store.set(k, v) },
     removeItem: (k: string) => { store.delete(k) },
-  }, { relay: 'https://relay.example', id: 'phone1' }, api, (s: string) => String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;').replace(/'/g,'&#39;'), class extends URL { static revokeObjectURL() {} }, () => '刚刚')
+  }, { relay: 'https://relay.example', id: 'phone1' }, api, (s: string) => String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;').replace(/'/g,'&#39;'), fetchStub, (p: string) => p, () => Promise.reject(new Error('no tunnel')), false, ccPlain, () => {})
 
   return {
     els, doc, calls, navButton, docHandlers, winHandlers,
@@ -113,9 +120,10 @@ function harness(source = MOBILE_WORKBENCH_JS) {
       await vi.advanceTimersByTimeAsync(0)
     },
     async tick(ms: number) { await vi.advanceTimersByTimeAsync(ms) },
-    /** 点权限卡上的「允许这一次」。 */
-    async allow(requestId: string) {
-      els.get('m-controls')!.fire('click', { target: { closest: () => ({ dataset: { control: 'allow', task: 'm1', request: requestId } }) } })
+    get status() { return els.get('m-status')! },
+    /** 点状态区里的「停止这一轮」。 */
+    async stop() {
+      els.get('m-status')!.fire('click', { target: { closest: (sel: string) => (sel === '[data-stop]' ? { dataset: { stop: '1', task: 'm1', run: 'run1' } } : null) } })
       await vi.advanceTimersByTimeAsync(0)
     },
     postCalls() { return calls.filter((c) => c.opts?.method === 'POST').length },
@@ -177,67 +185,6 @@ describe('连不上的时候,页面说清你看到的是几点的样子', () => 
     expect(h.listCalls()).toBe(before + 1)
   })
 
-  it('审批消失不能证明自己的提交成功:可能过期或被别处处理,而且不重发', async () => {
-    const h = harness()
-    h.setDetail({ permissions: [{ id: 'p1', taskId: 'm1', tool: 'Bash', description: 'rm tmp' }] })
-    await h.enterPane()
-    await h.openMatter()
-
-    h.down()
-    await h.allow('p1')
-    await h.tick(0)
-    expect(h.postCalls()).toBe(1)
-
-    // 请求消失不是提交回执,也可能是任务结束或其他设备已经处理。
-    h.up()
-    h.setDetail({ permissions: [] })
-    await h.tick(3000)
-
-    expect(h.notice.textContent).toContain('无法确认')
-    expect(h.notice.textContent).not.toContain('已经生效')
-    expect(h.postCalls()).toBe(1)   // 绝不自动重发
-  })
-
-  it('断网时批的那一下:重连后那条还在,就明说没送出去', async () => {
-    const h = harness()
-    h.setDetail({ permissions: [{ id: 'p1', taskId: 'm1', tool: 'Bash', description: 'rm tmp' }] })
-    await h.enterPane()
-    await h.openMatter()
-
-    h.down()
-    await h.allow('p1')
-    await h.tick(0)
-
-    h.up()
-    await h.tick(3000)   // 详情里 p1 仍然挂着
-
-    expect(h.notice.textContent).toContain('仍在等待')
-    expect(h.postCalls()).toBe(1)
-  })
-
-  it.each(['offline', 'background'] as const)('失效前的在途详情不能在 %s 后重新启用提交', async (event) => {
-    const h = harness()
-    h.setDetail({ permissions: [{ id: 'p1', taskId: 'm1', tool: 'Bash', description: 'command' }] })
-    await h.enterPane(); await h.openMatter()
-    h.deferDetail(); await h.tick(3000)
-    await h[event]()
-    await h.resolveDetail()
-    expect(h.els.get('m-send')!.disabled).toBe(true)
-    await h.allow('p1')
-    expect(h.postCalls()).toBe(0)
-    if (event === 'offline') expect(h.conn.hidden).toBe(false)
-  })
-
-  it('一次详情读取失败后就停止接受审批,直到重新取得当前详情', async () => {
-    const h=harness()
-    h.setDetail({permissions:[{id:'p1',taskId:'m1',tool:'Bash',description:'command'}]})
-    await h.enterPane();await h.openMatter()
-    h.down();await h.tick(3000)
-    await h.allow('p1')
-    expect(h.postCalls()).toBe(0)
-    h.up();await h.tick(3000);await h.allow('p1')
-    expect(h.postCalls()).toBe(1)
-  })
 })
 
 describe('脚本要的元素,真页面里都得有', () => {
@@ -251,92 +198,68 @@ describe('脚本要的元素,真页面里都得有', () => {
   })
 })
 
-describe('手机交办页面接线', () => {
-  it('keeps public messages visible while tool calls are escaped inside a closed section', async () => {
-    const h=harness(readMobileSource('workbench.js'))
-    h.setDetail({events:[
-      {kind:'user',text:'公开要求',createdAt:1},
-      {kind:'tool_call',text:'<img src=x onerror=evil()>\n读取文件 & 检查',createdAt:2},
-      {kind:'text',text:'公开答复',createdAt:3},
-      {kind:'tool_call',text:'继续检查',createdAt:4},
-    ]})
-    await h.openMatter()
-    const html=h.els.get('m-events')!.innerHTML
-    const folded=html.match(/<details\b[^>]*class="m-tool-events"[^>]*>([\s\S]*?)<\/details>/)
-    expect(folded).not.toBeNull()
-    expect(folded![0]).not.toMatch(/<details\b[^>]*\bopen\b/)
-    expect(folded![1]).toContain('<summary>工具记录（2）</summary>')
-    expect(folded![1]).toContain('&lt;img src=x onerror=evil()&gt;\n读取文件 &amp; 检查')
-    expect(folded![1]).not.toContain('<img')
-    expect(folded![1]).not.toContain('公开要求')
-    expect(folded![1]).not.toContain('公开答复')
-    expect(html.replace(folded![0],'')).toContain('公开要求')
-    expect(html.replace(folded![0],'')).toContain('公开答复')
+describe('一件事的详情在网页上只看状态(收敛 5b,2026-10-21)', () => {
+  const busy = { matter: { id: 'm1', title: '**首页**调整', kind: 'task', status: 'open', agents: ['codex'] }, task: { id: 'm1', providerId: 'codex', phase: 'working', status: 'running', error: null },
+    events: [{ kind: 'user', text: '公开要求', createdAt: 1 }, { kind: 'text', text: '公开答复', createdAt: 2 }, { kind: 'tool_call', text: 'bun test', createdAt: 3, activity: { type: 'command', status: 'running', label: '跑测试' } }],
+    artifacts: [{ id: 'a1', taskId: 'm1', name: '报告.md', mime: 'text/markdown', size: 10, sha256: 'x', createdAt: 1, approvedAt: null }],
+    inputs: [{ id: 'i1', taskId: 'm1', runId: 'run1', text: '补一句', status: 'held' }] }
+
+  it('标题(去掉排版记号)、执行者、状态词与正在跑的那一步;没有对话记录、成果、补充、接着说', async () => {
+    const h = harness()
+    h.setDetail(busy as never)
+    await h.enterPane(); await h.openMatter()
+    expect(h.els.get('m-title')!.textContent).toBe('首页调整')
+    expect(h.els.get('m-agents')!.hidden).toBe(false)
+    const html = h.status.innerHTML
+    expect(html).toContain('<p class="m-state">在做</p>')
+    expect(html).toContain('<span>正在</span> 跑测试')
+    for (const gone of ['公开要求', '公开答复', '报告.md', '补一句', 'textarea', 'data-artifact', 'data-control', 'data-handoff', 'm-say']) expect(html).not.toContain(gone)
+    expect(html).toContain('data-stop="1"')
   })
 
-  it('does not reserve a tool section when no tool calls exist', async () => {
-    const h=harness(readMobileSource('workbench.js'))
-    h.setDetail({events:[{kind:'text',text:'只有公开答复',createdAt:1}]})
-    await h.openMatter()
-    expect(h.els.get('m-events')!.innerHTML).toContain('只有公开答复')
-    expect(h.els.get('m-events')!.innerHTML).not.toContain('<details')
-    expect(h.els.get('m-events')!.innerHTML).not.toContain('工具记录')
+  it('等你决定 / 额度用完只当状态说:不出批准、回答、交接按钮', async () => {
+    const h = harness()
+    h.setDetail({ ...busy, events: [], task: { ...busy.task, phase: 'replied', status: 'completed' }, permissions: [{ id: 'p1', taskId: 'm1', tool: 'Bash', description: 'rm tmp' }],
+      quotaHandoff: { state: 'offer', from: 'codex', to: 'claude', kind: 'quota', resetAt: Date.now() + 30 * 60000 } } as never)
+    await h.enterPane(); await h.openMatter()
+    const html = h.status.innerHTML
+    expect(html).toContain('<p class="m-state">等你决定</p>')
+    expect(html).toContain('有 1 项等你决定，到手机 App 或电脑上处理。')
+    expect(html).toContain('Codex 的额度已用完。')
+    expect(html).toContain('可以在手机 App 或电脑上交给 Claude Code 接着做。')
+    expect(html).not.toContain('<button')
+    expect(html).not.toContain('rm tmp')
   })
 
-  it('preserves the owner’s expanded tool section during refresh', async () => {
-    const h=harness(readMobileSource('workbench.js'))
-    h.setDetail({events:[{kind:'tool_call',text:'执行细节',createdAt:1}]})
-    await h.openMatter()
-    h.els.get('m-events')!.querySelectorAll=()=>[fakeEl('expanded-tool-records')]
-    await h.foreground()
-    expect(h.els.get('m-events')!.innerHTML).toMatch(/<details\b[^>]*class="m-tool-events"[^>]*\bopen\b/)
-    h.els.get('m-events')!.querySelectorAll=()=>[]
-    await h.foreground()
-    expect(h.els.get('m-events')!.innerHTML).not.toMatch(/<details\b[^>]*\bopen\b/)
+  it('交出去了 / 没做成 / 完成 —— 状态词照用词表', async () => {
+    const h = harness()
+    h.setDetail({ ...busy, events: [], task: { ...busy.task, phase: 'failed', status: 'failed' }, quotaHandoff: { state: 'handed', from: 'codex', to: 'claude', matterId: 'abcdef12' } } as never)
+    await h.enterPane(); await h.openMatter()
+    expect(h.status.innerHTML).toContain('<p class="m-state">没做成</p>')
+    expect(h.status.innerHTML).toContain('已经交给 Claude Code 接着做了。')
+    h.setDetail({ ...busy, events: [], matter: { ...busy.matter, status: 'done' }, task: { ...busy.task, phase: 'replied' } } as never)
+    await h.tick(3000)
+    expect(h.status.innerHTML).toContain('<p class="m-state">完成</p>')
+    expect(h.status.innerHTML).not.toContain('data-stop')
   })
 
-  it('assembles the visible entry and keeps public messages outside collapsed tool details', () => {
-    const page=assembleMobilePage(readMobileSource).phone
-    expect(page.includes('id="home-entry"')).toBe(false) // 交办卡本来就在,顶上那个按钮重复(2026-10-17 去掉)
-    expect(page.includes('id="entry-root"')).toBe(true)
-    const ancestors:string[]=[]
-    let eventsAncestors:string[]|undefined
-    for(const match of page.replace(/<script>[\s\S]*?<\/script>|<style>[\s\S]*?<\/style>/g,'').matchAll(/<(\/?)([a-z][a-z0-9]*)\b([^>]*)>/gi)){
-      const [,closing,tag,attributes]=match
-      if(closing){const index=ancestors.lastIndexOf(tag!);if(index>=0)ancestors.splice(index)}
-      else{
-        if(/\bid="m-events"/.test(attributes!))eventsAncestors=[...ancestors]
-        if(!['meta','link','img','input','br','hr'].includes(tag!))ancestors.push(tag!)
-      }
-    }
-    expect(eventsAncestors).toBeDefined()
-    expect(eventsAncestors).not.toContain('details')
-    expect(page.indexOf('function createPhoneAttachments')).toBeGreaterThan(page.indexOf('var mCurrent'))
-    expect(page.indexOf('function openEntry')).toBeGreaterThan(page.indexOf('function createPhoneAttachments'))
-    expect(page.indexOf('function renderPresenceHome')).toBeGreaterThan(page.indexOf('function openEntry'))
-    expect(page.indexOf('function render(s)')).toBeGreaterThan(page.indexOf('function renderPresenceHome'))
-    expect(page.slice(page.indexOf('<script'),page.indexOf('<script')+8)).toBe('<script>')
+  it('「停下」留着:点一下先要确认,再点才发一次 POST /m/api/matter/stop,不重发', async () => {
+    const h = harness()
+    h.setDetail(busy as never)
+    await h.enterPane(); await h.openMatter()
+    await h.stop()
+    expect(h.status.innerHTML).toContain('再点一次，确认停止')
+    expect(h.postCalls()).toBe(0)
+    await h.stop()
+    expect(h.calls.filter((c) => c.opts?.method === 'POST').map((c) => [c.path, c.opts!.body])).toEqual([['/m/api/matter/stop', JSON.stringify({ id: 'm1', runId: 'run1' })]])
+    expect(h.notice.textContent).toBe('已经请电脑停下这一轮。')
   })
 
-  it('starts by checking saved receipts and opens entry only on an explicit tap, without resending', async () => {
-    const els=new Map<string,ReturnType<typeof fakeEl>&{focus:ReturnType<typeof vi.fn>;scrollIntoView:()=>void;appendChild:()=>void;click:()=>void;classList:{contains:()=>boolean;add:()=>void;remove:()=>void}}>()
-    const get=(id:string)=>{if(!els.has(id))els.set(id,{...fakeEl(id),focus:vi.fn(),scrollIntoView(){},appendChild(){},click(){this.fire('click')},classList:{contains:()=>false,add(){},remove(){}}});return els.get(id)!}
-    const requestId='123e4567-e89b-42d3-a456-426614174000',input={requestId,text:'已经送出，不能再送一遍',target:{kind:'managed'}}
-    const saved=new Map([['cc.phone.entry.v1:fixture',JSON.stringify({version:1,draft:{...input,providerId:'',revision:1},pending:[{input,revision:1}],last:null})]])
-    const calls:Array<{path:string;method:string}>=[]
-    const api=async(path:string,opts?:{method?:string})=>{
-      calls.push({path,method:opts?.method??'GET'})
-      const body=path.endsWith('/options')?{ok:true,status:'ready',defaultProviderId:'codex',projects:[],providers:[{id:'codex',displayName:'Codex',available:true}]}:{ok:false,error:'not_found'}
-      return{status:path.includes('create-receipt')?404:200,json:async()=>body}
-    }
-    const env={document:{hidden:false,visibilityState:'visible',getElementById:get,createElement:(tag:string)=>get('created-'+tag),querySelector:(selector:string)=>get(selector),querySelectorAll:()=>[],addEventListener(){}},window:{addEventListener(){}},REMOTE:{id:'fixture'},T:'test-token',location:{host:'test',replace(){}},localStorage:{getItem:(key:string)=>saved.get(key)??null,setItem:(key:string,value:string)=>saved.set(key,value),removeItem:(key:string)=>saved.delete(key)},api,esc:String,toast(){},setTimeout,clearTimeout,setInterval,crypto,openMatter:vi.fn(),openYou(){},ccMobilePane:vi.fn(),mUuid:()=>crypto.randomUUID()}
-    new Function(...Object.keys(env),`var mCurrent=null,mSeq=0;\n${readMobileSource('attachments.js')}\n${readMobileSource('entry.js')}\n${readMobileSource('presence.js')}\n${readMobileSource('home.js')}`)(...Object.values(env))
-    await vi.advanceTimersByTimeAsync(0)
-    expect(calls.filter(c=>c.path.includes('create-receipt'))).toEqual([{path:'/m/api/matter/create-receipt?requestId='+requestId,method:'GET'}])
-    expect(calls.filter(c=>c.method==='POST')).toEqual([])
-    expect(get('entry-text').value).toBe(input.text)
-    expect(get('entry-text').focus).not.toHaveBeenCalled()
-    expect(calls.filter(c=>c.method==='POST')).toEqual([])
-    expect(env.openMatter).not.toHaveBeenCalled()
+  it('页面上没有接着说、交办、成果、对话记录这些块', () => {
+    const page = assembleMobilePage(readMobileSource).phone
+    for (const id of ['m-say', 'm-say-box', 'm-send', 'm-events', 'm-artifacts', 'm-artifact-preview', 'm-inputs', 'm-controls', 'entry-root', 'terminal-root', 'lessons-root', 'p-sessions', 'p-memory', 'p-you', 'today-root', 'activity-root', 'home-result'])
+      expect(page, id).not.toContain(`id="${id}"`)
+    expect(page).not.toContain('CCM')
+    expect(page.slice(page.indexOf('<script'), page.indexOf('<script') + 8)).toBe('<script>')
   })
 })

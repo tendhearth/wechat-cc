@@ -754,8 +754,6 @@ async function bootDaemonInner(opts: BootDaemonOpts, undo: Array<() => void>): P
       workbench,
       cliSessions: () => cliEvents.list({ limit: 50 }),
       activity, activityLog,
-      // 手机上看 / 加 / 删项目经验(只给设备令牌);工作台没接上时回 503
-      lessons: { projects: () => workbenchRef.current ? workbenchRef.current.projects().map(p => ({ id: p.id, name: p.name, path: p.path })) : null, lessons: projectLessons },
       overseerToday,
       terminalHooks,
       // 手机拍板 / 说一句:拍板与微信「y/n 码」、桌宠权限卡同一份待批;说一句与微信「@码」同一个 core。

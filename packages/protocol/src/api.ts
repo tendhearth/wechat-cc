@@ -187,8 +187,8 @@ export const ProjectCatalogEntry = z.object({
 const Reason = z.object({ code: z.string(), message: z.string() })
 
 /** workbench/executor-capabilities.ts 的 `WorkbenchExecutorCapabilities`——
- * apps/mobile/src/entry.js:80 真读 `provider.capabilities.features.attachments`
- * 来决定材料能不能带着交办,不是只透传展示,类型漂移(比如变成字符串)必须被挡住。 */
+ * `provider.capabilities.features.attachments` 决定材料能不能带着交办(原先网页交办页 entry.js 真读它,
+ * 收敛 5b 删了那页;字段照旧下发),不是只透传展示,类型漂移(比如变成字符串)必须被挡住。 */
 export const WorkbenchExecutorCapabilities = z.object({
   version: z.literal(1),
   permissions: z.enum(['task', 'unattended']),
@@ -286,10 +286,6 @@ const HomeSuccess = z.object({
   events: z.array(FeedEvent), next_cursor: z.string().nullable(), sources_degraded: z.array(FeedSourceName),
 })
 
-const FeedSuccess = z.object({
-  ok: z.literal(true), events: z.array(FeedEvent), next_cursor: z.string().nullable(), sources_degraded: z.array(FeedSourceName),
-})
-
 // ── 「CC 记得你」(memory,memory/nightly-runtime.ts)───────────────────────
 
 const MemorySection = z.enum(['关于你', '偏好', '承诺', '身边的人', '近况'])
@@ -371,8 +367,7 @@ const SetStateSuccess = z.object({
 
 const TodoRow = z.object({
   id: z.number(), contact: z.string(), predicate: z.string(), value: z.string(),
-  // FactRow.time_ref(src/core/knowledge/store.ts):string|null —— apps/mobile/src/home.js:10
-  // 直接把它拼进 innerHTML,真读,不是透传。
+  // FactRow.time_ref(src/core/knowledge/store.ts):string|null —— 手机 App 的待办页直接显示它,真读,不是透传。
   time_ref: z.string().nullable(), updated_at: z.number(), display: z.string(),
 })
 
@@ -592,12 +587,10 @@ export const PHONE_API_SCHEMAS: Readonly<Record<string, z.ZodTypeAny>> = {
     z.object({ ok: z.literal(false), error: z.literal('link_only') }),
   ]),
   'GET /m/api/state': z.union([PhoneStateSuccess, PhoneErrorResponse]),
-  'GET /m/api/art/blink': z.object({ ok: z.literal(true), mime: z.literal('image/png'), half: z.string(), closed: z.string() }),
   'GET /m/api/art/presence': z.object({ ok: z.literal(true), mime: z.literal('image/png'), unlit: z.string(), lit: z.string() }),
   'GET /m/api/memory': z.union([MemorySuccess, PhoneErrorResponse]),
   'POST /m/api/memory/correct': z.union([z.object({ ok: z.literal(true) }), PhoneErrorResponse]),
   'GET /m/api/home': z.union([HomeSuccess, PhoneErrorResponse]),
-  'GET /m/api/feed': z.union([FeedSuccess, PhoneErrorResponse]),
   'POST /m/api/seen': z.union([z.object({ ok: z.literal(true), seen_until: z.string() }), PhoneErrorResponse]),
   'GET /m/api/matters': z.union([z.object({ ok: z.literal(true), matters: z.array(Matter) }), PhoneErrorResponse]),
   'GET /m/api/matter/insight': z.union([
@@ -627,9 +620,6 @@ export const PHONE_API_SCHEMAS: Readonly<Record<string, z.ZodTypeAny>> = {
   'GET /m/api/chat/file': z.union([z.object({ ok: z.literal(true), name: z.string(), mime: z.string(), size: z.number(), sha256: z.string(), offset: z.number(), nextOffset: z.number(), contentBase64: z.string() }), PhoneErrorResponse]),
   'GET /m/api/letters': z.union([z.object({ ok: z.literal(true), letters: z.array(LetterSummary) }), PhoneErrorResponse]),
   // 定时在手机上看得见(对标 B7,2026-10-20):列表 + 停 / 开 / 删;新建仍在微信「定时」。只给设备令牌。
-  'GET /m/api/lessons': z.union([z.object({ ok: z.literal(true), projects: z.array(z.object({ id: z.string(), name: z.string(), lessons: z.array(z.object({ id: z.string(), text: z.string() })) })), choices: z.array(z.object({ id: z.string(), name: z.string() })) }), PhoneErrorResponse]),
-  'POST /m/api/lessons/add': z.union([z.object({ ok: z.literal(true), id: z.string() }), PhoneErrorResponse]),
-  'POST /m/api/lessons/remove': z.union([z.object({ ok: z.literal(true) }), PhoneErrorResponse]),
   'GET /m/api/activity': z.union([z.object({ ok: z.literal(true), items: z.array(PhoneActivityItem), next: z.string().nullable(), degraded: z.array(z.string()) }), PhoneErrorResponse]),
   'GET /m/api/jobs': z.union([z.object({ ok: z.literal(true), timezone: z.string(), executor: z.string().nullable(), jobs: z.array(PhoneJob) }), PhoneErrorResponse]),
   'POST /m/api/jobs/action': z.union([z.object({ ok: z.literal(true) }), PhoneErrorResponse]),

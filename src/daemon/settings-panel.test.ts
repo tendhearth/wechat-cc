@@ -381,16 +381,15 @@ describe('随身 CC (phone PWA + device pairing)', () => {
     }])
   })
 
-  it('/m 首屏是「此刻」,回忆里仍能访问口袋三块', async () => {
+  it('/m 首屏是「此刻」;收敛 5b 后只有此刻与一起做,回忆和口袋三块去了 App', async () => {
     const { port } = await panel.start(0)
     const t = panel.issueToken()
     const html = await (await fetch(`http://127.0.0.1:${port}/m?t=${t}`)).text()
     expect(html).toContain('id="p-today"')
-    expect(html).toContain('id="p-pocket"')
+    expect(html).toContain('id="p-matters"')
     expect(html).toContain('/m/api/home')
     expect(html).toContain('cc.home.v2:')
-    expect(html).toContain('id="p-memory"')
-    for (const id of ['id="todos"', 'id="portrait"', 'id="stickers"']) expect(html).toContain(id)
+    for (const id of ['id="p-pocket"', 'id="p-memory"', 'id="todos"', 'id="portrait"', 'id="stickers"']) expect(html).not.toContain(id)
   })
 })
 
@@ -504,27 +503,6 @@ describe('随身 CC 首屏:伙伴的一天', () => {
       expect((r.events as unknown[]).length).toBe(2)
     })
   })
-  it('feed:分页接得上;坏游标 400', async () => {
-    await withPanel(mk(), async (base, t) => {
-      const p1 = await (await fetch(`${base}/m/api/feed?limit=2&t=${t}`)).json() as { events: Array<{ id: string }>; next_cursor: string | null; sources_degraded: string[] }
-      expect(p1.events).toHaveLength(2)
-      expect(p1.next_cursor).not.toBeNull()
-      expect(p1.sources_degraded).toEqual([])
-      const p2 = await (await fetch(`${base}/m/api/feed?limit=2&cursor=${encodeURIComponent(p1.next_cursor!)}&t=${t}`)).json() as { events: Array<{ id: string }>; next_cursor: string | null }
-      expect(p2.events.map(e => e.id)).toEqual(['chat_day:2026-09-05'])
-      expect(p2.next_cursor).toBeNull()
-      const bad = await fetch(`${base}/m/api/feed?cursor=%25%25&t=${t}`)
-      expect(bad.status).toBe(400)
-      expect(await bad.json()).toEqual({ ok: false, error: 'invalid_cursor' })
-    })
-  })
-  it('feed:单源挂 → sources_degraded 也在这个响应里 (I2)', async () => {
-    planThrows = true
-    await withPanel(mk(), async (base, t) => {
-      const r = await (await fetch(`${base}/m/api/feed?t=${t}`)).json() as { sources_degraded: string[] }
-      expect(r.sources_degraded).toEqual(['thought'])
-    })
-  })
   it('seen:写入、夹到 now、单调不后退、非法 400、没接 503', async () => {
     await withPanel(mk(), async (base, t) => {
       const post = (until: unknown) => fetch(`${base}/m/api/seen?t=${t}`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ until }) })
@@ -543,10 +521,9 @@ describe('随身 CC 首屏:伙伴的一天', () => {
       expect(r.status).toBe(503)
     })
   })
-  it('三个路由都要令牌', async () => {
+  it('两个路由都要令牌', async () => {
     await withPanel(mk(), async (base) => {
       expect((await fetch(`${base}/m/api/home`)).status).toBe(401)
-      expect((await fetch(`${base}/m/api/feed`)).status).toBe(401)
       expect((await fetch(`${base}/m/api/seen`, { method: 'POST' })).status).toBe(401)
     })
   })
@@ -1054,26 +1031,10 @@ describe('phone curated memory', () => {
     })
     const { port } = await p.start(0)
     try {
-      const r = await fetch(`http://127.0.0.1:${port}/m/api/memory?t=${p.issueToken()}`)
+      // 收敛 5b:记忆只给设备令牌(链接令牌的读收回了)
+      const r = await fetch(`http://127.0.0.1:${port}/m/api/memory?d=${await deviceOf(p, `http://127.0.0.1:${port}`)}`)
       expect(r.status).toBe(500)
       expect(await r.json()).toEqual({ ok: false, error: 'unavailable' })
-    } finally { await p.stop() }
-  })
-  it('serves the blink frames behind the token', async () => {
-    const p = makeSettingsPanel({
-      stateDir: mkdtempSync(join(tmpdir(), 'sp-art-')), ownerChatId: () => null,
-      chatPrefs: { get: () => ({}), set: (_id, patch) => patch },
-      getUserName: () => null, setUserName: async () => {}, log: () => {},
-    })
-    const { port } = await p.start(0)
-    try {
-      const base = `http://127.0.0.1:${port}`
-      expect((await fetch(`${base}/m/api/art/blink`)).status).toBe(401)
-      const r = await (await fetch(`${base}/m/api/art/blink?t=${p.issueToken()}`)).json() as { ok: boolean; mime: string; half: string; closed: string }
-      expect(r.ok).toBe(true)
-      expect(r.mime).toBe('image/png')
-      expect(Buffer.from(r.half, 'base64').subarray(1, 4).toString()).toBe('PNG')
-      expect(Buffer.from(r.closed, 'base64').subarray(1, 4).toString()).toBe('PNG')
     } finally { await p.stop() }
   })
   it('serves the presence art (「此刻」形象画) behind the token — moved out of the inlined /m page, 手机协议包 v2 Task 4 fix round 1', async () => {
@@ -1110,7 +1071,9 @@ describe('phone curated memory', () => {
     try {
       const base = `http://127.0.0.1:${port}`
       expect((await fetch(`${base}/m/api/memory`)).status).toBe(401)
-      const r = await (await fetch(`${base}/m/api/memory?t=${p.issueToken()}`)).json()
+      // 收敛 5b(2026-10-21):链接令牌读不到记忆了,设备令牌照旧
+      expect((await fetch(`${base}/m/api/memory?t=${p.issueToken()}`)).status).toBe(403)
+      const r = await (await fetch(`${base}/m/api/memory?d=${await deviceOf(p, base)}`)).json()
       expect(r).toEqual({ ok: true, ...view })
     } finally { await p.stop() }
   })
