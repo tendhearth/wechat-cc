@@ -100,3 +100,39 @@ describe('policy.say —— CC 开口只有这一道门', () => {
     expect(await policy.say({ kind: 'companion', chatId: OWNER }, async t => { await t.sendText(OWNER, 'x') })).toMatchObject({ allow: true })
   })
 })
+
+describe('tell / flushPending —— 推后的 report 落盘待说,补说走 say 开的那一轮(降级时落到 App)', () => {
+  it('**微信降级 + 补说 ⇒ 落到 App**(9d 评审:不能只发微信)', async () => {
+    const { makeProactiveOutbound } = await import('../companion/proactive-channel')
+    const { makePendingNotices } = await import('./pending-notices')
+    const { mkdtempSync } = await import('node:fs'); const { tmpdir } = await import('node:os'); const { join } = await import('node:path')
+    const recorded: string[] = []
+    let degraded = false, quiet = true
+    const outbound = makeProactiveOutbound({
+      wechatDegraded: () => degraded, wechatClosedSince: () => null,
+      sendWechat: async () => ({ msgId: 'w' }),
+      app: () => ({ deliverable: () => true, record: async (_c, t) => { recorded.push(t); return true }, push: () => {} }),
+      log: () => {},
+    })
+    const policy = makeSpeechPolicy({ care: () => 'low', quietEndsAt: (_c, n) => (quiet ? n + 3600_000 : null), outbound, log: () => {}, pending: makePendingNotices({ stateDir: mkdtempSync(join(tmpdir(), 'pend-')), log: () => {} }) })
+    expect(await policy.tell('job_notice', OWNER, '定时 j1 连续失败,先停了')).toBe(false)   // 免打扰 ⇒ 推后、入队
+    quiet = false; degraded = true
+    await policy.flushPending()
+    expect(recorded).toEqual(['定时 j1 连续失败,先停了'])
+    await policy.flushPending()
+    expect(recorded).toHaveLength(1)
+  })
+  it('initiative 推后不入队;report 推后入队;放行 ⇒ true', async () => {
+    const { makePendingNotices } = await import('./pending-notices')
+    const { mkdtempSync } = await import('node:fs'); const { tmpdir } = await import('node:os'); const { join } = await import('node:path')
+    const pending = makePendingNotices({ stateDir: mkdtempSync(join(tmpdir(), 'pend-')), log: () => {} })
+    const ob = fakeOutbound()
+    let quiet = true
+    const policy = makeSpeechPolicy({ care: () => 'low', quietEndsAt: (_c, n) => (quiet ? n + 3600_000 : null), outbound: ob.out, log: () => {}, pending })
+    await policy.tell('sticker', OWNER, '新表情')
+    await policy.tell('boot_notice', OWNER, '开机有几样没起来')
+    expect(pending.groups()).toEqual([expect.objectContaining({ chatId: OWNER, items: [expect.objectContaining({ kind: 'boot_notice' })] })])
+    quiet = false
+    expect(await policy.tell('upgrade_notice', OWNER, '升好了')).toBe(true)
+  })
+})

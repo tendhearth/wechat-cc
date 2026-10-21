@@ -13,6 +13,7 @@ import { loadCompanionConfig } from '../companion/config'
 import type { ProactiveOutbound } from '../companion/proactive-channel'
 import { makeSpeechLedgerStore } from '../speech/ledger-store'
 import { makeSpeechPolicy, type SpeechPolicy } from '../speech/policy'
+import { makePendingNotices } from '../speech/pending-notices'
 
 export function wireSpeech(d: {
   stateDir: string
@@ -29,6 +30,8 @@ export function wireSpeech(d: {
     outbound: d.proactive,
     ledger: (e) => ledger.append(e),
     log: d.log,
+    // report / blocking 被推后不丢:落盘待说,startPendingFlush 那一拍补说(defer 不是不送)
+    pending: makePendingNotices({ stateDir: d.stateDir, log: d.log, ...(d.now ? { now: d.now } : {}) }),
     ...(d.now ? { now: d.now } : {}),
   })
 }

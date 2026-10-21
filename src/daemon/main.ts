@@ -88,6 +88,7 @@ import { wireCliSessions } from './bootstrap/wire-cli-sessions'
 import { wireJobs } from './bootstrap/wire-jobs'
 import { pinHuntForExistingOwner } from './companion/hunt-default'
 import { makeTeardown } from './bootstrap/teardown'
+import { startPendingFlush } from './speech/pending-notices'
 import { wireActivity } from './bootstrap/wire-activity'
 import {wireWorkbenchNotifications} from './bootstrap/wire-workbench-notifications'
 import {wireWorkbenchArtifacts} from './bootstrap/wire-workbench-artifacts'
@@ -798,6 +799,8 @@ async function bootDaemonInner(opts: BootDaemonOpts, undo: Array<() => void>): P
     internalApi.provide({ phoneConnect: wired.phoneConnect })
     wiredRef.current = wired
     speechRef.set(wired.speech)
+    // 推后了的 report / blocking 补说的那一拍(speech/pending-notices.ts):门这一层唯一的触发点,关机停
+    lc.register(startPendingFlush(wired.speech, (t, l) => log(t, l)))
     const pipeline = buildInboundPipeline(wired.pipelineDeps)
     wireRef(wired.refs.pipeline, pipeline)
     wireRef(wired.refs.appTurn, pipeline.appTurn)

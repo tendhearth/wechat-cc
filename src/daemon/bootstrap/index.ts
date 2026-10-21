@@ -292,7 +292,7 @@ export async function buildBootstrap(deps: BootstrapDeps): Promise<Bootstrap> {
   }
   const socialWiring = (await sup.start('social', async () => {
     const w = await wireSocial({
-      log: deps.log, teardown, ...(deps.speech ? { speech: deps.speech } : {}),
+      log: deps.log, ...(deps.speech ? { speech: deps.speech } : {}),
       stateDir: deps.stateDir,
       sendFile: deps.ilink.sendFile ? (c, p) => deps.ilink.sendFile!(c, p) : undefined,
       db: deps.db,
