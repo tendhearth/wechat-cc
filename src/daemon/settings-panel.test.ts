@@ -325,8 +325,10 @@ describe('随身 CC (phone PWA + device pairing)', () => {
   it('phone state: todos with display names, portrait svg, sticker tags', async () => {
     const { port } = await panel.start(0)
     const base = `http://127.0.0.1:${port}`
-    const t = panel.issueToken()
-    const s2 = await (await fetch(`${base}/m/api/state?t=${t}`)).json() as { todos: { active: Array<{ display: string }> }; portrait: string | null; stickers: Array<{ tags: string[] }> }
+    // 理念 2(10-21):链接页面不调 /m/api/state ⇒ 只给设备(App 在用)
+    expect((await fetch(`${base}/m/api/state?t=${panel.issueToken()}`)).status).toBe(403)
+    const t = await deviceOf(panel, base)
+    const s2 = await (await fetch(`${base}/m/api/state?d=${t}`)).json() as { todos: { active: Array<{ display: string }> }; portrait: string | null; stickers: Array<{ tags: string[] }> }
     expect(s2.todos.active[0]!.display).toBe('小飞')
     expect(s2.portrait).toContain('<svg')
     expect(s2.stickers[0]!.tags).toEqual(['开心'])
@@ -335,8 +337,8 @@ describe('随身 CC (phone PWA + device pairing)', () => {
   it('phone state: portraitPng(给原生 App)按 SVG 缓存,第二次不再画;画不出 ⇒ 字段不出现', async () => {
     const { port } = await panel.start(0)
     const base = `http://127.0.0.1:${port}`
-    const t = panel.issueToken()
-    const read = async () => (await (await fetch(`${base}/m/api/state?t=${t}`)).json()) as Record<string, unknown>
+    const t = await deviceOf(panel, base)
+    const read = async () => (await (await fetch(`${base}/m/api/state?d=${t}`)).json()) as Record<string, unknown>
     expect((await read()).portraitPng).toBe('UE5HIQ==')
     expect((await read()).portraitPng).toBe('UE5HIQ==')
     expect(portraitRenders).toBe(1)
@@ -351,8 +353,10 @@ describe('随身 CC (phone PWA + device pairing)', () => {
   it('sticker ?b64=1 returns JSON data-URI payload (tunnel/shell mode images)', async () => {
     const { port } = await panel.start(0)
     const base = `http://127.0.0.1:${port}`
-    const t = panel.issueToken()
-    const r = await (await fetch(`${base}/m/api/sticker/bear.png?b64=1&t=${t}`)).json() as { ok: boolean; mime: string; data: string }
+    // 理念 2(10-21):贴纸只给设备(链接页面不调)
+    expect((await fetch(`${base}/m/api/sticker/bear.png?b64=1&t=${panel.issueToken()}`)).status).toBe(403)
+    const t = await deviceOf(panel, base)
+    const r = await (await fetch(`${base}/m/api/sticker/bear.png?b64=1&d=${t}`)).json() as { ok: boolean; mime: string; data: string }
     expect(r.ok).toBe(true)
     expect(r.mime).toBe('image/png')
     expect(Buffer.from(r.data, 'base64').toString()).toBe('png-bytes')
@@ -361,9 +365,9 @@ describe('随身 CC (phone PWA + device pairing)', () => {
   it('sticker image serving guards path traversal', async () => {
     const { port } = await panel.start(0)
     const base = `http://127.0.0.1:${port}`
-    const t = panel.issueToken()
-    expect((await fetch(`${base}/m/api/sticker/bear.png?t=${t}`)).status).toBe(200)
-    expect((await fetch(`${base}/m/api/sticker/..%2F..%2Fagent-config.json?t=${t}`)).status).toBe(404)
+    const t = await deviceOf(panel, base)
+    expect((await fetch(`${base}/m/api/sticker/bear.png?d=${t}`)).status).toBe(200)
+    expect((await fetch(`${base}/m/api/sticker/..%2F..%2Fagent-config.json?d=${t}`)).status).toBe(404)
   })
 
   it('serves the CC brand PNG without a token and declares its actual PWA dimensions', async () => {
@@ -504,7 +508,10 @@ describe('随身 CC 首屏:伙伴的一天', () => {
     })
   })
   it('seen:写入、夹到 now、单调不后退、非法 400、没接 503', async () => {
-    await withPanel(mk(), async (base, t) => {
+    await withPanel(mk(), async (base, link) => {
+      // 理念 2(10-21):链接页面不调 seen ⇒ 只给设备
+      expect((await fetch(`${base}/m/api/seen?t=${link}`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ until: '2026-09-06T07:00:00.000Z' }) })).status).toBe(403)
+      const t = await deviceOf({ issueToken: () => link }, base)
       const post = (until: unknown) => fetch(`${base}/m/api/seen?t=${t}`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ until }) })
       expect(await (await post('2026-09-06T07:00:00.000Z')).json()).toEqual({ ok: true, seen_until: '2026-09-06T07:00:00.000Z' })
       expect(await (await post('2099-01-01T00:00:00.000Z')).json()).toEqual({ ok: true, seen_until: '2026-09-06T08:00:00.000Z' })
@@ -516,7 +523,8 @@ describe('随身 CC 首屏:伙伴的一天', () => {
       expect(home.unread).toBe(0)
       expect(home.seen_until).toBe('2026-09-06T08:00:00.000Z')
     })
-    await withPanel(mk({ seen: undefined }), async (base, t) => {
+    await withPanel(mk({ seen: undefined }), async (base, link) => {
+      const t = await deviceOf({ issueToken: () => link }, base)
       const r = await fetch(`${base}/m/api/seen?t=${t}`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ until: '2026-09-06T07:00:00.000Z' }) })
       expect(r.status).toBe(503)
     })
@@ -753,11 +761,13 @@ describe('「一件事」手机路由(2026-09-16)', () => {
 describe('GET /m/api/matter/insight', () => {
   async function panelWith(insight?: unknown) {
     const panel = makeSettingsPanel({ stateDir: seedStateDir(), ownerChatId: () => OWNER, chatPrefs: { get: () => ({}), set: () => ({}) }, getUserName: () => null, setUserName: async () => {}, log: () => {}, ...(insight ? { insight } : {}) } as never)
-    const { port } = await panel.start(0)
-    return { panel, base: `http://127.0.0.1:${port}`, t: panel.issueToken() }
+    const { port } = await panel.start(0), base = `http://127.0.0.1:${port}`
+    // 理念 2(10-21):链接页面不调这条 ⇒ 只给设备
+    return { panel, base, t: await deviceOf(panel, base), link: panel.issueToken() }
   }
-  it('没接线 ⇒ 503;id 不合法 ⇒ 400', async () => {
+  it('没接线 ⇒ 503;id 不合法 ⇒ 400;链接令牌 ⇒ 403', async () => {
     const a = await panelWith()
+    expect((await fetch(`${a.base}/m/api/matter/insight?id=deadbeef&t=${a.link}`)).status).toBe(403)
     expect((await fetch(`${a.base}/m/api/matter/insight?id=deadbeef&t=${a.t}`)).status).toBe(503)
     await a.panel.stop()
     const b = await panelWith({ forMatter: vi.fn() })
@@ -781,12 +791,14 @@ describe('GET /m/api/matter/insight', () => {
 describe('GET /m/api/matter/changes', () => {
   async function panelWith(changes?: unknown) {
     const panel = makeSettingsPanel({ stateDir: seedStateDir(), ownerChatId: () => OWNER, chatPrefs: { get: () => ({}), set: () => ({}) }, getUserName: () => null, setUserName: async () => {}, log: () => {}, ...(changes ? { changes } : {}) } as never)
-    const { port } = await panel.start(0)
-    return { panel, base: `http://127.0.0.1:${port}`, t: panel.issueToken() }
+    const { port } = await panel.start(0), base = `http://127.0.0.1:${port}`
+    // 理念 2(10-21):链接页面不调这条 ⇒ 只给设备
+    return { panel, base, t: await deviceOf(panel, base), link: panel.issueToken() }
   }
   const T = (createdAt: number) => ({ createdAt, status: 'complete' as const, files: [{ path: 'a.ts', kind: 'modified' as const, diff: '+x' }] })
-  it('没接线 ⇒ 503;id 不合法 ⇒ 400', async () => {
+  it('没接线 ⇒ 503;id 不合法 ⇒ 400;链接令牌 ⇒ 403', async () => {
     const a = await panelWith()
+    expect((await fetch(`${a.base}/m/api/matter/changes?id=deadbeef&t=${a.link}`)).status).toBe(403)
     expect((await fetch(`${a.base}/m/api/matter/changes?id=deadbeef&t=${a.t}`)).status).toBe(503)
     await a.panel.stop()
     const b = await panelWith(vi.fn())
@@ -814,7 +826,7 @@ describe('POST /m/api/matter/review-mark|review-return', () => {
     const panel = makeSettingsPanel({ stateDir: seedStateDir(), ownerChatId: () => OWNER, chatPrefs: { get: () => ({}), set: () => ({}) }, getUserName: () => null, setUserName: async () => {}, log: () => {}, ...(review ? { review } : {}) } as never)
     const { port } = await panel.start(0)
     const base = `http://127.0.0.1:${port}`
-    // 退回只给设备令牌(#456 评审):先配对拿设备令牌;link 是 /set 链接令牌
+    // 退回只给设备令牌(#456 评审),标记也是(理念 2,10-21):先配对拿设备令牌;link 是 /set 链接令牌
     const paired = await (await fetch(`${base}/set/api/pair?t=${panel.issueToken()}`, { method: 'POST' })).json() as { device_token: string }
     const link = panel.issueToken()
     const post = (path: string, body: unknown, tok = paired.device_token) => fetch(`${base}${path}?t=${tok}`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body) })
@@ -833,14 +845,15 @@ describe('POST /m/api/matter/review-mark|review-return', () => {
     expect(review.ret).not.toHaveBeenCalled()
     await b.panel.stop()
   })
-  it('链接令牌:退回 403(不碰工作台);标记照旧能用', async () => {
+  // 理念 2(10-21):标记也收回了(链接页面不调),两条都 403
+  it('链接令牌:退回与标记都 403(不碰工作台)', async () => {
     const review = { mark: vi.fn(), ret: vi.fn(async () => ({})) }
     const p = await panelWith(review)
     const r = await p.post('/m/api/matter/review-return', { id: 'deadbeef', artifactId: 'a1', paths: ['a.ts'], comment: '改回去' }, p.link)
     expect(r.status).toBe(403)
     expect(review.ret).not.toHaveBeenCalled()
-    expect((await p.post('/m/api/matter/review-mark', { id: 'deadbeef', artifactId: 'a1', path: 'a.ts', mark: 'accepted' }, p.link)).status).toBe(200)
-    expect(review.mark).toHaveBeenCalledTimes(1)
+    expect((await p.post('/m/api/matter/review-mark', { id: 'deadbeef', artifactId: 'a1', path: 'a.ts', mark: 'accepted' }, p.link)).status).toBe(403)
+    expect(review.mark).not.toHaveBeenCalled()
     await p.panel.stop()
   })
   it('标记与退回原样转给工作台;工作台的错误码按手机那套映射', async () => {
@@ -1087,9 +1100,12 @@ describe('phone curated memory', () => {
     })
     const { port } = await p.start(0)
     try {
-      const base = `http://127.0.0.1:${port}`, tok = p.issueToken()
+      // 理念 2(10-21):链接页面不调记忆纠错 ⇒ 只给设备;链接令牌 403、不碰记忆
+      const base = `http://127.0.0.1:${port}`, tok = await deviceOf(p, base)
       const post = (body: unknown, t: string | null = tok) => fetch(`${base}/m/api/memory/correct${t ? `?t=${t}` : ''}`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body) })
       expect((await post({ id: 'b1', verdict: 'wrong' }, null)).status).toBe(401)
+      expect((await post({ id: 'b1', verdict: 'wrong' }, p.issueToken())).status).toBe(403)
+      expect(correctMemory).not.toHaveBeenCalled()
       expect((await post({ id: 'b1', verdict: 'wrong' })).status).toBe(200)
       expect(correctMemory).toHaveBeenCalledWith('b1', 'wrong')
       for (const b of [{ id: 'b1' }, { id: 'b1', verdict: 'nope' }, { id: '../x', verdict: 'delete' }, { id: 'b1', verdict: 'delete', extra: 1 }]) expect((await post(b)).status).toBe(400)

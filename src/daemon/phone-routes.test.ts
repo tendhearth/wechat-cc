@@ -21,11 +21,16 @@ describe('phoneRouteAllowed', () => {
     // chat/file:信的每一页也镜像进对话,链接令牌不能从这里读出信(评审 10-19 #1)
     const deviceOnly = ['GET /m/api/letters', 'GET /m/api/letters/page', 'GET /m/api/chat/file', 'POST /m/api/cli/permission', 'POST /m/api/cli/say', 'GET /m/api/jobs', 'POST /m/api/jobs/action', 'GET /m/api/activity', 'GET /m/api/matter/rewind', 'POST /m/api/matter/rewind', 'POST /m/api/matter/review-return', 'POST /m/api/matter/review-comment', 'POST /m/api/matter/review-comments-send', 'POST /m/api/matter/say', 'POST /m/api/matter/create', 'POST /m/api/matter/permission', 'POST /m/api/matter/answer', 'POST /m/api/matter/handoff', 'POST /m/api/session/continue', 'POST /m/api/matter/worktree', 'POST /m/api/chat/say', 'POST /m/api/push/register', 'POST /m/api/push/test',
       // 收敛 5b(2026-10-21):网页不再有这几页,链接令牌的读收回(#463「私事,收敛时再看」)
-      'GET /m/api/chat', 'GET /m/api/chat/search', 'GET /m/api/chat/voice', 'GET /m/api/memory', 'GET /m/api/sessions', 'GET /m/api/session', 'GET /m/api/session/continue', 'GET /m/api/cli/sessions', 'GET /m/api/cli/activity']
+      'GET /m/api/chat', 'GET /m/api/chat/search', 'GET /m/api/chat/voice', 'GET /m/api/memory', 'GET /m/api/sessions', 'GET /m/api/session', 'GET /m/api/session/continue', 'GET /m/api/cli/sessions', 'GET /m/api/cli/activity',
+      // 理念 2(2026-10-21):链接范围 = 链接页面扫出来的调用(scripts/link-routes-from-source.guard.test.ts);网页不再调的 22 条收回
+      'GET /m/api/state', 'GET /m/api/today', 'GET /m/api/sticker/', 'GET /m/api/connections', 'GET /m/api/entry/options', 'GET /m/api/entry/models',
+      'GET /m/api/attachment/upload', 'POST /m/api/attachment/chunk', 'POST /m/api/attachment/discard', 'GET /m/api/matter/create-receipt', 'GET /m/api/matter/input-receipt',
+      'GET /m/api/matter/insight', 'GET /m/api/matter/changes', 'GET /m/api/matter/artifact', 'GET /m/api/chat/transcribe', 'POST /m/api/chat/transcribe',
+      'GET /m/api/chat/model', 'POST /m/api/chat/model', 'POST /m/api/seen', 'POST /m/api/todo', 'POST /m/api/memory/correct', 'POST /m/api/matter/review-mark']
     expect([...LINK_ROUTES].sort()).toEqual([...PHONE_ROUTES].filter(r => !deviceOnly.includes(r)).sort())
     for (const r of deviceOnly) { expect(PHONE_ROUTES.has(r)).toBe(true); expect(LINK_ROUTES.has(r)).toBe(false) }
-    // 退回 / 行评论给执行者的话是指令 ⇒ 只给设备(#456 评审);review-mark 只记标记,链接令牌照旧能用
-    expect(LINK_ROUTES.has('POST /m/api/matter/review-mark')).toBe(true)
+    // 链接令牌剩下的就是链接页面会调的那几条:配对、设置页、此刻、一起做的看与停
+    expect([...LINK_ROUTES].sort()).toEqual(['GET /m', 'GET /m/api/art/presence', 'GET /m/api/home', 'GET /m/api/matter', 'GET /m/api/matters', 'GET /set', 'GET /set/api/state', 'POST /m/api/matter/stop', 'POST /set/api/apply', 'POST /set/api/pair'])
     expect([...LAN_ONLY_OPS].sort()).toEqual(['forget_devices', 'revoke_device', 'set_remote'])
   })
 })
@@ -73,10 +78,10 @@ describe('链接令牌白名单(审计续,10-20):读也要显式归类,缺省只
     for (const [r, why] of [...Object.entries(LINK_READ_OK), ...Object.entries(LINK_WRITE_OK)]) { expect(PHONE_ROUTES.has(r), r).toBe(true); expect(why.length, r).toBeGreaterThan(4) }
     for (const r of Object.keys(LINK_READ_OK)) expect(r.startsWith('POST '), r).toBe(false)
   })
-  // 32 条读 → 5b(2026-10-21)删了 feed / art/blink 两条路由、收回 9 条私事读 ⇒ 21 条
-  it('the link-readable reads are exactly the 21 left after convergence 5b; the private ones stay device-only', async () => {
+  // 32 条读 → 5b(2026-10-21)删了 feed / art/blink 两条路由、收回 9 条私事读 ⇒ 21 条 → 理念 2(同日)只留链接页面调的 ⇒ 7 条
+  it('the link-readable reads are exactly the 7 the link pages call; the private ones stay device-only', async () => {
     const reads = [...LINK_ROUTES].filter(r => !r.startsWith('POST ')).sort()
-    expect(reads).toHaveLength(21)
+    expect(reads).toHaveLength(7)
     for (const r of ['GET /m/api/activity', 'GET /m/api/chat/file', 'GET /m/api/jobs', 'GET /m/api/letters', 'GET /m/api/letters/page', 'GET /m/api/matter/rewind', 'GET /m/api/chat', 'GET /m/api/memory', 'GET /m/api/sessions', 'GET /m/api/cli/sessions', 'GET /m/api/cli/activity']) expect(LINK_ROUTES.has(r), r).toBe(false)
     // /set 链接打开的那一版网页(配对前)要读的这几条必须留着
     for (const r of ['GET /m', 'GET /m/api/home', 'GET /m/api/matters', 'GET /m/api/matter', 'GET /m/api/art/presence']) expect(LINK_ROUTES.has(r), r).toBe(true)

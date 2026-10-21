@@ -47,7 +47,8 @@ describe('从路由表推出来的名单与改造前快照逐条一致', () => {
   })
   // 新加的路由不比(上面 filter 掉了),但「哪些令牌能碰它」得有人点头:operator(桌面 / CLI 共用的长效令牌)、
   // federation(另一台 CC)、selftest、链接令牌,名单整份比 = 快照 + 下面明列的新增。往表里加 tokens:['operator']
-  // 或 link:'read'|'write' 而不改这里 ⇒ 红(#471 评审)。
+  // 或 link:'read'|'write' 而不改这里 ⇒ 红(#471 评审)。链接令牌那一份另有 link-routes-from-source.guard.test.ts 对着
+  // 链接页面源码核对(理念 2,10-21):收回的 22 条已从快照的 link / LINK_* 里删掉,所以这里 link 的新增照旧是空。
   it('令牌能碰到的范围:新增必须在这里显式点头', () => {
     const APPROVED_ADDITIONS: Record<'operator' | 'federation' | 'selftest' | 'link', string[]> = { operator: [], federation: [], selftest: [], link: [] }
     const reg = makeTokenRegistry(() => 'deadbeef'.repeat(8))

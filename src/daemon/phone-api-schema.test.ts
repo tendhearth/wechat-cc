@@ -425,9 +425,13 @@ describe('真实返回校验 — 首页 / 设置页 / 记忆 / 贴纸', () => {
     const started = await panel.start(0)
     base = `http://127.0.0.1:${started.port}`
     token = panel.issueToken()
+    dtCache = null
   })
   afterEach(async () => { await panel.stop(); removeTempDir(dir) })
 
+  // 理念 2(10-21):链接页面不调的路由只给设备 —— 这些测试先配一次对(配对会用掉链接令牌,再发一枚)
+  let dtCache: string | null = null
+  async function dev(): Promise<string> { if (!dtCache) { dtCache = await pairDevice(base, token); token = panel.issueToken() } return dtCache }
   function get(path: string, tok = token) { return fetch(`${base}${path}${path.includes('?') ? '&' : '?'}t=${tok}`) }
   function post(path: string, body: unknown, tok = token) {
     return fetch(`${base}${path}${path.includes('?') ? '&' : '?'}t=${tok}`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body) })
@@ -453,7 +457,8 @@ describe('真实返回校验 — 首页 / 设置页 / 记忆 / 贴纸', () => {
   })
 
   it('m/api/state、art/presence 真实返回符合 schema', async () => {
-    const st = parseAs('GET /m/api/state', await (await get('/m/api/state')).json()) as { portraitPng?: string }
+    expect((await get('/m/api/state')).status).toBe(403)   // 链接页面不调 /m/api/state(App 在用)
+    const st = parseAs('GET /m/api/state', await (await get('/m/api/state', await dev())).json()) as { portraitPng?: string }
     expect(st.portraitPng).toBe('iVBORw0KGgo=')
     parseAs('GET /m/api/art/presence', await (await get('/m/api/art/presence')).json())
   })
@@ -462,7 +467,7 @@ describe('真实返回校验 — 首页 / 设置页 / 记忆 / 贴纸', () => {
   // 这个字段的类型漂移(真实类型是 string|null,src/core/knowledge/store.ts 的 FactRow),
   // 不能是 z.unknown()。
   it('m/api/state 的 todos.active[].time_ref 类型漂移会被 schema 挡住', async () => {
-    const body = await (await get('/m/api/state')).json() as { todos: { active: Array<{ time_ref: unknown }> } }
+    const body = await (await get('/m/api/state', await dev())).json() as { todos: { active: Array<{ time_ref: unknown }> } }
     expect(body.todos.active[0]!.time_ref).toBeNull()
     const mutated = structuredClone(body)
     mutated.todos.active[0]!.time_ref = { not: 'a string' }
@@ -470,7 +475,7 @@ describe('真实返回校验 — 首页 / 设置页 / 记忆 / 贴纸', () => {
   })
 
   it('m/api/state 的 portraitPng 可有可无(老 daemon / 不是 macOS 不带);带了就必须是字符串', async () => {
-    const body = await (await get('/m/api/state')).json() as Record<string, unknown>
+    const body = await (await get('/m/api/state', await dev())).json() as Record<string, unknown>
     const { portraitPng: _p, ...without } = body
     expect(() => parseAs('GET /m/api/state', without)).not.toThrow()
     expect(() => parseAs('GET /m/api/state', { ...body, portraitPng: 42 })).toThrow()
@@ -478,7 +483,8 @@ describe('真实返回校验 — 首页 / 设置页 / 记忆 / 贴纸', () => {
 
   it('m/api/home、m/api/seen 真实返回符合 schema', async () => {
     parseAs('GET /m/api/home', await (await get('/m/api/home')).json())
-    parseAs('POST /m/api/seen', await (await post('/m/api/seen', { until: '2026-09-06T07:00:00.000Z' })).json())
+    expect((await post('/m/api/seen', { until: '2026-09-06T07:00:00.000Z' })).status).toBe(403)
+    parseAs('POST /m/api/seen', await (await post('/m/api/seen', { until: '2026-09-06T07:00:00.000Z' }, await dev())).json())
   })
 
   it('m/api/push/register、m/api/push/test 真实返回符合 schema', async () => {
@@ -525,7 +531,10 @@ describe('真实返回校验 — 首页 / 设置页 / 记忆 / 贴纸', () => {
     const dt = (await (await post('/set/api/pair', {})).json() as { device_token: string }).device_token
     token = panel.issueToken()
     parseAs('GET /m/api/memory', await (await fetch(`${base}/m/api/memory?d=${dt}`)).json())
-    parseAs('POST /m/api/todo', await (await post('/m/api/todo', { id: 7, status: 'resolved' })).json())
-    parseAs('GET /m/api/sticker/', await (await get('/m/api/sticker/bear.png?b64=1')).json())
+    // 理念 2(10-21):待办与贴纸也只给设备(链接页面不调)
+    expect((await post('/m/api/todo', { id: 7, status: 'resolved' })).status).toBe(403)
+    expect((await get('/m/api/sticker/bear.png?b64=1')).status).toBe(403)
+    parseAs('POST /m/api/todo', await (await post('/m/api/todo', { id: 7, status: 'resolved' }, dt)).json())
+    parseAs('GET /m/api/sticker/', await (await get('/m/api/sticker/bear.png?b64=1', dt)).json())
   })
 })
