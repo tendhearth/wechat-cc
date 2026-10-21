@@ -15,10 +15,11 @@ export interface MwCommandDeps {
 export function makeMwCommand(deps: MwCommandDeps): Middleware {
   return async (ctx, next) => {
     if (routedAway(ctx, 'command')) { await next(); return }
-    const id = await deps.registry.handle(ctx.msg)
-    if (id) {
-      deps.log('COMMAND', `${id} consumed from chat=${ctx.msg.chatId}`)
-      ctx.consumedBy = 'command'
+    const hit = await deps.registry.handle(ctx.msg)
+    if (hit) {
+      deps.log('COMMAND', `${hit.id} consumed from chat=${ctx.msg.chatId}`)
+      // 沿用老标签(admin / mode / onboarding / permission-reply / command):trace、welcome、milestone、activity 不用改
+      ctx.consumedBy = hit.group as NonNullable<typeof ctx.consumedBy>
       return
     }
     await next()
