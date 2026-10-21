@@ -129,6 +129,9 @@ function approvalScope(params: ObjectValue): string | null {
 }
 
 /** Workbench-only native protocol adapter. Normal chats continue using the SDK. */
+/** 发完 SIGKILL 之后至少再等多久看它退(关闭期限已经过了也给这一段)。 */
+const KILL_GRACE_MS = 250
+
 export function createWorkbenchCodexProvider(options: Options): AgentProvider {
   return {
     modelCatalog: project => discoverCodexModels(options.codexPathOverride, project.path, options.rpcTimeoutMs),
@@ -385,9 +388,12 @@ export function createWorkbenchCodexProvider(options: Options): AgentProvider {
           // 冻住时已经整棵 SIGKILL 过:只等它们全退(僵尸组上 kill(-组) 在 macOS 报 EPERM,别再发信号)。
           let killed = terminated
           if (terminated) freezer.kill(); else signalOwned('SIGTERM')
+          // 放弃之前一定先发过 SIGKILL,并且发完至少再看 KILL_GRACE_MS 有没有退:以前先查期限再发 SIGKILL ——
+          // 收尾阶段在满载下把预算用光时,第一圈就抛 codex_process_not_exited,一次 SIGKILL 都没发,进程留在机器上(10-21)。
+          let giveUpAt = deadline
           while (!exited || (terminated ? freezer.alive() : groupAlive())) {
-            if (Date.now() >= deadline) throw new Error('codex_process_not_exited')
-            if (!killed && Date.now() >= deadline - Math.max(50, timeout / 4)) { signalOwned('SIGKILL'); killed = true }
+            if (!killed && Date.now() >= deadline - Math.max(50, timeout / 4)) { signalOwned('SIGKILL'); killed = true; giveUpAt = Math.max(deadline, Date.now() + KILL_GRACE_MS) }
+            if (Date.now() >= giveUpAt) throw new Error('codex_process_not_exited')
             const pause = new Promise<void>(resolve => setTimeout(resolve, 15))
             await (exited ? pause : Promise.race([exit, pause]))
           }

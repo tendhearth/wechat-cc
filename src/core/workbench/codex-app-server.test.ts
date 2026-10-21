@@ -865,6 +865,18 @@ describe('workbench Codex app-server', () => {
     await expect.poll(() => child.kill.mock.calls.length).toBeGreaterThan(0)
   })
 
+  it('sends SIGKILL even when the close deadline is already past when the exit wait begins (a slow cleanup under load used up the budget)', async () => {
+    const { session, child } = await start({}, { closeTimeoutMs: 60 }); child.autoExit = false
+    child.kill.mockImplementation((signal?: string) => { if (signal === 'SIGKILL') queueMicrotask(() => child.exit(null, 'SIGKILL')); return true })
+    const real = Date.now.bind(Date), base = real(); let calls = 0
+    // 第一次(算期限)是真时间;之后一下跳过期限、再继续往前走 —— 等于收尾阶段把 60ms 全用光了
+    const now = vi.spyOn(Date, 'now').mockImplementation(() => calls++ === 0 ? base : base + 1_000 + calls * 20)
+    try {
+      await expect(session.close()).resolves.toBeUndefined()
+      expect(child.kill).toHaveBeenCalledWith('SIGKILL')
+    } finally { now.mockRestore() }
+  })
+
   it('reports failure to confirm process exit instead of resolving close', async () => {
     const { session, child } = await start({}, { closeTimeoutMs: 60 }); child.autoExit = false
     await expect(session.close()).rejects.toThrow('codex_process_not_exited')
