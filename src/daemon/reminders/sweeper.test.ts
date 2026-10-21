@@ -1,7 +1,9 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { openTestDb, type Db } from '../../lib/db'
 import { makeRemindersStore } from './store'
-import { runReminderSweep, lateReminderText, LATE_REMINDER_THRESHOLD_MS, RETRY_WINDOW_MS, backoffMs, MAX_SENDS_PER_SWEEP, MIN_ATTEMPTS_BEFORE_GIVE_UP } from './sweeper'
+import { makeSpeechPolicy } from '../speech/policy'
+import type { ProactiveOutbound } from '../companion/proactive-channel'
+import { sendReminderVia, runReminderSweep, lateReminderText, LATE_REMINDER_THRESHOLD_MS, RETRY_WINDOW_MS, backoffMs, MAX_SENDS_PER_SWEEP, MIN_ATTEMPTS_BEFORE_GIVE_UP } from './sweeper'
 
 const noop = () => {}
 const noopLog = () => {}
@@ -21,6 +23,23 @@ describe('runReminderSweep', () => {
     expect(send).toHaveBeenCalledWith('u', 'hi')
     expect(res).toEqual({ delivered: 1, retried: 0, failed: 0, deferred: 0 })
     expect((await store.list('u'))[0]!.status).toBe('sent')
+  })
+
+  it('**门说推后(两条路都送不到)⇒ 留着,不算一次尝试,24 小时也不放弃;恢复后送一次(带迟到前缀)**(SpeechPolicy 第 2 步)', async () => {
+    const store = makeRemindersStore(db)
+    await store.schedule({ chat_id: 'u', due_at: '2026-06-18T10:00:00Z', text: '交房租' })
+    let reachable = false
+    const sent: string[] = []
+    const send = async (_c: string, t: string) => (reachable ? (sent.push(t), { ok: true }) : { ok: false, deferred: 'undeliverable' })
+    for (const nowIso of ['2026-06-18T10:01:00Z', '2026-06-18T18:00:00Z', '2026-06-19T12:00:00Z']) {
+      expect(await runReminderSweep({ store, send, nowIso, log: noopLog })).toEqual({ delivered: 0, retried: 0, failed: 0, deferred: 1 })
+    }
+    expect((await store.list('u'))[0]).toMatchObject({ status: 'pending', attempts: 0 })
+    reachable = true
+    expect(await runReminderSweep({ store, send, nowIso: '2026-06-19T12:01:00Z', log: noopLog })).toEqual({ delivered: 1, retried: 0, failed: 0, deferred: 0 })
+    expect(sent).toHaveLength(1)
+    expect(sent[0]).toContain('交房租')
+    expect(sent[0]).not.toBe('交房租')   // 迟到了 ⇒ 带说明
   })
 
   it('does not deliver reminders that are not yet due', async () => {
@@ -229,5 +248,27 @@ describe('「CC 做过的事」(B9)', () => {
     const rows: unknown[] = []
     await runReminderSweep({ store, send: vi.fn().mockResolvedValue({ ok: true }), nowIso: '2026-06-18T10:01:00Z', log: () => {}, activityLog: { append: (e) => { rows.push(e) } }, isOwner: (c) => c === 'owner' })
     expect(rows).toEqual([{ kind: 'reminder', status: 'sent', ref: mine }])
+  })
+})
+
+describe('sendReminderVia —— 提醒接到 SpeechPolicy 上(requested:免打扰 / 别烦我都照发)', () => {
+  const speechWith = (o: { deliverable?: boolean; care?: 'off' | 'low'; quiet?: boolean; wechatError?: string; channel?: 'wechat' | 'app' }) => {
+    const outbound: ProactiveOutbound = {
+      appDeliverable: () => false, canDeliver: () => o.deliverable ?? true, sendOnce: async () => ({ ok: true }),
+      open: () => ({ sendText: async () => ({ msgId: 'm', ...(o.wechatError ? { error: o.wechatError } : {}) }), channel: () => o.channel ?? 'wechat', textOnly: () => false, sendAttachment: async () => false, sendSticker: async () => false, finish: () => {} }),
+    }
+    return makeSpeechPolicy({ care: () => o.care ?? 'low', quietEndsAt: () => (o.quiet ? Date.now() + 3600_000 : null), outbound, log: () => {} })
+  }
+  it('免打扰、别烦我都照发(时间是主人自己定的)', async () => {
+    expect(await sendReminderVia(speechWith({ quiet: true, care: 'off' }), noopLog)('u', 't')).toEqual({ ok: true })
+  })
+  it('送不到 ⇒ deferred;发了失败 ⇒ error 原样交回(-2 那条分路靠它)', async () => {
+    expect(await sendReminderVia(speechWith({ deliverable: false }), noopLog)('u', 't')).toEqual({ ok: false, deferred: 'undeliverable' })
+    expect(await sendReminderVia(speechWith({ wechatError: 'errcode=-2' }), noopLog)('u', 't')).toEqual({ ok: false, error: 'errcode=-2' })
+  })
+  it('落在 App 上 ⇒ 记一行日志', async () => {
+    const logs: string[] = []
+    await sendReminderVia(speechWith({ channel: 'app' }), (_t, l) => logs.push(l))('u', 't')
+    expect(logs.some(l => l.includes('delivered to the app'))).toBe(true)
   })
 })

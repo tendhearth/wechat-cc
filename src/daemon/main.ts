@@ -46,7 +46,7 @@ import { registerMailboxPoller } from './bootstrap/wire-mailbox'
 import { registerMemoryNightly } from './memory/nightly-lifecycle'
 import { resolveCheapEval } from './memory-llm-ops'
 import { wireLetters } from './bootstrap/wire-letters'
-import { registerReminders } from './reminders/sweeper'
+import { registerReminders, sendReminderVia } from './reminders/sweeper'
 import { makeRemindersStore } from './reminders/store'
 import { registerReportSweeper, sendReportVia } from './reports/sweeper'
 import { makeReportOutboxStore } from './reports/outbox'
@@ -882,14 +882,11 @@ async function bootDaemonInner(opts: BootDaemonOpts, undo: Array<() => void>): P
     // once delivery — the reminder is re-sent on the next sweep because the
     // row is still 'pending' — not a delay.
     // 2026-10-18:与伙伴推送同一条规矩 —— 微信能用走微信;不能用 / 发失败且 App 收得到(主人那条)⇒ 落到
-    // App(记进对话 + 推一条 companion)。都不通 ⇒ 微信的错误原样回给 sweeper,退避照旧。
+    // App(记进对话 + 推一条 companion)。10-21 起经 SpeechPolicy:都不通 ⇒ 留着、不算失败,通了就送。
     const remindersLc = await sup.start('reminders', () => registerReminders({
       store: makeRemindersStore(db),
-      send: async (chatId, text) => {
-        const r = await wired.proactive.sendOnce(chatId, text)
-        if (r.ok && r.channel === 'app') log('REMINDERS', `chat=${chatId} delivered to the app (wechat not usable)`)
-        return r.ok ? { ok: true } : { ok: false, ...(r.error ? { error: r.error } : {}) }
-      },
+      // 走 SpeechPolicy(第三批 3a,requested:免打扰 / 别烦我照发);两条路都送不到 ⇒ 留着、不算失败(reminders/sweeper sendReminderVia)
+      send: sendReminderVia(wired.speech, (t, l) => log(t, l)),
       log: (t, l) => log(t, l),
       activityLog,
       isOwner: (chatId: string) => resolveAdminChatId(loadAccess(), loadCompanionConfig(stateDir), null) === chatId,
