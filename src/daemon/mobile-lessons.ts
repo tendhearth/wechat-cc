@@ -6,7 +6,7 @@
  * - POST /m/api/lessons/add    {project, text}
  * - POST /m/api/lessons/remove {project, id}:按经验 id 删(旧列表按编号会删错)。
  *
- * 只给设备令牌(LINK_EXCLUDED):经验会进每家执行者的指令,写它等于给执行者下令,分享链接不能碰。
+ * 只给设备令牌(不在链接白名单 LINK_READ_OK / LINK_WRITE_OK 里):经验会进每家执行者的指令,写它等于给执行者下令,分享链接不能碰。
  */
 import type { ProjectLessons } from '../core/workbench/project-lessons'
 

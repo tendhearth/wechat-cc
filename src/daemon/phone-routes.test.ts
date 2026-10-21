@@ -62,3 +62,18 @@ describe('链接令牌能做的写操作:每条都要归类(审计 10-20)', () =
     for (const r of ['POST /m/api/matter/say', 'POST /m/api/chat/say', 'POST /m/api/matter/create', 'POST /m/api/matter/permission']) expect(LINK_ROUTES.has(r), r).toBe(false)
   })
 })
+
+describe('链接令牌白名单(审计续,10-20):读也要显式归类,缺省只给设备', () => {
+  it('LINK_ROUTES is exactly the listed reads + writes; every entry is a phone route with a reason; nothing else is link-reachable', async () => {
+    const { LINK_READ_OK, LINK_WRITE_OK } = await import('./phone-routes')
+    const listed = new Set([...Object.keys(LINK_READ_OK), ...Object.keys(LINK_WRITE_OK)])
+    expect([...LINK_ROUTES].sort()).toEqual([...listed].sort())
+    for (const [r, why] of [...Object.entries(LINK_READ_OK), ...Object.entries(LINK_WRITE_OK)]) { expect(PHONE_ROUTES.has(r), r).toBe(true); expect(why.length, r).toBeGreaterThan(4) }
+    for (const r of Object.keys(LINK_READ_OK)) expect(r.startsWith('POST '), r).toBe(false)
+  })
+  it('behaviour is unchanged by the switch: the same 32 reads stay link-readable, the private ones stay device-only', async () => {
+    const reads = [...LINK_ROUTES].filter(r => !r.startsWith('POST ')).sort()
+    expect(reads).toHaveLength(32)
+    for (const r of ['GET /m/api/activity', 'GET /m/api/chat/file', 'GET /m/api/jobs', 'GET /m/api/lessons', 'GET /m/api/letters', 'GET /m/api/letters/page', 'GET /m/api/matter/rewind']) expect(LINK_ROUTES.has(r), r).toBe(false)
+  })
+})

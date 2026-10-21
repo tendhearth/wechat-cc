@@ -3,7 +3,7 @@ import { Window } from 'happy-dom'
 import { assembleMobilePage } from './assemble'
 import { readMobileSource } from './sources'
 
-// 审计 10-20:/set 链接(10 分钟、能转发)打开的手机网页,看得见但不能送话给执行者 —— 门在服务端(LINK_EXCLUDED),
+// 审计 10-20:/set 链接(10 分钟、能转发)打开的手机网页,看得见但不能送话给执行者 —— 门在服务端(不在链接白名单 LINK_READ_OK / LINK_WRITE_OK 里),
 // 页面只按令牌种类换说法:补充 / 批准 / 回答 / 交办 / 接着做 换成一句「配对过的手机才能…」,旁边就是配对按钮。
 const windows: Window[] = []
 afterEach(async () => { await Promise.all(windows.splice(0).map(w => w.happyDOM.abort())) })
