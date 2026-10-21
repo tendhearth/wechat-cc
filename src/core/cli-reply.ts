@@ -16,8 +16,11 @@ export type CliReply =
 
 // 会话码 = 会话 id 的前 6 位(cli-session-store.ts),只有 0-9a-f。只认十六进制:「@codex …」「@claude …」「看 README」
 // 都是日常说法,不是会话码(重构第二批步 3a,§1.5 bug 3;以前 [a-z0-9] 一律认,回「没见过会话码」)。
-const VIEW_RE = /^看\s*([0-9a-f]{4,12})\s*$/i
-const SAY_RE = /^@([0-9a-f]{4,12})\s+([\s\S]+)$/i
+// 码 = 会话 id 前 6 位,查找按前缀(cli-events lookup),所以 4–5 位前缀也算 —— 但短的必须带一个数字:
+// 「看 face」「@dead 你说…」「@beef 帮我…」这种全是 a-f 的英文词不是会话码(评审 #473)。
+const CODE = '(?:[0-9a-f]{6,12}|(?=[a-f]*[0-9])[0-9a-f]{4,5})'
+const VIEW_RE = new RegExp(`^看\\s*(${CODE})\\s*$`, 'i')
+const SAY_RE = new RegExp(`^@(${CODE})\\s+([\\s\\S]+)$`, 'i')
 /**
  * 「终端」—— 列出终端里的会话(2026-10-14)。整句匹配,只认这几种说法:
  * 终端 / 终端会话 / 终端列表 / 看终端 / 看看终端 / 会话列表 / /cli,可带问号。

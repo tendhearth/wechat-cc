@@ -63,6 +63,12 @@ describe('会话码只认十六进制', () => {
     for (const t of ['@codex 帮我看看这个函数', '@claude 你觉得呢', '@cursor 改一下', '看 README', '看 readme', '@hello 你好'])
       expect(parseCliReply(t), t).toBeNull()
     expect(parseCliReply('@a1b2c3 继续')).toEqual({ kind: 'say', code: 'a1b2c3', text: '继续' })
-    expect(parseCliReply('看 AB12')).toEqual({ kind: 'view', code: 'ab12' })
+    expect(parseCliReply('看 AB12CD')).toEqual({ kind: 'view', code: 'ab12cd' })
+    // 评审 #473:码固定 6 位(8 位以上留给粘贴长 id);全是 a-f 的英文词不是码
+    for (const t of ['看 face', '@dead 你说呢', '@beef 帮我看看', '看 cafe', '@abcde 嗯']) expect(parseCliReply(t), t).toBeNull()
+    // 前缀查找仍然可用:短的带数字、6 位及以上随意
+    expect(parseCliReply('看 ab12')).toEqual({ kind: 'view', code: 'ab12' })
+    expect(parseCliReply('@a1b2c3d 继续')).toEqual({ kind: 'say', code: 'a1b2c3d', text: '继续' })
+    expect(parseCliReply('@abcdef 继续')).toEqual({ kind: 'say', code: 'abcdef', text: '继续' })
   })
 })
