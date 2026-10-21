@@ -56,6 +56,21 @@
 
 ---
 
+## 附:执行者在各处叫什么(⑥,重构第二批步 7)
+
+同一家执行者,在不同地方现在有好几种叫法(10-21 清点)。统一之后:**每家一个正式名字**,设置里需要分清「怎么连的」时才在后面加一句(`·` 后面那段)。
+
+| 执行者 | 微信回复前缀 / 通知 | `/mode` 列表、「CC 现在怎么样」 | 桌面设置 | 头像旁的名字(桌面 / 手机 / App) | **建议统一成** |
+|---|---|---|---|---|---|
+| Claude | Claude | Claude | Claude | Claude Code | **Claude** |
+| Codex | Codex | Codex | Codex | Codex | **Codex**(已一致) |
+| Cursor | Cursor | Cursor | Cursor | Cursor | **Cursor**(已一致) |
+| 自己的 API(DeepSeek / Kimi / Qwen…) | API | OpenAI-compatible | 自定义 AI 服务 | OpenAI | **自定义 AI 服务**;微信回复前缀用短的 **API** |
+| Gemini(填密钥) | Gemini | Gemini | Gemini · 密钥连接 | Gemini | **Gemini**;设置里写 **Gemini · 密钥连接** |
+| agy(Google 账号登录的 Gemini) | agy | Gemini (agy) | Gemini · 账号连接 | Antigravity | **Gemini**;设置里写 **Gemini · 账号连接** —— ⚠️ 两种 Gemini 都开着时,微信前缀要能分开,建议这时写 **Gemini(账号)** |
+
+**要你定的**:⑥ 照上面最右一列统一,还是你有更顺口的叫法(尤其是「自定义 AI 服务」和两种 Gemini)。定了以后由 daemon 统一下发名字,桌面 / 手机 / App 不再各存一份。
+
 ## 你点头之后怎么做
 
 - 每一条单独一个 PR,先做「关得掉」(开关 + 入口跟着开关走),再做「默认关」,最后才删代码;删之前跑一遍完整测试。
