@@ -88,3 +88,18 @@ describe('**report / blocking 推后不是不送**:落盘待说,门放行时一�
     expect(s.sent).toEqual([])
   })
 })
+
+describe('压着太多 ⇒ 丢最老的,但不悄悄少(9d 评审 #528 b)', () => {
+  it('超过 20 条 ⇒ 记一行日志;说的时候带一句「还有 N 件更早的,去信箱看」', async () => {
+    let q = true
+    const s = setup({ quiet: () => q })
+    for (let i = 1; i <= 23; i++) await s.tell('social_mail', `第 ${i} 封信`)
+    expect(s.logs.some(l => l.includes('dropped the oldest'))).toBe(true)
+    q = false
+    await s.flush()
+    expect(s.sent).toHaveLength(1)
+    expect(s.sent[0]).toContain('第 23 封信')
+    expect(s.sent[0]).not.toContain('第 3 封信\n')
+    expect(s.sent[0]).toContain('还有 3 件更早的,去信箱看')
+  })
+})

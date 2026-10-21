@@ -1042,8 +1042,6 @@ export function buildTickBodies(deps: TickDeps): TickBodies {
       try { await guestVisitPass(cfg.default_chat_id, nowIso, messagesStore) }
       catch (err) { deps.log('VISIT', `guest pass failed: ${errMsg(err)}`) }
     }
-    // 社交那边推后了的来信 / 结果 / 介绍(免打扰过了、微信通了):再问一次门,放行就一次说完(bootstrap/social-tell.ts)
-    try { await deps.boot.social?.flushNotices?.() } catch (err) { deps.log('SOCIAL', `pending notices flush failed: ${errMsg(err)}`) }
   }
 
   /**

@@ -363,8 +363,6 @@ export interface Bootstrap {
    * `a2aDeps`/`setA2A`)。
    */
   social?: {
-    /** 推后了的来信 / 结果 / 介绍:门放行时一次说完(social-tell.ts)。伙伴每一拍调。 */
-    flushNotices?(): Promise<void>
     penpal: {
       sendLetter(channel: string, text: string): Promise<{ ok: boolean; error?: string; letter_id?: string }>
       resendLetter(letterId: string): Promise<{ ok: boolean; error?: string; letter_id?: string }>

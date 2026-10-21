@@ -31,14 +31,21 @@ export function makeTellOwner(d: {
   log: (tag: string, line: string) => void
 }): TellOwner {
   const path = join(d.stateDir, 'companion', 'pending-social-notices.json')
-  const read = (): PendingNotice[] => {
-    if (!existsSync(path)) return []
-    try { const v = JSON.parse(readFileSync(path, 'utf8')) as unknown; return Array.isArray(v) ? v as PendingNotice[] : [] } catch { return [] }
+  /** 压着的几条 + 因为超过上限丢掉的条数(说的时候要提一句,不悄悄少)。 */
+  type Queue = { items: PendingNotice[]; dropped: number }
+  const read = (): Queue => {
+    if (!existsSync(path)) return { items: [], dropped: 0 }
+    try {
+      const v = JSON.parse(readFileSync(path, 'utf8')) as unknown
+      if (Array.isArray(v)) return { items: v as PendingNotice[], dropped: 0 }
+      const q = v as Partial<Queue>
+      return { items: Array.isArray(q.items) ? q.items : [], dropped: typeof q.dropped === 'number' ? q.dropped : 0 }
+    } catch { return { items: [], dropped: 0 } }
   }
-  const write = (items: PendingNotice[]): void => {
+  const write = (q: Queue): void => {
     mkdirSync(join(d.stateDir, 'companion'), { recursive: true })
     const tmp = `${path}.tmp-${process.pid}-${Date.now()}`
-    writeFileSync(tmp, JSON.stringify(items))
+    writeFileSync(tmp, JSON.stringify(q))
     renameSync(tmp, path)
   }
   const ready = (): { op: string; send: (chatId: string, text: string) => Promise<unknown>; speech: SpeechPolicy } | null => {
@@ -58,9 +65,12 @@ export function makeTellOwner(d: {
         const o = await r.speech.say({ kind, chatId: r.op }, async () => { await r.send(r.op, text) })
         if ('allow' in o) return
         if ('defer' in o && originOf(kind) !== 'initiative') {
-          const items = [...read(), { kind, text, at: new Date().toISOString() }].slice(-MAX_PENDING)
-          write(items)
-          d.log('SOCIAL', `${kind} notice deferred (${o.reason}) — kept to say later (${items.length} pending)`)
+          const q = read()
+          const all = [...q.items, { kind, text, at: new Date().toISOString() }]
+          const over = Math.max(0, all.length - MAX_PENDING)
+          if (over > 0) d.log('SOCIAL', `pending notices over ${MAX_PENDING} — dropped the oldest ${over} (content stays in the mailbox / records)`)
+          write({ items: all.slice(over), dropped: q.dropped + over })
+          d.log('SOCIAL', `${kind} notice deferred (${o.reason}) — kept to say later (${all.length - over} pending)`)
           return
         }
         d.log('SOCIAL', `${kind} notice ${'defer' in o ? 'deferred' : 'dropped'}: ${o.reason}`)
@@ -69,16 +79,17 @@ export function makeTellOwner(d: {
       }
     },
     async flush() {
-      const items = read()
+      const { items, dropped } = read()
       if (items.length === 0) return
       const r = ready()
       if (!r) return
       // 有等主人拍板的就按 blocking 问(免打扰不拦);否则按 report(免打扰推后)
       const kind: SocialNotice = items.some(i => i.kind === 'social_ask') ? 'social_ask' : 'social_result'
-      const text = items.length === 1 ? items[0]!.text : `刚才没顾上跟你说的几件事:\n${items.map(i => `· ${i.text}`).join('\n')}`
+      const more = dropped > 0 ? `\n(还有 ${dropped} 件更早的,去信箱看)` : ''
+      const text = (items.length === 1 && dropped === 0 ? items[0]!.text : `刚才没顾上跟你说的几件事:\n${items.map(i => `· ${i.text}`).join('\n')}`) + more
       try {
         const o = await r.speech.say({ kind, chatId: r.op }, async () => { await r.send(r.op, text) })
-        if ('allow' in o) { write([]); d.log('SOCIAL', `told ${items.length} pending notice(s)`) }
+        if ('allow' in o) { write({ items: [], dropped: 0 }); d.log('SOCIAL', `told ${items.length} pending notice(s)${dropped ? ` (+${dropped} older, pointed to the mailbox)` : ''}`) }
       } catch (err) {
         d.log('SOCIAL', `pending notices not told: ${err instanceof Error ? err.message : String(err)}`)
       }

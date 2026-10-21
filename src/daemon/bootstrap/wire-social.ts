@@ -32,6 +32,9 @@ import type { Db } from '../../lib/db'
 import type { SendAssistantText } from './fallback-reply'
 import type { BootstrapDeps } from './types'
 
+/** 推后了的社交通知多久再问一次门。 */
+const SOCIAL_NOTICE_FLUSH_MS = 5 * 60_000
+
 export interface SocialDeps {
   log: BootstrapDeps['log']
   stateDir: string
@@ -60,6 +63,8 @@ export interface SocialDeps {
   sendAssistantText: SendAssistantText | undefined
   /** CC 开口那道门(懒取,见 BootstrapDeps.speech)。 */
   speech?: () => import('../speech/policy').SpeechPolicy | null
+  /** 社交起的定时器在这里登记,关机停(./teardown.ts)。 */
+  teardown: import('./teardown').Teardown
   a2aRegistry: A2ARegistry
   a2aClient: A2AClient
   /**
@@ -81,8 +86,6 @@ export interface SocialWiring {
    */
   onMailboxLetter?: A2AServerOpts['onLetter']
   social?: {
-    /** 推后了的来信 / 结果 / 介绍:门放行时一次说完(social-tell.ts)。伙伴每一拍调。 */
-    flushNotices?(): Promise<void>
     penpal: {
       sendLetter(channel: string, text: string): Promise<{ ok: boolean; error?: string; letter_id?: string }>
       resendLetter(letterId: string): Promise<{ ok: boolean; error?: string; letter_id?: string }>
@@ -128,8 +131,6 @@ export async function wireSocial(deps: SocialDeps): Promise<SocialWiring> {
   } | undefined
   let socialWish: Omit<import('./wire-wish').WishService, 'onInbound'> | undefined
   let socialIntro: Omit<import('./wire-intro').IntroService, 'onInbound'> | undefined
-  /** 推后了的来信 / 结果 / 介绍再问一次门(./social-tell.ts);伙伴每一拍调。 */
-  let flushNotices: (() => Promise<void>) | undefined
 
   if (configuredAgent.social_enabled && configuredAgent.social_disclosure_policy) {
     const socialPolicy = configuredAgent.social_disclosure_policy
@@ -219,7 +220,11 @@ export async function wireSocial(deps: SocialDeps): Promise<SocialWiring> {
       }
       // 告诉主人一句社交上的事:先问 CC 开口那道门再经 sendAssistantText 发(./social-tell.ts,第三批 3a)
       const teller = makeTellOwner({ stateDir: deps.stateDir, resolveOperatorChatId, sendAssistantText, ...(deps.speech ? { speech: deps.speech } : {}), log: deps.log })
-      flushNotices = () => teller.flush()
+      // 推后了的来信 / 结果 / 介绍:社交自己每 5 分钟再问一次门(不挂在伙伴那一拍上 —— 主动关心关了那一拍就不跑,
+      // 开着社交的主人的回报会永远说不出来;9d 评审 #528 a)。谁起谁登记:关机时停(./teardown.ts)。
+      const flushTimer = setInterval(() => { void teller.flush() }, SOCIAL_NOTICE_FLUSH_MS)
+      flushTimer.unref?.()
+      deps.teardown.add('SOCIAL', 'pending notices flush', () => clearInterval(flushTimer))
       const tellOwner = (kind: import('../../core/speech/kinds').SocialNotice, text: string): void => { void teller.tell(kind, text) }
       const onInbound: import('../../core/penpal-correspondent').CorrespondentDeps['onInbound'] = ({ channelRowId, letterId, plaintext, env }) => {
         switch (env.kind) {
@@ -360,6 +365,6 @@ export async function wireSocial(deps: SocialDeps): Promise<SocialWiring> {
   return {
     onLetter: socialOnLetter,
     onMailboxLetter: socialOnMailboxLetter,
-    ...(socialPenpal && socialWish && socialIntro ? { social: { penpal: socialPenpal, wish: socialWish, intro: socialIntro, ...(flushNotices ? { flushNotices } : {}) } } : {}),
+    ...(socialPenpal && socialWish && socialIntro ? { social: { penpal: socialPenpal, wish: socialWish, intro: socialIntro } } : {}),
   }
 }
