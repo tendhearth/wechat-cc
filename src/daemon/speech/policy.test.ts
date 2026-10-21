@@ -9,7 +9,7 @@ function fakeOutbound(deliverable = true) {
   const turn: ProactiveTurn = {
     sendText: async (_c, t) => { sent.push(t); return { msgId: 'm' } },
     channel: () => (sent.length ? 'wechat' : null), textOnly: () => false,
-    sendAttachment: async () => false, finish: () => { finished++ },
+    sendAttachment: async () => false, sendSticker: async () => false, finish: () => { finished++ },
   }
   const out: ProactiveOutbound = { appDeliverable: () => false, canDeliver: () => deliverable, open: vi.fn(() => turn), sendOnce: async () => ({ ok: true }) }
   return { out, sent, finished: () => finished }

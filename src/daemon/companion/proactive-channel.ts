@@ -44,6 +44,8 @@ export interface ProactiveChannelDeps {
   /** 这个 chat 的主动推送窗口已知关闭的时刻(ilink.proactiveClosedSince);开着 ⇒ null。 */
   wechatClosedSince(chatId: string): string | null
   sendWechat(chatId: string, text: string): Promise<{ msgId: string; error?: string }>
+  /** 微信那头发一个本地文件(ilink.sendFile;抛错由调用方折成 {error})。没接 ⇒ 微信那条路发不了文件。 */
+  sendWechatFile?(chatId: string, path: string): Promise<{ error?: string }>
   /** 没开中继 v2 / 没配对 ⇒ null(只剩微信,即改造前)。懒取:App 那头比伙伴的 tick 晚接线。 */
   app(): AppChannel | null
   log(tag: string, line: string): void
@@ -65,6 +67,13 @@ export interface ProactiveTurn {
   textOnly(): boolean
   /** 落在 App 上的这一轮的附件:记进 App 对话页。没落在 App / 记不了 ⇒ false(调用方退回第 1 步)。 */
   sendAttachment(chatId: string, a: TurnAttachment): Promise<boolean>
+  /**
+   * 主动发一张表情(新贴纸那一句,第三批 3a):跟 sendText 同一套选路、同样粘住。微信 ⇒ 发那张图的文件;
+   * App ⇒ 记成表情引用(`{kind:'sticker', ref:{tag}}`,App 画成表情)。两条都不通 / 记不了 ⇒ false ——
+   * 调用方就什么都别发,**不退成一句文字说明**(9d 评审)。
+   * 跟 sendAttachment 分开:那个是回复交付用的(没落在 App 就回 false、让回复走它自己的微信路),语义不能动。
+   */
+  sendSticker(chatId: string, tag: string, path: string): Promise<boolean>
   /** 这一轮收尾:落在 App ⇒ 整轮的文字合成一条推送。没落在 App ⇒ 什么都不做。 */
   finish(): void
 }
@@ -135,6 +144,32 @@ export function makeProactiveOutbound(deps: ProactiveChannelDeps): ProactiveOutb
       },
       channel: () => sticky,
       textOnly: () => sticky === 'app',
+      async sendSticker(_c, tag, path) {
+        const toAppSticker = async (a: AppChannel): Promise<boolean> => {
+          if (!a.recordAttachment) return false
+          let said: string | null = null
+          try { said = await a.recordAttachment(chatId, { kind: 'sticker', ref: { tag } }) } catch (e) { deps.log('COMPANION_APP', `chat=${chatId} record sticker threw: ${errMsg(e)}`) }
+          if (said === null) return false
+          sticky = 'app'; app = a
+          if (said.trim()) appTexts.push(said)
+          return true
+        }
+        const toWechatFile = async (): Promise<string | null> => {
+          if (!deps.sendWechatFile) return 'no_wechat_file_sender'
+          try { return (await deps.sendWechatFile(chatId, path)).error ?? null } catch (e) { return errMsg(e) }
+        }
+        if (sticky === 'app' && app) return toAppSticker(app)
+        if (sticky === 'wechat') return (await toWechatFile()) === null
+        const a = appFor(chatId)
+        if (chooseChannel({ wechatUsable: wechatUsable(chatId), appDeliverable: !!a }) === 'app' && a) return toAppSticker(a)
+        const err = await toWechatFile()
+        if (err === null) { sticky = 'wechat'; return true }
+        if (a) {
+          deps.log('COMPANION_APP', `chat=${chatId} wechat sticker failed (${err}) — delivering to the app instead`)
+          return toAppSticker(a)
+        }
+        return false
+      },
       async sendAttachment(_c, a) {
         if (sticky !== 'app' || !app?.recordAttachment) return false
         let said: string | null = null

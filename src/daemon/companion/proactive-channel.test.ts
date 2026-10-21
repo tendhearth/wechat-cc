@@ -252,3 +252,46 @@ describe('一轮的出口 —— 附件(sendAttachment)', () => {
     expect(failed.app.push).toHaveBeenCalledWith('hi')
   })
 })
+
+describe('sendSticker —— 主动发一张表情:微信发文件,App 记表情引用;两条都不通 ⇒ false,不退成一句文字(9d)', () => {
+  const mk = (o: { degraded?: boolean; app?: boolean; fileError?: boolean; recordAtt?: string | null }) => {
+    const sendWechatFile = vi.fn(async () => (o.fileError ? { error: 'boom' } : {}))
+    const recordAttachment = vi.fn(async () => (o.recordAtt === undefined ? '[表情:开心]' : o.recordAtt))
+    const app: AppChannel = { deliverable: () => !!o.app, record: vi.fn(async () => true), push: vi.fn(), recordAttachment }
+    const out = makeProactiveOutbound({ wechatDegraded: () => !!o.degraded, wechatClosedSince: () => null, sendWechat: vi.fn(async () => ({ msgId: 'm' })), sendWechatFile, app: () => app, log: () => {} })
+    return { out, sendWechatFile, recordAttachment, app }
+  }
+  it('微信能用 ⇒ 发文件,路粘在微信', async () => {
+    const s = mk({ app: true })
+    const t = s.out.open(OWNER)
+    expect(await t.sendSticker(OWNER, '开心', '/lib/happy.png')).toBe(true)
+    expect(s.sendWechatFile).toHaveBeenCalledWith(OWNER, '/lib/happy.png')
+    expect(t.channel()).toBe('wechat')
+    expect(s.recordAttachment).not.toHaveBeenCalled()
+  })
+  it('微信降级、App 收得到 ⇒ 记成表情引用(App 画成表情,不是一张文件),收尾推一条', async () => {
+    const s = mk({ degraded: true, app: true })
+    const t = s.out.open(OWNER)
+    expect(await t.sendSticker(OWNER, '开心', '/lib/happy.png')).toBe(true)
+    expect(s.recordAttachment).toHaveBeenCalledWith(OWNER, { kind: 'sticker', ref: { tag: '开心' } })
+    expect(s.sendWechatFile).not.toHaveBeenCalled()
+    t.finish()
+    expect(s.app.push).toHaveBeenCalledWith('[表情:开心]')
+  })
+  it('两条都不通(跟 sendText 一样照试微信一次,失败)/ App 记不了 / 微信发失败且 App 收不到 ⇒ false', async () => {
+    expect(await mk({ degraded: true, app: false, fileError: true }).out.open(OWNER).sendSticker(OWNER, '开心', '/p')).toBe(false)
+    expect(await mk({ degraded: true, app: true, recordAtt: null }).out.open(OWNER).sendSticker(OWNER, '开心', '/p')).toBe(false)
+    expect(await mk({ fileError: true, app: false }).out.open(OWNER).sendSticker(OWNER, '开心', '/p')).toBe(false)
+  })
+  it('微信发文件失败、App 收得到 ⇒ 改记进 App', async () => {
+    const s = mk({ fileError: true, app: true })
+    const t = s.out.open(OWNER)
+    expect(await t.sendSticker(OWNER, '开心', '/p')).toBe(true)
+    expect(t.channel()).toBe('app')
+  })
+  it('没接微信发文件的口子 ⇒ 微信那条路当作发不了', async () => {
+    const app: AppChannel = { deliverable: () => false, record: vi.fn(async () => true), push: vi.fn() }
+    const out = makeProactiveOutbound({ wechatDegraded: () => false, wechatClosedSince: () => null, sendWechat: vi.fn(async () => ({ msgId: 'm' })), app: () => app, log: () => {} })
+    expect(await out.open(OWNER).sendSticker(OWNER, '开心', '/p')).toBe(false)
+  })
+})
