@@ -1326,6 +1326,36 @@ describe('人类做客 —— 朋友来聊过、走了,伙伴跟主人提一句'
     expect(evalFn).toHaveBeenCalledOnce()
   })
 
+  it('**主人说了「别烦我」(care off)→ 不讲;这次做客悄悄记过,之后打开主动关心也不翻旧账**', async () => {
+    const s = setupDeps({ defaultChatId: 'owner', inFlight: false, ...quiet('owner'), chatPrefsEntries: { owner: { care: 'off' } } })
+    cleanup.push(s.stateDir)
+    await seedGuest(s, 'guest@im.wechat', '2026-05-13T09:15:00.000Z')
+    const { evalFn, sent } = armEval(s)
+    const ticks = buildTickBodies(s.deps)
+    await ticks.pushTick({ nowIso: '2026-05-13T10:00:00.000Z' })
+    expect(evalFn).not.toHaveBeenCalled()
+    expect(sent).toEqual([])
+    s.chatPrefsEntries.owner = { care: 'low', hunt: true }
+    await ticks.pushTick({ nowIso: '2026-05-13T10:05:00.000Z' })
+    expect(evalFn).not.toHaveBeenCalled()
+    expect(sent).toEqual([])
+  })
+
+  it('**免打扰时段 → 先不讲(不记水位);时段过了照讲**', async () => {
+    // 10:00Z = 上海 18:00,落在 17:00–19:00 里;11:30Z = 19:30 已过
+    const s = setupDeps({ defaultChatId: 'owner', inFlight: false, ...quiet('owner'), chatPrefsEntries: { owner: { quiet: { from: '17:00', to: '19:00' } } } })
+    cleanup.push(s.stateDir)
+    saveCompanionConfig(s.stateDir, { ...loadCompanionConfig(s.stateDir), timezone: 'Asia/Shanghai' })
+    await seedGuest(s, 'guest@im.wechat', '2026-05-13T09:15:00.000Z')
+    const { evalFn, sent } = armEval(s)
+    const ticks = buildTickBodies(s.deps)
+    await ticks.pushTick({ nowIso: '2026-05-13T10:00:00.000Z' })
+    expect(evalFn).not.toHaveBeenCalled()
+    expect(sent).toEqual([])
+    await ticks.pushTick({ nowIso: '2026-05-13T11:30:00.000Z' })
+    expect(sent).toEqual(['刚才小王来过,问了工具的事。'])
+  })
+
   it('**客人还在聊(最后一句 5 分钟前)→ 不讲**', async () => {
     const s = setupDeps({ defaultChatId: 'owner', inFlight: false, ...quiet('owner') })
     cleanup.push(s.stateDir)

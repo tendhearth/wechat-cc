@@ -1016,6 +1016,12 @@ export function buildTickBodies(deps: TickDeps): TickBodies {
   async function guestVisitPass(ownerChat: string, nowIso: string, messagesStore: MessagesStore): Promise<void> {
     // 断线时不调模型也不外发(no-retry-storm):跟 pushTickForChat 同一道闸
     if (deps.health?.shouldSuspend('wechat')) return
+    // 跟 pushTickForChat 同两道主人的闸(复查 10-21:以前这条路两道都不看,主人说了「别烦我」还会开口):
+    //  - care off(别烦我)= 什么都别主动说 ⇒ 这次做客**悄悄记过**(推进水位、不调模型),以后打开主动关心也不翻旧账;
+    //  - 免打扰时段 ⇒ 只是晚点说 ⇒ 这一拍什么都不动,时段过了照讲。
+    const ownerPrefs = deps.chatPrefs.get(ownerChat)
+    if (inQuietHours(ownerPrefs.quiet, Date.parse(nowIso), loadCompanionConfig(deps.stateDir).timezone ?? 'Asia/Shanghai')) return
+    const silent = careLevel(ownerChat, ownerPrefs, ownerChat) === 'off'
     const statePath = join(deps.stateDir, 'companion', 'guest-visits.json')
     const state: GuestVisitState = (() => {
       try { const j = readJsonFile<Partial<GuestVisitState>>(statePath); return { narrated: j.narrated ?? {}, visits: j.visits ?? {} } }
@@ -1038,6 +1044,12 @@ export function buildTickBodies(deps: TickDeps): TickBodies {
           since: rows.map(r => ({ direction: r.direction, text: r.text, ts: r.ts })),
         }, state, nowMs)
         if (!due) continue
+        if (silent) {
+          state.narrated[chatId] = latestInboundTs
+          changed = true
+          deps.log('VISIT', `guest visit not told: chat=${chatId} — owner care is off; marked as seen`)
+          continue
+        }
         // 先记水位再讲:讲到一半 daemon 重启,不该下一拍再讲一遍。
         const priorMark = state.narrated[chatId]
         state.narrated[chatId] = latestInboundTs
