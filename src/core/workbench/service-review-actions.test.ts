@@ -59,7 +59,7 @@ function base(opts: { canResume?: boolean; retained?: boolean } = {}) {
   const runtimes: Retained[] = []
   const provider = opts.retained ? { async spawn() { const r = new Retained(); runtimes.push(r); return r.session } } : fakeProvider()
   registry.register('claude', provider as never, { displayName: 'Claude', canResume: () => opts.canResume ?? true, workbench: MANAGED_NATIVE_CAPABILITIES })
-  const service = makeWorkbenchService({ store, registry, stateDir, ownerChatId: () => 'owner' }); services.push(service)
+  const service = makeWorkbenchService({checkpointDeadlineMs:120_000, store, registry, stateDir, ownerChatId: () => 'owner' }); services.push(service)
   return { service, store, stateDir, project, runtimes }
 }
 async function settled(opts: { canResume?: boolean } = {}) {
