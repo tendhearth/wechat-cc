@@ -61,6 +61,27 @@ wechat-cc ci triage --sha <sha> --json      # 给机器看的一份
 
 要自己动手时,记住:`gh run list --commit <sha>` **要全 40 位 SHA**,短 sha 查不到任何东西 —— 而且是**安静地**返回空数组,看上去和「这次推送没有 CI」一模一样。(`ci triage` 自己先 `git rev-parse` 过,所以 `--sha 25113589` 是可以的。)
 
+## 本地满载下反复红的那一批(2026-10-21 收口)
+
+两路并行开发时本机负载常年 20–40,下面这些单跑全过、整套跑反复红(四轮里 1–8 次)。逐条摸过原因后按性质处理,**没有一律放宽超时**:
+
+| 文件 | 卡在哪 | 处理 |
+| --- | --- | --- |
+| `settings-panel-workbench`(两条大文件)、`apps/mobile/continuation-materials`、`apps/mobile/attachments` | `toEqual` 比几百 KB 的 Buffer —— vitest 逐字节递归,700KB 空闲就 5.6s | 改 `Buffer#equals`(sha256 那条照留) |
+| `lib/migration-order` | 每个锁定版本都从零重建库:O(n²) 次迁移 | 一个库按序迁移、每步取一次 schema(6.5s → 2.3s,锁定指纹全对) |
+| `apps/desktop/.../cc-asset-kit` | 纯 JS 解约 50 张 512² PNG;一条测试校验三遍 | 校验一遍;四份改过的整套那条给 60s |
+| `guard/owner-table` | 墙钟断言「国内调用 < 60ms」 | 改成跟 0ms 定时器赛跑(首次探测等 10 分钟的运行时里,不等探测的路径永远先出来) |
+| `core/acp/rpc` | harness 给每条都设 50ms 的 RPC 期限 | 缺省 10s,只有测超时那条传 50ms |
+| `reminders/reminders.e2e` | `waitForReplyTo` 缺省 5s 要盖一次真 daemon 启动 | 30s |
+| `bootstrap/openai-plugin-stall` | 3s 启动预算同时管卡住的插件和必需的 wechat MCP | 10s(生产是 20s) |
+| `workbench/wechat-create`、`workbench/service-entry` | `settle` 用缺省 10s poll 等真 git 整轮 | 同 `service-one-session`:testTimeout 60s、settle 30s、until 45s |
+| `scripts/cli-help.guard`(`plugin --help` 等) | 一条测试里同步冷启 1 + 子命令个 `bun cli.ts` | 每族 60s(每次 spawn 仍 15s 上限) |
+| `workbench/codex-app-server`(两条) | **生产 bug**:关闭循环先查期限再发 SIGKILL,一次卡顿就抛 `codex_process_not_exited` 而一次 SIGKILL 都没发 | 单独 PR 修生产代码 |
+| `workbench/service-one-session`(f99.txt) | **生产**:`git-review.ts` 的审阅期限写死 15s,忙时报告悄悄缺文件 | 交工作台那一路:做成可注入 |
+| `workbench/service-rewind`(eol) | 偶发 `rewind_unavailable`,疑似 settle 没等后台 git | 交工作台那一路:先把 reason 打出来 |
+
+**以后这里面哪条再在满载下红,先当新问题看**(上面的病因已经拿掉了);不在表里的,按同样的三类去摸:墙钟断言 ⇒ 注入时钟 / 赛跑;等完成的期限 ⇒ 只给那一处放宽或给旋钮;真吃 CPU ⇒ 先找自找的开销(大对象 `toEqual`、重复计算),再考虑单独串行。
+
 ## 怎么加一条 flake
 
 往 `src/cli/ci-flakes.json` 的 `entries` 里加一条:

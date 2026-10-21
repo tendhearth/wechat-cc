@@ -240,7 +240,8 @@ describe('phone task controls keep the existing execution boundary',()=>{
       const decoded=Buffer.from(part.contentBase64,'base64');expect(decoded.length).toBeLessThanOrEqual(128*1024);chunks.push(decoded)
     }
     expect(createHash('sha256').update(Buffer.concat(chunks)).digest('hex')).toBe(artifact.sha256)
-    expect(Buffer.concat(chunks)).toEqual(bytes)
+    // 大缓冲区别用 toEqual:vitest 逐字节递归比较,700KB 空闲机器上就要 5.6 秒(负载下撞 20s 超时);Buffer#equals 不到 1ms
+    expect(Buffer.concat(chunks).equals(bytes)).toBe(true)
   })
   it('completes decisions and a large file through the encrypted relay cap with a paired device, then rejects its revocation',async()=>{
     const task=create('tunnel'),live=await ready(task.id)
@@ -276,7 +277,7 @@ describe('phone task controls keep the existing execution boundary',()=>{
         const part=await remote('/m/api/matter/artifact?id='+task.id+'&artifactId='+artifact.id+'&sha256='+artifact.sha256+'&offset='+offset)
         expect(part.status).toBe(200);parts.push(Buffer.from(part.body.contentBase64,'base64'))
       }
-      expect(Buffer.concat(parts)).toEqual(bytes)
+      expect(Buffer.concat(parts).equals(bytes)).toBe(true)
       expect(frames.every(frame=>Buffer.byteLength(frame)<512*1024)).toBe(true)
       const image=readFileSync(new URL('../../assets/starter-stickers/moment-ai-offline.png',import.meta.url))
       expect(image.length).toBeGreaterThan(512*1024)

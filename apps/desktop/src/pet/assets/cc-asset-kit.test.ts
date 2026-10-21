@@ -127,10 +127,12 @@ describe('CC Asset Kit v1.0-alpha', () => {
   }, 30_000)
 
   it('ships every required state/view/frame with verified paths, bytes and shared vector geometry', () => {
-    expect(validateAssetKit().errors).toEqual([])
-    expect(validateAssetKit().assetCount).toBeGreaterThanOrEqual(37)
-    expect(validateAssetKit().warnings.join(' ')).toContain('do not prove anatomy')
-  })
+    // 校验一次就够(以前三行各跑一遍:每遍纯 JS 解约 50 张 512² PNG,负载下撞 20s 超时,10-21)
+    const kit = validateAssetKit()
+    expect(kit.errors).toEqual([])
+    expect(kit.assetCount).toBeGreaterThanOrEqual(37)
+    expect(kit.warnings.join(' ')).toContain('do not prove anatomy')
+  }, 30_000)
   it('loads the first Blender batch as both forms master and idle with a shared mask', () => {
     for (const form of ['lit', 'unlit']) {
       const path = `canonical/${form}/front.png`
@@ -330,7 +332,7 @@ describe('CC Asset Kit v1.0-alpha', () => {
       writeFileSync(join(target, 'manifest.json'), JSON.stringify(next))
       expect(validateAssetKit(target).errors).toContain('pair_geometry_mask:front')
     } finally { rmSync(dir, { recursive: true, force: true }) }
-  }, 30_000)
+  }, 60_000) // 四份改过的整套各校验一遍(每遍解约 50 张 PNG);负载下 30s 不够(10-21)
 })
 
 

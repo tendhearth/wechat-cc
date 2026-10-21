@@ -124,7 +124,8 @@ it('encodes and decodes more than 512 KiB in transport without an argument-stack
   const bytes=Uint8Array.from({length:768*1024+17},(_,i)=>i%251)
   const encoded=codec.enc(bytes)
   expect(encoded).toBe(Buffer.from(bytes).toString('base64url'))
-  expect(Buffer.from(codec.dec(encoded))).toEqual(Buffer.from(bytes))
+  // 大缓冲区别用 toEqual:vitest 逐字节递归比较,700KB 空闲机器上就要 5.6 秒(负载下撞 20s 超时);Buffer#equals 不到 1ms
+  expect(Buffer.from(codec.dec(encoded)).equals(Buffer.from(bytes))).toBe(true)
 })
 
 it('keeps an unknown submitted photo visible and recoverable after editing a separate draft',async()=>{

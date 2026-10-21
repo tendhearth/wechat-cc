@@ -38,7 +38,9 @@ beforeEach(()=>{
   db=openDb({path:join(stateDir,'state.db')});owner='owner';spawnCount=0;mintCount=0;seen=[];setup()
 })
 afterEach(async()=>{vi.restoreAllMocks();await service?.shutdown();db.close();removeTempDir(area)})
-const settle=async(id:string)=>expect.poll(()=>service.detail(id).task.status).toBe('completed')
+// 真 git(worktree add / 基线 / 审阅 / checkpoint)的整轮在满载套件里放大好几倍:跟 service-one-session 同一个口径给足余量(10-21 负载下假红)
+vi.setConfig({testTimeout:60_000})
+const settle=async(id:string)=>expect.poll(()=>service.detail(id).task.status,{timeout:30_000}).toBe('completed')
 const staged=()=>{
   const draftId=randomUUID(),id=randomUUID()
   const attachment=store.attachments.upload({id,draftId,name:'notes.txt',mime:'text/plain',base64:Buffer.from('original material').toString('base64')},stateDir,{ownerKey:'owner'})
@@ -391,7 +393,7 @@ it('until (v80): check fails ⇒ CC continues with the wrapped output; next turn
   expect(()=>service.createEntry(input({providerId:'agy',target:{kind:'project',projectId,isolation:'worktree'},until:{command:'true'}} as never),context)).toThrow('until_unattended_unsupported')
   const r=service.createEntry(input({target:{kind:'project',projectId,isolation:'worktree'},until:{command:'test -f done.txt && echo PASSED',maxRounds:3}} as never),context)
   const id=r.receipt.taskId
-  await expect.poll(()=>store.goals.get(id)?.status,{timeout:15_000}).toBe('passed')
+  await expect.poll(()=>store.goals.get(id)?.status,{timeout:45_000}).toBe('passed')
   expect(prompts).toHaveLength(2)
   expect(prompts[1]).toContain('第 1/3 轮')
   expect(prompts[1]).toContain('<check_output>')

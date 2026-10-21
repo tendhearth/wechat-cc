@@ -1,4 +1,4 @@
-import {afterEach,beforeEach,describe,expect,it} from 'vitest'
+import {afterEach,beforeEach,describe,expect,it,vi} from 'vitest'
 import {mkdtempSync,mkdirSync,realpathSync,renameSync} from 'node:fs'
 import {tmpdir} from 'node:os'
 import {join} from 'node:path'
@@ -28,7 +28,9 @@ beforeEach(()=>{
 })
 afterEach(async()=>{await service.shutdown();db.close();removeTempDir(root)})
 const command=(text='整理周报')=>`任务 新建 ${service.projects()[0]!.id} ${text}`
-const settle=async(id:string)=>expect.poll(()=>service.detail(id).task.status).toBe('completed')
+// 真 git(worktree add / 基线 / 审阅 / checkpoint)的整轮在满载套件里放大好几倍:跟 service-one-session 同一个口径给足余量(10-21 负载下假红)
+vi.setConfig({testTimeout:60_000})
+const settle=async(id:string)=>expect.poll(()=>service.detail(id).task.status,{timeout:30_000}).toBe('completed')
 
 describe('create one shared workbench task from WeChat',()=>{
   it('lists known projects and creates the same desktop-visible task with an explicit executor',async()=>{

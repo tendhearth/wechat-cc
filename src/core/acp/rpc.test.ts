@@ -8,7 +8,8 @@ function harness(overrides: Partial<Parameters<typeof createAcpConnection>[2]> =
   let pending = ''
   stdin.on('data', chunk => { pending += String(chunk); let i; while ((i = pending.indexOf('\n')) >= 0) { written.push(JSON.parse(pending.slice(0, i))); pending = pending.slice(i + 1) } })
   const onRequest = vi.fn(async () => ({ ok: true })), onNotification = vi.fn(), onFatal = vi.fn()
-  const conn = createAcpConnection(stdin, stdout, { rpcTimeoutMs: 50, onRequest, onNotification, onFatal, ...overrides })
+  // 缺省 10s:只有测超时的那条才传 50ms(负载下一个 50ms 的预算连 setTimeout(0) + 流转发都不够,10-21 假红 acp_rpc_timeout: initialize)
+  const conn = createAcpConnection(stdin, stdout, { rpcTimeoutMs: 10_000, onRequest, onNotification, onFatal, ...overrides })
   const agent = (msg: unknown) => stdout.write(JSON.stringify(msg) + '\n')
   const flushed = () => new Promise(resolve => setTimeout(resolve, 0))
   return { conn, written, agent, onRequest, onNotification, onFatal, flushed, stdout }
@@ -27,7 +28,7 @@ describe('ACP JSON-RPC over stdio', () => {
     expect(err).toBeInstanceOf(AcpRequestError); expect(err.code).toBe(-32000); expect(err.message).toBe('auth'); expect(err.data).toEqual({ x: 1 })
   })
   it('times out with the method name, and 0 means no timeout', async () => {
-    const h = harness()
+    const h = harness({ rpcTimeoutMs: 50 })
     await expect(h.conn.request('slow', {})).rejects.toThrow('acp_rpc_timeout: slow')
     const p = h.conn.request('session/prompt', {}, 0)
     await new Promise(resolve => setTimeout(resolve, 80))
