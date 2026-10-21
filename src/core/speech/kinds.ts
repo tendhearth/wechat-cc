@@ -28,6 +28,8 @@ export const SPEECH_KINDS = {
   brief: { origin: 'initiative', label: '早报' },
   recap: { origin: 'initiative', label: '周报' },
   letter: { origin: 'initiative', label: '信' },
+  // 主人当面说「给我写封信」:内容是主人点名要的 ⇒ 免打扰 / 别烦我都照写照寄。
+  letter_asked: { origin: 'requested', label: '当面要的信' },
   companion: { origin: 'initiative', label: '伙伴' },
   guest_visit: { origin: 'initiative', label: '来访' },
   // 一次性:只在画好的那一刻触发一次,没有「下一拍」—— 被推后就等于这一句丢了(贴纸已经进库,照样会用到)。

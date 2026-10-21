@@ -79,8 +79,12 @@ export interface LetterDeps {
   lastInboundAt(owner: string): Promise<number | null>
   evalText(): ((prompt: string) => Promise<string>) | null
   wechatSuspended(): boolean
-  /** 主人的免打扰时段(core/quiet-hours):为真 ⇒ 不定期的信这一拍不写不寄,到点照常;当面要的不受影响。缺省 ⇒ 不拦。 */
-  quiet?(): boolean
+  /**
+   * CC 开口那道门(SpeechPolicy,第三批 3a):信能不能写 / 能不能寄由它判 —— 不定期的信是 initiative(别烦我 ⇒ 这封不写,
+   * 写好没寄的不寄了,存档里留着;免打扰 / 两条路都送不到 ⇒ 等着);当面要的(letter_asked)是 requested,照写照寄。
+   * 「往哪儿寄、怎么一页一页寄、断了怎么续」仍是这里自己的事(信有自己的多页投递和 App 那条路)。
+   */
+  speech: import('../speech/policy').SpeechPolicy
   sendText(chatId: string, text: string): Promise<{ error?: string }>
   sendFile(chatId: string, path: string): Promise<void>
   /**
@@ -285,8 +289,14 @@ export function makeLetterRuntime(d: LetterDeps): LetterRuntime {
   return {
     tick: () => serial(async () => {
       const s = state()
-      // 免打扰时段:不定期的信等到时段过了(写好没寄的也等);当面要的(requested)照常寄
-      if (s.pending) { if (!s.pending.requested && d.quiet?.()) return; await deliver(s.pending); return }
+      // 写好没寄的:先问门(当面要的是 requested,照寄;不定期的:免打扰 / 送不到 ⇒ 等,别烦我 ⇒ 不寄了,存档里留着)
+      if (s.pending) {
+        const pending = s.pending, owner = d.ownerChatId()
+        if (!owner) return
+        const o = await d.speech.say({ kind: pending.requested ? 'letter_asked' : 'letter', chatId: owner, nowMs: d.now() }, async () => { await deliver(pending) })
+        if ('drop' in o) { save({ pending: null }); d.log('LETTERS', `letter ${pending.id} not sent: ${o.reason} (kept in archive)`) }
+        return
+      }
       if (!d.enabled()) return
       const nowMs = d.now()
       if (s.dueAt === null) {
@@ -296,29 +306,38 @@ export function makeLetterRuntime(d: LetterDeps): LetterRuntime {
         return
       }
       if (!isLetterDue({ nowMs, tz: d.timezone(), dueAt: s.dueAt })) return
-      if (d.quiet?.()) return
       const owner = d.ownerChatId()
-      if (!owner || d.wechatSuspended()) return
-      const r = await compose(owner, undefined)
-      if (r.kind !== 'letter') {
-        const retryDays = r.kind === 'skip' ? THIN_RETRY_DAYS : 1
-        save({ dueAt: nowMs + retryDays * DAY_MS })
-        d.log('LETTERS', `scheduled letter ${r.kind}: ${r.reason}; look again in ${retryDays}d`)
-        return
+      if (!owner) return
+      // 到点了:先问门,再写(写信要调模型,被拦下的那一拍一个 token 都不花)。免打扰 / 两条路都送不到 ⇒ 不写,还是到期,
+      // 下一拍再问;别烦我 ⇒ 这一封不写了,排下一封。
+      const o = await d.speech.say({ kind: 'letter', chatId: owner, nowMs }, async () => {
+        const r = await compose(owner, undefined)
+        if (r.kind !== 'letter') {
+          const retryDays = r.kind === 'skip' ? THIN_RETRY_DAYS : 1
+          save({ dueAt: nowMs + retryDays * DAY_MS })
+          d.log('LETTERS', `scheduled letter ${r.kind}: ${r.reason}; look again in ${retryDays}d`)
+          return
+        }
+        const p = file(r.letter, false)
+        save({ pending: p, dueAt: nextDueAt(nowMs, GAP_DAYS, d.random) })
+        await deliver(p)
+      })
+      if ('drop' in o) {
+        save({ dueAt: nextDueAt(nowMs, GAP_DAYS, d.random) })
+        d.log('LETTERS', `scheduled letter not written: ${o.reason}; next one rescheduled`)
       }
-      const p = file(r.letter, false)
-      save({ pending: p, dueAt: nextDueAt(nowMs, GAP_DAYS, d.random) })
-      await deliver(p)
     }),
 
     writeNow: (request) => serial(async (): Promise<WriteResult> => {
       const owner = d.ownerChatId()
       if (!owner) return { status: 'failed', reason: 'no_owner' }
       const s = state()
-      // 上一封还没寄出去:先寄它,不写新的
+      // 上一封还没寄出去:先寄它,不写新的(主人当面要的 ⇒ requested,照寄;门只在两条路都送不到时让它等)
       if (s.pending) {
-        const r = await deliver(s.pending)
-        return r === 'sent' ? { status: 'sent', id: s.pending.id } : r === 'waiting' ? { status: 'waiting', id: s.pending.id } : { status: 'failed', reason: `previous_${r}` }
+        const pending = s.pending
+        let r = 'waiting' as Awaited<ReturnType<typeof deliver>>
+        await d.speech.say({ kind: 'letter_asked', chatId: owner, nowMs: d.now() }, async () => { r = await deliver(pending) })
+        return r === 'sent' ? { status: 'sent', id: pending.id } : r === 'waiting' ? { status: 'waiting', id: pending.id } : { status: 'failed', reason: `previous_${r}` }
       }
       const r = await compose(owner, request)
       if (r.kind !== 'letter') {
@@ -329,7 +348,8 @@ export function makeLetterRuntime(d: LetterDeps): LetterRuntime {
       }
       const p = file(r.letter, true)
       save({ pending: p })
-      const out = await deliver(p)
+      let out = 'waiting' as Awaited<ReturnType<typeof deliver>>
+      await d.speech.say({ kind: 'letter_asked', chatId: owner, nowMs: d.now() }, async () => { out = await deliver(p) })
       return out === 'sent' || out === 'waiting' ? { status: out, id: p.id } : { status: 'failed', reason: out }
     }),
 

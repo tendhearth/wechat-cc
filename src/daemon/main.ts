@@ -843,6 +843,7 @@ async function bootDaemonInner(opts: BootDaemonOpts, undo: Array<() => void>): P
       strongEval: (id) => (typeof boot.registry.getStrongEval === 'function' ? boot.registry.getStrongEval(id as never) : null),
       cheapEval: (c) => resolveCheapEval({ getMode: (x) => boot.coordinator.getMode(x), registry: boot.registry }, c),
       wechatSuspended: () => boot.health.health.shouldSuspend('wechat'),
+      speech: wired.speech,
       sendText: (c, t) => ilink.sendMessage(c, t),
       // 逐页发不逐页记;寄出之后整封记成主人对话里的一行(App 对话页看得见),微信不通时寄到 App(2026-10-18)。
       sendFile: (c, f) => ilink.sendFile(c, f, { mirror: false }),
