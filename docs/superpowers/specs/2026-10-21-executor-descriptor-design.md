@@ -31,6 +31,8 @@ export interface ExecutorDescriptor {
 export const EXECUTORS: Readonly<Record<KnownProviderId, ExecutorDescriptor>>
 ```
 
+**分两层(10-21 动手时定,依赖规则逼出来的)**:`src/lib` 是依赖树的底,不能 import core,而模型字段(`agent-config`)、密钥名(`llm-keys`)这些读者在 lib / daemon。所以纯数据(斜杠词、模型字段、安装提示、密钥环境变量名、平台、端点)放 **`src/lib/executor-facts.ts`**;带 core 类型的能力行与档位缺口,由 core 按同一个 id 拼成上面的 `ExecutorDescriptor`。两层共用 `PROVIDER_IDS`,各自有「键与名单相等」的测试。
+
 规矩:**描述表只放「是什么」,不放「怎么造」。** 适配器的构造(SDK 选项、MCP 接线、autofix、版本核对)仍在各家的 `register` 函数里 —— 那是第三批「适配器合一」的事。
 
 ## 3. 谁改成读它(这一批)
