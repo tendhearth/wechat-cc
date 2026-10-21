@@ -2259,3 +2259,34 @@ describe('runJobTurn × 预先拼好的信封(早报)', () => {
     expect((s.dispatch.mock.calls[0] as unknown as [string])[0]).toBe('BRIEF-ENVELOPE')
   })
 })
+
+describe('runJobTurn × SpeechPolicy(第三批 3a 第 3 步):晨报 / 周报是 initiative,主人建的定时是 requested', () => {
+  const arm = (o: { prefs?: Record<string, unknown>; tz?: string } = {}) => {
+    const s = setupDeps({ defaultChatId: 'owner', inFlight: false, chatPrefsEntries: { owner: o.prefs ?? {} } as never })
+    if (o.tz) saveCompanionConfig(s.stateDir, { ...loadCompanionConfig(s.stateDir), timezone: o.tz })
+    s.dispatch.mockImplementation(() => ({ async *[Symbol.asyncIterator]() { yield { kind: 'text', text: '早上好' }; yield { kind: 'result', sessionId: 's', numTurns: 1, durationMs: 1 } } }))
+    ;(s.deps.boot as unknown as { sessionManager: Record<string, unknown> }).sessionManager.forget = vi.fn(async () => {})
+    ;(s.deps as TickDeps).replyDelivery = { begin: () => ({ mode: 'daemon', progress: async () => {}, deliver: async () => ({ target: 'wechat', bubbles: 1, attachmentsSent: 0, failures: [], msgIds: [], delivery: 'text' }), abandon: () => {} }) }
+    ;(s.deps as TickDeps).replyDeliveryModeFor = () => 'daemon'
+    return s
+  }
+  // 10:00Z = 上海 18:00,落在 17:00–19:00
+  const QUIET = { quiet: { from: '17:00', to: '19:00' } }
+  it('主人说了「别烦我」⇒ 晨报 / 周报 skipped:care_off,一轮都不跑(不花模型)', async () => {
+    for (const kind of ['brief', 'recap'] as const) {
+      const s = arm({ prefs: { care: 'off' } })
+      expect(await buildTickBodies(s.deps).runJobTurn({ chatId: 'owner', jobId: 'j', text: 'x', nowIso: '2026-05-13T10:00:00.000Z', kind })).toBe('skipped:care_off')
+      expect(s.dispatch).not.toHaveBeenCalled()
+    }
+  })
+  it('赶上免打扰 ⇒ 晨报 skipped:quiet(当天不补,运行器只有 10 分钟窗口);一轮都不跑', async () => {
+    const s = arm({ prefs: QUIET, tz: 'Asia/Shanghai' })
+    expect(await buildTickBodies(s.deps).runJobTurn({ chatId: 'owner', jobId: 'j', text: 'x', nowIso: '2026-05-13T10:00:00.000Z', kind: 'brief' })).toBe('skipped:quiet')
+    expect(s.dispatch).not.toHaveBeenCalled()
+  })
+  it('主人自己建的定时(requested)⇒ 免打扰、别烦我都照跑', async () => {
+    const s = arm({ prefs: { ...QUIET, care: 'off' }, tz: 'Asia/Shanghai' })
+    expect(await buildTickBodies(s.deps).runJobTurn({ chatId: 'owner', jobId: 'j', text: '看邮箱', nowIso: '2026-05-13T10:00:00.000Z' })).toBe('sent')
+    expect(s.dispatch).toHaveBeenCalledOnce()
+  })
+})

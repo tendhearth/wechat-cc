@@ -58,7 +58,7 @@ export function buildRecapText(o: { jobId: string; nowIso: string; material: str
 }
 
 export interface RecapTurnDeps {
-  runJobTurn: (a: { chatId: string; jobId: string; text: string; nowIso: string; buildText?: (style: TickTextStyle) => string }) => Promise<JobTurnResult>
+  runJobTurn: (a: { chatId: string; jobId: string; text: string; nowIso: string; buildText?: (style: TickTextStyle) => string; kind?: 'job' | 'brief' | 'recap' }) => Promise<JobTurnResult>
   ownerChatId: () => string | null
   now: () => number
   timeZone: () => string
@@ -77,6 +77,6 @@ export function makeRecapTurn(deps: RecapTurnDeps): (job: ScheduledJob, nowIso: 
     let usage: RecapUsageRow[] = []
     try { usage = deps.usage?.(deps.now() - WEEK_MS) ?? [] } catch { /* 读不到就不写 */ }
     const material = buildRecapMaterial(items, { now: deps.now(), timeZone: deps.timeZone(), usage })
-    return deps.runJobTurn({ chatId: owner, jobId: job.id, text: job.text, nowIso, buildText: (style) => buildRecapText({ jobId: job.id, nowIso, material }, style) })
+    return deps.runJobTurn({ chatId: owner, jobId: job.id, text: job.text, nowIso, kind: 'recap', buildText: (style) => buildRecapText({ jobId: job.id, nowIso, material }, style) })
   }
 }
