@@ -1020,7 +1020,7 @@ export function buildTickBodies(deps: TickDeps): TickBodies {
     //  - care off(别烦我)= 什么都别主动说 ⇒ 这次做客**悄悄记过**(推进水位、不调模型),以后打开主动关心也不翻旧账;
     //  - 免打扰时段 ⇒ 只是晚点说 ⇒ 这一拍什么都不动,时段过了照讲。
     const ownerPrefs = deps.chatPrefs.get(ownerChat)
-    if (inQuietHours(ownerPrefs.quiet, Date.parse(nowIso), loadCompanionConfig(deps.stateDir).timezone ?? 'Asia/Shanghai')) return
+    if (inQuietHours(ownerPrefs.quiet, Date.parse(nowIso), loadCompanionConfig(deps.stateDir).timezone)) return
     const silent = careLevel(ownerChat, ownerPrefs, ownerChat) === 'off'
     const statePath = join(deps.stateDir, 'companion', 'guest-visits.json')
     const state: GuestVisitState = (() => {
