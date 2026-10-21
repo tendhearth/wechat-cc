@@ -60,6 +60,8 @@ describe('phone web page: a matter is status only',()=>{
     detail.task.phase='replied';detail.events=[]
     detail.permissions=[{id:'p1',taskId:TASK,tool:'Bash',description:'rm -rf tmp',createdAt:1}]
     detail.quotaHandoff={state:'offer',from:'codex',to:'claude',kind:'quota',resetAt:Date.now()+20*60000}
+    // 名字只读 daemon 下发的 agentNames(收敛清单 ⑥);这里伪装 daemon,就照它的样子带上
+    detail.matter.agentNames={codex:'Codex',claude:'Claude'}
     await open()
     await expect.poll(()=>page.locator('#m-status .m-state').textContent()).toBe('等你决定')
     const status=await page.locator('#m-status').textContent()
@@ -67,6 +69,10 @@ describe('phone web page: a matter is status only',()=>{
     expect(status).toContain('Codex 的额度已用完')
     expect(status).not.toContain('rm -rf tmp')
     expect(await page.locator('#m-status button').count()).toBe(0)
+    // 老 daemon 不带 agentNames ⇒ 退回原始 id,不猜名字
+    delete detail.matter.agentNames
+    await open()
+    await expect.poll(()=>page.locator('#m-status').textContent()).toContain('codex 的额度已用完')
   })
 
   it('keeps 停下: arm, confirm, exactly one POST',async()=>{
