@@ -519,3 +519,32 @@ describe('演示:此刻页的伙伴', () => {
     } finally { vi.useRealTimers() }
   })
 })
+
+describe('演示:待办与 CC 画的你(收敛清单 ④)', () => {
+  it('三条在办、一条最近了结;画像过协议包的 state schema', async () => {
+    const b = makeDemoBackend({ lang: 'zh-Hans' })
+    await b.memory()
+    const p = await b.pocket()
+    expect(p.todos.active.map(r => r.id)).toEqual([101, 102, 103])
+    expect(p.todos.settled.map(r => r.id)).toEqual([104])
+    expect(Buffer.from(p.portraitPng!, 'base64').subarray(1, 4).toString()).toBe('PNG')
+    const parsed = PHONE_API_SCHEMAS['GET /m/api/state']!.safeParse({ ok: true, name: 'CC', ...p, portrait: null, stickers: [] })
+    expect(parsed.success).toBe(true)
+  })
+  it('完成 ⇒ 挪到最近了结(最新的在前);捞回 ⇒ 回到在办;不在的 ⇒ not_found;reset 还原', async () => {
+    let t = 1_760_000_000_000
+    const b = makeDemoBackend({ now: () => t })
+    t += 1000
+    await b.setTodo(102, 'resolved')
+    let p = await b.pocket()
+    expect(p.todos.active.map(r => r.id)).toEqual([101, 103])
+    expect(p.todos.settled.map(r => r.id)).toEqual([102, 104])
+    await b.setTodo(104, 'active')
+    p = await b.pocket()
+    expect(p.todos.active.map(r => r.id)).toEqual([101, 103, 104])
+    await expect(b.setTodo(999, 'resolved')).rejects.toMatchObject({ code: 'not_found' })
+    b.reset()
+    p = await b.pocket()
+    expect(p.todos.active.map(r => r.id)).toEqual([101, 102, 103])
+  })
+})

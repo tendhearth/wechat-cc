@@ -192,6 +192,8 @@ describe('随身 CC (phone PWA + device pairing)', () => {
   let nowMs: number
   const prefs: Record<string, Record<string, unknown>> = {}
 
+  let portraitRenders = 0
+  let portraitResult: string | null = null
   beforeEach(() => {
     stateDir = seedStateDir()
     mkdirSync(join(stateDir, 'stickers'), { recursive: true })
@@ -199,12 +201,16 @@ describe('随身 CC (phone PWA + device pairing)', () => {
     wf(join(stateDir, 'memory', OWNER, 'portrait.svg'), '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 320 320"><circle cx="1" cy="1" r="1" fill="none" stroke="#5a3f2d"/></svg>')
     nowMs = 1_000_000
     prefs[OWNER] = {}
+    portraitRenders = 0
+    portraitResult = 'UE5HIQ=='
     panel = makeSettingsPanel({
       stateDir,
       ownerChatId: () => OWNER,
       chatPrefs: { get: (c) => prefs[c] ?? {}, set: (c, patch) => { prefs[c] = { ...(prefs[c] ?? {}), ...patch }; return prefs[c]! } },
       getUserName: () => '大人',
       setUserName: async () => {},
+      // 测试里不起 qlmanage:假的渲染,数调用次数
+      portraitRender: async () => { portraitRenders++; return portraitResult },
       todos: {
         facts: {
           findFacts: (_k, _p, _q, status) => ({ results: status === 'active'
@@ -324,6 +330,22 @@ describe('随身 CC (phone PWA + device pairing)', () => {
     expect(s2.todos.active[0]!.display).toBe('小飞')
     expect(s2.portrait).toContain('<svg')
     expect(s2.stickers[0]!.tags).toEqual(['开心'])
+  })
+
+  it('phone state: portraitPng(给原生 App)按 SVG 缓存,第二次不再画;画不出 ⇒ 字段不出现', async () => {
+    const { port } = await panel.start(0)
+    const base = `http://127.0.0.1:${port}`
+    const t = panel.issueToken()
+    const read = async () => (await (await fetch(`${base}/m/api/state?t=${t}`)).json()) as Record<string, unknown>
+    expect((await read()).portraitPng).toBe('UE5HIQ==')
+    expect((await read()).portraitPng).toBe('UE5HIQ==')
+    expect(portraitRenders).toBe(1)
+    // 换一张画、这次画不出:字段不出现,portrait 照给
+    wf(join(stateDir, 'memory', OWNER, 'portrait.svg'), '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 320 320"><circle cx="2" cy="2" r="1" fill="none" stroke="#5a3f2d"/></svg>')
+    portraitResult = null
+    const s = await read()
+    expect('portraitPng' in s).toBe(false)
+    expect(s.portrait).toContain('<svg')
   })
 
   it('sticker ?b64=1 returns JSON data-URI payload (tunnel/shell mode images)', async () => {

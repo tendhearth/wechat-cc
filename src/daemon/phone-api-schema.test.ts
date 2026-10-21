@@ -396,6 +396,7 @@ describe('真实返回校验 — 首页 / 设置页 / 记忆 / 贴纸', () => {
       chatPrefs: { get: () => ({}), set: (_c, p) => p },
       getUserName: () => '大人', setUserName: async () => {}, log: () => {},
       remote: { isEnabled: () => false, setEnabled: () => {}, requestRestart: () => {} },
+      portraitRender: async () => 'iVBORw0KGgo=', // 不起 qlmanage
       todos: {
         facts: {
           findFacts: (_k, _p, _q, status) => ({ results: status === 'active' ? [{ id: 7, contact: 'wx_f', predicate: '还书', value: '答应还《三体》', time_ref: null, updated_at: 100 }] : [] }),
@@ -452,7 +453,8 @@ describe('真实返回校验 — 首页 / 设置页 / 记忆 / 贴纸', () => {
   })
 
   it('m/api/state、art/blink、art/presence 真实返回符合 schema', async () => {
-    parseAs('GET /m/api/state', await (await get('/m/api/state')).json())
+    const st = parseAs('GET /m/api/state', await (await get('/m/api/state')).json()) as { portraitPng?: string }
+    expect(st.portraitPng).toBe('iVBORw0KGgo=')
     parseAs('GET /m/api/art/blink', await (await get('/m/api/art/blink')).json())
     parseAs('GET /m/api/art/presence', await (await get('/m/api/art/presence')).json())
   })
@@ -466,6 +468,13 @@ describe('真实返回校验 — 首页 / 设置页 / 记忆 / 贴纸', () => {
     const mutated = structuredClone(body)
     mutated.todos.active[0]!.time_ref = { not: 'a string' }
     expect(() => parseAs('GET /m/api/state', mutated)).toThrow()
+  })
+
+  it('m/api/state 的 portraitPng 可有可无(老 daemon / 不是 macOS 不带);带了就必须是字符串', async () => {
+    const body = await (await get('/m/api/state')).json() as Record<string, unknown>
+    const { portraitPng: _p, ...without } = body
+    expect(() => parseAs('GET /m/api/state', without)).not.toThrow()
+    expect(() => parseAs('GET /m/api/state', { ...body, portraitPng: 42 })).toThrow()
   })
 
   it('m/api/home、m/api/feed、m/api/seen 真实返回符合 schema', async () => {

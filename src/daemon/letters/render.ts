@@ -4,9 +4,7 @@
  * qlmanage 出的缩略图永远是正方形 —— 所以画面是「一张信纸放在桌上」的方图,而不是竖长的一页。
  * 正文用 foreignObject 让 WebKit 自己断行;分页靠估算行数,宁可估多(留白)也不估少(被裁掉)。
  */
-import { existsSync, mkdirSync, renameSync, writeFileSync } from 'node:fs'
-import { join } from 'node:path'
-import { spawnSync } from '../../lib/runtime/process'
+import { rasterizeSvgFileSync } from '../../lib/svg-raster'
 import type { LetterDraft } from './compose'
 import { color, fontFamily } from '../../../packages/design-tokens/src/index'
 
@@ -146,20 +144,7 @@ export function letterSvgs(l: LetterDraft, day: string): string[] {
   return pages.map((p, index) => letterPageSvg(p, { day, index, total: pages.length }))
 }
 
-/** SVG → 方形 PNG(macOS qlmanage)。别的平台回 null,调用方退回发文字。 */
+/** SVG → 方形 PNG(macOS qlmanage,见 lib/svg-raster)。别的平台回 null,调用方退回发文字。 */
 export function rasterizeLetterPage(svg: string, dir: string, name: string, size = 1600): string | null {
-  if (process.platform !== 'darwin') return null
-  try {
-    mkdirSync(dir, { recursive: true })
-    const svgPath = join(dir, `${name}.svg`)
-    writeFileSync(svgPath, svg)
-    const r = spawnSync(['qlmanage', '-t', '-s', String(size), '-o', dir, svgPath])
-    const out = `${svgPath}.png`
-    if (r.exitCode !== 0 || !existsSync(out)) return null
-    const png = join(dir, `${name}.png`)
-    renameSync(out, png)
-    return png
-  } catch {
-    return null
-  }
+  return rasterizeSvgFileSync(svg, dir, name, size)
 }

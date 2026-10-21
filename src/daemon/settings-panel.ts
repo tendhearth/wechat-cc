@@ -26,6 +26,7 @@ import { basename, join } from 'node:path'
 import { normalizeUserName } from '../lib/user-name'
 import { writeConfigKey, readConfigSurface } from './config-surface'
 import { kickAtelierModelProvision, readModelStatus, shouldProvisionOnConfigChange } from './atelier-provision'
+import { makePortraitPng, type PortraitRender } from './portrait-png'
 import { safeSvgFile, EXPIRED_HTML, SW_JS, M_BOOTSTRAP_HTML, pageHtml, phoneHtml } from './settings-panel-html'
 import { loadAgentConfig, saveAgentConfig, modelForProvider } from '../lib/agent-config'
 import { saveLlmKey } from './llm-keys'
@@ -94,6 +95,8 @@ export interface SettingsPanelDeps {
   }
   /** 表情库(只读展示 + 图片文件服务)。 */
   stickers?: { list(): Array<{ file: string; tags: string[]; desc?: string }>; dir: string }
+  /** 「CC 画的你」SVG → base64 PNG(给原生 App,收敛清单 ④)。测试注入;默认 macOS qlmanage(portrait-png.ts)。 */
+  portraitRender?: PortraitRender
   /**
    * 随身 CC 首屏「伙伴的一天」的三个来源(spec 2026-09-06-mobile-home-feed §5.4)。
    * 缺省 ⇒ /m/api/home 三项 sources_degraded。IO 全在这里,mobile-feed.ts 是纯函数。
@@ -274,6 +277,7 @@ export function makeSettingsPanel(deps: SettingsPanelDeps): SettingsPanel {
   const tokens: PanelTokens = deps.tokens ?? makeTokenRegistry(undefined, now)
   const devices = makeDeviceCredentials({ store: makeDeviceStore(deps.stateDir, now), tokens, routeAllow: PHONE_ROUTES })
   devices.bootRegister()
+  const portraitPng = makePortraitPng({ stateDir: deps.stateDir, ...(deps.portraitRender ? { render: deps.portraitRender } : {}) })
   /** 只认面板自己的两种令牌 —— 共享注册表后 session / file / operator 也能 resolve,必须挡住。 */
   const panelToken = (t: string | null | undefined) => {
     if (!t) return null
@@ -361,7 +365,7 @@ export function makeSettingsPanel(deps: SettingsPanelDeps): SettingsPanel {
   }
 
   // 随身 CC 首页数据:待办(活跃+最近了结,带显示名)、小像、表情库。
-  const phoneState = (): object => {
+  const phoneState = (): { portrait: string | null } & Record<string, unknown> => {
     const owner = deps.ownerChatId()
     const names = new Map((deps.todos?.names() ?? []).map(c => [c.username, c.display]))
     const deco = (rows: Array<{ contact: string } & Record<string, unknown>>) =>
@@ -742,7 +746,10 @@ export function makeSettingsPanel(deps: SettingsPanelDeps): SettingsPanel {
             return new Response(phoneHtml(t!, deps.remoteInfo?.() ?? null), { headers: { 'content-type': 'text/html; charset=utf-8' } })
           }
           if (url.pathname === '/m/api/state' && req.method === 'GET') {
-            return json(phoneState())
+            const s = phoneState()
+            // 原生 App 读 PNG(没有 SVG 渲染);画不出 / 画得慢 ⇒ 这一次不带这个字段,不挡回包
+            const png = s.portrait ? await portraitPng(s.portrait).catch(() => null) : null
+            return json(png ? { ...s, portraitPng: png } : s)
           }
           if (url.pathname === '/m/api/art/blink' && req.method === 'GET') {
             return json({ ok: true, mime: 'image/png', half: blinkArt.half.base64, closed: blinkArt.closed.base64 })

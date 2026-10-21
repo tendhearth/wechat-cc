@@ -42,6 +42,10 @@ describe('mapPhoneError(HTTP 状态 + 正文 → BackendCode)', () => {
     [422, { ok: false, error: 'no_speech' }, 'no_speech'],
     [413, { ok: false, error: 'audio_too_large' }, 'too_large'],
     [503, { ok: false, error: 'voice_not_wired' }, 'unavailable'],
+    // 待办(收敛清单 ④):电脑没接待办 ⇒ unavailable;正文不对 ⇒ invalid;bad_json 不是我们会发的,按 unknown
+    [503, { ok: false, error: 'todos_not_wired' }, 'unavailable'],
+    [400, { ok: false, error: 'invalid' }, 'invalid'],
+    [400, { ok: false, error: 'bad_json' }, 'unknown'],
   ])('%s %j ⇒ %s', (status, body, want) => {
     expect(mapPhoneError(status, body)).toBe(want)
   })

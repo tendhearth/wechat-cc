@@ -820,3 +820,37 @@ describe('CC 做过的事(B9,2026-10-20)', () => {
     await expect(denied.b.activity()).rejects.toBeInstanceOf(Error)
   })
 })
+
+describe('待办与 CC 画的你(收敛清单 ④,2026-10-21)', () => {
+  const ROW = { id: 7, contact: 'mum', predicate: 'obligation', value: '周末回家吃饭', time_ref: '周六', updated_at: 1_760_000_000, display: '妈妈' }
+  const STATE = { ok: true, name: 'CC', todos: { active: [ROW], settled: [{ ...ROW, id: 8, time_ref: null }] }, portrait: '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 320 320"></svg>', portraitPng: 'iVBORw0KGgo=', stickers: [{ file: 'a.png', tags: ['开心'] }] }
+  it('pocket:读 /m/api/state,只留待办与 PNG 画像(名字、SVG、表情库不要);没有 portraitPng(老 daemon / 不是 macOS)⇒ null', async () => {
+    const { b, reqs } = harness({ 'GET /m/api/state': ok(STATE) })
+    const v = await b.pocket()
+    expect(reqs.at(-1)).toMatchObject({ key: 'GET /m/api/state', path: '/m/api/state' })
+    expect(v).toEqual({ todos: { active: [ROW], settled: [{ ...ROW, id: 8, time_ref: null }] }, portraitPng: 'iVBORw0KGgo=' })
+    const { portraitPng: _png, ...old } = STATE
+    const none = harness({ 'GET /m/api/state': ok(old) })
+    expect((await none.b.pocket()).portraitPng).toBeNull()
+    const bad = harness({ 'GET /m/api/state': ok({ ...STATE, portraitPng: 42 }) })
+    await expect(bad.b.pocket()).rejects.toMatchObject({ code: 'unknown' })
+  })
+  it('setTodo:正文恰好 { id, status };完成 = resolved、捞回 = active', async () => {
+    const { b, reqs } = harness({ 'POST /m/api/todo': ok({ ok: true }) })
+    await b.setTodo(7, 'resolved')
+    expect(reqs.at(-1)).toMatchObject({ key: 'POST /m/api/todo', path: '/m/api/todo' })
+    expect(reqs.at(-1)!.body).toEqual({ id: 7, status: 'resolved' })
+    await b.setTodo(8, 'active')
+    expect(reqs.at(-1)!.body).toEqual({ id: 8, status: 'active' })
+  })
+  it('错误:没接待办 ⇒ unavailable;正文不对 ⇒ invalid;形状不对 ⇒ unknown(不当成功)', async () => {
+    const unwired = harness({ 'POST /m/api/todo': ok({ ok: false, error: 'todos_not_wired' }, 503) })
+    await expect(unwired.b.setTodo(7, 'resolved')).rejects.toMatchObject({ code: 'unavailable' })
+    const bad = harness({ 'POST /m/api/todo': ok({ ok: false, error: 'invalid' }, 400) })
+    await expect(bad.b.setTodo(7, 'resolved')).rejects.toMatchObject({ code: 'invalid' })
+    const weird = harness({ 'POST /m/api/todo': ok({ ok: 'yes' }) })
+    await expect(weird.b.setTodo(7, 'resolved')).rejects.toMatchObject({ code: 'unknown' })
+    const shape = harness({ 'GET /m/api/state': ok({ ...STATE, todos: { active: [{ id: 'x' }], settled: [] } }) })
+    await expect(shape.b.pocket()).rejects.toMatchObject({ code: 'unknown' })
+  })
+})

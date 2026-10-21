@@ -1,10 +1,10 @@
 import { PHONE_SAY_MAX_CHARS, PHONE_TRANSCRIBE_MAX_BYTES } from '@wechat-cc/protocol'
 import { labelJoin, type Lang } from '../i18n'
-import { DEMO_STICKER, DEMO_STICKER_FILE, DEMO_VOICE } from './demo-media'
-import { BackendError, type Backend, type CliSessionRowT, type Connection, type MatterT, type MatterDetailT, type ApprovalExplanationT, type ChatJobT, type ChatMessageT, type SessionContinueT, type MatterSayResultT, type UploadStateT, type ChatModelViewT, type OverseerTodayT, type TodayItemT, type CompanionHomeT, type FeedEventT } from './types'
+import { DEMO_PORTRAIT_PNG, DEMO_STICKER, DEMO_STICKER_FILE, DEMO_VOICE } from './demo-media'
+import { BackendError, type Backend, type CliSessionRowT, type Connection, type MatterT, type MatterDetailT, type ApprovalExplanationT, type ChatJobT, type ChatMessageT, type SessionContinueT, type MatterSayResultT, type UploadStateT, type ChatModelViewT, type OverseerTodayT, type TodayItemT, type CompanionHomeT, type FeedEventT, type TodoStatus } from './types'
 import {
   copy, IDS, CHAT_ID, DEMO_HUNT_URL, PERM_ID, QUESTION_ID, RUN_IDS, t, explanation, progress, changesTurn, DEMO_REWIND_TOKEN, DEMO_HUNK_SHA, entryOptions,
-  demoActivity, demoConnections, demoJobs, demoLetters, demoSessions, demoSessionMessages, demoSessionTitleKey, DEMO_SESSION_MESSAGES, type Stage,
+  demoActivity, demoConnections, demoJobs, demoLetters, demoTodos, demoSessions, demoSessionMessages, demoSessionTitleKey, DEMO_SESSION_MESSAGES, type Stage,
 } from './demo-data'
 
 type Topic = 'home' | 'approvals' | 'agents' | `matter/${string}`
@@ -51,6 +51,12 @@ export function makeDemoBackend(opts: { now?: () => number; setTimeout?: typeof 
   let jobPaused = new Map<string, boolean>()
   let jobRemoved = new Set<string>()
   const demoJobList = () => demoJobs(lastLang, now()).filter(j => !jobRemoved.has(j.id)).map(j => ({ ...j, paused: jobPaused.get(j.id) ?? j.paused }))
+  // 待办(演示):完成 / 捞回只记在内存里(id → 改成什么、什么时候改的),reset() 还原
+  let todoSet = new Map<number, { status: TodoStatus; at: number }>()
+  const demoTodoList = () => demoTodos(lastLang, now()).map(r => {
+    const o = todoSet.get(r.id)
+    return o ? { ...r, settled: o.status === 'resolved', updated_at: Math.floor(o.at / 1000) } : r
+  })
   const subs = new Map<Topic, Set<(d: any) => void>>()
   // 终端里的会话(演示):一条等你批准(能在手机上拍)、一条在跑(说一句的框是灰的)、一条歇着(能接着说一句)。最后一句按语言读时生成。
   // 等批准那条开在电脑窗口里:拍完在跑时也能说,说了先「在送」、一会儿「送到」(同 daemon 的 say_id / last_say)。
@@ -567,6 +573,21 @@ export function makeDemoBackend(opts: { now?: () => number; setTimeout?: typeof 
       if (i < 0) throw new BackendError('not_found')
       demoMemory.splice(i, 1)
     },
+    async pocket() {
+      const rows = demoTodoList()
+      const strip = ({ settled: _s, ...r }: (typeof rows)[number]) => r
+      return {
+        todos: {
+          active: rows.filter(r => !r.settled).map(strip),
+          settled: rows.filter(r => r.settled).sort((a, b) => b.updated_at - a.updated_at).map(strip),
+        },
+        portraitPng: DEMO_PORTRAIT_PNG,
+      }
+    },
+    async setTodo(id, status) {
+      if (!demoTodoList().some(r => r.id === id)) throw new BackendError('not_found')
+      todoSet.set(id, { status, at: now() })
+    },
     async uploadChunk(p) {
       const cur = uploads.get(p.id) ?? { id: p.id, draftId: p.draftId, size: p.size, nextOffset: 0, status: 'uploading' as const }
       if (cur.draftId !== p.draftId || cur.size !== p.size || p.offset !== cur.nextOffset) throw new BackendError('invalid_attachment')
@@ -695,6 +716,6 @@ export function makeDemoBackend(opts: { now?: () => number; setTimeout?: typeof 
     },
     setActive() {},
     dispose() {},
-    reset() { epoch++; seq = 0; cli = seedCli(); createdBy = new Map(); saidBy = new Map(); adopted = new Map(); handedBy = new Map(); jobPaused = new Map(); jobRemoved = new Set(); deviceLabel = ''; rewound = false; reviewMarks.clear(); reviewComments.clear(); seed(); publish([...order]) },
+    reset() { epoch++; seq = 0; cli = seedCli(); createdBy = new Map(); saidBy = new Map(); adopted = new Map(); handedBy = new Map(); jobPaused = new Map(); jobRemoved = new Set(); todoSet = new Map(); deviceLabel = ''; rewound = false; reviewMarks.clear(); reviewComments.clear(); seed(); publish([...order]) },
   }
 }
