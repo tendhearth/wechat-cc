@@ -114,8 +114,11 @@ function teardown(stateDir: string): void {
 }
 
 
+// 每条消息一个不同的 createTimeMs:没有 msgId 的消息按 (userId, createTimeMs) 去重,同一毫秒造出的两条会被当成重复丢掉
+// (ubuntu CI 上对照那条偶发红就是这个,10-21)。
+let msgSeq = 0
 function adminMsg(text: string): InboundMsg {
-  return { chatId: 'admin_chat', userId: 'admin_chat', text, msgType: 'text', createTimeMs: Date.now(), accountId: 'acct1' }
+  return { chatId: 'admin_chat', userId: 'admin_chat', text, msgType: 'text', createTimeMs: Date.now() + ++msgSeq, accountId: 'acct1' }
 }
 
 /**
