@@ -1,3 +1,4 @@
+import { makeSpeechPolicy } from './speech/policy'
 import { describe, it, expect, vi } from 'vitest'
 import { mkdtempSync, mkdirSync, writeFileSync, rmSync, readFileSync } from 'node:fs'
 import { join } from 'node:path'
@@ -1629,6 +1630,8 @@ describe('bootstrap 社交接线', () => {
         loadProjects: () => ({ projects: {}, current: null }),
         lastActiveChatId: () => null,
         log: () => {},
+        // 社交通知要先问 CC 开口那道门(第三批 3a);这里给一个照常放行的门
+        speech: () => makeSpeechPolicy({ care: () => 'low', quietEndsAt: () => null, log: () => {}, outbound: { appDeliverable: () => false, canDeliver: () => true, sendOnce: async () => ({ ok: true }), open: () => ({ sendText: async () => ({ msgId: 'm' }), channel: () => 'wechat', textOnly: () => false, sendAttachment: async () => false, sendSticker: async () => false, finish: () => {} }) } }),
       })
       boot.conversationStore.upsertIdentity('op_chat', { userId: 'op_chat' })
       const peerKey = 'peer-letter-own-key-abc123'
