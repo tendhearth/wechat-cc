@@ -119,6 +119,22 @@ interface DaemonModule {
 - 模块划分(第一版):`wechat`(ilink / 收发 / 入站流水线)、`workbench`、`matters`、`phone`(配对 / 令牌 / 中继)、`companion`(陪伴 tick)、`memory`、`jobs`(定时 / 早报 / 周报)、`cli-sessions`(终端会话)、`calendar`、`letters`、`selfmaint`(自改 / 自检 / 升级);插件:`social`、`atelier`、`customer-review`、`hunt`、`chatroom`、`pet`。
 - 目录:`src/daemon/modules/<name>/`(index.ts 导出模块,其余文件跟着搬);顶层平铺的约 120 个文件归进去。
 
+### 3.1 步 6 的切法(2026-10-20 晚,摸过 main.ts 之后定)
+
+现状(main.ts `bootDaemon` 155–1286):25 处 `internalApi.set*`、4 个 Ref、3 个 `{current}` 持有者、3 个后补的 `let`;
+**3 处闭包引用了后面才声明的 const**(804→`workbench`、851→`jobsStore`、919→`wired`),今天没出事只因为中间没有 await —— 拆模块时加一个 await 就是启动崩。
+**启动到一半失败时不收尾**:catch 里调 `shutdown()`,而 `didStartup` 还是 false ⇒ `lc.stopAll` 被跳过,已经起来的 internal-api HTTP、cli-events、工作台会一直挂着。
+还有几样不归 lifecycle 管:bootstrap 的 idle sweep 定时器、pipeline-deps 里起的隧道客户端、`onMediaSent` 订阅。
+
+| 小步 | 内容 | 行为 |
+|---|---|---|
+| 6a | **先修两个真问题**:启动失败也按倒序停已登记的;3 处向后引用改成显式的晚绑定(容器的 `lazy`)。加一条测试:boot 中途抛错后,已登记的子系统都被停掉 | 修 bug |
+| 6b | **容器**:`provide(name, value)` / `get(name)` / `lazy(name)`(用到时才取,取不到报出名字)。`internalApi.set*` 收成一个 `bindInternalApi(container)`,Ref / 持有者 / 后补 `let` 都换成 `lazy` | 不变 |
+| 6c | **按功能切 main.ts**:cli-sessions(S9–S11)、jobs(S12 + S21)、workbench(S14 + S22 + S24)、companion(S16–S18)、selfmaint(S19)…… 每块一个 `modules/<name>/index.ts`,导出 `{name, needs, provides, init, stop}`;main 按 needs 拓扑排序后 init。每切一块一个 PR,启动快照(`/v1/health` + selftest)不变 | 不变 |
+| 6d | **lifecycle 收齐**:idle sweep、隧道客户端、`onMediaSent` 订阅进各自模块的 stop;关闭顺序由模块倒序决定,删掉手写的 `bootRef?.x?.stop()` | 关闭更干净 |
+
+pipeline-deps.ts(1100+ 行、横跨 wechat 入站 / 记忆 / 手机中继 / matters / 陪伴)在 6c 里跟着各自的模块拆开。
+
 ## 4. 执行者描述(ExecutorDescriptor)
 
 - 每家一份:id、显示名、对端、登录提示、`chat?` 能力、`workbench?` 能力、错误分类、档位执行方式(第一批的 #464 表直接从这里读)。
