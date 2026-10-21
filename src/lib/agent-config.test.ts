@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest'
 import { mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { tmpdir } from 'node:os'
+import { PROVIDER_IDS } from './provider-ids'
 import { loadAgentConfig, saveAgentConfig, parseAgentConfig, A2AAgentRecord, makeMtimeCachedConfigReader, activeModel, withActiveModel, modelForProvider, withModelForProvider, resolveForwardBudget, type AgentConfig } from './agent-config'
 
 describe('agent-config', () => {
@@ -630,6 +631,20 @@ describe('makeMtimeCachedConfigReader', () => {
 })
 
 describe('activeModel / withActiveModel — provider-specific model field', () => {
+  it('agy reads and writes agyModel (10-21: it fell through to `model`, so /v1/model on an agy owner wrote a field agy never reads and read it back as success)', () => {
+    const agy = { ...base('agy'), agyModel: 'gemini-3-pro', model: 'ignored' } as AgentConfig
+    expect(activeModel(agy)).toBe('gemini-3-pro')
+    const next = withActiveModel(agy, 'gemini-3-flash')
+    expect(next.agyModel).toBe('gemini-3-flash')
+    expect(next.model).toBe('ignored')
+  })
+  it('agrees with modelForProvider / withModelForProvider for the global provider, for every provider id', () => {
+    for (const id of PROVIDER_IDS) {
+      const c = { ...base(id), model: 'm', cursorModel: 'cm', openaiModel: 'om', geminiModel: 'gm', agyModel: 'am' } as AgentConfig
+      expect(activeModel(c)).toBe(modelForProvider(c, id))
+      expect(withActiveModel(c, 'x')).toEqual(withModelForProvider(c, id, 'x'))
+    }
+  })
   const base = (provider: AgentConfig['provider']): AgentConfig => ({
     provider, dangerouslySkipPermissions: false, autoStart: false, closeStopsDaemon: false,
   })
