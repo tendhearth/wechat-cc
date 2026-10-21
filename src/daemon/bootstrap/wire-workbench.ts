@@ -9,6 +9,7 @@ import {join} from 'node:path'
 import {listProjects} from '../../lib/project-registry'
 import { loadAgentConfig, saveAgentConfig, modelForProvider } from '../../lib/agent-config'
 import { findCodexBinary } from '../../lib/find-codex-binary'
+import { acpSupportedOn } from '../../core/acp/platform'
 import { createProviderRegistry, type ProviderRegistry } from '../../core/provider-registry'
 import { createClaudeAgentProvider, tierProfileToClaudeSdkOpts, makeWorkbenchClaudeCanUseTool } from '../../core/claude-agent-provider'
 import { createWorkbenchCodexProvider } from '../../core/workbench/codex-app-server'
@@ -93,9 +94,10 @@ export function registerUnattendedExecutors(target: ProviderRegistry, source: Pi
  * displayName/canResume 沿用 boot 的登记项。解析不到 ⇒ 不登记、不退回免审,记一行日志。
  */
 export function registerAcpExecutors(target: ProviderRegistry, source: Pick<ProviderRegistry, 'get'>, config: { cursorAgentBin?: string },
-  deps: { findOnPath?: (cmd: string) => string | null; create?: typeof createAcpWorkbenchProvider; log?: (tag: string, line: string) => void } = {}): string[] {
+  deps: { findOnPath?: (cmd: string) => string | null; create?: typeof createAcpWorkbenchProvider; log?: (tag: string, line: string) => void; platform?: NodeJS.Platform } = {}): string[] {
   const entry = source.get('cursor')
   if (!entry) return []
+  if (!acpSupportedOn(deps.platform)) { deps.log?.('WORKBENCH', 'cursor: ACP 执行者暂不支持 Windows(进程树清理没验证)— 不注册'); return [] }
   const launch = resolveAcpAgent('cursor', config, deps.findOnPath ?? findOnPath)
   if (!launch) { deps.log?.('WORKBENCH', 'cursor: cursor-agent binary not resolvable — ACP executor not registered'); return [] }
   const provider = (deps.create ?? createAcpWorkbenchProvider)({ command: launch.command, args: launch.args, displayName: launch.displayName, log: deps.log, targetProvider: 'cursor' })
@@ -109,8 +111,9 @@ export function registerAcpExecutors(target: ProviderRegistry, source: Pick<Prov
  * 不合格 / 命令找不到 / id 已被占 ⇒ 跳过并记一行,不影响别的。
  */
 export function registerCustomAcpExecutors(target: ProviderRegistry, agents: ReadonlyArray<{ id: string; name: string; command: string; args?: string[]; auth_method?: string }> | undefined,
-  deps: { findOnPath?: (cmd: string) => string | null; create?: typeof createAcpWorkbenchProvider; log?: (tag: string, line: string) => void } = {}): string[] {
+  deps: { findOnPath?: (cmd: string) => string | null; create?: typeof createAcpWorkbenchProvider; log?: (tag: string, line: string) => void; platform?: NodeJS.Platform } = {}): string[] {
   const registered: string[] = []
+  if ((agents?.length ?? 0) > 0 && !acpSupportedOn(deps.platform)) { deps.log?.('WORKBENCH', `自定义 ACP 执行者(${agents!.map(a => a.id).join('、')})暂不支持 Windows(进程树清理没验证)— 都不注册`); return registered }
   for (const agent of agents ?? []) {
     const problem = acpAgentProblem(agent)
     if (problem) { deps.log?.('WORKBENCH', `acp agent ${String(agent.id)} skipped: ${problem}`); continue }
