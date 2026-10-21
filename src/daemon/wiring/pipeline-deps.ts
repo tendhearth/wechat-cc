@@ -168,6 +168,8 @@ export function buildPipelineDeps(opts: PipelineDepsOpts, refs: PipelineDepsRefs
     wechatDegraded: () => boot.health.health.shouldSuspend('wechat'),
     wechatClosedSince: (chatId) => ilink.proactiveClosedSince(chatId),
     sendWechat: (chatId, text) => ilink.sendMessage(chatId, text),
+    // ilink.sendFile 失败是抛错 —— 折成 {error},proactive-channel 才能改走 App(新贴纸那一句,第三批 3a)
+    sendWechatFile: async (chatId, path) => { try { await ilink.sendFile(chatId, path); return {} } catch (err) { return { error: err instanceof Error ? err.message : String(err) } } },
     app: () => companionAppRef.current,
     log: (tag, line) => log(tag, line),
   })

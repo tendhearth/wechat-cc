@@ -387,6 +387,26 @@ function huntBody(opts: { nowIso: string }, style: TickTextStyle): string {
   )
 }
 
+/**
+ * 新贴纸那一句(觅食式表情生长)改走 SpeechPolicy(第三批 3a):别烦我 / 免打扰 / 都送不到由门判;
+ * 图跟字走同一条路(微信发文件、App 记表情引用)。图发不出去 ⇒ 什么都不说,**不退成一句光秃秃的文字**(9d 评审)。
+ * 贴纸已经在库里了,以后照样会用到;这一句只是「我画了张新的」的小报告,不补发。
+ */
+export async function announceNewSticker(
+  d: { speech?: import('../speech/policy').SpeechPolicy; stickers: { resolve(tag: string): string | null }; log: (tag: string, line: string) => void },
+  ownerChat: string,
+  mood: string,
+): Promise<void> {
+  if (!d.speech) { d.log('STICKERS', 'new-sticker notice skipped: speech policy not wired'); return }
+  const path = d.stickers.resolve(mood)
+  if (!path) { d.log('STICKERS', `new-sticker notice skipped: no file for mood=${mood}`); return }
+  const outcome = await d.speech.say({ kind: 'sticker', chatId: ownerChat }, async (turn) => {
+    if (!(await turn.sendSticker(ownerChat, mood, path))) { d.log('STICKERS', `new-sticker notice not sent: sticker undeliverable (mood=${mood})`); return }
+    await turn.sendText(ownerChat, `我画了张新表情!以后想说「${mood}」的时候就用它~`)
+  })
+  if (!('allow' in outcome)) d.log('STICKERS', `new-sticker notice ${'defer' in outcome ? 'deferred' : 'dropped'}: ${outcome.reason}`)
+}
+
 /** 来访叙述发不出去(sendText 回了 {error}):在 say 的生产者里抛,外面撤水位。 */
 class GuestNarrationSendFailed extends Error {}
 
@@ -1254,12 +1274,7 @@ export function buildTickBodies(deps: TickDeps): TickBodies {
           lib: deps.stickers,
           cheapEval: sdkEval,
           log: (t, l) => deps.log(t, l),
-          notify: async (mood) => {
-            if (!ownerChat) return
-            const path = deps.stickers!.resolve(mood)
-            if (path) await deps.ilink.sendFile(ownerChat, path)
-            await deps.ilink.sendMessage(ownerChat, `我画了张新表情!以后想说「${mood}」的时候就用它~`)
-          },
+          notify: (mood) => ownerChat ? announceNewSticker({ speech: deps.speech, stickers: deps.stickers!, log: deps.log }, ownerChat, mood) : Promise.resolve(),
         })
       } catch (err) {
         deps.log('STICKERS', `artist step failed: ${err instanceof Error ? err.message : err}`)

@@ -12,7 +12,7 @@ import { wireSpeech } from './wire-speech'
 const OWNER = 'owner@im.wechat'
 const outbound = (): ProactiveOutbound => ({
   appDeliverable: () => false, canDeliver: () => true, sendOnce: async () => ({ ok: true }),
-  open: () => ({ sendText: async () => ({ msgId: 'm' }), channel: () => 'wechat', textOnly: () => false, sendAttachment: async () => false, finish: () => {} }),
+  open: () => ({ sendText: async () => ({ msgId: 'm' }), channel: () => 'wechat', textOnly: () => false, sendAttachment: async () => false, sendSticker: async () => false, finish: () => {} }),
 })
 
 describe('wireSpeech —— care 档、免打扰跟伙伴一拍读同一份;账记进 speech_log', () => {
