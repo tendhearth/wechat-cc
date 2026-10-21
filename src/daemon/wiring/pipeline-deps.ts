@@ -410,6 +410,8 @@ export function buildPipelineDeps(opts: PipelineDepsOpts, refs: PipelineDepsRefs
   const mattersService = opts.matters ? makeMattersService({
     store: opts.matters,
     ownerChatId,
+    // 执行者叫什么(收敛清单 ⑥):唯一出处是 registry,三端只读 agentNames。
+    executorName: (id: string) => boot.registry.namesOf(id).name,
     ...(opts.workbench ? { workbench: opts.workbench } : {}),
     chat: {
       ownerChatId,

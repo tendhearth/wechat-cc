@@ -130,6 +130,9 @@ export function makeViewDomain(ctx:ServiceCtx, queries?:{quotaHandoff(id:string)
     try{origins=ctx.deps.matters?.origins(ids)??origins}catch{/* 见上 */}
     return {agents,origins}
   }
+  const handoffIds=(h:QuotaHandoffView|null):string[]=>h?[h.from,...('to' in h?[h.to]:[])]:[]
+  /** 执行者 id → 正式名字(收敛清单 ⑥):唯一出处 registry.namesOf;桌面只读这张,不存自己的名字表。 */
+  const agentNamesOf=(ids:Iterable<string|null|undefined>):Record<string,string>=>{const out:Record<string,string>={};for(const id of ids)if(id&&!(id in out))out[id]=ctx.deps.registry.namesOf(id).name;return out}
   const withAgents=(view:WorkbenchTaskView,marks:Marks):WorkbenchTaskView=>{const a=marks.agents.get(view.id),origin=marks.origins.get(view.id);return a?.length||origin?{...view,...(a?.length?{agents:a}:{}),...(origin?{origin}:{})}:view}
   function list(query:WorkbenchListQuery={}) {
     const providers=ctx.deps.registry.list().flatMap(id=>{const p=ctx.deps.registry.get(id);return isWorkbenchProviderId(id)&&p&&isWorkbenchExecutorCapabilities(p.opts.workbench)?[{id,displayName:ctx.deps.registry.namesOf(id).name,settingsLabel:ctx.deps.registry.namesOf(id).settings,capabilities:structuredClone(p.opts.workbench),quota:ctx.actions.deref('view').quotaExhausted(id),usage:ctx.deps.usage?.(id)??null}]:[]})
@@ -139,8 +142,9 @@ export function makeViewDomain(ctx:ServiceCtx, queries?:{quotaHandoff(id:string)
     const active=store.activeTaskPaths()
     const projects=store.projects().filter(project=>active.has(project.path)||existsSync(project.path))
     const projectProviders=Object.fromEntries(projects.map(project=>[project.path,store.projectProvider(project.path)??project.providerId]))
-    const agents=agentsOf(result.tasks.map(task=>task.id))
-    return {projects,tasks:result.tasks.map(task => withAgents(taskView(task,true),agents)),page:result.page,projectProviders,providers,historyProviders:Object.keys(ctx.deps.nativeHistory??{}),defaultProvider:providers.find(p=>p.id===ctx.deps.defaultProvider)?.id ?? providers[0]?.id ?? null,canWechat:!!ctx.deps.ownerChatId(),unattendedAcknowledgedAt:ctx.deps.unattendedAck?.get()??null}
+    const agents=agentsOf(result.tasks.map(task=>task.id)),historyProviders=Object.keys(ctx.deps.nativeHistory??{})
+    const agentNames=agentNamesOf([...providers.map(p=>p.id),...historyProviders,...result.tasks.flatMap(task=>[task.providerId,...(agents.agents.get(task.id)??[])])])
+    return {projects,tasks:result.tasks.map(task => withAgents(taskView(task,true),agents)),page:result.page,projectProviders,providers,historyProviders,agentNames,defaultProvider:providers.find(p=>p.id===ctx.deps.defaultProvider)?.id ?? providers[0]?.id ?? null,canWechat:!!ctx.deps.ownerChatId(),unattendedAcknowledgedAt:ctx.deps.unattendedAck?.get()??null}
   }
   function rewindOf(id:string){
     const times=store.artifacts(id).filter(a=>a.mime===GIT_REVIEW_MIME).map(a=>a.createdAt)
@@ -153,7 +157,8 @@ export function makeViewDomain(ctx:ServiceCtx, queries?:{quotaHandoff(id:string)
     const wechatNotifications={enabled:!!subscription?.enabled,notices:store.wechatNotifications.list(id).slice(-10).map(({id,runId,kind,status,reason,createdAt})=>({id,runId,kind,status,reason,createdAt}))}
     // 工作区脚本(2026-10-20)只进详情:读 tendhearth.json 要跑 git,列表不背这个;原文给桌面的确认框。
     const view=taskView(detail.task,true),scripts=view.worktree?queries?.scripts?.(id)??null:null
-    const result={...detail,events:detail.events.map(readableExecutionEvent),wechatNotifications,quotaHandoff:queries?.quotaHandoff(id)??null,...(runtime?{runtime}:{}),execution:store.execution.choice(id),lastExecution:store.execution.last(id),attachments:store.attachments.list(id),task:withAgents(scripts&&view.worktree?{...view,worktree:{...view.worktree,scripts}}:view,agentsOf([id])),inputs:store.liveInputs.list(id),questions:running?.questions.pending()??[],
+    const detailMarks=agentsOf([id]),quotaHandoff=queries?.quotaHandoff(id)??null
+    const result={...detail,events:detail.events.map(readableExecutionEvent),wechatNotifications,quotaHandoff,...(runtime?{runtime}:{}),execution:store.execution.choice(id),lastExecution:store.execution.last(id),attachments:store.attachments.list(id),task:withAgents(scripts&&view.worktree?{...view,worktree:{...view.worktree,scripts}}:view,detailMarks),agentNames:agentNamesOf([view.providerId,...(detailMarks.agents.get(id)??[]),...handoffIds(quotaHandoff)]),inputs:store.liveInputs.list(id),questions:running?.questions.pending()??[],
       // The timeline stays live through cancellation and process cleanup;
       // accepting supplemental input is a separate, narrower capability.
       ...(running?{runId:running.identity}:{}),

@@ -184,7 +184,8 @@ export interface Backend {
   /** CC 的连接快照(手机版,没有 detail)。 */
   connections(): Promise<ConnectionsT>
   /** 电脑上的原生会话(只读);cursor = 上一页的 nextCursor。 */
-  sessions(provider: 'claude' | 'codex', cursor?: string, q?: string): Promise<{ items: NativeSessionRowT[]; nextCursor: string | null }>
+  /** names:两个分段的执行者正式名字(daemon 下发,收敛清单 ⑥);老 daemon 不带。 */
+  sessions(provider: 'claude' | 'codex', cursor?: string, q?: string): Promise<{ items: NativeSessionRowT[]; nextCursor: string | null; names?: Record<string, string> }>
   /** 一个原生会话的一页消息;读不了 ⇒ BackendError('not_found')。 */
   session(key: string, cursor?: string, window?: 'recent' | 'start'): Promise<NativeSessionPageT>
   /** 这个电脑上的会话能不能在手机上接着做(不缓存,每次问电脑)。读不了 ⇒ BackendError('not_found')。 */

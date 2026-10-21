@@ -11,7 +11,7 @@ export type TerminalStatus = CliSessionRowT['status']
 export type TerminalRow = {
   id: string
   project: string
-  /** 「Claude Code」:只给读屏和详情页,行里画头像。 */
+  /** 执行者正式名字(daemon 给的 displayName,收敛清单 ⑥;老 daemon 不带 ⇒ id):只给读屏和详情页,行里画头像。 */
   source: string
   /** 执行者 id(claude / codex / cursor),画头像用。 */
   agent: string
@@ -52,7 +52,7 @@ export function terminalRow(s: CliSessionRowT, now: number, lang: Lang): Termina
   return {
     id: s.session_id,
     project: s.project,
-    source: t(lang, s.source === 'codex' ? 'sessions.codex' : s.source === 'cursor' ? 'sessions.cursor' : 'sessions.claude'),
+    source: s.displayName || s.source,
     agent: s.source === 'codex' || s.source === 'cursor' ? s.source : 'claude',
     status: s.status,
     stale: s.stale,

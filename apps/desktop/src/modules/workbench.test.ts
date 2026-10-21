@@ -193,12 +193,13 @@ describe('workbench rendering', () => {
   it('draws the agents who took part as an overlapping avatar stack, current one first, folding past four into +N', async () => {
     const { renderWorkbench } = await import('./workbench.js')
     const task=(id:string,agents?:string[])=>({id,title:`Task ${id}`,path:'/work',providerId:'codex',status:'completed',createdAt:1,updatedAt:2,error:null,...(agents?{agents}:{})})
-    const html=renderWorkbench({tasks:[task('OLD'),task('MANY',['codex','claude','cursor','my-acp','kimi'])],providers:[{id:'codex',displayName:'Codex'},{id:'my-acp',displayName:'My Agent'}],defaultProvider:'codex',canWechat:false,selectedId:null,detail:null,selectedArtifactId:null,error:'',preview:null})
+    const html=renderWorkbench({tasks:[task('OLD'),task('MANY',['codex','claude','cursor','my-acp','kimi'])],providers:[{id:'codex',displayName:'Codex'},{id:'my-acp',displayName:'My Agent'}],agentNames:{codex:'Codex',claude:'Claude',cursor:'Cursor'},defaultProvider:'codex',canWechat:false,selectedId:null,detail:null,selectedArtifactId:null,error:'',preview:null})
     const row=(id:string)=>html.slice(html.indexOf(`data-task-id="${id}"`),html.indexOf('</button>',html.indexOf(`data-task-id="${id}"`)))
     // 老 daemon 不带 agents ⇒ 任务自己那一家
     expect(row('OLD').match(/class="th-agent"/g)).toHaveLength(1)
     expect(row('OLD')).toContain('data-agent="codex"')
-    expect(row('MANY')).toMatch(/aria-label="Task MANY，Codex、Claude Code、Cursor、My Agent、Kimi，/)
+    // 名字只读 daemon 给的(列表的 agentNames,再是执行者列表);都没给的(kimi)念 id —— 收敛清单 ⑥
+    expect(row('MANY')).toMatch(/aria-label="Task MANY，Codex、Claude、Cursor、My Agent、kimi，/)
     expect(row('MANY').match(/data-agent="/g)).toHaveLength(3)
     expect(row('MANY')).toMatch(/data-agent="codex"[^>]*>[\s\S]*data-agent="claude"[\s\S]*data-agent="cursor"[\s\S]*>\+2</)
     expect(row('MANY')).toMatch(/style="z-index:4" data-agent="codex"/)

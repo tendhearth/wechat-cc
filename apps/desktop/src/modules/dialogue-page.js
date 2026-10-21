@@ -19,7 +19,8 @@
 // keeps a little module-scoped state (selected chat, current view, whether
 // the user has unlocked private threads this session).
 
-import { escapeHtml, showToast, providerShortLabel } from "../view.js"
+import { escapeHtml, showToast } from "../view.js"
+import { executorName } from "./executor-names.js"
 import { renderWorkbenchMarkdown, renderWorkbenchUserText, captureUserSources, restoreUserSources } from "./workbench-markdown.js"
 import { formatRelativeTimeShort } from "./observations.js"
 import { icon } from "./icons.js"
@@ -201,7 +202,7 @@ export function renderDialogueMessage(m, ctx) {
 
 /** Bot display label — provider-aware(「CC · Claude」,不是小写 id)。 @param {Message} m */
 function botLabel(m) {
-  return m.provider ? `CC · ${providerShortLabel(m.provider)}` : "CC"
+  return m.provider ? `CC · ${executorName(m.provider)}` : "CC"
 }
 
 /** HH:MM for a message ts; a timeline without times isn't a timeline.

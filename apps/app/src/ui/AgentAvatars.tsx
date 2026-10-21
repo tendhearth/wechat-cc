@@ -1,6 +1,6 @@
 import type { ReactNode } from 'react'
 import { Image, View } from 'react-native'
-import { agentGlyph, agentMonogram, agentsLabel, agentStack, type AgentGlyph } from '../view/agents'
+import { agentGlyph, agentMonogram, agentsLabel, agentStack, type AgentGlyph, type AgentNames } from '../view/agents'
 import { Txt } from './Txt'
 import { useTheme } from './useTheme'
 
@@ -33,32 +33,32 @@ function Disc({ size, children }: { size: number; children: ReactNode }) {
   )
 }
 
-export function AgentAvatar({ id, size = 24 }: { id: string; size?: number }) {
+export function AgentAvatar({ id, size = 24, names }: { id: string; size?: number; names?: AgentNames }) {
   const { c } = useTheme()
   const glyph = agentGlyph(id)
   return (
     <Disc size={size}>
       {glyph
         ? <Image source={GLYPH[glyph]} style={{ width: Math.round(size * 0.6), height: Math.round(size * 0.6), tintColor: c.ink }} resizeMode="contain" />
-        : <Txt role="caption" tone="ink">{agentMonogram(id)}</Txt>}
+        : <Txt role="caption" tone="ink">{agentMonogram(id, names)}</Txt>}
     </Disc>
   )
 }
 
 /**
  * 一件事的执行者:一个就是一个圆,几个就往左半叠,正在做的(第一个)压在最上面;超过 3 个折成「+N」。
- * 整组对读屏是一张图,标签念名字。没有执行者 ⇒ 什么都不画。
+ * 整组对读屏是一张图,标签念名字(names = daemon 给的 id → 名字;没有 ⇒ 念 id)。没有执行者 ⇒ 什么都不画。
  */
-export function AgentAvatars({ ids, size = 24, max = 3, testID }: { ids: readonly string[] | undefined; size?: number; max?: number; testID?: string }) {
+export function AgentAvatars({ ids, names, size = 24, max = 3, testID }: { ids: readonly string[] | undefined; names?: AgentNames; size?: number; max?: number; testID?: string }) {
   const { shown, more } = agentStack(ids, max)
   if (shown.length === 0) return null
   const step = -(size + RING * 2) * OVERLAP
   const n = shown.length + (more ? 1 : 0)
   return (
-    <View testID={testID} accessible accessibilityRole="image" accessibilityLabel={agentsLabel(ids)} style={{ flexDirection: 'row', alignItems: 'center' }}>
+    <View testID={testID} accessible accessibilityRole="image" accessibilityLabel={agentsLabel(ids, names)} style={{ flexDirection: 'row', alignItems: 'center' }}>
       {shown.map((id, i) => (
         <View key={id} style={{ marginLeft: i === 0 ? 0 : step, zIndex: n - i }}>
-          <AgentAvatar id={id} size={size} />
+          <AgentAvatar id={id} size={size} names={names} />
         </View>
       ))}
       {more ? (

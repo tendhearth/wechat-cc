@@ -44,6 +44,8 @@ export interface MattersServiceDeps {
   store:MatterStore
   /** Trusted owner resolver for narrow phone receipt reads; no identity comes from the request. */
   ownerChatId?:()=>string|null
+  /** 执行者 id → 正式名字(收敛清单 ⑥,接 registry.namesOf(id).name)。没接 ⇒ 不带 agentNames,界面退回 id。 */
+  executorName?:(id:string)=>string
   workbench?:{
     detail(id:string):{task:MatterTaskView;events:MatterEvent[]}&Partial<MatterTaskControls>&{requiresExternalClose?:boolean;continuation?:{mode:string};rewind?:{blocked:unknown}|null}
     /** 手机说第一句给「导入了、还没发过第一句」的任务(spec D5);没接 ⇒ 手机也走 continueTask(409)。 */
@@ -153,11 +155,18 @@ export function makeMattersService(deps:MattersServiceDeps):MattersService {
     const latest=live.reduce<(typeof live)[number]|null>((a,b)=>!a||b.createdAt>a.createdAt?b:a,null)
     if(!latest||latest.artifactId!==artifactId)throw Error('rewind_not_latest')
   }
+  /** 这些执行者叫什么(收敛清单 ⑥):只由 deps.executorName 定;没接 / 一个都没有 ⇒ 不带这个字段。 */
+  const namesFor=(ids:ReadonlyArray<string|null|undefined>):{agentNames?:Record<string,string>}=>{
+    if(!deps.executorName)return {}
+    const out:Record<string,string>={}
+    for(const id of ids)if(id&&!(id in out))out[id]=deps.executorName(id)
+    return Object.keys(out).length?{agentNames:out}:{}
+  }
   return {
     list(filter){
       // 列表每行行尾画参与过的执行者(一次查完整页)
       const matters=deps.store.list(filter),agents=deps.store.agents(matters.map(m=>m.id))
-      return matters.map(m=>{const a=agents.get(m.id);return a?.length?{...m,agents:a}:m})
+      return matters.map(m=>{const a=agents.get(m.id);return a?.length?{...m,agents:a,...namesFor(a)}:m})
     },
     inputReceipt(id,requestId){
       if(!ID.test(id))throw Error('invalid_matter_id')
@@ -195,7 +204,8 @@ export function makeMattersService(deps:MattersServiceDeps):MattersService {
       }
       // 详情页标题下那组头像:跟列表同一个出处
       const agents=deps.store.agents([matter.id]).get(matter.id)
-      return {matter:agents?.length?{...matter,agents}:matter,bindings:deps.store.bindings(id),sessions:deps.store.sessions(id),task,events,...controls,...(nativeStart?{nativeStart}:{}),...(quotaHandoff?{quotaHandoff}:{})}
+      const named=namesFor([...(agents??[]),task?.providerId,nativeStart?.providerId,quotaHandoff?.from,quotaHandoff&&'to' in quotaHandoff?quotaHandoff.to:undefined])
+      return {matter:{...matter,...(agents?.length?{agents}:{}),...named},bindings:deps.store.bindings(id),sessions:deps.store.sessions(id),task,events,...controls,...(nativeStart?{nativeStart}:{}),...(quotaHandoff?{quotaHandoff}:{})}
     },
     async ownerChat(surface){
       const owner=deps.chat?.ownerChatId();if(!owner)return null

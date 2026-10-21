@@ -8,7 +8,8 @@
 // Subscribes to: doctorPoller (renderDashboard + renderRestartButton fire
 // on every successful poll automatically).
 
-import { dashboardHero, accountRows, formatRelativeTime, escapeHtml, restartButtonState, deleteAccountConfirmCopy, diagnose, guardLine, PROVIDER_LABELS } from "../view.js"
+import { dashboardHero, accountRows, formatRelativeTime, escapeHtml, restartButtonState, deleteAccountConfirmCopy, diagnose, guardLine } from "../view.js"
+import { rememberExecutorNames, executorSettingsLabel } from "./executor-names.js"
 import { icon } from "./icons.js"
 
 // provider 菜单的数据源 = 大脑区已注册列表(/v1/llm/health registered),
@@ -19,16 +20,20 @@ const menuProviders = () => _registeredProviders || []
 async function refreshServiceChoices(deps) {
   const r = await deps.invokeApi?.("GET", "/v1/llm/health").catch(() => null)
   _registeredProviders = r?.ok && Array.isArray(r.registered) ? r.registered : []
+  rememberExecutorNames(r?.names)
 }
 function serviceChoicesMarkup(current) {
   return `<div class="service-menu-heading">已配置的 AI 服务</div>` + menuProviders().map(p =>
-    `<button class="${p === current ? "provider-menu-active" : ""}" data-provider="${escapeHtml(p)}">${escapeHtml(PROVIDER_LABELS[p] || p)}<small>${p === current ? "当前使用" : "切换使用"}</small></button>`
+    `<button class="${p === current ? "provider-menu-active" : ""}" data-provider="${escapeHtml(p)}">${escapeHtml(executorSettingsLabel(p))}<small>${p === current ? "当前使用" : "切换使用"}</small></button>`
   ).join("") + `<p class="service-menu-note">已配置不代表已验证回复。</p><button type="button" data-action="connect-ai">＋ 连接其他 AI 服务</button>`
 }
 // 连接结论(设置抽屉「连接」段顶上那两行)。鱼缸画布 2026-10-01 退休后不再轮换暖场文案,只说事实。
 function renderHeroHeadline(element, headline) {
   if (element) element.textContent = headline
 }
+
+/** 顶上那颗「现在用的 AI 服务」:名字由 daemon 定(设置里的写法);没连 ⇒「未连接」。 @param {string|null|undefined} id */
+const providerChip = id => id ? executorSettingsLabel(id) : "未连接"
 
 export function renderDashboard(report) {
   const expiredCount = (report.expiredBots || []).length
@@ -84,7 +89,7 @@ export function renderDashboard(report) {
           <div class="user-name">还没有连接用户</div>
           <div class="user-sub">打开设置添加微信账号</div>
         </div>
-        <span class="provider-chip">${escapeHtml(PROVIDER_LABELS[report.checks.provider.provider] || "未连接")}</span>
+        <span class="provider-chip">${escapeHtml(providerChip(report.checks.provider.provider))}</span>
       `
       tbody.innerHTML = ""
     } else {
@@ -105,7 +110,7 @@ export function renderDashboard(report) {
           <div class="user-sub">微信私聊，${currentSub}</div>
         </div>
         <button class="provider-switch" aria-haspopup="true" aria-label="更换 AI 服务">
-          <span class="provider-chip">${escapeHtml(PROVIDER_LABELS[report.checks.provider.provider] || "未连接")}</span>
+          <span class="provider-chip">${escapeHtml(providerChip(report.checks.provider.provider))}</span>
           <span class="provider-chevron">⌄</span>
         </button>
       `
@@ -623,7 +628,7 @@ export async function toggleProviderMenu(deps, report) {
       }
       closeProviderMenu()
       await runRestartSequence(deps)
-      setPending(`已切换到 ${PROVIDER_LABELS[name] || name}`)
+      setPending(`已切换到 ${executorSettingsLabel(name)}`)
       setTimeout(() => setPending(""), 2500)
       _providerSwitchInflight = false
     })
@@ -706,7 +711,7 @@ export async function toggleUserProviderMenu(deps, anchor, _report) {
       }
       row.dataset.currentProvider = name
       closeProviderMenu()
-      setPending(`已切换到 ${PROVIDER_LABELS[name] || name}`)
+      setPending(`已切换到 ${executorSettingsLabel(name)}`)
       setTimeout(() => setPending(""), 2500)
       _providerSwitchInflight = false
       await deps.doctorPoller?.refresh?.()
@@ -964,7 +969,7 @@ const PROVIDER_ICONS = {
 }
 /** 大脑名字前挂上自己的图标;没有对应图标就只出名字。 */
 function brainLabelWithIcon(id) {
-  return `${PROVIDER_ICONS[id] || ""}${escapeHtml(PROVIDER_LABELS[id] || id)}`
+  return `${PROVIDER_ICONS[id] || ""}${escapeHtml(executorSettingsLabel(id))}`
 }
 
 /**
@@ -979,6 +984,7 @@ export async function loadBrainHealth(deps, fresh) {
   if (!r || r.ok !== true) { if (!_troubleshootOpen) el.hidden = true; return }
   const registered = Array.isArray(r.registered) ? r.registered : []
   _registeredProviders = registered
+  rememberExecutorNames(r.names)
   if (_troubleshootOpen) return   // 排障面板开着时不覆盖它
   // 还没接任何大脑(新装机常态:没装 CLI、没填 key)—— 这不是「病」是
   // 「还没开始」,必须显眼引导,否则用户被卡死(owner 2026-08-26)。
@@ -1083,7 +1089,8 @@ export async function runBrainDial(deps) {
   steps.innerHTML = `${netRows}<div class="brain-checking">正在等待当前 AI 服务回复…</div>`
   const r = await deps.invokeApi("GET", "/v1/llm/health?fresh=1&scope=current", undefined, { timeoutMs: 150_000 }).catch(() => null)
   const result = r?.results?.find(x => x.provider === r.default_provider)
-  const label = PROVIDER_LABELS[r?.default_provider] || "当前 AI 服务"
+  rememberExecutorNames(r?.names)
+  const label = r?.default_provider ? executorSettingsLabel(r.default_provider) : "当前 AI 服务"
   const message = result?.ok === true ? `${label} 可以回复` : result?.ok === false ? `${label} 暂时无法回复` : "尚未验证回复，请稍后重试"
   steps.innerHTML = `${netRows}<div class="brain-net-row ${result?.ok === true ? "ok" : "bad"}">${escapeHtml(message)}</div>
     ${result?.ok === false ? `<details><summary>查看原因</summary>${escapeHtml(result.hint || result.error || "连接失败")}</details>` : ""}
@@ -1139,7 +1146,7 @@ export function openBrainSetup(_deps, provider) {
   if (provider === "openai" || provider === "gemini") {
     const isOpenai = provider === "openai"
     box.innerHTML = `
-      <div class="brain-setup-title">连接 ${isOpenai ? "自定义 AI 服务" : "Gemini"}</div>
+      <div class="brain-setup-title">连接 ${escapeHtml(executorSettingsLabel(provider))}</div>
       <div class="brain-setup-form">
         <input type="password" id="brain-key" placeholder="服务密钥" aria-label="服务密钥" autocomplete="off" />
         ${isOpenai ? `<details open><summary>高级连接：服务地址与模型</summary><input type="text" id="brain-baseurl" placeholder="接口地址,如 https://api.openai.com/v1" autocomplete="off" />

@@ -33,14 +33,7 @@ describe('provider 名单都以 provider-ids.ts 为准', () => {
     }
   })
 
-  it('桌面 view.js 的 PROVIDER_LABELS 键集合 = provider-ids', () => {
-    // 2026-10-16 起在 view.js(后厨与 dashboard 共用),不再在 dashboard.js
-    const src = read('apps', 'desktop', 'src', 'view.js')
-    const m = /const PROVIDER_LABELS = (?:\/\*\*[^*]*\*\/ )?\(?\{([^}]+)\}/.exec(src)
-    expect(m, 'view.js 里找不到 PROVIDER_LABELS').toBeTruthy()
-    const keys = [...m![1]!.matchAll(/(\w+)\s*:/g)].map(x => x[1]!).sort()
-    expect(keys).toEqual(IDS)
-  })
+  // 桌面 view.js 的 PROVIDER_LABELS 已删(收敛清单 ⑥):三端不存名字表,见 executor-display-names.guard.test.ts。
 
   it('mode-commands.ts 的 KNOWN_SLASH_COMMANDS 首行(isProviderCommand)= provider-ids 的斜杠形式', () => {
     const src = read('src', 'daemon', 'mode-commands.ts')

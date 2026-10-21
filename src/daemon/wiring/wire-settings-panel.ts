@@ -66,6 +66,8 @@ export function wireSettingsPanel(d: WireSettingsPanelDeps) {
 const phoneSessions = opts.workbench ? cacheSessions({ list: (p, i) => opts.workbench!.listNativeHistory(p, i), read: (k, i) => opts.workbench!.readNativeHistory(k, i), readRecent: (k, i) => opts.workbench!.readRecentNativeHistory(k, i) }) : null
 return makeSettingsPanel({
   connections,
+  // 执行者叫什么(收敛清单 ⑥):唯一出处 registry;App 读行里的 displayName,不存名字表。
+  executorName: (id: string) => boot.registry.namesOf(id).name,
   ...(opts.cliSessions ? { cliSessions: opts.cliSessions } : {}),
   ...(opts.cliActions ? { cliActions: opts.cliActions } : {}),
   ...(opts.overseerToday ? { overseerToday: opts.overseerToday } : {}),

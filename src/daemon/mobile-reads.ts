@@ -27,6 +27,8 @@ export interface MobileReadsDeps {
   connections?: () => ConnectionsSnapshot; sessions?: MobileSessionsDeps; cliSessions?: () => CliSessionView[]; cliActions?: CliPhoneActions
   /** 「今天」一眼看完(core/overseer-today.ts)。结构里只有目录名、没有完整路径,手机口径原样给。 */
   today?: () => OverseerToday
+  /** 执行者 id → 正式名字(收敛清单 ⑥)。缺省 ⇒ 行里不带 displayName,App 退回 id。 */
+  executorName?: (id: string) => string
 }
 /** 手机上终端会话列表最多给这么多条。 */
 export const PHONE_CLI_SESSIONS_MAX = 50
@@ -136,7 +138,8 @@ export async function mobileReadsRoute(deps: MobileReadsDeps, url: URL, req: Req
       // 开在电脑窗口里的 Claude 会话(2026-10-18):手机上在跑时也能接着说(话送进那个窗口)。
       const live = deps.cliActions?.liveWindows?.() ?? new Set<string>()
       const sessions = deps.cliSessions().slice(0, PHONE_CLI_SESSIONS_MAX).map(v => {
-        const base = phoneCliSession(v, ph)
+        const plain = phoneCliSession(v, ph)
+        const base = deps.executorName ? { ...plain, displayName: deps.executorName(v.source) } : plain
         const lw = v.source === 'claude' && live.has(v.session_id) ? { ...base, live_window: true } : base
         let said: ReturnType<NonNullable<CliPhoneActions['lastSay']>> = null
         try { said = deps.cliActions?.lastSay?.(v.session_id) ?? null } catch { said = null }
@@ -201,6 +204,8 @@ export async function mobileReadsRoute(deps: MobileReadsDeps, url: URL, req: Req
       return json({ ok: false, error: r.error }, r.error === 'not_found' ? 404 : 409)
     } catch { return json({ ok: false, error: 'unavailable' }, 503) }
   }
+  /** 行里带上执行者正式名字(收敛清单 ⑥);没接名字 ⇒ 原样(App 退回 id)。 */
+  const named = <R extends { provider: string }>(r: R): R & { displayName?: string } => deps.executorName ? { ...r, displayName: deps.executorName(r.provider) } : r
   if (url.pathname === '/m/api/sessions') {
     if (req.method !== 'GET') return json({ ok: false, error: 'method_not_allowed' }, 405)
     if (!deps.sessions) return json({ ok: false, error: 'sessions_not_wired' }, 503)
@@ -208,7 +213,8 @@ export async function mobileReadsRoute(deps: MobileReadsDeps, url: URL, req: Req
     if ((provider !== 'claude' && provider !== 'codex') || url.searchParams.getAll('provider').length !== 1 || cursor === null || queries.length > 1 || query.length > 200 || query.includes('\0')) return json({ ok: false, error: 'invalid' }, 400)
     try {
       const page = await withBudget(deps.sessions.list(provider, { q: query.trim(), limit: PHONE_SESSIONS_PAGE, ...(cursor ? { cursor } : {}) }), opts.budgetMs ?? PHONE_SESSIONS_BUDGET_MS)
-      return fitted(max => ({ ok: true, items: page.items.map(i => row(i, max)), nextCursor: page.nextCursor }), 200)
+      const names = deps.executorName ? { names: { claude: deps.executorName('claude'), codex: deps.executorName('codex') } } : {}
+      return fitted(max => ({ ok: true, items: page.items.map(i => named(row(i, max))), nextCursor: page.nextCursor, ...names }), 200)
     } catch (e) { return sessionError(e) }
   }
   if (url.pathname === '/m/api/session') {
@@ -220,7 +226,7 @@ export async function mobileReadsRoute(deps: MobileReadsDeps, url: URL, req: Req
     try {
       const p = await withBudget(window === 'recent' ? deps.sessions.readRecent!(key, { limit: PHONE_SESSION_PAGE }) : deps.sessions.read(key, { limit: PHONE_SESSION_PAGE, ...(cursor ? { cursor } : {}) }), Math.min(opts.budgetMs ?? PHONE_SESSIONS_BUDGET_MS, window === 'recent' ? PHONE_SESSION_RECENT_BUDGET_MS : PHONE_SESSIONS_BUDGET_MS))
       return fitted(max => ({
-        ok: true, session: row(p.session), nextCursor: p.nextCursor, managed: !!p.managedTaskId, window,
+        ok: true, session: named(row(p.session)), nextCursor: p.nextCursor, managed: !!p.managedTaskId, window,
         messages: p.messages.map(m => ({ id: m.id, role: m.role, text: m.text.slice(0, max), truncated: m.truncated || m.text.length > max })),
       }), PHONE_SESSION_TEXT_MAX)
     } catch (e) { return sessionError(e) }

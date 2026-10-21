@@ -262,3 +262,31 @@ describe('GET /m/api/today(「今天」一眼看完,2026-10-14)', () => {
     expect((await run({ today: () => today }, '/m/api/today', 'POST'))!.status).toBe(405)
   })
 })
+
+describe('执行者名字由 daemon 下发(收敛清单 ⑥)', () => {
+  const NAMES: Record<string, string> = { claude: 'Claude', codex: 'Codex', cursor: 'Cursor' }
+  const executorName = (id: string) => NAMES[id] ?? id
+  const view = {
+    session_id: 'abc123-xyz', code: 'abc123', source: 'codex' as const, status: 'idle' as const, stale: false,
+    project: 'wechat-cc', cwd: '/w', machine: null, origin_agent: null, last_summary: null,
+    last_event_at: 5, last_prompt_at: 3, created_at: 1, pending: null,
+  }
+  it('终端会话行、原生会话行 / 页都带 displayName;列表带两个分段的 names;都过 schema', async () => {
+    const cli = await run({ cliSessions: () => [view], executorName }, '/m/api/cli/sessions')
+    expect(cli!.body.sessions[0].displayName).toBe('Codex')
+    PHONE_API_SCHEMAS['GET /m/api/cli/sessions']!.parse(cli!.body)
+    const list = await run({ sessions: sessions(), executorName }, '/m/api/sessions?provider=claude')
+    expect(list!.body.items[0].displayName).toBe('Claude')
+    expect(list!.body.names).toEqual({ claude: 'Claude', codex: 'Codex' })
+    PHONE_API_SCHEMAS['GET /m/api/sessions']!.parse(list!.body)
+    const page = await run({ sessions: sessions(), executorName }, '/m/api/session?key=k1')
+    expect(page!.body.session.displayName).toBe('Claude')
+    PHONE_API_SCHEMAS['GET /m/api/session']!.parse(page!.body)
+  })
+  it('没接名字 ⇒ 都不带(App 退回 id)', async () => {
+    expect((await run({ cliSessions: () => [view] }, '/m/api/cli/sessions'))!.body.sessions[0].displayName).toBeUndefined()
+    const list = await run({ sessions: sessions() }, '/m/api/sessions?provider=claude')
+    expect(list!.body.names).toBeUndefined()
+    expect(list!.body.items[0].displayName).toBeUndefined()
+  })
+})

@@ -76,6 +76,11 @@ export const Matter = z.object({
   /** 参与过的执行者(2026-10-19):正在做的在前。只有列表带;老 daemon 不带。 */
   agents: z.array(z.string()).optional(),
   /**
+   * 执行者 id → 正式名字(收敛清单 ⑥):这件事里出现过的每一家(agents、详情里的任务执行者 / 交接对象)。
+   * 名字只由 daemon 定,三端不存名字表;老 daemon 不带 ⇒ 界面退回 id。
+   */
+  agentNames: z.record(z.string(), z.string()).optional(),
+  /**
    * 这件事从哪个表面来的(2026-10-19,建时写一次,永不改):微信 / 电脑 / 手机 App / 浏览器 / 终端 / CC 自己。
    * 老 daemon 不带、老的事不知道 ⇒ 省略,界面就不画。认不出的新值当没有(不让整行解析失败)。
    */
@@ -505,7 +510,8 @@ export const Connections = z.object({
 export type ConnectionsT = z.infer<typeof Connections>
 
 // ── 电脑上的原生会话(只读,spec 2026-10-01):key 是 base64url{providerId,nativeId},不给 cwd / nativeId ──
-export const NativeSessionRow = z.object({ key: z.string(), provider: z.enum(['claude', 'codex']), title: z.string(), project: z.string().nullable(), updatedAt: z.number().nullable(), active: z.boolean() })
+// displayName(收敛清单 ⑥):执行者正式名字,daemon 定;老 daemon 不带 ⇒ 退回 provider id。
+export const NativeSessionRow = z.object({ key: z.string(), provider: z.enum(['claude', 'codex']), displayName: z.string().optional(), title: z.string(), project: z.string().nullable(), updatedAt: z.number().nullable(), active: z.boolean() })
 export const NativeSessionMessage = z.object({ id: z.string(), role: z.enum(['user', 'assistant']), text: z.string(), truncated: z.boolean() })
 export const NativeSessionPage = z.object({ session: NativeSessionRow, messages: z.array(NativeSessionMessage), nextCursor: z.string().nullable(), managed: z.boolean(), window: z.enum(['recent', 'start']).optional() })
 export type NativeSessionRowT = z.infer<typeof NativeSessionRow>
@@ -528,6 +534,8 @@ export const CliActivityItem = z.object({ kind: z.enum(['you', 'said', 'step']),
 export type CliActivityItemT = z.infer<typeof CliActivityItem>
 export const CliSessionRow = z.object({
   session_id: z.string(), code: z.string(), source: z.enum(['claude', 'codex', 'cursor']),
+  // displayName(收敛清单 ⑥):这家执行者的正式名字,daemon 定;老 daemon 不带 ⇒ 退回 source。
+  displayName: z.string().optional(),
   status: z.enum(['running', 'waiting', 'idle', 'ended']), stale: z.boolean(),
   project: z.string(), machine: z.string().nullable(), last_summary: z.string().nullable(),
   last_event_at: z.number(), last_prompt_at: z.number().nullable(), created_at: z.number(),
@@ -567,7 +575,7 @@ export type OverseerTodayT = z.infer<typeof OverseerToday>
 // ── 在手机上接着做电脑上的会话(spec 2026-10-01-tendhearth-continue-sessions §4.3):只给目录名,matterId 只在 managed 有 ──
 export const SESSION_CONTINUE_STATES = ['ready', 'managed', 'busy_session', 'busy_folder', 'provider_missing', 'folder_missing', 'quota', 'empty'] as const
 export const SessionContinue = z.object({
-  state: z.enum(SESSION_CONTINUE_STATES), provider: z.enum(['claude', 'codex']), project: z.string().nullable(),
+  state: z.enum(SESSION_CONTINUE_STATES), provider: z.enum(['claude', 'codex']), displayName: z.string().optional(), project: z.string().nullable(),
   mode: z.enum(['native_resume', 'fresh_context']).nullable(), matterId: z.string().nullable(),
 })
 export type SessionContinueT = z.infer<typeof SessionContinue>
@@ -631,7 +639,8 @@ export const PHONE_API_SCHEMAS: Readonly<Record<string, z.ZodTypeAny>> = {
   'GET /m/api/chat/transcribe': z.union([z.object({ ok: z.literal(true), configured: z.boolean() }), PhoneErrorResponse]),
   'POST /m/api/chat/transcribe': z.union([z.object({ ok: z.literal(true), text: z.string() }), PhoneErrorResponse]),
   'GET /m/api/connections': z.union([z.object({ ok: z.literal(true) }).extend(Connections.shape), PhoneErrorResponse]),
-  'GET /m/api/sessions': z.union([z.object({ ok: z.literal(true), items: z.array(NativeSessionRow), nextCursor: z.string().nullable() }), PhoneErrorResponse]),
+  // names:两个分段(claude / codex)的正式名字,分段标签用(收敛清单 ⑥);老 daemon 不带。
+  'GET /m/api/sessions': z.union([z.object({ ok: z.literal(true), items: z.array(NativeSessionRow), nextCursor: z.string().nullable(), names: z.record(z.string(), z.string()).optional() }), PhoneErrorResponse]),
   'GET /m/api/cli/sessions': z.union([z.object({ ok: z.literal(true), sessions: z.array(CliSessionRow) }), PhoneErrorResponse]),
   // 错误码:not_found 404;cli_not_actionable(终端自己在问,没开码)/ cli_permission_stale(码已失效)409。
   'POST /m/api/cli/permission': z.union([z.object({ ok: z.literal(true) }), PhoneErrorResponse]),

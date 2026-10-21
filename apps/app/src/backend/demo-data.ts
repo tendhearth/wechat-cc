@@ -21,8 +21,8 @@ export const copy = {
   // 额度用完、等你决定交不交给另一位(spec continue-sessions §7-3)
   reportTitle: ['把周报整理成一页', 'One-page weekly report'],
   stepReport1: ['读过本周的提交记录', 'Read this week’s commits'],
-  evQuota: ['Claude Code 的额度用完了，这一轮没做完。', 'Claude Code ran out of quota; this round didn’t finish.'],
-  handoffFirst: ['接替 Claude Code（额度用完）继续这件事：把周报整理成一页', 'Taking over from Claude Code (out of quota): One-page weekly report'],
+  evQuota: ['Claude 的额度用完了，这一轮没做完。', 'Claude ran out of quota; this round didn’t finish.'],
+  handoffFirst: ['接替 Claude（额度用完）继续这件事：把周报整理成一页', 'Taking over from Claude (out of quota): One-page weekly report'],
   handoffDone: ['接着做完了，周报在 report.md。', 'Picked it up and finished. The report is in report.md.'],
   ev1: ['看过现有首页', 'Reviewed the current homepage'],
   ev2: ['调整手机上的布局', 'Refined the mobile layout'],
@@ -149,11 +149,20 @@ export function changesTurn(now: number): PhoneChangesTurnT {
   }
 }
 
+/**
+ * 演示里执行者叫什么:演示后端扮的是 daemon,名字照 id 首字母大写现算(claude ⇒ Claude),**不是名字表**。
+ * 真的名字只由 daemon 定(收敛清单 ⑥);演示里出现的只有 claude / codex / cursor,这样算出来正好对。
+ */
+export const demoName = (id: string): string => (id ? id[0]!.toUpperCase() + id.slice(1) : id)
+/** 演示一件事里出现过的执行者 → 名字(daemon 的 agentNames)。 */
+export const demoNames = (ids: ReadonlyArray<string | null | undefined>): Record<string, string> =>
+  Object.fromEntries(ids.filter((x): x is string => !!x).map(id => [id, demoName(id)]))
+
 export function entryOptions(lang: Lang): EntryOptionsT {
   return {
     status: 'ready', defaultProviderId: 'claude',
     providers: ['claude', 'codex', 'cursor'].map(id => ({
-      id, displayName: id[0]!.toUpperCase() + id.slice(1), available: true,
+      id, displayName: demoName(id), available: true,
       capabilities: {
         version: 1 as const, permissions: 'task' as const, configuration: 'task-policy' as const,
         completion: 'native' as const, stop: 'confirmed' as const, background: 'tracked' as const,
@@ -195,7 +204,7 @@ const SESSIONS: Array<{ key: string; provider: 'claude' | 'codex'; title: keyof 
 /** 演示的电脑上原生会话(claude 2 条、codex 1 条);provider 省略 ⇒ 全部。 */
 export function demoSessions(lang: Lang, now: number, provider?: 'claude' | 'codex'): NativeSessionRowT[] {
   return SESSIONS.filter(x => !provider || x.provider === provider)
-    .map(x => ({ key: x.key, provider: x.provider, title: t(lang, x.title), project: x.project, updatedAt: now - x.ago, active: x.active }))
+    .map(x => ({ key: x.key, provider: x.provider, displayName: demoName(x.provider), title: t(lang, x.title), project: x.project, updatedAt: now - x.ago, active: x.active }))
 }
 
 /** 演示会话标题的文案键(接成一件事后,标题跟着语言变)。 */

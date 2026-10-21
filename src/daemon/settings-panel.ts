@@ -147,6 +147,8 @@ export interface SettingsPanelDeps {
   overseerToday?: () => import('../core/overseer-today').OverseerToday
   /** 在手机上接着做电脑上的会话(spec 2026-10-01-tendhearth-continue-sessions)。缺省 ⇒ /m/api/session/continue 503。 */
   sessionContinue?: MobileSessionContinueActions
+  /** 执行者 id → 正式名字(收敛清单 ⑥,接 registry.namesOf(id).name)。缺省 ⇒ 会话 / 终端行不带 displayName,App 退回 id。 */
+  executorName?: (id: string) => string
   /** 主人「看到哪了」的水位,与桌面觅食台同一个文件(一个主人一个水位)。缺省 ⇒ POST /m/api/seen 503。 */
   seen?: { read: () => string | null; write: (iso: string) => void }
   /** 推送(中继 v2,spec 2026-09-30 §5)。缺省 ⇒ /m/api/push/* 503。按设备 id,不是令牌。 */
@@ -806,7 +808,7 @@ export function makeSettingsPanel(deps: SettingsPanelDeps): SettingsPanel {
           // ── 「一件事」:与桌面同一份数据,同一套语义 ──────────────────
           const mobileResponse=await mobileWorkbenchRoute(deps.matters,url,req,deps.entry,deps.uploads)
           if(mobileResponse)return mobileResponse
-          const continueResponse=await mobileSessionContinueRoute(deps.sessionContinue,url,req,id=>deps.matters?.seenOnPhone(id))
+          const continueResponse=await mobileSessionContinueRoute(deps.sessionContinue,url,req,id=>deps.matters?.seenOnPhone(id),deps.executorName?{executorName:deps.executorName}:{})
           if(continueResponse)return continueResponse
           // 跟 CC 说(spec 2026-10-01):主人对话一页 + 收下即回的说一句。
           const chatResponse = await mobileChatRoute(deps.chat, url, req)
@@ -820,7 +822,7 @@ export function makeSettingsPanel(deps: SettingsPanelDeps): SettingsPanel {
           // CC 做过的事(B9):只读时间线。链接令牌不在册。
           const activityResponse = await mobileActivityRoute(deps.activity, url, req)
           if (activityResponse) return activityResponse
-          const readResponse = await mobileReadsRoute({ ...(deps.connections ? { connections: deps.connections } : {}), ...(deps.sessions ? { sessions: deps.sessions } : {}), ...(deps.cliSessions ? { cliSessions: deps.cliSessions } : {}), ...(deps.cliActions ? { cliActions: deps.cliActions } : {}), ...(deps.overseerToday ? { today: deps.overseerToday } : {}) }, url, req)
+          const readResponse = await mobileReadsRoute({ ...(deps.connections ? { connections: deps.connections } : {}), ...(deps.sessions ? { sessions: deps.sessions } : {}), ...(deps.cliSessions ? { cliSessions: deps.cliSessions } : {}), ...(deps.cliActions ? { cliActions: deps.cliActions } : {}), ...(deps.overseerToday ? { today: deps.overseerToday } : {}), ...(deps.executorName ? { executorName: deps.executorName } : {}) }, url, req)
           if (readResponse) return readResponse
           if (url.pathname === '/m/api/matters' && req.method === 'GET') {
             if (!deps.matters) return json({ ok: false, error: 'matters_not_wired' }, 503)

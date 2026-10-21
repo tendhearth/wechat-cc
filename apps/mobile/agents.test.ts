@@ -7,7 +7,9 @@ import {readMobileSource} from './sources'
 // 图形与画法跟桌面共用 apps/desktop/src/shared/agent-avatars.{js,css},sources.ts 在 workbench.js 顶上内联。
 const windows:Window[]=[]
 afterEach(async()=>{await Promise.all(windows.splice(0).map(window=>window.happyDOM.abort()))})
-const matter=(id:string,agents?:string[])=>({id,kind:'task',title:'事 '+id,projectPath:'/p/blog',status:'open',ownerChatId:null,originMatterId:null,originMessageId:null,createdAt:1,updatedAt:1,...(agents?{agents}:{})})
+// agentNames:daemon 下发的名字(收敛清单 ⑥);网页不存名字表,daemon 没给的(自定义 ACP)就念 id
+const NAMES={claude:'Claude',codex:'Codex',cursor:'Cursor',agy:'Gemini'}
+const matter=(id:string,agents?:string[])=>({id,kind:'task',title:'事 '+id,projectPath:'/p/blog',status:'open',ownerChatId:null,originMatterId:null,originMessageId:null,createdAt:1,updatedAt:1,...(agents?{agents}:{}),agentNames:NAMES})
 function load(matters:unknown[]){
   const window=new Window({url:'https://fixture.test/m'});windows.push(window)
   const document=window.document;document.body.innerHTML=assembleMobilePage(readMobileSource).phone
@@ -27,7 +29,7 @@ describe('phone page: 执行者头像',()=>{
     const row=(id:string)=>h.document.querySelector(`[data-mid="${id}"]`)!
     const a=row('a').querySelector('.th-agents')!
     expect(a.getAttribute('role')).toBe('img')
-    expect(a.getAttribute('aria-label')).toBe('Codex、Claude Code')
+    expect(a.getAttribute('aria-label')).toBe('Codex、Claude')
     expect([...a.querySelectorAll('.th-agent')].map(e=>[e.getAttribute('data-agent'),(e as any).style.zIndex])).toEqual([['codex','2'],['claude','1']])
     expect(a.querySelectorAll('svg path').length).toBeGreaterThan(0)
     expect(row('a').querySelector('.tx')!.textContent).not.toContain('Codex')
@@ -40,9 +42,12 @@ describe('phone page: 执行者头像',()=>{
     h.renderMatter({...base,matter:matter('d',['claude','my-acp']),task:{providerId:'codex'}})
     const who=h.document.getElementById('m-agents') as unknown as HTMLElement
     expect(who.hidden).toBe(false)
-    expect(who.querySelector('.th-agents')!.getAttribute('aria-label')).toBe('Codex、Claude Code、my-acp')
+    expect(who.querySelector('.th-agents')!.getAttribute('aria-label')).toBe('Codex、Claude、my-acp')
     expect(who.querySelector('.th-agent-mono')!.textContent).toBe('M')
-    expect(who.querySelector(':scope > span:last-child')!.textContent).toBe('Codex、Claude Code、my-acp')
+    expect(who.querySelector(':scope > span:last-child')!.textContent).toBe('Codex、Claude、my-acp')
+    // 老 daemon 不带 agentNames ⇒ 念 id,不猜
+    h.renderMatter({...base,matter:{...matter('d',['claude']),agentNames:undefined},task:{providerId:'codex'}})
+    expect(who.querySelector(':scope > span:last-child')!.textContent).toBe('codex、claude')
     h.renderMatter({...base,matter:{...matter('e'),kind:'chat'},task:null})
     expect(who.hidden).toBe(true)
     expect(who.innerHTML).toBe('')

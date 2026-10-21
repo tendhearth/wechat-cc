@@ -145,7 +145,8 @@ export function wireCliSessions(d: WireCliSessionsDeps) {
       cliEvents.observe(ev)
       return forwarder.event(ev)
     },
-    list: (opts) => cliSessionViews(opts),
+    // displayName(收敛清单 ⑥):桌面「此刻」画终端会话时读它,不存名字表。
+    list: (opts) => cliSessionViews(opts).map(v => ({ ...v, displayName: boot.registry.namesOf(v.source).name })),
   } })
   internalApi.provide({ cliPermissions: {
     open: async (req) => {

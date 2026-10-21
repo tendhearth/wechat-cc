@@ -30,8 +30,8 @@ export function createQuotaHandoffAttempts(storage=null){
  }
 }
 /** @typedef {ReturnType<typeof createQuotaHandoffAttempts>} Attempts */
-const KNOWN_NAMES=new Map([['claude','Claude'],['codex','Codex'],['cursor','Cursor'],['gemini','Gemini']])
-const name=(/** @type {string} */id,/** @type {Provider[]} */providers)=>providers.find(p=>p.id===id)?.displayName??KNOWN_NAMES.get(id)??id
+// 名字只读 daemon 给的执行者列表(收敛清单 ⑥);不在列表里 ⇒ id。
+const name=(/** @type {string} */id,/** @type {Provider[]} */providers)=>providers.find(p=>p.id===id)?.displayName??id
 /** @param {Offer|null|undefined} offer @param {Provider[]} providers */
 export function quotaHandoffCopy(offer,providers){
  if(!offer)return ''

@@ -118,14 +118,6 @@ export function guardLine(guard) {
   return { state: "ok", text: "网络守护 · 探测可达", detail }
 }
 
-/** 后端 id → 给人看的名字(桌面各处共用一份)。 */
-export const PROVIDER_LABELS = /** @type {Record<string, string>} */ ({ claude: "Claude", codex: "Codex", cursor: "Cursor", agy: "Gemini · 账号连接", openai: "自定义 AI 服务", gemini: "Gemini · 密钥连接" })
-
-/** 短名(不带连接方式):claude ⇒ Claude、agy ⇒ Gemini;认不出的照原样。 @param {string} id */
-export function providerShortLabel(id) {
-  return (PROVIDER_LABELS[id] ?? id).split(" · ")[0] ?? id
-}
-
 export function escapeHtml(value) {
   return String(value).replace(/[&<>"']/g, ch => ({
     "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#039;",

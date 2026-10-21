@@ -92,6 +92,10 @@ describe('手机「接着做」路由(/m/api/session/continue)',()=>{
     const r=await mobileSessionContinueRoute(actions({preview:async()=>({...ready,state:'managed',mode:null,taskId:'deadbeef'})}),url(`?key=${KEY}`),new Request(url(`?key=${KEY}`)))
     expect(await r!.json()).toEqual({ok:true,state:'managed',provider:'claude',project:'proj',mode:null,matterId:'deadbeef'})
   })
+  it('GET:接了执行者名字 ⇒ 带 displayName(收敛清单 ⑥,daemon 定名字);没接不带',async()=>{
+    const r=await mobileSessionContinueRoute(actions(),url(`?key=${KEY}`),new Request(url(`?key=${KEY}`)),undefined,{executorName:id=>id==='claude'?'Claude':id})
+    expect(await r!.json()).toMatchObject({ok:true,provider:'claude',displayName:'Claude'})
+  })
   it('GET 回包形状固定:不带路径 / 原生 id(D13),即使核心多给了字段',async()=>{
     const leaky={...ready,cwd:'/Users/x/secret/proj',nativeId:'native-123',sourceFingerprint:'fp'}
     const r=await mobileSessionContinueRoute(actions({preview:async()=>leaky}),url(`?key=${KEY}`),new Request(url(`?key=${KEY}`)))

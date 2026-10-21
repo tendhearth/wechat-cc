@@ -156,7 +156,7 @@ export default function Matter() {
   const files = changes.data?.files ?? []
   const sendRow = sendBlock(turn, lang)
   const conv = conversationView(d.events)
-  const hb = handoffBlock(d.quotaHandoff, lang, Date.now())
+  const hb = handoffBlock(d.quotaHandoff, lang, Date.now(), d.matter.agentNames)
   const online = canSubmit(conn)
   const stop = async () => {
     const runId = d.runId
@@ -245,8 +245,8 @@ export default function Matter() {
         {agents.length || origin ? (
           <View testID="progress-agents" style={{ flexDirection: 'row', alignItems: 'center', gap: space.s }}>
             <OriginMark origin={origin} size={18} testID="progress-origin" />
-            <AgentAvatars ids={agents} size={28} />
-            <Txt role="small" tone="inkSoft" style={{ flex: 1 }} numberOfLines={1}>{[agentsLabel(agents), origin ? t(lang, originKey(origin)) : ''].filter(Boolean).join(' · ')}</Txt>
+            <AgentAvatars ids={agents} names={d.matter.agentNames} size={28} />
+            <Txt role="small" tone="inkSoft" style={{ flex: 1 }} numberOfLines={1}>{[agentsLabel(agents, d.matter.agentNames), origin ? t(lang, originKey(origin)) : ''].filter(Boolean).join(' · ')}</Txt>
           </View>
         ) : null}
         <View testID="progress-status"><StatusPill status={v.status} /></View>
@@ -271,7 +271,7 @@ export default function Matter() {
         {d.nativeStart ? (
           // 接过来、还没发第一句的电脑会话(spec D12):第一句会怎样 + 先让原来那个停下;发过第一句就没有了
           <View testID="progress-native-start" style={{ gap: space.xs }}>
-            {nativeStartLines(d.nativeStart, lang).map((line, i) => <Txt key={i} role="meta" tone="inkSoft">{line}</Txt>)}
+            {nativeStartLines(d.nativeStart, lang, d.matter.agentNames).map((line, i) => <Txt key={i} role="meta" tone="inkSoft">{line}</Txt>)}
           </View>
         ) : null}
 
@@ -476,8 +476,8 @@ export default function Matter() {
         <View testID="handoff-sheet" style={{ backgroundColor: c.paper, padding: space.xl, gap: space.m, borderTopLeftRadius: radius.sheet, borderTopRightRadius: radius.sheet }}>
           {d.quotaHandoff?.state === 'offer' ? (
             <>
-              <Txt role="item" accessibilityRole="header">{t(lang, 'handoff.title', { to: providerName(d.quotaHandoff.to, lang) })}</Txt>
-              {handoffSheetLines(d.quotaHandoff, lang, Date.now()).map((line, i) => <Txt key={i} testID={`handoff-line-${i}`} role="bubble">{line}</Txt>)}
+              <Txt role="item" accessibilityRole="header">{t(lang, 'handoff.title', { to: providerName(d.quotaHandoff.to, d.matter.agentNames) })}</Txt>
+              {handoffSheetLines(d.quotaHandoff, lang, Date.now(), d.matter.agentNames).map((line, i) => <Txt key={i} testID={`handoff-line-${i}`} role="bubble">{line}</Txt>)}
               {failureRow}
               <Button kind="primary" testID="handoff-confirm" label={hb.kind === 'offer' ? hb.action : ''} onPress={() => void confirmHandoff()} disabled={!online} busy={sending} />
             </>

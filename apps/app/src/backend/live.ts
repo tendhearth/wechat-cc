@@ -337,9 +337,9 @@ export function makeLiveBackend(d: LiveDeps): Backend {
     },
     async sessions(provider, cursor, q) {
       if (q !== undefined && (q.length > 200 || q.includes('\0'))) throw new BackendError('invalid')
-      const r = await call<{ items: NativeSessionRowT[]; nextCursor: string | null }>(
+      const r = await call<{ items: NativeSessionRowT[]; nextCursor: string | null; names?: Record<string, string> }>(
         'GET /m/api/sessions', `/m/api/sessions?provider=${provider}${cursor ? `&cursor=${encodeURIComponent(cursor)}` : ''}${q ? `&q=${encodeURIComponent(q.trim())}` : ''}`)
-      return { items: r.items, nextCursor: r.nextCursor }
+      return { items: r.items, nextCursor: r.nextCursor, ...(r.names ? { names: r.names } : {}) }
     },
     async session(key, cursor, window) {
       if (window === 'recent' && cursor !== undefined) throw new BackendError('invalid')

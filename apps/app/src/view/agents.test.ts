@@ -7,8 +7,11 @@ describe('执行者头像', () => {
     expect(agentGlyph('agy')).toBe('agy')
     expect(agentGlyph('my-acp')).toBeNull()
     expect(agentMonogram('my-acp')).toBe('M')
-    expect(agentName('codex')).toBe('Codex')
+    // 名字只由 daemon 给(收敛清单 ⑥):给了就用,没给 ⇒ id;App 不存名字表
+    expect(agentName('codex', { codex: 'Codex' })).toBe('Codex')
+    expect(agentName('codex')).toBe('codex')
     expect(agentName('my-acp')).toBe('my-acp')
+    expect(agentMonogram('agy', { agy: 'Gemini(账号)' })).toBe('G')
   })
   it('最多露 3 个,正好多一个就直接画出来,再多折成 +N;去重、保持顺序', () => {
     expect(agentStack(undefined)).toEqual({ shown: [], more: 0 })
@@ -17,7 +20,8 @@ describe('执行者头像', () => {
     expect(agentStack(['a', 'b', 'c', 'd', 'e'])).toEqual({ shown: ['a', 'b', 'c'], more: 2 })
   })
   it('读屏念名字;详情页任务那一家排第一,老 daemon 不带 agents 也有', () => {
-    expect(agentsLabel(['claude', 'codex'])).toBe('Claude Code、Codex')
+    expect(agentsLabel(['claude', 'codex'], { claude: 'Claude', codex: 'Codex' })).toBe('Claude、Codex')
+    expect(agentsLabel(['claude', 'openai'], { claude: 'Claude' })).toBe('Claude、openai')
     expect(matterAgents({ task: { providerId: 'codex' }, matter: { agents: ['claude', 'codex'] } })).toEqual(['codex', 'claude'])
     expect(matterAgents({ task: { providerId: 'claude' }, matter: {} })).toEqual(['claude'])
     expect(matterAgents({ task: null, matter: {} })).toEqual([])

@@ -30,6 +30,7 @@ import { mountPhoneConnect, mountOnboardPhone } from "./modules/phone-connect.js
 import { mountOnboardTerminal } from "./modules/terminal-hooks.js"
 import { serviceAction, forceKillDaemon } from "./modules/service.js"
 import { renderDashboard, renderRestartButton, setPending, setLastProbe, restartDaemon, stopDaemon, handleAccountRowClick, toggleProviderMenu, toggleUserProviderMenu, closeProviderMenu, checkIncidentsOnPoll, checkFsAccessOnPoll, checkGuardOnPoll, checkBrainHealthOnPoll, loadBrainHealth, runTroubleshoot, runBrainDial, closeTroubleshoot, renderNoBrain, openBrainSetup, saveBrainKey } from "./modules/dashboard.js"
+import { executorName, haveExecutorNames, loadExecutorNames } from "./modules/executor-names.js"
 import { renderConversations } from "./modules/conversations.js"
 import { loadMemoryPane, wireMemoryButtons, loadMemoryTopZone, loadMemoryDecisions, archiveObservation, synthesizeMemory, generateMemoryProfile, loadProjectMemory, isMemoryEmbryoEnabled, setMemoryEmbryoEnabled, renderMemoryProfileOverview, jumpToMemorySource } from "./modules/memory.js"
 import { rerenderLogs, loadLogsPane, startLogsAutoRefresh, stopLogsAutoRefresh } from "./modules/logs.js"
@@ -486,6 +487,14 @@ function wireDoctorSubscribers() {
   doctorPoller.subscribe(() => checkFsAccessOnPoll({ ...deps, ipcInvoke: invoke }))
   doctorPoller.subscribe(() => checkGuardOnPoll(deps))
   doctorPoller.subscribe(() => checkBrainHealthOnPoll(deps))
+  // 执行者叫什么由 daemon 定(收敛清单 ⑥):没拿到过就随 doctor 节拍要一次(daemon 还没起来 ⇒ 下一拍再要)。
+  // 老 daemon 不带 names ⇒ 一分钟才再问一次,不跟着 5 秒的节拍刷。
+  let namesTriedAt = 0
+  doctorPoller.subscribe(() => {
+    if (haveExecutorNames() || Date.now() - namesTriedAt < 60_000) return
+    namesTriedAt = Date.now()
+    loadExecutorNames(deps.invokeApi)
+  })
   conversationsPoller.subscribe(report => {
     if (state.mode === "dashboard") renderConversations(report, { invoke })
   })
@@ -817,7 +826,7 @@ function wireEvents() {
         box.hidden = false
         box.innerHTML = '<div class="brain-setup-title">选择已有账号，查看连接步骤</div>'
           + '<div class="nb-cli-row">'
-          + ['claude','codex','cursor'].map(function(pv){ return '<button class="brain-chip brain-off" type="button" data-brain-setup="'+pv+'">'+({claude:'Claude',codex:'Codex',cursor:'Cursor'}[pv])+'</button>' }).join('')
+          + ['claude','codex','cursor'].map(function(pv){ return '<button class="brain-chip brain-off" type="button" data-brain-setup="'+pv+'">'+escapeHtml(executorName(pv))+'</button>' }).join('')
           + '</div>'
       }
       return
@@ -1426,7 +1435,7 @@ async function openAvatarModal(deps, key) {
   const lb = document.getElementById("lightbox")
   const body = document.getElementById("lightbox-body")
   if (!lb || !body) return
-  const titleSubject = key === "claude" ? "Claude" : (extractContactNameFromOpenChat() || "联系人")
+  const titleSubject = key === "claude" ? executorName(key) : (extractContactNameFromOpenChat() || "联系人")
   // Look up current avatar (if any) for the preview slot.
   /** @type {AvatarInfo | null} */
   let info = null

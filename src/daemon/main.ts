@@ -639,7 +639,7 @@ async function bootDaemonInner(opts: BootDaemonOpts, undo: Array<() => void>): P
         hintFor: (id) => capabilitiesFor(id).authFailHint,
         log,
       })
-      internalApi.provide({ llmHealth: llmHealth, llmRegistered: () => boot.registry.list(), llmEndpoints: () => {
+      internalApi.provide({ llmHealth: llmHealth, llmRegistered: () => boot.registry.list(), llmNames: (id) => boot.registry.namesOf(id), llmEndpoints: () => {
         // 自配 base_url:目前只有 openai-compatible 端点可指向国内/本地服务。
         // 网络体检据此探真实端点,而非硬编码的 api.openai.com。
         const eps: Record<string, string> = {}

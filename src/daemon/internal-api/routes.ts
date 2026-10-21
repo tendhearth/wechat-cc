@@ -19,6 +19,7 @@ import { tmpdir } from 'node:os'
 import { errMsg, type InternalApiDeps, type InternalApiDelegateDep, type RouteTable } from './types'
 import { splitReply, paceMs } from '../reply-split'
 import { lookup } from '../../core/capability-matrix'
+import { PROVIDER_IDS } from '../../lib/provider-ids'
 import { normalizeUserName } from '../../lib/user-name'
 import type { Mode } from '../../core/conversation'
 import { pluginsHealthForTier } from '../plugins/health'
@@ -438,9 +439,13 @@ const onlineStickerCursor = new Map<string, number>()
       const fresh = q.get('fresh') === '1'
       const report = fresh ? await deps.llmHealth.dial(q.get('scope') === 'current' ? 'current' : undefined) : deps.llmHealth.cached()
       const registered = deps.llmRegistered?.() ?? []
+      // names(收敛清单 ⑥):六家内置 + 已注册的(含自定义 ACP)都给正式名字和设置里的写法;桌面不存名字表,
+      // 没注册的也给(「连接其他 AI 服务」的选项、旧对话里的执行者)。老 daemon 不带 ⇒ 桌面退回 id。
+      const names = deps.llmNames ? Object.fromEntries([...new Set([...PROVIDER_IDS, ...registered])].map(id => { const n = deps.llmNames!(id); return [id, { displayName: n.name, settingsLabel: n.settings }] })) : undefined
       return { status: 200, body: {
         ok: true,
         registered,
+        ...(names ? { names } : {}),
         unconfigured: unconfiguredHints(registered),
         ...(report ?? { checked_at: null, default_provider: null, results: [] }),
       } }
