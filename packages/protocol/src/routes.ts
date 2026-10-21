@@ -1,0 +1,607 @@
+/**
+ * routes.ts —— 路由表:每一条 HTTP 路由在各端的登记,**只写在这里一处**(重构第二批 5a,2026-10-20)。
+ *
+ * 以前一条桌面路由要登记五处(route-tiers 的档位、token-registry 的 operator routeAllow、
+ * workbench-proxy.ts 的 ROUTES、lib.rs 的 workbench_request_allowed 和它的测试),手机路由要登记
+ * PHONE_ROUTES + LINK_READ_OK / LINK_WRITE_OK。现在这些名单都从下面的 `ROUTES` 推出来:
+ *
+ * - daemon:`src/daemon/internal-api/route-tiers.ts`(ROUTE_MIN_TIER)、`token-registry.ts`
+ *   (operator 的 routeAllow)、`routes-federation.ts` / `selftest.ts`(各自那一条)、
+ *   `src/daemon/phone-routes.ts`(PHONE_ROUTES、LINK_*、LAN_ONLY_OPS、PHONE_TOPICS)—— 名字和类型都没变。
+ * - 桌面:`bun run gen:routes` 生成 `apps/desktop/src-tauri/generated/workbench-routes.json`(带 version),
+ *   `lib.rs` 用 include_str! 编进去、`apps/desktop/workbench-proxy.ts` import 同一份。生成物进仓库,
+ *   `scripts/route-registry.guard.test.ts` 盯着它和这张表一致。
+ * - 行为没变的证据:`scripts/fixtures/routes-snapshot-2026-10-20.json` 是改造前 origin/dev 上各份名单的
+ *   快照,`scripts/routes-snapshot.guard.test.ts` 断言从表推出来的逐条一致(只比快照里已有的路由)。
+ *   加新路由不用碰快照;改了已有路由的档位 / 令牌 / link 或删掉一条,快照测试会红 —— 有意为之就把
+ *   快照里那一条一起改,在 PR 里写明。
+ *
+ * **加一条路由 = 在这里加一行,跑 `bun run gen:routes`。** 处理器照旧写在 routes-*.ts /
+ * settings-panel.ts / mobile-*.ts 里;这张表只是数据(不 import 处理器、不 import zod),
+ * 手机 App 与 Rust 都能读。档位、令牌种类、link 都是普通字符串,以后加新值不用改类型。
+ *
+ * 字段:
+ * - `desktop`(`/v1/*`,内部 API):
+ *   - `tier` 最低档位(guest / trusted / admin);不在表里的 `/v1` 路由按 admin 处理(minTierFor,fail-closed)。
+ *   - `tokens` 除了按档位放行之外、**按路由逐条放行**的令牌种类:`operator`(桌面 / CLI 的 admin 凭据,
+ *     见 token-registry.ts 的 ROUTE-SCOPING 说明)、`federation`(hearth 铸的短命令牌,只够 knowledge/search)、
+ *     `selftest`(`selftest chat` 起的会话,只够 health)。
+ *   - `tauri` 打包版 App 的宿主代理(lib.rs workbench_request_allowed)放行;`devProxy` 浏览器预览的 dev 代理
+ *     (workbench-proxy.ts)也放行。`devProxy` 必须同时 `tauri`;matter 那几条只走 tauri(dev 代理经 test-shim
+ *     另一条路)。`tauri` 必须同时有 `operator` —— 宿主代理拿的就是 operator 凭据。
+ * - `phone`(`/m`、`/m/api/*`)与 `set`(`/set`、`/set/api/*`):设置面板的令牌(配过对的设备令牌一律能走)。
+ *   - `link` 10 分钟链接令牌能不能走:`none` 只给设备、`read` / `write` 要写一句 `reason`
+ *     (逐字搬自原来的 LINK_READ_OK / LINK_WRITE_OK,规矩见 phone-routes.ts 的注释)。
+ *   - `lanOnlyOps`:经隧道一律拒的 `/set/api/apply` 操作(原来的 LAN_ONLY_OPS)。
+ *   - 以 `/` 结尾的键是前缀(贴纸一族),见 phone-routes.ts 的 phoneRouteAllowed。
+ *
+ * 这一批不合并命名空间(桌面 `/v1/matter/say` 与手机 `/m/api/matter/say` 仍是两行):手机 App 不能强制升级。
+ */
+
+export type RouteKey = `${string} /${string}`
+
+/** 内部 API(`/v1/*`)这一端。 */
+export interface DesktopSurface {
+  /** 'guest' | 'trusted' | 'admin';普通字符串,向前兼容。 */
+  readonly tier: string
+  /** 按路由逐条放行的令牌种类:'operator' | 'federation' | 'selftest'。 */
+  readonly tokens?: readonly string[]
+  /** 打包版宿主代理(lib.rs)放行。 */
+  readonly tauri?: true
+  /** dev 代理(workbench-proxy.ts)放行。 */
+  readonly devProxy?: true
+}
+
+/** 设置面板(`/set`、`/m`)这一端。 */
+export interface PanelSurface {
+  /** 链接令牌:'none'(只给设备)| 'read' | 'write'。 */
+  readonly link: 'none' | 'read' | 'write'
+  /** link 为 read / write 时必填:为什么链接令牌也能走。 */
+  readonly reason?: string
+  /** 经隧道一律拒的 apply 操作。 */
+  readonly lanOnlyOps?: readonly string[]
+}
+
+export interface RouteSpec {
+  readonly desktop?: DesktopSurface
+  readonly phone?: PanelSurface
+  readonly set?: PanelSurface
+}
+
+/**
+ * operator 令牌为什么能走这些路由(原 token-registry.ts registerOperatorToken 里的逐条注释,原样搬来;
+ * 每段后面是它说的那几条)。新给 operator 加一条,在这里补一句。
+ *
+ *   → POST /v1/companion/converse, POST /v1/companion/speak, POST /v1/companion/transcribe
+ *
+ * Owner-only workspace (admin-tier reads of the owner's wxvault
+ * history + stored customer judgments). Reached ONLY through the
+ * Tauri host's customer_review_api command / the dev server's mirror
+ * of it — never from webview JS, which must not hold this token.
+ *   → GET /v1/customer-review/contacts, POST /v1/customer-review, POST /v1/customer-review/run, GET /v1/customer-review, GET /v1/customer-review/evidence, GET /v1/customer-review/recent, GET /v1/customer-review/history, POST /v1/customer-review/item
+ *
+ * 待办 workspace (2026-08-24) — same owner-only trust class and the
+ * same delivery channel (the Tauri host's owner-workspace command;
+ * webview JS never holds this token): obligation list + status
+ * writes, contact display names, reminder scheduling.
+ *   → POST /v1/knowledge/facts/find_facts, POST /v1/llm/keys
+ *
+ * Owner's retained thoughts, read through the desktop host only.
+ *   → GET /v1/companion/thoughts, POST /v1/knowledge/facts/set_fact_status, POST /v1/knowledge/graph/top_contacts, POST /v1/reminders/schedule
+ *
+ * 桌宠权限卡片(spec 2026-09-05-cc-desktop-pet §6)—— 主人在陪伴窗上
+ * 点「允许 / 拒绝」,经 Tauri 的 pet_permission_resolve 命令走这一条。
+ * 路由本身是 admin 档(route-tiers),所以只有这个 operator 凭据够得着;
+ * 少了这一行,按钮按下去必然 403 route_not_allowed(2026-09-05 终审
+ * Critical #1)。**只加 resolve,不加 GET /v1/permissions/pending**:
+ * 这个集合的口径是「桌面 app 真会调的那几条」,而待决列表桌面是从
+ * GET /v1/companion/pet(trusted 档)读的,operator 凭据永远不会去
+ * 调 /v1/permissions/pending —— 不调的就不给。
+ *   → POST /v1/permissions/resolve
+ *
+ * hearth federation mint (grant-gated, see routes-federation.ts) —
+ * the operator token alone is not enough; readGrant(stateDir) must
+ * also be non-null (explicit owner authorization, design option B).
+ *   → POST /v1/federation/mint
+ *
+ * Owner Workbench (2026-09-11) — the Tauri host proxies these
+ * requests with this operator credential; the webview never sees
+ * the token. Keep the grant to the exact Workbench methods.
+ *   → GET /v1/workbench/entry-options, POST /v1/workbench/create-entry, GET /v1/workbench/entry-receipt, POST /v1/workbench/attachment, GET /v1/workbench/attachment, POST /v1/workbench/discard-attachment, GET /v1/workbench
+ *
+ * 「一件事」三条:桌面 / 手机都从这里读同一份列表(2026-09-16)。
+ *   → GET /v1/matters, GET /v1/matter, GET /v1/matter/owner-chat, GET /v1/matter/owner-chat/search, POST /v1/matter/say
+ *
+ * 「CC 的连接」:桌面「此刻」右上角的连接浮层(2026-10-01)。
+ *   → GET /v1/connections
+ *
+ * 桌面「连接手机」(plan 7a):设置抽屉弹层与引导页的码、轮询「已连上」。
+ *   → POST /v1/phone/link, GET /v1/phone/devices, GET /v1/workbench/models, GET /v1/workbench/sessions, GET /v1/workbench/session, GET /v1/workbench/task, POST /v1/workbench/project, POST /v1/workbench/create, POST /v1/workbench/continue, POST /v1/workbench/cancel, GET /v1/workbench/artifact, POST /v1/workbench/approve, POST /v1/workbench/permission, POST /v1/workbench/archive, POST /v1/workbench/writer-exited, POST /v1/workbench/unattended-ack, GET /v1/workbench/review, POST /v1/workbench/review-mark, POST /v1/workbench/review-return, POST /v1/workbench/review-revert, POST /v1/workbench/review-comment, POST /v1/workbench/review-comments-send, POST /v1/workbench/review-hunk, POST /v1/workbench/worktree, POST /v1/workbench/script-approve, GET /v1/workbench/rewind-preview, POST /v1/workbench/rewind, POST /v1/workbench/rewind-resolve, POST /v1/workbench/import, POST /v1/workbench/prepare-resume, POST /v1/workbench/prepare-continuation, POST /v1/workbench/quota-handoff, POST /v1/workbench/handoff-preview, POST /v1/workbench/handoff, GET /v1/workbench/handoff, GET /v1/workbench/attention, POST /v1/workbench/input, POST /v1/workbench/answer, POST /v1/workbench/withdraw-input
+ *
+ * 自维护三件套(spec 2026-09-18-self-maintenance §1/§2) — the
+ * `wechat-cc selftest chat` CLI drives this route with the SAME
+ * operator token it uses for Workbench above (own credential
+ * read from internal-api-info.json, never the shared trusted
+ * file token). The desktop app itself never calls this route.
+ *   → POST /v1/selftest/converse
+ *
+ * 自改流水线(spec 2026-09-18-self-change-pipeline §daemon 侧)——
+ * `wechat-cc self change` 跑在 daemon 外面,用的是和 Workbench /
+ * selftest 同一份 operator 凭据(从 internal-api-info.json 读,不是
+ * 共享的 trusted 文件 token)。三条路由都是 admin 档,少了这三行
+ * 自改一开口就 403 route_not_allowed。
+ *   → POST /v1/self-change/notice, POST /v1/self-change/ask, GET /v1/self-change/decision
+ *
+ * `wechat-cc selftest phone` 用这份 operator 凭据取配对链接 —— 路由 plan 7a 起是 admin 档
+ * (铸 admin 链接令牌),共享的 trusted 文件 token 够不着了。桌面不再调它(改走 /v1/phone/link)。
+ *   → GET /v1/settings/link
+ *
+ * `wechat-cc cli upgrade|rollback`(外部 agent CLI 自动升级,2026-10-04):同一份 operator 凭据,
+ * admin 档。桌面不调(状态从 /v1/health 的 cli_upgrade 读)。
+ *   → POST /v1/cli/upgrade, POST /v1/cli/rollback
+ *
+ * 终端会话登记处(v76,2026-10-14):CC 统管主人所有终端 agent 会话的只读列表。admin 档,
+ * 同一份 operator 凭据。桌面「此刻」的等你行读它(2026-10-14):Tauri 宿主(lib.rs)与
+ * workbench-proxy.ts 都已登记;拍板不走这条,走 POST /v1/permissions/resolve。
+ *   → GET /v1/cli/sessions
+ *
+ * 「今天」一眼看完(2026-10-14):同一份 operator 凭据,admin 档、只读。桌面暂不调(保持简单)。
+ *   → GET /v1/overseer/today
+ *
+ * 接上 / 撤掉终端里的 Claude Code / Codex(2026-10-14):桌面「CC 现在怎么样」与引导页的「接上」/「修复」。
+ * admin 档,同一份 operator 凭据;Tauri 宿主(lib.rs)与 workbench-proxy.ts 都已登记。
+ *   → POST /v1/cli/hooks/install, POST /v1/cli/hooks/uninstall
+ *
+ * CC 的信(2026-10-16):`wechat-cc` 与维护者自检用同一份 operator 凭据看状态、当面写一封、开关。admin 档。
+ *   → GET /v1/letters, POST /v1/letters/write, POST /v1/letters/settings
+ */
+export const ROUTES: Readonly<Record<RouteKey, RouteSpec>> = {
+  // ── 内部 API(/v1/*)。注释原样搬自 route-tiers.ts 的 ROUTE_MIN_TIER ─────────────────────
+  // Owner Workbench: task instructions and generated artifacts are private.
+  'GET /v1/workbench/entry-options': { desktop: { tier: 'admin', tokens: ['operator'], tauri: true, devProxy: true } },
+  'POST /v1/workbench/create-entry': { desktop: { tier: 'admin', tokens: ['operator'], tauri: true, devProxy: true } },
+  'GET /v1/workbench/entry-receipt': { desktop: { tier: 'admin', tokens: ['operator'], tauri: true, devProxy: true } },
+  'GET /v1/workbench': { desktop: { tier: 'admin', tokens: ['operator'], tauri: true, devProxy: true } },
+  // 「一件事」(2026-09-16):任务指令、聊天都是主人的私事。
+  // 桌面(原 lib.rs 注释):「一件事」的 matter 列表与会话面、此刻里搜主人那条对话。只走 tauri:dev 代理经 test-shim 另一条路。
+  'GET /v1/matters': { desktop: { tier: 'admin', tokens: ['operator'], tauri: true } },
+  'GET /v1/matter': { desktop: { tier: 'admin', tokens: ['operator'], tauri: true } },
+  'GET /v1/matter/owner-chat': { desktop: { tier: 'admin', tokens: ['operator'], tauri: true } },
+  'GET /v1/matter/owner-chat/search': { desktop: { tier: 'admin', tokens: ['operator'], tauri: true } },
+  'POST /v1/matter/say': { desktop: { tier: 'admin', tokens: ['operator'], tauri: true } },
+  // 「CC 的连接」:带插件目录与原因,只给 admin。
+  'GET /v1/connections': { desktop: { tier: 'admin', tokens: ['operator'], tauri: true, devProxy: true } },
+  // 桌面「连接手机」(plan 7a):铸 admin 链接令牌 / 打开远程隧道,只给 operator 凭据。
+  // 桌面(原 lib.rs 注释):出码(必要时打开远程隧道)与轮询已配对设备。
+  'POST /v1/phone/link': { desktop: { tier: 'admin', tokens: ['operator'], tauri: true, devProxy: true } },
+  'GET /v1/phone/devices': { desktop: { tier: 'admin', tokens: ['operator'], tauri: true, devProxy: true } },
+  'GET /v1/workbench/models': { desktop: { tier: 'admin', tokens: ['operator'], tauri: true, devProxy: true } },
+  'POST /v1/workbench/attachment': { desktop: { tier: 'admin', tokens: ['operator'], tauri: true, devProxy: true } },
+  'GET /v1/workbench/attachment': { desktop: { tier: 'admin', tokens: ['operator'], tauri: true, devProxy: true } },
+  'POST /v1/workbench/discard-attachment': { desktop: { tier: 'admin', tokens: ['operator'], tauri: true, devProxy: true } },
+  'GET /v1/workbench/attention': { desktop: { tier: 'admin', tokens: ['operator'], tauri: true, devProxy: true } },
+  'POST /v1/workbench/input': { desktop: { tier: 'admin', tokens: ['operator'], tauri: true, devProxy: true } },
+  'POST /v1/workbench/answer': { desktop: { tier: 'admin', tokens: ['operator'], tauri: true, devProxy: true } },
+  'POST /v1/workbench/withdraw-input': { desktop: { tier: 'admin', tokens: ['operator'], tauri: true, devProxy: true } },
+  'GET /v1/workbench/sessions': { desktop: { tier: 'admin', tokens: ['operator'], tauri: true, devProxy: true } },
+  'GET /v1/workbench/session': { desktop: { tier: 'admin', tokens: ['operator'], tauri: true, devProxy: true } },
+  'GET /v1/workbench/task': { desktop: { tier: 'admin', tokens: ['operator'], tauri: true, devProxy: true } },
+  'POST /v1/workbench/project': { desktop: { tier: 'admin', tokens: ['operator'], tauri: true, devProxy: true } },
+  'POST /v1/workbench/create': { desktop: { tier: 'admin', tokens: ['operator'], tauri: true, devProxy: true } },
+  'POST /v1/workbench/continue': { desktop: { tier: 'admin', tokens: ['operator'], tauri: true, devProxy: true } },
+  'POST /v1/workbench/cancel': { desktop: { tier: 'admin', tokens: ['operator'], tauri: true, devProxy: true } },
+  'GET /v1/workbench/artifact': { desktop: { tier: 'admin', tokens: ['operator'], tauri: true, devProxy: true } },
+  'POST /v1/workbench/approve': { desktop: { tier: 'admin', tokens: ['operator'], tauri: true, devProxy: true } },
+  'POST /v1/workbench/permission': { desktop: { tier: 'admin', tokens: ['operator'], tauri: true, devProxy: true } },
+  'POST /v1/workbench/archive': { desktop: { tier: 'admin', tokens: ['operator'], tauri: true, devProxy: true } },
+  'POST /v1/workbench/writer-exited': { desktop: { tier: 'admin', tokens: ['operator'], tauri: true, devProxy: true } },
+  'POST /v1/workbench/unattended-ack': { desktop: { tier: 'admin', tokens: ['operator'], tauri: true, devProxy: true } },
+  'GET /v1/workbench/review': { desktop: { tier: 'admin', tokens: ['operator'], tauri: true, devProxy: true } },
+  'POST /v1/workbench/review-mark': { desktop: { tier: 'admin', tokens: ['operator'], tauri: true, devProxy: true } },
+  'POST /v1/workbench/review-return': { desktop: { tier: 'admin', tokens: ['operator'], tauri: true, devProxy: true } },
+  'POST /v1/workbench/review-revert': { desktop: { tier: 'admin', tokens: ['operator'], tauri: true, devProxy: true } },
+  // 行评论 / 按块撤回(2026-10-21)
+  'POST /v1/workbench/review-comment': { desktop: { tier: 'admin', tokens: ['operator'], tauri: true, devProxy: true } },
+  'POST /v1/workbench/review-comments-send': { desktop: { tier: 'admin', tokens: ['operator'], tauri: true, devProxy: true } },
+  'POST /v1/workbench/review-hunk': { desktop: { tier: 'admin', tokens: ['operator'], tauri: true, devProxy: true } },
+  'POST /v1/workbench/worktree': { desktop: { tier: 'admin', tokens: ['operator'], tauri: true, devProxy: true } },
+  'POST /v1/workbench/script-approve': { desktop: { tier: 'admin', tokens: ['operator'], tauri: true, devProxy: true } },
+  // 回到某一轮(2026-10-21):预览 / 执行 + 撤销 / 停住后主人拍板
+  'GET /v1/workbench/rewind-preview': { desktop: { tier: 'admin', tokens: ['operator'], tauri: true, devProxy: true } },
+  'POST /v1/workbench/rewind': { desktop: { tier: 'admin', tokens: ['operator'], tauri: true, devProxy: true } },
+  'POST /v1/workbench/rewind-resolve': { desktop: { tier: 'admin', tokens: ['operator'], tauri: true, devProxy: true } },
+  'POST /v1/workbench/import': { desktop: { tier: 'admin', tokens: ['operator'], tauri: true, devProxy: true } },
+  'POST /v1/workbench/prepare-resume': { desktop: { tier: 'admin', tokens: ['operator'], tauri: true, devProxy: true } },
+  'POST /v1/workbench/prepare-continuation': { desktop: { tier: 'admin', tokens: ['operator'], tauri: true, devProxy: true } },
+  'POST /v1/workbench/quota-handoff': { desktop: { tier: 'admin', tokens: ['operator'], tauri: true, devProxy: true } },
+  'POST /v1/workbench/handoff-preview': { desktop: { tier: 'admin', tokens: ['operator'], tauri: true, devProxy: true } },
+  'POST /v1/workbench/handoff': { desktop: { tier: 'admin', tokens: ['operator'], tauri: true, devProxy: true } },
+  'GET /v1/workbench/handoff': { desktop: { tier: 'admin', tokens: ['operator'], tauri: true, devProxy: true } },
+  // guest — liveness + read/reply
+  'GET /v1/health': { desktop: { tier: 'guest', tokens: ['selftest'] } },
+  'POST /v1/wechat/reply': { desktop: { tier: 'guest' } },
+  // 回复交付(spec 2026-10-03 §4.5):语音 / 表情附件与 reply 同级;文件附件在 handler 里再收紧到 trusted
+  // (与 send_file 同级)。目标永远是会话令牌里的 chat,不收 chat_id。
+  'POST /v1/turn/attach': { desktop: { tier: 'guest' } },
+  // §4.6:往别处发(别的聊天 / 主人微信 / 群发)只给 admin;trusted / guest 根本不注册这个工具。
+  'POST /v1/wechat/message': { desktop: { tier: 'admin' } },
+  'POST /v1/wechat/reply_voice': { desktop: { tier: 'guest' } },
+  'POST /v1/memory/read': { desktop: { tier: 'guest' } },
+  'GET /v1/memory/list': { desktop: { tier: 'guest' } },
+  'POST /v1/share/page': { desktop: { tier: 'guest' } },
+  'POST /v1/share/resurface': { desktop: { tier: 'guest' } },
+  'GET /v1/companion/status': { desktop: { tier: 'guest' } },
+  // send_sticker draws only from the curated sticker lib (pre-approved
+  // images, no arbitrary-path read) and has no exfiltration surface —
+  // same trust class as reply/reply_voice, so it's guest not trusted.
+  'POST /v1/wechat/send_sticker': { desktop: { tier: 'guest' } },
+  'POST /v1/wechat/search_online_sticker': { desktop: { tier: 'guest' } },
+  'POST /v1/wechat/search_online_sticker_candidates': { desktop: { tier: 'guest' } },
+  'POST /v1/wechat/send_online_sticker_candidate': { desktop: { tier: 'guest' } },
+  'POST /v1/wechat/sticker_feedback': { desktop: { tier: 'guest' } },
+  'GET /v1/stickers': { desktop: { tier: 'guest' } },
+  // reminders — scope (own chat only for session callers) is enforced in
+  // routes-reminders.ts; the tier floor is guest ("提醒我" is harmless).
+  'POST /v1/reminders/schedule': { desktop: { tier: 'guest', tokens: ['operator'] } },
+  'POST /v1/reminders/cancel': { desktop: { tier: 'guest' } },
+  'GET /v1/reminders/list': { desktop: { tier: 'guest' } },
+  // trusted — operator/agent ops (also reachable by the CLI, capped at trusted)
+  'POST /v1/wechat/broadcast': { desktop: { tier: 'trusted' } },
+  'POST /v1/wechat/send_file': { desktop: { tier: 'trusted' } },
+  'POST /v1/wechat/edit_message': { desktop: { tier: 'trusted' } },
+  'POST /v1/memory/write': { desktop: { tier: 'trusted' } },
+  'POST /v1/memory/delete': { desktop: { tier: 'trusted' } },
+  'POST /v1/user/set_name': { desktop: { tier: 'trusted' } },
+  'POST /v1/voice/save_config': { desktop: { tier: 'trusted' } },
+  'GET /v1/voice/status': { desktop: { tier: 'trusted' } },
+  'POST /v1/stt/save_config': { desktop: { tier: 'trusted' } },
+  'GET /v1/stt/status': { desktop: { tier: 'trusted' } },
+  'POST /v1/companion/enable': { desktop: { tier: 'trusted' } },
+  'POST /v1/companion/disable': { desktop: { tier: 'trusted' } },
+  'POST /v1/companion/snooze': { desktop: { tier: 'trusted' } },
+  'POST /v1/companion/import-local': { desktop: { tier: 'trusted' } },
+  'GET /v1/companion/presence': { desktop: { tier: 'trusted' } },
+  // CC 桌宠的「在做什么」(spec 2026-09-05-cc-desktop-pet §5.1)。trusted,和
+  // presence 同一类:桌面的唯一凭据是 daemon 级 0600 FILE token(=trusted),
+  // admin 会让每一次真机轮询 403 —— 觅食台 2026-07-22 就是这么静默坏的。
+  'GET /v1/companion/pet': { desktop: { tier: 'trusted' } },
+  'POST /v1/conversation/set-mode': { desktop: { tier: 'trusted' } },
+  'GET /v1/projects/list': { desktop: { tier: 'trusted' } },
+  'POST /v1/projects/add': { desktop: { tier: 'trusted' } },
+  'POST /v1/projects/remove': { desktop: { tier: 'trusted' } },
+  'POST /v1/projects/switch': { desktop: { tier: 'trusted' } },
+  'GET /v1/a2a/list': { desktop: { tier: 'trusted' } },
+  'GET /v1/a2a/info': { desktop: { tier: 'trusted' } },
+  'GET /v1/a2a/activity': { desktop: { tier: 'trusted' } },
+  'POST /v1/a2a/preview': { desktop: { tier: 'trusted' } },
+  'POST /v1/a2a/install': { desktop: { tier: 'trusted' } },
+  'POST /v1/a2a/remove': { desktop: { tier: 'trusted' } },
+  'POST /v1/a2a/pause': { desktop: { tier: 'trusted' } },
+  'POST /v1/a2a/send': { desktop: { tier: 'trusted' } },
+  'POST /v1/a2a/test': { desktop: { tier: 'trusted' } },
+  'GET /v1/plugins/list': { desktop: { tier: 'trusted' } },
+  'POST /v1/plugins/toggle': { desktop: { tier: 'trusted' } },
+  'GET /v1/plugins/registry': { desktop: { tier: 'trusted' } },
+  'POST /v1/plugins/install': { desktop: { tier: 'trusted' } },
+  'POST /v1/plugins/upgrade': { desktop: { tier: 'trusted' } },
+  'GET /v1/license/status': { desktop: { tier: 'trusted' } },
+  'POST /v1/license/activate': { desktop: { tier: 'trusted' } },
+  'POST /v1/license/deactivate': { desktop: { tier: 'trusted' } },
+  'POST /v1/delegate': { desktop: { tier: 'trusted' } },
+  // 终端 claude / codex 的 hook 事件(spec 2026-09-09-cli-hook-push):hook 子命令
+  // 拿的是 FILE token(= trusted)。
+  'POST /v1/cli/event': { desktop: { tier: 'trusted' } },
+  'POST /v1/cli/permission': { desktop: { tier: 'trusted' } },
+  'GET /v1/cli/permission': { desktop: { tier: 'trusted' } },
+  // 终端会话登记处(v76):列出主人所有终端会话的路径、最后一句、等批准的命令 —— 主人的私事,admin。
+  // 桌面(原 lib.rs / workbench-proxy.ts 注释):此刻「N 件事等你」里列出终端里等批准的 Claude Code / Codex,只读。
+  // 拍板不走这里,走 pet_permission_resolve(POST /v1/permissions/resolve)。
+  'GET /v1/cli/sessions': { desktop: { tier: 'admin', tokens: ['operator'], tauri: true, devProxy: true } },
+  // 「今天」一眼看完(2026-10-14):同上一份登记处 + 一起做的标题与待批 —— 主人的私事,admin。
+  'GET /v1/overseer/today': { desktop: { tier: 'admin', tokens: ['operator'] } },
+  // 读日历(对标 #8):日程是主人的私事。
+  'GET /v1/calendar/agenda': { desktop: { tier: 'admin' } },
+  // 接上 / 撤掉终端里的 Claude Code / Codex(2026-10-14):改主人 ~/.claude/settings.json 与 $CODEX_HOME/hooks.json,admin。
+  // 桌面(原 lib.rs 注释):「CC 现在怎么样」与引导页的「接上」/「修复」,主人点了确认才调。
+  'POST /v1/cli/hooks/install': { desktop: { tier: 'admin', tokens: ['operator'], tauri: true, devProxy: true } },
+  'POST /v1/cli/hooks/uninstall': { desktop: { tier: 'admin', tokens: ['operator'], tauri: true, devProxy: true } },
+  // CC 的信(2026-10-16):信是写给主人的私事;开关改主人的 companion 配置。admin。
+  'GET /v1/letters': { desktop: { tier: 'admin', tokens: ['operator'] } },
+  'POST /v1/letters/write': { desktop: { tier: 'admin', tokens: ['operator'] } },
+  'POST /v1/letters/settings': { desktop: { tier: 'admin', tokens: ['operator'] } },
+  'POST /v1/chat-prefs': { desktop: { tier: 'trusted' } },
+  // POST /v1/stickers writes an arbitrary sourcePath into the lib — same
+  // trust class as send_file, so it's trusted not guest.
+  'POST /v1/stickers': { desktop: { tier: 'trusted' } },
+  // 社交总开关。trusted 而非 admin:桌面端的凭证是 daemon 全局 FILE token
+  // (=trusted,见 api-info),admin 会让每一次真机点击 403 —— 2026-07-22 那个
+  // P0 就是这么来的。**发版评审时请连同同族 trusted 路由一起过一遍。**
+  'POST /v1/social/enable': { desktop: { tier: 'trusted' } },
+  // 心愿 (spec 2026-09-04-wish-postcard §4) — same trust class as the old
+  // P4 propose/confirm/cancel it replaces: the CLI/desktop's only credential
+  // is the daemon-wide FILE token (trusted); an admin-tiered route here
+  // would 403 every CLI/desktop call. send IS the real "broadcast to
+  // strangers" step, so FLAG all four for the release security review.
+  'POST /v1/social/wish': { desktop: { tier: 'trusted' } },
+  'POST /v1/social/wish/send': { desktop: { tier: 'trusted' } },
+  'POST /v1/social/wish/cancel': { desktop: { tier: 'trusted' } },
+  'GET /v1/social/wishes': { desktop: { tier: 'trusted' } },
+  // 介绍 (spec 2026-09-04-introduction) — same trust class as the wish
+  // routes above: CLI/desktop's only credential is the daemon-wide FILE
+  // token (trusted); an admin-tiered route here would 403 every real call.
+  'POST /v1/social/intro/request': { desktop: { tier: 'trusted' } },
+  'POST /v1/social/intro/accept': { desktop: { tier: 'trusted' } },
+  'POST /v1/social/intro/decline': { desktop: { tier: 'trusted' } },
+  'GET /v1/social/intro/offers': { desktop: { tier: 'trusted' } },
+  // admin — owner-only same-session power: drives a real turn on the
+  // owner's own chat session and returns the reply to the caller (app
+  // conversation channel, voice arc Stage 0). Same trust class as the
+  // other admin daemon-control routes below.
+  // admin — 待决权限的桌面面(spec §6)。读出来的是 agent 想动的手(命令原文),
+  // 拍板等于替主人说「可以」—— 和 converse 同一个信任等级:主人本人的事,不是
+  // 任何 trusted 联系人的事。微信侧的对应面是「y/n <hash>」,只认 admin 主人。
+  'GET /v1/permissions/pending': { desktop: { tier: 'admin' } },
+  'POST /v1/permissions/resolve': { desktop: { tier: 'admin', tokens: ['operator'] } },
+  // admin — 自改流水线的三个抓手(spec 2026-09-18-self-change-pipeline)。
+  // notice 往主人微信里发字,ask 替主人开一张 y/n 卡片,decision 读主人拍了什么:
+  // 三条都是「代表主人」,和上面两条权限面同一档。调用方是 operator 凭据。
+  'POST /v1/self-change/notice': { desktop: { tier: 'admin', tokens: ['operator'] } },
+  'POST /v1/self-change/ask': { desktop: { tier: 'admin', tokens: ['operator'] } },
+  'GET /v1/self-change/decision': { desktop: { tier: 'admin', tokens: ['operator'] } },
+  'POST /v1/companion/converse': { desktop: { tier: 'admin', tokens: ['operator'] } },
+  // admin — same trust class as converse above (voice arc Stage 1): synths
+  // reply audio for the owner's app-conversation-channel session.
+  'POST /v1/companion/speak': { desktop: { tier: 'admin', tokens: ['operator'] } },
+  // admin — voice arc Stage 2: transcribes inbound app-channel audio to text.
+  'POST /v1/companion/transcribe': { desktop: { tier: 'admin', tokens: ['operator'] } },
+  // admin — daemon-control (daemon_introspect / daemon_remediate)
+  'GET /v1/turns': { desktop: { tier: 'admin' } },
+  'GET /v1/sessions': { desktop: { tier: 'admin' } },
+  'GET /v1/model': { desktop: { tier: 'admin' } },
+  'POST /v1/sessions/release': { desktop: { tier: 'admin' } },
+  'POST /v1/model': { desktop: { tier: 'admin' } },
+  'POST /v1/daemon/restart': { desktop: { tier: 'admin' } },
+  // 自维护三件套(spec 2026-09-18-self-maintenance §1)——同上一类:一次真实
+  // spawn,只是权限比 companion/converse 还窄(session token 只放行
+  // GET /v1/health)。admin 而非 trusted:允许任何持 file token 的会话
+  // 白嫖 daemon 去开一整条真会话,不该比 daemon-control 的其它成员松。
+  'POST /v1/selftest/converse': { desktop: { tier: 'admin', tokens: ['operator'] } },
+  // admin —— 换主人电脑上的软件版本(外部 agent CLI 自动升级,2026-10-04);`wechat-cc cli` 用 operator 凭据调。
+  'POST /v1/cli/upgrade': { desktop: { tier: 'admin', tokens: ['operator'] } },
+  'POST /v1/cli/rollback': { desktop: { tier: 'admin', tokens: ['operator'] } },
+  // admin — on-demand file locate over the owner's computer (file_locate)
+  'GET /v1/locate': { desktop: { tier: 'admin' } },
+  // trusted — 觅食台 inbound toggle. DEMOTED admin→trusted 2026-07-22: the
+  // desktop's ONLY credential is the daemon-wide FILE token (= trusted;
+  // `daemon api-info` hands out the file token, and the admin operator
+  // token is route-scoped to converse/speak) — admin here 403'd every
+  // real-daemon 觅食台 read, silently rendering "社交觅食未启用" even when
+  // wired. Found by live visual acceptance; same root cause as the earlier
+  // reveal-route demotion below. localhost-only, 0600 file token.
+  // ⚠️ RELEASE-REVIEW FLAG (surface at next dev→master).
+  'GET /v1/social/inbound': { desktop: { tier: 'trusted' } },
+  'POST /v1/social/inbound': { desktop: { tier: 'trusted' } },
+  'GET /v1/social/relationships': { desktop: { tier: 'trusted' } },
+  'POST /v1/social/visit': { desktop: { tier: 'trusted' } },
+  // 打猎战利品(2026-09-03)。trusted 而非 admin:桌面端的凭证是 daemon 级
+  // FILE token(=trusted),admin 会让每一次真实的桌面读 403 —— 觅食台的读
+  // 路由 2026-07-22 正是这么静默坏了一个多月。写的两个也是 trusted:它们
+  // 只改主人自己那份清单的状态,不外发、不触网。
+  'GET /v1/companion/thoughts': { desktop: { tier: 'admin', tokens: ['operator'] } },
+  'GET /v1/journal': { desktop: { tier: 'trusted' } },
+  'GET /v1/journal/postcards': { desktop: { tier: 'trusted' } },
+  'POST /v1/journal/favorite': { desktop: { tier: 'trusted' } },
+  'POST /v1/journal/status': { desktop: { tier: 'trusted' } },
+  'POST /v1/journal/seen': { desktop: { tier: 'trusted' } },
+  'POST /v1/journal/remove': { desktop: { tier: 'trusted' } },
+  // trusted — 配对码 (spec §7). Same trust class as a2a/send + social wish:
+  // internal-api is 127.0.0.1 + 0600 file token; the CLI holds the FILE token
+  // (trusted). Acts on an operator-driven pairing, not a world-open broadcast.
+  'POST /v1/pair/start': { desktop: { tier: 'trusted' } },
+  'POST /v1/pair/accept': { desktop: { tier: 'trusted' } },
+  // 笔友信箱(spec 2026-07-22-penpal-mailbox-desktop)。读=admin(P2
+  // seeks/echoes 读路由先例:桌面 token 是 admin)。发信=trusted —
+  // ⚠️ RELEASE-REVIEW FLAG(下次 dev→master 发布时在 PR body surface):
+  // 作用于已互揭的既有信道(同 reveal / a2a/send 类),不产生新广播或
+  // 新关系;localhost-only internal-api + 0600 文件 token。顺带解锁
+  // 未来的 CLI 回信入口。
+  // (2026-07-22 same-day demotion: reads were born admin copying the P2
+  // precedent — which the live acceptance above proved wrong for the
+  // desktop's trusted file token. All four are trusted now.)
+  'GET /v1/penpal/channels': { desktop: { tier: 'trusted' } },
+  'GET /v1/penpal/letters': { desktop: { tier: 'trusted' } },
+  'POST /v1/penpal/letters': { desktop: { tier: 'trusted' } },
+  'POST /v1/penpal/letters/read': { desktop: { tier: 'trusted' } },
+  'POST /v1/penpal/letters/resend': { desktop: { tier: 'trusted' } },
+  // LLM 记忆操作(spec 2026-07-23-daemon-owns-llm-memory-ops)。trusted:桌面/CLI
+  // 唯一凭据是 0600 文件 token;localhost、动主人自己的记忆、烧一次 LLM。
+  // ⚠️ RELEASE-REVIEW FLAG(下次 dev→master surface)。
+  'POST /v1/memory/synthesize': { desktop: { tier: 'trusted' } },
+  'POST /v1/memory/nightly/run': { desktop: { tier: 'trusted' } },
+  'GET /v1/memory/source': { desktop: { tier: 'trusted' } },
+  'POST /v1/memory/source/review': { desktop: { tier: 'trusted' } },
+  'POST /v1/memory/profile/generate': { desktop: { tier: 'trusted' } },
+  'GET /v1/llm/health': { desktop: { tier: 'trusted' } },
+  'POST /v1/net/probe': { desktop: { tier: 'trusted' } },
+  'POST /v1/llm/keys': { desktop: { tier: 'admin', tokens: ['operator'] } },
+  // 铸的是 admin 档链接令牌(手机拿去配对),trusted 的普通聊天会话不能够着(spec 2026-10-01-tendhearth-pairing-ux §11.7,
+  // plan 7a 修)。调用方:selftest phone 用 operator 凭据;微信 /set 走进程内 settingsPanelLink(),不经 HTTP。
+  'GET /v1/settings/link': { desktop: { tier: 'admin', tokens: ['operator'] } },
+  'POST /v1/memory/portrait/generate': { desktop: { tier: 'trusted' } },
+  'GET /v1/memory/portrait': { desktop: { tier: 'trusted' } },
+  // 桌面读故障记录以显示"上次故障"横幅。trusted:桌面/CLI 的唯一凭据是
+  // 0600 文件 token;内容只有时间戳与分类,不含聊天数据。
+  'GET /v1/health/incidents': { desktop: { tier: 'trusted' } },
+  'GET /v1/atelier/works': { desktop: { tier: 'trusted' } },
+  'GET /v1/atelier/model-status': { desktop: { tier: 'trusted' } },
+  // Explicit desktop action; sends only to companion.default_chat_id and
+  // never accepts a caller-controlled recipient.
+  'POST /v1/atelier/share': { desktop: { tier: 'trusted' } },
+  // Knowledge Kernel (Phase 01, T3, docs/superpowers/specs/
+  // 2026-07-12-knowledge-kernel-phase01-design.md "Knowledge API").
+  // Ingest = admin/internal only: source/put and semantic/put are written
+  // by daemon-internal jobs (the wxvault source adapter, wxsearch's
+  // indexer) — no ordinary chat session has business writing into the
+  // owner's message store, so these fail closed at admin (same trust
+  // class as customer-review below: raw wxvault-derived content).
+  'POST /v1/knowledge/source/put': { desktop: { tier: 'admin' } },
+  'POST /v1/knowledge/semantic/put': { desktop: { tier: 'admin' } },
+  // Query = admin-only (NOT trusted), same as ingest above. These read the
+  // owner's full indexed cross-conversation message archive back out (raw
+  // source pages + semantic search over message text) with an optional,
+  // caller-supplied `conversation` filter — a non-owner `trusted` WeChat
+  // contact (who legitimately holds a session internal-api token, e.g. via
+  // POST /v1/a2a/send-class routes) could otherwise page every conversation
+  // in the store, not just their own. Knowledge query is admin-only until
+  // per-caller conversation scoping (memoryScopeDenied-style, see
+  // routes.ts's memoryScopeDenied) exists — opening it to `trusted` without
+  // that would let a trusted contact read the owner's full cross-conversation
+  // archive. Revisit once that scoping lands or a real "agent" caller
+  // identity beyond trusted/admin exists.
+  'GET /v1/chat/history': { desktop: { tier: 'admin' } },
+  'GET /v1/knowledge/messages': { desktop: { tier: 'admin' } },
+  'POST /v1/knowledge/search': { desktop: { tier: 'admin', tokens: ['federation'] } },
+  'GET /v1/knowledge/semantic/status': { desktop: { tier: 'admin' } },
+  // Graph Query (Knowledge Graph inproc, Task 5) — same admin-only trust
+  // class as the search/messages routes above: reads the owner's full
+  // contact/relationship graph, not just the current caller's own scope.
+  'POST /v1/knowledge/graph/contact_profile': { desktop: { tier: 'admin' } },
+  'POST /v1/knowledge/graph/top_contacts': { desktop: { tier: 'admin', tokens: ['operator'] } },
+  'POST /v1/knowledge/graph/rank_contacts': { desktop: { tier: 'admin' } },
+  'POST /v1/knowledge/graph/relationship_subgraph': { desktop: { tier: 'admin' } },
+  'POST /v1/knowledge/graph/connectors': { desktop: { tier: 'admin' } },
+  'GET /v1/knowledge/graph/status': { desktop: { tier: 'admin' } },
+  // Facts + Person (Knowledge Facts/Person inproc, Task 4) — same
+  // admin-only trust class as the graph routes above: reads/writes the
+  // owner's private fact store and per-contact briefs, not just the
+  // current caller's own scope.
+  'POST /v1/knowledge/facts/extraction_batch': { desktop: { tier: 'admin' } },
+  'POST /v1/knowledge/facts/record_facts': { desktop: { tier: 'admin' } },
+  'POST /v1/knowledge/facts/contact_facts': { desktop: { tier: 'admin' } },
+  'POST /v1/knowledge/facts/find_facts': { desktop: { tier: 'admin', tokens: ['operator'] } },
+  'POST /v1/knowledge/facts/set_fact_status': { desktop: { tier: 'admin', tokens: ['operator'] } },
+  'GET /v1/knowledge/facts/extraction_status': { desktop: { tier: 'admin' } },
+  'POST /v1/knowledge/person/brief': { desktop: { tier: 'admin' } },
+  // Config surface (config_get/config_set MCP tools) — admin-only: reads and
+  // writes the owner's daemon configuration (whitelist-bounded in
+  // src/daemon/config-surface.ts). Same trust class as the facts routes above.
+  'GET /v1/config/surface': { desktop: { tier: 'admin' } },
+  'POST /v1/config/set': { desktop: { tier: 'admin' } },
+  // admin — reads the owner's private wxvault history and stores personal
+  // customer judgments. Never expose to guest/trusted chat sessions.
+  'GET /v1/customer-review/contacts': { desktop: { tier: 'admin', tokens: ['operator'] } },
+  'POST /v1/customer-review': { desktop: { tier: 'admin', tokens: ['operator'] } },
+  'POST /v1/customer-review/run': { desktop: { tier: 'admin', tokens: ['operator'] } },
+  'GET /v1/customer-review': { desktop: { tier: 'admin', tokens: ['operator'] } },
+  'GET /v1/customer-review/evidence': { desktop: { tier: 'admin', tokens: ['operator'] } },
+  'GET /v1/customer-review/recent': { desktop: { tier: 'admin', tokens: ['operator'] } },
+  'GET /v1/customer-review/history': { desktop: { tier: 'admin', tokens: ['operator'] } },
+  'POST /v1/customer-review/item': { desktop: { tier: 'admin', tokens: ['operator'] } },
+  // admin — hearth federation mint (grant-gated, see routes-federation.ts).
+  // Mints a short-lived admin-tier token; a trusted-tier caller must not
+  // reach this even before the operator-routeAllow gate is considered.
+  'POST /v1/federation/mint': { desktop: { tier: 'admin', tokens: ['operator'] } },
+  // ── 设置面板(/set、/m)。注释原样搬自 phone-routes.ts 的 PHONE_ROUTES ────────────────────
+  // 设置页
+  'GET /set': { set: { link: 'read', reason: '设置页本身(配对就从这里开始)' } },
+  'GET /set/api/state': { set: { link: 'read', reason: '设置页要显示的状态' } },
+  'POST /set/api/apply': { set: { link: 'write', reason: '设置页本身;开关远程 / 撤设备这类在 LAN_ONLY_OPS 另有一道', lanOnlyOps: ['set_remote', 'revoke_device', 'forget_devices'] } },
+  'POST /set/api/pair': { set: { link: 'write', reason: '用链接换设备令牌,就是配对这一步' } },
+  // 随身 CC
+  'GET /m': { phone: { link: 'read', reason: '手机页面本身(配对之前也要能打开)' } },
+  'GET /m/api/state': { phone: { link: 'read', reason: '页面骨架:在不在、配对条、待办' } },
+  'GET /m/api/art/blink': { phone: { link: 'read', reason: 'CC 的形象画(眨眼)' } },
+  'GET /m/api/art/presence': { phone: { link: 'read', reason: 'CC 的形象画(在不在身边)' } },
+  'GET /m/api/memory': { phone: { link: 'read', reason: 'CC 眼中的你 —— 私事,收敛时再看' } },
+  // 「CC 记得你」逐条纠错(2026-10-06)
+  'POST /m/api/memory/correct': { phone: { link: 'write', reason: '只把一条记忆标成不对 / 过时,不给执行者下令' } },
+  'GET /m/api/home': { phone: { link: 'read', reason: '此刻页的内容(只读)' } },
+  'GET /m/api/feed': { phone: { link: 'read', reason: '此刻页的动态' } },
+  'POST /m/api/seen': { phone: { link: 'write', reason: '只记哪些消息已经看过' } },
+  'GET /m/api/matters': { phone: { link: 'read', reason: '一起做的列表' } },
+  'GET /m/api/matter': { phone: { link: 'read', reason: '一件事的详情' } },
+  'GET /m/api/matter/input-receipt': { phone: { link: 'read', reason: '查补充有没有送到(本身送不出话)' } },
+  'GET /m/api/matter/insight': { phone: { link: 'read', reason: '一件事的进展说明' } },
+  'GET /m/api/matter/changes': { phone: { link: 'read', reason: '一件事的改动(只读)' } },
+  // 手机逐文件审阅(2026-10-17):没问题 / 退回(同桌面 review-mark / review-return);退回只给设备(不在链接白名单里)
+  'POST /m/api/matter/review-mark': { phone: { link: 'write', reason: '只记「没问题」标记,不往执行者送话' } },
+  'POST /m/api/matter/review-return': { phone: { link: 'none' } },
+  // 行评论(切片 4,2026-10-21):整块评论建 / 删 + 发出;只给设备(不在链接白名单里)
+  'POST /m/api/matter/review-comment': { phone: { link: 'none' } },
+  'POST /m/api/matter/review-comments-send': { phone: { link: 'none' } },
+  // 撤掉这一轮(回退切片 4,2026-10-21):预览 + 带 token 执行;只给设备(不在链接白名单里)
+  'GET /m/api/matter/rewind': { phone: { link: 'none' } },
+  'POST /m/api/matter/rewind': { phone: { link: 'none' } },
+  'POST /m/api/matter/say': { phone: { link: 'none' } },
+  // 跟 CC 说(spec 2026-10-01,mobile-chat.ts):主人对话一页 + 收下即回的说一句
+  'GET /m/api/chat': { phone: { link: 'read', reason: '主人对话的记录 —— 私事,收敛时再看' } },
+  'POST /m/api/chat/say': { phone: { link: 'none' } },
+  // 搜主人那条对话(2026-10-06)
+  'GET /m/api/chat/search': { phone: { link: 'read', reason: '搜主人对话 —— 私事,收敛时再看' } },
+  // 回复里的语音附件按需合成(2026-10-04):只念库里那一行真有的那段
+  'GET /m/api/chat/voice': { phone: { link: 'read', reason: '回复里的语音 —— 私事,收敛时再看' } },
+  // 按住说话(2026-10-18):配没配语音转文字 + 一段录音转成字(只回字,不发、不执行;链接令牌也能用)
+  'GET /m/api/chat/transcribe': { phone: { link: 'read', reason: '有没有配语音转文字' } },
+  'POST /m/api/chat/transcribe': { phone: { link: 'write', reason: '录音转成字,只回字,不发、不执行' } },
+  // CC 回复里的文件按块读(2026-10-06)
+  'GET /m/api/chat/file': { phone: { link: 'none' } },
+  // CC 的信(2026-10-18,mobile-letters.ts):寄出去了的信 + 一页 PNG 按块读。信是私事:链接令牌不在册(见 LINK_ROUTES)
+  'GET /m/api/letters': { phone: { link: 'none' } },
+  // 定时(对标 B7,2026-10-20):只给设备
+  'GET /m/api/activity': { phone: { link: 'none' } },
+  'GET /m/api/lessons': { phone: { link: 'none' } },
+  'POST /m/api/lessons/add': { phone: { link: 'none' } },
+  'POST /m/api/lessons/remove': { phone: { link: 'none' } },
+  'GET /m/api/jobs': { phone: { link: 'none' } },
+  'POST /m/api/jobs/action': { phone: { link: 'none' } },
+  'GET /m/api/letters/page': { phone: { link: 'none' } },
+  // 主人对话用哪个后端 / 模型:读与钉(2026-10-06)
+  'GET /m/api/chat/model': { phone: { link: 'read', reason: '对话现在用哪个后端(改它在 LINK_WRITE_OK)' } },
+  'POST /m/api/chat/model': { phone: { link: 'write', reason: '改用哪个后端 / 模型,有费用影响但不是指令' } },
+  // CC 的连接(spec 2026-10-01,mobile-reads.ts),去掉 detail
+  'GET /m/api/connections': { phone: { link: 'read', reason: 'CC 的连接(已去掉细节)' } },
+  // 电脑上的原生会话(只读,spec 2026-10-01),项目只给目录名
+  'GET /m/api/sessions': { phone: { link: 'read', reason: '电脑上的会话列表(项目只给目录名)—— 收敛时再看' } },
+  'GET /m/api/session': { phone: { link: 'read', reason: '一条电脑会话(只读)—— 收敛时再看' } },
+  // 终端会话登记处(v76,2026-10-14):主人在 CC 外面开的 claude / codex 会话 —— 谁在跑、谁在等批准
+  'GET /m/api/cli/sessions': { phone: { link: 'read', reason: '终端会话登记处 —— 收敛时再看' } },
+  // 手机上拍板终端会话等批准的那一项(同微信「y/n 码」)、接着说一句(同微信「@码」)(2026-10-14)
+  'POST /m/api/cli/permission': { phone: { link: 'none' } },
+  'POST /m/api/cli/say': { phone: { link: 'none' } },
+  // 看着它跑(2026-10-17):一条终端会话最近几步(跑了什么、改了哪、说了什么),只读
+  'GET /m/api/cli/activity': { phone: { link: 'read', reason: '终端会话最近几步 —— 收敛时再看' } },
+  // 「今天」一眼看完(2026-10-14):终端 + 一起做,过去 24 小时;与微信「日报」同一份
+  'GET /m/api/today': { phone: { link: 'read', reason: '「今天」一眼看完' } },
+  // 在手机上接着做电脑上的会话(spec 2026-10-01-tendhearth-continue-sessions,mobile-workbench.ts):预览 + 接成一件事
+  'GET /m/api/session/continue': { phone: { link: 'read', reason: '接着做的预览(接成一件事只给设备)—— 收敛时再看' } },
+  'POST /m/api/session/continue': { phone: { link: 'none' } },
+  'POST /m/api/todo': { phone: { link: 'write', reason: '只改待办状态' } },
+  'GET /m/api/sticker/': { phone: { link: 'read', reason: '回复里的贴纸图片' } },
+  // 交办与材料(mobile-workbench.ts,#129)
+  // 交办时可选的模型(2026-10-06)
+  'GET /m/api/entry/models': { phone: { link: 'read', reason: '交办时可选的模型(交办本身只给设备)' } },
+  'POST /m/api/attachment/chunk': { phone: { link: 'write', reason: '只是材料;没有 create / say 就送不出去' } },
+  'GET /m/api/attachment/upload': { phone: { link: 'read', reason: '查上传进度(材料没有 create / say 就送不出去)' } },
+  'POST /m/api/attachment/discard': { phone: { link: 'write', reason: '丢掉自己传的材料' } },
+  'GET /m/api/entry/options': { phone: { link: 'read', reason: '交办表单的选项(交办本身只给设备)' } },
+  'POST /m/api/matter/create': { phone: { link: 'none' } },
+  'GET /m/api/matter/create-receipt': { phone: { link: 'read', reason: '查交办有没有收下(本身建不了事)' } },
+  'POST /m/api/matter/permission': { phone: { link: 'none' } },
+  // 手机上停下正在跑的这一轮(2026-10-06)
+  'POST /m/api/matter/stop': { phone: { link: 'write', reason: '停下是安全方向:能停,不能让它多做什么' } },
+  // 独立工作区:提交到分支 / 删除工作区(2026-10-07)
+  'POST /m/api/matter/worktree': { phone: { link: 'none' } },
+  'POST /m/api/matter/answer': { phone: { link: 'none' } },
+  'GET /m/api/matter/artifact': { phone: { link: 'read', reason: '一件事的成果(只读)' } },
+  // 额度用完 ⇒ 交给另一位执行者继续(spec 2026-10-01-tendhearth-continue-sessions §7-3,mobile-workbench.ts)
+  'POST /m/api/matter/handoff': { phone: { link: 'none' } },
+  // 推送(中继 v2,spec 2026-09-30 §5):登记 APNs / FCM token、发一条测试通知。只认设备令牌。
+  'POST /m/api/push/register': { phone: { link: 'none' } },
+  'POST /m/api/push/test': { phone: { link: 'none' } },
+}
+
+/**
+ * 手机能订阅的事件主题(phone-events.ts 的 `subscribe`)。`matter/` 以 `/` 结尾是前缀标记:
+ * 真正允许的是 `matter/<id>`,见 phone-routes.ts 的 phoneTopicAllowed。
+ */
+export const PHONE_TOPIC_NAMES: readonly string[] = ['home', 'approvals', 'agents', 'matter/']

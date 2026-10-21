@@ -14,6 +14,7 @@
 | `messages.ts` | `ClientHello` `ServerHello` `ReqMsg` `ResMsg` `SubMsg` `UnsubMsg` `EvMsg` `ErrMsg` `PingMsg` `PongMsg` `V2Message` … | 线上消息的 zod 模式;`b64Encode`/`b64Decode` |
 | `client.ts` | `makeProtocolClient` | 协议客户端:握手协商 v1/v2、`request()`、`subscribe()`、重连退避、保活;`requireV2` 拒绝降级(协商是明文,中继可剥掉 `v` 把双方降到无防重放的 v1;原生 app 打开) |
 | `api.ts` | `PHONE_API_SCHEMAS` `PHONE_HTML_ROUTES` 及 `Matter*` `Presence` `HomeWork` `FeedEvent` … | `/m/api/*` 响应体的 zod 模式;后台有守卫测试对着真实响应核对 |
+| `routes.ts`(子路径 `@wechat-cc/protocol/routes`) | `ROUTES` `PHONE_TOPIC_NAMES` | 路由表:每条路由在桌面 / 手机 / 设置页各端的档位、令牌、链接令牌放行。只是数据;daemon 的名单与桌面白名单都从它生成(`bun run gen:routes`) |
 | `browser.ts` | (默认导出 `CCP`) | 经典脚本入口,打成 IIFE 挂 `globalThis.CCP`,给不能 `import` 的手写页面用 |
 
 客户端类型在 `client-types.ts`(`ProtocolSocket`、`ClientOpts`、`ProtocolRequest`、`ProtocolResponse`),调用方只看这一份就知道要实现什么。

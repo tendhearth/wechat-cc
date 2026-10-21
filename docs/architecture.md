@@ -10,7 +10,7 @@ Product: **Tendhearth CC**; companion: **CC**. Existing command, package, reposi
 > Start with [the current product/capability guide](cc-workbench.md) and
 > [batch evidence](superpowers/reports/2026-09-14-cc-workbench-wrapup.md).
 >
-> **2026-09-27 修订**:去掉了所有会漂的数字与行号(迁移条数、中间件条数、provider 数、`file.ts:NNN`),改成「看哪个文件」。数字型事实以这些为准:迁移 `src/lib/db.ts` 的 `migrations` 数组(末条注释 `// vNN`);入站链 `src/daemon/inbound/build.ts`;provider 列表 `src/lib/provider-ids.ts`;路由与 tier `src/daemon/internal-api/route-tiers.ts`(鉴权现状:[reference/internal-api-auth.md](reference/internal-api-auth.md))。
+> **2026-09-27 修订**:去掉了所有会漂的数字与行号(迁移条数、中间件条数、provider 数、`file.ts:NNN`),改成「看哪个文件」。数字型事实以这些为准:迁移 `src/lib/db.ts` 的 `migrations` 数组(末条注释 `// vNN`);入站链 `src/daemon/inbound/build.ts`;provider 列表 `src/lib/provider-ids.ts`;路由与 tier `packages/protocol/src/routes.ts`(路由表,2026-10-20 起;`route-tiers.ts` 从它推出来)(鉴权现状:[reference/internal-api-auth.md](reference/internal-api-auth.md))。
 
 ---
 

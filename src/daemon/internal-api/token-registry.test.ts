@@ -122,7 +122,8 @@ describe('token-registry', () => {
     r.registerFileToken('cc'.repeat(32))
     const session = r.mint('trusted', 'codex/default/contact')
     const workbenchRoutes = [...(r.resolve('dd'.repeat(32))?.routeAllow ?? [])].filter(route => route.includes('/v1/workbench'))
-    expect(workbenchRoutes).toEqual([
+    // 比集合不比顺序:5a 起名单从路由表推出来,Set 的迭代顺序跟表走,不是行为。
+    expect(workbenchRoutes.sort()).toEqual([
       'GET /v1/workbench/entry-options',
       'POST /v1/workbench/create-entry',
       'GET /v1/workbench/entry-receipt',
@@ -167,7 +168,7 @@ describe('token-registry', () => {
       'POST /v1/workbench/input',
       'POST /v1/workbench/answer',
       'POST /v1/workbench/withdraw-input',
-    ])
+    ].sort())
     expect(r.resolve('cc'.repeat(32))?.routeAllow).toBeUndefined()
     expect(r.resolve(session)?.routeAllow).toBeUndefined()
     expect(r.resolve(session)?.tier).toBe('trusted')
