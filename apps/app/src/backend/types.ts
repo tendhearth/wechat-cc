@@ -74,6 +74,8 @@ export type BackendCode = 'stale' | 'busy' | 'offline' | 'revoked' | 'timeout' |
   | 'rewind_stale' | 'rewind_needs_owner' | 'rewind_shared' | 'rewind_merged' | 'rewind_ignored' | 'rewind_unavailable' | 'rewind_noop' | 'rewind_failed'
   // 行评论(切片 4):这一块已经变了 / 评论已发出(不能删)/ 同一个 id 内容不同 / 草稿满了
   | 'hunk_stale' | 'comment_sent' | 'comment_conflict' | 'comment_limit'
+  // 工作区脚本(2026-10-20):这份脚本还没在电脑上确认 / 已经在运行 / setup 在跑、跑完接着运行 / 没有 run 脚本
+  | 'scripts_unapproved' | 'script_running' | 'script_queued' | 'no_scripts'
 export type Unsubscribe = () => void
 
 export interface Backend {
@@ -105,6 +107,8 @@ export interface Backend {
   stop(p: { id: string; runId: string }): Promise<void>
   /** 独立工作区:提交到分支 / 删除工作区(2026-10-07)/ 合回项目(10-08,只快进;快进不了 ⇒ BackendError('merge_manual'),回电脑上合)。 */
   worktree(p: { id: string; action: 'commit' | 'remove' | 'merge' | 'reopen' }): Promise<{ branch: string; committed?: boolean; removed?: boolean; merged?: boolean; reopened?: boolean }>
+  /** 工作区脚本的运行 / 停下(同一个 POST /m/api/matter/worktree,2026-10-20)。批准只在电脑上:没批 ⇒ BackendError('scripts_unapproved')。只给配过对的手机。 */
+  worktreeScript(p: { id: string; action: 'run' | 'stop' }): Promise<{ branch: string; port?: number; setup?: string; run?: string; approved?: boolean }>
   /** 一件事的成果按块读(GET /m/api/matter/artifact,每块 128 KiB);sha256 对不上 ⇒ 电脑上那份已经换了。 */
   artifactChunk(p: { id: string; artifactId: string; sha256: string; offset: number }): Promise<{ offset: number; nextOffset: number; size: number; contentBase64: string }>
   /** 工作台补充携带首次提交的 runId;重发时 requestId / runId / text 保持同一份快照。缺省仍兼容聊天与首次接续。 */

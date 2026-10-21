@@ -235,6 +235,13 @@ describe('LiveBackend 提交', () => {
     expect(reqs[0]).toMatchObject({ retry: true, body: { requestId: REQ, text: 't', target: { kind: 'project', projectId: 'p-0123456789abcdef0123' }, providerId: 'claude' } })
     expect(reqs[1]?.body.target).toEqual({ kind: 'managed' })
   })
+  it('工作区脚本运行 / 停下(10-20):同一个 worktree 路由,正文只有 id + action;没批 ⇒ scripts_unapproved', async () => {
+    const { b, reqs } = harness({ 'POST /m/api/matter/worktree': ok({ ok: true, branch: 'cc/x', port: 47100, setup: 'done', run: 'running', approved: true }) })
+    expect(await b.worktreeScript({ id: ID, action: 'run' })).toEqual({ branch: 'cc/x', port: 47100, setup: 'done', run: 'running', approved: true })
+    expect(reqs[0]?.body).toEqual({ id: ID, action: 'run' })
+    const denied = harness({ 'POST /m/api/matter/worktree': ok({ ok: false, error: 'script_needs_computer' }, 428) })
+    await expect(denied.b.worktreeScript({ id: ID, action: 'run' })).rejects.toMatchObject({ code: 'scripts_unapproved' })
+  })
   it('交办带 until(10-20):只随独立工作区发,命令原文原样;没开独立工作区 ⇒ 不发', async () => {
     const { b, reqs } = harness({ 'POST /m/api/matter/create': ok({ ok: true, receipt: RECEIPT, task: WB_TASK }, 202) })
     const until = { command: 'bun run test -- --grep "a b"', maxRounds: 4 }

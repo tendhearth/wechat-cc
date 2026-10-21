@@ -179,3 +179,28 @@ describe('撤掉这一轮(回退切片 4)',()=>{
     PHONE_API_SCHEMAS['GET /m/api/matter']!.parse({ok:true,...d})
   })
 })
+
+describe('工作区脚本到手机(2026-10-20)',()=>{
+  it('详情:状态 + 端口 + 批没批 + 最后几行;脚本原文、路径、hash 不到手机;run / stop 转给 scriptAction',async()=>{
+    store.create({id:'deadbeef',kind:'task',title:'并行',projectPath:'/work',ownerChatId:'owner'})
+    const scripts={configured:true,approved:true,hash:'f'.repeat(64),config:{setup:'bun i',run:'PORT=$TENDHEARTH_PORT bun dev --secret',archive:null},setup:'done',run:'running',archiving:false}
+    const task={...TASK,path:'/Users/me/.wt/abc',worktree:{branch:'cc/abcd1234',projectPath:'/Users/me/secret',removed:false,merged:false,port:47100,scripts}}
+    const events=[{kind:'tool_call',text:'run',createdAt:3,activity:{id:'script-1',type:'command',status:'running',label:'run',output:'listening on http://localhost:47100\nbuilt /Users/me/.wt/abc/dist/app.js'}}]
+    const scriptAction=vi.fn(async()=>({branch:'cc/abcd1234',scripts,port:47100}))
+    const service=makeMattersService({store,workbench:{detail:()=>({task,events}),continueTask:vi.fn(),scriptAction} as never})
+    const d=await service.detail('deadbeef')
+    expect(d.task?.worktree).toEqual({branch:'cc/abcd1234',removed:false,port:47100,setup:'done',run:'running',approved:true,lastLines:['listening on http://localhost:47100','built ./dist/app.js']})
+    const json=JSON.stringify(d.task?.worktree);expect(json).not.toContain('--secret');expect(json).not.toContain('/Users/me');expect(json).not.toContain('fff')
+    PHONE_API_SCHEMAS['GET /m/api/matter']!.parse({ok:true,...d})
+    expect(await service.worktreeScript('deadbeef','stop')).toEqual({branch:'cc/abcd1234',port:47100,setup:'done',run:'running',approved:true})
+    expect(scriptAction).toHaveBeenCalledWith('deadbeef','stop')
+    // 工作区删了 ⇒ 不再带脚本状态
+    task.worktree={...task.worktree,removed:true}
+    expect((await service.detail('deadbeef')).task?.worktree).toEqual({branch:'cc/abcd1234',removed:true})
+  })
+  it('没接 scriptAction ⇒ workbench_not_wired',async()=>{
+    store.create({id:'deadbeef',kind:'task',title:'并行',projectPath:'/work'})
+    const service=makeMattersService({store,workbench:{detail:()=>({task:TASK,events:[]}),continueTask:vi.fn()} as never})
+    await expect(service.worktreeScript('deadbeef','run')).rejects.toThrow('workbench_not_wired')
+  })
+})

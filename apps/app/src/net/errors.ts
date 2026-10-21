@@ -37,6 +37,8 @@ const SPECIFIC: ReadonlyMap<string, BackendCode> = new Map<string, BackendCode>(
   ['rewind_needs_owner', 'rewind_needs_owner'], ['rewind_shared_folder', 'rewind_shared'], ['rewind_merged', 'rewind_merged'], ['rewind_ignored_conflict', 'rewind_ignored'],
   ['rewind_unavailable', 'rewind_unavailable'], ['not_worktree', 'rewind_unavailable'], ['rewind_noop', 'rewind_noop'], ['rewind_failed', 'rewind_failed'],
   // 行评论(切片 4):块变了 / 已发出 / 同 id 内容不同 / 草稿满了;评论不在了 ⇒ not_found(下面 NOT_FOUND)
+  // 工作区脚本(2026-10-20):批准只在电脑上 / 已经在运行 / setup 在跑(跑完接着运行)/ 没有 run 脚本
+  ['script_needs_computer', 'scripts_unapproved'], ['script_running', 'script_running'], ['script_setup_running', 'script_queued'], ['no_scripts', 'no_scripts'],
   ['review_hunk_stale', 'hunk_stale'], ['review_comment_sent', 'comment_sent'], ['review_comment_conflict', 'comment_conflict'], ['review_comment_limit', 'comment_limit'],
 ])
 const errOf = (body: unknown): string | null => {

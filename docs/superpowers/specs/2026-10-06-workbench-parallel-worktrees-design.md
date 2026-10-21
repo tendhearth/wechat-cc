@@ -47,6 +47,7 @@
 - 每个工作区一个端口（47100–48999），脚本里拿 `TENDHEARTH_PORT`；另有 `TENDHEARTH_WORKSPACE_PATH / ROOT_PATH / BRANCH`。
 - 输出进时间线（先打码）；只有 setup / archive 挡空闲自重启，run 不挡；CC 退出时停掉所有脚本，崩了重启后按开机时刻 + 进程组 + 组长启动时刻核对再停。
 - 批准只在桌面（确认框逐字给出三条脚本）。代码：`src/core/workbench/{worktree-scripts,worktree-ports,script-runner}.ts`、`service/scripts.ts`。
+- **补记（2026-10-20，PR-C 手机）**：这是对「不执行仓库里的东西」那条规矩的有意改动——CC 现在会跑仓库里的脚本，但**只跑主人批准过的那份确切内容**（仓库 + 内容哈希，一字之差就重批）。手机只能「运行 / 停下」（同一个 `POST /m/api/matter/worktree`，只给配过对的设备令牌，链接令牌 403）；手机上**不能批准**——没批时 daemon 回 428 `script_needs_computer`，App 只说「请先在电脑上确认一次这个仓库的脚本」。手机详情里只有状态 / 端口 / 批没批 / 最后几行输出（已打码、去路径），从不带脚本原文与路径。投影：`src/core/matters/phone-scripts.ts`。
 
 ## 拒绝与边界
 

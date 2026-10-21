@@ -65,6 +65,20 @@ CC 的目标是：日常管理 Claude/Codex 工作时，只打开 CC 就够。�
 - **免审**(agy):用执行者 CLI 自己的跳过审批开关启动;daemon 仍守文件夹占用、目录身份、成果收集、diff 快照与停止,但看不到、拦不下单步,没有权限卡与提问。第一次选到要在桌面确认一次(`POST /v1/workbench/unattended-ack`,存 `agent-config.json` 的 `workbench_unattended_ack_at`),未确认返回 428 `unattended_ack_required`。微信 / Windows 上没有这个确认入口。
 - **ACP**(Cursor):`cursor-agent acp`(Agent Client Protocol v1,stdio JSON-RPC)—— 命令逐次进权限卡(allow-once / reject-once),时间线有逐条活动行,`session/load` 接原会话,`close()` 确认进程组退出。工作区内的文件编辑由 Cursor 直接执行、不过权限卡(ACP 面上没有开关),每个任务开跑记一条提示。不注入 MCP、不做 elicitation;图片附件进 prompt。对话侧的 Cursor 同样常驻 ACP,按会话注入 wechat MCP。真机报文:`src/core/acp/fixtures/cursor-acp-2026-09-17.jsonl`。Claude / Codex 不换到 ACP(定案见 `superpowers/specs/2026-09-17-acp-evaluation.md`)。
 
+## 独立工作区的脚本(tendhearth.json)
+
+项目根目录放一份 `tendhearth.json`,独立工作区就会照它装依赖、起服务、收尾(对标 Conductor):
+
+```json
+{ "scripts": { "setup": "bun install", "run": "bun run dev --port $TENDHEARTH_PORT", "archive": "docker compose down" } }
+```
+
+- **只跑主人批准过的确切内容**:按(仓库,内容哈希)批,改一个字就要重新确认;没批只在时间线说一句「待确认」,什么都不跑。批准只在桌面(确认框逐字给出三条脚本,`POST /v1/workbench/script-approve`;没批时 run 回 428 `script_approval_required`)。脚本从建工作区时的那个提交读,执行者改文件改不了要跑的内容;git 钩子照旧不跑。
+- **setup**:建好 / 重新打开工作区后跑一次(批准那一刻补跑),限时 30 分钟。**run**:主人点「运行」(setup 还没跑成就先跑 setup,成了接着跑),每个工作区同时一个,「停下」= TERM、5 秒后 KILL。**archive**:删工作区前先停 run 再跑,限时 2 分钟,没跑成照删并留一句。
+- 环境变量:`TENDHEARTH_PORT`(每个工作区一个,47100–48999,用到时才分配)、`TENDHEARTH_WORKSPACE_PATH`(工作区目录)、`TENDHEARTH_ROOT_PATH`(项目目录)、`TENDHEARTH_BRANCH`。
+- 输出进时间线(一条命令活动,落库前打码)。CC 退出时停掉所有脚本;崩了重启后核对进程组再停,核对不上不动并说一句。
+- **手机**能「运行 / 停下」(`POST /m/api/matter/worktree` 的 `run` / `stop`,只给配过对的设备),**不能批准**:没批回 428 `script_needs_computer`,App 说「请先在电脑上确认一次这个仓库的脚本」。手机详情只看到状态、端口、批没批和最后几行输出(去路径),看不到脚本原文。
+
 ## 离开电脑后从微信继续
 
 CC 在微信里是管家：你说某件事，它找到是哪个任务、让原来的执行者接着做，不用你记编号，也不用你知道是 Claude 还是 Codex 在做（执行者是任务自己的属性；要换人时说"让 Codex 看看"才会出现）。它按这个顺序落定你指的是哪件，只在**活跃任务**（进行中 / 已答复 / 排队）里找：

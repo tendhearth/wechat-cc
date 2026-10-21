@@ -78,6 +78,10 @@ describe('演示后端', () => {
     expect((await b.matter('e5f6a7b8', 'en')).task?.worktree?.removed).toBe(true)
     await b.worktree({ id: 'e5f6a7b8', action: 'reopen' })
     expect((await b.matter('e5f6a7b8', 'en')).task?.worktree?.removed).toBe(false)
+    // 工作区脚本(2026-10-20):演示里运行 / 停下只翻状态
+    expect((await b.worktreeScript({ id: 'e5f6a7b8', action: 'run' })).run).toBe('running')
+    expect((await b.matter('e5f6a7b8', 'en')).task?.worktree).toMatchObject({ run: 'running', approved: true, port: 47100 })
+    expect((await b.worktreeScript({ id: 'e5f6a7b8', action: 'stop' })).run).toBe('idle')
   })
   it('演示会话按标题/项目过滤,读取明确反映recent/start并限制近期20条', async () => {
     const b = makeDemoBackend()

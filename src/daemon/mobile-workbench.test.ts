@@ -225,6 +225,29 @@ describe('phone worktree actions (2026-10-07)',()=>{
   })
 })
 
+describe('phone worktree scripts run / stop (2026-10-20)',()=>{
+  const post=(worktreeScript:(id:string,a:'run'|'stop')=>Promise<unknown>,body:unknown)=>{const url=new URL('http://phone.test/m/api/matter/worktree');return mobileWorkbenchRoute({worktreeScript:worktreeScript as never,worktree:vi.fn() as never},url,new Request(url,{method:'POST',body:JSON.stringify(body)}))}
+  it('run / stop 走 worktreeScript,回分支 + 状态 + 端口',async()=>{
+    const fn=vi.fn(async()=>({branch:'cc/abcd1234',port:47100,setup:'done',run:'running',approved:true}))
+    const r=await post(fn,{id:'deadbeef',action:'run'})
+    expect(r?.status).toBe(200);expect(await r!.json()).toEqual({ok:true,branch:'cc/abcd1234',port:47100,setup:'done',run:'running',approved:true})
+    expect(fn).toHaveBeenCalledWith('deadbeef','run')
+    expect((await post(fn,{id:'deadbeef',action:'stop'}))?.status).toBe(200)
+    expect(fn).toHaveBeenLastCalledWith('deadbeef','stop')
+    // 批准不在手机上
+    expect((await post(fn,{id:'deadbeef',action:'approve'}))?.status).toBe(400)
+    expect((await post(fn,{id:'deadbeef',action:'run',hash:'x'}))?.status).toBe(400)
+  })
+  it('没批 ⇒ 428 script_needs_computer;在跑 409;没有 run 脚本 422;没接 503',async()=>{
+    for(const [code,status,error] of [['script_approval_required',428,'script_needs_computer'],['script_running',409,'script_running'],['script_setup_running',409,'script_setup_running'],['no_scripts',422,'no_scripts'],['workbench_archived',409,'workbench_archived'],['worktree_removed',409,'worktree_removed'],['workbench_stopping',503,'workbench_stopping']] as const){
+      const r=await post(async()=>{throw Error(code)},{id:'deadbeef',action:'run'})
+      expect(r!.status,code).toBe(status);expect(await r!.json()).toEqual({ok:false,error})
+    }
+    const url=new URL('http://phone.test/m/api/matter/worktree')
+    expect((await mobileWorkbenchRoute({worktree:vi.fn() as never},url,new Request(url,{method:'POST',body:JSON.stringify({id:'deadbeef',action:'run'})})))?.status).toBe(503)
+  })
+})
+
 describe('mobileMatterError · 回退的 reason 只放短码(#444 评审)', () => {
   it('短码照给;带空格 / 路径 / 大写的整条不给', async () => {
     const { mobileMatterError } = await import('./mobile-workbench')
