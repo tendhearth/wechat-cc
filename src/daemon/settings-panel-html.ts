@@ -282,7 +282,7 @@ async function load() {
   $("f-persona").value = s.persona || ""
   $("f-split").checked = s.prefs.split !== false
   $("f-stickers").checked = s.prefs.stickers !== false
-  $("f-hunt").checked = s.prefs.hunt !== false
+  $("f-hunt").checked = s.prefs.hunt === true  // 打猎默认关(10-21 起)
   $("f-knowledge").checked = s.config.knowledge_enabled === true
   $("f-social").checked = s.config.social_enabled === true
   $("f-autostart").checked = s.config.autoStart === true

@@ -87,6 +87,7 @@ import { randomBytes } from 'node:crypto'
 import { wireWorkbench } from './bootstrap/wire-workbench'
 import { wireCliSessions } from './bootstrap/wire-cli-sessions'
 import { wireJobs } from './bootstrap/wire-jobs'
+import { pinHuntForExistingOwner } from './companion/hunt-default'
 import { wireActivity } from './bootstrap/wire-activity'
 import {wireWorkbenchNotifications} from './bootstrap/wire-workbench-notifications'
 import {wireWorkbenchArtifacts} from './bootstrap/wire-workbench-artifacts'
@@ -259,6 +260,9 @@ async function bootDaemonInner(opts: BootDaemonOpts, undo: Array<() => void>): P
     // A second instance would have a stale in-memory cache: the store's
     // write-through only protects its own writes, not cross-instance reads.
     const chatPrefs = makeChatPrefs(stateDir)
+    // 打猎改成默认关(收敛清单 ②,主人 10-21 定):第一次带着新默认开机时,把正在每天打猎的主人(主动关心开着、没单独设过)
+    // 写成显式的开,不让他跟着被关掉。只做一次(companion/hunt-default.ts);在任何伙伴 tick 之前。
+    pinHuntForExistingOwner({ stateDir, chatPrefs, companion: loadCompanionConfig(stateDir), log: (t, l) => log(t, l) })
     // Single shared sticker-library instance for this daemon (image-stickers
     // plan) — backs the /v1/stickers* routes and the stickerTagsFor thunk
     // below. Mirrors chatPrefs above: a second instance would read a stale

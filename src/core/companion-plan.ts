@@ -62,8 +62,9 @@ export function computeCandidates(i: CandidateInput, decide: SpeakGate): { candi
     else rejected.push({ action, reason: d.reason })
   }
   if (i.isOwnerChat) {
-    // 与 tick-bodies 原逻辑一致:pref 明确 false → off,否则 low;care off 由 level 传入时 shouldSpeak 自己拒。
-    consider('hunt', i.level === 'off' ? 'off' : (i.prefs.hunt !== false ? 'low' : 'off'))
+    // 打猎默认关(主人 10-21 定,收敛清单 ②):只有明确开了(hunt:true)才是候选。老装机的主人在开机时已经被写成显式的开
+    // (daemon/companion/hunt-default.ts),所以对他没有变化。care off 由 level 传入时 shouldSpeak 自己拒。
+    consider('hunt', i.level === 'off' ? 'off' : (i.prefs.hunt === true ? 'low' : 'off'))
     if (i.socialWired) consider('visit', i.level === 'off' ? 'off' : (i.prefs.visit !== false ? 'low' : 'off'))
   }
   consider('gap', i.level)
