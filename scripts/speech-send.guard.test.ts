@@ -50,7 +50,7 @@ const BASELINE: Record<string, [Tag, number]> = {
   'src/daemon/cli-reply-handler.ts': ['reply', 1],
   'src/daemon/internal-api/routes-turn.ts': ['reply', 1],
   // —— 要迁进 policy.say 的(盘点见设计稿第 2 步) ——
-  'src/daemon/main.ts': ['migrate', 15],                 // 提醒、回报、升级、开机降级汇总、重启 …
+  'src/daemon/main.ts': ['migrate', 14],                 // 提醒、升级、开机降级汇总、重启 …(一件事的回报已迁,10-21)
   'src/daemon/internal-api/routes.ts': ['migrate', 6],   // 画作分享、广播 …
   'src/daemon/wiring/pipeline-deps.ts': ['migrate', 6],  // 访客申请 …;其中 1 处是 proactive 的微信出口(say 背后的那条路,10-21 从 wiring/index.ts 搬来)
   'src/daemon/bootstrap/wire-social.ts': ['migrate', 5], // 来信、心愿、介绍、明信片

@@ -27,6 +27,8 @@ export const SPEECH_KINDS = {
   letter: { origin: 'initiative', label: '信' },
   companion: { origin: 'initiative', label: '伙伴' },
   guest_visit: { origin: 'initiative', label: '来访' },
+  // 一次性:只在画好的那一刻触发一次,没有「下一拍」—— 被推后就等于这一句丢了(贴纸已经进库,照样会用到)。
+  // 以后加别的一次性 initiative 照这条判:要么接受 defer 即丢,要么自己留个待发标记(9d 评审 #520)。
   sticker: { origin: 'initiative', label: '新贴纸' },
   memory_notice: { origin: 'initiative', label: '整理记忆' },
 } as const satisfies Record<string, { origin: SpeechOrigin; label: string }>

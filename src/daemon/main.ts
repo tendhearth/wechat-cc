@@ -48,7 +48,7 @@ import { resolveCheapEval } from './memory-llm-ops'
 import { wireLetters } from './bootstrap/wire-letters'
 import { registerReminders } from './reminders/sweeper'
 import { makeRemindersStore } from './reminders/store'
-import { registerReportSweeper } from './reports/sweeper'
+import { registerReportSweeper, sendReportVia } from './reports/sweeper'
 import { makeReportOutboxStore } from './reports/outbox'
 import { makeWorkbenchStore } from '../core/workbench/store'
 import { buildInboundPipeline } from './inbound/build'
@@ -906,10 +906,8 @@ async function bootDaemonInner(opts: BootDaemonOpts, undo: Array<() => void>): P
     const reportsLc = await sup.start('reports', () => registerReportSweeper({
       store: reportOutbox,
       matters,
-      send: async (chatId, text) => {
-        const r = await ilink.sendMessage(chatId, text) as { msgId?: string; error?: string }
-        return r.error ? { ok: false, error: r.error } : { ok: true }
-      },
+      // 一件事做完的回报走 SpeechPolicy(第三批 3a):推后留在 outbox,发出去以后的失败照旧回给 sweeper(reports/sweeper sendReportVia)
+      send: sendReportVia(wired.speech),
       log: (t, l) => log(t, l),
       noteAbandoned: (matterId, text) => {
         try { reportEventStore.addEvent(matterId, 'system', text) } catch { /* best effort — the drop itself already succeeded */ }

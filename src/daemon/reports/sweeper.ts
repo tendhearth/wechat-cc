@@ -120,7 +120,11 @@ export interface ReportSweepDeps {
   store: ReportOutboxStore
   matters: MatterStore
   /** Deliver a message to a chat. Resolves {ok} — never throws for normal failures. */
-  send: (chatId: string, text: string) => Promise<{ok: boolean; error?: string}>
+  /**
+   * 送一条回报。`deferred` = CC 开口那道门(SpeechPolicy,第三批 3a)说这会儿不该说 / 两条路都送不到 ——
+   * 不是失败:不算尝试、不退避、不写 first_fail_at,留在 outbox 里下一拍再问(defer 只是不风暴,不是不送)。
+   */
+  send: (chatId: string, text: string) => Promise<{ok: boolean; error?: string; deferred?: string}>
   /** Current time, injected for tests. */
   nowMs: number
   log: (tag: string, line: string) => void
@@ -157,6 +161,26 @@ export const MAX_SENDS_PER_SWEEP = 30
  * for that, and enqueue time is the honest "how long has the owner not
  * gotten this" answer anyway.
  */
+/**
+ * sweeper 的 `send` 接到 CC 开口那道门上(第三批 3a,kind=matter_report,归 report):
+ *  - 门说推后(免打扰 / 两条路都送不到)⇒ `deferred`:留在 outbox,不算失败(defer 只是不风暴,不是不送);
+ *  - 门放行 ⇒ 经 proactive-channel 送(微信能用走微信,降级落到 App),送的结果原样回给 sweeper,
+ *    -2 / 别的失败照旧走它的退避与放弃窗口;
+ *  - report 不会被 drop(判定表);万一 ⇒ 当成一次普通失败,照样退避、照样有放弃窗口,不悄悄丢。
+ */
+export function sendReportVia(speech: import('../speech/policy').SpeechPolicy): ReportSweepDeps['send'] {
+  return async (chatId, text) => {
+    let sent: {ok: boolean; error?: string} = {ok: false, error: 'not_sent'}
+    const o = await speech.say({kind: 'matter_report', chatId}, async (turn) => {
+      const r = await turn.sendText(chatId, text)
+      sent = r.error ? {ok: false, error: r.error} : {ok: true}
+    })
+    if ('defer' in o) return {ok: false, deferred: o.reason}
+    if ('drop' in o) return {ok: false, error: `speech_dropped:${o.reason}`}
+    return sent
+  }
+}
+
 export const HELD_OVERRIDE_MS = 10 * 60_000
 
 export async function runReportSweep(deps: ReportSweepDeps): Promise<ReportSweepResult> {
@@ -216,11 +240,17 @@ export async function runReportSweep(deps: ReportSweepDeps): Promise<ReportSweep
       deps.log('REPORTS', `held-override ${rec.id} (matter ${rec.matterId}) → ${chatId}: 粗闸挡了 ${deps.nowMs - rec.createdAt}ms(超过强制放行上限 ${HELD_OVERRIDE_MS}ms,自入队起算),无视粗闸照发`)
     }
 
-    let outcome: {ok: boolean; error?: string}
+    let outcome: {ok: boolean; error?: string; deferred?: string}
     try {
       outcome = await deps.send(chatId, rec.text)
     } catch (err) {
       outcome = {ok: false, error: err instanceof Error ? err.message : String(err)}
+    }
+
+    if (outcome.deferred) {
+      result.held++
+      deps.log('REPORTS', `held ${rec.id} (matter ${rec.matterId}) → ${chatId}: deferred by speech policy: ${outcome.deferred}(不计失败,下一拍再问)`)
+      continue
     }
 
     if (outcome.ok) {
@@ -288,7 +318,11 @@ const DEFAULT_INTERVAL_MS = 60 * 1000 // 60s
 export interface ReportSchedulerDeps {
   store: ReportOutboxStore
   matters: MatterStore
-  send: (chatId: string, text: string) => Promise<{ok: boolean; error?: string}>
+  /**
+   * 送一条回报。`deferred` = CC 开口那道门(SpeechPolicy,第三批 3a)说这会儿不该说 / 两条路都送不到 ——
+   * 不是失败:不算尝试、不退避、不写 first_fail_at,留在 outbox 里下一拍再问(defer 只是不风暴,不是不送)。
+   */
+  send: (chatId: string, text: string) => Promise<{ok: boolean; error?: string; deferred?: string}>
   log: (tag: string, line: string) => void
   /** Override sweep interval (ms). Defaults to 60s. */
   intervalMs?: number
