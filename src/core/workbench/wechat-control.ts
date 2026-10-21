@@ -197,11 +197,16 @@ function changesReply(id:string,turns:ReviewTurn[]|null):string {
   turns=turns.filter(t=>!t.discarded)
   const latest=turns.find(t=>t.status!=='unavailable')
   if(!latest)return turns.length?`任务 ${id}：改动记录读不出来，请在桌面工作台查看。`:`任务 ${id}：还没有改动记录（不是 Git 项目，或还没跑完一轮）。`
-  if(!latest.files.length)return `任务 ${id}：最近一轮没有改动文件。`
+  // 只审了一部分的一轮不能说成完整的(2026-10-20):开头先说「只检查了一部分」并带上原因(notes 里有 N / M),
+  // 没列出文件也不能说「没有改动」—— 没检查到的文件里可能有。最近那一轮读不出来、拿更早一轮顶上时也要说。
+  const partial=latest.status==='partial'
+  const why=partial?latest.notes.slice(0,2).map(n=>singleLine(n,200)).join(' '):''
+  const older=latest!==turns[0]?['最近一轮的改动记录读不出来，下面是更早的一轮。']:[]
+  const partialLine=partial?[`这一轮只检查了一部分${why?`：${why}`:'，有文件没能完整检查。'}以桌面为准。`]:[]
+  if(!latest.files.length)return [...older,partial?`任务 ${id}：已检查的文件里没有改动，但这一轮没查完。`:`任务 ${id}：最近一轮没有改动文件。`,...partialLine].join('\n')
   const shown=latest.files.slice(0,12).map(f=>`• ${KIND_LABEL[f.kind]??f.kind} ${singleLine(f.path,120)}${lineCounts(f.diff)}`)
-  const lines=[`任务 ${id} · 最近一轮改了 ${latest.files.length} 个文件${turns.length>1?`（共 ${turns.length} 轮）`:''}：`,...shown]
+  const lines=[...older,`任务 ${id} · 最近一轮${partial?'已检查的部分里':''}改了 ${latest.files.length} 个文件${turns.length>1?`（共 ${turns.length} 轮）`:''}：`,...partialLine,...shown]
   if(latest.files.length>12)lines.push(`还有 ${latest.files.length-12} 个。`)
-  if(latest.status==='partial')lines.push('这一轮有文件没能完整检查，以桌面为准。')
   lines.push('逐个看 diff、接受、打回或撤销：桌面工作台「改动」面板。')
   return lines.join('\n')
 }

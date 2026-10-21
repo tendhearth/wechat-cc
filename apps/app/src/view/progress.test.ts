@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { progressView } from './progress'
+import { progressView, changesCoverage } from './progress'
 
 const detail = (over: any = {}) => ({
   matter: { id: 'a', kind: 'task', title: 'mt', projectPath: '/p', status: 'open', ownerChatId: null, originMatterId: null, originMessageId: null, createdAt: 1, updatedAt: 1 },
@@ -57,5 +57,30 @@ describe('canStop — 手机上的「停止这一轮」(2026-10-06)', () => {
     expect(canStop({ runId: 'r1', task: task('replied') })).toBe(false)
     expect(canStop({ task: task('working') })).toBe(false)
     expect(canStop({ runId: 'r1', task: undefined } as never)).toBe(false)
+  })
+})
+
+describe('changesCoverage(只审了一部分要看得出来,2026-10-20)', () => {
+  const turn = (over: any = {}) => ({ createdAt: 1, status: 'complete', files: [], omittedFiles: 0, notes: [], ...over }) as any
+  it('查全了 ⇒ 不加话,可以说「还没有文件改动」', () => {
+    expect(changesCoverage(turn(), 'zh-Hans')).toEqual({ lines: [], showEmpty: true })
+    expect(changesCoverage(null, 'zh-Hans')).toEqual({ lines: [], showEmpty: true })
+  })
+  it('partial ⇒ 先说只检查了一部分,再跟电脑写的原因(带 N / M);不说「还没有文件改动」', () => {
+    const note = '读取超时，只检查了 90 / 100 个文件，其余尚未检查。'
+    const v = changesCoverage(turn({ status: 'partial', notes: [note], files: [{ path: 'a', kind: 'modified', truncated: false }] }), 'zh-Hans')
+    expect(v.lines).toEqual(['这一轮只检查了一部分，没列出来的文件不代表没改。', note])
+    expect(v.showEmpty).toBe(false)
+    expect(changesCoverage(turn({ status: 'partial', notes: [note] }), 'en').lines[0]).toMatch(/^Only part of this round was checked/)
+  })
+  it('unavailable ⇒ 记录不完整,不能说没改', () => {
+    const v = changesCoverage(turn({ status: 'unavailable', notes: ['结束时的项目状态无法读取，不能据此判断有没有修改。'] }), 'zh-Hans')
+    expect(v.lines[0]).toBe('这一轮的改动记录不完整，不能据此判断有没有修改。')
+    expect(v.showEmpty).toBe(false)
+  })
+  it('手机放不下的文件 ⇒ 说还有几个;标题的文件数也算上', () => {
+    const t = turn({ omittedFiles: 7, files: [{ path: 'a', kind: 'modified', truncated: false }] })
+    expect(changesCoverage(t, 'zh-Hans').lines).toEqual(['还有 7 个文件这里放不下，回电脑上看。'])
+    expect(progressView(detail(), null, t).changedFiles).toBe(8)
   })
 })

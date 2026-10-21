@@ -35,7 +35,7 @@ import { nativeStartLines, providerName } from '../../view/continue'
 import { canSubmit } from '../../view/connection'
 import { HANDOFF_RECHECK, handoffBlock, handoffErrorDot, handoffErrorText, handoffSheetLines } from '../../view/handoff'
 import { uuid } from '../../net/uuid'
-import { progressView, canStop } from '../../view/progress'
+import { progressView, canStop, changesCoverage } from '../../view/progress'
 import { inputRows } from '../../view/matter-input'
 import { untilLine } from '../../view/until'
 import { scriptOutcome, scriptsBlock } from '../../view/worktree-scripts'
@@ -148,6 +148,8 @@ export default function Matter() {
   const rewindBlocked = rewindBlockedNotice(d.task, lang)
   const turn = changes.data ?? null
   const gone = discardedLines(turn, lang)
+  // 只审了一部分 / 记录不完整 / 放不下的文件:不能看起来和查全了的一轮一样(2026-10-20)
+  const coverage = changesCoverage(turn, lang)
   const agents = matterAgents(d)
   // 出生地(2026-10-19):只画建这件事的那个表面;不知道 ⇒ 不画
   const origin = matterOrigin(d.matter.origin)
@@ -388,7 +390,8 @@ export default function Matter() {
               </View>
             ) : null}
             {rewindNote ? <Txt testID="progress-rewind-note" role="meta" tone="inkSoft" accessibilityLiveRegion="polite">{rewindNote}</Txt> : null}
-            {files.length === 0 ? <Txt role="meta" tone="inkSoft">{t(lang, 'progress.noChanges')}</Txt> : null}
+            {coverage.lines.map((line, i) => <Txt key={`cov-${i}`} testID={i === 0 ? 'progress-changes-coverage' : undefined} role={i === 0 ? 'meta' : 'caption'} tone="inkSoft">{line}</Txt>)}
+            {files.length === 0 && coverage.showEmpty ? <Txt role="meta" tone="inkSoft">{t(lang, 'progress.noChanges')}</Txt> : null}
             {files.map((f, i) => (
               // 已撤掉的那一轮灰着(没有审阅按钮)
               <View key={i} style={{ paddingVertical: space.s, gap: space.xs, opacity: turn?.discarded ? 0.55 : 1 }}>

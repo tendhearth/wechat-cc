@@ -34,7 +34,7 @@ const registry=()=>{
   return r
 }
 let current=''
-const make=(rewind?:RewindOptions,extra:Partial<Parameters<typeof makeWorkbenchService>[0]>={})=>makeWorkbenchService({store,registry:registry(),stateDir,managedWorkspaceRoot:join(area,'Tasks'),ownerChatId:()=>'owner',defaultProvider:'claude',registeredProjects:()=>[{alias:'project',path:project}],matters:makeMatterStore(db),changes:makeTaskChangeHub(),mintSessionToken:()=>'t',checkpointDeadlineMs:120_000,...(rewind?{rewind}:{}),...extra})
+const make=(rewind?:RewindOptions,extra:Partial<Parameters<typeof makeWorkbenchService>[0]>={})=>makeWorkbenchService({store,registry:registry(),stateDir,managedWorkspaceRoot:join(area,'Tasks'),ownerChatId:()=>'owner',defaultProvider:'claude',registeredProjects:()=>[{alias:'project',path:project}],matters:makeMatterStore(db),changes:makeTaskChangeHub(),mintSessionToken:()=>'t',checkpointDeadlineMs:120_000,reviewDeadlineMs:120_000,...(rewind?{rewind}:{}),...extra})
 beforeEach(()=>{
   area=realpathSync(mkdtempSync(join(tmpdir(),'cc-rewind-service-')));stateDir=join(area,'state');repo=join(area,'repo');project=join(repo,'pkg')
   mkdirSync(stateDir);mkdirSync(project,{recursive:true})
@@ -281,7 +281,9 @@ describe('回滚没回干净 ⇒ 停住,主人拍板', () => {
     const {id,oldHead}=await twoRounds()
     const before=read(id,'a.txt')
     const [r1]=rounds(id),p=await service.rewindPreview(id,{artifactId:r1!.artifactId,to:'end'})
-    await expect(service.rewind(id,{artifactId:r1!.artifactId,to:'end',token:p.token})).rejects.toMatchObject({message:'rewind_failed',rolledBack:true,reason:'eol_mismatch',path:'a.txt'})
+    // 摊开成普通对象再比:偶发失败时(曾见 rewind_unavailable)要能直接看到 reason / detail,而不是只有一句 message
+    const error=await service.rewind(id,{artifactId:r1!.artifactId,to:'end',token:p.token}).then(()=>null,(e:Error&Record<string,unknown>)=>({message:e.message,code:e.code,reason:e.reason,detail:e.detail,rolledBack:e.rolledBack,path:e.path}))
+    expect(error).toMatchObject({message:'rewind_failed',rolledBack:true,reason:'eol_mismatch',path:'a.txt'})
     // 回滚只保证 git 等价:eol 属性下检出的换行跟着属性走(已知限制,设计稿)
     expect(read(id,'a.txt').replace(/\r\n/g,'\n')).toBe(before.replace(/\r\n/g,'\n'));expect(g(store.worktrees.get(id)!.root,'rev-parse','HEAD')).toBe(oldHead)
     expect(service.detail(id).events.at(-1)!.text).toContain('换行')
@@ -350,7 +352,7 @@ describe('自己那条安静的保留会话', () => {
     const session:AgentSession={workbenchRuntime:runtime,async *dispatch(){},close:async()=>{ended=true;wake()}}
     const r=createProviderRegistry()
     r.register('claude',{async spawn(){return session}},{displayName:'claude',canResume:()=>true,workbench:MANAGED_NATIVE_CAPABILITIES})
-    service=makeWorkbenchService({store,registry:r,stateDir,managedWorkspaceRoot:join(area,'Tasks'),ownerChatId:()=>'owner',defaultProvider:'claude',registeredProjects:()=>[{alias:'project',path:project}],matters:makeMatterStore(db),changes:makeTaskChangeHub(),mintSessionToken:()=>'t',retainedIdleCloseMs:()=>9e9,checkpointDeadlineMs:120_000})
+    service=makeWorkbenchService({store,registry:r,stateDir,managedWorkspaceRoot:join(area,'Tasks'),ownerChatId:()=>'owner',defaultProvider:'claude',registeredProjects:()=>[{alias:'project',path:project}],matters:makeMatterStore(db),changes:makeTaskChangeHub(),mintSessionToken:()=>'t',retainedIdleCloseMs:()=>9e9,checkpointDeadlineMs:120_000,reviewDeadlineMs:120_000})
     const id=service.createEntry({requestId:randomUUID(),text:'改一下',target:{kind:'project',projectId:service.projects()[0]!.id,isolation:'worktree'}} as EntryInput,context).receipt.taskId
     current=service.detail(id).task.path
     await expect.poll(()=>service.detail(id).task.phase,{timeout:20_000}).toBe('replied')

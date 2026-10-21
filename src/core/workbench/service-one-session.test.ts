@@ -67,7 +67,7 @@ function setup(knobs:{handoffGraceMs?:()=>number;retainedIdleCloseMs?:()=>number
   const registry=createProviderRegistry()
   registry.register('claude',{async spawn(_project,context){const r=new SessionRuntime(context);runtimes.push(r);spawned.push(context);return r.session}},{displayName:'Claude',canResume:()=>true,workbench:MANAGED_NATIVE_CAPABILITIES})
   store=makeWorkbenchStore(db)
-  service=makeWorkbenchService({store,registry,stateDir:area,ownerChatId:()=>null,closeTimeoutMs:50,...knobs})
+  service=makeWorkbenchService({store,registry,stateDir:area,ownerChatId:()=>null,closeTimeoutMs:50,reviewDeadlineMs:120_000,...knobs})
   return service
 }
 beforeEach(()=>{

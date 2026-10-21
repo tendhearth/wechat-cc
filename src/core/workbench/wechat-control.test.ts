@@ -131,16 +131,39 @@ describe('WeChat task control through the shared service',()=>{
     expect(await control('owner',`任务 ${task.id} 改动`,identity)).toContain('还没有改动记录')
     turns=[turn([{path:'src/a.ts',kind:'modified',diff:'@@ -1,2 +1,3 @@\n a\n-b\n+B\n+c\n'},{path:'new.md',kind:'added',diff:'@@ -0,0 +1 @@\n+hi\n'},{path:'big.bin',kind:'not_reviewed'}],'partial'),turn([],'complete')]
     const reply=await control('owner',`任务 ${task.id} 改动`,identity) as string
-    expect(reply).toContain('最近一轮改了 3 个文件（共 2 轮）')
+    expect(reply).toContain('最近一轮已检查的部分里改了 3 个文件（共 2 轮）')
     expect(reply).toContain('• 修改 src/a.ts（+2 −1）')
     expect(reply).toContain('• 新建 new.md（+1 −0）')
     expect(reply).toContain('• 未展开 big.bin')
-    expect(reply).toContain('没能完整检查')
+    expect(reply).toContain('这一轮只检查了一部分，有文件没能完整检查。以桌面为准。')
     turns=[turn(Array.from({length:15},(_,i)=>({path:`f${i}.ts`,kind:'modified' as const,diff:'@@ -1 +1 @@\n-x\n+y\n'})))]
     expect(await control('owner',`任务 ${task.id} 改动`,identity)).toContain('还有 3 个。')
     const noReview=makeWechatWorkbenchControl({store,ownerChatId:()=>owner,actions:{...service,reviewList:undefined}})
     expect(await noReview('owner',`任务 ${task.id} 改动`,identity)).toContain('桌面工作台的「改动」面板')
     expect(await control('owner',`任务 ${task.id} 改动 a.ts`,identity)).toContain('用法')
+  })
+  it('任务 <编号> 改动 never lets a partial round read as complete (2026-10-20)',async()=>{
+    setup({async spawn(){return{async *dispatch(){yield result},async close(){}}}})
+    const task=create();await settled(task.id)
+    const note='读取超时，只检查了 90 / 100 个文件，其余尚未检查。'
+    const turn=(files:Array<{path:string;kind:'modified'}>,status:'complete'|'partial'|'unavailable',notes:string[]=[])=>({artifactId:'a',sha256:'s',name:'n',createdAt:1,status,headBefore:null,headAfter:null,preexistingPaths:[],notes,files:files.map(f=>({preexisting:false,diff:'@@ -1 +1 @@\n-x\n+y\n',...f}))})
+    let turns:ReturnType<typeof turn>[]=[]
+    const control=makeWechatWorkbenchControl({store,ownerChatId:()=>owner,actions:{...service,reviewList:()=>turns}})
+    turns=[turn([{path:'a.ts',kind:'modified'}],'partial',[note])]
+    const reply=await control('owner',`任务 ${task.id} 改动`,identity) as string
+    expect(reply).toContain('最近一轮已检查的部分里改了 1 个文件')
+    expect(reply).toContain(`这一轮只检查了一部分：${note}以桌面为准。`)
+    // 一个改动都没查到 ≠ 没有改动
+    turns=[turn([],'partial',[note])]
+    const empty=await control('owner',`任务 ${task.id} 改动`,identity) as string
+    expect(empty).not.toContain('没有改动文件')
+    expect(empty).toContain('已检查的文件里没有改动，但这一轮没查完。')
+    expect(empty).toContain('90 / 100')
+    // 最近一轮读不出来、拿更早的一轮顶上时要说
+    turns=[turn([],'unavailable',['快照无法读取或已损坏']),turn([{path:'b.ts',kind:'modified'}],'complete')]
+    const older=await control('owner',`任务 ${task.id} 改动`,identity) as string
+    expect(older.split('\n')[0]).toBe('最近一轮的改动记录读不出来，下面是更早的一轮。')
+    expect(older).not.toContain('只检查了一部分')
   })
   it('任务 <编号> 改动 skips rounds a rewind discarded (v81)',async()=>{
     setup({async spawn(){return{async *dispatch(){yield result},async close(){}}}})
