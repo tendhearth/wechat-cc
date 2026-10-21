@@ -3,9 +3,10 @@ import { mkdtempSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { SubsystemSupervisor } from '../subsystems'
+import { makeTeardown } from './teardown'
 import { wireKnowledge } from './wire-knowledge'
 
-const base = () => ({ sup: new SubsystemSupervisor(() => {}), log: () => {}, stateDir: mkdtempSync(join(tmpdir(), 'wk-')) })
+const base = () => ({ sup: new SubsystemSupervisor(() => {}), log: () => {}, teardown: makeTeardown(), stateDir: mkdtempSync(join(tmpdir(), 'wk-')) })
 const state = (sup: SubsystemSupervisor) => sup.statuses().find(s => s.name === 'knowledge')?.state
 
 describe('wireKnowledge', () => {
@@ -26,7 +27,9 @@ describe('wireKnowledge', () => {
       expect(k?.embedder).toBeUndefined()
       expect(k?.embedQuery).toBeUndefined()
       expect(state(ctx.sup)).toBe('ok')
-    } finally { k?.store.close() }
+      // 适配定时器登记在收尾清单里(复查 10-21:以前关机后还对着关掉的 store 跑)
+      expect(ctx.teardown.steps().map(t => `${t.tag}:${t.what}`)).toContain('KNOWLEDGE:adapter timer')
+    } finally { for (const t of ctx.teardown.steps()) await t.stop(); k?.store.close() }
   })
   it('store 打不开 ⇒ degraded,不外抛', async () => {
     const ctx = base()

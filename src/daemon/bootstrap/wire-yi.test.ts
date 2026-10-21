@@ -1,6 +1,7 @@
 import { describe, it, expect } from 'vitest'
 import { createServer } from 'node:net'
 import { SubsystemSupervisor } from '../subsystems'
+import { makeTeardown } from './teardown'
 import { wireYi } from './wire-yi'
 
 const parts = { a2aRegistry: { verifyBearer: () => null } as any, dispatchDelegate: (async () => '') as any }
@@ -9,7 +10,7 @@ const state = (sup: SubsystemSupervisor) => sup.statuses().find(s => s.name === 
 describe('wireYi', () => {
   it('yi_hub_listen / yi_brain 都没配 ⇒ undefined,supervisor 记 off', async () => {
     const sup = new SubsystemSupervisor(() => {})
-    expect(await wireYi({ sup, log: () => {}, configuredAgent: {} as any }, parts)).toBeUndefined()
+    expect(await wireYi({ sup, log: () => {}, teardown: makeTeardown(), configuredAgent: {} as any }, parts)).toBeUndefined()
     expect(state(sup)).toBe('off')
   })
   it('端口被占 ⇒ degraded、不外抛(boot 继续)', async () => {
@@ -18,7 +19,7 @@ describe('wireYi', () => {
     const port = (blocker.address() as { port: number }).port
     const sup = new SubsystemSupervisor(() => {})
     try {
-      const hub = await wireYi({ sup, log: () => {}, configuredAgent: { yi_hub_listen: { host: '127.0.0.1', port } } as any }, parts)
+      const hub = await wireYi({ sup, log: () => {}, teardown: makeTeardown(), configuredAgent: { yi_hub_listen: { host: '127.0.0.1', port } } as any }, parts)
       expect(hub).toBeUndefined()
       expect(state(sup)).toBe('degraded')
     } finally { blocker.close() }
@@ -31,7 +32,7 @@ describe('wireYi', () => {
     await new Promise<void>(r => probe.close(() => r()))
     const sup = new SubsystemSupervisor(() => {})
     const hub = await wireYi({
-      sup, log: () => {},
+      sup, log: () => {}, teardown: makeTeardown(),
       configuredAgent: { yi_hub_listen: { host: '127.0.0.1', port }, yi_brain: { url: 'not a url', handId: 'h', authToken: 't' } } as any,
     }, parts)
     expect(hub).toBeUndefined()
@@ -43,8 +44,29 @@ describe('wireYi', () => {
   })
   it('只配 hand(yi_brain)⇒ 没有 hub 但子系统记 ok,不是 off', async () => {
     const sup = new SubsystemSupervisor(() => {})
-    const hub = await wireYi({ sup, log: () => {}, configuredAgent: { yi_brain: { url: 'ws://127.0.0.1:1', handId: 'h', authToken: 't' } } as any }, parts)
+    const hub = await wireYi({ sup, log: () => {}, teardown: makeTeardown(), configuredAgent: { yi_brain: { url: 'ws://127.0.0.1:1', handId: 'h', authToken: 't' } } as any }, parts)
     expect(hub).toBeUndefined()
     expect(state(sup)).toBe('ok')
+  })
+  it('**hub 起来了 ⇒ 在收尾清单里登记停服务端;跑一遍收尾,端口就放了**(复查 10-21:以前关机不停)', async () => {
+    const probe = createServer()
+    await new Promise<void>(r => probe.listen(0, '127.0.0.1', r))
+    const port = (probe.address() as { port: number }).port
+    await new Promise<void>(r => probe.close(() => r()))
+    const sup = new SubsystemSupervisor(() => {})
+    const teardown = makeTeardown()
+    const hub = await wireYi({ sup, log: () => {}, teardown, configuredAgent: { yi_hub_listen: { host: '127.0.0.1', port } } as any }, parts)
+    expect(hub).toBeDefined()
+    expect(teardown.steps().map(t => `${t.tag}:${t.what}`)).toEqual(['YI:hub server'])
+    for (const t of teardown.steps()) await t.stop()
+    const again = createServer()
+    await expect(new Promise<void>((resolve, reject) => { again.once('error', reject); again.listen(port, '127.0.0.1', () => resolve()) })).resolves.toBeUndefined()
+    await new Promise<void>(r => again.close(() => r()))
+  })
+  it('只配 hand ⇒ 登记停出站连接', async () => {
+    const teardown = makeTeardown()
+    await wireYi({ sup: new SubsystemSupervisor(() => {}), log: () => {}, teardown, configuredAgent: { yi_brain: { url: 'ws://127.0.0.1:1', handId: 'h', authToken: 't' } } as any }, parts)
+    expect(teardown.steps().map(t => `${t.tag}:${t.what}`)).toEqual(['YI:hand client'])
+    for (const t of teardown.steps()) await t.stop()
   })
 })

@@ -26,6 +26,8 @@
  *   - src/daemon/main.ts (production entry)
  *   - src/daemon/bootstrap.test.ts / bootstrap.a2a.test.ts / bootstrap/boot-order.test.ts
  */
+import { makeTeardown } from './teardown'
+import { wireIdleSweep } from './wire-idle-sweep'
 import { SessionManager } from '../../core/session-manager'
 import type { TierProfile } from '../../core/user-tier'
 import type { ProviderId } from '../../core/conversation'
@@ -87,7 +89,8 @@ export async function buildBootstrap(deps: BootstrapDeps): Promise<Bootstrap> {
   const sup = deps.supervisor
   // 各 wire-* 共用的上下文(BootstrapCtx);configuredAgent 在下面第 5 步才有,
   // 之前的 wire 用 ctxBase,之后的用 ctx。
-  const ctxBase = { sup, log: deps.log, stateDir: deps.stateDir, db: deps.db }
+  const teardown = deps.teardown ?? makeTeardown()
+  const ctxBase = { sup, log: deps.log, stateDir: deps.stateDir, db: deps.db, teardown }
 
   // Connection-health runtime (Task 7) — constructed FIRST and unconditionally,
   // no config gate, so it exists before anything that could report a failure:
@@ -252,24 +255,8 @@ export async function buildBootstrap(deps: BootstrapDeps): Promise<Bootstrap> {
   const selfRestartCheck = wiredSelfRestart?.check ?? null
   const selfRestartActivityMarker = wiredSelfRestart?.marker ?? null
 
-  // Periodic idle sweep — without this, idleEvictMs is dead config (the
-  // method exists but was never called from production paths). 30 min of
-  // inactivity is the limit before a session is dropped; the next dispatch
-  // spawns a fresh subprocess that re-reads keychain credentials. Required
-  // to avoid the long-running-daemon OAuth-staleness path that surfaces as
-  // the claude binary streaming "Not logged in · Please run /login" as
-  // assistant text. unref() so the timer never keeps the event loop alive
-  // (matters for tests that build a real bootstrap and then exit).
-  //
-  // selfRestartCheck rides this SAME 60s tick (no new timer) — see the
-  // self-restart block above. It swallows its own errors, so no .catch here.
-  const idleSweepTimer = setInterval(() => {
-    sessionManager.sweepIdle().catch(err => {
-      deps.log('IDLE_SWEEP', `error: ${err instanceof Error ? err.message : String(err)}`)
-    })
-    void selfRestartCheck?.()
-  }, 60_000)
-  idleSweepTimer.unref()
+  // 每分钟一拍:空闲会话清扫 + 自重启检查 —— ./wire-idle-sweep.ts(复查 10-21 搬出,关机时停)。
+  wireIdleSweep({ log: deps.log, teardown }, { sessionManager, selfRestartCheck })
 
   // fallback 回复 / recordTurn / coordinator — ./wire-coordinator.ts(2026-09-27 拆分)。
   const { anomalyNotes, sendAssistantText, coordinator } = wireCoordinator(deps, ctxBase, { health, resolve, sessionManager, conversationStore, registry, defaultProviderId, readAgentConfig, permissionMode, turnTimeoutMs })

@@ -87,6 +87,7 @@ import { wireWorkbench } from './bootstrap/wire-workbench'
 import { wireCliSessions } from './bootstrap/wire-cli-sessions'
 import { wireJobs } from './bootstrap/wire-jobs'
 import { pinHuntForExistingOwner } from './companion/hunt-default'
+import { makeTeardown } from './bootstrap/teardown'
 import { wireActivity } from './bootstrap/wire-activity'
 import {wireWorkbenchNotifications} from './bootstrap/wire-workbench-notifications'
 import {wireWorkbenchArtifacts} from './bootstrap/wire-workbench-artifacts'
@@ -226,11 +227,14 @@ async function bootDaemonInner(opts: BootDaemonOpts, undo: Array<() => void>): P
   const BOOT_AT_ISO = new Date().toISOString()
   let bootRef: import('./bootstrap').Bootstrap | null = null
 
+  // bootstrap 起的定时器 / 连接的收尾清单(bootstrap/teardown.ts):在这里建、直接交给 shutdown,启动半路失败也停得到。
+  const bootTeardown = makeTeardown()
   // 收尾(重构第二批步 6a,runtime/shutdown.ts):不管启动有没有走完,都按倒序停已登记的子系统。
   const shutdown = makeDaemonShutdown({
     log: (t, l) => log(t, l),
     stopHeartbeat,
     lc,
+    teardown: bootTeardown,
     boot: () => bootRef,
     removeAgyGlobalMcp: () => removeAgyGlobalMcp({ log }),
     closeDb: () => db.close(),
@@ -447,7 +451,7 @@ async function bootDaemonInner(opts: BootDaemonOpts, undo: Array<() => void>): P
     lc.register(internalApi)
     // 2. bootstrap composes provider registry / session manager / coordinator
     const boot = await buildBootstrap({
-      stateDir, db, ilink, loadProjects: ilink.loadProjects, networkGate: guardRt.gate,
+      stateDir, db, ilink, loadProjects: ilink.loadProjects, networkGate: guardRt.gate, teardown: bootTeardown,
       lastActiveChatId: ilink.lastActiveChatId, log: (t, l, f) => log(t, l, f),
       fallbackProject: () => ({ alias: '_default', path: process.cwd() }),
       dangerouslySkipPermissions: dangerously, conversationStore,
