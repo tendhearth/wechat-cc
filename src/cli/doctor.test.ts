@@ -35,6 +35,24 @@ describe('doctor installer JSON', () => {
     expect(report.checks.accounts.fix?.action).toBeTruthy()
   })
 
+  // 重构第二批步 7:daemon 找 codex 还会翻 ~/.nvm(launchd / systemd 的 PATH 里没有 nvm);doctor 以前只看 PATH,
+  // nvm 装法的人 daemon 用得好好的,doctor 却说「codex 没装」。真接线(defaultDoctorDeps)用 daemon 同一个 findCodexBinary。
+  it('finds codex the same way the daemon does when findCodex is wired (nvm installs are not "missing")', () => {
+    const report = analyzeDoctor({
+      stateDir: '/state',
+      findOnPath: () => null,
+      findCodex: () => '/home/u/.nvm/versions/node/v22.0.0/bin/codex',
+      readAccounts: () => [],
+      readAccess: () => ({ dmPolicy: 'allowlist', allowFrom: [] }),
+      readAgentConfig: () => ({ provider: 'codex', dangerouslySkipPermissions: true, autoStart: false, closeStopsDaemon: false }),
+      readUserNames: () => ({}),
+      readExpiredBots: () => [],
+      daemon: () => ({ alive: false, pid: null }),
+      service: missingSystemd,
+    })
+    expect(report.checks.codex.path).toBe('/home/u/.nvm/versions/node/v22.0.0/bin/codex')
+  })
+
   it('flips claude/codex severity when provider=codex', () => {
     const report = analyzeDoctor({
       stateDir: '/state',

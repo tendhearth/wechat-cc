@@ -114,6 +114,21 @@ it('registers nothing for ACP when boot lacks cursor or the binary cannot be res
   expect(log).toHaveBeenCalledWith('WORKBENCH', expect.stringContaining('cursor'))
 })
 
+// 重构第二批步 7:ACP 执行者在 win32 上 spawn 时无条件抛(进程树清理没验证)—— 注册前就挡掉,别让人选了再报错。
+it('ACP executors (built-in cursor and custom) are not registered on win32; they would throw at spawn', async () => {
+  const source = createProviderRegistry(), target = createProviderRegistry()
+  source.register('cursor', fakeProvider(), { displayName: 'Cursor', canResume: () => true })
+  const log = vi.fn(), create = vi.fn()
+  expect(registerAcpExecutors(target, source, {}, { findOnPath: () => '/usr/bin/cursor-agent', create, log, platform: 'win32' })).toEqual([])
+  const { registerCustomAcpExecutors } = await import('./wire-workbench')
+  expect(registerCustomAcpExecutors(target, [{ id: 'opencode', name: 'OpenCode', command: 'opencode', args: ['acp'] }], { findOnPath: () => '/usr/bin/opencode', create, log, platform: 'win32' })).toEqual([])
+  expect(create).not.toHaveBeenCalled()
+  expect(target.list()).toEqual([])
+  expect(log).toHaveBeenCalledWith('WORKBENCH', expect.stringContaining('Windows'))
+  // 同样的输入在别的平台照常注册
+  expect(registerAcpExecutors(target, source, {}, { findOnPath: () => '/usr/bin/cursor-agent', create: vi.fn(() => fakeProvider()), platform: 'darwin' })).toEqual(['cursor'])
+})
+
 it('registers nothing when the source registry lacks agy/cursor', () => {
   const source = createProviderRegistry(), target = createProviderRegistry()
   source.register('claude', fakeProvider(), { displayName: 'Claude', canResume: () => true })

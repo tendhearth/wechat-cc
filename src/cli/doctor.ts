@@ -6,6 +6,7 @@ import { createRequire } from 'node:module'
 import { spawnSync } from 'node:child_process'
 import { STATE_DIR } from '../lib/config'
 import { findOnPath, probeBinaryVersion } from '../lib/util'
+import { findCodexBinary } from '../lib/find-codex-binary'
 import { loadAgentConfig, type AgentConfig } from '../lib/agent-config'
 import { buildServicePlan, isServiceInstalled, type ServiceKind } from './service-manager'
 import { appMainBinaryPath, compiledBinaryPath, compiledRepoRoot, isCompiledBundle } from '../lib/runtime-info'
@@ -53,6 +54,8 @@ export type Runtime = 'compiled-bundle' | 'source'
 export interface DoctorDeps {
   stateDir: string
   findOnPath: (cmd: string) => string | null
+  /** 找 codex:真接线用 daemon 同一个 findCodexBinary(PATH + ~/.nvm);缺省只看 PATH(测试注入 findOnPath 时不碰真机)。 */
+  findCodex?: () => string | null
   /**
    * 扫 `plugins/*` 指向的卫星仓库有没有未推的提交(见 satellite-repos.ts 的
    * 事故说明)。纯开发期检查:缺省不接线,打包版用户根本没有这些仓库。
@@ -195,7 +198,7 @@ export function analyzeDoctor(deps: DoctorDeps): DoctorReport {
   const bun = deps.findOnPath('bun')
   const git = deps.findOnPath('git')
   const claude = deps.findOnPath('claude')
-  const codex = deps.findOnPath('codex')
+  const codex = deps.findCodex ? deps.findCodex() : deps.findOnPath('codex')
   const probe = deps.probeBinaryVersion ?? (() => null)
   const claudeVersion = claude ? probe(claude) : null
   const codexVersion = codex ? probe(codex) : null
@@ -535,6 +538,7 @@ export function defaultDoctorDeps(stateDir = STATE_DIR): DoctorDeps {
   return {
     stateDir,
     findOnPath,
+    findCodex: () => findCodexBinary(),
     probeBinaryVersion,
     probeLogin: cli => defaultProbeLogin(cli),
     probeCursor: defaultProbeCursor,

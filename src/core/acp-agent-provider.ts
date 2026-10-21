@@ -12,6 +12,7 @@
  *  - 关 stdin 不会让 cursor-agent 退出 ⇒ close() 必须 SIGTERM/SIGKILL 进程组并确认退出;
  *  - 不声明 fs/terminal,agent 自己落盘。
  */
+import { acpSupportedOn } from './acp/platform'
 import { spawn as nodeSpawn } from 'node:child_process'
 import type { AgentAttachment, AgentEvent, AgentProvider, AgentSession, SpawnContext } from './agent-provider'
 import { AsyncQueue } from './async-queue'
@@ -181,7 +182,7 @@ export function createAcpProvider(options: AcpProviderOptions): AgentProvider {
     async spawn(project, context: SpawnContext): Promise<AgentSession> {
       // 对话侧与工作台共用这一句:两边都靠 close() 杀进程组收尾,Windows 上那条路没验过。
       // 文案不提"工作台" —— 对话侧也会撞到它(bootstrap 那边另有一道门:win32 不注册 ACP 对话 provider)。
-      if (process.platform === 'win32') throw new Error(`${options.displayName} 暂不支持 Windows：尚未验证进程树清理。`)
+      if (!acpSupportedOn()) throw new Error(`${options.displayName} 暂不支持 Windows：尚未验证进程树清理。`)
       // daemon 自己的凭据不进外部 CLI —— cursor-agent 还会再 spawn 它自己的 MCP 子进程,env 是会传染的。
       const child = spawn(options.command, options.args, { cwd: project.path, env: workbenchSubprocessEnv(), stdio: ['pipe', 'pipe', 'pipe'], detached: true, windowsHide: true })
       // 按 JSON-RPC 请求 id 记账:id 是 agent 唯一能用来对上回复的东西,撞 id ⇒ 协议已经不可信。

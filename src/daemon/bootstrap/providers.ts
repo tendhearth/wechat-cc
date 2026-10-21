@@ -1,3 +1,4 @@
+import { acpSupportedOn } from '../../core/acp/platform'
 import { homedir } from 'node:os'
 import { existsSync } from 'node:fs'
 import { createProviderRegistry, type ProviderRegistry } from '../../core/provider-registry'
@@ -159,6 +160,23 @@ export async function registerProviders(deps: ProviderDeps): Promise<ProviderWir
   }
   /** 晚注册时补一次开机末尾那道矩阵检查(只查这一个 id)。 */
   const assertLateRegistration = (id: ProviderId) => assertMatrixComplete([id])
+  /**
+   * 开机探测失败 ⇒ 后台退避重探,通过就注册(重构第二批步 7:以前 codex / cursor / agy 各抄一份)。
+   * accept:探测通过后还要过的那一关(codex 的版本号);回原因 ⇒ 这次不算。register 回 false ⇒ 「探测通过但注册失败」。
+   */
+  const retryRegistration = (id: ProviderId, bin: string, firstError: string, opts: {
+    accept?: (r: Extract<Awaited<ReturnType<typeof probe>>, { ok: true }>) => string | null
+    register: (bin: string, r: Extract<Awaited<ReturnType<typeof probe>>, { ok: true }>) => boolean | Promise<boolean>
+  }) => scheduleProbeRetry(id, firstError, async () => {
+    if (registry.has(id)) return { ok: true }
+    const r = await probe(bin)
+    if (!r.ok) return { ok: false, reason: describeProbeFailure(r) }
+    const rejected = opts.accept?.(r)
+    if (rejected) return { ok: false, reason: rejected }
+    if (!(await opts.register(bin, r))) return { ok: false, reason: '探测通过但注册失败(见上一行 BOOT)' }
+    assertLateRegistration(id)
+    return { ok: true }
+  })
 
   const defaultProviderId: ProviderId = deps.agentProviderKind
     ?? (process.env.WECHAT_AGENT_PROVIDER === 'codex' ? 'codex' : configuredAgent.provider)
@@ -396,17 +414,9 @@ export async function registerProviders(deps: ProviderDeps): Promise<ProviderWir
       // 探测本身失败(超时 / 非零退出 / 起不来)—— 开机负载下可能只是一时的:退避重探,
       // 通过就注册,不用重启。
       deps.log('BOOT', `codex: ${codexBinary} --version 探测失败(${codexProbeFailure})— 先不注册,后台退避重探`)
-      const bin = codexBinary
-      scheduleProbeRetry('codex', codexProbeFailure, async () => {
-        if (registry.has('codex')) return { ok: true }
-        const r = await probe(bin)
-        if (!r.ok) return { ok: false, reason: describeProbeFailure(r) }
-        const check = codexCheckFrom(bin, r)
-        if (check.reason === 'version_probe_failed') return { ok: false, reason: `--version 输出里没有版本号:${check.rawVersion ?? '(空)'}` }
-        codexVersionCheck = check
-        registerCodex(bin, check)
-        assertLateRegistration('codex')
-        return { ok: true }
+      retryRegistration('codex', codexBinary, codexProbeFailure, {
+        accept: (r) => { const check = codexCheckFrom(codexBinary, r); return check.reason === 'version_probe_failed' ? `--version 输出里没有版本号:${check.rawVersion ?? '(空)'}` : null },
+        register: (bin, r) => { const check = codexCheckFrom(bin, r); codexVersionCheck = check; registerCodex(bin, check); return true },
       })
     } else {
       // 跑起来了、退出码 0,但打不出版本号 —— 这是确定性的,不重探。
@@ -488,7 +498,7 @@ export async function registerProviders(deps: ProviderDeps): Promise<ProviderWir
   // ACP provider 的 close() 靠杀进程组收尾,Windows 上那条路没验过(acp-agent-provider.ts
   // spawn 时会直接抛)。注册了等于每一轮对话都撞一次那句抛错 —— 不如干脆不注册,
   // 让下面的 SDK 兜底照旧判断(有 CURSOR_API_KEY 就走 SDK,没有就是"未注册")。
-  if (cursorAgentBin && process.platform === 'win32') {
+  if (cursorAgentBin && !acpSupportedOn()) {
     deps.log('BOOT', 'cursor: ACP 对话 provider 暂不支持 Windows(进程组清理未验证),未注册')
   } else if (cursorAgentBin) {
     const r = await probe(cursorAgentBin)
@@ -548,15 +558,7 @@ export async function registerProviders(deps: ProviderDeps): Promise<ProviderWir
 
   // cursor-agent 探测失败(且 SDK 兜底也没注册上 cursor)⇒ 退避重探,通过就注册 ACP 对话 provider。
   if (cursorCliProbeFailure && cursorAgentBin && !registry.has('cursor')) {
-    const bin = cursorAgentBin
-    scheduleProbeRetry('cursor', cursorCliProbeFailure, async () => {
-      if (registry.has('cursor')) return { ok: true }
-      const r = await probe(bin)
-      if (!r.ok) return { ok: false, reason: describeProbeFailure(r) }
-      if (!(await registerCursorCli(bin))) return { ok: false, reason: '探测通过但注册失败(见上一行 BOOT)' }
-      assertLateRegistration('cursor')
-      return { ok: true }
-    })
+    retryRegistration('cursor', cursorAgentBin, cursorCliProbeFailure, { register: (bin) => registerCursorCli(bin) })
   }
 
   // ──────────────────────────────────────────────────────────────
@@ -770,14 +772,7 @@ export async function registerProviders(deps: ProviderDeps): Promise<ProviderWir
     else {
       const why = describeProbeFailure(r)
       deps.log('BOOT', `agy: ${agyBin} --version 探测失败(${why})— 先不注册,后台退避重探`)
-      scheduleProbeRetry('agy', why, async () => {
-        if (registry.has('agy')) return { ok: true }
-        const r2 = await probe(agyBin)
-        if (!r2.ok) return { ok: false, reason: describeProbeFailure(r2) }
-        if (!(await registerAgy(agyBin))) return { ok: false, reason: '探测通过但注册失败(见上一行 BOOT)' }
-        assertLateRegistration('agy')
-        return { ok: true }
-      })
+      retryRegistration('agy', agyBin, why, { register: (bin) => registerAgy(bin) })
     }
   }
 
