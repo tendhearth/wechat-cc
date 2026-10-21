@@ -1,8 +1,8 @@
-import {PHONE_ANSWER_MAX_JSON} from '@wechat-cc/protocol'
+import {PHONE_ANSWER_MAX_JSON,workbenchErrorHttp} from '@wechat-cc/protocol'
 import type {EntryResult} from '../core/workbench/service'
 import type {UploadChunk,UploadState} from '../core/workbench/attachment-uploads'
 import type {MattersService,MatterSayInput} from '../core/matters/service'
-import {entryErrorStatus,parseEntryInput,type EntryInput,type EntryOptions} from '../core/workbench/task-entry'
+import {parseEntryInput,type EntryInput,type EntryOptions} from '../core/workbench/task-entry'
 import type {NativeContinuePreview} from '../core/workbench/native-adoption'
 
 export type MobileMatterActions=Partial<Pick<MattersService,'permission'|'answer'|'artifactChunk'|'handoff'|'inputReceipt'|'stop'|'worktree'|'worktreeScript'|'rewindPreview'|'rewind'>>
@@ -21,42 +21,15 @@ const SHA=/^[a-f0-9]{64}$/
 const ARTIFACT=/^[a-f0-9-]{8,64}$/
 const object=(v:unknown):v is Record<string,unknown>=>!!v&&typeof v==='object'&&!Array.isArray(v)
 const json=(body:object,status=200)=>new Response(JSON.stringify(body),{status,headers:{'content-type':'application/json; charset=utf-8','cache-control':'no-store'}})
-/** 回到某一轮(切片 4):工作台的回退码原样给手机(App 认得的各有一句话,认不得的按「没做成」说)。 */
-const REWIND_409=new Set(['rewind_confirmation_required','rewind_confirmation_stale','rewind_not_latest','review_round_discarded','rewind_needs_owner','rewind_shared_folder','rewind_merged','rewind_ignored_conflict'])
+/** 状态与对外的码查 packages/protocol 的 WORKBENCH_ERRORS(phone 那一栏);回退的两种另带一个短字段。 */
 export function mobileMatterError(error:unknown):Response {
   const code=error instanceof Error?error.message:'internal'
-  if(REWIND_409.has(code))return json({ok:false,error:code},409)
+  const {status,error:out}=workbenchErrorHttp(code,'phone')
   // 这件事回不了:只带 reason,而且只认短码(/^[a-z_]{1,40}$/)—— 以后谁往 reason 里塞了细节也漏不出去(#444 评审)
-  if(code==='rewind_unavailable'||code==='rewind_noop'){const reason=(error as {reason?:unknown}).reason;return json({ok:false,error:code,...(typeof reason==='string'&&/^[a-z_]{1,40}$/.test(reason)?{reason}:{})},422)}
+  if(code==='rewind_unavailable'||code==='rewind_noop'){const reason=(error as {reason?:unknown}).reason;return json({ok:false,error:out,...(typeof reason==='string'&&/^[a-z_]{1,40}$/.test(reason)?{reason}:{})},status)}
   // 切换失败:rolledBack=true ⇒ 已恢复原样;false ⇒ 这件事停住了(随后详情里 task.rewind.blocked)
-  if(code==='rewind_failed'){const rolledBack=(error as {rolledBack?:unknown}).rolledBack;return json({ok:false,error:code,...(typeof rolledBack==='boolean'?{rolledBack}:{})},502)}
-  const entryStatus=entryErrorStatus(code)
-  if(entryStatus!==undefined)return json({ok:false,error:code},entryStatus)
-  if(code==='upload_invalid_content')return json({ok:false,error:code},400)
-  if(['matter_not_found','not_found'].includes(code))return json({ok:false,error:'matter_not_found'},404)
-  if(code==='upload_not_found')return json({ok:false,error:code},404)
-  if(['upload_discarded','upload_expired'].includes(code))return json({ok:false,error:code},410)
-  if(['attachment_storage_limit','attachment_limit','upload_limit','upload_unfinished_limit','invalid_attachment_size'].includes(code))return json({ok:false,error:code},413)
-  if(['upload_conflict','upload_changed','upload_offset','attachment_in_use'].includes(code))return json({ok:false,error:code},409)
-  // 行评论(切片 4):块变了 / 已发出不能改 / 同 id 内容不同 / 草稿满了 ⇒ 409;评论不在(或没有可发的草稿)⇒ 404
-  if(['review_hunk_stale','review_comment_sent','review_comment_conflict','review_comment_limit'].includes(code))return json({ok:false,error:code},409)
-  if(code==='review_comment_not_found')return json({ok:false,error:code},404)
-  if(code==='invalid_entry_owner')return json({ok:false,error:code},403)
-  // 独立工作区(2026-10-07):项目不是 Git 仓库 / 同名分支或目录已占 / git 自己失败。
-  if(code==='worktree_not_git'||code==='worktree_base_missing')return json({ok:false,error:code},422)
-  if(['worktree_branch_exists','worktree_conflict','worktree_dirty','worktree_removed','worktree_uncommitted','project_dirty','project_detached','worktree_not_ff','project_busy','worktree_branch_missing','worktree_open'].includes(code))return json({ok:false,error:code},409)
-  if(code==='not_worktree')return json({ok:false,error:code},422)
-  if(code==='worktree_git_failed')return json({ok:false,error:code},502)
-  // 工作区脚本(2026-10-20):批准只在电脑上 ⇒ 手机拿到的是「请先在电脑上确认」(script_needs_computer);在跑 409;没有 run 脚本 422
-  if(code==='script_approval_required')return json({ok:false,error:'script_needs_computer'},428)
-  if(code==='script_setup_running'||code==='script_running')return json({ok:false,error:code},409)
-  if(code==='no_scripts')return json({ok:false,error:code},422)
-  if(['creation_conflict','managed_workspace_changed','attachment_scope','attachment_conflict'].includes(code))return json({ok:false,error:code},409)
-  if(['entry_not_wired','managed_workspace_unavailable','invalid_managed_workspace','workbench_stopping','unavailable_provider','provider_quota_exhausted','quota_handoff_unavailable','network_unprotected'].includes(code))return json({ok:false,error:code},503)
-  if(['permission_stale','question_stale','input_stale','input_conflict','input_delivery_busy','workbench_busy','reply_sink_busy','workbench_archived','artifact_changed','restart_confirmation_required','restart_confirmation_stale','external_close_confirmation_required','external_close_confirmation_stale','native_session_busy','native_folder_busy','native_history_changed','quota_handoff_not_needed','quota_handoff_changed'].includes(code))return json({ok:false,error:code},409)
-  if(code.endsWith('_not_wired')||code==='input_storage_unavailable')return json({ok:false,error:'unavailable'},503)
-  if(code.startsWith('invalid_')||['matter_task_required','matter_say_unsupported'].includes(code))return json({ok:false,error:code},400)
-  return json({ok:false,error:'unavailable'},500)
+  if(code==='rewind_failed'){const rolledBack=(error as {rolledBack?:unknown}).rolledBack;return json({ok:false,error:out,...(typeof rolledBack==='boolean'?{rolledBack}:{})},status)}
+  return json({ok:false,error:out},status)
 }
 export function mobileSayInput(body:Record<string,unknown>):MatterSayInput|undefined {
   if(Object.keys(body).some(key=>!['id','text','requestId','runId','draftId','attachmentIds'].includes(key)))throw Error('invalid_request')

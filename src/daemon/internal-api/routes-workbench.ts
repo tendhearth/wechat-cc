@@ -5,7 +5,8 @@ import { isAbsolute } from 'node:path'
 import type { WorkbenchListQuery } from '../../core/workbench/store'
 import type {InputMaterials} from '../../core/workbench/service'
 import {isWorkbenchProviderId} from '../../core/workbench/executor-capabilities'
-import {entryErrorStatus,parseEntryInput} from '../../core/workbench/task-entry'
+import {parseEntryInput} from '../../core/workbench/task-entry'
+import {workbenchErrorHttp,workbenchErrorSpec} from '@wechat-cc/protocol'
 import type { InternalApiDeps, RouteHandler, RouteTable } from './types'
 
 const TASK_ID = /^[a-f0-9]{8}$/
@@ -40,13 +41,6 @@ function errorCode(err: unknown): string {
   return err instanceof Error ? err.message : ''
 }
 
-const REWIND_409=new Set(['rewind_confirmation_required','rewind_confirmation_stale','review_round_discarded','rewind_needs_owner','rewind_shared_folder','rewind_merged','rewind_ignored_conflict','rewind_undo_stale','rewind_undo_unavailable','rewind_not_blocked'])
-function rewindStatus(code:string):number|null{
-  if(REWIND_409.has(code))return 409
-  if(code==='rewind_unavailable'||code==='rewind_noop')return 422
-  if(code==='rewind_failed')return 502
-  return null
-}
 /** 只带这几个字段出去(service 挂在 Error 上的);别的(steps 原文这类)不外泄。 */
 function rewindExtra(err:unknown):JsonObject{
   if(!err||typeof err!=='object')return{}
@@ -57,59 +51,11 @@ function rewindExtra(err:unknown):JsonObject{
   return out
 }
 
+/** 状态与对外的码都查 packages/protocol 的 WORKBENCH_ERRORS;回退那一组另带 rewindExtra。 */
 function mappedError(err: unknown,entry=false): ReturnType<RouteHandler> {
   const code = errorCode(err)
-  // 回到某一轮(2026-10-21):冲突 / 要再确认 ⇒ 409;这件事回不了 ⇒ 422(带 reason / detail);切换失败 ⇒ 502(带备份 ref)。
-  const rewind=rewindStatus(code)
-  if(rewind)return{status:rewind,body:{error:code,...rewindExtra(err)}}
-  // Existing task APIs keep their established unattended 428 response.
-  const entryStatus=entryErrorStatus(code)
-  if(entryStatus!==undefined&&(entry||code!=='unattended_ack_required'))return{status:entryStatus,body:{error:code}}
-  if(['upload_discarded','upload_expired'].includes(code))return{status:410,body:{error:code}}
-  if(code==='attachment_in_use')return{status:409,body:{error:code}}
-  if(code==='invalid_entry_owner')return{status:403,body:{error:code}}
-  if(['creation_conflict','managed_workspace_changed','quota_handoff_changed','quota_handoff_not_needed'].includes(code))return{status:409,body:{error:code}}
-  if(code==='quota_handoff_unavailable')return{status:503,body:{error:code}}
-  if(['entry_not_wired','managed_workspace_unavailable','invalid_managed_workspace','workbench_stopping'].includes(code))return{status:503,body:{error:code}}
-  if(['model_catalog_unavailable','model_catalog_invalid','network_unprotected'].includes(code))return{status:503,body:{error:code}}
-  if(/^execution_.+_(unsupported|unknown)$/.test(code))return{status:400,body:{error:code}}
-  if(code==='execution_conflict')return{status:409,body:{error:code}}
-  if(['attachment_limit','attachment_storage_limit','invalid_attachment_size','request_body_too_large'].includes(code))return{status:413,body:{error:code}}
-  if(['attachment_conflict'].includes(code))return{status:409,body:{error:code}}
-  if(code==='attachment_scope')return{status:404,body:{error:'not_found'}}
-  if(code==='attachment_platform_unsupported')return{status:422,body:{error:code}}
-  if(['workbench_resume_unsupported'].includes(code))return{status:422,body:{error:code}}
-  if (['input_stale','input_conflict','input_delivery_busy','question_stale','input_limit'].includes(code))return{status:409,body:{error:code}}
-  if (code === 'invalid_question'||code === 'invalid_answer')return{status:400,body:{error:code}}
-  if (code === 'review_file_unmarkable'||code === 'invalid_review_reference')return{status:400,body:{error:code}}
-  if (code === 'workbench_archived' || code === 'workbench_busy' || code === 'artifact_changed' || code === 'permission_stale' || code === 'restart_confirmation_required' || code === 'restart_confirmation_stale') return { status: 409, body: { error: code } }
-  if (['handoff_changed','native_history_changed','native_session_already_managed','native_session_busy','native_session_identity_mismatch','external_close_confirmation_required','external_close_confirmation_stale'].includes(code))return{status:409,body:{error:code}}
-  if(code==='handoff_artifact_unsupported')return{status:422,body:{error:code}}
-  if(code==='native_import_too_large')return{status:400,body:{error:code}}
-  if (code === 'native_history_unsupported') return {status:422,body:{error:code}}
-  if (code === 'native_history_unavailable') return {status:503,body:{error:code}}
-  // 打回改走 submitInput 之后这条路由也能吐它:存不下补充是「这会儿没法办」,不是 500(终审 M7)。
-  if (code === 'input_storage_unavailable') return {status:503,body:{error:code}}
-  if (code === 'writer_alive' || code === 'invalid_state' || code === 'review_file_changed') return { status: 409, body: { error: code } }
-  if (code === 'review_revert_unavailable') return { status: 422, body: { error: code } }
-  // 行评论 / 按块撤回(2026-10-21):块变了 / 已发出不能改 / 同 id 不同内容 / 超上限 ⇒ 409;评论不在(或没有能发的草稿)⇒ 404
-  if (['review_hunk_stale', 'review_comment_sent', 'review_comment_conflict', 'review_comment_limit'].includes(code)) return { status: 409, body: { error: code } }
-  if (code === 'review_comment_not_found') return { status: 404, body: { error: code } }
-  if (code === 'worktree_dirty' || code === 'worktree_removed' || code === 'worktree_conflict' || code === 'worktree_branch_exists') return { status: 409, body: { error: code } }
-  if (['worktree_uncommitted', 'project_dirty', 'project_detached', 'worktree_not_ff', 'project_busy', 'worktree_branch_missing', 'worktree_open'].includes(code)) return { status: 409, body: { error: code } }
-  if (code === 'not_worktree' || code === 'worktree_not_git' || code === 'worktree_base_missing') return { status: 422, body: { error: code } }
-  if (code === 'worktree_git_failed') return { status: 502, body: { error: code } }
-  // 工作区脚本(2026-10-20):没批 ⇒ 428(桌面弹确认框给主人看原文);在跑 / 内容变了 ⇒ 409;这个工作区没有 run 脚本 ⇒ 422
-  if (code === 'script_approval_required') return { status: 428, body: { error: code } }
-  if (code === 'script_setup_running' || code === 'script_running' || code === 'script_config_changed') return { status: 409, body: { error: code } }
-  if (code === 'no_scripts') return { status: 422, body: { error: code } }
-  if (code === 'matter_not_found') return { status: 404, body: { error: code } }
-  if (code === 'not_found') return { status: 404, body: { error: code } }
-  if (code === 'unavailable_provider') return { status: 422, body: { error: code } }
-  if (code === 'unattended_ack_required') return { status: 428, body: { error: code } }
-  if (code === 'unattended_ack_unavailable') return { status: 503, body: { error: code } }
-  if (code.startsWith('invalid_')) return { status: 400, body: { error: code } }
-  return { status: 500, body: { error: 'internal' } }
+  const {status,error}=workbenchErrorHttp(code,'desktop',entry)
+  return {status,body:workbenchErrorSpec(code)?.rewind?{error,...rewindExtra(err)}:{error}}
 }
 
 export function workbenchRoutes(deps: InternalApiDeps): RouteTable {
