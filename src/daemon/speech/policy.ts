@@ -19,6 +19,8 @@ export interface SpeechRequest {
   perKind?: { ok: true } | { ok: false; reason: string }
   /** 定时触发的(晨报、周报):赶上免打扰当天记 skipped:quiet。 */
   scheduled?: boolean
+  /** 调用方这一拍的时刻(伙伴一拍有自己的 nowIso);缺省 = 时钟。免打扰按它判,账按它记。 */
+  nowMs?: number
 }
 
 export interface SpeechLedgerEntry {
@@ -54,7 +56,7 @@ export function makeSpeechPolicy(deps: {
   }
   return {
     async say(req, produce) {
-      const nowMs = now()
+      const nowMs = req.nowMs ?? now()
       const ts = new Date(nowMs).toISOString()
       const ends = deps.quietEndsAt(req.chatId, nowMs)
       const decision = decideSpeech(req.kind, {

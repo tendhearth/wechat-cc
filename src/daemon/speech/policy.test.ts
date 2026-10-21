@@ -54,6 +54,15 @@ describe('policy.say —— CC 开口只有这一道门', () => {
     expect(await s.policy.say({ kind: 'permission_ask', chatId: OWNER }, produce)).toEqual({ defer: true, reason: 'undeliverable' })
     expect(produce).not.toHaveBeenCalled()
   })
+  it('调用方带了这一拍的时刻 ⇒ 按它判免打扰、记账(伙伴一拍用的是自己的 nowIso,不是墙上的钟)', async () => {
+    const seen: number[] = []
+    const ob = fakeOutbound()
+    const ledger: SpeechLedgerEntry[] = []
+    const policy = makeSpeechPolicy({ care: () => 'low', quietEndsAt: (_c, nowMs) => { seen.push(nowMs); return null }, outbound: ob.out, ledger: e => { ledger.push(e) }, log: () => {}, now: () => 0 })
+    await policy.say({ kind: 'companion', chatId: OWNER, nowMs: Date.parse('2026-05-13T10:00:00.000Z') }, async () => {})
+    expect(seen).toEqual([Date.parse('2026-05-13T10:00:00.000Z')])
+    expect(ledger[0]!.ts).toBe('2026-05-13T10:00:00.000Z')
+  })
   it('perKind / scheduled 原样交给判定', async () => {
     const s = setup({ quietEnds: Date.parse('2026-10-21T23:00:00.000Z') })
     expect(await s.policy.say({ kind: 'brief', chatId: OWNER, scheduled: true }, async () => {})).toEqual({ drop: true, reason: 'skipped:quiet' })

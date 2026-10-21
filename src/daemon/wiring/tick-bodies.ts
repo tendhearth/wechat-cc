@@ -134,6 +134,8 @@ export interface TickDeps {
    * 交付(文字由 daemon 送,才改得了道)时才照跑;否则同以前,在模型之前就停手。
    */
   proactive?: import('../companion/proactive-channel').ProactiveOutbound
+  /** CC 主动开口唯一的门(第三批 3a,wiring/wire-speech.ts)。没接 ⇒ 已迁过来的那几条路不开口(不退回直接发)。 */
+  speech?: import('../speech/policy').SpeechPolicy
   /**
    * Testing seams for the optional hearth push (memory-infra Phase 1, HI W3).
    * Production omits these — distillAndPushOwnerKnowledge falls back to the
@@ -384,6 +386,9 @@ function huntBody(opts: { nowIso: string }, style: TickTextStyle): string {
     `别分享你们最近已经聊过的东西。`
   )
 }
+
+/** 来访叙述发不出去(sendText 回了 {error}):在 say 的生产者里抛,外面撤水位。 */
+class GuestNarrationSendFailed extends Error {}
 
 export function buildTickBodies(deps: TickDeps): TickBodies {
   const launchCwd = process.cwd()
@@ -1014,14 +1019,11 @@ export function buildTickBodies(deps: TickDeps): TickBodies {
    * 朋友,它跟伙伴说的话不该被逐字转给第三个人(prompt 里明写)。
    */
   async function guestVisitPass(ownerChat: string, nowIso: string, messagesStore: MessagesStore): Promise<void> {
-    // 断线时不调模型也不外发(no-retry-storm):跟 pushTickForChat 同一道闸
-    if (deps.health?.shouldSuspend('wechat')) return
-    // 跟 pushTickForChat 同两道主人的闸(复查 10-21:以前这条路两道都不看,主人说了「别烦我」还会开口):
-    //  - care off(别烦我)= 什么都别主动说 ⇒ 这次做客**悄悄记过**(推进水位、不调模型),以后打开主动关心也不翻旧账;
-    //  - 免打扰时段 ⇒ 只是晚点说 ⇒ 这一拍什么都不动,时段过了照讲。
-    const ownerPrefs = deps.chatPrefs.get(ownerChat)
-    if (inQuietHours(ownerPrefs.quiet, Date.parse(nowIso), loadCompanionConfig(deps.stateDir).timezone)) return
-    const silent = careLevel(ownerChat, ownerPrefs, ownerChat) === 'off'
+    // 能不能开口全交给 SpeechPolicy(第三批 3a):主人那条对话的 care 档(别烦我 ⇒ 不说,这次来访记作看过)、
+    // 免打扰(推后)、两条路都送不到(推后,不调模型 —— no-retry-storm)。判的是**主人那条**对话,不是访客那条。
+    // 模型调用放在 say 的生产者里:被拒 / 推后时一个 token 都不花。
+    if (!deps.speech) { deps.log('VISIT', 'guest pass skipped: speech policy not wired'); return }
+    const speech = deps.speech
     const statePath = join(deps.stateDir, 'companion', 'guest-visits.json')
     const state: GuestVisitState = (() => {
       try { const j = readJsonFile<Partial<GuestVisitState>>(statePath); return { narrated: j.narrated ?? {}, visits: j.visits ?? {} } }
@@ -1044,58 +1046,71 @@ export function buildTickBodies(deps: TickDeps): TickBodies {
           since: rows.map(r => ({ direction: r.direction, text: r.text, ts: r.ts })),
         }, state, nowMs)
         if (!due) continue
-        if (silent) {
-          state.narrated[chatId] = latestInboundTs
-          changed = true
-          deps.log('VISIT', `guest visit not told: chat=${chatId} — owner care is off; marked as seen`)
-          continue
-        }
         // 先记水位再讲:讲到一半 daemon 重启,不该下一拍再讲一遍。
         const priorMark = state.narrated[chatId]
         state.narrated[chatId] = latestInboundTs
         state.visits = { ...(state.visits ?? {}), [chatId]: ((state.visits ?? {})[chatId] ?? 0) + 1 }
         changed = true
-        // 没讲出去 ⇒ 只撤这一位的水位和这一次的计数,前面几位这一拍讲完的照常保留(评审 #194)
-        const unmark = (): void => {
-          if (priorMark === undefined) delete state.narrated[chatId]; else state.narrated[chatId] = priorMark
+        const uncount = (): void => {
           const n = (state.visits ?? {})[chatId] ?? 0
           if (n > 1) state.visits = { ...state.visits, [chatId]: n - 1 }
           else if (state.visits) { const { [chatId]: _drop, ...rest } = state.visits; state.visits = rest }
         }
-        const evalText = deps.boot.registry.getStrongEval?.(deps.boot.defaultProviderId) ?? deps.boot.registry.getCheapEval()
-        // 一时没有可用模型:这次做客不能就此吞掉,等有模型了再讲
-        if (!evalText) { unmark(); continue }
+        // 没讲出去 ⇒ 只撤这一位的水位和这一次的计数,前面几位这一拍讲完的照常保留(评审 #194)
+        const unmark = (): void => {
+          if (priorMark === undefined) delete state.narrated[chatId]; else state.narrated[chatId] = priorMark
+          uncount()
+        }
         const name = guestLabel(deps.boot.conversationStore?.getIdentity(chatId)?.last_user_name, chatId)
-        const cfgAgent = loadAgentConfig(deps.stateDir)
-        let raw: string
+        let told = ''
+        let noModel = false
+        let outcome: Awaited<ReturnType<typeof speech.say>>
         try {
-          raw = await evalText(buildGuestVisitNarrationPrompt({
-            myName: cfgAgent.bot_name?.trim() || '我',
-            persona: null, ownerOverview: null,
-            disclosurePolicy: cfgAgent.social_disclosure_policy ?? '别转述朋友的私事。',
-            guestName: name,
-            lines: due.map(m => ({ who: m.direction === 'in' ? 'guest' as const : 'me' as const, text: m.text })),
-          }))
+          outcome = await speech.say({ kind: 'guest_visit', chatId: ownerChat, nowMs }, async (turn) => {
+            const evalText = deps.boot.registry.getStrongEval?.(deps.boot.defaultProviderId) ?? deps.boot.registry.getCheapEval()
+            // 一时没有可用模型:这次做客不能就此吞掉,等有模型了再讲
+            if (!evalText) { noModel = true; return }
+            const cfgAgent = loadAgentConfig(deps.stateDir)
+            const raw = await evalText(buildGuestVisitNarrationPrompt({
+              myName: cfgAgent.bot_name?.trim() || '我',
+              persona: null, ownerOverview: null,
+              disclosurePolicy: cfgAgent.social_disclosure_policy ?? '别转述朋友的私事。',
+              guestName: name,
+              lines: due.map(m => ({ who: m.direction === 'in' ? 'guest' as const : 'me' as const, text: m.text })),
+            }))
+            const text = raw.trim().replace(/^[「『"“]+|[」』"”]+$/g, '')
+            if (!text) return
+            // sendText **不抛**,失败是回 {error} —— 一定要看(盘点 10-21:以前只有 catch,失败时水位照记,这次来访就丢了)
+            let r: { msgId: string; error?: string }
+            try { r = await turn.sendText(ownerChat, text) } catch (err) { throw new GuestNarrationSendFailed(errMsg(err)) }
+            if (r.error) throw new GuestNarrationSendFailed(r.error)
+            told = text
+          })
         } catch (err) {
-          if (!isNetworkUnprotectedError(err)) throw err
-          // 评审 #193 P2-3:讲述被网络守护拒了 —— 没讲过,这一位的水位放回去;这一拍到此为止
+          // 评审 #193 P2-3:讲述被网络守护拒了;或者发不出去 —— 没讲过,这一位的水位放回去;这一拍到此为止
           // (前面已经讲完的几位照常落盘),下一拍再讲。
-          unmark()
-          deps.log('VISIT', `guest narration skipped: chat=${chatId} — network unprotected; watermark unchanged, next tick retries`)
-          break
+          if (isNetworkUnprotectedError(err)) {
+            unmark()
+            deps.log('VISIT', `guest narration skipped: chat=${chatId} — network unprotected; watermark unchanged, next tick retries`)
+            break
+          }
+          if (err instanceof GuestNarrationSendFailed) {
+            unmark()
+            deps.log('VISIT', `guest narration send failed: chat=${chatId} — watermark unchanged, next tick retries: ${err.message}`)
+            break
+          }
+          throw err
         }
-        const text = raw.trim().replace(/^[「『"“]+|[」』"”]+$/g, '')
-        if (!text) continue
-        // 发不出去(多半断网):这一位撤回水位,这一拍到此为止;已讲完的几位在 finally 里落盘。
-        // sendMessage **不抛**,失败是回 {error}(ilink-glue)—— 以前只有 catch,失败时水位照记,这次来访就再也不讲了(盘点 10-21)。
-        let sendErr: string | undefined
-        try { sendErr = (await deps.ilink.sendMessage(ownerChat, text)).error } catch (err) { sendErr = errMsg(err) }
-        if (sendErr) {
-          unmark()
-          deps.log('VISIT', `guest narration send failed: chat=${chatId} — watermark unchanged, next tick retries: ${sendErr}`)
-          break
+        if ('drop' in outcome) {
+          // 别烦我:这次来访记作看过(水位留着、不算讲过),以后打开主动关心也不翻旧账
+          uncount()
+          deps.log('VISIT', `guest visit not told: chat=${chatId} — ${outcome.reason}; marked as seen`)
+          continue
         }
-        try { deps.huntStore?.recordVisit?.({ chatId: ownerChat, text, peerLabel: `${name}来过`, nowIso }) }
+        if ('defer' in outcome) { unmark(); break }   // 免打扰 / 都送不到:这一拍什么都不动,之后照讲
+        if (noModel) { unmark(); continue }
+        if (!told) continue
+        try { deps.huntStore?.recordVisit?.({ chatId: ownerChat, text: told, peerLabel: `${name}来过`, nowIso }) }
         catch (err) { deps.log('VISIT', `guest 见闻入库失败: ${errMsg(err)}`) }
         deps.log('VISIT', `guest visit told: chat=${chatId} name=${name} lines=${due.length}`)
       }
