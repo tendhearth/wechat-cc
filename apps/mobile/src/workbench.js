@@ -21,12 +21,17 @@ function mConn() {
   el.hidden = !stale
   el.textContent = stale ? (mLastOkAt===null?"家里的电脑暂时连不上，看看它开着没。":"家里的电脑暂时连不上 —— 你看到的是 " + mClock(mLastOkAt) + " 的样子") : ""
 }
-function mError(code) {
-  if (code === "detail_too_large") return "这件事的内容太多，网页上读不全，请到手机 App 或电脑上看。"
-  if (code === "unauthorized") return "这台手机已经不能连了，在电脑上重新配对。"
-  if (code === "not_found") return "找不到这件事了，可能已经删掉。"
-  return "暂时没读到，请检查连接后再看。"
+// 码 → 一句话。读列表 / 详情(GET /m/api/matters、/m/api/matter)用 M_ERRORS,停下这一轮用 M_STOP_ERRORS;
+// 没列的码走后面那句通用的。守卫 scripts/mobile-web-errors.guard.test.ts:每个码都得是那几条路由真会回的,
+// 路由会回的码要么在这里、要么在守卫的 GENERIC 里明列(以前这里认的 not_found 详情路由从来不回 —— 它回 matter_not_found)。
+var M_ERRORS = {
+  detail_too_large: "这件事的内容太多，网页上读不全，请到手机 App 或电脑上看。",
+  unauthorized: "这台手机已经不能连了，在电脑上重新配对。",
+  matter_not_found: "找不到这件事了，可能已经删掉。"
 }
+var M_STOP_ERRORS = { input_stale: "这一轮已经结束或换了一轮，刷新看看现在的样子。" }
+function mText(map, code, fallback) { return Object.prototype.hasOwnProperty.call(map, code) ? map[code] : fallback }
+function mError(code) { return mText(M_ERRORS, code, "暂时没读到，请检查连接后再看。") }
 function mApi(path,opts,sender) {
   var timer, epoch=mConnectionEpoch, pageId=mCurrent
   return Promise.race([(sender||api)(path,opts).then(function(r){return r.json().then(function(b){if (!r.status || r.status < 400) { if (b.ok) return b }; throw Object.assign(new Error(b.error || "unavailable"),{status:r.status})})}),new Promise(function(_r,reject){timer=setTimeout(function(){reject(new Error("timeout"))},15000)})])
@@ -104,7 +109,7 @@ async function mStop(task,run) {
     // 一次只走一条通道,不自动重发
     var r=await mPostOnce('/m/api/matter/stop',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({id:task,runId:run})})
     var b=await r.json().catch(function(){return null})
-    mNotice(b&&b.ok?'已经请电脑停下这一轮。':b&&b.error==='input_stale'?'这一轮已经结束或换了一轮，刷新看看现在的样子。':'没停成，稍后再试。')
+    mNotice(b&&b.ok?'已经请电脑停下这一轮。':mText(M_STOP_ERRORS,b&&b.error,'没停成，稍后再试。'))
   }catch(e){mNotice('没停成，稍后再试。')}
   finally{delete mBusy[key];mSetButtons();clearTimeout(mPoll);mSchedule()}
 }
