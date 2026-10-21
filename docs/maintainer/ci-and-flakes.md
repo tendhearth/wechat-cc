@@ -69,14 +69,14 @@ wechat-cc ci triage --sha <sha> --json      # 给机器看的一份
 | --- | --- | --- |
 | `settings-panel-workbench`(两条大文件)、`apps/mobile/continuation-materials`、`apps/mobile/attachments` | `toEqual` 比几百 KB 的 Buffer —— vitest 逐字节递归,700KB 空闲就 5.6s | 改 `Buffer#equals`(sha256 那条照留) |
 | `lib/migration-order` | 每个锁定版本都从零重建库:O(n²) 次迁移 | 一个库按序迁移、每步取一次 schema(6.5s → 2.3s,锁定指纹全对) |
-| `apps/desktop/.../cc-asset-kit` | 纯 JS 解约 50 张 512² PNG;一条测试校验三遍 | 校验一遍;四份改过的整套那条给 60s |
+| `apps/desktop/.../cc-asset-kit` | 纯 JS 解约 50 张 512² PNG;一条测试校验三遍;另一条拿 `toEqual` 比 512² 的 alpha | 校验一遍;四份改过的整套那条给 60s;alpha 改 `Buffer.compare` |
 | `guard/owner-table` | 墙钟断言「国内调用 < 60ms」 | 改成跟 0ms 定时器赛跑(首次探测等 10 分钟的运行时里,不等探测的路径永远先出来) |
 | `core/acp/rpc` | harness 给每条都设 50ms 的 RPC 期限 | 缺省 10s,只有测超时那条传 50ms |
 | `reminders/reminders.e2e` | `waitForReplyTo` 缺省 5s 要盖一次真 daemon 启动 | 30s |
 | `bootstrap/openai-plugin-stall` | 3s 启动预算同时管卡住的插件和必需的 wechat MCP | 10s(生产是 20s) |
 | `workbench/wechat-create`、`workbench/service-entry` | `settle` 用缺省 10s poll 等真 git 整轮 | 同 `service-one-session`:testTimeout 60s、settle 30s、until 45s |
 | e2e(`__e2e__/*`,每个文件第一条) | 冷启动 import 整个 daemon 超过 e2e 的 10s;boot-failure-lock 还因此串台(上一条超时后迟到的 finally 改回环境变量) | e2e testTimeout 30s;boot-failure-lock 预热放 beforeAll、环境变量在 afterEach 还原 |
-| `scripts/cli-help.guard`(`plugin --help` 等) | 一条测试里同步冷启 1 + 子命令个 `bun cli.ts` | 每族 60s(每次 spawn 仍 15s 上限) |
+| `scripts/cli-help.guard`(`plugin --help` 等;只读命令 `cli status` 等) | 一条测试里同步冷启 1 + 子命令个 `bun cli.ts`;只读命令自己还要挨个跑各家 CLI 的 `--version` | 每族 60s(每次 spawn 仍 15s 上限);只读命令单次 45s、每条 60s |
 | `workbench/codex-app-server`(两条) | **生产 bug**:关闭循环先查期限再发 SIGKILL,一次卡顿就抛 `codex_process_not_exited` 而一次 SIGKILL 都没发 | 单独 PR 修生产代码 |
 | `workbench/service-one-session`(f99.txt) | **生产**:`git-review.ts` 的审阅期限写死 15s,忙时报告悄悄缺文件 | 交工作台那一路:做成可注入 |
 | `workbench/service-rewind`(eol) | 偶发 `rewind_unavailable`,疑似 settle 没等后台 git | 交工作台那一路:先把 reason 打出来 |
