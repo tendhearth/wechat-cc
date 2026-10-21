@@ -40,7 +40,7 @@ describe('terminal_sessions', () => {
     expect((await h.mcp.listTools()).tools.map(t => t.name)).toContain('terminal_sessions')
     const text = await h.call()
     expect(h.calls).toEqual(['GET /v1/cli/sessions?limit=50'])
-    expect(text).toContain('· 等你批准 · p0 · Claude Code · 码 s0')
+    expect(text).toContain('· 等你批准 · p0 · Claude · 码 s0')
     expect(text).toContain('回「y 07」放行')
     expect(text).toContain('· 做完了 · p1 · Codex · 码 s1')
     expect(text).toContain('第 1 个做完了')
