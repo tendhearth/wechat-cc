@@ -789,6 +789,9 @@ async function bootDaemonInner(opts: BootDaemonOpts, undo: Array<() => void>): P
     internalApi.provide({ companionConverse: wired.companionConverse })
     // 「一件事」活动时间:先于工作台停(LIFO),退订 changes + 清节流定时器。
     lc.register({ name: 'matter-activity', stop: async () => wired.stopMatterActivity() })
+    // 手机那一簇(隧道 / notifier / 订阅 / 设置面板,重构第二批步 6d):登记在 polling 之前 ⇒ 倒序时入站先停,
+    // App 在途的回复还能经隧道送完(App 的入站本身也走隧道)。
+    lc.register({ name: 'phone', stop: () => wired.stopPhone() })
     // 与手机页共用同一个「一件事」读写面(pipeline-deps 里建的那一个)。
     if (wired.mattersService) internalApi.provide({ matters: wired.mattersService })
     // 同上,桌宠的「在做什么」—— 组装闭包在 pipeline-deps(那里才有 boot)。

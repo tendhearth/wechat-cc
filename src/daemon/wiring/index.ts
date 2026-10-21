@@ -172,6 +172,8 @@ export interface WiredDeps {
   mattersService: import('../../core/matters/service').MattersService | null
   /** 「一件事」活动时间:退订工作台事件 + 清节流定时器;main.ts 登记进 shutdown。 */
   stopMatterActivity: () => void
+  /** 关机时停手机那一簇(重构第二批步 6d);main.ts 在 polling 之前登记。 */
+  stopPhone: () => Promise<void>
   companionPushDeps: CompanionPushDeps
   companionIntrospectDeps: CompanionIntrospectDeps
   companionIngestDeps: CompanionIngestDeps
@@ -268,7 +270,7 @@ export function wireMain(opts: WireMainOpts): WiredDeps {
       : `cycle ${result.status}`)
   }
   // pipeline-deps 先造:App 那条路(companionApp)在它里面,伙伴的 tick 要用。buildTickBodies 构造时只是闭包。
-  const { appPush, companionApp, pipelineDeps, companionConverse, petTurn, settingsPanelLink, mattersService, memoryNightly, stopMatterActivity, connections, phoneConnect } = buildPipelineDeps(opts, refs)
+  const { appPush, companionApp, pipelineDeps, companionConverse, petTurn, settingsPanelLink, mattersService, memoryNightly, stopMatterActivity, stopPhone, connections, phoneConnect } = buildPipelineDeps(opts, refs)
   const proactive = makeProactiveOutbound({
     wechatDegraded: () => opts.boot.health.health.shouldSuspend('wechat'),
     wechatClosedSince: (chatId) => opts.ilink.proactiveClosedSince(chatId),
@@ -302,6 +304,7 @@ export function wireMain(opts: WireMainOpts): WiredDeps {
     mattersService,
     memoryNightly,
     stopMatterActivity,
+    stopPhone,
     ...lifecycleDeps,
     ticks,
     refs,
