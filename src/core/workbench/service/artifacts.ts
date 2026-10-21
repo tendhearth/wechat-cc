@@ -50,7 +50,7 @@ async function checkpointNow(ctx:ServiceCtx,running:Active,root:string,prev:stri
 export async function takeBaselineFor(ctx:ServiceCtx,running:Active,signal?:AbortSignal):Promise<GitBaseline> {
   const root=liveWorktreeRoot(ctx,running.taskId)
   // 差异基线的 signal 照旧(只有 execute 给);checkpoint 总有一个:调用方的,或这条 run 的停止信号
-  const [baseline,checkpoint]=await Promise.all([captureGitBaseline(running.path,{},signal),root?checkpointNow(ctx,running,root,running.checkpointTip,signal??stopSignalOf(running)):Promise.resolve(undefined)])
+  const [baseline,checkpoint]=await Promise.all([captureGitBaseline(running.path,{},signal,ctx.deps.reviewDeadlineMs),root?checkpointNow(ctx,running,root,running.checkpointTip,signal??stopSignalOf(running)):Promise.resolve(undefined)])
   if(checkpoint)baseline.checkpoint=checkpoint
   return baseline
 }
@@ -139,7 +139,7 @@ export function makeArtifactsDomain(ctx:ServiceCtx):ArtifactsDomain {
         // 独立工作区:这一轮结束时的 checkpoint 和差异并行打(只有起点打成了才打终点 —— 单个终点回退不了什么)
         const root=baseline.checkpoint?liveWorktreeRoot(ctx,running.taskId):null
         let sameTree=false
-        const [report,after]=await Promise.all([finishGitReview(baseline),root?takeCheckpoint({root,taskId:running.taskId,stateDir:ctx.stateDir,prev:baseline.checkpoint!,signal:stopSignalOf(running),...(ctx.deps.checkpointDeadlineMs!==undefined?{deadlineMs:ctx.deps.checkpointDeadlineMs}:{})}).catch(()=>null):Promise.resolve(null)])
+        const [report,after]=await Promise.all([finishGitReview(baseline,ctx.deps.reviewDeadlineMs),root?takeCheckpoint({root,taskId:running.taskId,stateDir:ctx.stateDir,prev:baseline.checkpoint!,signal:stopSignalOf(running),...(ctx.deps.checkpointDeadlineMs!==undefined?{deadlineMs:ctx.deps.checkpointDeadlineMs}:{})}).catch(()=>null):Promise.resolve(null)])
         if(after&&!('skipped' in after)){running.checkpointTip=after.commit;sameTree=after.sameTree;void pruneCheckpoints(root!,running.taskId)}
         if(state.shutdownComplete)return
         if(canonicalProject(running.path)!==running.path || directoryIdentity(running.path)!==running.directoryIdentity)throw new Error('invalid_path')

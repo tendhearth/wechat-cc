@@ -140,6 +140,8 @@ export interface ServiceDeps {
   /** 加一条项目经验(打回时「同时记成这个项目的经验」);同微信「经验」命令、手机那个文件。 */
   /** checkpoint 总期限(毫秒);缺省 CHECKPOINT_DEADLINE_MS。只给测试放宽(负载下 15 秒不够,打不成点那一轮就回不去)。 */
   checkpointDeadlineMs?: number
+  /** 差异快照每个阶段(基线 / 收尾)的总期限(毫秒);缺省 REVIEW_DEADLINE_MS(15 秒)。只给测试放宽:负载下读不完 ⇒ 快照 partial。 */
+  reviewDeadlineMs?: number
   addLesson?: (projectPath: string, text: string) => { ok: true } | { ok: false; error: 'invalid' | 'duplicate' | 'full' }
 }
 export interface ServiceCtx {

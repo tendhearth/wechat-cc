@@ -127,3 +127,10 @@ it('bounds serialized JSON even when control characters expand sixfold',async()=
  expect(bytes.length).toBeLessThanOrEqual(2048)
  expect(JSON.parse(bytes.toString())).toMatchObject({status:'partial',files:[{kind:'not_reviewed'}]})
 })
+it('takes an injected per-phase deadline; an exhausted one never reads as complete',async()=>{
+ const baseline=await captureGitBaseline(root,{},undefined,60_000);file('app.ts','const answer = 5\n')
+ expect((await finishGitReview(baseline,60_000))?.status).toBe('complete')
+ const starved=await captureGitBaseline(root,{},undefined,0)
+ expect(starved.kind).not.toBe('git')
+ expect((await finishGitReview(await captureGitBaseline(root),0))?.status).not.toBe('complete')
+})

@@ -27,10 +27,12 @@ export function gitEnv() {
   for(const key of Object.keys(env))if(key.startsWith('GIT_'))delete env[key]
   return {...env,LC_ALL:'C',GIT_OPTIONAL_LOCKS:'0',GIT_TERMINAL_PROMPT:'0',GIT_CONFIG_NOSYSTEM:'1',GIT_CONFIG_GLOBAL:'/dev/null',GIT_PAGER:'cat',GIT_NO_LAZY_FETCH:'1',GIT_NO_REPLACE_OBJECTS:'1'}
 }
+/** 每个阶段(基线 / 收尾)各自的总期限;缺省 15 秒。只给测试放宽(负载下 100 个文件读不完 ⇒ 快照变 partial)。 */
+export const REVIEW_DEADLINE_MS=15_000
 /** Each phase gets fresh config overrides and a total deadline. No repository helpers run. */
 class GitReader {
-  private readonly deadline=Date.now()+15_000
-  constructor(private readonly signal?:AbortSignal) {}
+  private readonly deadline:number
+  constructor(private readonly signal?:AbortSignal,deadlineMs=REVIEW_DEADLINE_MS) {this.deadline=Date.now()+deadlineMs}
   private filters:string[]=[]
   private readonly safe=['--no-pager','--no-optional-locks','-c','core.fsmonitor=false','-c','core.hooksPath=/dev/null']
   remaining(){return Math.max(0,this.deadline-Date.now())}
@@ -83,9 +85,9 @@ async function changed(reader:GitReader,project:string,head:string|null) {
   const tracked=head?paths(await reader.run(project,['diff','--no-ext-diff','--no-textconv','--ignore-submodules=all','--no-renames','--relative','--name-only','-z',head,'--','.'])):[]
   return [...new Set([...tracked,...paths(await reader.run(project,['ls-files','--others','--exclude-standard','-z','--','.']))])].filter(inScope).sort()
 }
-export async function captureGitBaseline(project:string,overrides:Partial<Limits>={},signal?:AbortSignal):Promise<GitBaseline> {
+export async function captureGitBaseline(project:string,overrides:Partial<Limits>={},signal?:AbortSignal,deadlineMs?:number):Promise<GitBaseline> {
   const baseline:GitBaseline={project,startedAt:Date.now(),head:null,kind:'git',paths:new Set(),initial:new Map(),preexistingPaths:[],notes:[],limits:{...DEFAULT_LIMITS,...overrides}}
-  const reader=new GitReader(signal)
+  const reader=new GitReader(signal,deadlineMs)
   try {
     if((await reader.run(project,['rev-parse','--is-inside-work-tree'])).toString().trim()!=='true'){baseline.kind='not_git';return baseline}
   } catch(error) {
@@ -102,8 +104,9 @@ export async function captureGitBaseline(project:string,overrides:Partial<Limits
     baseline.preexistingPaths=dirty.slice(0,baseline.limits.maxPaths)
     if(roster.length>baseline.limits.maxPaths)baseline.notes.push('开始时的文件数量超过限制，未读取的文件不能比较。')
     let bytes=0
-    for(const path of roster.slice(0,baseline.limits.maxPaths)) {
-      if(!reader.remaining()){baseline.notes.push('开始时读取超时，未读取的文件不能比较。');break}
+    const toRead=roster.slice(0,baseline.limits.maxPaths)
+    for(const path of toRead) {
+      if(!reader.remaining()){baseline.notes.push(`开始时读取超时，只读了 ${baseline.initial.size} / ${toRead.length} 个文件，未读取的文件不能比较。`);break}
       const value=working(project,path,baseline.limits,baseline.limits.maxTotalBytes-bytes)
       if(value.kind!=='missing')bytes+=value.bytesRead??0
       baseline.initial.set(path,value)
@@ -125,21 +128,24 @@ async function diffText(reader:GitReader,before:string,after:string,maxBytes:num
     return start<0?'':text.slice(start)
   } finally {rmSync(scratch,{recursive:true,force:true})}
 }
-export async function finishGitReview(baseline:GitBaseline):Promise<GitReview|null> {
+export async function finishGitReview(baseline:GitBaseline,deadlineMs?:number):Promise<GitReview|null> {
   if(baseline.kind==='not_git')return null
   const report:GitReview={version:1,scope:'working-tree-before-after',startedAt:baseline.startedAt,finishedAt:Date.now(),headBefore:baseline.head,headAfter:null,status:baseline.kind==='unavailable'?'unavailable':baseline.notes.length?'partial':'complete',preexistingPaths:baseline.preexistingPaths,notes:[...baseline.notes],files:[]}
   if(baseline.kind==='unavailable')return report
-  const reader=new GitReader()
+  const reader=new GitReader(undefined,deadlineMs)
   try {
     await reader.configure(baseline.project)
     try{report.headAfter=(await reader.run(baseline.project,['rev-parse','--verify','HEAD'])).toString().trim()}catch{}
     const candidates=[...new Set([...baseline.paths,...await allPaths(reader,baseline.project)])].sort()
     if(candidates.length>baseline.limits.maxPaths){report.status='partial';report.notes.push('变更文件数量超过限制，未列出的文件尚未检查。')}
-    let bytes=0,diffBytes=0
-    for(const path of candidates.slice(0,baseline.limits.maxPaths)) {
+    let bytes=0,diffBytes=0,checked=0
+    const toCheck=candidates.slice(0,baseline.limits.maxPaths)
+    for(const path of toCheck) {
       const file:ReviewFile={path,preexisting:baseline.preexistingPaths.includes(path),kind:'not_reviewed'}
       if(bytes>=baseline.limits.maxTotalBytes){file.reason='内容总量超过限制';report.files.push(file);report.status='partial';continue}
-      if(!reader.remaining()){report.status='partial';report.notes.push('读取超时，其余文件尚未检查。');break}
+      // 数字要写进说明:各端都原样显示 notes,主人得看得出「只审了一部分」以及差多少(2026-10-20)
+      if(!reader.remaining()){report.status='partial';report.notes.push(`读取超时，只检查了 ${checked} / ${toCheck.length} 个文件，其余尚未检查。`);break}
+      checked++
       const before=original(baseline,path)
       const beforeBytes=before.kind!=='missing'?before.bytesRead??0:0
       const after=working(baseline.project,path,baseline.limits,Math.max(0,baseline.limits.maxTotalBytes-bytes-beforeBytes))
