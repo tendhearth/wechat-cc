@@ -850,3 +850,18 @@ it('v83 creates review comment + hunk tables with state checks, a task index and
     expect(db.query('SELECT * FROM workbench_review_hunks').all()).toEqual([])
   }finally{db.close()}
 })
+
+it('v84 creates speech_log (CC 主动开口的外发账) with origin / outcome checks, a chat index, STRICT, and no text column',()=>{
+  const db=openTestDb()
+  try{
+    const ins=(origin:string,outcome:string)=>db.query("INSERT INTO speech_log(at,kind,origin,chat_id,outcome,reason,channel) VALUES(1,'companion',?,'c',?,NULL,NULL)").run(origin,outcome)
+    for(const o of ['blocking','requested','report','initiative'])ins(o,'allowed')
+    for(const o of ['deferred','dropped','failed'])ins('initiative',o)
+    expect(()=>ins('urgent','allowed')).toThrow()
+    expect(()=>ins('initiative','sent')).toThrow()
+    expect(()=>db.query("INSERT INTO speech_log(at,kind,origin,chat_id,outcome) VALUES('x','k','report','c','allowed')").run()).toThrow()
+    const cols=(db.query("PRAGMA table_info('speech_log')").all() as {name:string}[]).map(c=>c.name)
+    expect(cols).toEqual(['id','at','kind','origin','chat_id','outcome','reason','channel'])
+    expect((db.query("PRAGMA index_list('speech_log')").all() as {name:string}[]).map(i=>i.name)).toContain('speech_log_chat_at')
+  }finally{db.close()}
+})
