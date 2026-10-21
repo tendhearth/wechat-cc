@@ -1,4 +1,5 @@
 #!/usr/bin/env bun
+import { makeDaemonShutdown } from './runtime/shutdown'
 import { makeBriefPrefs, makeBriefTurn } from './scheduled-jobs/brief'
 import { parseAgenda, selectDue } from './companion/agenda'
 import { localParts } from './memory/nightly-schedule'
@@ -152,6 +153,17 @@ export interface DaemonHandle {
 }
 
 export async function bootDaemon(opts: BootDaemonOpts): Promise<DaemonHandle> {
+  // 主体 try 之前就失败(库打不开、迁移失败、ilink 适配器造不出来 ……)也要把锁、心跳、db 放掉:
+  // main() 退出前会指数退避等上几十秒到 30 分钟,这段时间里锁还拿着,回滚拉起的老 sidecar / 手动 start 都抢不到
+  // (重构第二批步 6a,wechat-cc-2a 评审)。都是幂等的:try 里失败时 shutdown 已经做过一遍也无妨。
+  const undo: Array<() => void> = []
+  try { return await bootDaemonInner(opts, undo) } catch (err) {
+    for (const f of undo.reverse()) { try { f() } catch { /* 尽力 */ } }
+    throw err
+  }
+}
+
+async function bootDaemonInner(opts: BootDaemonOpts, undo: Array<() => void>): Promise<DaemonHandle> {
   const { stateDir, dangerously } = opts
   const PID_PATH = join(stateDir, 'server.pid')
   const HEARTBEAT_PATH = join(stateDir, HEARTBEAT_FILE)
@@ -178,6 +190,7 @@ export async function bootDaemon(opts: BootDaemonOpts): Promise<DaemonHandle> {
   const heartbeatStaleMs = Math.max(HEARTBEAT_STALE_MS, turnTimeoutMs + 60_000)
   const lock = acquireInstanceLock(PID_PATH, { isHealthy: () => isHeartbeatFresh(HEARTBEAT_PATH, heartbeatStaleMs) })
   if (!lock.ok) throw new Error(`[wechat-cc] ${lock.reason} (pid=${lock.pid})`)
+  undo.push(() => releaseInstanceLock(PID_PATH))
   // Stamp an initial heartbeat immediately so this just-started daemon reads
   // as healthy before its first poll cycle lands. A dedicated ticker then
   // refreshes it on a fixed cadence, DECOUPLED from poll work — so a long inline
@@ -190,6 +203,7 @@ export async function bootDaemon(opts: BootDaemonOpts): Promise<DaemonHandle> {
   const previousRun = consumePreviousRunEvidence(stateDir)
   writeHeartbeat(HEARTBEAT_PATH)
   const stopHeartbeat = startHeartbeatTicker(HEARTBEAT_PATH)
+  undo.push(stopHeartbeat)
   // v0.5.6: collapse duplicate ilink bot bindings to one per wechat userId
   // BEFORE loading accounts. ilink only allows one active bot per user — when
   // the user re-scans, the old bot's session is invalidated server-side. The
@@ -203,15 +217,15 @@ export async function bootDaemon(opts: BootDaemonOpts): Promise<DaemonHandle> {
   try { loadAccess() }
   catch (err) {
     if (err instanceof AccessConfigCorruptError) {
-      releaseInstanceLock(PID_PATH)
+      // 以前直接 process.exit(1),绕过了 main() 的退避 ⇒ access.json 坏了就是重启风暴。锁由外层放。
       process.stderr.write(`wechat channel: FATAL ${err.message}\n`)
-      process.exit(1)
     }
     throw err
   }
   const accounts = await loadAllAccounts(stateDir)
   if (accounts.length === 0) { releaseInstanceLock(PID_PATH); throw new Error('[wechat-cc] no accounts bound. Run `wechat-cc setup` first.') }
   const db = openDb({ path: join(stateDir, 'wechat-cc.db') })
+  undo.push(() => db.close())
   // Per-turn observability store — written by the coordinator's recordTurn
   // (via bootstrap onTurnRecord) and read by internal-api GET /v1/turns.
   // Created here so both the internal-api registration and bootstrap below
@@ -236,43 +250,21 @@ export async function bootDaemon(opts: BootDaemonOpts): Promise<DaemonHandle> {
   const lc = new LifecycleSet((tag, line) => log(tag, line))
   // Subsystem degraded-boot (spec 2026-08-17) — 只包可选子系统;核心链不经它。
   const sup = new SubsystemSupervisor((t, l) => log(t, l))
-  let shuttingDown = false; let didStartup = false
   let pollingLcRef: { reconcile(): Promise<void> } | null = null
   let ticksRef: TickBodies | null = null
   const BOOT_AT_ISO = new Date().toISOString()
   let bootRef: import('./bootstrap').Bootstrap | null = null
 
-  const shutdown = async () => {
-    if (shuttingDown) return
-    shuttingDown = true; log('DAEMON', 'shutdown initiated')
-    stopHeartbeat()
-    if (didStartup) { try { await lc.stopAll() } catch { /* logged by lc */ } }
-    // Stop A2A server if it was started (a2a_listen was configured).
-    try { await bootRef?.a2aServer?.stop() } catch (err) { log('A2A', `server stop error: ${err instanceof Error ? err.message : String(err)}`) }
-    // Cancel any in-flight pairing-code poller (spec §7) if boot.pairing was
-    // wired (mailbox_relays configured) — mirrors the a2aServer stop above.
-    // Undefined/no active code ⇒ a clean no-op (PairingEngine.stop() is
-    // itself a no-op when nothing is active).
-    try { bootRef?.pairing?.stop() } catch (err) { log('PAIR', `stop error: ${err instanceof Error ? err.message : String(err)}`) }
-    // Close the Knowledge Kernel store if boot.knowledge was wired
-    // (knowledge_enabled configured) — mirrors the a2aServer/pairing
-    // teardown above; a dangling sqlite handle otherwise leaks past shutdown.
-    try { bootRef?.knowledge?.store.close() } catch (err) { log('KNOWLEDGE', `store close error: ${err instanceof Error ? err.message : String(err)}`) }
-    // Close the shared embedder service (Agent-facing Search Task 2) if one
-    // was constructed (knowledge_enabled + a resolvable embed script) — it's
-    // long-lived across cycles/queries by design (never closed per-cycle,
-    // see bootstrap/index.ts), so shutdown is the only place it tears down
-    // its embed subprocess.
-    try { await bootRef?.knowledge?.embedder?.close?.() } catch (err) { log('KNOWLEDGE', `embedder close error: ${err instanceof Error ? err.message : String(err)}`) }
-    // Clean up the tier-C global MCP entry (spec §3 residual, 2026-08-17
-    // follow-up) if agy was ever registered this boot — mirrors the other
-    // bootRef?.…-guarded optional teardowns above. Best-effort only: a
-    // crash-exit skips this and leaves the dead-token entry on disk, but
-    // that's fine — boot rewrites/upserts it fresh next start regardless.
-    try { if (bootRef?.registry?.has?.('agy')) removeAgyGlobalMcp({ log }) } catch (err) { log('AGY', `mcp config cleanup error: ${err instanceof Error ? err.message : String(err)}`) }
-    try { db.close() } catch (err) { console.error('db close failed:', err) }
-    releaseInstanceLock(PID_PATH)
-  }
+  // 收尾(重构第二批步 6a,runtime/shutdown.ts):不管启动有没有走完,都按倒序停已登记的子系统。
+  const shutdown = makeDaemonShutdown({
+    log: (t, l) => log(t, l),
+    stopHeartbeat,
+    lc,
+    boot: () => bootRef,
+    removeAgyGlobalMcp: () => removeAgyGlobalMcp({ log }),
+    closeDb: () => db.close(),
+    releaseLock: () => releaseInstanceLock(PID_PATH),
+  })
 
   // Restart: let the caller flush (HTTP response / a log line), then
   // graceful shutdown + exit so launchd/systemd KeepAlive respawns a fresh
@@ -799,8 +791,13 @@ export async function bootDaemon(opts: BootDaemonOpts): Promise<DaemonHandle> {
       status: (h) => cliPermissions.status(h),
       wait: (h, ms) => forwarder?.ownsHash(h) ? forwarder.permissionWait(h, ms) : cliPermissions.wait(h, ms),
     })
+    // 工作台在后面才接上(wireWorkbench):经持有者取,没就绪时各处按「还没有」处理(TDZ,评审 #443 / 重构第二批步 6a)
+    const workbenchRef: { current: ReturnType<typeof wireWorkbench> | null } = { current: null }
+    // wireMain 在后面;导入记忆写入要它的 memoryNightly ⇒ 同样经持有者取(没就绪 ⇒ 这次没记上)
+    const wiredRef: { current: ReturnType<typeof wireMain> | null } = { current: null }
     const legacyClaims=makeExecutionClaims()
-    const executionConflict=(s:import('../core/cli-events').CliSessionInfo)=>workbench?.conflictsExternal(s.cwd,s.source,s.session_id)??false
+    // 工作台在后面才接上(wireWorkbench):经持有者取,别直接引用后面才声明的 const(可选链防不住 TDZ;重构第二批步 6a)
+    const executionConflict=(s:import('../core/cli-events').CliSessionInfo)=>workbenchRef.current?.conflictsExternal(s.cwd,s.source,s.session_id)??false
     const reserveExecution=(s:import('../core/cli-events').CliSessionInfo)=>{
       const release=legacyClaims.acquire({owner:claimUuid(),path:s.cwd,providerId:s.source,nativeId:s.session_id})
       // A legacy runner's early pipe return is not proof that its writer exited.
@@ -843,6 +840,8 @@ export async function bootDaemon(opts: BootDaemonOpts): Promise<DaemonHandle> {
     })
     // 「今天」一眼看完(2026-10-14):终端登记处 + 一起做,过去 24 小时。微信「日报」、GET /v1/overseer/today、
     // 手机 /m/api/today 读同一个函数。工作台在下面才建 ⇒ 晚绑定(调用时它早已就绪)。只读,只在被问时算。
+    // 定时的存储挪到 overseerToday 之前:它的 jobs 回调会读(以前引用的是后面才声明的 const;重构第二批步 6a)
+    const jobsStore = makeJobsStore(stateDir)
     const overseerToday = makeOverseerTodaySource({
       terminal: () => cliSessionViews({ includeEnded: true, limit: TODAY_TERMINAL_LIMIT }),
       workbench: () => workbenchForToday,
@@ -858,7 +857,6 @@ export async function bootDaemon(opts: BootDaemonOpts): Promise<DaemonHandle> {
     internalApi.setCliHooks(terminalHooks)
     // 「看 码」「@码 文本」:主人对某条终端会话说话。只认主人;那边的会话 v1 先说明。
     // 定时任务的文件(spec 2026-10-20-scheduled-jobs-design):微信「定时」与每分钟一拍的 runner 共用一份。
-    const jobsStore = makeJobsStore(stateDir)
     // 「CC 做过的事」(B9,spec 2026-10-20-cc-activity-design):没留记录的动作(主动说话 / 定时 / 提醒)补记一行,
     // 只记状态 + id;手机时间线把它和已有记录(规则批 / 一起做 / 终端 / 信 / 记忆 / CLI 升级)合起来。只算主人。
     const activityLog = makeActivityLog({ stateDir, now: () => Date.now(), log: (t, l) => log(t, l) })
@@ -900,8 +898,6 @@ export async function bootDaemon(opts: BootDaemonOpts): Promise<DaemonHandle> {
       items: () => { const r = buildActivity(activity.sources(), { now: Date.now(), limit: 100 }); return { items: r.items, degraded: r.degraded } },
     })
     // 微信「经验 <项目> …」(第二轮对标 ★2):项目经验,每家执行者都照着做。只认主人;项目按名字认。
-    // 工作台在后面才接上(wireWorkbench);启动中途来的「经验」命令读到空的持有者 ⇒ 回「还在启动」,不碰 TDZ(评审 #443)
-    const workbenchRef: { current: ReturnType<typeof wireWorkbench> | null } = { current: null }
     const projectLessons = makeProjectLessons(stateDir)
     const lessonsCommand = makeProjectLessonsCommand({
       isOwner: (chatId) => resolveAdminChatId(loadAccess(), loadCompanionConfig(stateDir), null) === chatId,
@@ -915,7 +911,7 @@ export async function bootDaemon(opts: BootDaemonOpts): Promise<DaemonHandle> {
       isOwner: (chatId) => resolveAdminChatId(loadAccess(), loadCompanionConfig(stateDir), null) === chatId,
       say: (c, t) => ilink.sendMessage(c, t),
       now: () => Date.now(),
-      importEntries: (items, label) => wired.memoryNightly.importEntries(items, label),
+      importEntries: (items, label) => { if (!wiredRef.current) throw new Error('memory_not_wired'); return wiredRef.current.memoryNightly.importEntries(items, label) },
     })
     const jobsCommand = makeJobsCommand({
       store: jobsStore,
@@ -1024,6 +1020,7 @@ export async function bootDaemon(opts: BootDaemonOpts): Promise<DaemonHandle> {
     internalApi.setSettingsLink(wired.settingsPanelLink)
     internalApi.setConnections(wired.connections)
     internalApi.setPhoneConnect(wired.phoneConnect)
+    wiredRef.current = wired
     const pipeline = buildInboundPipeline(wired.pipelineDeps)
     wireRef(wired.refs.pipeline, pipeline)
     wireRef(wired.refs.appTurn, pipeline.appTurn)
@@ -1262,7 +1259,6 @@ export async function bootDaemon(opts: BootDaemonOpts): Promise<DaemonHandle> {
         }).catch(err => log('SUBSYS', `admin degraded summary send failed: ${err instanceof Error ? err.message : String(err)}`))
       }
     }
-    didStartup = true
     // The worker can arm timers immediately: construct only once partial-startup cleanup is active.
     workbenchNotifications=wireWorkbenchNotifications({workbench,ilink})
     workbenchArtifacts=wireWorkbenchArtifacts({workbench,ilink})
@@ -1292,6 +1288,7 @@ export async function bootDaemon(opts: BootDaemonOpts): Promise<DaemonHandle> {
 // would start. Compiled `wechat-cc-cli.exe run` would silently no-op.
 import { existsSync as fsExistsSync, readFileSync as fsReadFileSync } from 'node:fs'
 import { resolveDaemonStateDir } from './resolve-state-dir'
+import { recordBootFailure, clearBootFailures } from './runtime/boot-backoff'
 import { APP_VERSION, BUILD_SHA } from '../lib/app-version'
 export async function main() {
   const stateDir = resolveDaemonStateDir()
@@ -1310,7 +1307,16 @@ export async function main() {
   } catch (err) { log('DAEMON', `daemon.env load failed (continuing): ${err instanceof Error ? err.message : err}`) }
   const dangerously = process.argv.includes('--dangerously')
   let handle: DaemonHandle
-  try { handle = await bootDaemon({ stateDir, dangerously }) } catch (err) { console.error('[wechat-cc] fatal:', err); process.exit(1) }
+  try { handle = await bootDaemon({ stateDir, dangerously }) } catch (err) {
+    console.error('[wechat-cc] fatal:', err)
+    // 指数退避(重构第二批步 6a):launchd / systemd 只是每 5–10 秒拉起一次,确定性的启动失败(配置坏了、迁移失败)
+    // 会变成重启风暴。退出前按连续失败次数等:10s、20s、40s … 封顶 30 分钟。
+    const { count, delayMs } = recordBootFailure(stateDir, Date.now())
+    log('DAEMON', `startup failed (${count} in a row) — waiting ${Math.round(delayMs / 1000)}s before exit`)
+    await new Promise(r => setTimeout(r, delayMs))
+    process.exit(1)
+  }
+  clearBootFailures(stateDir)
   process.on('beforeExit', (code) => log('DAEMON', `beforeExit code=${code}`))
   process.on('exit', (code) => log('DAEMON', `exit code=${code}`))
   process.on('uncaughtException', (err) => {
