@@ -70,6 +70,7 @@ wechat-cc ci triage --sha <sha> --json      # 给机器看的一份
 | `settings-panel-workbench`(两条大文件)、`apps/mobile/continuation-materials`、`apps/mobile/attachments` | `toEqual` 比几百 KB 的 Buffer —— vitest 逐字节递归,700KB 空闲就 5.6s | 改 `Buffer#equals`(sha256 那条照留) |
 | `lib/migration-order` | 每个锁定版本都从零重建库:O(n²) 次迁移 | 一个库按序迁移、每步取一次 schema(6.5s → 2.3s,锁定指纹全对) |
 | `apps/desktop/.../cc-asset-kit` | 纯 JS 解约 50 张 512² PNG;一条测试校验三遍;另一条拿 `toEqual` 比 512² 的 alpha | 校验一遍;四份改过的整套那条给 60s;alpha 改 `Buffer.compare` |
+| `lib/timeout-fetch`(流一直在动就不掐) | 真时钟:每 10ms 一块对 idle 30ms,满载下一个 10ms 定时器迟到就被掐 | 假时钟推进(仍是 60ms > 30ms,证明每块都重置;把 idle 调到 5ms 它就红) |
 | `guard/owner-table` | 墙钟断言「国内调用 < 60ms」 | 改成跟 0ms 定时器赛跑(首次探测等 10 分钟的运行时里,不等探测的路径永远先出来) |
 | `core/acp/rpc` | harness 给每条都设 50ms 的 RPC 期限 | 缺省 10s,只有测超时那条传 50ms |
 | `reminders/reminders.e2e` | `waitForReplyTo` 缺省 5s 要盖一次真 daemon 启动 | 30s |
