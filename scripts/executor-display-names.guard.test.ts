@@ -63,7 +63,7 @@ const RULES: Array<{ why: string; re: RegExp }> = [
  * 规则命中、但不是执行者显示名的地方(文件 + 命中的那段原文)。加一条要写清为什么;它不再命中 ⇒ 红,删掉。
  */
 const NOT_DISPLAY_NAMES: ReadonlyArray<{ file: string; match: string; why: string }> = [
-  { file: 'src/daemon/cc-activity-source.ts', match: "claude: 'Claude Code'", why: '终端会话来源 → 终端里跑的程序名(「终端里的 Claude Code」),不是执行者显示名' },
+  { file: 'src/daemon/cc-activity-source.ts', match: "claude: 'Claude Code'", why: 'CLI 升级记录里的程序名(「Claude Code 升级到 x,自检通过」),不是执行者显示名;跟 cli-upgrade/specs.ts 的 CLI_SPECS.label 是同一个东西的两份,待收成一处' },
   { file: 'src/daemon/cc-activity-source.ts', match: "'Claude Code'", why: '同上' },
   { file: 'src/daemon/capabilities.ts', match: "claude: 'Claude Code'", why: '接 hooks 的终端程序名(「接上 Claude Code」),不是执行者显示名' },
   { file: 'src/daemon/capabilities.ts', match: "'Claude Code'", why: '同上' },
