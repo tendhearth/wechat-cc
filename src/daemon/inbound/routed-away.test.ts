@@ -1,8 +1,4 @@
 import { describe, it, expect, vi } from 'vitest'
-import { makeMwAdmin } from './mw-admin'
-import { makeMwMode } from './mw-mode'
-import { makeMwOnboarding } from './mw-onboarding'
-import { makeMwPermissionReply } from './mw-permission-reply'
 import { makeMwCommand } from './mw-command'
 import { makeCommandRegistry } from '../commands/registry'
 import { makeMwWorkbench } from './mw-workbench'
@@ -19,19 +15,15 @@ async function run(mw: Middleware, ctx: InboundCtx) { let nexted = false; await 
 
 describe('routedAway', () => {
   it('没路由 ⇒ false;路由到我 ⇒ false;路由到别人(含 chat)⇒ true', () => {
-    expect(routedAway({}, 'admin')).toBe(false)
-    expect(routedAway({ intent: { kind: 'admin' } }, 'admin')).toBe(false)
-    expect(routedAway({ intent: { kind: 'chat' } }, 'admin')).toBe(true)
-    expect(routedAway({ intent: { kind: 'mode' } }, 'admin')).toBe(true)
+    expect(routedAway({}, 'command')).toBe(false)
+    expect(routedAway({ intent: { kind: 'command' } }, 'command')).toBe(false)
+    expect(routedAway({ intent: { kind: 'chat' } }, 'command')).toBe(true)
+    expect(routedAway({ intent: { kind: 'task-command' } }, 'command')).toBe(true)
   })
 })
 
-describe('六个消费者按 intent 早退', () => {
+describe('消费者按 intent 早退(3b 之后只剩命令表与工作台)', () => {
   const table: Array<[string, string, (handle: () => boolean) => Middleware]> = [
-    ['admin', 'admin', h => makeMwAdmin({ adminHandler: { handle: async () => h() } })],
-    ['mode', 'mode', h => makeMwMode({ modeHandler: { handle: async () => h() } })],
-    ['onboarding', 'onboarding', h => makeMwOnboarding({ onboardingHandler: { handle: async () => h() } })],
-    ['permission-reply', 'permission-reply', h => makeMwPermissionReply({ handlePermissionReply: () => h(), log: () => {} })],
     ['command', 'command', h => makeMwCommand({ registry: makeCommandRegistry([{ id: 'x', probe: () => true, handle: async () => h() }]), log: () => {} })],
   ]
   for (const [name, kind, make] of table) {
@@ -64,5 +56,12 @@ describe('六个消费者按 intent 早退', () => {
       await run(mw, { ...ctxOf(undefined, '任务 列表'), origin })
       expect((handleWechat.mock.calls.at(-1) as unknown[])[2]).toMatchObject({ origin })
     }
+  })
+})
+
+describe('命令表的 group 沿用老的 consumedBy 标签(3b)', () => {
+  it('admin 那条处理了 ⇒ consumedBy=admin,不是 command', async () => {
+    const mw = makeMwCommand({ registry: makeCommandRegistry([{ id: 'admin', group: 'admin', probe: () => true, handle: async () => true }]), log: () => {} })
+    expect(await run(mw, ctxOf({ kind: 'command' }))).toEqual({ nexted: false, consumed: 'admin' })
   })
 })

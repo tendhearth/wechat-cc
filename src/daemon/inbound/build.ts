@@ -6,10 +6,6 @@ import { makeMwAccess, type AccessMwDeps } from './mw-access'
 import { makeMwDedup, type DedupMwDeps } from './mw-dedup'
 import { makeMwCaptureCtx, type CaptureCtxMwDeps } from './mw-capture-ctx'
 import { makeMwTyping, type TypingMwDeps } from './mw-typing'
-import { makeMwAdmin, type AdminMwDeps } from './mw-admin'
-import { makeMwMode, type ModeMwDeps } from './mw-mode'
-import { makeMwOnboarding, type OnboardingMwDeps } from './mw-onboarding'
-import { makeMwPermissionReply, type PermissionReplyMwDeps } from './mw-permission-reply'
 import { makeMwCommand, type MwCommandDeps } from './mw-command'
 import { makeMwAttachments, type AttachmentsMwDeps } from './mw-attachments'
 import { makeMwTranscribeVoice, type TranscribeVoiceMwDeps } from './mw-transcribe-voice'
@@ -42,10 +38,6 @@ export interface InboundPipelineDeps {
   /** 意图路由(intent.ts):闸门之后、消费者之前算一次;第一步只记不改。 */
   route?: RouteMwDeps
   typing: TypingMwDeps
-  admin: AdminMwDeps
-  mode: ModeMwDeps
-  onboarding: OnboardingMwDeps
-  permissionReply: PermissionReplyMwDeps
   /** 「看 码」「@码 文本」;缺席 ⇒ 不挂(测试 / 最小嵌入)。 */
   /** 命令表(重构第二批步 2);有它才有「命令」这一站。 */
   commands?: MwCommandDeps
@@ -74,7 +66,7 @@ export function buildInboundPipeline(d: InboundPipelineDeps): InboundPipeline {
   }
   // 消费者按 intent 早退(第二步):在场的消费者必须有探针,否则它永远轮不到 —— 启动时就报,别等真机。
   if (d.route) {
-    const present: Array<[IntentKind, boolean]> = [['task-command', !!d.workbench], ['admin', true], ['mode', true], ['onboarding', true], ['permission-reply', true], ['command', !!d.commands], ['task-reference', !!taskReference]]
+    const present: Array<[IntentKind, boolean]> = [['task-command', !!d.workbench], ['command', !!d.commands], ['task-reference', !!taskReference]]
     const missing = present.filter(([kind, on]) => on && !(kind in probes)).map(([kind]) => kind)
     if (missing.length) throw new Error(`inbound route: probe missing for ${missing.join(', ')}`)
   }
@@ -86,10 +78,6 @@ export function buildInboundPipeline(d: InboundPipelineDeps): InboundPipeline {
   //   附件 / 语音转文字 —— 提到路由之前,探针才看得到转出来的文字(4b 曾让语音里的指称永远判成 chat)。
   const consume = makeMwConsume({ handlers: {
     ...(d.workbench ? { 'task-command': makeMwWorkbench(d.workbench) } : {}),
-    admin: makeMwAdmin(d.admin),
-    mode: makeMwMode(d.mode),
-    onboarding: makeMwOnboarding(d.onboarding),
-    'permission-reply': makeMwPermissionReply(d.permissionReply),
     ...(d.commands ? { command: makeMwCommand(d.commands) } : {}),
     ...(taskReference ? { 'task-reference': taskReference } : {}),
   } })

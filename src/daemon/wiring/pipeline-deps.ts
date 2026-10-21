@@ -363,12 +363,6 @@ export function buildPipelineDeps(opts: PipelineDepsOpts, refs: PipelineDepsRefs
     redispatch: (run) => refs.pipeline.deref('guest approve redispatch')(run),
     log: (tag, line) => log(tag, line),
   })
-  // 命令表(重构第二批步 2):main 交来的文本命令 + 本文件的控制命令(串门 / 回信 / 配对 / 派 / 认识 / 访客)。
-  // 控制命令以前在派发里、llm-health 之后 ⇒ 模型挂了时配对 / 批准访客也用不了;现在和其余命令一起排在 llm-health 之前。
-  const commandRegistry = makeCommandRegistry([
-    ...(opts.commands ?? []),
-    { id: 'control', probe: (m) => commandRouter.probe(m), handle: (m) => commandRouter.tryHandle(m) },
-  ])
   // Owner notification for the guest branch — resolveAdminChatId
   // (admins-membership-based), NEVER resolveOperatorChatId (mw-identity has
   // already written a conversations row for this stranger by the time
@@ -1010,6 +1004,21 @@ export function buildPipelineDeps(opts: PipelineDepsOpts, refs: PipelineDepsRefs
     stateDir,
   })
 
+  // 命令表(重构第二批步 2 / 3b,spec §1):入站只有一站「命令」查这张表。**顺序就是优先级**(ids 就是真实顺序):
+  // 管理员 → (各命令声明的 /词:/cli /today /visit,由 registry 排在兜底之前)→ mode(认任何 /词的兜底)→ 上手(没见过的用户 / 起名阶段的每一句)
+  // → 权限 y/n → 文本命令(定时 / 日历 / 做过的事 / 经验 / 导入记忆 / 终端)→ 控制命令(串门 / 回信 / 配对 / 派 / 认识 / 访客)。
+  // group 沿用老的 consumedBy 标签,trace、welcome、milestone、activity 不用改。
+  const commandRegistry = makeCommandRegistry([
+    { id: 'admin', group: 'admin', probe: (m) => adminCommandsHandler.probe(m), handle: (m) => adminCommandsHandler.handle(m) },
+    { id: 'mode', group: 'mode', slashCatchAll: true, probe: (m) => modeHandler.probe(m), handle: (m) => modeHandler.handle(m) },
+    { id: 'onboarding', group: 'onboarding', probe: (m) => onboardingHandler.probe(m), handle: (m) => onboardingHandler.handle(m) },
+    { id: 'permission-reply', group: 'permission-reply',
+      probe: (m) => ilink.probePermissionReply(m.text ?? '', m.chatId, m.quote?.text),
+      handle: async (m) => { if (!ilink.handlePermissionReply(m.text ?? '', m.chatId, m.quote?.text)) return false; log('PERMISSION', `consumed reply from chat=${m.chatId}`); return true } },
+    ...(opts.commands ?? []),
+    { id: 'control', ownsSlash: (m) => /^\s*\/visit\b/i.test(m.text ?? ''), probe: (m) => commandRouter.probe(m), handle: (m) => commandRouter.tryHandle(m) },
+  ])
+
   const pipelineDeps: InboundPipelineDeps = {
     trace: { log },
     identity: {
@@ -1076,21 +1085,9 @@ export function buildPipelineDeps(opts: PipelineDepsOpts, refs: PipelineDepsRefs
     // 意图路由(第一步只记 trace 不改决策):探针全是各消费者自己交出来的只读判定。
     route: {
       probes: {
-        admin: (ctx) => adminCommandsHandler.probe(ctx.msg),
-        // mode 认任何 /词(兜底「不认识 /xx」);命令表认领的 /cli /today /visit 让给命令表 —— 具体的先于兜底(重构第二批步 3a,§1.5 bug 1)
-        mode: (ctx) => modeHandler.probe(ctx.msg) && !commandRegistry.probe(ctx.msg),
-        onboarding: (ctx) => onboardingHandler.probe(ctx.msg),
-        'permission-reply': (ctx) => ilink.probePermissionReply(ctx.msg.text ?? '', ctx.msg.chatId, ctx.msg.quote?.text),
         command: (ctx) => commandRegistry.probe(ctx.msg),
       },
       ...(opts.matters ? { matterFor: (chatId: string) => opts.matters!.findBySurface('wechat', chatId)?.id ?? null } : {}),
-      log,
-    },
-    admin: { adminHandler: adminCommandsHandler },
-    mode: { modeHandler },
-    onboarding: { onboardingHandler },
-    permissionReply: {
-      handlePermissionReply: (text: string, fromChatId?: string, quoted?: string) => ilink.handlePermissionReply(text, fromChatId, quoted),
       log,
     },
     commands: { registry: commandRegistry, log },

@@ -149,8 +149,8 @@ describe('pipeline-deps delegateToHand selfId (T2/T6 identity-split fix)', () =>
     delete process.env.WECHAT_A2A_SELF_ID
     try {
       const { pipelineDeps } = setup('cc-boot-resolved-1234')
-      const handled = await pipelineDeps.admin.adminHandler.handle(delegateMsg)
-      expect(handled).toBe(true) // fire-and-forget ack — runDelegate continues in the background
+      const handled = await pipelineDeps.commands!.registry.handle(delegateMsg)
+      expect(handled).toEqual({ id: 'admin', group: 'admin' }) // fire-and-forget ack — runDelegate continues in the background
 
       const call = await pollFor(() => doDelegateSpy.mock.calls[0] ?? null)
       expect(call).not.toBeNull()
@@ -168,7 +168,7 @@ describe('pipeline-deps delegateToHand selfId (T2/T6 identity-split fix)', () =>
     process.env.WECHAT_A2A_SELF_ID = 'env-var-stale-identity'
     try {
       const { pipelineDeps } = setup('cc-boot-resolved-5678')
-      await pipelineDeps.admin.adminHandler.handle(delegateMsg)
+      await pipelineDeps.commands!.registry.handle(delegateMsg)
       const call = await pollFor(() => doDelegateSpy.mock.calls[0] ?? null)
       expect(call).not.toBeNull()
       const [, req] = call as unknown as [unknown, { selfId: string }]

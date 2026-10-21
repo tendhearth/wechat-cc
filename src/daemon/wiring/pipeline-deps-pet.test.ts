@@ -163,18 +163,19 @@ describe('petTurn / 回合起止配对 (CC 桌宠 Phase B, fix round 1)', () => 
     expect(petSignals.snapshot('owner_chat').inFlightSinceMs).toBeNull()
   })
 
+  // 这条测的是派发那一步本身(起飞 / 落地),直接调 dispatch;owner_chat 在这里是没起名的用户,走整条命令表会被上手那条接走
   it('正常入站:进 coordinator 时起飞,回来时落地(抛错也落地)', async () => {
     let seenDuringDispatch: number | null = null
     const { pipelineDeps, petSignals } = setup({
       onDispatch: async (msg) => { seenDuringDispatch = petSignals.snapshot(msg.chatId).inFlightSinceMs },
     })
     // onDispatch 只在下面这一行里被调用 —— 那时 petSignals 早已初始化。
-    await inboundTurn(pipelineDeps, inbound('owner_chat', '你好'))
+    await pipelineDeps.dispatch.coordinator.dispatch(inbound('owner_chat', '你好'))
     expect(seenDuringDispatch).toBe(1000)
     expect(petSignals.snapshot('owner_chat').inFlightSinceMs).toBeNull()
 
     const boom = setup({ onDispatch: async () => { throw new Error('boom') } })
-    await expect(inboundTurn(boom.pipelineDeps, inbound('owner_chat', '你好'))).rejects.toThrow('boom')
+    await expect(boom.pipelineDeps.dispatch.coordinator.dispatch(inbound('owner_chat', '你好'))).rejects.toThrow('boom')
     expect(boom.petSignals.snapshot('owner_chat').inFlightSinceMs).toBeNull()
   })
 

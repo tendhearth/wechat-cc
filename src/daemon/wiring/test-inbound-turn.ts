@@ -6,7 +6,7 @@
 import type { InboundMsg } from '../../core/prompt-format'
 
 export async function inboundTurn(
-  d: { commands?: { registry: { handle(m: InboundMsg): Promise<string | null> } }; dispatch: { coordinator: { dispatch(m: InboundMsg): Promise<void> } } },
+  d: { commands?: { registry: { handle(m: InboundMsg): Promise<unknown> } }; dispatch: { coordinator: { dispatch(m: InboundMsg): Promise<void> } } },
   msg: InboundMsg,
 ): Promise<void> {
   if (await d.commands?.registry.handle(msg)) return

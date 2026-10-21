@@ -11,7 +11,7 @@ describe('CommandRegistry(重构第二批步 2)', () => {
     const r = makeCommandRegistry([a, b, c])
     expect(r.probe(msg('x'))).toBe(true)
     expect(a.handle).not.toHaveBeenCalled()
-    expect(await r.handle(msg('x'))).toBe('b')   // a 认领但没处理 ⇒ 交给下一个认领的
+    expect(await r.handle(msg('x'))).toEqual({ id: 'b', group: 'command' })   // a 认领但没处理 ⇒ 交给下一个认领的
     expect(c.handle).not.toHaveBeenCalled()
   })
   it('nothing claims ⇒ probe false, handle null; ids are unique (duplicate throws at build)', async () => {
@@ -31,5 +31,23 @@ describe('CommandRegistry(重构第二批步 2)', () => {
     expect(cmd.probe(msg('定时'))).toBe(true)
     expect(cmd.probe(msg('定时', 'guest'))).toBe(false)
     expect(await cmd.handle(msg('定时'))).toBe(true)
+  })
+})
+
+describe('CommandRegistry · 3b:group 与 /词 的归属', () => {
+  it('handle reports the group (old consumedBy label); default group is command', async () => {
+    const r = makeCommandRegistry([{ id: 'admin', group: 'admin', probe: (m) => m.text === '/health', handle: async () => true }, { id: 'jobs', probe: (m) => m.text === '定时', handle: async () => true }])
+    expect(await r.handle(msg('/health'))).toEqual({ id: 'admin', group: 'admin' })
+    expect(await r.handle(msg('定时'))).toEqual({ id: 'jobs', group: 'command' })
+  })
+  it('a /word a later command owns is placed before the slash catch-all; the order is visible in ids (order = priority, no look-ahead)', async () => {
+    const mode = { id: 'mode', group: 'mode', slashCatchAll: true as const, probe: (m: { text: string }) => m.text.startsWith('/'), handle: vi.fn(async () => true) }
+    const cli = { id: 'cli', ownsSlash: (m: { text: string }) => m.text === '/cli', probe: (m: { text: string }) => m.text === '/cli' || m.text === '终端', handle: vi.fn(async () => true) }
+    const onboarding = { id: 'onboarding', group: 'onboarding', probe: () => true, handle: vi.fn(async () => true) }
+    const r = makeCommandRegistry([mode, onboarding, cli])
+    expect(r.ids).toEqual(['cli:slash', 'mode', 'onboarding', 'cli'])
+    expect(await r.handle(msg('/cli'))).toEqual({ id: 'cli:slash', group: 'command' })
+    expect(await r.handle(msg('/cc'))).toEqual({ id: 'mode', group: 'mode' })
+    expect(await r.handle(msg('终端'))).toEqual({ id: 'onboarding', group: 'onboarding' })   // 非斜杠的写法留在原位
   })
 })
