@@ -125,3 +125,17 @@ describe('GET /v1/health · version', () => {
     expect('version' in (r.body as object)).toBe(false)
   })
 })
+
+describe('GET /v1/llm/health · names(收敛清单 ⑥)', () => {
+  const llmHealth = { cached: () => null, dial: async () => null } as unknown as NonNullable<InternalApiDeps['llmHealth']>
+  it('六家内置 + 已注册的(含自定义 ACP)都给正式名字和设置里的写法;没接名字 ⇒ 不带', async () => {
+    const llmNames = (id: string) => id === 'agy' ? { name: 'Gemini(账号)', short: 'Gemini(账号)', settings: 'Gemini · 账号连接' } : { name: `N:${id}`, short: id, settings: `S:${id}` }
+    const r = await makeRoutesUnderTest({ llmHealth, llmRegistered: () => ['claude', 'my-acp'], llmNames })['GET /v1/llm/health']!(q(), undefined)
+    const names = (r.body as { names: Record<string, { displayName: string; settingsLabel: string }> }).names
+    expect(Object.keys(names).sort()).toEqual(['agy', 'claude', 'codex', 'cursor', 'gemini', 'my-acp', 'openai'])
+    expect(names.agy).toEqual({ displayName: 'Gemini(账号)', settingsLabel: 'Gemini · 账号连接' })
+    expect(names['my-acp']).toEqual({ displayName: 'N:my-acp', settingsLabel: 'S:my-acp' })
+    const bare = await makeRoutesUnderTest({ llmHealth, llmRegistered: () => [] })['GET /v1/llm/health']!(q(), undefined)
+    expect((bare.body as { names?: unknown }).names).toBeUndefined()
+  })
+})

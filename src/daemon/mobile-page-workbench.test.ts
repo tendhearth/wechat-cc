@@ -199,7 +199,8 @@ describe('脚本要的元素,真页面里都得有', () => {
 })
 
 describe('一件事的详情在网页上只看状态(收敛 5b,2026-10-21)', () => {
-  const busy = { matter: { id: 'm1', title: '**首页**调整', kind: 'task', status: 'open', agents: ['codex'] }, task: { id: 'm1', providerId: 'codex', phase: 'working', status: 'running', error: null },
+  // agentNames:daemon 下发的名字(收敛清单 ⑥),网页只读它
+  const busy = { matter: { id: 'm1', title: '**首页**调整', kind: 'task', status: 'open', agents: ['codex'], agentNames: { codex: 'Codex', claude: 'Claude' } }, task: { id: 'm1', providerId: 'codex', phase: 'working', status: 'running', error: null },
     events: [{ kind: 'user', text: '公开要求', createdAt: 1 }, { kind: 'text', text: '公开答复', createdAt: 2 }, { kind: 'tool_call', text: 'bun test', createdAt: 3, activity: { type: 'command', status: 'running', label: '跑测试' } }],
     artifacts: [{ id: 'a1', taskId: 'm1', name: '报告.md', mime: 'text/markdown', size: 10, sha256: 'x', createdAt: 1, approvedAt: null }],
     inputs: [{ id: 'i1', taskId: 'm1', runId: 'run1', text: '补一句', status: 'held' }] }
@@ -226,7 +227,7 @@ describe('一件事的详情在网页上只看状态(收敛 5b,2026-10-21)', () 
     expect(html).toContain('<p class="m-state">等你决定</p>')
     expect(html).toContain('有 1 项等你决定，到手机 App 或电脑上处理。')
     expect(html).toContain('Codex 的额度已用完。')
-    expect(html).toContain('可以在手机 App 或电脑上交给 Claude Code 接着做。')
+    expect(html).toContain('可以在手机 App 或电脑上交给 Claude 接着做。')
     expect(html).not.toContain('<button')
     expect(html).not.toContain('rm tmp')
   })
@@ -236,7 +237,7 @@ describe('一件事的详情在网页上只看状态(收敛 5b,2026-10-21)', () 
     h.setDetail({ ...busy, events: [], task: { ...busy.task, phase: 'failed', status: 'failed' }, quotaHandoff: { state: 'handed', from: 'codex', to: 'claude', matterId: 'abcdef12' } } as never)
     await h.enterPane(); await h.openMatter()
     expect(h.status.innerHTML).toContain('<p class="m-state">没做成</p>')
-    expect(h.status.innerHTML).toContain('已经交给 Claude Code 接着做了。')
+    expect(h.status.innerHTML).toContain('已经交给 Claude 接着做了。')
     h.setDetail({ ...busy, events: [], matter: { ...busy.matter, status: 'done' }, task: { ...busy.task, phase: 'replied' } } as never)
     await h.tick(3000)
     expect(h.status.innerHTML).toContain('<p class="m-state">完成</p>')

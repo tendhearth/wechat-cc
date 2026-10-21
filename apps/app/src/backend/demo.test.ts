@@ -390,7 +390,7 @@ describe('演示后端 · 额度用完交给另一位(spec continue-sessions §7
   it('种子里那件:Claude Code 额度用完、可交给 Codex;详情过协议 schema', async () => {
     const d = await makeDemoBackend().matter('f3a4b5c6', 'zh-Hans')
     expect(MatterDetail.parse(d).quotaHandoff).toMatchObject({ state: 'offer', from: 'claude', to: 'codex', kind: 'quota' })
-    expect(d.events.map(e => e.text)).toContain('Claude Code 的额度用完了，这一轮没做完。')
+    expect(d.events.map(e => e.text)).toContain('Claude 的额度用完了，这一轮没做完。')
   })
   it('交出去 ⇒ 新一件(Codex、同一文件夹、第一句说清接替谁、正在做,2 秒后回复);原来那件变 handed;同 requestId / 另一个 requestId 都回同一件', async () => {
     vi.useFakeTimers()
@@ -400,7 +400,7 @@ describe('演示后端 · 额度用完交给另一位(spec continue-sessions §7
       const made = await b.matter(matterId, 'zh-Hans')
       expect(made.task).toMatchObject({ providerId: 'codex', path: '~/Projects/notes', phase: 'working' })
       expect(made.matter.originMatterId).toBe('f3a4b5c6')
-      expect(made.events[0]?.text).toBe('接替 Claude Code（额度用完）继续这件事：把周报整理成一页')
+      expect(made.events[0]?.text).toBe('接替 Claude（额度用完）继续这件事：把周报整理成一页')
       expect((await b.matter('f3a4b5c6', 'en')).quotaHandoff).toEqual({ state: 'handed', from: 'claude', to: 'codex', matterId })
       expect(await b.handoff({ id: 'f3a4b5c6', requestId: REQ, providerId: 'codex' })).toEqual({ matterId })
       expect(await b.handoff({ id: 'f3a4b5c6', requestId: 'other', providerId: 'codex' })).toEqual({ matterId })

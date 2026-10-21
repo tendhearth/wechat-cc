@@ -34,6 +34,8 @@ import { join, resolve, relative, isAbsolute } from 'node:path'
 import { guardCliInvoke } from './dev-guard'
 import { makeLiveReload, injectReloadScript } from './dev-reload'
 import { makeAtelierStore } from '../../src/daemon/atelier-store'
+import { executorNames } from '../../src/core/provider-display-names'
+import { PROVIDER_IDS } from '../../src/lib/provider-ids'
 
 const ROOT = process.env.WECHAT_CC_ROOT ?? join(import.meta.dir, '..', '..')
 // Accepts both spellings: src/lib/config.ts and lib.rs read WECHAT_STATE_DIR,
@@ -1585,7 +1587,8 @@ Bun.serve({
       return Response.json({ ok: true, results: [{ source: 'claude', ok: true, file: '/home/demo/.claude/settings.json', changed: true }], status: [] })
     }
     if (dryRun && url.pathname === '/v1/cli/sessions' && req.method === 'GET') {
-      return Response.json({ ok: true, sessions: __mockState.cliSessions ?? [] })
+      // 跟真 daemon 一样带上 displayName(wire-cli-sessions:registry.namesOf(source).name;收敛清单 ⑥)
+      return Response.json({ ok: true, sessions: (__mockState.cliSessions ?? []).map(x => ({ ...x, displayName: executorNames(String(x.source ?? 'claude')).name })) })
     }
     if (dryRun && url.pathname === '/v1/connections' && req.method === 'GET') {
       if (__mockState.connections === null) return Response.json({ error: 'unavailable' }, { status: 503 })
@@ -1609,7 +1612,10 @@ Bun.serve({
     // 切换后端的下拉菜单从这里拿「已配置的 AI 服务」(dashboard.js refreshServiceChoices,
     // 2026-08-26 起与「大脑」同源);演示模式给三家,和 doctor 报告里的 provider 对得上。
     if (dryRun && url.pathname === '/v1/llm/health' && req.method === 'GET') {
-      return Response.json({ ok: true, registered: ['claude', 'codex', 'cursor'] })
+      // names:跟真 daemon 同一个出处(core/provider-display-names),不另抄一份(收敛清单 ⑥)
+      const registered = ['claude', 'codex', 'cursor']
+      const names = Object.fromEntries(PROVIDER_IDS.map(id => { const n = executorNames(id, registered); return [id, { displayName: n.name, settingsLabel: n.settings }] }))
+      return Response.json({ ok: true, registered, names })
     }
     if (dryRun && url.pathname.startsWith('/v1/a2a/')) {
       const authHeader = req.headers.get('authorization') ?? ''

@@ -57,9 +57,9 @@ vi.mock('../ui/CCFigure', () => ({ CCFigure: () => null }))
 
 type Reply = { status: number; json: unknown } | Error
 const ok = (json: unknown, status = 200): Reply => ({ status, json })
-const row = (key = 'k1', provider: 'claude' | 'codex' = 'claude'): NativeSessionRowT => ({ key, provider, title: `会话 ${key}`, project: 'demo', updatedAt: 1, active: true })
+const row = (key = 'k1', provider: 'claude' | 'codex' = 'claude'): NativeSessionRowT => ({ key, provider, displayName: provider === 'codex' ? 'Codex' : 'Claude', title: `会话 ${key}`, project: 'demo', updatedAt: 1, active: true })
 const messages = (start: number, end: number): NativeSessionPageT['messages'] => Array.from({ length: end - start }, (_, i) => ({ id: `msg-${i + start}`, role: i % 2 ? 'assistant' : 'user', text: `第${i + start}条`, truncated: false }))
-const ready = (state: SessionContinueT['state'] = 'ready'): SessionContinueT => ({ state, provider: 'claude', project: 'demo', mode: state === 'ready' ? 'native_resume' : null, matterId: null })
+const ready = (state: SessionContinueT['state'] = 'ready'): SessionContinueT => ({ state, provider: 'claude', displayName: 'Claude', project: 'demo', mode: state === 'ready' ? 'native_resume' : null, matterId: null })
 function harness() {
   let list: (url: URL) => Reply | Promise<Reply> = url => ok({ ok: true, items: [row(url.searchParams.get('q') || 'k1', url.searchParams.get('provider') as 'claude' | 'codex')], nextCursor: null })
   let read: (url: URL) => Reply | Promise<Reply> = url => {
@@ -198,7 +198,7 @@ describe('session reading with real LiveBackend and native UI', () => {
     await ui.click('continue-confirm')
     expect(h.posts()).toHaveLength(0)
     await act(() => check.resolve(ok({ ok: true, ...ready() }))); await flush()
-    expect(ui.container.textContent).toContain('先让电脑上原来那个 Claude Code 停下')
+    expect(ui.container.textContent).toContain('先让电脑上原来那个 Claude 停下')
     expect(ui.byId('continue-confirm').textContent).toBe('已经停了，接着做')
     await ui.click('continue-confirm')
     expect(h.posts()).toEqual([{ path: '/m/api/session/continue', method: 'POST', body: { key: 'k1' } }])

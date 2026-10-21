@@ -44,10 +44,11 @@ function mSetButtons() {
 }
 function loadMatters() {
   mApi("/m/api/matters?status=open,replied,done").then(function(r){
-    document.getElementById("m-list").innerHTML=r.matters.filter(function(m){return m.kind!=="companion"}).map(function(m){return '<button type="button" class="card todo" data-mid="'+esc(m.id)+'"><span class="tx"><b>'+esc(ccPlain(m.title))+'</b><small>'+esc(M_KIND[m.kind]||m.kind)+' · '+esc(m.networkSuspended?"已暂停(网络未受保护)":(M_STATUS[m.status]||m.status))+(m.projectPath?' · '+esc(m.projectPath.split(/[\\/]/).filter(Boolean).pop()||m.projectPath):'')+'</small></span>'+mAgents.originMarkHtml(m.origin)+mAgents.agentAvatarsHtml(m.agents)+'</button>'}).join("") || '<div class="empty">还没有事，微信或桌面上交代一件就会出现在这里</div>'
+    document.getElementById("m-list").innerHTML=r.matters.filter(function(m){return m.kind!=="companion"}).map(function(m){return '<button type="button" class="card todo" data-mid="'+esc(m.id)+'"><span class="tx"><b>'+esc(ccPlain(m.title))+'</b><small>'+esc(M_KIND[m.kind]||m.kind)+' · '+esc(m.networkSuspended?"已暂停(网络未受保护)":(M_STATUS[m.status]||m.status))+(m.projectPath?' · '+esc(m.projectPath.split(/[\\/]/).filter(Boolean).pop()||m.projectPath):'')+'</small></span>'+mAgents.originMarkHtml(m.origin)+mAgents.agentAvatarsHtml(m.agents,{nameOf:mNameOf(m.agentNames)})+'</button>'}).join("") || '<div class="empty">还没有事，微信或桌面上交代一件就会出现在这里</div>'
   }).catch(function(e){document.getElementById("m-list").textContent=mError(e.message)})
 }
-function mProviderName(id) { return ({claude:'Claude Code',codex:'Codex',cursor:'Cursor',agy:'Antigravity'})[id]||id }
+/** 执行者叫什么只读 daemon 给的 matter.agentNames(收敛清单 ⑥),网页不存名字表;老 daemon 不带 ⇒ id。 */
+function mNameOf(names) { return function(id) { return names&&typeof names[id]==='string'&&names[id]?names[id]:id } }
 var M_ID = /^[a-z][a-z0-9._-]{0,63}$/
 /** 额度用完那一块只当状态读:认不出的形状一律当没有,不猜。 */
 function mQuotaView(value) {
@@ -56,7 +57,8 @@ function mQuotaView(value) {
   if((value.state!=='offer'&&value.state!=='none')||['quota','rate_limit'].indexOf(value.kind)<0||!Number.isFinite(value.resetAt))return null
   return value.state==='none'||typeof value.to==='string'&&M_ID.test(value.to)?value:null
 }
-function mQuotaText(view) {
+function mQuotaText(view, names) {
+  var mProviderName=mNameOf(names)
   if(view.state==='handed')return '已经交给 '+mProviderName(view.to)+' 接着做了。'
   var wait=Math.max(1,Math.ceil((view.resetAt-Date.now())/60000))
   var head=mProviderName(view.from)+(view.kind==='rate_limit'?' 暂时受限，请求太频繁了。':' 的额度已用完。')+'预计约 '+wait+' 分钟后可再试。'
@@ -78,7 +80,7 @@ function mRenderStatus(d) {
   if(state.waiting)html+='<p class="m-task-note">有 '+state.waiting+' 项等你决定，到手机 App 或电脑上处理。</p>'
   var events=d.events||[],last=events[events.length-1]
   if(last&&last.kind==='tool_call'&&last.activity&&last.activity.status==='running')html+='<p class="m-now"><span>正在</span> '+esc(last.activity.label||last.text)+'</p>'
-  if(d.matter.kind==='task'&&quota)html+='<p class="m-task-note">'+esc(mQuotaText(quota))+'</p>'
+  if(d.matter.kind==='task'&&quota)html+='<p class="m-task-note">'+esc(mQuotaText(quota,d.matter.agentNames))+'</p>'
   if(d.task&&d.task.error==='execution_model_unsupported')html+='<p class="m-task-note">请在电脑上为这件事选一个账号可用的模型后再继续。</p>'
   if(d.task&&d.task.rewind&&d.task.rewind.blocked)html+='<p class="m-task-note">撤回这一轮时停住了，请到电脑上处理。</p>'
   // 停下这一轮(2026-10-06,网页留着:停是安全方向):只在有一轮排队 / 在干活时出现;点一下先变「再点一次」,3 秒内再点才停,只停这一轮(runId)。
@@ -119,7 +121,7 @@ function renderMatter(d) {
   // 标题下一组头像 + 名字:任务那一家在前,老 daemon 不带 agents 也有
   // 出生地(2026-10-19):字形在头像组前面,名字后面写一句「从哪来的」;不知道 ⇒ 不画
   var agents=mAgents.matterAgents(d.task&&d.task.providerId,d.matter.agents),who=document.getElementById("m-agents"),from=mAgents.originLabel(d.matter.origin)
-  who.hidden=!agents.length&&!from;who.innerHTML=agents.length||from?mAgents.originMarkHtml(d.matter.origin)+mAgents.agentAvatarsHtml(agents)+'<span>'+esc([mAgents.agentsLabel(agents),from].filter(Boolean).join(" · "))+'</span>':''
+  who.hidden=!agents.length&&!from;who.innerHTML=agents.length||from?mAgents.originMarkHtml(d.matter.origin)+mAgents.agentAvatarsHtml(agents,{nameOf:mNameOf(d.matter.agentNames)})+'<span>'+esc([mAgents.agentsLabel(agents,mNameOf(d.matter.agentNames)),from].filter(Boolean).join(" · "))+'</span>':''
   mRenderStatus(d)
   mSetButtons()
 }

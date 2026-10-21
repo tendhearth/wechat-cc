@@ -41,6 +41,8 @@ export default function SessionReader() {
   const [confirmedWindow, setConfirmedWindow] = useState<NativeSessionPageT['window']>(undefined)
   const [title, setTitle] = useState('')
   const [rowProvider, setRowProvider] = useState<string | null>(null)
+  // 执行者叫什么:电脑给的 displayName(收敛清单 ⑥);老 daemon 不带 ⇒ 退回 id。
+  const [rowName, setRowName] = useState<string | null>(null)
   const [msgs, setMsgs] = useState<Msg[]>([])
   const [next, setNext] = useState<string | null>(null)
   const [state, setState] = useState<'loading' | 'ok' | 'missing' | 'slow'>('loading')
@@ -78,7 +80,7 @@ export default function SessionReader() {
       if (p.session.key !== key) throw new BackendError('unknown')
       loadedContext.current = { key, window, backend }
       setTitle(p.session.title)
-      setRowProvider(p.session.provider)
+      setRowProvider(p.session.provider); setRowName(p.session.displayName ?? null)
       setMsgs(m => mergeSessionMessages(cursor ? m : [], p.messages))
       setNext(window === 'start' ? p.nextCursor : null)
       setConfirmedWindow(p.window)
@@ -104,7 +106,7 @@ export default function SessionReader() {
     // 阅读区属于这一次成功读取的上下文。普通回页只核验续聊,不替换多页/展开原文。
     // 首次读取在 blur 中作废时还没有成功上下文,下一次 focus 会再读。
     if (!sameReading(loadedContext.current, { key, window, backend })) {
-      setTitle(''); setRowProvider(null); setMsgs([]); setNext(null); setConfirmedWindow(undefined); setMoreFailed(false); setState('loading')
+      setTitle(''); setRowProvider(null); setRowName(null); setMsgs([]); setNext(null); setConfirmedWindow(undefined); setMoreFailed(false); setState('loading')
       void load()
     }
     void check()
@@ -119,6 +121,7 @@ export default function SessionReader() {
 
   // 执行者的名字只来自电脑(预览 / 会话行),从不假定是 Claude(裁决 R5);都还没有 ⇒ null,失败句说「这个执行者」。
   const provider = typeof cont === 'object' ? cont.provider : rowProvider
+  const names = { ...(rowProvider && rowName ? { [rowProvider]: rowName } : {}), ...(typeof cont === 'object' && cont.displayName ? { [cont.provider]: cont.displayName } : {}) }
   // 会话本身读不了(missing)⇒ 底部不画:那一页已经说了读不了,不再另说「确认不了能不能接」
   const block = state === 'missing' ? { kind: 'none' as const } : continueBlock(cont, lang)
 
@@ -145,7 +148,7 @@ export default function SessionReader() {
       if (keyRef.current !== myKey) return
       if (p?.state === 'managed') { setSheet(false); void adopt(openThen, true); return }
     } else code = step.code
-    setFailure({ text: continueErrorText(code, provider, lang), dot: continueErrorDot(code) })
+    setFailure({ text: continueErrorText(code, provider, lang, names), dot: continueErrorDot(code) })
     if (CONTINUE_RECHECK.has(code)) void check()
   }
   const confirm = () => adopt(id => {
@@ -197,7 +200,7 @@ export default function SessionReader() {
               style={{ alignSelf: mine ? 'flex-end' : 'flex-start', maxWidth: '85%', backgroundColor: c.paper, borderColor: c.hair, borderWidth: 1, paddingHorizontal: space.l, paddingVertical: space.m, gap: space.xs,
                 borderTopLeftRadius: radius.bubble, borderTopRightRadius: radius.bubble, borderBottomLeftRadius: mine ? radius.bubble : 4, borderBottomRightRadius: mine ? 4 : radius.bubble }}
             >
-              <Txt role="caption" tone="inkSoft">{mine ? t(lang, 'chat.me') : rowProvider ? providerName(rowProvider, lang) : t(lang, 'cc.label')}</Txt>
+              <Txt role="caption" tone="inkSoft">{mine ? t(lang, 'chat.me') : rowProvider ? providerName(rowProvider, names) : t(lang, 'cc.label')}</Txt>
               <MessageText role={mine ? 'user' : 'assistant'} text={m.text} />
               {m.truncated ? <Txt role="caption" tone="inkSoft">{t(lang, 'chat.truncated')}</Txt> : null}
             </View>

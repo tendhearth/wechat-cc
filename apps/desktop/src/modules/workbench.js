@@ -93,13 +93,13 @@ function providerLabel(p) {
 /** @typedef {import('../../../../src/core/workbench/native-adoption').NativeSource} NativeSource */
 /** @typedef {import('../../../../src/core/workbench/native-adoption').NativeResumeDecision} NativeResume */
 /** @typedef {import('../../../../src/core/workbench/handoff').HandoffView} Handoff */
-/** @typedef {{quotaHandoff?:import('./workbench-quota-handoff.js').Offer|null,execution?:ExecutionChoice,lastExecution?:import('./workbench-execution.js').RunExecution|null,attachments?:import('./workbench-attachments.js').Attachment[],handoffs?:Handoff[],requiresExternalClose?:boolean,source?:NativeSource,task:Task,events:WorkbenchEvent[],artifacts:Artifact[],permissions?:Permission[],continuation?:Continuation,runId?:string,inputMode?:'steer'|'send'|'queue',runtime?:RuntimeSnapshot,questions?:import('./workbench-interaction.js').QuestionRequest[],inputs?:import('./workbench-interaction.js').LiveInput[],version?:number,rewind?:import('./workbench-rewind.js').RewindView}} Detail */
+/** @typedef {{agentNames?:Record<string,string>,quotaHandoff?:import('./workbench-quota-handoff.js').Offer|null,execution?:ExecutionChoice,lastExecution?:import('./workbench-execution.js').RunExecution|null,attachments?:import('./workbench-attachments.js').Attachment[],handoffs?:Handoff[],requiresExternalClose?:boolean,source?:NativeSource,task:Task,events:WorkbenchEvent[],artifacts:Artifact[],permissions?:Permission[],continuation?:Continuation,runId?:string,inputMode?:'steer'|'send'|'queue',runtime?:RuntimeSnapshot,questions?:import('./workbench-interaction.js').QuestionRequest[],inputs?:import('./workbench-interaction.js').LiveInput[],version?:number,rewind?:import('./workbench-rewind.js').RewindView}} Detail */
 /** @typedef {{q:string,archived:'exclude'|'only'|'all'}} TaskQuery */
 /** @typedef {{limit:number,total:number,hasMore:boolean,nextCursor:string|null}} TaskPage */
-/** @typedef {{tasks:Task[],providers:Provider[],defaultProvider:string|null,canWechat:boolean,historyProviders?:string[],page?:TaskPage,projects?:Array<{id:string,name:string,path:string,providerId:string}>,projectProviders?:Record<string,string>}} ListResult */
+/** @typedef {{tasks:Task[],providers:Provider[],defaultProvider:string|null,canWechat:boolean,historyProviders?:string[],agentNames?:Record<string,string>,page?:TaskPage,projects?:Array<{id:string,name:string,path:string,providerId:string}>,projectProviders?:Record<string,string>}} ListResult */
 /** @typedef {import('./workbench-artifact-preview.js').ArtifactPreview|null} Preview */
 /** @typedef {{artifactId:string,paths:string[],comment?:string,notice?:string,restartToken?:string,asLesson?:boolean}} ReviewReturnOpen */
-/** @typedef {{tasks:Task[],providers:Provider[],defaultProvider:string|null,canWechat:boolean,nativeResume?:NativeResume|null,historyProviders?:string[],selectedId:string|null,loadingId?:string|null,detail:Detail|null,selectedArtifactId:string|null,error:string,detailDisconnected?:boolean,preview:Preview,previewOpen?:boolean,query?:TaskQuery,page?:TaskPage,projects?:Array<{id:string,name:string,path:string,providerId:string}>,projectProviders?:Record<string,string>,loadingMore?:boolean,newScope?:string,version?:number,reviews?:ReviewTurn[],reviewsSignature?:string,reviewsError?:boolean,reviewReturnOpen?:ReviewReturnOpen|null,reviewReturnResult?:import('./workbench-review-panel.js').ReviewReturnResult|null,rewindOpen?:import('./workbench-rewind.js').RewindOpen|null,rewindRestoreConfirm?:boolean,lineSelect?:import('./workbench-review-panel.js').LineSelect|null,lineCompose?:import('./workbench-review-panel.js').LineCompose|null,commentsSend?:import('./workbench-review-panel.js').CommentsSend|null}} WorkbenchState */
+/** @typedef {{tasks:Task[],providers:Provider[],defaultProvider:string|null,canWechat:boolean,nativeResume?:NativeResume|null,historyProviders?:string[],agentNames?:Record<string,string>,selectedId:string|null,loadingId?:string|null,detail:Detail|null,selectedArtifactId:string|null,error:string,detailDisconnected?:boolean,preview:Preview,previewOpen?:boolean,query?:TaskQuery,page?:TaskPage,projects?:Array<{id:string,name:string,path:string,providerId:string}>,projectProviders?:Record<string,string>,loadingMore?:boolean,newScope?:string,version?:number,reviews?:ReviewTurn[],reviewsSignature?:string,reviewsError?:boolean,reviewReturnOpen?:ReviewReturnOpen|null,reviewReturnResult?:import('./workbench-review-panel.js').ReviewReturnResult|null,rewindOpen?:import('./workbench-rewind.js').RewindOpen|null,rewindRestoreConfirm?:boolean,lineSelect?:import('./workbench-review-panel.js').LineSelect|null,lineCompose?:import('./workbench-review-panel.js').LineCompose|null,commentsSend?:import('./workbench-review-panel.js').CommentsSend|null}} WorkbenchState */
 /** @typedef {import('./workbench-window-state.js').Draft} Draft */
 /** @typedef {{invokeWorkbenchApi:(method:'GET'|'POST',path:string,body?:Record<string,unknown>)=>Promise<unknown>,invoke?:(command:string,args:Record<string,unknown>)=>Promise<unknown>,pollMs?:number,confirmUnattended?:()=>Promise<boolean>,confirmScripts?:(config:import('./workbench-scripts-approve.js').ScriptsConfig)=>Promise<boolean>,onDelegate?:(draft:import('./task-entry.js').Draft)=>Promise<import('./task-entry.js').EntryResult|null>}} WorkbenchDeps */
 /** @typedef {{path:string,text:string,providerId?:string}} IncomingDraft */
@@ -178,7 +178,7 @@ function statusLabel(status, runtime, phase, networkSuspended) {
 /** @param {Task} task */
 function statusValue(task) { return task.importedOnly ? 'imported' : workbenchRuntimePresentation(task.status, task.runtime, task.phase, task.networkSuspended)?.status ?? task.status }
 
-/** @param {string} status @param {Continuation} [continuation] @param {number|null} [archivedAt] @param {{requiresClose:boolean,decision?:NativeResume|null}} [native] @param {{taskId:string,runId?:string,inputMode?:'steer'|'send'|'queue',runtime?:RuntimeSnapshot,busy?:boolean,error?:string}} [live] */
+/** @param {string} status @param {Continuation} [continuation] @param {number|null} [archivedAt] @param {{requiresClose:boolean,decision?:NativeResume|null,providerName?:string}} [native] @param {{taskId:string,runId?:string,inputMode?:'steer'|'send'|'queue',runtime?:RuntimeSnapshot,busy?:boolean,error?:string}} [live] */
 function renderTaskControlsBase(status, continuation, archivedAt,native,live) {
   if (archivedAt != null) return '<div class="wb-archived-controls"><p>已归档 <span>恢复后可继续</span></p><button type="button" class="wb-btn" data-action="restore-task">恢复任务</button></div>'
   if (status === 'running' && live?.runId && live.inputMode) {
@@ -203,7 +203,7 @@ function renderTaskControlsBase(status, continuation, archivedAt,native,live) {
   </form>`
   if(native?.requiresClose){
     const decision=native.decision,fresh=continuation?.mode==='restart_required'
-    const note=decision?`请先关闭原来的 ${escapeWorkbenchHtml(decision.providerId==='claude'?'Claude':'Codex')} 执行程序，再从这里继续。CC 无法替你确认外部程序已退出。`:fresh?'原会话暂时无法恢复。可以查看将带入的记录，再决定新开一轮。':'已加入任务列表，尚未执行。写下接着要做的事，就能从原会话继续。'
+    const note=decision?`请先关闭原来的 ${escapeWorkbenchHtml(native.providerName||decision.providerId)} 执行程序，再从这里继续。CC 无法替你确认外部程序已退出。`:fresh?'原会话暂时无法恢复。可以查看将带入的记录，再决定新开一轮。':'已加入任务列表，尚未执行。写下接着要做的事，就能从原会话继续。'
     const context=fresh&&continuation?.restart?`<details id="wb-restart-context"><summary>查看将带入的记录</summary><pre>${escapeWorkbenchHtml(continuation.restart.context)}</pre></details>`:''
     return `<section class="wb-recovery"><p>${note}</p>${decision?.changedSinceImport?'<p>原会话加入后有新内容；继续会使用原工具现在保存的历史。</p>':''}${context}</section><form class="wb-followup" data-action="${decision?'native-continue':'native-prepare'}" data-native-token="${escapeWorkbenchHtml(decision?.token??'')}" data-restart-token="${escapeWorkbenchHtml(fresh?continuation?.restart?.token??'':'')}"><label class="wb-sr-only" for="wb-followup-text">继续这个任务</label><textarea id="wb-followup-text" rows="2" placeholder="接下来要做什么…"></textarea><button class="wb-btn wb-btn-primary" type="submit">${decision?(fresh?'原程序已关闭，带记录新开':'原程序已关闭，继续'):fresh?'查看恢复方式':'继续'}</button></form>`
   }
@@ -216,7 +216,7 @@ function renderTaskControlsBase(status, continuation, archivedAt,native,live) {
   return '<form class="wb-followup" data-action="continue"><label class="wb-sr-only" for="wb-followup-text">继续这个任务</label><textarea id="wb-followup-text" rows="2" placeholder="继续这个任务…"></textarea><button class="wb-btn wb-btn-primary" type="submit">继续</button></form>'
 }
 
-/** @param {string} status @param {Continuation} [continuation] @param {number|null} [archivedAt] @param {{requiresClose:boolean,decision?:NativeResume|null}} [native] @param {{taskId:string,runId?:string,inputMode?:'steer'|'send'|'queue',runtime?:RuntimeSnapshot,busy?:boolean,error?:string}} [live] @param {Draft} [draft] @param {string} [attachmentError] */
+/** @param {string} status @param {Continuation} [continuation] @param {number|null} [archivedAt] @param {{requiresClose:boolean,decision?:NativeResume|null,providerName?:string}} [native] @param {{taskId:string,runId?:string,inputMode?:'steer'|'send'|'queue',runtime?:RuntimeSnapshot,busy?:boolean,error?:string}} [live] @param {Draft} [draft] @param {string} [attachmentError] */
 export function renderTaskControls(status,continuation,archivedAt,native,live,draft,attachmentError='') {
   const html=renderTaskControlsBase(status,continuation,archivedAt,native,live).replace('</textarea>','</textarea>'+renderAttachmentComposer(draft,attachmentError))
   return draft?.attachments?.some(a=>a.status!=='ready')?html.replace(/type="submit"(?! disabled)/g,'type="submit" disabled'):html
@@ -260,14 +260,18 @@ const projectDisclosureId = path => 'wb-project-fold-' + (Array.from(path, c => 
 
 // 执行者头像(2026-10-19,同手机 app):行尾一组圆头像,名字只进读屏标签和 title,行里不再写执行者名字。
 const AGENTS = createAgentAvatars()
-/** @param {Provider[]} providers @returns {(id:string)=>string|undefined} */
-const providerNameOf = providers => id => providers.find(p => p.id === id)?.displayName
+/**
+ * 执行者叫什么(收敛清单 ⑥):只读 daemon 给的 —— 详情 / 列表的 agentNames,再是执行者列表的 displayName;
+ * 都没有(老 daemon)⇒ undefined,头像那边退回 id。桌面不存名字表。
+ * @param {{providers:Provider[],agentNames?:Record<string,string>,detail?:{agentNames?:Record<string,string>}|null}} state @returns {(id:string)=>string|undefined}
+ */
+export const providerNameOf = state => id => state.detail?.agentNames?.[id] ?? state.agentNames?.[id] ?? state.providers.find(p => p.id === id)?.displayName
 /** 任务自己的执行者在前,再接 daemon 给的 agents(审阅 / 返工 / 会话;老 daemon 不带)。 @param {{providerId:string,agents?:string[]}} task */
 const taskAgents = task => AGENTS.matterAgents(task.providerId, task.agents)
 
-/** @param {Task} task @param {Provider[]} providers @param {string|null} selectedId @param {string} [projectName] */
-function renderTask(task, providers, selectedId, projectName) {
-  const agents = taskAgents(task), nameOf = providerNameOf(providers)
+/** @param {Task} task @param {(id:string)=>string|undefined} nameOf @param {string|null} selectedId @param {string} [projectName] */
+function renderTask(task, nameOf, selectedId, projectName) {
+  const agents = taskAgents(task)
   const provider = AGENTS.agentsLabel(agents, nameOf) || '未知执行者'
   const pendingPermissionCount = task.pendingPermissionCount ?? 0
   const pendingQuestionCount = task.pendingQuestionCount ?? 0
@@ -299,7 +303,7 @@ export function workbenchMessageContext(state) {
   const events = detail?.events ?? []
   return {
     detail,
-    helper: state.providers.find(p => p.id === detail?.task.providerId)?.displayName || detail?.task.providerId || '执行助手',
+    helper: (detail ? providerNameOf(state)(detail.task.providerId) || detail.task.providerId : '') || '执行助手',
     handoffs,
     origin: handoffs.find(h => h.purpose === 'review' && h.targetTaskId === detail?.task.id),
     otherProvider: state.providers.find(p => p.id !== detail?.task.providerId),
@@ -335,7 +339,7 @@ export function renderWorkbench(state, interactions, draft, attachmentError='',e
   const projects=groupWorkbenchTasks(tasks,state.projects).filter(project=>!query.q&&query.archived!=='only'||project.tasks.length||query.archived!=='only'&&project.label.toLowerCase().includes(query.q.toLowerCase()))
   const attentionTasks = tasks.filter(needsDecision)
   const projectName = (/** @type {Task} */ task) => task.workspaceKind === 'managed' ? '随手交办' : projects.find(p => p.path === projectPathOf(task))?.label ?? pathParts(projectPathOf(task)).name
-  const attentionList = attentionTasks.length ? `<section class="wb-attention-list" aria-label="等你处理"><header><h3>等你处理</h3><small>${state.page?.hasMore ? '当前列表' : `${attentionTasks.length} 件`}</small></header>${attentionTasks.map(task => renderTask(task, state.providers, state.loadingId ?? state.selectedId, projectName(task))).join('')}</section>` : ''
+  const attentionList = attentionTasks.length ? `<section class="wb-attention-list" aria-label="等你处理"><header><h3>等你处理</h3><small>${state.page?.hasMore ? '当前列表' : `${attentionTasks.length} 件`}</small></header>${attentionTasks.map(task => renderTask(task, providerNameOf(state), state.loadingId ?? state.selectedId, projectName(task))).join('')}</section>` : ''
   const regularProjects = projects.map(project => ({...project, tasks:project.tasks.filter(task => !needsDecision(task))}))
   const visibleProjects = regularProjects.filter(project => project.tasks.length || activeProject?.path === project.path)
   const selectedTask = tasks.find(task => task.id === (state.loadingId ?? state.selectedId)) ?? detail?.task
@@ -351,7 +355,7 @@ export function renderWorkbench(state, interactions, draft, attachmentError='',e
     const create = 'workspaceKind' in project && project.workspaceKind === 'managed'
       ? '<button type="button" class="wb-new wb-project-new" data-action="task-entry" aria-label="随手交办一件事">＋ 交办</button>'
       : `<button type="button" class="wb-new wb-project-new" data-action="task-entry" data-project-path="${escapeWorkbenchHtml(project.path)}" aria-label="在 ${escapeWorkbenchHtml(project.label)} 交办">＋ 交办</button>`
-    return `<section class="wb-project"><details id="${id}" data-sidebar-disclosure${open ? ' open' : ''}><summary title="${escapeWorkbenchHtml(project.path)}"><h3>${escapeWorkbenchHtml(project.label)}</h3><small>${project.tasks.length}</small></summary><div class="wb-project-tasks">${project.tasks.map(task => renderTask(task, state.providers, state.loadingId ?? state.selectedId)).join('') || '<p class="wb-empty-copy">在这个项目里交办一件事。</p>'}</div></details>${create}</section>`
+    return `<section class="wb-project"><details id="${id}" data-sidebar-disclosure${open ? ' open' : ''}><summary title="${escapeWorkbenchHtml(project.path)}"><h3>${escapeWorkbenchHtml(project.label)}</h3><small>${project.tasks.length}</small></summary><div class="wb-project-tasks">${project.tasks.map(task => renderTask(task, providerNameOf(state), state.loadingId ?? state.selectedId)).join('') || '<p class="wb-empty-copy">在这个项目里交办一件事。</p>'}</div></details>${create}</section>`
   }
   const otherId = 'wb-other-projects'
   const otherList = otherProjects.length ? `<details id="${otherId}" class="wb-other-projects" data-sidebar-disclosure${query.q || executionView.sidebarDisclosures?.get(otherId) ? ' open' : ''}><summary>其他项目 <small>${otherProjects.length}</small></summary><div>${otherProjects.map(project => `<section class="wb-project wb-project-empty"><h3 title="${escapeWorkbenchHtml(project.path)}">${escapeWorkbenchHtml(project.label)}</h3><button type="button" class="wb-new wb-project-new" data-action="task-entry" data-project-path="${escapeWorkbenchHtml(project.path)}" aria-label="在 ${escapeWorkbenchHtml(project.label)} 交办">＋ 交办</button></section>`).join('')}</div></details>` : ''
@@ -409,7 +413,7 @@ export function renderWorkbench(state, interactions, draft, attachmentError='',e
   const detailAgentIds = detail ? taskAgents(detail.task) : []
   // 出生地字形放在头像组旁边、名字前面;名字后面再写一句「从哪来的」(不知道 ⇒ 都不画)。
   const detailOrigin = detail ? AGENTS.originLabel(detail.task.origin) : ''
-  const detailAgents = detailAgentIds.length || detailOrigin ? `<p class="wb-task-agents">${detailOrigin ? AGENTS.originMarkHtml(detail?.task.origin) : ''}${AGENTS.agentAvatarsHtml(detailAgentIds, { nameOf: providerNameOf(state.providers) })}<span>${escapeWorkbenchHtml([AGENTS.agentsLabel(detailAgentIds, providerNameOf(state.providers)), detailOrigin].filter(Boolean).join(' · '))}</span></p>` : ''
+  const detailAgents = detailAgentIds.length || detailOrigin ? `<p class="wb-task-agents">${detailOrigin ? AGENTS.originMarkHtml(detail?.task.origin) : ''}${AGENTS.agentAvatarsHtml(detailAgentIds, { nameOf: providerNameOf(state) })}<span>${escapeWorkbenchHtml([AGENTS.agentsLabel(detailAgentIds, providerNameOf(state)), detailOrigin].filter(Boolean).join(' · '))}</span></p>` : ''
   const progress = detail ? `<div class="wb-task-progress"><span class="wb-status" data-status="${escapeWorkbenchHtml(statusValue({...detail.task,runtime:detail.runtime ?? detail.task.runtime}))}">${escapeWorkbenchHtml(detail.task.importedOnly ? '尚未执行' : statusLabel(detail.task.status, detail.runtime ?? detail.task.runtime, detail.task.phase, detail.task.networkSuspended))}</span>${decisionCount ? `<button type="button" class="wb-new wb-decision-jump" data-action="show-decisions">${decisionCount} 项等你处理 ↓</button>` : detail.task.phase === 'replied' ? '<span>这一轮已答复，可以继续补充要求</span>' : ''}</div>` : ''
   const taskHeader = detail ? `<header class="wb-task-head"><div><p class="wb-task-context">${detail.task.workspaceKind==='managed'?'随手交办':escapeWorkbenchHtml(state.projects?.find(project => project.path === projectPathOf(detail.task))?.name ?? pathParts(projectPathOf(detail.task)).name)}</p><h2 title="${escapeWorkbenchHtml(detail.task.title || '未命名任务')}">${escapeWorkbenchHtml(detail.task.title || '未命名任务')}</h2>${detailAgents}${worktreeHtml(detail.task, state.providers)}${untilHtml(detail.task)}${progress}${isUnattendedProvider(state.providers.find(p => p.id === detail.task.providerId)) ? '<p class="wb-task-unattended">免审执行者 · 看不到单步,只能停止</p>' : ''}</div><div class="wb-task-head-actions">${detail.artifacts.length ? `<button type="button" class="wb-new" data-action="show-artifacts">成果 · ${detail.artifacts.length}</button>` : ''}<details id="wb-task-info" class="wb-task-info"><summary>任务详情</summary><div class="wb-task-info-body"><dl><div><dt>完整路径</dt><dd class="wb-path">${escapeWorkbenchHtml(detail.task.path)}${detail.task.workspaceKind==='managed'?'<button type="button" class="wb-new" data-action="open-task-folder">打开工作位置</button>':''}</dd></div><div><dt>任务编号</dt><dd><code>${escapeWorkbenchHtml(detail.task.id)}</code></dd></div><div><dt>执行者</dt><dd>${escapeWorkbenchHtml(helper)}</dd></div><div><dt>更新时间</dt><dd>${escapeWorkbenchHtml(time(detail.task.updatedAt))}</dd></div>${detail.source?`<div><dt>原会话</dt><dd>${escapeWorkbenchHtml(detail.source.providerId)} · <code>${escapeWorkbenchHtml(detail.source.nativeId)}</code></dd></div><div><dt>已保存的原记录</dt><dd>${detail.source.selectedMessageCount} 段${detail.source.truncated?' · 部分文字':''}</dd></div>`:''}</dl><section class="wb-task-execution"><h3>下一轮使用</h3>${executionControls}${renderExecutionObservation(detail.lastExecution)}</section>${detail.task.archivedAt != null ? '<div class="wb-task-organization"><button type="button" class="wb-btn" data-action="restore-task">恢复任务</button></div>' : detail.task.canArchive === true ? `<div class="wb-task-organization"><button type="button" class="wb-btn" data-action="archive-task">归档任务</button>${detail.task.worktree && !detail.task.worktree.removed ? '<small>独立工作区没有没提交的改动时会一起删掉（分支保留）。</small>' : ''}</div>` : ''}${state.canWechat && detail.task.archivedAt == null ? `<div class="wb-wechat"><span>在微信继续</span><code>任务 ${escapeWorkbenchHtml(detail.task.id)}</code><button type="button" class="wb-btn" data-action="copy-wechat-command">复制</button></div>` : ''}</div></details></div></header>` : ''
   const modelErrorInTimeline=detail?.task.error==='execution_model_unsupported'&&detail.events.filter(event=>event.kind==='error').at(-1)?.errorCode==='execution_model_unsupported'
@@ -446,7 +450,7 @@ export function renderWorkbench(state, interactions, draft, attachmentError='',e
       </form></div>`
   const chosenContinuation=executionView.restartPreview?(executionView.restartPreview.status==='ready'?executionView.restartPreview.continuation??undefined:{mode:'restart_required'}):detail?.continuation
   const previewError=executionView.restartPreview?.error?`<p class="wb-interaction-error" role="alert">${escapeWorkbenchHtml(executionView.restartPreview.error)} <button type="button" class="wb-new" data-action="retry-continuation-preview">重新读取恢复说明</button></p>`:''
-  const controls = detail ? `<div class="wb-controls"><div class="wb-controls-inner">${permissionHtml}${renderWorkbenchQuestions(detail.task.id, detail.questions ?? [], interactions)}${previewError}${renderTaskControls(detail.task.status, chosenContinuation, detail.task.archivedAt,{requiresClose:!!detail.requiresExternalClose,decision:state.nativeResume?.taskId===detail.task.id?state.nativeResume:null},{taskId:detail.task.id,runId:detail.runId,inputMode:detail.inputMode,runtime:detail.runtime,...interactions?.inputState(detail.task.id)},draft,attachmentError)}</div></div>` : ''
+  const controls = detail ? `<div class="wb-controls"><div class="wb-controls-inner">${permissionHtml}${renderWorkbenchQuestions(detail.task.id, detail.questions ?? [], interactions)}${previewError}${renderTaskControls(detail.task.status, chosenContinuation, detail.task.archivedAt,{requiresClose:!!detail.requiresExternalClose,decision:state.nativeResume?.taskId===detail.task.id?state.nativeResume:null,providerName:state.nativeResume?.taskId===detail.task.id?providerNameOf(state)(state.nativeResume.providerId):undefined},{taskId:detail.task.id,runId:detail.runId,inputMode:detail.inputMode,runtime:detail.runtime,...interactions?.inputState(detail.task.id)},draft,attachmentError)}</div></div>` : ''
   return `<div class="workbench-shell${artifactPanel ? ' has-preview' : ''}"><aside class="wb-sidebar"><header><h2>一起做</h2><button type="button" class="wb-btn wb-btn-primary wb-delegate" data-action="task-entry">交办</button></header>${listControls}<div class="wb-task-list">${taskList}</div>${pagination}</aside><main class="wb-main">${taskHeader}<div class="wb-content"><div class="wb-content-inner">${state.error ? `<div class="wb-error" role="alert">${escapeWorkbenchHtml(state.error)}</div>` : ''}${detail && state.detailDisconnected ? '<div class="wb-error" role="status">任务更新暂时中断，正在重新连接。当前显示的是上次收到的内容。<button type="button" class="wb-btn" data-action="refresh">立即重试</button></div>' : ''}${content}</div></div>${detail ? '<div class="wb-reading-bar" hidden><button type="button" class="wb-btn" data-action="latest-content">有新内容 ↓</button></div>' : ''}${controls}</main>${artifactPanel}</div>`
 }
 
@@ -578,7 +582,7 @@ export function createWorkbenchController(deps) {
         while (pages < loadedPages && result.page?.hasMore && result.page.nextCursor) {
           const next = /** @type {ListResult} */ (await deps.invokeWorkbenchApi('GET', listPath(result.page.nextCursor)))
           if (!alive || request !== listRequest) return
-          result = { ...next, tasks: dedupe([...result.tasks, ...next.tasks]), projectProviders: { ...result.projectProviders, ...next.projectProviders } }
+          result = { ...next, tasks: dedupe([...result.tasks, ...next.tasks]), projectProviders: { ...result.projectProviders, ...next.projectProviders }, agentNames: { ...result.agentNames, ...next.agentNames } }
           pages++
         }
       }
@@ -610,6 +614,7 @@ export function createWorkbenchController(deps) {
         state.tasks = dedupe([...state.tasks, ...result.tasks])
         state.page = result.page
         state.projectProviders = { ...state.projectProviders, ...result.projectProviders }
+        state.agentNames = { ...state.agentNames, ...result.agentNames }
         state.error = ''
         loadedPages++
       } catch (error) { if (!alive || request !== listRequest) return; throw error }
@@ -1461,10 +1466,10 @@ export function initWorkbenchPage(deps) {
       const quote=event&&(selection&&event.text.includes(selection)?selection:event.text)
       if(revision&&quote&&quote.length>8000)return fail(new Error('这段回复较长，请先选中要采纳的一段原文，再交回。'))
       captureDraft();handoffCleanup?.()
-      handoffCleanup=mountHandoffDialog(deps.invokeWorkbenchApi,{sourceTaskId:detail.task.id,targetProviderId:providerId,purpose:revision?'revision':'review',request:revision?'请按选中的意见修改，并说明验证结果。':'请检查是否符合本任务要求，指出有依据的问题和遗漏。',artifacts:revision?[]:defaultReviewArtifacts(detail.artifacts),...(revision&&origin&&event?{targetTaskId:origin.sourceTaskId,quote:{taskId:detail.task.id,eventId:Number(event.id),text:quote??''}}:{})},revision?[]:detail.artifacts,detail.task.title,async id=>{if(!alive)return;navigationGeneration++;artifactRequest++;await controller.refresh({force:true});await controller.selectTask(id)},(detail.attachments??[]).map(a=>({...a,taskId:detail.task.id})))
+      handoffCleanup=mountHandoffDialog(deps.invokeWorkbenchApi,{sourceTaskId:detail.task.id,targetProviderId:providerId,purpose:revision?'revision':'review',request:revision?'请按选中的意见修改，并说明验证结果。':'请检查是否符合本任务要求，指出有依据的问题和遗漏。',artifacts:revision?[]:defaultReviewArtifacts(detail.artifacts),...(revision&&origin&&event?{targetTaskId:origin.sourceTaskId,quote:{taskId:detail.task.id,eventId:Number(event.id),text:quote??''}}:{})},revision?[]:detail.artifacts,detail.task.title,async id=>{if(!alive)return;navigationGeneration++;artifactRequest++;await controller.refresh({force:true});await controller.selectTask(id)},(detail.attachments??[]).map(a=>({...a,taskId:detail.task.id})),providerNameOf(controller.state)(providerId))
       return
     }
-    if (action === 'native-history') { captureDraft(); nativeHistoryCleanup?.(); nativeHistoryCleanup=mountHistoryDialog(deps.invokeWorkbenchApi,controller.state.historyProviders??[],async id=>{if(!alive)return;navigationGeneration++;await controller.refresh({force:true});await controller.selectTask(id)}); return }
+    if (action === 'native-history') { captureDraft(); nativeHistoryCleanup?.(); nativeHistoryCleanup=mountHistoryDialog(deps.invokeWorkbenchApi,controller.state.historyProviders??[],async id=>{if(!alive)return;navigationGeneration++;await controller.refresh({force:true});await controller.selectTask(id)},controller.state.agentNames??{}); return }
     if (action === 'refresh') return controller.refresh({ force: true }).catch(fail)
     if (action === 'task-entry') { captureDraft(); try { await deps.onDelegate?.({text:'',...(target.dataset.projectPath ? {projectPath:target.dataset.projectPath} : {})}) } catch(error) { if(alive)fail(error) }; return }
     if (action === 'new-task' || action === 'add-project') { captureDraft(); navigationGeneration++; artifactRequest++; controller.newTask(); if(action==='add-project'){controller.state.newScope='new:add-project';controller.paint(true)}; return }

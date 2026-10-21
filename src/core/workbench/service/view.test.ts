@@ -104,6 +104,10 @@ describe('makeViewDomain · 列表与详情', () => {
     expect(l.defaultProvider).toBe('claude'); expect(l.historyProviders).toEqual(['claude']); expect(l.canWechat).toBe(true); expect(l.unattendedAcknowledgedAt).toBeNull()
     expect(setup({ defaultProvider: 'codex' }).domain.list().defaultProvider).toBe('codex')
   })
+  it('list:agentNames 给出列表里每家执行者的正式名字(收敛清单 ⑥,registry.namesOf,桌面不存名字表)', () => {
+    const l = setup().domain.list()
+    expect(l.agentNames).toEqual({ claude: 'Claude', codex: 'Codex' })
+  })
   it('projects:没配主人 ⇒ [];addProject:未知执行者 ⇒ unavailable_provider、畸形 ⇒ invalid_request', () => {
     expect(setup({ owner: null }).domain.projects()).toEqual([])
     const { domain, project } = setup()

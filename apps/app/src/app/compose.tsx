@@ -257,7 +257,7 @@ export default function Compose() {
               {inputHint ? <Txt role="meta" tone="inkSoft">{inputHint}</Txt> : null}
               {nativeStart ? (
                 <View testID="compose-native-start" style={{ gap: space.xs }}>
-                  {nativeStartLines(nativeStart, lang).map((line, i) => <Txt key={i} role="meta" tone="inkSoft">{line}</Txt>)}
+                  {nativeStartLines(nativeStart, lang, detail.data?.matter.agentNames).map((line, i) => <Txt key={i} role="meta" tone="inkSoft">{line}</Txt>)}
                 </View>
               ) : null}
             </>
@@ -324,7 +324,7 @@ export default function Compose() {
           {outcome ? (
             <View style={{ flexDirection: 'row', alignItems: 'center', gap: space.s }}>
               <Dot kind={composeOutcomeDot(outcome)} size={8} />
-              <Txt testID={`compose-${outcome}`} role="meta" tone="inkSoft" accessibilityLiveRegion="polite" style={{ flex: 1 }}>{composeOutcomeText(outcome, lang, matter ? detail.data?.task?.providerId ?? null : provider?.id ?? null, !!matter)}</Txt>
+              <Txt testID={`compose-${outcome}`} role="meta" tone="inkSoft" accessibilityLiveRegion="polite" style={{ flex: 1 }}>{composeOutcomeText(outcome, lang, matter ? detail.data?.task?.providerId ?? null : provider?.id ?? null, !!matter, matter ? detail.data?.matter.agentNames : provider ? { [provider.id]: provider.displayName } : undefined)}</Txt>
             </View>
           ) : null}
           {rows.length ? <InputReceipts rows={rows} onRestore={restoreInput} onRetry={row => void sendInput(row.rawText, row.runId, row)} disabled={busy || !online} /> : null}

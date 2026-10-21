@@ -83,7 +83,7 @@ export default function Together() {
           <Pressable
             testID={`together-item-${item.id}`}
             accessibilityRole="button"
-            accessibilityLabel={`${item.title}, ${t(lang, `status.${item.status}`)}${item.agents.length ? `, ${agentsLabel(item.agents)}` : ''}${item.origin ? `, ${t(lang, originKey(item.origin))}` : ''}`}
+            accessibilityLabel={`${item.title}, ${t(lang, `status.${item.status}`)}${item.agents.length ? `, ${agentsLabel(item.agents, item.agentNames)}` : ''}${item.origin ? `, ${t(lang, originKey(item.origin))}` : ''}`}
             onPress={() => router.push(`/matter/${encodeURIComponent(item.id)}`)}
             style={({ pressed }) => ({
               flexDirection: 'row',
@@ -102,7 +102,7 @@ export default function Together() {
             </View>
             {/* 出生地(2026-10-19):头像组旁边一个小字形,只画出生地;不知道就不画 */}
             <OriginMark origin={item.origin} testID={`together-origin-${item.id}`} />
-            <AgentAvatars ids={item.agents} testID={`together-agents-${item.id}`} />
+            <AgentAvatars ids={item.agents} names={item.agentNames} testID={`together-agents-${item.id}`} />
             <Txt role="title" tone="inkSoft">›</Txt>
           </Pressable>
         )}

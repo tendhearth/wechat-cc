@@ -123,7 +123,7 @@ export function mountNowPage({ root, presencePoller, onOpenTask, onResolveTermin
     text.append(t, d)
     // 哪家:行尾一个圆头像(名字在读屏标签与 title 里,小窗标题下也写)。
     const who = document.createElement('span'); who.className = 'now-terminal-agent'
-    who.innerHTML = AGENTS.agentAvatarsHtml([r.agent], { cls: 'now-agents' })
+    who.innerHTML = AGENTS.agentAvatarsHtml([r.agent], { cls: 'now-agents', nameOf: () => r.source })
     const go = document.createElement('span'); go.className = 'go'
     go.textContent = canDecide ? '看清楚 ›' : done === '' ? '正在送…' : done ?? (r.hash ? '' : '回终端处理')
     if (done !== undefined) go.setAttribute('aria-live', 'polite')

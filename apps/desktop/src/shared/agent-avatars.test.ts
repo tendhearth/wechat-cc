@@ -3,16 +3,20 @@ import { readFileSync } from 'node:fs'
 import { createAgentAvatars } from './agent-avatars.js'
 
 const A = createAgentAvatars()
+// 名字只由 daemon 下发(收敛清单 ⑥):这里扮 daemon 给一份;没给的念 id
+const NAMES: Record<string, string> = { claude: 'Claude', codex: 'Codex', cursor: 'Cursor' }
+const nameOf = (id: string) => NAMES[id]
 
 describe('执行者头像(桌面 / 手机网页共用)', () => {
-  it('认得的几家有图标,别的画首字母;名字先认桌面给的 displayName', () => {
+  it('认得的几家有图标,别的画首字母;名字只认 daemon 给的,没给 ⇒ id', () => {
     expect(A.AGENT_GLYPHS).toEqual(['claude', 'codex', 'cursor', 'agy', 'gemini', 'kimi', 'openai', 'deepseek', 'qwen'])
     expect(A.agentGlyph('claude')).toBe('claude')
     expect(A.agentGlyph('my-acp')).toBeNull()
     expect(A.agentGlyph('toString')).toBeNull()
     expect(A.agentMonogram('my-acp')).toBe('M')
     expect(A.agentMonogram('my-acp', () => '小助手')).toBe('小')
-    expect(A.agentName('codex')).toBe('Codex')
+    expect(A.agentName('codex')).toBe('codex')
+    expect(A.agentName('codex', nameOf)).toBe('Codex')
     expect(A.agentName('my-acp')).toBe('my-acp')
     expect(A.agentName('claude', id => id === 'claude' ? 'Claude' : undefined)).toBe('Claude')
   })
@@ -25,7 +29,7 @@ describe('执行者头像(桌面 / 手机网页共用)', () => {
   })
 
   it('读屏念名字;任务那一家排第一,老 daemon 不带 agents 也有', () => {
-    expect(A.agentsLabel(['claude', 'codex'])).toBe('Claude Code、Codex')
+    expect(A.agentsLabel(['claude', 'codex'], nameOf)).toBe('Claude、Codex')
     expect(A.matterAgents('codex', ['claude', 'codex'])).toEqual(['codex', 'claude'])
     expect(A.matterAgents('claude', undefined)).toEqual(['claude'])
     expect(A.matterAgents(null, [])).toEqual([])
@@ -34,8 +38,8 @@ describe('执行者头像(桌面 / 手机网页共用)', () => {
   it('画出来:正在做的压在最上(z-index 递减),+N 垫底;整组一张图,标签和 title 念全部名字;没有就空串', () => {
     expect(A.agentAvatarsHtml([])).toBe('')
     expect(A.agentAvatarsHtml(undefined)).toBe('')
-    const html = A.agentAvatarsHtml(['codex', 'claude', 'cursor', 'my-acp', 'kimi'], { cls: 'x' })
-    expect(html).toMatch(/^<span class="th-agents x" role="img" aria-label="Codex、Claude Code、Cursor、my-acp、Kimi" title="Codex、Claude Code、Cursor、my-acp、Kimi">/)
+    const html = A.agentAvatarsHtml(['codex', 'claude', 'cursor', 'my-acp', 'kimi'], { cls: 'x', nameOf })
+    expect(html).toMatch(/^<span class="th-agents x" role="img" aria-label="Codex、Claude、Cursor、my-acp、kimi" title="Codex、Claude、Cursor、my-acp、kimi">/)
     expect([...html.matchAll(/style="z-index:(\d+)" data-agent="([^"]+)"/g)].map(m => [m[2], Number(m[1])])).toEqual([['codex', 4], ['claude', 3], ['cursor', 2]])
     expect(html).toContain('<span class="th-agent th-agent-more" style="z-index:0" aria-hidden="true">+2</span>')
     // 单色:跟着 currentColor 走,不带任何品牌色

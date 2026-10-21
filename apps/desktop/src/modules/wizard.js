@@ -10,6 +10,7 @@
 // Subscribes to: doctorPoller (renders env list on each successful poll)
 
 import { doctorRows, daemonStatusLine, escapeHtml, hasUsableProvider } from "../view.js"
+import { executorName } from "./executor-names.js"
 import { icon } from "./icons.js"
 
 const STEP_ORDER = ["doctor", "provider", "wechat", "service"]
@@ -76,7 +77,7 @@ export function doctorHeadline(report) {
   const needLogin = ['claude', 'codex'].filter(id => checks[id]?.ok && checks[id]?.loggedIn === false)
   if (!loggedInElsewhere && needLogin.length) {
     const how = needLogin.map(id => `「${LOGIN_COMMAND[id]}」`).join('或')
-    return { ready, needsLogin: needLogin, title: "装好了，还差登录", note: `没看到 ${needLogin.map(id => id === 'claude' ? 'Claude Code' : 'Codex').join(' / ')} 的登录，CC 会回不了话。在终端里运行${how}按提示登录，再点「重新检测」。` }
+    return { ready, needsLogin: needLogin, title: "装好了，还差登录", note: `没看到 ${needLogin.map(executorName).join(' / ')} 的登录，CC 会回不了话。在终端里运行${how}按提示登录，再点「重新检测」。` }
   }
   return { ready, title: "已经能见面了", note: "已检测到可用的 AI，可以继续连接微信。" }
 }

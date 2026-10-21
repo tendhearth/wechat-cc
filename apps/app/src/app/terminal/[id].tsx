@@ -96,7 +96,7 @@ export default function TerminalSession() {
               <View style={{ gap: space.s }}>
                 <TerminalStatusPill status={row.status} testID="terminal-detail-status" />
                 <View style={{ flexDirection: 'row', alignItems: 'center', gap: space.s }}>
-                  <AgentAvatars ids={[row.agent]} size={20} testID="terminal-detail-agent" />
+                  <AgentAvatars ids={[row.agent]} names={{ [row.agent]: row.source }} size={20} testID="terminal-detail-agent" />
                   <Txt role="small" tone="inkSoft" style={{ flex: 1 }}>{`${row.source} · ${row.stale && !fresher ? t(lang, 'terminal.stale.hint') : fresher ? relAgo(newest, Date.now(), lang) : row.ago}`}</Txt>
                 </View>
               </View>

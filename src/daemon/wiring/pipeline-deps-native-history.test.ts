@@ -23,7 +23,7 @@ function setup(workbench?:PipelineDepsOpts['workbench']){
   const dir=mkdtempSync(join(tmpdir(),'pipeline-native-history-')),db=openTestDb();resources.push({dir,db})
   const boot={
     sessionManager:{isInFlight:()=>false},sessionStore:{},conversationStore:{upsertIdentity(){}},
-    registry:{get:()=>undefined,list:()=>[],getCheapEval:()=>null,has:()=>false},
+    registry:{get:()=>undefined,list:()=>[],getCheapEval:()=>null,has:()=>false,namesOf:(id:string)=>({name:id,short:id,settings:id})},
     coordinator:{dispatch:async()=>{},getMode:()=>({kind:'solo',provider:'claude'}),cancel:()=>false},resolve:()=>null,
     formatInbound(){},sdkOptionsForProject(){},buildInstructions:()=>'',defaultProviderId:'claude',agentProviderKind:'claude',dispatchDelegate(){},
     a2aServer:null,agentConfig:{bot_name:null},health:{health:{shouldSuspend:()=>false,get:()=>({consecutiveFailures:0})}},

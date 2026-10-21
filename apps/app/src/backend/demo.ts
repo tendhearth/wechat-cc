@@ -5,6 +5,7 @@ import { BackendError, type Backend, type CliSessionRowT, type Connection, type 
 import {
   copy, IDS, CHAT_ID, DEMO_HUNT_URL, PERM_ID, QUESTION_ID, RUN_IDS, t, explanation, progress, changesTurn, DEMO_REWIND_TOKEN, DEMO_HUNK_SHA, entryOptions,
   demoActivity, demoConnections, demoJobs, demoLetters, demoTodos, demoSessions, demoSessionMessages, demoSessionTitleKey, DEMO_SESSION_MESSAGES, type Stage,
+  demoName, demoNames,
 } from './demo-data'
 
 type Topic = 'home' | 'approvals' | 'agents' | `matter/${string}`
@@ -123,7 +124,7 @@ export function makeDemoBackend(opts: { now?: () => number; setTimeout?: typeof 
         // 演示「直到…通过」(10-20):第 2 轮检查通过
         until: { command: 'bun run test', maxRounds: 3, rounds: 2, status: 'passed', lastExit: 0, stopReason: null } }), 'replied',
       [{ kind: 'user', key: 'notesTitle', createdAt: n - DAY - 60_000 }], 'notesTitle')
-    // 额度用完的一件(spec continue-sessions §7-3):Claude Code 没做完,电脑说可以交给 Codex 继续
+    // 额度用完的一件(spec continue-sessions §7-3):Claude 没做完,电脑说可以交给 Codex 继续
     const rTitle = t(lastLang, 'reportTitle')
     add(mkDetail(mkMatter(IDS.report, 'task', rTitle, 'done', '~/Projects/notes', n - 2 * HOUR, ['claude']),
       { id: IDS.report, title: rTitle, status: 'failed', phase: 'failed', providerId: 'claude', path: '~/Projects/notes', error: 'provider_quota_exhausted', updatedAt: n - 2 * HOUR }, {
@@ -168,6 +169,10 @@ export function makeDemoBackend(opts: { now?: () => number; setTimeout?: typeof 
     if (d.task) d.task.title = title
     d.questions = d.questions.map(q => (q.id === QUESTION_ID ? tripQuestion(l, q.createdAt) : q))
     if (d.matter.id === CHAT_ID) d.events = chatMsgs.map(m => ({ kind: m.role === 'me' ? 'user' : 'text', createdAt: m.at, text: chatText(m, l) }))
+    // 跟 daemon 一样带上这件事里出现过的执行者叫什么(收敛清单 ⑥)
+    const q = d.quotaHandoff
+    const names = demoNames([...(d.matter.agents ?? []), d.task?.providerId, d.nativeStart?.providerId, q?.from, q && 'to' in q ? q.to : undefined])
+    if (Object.keys(names).length) d.matter.agentNames = names
     return d
   }
   /** 读的语言变了 ⇒ 记下,并在当前调用之后把非 matter 主题按新语言补推一次。 */
@@ -409,7 +414,7 @@ export function makeDemoBackend(opts: { now?: () => number; setTimeout?: typeof 
     async sessions(provider, _cursor, q) {
       if (q !== undefined && (q.length > 200 || q.includes('\0'))) throw new BackendError('invalid')
       const needle = q?.trim().toLowerCase() ?? ''
-      return { items: demoSessions(lastLang, now(), provider).filter(row => !needle || `${row.title}\n${row.project ?? ''}`.toLowerCase().includes(needle)), nextCursor: null }
+      return { items: demoSessions(lastLang, now(), provider).filter(row => !needle || `${row.title}\n${row.project ?? ''}`.toLowerCase().includes(needle)), nextCursor: null, names: demoNames(['claude', 'codex']) }
     },
     async session(key, cursor, window = 'start') {
       if (window === 'recent' && cursor !== undefined) throw new BackendError('invalid')
@@ -420,9 +425,9 @@ export function makeDemoBackend(opts: { now?: () => number; setTimeout?: typeof 
     },
     async continuePreview(key) {
       const row = sessionRow(key), matterId = adopted.get(key) ?? null
-      if (matterId) return { state: 'managed', provider: row.provider, project: row.project, mode: null, matterId }
+      if (matterId) return { state: 'managed', provider: row.provider, displayName: demoName(row.provider), project: row.project, mode: null, matterId }
       const c = DEMO_CONTINUE[key] ?? { state: 'empty' as const, mode: null }
-      return { state: c.state, provider: row.provider, project: row.project, mode: c.mode, matterId: null }
+      return { state: c.state, provider: row.provider, displayName: demoName(row.provider), project: row.project, mode: c.mode, matterId: null }
     },
     async continueSession(key) {
       const dup = adopted.get(key)
@@ -634,7 +639,7 @@ export function makeDemoBackend(opts: { now?: () => number; setTimeout?: typeof 
     async testPush() { return { ok: false, code: 'demo' } },
     async unpair() {},
     async cliSessions() {
-      const rows = cli.map(({ summaryKey, ...r }) => ({ ...r, last_summary: summaryKey ? t(lastLang, summaryKey) : null }))
+      const rows = cli.map(({ summaryKey, ...r }) => ({ ...r, displayName: demoName(r.source), last_summary: summaryKey ? t(lastLang, summaryKey) : null }))
       return rows.sort((a, b) => (Number(b.status === 'waiting') - Number(a.status === 'waiting')) || b.last_event_at - a.last_event_at)
     },
     // 「今天」(演示):与 daemon 同一个分组口径 —— 终端演示会话 + 演示里的一起做,过去 24 小时。
@@ -642,7 +647,7 @@ export function makeDemoBackend(opts: { now?: () => number; setTimeout?: typeof 
       const n = now(), since = n - DAY
       const needsYou: OverseerTodayT['needsYou'] = [], done: TodayItemT[] = [], running: TodayItemT[] = [], stuck: OverseerTodayT['stuck'] = []
       for (const r of cli) {
-        const base: TodayItemT = { source: 'terminal', id: r.session_id, code: r.code, project: r.project, agent: r.source === 'codex' ? 'Codex' : r.source === 'cursor' ? 'Cursor' : 'Claude Code', title: null,
+        const base: TodayItemT = { source: 'terminal', id: r.session_id, code: r.code, project: r.project, agent: demoName(r.source), title: null,
           summary: r.summaryKey ? t(lastLang, r.summaryKey) : null, at: r.last_event_at, machine: null }
         if (r.status === 'waiting' && r.pending) needsYou.push({ ...base, kind: 'permission', count: 1, replyRef: r.pending.hash ?? null, at: r.pending.since, summary: `${r.pending.tool}: ${r.pending.summary ?? ''}` })
         else if (r.status === 'running') running.push(base)
@@ -651,7 +656,7 @@ export function makeDemoBackend(opts: { now?: () => number; setTimeout?: typeof 
       for (const e of list()) {
         const d = localize(e, lastLang)
         if (d.matter.kind !== 'task' || !d.task) continue
-        const base: TodayItemT = { source: 'together', id: d.matter.id, code: d.matter.id, project: (d.task.path.split('/').filter(Boolean).pop() ?? ''), agent: d.task.providerId === 'codex' ? 'Codex' : 'Claude',
+        const base: TodayItemT = { source: 'together', id: d.matter.id, code: d.matter.id, project: (d.task.path.split('/').filter(Boolean).pop() ?? ''), agent: demoName(d.task.providerId),
           title: d.matter.title, summary: null, at: d.task.updatedAt, machine: null }
         const waiting = d.permissions.length + d.questions.length
         if (waiting) needsYou.push({ ...base, kind: d.permissions.length ? 'permission' : 'question', count: waiting, replyRef: null })

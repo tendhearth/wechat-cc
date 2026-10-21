@@ -503,6 +503,8 @@ export interface InternalApiDeps {
   llmHealth?: import('../llm-health').LlmHealth
   /** Registered provider ids (registry.list) — set alongside llmHealth. */
   llmRegistered?: () => string[]
+  /** 执行者叫什么(收敛清单 ⑥,registry.namesOf)— set alongside llmHealth。桌面「AI 服务」各处读 GET /v1/llm/health 的 names。 */
+  llmNames?: (id: string) => import('../../core/provider-display-names').ExecutorNames
   /** provider id → 自配 base_url(如 openai-compatible 的国内/本地端点),
    *  给网络体检探真实端点用。set alongside llmHealth. */
   llmEndpoints?: () => Record<string, string>
@@ -617,7 +619,7 @@ export interface InternalApiDeps {
 /** 可以晚绑定的那些依赖 —— 只有这里列的键能经 `provide` 交进来。 */
 export const LATE_KEYS = [
   'delegate', 'conversation', 'a2a', 'social', 'knowledge', 'pairing', 'memoryLlm', 'incidents',
-  'llmHealth', 'llmRegistered', 'llmEndpoints',
+  'llmHealth', 'llmRegistered', 'llmNames', 'llmEndpoints',
   'cliEvents', 'cliPermissions', 'overseerToday', 'cliHooks', 'calendarAgenda',
   'workbench', 'matters', 'companionConverse', 'petTurn', 'settingsLink', 'connections', 'phoneConnect',
   'memoryNightly', 'letters', 'cliUpgrade',

@@ -15,6 +15,7 @@ export function careSections(data, attention = null) {
     for (const task of attention.tasks) tasks.set(task.id, {...tasks.get(task.id), ...task})
   }
   const names = new Map((data?.projects ?? []).map(p => [p.path, p.name]))
+  // 执行者叫什么只读 daemon 给的(收敛清单 ⑥):列表的 agentNames,再是执行者列表;都没有 ⇒ id。
   const providers = new Map((data?.providers ?? []).map(p => [p.id, p.displayName]))
   /** @type {{attention:CareRow[],working:CareRow[],recent:CareRow[],truncated:boolean}} */
   const result = { attention: [], working: [], recent: [], truncated: !!data?.page?.hasMore }
@@ -25,7 +26,7 @@ export function careSections(data, attention = null) {
     const label = pending ? [count(task.pendingPermissionCount) ? `${task.pendingPermissionCount} 项权限` : '', count(task.pendingQuestionCount) ? `${task.pendingQuestionCount} 个问题` : ''].filter(Boolean).join(' · ')
       : task.importedOnly ? '尚未执行' : task.waitingFor ? '等待前项任务'
       : runtime?.label ?? ({running:'执行中',queued:'排队中',completed:'已结束',failed:'执行遇到问题',cancelled:'已停止',interrupted:'执行已中断',pending_permission:'等待确认'}[status] ?? '打开查看状态')
-    const row = {...task, label, project: names.get(task.path) || task.path?.split(/[\\/]/).filter(Boolean).at(-1) || '', provider: providers.get(task.providerId) || ({claude:'Claude',codex:'Codex',cursor:'Cursor'}[task.providerId] ?? task.providerId ?? '')}
+    const row = {...task, label, project: names.get(task.path) || task.path?.split(/[\\/]/).filter(Boolean).at(-1) || '', provider: data?.agentNames?.[task.providerId] || providers.get(task.providerId) || task.providerId || ''}
     if (pending) result.attention.push(row)
     else if (!task.importedOnly && ['running','queued','pending_permission','paused'].includes(status)) result.working.push(row)
     else result.recent.push(row)

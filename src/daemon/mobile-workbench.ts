@@ -208,7 +208,7 @@ function adoptError(error:unknown):Response {
  * POST {key} 幂等地接成一件事,成功后登记手机露面。回包不含文件夹路径与原生 id(D13)。
  * 路径字面量必须写成 `url.pathname === '…'`:scripts/phone-routes.guard.test.ts 只抓这个形状。
  */
-export async function mobileSessionContinueRoute(actions:MobileSessionContinueActions|undefined,url:URL,req:Request,seen?:(matterId:string)=>void,opts:{budgetMs?:number;maxInflight?:number}={}):Promise<Response|null>{
+export async function mobileSessionContinueRoute(actions:MobileSessionContinueActions|undefined,url:URL,req:Request,seen?:(matterId:string)=>void,opts:{budgetMs?:number;maxInflight?:number;executorName?:(id:string)=>string}={}):Promise<Response|null>{
   const isContinue=url.pathname==='/m/api/session/continue'
   if(!isContinue)return null
   if(req.method!=='GET'&&req.method!=='POST')return json({ok:false,error:'method_not_allowed'},405)
@@ -234,7 +234,7 @@ export async function mobileSessionContinueRoute(actions:MobileSessionContinueAc
     try{
       // 超时:预览只读,放掉名额(记为已超时,扫描落定前同键重试仍并进来),迟到的结果丢弃(不缓存、不送达)。
       const p=await Promise.race([shared,new Promise<never>((_,rej)=>{timer=setTimeout(()=>{ex.add(key);rej(new Error('budget_exceeded'))},opts.budgetMs??PHONE_CONTINUE_BUDGET_MS)})])
-      return json({ok:true,state:p.state,provider:p.providerId,project:p.project,mode:p.mode,matterId:p.taskId})
+      return json({ok:true,state:p.state,provider:p.providerId,...(opts.executorName?{displayName:opts.executorName(p.providerId)}:{}),project:p.project,mode:p.mode,matterId:p.taskId})
     }catch(error){return previewError(error)}
     finally{if(timer)clearTimeout(timer)}
   }

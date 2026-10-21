@@ -48,7 +48,7 @@ export function TerminalItem({ row, onOpen }: { row: TerminalRow; onOpen: () => 
             ? <Txt testID={`terminal-now-${row.id}`} role="small" content="user" numberOfLines={2}>{`${t(lang, 'progress.stepNow')} · ${row.nowText}`}</Txt>
             : row.summary && !row.pendingText ? <Txt role="small" tone="inkSoft" content="user" numberOfLines={2}>{row.summary}</Txt> : null}
         </View>
-        <AgentAvatars ids={[row.agent]} testID={`terminal-agent-${row.id}`} />
+        <AgentAvatars ids={[row.agent]} names={{ [row.agent]: row.source }} testID={`terminal-agent-${row.id}`} />
         {review
           ? <Txt testID={`terminal-review-${row.id}`} role="bubble" tone="inkSoft">{`${t(lang, 'terminal.review')} ›`}</Txt>
           : <Txt role="title" tone="inkSoft">›</Txt>}

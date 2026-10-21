@@ -1,6 +1,7 @@
 import { PHONE_SAY_MAX_CHARS } from '@wechat-cc/protocol'
 import { t, type Lang } from '../i18n'
 import { providerName } from './continue'
+import type { AgentNames } from './agents'
 
 /**
  * 说一句 / 交办新事项的正文上限。daemon 两处都是 20 000:POST /m/api/matter/say 用 PHONE_SAY_MAX_CHARS;
@@ -53,7 +54,7 @@ export function composeOutcomeDot(o: ComposeOutcome): 'bad' | 'unknown' | 'warn'
 /** 页内提示那一句。provider:说的是哪个执行者(一件事的 task.providerId / 交办时选的);不知道 ⇒ 说「这个执行者」。
  *  onMatter:在一件事上说一句(true)还是交办新事项(false)。交办时没有「会话」:CC 在那个文件夹里忙 daemon 也回
  *  native_session_busy(createTask 用 nativeId=null 问冲突),invalid_path 说的是项目文件夹(final fix I2)。 */
-export function composeOutcomeText(o: ComposeOutcome, lang: Lang, provider: string | null, onMatter: boolean): string {
+export function composeOutcomeText(o: ComposeOutcome, lang: Lang, provider: string | null, onMatter: boolean, names?: AgentNames): string {
   switch (o) {
     case 'uncertain': return t(lang, 'compose.uncertain')
     case 'busy': return t(lang, 'compose.busy')
@@ -62,7 +63,7 @@ export function composeOutcomeText(o: ComposeOutcome, lang: Lang, provider: stri
     case 'revoked': return t(lang, 'conn.revokedTitle')
     case 'sessionBusy': return t(lang, onMatter ? 'continue.busySession' : 'continue.busyFolder')
     case 'folderBusy': return t(lang, 'continue.busyFolder')
-    case 'providerMissing': return provider ? t(lang, 'continue.providerMissing', { provider: providerName(provider, lang) }) : t(lang, 'continue.providerMissingAny')
+    case 'providerMissing': return provider ? t(lang, 'continue.providerMissing', { provider: providerName(provider, names) }) : t(lang, 'continue.providerMissingAny')
     case 'folderMissing': return t(lang, onMatter ? 'continue.folderMissing' : 'compose.projectFolderMissing')
     case 'quota': return t(lang, 'continue.quota')
     case 'sessionChanged': return t(lang, 'continue.changed')

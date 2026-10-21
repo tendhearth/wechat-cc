@@ -1,6 +1,7 @@
 import type { MatterQuotaHandoffT } from '@wechat-cc/protocol'
 import { t, type Lang } from '../i18n'
 import { providerName } from './continue'
+import type { AgentNames } from './agents'
 
 /**
  * 执行者额度用完 ⇒ 交给另一位继续(spec 2026-10-01-tendhearth-continue-sessions §7-3;微信「交给 X 继续？」的手机版)。
@@ -16,23 +17,23 @@ export type HandoffBlock =
 /** 约几分钟后恢复:向上取整,至少 1(过了点还没清掉也不说「0 分钟」)。 */
 const minutesLeft = (resetAt: number, now: number) => Math.max(1, Math.ceil((resetAt - now) / 60_000))
 
-function reason(h: { from: string; kind: 'quota' | 'rate_limit'; resetAt: number }, lang: Lang, now: number): string {
-  return t(lang, h.kind === 'rate_limit' ? 'handoff.rateNote' : 'handoff.quotaNote', { from: providerName(h.from, lang), minutes: String(minutesLeft(h.resetAt, now)) })
+function reason(h: { from: string; kind: 'quota' | 'rate_limit'; resetAt: number }, lang: Lang, now: number, names?: AgentNames): string {
+  return t(lang, h.kind === 'rate_limit' ? 'handoff.rateNote' : 'handoff.quotaNote', { from: providerName(h.from, names), minutes: String(minutesLeft(h.resetAt, now)) })
 }
 
-/** 没有 ⇒ 不画;能交 ⇒ 一句灰字 + 唯一的强调按钮;没人能接 ⇒ 两句灰字;交过了 ⇒ 说交给谁 + 打开那件事。 */
-export function handoffBlock(h: MatterQuotaHandoffT | undefined, lang: Lang, now: number): HandoffBlock {
+/** 没有 ⇒ 不画;能交 ⇒ 一句灰字 + 唯一的强调按钮;没人能接 ⇒ 两句灰字;交过了 ⇒ 说交给谁 + 打开那件事。names = 这件事的 agentNames(daemon 给的名字)。 */
+export function handoffBlock(h: MatterQuotaHandoffT | undefined, lang: Lang, now: number, names?: AgentNames): HandoffBlock {
   if (!h) return { kind: 'none' }
-  if (h.state === 'handed') return { kind: 'handed', note: t(lang, 'handoff.handed', { to: providerName(h.to, lang) }), open: t(lang, 'handoff.open'), matterId: h.matterId }
-  if (h.state === 'none') return { kind: 'note', lines: [reason(h, lang, now), t(lang, 'handoff.noneNote')] }
-  return { kind: 'offer', note: reason(h, lang, now), action: t(lang, 'handoff.action', { to: providerName(h.to, lang) }) }
+  if (h.state === 'handed') return { kind: 'handed', note: t(lang, 'handoff.handed', { to: providerName(h.to, names) }), open: t(lang, 'handoff.open'), matterId: h.matterId }
+  if (h.state === 'none') return { kind: 'note', lines: [reason(h, lang, now, names), t(lang, 'handoff.noneNote')] }
+  return { kind: 'offer', note: reason(h, lang, now, names), action: t(lang, 'handoff.action', { to: providerName(h.to, names) }) }
 }
 
 /** 确认卡:为什么(整句带句号)/ 在哪、原来那件不动 / 接手的看不到之前的对话(说实话)/ 会用谁的额度。 */
-export function handoffSheetLines(h: Extract<MatterQuotaHandoffT, { state: 'offer' }>, lang: Lang, now: number): string[] {
-  const from = providerName(h.from, lang), to = providerName(h.to, lang)
+export function handoffSheetLines(h: Extract<MatterQuotaHandoffT, { state: 'offer' }>, lang: Lang, now: number, names?: AgentNames): string[] {
+  const from = providerName(h.from, names), to = providerName(h.to, names)
   return [
-    reason(h, lang, now) + (lang === 'zh-Hans' ? '。' : '.'),
+    reason(h, lang, now, names) + (lang === 'zh-Hans' ? '。' : '.'),
     t(lang, 'handoff.where', { to }),
     t(lang, 'handoff.context', { to, from }),
     t(lang, 'continue.quotaNote', { provider: to }),
