@@ -135,6 +135,12 @@ interface DaemonModule {
 
 pipeline-deps.ts(1100+ 行、横跨 wechat 入站 / 记忆 / 手机中继 / matters / 陪伴)在 6c 里跟着各自的模块拆开。
 
+**6c 实际写法(10-21,#478 起定)**:不上 `{name, needs, provides, init, stop}` + 拓扑排序。每块一个 `src/daemon/bootstrap/wire-<名>.ts`,导出 `wireX(deps) => provides`,跟仓库里原有的 wire-letters / wire-workbench 一样;边界就写在 deps 和返回值上,main.ts 只按顺序调用。等调用顺序真成了负担再考虑排序。两条规矩:
+- **wireX 里不 await 还没就绪的东西**。要等 wireMain 之后才能起的部分(定时 runner 之类),返回 `start()` / `ready()`,由 main 决定什么时候调(wechat-cc-54 评审 #478)。
+- **晚到的依赖传 getter 或闭包**(`workbench()`、`runJobTurn`),调用时才取;没就绪时给明确的结果(null / 被拒的 promise),不靠持有者 + 可选链。
+
+已切:终端会话 #478、定时 / 早报 / 周报 / 换一家来审 #479。
+
 ## 4. 执行者描述(ExecutorDescriptor)
 
 - 每家一份:id、显示名、对端、登录提示、`chat?` 能力、`workbench?` 能力、错误分类、档位执行方式(第一批的 #464 表直接从这里读)。
