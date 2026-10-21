@@ -285,6 +285,7 @@ export function wireMain(opts: WireMainOpts): WiredDeps {
   const ticks = buildTickBodies({
     ...opts,
     proactive,
+    speech,
     permissionMode: opts.dangerously ? 'dangerously' : 'strict',
     generatePortrait: (chatId) => tickMemoryLlm.generatePortrait(chatId),
     // Connection-health gate (Task 7) — companion ticks read

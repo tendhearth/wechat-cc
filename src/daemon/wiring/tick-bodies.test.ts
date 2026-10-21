@@ -16,6 +16,7 @@ import { formatLocal, PLAN_EVAL_TIMEOUT_MS } from '../../core/companion-plan'
 import { NetworkUnprotectedError } from '../../lib/network-gate'
 import { loadCompanionConfig, saveCompanionConfig } from '../companion/config'
 import { makeProactiveOutbound } from '../companion/proactive-channel'
+import { wireSpeech } from './wire-speech'
 import { makeReplyDeliveryRuntime } from '../reply-delivery'
 
 /** Minimal in-memory fake of the structural chatPrefs subset TickDeps needs. */
@@ -235,6 +236,18 @@ function setupDeps(opts: {
     chatPrefs: makeFakeChatPrefs(chatPrefsEntries),
     careLedger: makeFakeCareLedger(careLedgerEntries),
   }
+  // 主动开口的门(第三批 3a):跟生产一样由 wireSpeech 造,care 档 / 免打扰读同一份 prefs + 伙伴配置;
+  // 微信那头每次都现读 deps.ilink.sendMessage(测试会在 setup 之后换掉它)。
+  deps.speech = wireSpeech({
+    stateDir, db, chatPrefs: deps.chatPrefs, log: deps.log,
+    proactive: makeProactiveOutbound({
+      wechatDegraded: () => deps.health?.shouldSuspend('wechat') ?? false,
+      wechatClosedSince: () => null,
+      sendWechat: (c, t) => (deps.ilink as unknown as { sendMessage(c: string, t: string): Promise<{ msgId: string; error?: string }> }).sendMessage(c, t),
+      app: () => null,
+      log: deps.log,
+    }),
+  })
   return { stateDir, acquire, isInFlight, dispatch, logs, deps, db, chatPrefsEntries, careLedgerEntries, runExclusive, coordinatorMutex }
 }
 
@@ -1358,6 +1371,15 @@ describe('人类做客 —— 朋友来聊过、走了,伙伴跟主人提一句'
     expect(sent).toEqual([])
   })
 
+  it('**判的是主人那条对话**:访客那条设了「别烦我」也不影响;主人那条设了才不说(9d 评审 #512)', async () => {
+    const s = setupDeps({ defaultChatId: 'owner', inFlight: false, ...quiet('owner'), chatPrefsEntries: { 'guest@im.wechat': { care: 'off' } } })
+    cleanup.push(s.stateDir)
+    await seedGuest(s, 'guest@im.wechat', '2026-05-13T09:15:00.000Z')
+    const { sent } = armEval(s)
+    await buildTickBodies(s.deps).pushTick({ nowIso: '2026-05-13T10:00:00.000Z' })
+    expect(sent).toEqual(['刚才小王来过,问了工具的事。'])
+  })
+
   it('**免打扰时段 → 先不讲(不记水位);时段过了照讲**', async () => {
     // 10:00Z = 上海 18:00,落在 17:00–19:00 里;11:30Z = 19:30 已过
     const s = setupDeps({ defaultChatId: 'owner', inFlight: false, ...quiet('owner'), chatPrefsEntries: { owner: { quiet: { from: '17:00', to: '19:00' } } } })
@@ -1447,12 +1469,14 @@ describe('人类做客 —— 朋友来聊过、走了,伙伴跟主人提一句'
     expect(sent).toHaveLength(2)
   })
 
-  it('微信连接降级(shouldSuspend)→ 这一拍不讲,也不调模型', async () => {
+  it('微信连接降级(shouldSuspend)、App 也收不到 → 这一拍不讲,也不调模型(SpeechPolicy 判「送不到 ⇒ 推后」)', async () => {
     const s = setupDeps({ defaultChatId: 'owner', inFlight: false, ...quiet('owner') })
     cleanup.push(s.stateDir)
     await seedGuest(s, 'guest@im.wechat', '2026-05-13T09:15:00.000Z')
     const { evalFn, sent } = armEval(s)
-    await buildTickBodies({ ...s.deps, health: { shouldSuspend: () => true } }).pushTick({ nowIso: '2026-05-13T10:00:00.000Z' })
+    // 夹具的门读的是 s.deps 本身的 health(跟生产一样只有一份)
+    s.deps.health = { shouldSuspend: () => true } as never
+    await buildTickBodies(s.deps).pushTick({ nowIso: '2026-05-13T10:00:00.000Z' })
     expect(evalFn).not.toHaveBeenCalled()
     expect(sent).toEqual([])
   })

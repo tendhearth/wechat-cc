@@ -54,7 +54,7 @@ const BASELINE: Record<string, [Tag, number]> = {
   'src/daemon/internal-api/routes.ts': ['migrate', 6],   // 画作分享、广播 …
   'src/daemon/wiring/pipeline-deps.ts': ['migrate', 5],  // 访客申请 …
   'src/daemon/bootstrap/wire-social.ts': ['migrate', 5], // 来信、心愿、介绍、明信片
-  'src/daemon/wiring/tick-bodies.ts': ['migrate', 3],    // 来访叙述、新贴纸
+  'src/daemon/wiring/tick-bodies.ts': ['migrate', 2],    // 新贴纸(来访叙述已迁,10-21)
   'src/daemon/bootstrap/wire-jobs.ts': ['migrate', 3],   // 没审成的通知
   'src/daemon/bootstrap/wire-cli-sessions.ts': ['migrate', 3],
   'src/daemon/wiring/wire-phone.ts': ['migrate', 2],
