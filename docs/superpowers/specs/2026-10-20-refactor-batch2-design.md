@@ -135,11 +135,11 @@ interface DaemonModule {
 
 | 步 | 内容 | 谁 | 依赖 |
 |---|---|---|---|
-| 1 | 入站快照 + 冲突测试基线(只加测试) | 我 | — |
-| 2 | `CommandRegistry` 骨架 + 把 `chainReplyHandlers` 和 `command-router` 那 11 条搬进来;修 1.5 的 2 | 我 | 1 |
+| 1 | ✅ 入站快照 + 冲突测试基线(只加测试):#468(probe 认领)、#469(端到端三档 + 模型暂停的证明) | 我 | — |
+| 2 | ✅ `CommandRegistry` 骨架 + 把 `chainReplyHandlers` 和 `command-router` 那 11 条搬进来;修 1.5 的 2:#472 | 我 | 1 |
 | 3 | 其余命令搬进来(admin / mode / onboarding / permission-reply / 访问闸);修 1.5 的 1、3、4、5 | 我 | 2 |
 | 4 | `wechat-control` 拆成注册表条目 + 微信收敛(1.3,主人过目后) | wechat-cc-2a(工作台是它的) | 3 |
-| 5a | 现有路由原样进表、生成各份清单,快照逐条一致,不删任何东西 | wechat-cc-2a | —(马上可开) |
+| 5a | ✅ 已完成(#471):表在 `packages/protocol/src/routes.ts`,daemon 名单与 `workbench-routes.json`(带 version)从表生成,快照 `scripts/fixtures/routes-snapshot-2026-10-20.json` 逐条一致。TODO(5c):「请更新 App」—— 真实错位是老 .app + 新 sidecar,需要 sidecar 知道 App 白名单的 version,放进统一 HTTP 层 | wechat-cc-2a | — |
 | 5b | 主人点头网页收敛清单后,按清单删页面与路由(一次改一张表) | wechat-cc-2a | 5a + 主人 |
 | 5c | 统一 HTTP 层(先手机后桌面)+ 桌面白名单 version / 「请更新 App」 | wechat-cc-2a | 5a |
 | 6 | `DaemonModule` + 容器;main.ts 缩短;目录归位 | 我 | 3 |
