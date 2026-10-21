@@ -13,24 +13,24 @@ async function run(mw: Middleware, ctx: InboundCtx) { let nexted = false; await 
 describe('mw-consume', () => {
   it('有 intent:只调对应的消费者,别的连碰都不碰', async () => {
     const calls: string[] = []
-    const mw = makeMwConsume({ handlers: { 'task-command': consumer('task-command', true, calls), command: consumer('command', true, calls) } })
+    const mw = makeMwConsume({ handlers: { 'task-reference': consumer('ref', true, calls), command: consumer('command', true, calls) } })
     expect(await run(mw, ctxOf({ kind: 'command' }))).toEqual({ nexted: false, consumed: 'command' })
     expect(calls).toEqual(['command'])
   })
   it('有 intent 但消费者没吃 ⇒ 进对话;intent=chat ⇒ 谁也不调直接进对话;没这个消费者也进对话', async () => {
     const calls: string[] = []
-    const mw = makeMwConsume({ handlers: { 'task-command': consumer('task-command', false, calls) } })
-    expect(await run(mw, ctxOf({ kind: 'task-command' }))).toEqual({ nexted: true, consumed: undefined })
-    expect(await run(mw, ctxOf({ kind: 'chat' }))).toEqual({ nexted: true, consumed: undefined })
+    const mw = makeMwConsume({ handlers: { command: consumer('command', false, calls) } })
     expect(await run(mw, ctxOf({ kind: 'command' }))).toEqual({ nexted: true, consumed: undefined })
-    expect(calls).toEqual(['task-command'])
+    expect(await run(mw, ctxOf({ kind: 'chat' }))).toEqual({ nexted: true, consumed: undefined })
+    expect(await run(mw, ctxOf({ kind: 'task-reference' }))).toEqual({ nexted: true, consumed: undefined })
+    expect(calls).toEqual(['command'])
   })
   it('没 intent(旧链):按 INTENT_ORDER 逐个试,谁先吃谁赢;都不吃 ⇒ 进对话', async () => {
     const calls: string[] = []
-    const mw = makeMwConsume({ handlers: { 'task-reference': consumer('ref', true, calls), command: consumer('command', true, calls), 'task-command': consumer('task-command', false, calls) } })
-    expect(await run(mw, ctxOf())).toEqual({ nexted: false, consumed: 'command' })
-    expect(calls).toEqual(['task-command', 'command'])
-    const none = makeMwConsume({ handlers: { 'task-command': consumer('task-command', false, calls) } })
+    const mw = makeMwConsume({ handlers: { 'task-reference': consumer('ref', true, calls), command: consumer('command', false, calls) } })
+    expect(await run(mw, ctxOf())).toEqual({ nexted: false, consumed: 'ref' })
+    expect(calls).toEqual(['command', 'ref'])
+    const none = makeMwConsume({ handlers: { command: consumer('command', false, calls) } })
     expect((await run(none, ctxOf())).nexted).toBe(true)
   })
 })
@@ -38,7 +38,7 @@ describe('mw-consume', () => {
 describe('skipFor / skipWhen', () => {
   it('skipFor:路由判成列出的意图 ⇒ 跳过这一站;别的意图 / 没路由 ⇒ 照跑', async () => {
     const inner = vi.fn<Middleware>(async (_ctx, next) => { await next() })
-    const mw = skipFor(['command', 'task-command'], inner)
+    const mw = skipFor(['command', 'task-reference'], inner)
     await run(mw, ctxOf({ kind: 'command' })); expect(inner).not.toHaveBeenCalled()
     await run(mw, ctxOf({ kind: 'chat' })); expect(inner).toHaveBeenCalledTimes(1)
     await run(mw, ctxOf()); expect(inner).toHaveBeenCalledTimes(2)

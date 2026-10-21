@@ -15,7 +15,8 @@ export interface MwCommandDeps {
 export function makeMwCommand(deps: MwCommandDeps): Middleware {
   return async (ctx, next) => {
     if (routedAway(ctx, 'command')) { await next(); return }
-    const hit = await deps.registry.handle(ctx.msg)
+    // origin 只由 daemon 在 App 一轮(appTurn)里填;微信入站不传 turn。
+    const hit = await deps.registry.handle(ctx.msg, ctx.origin !== undefined ? { origin: ctx.origin } : undefined)
     if (hit) {
       deps.log('COMMAND', `${hit.id} consumed from chat=${ctx.msg.chatId}`)
       // 沿用老标签(admin / mode / onboarding / permission-reply / command):trace、welcome、milestone、activity 不用改

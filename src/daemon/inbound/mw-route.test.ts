@@ -17,22 +17,22 @@ async function run(deps: Partial<RouteMwDeps>, ctx = ctxOf()) {
 
 describe('mw-route', () => {
   it('没有探针说"是" ⇒ chat,并且照样 next()', async () => {
-    const r = await run({ probes: { 'task-command': () => false, command: () => null } })
+    const r = await run({ probes: { command: () => false, 'task-reference': () => null } })
     expect(r.intent).toEqual({ kind: 'chat' }); expect(r.nexted).toBe(true)
   })
   it('按 INTENT_ORDER 取第一个说"是"的,后面的探针不再问', async () => {
     const asked: string[] = []
-    const probes = Object.fromEntries(INTENT_ORDER.map(k => [k, () => { asked.push(k); return k === 'command' || k === 'task-reference' }])) as RouteMwDeps['probes']
+    const probes = Object.fromEntries(INTENT_ORDER.map(k => [k, () => { asked.push(k); return true }])) as RouteMwDeps['probes']
     const r = await run({ probes })
-    expect(r.intent?.kind).toBe('command'); expect(asked).toEqual(['task-command', 'command'])
+    expect(r.intent?.kind).toBe('command'); expect(asked).toEqual(['command'])
   })
   it('探针可以直接交回 Intent(带 data),异步也行', async () => {
-    const r = await run({ probes: { 'task-command': () => false, 'task-reference': async () => ({ kind: 'task-reference', data: { picked: 'x' } }) } })
+    const r = await run({ probes: { command: () => false, 'task-reference': async () => ({ kind: 'task-reference', data: { picked: 'x' } }) } })
     expect(r.intent).toEqual({ kind: 'task-reference', data: { picked: 'x' } })
   })
   it('探针抛错 ⇒ 记 ROUTE 一行、当"不是"、继续往下问', async () => {
-    const r = await run({ probes: { 'task-command': () => { throw new Error('boom') }, command: () => true } })
-    expect(r.intent?.kind).toBe('command'); expect(r.logs).toEqual(['ROUTE probe task-command threw for chat=c1: boom']); expect(r.nexted).toBe(true)
+    const r = await run({ probes: { command: () => { throw new Error('boom') }, 'task-reference': () => true } })
+    expect(r.intent?.kind).toBe('task-reference'); expect(r.logs).toEqual(['ROUTE probe command threw for chat=c1: boom']); expect(r.nexted).toBe(true)
   })
   it('有登记处 ⇒ 顺手填这条消息落到哪件事;查不到 / 查坏了都是 null', async () => {
     expect((await run({ matterFor: c => c === 'c1' ? 'deadbeef' : null })).intent).toEqual({ kind: 'chat', matterId: 'deadbeef' })

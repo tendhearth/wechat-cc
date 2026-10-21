@@ -16,7 +16,7 @@ import type { Mode } from '../../core/conversation'
 import { makeWorkbenchStore } from '../../core/workbench/store'
 import { makeWorkbenchService, type WorkbenchService } from '../../core/workbench/service'
 import { createProviderRegistry } from '../../core/provider-registry'
-import {makeMwWorkbench} from '../inbound/mw-workbench'
+import {makeMwCommand} from '../inbound/mw-command'
 import type { AppTurn } from '../inbound/build'
 import { scopedReply } from '../inbound/reply-scope'
 import { makeMessagesStore } from '../../lib/messages-store'
@@ -275,8 +275,11 @@ describe('companionConverse in-flight guard (buildPipelineDeps)', () => {
     const workbench=makeWorkbenchService({store,registry:createProviderRegistry(),stateDir,ownerChatId:()=> 'owner_chat'})
     const {pipelineDeps,dispatch,dispatchInner,ilink}=setup({inFlight:false,workbench})
     const msg={chatId:'owner_chat',text:`任务 ${task.id}`,userId:'owner_chat',accountId:'account',createTimeMs:1,msgType:'text'}
-    await makeMwWorkbench(pipelineDeps.workbench!)({msg,receivedAtMs:1,requestId:'request'},()=>pipelineDeps.dispatch.coordinator.dispatch(msg))
+    await makeMwCommand(pipelineDeps.commands!)({msg,receivedAtMs:1,requestId:'request'},()=>pipelineDeps.dispatch.coordinator.dispatch(msg))
     expect(ilink.sendMessage).toHaveBeenCalledWith('owner_chat',expect.stringContaining('合计为 500'),{source:'workbench'})
+    // 步 4:「任务 …」是命令表第一条(只有接了工作台才有)
+    expect(pipelineDeps.commands!.registry.ids[0]).toBe('task-command')
+    expect(setup({inFlight:false}).pipelineDeps.commands!.registry.ids).not.toContain('task-command')
     expect(dispatch).not.toHaveBeenCalled()
     expect(dispatchInner).not.toHaveBeenCalled()
     await workbench.shutdown()

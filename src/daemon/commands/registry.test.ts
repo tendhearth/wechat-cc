@@ -50,4 +50,19 @@ describe('CommandRegistry · 3b:group 与 /词 的归属', () => {
     expect(await r.handle(msg('/cc'))).toEqual({ id: 'mode', group: 'mode' })
     expect(await r.handle(msg('终端'))).toEqual({ id: 'onboarding', group: 'onboarding' })   // 非斜杠的写法留在原位
   })
+  it('步 4:handle 的第二个参数(这一轮)原样交给命令;slash 条目也一样', async () => {
+    const seen: unknown[] = []
+    const r = makeCommandRegistry([
+      { id: 'a', probe: () => true, handle: async (_m, turn) => { seen.push(turn); return true } },
+      { id: 'mode', slashCatchAll: true, probe: () => false, handle: async () => false },
+    ])
+    await r.handle(msg('x'), { origin: 'desktop' }); await r.handle(msg('x'))
+    expect(seen).toEqual([{ origin: 'desktop' }, undefined])
+    const s = makeCommandRegistry([
+      { id: 'mode', slashCatchAll: true, probe: () => false, handle: async () => false },
+      { id: 'cli', ownsSlash: () => true, probe: () => true, handle: async (_m, turn) => { seen.push(turn); return true } },
+    ])
+    expect(await s.handle(msg('/cli'), { origin: null })).toEqual({ id: 'cli:slash', group: 'command' })
+    expect(seen.at(-1)).toEqual({ origin: null })
+  })
 })

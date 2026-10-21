@@ -11,6 +11,15 @@
  * 冲突由基线快照与冲突测试抓(command-baseline.test.ts、__e2e__/command-routing.e2e.test.ts)。
  */
 import type { InboundMsg } from '../../core/prompt-format'
+import type { MatterOrigin } from '../../core/matters/store'
+
+/**
+ * 这一轮的上下文(只有少数命令要看)。origin:App 一轮(桌面 / 手机)里建出来的事记在哪个表面;
+ * 省略 ⇒ 真的是微信入站;null ⇒ App 一轮但分不清表面。与 InboundCtx.origin 同义。
+ */
+export interface CommandTurn {
+  origin?: MatterOrigin | null
+}
 
 export interface WechatCommand {
   /** 唯一:trace 里记它,冲突测试按它报。 */
@@ -20,7 +29,7 @@ export interface WechatCommand {
   /** 只读,不许有副作用;抛错当作不认领。 */
   probe(msg: InboundMsg): boolean
   /** 真处理了 ⇒ true;认领了但这次不处理(比如状态变了)⇒ false,交给下一条认领的。 */
-  handle(msg: InboundMsg): Promise<boolean>
+  handle(msg: InboundMsg, turn?: CommandTurn): Promise<boolean>
   /** 这条消息是我认的 /词(/cli、/today、/visit…)⇒ 建表时排到 slashCatchAll 之前。 */
   ownsSlash?(msg: InboundMsg): boolean
   /** 认任何 /词的兜底(mode)。整张表最多一条。 */
@@ -31,7 +40,7 @@ export interface CommandRegistry {
   readonly ids: readonly string[]
   probe(msg: InboundMsg): boolean
   /** 处理了它的命令(id + group);没有 ⇒ null。 */
-  handle(msg: InboundMsg): Promise<{ id: string; group: string } | null>
+  handle(msg: InboundMsg, turn?: CommandTurn): Promise<{ id: string; group: string } | null>
 }
 
 function arrange(commands: readonly WechatCommand[]): WechatCommand[] {
@@ -42,7 +51,7 @@ function arrange(commands: readonly WechatCommand[]): WechatCommand[] {
     id: `${c.id}:slash`,
     ...(c.group ? { group: c.group } : {}),
     probe: (m) => c.ownsSlash!(m) && c.probe(m),
-    handle: (m) => c.handle(m),
+    handle: (m, turn) => c.handle(m, turn),
   }))
   return [...commands.slice(0, catchAll), ...slashes, ...commands.slice(catchAll)]
 }
@@ -55,8 +64,8 @@ export function makeCommandRegistry(input: readonly WechatCommand[]): CommandReg
   return {
     ids: commands.map(c => c.id),
     probe: (msg) => commands.some(c => claims(c, msg)),
-    async handle(msg) {
-      for (const c of commands) if (claims(c, msg) && await c.handle(msg)) return { id: c.id, group: c.group ?? 'command' }
+    async handle(msg, turn) {
+      for (const c of commands) if (claims(c, msg) && await c.handle(msg, turn)) return { id: c.id, group: c.group ?? 'command' }
       return null
     },
   }

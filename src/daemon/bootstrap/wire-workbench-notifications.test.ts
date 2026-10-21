@@ -13,7 +13,9 @@ import { makeConversationStore } from '../../core/conversation-store'
 import { makeIlinkAdapter } from '../ilink-glue'
 import { makeMessagesStore } from '../../lib/messages-store'
 import { makeMwCaptureCtx } from '../inbound/mw-capture-ctx'
-import { makeMwWorkbench } from '../inbound/mw-workbench'
+import { makeMwCommand } from '../inbound/mw-command'
+import { makeCommandRegistry } from '../commands/registry'
+import { makeTaskCommand } from '../commands/task-command'
 import { createInternalApi } from '../internal-api'
 import {MANAGED_NATIVE_CAPABILITIES} from '../../core/workbench/executor-capabilities'
 import {removeTempDir} from '../../lib/test-temp'
@@ -123,7 +125,7 @@ describe('wireWorkbenchNotifications', () => {
     const desktopGet = (path: string) => fetch(`http://127.0.0.1:${internalPort}${path}`, { headers: { authorization: `Bearer ${adminToken}` } })
     const replies = vi.fn(async () => ({ msgId: 'fixture-reply' }))
     const capture = makeMwCaptureCtx(adapter)
-    const commands = makeMwWorkbench({ handleWechat: service.handleWechat, sendMessage: replies })
+    const commands = makeMwCommand({ registry: makeCommandRegistry([makeTaskCommand({ handleWechat: service.handleWechat, sendMessage: replies })]), log: () => {} })
     const incoming = async (text: string, msgId: string) => {
       const ctx = { msg: { chatId: 'owner', userId: 'owner', accountId: 'account-1', text, msgType: 'text', createTimeMs: 1, msgId, contextToken: 'context-1' }, receivedAtMs: 1, requestId: msgId }
       await capture(ctx, () => commands(ctx, async () => {}))

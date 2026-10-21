@@ -5,6 +5,7 @@
  * Refs are passed in for late-bound polling/guard access from closures.
  */
 import { makeCommandRegistry } from '../commands/registry'
+import { makeTaskCommand } from '../commands/task-command'
 import { makeJobsStore } from '../../core/scheduled-jobs-store'
 import { jobsView, jobsAction } from '../scheduled-jobs/view'
 import { pickJobExecutor } from './tick-bodies'
@@ -911,10 +912,12 @@ export function buildPipelineDeps(opts: PipelineDepsOpts, refs: PipelineDepsRefs
   })
 
   // 命令表(重构第二批步 2 / 3b,spec §1):入站只有一站「命令」查这张表。**顺序就是优先级**(ids 就是真实顺序):
-  // 管理员 → (各命令声明的 /词:/cli /today /visit,由 registry 排在兜底之前)→ mode(认任何 /词的兜底)→ 上手(没见过的用户 / 起名阶段的每一句)
+  // 任务 …(工作台)→ 管理员 → (各命令声明的 /词:/cli /today /visit,由 registry 排在兜底之前)→ mode(认任何 /词的兜底)→ 上手(没见过的用户 / 起名阶段的每一句)
   // → 权限 y/n → 文本命令(定时 / 日历 / 做过的事 / 经验 / 导入记忆 / 终端)→ 控制命令(串门 / 回信 / 配对 / 派 / 认识 / 访客)。
   // group 沿用老的 consumedBy 标签,trace、welcome、milestone、activity 不用改。
   const commandRegistry = makeCommandRegistry([
+    // 「任务 …」(工作台控制,步 4):排第一 —— 以前是单独一种 intent,排在整张命令表之前。
+    ...(opts.workbench ? [makeTaskCommand({ handleWechat: opts.workbench.handleWechat, sendMessage: (chatId: string, text: string) => send(chatId, text, { source: 'workbench' }) })] : []),
     { id: 'admin', group: 'admin', probe: (m) => adminCommandsHandler.probe(m), handle: (m) => adminCommandsHandler.handle(m) },
     { id: 'mode', group: 'mode', slashCatchAll: true, probe: (m) => modeHandler.probe(m), handle: (m) => modeHandler.handle(m) },
     { id: 'onboarding', group: 'onboarding', probe: (m) => onboardingHandler.probe(m), handle: (m) => onboardingHandler.handle(m) },
@@ -987,7 +990,6 @@ export function buildPipelineDeps(opts: PipelineDepsOpts, refs: PipelineDepsRefs
       ...(boot.registry.getCheapEval()?{judge:makeCheapJudge(boot.registry.getCheapEval()!)}:{}),
       log,
     }}:{}),
-    ...(opts.workbench?{workbench:{handleWechat:opts.workbench.handleWechat,sendMessage:(chatId:string,text:string)=>send(chatId,text,{source:'workbench'})}}:{}),
     // 意图路由(第一步只记 trace 不改决策):探针全是各消费者自己交出来的只读判定。
     route: {
       probes: {
