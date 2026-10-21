@@ -80,6 +80,25 @@ describe('桌面 modules/workbench*.js 认的码都还在', () => {
   })
 })
 
+describe('桌面路由里直接写死的 {status, body:{error}} 与表一致(10-21:workbench_not_wired 字面量 503、表里却落到 500 internal)', () => {
+  const src = readFileSync(join(ROOT, 'src', 'daemon', 'internal-api', 'routes-workbench.ts'), 'utf8')
+  const literals = [...src.matchAll(/status\s*:\s*(\d{3})\s*,\s*body\s*:\s*\{\s*error\s*:\s*'([a-z_]+)'\s*\}/g)].map(m => ({ status: Number(m[1]), code: m[2]! }))
+  it('扫到了(workbench_not_wired 那 40 多处在里面)', () => {
+    expect(literals.filter(l => l.code === 'workbench_not_wired').length).toBeGreaterThan(30)
+  })
+  it.each([...new Map(literals.map(l => [`${l.status} ${l.code}`, l])).values()])('$status $code', ({ status, code }) => {
+    expect(workbenchErrorHttp(code, 'desktop')).toEqual({ status, error: code })
+  })
+})
+
+describe('workbench_not_wired:桌面带码、手机有意收成 unavailable(表里明写,不靠兜底)', () => {
+  it('两个表面各回什么', () => {
+    expect(WORKBENCH_ERRORS.workbench_not_wired).toBeDefined()
+    expect(workbenchErrorHttp('workbench_not_wired', 'desktop')).toEqual({ status: 503, error: 'workbench_not_wired' })
+    expect(workbenchErrorHttp('workbench_not_wired', 'phone')).toEqual({ status: 503, error: 'unavailable' })
+  })
+})
+
 describe('桌面路由能回的、桌面 UI 在等的码(#465 盘点发现)', () => {
   it('额度用完 / 文件夹正被占着 ⇒ 桌面带码回,不再是 500 internal', async () => {
     const { workbenchErrorHttp } = await import('../packages/protocol/src/workbench-errors')

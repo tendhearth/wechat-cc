@@ -188,6 +188,13 @@ describe('phone stop (2026-10-06)',()=>{
     expect(await r!.json()).toEqual({ok:false,error:'input_stale'})
     expect(r!.status).toBe(409)
   })
+  it('工作台没接上 ⇒ 503 unavailable(手机有意不带 workbench_not_wired,见 workbench-errors 那一行);服务里抛的同样',async()=>{
+    const url=new URL('http://phone.test/m/api/matter/stop'),req=()=>new Request(url,{method:'POST',body:JSON.stringify({id:'deadbeef',runId:RUN})})
+    for(const actions of [{},{stop:async()=>{throw Error('workbench_not_wired')}}]){
+      const r=await mobileWorkbenchRoute(actions,url,req())
+      expect(r!.status).toBe(503);expect(await r!.json()).toEqual({ok:false,error:'unavailable'})
+    }
+  })
 })
 
 describe('phone entry models (2026-10-06)',()=>{
