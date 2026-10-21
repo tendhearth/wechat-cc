@@ -50,7 +50,8 @@ describe('phone attachment controls',()=>{
     expect(backend.chunks.map(c=>Buffer.from(c.contentBase64,'base64').length)).toEqual([BLOCK,BLOCK,BLOCK,53])
     expect(backend.chunks.map(c=>c.offset)).toEqual([0,BLOCK,BLOCK*2,BLOCK*3])
     expect(new Set(backend.chunks.map(c=>c.id)).size).toBe(1)
-    expect(Buffer.concat(backend.chunks.map(c=>Buffer.from(c.contentBase64,'base64')))).toEqual(Buffer.from(data))
+    // 大缓冲区别用 toEqual:vitest 逐字节递归比较,700KB 空闲机器上就要 5.6 秒(负载下撞 20s 超时);Buffer#equals 不到 1ms
+    expect(Buffer.concat(backend.chunks.map(c=>Buffer.from(c.contentBase64,'base64'))).equals(Buffer.from(data))).toBe(true)
     expect(backend.chunks[0]).toMatchObject({draftId:DRAFT,taskId:TASK,sha256:hash(data),size:data.length})
     expect(control.readyIds()).toEqual([backend.chunks[0].id]);expect(control.isReady()).toBe(true)
     expect(control.signature()).toBe(JSON.stringify([[backend.chunks[0].id,hash(data),data.length]]))

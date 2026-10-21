@@ -47,26 +47,42 @@ import { migrations } from './db'
  * a CREATE TABLE must not be a false alarm, while columns, types, CHECK
  * constraints and indexes stay fully compared.
  */
-function canonicalSchema(n: number): string {
+function readSchema(db: ReturnType<typeof openSqlite>): string {
+  const rows = db
+    .query<{ type: string; name: string; sql: string | null }, []>(
+      "SELECT type, name, sql FROM sqlite_master WHERE name NOT LIKE 'sqlite_%' ORDER BY type, name",
+    )
+    .all()
+  return rows
+    .map(r => `${r.type} ${r.name} ${(r.sql ?? '').replace(/["`\[\]]/g, '').replace(/\s+/g, ' ').trim()}`)
+    .join('\n')
+}
+
+/**
+ * Canonical schema after migrations 1..n for every n in `versions`, from ONE database migrated in
+ * order and read after each step — the same sequence of migrations reaches the same state, so this is
+ * identical to a fresh build per version. (It used to rebuild from scratch per version: O(n²)
+ * migration runs, ~20s under a loaded test run.)
+ */
+function canonicalSchemas(versions: readonly number[]): Map<number, string> {
+  const want = new Set(versions)
+  const out = new Map<number, string>()
   const db = openSqlite(':memory:')
   try {
     db.exec('PRAGMA foreign_keys = ON;')
-    for (let i = 0; i < n; i++) migrations[i]!(db)
-    const rows = db
-      .query<{ type: string; name: string; sql: string | null }, []>(
-        "SELECT type, name, sql FROM sqlite_master WHERE name NOT LIKE 'sqlite_%' ORDER BY type, name",
-      )
-      .all()
-    return rows
-      .map(r => `${r.type} ${r.name} ${(r.sql ?? '').replace(/["`\[\]]/g, '').replace(/\s+/g, ' ').trim()}`)
-      .join('\n')
+    const max = Math.max(0, ...versions)
+    for (let i = 0; i < max && i < migrations.length; i++) {
+      migrations[i]!(db)
+      if (want.has(i + 1)) out.set(i + 1, readSchema(db))
+    }
   } finally {
     db.close()
   }
+  return out
 }
 
-function fingerprint(n: number): string {
-  return createHash('sha256').update(canonicalSchema(n)).digest('hex').slice(0, 16)
+function fingerprintOf(schema: string): string {
+  return createHash('sha256').update(schema).digest('hex').slice(0, 16)
 }
 
 // Locked at v1.3.8 (2026-08-13). To add a migration: append it to the array,
@@ -140,14 +156,16 @@ const RELEASED: Record<number, string> = {
 
 it('every released migration still produces the schema it was published with', () => {
   const drifted: string[] = []
+  const schemas = canonicalSchemas(Object.keys(RELEASED).map(Number))
   for (const [version, expected] of Object.entries(RELEASED)) {
     const n = Number(version)
     if (n > migrations.length) continue
-    const actual = fingerprint(n)
+    const schema = schemas.get(n)!
+    const actual = fingerprintOf(schema)
     // Dump the canonical text alongside the hash: a hash-only failure on a
     // platform you can't reproduce locally tells you nothing about WHAT moved.
     if (actual !== expected) {
-      drifted.push(`v${n}: locked ${expected}, now ${actual}\n    canonical:\n      ${canonicalSchema(n).split('\n').join('\n      ')}`)
+      drifted.push(`v${n}: locked ${expected}, now ${actual}\n    canonical:\n      ${schema.split('\n').join('\n      ')}`)
     }
   }
   expect(

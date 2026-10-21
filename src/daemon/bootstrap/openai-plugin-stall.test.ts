@@ -51,6 +51,10 @@ function alive(pid: number): boolean {
   try { process.kill(pid, 0); return true } catch { return false }
 }
 
+// 一个预算同时管「卡住的插件要被跳过」和「必需的 wechat MCP 要起来」:3s 在负载下连真 wechat MCP 冷启动都盖不住
+// (10-21 假红「did not start within 3000ms」)。10s:卡住的那个照样被跳过,只是这条测试多等几秒;生产是 20s(mcp-specs)。
+const STARTUP_MS = 10_000
+
 describe('openai session with a stalled plugin MCP server (real wechat MCP + internal API)', () => {
   let stateDir: string
   let api: InternalApi | null = null
@@ -83,7 +87,7 @@ describe('openai session with a stalled plugin MCP server (real wechat MCP + int
       makeChatModel: () => pingThenAnswer(),
       makeMcpBridge: (sessionEnv) => createMcpToolBridge(
         buildOpenaiMcpSpecs({ wechat, delegate: null, pluginMcp: { wxvault: stall } }, sessionEnv),
-        { ...openaiMcpBridgeOptions(log), startupTimeoutMs: 3_000 },
+        { ...openaiMcpBridgeOptions(log), startupTimeoutMs: STARTUP_MS },
       ),
       log,
     })
@@ -101,7 +105,7 @@ describe('openai session with a stalled plugin MCP server (real wechat MCP + int
       await session.close()
     }
 
-    expect(logs.some(l => l.startsWith('[MCP]') && l.includes('"wxvault"') && l.includes('3000ms'))).toBe(true)
+    expect(logs.some(l => l.startsWith('[MCP]') && l.includes('"wxvault"') && l.includes(`${STARTUP_MS}ms`))).toBe(true)
     expect(logs.some(l => l.startsWith('[SESSION_SPAWN]'))).toBe(true)
 
     // The given-up child must not be left running.
@@ -110,5 +114,5 @@ describe('openai session with a stalled plugin MCP server (real wechat MCP + int
     const deadline = Date.now() + 5_000
     while (alive(pid) && Date.now() < deadline) await new Promise(r => setTimeout(r, 100))
     expect(alive(pid)).toBe(false)
-  }, 30_000)
+  }, 60_000)
 })

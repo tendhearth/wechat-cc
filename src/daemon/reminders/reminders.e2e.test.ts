@@ -92,7 +92,8 @@ describe('e2e: reminders — schedule → sweep → deliver, then no double deli
       // routes-reminders.ts's scopeDenied lets touch this chat_id — a
       // session caller may only ever schedule for its own chat.
       daemon.sendText(FIXTURE_CHAT, 'hi')
-      await daemon.waitForReplyTo(FIXTURE_CHAT)
+      // 要盖住一次真 daemon 启动 + 一次派发:缺省 5s 在负载下不够(10-21 假红);e2e 目录里的同类等待都给 8s 以上
+      await daemon.waitForReplyTo(FIXTURE_CHAT, 30_000)
       const sessionToken = spawns.map(sessionTokenOf).find((t): t is string => !!t)
       expect(sessionToken, `${FIXTURE_CHAT} spawn must carry a session token`).toBeTruthy()
 
@@ -165,6 +166,6 @@ describe('e2e: reminders — schedule → sweep → deliver, then no double deli
     // 613 个文件抢 CPU:真启一遍 daemon(假 ilink + internal-api + 一次 dispatch
     // 往返 + 两次 sweep)单跑 2~4s,2026-09-19 满载实测撞到 20511ms 超时。60s 是
     // 按 ~10 倍放大留的余量;这里面每一个等待本身都是有界的(harness 的
-    // waitForReplyTo 等 5s 就抛),所以真卡死不会被这个数字藏住。
+    // waitForReplyTo 等 30s 就抛 —— 10-21 从 5s 抬上来,5s 盖不住满载下的一次启动 + 派发),所以真卡死不会被这个数字藏住。
   }, 60_000)
 })
