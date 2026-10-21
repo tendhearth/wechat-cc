@@ -1077,7 +1077,8 @@ export function buildPipelineDeps(opts: PipelineDepsOpts, refs: PipelineDepsRefs
     route: {
       probes: {
         admin: (ctx) => adminCommandsHandler.probe(ctx.msg),
-        mode: (ctx) => modeHandler.probe(ctx.msg),
+        // mode 认任何 /词(兜底「不认识 /xx」);命令表认领的 /cli /today /visit 让给命令表 —— 具体的先于兜底(重构第二批步 3a,§1.5 bug 1)
+        mode: (ctx) => modeHandler.probe(ctx.msg) && !commandRegistry.probe(ctx.msg),
         onboarding: (ctx) => onboardingHandler.probe(ctx.msg),
         'permission-reply': (ctx) => ilink.probePermissionReply(ctx.msg.text ?? '', ctx.msg.chatId, ctx.msg.quote?.text),
         command: (ctx) => commandRegistry.probe(ctx.msg),

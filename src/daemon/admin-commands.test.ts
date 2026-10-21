@@ -111,12 +111,21 @@ describe('admin-commands', () => {
     expect(body).toContain('清理所有过期')
   })
 
-  it('non-admin sender is silently dropped (no reply)', async () => {
+  // 重构第二批步 3a(§1.5 bug 4):以前非主人发管理员命令被静默吞掉、一个字不回。现在:斜杠命令回一句「只有主人能用」;
+  // 日常说法(背包 / 看记忆 / 让X执行…)不认领,交给模型照常聊。
+  it('non-admin slash command: consumed with a one-line "owner only" reply, nothing runs', async () => {
     isAdmin.mockReturnValue(false)
     const cmds = make()
-    expect(await cmds.handle(msg('/health'))).toBe(true)  // still consumed
-    expect(sendMessage).not.toHaveBeenCalled()             // but no response
+    expect(cmds.probe(msg('/health'))).toBe(true)
+    expect(await cmds.handle(msg('/health'))).toBe(true)
+    expect(sentBody()).toBe('这条只有主人能用。')
     expect(log).toHaveBeenCalledWith('ADMIN_CMD', expect.stringContaining('non-admin'))
+  })
+  it('non-admin natural phrase (背包 / 看记忆): not claimed, goes to normal chat', async () => {
+    isAdmin.mockReturnValue(false)
+    const cmds = make()
+    for (const t of ['背包', '看记忆', '有哪些手']) { expect(cmds.probe(msg(t)), t).toBe(false); expect(await cmds.handle(msg(t)), t).toBe(false) }
+    expect(sendMessage).not.toHaveBeenCalled()
   })
 
   describe('/update', () => {
@@ -153,7 +162,7 @@ describe('admin-commands', () => {
       expect(sentBody()).toContain('bun_not_found')
     })
 
-    it('non-admin /update is consumed but does not start the updater', async () => {
+    it('non-admin /update is consumed, says owner-only, and does not start the updater', async () => {
       isAdmin.mockReturnValue(false)
       const updateSelf = vi.fn(async () => ({ ok: true as const, pid: 1234 }))
       const cmds = make({ updateSelf })
@@ -161,7 +170,7 @@ describe('admin-commands', () => {
       expect(await cmds.handle(msg('/update', 'guest-chat'))).toBe(true)
 
       expect(updateSelf).not.toHaveBeenCalled()
-      expect(sendMessage).not.toHaveBeenCalled()
+      expect(sentBody()).toBe('这条只有主人能用。')
     })
   })
 
@@ -208,7 +217,7 @@ describe('admin-commands', () => {
       expect(await cmds.handle(msg('自改 把主人的仓库删了', 'guest-chat'))).toBe(true)
 
       expect(start).not.toHaveBeenCalled()
-      expect(sendMessage).not.toHaveBeenCalled()
+      expect(sentBody()).toBe('这条只有主人能用。')   // 明确的命令写法:说清楚(步 3a)
     })
 
     it('「自改 状态」列最近五条,不当成需求下单', async () => {
@@ -530,11 +539,11 @@ describe('admin-commands', () => {
       expect(releaseBusy).toHaveBeenCalledTimes(1)
     })
 
-    it('non-admin is consumed but does NOT synthesize or reply', async () => {
+    it('non-admin 整理记忆 is not claimed (goes to chat) and does NOT synthesize', async () => {
       isAdmin.mockReturnValue(false)
       const synthesizeMemory = vi.fn()
       const cmds = make({ synthesizeMemory: synthesizeMemory as unknown as AdminCommandsDeps['synthesizeMemory'] })
-      expect(await cmds.handle(msg('整理记忆'))).toBe(true)
+      expect(await cmds.handle(msg('整理记忆'))).toBe(false)
       await flush()
       expect(synthesizeMemory).not.toHaveBeenCalled()
       expect(sendMessage).not.toHaveBeenCalled()
@@ -767,11 +776,11 @@ describe('admin-commands', () => {
       expect(releaseBusy).toHaveBeenCalledTimes(1)
     })
 
-    it('non-admin is consumed but does NOT delegate', async () => {
+    it('non-admin 让X执行 is not claimed (goes to chat) and does NOT delegate', async () => {
       isAdmin.mockReturnValue(false)
       const delegateToHand = vi.fn()
       const cmds = make({ delegateToHand: delegateToHand as unknown as AdminCommandsDeps['delegateToHand'], knownHandNames: () => ['家里', '公司'] })
-      expect(await cmds.handle(msg('让家里执行 X'))).toBe(true)
+      expect(await cmds.handle(msg('让家里执行 X'))).toBe(false)
       await flush()
       expect(delegateToHand).not.toHaveBeenCalled()
       expect(sendMessage).not.toHaveBeenCalled()
@@ -829,13 +838,13 @@ describe('admin-commands', () => {
       expect(sendMessage).toHaveBeenCalledWith('admin-1', expect.stringContaining('小希'))
     })
 
-    it('/botname <valid> from non-admin → silently consumed, no setBotName', async () => {
+    it('/botname <valid> from non-admin → consumed with owner-only reply, no setBotName', async () => {
       isAdmin.mockReturnValue(false)
       const handler = build()
       const consumed = await handler.handle(mkMsg('/botname 偷偷改'))
-      expect(consumed).toBe(true)  // matches existing admin-cmd convention: drop silently
+      expect(consumed).toBe(true)
       expect(setBotName).not.toHaveBeenCalled()
-      expect(sendMessage).not.toHaveBeenCalled()
+      expect(sendMessage).toHaveBeenCalledWith(expect.anything(), '这条只有主人能用。')
     })
 
     it('/botname 跳过 → setBotName(null) + ack with fallback', async () => {

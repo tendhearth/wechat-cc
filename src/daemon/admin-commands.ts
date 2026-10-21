@@ -152,6 +152,14 @@ const BAG_RE = /^\s*(?:\/(?:bag|背包)|背包|打猎背包|猎物|战利品|打
 const SELF_CHANGE_RE = /^\s*自改\s+([\s\S]+)$/
 const SELF_CHANGE_STATUS_RE = /^\s*自改\s*(?:状态|列表)\s*$/
 
+/**
+ * 明确的命令写法:斜杠命令、手的配对码、「自改 …」—— 不会和日常聊天撞。非主人发来 ⇒ 回一句「只有主人能用」。
+ * 其余(背包 / 看记忆 / 有哪些手 / 整理记忆 / 让X执行…)和日常汉语重合,非主人说的就当普通聊天(重构第二批步 3a)。
+ */
+export function isExplicitAdminCommand(text: string): boolean {
+  return text.startsWith('/') || !!matchHandJoin(text) || SELF_CHANGE_RE.test(text) || SELF_CHANGE_STATUS_RE.test(text)
+}
+
 /** 认出一串配对码(裸码或 /hand <码>)。返回去掉空白的码,或 null。 */
 /** 管理员命令的识别面(纯函数)—— handle 与 probe 共用这一份,别再各写一遍。 */
 export function isAdminCommandText(text: string, handNames: readonly string[]): boolean {
@@ -283,7 +291,8 @@ async function sendHuntBag(deps: AdminCommandsDeps, chatId: string): Promise<voi
 export function makeAdminCommands(deps: AdminCommandsDeps): AdminCommands {
   const knownHands = (): readonly string[] => { try { return deps.knownHandNames?.() ?? [] } catch { return [] } }
   return {
-    probe(msg) { return isAdminCommandText(msg.text.trim(), knownHands()) },
+    // 非主人:只认明确的命令写法(回一句「只有主人能用」);日常说法不认领,交给模型(重构第二批步 3a,§1.5 bug 4)
+    probe(msg) { const t = msg.text.trim(); return isAdminCommandText(t, knownHands()) && (deps.isAdmin(msg.chatId) || isExplicitAdminCommand(t)) },
     async handle(msg) {
       const text = msg.text.trim()
       // 认一次派活指令。按**已注册的手名**认(不是按动词)—— 名字没命中就
@@ -298,7 +307,10 @@ export function makeAdminCommands(deps: AdminCommandsDeps): AdminCommands {
       if (!isCmd) return false
 
       if (!deps.isAdmin(msg.chatId)) {
-        deps.log('ADMIN_CMD', `non-admin ${msg.chatId} sent "${text.slice(0, 30)}" — dropped`)
+        // 以前一律静默吞掉、一个字不回;现在斜杠命令说清楚,日常说法不认领(进对话)
+        if (!isExplicitAdminCommand(text)) return false
+        deps.log('ADMIN_CMD', `non-admin ${msg.chatId} sent "${text.slice(0, 30)}" — owner only`)
+        await deps.sendMessage(msg.chatId, '这条只有主人能用。').catch(() => {})
         return true
       }
 

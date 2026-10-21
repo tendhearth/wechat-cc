@@ -10,6 +10,8 @@ import type { ImportResult } from './nightly-runtime'
 
 const TTL_MS = 30 * 60_000
 const START = /^\s*导入记忆(?:\s+(.{1,20}))?\s*$/
+/** 等粘贴时说这些 ⇒ 取消这次导入(重构第二批步 3a;以前会落进对话)。 */
+const CANCEL = /^\s*(不要|取消|算了|不导了|不用了)\s*[。.!！]?\s*$/
 
 /** 「全部」⇒ 全部下标;「1,3 / 1 3 / 1、3」⇒ 那几个(去重);「不要 / 取消 / 算了」⇒ [];认不出 / 越界 ⇒ null。 */
 export function parsePick(text: string, n: number): number[] | null {
@@ -42,7 +44,7 @@ export function makeMemoryImportCommand(deps: {
     if (START.test(text)) return true
     const s = live(chatId)
     if (!s) return false
-    if (s.kind === 'paste') return splitImportedMemory(text).length >= 2
+    if (s.kind === 'paste') return CANCEL.test(text) || splitImportedMemory(text).length >= 2
     return parsePick(text, s.items.length) !== null
   }
   return {
@@ -57,6 +59,7 @@ export function makeMemoryImportCommand(deps: {
         return true
       }
       const s = live(chatId)!
+      if (s.kind === 'paste' && CANCEL.test(text)) { stages.delete(chatId); await deps.say(chatId, '好,不导了。'); return true }
       if (s.kind === 'paste') {
         const { items, held } = screenImportedMemory(text)
         stages.set(chatId, { kind: 'pick', label: s.label, items, expiresAt: deps.now() + TTL_MS })
