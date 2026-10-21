@@ -45,14 +45,16 @@ export const EXECUTORS: Readonly<Record<KnownProviderId, ExecutorDescriptor>>
 | 密钥环境变量名:`llm-keys.ts` + providers.ts 三处字面量 + `delegate.ts` | `EXECUTORS[id].credentials` |
 | 模型字段:`agent-config.ts` 的 `modelForProvider` / `withModelForProvider` if 链;默认模型:`wire-model-options.ts` 与 providers.ts 两处「靠注释保持同步」 | `EXECUTORS[id].model` |
 | 端点:`net-probe.ts`、`call-classifier.ts`、`guard/targets.ts`(三份,agy / cursor 的 host 已经对不上) | `EXECUTORS[id].endpoints`(先核对哪一个才对,写进表里时附出处) |
-| 二进制查找:providers.ts、`doctor.ts`(`findOnPath('codex')` 漏了 nvm)、`wire-workbench.ts` 的第二次 `findCodexBinary` | `findExecutorBinary(EXECUTORS[id])` 一处 |
-| 平台:只有 chat 侧的 cursor 判了 win32;工作台 ACP 与自定义 ACP 在 Windows 上先注册、spawn 时才抛 | 注册前统一看 `platforms` |
+| 二进制查找:providers.ts、`doctor.ts`(`findOnPath('codex')` 漏了 nvm)、`wire-workbench.ts` 的第二次 `findCodexBinary` | `findExecutorBinary(EXECUTORS[id])` 一处 —— **不带缓存,只管「怎么找」;「什么时候找」由调用方定,各处现有时机原样保留**(wire-workbench:187 是接线时查一次并固化进工作台 codex;:162 额度监视器每次现查) |
+| 平台:只有 chat 侧的 cursor 判了 win32;工作台 ACP 与自定义 ACP 在 Windows 上先注册、spawn 时才抛(`acp-agent-provider.ts:184` 无条件 `throw`,chat 与工作台共用) | 注册前统一看 `platforms`;**标在传输上(`transport:'acp'` ⇒ win32 不注册),不只标 cursor** —— 内置 cursor 与所有自定义 ACP 在 Windows 上本来就从没跑起来过。可见变化:Windows 上工作台执行者列表少掉这几家(以前能选、一跑就报「暂不支持 Windows」),写进 PR 描述 |
 
 **`bootstrap/providers.ts` 的 if 梯子**:六段改成对 `EXECUTORS` 的一个循环,每家只剩「门槛(二进制 / 凭据)→ 探测 → 注册 / 失败排队重探」三步的共用骨架 + 一个 `build(desc, ctx)`。三份抄出来的「失败 ⇒ scheduleProbeRetry ⇒ 重探 ⇒ registerX ⇒ assertLateRegistration」收成一份。codex 的 autofix / 版本核对、cursor 的两种传输同 id 回退、agy 的全局 MCP 这三样真不同的,留在各自的 `build` 里。
 
 **`guard/targets.ts` 不再自己猜谁注册了**:改读 daemon 的已注册列表(在 daemon 里直接问 registry;CLI 侧走 /v1/health 已有的 providers 字段)。
 
 ## 4. 这一批不做
+
+- **欠账(记着,不在这一批)**:工作台 codex 的二进制在接线时固化。CLI 全自动升级换 codex 时,两种装法的路径都不变(standalone 换的是 `current` 软链、npm 全局 bin 不变),所以今天碰不到 —— 但这是靠巧合。以后要么工作台每次 spawn 现查,要么 cli-upgrade 升级成功后让工作台重新接一次 codex。动它会改执行路径,放第三批。
 
 - 不动适配器本身、不合并 chat / workbench / delegate 三套适配器(第三批)。
 - 不改任何对外文案的**内容**,只把它们收到一处(显示名不一致的那几处,收的时候选哪个由我列成表给主人看一眼 —— 见 §6)。
