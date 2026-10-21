@@ -69,7 +69,7 @@ const phoneLc = makePhoneLifecycle((tag, line) => log(tag, line))
 let v2Tunnel: import('../tunnel-client').TunnelClient | null = null
 let legacyTunnel: import('../tunnel-client').TunnelClient | null = null
 let notifier: { refresh(): void } | null = null
-// 面板在下面才建(它要 phonePush 当值):经 late.panel 读,没建好 ⇒ 当没有设备(见 PR #49x 的 null 行为表)。
+// 面板在下面才建(它要 phonePush 当值):经 late.panel 读,没建好 ⇒ 当没有设备(见 PR #492 的 null 行为表)。
 const phonePush = relays?.v2 ? makePhonePush({
   stateDir,
   send: (m) => v2Tunnel?.sendControl(m) ?? false,
