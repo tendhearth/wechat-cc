@@ -10,7 +10,7 @@ describe('SpeechPolicy 判定 —— 设计稿 2026-10-21-speech-policy-design �
   it('四类都有代表;origin 只由种类决定', () => {
     for (const o of ['blocking', 'requested', 'report', 'initiative']) expect(of(o), o).toBeDefined()
     expect(originOf('reminder')).toBe('requested')
-    expect(originOf('brief')).toBe('initiative')   // 晨报:开关是主人开的,内容是 CC 挑的
+    expect(originOf('brief')).toBe('initiative')   // 早报:开关是主人开的,内容是 CC 挑的
     expect(originOf('job')).toBe('requested')      // 「每天 9 点看邮箱」:内容是主人点名的
     expect(originOf('permission_ask')).toBe('blocking')
     expect(originOf('matter_report')).toBe('report')

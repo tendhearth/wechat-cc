@@ -37,7 +37,7 @@ type RunJobTurn = TickBodies['runJobTurn']
 export interface ReviewRequest { taskId: string; providerId: string; material: string }
 
 export interface WireJobsDeps {
-  /** 主人设的免打扰(建晨报 / 周报时撞上了当场说);没接 ⇒ 不提。 */
+  /** 主人设的免打扰(建早报 / 周报时撞上了当场说);没接 ⇒ 不提。 */
   quietWindow?: () => import('../../core/quiet-hours').QuietWindow | undefined
   stateDir: string
   db: Db
