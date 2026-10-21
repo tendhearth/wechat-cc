@@ -32,7 +32,7 @@ import { validateNickname, NICKNAME_MAX_LEN } from './nickname'
 import { capabilitiesFor } from '../core/capability-matrix'
 import type { AgentConfig } from '../lib/agent-config'
 import type { UserTier } from '../core/user-tier'
-import { providerDenialFor, describeProviderDenial } from '../core/provider-policy'
+import { providerDenialFor, describeProviderDenial, providerForSlash } from '../core/provider-policy'
 import { PROVIDER_IDS } from '../lib/provider-ids'
 
 /** /set 读写的这一对话的偏好(chat-prefs 的子集)。 */
@@ -133,20 +133,10 @@ function editDistance(a: string, b: string): number {
 }
 
 export function makeModeCommands(deps: ModeCommandsDeps): ModeCommands {
+  // 斜杠词表只有一份(core/provider-policy 的 PROVIDER_SLASH):/cc ⇒ claude、/api ⇒ openai(「主人自己的 API」,
+  // 不绑哪家厂商;openai 没注册时下面 registry.has() 那道回「未注册」)…… 拒绝语报词也读同一张表。
   function isProviderCommand(slashWord: string): ProviderId | null {
-    const lower = slashWord.toLowerCase()
-    if (lower === 'cc') return 'claude'
-    if (lower === 'codex') return 'codex'
-    if (lower === 'cursor') return 'cursor'
-    // Generic OpenAI-compatible backend (DeepSeek/Kimi/Qwen/…). Deliberately
-    // named `/api` rather than `/openai` — it's "the user's own API endpoint",
-    // not tied to a vendor. Only takes effect when the openai provider is
-    // registered (WECHAT_OPENAI_API_KEY + base_url + model); otherwise the
-    // registry.has() guard below replies "未注册".
-    if (lower === 'api') return 'openai'
-    if (lower === 'gemini') return 'gemini'
-    if (lower === 'agy') return 'agy'
-    return null
+    return providerForSlash(slashWord)
   }
 
   // Mirrors the delegate-mcp wiring in src/daemon/bootstrap/index.ts:322-325.

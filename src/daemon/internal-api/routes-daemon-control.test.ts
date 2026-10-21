@@ -42,6 +42,21 @@ describe('/v1/model — per-provider', () => {
     } finally { rmSync(dir, { recursive: true, force: true }) }
   })
 
+  // 10-21:默认执行者是 agy 时,不带 provider 的读写落在 `model` 上 —— agy 根本不读它,读回来却说成功(说假话)。
+  it('default provider agy: POST without provider writes agyModel, and GET reads back exactly what agy will use', async () => {
+    const dir = stateDirWith({ provider: 'agy', agyModel: 'gemini-3.7-flash-high', model: 'claude-opus-4-8' })
+    try {
+      const r = routesWith({ stateDir: dir })
+      expect((await r['GET /v1/model']!(new URLSearchParams(), undefined)).body).toEqual({ provider: 'agy', model: 'gemini-3.7-flash-high' })
+      const res = await r['POST /v1/model']!(new URLSearchParams(), { model: 'gemini-3.8-pro' })
+      expect(res.body).toMatchObject({ ok: true, provider: 'agy', model: 'gemini-3.8-pro' })
+      const cfg = loadAgentConfig(dir)
+      expect(cfg.agyModel).toBe('gemini-3.8-pro')
+      expect(cfg.model).toBe('claude-opus-4-8')
+      expect((await r['GET /v1/model']!(new URLSearchParams(), undefined)).body).toEqual({ provider: 'agy', model: 'gemini-3.8-pro' })
+    } finally { rmSync(dir, { recursive: true, force: true }) }
+  })
+
   it('POST without provider keeps the legacy behavior (global default provider)', async () => {
     const dir = stateDirWith({ provider: 'claude', model: 'claude-opus-4-8' })
     try {

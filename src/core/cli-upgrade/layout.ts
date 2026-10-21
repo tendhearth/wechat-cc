@@ -133,6 +133,6 @@ export function manualRollbackSteps(spec: CliSpec, version: string | null): stri
     case 'claude': return `终端里跑 \`claude install ${v}\`,然后 \`wechat-cc selftest chat --provider claude\` 确认。`
     case 'codex': return `standalone 装法:把 ~/.codex/packages/standalone/current 改指回 releases/${v}-<平台>;npm 装法:\`npm i -g @openai/codex@${v}\`。然后 \`wechat-cc selftest chat --provider codex\` 确认。`
     case 'cursor': return `把 ~/.local/bin/cursor-agent(和 agent)改指回 ~/.local/share/cursor-agent/versions/${v}/cursor-agent,然后 \`wechat-cc selftest chat --provider cursor\` 确认。`
-    case 'agy': return `agy 不保留旧版本:先在微信里用别的 provider(/claude 等),等 agy 出修复版后 \`wechat-cc cli upgrade agy\`。`
+    case 'agy': return `agy 不保留旧版本:先在微信里用别的 provider(/cc 等),等 agy 出修复版后 \`wechat-cc cli upgrade agy\`。`
   }
 }

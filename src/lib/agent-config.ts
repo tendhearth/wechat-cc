@@ -566,20 +566,18 @@ export function saveAgentConfig(stateDir: string, config: AgentConfig): void {
 // model` at each read/write — writing the wrong field is a silent no-op with
 // a falsely-confirming read-back.
 
+// The global-provider pair is just the per-provider pair below asked about `config.provider` — ONE place knows which
+// field each provider reads. (10-21: these used to be a second if-chain that had no agy branch, so /v1/model on an agy
+// owner wrote `model`, which agy never reads, and read it back as success.)
+
 /** The model id the configured provider actually reads (undefined if unset). */
 export function activeModel(config: AgentConfig): string | undefined {
-  if (config.provider === 'cursor') return config.cursorModel
-  if (config.provider === 'openai') return config.openaiModel
-  if (config.provider === 'gemini') return config.geminiModel
-  return config.model
+  return modelForProvider(config, config.provider)
 }
 
 /** A copy of `config` with the provider's active model field set to `model`. */
 export function withActiveModel(config: AgentConfig, model: string): AgentConfig {
-  if (config.provider === 'cursor') return { ...config, cursorModel: model }
-  if (config.provider === 'openai') return { ...config, openaiModel: model }
-  if (config.provider === 'gemini') return { ...config, geminiModel: model }
-  return { ...config, model }
+  return withModelForProvider(config, config.provider, model)
 }
 
 // activeModel/withActiveModel above answer "the GLOBAL default provider's

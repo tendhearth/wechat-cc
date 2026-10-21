@@ -20,6 +20,7 @@
  *    (缺省 = 全部已注册)。admin 不受限。
  */
 import type { ProviderId } from './conversation'
+import type { KnownProviderId } from '../lib/provider-ids'
 import type { UserTier } from './user-tier'
 import { capabilitiesFor } from './capability-matrix'
 
@@ -56,7 +57,23 @@ export function describeProviderDenial(d: ProviderDenial, slash: string): string
   return `管理员没把 /${slash} 开放给非管理员对话。可用: ${d.allowed.length ? d.allowed.join(', ') : '(无)'}`
 }
 
-/** provider id → 斜杠词(claude 是 /cc,其余同名)。 */
+/**
+ * 微信里切到某家用的斜杠词 —— 唯一一份(mode-commands 解析、拒绝语里报给用户的都读它)。
+ * claude 是 /cc;OpenAI 兼容后端是 /api(是「主人自己的 API」,不绑哪家厂商);其余同名。
+ * 10-21:以前这里只特判了 claude,拒绝语会叫访客发「/openai」—— 没有这个命令。
+ */
+export const PROVIDER_SLASH: Readonly<Record<KnownProviderId, string>> = {
+  claude: 'cc', codex: 'codex', cursor: 'cursor', openai: 'api', gemini: 'gemini', agy: 'agy',
+}
+
+/** provider id → 斜杠词。不在表里的(自定义执行者)⇒ 同名。 */
 export function slashFor(providerId: ProviderId): string {
-  return providerId === 'claude' ? 'cc' : providerId
+  return (PROVIDER_SLASH as Record<string, string>)[providerId] ?? providerId
+}
+
+/** 斜杠词 → provider id(不分大小写);不是哪家的词 ⇒ null。 */
+export function providerForSlash(word: string): KnownProviderId | null {
+  const lower = word.toLowerCase()
+  for (const id of Object.keys(PROVIDER_SLASH) as KnownProviderId[]) if (PROVIDER_SLASH[id] === lower) return id
+  return null
 }

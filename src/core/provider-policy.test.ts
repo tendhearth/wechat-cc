@@ -1,5 +1,6 @@
 import { describe, it, expect } from 'vitest'
-import { describeProviderDenial, providerDenialFor, slashFor } from './provider-policy'
+import { describeProviderDenial, providerDenialFor, providerForSlash, slashFor } from './provider-policy'
+import { PROVIDER_IDS } from '../lib/provider-ids'
 
 describe('providerDenialFor', () => {
   it('admin is never denied', () => {
@@ -38,5 +39,10 @@ describe('providerDenialFor', () => {
     expect(describeProviderDenial({ kind: 'unconfined_guest' }, 'cursor')).toBe('Cursor 对访客不开放：它在工作区内的文件编辑不经过权限卡，访客的权限约束不到它。')
     expect(describeProviderDenial({ kind: 'not_in_trusted_list', allowed: [] }, 'cursor')).toContain('(无)')
     expect(slashFor('claude')).toBe('cc'); expect(slashFor('agy')).toBe('agy')
+    // 10-21:openai 的斜杠词是 /api,以前拒绝语里写成「/openai」(没有这个命令)
+    expect(slashFor('openai')).toBe('api')
+    for (const id of PROVIDER_IDS) expect(providerForSlash(slashFor(id))).toBe(id)
+    expect(providerForSlash('openai')).toBeNull()
+    expect(providerForSlash('CC')).toBe('claude')
   })
 })
