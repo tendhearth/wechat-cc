@@ -167,6 +167,8 @@ function setupDeps(opts: {
   /** Task 6 — chat-prefs entries. Keys double as chatPrefs.list() — i.e.
    * every chat that has ever set a preference (not just non-default ones). */
   chatPrefsEntries?: Record<string, { care?: 'off' | 'low' | 'high'; hunt?: boolean; visit?: boolean; quiet?: { from: string; to: string } }>
+  /** 主人那条对话的 hunt 保持没设过(测 10-21 起的新默认:没设过 ⇒ 关)。缺省时夹具当它是被写成显式开的老主人。 */
+  huntUnset?: boolean
   /** Task 6 — care-ledger entries, keyed by chatId. */
   careLedgerEntries?: Record<string, CareLedgerEntry>
 }): Setup {
@@ -181,7 +183,12 @@ function setupDeps(opts: {
   }
   const logs: string[] = []
   const db = opts.db ?? openTestDb()
-  const chatPrefsEntries = opts.chatPrefsEntries ?? {}
+  // 打猎 10-21 起默认关(收敛清单 ②);老装机的主人开机时被写成显式的 hunt:true。这里的夹具代表那位主人:
+  // 主人那条对话没单独设 hunt ⇒ 当作开着。测「没设过 ⇒ 不打猎」的那条自己传 huntUnset。
+  const chatPrefsEntries: NonNullable<typeof opts.chatPrefsEntries> = { ...(opts.chatPrefsEntries ?? {}) }
+  if (opts.defaultChatId && !opts.huntUnset && chatPrefsEntries[opts.defaultChatId]?.hunt === undefined) {
+    chatPrefsEntries[opts.defaultChatId] = { ...(chatPrefsEntries[opts.defaultChatId] ?? {}), hunt: true }
+  }
   const careLedgerEntries = opts.careLedgerEntries ?? {}
   // dispatch returns AsyncIterable<AgentEvent>, not a Promise — the real
   // contract. Mocking as `Promise<void>` would mask the bug that pushTick
@@ -722,7 +729,17 @@ describe('buildTickBodies / pushTick — daily hunt branch (Task 3)', () => {
     }
   })
 
-  it('(a) owner, no agenda, hunt unset, no lastHuntAtIso ⇒ hunt dispatched (text has 打猎/值得), ledger claimed', async () => {
+  it('(a0) 10-21 起:主人没设过打猎 ⇒ 不打猎(默认关;老装机主人开机时已被写成显式开)', async () => {
+    const s = setupDeps({ defaultChatId: 'chat-1', inFlight: false, huntUnset: true })
+    cleanup.push(s.stateDir)
+    const { pushTick } = buildTickBodies(s.deps)
+    await pushTick({ nowIso: '2026-05-13T10:00:00.000Z' })
+    const texts = s.dispatch.mock.calls.map(c => String(c[0]))
+    expect(texts.some(t => t.includes('打猎'))).toBe(false)
+    expect(s.careLedgerEntries['chat-1']?.lastHuntAtIso).toBeUndefined()
+  })
+
+  it('(a) owner, no agenda, hunt on, no lastHuntAtIso ⇒ hunt dispatched (text has 打猎/值得), ledger claimed', async () => {
     const s = setupDeps({ defaultChatId: 'chat-1', inFlight: false })
     cleanup.push(s.stateDir)
     const { pushTick } = buildTickBodies(s.deps)
