@@ -16,6 +16,18 @@ describe('mwTrace', () => {
     expect(lines.some(([t, l]) => t === 'INBOUND' && l.includes('consumed=dispatched'))).toBe(true)
   })
 
+  it('a step that throws is logged consumed=error, not dispatched; the step that had claimed it is kept (#483 评审)', async () => {
+    const lines: Array<[string, string]> = []
+    const mw = makeMwTrace({ log: (t, l) => lines.push([t, l]) })
+    await mw(mkCtx(), async () => { throw new Error('workbench_reply_failed') })
+    const ctx = mkCtx()
+    await mw(ctx, async () => { ctx.consumedBy = 'workbench'; throw new Error('boom') })
+    const inbound = lines.filter(([t]) => t === 'INBOUND').map(([, l]) => l)
+    expect(inbound[0]).toContain('consumed=error ')
+    expect(inbound[1]).toContain('consumed=error:workbench ')
+    expect(inbound.some(l => l.includes('dispatched'))).toBe(false)
+  })
+
   it('logs consumed=<consumedBy> when set', async () => {
     const lines: Array<[string, string]> = []
     const mw = makeMwTrace({ log: (t, l) => lines.push([t, l]) })
