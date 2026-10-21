@@ -22,7 +22,7 @@ describe('mw-consume', () => {
     const mw = makeMwConsume({ handlers: { admin: consumer('admin', false, calls) } })
     expect(await run(mw, ctxOf({ kind: 'admin' }))).toEqual({ nexted: true, consumed: undefined })
     expect(await run(mw, ctxOf({ kind: 'chat' }))).toEqual({ nexted: true, consumed: undefined })
-    expect(await run(mw, ctxOf({ kind: 'cli-reply' }))).toEqual({ nexted: true, consumed: undefined })
+    expect(await run(mw, ctxOf({ kind: 'command' }))).toEqual({ nexted: true, consumed: undefined })
     expect(calls).toEqual(['admin'])
   })
   it('没 intent(旧链):按 INTENT_ORDER 逐个试,谁先吃谁赢;都不吃 ⇒ 进对话', async () => {

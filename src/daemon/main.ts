@@ -6,7 +6,8 @@ import { localParts } from './memory/nightly-schedule'
 import { formatOverseerToday } from '../core/overseer-today'
 import { makeJobsStore, summarizeJobs } from '../core/scheduled-jobs-store'
 import { registerScheduledJobs } from './scheduled-jobs/runner'
-import { makeJobsCommand, chainReplyHandlers } from './scheduled-jobs/command'
+import { makeJobsCommand } from './scheduled-jobs/command'
+import { fromReplyHandler } from './commands/registry'
 import { makeProjectLessonsCommand } from './project-lessons-command'
 import { makeProjectLessons } from '../core/workbench/project-lessons'
 import { buildReviewText, reviewMissNote } from '../core/workbench/review-request'
@@ -988,7 +989,8 @@ async function bootDaemonInner(opts: BootDaemonOpts, undo: Array<() => void>): P
       }),
       matters, guardRuntime: guardRt, subsystems: () => sup.statuses(),
       panelTokens: internalApi.panelTokens,
-      cliReply: chainReplyHandlers([jobsCommand, calendarCommand, activityCommand, lessonsCommand, memoryImportCommand, cliReplyHandler]),
+      // 命令表的顺序就是优先级(重构第二批步 2;与原来 chainReplyHandlers 的顺序一致)
+      commands: [fromReplyHandler('jobs', jobsCommand), fromReplyHandler('calendar', calendarCommand), fromReplyHandler('activity', activityCommand), fromReplyHandler('lessons', lessonsCommand), fromReplyHandler('memory-import', memoryImportCommand), fromReplyHandler('cli', cliReplyHandler)],
       stickers: stickerLib,
       requestRestart: (reason) => requestRestart(reason),
       llmHealth,

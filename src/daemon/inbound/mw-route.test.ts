@@ -22,7 +22,7 @@ describe('mw-route', () => {
   })
   it('按 INTENT_ORDER 取第一个说"是"的,后面的探针不再问', async () => {
     const asked: string[] = []
-    const probes = Object.fromEntries(INTENT_ORDER.map(k => [k, () => { asked.push(k); return k === 'mode' || k === 'cli-reply' }])) as RouteMwDeps['probes']
+    const probes = Object.fromEntries(INTENT_ORDER.map(k => [k, () => { asked.push(k); return k === 'mode' || k === 'command' }])) as RouteMwDeps['probes']
     const r = await run({ probes })
     expect(r.intent?.kind).toBe('mode'); expect(asked).toEqual(['task-command', 'admin', 'mode'])
   })

@@ -10,7 +10,7 @@ import { makeMwAdmin, type AdminMwDeps } from './mw-admin'
 import { makeMwMode, type ModeMwDeps } from './mw-mode'
 import { makeMwOnboarding, type OnboardingMwDeps } from './mw-onboarding'
 import { makeMwPermissionReply, type PermissionReplyMwDeps } from './mw-permission-reply'
-import { makeMwCliReply, type CliReplyMwDeps } from './mw-cli-reply'
+import { makeMwCommand, type MwCommandDeps } from './mw-command'
 import { makeMwAttachments, type AttachmentsMwDeps } from './mw-attachments'
 import { makeMwTranscribeVoice, type TranscribeVoiceMwDeps } from './mw-transcribe-voice'
 import { makeMwMessages, type MessagesMwDeps } from './mw-messages'
@@ -47,7 +47,8 @@ export interface InboundPipelineDeps {
   onboarding: OnboardingMwDeps
   permissionReply: PermissionReplyMwDeps
   /** 「看 码」「@码 文本」;缺席 ⇒ 不挂(测试 / 最小嵌入)。 */
-  cliReply?: CliReplyMwDeps
+  /** 命令表(重构第二批步 2);有它才有「命令」这一站。 */
+  commands?: MwCommandDeps
   attachments: AttachmentsMwDeps
   transcribeVoice: TranscribeVoiceMwDeps
   messages: MessagesMwDeps
@@ -73,7 +74,7 @@ export function buildInboundPipeline(d: InboundPipelineDeps): InboundPipeline {
   }
   // 消费者按 intent 早退(第二步):在场的消费者必须有探针,否则它永远轮不到 —— 启动时就报,别等真机。
   if (d.route) {
-    const present: Array<[IntentKind, boolean]> = [['task-command', !!d.workbench], ['admin', true], ['mode', true], ['onboarding', true], ['permission-reply', true], ['cli-reply', !!d.cliReply], ['task-reference', !!taskReference]]
+    const present: Array<[IntentKind, boolean]> = [['task-command', !!d.workbench], ['admin', true], ['mode', true], ['onboarding', true], ['permission-reply', true], ['command', !!d.commands], ['task-reference', !!taskReference]]
     const missing = present.filter(([kind, on]) => on && !(kind in probes)).map(([kind]) => kind)
     if (missing.length) throw new Error(`inbound route: probe missing for ${missing.join(', ')}`)
   }
@@ -89,7 +90,7 @@ export function buildInboundPipeline(d: InboundPipelineDeps): InboundPipeline {
     mode: makeMwMode(d.mode),
     onboarding: makeMwOnboarding(d.onboarding),
     'permission-reply': makeMwPermissionReply(d.permissionReply),
-    ...(d.cliReply ? { 'cli-reply': makeMwCliReply(d.cliReply) } : {}),
+    ...(d.commands ? { command: makeMwCommand(d.commands) } : {}),
     ...(taskReference ? { 'task-reference': taskReference } : {}),
   } })
   // 第四步(d):App 一轮走同一张表。链尾那一站只负责记"没人吃"。
