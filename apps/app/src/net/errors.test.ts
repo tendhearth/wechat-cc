@@ -112,7 +112,7 @@ const GENERIC = new Set([
   'attachment_conflict', 'attachment_in_use', 'attachment_limit', 'attachment_scope', 'attachment_storage_limit',
   'upload_changed', 'upload_conflict', 'upload_discarded', 'upload_expired', 'upload_invalid_content', 'upload_limit', 'upload_not_found', 'upload_offset', 'upload_unfinished_limit',
   // 独立工作区
-  'worktree_branch_exists', 'worktree_conflict', 'worktree_git_failed', 'worktree_open', 'worktree_project_missing', 'worktree_removed',
+  'worktree_branch_exists', 'worktree_conflict', 'worktree_git_failed', 'issue_unattended_unsupported', 'worktree_open', 'worktree_project_missing', 'worktree_removed',
   // 其余
   'external_close_confirmation_required', 'restart_confirmation_stale', 'creation_conflict', 'entry_not_wired', 'managed_workspace_changed', 'managed_workspace_unavailable',
   'network_unprotected', 'workbench_stopping', 'artifact_changed', 'matter_say_unsupported', 'matter_task_required', 'workbench_archived',

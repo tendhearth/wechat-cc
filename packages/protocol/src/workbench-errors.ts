@@ -176,7 +176,8 @@ export const WORKBENCH_ERRORS: Readonly<Record<string, WorkbenchErrorSpec>> = Ob
   control_conflict: {wechat: '这条消息的内容与已记录的操作不一致，未再次执行。请重新查询任务。'},
   control_stale: {wechat: '原请求对应的轮次已结束，未停止当前轮次。请重新查询任务。'},
   invalid_wechat_identity: {wechat: '无法确认这条微信消息的账号和发送者，没有创建任务。请在原聊天重新发送。'},
-  issue_unattended_unsupported: {wechat: '从 GitHub issue 开工的任务不交给免审执行者:issue 是外面的人写的,免审时又没人看着单步操作。换一位执行者再发,比如「任务 新建 <项目编号> 用 @claude issue <编号>」。没有开始工作。'},
+  // GitHub issue 开工不给免审执行者;createTask 抛,桌面交办 / 续做理论上也会走到 ⇒ 两端也带码(#466 评审)
+  issue_unattended_unsupported: {desktop: 422, phone: 422, wechat: '从 GitHub issue 开工的任务不交给免审执行者:issue 是外面的人写的,免审时又没人看着单步操作。换一位执行者再发,比如「任务 新建 <项目编号> 用 @claude issue <编号>」。没有开始工作。'},
   subscription_conflict: {wechat: '提醒绑定的账号已变化，没有把旧提醒转发到新账号。请在原聊天关闭提醒后重新设置。'},
 })
 
