@@ -112,6 +112,9 @@ const CAPABILITIES_BY_PROVIDER: Record<ProviderId, ProviderCapabilities> = {
   agy:    AGY_CAPABILITIES,
 }
 
+/** 登记了能力表的执行者(tier-enforcement 的守卫测试按它逐家查)。 */
+export const KNOWN_PROVIDER_IDS: readonly ProviderId[] = Object.freeze(Object.keys(CAPABILITIES_BY_PROVIDER))
+
 /**
  * Look up a provider's capability declaration. Throws on unknown id so
  * `assertMatrixComplete` can surface missing registrations at boot.
