@@ -5,7 +5,7 @@
 
 ## 一句话结论
 
-骨架是对的:分层意图清楚、工作台按域拆开、入站有 intent 路由、协议包有 zod schema、错误码已结构化。但**同一种病出现在六个地方**:一件事的「声明」被拆成 N 份清单散在各处,靠守卫测试把它们拉齐。每加一个功能都要改 12–20 个文件,而且清单之间已经实际漂移(下面有实例)。架构不清晰的根源不是某个大文件,而是**缺「一处声明、到处生成」的注册表**。
+骨架是对的:分层意图清楚、工作台按域拆开、入站有 intent 路由、协议包有 zod schema、错误码已结构化。但**同一种病出现在六个地方**:一件事的「声明」被拆成 N 份清单散在各处,靠守卫测试把它们拉齐。每加一个功能都要改 12–20 个文件,清单之间漂过(#412 的旧文案),以后还会。架构不清晰的根源不是某个大文件,而是**缺「一处声明、到处生成」的注册表**。
 
 ## 六个横切问题(按对以后开发的影响排)
 
@@ -15,7 +15,7 @@
 |---|---|---|
 | 手机路由 | `PHONE_ROUTES`、`LINK_EXCLUDED` / `LINK_WRITE_OK`、`PHONE_API_SCHEMAS`、settings-panel 里 30 个 `url.pathname ===` ✔、`mobile-*.ts` 处理器、App `live.ts` / `errors.ts` / i18n、网页 js、三份守卫测试 | — |
 | 桌面路由 | `ROUTE_MIN_TIER`、token-registry `routeAllow`、`lib.rs` match、`workbench-proxy.ts`、Rust 测试表(五处) | — |
-| 错误码 → 状态 / 文案 | wechat-control `failure()`(~35 条中文)、`mobileMatterError`、`routes-workbench` 的状态表、桌面 `LINE_ERRORS`、App `errors.ts` | `REWIND_409` 桌面与手机各一份,内容已不同 ✔(桌面有 `rewind_undo_*`,手机有 `rewind_not_latest`) |
+| 错误码 → 状态 / 文案 | wechat-control `failure()`(~35 条中文)、`mobileMatterError`、`routes-workbench` 的状态表、桌面 `LINE_ERRORS`、App `errors.ts` | `REWIND_409` 桌面与手机各一份(两端的码本来就不同:撤销回退只在桌面、「只能撤最近一轮」只在手机,所以这不算漂移,但两份手抄表迟早会);真漂过的例子:#412 时桌面 e2e 还在断言旧文案「允许这一次」 |
 | 微信命令 | ≥7 套:intent 路由、`chainReplyHandlers`(jobs / 日历 / 做过的事 / 经验 / 导入记忆,全挂在 intent `cli-reply` 名下)、`command-router`(派 / 串门 / 配对…,跑在管道**之后**,绕过 intent 与 trace)、`admin-commands`(40 条正则)、`mode-commands`(19)、`wechat-control`(~25 条正则)、`core/*-command.ts` | 「是不是主人」在 main.ts 里抄了 18 次 ✔ |
 | 执行者 | 聊天侧 `ProviderCapabilities` 与工作台侧 `WorkbenchExecutorCapabilities` 两套词汇;Claude / Codex / Cursor 各 3 个适配器;`bootstrap/providers.ts` 每家一段 if 梯子 | 同一家可以一边 `guestSafe:false` 一边 `permissions:'task'`,没人交叉核对 |
 
@@ -25,14 +25,16 @@
 - `ExecutorDescriptor` 每家一份:显示名、`chat?` / `workbench?` 能力、错误分类、能执行哪些策略维度;一个 `executors/<家>/{chat,workbench,errors,policy}.ts` 目录。
 - `ERRORS = {code: {http, kind, zh, hint?}}` 一张表 + `WorkbenchError(code)`;测试保证每个抛出的码都在表里。
 
-### 2. 安全模型没有落在一处 —— 这是**会出事**的那一条
+### 2. 执行档位的判断散在三处,没有一处能证明它们一致
 
-- `TIER_PROFILES` 本该是唯一来源,但每家执行者各自翻译:Cursor 与 Gemini 的翻译函数**直接忽略档案**(参数名就叫 `_tp`)✔;Codex 聊天线程不设联网,沿用主人的 codex 配置;ACP 只看 permissionMode;openai 把 relay 当 deny;agy 钉死 trusted。
-- 结果:一个「不给网」「不给写」的档案只在部分执行者上生效,其余**静默放过**。#460 给 Codex 补了不联网搜索,是同一类洞的一个点。
+> 初稿把这条写成「Cursor / Gemini 忽略档案 ⇒ 会越权」,说重了(wechat-cc-2a 指出,我核过):**现在没有访客越权的路**。Gemini 的档位在逐工具的 gate 里生效(`gemini-agent-provider.ts` 的 `gateEffectivePolicy`,翻译函数的 `_tp` 只管 SDK 选项);Cursor / Codex / agy 不能逐工具执行档位,但它们对访客在派发时就被 `providerDenialFor` 按原始档位拒了(`guestSafe:false` 或共享令牌),`--dangerously` 也解不开。
+
+- 真问题是**同一条安全判断散在三层**:① 各家的翻译函数(SDK 选项 / 沙箱)、② 逐工具的 gate(Claude canUseTool、Gemini gate、openai gate)、③ 派发时的 `guestSafe` / `adminMcpTools` 拒绝。新接一家执行者,漏掉其中一层不会有任何测试红。
+- **还剩一个真缺口**:trusted 档在 Cursor 上的 deny 集合执行不了(ACP 里改文件不弹卡);Codex 聊天线程不设联网,沿用主人自己的 codex 配置(#460 只给审查轮关了联网搜索)。
 - `tierNameFromProfile` 从档案「形状」反推档位名(JOB_PROFILE 恰好拒了 fs_write 才算 guest)—— 脆。
 - 手机链接令牌对**读**是 fail-open:`LINK_ROUTES = PHONE_ROUTES − LINK_EXCLUDED`,新加的 GET 默认链接能读;#457 的守卫只逼 POST 归类(我自己留的口)。「信」「回退」都是事后补的。
 
-**目标**:`Policy = compile(TierProfile, permissionMode)` 得到规范化的 `{fs, shell, network, mcpTools, askOn}`,执行者只见 Policy,每家声明自己**能执行哪几个维度**;做不到的维度 ⇒ 拒绝这个档(`guestSafe` 由此推导,不再手写)。一张「执行者 × 档位 × 模式」一致性测试。链接令牌改成**白名单**:路由声明里显式写 `link`,缺省只给设备。
+**目标**:先补一张 provider × tier 的能力表 + 一条守卫测试(每家每档:哪几维能执行、做不到的维度必须在派发时拒);再做 `Policy = compile(TierProfile, permissionMode)` 得到规范化的 `{fs, shell, network, mcpTools, askOn}`,执行者只见 Policy,每家声明自己**能执行哪几个维度**;做不到的维度 ⇒ 拒绝这个档(`guestSafe` 由此推导,不再手写)。一张「执行者 × 档位 × 模式」一致性测试。链接令牌改成**白名单**:路由声明里显式写 `link`,缺省只给设备。
 
 ### 3. 组装没有根:main.ts 是一个 1100 行的函数
 
@@ -77,9 +79,9 @@ db/migrations/NNNN_name.ts + runner.ts + repair.ts
 ## 先做什么(按「风险 × 收益」排,每一步都能单独合)
 
 **第一批:先堵会出事的(不等大重构)**
-1. 执行者 × 档位一致性测试 + Cursor / Gemini / ACP 真正执行档案(做不到的维度就拒);Codex 聊天线程按档案显式设联网。—— 我
+1. provider × tier 能力表 + 守卫测试(三层判断必须一致);补上 trusted 档在 Cursor 上的缺口(做不到 ⇒ 派发时拒或降档);Codex 聊天线程按档案显式设联网。—— 我
 2. 链接令牌改白名单(读也要显式归类)。—— 我(#457 的续)
-3. 错误码一张表(`errors.ts`),先消掉两份 `REWIND_409` 的漂移;桌面 / 手机 / 微信的文案与状态从表生成。—— 2a(工作台与审阅面板是它的)
+3. 错误码一张表(`errors.ts`),两份 `REWIND_409` 并进来;桌面 / 手机 / 微信的文案与状态从表生成。—— 2a(工作台与审阅面板是它的)
 
 **第二批:换骨架**
 4. 路由注册表(`packages/protocol` 一张表生成 daemon allowlist、Tauri allowlist、App 客户端)。
