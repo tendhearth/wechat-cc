@@ -1356,6 +1356,25 @@ describe('人类做客 —— 朋友来聊过、走了,伙伴跟主人提一句'
     expect(sent).toEqual(['刚才小王来过,问了工具的事。'])
   })
 
+  it('**发失败了(sendMessage 回 {error},不抛)⇒ 不记水位,下一拍照讲**(盘点 10-21:以前 catch 接不到,这次来访就丢了)', async () => {
+    const s = setupDeps({ defaultChatId: 'owner', inFlight: false, ...quiet('owner') })
+    cleanup.push(s.stateDir)
+    await seedGuest(s, 'guest@im.wechat', '2026-05-13T09:15:00.000Z')
+    const { evalFn, sent } = armEval(s)
+    let fail = true
+    ;(s.deps.ilink as unknown as { sendMessage: unknown }).sendMessage = async (_c: string, t: string) => {
+      if (fail) return { msgId: '', error: 'errcode=-2' }
+      sent.push(t); return { msgId: '1' }
+    }
+    const ticks = buildTickBodies(s.deps)
+    await ticks.pushTick({ nowIso: '2026-05-13T10:00:00.000Z' })
+    expect(sent).toEqual([])
+    fail = false
+    await ticks.pushTick({ nowIso: '2026-05-13T10:05:00.000Z' })
+    expect(sent).toEqual(['刚才小王来过,问了工具的事。'])
+    expect(evalFn).toHaveBeenCalledTimes(2)
+  })
+
   it('**客人还在聊(最后一句 5 分钟前)→ 不讲**', async () => {
     const s = setupDeps({ defaultChatId: 'owner', inFlight: false, ...quiet('owner') })
     cleanup.push(s.stateDir)

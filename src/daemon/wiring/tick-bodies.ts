@@ -1086,11 +1086,13 @@ export function buildTickBodies(deps: TickDeps): TickBodies {
         }
         const text = raw.trim().replace(/^[「『"“]+|[」』"”]+$/g, '')
         if (!text) continue
-        try { await deps.ilink.sendMessage(ownerChat, text) }
-        catch (err) {
-          // 发不出去(多半断网):这一位撤回水位,这一拍到此为止;已讲完的几位在 finally 里落盘
+        // 发不出去(多半断网):这一位撤回水位,这一拍到此为止;已讲完的几位在 finally 里落盘。
+        // sendMessage **不抛**,失败是回 {error}(ilink-glue)—— 以前只有 catch,失败时水位照记,这次来访就再也不讲了(盘点 10-21)。
+        let sendErr: string | undefined
+        try { sendErr = (await deps.ilink.sendMessage(ownerChat, text)).error } catch (err) { sendErr = errMsg(err) }
+        if (sendErr) {
           unmark()
-          deps.log('VISIT', `guest narration send failed: chat=${chatId} — watermark unchanged, next tick retries: ${errMsg(err)}`)
+          deps.log('VISIT', `guest narration send failed: chat=${chatId} — watermark unchanged, next tick retries: ${sendErr}`)
           break
         }
         try { deps.huntStore?.recordVisit?.({ chatId: ownerChat, text, peerLabel: `${name}来过`, nowIso }) }
