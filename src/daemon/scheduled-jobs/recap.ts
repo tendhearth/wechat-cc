@@ -3,6 +3,7 @@
  * 每周一次,把这一周 CC 替主人做过的事合成一段 —— 素材由 daemon 在本机拼(时间线那几个来源,只算主人),
  * 模型只负责挑和写;没东西就 NO_REPLY。跑法完全沿用定时(只读独立会话 job:<id>、闸门、每日上限)。
  */
+import { executorNames } from '../../core/provider-display-names'
 import type { JobTurnResult, TickTextStyle } from '../wiring/tick-bodies'
 import type { ScheduledJob } from '../../core/scheduled-jobs'
 import type { ActivityItem, ActivityKind } from '../../core/cc-activity'
@@ -18,12 +19,12 @@ const COUNT_WORD: Record<ActivityKind, (n: number) => string> = {
 }
 
 export interface RecapUsageRow { providerId: string; turns: number; input: number | null; output: number | null }
-const EXEC_NAME: Record<string, string> = { claude: 'Claude Code', codex: 'Codex', cursor: 'Cursor', agy: 'agy', openai: 'OpenAI 兼容' }
 const tokens = (n: number) => n >= 10_000 ? `${Math.round(n / 10_000)} 万` : String(n)
 /** 这一周各执行者自己报的用量(v82);一项没报 ⇒ 写「不报」,不写 0。 */
 function usageBlock(rows: RecapUsageRow[]): string {
   if (!rows.length) return ''
-  const line = (r: RecapUsageRow) => `- ${EXEC_NAME[r.providerId] ?? r.providerId} ${r.turns} 轮:${r.input === null && r.output === null ? '不报 token' : `输入 ${r.input === null ? '不报' : tokens(r.input) + ' token'},输出 ${r.output === null ? '不报' : tokens(r.output) + ' token'}`}`
+  // 名字只有一份(收敛清单 ⑥,lib/executor-facts):周报正文里用正式名字
+  const line = (r: RecapUsageRow) => `- ${executorNames(r.providerId).name} ${r.turns} 轮:${r.input === null && r.output === null ? '不报 token' : `输入 ${r.input === null ? '不报' : tokens(r.input) + ' token'},输出 ${r.output === null ? '不报' : tokens(r.output) + ' token'}`}`
   return `### 这一周各执行者用了多少(执行者自己报的)\n${rows.map(line).join('\n')}`
 }
 

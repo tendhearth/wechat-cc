@@ -61,7 +61,7 @@ describe('周报 × 用量(v82 之上)', () => {
   it('adds a line of tokens per executor this week; unknown totals say 不报; no usage ⇒ no line', () => {
     const m = buildRecapMaterial([it_('a', 'together', 1, '一起做「修测试」做完了')], { now: NOW, timeZone: 'Asia/Shanghai', usage: [{ providerId: 'claude', turns: 12, input: 120_000, output: 8_000 }, { providerId: 'codex', turns: 3, input: null, output: null }] })
     expect(m).toContain('### 这一周各执行者用了多少(执行者自己报的)')
-    expect(m).toContain('Claude Code 12 轮:输入 12 万 token,输出 8000 token')
+    expect(m).toContain('Claude 12 轮:输入 12 万 token,输出 8000 token')
     expect(m).toContain('Codex 3 轮:不报 token')
     expect(buildRecapMaterial([it_('a', 'together', 1, 'x')], { now: NOW, timeZone: 'Asia/Shanghai', usage: [] })).not.toContain('用了多少')
   })
