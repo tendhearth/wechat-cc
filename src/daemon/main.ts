@@ -153,6 +153,17 @@ export interface DaemonHandle {
 }
 
 export async function bootDaemon(opts: BootDaemonOpts): Promise<DaemonHandle> {
+  // 主体 try 之前就失败(库打不开、迁移失败、ilink 适配器造不出来 ……)也要把锁、心跳、db 放掉:
+  // main() 退出前会指数退避等上几十秒到 30 分钟,这段时间里锁还拿着,回滚拉起的老 sidecar / 手动 start 都抢不到
+  // (重构第二批步 6a,wechat-cc-2a 评审)。都是幂等的:try 里失败时 shutdown 已经做过一遍也无妨。
+  const undo: Array<() => void> = []
+  try { return await bootDaemonInner(opts, undo) } catch (err) {
+    for (const f of undo.reverse()) { try { f() } catch { /* 尽力 */ } }
+    throw err
+  }
+}
+
+async function bootDaemonInner(opts: BootDaemonOpts, undo: Array<() => void>): Promise<DaemonHandle> {
   const { stateDir, dangerously } = opts
   const PID_PATH = join(stateDir, 'server.pid')
   const HEARTBEAT_PATH = join(stateDir, HEARTBEAT_FILE)
@@ -179,6 +190,7 @@ export async function bootDaemon(opts: BootDaemonOpts): Promise<DaemonHandle> {
   const heartbeatStaleMs = Math.max(HEARTBEAT_STALE_MS, turnTimeoutMs + 60_000)
   const lock = acquireInstanceLock(PID_PATH, { isHealthy: () => isHeartbeatFresh(HEARTBEAT_PATH, heartbeatStaleMs) })
   if (!lock.ok) throw new Error(`[wechat-cc] ${lock.reason} (pid=${lock.pid})`)
+  undo.push(() => releaseInstanceLock(PID_PATH))
   // Stamp an initial heartbeat immediately so this just-started daemon reads
   // as healthy before its first poll cycle lands. A dedicated ticker then
   // refreshes it on a fixed cadence, DECOUPLED from poll work — so a long inline
@@ -191,6 +203,7 @@ export async function bootDaemon(opts: BootDaemonOpts): Promise<DaemonHandle> {
   const previousRun = consumePreviousRunEvidence(stateDir)
   writeHeartbeat(HEARTBEAT_PATH)
   const stopHeartbeat = startHeartbeatTicker(HEARTBEAT_PATH)
+  undo.push(stopHeartbeat)
   // v0.5.6: collapse duplicate ilink bot bindings to one per wechat userId
   // BEFORE loading accounts. ilink only allows one active bot per user — when
   // the user re-scans, the old bot's session is invalidated server-side. The
@@ -204,15 +217,15 @@ export async function bootDaemon(opts: BootDaemonOpts): Promise<DaemonHandle> {
   try { loadAccess() }
   catch (err) {
     if (err instanceof AccessConfigCorruptError) {
-      releaseInstanceLock(PID_PATH)
+      // 以前直接 process.exit(1),绕过了 main() 的退避 ⇒ access.json 坏了就是重启风暴。锁由外层放。
       process.stderr.write(`wechat channel: FATAL ${err.message}\n`)
-      process.exit(1)
     }
     throw err
   }
   const accounts = await loadAllAccounts(stateDir)
   if (accounts.length === 0) { releaseInstanceLock(PID_PATH); throw new Error('[wechat-cc] no accounts bound. Run `wechat-cc setup` first.') }
   const db = openDb({ path: join(stateDir, 'wechat-cc.db') })
+  undo.push(() => db.close())
   // Per-turn observability store — written by the coordinator's recordTurn
   // (via bootstrap onTurnRecord) and read by internal-api GET /v1/turns.
   // Created here so both the internal-api registration and bootstrap below
