@@ -28,7 +28,8 @@ import { scanSource } from './link-routes-scan'
 import { PHONE_ROUTES } from '../src/daemon/phone-routes'
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..')
-const read = (...p: string[]) => readFileSync(join(ROOT, ...p), 'utf8')
+// Windows 检出是 CRLF(autocrlf):统一成 \n 再切片,不然 '\n}\n' 这类边界找不到(#526 Windows CI)
+const read = (...p: string[]) => readFileSync(join(ROOT, ...p), 'utf8').replace(/\r\n/g, '\n')
 
 type Slice = { file: string; from: string; to: string }
 /** 从 from 起(含)到 to 之前截一段;找不到就红(写法变了,别让守卫静默变空)。 */
