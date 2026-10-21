@@ -4,6 +4,7 @@
  *
  * Refs are passed in for late-bound polling/guard access from closures.
  */
+import { makeCommandRegistry } from '../commands/registry'
 import { makeJobsStore } from '../../core/scheduled-jobs-store'
 import { jobsView, jobsAction } from '../scheduled-jobs/view'
 import { pickJobExecutor } from './tick-bodies'
@@ -221,8 +222,8 @@ export interface PipelineDepsOpts {
   turns?: { recent(limit: number): readonly { chatId: string; endedAt: number; outcome: string; mode: string; startedAt: number }[] }
   /** 三轴 presence 共用入口(internal-api lifecycle.getPresence)。main.ts 传入。 */
   presence?: () => Promise<import('../../core/companion-presence').Presence | null>
-  /** 「看 码」「@码 文本」的执行者(daemon/cli-reply-handler)。main.ts 传入。 */
-  cliReply?: { handle(text: string, chatId: string): Promise<boolean>; probe(text: string, chatId: string): boolean }
+  /** 微信文本命令(定时 / 日历 / 做过的事 / 经验 / 导入记忆 / 终端会话 …),main.ts 传入;和本文件的 command-router 一起组成 CommandRegistry(重构第二批步 2)。 */
+  commands?: readonly import('../commands/registry').WechatCommand[]
 }
 
 export interface PipelineDepsRefs {
@@ -362,6 +363,12 @@ export function buildPipelineDeps(opts: PipelineDepsOpts, refs: PipelineDepsRefs
     redispatch: (run) => refs.pipeline.deref('guest approve redispatch')(run),
     log: (tag, line) => log(tag, line),
   })
+  // 命令表(重构第二批步 2):main 交来的文本命令 + 本文件的控制命令(串门 / 回信 / 配对 / 派 / 认识 / 访客)。
+  // 控制命令以前在派发里、llm-health 之后 ⇒ 模型挂了时配对 / 批准访客也用不了;现在和其余命令一起排在 llm-health 之前。
+  const commandRegistry = makeCommandRegistry([
+    ...(opts.commands ?? []),
+    { id: 'control', probe: (m) => commandRouter.probe(m), handle: (m) => commandRouter.tryHandle(m) },
+  ])
   // Owner notification for the guest branch — resolveAdminChatId
   // (admins-membership-based), NEVER resolveOperatorChatId (mw-identity has
   // already written a conversations row for this stranger by the time
@@ -1073,7 +1080,7 @@ export function buildPipelineDeps(opts: PipelineDepsOpts, refs: PipelineDepsRefs
         mode: (ctx) => modeHandler.probe(ctx.msg),
         onboarding: (ctx) => onboardingHandler.probe(ctx.msg),
         'permission-reply': (ctx) => ilink.probePermissionReply(ctx.msg.text ?? '', ctx.msg.chatId, ctx.msg.quote?.text),
-        ...(opts.cliReply ? { 'cli-reply': (ctx) => opts.cliReply!.probe(ctx.msg.text ?? '', ctx.msg.chatId) } : {}),
+        command: (ctx) => commandRegistry.probe(ctx.msg),
       },
       ...(opts.matters ? { matterFor: (chatId: string) => opts.matters!.findBySurface('wechat', chatId)?.id ?? null } : {}),
       log,
@@ -1085,7 +1092,7 @@ export function buildPipelineDeps(opts: PipelineDepsOpts, refs: PipelineDepsRefs
       handlePermissionReply: (text: string, fromChatId?: string, quoted?: string) => ilink.handlePermissionReply(text, fromChatId, quoted),
       log,
     },
-    ...(opts.cliReply ? { cliReply: { handle: (t: string, c: string) => opts.cliReply!.handle(t, c), log } } : {}),
+    commands: { registry: commandRegistry, log },
     attachments: { materializeAttachments, inboxDir, log },
     transcribeVoice: {
       // ilink.voice.transcribe loads STT config internally and throws
@@ -1171,7 +1178,6 @@ export function buildPipelineDeps(opts: PipelineDepsOpts, refs: PipelineDepsRefs
         // 管理员控制命令(揭晓/回信/配对/派/访客许可)由 command-router 处理;
         // 命中即止,否则落到正常 agent 分发。逻辑本体见 command-router.ts。
         dispatch: async (msg) => {
-          if (await commandRouter.tryHandle(msg)) return
           // 桌宠「起飞了」的时刻(spec §5.1)。定义:一个「回合」= 从入站分发
           // 或 converse 进来的那一趟。所以记在命令路由**之后** —— 一句「待批准」
           // 被路由自己答掉了,桌宠不该说它在想事情。记在这里而不是 coordinator

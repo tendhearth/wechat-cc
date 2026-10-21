@@ -1,4 +1,5 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
+import { inboundTurn } from './test-inbound-turn'
 import { mkdtempSync, rmSync, writeFileSync, mkdirSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -157,7 +158,7 @@ describe('petTurn / 回合起止配对 (CC 桌宠 Phase B, fix round 1)', () => 
 
   it('被命令路由接走的消息不算一个回合:没起飞标记,也没进 coordinator', async () => {
     const { pipelineDeps, petSignals, coordinatorDispatch } = setup()
-    await pipelineDeps.dispatch.coordinator.dispatch(inbound('owner_chat', '待批准'))
+    await inboundTurn(pipelineDeps, inbound('owner_chat', '待批准'))
     expect(coordinatorDispatch).not.toHaveBeenCalled()
     expect(petSignals.snapshot('owner_chat').inFlightSinceMs).toBeNull()
   })
@@ -168,12 +169,12 @@ describe('petTurn / 回合起止配对 (CC 桌宠 Phase B, fix round 1)', () => 
       onDispatch: async (msg) => { seenDuringDispatch = petSignals.snapshot(msg.chatId).inFlightSinceMs },
     })
     // onDispatch 只在下面这一行里被调用 —— 那时 petSignals 早已初始化。
-    await pipelineDeps.dispatch.coordinator.dispatch(inbound('owner_chat', '你好'))
+    await inboundTurn(pipelineDeps, inbound('owner_chat', '你好'))
     expect(seenDuringDispatch).toBe(1000)
     expect(petSignals.snapshot('owner_chat').inFlightSinceMs).toBeNull()
 
     const boom = setup({ onDispatch: async () => { throw new Error('boom') } })
-    await expect(boom.pipelineDeps.dispatch.coordinator.dispatch(inbound('owner_chat', '你好'))).rejects.toThrow('boom')
+    await expect(inboundTurn(boom.pipelineDeps, inbound('owner_chat', '你好'))).rejects.toThrow('boom')
     expect(boom.petSignals.snapshot('owner_chat').inFlightSinceMs).toBeNull()
   })
 

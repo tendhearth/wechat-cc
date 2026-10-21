@@ -1,4 +1,5 @@
 import { describe, it, expect, vi, afterAll } from 'vitest'
+import { inboundTurn } from './test-inbound-turn'
 import { mkdtempSync, writeFileSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -107,7 +108,7 @@ describe('pipeline-deps pairing dispatch seam (配对 pairing-code)', () => {
   it('admin "配对" → start(), replies with the code, no normal turn', async () => {
     const pairing = fakePairing()
     const { pipelineDeps, coordinatorDispatch, sendAssistantText } = setup(pairing)
-    await pipelineDeps.dispatch.coordinator.dispatch(startMsg)
+    await inboundTurn(pipelineDeps, startMsg)
     expect(pairing!.start).toHaveBeenCalled()
     expect(coordinatorDispatch).not.toHaveBeenCalled()
     expect(sendAssistantText).toHaveBeenCalledTimes(1)
@@ -119,7 +120,7 @@ describe('pipeline-deps pairing dispatch seam (配对 pairing-code)', () => {
   it('admin "配对 <code>" → accept(code), success reply names the peer', async () => {
     const pairing = fakePairing()
     const { pipelineDeps, coordinatorDispatch, sendAssistantText } = setup(pairing)
-    await pipelineDeps.dispatch.coordinator.dispatch(acceptMsg)
+    await inboundTurn(pipelineDeps, acceptMsg)
     expect(pairing!.accept).toHaveBeenCalledWith('483921')
     expect(coordinatorDispatch).not.toHaveBeenCalled()
     expect(sendAssistantText).toHaveBeenCalledTimes(1)
@@ -131,7 +132,7 @@ describe('pipeline-deps pairing dispatch seam (配对 pairing-code)', () => {
   it('accept() self_pair failure gets the "own code" reply', async () => {
     const pairing = fakePairing({ accept: vi.fn(async () => ({ ok: false, reason: 'self_pair' })) })
     const { pipelineDeps, sendAssistantText } = setup(pairing)
-    await pipelineDeps.dispatch.coordinator.dispatch(acceptMsg)
+    await inboundTurn(pipelineDeps, acceptMsg)
     expect(sendAssistantText).toHaveBeenCalledTimes(1)
     const [, text] = sendAssistantText.mock.calls[0]!
     expect(text).toContain('自己的码')
@@ -140,7 +141,7 @@ describe('pipeline-deps pairing dispatch seam (配对 pairing-code)', () => {
   it('accept() id_conflict failure gets the upgrade-identity reply (single message — engine no longer double-notifies)', async () => {
     const pairing = fakePairing({ accept: vi.fn(async () => ({ ok: false, reason: 'id_conflict' })) })
     const { pipelineDeps, sendAssistantText } = setup(pairing)
-    await pipelineDeps.dispatch.coordinator.dispatch(acceptMsg)
+    await inboundTurn(pipelineDeps, acceptMsg)
     expect(sendAssistantText).toHaveBeenCalledTimes(1)
     const [, text] = sendAssistantText.mock.calls[0]!
     expect(text).toContain('撞名')
@@ -149,7 +150,7 @@ describe('pipeline-deps pairing dispatch seam (配对 pairing-code)', () => {
   it('accept() expired_or_wrong failure gets the "wrong or expired" reply', async () => {
     const pairing = fakePairing({ accept: vi.fn(async () => ({ ok: false, reason: 'expired_or_wrong' })) })
     const { pipelineDeps, sendAssistantText } = setup(pairing)
-    await pipelineDeps.dispatch.coordinator.dispatch(acceptMsg)
+    await inboundTurn(pipelineDeps, acceptMsg)
     expect(sendAssistantText).toHaveBeenCalledTimes(1)
     const [, text] = sendAssistantText.mock.calls[0]!
     expect(text).toContain('码不对或已过期')
@@ -164,7 +165,7 @@ describe('pipeline-deps pairing dispatch seam (配对 pairing-code)', () => {
   it('accept() relay_drop_failed failure gets its OWN distinct reply (not folded into "expired")', async () => {
     const pairing = fakePairing({ accept: vi.fn(async () => ({ ok: false, reason: 'relay_drop_failed' })) })
     const { pipelineDeps, sendAssistantText } = setup(pairing)
-    await pipelineDeps.dispatch.coordinator.dispatch(acceptMsg)
+    await inboundTurn(pipelineDeps, acceptMsg)
     expect(sendAssistantText).toHaveBeenCalledTimes(1)
     const [, text] = sendAssistantText.mock.calls[0]!
     expect(text).toContain('没能投到中继')
@@ -177,7 +178,7 @@ describe('pipeline-deps pairing dispatch seam (配对 pairing-code)', () => {
   it('start() relay_drop_failed renders its own honest failure reply (single message)', async () => {
     const pairing = fakePairing({ start: vi.fn(async () => ({ ok: false, reason: 'relay_drop_failed' })) })
     const { pipelineDeps, coordinatorDispatch, sendAssistantText } = setup(pairing)
-    await pipelineDeps.dispatch.coordinator.dispatch(startMsg)
+    await inboundTurn(pipelineDeps, startMsg)
     expect(pairing!.start).toHaveBeenCalled()
     expect(coordinatorDispatch).not.toHaveBeenCalled()
     expect(sendAssistantText).toHaveBeenCalledTimes(1)
@@ -189,21 +190,21 @@ describe('pipeline-deps pairing dispatch seam (配对 pairing-code)', () => {
   it('a non-command message falls through to a normal turn', async () => {
     const pairing = fakePairing()
     const { pipelineDeps, coordinatorDispatch } = setup(pairing)
-    await pipelineDeps.dispatch.coordinator.dispatch({ ...startMsg, text: '今天几点见面?' })
+    await inboundTurn(pipelineDeps, { ...startMsg, text: '今天几点见面?' })
     expect(coordinatorDispatch).toHaveBeenCalledTimes(1)
     expect(pairing!.start).not.toHaveBeenCalled()
   })
 
   it('no boot.pairing → always a normal turn, even for a well-formed 配对', async () => {
     const { pipelineDeps, coordinatorDispatch } = setup(undefined)
-    await pipelineDeps.dispatch.coordinator.dispatch(startMsg)
+    await inboundTurn(pipelineDeps, startMsg)
     expect(coordinatorDispatch).toHaveBeenCalledTimes(1)
   })
 
   it('a 配对 from a NON-admin chat is never consumed', async () => {
     const pairing = fakePairing()
     const { pipelineDeps, coordinatorDispatch } = setup(pairing)
-    await pipelineDeps.dispatch.coordinator.dispatch({ ...startMsg, chatId: 'someone_else', userId: 'someone_else' })
+    await inboundTurn(pipelineDeps, { ...startMsg, chatId: 'someone_else', userId: 'someone_else' })
     expect(coordinatorDispatch).toHaveBeenCalledTimes(1)
     expect(pairing!.start).not.toHaveBeenCalled()
   })

@@ -196,3 +196,24 @@ describe('command-router — 认识 / 同意 / 不了', () => {
     expect(intro.request).not.toHaveBeenCalled()
   })
 })
+
+// 重构第二批步 2:router 进 CommandRegistry,要一个只读的 probe —— 它认领的必须恰好是 tryHandle 会处理的。
+describe('command-router · probe(只读,与 tryHandle 一致)', () => {
+  const ok = () => vi.fn(async () => ({ ok: true, id: 'x', channel: 'c', sentTo: 1, status: 'cancelled', code: '123456', expiresAt: 0, peer: { name: 'p' } }))
+  const social = { wish: { send: ok(), cancel: vi.fn(() => ({ ok: true, status: 'cancelled' })), resolveRef: vi.fn(() => ({ ok: true, id: 'w' })) }, penpal: { startVisit: ok() }, intro: { request: ok(), accept: ok(), decline: ok() } } as never
+  const cases = ['串门', '派 a1b2c3', '取消 a1b2c3', '认识 ab12', '回信 ch1 你好', '配对', '配对 123456', '允许 123456', '邀请码', '待批准', '今天天气不错', '同意你的看法']
+  it('with every feature wired: probe(msg) === (tryHandle handled it), and probe has no side effects', async () => {
+    const deps = baseDeps({ social, penpal: { sendLetter: vi.fn(async () => ({ ok: true })) }, pairing: new Proxy({}, { get: () => ok() }) as never })
+    const r = makeCommandRouter(deps)
+    for (const t of cases) {
+      const claimed = r.probe(msg(t))
+      expect(deps.sendAssistantText, `probe(${t}) 不许说话`).not.toHaveBeenCalled()
+      expect(claimed, t).toBe(await makeCommandRouter(baseDeps({ social, penpal: { sendLetter: vi.fn(async () => ({ ok: true })) }, pairing: new Proxy({}, { get: () => ok() }) as never })).tryHandle(msg(t)))
+    }
+  })
+  it('unwired features and non-admins: probe is false exactly when tryHandle falls through', async () => {
+    for (const over of [{}, { isAdmin: () => false }, { loadAccess: () => ({ admins: [] }) }] as Partial<CommandRouterDeps>[]) {
+      for (const t of cases) expect(makeCommandRouter(baseDeps(over)).probe(msg(t)), `${JSON.stringify(Object.keys(over))} ${t}`).toBe(await makeCommandRouter(baseDeps(over)).tryHandle(msg(t)))
+    }
+  })
+})

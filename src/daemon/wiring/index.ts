@@ -63,8 +63,8 @@ export interface WireMainOpts {
   stickers?: import('../stickers').StickerLib
   /** 远程访问开关的重启触发(settings-panel set_remote)。 */
   requestRestart?: (reason: string) => void
-  /** 「看 码」「@码 文本」的执行者。 */
-  cliReply?: { handle(text: string, chatId: string): Promise<boolean>; probe(text: string, chatId: string): boolean }
+  /** 微信文本命令(重构第二批步 2,进 CommandRegistry)。 */
+  commands?: readonly import('../commands/registry').WechatCommand[]
   /** LLM 体检的只读缓存(settings-panel「模型与后端」表格;面板绝不主动外呼)。 */
   llmHealth?: { cached(): import('../llm-health').LlmHealthReport | null }
   /** Loaded before makeIlinkAdapter — passed separately because IlinkAdapter doesn't expose accounts. */

@@ -6,7 +6,7 @@
  * 优先级是下面这张表(就是原来链上的顺序),不是链上的位置。
  * 第一步(a)只算 + 记 trace,不改任何决策;第二步(b)消费者按 intent 早退;第三步(c)收成处理表。
  */
-export type IntentKind = 'task-command' | 'admin' | 'mode' | 'onboarding' | 'permission-reply' | 'cli-reply' | 'task-reference' | 'chat'
+export type IntentKind = 'task-command' | 'admin' | 'mode' | 'onboarding' | 'permission-reply' | 'command' | 'task-reference' | 'chat'
 
 export interface Intent {
   kind: IntentKind
@@ -23,4 +23,4 @@ export interface Intent {
 export const routedAway = (ctx: { intent?: Intent }, mine: IntentKind): boolean => ctx.intent !== undefined && ctx.intent.kind !== mine
 
 /** 消费者的优先级 —— 与 build.ts 里原来的链序一致;chat 是兜底,不在表里。 */
-export const INTENT_ORDER: readonly Exclude<IntentKind, 'chat'>[] = ['task-command', 'admin', 'mode', 'onboarding', 'permission-reply', 'cli-reply', 'task-reference']
+export const INTENT_ORDER: readonly Exclude<IntentKind, 'chat'>[] = ['task-command', 'admin', 'mode', 'onboarding', 'permission-reply', 'command', 'task-reference']

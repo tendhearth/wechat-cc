@@ -63,6 +63,8 @@ export interface CommandRouterDeps {
 }
 
 export interface CommandRouter {
+  /** 只读:这条消息是不是我会处理的控制命令(与 tryHandle 的闸门逐条一致,不发消息、不改状态)。重构第二批步 2。 */
+  probe(msg: InboundMsg): boolean
   /** True iff the message was a control command this router handled. */
   tryHandle(msg: InboundMsg): Promise<boolean>
 }
@@ -72,6 +74,15 @@ export function makeCommandRouter(deps: CommandRouterDeps): CommandRouter {
   const say = (chatId: string, text: string) => { void deps.sendAssistantText?.(chatId, text) }
 
   return {
+    probe(msg: InboundMsg): boolean {
+      if (!deps.isAdmin(msg.chatId)) return false
+      const t = msg.text
+      if (deps.social && (parseVisitCommand(t) || parseSeekCommand(t) || parseIntroCommand(t))) return true
+      if (deps.penpal && parseLetterCommand(t)) return true
+      if (deps.pairing && parsePairCommand(t)) return true
+      if (deps.loadAccess().admins?.length && parseGuestCommand(t)) return true
+      return false
+    },
     async tryHandle(msg: InboundMsg): Promise<boolean> {
       // 串门(2026-09-03 实验)—— 主人说「串门」,伙伴挑一个开着的笔友信道过去
       // 聊几句,回来讲给主人听。见 core/visit.ts 顶部的 WHY。

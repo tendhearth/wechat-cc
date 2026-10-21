@@ -3,7 +3,7 @@ import type { InboundMsg } from '../../core/prompt-format'
 import type { Intent } from './intent'
 import type { MatterOrigin } from '../../core/matters/store'
 
-export type ConsumedBy = 'admin' | 'mode' | 'onboarding' | 'permission-reply' | 'cli-reply' | 'guard' | 'access' | 'health' | 'workbench'
+export type ConsumedBy = 'admin' | 'mode' | 'onboarding' | 'permission-reply' | 'command' | 'guard' | 'access' | 'health' | 'workbench'
 
 export interface InboundCtx {
   readonly msg: InboundMsg

@@ -1,4 +1,5 @@
 import { describe, it, expect, vi } from 'vitest'
+import { makeCommandRegistry } from '../commands/registry'
 import { buildInboundPipeline, type InboundPipelineDeps } from './build'
 import type { InboundCtx } from './types'
 
@@ -203,11 +204,11 @@ describe('意图路由(第二步:消费者按 intent 早退)', () => {
     const { deps } = fakeDeps()
     deps.route = { probes: { admin: () => false, mode: () => false, onboarding: () => false }, log: () => {} }
     expect(() => buildInboundPipeline(deps)).toThrow('probe missing for permission-reply')
-    deps.cliReply = { handle: async () => false, log: () => {} }
+    deps.commands = { registry: makeCommandRegistry([]), log: () => {} }
     deps.route = { probes: { admin: () => false, mode: () => false, onboarding: () => false, 'permission-reply': () => false }, log: () => {} }
-    expect(() => buildInboundPipeline(deps)).toThrow('probe missing for cli-reply')
+    expect(() => buildInboundPipeline(deps)).toThrow('probe missing for command')
     // 工作台和管家的探针由 build 自己接,不用外面给
-    deps.cliReply = undefined
+    deps.commands = undefined
     deps.workbench = { handleWechat: async () => null, sendMessage: async () => ({}) }
     expect(() => buildInboundPipeline(deps)).not.toThrow()
   })

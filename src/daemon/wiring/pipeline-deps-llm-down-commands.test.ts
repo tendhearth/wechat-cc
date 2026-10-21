@@ -121,17 +121,17 @@ function adminMsg(text: string): InboundMsg {
 /**
  * 重构第二批 · 步 1c(spec 2026-10-20-refactor-batch2-design §1.5 bug 2 的现状;只加测试):
  * 模型挂了时,完全不用模型的主人命令(邀请码 / 待批准)走完整入站流水线,今天落到哪里。
- * command-router 排在派发里、llm-health 之后 ⇒ 今天它们到不了。步 2 把命令提到 llm-health 之前后,这条测试改成断言「回了邀请码」。
+ * 以前 command-router 排在派发里、llm-health 之后 ⇒ 它们到不了(§1.5 bug 2)。步 2 把命令提到 llm-health 之前,现在照常回。
  */
 describe('模型挂了时的主人命令(步 1c 基线)', () => {
-  it('today: 邀请码 / 待批准 never reach the command router while llm is suspended', async () => {
+  it('邀请码 / 待批准 still answer while llm is suspended (步 2:命令排在 llm-health 之前;以前到不了)', async () => {
     const s = setup(['admin_chat'])
     try {
       const pipeline = buildInboundPipeline(s.pipelineDeps as never)
       for (const text of ['邀请码', '待批准']) await pipeline({ msg: adminMsg(text), receivedAtMs: Date.now(), requestId: `r-${text}` })
       const said = [...s.sendAssistantText.mock.calls.map(c => String(c[1])), ...s.sendMessage.mock.calls.map(c => String(c[1]))]
-      expect(said.some(t => t.startsWith('邀请码:'))).toBe(false)
-      expect(said.some(t => t.includes('目前没有待批准'))).toBe(false)
+      expect(said.some(t => t.startsWith('邀请码:'))).toBe(true)
+      expect(said.some(t => t.includes('目前没有待批准'))).toBe(true)
       expect(s.coordinatorDispatch).not.toHaveBeenCalled()
     } finally { teardown(s.stateDir) }
   })

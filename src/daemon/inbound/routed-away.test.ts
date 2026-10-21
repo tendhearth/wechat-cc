@@ -3,7 +3,8 @@ import { makeMwAdmin } from './mw-admin'
 import { makeMwMode } from './mw-mode'
 import { makeMwOnboarding } from './mw-onboarding'
 import { makeMwPermissionReply } from './mw-permission-reply'
-import { makeMwCliReply } from './mw-cli-reply'
+import { makeMwCommand } from './mw-command'
+import { makeCommandRegistry } from '../commands/registry'
 import { makeMwWorkbench } from './mw-workbench'
 import { routedAway } from './intent'
 import type { InboundCtx, Middleware } from './types'
@@ -31,7 +32,7 @@ describe('六个消费者按 intent 早退', () => {
     ['mode', 'mode', h => makeMwMode({ modeHandler: { handle: async () => h() } })],
     ['onboarding', 'onboarding', h => makeMwOnboarding({ onboardingHandler: { handle: async () => h() } })],
     ['permission-reply', 'permission-reply', h => makeMwPermissionReply({ handlePermissionReply: () => h(), log: () => {} })],
-    ['cli-reply', 'cli-reply', h => makeMwCliReply({ handle: async () => h(), log: () => {} })],
+    ['command', 'command', h => makeMwCommand({ registry: makeCommandRegistry([{ id: 'x', probe: () => true, handle: async () => h() }]), log: () => {} })],
   ]
   for (const [name, kind, make] of table) {
     it(`${name}:路由到别人 ⇒ 不调 handle 直接 next;路由到我 / 没路由 ⇒ 照常`, async () => {
