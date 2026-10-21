@@ -1804,6 +1804,9 @@ mod workbench_proxy_tests {
         let routes = super::workbench_routes();
         assert!(routes.len() >= 30, "generated/workbench-routes.json looks empty: {}", routes.len());
         assert!(routes.iter().all(|(method, route)| (method == "GET" || method == "POST") && route.starts_with("/v1/")));
+        // 5c 要拿它跟 sidecar 比「App 是不是太老」(#471 评审)
+        let file: serde_json::Value = serde_json::from_str(super::WORKBENCH_ROUTES_JSON).unwrap();
+        assert!(file.get("version").and_then(serde_json::Value::as_u64).is_some_and(|v| v >= 1), "generated/workbench-routes.json needs a numeric version");
     }
 
     #[test]

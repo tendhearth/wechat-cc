@@ -45,6 +45,20 @@ describe('从路由表推出来的名单与改造前快照逐条一致', () => {
       selftest: sorted(routesForToken('selftest')),
     }).toEqual(snap.tokenAllow)
   })
+  // 新加的路由不比(上面 filter 掉了),但「哪些令牌能碰它」得有人点头:operator(桌面 / CLI 共用的长效令牌)、
+  // federation(另一台 CC)、selftest、链接令牌,名单整份比 = 快照 + 下面明列的新增。往表里加 tokens:['operator']
+  // 或 link:'read'|'write' 而不改这里 ⇒ 红(#471 评审)。
+  it('令牌能碰到的范围:新增必须在这里显式点头', () => {
+    const APPROVED_ADDITIONS: Record<'operator' | 'federation' | 'selftest' | 'link', string[]> = { operator: [], federation: [], selftest: [], link: [] }
+    const reg = makeTokenRegistry(() => 'deadbeef'.repeat(8))
+    reg.registerOperatorToken('op')
+    const all = (a: Iterable<string>) => [...a].sort()
+    const want = (k: keyof typeof APPROVED_ADDITIONS) => [...snap.tokenAllow[k], ...APPROVED_ADDITIONS[k]].sort()
+    expect(all(reg.resolve('op')!.routeAllow!)).toEqual(want('operator'))
+    expect(all(routesForToken('federation'))).toEqual(want('federation'))
+    expect(all(routesForToken('selftest'))).toEqual(want('selftest'))
+    expect(all(LINK_ROUTES)).toEqual(want('link'))
+  })
   it('PHONE_ROUTES / LINK_ROUTES / LAN_ONLY_OPS / PHONE_TOPICS', () => {
     expect(sorted(PHONE_ROUTES)).toEqual(snap.PHONE_ROUTES)
     expect(sorted(LINK_ROUTES)).toEqual(snap.LINK_ROUTES)
