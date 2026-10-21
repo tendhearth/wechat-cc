@@ -4,10 +4,21 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { makeMemoryNightlyRuntime, deliverPendingNotice, type NoticeDeps } from './nightly-runtime'
 import { readNightlyState, writeNightlyState, type NightlyRunDeps } from './nightly'
+import { makeSpeechPolicy, type SpeechPolicy } from '../speech/policy'
+import type { ProactiveOutbound } from '../companion/proactive-channel'
 
 const OWNER = 'owner@im.wechat'
 let stateDir: string, root: string, now: number, sent: string[]
 let n = 0
+
+/** 跟生产同一道门(policy.say);微信那头记进 sent。 */
+function speechFor(o: { deliverable?: boolean; care?: 'off' | 'low'; quietEnds?: number | null } = {}): SpeechPolicy {
+  const outbound: ProactiveOutbound = {
+    appDeliverable: () => false, canDeliver: () => o.deliverable ?? true, sendOnce: async () => ({ ok: true }),
+    open: () => ({ sendText: async (_c, t) => { sent.push(t); return { msgId: 'm' } }, channel: () => 'wechat', textOnly: () => false, sendAttachment: async () => false, finish: () => {} }),
+  }
+  return makeSpeechPolicy({ care: () => o.care ?? 'low', quietEndsAt: () => o.quietEnds ?? null, outbound, log: () => {}, now: () => now })
+}
 
 function deps(over: Partial<NightlyRunDeps & NoticeDeps> = {}): NightlyRunDeps & NoticeDeps {
   return {
@@ -22,8 +33,7 @@ function deps(over: Partial<NightlyRunDeps & NoticeDeps> = {}): NightlyRunDeps &
     log: () => {},
     careGate: () => ({ ok: true }),
     claim: vi.fn(),
-    wechatSuspended: () => false,
-    send: async (_c, t) => { sent.push(t); return {} },
+    speech: speechFor(),
     ...over,
   }
 }
@@ -52,7 +62,16 @@ describe('memory nightly runtime', () => {
     const claim = vi.fn()
     writeNightlyState(stateDir, { ...readNightlyState(stateDir), pendingNotice: { text: 'x', createdAtMs: Date.parse('2026-09-25T04:00:00Z') } })
     now = Date.parse('2026-09-25T10:00:00Z')
-    expect(await deliverPendingNotice(deps({ wechatSuspended: () => true }))).toBe('waiting')
+    expect(await deliverPendingNotice(deps({ speech: speechFor({ deliverable: false }) }))).toBe('waiting')
+    // 免打扰(SpeechPolicy,第三批 3a):往后推,通知留着;以前这条只有「09:00 以后」一道下限
+    expect(await deliverPendingNotice(deps({ speech: speechFor({ quietEnds: Date.parse('2026-09-25T12:00:00Z') }) }))).toBe('waiting')
+    expect(readNightlyState(stateDir).pendingNotice).not.toBeNull()
+    // 别烦我:不发、清掉(跟以前 care 闸拒绝时一样)
+    const s2 = deps({ speech: speechFor({ care: 'off' }), claim: vi.fn() })
+    const keep = readNightlyState(stateDir).pendingNotice
+    expect(await deliverPendingNotice(s2)).toBe('dropped')
+    expect(s2.claim).not.toHaveBeenCalled()
+    writeNightlyState(stateDir, { ...readNightlyState(stateDir), pendingNotice: keep })
     expect(await deliverPendingNotice(deps({ careGate: () => ({ ok: false, reason: 'memory_cooldown' }) }))).toBe('waiting')
     expect(await deliverPendingNotice(deps({ claim }))).toBe('sent')
     expect(claim).toHaveBeenCalledWith(OWNER, '2026-09-25T10:00:00.000Z')

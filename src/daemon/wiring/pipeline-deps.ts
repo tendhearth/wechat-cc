@@ -13,7 +13,6 @@ import { spawn } from 'node:child_process'
 import { dirname } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { existsSync } from 'node:fs'
-import type { Ref } from '../../lib/lifecycle'
 import type { GuardLifecycle } from '../guard/lifecycle'
 import type { PollingLifecycle } from '../polling-lifecycle'
 import type { InboundPipelineDeps } from '../inbound/build'
@@ -86,6 +85,10 @@ export function makeDelegateToHand(deps: DelegateDeps) {
 
 export type { PipelineDepsOpts } from './pipeline-deps-opts'
 import type { PipelineDepsOpts } from './pipeline-deps-opts'
+import { Ref } from '../../lib/lifecycle'
+import { makeProactiveOutbound, type AppChannel, type ProactiveOutbound } from '../companion/proactive-channel'
+import type { SpeechPolicy } from '../speech/policy'
+import { wireSpeech } from './wire-speech'
 
 export interface PipelineDepsRefs {
   polling: Ref<PollingLifecycle>
@@ -145,6 +148,10 @@ export interface BuildPipelineDepsResult {
    * 没开中继 v2 / 没有「一件事」库(手机对话不存在)⇒ null,伙伴与提醒只走微信。
    */
   companionApp: import('../companion/proactive-channel').AppChannel | null
+  /** CC 主动找你的出口(微信能用走微信,不能用落到 App)。 */
+  proactive: ProactiveOutbound
+  /** CC 主动开口唯一的门(第三批 3a)。 */
+  speech: SpeechPolicy
 }
 
 export function buildPipelineDeps(opts: PipelineDepsOpts, refs: PipelineDepsRefs): BuildPipelineDepsResult {
@@ -152,6 +159,19 @@ export function buildPipelineDeps(opts: PipelineDepsOpts, refs: PipelineDepsRefs
   // 消费者的回话:微信来的一轮直发微信;App 来的一轮(withReplyScope 里)截住交还 App(inbound/reply-scope)。
   const send = scopedSend((cid: string, txt: string, o?: { source: 'workbench' }) => ilink.sendMessage(cid, txt, o))
   const inboxDir = join(stateDir, 'inbox')
+
+  // CC 主动找你的出口 + 开口那道门(第三批 3a)。记忆通知在下面就要用,所以在最前面造。
+  // App 那条路(companionApp)要等 wirePhone 才有 —— 这是一个真实的环:记忆 → 手机页(要显示记忆)→ App 通道 → 门 → 记忆通知。
+  // proactive-channel 的 app() 本来就是为这个设计的懒取;这里用 Ref 接上(只 set 一次,没开中继 v2 就一直是 null)。
+  const companionAppRef = new Ref<AppChannel>('companionApp')
+  const proactive = makeProactiveOutbound({
+    wechatDegraded: () => boot.health.health.shouldSuspend('wechat'),
+    wechatClosedSince: (chatId) => ilink.proactiveClosedSince(chatId),
+    sendWechat: (chatId, text) => ilink.sendMessage(chatId, text),
+    app: () => companionAppRef.current,
+    log: (tag, line) => log(tag, line),
+  })
+  const speech = wireSpeech({ stateDir, db, chatPrefs, proactive, log: (tag, line) => log(tag, line) })
 
   // A2A exec (delegate a task to a hand) runs a FULL agent on the hand —
   // often tens of seconds to minutes. The shared a2aDeps.client's 10s timeout
@@ -240,7 +260,7 @@ export function buildPipelineDeps(opts: PipelineDepsOpts, refs: PipelineDepsRefs
     return ilink.sendMessage(adminChatId, text)
   }
   // 记忆(重构第二批步 6c,wire-memory.ts):LLM 记忆操作、每晚整理、欢迎时的观察。
-  const { memoryLlmOps, memoryNightly, maybeWriteWelcomeObservation } = wireMemory({ stateDir, db, boot, chatPrefs, careLedger, ilink, log })
+  const { memoryLlmOps, memoryNightly, maybeWriteWelcomeObservation } = wireMemory({ stateDir, db, boot, chatPrefs, careLedger, speech, log })
 
   const adminCommandsHandler = makeAdminCommands({
     stateDir, isAdmin,
@@ -444,6 +464,7 @@ export function buildPipelineDeps(opts: PipelineDepsOpts, refs: PipelineDepsRefs
   })
   phoneDevices.current = () => phone.settingsPanel.phoneDevices().length
   const { appPush, companionApp, phoneChat, settingsPanel } = phone
+  if (companionApp) companionAppRef.set(companionApp)
 
 
   const modeHandler = makeModeCommands({
@@ -724,5 +745,5 @@ export function buildPipelineDeps(opts: PipelineDepsOpts, refs: PipelineDepsRefs
   const petTurn = wirePetTurn({ stateDir, ilink: opts.ilink, petSignals: opts.petSignals, boot, messagesStore })
 
 
-  return { stopPhone: () => phone.stop(), appPush, companionApp, pipelineDeps, companionConverse, petTurn, mattersService, memoryNightly, stopMatterActivity, settingsPanelLink: () => settingsPanel.linkUrl(), phoneChat, connections, phoneConnect: { link: (o) => settingsPanel.phoneLink(o), devices: () => settingsPanel.phoneDevices() } }
+  return { stopPhone: () => phone.stop(), appPush, companionApp, proactive, speech, pipelineDeps, companionConverse, petTurn, mattersService, memoryNightly, stopMatterActivity, settingsPanelLink: () => settingsPanel.linkUrl(), phoneChat, connections, phoneConnect: { link: (o) => settingsPanel.phoneLink(o), devices: () => settingsPanel.phoneDevices() } }
 }
