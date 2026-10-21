@@ -66,7 +66,6 @@ const BASELINE: Record<string, [Tag, number]> = {
   'src/daemon/phone-notifier.ts': ['migrate', 2],
   'src/daemon/inbound/mw-access.ts': ['migrate', 2],
   'src/daemon/wiring/command-router.ts': ['migrate', 1],
-  'src/daemon/startup-sweeps.ts': ['migrate', 1],
   'src/daemon/bootstrap/wire-workbench-notifications.ts': ['migrate', 1],
   'src/daemon/bootstrap/wire-workbench-artifacts.ts': ['migrate', 1],
   'src/daemon/bootstrap/wire-activity.ts': ['migrate', 1],

@@ -80,6 +80,19 @@ async function runInboxCleanup(deps: StartupSweepDeps): Promise<void> {
   }
 }
 
+/**
+ * 重启通知的发送口:交给 CC 开口那道门(restart_notice,report)。说出去了,或者被推后 / 没发出去而进了待说队列 ——
+ * 都算办完(回 {}),notifyStartup 就不再一轮轮重试(那会往待说队列里塞好几份同样的话)。门没接 ⇒ 不发、记一行。
+ */
+export function restartNoticeSender(deps: Pick<StartupSweepDeps, 'speech' | 'log'>): (chatId: string, text: string) => Promise<{ error?: string }> {
+  return async (cid, txt) => {
+    if (!deps.speech) { deps.log('NOTIFY', `restart notice to ${cid} not sent: speech policy not wired`); return {} }
+    const said = await deps.speech.tell('restart_notice', cid, txt)
+    if (!said) deps.log('NOTIFY', `restart notice to ${cid} handed to the pending queue (deferred or not delivered yet)`)
+    return {}
+  }
+}
+
 async function runStartupNotify(deps: StartupSweepDeps): Promise<void> {
   try {
     await notifyStartup(
@@ -89,13 +102,7 @@ async function runStartupNotify(deps: StartupSweepDeps): Promise<void> {
           const a = loadAccess()
           return { allowFrom: a.allowFrom, admins: a.admins }
         },
-        // 交给门:说出去了,或者被推后 / 没发出去而进了待说队列 —— 都算办完(返回成功),notifyStartup 就不再重试
-        send: async (cid, txt) => {
-          if (!deps.speech) { deps.log('NOTIFY', `restart notice to ${cid} not sent: speech policy not wired`); return {} }
-          const said = await deps.speech.tell('restart_notice', cid, txt)
-          if (!said) deps.log('NOTIFY', `restart notice to ${cid} handed to the pending queue (deferred or not delivered yet)`)
-          return {}
-        },
+        send: restartNoticeSender(deps),
         log: deps.log,
         ...(deps.previousRun ? { evidence: deps.previousRun } : {}),
         settings: resolveRestartNoticeSettings(loadAgentConfig(deps.stateDir).restart_notice),
