@@ -1,5 +1,6 @@
 import {validBaseBranch} from './worktree-workspaces'
 import {parseReviewRequest,reviewMaterial} from './review-request'
+import {WORKBENCH_ERRORS,workbenchErrorSpec} from '@wechat-cc/protocol'
 import {compareReply} from './wechat-compare'
 import {issueTaskText,parseIssueRef,type IssueData} from './issue-intake'
 import {createHash,randomUUID} from 'node:crypto'
@@ -51,7 +52,7 @@ function runtimeStatus(status:string,runtime?:AgentRuntimeSnapshot,networkSuspen
 }
 const REQUEST_MAX=6000
 const unavailable='没有找到这个任务，请在桌面工作台核对编号。'
-const stale='这条请求已失效或不属于这个任务。请重新查询任务，使用当前请求编号。'
+const stale=WORKBENCH_ERRORS.permission_stale!.wechat!
 const stopUnconfirmed='这条停止请求已记录，但尚未确认执行结果。请查询任务状态；如需停止当前轮次，请发送一条新的停止消息。'
 const usage=(id='<任务编号>')=>`用法：\n项目：任务 项目\n新建：任务 新建 <项目编号> <要求>\n并行：任务 新建 <项目编号> 独立 <要求>（从某个分支开始：独立@<分支>）\n从 GitHub issue 开工：任务 新建 <项目编号> issue <编号>\n两家对比：任务 新建 <项目编号> 对比 @claude @codex <要求>（并排看：任务 对比 <编号> <编号>）\n查看：任务 ${id}\n补充：任务 ${id} 补充 <要求>\n改动：任务 ${id} 改动\n记成经验：任务 ${id} 记成经验 <一句话>\n换一家来审：任务 ${id} 请 @codex 审\n独立工作区：任务 ${id} 提交 / 合回 / 删除工作区 / 重开工作区\n停止：任务 ${id} 停止\n处理待办时，请复制任务消息中的完整请求编号。`
 const clip=(value:string,max:number)=>value.length>max?value.slice(0,max)+'…':value
@@ -151,22 +152,6 @@ function statusReply(detail:Detail){
   lines.push(`补充：任务 ${id} 补充 <要求>`,`查看结果：任务 ${id} 结果`)
   return lines.join('\n\n')
 }
-const WORKTREE_REFUSED:Record<string,string>={
-  not_worktree:'这件事不在独立工作区里，没有可提交、合回或删除的分支。',
-  worktree_removed:'这件事的独立工作区已经删除了，分支还在项目里。要接着做：任务 {id} 重开工作区',
-  worktree_open:'独立工作区还开着，不用重开。',
-  worktree_branch_missing:'分支已经不在项目里了，没法重开。请重新交办一件。',
-  worktree_conflict:'原来的工作区位置被占了，没法重开。请在桌面上看看。',
-  workbench_archived:'这项任务已归档，请先在桌面恢复任务。',
-  workbench_busy:'这个工作区还有会话开着，先「停止」或等它收工再操作。',
-  worktree_dirty:'独立工作区里还有没提交的改动，先发「任务 {id} 提交」再删除。',
-  worktree_uncommitted:'独立工作区里还有没提交的改动，先发「任务 {id} 提交」再合回。',
-  project_dirty:'项目目录里有没提交的改动，CC 不替你合并。请处理那些改动，或在电脑上自己合并。',
-  project_detached:'项目目录现在不在任何分支上，请在电脑上自己合并。',
-  worktree_not_ff:'项目在这之后又有了新提交，不能直接快进。请在电脑上自己合并（可能要处理冲突）。',
-  project_busy:'项目目录里还有别的任务在跑，等它收工再合回。',
-  worktree_git_failed:'git 操作没成功，请在电脑上看看这个项目的状态。',
-}
 /** 「任务 <编号> 提交 / 合回 / 删除工作区」:与桌面、手机同一个 worktreeAction;拒绝原因都说成人话。 */
 function worktreeReply(id:string,verb:'提交'|'合回'|'删除工作区'|'重开工作区',act:Actions['worktreeAction']){
   if(!act)return '这里做不了独立工作区的操作，请在桌面工作台上做。'
@@ -180,37 +165,16 @@ function worktreeReply(id:string,verb:'提交'|'合回'|'删除工作区'|'重�
     return `任务 ${id}：独立工作区已删除，分支 ${r.branch} 保留在项目里。`
   }catch(error){
     const code=error instanceof Error?error.message:''
-    return WORKTREE_REFUSED[code]?.replaceAll('{id}',id)??'暂时无法处理，请在桌面工作台查看任务状态。'
+    return workbenchErrorSpec(code)?.wechatWorktree?.replaceAll('{id}',id)??'暂时无法处理，请在桌面工作台查看任务状态。'
   }
 }
+/** 每个码那句话在 packages/protocol 的 WORKBENCH_ERRORS(wechat 一栏);这里只留前缀规则与兜底。 */
 function failure(error:unknown,id:string){
   const code=error instanceof Error?error.message:''
-  if(code==='artifact_delivery_conflict')return '这条文件请求与已记录的内容不一致，没有再次发送。请重新查看任务成果。'
-  if(code==='artifact_transport_unavailable')return '文件发送暂不可用，已保存的成果仍可在桌面工作台查看。'
-  if(code==='artifact_changed'||code.startsWith('invalid_artifact'))return '成果文件已变化或未通过校验，没有发送。请在桌面查看保存的版本。'
-  if(code==='subscription_conflict')return '提醒绑定的账号已变化，没有把旧提醒转发到新账号。请在原聊天关闭提醒后重新设置。'
-  if(code==='permission_stale'||code==='question_stale')return stale
-  if(code==='invalid_answer'||error instanceof SyntaxError)return '答案格式或选项不正确，尚未提交。请按问题中的示例回答。'
-  if(code==='worktree_base_missing')return '项目里没有这个分支，没有开始工作。请核对分支名（本地分支），或去掉 @<分支> 从最新提交开始。'
-  if(code==='worktree_not_git')return '这个项目不是 Git 仓库，开不了独立工作区。去掉「独立」就能照常交办。'
-  if(code==='worktree_removed')return `这件事的独立工作区已经删除了（分支还在项目里）。要接着做，先发「任务 ${id} 重开工作区」。`
-  if(code==='workbench_archived')return '这项任务已归档。请在桌面工作台恢复任务后再继续。'
-  if(code==='restart_confirmation_required'||code==='restart_confirmation_stale')return '原执行会话暂时无法恢复。请打开桌面工作台，查看恢复选项并确认是否带此前记录重新开始。'
-  if(code==='external_close_confirmation_required')return '请先在桌面工作台确认原执行程序已关闭，再继续这项任务。'
-  if(code==='input_stale'||code==='workbench_busy')return '任务轮次已变化或正在停止，这条补充没有发送。请重新查询任务后再提交。'
-  if(code==='input_conflict')return '这条消息的内容与已记录的补充不一致，未再次发送。请重新查询任务。'
-  if(code==='control_conflict')return '这条消息的内容与已记录的操作不一致，未再次执行。请重新查询任务。'
-  if(code==='creation_conflict')return '这条消息的内容与已记录的新建要求不一致，未再次创建。请发送一条新消息。'
-  if(code==='project_stale')return '这个项目编号已失效或目录已变化，没有开始工作。请发送「任务 项目」重新选择。'
-  if(code==='workbench_attachments_unsupported')return '这个执行者暂不支持工作任务附件，没有开始工作。请移除附件，或改用支持附件的执行者。'
-  if(code==='workbench_execution_unsupported')return '这个执行者暂不支持所选执行设置，没有开始工作。请改为自动设置，或选择其他执行者。'
-  if(code==='workbench_resume_unsupported')return '这个执行者无法安全恢复原会话，没有继续工作。请在桌面查看恢复说明，并决定是否带记录重新开始。'
-  if(code==='issue_unattended_unsupported')return '从 GitHub issue 开工的任务不交给免审执行者:issue 是外面的人写的,免审时又没人看着单步操作。换一位执行者再发,比如「任务 新建 <项目编号> 用 @claude issue <编号>」。没有开始工作。'
-  if(code==='unattended_ack_required')return 'agy 是免审执行者：跑任务时看不到、拦不下单步操作，没有权限卡和提问，只能停止；它用的工具凭据不是按任务隔离的；时间线只有文字；不能带附件、不能选模型。请先在桌面工作台确认一次，之后微信也能直接用。没有开始工作。'
-  if(code==='unavailable_provider')return '暂时没有可用的工作执行者，没有开始工作。请在桌面连接或管理一个支持工作任务的执行者。'
-  if(code==='invalid_wechat_identity')return '无法确认这条微信消息的账号和发送者，没有创建任务。请在原聊天重新发送。'
-  if(code==='control_stale')return '原请求对应的轮次已结束，未停止当前轮次。请重新查询任务。'
-  if(code==='input_limit'||code==='input_delivery_busy')return '仍有补充等待交付，请稍后再试。'
+  const text=workbenchErrorSpec(code)?.wechat
+  if(text)return text.replaceAll('{id}',id)
+  if(code.startsWith('invalid_artifact'))return WORKBENCH_ERRORS.artifact_changed!.wechat!
+  if(error instanceof SyntaxError)return WORKBENCH_ERRORS.invalid_answer!.wechat!
   if(code.startsWith('invalid_'))return usage(id)
   return '暂时无法处理，请在桌面工作台查看任务状态。'
 }

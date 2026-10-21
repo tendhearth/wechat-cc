@@ -37,3 +37,5 @@ export type { RelayError, PushPlatformT, DaemonControlT, RoomControlT } from './
 export { pairCheckCode, PAIR_CHECK_ALPHABET, PAIR_CHECK_RE } from './pair-check'
 export { HomeTopic, ApprovalItem, ApprovalsTopic, AgentsTopic, MatterTopic } from './topics'
 export type { HomeTopicT, ApprovalItemT, AgentsTopicT, MatterTopicT } from './topics'
+export { WORKBENCH_ERRORS, workbenchErrorSpec, workbenchErrorHttp } from './workbench-errors'
+export type { WorkbenchErrorSpec, WorkbenchErrorOut, WorkbenchErrorSurface } from './workbench-errors'
