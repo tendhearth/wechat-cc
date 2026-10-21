@@ -7,6 +7,10 @@
  *   ③ 各家的翻译函数(沙箱 / SDK 选项)与 wechat MCP 按会话令牌档位注册工具 —— 粗粒度,补不了 ① 的细节。
  * 这里只按 ① ② 判(③ 是兜底,不当作「守住了」);做不到的就是 gap,必须写进 KNOWN_TIER_GAPS 说清楚。
  * 只看 strict:--dangerously 下 trusted 本来就算 admin、访客一律降回 strict(resolveEffectiveTier / effectivePermissionMode)。
+ *
+ * 「per-tool」不靠自报:tier-enforcement.proof.test.ts 对每家真调一次 gate(访客碰 shell、trusted 碰 admin 专用工具都要被拒)。
+ * 「dispatch-deny」证明的是 providerDenialFor 对这家会拒;**访客能进的派发入口只有 conversation-coordinator 那一处**
+ * (工作台、定时、换一家来审都只给主人)。以后新开一个访客能进的入口,要在那里同样调 providerDenialFor。
  */
 import { capabilitiesFor, KNOWN_PROVIDER_IDS } from './capability-matrix'
 import { providerDenialFor } from './provider-policy'
