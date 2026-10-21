@@ -149,7 +149,8 @@ describe('CC Asset Kit v1.0-alpha', () => {
     const mask = readRGBA(readFileSync(join(root, 'masks/front.png'))).alpha
     const dark = readRGBA(readFileSync(join(root, 'canonical/unlit/front.png')))
     const light = readRGBA(readFileSync(join(root, 'canonical/lit/front.png')))
-    expect(dark.alpha).toEqual(mask)
+    // 512² 的 alpha 别用 toEqual(vitest 逐字节递归,负载下这一条撞 20s,10-21);逐字节一致 ⇔ Buffer.compare === 0
+    expect(Buffer.compare(Buffer.from(dark.alpha), Buffer.from(mask))).toBe(0)
     expect(light.alpha.some((a, i) => mask[i] === 0 && a > 0)).toBe(true)
     let whiteEyes = 0
     for (let i = 0; i < mask.length; i++) {
