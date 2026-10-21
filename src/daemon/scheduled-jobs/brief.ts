@@ -76,7 +76,7 @@ export function makeBriefPrefs(root: () => string | null) {
 }
 
 export interface BriefTurnDeps {
-  runJobTurn: (a: { chatId: string; jobId: string; text: string; nowIso: string; buildText?: (style: TickTextStyle) => string; kind?: 'job' | 'brief' | 'recap' }) => Promise<JobTurnResult>
+  runJobTurn: (a: { chatId: string; jobId: string; text: string; nowIso: string; buildText?: (style: TickTextStyle) => string; kind: 'job' | 'review' | 'brief' | 'recap'; scheduled: boolean }) => Promise<JobTurnResult>
   ownerChatId: () => string | null
   today: () => string | null
   reminders: () => Array<{ at: string; text: string }> | Promise<Array<{ at: string; text: string }>>
@@ -99,7 +99,7 @@ export function makeBriefTurn(deps: BriefTurnDeps): (job: ScheduledJob, nowIso: 
     let calendar: string | null = null
     try { calendar = deps.calendar ? await deps.calendar() : null } catch { /* 读不到日历不挡早报 */ }
     const material = buildBriefMaterial({ today: safe(deps.today, null), reminders, agenda: safe(deps.agenda, []), prefs: safe(deps.prefs, []), calendar })
-    const r = await deps.runJobTurn({ chatId: owner, jobId: job.id, text: job.text, nowIso, kind: 'brief', buildText: (style) => buildBriefText({ jobId: job.id, nowIso, material }, style) })
+    const r = await deps.runJobTurn({ chatId: owner, jobId: job.id, text: job.text, nowIso, kind: 'brief', scheduled: true, buildText: (style) => buildBriefText({ jobId: job.id, nowIso, material }, style) })
     if (r === 'sent') { try { deps.claim(owner, nowIso) } catch { /* 记不上只是当天可能多一句问候 */ } }
     return r
   }

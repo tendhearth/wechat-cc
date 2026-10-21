@@ -17,6 +17,9 @@ export const SPEECH_KINDS = {
   pairing: { origin: 'blocking', label: '配对' },
   reminder: { origin: 'requested', label: '提醒' },
   job: { origin: 'requested', label: '定时任务' },
+  // 主人点名「换一家来审」:内容(审哪件、谁来审)是主人点的,而且只触发一次、后面没有队列 —— 归 report 的话免打扰里
+  // 一推后就丢了(9d 评审 #524 讨论)。所以归 requested。
+  review: { origin: 'requested', label: '换一家来审' },
   matter_report: { origin: 'report', label: '一件事的回报' },
   review_missed: { origin: 'report', label: '定时审阅错过了' },
   upgrade_notice: { origin: 'report', label: '升级完成' },

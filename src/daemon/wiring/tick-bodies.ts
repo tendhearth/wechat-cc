@@ -269,7 +269,7 @@ export interface TickBodies {
    * 定时任务的一轮(spec 2026-10-20-scheduled-jobs-design):独立会话 `job:<id>`、只读档、strict,
    * 走伙伴主动消息的出口;跑完 forget(不续接、不占位)。只给 claude / codex。
    */
-  runJobTurn(args: { chatId: string; jobId: string; text: string; nowIso: string; buildText?: (style: TickTextStyle) => string; /** 主人点名哪家(换一家来审,10-20);只认 JOB_PROVIDERS,没装 ⇒ skipped:executor,不换人。 */ provider?: (typeof JOB_PROVIDERS)[number]; /** 'review' ⇒ REVIEW_PROFILE(不给网,评审 #460);缺省 JOB_PROFILE */ profile?: 'job' | 'review'; /** 这是哪一种话(SpeechPolicy):主人建的定时 / 换一家来审 = job(requested);晨报 = brief、周报 = recap(initiative)。缺省 job。 */ kind?: 'job' | 'brief' | 'recap' }): Promise<JobTurnResult>
+  runJobTurn(args: { chatId: string; jobId: string; text: string; nowIso: string; buildText?: (style: TickTextStyle) => string; /** 主人点名哪家(换一家来审,10-20);只认 JOB_PROVIDERS,没装 ⇒ skipped:executor,不换人。 */ provider?: (typeof JOB_PROVIDERS)[number]; /** 'review' ⇒ REVIEW_PROFILE(不给网,评审 #460);缺省 JOB_PROFILE */ profile?: 'job' | 'review'; /** 这是哪一种话(SpeechPolicy)—— **必填,没有缺省**:缺省往放行的方向兜底,忘了传就悄悄成了「主人要的」(9d 评审 #524)。主人建的定时 = job、换一家来审 = review(都是 requested);晨报 = brief、周报 = recap(initiative)。 */ kind: 'job' | 'review' | 'brief' | 'recap'; /** 定时触发的(赶上免打扰的 initiative 当天记 skipped:quiet,不往后推);换一家来审不是。 */ scheduled: boolean }): Promise<JobTurnResult>
 }
 
 export interface BuildPushTickTextOpts {
@@ -671,7 +671,7 @@ export function buildTickBodies(deps: TickDeps): TickBodies {
     return true
   }
 
-  async function runJobTurn(args: { chatId: string; jobId: string; text: string; nowIso: string; buildText?: (style: TickTextStyle) => string; /** 主人点名哪家(换一家来审,10-20);只认 JOB_PROVIDERS,没装 ⇒ skipped:executor,不换人。 */ provider?: (typeof JOB_PROVIDERS)[number]; /** 'review' ⇒ REVIEW_PROFILE(不给网,评审 #460);缺省 JOB_PROFILE */ profile?: 'job' | 'review'; /** 这是哪一种话(SpeechPolicy):主人建的定时 / 换一家来审 = job(requested);晨报 = brief、周报 = recap(initiative)。缺省 job。 */ kind?: 'job' | 'brief' | 'recap' }): Promise<JobTurnResult> {
+  async function runJobTurn(args: { chatId: string; jobId: string; text: string; nowIso: string; buildText?: (style: TickTextStyle) => string; /** 主人点名哪家(换一家来审,10-20);只认 JOB_PROVIDERS,没装 ⇒ skipped:executor,不换人。 */ provider?: (typeof JOB_PROVIDERS)[number]; /** 'review' ⇒ REVIEW_PROFILE(不给网,评审 #460);缺省 JOB_PROFILE */ profile?: 'job' | 'review'; /** 这是哪一种话(SpeechPolicy)—— **必填,没有缺省**:缺省往放行的方向兜底,忘了传就悄悄成了「主人要的」(9d 评审 #524)。主人建的定时 = job、换一家来审 = review(都是 requested);晨报 = brief、周报 = recap(initiative)。 */ kind: 'job' | 'review' | 'brief' | 'recap'; /** 定时触发的(赶上免打扰的 initiative 当天记 skipped:quiet,不往后推);换一家来审不是。 */ scheduled: boolean }): Promise<JobTurnResult> {
     const { chatId, jobId } = args
     const gate = resolveDispatch(chatId)
     if (gate.blocked === 'wechat_degraded') return 'skipped:degraded'
@@ -690,7 +690,7 @@ export function buildTickBodies(deps: TickDeps): TickBodies {
     let result: JobTurnResult = 'failed:error'
     try {
       const nowMs = Date.parse(args.nowIso)
-      const said = await speech.say({ kind: args.kind ?? 'job', chatId, scheduled: true, ...(Number.isFinite(nowMs) ? { nowMs } : {}) }, async (outbound) => {
+      const said = await speech.say({ kind: args.kind, chatId, scheduled: args.scheduled, ...(Number.isFinite(nowMs) ? { nowMs } : {}) }, async (outbound) => {
       // 回复交付按 chatId 记账 ⇒ 与主人的对话串行,不然两轮的回复会混在一起。
       await deps.boot.coordinator.runExclusive(chatId, async () => {
         // 先忘一次:上次若崩在半路(没走到 finally),留下的续接记录会让这次接着上次的对话(终审 minor)。
