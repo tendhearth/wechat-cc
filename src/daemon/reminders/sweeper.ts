@@ -55,7 +55,11 @@ export const MAX_SENDS_PER_SWEEP = 30
 export interface SweepDeps {
   store: RemindersStore
   /** Deliver a message to a chat. Resolves {ok} — never throws for normal failures. */
-  send: (chatId: string, text: string) => Promise<{ ok: boolean; error?: string }>
+  /**
+   * 送一条提醒。`deferred` = CC 开口那道门(SpeechPolicy,第三批 3a)说两条路都送不到 —— 不是失败:
+   * 不算尝试、不退避,也不进放弃窗口;下一拍再问,通了就送(迟到的照常带说明)。
+   */
+  send: (chatId: string, text: string) => Promise<{ ok: boolean; error?: string; deferred?: string }>
   /** Current time, injected for tests. */
   nowIso: string
   log: (tag: string, line: string) => void
@@ -87,13 +91,22 @@ export const LATE_REMINDER_THRESHOLD_MS = 30 * 60_000
  * 迷惑(2026-08-27:票据过期/网络抖动会让提醒迟到送达,原文照发读起来
  * 像凭空冒出来)。未超阈值 → 原文。无 emoji,符合 CC 身份。
  */
+/** 晚了多久(提醒不再 24 小时就放弃,可能晚好几天 —— 主人一眼要看出还用不用管;9d 评审 #523)。 */
+function lateBy(ms: number): string {
+  const min = Math.floor(ms / 60_000)
+  if (min < 60) return `${min} 分钟`
+  const h = Math.floor(min / 60)
+  if (h < 24) return `${h} 小时`
+  return `${Math.floor(h / 24)} 天`
+}
+
 export function lateReminderText(text: string, dueAtIso: string, nowMs: number): string {
   const due = Date.parse(dueAtIso)
   if (!Number.isFinite(due) || nowMs - due < LATE_REMINDER_THRESHOLD_MS) return text
   const local = toLocalISO(due)            // 2026-08-27T15:00:00-07:00
   const md = local.slice(5, 10).replace('-', '月') + '日'   // 08月27日
   const hm = local.slice(11, 16)                             // 15:00
-  return `这条提醒晚了点(本该 ${md} ${hm} 提醒你)——刚才没连上你,现在补给你:\n${text}`
+  return `这条提醒晚了 ${lateBy(nowMs - due)}(本该 ${md} ${hm} 提醒你)——刚才没连上你,现在补给你:\n${text}`
 }
 
 export async function runReminderSweep(deps: SweepDeps): Promise<SweepResult> {
@@ -124,11 +137,17 @@ export async function runReminderSweep(deps: SweepDeps): Promise<SweepResult> {
     }
     sendAttempts++
 
-    let outcome: { ok: boolean; error?: string }
+    let outcome: { ok: boolean; error?: string; deferred?: string }
     try {
       outcome = await deps.send(rec.chat_id, lateReminderText(rec.text, rec.due_at, nowMs))
     } catch (err) {
       outcome = { ok: false, error: err instanceof Error ? err.message : String(err) }
+    }
+
+    if (outcome.deferred) {
+      result.deferred++
+      deps.log('REMINDERS', `deferred ${rec.id} → ${rec.chat_id}: ${outcome.deferred}(两条路都送不到,不计失败,通了就送)`)
+      continue
     }
 
     if (outcome.ok) {
@@ -167,11 +186,34 @@ export async function runReminderSweep(deps: SweepDeps): Promise<SweepResult> {
   return result
 }
 
+/**
+ * 提醒接到 CC 开口那道门上(第三批 3a,kind=reminder,归 requested:时间是主人自己定的 ⇒ 免打扰、别烦我都照发)。
+ *  - 两条路都送不到 ⇒ `deferred`(留着,不算失败);
+ *  - 放行 ⇒ 经 proactive-channel 送(微信能用走微信,降级落到 App),结果原样交回,-2 / 退避 / 放弃窗口照旧。
+ */
+export function sendReminderVia(speech: import('../speech/policy').SpeechPolicy, log: (tag: string, line: string) => void): SweepDeps['send'] {
+  return async (chatId, text) => {
+    let sent: { ok: boolean; error?: string } = { ok: false, error: 'not_sent' }
+    const o = await speech.say({ kind: 'reminder', chatId }, async (turn) => {
+      const r = await turn.sendText(chatId, text)
+      sent = r.error ? { ok: false, error: r.error } : { ok: true }
+    })
+    if ('defer' in o) return { ok: false, deferred: o.reason }
+    if ('drop' in o) return { ok: false, error: `speech_dropped:${o.reason}` }
+    if (sent.ok && o.channel === 'app') log('REMINDERS', `chat=${chatId} delivered to the app (wechat not usable)`)
+    return sent
+  }
+}
+
 const DEFAULT_INTERVAL_MS = 60 * 1000 // 60s
 
 export interface ReminderSchedulerDeps {
   store: RemindersStore
-  send: (chatId: string, text: string) => Promise<{ ok: boolean; error?: string }>
+  /**
+   * 送一条提醒。`deferred` = CC 开口那道门(SpeechPolicy,第三批 3a)说两条路都送不到 —— 不是失败:
+   * 不算尝试、不退避,也不进放弃窗口;下一拍再问,通了就送(迟到的照常带说明)。
+   */
+  send: (chatId: string, text: string) => Promise<{ ok: boolean; error?: string; deferred?: string }>
   log: (tag: string, line: string) => void
   /** Override sweep interval (ms). Defaults to 60s. */
   intervalMs?: number
