@@ -4,15 +4,26 @@ import { join } from 'node:path'
 import { makePhoneLifecycle } from './phone-lifecycle'
 
 describe('phone lifecycle(手机那一簇关机时停掉:隧道 / notifier / 订阅 / 设置面板)', () => {
-  it('stops in the order things were added, once; a failing stop does not skip the rest', async () => {
+  it('stops in a FIXED order regardless of when things were added (real boot: the panel is added synchronously, the tunnels only after the async import) — tunnels first, panel last', async () => {
+    const order: string[] = []
+    const lc = makePhoneLifecycle(() => {})
+    lc.add('settings-panel', () => { order.push('settings-panel') })   // 同步,先到
+    lc.add('phone-events', () => { order.push('phone-events') })
+    lc.add('notifier', () => { order.push('notifier') })               // 异步 import 回来以后才到
+    lc.add('v2-tunnel', () => { order.push('v2-tunnel') })
+    lc.add('legacy-tunnel', () => { order.push('legacy-tunnel') })
+    await lc.stop()
+    expect(order).toEqual(['legacy-tunnel', 'v2-tunnel', 'notifier', 'phone-events', 'settings-panel'])
+  })
+  it('stops once; a failing stop is logged and does not skip the rest', async () => {
     const order: string[] = []
     const logs: string[] = []
     const lc = makePhoneLifecycle((t, l) => logs.push(`${t} ${l}`))
-    lc.add('tunnel', () => { order.push('tunnel') })
+    lc.add('settings-panel', async () => { order.push('settings-panel') })
     lc.add('notifier', () => { throw new Error('boom') })
-    lc.add('panel', async () => { order.push('panel') })
+    lc.add('v2-tunnel', () => { order.push('v2-tunnel') })
     await lc.stop(); await lc.stop()
-    expect(order).toEqual(['tunnel', 'panel'])
+    expect(order).toEqual(['v2-tunnel', 'settings-panel'])
     expect(logs.some(l => l.includes('notifier') && l.includes('boom'))).toBe(true)
   })
   it('something that only comes up after stop (the async tunnel import) is stopped right away instead of started', async () => {
@@ -20,7 +31,7 @@ describe('phone lifecycle(手机那一簇关机时停掉:隧道 / notifier / 订
     await lc.stop()
     expect(lc.stopped()).toBe(true)
     let stopped = false
-    lc.add('late tunnel', () => { stopped = true })
+    lc.add('v2-tunnel', () => { stopped = true })
     expect(stopped).toBe(true)
   })
   it('main.ts registers the phone cluster BEFORE polling ⇒ reverse stop: inbound stops first, in-flight App replies still drain through the tunnel', () => {
