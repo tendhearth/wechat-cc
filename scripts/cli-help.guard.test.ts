@@ -57,7 +57,8 @@ describe('cli.ts --help 快照(逐字节)', () => {
         expect(c.code, c.out).toBe(0)
         expect(c.out).toMatchSnapshot(`${name} ${child} --help`)
       }
-    })
+      // 一族要冷启 1 + 子命令个 `bun cli.ts`(plugin 一族就有好几个),满载下单个冷启几秒,20s 不够(10-21);每次 spawn 自己仍有 15s 上限
+    }, 60_000)
   }
 })
 
