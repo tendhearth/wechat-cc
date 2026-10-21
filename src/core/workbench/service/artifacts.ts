@@ -35,7 +35,7 @@ function stopSignalOf(running:Active):AbortSignal {
 /** 给这一轮打个 checkpoint;打不成就是 undefined(那一轮不可回退),从不抛。打成了记下来给下一次复用。 */
 async function checkpointNow(ctx:ServiceCtx,running:Active,root:string,prev:string|undefined,signal?:AbortSignal):Promise<string|undefined> {
   try {
-    const result=await takeCheckpoint({root,taskId:running.taskId,stateDir:ctx.stateDir,...(prev?{prev}:{}),...(signal?{signal}:{})})
+    const result=await takeCheckpoint({root,taskId:running.taskId,stateDir:ctx.stateDir,...(prev?{prev}:{}),...(signal?{signal}:{}),...(ctx.deps.checkpointDeadlineMs!==undefined?{deadlineMs:ctx.deps.checkpointDeadlineMs}:{})})
     if('skipped' in result){ctx.log?.('workbench',`checkpoint skipped task=${running.taskId} reason=${result.skipped}`);return undefined}
     running.checkpointTip=result.commit
     // 每件事至多留 CHECKPOINT_KEEP 个(设计稿「ref 的去留」),旧的随裁
@@ -139,7 +139,7 @@ export function makeArtifactsDomain(ctx:ServiceCtx):ArtifactsDomain {
         // 独立工作区:这一轮结束时的 checkpoint 和差异并行打(只有起点打成了才打终点 —— 单个终点回退不了什么)
         const root=baseline.checkpoint?liveWorktreeRoot(ctx,running.taskId):null
         let sameTree=false
-        const [report,after]=await Promise.all([finishGitReview(baseline),root?takeCheckpoint({root,taskId:running.taskId,stateDir:ctx.stateDir,prev:baseline.checkpoint!,signal:stopSignalOf(running)}).catch(()=>null):Promise.resolve(null)])
+        const [report,after]=await Promise.all([finishGitReview(baseline),root?takeCheckpoint({root,taskId:running.taskId,stateDir:ctx.stateDir,prev:baseline.checkpoint!,signal:stopSignalOf(running),...(ctx.deps.checkpointDeadlineMs!==undefined?{deadlineMs:ctx.deps.checkpointDeadlineMs}:{})}).catch(()=>null):Promise.resolve(null)])
         if(after&&!('skipped' in after)){running.checkpointTip=after.commit;sameTree=after.sameTree;void pruneCheckpoints(root!,running.taskId)}
         if(state.shutdownComplete)return
         if(canonicalProject(running.path)!==running.path || directoryIdentity(running.path)!==running.directoryIdentity)throw new Error('invalid_path')

@@ -138,6 +138,8 @@ export interface ServiceDeps {
   /** 项目经验(2026-10-20):源项目路径 ⇒ 要放进执行者指令的那一段;没有 ⇒ null。 */
   projectLessons?: (projectPath: string | null) => string | null
   /** 加一条项目经验(打回时「同时记成这个项目的经验」);同微信「经验」命令、手机那个文件。 */
+  /** checkpoint 总期限(毫秒);缺省 CHECKPOINT_DEADLINE_MS。只给测试放宽(负载下 15 秒不够,打不成点那一轮就回不去)。 */
+  checkpointDeadlineMs?: number
   addLesson?: (projectPath: string, text: string) => { ok: true } | { ok: false; error: 'invalid' | 'duplicate' | 'full' }
 }
 export interface ServiceCtx {

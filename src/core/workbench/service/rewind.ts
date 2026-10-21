@@ -173,7 +173,7 @@ export function makeRewindDomain(ctx: ServiceCtx, domains: { lifecycle: Pick<Lif
   async function backupNow(id: string, root: string): Promise<{ commit: string; tree: string; filters: string[] }> {
     const args = await checkpointGitArgs(root)
     if ('skipped' in args) throw fail('rewind_unavailable', { reason: args.skipped })
-    const b = await takeCheckpoint({ root, taskId: id, stateDir: ctx.stateDir })
+    const b = await takeCheckpoint({ root, taskId: id, stateDir: ctx.stateDir, ...(ctx.deps.checkpointDeadlineMs !== undefined ? { deadlineMs: ctx.deps.checkpointDeadlineMs } : {}) })
     if ('skipped' in b) throw fail('rewind_unavailable', { reason: b.skipped })
     return { commit: b.commit, tree: b.tree, filters: args.filters }
   }
