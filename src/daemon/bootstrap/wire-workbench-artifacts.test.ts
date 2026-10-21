@@ -11,7 +11,9 @@ import {makeWorkbenchStore} from '../../core/workbench/store'
 import {makeWorkbenchService,type WorkbenchService} from '../../core/workbench/service'
 import {saveArtifactSnapshot} from '../../core/workbench/artifacts'
 import {makeIlinkAdapter} from '../ilink-glue'
-import {makeMwWorkbench} from '../inbound/mw-workbench'
+import {makeMwCommand} from '../inbound/mw-command'
+import {makeCommandRegistry} from '../commands/registry'
+import {makeTaskCommand} from '../commands/task-command'
 import {wireWorkbenchArtifacts} from './wire-workbench-artifacts'
 import {removeTempDir} from '../../lib/test-temp'
 import { serve, type Server } from '../../lib/runtime/http'
@@ -49,7 +51,7 @@ async function fixture(finalResponses:unknown[]){
   const adapter=makeIlinkAdapter({stateDir:root,accounts:[{id:'account-1',botId:'bot',userId:'user',baseUrl:`http://127.0.0.1:${server.port}`,token:'secret',syncBuf:''}],db,conversationStore:makeConversationStore(db)})
   adapter.routeChatToAccount('owner','account-1');adapter.captureContextToken('owner','context-1')
   const wiring=wireWorkbenchArtifacts({workbench:service,ilink:adapter}),ordinary=vi.fn(async()=>({msgId:'ordinary'}))
-  const middleware=makeMwWorkbench({handleWechat:service.handleWechat,sendMessage:ordinary})
+  const middleware=makeMwCommand({registry:makeCommandRegistry([makeTaskCommand({handleWechat:service.handleWechat,sendMessage:ordinary})]),log:()=>{}})
   const command=`任务 ${task.id} 文件 ${artifact.id}`
   const invoke=async()=>{const ctx={msg:{chatId:'owner',userId:'owner',accountId:'account-1',text:command,msgType:'text',createTimeMs:1,msgId:'artifact-command',contextToken:'context-1'},receivedAtMs:1,requestId:'artifact-command'};await middleware(ctx,async()=>{});return ctx}
   cleanups.push(async()=>{await wiring.close();await service.shutdown();server.stop(true);db.close();removeTempDir(root)})

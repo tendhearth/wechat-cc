@@ -8,9 +8,9 @@
  */
 /**
  * 重构第二批步 3b:admin / mode / onboarding / permission-reply 收进命令表(commands/registry.ts),
- * 这里只剩三种 —— 工作台的「任务 …」(步 4 再收)、命令表、管家指称。命令表内部的先后见 registry 的 ids。
+ * 步 4:工作台的「任务 …」也收进命令表(ids[0])。这里只剩两种 —— 命令表、管家指称。命令表内部的先后见 registry 的 ids。
  */
-export type IntentKind = 'task-command' | 'command' | 'task-reference' | 'chat'
+export type IntentKind = 'command' | 'task-reference' | 'chat'
 
 export interface Intent {
   kind: IntentKind
@@ -27,4 +27,4 @@ export interface Intent {
 export const routedAway = (ctx: { intent?: Intent }, mine: IntentKind): boolean => ctx.intent !== undefined && ctx.intent.kind !== mine
 
 /** 消费者的优先级 —— 与 build.ts 里原来的链序一致;chat 是兜底,不在表里。 */
-export const INTENT_ORDER: readonly Exclude<IntentKind, 'chat'>[] = ['task-command', 'command', 'task-reference']
+export const INTENT_ORDER: readonly Exclude<IntentKind, 'chat'>[] = ['command', 'task-reference']
