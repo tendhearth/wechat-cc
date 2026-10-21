@@ -8,8 +8,9 @@
  * (几条合成一句)。以前社交通知不看免打扰,半夜来信主人会收到一句;推后了就再也不说,对 report 来说比以前更差。
  * CC 自己的见闻(initiative)推后就是这一句不说 —— 东西在背包里,不排队。
  */
-import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdirSync, renameSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
+import { readJsonFile } from '../../lib/read-json-file'
 import { originOf, type SocialNotice } from '../../core/speech/kinds'
 import type { SpeechPolicy } from '../speech/policy'
 
@@ -36,7 +37,7 @@ export function makeTellOwner(d: {
   const read = (): Queue => {
     if (!existsSync(path)) return { items: [], dropped: 0 }
     try {
-      const v = JSON.parse(readFileSync(path, 'utf8')) as unknown
+      const v = readJsonFile<unknown>(path)   // 容忍 BOM(Windows 真机踩过);仓库守卫不许裸的 JSON.parse(readFileSync)
       if (Array.isArray(v)) return { items: v as PendingNotice[], dropped: 0 }
       const q = v as Partial<Queue>
       return { items: Array.isArray(q.items) ? q.items : [], dropped: typeof q.dropped === 'number' ? q.dropped : 0 }
