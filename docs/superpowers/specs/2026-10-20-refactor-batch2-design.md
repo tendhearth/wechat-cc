@@ -46,7 +46,8 @@ interface CommandCtx { chatId; tier; isOwner; say(text); log; services: … }   
 - 配对、访客批准 / 邀请码、自改、`/health`、`/update`、`/reset`
 
 **引去软件(整体掌控 / 多 agent)** —— 微信上仍认得这句话,但回一句「这件事在 App / 电脑上做:……」并给出打开方式:
-- 两家对比(新建 / 并排看)、请 X 审、改动详情、记成经验、项目经验的增删、工作区的提交 / 合回 / 删除 / 重开、取成果文件 / 正文分页
+- ⚠️ **今天刚上线就收回的**:两家对比(新建 / 并排看,#451 #452)、请 X 审(#460)、记成经验(#454)。主人留意:这几条不是老功能,是今天下午刚在微信上做的,按「微信收敛」划过去。
+- 其余:改动详情、项目经验的增删(「经验 …」)、工作区的提交 / 合回 / 删除 / 重开、取成果文件 / 正文分页
 - `/both /chat` 多家同答 / 圆桌
 
 > 这一节是**我按主人那句话做的划分**,PR 之前请主人过目;任何一条想留在微信,改 `surface` 一个字段就行。
@@ -69,22 +70,27 @@ interface CommandCtx { chatId; tier; isOwner; say(text); log; services: … }   
 
 ## 2. 路由注册表(桌面 + 手机)
 
-### 2.1 一张表
+### 2.1 一张表(wechat-cc-2a 评审后改)
 
 ```ts
 // packages/protocol/src/routes.ts
-route('POST /v1/matter/say', {
-  surfaces: ['desktop', 'phone'],   // 同一个处理器,两种令牌
-  tier: 'admin',
-  link: 'none' | 'read' | 'write',   // 只对手机有意义;缺省 'none'(只给设备)
-  req: zod, res: zod,
-  errors: ['workbench_busy', …],     // 引用 workbench-errors 表
+route('matter.say', {
+  service: 'matters.say',                       // 同一个服务
+  surfaces: {                                    // 各端各自的路径、令牌、回包投影 —— 不是同一个处理器
+    desktop: { path: 'POST /v1/matter/say', tier: 'admin', res: DesktopSay },
+    phone:   { path: 'POST /m/api/matter/say', link: 'none', res: PhoneSay, project: phoneSay },
+  },
+  req: zod,
+  errors: ['workbench_busy', …],                // 引用 workbench-errors 表(状态按端)
 })
 ```
 
-- **一个命名空间**:手机的 `/m/api/*` 与桌面的 `/v1/*` 指向同一批处理器(现在两套平行路由族、同一个 MattersService)。旧路径先保留一层别名,App / 网页换完再删。
-- 从表里生成:daemon 的 `ROUTE_MIN_TIER` / `routeAllow` / `PHONE_ROUTES` / `LINK_READ_OK` / `LINK_WRITE_OK`;Tauri 的 `lib.rs` 白名单与 `workbench-proxy.ts`(build 时生成一份 JSON);App 与桌面的类型化客户端(`createClient(routes)`)。
-- 一层统一的 HTTP:鉴权(令牌种类 + 档位 + link)、JSON 解析、zod 校验、错误码 → 状态都在这里;`settings-panel.ts` 的 30 个 `url.pathname ===` 和 7 个 `mobile-*.ts` 的手工解析收成处理器函数。
+- **同一批服务、按端投影**:手机回包是专门裁过的(脚本剥路径只带尾巴、审阅块不带原文行号、回退的 reason 走白名单),合成一个处理器会让桌面字段漏到手机。处理器拿到服务结果后按端 `project`。
+- **这一批不合并命名空间**:手机 App 没法强制升级、TestFlight 的老 build 会一直在,删旧路径得有最低版本闸;收益最小、风险最大 ⇒ 挪到第三批或不做。
+- **表要覆盖现在散在别处的全部清单**:`ROUTE_MIN_TIER`、operator / 设备 / 链接令牌的 `routeAllow`、`PHONE_ROUTES`、`LINK_READ_OK` / `LINK_WRITE_OK`、`LAN_ONLY_OPS`、`PHONE_TOPICS` 订阅、`/set` 页那 30 个路径(用的是链接令牌);否则表外还会留一份。
+- 从表里生成:上面这些 daemon 清单;Tauri 的 `lib.rs` 白名单与 `workbench-proxy.ts`(build 时生成一份带 **version** 的 JSON);App 与桌面的类型化客户端。
+- **版本错位**:`lib.rs` 编进 .app,`self deploy` 只换 sidecar ⇒ 新加的桌面路由要等下一版 App 才走得通。生成物带 version;sidecar 发现桌面白名单比自己老时,新路由回「请更新 App」(带码),不是 403。
+- 一层统一的 HTTP:鉴权(令牌种类 + 档位 + link)、JSON 解析、zod 校验、错误码 → 状态;`settings-panel.ts` 的 30 个 `url.pathname ===` 和 7 个 `mobile-*.ts` 的手工解析收成处理器函数。
 - 守卫测试换成一条:生成物与表一致(快照)。
 
 ### 2.2 跟手机网页收敛的关系
@@ -131,15 +137,17 @@ interface DaemonModule {
 | 2 | `CommandRegistry` 骨架 + 把 `chainReplyHandlers` 和 `command-router` 那 11 条搬进来;修 1.5 的 2 | 我 | 1 |
 | 3 | 其余命令搬进来(admin / mode / onboarding / permission-reply / 访问闸);修 1.5 的 1、3、4、5 | 我 | 2 |
 | 4 | `wechat-control` 拆成注册表条目 + 微信收敛(1.3,主人过目后) | wechat-cc-2a(工作台是它的) | 3 |
-| 5 | 路由表 + 生成物 + 统一 HTTP 层(先手机,再桌面) | wechat-cc-2a(三端界面) | — |
+| 5a | 现有路由原样进表、生成各份清单,快照逐条一致,不删任何东西 | wechat-cc-2a | —(马上可开) |
+| 5b | 主人点头网页收敛清单后,按清单删页面与路由(一次改一张表) | wechat-cc-2a | 5a + 主人 |
+| 5c | 统一 HTTP 层(先手机后桌面)+ 桌面白名单 version / 「请更新 App」 | wechat-cc-2a | 5a |
 | 6 | `DaemonModule` + 容器;main.ts 缩短;目录归位 | 我 | 3 |
 | 7 | `ExecutorDescriptor` + 注册循环 | 我 | 6 |
 | 8 | 插件化:social / atelier / customer-review / hunt / chatroom / pet 进 `plugins/`,默认关 | 我 | 6 |
 
-步 5 与步 1–4 可以并行(一个动入站、一个动 HTTP);步 6 开始前两边都要合干净。整批预计一周多,期间不接新功能。
+步 5a / 5c 与步 1–4 可以并行(一个动入站、一个动 HTTP);步 6 开始前两边都要合干净。整批预计一周多,期间不接新功能。
 
 ## 7. 要主人过目的
 
-1. **1.3 的划分**:哪些留在微信、哪些引去软件、哪些进插件。
+1. **1.3 的划分**:哪些留在微信、哪些引去软件、哪些进插件 —— 特别是标 ⚠️ 的「今天刚上线就收回」那三条。
 2. **1.5 的五个 bug** 修了以后,行为会变(变成该有的样子)。
 3. **插件默认关**:关掉以后,手 / 背包 / 串门 / 回信 / 心愿 / 介绍 这些在微信上会回「这个功能没开,到设置里打开」。
