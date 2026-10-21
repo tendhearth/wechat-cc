@@ -45,6 +45,7 @@
 **3a. `SpeechPolicy`:CC 开口只有一道门(理念 3)——我**
 - `request({kind, chatId, origin}) → {allow, channel} | {defer, until} | {drop, reason}`。九条路都改成只产出候选,发送原语收成一个。
 - **怎么分「主人要的」和「CC 自己想说的」**(以前没人定,我定):
+  - **准绳:看这一句的*内容*是不是主人点名要的,不看开关是谁打开的**(9d 评审 #507)。晨报的开关是主人开的,但内容是 CC 自己挑的,所以算 initiative;定时任务「每天 9 点看邮箱」的内容是主人点名的,所以算 requested。以后加新类型,先按这条归类。
   - `origin: 'requested'` 是主人亲手定了时间的:提醒、他建的定时任务。绕过 care 档;提醒连免打扰也绕过,时间本身就是他要的。
   - `origin: 'report'` 是主人交办的事做完了来回报:不看 care 档,但遵守免打扰(往后推)。
   - `origin: 'initiative'` 是 CC 自己想说的:晨报、周报、信、伙伴、来访、贴纸、记忆通知。care off ⇒ 不说;免打扰 ⇒ 往后推;按类、按天限频;记一本外发账。
@@ -60,7 +61,7 @@
 
 **3c. 执行者一份描述(理念 1)——我**
 - 显示名下发(⑥,在做)。
-- 端点 host 一处:等真机抓到连接后再定,不猜。
+- 端点 host 一处:等真机抓到连接后再定,不猜。网络检查(`net-probe`)和网络守护(`call-classifier`)一起对上,两边必须从同一份描述读。
 - 注册只在一处:`providers.ts` 和 `wire-workbench.ts` 两边重复的注册收成「描述里的 detect / build」。
 - `Policy` 编译器把 Codex / agy / Cursor 的翻译层纳入证明。`guestSafe` 改成必须显式写。
 
