@@ -139,7 +139,9 @@ pipeline-deps.ts(1100+ 行、横跨 wechat 入站 / 记忆 / 手机中继 / matt
 - **wireX 里不 await 还没就绪的东西**。要等 wireMain 之后才能起的部分(定时 runner 之类),返回 `start()` / `ready()`,由 main 决定什么时候调(wechat-cc-54 评审 #478)。
 - **晚到的依赖传 getter 或闭包**(`workbench()`、`runJobTurn`),调用时才取;没就绪时给明确的结果(null / 被拒的 promise),不靠持有者 + 可选链。
 
-已切:终端会话 #478、定时 / 早报 / 周报 / 换一家来审 #479。
+已切:终端会话 #478、定时 / 早报 / 周报 / 换一家来审 #479、「CC 做过的事」#480。
+
+**工作台不切**(10-21 摸过之后定):它的主体早就在 `wireWorkbench()` 里了;main.ts 里剩下的是**启停顺序本身** —— `workbench-notifications` / `workbench-artifacts` 先占位登记在 polling 之前(倒序停时先停入站、再排空任务外发、最后刷 ilink),等 startup 走完才建(它们一建就起定时器),`setExecutionGuard` / `setSuspendedTasks` 回挂到 SessionManager 和网络守护。这些是 main 的职责(决定先后),搬进 wire-workbench 只会把顺序藏起来。
 
 ## 4. 执行者描述(ExecutorDescriptor)
 
