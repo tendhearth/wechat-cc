@@ -7,7 +7,7 @@ import {
 import { shouldSpeak } from '../daemon/companion/calibration'
 
 const NOW = '2026-05-13T02:00:00.000Z'   // 北京 10:00 周三
-const base = { isOwnerChat: true, level: 'low' as const, prefs: {}, socialWired: true, nowIso: NOW, ledger: { noReplyCount: 0 }, lastInboundAtIso: '2026-05-01T00:00:00.000Z' }
+const base = { isOwnerChat: true, level: 'low' as const, prefs: { hunt: true }, socialWired: true, nowIso: NOW, ledger: { noReplyCount: 0 }, lastInboundAtIso: '2026-05-01T00:00:00.000Z' }
 
 const ctx = (over: Partial<PlanContext> = {}): PlanContext => ({
   nowLocal: '2026-05-13 10:00 周三', ownerLastInboundMinutesAgo: 600,
@@ -30,6 +30,10 @@ describe('computeCandidates', () => {
     const r = computeCandidates({ ...base, ledger: { noReplyCount: 0, lastHuntAtIso: '2026-05-13T00:00:00.000Z' }, lastInboundAtIso: '2026-05-13T01:00:00.000Z' }, shouldSpeak)
     expect(r.candidates.map(c => c.action)).toEqual(['visit'])
     expect(r.rejected.find(x => x.action === 'hunt')?.reason).toBe('hunt_cooldown')
+  })
+  it('打猎默认关(主人 10-21 定):没设过 ⇒ 不是候选;明确开了才算(老装机的主人在开机时已被写成显式的开)', () => {
+    expect(computeCandidates({ ...base, prefs: {} }, shouldSpeak).candidates.map(c => c.action)).not.toContain('hunt')
+    expect(computeCandidates({ ...base, prefs: { hunt: true } }, shouldSpeak).candidates.map(c => c.action)).toContain('hunt')
   })
   it('非主人会话只可能有 gap;pref hunt=false / 社交没接线 分别拿掉 hunt / visit', () => {
     expect(computeCandidates({ ...base, isOwnerChat: false }, shouldSpeak).candidates.map(c => c.action)).toEqual(['gap'])

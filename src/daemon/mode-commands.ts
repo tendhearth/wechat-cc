@@ -501,7 +501,7 @@ export function makeModeCommands(deps: ModeCommandsDeps): ModeCommands {
           const splitState = p.split === false ? 'off' : 'on'
           const careState = p.care ?? '未设置'
           const stickersState = p.stickers === undefined ? '未设置' : (p.stickers ? 'on' : 'off')
-          const huntState = p.hunt === undefined ? '未设置' : (p.hunt ? 'on' : 'off')
+          const huntState = p.hunt === undefined ? '未设置(默认关)' : (p.hunt ? 'on' : 'off')
           const visitState = p.visit === undefined ? '未设置' : (p.visit ? 'on' : 'off')
           // Concise overview (owner feedback 2026-08-25: 回复应该更简洁,具体
           // 修改到页面里) — values only; the panel link is where changes

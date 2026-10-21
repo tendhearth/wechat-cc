@@ -19,7 +19,7 @@ export interface ChatPrefs {
   care?: 'off' | 'low' | 'high'
   /** 表情包开关 (sticker replies). undefined ⇒ ON (default); false ⇒ off. */
   stickers?: boolean
-  /** 每日打猎开关 (daily hunt toggle). undefined ⇒ ON (default); false ⇒ off. */
+  /** 每日打猎开关。**undefined ⇒ 关**(2026-10-21 起,收敛清单 ②;以前是开)。true ⇒ 开。老装机主人的「没设过」开机时写成了显式 true(companion/hunt-default.ts)。 */
   hunt?: boolean
   /** 每日串门开关。undefined ⇒ ON;false ⇒ off。 */
   visit?: boolean
