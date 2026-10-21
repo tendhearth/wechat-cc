@@ -30,3 +30,14 @@ describe('工作区脚本到手机的投影(2026-10-20)',()=>{
     expect([...phoneLine('x'.repeat(500),[])].length).toBe(200)
   })
 })
+
+describe('phoneLine · 路径不漏(#459 评审)', () => {
+  it('冒号后面的路径、file:// 都只留最后一段;http(s) 不碰;兄弟目录不被根误伤', () => {
+    expect(phoneLine('PATH=/usr/bin:/Users/me/.bun/bin', [])).toBe('PATH=…/bin:…/bin')
+    expect(phoneLine('cwd:/Users/me/secret/proj', [])).toBe('cwd:…/proj')
+    expect(phoneLine('open file:///Users/me/notes/a.md', [])).toBe('open file://…/a.md')
+    expect(phoneLine('see http://localhost:47100/app and https://x.dev/a', [])).toBe('see http://localhost:47100/app and https://x.dev/a')
+    expect(phoneLine('/Users/me/proj/src/a.ts and /Users/me/proj2/b.ts', ['/Users/me/proj'])).toBe('./src/a.ts and …/b.ts')
+    expect(phoneLine('done in /Users/me/proj', ['/Users/me/proj'])).toBe('done in .')
+  })
+})

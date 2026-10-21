@@ -12,15 +12,20 @@ type ScriptsLike={configured?:unknown;approved?:unknown;setup?:unknown;run?:unkn
 type EventLike={activity?:{id?:unknown;output?:unknown}}
 
 const ANSI=/\x1b\[[0-9;?]*[ -/]*[@-~]|\x1b\][^\x07]*(?:\x07|\x1b\\)/g
-// 绝对路径:行首或空白 / 引号 / 括号 / 等号之后的 /xxx(不碰 http://host/ 里的 //),以及 C:\xxx
-const POSIX_PATH=/(^|[\s'"(=\[])(\/[^\s'"()\]]+)/g
+// 绝对路径:行首或空白 / 引号 / 括号 / 等号 / 冒号之后的 /xxx(冒号:PATH=a:/Users/x、cwd:/Users/x —— #459 评审);
+// 路径不许以 // 开头 ⇒ http://host/ 不碰;file:///xxx 单独先处理。以及 C:\xxx
+const FILE_URL=/file:\/\/(\/[^\s'"()\]]+)/g
+const POSIX_PATH=/(^|[\s'"(=\[:])(\/(?!\/)[^\s'"()\]:]+)/g
 const WIN_PATH=/(^|[\s'"(=\[])([A-Za-z]:\\[^\s'"()\]]+)/g
+const esc=(s:string)=>s.replace(/[.*+?^${}()|[\]\\]/g,'\\$&')
 const tailName=(p:string)=>{const parts=p.split(/[\\/]+/).filter(Boolean);return parts.length?`…/${parts[parts.length-1]}`:'…'}
 
 /** 一行给手机看的输出:去颜色码和控制符、已知根目录换成「.」、其余绝对路径只留最后一段。 */
 export function phoneLine(line:string,roots:readonly string[]):string {
   let s=line.replace(ANSI,'').replace(/[\x00-\x08\x0b-\x1f\x7f]/g,'')
-  for(const root of roots)if(root&&root.length>1)s=s.split(root).join('.')
+  // 根目录只在整段边界上换(/Users/me/proj2 不会因为根是 /Users/me/proj 变成「.2」)
+  for(const root of roots)if(root&&root.length>1)s=s.replace(new RegExp(esc(root)+'(?=$|[\\\\/\\s\'"():])','g'),'.')
+  s=s.replace(FILE_URL,(_m,p:string)=>'file://'+tailName(p))
   s=s.replace(POSIX_PATH,(_m,pre:string,p:string)=>pre+tailName(p)).replace(WIN_PATH,(_m,pre:string,p:string)=>pre+tailName(p))
   return [...s].slice(0,LINE_MAX).join('')
 }
