@@ -18,3 +18,21 @@ describe('重启通知经 CC 开口那道门(第三批 3a)', () => {
     expect(logs[0]).toContain('speech policy not wired')
   })
 })
+
+describe('重启通知按对话一个一个进门(9d 评审)', () => {
+  it('两个收件人、一个送到一个没送到 ⇒ 只有没送到的那个进待说队列', async () => {
+    const { makeSpeechPolicy } = await import('./speech/policy')
+    const { makePendingNotices } = await import('./speech/pending-notices')
+    const { mkdtempSync } = await import('node:fs'); const { tmpdir } = await import('node:os'); const { join } = await import('node:path')
+    const pending = makePendingNotices({ stateDir: mkdtempSync(join(tmpdir(), 'restart-')), log: () => {} })
+    const outbound = {
+      appDeliverable: () => false, canDeliver: () => true, sendOnce: async () => ({ ok: true }),
+      open: (chatId: string) => ({ sendText: async () => (chatId === 'admin-b' ? { msgId: '', error: 'down' } : { msgId: 'm' }), channel: () => 'wechat' as const, textOnly: () => false, sendAttachment: async () => false, sendSticker: async () => false, finish: () => {} }),
+    }
+    const speech = makeSpeechPolicy({ care: () => 'low', quietEndsAt: () => null, outbound, log: () => {}, pending })
+    const send = restartNoticeSender({ speech, log: () => {} })
+    await send('admin-a', 'CC 刚才重启了')
+    await send('admin-b', 'CC 刚才重启了')
+    expect(pending.groups().map(g => g.chatId)).toEqual(['admin-b'])
+  })
+})
