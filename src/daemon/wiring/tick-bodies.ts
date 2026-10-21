@@ -266,7 +266,7 @@ export interface TickBodies {
    * 定时任务的一轮(spec 2026-10-20-scheduled-jobs-design):独立会话 `job:<id>`、只读档、strict,
    * 走伙伴主动消息的出口;跑完 forget(不续接、不占位)。只给 claude / codex。
    */
-  runJobTurn(args: { chatId: string; jobId: string; text: string; nowIso: string; buildText?: (style: TickTextStyle) => string }): Promise<JobTurnResult>
+  runJobTurn(args: { chatId: string; jobId: string; text: string; nowIso: string; buildText?: (style: TickTextStyle) => string; /** 主人点名哪家(换一家来审,10-20);只认 JOB_PROVIDERS,没装 ⇒ skipped:executor,不换人。 */ provider?: (typeof JOB_PROVIDERS)[number] }): Promise<JobTurnResult>
 }
 
 export interface BuildPushTickTextOpts {
@@ -645,13 +645,13 @@ export function buildTickBodies(deps: TickDeps): TickBodies {
     return true
   }
 
-  async function runJobTurn(args: { chatId: string; jobId: string; text: string; nowIso: string; buildText?: (style: TickTextStyle) => string }): Promise<JobTurnResult> {
+  async function runJobTurn(args: { chatId: string; jobId: string; text: string; nowIso: string; buildText?: (style: TickTextStyle) => string; /** 主人点名哪家(换一家来审,10-20);只认 JOB_PROVIDERS,没装 ⇒ skipped:executor,不换人。 */ provider?: (typeof JOB_PROVIDERS)[number] }): Promise<JobTurnResult> {
     const { chatId, jobId } = args
     const gate = resolveDispatch(chatId)
     if (gate.blocked === 'wechat_degraded') return 'skipped:degraded'
     const { proj } = gate
     const registry = deps.boot.registry as { has?: (id: string) => boolean }
-    const providerId = pickJobExecutor(id => registry.has?.(id) ?? false)
+    const providerId = args.provider ? ((JOB_PROVIDERS as readonly string[]).includes(args.provider) && (registry.has?.(args.provider) ?? false) ? args.provider : null) : pickJobExecutor(id => registry.has?.(id) ?? false)
     if (!providerId || !deps.replyDelivery || deliveryModeOf(providerId) !== 'daemon') return 'skipped:executor'
     if (gate.blocked === 'session_in_flight') return 'skipped:busy'
     const key = { alias: `job:${jobId}`, providerId, chatId }
