@@ -1,14 +1,17 @@
 import { useRouter } from 'expo-router'
-import { useState } from 'react'
+import { useRef, useState } from 'react'
 import { Pressable, ScrollView, View } from 'react-native'
 import { SafeAreaView } from 'react-native-safe-area-context'
-import { BackendError, type MemoryVerdict } from '../backend/types'
+import { BackendError, type MemoryVerdict, type TodoStatus } from '../backend/types'
 import { t } from '../i18n'
 import { useLang } from '../i18n/useLang'
 import { useBackendCtx } from '../state/BackendProvider'
-import { useConnection, useQuery } from '../state/hooks'
+import { useConnection, useQuery, useSubmit } from '../state/hooks'
 import { canSubmit } from '../view/connection'
 import { memoryImportLine } from '../view/memory'
+import { todoActionNote, todosView, type TodoItem } from '../view/todos'
+import { ConnectionNotice } from '../ui/ConnectionNotice'
+import { Portrait } from '../ui/Portrait'
 import { TopBar } from '../ui/TopBar'
 import { radius, space } from '../ui/tokens'
 import { Txt } from '../ui/Txt'
@@ -18,6 +21,8 @@ const VERDICTS: MemoryVerdict[] = ['wrong', 'outdated', 'delete']
 
 // 「CC 记得你」(2026-10-06,与手机网页「CC 眼中的你」同一份):每晚整理出来的记忆;点一条可以说它记错了 / 过时了 / 不用记 ——
 // 立刻拿掉,CC 记下这次纠正、当晚整理不写回(记忆整理步骤 A)。
+// 「CC 画的你」与「待办」(收敛清单 ④,2026-10-21)也住这一页:都是 CC 眼中的你,网页上原本也和回忆放在一起。
+// 画在最上面(没画过 ⇒ 不画);待办在记忆前面:在办的带「完成」,最近了结的收起、带「捞回」。离线时两个按钮都灰着。
 export default function Memory() {
   const { c } = useTheme()
   const lang = useLang()
@@ -29,6 +34,46 @@ export default function Memory() {
   const [busy, setBusy] = useState(false)
   const [note, setNote] = useState<string | null>(null)
   const v = memory.data
+  const submit = useSubmit()
+  const pocket = useQuery('pocket', () => backend.pocket(), { refreshOnMount: true })
+  const todos = pocket.data ? todosView(pocket.data.todos, lang) : null
+  const [showSettled, setShowSettled] = useState(false)
+  const [todoBusy, setTodoBusy] = useState<number | null>(null)
+  const [todoNote, setTodoNote] = useState<string | null>(null)
+  // 同一帧连点两下:state 还没更新,靠 ref 挡住第二下
+  const todoInFlight = useRef(false)
+
+  const setTodo = async (id: number, status: TodoStatus) => {
+    if (todoInFlight.current || !online) return
+    todoInFlight.current = true
+    setTodoBusy(id); setTodoNote(null)
+    try {
+      const r = await submit(`todo:${id}`, () => backend.setTodo(id, status))
+      const key = todoActionNote(status, r)
+      if (key) setTodoNote(t(lang, key))
+      await pocket.refresh().catch(() => {}) // 失败会落在 pocket.error ⇒ 下面那句「可能不是最新的」
+    } finally {
+      todoInFlight.current = false
+      setTodoBusy(null)
+    }
+  }
+  const todoRow = (it: TodoItem, status: TodoStatus) => {
+    const off = !online || todoBusy !== null
+    const settled = status === 'active'
+    return (
+      <View key={it.id} testID={`todo-${it.id}`} style={{ flexDirection: 'row', alignItems: 'center', gap: space.m, borderBottomWidth: 1, borderBottomColor: c.hair, paddingBottom: space.s }}>
+        <View style={{ flex: 1, gap: space.xs }}>
+          <Txt role="bubble" content="user" tone={settled ? 'inkSoft' : 'ink'} style={settled ? { textDecorationLine: 'line-through' } : undefined}>{it.text}</Txt>
+          <Txt role="meta" tone="inkSoft" content="user">{it.meta}</Txt>
+        </View>
+        <Pressable testID={`todo-${settled ? 'restore' : 'done'}-${it.id}`} accessibilityRole="button" accessibilityState={{ disabled: off, busy: todoBusy === it.id }} disabled={off}
+          onPress={() => void setTodo(it.id, status)}
+          style={({ pressed }) => ({ minHeight: 36, justifyContent: 'center', paddingHorizontal: space.m, borderRadius: radius.control, borderWidth: 1, borderColor: c.hair, opacity: off ? 0.55 : pressed ? 0.7 : 1 })}>
+          <Txt role="meta">{t(lang, settled ? 'todos.restore' : 'todos.done')}</Txt>
+        </Pressable>
+      </View>
+    )
+  }
 
   const correct = async (id: string, verdict: MemoryVerdict) => {
     if (busy) return
@@ -41,6 +86,7 @@ export default function Memory() {
   return (
     <SafeAreaView edges={['top', 'bottom']} style={{ flex: 1, backgroundColor: c.paper }}>
       <TopBar title={t(lang, 'memory.title')} onBack={() => (router.canGoBack() ? router.back() : router.replace('/'))} />
+      <View style={{ paddingHorizontal: space.xl }}><ConnectionNotice /></View>
       <ScrollView contentContainerStyle={{ paddingHorizontal: space.xl, paddingBottom: space.xl, gap: space.l }}>
         {!v ? <Txt testID="memory-state" role="meta" tone="inkSoft">{t(lang, memory.error ? 'memory.unavailable' : 'progress.loading')}</Txt> : null}
         {v ? (
@@ -49,6 +95,29 @@ export default function Memory() {
             {v.when_label ? <Txt role="meta" tone="inkSoft">{t(lang, 'memory.updated', { when: v.when_label })}</Txt> : null}
           </View>
         ) : null}
+        {pocket.data?.portraitPng ? <Portrait png={pocket.data.portraitPng} label={t(lang, 'portrait.caption')} /> : null}
+        {todos ? (
+          <View testID="todos" style={{ gap: space.s }}>
+            <Txt role="caption" tone="inkSoft" accessibilityRole="header">{t(lang, 'todos.title')}</Txt>
+            {todos.empty ? (
+              <View testID="todos-empty" style={{ gap: space.xs }}>
+                <Txt role="bubble" tone="inkSoft">{todos.empty.line}</Txt>
+                <Txt role="meta" tone="inkSoft">{todos.empty.hint}</Txt>
+              </View>
+            ) : null}
+            {todos.active.map(it => todoRow(it, 'resolved'))}
+            {todos.settledToggle ? (
+              <Pressable testID="todos-settled-toggle" accessibilityRole="button" accessibilityState={{ expanded: showSettled }} onPress={() => setShowSettled(!showSettled)}
+                style={{ minHeight: 36, justifyContent: 'center' }}>
+                <Txt role="meta" tone="inkSoft">{todos.settledToggle}</Txt>
+              </Pressable>
+            ) : null}
+            {showSettled ? todos.settled.map(it => todoRow(it, 'active')) : null}
+            {todoNote ? <Txt testID="todos-note" role="meta" tone="inkSoft" accessibilityLiveRegion="polite">{todoNote}</Txt> : null}
+            {/* 手上有列表、但最近一次重拉失败了 ⇒ 别让人以为这就是现在的样子 */}
+            {pocket.error ? <Txt testID="todos-stale" role="meta" tone="inkSoft">{t(lang, 'todos.stale')}</Txt> : null}
+          </View>
+        ) : pocket.error ? <Txt testID="todos-unavailable" role="meta" tone="inkSoft">{t(lang, 'todos.unavailable')}</Txt> : null}
         {v?.sections.map(s => (
           <View key={s.name} style={{ gap: space.s }}>
             <Txt role="caption" tone="inkSoft" accessibilityRole="header">{s.name}</Txt>

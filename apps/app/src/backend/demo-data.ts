@@ -1,5 +1,5 @@
 import type { Lang } from '../i18n'
-import type { ApprovalExplanationT, ProgressSummaryT, PhoneChangesTurnT, EntryOptionsT, ConnectionsT, NativeSessionRowT, NativeSessionPageT, LetterSummaryT, PhoneJobT, ActivityItemT } from './types'
+import type { ApprovalExplanationT, ProgressSummaryT, PhoneChangesTurnT, EntryOptionsT, ConnectionsT, NativeSessionRowT, NativeSessionPageT, LetterSummaryT, PhoneJobT, ActivityItemT, TodoRowT } from './types'
 
 /** 演示情境的文案(中英两份,照设计样稿 tendhearth-phone.html 的 tr('中','英'))。 */
 type Pair = readonly [zh: string, en: string]
@@ -277,4 +277,21 @@ const ACTIVITY: ReadonlyArray<{ id: string; kind: ActivityItemT['kind']; ago: nu
 
 export function demoActivity(lang: Lang, now: number): ActivityItemT[] {
   return ACTIVITY.map(a => ({ id: a.id, kind: a.kind, at: now - a.ago, title: pick(lang, a.title), ...(a.ref ? { ref: a.ref } : {}) }))
+}
+
+/**
+ * 演示的待办(收敛清单 ④,2026-10-21):三条在办、一条最近了结。真连接时 value / time_ref 是聊天里的原话,
+ * display 是联系人的显示名;演示里按语言给。updated_at 是秒(同 daemon 的 facts 表)。
+ */
+const TODOS: ReadonlyArray<{ id: number; contact: string; display: Pair; value: Pair; time_ref: Pair | null; ago: number; settled: boolean }> = [
+  { id: 101, contact: 'mum', display: ['妈妈', 'Mum'], value: ['周末回家吃饭', 'Go home for dinner at the weekend'], time_ref: ['周六', 'Saturday'], ago: 2 * HOUR, settled: false },
+  { id: 102, contact: 'lin', display: ['小林', 'Lin'], value: ['把作品集的链接发给他', 'Send him the portfolio link'], time_ref: null, ago: DAY, settled: false },
+  { id: 103, contact: 'lin', display: ['小林', 'Lin'], value: ['还他那本《设计心理学》', 'Return his copy of The Design of Everyday Things'], time_ref: ['下周', 'next week'], ago: 2 * DAY, settled: false },
+  { id: 104, contact: 'mum', display: ['妈妈', 'Mum'], value: ['帮她预约体检', 'Book her health check'], time_ref: ['这周', 'this week'], ago: 3 * DAY, settled: true },
+]
+export function demoTodos(lang: Lang, now: number): Array<TodoRowT & { settled: boolean }> {
+  return TODOS.map(r => ({
+    id: r.id, contact: r.contact, predicate: 'obligation', value: pick(lang, r.value), time_ref: r.time_ref ? pick(lang, r.time_ref) : null,
+    updated_at: Math.floor((now - r.ago) / 1000), display: pick(lang, r.display), settled: r.settled,
+  }))
 }

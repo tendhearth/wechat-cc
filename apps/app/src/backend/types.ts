@@ -40,6 +40,14 @@ export type ActivityPageT = { items: ActivityItemT[]; next: string | null; degra
 /** 定时列表(GET /m/api/jobs,2026-10-20):executor=null ⇒ 这台电脑上没有能跑定时的执行者。 */
 export type JobsViewT = { timezone: string; executor: string | null; jobs: PhoneJobT[] }
 export type JobsAction = 'pause' | 'resume' | 'remove'
+/** 一条待办(GET /m/api/state 的 todos 里一行,协议包 TodoRow 校验):value = 要做的事,display = 跟谁(联系人显示名),
+ *  time_ref = 聊天里说的时间(「周五」),可能没有;updated_at = 秒。 */
+export type TodoRowT = { id: number; contact: string; predicate: string; value: string; time_ref: string | null; updated_at: number; display: string }
+/** 「待办」与「CC 画的你」(收敛清单 ④,2026-10-21,从手机网页搬来):settled = 最近七天了结的(最多 20 条);
+ *  portraitPng = 电脑画好的 base64 PNG(原生端没有 SVG 渲染);没画过 / 电脑不是 macOS / 老 daemon ⇒ null。 */
+export type PocketT = { todos: { active: TodoRowT[]; settled: TodoRowT[] }; portraitPng: string | null }
+/** 完成 = resolved;捞回 = active。 */
+export type TodoStatus = 'resolved' | 'active'
 export type ChatSearchHitT = z.infer<typeof ChatSearchHit>
 /** 一句话 / 一件新事带的材料:同一个草稿 id 下先传好的几份(2026-10-06)。 */
 export type PhoneMaterials = { draftId: string; attachmentIds: string[] }
@@ -142,6 +150,10 @@ export interface Backend {
   memory(): Promise<MemoryViewT>
   /** 逐条纠错(POST /m/api/memory/correct,2026-10-06):立刻拿掉,CC 记下这次纠正、当晚整理不写回。不在了 ⇒ BackendError('not_found')。 */
   correctMemory(id: string, verdict: MemoryVerdict): Promise<void>
+  /** 待办与 CC 画的你(GET /m/api/state;同一条里还有名字、表情库,App 不读)。 */
+  pocket(): Promise<PocketT>
+  /** 完成 / 捞回一条待办(POST /m/api/todo,正文恰好 { id, status })。电脑没接待办 ⇒ BackendError('unavailable')。 */
+  setTodo(id: number, status: TodoStatus): Promise<void>
   /** 在主人那条对话里搜(GET /m/api/chat/search,2026-10-06):新的在前,最多 30 条、每条最多 600 字。 */
   chatSearch(q: string): Promise<ChatSearchHitT[]>
   /** 回复里第 index 个附件(必须是语音)按需合成的声音(GET /m/api/chat/voice)。太长 ⇒ BackendError('too_large');电脑没设朗读 ⇒ 'no_voice'。 */

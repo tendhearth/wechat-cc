@@ -380,6 +380,9 @@ const PhoneStateSuccess = z.object({
   ok: z.literal(true), name: z.string(),
   todos: z.object({ active: z.array(TodoRow), settled: z.array(TodoRow) }),
   portrait: z.string().nullable(),
+  // 同一张画的 base64 PNG(512px 方图,2026-10-21):原生 App 没有 SVG 渲染就读这个。只有 macOS 上的电脑画得出;
+  // 没画过 / 画不出 / 老 daemon ⇒ 没有这个字段。
+  portraitPng: z.string().optional(),
   stickers: z.array(z.object({ file: z.string(), tags: z.array(z.string()), desc: z.string().optional() })),
 })
 

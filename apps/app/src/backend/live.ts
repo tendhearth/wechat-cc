@@ -21,7 +21,7 @@ import {
   type ApprovalExplanationT, type Backend, type Connection, type DeviceRowT, type EntryOptionsT,
   type MatterDetailT, type MatterT, type PhoneChangesTurnT, type ProgressSummaryT, type Unsubscribe,
   type ChatPageT, type ChatJobT, type ConnectionsT, type NativeSessionRowT, type NativeSessionPageT, type SessionContinueT,
-  type MatterSayResultT, type MatterInputT, type CliSessionRowT, type CliActivityItemT, type OverseerTodayT, type CompanionHomeT, type FeedEventT, type PresenceT, type UploadStateT, type EntryModelCatalogT, type MemoryViewT, type ChatModelViewT, type ChatSearchHitT, type LetterSummaryT, type FileChunkT, type JobsViewT, type ActivityPageT, type RewindPreviewT,
+  type MatterSayResultT, type MatterInputT, type CliSessionRowT, type CliActivityItemT, type OverseerTodayT, type CompanionHomeT, type FeedEventT, type PresenceT, type UploadStateT, type EntryModelCatalogT, type MemoryViewT, type ChatModelViewT, type ChatSearchHitT, type LetterSummaryT, type FileChunkT, type JobsViewT, type ActivityPageT, type RewindPreviewT, type PocketT,
 } from './types'
 
 type Topic = Parameters<Backend['subscribe']>[0]
@@ -273,6 +273,15 @@ export function makeLiveBackend(d: LiveDeps): Backend {
     },
     async correctMemory(id, verdict) {
       await call('POST /m/api/memory/correct', '/m/api/memory/correct', { body: { id, verdict } })
+    },
+    async pocket() {
+      // 这一条还带名字、SVG 画像、表情库;App 只取待办与 PNG 画像
+      const r = await call<{ ok: true; todos: PocketT['todos']; portraitPng?: string }>('GET /m/api/state', '/m/api/state')
+      return { todos: { active: r.todos.active, settled: r.todos.settled }, portraitPng: r.portraitPng ?? null }
+    },
+    async setTodo(id, status) {
+      // 不自动重发:超时 ⇒ 不确定,页面重拉
+      await call('POST /m/api/todo', '/m/api/todo', { body: { id, status } })
     },
     async uploadChunk(p) {
       // 不自动重发:同一块重传由上传循环先问进度再续(uploadStatus),不在协议层盲重试。
