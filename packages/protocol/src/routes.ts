@@ -31,7 +31,9 @@
  *     另一条路)。`tauri` 必须同时有 `operator` —— 宿主代理拿的就是 operator 凭据。
  * - `phone`(`/m`、`/m/api/*`)与 `set`(`/set`、`/set/api/*`):设置面板的令牌(配过对的设备令牌一律能走)。
  *   - `link` 10 分钟链接令牌能不能走:`none` 只给设备、`read` / `write` 要写一句 `reason`
- *     (逐字搬自原来的 LINK_READ_OK / LINK_WRITE_OK,规矩见 phone-routes.ts 的注释)。
+ *     (逐字搬自原来的 LINK_READ_OK / LINK_WRITE_OK,规矩见 phone-routes.ts 的注释)。开成 read / write 的集合
+ *     必须**等于**链接页面源码里扫出来的调用(`scripts/link-routes-from-source.guard.test.ts`,理念 2):
+ *     页面不调的不开,页面调的不能是 none。
  *   - `lanOnlyOps`:经隧道一律拒的 `/set/api/apply` 操作(原来的 LAN_ONLY_OPS)。
  *   - 以 `/` 结尾的键是前缀(贴纸一族),见 phone-routes.ts 的 phoneRouteAllowed。
  *
@@ -497,21 +499,25 @@ export const ROUTES: Readonly<Record<RouteKey, RouteSpec>> = {
   // 随身 CC
   // 收敛 5b(2026-10-21):网页删了对话 / 记忆 / 电脑会话 / 终端会话那几页,链接令牌对它们的读一并收回
   // (#463 标的「私事,收敛时再看」);设备令牌与 App 照旧。眨眼帧、动态翻页、项目经验三组接口只有网页在用,连路由删了。
+  // 理念 2(2026-10-21):`link` 不再逐条判,= 链接页面(/m 网页、/set、中继壳页、App 配对)源码里扫出来的调用,
+  // scripts/link-routes-from-source.guard.test.ts 双向核对。网页不再调的 22 条(state、today、todo、贴纸、交办与材料、
+  // 一件事的进展 / 改动 / 成果 / 回执、审阅标记、对话模型、语音转字、连接、seen、记忆纠错)一并收成 'none'。
+  // 给链接页面加一条调用:先写进页面,守卫会红着告诉你开哪一行。
   'GET /m': { phone: { link: 'read', reason: '手机页面本身(配对之前也要能打开)' } },
-  'GET /m/api/state': { phone: { link: 'read', reason: '页面骨架:在不在、配对条、待办' } },
+  'GET /m/api/state': { phone: { link: 'none' } },
   'GET /m/api/art/presence': { phone: { link: 'read', reason: 'CC 的形象画(在不在身边)' } },
   'GET /m/api/memory': { phone: { link: 'none' } },
   // 「CC 记得你」逐条纠错(2026-10-06)
-  'POST /m/api/memory/correct': { phone: { link: 'write', reason: '只把一条记忆标成不对 / 过时,不给执行者下令' } },
+  'POST /m/api/memory/correct': { phone: { link: 'none' } },
   'GET /m/api/home': { phone: { link: 'read', reason: '此刻页的内容(只读)' } },
-  'POST /m/api/seen': { phone: { link: 'write', reason: '只记哪些消息已经看过' } },
+  'POST /m/api/seen': { phone: { link: 'none' } },
   'GET /m/api/matters': { phone: { link: 'read', reason: '一起做的列表' } },
   'GET /m/api/matter': { phone: { link: 'read', reason: '一件事的详情' } },
-  'GET /m/api/matter/input-receipt': { phone: { link: 'read', reason: '查补充有没有送到(本身送不出话)' } },
-  'GET /m/api/matter/insight': { phone: { link: 'read', reason: '一件事的进展说明' } },
-  'GET /m/api/matter/changes': { phone: { link: 'read', reason: '一件事的改动(只读)' } },
-  // 手机逐文件审阅(2026-10-17):没问题 / 退回(同桌面 review-mark / review-return);退回只给设备(不在链接白名单里)
-  'POST /m/api/matter/review-mark': { phone: { link: 'write', reason: '只记「没问题」标记,不往执行者送话' } },
+  'GET /m/api/matter/input-receipt': { phone: { link: 'none' } },
+  'GET /m/api/matter/insight': { phone: { link: 'none' } },
+  'GET /m/api/matter/changes': { phone: { link: 'none' } },
+  // 手机逐文件审阅(2026-10-17):没问题 / 退回(同桌面 review-mark / review-return);两条都只给设备(链接页面不调)
+  'POST /m/api/matter/review-mark': { phone: { link: 'none' } },
   'POST /m/api/matter/review-return': { phone: { link: 'none' } },
   // 行评论(切片 4,2026-10-21):整块评论建 / 删 + 发出;只给设备(不在链接白名单里)
   'POST /m/api/matter/review-comment': { phone: { link: 'none' } },
@@ -527,9 +533,9 @@ export const ROUTES: Readonly<Record<RouteKey, RouteSpec>> = {
   'GET /m/api/chat/search': { phone: { link: 'none' } },
   // 回复里的语音附件按需合成(2026-10-04):只念库里那一行真有的那段
   'GET /m/api/chat/voice': { phone: { link: 'none' } },
-  // 按住说话(2026-10-18):配没配语音转文字 + 一段录音转成字(只回字,不发、不执行;链接令牌也能用)
-  'GET /m/api/chat/transcribe': { phone: { link: 'read', reason: '有没有配语音转文字' } },
-  'POST /m/api/chat/transcribe': { phone: { link: 'write', reason: '录音转成字,只回字,不发、不执行' } },
+  // 按住说话(2026-10-18):配没配语音转文字 + 一段录音转成字(只回字,不发、不执行)
+  'GET /m/api/chat/transcribe': { phone: { link: 'none' } },
+  'POST /m/api/chat/transcribe': { phone: { link: 'none' } },
   // CC 回复里的文件按块读(2026-10-06)
   'GET /m/api/chat/file': { phone: { link: 'none' } },
   // CC 的信(2026-10-18,mobile-letters.ts):寄出去了的信 + 一页 PNG 按块读。信是私事:链接令牌不在册(见 LINK_ROUTES)
@@ -540,10 +546,10 @@ export const ROUTES: Readonly<Record<RouteKey, RouteSpec>> = {
   'POST /m/api/jobs/action': { phone: { link: 'none' } },
   'GET /m/api/letters/page': { phone: { link: 'none' } },
   // 主人对话用哪个后端 / 模型:读与钉(2026-10-06)
-  'GET /m/api/chat/model': { phone: { link: 'read', reason: '对话现在用哪个后端(改它在 LINK_WRITE_OK)' } },
-  'POST /m/api/chat/model': { phone: { link: 'write', reason: '改用哪个后端 / 模型,有费用影响但不是指令' } },
+  'GET /m/api/chat/model': { phone: { link: 'none' } },
+  'POST /m/api/chat/model': { phone: { link: 'none' } },
   // CC 的连接(spec 2026-10-01,mobile-reads.ts),去掉 detail
-  'GET /m/api/connections': { phone: { link: 'read', reason: 'CC 的连接(已去掉细节)' } },
+  'GET /m/api/connections': { phone: { link: 'none' } },
   // 电脑上的原生会话(只读,spec 2026-10-01),项目只给目录名
   'GET /m/api/sessions': { phone: { link: 'none' } },
   'GET /m/api/session': { phone: { link: 'none' } },
@@ -555,28 +561,28 @@ export const ROUTES: Readonly<Record<RouteKey, RouteSpec>> = {
   // 看着它跑(2026-10-17):一条终端会话最近几步(跑了什么、改了哪、说了什么),只读
   'GET /m/api/cli/activity': { phone: { link: 'none' } },
   // 「今天」一眼看完(2026-10-14):终端 + 一起做,过去 24 小时;与微信「日报」同一份
-  'GET /m/api/today': { phone: { link: 'read', reason: '「今天」一眼看完' } },
+  'GET /m/api/today': { phone: { link: 'none' } },
   // 在手机上接着做电脑上的会话(spec 2026-10-01-tendhearth-continue-sessions,mobile-workbench.ts):预览 + 接成一件事
   'GET /m/api/session/continue': { phone: { link: 'none' } },
   'POST /m/api/session/continue': { phone: { link: 'none' } },
-  'POST /m/api/todo': { phone: { link: 'write', reason: '只改待办状态' } },
-  'GET /m/api/sticker/': { phone: { link: 'read', reason: '回复里的贴纸图片' } },
+  'POST /m/api/todo': { phone: { link: 'none' } },
+  'GET /m/api/sticker/': { phone: { link: 'none' } },
   // 交办与材料(mobile-workbench.ts,#129)
   // 交办时可选的模型(2026-10-06)
-  'GET /m/api/entry/models': { phone: { link: 'read', reason: '交办时可选的模型(交办本身只给设备)' } },
-  'POST /m/api/attachment/chunk': { phone: { link: 'write', reason: '只是材料;没有 create / say 就送不出去' } },
-  'GET /m/api/attachment/upload': { phone: { link: 'read', reason: '查上传进度(材料没有 create / say 就送不出去)' } },
-  'POST /m/api/attachment/discard': { phone: { link: 'write', reason: '丢掉自己传的材料' } },
-  'GET /m/api/entry/options': { phone: { link: 'read', reason: '交办表单的选项(交办本身只给设备)' } },
+  'GET /m/api/entry/models': { phone: { link: 'none' } },
+  'POST /m/api/attachment/chunk': { phone: { link: 'none' } },
+  'GET /m/api/attachment/upload': { phone: { link: 'none' } },
+  'POST /m/api/attachment/discard': { phone: { link: 'none' } },
+  'GET /m/api/entry/options': { phone: { link: 'none' } },
   'POST /m/api/matter/create': { phone: { link: 'none' } },
-  'GET /m/api/matter/create-receipt': { phone: { link: 'read', reason: '查交办有没有收下(本身建不了事)' } },
+  'GET /m/api/matter/create-receipt': { phone: { link: 'none' } },
   'POST /m/api/matter/permission': { phone: { link: 'none' } },
   // 手机上停下正在跑的这一轮(2026-10-06)
   'POST /m/api/matter/stop': { phone: { link: 'write', reason: '停下是安全方向:能停,不能让它多做什么' } },
   // 独立工作区:提交到分支 / 删除工作区(2026-10-07)
   'POST /m/api/matter/worktree': { phone: { link: 'none' } },
   'POST /m/api/matter/answer': { phone: { link: 'none' } },
-  'GET /m/api/matter/artifact': { phone: { link: 'read', reason: '一件事的成果(只读)' } },
+  'GET /m/api/matter/artifact': { phone: { link: 'none' } },
   // 额度用完 ⇒ 交给另一位执行者继续(spec 2026-10-01-tendhearth-continue-sessions §7-3,mobile-workbench.ts)
   'POST /m/api/matter/handoff': { phone: { link: 'none' } },
   // 推送(中继 v2,spec 2026-09-30 §5):登记 APNs / FCM token、发一条测试通知。只认设备令牌。

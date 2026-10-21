@@ -33,7 +33,7 @@ export const PHONE_ROUTES: ReadonlySet<string> = new Set(PANEL_ROWS.map(r => r.k
 // chat/file 也只给设备(评审 10-19 #1):寄出去的信每一页都镜像成主人对话里的一行文件,链接令牌能从这里读出整封信,
 // 等于绕过上面「信是私事」;手机网页 /m 不用这条(只有原生 App 按块下载回复里的文件)。
 // 撤掉这一轮(2026-10-21)也只给设备:会丢掉工作区里的改动,不能让 10 分钟、可能外泄的链接令牌做。
-// 退回 / 行评论(#456 评审):送给执行者的话就是指令 ⇒ 只给设备。review-mark 只记标记、不给执行者递话,留给链接令牌。
+// 退回 / 行评论(#456 评审):送给执行者的话就是指令 ⇒ 只给设备。review-mark 当时留给链接令牌,理念 2(10-21)收回:链接页面不调。
 // 审计(2026-10-20,与 wechat-cc-2a 定):会把话 / 批准 / 新任务送到执行者那里、或会丢改动的写操作 ⇒ 只给设备。
 // 主人那条 CC(chat/say)是 admin 档、默认 dangerously,能跑 shell、能委派 —— 链接一转发谁都能指挥它。推送两条处理器里本来就只认设备,这里对齐。
 /**
@@ -41,6 +41,11 @@ export const PHONE_ROUTES: ReadonlySet<string> = new Set(PANEL_ROWS.map(r => r.k
  * 以前是「全部减去排除名单」,新加的 GET 默认链接就能读(信、回退都是事后补的)。改成白名单时逐条保留了原来的行为;
  * 标「私事,收敛时再看」的几条是主人的对话 / 记忆 / 电脑会话,手机网页收敛(主人 10-20 拍板)时一并收紧。
  * 只给设备的那几条(信、定时、做过的事、经验、回退、对话里的文件,以及所有送话给执行者的写操作)不在任何一张表里。
+ *
+ * **理念 2(架构复查 10-21「权限跟着入口走」)**:LINK_READ_OK ∪ LINK_WRITE_OK 必须**等于**链接页面
+ * (/m 网页、/set、中继壳页 relay/pset、App 配对那一步)源码里扫出来的调用 ——
+ * `scripts/link-routes-from-source.guard.test.ts` 双向核对。不再逐条判「这条算不算私事」:页面不调就收,
+ * 页面调了却是 'none' 就红(链接会话会 403)。给链接页面加调用 = 先改页面,守卫告诉你开哪一行、写理由。
  */
 export const LINK_READ_OK: Readonly<Record<string, string>> = Object.fromEntries(
   PANEL_ROWS.filter(r => r.panel.link === 'read').map(r => [r.key, r.panel.reason ?? '']),
