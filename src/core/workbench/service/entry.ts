@@ -17,7 +17,7 @@ import { createManagedWorkspaces, type ManagedWorkspaces } from '../managed-work
 import { publicTask } from '../store'
 import { canonicalEntryHash, composeEntryPrompt, entryOrigin, parseEntryInput, type EntryContext, type EntryInput, type EntryOptions } from '../task-entry'
 import { directoryIdentity } from './directory-identity'
-import { baseBranchExists, ensureWorktree, planWorktree, repoRootOf, type WorktreePlan } from '../worktree-workspaces'
+import { baseBranchExists, ensureWorktree, planWorktree, repoRootOrFail, type WorktreePlan } from '../worktree-workspaces'
 import { pinnedScriptSha } from '../worktree-scripts'
 import type { ServiceCtx } from './ctx'
 import type { EntryResult } from './types'
@@ -64,7 +64,7 @@ export function makeEntryDomain(ctx:ServiceCtx, domains:EntryDomains) {
   }
   /** 独立工作区的位置:状态目录下,按项目编号 + 预约里的随机编号(前 8 位)。 */
   function worktreePlan(workspaceId:string,project:{id:string;path:string},base?:string):WorktreePlan {
-    const repoRoot=repoRootOf(project.path)
+    const repoRoot=repoRootOrFail(project.path)
     if(!repoRoot)throw Error('worktree_not_git')
     return planWorktree({stateDir:ctx.stateDir,projectId:project.id,projectPath:project.path,repoRoot,id:workspaceId.replace(/-/g,'').slice(0,8),...(base!==undefined?{base}:{})})
   }
@@ -99,10 +99,10 @@ export function makeEntryDomain(ctx:ServiceCtx, domains:EntryDomains) {
       const isolated=input.target.kind==='project'&&input.target.isolation==='worktree'
       // 独立工作区(2026-10-07):不是 git 仓库就当场拒绝,不留一条半截的预约。路径留空到建好工作区再定:
       // 预约时算出的路径和建好后的真实路径在 Windows 上写法可能不同(8.3 短名 / 长名),先写死会被当成冲突。
-      if(isolated&&!repoRootOf(project!.path))throw Error('worktree_not_git')
+      if(isolated&&!repoRootOrFail(project!.path))throw Error('worktree_not_git')
       // 指定了起点分支 ⇒ 预约前就核对它在不在,不留半截预约(10-08)
       const base=input.target.kind==='project'?input.target.base:undefined
-      if(isolated&&base!==undefined&&!baseBranchExists(repoRootOf(project!.path)!,base))throw Error('worktree_base_missing')
+      if(isolated&&base!==undefined&&!baseBranchExists(repoRootOrFail(project!.path)!,base))throw Error('worktree_base_missing')
       const workspaceId=input.target.kind==='managed'||isolated?randomUUID():null
       record=store.entryRequests.reserve({ownerKey:context.ownerKey,requestId:input.requestId,canonicalRequestHash:hash,target:input.target,
         workspaceId,resolvedPath:input.target.kind==='managed'?managed().resolvePath(workspaceId!):isolated?null:project?.path??null,directoryIdentity:project&&!isolated?directoryIdentity(project.path):null,

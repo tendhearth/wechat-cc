@@ -4,7 +4,7 @@ import { existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, symlink
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { removeTempDir } from '../../lib/test-temp'
-import { baseBranchExists, validBaseBranch, commitWorktree, copyIncludedFiles, ensureWorktree, git, mergeHint, mergeWorktree, planWorktree, removeWorktree, reopenWorktree, repoRootOf, worktreeDirty } from './worktree-workspaces'
+import { baseBranchExists, validBaseBranch, commitWorktree, copyIncludedFiles, ensureWorktree, git, mergeHint, mergeWorktree, planWorktree, removeWorktree, reopenWorktree, repoRootOf, repoRootOrFail, worktreeDirty } from './worktree-workspaces'
 
 const dirs: string[] = []
 afterEach(() => { for (const d of dirs.splice(0)) removeTempDir(d) })
@@ -186,5 +186,27 @@ describe('worktree workspaces (2026-10-07)', () => {
   it('merge hint quotes paths with spaces', () => {
     expect(mergeHint('/Users/a/My Project', 'cc/abcd1234')).toBe("cd '/Users/a/My Project' && git merge cc/abcd1234")
     expect(mergeHint('/Users/a/p', 'cc/abcd1234')).toBe('cd /Users/a/p && git merge cc/abcd1234')
+  })
+})
+
+describe('repoRootOrFail(10-21:机器忙时 git 没问成 ≠ 不是仓库)', () => {
+  it('a repo ⇒ its root; a plain folder or a missing path ⇒ null (same answers as repoRootOf)', () => {
+    const root = realpathSync(mkdtempSync(join(tmpdir(), 'rrof-')))
+    try {
+      const repo = join(root, 'repo'), plain = join(root, 'plain'); mkdirSync(repo); mkdirSync(plain)
+      execFileSync('git', ['init', '-q'], { cwd: repo })
+      expect(repoRootOrFail(repo)).toBe(repoRootOf(repo))
+      expect(repoRootOrFail(plain)).toBeNull()
+      expect(repoRootOrFail(join(root, 'gone'))).toBeNull()
+    } finally { removeTempDir(root) }
+  })
+  it.skipIf(process.platform === 'win32')('git could not be asked at all (not exit 128: here, git missing from PATH) ⇒ throws worktree_git_failed instead of claiming "not a repo"; repoRootOf still says null (the permission gate stays fail-closed)', () => {
+    const root = realpathSync(mkdtempSync(join(tmpdir(), 'rrof-')))
+    const path = process.env.PATH
+    try {
+      process.env.PATH = join(root, 'no-bin')
+      expect(() => repoRootOrFail(root)).toThrow('worktree_git_failed')
+      expect(repoRootOf(root)).toBeNull()
+    } finally { process.env.PATH = path; removeTempDir(root) }
   })
 })
