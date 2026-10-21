@@ -32,13 +32,13 @@ export const PHONE_ROUTES: ReadonlySet<string> = new Set([
   'GET /m/api/matter/input-receipt',
   'GET /m/api/matter/insight',
   'GET /m/api/matter/changes',
-  // 手机逐文件审阅(2026-10-17):没问题 / 退回(同桌面 review-mark / review-return);退回只给设备(见 LINK_EXCLUDED)
+  // 手机逐文件审阅(2026-10-17):没问题 / 退回(同桌面 review-mark / review-return);退回只给设备(不在链接白名单里)
   'POST /m/api/matter/review-mark',
   'POST /m/api/matter/review-return',
-  // 行评论(切片 4,2026-10-21):整块评论建 / 删 + 发出;只给设备(见 LINK_EXCLUDED)
+  // 行评论(切片 4,2026-10-21):整块评论建 / 删 + 发出;只给设备(不在链接白名单里)
   'POST /m/api/matter/review-comment',
   'POST /m/api/matter/review-comments-send',
-  // 撤掉这一轮(回退切片 4,2026-10-21):预览 + 带 token 执行;只给设备(见 LINK_EXCLUDED)
+  // 撤掉这一轮(回退切片 4,2026-10-21):预览 + 带 token 执行;只给设备(不在链接白名单里)
   'GET /m/api/matter/rewind',
   'POST /m/api/matter/rewind',
   'POST /m/api/matter/say',
@@ -124,10 +124,49 @@ export const PHONE_ROUTES: ReadonlySet<string> = new Set([
 // 退回 / 行评论(#456 评审):送给执行者的话就是指令 ⇒ 只给设备。review-mark 只记标记、不给执行者递话,留给链接令牌。
 // 审计(2026-10-20,与 wechat-cc-2a 定):会把话 / 批准 / 新任务送到执行者那里、或会丢改动的写操作 ⇒ 只给设备。
 // 主人那条 CC(chat/say)是 admin 档、默认 dangerously,能跑 shell、能委派 —— 链接一转发谁都能指挥它。推送两条处理器里本来就只认设备,这里对齐。
-const LINK_EXCLUDED: ReadonlySet<string> = new Set(['POST /m/api/matter/say', 'POST /m/api/matter/create', 'POST /m/api/matter/permission', 'POST /m/api/matter/answer', 'POST /m/api/matter/handoff', 'POST /m/api/session/continue', 'POST /m/api/matter/worktree', 'POST /m/api/chat/say', 'POST /m/api/push/register', 'POST /m/api/push/test', 'POST /m/api/matter/review-return', 'POST /m/api/matter/review-comment', 'POST /m/api/matter/review-comments-send', 'POST /m/api/cli/say', 'POST /m/api/cli/permission', 'GET /m/api/letters', 'GET /m/api/letters/page', 'GET /m/api/chat/file', 'GET /m/api/jobs', 'POST /m/api/jobs/action', 'GET /m/api/activity', 'GET /m/api/lessons', 'POST /m/api/lessons/add', 'POST /m/api/lessons/remove', 'GET /m/api/matter/rewind', 'POST /m/api/matter/rewind'])
+/**
+ * 链接令牌能读的路由,每条一句理由(审计续 2026-10-20)。**白名单**:不在这里、也不在 LINK_WRITE_OK 的路由一律只给设备 ——
+ * 以前是「全部减去排除名单」,新加的 GET 默认链接就能读(信、回退都是事后补的)。改成白名单时逐条保留了原来的行为;
+ * 标「私事,收敛时再看」的几条是主人的对话 / 记忆 / 电脑会话,手机网页收敛(主人 10-20 拍板)时一并收紧。
+ * 只给设备的那几条(信、定时、做过的事、经验、回退、对话里的文件,以及所有送话给执行者的写操作)不在任何一张表里。
+ */
+export const LINK_READ_OK: Readonly<Record<string, string>> = {
+  'GET /set': '设置页本身(配对就从这里开始)',
+  'GET /set/api/state': '设置页要显示的状态',
+  'GET /m': '手机页面本身(配对之前也要能打开)',
+  'GET /m/api/state': '页面骨架:在不在、配对条、待办',
+  'GET /m/api/art/blink': 'CC 的形象画(眨眼)',
+  'GET /m/api/art/presence': 'CC 的形象画(在不在身边)',
+  'GET /m/api/sticker/': '回复里的贴纸图片',
+  'GET /m/api/home': '此刻页的内容(只读)',
+  'GET /m/api/feed': '此刻页的动态',
+  'GET /m/api/today': '「今天」一眼看完',
+  'GET /m/api/connections': 'CC 的连接(已去掉细节)',
+  'GET /m/api/matters': '一起做的列表',
+  'GET /m/api/matter': '一件事的详情',
+  'GET /m/api/matter/insight': '一件事的进展说明',
+  'GET /m/api/matter/changes': '一件事的改动(只读)',
+  'GET /m/api/matter/artifact': '一件事的成果(只读)',
+  'GET /m/api/matter/input-receipt': '查补充有没有送到(本身送不出话)',
+  'GET /m/api/matter/create-receipt': '查交办有没有收下(本身建不了事)',
+  'GET /m/api/entry/options': '交办表单的选项(交办本身只给设备)',
+  'GET /m/api/entry/models': '交办时可选的模型(交办本身只给设备)',
+  'GET /m/api/attachment/upload': '查上传进度(材料没有 create / say 就送不出去)',
+  'GET /m/api/chat/transcribe': '有没有配语音转文字',
+  'GET /m/api/chat/model': '对话现在用哪个后端(改它在 LINK_WRITE_OK)',
+  'GET /m/api/chat': '主人对话的记录 —— 私事,收敛时再看',
+  'GET /m/api/chat/search': '搜主人对话 —— 私事,收敛时再看',
+  'GET /m/api/chat/voice': '回复里的语音 —— 私事,收敛时再看',
+  'GET /m/api/memory': 'CC 眼中的你 —— 私事,收敛时再看',
+  'GET /m/api/sessions': '电脑上的会话列表(项目只给目录名)—— 收敛时再看',
+  'GET /m/api/session': '一条电脑会话(只读)—— 收敛时再看',
+  'GET /m/api/session/continue': '接着做的预览(接成一件事只给设备)—— 收敛时再看',
+  'GET /m/api/cli/sessions': '终端会话登记处 —— 收敛时再看',
+  'GET /m/api/cli/activity': '终端会话最近几步 —— 收敛时再看',
+}
 /**
  * 链接令牌还能做的写操作,每条一句理由(审计 2026-10-20)。`phone-routes.test.ts` 要求每条 POST 要么在
- * LINK_EXCLUDED、要么在这里 —— 新加写路由必须想清楚归哪边。
+ * 「只给设备」(不在任何链接白名单里)、要么在这里 —— 新加写路由必须想清楚归哪边。
  */
 export const LINK_WRITE_OK: Readonly<Record<string, string>> = {
   'POST /set/api/apply': '设置页本身;开关远程 / 撤设备这类在 LAN_ONLY_OPS 另有一道',
@@ -142,7 +181,7 @@ export const LINK_WRITE_OK: Readonly<Record<string, string>> = {
   'POST /m/api/attachment/chunk': '只是材料;没有 create / say 就送不出去',
   'POST /m/api/attachment/discard': '丢掉自己传的材料',
 }
-export const LINK_ROUTES: ReadonlySet<string> = new Set([...PHONE_ROUTES].filter(r => !LINK_EXCLUDED.has(r)))
+export const LINK_ROUTES: ReadonlySet<string> = new Set([...Object.keys(LINK_READ_OK), ...Object.keys(LINK_WRITE_OK)].filter(r => PHONE_ROUTES.has(r)))
 
 /**
  * 经隧道(`_via=tunnel`)一律拒的 `/set/api/apply` 操作:开关远程访问会重启 daemon,

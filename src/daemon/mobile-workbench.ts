@@ -134,7 +134,7 @@ export async function mobileWorkbenchRoute(actions:MobileMatterActions|undefined
     }catch(error){return mobileMatterError(error)}
   }
   // 独立工作区(2026-10-07):提交到分支 / 删除工作区 / 合回项目(10-08);正文恰好 id + action。
-  // run / stop(2026-10-20):工作区脚本,会在电脑上跑命令 ⇒ 只给设备令牌(LINK_EXCLUDED);批准不在这里。
+  // run / stop(2026-10-20):工作区脚本,会在电脑上跑命令 ⇒ 只给设备令牌(不在链接白名单 LINK_READ_OK / LINK_WRITE_OK 里);批准不在这里。
   if(url.pathname==='/m/api/matter/worktree'){
     if(req.method!=='POST')return json({ok:false,error:'method_not_allowed'},405)
     try{
@@ -149,7 +149,7 @@ export async function mobileWorkbenchRoute(actions:MobileMatterActions|undefined
       return json({ok:true,...actions.worktree(b.id,b.action)})
     }catch(error){return mobileMatterError(error)}
   }
-  // 撤掉这一轮(回退切片 4):GET 预览(固定回到最新那一轮开始之前)、POST 正文恰好 {id, artifactId, token}。只给设备令牌(LINK_EXCLUDED)。
+  // 撤掉这一轮(回退切片 4):GET 预览(固定回到最新那一轮开始之前)、POST 正文恰好 {id, artifactId, token}。只给设备令牌(不在链接白名单 LINK_READ_OK / LINK_WRITE_OK 里)。
   if(url.pathname==='/m/api/matter/rewind'){
     if(req.method!=='GET'&&req.method!=='POST')return json({ok:false,error:'method_not_allowed'},405)
     try{
