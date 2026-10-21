@@ -14,6 +14,7 @@ import { chmodSync, copyFileSync, existsSync, mkdirSync } from 'node:fs'
 import { dirname, join, resolve } from 'node:path'
 import { sidecarNameFor } from '../../../src/lib/app-identity'
 import { sidecarNativePlugin, stageOrtFrameworks } from './sidecar-native'
+import { writeWorkbenchRoutes } from '../../../scripts/gen-routes'
 
 type Target = { bunTarget: string; rustTriple: string; extension?: string }
 
@@ -32,6 +33,8 @@ if (!target) {
 }
 
 const root = resolve(import.meta.dir, '../../..')
+// lib.rs 用 include_str! 编进 generated/workbench-routes.json:打包前按路由表重新生成一遍(内容没变就不碰文件)。
+if (writeWorkbenchRoutes()) console.log('workbench-routes.json 按路由表更新了 —— 记得提交')
 // 1.7.5 起 macOS 的 sidecar 叫 `tendhearth-cc-cli`(活动监视器里看得到的名字,
 // 见 src/lib/app-identity.ts 与 tauri.macos.conf.json 的 externalBin);别的平台照旧。
 const output = join(

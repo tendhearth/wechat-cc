@@ -25,14 +25,15 @@
 
 ## 路由登记
 
-新加一条内部 API 路由:
+新加一条路由(桌面 `/v1/*`、手机 `/m/*`、设置页 `/set/*` 都一样):**在 `packages/protocol/src/routes.ts` 加一行,跑 `bun run gen:routes`**(重构第二批 5a,2026-10-20)。处理器照旧写在 `routes-*.ts` / `settings-panel.ts` / `mobile-*.ts`。
 
-- **桌面 app 会调** ⇒ 要登记**五处**:`src/daemon/internal-api/route-tiers.ts`、`token-registry.ts` 的 `routeAllow` **以及它那个精确集合测试**、`apps/desktop/src-tauri/src/lib.rs` 的 `matches!` **以及它的测试表**、`apps/desktop/workbench-proxy.ts`。
-- **桌面不调** ⇒ 登记**三处**(route-tiers + token-registry + 它的精确集合测试)。
+- 桌面这一端写 `desktop: { tier, tokens?, tauri?, devProxy? }`:`tokens: ['operator']` 就是以前 token-registry 的 `routeAllow`;`tauri: true` 是打包版宿主代理(lib.rs)放行,`devProxy: true` 是浏览器预览的 dev 代理放行。lib.rs 与 `workbench-proxy.ts` 都读生成的 `apps/desktop/src-tauri/generated/workbench-routes.json`,不再手写名单。
+- 手机 / 设置页这一端写 `phone` / `set: { link: 'none' | 'read' | 'write', reason? }`:`none` = 只给配过对的设备;链接令牌能走的要写一句理由。
 
-漏一处的典型症状是按钮按下去 403 `route_not_allowed`,而且只在打包版上出现。
+以前「桌面会调要登记五处」漏一处的症状是按钮按下去 403 `route_not_allowed`,而且只在打包版上出现;现在只有一处可漏。
 
-- 2026-09-27 起四份白名单的包含关系(`lib.rs ⊆ workbench-proxy ⊆ routeAllow ⊆ ROUTE_MIN_TIER`)由 `scripts/route-registry.guard.test.ts` 钉住;漏登记会在本地就红,不用等打包版。鉴权模型现状见 [reference/internal-api-auth.md](../reference/internal-api-auth.md)。
+- `scripts/route-registry.guard.test.ts` 盯着生成物与表一致(忘了跑 `gen:routes` 本地就红)和表内约束(`devProxy ⇒ tauri ⇒ operator`);`scripts/routes-snapshot.guard.test.ts` 把每份名单对着 `scripts/fixtures/routes-snapshot-2026-10-20.json` 逐条比 —— 只比快照里已有的路由:加新路由不用碰它;**有意改了已有路由的档位 / 令牌 / link(或删掉一条),把快照里那一条一起改,在 PR 里写明。**鉴权模型现状见 [reference/internal-api-auth.md](../reference/internal-api-auth.md)。
+- 桌面白名单编在 .app 里,`self deploy` 只换 sidecar:新加的 `tauri` 路由要等下一版 App 才走得通(生成物带 `version`,「请更新 App」的码留给第 5c 步)。
 - 同类守卫:`scripts/provider-registry.guard.test.ts`(加一家 provider 要改的名单)、`scripts/cli-ratchet.guard.test.ts`(`cli.ts` 只许变小)。
 
 ## 加 CLI 命令(2026-09-27 起)

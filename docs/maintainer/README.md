@@ -83,6 +83,10 @@ wechat-cc self change "<需求>"       # --no-deploy 只合 dev;--list / --resum
 
 手机 ↔ 中继 ↔ 后台的加密与消息在 `packages/protocol`(`@wechat-cc/protocol`),API、向量再生、纯净规则见它的 [README](../../packages/protocol/README.md)。**新运行时接入(比如 RN app)一句话:实现 `ProtocolSocket` 五个方法(含 `onOpen`),把它交给 `makeProtocolClient`,自己别碰加密。**
 
+## 加一条路由
+
+桌面 `/v1/*`、手机 `/m/*`、设置页 `/set/*` 都一样:**在 `packages/protocol/src/routes.ts` 加一行,跑 `bun run gen:routes`**,生成物 `apps/desktop/src-tauri/generated/workbench-routes.json` 一起提交。档位、operator 等令牌的放行、打包版 / dev 代理白名单、手机链接令牌能不能走,都写在那一行里;daemon 的 `ROUTE_MIN_TIER`、`routeAllow`、`PHONE_ROUTES`、`LINK_*` 和 lib.rs / `workbench-proxy.ts` 都从它推出来。字段说明在文件头,规矩见 [rules-from-real-machines.md](rules-from-real-machines.md#路由登记)。
+
 ## 为什么有这份手册
 
 2026-09 那几天,四个功能的闭环里单测一个真 bug 都没抓到,全靠真机 smoke;而 smoke 是临时写的脚本、部署是手工 `cp`、规矩全在控制器的私人记忆里。手册 + `selftest` + `self deploy` 就是把这三段搬进仓库。

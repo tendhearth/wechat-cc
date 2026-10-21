@@ -16,6 +16,7 @@ import { join } from 'node:path'
 import { collectTurn } from '../core/agent-provider'
 import type { ProviderRegistry } from '../core/provider-registry'
 import { TIER_PROFILES, sessionAuthEnv, type UserTier } from '../core/user-tier'
+import { routesForToken } from './internal-api/route-tiers'
 
 export interface SelftestConverseResult {
   ok: boolean
@@ -100,7 +101,8 @@ export async function runSelftestConverse(
   // whose own identity no route could read back.
   const sessionKey = `selftest/selftest/${randomUUID()}`
   const token = deps.mintSessionToken('trusted', sessionKey, {
-    routeAllow: new Set(['GET /v1/health']),
+    // 名单在路由表(packages/protocol/src/routes.ts)里:`desktop.tokens` 含 'selftest' 的行(只有 GET /v1/health)。
+    routeAllow: routesForToken('selftest'),
     ttlMs: TOKEN_TTL_MS,
   })
 

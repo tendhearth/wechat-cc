@@ -1125,78 +1125,32 @@ async fn customer_review_api(
     Ok(body_text)
 }
 
+// 放行名单是生成物(重构第二批 5a):路由表 packages/protocol/src/routes.ts 里 `desktop.tauri` 的行,
+// `bun run gen:routes` 写进 generated/workbench-routes.json,这里编进二进制。别在这里手加路由。
+// `scripts/route-registry.guard.test.ts` 盯着 JSON 与表一致;下面的测试用例照旧逐条核对行为。
+const WORKBENCH_ROUTES_JSON: &str = include_str!("../generated/workbench-routes.json");
+
+fn workbench_routes() -> &'static std::collections::HashSet<(String, String)> {
+    static ROUTES: std::sync::OnceLock<std::collections::HashSet<(String, String)>> = std::sync::OnceLock::new();
+    ROUTES.get_or_init(|| {
+        let file: Value = serde_json::from_str(WORKBENCH_ROUTES_JSON).expect("generated/workbench-routes.json is valid JSON");
+        file.get("tauri")
+            .and_then(Value::as_array)
+            .expect("generated/workbench-routes.json has a tauri array")
+            .iter()
+            .filter_map(Value::as_str)
+            .filter_map(|key| key.split_once(' '))
+            .map(|(method, route)| (method.to_owned(), route.to_owned()))
+            .collect()
+    })
+}
+
 fn workbench_request_allowed(method: &str, path: &str) -> bool {
     let route = path.split('?').next().unwrap_or("");
     if route.contains("..") {
         return false;
     }
-    matches!(
-        (method, route),
-        ("GET", "/v1/workbench")
-            | ("GET", "/v1/workbench/entry-options")
-            | ("POST", "/v1/workbench/create-entry")
-            | ("GET", "/v1/workbench/entry-receipt")
-            | ("GET", "/v1/workbench/models")
-            | ("GET", "/v1/workbench/sessions")
-            | ("GET", "/v1/workbench/session")
-            | ("GET", "/v1/workbench/task")
-            | ("GET", "/v1/workbench/artifact")
-            | ("GET", "/v1/workbench/attachment")
-            | ("POST", "/v1/workbench/attachment")
-            | ("POST", "/v1/workbench/discard-attachment")
-            | ("POST", "/v1/workbench/project")
-            | ("POST", "/v1/workbench/create")
-            | ("POST", "/v1/workbench/continue")
-            | ("POST", "/v1/workbench/cancel")
-            | ("POST", "/v1/workbench/approve")
-            | ("POST", "/v1/workbench/permission")
-            | ("POST", "/v1/workbench/archive")
-            | ("POST", "/v1/workbench/writer-exited")
-            | ("POST", "/v1/workbench/unattended-ack")
-            | ("GET", "/v1/workbench/review")
-            | ("POST", "/v1/workbench/review-mark")
-            | ("POST", "/v1/workbench/review-return")
-            | ("POST", "/v1/workbench/review-revert")
-            // 行评论 / 按块撤回(2026-10-21)
-            | ("POST", "/v1/workbench/review-comment")
-            | ("POST", "/v1/workbench/review-comments-send")
-            | ("POST", "/v1/workbench/review-hunk")
-            | ("POST", "/v1/workbench/worktree")
-            | ("POST", "/v1/workbench/script-approve")
-            // 回到某一轮(2026-10-21):预览、执行 / 撤销、停住后主人拍板
-            | ("GET", "/v1/workbench/rewind-preview")
-            | ("POST", "/v1/workbench/rewind")
-            | ("POST", "/v1/workbench/rewind-resolve")
-            | ("POST", "/v1/workbench/import")
-            | ("POST", "/v1/workbench/prepare-resume")
-            | ("POST", "/v1/workbench/prepare-continuation")
-            | ("POST", "/v1/workbench/quota-handoff")
-            | ("POST", "/v1/workbench/handoff-preview")
-            | ("POST", "/v1/workbench/handoff")
-            | ("GET", "/v1/workbench/handoff")
-            | ("GET", "/v1/workbench/attention")
-            // 「一件事」(2026-09-16):桌面的 matter 列表与会话面
-            | ("GET", "/v1/matters")
-            | ("GET", "/v1/matter")
-            | ("GET", "/v1/matter/owner-chat")
-            // 此刻里搜主人那条对话(2026-10-06)
-            | ("GET", "/v1/matter/owner-chat/search")
-            | ("POST", "/v1/matter/say")
-            // 「CC 的连接」(2026-10-01):此刻右上角的连接浮层,只读。
-            | ("GET", "/v1/connections")
-            // 终端会话(2026-10-14):此刻「N 件事等你」里列出终端里等批准的 Claude Code / Codex,只读。
-            // 拍板不走这里,走 pet_permission_resolve(POST /v1/permissions/resolve)。
-            | ("GET", "/v1/cli/sessions")
-            // 接上 / 撤掉终端里的 Claude Code / Codex(2026-10-14):「CC 现在怎么样」与引导页的「接上」/「修复」,主人点了确认才调。
-            | ("POST", "/v1/cli/hooks/install")
-            | ("POST", "/v1/cli/hooks/uninstall")
-            // 「连接手机」(plan 7a):出码(必要时打开远程隧道)与轮询已配对设备。
-            | ("POST", "/v1/phone/link")
-            | ("GET", "/v1/phone/devices")
-            | ("POST", "/v1/workbench/input")
-            | ("POST", "/v1/workbench/answer")
-            | ("POST", "/v1/workbench/withdraw-input")
-    )
+    workbench_routes().contains(&(method.to_owned(), route.to_owned()))
 }
 
 // Workbench owns admin-only folder tasks and artifact snapshots. Keep its
@@ -1843,6 +1797,16 @@ mod workbench_proxy_tests {
             assert_eq!(super::validate_workbench_body("POST", path, Some(&(exact + "x"))).unwrap_err(), "request_body_too_large");
             assert!(super::validate_workbench_body("POST", path, None).is_ok());
         }
+    }
+
+    #[test]
+    fn generated_route_list_is_loaded() {
+        let routes = super::workbench_routes();
+        assert!(routes.len() >= 30, "generated/workbench-routes.json looks empty: {}", routes.len());
+        assert!(routes.iter().all(|(method, route)| (method == "GET" || method == "POST") && route.starts_with("/v1/")));
+        // 5c 要拿它跟 sidecar 比「App 是不是太老」(#471 评审)
+        let file: serde_json::Value = serde_json::from_str(super::WORKBENCH_ROUTES_JSON).unwrap();
+        assert!(file.get("version").and_then(serde_json::Value::as_u64).is_some_and(|v| v >= 1), "generated/workbench-routes.json needs a numeric version");
     }
 
     #[test]
