@@ -90,3 +90,31 @@ describe('e2e: 执行者探测一直失败时,不用模型的命令照常回', (
     expect(out).toMatchSnapshot()
   }, 120_000)
 })
+
+// 评审(3b 接口):快照只有 knownUsers 三档的话,对 onboarding 的两条路是瞎的 —— 没见过的用户、起名阶段,
+// onboarding 的 probe 对这两种状态下的每一句都认(onboarding.ts)。3b 搬 onboarding 进命令表时对的就是这份。
+// 已知:起名阶段发 /cli 现在被 onboarding 当成名字(回「昵称只支持…」)—— 3a 让 mode 把 /cli 让给命令表,而命令表排在 onboarding 之后;
+// 3b 把 /cli /today 拆成排在 mode 之前的一条,这一行会变成列终端会话。
+describe('e2e: 没见过的主人走一遍上手(起名阶段里的命令)', () => {
+  it('nickname → bot name, with slash commands sent in between', async () => {
+    const daemon = await startTestDaemon({
+      dangerously: true,
+      access: { admins: ['fresh'], allowFrom: ['fresh'] },
+      knownUsers: {},
+      claudeScript: { async onDispatch() { return { toolCalls: [], finalText: 'AGENT' } } },
+    })
+    const out: Array<[string, string]> = []
+    try {
+      let t = Date.now()
+      for (const text of ['你好', '/cc', '小明', '/cc', '/cli', '小C', '你好']) {
+        const before = daemon.ilink.outbox().filter(m => m.endpoint === 'sendmessage' && m.chatId === 'fresh').length
+        daemon.sendText('fresh', text, { createTimeMs: (t += 1000) })
+        const got = await daemon.waitForOutbound(ms => ms.filter(m => m.endpoint === 'sendmessage' && m.chatId === 'fresh').length > before, 3000).catch(() => null)
+        await new Promise(r => setTimeout(r, 300))   // 一句可能回好几条(欢迎 + 问名字),都收进来
+        const fresh = (got ? daemon.ilink.outbox() : daemon.ilink.outbox()).filter(m => m.endpoint === 'sendmessage' && m.chatId === 'fresh').slice(before).map(m => m.text ?? '').join(' | ')
+        out.push([text, fresh ? stable(fresh.replace(/\s+/g, ' ')).slice(0, 60) : '(没回)'])
+      }
+    } finally { await daemon.stop() }
+    expect(out).toMatchSnapshot()
+  }, 120_000)
+})
