@@ -483,7 +483,7 @@ describe('makeModeCommands', () => {
     const consumed = await cmds.handle(inbound('/agy'))
     expect(consumed).toBe(true)
     expect(set).toHaveBeenCalledWith('chat-1', { kind: 'solo', provider: 'agy' })
-    expect(sentMessages[0]?.[1]).toContain('Agy')
+    expect(sentMessages[0]?.[1]).toContain('Gemini')  // 收敛清单 ⑥:agy 对外叫 Gemini
     expect(sentMessages[0]?.[1]).toContain('solo')
   })
 

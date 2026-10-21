@@ -53,7 +53,7 @@ return cacheConnections(() => buildConnections({
     try { devices = d.phoneDevices() } catch { /* 读不到就当没配对 */ }
     return buildCapabilities({
       wechat: { outbound: outbound.state, expired: ilink.sessionState.listExpired().length, lastError: outbound.lastError ?? null, ownerWindowClosedSince: (() => { const o = ownerChatId(); return o ? ilink.proactiveClosedSince(o) : null })() },
-      brain: { provider, name: boot.registry.get(provider)?.opts.displayName ?? provider, registered: boot.registry.has(provider), retrying: probe?.state === 'retrying', lastError: probe?.last_error ?? null },
+      brain: { provider, name: boot.registry.namesOf(provider).name, registered: boot.registry.has(provider), retrying: probe?.state === 'retrying', lastError: probe?.last_error ?? null },
       guard: guard?.enabled ? { safe: guard.safe, paused: !!guard.paused, detail: guard.detail ?? null } : null,
       fullDiskAccess: fda === null ? null : { granted: fda, settingsUrl: 'x-apple.systempreferences:com.apple.preference.security?Privacy_AllFiles' },
       knowledge: cfg.knowledge_enabled === true ? { built: !!boot.knowledge, embed: boot.knowledge?.embedStatus?.() ?? (boot.knowledge?.embedder ? 'python' : 'none') } : null,

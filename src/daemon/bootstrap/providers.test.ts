@@ -117,7 +117,7 @@ describe('registerProviders — agy (fix round 1: test-runner guard)', () => {
       expect(logs.some(([tag, line]) => tag === 'BOOT' && line.includes('internalApi/mintSessionToken unavailable'))).toBe(true)
     })
 
-    it('agyBin opt-in + explicit agyGeminiConfigDir ⇒ registered, displayName = "Gemini (agy)", and the global MCP config is written to THAT dir (never the real home dir)', async () => {
+    it('agyBin opt-in + explicit agyGeminiConfigDir ⇒ registered, named "Gemini" (收敛清单 ⑥), and the global MCP config is written to THAT dir (never the real home dir)', async () => {
       const binDir = mkdtempSync(join(tmpdir(), 'providers-test-bin-'))
       const agyBin = makeFakeAgyBin(binDir)
       const geminiConfigDir = mkdtempSync(join(tmpdir(), 'providers-test-gemini-config-'))
@@ -132,7 +132,7 @@ describe('registerProviders — agy (fix round 1: test-runner guard)', () => {
 
       expect(registry.has('agy')).toBe(true)
       const entry = registry.get('agy')
-      expect(entry?.opts.displayName).toBe('Gemini (agy)')
+      expect(registry.namesOf('agy')).toEqual({ name: 'Gemini', short: 'Gemini', settings: 'Gemini · 账号连接' })
       expect(entry?.opts.canResume('/any/cwd', 'any-thread')).toBe(true)
 
       // mintSessionToken was called with the tier-C fixed shape: ONE

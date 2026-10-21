@@ -132,7 +132,7 @@ export function makeViewDomain(ctx:ServiceCtx, queries?:{quotaHandoff(id:string)
   }
   const withAgents=(view:WorkbenchTaskView,marks:Marks):WorkbenchTaskView=>{const a=marks.agents.get(view.id),origin=marks.origins.get(view.id);return a?.length||origin?{...view,...(a?.length?{agents:a}:{}),...(origin?{origin}:{})}:view}
   function list(query:WorkbenchListQuery={}) {
-    const providers=ctx.deps.registry.list().flatMap(id=>{const p=ctx.deps.registry.get(id);return isWorkbenchProviderId(id)&&p&&isWorkbenchExecutorCapabilities(p.opts.workbench)?[{id,displayName:p.opts.displayName,capabilities:structuredClone(p.opts.workbench),quota:ctx.actions.deref('view').quotaExhausted(id),usage:ctx.deps.usage?.(id)??null}]:[]})
+    const providers=ctx.deps.registry.list().flatMap(id=>{const p=ctx.deps.registry.get(id);return isWorkbenchProviderId(id)&&p&&isWorkbenchExecutorCapabilities(p.opts.workbench)?[{id,displayName:ctx.deps.registry.namesOf(id).name,settingsLabel:ctx.deps.registry.namesOf(id).settings,capabilities:structuredClone(p.opts.workbench),quota:ctx.actions.deref('view').quotaExhausted(id),usage:ctx.deps.usage?.(id)??null}]:[]})
     const result=store.listPage(query)
     // 文件夹已经不在、名下也没有没归档的任务 ⇒ 不再列出(2026-10-05):这种项目点进去什么也做不了,
     // 自检 / 临时目录留下的空壳会把「其他项目」撑到几十个。行不删,文件夹回来了就又出现。

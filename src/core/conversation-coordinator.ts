@@ -17,7 +17,7 @@
  */
 import type { SessionManager } from './session-manager'
 import type { ConversationStore } from './conversation-store'
-import { providerCallTarget, type ProviderRegistry } from './provider-registry'
+import { namesIn, providerCallTarget, type ProviderRegistry } from './provider-registry'
 import type { Mode, ProviderId } from './conversation'
 import type { InboundMsg } from './prompt-format'
 import { makeHandoffLedger, buildHandoffBlock, buildColdStartBlock, type HandoffTurn } from './provider-handoff'
@@ -1138,7 +1138,7 @@ export function createConversationCoordinator(deps: ConversationCoordinatorDeps)
     // 附件才登记得上。legacy 的参与者照旧每段一条。
     const deliveries = acquired.map((a, i) => {
       if (a.status !== 'fulfilled' || deliveryModeFor(participants[i]!) !== 'daemon') return undefined
-      const dn = deps.registry.get(participants[i]!)?.opts.displayName ?? participants[i]!
+      const dn = namesIn(deps.registry, participants[i]!).short
       return deps.replyDelivery!.begin(msg.chatId, { mode: 'daemon', context: 'parallel', providerId: participants[i]!, participantLabel: dn, textStrategy: textStrategyFor(participants[i]!) })
     })
     // Register every acquired handle's cancel BEFORE dispatching — /stop must
@@ -1216,7 +1216,7 @@ export function createConversationCoordinator(deps: ConversationCoordinatorDeps)
         if (replyToolCalled || assistantText.length === 0) continue
         // Provider didn't call reply tool — fall back to forwarding raw
         // assistant text, prefixed so the user can tell who said what.
-        const dn = deps.registry.get(providerId)?.opts.displayName ?? providerId
+        const dn = namesIn(deps.registry, providerId).short
         deps.log('FALLBACK_REPLY', `chat=${msg.chatId} provider=${providerId} chunks=${assistantText.length} (parallel)`)
         for (const t of assistantText) {
           await deps.sendAssistantText?.(msg.chatId, `[${dn}] ${t}`)
@@ -1287,7 +1287,7 @@ export function createConversationCoordinator(deps: ConversationCoordinatorDeps)
       const startedAt = nowMs()
       let summary: Awaited<ReturnType<typeof collectTurn>> | undefined
       let err: string | undefined
-      const dn = deps.registry.get(providerId)?.opts.displayName ?? providerId
+      const dn = namesIn(deps.registry, providerId).short
       // 回复交付 daemon(spec §4.9):这位发言人的最后的话经端口送达(前缀 [名字] 由 daemon 加,/chat 一人一条
       // 不分条);开轮在 dispatch 之前,附件才登记得上。legacy 的发言人照旧拼全部文字一条发。
       let delivery: TurnDeliveryHandle | undefined

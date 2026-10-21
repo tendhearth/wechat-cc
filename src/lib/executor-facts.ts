@@ -10,8 +10,19 @@ import type { KnownProviderId } from './provider-ids'
 
 export type ModelField = 'model' | 'cursorModel' | 'openaiModel' | 'geminiModel' | 'agyModel'
 
+export interface ExecutorNames {
+  /** 正式名字:桌面 / 手机 / App 头像旁、「CC 的连接」里。 */
+  name: string
+  /** 微信回复前缀、通知里用的短名。 */
+  short: string
+  /** 设置里要分清「怎么连的」时的写法(`·` 后面那段)。 */
+  settings: string
+}
+
 export interface ExecutorFacts {
   id: KnownProviderId
+  /** 叫什么(收敛清单 ⑥,主人 10-21 定;两种 Gemini 都开时的「Gemini(账号)」在 core/provider-display-names)。 */
+  names: ExecutorNames
   /** 微信里切到它的词(/cc、/api …)。 */
   slash: string
   /** agent-config 里它读的模型字段。claude / codex 共用 `model`(只在它是全局默认时才算它的)。 */
@@ -23,11 +34,11 @@ export interface ExecutorFacts {
 }
 
 export const EXECUTOR_FACTS: Readonly<Record<KnownProviderId, ExecutorFacts>> = {
-  claude: { id: 'claude', slash: 'cc', modelField: 'model', setupHint: '安装 Claude Code 并在终端登录一次(claude)' },
-  codex: { id: 'codex', slash: 'codex', modelField: 'model', setupHint: '安装 codex CLI 并登录一次' },
-  cursor: { id: 'cursor', slash: 'cursor', modelField: 'cursorModel', setupHint: '终端跑:curl https://cursor.com/install -fsS | bash,然后 cursor-agent login(用 Cursor 订阅账号)' },
+  claude: { id: 'claude', names: { name: 'Claude', short: 'Claude', settings: 'Claude' }, slash: 'cc', modelField: 'model', setupHint: '安装 Claude Code 并在终端登录一次(claude)' },
+  codex: { id: 'codex', names: { name: 'Codex', short: 'Codex', settings: 'Codex' }, slash: 'codex', modelField: 'model', setupHint: '安装 codex CLI 并登录一次' },
+  cursor: { id: 'cursor', names: { name: 'Cursor', short: 'Cursor', settings: 'Cursor' }, slash: 'cursor', modelField: 'cursorModel', setupHint: '终端跑:curl https://cursor.com/install -fsS | bash,然后 cursor-agent login(用 Cursor 订阅账号)' },
   // 「/api」不是 /openai:这是主人自己的 API 端点(DeepSeek / Kimi / Qwen …),不绑哪家厂商。
-  openai: { id: 'openai', slash: 'api', modelField: 'openaiModel', setupHint: '把 WECHAT_OPENAI_API_KEY 写进 ~/.claude/channels/wechat/daemon.env,并配置 openaiBaseUrl/openaiModel', credentialEnv: ['WECHAT_OPENAI_API_KEY'] },
-  gemini: { id: 'gemini', slash: 'gemini', modelField: 'geminiModel', setupHint: '把 GEMINI_API_KEY 写进 ~/.claude/channels/wechat/daemon.env', credentialEnv: ['GEMINI_API_KEY', 'GOOGLE_API_KEY'] },
-  agy: { id: 'agy', slash: 'agy', modelField: 'agyModel', setupHint: '安装 Antigravity CLI(agy)并登录一次(Google AI Pro 订阅)' },
+  openai: { id: 'openai', names: { name: '自定义 AI 服务', short: 'API', settings: '自定义 AI 服务' }, slash: 'api', modelField: 'openaiModel', setupHint: '把 WECHAT_OPENAI_API_KEY 写进 ~/.claude/channels/wechat/daemon.env,并配置 openaiBaseUrl/openaiModel', credentialEnv: ['WECHAT_OPENAI_API_KEY'] },
+  gemini: { id: 'gemini', names: { name: 'Gemini', short: 'Gemini', settings: 'Gemini · 密钥连接' }, slash: 'gemini', modelField: 'geminiModel', setupHint: '把 GEMINI_API_KEY 写进 ~/.claude/channels/wechat/daemon.env', credentialEnv: ['GEMINI_API_KEY', 'GOOGLE_API_KEY'] },
+  agy: { id: 'agy', names: { name: 'Gemini', short: 'Gemini', settings: 'Gemini · 账号连接' }, slash: 'agy', modelField: 'agyModel', setupHint: '安装 Antigravity CLI(agy)并登录一次(Google AI Pro 订阅)' },
 }

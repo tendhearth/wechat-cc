@@ -240,7 +240,7 @@ describe('daemon × /both(parallel)', () => {
       sendAssistantText, replyDelivery: p.port, replyDeliveryModeFor: (id) => id === 'openai' ? 'daemon' : 'legacy',
     })
     await c.dispatch(inbound())
-    expect(p.begun).toEqual([{ chatId: 'chat-1', mode: 'daemon', context: 'parallel', providerId: 'openai', participantLabel: 'Qwen', textStrategy: 'all_segments' }])
+    expect(p.begun).toEqual([{ chatId: 'chat-1', mode: 'daemon', context: 'parallel', providerId: 'openai', participantLabel: 'API', textStrategy: 'all_segments' }])  // 内置执行者的名字由 executor-facts 定(⑥),注册时给的 'Qwen' 不算
     expect(p.delivered).toEqual([{ finalText: '选 A', narration: ['我想想'] }])
     // claude 仍是 legacy:每段一条(今天的形状)
     expect(sendAssistantText.mock.calls.map(c => (c as unknown[])[1])).toEqual(['[Claude] 我想想', '[Claude] 选 A'])
