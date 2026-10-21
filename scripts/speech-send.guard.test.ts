@@ -15,7 +15,18 @@ import { join, relative, dirname } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..')
-const SEND = /\b(?:sendMessage|sendFile|sendWorkbenchNotice|sendWorkbenchArtifact|sendReplyOnce|sendWechat|sendAssistantText|fanoutPush|sendOnce)\(/g
+// 发送原语 = IlinkAdapter 上所有 send* 方法(sendTyping 除外,它不说话)+ 其余几层包装。ilink 那一份从类型里读,不手写:
+// ilink 以后加 sendVoice 这类方法,守卫自动管到(9d 评审 #513)。
+const NOT_SPEECH = new Set(['sendTyping'])
+function ilinkSendMethods(): string[] {
+  const src = readFileSync(join(ROOT, 'src', 'daemon', 'ilink-glue.ts'), 'utf8')
+  const body = /export interface IlinkAdapter \{([\s\S]*?)\n\}/.exec(src)?.[1] ?? ''
+  return [...new Set([...body.matchAll(/^\s+(send[A-Za-z]*)\??\(/gm)].map(m => m[1]!))].filter(n => !NOT_SPEECH.has(n))
+}
+/** 包在 ilink 外面的几层(回复兜底、伙伴通道、App 推送)。 */
+const WRAPPERS = ['sendReplyOnce', 'sendWechat', 'sendAssistantText', 'fanoutPush', 'sendOnce']
+const PRIMITIVES = [...ilinkSendMethods(), ...WRAPPERS]
+const SEND = new RegExp(`\\b(?:${PRIMITIVES.join('|')})\\(`, 'g')
 
 type Tag = 'primitive' | 'reply' | 'migrate'
 const BASELINE: Record<string, [Tag, number]> = {
@@ -73,6 +84,10 @@ function walk(dir: string, out: string[] = []): string[] {
 }
 
 describe('发送原语只在登记过的地方出现,次数只许降', () => {
+  it('原语清单从 IlinkAdapter 读得出来(读不出来 ⇒ 守卫瞎了,先红)', () => {
+    expect(ilinkSendMethods().sort()).toEqual(expect.arrayContaining(['sendFile', 'sendMessage']))
+    expect(ilinkSendMethods()).not.toContain('sendTyping')
+  })
   const counts = new Map<string, number>()
   for (const d of ['src/daemon', 'src/core', 'src/lib']) {
     for (const f of walk(join(ROOT, d))) {
