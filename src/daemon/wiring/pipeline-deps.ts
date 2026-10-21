@@ -31,17 +31,7 @@ import { scopedSend } from '../inbound/reply-scope'
 import type { AppTurn } from '../inbound/build'
 import { basename as pathBasename } from 'node:path'
 import { wireConnections } from './wire-connections'
-import { wireSettingsPanel } from './wire-settings-panel'
-import { tmpdir } from 'node:os'
-import { makePhoneChatId, makePhoneOwner } from '../mobile-chat'
-import { makePhoneChat } from '../phone-chat'
-import { makePhoneEventsWiring } from '../phone-topic-sources'
-import { resolveRemoteRelays, mergeOnlineDevices } from '../remote-relay-config'
-import { makePhonePush } from '../phone-push'
-import { fanoutPush, makePhoneNotifier } from '../phone-notifier'
-import { makeAppChannel } from '../companion/app-channel'
-import { makeMediaMirror } from '../companion/media-mirror'
-import { deviceIdOf } from '../device-store'
+import { wirePhone } from './wire-phone'
 import { makeCommandRouter } from './command-router'
 import { ensureChatAndNote, makeMatterActivity, wireMatterActivity } from '../matter-activity'
 import { makeGuestRequestStore } from '../guest-requests'
@@ -58,7 +48,6 @@ import type { A2AAgentRecord } from '../../lib/agent-config'
 import { materializeAttachments } from '../media'
 import { makeFireMilestonesFor, makeRecordInbound } from './side-effects'
 import { makeMessagesStore } from '../../lib/messages-store'
-import { makePhoneLifecycle } from './phone-lifecycle'
 import { wireMemory } from './wire-memory'
 import { wirePetTurn } from './wire-pet-turn'
 import { wireCompanionConverse } from './wire-converse'
@@ -68,7 +57,7 @@ import type { YiHub, YiDispatch } from '../../core/yi-hub'
 import type { ExecResult } from '../../core/a2a-server'
 import { makeMattersService } from '../../core/matters/service'
 import { makeSayReceipts } from '../../core/matters/say-receipts'
-import { currentPhoneClient, surfaceOrigin } from '../phone-client'
+import { surfaceOrigin } from '../phone-client'
 
 export interface DelegateDeps {
   listHands: () => readonly A2AAgentRecord[]
@@ -403,37 +392,6 @@ export function buildPipelineDeps(opts: PipelineDepsOpts, refs: PipelineDepsRefs
     },
   })
 
-  // 微信可点开的图形设置面板 (2026-08-25) — lazily-started LAN server, every
-  // endpoint gated on a one-active 10-min token. /set (no args) from an
-  // admin appends the link. See settings-panel.ts's security posture.
-  // Remote tunnel opt-in (随身 CC out-of-home) — resolve id/relay BEFORE the
-  // panel so its /m page can bake them in for out-of-home phones.
-  const remoteCfg = loadAgentConfig(stateDir) as { remote_tunnel?: boolean; remote_relay_url?: string; relay_v2_url?: string }
-  // 过渡期双中继(spec 2026-09-30 §8):老 VPS 中继 + 官方中继 v2;remoteInfo 优先 v2。
-  const relays = resolveRemoteRelays(stateDir, remoteCfg, (tag, line) => log(tag, line))
-  const remoteTunnel = relays?.remoteInfo ?? null
-  // 推送(中继 v2):先建,面板与隧道都要它;发送走 v2 隧道客户端(稍后才建 —— 懒绑定)。
-  // 手机那一簇关机时要停的东西(重构第二批步 6d):main.ts 在 polling 之前登记 ⇒ 倒序时入站先停,App 在途回复还能经隧道送完。
-  const phoneLc = makePhoneLifecycle((tag, line) => log(tag, line))
-  let v2Tunnel: import('../tunnel-client').TunnelClient | null = null
-  let legacyTunnel: import('../tunnel-client').TunnelClient | null = null
-  let notifier: { refresh(): void } | null = null
-  // settingsPanel 在下面才定义;deviceToken / deviceIds 两个闭包只在运行时(推送登记 / 发送 / resync)
-  // 才被调用,那时它早已建好 —— 与 companionConverse 的写法同一姿势。
-  const phonePush = relays?.v2 ? makePhonePush({
-    stateDir,
-    send: (m) => v2Tunnel?.sendControl(m) ?? false,
-    deviceToken: (id) => settingsPanel.deviceTokens().find(t => deviceIdOf(t) === id) ?? null,
-    deviceIds: () => settingsPanel.deviceTokens().map(deviceIdOf),
-    onChange: () => notifier?.refresh(),
-    log: (tag, line) => log(tag, line),
-  }) : null
-
-  // 两条隧道合并(Review Focus 4):同一台手机从哪条连着都算在线。隧道没建 ⇒ 空。
-  const onlineDevices = () => mergeOnlineDevices([legacyTunnel?.subscribedDeviceTokens() ?? [], v2Tunnel?.subscribedDeviceTokens() ?? []], deviceIdOf)
-  // 终端会话的手机推送出口(cli-app-push.ts):与工作台通知同一套 fanout(在线的跳过、失败只记日志)。
-  const appPush: import('../cli-app-push').AppPushOutlet = (p) =>
-    phonePush ? fanoutPush({ push: phonePush, subscribedDevices: onlineDevices, log: (tag, line) => log(tag, line) }, p) : null
 
   // 主人的 chat:设置面板与微信管家都要,算一次(评审 2026-09-16 去重)。
   const ownerChatId = () => resolveAdminChatId(loadAccess(), loadCompanionConfig(stateDir), null)
@@ -464,128 +422,27 @@ export function buildPipelineDeps(opts: PipelineDepsOpts, refs: PipelineDepsRefs
     sayReceipts: makeSayReceipts(db),
     originOf: surfaceOrigin,
   }) : null
-  // 手机「跟 CC 说」(spec 2026-10-01):主人对话一页(只读)+ 收下即回的说一句。
-  // 对话 chat 必须就是 companionConverse 写进去的那条(它认 companion 的 default_chat_id):
-  // 两者不一致(default_chat_id 不是 admin)⇒ 当作没有主人对话,免得手机看 A 却说进 B。
-  const phoneChatId = makePhoneChatId({ ownerChatId, converseChatId: () => loadCompanionConfig(stateDir).default_chat_id ?? null, log: (tag, line) => log(tag, line) })
-  const phoneOwner = opts.matters ? makePhoneOwner({ ownerChatId: phoneChatId, matters: opts.matters, origin: currentPhoneClient }) : null
-  let phoneEvents: import('../phone-events').PhoneEvents | null = null
-  // converse 必须是回合串行入口 companionConverse(与微信 / 桌面「跟 CC 说」同一条:
-  // isInFlight 前置拒 + coordinator.submitTurn 持每 chat 锁),手机一句不会和微信一轮在主人会话上并跑。
-  const phoneChat = phoneOwner ? makePhoneChat({
-    converse: (text, images) => companionConverse(text, 'phone', images),
-    // 手机带的图:材料暂存里按主人取(与交办同一套校验),读完即删,图落到对话 inbox(2026-10-06)。
-    ...(opts.workbench ? { takeImages: (m: { draftId: string; attachmentIds: string[] }) => opts.workbench!.takeChatImages(m, { ownerKey: ownerChatId() ?? '', surface: 'phone' }) } : {}),
-    ownerMatterId: () => phoneOwner.ensure(),
-    onSettled: id => { matterActivity?.note(id); phoneEvents?.poke() },
-    log: (tag, line) => log(tag, line),
-  }) : null
-  // CC 主动找你的第二条路(2026-10-18):微信不通时伙伴推送 / 提醒落到 App —— 记进手机对话读的同一条主人
-  // chat、捅主题、推一条 companion。「送得到」只认还配对着的推送登记,或正连着的设备。
-  const companionApp = phonePush && phoneOwner ? makeAppChannel({
-    // App 对话页认的那条(主人 chat matter 已经在):还没有 ⇒ 点开通知也没有对话可看,当送不到。
-    ownerChatId: () => phoneOwner.peek()?.chatId ?? null,
-    pushDevices: () => { const paired = new Set(settingsPanel.deviceTokens().map(deviceIdOf)); return phonePush.registered().filter(id => paired.has(id)) },
-    onlineDevices,
-    relayOnline: () => v2Tunnel?.connected() ?? false,
-    append: (rec) => messagesStore.append(rec),
-    touched: () => { const m = phoneOwner.peek(); if (m) matterActivity?.note(m.matterId); phoneEvents?.poke() },
-    push: (p) => fanoutPush({ push: phonePush, subscribedDevices: onlineDevices, log: (tag, line) => log(tag, line) }, p),
-    ...(opts.stickers ? { stickerFile: (tag: string) => opts.stickers!.resolve(tag) } : {}),
-    log: (tag, line) => log(tag, line),
-  }) : null
-  // 媒体镜像(手机伙伴第 2 步,2026-10-18):CC 在微信上发给主人的图 / 表情 / 语音 / 文件,App 对话页也看得见 ——
-  // 主人那条记一行 CC,附件放 extras(只存引用)。只认 App 镜像的那条主人对话;别的 chat 不记。
-  if (phoneOwner) {
-    const mirror = makeMediaMirror({
-      ownerChatId: () => phoneOwner.peek()?.chatId ?? null,
-      stickerDir: opts.stickers ? join(stateDir, 'stickers') : null,
-      stickerLabel: (file) => opts.stickers?.list().find(e => e.file === file)?.tags[0] ?? null,
-      scratchRoots: [tmpdir(), join(stateDir, 'tts-tmp')],
-      append: (rec) => messagesStore.append(rec),
-      touched: () => { const m = phoneOwner.peek(); if (m) matterActivity?.note(m.matterId); phoneEvents?.poke() },
-      log: (tag, line) => log(tag, line),
-    })
-    ilink.onMediaSent?.((chatId, m) => mirror.noteSent(chatId, m))
-  }
   // 「CC 的连接」与「CC 现在怎么样」(重构第二批步 6c,wire-connections.ts)。
-  // 配对过的手机数从设置面板读,面板又要 connections 当值 —— 真环;经 getter 在被问时才读(面板下面才建,读不到就当 0)。
+  // 配对过的手机数从设置面板读,面板又要 connections 当值 —— 真环。显式的晚绑定:手机那一簇建好之后才填;
+  // 没填 ⇒ 0(不靠 try/catch 吞 TDZ,catch 只留给真的读失败,#488 评审)。
+  const phoneDevices: { current: (() => number) | null } = { current: null }
   const connections = wireConnections({
     stateDir, boot, ilink, ownerChatId,
-    phoneDevices: () => settingsPanel.phoneDevices().length,
+    phoneDevices: () => phoneDevices.current?.() ?? 0,
     ...(opts.workbench ? { workbench: opts.workbench } : {}),
     ...(opts.guardRuntime ? { guardRuntime: opts.guardRuntime } : {}),
     ...(opts.terminalHooks ? { terminalHooks: opts.terminalHooks } : {}),
     ...(opts.subsystems ? { subsystems: opts.subsystems } : {}),
   })
-  // 设置面板(手机页 / 随身 CC 的那一层,重构第二批步 6c,wire-settings-panel.ts)。手机那一簇的环在下一步(wirePhone)才解。
-  const settingsPanel = wireSettingsPanel({
-    opts, connections, stateDir, db, boot, ilink, log, chatPrefs, messagesStore, ownerChatId, mattersService, memoryNightly,
-    phone: { remoteCfg, remoteTunnel, push: phonePush, owner: phoneOwner, chat: phoneChat },
+  // 手机那一簇(重构第二批步 6c,wire-phone.ts):推送 / 主人对话 / 手机对话 / App 主动通道 / 媒体镜像 / 设置面板 / 隧道 / notifier / 订阅。
+  // 簇里的环在 wirePhone 里面解(显式的 late 对象);这里只拿结果。关机停它的那一项 main.ts 登记在 polling 之前。
+  const phone = wirePhone({
+    opts, stateDir, db, boot, ilink, log, chatPrefs, messagesStore,
+    ownerChatId, matterActivity, companionConverse, mattersService, memoryNightly, connections,
   })
+  phoneDevices.current = () => phone.settingsPanel.phoneDevices().length
+  const { appPush, companionApp, phoneChat, settingsPanel } = phone
 
-  // 远程中继隧道 daemon leg — dials the relay out (NAT-piercing); phone
-  // reaches it via the SAME settingsPanel.handleRequest. OFF unless
-  // remote_tunnel:true (resolved into relays above). 过渡期两条:老中继 + v2。
-  if (relays) {
-    // 手机协议 v2 的订阅(第 11 步):四路来源(home / matter/<id> / approvals / agents)+ 集线器;
-    // 工作台一变就 poke(回调里只许 poke,见 makePhoneEventsWiring)。推送判定在 phone-notifier.ts。关机时由 phoneLc 退订。
-    const phone = makePhoneEventsWiring({
-      ...(opts.workbench ? { workbench: opts.workbench, changes: opts.workbench.changes } : {}),
-      ...(opts.matters ? { matters: opts.matters } : {}),
-      home: (limit, o) => settingsPanel.home(limit, o),
-      ...(phoneChat ? { chat: {
-        latestAt: async (chatId: string) => { const ts = await messagesStore.latestTs(chatId); return ts ? Date.parse(ts) : null },
-        pendingMatter: () => phoneChat.pendingMatter(),
-      } } : {}),
-      log: (tag, line) => log(tag, line),
-    })
-    phoneEvents = phone.events
-    import('../tunnel-client').then(({ makeTunnelClient }) => {
-      // 关机先到、隧道后建:不再连上去
-      if (phoneLc.stopped()) { phone.dispose(); return }
-      const common = {
-        events: phone.events,
-        handleRequest: (req: Request) => settingsPanel.handleRequest(req),
-        // 设备令牌从面板取(梳理第 6 步:不再裸读 settings-devices.json,文件只有 device-store 一个读者)。
-        knownDeviceTokens: () => settingsPanel.deviceTokens(),
-        activeLinkToken: () => settingsPanel.activeLinkToken(),
-        log: (tag: string, line: string) => log(tag, line),
-      }
-      // 过渡期(spec §8):老中继照连,已配对的手机网页还指着它。
-      legacyTunnel = makeTunnelClient({ ...common, daemonId: relays.legacy.id, relayUrl: relays.legacy.daemonUrl })
-      legacyTunnel.start()
-      phoneLc.add('legacy-tunnel', () => legacyTunnel?.stop())
-      if (relays.v2) {
-        v2Tunnel = makeTunnelClient({
-          ...common,
-          daemonId: relays.v2.identity.id,
-          relayUrl: relays.v2.daemonUrl,
-          login: relays.v2.identity,
-          onLogin: () => phonePush?.resync(),
-          onControl: (m) => phonePush?.onControl(m),
-        })
-        v2Tunnel.start()
-        phoneLc.add('v2-tunnel', () => v2Tunnel?.stop())
-      }
-      if (phonePush && opts.workbench) {
-        const wb = opts.workbench
-        const n = makePhoneNotifier({
-          events: phone.events,
-          push: phonePush,
-          // 两条隧道合并(Review Focus 4):同一台手机从哪条连着都算在线。
-          subscribedDevices: onlineDevices,
-          taskInfo: (id) => { try { const d = wb.detail(id); return { title: d.task.title, status: d.task.status } } catch { return null } },
-          log: (tag, line) => log(tag, line),
-        })
-        notifier = n
-        n.refresh()
-        phoneLc.add('notifier', () => n.dispose())
-      }
-      phoneLc.add('phone-events', () => phone.dispose())
-      log('TUNNEL', `remote tunnel enabled — legacy ${relays.legacy.id.slice(0, 8)}…${relays.v2 ? `, v2 ${relays.v2.identity.id.slice(0, 8)}…` : ''}`)
-    }).catch(err => log('TUNNEL', `tunnel client load failed: ${err instanceof Error ? err.message : err}`))
-  }
 
   const modeHandler = makeModeCommands({
     coordinator: boot.coordinator,
@@ -864,8 +721,6 @@ export function buildPipelineDeps(opts: PipelineDepsOpts, refs: PipelineDepsRefs
   // 桌宠的「在做什么」(重构第二批步 6c,wire-pet-turn.ts)
   const petTurn = wirePetTurn({ stateDir, ilink: opts.ilink, petSignals: opts.petSignals, boot, messagesStore })
 
-  // 设置面板的 HTTP(第一次要链接时才起)放最后停:前面的隧道还在转它的请求
-  phoneLc.add('settings-panel', () => settingsPanel.stop())
 
-  return { stopPhone: () => phoneLc.stop(), appPush, companionApp, pipelineDeps, companionConverse, petTurn, mattersService, memoryNightly, stopMatterActivity, settingsPanelLink: () => settingsPanel.linkUrl(), phoneChat, connections, phoneConnect: { link: (o) => settingsPanel.phoneLink(o), devices: () => settingsPanel.phoneDevices() } }
+  return { stopPhone: () => phone.stop(), appPush, companionApp, pipelineDeps, companionConverse, petTurn, mattersService, memoryNightly, stopMatterActivity, settingsPanelLink: () => settingsPanel.linkUrl(), phoneChat, connections, phoneConnect: { link: (o) => settingsPanel.phoneLink(o), devices: () => settingsPanel.phoneDevices() } }
 }
