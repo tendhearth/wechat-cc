@@ -71,7 +71,7 @@ const workbench=makeWorkbenchService({
   mintSessionToken:key=>api.mintSessionToken('trusted',key,{routeAllow:new Set()}),
   revokeSessionToken:key=>api.invalidateSession(key),
 })
-api.setWorkbench(workbench)
+api.provide({ workbench })
 const started=await api.start()
 writeFileSync(infoPath,JSON.stringify({baseUrl:`http://127.0.0.1:${started.port}`,daemonPid:process.pid,...started}),{mode:0o600})
 const port=process.env.WECHAT_CC_SHIM_PORT??'4187'

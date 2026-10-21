@@ -461,7 +461,7 @@ describe('Workbench internal HTTP API', () => {
     const { request } = await start()
     expect((await request('/v1/workbench')).status).toBe(503)
     const workbench = service()
-    api!.setWorkbench(workbench as never)
+    api!.provide({ workbench: workbench as never })
     const response = await request('/v1/workbench')
     expect(response.status).toBe(200)
     expect(await response.json()).toEqual(await workbench.list())

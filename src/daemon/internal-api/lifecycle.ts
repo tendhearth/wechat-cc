@@ -1,37 +1,14 @@
 import { writeFileSync, unlinkSync } from 'node:fs'
 import { join } from 'node:path'
 import type { Lifecycle } from '../../lib/lifecycle'
-import { createInternalApi, type InternalApiDeps, type InternalApiDelegateDep } from './index'
+import { createInternalApi } from './index'
+import type { InternalApiDeps, LateDeps } from './types'
 
 export interface InternalApiLifecycle extends Lifecycle {
   readonly baseUrl: string
   readonly tokenFilePath: string
-  setDelegate(d: InternalApiDelegateDep): void
-  setConversation(c: NonNullable<InternalApiDeps['conversation']>): void
-  setCompanionConverse(fn: NonNullable<InternalApiDeps['companionConverse']>): void
-  setWorkbench(service: NonNullable<InternalApiDeps['workbench']>): void
-  setMatters(service: NonNullable<InternalApiDeps['matters']>): void
-  setPetTurn(fn: NonNullable<InternalApiDeps['petTurn']>): void
-  setCliEvents(hub: NonNullable<InternalApiDeps['cliEvents']>): void
-  setCliPermissions(relay: NonNullable<InternalApiDeps['cliPermissions']>): void
-  setOverseerToday(fn: NonNullable<InternalApiDeps['overseerToday']>): void
-  setCalendarAgenda(fn: NonNullable<InternalApiDeps['calendarAgenda']>): void
-  setLetters(rt: NonNullable<InternalApiDeps['letters']>): void
-  setCliHooks(svc: NonNullable<InternalApiDeps['cliHooks']>): void
+  provide(patch: LateDeps): void
   getPresence(): Promise<import('../../core/companion-presence').Presence | null>
-  setCustomerReview(service: NonNullable<InternalApiDeps['customerReview']>): void
-  setA2A(a2a: NonNullable<InternalApiDeps['a2a']>): void
-  setSocial(social: NonNullable<InternalApiDeps['social']>): void
-  setKnowledge(knowledge: NonNullable<InternalApiDeps['knowledge']>): void
-  setPairing(pairing: NonNullable<InternalApiDeps['pairing']>): void
-  setMemory(memory: NonNullable<InternalApiDeps['memoryLlm']>): void
-  setIncidents(incidents: NonNullable<InternalApiDeps['incidents']>): void
-  setLlmHealth(h: NonNullable<InternalApiDeps['llmHealth']>, registered?: () => string[], endpoints?: () => Record<string, string>): void
-  setSettingsLink(fn: NonNullable<InternalApiDeps['settingsLink']>): void
-  setConnections(fn: NonNullable<InternalApiDeps['connections']>): void
-  setPhoneConnect(p: NonNullable<InternalApiDeps['phoneConnect']>): void
-  setMemoryNightly(r: { runNow(): Promise<unknown> }): void
-  setCliUpgrade(u: import('../../core/cli-upgrade/engine').CliUpgrader): void
   mintSessionToken(tier: import('../../core/user-tier').UserTier, sessionKey: string, opts?: import('./token-registry').MintTokenOpts): string
   invalidateSession(sessionKey: string): void
   panelTokens: import('./token-registry').PanelTokens
@@ -63,32 +40,8 @@ export async function registerInternalApi(deps: InternalApiDeps): Promise<Intern
     name: 'internal-api',
     baseUrl: `http://127.0.0.1:${port}`,
     tokenFilePath,
-    setDelegate: (d) => api.setDelegate(d),
-    setConversation: (c) => api.setConversation(c),
-    setCompanionConverse: (fn) => api.setCompanionConverse(fn),
-    setWorkbench: (service) => api.setWorkbench(service),
-    setMatters: (service) => api.setMatters(service),
-    setPetTurn: (fn) => api.setPetTurn(fn),
-    setCliEvents: (hub) => api.setCliEvents(hub),
-    setCliPermissions: (relay) => api.setCliPermissions(relay),
-    setOverseerToday: (fn) => api.setOverseerToday(fn),
-    setCalendarAgenda: (fn) => api.setCalendarAgenda(fn),
-    setLetters: (rt) => api.setLetters(rt),
-    setCliHooks: (svc) => api.setCliHooks(svc),
+    provide: (patch) => api.provide(patch),
     getPresence: () => api.getPresence(),
-    setCustomerReview: (service) => api.setCustomerReview(service),
-    setA2A: (a2a) => api.setA2A(a2a),
-    setSocial: (social) => api.setSocial(social),
-    setKnowledge: (knowledge) => api.setKnowledge(knowledge),
-    setPairing: (pairing) => api.setPairing(pairing),
-    setMemory: (memory) => api.setMemory(memory),
-    setIncidents: (incidents) => api.setIncidents(incidents),
-    setLlmHealth: (h, registered, endpoints) => api.setLlmHealth(h, registered, endpoints),
-    setSettingsLink: (fn) => api.setSettingsLink(fn),
-    setConnections: (fn) => api.setConnections(fn),
-    setPhoneConnect: (p) => api.setPhoneConnect(p),
-    setMemoryNightly: (r) => api.setMemoryNightly(r),
-    setCliUpgrade: (u) => api.setCliUpgrade(u),
     mintSessionToken: (tier, sessionKey, opts) => api.mintSessionToken(tier, sessionKey, opts),
     invalidateSession: (sessionKey) => api.invalidateSession(sessionKey),
     panelTokens: api.panelTokens,

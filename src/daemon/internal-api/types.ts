@@ -619,6 +619,17 @@ export interface InternalApiDeps {
   }) => Promise<import('../selftest').SelftestConverseResult | null>
 }
 
+/** 可以晚绑定的那些依赖 —— 只有这里列的键能经 `provide` 交进来。 */
+export const LATE_KEYS = [
+  'delegate', 'conversation', 'a2a', 'social', 'knowledge', 'pairing', 'memoryLlm', 'incidents', 'customerReview',
+  'llmHealth', 'llmRegistered', 'llmEndpoints',
+  'cliEvents', 'cliPermissions', 'overseerToday', 'cliHooks', 'calendarAgenda',
+  'workbench', 'matters', 'companionConverse', 'petTurn', 'settingsLink', 'connections', 'phoneConnect',
+  'memoryNightly', 'letters', 'cliUpgrade',
+] as const satisfies readonly (keyof InternalApiDeps)[]
+export type LateKey = typeof LATE_KEYS[number]
+export type LateDeps = { [K in LateKey]?: NonNullable<InternalApiDeps[K]> }
+
 export interface InternalApi {
   /** Start listening on 127.0.0.1:0; resolves once bound. */
   start(): Promise<{ port: number; tokenFilePath: string; operatorTokenFilePath: string }>
@@ -628,89 +639,14 @@ export interface InternalApi {
   port(): number
   /** Filesystem path of the token file. */
   tokenFilePath(): string
-  /** Late-bind the owner-only Workbench after provider bootstrap. */
-  setWorkbench(service: WorkbenchService): void
-  setMatters(service: import('../../core/matters/service').MattersService): void
   /**
-   * RFC 03 P4 — late-bind the delegate dispatcher after bootstrap has
-   * constructed the bare delegate providers. /v1/delegate route returns
-   * 503 until this is called.
+   * 晚绑定(重构第二批步 6b):bootstrap / wireMain 之后才造得出来的服务,一次交进来一批。
+   * 以前是 24 个 setX 方法,加一样服务要改四处(这里、index.ts、lifecycle.ts、main.ts);现在只在 `LATE_KEYS` 加一个名字。
+   * 没交进来之前,对应的路由照旧 503(xxx_not_wired)或空,行为不变。传 undefined 的键忽略,不会清掉已有的。
    */
-  setDelegate(d: InternalApiDelegateDep): void
-  setLlmHealth(h: import('../llm-health').LlmHealth, registered?: () => string[], endpoints?: () => Record<string, string>): void
-  setSettingsLink(fn: () => Promise<string | null>): void
-  setConnections(fn: () => import('../connections').ConnectionsSnapshot): void
-  setPhoneConnect(p: PhoneConnectDep): void
-  setMemoryNightly(r: { runNow(): Promise<unknown> }): void
-  setCliUpgrade(u: import('../../core/cli-upgrade/engine').CliUpgrader): void
-  /**
-   * Late-bind the conversation controller (coordinator.setMode) after
-   * bootstrap has constructed the coordinator. /v1/conversation/set-mode
-   * returns 503 until this is called.
-   */
-  setConversation(c: NonNullable<InternalApiDeps['conversation']>): void
-  /**
-   * Late-bind the companion converse dep (app-conversation-channel, Stage 0
-   * Task 2) after the wiring layer has built the closure over the
-   * coordinator + reply sinks. POST /v1/companion/converse returns 503
-   * until this is called.
-   */
-  setCompanionConverse(fn: NonNullable<InternalApiDeps['companionConverse']>): void
-  /**
-   * Late-bind 桌宠 turn 的组装闭包(CC 桌宠 Phase B),同 setCompanionConverse:
-   * 它闭包了 boot.sessionManager / boot.coordinator,只有 wireMain 返回之后
-   * 才存在。GET /v1/companion/pet 在此之前返回 503。
-   */
-  setPetTurn(fn: NonNullable<InternalApiDeps['petTurn']>): void
-  setCliEvents(hub: NonNullable<InternalApiDeps['cliEvents']>): void
-  setCliPermissions(relay: NonNullable<InternalApiDeps['cliPermissions']>): void
-  setOverseerToday(fn: NonNullable<InternalApiDeps['overseerToday']>): void
-  setCalendarAgenda(fn: NonNullable<InternalApiDeps['calendarAgenda']>): void
-  setLetters(rt: NonNullable<InternalApiDeps['letters']>): void
-  setCliHooks(svc: NonNullable<InternalApiDeps['cliHooks']>): void
+  provide(patch: LateDeps): void
   /** 三轴 presence 的共用入口(随身 CC 手机页经此读,不自己拼输入)。null = journal 没接。 */
   getPresence(): Promise<import('../../core/companion-presence').Presence | null>
-  /** Late-bind Customer Review after wxvault + an eval provider are ready. */
-  setCustomerReview(service: NonNullable<InternalApiDeps['customerReview']>): void
-  /**
-   * Late-bind A2A deps after bootstrap has constructed the registry,
-   * client, and events store. POST /v1/a2a/send returns 503 until this
-   * is called (when a2a_listen is configured).
-   */
-  setA2A(a2a: NonNullable<InternalApiDeps['a2a']>): void
-  /**
-   * Late-bind the social surface (笔友信道 + 心愿) after bootstrap has
-   * constructed it. POST /v1/social/wish{,/send,/cancel} return 503
-   * until this is called (only happens when social_enabled +
-   * social_disclosure_policy are both configured).
-   */
-  setSocial(social: NonNullable<InternalApiDeps['social']>): void
-  /**
-   * Late-bind the Knowledge Kernel store + semanticSearch (Phase 01 T5)
-   * after bootstrap has constructed `boot.knowledge` (only happens when
-   * `knowledge_enabled` is configured). /v1/knowledge/* routes return 503
-   * knowledge_not_wired until this is called (mirrors `setSocial` above).
-   */
-  setKnowledge(knowledge: NonNullable<InternalApiDeps['knowledge']>): void
-  /**
-   * Late-bind the 配对码 engine (spec §7) after bootstrap has constructed it
-   * (only happens when mailbox_relays is configured). POST /v1/pair/start
-   * and POST /v1/pair/accept return 503 until this is called.
-   */
-  setPairing(pairing: NonNullable<InternalApiDeps['pairing']>): void
-  /**
-   * Late-bind the LLM memory ops (spec 2026-07-23-daemon-owns-llm-memory-ops)
-   * after bootstrap has constructed the coordinator + provider registry.
-   * POST /v1/memory/{synthesize,profile/generate} return 503 until this is
-   * called.
-   */
-  setMemory(memory: NonNullable<InternalApiDeps['memoryLlm']>): void
-  /**
-   * Late-bind the incident store (Task 8) after bootstrap's `wireHealth`
-   * constructs the health runtime. GET /v1/health/incidents returns an
-   * empty list (not 503) until this is called.
-   */
-  setIncidents(incidents: NonNullable<InternalApiDeps['incidents']>): void
   /**
    * Mint an env-only per-session token granting `tier`, keyed by `sessionKey`
    * (`provider/alias/chatId`). The daemon injects it into that session's MCP
