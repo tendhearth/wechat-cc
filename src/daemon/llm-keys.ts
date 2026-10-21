@@ -12,12 +12,13 @@ import { join } from 'node:path'
 import { upsertEnvFile } from '../lib/env-file'
 import { loadAgentConfig } from '../lib/agent-config'
 import { writeConfigKey } from './config-surface'
+import { EXECUTOR_FACTS } from '../lib/executor-facts'
 
 export type LlmKeyProvider = 'openai' | 'gemini'
 
 export const LLM_KEY_ENV: Record<LlmKeyProvider, string> = {
-  openai: 'WECHAT_OPENAI_API_KEY',
-  gemini: 'GEMINI_API_KEY',
+  openai: EXECUTOR_FACTS.openai.credentialEnv![0]!,
+  gemini: EXECUTOR_FACTS.gemini.credentialEnv![0]!,
 }
 
 export type SaveLlmKeyResult =

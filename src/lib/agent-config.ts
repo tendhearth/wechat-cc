@@ -6,6 +6,7 @@ import { join } from 'node:path'
 import z from 'zod'
 
 import { PROVIDER_IDS, isKnownProviderId, type KnownProviderId } from './provider-ids'
+import { EXECUTOR_FACTS } from './executor-facts'
 export type AgentProviderKind = KnownProviderId
 
 export interface AgentConfig {
@@ -592,20 +593,15 @@ export function withActiveModel(config: AgentConfig, model: string): AgentConfig
 
 /** The model id `providerId` should use, resolved per-provider (undefined if unset). */
 export function modelForProvider(config: AgentConfig, providerId: string): string | undefined {
-  if (providerId === 'openai') return config.openaiModel
-  if (providerId === 'cursor') return config.cursorModel
-  if (providerId === 'gemini') return config.geminiModel
-  if (providerId === 'agy') return config.agyModel
+  const field = isKnownProviderId(providerId) ? EXECUTOR_FACTS[providerId].modelField : 'model'
+  if (field !== 'model') return config[field]
   return config.provider === providerId ? config.model : undefined
 }
 
 /** A copy of `config` with `providerId`'s own model field set — regardless of the global default provider. */
 export function withModelForProvider(config: AgentConfig, providerId: string, model: string): AgentConfig {
-  if (providerId === 'openai') return { ...config, openaiModel: model }
-  if (providerId === 'cursor') return { ...config, cursorModel: model }
-  if (providerId === 'gemini') return { ...config, geminiModel: model }
-  if (providerId === 'agy') return { ...config, agyModel: model }
-  return { ...config, model }
+  const field = isKnownProviderId(providerId) ? EXECUTOR_FACTS[providerId].modelField : 'model'
+  return { ...config, [field]: model }
 }
 
 /** Sub-project C default: 30 forwards/hour per upstream sender. Applied by
