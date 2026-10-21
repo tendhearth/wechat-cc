@@ -37,7 +37,7 @@ import { currentPhoneClient } from '../phone-client'
 
 export interface WireSettingsPanelDeps {
   /** 面板直接读的那几项 opts(只有这些)。 */
-  opts: Pick<PipelineDepsOpts, 'activity' | 'cliActions' | 'cliSessions' | 'huntStore' | 'lessons' | 'llmHealth' | 'matters' | 'overseerToday' | 'panelTokens' | 'presence' | 'requestRestart' | 'stickers' | 'turns' | 'workbench'>
+  opts: Pick<PipelineDepsOpts, 'activity' | 'cliActions' | 'cliSessions' | 'huntStore' | 'llmHealth' | 'matters' | 'overseerToday' | 'panelTokens' | 'presence' | 'requestRestart' | 'stickers' | 'turns' | 'workbench'>
   connections: Parameters<typeof makeSettingsPanel>[0]['connections']
   stateDir: string
   db: Db
@@ -115,7 +115,6 @@ return makeSettingsPanel({
   ...(mattersService && opts.matters ? { matters: { list: (f) => mattersService.list(f), detail: (id) => mattersService.detail(id), inputReceipt:mattersService.inputReceipt, say: (id, text, input) => mattersService.say(id, text, 'phone',input), permission:mattersService.permission,answer:mattersService.answer,stop:mattersService.stop,worktree:mattersService.worktree,rewindPreview:mattersService.rewindPreview,rewind:mattersService.rewind,artifactChunk:mattersService.artifactChunk,handoff:mattersService.handoff,seenOnPhone: (id) => opts.matters!.bind(id, 'phone', 'pwa') } } : {}),
   // 「CC 的信」(2026-10-18):只读存档,寄出去了的才列。
   ...(opts.activity ? { activity: opts.activity } : {}),
-  ...(opts.lessons ? { lessons: opts.lessons } : {}),
   letters: { list: () => listLetters(stateDir), pagePath: (id: string, page: number) => letterPagePath(stateDir, id, page) },
   // 定时在手机上看得见(对标 B7):与微信「定时」、runner 读写同一个 scheduled-jobs.json。
   jobs: (() => {

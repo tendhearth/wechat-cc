@@ -5,8 +5,7 @@ import { fileURLToPath } from 'node:url'
 import vm from 'node:vm'
 import { assembleMobilePage, serializeMobilePage } from './assemble'
 import { readMobileSource, MOBILE_PAGE_OUT, MOBILE_SRC } from './sources'
-import { buildProtocolJs, buildMarkdownJs, escapeInlineMarkdownScript, assembleRelayShell, PROTOCOL_JS_OUT, MARKDOWN_JS_OUT, PSET_SHELL_SRC, PSET_SHELL_OUT } from './build'
-import * as serverEntry from '../../src/core/workbench/task-entry'
+import { buildProtocolJs, assembleRelayShell, PROTOCOL_JS_OUT, PSET_SHELL_SRC, PSET_SHELL_OUT } from './build'
 
 describe('apps/mobile → src/daemon/mobile-page.generated.json', () => {
   const page = assembleMobilePage(readMobileSource)
@@ -18,10 +17,10 @@ describe('apps/mobile → src/daemon/mobile-page.generated.json', () => {
 
   it('sources and the generated JSON check out with LF on every platform (Windows autocrlf would desync the sync test)', () => {
     const paths = [
-      'apps/mobile/src/phone.html', 'apps/mobile/src/workbench.js', 'apps/desktop/src/shared/task-entry-contract.js', 'src/daemon/mobile-page.generated.json',
+      'apps/mobile/src/phone.html', 'apps/mobile/src/workbench.js', 'src/daemon/mobile-page.generated.json',
       'apps/desktop/src/shared/agent-avatars.js', 'apps/desktop/src/shared/agent-avatars.css',
       // 手机协议包 v2 Task 4:三份新生成物,同一个理由(整份文本比对,CRLF 必红)。
-      'apps/mobile/src/protocol-generated.js', 'apps/mobile/src/markdown-generated.js', 'relay/pset.src.html', 'relay/pset.html',
+      'apps/mobile/src/protocol-generated.js', 'relay/pset.src.html', 'relay/pset.html',
     ]
     const root = fileURLToPath(new URL('../../', import.meta.url))
     const out = execFileSync('git', ['check-attr', 'eol', '--', ...paths], { cwd: root, encoding: 'utf8' })
@@ -40,7 +39,7 @@ describe('apps/mobile → src/daemon/mobile-page.generated.json', () => {
     // readMobileSource)—— 后者(手机协议包 v2 Task 4 起)会把顶部占位注释
     // 原地换成 protocol-generated.js 那份压缩后的 IIFE,首行天然以 `(` 开头,
     // 那是机器产物自己的 IIFE 包裹,不是这条测试要抓的手写代码 ASI 隐患。
-    for (const name of ['boot.js', 'transport.js', 'nav.js', 'workbench.js', 'attachments.js', 'entry.js', 'presence.js', 'you.js', 'home.js', 'sw.js']) {
+    for (const name of ['boot.js', 'transport.js', 'nav.js', 'workbench.js', 'presence.js', 'home.js', 'sw.js']) {
       const source = name === 'transport.js' ? readFileSync(new URL(name, MOBILE_SRC), 'utf8') : readMobileSource(name)
       const bad = source.split('\n').map((line, i) => [i + 1, line.replace(/\/\*\*.*?\*\/\s*/g, '')] as const)
         .filter(([, line]) => /^\s*[([]/.test(line))
@@ -53,73 +52,21 @@ describe('apps/mobile → src/daemon/mobile-page.generated.json', () => {
     expect(page.phone).not.toMatch(/<link[^>]*rel="stylesheet"/)
   })
 
-  it('loads the shared Markdown bundle exactly once before the dialogue renderer, inside a syntax-valid inline script', () => {
-    expect(page.phone).toContain(readMobileSource('markdown.js'))
-    expect(page.phone.match(/globalThis\.CCM=/g)).toHaveLength(1)
-    expect(page.phone.indexOf('globalThis.CCM=')).toBeLessThan(page.phone.indexOf('function mRenderEvents'))
+  it('the inline page script is syntax-valid and carries no Markdown renderer (收敛 5b:详情只看状态)', () => {
+    expect(page.phone).not.toContain('globalThis.CCM=')
     expect(page.phone).not.toContain('@@CCM@@')
     const script=/<script>([\s\S]*?)<\/script>/.exec(page.phone)![1]!
       .replace('{{TOKEN_JSON}}','"fixture"').replace('{{REMOTE_JSON}}','null')
     expect(()=>new Function(script)).not.toThrow()
   })
 
-  it('inlines the same browser-safe entry contract into the classic script without importing runtime modules',()=>{
-    const source=readMobileSource('entry.js')
-    const contract=new Function('REMOTE','location',source+'\nreturn eContract')(null,{host:'localhost'})
-    expect(contract.ENTRY_LIMITS).toEqual(serverEntry.ENTRY_LIMITS)
-    const input={text:'要求',context:{excerpts:[{role:'assistant',text:'讨论'}]}}
-    expect(contract.composeEntryPrompt(input)).toBe(serverEntry.composeEntryPrompt(input as any))
-    expect(contract.entryFailureKind('api_task_attachment_invalid',{surface:'phone',method:'POST',status:400})).toBe('rejected')
-    expect(page.phone).toContain(source)
-    expect(source).not.toMatch(/^\s*(?:import|export)\s/m)
-  })
-
-  it('keeps inline contract bytes identical between the production builder and the test runtime',()=>{
+  it('keeps the inlined agent-avatar factory bytes identical between the production builder and the test runtime',()=>{
     const root=fileURLToPath(new URL('../../',import.meta.url))
-    const production=execFileSync('bun',['--eval',"import {readMobileSource} from './apps/mobile/sources.ts'; process.stdout.write(readMobileSource('entry.js'))"],{cwd:root,encoding:'utf8'})
-    expect(production).toBe(readMobileSource('entry.js'))
+    const production=execFileSync('bun',['--eval',"import {readMobileSource} from './apps/mobile/sources.ts'; process.stdout.write(readMobileSource('workbench.js'))"],{cwd:root,encoding:'utf8'})
+    expect(production).toBe(readMobileSource('workbench.js'))
   })
 })
 
-describe('apps/mobile/src/markdown-generated.js', () => {
-  const generated=readFileSync(MARKDOWN_JS_OUT,'utf8')
-
-  it.skipIf(!process.versions.bun)('is in sync with packages/markdown/src/browser.ts (fix: bun run build:mobile)', async () => {
-    expect(generated).toBe(await buildMarkdownJs())
-  })
-
-  it('is self-contained, has no HTML script boundaries, and preserves Markdown rendering in a browser sandbox', () => {
-    expect(generated).not.toMatch(/\b(?:import|require)\(/)
-    expect(generated).not.toMatch(/<\/script|<!--/i)
-    const sandbox=vm.createContext({})
-    vm.runInContext(generated,sandbox)
-    const api=sandbox.CCM as {renderMarkdown:(s:string)=>string;markdownPlainText:(s:string)=>string;hasMarkdownFormatting:(s:string)=>boolean}
-    expect(api.renderMarkdown('**重点** [文档](https://example.com)')).toContain('<strong>重点</strong>')
-    expect(api.renderMarkdown('<script>bad()</script> [坏链接](javascript:bad())')).not.toMatch(/<script|href="javascript:/)
-    expect(api.markdownPlainText('**重点** [文档](https://example.com)')).not.toMatch(/\*\*|\]\(/)
-    expect(api.hasMarkdownFormatting('普通消息')).toBe(false)
-    expect(api.hasMarkdownFormatting('**有格式**')).toBe(true)
-  })
-
-  it('escapes HTML parser sentinels without changing JavaScript string and replacement-pattern semantics', () => {
-    const source='globalThis.fixture="</ScRiPt><script><!-- $& $1 $$ $`"'
-    const escaped=escapeInlineMarkdownScript(source)
-    expect(escaped).not.toMatch(/<\/script|<!--/i)
-    const sandbox=vm.createContext({})
-    vm.runInContext(escaped,sandbox)
-    expect(sandbox.fixture).toBe('</ScRiPt><script><!-- $& $1 $$ $`')
-  })
-})
-
-/**
- * 手机协议包 v2 Task 4:手机页 /m 与中继壳页 relay/pset.html 的 v1 加密改由
- * packages/protocol 生成,不再手写 WebCrypto。apps/mobile/src/protocol-generated.js
- * 是 `Bun.build({ format:'iife' })` 打包 packages/protocol/src/browser.ts 的产物 ——
- * Bun.build 是 Bun 专属 API,只有下面「is in sync」这一条断言用 it.skipIf 在
- * Node 作业上跳过(理由字符串见断言本身);其余断言(LF、无 crypto.subtle、
- * 沙箱往返、relay/pset.html 跟已提交的 protocol-generated.js 一致)两个运行
- * 器都跑。
- */
 describe('apps/mobile/src/protocol-generated.js', () => {
   const generated = readFileSync(PROTOCOL_JS_OUT, 'utf8')
 

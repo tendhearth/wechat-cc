@@ -13,7 +13,7 @@ function load(matters:unknown[]){
   const document=window.document;document.body.innerHTML=assembleMobilePage(readMobileSource).phone
   const api=vi.fn(async(path:string)=>({ok:true,status:200,json:async()=>path.startsWith('/m/api/matters')?{ok:true,matters}:{ok:false,error:'not_found'}}))
   const env={document,window,api,fetch:api,tunnel:vi.fn(),q:(p:string)=>p,localStorage:window.localStorage,REMOTE:{id:'t'},AbortController,setTimeout,clearTimeout,crypto,URL:{revokeObjectURL:()=>{}},
-    CCM:{renderMarkdown:(s:string)=>s,hasMarkdownFormatting:()=>false},ago:()=>'刚刚',
+    ccPlain:(s:string)=>s,ccSelectMobilePane:()=>{},
     esc:(text:unknown)=>String(text).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'})[c]!)}
   const fns=new Function(...Object.keys(env),'var preferTunnel=false;\n'+readMobileSource('workbench.js')+'\nreturn {loadMatters,renderMatter}')(...Object.values(env)) as {loadMatters:()=>void,renderMatter:(d:unknown)=>void}
   return {...fns,document}

@@ -95,8 +95,8 @@ describe('中继 v2 端到端', () => {
     expect(d1.sendControl({ ping: 1 })).toBe(false)   // 被替换的那条已经没有可用连接
     expect(d2Logs.some(l => l.includes('socket closed'))).toBe(false)   // 新连接没被踢
     d1.stop()   // 旧进程退场(它在退避里等重连;不停的话两份同身份的 daemon 会互相替换)
-    const r2 = await phone.request({ method: 'GET', path: '/m/api/feed' })
-    expect(r2.json()).toEqual({ path: '/m/api/feed' })
+    const r2 = await phone.request({ method: 'GET', path: '/m/api/matters' })
+    expect(r2.json()).toEqual({ path: '/m/api/matters' })
     phone.close(); d2.stop()
   })
 })

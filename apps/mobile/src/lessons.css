@@ -1,3 +1,0 @@
-#lessons-root{margin-top:22px}#m-detail:not([hidden])~#lessons-root{display:none}
-.lessons-project>small{display:block;font-size:12px;color:var(--soft);margin-top:12px}.lessons-row{display:flex;align-items:center;gap:8px}.lessons-row span{flex:1;overflow-wrap:anywhere}.lessons-del{width:auto;border:0;padding:8px 0 8px 12px}
-#lessons-form{display:flex;flex-wrap:wrap;gap:6px;margin-top:12px}#lessons-form :is(select,input){font:inherit;border:1px solid var(--line);border-radius:var(--r-s);padding:8px;min-height:44px}#lessons-form input{flex:1 1 200px}

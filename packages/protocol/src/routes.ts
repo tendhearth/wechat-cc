@@ -495,15 +495,15 @@ export const ROUTES: Readonly<Record<RouteKey, RouteSpec>> = {
   'POST /set/api/apply': { set: { link: 'write', reason: '设置页本身;开关远程 / 撤设备这类在 LAN_ONLY_OPS 另有一道', lanOnlyOps: ['set_remote', 'revoke_device', 'forget_devices'] } },
   'POST /set/api/pair': { set: { link: 'write', reason: '用链接换设备令牌,就是配对这一步' } },
   // 随身 CC
+  // 收敛 5b(2026-10-21):网页删了对话 / 记忆 / 电脑会话 / 终端会话那几页,链接令牌对它们的读一并收回
+  // (#463 标的「私事,收敛时再看」);设备令牌与 App 照旧。眨眼帧、动态翻页、项目经验三组接口只有网页在用,连路由删了。
   'GET /m': { phone: { link: 'read', reason: '手机页面本身(配对之前也要能打开)' } },
   'GET /m/api/state': { phone: { link: 'read', reason: '页面骨架:在不在、配对条、待办' } },
-  'GET /m/api/art/blink': { phone: { link: 'read', reason: 'CC 的形象画(眨眼)' } },
   'GET /m/api/art/presence': { phone: { link: 'read', reason: 'CC 的形象画(在不在身边)' } },
-  'GET /m/api/memory': { phone: { link: 'read', reason: 'CC 眼中的你 —— 私事,收敛时再看' } },
+  'GET /m/api/memory': { phone: { link: 'none' } },
   // 「CC 记得你」逐条纠错(2026-10-06)
   'POST /m/api/memory/correct': { phone: { link: 'write', reason: '只把一条记忆标成不对 / 过时,不给执行者下令' } },
   'GET /m/api/home': { phone: { link: 'read', reason: '此刻页的内容(只读)' } },
-  'GET /m/api/feed': { phone: { link: 'read', reason: '此刻页的动态' } },
   'POST /m/api/seen': { phone: { link: 'write', reason: '只记哪些消息已经看过' } },
   'GET /m/api/matters': { phone: { link: 'read', reason: '一起做的列表' } },
   'GET /m/api/matter': { phone: { link: 'read', reason: '一件事的详情' } },
@@ -521,12 +521,12 @@ export const ROUTES: Readonly<Record<RouteKey, RouteSpec>> = {
   'POST /m/api/matter/rewind': { phone: { link: 'none' } },
   'POST /m/api/matter/say': { phone: { link: 'none' } },
   // 跟 CC 说(spec 2026-10-01,mobile-chat.ts):主人对话一页 + 收下即回的说一句
-  'GET /m/api/chat': { phone: { link: 'read', reason: '主人对话的记录 —— 私事,收敛时再看' } },
+  'GET /m/api/chat': { phone: { link: 'none' } },
   'POST /m/api/chat/say': { phone: { link: 'none' } },
   // 搜主人那条对话(2026-10-06)
-  'GET /m/api/chat/search': { phone: { link: 'read', reason: '搜主人对话 —— 私事,收敛时再看' } },
+  'GET /m/api/chat/search': { phone: { link: 'none' } },
   // 回复里的语音附件按需合成(2026-10-04):只念库里那一行真有的那段
-  'GET /m/api/chat/voice': { phone: { link: 'read', reason: '回复里的语音 —— 私事,收敛时再看' } },
+  'GET /m/api/chat/voice': { phone: { link: 'none' } },
   // 按住说话(2026-10-18):配没配语音转文字 + 一段录音转成字(只回字,不发、不执行;链接令牌也能用)
   'GET /m/api/chat/transcribe': { phone: { link: 'read', reason: '有没有配语音转文字' } },
   'POST /m/api/chat/transcribe': { phone: { link: 'write', reason: '录音转成字,只回字,不发、不执行' } },
@@ -536,9 +536,6 @@ export const ROUTES: Readonly<Record<RouteKey, RouteSpec>> = {
   'GET /m/api/letters': { phone: { link: 'none' } },
   // 定时(对标 B7,2026-10-20):只给设备
   'GET /m/api/activity': { phone: { link: 'none' } },
-  'GET /m/api/lessons': { phone: { link: 'none' } },
-  'POST /m/api/lessons/add': { phone: { link: 'none' } },
-  'POST /m/api/lessons/remove': { phone: { link: 'none' } },
   'GET /m/api/jobs': { phone: { link: 'none' } },
   'POST /m/api/jobs/action': { phone: { link: 'none' } },
   'GET /m/api/letters/page': { phone: { link: 'none' } },
@@ -548,19 +545,19 @@ export const ROUTES: Readonly<Record<RouteKey, RouteSpec>> = {
   // CC 的连接(spec 2026-10-01,mobile-reads.ts),去掉 detail
   'GET /m/api/connections': { phone: { link: 'read', reason: 'CC 的连接(已去掉细节)' } },
   // 电脑上的原生会话(只读,spec 2026-10-01),项目只给目录名
-  'GET /m/api/sessions': { phone: { link: 'read', reason: '电脑上的会话列表(项目只给目录名)—— 收敛时再看' } },
-  'GET /m/api/session': { phone: { link: 'read', reason: '一条电脑会话(只读)—— 收敛时再看' } },
+  'GET /m/api/sessions': { phone: { link: 'none' } },
+  'GET /m/api/session': { phone: { link: 'none' } },
   // 终端会话登记处(v76,2026-10-14):主人在 CC 外面开的 claude / codex 会话 —— 谁在跑、谁在等批准
-  'GET /m/api/cli/sessions': { phone: { link: 'read', reason: '终端会话登记处 —— 收敛时再看' } },
+  'GET /m/api/cli/sessions': { phone: { link: 'none' } },
   // 手机上拍板终端会话等批准的那一项(同微信「y/n 码」)、接着说一句(同微信「@码」)(2026-10-14)
   'POST /m/api/cli/permission': { phone: { link: 'none' } },
   'POST /m/api/cli/say': { phone: { link: 'none' } },
   // 看着它跑(2026-10-17):一条终端会话最近几步(跑了什么、改了哪、说了什么),只读
-  'GET /m/api/cli/activity': { phone: { link: 'read', reason: '终端会话最近几步 —— 收敛时再看' } },
+  'GET /m/api/cli/activity': { phone: { link: 'none' } },
   // 「今天」一眼看完(2026-10-14):终端 + 一起做,过去 24 小时;与微信「日报」同一份
   'GET /m/api/today': { phone: { link: 'read', reason: '「今天」一眼看完' } },
   // 在手机上接着做电脑上的会话(spec 2026-10-01-tendhearth-continue-sessions,mobile-workbench.ts):预览 + 接成一件事
-  'GET /m/api/session/continue': { phone: { link: 'read', reason: '接着做的预览(接成一件事只给设备)—— 收敛时再看' } },
+  'GET /m/api/session/continue': { phone: { link: 'none' } },
   'POST /m/api/session/continue': { phone: { link: 'none' } },
   'POST /m/api/todo': { phone: { link: 'write', reason: '只改待办状态' } },
   'GET /m/api/sticker/': { phone: { link: 'read', reason: '回复里的贴纸图片' } },

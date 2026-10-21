@@ -13,18 +13,15 @@ describe('production phone presence',()=>{
       expect(createHash('sha256').update(source).digest('hex')).toBe(entry.sha256)
     }
   })
-  it('moves past events into memories and keeps existing pocket functions reachable',()=>{
+  // 收敛 5b(2026-10-21):网页只留配对、此刻(CC + 一行状态 + 连不上 + 等你的那一件)、一起做(列表 + 只看状态的详情)、设置。
+  it('keeps only 此刻 and 一起做; memories, todos, portrait and stickers live in the App now',()=>{
     const html=phoneHtml('test',null)
-    expect(html).toContain('id="p-memory"')
-    expect(html.indexOf('id="feed"')).toBeGreaterThan(html.indexOf('id="p-memory"'))
-    expect(html).toContain('id="memory-open"')
     const nav=html.match(/<nav>[\s\S]*?<\/nav>/)?.[0]??''
     expect(nav.match(/data-p=/g)).toHaveLength(2)
     expect(nav).toContain('data-p="today"');expect(nav).toContain('data-p="matters"')
-    expect(nav).not.toContain('data-p="memory"')
-    expect(html).toContain('id="home-focus"')
-    expect(html).toContain('id="home-result"')
-    for(const id of ['todos','portrait','stickers'])expect(html).toContain(`id="${id}"`)
+    expect(html.match(/class="pane[^"]*" id="p-[a-z]+"/g)?.map(m=>m.replace(/.*id="/,'').replace('"',''))).toEqual(['p-today','p-matters'])
+    for(const id of ['home-focus','pres-txt','banner','pairbar','nav-set','m-list','m-detail','m-status'])expect(html).toContain(`id="${id}"`)
+    for(const id of ['p-memory','feed','memory-open','todos','portrait','stickers','p-you','home-result'])expect(html).not.toContain(`id="${id}"`)
     expect(html).not.toContain('<span class="i">🌤</span>')
   })
   it('leaves room for the relay envelope inside a 512KB frame',()=>{
