@@ -190,7 +190,8 @@ async function pollAtelier() {
 function startAtelierPoll() { if (atelierPoll) clearInterval(atelierPoll); atelierPoll = setInterval(pollAtelier, 2000) }
 // ── 模型与后端 ─────────────────────────────────────────────────────────
 var MODEL_KEY = { claude: "model", agy: "agyModel", cursor: "cursorModel", openai: "openaiModel", gemini: "geminiModel" };
-var PROVIDER_NAME = { claude: "Claude", agy: "Gemini(订阅 agy)", cursor: "Cursor(订阅)", codex: "Codex", openai: "自配 API(/api)", gemini: "Gemini(API key)" };
+// 执行者叫什么只读 daemon 下发的 providers[].name(收敛清单 ⑥),页面不存名字表;老 daemon 不带 ⇒ id
+var PROVIDER_NAME = {};
 function esc(t) { return String(t == null ? "" : t).replace(/[&<>"]/g, function (c) { return { "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c] }) }
 function statusText(p) {
   if (p.status === "ok") return "✓ 通" + (p.latency_ms != null ? "(" + p.latency_ms + "ms)" : "")
@@ -200,6 +201,7 @@ function statusText(p) {
 }
 function renderModels(m) {
   if (!m) return
+  PROVIDER_NAME = {}; for (var n = 0; n < m.providers.length; n++) if (m.providers[n].name) PROVIDER_NAME[m.providers[n].id] = m.providers[n].name
   var html = ""
   for (var i = 0; i < m.providers.length; i++) {
     var p = m.providers[i], key = MODEL_KEY[p.id]
