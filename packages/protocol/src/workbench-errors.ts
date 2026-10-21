@@ -78,6 +78,7 @@ export const WORKBENCH_ERRORS: Readonly<Record<string, WorkbenchErrorSpec>> = Ob
   project_busy: {desktop: 409, phone: 409, wechatWorktree: '项目目录里还有别的任务在跑，等它收工再合回。'},
   project_detached: {desktop: 409, phone: 409, wechatWorktree: '项目目录现在不在任何分支上，请在电脑上自己合并。'},
   project_dirty: {desktop: 409, phone: 409, wechatWorktree: '项目目录里有没提交的改动，CC 不替你合并。请处理那些改动，或在电脑上自己合并。'},
+  worktree_project_missing: {desktop: 409, phone: 409},
   worktree_base_missing: {desktop: 422, phone: 422, wechat: '项目里没有这个分支，没有开始工作。请核对分支名（本地分支），或去掉 @<分支> 从最新提交开始。'},
   worktree_branch_exists: {desktop: 409, phone: 409},
   worktree_branch_missing: {desktop: 409, phone: 409, wechatWorktree: '分支已经不在项目里了，没法重开。请重新交办一件。'},
@@ -118,15 +119,17 @@ export const WORKBENCH_ERRORS: Readonly<Record<string, WorkbenchErrorSpec>> = Ob
   external_close_confirmation_stale: {desktop: 409, phone: 409},
   handoff_artifact_unsupported: {desktop: 422},
   handoff_changed: {desktop: 409},
-  native_folder_busy: {phone: 409},
+  native_folder_busy: {desktop: 409, phone: 409},
   native_history_changed: {desktop: 409, phone: 409},
+  native_history_empty: {desktop: 409, phone: 409},
   native_history_unavailable: {desktop: 503},
   native_history_unsupported: {desktop: 422},
   native_import_too_large: {desktop: 400},
   native_session_already_managed: {desktop: 409},
   native_session_busy: {desktop: 409, phone: 409},
   native_session_identity_mismatch: {desktop: 409},
-  provider_quota_exhausted: {phone: 503},
+  // 桌面以前回 500 internal,「另做一份」那句额度人话出不来(#465 盘点时发现)
+  provider_quota_exhausted: {desktop: 503, phone: 503},
   quota_handoff_changed: {desktop: 409, phone: 409},
   quota_handoff_not_needed: {desktop: 409, phone: 409},
   quota_handoff_unavailable: {desktop: 503, phone: 503},
@@ -173,7 +176,8 @@ export const WORKBENCH_ERRORS: Readonly<Record<string, WorkbenchErrorSpec>> = Ob
   control_conflict: {wechat: '这条消息的内容与已记录的操作不一致，未再次执行。请重新查询任务。'},
   control_stale: {wechat: '原请求对应的轮次已结束，未停止当前轮次。请重新查询任务。'},
   invalid_wechat_identity: {wechat: '无法确认这条微信消息的账号和发送者，没有创建任务。请在原聊天重新发送。'},
-  issue_unattended_unsupported: {wechat: '从 GitHub issue 开工的任务不交给免审执行者:issue 是外面的人写的,免审时又没人看着单步操作。换一位执行者再发,比如「任务 新建 <项目编号> 用 @claude issue <编号>」。没有开始工作。'},
+  // GitHub issue 开工不给免审执行者;createTask 抛,桌面交办 / 续做理论上也会走到 ⇒ 两端也带码(#466 评审)
+  issue_unattended_unsupported: {desktop: 422, phone: 422, wechat: '从 GitHub issue 开工的任务不交给免审执行者:issue 是外面的人写的,免审时又没人看着单步操作。换一位执行者再发,比如「任务 新建 <项目编号> 用 @claude issue <编号>」。没有开始工作。'},
   subscription_conflict: {wechat: '提醒绑定的账号已变化，没有把旧提醒转发到新账号。请在原聊天关闭提醒后重新设置。'},
 })
 

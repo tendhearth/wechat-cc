@@ -79,3 +79,52 @@ describe('桌面 modules/workbench*.js 认的码都还在', () => {
     expect(desktopCodes(join(MODULES, file)).filter(c => !known(c)), file).toEqual([])
   })
 })
+
+describe('桌面路由能回的、桌面 UI 在等的码(#465 盘点发现)', () => {
+  it('额度用完 / 文件夹正被占着 ⇒ 桌面带码回,不再是 500 internal', async () => {
+    const { workbenchErrorHttp } = await import('../packages/protocol/src/workbench-errors')
+    expect(workbenchErrorHttp('provider_quota_exhausted', 'desktop')).toEqual({ status: 503, error: 'provider_quota_exhausted' })
+    expect(workbenchErrorHttp('native_folder_busy', 'desktop')).toEqual({ status: 409, error: 'native_folder_busy' })
+  })
+})
+
+/**
+ * 反向:工作台 core 里抛出的每个码(Error('码') 与 fail('码') 这类 helper;模板 / 变量拼出来的扫不到),要么桌面路由认得(表里有桌面状态 / 落在前缀规则上),要么明列在这里 =「不走桌面 HTTP 的内部码」
+ * (执行者运行时、任务失败记录、只有手机 / 微信才走的路)。没归类的新码会静默变成 500 internal ——
+ * provider_quota_exhausted 就是这么丢的(#465 评审)。表里补上了的、或者已经不再抛的,从这里删掉。
+ */
+const INTERNAL_ONLY = new Set([
+    // api-task 执行者运行时:落进任务失败记录,不走桌面 HTTP
+    'api_task_private_scope', 'api_task_scope_invalid', 'api_task_scope_changed', 'api_task_output_limit', 'api_task_incomplete',
+    'api_task_response_invalid', 'permission_denied', 'api_task_step_limit', 'api_task_closed', 'api_task_busy',
+    'api_artifact_exists_or_invalid_path', 'api_file_not_text', 'api_file_operation_failed', 'api_messages_too_large', 'api_model_aborted',
+    'api_model_stream_already_consumed', 'api_model_stream_incomplete', 'api_project_changed', 'api_session_binding', 'api_session_conflict',
+    'api_task_cancelled', 'api_task_close_unconfirmed', 'artifact_delivery_conflict', 'artifact_delivery_not_found', 'artifact_delivery_scope',
+    'artifact_delivery_stale', 'artifact_transport_unavailable', 'attachment_data_missing', 'attachment_image_unsupported', 'close_timeout',
+    'codex_child_message_limit', 'codex_empty_input', 'codex_events_already_consumed', 'codex_input_id_conflict', 'codex_input_limit',
+    'codex_invalid_rpc_response', 'codex_missing_thread_id', 'codex_missing_turn_id', 'codex_no_active_turn', 'codex_process_not_exited',
+    'codex_resume_thread_mismatch', 'codex_runtime_already_started', 'codex_runtime_record_limit', 'codex_runtime_requires_lifetime_stream',
+    'codex_session_closed', 'codex_steer_no_longer_active', 'codex_steer_turn_mismatch', 'codex_terminal_cleanup_unverified',
+    'codex_turn_already_running', 'codex_turn_cancelled', 'codex_turn_start_mismatch', 'codex_unverified_thread_cwd',
+    'codex_unverified_thread_policy', 'control_conflict', 'control_stale', 'diff_limit', 'entry_already_accepted', 'entry_matter_link_failed',
+    'entry_not_accepted', 'input_not_delivered', 'matters_not_wired', 'missing_finish_reason',
+    'notification_conflict', 'question_limit', 'review_cancelled', 'review_deadline', 'review_size_limit', 'rewind_backup_exists',
+    'rewind_git_failed', 'rewind_verify_tree', 'runtime_closed_before_input_acknowledgement', 'session_start_timeout', 'subscription_conflict',
+    'subscription_inactive', 'subscription_mismatch', 'turn_timeout', 'unsupported_api_tool', 'upload_conflict', 'upload_invalid_content',
+    'upload_not_found', 'upload_unfinished_limit',
+])
+describe('工作台抛出的码都归了类(反向守卫)', () => {
+  it('every Error(\'code\') literal under src/core/workbench is desktop-mapped or listed INTERNAL_ONLY; the list has no stale entries', async () => {
+    const { workbenchErrorHttp } = await import('../packages/protocol/src/workbench-errors')
+    const { join } = await import('node:path')
+    const { statSync } = await import('node:fs')
+    const files: string[] = []
+    const walk = (d: string) => { for (const f of readdirSync(d)) { const p = join(d, f); if (statSync(p).isDirectory()) walk(p); else if (p.endsWith('.ts') && !p.includes('.test.')) files.push(p) } }
+    walk('src/core/workbench')
+    const thrown = new Set<string>()
+    for (const f of files) for (const m of readFileSync(f, 'utf8').matchAll(/(?:Error|\bfail)\(\s*['"`]([a-z][a-z0-9_]+)['"`]\s*[,)]/g)) thrown.add(m[1]!)
+    const unmapped = [...thrown].filter(c => workbenchErrorHttp(c, 'desktop').error === 'internal')
+    expect(unmapped.filter(c => !INTERNAL_ONLY.has(c)), '新抛的码:在 workbench-errors 里给桌面状态,或者确实不走桌面 HTTP 就列进 INTERNAL_ONLY').toEqual([])
+    expect([...INTERNAL_ONLY].filter(c => !unmapped.includes(c)), '已经归了类或不再抛,从 INTERNAL_ONLY 删掉').toEqual([])
+  })
+})
