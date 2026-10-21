@@ -235,8 +235,16 @@ describe('runReminderSweep', () => {
     // late (past threshold) → prefixed, original text preserved at the end
     const late = lateReminderText('记得吃药', due, Date.parse(due) + LATE_REMINDER_THRESHOLD_MS + 60_000)
     expect(late).not.toBe('记得吃药')
-    expect(late).toContain('晚了点')
+    expect(late).toContain('晚了 31 分钟')
     expect(late.endsWith('记得吃药')).toBe(true)
+  })
+
+  it('lateReminderText 写明晚了多久(提醒不再 24 小时就放弃,可能晚好几天;9d 评审 #523)', () => {
+    const due = '2026-08-27T22:00:00.000Z', d = Date.parse(due)
+    expect(lateReminderText('开会', due, d + 45 * 60_000)).toContain('晚了 45 分钟')
+    expect(lateReminderText('开会', due, d + 2 * 3600_000 + 10 * 60_000)).toContain('晚了 2 小时')
+    expect(lateReminderText('开会', due, d + 3 * 86400_000 + 3600_000)).toContain('晚了 3 天')
+    expect(lateReminderText('开会', due, d + 3 * 86400_000 + 3600_000)).toMatch(/本该 \d{2}月\d{2}日 \d{2}:\d{2}/)
   })
 })
 describe('「CC 做过的事」(B9)', () => {

@@ -91,13 +91,22 @@ export const LATE_REMINDER_THRESHOLD_MS = 30 * 60_000
  * 迷惑(2026-08-27:票据过期/网络抖动会让提醒迟到送达,原文照发读起来
  * 像凭空冒出来)。未超阈值 → 原文。无 emoji,符合 CC 身份。
  */
+/** 晚了多久(提醒不再 24 小时就放弃,可能晚好几天 —— 主人一眼要看出还用不用管;9d 评审 #523)。 */
+function lateBy(ms: number): string {
+  const min = Math.floor(ms / 60_000)
+  if (min < 60) return `${min} 分钟`
+  const h = Math.floor(min / 60)
+  if (h < 24) return `${h} 小时`
+  return `${Math.floor(h / 24)} 天`
+}
+
 export function lateReminderText(text: string, dueAtIso: string, nowMs: number): string {
   const due = Date.parse(dueAtIso)
   if (!Number.isFinite(due) || nowMs - due < LATE_REMINDER_THRESHOLD_MS) return text
   const local = toLocalISO(due)            // 2026-08-27T15:00:00-07:00
   const md = local.slice(5, 10).replace('-', '月') + '日'   // 08月27日
   const hm = local.slice(11, 16)                             // 15:00
-  return `这条提醒晚了点(本该 ${md} ${hm} 提醒你)——刚才没连上你,现在补给你:\n${text}`
+  return `这条提醒晚了 ${lateBy(nowMs - due)}(本该 ${md} ${hm} 提醒你)——刚才没连上你,现在补给你:\n${text}`
 }
 
 export async function runReminderSweep(deps: SweepDeps): Promise<SweepResult> {
