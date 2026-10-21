@@ -37,6 +37,8 @@ type RunJobTurn = TickBodies['runJobTurn']
 export interface ReviewRequest { taskId: string; providerId: string; material: string }
 
 export interface WireJobsDeps {
+  /** 主人设的免打扰(建晨报 / 周报时撞上了当场说);没接 ⇒ 不提。 */
+  quietWindow?: () => import('../../core/quiet-hours').QuietWindow | undefined
   stateDir: string
   db: Db
   ilink: IlinkAdapter
@@ -70,6 +72,7 @@ export function wireJobs(d: WireJobsDeps) {
     log: (t, l) => log(t, l),
     jobExecutor: () => pickJobExecutor(id => boot.registry.has(id as never)),
     briefPrefs,
+    ...(d.quietWindow ? { quietWindow: d.quietWindow } : {}),
   })
   // 主人亲手写的定时任务(spec 2026-10-20-scheduled-jobs-design):每分钟一拍,到点在只读的独立会话里跑一轮,
   // 走伙伴主动消息的出口;只给主人那条对话。坏了只降级,不挡启动。

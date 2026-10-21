@@ -4,6 +4,8 @@
 import { BRIEF_PREF_USAGE, describeSchedule, JOB_USAGE, nextRunLabel, parseBriefPref, parseJobCommand, type ScheduledJob } from '../../core/scheduled-jobs'
 import { localParts } from '../memory/nightly-schedule'
 import type { JobsStore } from '../../core/scheduled-jobs-store'
+import { hhmmInQuiet, quietLabel, type QuietWindow } from '../../core/quiet-hours'
+import { providerDisplayName } from '../../core/provider-display-names'
 
 export interface ReplyHandler { probe(text: string, chatId: string): boolean; handle(text: string, chatId: string): Promise<boolean> }
 
@@ -13,7 +15,7 @@ const STATUS_WORDS: Record<string, string> = { sent: '说了', silent: '没说�
 export function statusWord(s: string | null): string {
   if (!s) return '还没跑过'
   if (STATUS_WORDS[s]) return STATUS_WORDS[s]!
-  if (s.startsWith('skipped:')) return { 'skipped:network': '跳过(网络不安全)', 'skipped:cap': '跳过(当天定时满了)', 'skipped:executor': '跳过(当前执行者不支持)', 'skipped:degraded': '跳过(发不出去)' }[s] ?? '跳过'
+  if (s.startsWith('skipped:')) return { 'skipped:network': '跳过(网络不安全)', 'skipped:cap': '跳过(当天定时满了)', 'skipped:executor': '跳过(当前执行者不支持)', 'skipped:degraded': '跳过(发不出去)', 'skipped:quiet': '跳过(在免打扰里)', 'skipped:care_off': '跳过(你说了别烦我)' }[s] ?? '跳过'
   return `没跑成(${s.replace(/^failed:/, '')})`
 }
 
@@ -28,12 +30,18 @@ export function makeJobsCommand(deps: {
   jobExecutor?: () => string | null
   /** 早报的口味(memory/<owner>/brief-prefs.md);缺省 ⇒ 「早报 …」不当命令。 */
   briefPrefs?: { read(): string[]; add(line: string): void; clear(): void }
+  /** 主人设的免打扰(chat-prefs 主人那条)。晨报 / 周报的时间落在里面 ⇒ 建的时候当场说「会天天跳过」(9d 评审 #509)。 */
+  quietWindow?: () => QuietWindow | undefined
 }): ReplyHandler {
-  const EXEC_NAME: Record<string, string> = { claude: 'Claude', codex: 'Codex' }
+  const quietNote = (j: ScheduledJob): string => {
+    const w = deps.quietWindow?.()
+    if (!(j.brief || j.recap) || !w || !hhmmInQuiet(j.schedule.at, w)) return ''
+    return `\n注意:${j.schedule.at} 落在你的免打扰(${quietLabel(w)})里,${j.brief ? '早报' : '周报'}到点会跳过,不会晚点补。想让它照常来,换个时间,或者改免打扰。`
+  }
   const execNote = (): string => {
     if (!deps.jobExecutor) return ''
     const e = deps.jobExecutor()
-    return e ? `定时用 ${EXEC_NAME[e] ?? e} 跑(只读)。` : '注意:这台电脑上没有 Claude 或 Codex,定时现在跑不了(只有这两家能保证只读)。装上或登录其中一个就会照常跑。'
+    return e ? `定时用 ${providerDisplayName(e)} 跑(只读)。` : '注意:这台电脑上没有 Claude 或 Codex,定时现在跑不了(只有这两家能保证只读)。装上或登录其中一个就会照常跑。'
   }
   const local = () => localParts(deps.now(), deps.timezone())
   const head = (t: string) => { const a = [...t]; return a.length <= 30 ? t : a.slice(0, 29).join('') + '…' }
@@ -78,7 +86,7 @@ export function makeJobsCommand(deps: {
         const r = deps.store.add(cmd.schedule, cmd.text, new Date(deps.now()), cmd.brief ? { brief: true } : cmd.recap ? { recap: true } : {})
         if (!r.ok) { await reply(r.error); return true }
         deps.log('JOBS', `owner added ${r.job.id} ${describeSchedule(r.job.schedule)}`)
-        await reply(`记下了(${r.job.id}):${describeSchedule(r.job.schedule, deps.timezone())} ${r.job.brief ? '早报 —— 今天到期的事、昨天各执行者做了什么、等你拍板的;没东西就不发。「早报 少点 / 多点 …」调口味' : r.job.recap ? '周报 —— CC 这一周替你做了什么、哪些卡住了、下周值得留意的;没东西就不发' : head(r.job.text)}\n下次:${nextRunLabel(r.job.schedule, local())}。到时候我只看、只查,有值得说的才找你,没新东西就不吭声。${execNote()}`)
+        await reply(`记下了(${r.job.id}):${describeSchedule(r.job.schedule, deps.timezone())} ${r.job.brief ? '早报 —— 今天到期的事、昨天各执行者做了什么、等你拍板的;没东西就不发。「早报 少点 / 多点 …」调口味' : r.job.recap ? '周报 —— CC 这一周替你做了什么、哪些卡住了、下周值得留意的;没东西就不发' : head(r.job.text)}\n下次:${nextRunLabel(r.job.schedule, local())}。到时候我只看、只查,有值得说的才找你,没新东西就不吭声。${execNote()}${quietNote(r.job)}`)
         return true
       }
       const exists = deps.store.list().jobs.some(j => j.id === cmd.id)
