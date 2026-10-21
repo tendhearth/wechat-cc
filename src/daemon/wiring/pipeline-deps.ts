@@ -33,9 +33,6 @@ import type { ChatPrefsStore } from '../chat-prefs'
 import type { CareLedger } from '../companion/care-ledger'
 import type { ReplySinks } from '../reply-sinks'
 import { loadCompanionConfig } from '../companion/config'
-import { buildCapabilities } from '../capabilities'
-import { hasFullDiskAccess } from '../../lib/fs-access'
-import { readNightlyState } from '../memory/nightly'
 import { readPlanLogDays } from '../companion/plan-memory'
 import { readJournalSeen, writeJournalSeen } from '../../core/journal-seen'
 import { resolveAdminChatId } from '../companion/resolve-admin'
@@ -44,12 +41,10 @@ import { scopedSend } from '../inbound/reply-scope'
 import type { AppTurn } from '../inbound/build'
 import { basename as pathBasename } from 'node:path'
 import { makeSettingsPanel, phoneMayOpenMatter } from '../settings-panel'
-import { buildConnections, cacheConnections } from '../connections'
+import { wireConnections } from './wire-connections'
 import { makeRemoteToggle, relayV2Configured } from '../remote-toggle'
 import { cacheSessions } from '../mobile-reads'
-import { maxDecryptedMtime } from '../companion/ingest/cycle'
-import { hostname, tmpdir } from 'node:os'
-import { APP_VERSION } from '../../lib/app-version'
+import { tmpdir } from 'node:os'
 import { makePhoneChatId, makePhoneOwner } from '../mobile-chat'
 import { makePhoneChat } from '../phone-chat'
 import { makePhoneInsight } from '../phone-insight'
@@ -597,41 +592,16 @@ export function buildPipelineDeps(opts: PipelineDepsOpts, refs: PipelineDepsRefs
     })
     ilink.onMediaSent?.((chatId, m) => mirror.noteSent(chatId, m))
   }
-  // 「CC 的连接」(spec 2026-10-01):插件快照 / 解密库时间 / 知识库 / 工作台。裁定 8:缓存 10 s、最多 3 次 detail()。
-  // wechatSyncedAt = wxvault 解密库的最近落盘时间(同步时间),不是最新微信消息时间。
-  const startedAt = Date.now() - Math.round(process.uptime() * 1000)
-  const connections = cacheConnections(() => buildConnections({
-    plugins: () => boot.pluginsHealth ?? null,
-    wechatSyncedAt: () => { const m = maxDecryptedMtime(stateDir); return m > 0 ? m : null },
-    knowledge: () => ({ enabled: (loadAgentConfig(stateDir) as { knowledge_enabled?: boolean }).knowledge_enabled === true, built: !!boot.knowledge, latestAt: boot.knowledge?.store.latestMessageAtMs() ?? null, syncedAt: boot.knowledge?.store.lastSyncAtMs() ?? null }),
-    computer: () => ({ label: hostname().replace(/\.local$/, ''), since: startedAt, version: APP_VERSION }),
-    detailLimit: 3,
+  // 「CC 的连接」与「CC 现在怎么样」(重构第二批步 6c,wire-connections.ts)。
+  // 配对过的手机数从设置面板读,面板又要 connections 当值 —— 真环;经 getter 在被问时才读(面板下面才建,读不到就当 0)。
+  const connections = wireConnections({
+    stateDir, boot, ilink, ownerChatId,
+    phoneDevices: () => settingsPanel.phoneDevices().length,
     ...(opts.workbench ? { workbench: opts.workbench } : {}),
-    // 「CC 现在怎么样」(2026-10-06):现有信号拼成四态能力表(capabilities.ts);任何一路读不到就当没有,不让整张卡挂掉。
-    capabilities: () => {
-      const cfg = loadAgentConfig(stateDir) as { provider?: string; knowledge_enabled?: boolean }
-      const provider = cfg.provider ?? 'claude'
-      const probe = (boot.providerProbes?.() ?? []).find(p => p.id === provider)
-      const outbound = ilink.outboundHealth()
-      const guard = opts.guardRuntime?.health()
-      const fda = process.platform === 'darwin' ? hasFullDiskAccess() : null
-      const nightly = readNightlyState(stateDir)
-      let devices = 0
-      try { devices = settingsPanel.phoneDevices().length } catch { /* 读不到就当没配对 */ }
-      return buildCapabilities({
-        wechat: { outbound: outbound.state, expired: ilink.sessionState.listExpired().length, lastError: outbound.lastError ?? null, ownerWindowClosedSince: (() => { const o = ownerChatId(); return o ? ilink.proactiveClosedSince(o) : null })() },
-        brain: { provider, name: boot.registry.get(provider)?.opts.displayName ?? provider, registered: boot.registry.has(provider), retrying: probe?.state === 'retrying', lastError: probe?.last_error ?? null },
-        guard: guard?.enabled ? { safe: guard.safe, paused: !!guard.paused, detail: guard.detail ?? null } : null,
-        fullDiskAccess: fda === null ? null : { granted: fda, settingsUrl: 'x-apple.systempreferences:com.apple.preference.security?Privacy_AllFiles' },
-        knowledge: cfg.knowledge_enabled === true ? { built: !!boot.knowledge, embed: boot.knowledge?.embedStatus?.() ?? (boot.knowledge?.embedder ? 'python' : 'none') } : null,
-        memory: loadCompanionConfig(stateDir).memory_nightly_enabled ? { failures: nightly.failures, firstRunDone: nightly.firstRunDone } : null,
-        background: (() => { const h = boot.registry.cheapEvalHealth?.(); return h ? { failures: h.consecutiveFailures, lastError: h.lastError } : null })(),
-        phone: { relay: relayV2Configured(stateDir), devices },
-        terminal: (() => { try { return opts.terminalHooks?.capabilityInput() ?? null } catch { return null } })(),
-        subsystems: opts.subsystems?.() ?? [],
-      })
-    },
-  }))
+    ...(opts.guardRuntime ? { guardRuntime: opts.guardRuntime } : {}),
+    ...(opts.terminalHooks ? { terminalHooks: opts.terminalHooks } : {}),
+    ...(opts.subsystems ? { subsystems: opts.subsystems } : {}),
+  })
   // 原生会话读:单飞 + 短缓存(裁定 8),10 s 预算超了也不会堆积后台扫描。
   const phoneSessions = opts.workbench ? cacheSessions({ list: (p, i) => opts.workbench!.listNativeHistory(p, i), read: (k, i) => opts.workbench!.readNativeHistory(k, i), readRecent: (k, i) => opts.workbench!.readRecentNativeHistory(k, i) }) : null
   const settingsPanel = makeSettingsPanel({
