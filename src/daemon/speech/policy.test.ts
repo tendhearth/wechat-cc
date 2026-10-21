@@ -100,3 +100,89 @@ describe('policy.say —— CC 开口只有这一道门', () => {
     expect(await policy.say({ kind: 'companion', chatId: OWNER }, async t => { await t.sendText(OWNER, 'x') })).toMatchObject({ allow: true })
   })
 })
+
+describe('tell / flushPending —— 推后的 report 落盘待说,补说走 say 开的那一轮(降级时落到 App)', () => {
+  it('**微信降级 + 补说 ⇒ 落到 App**(9d 评审:不能只发微信)', async () => {
+    const { makeProactiveOutbound } = await import('../companion/proactive-channel')
+    const { makePendingNotices } = await import('./pending-notices')
+    const { mkdtempSync } = await import('node:fs'); const { tmpdir } = await import('node:os'); const { join } = await import('node:path')
+    const recorded: string[] = []
+    let degraded = false, quiet = true
+    const outbound = makeProactiveOutbound({
+      wechatDegraded: () => degraded, wechatClosedSince: () => null,
+      sendWechat: async () => ({ msgId: 'w' }),
+      app: () => ({ deliverable: () => true, record: async (_c, t) => { recorded.push(t); return true }, push: () => {} }),
+      log: () => {},
+    })
+    const policy = makeSpeechPolicy({ care: () => 'low', quietEndsAt: (_c, n) => (quiet ? n + 3600_000 : null), outbound, log: () => {}, pending: makePendingNotices({ stateDir: mkdtempSync(join(tmpdir(), 'pend-')), log: () => {} }) })
+    expect(await policy.tell('job_notice', OWNER, '定时 j1 连续失败,先停了')).toBe(false)   // 免打扰 ⇒ 推后、入队
+    quiet = false; degraded = true
+    await policy.flushPending()
+    expect(recorded).toEqual(['定时 j1 连续失败,先停了'])
+    await policy.flushPending()
+    expect(recorded).toHaveLength(1)
+  })
+  it('initiative 推后不入队;report 推后入队;放行 ⇒ true', async () => {
+    const { makePendingNotices } = await import('./pending-notices')
+    const { mkdtempSync } = await import('node:fs'); const { tmpdir } = await import('node:os'); const { join } = await import('node:path')
+    const pending = makePendingNotices({ stateDir: mkdtempSync(join(tmpdir(), 'pend-')), log: () => {} })
+    const ob = fakeOutbound()
+    let quiet = true
+    const policy = makeSpeechPolicy({ care: () => 'low', quietEndsAt: (_c, n) => (quiet ? n + 3600_000 : null), outbound: ob.out, log: () => {}, pending })
+    await policy.tell('sticker', OWNER, '新表情')
+    await policy.tell('boot_notice', OWNER, '开机有几样没起来')
+    expect(pending.groups()).toEqual([expect.objectContaining({ chatId: OWNER, items: [expect.objectContaining({ kind: 'boot_notice' })] })])
+    quiet = false
+    expect(await policy.tell('upgrade_notice', OWNER, '升好了')).toBe(true)
+  })
+})
+
+describe('待说队列不丢话(9d 评审 #531)', () => {
+  const mk = async (o: { sendErr: () => string | undefined; onSend?: () => void | Promise<void> }) => {
+    const { makePendingNotices } = await import('./pending-notices')
+    const { mkdtempSync } = await import('node:fs'); const { tmpdir } = await import('node:os'); const { join } = await import('node:path')
+    const sent: string[] = []
+    let now = Date.parse('2026-10-21T10:00:00.000Z')
+    const outbound = { appDeliverable: () => false, canDeliver: () => true, sendOnce: async () => ({ ok: true }),
+      open: () => ({ sendText: async (_c: string, t: string) => { await o.onSend?.(); const e = o.sendErr(); if (e) return { msgId: '', error: e }; sent.push(t); return { msgId: 'm' } }, channel: () => 'wechat' as const, textOnly: () => false, sendAttachment: async () => false, sendSticker: async () => false, finish: () => {} }) }
+    const pending = makePendingNotices({ stateDir: mkdtempSync(join(tmpdir(), 'pend-')), log: () => {} })
+    const policy = makeSpeechPolicy({ care: () => 'low', quietEndsAt: () => null, outbound, log: () => {}, pending, now: () => now })
+    return { policy, pending, sent, advance: (ms: number) => { now += ms } }
+  }
+  it('① 门放行、发失败(回 error)⇒ 入队;下一拍说出来;外层照旧拿到 false', async () => {
+    let err: string | undefined = 'network down'
+    const t = await mk({ sendErr: () => err })
+    expect(await t.policy.tell('job_notice', OWNER, '定时 j1 停了')).toBe(false)
+    expect(t.pending.groups()[0]!.items.map(i => i.text)).toEqual(['定时 j1 停了'])
+    err = undefined
+    t.advance(10 * 60_000)
+    await t.policy.flushPending()
+    expect(t.sent).toEqual(['定时 j1 停了'])
+  })
+  it('① initiative 发失败 ⇒ 不入队', async () => {
+    const t = await mk({ sendErr: () => 'down' })
+    await t.policy.tell('sticker', OWNER, '新表情')
+    expect(t.pending.groups()).toEqual([])
+  })
+  it('② flush 发送途中又进来一条 ⇒ 那条留在队列里,下一拍说', async () => {
+    let addDuringSend: (() => void) | null = null
+    const t = await mk({ sendErr: () => undefined, onSend: () => { addDuringSend?.(); addDuringSend = null } })
+    t.pending.add({ id: 'a', kind: 'job_notice', chatId: OWNER, text: '第一条', at: 'x' })
+    addDuringSend = () => t.pending.add({ id: 'b', kind: 'boot_notice', chatId: OWNER, text: '路上进来的', at: 'y' })
+    await t.policy.flushPending()
+    expect(t.sent).toEqual(['第一条'])
+    expect(t.pending.groups()[0]!.items.map(i => i.text)).toEqual(['路上进来的'])
+    await t.policy.flushPending()
+    expect(t.sent).toEqual(['第一条', '路上进来的'])
+  })
+  it('补说一直失败 ⇒ 按对话指数退避(5 → 10 → 20 分钟 …),不每拍都撞', async () => {
+    let tries = 0
+    const t = await mk({ sendErr: () => { tries++; return 'still down' } })
+    t.pending.add({ id: 'a', kind: 'job_notice', chatId: OWNER, text: 'x', at: 'x' })
+    await t.policy.flushPending(); expect(tries).toBe(1)
+    t.advance(4 * 60_000); await t.policy.flushPending(); expect(tries).toBe(1)   // 退避中
+    t.advance(2 * 60_000); await t.policy.flushPending(); expect(tries).toBe(2)   // 过了 5 分钟
+    t.advance(6 * 60_000); await t.policy.flushPending(); expect(tries).toBe(2)   // 第二次退避 10 分钟
+    t.advance(5 * 60_000); await t.policy.flushPending(); expect(tries).toBe(3)
+  })
+})

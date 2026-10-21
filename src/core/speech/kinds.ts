@@ -23,6 +23,9 @@ export const SPEECH_KINDS = {
   matter_report: { origin: 'report', label: '一件事的回报' },
   review_missed: { origin: 'report', label: '定时审阅错过了' },
   upgrade_notice: { origin: 'report', label: '升级完成' },
+  // 只发一次的系统通知:被推后 ⇒ 门的「待说」队列接住,之后补说(defer 不是不送)。
+  job_notice: { origin: 'report', label: '定时被暂停' },
+  boot_notice: { origin: 'report', label: '开机有几样没起来' },
   outbound_health: { origin: 'report', label: '外发出了问题' },
   restart_notice: { origin: 'report', label: '重启了' },
   brief: { origin: 'initiative', label: '早报' },
@@ -35,8 +38,8 @@ export const SPEECH_KINDS = {
   // 一次性:只在画好的那一刻触发一次,没有「下一拍」—— 被推后就等于这一句丢了(贴纸已经进库,照样会用到)。
   // 以后加别的一次性 initiative 照这条判:要么接受 defer 即丢,要么自己留个待发标记(9d 评审 #520)。
   sticker: { origin: 'initiative', label: '新贴纸' },
-  // 社交(笔友 / 心愿 / 介绍 / 串门)。这几条通知都只发一次;推后就等于这一句丢了 —— 可以接受的前提是**内容本身另有地方留着**
-  // (信在信箱、心愿的答复在心愿记录、介绍的结果在注册表、见闻在背包 / 觅食台),主人回头看得到(第三批 3a)。
+  // 社交(笔友 / 心愿 / 介绍 / 串门)。report / blocking 那几条被推后 ⇒ 门的「待说」队列接住、之后补说(speech/pending-notices.ts);
+  // social_story(CC 自己的见闻)推后就是这一句不说,东西在背包 / 觅食台里(第三批 3a,9d 评审 #528)。
   social_ask: { origin: 'blocking', label: '有人想认识你' },        // 介绍:等主人回「同意 / 不了」
   social_result: { origin: 'report', label: '社交的结果' },          // 心愿的答复、介绍成没成、替主人回了谁
   social_mail: { origin: 'report', label: '笔友来信' },               // 信在信箱里留着

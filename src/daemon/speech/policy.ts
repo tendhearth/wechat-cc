@@ -13,6 +13,10 @@
 import { decideSpeech, type CareSetting, type SpeechDecision } from '../../core/speech/decide'
 import { originOf, type SpeechKind, type SpeechOrigin } from '../../core/speech/kinds'
 import type { ProactiveChannel, ProactiveOutbound, ProactiveTurn } from '../companion/proactive-channel'
+import { mergePending } from './pending-notices'
+
+const PENDING_RETRY_BASE_MS = 5 * 60_000
+const PENDING_RETRY_MAX_MS = 60 * 60_000
 
 export interface SpeechRequest {
   kind: SpeechKind
@@ -39,6 +43,15 @@ export type SpeechOutcome = ({ allow: true; channel: ProactiveChannel | null }) 
 
 export interface SpeechPolicy {
   say(req: SpeechRequest, produce: (turn: ProactiveTurn) => Promise<void>): Promise<SpeechOutcome>
+  /**
+   * 一句话的主动开口(系统通知、社交通知 …):问门,放行就发。`send` 缺省 = 经 say 开的那一轮(微信能用走微信,
+   * 降级落到 App);社交那几句要经 sendAssistantText 发 —— 它管 App 回话截获与旁听 —— 就把它传进来。
+   * **report / blocking 被推后 ⇒ 进「待说」队列**(pending-notices.ts),flushPending 时补说 —— defer 不是不送。
+   * 发出去了 ⇒ true;被推后 / 被拒 / 发失败 ⇒ false(调用方可以照旧走自己的兜底,比如桌面通知)。
+   */
+  tell(kind: SpeechKind, chatId: string, text: string, send?: (chatId: string, text: string) => Promise<unknown>): Promise<boolean>
+  /** 压着的几句再问一次门;放行 ⇒ 每条对话合成一句,经 say 开的那一轮发(降级时落到 App),说完清掉。 */
+  flushPending(): Promise<void>
 }
 
 export function makeSpeechPolicy(deps: {
@@ -51,6 +64,8 @@ export function makeSpeechPolicy(deps: {
   ledger?: (e: SpeechLedgerEntry) => void
   log: (tag: string, line: string) => void
   now?: () => number
+  /** 「待说」队列(没接 ⇒ 推后的 report 就是这一句不说,只用于测试 / 最小嵌入)。 */
+  pending?: import('./pending-notices').PendingNotices
 }): SpeechPolicy {
   const now = deps.now ?? Date.now
   /** (kind, chatId) → 上一次记下的那次推后(理由 + 时刻)。只在内存里:重启后多记一行无妨。 */
@@ -59,7 +74,9 @@ export function makeSpeechPolicy(deps: {
   const write = (e: SpeechLedgerEntry): void => {
     try { deps.ledger?.(e) } catch (err) { deps.log('SPEECH', `ledger write failed: ${err instanceof Error ? err.message : String(err)}`) }
   }
-  return {
+  /** 补说发失败的对话:指数退避(5 分钟起,封顶 1 小时)。只在内存里:重启后从头算,无妨。 */
+  const flushBackoff = new Map<string, { fails: number; nextAt: number }>()
+  const policy: SpeechPolicy = {
     async say(req, produce) {
       const nowMs = req.nowMs ?? now()
       const ts = new Date(nowMs).toISOString()
@@ -99,5 +116,48 @@ export function makeSpeechPolicy(deps: {
       write({ ...base, outcome: 'allowed', reason: null, channel: turn.channel() })
       return { allow: true, channel: turn.channel() }
     },
+    async tell(kind, chatId, text, send) {
+      let sent = false
+      const o = await policy.say({ kind, chatId }, async (turn) => {
+        try {
+          if (send) { await send(chatId, text); sent = true; return }
+          sent = !(await turn.sendText(chatId, text)).error
+        } catch (err) {
+          deps.log('SPEECH', `${kind} chat=${chatId} send threw: ${err instanceof Error ? err.message : String(err)}`)
+        }
+      })
+      // report / blocking 没说出去 —— 被推后,**或者放行了但发失败**(ilink 回 error / 网络抖)—— 都入队,之后补说(9d 评审 #531 ①)
+      const notSaid = 'defer' in o || ('allow' in o && !sent)
+      if (notSaid && originOf(kind) !== 'initiative' && deps.pending) {
+        deps.pending.add({ kind, chatId, text, at: new Date(now()).toISOString() })
+        deps.log('SPEECH', `${kind} chat=${chatId} kept to say later (${'defer' in o ? o.reason : 'send failed'})`)
+      }
+      return sent
+    },
+    async flushPending() {
+      if (!deps.pending) return
+      const t = now()
+      for (const g of deps.pending.groups()) {
+        const b = flushBackoff.get(g.chatId)
+        if (b && t < b.nextAt) continue   // 上次补说发失败了:按对话指数退避,不每拍都撞(no-retry-storm)
+        // 有等主人拍板的就按 blocking 问(免打扰不拦);否则按第一条 report 问
+        const kind = g.items.find(i => originOf(i.kind) === 'blocking')?.kind ?? g.items[0]!.kind
+        let sent = false
+        const o = await policy.say({ kind, chatId: g.chatId }, async (turn) => {
+          try { sent = !(await turn.sendText(g.chatId, mergePending(g.items, g.dropped))).error } catch { sent = false }
+        })
+        if ('allow' in o && sent) {
+          // 只删这次真说了的那几条(发送途中又进来的留着,下一拍说;9d 评审 #531 ②)
+          deps.pending.remove(g.chatId, g.items.map(i => i.id), g.dropped)
+          flushBackoff.delete(g.chatId)
+          deps.log('SPEECH', `told ${g.items.length} pending notice(s) chat=${g.chatId}`)
+        } else if ('allow' in o) {
+          const fails = (b?.fails ?? 0) + 1
+          flushBackoff.set(g.chatId, { fails, nextAt: t + Math.min(PENDING_RETRY_BASE_MS * 2 ** (fails - 1), PENDING_RETRY_MAX_MS) })
+          deps.log('SPEECH', `pending notices chat=${g.chatId} send failed (try ${fails}) — backing off`)
+        }
+      }
+    },
   }
+  return policy
 }
