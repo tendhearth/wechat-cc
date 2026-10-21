@@ -75,6 +75,25 @@ describe('policy.say —— CC 开口只有这一道门', () => {
     expect(s.finished()).toBe(1)
     expect(s.ledger[0]).toMatchObject({ outcome: 'failed', reason: 'boom' })
   })
+  it('**同一条话、同一个理由连着被推后 ⇒ 账一小时只记一次**;放行 / 被拒以后重新算(9d 评审 #521:一夜免打扰 × 每拍会把账淹掉)', async () => {
+    let now = Date.parse('2026-10-21T15:00:00.000Z')
+    let quiet = true
+    const ob = fakeOutbound()
+    const ledger: SpeechLedgerEntry[] = []
+    const policy = makeSpeechPolicy({ care: () => 'low', quietEndsAt: () => (quiet ? now + 8 * 3600_000 : null), outbound: ob.out, ledger: e => { ledger.push(e) }, log: () => {}, now: () => now })
+    for (let i = 0; i < 20; i++) { await policy.say({ kind: 'matter_report', chatId: OWNER }, async () => {}); now += 60_000 }   // 20 分钟,每分钟一拍
+    expect(ledger.map(e => e.outcome)).toEqual(['deferred'])
+    await policy.say({ kind: 'memory_notice', chatId: OWNER }, async () => {})                                                  // 别的种类单独记
+    expect(ledger).toHaveLength(2)
+    now += 60 * 60_000
+    await policy.say({ kind: 'matter_report', chatId: OWNER }, async () => {})                                                  // 过了一小时再记一次
+    expect(ledger.filter(e => e.kind === 'matter_report').map(e => e.outcome)).toEqual(['deferred', 'deferred'])
+    quiet = false
+    await policy.say({ kind: 'matter_report', chatId: OWNER }, async () => {})                                                  // 放行照记
+    quiet = true
+    await policy.say({ kind: 'matter_report', chatId: OWNER }, async () => {})                                                  // 放行之后又被推后 ⇒ 重新算,马上记
+    expect(ledger.filter(e => e.kind === 'matter_report').map(e => e.outcome)).toEqual(['deferred', 'deferred', 'allowed', 'deferred'])
+  })
   it('记账抛错不影响开口', async () => {
     const ob = fakeOutbound()
     const policy = makeSpeechPolicy({ care: () => 'low', quietEndsAt: () => null, outbound: ob.out, ledger: () => { throw new Error('disk') }, log: () => {} })

@@ -6,6 +6,8 @@
  * 「能不能说」在这里,「往哪儿送」(微信 / 降级走 App)仍是 proactive-channel 的事。
  *
  * 每次判定记一行账(种类、类别、结果、原因、通道、时间;**不记正文**),回答「CC 为什么说了 / 没说」。
+ * 例外:同一种话、同一条对话、同一个理由**连着被推后**,账和日志一小时只记一次(9d 评审 #521:一夜免打扰 ×
+ * 每拍再问一次,会把账淹掉)。放行 / 被拒 / 失败以后重新算。
  * 第 1 步只加不接:还没有调用方,行为不变。
  */
 import { decideSpeech, type CareSetting, type SpeechDecision } from '../../core/speech/decide'
@@ -51,6 +53,9 @@ export function makeSpeechPolicy(deps: {
   now?: () => number
 }): SpeechPolicy {
   const now = deps.now ?? Date.now
+  /** (kind, chatId) → 上一次记下的那次推后(理由 + 时刻)。只在内存里:重启后多记一行无妨。 */
+  const lastDefer = new Map<string, { reason: string; at: number }>()
+  const DEFER_LOG_EVERY_MS = 60 * 60_000
   const write = (e: SpeechLedgerEntry): void => {
     try { deps.ledger?.(e) } catch (err) { deps.log('SPEECH', `ledger write failed: ${err instanceof Error ? err.message : String(err)}`) }
   }
@@ -67,9 +72,19 @@ export function makeSpeechPolicy(deps: {
         ...(req.scheduled ? { scheduled: true } : {}),
       })
       const base = { kind: req.kind, origin: originOf(req.kind), chatId: req.chatId, ts }
-      if (!('allow' in decision)) {
-        write({ ...base, outcome: 'defer' in decision ? 'deferred' : 'dropped', reason: decision.reason, channel: null })
-        deps.log('SPEECH', `${req.kind} chat=${req.chatId} ${'defer' in decision ? 'deferred' : 'dropped'}: ${decision.reason}`)
+      const key = `${req.kind}\u0000${req.chatId}`
+      if ('defer' in decision) {
+        const prev = lastDefer.get(key)
+        if (prev && prev.reason === decision.reason && nowMs - prev.at < DEFER_LOG_EVERY_MS) return decision
+        lastDefer.set(key, { reason: decision.reason, at: nowMs })
+        write({ ...base, outcome: 'deferred', reason: decision.reason, channel: null })
+        deps.log('SPEECH', `${req.kind} chat=${req.chatId} deferred: ${decision.reason}`)
+        return decision
+      }
+      lastDefer.delete(key)
+      if ('drop' in decision) {
+        write({ ...base, outcome: 'dropped', reason: decision.reason, channel: null })
+        deps.log('SPEECH', `${req.kind} chat=${req.chatId} dropped: ${decision.reason}`)
         return decision
       }
       const turn = deps.outbound.open(req.chatId)
