@@ -9,6 +9,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 import { makeLetterRuntime, readLetterState, type LetterApp, type LetterDeps } from './runtime'
 import { letterPagePath, listLetters } from './archive'
 import { letterToApp, LETTER_PUSH_BODY } from '../bootstrap/wire-letters'
+import { lettersTestSpeech } from './test-speech'
 import type { AppChannel } from '../companion/proactive-channel'
 
 const TZ = 'Asia/Shanghai'
@@ -20,7 +21,8 @@ const WINDOW_CLOSED = 'ilink/sendmessage errcode=-2: prepare failed'
 const dirs: string[] = []
 afterEach(() => { for (const d of dirs.splice(0)) rmSync(d, { recursive: true, force: true }) })
 
-function setup(over: Partial<LetterDeps> & { appOk?: boolean; deliverable?: boolean; noApp?: boolean } = {}) {
+function setup(o: Partial<LetterDeps> & { appOk?: boolean; deliverable?: boolean; noApp?: boolean; quiet?: () => boolean; careOff?: () => boolean } = {}) {
+  const { quiet, careOff, ...over } = o
   const stateDir = mkdtempSync(join(tmpdir(), 'letters-app-'))
   dirs.push(stateDir)
   const wechat: string[] = []
@@ -40,6 +42,7 @@ function setup(over: Partial<LetterDeps> & { appOk?: boolean; deliverable?: bool
     rasterize: (_svg, dir, name) => { mkdirSync(dir, { recursive: true }); const p = join(dir, `${name}.png`); writeFileSync(p, 'png'); return p },
     now: () => now, random: () => 0, newId: () => 'abc123', log: (_t, l) => { logs.push(l) },
     mirror: (_c, pages) => { mirrored.push(pages) },
+    speech: lettersTestSpeech({ ...(quiet ? { quiet } : {}), ...(careOff ? { careOff } : {}) }),
     ...(over.noApp ? {} : { app: () => app }),
     ...over,
   }
@@ -129,6 +132,39 @@ describe('免打扰(10-20):不定期的信在主人的免打扰时段里不写�
     const t = setup({ quiet: () => true })
     const r = await t.rt.writeNow('给我写封信')
     expect(r.status).not.toBe('failed')
+    expect(t.wechat.length).toBeGreaterThan(0)
+  })
+})
+
+describe('别烦我(SpeechPolicy,第三批 3a):不定期的信是 initiative,当面要的是 requested', () => {
+  it('到点了但主人说了别烦我 ⇒ 这一封不写(不调模型)、排下一封', async () => {
+    const t = setup({ careOff: () => true })
+    await t.rt.tick()   // 第一次只排期
+    const due = readLetterState(t.stateDir).dueAt!
+    t.setNow(due + 60_000)
+    await t.rt.tick()
+    expect(t.wechat).toEqual([])
+    expect(listLetters(t.stateDir)).toEqual([])
+    expect(readLetterState(t.stateDir).dueAt).toBeGreaterThan(due)
+    expect(t.logs.some(l => l.includes('not written: care_off'))).toBe(true)
+  })
+  it('写好没寄的不定期的信,主人说了别烦我 ⇒ 不寄了,存档里留着', async () => {
+    let off = false
+    // 微信窗口关着、App 收不到 ⇒ 写好了但压着
+    const t = setup({ careOff: () => off, deliverable: false, sendFile: async () => { throw new Error(WINDOW_CLOSED) } })
+    await t.rt.tick()
+    t.setNow(readLetterState(t.stateDir).dueAt! + 60_000)
+    await t.rt.tick()
+    expect(readLetterState(t.stateDir).pending).toBeTruthy()
+    off = true
+    await t.rt.tick()
+    expect(readLetterState(t.stateDir).pending ?? null).toBeNull()
+    expect(t.logs.some(l => l.includes('not sent: care_off (kept in archive)'))).toBe(true)
+  })
+  it('当面要的信 ⇒ 免打扰、别烦我都照写照寄', async () => {
+    const t = setup({ quiet: () => true, careOff: () => true })
+    const r = await t.rt.writeNow('给我写封信')
+    expect(r.status).toBe('sent')
     expect(t.wechat.length).toBeGreaterThan(0)
   })
 })

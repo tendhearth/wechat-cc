@@ -1,3 +1,4 @@
+import { lettersTestSpeech } from './test-speech'
 import { mkdtempSync, readFileSync, rmSync, writeFileSync, mkdirSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -163,6 +164,7 @@ describe('runtime', () => {
       random: () => 0,
       newId: () => 'abc',
       log: (_t, l) => { logs.push(l) },
+      speech: lettersTestSpeech(),
       ...over,
     }
     return { deps, rt: makeLetterRuntime(deps), sent, logs, stateDir, setNow: (v: number) => { now = v }, setEnabled: (v: boolean) => { enabled = v }, evals: () => evalCalls }
@@ -306,6 +308,7 @@ describe('runtime preview', () => {
       evalText: () => async () => JSON.stringify({ salutation: '你好:', paragraphs: ['一'], signoff: '' }),
       wechatSuspended: () => false, sendText: async (_c, t) => { sent.push(t); return {} }, sendFile: async (_c, p) => { sent.push(p) },
       rasterize: (_s, dir, name) => join(dir, `${name}.png`), now: () => EVENING, random: () => 0, newId: () => 'x', log: () => {},
+      speech: lettersTestSpeech(),
     })
     const r = await rt.preview()
     expect(r.status).toBe('ok')

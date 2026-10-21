@@ -1,6 +1,4 @@
 /** CC 的信(2026-10-16):把 letters/runtime 接到真库、真微信、真模型,并挂 15 分钟一次的 tick。 */
-import { inQuietHours } from '../../core/quiet-hours'
-import { makeChatPrefs } from '../chat-prefs'
 import { randomBytes } from 'node:crypto'
 import { basename, join } from 'node:path'
 import type { Db } from '../../lib/db'
@@ -25,6 +23,8 @@ export interface WireLettersDeps {
   strongEval(providerId: string): Eval | null
   cheapEval(chatId: string): Eval | null
   wechatSuspended(): boolean
+  /** CC 开口那道门(main.ts 的 wired.speech)。 */
+  speech: import('../speech/policy').SpeechPolicy
   sendText(chatId: string, text: string): Promise<{ error?: string }>
   /** 逐页发;这里发的页不该再被媒体镜像逐页记(main.ts 传 mirror:false),整封由 `mirror` 记成一行。 */
   sendFile(chatId: string, path: string): Promise<void>
@@ -84,8 +84,8 @@ export function wireLetters(d: WireLettersDeps): { runtime: LetterRuntime; start
       return d.strongEval('claude') ?? (p ? d.strongEval(p) : null) ?? d.cheapEval(c)
     },
     wechatSuspended: d.wechatSuspended,
-    // 免打扰时段(主人那条对话的 /set 免打扰):不定期的信等到之后
-    quiet: () => { const o = owner(); return !!o && inQuietHours(makeChatPrefs(d.stateDir).get(o).quiet, Date.now(), loadCompanionConfig(d.stateDir).timezone) },
+    // 能不能写 / 寄:CC 开口那道门(第三批 3a)—— 免打扰、别烦我、两条路都送不到都由它判,跟别的主动开口同一份
+    speech: d.speech,
     sendText: d.sendText,
     sendFile: d.sendFile,
     ...(d.mirror ? { mirror: d.mirror } : {}),

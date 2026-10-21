@@ -40,6 +40,9 @@ const BASELINE: Record<string, [Tag, number]> = {
   'src/daemon/bootstrap/fallback-reply.ts': ['primitive', 1],
   'src/core/conversation-coordinator.ts': ['primitive', 1],
   'src/daemon/inbound/reply-scope.ts': ['primitive', 1],
+  // 信自己的一套投递(多页、断了续发、App 那条路)。能不能写 / 寄已经走 policy.say(第三批 3a),发送只在 say 的生产者里。
+  'src/daemon/letters/runtime.ts': ['primitive', 2],
+  'src/daemon/bootstrap/wire-letters.ts': ['primitive', 1],
   // —— 回答对方刚发来的那一句 ——
   'src/daemon/admin-commands.ts': ['reply', 69],
   'src/daemon/onboarding.ts': ['reply', 16],
@@ -59,13 +62,11 @@ const BASELINE: Record<string, [Tag, number]> = {
   'src/daemon/wiring/wire-phone.ts': ['migrate', 2],
   'src/daemon/self-change-glue.ts': ['migrate', 2],
   'src/daemon/phone-notifier.ts': ['migrate', 2],
-  'src/daemon/letters/runtime.ts': ['migrate', 2],
   'src/daemon/inbound/mw-access.ts': ['migrate', 2],
   'src/daemon/wiring/command-router.ts': ['migrate', 1],
   'src/daemon/startup-sweeps.ts': ['migrate', 1],
   'src/daemon/bootstrap/wire-workbench-notifications.ts': ['migrate', 1],
   'src/daemon/bootstrap/wire-workbench-artifacts.ts': ['migrate', 1],
-  'src/daemon/bootstrap/wire-letters.ts': ['migrate', 1],
   'src/daemon/bootstrap/wire-activity.ts': ['migrate', 1],
   'src/daemon/bootstrap/wire-a2a-server.ts': ['migrate', 1],
   'src/daemon/bootstrap/index.ts': ['migrate', 1],
