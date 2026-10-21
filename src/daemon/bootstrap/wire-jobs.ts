@@ -80,7 +80,7 @@ export function wireJobs(d: WireJobsDeps) {
   const requestReview = (r: ReviewRequest): boolean => {
     const owner = briefOwner()
     if (!owner || (r.providerId !== 'claude' && r.providerId !== 'codex')) return false
-    void d.runJobTurn({ chatId: owner, jobId: `review-${r.taskId}`, text: '', nowIso: new Date().toISOString(), provider: r.providerId, profile: 'review', buildText: (style) => buildReviewText(r.material, style) })
+    void d.runJobTurn({ chatId: owner, jobId: `review-${r.taskId}`, text: '', nowIso: new Date().toISOString(), provider: r.providerId, profile: 'review', kind: 'review', scheduled: false, buildText: (style) => buildReviewText(r.material, style) })
       .then(res => {
         log('REVIEW', `task=${r.taskId} by=${r.providerId} → ${res}`)
         // 答应了「看完发给你」:没发成就老实说一句,不让主人干等(规矩:CC 不撒谎)
@@ -156,7 +156,7 @@ export function wireJobs(d: WireJobsDeps) {
         if (job.recap) return recapTurn(job, nowIso)
         const owner = resolveAdminChatId(loadAccess(), loadCompanionConfig(stateDir), null)
         if (!owner) return 'skipped:no_owner'
-        return d.runJobTurn({ chatId: owner, jobId: job.id, text: job.text, nowIso })
+        return d.runJobTurn({ chatId: owner, jobId: job.id, text: job.text, nowIso, kind: 'job', scheduled: true })
       },
       notifyOwner: (text) => {
         const owner = resolveAdminChatId(loadAccess(), loadCompanionConfig(stateDir), null)

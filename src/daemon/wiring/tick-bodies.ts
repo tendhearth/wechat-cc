@@ -231,7 +231,8 @@ export async function distillAndPushOwnerKnowledge(deps: TickDeps, ownerChat: st
   }
 }
 
-export type JobTurnResult = 'sent' | 'silent' | 'skipped:executor' | 'skipped:busy' | 'skipped:degraded' | 'skipped:network' | `failed:${string}`
+/** skipped:quiet / skipped:care_off:SpeechPolicy 的判定(晨报、周报是 initiative —— 赶上免打扰当天记 skipped:quiet,别烦我 ⇒ skipped:care_off)。 */
+export type JobTurnResult = 'sent' | 'silent' | 'skipped:executor' | 'skipped:busy' | 'skipped:degraded' | 'skipped:network' | 'skipped:quiet' | 'skipped:care_off' | `failed:${string}`
 
 /** 定时任务的信封。主人的原话放进 <request>,伪造的收尾标签先拆掉。 */
 export function buildJobText(o: { jobId: string; nowIso: string; text: string }, style: TickTextStyle = {}): string {
@@ -268,7 +269,7 @@ export interface TickBodies {
    * 定时任务的一轮(spec 2026-10-20-scheduled-jobs-design):独立会话 `job:<id>`、只读档、strict,
    * 走伙伴主动消息的出口;跑完 forget(不续接、不占位)。只给 claude / codex。
    */
-  runJobTurn(args: { chatId: string; jobId: string; text: string; nowIso: string; buildText?: (style: TickTextStyle) => string; /** 主人点名哪家(换一家来审,10-20);只认 JOB_PROVIDERS,没装 ⇒ skipped:executor,不换人。 */ provider?: (typeof JOB_PROVIDERS)[number]; /** 'review' ⇒ REVIEW_PROFILE(不给网,评审 #460);缺省 JOB_PROFILE */ profile?: 'job' | 'review' }): Promise<JobTurnResult>
+  runJobTurn(args: { chatId: string; jobId: string; text: string; nowIso: string; buildText?: (style: TickTextStyle) => string; /** 主人点名哪家(换一家来审,10-20);只认 JOB_PROVIDERS,没装 ⇒ skipped:executor,不换人。 */ provider?: (typeof JOB_PROVIDERS)[number]; /** 'review' ⇒ REVIEW_PROFILE(不给网,评审 #460);缺省 JOB_PROFILE */ profile?: 'job' | 'review'; /** 这是哪一种话(SpeechPolicy)—— **必填,没有缺省**:缺省往放行的方向兜底,忘了传就悄悄成了「主人要的」(9d 评审 #524)。主人建的定时 = job、换一家来审 = review(都是 requested);晨报 = brief、周报 = recap(initiative)。 */ kind: 'job' | 'review' | 'brief' | 'recap'; /** 定时触发的(赶上免打扰的 initiative 当天记 skipped:quiet,不往后推);换一家来审不是。 */ scheduled: boolean }): Promise<JobTurnResult>
 }
 
 export interface BuildPushTickTextOpts {
@@ -670,7 +671,7 @@ export function buildTickBodies(deps: TickDeps): TickBodies {
     return true
   }
 
-  async function runJobTurn(args: { chatId: string; jobId: string; text: string; nowIso: string; buildText?: (style: TickTextStyle) => string; /** 主人点名哪家(换一家来审,10-20);只认 JOB_PROVIDERS,没装 ⇒ skipped:executor,不换人。 */ provider?: (typeof JOB_PROVIDERS)[number]; /** 'review' ⇒ REVIEW_PROFILE(不给网,评审 #460);缺省 JOB_PROFILE */ profile?: 'job' | 'review' }): Promise<JobTurnResult> {
+  async function runJobTurn(args: { chatId: string; jobId: string; text: string; nowIso: string; buildText?: (style: TickTextStyle) => string; /** 主人点名哪家(换一家来审,10-20);只认 JOB_PROVIDERS,没装 ⇒ skipped:executor,不换人。 */ provider?: (typeof JOB_PROVIDERS)[number]; /** 'review' ⇒ REVIEW_PROFILE(不给网,评审 #460);缺省 JOB_PROFILE */ profile?: 'job' | 'review'; /** 这是哪一种话(SpeechPolicy)—— **必填,没有缺省**:缺省往放行的方向兜底,忘了传就悄悄成了「主人要的」(9d 评审 #524)。主人建的定时 = job、换一家来审 = review(都是 requested);晨报 = brief、周报 = recap(initiative)。 */ kind: 'job' | 'review' | 'brief' | 'recap'; /** 定时触发的(赶上免打扰的 initiative 当天记 skipped:quiet,不往后推);换一家来审不是。 */ scheduled: boolean }): Promise<JobTurnResult> {
     const { chatId, jobId } = args
     const gate = resolveDispatch(chatId)
     if (gate.blocked === 'wechat_degraded') return 'skipped:degraded'
@@ -679,10 +680,17 @@ export function buildTickBodies(deps: TickDeps): TickBodies {
     const providerId = args.provider ? ((JOB_PROVIDERS as readonly string[]).includes(args.provider) && (registry.has?.(args.provider) ?? false) ? args.provider : null) : pickJobExecutor(id => registry.has?.(id) ?? false)
     if (!providerId || !deps.replyDelivery || deliveryModeOf(providerId) !== 'daemon') return 'skipped:executor'
     if (gate.blocked === 'session_in_flight') return 'skipped:busy'
+    // 能不能开口交给 SpeechPolicy(第三批 3a):主人建的定时是 requested(免打扰 / 别烦我照发);晨报、周报是
+    // initiative(内容是 CC 挑的)⇒ 别烦我不发、赶上免打扰当天记 skipped:quiet(运行器只有 10 分钟窗口,不往后推)。
+    // 模型这一轮放在 say 的生产者里:被拒的那一拍一个 token 都不花。这一轮的出口就是 say 开的那一轮。
+    if (!deps.speech) { deps.log('JOBS', `job ${jobId} not run: speech policy not wired`); return 'failed:speech_not_wired' }
+    const speech = deps.speech
     const key = { alias: `job:${jobId}`, providerId, chatId }
     const sm = deps.boot.sessionManager as typeof deps.boot.sessionManager & { forget?: (k: typeof key) => Promise<void> }
     let result: JobTurnResult = 'failed:error'
     try {
+      const nowMs = Date.parse(args.nowIso)
+      const said = await speech.say({ kind: args.kind, chatId, scheduled: args.scheduled, ...(Number.isFinite(nowMs) ? { nowMs } : {}) }, async (outbound) => {
       // 回复交付按 chatId 记账 ⇒ 与主人的对话串行,不然两轮的回复会混在一起。
       await deps.boot.coordinator.runExclusive(chatId, async () => {
         // 先忘一次:上次若崩在半路(没走到 finally),留下的续接记录会让这次接着上次的对话(终审 minor)。
@@ -691,8 +699,7 @@ export function buildTickBodies(deps: TickDeps): TickBodies {
         const style: TickTextStyle = { replyDelivery: 'final_text', allSegments: replyTextStrategyFor(providerId) === 'all_segments' }
         // 早报(对标 #7)自己拼好信封(素材 + 写法);其余定时用主人的原话包一层。
         const text = args.buildText ? args.buildText(style) : buildJobText({ jobId, nowIso: args.nowIso, text: args.text }, style)
-        const outbound = deps.proactive?.open(chatId)
-        const turn = deps.replyDelivery!.begin(chatId, { mode: 'daemon', context: 'tick', providerId, textStrategy: replyTextStrategyFor(providerId), ...(outbound ? { outbound } : {}) })
+        const turn = deps.replyDelivery!.begin(chatId, { mode: 'daemon', context: 'tick', providerId, textStrategy: replyTextStrategyFor(providerId), outbound })
         // 到点就 cancel(终审 I3):不然一轮卡住就一直占着主人那条对话的锁,晚到的回复还会照发。
         const deadline = setTimeout(() => { void handle.cancel?.().catch(() => {}) }, JOB_TURN_MAX_MS)
         ;(deadline as { unref?: () => void }).unref?.()
@@ -705,7 +712,7 @@ export function buildTickBodies(deps: TickDeps): TickBodies {
             return
           }
           const report = await turn.deliver({ finalText: summary.finalText ?? '', narration: summary.narration ?? [] })
-          outbound?.finish()
+          outbound.finish()
           if (report.delivery === 'silent' || report.delivery === 'empty') result = report.failures.length ? `failed:${report.failures[0]}` : 'silent'
           else result = report.failures.length && report.bubbles === 0 && report.attachmentsSent === 0 ? `failed:${report.failures[0]}` : 'sent'
         } catch (err) {
@@ -715,6 +722,9 @@ export function buildTickBodies(deps: TickDeps): TickBodies {
           clearTimeout(deadline)
         }
       })
+      })
+      if ('drop' in said) result = said.reason === 'skipped:quiet' ? 'skipped:quiet' : said.reason === 'care_off' ? 'skipped:care_off' : `failed:${said.reason}`
+      else if ('defer' in said) result = said.reason === 'undeliverable' ? 'skipped:degraded' : `failed:${said.reason}`
     } catch (err) {
       result = isNetworkUnprotectedError(err) ? 'skipped:network' : `failed:${errMsg(err).slice(0, 60)}`
     } finally {
