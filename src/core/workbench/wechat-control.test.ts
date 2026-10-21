@@ -527,3 +527,23 @@ describe('任务 <编号> 记成经验 <一句>(10-20,接 #443)',()=>{
     expect(String(await control('owner',`任务 ${task.id} 记成经验`,{...identity,msgId:'l3'}))).toContain('记成经验 <一句话>')
   })
 })
+
+describe('任务 <编号> 请 @codex 审(换一家来审,10-20)',()=>{
+  it('starts a read-only review with the named executor and the change material; only claude / codex; nothing to review ⇒ says so',async()=>{
+    setup({async spawn(){return{async *dispatch(){yield result},async close(){}}}})
+    const requested:Array<{taskId:string;providerId:string;material:string}>=[]
+    const turns=[{artifactId:'a',sha256:'s',name:'n',createdAt:1,status:'complete',headBefore:null,headAfter:null,preexistingPaths:[],notes:[],files:[{path:'login.ts',preexisting:false,kind:'modified',diff:'+ok'}]}]
+    let review:unknown[]=turns
+    const control=makeWechatWorkbenchControl({store,ownerChatId:()=>owner,requestReview:r=>{requested.push(r);return true},actions:{...service,reviewList:()=>review as never}})
+    const task=create();await settled(task.id)
+    const r=String(await control('owner',`任务 ${task.id} 请 @codex 审`,{...identity,msgId:'rv1'}))
+    expect(r).toContain('已请 codex 审');expect(r).toContain('只读')
+    expect(requested).toHaveLength(1)
+    expect(requested[0]).toMatchObject({taskId:task.id,providerId:'codex'})
+    expect(requested[0]!.material).toContain('login.ts')
+    expect(String(await control('owner',`任务 ${task.id} 请 @agy 审`,{...identity,msgId:'rv2'}))).toContain('claude、codex')
+    review=[]
+    expect(String(await control('owner',`任务 ${task.id} 请 codex 审`,{...identity,msgId:'rv3'}))).toContain('还没有改动可审')
+    expect(requested).toHaveLength(1)
+  })
+})

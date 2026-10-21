@@ -8,6 +8,7 @@ import { registerScheduledJobs } from './scheduled-jobs/runner'
 import { makeJobsCommand, chainReplyHandlers } from './scheduled-jobs/command'
 import { makeProjectLessonsCommand } from './project-lessons-command'
 import { makeProjectLessons } from '../core/workbench/project-lessons'
+import { buildReviewText, reviewMissNote } from '../core/workbench/review-request'
 import { makeMemoryImportCommand } from './memory/import-command'
 import { agendaReplyText, appBundleHasCalendarUsage, makeCalendar, makeCalendarCommand } from './calendar/calendar'
 import { makeActivityLog } from './activity-log'
@@ -961,7 +962,9 @@ export async function bootDaemon(opts: BootDaemonOpts): Promise<DaemonHandle> {
     const matters = makeMatterStore(db)
     // 回报投递队列(v65,task-3,2026-09-23):每轮答复入队一次,sweeper 按到期时间取件送达。
     const reportOutbox = makeReportOutboxStore(db)
-    const workbench = wireWorkbench({ db, stateDir, boot, internalApi, matters, reportOutbox, networkGate: guardRt.gate, permissionGate,
+    // 换一家来审(10-20):只读轮在 wireMain 之后才有 ⇒ 持有者;没就绪就回 false(「现在请不到人来审」),不碰 TDZ
+    const reviewRef: { current: ((r: { taskId: string; providerId: string; material: string }) => boolean) | null } = { current: null }
+    const workbench = wireWorkbench({ db, stateDir, boot, internalApi, matters, reportOutbox, networkGate: guardRt.gate, permissionGate, requestReview: (r) => reviewRef.current?.(r) ?? false,
       onTurnError: (providerId, code, message) => { cliUpgradeRef.current?.onTurnError(providerId, code, message) },
       executionConflict:(path,providerId,nativeId)=>boot.sessionManager.hasProjectConflict(path)||
         (!!nativeId&&Object.values(boot.sessionStore.all()).some(s=>s.provider===providerId&&s.session_id===nativeId))||
@@ -1127,6 +1130,23 @@ export async function bootDaemon(opts: BootDaemonOpts): Promise<DaemonHandle> {
     // 早报(spec 2026-10-20-morning-brief-design):素材在本机拼好 —— 日报原文、今天到期的提醒、agenda、口味;
     // 发出去了就记一次主动消息(careLedger.claim),当天的问候按它冷却,取代而不是叠加。
     const briefTz = () => loadCompanionConfig(stateDir).timezone ?? 'Asia/Shanghai'
+    // 换一家来审(10-20):另一家用定时那条只读轮(job:review-<任务>、JOB_PROFILE、strict)看改动,意见直接发给主人。后台跑,不挡微信回话。
+    reviewRef.current = (r) => {
+      const owner = briefOwner()
+      if (!owner || (r.providerId !== 'claude' && r.providerId !== 'codex')) return false
+      void wired.ticks.runJobTurn({ chatId: owner, jobId: `review-${r.taskId}`, text: '', nowIso: new Date().toISOString(), provider: r.providerId, profile: 'review', buildText: (style) => buildReviewText(r.material, style) })
+        .then(res => {
+          log('REVIEW', `task=${r.taskId} by=${r.providerId} → ${res}`)
+          // 答应了「看完发给你」:没发成就老实说一句,不让主人干等(规矩:CC 不撒谎)
+          const why = reviewMissNote(res)
+          if (why) void ilink.sendMessage(owner, `${r.providerId} 没审成 ${r.taskId} 的改动:${why}`).catch(() => {})
+        })
+        .catch(err => {
+          log('REVIEW', `task=${r.taskId} by=${r.providerId} threw: ${err instanceof Error ? err.message : String(err)}`)
+          void ilink.sendMessage(owner, `${r.providerId} 没审成 ${r.taskId} 的改动,过一会儿再发一次「任务 ${r.taskId} 请 @${r.providerId} 审」。`).catch(() => {})
+        })
+      return true
+    }
     const briefTurn = makeBriefTurn({
       runJobTurn: (a) => wired.ticks.runJobTurn(a),
       ownerChatId: briefOwner,

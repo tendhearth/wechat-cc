@@ -131,6 +131,17 @@ export const JOB_PROFILE: TierProfile = {
 }
 
 /**
+ * 换一家来审那一轮(评审 #460):定时只读档去掉 network。审的 diff 是直接放进提示词的材料,不是读出来的 ⇒
+ * 「读过才断网」的污点一开始就没有;被注入的 diff 能先 WebFetch 把仓库内容拼进 URL 发出去。全程不给网。
+ */
+const REVIEW_ALLOW = new Set<ToolKind>([...JOB_ALLOW].filter(k => k !== 'network'))
+export const REVIEW_PROFILE: TierProfile = {
+  allow: REVIEW_ALLOW,
+  relay: new Set(),
+  deny: difference(ALL_KINDS, REVIEW_ALLOW),
+}
+
+/**
  * Recover the tier NAME from a resolved TierProfile. Used by providers to bake
  * `WECHAT_SESSION_TIER` into MCP child env (the non-secret companion to the
  * per-session token). Keys on capability, not object identity: admin is the

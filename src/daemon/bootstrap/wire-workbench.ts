@@ -144,6 +144,8 @@ export function wireWorkbench(opts: {
   matters?: import('../../core/matters/store').MatterStore
   /** 回报投递队列(task-3,2026-09-23):与 matters 一起有才接得上 ReportSink,单传一个不够。 */
   reportOutbox?: import('../reports/outbox').ReportOutboxStore
+  /** 换一家来审(10-20):「任务 <编号> 请 @codex 审」起一次只读轮;main 里接 tickBodies.runJobTurn。 */
+  requestReview?: (r: { taskId: string; providerId: string; material: string }) => boolean
   /** 网络闸门(2026-10-02):执行者 registry、起执行者 / 投补充、额度查询都过它。 */
   networkGate?: import('../../lib/network-gate').NetworkGate
   /** 执行者一轮失败时的错误通道 —— CLI 自动升级的报错触发(2026-10-04)。 */
@@ -246,6 +248,7 @@ export function wireWorkbench(opts: {
     fetchIssue:makeIssueFetcher(),
     // 「任务 <编号> 记成经验 <一句>」与打回时「同时记成这个项目的经验」:跟微信「经验」命令、手机同一个文件
     addLesson:(p,t)=>{const r=makeProjectLessons(opts.stateDir).add(p,t);return r.ok?{ok:true}:r},
+    ...(opts.requestReview?{requestReview:opts.requestReview}:{}),
     ...(opts.permissionGate?{permissionDecide:(ask:import('../../core/permission-rules/types').AskSource)=>opts.permissionGate!.decide(ask)}:{}),
     executionConflict:opts.executionConflict,
     nativeHistory:{claude:createClaudeHistoryReader(),...(binary?{codex:createCodexHistoryReader({codexPathOverride:binary})}:{})},

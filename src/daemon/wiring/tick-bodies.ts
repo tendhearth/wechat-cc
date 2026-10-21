@@ -17,7 +17,7 @@ import { makeEventsStore } from '../events/store'
 import { makeObservationsStore } from '../observations/store'
 import { runIntrospectTick } from '../companion/introspect'
 import { resolveIntrospectChatId, makeIntrospectAgent } from '../companion/introspect-runtime'
-import { resolveEffectiveTier, TIER_PROFILES, JOB_PROFILE, effectivePermissionMode } from '../../core/user-tier'
+import { resolveEffectiveTier, TIER_PROFILES, JOB_PROFILE, REVIEW_PROFILE, effectivePermissionMode } from '../../core/user-tier'
 import { dueGuestVisit, guestLabel, type GuestVisitState } from '../companion/guest-visits'
 import { buildGuestVisitNarrationPrompt } from '../../core/visit'
 import type { Access } from '../../lib/access'
@@ -266,7 +266,7 @@ export interface TickBodies {
    * 定时任务的一轮(spec 2026-10-20-scheduled-jobs-design):独立会话 `job:<id>`、只读档、strict,
    * 走伙伴主动消息的出口;跑完 forget(不续接、不占位)。只给 claude / codex。
    */
-  runJobTurn(args: { chatId: string; jobId: string; text: string; nowIso: string; buildText?: (style: TickTextStyle) => string }): Promise<JobTurnResult>
+  runJobTurn(args: { chatId: string; jobId: string; text: string; nowIso: string; buildText?: (style: TickTextStyle) => string; /** 主人点名哪家(换一家来审,10-20);只认 JOB_PROVIDERS,没装 ⇒ skipped:executor,不换人。 */ provider?: (typeof JOB_PROVIDERS)[number]; /** 'review' ⇒ REVIEW_PROFILE(不给网,评审 #460);缺省 JOB_PROFILE */ profile?: 'job' | 'review' }): Promise<JobTurnResult>
 }
 
 export interface BuildPushTickTextOpts {
@@ -645,13 +645,13 @@ export function buildTickBodies(deps: TickDeps): TickBodies {
     return true
   }
 
-  async function runJobTurn(args: { chatId: string; jobId: string; text: string; nowIso: string; buildText?: (style: TickTextStyle) => string }): Promise<JobTurnResult> {
+  async function runJobTurn(args: { chatId: string; jobId: string; text: string; nowIso: string; buildText?: (style: TickTextStyle) => string; /** 主人点名哪家(换一家来审,10-20);只认 JOB_PROVIDERS,没装 ⇒ skipped:executor,不换人。 */ provider?: (typeof JOB_PROVIDERS)[number]; /** 'review' ⇒ REVIEW_PROFILE(不给网,评审 #460);缺省 JOB_PROFILE */ profile?: 'job' | 'review' }): Promise<JobTurnResult> {
     const { chatId, jobId } = args
     const gate = resolveDispatch(chatId)
     if (gate.blocked === 'wechat_degraded') return 'skipped:degraded'
     const { proj } = gate
     const registry = deps.boot.registry as { has?: (id: string) => boolean }
-    const providerId = pickJobExecutor(id => registry.has?.(id) ?? false)
+    const providerId = args.provider ? ((JOB_PROVIDERS as readonly string[]).includes(args.provider) && (registry.has?.(args.provider) ?? false) ? args.provider : null) : pickJobExecutor(id => registry.has?.(id) ?? false)
     if (!providerId || !deps.replyDelivery || deliveryModeOf(providerId) !== 'daemon') return 'skipped:executor'
     if (gate.blocked === 'session_in_flight') return 'skipped:busy'
     const key = { alias: `job:${jobId}`, providerId, chatId }
@@ -662,7 +662,7 @@ export function buildTickBodies(deps: TickDeps): TickBodies {
       await deps.boot.coordinator.runExclusive(chatId, async () => {
         // 先忘一次:上次若崩在半路(没走到 finally),留下的续接记录会让这次接着上次的对话(终审 minor)。
         try { await sm.forget?.(key) } catch { /* 没有就没有 */ }
-        const handle = await deps.boot.sessionManager.acquire({ alias: key.alias, path: proj.path, providerId, chatId, tierProfile: JOB_PROFILE, permissionMode: 'strict' })
+        const handle = await deps.boot.sessionManager.acquire({ alias: key.alias, path: proj.path, providerId, chatId, tierProfile: args.profile === 'review' ? REVIEW_PROFILE : JOB_PROFILE, permissionMode: 'strict' })
         const style: TickTextStyle = { replyDelivery: 'final_text', allSegments: replyTextStrategyFor(providerId) === 'all_segments' }
         // 早报(对标 #7)自己拼好信封(素材 + 写法);其余定时用主人的原话包一层。
         const text = args.buildText ? args.buildText(style) : buildJobText({ jobId, nowIso: args.nowIso, text: args.text }, style)
