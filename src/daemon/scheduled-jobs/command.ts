@@ -7,16 +7,6 @@ import type { JobsStore } from '../../core/scheduled-jobs-store'
 
 export interface ReplyHandler { probe(text: string, chatId: string): boolean; handle(text: string, chatId: string): Promise<boolean> }
 
-/** 几个文本命令处理器串起来:probe 任一认;handle 交给第一个 probe 认、且真处理了的。 */
-export function chainReplyHandlers(handlers: readonly ReplyHandler[]): ReplyHandler {
-  return {
-    probe: (t, c) => handlers.some(h => h.probe(t, c)),
-    async handle(t, c) {
-      for (const h of handlers) if (h.probe(t, c) && await h.handle(t, c)) return true
-      return false
-    },
-  }
-}
 
 const STATUS_WORDS: Record<string, string> = { sent: '说了', silent: '没说话(没新东西)' }
 /** 上次结果的人话(微信列表与手机列表共用)。 */

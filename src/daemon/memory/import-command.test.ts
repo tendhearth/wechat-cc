@@ -60,4 +60,11 @@ describe('导入记忆 (WeChat)', () => {
     await s.send('全部')
     expect(s.imported[0]!.items).toHaveLength(2)
   })
+  it('while waiting for the paste, 「不要 / 取消 / 算了」 cancels the import instead of going to chat (重构第二批步 3a)', async () => {
+    const s = setup()
+    await s.send('导入记忆')
+    expect(await s.send('不要')).toBe(true)
+    expect(s.said.at(-1)).toContain('不导了')
+    expect(await s.send('- 你住在上海\n- 你喜欢猫')).toBe(false)   // 已经取消:粘贴不再被接住
+  })
 })

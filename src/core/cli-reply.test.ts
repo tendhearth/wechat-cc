@@ -55,3 +55,14 @@ describe('resumeCommand × resolved binary (device-e2e 10-20)', () => {
     expect(resumeCommand('codex', 'sid', 'hi', false, { claude: '/x' }).cmd).toBe('codex')
   })
 })
+
+// 重构第二批步 3a(§1.5 bug 3):会话码是会话 id 的前 6 位(cli-session-store.ts),只有 0-9a-f。
+// 以前 [a-z0-9] 都认 ⇒ 主人写「@codex 帮我看看」「@claude 你觉得呢」「看 README」被当成会话码,回「没见过会话码」。
+describe('会话码只认十六进制', () => {
+  it('@codex / @claude / 看 README 不是会话命令;@a1b2c3 / 看 ab12 仍然是', () => {
+    for (const t of ['@codex 帮我看看这个函数', '@claude 你觉得呢', '@cursor 改一下', '看 README', '看 readme', '@hello 你好'])
+      expect(parseCliReply(t), t).toBeNull()
+    expect(parseCliReply('@a1b2c3 继续')).toEqual({ kind: 'say', code: 'a1b2c3', text: '继续' })
+    expect(parseCliReply('看 AB12')).toEqual({ kind: 'view', code: 'ab12' })
+  })
+})

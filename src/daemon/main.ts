@@ -989,7 +989,7 @@ async function bootDaemonInner(opts: BootDaemonOpts, undo: Array<() => void>): P
       }),
       matters, guardRuntime: guardRt, subsystems: () => sup.statuses(),
       panelTokens: internalApi.panelTokens,
-      // 命令表的顺序就是优先级(重构第二批步 2;与原来 chainReplyHandlers 的顺序一致)
+      // 命令表的顺序就是优先级(重构第二批步 2;与原来文本命令链的顺序一致)
       commands: [fromReplyHandler('jobs', jobsCommand), fromReplyHandler('calendar', calendarCommand), fromReplyHandler('activity', activityCommand), fromReplyHandler('lessons', lessonsCommand), fromReplyHandler('memory-import', memoryImportCommand), fromReplyHandler('cli', cliReplyHandler)],
       stickers: stickerLib,
       requestRestart: (reason) => requestRestart(reason),

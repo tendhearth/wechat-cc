@@ -14,8 +14,10 @@ export type CliReply =
   | { kind: 'view'; code: string }
   | { kind: 'say'; code: string; text: string }
 
-const VIEW_RE = /^看\s*([a-z0-9]{4,12})\s*$/i
-const SAY_RE = /^@([a-z0-9]{4,12})\s+([\s\S]+)$/i
+// 会话码 = 会话 id 的前 6 位(cli-session-store.ts),只有 0-9a-f。只认十六进制:「@codex …」「@claude …」「看 README」
+// 都是日常说法,不是会话码(重构第二批步 3a,§1.5 bug 3;以前 [a-z0-9] 一律认,回「没见过会话码」)。
+const VIEW_RE = /^看\s*([0-9a-f]{4,12})\s*$/i
+const SAY_RE = /^@([0-9a-f]{4,12})\s+([\s\S]+)$/i
 /**
  * 「终端」—— 列出终端里的会话(2026-10-14)。整句匹配,只认这几种说法:
  * 终端 / 终端会话 / 终端列表 / 看终端 / 看看终端 / 会话列表 / /cli,可带问号。

@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from 'vitest'
 import { makeCommandRouter, type CommandRouterDeps } from './command-router'
 import type { InboundMsg } from '../../core/prompt-format'
+import { COMMAND_EXAMPLES, CHAT } from '../inbound/command-corpus'
 
 function msg(text: string, chatId = 'owner@im.wechat'): InboundMsg {
   return { chatId, userId: chatId, text, msgType: 'text', createTimeMs: 0, accountId: 'acct' }
@@ -214,6 +215,20 @@ describe('command-router · probe(只读,与 tryHandle 一致)', () => {
   it('unwired features and non-admins: probe is false exactly when tryHandle falls through', async () => {
     for (const over of [{}, { isAdmin: () => false }, { loadAccess: () => ({ admins: [] }) }] as Partial<CommandRouterDeps>[]) {
       for (const t of cases) expect(makeCommandRouter(baseDeps(over)).probe(msg(t)), `${JSON.stringify(Object.keys(over))} ${t}`).toBe(await makeCommandRouter(baseDeps(over)).tryHandle(msg(t)))
+    }
+  })
+})
+
+// 评审 #472:probe 与 tryHandle 的闸门是手抄成一致的,漂了就会「probe 说不认、tryHandle 本来会认」⇒ 这句话进了模型,没人报错。
+// 用整份命令语料 × 几种接线组合过一遍:probe 为 false 时 tryHandle 一定也是 false(反过来也要一致)。
+describe('command-router · probe / tryHandle 不漂(整份语料)', () => {
+  it('for every corpus sentence and wiring combo, probe === tryHandle', async () => {
+    const ok = () => vi.fn(async () => ({ ok: true, id: 'x', channel: 'c', sentTo: 1, status: 'cancelled', code: '123456', expiresAt: 0, peer: { name: 'p' } }))
+    const wired = () => ({ social: { wish: { send: ok(), cancel: vi.fn(() => ({ ok: true, status: 'cancelled' })), resolveRef: vi.fn(() => ({ ok: true, id: 'w' })) }, penpal: { startVisit: ok() }, intro: { request: ok(), accept: ok(), decline: ok() } } as never, penpal: { sendLetter: ok() } as never, pairing: new Proxy({}, { get: () => ok() }) as never })
+    const combos: Array<() => Partial<CommandRouterDeps>> = [() => ({}), () => wired(), () => ({ ...wired(), isAdmin: () => false }), () => ({ ...wired(), loadAccess: () => ({ admins: [] }) })]
+    for (const combo of combos) for (const t of [...COMMAND_EXAMPLES, ...CHAT]) {
+      const claimed = makeCommandRouter(baseDeps(combo())).probe(msg(t))
+      expect(claimed, `${t}`).toBe(await makeCommandRouter(baseDeps(combo())).tryHandle(msg(t)))
     }
   })
 })

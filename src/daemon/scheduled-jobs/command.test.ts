@@ -3,7 +3,7 @@ import { mkdtempSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { makeJobsStore } from '../../core/scheduled-jobs-store'
-import { makeJobsCommand, chainReplyHandlers } from './command'
+import { makeJobsCommand } from './command'
 
 function setup() {
   const store = makeJobsStore(mkdtempSync(join(tmpdir(), 'jobs-cmd-')))
@@ -64,19 +64,6 @@ describe('定时 (WeChat)', () => {
   })
 })
 
-describe('chainReplyHandlers', () => {
-  it('probe is any; handle goes only to a handler whose probe claims it', async () => {
-    const a = { probe: vi.fn((t: string) => t === 'a'), handle: vi.fn(async (t: string) => t === 'a') }
-    const b = { probe: vi.fn((t: string) => t === 'b'), handle: vi.fn(async (t: string) => t === 'b') }
-    const c = chainReplyHandlers([a, b])
-    expect(c.probe('b', 'x')).toBe(true)
-    expect(c.probe('z', 'x')).toBe(false)
-    expect(await c.handle('b', 'x')).toBe(true)
-    expect(a.handle).not.toHaveBeenCalled()
-    expect(await c.handle('z', 'x')).toBe(false)
-    expect(b.handle).toHaveBeenCalledTimes(1)
-  })
-})
 
 describe('定时 × 执行者(真机核对 10-20)', () => {
   function mk(executor: string | null) {
