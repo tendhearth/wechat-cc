@@ -1016,6 +1016,12 @@ export function buildTickBodies(deps: TickDeps): TickBodies {
   async function guestVisitPass(ownerChat: string, nowIso: string, messagesStore: MessagesStore): Promise<void> {
     // 断线时不调模型也不外发(no-retry-storm):跟 pushTickForChat 同一道闸
     if (deps.health?.shouldSuspend('wechat')) return
+    // 跟 pushTickForChat 同两道主人的闸(复查 10-21:以前这条路两道都不看,主人说了「别烦我」还会开口):
+    //  - care off(别烦我)= 什么都别主动说 ⇒ 这次做客**悄悄记过**(推进水位、不调模型),以后打开主动关心也不翻旧账;
+    //  - 免打扰时段 ⇒ 只是晚点说 ⇒ 这一拍什么都不动,时段过了照讲。
+    const ownerPrefs = deps.chatPrefs.get(ownerChat)
+    if (inQuietHours(ownerPrefs.quiet, Date.parse(nowIso), loadCompanionConfig(deps.stateDir).timezone)) return
+    const silent = careLevel(ownerChat, ownerPrefs, ownerChat) === 'off'
     const statePath = join(deps.stateDir, 'companion', 'guest-visits.json')
     const state: GuestVisitState = (() => {
       try { const j = readJsonFile<Partial<GuestVisitState>>(statePath); return { narrated: j.narrated ?? {}, visits: j.visits ?? {} } }
@@ -1038,6 +1044,12 @@ export function buildTickBodies(deps: TickDeps): TickBodies {
           since: rows.map(r => ({ direction: r.direction, text: r.text, ts: r.ts })),
         }, state, nowMs)
         if (!due) continue
+        if (silent) {
+          state.narrated[chatId] = latestInboundTs
+          changed = true
+          deps.log('VISIT', `guest visit not told: chat=${chatId} — owner care is off; marked as seen`)
+          continue
+        }
         // 先记水位再讲:讲到一半 daemon 重启,不该下一拍再讲一遍。
         const priorMark = state.narrated[chatId]
         state.narrated[chatId] = latestInboundTs
@@ -1074,11 +1086,13 @@ export function buildTickBodies(deps: TickDeps): TickBodies {
         }
         const text = raw.trim().replace(/^[「『"“]+|[」』"”]+$/g, '')
         if (!text) continue
-        try { await deps.ilink.sendMessage(ownerChat, text) }
-        catch (err) {
-          // 发不出去(多半断网):这一位撤回水位,这一拍到此为止;已讲完的几位在 finally 里落盘
+        // 发不出去(多半断网):这一位撤回水位,这一拍到此为止;已讲完的几位在 finally 里落盘。
+        // sendMessage **不抛**,失败是回 {error}(ilink-glue)—— 以前只有 catch,失败时水位照记,这次来访就再也不讲了(盘点 10-21)。
+        let sendErr: string | undefined
+        try { sendErr = (await deps.ilink.sendMessage(ownerChat, text)).error } catch (err) { sendErr = errMsg(err) }
+        if (sendErr) {
           unmark()
-          deps.log('VISIT', `guest narration send failed: chat=${chatId} — watermark unchanged, next tick retries: ${errMsg(err)}`)
+          deps.log('VISIT', `guest narration send failed: chat=${chatId} — watermark unchanged, next tick retries: ${sendErr}`)
           break
         }
         try { deps.huntStore?.recordVisit?.({ chatId: ownerChat, text, peerLabel: `${name}来过`, nowIso }) }
