@@ -381,31 +381,6 @@ export const CompanionImportLocalResponse = z.union([
 
 // ── Customer Review (owner-only app module) ────────────────────────────────
 
-const CustomerReviewId = z.string().trim().min(1).max(100)
-const CustomerReviewDate = z.string().regex(/^\d{4}-\d{2}-\d{2}$/)
-const CustomerReviewSourceKey = z.string().regex(/^[a-f0-9]{24}$/)
-
-export const CustomerReviewContactSearchQuery = z.object({
-  query: z.string().trim().min(1).max(100),
-})
-export const CustomerReviewCreateRequest = z.object({
-  contact_id: z.string().trim().min(1).max(300),
-  contact_display_name: z.string().trim().min(1).max(200),
-  range_from: CustomerReviewDate,
-  range_to: CustomerReviewDate,
-})
-export const CustomerReviewIdRequest = z.object({ id: CustomerReviewId })
-export const CustomerReviewEvidenceQuery = z.object({ id: CustomerReviewId, source_key: CustomerReviewSourceKey })
-export const CustomerReviewRecentQuery = z.object({})
-export const CustomerReviewHistoryQuery = z.object({
-  contact_id: z.string().trim().min(1).max(300),
-})
-export const CustomerReviewItemRequest = z.object({
-  id: CustomerReviewId,
-  source_key: CustomerReviewSourceKey,
-  status: z.enum(['confirmed', 'corrected', 'completed_elsewhere', 'rejected', 'ignored']),
-  corrected_text: z.string().trim().min(1).max(500).optional(),
-})
 
 // ── POST /v1/wechat/reply ────────────────────────────────────────────────────
 
@@ -683,9 +658,6 @@ export type CompanionSnoozeResponseT = z.infer<typeof CompanionSnoozeResponse>
 export type CompanionImportLocalRequestT = z.infer<typeof CompanionImportLocalRequest>
 export type CompanionImportLocalResponseT = z.infer<typeof CompanionImportLocalResponse>
 
-export type CustomerReviewCreateRequestT = z.infer<typeof CustomerReviewCreateRequest>
-export type CustomerReviewIdRequestT = z.infer<typeof CustomerReviewIdRequest>
-export type CustomerReviewItemRequestT = z.infer<typeof CustomerReviewItemRequest>
 
 export type WechatReplyRequestT = z.infer<typeof WechatReplyRequest>
 export type WechatReplyResponseT = z.infer<typeof WechatReplyResponse>
@@ -798,14 +770,6 @@ export const REQUEST_SCHEMAS: Record<string, z.ZodTypeAny | undefined> = {
   'POST /v1/companion/import-local': CompanionImportLocalRequest,
 
   // customer review
-  'GET /v1/customer-review/contacts': CustomerReviewContactSearchQuery,
-  'POST /v1/customer-review': CustomerReviewCreateRequest,
-  'POST /v1/customer-review/run': CustomerReviewIdRequest,
-  'GET /v1/customer-review': CustomerReviewIdRequest,
-  'GET /v1/customer-review/evidence': CustomerReviewEvidenceQuery,
-  'GET /v1/customer-review/recent': CustomerReviewRecentQuery,
-  'GET /v1/customer-review/history': CustomerReviewHistoryQuery,
-  'POST /v1/customer-review/item': CustomerReviewItemRequest,
 
   // wechat
   'POST /v1/wechat/reply': WechatReplyRequest,

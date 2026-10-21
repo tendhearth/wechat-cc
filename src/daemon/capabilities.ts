@@ -54,7 +54,7 @@ export interface CapabilityInputs {
 }
 
 export const SUBSYSTEM_NAMES: Record<string, string> = {
-  knowledge: '知识库', 'cli-upgrade': '外部 CLI 自动升级', 'a2a-server': 'CC 之间的往来', 'customer-review': '客户回顾', guard: '网络守护',
+  knowledge: '知识库', 'cli-upgrade': '外部 CLI 自动升级', 'a2a-server': 'CC 之间的往来', guard: '网络守护',
   'mailbox-poller': '笔友信箱', 'memory-nightly': '记忆整理', pairing: '手机配对', reminders: '提醒', reports: '任务回报', 'self-restart': '空闲自动重启', social: '社交', yi: '一件事',
 }
 

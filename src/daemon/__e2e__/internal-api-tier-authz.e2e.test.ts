@@ -112,24 +112,20 @@ describe('e2e: internal-api enforces caller tier at the route layer', () => {
       const adminTurns = await fetch(`${baseUrl}/v1/turns`, auth(adminAuth!.token!))
       expect(adminTurns.status).toBe(200)
 
-      // 9. CUSTOMER REVIEW — the owner-only workspace reads the owner's private
-      //    wxvault history and stores personal judgments about customers, so
-      //    the shell-capable agent holding the trusted file token must not
-      //    reach it. Added 2026-07-28: the feature shipped with handler-level
-      //    tests only, which call the route functions directly and therefore
-      //    never exercise this dispatcher check at all.
-      const crTrusted = await fetch(`${baseUrl}/v1/customer-review/recent`, auth(trusted))
+      // 9. OWNER WORKSPACE — admin-only routes the desktop reaches through the Tauri host (here: companion thoughts,
+      //    wxvault-derived). The shell-capable agent holding the trusted file token must not reach them.
+      //    (Was the customer-review route until that feature was removed 2026-10-21; same trust class.)
+      const crTrusted = await fetch(`${baseUrl}/v1/companion/thoughts`, auth(trusted))
       expect(crTrusted.status).toBe(403)
       expect(await crTrusted.json()).toEqual({ error: 'forbidden', required: 'admin' })
 
       // 10. The OPERATOR token (the credential the Tauri host keeps to itself)
-      //     passes authorization on the same route. The test daemon has no
-      //     wxvault, so the runtime is unwired and the handler answers 503 —
-      //     which is exactly the point: it got past auth to reach the handler.
+      //     passes authorization on the same route (200, or 503 when the test daemon has nothing wired behind it —
+      //     either way it got past auth to reach the handler).
       const { operatorTokenFilePath } = readApiInfo(daemon.stateDir)
       expect(operatorTokenFilePath, 'daemon must publish an operator token path').toBeTruthy()
       const operator = readFileSync(operatorTokenFilePath!, 'utf8').trim()
-      const crOperator = await fetch(`${baseUrl}/v1/customer-review/recent`, auth(operator))
+      const crOperator = await fetch(`${baseUrl}/v1/companion/thoughts`, auth(operator))
       expect([200, 503]).toContain(crOperator.status)
 
       // 11. …and that operator token stays narrow: routeAllow must keep it off

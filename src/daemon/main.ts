@@ -79,7 +79,6 @@ import { hostname as osHostname } from 'node:os'
 import { makeAtelierStore } from './atelier-store'
 import { companionOfferEligible } from './companion/offer-eligibility'
 import { countInboundMessagesSync, NEW_RELATIONSHIP_MSG_COUNT } from '../lib/messages-store'
-import { startCustomerReviewRuntime } from './customer-review/runtime'
 import { SUPERVISED_ENV } from '../core/supervised-env'
 import { SubsystemSupervisor } from './subsystems'
 import { removeAgyGlobalMcp } from './bootstrap/agy-mcp-config'
@@ -428,8 +427,7 @@ async function bootDaemonInner(opts: BootDaemonOpts, undo: Array<() => void>): P
       // busy registry, so calls that land before buildBootstrap resolves
       // get a no-op release (correct — nothing can be "busy" before
       // bootstrap finishes anyway). Backs BOTH the dispatcher's own
-      // non-GET request hold (index.ts) and customer-review's task-launch
-      // hold (routes-customer-review.ts) — they share this one field.
+      // non-GET request hold (index.ts) — and anything else that launches long work through internal-api.
       holdBusy: (l) => bootRef?.holdBusy?.(l) ?? (() => {}),
       busyLabels: () => bootRef?.busyLabels?.() ?? [],
       log: (t, l) => log(t, l),
@@ -605,19 +603,6 @@ async function bootDaemonInner(opts: BootDaemonOpts, undo: Array<() => void>): P
     // already constructed the store (review finding: this call was missing
     // entirely — no setKnowledge existed on internalApi at all).
     if (boot.knowledge) internalApi.provide({ knowledge: boot.knowledge })
-    // Customer Review is optional: a missing/unready wxvault or eval provider
-    // leaves the daemon healthy and its owner-only routes return 503.
-    const customerReview = await sup.start('customer-review', () => startCustomerReviewRuntime({
-      stateDir,
-      db,
-      registry: boot.registry,
-      defaultProviderId: boot.defaultProviderId,
-      log: (tag, line) => log(tag, line),
-    }))
-    if (customerReview) {
-      internalApi.provide({ customerReview: customerReview.service })
-      lc.register(customerReview)
-    }
     // Wire the 配对码 engine (spec §7) — only present when mailbox_relays is
     // configured. So POST /v1/pair/start + /v1/pair/accept work when wired.
     if (boot.pairing) internalApi.provide({ pairing: boot.pairing })
