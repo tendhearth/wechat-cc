@@ -53,7 +53,8 @@ export interface WishDeps {
   judge(topic: string): Promise<{ match: 'yes' | 'no'; blurb?: string }>
   /** 见闻进日志(seeker 侧)。 */
   recordPostcard(a: { text: string; peerLabel: string }): string | null
-  notifyOwner(text: string): void
+  /** 告诉主人一句(经 CC 开口那道门:kind 决定别烦我 / 免打扰拦不拦,见 core/speech/kinds 的 social_*)。 */
+  notifyOwner(text: string, kind: import('../../core/speech/kinds').SocialNotice): void
   /**
    * busy 登记处(Bootstrap['holdBusy'])。答一条心愿要跑判官 + 披露门,是
    * **脱离用户会话**的后台模型活 —— 不登记的话空闲自动重启会在判官跑到一半
@@ -171,9 +172,9 @@ export function makeWish(deps: WishDeps): WishService {
   const sayCantHelp = async (channelRowId: string, id: string, text: string, expiresAt: string, hop: Hop, asked: string): Promise<void> => {
     if (hop === 1 && FORWARD_ONLY_WHEN_UNABLE && deps.forwardBudget) {
       const n = await forwardWish(channelRowId, { id, text, expiresAt, hop })
-      if (n > 0) { deps.notifyOwner(`${asked},我答不上,帮着问了 ${n} 个朋友`); return }
+      if (n > 0) { deps.notifyOwner(`${asked},我答不上,帮着问了 ${n} 个朋友`, 'social_result'); return }
     }
-    deps.notifyOwner(`${asked},我说不知道`)
+    deps.notifyOwner(`${asked},我说不知道`, 'social_result')
   }
 
   /**
@@ -202,7 +203,7 @@ export function makeWish(deps: WishDeps): WishService {
     // 是两句不同的话,不然一次模型故障会被记成一次「我说不知道」。
     if (!gated.ok && isCheckerFailure(gated.violations)) {
       log(`wish=${id} 回话时披露门不可用(${gated.violations.join(',')}) — 没回`)
-      deps.notifyOwner(`${asked},我想回但没寄出去(模型没响应)`)
+      deps.notifyOwner(`${asked},我想回但没寄出去(模型没响应)`, 'social_result')
       return
     }
     if (!gated.ok || gated.redacted.trim() === '') {
@@ -218,10 +219,10 @@ export function makeWish(deps: WishDeps): WishService {
     catch (err) { sent = { ok: false, error: errText(err) } }
     if (!sent.ok) {
       log(`wish=${id} 明信片没寄出去: ${sent.error ?? 'send_failed'}`)
-      deps.notifyOwner(`${asked},我想回但没寄出去`)
+      deps.notifyOwner(`${asked},我想回但没寄出去`, 'social_result')
       return
     }
-    deps.notifyOwner(`${asked},我回了:${reply}`)
+    deps.notifyOwner(`${asked},我回了:${reply}`, 'social_result')
     log(`wish=${id} 回了一张明信片 → ${channelRowId}`)
   }
 
@@ -316,7 +317,7 @@ export function makeWish(deps: WishDeps): WishService {
     try { deps.recordPostcard({ text: p.text, peerLabel: label }) }
     catch (err) { log(`明信片入库失败(还是会跟主人说): ${errText(err)}`) }
     const tail = isRelayed ? `(想认识就回「认识 ${p.replyId!.slice(0, 6)}」)` : ''
-    deps.notifyOwner(`${label} 回了你的心愿「${r.wish.redacted.slice(0, 20)}」:${p.text}${tail}`)
+    deps.notifyOwner(`${label} 回了你的心愿「${r.wish.redacted.slice(0, 20)}」:${p.text}${tail}`, 'social_result')
     log(`postcard wish=${p.wishId} 收下了 replies=${r.wish.replies}`)
     return true
   }

@@ -1,3 +1,4 @@
+import { makeTellOwner } from './social-tell'
 import { randomBytes, randomUUID } from 'node:crypto'
 import { makeJudge } from '../../core/social-judge'
 import { makeVisit } from './wire-visit'
@@ -57,6 +58,8 @@ export interface SocialDeps {
   knowledge?: import('../social/owner-grounding').GroundingKnowledge
   resolveOperatorChatId: () => string | null
   sendAssistantText: SendAssistantText | undefined
+  /** CC 开口那道门(懒取,见 BootstrapDeps.speech)。 */
+  speech?: () => import('../speech/policy').SpeechPolicy | null
   a2aRegistry: A2ARegistry
   a2aClient: A2AClient
   /**
@@ -210,12 +213,13 @@ export async function wireSocial(deps: SocialDeps): Promise<SocialWiring> {
         const name = ch?.peer_agent_id ? a2aRegistry.get(ch.peer_agent_id)?.name : undefined
         return name || (ch ? `第 ${ch.degree} 度的某人` : '某人')
       }
+      // 告诉主人一句社交上的事:先问 CC 开口那道门再经 sendAssistantText 发(./social-tell.ts,第三批 3a)
+      const tellOwnerAsync = makeTellOwner({ resolveOperatorChatId, sendAssistantText, ...(deps.speech ? { speech: deps.speech } : {}), log: deps.log })
+      const tellOwner = (kind: import('../../core/speech/kinds').SocialNotice, text: string): void => { void tellOwnerAsync(kind, text) }
       const onInbound: import('../../core/penpal-correspondent').CorrespondentDeps['onInbound'] = ({ channelRowId, letterId, plaintext, env }) => {
         switch (env.kind) {
           case 'letter': {
-            const op = resolveOperatorChatId()
-            if (!op || !sendAssistantText) return
-            void sendAssistantText(op, `${peerLabel(channelRowId)}给你写信了:${plaintext.slice(0, 40)}\n(回信 ${channelRowId} <你的话>)`)
+            tellOwner('social_mail', `${peerLabel(channelRowId)}给你写信了:${plaintext.slice(0, 40)}\n(回信 ${channelRowId} <你的话>)`)
             return
           }
           case 'visit':
@@ -244,7 +248,7 @@ export async function wireSocial(deps: SocialDeps): Promise<SocialWiring> {
         evalText: (typeof registry.getStrongEval === 'function' ? registry.getStrongEval(deps.defaultProviderId) : null) ?? socialCheapEval,
         myName: configuredAgent.bot_name?.trim() || '我',
         disclosurePolicy: socialPolicy,
-        notifyOwner: (text) => { const op = resolveOperatorChatId(); if (op && sendAssistantText) void sendAssistantText(op, text) },
+        notifyOwner: (text, kind) => tellOwner(kind, text),
         // 见闻进背包。Journal 无内存态,这里另起一个实例读同一张表没问题。
         recordVisit: ({ text, peerLabel }) => {
           const op = resolveOperatorChatId()
@@ -258,8 +262,14 @@ export async function wireSocial(deps: SocialDeps): Promise<SocialWiring> {
           send: async (svg) => {
             const op = resolveOperatorChatId()
             if (!op || !deps.sendFile) return
-            const png = await rasterizeSvgDarwin(svg, join(deps.stateDir, 'companion', 'postcards'))
-            if (png) await deps.sendFile(op, png)
+            const speech = deps.speech?.()
+            if (!speech) { deps.log('SOCIAL', 'postcard not sent: speech policy not wired yet'); return }
+            // 明信片也问门(串门见闻那一类:别烦我 / 免打扰 ⇒ 这张不发微信,背包里照样有)
+            const sendFile = deps.sendFile
+            await speech.say({ kind: 'social_story', chatId: op }, async () => {
+              const png = await rasterizeSvgDarwin(svg, join(deps.stateDir, 'companion', 'postcards'))
+              if (png) await sendFile(op, png)
+            })
           },
         },
         log: deps.log,
@@ -283,7 +293,7 @@ export async function wireSocial(deps: SocialDeps): Promise<SocialWiring> {
           const op = resolveOperatorChatId()
           return op ? makeJournal(deps.db).recordPostcard({ chatId: op, text, peerLabel }) : null
         },
-        notifyOwner: (text) => { const op = resolveOperatorChatId(); if (op && sendAssistantText) void sendAssistantText(op, text) },
+        notifyOwner: (text, kind) => tellOwner(kind, text),
         // 认识的人就叫名字,不认识就说第几度 —— 主人得知道这话是谁回的。
         peerLabel,
         // 转问节流(sub-project C):一条信道 24 小时内最多转问 FORWARD_PER_SENDER
@@ -316,7 +326,7 @@ export async function wireSocial(deps: SocialDeps): Promise<SocialWiring> {
         },
         mintKey: () => randomBytes(24).toString('hex'),
         genChannel: () => { const kp = generateKeypair(); return { channelId: randomUUID(), pubkey: kp.publicKey, privkey: kp.privateKey } },
-        notifyOwner: (text) => { const op = resolveOperatorChatId(); if (op && sendAssistantText) void sendAssistantText(op, text) },
+        notifyOwner: (text, kind) => tellOwner(kind, text),
         peerLabel, log: deps.log,
       })
       socialIntro = { request: (r) => intro!.request(r), accept: (r) => intro!.accept(r), decline: (r) => intro!.decline(r), offers: () => intro!.offers() }

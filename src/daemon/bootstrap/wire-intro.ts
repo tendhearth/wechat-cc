@@ -57,7 +57,8 @@ export interface IntroDeps {
   adopt(card: PairCard, mine: { channelId: string; pubkey: string; privkey: string }, myMintedKey: string, nonce: string): { ok: true; channelOpened: boolean } | { ok: false; reason: 'id_conflict' }
   mintKey(): string
   genChannel(): { channelId: string; pubkey: string; privkey: string }
-  notifyOwner(text: string): void
+  /** 告诉主人一句(经 CC 开口那道门:kind 决定别烦我 / 免打扰拦不拦,见 core/speech/kinds 的 social_*)。 */
+  notifyOwner(text: string, kind: import('../../core/speech/kinds').SocialNotice): void
   peerLabel(channelRowId: string): string
   holdBusy?: (label: string) => () => void
   now?: () => number
@@ -201,7 +202,7 @@ export function makeIntro(deps: IntroDeps): IntroService {
     if (waiting >= FORWARD_PER_SENDER) { log(`forward replyId=${p.replyId} ${channelRowId} 压着 ${waiting} 笔没回话的邀约 — 丢(不再打扰主人)`); return true }
     save({ ...idx, offers: { ...idx.offers, [p.replyId]: { wishId: p.wishId, viaChannel: channelRowId, hint, at: nowIso() } } })
     const short = p.replyId.slice(0, 6)
-    deps.notifyOwner(`${deps.peerLabel(channelRowId)} 的朋友(就是问「${hint}」那位)想认识你。回「同意 ${short}」或「不了 ${short}」`)
+    deps.notifyOwner(`${deps.peerLabel(channelRowId)} 的朋友(就是问「${hint}」那位)想认识你。回「同意 ${short}」或「不了 ${short}」`, 'social_ask')
     return true
   }
 
@@ -224,7 +225,7 @@ export function makeIntro(deps: IntroDeps): IntroService {
     bg('交叉名片', async () => {
       await send(pd.requesterChannel, introEnvelope({ stage: 'card', replyId: p.replyId, wishId: pd.wishId, card: theirCard }), `card→请求方 replyId=${p.replyId}`)
       await send(pd.targetChannel, introEnvelope({ stage: 'card', replyId: p.replyId, wishId: pd.wishId, card: pd.requesterCard }), `card→被介绍方 replyId=${p.replyId}`)
-      deps.notifyOwner(`我把 ${deps.peerLabel(pd.requesterChannel)} 介绍给了 ${deps.peerLabel(pd.targetChannel)}`)
+      deps.notifyOwner(`我把 ${deps.peerLabel(pd.requesterChannel)} 介绍给了 ${deps.peerLabel(pd.targetChannel)}`, 'social_result')
     })
     return true
   }
@@ -253,7 +254,7 @@ export function makeIntro(deps: IntroDeps): IntroService {
       return true
     }
     writeWishes(deps.stateDir, clearMyIntro(list, found.ref.replyId))
-    deps.notifyOwner(`${deps.peerLabel(channelRowId)} 的朋友这次不想认识新朋友`)
+    deps.notifyOwner(`${deps.peerLabel(channelRowId)} 的朋友这次不想认识新朋友`, 'social_result')
     return true
   }
 
@@ -264,13 +265,13 @@ export function makeIntro(deps: IntroDeps): IntroService {
     catch (err) { log(`card replyId=${replyId} adopt 抛错: ${errText(err)}`); return }
     if (!r.ok) {
       log(`card replyId=${replyId} adopt 拒了: ${r.reason}`)
-      deps.notifyOwner('介绍失败:对方身份和已有联系人冲突')
+      deps.notifyOwner('介绍失败:对方身份和已有联系人冲突', 'social_result')
       return
     }
     // 注册表已经写好了 = 朋友是交上了,信道没开成是另一回事(重新配对能补)。
     if (!r.channelOpened) log(`card replyId=${replyId} 注册表写好了但信道没开成`)
     clearClaim()
-    deps.notifyOwner(`你和 ${card.name} 成了朋友(经 ${deps.peerLabel(channelRowId)} 介绍)${r.channelOpened ? '' : ',信道稍后补'}`)
+    deps.notifyOwner(`你和 ${card.name} 成了朋友(经 ${deps.peerLabel(channelRowId)} 介绍)${r.channelOpened ? '' : ',信道稍后补'}`, 'social_result')
     log(`card replyId=${replyId} 成了 — ${card.self_id}`)
   }
 
