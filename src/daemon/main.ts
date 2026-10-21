@@ -6,13 +6,6 @@ import { makeProjectLessonsCommand } from './project-lessons-command'
 import { makeProjectLessons } from '../core/workbench/project-lessons'
 import { makeMemoryImportCommand } from './memory/import-command'
 import { agendaReplyText, appBundleHasCalendarUsage, makeCalendar, makeCalendarCommand } from './calendar/calendar'
-import { makeActivityLog } from './activity-log'
-import { makeActivityCommand } from './activity/command'
-import { listLetters } from './letters/archive'
-import { collectActivity } from './cc-activity-source'
-import { ACTIVITY_WINDOW_MS, buildActivity } from '../core/cc-activity'
-import { makeFileStateStore as makeCliUpgradeStateStore } from '../core/cli-upgrade/state'
-import { MEMORY_LOG_FILE, ownerMemoryRoot } from './memory/nightly'
 import { makeMatterStore } from '../core/matters/store'
 if (!process.env.CLAUDE_CODE_ENTRYPOINT) { process.env.CLAUDE_CODE_ENTRYPOINT = 'sdk-ts' }
 // 回环守卫(spec 2026-09-09-cli-hook-push §3):daemon 经 SDK 拉起的 claude / codex
@@ -94,6 +87,7 @@ import { randomBytes } from 'node:crypto'
 import { wireWorkbench } from './bootstrap/wire-workbench'
 import { wireCliSessions } from './bootstrap/wire-cli-sessions'
 import { wireJobs } from './bootstrap/wire-jobs'
+import { wireActivity } from './bootstrap/wire-activity'
 import {wireWorkbenchNotifications} from './bootstrap/wire-workbench-notifications'
 import {wireWorkbenchArtifacts} from './bootstrap/wire-workbench-artifacts'
 import { SUBSYSTEM_NAMES } from './capabilities'
@@ -679,45 +673,8 @@ async function bootDaemonInner(opts: BootDaemonOpts, undo: Array<() => void>): P
     const { cliEvents, cliPermissions, replyCore, permissionDecisions, permissionGate, cliSessionViews,
       legacyClaims, executionConflict, reserveExecution, liveWindow, startCwd, overseerToday, terminalHooks } = cli
     const a2a = boot.a2aDeps
-    // 「看 码」「@码 文本」:主人对某条终端会话说话。只认主人;那边的会话 v1 先说明。
-    // 定时任务的文件(spec 2026-10-20-scheduled-jobs-design):微信「定时」与每分钟一拍的 runner 共用一份。
-    // 「CC 做过的事」(B9,spec 2026-10-20-cc-activity-design):没留记录的动作(主动说话 / 定时 / 提醒)补记一行,
-    // 只记状态 + id;手机时间线把它和已有记录(规则批 / 一起做 / 终端 / 信 / 记忆 / CLI 升级)合起来。只算主人。
-    const activityLog = makeActivityLog({ stateDir, now: () => Date.now(), log: (t, l) => log(t, l) })
-    const activityOwner = () => resolveAdminChatId(loadAccess(), loadCompanionConfig(stateDir), null)
-    const activity = {
-      now: () => Date.now(),
-      sources: () => {
-        const since = Date.now() - ACTIVITY_WINDOW_MS
-        return collectActivity({
-          now: () => Date.now(), ownerChatId: activityOwner,
-          decisions: () => permissionDecisions.since(since, 200),
-          tasks: () => db.query<{ id: string; title: string; status: string; updatedAt: number; ownerChatId: string | null }, [number]>('SELECT id,title,status,updated_at AS updatedAt,owner_chat_id AS ownerChatId FROM workbench_tasks WHERE updated_at>=? ORDER BY updated_at DESC LIMIT 200').all(since),
-          terminal: () => cliEvents.list({ includeEnded: true, limit: 200 }).filter(v => v.last_event_at >= since),
-          letters: () => listLetters(stateDir),
-          memoryLog: () => {
-            const o = activityOwner(), root = o ? ownerMemoryRoot(stateDir, o) : null
-            const f = root ? join(root, MEMORY_LOG_FILE) : null
-            if (!f || !fsExistsSync(f)) return []
-            return fsReadFileSync(f, 'utf8').split('\n').slice(-200).flatMap((l: string) => { try { const r = JSON.parse(l); return r && typeof r.at === 'string' ? [r] : [] } catch { return [] } })
-          },
-          log: () => activityLog.read(since),
-          jobs: () => jobsStore.list().jobs,
-          reminderText: (id) => {
-            const o = activityOwner()
-            return o ? db.query<{ text: string }, [string, string]>('SELECT text FROM reminders WHERE id=? AND chat_id=?').get(id, o)?.text ?? null : null
-          },
-          cliUpgrades: () => Object.entries(makeCliUpgradeStateStore(stateDir).load()).map(([cli, s]) => ({ cli, last: s.lastUpgrade ?? null })),
-        })
-      },
-    }
-    // 微信「做过的事 [今天|本周]」(B9 在微信上):与手机时间线同一组来源,只认主人。
-    const activityCommand = makeActivityCommand({
-      isOwner: (chatId) => resolveAdminChatId(loadAccess(), loadCompanionConfig(stateDir), null) === chatId,
-      say: (c, t) => ilink.sendMessage(c, t),
-      now: () => Date.now(), timeZone: () => loadCompanionConfig(stateDir).timezone ?? 'Asia/Shanghai',
-      items: () => { const r = buildActivity(activity.sources(), { now: Date.now(), limit: 100 }); return { items: r.items, degraded: r.degraded } },
-    })
+    // 「CC 做过的事」(重构第二批步 6c,bootstrap/wire-activity.ts):手机时间线 / 微信「做过的事」/ 周报共用一组来源。
+    const { activityLog, activity, command: activityCommand } = wireActivity({ stateDir, db, ilink, permissionDecisions, cliEvents, jobsStore })
     // 微信「经验 <项目> …」(第二轮对标 ★2):项目经验,每家执行者都照着做。只认主人;项目按名字认。
     const projectLessons = makeProjectLessons(stateDir)
     const lessonsCommand = makeProjectLessonsCommand({
