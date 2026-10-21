@@ -25,6 +25,8 @@ import { buildPipelineDeps } from './pipeline-deps'
 import { buildLifecycleDeps } from './lifecycle-deps'
 import { buildTickBodies, type TickBodies } from './tick-bodies'
 import { makeProactiveOutbound, type ProactiveOutbound } from '../companion/proactive-channel'
+import type { SpeechPolicy } from '../speech/policy'
+import { wireSpeech } from './wire-speech'
 import { makeMemoryLlmOps } from '../memory-llm-ops'
 import { makeAtelierStore } from '../atelier-store'
 import { makeJsonAtelierPlanner } from '../atelier-planner'
@@ -164,6 +166,8 @@ export interface WiredDeps {
    * 伙伴的 tick 已经接上;main.ts 接给提醒。
    */
   proactive: ProactiveOutbound
+  /** CC 主动开口唯一的门(第三批 3a,./wire-speech.ts);各条主动开口的路逐个迁过来。 */
+  speech: SpeechPolicy
   /** App 那条路本身(没开中继 v2 / 没配对 ⇒ null);main.ts 接给信(微信不通时寄到 App)。 */
   companionApp: import('../companion/proactive-channel').AppChannel | null
   /** 每晚记忆整理运行时(pipeline-deps 造);main.ts 挂定时器 + setMemoryNightly。 */
@@ -277,6 +281,7 @@ export function wireMain(opts: WireMainOpts): WiredDeps {
     app: () => companionApp,
     log: (tag, line) => opts.log(tag, line),
   })
+  const speech = wireSpeech({ stateDir: opts.stateDir, db: opts.db, chatPrefs: opts.chatPrefs, proactive, log: (tag, line) => opts.log(tag, line) })
   const ticks = buildTickBodies({
     ...opts,
     proactive,
@@ -293,6 +298,7 @@ export function wireMain(opts: WireMainOpts): WiredDeps {
   return {
     appPush,
     proactive,
+    speech,
     companionApp,
     pipelineDeps,
     companionConverse,
