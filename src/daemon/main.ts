@@ -704,6 +704,7 @@ async function bootDaemonInner(opts: BootDaemonOpts, undo: Array<() => void>): P
     // 每分钟一拍的 runner 要 wireMain 之后的只读轮 ⇒ 先建、后 start()。只读轮经 wiredRef 取,没就绪 ⇒ 抛 not_wired。
     const jobs = wireJobs({
       stateDir, db, ilink, boot, sup, lc, jobsStore, activityLog, activity, calendar, overseerToday, careLedger,
+      quietWindow: () => { const o = resolveAdminChatId(loadAccess(), loadCompanionConfig(stateDir), null); return o ? chatPrefs.get(o).quiet : undefined },
       // async:没就绪时是一个被拒的 promise,不是同步抛 —— requestReview 的 .catch 接得住,照实告诉主人「没审成」
       runJobTurn: async (a) => { if (!wiredRef.current) throw new Error('jobs_not_wired'); return wiredRef.current.ticks.runJobTurn(a) },
       sendProactive: (chatId, text) => {

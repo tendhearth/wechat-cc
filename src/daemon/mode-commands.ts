@@ -20,7 +20,7 @@
  * admin-commands, EVERY user can flip their own chat's mode (no admin
  * gate) — this is per-chat user preference, not a system-wide change.
  */
-import { parseQuietHours, quietLabel } from '../core/quiet-hours'
+import { hhmmInQuiet, parseQuietHours, quietLabel } from '../core/quiet-hours'
 import { parseAvoidTopics, topicLabels, type AvoidTopic } from '../core/companion-topics'
 import type { ConversationCoordinator } from '../core/conversation-coordinator'
 import { namesIn, type ProviderRegistry } from '../core/provider-registry'
@@ -38,6 +38,8 @@ import { PROVIDER_IDS } from '../lib/provider-ids'
 type ModeChatPrefs = { split?: boolean; care?: 'off' | 'low' | 'high'; stickers?: boolean; hunt?: boolean; visit?: boolean; avoid?: AvoidTopic[]; quiet?: import('../core/quiet-hours').QuietWindow }
 
 export interface ModeCommandsDeps {
+  /** 主人建的早报 / 周报几点到(设免打扰时撞上了就当场说「会天天跳过」,9d 评审 #509)。没接 ⇒ 不提。 */
+  initiativeJobTimes?: () => Array<{ label: string; at: string }>
   coordinator: Pick<ConversationCoordinator, 'getMode' | 'setMode' | 'cancel'>
   registry: Pick<ProviderRegistry, 'has' | 'get' | 'list'>
   /** Default provider id, surfaced by /mode + /solo for status messages. */
@@ -495,7 +497,7 @@ export function makeModeCommands(deps: ModeCommandsDeps): ModeCommands {
 
       // /set — per-chat preferences (the settings layer's dials: split, care).
       if (slashWord.toLowerCase() === 'set') {
-        const SET_USAGE = '不认识这个设置。目前支持:\n· /set split on|off (别名: 拆分 开|关)\n· /set care off|low|high (别名: 关心 关|低|高)\n· /set stickers on|off (别名: 表情 开|关)\n· /set hunt on|off (别名: 打猎 开|关)\n· /set visit on|off (别名: 串门 开|关)\n· /set avoid 健康,家人|无 (别名: 别聊;CC 不主动提的话题:健康、家人、钱、工作、感情、外貌)\n· /set quiet 23:00-8:00|off (别名: 免打扰;这段时间 CC 不主动找你,提醒 / 定时照常)\n· /set cheap auto|claude|agy|openai|… (管理员;后台评估用哪家)\n· /set providers claude,openai|all (管理员;非管理员对话能用哪些)\n· /set provider cc|agy|api|… (管理员;全局默认大脑,改完自动重启)'
+        const SET_USAGE = '不认识这个设置。目前支持:\n· /set split on|off (别名: 拆分 开|关)\n· /set care off|low|high (别名: 关心 关|低|高)\n· /set stickers on|off (别名: 表情 开|关)\n· /set hunt on|off (别名: 打猎 开|关)\n· /set visit on|off (别名: 串门 开|关)\n· /set avoid 健康,家人|无 (别名: 别聊;CC 不主动提的话题:健康、家人、钱、工作、感情、外貌)\n· /set quiet 23:00-8:00|off (别名: 免打扰;这段时间 CC 不主动找你,早报 / 周报会跳过;提醒、你自己建的定时照常)\n· /set cheap auto|claude|agy|openai|… (管理员;后台评估用哪家)\n· /set providers claude,openai|all (管理员;非管理员对话能用哪些)\n· /set provider cc|agy|api|… (管理员;全局默认大脑,改完自动重启)'
         const p = deps.chatPrefs.get(msg.chatId)
         if (tail === '') {
           const splitState = p.split === false ? 'off' : 'on'
@@ -625,7 +627,11 @@ export function makeModeCommands(deps: ModeCommandsDeps): ModeCommands {
           const r = parseQuietHours(rawValue)
           if (!r.ok) { await reply(msg.chatId, r.error); return true }
           deps.chatPrefs.set(msg.chatId, { quiet: r.window ?? undefined })
-          await reply(msg.chatId, r.window ? `记下了:每天 ${quietLabel(r.window)} 我不主动找你(问候、打猎、串门、信都等到之后)。你设的提醒、定时和一起做的通知照常。` : '免打扰关了。')
+          // 跟 SpeechPolicy 的判定对得上(第三批 3a):CC 自己挑内容的推后 / 跳过(早报、周报到点赶上就当天跳过),
+          // 主人点名要的(提醒、自己建的定时)和等你拍板的照常。撞上的早报 / 周报当场说,别让主人过几天才从列表里发现。
+          const hit = r.window ? (deps.initiativeJobTimes?.() ?? []).filter(j => hhmmInQuiet(j.at, r.window!)) : []
+          const clash = hit.length ? `\n注意:你的${hit.map(j => `${j.label}(${j.at})`).join('、')}落在这段里,到点会跳过,不会晚点补。想让它照常来,换个时间,或者改免打扰。` : ''
+          await reply(msg.chatId, r.window ? `记下了:每天 ${quietLabel(r.window)} 我不主动找你(问候、打猎、串门、信、早报、周报都等到之后或当天跳过)。你设的提醒、你自己建的定时、等你批准的和一起做的通知照常。${clash}` : '免打扰关了。')
           deps.log('MODE_CMD', `chat=${msg.chatId} /set quiet=${r.window ? quietLabel(r.window) : 'off'}`)
           return true
         }

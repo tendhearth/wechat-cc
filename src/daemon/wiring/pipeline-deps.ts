@@ -85,6 +85,7 @@ export function makeDelegateToHand(deps: DelegateDeps) {
 
 export type { PipelineDepsOpts } from './pipeline-deps-opts'
 import type { PipelineDepsOpts } from './pipeline-deps-opts'
+import { makeJobsStore } from '../../core/scheduled-jobs-store'
 import { Ref } from '../../lib/lifecycle'
 import { makeProactiveOutbound, type AppChannel, type ProactiveOutbound } from '../companion/proactive-channel'
 import type { SpeechPolicy } from '../speech/policy'
@@ -470,6 +471,8 @@ export function buildPipelineDeps(opts: PipelineDepsOpts, refs: PipelineDepsRefs
 
 
   const modeHandler = makeModeCommands({
+    // 设免打扰时撞上的早报 / 周报当场说(定时那份存在文件里,每次现读,另起一个只读实例不会读到旧的)
+    initiativeJobTimes: () => makeJobsStore(stateDir).list().jobs.filter(j => j.brief || j.recap).map(j => ({ label: j.brief ? '早报' : '周报', at: j.schedule.at })),
     coordinator: boot.coordinator,
     registry: boot.registry,
     defaultProviderId: boot.defaultProviderId,

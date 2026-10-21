@@ -6,7 +6,7 @@
  *  - blocking   有事卡着等主人拍板(权限 y/n、有人想跟 CC 说话、配对)。iOS 的 time-sensitive / critical。
  *  - requested  内容、时间都是主人点名的(提醒、「每天 9 点看邮箱」)。
  *  - report     主人交办的事有了结果,CC 来回话(内容 CC 定、起因是主人)。
- *  - initiative CC 自己挑内容(晨报的开关是主人开的,但内容是 CC 挑的 ⇒ 算这一类)。
+ *  - initiative CC 自己挑内容(早报的开关是主人开的,但内容是 CC 挑的 ⇒ 算这一类)。
  * 加一种新的话 = 这里加一行,先按上面那条准绳归类。
  */
 export type SpeechOrigin = 'blocking' | 'requested' | 'report' | 'initiative'
@@ -25,7 +25,7 @@ export const SPEECH_KINDS = {
   upgrade_notice: { origin: 'report', label: '升级完成' },
   outbound_health: { origin: 'report', label: '外发出了问题' },
   restart_notice: { origin: 'report', label: '重启了' },
-  brief: { origin: 'initiative', label: '晨报' },
+  brief: { origin: 'initiative', label: '早报' },
   recap: { origin: 'initiative', label: '周报' },
   letter: { origin: 'initiative', label: '信' },
   companion: { origin: 'initiative', label: '伙伴' },

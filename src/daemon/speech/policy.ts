@@ -19,7 +19,7 @@ export interface SpeechRequest {
   chatId: string
   /** 这一种自己的频率 / 冷却(只对 initiative 生效)。 */
   perKind?: { ok: true } | { ok: false; reason: string }
-  /** 定时触发的(晨报、周报):赶上免打扰当天记 skipped:quiet。 */
+  /** 定时触发的(早报、周报):赶上免打扰当天记 skipped:quiet。 */
   scheduled?: boolean
   /** 调用方这一拍的时刻(伙伴一拍有自己的 nowIso);缺省 = 时钟。免打扰按它判,账按它记。 */
   nowMs?: number

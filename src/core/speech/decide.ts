@@ -24,7 +24,7 @@ export interface SpeechContext {
   deliverable: boolean
   /** 这一种自己的频率 / 冷却(伙伴的 shouldSpeak、贴纸的 22 小时 …)。只对 initiative 生效。 */
   perKind?: { ok: true } | { ok: false; reason: string }
-  /** 定时触发的(晨报、周报):赶上免打扰不往后推,当天记 skipped:quiet —— 运行器到点后只有 10 分钟窗口。 */
+  /** 定时触发的(早报、周报):赶上免打扰不往后推,当天记 skipped:quiet —— 运行器到点后只有 10 分钟窗口。 */
   scheduled?: boolean
 }
 

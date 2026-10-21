@@ -96,9 +96,21 @@ describe('早报 × 微信', () => {
       store, isOwner: (c) => c === 'owner', say: async (_c, t) => { said.push(t) }, timezone: () => 'Asia/Shanghai',
       now: () => Date.parse('2026-10-20T00:00:00Z'), log: () => {}, jobExecutor: () => 'claude',
       briefPrefs: { read: () => [...prefs], add: (l) => { prefs.push(l); while (prefs.length > 10) prefs.shift() }, clear: () => { prefs.length = 0 } },
+      quietWindow: () => quiet,
     })
     return { store, said, prefs, cmd }
   }
+  let quiet: { from: string; to: string } | undefined
+  it('早报的时间落在免打扰里 ⇒ 建的时候当场说「会跳过」;不在就不提(9d 评审 #509)', async () => {
+    quiet = { from: '23:00', to: '08:00' }
+    const m = mk()
+    await m.cmd.handle('定时 早报 7:30', 'owner')
+    expect(m.said[0]).toContain('07:30 落在你的免打扰(23:00–08:00)里,早报到点会跳过')
+    quiet = undefined
+    const n = mk()
+    await n.cmd.handle('定时 早报 8:30', 'owner')
+    expect(n.said[0]).not.toContain('免打扰')
+  })
   it('adds one brief; a second one is refused with the existing id', async () => {
     const m = mk()
     await m.cmd.handle('定时 早报 8:00', 'owner')

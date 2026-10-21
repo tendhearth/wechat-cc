@@ -18,6 +18,7 @@ function setup(opts: {
   config?: { openaiBaseUrl?: string; openaiModel?: string; openaiAliases?: Record<string, string>; cheapEvalProvider?: string; trusted_providers?: string[] }
   models?: { models: string[]; error?: string; fromCache?: boolean }
   notes?: Partial<Record<ProviderId, string>>
+  initiativeJobTimes?: Array<{ label: string; at: string }>
   requestRestart?: (reason: string) => void
 } = {}) {
   const registered = opts.registered ?? ['claude', 'codex']
@@ -52,6 +53,7 @@ function setup(opts: {
     set: (c: string, p: { split?: boolean; care?: 'off' | 'low' | 'high'; stickers?: boolean; hunt?: boolean }) => { const n = { ...(prefsData.get(c) ?? {}), ...p }; prefsData.set(c, n); return n },
   }
   const cmds = makeModeCommands({
+    ...(opts.initiativeJobTimes ? { initiativeJobTimes: () => opts.initiativeJobTimes! } : {}),
     coordinator: {
       getMode: () => stored ?? { kind: 'solo', provider: opts.defaultProviderId ?? 'claude' },
       setMode: (chatId, mode) => { stored = mode; set(chatId, mode) },
@@ -938,6 +940,14 @@ describe('makeModeCommands', () => {
     expect(prefsData.get('chat-1')).toEqual({})
     await cmds.handle(inbound('/set 免打扰 晚上'))
     expect(sentMessages.at(-1)?.[1]).toContain('/set 免打扰 23:00-8:00')
+  })
+  it('/set 免打扰 撞上了早报 / 周报的时间 ⇒ 当场说「会跳过」;没撞上就不提(9d 评审 #509)', async () => {
+    const { cmds, sentMessages } = setup({ initiativeJobTimes: [{ label: '早报', at: '07:30' }, { label: '周报', at: '20:00' }] })
+    await cmds.handle(inbound('/set 免打扰 23:00-8:00'))
+    expect(sentMessages.at(-1)?.[1]).toContain('早报(07:30)落在这段里,到点会跳过')
+    expect(sentMessages.at(-1)?.[1]).not.toContain('周报(20:00)')
+    await cmds.handle(inbound('/set 免打扰 1:00-6:00'))
+    expect(sentMessages.at(-1)?.[1]).not.toContain('会跳过')
   })
   it('bare /set shows the quiet window', async () => {
     const { cmds, sentMessages } = setup()
