@@ -48,7 +48,6 @@ import { pluginRoutes } from './routes-plugins'
 import { licenseRoutes } from './routes-license'
 import { daemonControlRoutes } from './routes-daemon-control'
 import { fileRoutes } from './routes-files'
-import { customerReviewRoutes } from './routes-customer-review'
 import { federationRoutes } from './routes-federation'
 import { remindersRoutes } from './routes-reminders'
 import { lettersRoutes } from './routes-letters'
@@ -1081,7 +1080,6 @@ const onlineStickerCursor = new Map<string, number>()
     ...pluginRoutes(deps),
     ...licenseRoutes(deps),
     ...daemonControlRoutes(deps),
-    ...customerReviewRoutes(deps),
     ...federationRoutes(deps),
     ...fileRoutes(),
   }

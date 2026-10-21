@@ -1047,9 +1047,8 @@ async fn customer_review_api(
         "/v1/knowledge/graph/top_contacts",
         "/v1/reminders/schedule",
     ];
-    let allowed = route == "/v1/customer-review"
-        || route.starts_with("/v1/customer-review/")
-        || OWNER_WORKSPACE_ROUTES.contains(&route);
+    // 客户回顾(/v1/customer-review*)2026-10-21 删了;这个命令名留着,它现在只代理下面这份主人工作区路由。
+    let allowed = OWNER_WORKSPACE_ROUTES.contains(&route);
     if !allowed || path.contains("..") {
         return Err(format!("customer_review_api refuses path: {path}"));
     }

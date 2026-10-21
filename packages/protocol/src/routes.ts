@@ -74,11 +74,6 @@ export interface RouteSpec {
  *
  *   → POST /v1/companion/converse, POST /v1/companion/speak, POST /v1/companion/transcribe
  *
- * Owner-only workspace (admin-tier reads of the owner's wxvault
- * history + stored customer judgments). Reached ONLY through the
- * Tauri host's customer_review_api command / the dev server's mirror
- * of it — never from webview JS, which must not hold this token.
- *   → GET /v1/customer-review/contacts, POST /v1/customer-review, POST /v1/customer-review/run, GET /v1/customer-review, GET /v1/customer-review/evidence, GET /v1/customer-review/recent, GET /v1/customer-review/history, POST /v1/customer-review/item
  *
  * 待办 workspace (2026-08-24) — same owner-only trust class and the
  * same delivery channel (the Tauri host's owner-workspace command;
@@ -443,7 +438,7 @@ export const ROUTES: Readonly<Record<RouteKey, RouteSpec>> = {
   // by daemon-internal jobs (the wxvault source adapter, wxsearch's
   // indexer) — no ordinary chat session has business writing into the
   // owner's message store, so these fail closed at admin (same trust
-  // class as customer-review below: raw wxvault-derived content).
+  // class as the rest of the owner workspace: raw wxvault-derived content).
   'POST /v1/knowledge/source/put': { desktop: { tier: 'admin' } },
   'POST /v1/knowledge/semantic/put': { desktop: { tier: 'admin' } },
   // Query = admin-only (NOT trusted), same as ingest above. These read the
@@ -489,14 +484,6 @@ export const ROUTES: Readonly<Record<RouteKey, RouteSpec>> = {
   'POST /v1/config/set': { desktop: { tier: 'admin' } },
   // admin — reads the owner's private wxvault history and stores personal
   // customer judgments. Never expose to guest/trusted chat sessions.
-  'GET /v1/customer-review/contacts': { desktop: { tier: 'admin', tokens: ['operator'] } },
-  'POST /v1/customer-review': { desktop: { tier: 'admin', tokens: ['operator'] } },
-  'POST /v1/customer-review/run': { desktop: { tier: 'admin', tokens: ['operator'] } },
-  'GET /v1/customer-review': { desktop: { tier: 'admin', tokens: ['operator'] } },
-  'GET /v1/customer-review/evidence': { desktop: { tier: 'admin', tokens: ['operator'] } },
-  'GET /v1/customer-review/recent': { desktop: { tier: 'admin', tokens: ['operator'] } },
-  'GET /v1/customer-review/history': { desktop: { tier: 'admin', tokens: ['operator'] } },
-  'POST /v1/customer-review/item': { desktop: { tier: 'admin', tokens: ['operator'] } },
   // admin — hearth federation mint (grant-gated, see routes-federation.ts).
   // Mints a short-lived admin-tier token; a trusted-tier caller must not
   // reach this even before the operator-routeAllow gate is considered.

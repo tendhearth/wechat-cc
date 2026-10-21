@@ -276,11 +276,6 @@ export interface InternalApiDeps {
   /** 终端会话权限 → 微信 y/n(spec 2026-09-09-cli-hook-push §6.3)。main.ts setCliPermissions。 */
   cliPermissions?: Pick<import('../../core/cli-permission-relay').CliPermissionRelay, 'open' | 'status' | 'wait'>
   /**
-   * Owner-only Customer Review application service. Late-bound after
-   * bootstrap because it needs the active provider registry and wxvault MCP.
-   */
-  customerReview?: import('../customer-review/service').CustomerReviewService
-  /**
    * Optional A2A deps — undefined when a2a_listen is not configured.
    * When absent, POST /v1/a2a/send returns 503.
    */
@@ -621,7 +616,7 @@ export interface InternalApiDeps {
 
 /** 可以晚绑定的那些依赖 —— 只有这里列的键能经 `provide` 交进来。 */
 export const LATE_KEYS = [
-  'delegate', 'conversation', 'a2a', 'social', 'knowledge', 'pairing', 'memoryLlm', 'incidents', 'customerReview',
+  'delegate', 'conversation', 'a2a', 'social', 'knowledge', 'pairing', 'memoryLlm', 'incidents',
   'llmHealth', 'llmRegistered', 'llmEndpoints',
   'cliEvents', 'cliPermissions', 'overseerToday', 'cliHooks', 'calendarAgenda',
   'workbench', 'matters', 'companionConverse', 'petTurn', 'settingsLink', 'connections', 'phoneConnect',
