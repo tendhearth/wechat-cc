@@ -42,7 +42,7 @@ describe('replyRefOf / cliSourceLabel', () => {
     expect(replyRefOf(waiting({}, { reply_code: null }))).toBe('k3x9z')
     expect(replyRefOf(waiting({}, { reply_code: null, hash: null }))).toBeNull()
     expect(replyRefOf(view())).toBeNull()
-    expect(cliSourceLabel('claude')).toBe('Claude Code')
+    expect(cliSourceLabel('claude')).toBe('Claude')  // 收敛清单 ⑥:名字只有一份,终端里的也叫 Claude
     expect(cliSourceLabel('codex')).toBe('Codex')
     expect(cliSourceLabel('cursor')).toBe('Cursor')
   })
@@ -64,11 +64,11 @@ describe('formatCliSessionDigest', () => {
     ], { now: NOW, localMachine: 'here' })
     expect(t.split('\n')).toEqual([
       '终端里 3 个会话(1 个等你批准、1 个在跑):',
-      '· 等你批准 · wechat-cc · Claude Code · 码 ab12c3 · 2 分钟前',
+      '· 等你批准 · wechat-cc · Claude · 码 ab12c3 · 2 分钟前',
       '   Bash: rm -rf dist',
       '   —— 回「y 07」放行、「n 07」拒绝',
       '· 在跑 · melu · Codex · 码 9f8e7d · 3 分钟前',
-      '· 做完了 · leni · Claude Code · 码 1a2b3c · 2 小时前',
+      '· 做完了 · leni · Claude · 码 1a2b3c · 2 小时前',
       '   登录页改好了, 测试也过了',
       '「看 码」看最近的对话,「@码 话」接着说一句',
     ])
@@ -86,7 +86,7 @@ describe('formatCliSessionDigest', () => {
     const t = formatCliSessionDigest([
       view({ machine: 'WIN-PC', status: 'idle', stale: true, last_summary: 'x'.repeat(200) }),
     ], { now: NOW, localMachine: 'here' })
-    expect(t).toContain('没动静了 · wechat-cc · 那边(WIN-PC) · Claude Code')
+    expect(t).toContain('没动静了 · wechat-cc · 那边(WIN-PC) · Claude')
     expect(t).toContain('x'.repeat(59) + '…')
     expect(t).not.toContain('x'.repeat(61))
   })

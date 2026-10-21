@@ -8,6 +8,7 @@
  *
  * 纯函数:不碰库、不碰微信。输入是登记处的视图(状态已按 stale 折算、等你批准的已排在前)。
  */
+import { executorNames } from './provider-display-names'
 import type { CliSessionView } from './cli-session-store'
 
 /** 一次最多列这么多条(微信一屏)。 */
@@ -42,8 +43,9 @@ export function withReplyRefs(
   })
 }
 
+/** 终端会话是哪一家开的 —— 名字只有一份(收敛清单 ⑥,lib/executor-facts);微信通知和「今天」的 agent 都读这里。 */
 export function cliSourceLabel(source: CliSessionView['source']): string {
-  return source === 'codex' ? 'Codex' : source === 'cursor' ? 'Cursor' : 'Claude Code'
+  return executorNames(source).short
 }
 
 /** 「刚刚 / 3 分钟前 / 2 小时前 / 昨天 / 5 天前」。 */

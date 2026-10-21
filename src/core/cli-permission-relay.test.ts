@@ -42,7 +42,7 @@ describe('CliPermissionRelay(spec 2026-09-09-cli-hook-push §6.3)', () => {
     const hash = (r as { hash: string }).hash
     expect(hash).toMatch(/^[a-z0-9]{5}$/)
     expect(asked[0]!.timeoutMs).toBe(CLI_PERMISSION_WAIT_MS)
-    expect(asked[0]!.prompt).toContain('Claude Code 等你批准 · wechat-cc · 码 abc123')
+    expect(asked[0]!.prompt).toContain('Claude 等你批准 · wechat-cc · 码 abc123')
     expect(asked[0]!.prompt).toContain('Bash: rm -rf ./tmp')
     // 「怎么回」那一行由 ilink-glue.askUser 统一加(两位数码在那里分配),relay 的文案只说过期后会怎样。
     expect(asked[0]!.prompt).not.toContain(`y ${hash}`)

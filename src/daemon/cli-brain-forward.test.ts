@@ -46,7 +46,7 @@ describe('brain forwarder(手侧)', () => {
     const h = harness([rec()])
     expect(await h.fwd.event({ ...ev, idle_s: PRESENT_IDLE_S - 1 })).toBe('noop')
     expect(h.calls).toEqual([])
-    expect(h.desktop[0]).toContain('Claude Code 完成了')
+    expect(h.desktop[0]).toContain('Claude 完成了')
     expect(await h.fwd.permissionOpen({ source: 'claude', session_id: 'abc123', cwd: '/w', tool_name: 'Bash', idle_s: 3 })).toEqual({ status: 'owner_present' })
   })
 

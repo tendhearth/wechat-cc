@@ -48,7 +48,7 @@ describe('CliEventHub 压 / 撤 / 清(spec 2026-09-09-cli-hook-push §5)', () =>
     expect(sent).toEqual([])
     await vi.advanceTimersByTimeAsync(1)
     expect(sent).toHaveLength(1)
-    expect(sent[0]).toBe('Claude Code 完成了 · wechat-cc · 码 a1b2c3\n搞定了')
+    expect(sent[0]).toBe('Claude 完成了 · wechat-cc · 码 a1b2c3\n搞定了')
     expect(hub.pending()).toEqual([])
   })
 
@@ -226,7 +226,7 @@ describe('发到哪个面(人在电脑前 → 桌面;机器空闲 → 微信)', 
     hub.ingest(ev({ text: '**粗体** 第一行\n\n- 点一\n- 点二' }))
     await settle()
     expect(sent).toEqual([])
-    expect(desktop).toEqual([{ title: 'Claude Code 完成了 · wechat-cc · 码 a1b2c3', body: '粗体 第一行 · 点一 · 点二' }])
+    expect(desktop).toEqual([{ title: 'Claude 完成了 · wechat-cc · 码 a1b2c3', body: '粗体 第一行 · 点一 · 点二' }])
     expect(hub.ingest(ev())).toBe('noop')
   })
 
@@ -249,7 +249,7 @@ describe('发到哪个面(人在电脑前 → 桌面;机器空闲 → 微信)', 
     b.hub.ingest(ev({ machine: 'win-test', idle_s: 900 }))
     await settle()
     expect(b.sent).toHaveLength(1)
-    expect(b.sent[0]).toContain('Claude Code 完成了 · 那边(win-test) · wechat-cc · 码 a1b2c3')
+    expect(b.sent[0]).toContain('Claude 完成了 · 那边(win-test) · wechat-cc · 码 a1b2c3')
     expect(b.desktop).toEqual([])
   })
 
@@ -303,10 +303,10 @@ describe('会话登记(「看 码」「@码」按前缀找)', () => {
 describe('措辞', () => {
   it('stop:完整最后一句去 markdown,保留换行', () => {
     const s = formatCliPush(ev({ text: '## 结果\n\n**代码**:`feat/x` 四个提交\n- 一\n- 二\n\n\n看 [PR](https://g/1)' }), 'wechat-cc')
-    expect(s).toBe('Claude Code 完成了 · wechat-cc · 码 a1b2c3\n结果\n\n代码:feat/x 四个提交\n· 一\n· 二\n\n看 PR (https://g/1)')
+    expect(s).toBe('Claude 完成了 · wechat-cc · 码 a1b2c3\n结果\n\n代码:feat/x 四个提交\n· 一\n· 二\n\n看 PR (https://g/1)')
   })
   it('stop 没留最后一句 → 只有标题行', () => {
-    expect(formatCliPush(ev({ text: undefined }), 'wechat-cc')).toBe('Claude Code 完成了 · wechat-cc · 码 a1b2c3')
+    expect(formatCliPush(ev({ text: undefined }), 'wechat-cc')).toBe('Claude 完成了 · wechat-cc · 码 a1b2c3')
   })
   it('permission:等你批准 + 工具摘要 + 回终端提示', () => {
     const s = formatCliPush(ev({ source: 'codex', kind: 'permission', session_id: '9f0e1d22', text: 'Bash: rm -rf ./tmp' }), 'tendhearth')
