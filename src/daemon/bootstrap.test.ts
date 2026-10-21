@@ -1405,7 +1405,7 @@ describe('bootstrap 社交接线', () => {
       expect(card.capabilities.some(c => c.name === 'reveal')).toBe(false)
       // boot.social 三块:信道(写信 / 串门)、心愿、介绍。
       expect(boot.social).toBeDefined()
-      expect(Object.keys(boot.social!).sort()).toEqual(['intro', 'penpal', 'wish'])
+      expect(Object.keys(boot.social!).sort()).toEqual(['flushNotices', 'intro', 'penpal', 'wish'])
       expect(typeof boot.social!.penpal.sendLetter).toBe('function')
       expect(typeof boot.social!.penpal.startVisit).toBe('function')
       expect(typeof boot.social!.wish.propose).toBe('function')

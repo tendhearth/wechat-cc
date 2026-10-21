@@ -81,6 +81,8 @@ export interface SocialWiring {
    */
   onMailboxLetter?: A2AServerOpts['onLetter']
   social?: {
+    /** 推后了的来信 / 结果 / 介绍:门放行时一次说完(social-tell.ts)。伙伴每一拍调。 */
+    flushNotices?(): Promise<void>
     penpal: {
       sendLetter(channel: string, text: string): Promise<{ ok: boolean; error?: string; letter_id?: string }>
       resendLetter(letterId: string): Promise<{ ok: boolean; error?: string; letter_id?: string }>
@@ -126,6 +128,8 @@ export async function wireSocial(deps: SocialDeps): Promise<SocialWiring> {
   } | undefined
   let socialWish: Omit<import('./wire-wish').WishService, 'onInbound'> | undefined
   let socialIntro: Omit<import('./wire-intro').IntroService, 'onInbound'> | undefined
+  /** 推后了的来信 / 结果 / 介绍再问一次门(./social-tell.ts);伙伴每一拍调。 */
+  let flushNotices: (() => Promise<void>) | undefined
 
   if (configuredAgent.social_enabled && configuredAgent.social_disclosure_policy) {
     const socialPolicy = configuredAgent.social_disclosure_policy
@@ -214,8 +218,9 @@ export async function wireSocial(deps: SocialDeps): Promise<SocialWiring> {
         return name || (ch ? `第 ${ch.degree} 度的某人` : '某人')
       }
       // 告诉主人一句社交上的事:先问 CC 开口那道门再经 sendAssistantText 发(./social-tell.ts,第三批 3a)
-      const tellOwnerAsync = makeTellOwner({ resolveOperatorChatId, sendAssistantText, ...(deps.speech ? { speech: deps.speech } : {}), log: deps.log })
-      const tellOwner = (kind: import('../../core/speech/kinds').SocialNotice, text: string): void => { void tellOwnerAsync(kind, text) }
+      const teller = makeTellOwner({ stateDir: deps.stateDir, resolveOperatorChatId, sendAssistantText, ...(deps.speech ? { speech: deps.speech } : {}), log: deps.log })
+      flushNotices = () => teller.flush()
+      const tellOwner = (kind: import('../../core/speech/kinds').SocialNotice, text: string): void => { void teller.tell(kind, text) }
       const onInbound: import('../../core/penpal-correspondent').CorrespondentDeps['onInbound'] = ({ channelRowId, letterId, plaintext, env }) => {
         switch (env.kind) {
           case 'letter': {
@@ -355,6 +360,6 @@ export async function wireSocial(deps: SocialDeps): Promise<SocialWiring> {
   return {
     onLetter: socialOnLetter,
     onMailboxLetter: socialOnMailboxLetter,
-    ...(socialPenpal && socialWish && socialIntro ? { social: { penpal: socialPenpal, wish: socialWish, intro: socialIntro } } : {}),
+    ...(socialPenpal && socialWish && socialIntro ? { social: { penpal: socialPenpal, wish: socialWish, intro: socialIntro, ...(flushNotices ? { flushNotices } : {}) } } : {}),
   }
 }
