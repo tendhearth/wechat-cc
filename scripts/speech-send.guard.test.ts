@@ -59,7 +59,7 @@ const BASELINE: Record<string, [Tag, number]> = {
   'src/daemon/main.ts': ['migrate', 10],                 // 余下是接线:回复交付、命令回话、信自己的投递;**还要迁的只剩自改那一条**(selfChange.sendMessage)
   'src/daemon/internal-api/routes.ts': ['migrate', 6],   // 画作分享、广播 …
   'src/daemon/wiring/pipeline-deps.ts': ['migrate', 7],  // 访客申请 …;其中 2 处是 proactive 的微信出口(发字、发文件;say 背后的那条路)
-  'src/daemon/bootstrap/wire-jobs.ts': ['migrate', 3],   // 没审成的通知
+  'src/daemon/bootstrap/wire-jobs.ts': ['migrate', 1],   // 剩下是定时命令的回话(say);「没审成」那两句已走门(10-21)
   'src/daemon/bootstrap/wire-cli-sessions.ts': ['migrate', 3],
   'src/daemon/wiring/wire-phone.ts': ['migrate', 2],
   'src/daemon/self-change-glue.ts': ['migrate', 2],

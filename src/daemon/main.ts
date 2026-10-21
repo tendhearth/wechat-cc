@@ -711,9 +711,9 @@ async function bootDaemonInner(opts: BootDaemonOpts, undo: Array<() => void>): P
       // async:没就绪时是一个被拒的 promise,不是同步抛 —— requestReview 的 .catch 接得住,照实告诉主人「没审成」
       runJobTurn: async (a) => { if (!wiredRef.current) throw new Error('jobs_not_wired'); return wiredRef.current.ticks.runJobTurn(a) },
       // 定时那边的一句(连续失败被暂停 …)经 CC 开口那道门(第三批 3a,job_notice 归 report)
-      sendProactive: (chatId, text) => {
+      sendProactive: (chatId, text, kind = 'job_notice') => {
         if (!wiredRef.current) { log('JOBS', `proactive send dropped (not wired yet) chat=${chatId}`); return }
-        void wiredRef.current.speech.tell('job_notice', chatId, text)
+        void wiredRef.current.speech.tell(kind, chatId, text)
       },
     })
     const jobsCommand = jobs.command
