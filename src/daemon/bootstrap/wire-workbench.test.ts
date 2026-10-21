@@ -95,7 +95,7 @@ it('registers cursor through the ACP provider with ACP capabilities when the bin
   const source = createProviderRegistry(), target = createProviderRegistry()
   source.register('cursor', fakeProvider(), { displayName: 'Cursor', canResume: () => true })
   const acp = fakeProvider(), create = vi.fn(() => acp), log = vi.fn()
-  const registered = registerAcpExecutors(target, source, { cursorAgentBin: '/opt/cursor-agent' }, { create, findOnPath: () => null, log })
+  const registered = registerAcpExecutors(target, source, { cursorAgentBin: '/opt/cursor-agent' }, { create, findOnPath: () => null, log, platform: 'darwin' })
   expect(registered).toEqual(['cursor'])
   // log 必须接到 provider 上,否则 sessionId 对不上而丢掉的更新在 daemon 日志里一声不吭。
   expect(create).toHaveBeenCalledWith({ command: '/opt/cursor-agent', args: ['acp'], displayName: 'Cursor', log, targetProvider: 'cursor' })
@@ -106,14 +106,15 @@ it('registers cursor through the ACP provider with ACP capabilities when the bin
 
 it('registers nothing for ACP when boot lacks cursor or the binary cannot be resolved', () => {
   const source = createProviderRegistry(), target = createProviderRegistry()
-  expect(registerAcpExecutors(target, source, {}, { findOnPath: () => '/usr/bin/cursor-agent', create: vi.fn() })).toEqual([])
+  expect(registerAcpExecutors(target, source, {}, { findOnPath: () => '/usr/bin/cursor-agent', create: vi.fn(), platform: 'darwin' })).toEqual([])
   source.register('cursor', fakeProvider(), { displayName: 'Cursor', canResume: () => true })
   const log = vi.fn()
-  expect(registerAcpExecutors(target, source, {}, { findOnPath: () => null, create: vi.fn(), log })).toEqual([])
+  expect(registerAcpExecutors(target, source, {}, { findOnPath: () => null, create: vi.fn(), log, platform: 'darwin' })).toEqual([])
   expect(target.has('cursor')).toBe(false)
   expect(log).toHaveBeenCalledWith('WORKBENCH', expect.stringContaining('cursor'))
 })
 
+// 下面这几条都显式注入 platform:平台门会在 Windows CI runner 上真的生效(#497 初版在 win32 上红过),别让测试跟着跑它的机器变。
 // 重构第二批步 7:ACP 执行者在 win32 上 spawn 时无条件抛(进程树清理没验证)—— 注册前就挡掉,别让人选了再报错。
 it('ACP executors (built-in cursor and custom) are not registered on win32; they would throw at spawn', async () => {
   const source = createProviderRegistry(), target = createProviderRegistry()
@@ -525,7 +526,7 @@ it('custom ACP executors (2026-10-07): valid ones register with ACP capabilities
     { id: 'cursor-dup', name: 'Dup', command: '/abs/cursor' },
     { id: 'ghost', name: 'Ghost', command: 'ghost-cli' },
     { id: 'Bad', name: 'Bad', command: '/x' },
-  ], { findOnPath: cmd => (cmd === 'gemini' ? '/usr/local/bin/gemini' : null), create: create as never, log })
+  ], { findOnPath: cmd => (cmd === 'gemini' ? '/usr/local/bin/gemini' : null), create: create as never, log, platform: 'darwin' })
   expect(registered).toEqual(['gemini-cli', 'cursor-dup'])
   expect(create).toHaveBeenCalledWith(expect.objectContaining({ command: '/usr/local/bin/gemini', args: ['--acp'], displayName: 'Gemini CLI' }))
   expect((create.mock.calls[0] as unknown as [object])[0]).not.toHaveProperty('targetProvider')
