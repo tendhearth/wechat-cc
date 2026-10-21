@@ -28,6 +28,7 @@ import { thoughtRoutes } from '../../src/daemon/internal-api/routes-thoughts'
 
 import { spawn } from 'bun'
 import { createWorkbenchProxy } from './workbench-proxy'
+import WORKBENCH_ROUTES from './src-tauri/generated/workbench-routes.json'
 import { invokeErrorMessage } from './shim-invoke-error.js'
 import { createHtmlPreviewHost, htmlPreviewParentCsp } from './html-preview'
 import { join, resolve, relative, isAbsolute } from 'node:path'
@@ -54,6 +55,10 @@ const allowMutations = process.env.WECHAT_CC_DEV_ALLOW_MUTATIONS === '1'
 
 // Optional isolated workbench runtime. Other pages keep using the existing daemon.
 const workbenchWrites = process.env.WECHAT_CC_DEV_WORKBENCH_WRITES === '1'
+/** 待办代理的放行名单:路由表 `desktop.ownerWorkspace` 里 POST 的路径(生成物;守卫 scripts/route-registry.guard.test.ts)。 */
+const OWNER_WORKSPACE_POST_PATHS: ReadonlySet<string> = new Set(
+  WORKBENCH_ROUTES.ownerWorkspace.filter(key => key.startsWith('POST ')).map(key => key.slice('POST '.length)),
+)
 const workbenchProxy = createWorkbenchProxy({
   stateDir: process.env.WECHAT_CC_WORKBENCH_STATE_DIR ?? STATE_DIR,
   dryRun, allowWrites: allowMutations || workbenchWrites,
@@ -453,14 +458,8 @@ Bun.serve({
       const result = await handler(url.searchParams, undefined)
       return Response.json(result.body, { status: result.status })
     }
-    const TODOS_PROXY_ROUTES = new Set([
-      '/v1/knowledge/facts/find_facts',
-      '/v1/llm/keys',
-      '/v1/knowledge/facts/set_fact_status',
-      '/v1/knowledge/graph/top_contacts',
-      '/v1/reminders/schedule',
-    ])
-    if (TODOS_PROXY_ROUTES.has(url.pathname) && req.method === 'POST') {
+    // 路由表里 `desktop.ownerWorkspace` 的 POST 那几条(生成物,和 lib.rs 同一份);GET 那条(记下的想法)上面在本进程里答。
+    if (OWNER_WORKSPACE_POST_PATHS.has(url.pathname) && req.method === 'POST') {
       if (isCrossSiteRequest(req)) return new Response('forbidden', { status: 403 })
       if (dryRun) return Response.json({ error: 'not_wired_in_mock' }, { status: 503 })
       try {

@@ -29,6 +29,9 @@
  *   - `tauri` 打包版 App 的宿主代理(lib.rs workbench_request_allowed)放行;`devProxy` 浏览器预览的 dev 代理
  *     (workbench-proxy.ts)也放行。`devProxy` 必须同时 `tauri`;matter 那几条只走 tauri(dev 代理经 test-shim
  *     另一条路)。`tauri` 必须同时有 `operator` —— 宿主代理拿的就是 operator 凭据。
+ *   - `ownerWorkspace` 主人工作区(待办、记下的想法):打包版走 lib.rs 的 `customer_review_api` 宿主命令
+ *     (按路径放行,GET / POST 都收),桌面 api.js 的 OWNER_WORKSPACE_PATHS 据此把请求交给宿主,dev 预览的
+ *     test-shim.ts 照同一份名单代理。和 `tauri` 互斥(一条路由只走一个宿主命令),必须有 `operator`。
  * - `phone`(`/m`、`/m/api/*`)与 `set`(`/set`、`/set/api/*`):设置面板的令牌(配过对的设备令牌一律能走)。
  *   - `link` 10 分钟链接令牌能不能走:`none` 只给设备、`read` / `write` 要写一句 `reason`
  *     (逐字搬自原来的 LINK_READ_OK / LINK_WRITE_OK,规矩见 phone-routes.ts 的注释)。开成 read / write 的集合
@@ -52,6 +55,8 @@ export interface DesktopSurface {
   readonly tauri?: true
   /** dev 代理(workbench-proxy.ts)放行。 */
   readonly devProxy?: true
+  /** 主人工作区:lib.rs 的 customer_review_api / api.js 的 OWNER_WORKSPACE_PATHS / test-shim.ts 放行。 */
+  readonly ownerWorkspace?: true
 }
 
 /** 设置面板(`/set`、`/m`)这一端。 */
@@ -239,7 +244,7 @@ export const ROUTES: Readonly<Record<RouteKey, RouteSpec>> = {
   'GET /v1/stickers': { desktop: { tier: 'guest' } },
   // reminders — scope (own chat only for session callers) is enforced in
   // routes-reminders.ts; the tier floor is guest ("提醒我" is harmless).
-  'POST /v1/reminders/schedule': { desktop: { tier: 'guest', tokens: ['operator'] } },
+  'POST /v1/reminders/schedule': { desktop: { tier: 'guest', tokens: ['operator'], ownerWorkspace: true } },
   'POST /v1/reminders/cancel': { desktop: { tier: 'guest' } },
   'GET /v1/reminders/list': { desktop: { tier: 'guest' } },
   // trusted — operator/agent ops (also reachable by the CLI, capped at trusted)
@@ -384,7 +389,7 @@ export const ROUTES: Readonly<Record<RouteKey, RouteSpec>> = {
   // FILE token(=trusted),admin 会让每一次真实的桌面读 403 —— 觅食台的读
   // 路由 2026-07-22 正是这么静默坏了一个多月。写的两个也是 trusted:它们
   // 只改主人自己那份清单的状态,不外发、不触网。
-  'GET /v1/companion/thoughts': { desktop: { tier: 'admin', tokens: ['operator'] } },
+  'GET /v1/companion/thoughts': { desktop: { tier: 'admin', tokens: ['operator'], ownerWorkspace: true } },
   'GET /v1/journal': { desktop: { tier: 'trusted' } },
   'GET /v1/journal/postcards': { desktop: { tier: 'trusted' } },
   'POST /v1/journal/favorite': { desktop: { tier: 'trusted' } },
@@ -420,7 +425,7 @@ export const ROUTES: Readonly<Record<RouteKey, RouteSpec>> = {
   'POST /v1/memory/profile/generate': { desktop: { tier: 'trusted' } },
   'GET /v1/llm/health': { desktop: { tier: 'trusted' } },
   'POST /v1/net/probe': { desktop: { tier: 'trusted' } },
-  'POST /v1/llm/keys': { desktop: { tier: 'admin', tokens: ['operator'] } },
+  'POST /v1/llm/keys': { desktop: { tier: 'admin', tokens: ['operator'], ownerWorkspace: true } },
   // 铸的是 admin 档链接令牌(手机拿去配对),trusted 的普通聊天会话不能够着(spec 2026-10-01-tendhearth-pairing-ux §11.7,
   // plan 7a 修)。调用方:selftest phone 用 operator 凭据;微信 /set 走进程内 settingsPanelLink(),不经 HTTP。
   'GET /v1/settings/link': { desktop: { tier: 'admin', tokens: ['operator'] } },
@@ -463,7 +468,7 @@ export const ROUTES: Readonly<Record<RouteKey, RouteSpec>> = {
   // class as the search/messages routes above: reads the owner's full
   // contact/relationship graph, not just the current caller's own scope.
   'POST /v1/knowledge/graph/contact_profile': { desktop: { tier: 'admin' } },
-  'POST /v1/knowledge/graph/top_contacts': { desktop: { tier: 'admin', tokens: ['operator'] } },
+  'POST /v1/knowledge/graph/top_contacts': { desktop: { tier: 'admin', tokens: ['operator'], ownerWorkspace: true } },
   'POST /v1/knowledge/graph/rank_contacts': { desktop: { tier: 'admin' } },
   'POST /v1/knowledge/graph/relationship_subgraph': { desktop: { tier: 'admin' } },
   'POST /v1/knowledge/graph/connectors': { desktop: { tier: 'admin' } },
@@ -475,8 +480,8 @@ export const ROUTES: Readonly<Record<RouteKey, RouteSpec>> = {
   'POST /v1/knowledge/facts/extraction_batch': { desktop: { tier: 'admin' } },
   'POST /v1/knowledge/facts/record_facts': { desktop: { tier: 'admin' } },
   'POST /v1/knowledge/facts/contact_facts': { desktop: { tier: 'admin' } },
-  'POST /v1/knowledge/facts/find_facts': { desktop: { tier: 'admin', tokens: ['operator'] } },
-  'POST /v1/knowledge/facts/set_fact_status': { desktop: { tier: 'admin', tokens: ['operator'] } },
+  'POST /v1/knowledge/facts/find_facts': { desktop: { tier: 'admin', tokens: ['operator'], ownerWorkspace: true } },
+  'POST /v1/knowledge/facts/set_fact_status': { desktop: { tier: 'admin', tokens: ['operator'], ownerWorkspace: true } },
   'GET /v1/knowledge/facts/extraction_status': { desktop: { tier: 'admin' } },
   'POST /v1/knowledge/person/brief': { desktop: { tier: 'admin' } },
   // Config surface (config_get/config_set MCP tools) — admin-only: reads and

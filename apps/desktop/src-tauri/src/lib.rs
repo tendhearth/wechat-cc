@@ -1034,27 +1034,12 @@ async fn customer_review_api(
     // Hard allow-list: this hands out admin authority, so it must never become
     // a generic daemon proxy. Reject anything outside the workspace's own
     // prefix, and any traversal-ish path, before touching the token.
-    let route = path.split('?').next().unwrap_or("");
     // 待办 workspace (2026-08-24) shares this channel: obligation list +
     // status writes, contact display names, reminder scheduling — all the
     // owner's own private data, exactly customer review's trust class.
     // Still a hard allow-list, still no generic proxying.
-    const OWNER_WORKSPACE_ROUTES: [&str; 6] = [
-        "/v1/knowledge/facts/find_facts",
-        "/v1/llm/keys",
-        "/v1/companion/thoughts",
-        "/v1/knowledge/facts/set_fact_status",
-        "/v1/knowledge/graph/top_contacts",
-        "/v1/reminders/schedule",
-    ];
-    // 客户回顾(/v1/customer-review*)2026-10-21 删了;这个命令名留着,它现在只代理下面这份主人工作区路由。
-    let allowed = OWNER_WORKSPACE_ROUTES.contains(&route);
-    if !allowed || path.contains("..") {
-        return Err(format!("customer_review_api refuses path: {path}"));
-    }
-    if method != "GET" && method != "POST" {
-        return Err(format!("customer_review_api refuses method: {method}"));
-    }
+    // 客户回顾(/v1/customer-review*)2026-10-21 删了;这个命令名留着,它现在只代理主人工作区那几条路由。
+    owner_workspace_request_check(&method, &path)?;
 
     let home = std::env::var("HOME")
         .or_else(|_| std::env::var("USERPROFILE"))
@@ -1142,6 +1127,36 @@ fn workbench_routes() -> &'static std::collections::HashSet<(String, String)> {
             .map(|(method, route)| (method.to_owned(), route.to_owned()))
             .collect()
     })
+}
+
+// 主人工作区的放行名单也是生成物(2026-10-21):路由表里 `desktop.ownerWorkspace` 的行,gen:routes 写进同一份
+// JSON 的 `ownerWorkspace`。customer_review_api 按**路径**放行、GET / POST 都收 —— 和以前手写那六条一样
+// (表里的方法只是记录;收紧成逐条方法是另一回事)。别在这里手加路由。
+fn owner_workspace_routes() -> &'static std::collections::HashSet<String> {
+    static ROUTES: std::sync::OnceLock<std::collections::HashSet<String>> = std::sync::OnceLock::new();
+    ROUTES.get_or_init(|| {
+        let file: Value = serde_json::from_str(WORKBENCH_ROUTES_JSON).expect("generated/workbench-routes.json is valid JSON");
+        file.get("ownerWorkspace")
+            .and_then(Value::as_array)
+            .expect("generated/workbench-routes.json has an ownerWorkspace array")
+            .iter()
+            .filter_map(Value::as_str)
+            .filter_map(|key| key.split_once(' '))
+            .map(|(_method, route)| route.to_owned())
+            .collect()
+    })
+}
+
+/// customer_review_api 的门:路径不在名单 / 带 `..` ⇒ refuses path;方法不是 GET / POST ⇒ refuses method。
+fn owner_workspace_request_check(method: &str, path: &str) -> Result<(), String> {
+    let route = path.split('?').next().unwrap_or("");
+    if !owner_workspace_routes().contains(route) || path.contains("..") {
+        return Err(format!("customer_review_api refuses path: {path}"));
+    }
+    if method != "GET" && method != "POST" {
+        return Err(format!("customer_review_api refuses method: {method}"));
+    }
+    Ok(())
 }
 
 fn workbench_request_allowed(method: &str, path: &str) -> bool {
@@ -1806,6 +1821,33 @@ mod workbench_proxy_tests {
         // 5c 要拿它跟 sidecar 比「App 是不是太老」(#471 评审)
         let file: serde_json::Value = serde_json::from_str(super::WORKBENCH_ROUTES_JSON).unwrap();
         assert!(file.get("version").and_then(serde_json::Value::as_u64).is_some_and(|v| v >= 1), "generated/workbench-routes.json needs a numeric version");
+    }
+
+    #[test]
+    fn owner_workspace_routes_match_the_former_hand_written_list() {
+        // 2026-10-21 之前 customer_review_api 里手写的 OWNER_WORKSPACE_ROUTES,原样照抄:生成物得是同一组路径。
+        let former: std::collections::HashSet<String> = [
+            "/v1/knowledge/facts/find_facts",
+            "/v1/llm/keys",
+            "/v1/companion/thoughts",
+            "/v1/knowledge/facts/set_fact_status",
+            "/v1/knowledge/graph/top_contacts",
+            "/v1/reminders/schedule",
+        ]
+        .iter()
+        .map(|s| s.to_string())
+        .collect();
+        assert_eq!(super::owner_workspace_routes(), &former);
+        for path in &former {
+            for method in ["GET", "POST"] {
+                assert!(super::owner_workspace_request_check(method, path).is_ok(), "{method} {path}");
+            }
+            assert!(super::owner_workspace_request_check("GET", &format!("{path}?x=1")).is_ok());
+            assert_eq!(super::owner_workspace_request_check("DELETE", path).unwrap_err(), "customer_review_api refuses method: DELETE");
+        }
+        for path in ["/v1/workbench", "/v1/customer-review/list", "/v1/llm/keys/..", "/v1/llm/keys/../../v1/companion/converse", "/v1/companion/converse", ""] {
+            assert_eq!(super::owner_workspace_request_check("POST", path).unwrap_err(), format!("customer_review_api refuses path: {path}"));
+        }
     }
 
     #[test]

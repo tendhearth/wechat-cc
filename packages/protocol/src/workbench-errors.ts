@@ -150,6 +150,12 @@ export const WORKBENCH_ERRORS: Readonly<Record<string, WorkbenchErrorSpec>> = Ob
   unattended_ack_unavailable: {desktop: 503},
   unavailable_provider: {desktop: 422, phone: 503, wechat: '暂时没有可用的工作执行者，没有开始工作。请在桌面连接或管理一个支持工作任务的执行者。'},
   workbench_stopping: {desktop: 503, phone: 503},
+  // 工作台没接上(降级启动 / 测试里不接):桌面带原码(桌面 JS 与 daemon 同一个包,路由里 44 处字面量回 503 workbench_not_wired),
+  // 手机**有意**收成 503 unavailable —— 和 FALLBACK「手机 *_not_wired ⇒ 503 unavailable」、input_storage_unavailable 同一个口径:
+  // 子系统叫什么不给手机,App 只认 unavailable 这一个「电脑那边还没准备好」。换成带原码要 App 先认得它,
+  // 而装着的旧版 App 不能强制升级:它会把 workbench_not_wired 落成 unknown(说一句 / 停下就成了「不确定送到没有」)。
+  // 2026-10-21 架构复查:这里写明是有意的差异,不再只靠兜底规则。
+  workbench_not_wired: {desktop: 503, phone: [503, 'unavailable']},
   // ── 补充 / 提问 / 权限 / 轮次
   artifact_changed: {desktop: 409, phone: 409, wechat: '成果文件已变化或未通过校验，没有发送。请在桌面查看保存的版本。'},
   execution_conflict: {desktop: 409},

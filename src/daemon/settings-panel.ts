@@ -20,6 +20,7 @@
  *    pairing, restore, restart) are deliberately NOT here — they stay
  *    conversational where CC can confirm context.
  */
+import { executorNames } from '../core/provider-display-names'
 import { randomBytes } from 'node:crypto'
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
 import { basename, join } from 'node:path'
@@ -308,6 +309,8 @@ export function makeSettingsPanel(deps: SettingsPanelDeps): SettingsPanel {
       const status = !isReg ? 'unconfigured' : pr == null ? 'unknown' : pr.ok === true ? 'ok' : pr.ok === false ? 'broken' : 'unknown'
       return {
         id,
+        // 设置页要分清「怎么连的」⇒ 用 settings 那种写法(收敛清单 ⑥;页面不再自带名字表)
+        name: executorNames(id, [...registered]).settings,
         registered: isReg,
         model: modelForProvider(cfg, id) ?? null,
         status,

@@ -4,7 +4,11 @@
  *
  * - `tauri`:lib.rs 的 workbench_request_allowed 放行的 `"METHOD /path"`(include_str! 编进 .app)。
  * - `devProxy`:apps/desktop/workbench-proxy.ts(浏览器预览的 dev 代理)放行的。
- * - `version`:名单内容的版本。两份名单和上一次生成的一样 ⇒ 不动;变了 ⇒ 加一。sidecar 能单独换
+ * - `ownerWorkspace`:主人工作区(待办、记下的想法)走 lib.rs 的 customer_review_api 宿主命令;同一份名单
+ *   test-shim.ts 直接 import,api.js(webview 里引不到这份文件)由守卫对着它核对。
+ * - `version`:名单内容的版本。三份名单和上一次生成的一样 ⇒ 不动;变了 ⇒ 加一。
+ *   上一份还没有 `ownerWorkspace`(2026-10-21 之前生成的)时这份名单不参与比较:它的内容就是当时 lib.rs
+ *   手写的那六条,编进 .app 的放行范围没变,不该因为挪了个地方就加版本。sidecar 能单独换
  *   (`self deploy`),lib.rs 编在 .app 里,第 5c 步拿它判断「桌面白名单比 sidecar 老」。
  *
  * 生成物进仓库;`scripts/route-registry.guard.test.ts` 重新生成一遍和仓库里的比,不一致就红。
@@ -24,6 +28,7 @@ export interface WorkbenchRoutesFile {
   version: number
   tauri: string[]
   devProxy: string[]
+  ownerWorkspace: string[]
 }
 
 const COMMENT = '生成物,别手改:改 packages/protocol/src/routes.ts 后跑 bun run gen:routes'
@@ -35,11 +40,13 @@ export function renderWorkbenchRoutes(previous?: string): string {
   const rows = Object.entries(ROUTES).flatMap(([key, r]) => (r.desktop ? [{ key, d: r.desktop }] : []))
   const tauri = rows.filter(r => r.d.tauri).map(r => r.key).sort()
   const devProxy = rows.filter(r => r.d.devProxy).map(r => r.key).sort()
+  const ownerWorkspace = rows.filter(r => r.d.ownerWorkspace).map(r => r.key).sort()
   let prev: Partial<WorkbenchRoutesFile> = {}
   try { if (previous) prev = JSON.parse(previous) } catch { prev = {} }
   const prevVersion = typeof prev.version === 'number' ? prev.version : 0
   const unchanged = prevVersion > 0 && sameList(prev.tauri, tauri) && sameList(prev.devProxy, devProxy)
-  const out: WorkbenchRoutesFile = { _comment: COMMENT, version: unchanged ? prevVersion : prevVersion + 1, tauri, devProxy }
+    && (prev.ownerWorkspace === undefined || sameList(prev.ownerWorkspace, ownerWorkspace))
+  const out: WorkbenchRoutesFile = { _comment: COMMENT, version: unchanged ? prevVersion : prevVersion + 1, tauri, devProxy, ownerWorkspace }
   return JSON.stringify(out, null, 2) + '\n'
 }
 
