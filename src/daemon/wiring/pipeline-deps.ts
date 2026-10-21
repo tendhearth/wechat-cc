@@ -84,6 +84,7 @@ import type { A2AAgentRecord } from '../../lib/agent-config'
 import { materializeAttachments } from '../media'
 import { makeFireMilestonesFor, makeRecordInbound } from './side-effects'
 import { makeMessagesStore } from '../../lib/messages-store'
+import { makePhoneLifecycle } from './phone-lifecycle'
 import { wireMemory } from './wire-memory'
 import { wirePetTurn } from './wire-pet-turn'
 import { makeDedupStore } from '../../lib/dedup-store'
@@ -205,6 +206,8 @@ const CLI_ENTRY = join(REPO_ROOT, 'cli.ts')
 
 export interface BuildPipelineDepsResult {
   pipelineDeps: InboundPipelineDeps
+  /** 关机时停手机那一簇(隧道 / notifier / 订阅 / 设置面板);main.ts 在 polling 之前登记。 */
+  stopPhone: () => Promise<void>
   /** Mint a fresh settings-panel URL (10-min single-active token) — the
    *  微信 /set(进程内)与 GET /v1/settings/link(admin 档,plan 7a;selftest phone 用)。
    *  桌面「连接手机」走 phoneConnect / POST /v1/phone/link。 */
@@ -501,6 +504,8 @@ export function buildPipelineDeps(opts: PipelineDepsOpts, refs: PipelineDepsRefs
   const relays = resolveRemoteRelays(stateDir, remoteCfg, (tag, line) => log(tag, line))
   const remoteTunnel = relays?.remoteInfo ?? null
   // 推送(中继 v2):先建,面板与隧道都要它;发送走 v2 隧道客户端(稍后才建 —— 懒绑定)。
+  // 手机那一簇关机时要停的东西(重构第二批步 6d):main.ts 在 polling 之前登记 ⇒ 倒序时入站先停,App 在途回复还能经隧道送完。
+  const phoneLc = makePhoneLifecycle((tag, line) => log(tag, line))
   let v2Tunnel: import('../tunnel-client').TunnelClient | null = null
   let legacyTunnel: import('../tunnel-client').TunnelClient | null = null
   let notifier: { refresh(): void } | null = null
@@ -775,7 +780,7 @@ export function buildPipelineDeps(opts: PipelineDepsOpts, refs: PipelineDepsRefs
   // remote_tunnel:true (resolved into relays above). 过渡期两条:老中继 + v2。
   if (relays) {
     // 手机协议 v2 的订阅(第 11 步):四路来源(home / matter/<id> / approvals / agents)+ 集线器;
-    // 工作台一变就 poke(回调里只许 poke,见 makePhoneEventsWiring)。推送判定在 phone-notifier.ts。随 daemon 常驻,不 dispose(轮询定时器 unref,且只在有订阅时跑)。
+    // 工作台一变就 poke(回调里只许 poke,见 makePhoneEventsWiring)。推送判定在 phone-notifier.ts。关机时由 phoneLc 退订。
     const phone = makePhoneEventsWiring({
       ...(opts.workbench ? { workbench: opts.workbench, changes: opts.workbench.changes } : {}),
       ...(opts.matters ? { matters: opts.matters } : {}),
@@ -788,6 +793,8 @@ export function buildPipelineDeps(opts: PipelineDepsOpts, refs: PipelineDepsRefs
     })
     phoneEvents = phone.events
     import('../tunnel-client').then(({ makeTunnelClient }) => {
+      // 关机先到、隧道后建:不再连上去
+      if (phoneLc.stopped()) { phone.dispose(); return }
       const common = {
         events: phone.events,
         handleRequest: (req: Request) => settingsPanel.handleRequest(req),
@@ -799,6 +806,7 @@ export function buildPipelineDeps(opts: PipelineDepsOpts, refs: PipelineDepsRefs
       // 过渡期(spec §8):老中继照连,已配对的手机网页还指着它。
       legacyTunnel = makeTunnelClient({ ...common, daemonId: relays.legacy.id, relayUrl: relays.legacy.daemonUrl })
       legacyTunnel.start()
+      phoneLc.add('legacy-tunnel', () => legacyTunnel?.stop())
       if (relays.v2) {
         v2Tunnel = makeTunnelClient({
           ...common,
@@ -809,6 +817,7 @@ export function buildPipelineDeps(opts: PipelineDepsOpts, refs: PipelineDepsRefs
           onControl: (m) => phonePush?.onControl(m),
         })
         v2Tunnel.start()
+        phoneLc.add('v2-tunnel', () => v2Tunnel?.stop())
       }
       if (phonePush && opts.workbench) {
         const wb = opts.workbench
@@ -822,7 +831,9 @@ export function buildPipelineDeps(opts: PipelineDepsOpts, refs: PipelineDepsRefs
         })
         notifier = n
         n.refresh()
+        phoneLc.add('notifier', () => n.dispose())
       }
+      phoneLc.add('phone-events', () => phone.dispose())
       log('TUNNEL', `remote tunnel enabled — legacy ${relays.legacy.id.slice(0, 8)}…${relays.v2 ? `, v2 ${relays.v2.identity.id.slice(0, 8)}…` : ''}`)
     }).catch(err => log('TUNNEL', `tunnel client load failed: ${err instanceof Error ? err.message : err}`))
   }
@@ -1266,5 +1277,8 @@ export function buildPipelineDeps(opts: PipelineDepsOpts, refs: PipelineDepsRefs
   // 桌宠的「在做什么」(重构第二批步 6c,wire-pet-turn.ts)
   const petTurn = wirePetTurn({ stateDir, ilink: opts.ilink, petSignals: opts.petSignals, boot, messagesStore })
 
-  return { appPush, companionApp, pipelineDeps, companionConverse, petTurn, mattersService, memoryNightly, stopMatterActivity, settingsPanelLink: () => settingsPanel.linkUrl(), phoneChat, connections, phoneConnect: { link: (o) => settingsPanel.phoneLink(o), devices: () => settingsPanel.phoneDevices() } }
+  // 设置面板的 HTTP(第一次要链接时才起)放最后停:前面的隧道还在转它的请求
+  phoneLc.add('settings-panel', () => settingsPanel.stop())
+
+  return { stopPhone: () => phoneLc.stop(), appPush, companionApp, pipelineDeps, companionConverse, petTurn, mattersService, memoryNightly, stopMatterActivity, settingsPanelLink: () => settingsPanel.linkUrl(), phoneChat, connections, phoneConnect: { link: (o) => settingsPanel.phoneLink(o), devices: () => settingsPanel.phoneDevices() } }
 }
