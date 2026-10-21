@@ -184,5 +184,3 @@ describe('待说队列不丢话(9d 评审 #531)', () => {
     t.advance(2 * 60_000); await t.policy.flushPending(); expect(tries).toBe(2)   // 过了 5 分钟
     t.advance(6 * 60_000); await t.policy.flushPending(); expect(tries).toBe(2)   // 第二次退避 10 分钟
     t.advance(5 * 60_000); await t.policy.flushPending(); expect(tries).toBe(3)
-  })
-})
