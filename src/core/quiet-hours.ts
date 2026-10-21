@@ -47,3 +47,10 @@ export function quietEndsAt(w: QuietWindow | undefined, nowMs: number, timeZone:
   const left = (end - now + 24 * 60) % (24 * 60) || 24 * 60
   return Math.floor(nowMs / 60_000) * 60_000 + left * 60_000
 }
+
+/** 某个钟点(「08:30」)落不落在免打扰里 —— 设晨报时间 / 设免打扰时当场提醒「会天天跳过」用(9d 评审 #509)。 */
+export function hhmmInQuiet(hhmm: string, w: QuietWindow | undefined): boolean {
+  if (!w || !/^\d{2}:\d{2}$/.test(hhmm)) return false
+  const t = minutesOf(hhmm), a = minutesOf(w.from), b = minutesOf(w.to)
+  return a < b ? t >= a && t < b : t >= a || t < b
+}

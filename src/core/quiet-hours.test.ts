@@ -33,3 +33,15 @@ describe('quiet hours', () => {
     expect(new Date(end!).toISOString()).toBe('2026-10-21T00:00:00.000Z')
   })
 })
+
+describe('hhmmInQuiet —— 晨报时间落不落在免打扰里', () => {
+  it('当天的窗口 / 跨午夜的窗口 / 边界(开头算、结尾不算)/ 没设', async () => {
+    const { hhmmInQuiet } = await import('./quiet-hours')
+    expect(hhmmInQuiet('13:00', { from: '12:00', to: '14:00' })).toBe(true)
+    expect(hhmmInQuiet('08:00', { from: '23:00', to: '08:30' })).toBe(true)
+    expect(hhmmInQuiet('08:30', { from: '23:00', to: '08:30' })).toBe(false)
+    expect(hhmmInQuiet('23:00', { from: '23:00', to: '08:30' })).toBe(true)
+    expect(hhmmInQuiet('09:00', { from: '23:00', to: '08:30' })).toBe(false)
+    expect(hhmmInQuiet('09:00', undefined)).toBe(false)
+  })
+})
