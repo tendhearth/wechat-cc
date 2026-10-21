@@ -3,13 +3,13 @@
  * 只算 CC 替主人做的事、只算主人的;正文不搬(信只取开头,提醒的原文按 id 回原表读、只认主人)。
  * 每个来源各自 try / catch:抛了 ⇒ null(进 degraded),没接 ⇒ 不出现。
  */
+import { CLI_SPECS } from '../core/cli-upgrade/specs'
 import { activityTitle, type ActivityItem, type ActivitySources } from '../core/cc-activity'
 import type { PermissionDecisionRow } from './permission-decisions-store'
 import type { ActivityLogEntry } from './activity-log'
 import { statusWord } from './scheduled-jobs/command'
 
 const LETTER_OPENING_MAX = 24
-const CLI_NAME: Record<string, string> = { claude: 'Claude Code', codex: 'Codex', cursor: 'Cursor', agy: 'agy' }
 
 export interface ActivitySourceDeps {
   now: () => number
@@ -84,7 +84,8 @@ export function collectActivity(deps: ActivitySourceDeps): ActivitySources {
     if (!last) return []
     const at = Date.parse(last.at)
     if (!Number.isFinite(at)) return []
-    const name = CLI_NAME[cli] ?? cli
+    // 程序名(「Claude Code 升级到 …」)只有一处:cli-upgrade/specs 的 CLI_SPECS.label(不是执行者显示名,那个在 executor-facts)
+    const name = (CLI_SPECS as Record<string, { label: string } | undefined>)[cli]?.label ?? cli
     const text = last.result === 'upgraded' ? `${name} 升级到 ${last.to},自检通过`
       : last.result === 'rolled_back' ? `${name} 升级到 ${last.to} 没过自检,退回了 ${last.from}`
       : last.result === 'unverified' ? `${name} 换到了 ${last.to},还没验过`
