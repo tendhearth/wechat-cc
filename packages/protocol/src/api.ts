@@ -215,7 +215,8 @@ export const EntryOptions = z.object({
   reason: Reason.optional(),
   defaultProviderId: z.string().nullable(),
   providers: z.array(z.object({
-    id: z.string(), displayName: z.string(), available: z.boolean(),
+    // displayName = 正式名字;settingsLabel = 设置里写清怎么连的(Gemini · 账号连接)。都由 daemon 定(收敛清单 ⑥),三端不再各存一份。
+    id: z.string(), displayName: z.string(), settingsLabel: z.string().optional(), available: z.boolean(),
     unavailableReason: Reason.optional(),
     capabilities: WorkbenchExecutorCapabilities,
   })),

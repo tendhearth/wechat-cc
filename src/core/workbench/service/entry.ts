@@ -57,7 +57,7 @@ export function makeEntryDomain(ctx:ServiceCtx, domains:EntryDomains) {
       if(!isWorkbenchProviderId(id)||!p||!isWorkbenchExecutorCapabilities(p.opts.workbench))return[]
       let reason:string|undefined
       try{requireInput(id,[],PROVIDER_EXECUTION_CHOICE);if(quota.exhausted(id))reason='provider_quota_exhausted'}catch(error){reason=error instanceof Error?error.message:'unavailable_provider'}
-      return[{id,displayName:p.opts.displayName,available:!reason,...(reason?{unavailableReason:{code:reason,message:reason==='unattended_ack_required'?'请先在电脑上确认免审执行。':executionFailureMessage(reason)}}:{}),capabilities:structuredClone(p.opts.workbench)}]
+      return[{id,displayName:ctx.deps.registry.namesOf(id).name,settingsLabel:ctx.deps.registry.namesOf(id).settings,available:!reason,...(reason?{unavailableReason:{code:reason,message:reason==='unattended_ack_required'?'请先在电脑上确认免审执行。':executionFailureMessage(reason)}}:{}),capabilities:structuredClone(p.opts.workbench)}]
     })
     const defaultProviderId=providers.find(p=>p.id===ctx.deps.defaultProvider&&p.available)?.id??null
     return{status:defaultProviderId?'ready':'needs_connection',...(!defaultProviderId?{reason:{code:'unavailable_provider',message:'请在电脑上连接默认执行者，或在更多选项中选择已连接的执行者。'}}:{}),defaultProviderId,providers,projects:projects()}

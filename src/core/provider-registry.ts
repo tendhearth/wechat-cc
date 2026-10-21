@@ -14,6 +14,8 @@
 import type { AgentAttachment, AgentEvent, AgentProvider, AgentSession, AgentWorkbenchRuntime, CallTargetKind, CheapEval, SpawnContext } from './agent-provider'
 import type { WorkbenchExecutorCapabilities } from './workbench/executor-capabilities'
 import type { ProviderId } from './conversation'
+import { executorNames, type ExecutorNames } from './provider-display-names'
+import { isKnownProviderId } from '../lib/provider-ids'
 import { hasAuthCode } from '../lib/auth-failure'
 import { isAuthErrorCode, providerErrorCodeOf } from '../lib/provider-error-code'
 import { isConnectFailure } from '../lib/net-errors'
@@ -142,8 +144,11 @@ export interface ProviderRegistration {
   workbench?: WorkbenchExecutorCapabilities
   /** Synchronous provider limits, checked before accepting a task; no execution or material reads. */
   validateWorkbenchInput?: (input:{text:string;attachments:readonly {mime:string;size:number}[]})=>void
-  /** Human-readable name; used by mode-commands prompts and dashboard. */
-  displayName: string
+  /**
+   * 只给**认不出的 id**(自定义 ACP 执行者)用的名字。六家内置执行者的名字一律由 lib/executor-facts 定,
+   * 这里写了也不看 —— 读名字走 `registry.namesOf(id)`(收敛清单 ⑥)。
+   */
+  displayName?: string
   /**
    * Returns true if a stored thread/session id can still be resumed
    * (i.e. the provider's on-disk transcript is intact). SessionManager
@@ -152,11 +157,23 @@ export interface ProviderRegistration {
   canResume: (cwd: string, threadId: string) => boolean
 }
 
+/**
+ * 叫什么(收敛清单 ⑥):内置六家照 executor-facts,两种 Gemini 都开着时按 list() 区分;认不出的 id 用注册时给的名字。
+ * 只要 get + list,所以只拿到 registry 一部分的调用方(协调器、mode-commands)也用这一个。
+ */
+export function namesIn(reg: Pick<ProviderRegistry, 'get' | 'list'>, id: ProviderId): ExecutorNames {
+  const custom = reg.get(id)?.opts.displayName
+  if (!isKnownProviderId(id) && custom) return { name: custom, short: custom, settings: custom }
+  return executorNames(id, reg.list())
+}
+
 export interface ProviderRegistry {
   register(id: ProviderId, provider: AgentProvider, opts: ProviderRegistration): void
   get(id: ProviderId): { provider: AgentProvider; opts: ProviderRegistration } | null
   has(id: ProviderId): boolean
   list(): ProviderId[]
+  /** 叫什么:内置六家照 executor-facts(两种 Gemini 都开着时按现在注册了谁区分);自定义的用注册时给的名字。 */
+  namesOf(id: ProviderId): ExecutorNames
   /**
    * Resolve a cheapEval callback from registered providers, picked by
    * cost-tier preference (cheapest first). Returns null if no registered
@@ -417,6 +434,7 @@ export function createProviderRegistry(opts?: {
     list() {
       return Array.from(entries.keys())
     },
+    namesOf(id) { return namesIn({ get: i => entries.get(i) ?? null, list: () => Array.from(entries.keys()) }, id) },
     cheapEvalHealth() {
       return { ...evalHealth }
     },

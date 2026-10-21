@@ -7,13 +7,14 @@
  *
  * 这些断言不测逻辑,测的是「这几份名单还对得上同一组 id」。
  */
+import { EXECUTOR_FACTS } from '../src/lib/executor-facts'
+import { executorNames } from '../src/core/provider-display-names'
 import { describe, it, expect } from 'vitest'
 import { readFileSync } from 'node:fs'
 import { join, dirname } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { PROVIDER_IDS } from '../src/lib/provider-ids'
 import { capabilitiesFor } from '../src/core/capability-matrix'
-import { providerDisplayName } from '../src/core/provider-display-names'
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..')
 const read = (...p: string[]) => readFileSync(join(ROOT, ...p), 'utf8')
@@ -24,13 +25,12 @@ describe('provider 名单都以 provider-ids.ts 为准', () => {
     for (const id of PROVIDER_IDS) expect(() => capabilitiesFor(id)).not.toThrow()
   })
 
-  it('展示名表 KNOWN_NAMES 的键集合 = provider-ids(不靠首字母大写兜底)', () => {
-    const src = read('src', 'core', 'provider-display-names.ts')
-    const m = /const KNOWN_NAMES[^=]*=\s*Object\.freeze\(\{([^}]+)\}/.exec(src)
-    expect(m, 'provider-display-names.ts 里找不到 KNOWN_NAMES').toBeTruthy()
-    const keys = [...m![1]!.matchAll(/(\w+)\s*:/g)].map(x => x[1]!).sort()
-    expect(keys).toEqual(IDS)
-    for (const id of PROVIDER_IDS) expect(providerDisplayName(id).length).toBeGreaterThan(0)
+  it('每家都有自己的名字(lib/executor-facts 的 names;不靠首字母大写兜底)—— 收敛清单 ⑥', () => {
+    for (const id of PROVIDER_IDS) {
+      const n = EXECUTOR_FACTS[id].names
+      expect(n.name.length * n.short.length * n.settings.length, id).toBeGreaterThan(0)
+      expect(executorNames(id), id).toEqual(n)
+    }
   })
 
   it('桌面 view.js 的 PROVIDER_LABELS 键集合 = provider-ids', () => {

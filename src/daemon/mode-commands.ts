@@ -23,7 +23,7 @@
 import { parseQuietHours, quietLabel } from '../core/quiet-hours'
 import { parseAvoidTopics, topicLabels, type AvoidTopic } from '../core/companion-topics'
 import type { ConversationCoordinator } from '../core/conversation-coordinator'
-import type { ProviderRegistry } from '../core/provider-registry'
+import { namesIn, type ProviderRegistry } from '../core/provider-registry'
 import type { Mode, ProviderId } from '../core/conversation'
 import type { InboundMsg } from '../core/prompt-format'
 import { botName } from './bot-name'
@@ -357,7 +357,7 @@ export function makeModeCommands(deps: ModeCommandsDeps): ModeCommands {
             return true
           }
           deps.coordinator.setMode(msg.chatId, { kind: 'solo', provider: providerId })
-          const dn = deps.registry.get(providerId)?.opts.displayName ?? providerId
+          const dn = namesIn(deps.registry, providerId).short
           await reply(msg.chatId, `这个对话切到 ${dn} (solo)。下条消息开始生效。`)
           deps.log('MODE_CMD', `chat=${msg.chatId} → solo+${providerId}`)
           return true
@@ -398,8 +398,8 @@ export function makeModeCommands(deps: ModeCommandsDeps): ModeCommands {
             await reply(msg.chatId, `/${slashWord} + ${peerSlash} 启用失败: ${err instanceof Error ? err.message : String(err)}`)
             return true
           }
-          const primaryDn = deps.registry.get(providerId)?.opts.displayName ?? providerId
-          const peerDn = deps.registry.get(peerProviderId)?.opts.displayName ?? peerProviderId
+          const primaryDn = namesIn(deps.registry, providerId).short
+          const peerDn = namesIn(deps.registry, peerProviderId).short
           await reply(
             msg.chatId,
             `主从模式开启: ${primaryDn} 主导，需要时它会调 \`delegate_${peerProviderId}\` 工具去咨询 ${peerDn}（一次性，无对话历史）。`,
@@ -483,7 +483,7 @@ export function makeModeCommands(deps: ModeCommandsDeps): ModeCommands {
           // 按对话钉(Mode.solo.model),不再改全局 agent-config —— 这个群
           // 钉 DeepSeek 不该把别的群也换了。全局默认走 /set / 设置面板。
           deps.coordinator.setMode(msg.chatId, { kind: 'solo', provider: providerId, model })
-          const dn = deps.registry.get(providerId)?.opts.displayName ?? providerId
+          const dn = namesIn(deps.registry, providerId).short
           const shown = aliased ? `${model}(别名 ${tail})` : model !== tail ? `${model}(按网关拼法,你输的是 ${tail})` : model
           await reply(msg.chatId, `这个对话切到 ${dn} (solo)，模型 = ${shown}（只对这个对话）。下条消息开始生效。${unverified ? '(网关列表拿不到,没核对这个名字;下条消息报错就换一个)' : ''}`)
           deps.log('MODE_CMD', `chat=${msg.chatId} → solo+${providerId} model=${model}`)
@@ -542,7 +542,7 @@ export function makeModeCommands(deps: ModeCommandsDeps): ModeCommands {
           if (target === deps.defaultProviderId) { await reply(msg.chatId, `默认已经是 ${target},不用改。`); return true }
           const r = await deps.setConfig('provider', target)
           if (!r.ok) { await reply(msg.chatId, `没改成:${r.detail ?? r.error}`); return true }
-          const dn = deps.registry.get(target)?.opts.displayName ?? target
+          const dn = namesIn(deps.registry, target).short
           if (deps.requestRestart) {
             await reply(msg.chatId, `默认大脑改为 ${dn}。我重启一下(十几秒),回来就生效。单个对话临时切换还是 /cc /api /agy。`)
             deps.log('MODE_CMD', `chat=${msg.chatId} /set provider=${target} → restart`)
@@ -682,7 +682,7 @@ export function makeModeCommands(deps: ModeCommandsDeps): ModeCommands {
         // the user's chat. (Alternative would be conversationStore.delete
         // but that exposes the daemon-default at a layer above the user.)
         deps.coordinator.setMode(msg.chatId, { kind: 'solo', provider: deps.defaultProviderId })
-        const dn = deps.registry.get(deps.defaultProviderId)?.opts.displayName ?? deps.defaultProviderId
+        const dn = namesIn(deps.registry, deps.defaultProviderId).short
         await reply(msg.chatId, `这个对话恢复默认 (solo · ${dn})。`)
         deps.log('MODE_CMD', `chat=${msg.chatId} → reset to default ${deps.defaultProviderId}`)
         return true
@@ -723,7 +723,7 @@ export function makeModeCommands(deps: ModeCommandsDeps): ModeCommands {
       if (slashWord.toLowerCase() === 'stop' && tail === '') {
         const wasInFlight = deps.coordinator.cancel(msg.chatId)
         deps.coordinator.setMode(msg.chatId, { kind: 'solo', provider: deps.defaultProviderId })
-        const dn = deps.registry.get(deps.defaultProviderId)?.opts.displayName ?? deps.defaultProviderId
+        const dn = namesIn(deps.registry, deps.defaultProviderId).short
         // Generic copy: coordinator.cancel() now also fires for solo/parallel
         // handle-cancels (post-cancel-review CRITICAL 1), not just chatroom's
         // preempt loop — a chatroom-specific message here would mislead solo

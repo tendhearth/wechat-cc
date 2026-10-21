@@ -134,6 +134,7 @@ export interface ProviderWiring {
   reprobeProvider: (id: string) => Promise<boolean | null>
 }
 
+// 名字不在这里写:内置六家叫什么由 lib/executor-facts 定,读名字走 registry.namesOf(收敛清单 ⑥)。
 export async function registerProviders(deps: ProviderDeps): Promise<ProviderWiring> {
   // Re-materialize the bare locals the moved blocks reference, so their bodies
   // stay byte-identical to the original buildBootstrap code.
@@ -263,7 +264,6 @@ export async function registerProviders(deps: ProviderDeps): Promise<ProviderWir
     'claude',
     claudeProvider,
     {
-      displayName: 'Claude',
       canResume: (cwd, sid) => existsSync(claudeSessionJsonlPath(HOME, cwd, sid)),
     },
   )
@@ -402,7 +402,6 @@ export async function registerProviders(deps: ProviderDeps): Promise<ProviderWir
       'codex',
       codexProvider,
       {
-        displayName: 'Codex',
         canResume: (_cwd, sid) => codexSessionJsonlPaths(HOME, sid).some(p => existsSync(p)),
       },
     )
@@ -486,7 +485,7 @@ export async function registerProviders(deps: ProviderDeps): Promise<ProviderWir
           mcpSpecs: { wechat: wechatStdioForCursor, delegate: null },
           log: deps.log,
         }),
-        { displayName: 'Cursor', canResume: () => true },
+        { canResume: () => true },
       )
       deps.log('BOOT', 'cursor: cursor-agent CLI present (subscription auth) — provider registered (ACP, per-session MCP)')
       return true
@@ -540,7 +539,6 @@ export async function registerProviders(deps: ProviderDeps): Promise<ProviderWir
           },
         }),
         {
-          displayName: 'Cursor',
           // P1 ships with resume disabled — Agent.resume(agentId) is documented
           // but unverified in the spike beyond static types. Enable in a P1.1
           // follow-up after dogfooding.
@@ -616,7 +614,6 @@ export async function registerProviders(deps: ProviderDeps): Promise<ProviderWir
           log: deps.log,
         }),
         {
-          displayName: 'OpenAI-compatible',
           // No resume support in v1 — same posture as cursor above.
           canResume: () => false,
         },
@@ -686,7 +683,7 @@ export async function registerProviders(deps: ProviderDeps): Promise<ProviderWir
           buildGate,
           cheapModel: process.env.WECHAT_GEMINI_CHEAP_MODEL ?? 'gemini-flash-latest',
         }),
-        { displayName: 'Gemini', canResume: () => false },
+        { canResume: () => false },
       )
       deps.log('BOOT', 'gemini: SDK + API key present — provider registered')
       deps.log('BOOT', 'gemini (API key) is deprecated since 2026-09-27 — prefer /agy (subscription Gemini via Antigravity CLI); this path is kept for existing GEMINI_API_KEY users and gets no new features')
@@ -753,7 +750,7 @@ export async function registerProviders(deps: ProviderDeps): Promise<ProviderWir
           turnTimeoutMs,
           log: deps.log,
         }),
-        { displayName: 'Gemini (agy)', canResume: () => true },
+        { canResume: () => true },
       )
       deps.log('BOOT', 'agy: binary present — provider registered')
       return true

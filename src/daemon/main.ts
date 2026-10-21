@@ -360,7 +360,8 @@ async function bootDaemonInner(opts: BootDaemonOpts, undo: Array<() => void>): P
       sharePage: (t, c, o) => ilink.sharePage(t, c, o), resurfacePage: (q) => ilink.resurfacePage(q),
       companion: { enable: () => ilink.companion.enable(), disable: () => ilink.companion.disable(), status: () => ilink.companion.status(), snooze: (m) => ilink.companion.snooze(m), setImportLocal: (e) => ilink.companion.setImportLocal(e) },
       ilink: { sendReply: (c, t) => ilink.sendMessage(c, t).then(r => r as { msgId: string; error?: string }), sendFile: (c, p) => ilink.sendFile(c, p), noteSentMedia: (c, m) => ilink.noteSentMedia?.(c, m), editMessage: (c, m, t) => ilink.editMessage(c, m, t), broadcast: (t, a) => ilink.broadcast(t, a) },
-      prefix: { conversationStore, providerDisplayName, permissionMode: dangerously ? 'dangerously' as const : 'strict' as const },
+      // 微信回复前缀用短名;两种 Gemini 都开着时要分得开,所以按现在注册了谁来解析(收敛清单 ⑥)
+      prefix: { conversationStore, providerDisplayName: (id) => providerDisplayName(id, bootRef?.registry.list() ?? []), permissionMode: dangerously ? 'dangerously' as const : 'strict' as const },
       turns: turnRecordStore,
       // Live-session lister + heartbeat probe back the admin self-diagnosis
       // tools (GET /v1/sessions, ops fields in /v1/health). listSessions is a

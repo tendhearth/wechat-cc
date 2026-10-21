@@ -178,7 +178,8 @@ it('wires boot-discovered agy into the live workbench service with unattended pe
     const list = service.list()
     const agy = list.providers.find(p => p.id === 'agy')
     expect(agy).toBeDefined()
-    expect(agy!.displayName).toBe('Gemini (agy)')
+    expect(agy!.displayName).toBe('Gemini')  // 收敛清单 ⑥:名字由 executor-facts 定,注册时写的不算
+    expect(agy!.settingsLabel).toBe('Gemini · 账号连接')
     expect(agy!.capabilities.permissions).toBe('unattended')
     expect(list.unattendedAcknowledgedAt).toBe(999)
   } finally {

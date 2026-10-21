@@ -143,7 +143,7 @@ return makeSettingsPanel({
           mode: mode.kind, provider,
           model: mode.kind === 'solo' ? mode.model ?? null : null,
           globalModel: modelForProvider(cfg, provider) ?? null,
-          providers: boot.registry.list().map(id => ({ id, name: boot.registry.get(id)?.opts.displayName ?? id })),
+          providers: boot.registry.list().map(id => ({ id, name: boot.registry.namesOf(id).settings })),
         }
       },
       set: (chatId: string, provider: string, model: string | null) => boot.coordinator.setMode(chatId, { kind: 'solo', provider, ...(model ? { model } : {}) }),
