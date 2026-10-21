@@ -24,9 +24,8 @@ import type { ReplySinks } from '../reply-sinks'
 import { buildPipelineDeps } from './pipeline-deps'
 import { buildLifecycleDeps } from './lifecycle-deps'
 import { buildTickBodies, type TickBodies } from './tick-bodies'
-import { makeProactiveOutbound, type ProactiveOutbound } from '../companion/proactive-channel'
+import type { ProactiveOutbound } from '../companion/proactive-channel'
 import type { SpeechPolicy } from '../speech/policy'
-import { wireSpeech } from './wire-speech'
 import { makeMemoryLlmOps } from '../memory-llm-ops'
 import { makeAtelierStore } from '../atelier-store'
 import { makeJsonAtelierPlanner } from '../atelier-planner'
@@ -273,15 +272,7 @@ export function wireMain(opts: WireMainOpts): WiredDeps {
       : `cycle ${result.status}`)
   }
   // pipeline-deps 先造:App 那条路(companionApp)在它里面,伙伴的 tick 要用。buildTickBodies 构造时只是闭包。
-  const { appPush, companionApp, pipelineDeps, companionConverse, petTurn, settingsPanelLink, mattersService, memoryNightly, stopMatterActivity, stopPhone, connections, phoneConnect } = buildPipelineDeps(opts, refs)
-  const proactive = makeProactiveOutbound({
-    wechatDegraded: () => opts.boot.health.health.shouldSuspend('wechat'),
-    wechatClosedSince: (chatId) => opts.ilink.proactiveClosedSince(chatId),
-    sendWechat: (chatId, text) => opts.ilink.sendMessage(chatId, text),
-    app: () => companionApp,
-    log: (tag, line) => opts.log(tag, line),
-  })
-  const speech = wireSpeech({ stateDir: opts.stateDir, db: opts.db, chatPrefs: opts.chatPrefs, proactive, log: (tag, line) => opts.log(tag, line) })
+  const { appPush, companionApp, proactive, speech, pipelineDeps, companionConverse, petTurn, settingsPanelLink, mattersService, memoryNightly, stopMatterActivity, stopPhone, connections, phoneConnect } = buildPipelineDeps(opts, refs)
   const ticks = buildTickBodies({
     ...opts,
     proactive,

@@ -13,10 +13,11 @@ import { MAX_ENTRY_CHARS, type AppliedOp } from './nightly-ops'
 import { localParts, noticeTiming } from './nightly-schedule'
 
 export interface NoticeDeps {
+  /** 这一种自己的节奏(companion/calibration shouldSpeak memory:冷却 / 无回复暂停 / care)。 */
   careGate(chatId: string, nowIso: string): { ok: true } | { ok: false; reason: string }
   claim(chatId: string, nowIso: string): void
-  wechatSuspended(): boolean
-  send(chatId: string, text: string): Promise<{ error?: string }>
+  /** CC 主动开口唯一的门(第三批 3a):别烦我、免打扰、两条路都送不到由它判;往哪儿送(微信 / App)由它背后的 proactive-channel 定。 */
+  speech: import('../speech/policy').SpeechPolicy
 }
 export interface CuratedItem {
   /** 这条是从哪几句聊天里来的(时间 + 摘一段;10-20 起每晚整理才记,老条目为空)。 */
@@ -68,19 +69,24 @@ export async function deliverPendingNotice(deps: NightlyRunDeps & NoticeDeps): P
   const clear = () => writeNightlyState(deps.stateDir, { ...readNightlyState(deps.stateDir), pendingNotice: null })
   const timing = noticeTiming({ nowMs, tz: deps.config().timezone, createdAtMs: pending.createdAtMs })
   if (timing === 'expire') { clear(); deps.log('MEMORY_NIGHTLY', 'notice expired unsent'); return 'expired' }
-  if (timing === 'wait' || deps.wechatSuspended()) return 'waiting'
+  if (timing === 'wait') return 'waiting'
   const nowIso = new Date(nowMs).toISOString()
   const gate = deps.careGate(owner, nowIso)
-  if (!gate.ok) {
-    if (gate.reason === 'memory_cooldown') return 'waiting'
+  // 冷却没到 ⇒ 晚点再说(通知留着,24 小时过了自己作废);别的拒绝原因交给门,由它判 drop
+  if (!gate.ok && gate.reason === 'memory_cooldown') return 'waiting'
+  const outcome = await deps.speech.say({ kind: 'memory_notice', chatId: owner, nowMs, perKind: gate }, async (turn) => {
+    deps.claim(owner, nowIso)   // 先登记再发:至多一次,不重试轰炸
     clear()
-    deps.log('MEMORY_NIGHTLY', `notice dropped: ${gate.reason}`)
+    const r = await turn.sendText(owner, pending.text)
+    if (r.error) deps.log('MEMORY_NIGHTLY', `notice send failed (not retried): ${r.error}`)
+  })
+  // 免打扰 / 两条路都送不到 ⇒ 往后推(通知留着);别烦我 / 无回复暂停 ⇒ 这一份不发了
+  if ('defer' in outcome) return 'waiting'
+  if ('drop' in outcome) {
+    clear()
+    deps.log('MEMORY_NIGHTLY', `notice dropped: ${outcome.reason}`)
     return 'dropped'
   }
-  deps.claim(owner, nowIso)   // 先登记再发:至多一次,不重试轰炸
-  clear()
-  const r = await deps.send(owner, pending.text)
-  if (r.error) deps.log('MEMORY_NIGHTLY', `notice send failed (not retried): ${r.error}`)
   return 'sent'
 }
 

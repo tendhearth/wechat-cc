@@ -6,7 +6,7 @@ import { randomBytes } from 'node:crypto'
 import type { Db } from '../../lib/db'
 import { makeMessagesStore } from '../../lib/messages-store'
 import type { Bootstrap } from '../bootstrap'
-import type { IlinkAdapter } from '../ilink-glue'
+import type { SpeechPolicy } from '../speech/policy'
 import type { ChatPrefsStore } from '../chat-prefs'
 import type { CareLedger } from '../companion/care-ledger'
 import { loadCompanionConfig } from '../companion/config'
@@ -22,12 +22,13 @@ export interface WireMemoryDeps {
   boot: Bootstrap
   chatPrefs: ChatPrefsStore
   careLedger: CareLedger
-  ilink: Pick<IlinkAdapter, 'sendMessage'>
+  /** CC 主动开口唯一的门:整理完的那一句通知经它发(第三批 3a)。 */
+  speech: SpeechPolicy
   log: (tag: string, line: string) => void
 }
 
 export function wireMemory(d: WireMemoryDeps) {
-  const { stateDir, db, boot, chatPrefs, careLedger, ilink, log } = d
+  const { stateDir, db, boot, chatPrefs, careLedger, speech, log } = d
   // Shared LLM-backed memory ops (overview synthesis + profile generation),
   // wired with the daemon's OWN provider registry/coordinator so both the
   // WeChat admin-command path (below) and the internal-api routes the
@@ -68,8 +69,7 @@ export function wireMemory(d: WireMemoryDeps) {
       ledger: careLedger.get(chatId),
     }),
     claim: (chatId, nowIso) => careLedger.claimMemory(chatId, nowIso),
-    wechatSuspended: () => boot.health.health.shouldSuspend('wechat'),
-    send: (chatId, text) => ilink.sendMessage(chatId, text),
+    speech,
   })
   // 手动立即运行(内部 API / 以后的微信「整理记忆」)可能跑到 5 分钟 —— 持 busy token,
   // 免得空闲自动重启把它杀掉。定时 tick 的 busy 由 registerMemoryNightly 自己持。
