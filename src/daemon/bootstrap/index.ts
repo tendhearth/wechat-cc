@@ -324,7 +324,7 @@ export async function buildBootstrap(deps: BootstrapDeps): Promise<Bootstrap> {
     a2aEventsStore,
     dispatchDelegate,
     resolveOperatorChatId,
-    sendAssistantText,
+    sendAssistantText, ...(deps.speech ? { speech: deps.speech } : {}),
     onLetter: socialWiring.onLetter,
   }))
   const a2aDeps = a2aWiring?.a2aDeps
@@ -345,7 +345,7 @@ export async function buildBootstrap(deps: BootstrapDeps): Promise<Bootstrap> {
     db: deps.db,
     selfId,
     url: a2aServer ? a2aServer.baseUrl() : undefined,
-    notify: (msg) => { const op = resolveOperatorChatId(); if (op && sendAssistantText) void sendAssistantText(op, msg) },
+    tellOwner: { resolveOperatorChatId, sendAssistantText, ...(deps.speech ? { speech: deps.speech } : {}), log: deps.log },
     log: deps.log,
   }))
 

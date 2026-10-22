@@ -5,15 +5,27 @@
  * (speech/pending-notices.ts);CC 自己的见闻(initiative)推后就是这一句不说,东西在背包里。
  * 门取不到 ⇒ 不发、记一行,不退回直接发。
  */
-import type { SocialNotice } from '../../core/speech/kinds'
+import type { SocialNotice, SpeechKind } from '../../core/speech/kinds'
 import type { SpeechPolicy } from '../speech/policy'
 
-export function makeTellOwner(d: {
+export interface TellOwnerDeps {
   resolveOperatorChatId: () => string | null
   sendAssistantText: ((chatId: string, text: string) => Promise<unknown>) | undefined
   speech?: () => SpeechPolicy | null
   log: (tag: string, line: string) => void
-}): (kind: SocialNotice, text: string) => Promise<void> {
+}
+
+export function makeTellOwner(d: TellOwnerDeps): (kind: SocialNotice, text: string) => Promise<void> {
+  return tellOwner(d)
+}
+
+/** 同一件事,种类定死:配对结果(pairing)这类只说一种话的出口用它(bootstrap/index 一行接上)。 */
+export function makeTellOwnerAs(kind: SpeechKind, d: TellOwnerDeps): (text: string) => Promise<void> {
+  const tell = tellOwner(d)
+  return (text) => tell(kind, text)
+}
+
+function tellOwner(d: TellOwnerDeps): (kind: SpeechKind, text: string) => Promise<void> {
   return async (kind, text) => {
     const op = d.resolveOperatorChatId()
     const send = d.sendAssistantText
