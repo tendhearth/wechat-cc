@@ -8,7 +8,6 @@ import type { Db } from '../../lib/db'
 import {join} from 'node:path'
 import {listProjects} from '../../lib/project-registry'
 import { loadAgentConfig, saveAgentConfig, modelForProvider } from '../../lib/agent-config'
-import { findCodexBinary } from '../../lib/find-codex-binary'
 import { acpSupportedOn } from '../../core/acp/platform'
 import { createProviderRegistry, type ProviderRegistry } from '../../core/provider-registry'
 import { createClaudeAgentProvider, tierProfileToClaudeSdkOpts, makeWorkbenchClaudeCanUseTool } from '../../core/claude-agent-provider'
@@ -163,7 +162,7 @@ export function wireWorkbench(opts: {
   // 订阅额度监视器:Codex 问 app-server,Claude 用 Claude Code 自己的 OAuth 凭据问 usage 接口(subscription-usage.ts)。
   const usageMonitor=makeUsageMonitor({sources:{
     // 每次查都现判 codex 在不在(开机没探到、后来重探成功的,不重启也有额度)。
-    codex:async()=>{const bin=opts.boot.registry.has('codex')?findCodexBinary():null;if(!bin)return null
+    codex:async()=>{const bin=opts.boot.registry.get('codex')?.opts.bin?.() ?? null;if(!bin)return null
       return gatedUsage({provider:'codex',baseUrl:'https://chatgpt.com',purpose:'usage',exact:true},async()=>{const r=await readCodexRateLimits({codexPathOverride:bin});return r?parseCodexRateLimits(r,Date.now()):null})()},
     ...(opts.boot.registry.has('claude')?{claude:gatedUsage({provider:'claude',baseUrl:'https://api.anthropic.com',purpose:'usage'},async()=>{
       const cred=readClaudeOAuthToken({platform:process.platform,keychain:()=>spawnSync(['security','find-generic-password','-s','Claude Code-credentials','-w']).stdout.toString(),readFile:()=>readFileSync(join(homedir(),'.claude','.credentials.json'),'utf8'),now:Date.now})
@@ -197,15 +196,19 @@ export function wireWorkbench(opts: {
     },
     codex:()=>{
       const codex=opts.boot.registry.get('codex')
-      const binary=codex ? findCodexBinary() : null
-      if (!codex || !binary) return
+      const found=codex?.opts.bin?.() ?? null
+      if (!codex || !found) return
+      // 每次 spawn 现取(3c 第 3 步,稿 §4.1 ①):升级换了路径,下一个会话用新的,在跑的不动。
+      // 一时找不到就仍用上一次的那个 —— spawn 失败照实报(§4.1 ②),不假装成功、不静默换别家。
+      let last=found
+      const current=()=>{const b=codex.opts.bin?.() ?? null;if(b)last=b;return last}
       registry.register('codex',createWorkbenchCodexProvider({
-        codexPathOverride:binary,
+        codexPathOverride:current,
         model:modelForProvider(loadAgentConfig(opts.stateDir),'codex'),
         // The adapter discovers native tools, excludes companion services, and
         // routes admitted tool calls through this task's approval requests.
       }),{...codex.opts,workbench:MANAGED_NATIVE_CAPABILITIES})
-      nativeHistory.codex=createCodexHistoryReader({codexPathOverride:binary})
+      nativeHistory.codex=createCodexHistoryReader({codexPathOverride:current})
     },
     openai:()=>{ if(opts.boot.registry.has('openai'))registerWorkbenchApi(registry,opts.db,opts.stateDir,loadAgentConfig(opts.stateDir),process.env) },
     cursor:()=>{ registerAcpExecutors(registry,opts.boot.registry,loadAgentConfig(opts.stateDir),{log:opts.log}) },

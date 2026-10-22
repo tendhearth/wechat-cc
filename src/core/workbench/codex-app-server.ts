@@ -23,7 +23,11 @@ type RpcId = string | number
 type ObjectValue = Record<string, any>
 interface Message { id?: RpcId; method?: string; params?: ObjectValue; result?: ObjectValue; error?: { code?: number; message?: string } }
 interface Options {
-  codexPathOverride: string; model?: string; rpcTimeoutMs?: number; closeTimeoutMs?: number
+  /**
+   * codex 可执行文件。给函数 ⇒ 每次 spawn / 列模型时现取(3c 第 3 步,2026-10-22):CLI 升级换了路径,
+   * 下一个会话就用新的;已经起来的会话是自己那个子进程,不受影响,不打断(设计稿 §4.1 ①)。
+   */
+  codexPathOverride: string | (() => string); model?: string; rpcTimeoutMs?: number; closeTimeoutMs?: number
   /** 守护:按 codex 配置层预测端点时的注入(测试给临时 CODEX_HOME / systemDir;缺省 = 子进程的环境)。 */
   codexTargetOptions?: () => Omit<ResolveCodexTargetOptions, 'cwd' | 'overrides'>
   /** 边界超时(arch backlog #4 第 2 步);缺省读环境变量,见 core/codex-errors。 */
@@ -133,8 +137,9 @@ function approvalScope(params: ObjectValue): string | null {
 const KILL_GRACE_MS = 250
 
 export function createWorkbenchCodexProvider(options: Options): AgentProvider {
+  const codexPath = (): string => typeof options.codexPathOverride === 'function' ? options.codexPathOverride() : options.codexPathOverride
   return {
-    modelCatalog: project => discoverCodexModels(options.codexPathOverride, project.path, options.rpcTimeoutMs),
+    modelCatalog: project => discoverCodexModels(codexPath(), project.path, options.rpcTimeoutMs),
     // 守护(评审 #193 P1-1 + 2026-10-03):起会话前的预测 —— 按子进程会拿到的环境(CODEX_HOME)读 codex
     // 自己的配置层(codex 0.153 不认 OPENAI_BASE_URL)。会话起来以后改用 codex 自己 config/read 的结果。
     callTarget: (kind, context) => kind === 'cheapEval' || kind === 'strongEval' ? null
@@ -147,7 +152,9 @@ export function createWorkbenchCodexProvider(options: Options): AgentProvider {
         if (selectedModel?.inputModalities && !selectedModel.inputModalities.includes('image') && attachments?.some(item => item.mime.startsWith('image/'))) throw new Error('execution_image_unsupported')
       }
       if (process.platform === 'win32') throw new Error('Codex 工作台暂不支持 Windows：尚未验证任务进程树清理。')
-      const discovery = await discoverWorkbenchCodexConfig(options.codexPathOverride, project.path)
+      // 这个会话从头到尾用同一个路径:发现配置和起 app-server 用的是同一份 codex。
+      const binary = codexPath()
+      const discovery = await discoverWorkbenchCodexConfig(binary, project.path)
       // Startup has no turn. Keep MCPs disabled while reading the native layers,
       // without overwriting the user's web-search mode before config/read.
       const { web_search: _startupSearch, ...startupConfig } = discovery.config
@@ -156,7 +163,7 @@ export function createWorkbenchCodexProvider(options: Options): AgentProvider {
       // 守护(评审 #193 P1-1 + 2026-10-03):app-server 是常驻子进程,端点在它起来那一刻按配置定下。
       // 先按配置层预测;initialize 之后问 codex 自己(config/read),用它报的有效配置覆盖。
       let spawnTarget: CallTarget = codexCallTarget({ model: model ?? null }, { env: childEnv, ...(options.codexTargetOptions?.() ?? {}), cwd: project.path, overrides: startupConfig })
-      const child = spawn(options.codexPathOverride, [...workbenchCodexArgs(startupConfig), 'app-server', '--listen', 'stdio://'], {
+      const child = spawn(binary, [...workbenchCodexArgs(startupConfig), 'app-server', '--listen', 'stdio://'], {
         cwd: project.path, env: childEnv, stdio: ['pipe', 'pipe', 'pipe'],
         windowsHide: true, detached: true,
       })

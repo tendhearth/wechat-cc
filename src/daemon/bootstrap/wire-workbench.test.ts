@@ -223,6 +223,29 @@ it('an executor registered on the boot registry after wiring (late probe success
   }
 })
 
+// 3c 第 3 步:工作台的 codex 只认对话侧登记时给的 bin(),自己不再去找;bin() 找不到 ⇒ 不进工作台。
+it('the workbench codex comes from the boot registration bin(), not its own lookup; no bin ⇒ no codex', () => {
+  const root = realpathSync(mkdtempSync(join(tmpdir(), 'wire-workbench-codex-'))); acknowledgeDirs.push(root)
+  const stateDir = join(root, 'state')
+  saveAgentConfig(stateDir, { provider: 'claude', dangerouslySkipPermissions: true, autoStart: true, closeStopsDaemon: false })
+  const db = openDb({ path: join(stateDir, 'state.db') })
+  const wire = (bin: (() => string | null) | undefined) => {
+    const bootRegistry = createProviderRegistry()
+    bootRegistry.register('codex', fakeProvider(), { canResume: () => true, ...(bin ? { bin } : {}) })
+    const boot = { registry: bootRegistry, sdkOptionsForProject: (() => ({})) as unknown as Bootstrap['sdkOptionsForProject'], defaultProviderId: 'codex', holdBusy: (_label: string) => () => {} } as unknown as Bootstrap
+    return wireWorkbench({ db, stateDir, boot, internalApi: { mintSessionToken: () => 'token', invalidateSession: () => {} }, askUser: async () => 'allow', log: () => {} })
+  }
+  try {
+    const calls: number[] = []
+    expect(wire(() => { calls.push(1); return '/opt/codex' }).list().providers.some(p => p.id === 'codex')).toBe(true)
+    expect(calls.length).toBeGreaterThan(0)
+    expect(wire(() => null).list().providers.some(p => p.id === 'codex')).toBe(false)
+    expect(wire(undefined).list().providers.some(p => p.id === 'codex')).toBe(false)
+  } finally {
+    db.close()
+  }
+})
+
 /**
  * 端到端接线(task-3,2026-09-23):matters + reportOutbox 一起传给
  * wireWorkbench 时,「一件事」结算那一拍应该真的把回报写进

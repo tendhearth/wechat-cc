@@ -155,6 +155,11 @@ export interface ProviderRegistration {
    * checks this before passing a stale resume id to the SDK.
    */
   canResume: (cwd: string, threadId: string) => boolean
+  /**
+   * 这家自己的可执行文件现在在哪(3c 第 3 步,2026-10-22)。每次调用现判、不缓存;找不到 ⇒ null。
+   * 登记它的那一侧(对话侧 providers.ts)说了算,工作台、额度查询都读这个,不再各自去找。
+   */
+  bin?: () => string | null
 }
 
 /**

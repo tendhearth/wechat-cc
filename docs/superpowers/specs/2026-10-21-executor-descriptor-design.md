@@ -56,7 +56,7 @@ export const EXECUTORS: Readonly<Record<KnownProviderId, ExecutorDescriptor>>
 
 ## 4. 这一批不做
 
-- **欠账(记着,不在这一批)**:工作台 codex 的二进制在接线时固化。CLI 全自动升级换 codex 时,两种装法的路径都不变(standalone 换的是 `current` 软链、npm 全局 bin 不变),所以今天碰不到 —— 但这是靠巧合。以后要么工作台每次 spawn 现查,要么 cli-upgrade 升级成功后让工作台重新接一次 codex。动它会改执行路径,放第三批。
+- **欠账(记着,不在这一批)**:工作台 codex 的二进制在接线时固化。CLI 全自动升级换 codex 时,两种装法的路径都不变(standalone 换的是 `current` 软链、npm 全局 bin 不变),所以今天碰不到 —— 但这是靠巧合。以后要么工作台每次 spawn 现查,要么 cli-upgrade 升级成功后让工作台重新接一次 codex。动它会改执行路径,放第三批。 **⟨2026-10-22 已还:3c 第 3 步,工作台每次 spawn 经登记项的 `bin()` 现取,在跑的会话不受影响;见 `2026-10-22-executor-detect-once-design.md` §4.1 ①⟩**
 
 - 不动适配器本身、不合并 chat / workbench / delegate 三套适配器(第三批)。
 - 不改任何对外文案的**内容**,只把它们收到一处(显示名不一致的那几处,收的时候选哪个由我列成表给主人看一眼 —— 见 §6)。
