@@ -8,11 +8,13 @@
 
 | 机制 | 处数 | 管什么 |
 |---|---|---|
-| `LifecycleSet`(`lc.register`) | 25 | 关机时倒序 stop,单项 5 秒超时 |
-| bootstrap 收尾清单(`teardown.add`,#508) | 6 | bootstrap 里起的定时器 / 服务 |
+| `LifecycleSet`(`lc.register`) | 24 | 关机时倒序 stop,单项 5 秒超时 |
+| bootstrap 收尾清单(`teardown.add`,#508) | 4 | bootstrap 里起的定时器 / 服务 |
 | `phoneLc.add` | 7 | 手机那一簇自己的收尾 |
-| `SubsystemSupervisor`(`sup.start`) | 21 | 可选子系统起失败 ⇒ degraded,不拖垮开机 |
+| `SubsystemSupervisor`(`sup.start`) | 17 | 可选子系统起失败 ⇒ degraded,不拖垮开机 |
 | `Ref<>` 晚绑定 | 10(5 个文件) | 构造顺序有环时先占位,之后 `.set()` |
+
+(数的是生产代码里的调用,注释不算,按守卫 `scripts/daemon-module.guard.test.ts` 的口径。初稿把注释也数进去了。另有 11 处裸 `setInterval`,其中 2 处不是生命周期,永久豁免。)
 
 后果:
 - **关机顺序看谁先登记**。#508 修掉的三处漏停(yi 的 WebSocket、知识库定时器、空闲清扫)都是这么来的。
