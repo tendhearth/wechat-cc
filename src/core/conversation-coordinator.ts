@@ -28,7 +28,7 @@ import {
   parsePeerRank, aggregateRanking, formatRankingFooter, buildParallelSynthesisPrompt,
   type Opening, type Contention, type RankedSpeaker,
 } from './chatroom-conductor'
-import { assertSupported, capabilitiesFor, replyDeliveryFor, replyTextStrategyFor, UnsupportedCombinationError, type PermissionMode } from './capability-matrix'
+import { capabilitiesFor, replyDeliveryFor, replyTextStrategyFor, type PermissionMode } from './capability-matrix'
 import { buildTurnReply, makeTurnTextCollector, type DeliveryKind, type DeliveryReport, type ReplyDeliveryMode, type ReplyDeliveryPort, type ReplyTextStrategy, type TurnDeliveryHandle } from './turn-reply'
 import { collectTurn, TURN_TIMEOUT_CODE, type AgentEvent, type TurnSummary } from './agent-provider'
 import { isAuthErrorCode, providerErrorCodeOf } from '../lib/provider-error-code'
@@ -137,8 +137,8 @@ export interface ConversationCoordinatorDeps {
   /**
    * Permission mode — 'strict' (default, per-tool relay) or 'dangerously'
    * (bypass all permission prompts). Computed once at bootstrap from
-   * `dangerouslySkipPermissions`. Threaded into assertSupported() at
-   * dispatch entry and used by capability-matrix to gate combinations.
+   * `dangerouslySkipPermissions`. Each chat's effective mode is derived from it
+   * (effectivePermissionMode: guests always strict).
    */
   permissionMode: PermissionMode
   /**
@@ -1462,27 +1462,6 @@ export function createConversationCoordinator(deps: ConversationCoordinatorDeps)
         if (participants.length === 1) {
           deps.log('COORDINATOR', `chat=${msg.chatId} ${mode.kind} resolved to single participant ${participants[0]}; degrading to solo`)
           return dispatchSolo(msg, proj, participants[0]!, mode.kind)
-        }
-      }
-
-      // Capability-matrix guard: reject forbidden (mode × provider × permissionMode)
-      // combinations before any session is acquired. All current rows have
-      // forbidden=false so this is a forward-looking safety net — it will fire
-      // when a row is explicitly marked forbidden in a future policy tightening.
-      // Unknown providers (not in the matrix) are silently passed through —
-      // the coordinator's own fallback logic handles unregistered providers.
-      const providersInUse: ProviderId[] =
-        mode.kind === 'solo' ? [mode.provider] :
-        mode.kind === 'primary_tool' ? [mode.primary] :
-        participants!  // parallel/chatroom — never null here due to early-return above
-      for (const p of providersInUse) {
-        try {
-          assertSupported(mode.kind, p, deps.permissionMode)
-        } catch (err) {
-          // Re-throw only explicit policy violations (forbidden=true rows).
-          // Let unknown-provider errors pass — they're handled downstream
-          // by the mode-specific fallback paths in the switch below.
-          if (err instanceof UnsupportedCombinationError) throw err
         }
       }
 

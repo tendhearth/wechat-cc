@@ -2,11 +2,9 @@ import { describe, it, expect } from 'vitest'
 import {
   CAPABILITY_MATRIX,
   lookup,
-  assertSupported,
   assertMatrixComplete,
   capabilitiesFor,
   capabilityProviderIds,
-  UnsupportedCombinationError,
   type MatrixRow,
   type PermissionMode,
 } from './capability-matrix'
@@ -37,7 +35,6 @@ describe('CAPABILITY_MATRIX', () => {
       expect(got.askUser).toBe(row.askUser)
       expect(got.replyPrefix).toBe(row.replyPrefix)
       expect(got.delegate).toBe(row.delegate)
-      expect(got.forbidden).toBe(row.forbidden)
     },
   )
 
@@ -56,32 +53,12 @@ describe('CAPABILITY_MATRIX', () => {
       if (row.mode === 'primary_tool') expect(row.replyPrefix).toBe('on-fallback-only')
     },
   )
-
-  it('every row currently has forbidden=false (v1.0)', () => {
-    for (const row of CAPABILITY_MATRIX) expect(row.forbidden).toBe(false)
-  })
 })
 
 describe('lookup', () => {
   it('throws on unknown combo', () => {
     expect(() => lookup('solo' as Mode['kind'], 'mystery' as ProviderId, 'strict' as PermissionMode))
       .toThrow(/no row for/)
-  })
-})
-
-describe('assertSupported', () => {
-  it('passes when combo is supported (forbidden=false)', () => {
-    expect(() => assertSupported('solo', 'claude', 'strict')).not.toThrow()
-  })
-
-  it('throws UnsupportedCombinationError when the matrix row is forbidden', () => {
-    // Post-Phase-2: Capability is computed via deriveCapability, so
-    // mutating CAPABILITY_MATRIX[0] no longer affects what lookup()
-    // returns. Drive the constructor directly — assertSupported's only
-    // contract is "if cap.forbidden, throw UnsupportedCombinationError".
-    const err = new UnsupportedCombinationError('solo', 'claude', 'strict', 'test-only')
-    expect(err).toBeInstanceOf(UnsupportedCombinationError)
-    expect(err.message).toMatch(/combination not supported.*solo.*claude.*strict.*test-only/)
   })
 })
 
@@ -105,7 +82,6 @@ describe('ghost-gemini — extensibility check (RFC 05 Phase 2)', () => {
       // this hypothetical gemini has supportsDelegation=false, so delegate
       // is 'unloaded' in every mode — including primary_tool (B2 conjunct).
       expect(cap.delegate).toBe('unloaded')
-      expect(cap.forbidden).toBe(false)
     }
   })
 
@@ -142,7 +118,6 @@ describe('deriveCapability (RFC 05 Phase 2)', () => {
       expect(derived.askUser).toBe(row.askUser)
       expect(derived.replyPrefix).toBe(row.replyPrefix)
       expect(derived.delegate).toBe(row.delegate)
-      expect(derived.forbidden).toBe(row.forbidden)
     },
   )
 })
@@ -161,7 +136,6 @@ describe('capability-matrix — cursor rows', () => {
     expect(cap.askUser).toBe('never')
     expect(cap.replyPrefix).toBe('never')
     expect(cap.delegate).toBe('unloaded')
-    expect(cap.forbidden).toBe(false)
   })
 
   it('cursor chatroom dangerously: askUser=never, replyPrefix=always', () => {
@@ -187,7 +161,6 @@ describe('capability-matrix — agy rows', () => {
       expect(cap.askUser).toBe('never') // perToolCallback:false flattens 'per-tool' to 'never'
       expect(cap.replyPrefix).toBe('never')
       expect(cap.delegate).toBe('unloaded')
-      expect(cap.forbidden).toBe(false)
     }
   })
 

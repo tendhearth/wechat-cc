@@ -3,7 +3,6 @@
  * every (mode × provider × permissionMode) combination.
  *
  * Consumed by:
- *   - core/conversation-coordinator.ts  → assertSupported() at dispatch entry
  *   - core/permission-relay.ts          → lookup().askUser to gate per-tool prompts
  *   - daemon/internal-api/routes.ts     → lookup().replyPrefix for [Display] prefixing
  *
@@ -42,12 +41,6 @@ export interface Capability {
 
   /** delegate_<peer> MCP tool 是否加载到本 provider session。 */
   delegate: 'loaded' | 'unloaded'
-
-  /** 显式禁用标志。v1.0 全 false；将来按策略收紧。 */
-  forbidden: boolean
-
-  /** 错误消息 + 文档辅助。 */
-  notes: string
 }
 
 export interface MatrixRow extends Capability {
@@ -70,25 +63,24 @@ interface ModeTrait {
   /** Realisable askUser value when the provider has perToolCallback. */
   askUser: 'per-tool' | 'never'
   replyPrefix: 'always' | 'never' | 'on-fallback-only'
-  forbidden: boolean
 }
 
 const MODE_TRAITS: Record<Mode['kind'], Record<PermissionMode, ModeTrait>> = {
   solo: {
-    strict:      { askUser: 'per-tool', replyPrefix: 'never', forbidden: false },
-    dangerously: { askUser: 'never',    replyPrefix: 'never', forbidden: false },
+    strict:      { askUser: 'per-tool', replyPrefix: 'never' },
+    dangerously: { askUser: 'never',    replyPrefix: 'never' },
   },
   parallel: {
-    strict:      { askUser: 'per-tool', replyPrefix: 'always', forbidden: false },
-    dangerously: { askUser: 'never',    replyPrefix: 'always', forbidden: false },
+    strict:      { askUser: 'per-tool', replyPrefix: 'always' },
+    dangerously: { askUser: 'never',    replyPrefix: 'always' },
   },
   primary_tool: {
-    strict:      { askUser: 'per-tool', replyPrefix: 'on-fallback-only', forbidden: false },
-    dangerously: { askUser: 'never',    replyPrefix: 'on-fallback-only', forbidden: false },
+    strict:      { askUser: 'per-tool', replyPrefix: 'on-fallback-only' },
+    dangerously: { askUser: 'never',    replyPrefix: 'on-fallback-only' },
   },
   chatroom: {
-    strict:      { askUser: 'per-tool', replyPrefix: 'always', forbidden: false },
-    dangerously: { askUser: 'never',    replyPrefix: 'always', forbidden: false },
+    strict:      { askUser: 'per-tool', replyPrefix: 'always' },
+    dangerously: { askUser: 'never',    replyPrefix: 'always' },
   },
 }
 
@@ -181,8 +173,6 @@ export function deriveCapability(
     askUser,
     replyPrefix: trait.replyPrefix,
     delegate,
-    forbidden: trait.forbidden,
-    notes: '',
   }
 }
 
@@ -225,30 +215,10 @@ export function lookup(
   return deriveCapability(cap, mode, permissionMode)
 }
 
-export class UnsupportedCombinationError extends Error {
-  constructor(
-    public readonly mode: Mode['kind'],
-    public readonly provider: ProviderId,
-    public readonly permissionMode: PermissionMode,
-    public readonly notes: string,
-  ) {
-    super(`combination not supported: mode=${mode} provider=${provider} perm=${permissionMode}${
-      notes ? ` — ${notes}` : ''
-    }`)
-    this.name = 'UnsupportedCombinationError'
-  }
-}
-
-export function assertSupported(
-  mode: Mode['kind'],
-  provider: ProviderId,
-  permissionMode: PermissionMode,
-): void {
-  const cap = lookup(mode, provider, permissionMode)
-  if (cap.forbidden) {
-    throw new UnsupportedCombinationError(mode, provider, permissionMode, cap.notes)
-  }
-}
+// assertSupported / UnsupportedCombinationError / forbidden / notes 已删(3c Policy 第 3 步,2026-10-22):每一行的
+// forbidden 都是 false,分派时那道检查从来没拦过任何东西,传进去的还是全 daemon 的模式而不是这个对话的。真正的
+// 「这家这一档做不到」由 core/tier-enforcement.ts 的缺口登记 + 规则测试守(新缺口不写理由 CI 红),访客由
+// provider-policy.providerDenialFor 在两个入口拒(协调器、主动 / 定时那一拍)。
 
 /**
  * Verify the matrix has a row for every (mode × provider × permissionMode)
