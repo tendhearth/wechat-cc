@@ -16,7 +16,7 @@ process.env.WECHAT_CC_DAEMON_CHILD = '1'
 import { join } from 'node:path'
 import selfPkg from '../../package.json' with { type: 'json' }
 import { homedir } from 'node:os'
-import { acquireInstanceLock, releaseInstanceLock, isHeartbeatFresh, writeHeartbeat, startHeartbeatTicker, HEARTBEAT_FILE, HEARTBEAT_STALE_MS } from './single-instance'
+import { acquireInstanceLockWaitingForShutdown, releaseInstanceLock, isHeartbeatFresh, writeHeartbeat, startHeartbeatTicker, HEARTBEAT_FILE, HEARTBEAT_STALE_MS, LOCK_WAIT_FOR_SHUTDOWN_MS } from './single-instance'
 import { openDb } from '../lib/db'
 import { LifecycleSet, Ref, wireRef } from '../lib/lifecycle'
 import { log } from '../lib/log'
@@ -53,7 +53,7 @@ import { makeReportOutboxStore } from './reports/outbox'
 import { makeWorkbenchStore } from '../core/workbench/store'
 import { buildInboundPipeline } from './inbound/build'
 import { runStartupSweeps } from './startup-sweeps'
-import { consumePreviousRunEvidence, markCleanShutdown, markPlannedRestart } from '../lib/restart-markers'
+import { consumePreviousRunEvidence, markCleanShutdown, markPlannedRestart, peekCleanShutdown } from '../lib/restart-markers'
 import { wireMain } from './wiring'
 import type { TickBodies } from './wiring/tick-bodies'
 import { makeChatPrefs } from './chat-prefs'
@@ -166,7 +166,13 @@ async function bootDaemonInner(opts: BootDaemonOpts, undo: Array<() => void>): P
     return Number.isFinite(n) && n >= 0 ? n : 10 * 60_000
   })()
   const heartbeatStaleMs = Math.max(HEARTBEAT_STALE_MS, turnTimeoutMs + 60_000)
-  const lock = acquireInstanceLock(PID_PATH, { isHealthy: () => isHeartbeatFresh(HEARTBEAT_PATH, heartbeatStaleMs) })
+  // 撞上「上一个还在收尾」(launchctl kickstart -k:旧的还在停,新的已经起来)⇒ 等它退,最多 30 秒,别直接判失败
+  // (以前每次都要退避 10 秒才起来)。判据是它开始优雅退出时自己写的纸条:pid 对得上、是这一分钟内写的。
+  const lock = await acquireInstanceLockWaitingForShutdown(PID_PATH, {
+    isHealthy: () => isHeartbeatFresh(HEARTBEAT_PATH, heartbeatStaleMs),
+    holderShuttingDown: (pid) => { const m = peekCleanShutdown(stateDir); return !!m && m.pid === pid && Date.now() - m.ts < 2 * LOCK_WAIT_FOR_SHUTDOWN_MS },
+    onWait: (pid) => log('DAEMON', `previous daemon pid=${pid} is still shutting down — waiting for it to exit (up to ${LOCK_WAIT_FOR_SHUTDOWN_MS / 1000}s)`),
+  })
   if (!lock.ok) throw new Error(`[wechat-cc] ${lock.reason} (pid=${lock.pid})`)
   undo.push(() => releaseInstanceLock(PID_PATH))
   // Stamp an initial heartbeat immediately so this just-started daemon reads
@@ -266,6 +272,9 @@ async function bootDaemonInner(opts: BootDaemonOpts, undo: Array<() => void>): P
     // 给下次开机留一张「这次是计划内的」纸条:daemon 自己要求的重启(空闲加载
     // 新代码、换后端、运维 POST /v1/daemon/restart …)一律不在微信里播报。
     markPlannedRestart(stateDir, reason)
+    // 这也是一次优雅退出:留优雅退出纸条(restart-markers 本来就这么写的,代码以前漏了),
+    // 下一个进程撞上锁时才认得出「它在收尾」、等它退(single-instance acquireInstanceLockWaitingForShutdown)
+    markCleanShutdown(stateDir, `restart:${reason}`)
     setTimeout(() => { void shutdown().finally(() => process.exit(0)) }, 500)
   }
 
