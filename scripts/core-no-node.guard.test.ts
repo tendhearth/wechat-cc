@@ -83,7 +83,7 @@ const BASELINE: Record<string, number> = {
   'src/core/permission-rules/paths.ts': 1,
   'src/core/permission-rules/rules-file.ts': 1,
   'src/core/scheduled-jobs-store.ts': 2,
-  'src/core/self-agent-id.ts': 3,
+  'src/core/self-agent-id.ts': 2,
   'src/core/session-state.ts': 1,
   'src/core/session-store.ts': 1,
   'src/core/wish.ts': 1,
