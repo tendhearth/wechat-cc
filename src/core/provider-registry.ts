@@ -172,6 +172,12 @@ export interface ProviderRegistry {
   get(id: ProviderId): { provider: AgentProvider; opts: ProviderRegistration } | null
   has(id: ProviderId): boolean
   list(): ProviderId[]
+  /**
+   * 注册之后通知(3c,2026-10-22):开机时没探到、后来重探成功的执行者,下游(工作台)靠这个跟上,
+   * 不再只抄开机那一刻的快照。只增不减 —— 没有注销,也就没有对应的通知(稿 §4.1 ②)。
+   * 回调同步、在登记完成后调;回调抛错不影响登记本身,回调自己负责记日志。返回退订。
+   */
+  onRegister(cb: (id: ProviderId) => void): () => void
   /** 叫什么:内置六家照 executor-facts(两种 Gemini 都开着时按现在注册了谁区分);自定义的用注册时给的名字。 */
   namesOf(id: ProviderId): ExecutorNames
   /**
@@ -420,10 +426,16 @@ export function createProviderRegistry(opts?: {
       throw lastErr
     }
   }
+  const registerListeners = new Set<(id: ProviderId) => void>()
   const registry: ProviderRegistry = {
     register(id, provider, opts) {
       if (entries.has(id)) throw new Error(`provider already registered: ${id}`)
       entries.set(id, { provider: networkGate ? withNetworkGate(provider, networkGate, id) : provider, opts })
+      for (const cb of [...registerListeners]) { try { cb(id) } catch { /* 回调自己记日志;登记已经成了,不因下游失败回滚 */ } }
+    },
+    onRegister(cb) {
+      registerListeners.add(cb)
+      return () => { registerListeners.delete(cb) }
     },
     get(id) {
       return entries.get(id) ?? null
