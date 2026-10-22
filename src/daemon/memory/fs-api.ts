@@ -15,16 +15,20 @@
  * memory_write calls, not wired into this module.
  */
 
-import { existsSync, mkdirSync, readdirSync, readFileSync, realpathSync, renameSync, unlinkSync } from 'node:fs'
+import { existsSync, mkdirSync, readdirSync, readFileSync, realpathSync, renameSync, statSync, unlinkSync } from 'node:fs'
 import { basename, dirname, join, relative, resolve, sep } from 'node:path'
-import { isDerivedMemoryStale } from '../../lib/memory-derived-state'
+import { derivedMemoryStatus, invalidateDerivedMemory, type InvalidationReason } from '../../lib/memory-derived-state'
+import { memoryArtifactKind } from '../../lib/memory-artifacts'
 import { writeFileAtomic } from '../../lib/json-file'
 
 export interface MemoryFS {
   /** Read a memory file. Returns null if not present (no throw). */
   read(relPath: string): string | null
-  /** Write (atomic). Creates parent dirs as needed. */
-  write(relPath: string, content: string): void
+  /**
+   * Write (atomic). Creates parent dirs as needed. 写的是源(lib/memory-artifacts)⇒ 先让这个对话的生成物过期:
+   * `reason` 说为什么 —— CC 自己记笔记是 'added';缺省 'retracted'(往藏的方向兜底,3e 记忆第 2 步)。
+   */
+  write(relPath: string, content: string, opts?: { reason?: InvalidationReason }): void
   /** List all files (recursive). When `relDir` is given, lists under that subdir. */
   list(relDir?: string): string[]
   /** Delete a file. No-op if absent. */
@@ -47,6 +51,11 @@ export interface MemoryFS {
 export interface MemoryFSOptions {
   rootDir: string
   maxFileBytes?: number      // default 100_000
+  /**
+   * root 是一个对话的记忆目录('chat',缺省)还是所有对话的上一层('all-chats',路径形如 `<chat>/profile.md`)。
+   * 写源时要找到「这个对话」那一层去记生成物过期(3e 记忆第 2 步);明说,不从目录名猜。
+   */
+  layout?: 'chat' | 'all-chats'
   allowedExt?: string[]      // default ['.md']
 }
 
@@ -151,9 +160,25 @@ export function makeMemoryFS(opts: MemoryFSOptions): MemoryFS {
     }
   }
 
-  function staleOverview(full: string): boolean {
+  /** 生成物的过期标记记在「这个对话」那一层:layout 'chat' ⇒ root;'all-chats' ⇒ root/<第一段>(只有一段的就是 root)。 */
+  function chatRootOf(full: string): string {
+    if (opts.layout !== 'all-chats') return root
+    const segs = relative(root, full).split(sep)
+    return segs.length > 1 ? join(root, segs[0]!) : root
+  }
+
+  /**
+   * _overview.md 现在能不能给(3e 记忆第 2 步,9d 定):主人删了 / 改了东西以后的过期 ⇒ 藏(总览会进串门人设,带到别人的 CC
+   * 那里,不能把主人撤掉的话说出去);只是源里多了东西 ⇒ 照常给,开头贴一句「这份是哪天整理的、之后又有变化」。
+   */
+  function overviewStatus(full: string): 'fresh' | 'added' | 'retracted' {
     const real = realpathSync(full)
-    return basename(real) === '_overview.md' && isDerivedMemoryStale(dirname(real), 'overview')
+    return basename(real) === '_overview.md' ? derivedMemoryStatus(dirname(real), 'overview') : 'fresh'
+  }
+  function staleLabel(full: string): string {
+    let day = ''
+    try { const d = new Date(statSync(full).mtimeMs); day = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}` } catch { /* 拿不到日期就不写 */ }
+    return `> (这份整体理解是${day ? ` ${day} ` : '之前'}整理的,之后记忆又有变化,可能不全。)\n\n`
   }
 
   return {
@@ -164,11 +189,13 @@ export function makeMemoryFS(opts: MemoryFSOptions): MemoryFS {
       checkExt(full)
       if (!existsSync(full)) return null
       assertWithinRealRoot(full, true)
-      if (staleOverview(full)) return null
-      return readFileSync(full, 'utf8')
+      const status = overviewStatus(full)
+      if (status === 'retracted') return null
+      const text = readFileSync(full, 'utf8')
+      return status === 'added' ? staleLabel(full) + text : text
     },
 
-    write(relPath, content) {
+    write(relPath, content, opts) {
       const full = resolveSafe(relPath)
       checkExt(full)
       if (typeof content !== 'string') throw new MemoryPathError('content must be a string')
@@ -182,6 +209,8 @@ export function makeMemoryFS(opts: MemoryFSOptions): MemoryFS {
       // and realpathSync(parent) succeeds; check the candidate full
       // path (which may not yet exist).
       assertWithinRealRoot(full, false)
+      const chatRoot = chatRootOf(full)
+      if (memoryArtifactKind(relative(chatRoot, full)) === 'source') invalidateDerivedMemory(chatRoot, opts?.reason ?? 'retracted')
       writeFileAtomic(full, content, { mode: 0o600 })
     },
 
@@ -210,7 +239,7 @@ export function makeMemoryFS(opts: MemoryFSOptions): MemoryFS {
           if (entry.isSymbolicLink()) continue
           if (entry.isDirectory()) stack.push(p)
           else if (entry.isFile() && exts.has(extOf(entry.name))) {
-            if (staleOverview(p)) continue
+            if (overviewStatus(p) === 'retracted') continue
             // Normalize to POSIX so the public API (paths shown to Claude
             // and consumed by `memory_read`) is identical on Windows + POSIX.
             out.push(relative(root, p).split(sep).join('/'))

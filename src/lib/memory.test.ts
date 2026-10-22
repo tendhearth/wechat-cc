@@ -151,3 +151,24 @@ describe('writeMemoryFile', () => {
     expect(stored).toBe(body)
   })
 })
+
+// 3e 记忆第 2 步:CLI / 桌面编辑器写源 ⇒ 生成物过期,缺省按主人删改算(retracted);合成写回 _overview.md 是生成物,不触发。
+describe('writeMemoryFile × derived memory', () => {
+  it('a source write invalidates (default retracted, or the given reason); writing the derived overview does not', async () => {
+    const { mkdtempSync, rmSync } = await import('node:fs')
+    const { tmpdir } = await import('node:os')
+    const { join } = await import('node:path')
+    const { writeMemoryFile } = await import('./memory')
+    const { derivedMemoryStatus } = await import('./memory-derived-state')
+    const stateDir = mkdtempSync(join(tmpdir(), 'memory-src-'))
+    try {
+      const chat = join(stateDir, 'memory', 'owner1')
+      writeMemoryFile(stateDir, 'owner1', '_overview.md', 'synth')
+      expect(derivedMemoryStatus(chat, 'overview')).toBe('fresh')
+      writeMemoryFile(stateDir, 'owner1', 'notes/a.md', 'x', { reason: 'added' })
+      expect(derivedMemoryStatus(chat, 'overview')).toBe('added')
+      writeMemoryFile(stateDir, 'owner1', 'memory.md', 'owner edit')
+      expect(derivedMemoryStatus(chat, 'overview')).toBe('retracted')
+    } finally { rmSync(stateDir, { recursive: true, force: true }) }
+  })
+})

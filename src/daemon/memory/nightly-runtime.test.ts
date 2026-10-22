@@ -206,6 +206,16 @@ describe('owner corrections, step A (2026-10-06)', () => {
     expect(readFileSync(join(stateDir, 'memory-archive', OWNER, 'memory-expired.md'), 'utf8')).toContain('(owner_outdated)')
     await expect(rt.correct(id, 'wrong')).rejects.toThrow('memory_entry_not_found')
   })
+  // 3e 记忆第 2 步(9d 定):每晚整理只是多了 / 整理了东西 ⇒ 总览 added(贴标签照常用);主人纠正 ⇒ retracted(藏,不带去串门)。
+  it('the nightly tidy marks derived memory "added"; an owner correction marks it "retracted"', async () => {
+    const { derivedMemoryStatus } = await import('../../lib/memory-derived-state')
+    const rt = makeMemoryNightlyRuntime(deps())
+    await rt.runNow()
+    expect(derivedMemoryStatus(root, 'overview')).toBe('added')
+    const id = rt.curatedView().sections.flatMap(s => s.items)[0]!.id!
+    await rt.correct(id, 'wrong')
+    expect(derivedMemoryStatus(root, 'overview')).toBe('retracted')
+  })
   it('a correction survives a large profile.md and a model that writes the entry back word for word (2026-10-10)', async () => {
     const prompts: string[] = []
     const reAdd = async (p: string) => { prompts.push(p); return JSON.stringify({ add: [{ section: '承诺', text: '周五前给 X 回话(期限 2026-09-26)' }], update: [], confirm: [], remove: [] }) }

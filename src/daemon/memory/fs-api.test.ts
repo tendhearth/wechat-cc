@@ -10,7 +10,7 @@ describe('MemoryFS', () => {
   beforeEach(() => { root = mkdtempSync(join(tmpdir(), 'memfs-')) })
   afterEach(() => { rmSync(root, { recursive: true, force: true }) })
 
-  const make = () => makeMemoryFS({ rootDir: root })
+  const make = () => makeMemoryFS({ rootDir: root, layout: 'all-chats' })
 
   it('hides stale overview from reads and listings for both global and per-chat memory roots', () => {
     const fs = make()
@@ -25,6 +25,37 @@ describe('MemoryFS', () => {
     expect(existsSync(join(root, 'c1', '_overview.md'))).toBe(true)
     symlinkSync(join(root, 'c1', '_overview.md'), join(root, 'c1', 'overview-alias.md'))
     expect(chatFs.read('overview-alias.md')).toBeNull()
+  })
+
+  // 3e 记忆第 2 步(9d 定):只是多了东西 ⇒ 照常给、开头贴一句;主人删改过 ⇒ 藏(总览会进串门人设,带到别人的 CC)。
+  it('an overview that is only incomplete (added) is served with a label; one after an owner retraction stays hidden', () => {
+    const fs = make()
+    fs.write('c1/_overview.md', 'owner likes hiking')
+    invalidateDerivedMemory(join(root, 'c1'), 'added')
+    const got = fs.read('c1/_overview.md')
+    expect(got).toContain('owner likes hiking')
+    expect(got).toMatch(/^> \(这份整体理解是 \d{4}-\d{2}-\d{2} 整理的,之后记忆又有变化,可能不全。\)\n\nowner likes hiking$/)
+    expect(fs.list()).toContain('c1/_overview.md')
+    invalidateDerivedMemory(join(root, 'c1'), 'retracted')
+    expect(fs.read('c1/_overview.md')).toBeNull()
+    expect(fs.list()).not.toContain('c1/_overview.md')
+  })
+  it('writing a source invalidates that chat: CC notes are "added", anything else defaults to "retracted"; writing a derived file does not', async () => {
+    const { derivedMemoryStatus } = await import('../../lib/memory-derived-state')
+    const fs = make()
+    fs.write('c1/_overview.md', 'v1')
+    expect(derivedMemoryStatus(join(root, 'c1'), 'overview')).toBe('fresh')
+    fs.write('c1/profile.md', 'note', { reason: 'added' })
+    expect(derivedMemoryStatus(join(root, 'c1'), 'overview')).toBe('added')
+    fs.write('c1/notes/trip.md', 'edited by owner')
+    expect(derivedMemoryStatus(join(root, 'c1'), 'overview')).toBe('retracted')
+    // 别的对话不受影响
+    fs.write('c2/_overview.md', 'other')
+    expect(derivedMemoryStatus(join(root, 'c2'), 'overview')).toBe('fresh')
+    // per-chat 根下写也找得到同一层
+    const chatFs = makeMemoryFS({ rootDir: join(root, 'c2') })
+    chatFs.write('profile.md', 'x', { reason: 'added' })
+    expect(derivedMemoryStatus(join(root, 'c2'), 'overview')).toBe('added')
   })
 
   it('write then read roundtrips content', () => {

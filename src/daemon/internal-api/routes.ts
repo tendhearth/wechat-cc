@@ -292,7 +292,8 @@ const onlineStickerCursor = new Map<string, number>()
         // 同日失忆(2026-10-01):CC 写 <chat>/profile.md 时,新冒出来的行进今天的草稿,别的会话马上看得到。
         const draftChat = caller?.origin === 'session' ? chatOfProfilePath(path) : null
         const before = draftChat ? deps.memory.read(path) : null
-        deps.memory.write(path, content)
+        // CC 自己记笔记 ⇒ 生成物只是不全('added');别的来路(主人在桌面 / 设置里写)⇒ 缺省 'retracted'。
+        deps.memory.write(path, content, caller?.origin === 'session' ? { reason: 'added' } : undefined)
         if (draftChat) {
           try { recordProfileWrite(deps.memory, draftChat, before, content) }
           catch (err) { deps.log?.('MEMORY', `today-draft append failed: ${errMsg(err)}`) }

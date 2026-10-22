@@ -193,7 +193,7 @@ describe('internal-api', () => {
     let memoryRoot: string
     async function startWithMemory(): Promise<{ port: number; token: string }> {
       memoryRoot = join(stateDir, 'memory')
-      const memory = makeMemoryFS({ rootDir: memoryRoot })
+      const memory = makeMemoryFS({ rootDir: memoryRoot, layout: 'all-chats' })
       api = createInternalApi({ stateDir, daemonPid: 999, memory })
       const { port, tokenFilePath } = await api.start()
       const token = readFileSync(tokenFilePath, 'utf8').trim()
@@ -403,6 +403,17 @@ describe('internal-api', () => {
           headers: { Authorization: `Bearer ${token}`, 'content-type': 'application/json' },
           body: JSON.stringify({ path, content: 'x' }),
         })
+
+      // 3e 记忆第 2 步:CC 会话自己记笔记 ⇒ 生成物只是不全(added);文件令牌那一路(主人 / 工具)⇒ 缺省 retracted。
+      it('a session write marks that chat\'s derived memory "added"; a file-token write marks it "retracted"', async () => {
+        const { derivedMemoryStatus } = await import('../lib/memory-derived-state')
+        const { port, token } = await startWithMemory()
+        const tok = api!.mintSessionToken('trusted', 'claude/a/chat-1')
+        expect((await write(port, tok, 'chat-1/notes.md')).status).toBe(200)
+        expect(derivedMemoryStatus(join(memoryRoot, 'chat-1'), 'overview')).toBe('added')
+        expect((await write(port, token, 'chat-1/notes.md')).status).toBe(200)
+        expect(derivedMemoryStatus(join(memoryRoot, 'chat-1'), 'overview')).toBe('retracted')
+      })
 
       it('trusted session token can write/read within its OWN chat subtree', async () => {
         const { port } = await startWithMemory()

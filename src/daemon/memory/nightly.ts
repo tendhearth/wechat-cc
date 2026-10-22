@@ -3,6 +3,7 @@
  * 素材 → 指纹(没新东西不调模型)→ 便宜模型出改动清单 → 程序校验执行 → 修订检查(主人正在改就作废)
  * → 备份旧版、原子写、追加日志、更新状态。任何失败都不写文件;同一天不再自动重试。
  */
+import { invalidateDerivedMemory } from '../../lib/memory-derived-state'
 import { writeFileAtomic } from '../../lib/json-file'
 import { nextSources, readSources, writeSources, SOURCE_EXCERPT_MAX, type SourceRef } from './sources'
 import { appendFileSync, copyFileSync, existsSync, mkdirSync, readFileSync, readdirSync, rmSync, statSync } from 'node:fs'
@@ -319,6 +320,8 @@ export async function runMemoryNightly(deps: NightlyRunDeps, opts: { force: bool
       // pre-write content.
       if (!existsSync(archivePath)) copyFileSync(memPath, archivePath)
     }
+    // 每晚整理:源里多了 / 整理了东西,旧总览只是不全 ⇒ 'added'(3e 记忆第 2 步)。先记过期再写源。
+    invalidateDerivedMemory(root, 'added')
     writeFileAtomic(memPath, serializeMemoryDoc(res.doc, nowIso))
 
     // Only append expired-entry lines AFTER the rename succeeded — otherwise
