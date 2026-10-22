@@ -35,15 +35,16 @@ describe('provider 名单都以 provider-ids.ts 为准', () => {
 
   // 桌面 view.js 的 PROVIDER_LABELS 已删(收敛清单 ⑥):三端不存名字表,见 executor-display-names.guard.test.ts。
 
-  it('mode-commands.ts 的 KNOWN_SLASH_COMMANDS 首行(isProviderCommand)= provider-ids 的斜杠形式', () => {
+  // 第三批 3d 起 mode-commands 认的 /词从行表推出来,provider 那行直接取 PROVIDER_SLASH(以前是手写的 KNOWN_SLASH_COMMANDS 首行)。
+  // 守卫的意思不变:微信里切 provider 的斜杠词 = provider-ids 的斜杠形式。
+  it('mode-commands.ts 的 provider 那行取自 PROVIDER_SLASH(不手写),而 PROVIDER_SLASH = provider-ids 的斜杠形式', async () => {
     const src = read('src', 'daemon', 'mode-commands.ts')
-    const m = /const KNOWN_SLASH_COMMANDS = new Set\(\[\s*([^\n]+)\/\/ isProviderCommand/.exec(src)
-    expect(m, '找不到 KNOWN_SLASH_COMMANDS 的 isProviderCommand 行').toBeTruthy()
-    const slashes = [...m![1]!.matchAll(/'(\w+)'/g)].map(x => x[1]!).sort()
+    expect(src, 'mode-commands 的 provider 行不再取 PROVIDER_SLASH —— 别回到手写的斜杠词表').toMatch(/\{ id: 'provider', words: Object\.values\(PROVIDER_SLASH\)/)
+    const { PROVIDER_SLASH } = await import('../src/core/provider-policy')
     // 两个历史命名:claude 的斜杠是 /cc,openai 的是 /api;其余同名
     const SLASH_OF: Record<string, string> = { claude: 'cc', openai: 'api' }
     const expected = IDS.map(id => SLASH_OF[id] ?? id).sort()
-    expect(slashes).toEqual(expected)
+    expect(Object.values(PROVIDER_SLASH).sort()).toEqual(expected)
   })
 
   it('桌面「选择已有账号」芯片只列订阅 CLI 三家,且都是真 id', () => {
