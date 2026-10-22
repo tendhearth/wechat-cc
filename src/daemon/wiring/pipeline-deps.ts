@@ -86,6 +86,7 @@ export function makeDelegateToHand(deps: DelegateDeps) {
 export type { PipelineDepsOpts } from './pipeline-deps-opts'
 import type { PipelineDepsOpts } from './pipeline-deps-opts'
 import { makeJobsStore } from '../../core/scheduled-jobs-store'
+import { makeGuestOwnerNotify } from '../inbound/guest-notify'
 import { Ref } from '../../lib/lifecycle'
 import { makeProactiveOutbound, type AppChannel, type ProactiveOutbound } from '../companion/proactive-channel'
 import type { SpeechPolicy } from '../speech/policy'
@@ -257,11 +258,8 @@ export function buildPipelineDeps(opts: PipelineDepsOpts, refs: PipelineDepsRefs
   // degraded-subsystem admin summary (~:487-501) — the guest's text is
   // truncated/escaped by mw-access BEFORE it ever reaches this closure, and
   // never passes through a prompt.
-  const notifyOwnerOfGuest = (text: string): Promise<{ error?: string }> => {
-    const adminChatId = resolveAdminChatId(loadAccess(), loadCompanionConfig(stateDir), null)
-    if (!adminChatId) return Promise.resolve({ error: 'no_admin_chat_configured' })
-    return ilink.sendMessage(adminChatId, text)
-  }
+  // 经 CC 开口那道门(guest_request,blocking);交给门就算办完,重试归待说队列(inbound/guest-notify.ts)
+  const notifyOwnerOfGuest = makeGuestOwnerNotify({ speech: () => speech, adminChatId: () => resolveAdminChatId(loadAccess(), loadCompanionConfig(stateDir), null), log: (t, l) => log(t, l) })
   // 记忆(重构第二批步 6c,wire-memory.ts):LLM 记忆操作、每晚整理、欢迎时的观察。
   const { memoryLlmOps, memoryNightly, maybeWriteWelcomeObservation } = wireMemory({ stateDir, db, boot, chatPrefs, careLedger, speech, log })
 

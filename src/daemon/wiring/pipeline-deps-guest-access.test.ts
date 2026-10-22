@@ -160,7 +160,8 @@ describe('pipeline-deps guest-access wiring (spec §2)', () => {
     try {
       const r = await pipelineDeps.access.notifyOwner!('👋 someone wants to chat')
       expect(sendMessage).toHaveBeenCalledWith('admin_chat', '👋 someone wants to chat')
-      expect(r).toEqual({ msgId: 'sent:1' })
+      // 经 CC 开口那道门(guest_request):交给门就算办完,回 {}(第三批 3a,inbound/guest-notify.ts)
+      expect(r).toEqual({})
     } finally {
       rmSync(stateDir, { recursive: true, force: true })
     }
