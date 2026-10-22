@@ -1,4 +1,5 @@
 // 从 cli.ts 逐字搬出(2026-09-27 cli 拆分,spec 2026-09-27-cli-split-design);行为、参数、文案不变。
+import { writeFileAtomic } from '../../lib/json-file'
 import { defineCommand } from 'citty'
 import selfPkg from '../../../package.json' with { type: 'json' }
 import { STATE_DIR } from '../../lib/config'
@@ -160,7 +161,7 @@ const pluginSetupCmd = defineCommand({
     // Progress file the desktop wizard polls (same pattern as install-progress.json).
     const progressFile = join(STATE_DIR, 'plugin-setup-progress.json')
     const writeProgress = (o: Record<string, unknown>) => {
-      try { writeFileSync(progressFile, JSON.stringify({ plugin: args.name, ...o })) } catch { /* best effort */ }
+      try { writeFileAtomic(progressFile, JSON.stringify({ plugin: args.name, ...o })) } catch { /* best effort */ }
     }
     writeProgress({ running: true, stage: 0, total: 0, label: 'starting' })
     const child = spawn(sub(setup.command), (setup.args ?? []).map(sub), { env, stdio: ['ignore', 'pipe', 'pipe'] })

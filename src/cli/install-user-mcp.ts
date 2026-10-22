@@ -7,7 +7,8 @@
  * which is required for the /project switch flow to work — the new
  * session needs the wechat MCP tool available immediately after chdir.
  */
-import { existsSync, renameSync, writeFileSync } from 'fs'
+import { writeFileAtomic } from '../lib/json-file'
+import { existsSync } from 'fs'
 import { readJsonFile } from '../lib/read-json-file'
 
 export interface McpServerConfig {
@@ -28,9 +29,7 @@ function readConfig(file: string): ClaudeUserConfig {
 }
 
 function writeConfig(file: string, cfg: ClaudeUserConfig): void {
-  const tmp = `${file}.tmp`
-  writeFileSync(tmp, JSON.stringify(cfg, null, 2) + '\n', { mode: 0o600 })
-  renameSync(tmp, file)
+  writeFileAtomic(file, JSON.stringify(cfg, null, 2) + '\n', { mode: 0o600 })
 }
 
 export function installUserMcp(file: string, name: string, entry: McpServerConfig): void {

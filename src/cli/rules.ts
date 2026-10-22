@@ -3,7 +3,8 @@
  * daemon 按 mtime 在下一条请求时读到。坏文件一律不覆盖(主人手改了一半的东西不能被 CLI 冲掉)。
  * 新规则先过一遍同一个解析器 —— 解析器会丢的规则,这里直接拒,不写进文件。
  */
-import { existsSync, readFileSync, renameSync, writeFileSync } from 'node:fs'
+import { writeFileAtomic } from '../lib/json-file'
+import { existsSync, readFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { EMPTY_RULES, parseRulesFile, RULES_FILE, serializeRulesFile } from '../core/permission-rules/rules-file'
 import type { Rule, RuleWhen, RulesFile, Verdict } from '../core/permission-rules/types'
@@ -22,9 +23,7 @@ export function readRulesForEdit(stateDir: string): { ok: true; file: RulesFile 
 
 function write(stateDir: string, f: RulesFile): void {
   const path = join(stateDir, RULES_FILE)
-  const tmp = `${path}.tmp-${process.pid}`
-  writeFileSync(tmp, serializeRulesFile(f), { mode: 0o600 })
-  renameSync(tmp, path)
+  writeFileAtomic(path, serializeRulesFile(f), { mode: 0o600 })
 }
 
 function edit(stateDir: string, fn: (f: RulesFile) => RulesFile | string): Result {

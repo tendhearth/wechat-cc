@@ -18,6 +18,8 @@ const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..')
 const HOME = 'src/lib/json-file.ts'
 /** 不算的(写明为什么)。 */
 const EXEMPT: Record<string, string> = {
+  'src/cli/self-change/state.ts': '走注入的 fs(测试拿假文件系统替身),第三处是 `wx` 只建不换的锁文件 —— 换成 lib/json-file 会绕开注入的 fs',
+  'src/cli/update.ts': '换的是可执行文件本身:bun build 直接输出到 tmp,再 rename(Windows 先 unlink 旧的)。不是状态文件,也不是 JSON',
   'src/daemon/__e2e__/harness.ts': 'e2e 测试夹具,给假 daemon 铺状态目录,不是生产写法',
   'src/daemon/atelier-store.ts': '图 + 元数据两个文件一起提交:各自用独一无二的 scratch 名(randomUUID)+ `wx`,两个都写好才依次 rename。单文件的 writeFileAtomic 表达不了这种两步提交',
   'src/daemon/relay-identity.ts': '只建不换:`wx` 直接建目标文件,已经有了就失败、改读别人先写的那一份(并发启动时两个进程不能各留一个种子)。原子替换在这里是错的',
@@ -55,18 +57,9 @@ function current(): Record<string, number> {
   return out
 }
 
-// 2026-10-22 基线(3e 第 3 步迁完 src/lib、src/core,第 4 步迁完 daemon 的配置 / 状态存储、第 5 步迁完 daemon 其余之后 —— 只剩 CLI)。迁一处减一;降到 0 删掉那一行。
-const BASELINE: Record<string, number> = {
-  'src/cli/account-remove.ts': 1,
-  'src/cli/commands/plugin.ts': 1,
-  'src/cli/commands/service.ts': 2,
-  'src/cli/handoff.ts': 1,
-  'src/cli/hook.ts': 2,
-  'src/cli/install-user-mcp.ts': 2,
-  'src/cli/rules.ts': 1,
-  'src/cli/self-change/state.ts': 3,
-  'src/cli/update.ts': 1,
-}
+// 2026-10-22:3e 第 3–6 步迁完 src/lib、src/core、src/daemon、src/cli,基线清零。这张表以后只该是空的:新代码写状态文件
+// 一律用 lib/json-file;真有理由不用(像上面的豁免),写进 EXEMPT 并说清为什么。
+const BASELINE: Record<string, number> = {}
 
 describe('状态文件只有一种写法(棘轮)', () => {
   it('counts the two shapes and skips comment lines', () => {
