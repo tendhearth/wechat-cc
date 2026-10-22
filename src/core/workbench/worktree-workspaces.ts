@@ -38,7 +38,7 @@ export function git(cwd: string, args: string[], opts: { ownerConfig?: boolean; 
     return execFileSync('git', [...SAFE, ...args], { cwd, env: gitEnv(opts.ownerConfig), encoding: 'utf8', timeout: TIMEOUT_MS, maxBuffer: 16 * 1024 * 1024, ...(opts.input !== undefined ? { input: opts.input } : { stdio: ['ignore', 'pipe', 'pipe'] }) }).trim()
   } catch (error) {
     const stderr = String((error as { stderr?: unknown }).stderr ?? '').trim().split('\n').slice(0, 3).join(' | ')
-    // exitStatus:git 自己退出的码(128 = 不是仓库 / 不让用);超时被杀、起不来时没有 —— repoRootOrFail 靠它分「是不是仓库」和「这次没问成」
+    // exitStatus:git 自己退出的码;超时被杀、起不来时没有 —— repoRootOrFail 靠它分「git 答了」和「这次没问成」,再看 stderr 判是不是仓库
     const status = (error as { status?: unknown }).status
     const timedOut = (error as { code?: unknown }).code === 'ETIMEDOUT' || (error as { signal?: unknown }).signal === 'SIGTERM'
     throw Object.assign(new Error('worktree_git_failed'), { detail: stderr, ...(typeof status === 'number' ? { exitStatus: status } : {}), ...(timedOut ? { timedOut: true } : {}) })
@@ -53,14 +53,18 @@ export function repoRootOf(projectPath: string): string | null {
   } catch { return null }
 }
 /**
+ * git 说这里不是仓库的那句 stderr(gitEnv 定了 LC_ALL=C,措辞固定)。只认这一句:dubious ownership / safe.directory
+ * 是「是仓库,但 git 不信任这个目录」,说成「不是 Git 仓库」是假话,走 worktree_git_failed 带原文(#537 评审)。
+ */
+export const NOT_A_REPO = /not a git repository/i
+
+/**
  * 同上,但分清「git 说不是仓库」和「这次没问成」(10-21):机器很忙时 rev-parse 撞上超时,repoRootOf 会把它当成不是仓库,
- * 主人就收到一句假话「这个项目不是 Git 仓库」。这里:目录不在 / git 自己退出(128 等)⇒ null;超时 ⇒ 直接抛 worktree_git_failed
+ * 主人就收到一句假话「这个项目不是 Git 仓库」。这里:目录不在 / git 自己说了「不是仓库」(NOT_A_REPO)⇒ null;别的非零退出、
+ * 成功却读回空 ⇒ 抛 worktree_git_failed 带原文;超时 ⇒ 直接抛 worktree_git_failed
  * (「git 操作没成功」)—— git() 是同步的,再等一轮 30 秒等于把整个 daemon 再堵 30 秒(#490 评审);起不来(EAGAIN / EMFILE 这类,
  * 几乎是瞬时的)⇒ 再问一次,还不行再抛。工作台建独立工作区用它;终端的权限闸门仍用 repoRootOf(读不到就当项目外,偏保守)。
  */
-/** git 说这里不是仓库 / 不让用(safe.directory)的那几种 stderr。 */
-export const NOT_A_REPO = /not a git repository|dubious ownership|safe\.directory/i
-
 export function repoRootOrFail(projectPath: string): string | null {
   if (!existsSync(projectPath)) return null
   let last: unknown
@@ -72,7 +76,7 @@ export function repoRootOrFail(projectPath: string): string | null {
       return real(top)
     } catch (error) {
       const e = error as { exitStatus?: unknown; detail?: unknown }
-      // 只有 git 自己说了「不是仓库 / 不让用」才回 null(⇒ worktree_not_git);别的非零退出带着 stderr 抛 worktree_git_failed,
+      // 只有 git 自己说了「不是仓库」才回 null(⇒ worktree_not_git);别的非零退出带着 stderr 抛 worktree_git_failed,
       // 主人看到的是「git 操作没成功」,日志里有原文 —— 以前任何退出码都当成「不是仓库」
       if (typeof e.exitStatus === 'number') {
         if (NOT_A_REPO.test(String(e.detail ?? ''))) return null

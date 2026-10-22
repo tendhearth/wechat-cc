@@ -212,9 +212,10 @@ describe('repoRootOrFail(10-21:机器忙时 git 没问成 ≠ 不是仓库)', ()
 })
 
 describe('repoRootOrFail 只在 git 真说了「不是仓库」时才回 null(10-22)', () => {
-  it('认得 git 的那几种说法;别的报错不算「不是仓库」', () => {
+  it('只认 git 说「不是仓库」那一句;dubious ownership、index.lock 之类都不算', () => {
     expect(NOT_A_REPO.test('fatal: not a git repository (or any of the parent directories): .git')).toBe(true)
-    expect(NOT_A_REPO.test("fatal: detected dubious ownership in repository at '/x'")).toBe(true)
+    // 是仓库、只是 git 不信任这个目录 ⇒ 不说成「不是 Git 仓库」(#537 评审)
+    expect(NOT_A_REPO.test("fatal: detected dubious ownership in repository at '/x'")).toBe(false)
     expect(NOT_A_REPO.test('fatal: Unable to create \'/x/.git/index.lock\': File exists.')).toBe(false)
     expect(NOT_A_REPO.test('')).toBe(false)
   })
