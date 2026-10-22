@@ -1,5 +1,5 @@
 import { makeSpeechPolicy } from './speech/policy'
-import { describe, it, expect, vi } from 'vitest'
+import { describe, it, expect, vi, afterEach } from 'vitest'
 import { mkdtempSync, mkdirSync, writeFileSync, rmSync, readFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { tmpdir } from 'node:os'
@@ -84,6 +84,10 @@ function makeIlinkStub() {
     askUser: vi.fn(),
   }
 }
+
+
+// stubEnv 设的环境变量每条测试后都还原,哪怕那条超时了(见 knowledge-orchestration 那条)
+afterEach(() => { vi.unstubAllEnvs() })
 
 describe('bootstrap', () => {
   it('sdkOptionsForProject returns cwd, wechat stdio mcpServer, canUseTool, systemPrompt', async () => {
@@ -922,8 +926,9 @@ describe('bootstrap', () => {
       kind: 'mcp',
       spawn: { command: process.execPath, args: [] },
     }))
-    const prevBundledDir = process.env.WECHAT_CC_BUNDLED_PLUGINS_DIR
-    process.env.WECHAT_CC_BUNDLED_PLUGINS_DIR = bundledDir
+    // vi.stubEnv + 文件顶上那个 afterEach 还原:这条超时的话,try / finally 的 finally 要等还在跑的 body 落定才执行,
+    // 下一条就会带着这个插件目录起 bootstrap、看到「知识编排」(10-22 macOS CI 上两条连着红)。afterEach 不等 body。
+    vi.stubEnv('WECHAT_CC_BUNDLED_PLUGINS_DIR', bundledDir)
     try {
       const b = await buildBootstrap({
         supervisor: new SubsystemSupervisor(() => {}),
@@ -948,8 +953,6 @@ describe('bootstrap', () => {
       // knowledgeSearchAvailable:true counterpart).
       expect(prompt).not.toContain('消息检索')
     } finally {
-      if (prevBundledDir === undefined) delete process.env.WECHAT_CC_BUNDLED_PLUGINS_DIR
-      else process.env.WECHAT_CC_BUNDLED_PLUGINS_DIR = prevBundledDir
       rmSync(base, { recursive: true, force: true })
     }
   })
@@ -2112,8 +2115,7 @@ describe('bootstrap knowledge kernel wiring (KK T5)', () => {
     // from that ambient machine state (mirrors the pattern the
     // knowledge-orchestration tests already use for the same reason).
     const emptyBundledDir = mkdtempSync(join(tmpdir(), 'bootstrap-knowledge-nobundled-'))
-    const prevBundledDir = process.env.WECHAT_CC_BUNDLED_PLUGINS_DIR
-    process.env.WECHAT_CC_BUNDLED_PLUGINS_DIR = emptyBundledDir
+    vi.stubEnv('WECHAT_CC_BUNDLED_PLUGINS_DIR', emptyBundledDir)   // afterEach 还原,超时也不串到下一条
     try {
       boot = await buildBootstrap({
         supervisor: new SubsystemSupervisor(() => {}),
@@ -2160,8 +2162,6 @@ describe('bootstrap knowledge kernel wiring (KK T5)', () => {
       boot?.knowledge?.store.close()
       await boot?.knowledge?.embedder?.close?.()
       await boot?.a2aServer?.stop()
-      if (prevBundledDir === undefined) delete process.env.WECHAT_CC_BUNDLED_PLUGINS_DIR
-      else process.env.WECHAT_CC_BUNDLED_PLUGINS_DIR = prevBundledDir
       rmSync(emptyBundledDir, { recursive: true, force: true })
       rmSync(stateDir, { recursive: true, force: true })
     }
@@ -2194,8 +2194,7 @@ describe('bootstrap knowledge kernel wiring (KK T5)', () => {
     const logLines: Array<{ tag: string; line: string; fields?: Record<string, unknown> }> = []
     let boot: Awaited<ReturnType<typeof buildBootstrap>> | null = null
     const emptyBundledDir = mkdtempSync(join(tmpdir(), 'bootstrap-knowledge-graph-nobundled-'))
-    const prevBundledDir = process.env.WECHAT_CC_BUNDLED_PLUGINS_DIR
-    process.env.WECHAT_CC_BUNDLED_PLUGINS_DIR = emptyBundledDir
+    vi.stubEnv('WECHAT_CC_BUNDLED_PLUGINS_DIR', emptyBundledDir)   // afterEach 还原,超时也不串到下一条
     try {
       boot = await buildBootstrap({
         supervisor: new SubsystemSupervisor(() => {}),
@@ -2224,8 +2223,6 @@ describe('bootstrap knowledge kernel wiring (KK T5)', () => {
       boot?.knowledge?.store.close()
       await boot?.knowledge?.embedder?.close?.()
       await boot?.a2aServer?.stop()
-      if (prevBundledDir === undefined) delete process.env.WECHAT_CC_BUNDLED_PLUGINS_DIR
-      else process.env.WECHAT_CC_BUNDLED_PLUGINS_DIR = prevBundledDir
       rmSync(emptyBundledDir, { recursive: true, force: true })
       rmSync(stateDir, { recursive: true, force: true })
     }
