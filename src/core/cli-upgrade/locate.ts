@@ -7,6 +7,7 @@
 import { existsSync } from 'node:fs'
 import { findOnPath } from '../../lib/util'
 import { findCodexBinary } from '../../lib/find-codex-binary'
+import { executorBinary } from '../../lib/executor-detect'
 import type { CliId } from './specs'
 
 export interface LocateOpts { cursorAgentBin?: string; agyBin?: string; env?: NodeJS.ProcessEnv }
@@ -20,7 +21,7 @@ export function defaultLocate(id: CliId, opts: LocateOpts = {}): string | null {
       return findOnPath('claude')
     }
     case 'codex': return findCodexBinary()
-    case 'cursor': return opts.cursorAgentBin ?? findOnPath('cursor-agent')
-    case 'agy': return opts.agyBin ?? findOnPath('agy')
+    case 'cursor': return executorBinary('cursor', opts, findOnPath)
+    case 'agy': return executorBinary('agy', opts, findOnPath)
   }
 }

@@ -18,6 +18,7 @@ import { createAiSdkChatModel } from '../../core/openai-chat-model'
 import { createMcpToolBridge } from '../../core/openai-mcp-bridge'
 import { collectTurn, type AgentProvider } from '../../core/agent-provider'
 import type { Options } from '@anthropic-ai/claude-agent-sdk'
+import { executorCredential, executorMissingConfig } from '../../lib/executor-detect'
 import type { ProviderId } from '../../core/conversation'
 import { loadAgentConfig } from '../../lib/agent-config'
 import { TIER_PROFILES, type TierProfile } from '../../core/user-tier'
@@ -161,9 +162,9 @@ export function buildDelegateDispatch(deps: DelegateBuildDeps): DelegateDispatch
   // 外部集成反馈 #3 (2026-08-26):配齐即全会话可 delegate 相当于给所有
   // 会话开了一条通往该端点的路;delegateOpenai:false 可关(默认 true 保持
   // 向后兼容 —— "端点只服务某一个会话"的场景显式关掉)。
-  const openaiKey = process.env.WECHAT_OPENAI_API_KEY
+  const openaiKey = executorCredential('openai', process.env)
   const delegateOpenai: AgentProvider | null =
-    configuredAgent.delegateOpenai !== false && openaiKey && configuredAgent.openaiBaseUrl && configuredAgent.openaiModel
+    configuredAgent.delegateOpenai !== false && openaiKey && executorMissingConfig('openai', configuredAgent).length === 0 && configuredAgent.openaiBaseUrl && configuredAgent.openaiModel
       ? (() => {
           const baseURL = configuredAgent.openaiBaseUrl
           const defaultModel = configuredAgent.openaiModel

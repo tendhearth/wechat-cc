@@ -21,6 +21,7 @@ import { loadAgentConfig, modelForProvider, type AgentConfig } from '../../lib/a
 import { classifyCall, type CallTarget } from '../../lib/call-classifier'
 import { codexCallTarget, type ResolveCodexTargetOptions } from '../../lib/codex-target'
 import { findOnPath } from '../../lib/util'
+import { cursorSdkFallback, executorBinary, executorMissingConfig } from '../../lib/executor-detect'
 import { loadGuardConfig } from './store'
 
 export interface ProviderInUse {
@@ -135,10 +136,12 @@ export function classifyConfiguredForCli(stateDir: string, opts: { onPath?: (bin
   const onPath = opts.onPath ?? findOnPath
   const env = guardEnvFor(stateDir)
   const registered = ['claude', 'codex']
-  if (cfg?.cursorAgentBin || onPath('cursor-agent') || process.env.CURSOR_API_KEY) registered.push('cursor')
-  if (cfg?.openaiBaseUrl && cfg.openaiModel) registered.push('openai')
-  if (cfg?.agyBin || onPath('agy')) registered.push('agy')
-  if (cfg?.geminiModel) registered.push('gemini')
+  // 「在不在」同 daemon 一套(lib/executor-detect);CLI 看不到 daemon.env 里的密钥,所以 openai / gemini 只看配置。
+  const c = cfg ?? {}
+  if (executorBinary('cursor', c, onPath) || cursorSdkFallback(c, process.env).key) registered.push('cursor')
+  if (executorMissingConfig('openai', c).length === 0) registered.push('openai')
+  if (executorBinary('agy', c, onPath)) registered.push('agy')
+  if (executorMissingConfig('gemini', c).length === 0) registered.push('gemini')
   const g = loadGuardConfig(stateDir)
   const resolve = makeResolveTarget(() => cfg, env)
   return configuredProviders(cfg, registered).map(p => {
