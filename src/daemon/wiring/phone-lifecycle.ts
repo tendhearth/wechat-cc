@@ -8,7 +8,7 @@
  * 面板最后(隧道在转它的请求)。只停一次;一处停坏了记一行、不挡后面的。
  * 关机先到、隧道后建 ⇒ add 时立刻停掉,不让它再连上去。
  */
-export const PHONE_STOP_ORDER = ['media-mirror', 'legacy-tunnel', 'v2-tunnel', 'notifier', 'phone-events', 'settings-panel'] as const
+export const PHONE_STOP_ORDER = ['media-mirror', 'legacy-tunnel', 'v2-tunnel', 'notifier', 'push-gate', 'phone-events', 'settings-panel'] as const
 export type PhoneStopName = typeof PHONE_STOP_ORDER[number]
 
 export interface PhoneLifecycle {

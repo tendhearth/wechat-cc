@@ -4,7 +4,7 @@
  * 不另造信号:像一台手机一样订阅事件集线器的 `approvals` 与 `agents` 两个主题(同一份摘要、同一套
  * poke),比较前后两份快照 —— 新的待批准 / 待回答、任务本轮做完(working → replied)、任务失败。
  * 第一份快照只做基线(daemon 重启不补发)。有登记设备才订阅,没有就退订,别让集线器空转。
- * 正在用实时订阅连着的手机不推(它自己看得见)。
+ * 正在用实时订阅连着的手机不推(它自己看得见)。推送经 deps.deliver —— 接线处让它先问 CC 开口那道门。
  */
 import type { PhoneEvents } from './phone-events'
 import type { ApprovalSummary } from './phone-topic-sources'
@@ -38,8 +38,13 @@ type AgentsSnap = { tasks: Array<{ id: string; title: string; phase: string }> }
 
 export function makePhoneNotifier(deps: {
   events: Pick<PhoneEvents, 'subscribe'>
-  push: Pick<PhonePush, 'registered' | 'notify'>
-  subscribedDevices(): Set<string>
+  /** 只用来判断要不要订阅(有登记设备才订阅)。 */
+  push: Pick<PhonePush, 'registered'>
+  /**
+   * 推一条。接线处给的是问过 CC 开口那道门的推送(speech/push-gate.ts:批准 / 提问 = blocking,做完 / 没做成 =
+   * report,免打扰里先压着)—— 这里不直接调 fanoutPush,免得绕过门。
+   */
+  deliver(p: PushPayload): void
   taskInfo(taskId: string): { title: string; status: string } | null
   log: (tag: string, line: string) => void
 }): { refresh(): void; dispose(): void } {
@@ -47,7 +52,7 @@ export function makePhoneNotifier(deps: {
   let approvalsSeen: Set<string> | null = null
   let agentsPrev: Map<string, { title: string; phase: string }> | null = null
 
-  const fanout = (p: PushPayload): void => { fanoutPush(deps, p) }
+  const fanout = (p: PushPayload): void => { deps.deliver(p) }
 
   // 一条事件失败不连累其余;整个 fanout(registered / subscribedDevices 抛)也不许冒出去。
   function safeFanout(mk: () => PushPayload | null): void {

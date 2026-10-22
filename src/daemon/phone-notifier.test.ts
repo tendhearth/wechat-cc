@@ -1,5 +1,5 @@
 import { describe, it, expect, vi } from 'vitest'
-import { makePhoneNotifier } from './phone-notifier'
+import { fanoutPush, makePhoneNotifier } from './phone-notifier'
 
 function harness(opts: { registered?: string[]; online?: string[]; tasks?: Record<string, { title: string; status: string }>; throwTask?: string; notifyThrowsFor?: string } = {}) {
   const handlers = new Map<string, (ev: { epoch: string; seq: number; data: unknown }) => void>()
@@ -9,9 +9,11 @@ function harness(opts: { registered?: string[]; online?: string[]; tasks?: Recor
   }
   let registered = opts.registered ?? ['dev1', 'dev2']
   const notify = vi.fn((id: string, _p: unknown) => { if (id === opts.notifyThrowsFor) throw new Error('down'); return true })
+  const push = { registered: () => registered, notify }
   const n = makePhoneNotifier({
-    events, push: { registered: () => registered, notify },
-    subscribedDevices: () => new Set(opts.online ?? []),
+    events, push,
+    // 接线处是问过门的推送(speech/push-gate.ts,另有测试);这里直接 fanout,只测「该推什么」
+    deliver: (p) => { fanoutPush({ push, subscribedDevices: () => new Set(opts.online ?? []), log: () => {} }, p) },
     taskInfo: (id) => { if (opts.throwTask === id) throw new Error('boom'); return opts.tasks?.[id] ?? null },
     log: () => {},
   })

@@ -214,3 +214,20 @@ describe('tell 的自带 send 回 false ⇒ 算没说出去(sendAssistantText �
     expect(await policy.tell('social_mail', OWNER, 'b', async () => undefined)).toBe(true)
   })
 })
+
+describe('policy.ask —— 只问门、不开一轮(App 原生推送)', () => {
+  it('放行 ⇒ 记 allowed + 调用方给的通道,不开 proactive 那一轮;免打扰里 report 推后、blocking 照放', () => {
+    const s = setup()
+    expect(s.policy.ask({ kind: 'matter_report', chatId: OWNER }, { channel: 'app', deliverable: true })).toEqual({ allow: true, channel: 'app' })
+    expect(s.out.open).not.toHaveBeenCalled()
+    expect(s.ledger[0]).toMatchObject({ outcome: 'allowed', channel: 'app' })
+    const q = setup({ quietEnds: Date.parse('2026-10-21T23:00:00.000Z') })
+    expect(q.policy.ask({ kind: 'matter_report', chatId: OWNER }, { channel: 'app', deliverable: true })).toMatchObject({ defer: true, reason: 'quiet_hours' })
+    expect(q.policy.ask({ kind: 'permission_ask', chatId: OWNER }, { channel: 'app', deliverable: true })).toEqual({ allow: true, channel: 'app' })
+  })
+  it('deliverable 用调用方给的,不看微信', () => {
+    const s = setup({ deliverable: false })
+    expect(s.policy.ask({ kind: 'matter_report', chatId: OWNER }, { channel: 'app', deliverable: true })).toEqual({ allow: true, channel: 'app' })
+    expect(s.policy.ask({ kind: 'matter_report', chatId: OWNER }, { channel: 'app', deliverable: false })).toMatchObject({ defer: true, reason: 'undeliverable' })
+  })
+})

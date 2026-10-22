@@ -461,7 +461,7 @@ export function buildPipelineDeps(opts: PipelineDepsOpts, refs: PipelineDepsRefs
   // 簇里的环在 wirePhone 里面解(显式的 late 对象);这里只拿结果。关机停它的那一项 main.ts 登记在 polling 之前。
   const phone = wirePhone({
     opts, stateDir, db, boot, ilink, log, chatPrefs, messagesStore,
-    ownerChatId, matterActivity, companionConverse, mattersService, memoryNightly, connections,
+    ownerChatId, matterActivity, companionConverse, mattersService, memoryNightly, connections, speech,
   })
   phoneDevices.current = () => phone.settingsPanel.phoneDevices().length
   const { appPush, companionApp, phoneChat, settingsPanel } = phone

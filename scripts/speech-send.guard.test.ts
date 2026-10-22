@@ -46,6 +46,13 @@ const BASELINE: Record<string, [Tag, number]> = {
   // 社交那几条通知:判定走 policy.say(social-tell.ts,经 sendAssistantText 发 —— 它管 App 回话截获与旁听,不换);
   // 剩下这一处是明信片的 sendFile,也只在 say 的生产者里。
   'src/daemon/bootstrap/wire-social.ts': ['primitive', 1],
+  // 工作台的微信通知:判定走 policy.say(批准 / 提问 = permission_ask,做完 / 失败 = matter_report);剩下这一处是工作台
+  // 自己的严格发送口(幂等 client_id + 绑定核对 + 回执),只在 say 的生产者里、经 turn.sendTextWith 当微信那条腿。
+  'src/daemon/bootstrap/wire-workbench-notifications.ts': ['primitive', 1],
+  // App 原生推送:fanoutPush 的定义(phone-notifier)和唯一的调用(wire-phone)。用它的三处 —— App 主动通道(只在 say 那一轮
+  // 收尾时推)、工作台通知推送(phone-notifier)、终端会话推送(appPush)—— 后两处先过 speech/push-gate.ts 问门(policy.ask)。
+  'src/daemon/phone-notifier.ts': ['primitive', 1],
+  'src/daemon/wiring/wire-phone.ts': ['primitive', 1],
   // main.ts 剩下的全是接线:回复交付、命令回话、信自己的投递、internal-api 的回话出口(主动开口都已经走门,10-21)
   'src/daemon/main.ts': ['primitive', 9],
   // pipeline-deps 剩下的全是接线:回话出口、proactive 的微信出口(发字 / 发文件)、给访客的回话、llm-health 的回话;访客申请已走门(10-21)
@@ -63,13 +70,12 @@ const BASELINE: Record<string, [Tag, number]> = {
   // 主人当面点的操作(桌面「分享这幅画」、广播),发给谁也是主人定的;以及回复那一轮里模型调的发文件 / 发表情。
   // 都不是 CC 主动开口 —— 别照这个口子把真正主动的东西塞进来(9d 评审)。
   'src/daemon/internal-api/routes.ts': ['reply', 6],
+  // 主人刚发「任务 X 文件 <id>」点名要的那份成果:在处理这条命令时同步送、结果就是这条命令的回话;worker 没有定时 / 扫描,
+  // 送不成也不自动重发(让主人重发命令)。回话不经门(设计稿「不改回复那条路」)。
+  'src/daemon/bootstrap/wire-workbench-artifacts.ts': ['reply', 1],
   // —— 要迁进 policy.say 的(盘点见设计稿第 2 步) ——
   'src/daemon/bootstrap/wire-jobs.ts': ['migrate', 1],   // 剩下是定时命令的回话(say);「没审成」那两句已走门(10-21)
-  'src/daemon/wiring/wire-phone.ts': ['migrate', 2],
-  'src/daemon/phone-notifier.ts': ['migrate', 2],
   'src/daemon/wiring/command-router.ts': ['migrate', 1],
-  'src/daemon/bootstrap/wire-workbench-notifications.ts': ['migrate', 1],
-  'src/daemon/bootstrap/wire-workbench-artifacts.ts': ['migrate', 1],
   'src/daemon/bootstrap/wire-activity.ts': ['migrate', 1],
   'src/daemon/bootstrap/wire-a2a-server.ts': ['migrate', 1],
   'src/daemon/bootstrap/index.ts': ['migrate', 1],

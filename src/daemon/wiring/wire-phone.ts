@@ -23,6 +23,7 @@ import { makePhoneEventsWiring } from '../phone-topic-sources'
 import { resolveRemoteRelays, mergeOnlineDevices } from '../remote-relay-config'
 import { makePhonePush } from '../phone-push'
 import { fanoutPush, makePhoneNotifier } from '../phone-notifier'
+import { makePushGate } from '../speech/push-gate'
 import { makeAppChannel } from '../companion/app-channel'
 import { makeMediaMirror } from '../companion/media-mirror'
 import { deviceIdOf } from '../device-store'
@@ -48,10 +49,12 @@ export interface WirePhoneDeps {
   mattersService: MattersService | null
   memoryNightly: MemoryNightlyRuntime
   connections: WireSettingsPanelDeps['connections']
+  /** CC 开口那道门:工作台 / 终端会话的原生推送先问它(speech/push-gate.ts)。 */
+  speech: Pick<import('../speech/policy').SpeechPolicy, 'ask'>
 }
 
 export function wirePhone(d: WirePhoneDeps) {
-  const { opts, stateDir, db, boot, ilink, log, chatPrefs, messagesStore, ownerChatId, matterActivity, companionConverse, mattersService, memoryNightly, connections } = d
+  const { opts, stateDir, db, boot, ilink, log, chatPrefs, messagesStore, ownerChatId, matterActivity, companionConverse, mattersService, memoryNightly, connections, speech } = d
   // 簇里晚到的那一样(面板要 phonePush 当值,phonePush 又要读面板):建好就填,读的地方判空。
   const late: { panel: ReturnType<typeof wireSettingsPanel> | null } = { panel: null }
 // 微信可点开的图形设置面板 (2026-08-25) — lazily-started LAN server, every
@@ -81,9 +84,15 @@ const phonePush = relays?.v2 ? makePhonePush({
 
 // 两条隧道合并(Review Focus 4):同一台手机从哪条连着都算在线。隧道没建 ⇒ 空。
 const onlineDevices = () => mergeOnlineDevices([legacyTunnel?.subscribedDeviceTokens() ?? [], v2Tunnel?.subscribedDeviceTokens() ?? []], deviceIdOf)
-// 终端会话的手机推送出口(cli-app-push.ts):与工作台通知同一套 fanout(在线的跳过、失败只记日志)。
-const appPush: import('../cli-app-push').AppPushOutlet = (p) =>
+// 推送本身(在线的跳过、失败只记日志)。这个文件里只有这一处调 fanoutPush;用它的三处:
+//  - App 主动通道(companionApp.push):只在 proactive-channel 那一轮收尾时推,那一轮已经过了门(say);
+//  - 工作台通知(phone-notifier)、终端会话(cli-app-push 的 appPush):由状态变化直接触发 ⇒ 先过 pushGate 问门。
+const fanout = (p: import('../phone-push').PushPayload) =>
   phonePush ? fanoutPush({ push: phonePush, subscribedDevices: onlineDevices, log: (tag, line) => log(tag, line) }, p) : null
+const pushGate = makePushGate({ speech, ownerChatId, push: fanout, log: (tag, line) => log(tag, line) })
+phoneLc.add('push-gate', () => pushGate.stop())
+// 终端会话的手机推送出口(cli-app-push.ts):问过门再推(批准 = blocking 照推;完成了 = report,免打扰里先压着)。
+const appPush: import('../cli-app-push').AppPushOutlet = (p) => (phonePush ? pushGate.push(p) : null)
 
 // 手机「跟 CC 说」(spec 2026-10-01):主人对话一页(只读)+ 收下即回的说一句。
 // 对话 chat 必须就是 companionConverse 写进去的那条(它认 companion 的 default_chat_id):
@@ -111,7 +120,7 @@ const companionApp = phonePush && phoneOwner ? makeAppChannel({
   relayOnline: () => v2Tunnel?.connected() ?? false,
   append: (rec) => messagesStore.append(rec),
   touched: () => { const m = phoneOwner.peek(); if (m) matterActivity?.note(m.matterId); phoneEvents?.poke() },
-  push: (p) => fanoutPush({ push: phonePush, subscribedDevices: onlineDevices, log: (tag, line) => log(tag, line) }, p),
+  push: (p) => fanout(p),
   ...(opts.stickers ? { stickerFile: (tag: string) => opts.stickers!.resolve(tag) } : {}),
   log: (tag, line) => log(tag, line),
 }) : null
@@ -187,8 +196,7 @@ if (relays) {
       const n = makePhoneNotifier({
         events: phone.events,
         push: phonePush,
-        // 两条隧道合并(Review Focus 4):同一台手机从哪条连着都算在线。
-        subscribedDevices: onlineDevices,
+        deliver: (p) => { pushGate.push(p) },
         taskInfo: (id) => { try { const d = wb.detail(id); return { title: d.task.title, status: d.task.status } } catch { return null } },
         log: (tag, line) => log(tag, line),
       })
