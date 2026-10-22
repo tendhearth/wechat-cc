@@ -39,8 +39,11 @@ function isCurrent(epoch) { return active && generation === epoch }
 /** A generic HTTP 503 or a connection error does not establish this state.
  * @param {unknown} error */
 function isSocialOff(error) {
-  return (error instanceof Error ? error.message : String(error)) === 'social_not_wired'
+  return SOCIAL_OFF_CODES.has(error instanceof Error ? error.message : String(error))
 }
+/** 社交关着:daemon 路由层统一回 module_off(第三批 3b);social_not_wired 是迁移前处理器自己回的,过渡期一起认。
+ * module_degraded(开着却没起来)不算关着 —— 走「暂时读不到 / 重试」,别劝主人去「开启」一个已经开着的东西。 */
+const SOCIAL_OFF_CODES = new Set(['module_off', 'social_not_wired'])
 
 /** @param {any} result */
 function wishGateErrText(result) {
@@ -167,7 +170,7 @@ export function renderOffers(data) {
 async function readList(path, field) {
   try {
     const response = /** @type {Record<string, any>|null|undefined} */ (await invokeApi('GET', path))
-    if (response?.error === 'social_not_wired') return { items: null, state: 'off' }
+    if (SOCIAL_OFF_CODES.has(response?.error)) return { items: null, state: 'off' }
     if (!Array.isArray(response?.[field])) return { items: null, state: 'error' }
     return { items: response[field] }
   } catch (error) {

@@ -69,7 +69,22 @@ export interface PanelSurface {
   readonly lanOnlyOps?: readonly string[]
 }
 
+/**
+ * 可整块关掉的功能模块(第三批 3b,设计稿 2026-10-22-daemon-module-design)。名字就是 daemon 子系统的名字
+ * (`/v1/health.subsystems[].name`),daemon 的路由层按它判这条路由此刻能不能走。只放**有整块开关**的模块;
+ * 已经有主人开关的东西(打猎、来访)不在这里(设计稿「一件事只有一个开关」)。
+ */
+export const MODULE_NAMES = ['social'] as const
+export type ModuleName = (typeof MODULE_NAMES)[number]
+
 export interface RouteSpec {
+  /**
+   * 这条路由属于哪个模块:那个模块此刻不是 ok ⇒ daemon 在**鉴权之后**、处理器之前统一回
+   * 503 `module_off`(主人关的)/ `module_degraded`(开着但没起来,带原因),处理器里不用再写分支。
+   * 只给「模块没起来就做不了」的路由标;开关路由本身(`POST /v1/social/enable`)和不依赖模块的读
+   * (关系视图、入站设置)不标。不进 gen:routes 的生成物(壳不需要知道,改它不用发版)。
+   */
+  readonly module?: ModuleName
   readonly desktop?: DesktopSurface
   readonly phone?: PanelSurface
   readonly set?: PanelSurface
@@ -324,17 +339,17 @@ export const ROUTES: Readonly<Record<RouteKey, RouteSpec>> = {
   // is the daemon-wide FILE token (trusted); an admin-tiered route here
   // would 403 every CLI/desktop call. send IS the real "broadcast to
   // strangers" step, so FLAG all four for the release security review.
-  'POST /v1/social/wish': { desktop: { tier: 'trusted' } },
-  'POST /v1/social/wish/send': { desktop: { tier: 'trusted' } },
-  'POST /v1/social/wish/cancel': { desktop: { tier: 'trusted' } },
-  'GET /v1/social/wishes': { desktop: { tier: 'trusted' } },
+  'POST /v1/social/wish': { module: 'social', desktop: { tier: 'trusted' } },
+  'POST /v1/social/wish/send': { module: 'social', desktop: { tier: 'trusted' } },
+  'POST /v1/social/wish/cancel': { module: 'social', desktop: { tier: 'trusted' } },
+  'GET /v1/social/wishes': { module: 'social', desktop: { tier: 'trusted' } },
   // 介绍 (spec 2026-09-04-introduction) — same trust class as the wish
   // routes above: CLI/desktop's only credential is the daemon-wide FILE
   // token (trusted); an admin-tiered route here would 403 every real call.
-  'POST /v1/social/intro/request': { desktop: { tier: 'trusted' } },
-  'POST /v1/social/intro/accept': { desktop: { tier: 'trusted' } },
-  'POST /v1/social/intro/decline': { desktop: { tier: 'trusted' } },
-  'GET /v1/social/intro/offers': { desktop: { tier: 'trusted' } },
+  'POST /v1/social/intro/request': { module: 'social', desktop: { tier: 'trusted' } },
+  'POST /v1/social/intro/accept': { module: 'social', desktop: { tier: 'trusted' } },
+  'POST /v1/social/intro/decline': { module: 'social', desktop: { tier: 'trusted' } },
+  'GET /v1/social/intro/offers': { module: 'social', desktop: { tier: 'trusted' } },
   // admin — owner-only same-session power: drives a real turn on the
   // owner's own chat session and returns the reply to the caller (app
   // conversation channel, voice arc Stage 0). Same trust class as the
@@ -384,7 +399,7 @@ export const ROUTES: Readonly<Record<RouteKey, RouteSpec>> = {
   'GET /v1/social/inbound': { desktop: { tier: 'trusted' } },
   'POST /v1/social/inbound': { desktop: { tier: 'trusted' } },
   'GET /v1/social/relationships': { desktop: { tier: 'trusted' } },
-  'POST /v1/social/visit': { desktop: { tier: 'trusted' } },
+  'POST /v1/social/visit': { module: 'social', desktop: { tier: 'trusted' } },
   // 打猎战利品(2026-09-03)。trusted 而非 admin:桌面端的凭证是 daemon 级
   // FILE token(=trusted),admin 会让每一次真实的桌面读 403 —— 觅食台的读
   // 路由 2026-07-22 正是这么静默坏了一个多月。写的两个也是 trusted:它们
@@ -410,11 +425,11 @@ export const ROUTES: Readonly<Record<RouteKey, RouteSpec>> = {
   // (2026-07-22 same-day demotion: reads were born admin copying the P2
   // precedent — which the live acceptance above proved wrong for the
   // desktop's trusted file token. All four are trusted now.)
-  'GET /v1/penpal/channels': { desktop: { tier: 'trusted' } },
-  'GET /v1/penpal/letters': { desktop: { tier: 'trusted' } },
-  'POST /v1/penpal/letters': { desktop: { tier: 'trusted' } },
-  'POST /v1/penpal/letters/read': { desktop: { tier: 'trusted' } },
-  'POST /v1/penpal/letters/resend': { desktop: { tier: 'trusted' } },
+  'GET /v1/penpal/channels': { module: 'social', desktop: { tier: 'trusted' } },
+  'GET /v1/penpal/letters': { module: 'social', desktop: { tier: 'trusted' } },
+  'POST /v1/penpal/letters': { module: 'social', desktop: { tier: 'trusted' } },
+  'POST /v1/penpal/letters/read': { module: 'social', desktop: { tier: 'trusted' } },
+  'POST /v1/penpal/letters/resend': { module: 'social', desktop: { tier: 'trusted' } },
   // LLM 记忆操作(spec 2026-07-23-daemon-owns-llm-memory-ops)。trusted:桌面/CLI
   // 唯一凭据是 0600 文件 token;localhost、动主人自己的记忆、烧一次 LLM。
   // ⚠️ RELEASE-REVIEW FLAG(下次 dev→master surface)。

@@ -26,7 +26,7 @@ import { mkdirSync, writeFileSync } from 'node:fs'
 import { join, dirname } from 'node:path'
 import { randomBytes } from 'node:crypto'
 import { makeTokenRegistry, type TokenInfo } from './token-registry'
-import { minTierFor, tierMeets } from './route-tiers'
+import { minTierFor, moduleFor, tierMeets } from './route-tiers'
 import type { UserTier } from '../../core/user-tier'
 import type { AddressInfo } from 'node:net'
 import {
@@ -221,6 +221,20 @@ export function createInternalApi(deps: InternalApiDeps): InternalApi {
         event: 'route_not_allowed', path: routeKey, caller: caller.tier, origin: caller.origin,
       })
       return send(res, 403, { error: 'route_not_allowed' }, origin)
+    }
+
+    // Module gate(第三批 3b,设计稿 2026-10-22-daemon-module-design):表里标了 module 的路由,那个模块此刻
+    // 不是 ok ⇒ 统一 503,处理器里不用再写分支。放在鉴权两道门**之后**:没权限的照旧 401 / 403,
+    // 不让「模块关着」变成探测装了什么功能的口子。主人关的 ⇒ module_off;开着却没起来 ⇒ module_degraded
+    // 带原因 —— 别把坏了说成关了。subsystems 里找不到这个模块(测试 / 还没登记)⇒ 放给处理器,它自己的兜底照旧。
+    const mod = moduleFor(routeKey)
+    if (mod) {
+      const st = deps.subsystems?.().find(s => s.name === mod)
+      if (st && st.state !== 'ok') {
+        const code = st.state === 'off' ? 'module_off' : 'module_degraded'
+        deps.log?.('INTERNAL_API', `503 ${routeKey} ${code} module=${mod}`, { event: code, path: routeKey, module: mod })
+        return send(res, 503, { error: code, module: mod, ...(st.state !== 'off' && st.error ? { detail: st.error } : {}) }, origin)
+      }
     }
 
     let body: unknown = null

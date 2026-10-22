@@ -156,6 +156,10 @@ export const WORKBENCH_ERRORS: Readonly<Record<string, WorkbenchErrorSpec>> = Ob
   // 而装着的旧版 App 不能强制升级:它会把 workbench_not_wired 落成 unknown(说一句 / 停下就成了「不确定送到没有」)。
   // 2026-10-21 架构复查:这里写明是有意的差异,不再只靠兜底规则。
   workbench_not_wired: {desktop: 503, phone: [503, 'unavailable']},
+  // 模块门(第三批 3b,daemon internal-api 的路由层统一回,routes.ts 表里的 module 字段):主人关的 ⇒ module_off;开着却没起来 ⇒
+  // module_degraded(带 detail)。手机老 App 不认这两个码 ⇒ 同 workbench_not_wired 收成 unavailable;桌面认原码(wishes / people / a2a-agents)。
+  module_off: {desktop: 503, phone: [503, 'unavailable']},
+  module_degraded: {desktop: 503, phone: [503, 'unavailable']},
   // ── 补充 / 提问 / 权限 / 轮次
   artifact_changed: {desktop: 409, phone: 409, wechat: '成果文件已变化或未通过校验，没有发送。请在桌面查看保存的版本。'},
   execution_conflict: {desktop: 409},
