@@ -52,8 +52,8 @@ export const CURSOR_CAPABILITIES: ProviderCapabilities = {
   supportsDelegation: false,
   supportsResume: true,
   defaultPeer: 'claude',
-  // 生产读的是 ACP_CURSOR_CAPABILITIES(false);这一行同样照保守写,没有按 tier 收紧 Cursor 自己工具的门。
-  guestSafe: false,
+  // 生产读的是 ACP_CURSOR_CAPABILITIES;这一行同样照保守写:沙箱收住写和命令,读工作区外、上网没核实 ⇒ 收不住。
+  confines: { read_outside_workspace: 'none', fs_write: 'sandbox', shell: 'sandbox', network: 'none' },
   authFailHint: 'Cursor 凭证无效，请检查电脑上的 CURSOR_API_KEY 后再发消息。',
 }
 

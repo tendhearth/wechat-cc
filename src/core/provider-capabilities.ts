@@ -19,7 +19,7 @@ export const CLAUDE_CAPABILITIES: ProviderCapabilities = {
   supportsResume: true,
   defaultPeer: 'codex',
   // 每次工具调用都过 canUseTool → daemon 的权限桥按会话 tier 判。
-  guestSafe: true,
+  confines: { read_outside_workspace: 'per_tool', fs_write: 'per_tool', shell: 'per_tool', network: 'per_tool' },
   authFailHint: 'Claude 登录已过期，请在电脑上跑 `claude login` 后再发消息。',
   // 回复交付第 5 步(2026-10-03,维护者按约定定,主人授权):最后一段非空文字就是回复,之前的段是旁白(不进微信,
   // 超过 120 秒 daemon 发一句进度)。wechat MCP 是 wechatStdioMcpSpec('claude') + 会话 env(sdkOptionsForProject),
@@ -46,7 +46,8 @@ export const CODEX_CAPABILITIES: ProviderCapabilities = {
   // 访客给的是 read-only 沙盒 + untrusted 审批(codex-agent-provider 的 guest 档),但 Codex 的只读沙盒照样能读
   // 整台电脑,cat / ls / grep 这类「安全命令」也不问就跑 ⇒ 访客能把 ~/.private_keys、记忆、access.json 读走
   // (2026-10-10 评审)。和 Cursor 一样对访客关门;trusted / admin 不受影响。
-  guestSafe: false,
+  // 网络:workspace-write 沙箱下 shell 能不能上网没真机核实过 ⇒ 按收不住写。
+  confines: { read_outside_workspace: 'none', fs_write: 'sandbox', shell: 'sandbox', network: 'none' },
   authFailHint: 'Codex 登录已过期，请在电脑上跑 `codex login` 后再发消息。',
   // 回复交付第 4 步(2026-10-03,维护者按约定定,主人授权):最后一段非空文字(= 一轮最后一条 agent_message)
   // 就是回复,之前的段是旁白(不进微信,超过 120 秒 daemon 发一句进度)。wechat MCP 是按 spawn 合进 SDK config
@@ -70,7 +71,8 @@ export const ACP_CURSOR_CAPABILITIES: ProviderCapabilities = {
   // Cursor 自己的工具面按 permissionMode 就地判(acp-agent-provider 的 permissions:'mode'),
   // tierProfile 根本到不了它;更要命的是工作区内的文件编辑压根不发 session/request_permission
   // (2026-09-17 真机 spike 第 2 条)—— 访客的权限约束不到它,所以 guest 一律拒。
-  guestSafe: false,
+  // 命令会发权限请求(对话侧按模式应答);读文件、上网没有任何门。
+  confines: { read_outside_workspace: 'none', fs_write: 'none', shell: 'per_tool', network: 'none' },
   defaultPeer: 'claude',
   authFailHint: 'cursor 登录态失效,请在电脑上跑一次 `cursor-agent login` 重新登录后再发消息。',
   // 回复交付第 3 步(2026-10-03,维护者按约定定,主人授权):最后一段非空文字就是回复,之前的段是旁白(不进微信,
@@ -97,7 +99,7 @@ export const OPENAI_CAPABILITIES: ProviderCapabilities = {
   supportsResume: false,
   defaultPeer: 'claude',
   // 循环是自己的,工具闸按会话 tier 判(上面 sandboxLevels 那条:tier 闸是唯一的门)。
-  guestSafe: true,
+  confines: { read_outside_workspace: 'per_tool', fs_write: 'per_tool', shell: 'per_tool', network: 'per_tool' },
   authFailHint: 'openai: set WECHAT_OPENAI_API_KEY (and check base_url/model in agent config).',
   // 回复交付第 1 步(spec 2026-10-03 §5.2):2026-10-03 维护者决定切 daemon(主人授权)。四轮 reply-once
   // 闸门里新路在真正的故障点上全面好于 legacy(污染会话 15/15 干净收住 vs legacy 8.4 条、3/5 跑满步数;
@@ -119,8 +121,8 @@ export const GEMINI_CAPABILITIES: ProviderCapabilities = {
   supportsDelegation: false,
   supportsResume: false,
   defaultPeer: 'claude',
-  // 同 openai:自研循环,工具闸按会话 tier 判。
-  guestSafe: true,
+  // 同 openai:自研循环,工具闸按会话 tier 判(它没有自带的读写 / 命令工具,所有工具都过闸)。
+  confines: { read_outside_workspace: 'per_tool', fs_write: 'per_tool', shell: 'per_tool', network: 'per_tool' },
   // 回复交付收尾(spec 2026-10-03 §5.7 删除清单「gemini 二选一」,2026-10-04 定:迁到 daemon,不删)。
   // 和 openai 同一种形状:自研循环(没有 functionCall 的那一步就是一轮的结束)、聊天型模型 ⇒ 全部文字段按
   // 顺序交付。迁过来后 legacy 路径不再有任何默认使用者,第 6 步可以整块删。这家一直没有真模型闸门(主人
@@ -148,8 +150,8 @@ export const AGY_CAPABILITIES: ProviderCapabilities = {
   supportsResume: true,
   defaultPeer: 'claude',
   // 没有逐工具回调、也没有映射的沙盒,自己的工具面按 tier 收不住。访客本来就被上面的共享钥匙那条挡着,
-  // 这里照实写 false,不靠那条兜。
-  guestSafe: false,
+  // 这里照实写,不靠那条兜。
+  confines: { read_outside_workspace: 'none', fs_write: 'none', shell: 'none', network: 'none' },
   authFailHint: 'agy 登录态失效，请在电脑上跑一次 `agy` 重新登录后再发消息。',
   // 回复交付第 2 步(2026-10-03):维护者决定切 daemon(主人授权)。沙盒闸门(真 agy,56 轮)两臂行为打平、
   // daemon 非回复工具调用更少(10.3 vs 15.0);结构收益:双发不再依赖命名空间折叠、共享令牌的附件绑到本轮

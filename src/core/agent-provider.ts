@@ -341,6 +341,23 @@ export type SandboxLevel = 'none' | 'read-only' | 'workspace-write' | 'full'
  * not authoring 8 new matrix rows or editing per-provider branches in
  * bootstrap (peer pairing / delegate availability derive from here).
  */
+export type Confinement = 'per_tool' | 'sandbox' | 'none'
+export interface ToolSurfaceConfinement {
+  /** 读工作区以外的文件(主人的私钥、记忆、access.json 都在外面)。 */
+  read_outside_workspace: Confinement
+  /** 改文件。 */
+  fs_write: Confinement
+  /** 跑命令。 */
+  shell: Confinement
+  /** 上网。 */
+  network: Confinement
+}
+
+/** 访客能不能用:四件事都收得住才行(provider-policy 的第 2 条规则读它)。 */
+export function guestSafe(cap: Pick<ProviderCapabilities, 'confines'>): boolean {
+  return Object.values(cap.confines).every(c => c !== 'none')
+}
+
 export interface ProviderCapabilities {
   /**
    * In `primary_tool` mode this provider delegates to `delegate_<peer>`;
@@ -389,12 +406,13 @@ export interface ProviderCapabilities {
   supportsDelegation: boolean
   /** Can resume an existing session id across daemon restarts. */
   supportsResume: boolean
-  /** false ⇒ 该 provider 无法按 tier 约束自己的工具(如 ACP 的工作区编辑不经权限卡),guest 一律拒。
-   *  与 `adminMcpTools` 是两件事:那条说的是"MCP 子进程拿到的是不是本会话的 tier",
-   *  这条说的是"provider 自带的工具(Cursor 自己的读写/执行)有没有一道按 tier 收紧的门"。
-   *  必填(3c,2026-10-22):以前缺省 = true,新加一家忘了写就默认对访客开门 —— 缺省往放行的方向兜底。
-   *  true 只给工具面真有一道按 tier 收紧的门的:daemon 的权限桥(claude)或自己的工具闸(openai / gemini)。 */
-  guestSafe: boolean
+  /**
+   * provider 自带的工具面(不是 wechat MCP —— 那个按会话档位注册)在四件事上怎么被档位收住(3c Policy 第 4 步,2026-10-22):
+   * 'per_tool' = 每次调用按档位判(daemon 权限桥 / 自己的工具闸);'sandbox' = SDK 沙箱粗粒度收住;'none' = 收不住。
+   * **没核实过的一律写 'none'**(按做不到算,不替它说好话)。访客能不能用由这张表推出来(`guestSafe(cap)`):
+   * 有一件收不住就不行。以前是手写一个 guestSafe 布尔,理由只在注释里。
+   */
+  confines: ToolSurfaceConfinement
   /**
    * 回复交付开关(spec 2026-10-03-reply-delivery §5.0)。缺省 = 'legacy':走 reply 工具 + FALLBACK_REPLY。
    * 'shadow':照旧,但每轮算一次新路会发什么,记 [REPLY_SHADOW];'daemon':最后的话就是回复。

@@ -97,7 +97,7 @@ describe('ghost-gemini — extensibility check (RFC 05 Phase 2)', () => {
       sandboxLevels: new Set<'none' | 'read-only' | 'workspace-write' | 'full'>(),
       supportsDelegation: false,
       supportsResume: false,
-      guestSafe: true,
+      confines: { read_outside_workspace: 'per_tool', fs_write: 'per_tool', shell: 'per_tool', network: 'per_tool' } as const,
     }
     const modes: Mode['kind'][] = ['solo', 'parallel', 'primary_tool', 'chatroom']
     const perms: PermissionMode[] = ['strict', 'dangerously']

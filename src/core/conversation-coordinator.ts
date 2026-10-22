@@ -686,7 +686,7 @@ export function createConversationCoordinator(deps: ConversationCoordinatorDeps)
     // a provider a guest may not use: agy (one long-lived 'trusted' token for
     // every conversation — agy-mcp-config.ts) or cursor (ACP: its own file
     // edits inside the workspace never surface a permission card, so a guest's
-    // tier cannot confine it — ProviderCapabilities.guestSafe === false).
+    // tier cannot confine it — guestSafe(cap) === false —— its confines table has an unconfined entry).
     // Originally agy-only ("agy final-review Important 2").
     {
       const rawTier = resolveTier(msg.chatId, deps.loadAccess())

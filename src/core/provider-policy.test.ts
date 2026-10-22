@@ -1,6 +1,8 @@
 import { describe, it, expect } from 'vitest'
 import { describeProviderDenial, providerDenialFor, providerForSlash, slashFor } from './provider-policy'
 import { PROVIDER_IDS } from '../lib/provider-ids'
+import { capabilitiesFor } from './capability-matrix'
+import { guestSafe } from './agent-provider'
 
 describe('providerDenialFor', () => {
   it('admin is never denied', () => {
@@ -36,6 +38,18 @@ describe('providerDenialFor', () => {
     expect(providerDenialFor('bogus', 'guest', undefined)).toEqual({ kind: 'unconfined_guest' })
     expect(providerDenialFor('bogus', 'trusted', undefined)).toBeNull()
     expect(providerDenialFor('bogus', 'admin', undefined)).toBeNull()
+  })
+  // 3c Policy 第 4 步:访客能不能用不再手写,从能力表的 confines(四件事各靠哪道门收住)推出来。
+  // 推出来的结果必须和手写时代一样 —— 这条把六家逐个钉住,并说清是哪一件收不住。
+  it('guestSafe is derived from what the tool surface can confine; the six executors land where the hand-written flag was', () => {
+    const unconfined = Object.fromEntries(PROVIDER_IDS.map(id => [id, Object.entries(capabilitiesFor(id).confines).filter(([, c]) => c === 'none').map(([k]) => k).sort()]))
+    expect(unconfined).toEqual({
+      claude: [], openai: [], gemini: [],
+      codex: ['network', 'read_outside_workspace'],
+      cursor: ['fs_write', 'network', 'read_outside_workspace'],
+      agy: ['fs_write', 'network', 'read_outside_workspace', 'shell'],
+    })
+    for (const id of PROVIDER_IDS) expect(guestSafe(capabilitiesFor(id)), id).toBe(unconfined[id]!.length === 0)
   })
   it('a guest gets exactly the executors whose capabilities declare a tier-confined tool surface (guestSafe) and a per-session MCP tier', () => {
     const open = PROVIDER_IDS.filter(id => providerDenialFor(id, 'guest', undefined) === null)
