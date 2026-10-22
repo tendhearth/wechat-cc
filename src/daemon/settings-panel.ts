@@ -33,6 +33,7 @@ import { loadAgentConfig, saveAgentConfig, modelForProvider } from '../lib/agent
 import { saveLlmKey } from './llm-keys'
 import { PROVIDER_SETUP_HINTS, type LlmHealthReport } from './llm-health'
 import { capabilitiesFor } from '../core/capability-matrix'
+import { providerDenialFor } from '../core/provider-policy'
 import { PROVIDER_IDS } from '../lib/provider-ids'
 import { buildFeed, FEED_DEFAULT_LIMIT, dayKey, type FeedSources, type TurnLite } from './mobile-feed'
 import presenceArt from './mobile-presence-art.json'
@@ -338,7 +339,8 @@ export function makeSettingsPanel(deps: SettingsPanelDeps): SettingsPanel {
       //    但访客照样用不了 —— 两条规矩(core/provider-policy.ts)对得上。
       trusted_providers: cfg.trusted_providers ?? null,
       shared_token: PANEL_PROVIDERS.filter(id => { try { return !capabilitiesFor(id).adminMcpTools } catch { return false } }),
-      guest_blocked: PANEL_PROVIDERS.filter(id => { try { const c = capabilitiesFor(id); return c.guestSafe === false || !c.adminMcpTools } catch { return false } }),
+      // 从 providerDenialFor 推出来,不另抄一遍规矩:面板说的和分派时真挡的永远是同一个判断。
+      guest_blocked: PANEL_PROVIDERS.filter(id => providerDenialFor(id, 'guest', undefined) !== null),
     }
   }
 

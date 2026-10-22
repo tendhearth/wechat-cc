@@ -31,8 +31,15 @@ describe('providerDenialFor', () => {
     // guest: the allowlist applies too (it is "non-admin"), after the shared-token rule
     expect(providerDenialFor('claude', 'guest', ['openai'])).toEqual({ kind: 'not_in_trusted_list', allowed: ['openai'] })
   })
-  it('unknown provider ids do not throw (registry validates elsewhere)', () => {
-    expect(providerDenialFor('bogus', 'guest', undefined)).toBeNull()
+  // 3c(2026-10-22):以前查不到能力的 id 对访客放行 —— 缺省往放行的方向兜底。现在关门;非访客照旧只看名单。
+  it('unknown provider ids do not throw, and a guest is refused them (fail closed)', () => {
+    expect(providerDenialFor('bogus', 'guest', undefined)).toEqual({ kind: 'unconfined_guest' })
+    expect(providerDenialFor('bogus', 'trusted', undefined)).toBeNull()
+    expect(providerDenialFor('bogus', 'admin', undefined)).toBeNull()
+  })
+  it('a guest gets exactly the executors whose capabilities declare a tier-confined tool surface (guestSafe) and a per-session MCP tier', () => {
+    const open = PROVIDER_IDS.filter(id => providerDenialFor(id, 'guest', undefined) === null)
+    expect(open.sort()).toEqual(['claude', 'gemini', 'openai'])
   })
   it('messages + slash words', () => {
     expect(describeProviderDenial({ kind: 'shared_token_guest' }, 'agy')).toBe('/agy 目前仅管理员/信任聊天可用（工具通道暂无法按会话隔离权限）。')
