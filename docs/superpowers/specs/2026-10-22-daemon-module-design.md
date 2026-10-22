@@ -148,6 +148,12 @@ app.status()  // [{ name, state: 'ok' | 'off' | 'degraded', error?, sinceIso }]
 
 第 1–3 步做完,主人就能看到效果:设置里社交一个开关,关了就整块不跑。后面几步是还账,随时可以停。
 
+## 待办(迁移途中记下的)
+
+- **a2a-server 的 listen 要挪到 onStart**(9d 评审 #552):现在 \`a2aServerModule\` 在 init 里就 listen 了。它眼下没有上游,所以无害;等 speech 进了容器、a2a 写上 \`needs: ['speech']\`,listen 就得挪到 start 段,不然上游在 start 段才坏时,它已经在收信了。
+- **核心链(会话、ilink、拉消息、工作台、internal-api)最后迁**:风险最大。等 #546–#552 这一批上线、主人用一阵、日志干净了再动。guard、cli-upgrade 两个 \`Ref\` 跟着它们一起换。
+- 社交关着时 \`/set\` 列表里那行「每日串门: on」不带说明(小,未做)。
+
 ## 评审定下的(9d,#541)
 
 1. **`lazy` 单独不够** ⇒ 分 init / start 两段。真环有两个:ilink ↔ speech 在构造期,pipeline ↔ polling 在运行期。
