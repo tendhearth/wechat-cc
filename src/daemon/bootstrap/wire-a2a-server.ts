@@ -197,3 +197,21 @@ export async function wireA2aServer(deps: A2aServerDeps): Promise<A2aServerWirin
 
   return { a2aServer, a2aDeps }
 }
+
+/**
+ * A2A 服务是一个模块(第三批 3b 第 5 步):总是 ok(没配 a2a_listen 时服务是 null,出站照样能用 —— 跟以前一样)。
+ * 服务一起来就经 `own` 登记停法。以前由 runtime/shutdown 经 boot() 停,开机没走完 boot 还是 null,端口就不放;
+ * 而且现在按开机的倒序,它在社交、知识库**之前**停:先关进来的门,再关处理来信的人。
+ */
+export function a2aServerModule(deps: A2aServerDeps): import('../modules/container').DaemonModule<A2aServerWiring> {
+  return {
+    name: 'a2a-server',
+    optional: true,
+    async init(m) {
+      const w = await wireA2aServer(deps)
+      const server = w.a2aServer
+      if (server) m.own('server', () => server.stop())
+      return w
+    },
+  }
+}

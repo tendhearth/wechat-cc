@@ -21,3 +21,9 @@ export async function runModuleGroup(
   await group.start()
   return group
 }
+
+/** 只有一个模块的组:回它提供的东西;关着 / 起失败 ⇒ undefined(跟以前 sup.start 回 undefined 同一个约定)。 */
+export async function runModule<T>(ctx: Pick<BootstrapCtx, 'sup' | 'log' | 'teardown'>, mod: DaemonModule<T>): Promise<T | undefined> {
+  const group = await runModuleGroup(ctx, mod.name, [mod])
+  return group.provided<T>(mod.name)
+}

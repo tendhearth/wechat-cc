@@ -330,7 +330,8 @@ export interface Bootstrap {
   }
   /**
    * Running A2A HTTP server — null when a2a_listen is not configured.
-   * main.ts calls a2aServer?.stop() in shutdown.
+   * Stopped by its module's own (bootstrap/wire-a2a-server.ts a2aServerModule) via the teardown list —
+   * also when boot didn't finish. Tests that build a bootstrap without running teardown stop it themselves.
    */
   a2aServer: import('../../core/a2a-server').A2AServer | null
   /**
@@ -419,9 +420,9 @@ export interface Bootstrap {
    * available before `buildBootstrap` runs, so main.ts can pass this same
    * shape straight into `registerInternalApi`'s `knowledge` dep (T3).
    * Exposed here so bootstrap tests can assert the config gate and so the
-   * store can be closed in test teardown (mirrors `boot.a2aServer`'s
-   * teardown posture — `store.close()` is the caller's job, same as
-   * `a2aServer?.stop()`).
+   * store can be closed in test teardown. In production it is closed by the
+   * knowledge module (wire-knowledge.ts) via the teardown list, like the A2A
+   * server — tests that skip teardown close it themselves.
    *
    * Agent-facing Search (Task 2) — `embedder` is the ONE shared, long-lived
    * embed-subprocess service (../../core/knowledge/embedder-service.ts)
