@@ -20,6 +20,7 @@
  * admin-commands, EVERY user can flip their own chat's mode (no admin
  * gate) — this is per-chat user preference, not a system-wide change.
  */
+import { SOCIAL_OFF_LINE, socialUnavailableLine } from './social-state'
 import { hhmmInQuiet, parseQuietHours, quietLabel } from '../core/quiet-hours'
 import { parseAvoidTopics, topicLabels, type AvoidTopic } from '../core/companion-topics'
 import type { ConversationCoordinator } from '../core/conversation-coordinator'
@@ -67,6 +68,8 @@ export interface ModeCommandsDeps {
   /** `/api list` 的网关模型发现(daemon/openai-models.ts)。缺省 ⇒ 列表只有别名。 */
   openaiModels?: { list(): Promise<{ models: string[]; error?: string; fromCache?: boolean }> }
   /** Per-chat prefs (chat-prefs store). /set reads+writes THIS chat's entry. */
+  /** 社交此刻的状态(daemon/social-state.ts)。`/set visit on` 时社交不在 ⇒ 照存,但说清楚现在不会去串门。缺省 ⇒ 老说法。 */
+  socialState?: () => import('./social-state').SocialState
   chatPrefs: {
     get(chatId: string): ModeChatPrefs
     set(chatId: string, patch: ModeChatPrefs): ModeChatPrefs
@@ -652,7 +655,12 @@ export function makeModeCommands(deps: ModeCommandsDeps): ModeCommands {
           }
           const on = /^(on|开)$/i.test(rawValue)
           deps.chatPrefs.set(msg.chatId, { visit: on })
-          await reply(msg.chatId, on ? '每日串门已开启。' : '每日串门已关闭。')
+          // 社交不在时照存(主人可能是先设好、再去开社交),但别说成「已开启」就完了 —— 那等于说它会去串门,其实不会
+          const social = on ? deps.socialState?.() : undefined
+          await reply(msg.chatId, !on ? '每日串门已关闭。'
+            : social === 'off' ? `记下了:每日串门开。不过${SOCIAL_OFF_LINE.replace(/。$/, '')},开了社交才会去串门。`
+            : social === 'degraded' || social === 'pending' ? `记下了:每日串门开。不过${socialUnavailableLine(social)}`
+            : '每日串门已开启。')
           deps.log('MODE_CMD', `chat=${msg.chatId} /set visit=${on}`)
           return true
         }

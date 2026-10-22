@@ -74,6 +74,27 @@ function registerRefPost(
   })
 }
 
+/**
+ * 社交现在起着没有(第三批 3b 第 3 步 3-2):没起 ⇒ 这些工具不挂给模型 —— 模型看不到的就不会去试,
+ * 也就不会拿一个 module_off 回来再跟主人解释一遍。开关改了要重启才生效,MCP 子进程跟着会话重起,所以开机时读一次就够。
+ * **失败就放行**:读不到 / 超时 / 老 daemon 没有 social 这一项 ⇒ 照旧挂上(路由那道门仍会照实回 module_off),
+ * 不能因为一次读失败把主人开着的社交弄丢。最多等 2 秒,不拖住会话启动。
+ */
+export async function socialIsUp(client: InternalApiClient, timeoutMs = 2_000): Promise<boolean> {
+  try {
+    let timer: ReturnType<typeof setTimeout> | undefined
+    const health = await Promise.race([
+      client.request<{ subsystems?: Array<{ name: string; state: string }> }>('GET', '/v1/health'),
+      new Promise<null>(r => { timer = setTimeout(() => r(null), timeoutMs) }),
+    ])
+    if (timer) clearTimeout(timer)
+    const social = health?.subsystems?.find(s => s.name === 'social')
+    return !social || social.state === 'ok'
+  } catch {
+    return true
+  }
+}
+
 export function registerSocialTools(server: McpServer, client: InternalApiClient): void {
   registerSocialSeekTool(server, client)
 

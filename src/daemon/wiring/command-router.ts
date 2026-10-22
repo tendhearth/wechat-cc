@@ -23,6 +23,7 @@ import { parsePairCommand } from '../../core/pair-command'
 import { parseSeekCommand } from '../../core/seek-command'
 import { parseGuestCommand } from '../../core/guest-command'
 import { parseIntroCommand } from '../../core/intro-command'
+import { socialUnavailableLine, type SocialState } from '../social-state'
 import { previewText } from '../inbound/mw-access'
 import { GUEST_REQUEST_TTL_MS } from '../guest-requests'
 import type { GuestRequestStore } from '../guest-requests'
@@ -48,6 +49,12 @@ export interface CommandRouterDeps {
   }
   /** 回信 — present only when the pen-pal channel is wired. */
   penpal?: { sendLetter(channel: string, text: string): Promise<{ ok: boolean; error?: string }> }
+  /**
+   * 社交没接上时它现在是关着还是坏了(第三批 3b 第 3 步 3-2)。有它 ⇒ 主人发了一句社交命令(串门 / 派 / 认识 / 回信)
+   * 而社交不在,**明说**(关着:去设置里打开;坏了:没起来、去哪看原因),不再悄悄落成一轮普通对话。
+   * 只在那句话确实是社交命令时才调(probe 每条消息都过,读配置要省着)。缺省 ⇒ 老行为。
+   */
+  socialState?: () => SocialState
   /** 配对 — present only when mailbox_relays is configured. */
   pairing?: PairingEngine
   /** Guest path (允许/拒绝/邀请码/待批准) — always constructed, gated by admins-list. */
@@ -73,10 +80,24 @@ export function makeCommandRouter(deps: CommandRouterDeps): CommandRouter {
   const now = deps.now ?? (() => Date.now())
   const say = (chatId: string, text: string) => { void deps.sendAssistantText?.(chatId, text) }
 
+  /** 是社交命令,而社交此刻不在 ⇒ 关着 / 坏了;否则 null(包括不是社交命令、社交好好的、没接 socialState)。 */
+  const socialAbsentFor = (t: string): Exclude<SocialState, 'ok'> | null => {
+    if ((deps.social && deps.penpal) || !deps.socialState) return null
+    // 「同意 <ref>」除外:「同意」也是权限卡的放行词(pending-permissions 的 ALLOW_WORDS),码是两位数(「同意 07」);
+    // 社交不在时根本不会有待回的介绍,这句只可能是在批权限,别回它「社交关着」
+    const intro = parseIntroCommand(t)
+    const isSocialCmd = (!deps.social && (parseVisitCommand(t) || parseSeekCommand(t) || (intro && intro.kind !== 'accept')))
+      || (!deps.penpal && parseLetterCommand(t))
+    if (!isSocialCmd) return null
+    const s = deps.socialState()
+    return s === 'ok' ? null : s
+  }
+
   return {
     probe(msg: InboundMsg): boolean {
       if (!deps.isAdmin(msg.chatId)) return false
       const t = msg.text
+      if (socialAbsentFor(t)) return true
       if (deps.social && (parseVisitCommand(t) || parseSeekCommand(t) || parseIntroCommand(t))) return true
       if (deps.penpal && parseLetterCommand(t)) return true
       if (deps.pairing && parsePairCommand(t)) return true
@@ -84,6 +105,11 @@ export function makeCommandRouter(deps: CommandRouterDeps): CommandRouter {
       return false
     },
     async tryHandle(msg: InboundMsg): Promise<boolean> {
+      // 社交命令,但社交不在:明说,不落成普通对话(关着 ≠ 坏了,两句话不一样)
+      if (deps.isAdmin(msg.chatId)) {
+        const absent = socialAbsentFor(msg.text)
+        if (absent) { say(msg.chatId, socialUnavailableLine(absent)); return true }
+      }
       // 串门(2026-09-03 实验)—— 主人说「串门」,伙伴挑一个开着的笔友信道过去
       // 聊几句,回来讲给主人听。见 core/visit.ts 顶部的 WHY。
       if (deps.social && deps.isAdmin(msg.chatId)) {

@@ -20,6 +20,7 @@ function setup(opts: {
   notes?: Partial<Record<ProviderId, string>>
   initiativeJobTimes?: Array<{ label: string; at: string }>
   requestRestart?: (reason: string) => void
+  socialState?: 'ok' | 'off' | 'degraded' | 'pending'
 } = {}) {
   const registered = opts.registered ?? ['claude', 'codex']
   const set = vi.fn<(chatId: string, mode: Mode) => void>()
@@ -53,6 +54,7 @@ function setup(opts: {
     set: (c: string, p: { split?: boolean; care?: 'off' | 'low' | 'high'; stickers?: boolean; hunt?: boolean }) => { const n = { ...(prefsData.get(c) ?? {}), ...p }; prefsData.set(c, n); return n },
   }
   const cmds = makeModeCommands({
+    ...(opts.socialState ? { socialState: () => opts.socialState! } : {}),
     ...(opts.initiativeJobTimes ? { initiativeJobTimes: () => opts.initiativeJobTimes! } : {}),
     coordinator: {
       getMode: () => stored ?? { kind: 'solo', provider: opts.defaultProviderId ?? 'claude' },
@@ -1234,5 +1236,35 @@ describe('probe(路由探针:只读)', () => {
     const h = makeModeCommands({ getMode: () => ({ kind: 'solo', provider: 'claude' } as unknown as Mode), setMode: async () => {}, providers: () => ['claude' as ProviderId], tierOf: () => 'admin' as UserTier, sendMessage: async () => ({}) } as unknown as Parameters<typeof makeModeCommands>[0])
     for (const t of ['/帮助', '/both', '/chat', '/solo claude']) expect(h.probe(inbound(t)), t).toBe(true)
     for (const t of ['今天天气不错', '帮助', '任务 列表']) expect(h.probe(inbound(t)), t).toBe(false)
+  })
+})
+
+describe('/set visit:社交不在时照存,但不说成「已开启」就完了(第三批 3b 第 3 步 3-2)', () => {
+  it('社交好好的 ⇒ 照旧「每日串门已开启」', async () => {
+    const { cmds, sentMessages, prefsData } = setup({ socialState: 'ok' })
+    await cmds.handle(inbound('/set visit on'))
+    expect(sentMessages.at(-1)?.[1]).toBe('每日串门已开启。')
+    expect(prefsData.get('chat-1')).toMatchObject({ visit: true })
+  })
+  it('**社交关着 ⇒ 照存,并说开了社交才会去串门**(以前回「已开启」,等于说它会去,其实不会)', async () => {
+    const { cmds, sentMessages, prefsData } = setup({ socialState: 'off' })
+    await cmds.handle(inbound('/set 串门 开'))
+    expect(prefsData.get('chat-1')).toMatchObject({ visit: true })
+    expect(sentMessages.at(-1)?.[1]).toBe('记下了:每日串门开。不过社交现在关着,去设置里打开,开了社交才会去串门。')
+  })
+  it('社交开着却没起来 ⇒ 说没起来、去哪看,不劝他去开', async () => {
+    const { cmds, sentMessages } = setup({ socialState: 'degraded' })
+    await cmds.handle(inbound('/set visit on'))
+    expect(sentMessages.at(-1)?.[1]).toBe('记下了:每日串门开。不过社交开着,但现在没起来,原因在「CC 现在怎么样」里。')
+  })
+  it('社交刚打开、还没重启 ⇒ 说重启后才生效', async () => {
+    const { cmds, sentMessages } = setup({ socialState: 'pending' })
+    await cmds.handle(inbound('/set visit on'))
+    expect(sentMessages.at(-1)?.[1]).toBe('记下了:每日串门开。不过社交刚打开,重启 CC 后才生效。')
+  })
+  it('关串门不用提社交', async () => {
+    const { cmds, sentMessages } = setup({ socialState: 'off' })
+    await cmds.handle(inbound('/set visit off'))
+    expect(sentMessages.at(-1)?.[1]).toBe('每日串门已关闭。')
   })
 })
