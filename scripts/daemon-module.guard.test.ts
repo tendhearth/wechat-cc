@@ -37,8 +37,8 @@ const CONTAINER = 'src/daemon/modules/container.ts'
 
 // 2026-10-22 基线(按文件)。迁一处减一;迁完的行删掉。
 const BASELINE: Record<string, Partial<Record<Kind, number>>> = {
-  'src/daemon/main.ts': { Ref: 2, 'lc.register': 21, 'sup.start': 10 },
-  'src/daemon/bootstrap/index.ts': { Ref: 1, 'sup.start': 4 },
+  'src/daemon/main.ts': { Ref: 2, 'lc.register': 20, 'sup.start': 9 },
+  'src/daemon/bootstrap/index.ts': { Ref: 1, 'sup.start': 3 },
   'src/daemon/bootstrap/wire-cli-sessions.ts': { 'lc.register': 2 },
   // 过渡桥(第 2 步):一组模块的 stopAll 先登记进收尾清单再起。bootstrap 全部迁完,它跟收尾清单一起删
   'src/daemon/bootstrap/module-group.ts': { 'teardown.add': 1 },

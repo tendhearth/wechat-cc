@@ -26,7 +26,7 @@ function ilinkStub() {
 }
 
 describe('buildBootstrap boot order', () => {
-  it('sup.start 的名字序列 == knowledge → self-restart → social → a2a-server → pairing → yi', async () => {
+  it('sup.start / adopt 的名字序列 == knowledge → self-restart → social → mailbox-poller → a2a-server → pairing → yi', async () => {
     const sup = new SubsystemSupervisor(() => {})
     const names: string[] = []
     const realStart = sup.start.bind(sup)
@@ -44,7 +44,8 @@ describe('buildBootstrap boot order', () => {
       internalApi: { baseUrl: 'http://127.0.0.1:0', tokenFilePath: join(tmpdir(), 'token') },
     })
     try {
-      expect(names).toEqual(['knowledge', 'self-restart', 'social', 'a2a-server', 'pairing', 'yi'])
+      // mailbox-poller 从第三批 3b 第 3 步起是社交那一组里的模块(以前在 main.ts 里单独起,不在这个序列里)
+      expect(names).toEqual(['knowledge', 'self-restart', 'social', 'mailbox-poller', 'a2a-server', 'pairing', 'yi'])
       // 每个名字只 start 一次(同名二次 start 直接 throw,这里顺带钉住不重复)。
       expect(new Set(names).size).toBe(names.length)
     } finally {

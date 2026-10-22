@@ -1,22 +1,23 @@
 /**
- * wire-mailbox-deps.ts — content-blind mailbox 轮询器的 deps(main.ts 据此决定挂不挂
- * registerMailboxPoller)。从 bootstrap/index.ts 逐字搬出(2026-09-27 bootstrap 拆分,
+ * wire-mailbox-deps.ts — content-blind mailbox 轮询器的 deps。第三批 3b 第 3 步起由社交那一组里的
+ * `mailbox-poller` 模块调用(./social-module.ts),不再经 main.ts。从 bootstrap/index.ts 逐字搬出(2026-09-27 bootstrap 拆分,
  * spec 2026-09-27-bootstrap-split-design);块内逻辑与注释不变,只参数化:
  * deps.stateDir/log → ctx.*,configuredAgent → ctx.configuredAgent,a2aRegistry /
  * socialWiring.onMailboxLetter / readAgentConfig 走 parts.*。
  */
 import type { A2ARegistry } from '../../core/a2a-registry'
-import type { Bootstrap, BootstrapCtx } from './types'
+import type { BootstrapCtx } from './types'
+import type { MailboxPollerDeps } from './wire-mailbox'
 import type { SocialWiring } from './wire-social'
 import type { ModelOptionsSlice } from './wire-model-options'
 
 export function wireMailboxDeps(
   ctx: Pick<BootstrapCtx, 'stateDir' | 'log' | 'configuredAgent'>,
   parts: { a2aRegistry: A2ARegistry; onMailboxLetter: SocialWiring['onMailboxLetter']; readAgentConfig: ModelOptionsSlice['readAgentConfig'] },
-): Bootstrap['mailboxPollerDeps'] {
+): MailboxPollerDeps | undefined {
   // Content-blind mailbox transport (sub-project B, Task 8) — the poller's
   // deps, constructed only when social wiring is live AND at least one relay
-  // is configured. main.ts mounts `registerMailboxPoller(mailboxPollerDeps)`
+  // is configured. The mailbox-poller module mounts `registerMailboxPoller(deps)`
   // on the companion scheduler iff this is present; otherwise the feature
   // stays fully inert (no poll timer, no relay traffic). I1: `onMailboxLetter`
   // is `socialWiring.onMailboxLetter` (own-channel-only) — the only inbound
