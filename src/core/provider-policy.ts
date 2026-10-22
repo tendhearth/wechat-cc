@@ -36,13 +36,14 @@ export function providerDenialFor(
   trustedProviders: readonly ProviderId[] | undefined,
 ): ProviderDenial | null {
   if (tier === 'admin') return null
-  let shared = false
-  try { shared = !capabilitiesFor(providerId).adminMcpTools } catch { shared = false }
-  if (tier === 'guest' && shared) return { kind: 'shared_token_guest' }
-  // guestSafe 未声明 = true(老 provider 的工具面有权限桥或 sandbox 收着);只有明确写 false 的才挡。
-  let unconfined = false
-  try { unconfined = capabilitiesFor(providerId).guestSafe === false } catch { unconfined = false }
-  if (tier === 'guest' && unconfined) return { kind: 'unconfined_guest' }
+  if (tier === 'guest') {
+    // 能力表里查不到的 id(拼错、或新加一家漏了登记)对访客关门:缺省往拒绝的方向兜底(3c,2026-10-22)。
+    let cap: ReturnType<typeof capabilitiesFor> | null = null
+    try { cap = capabilitiesFor(providerId) } catch { cap = null }
+    if (!cap) return { kind: 'unconfined_guest' }
+    if (!cap.adminMcpTools) return { kind: 'shared_token_guest' }
+    if (!cap.guestSafe) return { kind: 'unconfined_guest' }
+  }
   if (trustedProviders && !trustedProviders.includes(providerId)) return { kind: 'not_in_trusted_list', allowed: trustedProviders }
   return null
 }

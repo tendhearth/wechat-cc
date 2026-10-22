@@ -52,6 +52,8 @@ export const CURSOR_CAPABILITIES: ProviderCapabilities = {
   supportsDelegation: false,
   supportsResume: true,
   defaultPeer: 'claude',
+  // 生产读的是 ACP_CURSOR_CAPABILITIES(false);这一行同样照保守写,没有按 tier 收紧 Cursor 自己工具的门。
+  guestSafe: false,
   authFailHint: 'Cursor 凭证无效，请检查电脑上的 CURSOR_API_KEY 后再发消息。',
 }
 

@@ -392,8 +392,9 @@ export interface ProviderCapabilities {
   /** false ⇒ 该 provider 无法按 tier 约束自己的工具(如 ACP 的工作区编辑不经权限卡),guest 一律拒。
    *  与 `adminMcpTools` 是两件事:那条说的是"MCP 子进程拿到的是不是本会话的 tier",
    *  这条说的是"provider 自带的工具(Cursor 自己的读写/执行)有没有一道按 tier 收紧的门"。
-   *  缺省(未声明)= true:老 provider 的工具面要么走 daemon 的权限桥,要么由 SDK 的 sandbox 收着。 */
-  guestSafe?: boolean
+   *  必填(3c,2026-10-22):以前缺省 = true,新加一家忘了写就默认对访客开门 —— 缺省往放行的方向兜底。
+   *  true 只给工具面真有一道按 tier 收紧的门的:daemon 的权限桥(claude)或自己的工具闸(openai / gemini)。 */
+  guestSafe: boolean
   /**
    * 回复交付开关(spec 2026-10-03-reply-delivery §5.0)。缺省 = 'legacy':走 reply 工具 + FALLBACK_REPLY。
    * 'shadow':照旧,但每轮算一次新路会发什么,记 [REPLY_SHADOW];'daemon':最后的话就是回复。

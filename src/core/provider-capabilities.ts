@@ -18,6 +18,8 @@ export const CLAUDE_CAPABILITIES: ProviderCapabilities = {
   supportsDelegation: true,
   supportsResume: true,
   defaultPeer: 'codex',
+  // 每次工具调用都过 canUseTool → daemon 的权限桥按会话 tier 判。
+  guestSafe: true,
   authFailHint: 'Claude 登录已过期，请在电脑上跑 `claude login` 后再发消息。',
   // 回复交付第 5 步(2026-10-03,维护者按约定定,主人授权):最后一段非空文字就是回复,之前的段是旁白(不进微信,
   // 超过 120 秒 daemon 发一句进度)。wechat MCP 是 wechatStdioMcpSpec('claude') + 会话 env(sdkOptionsForProject),
@@ -94,6 +96,8 @@ export const OPENAI_CAPABILITIES: ProviderCapabilities = {
   supportsDelegation: true,
   supportsResume: false,
   defaultPeer: 'claude',
+  // 循环是自己的,工具闸按会话 tier 判(上面 sandboxLevels 那条:tier 闸是唯一的门)。
+  guestSafe: true,
   authFailHint: 'openai: set WECHAT_OPENAI_API_KEY (and check base_url/model in agent config).',
   // 回复交付第 1 步(spec 2026-10-03 §5.2):2026-10-03 维护者决定切 daemon(主人授权)。四轮 reply-once
   // 闸门里新路在真正的故障点上全面好于 legacy(污染会话 15/15 干净收住 vs legacy 8.4 条、3/5 跑满步数;
@@ -115,6 +119,8 @@ export const GEMINI_CAPABILITIES: ProviderCapabilities = {
   supportsDelegation: false,
   supportsResume: false,
   defaultPeer: 'claude',
+  // 同 openai:自研循环,工具闸按会话 tier 判。
+  guestSafe: true,
   // 回复交付收尾(spec 2026-10-03 §5.7 删除清单「gemini 二选一」,2026-10-04 定:迁到 daemon,不删)。
   // 和 openai 同一种形状:自研循环(没有 functionCall 的那一步就是一轮的结束)、聊天型模型 ⇒ 全部文字段按
   // 顺序交付。迁过来后 legacy 路径不再有任何默认使用者,第 6 步可以整块删。这家一直没有真模型闸门(主人
@@ -141,6 +147,9 @@ export const AGY_CAPABILITIES: ProviderCapabilities = {
   supportsDelegation: false,
   supportsResume: true,
   defaultPeer: 'claude',
+  // 没有逐工具回调、也没有映射的沙盒,自己的工具面按 tier 收不住。访客本来就被上面的共享钥匙那条挡着,
+  // 这里照实写 false,不靠那条兜。
+  guestSafe: false,
   authFailHint: 'agy 登录态失效，请在电脑上跑一次 `agy` 重新登录后再发消息。',
   // 回复交付第 2 步(2026-10-03):维护者决定切 daemon(主人授权)。沙盒闸门(真 agy,56 轮)两臂行为打平、
   // daemon 非回复工具调用更少(10.3 vs 15.0);结构收益:双发不再依赖命名空间折叠、共享令牌的附件绑到本轮
