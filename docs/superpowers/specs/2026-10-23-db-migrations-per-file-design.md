@@ -46,7 +46,9 @@ export const migrations = [v001, v002, …, v084].map(m => m.migration)
    紧急要改老迁移走显式豁免:PR 标题带 `[migration-edit]`、描述写理由(检查读 PR 标题放行)。
    这一条和指纹守卫互补:指纹只看新建库的结果,v49 / v59 那类「只修存量库」的改动指纹看不出来,这里看得出来。
    实现:`scripts/migration-frozen.ts`,CI 的 build 作业在 `actions/checkout` 用 `fetch-depth: 0` 之后跑;本地没有
-   `origin/dev` 时跳过并说一句(不在本地挡人,挡在 CI)。
+   `origin/dev` 时跳过并说一句(不在本地挡人,挡在 CI)。**但 `CI=true` 时没有 `origin/dev` 一律判红** —— 不然 checkout
+   配置一改(比如 fetch-depth 回到 1),这道闸门就悄悄失效。豁免读 PR 标题,经 env 从
+   `github.event.pull_request.title` 传进去(不在脚本里拼进命令行,标题是不可信输入)。
 
 ## 5. 「删掉九个迁就测试的守护」—— 这里改主意了
 
