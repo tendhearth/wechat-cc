@@ -55,7 +55,8 @@ export interface WireJobsDeps {
   /** 定时那条只读轮(wireMain 之后才有;没就绪 ⇒ 抛)。 */
   runJobTurn: RunJobTurn
   /** 伙伴主动消息的出口(只送一次;没就绪 ⇒ 不送)。 */
-  sendProactive(chatId: string, text: string): void
+  /** 主动说一句(经 CC 开口那道门;kind 缺省 job_notice)。 */
+  sendProactive(chatId: string, text: string, kind?: 'job_notice' | 'review_missed'): void
 }
 
 export function wireJobs(d: WireJobsDeps) {
@@ -88,11 +89,12 @@ export function wireJobs(d: WireJobsDeps) {
         log('REVIEW', `task=${r.taskId} by=${r.providerId} → ${res}`)
         // 答应了「看完发给你」:没发成就老实说一句,不让主人干等(规矩:CC 不撒谎)
         const why = reviewMissNote(res)
-        if (why) void ilink.sendMessage(owner, `${r.providerId} 没审成 ${r.taskId} 的改动:${why}`).catch(() => {})
+        // 答应了「看完发给你」:没审成也要说一句(经 CC 开口那道门,review_missed 归 report)
+        if (why) d.sendProactive(owner, `${r.providerId} 没审成 ${r.taskId} 的改动:${why}`, 'review_missed')
       })
       .catch(err => {
         log('REVIEW', `task=${r.taskId} by=${r.providerId} threw: ${err instanceof Error ? err.message : String(err)}`)
-        void ilink.sendMessage(owner, `${r.providerId} 没审成 ${r.taskId} 的改动,过一会儿再发一次「任务 ${r.taskId} 请 @${r.providerId} 审」。`).catch(() => {})
+        d.sendProactive(owner, `${r.providerId} 没审成 ${r.taskId} 的改动,过一会儿再发一次「任务 ${r.taskId} 请 @${r.providerId} 审」。`, 'review_missed')
       })
     return true
   }

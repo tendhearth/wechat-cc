@@ -710,9 +710,10 @@ async function bootDaemonInner(opts: BootDaemonOpts, undo: Array<() => void>): P
       quietWindow: () => { const o = resolveAdminChatId(loadAccess(), loadCompanionConfig(stateDir), null); return o ? chatPrefs.get(o).quiet : undefined },
       // async:没就绪时是一个被拒的 promise,不是同步抛 —— requestReview 的 .catch 接得住,照实告诉主人「没审成」
       runJobTurn: async (a) => { if (!wiredRef.current) throw new Error('jobs_not_wired'); return wiredRef.current.ticks.runJobTurn(a) },
-      sendProactive: (chatId, text) => {
+      // 定时那边的一句(连续失败被暂停 …)经 CC 开口那道门(第三批 3a,job_notice 归 report)
+      sendProactive: (chatId, text, kind = 'job_notice') => {
         if (!wiredRef.current) { log('JOBS', `proactive send dropped (not wired yet) chat=${chatId}`); return }
-        void wiredRef.current.proactive.sendOnce(chatId, text)
+        void wiredRef.current.speech.tell(kind, chatId, text)
       },
     })
     const jobsCommand = jobs.command
@@ -872,8 +873,8 @@ async function bootDaemonInner(opts: BootDaemonOpts, undo: Array<() => void>): P
       sendOwner: async (text) => {
         const owner = resolveAdminChatId(loadAccess(), loadCompanionConfig(stateDir), null)
         if (!owner) return false
-        const r = await ilink.sendMessage(owner, text) as { error?: string }
-        return !r.error
+        // 经 CC 开口那道门(upgrade_notice 归 report);被推后 / 没发出去 ⇒ false,调用方照旧发桌面通知
+        return wired.speech.tell('upgrade_notice', owner, text)
       },
       notifyDesktop: (t, b) => notifyDesktop(t, b),
       log: (t, l) => log(t, l),
@@ -942,11 +943,10 @@ async function bootDaemonInner(opts: BootDaemonOpts, undo: Array<() => void>): P
         // ilink.sendMessage resolves { error } instead of rejecting (ilink-glue
         // swallows assertChatRoutable etc.), so the failure signal is the
         // resolved error field; keep .catch as belt-and-suspenders only.
-        void ilink.sendMessage(adminChatId,
-          `这次开机有几样没起来：${names}。其它功能照常。`,
-        ).then(r => {
-          if (r.error) log('SUBSYS', `admin degraded summary send failed: ${r.error}`)
-        }).catch(err => log('SUBSYS', `admin degraded summary send failed: ${err instanceof Error ? err.message : String(err)}`))
+        // 经 CC 开口那道门(boot_notice 归 report);「CC 现在怎么样」里同样看得到这几样
+        void wired.speech.tell('boot_notice', adminChatId, `这次开机有几样没起来：${names}。其它功能照常。`)
+          .then(sent => { if (!sent) log('SUBSYS', 'admin degraded summary not sent (deferred by speech policy or send failed)') })
+          .catch(err => log('SUBSYS', `admin degraded summary send failed: ${err instanceof Error ? err.message : String(err)}`))
       }
     }
     // The worker can arm timers immediately: construct only once partial-startup cleanup is active.
