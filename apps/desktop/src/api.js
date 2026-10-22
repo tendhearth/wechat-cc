@@ -99,6 +99,19 @@ async function callOwnerWorkspace(method, path, body) {
 }
 
 /**
+ * daemon 拒写配置文件(3e,lib/json-file):文件读不出来、或者刚被别处改过。任何一条路由都可能碰上,所以在这里统一
+ * 翻成主人看得懂的一句,`code` 留着原码。detail 里是 daemon 给的原因(含文件路径),原样带上,方便主人去看是哪个文件。
+ * 其余的码照旧:Error.message 就是码,各处按码判断的代码不受影响。
+ * @param {string} code @param {unknown} detail @returns {string | null}
+ */
+export function configRefusalText(code, detail) {
+  const why = typeof detail === 'string' && detail ? `(${detail})` : ''
+  if (code === 'config_unreadable') return `配置文件好像坏了,CC 没敢改它${why}`
+  if (code === 'config_busy') return '配置文件刚被别处改过,这次没写进去,再试一次'
+  return null
+}
+
+/**
  * Call a daemon internal-api endpoint.
  * @param {'GET' | 'POST'} method
  * @param {string} path  e.g. '/v1/a2a/list' or '/v1/a2a/activity?agent_id=x&limit=50'
@@ -195,7 +208,11 @@ async function callApi(method, path, body, retried, opts) {
       return callApi(method, path, body, true, opts)
     }
     let errText = `HTTP ${resp.status}`
-    try { const j = await resp.json(); errText = j?.error ?? errText } catch { /* ignore */ }
+    /** @type {unknown} */
+    let detail
+    try { const j = await resp.json(); errText = j?.error ?? errText; detail = j?.detail } catch { /* ignore */ }
+    const friendly = configRefusalText(errText, detail)
+    if (friendly) throw Object.assign(new Error(friendly), { code: errText })
     throw new Error(errText)
   }
   return resp.json()
