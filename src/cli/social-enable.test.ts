@@ -154,3 +154,16 @@ describe('applySocialSwitch —— CLI 与桌面共用的纯核心', () => {
     expect(statSync(join(stateDir, 'agent-config.json')).mode & 0o777).toBe(0o600)
   })
 })
+
+// 3e(2026-10-22):以前读不出来就当成 {},再写回 —— 主人整份配置只剩 social_* 这几个键。
+describe('applySocialSwitch refuses to overwrite an unreadable agent-config.json', () => {
+  it('throws config_unreadable and leaves the file exactly as it was', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'social-unreadable-'))
+    try {
+      const p = join(dir, 'agent-config.json'), torn = '{"provider":"codex","a2a_agents":[{"id":"x"'
+      writeFileSync(p, torn)
+      expect(() => applySocialSwitch(dir, true)).toThrow(expect.objectContaining({ code: 'config_unreadable' }))
+      expect(readFileSync(p, 'utf8')).toBe(torn)
+    } finally { rmSync(dir, { recursive: true, force: true }) }
+  })
+})

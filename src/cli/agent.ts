@@ -22,6 +22,7 @@ import { createA2AClient, type A2AClientOpts } from '../core/a2a-client'
 import { makeA2AEventsStore } from '../core/a2a-events-store'
 import { openWechatDb } from '../lib/db'
 import { readJsonFile } from '../lib/read-json-file'
+import { readJsonObject, writeJsonAtomic } from '../lib/json-file'
 
 /**
  * Read the daemon-written a2a-info.json (no token; safe to read directly).
@@ -361,7 +362,6 @@ export function slugify(s: string): string {
 // Reads/writes agent-config.json's `a2a_listen` field directly, preserving
 // other top-level fields. Doesn't restart the daemon — operator's call.
 
-import { writeFileSync as _writeFileSync } from 'node:fs'  // re-export alias for clarity in tests
 
 function readAgentConfigRaw(stateDir: string): Record<string, unknown> {
   const path = join(stateDir, 'agent-config.json')
@@ -376,7 +376,10 @@ function readAgentConfigRaw(stateDir: string): Record<string, unknown> {
 
 function writeAgentConfigRaw(stateDir: string, cfg: Record<string, unknown>): void {
   const path = join(stateDir, 'agent-config.json')
-  _writeFileSync(path, JSON.stringify(cfg, null, 2))
+  // 读的时候坏文件被当成 {}(readAgentConfigRaw),这里再直接覆盖就把整份配置抹了 —— 写之前确认旧文件读得出来,
+  // 写法统一走 lib/json-file(3e,2026-10-22)。
+  if (existsSync(path)) readJsonObject(path)
+  writeJsonAtomic(path, cfg)
 }
 
 export interface DaemonA2AEnableOpts {

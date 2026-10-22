@@ -12,10 +12,11 @@
  *
  * See docs/superpowers/specs/2026-05-24-a2a-integration-design.md.
  */
-import { writeFileSync, existsSync } from 'node:fs'
+import { existsSync } from 'node:fs'
 import { join } from 'node:path'
 import type { A2AAgentRecord } from '../lib/agent-config'
 import { readJsonFile } from '../lib/read-json-file'
+import { updateJsonFile } from '../lib/json-file'
 
 /** Subset of A2AAgentRecord that's safe to patch via update(). `id` is the
  *  primary key and can't be changed; `capabilities` is derived from the
@@ -56,17 +57,8 @@ export function createA2ARegistry(opts: A2ARegistryOpts): A2ARegistry {
   }
 
   function persistAll(agents: A2AAgentRecord[]): void {
-    // Read full config so we don't lose other top-level fields.
-    let raw: Record<string, unknown> = {}
-    if (existsSync(configPath)) {
-      try {
-        raw = readJsonFile(configPath) as Record<string, unknown>
-      } catch {
-        raw = {}
-      }
-    }
-    raw.a2a_agents = agents
-    writeFileSync(configPath, JSON.stringify(raw, null, 2))
+    // 只改 a2a_agents,保留其它键;读不出来就不写(以前 catch 成 {} 再直接覆盖原文件,会把整份配置换成只剩这一个键)。
+    updateJsonFile(configPath, raw => { raw.a2a_agents = agents })
   }
 
   // No in-memory cache: agent-config.json is shared with CLI / dashboard /

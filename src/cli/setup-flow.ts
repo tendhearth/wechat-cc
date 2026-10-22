@@ -4,6 +4,7 @@ import { join } from 'node:path'
 import { ILINK_APP_ID, ILINK_BASE_URL, ILINK_BOT_TYPE } from '../lib/config'
 import { dedupeAccountsByUserId } from '../lib/dedupe-accounts'
 import { readJsonFile } from '../lib/read-json-file'
+import { readJsonObject, UnreadableJsonError, writeJsonAtomic } from '../lib/json-file'
 
 const ILINK_CLIENT_VERSION = '131335'
 const SETUP_QR_EXPIRES_MS = 480_000
@@ -268,7 +269,13 @@ export function persistConfirmedAccount(opts: {
 
   if (status.ilink_user_id) {
     let access: { dmPolicy: 'allowlist' | 'disabled'; allowFrom: string[]; admins?: string[] } = { dmPolicy: 'allowlist', allowFrom: [] }
-    try { access = readJsonFile(accessFile) } catch {}
+    // 读不出来:以前吞掉错误、从空名单起再写回 —— 主人原来的名单和管理员就这么没了。现在和 daemon(lib/access.ts)
+    // 同一个做法:把坏文件挪到 .corrupt-<时间>,再从空名单起;数据留着能找回(3e,2026-10-22)。
+    if (existsSync(accessFile)) try { access = readJsonObject(accessFile) as typeof access }
+    catch (err) {
+      if (!(err instanceof UnreadableJsonError)) throw err
+      try { renameSync(accessFile, `${accessFile}.corrupt-${Date.now()}`) } catch { /* 挪不走就照旧从空名单起 */ }
+    }
     if (!access.allowFrom) access.allowFrom = []
     let dirty = false
     if (!access.allowFrom.includes(status.ilink_user_id)) {
@@ -288,11 +295,7 @@ export function persistConfirmedAccount(opts: {
       access.admins = [status.ilink_user_id]
       dirty = true
     }
-    if (dirty) {
-      const tmpAccess = `${accessFile}.tmp`
-      writeFileSync(tmpAccess, JSON.stringify(access, null, 2) + '\n', { mode: 0o600 })
-      renameSync(tmpAccess, accessFile)
-    }
+    if (dirty) writeJsonAtomic(accessFile, access)
   }
 
   // Determine scenario AFTER writing the new dir but BEFORE dedupe runs.

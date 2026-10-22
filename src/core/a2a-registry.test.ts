@@ -201,3 +201,16 @@ describe('update —— may_exec 可 patch(重新配对是一次新授权)', () 
     expect(createA2ARegistry({ stateDir: dir }).get('brain')!.may_exec).toBe(true)
   })
 })
+
+// 3e(2026-10-22):以前 persistAll 读不出来就当成 {},直接覆盖原文件 —— 整份 agent-config 只剩 a2a_agents。
+describe('a2a-registry never overwrites an unreadable agent-config.json', () => {
+  it('add() throws config_unreadable and leaves the file as it was', async () => {
+    const { readFileSync } = await import('node:fs')
+    const stateDir = makeTempStateDir()
+    const torn = '{"provider":"codex","social_enabled":true,"a2a_ag'
+    writeFileSync(join(stateDir, 'agent-config.json'), torn)
+    const reg = createA2ARegistry({ stateDir })
+    expect(() => reg.add(rec('gamma'))).toThrow(expect.objectContaining({ code: 'config_unreadable' }))
+    expect(readFileSync(join(stateDir, 'agent-config.json'), 'utf8')).toBe(torn)
+  })
+})

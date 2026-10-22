@@ -130,6 +130,15 @@ describe('saveAccess + loadAccess round-trip', () => {
   })
 })
 
+// 3e(2026-10-22):以前带 BOM 的 access.json 会被当成坏文件挪走、daemon 退出(Windows 上 PowerShell 写的就带 BOM)。
+describe('access.json with a UTF-8 BOM', () => {
+  it('loads normally instead of being moved aside as corrupt', () => {
+    writeFileSync(join(TEST_DIR, 'access.json'), '\uFEFF' + JSON.stringify({ dmPolicy: 'allowlist', allowFrom: ['bom@im.wechat'], admins: ['bom@im.wechat'] }))
+    _clearCache()
+    expect(loadAccess().admins).toEqual(['bom@im.wechat'])
+  })
+})
+
 describe('trusted field', () => {
   it('parses trusted array when present', () => {
     writeAccess({

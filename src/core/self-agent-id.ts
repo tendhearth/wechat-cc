@@ -24,32 +24,25 @@
  * writes; a full-object saveAgentConfig would wipe those peers off disk.
  */
 import { createHash } from 'node:crypto'
-import { existsSync, writeFileSync, renameSync, mkdirSync } from 'node:fs'
 import { join } from 'node:path'
 import { loadMailboxIdentity } from './mailbox-crypto'
 import type { AgentConfig } from '../lib/agent-config'
-import { readJsonFile } from '../lib/read-json-file'
+import { updateJsonFile } from '../lib/json-file'
 
 export interface ResolveSelfAgentIdDeps {
   env?: Record<string, string | undefined>
   loadIdentity?: (stateDir: string) => { addr: string }
   /** MERGE-persist: set only self_agent_id in the raw config file. Stubbable. */
   persist?: (stateDir: string, selfAgentId: string) => void
+  /** 写不进去(配置文件读不出来 ⇒ lib/json-file 拒写)时调;id 照样返回、这次不落盘,开机不因此失败。 */
+  onPersistError?: (err: unknown) => void
 }
 
 /** Read-modify-write the raw agent-config.json, setting ONLY self_agent_id.
  *  Preserves a2a_agents + every unmodeled key; atomic tmp+rename (0600). */
 function persistSelfAgentId(stateDir: string, selfAgentId: string): void {
-  const path = join(stateDir, 'agent-config.json')
-  let raw: Record<string, unknown> = {}
-  if (existsSync(path)) {
-    try { raw = readJsonFile(path) as Record<string, unknown> } catch { raw = {} }
-  }
-  raw.self_agent_id = selfAgentId
-  mkdirSync(stateDir, { recursive: true, mode: 0o700 })
-  const tmp = `${path}.tmp`
-  writeFileSync(tmp, JSON.stringify(raw, null, 2) + '\n', { mode: 0o600 })
-  renameSync(tmp, path)
+  // 读不出来就不写(以前 catch 成 {} 再写回,会把整份配置换成只剩这一个键);写法统一走 lib/json-file。
+  updateJsonFile(join(stateDir, 'agent-config.json'), raw => { raw.self_agent_id = selfAgentId })
 }
 
 export function resolveSelfAgentId(config: AgentConfig, stateDir: string, deps: ResolveSelfAgentIdDeps = {}): string {
@@ -57,7 +50,10 @@ export function resolveSelfAgentId(config: AgentConfig, stateDir: string, deps: 
   const fromEnv = env.WECHAT_A2A_SELF_ID
   if (fromEnv) return fromEnv
   if (config.self_agent_id) return config.self_agent_id
-  const persist = deps.persist ?? persistSelfAgentId
+  const persistRaw = deps.persist ?? persistSelfAgentId
+  const persist = (dir: string, id: string) => {
+    try { persistRaw(dir, id) } catch (err) { if (deps.onPersistError) deps.onPersistError(err); else throw err }
+  }
   if (config.mailbox_relays?.length) {
     // Grandfather: keep the legacy shared id if this daemon already has edges.
     if (config.a2a_agents?.length) {

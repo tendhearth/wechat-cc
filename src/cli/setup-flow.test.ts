@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest'
-import { mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import { mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync, readdirSync } from 'node:fs'
 import { join } from 'node:path'
 import { tmpdir } from 'node:os'
 import { determineScenario, pollSetupQrStatus, requestSetupQrCode, defaultFetchBinary, persistConfirmedAccount } from './setup-flow'
@@ -156,6 +156,27 @@ describe('persistConfirmedAccount admins bootstrap (A1)', () => {
       const access = JSON.parse(readFileSync(join(stateDir, 'access.json'), 'utf8')) as { allowFrom: string[]; admins?: string[] }
       expect(access.allowFrom).toContain('user-1')
       expect(access.admins).toEqual(['user-1'])
+    } finally {
+      rmSync(stateDir, { recursive: true, force: true })
+    }
+  })
+
+  // 3e(2026-10-22):以前读不出来就吞掉错误、从空名单起写回 —— 主人原来的名单和管理员没了,还没处找。
+  // 现在和 daemon 一样:坏文件挪到 .corrupt-<时间>,数据留着。
+  it('an unreadable access.json is moved aside (kept), not silently overwritten', () => {
+    const stateDir = mkdtempSync(join(tmpdir(), 'setup-admins-torn-'))
+    try {
+      const torn = '{"dmPolicy":"allowlist","allowFrom":["owner"],"admins":["own'
+      writeFileSync(join(stateDir, 'access.json'), torn)
+      persistConfirmedAccount({
+        stateDir,
+        currentBaseUrl: 'https://ilinkai.weixin.qq.com',
+        status: { status: 'confirmed', bot_token: 'tok', ilink_bot_id: 'bot:1/im-bot', ilink_user_id: 'user-1' },
+      })
+      const aside = readdirSync(stateDir).filter(n => n.startsWith('access.json.corrupt-'))
+      expect(aside).toHaveLength(1)
+      expect(readFileSync(join(stateDir, aside[0]!), 'utf8')).toBe(torn)
+      expect((JSON.parse(readFileSync(join(stateDir, 'access.json'), 'utf8')) as { admins?: string[] }).admins).toEqual(['user-1'])
     } finally {
       rmSync(stateDir, { recursive: true, force: true })
     }
