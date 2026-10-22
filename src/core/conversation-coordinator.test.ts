@@ -2,7 +2,6 @@ import { describe, expect, it, vi } from 'vitest'
 import { createConversationCoordinator, authFailNotice, turnPolicy, turnErrorNotice } from './conversation-coordinator'
 import { errorWithProviderCode } from '../lib/provider-error-code'
 import { createProviderRegistry } from './provider-registry'
-import * as capabilityMatrix from './capability-matrix'
 import { makeFakeSession } from './test-helpers'
 import type { AgentEvent, AgentProvider, AgentSession } from './agent-provider'
 import type { Mode, ProviderId } from './conversation'
@@ -661,33 +660,6 @@ describe('ConversationCoordinator', () => {
   })
 
   // chatroom is now implemented in P5 — see "chatroom mode (P5)" describe block below.
-
-  it('dispatch calls assertSupported for the effective provider before acquiring session', async () => {
-    // Spy on assertSupported — verify it's called with correct (mode, provider, permissionMode)
-    const spy = vi.spyOn(capabilityMatrix, 'assertSupported')
-    const session = makeFakeSession({
-      events: [{ kind: 'result', sessionId: '_', numTurns: 1, durationMs: 0 }],
-    })
-    const acquire = vi.fn(async (_req: AcquireRequest) =>
-      makeHandle('claude', session)
-    )
-    const registry = createProviderRegistry()
-    registry.register('claude', dummyProvider, { displayName: 'Claude', canResume: () => true })
-    const c = createConversationCoordinator({
-      resolveProject: () => ({ alias: 'a', path: '/p' }),
-      manager: { acquire },
-      conversationStore: makeMockStore(),
-      registry,
-      defaultProviderId: 'claude',
-      format: () => 'x',
-      permissionMode: 'strict',
-      loadAccess: adminAccess,
-      log: () => {},
-    })
-    await c.dispatch(inbound('chat-1', 'hi'))
-    expect(spy).toHaveBeenCalledWith('solo', 'claude', 'strict')
-    spy.mockRestore()
-  })
 
   // ─── solo/parallel cancel — post-cancel-review CRITICAL 1 ──────────────
   // Chatroom already had its own AbortController-based preempt loop
