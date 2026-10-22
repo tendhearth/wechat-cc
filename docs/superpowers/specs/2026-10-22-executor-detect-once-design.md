@@ -38,8 +38,20 @@
 - 读它的:providers.ts、workbench-api、`resolveAcpAgent`、doctor、guard/targets、cli-upgrade/locate。测试:每家每条门槛一个用例;六处调用方都 import 它(守卫测试扫源码,出现手写的 `findOnPath('cursor-agent')` / `process.env.GEMINI_API_KEY` 等就红)。
 
 **第 3 步:二进制路径随注册下发,工作台不再自己找。**
-- 注册时把 detect 出来的 `bin` 放进 registry 那一项的 opts;工作台 codex / 额度监视器读它,删掉三次 `findCodexBinary()`。
-- 欠账照旧记着(上位稿 §4):CLI 升级换了 codex 的路径,工作台要跟着变 —— 第 1 步的 `onRegister` 正好接得住,`reprobeProvider` 重注册时工作台重建那一家。第 3 步把「重注册 ⇒ 重建」也做掉(第 1 步只管首次)。
+- 注册时把 detect 的结果以**取值函数** `bin(): string | null` 放进 registry 那一项的 opts(每次调用现判,不缓存);工作台 codex / 额度监视器读它,删掉三次 `findCodexBinary()`。
+- 还掉上位稿 §4 那笔账(codex 路径只在接线时查一次):工作台 codex **每次 spawn / resume 时**调 `bin()` 取路径,而不是接线时固化。CLI 升级换了路径,下一个回合自然用新的。
+
+## 4.1 三条定案(9d 审稿时要求写明)
+
+**① 换路径 / 重登记时,在跑的不断、旧的不漏。** 不做「换适配器」:registry 今天就是 `register` 遇到重复 id 直接抛,一家一个 id 只建一次,本稿不改这一点。路径变化走第 3 步的 `bin()` —— 适配器实例不换,换的只是**下一次** spawn / resume 用的可执行文件:
+- 在跑的回合:用它 spawn 时的那个进程跑完,不打断(进程是那时起的,和 registry 无关)。
+- 新开的、续接的:spawn 时现取 `bin()`,用新路径。
+- 没有「旧适配器」要 close:实例只有一个。cursor 的常驻 ACP 连接是按会话开的、随会话关(现有逻辑),不受路径变化影响 —— 旧会话的连接照旧在会话结束时关,新会话用新路径起新连接。
+- 测试钉住:假 codex 路径 A 起一个长回合 → 把 `bin()` 改成 B → 再开一个回合:第一个回合的进程仍是 A 且正常跑完、第二个用 B;两个回合结束后没有残留子进程(进程表里 A、B 都不在)。
+
+**② 注销:只增不减,用的时候失败照实报。** 不加 `onUnregister`。执行者开机后被卸载 / 登录失效,registry 里那一项照旧在;下一次 spawn 失败,走现有的报错路径(工作台任务进 failed 并写原因、微信回「X 没起来:<原因>」),不假装成功、不静默换别家。理由:今天没有任何一条路径会注销,加一个永远不触发的回调只会是没人测过的分支;真要「卸载后从列表消失」,那是另一件事(doctor / 面板展示层),不在这一块。
+
+**③ 「空串 = 没配」是对话侧看得见的变化**:`cursorAgentBin` / `agyBin` 配成空串,以前对话侧当成配了、不注册;以后回落 PATH 找,找到就注册。第 2 步的 PR 描述写一句,同一个 PR 往下一版发版说明(`docs/releases/desktop-v1.7.8.md`,没有就新建这一节)加一句:「设置里清空 Cursor / agy 的路径,现在等于『自动找』,不再等于『不用』。」
 
 ## 5. 这一块不做
 
@@ -53,4 +65,4 @@
 
 - 现有 providers / probe-retry / wire-workbench / bootstrap / doctor / guard 测试原样过。
 - e2e 启动快照:`/v1/health` providers 段与 `/mode` 输出改前改后逐字相同(第 2 步的空串规则除外,用单测钉)。
-- 第 1 步的新测试临时删掉 `onRegister` 那行要红。
+- 第 1 步的新测试临时删掉 `onRegister` 那行要红;第 3 步「在跑的不断、旧的不漏」那条测试,临时把 `bin()` 改回接线时固化要红。
