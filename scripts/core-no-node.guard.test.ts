@@ -2,7 +2,7 @@
  * core 不碰 `node:*`(第三批 3f,理念 5「规矩交给机器,数违规条数,不数行数」)。
  *
  * src/core 是「做什么」的那一层,运行时(文件、进程、网络、系统)应该从外面注入 —— 这样它在 node / bun / 测试里
- * 都是同一份、能在没有真机的地方证明。2026-10-22 盘点:100 个文件、177 处值导入 `node:*`(类型导入不算:
+ * 都是同一份、能在没有真机的地方证明。2026-10-22 盘点:101 个文件、179 处值导入 `node:*`(类型导入不算:
  * 它不在运行时出现)。一次搬不完,所以跟 speech-send / daemon-module 守卫一个做法 —— 棘轮:
  *  - **没登记的文件出现值导入 `node:*` ⇒ 红**:新代码把运行时能力从参数传进来,或放到 src/lib/runtime / daemon 那一层;
  *  - **登记过的文件次数只许降**:多一处红;少了也红,提示你把数字调下来;降到 0 删掉那一行。
@@ -18,7 +18,9 @@ const CORE = join(ROOT, 'src', 'core')
 
 /** 一个文件里值导入 `node:*` 的处数:静态 import / export … from(跨行也算,`import type` / `export type` 不算)+ 动态 import() / require()。 */
 export function nodeValueImports(src: string): number {
-  const code = src.replace(/\/\*[\s\S]*?\*\//g, m => m.replace(/[^\n]/g, ' ')).split('\n').map(l => l.replace(/^\s*\/\/.*$/, '')).join('\n')
+  // 注释按行判(行首是 // 、/* 或 * 的整行不算),不用跨行的块注释正则:字符串里的 `/*`(比如 glob 'src/**/*.ts')
+  // 会被当成注释开头,一路吞到下一个 `*/`,把中间的真导入吃掉 —— daemon-module 守卫第一版踩过(9d 评审 #568)。
+  const code = src.split('\n').map(l => /^\s*(\/\/|\/\*|\*)/.test(l) ? '' : l).join('\n')
   const statics = code.match(/(?:^|\n)\s*(?:import|export)\s+(?!type[\s{])[^;'"`]*?\bfrom\s+['"]node:[^'"]+['"]/g) ?? []
   const sideEffect = code.match(/(?:^|\n)\s*import\s+['"]node:[^'"]+['"]/g) ?? []
   const dynamic = code.match(/\b(?:import|require)\(\s*['"]node:[^'"]+['"]\s*\)/g) ?? []
@@ -66,6 +68,7 @@ const BASELINE: Record<string, number> = {
   'src/core/knowledge/js-embedder.ts': 2,
   'src/core/knowledge/source-adapter.ts': 3,
   'src/core/knowledge/store.ts': 2,
+  'src/core/knowledge/wxvault-refresh.ts': 2,
   'src/core/mailbox-crypto.ts': 3,
   'src/core/mailbox-cursor-store.ts': 2,
   'src/core/matters/say-receipts.ts': 1,
@@ -154,6 +157,8 @@ describe('core 不碰 node:*(棘轮)', () => {
     expect(nodeValueImports("export type { Stats } from 'node:fs'")).toBe(0)
     expect(nodeValueImports("// import { x } from 'node:fs'\n/* import { y } from 'node:os' */")).toBe(0)
     expect(nodeValueImports("const m = await import('node:crypto')")).toBe(1)
+    // 字符串里的 `/*` 不能把后面的真导入吞掉
+    expect(nodeValueImports("const glob = 'src/**/*.ts'\nimport { spawn } from 'node:child_process'\nconst end = '*/'")).toBe(1)
   })
   it('no new file imports node:* at runtime, and registered files only go down', () => {
     const now = current()
