@@ -522,7 +522,7 @@ export function socialToolsSection(): string {
 - 「同意 / 不了」:用 \`intro_offers\` 对上 reply_id,再 \`intro_accept\` / \`intro_decline\`。
 - 「去串门」:\`visit\`,可带对方名字。
 派心愿是唯一的例外:\`social_seek\` 只出脱敏预览并存草稿,把 preview 原样念给主人;主人点头(任何肯定的说法)再 \`wish_send\`,「算了」就 \`wish_cancel\`。
-工具回 \`ok:false\` 时把 reason 用人话说;\`error\` 里是 \`social_not_wired\` 表示社交层没开,连不上 daemon 是另一回事,两句别混。主人也可以直接回「派 w1」「认识 ab12」这类精确命令,那不经过你。`
+工具回 \`ok:false\` 时把 reason 用人话说;\`error\` 是 \`module_off\` 表示社交关着(主人可以去设置里打开),\`module_degraded\` 表示开着但没起来(原因在 \`detail\` 里,别劝他去开),连不上 daemon 又是另一回事,三句别混。主人也可以直接回「派 w1」「认识 ab12」这类精确命令,那不经过你。`
 }
 
 /**

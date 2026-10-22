@@ -29,13 +29,20 @@ import { isIntroClaimLive } from '../../core/intro'
 import { readJsonFile } from '../../lib/read-json-file'
 import { join } from 'node:path'
 
+/**
+ * 社交没接上时处理器自己的兜底(第三批 3b):正常情况下请求到不了这里 —— 路由层的模块门(internal-api/index.ts)已经按
+ * 模块状态回了 module_off / module_degraded。只有 subsystems 里没登记 social(测试、老接线)才会走到这里;不知道是关了还是坏了,
+ * 就照门的形状回 module_off。旧码 social_not_wired / penpal_not_wired 已经不用了。
+ */
+const SOCIAL_MODULE_OFF = { status: 503, body: { error: 'module_off', module: 'social' } } as const
+
 export function socialRoutes(deps: InternalApiDeps): RouteTable {
   return {
     // 串门(桌面「认识的人」里的按钮)。整趟要跑两三分钟(6-7 次模型调用),
     // 不等 —— 起跑就回,结果经微信 + 日志(journal)到主人手里。
     'POST /v1/social/visit': async (_q, body) => {
       const penpal = deps.social?.penpal
-      if (!penpal?.startVisit) return { status: 503, body: { error: 'social_not_wired' } }
+      if (!penpal?.startVisit) return SOCIAL_MODULE_OFF
       const target = ((body ?? {}) as { target?: unknown }).target
       if (target !== undefined && (typeof target !== 'string' || target === '')) return { status: 400, body: { error: 'bad_target' } }
       void penpal.startVisit!(target as string | undefined).catch(() => { /* 失败已在 wire-visit 记日志 */ })
@@ -92,26 +99,26 @@ export function socialRoutes(deps: InternalApiDeps): RouteTable {
 
     // 心愿(spec 2026-09-04-wish-postcard §4)。propose 只存草稿 —— 发出必须是主人的动作。
     'POST /v1/social/wish': async (_q, body) => {
-      if (!deps.social?.wish) return { status: 503, body: { error: 'social_not_wired' } }
+      if (!deps.social?.wish) return SOCIAL_MODULE_OFF
       const text = ((body ?? {}) as { text?: unknown }).text
       if (typeof text !== 'string' || text.trim() === '') return { status: 400, body: { error: 'missing_text' } }
       return { status: 200, body: await deps.social.wish.propose(text.trim()) }
     },
     'POST /v1/social/wish/send': async (_q, body) => {
-      if (!deps.social?.wish) return { status: 503, body: { error: 'social_not_wired' } }
+      if (!deps.social?.wish) return SOCIAL_MODULE_OFF
       const id = ((body ?? {}) as { id?: unknown }).id
       if (typeof id !== 'string' || id === '') return { status: 400, body: { error: 'missing_id' } }
       const r = await deps.social.wish.send(id)
       return { status: 200, body: r.ok ? { ok: true, sent_to: r.sentTo } : r }
     },
     'POST /v1/social/wish/cancel': async (_q, body) => {
-      if (!deps.social?.wish) return { status: 503, body: { error: 'social_not_wired' } }
+      if (!deps.social?.wish) return SOCIAL_MODULE_OFF
       const id = ((body ?? {}) as { id?: unknown }).id
       if (typeof id !== 'string' || id === '') return { status: 400, body: { error: 'missing_id' } }
       return { status: 200, body: deps.social.wish.cancel(id) }
     },
     'GET /v1/social/wishes': async () => {
-      if (!deps.social?.wish) return { status: 503, body: { error: 'social_not_wired' } }
+      if (!deps.social?.wish) return SOCIAL_MODULE_OFF
       return {
         status: 200,
         body: {
@@ -133,28 +140,28 @@ export function socialRoutes(deps: InternalApiDeps): RouteTable {
     // 缺线 → 503;body 里的 reply_id 非空字符串校验 → 400;service 已经把结果
     // 归一成 {ok:true, replyId} | {ok:false, reason},这里只是转成 snake_case。
     'POST /v1/social/intro/request': async (_q, body) => {
-      if (!deps.social?.intro) return { status: 503, body: { error: 'social_not_wired' } }
+      if (!deps.social?.intro) return SOCIAL_MODULE_OFF
       const replyId = ((body ?? {}) as { reply_id?: unknown }).reply_id
       if (typeof replyId !== 'string' || replyId === '') return { status: 400, body: { error: 'missing_reply_id' } }
       const r = await deps.social.intro.request(replyId)
       return { status: 200, body: r.ok ? { ok: true, reply_id: r.replyId } : r }
     },
     'POST /v1/social/intro/accept': async (_q, body) => {
-      if (!deps.social?.intro) return { status: 503, body: { error: 'social_not_wired' } }
+      if (!deps.social?.intro) return SOCIAL_MODULE_OFF
       const replyId = ((body ?? {}) as { reply_id?: unknown }).reply_id
       if (typeof replyId !== 'string' || replyId === '') return { status: 400, body: { error: 'missing_reply_id' } }
       const r = await deps.social.intro.accept(replyId)
       return { status: 200, body: r.ok ? { ok: true, reply_id: r.replyId } : r }
     },
     'POST /v1/social/intro/decline': async (_q, body) => {
-      if (!deps.social?.intro) return { status: 503, body: { error: 'social_not_wired' } }
+      if (!deps.social?.intro) return SOCIAL_MODULE_OFF
       const replyId = ((body ?? {}) as { reply_id?: unknown }).reply_id
       if (typeof replyId !== 'string' || replyId === '') return { status: 400, body: { error: 'missing_reply_id' } }
       const r = await deps.social.intro.decline(replyId)
       return { status: 200, body: r.ok ? { ok: true, reply_id: r.replyId } : r }
     },
     'GET /v1/social/intro/offers': async () => {
-      if (!deps.social?.intro) return { status: 503, body: { error: 'social_not_wired' } }
+      if (!deps.social?.intro) return SOCIAL_MODULE_OFF
       return { status: 200, body: { offers: deps.social.intro.offers().map(o => ({ reply_id: o.replyId, hint: o.hint, via_label: o.viaLabel, at: o.at })) } }
     },
     // 觅食台 P2 Task 3 — inbound on/off toggle over a2a_listen, replacing the

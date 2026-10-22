@@ -1591,7 +1591,7 @@ describe('bootstrap 社交接线', () => {
         body: JSON.stringify({ text: 'x' }),
       })
       expect(resp.status).toBe(503)
-      expect(await resp.json()).toMatchObject({ error: 'social_not_wired' })
+      expect(await resp.json()).toMatchObject({ error: 'module_off', module: 'social' })
     } finally {
       await api.stop()
       rmSync(stateDir, { recursive: true, force: true })

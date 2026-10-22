@@ -31,10 +31,10 @@ function makeDeps(over: Record<string, unknown> = {}) {
 const q = (s = '') => new URLSearchParams(s)
 
 describe('GET /v1/penpal/channels', () => {
-  it('未接线 → 503 penpal_not_wired', async () => {
+  it('未接线 → 503 module_off(旧码 penpal_not_wired 已不用)', async () => {
     const r = await penpalRoutes({ social: undefined } as unknown as InternalApiDeps)['GET /v1/penpal/channels']!(q(), undefined)
     expect(r.status).toBe(503)
-    expect((r.body as any).error).toBe('penpal_not_wired')
+    expect(r.body).toEqual({ error: 'module_off', module: 'social' })
   })
   it('只列 open 信道;直连查 registry 名、中转标第N度;带 unread/last_preview', async () => {
     const { deps } = makeDeps()

@@ -1,11 +1,18 @@
 /**
  * internal-api 笔友信箱 routes(spec 2026-07-22-penpal-mailbox-desktop)。
- * Mirrors routes-social.ts:503 penpal_not_wired until wire-social exposes
+ * Mirrors routes-social.ts:社交没接上 ⇒ module_off(以前叫 penpal_not_wired)until wire-social exposes
  * the correspondent+stores. Reads are the OWNER's local plaintext thread —
  * the ciphertext columns (sealed_ciphertext/nonce/tag) NEVER leave the
  * daemon (投影只挑明文字段,测试断言)。
  */
 import type { InternalApiDeps, RouteTable } from './types'
+
+/**
+ * 社交没接上时处理器自己的兜底(第三批 3b):正常情况下请求到不了这里 —— 路由层的模块门(internal-api/index.ts)已经按
+ * 模块状态回了 module_off / module_degraded。只有 subsystems 里没登记 social(测试、老接线)才会走到这里;不知道是关了还是坏了,
+ * 就照门的形状回 module_off。旧码 social_not_wired / penpal_not_wired 已经不用了。
+ */
+const SOCIAL_MODULE_OFF = { status: 503, body: { error: 'module_off', module: 'social' } } as const
 
 const PREVIEW_LEN = 60
 
@@ -13,7 +20,7 @@ export function penpalRoutes(deps: InternalApiDeps): RouteTable {
   return {
     'GET /v1/penpal/channels': async () => {
       const p = deps.social?.penpal
-      if (!p) return { status: 503, body: { error: 'penpal_not_wired' } }
+      if (!p) return SOCIAL_MODULE_OFF
       const unread = new Map(p.letterStore.unreadCountByChannel().map(r => [r.channel_id, r.n]))
       const channels = p.channelStore.list()
         .filter(c => c.status === 'open')
@@ -38,7 +45,7 @@ export function penpalRoutes(deps: InternalApiDeps): RouteTable {
     },
     'GET /v1/penpal/letters': async (q) => {
       const p = deps.social?.penpal
-      if (!p) return { status: 503, body: { error: 'penpal_not_wired' } }
+      if (!p) return SOCIAL_MODULE_OFF
       const channelId = q.get('channel_id') ?? ''
       if (!channelId) return { status: 400, body: { error: 'missing_channel_id' } }
       if (!p.channelStore.get(channelId)) return { status: 404, body: { error: 'unknown_channel' } }
@@ -50,7 +57,7 @@ export function penpalRoutes(deps: InternalApiDeps): RouteTable {
     },
     'POST /v1/penpal/letters': async (_q, body) => {
       const p = deps.social?.penpal
-      if (!p) return { status: 503, body: { error: 'penpal_not_wired' } }
+      if (!p) return SOCIAL_MODULE_OFF
       const { channel_id, text } = (body ?? {}) as { channel_id?: unknown; text?: unknown }
       if (typeof channel_id !== 'string' || channel_id.length === 0) return { status: 400, body: { error: 'missing_channel_id' } }
       if (typeof text !== 'string' || text.length === 0) return { status: 400, body: { error: 'missing_text' } }
@@ -61,14 +68,14 @@ export function penpalRoutes(deps: InternalApiDeps): RouteTable {
     // 重复投递 — 终审 2026-07-22 记录的洞,这条路由是它的修复面。
     'POST /v1/penpal/letters/resend': async (_q, body) => {
       const p = deps.social?.penpal
-      if (!p) return { status: 503, body: { error: 'penpal_not_wired' } }
+      if (!p) return SOCIAL_MODULE_OFF
       const letterId = ((body ?? {}) as { letter_id?: unknown }).letter_id
       if (typeof letterId !== 'string' || letterId.length === 0) return { status: 400, body: { error: 'missing_letter_id' } }
       return { status: 200, body: await p.resendLetter(letterId) }
     },
     'POST /v1/penpal/letters/read': async (_q, body) => {
       const p = deps.social?.penpal
-      if (!p) return { status: 503, body: { error: 'penpal_not_wired' } }
+      if (!p) return SOCIAL_MODULE_OFF
       const channelId = ((body ?? {}) as { channel_id?: unknown }).channel_id
       if (typeof channelId !== 'string' || channelId.length === 0) return { status: 400, body: { error: 'missing_channel_id' } }
       p.letterStore.markAllRead(channelId, new Date().toISOString())

@@ -840,7 +840,10 @@ describe('socialAvailable (social-tools 2026-09-05)', () => {
     expect(s).toContain('先查再答')
     expect(s).toContain('直接做')
     expect(s).toContain('preview')
-    expect(s).toContain('social_not_wired')
+    // 第三批 3b:社交不在时回 module_off(关着)/ module_degraded(没起来),提示里两个都讲,旧码不再出现
+    expect(s).toContain('module_off')
+    expect(s).toContain('module_degraded')
+    expect(s).not.toContain('social_not_wired')
   })
 })
 

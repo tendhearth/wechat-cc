@@ -104,11 +104,11 @@ describe('registerSocialTools', () => {
 
   it('a 503 from the route becomes a structured error text, never an MCP exception', async () => {
     const { call } = await harness({
-      'POST /v1/social/intro/request': new InternalApiError('503', 503, '/v1/social/intro/request', { error: 'social_not_wired' }),
+      'POST /v1/social/intro/request': new InternalApiError('503', 503, '/v1/social/intro/request', { error: 'module_off', module: 'social' }),
     })
     const r = await call('intro_request', { reply_ref: 'ab' })
     expect(String(r.error)).toContain('503')
-    expect(String(r.error)).toContain('social_not_wired')
+    expect(String(r.error)).toContain('module_off')
   })
 
   it('social_seek is unchanged: proposes via POST /v1/social/wish and adds the hint', async () => {
