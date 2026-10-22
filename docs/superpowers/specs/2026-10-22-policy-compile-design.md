@@ -63,7 +63,7 @@ compilePolicy(executor, tier, permissionMode): CompiledPolicy
 
 1. **`compilePolicy` + 快照,行为不变。** 六家翻译函数挪进去,provider 改读它;删 matrix 那份假说法;36 格快照。
 2. **缺口登记扩到 admin。** 把今天 admin 的真实缺口(codex / agy 不问 destructive)登记成「已知、带理由」,规则测试上线。此步仍不改行为。
-3. **`assertSupported` 读 gaps。** 没登记的「比档位松」在分派时拒。今天按第 2 步全部登记过,所以上线时没有可见变化;以后新加执行者或改档位,漏登记就红 / 就拒。
+3. **删掉 `assertSupported` 这道假检查。** ⟨10-22 动手时改:原计划让它读 gaps 在分派时拒;但第 2 步之后已知执行者的缺口全由规则测试守(漏登记 CI 红),运行时那一拒对已知执行者永远走不到,对未知 id 又拿不到能力行 —— 写一道永远不触发的运行时检查,就是再造一个 `forbidden`。按理念 5「规矩交给机器」,守在测试里,运行时删掉。(#566)⟩
 4. **`guestSafe` 从 `enforces` 推出来**,删掉手写的那一格(#556 刚改成必填,这一步把它变成推导)。
 
 ## 6. 准绳(9d 同意)与两步待主人点头
