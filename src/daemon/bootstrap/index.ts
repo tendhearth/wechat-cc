@@ -50,10 +50,9 @@ import { wireInstructions } from './wire-instructions'
 import { wireCoordinator } from './wire-coordinator'
 import { wireA2a } from './wire-a2a'
 import { wireYi } from './wire-yi'
-import { wireMailboxDeps } from './wire-mailbox-deps'
 import { Ref } from '../../lib/lifecycle'
 import { resolveClaudeBinary, hydrateClaudeAuthEnvFromUserSettings } from './claude-env'
-import { wireSocial } from './wire-social'
+import { wireSocialGroup } from './social-module'
 import { wireA2aServer } from './wire-a2a-server'
 import { wirePairing } from './wire-pairing'
 import { wireHealth } from './wire-health'
@@ -285,34 +284,26 @@ export async function buildBootstrap(deps: BootstrapDeps): Promise<Bootstrap> {
   // A2A registry / client / events + resolveOperatorChatId — ./wire-a2a.ts(2026-09-27 拆分)。
   const { a2aRegistry, a2aClient, a2aEventsStore, resolveOperatorChatId } = wireA2a(ctxBase)
 
-  // 降级兜底:social 抛错时的 inert wiring — 与 wireSocial 未配置时的内部
-  // 状态同形(全 handler undefined),下游 a2a/mailbox/return 的门原样生效。
-  const inertSocialWiring: import('./wire-social').SocialWiring = {
-    onLetter: undefined,
-  }
-  const socialWiring = (await sup.start('social', async () => {
-    const w = await wireSocial({
-      log: deps.log, ...(deps.speech ? { speech: deps.speech } : {}),
-      stateDir: deps.stateDir,
-      sendFile: deps.ilink.sendFile ? (c, p) => deps.ilink.sendFile!(c, p) : undefined,
-      db: deps.db,
-      configuredAgent,
-      selfId,
-      registry,
-      defaultProviderId,
-      resolveOperatorChatId,
-      sendAssistantText,
-      a2aRegistry,
-      a2aClient,
-      knowledge,
-      // 串门 / 答心愿是脱离会话的后台模型活 —— 登记进 busy,空闲自动重启
-      // 才不会掐在半程(和 delegate 的 'a2a-delegate' 同一个理由)。
-      holdBusy: busyRegistry.hold,
-    })
-    // 未配置 / 无 cheapEval ⇒ wireSocial 返回 inert 对象(social 字段缺席)
-    // ⇒ 映射为 null ⇒ supervisor 记 off。
-    return w.social ? w : null
-  })) ?? inertSocialWiring
+  // 社交 + 笔友信箱轮询 —— 一组模块(./social-module.ts,第三批 3b 第 3 步):开关就是 social_enabled,
+  // 关着 / 坏了 ⇒ INERT_SOCIAL(handler 全缺席,下游 a2a / mailbox 的门原样生效)。
+  const socialWiring = await wireSocialGroup(ctx, {
+    log: deps.log, ...(deps.speech ? { speech: deps.speech } : {}),
+    stateDir: deps.stateDir,
+    sendFile: deps.ilink.sendFile ? (c, p) => deps.ilink.sendFile!(c, p) : undefined,
+    db: deps.db,
+    configuredAgent,
+    selfId,
+    registry,
+    defaultProviderId,
+    resolveOperatorChatId,
+    sendAssistantText,
+    a2aRegistry,
+    a2aClient,
+    knowledge,
+    // 串门 / 答心愿是脱离会话的后台模型活 —— 登记进 busy,空闲自动重启
+    // 才不会掐在半程(和 delegate 的 'a2a-delegate' 同一个理由)。
+    holdBusy: busyRegistry.hold,
+  }, { a2aRegistry, readAgentConfig })
   socialWired.set(!!socialWiring.social)
 
   const a2aWiring = await sup.start('a2a-server', () => wireA2aServer({
@@ -348,9 +339,6 @@ export async function buildBootstrap(deps: BootstrapDeps): Promise<Bootstrap> {
     tellOwner: { resolveOperatorChatId, sendAssistantText, ...(deps.speech ? { speech: deps.speech } : {}), log: deps.log },
     log: deps.log,
   }))
-
-  // mailbox 轮询器 deps — ./wire-mailbox-deps.ts(2026-09-27 拆分)。
-  const mailboxPollerDeps = wireMailboxDeps(ctx, { a2aRegistry, onMailboxLetter: socialWiring.onMailboxLetter, readAgentConfig })
 
   // 乙 v2 — ./wire-yi.ts(2026-09-27 拆分);经 sup.start('yi')。
   const yiHub = await wireYi(ctx, { a2aRegistry, dispatchDelegate })
@@ -409,7 +397,6 @@ export async function buildBootstrap(deps: BootstrapDeps): Promise<Bootstrap> {
      * social_enabled + at least one mailbox_relays entry are configured.
      * main.ts mounts the poller lifecycle iff this is set.
      */
-    ...(mailboxPollerDeps ? { mailboxPollerDeps } : {}),
     /**
      * 配对码 (spec §7) — undefined when mailbox_relays isn't configured;
      * see Bootstrap['pairing']'s doc comment in ./types.ts.

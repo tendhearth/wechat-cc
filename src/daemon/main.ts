@@ -42,7 +42,6 @@ import { makeGuardRuntime } from './guard/runtime'
 import { registerPolling } from './polling-lifecycle'
 import { registerSessions } from './sessions-lifecycle'
 import { registerIlink } from './ilink-lifecycle'
-import { registerMailboxPoller } from './bootstrap/wire-mailbox'
 import { registerMemoryNightly } from './memory/nightly-lifecycle'
 import { resolveCheapEval } from './memory-llm-ops'
 import { wireLetters } from './bootstrap/wire-letters'
@@ -836,14 +835,7 @@ async function bootDaemonInner(opts: BootDaemonOpts, undo: Array<() => void>): P
     lc.register({name:'workbench-artifacts',stop:async()=>{await workbenchArtifacts?.close()}})
     const pollingLc = registerPolling({ ...wired.pollingDeps, runPipeline: pipeline })
     wireRef(wired.refs.polling, pollingLc); lc.register(pollingLc); pollingLcRef = pollingLc
-    // Content-blind mailbox transport (Task 8) — mounted only when bootstrap
-    // produced mailboxPollerDeps (social_enabled + at least one configured
-    // mailbox_relays entry + a live onMailboxLetter). Absent ⇒ no poll timer,
-    // no relay traffic — same "undefined ⇒ fully inert" posture as every
-    // other optional companion/social wiring above.
-    const mailboxLc = await sup.start('mailbox-poller',
-      () => boot.mailboxPollerDeps ? registerMailboxPoller(boot.mailboxPollerDeps) : undefined)
-    if (mailboxLc) lc.register(mailboxLc)
+    // 笔友信箱的轮询器从第三批 3b 第 3 步起是社交那一组里的一个模块(bootstrap/social-module.ts),不在这里起。
     // 每晚整理长期记忆 memory.md(2026-09-25)。15 分钟一次「该不该跑」,运行时在 pipeline-deps 造好。
     const memoryNightlyLc = await sup.start('memory-nightly', () => registerMemoryNightly({
       runtime: wired.memoryNightly, holdBusy: (l) => boot.holdBusy(l), log: (t, l) => log(t, l),
