@@ -346,7 +346,7 @@ async function bootDaemonInner(opts: BootDaemonOpts, undo: Array<() => void>): P
       // 和微信、桌面共用同一份 PendingPermissions —— 主人从哪边拍都算数。
       selfChange: makeSelfChangeGlue({
         ownerChatId: () => loadCompanionConfig(stateDir).default_chat_id ?? null,
-        sendMessage: (c, t) => ilink.sendMessage(c, t),
+        speech: () => speechRef.current,
         // 只登记、自己发卡:卡片发不出去时条目要留在登记处,好让主人从桌面
         // 权限卡或 `self change --approve <id>` 拍板(见 self-change-glue 顶注)。
         registerPending: (h, t, meta) => ilink.registerPendingPermission(h, t, meta),

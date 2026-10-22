@@ -13,6 +13,9 @@ export type SpeechOrigin = 'blocking' | 'requested' | 'report' | 'initiative'
 
 export const SPEECH_KINDS = {
   permission_ask: { origin: 'blocking', label: '等你批准' },
+  // 自改:拍板卡等主人回 y / n(码会过期,不进待说队列,见 daemon/self-change-glue.ts);进展是回报
+  self_change_ask: { origin: 'blocking', label: '自改要你拍板' },
+  self_change_progress: { origin: 'report', label: '自改进展' },
   guest_request: { origin: 'blocking', label: '有人想跟 CC 说话' },
   pairing: { origin: 'blocking', label: '配对' },
   reminder: { origin: 'requested', label: '提醒' },

@@ -46,6 +46,8 @@ const BASELINE: Record<string, [Tag, number]> = {
   // 社交那几条通知:判定走 policy.say(social-tell.ts,经 sendAssistantText 发 —— 它管 App 回话截获与旁听,不换);
   // 剩下这一处是明信片的 sendFile,也只在 say 的生产者里。
   'src/daemon/bootstrap/wire-social.ts': ['primitive', 1],
+  // main.ts 剩下的全是接线:回复交付、命令回话、信自己的投递、internal-api 的回话出口(主动开口都已经走门,10-21)
+  'src/daemon/main.ts': ['primitive', 9],
   // —— 回答对方刚发来的那一句 ——
   'src/daemon/admin-commands.ts': ['reply', 69],
   'src/daemon/onboarding.ts': ['reply', 16],
@@ -56,13 +58,11 @@ const BASELINE: Record<string, [Tag, number]> = {
   'src/daemon/cli-reply-handler.ts': ['reply', 1],
   'src/daemon/internal-api/routes-turn.ts': ['reply', 1],
   // —— 要迁进 policy.say 的(盘点见设计稿第 2 步) ——
-  'src/daemon/main.ts': ['migrate', 10],                 // 余下是接线:回复交付、命令回话、信自己的投递;**还要迁的只剩自改那一条**(selfChange.sendMessage)
   'src/daemon/internal-api/routes.ts': ['migrate', 6],   // 画作分享、广播 …
   'src/daemon/wiring/pipeline-deps.ts': ['migrate', 7],  // 访客申请 …;其中 2 处是 proactive 的微信出口(发字、发文件;say 背后的那条路)
   'src/daemon/bootstrap/wire-jobs.ts': ['migrate', 1],   // 剩下是定时命令的回话(say);「没审成」那两句已走门(10-21)
   'src/daemon/bootstrap/wire-cli-sessions.ts': ['migrate', 3],
   'src/daemon/wiring/wire-phone.ts': ['migrate', 2],
-  'src/daemon/self-change-glue.ts': ['migrate', 2],
   'src/daemon/phone-notifier.ts': ['migrate', 2],
   'src/daemon/inbound/mw-access.ts': ['migrate', 2],
   'src/daemon/wiring/command-router.ts': ['migrate', 1],
