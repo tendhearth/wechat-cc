@@ -275,3 +275,33 @@ describe('社交不在时明说(第三批 3b 第 3 步 3-2):不再悄悄落成�
     expect(makeCommandRouter(baseDeps()).probe(msg('串门'))).toBe(false)
   })
 })
+
+describe('控制命令一条一行(第三批 3d):任何一句话最多一行认领 —— 先后顺序因此无关紧要', () => {
+  const social = { wish: { send: vi.fn(), cancel: vi.fn(), resolveRef: vi.fn() }, penpal: { startVisit: vi.fn() }, intro: { request: vi.fn(), accept: vi.fn(), decline: vi.fn() } } as unknown as CommandRouterDeps['social']
+  const penpal = { sendLetter: vi.fn() } as unknown as CommandRouterDeps['penpal']
+  const pairing = { start: vi.fn(), accept: vi.fn() } as unknown as CommandRouterDeps['pairing']
+  const setups: Array<[string, Partial<CommandRouterDeps>]> = [
+    ['社交开着', { social, penpal, pairing, socialState: () => 'ok' }],
+    ['社交关着', { pairing, socialState: () => 'off' }],
+    ['社交坏了', { socialState: () => 'degraded' }],
+    ['什么都没接', {}],
+  ]
+  it('语料里的每一句,在每种状态下,认领它的控制命令行不超过一行(以后加一行跟别的抢同一句话,这里红)', async () => {
+    const { makeControlCommands } = await import('./command-router')
+    const overlaps: string[] = []
+    for (const [label, over] of setups) {
+      const rows = makeControlCommands(baseDeps(over))
+      for (const text of [...COMMAND_EXAMPLES, ...CHAT]) {
+        const claimed = rows.filter(r => { try { return r.probe(msg(text)) } catch { return false } }).map(r => r.id)
+        if (claimed.length > 1) overlaps.push(`${label}:「${text}」 ⇒ ${claimed.join(', ')}`)
+      }
+    }
+    expect(overlaps).toEqual([])
+  })
+  it('id 都是 control.*、group 都是 control(trace / consumedBy 读的不变)', async () => {
+    const { makeControlCommands } = await import('./command-router')
+    const rows = makeControlCommands(baseDeps())
+    expect(rows.map(r => r.id)).toEqual(['control.social-off', 'control.visit', 'control.letter', 'control.pair', 'control.wish', 'control.intro', 'control.guest'])
+    expect(new Set(rows.map(r => r.group))).toEqual(new Set(['control']))
+  })
+})
