@@ -52,8 +52,10 @@ export function deactivateA2AAgentsTab() {
   closeAddModal(false)
 }
 
-/** Only these explicit server responses mean social has not been wired. */
-function isSocialUnwired(error) { return error === 'social_not_wired' || error === 'penpal_not_wired' }
+/** Only these explicit server responses mean social is off: module_off is the daemon route gate (第三批 3b); the two
+ * *_not_wired codes are what handlers answered before it, kept while both can arrive. module_degraded (on but not
+ * running) deliberately falls through to the generic "暂时读不到" path — it is not off. */
+function isSocialUnwired(error) { return error === 'module_off' || error === 'social_not_wired' || error === 'penpal_not_wired' }
 function readErrorText(err) { return err instanceof Error ? err.message : String(err) }
 function renderReadError(what, action = 'forage-retry') {
   return `<div class="fd-empty" role="status">${escapeHtml(what)}暂时读不到。<button class="btn ghost" data-action="${action}" type="button">重试</button></div>`

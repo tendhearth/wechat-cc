@@ -542,7 +542,7 @@ describe('觅食读取与信箱的页面所有权', () => {
     expect(mail().querySelector('[data-action="mailbox-retry"]')).not.toBeNull()
   })
 
-  it.each(['social_not_wired', 'penpal_not_wired'])('仅明确 %s 才显示开启引导', async (code) => {
+  it.each(['module_off', 'social_not_wired', 'penpal_not_wired'])('仅明确 %s 才显示开启引导', async (code) => {
     call.mockImplementation(async (method: string, path: string) => {
       if (path === '/v1/penpal/channels') throw new Error(code)
       return success(method, path)

@@ -1,4 +1,4 @@
-import { ROUTES } from '@wechat-cc/protocol/routes'
+import { ROUTES, type ModuleName } from '@wechat-cc/protocol/routes'
 import type { UserTier } from '../../core/user-tier'
 
 /**
@@ -38,4 +38,9 @@ export function routesForToken(kind: string): ReadonlySet<string> {
 
 export function minTierFor(routeKey: string): UserTier {
   return ROUTE_MIN_TIER[routeKey] ?? 'admin'
+}
+
+/** 这条路由属于哪个模块(表里的 `module`);没标 ⇒ undefined,不受模块门管。 */
+export function moduleFor(routeKey: string): ModuleName | undefined {
+  return (ROUTES as Readonly<Record<string, { module?: ModuleName }>>)[routeKey]?.module
 }
