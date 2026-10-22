@@ -3014,7 +3014,7 @@ describe('internal-api', () => {
         headers: { Authorization: `Bearer ${token}` },
       })
       expect(resp.status).toBe(503)
-      expect(await resp.json()).toEqual({ error: 'social_not_wired' })
+      expect(await resp.json()).toEqual({ error: 'module_off', module: 'social' })
     })
 
     it('POST /v1/social/wish drives propose(text) and returns the outcome verbatim', async () => {
