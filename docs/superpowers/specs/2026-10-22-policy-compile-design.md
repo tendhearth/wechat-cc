@@ -66,10 +66,20 @@ compilePolicy(executor, tier, permissionMode): CompiledPolicy
 3. **`assertSupported` 读 gaps。** 没登记的「比档位松」在分派时拒。今天按第 2 步全部登记过,所以上线时没有可见变化;以后新加执行者或改档位,漏登记就红 / 就拒。
 4. **`guestSafe` 从 `enforces` 推出来**,删掉手写的那一格(#556 刚改成必填,这一步把它变成推导)。
 
-## 6. 需要主人定的(不自己拍)
+## 6. 定案:同一个主人,同一条规矩(主人授权维护者定,2026-10-22)
 
-- **admin 用 codex / agy 时,危险命令要不要问?** 今天不问(codex 的 never、agy 没有逐条回调)。要问的话:codex 改 `on-request` 会让每条越界命令都弹卡(会很吵);agy 没法逐条问,只能整家对 admin 也不开放 destructive。我的建议:**维持不问,登记成已知缺口**,因为主人是自己机器的主人,用 codex 时本来就预期它会自己跑;微信里切到 codex 时提示一句「codex 不会逐条问你」。
-- **ACP Cursor 在 trusted / admin strict 下:继续一律拒,还是走主人拍板?** 今天一律拒(更严、安全,但 Cursor 在对话里基本跑不了命令)。工作台那边 Cursor 已经有权限卡。我的建议:**对话侧也接到权限卡**(和 claude 一样问主人),这是行为变化,单独一个 PR、主人点头再做。
+9d 审稿时指出:admin 下 codex 删东西不问、ACP Cursor 却全拒 —— 对同一个主人,两家做法正好相反。定一条准绳,两家都照它:
+
+> **档位说「问」的,执行者能问就必须问;问不了的,登记成已知缺口,并在主人切过去时说一句。**
+
+- **ACP Cursor:能问 ⇒ 改成问。** 它每条命令都发 `session/request_permission`,做得到逐条问;今天一律 `reject_once` 是「能问却不问、直接拒」,不符合准绳。改成:按编译出的 `wants` 应答 —— allow 的放、deny 的拒、ask 的走和 claude 同一条权限卡(`permission-relay` → 微信 / 手机,拍板码),超时按拒。guest 不受影响(本来就分派时拒)。这是行为变化,单独一个 PR(第 5 步),上线时写进发版说明。
+- **Codex / agy:问不了 ⇒ 维持不问,登记 + 说一句。** codex 的 approval 只有整轮粗粒度(`on-request` 会让每条越界命令都弹卡,而且分不出 destructive),agy 没有逐条回调。两家在 admin / trusted strict 下 `shell_destructive` 等「问」的维度登记为已知缺口(第 2 步),并在微信 `/codex`、`/agy` 切过去时回一句「它不会逐条问你,删东西也不会」—— CC 不骗人,主人知道再选。
+- openai 的「问 ⇒ 拒」:它有自己的循环,做得到问;按准绳也该改成问。放在 Cursor 之后,同样单独一个 PR(第 6 步)。
+
+于是 §5 的切法补两步:
+
+5. **ACP Cursor 按编译结果应答,「问」走权限卡。** 测试:trusted strict 下 shell 请求弹卡、拍板放行才执行、超时拒;admin dangerously 全放不变;guest 照旧分派时拒。
+6. **openai 的 relay 接权限卡**(同上)。
 
 ## 7. 这一块不做
 
