@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest'
-import { mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync, readdirSync } from 'node:fs'
+import { mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync, readdirSync, statSync } from 'node:fs'
 import { join } from 'node:path'
 import { tmpdir } from 'node:os'
 import { determineScenario, pollSetupQrStatus, requestSetupQrCode, defaultFetchBinary, persistConfirmedAccount } from './setup-flow'
@@ -163,6 +163,26 @@ describe('persistConfirmedAccount admins bootstrap (A1)', () => {
 
   // 3e(2026-10-22):以前读不出来就吞掉错误、从空名单起写回 —— 主人原来的名单和管理员没了,还没处找。
   // 现在和 daemon 一样:坏文件挪到 .corrupt-<时间>,数据留着。
+  // 3e 第 2 步:令牌以前直接覆盖、account.json 用固定 account.json.tmp;现在都走独立 tmp + rename,0o600、不留 tmp。
+  it('token and account.json land 0o600 with no tmp files left behind', () => {
+    const stateDir = mkdtempSync(join(tmpdir(), 'setup-account-atomic-'))
+    try {
+      persistConfirmedAccount({
+        stateDir,
+        currentBaseUrl: 'https://ilinkai.weixin.qq.com',
+        status: { status: 'confirmed', bot_token: 'tok', ilink_bot_id: 'bot:1/im-bot', ilink_user_id: 'user-1' },
+      })
+      const accountsRoot = join(stateDir, 'accounts')
+      const [acct] = readdirSync(accountsRoot)
+      const dir = join(accountsRoot, acct!)
+      expect(readdirSync(dir).sort()).toEqual(['account.json', 'token'])
+      expect(readFileSync(join(dir, 'token'), 'utf8')).toBe('tok')
+      if (process.platform !== 'win32') for (const f of ['token', 'account.json']) expect(statSync(join(dir, f)).mode & 0o777).toBe(0o600)
+    } finally {
+      rmSync(stateDir, { recursive: true, force: true })
+    }
+  })
+
   it('an unreadable access.json is moved aside (kept), not silently overwritten', () => {
     const stateDir = mkdtempSync(join(tmpdir(), 'setup-admins-torn-'))
     try {

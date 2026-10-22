@@ -3,10 +3,11 @@
  * 喂回 prompt 的「今天之前的判断」;实现「说了不做就 90 分钟别再问」。
  * 留最近 14 天(手机 feed 要看历史),`readPlanLog(today)` 仍只回今天的。
  */
-import { existsSync, mkdirSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdirSync } from 'node:fs'
 import { join } from 'node:path'
 import { readJsonFile } from '../../lib/read-json-file'
 import type { PlanLogEntry } from '../../core/companion-plan'
+import { writeJsonAtomic } from '../../lib/json-file'
 
 const dirOf = (stateDir: string) => join(stateDir, 'companion')
 const pathOf = (stateDir: string) => join(dirOf(stateDir), 'plan-log.json')
@@ -14,7 +15,7 @@ const pathOf = (stateDir: string) => join(dirOf(stateDir), 'plan-log.json')
 function writeJson(stateDir: string, value: unknown): void {
   const dir = dirOf(stateDir)
   if (!existsSync(dir)) mkdirSync(dir, { recursive: true })
-  writeFileSync(pathOf(stateDir), JSON.stringify(value, null, 2))
+  writeJsonAtomic(pathOf(stateDir), value)
 }
 
 /** 留几天。spec 2026-09-06-mobile-home-feed §5.1:手机 feed 要看历史,不再每天清零。 */

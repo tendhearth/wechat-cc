@@ -2,9 +2,10 @@
  * neighbor-memory.ts — 邻居的记忆:上次去谁家、每家聊到哪、去过几次。
  * 存在 companion/neighbors.json。串门(wire-visit)写,关系视图(routes-social)读。
  */
-import { existsSync, mkdirSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdirSync } from 'node:fs'
 import { join } from 'node:path'
 import { readJsonFile } from '../../lib/read-json-file'
+import { writeJsonAtomic } from '../../lib/json-file'
 
 export interface NeighborMemory {
   lastId: string | null
@@ -22,5 +23,5 @@ export function readNeighborMemory(stateDir: string): NeighborMemory {
 export function writeNeighborMemory(stateDir: string, m: NeighborMemory): void {
   const dir = join(stateDir, 'companion')
   if (!existsSync(dir)) mkdirSync(dir, { recursive: true })
-  writeFileSync(join(dir, 'neighbors.json'), JSON.stringify(m, null, 2))
+  writeJsonAtomic(join(dir, 'neighbors.json'), m)
 }

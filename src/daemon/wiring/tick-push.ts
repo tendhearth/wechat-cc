@@ -3,7 +3,7 @@
  */
 import { inQuietHours } from '../../core/quiet-hours'
 import { join } from 'node:path'
-import { mkdirSync, writeFileSync, readFileSync } from 'node:fs'
+import { readFileSync } from 'node:fs'
 import { loadAgentConfig } from '../../lib/agent-config'
 import { loadCompanionConfig } from '../companion/config'
 import { makeObservationsStore } from '../observations/store'
@@ -22,6 +22,7 @@ import { isNetworkUnprotectedError, NETWORK_UNPROTECTED_REASON } from '../../lib
 import type { TickDeps } from './tick-deps'
 import type { TickDispatch } from './tick-dispatch'
 import { buildPushTickText, buildGapCheckinText, buildHuntText } from './tick-texts'
+import { writeJsonAtomic } from '../../lib/json-file'
 function errMsg(err: unknown): string { return err instanceof Error ? err.message : String(err) }
 
 /** 来访叙述发不出去(sendText 回了 {error}):在 say 的生产者里抛,外面撤水位。 */
@@ -443,7 +444,7 @@ export function makePushTick(deps: TickDeps, dispatch: TickDispatch): (opts?: { 
     } finally {
       // 中途抛错也要把已讲完的几位落盘,否则下一拍重讲(重复发给主人)
       if (changed) {
-        try { mkdirSync(join(deps.stateDir, 'companion'), { recursive: true }); writeFileSync(statePath, JSON.stringify(state, null, 2)) }
+        try { writeJsonAtomic(statePath, state) }
         catch (err) { deps.log('VISIT', `guest state write failed: ${errMsg(err)}`) }
       }
     }
