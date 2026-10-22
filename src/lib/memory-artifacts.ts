@@ -10,10 +10,12 @@
  */
 export type MemoryArtifactKind = 'source' | 'derived' | 'queue' | 'ledger'
 
-export const MEMORY_ARTIFACTS: Readonly<Record<string, { kind: MemoryArtifactKind; why: string }>> = {
+export const MEMORY_ARTIFACTS: Readonly<Record<string, { kind: MemoryArtifactKind; why: string; synthesisInput?: false }>> = {
   'memory.md': { kind: 'source', why: '每轮注入的那份;nightly 整理、主人纠正 / 编辑' },
   'profile.md': { kind: 'source', why: 'CC 自己的笔记(MCP memory_write);gardener 会压缩' },
-  'corrections.md': { kind: 'source', why: '主人的纠正,nightly 据此不再加回' },
+  // 不喂合成:每一行都复述了被纠正的那句(「主人说这条已经过时:<原话>」)—— 当素材喂进去,总览可能正好把主人撤掉的话写回来,
+  // 而总览会进串门人设、带到别人的 CC 那里。它是给 nightly 的指令,不是关于主人的事实。
+  'corrections.md': { kind: 'source', why: '主人的纠正,nightly 据此不再加回', synthesisInput: false },
   'preferences.md': { kind: 'source', why: 'CC 记下的偏好' },
   'persona.md': { kind: 'source', why: 'CC 的人设' },
   'agenda.md': { kind: 'source', why: '待办;晨报和定时也读' },
@@ -26,6 +28,15 @@ export const MEMORY_ARTIFACTS: Readonly<Record<string, { kind: MemoryArtifactKin
   'memory-log.jsonl': { kind: 'ledger', why: 'nightly 的审计日志,只追加' },
   'memory-sources.json': { kind: 'ledger', why: '整理时的出处映射(当时的消息 id)' },
   '.derived-state.json': { kind: 'ledger', why: '生成物过期标记本身' },
+}
+
+/**
+ * 合成(总览 / 画像)能不能拿它当素材(3e 记忆第 3 步):只吃源,而且不吃标了 synthesisInput: false 的(corrections.md)。
+ * 生成物不喂生成物(以前只排除了 _overview.md 自己,knowledge.md 被读两遍、today-draft 和 profile.md 重复)。
+ */
+export function feedsSynthesis(relPath: string): boolean {
+  const p = relPath.split('\\').join('/').replace(/^\.\//, '')
+  return memoryArtifactKind(p) === 'source' && MEMORY_ARTIFACTS[p]?.synthesisInput !== false
 }
 
 /** 相对记忆目录的路径 → 类别。notes/ 下的、认不出的 ⇒ source;墓碑 `*.deleted-*`、点开头的临时文件 ⇒ ledger。 */
