@@ -1,4 +1,5 @@
-import { existsSync, renameSync, rmSync, writeFileSync } from 'node:fs'
+import { writeFileAtomic } from '../lib/json-file'
+import { existsSync, rmSync } from 'node:fs'
 import { join } from 'node:path'
 import { readJsonFile } from '../lib/read-json-file'
 
@@ -119,7 +120,5 @@ function dropSessionStateBot(file: string, botId: string): boolean {
 }
 
 function atomicWrite(file: string, content: string): void {
-  const tmp = `${file}.tmp-${process.pid}-${Date.now()}`
-  writeFileSync(tmp, content, { mode: 0o600 })
-  renameSync(tmp, file)
+  writeFileAtomic(file, content, { mode: 0o600 })
 }

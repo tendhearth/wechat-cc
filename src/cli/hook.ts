@@ -19,8 +19,9 @@
  * 置 WECHAT_CC_DAEMON_CHILD=1(daemon/main.ts);hook 看到就直接退出,不然 daemon 的每个
  * 回合都会被推回微信。
  */
+import { writeFileAtomic } from '../lib/json-file'
 import { toolInputFacts } from '../core/permission-rules/facts'
-import { existsSync, readFileSync, writeFileSync, renameSync, mkdirSync, statSync, openSync, readSync, closeSync } from 'node:fs'
+import { existsSync, readFileSync, mkdirSync, statSync, openSync, readSync, closeSync } from 'node:fs'
 import { dirname, join } from 'node:path'
 import { hostname } from 'node:os'
 import { readJsonFile } from '../lib/read-json-file'
@@ -429,9 +430,7 @@ function readHooksFile(file: string): HooksFile {
 
 function writeHooksFile(file: string, cfg: HooksFile): void {
   mkdirSync(dirname(file), { recursive: true })
-  const tmp = `${file}.tmp-${process.pid}`
-  writeFileSync(tmp, JSON.stringify(cfg, null, 2) + '\n')
-  renameSync(tmp, file)
+  writeFileAtomic(file, JSON.stringify(cfg, null, 2) + '\n')
 }
 
 /** 去掉自家条目;返回删掉的 handler 数。空组、空事件键一并收掉。 */

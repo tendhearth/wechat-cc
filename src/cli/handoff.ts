@@ -5,7 +5,8 @@
  * `memory/` dir. Overwrites on each switch. See the design spec for why
  * we don't accumulate history here.
  */
-import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from 'fs'
+import { writeFileAtomic } from '../lib/json-file'
+import { existsSync, mkdirSync, readFileSync } from 'fs'
 import { join } from 'path'
 
 export interface HandoffInput {
@@ -38,9 +39,7 @@ type: reference
 }
 
 function writeAtomic(file: string, content: string): void {
-  const tmp = `${file}.tmp`
-  writeFileSync(tmp, content, { mode: 0o600 })
-  renameSync(tmp, file)
+  writeFileAtomic(file, content, { mode: 0o600 })
 }
 
 function buildIndexLine(sourceAlias: string, timestamp: string): string {
