@@ -1,4 +1,5 @@
 #!/usr/bin/env bun
+import { startLifecycleModule, type LifecycleModuleHost } from './modules/lifecycle-module'
 import { makeDaemonShutdown } from './runtime/shutdown'
 import { makeJobsStore, summarizeJobs } from '../core/scheduled-jobs-store'
 import { fromReplyHandler } from './commands/registry'
@@ -229,6 +230,8 @@ async function bootDaemonInner(opts: BootDaemonOpts, undo: Array<() => void>): P
   const lc = new LifecycleSet((tag, line) => log(tag, line))
   // Subsystem degraded-boot (spec 2026-08-17) — 只包可选子系统;核心链不经它。
   const sup = new SubsystemSupervisor((t, l) => log(t, l))
+  // 定时器那几样一行起一个模块(第三批 3b 第 5 步,modules/lifecycle-module.ts):停法登记在 lc 里它原来那一行的位置,停的顺序不变
+  const moduleHost: LifecycleModuleHost = { sup, log: (t, l) => log(t, l), register: (name, stop) => lc.register({ name, stop }) }
   let pollingLcRef: { reconcile(): Promise<void> } | null = null
   let ticksRef: TickBodies | null = null
   const BOOT_AT_ISO = new Date().toISOString()
@@ -813,15 +816,10 @@ async function bootDaemonInner(opts: BootDaemonOpts, undo: Array<() => void>): P
     wireRef(wired.refs.pipeline, pipeline)
     wireRef(wired.refs.appTurn, pipeline.appTurn)
     // 4. register lifecycles (LIFO stop = startup order reversed)
-    const pushLc = await sup.start('companion.push', () => registerCompanionPush(wired.companionPushDeps))
-    if (pushLc) lc.register(pushLc)
-    const introspectLc = await sup.start('companion.introspect', () => registerCompanionIntrospect(wired.companionIntrospectDeps))
-    if (introspectLc) lc.register(introspectLc)
-    const ingestLc = await sup.start('companion.ingest', () => registerIngest(wired.companionIngestDeps))
-    if (ingestLc) {
-      lc.register(ingestLc)
-      wireRef(wired.refs.ingestNudge, ingestLc.nudge)   // inbound path nudges ingestion on fresh activity
-    }
+    await startLifecycleModule(moduleHost, 'companion.push', () => registerCompanionPush(wired.companionPushDeps))
+    await startLifecycleModule(moduleHost, 'companion.introspect', () => registerCompanionIntrospect(wired.companionIntrospectDeps))
+    const ingestLc = await startLifecycleModule(moduleHost, 'companion.ingest', () => registerIngest(wired.companionIngestDeps))
+    if (ingestLc) wireRef(wired.refs.ingestNudge, ingestLc.nudge)   // inbound path nudges ingestion on fresh activity
     const guardLc = await sup.start('guard', () => registerGuard(wired.guardDeps))
     if (guardLc) { wireRef(wired.refs.guard, guardLc); lc.register(guardLc) }
     // 外部 CLI provider 的退避重探计时器(2026-10-04)—— 关停时别再起探测、别再晚注册。
@@ -837,10 +835,9 @@ async function bootDaemonInner(opts: BootDaemonOpts, undo: Array<() => void>): P
     wireRef(wired.refs.polling, pollingLc); lc.register(pollingLc); pollingLcRef = pollingLc
     // 笔友信箱的轮询器从第三批 3b 第 3 步起是社交那一组里的一个模块(bootstrap/social-module.ts),不在这里起。
     // 每晚整理长期记忆 memory.md(2026-09-25)。15 分钟一次「该不该跑」,运行时在 pipeline-deps 造好。
-    const memoryNightlyLc = await sup.start('memory-nightly', () => registerMemoryNightly({
+    await startLifecycleModule(moduleHost, 'memory-nightly', () => registerMemoryNightly({
       runtime: wired.memoryNightly, holdBusy: (l) => boot.holdBusy(l), log: (t, l) => log(t, l),
     }))
-    if (memoryNightlyLc) lc.register(memoryNightlyLc)
     internalApi.provide({ memoryNightly: wired.memoryNightly })
     // CC 的信(2026-10-16):不定期写一封信、排成信纸寄到微信;主人说「给我写封信」时 cc_letter 工具当场写。
     // 开关 companion.letters_enabled 默认关。可选子系统:坏了只降级。
@@ -858,8 +855,7 @@ async function bootDaemonInner(opts: BootDaemonOpts, undo: Array<() => void>): P
       app: () => wired.companionApp,
       holdBusy: (l) => boot.holdBusy(l), log: (t, l) => log(t, l),
     })
-    const lettersLc = await sup.start('letters', () => letters.start())
-    if (lettersLc) lc.register(lettersLc)
+    await startLifecycleModule(moduleHost, 'letters', () => letters.start())
     internalApi.provide({ letters: letters.runtime })
     // 外部 agent CLI 自动升级(主人 2026-10-04,docs/maintainer/cli-auto-upgrade.md):空闲时用官方升级器升、
     // 升完立刻自检、不过就退回 + 记坏版本 + 告诉主人一次。可选子系统:坏了只降级。
@@ -892,7 +888,7 @@ async function bootDaemonInner(opts: BootDaemonOpts, undo: Array<() => void>): P
     // row is still 'pending' — not a delay.
     // 2026-10-18:与伙伴推送同一条规矩 —— 微信能用走微信;不能用 / 发失败且 App 收得到(主人那条)⇒ 落到
     // App(记进对话 + 推一条 companion)。10-21 起经 SpeechPolicy:都不通 ⇒ 留着、不算失败,通了就送。
-    const remindersLc = await sup.start('reminders', () => registerReminders({
+    await startLifecycleModule(moduleHost, 'reminders', () => registerReminders({
       store: makeRemindersStore(db),
       // 走 SpeechPolicy(第三批 3a,requested:免打扰 / 别烦我照发);两条路都送不到 ⇒ 留着、不算失败(reminders/sweeper sendReminderVia)
       send: sendReminderVia(wired.speech, (t, l) => log(t, l)),
@@ -900,7 +896,6 @@ async function bootDaemonInner(opts: BootDaemonOpts, undo: Array<() => void>): P
       activityLog,
       isOwner: (chatId: string) => resolveAdminChatId(loadAccess(), loadCompanionConfig(stateDir), null) === chatId,
     }))
-    if (remindersLc) lc.register(remindersLc)
     await jobs.start()
     // 回报投递(task-3,2026-09-23):每轮答复回原对话说一声,人不在就等人回来
     // 再送(errcode=-2 不计入放弃窗口,保持 pending 退避重试)。同样是可选子
@@ -909,7 +904,7 @@ async function bootDaemonInner(opts: BootDaemonOpts, undo: Array<() => void>): P
     // 时间线上留一笔(评审修复轮 3 ③)——同一个 db,跟 wireWorkbench 内部那份
     // 各自持有自己的预备语句,写入互相可见,不需要共享实例。
     const reportEventStore = makeWorkbenchStore(db)
-    const reportsLc = await sup.start('reports', () => registerReportSweeper({
+    await startLifecycleModule(moduleHost, 'reports', () => registerReportSweeper({
       store: reportOutbox,
       matters,
       // 一件事做完的回报走 SpeechPolicy(第三批 3a):推后留在 outbox,发出去以后的失败照旧回给 sweeper(reports/sweeper sendReportVia)
@@ -919,7 +914,6 @@ async function bootDaemonInner(opts: BootDaemonOpts, undo: Array<() => void>): P
         try { reportEventStore.addEvent(matterId, 'system', text) } catch { /* best effort — the drop itself already succeeded */ }
       },
     }))
-    if (reportsLc) lc.register(reportsLc)
     // 5. one-shot startup sweeps — fire-and-forget
     runStartupSweeps({ ...wired.startupDeps, previousRun })
     // 外部集成反馈 #6:这个 flag 的语义像"跳过工具确认",实际是全局提权
