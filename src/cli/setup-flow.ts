@@ -294,7 +294,7 @@ export function persistConfirmedAccount(opts: {
       access.admins = [status.ilink_user_id]
       dirty = true
     }
-    if (dirty) writeJsonAtomic(accessFile, access)
+    if (dirty) writeJsonAtomic(accessFile, access, { mode: 0o600 })
   }
 
   // Determine scenario AFTER writing the new dir but BEFORE dedupe runs.

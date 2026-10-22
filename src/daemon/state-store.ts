@@ -1,5 +1,6 @@
-import { readFileSync, writeFileSync, existsSync, mkdirSync, renameSync } from 'node:fs'
+import { readFileSync, existsSync, mkdirSync } from 'node:fs'
 import { dirname } from 'node:path'
+import { writeFileAtomic } from '../lib/json-file'
 
 export interface StateStoreOptions {
   debounceMs: number
@@ -34,9 +35,7 @@ export function makeStateStore(filePath: string, opts: StateStoreOptions): State
     if (!dirty) return
     const dir = dirname(filePath)
     if (!existsSync(dir)) mkdirSync(dir, { recursive: true })
-    const tmp = `${filePath}.tmp-${process.pid}-${Date.now()}`
-    writeFileSync(tmp, JSON.stringify(data), 'utf8')
-    renameSync(tmp, filePath)
+    writeFileAtomic(filePath, JSON.stringify(data))
     dirty = false
   }
 

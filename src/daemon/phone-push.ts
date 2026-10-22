@@ -12,10 +12,10 @@
  * 结果:房间回 `{push_result:{…,ref}}`,按 ref 结清等待者(test() 用);`{push_invalid}` ⇒ 删本地登记。
  */
 import { randomBytes } from 'node:crypto'
-import { renameSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { derivePushKey, pushTokenValid, sealPush, type PushKindT, type PushPlaintextT, type PushPlatformT } from '@wechat-cc/protocol'
 import { readJsonFile } from '../lib/read-json-file'
+import { writeFileAtomic } from '../lib/json-file'
 
 /** 形状以协议包的 PushPlaintext 为准(原生端按它解析);这里只是去掉 daemon 自己填的 ts。 */
 export type PushKind = PushKindT
@@ -58,9 +58,7 @@ export function makePhonePush(deps: {
     try { const r = readJsonFile(path) as Record<string, Row>; return r && typeof r === 'object' ? r : {} } catch { return {} }
   }
   const write = (rows: Record<string, Row>) => {
-    const tmp = `${path}.tmp`
-    writeFileSync(tmp, JSON.stringify(rows, null, 2), { mode: 0o600 })
-    renameSync(tmp, path)
+    writeFileAtomic(path, JSON.stringify(rows, null, 2), { mode: 0o600 })
   }
   const changed = () => { try { deps.onChange?.() } catch { /* 通知方自己的事 */ } }
 

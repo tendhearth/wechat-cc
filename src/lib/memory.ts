@@ -79,7 +79,7 @@ export function writeMemoryFile(stateDir: string, userId: string, relPath: strin
   }
   const created = !existsSync(target)
   mkdirSync(dirname(target), { recursive: true, mode: 0o700 })
-  writeFileAtomic(target, body)
+  writeFileAtomic(target, body, { mode: 0o600 })
   return { bytesWritten: bytes, created }
 }
 
@@ -101,7 +101,7 @@ export function writeMemoryProfileFile(stateDir: string, userId: string, body: s
   }
   const created = !existsSync(target)
   mkdirSync(dirname(target), { recursive: true, mode: 0o700 })
-  writeFileAtomic(target, body)
+  writeFileAtomic(target, body, { mode: 0o600 })
   return { bytesWritten: bytes, created }
 }
 

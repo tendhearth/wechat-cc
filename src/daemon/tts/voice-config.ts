@@ -1,6 +1,7 @@
-import { writeFileSync, existsSync, renameSync } from 'node:fs'
+import { existsSync } from 'node:fs'
 import { join } from 'node:path'
 import { readJsonFile } from '../../lib/read-json-file'
+import { writeFileAtomic } from '../../lib/json-file'
 
 export type VoiceConfig =
   | {
@@ -64,11 +65,5 @@ export function loadVoiceConfig(stateDir: string): VoiceConfig | null {
 
 export async function saveVoiceConfig(stateDir: string, cfg: VoiceConfig): Promise<void> {
   const p = configPath(stateDir)
-  const tmp = `${p}.tmp-${process.pid}-${Date.now()}`
-  // Apply 0o600 atomically with the write — eliminates the brief
-  // window between writeFileSync and chmodSync where the file is
-  // readable by other users. Honored on POSIX; ignored on Windows
-  // (no umask there but also no observable issue).
-  writeFileSync(tmp, JSON.stringify(cfg, null, 2), { encoding: 'utf8', mode: 0o600 })
-  renameSync(tmp, p)
+  writeFileAtomic(p, JSON.stringify(cfg, null, 2), { mode: 0o600 })
 }

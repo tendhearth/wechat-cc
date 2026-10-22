@@ -29,7 +29,7 @@ function readState(root: string): DerivedState | null {
 function writeState(root: string, state: DerivedState): void {
   mkdirSync(root, { recursive: true, mode: 0o700 })
   const path = join(root, STATE_FILE)
-  writeFileAtomic(path, JSON.stringify(state))
+  writeFileAtomic(path, JSON.stringify(state), { mode: 0o600 })
 }
 
 export function readDerivedRevision(memoryRoot: string): string {

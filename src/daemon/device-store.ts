@@ -10,10 +10,10 @@
  * token-registry 的同步只在 `makeDeviceCredentials` 一处:面板与隧道都只认它。
  */
 import { createHash, randomBytes } from 'node:crypto'
-import { renameSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { readJsonFile } from '../lib/read-json-file'
 import type { PanelTokens } from './internal-api/token-registry'
+import { writeFileAtomic } from '../lib/json-file'
 
 const DEVICES_FILE = 'settings-devices.json'
 const MAX_DEVICES = 20
@@ -64,9 +64,7 @@ export function makeDeviceStore(stateDir: string, now: () => number = () => Date
   // 原子写(临时文件 + rename):touch 每台每 5 分钟就要重写一次,写到一半断电留下半截
   // JSON,下一次读就是「没有设备」—— 评审 2026-09-29。
   const write = (rows: Record<string, Stored>) => {
-    const tmp = `${path}.tmp`
-    writeFileSync(tmp, JSON.stringify(rows, null, 2), { mode: 0o600 })
-    renameSync(tmp, path)
+    writeFileAtomic(path, JSON.stringify(rows, null, 2), { mode: 0o600 })
   }
   const toRow = (r: Stored): DeviceRow => {
     const row: DeviceRow = { id: r.id!, created_at: r.created_at, last_seen_at: r.last_seen_at! }

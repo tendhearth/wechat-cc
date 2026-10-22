@@ -6,10 +6,10 @@
  * 身份文件坏了 ⇒ 这次只连老中继(relay-identity.ts 不会悄悄换 id)。
  */
 import { randomBytes } from 'node:crypto'
-import { writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { readJsonFile } from '../lib/read-json-file'
 import { loadOrCreateRelayIdentity, type RelayIdentity } from './relay-identity'
+import { writeFileAtomic } from '../lib/json-file'
 
 const LEGACY_PHONE_URL = 'wss://cc.tendhearth.com/tunnel/phone'
 
@@ -28,7 +28,7 @@ export function resolveRemoteRelays(
   const idPath = join(stateDir, 'tunnel-id.json')
   let did: string
   try { did = (readJsonFile(idPath) as { id: string }).id }
-  catch { did = 't' + randomBytes(18).toString('hex'); try { writeFileSync(idPath, JSON.stringify({ id: did }), { mode: 0o600 }) } catch { /* best effort */ } }
+  catch { did = 't' + randomBytes(18).toString('hex'); try { writeFileAtomic(idPath, JSON.stringify({ id: did }), { mode: 0o600 }) } catch { /* best effort */ } }
   const phoneUrl = cfg.remote_relay_url ?? LEGACY_PHONE_URL
   const legacy = { id: did, phoneUrl, daemonUrl: phoneUrl.replace('/tunnel/phone', '/tunnel/daemon') }
 

@@ -18,7 +18,7 @@ export function makeCursorStore(stateDir: string): CursorStore {
     get(relay) { return read()[relay] ?? 0 },
     set(relay, cursor) {
       const all = read(); all[relay] = cursor
-      writeJsonAtomic(path, all)
+      writeJsonAtomic(path, all, { mode: 0o600 })
     },
   }
 }

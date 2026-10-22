@@ -8,7 +8,8 @@
  *
  * 这里给两件事:
  *  - `writeJsonAtomic` / `writeFileAtomic`:独一无二的 tmp 名(pid + 随机,`wx` 打开)→ 写完 fsync → rename。
- *    权限:新建默认 0o600,已有文件保留原来的 mode(Windows 上 mode 无意义,忽略)。Windows 上目标文件被杀毒 /
+ *    权限:调用方给了 `mode` ⇒ 每次都按它写(存密钥的文件要这样:以前每次写都收回 0o600);没给 ⇒ 已有文件保留原来的
+ *    mode、新建默认 0o600(Windows 上 mode 无意义,忽略)。Windows 上目标文件被杀毒 /
  *    索引器占着时 rename 会偶发 EPERM / EBUSY / EACCES:短重试 3 次、间隔 50ms,再不行照实抛。
  *  - `updateJsonFile`:读-改-写。**旧文件存在但读不出来(不是合法 JSON、或不是对象)⇒ 拒写,抛 `UnreadableJsonError`**,
  *    绝不拿 `{}` 顶上去覆盖。读走 readJsonFile(容忍 BOM —— Windows 上 PowerShell 写的文件带 BOM,出过真 bug)。
@@ -46,7 +47,7 @@ function sleepSync(ms: number): void {
 }
 
 export interface AtomicWriteOptions {
-  /** 新建文件的权限;缺省 0o600。已有文件一律保留原来的 mode。 */
+  /** 给了 ⇒ 每次都按它写(存密钥的文件:令牌、daemon.env、agent-config 里的 a2a key…);没给 ⇒ 已有文件保留原 mode、新建 0o600。 */
   mode?: number
   /** 只给测试:rename 实现与重试间隔。 */
   rename?: (from: string, to: string) => void
@@ -61,7 +62,7 @@ function existingMode(path: string): number | null {
 export function writeFileAtomic(path: string, data: string, opts: AtomicWriteOptions = {}): void {
   const dir = dirname(path)
   mkdirSync(dir, { recursive: true, mode: 0o700 })
-  const mode = existingMode(path) ?? opts.mode ?? 0o600
+  const mode = opts.mode ?? existingMode(path) ?? 0o600
   const tmp = join(dir, `.${basename(path)}.${process.pid}.${randomBytes(6).toString('hex')}.tmp`)
   const fd = openSync(tmp, 'wx', mode)
   try {
