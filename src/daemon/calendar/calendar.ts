@@ -3,8 +3,9 @@
  * 开关存 state/calendar.json;授权只在主人「日历 开」时请求;读之前先看状态 —— 没授权时 EventKit 读出来是空的,
  * 绝不能把「没权限」说成「今天没安排」。日志里不写标题。只进主人的轮次(早报 / 「日历」命令)。
  */
+import { writeFileAtomic } from '../../lib/json-file'
 import { join } from 'node:path'
-import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdirSync, readFileSync } from 'node:fs'
 import { spawnSync } from 'node:child_process'
 import { readJsonFile } from '../../lib/read-json-file'
 import { dayWindow, formatAgenda, parseRead, parseStatus, readScript, requestScript, statusScript, type CalendarStatus } from '../../core/calendar/eventkit'
@@ -52,9 +53,7 @@ export function makeCalendar(deps: CalendarDeps) {
   const enabled = (): boolean => { try { return readJsonFile<{ enabled?: unknown }>(file)?.enabled === true } catch { return false } }
   const setEnabled = (on: boolean) => {
     mkdirSync(deps.stateDir, { recursive: true })
-    const tmp = `${file}.tmp-${process.pid}`
-    writeFileSync(tmp, JSON.stringify({ enabled: on }) + '\n')
-    renameSync(tmp, file)
+    writeFileAtomic(file, JSON.stringify({ enabled: on }) + '\n')
   }
   const osa = (script: string, ms: number) => deps.run('osascript', ['-l', 'JavaScript', '-e', script], deps.stateDir, ms)
   const available = () => deps.platform === 'darwin' && deps.bundleHasUsage()

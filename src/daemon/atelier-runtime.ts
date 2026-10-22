@@ -1,4 +1,5 @@
-import { existsSync, mkdirSync, renameSync, writeFileSync } from 'node:fs'
+import { writeFileAtomic } from '../lib/json-file'
+import { mkdirSync } from 'node:fs'
 import { readJsonFile } from '../lib/read-json-file'
 import { isNetworkUnprotectedError } from '../lib/network-gate'
 import { dirname, join } from 'node:path'
@@ -111,9 +112,7 @@ export function readAtelierCadence(stateDir: string): AtelierCadenceState {
 export function writeAtelierCadence(stateDir: string, state: AtelierCadenceState): void {
   const file = statePath(stateDir)
   mkdirSync(dirname(file), { recursive: true })
-  const tmp = `${file}.tmp-${process.pid}-${Date.now()}`
-  writeFileSync(tmp, JSON.stringify(state, null, 2), { encoding: 'utf8', mode: 0o600 })
-  renameSync(tmp, file)
+  writeFileAtomic(file, JSON.stringify(state, null, 2), { mode: 0o600 })
 }
 
 function recentSuccessful(state: AtelierCadenceState, nowMs: number, windowMs: number): string[] {

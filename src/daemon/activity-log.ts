@@ -5,7 +5,8 @@
  * - 写是异步的,失败只进日志,不影响动作本身。
  * - 有上限:超过 ACTIVITY_LOG_MAX_LINES 行就留新的一半;14 天前的裁掉。读时坏行跳过。
  */
-import { appendFile, readFile, rename, writeFile } from 'node:fs/promises'
+import { writeFileAtomic } from '../lib/json-file'
+import { appendFile, readFile } from 'node:fs/promises'
 import { existsSync, readFileSync } from 'node:fs'
 import { join } from 'node:path'
 
@@ -39,9 +40,7 @@ export function makeActivityLog(deps: { stateDir: string; now: () => number; log
     let keep = rows.filter(r => r.at >= cutoff)
     if (keep.length > ACTIVITY_LOG_MAX_LINES) keep = keep.slice(-Math.floor(ACTIVITY_LOG_MAX_LINES / 2))
     if (keep.length === rows.length) return
-    const tmp = `${file}.tmp-${process.pid}`
-    await writeFile(tmp, keep.map(r => JSON.stringify(r)).join('\n') + (keep.length ? '\n' : ''))
-    await rename(tmp, file)
+    writeFileAtomic(file, keep.map(r => JSON.stringify(r)).join('\n') + (keep.length ? '\n' : ''))
   }
 
   return {

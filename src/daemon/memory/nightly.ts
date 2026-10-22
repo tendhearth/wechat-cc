@@ -3,8 +3,9 @@
  * 素材 → 指纹(没新东西不调模型)→ 便宜模型出改动清单 → 程序校验执行 → 修订检查(主人正在改就作废)
  * → 备份旧版、原子写、追加日志、更新状态。任何失败都不写文件;同一天不再自动重试。
  */
+import { writeFileAtomic } from '../../lib/json-file'
 import { nextSources, readSources, writeSources, SOURCE_EXCERPT_MAX, type SourceRef } from './sources'
-import { appendFileSync, copyFileSync, existsSync, mkdirSync, readFileSync, readdirSync, renameSync, rmSync, statSync, writeFileSync } from 'node:fs'
+import { appendFileSync, copyFileSync, existsSync, mkdirSync, readFileSync, readdirSync, rmSync, statSync } from 'node:fs'
 import { createHash } from 'node:crypto'
 import { join } from 'node:path'
 import { readJsonFile } from '../../lib/read-json-file'
@@ -69,9 +70,7 @@ export function readNightlyState(stateDir: string): NightlyState {
 export function writeNightlyState(stateDir: string, s: NightlyState): void {
   const dir = join(stateDir, 'companion')
   mkdirSync(dir, { recursive: true })
-  const tmp = join(dir, `${STATE_FILE}.tmp-${process.pid}`)
-  writeFileSync(tmp, JSON.stringify(s, null, 2))
-  renameSync(tmp, join(dir, STATE_FILE))
+  writeFileAtomic(join(dir, STATE_FILE), JSON.stringify(s, null, 2))
 }
 
 /** Only the fields a run owns. pendingNotice is deliberately absent — see mergeRunState. */
@@ -133,9 +132,7 @@ function consumeDraftFile(root: string, consumed: string, log: NightlyRunDeps['l
   try {
     const rest = consumeDraft(readIf(p), consumed)
     if (rest) {
-      const tmp = `${p}.tmp-${process.pid}`
-      writeFileSync(tmp, rest)
-      renameSync(tmp, p)
+      writeFileAtomic(p, rest)
     } else rmSync(p, { force: true })
   } catch (e) {
     log('MEMORY_NIGHTLY', `today-draft cleanup failed (kept for tomorrow): ${e instanceof Error ? e.message : String(e)}`)
@@ -322,9 +319,7 @@ export async function runMemoryNightly(deps: NightlyRunDeps, opts: { force: bool
       // pre-write content.
       if (!existsSync(archivePath)) copyFileSync(memPath, archivePath)
     }
-    const tmp = `${memPath}.tmp-${process.pid}`
-    writeFileSync(tmp, serializeMemoryDoc(res.doc, nowIso))
-    renameSync(tmp, memPath)
+    writeFileAtomic(memPath, serializeMemoryDoc(res.doc, nowIso))
 
     // Only append expired-entry lines AFTER the rename succeeded — otherwise
     // a failure further down (or on a later retry re-expiring the same

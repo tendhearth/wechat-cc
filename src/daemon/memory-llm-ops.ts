@@ -6,6 +6,7 @@
  * routes the desktop calls (routes-memory). This is the single place LLM
  * memory ops run — NEVER the compiled CLI sidecar (spec §1).
  */
+import { writeFileAtomic } from '../lib/json-file'
 import type { Db } from '../lib/db'
 import { readJsonFile } from '../lib/read-json-file'
 import { beginDerivedGeneration, isDerivedMemoryStale, readDerivedRevision } from '../lib/memory-derived-state'
@@ -94,7 +95,7 @@ export function makeMemoryLlmOps(deps: MemoryLlmOpsDeps): MemoryLlmOps {
       if (!svg) return { ok: false, error: 'unsafe_svg' }
       const path = join(memDir, 'portrait.svg')
       writeFileSync(path, svg)
-      writeFileSync(join(memDir, 'portrait.json'), JSON.stringify({ generated_at: new Date().toISOString() }))
+      writeFileAtomic(join(memDir, 'portrait.json'), JSON.stringify({ generated_at: new Date().toISOString() }))
       return { ok: true, path }
     },
   }

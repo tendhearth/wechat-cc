@@ -5,7 +5,8 @@
  * { 条目 id: [{ id: 消息 id, ts, excerpt }] }。每晚整理时,模型在 add / update 上标素材记号(c3 = 聊天第 3 行),
  * 这里换成真消息;删掉 / 过期的条目同时清掉出处。记号对不上的直接丢,出处缺了不影响记忆本身。
  */
-import { existsSync, renameSync, writeFileSync } from 'node:fs'
+import { writeFileAtomic } from '../../lib/json-file'
+import { existsSync } from 'node:fs'
 import { readJsonFile } from '../../lib/read-json-file'
 import { join } from 'node:path'
 import type { AppliedOp, NightlyOps } from './nightly-ops'
@@ -28,9 +29,7 @@ export function readSources(root: string): SourceMap {
 
 export function writeSources(root: string, map: SourceMap): void {
   const p = join(root, SOURCES_FILE)
-  const tmp = `${p}.tmp-${process.pid}`
-  writeFileSync(tmp, JSON.stringify(map, null, 1) + '\n')
-  renameSync(tmp, p)
+  writeFileAtomic(p, JSON.stringify(map, null, 1) + '\n')
 }
 
 /** 这一晚的改动 → 新的出处表。add 的 id 按 ops.add 的顺序对上 applied 里的 add。 */

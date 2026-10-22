@@ -3,10 +3,11 @@
  * 素材由 daemon 在本机拼好(日报原文、今天到期的提醒、agenda、主人的口味),模型只负责挑和写;没东西就 NO_REPLY。
  * 跑法完全沿用定时任务(只读独立会话 job:<id>、闸门、每日上限),这里只管素材、信封与口味文件。
  */
-import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdirSync, readFileSync } from 'node:fs'
 import { join } from 'node:path'
 import type { JobTurnResult, TickTextStyle } from '../wiring/tick-bodies'
 import type { ScheduledJob } from '../../core/scheduled-jobs'
+import { writeFileAtomic } from '../../lib/json-file'
 
 export const BRIEF_MATERIAL_MAX = 4000
 export const BRIEF_PREFS_FILE = 'brief-prefs.md'
@@ -64,9 +65,7 @@ export function makeBriefPrefs(root: () => string | null) {
     const f = file()
     if (!f) return
     mkdirSync(join(f, '..'), { recursive: true })
-    const tmp = `${f}.tmp-${process.pid}`
-    writeFileSync(tmp, lines.map(l => `- ${l}`).join('\n') + (lines.length ? '\n' : ''))
-    renameSync(tmp, f)
+    writeFileAtomic(f, lines.map(l => `- ${l}`).join('\n') + (lines.length ? '\n' : ''))
   }
   return {
     read,

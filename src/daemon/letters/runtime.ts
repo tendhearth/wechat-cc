@@ -12,7 +12,8 @@
  *   - 其它失败最多试 3 次,之后放弃(信还在存档里)。
  * 一次一封:上一封没寄出去之前,不写下一封。
  */
-import { existsSync, mkdirSync, readdirSync, renameSync, writeFileSync } from 'node:fs'
+import { writeFileAtomic } from '../../lib/json-file'
+import { existsSync, mkdirSync, readdirSync } from 'node:fs'
 import { join } from 'node:path'
 import { readJsonFile } from '../../lib/read-json-file'
 import { localParts } from '../memory/nightly-schedule'
@@ -130,9 +131,7 @@ export function readLetterState(stateDir: string): LetterState {
 function writeLetterState(stateDir: string, s: LetterState): void {
   const dir = join(stateDir, 'companion')
   mkdirSync(dir, { recursive: true })
-  const p = join(dir, STATE_FILE), tmp = `${p}.tmp-${process.pid}`
-  writeFileSync(tmp, JSON.stringify(s, null, 2))
-  renameSync(tmp, p)
+  writeFileAtomic(join(dir, STATE_FILE), JSON.stringify(s, null, 2))
 }
 
 function readRecords(stateDir: string): LetterRecord[] {
@@ -148,7 +147,7 @@ function readRecords(stateDir: string): LetterRecord[] {
 function writeRecord(stateDir: string, r: LetterRecord): void {
   const dir = join(stateDir, LETTERS_DIR, r.id)
   mkdirSync(dir, { recursive: true })
-  writeFileSync(join(dir, 'letter.json'), JSON.stringify(r, null, 2))
+  writeFileAtomic(join(dir, 'letter.json'), JSON.stringify(r, null, 2))
 }
 const opening = (r: LetterRecord) => (r.letter.paragraphs[0] ?? '').slice(0, 40)
 

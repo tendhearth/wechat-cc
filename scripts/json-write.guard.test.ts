@@ -19,6 +19,7 @@ const HOME = 'src/lib/json-file.ts'
 /** 不算的(写明为什么)。 */
 const EXEMPT: Record<string, string> = {
   'src/daemon/__e2e__/harness.ts': 'e2e 测试夹具,给假 daemon 铺状态目录,不是生产写法',
+  'src/daemon/atelier-store.ts': '图 + 元数据两个文件一起提交:各自用独一无二的 scratch 名(randomUUID)+ `wx`,两个都写好才依次 rename。单文件的 writeFileAtomic 表达不了这种两步提交',
   'src/daemon/relay-identity.ts': '只建不换:`wx` 直接建目标文件,已经有了就失败、改读别人先写的那一份(并发启动时两个进程不能各留一个种子)。原子替换在这里是错的',
 }
 
@@ -54,7 +55,7 @@ function current(): Record<string, number> {
   return out
 }
 
-// 2026-10-22 基线(3e 第 3 步迁完 src/lib、src/core,第 4 步迁完 daemon 的配置 / 状态存储之后)。迁一处减一;降到 0 删掉那一行。
+// 2026-10-22 基线(3e 第 3 步迁完 src/lib、src/core,第 4 步迁完 daemon 的配置 / 状态存储、第 5 步迁完 daemon 其余之后 —— 只剩 CLI)。迁一处减一;降到 0 删掉那一行。
 const BASELINE: Record<string, number> = {
   'src/cli/account-remove.ts': 1,
   'src/cli/commands/plugin.ts': 1,
@@ -65,26 +66,6 @@ const BASELINE: Record<string, number> = {
   'src/cli/rules.ts': 1,
   'src/cli/self-change/state.ts': 3,
   'src/cli/update.ts': 1,
-  'src/daemon/activity-log.ts': 1,
-  'src/daemon/atelier-provision.ts': 2,
-  'src/daemon/atelier-runtime.ts': 2,
-  'src/daemon/atelier-store.ts': 3,
-  'src/daemon/bootstrap/agy-mcp-config.ts': 2,
-  'src/daemon/bootstrap/cursor-mcp-config.ts': 2,
-  'src/daemon/calendar/calendar.ts': 2,
-  'src/daemon/cc-starter-pack.ts': 1,
-  'src/daemon/internal-api/federation-grant.ts': 1,
-  'src/daemon/internal-api/index.ts': 2,
-  'src/daemon/letters/runtime.ts': 3,
-  'src/daemon/local-import.ts': 1,
-  'src/daemon/memory-llm-ops.ts': 1,
-  'src/daemon/memory/fs-api.ts': 1,
-  'src/daemon/memory/gardener.ts': 3,
-  'src/daemon/memory/nightly-runtime.ts': 2,
-  'src/daemon/memory/nightly.ts': 4,
-  'src/daemon/memory/sources.ts': 2,
-  'src/daemon/notify-startup.ts': 3,
-  'src/daemon/scheduled-jobs/brief.ts': 1,
 }
 
 describe('状态文件只有一种写法(棘轮)', () => {

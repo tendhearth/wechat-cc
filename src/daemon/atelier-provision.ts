@@ -8,8 +8,9 @@
  * Turning the atelier off downloads nothing. The SHA-256 is the integrity gate:
  * a wrong URL fails closed rather than installing bad bytes.
  */
+import { writeFileAtomic } from '../lib/json-file'
 import { createHash } from 'node:crypto'
-import { createReadStream, existsSync, mkdirSync, renameSync, writeFileSync } from 'node:fs'
+import { createReadStream, existsSync, mkdirSync } from 'node:fs'
 import { readJsonFile } from '../lib/read-json-file'
 import { open, rename, rm } from 'node:fs/promises'
 import { dirname, join } from 'node:path'
@@ -81,9 +82,7 @@ export function formatAtelierModelStatus(
 function writeModelStatus(stateDir: string, status: ModelProvisionStatus): void {
   const file = modelStatusPath(stateDir)
   mkdirSync(dirname(file), { recursive: true })
-  const tmp = `${file}.tmp-${process.pid}-${Date.now()}`
-  writeFileSync(tmp, JSON.stringify(status, null, 2), { encoding: 'utf8', mode: 0o600 })
-  renameSync(tmp, file)
+  writeFileAtomic(file, JSON.stringify(status, null, 2), { mode: 0o600 })
 }
 
 async function hashFileSha256(path: string): Promise<string> {
