@@ -107,7 +107,9 @@ policy.say(req, async (turn: ProactiveTurn) => { /* 产出并发送 */ }) → Pr
 - 先 `decide`。是 allow 才 `proactiveOutbound.open(chatId)` 拿到一轮,交给生产者;发完 `turn.finish()`。
 - 生产者拿不到别的发送原语,直接调 ilink 的那几处(B、C、G、I 和两处通知)全部改走这里。微信降级时一律由 `proactive-channel` 选 App,不再有五种分支。
 - **贵的事放在判定之后**:要调模型的生产者(伙伴、来访、晨报)在 allow 之后才调。被拒、被推后都不花模型。
-- **外发账**:每次判定写一行 `speech_log`(SQLite,一张新表),字段是 kind、origin、chatId、结果(allowed / deferred / dropped + reason)、channel、ts。用来回答「CC 昨天为什么说了这句、为什么没说那句」。「你不在的这 N 小时」和日报直接读它。只记种类和原因,不记正文。
+- **外发账**:每次判定写一行 `speech_log`(SQLite,一张新表),字段是 kind、origin、chatId、结果(allowed / deferred / dropped + reason)、channel、ts。用来回答「CC 昨天为什么说了这句、为什么没说那句」。只记种类和原因,不记正文。
+  - **现状(10-21 迁移完时)**:只写不读,`ledger-store.recent()` 还没有调用方。原稿写的「『你不在的这 N 小时』和日报直接读它」**不成立,也不该这么做**:账是「为什么」,不是「有几条」(9d 评审 #522)。连着推后的同一句一小时只记一次,拿它去数一定少数;要数,从各自的持久层读。
+  - **该有的读者(解冻后第一件)**:主人当面问「昨晚为什么没跟我说早报」⇒ CC 查自己的账照实答。做法是一个只读、只认 admin 的工具,只返回主人这条对话的账。这跟 iOS 专注模式的做法一样:专注模式结束后,系统会说哪几条被静音了、为什么,而不是给一个数字。功能冻结期间不加新的工具和路由。
 
 ### 4. 守卫(交给机器)
 

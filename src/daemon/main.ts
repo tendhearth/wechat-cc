@@ -218,7 +218,9 @@ async function bootDaemonInner(opts: BootDaemonOpts, undo: Array<() => void>): P
   // 网络守护运行时(2026-10-02):闸门要比 ilink / internal-api / bootstrap 都先有 ——
   // 语音、provider registry、SessionManager、协调器、工作台都接它;guard 生命周期在后面才 start。
   const guardRt = makeGuardRuntime({ stateDir, log: (t, l) => log(t, l) })
-  const ilink = makeIlinkAdapter({ stateDir, accounts, db, conversationStore, networkGate: guardRt.gate })
+  // CC 开口那道门:wireMain 里才建,这里先占位(ilink 的权限卡、自改、终端会话都懒取它)
+  const speechRef = new Ref<import('./speech/policy').SpeechPolicy>('speech')
+  const ilink = makeIlinkAdapter({ stateDir, accounts, db, conversationStore, networkGate: guardRt.gate, speech: () => speechRef.current })
   const memoryFS = makeMemoryFS({ rootDir: join(stateDir, 'memory') })
   const lc = new LifecycleSet((tag, line) => log(tag, line))
   // Subsystem degraded-boot (spec 2026-08-17) — 只包可选子系统;核心链不经它。
@@ -231,7 +233,6 @@ async function bootDaemonInner(opts: BootDaemonOpts, undo: Array<() => void>): P
   // bootstrap 起的定时器 / 连接的收尾清单(bootstrap/teardown.ts):在这里建、直接交给 shutdown,启动半路失败也停得到。
   const bootTeardown = makeTeardown()
   // CC 开口那道门在 wireMain 里才造;bootstrap 里的社交通知比它早接线、晚发 ⇒ 用 Ref 交过去(只 set 一次)。
-  const speechRef = new Ref<import('./speech/policy').SpeechPolicy>('speech')
   // 收尾(重构第二批步 6a,runtime/shutdown.ts):不管启动有没有走完,都按倒序停已登记的子系统。
   const shutdown = makeDaemonShutdown({
     log: (t, l) => log(t, l),

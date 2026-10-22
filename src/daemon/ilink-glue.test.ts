@@ -182,6 +182,23 @@ describe('makeIlinkAdapter (composed)', () => {
     await a.flush()
   })
 
+  it('权限卡经 CC 开口那道门记一行账(permission_ask,只记账不拦);门没接上 / 记账抛错 ⇒ 卡照样登记、照样能批', async () => {
+    const asks: Array<[string, string]> = []
+    const a = makeIlinkAdapter({ stateDir: newStateDir(), accounts: [acct], ...newAdapterDeps(), speech: () => ({ ask: (req: { kind: string; chatId: string }) => { asks.push([req.kind, req.chatId]); return { allow: true as const, channel: 'wechat' as const } } }) })
+    const p = a.askUser('chat-1', 'test prompt', 'ab124', 60_000)
+    expect(asks).toEqual([['permission_ask', 'chat-1']])
+    expect(a.handlePermissionReply('y ab124', 'chat-1')).toBe(true)
+    expect(await p).toBe('allow')
+    for (const speech of [() => null, () => ({ ask: () => { throw new Error('ledger down') } })]) {
+      const b = makeIlinkAdapter({ stateDir: newStateDir(), accounts: [acct], ...newAdapterDeps(), speech })
+      const q = b.askUser('chat-1', 'test prompt', 'ab125', 60_000)
+      expect(b.handlePermissionReply('y ab125', 'chat-1')).toBe(true)
+      expect(await q).toBe('allow')
+      await b.flush()
+    }
+    await a.flush()
+  })
+
   it('handlePermissionReply handles deny decision', async () => {
     const a = makeIlinkAdapter({ stateDir: newStateDir(), accounts: [acct], ...newAdapterDeps() })
     const p = a.askUser('chat-1', 'test prompt', 'zz999', 60_000)
