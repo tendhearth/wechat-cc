@@ -175,6 +175,12 @@ export function makeMemoryFS(opts: MemoryFSOptions): MemoryFS {
     const real = realpathSync(full)
     return basename(real) === '_overview.md' ? derivedMemoryStatus(dirname(real), 'overview') : 'fresh'
   }
+  /** 读的时候贴上去的那句。写回来时剥掉(可能叠了好几层),不然模型读完原样 memory_write 回去,标签就成了正文(9d 评审 #581)。 */
+  const STALE_LABEL = /^> \(这份整体理解是[^\n]*整理的,之后记忆又有变化,可能不全。\)\n\n/
+  function stripStaleLabels(text: string): string {
+    while (STALE_LABEL.test(text)) text = text.replace(STALE_LABEL, '')
+    return text
+  }
   function staleLabel(full: string): string {
     let day = ''
     try { const d = new Date(statSync(full).mtimeMs); day = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}` } catch { /* 拿不到日期就不写 */ }
@@ -199,6 +205,7 @@ export function makeMemoryFS(opts: MemoryFSOptions): MemoryFS {
       const full = resolveSafe(relPath)
       checkExt(full)
       if (typeof content !== 'string') throw new MemoryPathError('content must be a string')
+      if (basename(full) === '_overview.md') content = stripStaleLabels(content)
       const bytes = Buffer.byteLength(content, 'utf8')
       if (bytes > maxBytes) {
         throw new MemoryPathError(`file too large: ${bytes} bytes > ${maxBytes} limit`)

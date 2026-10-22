@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
-import { mkdtempSync, rmSync, writeFileSync, mkdirSync, existsSync, symlinkSync } from 'node:fs'
+import { mkdtempSync, rmSync, writeFileSync, mkdirSync, existsSync, symlinkSync, readFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { tmpdir } from 'node:os'
 import { makeMemoryFS, MemoryPathError } from './fs-api'
@@ -39,6 +39,15 @@ describe('MemoryFS', () => {
     invalidateDerivedMemory(join(root, 'c1'), 'retracted')
     expect(fs.read('c1/_overview.md')).toBeNull()
     expect(fs.list()).not.toContain('c1/_overview.md')
+  })
+  it('the stale label is stripped when an overview is written back, so it never becomes body text or stacks up', () => {
+    const fs = make()
+    fs.write('c1/_overview.md', 'owner likes hiking')
+    invalidateDerivedMemory(join(root, 'c1'), 'added')
+    const labelled = fs.read('c1/_overview.md')!
+    fs.write('c1/_overview.md', labelled + '\nand cooking')
+    fs.write('c1/_overview.md', fs.read('c1/_overview.md')!)
+    expect(readFileSync(join(root, 'c1', '_overview.md'), 'utf8')).toBe('owner likes hiking\nand cooking')
   })
   it('writing a source invalidates that chat: CC notes are "added", anything else defaults to "retracted"; writing a derived file does not', async () => {
     const { derivedMemoryStatus } = await import('../../lib/memory-derived-state')
