@@ -56,6 +56,7 @@ export interface SpeechPolicy {
    * 只问门、不开一轮:给「自己就是通道」的发送口用 —— App 原生推送(speech/push-gate.ts)。判定、记账跟 say 一样;
    * 放行 ⇒ 账记 allowed、channel 记调用方给的那条,发送由调用方自己做。被推后 / 被拒 ⇒ 原样回,怎么补是调用方的事
    * (report / blocking 不能丢)。`deliverable` 由调用方给:推送送不送得到是推送自己的事,跟微信断没断无关。
+   * 账上的 allowed 记的是**门的判定**,不是送达:放行以后推到 0 台(没配对 / 都离线)账上照样是 allowed,送达与否看推送自己的日志(#536 评审)。
    */
   ask(req: SpeechRequest, o: { channel: ProactiveChannel; deliverable: boolean }): SpeechOutcome
 }

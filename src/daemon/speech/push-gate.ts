@@ -77,6 +77,7 @@ export function makePushGate(d: {
       const r = attempt(h.p)
       if ('until' in r) held.set(key, { p: h.p, until: r.until })
       else if ('pushed' in r) d.log('PUSH', `held ${h.p.kind} push released (${key})`)
+      else d.log('PUSH', `held ${h.p.kind} push dropped on release (${key}): ${r.dropped}`)
     }
     arm()
   }
