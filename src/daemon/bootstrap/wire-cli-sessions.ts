@@ -48,6 +48,8 @@ export interface WireCliSessionsDeps {
   lc: LifecycleSet
   internalApi: InternalApiLifecycle
   boot: Bootstrap
+  /** CC 开口那道门(第三批 3a),懒取(main.ts 的 Ref;这里比门早接线)。取不到 ⇒ 终端汇总不发微信(桌面 / App 照旧),规则通知不发。 */
+  speech: () => Pick<import('../speech/policy').SpeechPolicy, 'tell'> | null
   networkGate: NetworkGate
   /** 工作台在后面才建:调用时取,没就绪 ⇒ null。 */
   workbench(): CliSessionsWorkbench | null
@@ -59,14 +61,19 @@ export function wireCliSessions(d: WireCliSessionsDeps) {
   const { stateDir, dangerously, db, ilink, lc, internalApi, boot } = d
   // 终端 claude / codex 会话的 hook 事件(spec 2026-09-09-cli-hook-push):压一段
   // 再推给主人,同会话再敲一句就撤。发到哪:与权限卡、A2A notify 同一个主人
-  // chat;怎么发:boot.sendAssistantText(同一条外发,断线时它自己退避、这里不重试)。
+  // chat;怎么发:经 CC 开口那道门,投递走 boot.sendAssistantText —— 同一条外发,断线时它自己退避、这里不重试。
   // 手机 app 推送出口:pipeline-deps(wireMain)里才造,这里先占位、建完再接上(cli-app-push.ts)。
   let cliAppPush: AppPushOutlet | null = null
   const cliEvents = makeCliEventHub({
+    // 经 CC 开口那道门(cli_session,report;汇总里可能带 y/n 码 ⇒ expiring,不进待说队列),
+    // 投递仍走 sendAssistantText;没说出去 ⇒ 'rejected',hub 照旧落到 App 推送 / 桌面通知。
     send: async (text) => {
       const owner = resolveAdminChatId(loadAccess(), loadCompanionConfig(stateDir), null)
-      if (!owner || !boot.sendAssistantText) return 'no_target'
-      return await boot.sendAssistantText(owner, text) ? 'sent' : 'rejected'
+      const sat = boot.sendAssistantText
+      if (!owner || !sat) return 'no_target'
+      const speech = d.speech()
+      if (!speech) return 'rejected'
+      return await speech.tell('cli_session', owner, text, (c, t) => sat(c, t)) ? 'sent' : 'rejected'
     },
     // 第二个出口:同一批、同一套在场判断,微信拒了手机照样收到。
     pushApp: makeCliHubAppPush({ push: () => cliAppPush, log: (t, l) => log(t, l) }),
@@ -95,9 +102,12 @@ export function wireCliSessions(d: WireCliSessionsDeps) {
     stateDir,
     store: permissionDecisions,
     cheapEval: () => boot.registry.getCheapEval(),
+    // 放行规则出了问题、退回逐条问(rules_notice,report):经门,推后 / 没发出去进待说队列
     notifyOwner: (text) => {
       const owner = resolveAdminChatId(loadAccess(), loadCompanionConfig(stateDir), null)
-      if (owner) void ilink.sendMessage(owner, text)
+      const speech = d.speech()
+      if (owner && speech) void speech.tell('rules_notice', owner, text)
+      else if (owner) log('PERMISSION_GATE', 'rules notice not sent: speech policy not wired yet')
     },
     log: (t, l) => log(t, l),
   })

@@ -60,10 +60,11 @@ const BASELINE: Record<string, [Tag, number]> = {
   'src/daemon/cli-reply-handler.ts': ['reply', 1],
   'src/daemon/internal-api/routes-turn.ts': ['reply', 1],
   'src/daemon/inbound/mw-access.ts': ['reply', 2],     // 回访客刚发来的那一句(欢迎语 / 中性回话);告诉主人的那句已走门
+  // 主人当面点的操作(桌面「分享这幅画」、广播),发给谁也是主人定的;以及回复那一轮里模型调的发文件 / 发表情。
+  // 都不是 CC 主动开口 —— 别照这个口子把真正主动的东西塞进来(9d 评审)。
+  'src/daemon/internal-api/routes.ts': ['reply', 6],
   // —— 要迁进 policy.say 的(盘点见设计稿第 2 步) ——
-  'src/daemon/internal-api/routes.ts': ['migrate', 6],   // 画作分享、广播 …
   'src/daemon/bootstrap/wire-jobs.ts': ['migrate', 1],   // 剩下是定时命令的回话(say);「没审成」那两句已走门(10-21)
-  'src/daemon/bootstrap/wire-cli-sessions.ts': ['migrate', 3],
   'src/daemon/wiring/wire-phone.ts': ['migrate', 2],
   'src/daemon/phone-notifier.ts': ['migrate', 2],
   'src/daemon/wiring/command-router.ts': ['migrate', 1],
