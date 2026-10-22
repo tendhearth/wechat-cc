@@ -21,6 +21,8 @@ export interface A2aServerDeps {
   dispatchDelegate: DelegateDispatch
   resolveOperatorChatId: () => string | null
   sendAssistantText: SendAssistantText | undefined
+  /** CC 开口那道门(懒取)。取不到 ⇒ 不发、记一行,不退回直接发(跟社交通知同一个做法)。 */
+  speech?: () => import('../speech/policy').SpeechPolicy | null
   onLetter: A2AServerOpts['onLetter']
 }
 
@@ -52,9 +54,10 @@ export async function wireA2aServer(deps: A2aServerDeps): Promise<A2aServerWirin
       return
     }
     const formatted = `[A2A:${event.agent.id}] ${event.text}`
-    if (sendAssistantText) {
-      await sendAssistantText(operatorChatId, formatted)
-    }
+    // 经 CC 开口那道门(a2a_notify,report):投递仍走 sendAssistantText;推后 / 没发出去 ⇒ 门的待说队列补说
+    const speech = deps.speech?.()
+    if (sendAssistantText && speech) await speech.tell('a2a_notify', operatorChatId, formatted, sendAssistantText)
+    else if (sendAssistantText) deps.log('A2A_NOTIFY_IN', `notify from ${event.agent.id} not sent: speech policy not wired yet`)
     a2aEventsStore.append({
       direction: 'in', agent_id: event.agent.id, text: event.text,
       urgency: event.urgency, status: 'ok',

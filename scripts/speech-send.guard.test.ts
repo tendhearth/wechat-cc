@@ -5,8 +5,10 @@
  * 下面每个文件标一类、记现在的调用次数。规矩:
  *  - **没登记的文件出现发送调用 ⇒ 红**:新的主动开口一律走 `policy.say`(daemon/speech/policy.ts)。
  *  - **登记过的文件次数只许降**:多一处 ⇒ 红;少了也红,提示你把数字调下来(棘轮,不让迁走的位置被悄悄补回去)。
- *  - 'primitive' 是发送本身(定义 / 路由),'reply' 是回答对方刚发来的那一句(不属于主动开口),两类长期留着;
- *    'migrate' 是要迁进 policy.say 的,迁完这一行删掉。
+ *  - 只有两类,长期留着:'primitive' 是发送本身(定义 / 接线 / 投递出口);'reply' 是回答对方刚发来的那一句,
+ *    或者主人当面点的操作(发给谁也是主人定的)—— 都不属于主动开口。
+ *  - **没有过渡态**:2026-10-22 盘点的 36 处全部迁完,'migrate' 这一类删了。新的主动开口一律走 `policy.say` / `policy.tell`,
+ *    不许先登记个「以后再迁」(9d 评审)。
  * 数的是调用,不是行数(复查 10-21 理念 5:数违规,不数症状)。
  */
 import { describe, it, expect } from 'vitest'
@@ -28,7 +30,7 @@ const WRAPPERS = ['sendReplyOnce', 'sendWechat', 'sendAssistantText', 'fanoutPus
 const PRIMITIVES = [...ilinkSendMethods(), ...WRAPPERS]
 const SEND = new RegExp(`\\b(?:${PRIMITIVES.join('|')})\\(`, 'g')
 
-type Tag = 'primitive' | 'reply' | 'migrate'
+type Tag = 'primitive' | 'reply'
 const BASELINE: Record<string, [Tag, number]> = {
   // —— 发送本身 ——
   'src/daemon/ilink-glue.ts': ['primitive', 12],
@@ -70,15 +72,14 @@ const BASELINE: Record<string, [Tag, number]> = {
   // 主人当面点的操作(桌面「分享这幅画」、广播),发给谁也是主人定的;以及回复那一轮里模型调的发文件 / 发表情。
   // 都不是 CC 主动开口 —— 别照这个口子把真正主动的东西塞进来(9d 评审)。
   'src/daemon/internal-api/routes.ts': ['reply', 6],
+  // 主人发的命令的回话:「定时 …」「做过的事 …」
+  'src/daemon/bootstrap/wire-jobs.ts': ['reply', 1],
+  'src/daemon/bootstrap/wire-activity.ts': ['reply', 1],
+  // 主人回「允许 12」之后告诉访客「主人同意啦!」:主人当面的操作,发给谁也是主人定的
+  'src/daemon/wiring/command-router.ts': ['reply', 1],
   // 主人刚发「任务 X 文件 <id>」点名要的那份成果:在处理这条命令时同步送、结果就是这条命令的回话;worker 没有定时 / 扫描,
   // 送不成也不自动重发(让主人重发命令)。回话不经门(设计稿「不改回复那条路」)。
   'src/daemon/bootstrap/wire-workbench-artifacts.ts': ['reply', 1],
-  // —— 要迁进 policy.say 的(盘点见设计稿第 2 步) ——
-  'src/daemon/bootstrap/wire-jobs.ts': ['migrate', 1],   // 剩下是定时命令的回话(say);「没审成」那两句已走门(10-21)
-  'src/daemon/wiring/command-router.ts': ['migrate', 1],
-  'src/daemon/bootstrap/wire-activity.ts': ['migrate', 1],
-  'src/daemon/bootstrap/wire-a2a-server.ts': ['migrate', 1],
-  'src/daemon/bootstrap/index.ts': ['migrate', 1],
 }
 
 function walk(dir: string, out: string[] = []): string[] {
@@ -105,7 +106,7 @@ describe('发送原语只在登记过的地方出现,次数只许降', () => {
   it('没登记的文件不许直接发 —— 新的主动开口走 policy.say', () => {
     expect([...counts.keys()].filter(f => !(f in BASELINE))).toEqual([])
   })
-  it('登记过的文件:多了红;少了也红(把 BASELINE 的数字调下来,迁完的 migrate 行删掉)', () => {
+  it('登记过的文件:多了红;少了也红(把 BASELINE 的数字调下来)', () => {
     const drift: string[] = []
     for (const [f, [tag, n]] of Object.entries(BASELINE)) {
       const now = counts.get(f) ?? 0

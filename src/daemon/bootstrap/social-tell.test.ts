@@ -5,7 +5,7 @@ import { join } from 'node:path'
 import { makeSpeechPolicy } from '../speech/policy'
 import { makePendingNotices } from '../speech/pending-notices'
 import type { ProactiveOutbound } from '../companion/proactive-channel'
-import { makeTellOwner } from './social-tell'
+import { makeTellOwner, makeTellOwnerAs } from './social-tell'
 
 const OWNER = 'owner@im.wechat'
 function setup(o: { care?: 'off' | 'low'; quiet?: () => boolean; noSpeech?: boolean; stateDir?: string } = {}) {
@@ -92,5 +92,19 @@ describe('**report / blocking 推后不是不送**:门的「待说」队列接�
     expect(s.sent[0]).toContain('第 23 封信')
     expect(s.sent[0]).not.toContain('第 3 封信\n')
     expect(s.sent[0]).toContain('还有 3 件更早的')
+  })
+})
+
+describe('配对结果(pairing,requested)走同一个出口:主人说了「配对」在等这一句', () => {
+  it('免打扰里、别烦我里都照说(不是 initiative,也不排队等)', async () => {
+    for (const o of [{ quiet: () => true }, { care: 'off' as const }]) {
+      const sent: string[] = []
+      const outbound: ProactiveOutbound = { appDeliverable: () => false, canDeliver: () => true, sendOnce: async () => ({ ok: true }), open: () => ({ sendText: async () => ({ msgId: 'm' }), channel: () => 'wechat', textOnly: () => false, sendAttachment: async () => false, sendSticker: async () => false, finish: () => {} }) }
+      const quiet = o.quiet ?? (() => false)
+      const speech = makeSpeechPolicy({ care: () => o.care ?? 'low', quietEndsAt: (_c, n) => (quiet() ? n + 3600_000 : null), outbound, log: () => {} })
+      const tell = makeTellOwnerAs('pairing', { resolveOperatorChatId: () => OWNER, sendAssistantText: async (_c, t) => { sent.push(t) }, speech: () => speech, log: () => {} })
+      await tell('和 老王 的 bot 连上了 ✓')
+      expect(sent).toEqual(['和 老王 的 bot 连上了 ✓'])
+    }
   })
 })
