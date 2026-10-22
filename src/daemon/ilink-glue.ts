@@ -192,8 +192,14 @@ export function makeIlinkAdapter(opts: {
   conversationStore: ConversationStore
   /** 网络闸门(2026-10-02):语音合成 / 识别出门前问一次。 */
   networkGate?: import('../lib/network-gate').NetworkGate
+  /**
+   * CC 开口那道门(第三批 3a),懒取(门比 adapter 晚建)。askUser 的权限卡只用它**记账**(policy.ask,permission_ask):
+   * blocking 一律放行,投递仍是下面那条 fail-fast,行为不变 —— 只是账上多一行「为什么说了」,跟工作台的卡、App 推送同一种口径。
+   */
+  speech?: () => Pick<import('./speech/policy').SpeechPolicy, 'ask'> | null
 }): IlinkAdapter {
   const ctx = makeIlinkContext(opts)
+  const speechOf = opts.speech   // askUser 的形参也叫 opts,先取出来
   const messagesStore = makeMessagesStore(opts.db)
   const { stateDir, accounts, ctxStore, conversationStore, acctStore, sessionState, pending, sweepTimer, projectsFile, resolveAccount, assertChatRoutable } = ctx
 
@@ -490,6 +496,8 @@ export function makeIlinkAdapter(opts: {
       // reply can EVER come. Don't dead-wait the full 10-min timeout (which
       // races the turn's own no-activity kill → user gets nothing). Resolve
       // 'undelivered' at once so the turn ends now with an honest reason.
+      // 只记账,不拦:permission_ask 是 blocking,判定表里不会推后 / 丢(9d 定的口径,#536)。
+      try { speechOf?.()?.ask({ kind: 'permission_ask', chatId }, { channel: 'wechat', deliverable: true }) } catch (err) { log('PERMISSION', `speech ledger failed: ${err instanceof Error ? err.message : String(err)}`) }
       adapter.sendMessage(chatId, card).then(
         (res) => {
           const err = (res as { error?: string } | null | undefined)?.error
