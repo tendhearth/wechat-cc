@@ -1268,3 +1268,36 @@ describe('/set visit:社交不在时照存,但不说成「已开启」就完了(
     expect(sentMessages.at(-1)?.[1]).toBe('每日串门已关闭。')
   })
 })
+
+describe('斜杠命令一条一行(第三批 3d)', () => {
+  it('认的斜杠词从命令行表推出来,跟以前手写的那份一字不差(没有新的被当成「不认识」,也没有悄悄多认)', () => {
+    const { cmds } = setup()
+    expect([...cmds.slashWords()].sort()).toEqual(['agy', 'api', 'both', 'cc', 'chat', 'codex', 'cursor', 'gemini', 'help', 'mode', 'name', 'parallel', 'set', 'solo', 'stop', 'whoami'])
+  })
+  it('**主人的 /help 提到了每个认的词**(加了命令不写进 /help 就红);不提的几个写明为什么', async () => {
+    // 不在 /help 里的:help 自己;both / parallel / chat 是 10-21 从微信退掉的(只回一句「去桌面开」),不该再招呼主人用
+    const NOT_IN_HELP: Record<string, string> = { help: '就是它自己', both: '微信里已退役', parallel: '微信里已退役', chat: '微信里已退役' }
+    const { cmds, sentMessages } = setup({ isAdmin: () => true })
+    await cmds.handle(inbound('/help'))
+    const help = sentMessages.at(-1)![1]
+    const missing = cmds.slashWords().filter(w => !(w in NOT_IN_HELP) && !new RegExp(`/${w}\\b`, 'i').test(help))
+    expect(missing).toEqual([])
+  })
+  it('命令表里的行:mode.<行>,最后是 /词兜底 mode.unknown;group 都是 mode', () => {
+    const { cmds } = setup()
+    const rows = cmds.commands()
+    expect(rows.map(r => r.id)).toEqual(['mode.provider', 'mode.set', 'mode.solo', 'mode.mode', 'mode.multi', 'mode.stop', 'mode.whoami', 'mode.name', 'mode.help', 'mode.unknown'])
+    expect(rows.filter(r => r.slashCatchAll).map(r => r.id)).toEqual(['mode.unknown'])
+    expect(new Set(rows.map(r => r.group))).toEqual(new Set(['mode']))
+  })
+  it('除了兜底,任何一句话最多一行认领(先后因此无关紧要)', async () => {
+    const { COMMAND_EXAMPLES, CHAT } = await import('./inbound/command-corpus')
+    const { cmds } = setup()
+    const rows = cmds.commands().filter(r => !r.slashCatchAll)
+    const overlaps = [...COMMAND_EXAMPLES, ...CHAT, '/帮助', '/both', '/solo x', '/name 小明'].flatMap(t => {
+      const claimed = rows.filter(r => { try { return r.probe(inbound(t)) } catch { return false } }).map(r => r.id)
+      return claimed.length > 1 ? [`「${t}」 ⇒ ${claimed.join(', ')}`] : []
+    })
+    expect(overlaps).toEqual([])
+  })
+})
