@@ -1,5 +1,5 @@
 import { describe, it, expect, afterEach } from 'vitest'
-import { chmodSync, mkdtempSync, readdirSync, readFileSync, renameSync, rmSync, statSync, writeFileSync } from 'node:fs'
+import { chmodSync, lstatSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, renameSync, rmSync, statSync, symlinkSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { ConcurrentJsonUpdateError, UnreadableJsonError, updateJsonFile, writeFileAtomic, writeJsonAtomic } from './json-file'
@@ -89,5 +89,39 @@ describe('updateJsonFile', () => {
     expect(JSON.parse(readFileSync(p, 'utf8'))).toEqual({ n: 1, other: 'kept', mine: true })
     let k = 0
     expect(() => updateJsonFile(p, () => { writeFileSync(p, JSON.stringify({ n: ++k, pad: 'x'.repeat(k) })) })).toThrow(ConcurrentJsonUpdateError)
+  })
+})
+
+// 9d 评审 #576:主人家目录里的 Claude / Cursor 配置常被 stow / chezmoi 链到 dotfiles,tmp + rename 会把链接换成普通文件。
+describe('followSymlink', () => {
+  it('writes through a symlink to the real file and keeps the link', () => {
+    if (process.platform === 'win32') return  // Windows 上建符号链接要管理员权限 / 开发者模式,CI 里不保证
+    const d = fresh(), dots = join(d, 'dotfiles'), real = join(dots, 'settings.json'), link = join(d, 'settings.json')
+    mkdirSync(dots)
+    writeFileSync(real, '{"old":true}\n')
+    symlinkSync(real, link)
+    writeJsonAtomic(link, { new: true }, { followSymlink: true })
+    expect(lstatSync(link).isSymbolicLink()).toBe(true)
+    expect(JSON.parse(readFileSync(real, 'utf8'))).toEqual({ new: true })
+    expect(readdirSync(d).sort()).toEqual(['dotfiles', 'settings.json'])
+    expect(readdirSync(dots)).toEqual(['settings.json'])
+  })
+  it('a dangling link is resolved to where it points (the real file gets created there)', () => {
+    if (process.platform === 'win32') return
+    const d = fresh(), dots = join(d, 'dotfiles'), link = join(d, 'mcp.json')
+    mkdirSync(dots)
+    symlinkSync(join(dots, 'mcp.json'), link)
+    writeJsonAtomic(link, { a: 1 }, { followSymlink: true })
+    expect(lstatSync(link).isSymbolicLink()).toBe(true)
+    expect(JSON.parse(readFileSync(join(dots, 'mcp.json'), 'utf8'))).toEqual({ a: 1 })
+  })
+  it('without the option a link is replaced (state-dir default: never write through a planted link)', () => {
+    if (process.platform === 'win32') return
+    const d = fresh(), outside = join(d, 'outside.json'), link = join(d, 'state.json')
+    writeFileSync(outside, '{"untouched":true}\n')
+    symlinkSync(outside, link)
+    writeJsonAtomic(link, { x: 1 })
+    expect(lstatSync(link).isSymbolicLink()).toBe(false)
+    expect(readFileSync(outside, 'utf8')).toBe('{"untouched":true}\n')
   })
 })
