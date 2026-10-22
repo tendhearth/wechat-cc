@@ -108,8 +108,14 @@ function briefPath(config: SelfChangeConfig, id: string): string {
 }
 
 export function writePatch(d: PipelineDeps, patch: Partial<SelfChangeSettings>): void {
-  if (d.writeConfigPatch) d.writeConfigPatch(patch)
-  else writeSelfChangeConfigPatch(d.stateDir, patch)
+  // agent-config.json 读不出来时 lib/json-file 拒写(3e,2026-10-22;以前会拿缺省值把整份配置覆盖掉)。自改流水线
+  // 不能因此半路崩:记一行照实说哪一项没记上,接着走。停机标记没写上的话,下次不会自动停 —— 所以这行要说清楚。
+  try {
+    if (d.writeConfigPatch) d.writeConfigPatch(patch)
+    else writeSelfChangeConfigPatch(d.stateDir, patch)
+  } catch (err) {
+    d.log(`⚠ 自改状态(${Object.keys(patch).join(' / ')})没能写进 agent-config.json:${err instanceof Error ? err.message : String(err)}`)
+  }
 }
 
 /** 一条 git,失败就抛 —— 步骤用 `guardGit` 把它翻成 StepOutcome。 */

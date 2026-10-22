@@ -338,6 +338,14 @@ export function createInternalApi(deps: InternalApiDeps): InternalApi {
       const out = await route(url.searchParams, body, callerInfo)
       send(res, out.status, out.body, origin)
     } catch (err) {
+      // 配置文件读不出来 / 刚被别处改过 ⇒ lib/json-file 拒写(3e,2026-10-22)。任何路由碰上都回一个看得懂的码,
+      // 不是 500,daemon 也不退。
+      const code = (err as { code?: unknown })?.code
+      if (code === 'config_unreadable' || code === 'config_busy') {
+        deps.log?.('INTERNAL_API', `409 ${method} ${rawUrl}: ${errMsg(err)}`, { event: 'config_write_refused', method, url: rawUrl, error: errMsg(err) })
+        send(res, 409, { error: code, detail: errMsg(err) }, origin)
+        return
+      }
       deps.log?.('INTERNAL_API', `500 ${method} ${rawUrl}: ${errMsg(err)}`, {
         event: 'route_threw',
         method,

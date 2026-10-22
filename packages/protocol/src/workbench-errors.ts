@@ -160,6 +160,10 @@ export const WORKBENCH_ERRORS: Readonly<Record<string, WorkbenchErrorSpec>> = Ob
   // module_degraded(带 detail)。手机老 App 不认这两个码 ⇒ 同 workbench_not_wired 收成 unavailable;桌面认原码(wishes / people / a2a-agents)。
   module_off: {desktop: 503, phone: [503, 'unavailable']},
   module_degraded: {desktop: 503, phone: [503, 'unavailable']},
+  // 配置文件写不进去(第三批 3e,lib/json-file):旧文件读不出来就拒写,不拿 {} 覆盖;刚被别处改过两次就让你稍后再试。
+  // daemon internal-api 统一回 409(index.ts 的路由 catch),带 detail(哪个文件、为什么)。
+  config_unreadable: {desktop: 409},
+  config_busy: {desktop: 409},
   // ── 补充 / 提问 / 权限 / 轮次
   artifact_changed: {desktop: 409, phone: 409, wechat: '成果文件已变化或未通过校验，没有发送。请在桌面查看保存的版本。'},
   execution_conflict: {desktop: 409},

@@ -138,7 +138,10 @@ export async function buildBootstrap(deps: BootstrapDeps): Promise<Bootstrap> {
   // calling it more than once per boot (let alone lazily, per request) would
   // re-enter that persistence for no benefit and risks two wiring seams
   // momentarily disagreeing on this daemon's own identity.
-  const selfId = resolveSelfAgentId(configuredAgent, deps.stateDir)
+  const selfId = resolveSelfAgentId(configuredAgent, deps.stateDir, {
+    // 配置文件读不出来 ⇒ 拒写(lib/json-file):这次不落盘,照常开机,记一行(3e,2026-10-22)。
+    onPersistError: err => deps.log('BOOT', `self_agent_id 没能写进 agent-config.json:${err instanceof Error ? err.message : String(err)}`),
+  })
 
   // Knowledge Kernel — ./wire-knowledge.ts(2026-09-27 拆分);经 sup.start('knowledge')。
   const ctx = { ...ctxBase, configuredAgent }

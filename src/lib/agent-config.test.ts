@@ -1038,3 +1038,26 @@ describe('agent-config cli_auto_upgrade(外部 CLI 自动升级,2026-10-04)', ()
     } finally { rmSync(dir, { recursive: true, force: true }) }
   })
 })
+
+// 3e(2026-10-22):load 在文件坏了时给缺省值,save 再写回 —— 整份配置被换成缺省。现在 save 拒写;load 容忍 BOM。
+describe('agent-config — unreadable / BOM files', () => {
+  it('saveAgentConfig refuses to replace an unreadable file (load handed back defaults for it)', async () => {
+    const { readFileSync } = await import('node:fs')
+    const dir = mkdtempSync(join(tmpdir(), 'agent-config-torn-'))
+    try {
+      const p = join(dir, 'agent-config.json'), torn = '{"provider":"codex","model":"gpt-5'
+      writeFileSync(p, torn)
+      const cfg = loadAgentConfig(dir)
+      expect(cfg.provider).toBe('claude')
+      expect(() => saveAgentConfig(dir, { ...cfg, bot_name: 'x' })).toThrow(expect.objectContaining({ code: 'config_unreadable' }))
+      expect(readFileSync(p, 'utf8')).toBe(torn)
+    } finally { rmSync(dir, { recursive: true, force: true }) }
+  })
+  it('loadAgentConfig reads a file that starts with a UTF-8 BOM (Windows PowerShell writes one)', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'agent-config-bom-'))
+    try {
+      writeFileSync(join(dir, 'agent-config.json'), '﻿{"provider":"codex","dangerouslySkipPermissions":false,"autoStart":true,"closeStopsDaemon":false}')
+      expect(loadAgentConfig(dir).provider).toBe('codex')
+    } finally { rmSync(dir, { recursive: true, force: true }) }
+  })
+})

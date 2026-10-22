@@ -251,7 +251,16 @@ const selfChangeCmd = defineCommand({
 
     // `--unhalt`:给 undefined 等于把键删掉(JSON.stringify 不序列化 undefined)。
     if (args.unhalt) {
-      writeSelfChangeConfigPatch(STATE_DIR, { halted_at: undefined, halt_reason: undefined, fail_streak: 0 })
+      try {
+        writeSelfChangeConfigPatch(STATE_DIR, { halted_at: undefined, halt_reason: undefined, fail_streak: 0 })
+      } catch (err) {
+        // 配置文件读不出来 ⇒ 拒写(不拿缺省值覆盖主人的配置);说一句人话、非零退出。
+        const msg = err instanceof Error ? err.message : String(err)
+        if (json) console.log(JSON.stringify({ ok: false, error: (err as { code?: string }).code ?? 'error', detail: msg }, null, 2))
+        else console.error(`没能解除自改停机:${msg}`)
+        process.exit(1)
+        return
+      }
       if (json) console.log(JSON.stringify({ ok: true, unhalted: true }, null, 2))
       else console.log('自改停机已解除:halted_at / halt_reason 清掉,fail_streak 归零。')
       process.exit(0)

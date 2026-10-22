@@ -1,5 +1,8 @@
-import { mkdirSync, readFileSync, renameSync, statSync, writeFileSync } from 'node:fs'
+import { existsSync, readFileSync, statSync } from 'node:fs'
 import { join } from 'node:path'
+import { readJsonObject, writeJsonAtomic } from './json-file'
+import { stripBom } from './read-json-file'
+import { log } from './log'
 // zod v4: `import { z } from 'zod'` resolves to undefined under vitest's
 // bundler; use the default export instead (both forms are equivalent at
 // runtime — this is a build-tool interop quirk, not a zod API difference).
@@ -384,7 +387,7 @@ const CONFIG_FILE = 'agent-config.json'
 
 export function loadAgentConfig(stateDir: string): AgentConfig {
   try {
-    const raw = readFileSync(join(stateDir, CONFIG_FILE), 'utf8')
+    const raw = stripBom(readFileSync(join(stateDir, CONFIG_FILE), 'utf8'))
     const parsed = JSON.parse(raw) as Partial<AgentConfig> & { keepAlive?: boolean }
     const dangerouslySkipPermissions = parsed.dangerouslySkipPermissions ?? true
     const autoStart = parsed.autoStart ?? true
@@ -501,7 +504,10 @@ export function loadAgentConfig(stateDir: string): AgentConfig {
       ...(selfChange ? { self_change: selfChange } : {}),
       ...(restartNotice && Object.keys(restartNotice).length > 0 ? { restart_notice: restartNotice } : {}),
     }
-  } catch {
+  } catch (err) {
+    // 文件不在 = 新装,照常用缺省;文件在但读不出来 = 被写坏了 —— 以前这里一声不吭地退回缺省,主人只看到「配置怎么
+    // 全没了」。现在记一行(3e,2026-10-22);saveAgentConfig 也会拒绝拿缺省覆盖这个坏文件(见下)。
+    if ((err as NodeJS.ErrnoException)?.code !== 'ENOENT') log('CONFIG', `agent-config.json 读不出来,这次按缺省跑(文件没动):${err instanceof Error ? err.message : String(err)}`)
     return { provider: 'claude', dangerouslySkipPermissions: true, autoStart: true, closeStopsDaemon: false }
   }
 }
@@ -552,12 +558,14 @@ export function makeMtimeCachedConfigReader(
   }
 }
 
+/**
+ * 整份写回(调用方都是 load → 改 → save)。旧文件存在但读不出来 ⇒ 抛 UnreadableJsonError、不写:loadAgentConfig 在那种
+ * 情况下给的是缺省值,写回去就把主人整份配置换成了缺省(3e,2026-10-22)。写法统一走 lib/json-file。
+ */
 export function saveAgentConfig(stateDir: string, config: AgentConfig): void {
-  mkdirSync(stateDir, { recursive: true, mode: 0o700 })
   const file = join(stateDir, CONFIG_FILE)
-  const tmp = `${file}.tmp`
-  writeFileSync(tmp, JSON.stringify(config, null, 2) + '\n', { mode: 0o600 })
-  renameSync(tmp, file)
+  if (existsSync(file)) readJsonObject(file)
+  writeJsonAtomic(file, config)
 }
 
 // The pinned model lives in a provider-specific field: cursor reads

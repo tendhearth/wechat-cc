@@ -23,9 +23,10 @@
  *    否则用户被单向门锁住。关闭只翻 social_enabled,**保留**披露策略与中继,
  *    这样再开启时不用重填。
  */
-import { existsSync, writeFileSync, renameSync, mkdirSync } from 'node:fs'
+import { existsSync } from 'node:fs'
 import { join } from 'node:path'
 import { readJsonFile } from '../lib/read-json-file'
+import { updateJsonFile } from '../lib/json-file'
 
 export const DEFAULT_SOCIAL_DISCLOSURE_POLICY =
   '可以说我的兴趣、想找的同好或资源;不可透露我的真实姓名、住址、电话或任何联系方式,也不提及除我和收件方以外的任何第三方。'
@@ -56,28 +57,26 @@ export interface SocialSwitchResult {
  */
 export function applySocialSwitch(stateDir: string, enabled: boolean): SocialSwitchResult {
   const path = join(stateDir, 'agent-config.json')
-  const raw = readRawConfig(path)
-  const changed: string[] = []
+  let changed: string[] = []
+  // 读不出来 ⇒ updateJsonFile 抛 UnreadableJsonError、不写(以前当成 {} 写回,主人整份配置只剩这几个键)。
+  updateJsonFile(path, raw => {
+    changed = []
 
-  if (raw.social_enabled !== enabled) changed.push('social_enabled')
-  raw.social_enabled = enabled
+    if (raw.social_enabled !== enabled) changed.push('social_enabled')
+    raw.social_enabled = enabled
 
-  // 只有开启时才补默认值;关闭时保留它们(见文件头第 2 条)。
-  if (enabled) {
-    if (raw.social_disclosure_policy == null) {
-      raw.social_disclosure_policy = DEFAULT_SOCIAL_DISCLOSURE_POLICY
-      changed.push('social_disclosure_policy(默认)')
+    // 只有开启时才补默认值;关闭时保留它们(见文件头第 2 条)。
+    if (enabled) {
+      if (raw.social_disclosure_policy == null) {
+        raw.social_disclosure_policy = DEFAULT_SOCIAL_DISCLOSURE_POLICY
+        changed.push('social_disclosure_policy(默认)')
+      }
+      if (!Array.isArray(raw.mailbox_relays) || raw.mailbox_relays.length === 0) {
+        raw.mailbox_relays = DEFAULT_MAILBOX_RELAYS
+        changed.push('mailbox_relays(默认)')
+      }
     }
-    if (!Array.isArray(raw.mailbox_relays) || raw.mailbox_relays.length === 0) {
-      raw.mailbox_relays = DEFAULT_MAILBOX_RELAYS
-      changed.push('mailbox_relays(默认)')
-    }
-  }
-
-  mkdirSync(stateDir, { recursive: true, mode: 0o700 })
-  const tmp = `${path}.tmp`
-  writeFileSync(tmp, JSON.stringify(raw, null, 2) + '\n', { mode: 0o600 })
-  renameSync(tmp, path)
+  })
   return { enabled, changed }
 }
 
