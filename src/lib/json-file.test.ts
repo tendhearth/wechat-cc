@@ -7,7 +7,6 @@ import { ConcurrentJsonUpdateError, UnreadableJsonError, updateJsonFile, writeFi
 const dirs: string[] = []
 const fresh = () => { const d = mkdtempSync(join(tmpdir(), 'json-file-')); dirs.push(d); return d }
 afterEach(() => { for (const d of dirs.splice(0)) rmSync(d, { recursive: true, force: true }) })
-const posix = process.platform !== 'win32'
 
 describe('writeJsonAtomic', () => {
   it('writes pretty JSON with a trailing newline and leaves no tmp file behind', () => {
@@ -16,7 +15,8 @@ describe('writeJsonAtomic', () => {
     expect(readFileSync(p, 'utf8')).toBe('{\n  "a": 1\n}\n')
     expect(readdirSync(d)).toEqual(['a.json'])
   })
-  it.runIf(posix)('new files default to 0o600; an existing file keeps its mode', () => {
+  it('new files default to 0o600; an existing file keeps its mode', () => {
+    if (process.platform === 'win32') return  // Windows 上 mode 恒为 0o666,没有可断言的
     const d = fresh(), p = join(d, 'a.json')
     writeJsonAtomic(p, {})
     expect(statSync(p).mode & 0o777).toBe(0o600)

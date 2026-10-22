@@ -157,10 +157,23 @@ describe('writeSelfChangeConfigPatch', () => {
     expect(loadAgentConfig(dir).self_change).toEqual({ fail_streak: 1 })
   })
 
-  it('磁盘上是坏 JSON:不静默吃掉别人的配置,新块照写', () => {
+  // 3e(2026-10-22)规矩变了:以前坏文件会被「缺省值 + 新块」整份覆盖(主人别的配置全没了);现在拒写、原样不动,
+  // 调用方(steps.writePatch 记一行接着走;`self --unhalt` 说一句人话、非零退出)。
+  it('磁盘上是坏 JSON:拒写(config_unreadable),文件原样不动 —— 不拿缺省值覆盖别人的配置', () => {
     const dir = tempDir()
     writeFileSync(join(dir, 'agent-config.json'), '{ not json')
-    writeSelfChangeConfigPatch(dir, { fail_streak: 1 })
-    expect(loadAgentConfig(dir).self_change).toEqual({ fail_streak: 1 })
+    expect(() => writeSelfChangeConfigPatch(dir, { fail_streak: 1 })).toThrow(expect.objectContaining({ code: 'config_unreadable' }))
+    expect(readFileSync(join(dir, 'agent-config.json'), 'utf8')).toBe('{ not json')
+  })
+})
+
+// 3e(2026-10-22):配置文件读不出来时 writeSelfChangeConfigPatch 会抛;流水线里记状态那一步不能因此半路崩。
+describe('steps.writePatch × refused config write', () => {
+  it('logs which fields did not land and keeps going (does not throw)', async () => {
+    const { writePatch } = await import('./steps')
+    const lines: string[] = []
+    const d = { log: (l: string) => { lines.push(l) }, stateDir: '/nowhere', writeConfigPatch: () => { throw Object.assign(new Error('agent-config.json 读不出来'), { code: 'config_unreadable' }) } }
+    expect(() => writePatch(d as never, { fail_streak: 2 })).not.toThrow()
+    expect(lines.some(l => l.includes('fail_streak') && l.includes('读不出来'))).toBe(true)
   })
 })
