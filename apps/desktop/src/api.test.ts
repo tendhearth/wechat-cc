@@ -57,6 +57,26 @@ describe('invokeApi', () => {
     })
   })
 
+  // daemon 拒写配置(3e):409 config_unreadable / config_busy ⇒ 主人看得懂的一句 + 原码留在 .code;别的码照旧是 message
+  it('turns a refused config write into a readable message and keeps the code', async () => {
+    const invoke = vi.fn(async () => ({ ok: true, baseUrl: 'http://127.0.0.1:54091', token: 't' }))
+    root.window = { __TAURI__: { core: { invoke } } }
+    globalThis.fetch = vi.fn()
+      .mockResolvedValueOnce(new Response(JSON.stringify({ error: 'config_unreadable', detail: '/x/agent-config.json: Unexpected token' }), { status: 409 }))
+      .mockResolvedValueOnce(new Response(JSON.stringify({ error: 'config_busy' }), { status: 409 }))
+      .mockResolvedValueOnce(new Response(JSON.stringify({ error: 'module_off', module: 'social' }), { status: 503 })) as unknown as typeof fetch
+    vi.resetModules()
+    const { invokeApi } = await import('./api.js')
+    const a = await invokeApi('POST', '/v1/social/enable', { enabled: true }).then(() => { throw new Error('should have thrown') }, (e: unknown) => e as Error & { code?: string })
+    expect(a.message).toBe('配置文件好像坏了,CC 没敢改它(/x/agent-config.json: Unexpected token)')
+    expect(a.code).toBe('config_unreadable')
+    const b = await invokeApi('POST', '/v1/social/enable', { enabled: true }).then(() => { throw new Error('should have thrown') }, (e: unknown) => e as Error & { code?: string })
+    expect(b.message).toContain('再试一次')
+    expect(b.code).toBe('config_busy')
+    const c = await invokeApi('GET', '/v1/social/wishes').then(() => { throw new Error('should have thrown') }, (e: unknown) => e as Error)
+    expect(c.message).toBe('module_off')
+  })
+
   it('never fetches owner-workspace routes from JS — the host holds that credential', async () => {
     // The operator token is admin-tier. Keeping it in Rust is the whole point:
     // a script running in the webview must not be able to lift it and then
