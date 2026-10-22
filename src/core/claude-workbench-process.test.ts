@@ -5,6 +5,9 @@ import { describe, expect, it } from 'vitest'
 import { ownClaudeWorkbenchProcess } from './claude-workbench-process'
 
 const exists = (pid: number) => { try { process.kill(pid, 0); return true } catch { return false } }
+// 关掉以后进程「最后没了」才是要钉的事。被过继给 launchd / init 的孙进程是异步收尸的:close 返回那一刻 kill(pid,0)
+// 还可能看得见它一小会儿(10-22 CI node 上、满载本机上各红过一次)。轮询等它消失;真逃掉的进程 5 秒后照样红。
+const gone = (pid: number) => expect.poll(() => exists(pid), { timeout: 5_000 }).toBe(false)
 describe.skipIf(process.platform === 'win32')('Claude owned process teardown', () => {
   it('kills frozen detached descendants without allowing termination handlers to create new work', async () => {
     const area = mkdtempSync(join(tmpdir(), 'cc-claude-owned-process-')), sentinel = join(area, 'child.pid'), lateFile = join(area, 'late.pid')
@@ -23,9 +26,9 @@ describe.skipIf(process.platform === 'win32')('Claude owned process teardown', (
       expect(exists(descendantPid)).toBe(true)
       const deadline = Date.now() + 2500
       owner.prepareClose(deadline); await owner.close(deadline)
-      expect(exists(processChild.pid!)).toBe(false)
-      expect(exists(descendantPid)).toBe(false)
-      expect(exists(-descendantPid)).toBe(false)
+      await gone(processChild.pid!)
+      await gone(descendantPid)
+      await gone(-descendantPid)
       expect(existsSync(lateFile)).toBe(false)
     } finally {
       for (const pid of [descendantPid, processChild.pid, ...(existsSync(lateFile) ? [Number(readFileSync(lateFile, 'utf8'))] : [])]) if (pid) { try { process.kill(-pid, 'SIGKILL') } catch {} }
@@ -86,8 +89,8 @@ describe.skipIf(process.platform === 'win32')('Claude owned process teardown', (
       owner.terminate()
       const deadline = Date.now() + 2500
       owner.prepareClose(deadline); await owner.close(deadline)
-      expect(exists(processChild.pid!)).toBe(false)
-      expect(exists(descendantPid)).toBe(false)
+      await gone(processChild.pid!)
+      await gone(descendantPid)
     } finally {
       for (const pid of [descendantPid, processChild.pid]) if (pid) { try { process.kill(-pid, 'SIGKILL') } catch {} }
       rmSync(area, { recursive: true, force: true })
