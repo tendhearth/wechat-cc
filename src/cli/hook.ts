@@ -430,7 +430,8 @@ function readHooksFile(file: string): HooksFile {
 
 function writeHooksFile(file: string, cfg: HooksFile): void {
   mkdirSync(dirname(file), { recursive: true })
-  writeFileAtomic(file, JSON.stringify(cfg, null, 2) + '\n')
+  // 主人家目录里的配置:常被 stow / chezmoi 链到 dotfiles,写到链接指向的真文件,别把链接换掉。
+  writeFileAtomic(file, JSON.stringify(cfg, null, 2) + '\n', { followSymlink: true })
 }
 
 /** 去掉自家条目;返回删掉的 handler 数。空组、空事件键一并收掉。 */

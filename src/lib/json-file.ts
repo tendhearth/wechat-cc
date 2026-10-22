@@ -18,9 +18,9 @@
  * `updateJsonFile` 做了一步乐观检查:写之前看一眼 mtime / size,读完以后被人改过就重读、重算一次;
  * 两次都被抢就照实抛 `ConcurrentJsonUpdateError`,不悄悄覆盖。真要强一致,要上锁,不在这一步。
  */
-import { closeSync, existsSync, fsyncSync, mkdirSync, openSync, renameSync, rmSync, statSync, writeSync } from 'node:fs'
+import { closeSync, existsSync, fsyncSync, lstatSync, mkdirSync, openSync, readlinkSync, realpathSync, renameSync, rmSync, statSync, writeSync } from 'node:fs'
 import { randomBytes } from 'node:crypto'
-import { basename, dirname, join } from 'node:path'
+import { basename, dirname, isAbsolute, join, resolve } from 'node:path'
 import { readJsonFile } from './read-json-file'
 
 export class UnreadableJsonError extends Error {
@@ -49,6 +49,13 @@ function sleepSync(ms: number): void {
 export interface AtomicWriteOptions {
   /** 给了 ⇒ 每次都按它写(存密钥的文件:令牌、daemon.env、agent-config 里的 a2a key…);没给 ⇒ 已有文件保留原 mode、新建 0o600。 */
   mode?: number
+  /**
+   * 目标是符号链接时写到链接指向的真文件(真文件目录里建 tmp 再 rename),链接本身留着。**只给主人家目录里的配置用**
+   * (~/.claude / Cursor 的 hooks、MCP 配置:很多人用 stow / chezmoi 把它们链到 dotfiles 仓库,tmp + rename 会把链接
+   * 换成普通文件)。缺省不跟:CC 自己的状态目录里冒出来的链接一律被替换掉,不能借它把写操作引到别处去
+   * (记忆目录的 lstat 检查是同一个道理)。
+   */
+  followSymlink?: boolean
   /** 只给测试:rename 实现与重试间隔。 */
   rename?: (from: string, to: string) => void
   retryDelayMs?: number
@@ -59,7 +66,19 @@ function existingMode(path: string): number | null {
   try { return statSync(path).mode & 0o777 } catch { return null }
 }
 
+/** 链接指向的真文件;不是链接 ⇒ 原样。悬空链接(指向的文件还不存在)⇒ 按链接内容解析出的路径。 */
+function linkTarget(path: string): string {
+  let isLink = false
+  try { isLink = lstatSync(path).isSymbolicLink() } catch { return path }
+  if (!isLink) return path
+  try { return realpathSync(path) } catch {
+    const to = readlinkSync(path)
+    return isAbsolute(to) ? to : resolve(dirname(path), to)
+  }
+}
+
 export function writeFileAtomic(path: string, data: string, opts: AtomicWriteOptions = {}): void {
+  if (opts.followSymlink) path = linkTarget(path)
   const dir = dirname(path)
   mkdirSync(dir, { recursive: true, mode: 0o700 })
   const mode = opts.mode ?? existingMode(path) ?? 0o600

@@ -29,7 +29,8 @@ function readConfig(file: string): ClaudeUserConfig {
 }
 
 function writeConfig(file: string, cfg: ClaudeUserConfig): void {
-  writeFileAtomic(file, JSON.stringify(cfg, null, 2) + '\n', { mode: 0o600 })
+  // 主人家目录里的配置:常被链到 dotfiles,写到链接指向的真文件,别把链接换掉。
+  writeFileAtomic(file, JSON.stringify(cfg, null, 2) + '\n', { mode: 0o600, followSymlink: true })
 }
 
 export function installUserMcp(file: string, name: string, entry: McpServerConfig): void {
