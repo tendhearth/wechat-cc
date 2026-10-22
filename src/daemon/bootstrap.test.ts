@@ -2045,6 +2045,8 @@ describe('bootstrap pairing-code wiring', () => {
       loadProjects: () => ({ projects: {}, current: null }),
       lastActiveChatId: () => null,
       log: () => {},
+      // 第三批 3b 第 5 步起空闲自动重启是模块,没有 requestRestart 就是 off、不调 wireSelfRestart;这里要看传进去的闭包
+      requestRestart: () => {},
     })
     expect(wireSelfRestart).toHaveBeenCalledTimes(1)
     const passedDeps = vi.mocked(wireSelfRestart).mock.calls[0]![0]
@@ -2072,6 +2074,8 @@ describe('bootstrap pairing-code wiring', () => {
       loadProjects: () => ({ projects: {}, current: null }),
       lastActiveChatId: () => null,
       log: () => {},
+      // 第三批 3b 第 5 步起空闲自动重启是模块,没有 requestRestart 就是 off、不调 wireSelfRestart;这里要看传进去的闭包
+      requestRestart: () => {},
     })
     expect(wireSelfRestart).toHaveBeenCalledTimes(1)
     const passedDeps = vi.mocked(wireSelfRestart).mock.calls[0]![0]

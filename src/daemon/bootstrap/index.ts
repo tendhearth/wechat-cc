@@ -53,10 +53,11 @@ import { wireYi } from './wire-yi'
 import { Ref } from '../../lib/lifecycle'
 import { resolveClaudeBinary, hydrateClaudeAuthEnvFromUserSettings } from './claude-env'
 import { wireSocialGroup } from './social-module'
-import { wireA2aServer } from './wire-a2a-server'
-import { wirePairing } from './wire-pairing'
+import { runModule } from './module-group'
+import { a2aServerModule } from './wire-a2a-server'
+import { pairingModule } from './wire-pairing'
 import { wireHealth } from './wire-health'
-import { wireSelfRestart } from './wire-self-restart'
+import { selfRestartModule } from './self-restart-module'
 import { resolveSelfAgentId } from '../../core/self-agent-id'
 import type { BootstrapDeps, Bootstrap } from './types'
 export type { BootstrapDeps, Bootstrap } from './types'
@@ -239,7 +240,7 @@ export async function buildBootstrap(deps: BootstrapDeps): Promise<Bootstrap> {
   // never-seen dependency), but the try/catch + null-on-failure keeps this
   // on the "can't prove it's fresh ⇒ don't restart" side the rest of the
   // mechanism commits to everywhere else.
-  const wiredSelfRestart = (await sup.start('self-restart', () => wireSelfRestart({
+  const wiredSelfRestart = (await runModule(ctx, selfRestartModule({
     requestRestart: deps.requestRestart,
     anyInFlight: () => sessionManager.anyInFlight(),
     busy: () => busyRegistry.busy(),
@@ -306,7 +307,7 @@ export async function buildBootstrap(deps: BootstrapDeps): Promise<Bootstrap> {
   }, { a2aRegistry, readAgentConfig })
   socialWired.set(!!socialWiring.social)
 
-  const a2aWiring = await sup.start('a2a-server', () => wireA2aServer({
+  const a2aWiring = await runModule(ctx, a2aServerModule({
     log: deps.log,
     stateDir: deps.stateDir,
     configuredAgent,
@@ -329,7 +330,7 @@ export async function buildBootstrap(deps: BootstrapDeps): Promise<Bootstrap> {
   // Undefined when mailbox_relays is unconfigured — the WeChat「配对」dispatch
   // seam and internal-api /v1/pair/* routes then stay inert, same posture
   // as boot.social/boot.penpal.
-  const pairingEngine = await sup.start('pairing', () => wirePairing({
+  const pairingEngine = await runModule(ctx, pairingModule({
     stateDir: deps.stateDir,
     configuredAgent,
     a2aRegistry,

@@ -67,3 +67,36 @@ describe('别的 agent 捎给主人的话经 CC 开口那道门(a2a_notify,repor
     } finally { await s.done() }
   })
 })
+
+describe('A2A 服务是一个模块(第三批 3b 第 5 步):停法登记在收尾清单里', () => {
+  it('**只跑收尾清单就能把端口放掉**(以前由 shutdown 经 boot() 停,开机没走完 boot 是 null,端口就不放)', async () => {
+    const { SubsystemSupervisor } = await import('../subsystems')
+    const { makeTeardown } = await import('./teardown')
+    const { runModule } = await import('./module-group')
+    const { a2aServerModule } = await import('./wire-a2a-server')
+    const { createServer } = await import('node:net')
+    const port = 19934
+    const stateDir = mkdtempSync(join(tmpdir(), 'a2a-module-'))
+    writeFileSync(join(stateDir, 'agent-config.json'), JSON.stringify({
+      provider: 'claude', dangerouslySkipPermissions: false, autoStart: false, closeStopsDaemon: false,
+      a2a_listen: { host: '127.0.0.1', port }, a2a_agents: [],
+    }))
+    const sup = new SubsystemSupervisor(() => {})
+    const teardown = makeTeardown()
+    const slice = wireA2a({ stateDir, db: openTestDb() })
+    try {
+      const w = await runModule({ sup, teardown, log: () => {} }, a2aServerModule({
+        log: () => {}, stateDir, configuredAgent: loadAgentConfig(stateDir),
+        a2aRegistry: slice.a2aRegistry, a2aClient: slice.a2aClient, a2aEventsStore: slice.a2aEventsStore,
+        dispatchDelegate: (async () => ({ ok: false })) as never, resolveOperatorChatId: () => null,
+        sendAssistantText: undefined, onLetter: undefined as never,
+      }))
+      expect(w?.a2aServer).toBeTruthy()
+      expect(sup.statuses()).toMatchObject([{ name: 'a2a-server', state: 'ok' }])
+      for (const t of teardown.steps()) await t.stop()
+      const again = createServer()
+      await expect(new Promise<void>((resolve, reject) => { again.once('error', reject); again.listen(port, '127.0.0.1', () => resolve()) })).resolves.toBeUndefined()
+      await new Promise<void>(r => again.close(() => r()))
+    } finally { rmSync(stateDir, { recursive: true, force: true }) }
+  })
+})

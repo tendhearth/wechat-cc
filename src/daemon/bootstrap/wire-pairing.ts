@@ -76,3 +76,21 @@ export function wirePairing(deps: PairingWireDeps): PairingEngine | undefined {
   deps.log('BOOT', `pairing: wired (rendezvous relay ${relays[0]})`)
   return engine
 }
+
+/**
+ * 配对是一个模块(第三批 3b 第 5 步):开关是 `mailbox_relays`(不看 social_enabled,是刻意的)。
+ * 停法经 `own` 登记 —— 以前由 runtime/shutdown 经 boot() 停,开机没走完时停不到。
+ */
+export function pairingModule(deps: PairingWireDeps): import('../modules/container').DaemonModule<PairingEngine> {
+  return {
+    name: 'pairing',
+    optional: true,
+    enabled: () => !!deps.configuredAgent.mailbox_relays?.length,
+    init(m) {
+      const engine = wirePairing(deps)
+      if (!engine) throw new Error('pairing: no mailbox relays')   // enabled() 已经挡过,到不了
+      m.own('engine', () => engine.stop())
+      return engine
+    },
+  }
+}
