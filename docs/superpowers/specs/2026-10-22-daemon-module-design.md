@@ -81,7 +81,7 @@ app.status()  // [{ name, state: 'ok' | 'off' | 'degraded', error?, sinceIso }]
 
 - 开机:按 `needs ∪ wants` 拓扑排序,**有环 ⇒ 开机就抛**,一条测试钉住真实的模块表无环。真的环不进 `needs`,写成 `lazy`,所以排序图本身无环。
 - `status()` 接到现有的 `/v1/health.subsystems` 上,不另起一个接口。「CC 现在怎么样」和自检读的还是同一份。
-- 一个 `needs` 的上游是 off 或 degraded ⇒ 下游也是 off 或 degraded,原因写「上游 X 没起」。不会半起。
+- 一个 `needs` 的上游没起 ⇒ 下游不 init,**状态跟着上游**:上游 degraded ⇒ 下游 degraded,写明「upstream X not running」;只有主人关掉的 off 才往下传成 off。**不把坏了的标成 off**:状态页上 off 的意思是「主人关的 / 没配置」,上游坏了也标 off,就是一句假话(9d 评审 #541、#542)。不会半起。
 - `MODULES` 是**一张显式的表**(`src/daemon/modules.ts`),按名字排,谁依赖谁写在每一行里。main.ts 只剩:读配置 → `startModules` → 等信号 → `stopAll`。
 
 ### 顺带消掉的一类空窗
