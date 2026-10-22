@@ -186,3 +186,17 @@ describe('待说队列不丢话(9d 评审 #531)', () => {
     t.advance(5 * 60_000); await t.policy.flushPending(); expect(tries).toBe(3)
   })
 })
+
+describe('带会过期码的卡不进待说队列(9d 评审 #533)', () => {
+  it('permission_ask / self_change_ask 没送到 ⇒ 不入队;social_ask(介绍一直有效)照样入队', async () => {
+    const { makePendingNotices } = await import('./pending-notices')
+    const { mkdtempSync } = await import('node:fs'); const { tmpdir } = await import('node:os'); const { join } = await import('node:path')
+    const pending = makePendingNotices({ stateDir: mkdtempSync(join(tmpdir(), 'pend-')), log: () => {} })
+    const ob = fakeOutbound(false)   // 两条路都送不到 ⇒ 门推后
+    const policy = makeSpeechPolicy({ care: () => 'low', quietEndsAt: () => null, outbound: ob.out, log: () => {}, pending })
+    await policy.tell('permission_ask', OWNER, '要不要放行?回 y 07')
+    await policy.tell('self_change_ask', OWNER, '合进 dev?回 y 08')
+    await policy.tell('social_ask', OWNER, '老王的朋友想认识你')
+    expect(pending.groups()[0]!.items.map(i => i.kind)).toEqual(['social_ask'])
+  })
+})

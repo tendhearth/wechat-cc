@@ -11,7 +11,7 @@
  * 第 1 步只加不接:还没有调用方,行为不变。
  */
 import { decideSpeech, type CareSetting, type SpeechDecision } from '../../core/speech/decide'
-import { originOf, type SpeechKind, type SpeechOrigin } from '../../core/speech/kinds'
+import { isExpiring, originOf, type SpeechKind, type SpeechOrigin } from '../../core/speech/kinds'
 import type { ProactiveChannel, ProactiveOutbound, ProactiveTurn } from '../companion/proactive-channel'
 import { mergePending } from './pending-notices'
 
@@ -128,7 +128,8 @@ export function makeSpeechPolicy(deps: {
       })
       // report / blocking 没说出去 —— 被推后,**或者放行了但发失败**(ilink 回 error / 网络抖)—— 都入队,之后补说(9d 评审 #531 ①)
       const notSaid = 'defer' in o || ('allow' in o && !sent)
-      if (notSaid && originOf(kind) !== 'initiative' && deps.pending) {
+      // 带会过期码的卡不排队(isExpiring):晚补出去只会给一个失效的码
+      if (notSaid && originOf(kind) !== 'initiative' && !isExpiring(kind) && deps.pending) {
         deps.pending.add({ kind, chatId, text, at: new Date(now()).toISOString() })
         deps.log('SPEECH', `${kind} chat=${chatId} kept to say later (${'defer' in o ? o.reason : 'send failed'})`)
       }

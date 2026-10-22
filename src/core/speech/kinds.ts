@@ -12,9 +12,9 @@
 export type SpeechOrigin = 'blocking' | 'requested' | 'report' | 'initiative'
 
 export const SPEECH_KINDS = {
-  permission_ask: { origin: 'blocking', label: '等你批准' },
+  permission_ask: { origin: 'blocking', label: '等你批准', expiring: true },
   // 自改:拍板卡等主人回 y / n(码会过期,不进待说队列,见 daemon/self-change-glue.ts);进展是回报
-  self_change_ask: { origin: 'blocking', label: '自改要你拍板' },
+  self_change_ask: { origin: 'blocking', label: '自改要你拍板', expiring: true },
   self_change_progress: { origin: 'report', label: '自改进展' },
   guest_request: { origin: 'blocking', label: '有人想跟 CC 说话' },
   pairing: { origin: 'blocking', label: '配对' },
@@ -48,9 +48,17 @@ export const SPEECH_KINDS = {
   social_mail: { origin: 'report', label: '笔友来信' },               // 信在信箱里留着
   social_story: { origin: 'initiative', label: '串门见闻' },          // 串门回来讲、邻居、明信片
   memory_notice: { origin: 'initiative', label: '整理记忆' },
-} as const satisfies Record<string, { origin: SpeechOrigin; label: string }>
+} as const satisfies Record<string, { origin: SpeechOrigin; label: string; expiring?: true }>
 
 export type SpeechKind = keyof typeof SPEECH_KINDS
+
+/**
+ * 带会过期码的卡(y/n 码、权限卡):**不进待说队列**。真相在登记处,补说只会给出一个已经失效的码;
+ * 没送到 ⇒ 条目照样在登记处,桌面 / 终端仍可拍板(9d 评审 #533)。
+ */
+export function isExpiring(kind: SpeechKind): boolean {
+  return 'expiring' in SPEECH_KINDS[kind]
+}
 
 export function originOf(kind: SpeechKind): SpeechOrigin {
   return SPEECH_KINDS[kind].origin
