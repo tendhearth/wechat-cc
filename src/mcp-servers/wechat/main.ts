@@ -28,7 +28,7 @@ import { registerCompanionTools } from './tools-companion'
 import { registerA2ASendTool } from './tools-a2a'
 import { registerDaemonTools } from './tools-daemon'
 import { registerFileTools } from './tools-files'
-import { registerSocialTools } from './tools-social'
+import { registerSocialTools, socialIsUp } from './tools-social'
 import { registerKnowledgeSearchTool } from './tools-knowledge'
 import { registerFederatedQueryTool } from './tools-federated'
 import { registerGraphTools } from './tools-graph'
@@ -202,7 +202,9 @@ if (SESSION_IS_ADMIN) {
   // 都在 ADMIN_ONLY);非 admin 会话根本看不到。路由层按 trusted 门拒
   // guest;trusted 会话由注册门(SESSION_IS_ADMIN)+ classify 门
   // (social_act ∈ ADMIN_ONLY)挡住。
-  registerSocialTools(server, client)
+  // 社交没起(关着 / 坏了)⇒ 不挂这些工具(第三批 3b 第 3 步 3-2;读不到就照旧挂,见 socialIsUp)
+  if (await socialIsUp(client)) registerSocialTools(server, client)
+  else logErr('social is not running — social tools not registered for this session')
   // agent-facing search (AS T4): knowledge_search runs a semantic query
   // over the owner's WeChat message history — same private-data trust
   // class as file_locate/social_seek, so admin-only.

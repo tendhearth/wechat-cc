@@ -131,10 +131,12 @@ describe('pipeline-deps social dispatch seam (回信 letter reply)', () => {
     expect(text).toMatch(/没找到这条笔友通道|发送失败/)
   })
 
-  it('no boot.penpal → always a normal turn, even for a well-formed 回信', async () => {
-    const { pipelineDeps, coordinatorDispatch } = setup(undefined)
+  // 第三批 3b 第 3 步 3-2 起:社交不在时,一句合法的社交命令不再悄悄落成普通对话,而是明说(这里没开 social_enabled ⇒ 关着)
+  it('no boot.penpal (social off) → a well-formed 回信 is NOT a normal turn; the owner is told social is off', async () => {
+    const { pipelineDeps, coordinatorDispatch, sendAssistantText } = setup(undefined)
     await inboundTurn(pipelineDeps, letterMsg)
-    expect(coordinatorDispatch).toHaveBeenCalledTimes(1)
+    expect(coordinatorDispatch).not.toHaveBeenCalled()
+    expect(sendAssistantText.mock.calls.map(c => c[1])).toEqual(['社交现在关着,去设置里打开。'])
   })
 
   it('a non-command message falls through to a normal turn', async () => {
@@ -253,10 +255,11 @@ describe('pipeline-deps social dispatch seam (派/取消 wish)', () => {
     expect(coordinatorDispatch).toHaveBeenCalledTimes(1)
   })
 
-  it('no boot.social → always a normal turn, even for a well-formed 派', async () => {
-    const { pipelineDeps, coordinatorDispatch } = setup(undefined)
+  it('no boot.social (social off) → a well-formed 派 is NOT a normal turn; the owner is told social is off', async () => {
+    const { pipelineDeps, coordinatorDispatch, sendAssistantText } = setup(undefined)
     await inboundTurn(pipelineDeps, msg('派 3f9a2b'))
-    expect(coordinatorDispatch).toHaveBeenCalledTimes(1)
+    expect(coordinatorDispatch).not.toHaveBeenCalled()
+    expect(sendAssistantText.mock.calls.map(c => c[1])).toEqual(['社交现在关着,去设置里打开。'])
   })
 
   // Mandatory regression (I2 delegate-collision guard) — an admin delegate

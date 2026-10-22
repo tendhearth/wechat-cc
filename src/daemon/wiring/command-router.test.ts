@@ -232,3 +232,36 @@ describe('command-router · probe / tryHandle 不漂(整份语料)', () => {
     }
   })
 })
+
+describe('社交不在时明说(第三批 3b 第 3 步 3-2):不再悄悄落成普通对话', () => {
+  const said = (d: CommandRouterDeps) => (d.sendAssistantText as ReturnType<typeof vi.fn>).mock.calls.map(c => c[1])
+  it('关着 ⇒ 「社交现在关着,去设置里打开」;串门 / 派 / 认识 / 回信 都是', async () => {
+    // 命令的写法取自 inbound/command-corpus.ts(真实例句)
+    // 派 / 取消 的心愿引用只认十六进制(parseSeekCommand 的字符集,挡住「派 家里 跑 …」这种委派命令)
+    for (const t of ['串门', '/visit', '派 ab12', '取消 ab12', '认识 ab12', '不了 ab12', '回信 ch1 你好']) {
+      const d = baseDeps({ socialState: () => 'off' })
+      const r = makeCommandRouter(d)
+      expect(r.probe(msg(t))).toBe(true)
+      expect(await r.tryHandle(msg(t))).toBe(true)
+      expect(said(d)).toEqual(['社交现在关着,去设置里打开。'])
+    }
+  })
+  it('**开着却没起来 ⇒ 说没起来、去哪看原因,不劝他去开**(坏了 ≠ 关了)', async () => {
+    const d = baseDeps({ socialState: () => 'degraded' })
+    expect(await makeCommandRouter(d).tryHandle(msg('串门'))).toBe(true)
+    expect(said(d)).toEqual(['社交开着,但现在没起来,原因在「CC 现在怎么样」里。'])
+  })
+  it('不是社交命令 ⇒ 不拦,也不去读社交状态(probe 每条消息都过)', async () => {
+    const socialState = vi.fn(() => 'off' as const)
+    const r = makeCommandRouter(baseDeps({ socialState }))
+    // 普通句子,包括提到串门的(command-corpus 里「不该当命令」的那几句)
+    for (const t of ['今天天气怎么样', '串门好玩吗', '配对成功了吗', '派 家里 跑 拉日志']) expect(r.probe(msg(t))).toBe(false)
+    expect(socialState).not.toHaveBeenCalled()
+  })
+  it('不是主人 ⇒ 不拦', () => {
+    expect(makeCommandRouter(baseDeps({ isAdmin: () => false, socialState: () => 'off' })).probe(msg('串门'))).toBe(false)
+  })
+  it('没接 socialState ⇒ 老行为(落成普通对话)', () => {
+    expect(makeCommandRouter(baseDeps()).probe(msg('串门'))).toBe(false)
+  })
+})
