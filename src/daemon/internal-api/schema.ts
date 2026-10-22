@@ -571,7 +571,8 @@ export const ConversationSetModeRequest = z.object({
   quiet: z.boolean().optional(),
 })
 export const ConversationSetModeResponse = z.union([
-  z.object({ ok: z.literal(true) }),
+  /** notice:切到的这家「问不了就放行」时要照实告诉主人的那一句(core/tier-enforcement 的 noAskNotice)。 */
+  z.object({ ok: z.literal(true), notice: z.string().optional() }),
   z.object({ error: z.string() }),
 ])
 

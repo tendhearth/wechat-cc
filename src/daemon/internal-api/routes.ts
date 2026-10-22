@@ -19,6 +19,7 @@ import { tmpdir } from 'node:os'
 import { errMsg, type InternalApiDeps, type InternalApiDelegateDep, type RouteTable } from './types'
 import { splitReply, paceMs } from '../reply-split'
 import { lookup } from '../../core/capability-matrix'
+import { noAskNotice } from '../../core/tier-enforcement'
 import { PROVIDER_IDS } from '../../lib/provider-ids'
 import { normalizeUserName } from '../../lib/user-name'
 import type { Mode } from '../../core/conversation'
@@ -750,11 +751,14 @@ const onlineStickerCursor = new Map<string, number>()
         chatroom: 'chatroom',
       }
       const humanName = kindNames[mode.kind] ?? String(mode.kind)
+      // 切到一家「问不了就放行」的执行者:照实说一句(稿 2026-10-22-policy-compile §6)。provider_switch(quiet)
+      // 由 agent 转告主人,所以放进回执;控制台那条直接接在回执后面。
+      const notice = mode.kind === 'solo' && 'provider' in mode ? noAskNotice(mode.provider) : null
       // Best-effort wechat reply — never fail the route if send fails.
       // `quiet`: an agent (wechat-mcp provider_switch) is the caller and will
       // tell the user itself — a second「来自控制台」line would be noise.
       if (deps.ilink && !quiet) {
-        deps.ilink.sendReply(chatId, `已切换到 ${humanName}（来自控制台）`).catch(err => {
+        deps.ilink.sendReply(chatId, `已切换到 ${humanName}（来自控制台）${notice ? `\n${notice}` : ''}`).catch(err => {
           deps.log?.('SET_MODE', `wechat reply failed: ${errMsg(err)}`)
         })
       }
@@ -763,7 +767,7 @@ const onlineStickerCursor = new Map<string, number>()
         chatId,
         mode,
       })
-      return { status: 200, body: { ok: true } }
+      return { status: 200, body: { ok: true, ...(notice ? { notice } : {}) } }
     },
 
     // ── companion converse (app-conversation-channel, voice arc Stage 0) ──
