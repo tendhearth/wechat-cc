@@ -74,6 +74,17 @@ export interface ProactiveTurn {
    * 跟 sendAttachment 分开:那个是回复交付用的(没落在 App 就回 false、让回复走它自己的微信路),语义不能动。
    */
   sendSticker(chatId: string, tag: string, path: string): Promise<boolean>
+  /**
+   * 一句文字,但**微信那条腿用调用方自己的发送口**(工作台通知:幂等 client_id + 绑定核对 + 服务端回执,不能换成
+   * sendWechat;第三批 3a)。选路、粘住同 sendText。`wechat()` 回:
+   *  - 'sent'      落在微信;
+   *  - 'not_sent'  确定没发出去(推送窗口关了 / 还没有 context token)⇒ App 送得到就落 App;
+   *  - 'final'     不许换路(被拦,或结果不明 —— 可能已经到了,换路会说两遍)。
+   * `silent` ⇒ 落在 App 时只记进对话、收尾不推这一句(同一件事 App 已有自己的原生推送,免得响两次)。
+   * `ready` ⇒ 落 App 前同步再核一次(工作台:请求还在等、绑定没变);不过 ⇒ 不记,回没送到。
+   * 回 ok = 送到了,channel = 落在哪。可选:测试里的假通道不用实现;没有 ⇒ 调用方当没送到。
+   */
+  sendTextWith?(chatId: string, text: string, wechat: () => Promise<'sent' | 'not_sent' | 'final'>, o?: { silent?: boolean; ready?: () => boolean }): Promise<{ ok: boolean; channel: ProactiveChannel | null }>
   /** 这一轮收尾:落在 App ⇒ 整轮的文字合成一条推送。没落在 App ⇒ 什么都不做。 */
   finish(): void
 }
@@ -113,11 +124,11 @@ export function makeProactiveOutbound(deps: ProactiveChannelDeps): ProactiveOutb
     let app: AppChannel | null = null
     let seq = 0
 
-    const toApp = async (a: AppChannel, text: string): Promise<{ msgId: string; error?: string }> => {
+    const toApp = async (a: AppChannel, text: string, silent = false): Promise<{ msgId: string; error?: string }> => {
       let ok = false
       try { ok = await a.record(chatId, text) } catch (e) { deps.log('COMPANION_APP', `chat=${chatId} record threw: ${errMsg(e)}`) }
       if (!ok) return { msgId: `err:${Date.now()}`, error: 'app_record_failed' }
-      appTexts.push(text)
+      if (!silent) appTexts.push(text)
       return { msgId: `app:${Date.now()}:${seq++}` }
     }
 
@@ -144,6 +155,31 @@ export function makeProactiveOutbound(deps: ProactiveChannelDeps): ProactiveOutb
       },
       channel: () => sticky,
       textOnly: () => sticky === 'app',
+      async sendTextWith(_c, text, wechat, o) {
+        const silent = !!o?.silent
+        const viaApp = async (a: AppChannel): Promise<{ ok: boolean; channel: ProactiveChannel | null }> => {
+          if (o?.ready && !o.ready()) return { ok: false, channel: null }
+          sticky = 'app'; app = a
+          return { ok: !(await toApp(a, text, silent)).error, channel: 'app' as const }
+        }
+        const viaWechat = async (): Promise<'sent' | 'not_sent' | 'final'> => {
+          try { return await wechat() } catch (e) { deps.log('COMPANION_APP', `chat=${chatId} own wechat sender threw: ${errMsg(e)}`); return 'final' }
+        }
+        if (sticky === 'app' && app) return viaApp(app)
+        if (sticky === 'wechat') { const r = await viaWechat(); return { ok: r === 'sent', channel: 'wechat' } }
+        const a = appFor(chatId)
+        if (chooseChannel({ wechatUsable: wechatUsable(chatId), appDeliverable: !!a }) === 'app' && a) {
+          deps.log('COMPANION_APP', `chat=${chatId} wechat not usable (${degraded() ? 'degraded' : 'window closed'}) — delivering to the app`)
+          return viaApp(a)
+        }
+        const r = await viaWechat()
+        if (r === 'sent') { sticky = 'wechat'; return { ok: true, channel: 'wechat' } }
+        if (r === 'not_sent' && a) {
+          deps.log('COMPANION_APP', `chat=${chatId} own wechat sender did not send — delivering to the app instead`)
+          return viaApp(a)
+        }
+        return { ok: false, channel: null }
+      },
       async sendSticker(_c, tag, path) {
         const toAppSticker = async (a: AppChannel): Promise<boolean> => {
           if (!a.recordAttachment) return false

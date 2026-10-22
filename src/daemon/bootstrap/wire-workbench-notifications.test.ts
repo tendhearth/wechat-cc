@@ -20,9 +20,25 @@ import { createInternalApi } from '../internal-api'
 import {MANAGED_NATIVE_CAPABILITIES} from '../../core/workbench/executor-capabilities'
 import {removeTempDir} from '../../lib/test-temp'
 import { serve } from '../../lib/runtime/http'
+import { makeProactiveOutbound, type AppChannel } from '../companion/proactive-channel'
+import { makeSpeechPolicy } from '../speech/policy'
+import { makePendingNotices } from '../speech/pending-notices'
+
+/** 真的门 + 真的 proactive-channel(微信那条腿是工作台自己的发送口);App 那条路是假的。 */
+function speechHarness(o: { care?: 'off' | 'low'; quietEnds?: number | null; wechatDegraded?: boolean; app?: AppChannel | null } = {}) {
+  const dir = mkdtempSync(join(tmpdir(), 'wb-speech-')); tempDirs.push(dir)
+  const sendWechat = vi.fn(async () => ({ msgId: 'plain' }))
+  const outbound = makeProactiveOutbound({ wechatDegraded: () => o.wechatDegraded ?? false, wechatClosedSince: () => null, sendWechat, app: () => o.app ?? null, log: () => {} })
+  const pending = makePendingNotices({ stateDir: dir, log: () => {} })
+  const speech = makeSpeechPolicy({ care: () => o.care ?? 'low', quietEndsAt: () => o.quietEnds ?? null, outbound, log: () => {}, pending })
+  return { speech, pending, sendWechat }
+}
+const tempDirs: string[] = []
+const fakeApp = () => ({ deliverable: () => true, record: vi.fn(async (_c: string, _t: string) => true), push: vi.fn((_t: string) => {}) })
 
 const databases: Database[] = []
-function fixture() {
+function fixture(speechOpts: Parameters<typeof speechHarness>[0] = {}) {
+  const sh = speechHarness(speechOpts)
   const db = openSqlite(':memory:'); databases.push(db)
   db.exec("PRAGMA foreign_keys=ON; CREATE TABLE workbench_tasks(id TEXT PRIMARY KEY NOT NULL) STRICT; INSERT INTO workbench_tasks(id) VALUES('task-1'),('task-2');")
   initializeWechatNotificationSchema(db)
@@ -36,10 +52,10 @@ function fixture() {
   }
   const sendWorkbenchNotice = vi.fn(async (_notice: unknown, _signal?: AbortSignal) => ({ status: 'accepted' as const }))
   const chatAccountId = vi.fn((chatId: string): string | null => chatId === 'owner-2' ? 'account-2' : 'account-1')
-  const wired = wireWorkbenchNotifications({ workbench: workbench as never, ilink: { sendWorkbenchNotice, chatAccountId } })
-  return { notificationStore, workbench, sendWorkbenchNotice, chatAccountId, wired, get eligibleCalls() { return eligibleCalls }, get wake() { return wake } }
+  const wired = wireWorkbenchNotifications({ workbench: workbench as never, ilink: { sendWorkbenchNotice, chatAccountId }, speech: sh.speech })
+  return { notificationStore, workbench, sendWorkbenchNotice, chatAccountId, wired, ...sh, get eligibleCalls() { return eligibleCalls }, get wake() { return wake } }
 }
-afterEach(() => { for (const db of databases.splice(0)) db.close() })
+afterEach(() => { for (const db of databases.splice(0)) db.close(); for (const d of tempDirs.splice(0)) removeTempDir(d) })
 
 const input = (overrides = {}) => ({ taskId: 'task-1', runId: 'run-1', ownerChatId: 'owner-1', accountId: 'account-1', kind: 'completed' as const, text: '完成', ...overrides })
 
@@ -80,7 +96,7 @@ describe('wireWorkbenchNotifications', () => {
 
   it('suppresses delivery when the strict adapter method is unavailable', async () => {
     const f = fixture(); await f.wired.close()
-    const wired = wireWorkbenchNotifications({ workbench: f.workbench as never, ilink: { chatAccountId: f.chatAccountId } })
+    const wired = wireWorkbenchNotifications({ workbench: f.workbench as never, ilink: { chatAccountId: f.chatAccountId }, speech: f.speech })
     f.notificationStore.watch('task-1', 'owner-1', 'account-1', true); f.notificationStore.enqueue(input())
     await wired.wake()
     expect(f.notificationStore.list('task-1')[0]).toMatchObject({ status: 'suppressed', reason: 'transport_unavailable' })
@@ -118,7 +134,7 @@ describe('wireWorkbenchNotifications', () => {
     } })
     await ilinkServer.ready
     const adapter = makeIlinkAdapter({ stateDir: root, accounts: [{ id: 'account-1', botId: 'bot', userId: 'user', baseUrl: `http://127.0.0.1:${ilinkServer.port}`, token: 'secret', syncBuf: '' }], db, conversationStore: makeConversationStore(db) })
-    const wired = wireWorkbenchNotifications({ workbench: service, ilink: adapter })
+    const wired = wireWorkbenchNotifications({ workbench: service, ilink: adapter, speech: speechHarness().speech })
     const internalApi = createInternalApi({ stateDir: root, daemonPid: 1, workbench: service } as never)
     const adminToken = internalApi.mintSessionToken('admin', 'codex/default/owner')
     const { port: internalPort } = await internalApi.start()
@@ -166,5 +182,81 @@ describe('wireWorkbenchNotifications', () => {
     } finally {
       await internalApi.stop(); ilinkServer.stop(true); await wired.close(); await service.shutdown(); await adapter.flush(); db.close(); removeTempDir(root)
     }
+  })
+})
+
+describe('工作台通知经 CC 开口那道门(第三批 3a)', () => {
+  const QUIET_END = Date.parse('2030-01-01T07:00:00.000Z')
+  const permission = () => input({ kind: 'permission' as const, requestId: 'perm-1', text: '需要你批准' })
+
+  it('别烦我 ⇒ 批准卡(blocking)和做完了(report)都照发', async () => {
+    const f = fixture({ care: 'off' }); f.notificationStore.watch('task-1', 'owner-1', 'account-1', true)
+    f.notificationStore.enqueue(permission()); f.notificationStore.enqueue(input())
+    await f.wake!()
+    expect(f.sendWorkbenchNotice).toHaveBeenCalledTimes(2)
+    expect(f.notificationStore.list('task-1').map(n => n.status)).toEqual(['accepted', 'accepted'])
+  })
+
+  it('免打扰 ⇒ 批准卡照发;做完了推到时段结束 —— 留在自己的 outbox(不算尝试),不进「待说」队列', async () => {
+    const f = fixture({ quietEnds: QUIET_END }); f.notificationStore.watch('task-1', 'owner-1', 'account-1', true)
+    f.notificationStore.enqueue(permission()); const done = f.notificationStore.enqueue(input())
+    await f.wake!()
+    expect(f.sendWorkbenchNotice).toHaveBeenCalledOnce()
+    expect((f.sendWorkbenchNotice.mock.calls[0]![0] as { kind: string }).kind).toBe('permission')
+    expect(f.notificationStore.list('task-1').find(n => n.id === done.id)).toMatchObject({ status: 'pending', reason: 'quiet_hours' })
+    expect(f.notificationStore.nextDue(Date.now())).toBe(QUIET_END)
+    expect(f.pending.groups()).toEqual([])
+    await f.wired.close()
+    // 不算尝试:时段结束后第一次真发失败,退避从头算(defer_count 没因推后而涨)
+    expect(f.notificationStore.claim(done.id, QUIET_END)).not.toBeNull()
+    f.notificationStore.defer(done.id, 'window_closed', QUIET_END, 1000, 60_000)
+    expect(f.notificationStore.nextDue(QUIET_END)).toBe(QUIET_END + 1000)
+  })
+
+  it('微信降级 ⇒ 落到 App:记进主人对话,不另推(phone-notifier 已经推过原生通知),工作台发送口不碰', async () => {
+    const app = fakeApp()
+    const f = fixture({ wechatDegraded: true, app }); f.notificationStore.watch('task-1', 'owner-1', 'account-1', true)
+    f.notificationStore.enqueue(input())
+    await f.wake!()
+    expect(f.sendWorkbenchNotice).not.toHaveBeenCalled()
+    expect(app.record).toHaveBeenCalledWith('owner-1', '完成')
+    expect(app.push).not.toHaveBeenCalled()
+    expect(f.notificationStore.list('task-1')[0]).toMatchObject({ status: 'accepted', reason: 'app' })
+  })
+
+  it('微信推送窗口关了(-2,确定没发出去)⇒ 改走 App', async () => {
+    const app = fakeApp()
+    const f = fixture({ app }); f.notificationStore.watch('task-1', 'owner-1', 'account-1', true)
+    f.sendWorkbenchNotice.mockResolvedValueOnce({ status: 'deferred', reason: 'window_closed' } as never)
+    f.notificationStore.enqueue(input())
+    await f.wake!()
+    expect(f.sendWorkbenchNotice).toHaveBeenCalledOnce()
+    expect(app.record).toHaveBeenCalledOnce()
+    expect(f.notificationStore.list('task-1')[0]).toMatchObject({ status: 'accepted', reason: 'app' })
+  })
+
+  it('结果不明(unknown,可能已经到了)⇒ 不换路,免得说两遍', async () => {
+    const app = fakeApp()
+    const f = fixture({ app }); f.notificationStore.watch('task-1', 'owner-1', 'account-1', true)
+    f.sendWorkbenchNotice.mockResolvedValueOnce({ status: 'unknown', reason: 'transport_uncertain' } as never)
+    f.notificationStore.enqueue(input())
+    await f.wake!()
+    expect(app.record).not.toHaveBeenCalled()
+    expect(f.notificationStore.list('task-1')[0]).toMatchObject({ status: 'unknown' })
+  })
+
+  it('两条路都送不到 ⇒ 批准卡**不进**「待说」队列(带会过期的码);留在 outbox,重试前再核一次,请求没了就作废', async () => {
+    const f = fixture({ wechatDegraded: true, app: null }); f.notificationStore.watch('task-1', 'owner-1', 'account-1', true)
+    const card = f.notificationStore.enqueue(permission())
+    await f.wake!()
+    expect(f.sendWorkbenchNotice).not.toHaveBeenCalled()
+    expect(f.pending.groups()).toEqual([])
+    expect(f.notificationStore.list('task-1')[0]).toMatchObject({ id: card.id, status: 'pending', reason: 'undeliverable' })
+    // 主人在桌面上拍了板 ⇒ 请求不在了;到点重试时核对不过 ⇒ 作废,永远不会补发一个死码
+    f.workbench.notificationEligible.mockReturnValue(false)
+    f.notificationStore.releaseDeferred('owner-1', 'account-1')
+    await f.wake!()
+    expect(f.sendWorkbenchNotice).not.toHaveBeenCalled()
+    expect(f.notificationStore.list('task-1')[0]).toMatchObject({ status: 'suppressed', reason: 'ineligible' })
   })
 })

@@ -2,7 +2,11 @@ import {makeArtifactDeliveryWorker,type ArtifactDeliveryReceipt} from '../../cor
 import type {WorkbenchService} from '../../core/workbench/service'
 import type {IlinkAdapter} from '../ilink-glue'
 
-/** Files are delivered only from an explicit owner request, never from a notification scan. */
+/**
+ * Files are delivered only from an explicit owner request, never from a notification scan.
+ * 不经 CC 开口那道门(第三批 3a):这是对主人刚发的「任务 X 文件 <id>」的回话 —— 内容是主人点名的,在处理那条命令时
+ * 同步送,送的结果就是回话正文;没有定时、没有扫描、不自动重发。回话那条路不经门(设计稿「明确不做」)。
+ */
 export function wireWorkbenchArtifacts(opts:{
   workbench:WorkbenchService
   ilink:Pick<IlinkAdapter,'chatAccountId'|'uploadWorkbenchArtifact'|'sendWorkbenchArtifact'>

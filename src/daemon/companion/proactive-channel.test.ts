@@ -295,3 +295,33 @@ describe('sendSticker —— 主动发一张表情:微信发文件,App 记表情
     expect(await out.open(OWNER).sendSticker(OWNER, '开心', '/p')).toBe(false)
   })
 })
+
+describe('sendTextWith —— 微信那条腿用调用方自己的发送口(工作台通知,第三批 3a)', () => {
+  it('微信能用 ⇒ 只调自己的发送口,不调 sendWechat、不碰 App', async () => {
+    const s = setup({ app: 'deliverable' })
+    const own = vi.fn(async () => 'sent' as const)
+    const t = s.out.open(OWNER)
+    expect(await t.sendTextWith!(OWNER, '做完了', own)).toEqual({ ok: true, channel: 'wechat' })
+    expect(own).toHaveBeenCalledOnce(); expect(s.sendWechat).not.toHaveBeenCalled(); expect(s.app.record).not.toHaveBeenCalled()
+  })
+  it('微信降级 ⇒ 落 App;silent ⇒ 只记不推', async () => {
+    const s = setup({ degraded: true, app: 'deliverable' })
+    const own = vi.fn(async () => 'sent' as const)
+    const t = s.out.open(OWNER)
+    expect(await t.sendTextWith!(OWNER, '做完了', own, { silent: true })).toEqual({ ok: true, channel: 'app' })
+    t.finish()
+    expect(own).not.toHaveBeenCalled(); expect(s.app.record).toHaveBeenCalledWith(OWNER, '做完了'); expect(s.app.push).not.toHaveBeenCalled()
+  })
+  it('确定没发出去 ⇒ 改走 App;结果不明(final)⇒ 不换路', async () => {
+    const s = setup({ app: 'deliverable' })
+    expect(await s.out.open(OWNER).sendTextWith!(OWNER, 'a', async () => 'not_sent')).toEqual({ ok: true, channel: 'app' })
+    const s2 = setup({ app: 'deliverable' })
+    expect(await s2.out.open(OWNER).sendTextWith!(OWNER, 'a', async () => 'final')).toEqual({ ok: false, channel: null })
+    expect(s2.app.record).not.toHaveBeenCalled()
+  })
+  it('落 App 前 ready() 不过 ⇒ 不记', async () => {
+    const s = setup({ degraded: true, app: 'deliverable' })
+    expect(await s.out.open(OWNER).sendTextWith!(OWNER, 'a', async () => 'sent', { ready: () => false })).toEqual({ ok: false, channel: null })
+    expect(s.app.record).not.toHaveBeenCalled()
+  })
+})

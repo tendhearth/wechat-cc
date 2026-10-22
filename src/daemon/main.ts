@@ -951,7 +951,7 @@ async function bootDaemonInner(opts: BootDaemonOpts, undo: Array<() => void>): P
       }
     }
     // The worker can arm timers immediately: construct only once partial-startup cleanup is active.
-    workbenchNotifications=wireWorkbenchNotifications({workbench,ilink})
+    workbenchNotifications=wireWorkbenchNotifications({workbench,ilink,speech:wired.speech})
     workbenchArtifacts=wireWorkbenchArtifacts({workbench,ilink})
     void workbenchNotifications.wake().catch(()=>log('WORKBENCH','Task notifications are waiting for storage recovery.'))
   } catch (err) {

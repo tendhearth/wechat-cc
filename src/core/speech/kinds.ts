@@ -12,6 +12,7 @@
 export type SpeechOrigin = 'blocking' | 'requested' | 'report' | 'initiative'
 
 export const SPEECH_KINDS = {
+  // 执行者等主人批准,也包括「CC 有问题问你」(执行者卡着等回答)—— 工作台通知 / App 推送都用这一种。
   permission_ask: { origin: 'blocking', label: '等你批准', expiring: true },
   // 自改:拍板卡等主人回 y / n(码会过期,不进待说队列,见 daemon/self-change-glue.ts);进展是回报
   self_change_ask: { origin: 'blocking', label: '自改要你拍板', expiring: true },
