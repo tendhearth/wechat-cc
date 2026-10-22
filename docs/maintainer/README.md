@@ -20,6 +20,10 @@
 
 收尾只清理自己负责且已确认不再使用的分支和工作树。遇到集成工作区有未知改动或正在被别人使用,先交接,不能 `reset`、`clean` 或替别人 `stash`。
 
+## 怎么加
+
+- [加一个执行者](add-an-executor.md):一份事实(`executor-facts`)+ 一份能力(`provider-capabilities`)+ 两处构造,其余推导,漏了由测试点名。
+
 ## 最短路径
 
 ```bash
