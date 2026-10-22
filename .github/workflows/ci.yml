@@ -32,6 +32,7 @@ jobs:
       relay: ${{ steps.filter.outputs.relay }}
       app: ${{ steps.filter.outputs.app }}
       app_native: ${{ steps.filter.outputs.app_native }}
+      migrations: ${{ steps.filter.outputs.migrations }}
     steps:
       - uses: actions/checkout@v4
       - uses: dorny/paths-filter@v3
@@ -50,6 +51,8 @@ jobs:
             app_native:
               - 'apps/app/native/**'
               - 'packages/protocol/**'
+            migrations:
+              - 'src/lib/db/migrations/**'
 
   build:
     name: build · ${{ matrix.os }}
@@ -157,6 +160,27 @@ jobs:
 
   # 官方中继 v2(apps/relay,Cloudflare Workers)。测试跑在本地 workerd 里,只在 Linux 上跑一份;
   # 只在中继、协议包或壳页源码动过时跑(跟 desktop-e2e 同一个 changes 输出机制)。
+  # 进了 dev 的迁移一字不许改(第三批 3e,scripts/migration-frozen.ts)。主人真机跑的就是 dev,迁移一合进去就在他的库里跑过了。
+  # 单独一个轻作业、只在改到迁移目录时跑:只有它要全量历史(fetch-depth: 0),别让三平台的 build 都慢一截。
+  # PR 用 PR 标题放行 [migration-edit];自改流水线推的 self/** 不走 PR,也要过这道检查。
+  # 标题经 env 传进去,不在 run 里直接插值:标题里带反引号或 $() 会被 shell 执行。
+  migrations:
+    name: migrations · frozen
+    needs: changes
+    if: needs.changes.outputs.migrations == 'true' && (github.event_name == 'pull_request' || startsWith(github.ref, 'refs/heads/self/'))
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: 1.3.14
+      - name: Migrations already on dev are frozen
+        env:
+          PR_TITLE: ${{ github.event.pull_request.title }}
+        run: bun scripts/migration-frozen.ts
+
   relay:
     name: relay · workers
     needs: changes
