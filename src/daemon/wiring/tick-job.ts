@@ -30,6 +30,7 @@ export function makeRunJobTurn(deps: TickDeps, dispatch: TickDispatch) {
     const { chatId, jobId } = args
     const gate = resolveDispatch(chatId)
     if (gate.blocked === 'wechat_degraded') return 'skipped:degraded'
+    // provider_denied 不挡这里:定时自己挑执行者(JOB_PROVIDERS)、用 JOB_PROFILE,不用这个对话的 mode provider。
     const { proj } = gate
     const registry = deps.boot.registry as { has?: (id: string) => boolean }
     const providerId = args.provider ? ((JOB_PROVIDERS as readonly string[]).includes(args.provider) && (registry.has?.(args.provider) ?? false) ? args.provider : null) : pickJobExecutor(id => registry.has?.(id) ?? false)

@@ -472,6 +472,23 @@ describe('buildTickBodies / pushTick — companion default_chat_id + tier (Task 
     expect(s.logs.some(l => l.startsWith('COMPANION|'))).toBe(false)
   })
 
+  // 3c(2026-10-22):主动 / 定时这一拍以前不过 providerDenialFor —— 对话的 mode 行是还是 trusted 时设的
+  // solo+codex / cursor,降成 guest 以后主动消息照样拿它起执行者(协调器那条分派时的门挡得住,这里漏了)。
+  it.each(['codex', 'cursor', 'agy'])('a guest default chat whose persisted mode is solo+%s gets no proactive turn on it', async (provider) => {
+    const access: Access = { dmPolicy: 'allowlist', allowFrom: ['nonadmin'], admins: ['someone-else'] }
+    const s = setupDeps({
+      defaultChatId: 'nonadmin', inFlight: false, access,
+      agendaMd: '- [ ] due:2026-05-13 check in on project',
+      mode: { kind: 'solo', provider },
+    })
+    cleanup.push(s.stateDir)
+    const { pushTick } = buildTickBodies(s.deps)
+    await pushTick({ nowIso: '2026-05-13T10:00:00.000Z' })
+    expect(s.acquire).not.toHaveBeenCalled()
+    expect(s.dispatch).not.toHaveBeenCalled()
+    expect(s.logs.some(l => l.includes(`provider=${provider} not allowed`))).toBe(true)
+  })
+
   it('pushTick with non-admin default_chat_id resolves to guest tier and logs a COMPANION warning', async () => {
     const access: Access = {
       dmPolicy: 'allowlist',
