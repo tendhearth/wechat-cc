@@ -20,7 +20,7 @@ function setup(opts: {
   notes?: Partial<Record<ProviderId, string>>
   initiativeJobTimes?: Array<{ label: string; at: string }>
   requestRestart?: (reason: string) => void
-  socialState?: 'ok' | 'off' | 'degraded'
+  socialState?: 'ok' | 'off' | 'degraded' | 'pending'
 } = {}) {
   const registered = opts.registered ?? ['claude', 'codex']
   const set = vi.fn<(chatId: string, mode: Mode) => void>()
@@ -1256,6 +1256,11 @@ describe('/set visit:社交不在时照存,但不说成「已开启」就完了(
     const { cmds, sentMessages } = setup({ socialState: 'degraded' })
     await cmds.handle(inbound('/set visit on'))
     expect(sentMessages.at(-1)?.[1]).toBe('记下了:每日串门开。不过社交开着,但现在没起来,原因在「CC 现在怎么样」里。')
+  })
+  it('社交刚打开、还没重启 ⇒ 说重启后才生效', async () => {
+    const { cmds, sentMessages } = setup({ socialState: 'pending' })
+    await cmds.handle(inbound('/set visit on'))
+    expect(sentMessages.at(-1)?.[1]).toBe('记下了:每日串门开。不过社交刚打开,重启 CC 后才生效。')
   })
   it('关串门不用提社交', async () => {
     const { cmds, sentMessages } = setup({ socialState: 'off' })

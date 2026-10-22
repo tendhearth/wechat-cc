@@ -245,7 +245,7 @@ export function buildPipelineDeps(opts: PipelineDepsOpts, refs: PipelineDepsRefs
     ...(boot.social ? { social: { wish: boot.social.wish, penpal: { startVisit: (c) => boot.social!.penpal.startVisit(c) }, intro: boot.social.intro } } : {}),
     ...(boot.penpal ? { penpal: boot.penpal } : {}),
     ...(boot.pairing ? { pairing: boot.pairing } : {}),
-    socialState: () => socialState(loadAgentConfig(stateDir), !!boot.social),
+    socialState: () => socialState(opts.subsystems?.(), loadAgentConfig(stateDir), !!boot.social),
     guestRequests,
     hydrateRoute,
     sendMessage: (c, t) => ilink.sendMessage(c, t).then(r => r as { error?: string }),
@@ -471,7 +471,7 @@ export function buildPipelineDeps(opts: PipelineDepsOpts, refs: PipelineDepsRefs
 
 
   const modeHandler = makeModeCommands({
-    socialState: () => socialState(loadAgentConfig(stateDir), !!boot.social),
+    socialState: () => socialState(opts.subsystems?.(), loadAgentConfig(stateDir), !!boot.social),
     // 设免打扰时撞上的早报 / 周报当场说(定时那份存在文件里,每次现读,另起一个只读实例不会读到旧的)
     initiativeJobTimes: () => makeJobsStore(stateDir).list().jobs.filter(j => j.brief || j.recap).map(j => ({ label: j.brief ? '早报' : '周报', at: j.schedule.at })),
     coordinator: boot.coordinator,

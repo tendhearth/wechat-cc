@@ -251,6 +251,11 @@ describe('社交不在时明说(第三批 3b 第 3 步 3-2):不再悄悄落成�
     expect(await makeCommandRouter(d).tryHandle(msg('串门'))).toBe(true)
     expect(said(d)).toEqual(['社交开着,但现在没起来,原因在「CC 现在怎么样」里。'])
   })
+  it('刚打开、还没重启 ⇒ 说重启后才生效(不说「没起来」)', async () => {
+    const d = baseDeps({ socialState: () => 'pending' })
+    expect(await makeCommandRouter(d).tryHandle(msg('串门'))).toBe(true)
+    expect(said(d)).toEqual(['社交刚打开,重启 CC 后才生效。'])
+  })
   it('不是社交命令 ⇒ 不拦,也不去读社交状态(probe 每条消息都过)', async () => {
     const socialState = vi.fn(() => 'off' as const)
     const r = makeCommandRouter(baseDeps({ socialState }))

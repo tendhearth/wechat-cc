@@ -20,7 +20,7 @@
  * admin-commands, EVERY user can flip their own chat's mode (no admin
  * gate) — this is per-chat user preference, not a system-wide change.
  */
-import { SOCIAL_DEGRADED_LINE, SOCIAL_OFF_LINE } from './social-state'
+import { SOCIAL_OFF_LINE, socialUnavailableLine } from './social-state'
 import { hhmmInQuiet, parseQuietHours, quietLabel } from '../core/quiet-hours'
 import { parseAvoidTopics, topicLabels, type AvoidTopic } from '../core/companion-topics'
 import type { ConversationCoordinator } from '../core/conversation-coordinator'
@@ -659,7 +659,7 @@ export function makeModeCommands(deps: ModeCommandsDeps): ModeCommands {
           const social = on ? deps.socialState?.() : undefined
           await reply(msg.chatId, !on ? '每日串门已关闭。'
             : social === 'off' ? `记下了:每日串门开。不过${SOCIAL_OFF_LINE.replace(/。$/, '')},开了社交才会去串门。`
-            : social === 'degraded' ? `记下了:每日串门开。不过${SOCIAL_DEGRADED_LINE}`
+            : social === 'degraded' || social === 'pending' ? `记下了:每日串门开。不过${socialUnavailableLine(social)}`
             : '每日串门已开启。')
           deps.log('MODE_CMD', `chat=${msg.chatId} /set visit=${on}`)
           return true
