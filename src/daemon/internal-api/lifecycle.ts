@@ -1,8 +1,9 @@
-import { writeFileSync, unlinkSync } from 'node:fs'
+import { unlinkSync } from 'node:fs'
 import { join } from 'node:path'
 import type { Lifecycle } from '../../lib/lifecycle'
 import { createInternalApi } from './index'
 import type { InternalApiDeps, LateDeps } from './types'
+import { writeJsonAtomic } from '../../lib/json-file'
 
 export interface InternalApiLifecycle extends Lifecycle {
   readonly baseUrl: string
@@ -30,11 +31,8 @@ export async function registerInternalApi(deps: InternalApiDeps): Promise<Intern
   // token path without hardcoding it — see token-registry.ts's module doc
   // comment for why a file-origin admin token is safe here.
   try {
-    writeFileSync(
-      infoPath,
-      JSON.stringify({ baseUrl: `http://127.0.0.1:${port}`, tokenFilePath, operatorTokenFilePath, pid: process.pid, ts: Date.now() }, null, 2),
-      { mode: 0o600 },
-    )
+    // CLI 随时会读这个文件:写到一半被读到就是半个 JSON —— 一样走独立 tmp + rename(3e 第 2 步)。
+    writeJsonAtomic(infoPath, { baseUrl: `http://127.0.0.1:${port}`, tokenFilePath, operatorTokenFilePath, pid: process.pid, ts: Date.now() }, { mode: 0o600 })
   } catch { /* non-fatal: CLI will just error clearly if it can't find the file */ }
   return {
     name: 'internal-api',

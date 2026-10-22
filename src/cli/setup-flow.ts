@@ -1,10 +1,10 @@
-import { existsSync, readdirSync, writeFileSync, mkdirSync, renameSync } from 'node:fs'
+import { existsSync, readdirSync, mkdirSync, renameSync } from 'node:fs'
 import { homedir } from 'node:os'
 import { join } from 'node:path'
 import { ILINK_APP_ID, ILINK_BASE_URL, ILINK_BOT_TYPE } from '../lib/config'
 import { dedupeAccountsByUserId } from '../lib/dedupe-accounts'
 import { readJsonFile } from '../lib/read-json-file'
-import { readJsonObject, UnreadableJsonError, writeJsonAtomic } from '../lib/json-file'
+import { readJsonObject, UnreadableJsonError, writeFileAtomic, writeJsonAtomic } from '../lib/json-file'
 
 const ILINK_CLIENT_VERSION = '131335'
 const SETUP_QR_EXPIRES_MS = 480_000
@@ -256,16 +256,15 @@ export function persistConfirmedAccount(opts: {
   const accountId = status.ilink_bot_id.replace(/[^a-zA-Z0-9_-]/g, '-')
   const accountDir = join(accountsDir, accountId)
   mkdirSync(accountDir, { recursive: true, mode: 0o700 })
-  writeFileSync(join(accountDir, 'token'), status.bot_token, { mode: 0o600 })
+  // 令牌和 account.json 都走独立 tmp + fsync + rename,0o600(3e 第 2 步;以前令牌直接覆盖、account.json 用固定 tmp 名)。
+  writeFileAtomic(join(accountDir, 'token'), status.bot_token, { mode: 0o600 })
 
   const account = {
     baseUrl: status.baseurl ?? opts.currentBaseUrl,
     userId: status.ilink_user_id ?? '',
     botId: status.ilink_bot_id,
   }
-  const tmpAccount = join(accountDir, 'account.json.tmp')
-  writeFileSync(tmpAccount, JSON.stringify(account, null, 2) + '\n', { mode: 0o600 })
-  renameSync(tmpAccount, join(accountDir, 'account.json'))
+  writeJsonAtomic(join(accountDir, 'account.json'), account, { mode: 0o600 })
 
   if (status.ilink_user_id) {
     let access: { dmPolicy: 'allowlist' | 'disabled'; allowFrom: string[]; admins?: string[] } = { dmPolicy: 'allowlist', allowFrom: [] }

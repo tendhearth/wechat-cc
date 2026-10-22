@@ -5,10 +5,11 @@
  * + 还没派的草稿。收件方的 wishes-seen 是幂等键:信箱 at-least-once,同一条
  * 心愿可能到两次,判官不能跑两次、主人不能被打扰两次。
  */
-import { existsSync, mkdirSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdirSync } from 'node:fs'
 import { join } from 'node:path'
 import { readJsonFile } from '../../lib/read-json-file'
 import type { WishRecord } from '../../core/wish'
+import { writeJsonAtomic } from '../../lib/json-file'
 
 export const WISH_SEEN_TTL_MS = 14 * 24 * 60 * 60_000
 
@@ -18,7 +19,7 @@ const seenPath = (stateDir: string) => join(dirOf(stateDir), 'wishes-seen.json')
 
 function writeJson(path: string, dir: string, value: unknown): void {
   if (!existsSync(dir)) mkdirSync(dir, { recursive: true })
-  writeFileSync(path, JSON.stringify(value, null, 2))
+  writeJsonAtomic(path, value)
 }
 
 export function readWishes(stateDir: string): WishRecord[] {
