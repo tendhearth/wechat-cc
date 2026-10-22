@@ -404,6 +404,8 @@ export async function registerProviders(deps: ProviderDeps): Promise<ProviderWir
       codexProvider,
       {
         canResume: (_cwd, sid) => codexSessionJsonlPaths(HOME, sid).some(p => existsSync(p)),
+        // 工作台 / 额度查询每次现取(CLI 升级换了路径也跟得上);对话侧这个 SDK provider 仍用开机时验过的那个。
+        bin: () => findCodexBinary(),
       },
     )
   }

@@ -2,7 +2,7 @@ import { openCodexHistoryRpc, type CodexHistoryRpc, type CodexHistoryRpcOptions 
 import { assertHistoryResponse, decodeNativeHistoryKey, encodeNativeHistoryKey, historyCursor, historyCwd, historyMessage, historyObject, historyPreview, historyText, nativeHistoryFailure, normalizeHistoryList, normalizeHistoryRead, readHistoryCursor, type NativeHistoryItem, type NativeHistoryMessage, type NativeHistoryReader } from './native-history'
 
 export interface CodexHistoryOptions {
-  codexPathOverride?:string;cwd?:string;timeoutMs?:number;closeTimeoutMs?:number
+  codexPathOverride?:string|(()=>string);cwd?:string;timeoutMs?:number;closeTimeoutMs?:number
   openRpc?:()=>Promise<CodexHistoryRpc>
 }
 /** Identity is Thread.id. sessionId is shared by an entire native thread tree. */
@@ -26,7 +26,7 @@ function pageData(value:unknown,limit:number):{data:unknown[];nextCursor:string|
   return {data:value.data,nextCursor:value.nextCursor as string|null}
 }
 export function createCodexHistoryReader(options:CodexHistoryOptions={}):NativeHistoryReader {
-  const open=options.openRpc??(()=>openCodexHistoryRpc({codexPathOverride:options.codexPathOverride??'codex',cwd:options.cwd,timeoutMs:options.timeoutMs,closeTimeoutMs:options.closeTimeoutMs} as CodexHistoryRpcOptions))
+  const open=options.openRpc??(()=>openCodexHistoryRpc({codexPathOverride:(typeof options.codexPathOverride==='function'?options.codexPathOverride():options.codexPathOverride)??'codex',cwd:options.cwd,timeoutMs:options.timeoutMs,closeTimeoutMs:options.closeTimeoutMs} as CodexHistoryRpcOptions))
   async function usingRpc<T>(run:(rpc:CodexHistoryRpc)=>Promise<T>):Promise<T>{
     let rpc:CodexHistoryRpc|undefined
     try{rpc=await open();return await run(rpc)}catch(error){throw nativeHistoryFailure(error)}finally{if(rpc)await rpc.close()}

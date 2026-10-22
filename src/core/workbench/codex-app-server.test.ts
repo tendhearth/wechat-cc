@@ -95,6 +95,29 @@ beforeEach(() => {
 afterEach(async () => { for (const session of sessions) await session.close().catch(() => {}); vi.restoreAllMocks() })
 
 describe('workbench Codex app-server', () => {
+  // 3c 第 3 步(2026-10-22,设计稿 §4.1 ①):CLI 升级换了 codex 路径 ⇒ 下一个会话用新的;在跑的那个是自己的子进程,
+  // 不打断、正常跑完;两个都关掉后没有留下活着的子进程。以前路径在接线时固化,升级后要重启才用上新的。
+  it('re-resolves the codex binary per session: a running turn keeps its process and finishes, the next session uses the new path, nothing is left alive', async () => {
+    const used: string[] = []
+    const base = mocks.spawn.getMockImplementation()!
+    mocks.spawn.mockImplementation((binary: string, args: string[]) => { const child = base(binary, args); if (!(child as FakeProcess).probe) used.push(binary); return child })
+    let path = '/old/codex'
+    const provider = createWorkbenchCodexProvider({ codexPathOverride: () => path, rpcTimeoutMs: 200, closeTimeoutMs: 250 })
+    const first = await provider.spawn({ alias: 'workbench:a', path: '/project' }, context()); sessions.push(first)
+    const firstChild = children.at(-1)!
+    const run = collect(first); await begun(firstChild)
+    path = '/new/codex'
+    const second = await provider.spawn({ alias: 'workbench:b', path: '/project' }, context()); sessions.push(second)
+    const secondChild = children.at(-1)!
+    expect(used).toEqual(['/old/codex', '/new/codex'])
+    expect(mocks.spawn.mock.calls.filter(([, args]) => (args as string[]).includes('mcp')).map(([bin]) => bin)).toEqual(['/old/codex', '/new/codex'])
+    // 换路径没打断在跑的那一轮
+    expect(firstChild.exitCode).toBeNull(); expect(firstChild.signalCode).toBeNull()
+    completed(firstChild); await run.done
+    expect(run.events.some(e => e.kind === 'result')).toBe(true)
+    await first.close(); await second.close()
+    for (const child of [firstChild, secondChild]) expect(child.exitCode !== null || child.signalCode !== null).toBe(true)
+  })
   it('rejects images on a known text-only selected model before dispatch or steer',async()=>{
     modelModalities=['text']
     const {session,child}=await start({execution:{defaults:'native',model:'native-model',reasoningEffort:null}})
