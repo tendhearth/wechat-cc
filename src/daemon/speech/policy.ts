@@ -120,7 +120,8 @@ export function makeSpeechPolicy(deps: {
       let sent = false
       const o = await policy.say({ kind, chatId }, async (turn) => {
         try {
-          if (send) { await send(chatId, text); sent = true; return }
+          // 自带的 send(比如 sendAssistantText)发不出去时回 false、不抛 ⇒ 那也算没说出去
+          if (send) { sent = (await send(chatId, text)) !== false; return }
           sent = !(await turn.sendText(chatId, text)).error
         } catch (err) {
           deps.log('SPEECH', `${kind} chat=${chatId} send threw: ${err instanceof Error ? err.message : String(err)}`)

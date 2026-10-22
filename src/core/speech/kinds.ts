@@ -30,6 +30,10 @@ export const SPEECH_KINDS = {
   job_notice: { origin: 'report', label: '定时被暂停' },
   boot_notice: { origin: 'report', label: '开机有几样没起来' },
   outbound_health: { origin: 'report', label: '外发出了问题' },
+  // 终端会话的汇总(做完了 / 等你批准,带 y/n 码):hub 自己有压一段、撤回、桌面通知和 App 推送这一套;
+  // 汇总里可能带会过期的码 ⇒ 标 expiring,不进待说队列(daemon/bootstrap/wire-cli-sessions.ts)。
+  cli_session: { origin: 'report', label: '终端会话', expiring: true },
+  rules_notice: { origin: 'report', label: '放行规则出了问题' },
   restart_notice: { origin: 'report', label: '重启了' },
   brief: { origin: 'initiative', label: '早报' },
   recap: { origin: 'initiative', label: '周报' },

@@ -200,3 +200,17 @@ describe('带会过期码的卡不进待说队列(9d 评审 #533)', () => {
     expect(pending.groups()[0]!.items.map(i => i.kind)).toEqual(['social_ask'])
   })
 })
+
+describe('tell 的自带 send 回 false ⇒ 算没说出去(sendAssistantText 发不出去时回 false,不抛)', () => {
+  it('回 false ⇒ tell 回 false、report 入队;回 true / 不回东西 ⇒ 算说了', async () => {
+    const { makePendingNotices } = await import('./pending-notices')
+    const { mkdtempSync } = await import('node:fs'); const { tmpdir } = await import('node:os'); const { join } = await import('node:path')
+    const pending = makePendingNotices({ stateDir: mkdtempSync(join(tmpdir(), 'pend-')), log: () => {} })
+    const ob = fakeOutbound()
+    const policy = makeSpeechPolicy({ care: () => 'low', quietEndsAt: () => null, outbound: ob.out, log: () => {}, pending })
+    expect(await policy.tell('social_mail', OWNER, '来信了', async () => false)).toBe(false)
+    expect(pending.groups()[0]!.items.map(i => i.text)).toEqual(['来信了'])
+    expect(await policy.tell('social_mail', OWNER, 'a', async () => true)).toBe(true)
+    expect(await policy.tell('social_mail', OWNER, 'b', async () => undefined)).toBe(true)
+  })
+})

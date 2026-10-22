@@ -663,6 +663,7 @@ async function bootDaemonInner(opts: BootDaemonOpts, undo: Array<() => void>): P
     const jobsStore = makeJobsStore(stateDir)
     // 终端会话(重构第二批步 6c,bootstrap/wire-cli-sessions.ts)
     const cli = wireCliSessions({
+      speech: () => speechRef.current,
       stateDir, dangerously, db, ilink, lc, internalApi, boot, networkGate: guardRt.gate,
       workbench: () => workbenchRef.current,
       jobsSince: (since) => summarizeJobs(jobsStore, since),
