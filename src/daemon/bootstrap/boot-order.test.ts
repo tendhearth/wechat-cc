@@ -1,7 +1,8 @@
 /**
  * boot 顺序钉子(spec 2026-09-27-bootstrap-split,Review Focus #1)。
  * 九块搬进 wire-*.ts 之后,index 里的调用点必须留在原位;可失败的块经 sup.start 拉起,
- * 它们的名字序列就是 boot 顺序的可观测形状。多一块、少一块、换位都在这里红。
+ * 或者(第三批 3b 起)作为一组模块被 sup.adopt 收养 —— 两种按发生的顺序记在一起,
+ * 名字序列就是 boot 顺序的可观测形状。多一块、少一块、换位都在这里红。
  */
 import { describe, it, expect, vi } from 'vitest'
 import { mkdtempSync } from 'node:fs'
@@ -30,6 +31,8 @@ describe('buildBootstrap boot order', () => {
     const names: string[] = []
     const realStart = sup.start.bind(sup)
     sup.start = ((name: string, fn: any) => { names.push(name); return realStart(name, fn) }) as typeof sup.start
+    const realAdopt = sup.adopt.bind(sup)
+    sup.adopt = ((group: { status(): Array<{ name: string }> }) => { names.push(...group.status().map(s => s.name)); return realAdopt(group as any) }) as typeof sup.adopt
     const boot = await buildBootstrap({
       supervisor: sup,
       db: openTestDb(),

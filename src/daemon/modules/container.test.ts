@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { orderModules, startModules, type DaemonModule, type ModuleTimers } from './container'
+import { createModules, orderModules, startModules, type DaemonModule, type ModuleTimers } from './container'
 
 /** 假定时器:记下开动 / 清掉了哪些,手动 tick。 */
 function fakeTimers() {
@@ -260,5 +260,61 @@ describe('小处(9d 评审 #542)', () => {
       { name: 'ilink', lazy: ['speech'], init: () => {} },
       { name: 'speech', needs: ['ilink'], init: () => {} },
     ]).map(m => m.name)).toEqual(['ilink', 'speech'])
+  })
+})
+
+describe('开机途中也能停(第 2 步:SIGTERM 落在开机途中)', () => {
+  it('init 途中 stopAll ⇒ 后面的模块不再 init;已经 init 的资源停掉;start 正常返回', async () => {
+    const t = fakeTimers()
+    const stopped: string[] = []
+    const inited: string[] = []
+    let release: () => void = () => {}
+    const group = createModules([
+      { name: 'a', init: (ctx) => { inited.push('a'); ctx.own('conn', () => { stopped.push('a/conn') }) } },
+      { name: 'b', needs: ['a'], init: async (ctx) => { inited.push('b'); ctx.own('ws', () => { stopped.push('b/ws') }); await new Promise<void>(r => { release = r }) } },
+      { name: 'c', needs: ['b'], init: () => { inited.push('c') } },
+    ], { log: () => {}, timers: t.timers })
+    const starting = group.start()
+    await Promise.resolve(); await Promise.resolve()
+    const stopping = group.stopAll()
+    release()
+    await starting
+    await stopping
+    expect(inited).toEqual(['a', 'b'])
+    expect(stopped).toEqual(['b/ws', 'a/conn'])
+    expect(t.live.size).toBe(0)
+  })
+  it('start 段途中 stopAll ⇒ 不再开动后面的;已经开动的 interval 清掉', async () => {
+    const t = fakeTimers()
+    let release: () => void = () => {}
+    let laterStarted = false
+    const group = createModules([
+      { name: 'a', init: (ctx) => { ctx.interval('tick', 1, () => {}); ctx.onStart('slow', () => new Promise<void>(r => { release = r })) } },
+      { name: 'b', init: (ctx) => { ctx.onStart('go', () => { laterStarted = true }) } },
+    ], { log: () => {}, timers: t.timers })
+    const starting = group.start()
+    await new Promise(r => setTimeout(r, 0))
+    expect(t.live.size).toBe(1)
+    const stopping = group.stopAll()
+    release()
+    await starting
+    await stopping
+    expect(laterStarted).toBe(false)
+    expect(t.live.size).toBe(0)
+  })
+  it('卡住的 onStart 不会让 stopAll 一直等:最多等一个停止超时', async () => {
+    const stopped: string[] = []
+    const group = createModules([
+      { name: 'a', init: (ctx) => { ctx.own('conn', () => { stopped.push('a/conn') }); ctx.onStart('hangs', () => new Promise(() => {})) } },
+    ], { log: () => {}, timers: fakeTimers().timers, stopTimeoutMs: 20 })
+    void group.start()
+    await new Promise(r => setTimeout(r, 0))
+    await group.stopAll()
+    expect(stopped).toEqual(['a/conn'])
+  })
+  it('start() 只能调一次', async () => {
+    const group = createModules([{ name: 'a', init: () => {} }], { log: () => {}, timers: fakeTimers().timers })
+    await group.start()
+    expect(() => group.start()).toThrow(/twice/)
   })
 })

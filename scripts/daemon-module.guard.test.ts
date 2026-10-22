@@ -40,10 +40,10 @@ const BASELINE: Record<string, Partial<Record<Kind, number>>> = {
   'src/daemon/main.ts': { Ref: 2, 'lc.register': 21, 'sup.start': 10 },
   'src/daemon/bootstrap/index.ts': { Ref: 1, 'sup.start': 4 },
   'src/daemon/bootstrap/wire-cli-sessions.ts': { 'lc.register': 2 },
+  // 过渡桥(第 2 步):一组模块的 stopAll 先登记进收尾清单再起。bootstrap 全部迁完,它跟收尾清单一起删
+  'src/daemon/bootstrap/module-group.ts': { 'teardown.add': 1 },
   'src/daemon/bootstrap/wire-idle-sweep.ts': { setInterval: 1, 'teardown.add': 1 },
   'src/daemon/bootstrap/wire-jobs.ts': { 'lc.register': 1, 'sup.start': 1 },
-  'src/daemon/bootstrap/wire-knowledge.ts': { setInterval: 1, 'teardown.add': 1, 'sup.start': 1 },
-  'src/daemon/bootstrap/wire-yi.ts': { 'teardown.add': 2, 'sup.start': 1 },
   'src/daemon/cli-upgrade/wire.ts': { setInterval: 1 },
   'src/daemon/guard/pause-policy.ts': { setInterval: 1 },
   'src/daemon/guard/runtime.ts': { Ref: 1 },

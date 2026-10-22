@@ -103,6 +103,11 @@ export interface BootDaemonOpts {
   stateDir: string
   dangerously: boolean
   /**
+   * 收尾函数一建好就交出来(第三批 3b 第 2 步):开机途中收到 SIGTERM,信号处理拿它停掉已经起了的东西,
+   * 不用等 bootDaemon 返回。以前信号处理在开机走完之后才装,开机途中收到 SIGTERM 就是默认行为:直接死,什么都不收。
+   */
+  onShutdownReady?: (shutdown: () => Promise<void>) => void
+  /**
    * Eval-harness override — when set, both companion schedulers use this
    * interval (ms) instead of the production defaults. Eval harness passes
    * `1_000_000_000` (≈11.5 days; jitter-safe under setTimeout's int32 cap)
@@ -244,6 +249,7 @@ async function bootDaemonInner(opts: BootDaemonOpts, undo: Array<() => void>): P
     closeDb: () => db.close(),
     releaseLock: () => releaseInstanceLock(PID_PATH),
   })
+  opts.onShutdownReady?.(shutdown)
 
   // Restart: let the caller flush (HTTP response / a log line), then
   // graceful shutdown + exit so launchd/systemd KeepAlive respawns a fresh
@@ -998,8 +1004,24 @@ export async function main() {
     }
   } catch (err) { log('DAEMON', `daemon.env load failed (continuing): ${err instanceof Error ? err.message : err}`) }
   const dangerously = process.argv.includes('--dangerously')
+  // 信号处理在开机**之前**装(第三批 3b 第 2 步):开机途中收到 SIGTERM(launchctl kickstart -k、换包、注销)也走收尾,
+  // 停掉已经起了的那些(收尾清单、已经登记的子系统、db、锁),而不是默认行为直接死。收尾函数一建好 bootDaemon 就交过来。
+  let shutdownFn: (() => Promise<void>) | null = null
+  let alreadyShuttingDown = false
+  const cliShutdown = async (sig: string) => {
+    if (alreadyShuttingDown) { log('DAEMON', `${sig} during shutdown — forcing exit`); process.exit(130) }
+    alreadyShuttingDown = true; log('DAEMON', `${sig} received, shutting down${handleReady ? '' : ' (during boot)'}`)
+    // 有人让它停(launchctl kickstart -k / bootout、App 更新换包、注销关机)——
+    // 先留纸条再收尾:哪怕收尾中途被 SIGKILL,下次开机也认得出这是计划内的。
+    markCleanShutdown(stateDir, sig)
+    if (shutdownFn) await shutdownFn()
+    process.exit(0)
+  }
+  process.on('SIGINT', () => void cliShutdown('SIGINT'))
+  process.on('SIGTERM', () => void cliShutdown('SIGTERM'))
+  let handleReady = false
   let handle: DaemonHandle
-  try { handle = await bootDaemon({ stateDir, dangerously }) } catch (err) {
+  try { handle = await bootDaemon({ stateDir, dangerously, onShutdownReady: (fn) => { shutdownFn = fn } }) } catch (err) {
     console.error('[wechat-cc] fatal:', err)
     // 指数退避(重构第二批步 6a):launchd / systemd 只是每 5–10 秒拉起一次,确定性的启动失败(配置坏了、迁移失败)
     // 会变成重启风暴。退出前按连续失败次数等:10s、20s、40s … 封顶 30 分钟。
@@ -1019,17 +1041,8 @@ export async function main() {
     log('DAEMON', `unhandledRejection: ${errorDetails(reason)}`)
     process.exit(1)
   })
-  let alreadyShuttingDown = false
-  const cliShutdown = async (sig: string) => {
-    if (alreadyShuttingDown) { log('DAEMON', `${sig} during shutdown — forcing exit`); process.exit(130) }
-    alreadyShuttingDown = true; log('DAEMON', `${sig} received, shutting down`)
-    // 有人让它停(launchctl kickstart -k / bootout、App 更新换包、注销关机)——
-    // 先留纸条再收尾:哪怕收尾中途被 SIGKILL,下次开机也认得出这是计划内的。
-    markCleanShutdown(stateDir, sig)
-    await handle.shutdown(); process.exit(0)
-  }
-  process.on('SIGINT', () => void cliShutdown('SIGINT'))
-  process.on('SIGTERM', () => void cliShutdown('SIGTERM'))
+  handleReady = true
+  shutdownFn = () => handle.shutdown()
   process.on('SIGUSR1', () => { handle.pollingReconcile?.()?.catch(err => log('RECONCILE', `SIGUSR1 reconcile failed: ${err instanceof Error ? err.message : String(err)}`)) })
   // SIGUSR2 — fire a companion push tick now (instead of waiting for the ~20min
   // scheduler). Sent by `wechat-cc companion push`. See cli/companion-push.ts.
