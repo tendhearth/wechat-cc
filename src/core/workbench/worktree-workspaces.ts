@@ -58,15 +58,26 @@ export function repoRootOf(projectPath: string): string | null {
  * (「git 操作没成功」)—— git() 是同步的,再等一轮 30 秒等于把整个 daemon 再堵 30 秒(#490 评审);起不来(EAGAIN / EMFILE 这类,
  * 几乎是瞬时的)⇒ 再问一次,还不行再抛。工作台建独立工作区用它;终端的权限闸门仍用 repoRootOf(读不到就当项目外,偏保守)。
  */
+/** git 说这里不是仓库 / 不让用(safe.directory)的那几种 stderr。 */
+export const NOT_A_REPO = /not a git repository|dubious ownership|safe\.directory/i
+
 export function repoRootOrFail(projectPath: string): string | null {
   if (!existsSync(projectPath)) return null
   let last: unknown
   for (let attempt = 0; attempt < 2; attempt++) {
     try {
       const top = git(projectPath, ['rev-parse', '--show-toplevel'])
-      return top ? real(top) : null
+      // 成功却读回空 ⇒ 不是「不是仓库」,是这次没读全;不能说成假话(10-22,CI 上偶发 worktree_not_git)
+      if (!top) throw Object.assign(new Error('worktree_git_failed'), { detail: 'rev-parse returned empty output' })
+      return real(top)
     } catch (error) {
-      if (typeof (error as { exitStatus?: unknown }).exitStatus === 'number') return null
+      const e = error as { exitStatus?: unknown; detail?: unknown }
+      // 只有 git 自己说了「不是仓库 / 不让用」才回 null(⇒ worktree_not_git);别的非零退出带着 stderr 抛 worktree_git_failed,
+      // 主人看到的是「git 操作没成功」,日志里有原文 —— 以前任何退出码都当成「不是仓库」
+      if (typeof e.exitStatus === 'number') {
+        if (NOT_A_REPO.test(String(e.detail ?? ''))) return null
+        throw error
+      }
       if ((error as { timedOut?: unknown }).timedOut) throw error
       last = error
     }

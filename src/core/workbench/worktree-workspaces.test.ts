@@ -4,7 +4,7 @@ import { existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, symlink
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { removeTempDir } from '../../lib/test-temp'
-import { baseBranchExists, validBaseBranch, commitWorktree, copyIncludedFiles, ensureWorktree, git, mergeHint, mergeWorktree, planWorktree, removeWorktree, reopenWorktree, repoRootOf, repoRootOrFail, worktreeDirty } from './worktree-workspaces'
+import { baseBranchExists, validBaseBranch, commitWorktree, copyIncludedFiles, ensureWorktree, git, mergeHint, mergeWorktree, planWorktree, removeWorktree, reopenWorktree, repoRootOf, repoRootOrFail, worktreeDirty, NOT_A_REPO } from './worktree-workspaces'
 
 const dirs: string[] = []
 afterEach(() => { for (const d of dirs.splice(0)) removeTempDir(d) })
@@ -208,5 +208,18 @@ describe('repoRootOrFail(10-21:机器忙时 git 没问成 ≠ 不是仓库)', ()
       expect(() => repoRootOrFail(root)).toThrow('worktree_git_failed')
       expect(repoRootOf(root)).toBeNull()
     } finally { process.env.PATH = path; removeTempDir(root) }
+  })
+})
+
+describe('repoRootOrFail 只在 git 真说了「不是仓库」时才回 null(10-22)', () => {
+  it('认得 git 的那几种说法;别的报错不算「不是仓库」', () => {
+    expect(NOT_A_REPO.test('fatal: not a git repository (or any of the parent directories): .git')).toBe(true)
+    expect(NOT_A_REPO.test("fatal: detected dubious ownership in repository at '/x'")).toBe(true)
+    expect(NOT_A_REPO.test('fatal: Unable to create \'/x/.git/index.lock\': File exists.')).toBe(false)
+    expect(NOT_A_REPO.test('')).toBe(false)
+  })
+  it('.git 指向不存在的地方 ⇒ git 说不是仓库 ⇒ null', () => {
+    const root = realpathSync(mkdtempSync(join(tmpdir(), 'rrof2-')))
+    try { writeFileSync(join(root, '.git'), 'gitdir: /no/such/place\n'); expect(repoRootOrFail(root)).toBeNull() } finally { removeTempDir(root) }
   })
 })
