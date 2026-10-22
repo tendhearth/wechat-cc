@@ -40,7 +40,7 @@ describe('init / start 两段(9d 评审 #541:两个真环)', () => {
     let early: unknown = null
     let viaStart: unknown = null
     const { started } = run([
-      { name: 'polling', init: (ctx) => {
+      { name: 'polling', lazy: ['pipeline'], init: (ctx) => {
         const pipeline = ctx.lazy<{ id: string }>('pipeline')
         try { pipeline() } catch (e) { early = e }
         ctx.onStart('pull', () => { viaStart = pipeline().id })
@@ -201,5 +201,64 @@ describe('拿东西只能拿写明了的依赖', () => {
     await new Promise(r => setTimeout(r, 0))
     expect(logs.filter(l => /tick failed/.test(l))).toHaveLength(2)
     expect(t.live.size).toBe(2)
+  })
+})
+
+describe('上游在 start 段才坏(9d 评审 #542)', () => {
+  it('needs 的上游 onStart 抛错 ⇒ 下游不开动、跟着 degraded,并停掉它 init 时登记的 own', async () => {
+    const t = fakeTimers()
+    const stopped: string[] = []
+    let downstreamStarted = false
+    const { started } = run([
+      { name: 'yi', optional: true, init: (ctx) => { ctx.onStart('listen', () => { throw new Error('EADDRINUSE') }); return { port: 1 } } },
+      { name: 'hand', optional: true, needs: ['yi'], init: (ctx) => {
+        ctx.own('client', () => { stopped.push('hand/client') })
+        ctx.interval('ping', 1, () => {})
+        ctx.onStart('connect', () => { downstreamStarted = true })
+      } },
+    ], t)
+    const app = await started
+    expect(app.status().map(s => [s.name, s.state, s.error])).toEqual([['yi', 'degraded', 'EADDRINUSE'], ['hand', 'degraded', 'upstream yi not running']])
+    expect(downstreamStarted).toBe(false)
+    expect(stopped).toEqual(['hand/client'])
+    expect(t.live.size).toBe(0)
+  })
+  it('wants:init 时真拿到了的,上游后来坏了也跟着;没拿的不受影响', async () => {
+    const { started } = run([
+      { name: 'social', optional: true, init: (ctx) => { ctx.onStart('go', () => { throw new Error('relay down') }); return 'api' } },
+      { name: 'forage', wants: ['social'], init: (ctx) => { ctx.maybe('social') } },
+      { name: 'companion', wants: ['social'], init: () => {} },
+    ])
+    expect((await started).status().map(s => [s.name, s.state])).toEqual([['social', 'degraded'], ['forage', 'degraded'], ['companion', 'ok']])
+  })
+})
+
+describe('小处(9d 评审 #542)', () => {
+  it('interval 上一次还没跑完 ⇒ 这一拍跳过,不叠;跑完了下一拍照常', async () => {
+    const t = fakeTimers()
+    let calls = 0
+    let finish: () => void = () => {}
+    const { started } = run([{ name: 'a', init: (ctx) => { ctx.interval('slow', 1, () => { calls++; return new Promise<void>(r => { finish = r }) }) } }], t)
+    await started
+    t.tickAll(); t.tickAll(); t.tickAll()
+    expect(calls).toBe(1)
+    finish()
+    await new Promise(r => setTimeout(r, 0))
+    t.tickAll()
+    expect(calls).toBe(2)
+  })
+  it('lazy 只能拿 lazy 里声明了的;同一个名字既在 lazy 又在 needs ⇒ 开机就抛', async () => {
+    const { started } = run([
+      { name: 'a', init: () => 1 },
+      { name: 'b', init: (ctx) => { ctx.lazy('a') } },
+    ])
+    await expect(started).rejects.toThrow(/not in its lazy/)
+    expect(() => orderModules([{ name: 'a', init: () => {} }, { name: 'b', needs: ['a'], lazy: ['a'], init: () => {} }])).toThrow(/cycle edge, pick one/)
+  })
+  it('真环写成 lazy 就不进排序:ilink ↔ speech 两边互相 lazy 也排得出来', () => {
+    expect(orderModules([
+      { name: 'ilink', lazy: ['speech'], init: () => {} },
+      { name: 'speech', needs: ['ilink'], init: () => {} },
+    ]).map(m => m.name)).toEqual(['ilink', 'speech'])
   })
 })
