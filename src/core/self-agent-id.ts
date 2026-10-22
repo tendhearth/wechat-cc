@@ -42,7 +42,7 @@ export interface ResolveSelfAgentIdDeps {
  *  Preserves a2a_agents + every unmodeled key; atomic tmp+rename (0600). */
 function persistSelfAgentId(stateDir: string, selfAgentId: string): void {
   // 读不出来就不写(以前 catch 成 {} 再写回,会把整份配置换成只剩这一个键);写法统一走 lib/json-file。
-  updateJsonFile(join(stateDir, 'agent-config.json'), raw => { raw.self_agent_id = selfAgentId })
+  updateJsonFile(join(stateDir, 'agent-config.json'), raw => { raw.self_agent_id = selfAgentId }, { mode: 0o600 })
 }
 
 export function resolveSelfAgentId(config: AgentConfig, stateDir: string, deps: ResolveSelfAgentIdDeps = {}): string {

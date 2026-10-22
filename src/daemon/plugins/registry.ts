@@ -7,12 +7,13 @@
  * default DISABLED — discovery is not consent, because a manifest tells the
  * daemon to spawn a process. `plugins.json` records explicit operator choices.
  */
-import { existsSync, readdirSync, statSync, mkdirSync, writeFileSync, renameSync } from 'node:fs'
+import { existsSync, readdirSync, statSync, mkdirSync } from 'node:fs'
 import { delimiter, dirname, join, sep } from 'node:path'
 import type { McpStdioSpec } from '../bootstrap/mcp-specs'
 import { MANIFEST_FILE, pluginsConfigPath, pluginDataDir } from './paths'
 import { parseManifest, type PluginManifest } from './manifest'
 import { readJsonFile } from '../../lib/read-json-file'
+import { writeFileAtomic } from '../../lib/json-file'
 
 export type PluginSource = 'bundled' | 'user'
 
@@ -118,9 +119,7 @@ export function setPluginEnabled(stateDir: string, name: string, enabled: boolea
   const map = readEnabledMap(stateDir)
   map[name] = enabled
   mkdirSync(dirname(p), { recursive: true })
-  const tmp = `${p}.tmp`
-  writeFileSync(tmp, JSON.stringify({ enabled: map }, null, 2) + '\n', { mode: 0o600 })
-  renameSync(tmp, p)
+  writeFileAtomic(p, JSON.stringify({ enabled: map }, null, 2) + '\n', { mode: 0o600 })
 }
 
 /** Expand `${pluginDir}`/`${dataDir}` in command/argv/env into a concrete stdio spec. */

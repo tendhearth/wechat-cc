@@ -58,7 +58,7 @@ export function createA2ARegistry(opts: A2ARegistryOpts): A2ARegistry {
 
   function persistAll(agents: A2AAgentRecord[]): void {
     // 只改 a2a_agents,保留其它键;读不出来就不写(以前 catch 成 {} 再直接覆盖原文件,会把整份配置换成只剩这一个键)。
-    updateJsonFile(configPath, raw => { raw.a2a_agents = agents })
+    updateJsonFile(configPath, raw => { raw.a2a_agents = agents }, { mode: 0o600 })
   }
 
   // No in-memory cache: agent-config.json is shared with CLI / dashboard /

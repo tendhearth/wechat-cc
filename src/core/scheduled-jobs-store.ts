@@ -21,7 +21,7 @@ export interface JobRunState { lastRunDay: string | null; lastRunAt: string | nu
 const EMPTY_STATE: JobRunState = { lastRunDay: null, lastRunAt: null, lastStatus: null, failStreak: 0 }
 
 function atomicWrite(path: string, value: unknown): void {
-  writeJsonAtomic(path, value)
+  writeJsonAtomic(path, value, { mode: 0o600 })
 }
 
 export function makeJobsStore(stateDir: string) {

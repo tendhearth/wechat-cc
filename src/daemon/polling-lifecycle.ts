@@ -1,10 +1,11 @@
-import { existsSync, mkdirSync, renameSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdirSync } from 'node:fs'
 import { join } from 'node:path'
 import { randomBytes } from 'node:crypto'
 import type { Lifecycle } from '../lib/lifecycle'
 import { startLongPollLoops, parseUpdates, type RawUpdate } from './poll-loop'
 import { loadAllAccounts, type IlinkAccount } from './ilink-glue'
 import type { PipelineRun } from './inbound/types'
+import { writeFileAtomic } from '../lib/json-file'
 
 export interface PollingDeps {
   stateDir: string
@@ -92,9 +93,7 @@ export function registerPolling(deps: PollingDeps): PollingLifecycle {
         const acctDir = join(deps.stateDir, 'accounts', accountId)
         if (!existsSync(acctDir)) return
         const dest = join(acctDir, 'sync_buf')
-        const tmp = `${dest}.tmp`
-        writeFileSync(tmp, syncBuf, { mode: 0o600 })
-        renameSync(tmp, dest)
+        writeFileAtomic(dest, syncBuf, { mode: 0o600 })
       } catch (err) {
         deps.log('POLL', `sync_buf persist failed for ${accountId}: ${err instanceof Error ? err.message : err}`)
       }

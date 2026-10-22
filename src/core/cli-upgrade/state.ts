@@ -94,7 +94,7 @@ export function makeFileStateStore(stateDir: string): StateStore {
       try { return normalize(readJsonFile(path)) } catch { return normalize({}) }
     },
     save(s) {
-      writeJsonAtomic(path, s)
+      writeJsonAtomic(path, s, { mode: 0o600 })
     },
   }
 }

@@ -24,6 +24,15 @@ describe('writeJsonAtomic', () => {
     writeJsonAtomic(p, { b: 2 })
     expect(statSync(p).mode & 0o777).toBe(0o644)
   })
+  // 存密钥的文件(令牌、daemon.env、agent-config 里的 a2a key):以前每次写都收回 0o600,给了 mode 就照这个做。
+  it('an explicit mode is enforced on every write, even over a looser existing file', () => {
+    if (process.platform === 'win32') return  // Windows 上 mode 恒为 0o666,没有可断言的
+    const d = fresh(), p = join(d, 'secret.env')
+    writeFileSync(p, 'K=v\n')
+    chmodSync(p, 0o644)
+    writeFileAtomic(p, 'K=w\n', { mode: 0o600 })
+    expect(statSync(p).mode & 0o777).toBe(0o600)
+  })
   // 9d 评审:Windows 上目标被杀毒 / 索引器占着,rename 偶发 EPERM / EBUSY —— 短重试,再不行照实抛、不留 tmp。
   it('on win32 retries a busy rename, then gives up and cleans the tmp file', () => {
     const d = fresh(), p = join(d, 'a.json')

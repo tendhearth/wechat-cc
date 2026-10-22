@@ -98,7 +98,7 @@ function readAccessFile(): Access {
 
 export function saveAccess(a: Access): void {
   // 独一无二的 tmp 名 + fsync + rename(lib/json-file);以前固定用 access.json.tmp,和 setup-flow 撞同一个。
-  writeJsonAtomic(accessFile(), a)
+  writeJsonAtomic(accessFile(), a, { mode: 0o600 })
 }
 
 /**

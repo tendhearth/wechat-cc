@@ -40,7 +40,7 @@ function loadRegistry(file: string): ProjectRegistry {
 }
 
 function saveRegistry(file: string, reg: ProjectRegistry): void {
-  writeJsonAtomic(file, reg)
+  writeJsonAtomic(file, reg, { mode: 0o600 })
 }
 
 export function addProject(file: string, alias: string, path: string): void {

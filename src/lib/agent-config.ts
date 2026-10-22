@@ -565,7 +565,7 @@ export function makeMtimeCachedConfigReader(
 export function saveAgentConfig(stateDir: string, config: AgentConfig): void {
   const file = join(stateDir, CONFIG_FILE)
   if (existsSync(file)) readJsonObject(file)
-  writeJsonAtomic(file, config)
+  writeJsonAtomic(file, config, { mode: 0o600 })
 }
 
 // The pinned model lives in a provider-specific field: cursor reads

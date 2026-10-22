@@ -53,7 +53,7 @@ export interface PreviousRunEvidence {
 function writeMark(stateDir: string, file: string, body: unknown): void {
   try {
     mkdirSync(stateDir, { recursive: true, mode: 0o700 })
-    writeFileAtomic(join(stateDir, file), JSON.stringify(body) + '\n')
+    writeFileAtomic(join(stateDir, file), JSON.stringify(body) + '\n', { mode: 0o600 })
   } catch { /* best effort —— 写不成最多是多一次判断成「意外」,不能挡住重启 */ }
 }
 

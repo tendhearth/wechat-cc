@@ -61,7 +61,7 @@ export function mintInvite(stateDir: string, opts: { handUrl: string; nowMs: num
   if (!opts.handUrl) throw new Error('handUrl required (enable A2A on a reachable host first)')
   const secret = randomBytes(24).toString('base64url')
   const expiresMs = opts.nowMs + INVITE_TTL_MS
-  writeFileAtomic(pendingPath(stateDir), JSON.stringify({ secret, expiresMs }))
+  writeFileAtomic(pendingPath(stateDir), JSON.stringify({ secret, expiresMs }), { mode: 0o600 })
   const payload: PairCode = { handUrl: opts.handUrl, secret, ...(opts.handName ? { handName: opts.handName } : {}) }
   const code = MAGIC + Buffer.from(JSON.stringify(payload), 'utf8').toString('base64url')
   return { code, expiresMs }

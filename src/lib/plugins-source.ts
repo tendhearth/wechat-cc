@@ -53,7 +53,7 @@ export function readPluginsSourcePointer(stateDir: string): string | null {
 export function writePluginsSourcePointer(stateDir: string, dir: string, plugins: string[] = pluginNamesIn(dir)): void {
   const p = pluginsSourcePointerPath(stateDir)
   mkdirSync(dirname(p), { recursive: true })
-  writeJsonAtomic(p, { dir, plugins })
+  writeJsonAtomic(p, { dir, plugins }, { mode: 0o600 })
 }
 
 /**

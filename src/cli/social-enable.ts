@@ -76,7 +76,7 @@ export function applySocialSwitch(stateDir: string, enabled: boolean): SocialSwi
         changed.push('mailbox_relays(默认)')
       }
     }
-  })
+  }, { mode: 0o600 })
   return { enabled, changed }
 }
 

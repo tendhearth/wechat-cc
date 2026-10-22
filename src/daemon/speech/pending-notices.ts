@@ -7,10 +7,11 @@
  * 落盘:speech/pending-notices.json(读用 readJsonFile 容忍 BOM;写 tmp + rename)。超过上限丢最老的,记一行日志,
  * 说的时候带一句「还有 N 件更早的」,不悄悄少。
  */
-import { existsSync, mkdirSync, renameSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdirSync } from 'node:fs'
 import { join } from 'node:path'
 import { readJsonFile } from '../../lib/read-json-file'
 import type { SpeechKind } from '../../core/speech/kinds'
+import { writeFileAtomic } from '../../lib/json-file'
 
 /** id:入队时给,说完只删这次真说了的那几条(flush 发送途中又进来的不会被一并删掉;9d 评审 #531)。 */
 export interface PendingNotice { id: string; kind: SpeechKind; chatId: string; text: string; at: string }
@@ -39,9 +40,7 @@ export function makePendingNotices(o: { stateDir: string; log: (tag: string, lin
   }
   const write = (s: Store): void => {
     mkdirSync(dir, { recursive: true })
-    const tmp = `${path}.tmp-${process.pid}-${Date.now()}`
-    writeFileSync(tmp, JSON.stringify(s))
-    renameSync(tmp, path)
+    writeFileAtomic(path, JSON.stringify(s))
   }
   return {
     add(input) {

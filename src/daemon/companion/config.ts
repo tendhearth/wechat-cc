@@ -11,9 +11,10 @@
  *   - snooze_until: temporary hard stop (set via companion_snooze)
  *   - timezone: so the scheduler's jitter respects user locality
  */
-import { writeFileSync, existsSync, mkdirSync, renameSync } from 'node:fs'
+import { existsSync, mkdirSync } from 'node:fs'
 import { companionDir, configPath } from './paths'
 import { readJsonFile } from '../../lib/read-json-file'
+import { writeFileAtomic } from '../../lib/json-file'
 
 export interface CompanionConfig {
   enabled: boolean
@@ -123,7 +124,5 @@ export async function saveCompanionConfig(stateDir: string, cfg: CompanionConfig
   if (!existsSync(companionDir(stateDir))) {
     mkdirSync(companionDir(stateDir), { recursive: true })
   }
-  const tmp = `${p}.tmp-${process.pid}-${Date.now()}`
-  writeFileSync(tmp, JSON.stringify(cfg, null, 2), 'utf8')
-  renameSync(tmp, p)
+  writeFileAtomic(p, JSON.stringify(cfg, null, 2))
 }

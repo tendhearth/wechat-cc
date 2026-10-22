@@ -55,7 +55,7 @@ export function loadMailboxIdentity(stateDir: string): MailboxIdentity {
       throw new Error(`loadMailboxIdentity: failed to read ${file}: ${err instanceof Error ? err.message : String(err)}`)
     }
     const k = generateMailboxIdentity()
-    writeJsonAtomic(file, k)
+    writeJsonAtomic(file, k, { mode: 0o600 })
     return toIdentity(k)
   }
   // File is present — a parse/decode failure here is a corrupt key file, NOT

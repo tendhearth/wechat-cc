@@ -379,7 +379,7 @@ function writeAgentConfigRaw(stateDir: string, cfg: Record<string, unknown>): vo
   // 读的时候坏文件被当成 {}(readAgentConfigRaw),这里再直接覆盖就把整份配置抹了 —— 写之前确认旧文件读得出来,
   // 写法统一走 lib/json-file(3e,2026-10-22)。
   if (existsSync(path)) readJsonObject(path)
-  writeJsonAtomic(path, cfg)
+  writeJsonAtomic(path, cfg, { mode: 0o600 })
 }
 
 export interface DaemonA2AEnableOpts {
