@@ -3,7 +3,9 @@
  * 推送那一拍(tick-push)和定时那一轮(tick-job)共用这一份,所以单独成文件。
  */
 import { loadCompanionConfig } from '../companion/config'
-import { resolveEffectiveTier, TIER_PROFILES, effectivePermissionMode } from '../../core/user-tier'
+import { resolveEffectiveTier, resolveTier, TIER_PROFILES, effectivePermissionMode } from '../../core/user-tier'
+import { providerDenialFor } from '../../core/provider-policy'
+import { loadAgentConfig } from '../../lib/agent-config'
 import { replyDeliveryFor, replyTextStrategyFor } from '../../core/capability-matrix'
 import { collectTurn } from '../../core/agent-provider'
 import type { ReplyDeliveryMode } from '../../core/turn-reply'
@@ -26,7 +28,7 @@ export function makeTickDispatch(deps: TickDeps) {
    */
   type DispatchGate =
     | { blocked: 'wechat_degraded' }
-    | { blocked: 'session_in_flight' | null; proj: { alias: string; path: string }; tier: ReturnType<typeof resolveEffectiveTier>; providerId: typeof deps.boot.defaultProviderId }
+    | { blocked: 'session_in_flight' | 'provider_denied' | null; proj: { alias: string; path: string }; tier: ReturnType<typeof resolveEffectiveTier>; providerId: typeof deps.boot.defaultProviderId }
   const deliveryModeOf = (providerId: string): ReplyDeliveryMode => (deps.replyDeliveryModeFor ?? replyDeliveryFor)(providerId)
   /** 微信断了还能不能照跑:App 收得到这个 chat,且当轮走 daemon 交付(legacy 的 reply 工具直连微信,改不了道)。 */
   const appCarries = (chatId: string, providerId: string): boolean =>
@@ -47,6 +49,16 @@ export function makeTickDispatch(deps: TickDeps) {
       mode.kind === 'solo' ? mode.provider
       : mode.kind === 'primary_tool' ? mode.primary
       : (mode.participants?.[0] ?? deps.boot.defaultProviderId)
+    // 和协调器分派时同一道门(conversation-coordinator 的 dispatch-time gate,3c 2026-10-22 补上):对话的 mode
+    // 行可能是还是 trusted 时设的,降成 guest 以后留着 —— 主动 / 定时这一拍照样会拿它起执行者。用原始 tier
+    // (不是 effective:--dangerously 不能替访客解锁),名单读 agent-config 的 trusted_providers。
+    const rawTier = resolveTier(chatId, deps.loadAccess())
+    let denied = false
+    if (rawTier !== 'admin') {
+      try { denied = providerDenialFor(providerId, rawTier, loadAgentConfig(deps.stateDir).trusted_providers) !== null }
+      catch { denied = true }  // 非管理员、判不了就不起执行者:缺省往拒绝的方向兜底(主人那条不受影响)
+    }
+    if (denied) return { blocked: 'provider_denied', proj, tier, providerId }
     // 在 LLM 生成之前就拦下:degraded 时这条消息既发不出去,生成它也是白烧
     // token,而且等链路恢复后内容早已过时 —— 所以直接丢弃,不排队。
     // 例外(2026-10-18):App 收得到 ⇒ 这一拍照跑,文字落到 App(「有一条路送得到」才是闸)。
@@ -84,6 +96,10 @@ export function makeTickDispatch(deps: TickDeps) {
       deps.log('COMPANION', `chat=${chatId} is non-admin tier (${tier}); push tick will run with reduced capabilities`)
     }
     const tierProfile = TIER_PROFILES[tier]
+    if (gate.blocked === 'provider_denied') {
+      deps.log('COMPANION', `chat=${chatId} skipped: provider=${providerId} not allowed for this chat's tier (${tier})`)
+      return false
+    }
     if (gate.blocked === 'session_in_flight') {
       deps.log('SCHED', `[companion] skipping push tick: user session in-flight (alias=${proj.alias} provider=${providerId} chat=${chatId})`)
       return false // leave the item pending — retry next tick
