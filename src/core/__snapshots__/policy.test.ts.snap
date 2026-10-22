@@ -1,0 +1,174 @@
+// Vitest Snapshot v1, https://vitest.dev/guide/snapshot.html
+
+exports[`compilePolicy —— 档位 × 模式 → 每家执行者实际的设置,全表一处钉住 > the full table 1`] = `
+{
+  "agy / admin / dangerously": {
+    "skipPermissions": true,
+  },
+  "agy / admin / strict": {
+    "skipPermissions": false,
+  },
+  "agy / guest / dangerously": {
+    "skipPermissions": true,
+  },
+  "agy / guest / strict": {
+    "skipPermissions": false,
+  },
+  "agy / trusted / dangerously": {
+    "skipPermissions": true,
+  },
+  "agy / trusted / strict": {
+    "skipPermissions": false,
+  },
+  "claude / admin / dangerously": {
+    "permissionMode": "bypassPermissions",
+  },
+  "claude / admin / strict": {
+    "permissionMode": "default",
+  },
+  "claude / guest / dangerously": {
+    "permissionMode": "bypassPermissions",
+  },
+  "claude / guest / strict": {
+    "disallowedTools": [
+      "Read",
+      "Glob",
+      "Grep",
+      "LS",
+      "Write",
+      "Edit",
+      "NotebookEdit",
+      "Bash",
+      "KillShell",
+      "WebFetch",
+      "WebSearch",
+      "Task",
+    ],
+    "permissionMode": "default",
+  },
+  "claude / trusted / dangerously": {
+    "permissionMode": "bypassPermissions",
+  },
+  "claude / trusted / strict": {
+    "permissionMode": "default",
+  },
+  "codex / admin / dangerously": {
+    "approvalPolicy": "never",
+    "sandboxMode": "danger-full-access",
+  },
+  "codex / admin / strict": {
+    "approvalPolicy": "never",
+    "sandboxMode": "workspace-write",
+  },
+  "codex / guest / dangerously": {
+    "approvalPolicy": "never",
+    "sandboxMode": "danger-full-access",
+    "webSearchEnabled": false,
+    "webSearchMode": "disabled",
+  },
+  "codex / guest / strict": {
+    "approvalPolicy": "untrusted",
+    "sandboxMode": "read-only",
+    "webSearchEnabled": false,
+    "webSearchMode": "disabled",
+  },
+  "codex / trusted / dangerously": {
+    "approvalPolicy": "never",
+    "sandboxMode": "danger-full-access",
+  },
+  "codex / trusted / strict": {
+    "approvalPolicy": "never",
+    "sandboxMode": "workspace-write",
+  },
+  "cursor-acp / admin / dangerously": {
+    "answer": "allow",
+  },
+  "cursor-acp / admin / strict": {
+    "answer": "reject",
+  },
+  "cursor-acp / guest / dangerously": {
+    "answer": "allow",
+  },
+  "cursor-acp / guest / strict": {
+    "answer": "reject",
+  },
+  "cursor-acp / trusted / dangerously": {
+    "answer": "allow",
+  },
+  "cursor-acp / trusted / strict": {
+    "answer": "reject",
+  },
+  "cursor-sdk / admin / dangerously": {
+    "sandboxOptions": {
+      "enabled": false,
+    },
+  },
+  "cursor-sdk / admin / strict": {
+    "sandboxOptions": {
+      "enabled": true,
+    },
+  },
+  "cursor-sdk / guest / dangerously": {
+    "sandboxOptions": {
+      "enabled": false,
+    },
+  },
+  "cursor-sdk / guest / strict": {
+    "sandboxOptions": {
+      "enabled": true,
+    },
+  },
+  "cursor-sdk / trusted / dangerously": {
+    "sandboxOptions": {
+      "enabled": false,
+    },
+  },
+  "cursor-sdk / trusted / strict": {
+    "sandboxOptions": {
+      "enabled": true,
+    },
+  },
+  "gemini / admin / dangerously": {
+    "gateEnabled": false,
+  },
+  "gemini / admin / strict": {
+    "gateEnabled": true,
+  },
+  "gemini / guest / dangerously": {
+    "gateEnabled": false,
+  },
+  "gemini / guest / strict": {
+    "gateEnabled": true,
+  },
+  "gemini / trusted / dangerously": {
+    "gateEnabled": false,
+  },
+  "gemini / trusted / strict": {
+    "gateEnabled": true,
+  },
+  "openai / admin / dangerously": {
+    "bypass": true,
+    "relayAs": "deny",
+  },
+  "openai / admin / strict": {
+    "bypass": false,
+    "relayAs": "deny",
+  },
+  "openai / guest / dangerously": {
+    "bypass": true,
+    "relayAs": "deny",
+  },
+  "openai / guest / strict": {
+    "bypass": false,
+    "relayAs": "deny",
+  },
+  "openai / trusted / dangerously": {
+    "bypass": true,
+    "relayAs": "deny",
+  },
+  "openai / trusted / strict": {
+    "bypass": false,
+    "relayAs": "deny",
+  },
+}
+`;

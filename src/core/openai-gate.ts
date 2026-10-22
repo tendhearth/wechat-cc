@@ -19,6 +19,7 @@
  */
 import { classifyToolUse, type TierProfile } from './user-tier'
 import type { PermissionMode } from './agent-provider'
+import { compilePolicy } from './policy'
 
 export type GateDecision = 'allow' | 'deny'
 
@@ -37,7 +38,8 @@ export function gateTool(args: {
   tierProfile: TierProfile
   permissionMode: PermissionMode
 }): GateDecision {
-  if (args.permissionMode === 'dangerously') return 'allow'
+  const policy = compilePolicy('openai', args.tierProfile, args.permissionMode)
+  if (policy.bypass) return 'allow'
 
   // classifyToolUse recognizes wechat MCP tools by their SDK-prefixed name
   // (`mcp__wechat__<name>`); built-in tools (Read/Write/Edit/Bash/...) pass
@@ -50,6 +52,6 @@ export function gateTool(args: {
   if (args.tierProfile.deny.has(kind)) return 'deny'
   // v1: relay collapses to deny in strict mode — mid-turn WeChat
   // confirmation round-trip is deferred to a follow-up task.
-  if (args.tierProfile.relay.has(kind)) return 'deny'
+  if (args.tierProfile.relay.has(kind)) return policy.relayAs
   return 'allow'
 }

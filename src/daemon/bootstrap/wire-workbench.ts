@@ -11,7 +11,8 @@ import { loadAgentConfig, saveAgentConfig, modelForProvider } from '../../lib/ag
 import { findCodexBinary } from '../../lib/find-codex-binary'
 import { acpSupportedOn } from '../../core/acp/platform'
 import { createProviderRegistry, type ProviderRegistry } from '../../core/provider-registry'
-import { createClaudeAgentProvider, tierProfileToClaudeSdkOpts, makeWorkbenchClaudeCanUseTool } from '../../core/claude-agent-provider'
+import { createClaudeAgentProvider, makeWorkbenchClaudeCanUseTool } from '../../core/claude-agent-provider'
+import { compilePolicy } from '../../core/policy'
 import { createWorkbenchCodexProvider } from '../../core/workbench/codex-app-server'
 import type { PermissionRelayDeps } from '../../core/permission-relay'
 import { TIER_PROFILES } from '../../core/user-tier'
@@ -41,7 +42,7 @@ import { findOnPath } from '../../lib/util'
 
 /** Reuse transport/model setup, never the companion's prompt or bypass. */
 export function workbenchClaudeOptions(base: Options, instructions: string, permit: CanUseTool, native: NativeClaudeTools = {servers:{},omitted:[]}): Options {
-  const tier = tierProfileToClaudeSdkOpts(TIER_PROFILES.trusted,'strict')
+  const tier = compilePolicy('claude',TIER_PROFILES.trusted,'strict')
   return {
     cwd:base.cwd, model:base.model, effort:base.effort, thinking:base.thinking, pathToClaudeCodeExecutable:base.pathToClaudeCodeExecutable,
     executable:base.executable, executableArgs:base.executableArgs,

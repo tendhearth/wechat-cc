@@ -36,7 +36,6 @@ describe('CAPABILITY_MATRIX', () => {
       const got = lookup(row.mode, row.provider, row.permissionMode)
       expect(got.askUser).toBe(row.askUser)
       expect(got.replyPrefix).toBe(row.replyPrefix)
-      expect(got.approvalPolicy).toBe(row.approvalPolicy)
       expect(got.delegate).toBe(row.delegate)
       expect(got.forbidden).toBe(row.forbidden)
     },
@@ -45,8 +44,6 @@ describe('CAPABILITY_MATRIX', () => {
   it.each(CAPABILITY_MATRIX)(
     'row $mode/$provider/$permissionMode satisfies invariants',
     (row: MatrixRow) => {
-      if (row.provider === 'claude') expect(row.approvalPolicy).toBeNull()
-      if (row.provider === 'codex')  expect(row.approvalPolicy).not.toBeNull()
       if (row.permissionMode === 'dangerously') expect(row.askUser).toBe('never')
       // B2(spec §4): delegate is loaded only when BOTH mode=primary_tool
       // AND the provider itself supportsDelegation — cursor/gemini/agy
@@ -105,8 +102,6 @@ describe('ghost-gemini — extensibility check (RFC 05 Phase 2)', () => {
       const cap = deriveCapability(GEMINI_CAPABILITIES, m, pm)
       // per-tool callback => askUser honors trait (per-tool in strict, never in dangerously)
       expect(cap.askUser).toBe(pm === 'strict' ? 'per-tool' : 'never')
-      // gemini has no sandbox levels → approvalPolicy null
-      expect(cap.approvalPolicy).toBeNull()
       // this hypothetical gemini has supportsDelegation=false, so delegate
       // is 'unloaded' in every mode — including primary_tool (B2 conjunct).
       expect(cap.delegate).toBe('unloaded')
@@ -146,7 +141,6 @@ describe('deriveCapability (RFC 05 Phase 2)', () => {
       const derived = deriveCapability(cap, row.mode, row.permissionMode)
       expect(derived.askUser).toBe(row.askUser)
       expect(derived.replyPrefix).toBe(row.replyPrefix)
-      expect(derived.approvalPolicy).toBe(row.approvalPolicy)
       expect(derived.delegate).toBe(row.delegate)
       expect(derived.forbidden).toBe(row.forbidden)
     },
@@ -166,7 +160,6 @@ describe('capability-matrix — cursor rows', () => {
     const cap = lookup('solo', 'cursor', 'strict')
     expect(cap.askUser).toBe('never')
     expect(cap.replyPrefix).toBe('never')
-    expect(cap.approvalPolicy).toBeNull()
     expect(cap.delegate).toBe('unloaded')
     expect(cap.forbidden).toBe(false)
   })
@@ -188,12 +181,11 @@ describe('capability-matrix — cursor rows', () => {
 })
 
 describe('capability-matrix — agy rows', () => {
-  it('agy solo strict/dangerously: per-tool callback absent → askUser=never, no sandbox → approvalPolicy null', () => {
+  it('agy solo strict/dangerously: per-tool callback absent → askUser=never', () => {
     for (const pm of ['strict', 'dangerously'] as const) {
       const cap = lookup('solo', 'agy', pm)
       expect(cap.askUser).toBe('never') // perToolCallback:false flattens 'per-tool' to 'never'
       expect(cap.replyPrefix).toBe('never')
-      expect(cap.approvalPolicy).toBeNull() // no read-only sandbox level to land 'untrusted' on
       expect(cap.delegate).toBe('unloaded')
       expect(cap.forbidden).toBe(false)
     }

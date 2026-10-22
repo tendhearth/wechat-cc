@@ -12,6 +12,7 @@
  *  - 关 stdin 不会让 cursor-agent 退出 ⇒ close() 必须 SIGTERM/SIGKILL 进程组并确认退出;
  *  - 不声明 fs/terminal,agent 自己落盘。
  */
+import { compilePolicy } from './policy'
 import { acpSupportedOn } from './acp/platform'
 import { spawn as nodeSpawn } from 'node:child_process'
 import type { AgentAttachment, AgentEvent, AgentProvider, AgentSession, SpawnContext } from './agent-provider'
@@ -250,7 +251,7 @@ export function createAcpProvider(options: AcpProviderOptions): AgentProvider {
             queueMicrotask(() => fatal(`无法核实或完整显示本次 ${options.displayName} 权限请求，工作台已停止任务。`)); return { outcome: { outcome: 'cancelled' } }
           }
           if (options.permissions === 'mode') {
-            const optionId = acpPermissionOption(params.options, context.permissionMode === 'dangerously')
+            const optionId = acpPermissionOption(params.options, compilePolicy('cursor-acp', context.tierProfile, context.permissionMode).answer === 'allow')
             return optionId ? { outcome: { outcome: 'selected', optionId } } : { outcome: { outcome: 'cancelled' } }
           }
           const toolCall = params.toolCall as Record<string, unknown>

@@ -10,6 +10,7 @@
  * docs/superpowers/plans/2026-08-17-agy-provider.md (Task 1 spike — the
  * source of the CONTROLLER RULINGS baked into arg assembly below).
  */
+import { compilePolicy } from './policy'
 import { tmpdir } from 'node:os'
 import { assertNotAuthFailed, normalizeWechatMcpServer, type AgentEvent, type AgentProject, type AgentProvider, type AgentSession, type CheapEval, type SpawnContext } from './agent-provider'
 import { makeAgyStreamParser } from './agy-stream'
@@ -423,7 +424,7 @@ export function createAgyAgentProvider(opts: AgyAgentProviderOptions): AgentProv
               } else if (isFirst) {
                 args.push('--new-project')
               }
-              if (ctx.permissionMode === 'dangerously') args.push('--dangerously-skip-permissions')
+              if (compilePolicy('agy', ctx.tierProfile, ctx.permissionMode).skipPermissions) args.push('--dangerously-skip-permissions')
               const extra = opts.sessionArgsFor?.(ctx)
               if (extra?.args && extra.args.length > 0) args.push(...extra.args)
               if (extra?.env && Object.keys(extra.env).length > 0) {

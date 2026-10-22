@@ -1,3 +1,4 @@
+import { compilePolicy } from './policy'
 /**
  * Cursor SDK agent provider.
  *
@@ -57,35 +58,7 @@ export const CURSOR_CAPABILITIES: ProviderCapabilities = {
   authFailHint: 'Cursor 凭证无效，请检查电脑上的 CURSOR_API_KEY 后再发消息。',
 }
 
-export interface CursorTierSdkOpts {
-  sandboxOptions: { enabled: boolean }
-}
-
-/**
- * Translate daemon TierProfile → Cursor SDK options.
- *
- * Heuristic: a profile with no relay and no deny is admin-equivalent
- * (sandbox off). Any non-empty relay or deny → enable sandbox. Matches
- * the same size-based heuristic Codex uses.
- *
- * Guest gets the same sandbox as trusted — Cursor lacks a read-only
- * mode, so guest can write inside cwd. Documented in README as a
- * known limitation; operators with strict guest separation route
- * guests to Claude.
- */
-export function tierProfileToCursorSdkOpts(_tp: TierProfile, permissionMode: PermissionMode): CursorTierSdkOpts {
-  // Cursor has no per-tool callback. The only knob is sandbox on/off.
-  // Strict mode → always sandboxed (operator wanting unrestricted access
-  // opts in via `--dangerously`). Pre-RFC-05 this varied by tier shape,
-  // but post-C4 the "admin tier = no sandbox" shortcut conflated with
-  // "admin can still call destructive Bash" — and cursor can't enforce
-  // the relay, so the safer default is "sandboxed unless the operator
-  // explicitly bypassed at daemon level".
-  if (permissionMode === 'dangerously') {
-    return { sandboxOptions: { enabled: false } }
-  }
-  return { sandboxOptions: { enabled: true } }
-}
+export { tierProfileToCursorSdkOpts, type CursorTierSdkOpts } from './policy'
 
 /**
  * Parse Cursor's tool name into { server?, tool } for AgentEvent.
@@ -265,7 +238,7 @@ export function createCursorAgentProvider(opts: CursorAgentProviderOptions): Age
       return model ? { provider: 'cursor', model } : null
     },
     async spawn(project: AgentProject, spawnOpts) {
-      const tierOpts = tierProfileToCursorSdkOpts(spawnOpts.tierProfile, spawnOpts.permissionMode)
+      const tierOpts = compilePolicy('cursor-sdk', spawnOpts.tierProfile, spawnOpts.permissionMode)
       // Per-session internal-api auth — merge the env-only token + tier into
       // the CORE stdio MCP children's env (provider-agnostic seam; same as
       // claude/codex). Scoped to CORE_MCP_SERVER_NAMES so third-party plugins

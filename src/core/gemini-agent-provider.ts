@@ -15,6 +15,7 @@
  * Decoupled from bootstrap via injected genai / mcpConnect / buildGate so the
  * loop is unit-testable. See docs/superpowers/specs/2026-06-04-gemini-provider-design.md.
  */
+import { compilePolicy } from './policy'
 import type { AgentEvent, AgentProject, AgentProvider, AgentSession, PermissionMode, SpawnContext } from './agent-provider'
 import type { TierProfile } from './user-tier'
 import { classifyToolUse } from './user-tier'
@@ -26,14 +27,7 @@ import { withProviderCode } from '../lib/provider-error-code'
 
 export { GEMINI_CAPABILITIES } from './provider-capabilities'
 
-export interface GeminiTierSdkOpts {
-  /** strict ⇒ the per-tool gate runs; dangerously ⇒ operator bypassed everything. */
-  gateEnabled: boolean
-}
-
-export function tierProfileToGeminiSdkOpts(_tp: TierProfile, permissionMode: PermissionMode): GeminiTierSdkOpts {
-  return { gateEnabled: permissionMode !== 'dangerously' }
-}
+export { tierProfileToGeminiSdkOpts, type GeminiTierSdkOpts } from './policy'
 
 /** A per-spawn tool gate. allow → execute; deny → synthesize an error
  *  functionResponse so the model sees the refusal. Phase B builds the real one
@@ -285,7 +279,7 @@ export function makeGeminiToolGate(deps: GeminiGateDeps): (ctx: SpawnContext) =>
     // across chats. Combined with chatId in the hash input → unique per relay.
     let relaySeq = 0
     return async (toolName, input) => {
-      if (ctx.permissionMode === 'dangerously') return { allow: true }
+      if (!compilePolicy('gemini', ctx.tierProfile, ctx.permissionMode).gateEnabled) return { allow: true }
       // Reject any bare name already containing '__': prefixing `mcp__wechat__`
       // onto it (e.g. `mcp__wechat__shell` → `mcp__wechat__mcp__wechat__shell`)
       // yields a malformed name classifyToolUse may misclassify as unknown→allow,
