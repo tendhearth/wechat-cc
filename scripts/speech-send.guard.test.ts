@@ -48,6 +48,8 @@ const BASELINE: Record<string, [Tag, number]> = {
   'src/daemon/bootstrap/wire-social.ts': ['primitive', 1],
   // main.ts 剩下的全是接线:回复交付、命令回话、信自己的投递、internal-api 的回话出口(主动开口都已经走门,10-21)
   'src/daemon/main.ts': ['primitive', 9],
+  // pipeline-deps 剩下的全是接线:回话出口、proactive 的微信出口(发字 / 发文件)、给访客的回话、llm-health 的回话;访客申请已走门(10-21)
+  'src/daemon/wiring/pipeline-deps.ts': ['primitive', 6],
   // —— 回答对方刚发来的那一句 ——
   'src/daemon/admin-commands.ts': ['reply', 69],
   'src/daemon/onboarding.ts': ['reply', 16],
@@ -57,14 +59,13 @@ const BASELINE: Record<string, [Tag, number]> = {
   'src/daemon/commands/task-command.ts': ['reply', 2],
   'src/daemon/cli-reply-handler.ts': ['reply', 1],
   'src/daemon/internal-api/routes-turn.ts': ['reply', 1],
+  'src/daemon/inbound/mw-access.ts': ['reply', 2],     // 回访客刚发来的那一句(欢迎语 / 中性回话);告诉主人的那句已走门
   // —— 要迁进 policy.say 的(盘点见设计稿第 2 步) ——
   'src/daemon/internal-api/routes.ts': ['migrate', 6],   // 画作分享、广播 …
-  'src/daemon/wiring/pipeline-deps.ts': ['migrate', 7],  // 访客申请 …;其中 2 处是 proactive 的微信出口(发字、发文件;say 背后的那条路)
   'src/daemon/bootstrap/wire-jobs.ts': ['migrate', 1],   // 剩下是定时命令的回话(say);「没审成」那两句已走门(10-21)
   'src/daemon/bootstrap/wire-cli-sessions.ts': ['migrate', 3],
   'src/daemon/wiring/wire-phone.ts': ['migrate', 2],
   'src/daemon/phone-notifier.ts': ['migrate', 2],
-  'src/daemon/inbound/mw-access.ts': ['migrate', 2],
   'src/daemon/wiring/command-router.ts': ['migrate', 1],
   'src/daemon/bootstrap/wire-workbench-notifications.ts': ['migrate', 1],
   'src/daemon/bootstrap/wire-workbench-artifacts.ts': ['migrate', 1],
