@@ -43,7 +43,7 @@ export interface LifecycleDepsOpts {
   schedulerIntervalMs?: number
 }
 
-export function buildLifecycleDeps(opts: LifecycleDepsOpts, ticks: TickBodies): {
+export function buildLifecycleDeps(opts: LifecycleDepsOpts, ticks: TickBodies, speech?: import('../speech/policy').SpeechPolicy): {
   companionPushDeps: CompanionPushDeps
   companionIntrospectDeps: CompanionIntrospectDeps
   companionIngestDeps: CompanionIngestDeps
@@ -173,6 +173,7 @@ export function buildLifecycleDeps(opts: LifecycleDepsOpts, ticks: TickBodies): 
       accountCount: accounts.length,
       dangerously,
       runIntrospectOnce: ticks.introspectTick,
+      ...(speech ? { speech } : {}),
     },
   }
 }

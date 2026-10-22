@@ -286,7 +286,7 @@ export function wireMain(opts: WireMainOpts): WiredDeps {
     health: opts.boot.health.health,
     runAtelierTick,
   })
-  const lifecycleDeps = buildLifecycleDeps(opts, ticks)
+  const lifecycleDeps = buildLifecycleDeps(opts, ticks, speech)
   return {
     appPush,
     proactive,
