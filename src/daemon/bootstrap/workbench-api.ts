@@ -1,5 +1,6 @@
 import {mkdirSync} from 'node:fs'
 import type {Db} from '../../lib/db'
+import {executorCredential,executorMissingConfig} from '../../lib/executor-detect'
 import type {ProviderRegistry} from '../../core/provider-registry'
 import {createApiModel} from '../../core/workbench/api-model'
 import {makeApiSessionStore} from '../../core/workbench/api-sessions'
@@ -13,8 +14,8 @@ export function registerWorkbenchApi(
   config:{openaiBaseUrl?:string;openaiModel?:string},
   env:Record<string,string|undefined>,
 ):boolean{
-  const baseURL=config.openaiBaseUrl?.trim(),model=config.openaiModel?.trim(),apiKey=env.WECHAT_OPENAI_API_KEY
-  if(!baseURL||!model||!apiKey)return false
+  const baseURL=config.openaiBaseUrl?.trim(),model=config.openaiModel?.trim(),apiKey=executorCredential('openai',env)
+  if(executorMissingConfig('openai',config).length>0||!baseURL||!model||!apiKey)return false
   try{
     const connection={baseURL,apiKey,model}
     const configHash=apiTaskConnectionHash(connection)

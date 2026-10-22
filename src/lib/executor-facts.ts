@@ -31,14 +31,26 @@ export interface ExecutorFacts {
   setupHint: string
   /** 「配齐了才注册」要的密钥环境变量(第一个是写入 daemon.env 时用的名字)。 */
   credentialEnv?: readonly string[]
+  /**
+   * 「这台机器上有没有」怎么判(3c 第 2 步,2026-10-22)。读它的只有 lib/executor-detect.ts,
+   * 别处一律调 detect 那几个函数,不再手写 `cursorAgentBin ?? findOnPath('cursor-agent')`。
+   * - binary:自己的可执行文件;configKey 是 agent-config 里覆盖路径的那一格(空串 = 没配,回落 PATH)。
+   * - requiresConfig:agent-config 里必须非空(trim 后)的字段。
+   */
+  detect?: {
+    binary?: { name: string; configKey: 'cursorAgentBin' | 'agyBin' }
+    requiresConfig?: readonly ExecutorConfigField[]
+  }
 }
+
+export type ExecutorConfigField = 'openaiBaseUrl' | 'openaiModel' | 'geminiModel' | 'cursorModel'
 
 export const EXECUTOR_FACTS: Readonly<Record<KnownProviderId, ExecutorFacts>> = {
   claude: { id: 'claude', names: { name: 'Claude', short: 'Claude', settings: 'Claude' }, slash: 'cc', modelField: 'model', setupHint: '安装 Claude Code 并在终端登录一次(claude)' },
   codex: { id: 'codex', names: { name: 'Codex', short: 'Codex', settings: 'Codex' }, slash: 'codex', modelField: 'model', setupHint: '安装 codex CLI 并登录一次' },
-  cursor: { id: 'cursor', names: { name: 'Cursor', short: 'Cursor', settings: 'Cursor' }, slash: 'cursor', modelField: 'cursorModel', setupHint: '终端跑:curl https://cursor.com/install -fsS | bash,然后 cursor-agent login(用 Cursor 订阅账号)' },
+  cursor: { id: 'cursor', names: { name: 'Cursor', short: 'Cursor', settings: 'Cursor' }, slash: 'cursor', modelField: 'cursorModel', setupHint: '终端跑:curl https://cursor.com/install -fsS | bash,然后 cursor-agent login(用 Cursor 订阅账号)', detect: { binary: { name: 'cursor-agent', configKey: 'cursorAgentBin' } } },
   // 「/api」不是 /openai:这是主人自己的 API 端点(DeepSeek / Kimi / Qwen …),不绑哪家厂商。
-  openai: { id: 'openai', names: { name: '自定义 AI 服务', short: 'API', settings: '自定义 AI 服务' }, slash: 'api', modelField: 'openaiModel', setupHint: '把 WECHAT_OPENAI_API_KEY 写进 ~/.claude/channels/wechat/daemon.env,并配置 openaiBaseUrl/openaiModel', credentialEnv: ['WECHAT_OPENAI_API_KEY'] },
-  gemini: { id: 'gemini', names: { name: 'Gemini', short: 'Gemini', settings: 'Gemini · 密钥连接' }, slash: 'gemini', modelField: 'geminiModel', setupHint: '把 GEMINI_API_KEY 写进 ~/.claude/channels/wechat/daemon.env', credentialEnv: ['GEMINI_API_KEY', 'GOOGLE_API_KEY'] },
-  agy: { id: 'agy', names: { name: 'Gemini', short: 'Gemini', settings: 'Gemini · 账号连接' }, slash: 'agy', modelField: 'agyModel', setupHint: '安装 Antigravity CLI(agy)并登录一次(Google AI Pro 订阅)' },
+  openai: { id: 'openai', names: { name: '自定义 AI 服务', short: 'API', settings: '自定义 AI 服务' }, slash: 'api', modelField: 'openaiModel', setupHint: '把 WECHAT_OPENAI_API_KEY 写进 ~/.claude/channels/wechat/daemon.env,并配置 openaiBaseUrl/openaiModel', credentialEnv: ['WECHAT_OPENAI_API_KEY'], detect: { requiresConfig: ['openaiBaseUrl', 'openaiModel'] } },
+  gemini: { id: 'gemini', names: { name: 'Gemini', short: 'Gemini', settings: 'Gemini · 密钥连接' }, slash: 'gemini', modelField: 'geminiModel', setupHint: '把 GEMINI_API_KEY 写进 ~/.claude/channels/wechat/daemon.env', credentialEnv: ['GEMINI_API_KEY', 'GOOGLE_API_KEY'], detect: { requiresConfig: ['geminiModel'] } },
+  agy: { id: 'agy', names: { name: 'Gemini', short: 'Gemini', settings: 'Gemini · 账号连接' }, slash: 'agy', modelField: 'agyModel', setupHint: '安装 Antigravity CLI(agy)并登录一次(Google AI Pro 订阅)', detect: { binary: { name: 'agy', configKey: 'agyBin' } } },
 }

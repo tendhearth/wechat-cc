@@ -21,6 +21,7 @@ import { loadAccess } from '../../lib/access'
 import { loadCompanionConfig } from '../companion/config'
 import { findOnPath, probeBinaryVersion } from '../../lib/util'
 import { findCodexBinary } from '../../lib/find-codex-binary'
+import { cursorSdkFallback, executorBinary, executorCredential, executorMissingConfig } from '../../lib/executor-detect'
 import { checkCodexVersion } from './codex-version-check'
 import { attemptCodexAutofix } from '../../lib/codex-autofix'
 import { fileURLToPath } from 'node:url'
@@ -453,7 +454,8 @@ export async function registerProviders(deps: ProviderDeps): Promise<ProviderWir
   // Same TEST-RUNNER PATH-fallback guard as agy below: a dev box with
   // cursor-agent installed must not register a real provider in every test
   // bootstrap — tests opt in via `cursorAgentBin` in seeded agent-config.
-  const cursorAgentBin = configuredAgent.cursorAgentBin ?? (UNDER_TEST_RUNNER ? null : findOnPath('cursor-agent'))
+  // 「在不在」统一由 executor-detect 判(3c 第 2 步):配置里的路径 trim 后为空 = 没配,回落 PATH。
+  const cursorAgentBin = executorBinary('cursor', configuredAgent, UNDER_TEST_RUNNER ? () => null : findOnPath)
   let cursorCliRegistered = false
   let cursorCliProbeFailure: string | null = null
   const registerCursorCli = async (cursorAgentBin: string): Promise<boolean> => {
@@ -508,10 +510,10 @@ export async function registerProviders(deps: ProviderDeps): Promise<ProviderWir
     }
   }
 
-  const cursorKey = process.env.CURSOR_API_KEY
+  const { key: cursorKey, missingModel: cursorMissingModel } = cursorSdkFallback(configuredAgent, process.env)
   if (cursorCliRegistered) {
     // CLI path won — the SDK/API-key fallback below is skipped entirely.
-  } else if (cursorKey && !configuredAgent.cursorModel) {
+  } else if (cursorKey && cursorMissingModel) {
     // Cursor SDK's @cursor/sdk/dist/esm/options.d.ts says model is "required
     // for local agents" — local is the only mode wechat-cc uses today.
     // Fail-fast at boot with an actionable message rather than crash on
@@ -569,8 +571,8 @@ export async function registerProviders(deps: ProviderDeps): Promise<ProviderWir
   // skipped with a BOOT log line. The SDK modules are dynamic-imported so a
   // registration failure (missing dep, bad config) degrades to a log line
   // instead of crashing boot.
-  const openaiKey = process.env.WECHAT_OPENAI_API_KEY
-  if (openaiKey && configuredAgent.openaiBaseUrl && configuredAgent.openaiModel) {
+  const openaiKey = executorCredential('openai', process.env)
+  if (openaiKey && executorMissingConfig('openai', configuredAgent).length === 0 && configuredAgent.openaiBaseUrl && configuredAgent.openaiModel) {
     // Narrowed into locals: property access on `configuredAgent` doesn't
     // stay narrowed inside the `makeChatModel` closure below (TS only
     // preserves narrowing for local const bindings, not object properties).
@@ -645,8 +647,8 @@ export async function registerProviders(deps: ProviderDeps): Promise<ProviderWir
   //
   // geminiModel must be set via `wechat-cc provider set gemini
   // --model gemini-flash-latest` before the key is useful.
-  const geminiKey = process.env.GEMINI_API_KEY ?? process.env.GOOGLE_API_KEY
-  if (geminiKey && !configuredAgent.geminiModel) {
+  const geminiKey = executorCredential('gemini', process.env)
+  if (geminiKey && executorMissingConfig('gemini', configuredAgent).length > 0) {
     deps.log('BOOT',
       'gemini: GEMINI_API_KEY is set but geminiModel is not configured. ' +
       'Run `wechat-cc provider set gemini --model gemini-flash-latest`. Provider not registered.',
@@ -714,7 +716,7 @@ export async function registerProviders(deps: ProviderDeps): Promise<ProviderWir
   // must opt in explicitly via `agyBin` in its seeded agent-config, exactly
   // like agyGeminiConfigDir below must be explicit to exercise the MCP
   // write path. Production (not under a test runner) is unchanged.
-  const agyBin = configuredAgent.agyBin ?? (UNDER_TEST_RUNNER ? null : findOnPath('agy'))
+  const agyBin = executorBinary('agy', configuredAgent, UNDER_TEST_RUNNER ? () => null : findOnPath)
   const registerAgy = async (agyBin: string): Promise<boolean> => {
     try {
       const { createAgyAgentProvider } = await import('../../core/agy-agent-provider')
