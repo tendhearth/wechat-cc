@@ -36,79 +36,8 @@ function userContent(text: string, attachments: readonly AgentAttachment[] = [])
 
 export { CLAUDE_CAPABILITIES } from './provider-capabilities'
 
-/**
- * Map ToolKind → the Claude Code built-in tool names that fall into it.
- * MCP tools (mcp__wechat__*) are NOT listed — they're gated by canUseTool
- * (a per-tool callback fires for every MCP invocation), which the
- * permission-relay layer sets up.
- */
-const TOOL_KIND_TO_CLAUDE_BUILTINS: Record<ToolKind, ReadonlyArray<string>> = {
-  reply: [],            // MCP-only
-  share_page: [],       // MCP-only
-  memory_read: [],      // MCP-only
-  memory_write: [],     // MCP-only
-  memory_delete: [],    // MCP-only
-  observations_read: [],  // MCP-only
-  observations_write: [], // MCP-only
-  fs_read: ['Read', 'Glob', 'Grep', 'LS'],
-  fs_write: ['Write', 'Edit', 'NotebookEdit'],
-  shell: ['Bash', 'KillShell'],
-  shell_destructive: [],   // virtual; same Bash tool, gated by canUseTool input inspection
-  network: ['WebFetch', 'WebSearch'],
-  subagent: ['Task'],
-  a2a_send: [],            // MCP-only
-  daemon_introspect: [],   // MCP-only (mcp__wechat__diagnostic_*), gated by canUseTool
-  daemon_remediate: [],    // MCP-only (mcp__wechat__session_release / model_set / daemon_restart)
-  file_locate: [],         // MCP-only (mcp__wechat__locate_file), gated by canUseTool
-  plugin_tool: [],         // MCP-only (mcp__<plugin>__*), admin-only, gated by canUseTool
-  social_seek: [],         // MCP-only (mcp__wechat__social_seek), admin-only, gated by canUseTool
-  social_act: [],          // MCP-only (mcp__wechat__wish_list / wish_send / wish_cancel / intro_request / intro_accept / intro_decline / intro_offers / relationships / visit), admin-only, gated by canUseTool
-  knowledge_search: [],    // MCP-only (mcp__wechat__knowledge_search), admin-only, gated by canUseTool
-  federated_query: [],     // MCP-only (mcp__wechat__federated_query), admin-only, gated by canUseTool
-  graph_query: [],         // MCP-only (mcp__wechat__contact_profile / top_contacts / relationship_subgraph / connectors / graph_status), admin-only, gated by canUseTool
-  facts_query: [],         // MCP-only (mcp__wechat__extraction_batch / record_facts / contact_facts / find_facts / set_fact_status / extraction_status), admin-only, gated by canUseTool
-  person_query: [],        // MCP-only (mcp__wechat__person_brief), admin-only, gated by canUseTool
-  config_admin: [],        // MCP-only (mcp__wechat__config_get / config_set), admin-only, gated by canUseTool
-  mode_switch: [],         // MCP-only (mcp__wechat__provider_switch), trusted+, gated by canUseTool
-  message_other: [],       // MCP-only (mcp__wechat__message, 回复交付 §4.6), admin-only, gated by canUseTool
-}
-
-export interface ClaudeTierSdkOpts {
-  permissionMode: 'default' | 'bypassPermissions'
-  disallowedTools?: string[]
-}
-
-/**
- * Pure translation from (TierProfile, permissionMode) → Claude SDK options.
- * The caller layers `canUseTool` on top of this — `disallowedTools` only
- * covers built-ins (which the SDK knows by name); MCP tools and
- * shell_destructive get filtered inside the canUseTool closure.
- *
- * `permissionMode='dangerously'` bypasses unconditionally — operator
- * opted into full SDK bypass regardless of tier. `permissionMode='strict'`
- * always uses `default` + canUseTool; tier-aware allow/relay/deny
- * decisions happen inside the canUseTool callback (see
- * `effectivePolicy` in permission-relay.ts). Pre-RFC-05 this function
- * inferred "dangerously-equivalent" from `relay.size === 0 && deny.size === 0`
- * (admin tier shape), which broke when admin tier policy changed (C4)
- * and when --dangerously didn't propagate to non-admin chats (C5).
- */
-export function tierProfileToClaudeSdkOpts(tp: TierProfile, permissionMode: PermissionMode): ClaudeTierSdkOpts {
-  if (permissionMode === 'dangerously') {
-    return { permissionMode: 'bypassPermissions' }
-  }
-
-  // Build disallowedTools from the deny set's built-in tools only
-  const disallowed: string[] = []
-  for (const kind of tp.deny) {
-    for (const name of TOOL_KIND_TO_CLAUDE_BUILTINS[kind]) disallowed.push(name)
-  }
-
-  return {
-    permissionMode: 'default',
-    ...(disallowed.length > 0 ? { disallowedTools: disallowed } : {}),
-  }
-}
+// 档位 × 模式 → SDK 选项的翻译挪到 core/policy.ts(3c Policy 编译器第 1 步);旧名字从那里转出,调用方不变。
+export { tierProfileToClaudeSdkOpts, type ClaudeTierSdkOpts } from './policy'
 
 export interface ClaudeAgentProviderOptions {
   /**

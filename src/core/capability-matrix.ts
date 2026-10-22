@@ -5,8 +5,6 @@
  * Consumed by:
  *   - core/conversation-coordinator.ts  → assertSupported() at dispatch entry
  *   - core/permission-relay.ts          → lookup().askUser to gate per-tool prompts
- *   - core/codex-agent-provider.ts +    → lookup().approvalPolicy at provider build
- *     daemon/bootstrap/index.ts
  *   - daemon/internal-api/routes.ts     → lookup().replyPrefix for [Display] prefixing
  *
  * Boot-time assertion: `assertMatrixComplete(providers)` is called from
@@ -39,8 +37,8 @@ export interface Capability {
   /** 'always'=parallel/chatroom；'never'=solo；'on-fallback-only'=primary_tool */
   replyPrefix: 'always' | 'never' | 'on-fallback-only'
 
-  /** Codex SDK approval_policy；non-codex 行为 null。 */
-  approvalPolicy: 'untrusted' | 'on-request' | 'never' | null
+  // approvalPolicy 已删(3c Policy 第 1 步,2026-10-22):codex 实际用的审批在 core/policy.ts 编译,
+  // 这里那份(strict ⇒ untrusted)没人读、和实际(trusted / admin ⇒ never)不符,是一份会骗人的说法。
 
   /** delegate_<peer> MCP tool 是否加载到本 provider session。 */
   delegate: 'loaded' | 'unloaded'
@@ -60,7 +58,7 @@ export interface MatrixRow extends Capability {
 
 /**
  * Per (mode × permissionMode) trait — invariant across providers. The
- * provider-specific bits (askUser actually realisable? approvalPolicy
+ * provider-specific bits (askUser actually realisable? delegate
  * actually meaningful?) are layered on top inside `deriveCapability`.
  *
  * RFC 05 Phase 2: this replaces the 24-row hand-written CAPABILITY_MATRIX
@@ -72,28 +70,25 @@ interface ModeTrait {
   /** Realisable askUser value when the provider has perToolCallback. */
   askUser: 'per-tool' | 'never'
   replyPrefix: 'always' | 'never' | 'on-fallback-only'
-  /** Coarse approval-policy value used by SDKs without perToolCallback
-   *  AND with a 'read-only' sandbox level (Codex). */
-  coarseApproval: 'untrusted' | 'never'
   forbidden: boolean
 }
 
 const MODE_TRAITS: Record<Mode['kind'], Record<PermissionMode, ModeTrait>> = {
   solo: {
-    strict:      { askUser: 'per-tool', replyPrefix: 'never',           coarseApproval: 'untrusted', forbidden: false },
-    dangerously: { askUser: 'never',    replyPrefix: 'never',           coarseApproval: 'never',     forbidden: false },
+    strict:      { askUser: 'per-tool', replyPrefix: 'never', forbidden: false },
+    dangerously: { askUser: 'never',    replyPrefix: 'never', forbidden: false },
   },
   parallel: {
-    strict:      { askUser: 'per-tool', replyPrefix: 'always',          coarseApproval: 'untrusted', forbidden: false },
-    dangerously: { askUser: 'never',    replyPrefix: 'always',          coarseApproval: 'never',     forbidden: false },
+    strict:      { askUser: 'per-tool', replyPrefix: 'always', forbidden: false },
+    dangerously: { askUser: 'never',    replyPrefix: 'always', forbidden: false },
   },
   primary_tool: {
-    strict:      { askUser: 'per-tool', replyPrefix: 'on-fallback-only', coarseApproval: 'untrusted', forbidden: false },
-    dangerously: { askUser: 'never',    replyPrefix: 'on-fallback-only', coarseApproval: 'never',     forbidden: false },
+    strict:      { askUser: 'per-tool', replyPrefix: 'on-fallback-only', forbidden: false },
+    dangerously: { askUser: 'never',    replyPrefix: 'on-fallback-only', forbidden: false },
   },
   chatroom: {
-    strict:      { askUser: 'per-tool', replyPrefix: 'always',          coarseApproval: 'untrusted', forbidden: false },
-    dangerously: { askUser: 'never',    replyPrefix: 'always',          coarseApproval: 'never',     forbidden: false },
+    strict:      { askUser: 'per-tool', replyPrefix: 'always', forbidden: false },
+    dangerously: { askUser: 'never',    replyPrefix: 'always', forbidden: false },
   },
 }
 
@@ -177,13 +172,6 @@ export function deriveCapability(
   // strict mode still has trait.askUser='per-tool' nominally, but the
   // provider can't honor it — flatten to 'never'.
   const askUser = cap.perToolCallback ? trait.askUser : 'never'
-  // approvalPolicy is the codex-shaped coarse gate; meaningful only when
-  // the SDK has no per-tool callback AND exposes a read-only sandbox
-  // tier (so 'untrusted' has somewhere to land). Cursor lacks read-only
-  // and Claude has perToolCallback — both return null.
-  const approvalPolicy = !cap.perToolCallback && cap.sandboxLevels.has('read-only')
-    ? trait.coarseApproval
-    : null
   // RFC-05 §2.4 的合取(spec 2026-08-17-provider-runtime-dedup §4):主提供方
   // 自己必须 supportsDelegation 才装载 delegate-mcp —— gemini/cursor 的注册
   // 根本没有 delegate stdio 通道,'loaded' 是谎报。mode-commands 与
@@ -192,7 +180,6 @@ export function deriveCapability(
   return {
     askUser,
     replyPrefix: trait.replyPrefix,
-    approvalPolicy,
     delegate,
     forbidden: trait.forbidden,
     notes: '',

@@ -1,3 +1,4 @@
+import { compilePolicy } from './policy'
 import { Codex, type Thread, type ThreadEvent, type ThreadItem } from '@openai/codex-sdk'
 import { tmpdir } from 'node:os'
 import { mergeEnvIntoMcpServers, CORE_MCP_SERVER_NAMES, type AgentEvent, type AgentProject, type AgentProvider, type AgentSession, type PermissionMode, type SpawnContext } from './agent-provider'
@@ -37,63 +38,8 @@ export function codexItemToolCall(item: { type: string; server?: unknown; tool?:
   return { kind: 'tool_call', tool: CODEX_BUILTIN_TOOL_NAMES[item.type] ?? item.type }
 }
 
-/**
- * 档里不给网(审查轮 REVIEW_PROFILE、访客)⇒ 线程上把联网搜索关掉,不沿用主人 codex 配置里的默认(评审 #460)。
- * 沙箱网络不在这里设:不给网的档都是 read-only 沙箱,shell 本来就上不了网;而且会话不带 networkAccessEnabled
- * 是 e2e 假 codex 认出「这不是 cheapEval」的那根钉。
- */
-export function codexNetworkOpts(tp: TierProfile): { webSearchEnabled?: false; webSearchMode?: 'disabled' } {
-  return tp.deny.has('network') ? { webSearchEnabled: false, webSearchMode: 'disabled' } : {}
-}
-
-export interface CodexTierSdkOpts {
-  sandboxMode: 'read-only' | 'workspace-write' | 'danger-full-access'
-  approvalPolicy: 'untrusted' | 'on-request' | 'never'
-}
-
-/**
- * Pure translation from (TierProfile, permissionMode) → Codex SDK options.
- *
- * Codex has no per-tool callback equivalent to Claude's canUseTool.
- * Tier enforcement is therefore coarser:
- *   - `permissionMode='dangerously'` → full access on every chat (operator
- *     opted into bypass; tier doesn't matter)
- *   - admin → workspace-write sandbox. Admin's destructive ops relay on
- *     the Claude side via canUseTool, but codex has no equivalent gate to
- *     honor that relay — so rather than hand admin unconditional
- *     danger-full-access, it drops to workspace-write (write within cwd,
- *     no approval). danger-full-access is `--dangerously`-only.
- *   - trusted → workspace-write sandbox (no admin UI to field
- *     'on-request' prompts, so we use 'never' approval — destructive
- *     ops within the workspace cwd are still possible; documented
- *     limitation)
- *   - guest → read-only sandbox + untrusted approval (functionally
- *     restricted to reading + replying)
- *
- * Pre-RFC-05 this function ignored `permissionMode` entirely and
- * derived everything from `TierProfile` shape — which silently broke
- * the `--dangerously` operator override for non-admin chats (C5).
- */
-export function tierProfileToCodexSdkOpts(tp: TierProfile, permissionMode: PermissionMode): CodexTierSdkOpts {
-  if (permissionMode === 'dangerously') {
-    return { sandboxMode: 'danger-full-access', approvalPolicy: 'never' }
-  }
-  // strict mode. A profile that denies nothing AND relays nothing is the
-  // full-bypass shape → danger-full-access.
-  if (tp.deny.size === 0 && tp.relay.size === 0) {
-    return { sandboxMode: 'danger-full-access', approvalPolicy: 'never' }
-  }
-  // Sandbox scope keys off what the tier can actually DO, not deny-set
-  // cardinality: any tier that can write files and run shell (admin, trusted)
-  // gets workspace-write; one that can't (guest — read/reply only) gets
-  // read-only. The old `deny.size === 0` check mis-fired the moment a tier
-  // denied a tool unrelated to fs/shell scope (e.g. the admin-only
-  // daemon_introspect now in trusted.deny), collapsing trusted to read-only.
-  if (tp.allow.has('fs_write') && tp.allow.has('shell')) {
-    return { sandboxMode: 'workspace-write', approvalPolicy: 'never' }
-  }
-  return { sandboxMode: 'read-only', approvalPolicy: 'untrusted' }
-}
+// 档位 × 模式 → SDK 选项的翻译挪到 core/policy.ts(3c Policy 编译器第 1 步);旧名字从那里转出,调用方不变。
+export { codexNetworkOpts, tierProfileToCodexSdkOpts, type CodexTierSdkOpts } from './policy'
 
 /**
  * codex-agent-provider — Codex SDK companion to claude-agent-provider, using
@@ -252,7 +198,7 @@ export function createCodexAgentProvider(opts: CodexAgentProviderOptions = {}): 
       // contract conformance but don't consume it.
       spawnOpts: SpawnContext,
     ): Promise<AgentSession> {
-      const tierOpts = tierProfileToCodexSdkOpts(spawnOpts.tierProfile, spawnOpts.permissionMode)
+      const tierOpts = compilePolicy('codex', spawnOpts.tierProfile, spawnOpts.permissionMode)
       const config: Record<string, unknown> = {}
       if (opts.mcpServers) {
         // Per-session internal-api auth: merge the env-only WECHAT_SESSION_TOKEN
@@ -296,7 +242,7 @@ export function createCodexAgentProvider(opts: CodexAgentProviderOptions = {}): 
         skipGitRepoCheck: true,
         sandboxMode: tierOpts.sandboxMode,
         approvalPolicy: tierOpts.approvalPolicy,
-        ...codexNetworkOpts(spawnOpts.tierProfile),
+        ...(tierOpts.webSearchEnabled === false ? { webSearchEnabled: tierOpts.webSearchEnabled, webSearchMode: tierOpts.webSearchMode } : {}),
         ...(model ? { model } : {}),
       } as const
 
