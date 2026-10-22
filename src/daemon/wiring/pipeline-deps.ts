@@ -31,7 +31,7 @@ import type { AppTurn } from '../inbound/build'
 import { basename as pathBasename } from 'node:path'
 import { wireConnections } from './wire-connections'
 import { wirePhone } from './wire-phone'
-import { makeCommandRouter } from './command-router'
+import { makeControlCommands } from './command-router'
 import { ensureChatAndNote, makeMatterActivity, wireMatterActivity } from '../matter-activity'
 import { makeGuestRequestStore } from '../guest-requests'
 import { makeForwardBudget } from '../../core/forward-budget'
@@ -237,7 +237,7 @@ export function buildPipelineDeps(opts: PipelineDepsOpts, refs: PipelineDepsRefs
   }
 
   // 管理员控制命令路由 — 从 dispatch 闭包抽出(命令逻辑本体在 command-router.ts)。
-  const commandRouter = makeCommandRouter({
+  const controlCommands = makeControlCommands({
     isAdmin: (c) => isAdmin(c),
     loadAccess: () => loadAccess(),
     appendAllowFrom: (c) => { appendAllowFrom(c) },
@@ -570,7 +570,8 @@ export function buildPipelineDeps(opts: PipelineDepsOpts, refs: PipelineDepsRefs
       probe: (m) => ilink.probePermissionReply(m.text ?? '', m.chatId, m.quote?.text),
       handle: async (m) => { if (!ilink.handlePermissionReply(m.text ?? '', m.chatId, m.quote?.text)) return false; log('PERMISSION', `consumed reply from chat=${m.chatId}`); return true } },
     ...(opts.commands ?? []),
-    { id: 'control', ownsSlash: (m) => /^\s*\/visit\b/i.test(m.text ?? ''), probe: (m) => commandRouter.probe(m), handle: (m) => commandRouter.tryHandle(m) },
+    // 控制命令一条一行(第三批 3d,command-router.ts 的 makeControlCommands):control.social-off → visit(认 /visit)→ letter → pair → wish → intro → guest
+    ...controlCommands,
   ])
 
   const pipelineDeps: InboundPipelineDeps = {
