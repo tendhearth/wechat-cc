@@ -5,14 +5,15 @@
  * internal-api 的 HTTP、cli-events、工作台 …… 都会一直挂着(这个门是 2026-06 e2e 重构时带进来的回退;更早的
  * catch 里本来就会 stopAll)。LifecycleSet 只停登记过的,所以半路失败也只停起来了的那些。
  * 其余顺序与原来一致:心跳 → 各子系统倒序 → bootstrap 的收尾清单倒序(定时器、yi 的连接,见 bootstrap/teardown.ts)
- * → bootstrap 自带的几样(a2a、配对、知识库、embedder、agy 的 MCP 配置)→ db → 锁。
+ * → bootstrap 自带的几样(a2a、配对、agy 的 MCP 配置)→ db → 锁。
+ * 知识库和它的 embedder 从 2026-10-22 起是一个模块(第三批 3b 第 2 步):在收尾清单里那一组的 stopAll 里关,
+ * 所以开机没走完时也关得到(以前在这里经 boot() 取,boot 还是 null 就不关)。
  * 收尾清单由 main.ts 建好直接给这里(不经 boot()),所以 bootstrap 起到一半失败也会停掉已经起了的那几样。
  */
 import type { Teardown } from '../bootstrap/teardown'
 export interface ShutdownBoot {
   a2aServer?: { stop(): Promise<void> | void } | null
   pairing?: { stop(): void } | null
-  knowledge?: { store: { close(): void }; embedder?: { close?(): Promise<void> | void } | null } | null
   registry?: { has?(id: string): boolean }
 }
 
@@ -41,8 +42,6 @@ export function makeDaemonShutdown(deps: {
     const boot = deps.boot()
     await step('A2A', 'server stop', () => boot?.a2aServer?.stop())
     await step('PAIR', 'stop', () => boot?.pairing?.stop())
-    await step('KNOWLEDGE', 'store close', () => boot?.knowledge?.store.close())
-    await step('KNOWLEDGE', 'embedder close', () => boot?.knowledge?.embedder?.close?.())
     await step('AGY', 'mcp config cleanup', () => { if (boot?.registry?.has?.('agy')) deps.removeAgyGlobalMcp?.() })
     try { deps.closeDb() } catch (err) { console.error('db close failed:', err) }
     deps.releaseLock()

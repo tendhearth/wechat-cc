@@ -27,7 +27,7 @@ export class SubsystemSupervisor {
    * 其余 ⇒ ok,原样返回。同名重复 start 是编程错误,直接 throw。
    */
   async start<T>(name: string, fn: () => Promise<T> | T): Promise<T | undefined> {
-    if (this.entries.has(name)) {
+    if (this.entries.has(name) || this.adopted.some(g => g.status().some(x => x.name === name))) {
       throw new Error(`SubsystemSupervisor: duplicate start('${name}')`)
     }
     const sinceIso = new Date().toISOString()
@@ -49,6 +49,20 @@ export class SubsystemSupervisor {
     }
   }
 
-  statuses(): SubsystemStatus[] { return [...this.entries.values()] }
+  /**
+   * 收养一组 DaemonModule(第三批 3b,bootstrap/module-group.ts):它们的状态一起进 /v1/health.subsystems,
+   * 而且是**活的**(每次现读,不是收养那一刻的快照)。跟已有的名字重名 ⇒ throw(编程错误,同 start)。
+   */
+  adopt(group: { status(): SubsystemStatus[] }): void {
+    for (const s of group.status()) {
+      if (this.entries.has(s.name) || this.adopted.some(g => g.status().some(x => x.name === s.name))) {
+        throw new Error(`SubsystemSupervisor: duplicate subsystem '${s.name}' (adopted module group)`)
+      }
+    }
+    this.adopted.push(group)
+  }
+  private readonly adopted: Array<{ status(): SubsystemStatus[] }> = []
+
+  statuses(): SubsystemStatus[] { return [...this.entries.values(), ...this.adopted.flatMap(g => g.status())] }
   degraded(): SubsystemStatus[] { return this.statuses().filter(s => s.state === 'degraded') }
 }

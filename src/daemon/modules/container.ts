@@ -17,6 +17,9 @@
  *    只要不再是 ok ⇒ 下游跟着上游的状态,并停掉它 init 时登记的 own;没拿到的 wants 不算,它本来就没在用。
  *  - interval 叠跑:上一次还没跑完(async 没结束)⇒ 这一拍跳过,不叠(慢的时候不会越积越多)。
  *  - stop:模块逆序、模块内逆登记序;单项 5 秒超时,失败只记一行不挡后面(LifecycleSet 的语义)。可重复调。
+ *    **开机途中也能停**(第 2 步,SIGTERM 落在开机途中):`createModules` 先拿到句柄、把 stopAll 交给收尾清单,
+ *    再 `start()`。start 途中调 stopAll ⇒ 下一个模块边界就不再往下 init / start,等手上那一步落定(最多一个
+ *    停止超时),再停掉已经起了的。
  *
  * 状态形状沿用 SubsystemStatus(/v1/health.subsystems 读的就是它)。
  */
@@ -107,10 +110,22 @@ export function orderModules(mods: readonly DaemonModule[]): DaemonModule[] {
   return out
 }
 
-export async function startModules(
-  mods: readonly DaemonModule[],
-  opts: { log: (tag: string, line: string) => void; timers?: ModuleTimers; now?: () => number; stopTimeoutMs?: number },
-): Promise<StartedModules> {
+export interface ModuleGroup extends StartedModules {
+  /** init 段 + start 段。只能调一次。途中被 stopAll ⇒ 停在下一个模块边界,正常返回(不抛)。 */
+  start(): Promise<void>
+}
+
+type ModuleOpts = { log: (tag: string, line: string) => void; timers?: ModuleTimers; now?: () => number; stopTimeoutMs?: number }
+
+/** 建好、起完再返回(没有开机途中要停的场景时用,比如测试)。 */
+export async function startModules(mods: readonly DaemonModule[], opts: ModuleOpts): Promise<StartedModules> {
+  const group = createModules(mods, opts)
+  await group.start()
+  return group
+}
+
+/** 先拿句柄(好把 stopAll 交给收尾清单),再 start()。 */
+export function createModules(mods: readonly DaemonModule[], opts: ModuleOpts): ModuleGroup {
   const timers: ModuleTimers = opts.timers ?? {
     setInterval: (fn, ms) => { const h = setInterval(fn, ms); (h as { unref?: () => void }).unref?.(); return h },
     clearInterval: (h) => clearInterval(h as ReturnType<typeof setInterval>),
@@ -121,6 +136,11 @@ export async function startModules(
   const ordered = orderModules(mods)
   const slots = new Map<string, Slot>()
   let phase: 'init' | 'start' | 'running' | 'stopped' = 'init'
+  /** 开机途中有人要停:init / start 循环在下一个模块边界退出。 */
+  let stopRequested = false
+  let starting: Promise<void> | null = null
+  /** 读当前阶段(跨 await 时 TS 会按旧值收窄,这里要的是真值)。 */
+  const stopped = (): boolean => phase === 'stopped'
 
   const stopOne = async (slot: Slot, r: Reg): Promise<void> => {
     if (r.kind === 'onStart') return
@@ -153,104 +173,121 @@ export async function startModules(
     slot.regs = []
   }
 
-  // —— init 段 ——
-  for (const mod of ordered) {
-    const slot: Slot = { mod, status: { name: mod.name, state: 'ok', sinceIso: iso() }, regs: [], started: [], took: new Set() }
-    slots.set(mod.name, slot)
-    if (mod.enabled && !mod.enabled()) { slot.status = { name: mod.name, state: 'off', sinceIso: iso() }; continue }
-    const blocker = (mod.needs ?? []).map(n => slots.get(n)!).find(s => s.status.state !== 'ok')
-    if (blocker) {
-      slot.status = { name: mod.name, state: blocker.status.state, ...(blocker.status.state === 'degraded' ? { error: `upstream ${blocker.mod.name} not running` } : {}), sinceIso: iso() }
-      opts.log('MODULES', `${mod.name} ${blocker.status.state}: upstream ${blocker.mod.name} is ${blocker.status.state}`)
-      continue
-    }
-    const needs = new Set(mod.needs ?? []), wants = new Set(mod.wants ?? []), lazies = new Set(mod.lazy ?? [])
-    const ctx: ModuleCtx = {
-      get: <T>(n: string): T => {
-        if (!needs.has(n)) throw new Error(`modules: '${mod.name}' called ctx.get('${n}') but '${n}' is not in its needs`)
-        return slots.get(n)!.value as T
-      },
-      maybe: <T>(n: string): T | null => {
-        if (!wants.has(n)) throw new Error(`modules: '${mod.name}' called ctx.maybe('${n}') but '${n}' is not in its wants`)
-        const s = slots.get(n)!
-        if (s.status.state !== 'ok') return null
-        slot.took.add(n)
-        return s.value as T
-      },
-      lazy: <T>(n: string): (() => T) => {
-        if (!lazies.has(n)) throw new Error(`modules: '${mod.name}' called ctx.lazy('${n}') but '${n}' is not in its lazy`)
-        return () => {
-          if (phase === 'init') throw new Error(`modules: lazy('${n}') used by '${mod.name}' before start — only start-phase code may touch a lazy dependency`)
-          const s = slots.get(n)
-          if (!s || s.status.state !== 'ok') throw new Error(`modules: lazy('${n}') used by '${mod.name}' but '${n}' is ${s?.status.state ?? 'missing'}`)
-          return s.value as T
-        }
-      },
-      interval: (name, ms, fn) => { slot.regs.push({ kind: 'interval', name, ms, fn }) },
-      onStart: (name, fn) => { slot.regs.push({ kind: 'onStart', name, fn }) },
-      own: (name, stop) => { slot.regs.push({ kind: 'own', name, stop }) },
-      log: (line) => opts.log('MODULES', `${mod.name}: ${line}`),
-    }
-    try {
-      slot.value = await mod.init(ctx)
-    } catch (err) {
-      if (mod.optional) { await degrade(slot, err, 'init'); continue }
-      opts.log('MODULES', `${mod.name} failed at init (required): ${errMsg(err)}`)
-      await stopAllSlots()
-      phase = 'stopped'
-      throw err
-    }
-  }
-
-  // —— start 段 ——
-  phase = 'start'
-  for (const mod of ordered) {
-    const slot = slots.get(mod.name)!
-    if (slot.status.state !== 'ok') continue
-    // 上游在 start 段才坏了 ⇒ 我手里拿着的是一个停了的上游:跟着它,停掉我 init 时登记的(9d 评审 #542)
-    const upstream = [...(mod.needs ?? []), ...slot.took].map(n => slots.get(n)!).find(s => s.status.state !== 'ok')
-    if (upstream) {
-      opts.log('MODULES', `${mod.name} not started: upstream ${upstream.mod.name} became ${upstream.status.state} during start`)
-      await stopSlot(slot)
-      slot.regs = []
-      slot.status = { name: mod.name, state: upstream.status.state, ...(upstream.status.state === 'degraded' ? { error: `upstream ${upstream.mod.name} not running` } : {}), sinceIso: iso() }
-      continue
-    }
-    try {
-      for (const r of slot.regs) {
-        if (r.kind === 'interval') {
-          r.handle = timers.setInterval(() => {
-            if (r.busy) return   // 上一次还没跑完 ⇒ 这一拍跳过,不叠
-            r.busy = true
-            const done = (): void => { r.busy = false }
-            try {
-              void Promise.resolve(r.fn())
-                .catch(err => opts.log('MODULES', `${mod.name}/${r.name} tick failed: ${errMsg(err)}`))
-                .finally(done)
-            } catch (err) { done(); opts.log('MODULES', `${mod.name}/${r.name} tick failed: ${errMsg(err)}`) }
-          }, r.ms)
-        } else if (r.kind === 'onStart') {
-          await r.fn()
-        }
+  async function run(): Promise<void> {
+    // —— init 段 ——
+    for (const mod of ordered) {
+      if (stopRequested) return
+      const slot: Slot = { mod, status: { name: mod.name, state: 'ok', sinceIso: iso() }, regs: [], started: [], took: new Set() }
+      slots.set(mod.name, slot)
+      if (mod.enabled && !mod.enabled()) { slot.status = { name: mod.name, state: 'off', sinceIso: iso() }; continue }
+      const blocker = (mod.needs ?? []).map(n => slots.get(n)!).find(s => s.status.state !== 'ok')
+      if (blocker) {
+        slot.status = { name: mod.name, state: blocker.status.state, ...(blocker.status.state === 'degraded' ? { error: `upstream ${blocker.mod.name} not running` } : {}), sinceIso: iso() }
+        opts.log('MODULES', `${mod.name} ${blocker.status.state}: upstream ${blocker.mod.name} is ${blocker.status.state}`)
+        continue
       }
-    } catch (err) {
-      if (mod.optional) { await degrade(slot, err, 'start'); continue }
-      opts.log('MODULES', `${mod.name} failed at start (required): ${errMsg(err)}`)
-      await stopAllSlots()
-      phase = 'stopped'
-      throw err
+      const needs = new Set(mod.needs ?? []), wants = new Set(mod.wants ?? []), lazies = new Set(mod.lazy ?? [])
+      const ctx: ModuleCtx = {
+        get: <T>(n: string): T => {
+          if (!needs.has(n)) throw new Error(`modules: '${mod.name}' called ctx.get('${n}') but '${n}' is not in its needs`)
+          return slots.get(n)!.value as T
+        },
+        maybe: <T>(n: string): T | null => {
+          if (!wants.has(n)) throw new Error(`modules: '${mod.name}' called ctx.maybe('${n}') but '${n}' is not in its wants`)
+          const s = slots.get(n)!
+          if (s.status.state !== 'ok') return null
+          slot.took.add(n)
+          return s.value as T
+        },
+        lazy: <T>(n: string): (() => T) => {
+          if (!lazies.has(n)) throw new Error(`modules: '${mod.name}' called ctx.lazy('${n}') but '${n}' is not in its lazy`)
+          return () => {
+            if (phase === 'init') throw new Error(`modules: lazy('${n}') used by '${mod.name}' before start — only start-phase code may touch a lazy dependency`)
+            const s = slots.get(n)
+            if (!s || s.status.state !== 'ok') throw new Error(`modules: lazy('${n}') used by '${mod.name}' but '${n}' is ${s?.status.state ?? 'missing'}`)
+            return s.value as T
+          }
+        },
+        interval: (name, ms, fn) => { slot.regs.push({ kind: 'interval', name, ms, fn }) },
+        onStart: (name, fn) => { slot.regs.push({ kind: 'onStart', name, fn }) },
+        own: (name, stop) => { slot.regs.push({ kind: 'own', name, stop }) },
+        log: (line) => opts.log('MODULES', `${mod.name}: ${line}`),
+      }
+      try {
+        slot.value = await mod.init(ctx)
+      } catch (err) {
+        if (mod.optional) { await degrade(slot, err, 'init'); continue }
+        opts.log('MODULES', `${mod.name} failed at init (required): ${errMsg(err)}`)
+        await stopAllSlots()
+        phase = 'stopped'
+        throw err
+      }
     }
+
+    // —— start 段 ——
+    phase = 'start'
+    for (const mod of ordered) {
+      if (stopRequested) return
+      const slot = slots.get(mod.name)!
+      if (slot.status.state !== 'ok') continue
+      // 上游在 start 段才坏了 ⇒ 我手里拿着的是一个停了的上游:跟着它,停掉我 init 时登记的(9d 评审 #542)
+      const upstream = [...(mod.needs ?? []), ...slot.took].map(n => slots.get(n)!).find(s => s.status.state !== 'ok')
+      if (upstream) {
+        opts.log('MODULES', `${mod.name} not started: upstream ${upstream.mod.name} became ${upstream.status.state} during start`)
+        await stopSlot(slot)
+        slot.regs = []
+        slot.status = { name: mod.name, state: upstream.status.state, ...(upstream.status.state === 'degraded' ? { error: `upstream ${upstream.mod.name} not running` } : {}), sinceIso: iso() }
+        continue
+      }
+      try {
+        for (const r of slot.regs) {
+          if (r.kind === 'interval') {
+            r.handle = timers.setInterval(() => {
+              if (r.busy) return   // 上一次还没跑完 ⇒ 这一拍跳过,不叠
+              r.busy = true
+              const done = (): void => { r.busy = false }
+              try {
+                void Promise.resolve(r.fn())
+                  .catch(err => opts.log('MODULES', `${mod.name}/${r.name} tick failed: ${errMsg(err)}`))
+                  .finally(done)
+              } catch (err) { done(); opts.log('MODULES', `${mod.name}/${r.name} tick failed: ${errMsg(err)}`) }
+            }, r.ms)
+          } else if (r.kind === 'onStart') {
+            await r.fn()
+          }
+        }
+      } catch (err) {
+        if (mod.optional) { await degrade(slot, err, 'start'); continue }
+        opts.log('MODULES', `${mod.name} failed at start (required): ${errMsg(err)}`)
+        await stopAllSlots()
+        phase = 'stopped'
+        throw err
+      }
+    }
+    if (!stopRequested) phase = 'running'
   }
-  phase = 'running'
 
   return {
-    status: () => ordered.map(m => ({ ...slots.get(m.name)!.status })),
+    start: () => {
+      if (starting) throw new Error('modules: start() called twice')
+      starting = run()
+      return starting
+    },
+    status: () => ordered.map(m => ({ ...(slots.get(m.name)?.status ?? { name: m.name, state: 'off' as const, sinceIso: iso() }) })),
     provided: <T>(name: string): T | undefined => {
       const s = slots.get(name)
       return s && s.status.state === 'ok' ? (s.value as T) : undefined
     },
     stopAll: async () => {
       if (phase === 'stopped') return
+      stopRequested = true
+      // 开机途中:等手上那一步落定(最多一个停止超时),它可能正在登记 own
+      if (starting) {
+        let t: ReturnType<typeof setTimeout> | undefined
+        await Promise.race([starting.catch(() => {}), new Promise<void>(r => { t = setTimeout(r, stopTimeoutMs) })])
+        if (t) clearTimeout(t)
+      }
+      if (stopped()) return   // start 自己失败时已经全停过
       phase = 'stopped'
       await stopAllSlots()
     },

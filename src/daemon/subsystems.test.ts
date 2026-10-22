@@ -44,3 +44,23 @@ describe('SubsystemSupervisor', () => {
     await expect(sup.start('dup', () => 2)).rejects.toThrow(/duplicate/)
   })
 })
+
+describe('adopt:一组 DaemonModule 的状态进 health.subsystems(第三批 3b)', () => {
+  it('是活的:收养之后组里的状态变了,statuses() 读到的是新的', () => {
+    const sup = new SubsystemSupervisor(() => {})
+    let state: 'off' | 'ok' | 'degraded' = 'off'
+    sup.adopt({ status: () => [{ name: 'yi', state, sinceIso: 't' }] })
+    expect(sup.statuses().map(s => s.state)).toEqual(['off'])
+    state = 'degraded'
+    expect(sup.degraded().map(s => s.name)).toEqual(['yi'])
+  })
+  it('跟 start 过的、跟别的组重名 ⇒ throw(编程错误)', async () => {
+    const sup = new SubsystemSupervisor(() => {})
+    await sup.start('knowledge', () => 1)
+    expect(() => sup.adopt({ status: () => [{ name: 'knowledge', state: 'ok', sinceIso: 't' }] })).toThrow(/duplicate/)
+    sup.adopt({ status: () => [{ name: 'yi', state: 'ok', sinceIso: 't' }] })
+    expect(() => sup.adopt({ status: () => [{ name: 'yi', state: 'ok', sinceIso: 't' }] })).toThrow(/duplicate/)
+
+    await expect(sup.start('yi', () => 1)).rejects.toThrow(/duplicate/)
+  })
+})

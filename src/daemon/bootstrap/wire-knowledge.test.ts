@@ -27,9 +27,15 @@ describe('wireKnowledge', () => {
       expect(k?.embedder).toBeUndefined()
       expect(k?.embedQuery).toBeUndefined()
       expect(state(ctx.sup)).toBe('ok')
-      // 适配定时器登记在收尾清单里(复查 10-21:以前关机后还对着关掉的 store 跑)
-      expect(ctx.teardown.steps().map(t => `${t.tag}:${t.what}`)).toContain('KNOWLEDGE:adapter timer')
-    } finally { for (const t of ctx.teardown.steps()) await t.stop(); k?.store.close() }
+      // 第三批 3b 第 2 步:知识库是一个模块,收尾清单里登记的是这一组的 stopAll(先登记、再起)。
+      // 跑一遍收尾 ⇒ 适配定时器停掉、store 关掉,而且只关一次(以前 store 由 runtime/shutdown 经 boot() 关)
+      expect(ctx.teardown.steps().map(t => `${t.tag}:${t.what}`)).toEqual(['MODULES:knowledge group'])
+      const realClose = k!.store.close.bind(k!.store)
+      let closes = 0
+      k!.store.close = () => { closes++; realClose() }
+      for (const t of ctx.teardown.steps()) await t.stop()
+      expect(closes).toBe(1)
+    } catch (err) { k?.store.close(); throw err }
   })
   it('store 打不开 ⇒ degraded,不外抛', async () => {
     const ctx = base()

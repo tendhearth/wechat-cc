@@ -57,7 +57,8 @@ describe('wireYi', () => {
     const teardown = makeTeardown()
     const hub = await wireYi({ sup, log: () => {}, teardown, configuredAgent: { yi_hub_listen: { host: '127.0.0.1', port } } as any }, parts)
     expect(hub).toBeDefined()
-    expect(teardown.steps().map(t => `${t.tag}:${t.what}`)).toEqual(['YI:hub server'])
+    // 第三批 3b 第 2 步:yi 是一个模块,收尾清单里登记的是整组的 stopAll(先登记、再起);里面再按逆序停
+    expect(teardown.steps().map(t => `${t.tag}:${t.what}`)).toEqual(['MODULES:yi group'])
     for (const t of teardown.steps()) await t.stop()
     const again = createServer()
     await expect(new Promise<void>((resolve, reject) => { again.once('error', reject); again.listen(port, '127.0.0.1', () => resolve()) })).resolves.toBeUndefined()
@@ -66,7 +67,8 @@ describe('wireYi', () => {
   it('只配 hand ⇒ 登记停出站连接', async () => {
     const teardown = makeTeardown()
     await wireYi({ sup: new SubsystemSupervisor(() => {}), log: () => {}, teardown, configuredAgent: { yi_brain: { url: 'ws://127.0.0.1:1', handId: 'h', authToken: 't' } } as any }, parts)
-    expect(teardown.steps().map(t => `${t.tag}:${t.what}`)).toEqual(['YI:hand client'])
+    // 第三批 3b 第 2 步:yi 是一个模块,收尾清单里登记的是整组的 stopAll(先登记、再起);里面再按逆序停
+    expect(teardown.steps().map(t => `${t.tag}:${t.what}`)).toEqual(['MODULES:yi group'])
     for (const t of teardown.steps()) await t.stop()
   })
 })
