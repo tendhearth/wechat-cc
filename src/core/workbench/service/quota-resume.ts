@@ -4,10 +4,11 @@
  * 只试一次:没接上就写事件 + 告诉主人一句,不重试。排程存 quota-resume.json(重启读回;错过 6 小时以上不补)。
  */
 import { createHash } from 'node:crypto'
-import { existsSync, mkdirSync, renameSync, writeFileSync } from 'node:fs'
+import { existsSync } from 'node:fs'
 import { join } from 'node:path'
 import { readJsonFile } from '../../../lib/read-json-file'
 import type { ServiceCtx } from './ctx'
+import { writeFileAtomic } from '../../../lib/json-file'
 
 export const QUOTA_RESUME_FILE = 'quota-resume.json'
 export const QUOTA_RESUME_MARGIN_MS = 2 * 60_000
@@ -38,7 +39,7 @@ export function makeQuotaResumeDomain(ctx: ServiceCtx, opts: QuotaResumeOptions 
   const timers = new Map<string, Timer>()
   const read = (): Record<string, Entry> => { try { return existsSync(file) ? readJsonFile<Record<string, Entry>>(file) ?? {} : {} } catch { return {} } }
   const write = (all: Record<string, Entry>) => {
-    try { mkdirSync(ctx.stateDir, { recursive: true }); const tmp = `${file}.tmp-${process.pid}`; writeFileSync(tmp, JSON.stringify(all) + '\n'); renameSync(tmp, file) }
+    try { writeFileAtomic(file, JSON.stringify(all) + '\n') }
     catch (err) { ctx.log?.('WORKBENCH_QUOTA_RESUME', `write failed: ${err instanceof Error ? err.message : err}`) }
   }
   const drop = (id: string) => { const all = read(); if (all[id]) { delete all[id]; write(all) } timers.get(id)?.cancel(); timers.delete(id) }

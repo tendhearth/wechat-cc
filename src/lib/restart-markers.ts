@@ -20,9 +20,10 @@
  *
  * 停机时长用上一个进程最后一次心跳(server.heartbeat,30s 一跳)估。
  */
-import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdirSync, readFileSync, rmSync } from 'node:fs'
 import { join } from 'node:path'
 import { readJsonFile } from './read-json-file'
+import { writeFileAtomic } from './json-file'
 
 export const PLANNED_RESTART_FILE = 'planned-restart.json'
 export const CLEAN_SHUTDOWN_FILE = 'clean-shutdown.json'
@@ -52,7 +53,7 @@ export interface PreviousRunEvidence {
 function writeMark(stateDir: string, file: string, body: unknown): void {
   try {
     mkdirSync(stateDir, { recursive: true, mode: 0o700 })
-    writeFileSync(join(stateDir, file), JSON.stringify(body) + '\n', { mode: 0o600 })
+    writeFileAtomic(join(stateDir, file), JSON.stringify(body) + '\n')
   } catch { /* best effort —— 写不成最多是多一次判断成「意外」,不能挡住重启 */ }
 }
 

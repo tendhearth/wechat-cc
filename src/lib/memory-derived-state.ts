@@ -1,8 +1,9 @@
 /** Per-chat generation fence. Raw generated files remain on disk for review. */
 import { randomUUID } from 'node:crypto'
-import { lstatSync, mkdirSync, renameSync, writeFileSync } from 'node:fs'
+import { lstatSync, mkdirSync } from 'node:fs'
 import { join } from 'node:path'
 import { readJsonFile } from './read-json-file'
+import { writeFileAtomic } from './json-file'
 
 type DerivedKind = 'overview' | 'profile'
 interface DerivedState { version: 1; revision: string; overview: string | null; profile: string | null }
@@ -28,9 +29,7 @@ function readState(root: string): DerivedState | null {
 function writeState(root: string, state: DerivedState): void {
   mkdirSync(root, { recursive: true, mode: 0o700 })
   const path = join(root, STATE_FILE)
-  const tmp = `${path}.tmp-${randomUUID()}`
-  writeFileSync(tmp, JSON.stringify(state), { encoding: 'utf8', mode: 0o600, flag: 'wx' })
-  renameSync(tmp, path)
+  writeFileAtomic(path, JSON.stringify(state))
 }
 
 export function readDerivedRevision(memoryRoot: string): string {

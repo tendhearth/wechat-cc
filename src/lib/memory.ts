@@ -7,7 +7,8 @@
  * MCP. The desktop GUI / CLI need to enumerate ACROSS users, so this layer
  * sits one level up. Path-traversal protection mirrors fs-api's logic.
  */
-import { existsSync, mkdirSync, readFileSync, readdirSync, renameSync, statSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdirSync, readFileSync, readdirSync, statSync } from 'node:fs'
+import { writeFileAtomic } from './json-file'
 import { dirname, join, relative, resolve } from 'node:path'
 import { isDerivedMemoryStale } from './memory-derived-state'
 
@@ -62,7 +63,7 @@ const PROFILE_FILENAME = '_profile.json'
 // Atomic write of a memory file. Body must be UTF-8 string (callers
 // decode base64 etc upstream). Mirrors the sandboxing of fs-api.ts:
 // .md only, ≤100KB, path-traversal blocked, parent dirs auto-created
-// inside the user root, atomic rename via .tmp-<pid>-<ts>.
+// inside the user root, atomic via lib/json-file(tmp 名以 . 开头,下面的列目录会跳过)。
 //
 // Why this lives at top level (vs fs-api): the per-user MemoryFS in
 // src/daemon/memory/fs-api.ts is bound to a single rootDir at construction
@@ -78,9 +79,7 @@ export function writeMemoryFile(stateDir: string, userId: string, relPath: strin
   }
   const created = !existsSync(target)
   mkdirSync(dirname(target), { recursive: true, mode: 0o700 })
-  const tmp = `${target}.tmp-${process.pid}-${Date.now()}`
-  writeFileSync(tmp, body, { mode: 0o600 })
-  renameSync(tmp, target)
+  writeFileAtomic(target, body)
   return { bytesWritten: bytes, created }
 }
 
@@ -102,9 +101,7 @@ export function writeMemoryProfileFile(stateDir: string, userId: string, body: s
   }
   const created = !existsSync(target)
   mkdirSync(dirname(target), { recursive: true, mode: 0o700 })
-  const tmp = `${target}.tmp-${process.pid}-${Date.now()}`
-  writeFileSync(tmp, body, { mode: 0o600 })
-  renameSync(tmp, target)
+  writeFileAtomic(target, body)
   return { bytesWritten: bytes, created }
 }
 

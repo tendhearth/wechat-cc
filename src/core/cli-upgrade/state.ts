@@ -5,10 +5,10 @@
  * 坏版本名单(known-bad:升级后自检没过、已退回的版本;更新的版本出来之前不再升到它)、
  * 当前版本的自检状态、已经通知过主人的事(同一件事只说一次)。
  */
-import { mkdirSync, renameSync, writeFileSync } from 'node:fs'
 import { readJsonFile } from '../../lib/read-json-file'
 import { join } from 'node:path'
 import { CLI_IDS, type CliId } from './specs'
+import { writeJsonAtomic } from '../../lib/json-file'
 
 export type VerifyState = 'ok' | 'failed' | 'unverified' | 'unknown'
 export type UpgradeSource = 'scheduled' | 'reactive' | 'manual' | 'external'
@@ -94,10 +94,7 @@ export function makeFileStateStore(stateDir: string): StateStore {
       try { return normalize(readJsonFile(path)) } catch { return normalize({}) }
     },
     save(s) {
-      mkdirSync(stateDir, { recursive: true, mode: 0o700 })
-      const tmp = `${path}.tmp`
-      writeFileSync(tmp, JSON.stringify(s, null, 2) + '\n', { mode: 0o600 })
-      renameSync(tmp, path)
+      writeJsonAtomic(path, s)
     },
   }
 }

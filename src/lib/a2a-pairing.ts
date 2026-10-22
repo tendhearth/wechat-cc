@@ -11,9 +11,10 @@
  * pending-invite file the hand's /a2a/pair verifies against. No network here.
  */
 import { randomBytes } from 'node:crypto'
-import { existsSync, rmSync, writeFileSync } from 'node:fs'
+import { existsSync, rmSync } from 'node:fs'
 import { join } from 'node:path'
 import { readJsonFile } from './read-json-file'
+import { writeFileAtomic } from './json-file'
 
 const MAGIC = 'WCCP1'
 const PENDING_FILE = 'a2a-pair-pending.json'
@@ -60,7 +61,7 @@ export function mintInvite(stateDir: string, opts: { handUrl: string; nowMs: num
   if (!opts.handUrl) throw new Error('handUrl required (enable A2A on a reachable host first)')
   const secret = randomBytes(24).toString('base64url')
   const expiresMs = opts.nowMs + INVITE_TTL_MS
-  writeFileSync(pendingPath(stateDir), JSON.stringify({ secret, expiresMs }), { mode: 0o600 })
+  writeFileAtomic(pendingPath(stateDir), JSON.stringify({ secret, expiresMs }))
   const payload: PairCode = { handUrl: opts.handUrl, secret, ...(opts.handName ? { handName: opts.handName } : {}) }
   const code = MAGIC + Buffer.from(JSON.stringify(payload), 'utf8').toString('base64url')
   return { code, expiresMs }
