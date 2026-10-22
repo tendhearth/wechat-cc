@@ -162,7 +162,9 @@ export function wireWorkbench(opts: {
   const gatedUsage=<T>(target:import('../../lib/network-gate').CallTarget,fn:()=>Promise<T|null>)=>async():Promise<T|null>=>!(await decideCall(opts.networkGate,target)).allowed?null:fn()
   // 订阅额度监视器:Codex 问 app-server,Claude 用 Claude Code 自己的 OAuth 凭据问 usage 接口(subscription-usage.ts)。
   const usageMonitor=makeUsageMonitor({sources:{
-    ...(opts.boot.registry.has('codex')&&findCodexBinary()?{codex:gatedUsage({provider:'codex',baseUrl:'https://chatgpt.com',purpose:'usage',exact:true},async()=>{const r=await readCodexRateLimits({codexPathOverride:findCodexBinary()!});return r?parseCodexRateLimits(r,Date.now()):null})}:{}),
+    // 每次查都现判 codex 在不在(开机没探到、后来重探成功的,不重启也有额度)。
+    codex:async()=>{const bin=opts.boot.registry.has('codex')?findCodexBinary():null;if(!bin)return null
+      return gatedUsage({provider:'codex',baseUrl:'https://chatgpt.com',purpose:'usage',exact:true},async()=>{const r=await readCodexRateLimits({codexPathOverride:bin});return r?parseCodexRateLimits(r,Date.now()):null})()},
     ...(opts.boot.registry.has('claude')?{claude:gatedUsage({provider:'claude',baseUrl:'https://api.anthropic.com',purpose:'usage'},async()=>{
       const cred=readClaudeOAuthToken({platform:process.platform,keychain:()=>spawnSync(['security','find-generic-password','-s','Claude Code-credentials','-w']).stdout.toString(),readFile:()=>readFileSync(join(homedir(),'.claude','.credentials.json'),'utf8'),now:Date.now})
       if(!cred)return null
@@ -175,29 +177,49 @@ export function wireWorkbench(opts: {
   const ownerChatId=() => resolveAdminChatId(loadAccess(),loadCompanionConfig(opts.stateDir),null)
   const registry=createProviderRegistry(opts.networkGate?{networkGate:opts.networkGate}:undefined)
   const agentConfig=loadAgentConfig(opts.stateDir)
-  const claude=opts.boot.registry.get('claude')
-  if (claude) registry.register('claude',createClaudeAgentProvider({
-    sdkOptionsForProject(alias,path,tier,chatId,env,instructions,context) {
-      const base=opts.boot.sdkOptionsForProject(alias,path,tier,chatId,env,instructions)
-      const native=readNativeClaudeTools(path)
-      const notice=claudeNativeCapabilityNotice(native)
-      if(notice)context?.reportNotice?.(notice)
-      const permit=makeWorkbenchClaudeCanUseTool(context?.requestPermission,context?.requestUserInput,Object.keys(native.servers))
-      return workbenchClaudeOptions(base,instructions ?? '',permit,native)
+  // 工作台跟着对话侧的登记走(3c 第 1 步,2026-10-22):开机时已登记的先建,之后登记的(探测失败后重探成功、
+  // CLI 升级后 reprobe)由 onRegister 补上 —— 以前只在这里抄一次,晚到的执行者要等重启才进「一起做」。
+  // 一家只建一次(registry 遇到重复 id 会抛);只增不减(稿 §4.1 ②)。
+  const nativeHistory:Partial<Record<'claude'|'codex',ReturnType<typeof createClaudeHistoryReader>>>={claude:createClaudeHistoryReader()}
+  const BUILD:Partial<Record<string,()=>void>>={
+    claude:()=>{
+      const claude=opts.boot.registry.get('claude')
+      if (claude) registry.register('claude',createClaudeAgentProvider({
+        sdkOptionsForProject(alias,path,tier,chatId,env,instructions,context) {
+          const base=opts.boot.sdkOptionsForProject(alias,path,tier,chatId,env,instructions)
+          const native=readNativeClaudeTools(path)
+          const notice=claudeNativeCapabilityNotice(native)
+          if(notice)context?.reportNotice?.(notice)
+          const permit=makeWorkbenchClaudeCanUseTool(context?.requestPermission,context?.requestUserInput,Object.keys(native.servers))
+          return workbenchClaudeOptions(base,instructions ?? '',permit,native)
+        },
+      }),{...claude.opts,workbench:MANAGED_NATIVE_CAPABILITIES})
     },
-  }),{...claude.opts,workbench:MANAGED_NATIVE_CAPABILITIES})
-  const codex=opts.boot.registry.get('codex')
-  const binary=codex ? findCodexBinary() : null
-  if (codex && binary) registry.register('codex',createWorkbenchCodexProvider({
-    codexPathOverride:binary,
-    model:modelForProvider(loadAgentConfig(opts.stateDir),'codex'),
-    // The adapter discovers native tools, excludes companion services, and
-    // routes admitted tool calls through this task's approval requests.
-  }),{...codex.opts,workbench:MANAGED_NATIVE_CAPABILITIES})
-  if(opts.boot.registry.has('openai'))registerWorkbenchApi(registry,opts.db,opts.stateDir,agentConfig,process.env)
-  registerAcpExecutors(registry,opts.boot.registry,agentConfig,{log:opts.log})
+    codex:()=>{
+      const codex=opts.boot.registry.get('codex')
+      const binary=codex ? findCodexBinary() : null
+      if (!codex || !binary) return
+      registry.register('codex',createWorkbenchCodexProvider({
+        codexPathOverride:binary,
+        model:modelForProvider(loadAgentConfig(opts.stateDir),'codex'),
+        // The adapter discovers native tools, excludes companion services, and
+        // routes admitted tool calls through this task's approval requests.
+      }),{...codex.opts,workbench:MANAGED_NATIVE_CAPABILITIES})
+      nativeHistory.codex=createCodexHistoryReader({codexPathOverride:binary})
+    },
+    openai:()=>{ if(opts.boot.registry.has('openai'))registerWorkbenchApi(registry,opts.db,opts.stateDir,loadAgentConfig(opts.stateDir),process.env) },
+    cursor:()=>{ registerAcpExecutors(registry,opts.boot.registry,loadAgentConfig(opts.stateDir),{log:opts.log}) },
+    agy:()=>{ registerUnattendedExecutors(registry,opts.boot.registry) },
+  }
+  const follow=(id:string)=>{
+    const build=BUILD[id]
+    if(!build||registry.has(id))return
+    try{build()}catch(err){opts.log('WORKBENCH',`${id}: 接不上工作台 — ${err instanceof Error?err.message:String(err)}`)}
+  }
+  for(const id of ['claude','codex','openai','cursor'])follow(id)
   registerCustomAcpExecutors(registry,agentConfig.acp_agents,{log:opts.log})
-  registerUnattendedExecutors(registry,opts.boot.registry)
+  follow('agy')
+  opts.boot.registry.onRegister(id=>{ follow(id); if(registry.has(id))opts.log('WORKBENCH',`${id}: 晚到的执行者已进工作台`) })
   const store=makeWorkbenchStore(opts.db)
   // 回报投递(task-3,2026-09-23):两样都要有才接得上——没有 matters 就没法建/追出生地,
   // 没有 reportOutbox 就没地方写;任一个缺,整条功能不存在(降级路径,同 matters 的老接线约定)。
@@ -254,7 +276,8 @@ export function wireWorkbench(opts: {
     ...(opts.requestReview?{requestReview:opts.requestReview}:{}),
     ...(opts.permissionGate?{permissionDecide:(ask:import('../../core/permission-rules/types').AskSource)=>opts.permissionGate!.decide(ask)}:{}),
     executionConflict:opts.executionConflict,
-    nativeHistory:{claude:createClaudeHistoryReader(),...(binary?{codex:createCodexHistoryReader({codexPathOverride:binary})}:{})},
+    // 同一个对象:codex 晚到时 BUILD.codex 往里补,服务侧读的是这份引用。
+    nativeHistory,
     store,registry,stateDir:opts.stateDir,ownerChatId,matters:opts.matters,reports,recollect,log:opts.log,
     usage:(id)=>id==='claude'||id==='codex'?usageMonitor.cached(id):null,
     registeredProjects:()=>listProjects(join(opts.stateDir,'projects.json')),

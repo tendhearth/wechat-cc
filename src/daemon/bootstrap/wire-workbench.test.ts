@@ -187,6 +187,42 @@ it('wires boot-discovered agy into the live workbench service with unattended pe
   }
 })
 
+// 3c 第 1 步(2026-10-22):以前工作台在接线时把 boot registry 抄一次,开机没探到、后来重探成功的执行者
+// 要等重启才进「一起做」。现在跟着 onRegister 走。
+it('an executor registered on the boot registry after wiring (late probe success) shows up in the workbench without a restart', () => {
+  const root = realpathSync(mkdtempSync(join(tmpdir(), 'wire-workbench-late-'))); acknowledgeDirs.push(root)
+  const stateDir = join(root, 'state')
+  saveAgentConfig(stateDir, { provider: 'claude', dangerouslySkipPermissions: true, autoStart: true, closeStopsDaemon: false, workbench_unattended_ack_at: 999 })
+  const db = openDb({ path: join(stateDir, 'state.db') })
+  const bootRegistry = createProviderRegistry()
+  const boot = {
+    registry: bootRegistry,
+    sdkOptionsForProject: (() => ({})) as unknown as Bootstrap['sdkOptionsForProject'],
+    defaultProviderId: 'claude',
+    holdBusy: (_label: string) => () => {},
+  } as unknown as Bootstrap
+  const lines: string[] = []
+  try {
+    const service = wireWorkbench({
+      db, stateDir, boot,
+      internalApi: { mintSessionToken: () => 'token', invalidateSession: () => {} },
+      askUser: async () => 'allow',
+      log: (_t, l) => { lines.push(l) },
+    })
+    expect(service.list().providers.find(p => p.id === 'agy')).toBeUndefined()
+    bootRegistry.register('agy', fakeProvider(), { displayName: 'Gemini (agy)', canResume: () => true })
+    const agy = service.list().providers.filter(p => p.id === 'agy')
+    expect(agy).toHaveLength(1)
+    expect(agy[0]!.capabilities.permissions).toBe('unattended')
+    expect(lines.some(l => l.includes('agy') && l.includes('晚到'))).toBe(true)
+    // 工作台不认的 id(gemini 不进工作台)登记了也不出错、不出现
+    bootRegistry.register('gemini', fakeProvider(), { displayName: 'Gemini', canResume: () => false })
+    expect(service.list().providers.find(p => p.id === 'gemini')).toBeUndefined()
+  } finally {
+    db.close()
+  }
+})
+
 /**
  * 端到端接线(task-3,2026-09-23):matters + reportOutbox 一起传给
  * wireWorkbench 时,「一件事」结算那一拍应该真的把回报写进

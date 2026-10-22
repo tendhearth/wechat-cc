@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest'
+import { describe, expect, it, vi } from 'vitest'
 import { createProviderRegistry, DEFAULT_CHEAP_EVAL_BUDGET_MS, isAuthError } from './provider-registry'
 import { errorWithProviderCode } from '../lib/provider-error-code'
 import { makeFakeSession } from './test-helpers'
@@ -389,5 +389,29 @@ describe('isAuthError — 冷却时长按 provider 码判(arch backlog #4 第 2 
   it('无码回退到 `auth_failed:` 前缀(旧路径不变);agy 歧义句不算', () => {
     expect(isAuthError(new Error('auth_failed: Not logged in'))).toBe(true)
     expect(isAuthError(new Error('agy result status=ERROR: authentication failed or timed out'))).toBe(false)
+  })
+})
+
+// 3c 第 1 步(2026-10-22):下游靠 onRegister 跟上晚到的执行者
+describe('onRegister', () => {
+  const p = { async spawn() { throw new Error('unused') } } as unknown as AgentProvider
+  it('fires after the entry is in place, once per registration, and stops after unsubscribe', () => {
+    const reg = createProviderRegistry()
+    const seen: Array<[string, boolean]> = []
+    const off = reg.onRegister(id => { seen.push([id, reg.has(id)]) })
+    reg.register('codex', p, { displayName: 'Codex', canResume: () => true })
+    expect(seen).toEqual([['codex', true]])
+    off()
+    reg.register('agy', p, { displayName: 'agy', canResume: () => true })
+    expect(seen).toEqual([['codex', true]])
+  })
+  it('a throwing listener does not undo the registration or starve other listeners', () => {
+    const reg = createProviderRegistry()
+    const after = vi.fn()
+    reg.onRegister(() => { throw new Error('downstream broke') })
+    reg.onRegister(after)
+    expect(() => reg.register('codex', p, { displayName: 'Codex', canResume: () => true })).not.toThrow()
+    expect(reg.has('codex')).toBe(true)
+    expect(after).toHaveBeenCalledWith('codex')
   })
 })
