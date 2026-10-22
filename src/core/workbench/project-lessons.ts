@@ -3,11 +3,12 @@
  * 不管哪家执行者来做这个项目都照着做 —— 各家自己的记忆文件换一家就丢,「不绑一家」要求经验放在 CC 这边。
  * v1 只存在 daemon(project-lessons.json,按源项目路径),不写进主人的仓库。
  */
-import { existsSync, mkdirSync, renameSync, writeFileSync } from 'node:fs'
+import { existsSync } from 'node:fs'
 import { readJsonFile } from '../../lib/read-json-file'
 import { join } from 'node:path'
 import { randomBytes } from 'node:crypto'
 import type { WorkbenchStore } from './store'
+import { writeFileAtomic } from '../../lib/json-file'
 
 export const LESSONS_FILE = 'project-lessons.json'
 export const LESSONS_MAX = 10
@@ -31,7 +32,7 @@ export function makeProjectLessons(stateDir: string, now: () => number = Date.no
     if (!existsSync(file)) return {}
     try { const v = readJsonFile<unknown>(file); return v && typeof v === 'object' && !Array.isArray(v) ? v as All : {} } catch { return {} }
   }
-  const write = (all: All) => { mkdirSync(stateDir, { recursive: true }); const tmp = `${file}.tmp-${process.pid}`; writeFileSync(tmp, JSON.stringify(all, null, 1) + '\n'); renameSync(tmp, file) }
+  const write = (all: All) => { writeFileAtomic(file, JSON.stringify(all, null, 1) + '\n') }
   const norm = (t: string) => t.replace(/[ \t]+/g, ' ').trim()
   return {
     list(projectPath: string): Lesson[] { const v = read()[projectPath]; return Array.isArray(v) ? v.filter(l => l && typeof l.text === 'string') : [] },

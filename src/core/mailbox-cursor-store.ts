@@ -3,9 +3,9 @@
  * state-dir JSON file (0600, tmp-then-rename). Survives a daemon restart so the
  * poller resumes after the last acked item. See spec §3.3.
  */
-import { mkdirSync, renameSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { readJsonFile } from '../lib/read-json-file'
+import { writeJsonAtomic } from '../lib/json-file'
 
 export interface CursorStore { get(relay: string): number; set(relay: string, cursor: number): void }
 
@@ -18,10 +18,7 @@ export function makeCursorStore(stateDir: string): CursorStore {
     get(relay) { return read()[relay] ?? 0 },
     set(relay, cursor) {
       const all = read(); all[relay] = cursor
-      mkdirSync(stateDir, { recursive: true, mode: 0o700 })
-      const tmp = `${path}.tmp`
-      writeFileSync(tmp, JSON.stringify(all, null, 2) + '\n', { mode: 0o600 })
-      renameSync(tmp, path)
+      writeJsonAtomic(path, all)
     },
   }
 }

@@ -2,11 +2,12 @@
  * plugins-source — the owner's first-party plugins location, shared by the
  * daemon (src/daemon/plugins/paths.ts re-exports it) and `self deploy` (cli).
  */
-import { existsSync, mkdirSync, readdirSync, renameSync, statSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdirSync, readdirSync, statSync } from 'node:fs'
 import { dirname, join, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { readJsonFile } from './read-json-file'
 import { isCompiledBundle } from './runtime-info'
+import { writeJsonAtomic } from './json-file'
 
 export const MANIFEST_FILE = 'wechat-cc.plugin.json'
 
@@ -52,9 +53,7 @@ export function readPluginsSourcePointer(stateDir: string): string | null {
 export function writePluginsSourcePointer(stateDir: string, dir: string, plugins: string[] = pluginNamesIn(dir)): void {
   const p = pluginsSourcePointerPath(stateDir)
   mkdirSync(dirname(p), { recursive: true })
-  const tmp = `${p}.tmp`
-  writeFileSync(tmp, JSON.stringify({ dir, plugins }, null, 2) + '\n', { mode: 0o600 })
-  renameSync(tmp, p)
+  writeJsonAtomic(p, { dir, plugins })
 }
 
 /**

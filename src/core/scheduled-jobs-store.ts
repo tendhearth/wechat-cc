@@ -4,10 +4,11 @@
  *   scheduled-jobs-state.json  每个定时上次跑的结果(只有 runner 写)
  * 原子写;定时文件坏了 ⇒ 当没有定时并报错,任何写入都拒(不把主人手改了一半的东西冲掉)。
  */
-import { existsSync, renameSync, writeFileSync } from 'node:fs'
+import { existsSync } from 'node:fs'
 import { readJsonFile } from '../lib/read-json-file'
 import { join } from 'node:path'
 import type { JobSchedule, ScheduledJob } from './scheduled-jobs'
+import { writeJsonAtomic } from '../lib/json-file'
 
 export const JOBS_FILE = 'scheduled-jobs.json'
 export const JOBS_STATE_FILE = 'scheduled-jobs-state.json'
@@ -20,9 +21,7 @@ export interface JobRunState { lastRunDay: string | null; lastRunAt: string | nu
 const EMPTY_STATE: JobRunState = { lastRunDay: null, lastRunAt: null, lastStatus: null, failStreak: 0 }
 
 function atomicWrite(path: string, value: unknown): void {
-  const tmp = `${path}.tmp-${process.pid}`
-  writeFileSync(tmp, JSON.stringify(value, null, 2) + '\n', { mode: 0o600 })
-  renameSync(tmp, path)
+  writeJsonAtomic(path, value)
 }
 
 export function makeJobsStore(stateDir: string) {

@@ -10,9 +10,10 @@
  * Inner plaintext = {path, bearer, body}. See spec §3.2.
  */
 import { generateKeyPairSync, sign as edSign, createPrivateKey } from 'node:crypto'
-import { mkdirSync, readFileSync, renameSync, writeFileSync } from 'node:fs'
+import { readFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { generateKeypair, deriveSharedKey, sealLetter, openLetter } from './penpal-crypto'
+import { writeJsonAtomic } from '../lib/json-file'
 
 export interface Envelope { eph_pub: string; nonce: string; ct: string; tag: string }
 export interface EnvelopeInner { path: string; bearer: string; body: unknown }
@@ -54,10 +55,7 @@ export function loadMailboxIdentity(stateDir: string): MailboxIdentity {
       throw new Error(`loadMailboxIdentity: failed to read ${file}: ${err instanceof Error ? err.message : String(err)}`)
     }
     const k = generateMailboxIdentity()
-    mkdirSync(stateDir, { recursive: true, mode: 0o700 })
-    const tmp = `${file}.tmp`
-    writeFileSync(tmp, JSON.stringify(k, null, 2) + '\n', { mode: 0o600 })
-    renameSync(tmp, file)
+    writeJsonAtomic(file, k)
     return toIdentity(k)
   }
   // File is present — a parse/decode failure here is a corrupt key file, NOT

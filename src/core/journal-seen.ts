@@ -5,9 +5,9 @@
  * 和「没看过」是两个概念。水位 = 主人上次打开觅食台的时刻;之后新增的条目
  * 就是桌宠脚边包袱里的东西。
  */
-import { existsSync, mkdirSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { readJsonFile } from '../lib/read-json-file'
+import { writeJsonAtomic } from '../lib/json-file'
 
 const file = (stateDir: string) => join(stateDir, 'companion', 'journal-seen.json')
 
@@ -19,7 +19,5 @@ export function readJournalSeen(stateDir: string): string | null {
 }
 
 export function writeJournalSeen(stateDir: string, iso: string): void {
-  const dir = join(stateDir, 'companion')
-  if (!existsSync(dir)) mkdirSync(dir, { recursive: true })
-  writeFileSync(file(stateDir), JSON.stringify({ seenUntil: iso }, null, 2))
+  writeJsonAtomic(file(stateDir), { seenUntil: iso })
 }
