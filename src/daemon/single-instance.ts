@@ -56,6 +56,42 @@ export function acquireInstanceLock(pidPath: string, opts?: AcquireOpts): LockRe
   return { ok: true }
 }
 
+/** 撞上「正在收尾的上一个进程」时最多等多久(launchctl kickstart -k:旧进程还在停,新进程已经起来)。 */
+export const LOCK_WAIT_FOR_SHUTDOWN_MS = 30_000
+
+/**
+ * 跟 acquireInstanceLock 一样,只多一种情况:被拒了,而**占着锁的那个正在收尾**(`holderShuttingDown(pid)`:
+ * 它开始优雅退出时自己写了 clean-shutdown 纸条,pid 对得上、是新写的)⇒ 每 `pollMs` 重试一次,最多等 `maxWaitMs`。
+ * 它收尾完会删 pidfile、或者进程没了,下一次就拿得到。等到头还拿不到 ⇒ 回最后一次的拒绝,照旧走开机失败的退避。
+ *
+ * 2026-10-22:以前撞上就判失败、退避 10 秒才起来(kickstart -k 几乎每次都撞,日志里历史上 117 次)。
+ * **没有纸条 ⇒ 不等**:真的两个同时起(launchd 自启撞上手动 start)照旧立刻拒,不白拖。
+ */
+export async function acquireInstanceLockWaitingForShutdown(
+  pidPath: string,
+  opts: AcquireOpts & {
+    holderShuttingDown: (pid: number) => boolean
+    maxWaitMs?: number
+    pollMs?: number
+    onWait?: (pid: number) => void
+    sleep?: (ms: number) => Promise<void>
+    now?: () => number
+  },
+): Promise<LockResult> {
+  let r = acquireInstanceLock(pidPath, opts)
+  if (r.ok || !opts.holderShuttingDown(r.pid)) return r
+  opts.onWait?.(r.pid)
+  const now = opts.now ?? Date.now
+  const sleep = opts.sleep ?? ((ms: number) => new Promise<void>(res => setTimeout(res, ms)))
+  const deadline = now() + (opts.maxWaitMs ?? LOCK_WAIT_FOR_SHUTDOWN_MS)
+  while (now() < deadline) {
+    await sleep(opts.pollMs ?? 250)
+    r = acquireInstanceLock(pidPath, opts)
+    if (r.ok) return r
+  }
+  return r
+}
+
 /**
  * How long a heartbeat may go un-refreshed before the holder is considered
  * wedged. Must comfortably exceed the ilink long-poll round-trip + retry

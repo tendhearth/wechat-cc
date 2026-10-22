@@ -92,6 +92,17 @@ function readHeartbeat(stateDir: string): number | null {
  * 开机最早的时候调用 —— **必须**在本进程写第一跳心跳之前,否则读到的是自己。
  * 两张纸条都在这里吃掉:哪怕这次最后不发通知,也不能把它们留给下一次。
  */
+/**
+ * 只读、不删:优雅退出的纸条(开机还要 consume 它决定要不要播报,所以这里不能删)。
+ * 新进程撞上锁时用它判断「占着锁的那个是不是正在收尾」(daemon/single-instance.ts acquireInstanceLockWaitingForShutdown)。
+ */
+export function peekCleanShutdown(stateDir: string): CleanShutdownMark | null {
+  const c = readJson(join(stateDir, CLEAN_SHUTDOWN_FILE))
+  return c && typeof c.ts === 'number' && typeof c.pid === 'number'
+    ? { cause: typeof c.cause === 'string' ? c.cause : 'unknown', pid: c.pid, ts: c.ts }
+    : null
+}
+
 export function consumePreviousRunEvidence(stateDir: string, now: number = Date.now()): PreviousRunEvidence {
   const lastHeartbeatAt = readHeartbeat(stateDir)
   const p = consume(join(stateDir, PLANNED_RESTART_FILE))
