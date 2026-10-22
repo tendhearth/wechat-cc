@@ -91,7 +91,7 @@ describe('renderForageDesk — hero + net', () => {
 
   it('明确 mailbox 未开启 → 引导说明，agent count still shows', () => {
     const el = installDom()
-    renderForageDesk({ agents: [{ id: 'a', name: 'A' }], inbound: null, mailboxError: 'penpal_not_wired' })
+    renderForageDesk({ agents: [{ id: 'a', name: 'A' }], inbound: null, mailboxError: 'module_off' })
     expect(el['fd-social-note'].hidden).toBe(false)
     expect(el['fd-social-note'].textContent).toContain('尚未开启')
     expect(el['fd-social-note'].textContent).toContain('你的觅食网')
@@ -238,7 +238,7 @@ describe('笔友信箱', () => {
 
   it('明确未开启 → 引导;成功空数组 → 空态文案', () => {
     const el = installDom()
-    renderForageDesk({ agents: [], inbound: null, mailbox: null, mailboxError: 'penpal_not_wired' })
+    renderForageDesk({ agents: [], inbound: null, mailbox: null, mailboxError: 'module_off' })
     expect(el['fd-mailbox'].innerHTML).toContain('data-action="social-enable"')
     renderForageDesk({ agents: [], inbound: null, mailbox: [] })
     expect(el['fd-mailbox'].innerHTML).toContain('还没有笔友')
@@ -542,7 +542,7 @@ describe('觅食读取与信箱的页面所有权', () => {
     expect(mail().querySelector('[data-action="mailbox-retry"]')).not.toBeNull()
   })
 
-  it.each(['module_off', 'social_not_wired', 'penpal_not_wired'])('仅明确 %s 才显示开启引导', async (code) => {
+  it.each(['module_off'])('仅明确 %s 才显示开启引导', async (code) => {
     call.mockImplementation(async (method: string, path: string) => {
       if (path === '/v1/penpal/channels') throw new Error(code)
       return success(method, path)

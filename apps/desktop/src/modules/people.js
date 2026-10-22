@@ -76,7 +76,7 @@ export function renderPeople(data) {
   if (!host) return
   if (data.relationships == null) {
     if (count) count.textContent = ''
-    host.innerHTML = /module_off|social_not_wired/.test(String(data.error || ''))
+    host.innerHTML = String(data.error || '').includes('module_off')
       ? '<div class="fd-empty" role="status"><p>朋友来往还没有开启。开启后，CC 可以和朋友的 CC 打交道。</p><button type="button" data-action="social-enable">启用社交</button></div>'
       : '<div class="fd-empty" role="status"><p>暂时无法读取联系人。</p><button type="button" data-pp-action="retry">重试</button></div>'
     return
@@ -124,7 +124,7 @@ export async function onPeopleClick(ev) {
   syncVisitButtons()
   if (owner !== pageGeneration) return
   if (r?.ok) showToast('出门了，聊完会在微信里跟你说')
-  else if (r?.error === 'module_off' || r?.error === 'social_not_wired') showToast('社交还没开')
+  else if (r?.error === 'module_off') showToast('社交还没开')
   else if (r?.error === 'module_degraded') showToast('社交开着，但这会儿没起来，请稍后重试')
   else showToast('这次没能出门，请稍后重试')
 }

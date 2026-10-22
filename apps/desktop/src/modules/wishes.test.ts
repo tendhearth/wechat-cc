@@ -114,7 +114,7 @@ describe('心愿 — 已有接口、确认与生命周期', () => {
     expect(query('#fd-wish-list').textContent).toContain('读回来了')
   })
 
-  it.each(['module_off', 'social_not_wired'])('只有明确 %s 显示开启引导，查看设置不自动开启或派出', async (code) => {
+  it.each(['module_off'])('只有明确 %s 显示开启引导，查看设置不自动开启或派出', async (code) => {
     invokeApi.mockImplementation((method, path, body) => path === '/v1/social/wishes' || path === '/v1/social/intro/offers'
       ? Promise.reject(new Error(code)) : normal(method, path, body))
     await mount()
@@ -312,7 +312,7 @@ describe('心愿 — 已有接口、确认与生命周期', () => {
     compose('刚准备好的句子')
     await settle()
     expect(query('.wsh-draft-text').textContent).toBe('刚准备好的句子')
-    old.resolve({ error: 'social_not_wired' })
+    old.resolve({ error: 'module_off' })
     await oldRead
     expect(query('#fd-wish-list').textContent).toContain('已保存的草稿')
     expect(query('#fd-wish-list').textContent).not.toContain('社交没开')
