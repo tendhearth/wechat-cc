@@ -37,15 +37,24 @@ export function memoryArtifactKind(relPath: string): Kind   // 认不出的(note
 
 **源一变,生成物过期**:所有写源的路径收成一个 `writeMemorySource(root, relPath, content)`(写 + `invalidateDerivedMemory`)。今天写源的地方:nightly 的两处、nightly-runtime 的纠正、`lib/memory.ts` 的两个写函数(MCP memory_write 与 CLI memory write 共用)、gardener 的重写。守卫测试:扫 `src/` 里往 `memory/<chat>/` 写文件的调用(同 json-write 守卫的做法),不经 `writeMemorySource` / 合成提交函数的 ⇒ 红。
 
+**过期是懒的**(9d 审稿):`invalidateDerivedMemory` 只记一笔(revision 变了),**不触发重算**。重算照旧只在两种时候:用到它的地方
+看见过期(读 `_overview.md` 时隐藏、`_profile.json` 带 `needsRefresh`)和已有的那一拍(24 小时自动整理 / 主人点「整理记忆」),
+沿用现有的冷却和花费闸门。不然 nightly 每晚改一次 `memory.md` 就固定多一次模型调用,断网时还会反复重试(违反「断网别重试风暴」)。
+第 2 步要核:今天有没有哪个定时任务「看见过期就重算」—— 有的话,失效变准以后它会跑得更勤,要先给它加冷却。
+
 **生成物不给手改**:`writeMemoryFile` 对 `kind === 'derived'` 拒写(码 `memory_derived_readonly`,进错误码表);桌面编辑器对这几个文件显示只读 + 「重新生成」。和证据审阅那条路的说法对齐。
 
 **合成只吃源**:`memory-synthesis` 选输入改成按清单过滤 `kind === 'source'`(今天是一个手写的排除名单)。
 
 **`knowledge.md`** 是 ingest 从知识库生成的:归 `derived`,但它的「源」不在记忆目录里,过期由 ingest 自己的节奏管,这一块不动。
 
-## 5. 主人看得见的变化(一条,标出来)
+## 5. 主人看得见的变化(一条,标出来,第 4 步等主人选)
 
-- 桌面记忆编辑器里 `_overview.md` / `_profile.json` 变成只读,旁边一个「重新生成」。**以前能改,但改了下次就被覆盖、不提醒** —— 现在说实话。这是主人看得见的一处变化,PR 描述和发版说明各写一句;如果整合者认为要主人先点头,这一步可以单独拆出去等。
+今天桌面编辑器能改 `_overview.md`,改了下次合成就被悄悄覆盖。两种修法,**9d 拿给主人选,桌面界面归 9d**:
+
+- **A. 只读 + 重新生成**:说实话,但把「在派生页上纠正 CC」这个手段拿走了。
+- **B. 改动变成一条「主人更正」写进源**(9d 提的):在派生页上改的内容,存成 `corrections.md` 里的一条(或等价的源记录),
+  再照常重新生成。不会被悄悄覆盖,主人纠正 CC 的手段也还在。我倾向 B。
 
 其余(过期变得准、合成不再吃生成物)主人只会看到「串门时的人设和平时说的一致了」。
 
@@ -54,7 +63,7 @@ export function memoryArtifactKind(relPath: string): Kind   // 认不出的(note
 1. 清单 + `memoryArtifactKind` + 测试(每个已知文件都归了类;`MEMORY_ARTIFACTS` 的键与盘点表一致)。不改行为。
 2. `writeMemorySource`,写源的几处改走它;守卫测试。行为变化:生成物在源变了以后会显示过期 / `needsRefresh`(以前不会)。
 3. 合成按清单只吃源。
-4. 生成物只读(§5 那一条),桌面只读 + 重新生成。
+4. 等主人在 §5 的 A / B 里选;daemon 侧我做,桌面 9d 做。
 
 ## 7. 不做
 
