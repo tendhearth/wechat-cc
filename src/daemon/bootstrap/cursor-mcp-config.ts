@@ -11,10 +11,11 @@
  * `wechat-cc:wechat` 一个键;绝不因为文件损坏就整体覆盖;测试 runner 下
  * 不传 cursorConfigDir 就自动跳过,绝不碰操作者真的 ~/.cursor)。
  */
-import { readFileSync, renameSync, writeFileSync } from 'node:fs'
+import { readFileSync } from 'node:fs'
 import { homedir } from 'node:os'
 import { join } from 'node:path'
 import { UNDER_TEST_RUNNER } from '../../lib/config'
+import { writeFileAtomic } from '../../lib/json-file'
 
 /** 上一版写入时用的命名空间键 —— 只在本文件内私有,不再对外导出。 */
 const LEGACY_CURSOR_WECHAT_MCP_KEY = 'wechat-cc:wechat'
@@ -71,9 +72,7 @@ export function removeCursorGlobalMcp(opts: RemoveCursorMcpOpts): boolean {
   const remainingServers = { ...existingServers }
   delete remainingServers[LEGACY_CURSOR_WECHAT_MCP_KEY]
   const newRoot: McpConfigRoot = { ...existingRoot, mcpServers: remainingServers }
-  const tmp = `${path}.tmp`
-  writeFileSync(tmp, JSON.stringify(newRoot, null, 2) + '\n', { mode: 0o600 })
-  renameSync(tmp, path)
+  writeFileAtomic(path, JSON.stringify(newRoot, null, 2) + '\n', { mode: 0o600 })
   opts.log(LOG_TAG, `removed namespace "${LEGACY_CURSOR_WECHAT_MCP_KEY}" from ${path}`)
   return true
 }

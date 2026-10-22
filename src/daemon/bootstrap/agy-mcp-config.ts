@@ -29,12 +29,13 @@
  *    write elsewhere in the operator's toolchain can't be silently
  *    stomped by us. On any doubt about shape, we log and back off.
  */
-import { mkdirSync, readFileSync, renameSync, writeFileSync } from 'node:fs'
+import { mkdirSync, readFileSync } from 'node:fs'
 import { homedir } from 'node:os'
 import { join } from 'node:path'
 import type { McpStdioSpec } from '../../core/mcp-stdio-spec'
 import { UNDER_TEST_RUNNER } from '../../lib/config'
 import { AGY_WECHAT_MCP_NAMESPACE_ID } from '../../core/agent-provider'
+import { writeFileAtomic } from '../../lib/json-file'
 
 /** Our namespaced entry key inside `mcpServers` — never touch any other key.
  *
@@ -160,9 +161,7 @@ export function setupAgyGlobalMcp(opts: PrepareAgyMcpOpts): boolean {
   }
 
   mkdirSync(dir, { recursive: true, mode: 0o700 })
-  const tmp = `${path}.tmp`
-  writeFileSync(tmp, newText, { mode: 0o600 })
-  renameSync(tmp, path)
+  writeFileAtomic(path, newText, { mode: 0o600 })
   opts.log(LOG_TAG, `${existingRaw === null ? 'created' : 'updated'} ${path} (namespace "${AGY_WECHAT_MCP_NAMESPACE_ID}")`)
   return true
 }
@@ -236,9 +235,7 @@ export function removeAgyGlobalMcp(opts: RemoveAgyMcpOpts): boolean {
   const newRoot: McpConfigRoot = { ...existingRoot, mcpServers: remainingServers }
   const newText = JSON.stringify(newRoot, null, 2) + '\n'
 
-  const tmp = `${path}.tmp`
-  writeFileSync(tmp, newText, { mode: 0o600 })
-  renameSync(tmp, path)
+  writeFileAtomic(path, newText, { mode: 0o600 })
   opts.log(LOG_TAG, `removed namespace "${AGY_WECHAT_MCP_NAMESPACE_ID}" from ${path}`)
   return true
 }

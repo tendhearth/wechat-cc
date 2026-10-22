@@ -15,12 +15,10 @@
  * memory_write calls, not wired into this module.
  */
 
-import {
-  existsSync, mkdirSync, readdirSync, readFileSync, realpathSync, renameSync, unlinkSync,
-  writeFileSync,
-} from 'node:fs'
+import { existsSync, mkdirSync, readdirSync, readFileSync, realpathSync, renameSync, unlinkSync } from 'node:fs'
 import { basename, dirname, join, relative, resolve, sep } from 'node:path'
 import { isDerivedMemoryStale } from '../../lib/memory-derived-state'
+import { writeFileAtomic } from '../../lib/json-file'
 
 export interface MemoryFS {
   /** Read a memory file. Returns null if not present (no throw). */
@@ -184,9 +182,7 @@ export function makeMemoryFS(opts: MemoryFSOptions): MemoryFS {
       // and realpathSync(parent) succeeds; check the candidate full
       // path (which may not yet exist).
       assertWithinRealRoot(full, false)
-      const tmp = `${full}.tmp-${process.pid}-${Date.now()}`
-      writeFileSync(tmp, content, { mode: 0o600, encoding: 'utf8' })
-      renameSync(tmp, full)
+      writeFileAtomic(full, content, { mode: 0o600 })
     },
 
     list(relDir) {

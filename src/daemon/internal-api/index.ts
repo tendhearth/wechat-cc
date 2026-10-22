@@ -21,8 +21,9 @@
  * + interface types live in ./types.ts. The split is purely organisational
  * — no behaviour change vs the pre-split monolithic internal-api.ts.
  */
+import { writeFileAtomic } from '../../lib/json-file'
 import { createServer, type Server, type IncomingMessage, type ServerResponse } from 'node:http'
-import { mkdirSync, writeFileSync } from 'node:fs'
+import { mkdirSync } from 'node:fs'
 import { join, dirname } from 'node:path'
 import { randomBytes } from 'node:crypto'
 import { makeTokenRegistry, type TokenInfo } from './token-registry'
@@ -368,12 +369,9 @@ export function createInternalApi(deps: InternalApiDeps): InternalApi {
       // Register the daemon-wide file token as `trusted` — it's shell-readable,
       // so it can't grant more than the least-trusted process that reads it.
       registry.registerFileToken(tokenHex)
-      // Write atomically — token consumers may already be reading on rotate.
-      const tmp = `${tokenPath}.tmp-${process.pid}-${Date.now()}`
-      writeFileSync(tmp, tokenHex + '\n', { mode: 0o600 })
-      // Use rename for atomic swap. node:fs renameSync is fine on linux/mac.
-      const { renameSync } = await import('node:fs')
-      renameSync(tmp, tokenPath)
+      // Write atomically — token consumers may already be reading on rotate(lib/json-file:独立 tmp + fsync + rename,
+      // Windows 上 rename 被占用会短重试)。
+      writeFileAtomic(tokenPath, tokenHex + '\n', { mode: 0o600 })
 
       // Separate admin-tier operator token (option B) — a distinct random
       // secret, registered `admin`, written to its own 0600 file. See
@@ -384,9 +382,7 @@ export function createInternalApi(deps: InternalApiDeps): InternalApi {
       // trusted file token above.
       const opTokenHex = randomBytes(32).toString('hex')
       registry.registerOperatorToken(opTokenHex)
-      const opTmp = `${operatorTokenPath}.tmp-${process.pid}-${Date.now()}`
-      writeFileSync(opTmp, opTokenHex + '\n', { mode: 0o600 })
-      renameSync(opTmp, operatorTokenPath)
+      writeFileAtomic(operatorTokenPath, opTokenHex + '\n', { mode: 0o600 })
 
       server = createServer(handleRequest)
       // Catch listener errors so we surface bind failures to start()'s caller.

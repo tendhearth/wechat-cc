@@ -3,7 +3,7 @@
  * 「整理记忆」的立即运行,以及给微信(文本)与手机(结构)的只读视图。
  */
 import { readSources, writeSources } from './sources'
-import { appendFileSync, existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from 'node:fs'
+import { appendFileSync, existsSync, mkdirSync, readFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { MEMORY_CAP_CHARS, MEMORY_FILENAME, SECTIONS, assignMissingIds, docChars, parseDue, parseMemoryDoc, serializeMemoryDoc, type Section } from './curated-doc'
 import { DISPLAY_ORDER, dueLabel, formatWeChatMemory, splitPerson, spokenTime, stripDue, viewChanges, type ViewChange } from './memory-text'
@@ -11,6 +11,7 @@ import { CORRECTIONS_FILENAME, MEMORY_LOG_FILE, ownerMemoryRoot, readCorrections
 import type { NightlyRunResult } from './nightly-notify'
 import { MAX_ENTRY_CHARS, type AppliedOp } from './nightly-ops'
 import { localParts, noticeTiming } from './nightly-schedule'
+import { writeFileAtomic } from '../../lib/json-file'
 
 export interface NoticeDeps {
   /** 这一种自己的节奏(companion/calibration shouldSpeak memory:冷却 / 无回复暂停 / care)。 */
@@ -144,9 +145,8 @@ export function makeMemoryNightlyRuntime(deps: NightlyRunDeps & NoticeDeps): Mem
       if (!hit) throw new Error('memory_entry_not_found')
       const src = readSources(got.root)
       const nowMs = deps.now(), nowIso = new Date(nowMs).toISOString(), day = localParts(nowMs, deps.config().timezone).day
-      const memPath = join(got.root, MEMORY_FILENAME), tmp = `${memPath}.tmp-${process.pid}`
-      writeFileSync(tmp, serializeMemoryDoc(got.doc, nowIso))
-      renameSync(tmp, memPath)
+      const memPath = join(got.root, MEMORY_FILENAME)
+      writeFileAtomic(memPath, serializeMemoryDoc(got.doc, nowIso))
       // 改名成功后才记:失败了 memory.md 没动,也不留一行假的纠正
       appendFileSync(join(got.root, CORRECTIONS_FILENAME), `- ${day} ${VERDICT_LINE[verdict]}:[${hit.section}] ${hit.text}\n`)
       if (src[id]) { delete src[id]; try { writeSources(got.root, src) } catch { /* 出处是附带的 */ } }
@@ -185,9 +185,7 @@ export function makeMemoryNightlyRuntime(deps: NightlyRunDeps & NoticeDeps): Mem
         have.add(text); added.push({ id, section: it.section, text })
       }
       if (added.length) {
-        const tmp = `${memPath}.tmp-${process.pid}`
-        writeFileSync(tmp, serializeMemoryDoc(doc, nowIso))
-        renameSync(tmp, memPath)
+        writeFileAtomic(memPath, serializeMemoryDoc(doc, nowIso))
         // 「CC 做过的事」里的记忆那一行读这份日志;出处标成导入(手机「CC 眼中的你」显示「从 X 导入」)
         try { appendFileSync(join(r, MEMORY_LOG_FILE), JSON.stringify({ at: nowIso, ops: added.map(a => ({ kind: 'add', ...a })), source: 'import' }) + '\n') } catch { /* 日志是附带的 */ }
         try {

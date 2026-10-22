@@ -2,6 +2,7 @@
 // authorized hearth to obtain admin-tier tokens (design option B). The mint
 // route (routes-federation.ts) requires this to exist; the CLI --authorize
 // writes it. 0600, owner-only — same trust posture as the operator token.
+import { writeFileAtomic } from '../../lib/json-file'
 import { existsSync, writeFileSync, unlinkSync, chmodSync } from 'node:fs'
 import { join } from 'node:path'
 import { readJsonFile } from '../../lib/read-json-file'
@@ -17,7 +18,7 @@ export function grantPath(stateDir: string): string {
 export function writeGrant(stateDir: string, ts: number, integration = 'hearth'): FederationGrant {
   const grant: FederationGrant = { integration, ts }
   const p = grantPath(stateDir)
-  writeFileSync(p, JSON.stringify(grant, null, 2) + '\n', { mode: 0o600 })
+  writeFileAtomic(p, JSON.stringify(grant, null, 2) + '\n', { mode: 0o600 })
   chmodSync(p, 0o600) // writeFileSync mode is create-only; force it on overwrite too
   return grant
 }

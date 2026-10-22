@@ -14,7 +14,8 @@
  * to files touched since — the first run imports everything, later runs only
  * re-parse new / appended sessions. INSERT OR IGNORE makes any overlap a no-op.
  */
-import { readdirSync, writeFileSync } from 'node:fs'
+import { writeFileAtomic } from '../lib/json-file'
+import { readdirSync } from 'node:fs'
 import { homedir } from 'node:os'
 import { join } from 'node:path'
 import type { Db } from '../lib/db'
@@ -43,7 +44,7 @@ export function makeFileWatermark(path: string): { get: () => number | null; set
       } catch { return null }
     },
     set(ms) {
-      try { writeFileSync(path, JSON.stringify({ watermark: ms }), { mode: 0o600 }) } catch { /* best-effort */ }
+      try { writeFileAtomic(path, JSON.stringify({ watermark: ms }), { mode: 0o600 }) } catch { /* best-effort */ }
     },
   }
 }

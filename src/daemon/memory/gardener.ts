@@ -27,9 +27,10 @@
  *     back off instead of retrying forever (see recordValidationFailure).
  */
 import { createHash } from 'node:crypto'
-import { existsSync, mkdirSync, readdirSync, readFileSync, renameSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from 'node:fs'
 import { dirname, join } from 'node:path'
 import { assertNotAuthFailed } from '../../core/agent-provider'
+import { writeFileAtomic } from '../../lib/json-file'
 
 export const MIN_GARDEN_BYTES = 2048
 export const MAX_GARDEN_FILES_PER_TICK = 5
@@ -169,9 +170,7 @@ function readState(stateFile: string): WatermarkState {
 function writeState(stateFile: string, data: WatermarkState): void {
   const dir = dirname(stateFile)
   if (!existsSync(dir)) mkdirSync(dir, { recursive: true })
-  const tmp = `${stateFile}.tmp-${process.pid}-${Date.now()}`
-  writeFileSync(tmp, JSON.stringify(data), 'utf8')
-  renameSync(tmp, stateFile)
+  writeFileAtomic(stateFile, JSON.stringify(data))
 }
 
 /** Candidate relPaths for one chat dir: profile.md, preferences.md, notes/*.md
@@ -219,9 +218,7 @@ function buildGardenPrompt(content: string): string {
 function atomicWriteFile(fullPath: string, content: string): void {
   const dir = dirname(fullPath)
   if (!existsSync(dir)) mkdirSync(dir, { recursive: true, mode: 0o700 })
-  const tmp = `${fullPath}.tmp-${process.pid}-${Date.now()}`
-  writeFileSync(tmp, content, { mode: 0o600, encoding: 'utf8' })
-  renameSync(tmp, fullPath)
+  writeFileAtomic(fullPath, content, { mode: 0o600 })
 }
 
 function archiveOriginal(archiveRoot: string, chatId: string, relPath: string, today: string, content: string): void {

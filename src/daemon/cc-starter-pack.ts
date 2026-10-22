@@ -1,3 +1,4 @@
+import { writeFileAtomic } from '../lib/json-file'
 import { mkdtempSync, writeFileSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -11,7 +12,7 @@ export function materializeCcStarterPack(): string {
       writeFileSync(join(dir, entry.file), Buffer.from(png, 'base64'))
       return entry
     })
-    writeFileSync(join(dir, 'manifest.json'), JSON.stringify(manifest))
+    writeFileAtomic(join(dir, 'manifest.json'), JSON.stringify(manifest))
     process.once('exit', () => rmSync(dir, { recursive: true, force: true }))
     return dir
   } catch (error) {
