@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest'
-import type { SpawnContext } from './agent-provider'
+import { guestSafe, type SpawnContext } from './agent-provider'
 import { TIER_PROFILES } from './user-tier'
 import { createAcpProvider } from './acp-agent-provider'
 import { ACP_CURSOR_CAPABILITIES, acpMcpServersFor, createAcpCursorChatProvider, DEFAULT_CURSOR_MODEL } from './acp-cursor-chat'
@@ -30,7 +30,8 @@ describe('ACP cursor chat provider', () => {
   it('declares admin MCP tools, resume, no per-tool callback, claude as default peer', () => {
     expect(ACP_CURSOR_CAPABILITIES).toMatchObject({ perToolCallback: false, adminMcpTools: true, supportsDelegation: false, supportsResume: true, defaultPeer: 'claude' })
     // MCP 子进程按会话带 tier(adminMcpTools:true),但 Cursor 自己的工具面约束不住 ⇒ guest 一律拒。
-    expect(ACP_CURSOR_CAPABILITIES.guestSafe).toBe(false)
+    expect(guestSafe(ACP_CURSOR_CAPABILITIES)).toBe(false)
+    expect(ACP_CURSOR_CAPABILITIES.confines.fs_write).toBe('none')
     expect(ACP_CURSOR_CAPABILITIES.authFailHint).toContain('cursor-agent login')
     expect(DEFAULT_CURSOR_MODEL).toBe('auto')
   })

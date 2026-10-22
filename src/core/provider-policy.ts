@@ -12,7 +12,7 @@
  *    ACP 后 MCP 按会话注入、带逐会话 token 与 tier(acp-cursor-chat.ts),
  *    不再共享钥匙,这道门也就不再挡它 —— 换成下面第 2 条挡。
  * 2. **约束不了自己工具面的 provider 拒 guest。**
- *    `ProviderCapabilities.guestSafe === false`:provider 自带的工具不经过
+ *    `guestSafe(cap) === false`(能力表 `confines` 里有一件收不住):provider 自带的工具不经过
  *    daemon 的权限卡、也不看 tierProfile。cursor 走 ACP 后就是这样 ——
  *    权限按 permissionMode 就地判,而工作区内的文件编辑压根不请求批准
  *    (真机 spike 2026-09-17)。guest 切过去等于让访客改主人的项目 —— 拒。
@@ -24,6 +24,7 @@ import { PROVIDER_IDS, type KnownProviderId } from '../lib/provider-ids'
 import { EXECUTOR_FACTS } from '../lib/executor-facts'
 import type { UserTier } from './user-tier'
 import { capabilitiesFor } from './capability-matrix'
+import { guestSafe } from './agent-provider'
 
 export type ProviderDenial =
   | { kind: 'shared_token_guest' }
@@ -42,7 +43,7 @@ export function providerDenialFor(
     try { cap = capabilitiesFor(providerId) } catch { cap = null }
     if (!cap) return { kind: 'unconfined_guest' }
     if (!cap.adminMcpTools) return { kind: 'shared_token_guest' }
-    if (!cap.guestSafe) return { kind: 'unconfined_guest' }
+    if (!guestSafe(cap)) return { kind: 'unconfined_guest' }
   }
   if (trustedProviders && !trustedProviders.includes(providerId)) return { kind: 'not_in_trusted_list', allowed: trustedProviders }
   return null

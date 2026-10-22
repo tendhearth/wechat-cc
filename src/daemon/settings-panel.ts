@@ -334,7 +334,7 @@ export function makeSettingsPanel(deps: SettingsPanelDeps): SettingsPanel {
       cheap: cfg.cheapEvalProvider ?? 'auto',
       // 非管理员可用哪些(null = 全部)。两张单子不是一回事:
       //  - shared_token:共享一把 trusted 钥匙(adminMcpTools=false)⇒ 面板上的 🔑 徽章;
-      //  - guest_blocked:guest 一律拒的(共享钥匙的 + 约束不住自己工具面的 guestSafe:false,
+      //  - guest_blocked:guest 一律拒的(共享钥匙的 + 约束不住自己工具面的 —— 能力表 confines 里有一件收不住,
       //    如走 ACP 的 cursor)⇒ 面板上"访客不可用"那句。cursor 不是共享钥匙,所以没有 🔑,
       //    但访客照样用不了 —— 两条规矩(core/provider-policy.ts)对得上。
       trusted_providers: cfg.trusted_providers ?? null,
