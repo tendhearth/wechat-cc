@@ -83,7 +83,10 @@ export function makeCommandRouter(deps: CommandRouterDeps): CommandRouter {
   /** 是社交命令,而社交此刻不在 ⇒ 关着 / 坏了;否则 null(包括不是社交命令、社交好好的、没接 socialState)。 */
   const socialAbsentFor = (t: string): Exclude<SocialState, 'ok'> | null => {
     if ((deps.social && deps.penpal) || !deps.socialState) return null
-    const isSocialCmd = (!deps.social && (parseVisitCommand(t) || parseSeekCommand(t) || parseIntroCommand(t)))
+    // 「同意 <ref>」除外:「同意」也是权限卡的放行词(pending-permissions 的 ALLOW_WORDS),码是两位数(「同意 07」);
+    // 社交不在时根本不会有待回的介绍,这句只可能是在批权限,别回它「社交关着」
+    const intro = parseIntroCommand(t)
+    const isSocialCmd = (!deps.social && (parseVisitCommand(t) || parseSeekCommand(t) || (intro && intro.kind !== 'accept')))
       || (!deps.penpal && parseLetterCommand(t))
     if (!isSocialCmd) return null
     const s = deps.socialState()

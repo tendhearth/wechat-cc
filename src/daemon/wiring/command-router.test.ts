@@ -263,6 +263,11 @@ describe('社交不在时明说(第三批 3b 第 3 步 3-2):不再悄悄落成�
     for (const t of ['今天天气怎么样', '串门好玩吗', '配对成功了吗', '派 家里 跑 拉日志']) expect(r.probe(msg(t))).toBe(false)
     expect(socialState).not.toHaveBeenCalled()
   })
+  it('**「同意 07」不拦**:「同意」也是权限卡的放行词;社交不在时不会有待回的介绍,这句只可能是在批权限', () => {
+    const r = makeCommandRouter(baseDeps({ socialState: () => 'off' }))
+    expect(r.probe(msg('同意 07'))).toBe(false)
+    expect(r.probe(msg('同意 ab12'))).toBe(false)
+  })
   it('不是主人 ⇒ 不拦', () => {
     expect(makeCommandRouter(baseDeps({ isAdmin: () => false, socialState: () => 'off' })).probe(msg('串门'))).toBe(false)
   })
