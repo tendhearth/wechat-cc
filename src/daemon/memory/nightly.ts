@@ -3,7 +3,7 @@
  * 素材 → 指纹(没新东西不调模型)→ 便宜模型出改动清单 → 程序校验执行 → 修订检查(主人正在改就作废)
  * → 备份旧版、原子写、追加日志、更新状态。任何失败都不写文件;同一天不再自动重试。
  */
-import { correctedTexts } from '../../lib/memory-corrections'
+import { MIN_CORRECTED_CHARS, correctedTexts } from '../../lib/memory-corrections'
 import { readOwnerDoc, renderOwnerForPrompt } from '../../lib/memory-owner'
 import { invalidateDerivedMemory } from '../../lib/memory-derived-state'
 import { writeFileAtomic } from '../../lib/json-file'
@@ -119,6 +119,19 @@ export function readCorrections(root: string): { block: string; texts: Set<strin
 export function dropCorrected(ops: NightlyOps, texts: ReadonlySet<string>): NightlyOps {
   if (!texts.size) return ops
   return { ...ops, add: ops.add.filter(a => !texts.has(normalizeEntry(a.text))), update: ops.update.filter(u => !texts.has(normalizeEntry(u.text))) }
+}
+
+/**
+ * 整理不许把主人原话抄进 memory.md(记忆编辑第 3 步,整合者审稿):memory.md 喂总览合成,合成可能换个说法写进生成的那部分,
+ * 那部分会随串门出去 —— owner.md 不喂合成就白挡了。提示词里说了「不要再写进记忆」,这里在代码里再挡一次:
+ * add / update 的正文等于某句原话,或包含一句够长的原话(短于 MIN_CORRECTED_CHARS 的只比相等,免得一个短词误挡)⇒ 丢掉。
+ */
+export function dropOwnerWords(ops: NightlyOps, ownerTexts: readonly string[]): { ops: NightlyOps; dropped: number } {
+  const words = ownerTexts.map(normalizeEntry).filter(Boolean)
+  if (!words.length) return { ops, dropped: 0 }
+  const hit = (t: string) => { const n = normalizeEntry(t); return words.some(w => n === w || ([...w].length >= MIN_CORRECTED_CHARS && n.includes(w))) }
+  const add = ops.add.filter(a => !hit(a.text)), update = ops.update.filter(u => !hit(u.text))
+  return { ops: { ...ops, add, update }, dropped: ops.add.length - add.length + ops.update.length - update.length }
 }
 
 export const DRAFT_BLOCK = '今天的草稿 today-draft.md(白天 CC 刚记下的新情况,优先整理进来)'
@@ -300,7 +313,9 @@ export async function runMemoryNightly(deps: NightlyRunDeps, opts: { force: bool
   }
   const parsed = parseOps(raw)
   if (!parsed) return fail('bad_json')
-  const ops = dropCorrected(parsed, corrections.texts)
+  const owned = dropOwnerWords(dropCorrected(parsed, corrections.texts), readOwnerDoc(root).assertions.map(a => a.text))
+  if (owned.dropped) deps.log('MEMORY_NIGHTLY', `dropped ${owned.dropped} op(s) that copied the owner's own words into memory.md`)
+  const ops = owned.ops
   const res = applyNightly(doc, ops, { today: day, newId: deps.newId })
   if (!res.ok) return fail(res.reason)
 
