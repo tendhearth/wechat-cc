@@ -28,7 +28,7 @@
 
 ### 1. 新的源:`owner.md`(主人原话)
 
-- 进 `src/lib/memory-artifacts.ts` 的清单:`kind: 'source'`,喂合成。
+- 进 `src/lib/memory-artifacts.ts` 的清单:`kind: 'source'`,**不喂总览合成**(`synthesisInput: false`,见 §2)。
 - 格式同 `memory.md` 的条目行(复用 `curated-doc.ts` 的解析):`- <原话> <!-- o:<id> · <日期> · <来自 overview|memory> -->`;
   改写来的那条额外记 `· 替换:<更正 id>`;view 把它展开成 `replaces: { correctionId, text }`。
 - **只有一个写者**:下面第 3 节的编辑接口。守卫测试照 3e 第 2 步那条(扫往 `memory/<chat>/` 写文件的调用):`owner.md` 只许经 `writeOwnerAssertions` 写。
@@ -41,7 +41,12 @@
 
 - `synthesizeOverview` 照常让模型写总览,然后**由代码**在提交前把 `owner.md` 的每一条原样插到总览最前面一节「## 你写的」,
   每行尾注 `<!-- o:<id> -->`。模型写的部分照旧过出口过滤(`dropCorrectedLines`);主人原话不过 —— 那是主人说的,不该被更正清单挡。
-- 模型也看得到 `owner.md`(它是源、喂合成),提示词里写「下面这些主人已经亲口说了,总览里不要再复述」,免得说两遍。复述了也只是重复,不是错。
+- **总览的模型看不到 `owner.md`**(第 3 步实现时改的,`synthesisInput: false`):喂给它,它会把主人原话换个说法写进生成的那部分,
+  而那部分会随串门出去,去掉「你写的」一节也挡不住。
+- **这条泄漏只是收窄,没有封死**:每晚整理 memory.md 时读 `owner.md`(memory.md 只在主人对话注入),而 memory.md 喂总览合成。
+  整理要是把主人原话抄进 memory.md,合成就可能把它写进生成的那部分。挡这条路的是两层:提示词「不要再写进记忆」,
+  和代码里的 `dropOwnerWords`(`src/daemon/memory/nightly.ts`:add / update 的正文等于某句原话、或包含一句够长的原话 ⇒ 丢掉)。
+  代码那层是逐字的,**整理换个说法抄进去就漏过去** —— 跟更正的出口过滤是同一个限制。
 - **对外一律不带「你写的」那一节**:一个函数 `overviewForOthers(memoryRoot)` 读 `_overview.md` 并去掉这一节;凡是要把总览带出主人自己对话的
   (今天是 `wire-visit.ts` 的串门「CC 眼中的主人」)都经它。守卫测试扫 `src/` 里直接读 `_overview.md` 的地方,白名单只有:桌面 view、合成自己、
   主人自己在微信里「看记忆」(`pipeline-deps.ts` 的 `readOverview`)、内部素材(`snapshot.ts`、`memory-llm-ops.ts`、`portrait-artist.ts`、
@@ -121,6 +126,8 @@ type ViewLine = {
 - **冲突靠提示,不靠代码**:主人写了「我不喝咖啡」,`memory.md` 里还有一条「喜欢美式」—— 注入时标了「以主人这里为准」,nightly 也被要求改掉冲突条目,
   但没有代码能判两句话矛盾。如果主人是在改写那一条(diff 里是相邻的删 + 加),旧的那条就成了更正,会被确定地清掉;只有主人另起一行写时才靠提示。
 - 出口过滤是逐字的(3b 已经写过):模型换个说法重新拼出被删的那句,挡不住;命中计数照旧是看这件事的数据。
+- **总览的生成部分不会立刻顺着主人原话改**:模型看不到 `owner.md`,要等每晚整理把 memory.md 里和原话冲突的条目改掉,下一次合成才跟上。
+  主人是改写某一行的(键在、文字变了),旧话当场就成了更正、出口过滤立刻挡住;只有另起一行写时才要等。
 
 ## 切法
 
