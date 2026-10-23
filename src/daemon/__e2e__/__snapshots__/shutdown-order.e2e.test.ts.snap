@@ -28,6 +28,7 @@ exports[`daemon shutdown order (snapshot) > stops every subsystem in the recorde
   "lc speech-pending-flush",
   "lc phone",
   "lc matter-activity",
+  "module workbench/stop",
   "lc workbench",
   "lc cli-permissions",
   "lc cli-events",

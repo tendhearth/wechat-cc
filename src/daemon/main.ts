@@ -768,7 +768,10 @@ async function bootDaemonInner(opts: BootDaemonOpts, undo: Array<() => void>): P
     const matters = makeMatterStore(db)
     // 回报投递队列(v65,task-3,2026-09-23):每轮答复入队一次,sweeper 按到期时间取件送达。
     const reportOutbox = makeReportOutboxStore(db)
-    const workbench = wireWorkbench({ db, stateDir, boot, internalApi, matters, reportOutbox, networkGate: guardRt.gate, permissionGate, requestReview: (r) => jobs.requestReview(r),
+    // 核心链就地搬进模块容器的第 1 步(设计稿 2026-10-23-core-chain-modules):停法登记在原来 lc.register 那一行的位置,
+    // 关机顺序不变;起不来照旧整个开机失败(required)。状态进 /v1/health.subsystems。
+    const workbenchLc = await startLifecycleModule(moduleHost, 'workbench', () => {
+      const service = wireWorkbench({ db, stateDir, boot, internalApi, matters, reportOutbox, networkGate: guardRt.gate, permissionGate, requestReview: (r) => jobs.requestReview(r),
       onTurnError: (providerId, code, message) => {
         cliUpgradeRef.current?.onTurnError(providerId, code, message)
         // 一起做里被拒也算(只有 agy 用一起做时,大脑那一行不该落后)
@@ -780,12 +783,14 @@ async function bootDaemonInner(opts: BootDaemonOpts, undo: Array<() => void>): P
         (!!nativeId&&Object.values(boot.sessionStore.all()).some(s=>s.provider===providerId&&s.session_id===nativeId))||
         legacyClaims.conflicts({owner:'workbench',path,providerId,nativeId})||
         (!!nativeId&&cliEvents.sessions().some(s=>s.source===providerId&&s.session_id===nativeId&&!!s.origin_agent)), askUser: ilink.askUser, log: (t,l) => log(t,l) })
+      return { name: 'workbench', stop: () => service.shutdown(), service }
+    }, { required: true })
+    const workbench = workbenchLc!.service
     boot.sessionManager.setExecutionGuard((path,providerId,nativeId)=>workbench.conflictsExternal(path,providerId,nativeId))
     internalApi.provide({ workbench: workbench })
     workbenchRef.current = workbench
     // 暂停在跑的任务(2026-10-03):health 的 guard 块 / `guard status` 列出被冻住的任务。
     guardRt.setSuspendedTasks(() => workbench.networkSuspended())
-    lc.register({ name: 'workbench', stop: () => workbench.shutdown() })
     const wired = wireMain({
       workbench,
       cliSessions: () => cliEvents.list({ limit: 50 }),
