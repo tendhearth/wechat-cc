@@ -17,6 +17,7 @@ export function taskErrorForProviderCode(code:string|undefined,raw:string):strin
     case 'auth_failed':return executionFailureMessage(raw)!==raw?raw:'provider_auth_expired'
     case 'network':return 'provider_network'
     case 'server_error':return 'provider_server_error'
+    case 'region_unavailable':return 'provider_region_unavailable'
     case 'invalid_request':return executionFailureMessage(raw)!==raw?raw:'provider_invalid_request'
     default:return undefined
   }
@@ -53,6 +54,7 @@ export function executionFailureMessage(code:string):string {
     provider_auth_rejected:'这家执行者的服务拒绝了账号或密钥（API 返回 401/403），这一轮没有完成。请检查账号或密钥后再继续。',
     provider_network:'连不上这家执行者的服务（网络问题），这一轮没有完成。网络恢复后再继续。',
     provider_server_error:'这家执行者的服务端出错了（5xx），这一轮没有完成。通常过一会儿会恢复，稍后再继续。',
+    provider_region_unavailable:'这家执行者在你现在的网络出口所在地区用不了，这一轮没有完成。换一个出口地区，或交给另一位执行者继续。',
     provider_invalid_request:'这家执行者拒绝了这次请求（请求不合法，比如内容太长或模型不可用），这一轮没有完成。请调整后再继续。',
     network_unprotected:'网络未受保护(bx 未连上或 VPN 探测失败),这个执行者用到需要保护的接口，这一步先暂停，这一轮没有开始。恢复后再继续。',
     api_task_scope_invalid:'无法确认 API 任务的项目范围，任务没有开始。请重新打开项目后再试。',

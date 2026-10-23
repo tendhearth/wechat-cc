@@ -18,11 +18,17 @@ import type { ProviderErrorCode } from '../lib/provider-error-code'
 import { isConnectFailure } from '../lib/net-errors'
 
 const AMBIGUOUS = /authentication failed or timed out/i
+// 2026-10-23 真机抓包时 agy 回的原话:「error: Eligibility check failed: Your current account is not eligible for Antigravity,
+// because it is not currently available in your location.」—— 出口地区不在服务范围。不是登录问题,也不是瞬时(重试没用)。
+// 只认「location」那半句:「not eligible for Antigravity, because …」是所有不合格原因的开头(没订阅、年龄 / 组织限制 …),
+// 都判成地区会把主人指错方向(9d 评审 #604)。别的原因先认不出、走原来的回退。
+const REGION = /not currently available in your location/i
 const GO_NETWORK = /no such host|": EOF\b|TLS handshake timeout|i\/o timeout|connection (?:refused|reset)|network is unreachable|There was a network issue|context deadline exceeded|Client\.Timeout/i
 
 export function agyErrorCode(message: string): ProviderErrorCode | undefined {
   const m = message ?? ''
   if (!m.trim()) return undefined
+  if (REGION.test(m)) return 'region_unavailable'
   if (AMBIGUOUS.test(m)) return 'network' // 红线 B
   if (GO_NETWORK.test(m) || isConnectFailure(m)) return 'network'
   if (/\b429\b|RESOURCE_EXHAUSTED|rate limit/i.test(m)) return 'rate_limited'

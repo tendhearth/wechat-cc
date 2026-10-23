@@ -139,6 +139,7 @@
 | `agy.eof.cheap_eval` | network | 采集 | cheap_eval · thrown | `agy result status=ERROR: Eligibility check failed: Post "https://daily-cloudcode-pa.googleapis.com/v1internal:loadCodeAssist": EOF` | **`network`** | network | transient | connectFailure |
 | `agy.userinfo_eof.cheap_eval` | network | 采集 | cheap_eval · thrown | `agy result status=ERROR: Eligibility check failed: Get "https://www.googleapis.com/oauth2/v2/userinfo": EOF` | **`network`** | network | transient | connectFailure |
 | `agy.network_issue.cheap_eval` | network | 采集 | cheap_eval · thrown | `agy result status=ERROR: There was a network issue connecting to the server, please try again.` | **`network`** | network | unknown | — |
+| `agy.region.session` | region | 采集(2026-10-23 抓包) | session · thrown | `agy exited 1: error: Eligibility check failed: Your current account is not eligible for Antigravity, because it is not currently available in your location.` | **`region_unavailable`** | unknown | unknown | — |
 
 ### openai 兼容(自有循环 + AI SDK;DeepSeek / Kimi / 自建 litellm 网关)
 
