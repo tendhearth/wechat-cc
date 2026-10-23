@@ -143,8 +143,8 @@ CC 要取代的是 **Paseo / Orca 这一层**(agent 之上的编排 + 多端),�
 | # | 任务 | 谁有 | 为什么 | 归属 |
 |---|---|---|---|---|
 | 1 | 🟡 #406 #409 #410 + 手机这片(PR-C,在审)**独立工作区的 setup / run 脚本 + 每区一个端口**(仓库里主人提交的脚本,每仓库首次跑前问一次;输出进事件流;桌面 / 手机一个「跑起来」) | Conductor、Paseo、Jules、Vibe Kanban | 并行工作区开出来没装依赖、起不来服务 = 定位第 ① 条只做了一半 | wechat-cc-2a |
-| 2 | **回到某一轮**(复用 v62 的每轮快照 sha,重置工作区、截掉后面的轮) | Conductor checkpoints、Claude Code rewind | 手机上撤一轮坏改动,不用整个丢工作区 | wechat-cc-2a |
-| 3 | **diff 行评论送回执行者 + 按块接受**(审阅面板从「整文件退回」细到行) | Orca、Vibe Kanban、Nimbalyst | 已在逐文件审阅的后续里 | wechat-cc-2a |
+| 2 | ✅ #428 #433 #439 #444 **回到某一轮**(复用 v62 的每轮快照 sha,重置工作区、截掉后面的轮) | Conductor checkpoints、Claude Code rewind | 手机上撤一轮坏改动,不用整个丢工作区 | wechat-cc-2a |
+| 3 | ✅ #449 #450 #453 #456 **diff 行评论送回执行者 + 按块接受**(审阅面板从「整文件退回」细到行) | Orca、Vibe Kanban、Nimbalyst | 已在逐文件审阅的后续里 | wechat-cc-2a |
 | 4 | **记忆带出处 + 过期改写**(#405)(每晚整理时给每条记上来源对话 / 消息;带日期的记忆过期后改成过去时或归档;手机「CC 从哪知道的」) | Claude、ChatGPT Dreaming、Plaud | 信任与纠错;「下周去日本」一直挂着显得傻 | 我 |
 | 5 | **「CC 可以主动聊的话题」开关**(#404)(健康 / 家人 / 钱…,`/set` 里改,便宜模型闸门读它) | ChatGPT | 主动消息不越界;Google 自己承认 Gemini 过度个性化 | 我 |
 
@@ -188,16 +188,16 @@ CC 要取代的是 **Paseo / Orca 这一层**(agent 之上的编排 + 多端),�
 
 | # | 做什么 | 借鉴 | 归属 |
 |---|---|---|---|
-| A | 网页端不一致收口:CC 只在真连着时亮(之前 800ms 后无条件点亮,违反规矩 9)、拍板与状态按用词表、去 emoji、强调色不上状态字、断线文案 | 现状盘点 | 我(本 PR) |
+| A | ✅ #412 网页端不一致收口:CC 只在真连着时亮(之前 800ms 后无条件点亮,违反规矩 9)、拍板与状态按用词表、去 emoji、强调色不上状态字、断线文案 | 现状盘点 | 我(本 PR) |
 | B1 | 「一起做」列表分三组 等你 / 在做 / 做完 | Paseo、GitHub Live | wechat-cc-2a |
 | B2 | 通知上直接「允许这一步 / 先不做」+ 锁屏一行 Live Activity | Happy、Claude Remote Control、GitHub | wechat-cc-2a(要新 build + 真机) |
 | B3 | Mac 睡着 / 中继不在 ⇒「电脑歇了,事情先停着」,CC 变暗,不用红 | Codex iOS、Dispatch | wechat-cc-2a |
 | B4 | ✅ #414(先是一条普通消息)早报放在此刻顶部,结尾「就这些」 | Gemini Daily Brief、Pulse | 我(对标 #7) |
-| B5 | diff 点一行写意见送回执行者 | Codex iOS | wechat-cc-2a(对标 3) |
+| B5 | ✅ #456(手机整块评论)diff 点一行写意见送回执行者 | Codex iOS | wechat-cc-2a(对标 3) |
 | B6 | ✅ #415 #416 diff / 拍板里标出有风险的文件(鉴权、删测试、迁移):一个强调色「注意」,不用红黄绿 | Cursor 评测里被要的 | 我,之后 |
 | B7 | ✅ #417 #418 设置里的列表;对话小签暂不做 —— 定时在 App 里看得见:对话里一个小签 + 设置里一张列表 | ChatGPT Tasks、Gemini | 我,之后 |
 | B8 | 对话里说话、实时出字 | ChatGPT、Paseo | 等 STT 本地化 |
-| B9 | 「CC 做过的事」时间线 | Meta Muse | 之后 |
+| B9 | ✅ #429 #432 「CC 做过的事」时间线 | Meta Muse | 之后 |
 
 记下未做:风险原因、定时的时间 label 与上次结果、until 的停下原因是 daemon 给的中文,英文界面会中英混排(要做就让 daemon 给结构化的码);网页没带自己的衬线字体(装进页面会顶到中继 512KB 帧预算)、几处 1.5px 边框与 12.5px 这类不在 token 里的尺寸、网页额度接手还用 `window.confirm`(三份测试按同步 confirm 写,单独改)。
 

@@ -49,6 +49,14 @@ describe('discover', () => {
     const log = [1, 2, 3].map(h => at(h, '[GUARD] 网络守护:被拒')).join('\n')
     expect(discover({ ...base, log })[0]?.count).toBe(3)
   })
+  it('给了部署时刻 ⇒ 每类数「部署后还有几次」(0 多半是修好了),人读版也带上', () => {
+    const log = [30, 20, 10, 2, 1].map(h => at(h, '[INGEST] agy not eligible failed')).join('\n')
+    const c = discover({ ...base, log, deployedAt: NOW - 5 * 3_600_000 })
+    expect(c[0]).toMatchObject({ count: 5, sinceDeploy: 2 })
+    expect(formatDiscover(c, 48)).toContain('5 次(部署后 2)')
+    expect(discover({ ...base, log })[0]!.sinceDeploy).toBeUndefined()
+  })
+
   it('人读版:没有就说没有;有就带次数和例子', () => {
     expect(formatDiscover([], 48)).toMatch(/没有/)
     const log = [1, 2, 3].map(h => at(h, '[A] x failed')).join('\n')
@@ -61,6 +69,11 @@ describe('redact —— 例子交给模型之前抹掉人', () => {
     expect(redact('chat=o9cq800sObd3lbrHBgiItB1pooDQ@im.wechat error=errcode=-2 attempts=3')).toBe('chat=<chat> error=errcode=-2 attempts=3')
     expect(redact('backfill failed for wxid_kgzqqkcfrwzm21 batch 8209')).toBe('backfill failed for <wxid> batch 8209')
     expect(redact('send failed to=x text=今晚一起吃饭吗')).toBe('send failed to=x text=<略>')
+    // 10-23 第一次真跑漏过:字母数字混排的联系人编号。
+    expect(redact('settlement backfill failed for YWW100110221102 (retry next cycle)')).toBe('settlement backfill failed for <id> (retry next cycle)')
+    expect(redact('{"c":"YWW100110221102","u":1,"l":8209}')).toBe('{"c":"<id>","u":1,"l":8209}')
+    // 纯词、纯数字、短的版本号留着:例子还得看得懂。
+    expect(redact('NetworkUnprotectedError errcode=-2 batch 8209 e373342')).toBe('NetworkUnprotectedError errcode=-2 batch 8209 e373342')
   })
   it('discover 的 example 是抹过的', () => {
     const NOW2 = Date.parse('2026-10-23T20:00:00.000Z')
