@@ -239,7 +239,7 @@ describe('runReminderSweep', () => {
     expect(late.endsWith('记得吃药')).toBe(true)
   })
 
-  it('lateReminderText 写明晚了多久(提醒不再 24 小时就放弃,可能晚好几天;9d 评审 #523)', () => {
+  it('lateReminderText 写明晚了多久(提醒不再 24 小时就放弃,可能晚好几天;整合者评审 #523)', () => {
     const due = '2026-08-27T22:00:00.000Z', d = Date.parse(due)
     expect(lateReminderText('开会', due, d + 45 * 60_000)).toContain('晚了 45 分钟')
     expect(lateReminderText('开会', due, d + 2 * 3600_000 + 10 * 60_000)).toContain('晚了 2 小时')

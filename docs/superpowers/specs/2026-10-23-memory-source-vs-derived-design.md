@@ -1,6 +1,6 @@
 # 记忆:哪些是源,哪些是生成物(第三批 3e)设计稿
 
-> 2026-10-23 · wechat-cc arch-review 起草,待 wechat-cc-9d 审。上位:`docs/architecture-review-2026-10-21.md` §3e「记忆定『源』:库和 memory.md 是源,其余标生成物」。
+> 2026-10-23 · 审查者起草,待整合者审。上位:`docs/architecture-review-2026-10-21.md` §3e「记忆定『源』:库和 memory.md 是源,其余标生成物」。
 
 ## 1. 盘点(读代码核过)
 
@@ -37,7 +37,7 @@ export function memoryArtifactKind(relPath: string): Kind   // 认不出的(note
 
 **源一变,生成物过期**:所有写源的路径收成一个 `writeMemorySource(root, relPath, content)`(写 + `invalidateDerivedMemory`)。今天写源的地方:nightly 的两处、nightly-runtime 的纠正、`lib/memory.ts` 的两个写函数(MCP memory_write 与 CLI memory write 共用)、gardener 的重写。守卫测试:扫 `src/` 里往 `memory/<chat>/` 写文件的调用(同 json-write 守卫的做法),不经 `writeMemorySource` / 合成提交函数的 ⇒ 红。
 
-**过期是懒的**(9d 审稿):`invalidateDerivedMemory` 只记一笔(revision 变了),**不触发重算**。重算照旧只在两种时候:用到它的地方
+**过期是懒的**(整合者审稿):`invalidateDerivedMemory` 只记一笔(revision 变了),**不触发重算**。重算照旧只在两种时候:用到它的地方
 看见过期(读 `_overview.md` 时隐藏、`_profile.json` 带 `needsRefresh`)和已有的那一拍(24 小时自动整理 / 主人点「整理记忆」),
 沿用现有的冷却和花费闸门。不然 nightly 每晚改一次 `memory.md` 就固定多一次模型调用,断网时还会反复重试(违反「断网别重试风暴」)。
 第 2 步要核:今天有没有哪个定时任务「看见过期就重算」—— 有的话,失效变准以后它会跑得更勤,要先给它加冷却。
@@ -50,10 +50,10 @@ export function memoryArtifactKind(relPath: string): Kind   // 认不出的(note
 
 ## 5. 主人看得见的变化(一条,标出来,第 4 步等主人选)
 
-今天桌面编辑器能改 `_overview.md`,改了下次合成就被悄悄覆盖。两种修法,**9d 拿给主人选,桌面界面归 9d**:
+今天桌面编辑器能改 `_overview.md`,改了下次合成就被悄悄覆盖。两种修法,**整合者拿给主人选,桌面界面归整合者**:
 
 - **A. 只读 + 重新生成**:说实话,但把「在派生页上纠正 CC」这个手段拿走了。
-- **B. 改动变成一条「主人更正」写进源**(9d 提的):在派生页上改的内容,存成 `corrections.md` 里的一条(或等价的源记录),
+- **B. 改动变成一条「主人更正」写进源**(整合者提的):在派生页上改的内容,存成 `corrections.md` 里的一条(或等价的源记录),
   再照常重新生成。不会被悄悄覆盖,主人纠正 CC 的手段也还在。我倾向 B。
 
 其余(过期变得准、合成不再吃生成物)主人只会看到「串门时的人设和平时说的一致了」。
@@ -63,9 +63,9 @@ export function memoryArtifactKind(relPath: string): Kind   // 认不出的(note
 1. 清单 + `memoryArtifactKind` + 测试(每个已知文件都归了类;`MEMORY_ARTIFACTS` 的键与盘点表一致)。不改行为。
 2. `writeMemorySource`,写源的几处改走它;守卫测试。行为变化:生成物在源变了以后会显示过期 / `needsRefresh`(以前不会)。
 3. 合成按清单只吃源。
-4. 等主人在 §5 的 A / B 里选;daemon 侧我做,桌面 9d 做。
+4. 等主人在 §5 的 A / B 里选;daemon 侧我做,桌面整合者做。
 
-## 6b. 第 3b 步:更正要一直传到底(第 3 步之后、第 4 步之前;9d 审稿加的)
+## 6b. 第 3b 步:更正要一直传到底(第 3 步之后、第 4 步之前;整合者审稿加的)
 
 **为什么排在第 4 步前面**:今天主人点「更正」,只从 `memory.md` 删掉那一条;CC 自己的笔记(`profile.md`)和别的源里那句还在,
 下一次重新生成总览就又学回来了,还可能在串门时说给外人听。主人以为 CC 忘了,其实只是暂时没说 —— 这是 CC 对主人说了假话。

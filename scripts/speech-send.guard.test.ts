@@ -8,7 +8,7 @@
  *  - 只有两类,长期留着:'primitive' 是发送本身(定义 / 接线 / 投递出口);'reply' 是回答对方刚发来的那一句,
  *    或者主人当面点的操作(发给谁也是主人定的)—— 都不属于主动开口。
  *  - **没有过渡态**:2026-10-22 盘点的 36 处全部迁完,'migrate' 这一类删了。新的主动开口一律走 `policy.say` / `policy.tell`,
- *    不许先登记个「以后再迁」(9d 评审)。
+ *    不许先登记个「以后再迁」(整合者评审)。
  * 数的是调用,不是行数(复查 10-21 理念 5:数违规,不数症状)。
  */
 import { describe, it, expect } from 'vitest'
@@ -18,7 +18,7 @@ import { fileURLToPath } from 'node:url'
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..')
 // 发送原语 = IlinkAdapter 上所有 send* 方法(sendTyping 除外,它不说话)+ 其余几层包装。ilink 那一份从类型里读,不手写:
-// ilink 以后加 sendVoice 这类方法,守卫自动管到(9d 评审 #513)。
+// ilink 以后加 sendVoice 这类方法,守卫自动管到(整合者评审 #513)。
 const NOT_SPEECH = new Set(['sendTyping'])
 function ilinkSendMethods(): string[] {
   const src = readFileSync(join(ROOT, 'src', 'daemon', 'ilink-glue.ts'), 'utf8')
@@ -70,7 +70,7 @@ const BASELINE: Record<string, [Tag, number]> = {
   'src/daemon/internal-api/routes-turn.ts': ['reply', 1],
   'src/daemon/inbound/mw-access.ts': ['reply', 2],     // 回访客刚发来的那一句(欢迎语 / 中性回话);告诉主人的那句已走门
   // 主人当面点的操作(桌面「分享这幅画」、广播),发给谁也是主人定的;以及回复那一轮里模型调的发文件 / 发表情。
-  // 都不是 CC 主动开口 —— 别照这个口子把真正主动的东西塞进来(9d 评审)。
+  // 都不是 CC 主动开口 —— 别照这个口子把真正主动的东西塞进来(整合者评审)。
   'src/daemon/internal-api/routes.ts': ['reply', 6],
   // 主人发的命令的回话:「定时 …」「做过的事 …」
   'src/daemon/bootstrap/wire-jobs.ts': ['reply', 1],

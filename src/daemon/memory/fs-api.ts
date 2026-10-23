@@ -179,14 +179,14 @@ export function makeMemoryFS(opts: MemoryFSOptions): MemoryFS {
   }
 
   /**
-   * _overview.md 现在能不能给(3e 记忆第 2 步,9d 定):主人删了 / 改了东西以后的过期 ⇒ 藏(总览会进串门人设,带到别人的 CC
+   * _overview.md 现在能不能给(3e 记忆第 2 步,整合者定):主人删了 / 改了东西以后的过期 ⇒ 藏(总览会进串门人设,带到别人的 CC
    * 那里,不能把主人撤掉的话说出去);只是源里多了东西 ⇒ 照常给,开头贴一句「这份是哪天整理的、之后又有变化」。
    */
   function overviewStatus(full: string): 'fresh' | 'added' | 'retracted' {
     const real = realpathSync(full)
     return basename(real) === '_overview.md' ? derivedMemoryStatus(dirname(real), 'overview') : 'fresh'
   }
-  /** 读的时候贴上去的那句。写回来时剥掉(可能叠了好几层),不然模型读完原样 memory_write 回去,标签就成了正文(9d 评审 #581)。 */
+  /** 读的时候贴上去的那句。写回来时剥掉(可能叠了好几层),不然模型读完原样 memory_write 回去,标签就成了正文(整合者评审 #581)。 */
   const STALE_LABEL = /^> \(这份整体理解是[^\n]*整理的,之后记忆又有变化,可能不全。\)\n\n/
   function stripStaleLabels(text: string): string {
     while (STALE_LABEL.test(text)) text = text.replace(STALE_LABEL, '')

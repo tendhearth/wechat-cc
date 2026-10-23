@@ -1,6 +1,6 @@
 # 迁移一版一个文件(第三批 3e)设计稿
 
-> 2026-10-23 · wechat-cc arch-review 起草,待 wechat-cc-9d 审。上位:`docs/architecture-review-2026-10-21.md` §3e「`db.ts` 一版一个文件,老夹具从真迁移起步,删掉九个迁就测试的守护」。
+> 2026-10-23 · 审查者起草,待整合者审。上位:`docs/architecture-review-2026-10-21.md` §3e「`db.ts` 一版一个文件,老夹具从真迁移起步,删掉九个迁就测试的守护」。
 
 ## 1. 现在是什么样
 
@@ -32,7 +32,7 @@ export const migrations = [v001, v002, …, v084].map(m => m.migration)
 
 `db.ts` 留下 `openDb` / `runMigrations` / repair / `withLockRetry` 和几张 `initialize*Schema`,从 `./db/migrations` 引 `migrations`。`export { migrations }` 照旧从 `db.ts` 转出,外部 import 不变。
 
-## 4. 计数怎么保证不变(9d 要求的一节)
+## 4. 计数怎么保证不变(整合者要求的一节)
 
 `PRAGMA user_version` 记的是**跑了几个**,不是哪几个(#79 的根因)。所以拆文件这一步必须证明「第 i 项还是原来的第 i 项」,而且以后也不会被悄悄挪动。三道:
 
@@ -40,7 +40,7 @@ export const migrations = [v001, v002, …, v084].map(m => m.migration)
 2. **文件名 = 位置**,守卫测试钉住:`index.ts` 里第 i 个 import 必须是 `./v{i 补零到三位}`,`migrations.length` 等于目录里 `v*.ts` 的个数,编号连续、不跳号、不重号。于是:
    - 有人在中间插一个文件 ⇒ 后面的文件名全对不上 ⇒ 红;
    - 两路各自加了 `v085.ts` ⇒ 合并时**同名文件冲突**(比今天「数组末尾各加一项、git 自动合成两项」更好:今天两项会被静默合并成 v85、v86,其中一路的库就和 #79 一样错位)。
-3. **进了 dev 的就不许改**(9d 审稿改的:「发版时锁哈希」一靠人记、二冻得太晚 —— 主人真机跑的就是 dev,迁移一合进 dev、
+3. **进了 dev 的就不许改**(整合者审稿改的:「发版时锁哈希」一靠人记、二冻得太晚 —— 主人真机跑的就是 dev,迁移一合进 dev、
    部署一次,就已经在他的库里跑过了)。CI 里一步检查:拿这个 PR 改到的 `src/lib/db/migrations/v*.ts` 跟 `origin/dev` 上的
    同名文件比,**dev 上已经有的必须一字不差,只有新加的文件能改**。不用维护哈希表,冻结时刻跟部署节奏对得上。
    紧急要改老迁移走显式豁免:PR 标题带 `[migration-edit]`、描述写理由(检查读 PR 标题放行)。

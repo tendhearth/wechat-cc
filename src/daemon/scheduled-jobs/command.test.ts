@@ -101,7 +101,7 @@ describe('早报 × 微信', () => {
     return { store, said, prefs, cmd }
   }
   let quiet: { from: string; to: string } | undefined
-  it('早报的时间落在免打扰里 ⇒ 建的时候当场说「会跳过」;不在就不提(9d 评审 #509)', async () => {
+  it('早报的时间落在免打扰里 ⇒ 建的时候当场说「会跳过」;不在就不提(整合者评审 #509)', async () => {
     quiet = { from: '23:00', to: '08:00' }
     const m = mk()
     await m.cmd.handle('定时 早报 7:30', 'owner')

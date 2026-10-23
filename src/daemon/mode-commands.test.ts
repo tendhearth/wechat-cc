@@ -943,7 +943,7 @@ describe('makeModeCommands', () => {
     await cmds.handle(inbound('/set 免打扰 晚上'))
     expect(sentMessages.at(-1)?.[1]).toContain('/set 免打扰 23:00-8:00')
   })
-  it('/set 免打扰 撞上了早报 / 周报的时间 ⇒ 当场说「会跳过」;没撞上就不提(9d 评审 #509)', async () => {
+  it('/set 免打扰 撞上了早报 / 周报的时间 ⇒ 当场说「会跳过」;没撞上就不提(整合者评审 #509)', async () => {
     const { cmds, sentMessages } = setup({ initiativeJobTimes: [{ label: '早报', at: '07:30' }, { label: '周报', at: '20:00' }] })
     await cmds.handle(inbound('/set 免打扰 23:00-8:00'))
     expect(sentMessages.at(-1)?.[1]).toContain('早报(07:30)落在这段里,到点会跳过')

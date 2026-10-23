@@ -75,7 +75,7 @@ describe('policy.say —— CC 开口只有这一道门', () => {
     expect(s.finished()).toBe(1)
     expect(s.ledger[0]).toMatchObject({ outcome: 'failed', reason: 'boom' })
   })
-  it('**同一条话、同一个理由连着被推后 ⇒ 账一小时只记一次**;放行 / 被拒以后重新算(9d 评审 #521:一夜免打扰 × 每拍会把账淹掉)', async () => {
+  it('**同一条话、同一个理由连着被推后 ⇒ 账一小时只记一次**;放行 / 被拒以后重新算(整合者评审 #521:一夜免打扰 × 每拍会把账淹掉)', async () => {
     let now = Date.parse('2026-10-21T15:00:00.000Z')
     let quiet = true
     const ob = fakeOutbound()
@@ -102,7 +102,7 @@ describe('policy.say —— CC 开口只有这一道门', () => {
 })
 
 describe('tell / flushPending —— 推后的 report 落盘待说,补说走 say 开的那一轮(降级时落到 App)', () => {
-  it('**微信降级 + 补说 ⇒ 落到 App**(9d 评审:不能只发微信)', async () => {
+  it('**微信降级 + 补说 ⇒ 落到 App**(整合者评审:不能只发微信)', async () => {
     const { makeProactiveOutbound } = await import('../companion/proactive-channel')
     const { makePendingNotices } = await import('./pending-notices')
     const { mkdtempSync } = await import('node:fs'); const { tmpdir } = await import('node:os'); const { join } = await import('node:path')
@@ -137,7 +137,7 @@ describe('tell / flushPending —— 推后的 report 落盘待说,补说走 say
   })
 })
 
-describe('待说队列不丢话(9d 评审 #531)', () => {
+describe('待说队列不丢话(整合者评审 #531)', () => {
   const mk = async (o: { sendErr: () => string | undefined; onSend?: () => void | Promise<void> }) => {
     const { makePendingNotices } = await import('./pending-notices')
     const { mkdtempSync } = await import('node:fs'); const { tmpdir } = await import('node:os'); const { join } = await import('node:path')
@@ -187,7 +187,7 @@ describe('待说队列不丢话(9d 评审 #531)', () => {
   })
 })
 
-describe('带会过期码的卡不进待说队列(9d 评审 #533)', () => {
+describe('带会过期码的卡不进待说队列(整合者评审 #533)', () => {
   it('permission_ask / self_change_ask 没送到 ⇒ 不入队;social_ask(介绍一直有效)照样入队', async () => {
     const { makePendingNotices } = await import('./pending-notices')
     const { mkdtempSync } = await import('node:fs'); const { tmpdir } = await import('node:os'); const { join } = await import('node:path')

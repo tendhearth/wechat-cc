@@ -4,7 +4,7 @@ import { socialState, socialUnavailableLine } from './social-state'
 const on = { social_enabled: true, social_disclosure_policy: 'p' }
 const st = (state: 'ok' | 'degraded' | 'off') => [{ name: 'knowledge', state: 'ok' as const }, { name: 'social', state }]
 
-describe('socialState:以开机时模块的状态为准,配置只看开关改过没有(9d 评审 #546)', () => {
+describe('socialState:以开机时模块的状态为准,配置只看开关改过没有(整合者评审 #546)', () => {
   it('开机时 ok ⇒ ok(之后关了开关,重启前照常能用)', () => {
     expect(socialState(st('ok'), on, true)).toBe('ok')
     expect(socialState(st('ok'), {}, true)).toBe('ok')

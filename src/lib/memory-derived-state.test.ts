@@ -62,7 +62,7 @@ describe('derived memory freshness', () => {
   })
 })
 
-// 3e 记忆第 2 步(9d 定):过期分两种。主人删改 ⇒ retracted(藏);只是多了东西 ⇒ added(贴标签照常用)。
+// 3e 记忆第 2 步(整合者定):过期分两种。主人删改 ⇒ retracted(藏);只是多了东西 ⇒ added(贴标签照常用)。
 describe('derived memory: why it went stale', () => {
   it('added vs retracted, and a retraction sticks until that artefact is regenerated', async () => {
     const { derivedMemoryStatus } = await import('./memory-derived-state')

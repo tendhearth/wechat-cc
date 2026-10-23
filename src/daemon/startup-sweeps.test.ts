@@ -19,7 +19,7 @@ describe('重启通知经 CC 开口那道门(第三批 3a)', () => {
   })
 })
 
-describe('重启通知按对话一个一个进门(9d 评审)', () => {
+describe('重启通知按对话一个一个进门(整合者评审)', () => {
   it('两个收件人、一个送到一个没送到 ⇒ 只有没送到的那个进待说队列', async () => {
     const { makeSpeechPolicy } = await import('./speech/policy')
     const { makePendingNotices } = await import('./speech/pending-notices')

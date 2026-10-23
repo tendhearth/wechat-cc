@@ -27,7 +27,7 @@ describe('MemoryFS', () => {
     expect(chatFs.read('overview-alias.md')).toBeNull()
   })
 
-  // 3e 记忆第 2 步(9d 定):只是多了东西 ⇒ 照常给、开头贴一句;主人删改过 ⇒ 藏(总览会进串门人设,带到别人的 CC)。
+  // 3e 记忆第 2 步(整合者定):只是多了东西 ⇒ 照常给、开头贴一句;主人删改过 ⇒ 藏(总览会进串门人设,带到别人的 CC)。
   it('an overview that is only incomplete (added) is served with a label; one after an owner retraction stays hidden', () => {
     const fs = make()
     fs.write('c1/_overview.md', 'owner likes hiking')

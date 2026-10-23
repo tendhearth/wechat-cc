@@ -1,6 +1,6 @@
 # 执行者「在不在」只判一处(3c 第三块)设计稿
 
-> 2026-10-22 · wechat-cc arch-review 起草,待 wechat-cc-9d 审。上位:`docs/architecture-review-2026-10-21.md` §3c「注册只在一处」、`2026-10-21-executor-descriptor-design.md` §3 二进制查找 / 平台门。
+> 2026-10-22 · 审查者起草,待整合者审。上位:`docs/architecture-review-2026-10-21.md` §3c「注册只在一处」、`2026-10-21-executor-descriptor-design.md` §3 二进制查找 / 平台门。
 
 ## 1. 现在是什么样(读代码核过)
 
@@ -41,7 +41,7 @@
 - 注册时把 detect 的结果以**取值函数** `bin(): string | null` 放进 registry 那一项的 opts(每次调用现判,不缓存);工作台 codex / 额度监视器读它,删掉三次 `findCodexBinary()`。
 - 还掉上位稿 §4 那笔账(codex 路径只在接线时查一次):工作台 codex **每次 spawn / resume 时**调 `bin()` 取路径,而不是接线时固化。CLI 升级换了路径,下一个回合自然用新的。
 
-## 4.1 三条定案(9d 审稿时要求写明)
+## 4.1 三条定案(整合者审稿时要求写明)
 
 **① 换路径 / 重登记时,在跑的不断、旧的不漏。** 不做「换适配器」:registry 今天就是 `register` 遇到重复 id 直接抛,一家一个 id 只建一次,本稿不改这一点。路径变化走第 3 步的 `bin()` —— 适配器实例不换,换的只是**下一次** spawn / resume 用的可执行文件:
 - 在跑的回合:用它 spawn 时的那个进程跑完,不打断(进程是那时起的,和 registry 无关)。

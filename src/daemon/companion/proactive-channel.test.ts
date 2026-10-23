@@ -253,7 +253,7 @@ describe('一轮的出口 —— 附件(sendAttachment)', () => {
   })
 })
 
-describe('sendSticker —— 主动发一张表情:微信发文件,App 记表情引用;两条都不通 ⇒ false,不退成一句文字(9d)', () => {
+describe('sendSticker —— 主动发一张表情:微信发文件,App 记表情引用;两条都不通 ⇒ false,不退成一句文字(整合者)', () => {
   const mk = (o: { degraded?: boolean; app?: boolean; fileError?: boolean; recordAtt?: string | null }) => {
     const sendWechatFile = vi.fn(async () => (o.fileError ? { error: 'boom' } : {}))
     const recordAttachment = vi.fn(async () => (o.recordAtt === undefined ? '[表情:开心]' : o.recordAtt))

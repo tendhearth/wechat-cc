@@ -70,7 +70,7 @@ export interface ProactiveTurn {
   /**
    * 主动发一张表情(新贴纸那一句,第三批 3a):跟 sendText 同一套选路、同样粘住。微信 ⇒ 发那张图的文件;
    * App ⇒ 记成表情引用(`{kind:'sticker', ref:{tag}}`,App 画成表情)。两条都不通 / 记不了 ⇒ false ——
-   * 调用方就什么都别发,**不退成一句文字说明**(9d 评审)。
+   * 调用方就什么都别发,**不退成一句文字说明**(整合者评审)。
    * 跟 sendAttachment 分开:那个是回复交付用的(没落在 App 就回 false、让回复走它自己的微信路),语义不能动。
    */
   sendSticker(chatId: string, tag: string, path: string): Promise<boolean>

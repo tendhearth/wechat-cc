@@ -12,7 +12,7 @@
  *  - start:按同样的顺序,开动每个 ok 模块的 interval、依次 await 它的 onStart。onStart 抛错同上:optional ⇒ degraded
  *    并停掉它自己已经开动的;非 optional ⇒ 停掉全部再抛。`lazy` 拿到的东西只在这之后被用到,两个真环
  *    (ilink ↔ speech 构造期、pipeline ↔ polling 运行期)靠它。
- *    **开动每个模块之前再查一遍上游**(9d 评审 #542):上游在 start 段才坏(onStart 抛错 ⇒ degraded、已经停掉)时,
+ *    **开动每个模块之前再查一遍上游**(整合者评审 #542):上游在 start 段才坏(onStart 抛错 ⇒ degraded、已经停掉)时,
  *    已经 init 过的下游手里拿着的是一个停了的上游。needs 的上游、以及 init 时经 maybe **真拿到了**的 wants 上游,
  *    只要不再是 ok ⇒ 下游跟着上游的状态,并停掉它 init 时登记的 own;没拿到的 wants 不算,它本来就没在用。
  *  - interval 叠跑:上一次还没跑完(async 没结束)⇒ 这一拍跳过,不叠(慢的时候不会越积越多)。
@@ -230,7 +230,7 @@ export function createModules(mods: readonly DaemonModule[], opts: ModuleOpts): 
       if (stopRequested) return
       const slot = slots.get(mod.name)!
       if (slot.status.state !== 'ok') continue
-      // 上游在 start 段才坏了 ⇒ 我手里拿着的是一个停了的上游:跟着它,停掉我 init 时登记的(9d 评审 #542)
+      // 上游在 start 段才坏了 ⇒ 我手里拿着的是一个停了的上游:跟着它,停掉我 init 时登记的(整合者评审 #542)
       const upstream = [...(mod.needs ?? []), ...slot.took].map(n => slots.get(n)!).find(s => s.status.state !== 'ok')
       if (upstream) {
         opts.log('MODULES', `${mod.name} not started: upstream ${upstream.mod.name} became ${upstream.status.state} during start`)

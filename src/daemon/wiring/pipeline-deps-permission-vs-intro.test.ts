@@ -53,7 +53,7 @@ function writeAccess(admins: string[]): void {
 afterAll(() => { rmSync(ACCESS_STATE_DIR, { recursive: true, force: true }) })
 
 // 「同意 <码>」两头都认:权限卡的放行词(pending-permissions 的 ALLOW_WORDS,码是两位数)和介绍的「同意 <引用>」
-// (intro-command:2–8 位十六进制,「07」也算)。规矩(9d 拍板,10-22):**权限卡优先,但只在真的有那张卡时** ——
+// (intro-command:2–8 位十六进制,「07」也算)。规矩(整合者拍板,10-22):**权限卡优先,但只在真的有那张卡时** ——
 // 有同码、还在等的卡 ⇒ 权限那边批;没有 ⇒ 落到介绍。理由:权限卡是 blocking,被介绍吃掉,执行者就一直卡着、
 // 主人还以为批了;介绍被吃掉,最坏是再说一次。
 // 现在这条规矩只靠命令表里 permission-reply 排在 control 前面在撑(pipeline-deps.ts 的 commandRegistry),

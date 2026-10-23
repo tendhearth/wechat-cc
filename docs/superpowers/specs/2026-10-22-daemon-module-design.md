@@ -1,6 +1,6 @@
 # DaemonModule:一种写法,启停成对(第三批 3b)
 
-2026-10-22 · 架构复查 #507 理念 4「每个功能能整块拔掉」的落地 · 状态:**9d 评审过(#541),方向批准**;三处拍板和两处更正已经写进正文
+2026-10-22 · 架构复查 #507 理念 4「每个功能能整块拔掉」的落地 · 状态:**整合者评审过(#541),方向批准**;三处拍板和两处更正已经写进正文
 
 ## 为什么
 
@@ -56,7 +56,7 @@ interface ModuleCtx {
 }
 ```
 
-**分两段:init 只登记,start 才开动**(9d 评审 #541)。真的环有两种:
+**分两段:init 只登记,start 才开动**(整合者评审 #541)。真的环有两种:
 - **构造期的环**:ilink ↔ speech(#538)。ilink 的权限卡要经门记账,门的外发又要经 ilink 发。
 - **运行期的环**:pipeline ↔ polling。polling 一起就开始拉消息,拉到的要交给 pipeline;pipeline 里的管理命令(停 / 看账号)又要拿着 polling。
 
@@ -81,7 +81,7 @@ app.status()  // [{ name, state: 'ok' | 'off' | 'degraded', error?, sinceIso }]
 
 - 开机:按 `needs ∪ wants` 拓扑排序,**有环 ⇒ 开机就抛**,一条测试钉住真实的模块表无环。真的环不进 `needs`,写成 `lazy`,所以排序图本身无环。
 - `status()` 接到现有的 `/v1/health.subsystems` 上,不另起一个接口。「CC 现在怎么样」和自检读的还是同一份。
-- 一个 `needs` 的上游没起 ⇒ 下游不 init,**状态跟着上游**:上游 degraded ⇒ 下游 degraded,写明「upstream X not running」;只有主人关掉的 off 才往下传成 off。**不把坏了的标成 off**:状态页上 off 的意思是「主人关的 / 没配置」,上游坏了也标 off,就是一句假话(9d 评审 #541、#542)。不会半起。
+- 一个 `needs` 的上游没起 ⇒ 下游不 init,**状态跟着上游**:上游 degraded ⇒ 下游 degraded,写明「upstream X not running」;只有主人关掉的 off 才往下传成 off。**不把坏了的标成 off**:状态页上 off 的意思是「主人关的 / 没配置」,上游坏了也标 off,就是一句假话(整合者评审 #541、#542)。不会半起。
 - `MODULES` 是**一张显式的表**(`src/daemon/modules.ts`),按名字排,谁依赖谁写在每一行里。main.ts 只剩:读配置 → `startModules` → 等信号 → `stopAll`。
 
 ### 顺带消掉的一类空窗
@@ -96,7 +96,7 @@ app.status()  // [{ name, state: 'ok' | 'off' | 'degraded', error?, sinceIso }]
 
 **配对不在社交这一组**(第 3 步盘点时发现):它看的是 `mailbox_relays`,不看 `social_enabled`,是刻意的(不开社交也能配对)。笔友信箱的轮询器是社交组里单独的一个模块(`needs: ['social']`):它坏了不连累社交,「笔友信箱」那一行也照旧单独显示。
 
-**打猎、来访不做成模块**(9d 评审 #541):它们已经有主人自己的开关,`prefs.hunt`(#504,新装默认关)和 `prefs.visit`。再加一个模块开关,就是两个开关管一件事:主人在一处打开、另一处还关着,就会以为坏了。这正是理念 1 要防的事。准绳:
+**打猎、来访不做成模块**(整合者评审 #541):它们已经有主人自己的开关,`prefs.hunt`(#504,新装默认关)和 `prefs.visit`。再加一个模块开关,就是两个开关管一件事:主人在一处打开、另一处还关着,就会以为坏了。这正是理念 1 要防的事。准绳:
 - 已经有主人开关的东西,模块常开,由主人的开关管;
 - 模块开关只给「整块代码根本不该跑」的东西:服务、定时器、路由。
 
@@ -141,8 +141,8 @@ app.status()  // [{ name, state: 'ok' | 'off' | 'degraded', error?, sinceIso }]
      - `/set visit on` 回「每日串门已开启」;
      - 10 个社交 MCP 工具照样挂给模型;
      - 路由回 `social_not_wired` / `penpal_not_wired`,桌面靠这两个码判断。
-     这一步统一成 `module_off`,先鉴权再判模块;命令回一句「社交现在关着,去设置里打开」;工具在关着时不挂;桌面和错误码表同步改(表和客户端归 9d)。
-4. ~~**画室**:同样做法。~~ **不做**(10-22 盘点后定):画室没有自己的定时器和服务,挂在每天一次的自省那一拍里;开关 `atelier_mode` 每拍现读,改了不用重启就生效。做成模块只多一道路由门,却会把它变成「重启才生效」,是退步。9d 同意。
+     这一步统一成 `module_off`,先鉴权再判模块;命令回一句「社交现在关着,去设置里打开」;工具在关着时不挂;桌面和错误码表同步改(表和客户端归整合者)。
+4. ~~**画室**:同样做法。~~ **不做**(10-22 盘点后定):画室没有自己的定时器和服务,挂在每天一次的自省那一拍里;开关 `atelier_mode` 每拍现读,改了不用重启就生效。做成模块只多一道路由门,却会把它变成「重启才生效」,是退步。整合者同意。
 5. 剩下的 wire-* 逐个迁。不是环的 `Ref` 改成写进 `needs`;两个真环(ilink ↔ speech、pipeline ↔ polling)换成 `ctx.lazy`。每换一个,守卫的数降一。
 6. 全部降到 0 ⇒ 删掉旧的四样。
 
@@ -150,11 +150,11 @@ app.status()  // [{ name, state: 'ok' | 'off' | 'degraded', error?, sinceIso }]
 
 ## 待办(迁移途中记下的)
 
-- **a2a-server 的 listen 要挪到 onStart**(9d 评审 #552):现在 \`a2aServerModule\` 在 init 里就 listen 了。它眼下没有上游,所以无害;等 speech 进了容器、a2a 写上 \`needs: ['speech']\`,listen 就得挪到 start 段,不然上游在 start 段才坏时,它已经在收信了。
+- **a2a-server 的 listen 要挪到 onStart**(整合者评审 #552):现在 \`a2aServerModule\` 在 init 里就 listen 了。它眼下没有上游,所以无害;等 speech 进了容器、a2a 写上 \`needs: ['speech']\`,listen 就得挪到 start 段,不然上游在 start 段才坏时,它已经在收信了。
 - **核心链(会话、ilink、拉消息、工作台、internal-api)最后迁**:风险最大。等 #546–#552 这一批上线、主人用一阵、日志干净了再动。guard、cli-upgrade 两个 \`Ref\` 跟着它们一起换。
 - 社交关着时 \`/set\` 列表里那行「每日串门: on」不带说明(小,未做)。
 
-## 评审定下的(9d,#541)
+## 评审定下的(整合者,#541)
 
 1. **`lazy` 单独不够** ⇒ 分 init / start 两段。真环有两个:ilink ↔ speech 在构造期,pipeline ↔ polling 在运行期。
 2. 表里的字段叫 `module`,可选;名字清单 `MODULE_NAMES` 放在 protocol 里;`gen:routes` 生成的 JSON 不带它。

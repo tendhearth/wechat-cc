@@ -35,7 +35,7 @@ describe('排序:needs ∪ wants 的拓扑序', () => {
   })
 })
 
-describe('init / start 两段(9d 评审 #541:两个真环)', () => {
+describe('init / start 两段(整合者评审 #541:两个真环)', () => {
   it('**init 期间调 lazy 的函数会抛**;start 段起调得到', async () => {
     let early: unknown = null
     let viaStart: unknown = null
@@ -204,7 +204,7 @@ describe('拿东西只能拿写明了的依赖', () => {
   })
 })
 
-describe('上游在 start 段才坏(9d 评审 #542)', () => {
+describe('上游在 start 段才坏(整合者评审 #542)', () => {
   it('needs 的上游 onStart 抛错 ⇒ 下游不开动、跟着 degraded,并停掉它 init 时登记的 own', async () => {
     const t = fakeTimers()
     const stopped: string[] = []
@@ -233,7 +233,7 @@ describe('上游在 start 段才坏(9d 评审 #542)', () => {
   })
 })
 
-describe('小处(9d 评审 #542)', () => {
+describe('小处(整合者评审 #542)', () => {
   it('interval 上一次还没跑完 ⇒ 这一拍跳过,不叠;跑完了下一拍照常', async () => {
     const t = fakeTimers()
     let calls = 0

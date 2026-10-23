@@ -33,7 +33,7 @@ describe('writeJsonAtomic', () => {
     writeFileAtomic(p, 'K=w\n', { mode: 0o600 })
     expect(statSync(p).mode & 0o777).toBe(0o600)
   })
-  // 9d 评审:Windows 上目标被杀毒 / 索引器占着,rename 偶发 EPERM / EBUSY —— 短重试,再不行照实抛、不留 tmp。
+  // 整合者评审:Windows 上目标被杀毒 / 索引器占着,rename 偶发 EPERM / EBUSY —— 短重试,再不行照实抛、不留 tmp。
   it('on win32 retries a busy rename, then gives up and cleans the tmp file', () => {
     const d = fresh(), p = join(d, 'a.json')
     let calls = 0
@@ -92,7 +92,7 @@ describe('updateJsonFile', () => {
   })
 })
 
-// 9d 评审 #576:主人家目录里的 Claude / Cursor 配置常被 stow / chezmoi 链到 dotfiles,tmp + rename 会把链接换成普通文件。
+// 整合者评审 #576:主人家目录里的 Claude / Cursor 配置常被 stow / chezmoi 链到 dotfiles,tmp + rename 会把链接换成普通文件。
 describe('followSymlink', () => {
   it('writes through a symlink to the real file and keeps the link', () => {
     if (process.platform === 'win32') return  // Windows 上建符号链接要管理员权限 / 开发者模式,CI 里不保证

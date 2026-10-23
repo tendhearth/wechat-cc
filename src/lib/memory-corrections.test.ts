@@ -78,7 +78,7 @@ describe('dropCorrectedAgenda', () => {
   })
 })
 
-// 9d 记的欠账:CC 自己换了说法的待办,逐字匹配接不住 —— 问便宜模型挑编号。
+// 整合者记的欠账:CC 自己换了说法的待办,逐字匹配接不住 —— 问便宜模型挑编号。
 describe('agenda drop by model (pure parts)', () => {
   const AGENDA = '# agenda\n- [ ] due:2026-10-30 问问杭州之行顺不顺利\n- [x] done:2026-10-01 买咖啡豆\n- [ ] due:2026-11-02 提醒周报\n'
   it('numbers only the open items, in order', () => {

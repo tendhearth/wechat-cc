@@ -7,7 +7,7 @@
  *  - **没登记的文件出现这几种调用 ⇒ 红**:新代码写成模块。
  *  - **登记过的文件次数只许降**:多一处红;少了也红,提示你把数字调下来(棘轮)。
  *  - 全部降到 0 ⇒ 删掉 LifecycleSet、Ref、SubsystemSupervisor、收尾清单这四样。
- * 只扫生产代码(排除 *.test.ts,9d 评审 #541);注释行不算。
+ * 只扫生产代码(排除 *.test.ts,整合者评审 #541);注释行不算。
  */
 import { describe, it, expect } from 'vitest'
 import { readFileSync, readdirSync, statSync } from 'node:fs'

@@ -8,7 +8,7 @@
  *
  * **只有真的判过才留标记**:伙伴配置不存在(新装)或读到了合法的 `enabled`。配置在但读坏了(半写 / 权限 / TCC)时
  * 不能用 loadCompanionConfig —— 它会静默退回默认值(enabled 是默认、default_chat_id 是 null),判成「不动」再留标记,
- * 主人的每日打猎就永远关了、没人知道(9d 评审 #504)。所以这里自己读原文,读坏了就不判、不留标记,下次开机再判。
+ * 主人的每日打猎就永远关了、没人知道(整合者评审 #504)。所以这里自己读原文,读坏了就不判、不留标记,下次开机再判。
  */
 import { existsSync, mkdirSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'

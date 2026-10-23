@@ -24,7 +24,7 @@ function errMsg(err: unknown): string { return err instanceof Error ? err.messag
 
 /**
  * 新贴纸那一句(觅食式表情生长)改走 SpeechPolicy(第三批 3a):别烦我 / 免打扰 / 都送不到由门判;
- * 图跟字走同一条路(微信发文件、App 记表情引用)。图发不出去 ⇒ 什么都不说,**不退成一句光秃秃的文字**(9d 评审)。
+ * 图跟字走同一条路(微信发文件、App 记表情引用)。图发不出去 ⇒ 什么都不说,**不退成一句光秃秃的文字**(整合者评审)。
  * 贴纸已经在库里了,以后照样会用到;这一句只是「我画了张新的」的小报告,不补发。
  */
 export async function announceNewSticker(
