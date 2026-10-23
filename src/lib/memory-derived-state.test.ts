@@ -61,3 +61,38 @@ describe('derived memory freshness', () => {
     expect(isDerivedMemoryStale(root, 'overview')).toBe(true)
   })
 })
+
+// 3e 记忆第 2 步(9d 定):过期分两种。主人删改 ⇒ retracted(藏);只是多了东西 ⇒ added(贴标签照常用)。
+describe('derived memory: why it went stale', () => {
+  it('added vs retracted, and a retraction sticks until that artefact is regenerated', async () => {
+    const { derivedMemoryStatus } = await import('./memory-derived-state')
+    const root = temp()
+    expect(derivedMemoryStatus(root, 'overview')).toBe('fresh')
+    invalidateDerivedMemory(root, 'added')
+    expect(derivedMemoryStatus(root, 'overview')).toBe('added')
+    invalidateDerivedMemory(root, 'retracted')
+    expect(derivedMemoryStatus(root, 'overview')).toBe('retracted')
+    // 后面再来一次 added 不能把 retracted 冲掉
+    invalidateDerivedMemory(root, 'added')
+    expect(derivedMemoryStatus(root, 'overview')).toBe('retracted')
+    // 重新生成 overview ⇒ overview 回到 fresh;profile 没重新生成,照旧 retracted
+    const rev = beginDerivedGeneration(root)
+    expect(commitDerivedMemory(root, 'overview', rev, () => {})).toBe(true)
+    expect(derivedMemoryStatus(root, 'overview')).toBe('fresh')
+    expect(derivedMemoryStatus(root, 'profile')).toBe('retracted')
+    // 生成以后只是多了东西 ⇒ added
+    invalidateDerivedMemory(root, 'added')
+    expect(derivedMemoryStatus(root, 'overview')).toBe('added')
+  })
+  it('no reason given ⇒ retracted (fail toward hiding); a legacy stale state without reasons reads as retracted', async () => {
+    const { derivedMemoryStatus } = await import('./memory-derived-state')
+    const a = temp()
+    invalidateDerivedMemory(a)
+    expect(derivedMemoryStatus(a, 'overview')).toBe('retracted')
+    const b = temp()
+    writeFileSync(join(b, '.derived-state.json'), JSON.stringify({ version: 1, revision: 'r2', overview: 'r1', profile: 'r1' }))
+    expect(derivedMemoryStatus(b, 'overview')).toBe('retracted')
+    invalidateDerivedMemory(b, 'added')
+    expect(derivedMemoryStatus(b, 'overview')).toBe('retracted')
+  })
+})

@@ -2,6 +2,7 @@
  * 每晚记忆整理的运行时:15 分钟一次 tick(该跑就跑一次整理、再看看待发通知),
  * 「整理记忆」的立即运行,以及给微信(文本)与手机(结构)的只读视图。
  */
+import { invalidateDerivedMemory } from '../../lib/memory-derived-state'
 import { readSources, writeSources } from './sources'
 import { appendFileSync, existsSync, mkdirSync, readFileSync } from 'node:fs'
 import { join } from 'node:path'
@@ -146,6 +147,8 @@ export function makeMemoryNightlyRuntime(deps: NightlyRunDeps & NoticeDeps): Mem
       const src = readSources(got.root)
       const nowMs = deps.now(), nowIso = new Date(nowMs).toISOString(), day = localParts(nowMs, deps.config().timezone).day
       const memPath = join(got.root, MEMORY_FILENAME)
+      // 主人纠正 / 标过期 ⇒ 'retracted':旧总览里可能正好有这句,藏起来等重新生成(3e 记忆第 2 步)。
+      invalidateDerivedMemory(got.root, 'retracted')
       writeFileAtomic(memPath, serializeMemoryDoc(got.doc, nowIso))
       // 改名成功后才记:失败了 memory.md 没动,也不留一行假的纠正
       appendFileSync(join(got.root, CORRECTIONS_FILENAME), `- ${day} ${VERDICT_LINE[verdict]}:[${hit.section}] ${hit.text}\n`)
@@ -185,6 +188,7 @@ export function makeMemoryNightlyRuntime(deps: NightlyRunDeps & NoticeDeps): Mem
         have.add(text); added.push({ id, section: it.section, text })
       }
       if (added.length) {
+        invalidateDerivedMemory(r, 'added')  // 导入只加不删
         writeFileAtomic(memPath, serializeMemoryDoc(doc, nowIso))
         // 「CC 做过的事」里的记忆那一行读这份日志;出处标成导入(手机「CC 眼中的你」显示「从 X 导入」)
         try { appendFileSync(join(r, MEMORY_LOG_FILE), JSON.stringify({ at: nowIso, ops: added.map(a => ({ kind: 'add', ...a })), source: 'import' }) + '\n') } catch { /* 日志是附带的 */ }

@@ -232,7 +232,7 @@ async function bootDaemonInner(opts: BootDaemonOpts, undo: Array<() => void>): P
   // CC 开口那道门:wireMain 里才建,这里先占位(ilink 的权限卡、自改、终端会话都懒取它)
   const speechRef = new Ref<import('./speech/policy').SpeechPolicy>('speech')
   const ilink = makeIlinkAdapter({ stateDir, accounts, db, conversationStore, networkGate: guardRt.gate, speech: () => speechRef.current })
-  const memoryFS = makeMemoryFS({ rootDir: join(stateDir, 'memory') })
+  const memoryFS = makeMemoryFS({ rootDir: join(stateDir, 'memory'), layout: 'all-chats' })
   const lc = new LifecycleSet((tag, line) => log(tag, line))
   // Subsystem degraded-boot (spec 2026-08-17) — 只包可选子系统;核心链不经它。
   const sup = new SubsystemSupervisor((t, l) => log(t, l))
