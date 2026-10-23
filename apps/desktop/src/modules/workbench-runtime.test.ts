@@ -87,6 +87,15 @@ describe('executor quota (评审 2026-09-16)', () => {
   })
 })
 
+describe('executor refused in this region (2026-10-23)', () => {
+  it('says so in the picker, ahead of quota, and leaves others alone', () => {
+    const task={id:'A',title:'T',path:'/project',providerId:'claude',status:'running',createdAt:1,updatedAt:2,error:null}
+    const providers=[{id:'agy',displayName:'Gemini',quota:{kind:'quota' as const,since:1,resetAt:2,message:'x'},refusal:{code:'region_unavailable',since:'2026-10-23T09:00:00Z'}},{id:'claude',displayName:'Claude',quota:null,refusal:null}]
+    const html=renderWorkbench({tasks:[task],providers,defaultProvider:'claude',canWechat:false,selectedId:null,selectedArtifactId:null,error:'',preview:null,detail:null})
+    expect(html).toContain('Gemini（你现在的出口地区用不了）');expect(html).not.toContain('Gemini（额度已用完）');expect(html).toContain('>Claude<')
+  })
+})
+
 describe('executor usage windows (2026-09-16)', () => {
   it('shows real subscription windows next to the executor name, and 额度已用完 when a window is full', () => {
     const task={id:'A',title:'T',path:'/project',providerId:'codex',status:'running',createdAt:1,updatedAt:2,error:null}

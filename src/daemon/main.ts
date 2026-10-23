@@ -775,6 +775,7 @@ async function bootDaemonInner(opts: BootDaemonOpts, undo: Array<() => void>): P
         providerRefusals.onTurn({ provider: providerId, outcome: 'error', ...(code ? { errorCode: code } : {}), endedAt: Date.now() })
       },
       onTurnCompleted: (providerId) => providerRefusals.onTurn({ provider: providerId, outcome: 'completed', endedAt: Date.now() }),
+      providerRefusal: (providerId) => providerRefusals.get(providerId),
       executionConflict:(path,providerId,nativeId)=>boot.sessionManager.hasProjectConflict(path)||
         (!!nativeId&&Object.values(boot.sessionStore.all()).some(s=>s.provider===providerId&&s.session_id===nativeId))||
         legacyClaims.conflicts({owner:'workbench',path,providerId,nativeId})||

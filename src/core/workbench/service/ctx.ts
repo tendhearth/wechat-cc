@@ -93,6 +93,8 @@ export interface ServiceDeps {
   registry: ProviderRegistry
   /** 订阅执行者的真实额度快照(subscription-usage.ts 的监视器缓存);可选,不传就只靠失败信息判耗尽。 */
   usage?: (providerId: string) => UsageSnapshot | null
+  /** 这家执行者现在被拒着(daemon/provider-refusals:出口地区用不了,2026-10-23)。只读;没有 ⇒ null。 */
+  refusal?: (providerId: string) => { code: string; since: string } | null
   /** 权限卡的等待上限(ms);缺省 WORKBENCH_PERMISSION_TIMEOUT_MS。 */
   permissionTimeoutMs?: number
   /** 放行规则(2026-10-19):权限卡登记之前先问;不传 ⇒ 每条都问主人(改造前)。 */

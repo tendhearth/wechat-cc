@@ -78,11 +78,13 @@ function forkHtml(task, providers) {
 /** @typedef {{id:string,taskId:string,kind:'user'|'text'|'tool_call'|'system'|'error',text:string,createdAt:number,attachments?:import('./workbench-attachments.js').Attachment[],sourceId?:string|null,runId?:string,activity?:WorkbenchActivity,errorCode?:'execution_model_unsupported',diagnostic?:string}} WorkbenchEvent */
 /** @typedef {{id:string,taskId:string,name:string,mime:string,size:number,sha256:string,createdAt:number,approvedAt:number|null}} Artifact */
 /** @typedef {{id:string,taskId:string,tool:string,description:string,createdAt:number}} Permission */
-/** @typedef {{id:string,displayName:string,capabilities?:{attachments?:boolean,execution?:boolean,resume?:boolean,permissions?:string},quota?:{kind:'quota'|'rate_limit',resetAt?:number}|null,usage?:{windows:Array<{name:string,usedPercent:number}>}|null}} Provider */
+/** @typedef {{id:string,displayName:string,capabilities?:{attachments?:boolean,execution?:boolean,resume?:boolean,permissions?:string},quota?:{kind:'quota'|'rate_limit',resetAt?:number}|null,usage?:{windows:Array<{name:string,usedPercent:number}>}|null,refusal?:{code:string,since:string}|null}} Provider */
 /** 执行者名 + 额度状态:用完 / 限流一眼看得出来;订阅执行者带上真实窗口(5h / 周)—— 那不是估算,是厂商自己回的。 @param {Provider} p */
 function providerLabel(p) {
   // 免审记号跟在最后:额度 / 限流是一时的,免审是这位执行者的性子。
   const unattended = unattendedLabelSuffix(p)
+  // 被拒着比额度更要紧:重发没用,换出口地区或换一位(daemon/provider-refusals,最近一次真跑成功才清)。
+  if (p.refusal?.code === 'region_unavailable') return `${p.displayName}（你现在的出口地区用不了）${unattended}`
   if (p.quota?.kind === 'quota') return `${p.displayName}（额度已用完）${unattended}`
   if (p.quota?.kind === 'rate_limit') return `${p.displayName}（限流中）${unattended}`
   const windows = (p.usage?.windows ?? []).map(w => `${w.name === 'weekly' ? '周' : w.name} ${Math.round(w.usedPercent)}%`)
