@@ -34,14 +34,11 @@ bun run verify                       # 只跑改动牵连到的 + 全部守卫(s
 bun run verify --full                # 整合者:test / test:node / typecheck / depcheck 四条全跑,跟 CI 一样
 cd apps/relay && bun run test        # 改了中继 / 协议包时(另有 test:e2e,见 relay.md)
 
-# 2. 以下由整合者串行执行:构建已验证 dev 的 sidecar 并原子换进 .app(macOS)
-cd apps/desktop && bun run build-sidecar && cd -
-wechat-cc self deploy                # 换 inode + kickstart + 健康门,不过自动回滚
-
-# 3. 真机自检(daemon 在跑的前提下)
-wechat-cc selftest workbench --executor cursor --image --resume   # 加 --keep 保留 scratch 项目
-wechat-cc selftest chat --provider cursor --resume
-wechat-cc selftest phone                # 手机协议 v2 真机闭环(需开「出门也能用」)
+# 2+3. 以下由整合者串行执行(macOS):一道部署门走完 —— 负载 → 网络守护 → 构建 sidecar → self deploy → 工作台 + 对话两条自检,红了回滚(deploy.md「一条命令走完」)
+wechat-cc self ship                  # 机器忙退 3、守护不安全退 5,都是什么都没动;--wait-min N 等机器闲
+#   分步跑也行:build-sidecar → self deploy → selftest workbench --image --resume / selftest chat --resume(加 --keep 保留 scratch)
+wechat-cc selftest phone                # 手机协议 v2 真机闭环(需开「出门也能用」),ship 不含它
+# 过几个小时:wechat-cc self soak(改到开机 / 关机顺序的加 --min-restarts 1)
 
 # 4. 推 dev,看 CI
 git push origin dev

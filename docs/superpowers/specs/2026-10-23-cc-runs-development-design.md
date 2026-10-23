@@ -157,7 +157,7 @@
 1. **做法清单成文件**:`docs/maintainer/practices.md` 加格式守卫。只有文档。
 2. **评审换人,由 CC 挑**:自改的 review 步改成另一家执行者,按 §4.2 现挑;findings 回路不变。
 3. **合并队列(整合者)**:砖已经有了 —— `wechat-cc ci land`(10-23,#623 / #624:只等最上面那个的 CI、从下往上 rebase / 改 base / squash、中断了接着来)。这一步把它接进自改,让自改的一串 PR 走它。**已做**(2026-10-23):自改推 `self/<id>` 时开进 dev 的 PR,拍板后交给 ci land squash 合;CI 改成只认 PR(`self/**` 推送不再单跑),自改的 PR 照旧三平台。
-4. **一批的部署门**:砖也有了 —— `bun run verify`(本地只跑牵连到的)、`wechat-cc self soak`(部署稳不稳看信号,不死等一天)。这一步补负载判断,把 deploy → selftest → soak 串成一道门。
+4. **一批的部署门**:砖也有了 —— `bun run verify`(本地只跑牵连到的)、`wechat-cc self soak`(部署稳不稳看信号,不死等一天)。这一步补负载判断,把 deploy → selftest → soak 串成一道门。**已做**(2026-10-23):`wechat-cc self ship`(负载 → 网络守护 → 构建 → deploy → 自检,红了回滚,之后看 soak);自改的 deploy 步过同一道门(`machine_busy` / `network_unprotected`,停在 deploy 可 `--resume`)。
 5. **发掘任务**(§4.8):每晚一次,产出排好序的候选;修 bug / 重构类直接进 1–4 的流程,看得见的攒成一天一条问主人。
 6. **规划者**:目标变成计划和 PR 列表;碰到「主人看得见的行为」自动停在设计稿等拍板。
 7. **并行开发**:两个工作区,按依赖图排。

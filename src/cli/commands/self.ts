@@ -429,6 +429,63 @@ const selfSoakCmd = defineCommand({
   },
 })
 
+// ── self ship — 一批合进 dev 之后的部署门(src/cli/self-ship.ts 开头写了顺序和为什么) ──
+const selfShipCmd = defineCommand({
+  meta: { name: 'ship', description: '部署门:负载 → 网络守护 → 构建 sidecar → self deploy → 自检(红了回滚);之后看 self soak(仅 macOS 源码模式)' },
+  args: {
+    'wait-min': { type: 'string', description: '机器忙时最多等几分钟(缺省 0:忙就不动)' },
+    'max-load': { type: 'string', description: '1 分钟负载 / 核数的上限(缺省 1.0)' },
+    'skip-build': { type: 'boolean', description: '不构建,直接部署已经构建好的 sidecar' },
+  },
+  async run({ args }) {
+    const { runShip, SHIP_EXIT, DEFAULT_MAX_LOAD_PER_CPU } = await import('../self-ship')
+    if (process.platform !== 'darwin' || isCompiledBundle()) {
+      console.error('self ship: 只在 macOS 源码模式下跑(要在仓库里构建 sidecar);打包版用 self deploy --binary')
+      process.exit(SHIP_EXIT.deploy_failed)
+      return
+    }
+    const num = (raw: unknown, dflt: number) => (raw === undefined || raw === '' ? dflt : Number(raw))
+    const waitMin = num(args['wait-min'], 0)
+    const maxLoadPerCpu = num(args['max-load'], DEFAULT_MAX_LOAD_PER_CPU)
+    if (!Number.isFinite(waitMin) || waitMin < 0 || !Number.isFinite(maxLoadPerCpu) || maxLoadPerCpu <= 0) {
+      console.error('self ship: 用法 wechat-cc self ship [--wait-min N] [--max-load X] [--skip-build]')
+      process.exit(SHIP_EXIT.deploy_failed)
+      return
+    }
+    const { loadavg, cpus } = await import('node:os')
+    const { readApiInfo } = await import('../../lib/api-info')
+    const { makeDaemonClient } = await import('../self-change/daemon-client')
+    const { deployFromRepo, makeSelftest } = await import('../self-change/index')
+    const { spawnCollect } = await import('../self-change/runner')
+    const { SELF_CHANGE_DEFAULTS } = await import('../self-change/policy')
+    const { defaultSelftestDeps, runChatSelftest, runWorkbenchSelftest } = await import('../selftest')
+    const daemon = makeDaemonClient({ readApiInfo: () => readApiInfo(STATE_DIR), fetch })
+    const agent = loadAgentConfig(STATE_DIR).self_change
+    const res = await runShip({
+      load: () => ({ load1: loadavg()[0] ?? 0, cpus: cpus().length }),
+      guard: () => daemon.guard(),
+      build: async () => {
+        const r = await spawnCollect('bun', ['run', 'build-sidecar'], { cwd: join(SOURCE_REPO_ROOT, 'apps', 'desktop'), env: process.env, timeoutMs: SELF_CHANGE_DEFAULTS.tests_timeout_ms })
+        return { ok: r.code === 0, detail: (r.stderr || r.stdout).trim().split('\n').slice(-20).join('\n') }
+      },
+      deploy: mode => deployFromRepo(STATE_DIR, SOURCE_REPO_ROOT, mode),
+      // 跟自改同一套自检、同一份配置(agent-config 的 self_change.selftest_executor / selftest_provider)。
+      selftest: makeSelftest({
+        selftestExecutor: agent?.selftest_executor ?? SELF_CHANGE_DEFAULTS.selftest_executor,
+        selftestProvider: agent?.selftest_provider ?? SELF_CHANGE_DEFAULTS.selftest_provider,
+      }, {
+        workbench: o => runWorkbenchSelftest(defaultSelftestDeps(STATE_DIR), o),
+        chat: o => runChatSelftest(defaultSelftestDeps(STATE_DIR), o),
+      }),
+      sleep: ms => new Promise(r => setTimeout(r, ms)),
+      now: () => Date.now(),
+      log: line => console.error(line),
+    }, { waitMin, maxLoadPerCpu, skipBuild: Boolean(args['skip-build']) })
+    ;(res.exitCode === SHIP_EXIT.shipped ? console.log : console.error)(res.message)
+    process.exit(res.exitCode)
+  },
+})
+
 // ── self discover — 真机日志里反复出现的失败,排成候选任务(src/cli/self-discover.ts 开头写了判法) ──
 const selfDiscoverCmd = defineCommand({
   meta: { name: 'discover', description: '发掘任务:最近日志里反复出现的失败按次数排成候选(CC 自己迭代的第一个来源);只读' },
@@ -456,5 +513,5 @@ const selfDiscoverCmd = defineCommand({
 
 export const selfCmd = defineCommand({
   meta: { name: 'self', description: '自维护:部署自身、让 CC 自己改自己（仅 macOS launchd；见 docs/maintainer/deploy.md 与 self-change.md）' },
-  subCommands: { change: selfChangeCmd, deploy: selfDeployCmd, soak: selfSoakCmd, discover: selfDiscoverCmd },
+  subCommands: { change: selfChangeCmd, deploy: selfDeployCmd, ship: selfShipCmd, soak: selfSoakCmd, discover: selfDiscoverCmd },
 })

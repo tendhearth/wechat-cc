@@ -29,6 +29,7 @@ import type { ImplementRunner, ReviewerChoice } from './runner'
 import { providerDisplayName } from '../../core/provider-display-names'
 import type { DaemonClient } from './daemon-client'
 import { prTitle, type Forge, type PrRef } from './forge'
+import { DEFAULT_MAX_LOAD_PER_CPU, waitForQuietMachine, type MachineLoad } from '../self-ship'
 import type { ReviewFinding, SelfChangeState, SelfChangeStep, StateStore } from './state'
 
 export interface StepOutcome {
@@ -64,6 +65,8 @@ export interface PipelineDeps {
   /** 开 PR / 等 CI 合 / 关 PR(forge.ts)。 */
   forge: Forge
   deploy: (repoRoot: string) => Promise<SelfDeployResult>
+  /** 部署门的负载(self-ship.ts):1 分钟负载与核数。不给 ⇒ 不看负载(测试缺省)。 */
+  machineLoad?: () => MachineLoad
   rollback: (repoRoot: string) => Promise<SelfDeployResult>
   selftest: () => Promise<{ workbench: SelftestReport; chat: SelftestReport }>
   fs: { exists(p: string): boolean; writeFile(p: string, s: string): void; mkdirp(p: string): void }
@@ -75,6 +78,9 @@ export interface PipelineDeps {
   /** 停机 / fail_streak 写回 agent-config。缺省是真文件;测试塞假件。 */
   writeConfigPatch?: (patch: Partial<SelfChangeSettings>) => void
 }
+
+/** 部署前机器忙,最多等多久(一条自改没人盯,等一个小时比白白回滚强)。 */
+const DEPLOY_LOAD_WAIT_MIN = 60
 
 /** clone / fetch / push 的上限:首次 clone 这个仓库要几分钟。 */
 const NETWORK_TIMEOUT_MS = 10 * 60_000
@@ -890,6 +896,19 @@ async function deploy(s: SelfChangeState, d: PipelineDeps): Promise<StepOutcome>
   // 装错东西不算「机器坏了」,是「不知道该装什么」—— 不加 fail_streak、不停机,
   // 要的是人来看一眼(把 `<workdir>/runs/<id>` 删掉,`--resume` 会按批准的提交重开)。
   if (mismatch) return mismatch
+
+  // 部署门(跟 `self ship` 同一道,设计稿 2026-10-23-cc-runs-development §6 第 4 步):什么都还没动的时候先问能不能动。
+  // 两种都停在 deploy、不推 fail_streak(机器没坏,是现在不合适),`--resume` 从这里接着来。
+  if (d.machineLoad) {
+    const busy = await waitForQuietMachine({ load: d.machineLoad, sleep: d.sleep, now: d.now, log: d.log }, { waitMin: DEPLOY_LOAD_WAIT_MIN, maxLoadPerCpu: DEFAULT_MAX_LOAD_PER_CPU })
+    if (busy) return { ok: false, fail: 'machine_busy', detail: `${busy}。没部署;wechat-cc self change --resume ${s.id} 接着来` }
+  }
+  // 自检要调模型:网络守护不安全时部署完也验不了,只能回滚。
+  const g = await d.daemon.guard().catch(() => null)
+  if (!g || (g.enabled && !g.safe)) {
+    const why = !g ? '读不到网络守护的状态(daemon 不通?)' : `网络守护说现在不安全:${g.detail}`
+    return { ok: false, fail: 'network_unprotected', detail: `${why}。没部署(自检要调模型);wechat-cc self change --resume ${s.id} 接着来` }
+  }
 
   const build = await d.exec('bun', ['run', 'build-sidecar'], { cwd: join(dir, 'apps', 'desktop'), timeoutMs: SELF_CHANGE_DEFAULTS.tests_timeout_ms })
   if (build.code !== 0) {

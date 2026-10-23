@@ -796,6 +796,38 @@ describe('deploy', () => {
   const here = (over: FakeOpts = {}): ReturnType<typeof makeFakeDeps> =>
     makeFakeDeps({ exists: () => true, git: gitReply(ON_APPROVED), ...over })
 
+  it('部署门:机器忙了一个小时 ⇒ machine_busy,不构建、不推 fail_streak', async () => {
+    let t = 0
+    const { deps, rec } = here({ now: () => t })
+    deps.sleep = async ms => { t += ms }
+    deps.machineLoad = () => ({ load1: 40, cpus: 18 })
+    const out = await steps.deploy(merged(), deps)
+    expect(out).toMatchObject({ ok: false, fail: 'machine_busy' })
+    expect(out.detail).toContain('--resume ab12cd34')
+    expect(t).toBe(60 * 60_000)
+    expect(rec.exec).toEqual([])
+    expect(rec.deployed).toEqual([])
+    expect(rec.patches).toEqual([])
+  })
+
+  it('部署门:等着等着闲下来 ⇒ 照常构建部署', async () => {
+    const loads = [40, 40, 2]
+    const { deps, rec } = here()
+    deps.machineLoad = () => ({ load1: loads.shift() ?? 2, cpus: 18 })
+    expect(await steps.deploy(merged(), deps)).toMatchObject({ ok: true })
+    expect(rec.deployed).toHaveLength(1)
+  })
+
+  it('部署门:网络守护不安全 / 读不到 ⇒ network_unprotected,不构建', async () => {
+    for (const g of [null, { enabled: true, safe: false, detail: 'bx 断了' }]) {
+      const { deps, rec } = here()
+      deps.daemon.guard = async () => g
+      expect(await steps.deploy(merged(), deps)).toMatchObject({ ok: false, fail: 'network_unprotected' })
+      expect(rec.exec).toEqual([])
+      expect(rec.patches).toEqual([])
+    }
+  })
+
   it('build-sidecar 红 ⇒ deploy_failed + fail_streak+1', async () => {
     const { deps, rec } = here({ exec: () => ({ code: 1, stderr: '编译错误' }) })
     expect(await steps.deploy(merged(), deps)).toMatchObject({ ok: false, fail: 'deploy_failed' })
