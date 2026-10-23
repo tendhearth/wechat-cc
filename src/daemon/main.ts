@@ -842,7 +842,8 @@ async function bootDaemonInner(opts: BootDaemonOpts, undo: Array<() => void>): P
     lc.register({ name: 'provider-probes', stop: async () => { boot.stopProviderProbes?.() } })
     // 核心链就地搬家第 3 步(设计稿 2026-10-23-core-chain-modules):位置不变、关机顺序不变;起不来照旧整个开机失败。
     await startLifecycleModule(moduleHost, 'sessions', () => registerSessions(wired.sessionsDeps), { required: true })
-    lc.register(registerIlink(wired.ilinkDeps))
+    // 核心链就地搬家第 4 步:同上。ilink 的 30 秒清扫计时器(ilink/context.ts)和 speechRef 环留给 PR 6。
+    await startLifecycleModule(moduleHost, 'ilink', () => registerIlink(wired.ilinkDeps), { required: true })
     let workbenchNotifications:ReturnType<typeof wireWorkbenchNotifications>|undefined
     let workbenchArtifacts:ReturnType<typeof wireWorkbenchArtifacts>|undefined
     // Register before polling so shutdown stops inbound, drains task sends, then flushes ilink.
