@@ -91,6 +91,13 @@ describe('readMemoryFile', () => {
 describe('writeMemoryFile', () => {
   const USER = 'o9cq800sObd3lbrHBgiItB1pooDQ@im.wechat'
 
+  it('owner.md (主人原话) cannot be overwritten wholesale — only via memory edit', () => {
+    for (const p of ['owner.md', 'OWNER.md', './owner.md', 'x/../owner.md']) {
+      expect(() => writeMemoryFile(stateDir, USER, p, '- 我说的\n'), p).toThrow(/owner\.md/)
+    }
+    expect(() => writeMemoryFile(stateDir, USER, 'notes/owner.md', '普通笔记\n')).not.toThrow()
+  })
+
   it('writes a new file and reports created=true', () => {
     const result = writeMemoryFile(stateDir, USER, 'fresh.md', '# 新笔记\n')
     expect(result.created).toBe(true)

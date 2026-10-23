@@ -13,6 +13,7 @@ import { existsSync, mkdirSync, readFileSync, readdirSync, statSync } from 'node
 import { writeFileAtomic } from './json-file'
 import { dirname, join, relative, resolve } from 'node:path'
 import { isDerivedMemoryStale } from './memory-derived-state'
+import { OWNER_FILENAME } from './memory-owner'
 
 export interface MemoryFileEntry {
   name: string
@@ -75,6 +76,10 @@ const PROFILE_FILENAME = '_profile.json'
 // MemoryFS per user.
 export function writeMemoryFile(stateDir: string, userId: string, relPath: string, body: string, opts: { reason?: InvalidationReason } = {}): { bytesWritten: number; created: boolean } {
   const target = resolveSafe(stateDir, userId, relPath)
+  // 主人原话只经记忆编辑写(lib/memory-owner),整份覆盖会绕过「删 = 更正、加 = 原话」那一步。
+  if (relative(resolve(join(stateDir, 'memory', userId)), target).split('\\').join('/').toLowerCase() === OWNER_FILENAME) {
+    throw new Error('owner.md 是主人亲手写的原话,只能经记忆编辑改')
+  }
   // 写的是源 ⇒ 先让这个对话的生成物过期(3e 记忆第 2 步)。主人在桌面编辑可能是删改 ⇒ 缺省 'retracted';
   // 合成写回 _overview.md 是生成物,不触发。
   if (memoryArtifactKind(relPath) === 'source') invalidateDerivedMemory(join(stateDir, 'memory', userId), opts.reason ?? 'retracted')

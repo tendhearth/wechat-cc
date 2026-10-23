@@ -18,6 +18,7 @@ export const MEMORY_ARTIFACTS: Readonly<Record<string, { kind: MemoryArtifactKin
   'corrections.md': { kind: 'source', why: '主人的纠正,nightly 据此不再加回', synthesisInput: false },
   'preferences.md': { kind: 'source', why: 'CC 记下的偏好' },
   'persona.md': { kind: 'source', why: 'CC 的人设' },
+  'owner.md': { kind: 'source', why: '主人原话:主人在记忆上加 / 改写的行;只经记忆编辑写,CC 和整理都不改' },
   'agenda.md': { kind: 'source', why: '待办;晨报和定时也读' },
   '_overview.md': { kind: 'derived', why: 'synthesizeOverview 合成;串门当人设、快照、桌面' },
   '_profile.json': { kind: 'derived', why: 'synthesizeProfile 合成;桌面画像页' },

@@ -68,6 +68,7 @@ import { makeReplyDeliveryRuntime } from './reply-delivery'
 import { makeCareLedger } from './companion/care-ledger'
 import { careLevel } from './companion/calibration'
 import { loadCompanionConfig } from './companion/config'
+import { readOwnerDoc, renderOwnerForPrompt } from '../lib/memory-owner'
 import { makeSelfChangeGlue } from './self-change-glue'
 import { defaultRunner, makeCliReplyHandler } from './cli-reply-handler'
 import { makeCliPhoneActions } from './cli-phone-actions'
@@ -563,6 +564,11 @@ async function bootDaemonInner(opts: BootDaemonOpts, undo: Array<() => void>): P
         const fs = makeMemoryFS({ rootDir: join(stateDir, 'memory', c) })
         const raw = fs.read(MEMORY_FILENAME)
         return raw ? renderForPrompt(parseMemoryDoc(raw)) : ''
+      },
+      // 主人原话(记忆编辑设计稿 2026-10-23 §1):只在主人自己的对话里注入,访客 / trusted 的对话读不到。
+      ownerMemoryFor: (c) => {
+        if (c !== loadCompanionConfig(stateDir).default_chat_id) return ''
+        return renderOwnerForPrompt(readOwnerDoc(join(stateDir, 'memory', c)))
       },
       // 今天的草稿(同日失忆修复,2026-10-01):CC 白天写进 profile.md 的新行,随 memory.md 一起注入。
       todayDraftFor: (c) => { try { return readDraftForPrompt(memoryFS, c) } catch { return '' } },

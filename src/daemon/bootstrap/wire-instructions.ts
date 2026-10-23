@@ -15,7 +15,7 @@ import type { Bootstrap, BootstrapDeps } from './types'
 import type { PluginsSlice } from './wire-plugins'
 
 export function wireInstructions(
-  deps: Pick<BootstrapDeps, 'ilink' | 'personaFor' | 'stickerTagsFor' | 'careLevelFor' | 'newRelationshipFor' | 'companionOfferFor' | 'coreMemoryFor' | 'curatedMemoryFor' | 'todayDraftFor' | 'knowledgeMemoryFor' | 'bubbleRepliesFor'>,
+  deps: Pick<BootstrapDeps, 'ilink' | 'personaFor' | 'stickerTagsFor' | 'careLevelFor' | 'newRelationshipFor' | 'companionOfferFor' | 'coreMemoryFor' | 'curatedMemoryFor' | 'ownerMemoryFor' | 'todayDraftFor' | 'knowledgeMemoryFor' | 'bubbleRepliesFor'>,
   parts: {
     plugins: Pick<PluginsSlice, 'delegateStdioByProvider' | 'knowledgePluginNames'>
     defaultProviderId: ProviderId
@@ -146,6 +146,7 @@ export function wireInstructions(
       // nightly memory tidy design, Task 8 — when present, prompt-builder
       // injects this INSTEAD of coreMemory's profile excerpt.
       curatedMemory: deps.curatedMemoryFor?.(chatId),
+      ownerMemory: deps.ownerMemoryFor?.(chatId),
       // 同日失忆修复(2026-10-01):今天的草稿,prompt-builder 只在有 curatedMemory 时渲染它。
       todayDraft: deps.todayDraftFor?.(chatId),
       knowledgeMemory: deps.knowledgeMemoryFor?.(chatId),

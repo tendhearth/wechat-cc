@@ -4,6 +4,7 @@
  * → 备份旧版、原子写、追加日志、更新状态。任何失败都不写文件;同一天不再自动重试。
  */
 import { correctedTexts } from '../../lib/memory-corrections'
+import { readOwnerDoc, renderOwnerForPrompt } from '../../lib/memory-owner'
 import { invalidateDerivedMemory } from '../../lib/memory-derived-state'
 import { writeFileAtomic } from '../../lib/json-file'
 import { nextSources, readSources, writeSources, SOURCE_EXCERPT_MAX, type SourceRef } from './sources'
@@ -105,6 +106,8 @@ const readIf = (p: string): string => (existsSync(p) ? readFileSync(p, 'utf8') :
 export const CORRECTIONS_FILENAME = 'corrections.md'
 export const CORRECTIONS_BLOCK = '主人纠正过的条目 corrections.md(这些内容一律不要再 add 或 update 回记忆)'
 const CORRECTIONS_CAP = 3000
+/** 主人原话 owner.md(记忆编辑设计稿 2026-10-23 §1):只读素材,放在纠正后面、不占预算;整理从不写它。 */
+export const OWNER_BLOCK = '主人亲手写的原话(只读:不要改写、不要再写进记忆;记忆里和它冲突的条目改掉或删掉)'
 const normalizeEntry = (text: string): string => text.replace(/\s+/g, ' ').trim()
 /** 纠正记录:给模型看的尾部(最新的在后,封顶)+ 全部纠正过的正文(代码里拦逐字写回)。 */
 export function readCorrections(root: string): { block: string; texts: Set<string> } {
@@ -197,6 +200,7 @@ export function buildNightlyPrompt(a: { today: string; current: string; material
     '规则:',
     '- 只根据下面的素材改,不要编造;素材里主人说某条不对,就改掉或删掉它。',
     '- 「主人纠正过的条目」里的内容,哪怕别的素材里还提到,也不要再写回记忆(不 add、不 update 成它)。',
+    '- 「主人亲手写的原话」已经单独存着、每次对话都会读:不要再写进记忆,也不要改它;记忆里和它冲突的条目改掉或删掉。',
     '- 仍然成立的条目放进 confirm;合并措辞、补充细节用 update 且 reversal=false;意思被推翻才 reversal=true。',
     '- 删除必须写原因;只有确定不再成立才删。',
     '- 每条只写一件事:一个人一条,一个偏好一条。',
@@ -250,12 +254,15 @@ export async function runMemoryNightly(deps: NightlyRunDeps, opts: { force: bool
   // 白白多调一次模型。
   const draft = readIf(join(root, TODAY_DRAFT_FILENAME))
   const corrections = readCorrections(root)
+  const ownerWords = renderOwnerForPrompt(readOwnerDoc(root))
   const material = [
     corrections.block ? `### ${CORRECTIONS_BLOCK}\n${corrections.block}` : '',
+    ownerWords ? `### ${OWNER_BLOCK}\n${ownerWords}` : '',
     draft.trim() ? `### ${DRAFT_BLOCK}\n${draft.trim()}` : '',
     rest,
   ].filter(Boolean).join('\n\n')
-  const fingerprint = createHash('sha256').update(rest).digest('hex')
+  // 主人新写的原话也算新素材(记忆里可能有和它冲突的条目要改);没有原话时指纹和以前逐字节一样。
+  const fingerprint = createHash('sha256').update(rest).update(ownerWords).digest('hex')
   if (!firstRun && fingerprint === state.fingerprint) {
     mergeRunState(deps.stateDir, { lastRunDay: day })
     consumeDraftFile(root, draft, deps.log)

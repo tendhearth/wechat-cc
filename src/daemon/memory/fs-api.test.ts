@@ -67,6 +67,29 @@ describe('MemoryFS', () => {
     expect(derivedMemoryStatus(join(root, 'c2'), 'overview')).toBe('added')
   })
 
+  it('owner.md 是主人原话:CC 写不了、删不了(不分大小写、绕路径也不行);notes/owner.md 是普通笔记照写', () => {
+    const fs = make()
+    for (const p of ['c1/owner.md', 'c1/Owner.MD', 'c1/x/../owner.md', './c1/owner.md']) {
+      expect(() => fs.write(p, '- 我说的'), p).toThrow(MemoryPathError)
+    }
+    expect(() => fs.delete('c1/owner.md')).toThrow(MemoryPathError)
+    expect(() => fs.softDelete('c1/owner.md')).toThrow(MemoryPathError)
+    expect(existsSync(join(root, 'c1', 'owner.md'))).toBe(false)
+    fs.write('c1/notes/owner.md', '一份叫 owner 的笔记')
+    expect(fs.read('c1/notes/owner.md')).toBe('一份叫 owner 的笔记')
+    const chatFs = makeMemoryFS({ rootDir: join(root, 'c2') })
+    expect(() => chatFs.write('owner.md', 'x')).toThrow(MemoryPathError)
+  })
+
+  it('主人原话一写下,这个对话的生成物就过期(往藏的方向)', async () => {
+    const { derivedMemoryStatus } = await import('../../lib/memory-derived-state')
+    const { writeOwnerAssertions } = await import('../../lib/memory-owner')
+    make().write('c1/_overview.md', 'v1')
+    expect(derivedMemoryStatus(join(root, 'c1'), 'overview')).toBe('fresh')
+    writeOwnerAssertions(join(root, 'c1'), { assertions: [{ id: 'a1b2', text: '我不喝咖啡', date: '2026-10-23', origin: 'overview' }], extra: [] })
+    expect(derivedMemoryStatus(join(root, 'c1'), 'overview')).toBe('retracted')
+  })
+
   it('write then read roundtrips content', () => {
     const fs = make()
     fs.write('profile.md', '# Hi\nuser is 顾时瑞')
