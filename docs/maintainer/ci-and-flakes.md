@@ -20,7 +20,7 @@
 
 **叠起来的一串 PR**:整合者不用每层等一遍 PR CI。上层包含下层的全部改动,只看最上面那个 PR 的 CI(`pull_request` 不限 base,上层 PR 也有 CI;它的 `changes` 输出全部强制 true,因为 paths-filter 只看得见这一层);一条没跑的 rollup 不算绿;绿了按顺序合进 dev,合完推 dev 那一次(三平台)才是正式闸门。中间层 rebase 后被取消的运行不用重跑。
 
-这一套是一条命令:`wechat-cc ci land <最上面那个 PR>`(在整合者自己的 detached worktree 里跑;`--dry-run` 先看认出的那一串)。它先记下每层旧 head、钉死最上面那个的 head 等 CI(非 skipped 至少 5 条全绿,只改文档的串给 `--min-checks 1`),再从下往上 `rebase --onto origin/dev <下层旧 head>` → tsc → 带租约推 → 改 base → `--match-head-commit` squash 合。停下来的情形(退出码):1 CI 红 / 2 前提不满足 / 3 head 或 dev 被人动过 / 4 rebase 冲突(已 abort,前面合了的留着)/ 5 超时;有兄弟 PR(两个叠在同一个下层上)第一版直接停。给的不是最上面那个(比如核心链一步一部署,只合 #598、#599 还叠在它上面)⇒ 只合到给的那层,上面的不动、不算兄弟;它们的 base 还指着合掉的分支,以后 `ci land <上面那个>` 接着来(起点从 force push 事件里找,找不到就 `--parent-old`)。合完照旧 `wechat-cc ci triage --wait --rerun` 看 dev 推送那一次。
+这一套是一条命令:`wechat-cc ci land <最上面那个 PR>`(在整合者自己的 detached worktree 里跑;`--dry-run` 先看认出的那一串)。它先记下每层旧 head、钉死最上面那个的 head 等 CI(非 skipped 至少 5 条全绿,只改文档的串给 `--min-checks 1`),再从下往上 `rebase --onto origin/dev <下层旧 head>` → tsc → 带租约推 → 改 base → `--match-head-commit` squash 合。停下来的情形(退出码):1 CI 红 / 2 前提不满足 / 3 head 或 dev 被人动过 / 4 rebase 冲突(已 abort,前面合了的留着)/ 5 超时;有兄弟 PR(两个叠在同一个下层上)第一版直接停。给的不是最上面那个(比如核心链一步一部署,只合 #598、#599 还叠在它上面)⇒ 只合到给的那层,上面的不动、不算兄弟;它们的 base 还指着合掉的分支,以后 `ci land <上面那个>` 接着来(起点从 force push 事件里找,找不到就 `--parent-old`)。等的那个 head 三分钟一条检查都没有 ⇒ 打一行「多半没触发 CI」和重触发的办法:`gh pr close N && gh pr reopen N`(改 base 紧接着 force push 时 GitHub 有时一条运行都不建,10-23 #599);十分钟还是没有才判红。合完照旧 `wechat-cc ci triage --wait --rerun` 看 dev 推送那一次。
 
 bun 版本在 workflow 里**钉死**(`bun-version: 1.3.14`),不用 `latest` —— 上游发新版能让 CI 在没有任何提交的情况下自己变红。升 bun 该是一件有人盯着的事。
 

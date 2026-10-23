@@ -147,6 +147,8 @@ const BLIP_MS = 60_000
 const DEFAULT_MIN_CHECKS = 5
 const DEFAULT_TIMEOUT_MIN = 120
 const NO_CHECKS_GIVE_UP_MS = 10 * 60_000
+/** 一条检查都没有过了这么久 ⇒ 先说一声多半没触发(不判红,判红还是十分钟那条)。 */
+const NO_CHECKS_HINT_MS = 3 * 60_000
 const MAX_BLIPS = 10
 const NET_RETRIES = 3
 const NET_BACKOFF_MS = [5_000, 15_000, 45_000]
@@ -307,6 +309,10 @@ export async function runCiLand(deps: CiLandDeps, opts: CiLandOpts): Promise<CiL
   // 那个空档里看到的是「一条 SUCCESS、没有在跑的」。rollup 十分钟没变化、还是不够数,才判。
   let lastSig = ''
   let sigSince = deps.now()
+  const waitStart = deps.now()
+  let hinted = false
+  // 改了 base 紧接着 force push(或者反过来),GitHub 有时一条运行都不建(2026-10-23 #599):别安静地等,说怎么重触发。
+  const reopenHint = `gh pr close ${topLayer.number} && gh pr reopen ${topLayer.number}(重触发 pull_request,head 不变)`
   for (;;) {
     if (deps.now() > deadline) return done(CI_LAND_EXIT.timeout, `等 #${topLayer.number} 的 CI 超时`)
     const v = ghJson<{ headRefOid: string; statusCheckRollup: RollupItem[] | null }>('pr', 'view', String(topLayer.number), '--json', 'headRefOid,statusCheckRollup')
@@ -323,10 +329,14 @@ export async function runCiLand(deps: CiLandDeps, opts: CiLandOpts): Promise<CiL
     if (verdict.kind === 'green') { deps.log(`#${topLayer.number} 的 CI 绿了(${verdict.counted} 条)`); break }
     const sig = JSON.stringify(v.statusCheckRollup ?? [])
     if (sig !== lastSig) { lastSig = sig; sigSince = deps.now() }
+    if (verdict.kind === 'too_few' && verdict.counted === 0 && !hinted && deps.now() - waitStart >= NO_CHECKS_HINT_MS) {
+      hinted = true
+      deps.log(`#${topLayer.number} 的 head ${pinnedTop.slice(0, 8)} ${Math.round(NO_CHECKS_HINT_MS / 60_000)} 分钟了一条检查都没有:多半没触发 CI。${reopenHint}`)
+    }
     if (verdict.kind === 'too_few' && deps.now() - sigSince > NO_CHECKS_GIVE_UP_MS) {
       // 十分钟还是空 ⇒ CI 根本没触发(比如 pull_request 的 base 过滤);不空但不够数 ⇒ 多半是只改文档的串。
       return done(CI_LAND_EXIT.red, verdict.counted === 0
-        ? `#${topLayer.number} 十分钟了一条检查都没有:CI 没触发,不能当绿`
+        ? `#${topLayer.number} 十分钟了一条检查都没有:CI 没触发,不能当绿。${reopenHint},然后重跑 ci land`
         : `#${topLayer.number} 只跑了 ${verdict.counted} 条非 skipped 检查(要 ${minChecks}):只改文档的串用 --min-checks 1`)
     }
     deps.log(`#${topLayer.number} 的 CI 还在跑(${verdict.kind === 'pending' ? verdict.counted : 0} 条),${POLL_MS / 60_000} 分钟后再看`)
