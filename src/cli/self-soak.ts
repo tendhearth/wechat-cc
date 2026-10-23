@@ -58,16 +58,20 @@ const DEPLOY_MARK = /\[NOTIFY\] skip startup notify: planned restart \(self-depl
 const GRACEFUL = /\[NOTIFY\] skip startup notify: planned restart \(shutdown:/
 const TS = /^(\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?Z) /
 
+/** 日志里最后一次 self deploy 重启的时刻;没有 ⇒ null。`self discover` 用它算「部署后还有几次」。 */
+export function lastDeployAt(log: string): number | null {
+  const lines = log.split('\n')
+  for (let i = lines.length - 1; i >= 0; i--) {
+    if (!DEPLOY_MARK.test(lines[i]!)) continue
+    const m = TS.exec(lines[i]!)
+    if (m) return Date.parse(m[1]!)
+  }
+  return null
+}
+
 export function judgeSoak(input: SoakInput): SoakReport {
   const lines = input.log.split('\n')
-  let since = input.since ?? null
-  if (since === null) {
-    for (let i = lines.length - 1; i >= 0; i--) {
-      if (!DEPLOY_MARK.test(lines[i]!)) continue
-      const m = TS.exec(lines[i]!)
-      if (m) { since = Date.parse(m[1]!); break }
-    }
-  }
+  let since = input.since ?? lastDeployAt(input.log)
   const problems: string[] = []
   const notes: string[] = []
   let restarts = 0

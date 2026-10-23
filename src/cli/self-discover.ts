@@ -17,6 +17,8 @@ export interface DiscoverInput {
   hours: number
   /** 至少出现几次才算候选(缺省 3)。 */
   minCount: number
+  /** 最后一次部署的时刻(self-soak.ts lastDeployAt)。给了就数「部署后还有几次」。 */
+  deployedAt?: number | null
 }
 
 export interface Candidate {
@@ -26,6 +28,8 @@ export interface Candidate {
   count: number
   firstSeen: string
   lastSeen: string
+  /** 最后一次部署之后出现的次数;没给 deployedAt ⇒ 没有这一格。0 = 多半已经修好了(或者那条路这一版还没走到)。 */
+  sinceDeploy?: number
   /** 一条例子(截断),给规划者和人看。**抹掉了人**(聊天 id、wxid、十六进制 id、`text=` 后面的正文),数字留着 ——
    *  第 5 步会把候选交给模型(Claude / Codex)当提示词,原样的日志行里有主人和联系人的 id,偶尔还有消息原文。 */
   example: string
@@ -43,6 +47,8 @@ export function redact(message: string): string {
     .replace(/\b[\w.+-]+@im\.wechat\b/g, '<chat>')
     .replace(/\bwxid_\w+/g, '<wxid>')
     .replace(/\b[0-9a-f]{8,}\b/gi, '<id>')
+    // 字母和数字混在一起、8 位以上的(联系人 / 群的编号,如 YWW100110221102):10-23 第一次真跑漏过一回。
+    .replace(/\b(?=[A-Za-z0-9_]*[A-Za-z])(?=[A-Za-z0-9_]*\d)[A-Za-z0-9_]{8,}\b/g, '<id>')
     .replace(/\b(text|body|content|msg)=.*$/i, '$1=<略>')
 }
 
@@ -73,8 +79,9 @@ export function discover(input: DiscoverInput): Candidate[] {
     const signature = signatureOf(msg)
     const key = `${tag}\u0000${signature}`
     const g = groups.get(key)
-    if (g) { g.count++; g.lastSeen = ts }
-    else groups.set(key, { tag, signature, count: 1, firstSeen: ts, lastSeen: ts, example: redact(msg).slice(0, 240) })
+    const after = input.deployedAt != null && t >= input.deployedAt ? 1 : 0
+    if (g) { g.count++; g.lastSeen = ts; if (g.sinceDeploy !== undefined) g.sinceDeploy += after }
+    else groups.set(key, { tag, signature, count: 1, firstSeen: ts, lastSeen: ts, example: redact(msg).slice(0, 240), ...(input.deployedAt != null ? { sinceDeploy: after } : {}) })
   }
   return [...groups.values()].filter(c => c.count >= input.minCount).sort((a, b) => b.count - a.count || b.lastSeen.localeCompare(a.lastSeen))
 }
@@ -83,7 +90,8 @@ export function formatDiscover(cands: Candidate[], hours: number): string {
   if (!cands.length) return `最近 ${hours} 小时日志里没有反复出现的失败。`
   const out = [`最近 ${hours} 小时反复出现的失败(${cands.length} 类,次数多的在前):`]
   for (const c of cands.slice(0, 20)) {
-    out.push(`  ${String(c.count).padStart(4)} 次  [${c.tag}] ${c.signature}`)
+    const after = c.sinceDeploy === undefined ? '' : `(部署后 ${c.sinceDeploy})`
+    out.push(`  ${String(c.count).padStart(4)} 次${after}  [${c.tag}] ${c.signature}`)
     out.push(`         ${c.firstSeen.slice(5, 16)} → ${c.lastSeen.slice(5, 16)}  例:${c.example.slice(0, 120)}`)
   }
   return out.join('\n')
