@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest'
 import { mkdtempSync, readFileSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { OWNER_FILENAME, parseOwnerDoc, readOwnerDoc, renderOwnerForPrompt, serializeOwnerDoc, writeOwnerAssertions, type OwnerDoc } from './memory-owner'
+import { OWNER_FILENAME, overviewForOthers, renderOwnerOverviewSection, stripOwnerOverviewSection, parseOwnerDoc, readOwnerDoc, renderOwnerForPrompt, serializeOwnerDoc, writeOwnerAssertions, type OwnerDoc } from './memory-owner'
 
 const doc: OwnerDoc = {
   assertions: [
@@ -55,5 +55,22 @@ describe('owner.md', () => {
 
   it('没有文件 ⇒ 空的', () => {
     expect(readOwnerDoc(join(tmpdir(), 'no-such-owner-dir'))).toEqual({ assertions: [], extra: [] })
+  })
+})
+
+describe('总览里主人原话那一节', () => {
+  const overview = '<!-- 由 wechat-cc 生成 -->\n\n## 你写的\n- 我不喝咖啡 <!-- o:a1b2 -->\n\n## 他是谁\n主人做 wechat-cc。\n'
+  it('渲染:标题 + 逐字 + 编号;没有原话 ⇒ 空', () => {
+    expect(renderOwnerOverviewSection(doc)).toBe('## 你写的\n- 我不喝咖啡 <!-- o:a1b2 -->\n- 周末不谈工作 <!-- o:c3d4 -->')
+    expect(renderOwnerOverviewSection({ assertions: [], extra: [] })).toBe('')
+  })
+  it('对外的版本去掉那一节,别的原样', () => {
+    const out = overviewForOthers(overview)
+    expect(out).not.toContain('我不喝咖啡')
+    expect(out).toContain('## 他是谁\n主人做 wechat-cc。')
+  })
+  it('那一节在中间、或者有两节同名的,也都去掉', () => {
+    const md = '## 他是谁\nA\n## 你写的\n- x\n## 近况\nB\n## 你写的\n- y\n'
+    expect(stripOwnerOverviewSection(md)).toBe('## 他是谁\nA\n## 近况\nB')
   })
 })

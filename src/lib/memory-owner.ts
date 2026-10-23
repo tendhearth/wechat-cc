@@ -63,3 +63,31 @@ export function renderOwnerForPrompt(doc: OwnerDoc): string {
   const body = doc.assertions.map(a => `- ${a.text}`).join('\n')
   return body.length > OWNER_MEMORY_MAX_CHARS ? `${body.slice(0, OWNER_MEMORY_MAX_CHARS)}\n(已截断)` : body
 }
+
+/** 总览里主人原话那一节的标题(合成时由代码插在最前面;lib/memory-edit 的 overviewTextLines 认它、跳过它)。 */
+export const OWNER_OVERVIEW_HEADING = '## 你写的'
+
+/** 总览最前面那一节:主人原话逐字,每行尾注编号。没有原话 ⇒ ''。 */
+export function renderOwnerOverviewSection(doc: OwnerDoc): string {
+  if (!doc.assertions.length) return ''
+  return [OWNER_OVERVIEW_HEADING, ...doc.assertions.map(a => `- ${clean(a.text)} <!-- o:${a.id} -->`)].join('\n')
+}
+
+/** 去掉「## 你写的」那一节(从标题到下一个标题之前)。模型照着样子写出一节同名的,也一并去掉。 */
+export function stripOwnerOverviewSection(md: string): string {
+  const out: string[] = []
+  let skipping = false
+  for (const line of md.split('\n')) {
+    if (/^#{1,6}\s/.test(line.trim())) skipping = /^##\s+你写的\s*$/.test(line.trim())
+    if (!skipping) out.push(line)
+  }
+  return out.join('\n').replace(/\n{3,}/g, '\n\n')
+}
+
+/**
+ * 要把总览带出主人自己的对话(串门「CC 眼中的主人」……)一律经这里:去掉主人原话那一节。
+ * 主人是在自己的记忆页上写给 CC 看的,不等于同意说给别人的 CC 听。scripts/memory-overview-readers.guard.test.ts 守。
+ */
+export function overviewForOthers(overview: string): string {
+  return stripOwnerOverviewSection(overview).trim()
+}

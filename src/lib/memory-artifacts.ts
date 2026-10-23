@@ -18,7 +18,9 @@ export const MEMORY_ARTIFACTS: Readonly<Record<string, { kind: MemoryArtifactKin
   'corrections.md': { kind: 'source', why: '主人的纠正,nightly 据此不再加回', synthesisInput: false },
   'preferences.md': { kind: 'source', why: 'CC 记下的偏好' },
   'persona.md': { kind: 'source', why: 'CC 的人设' },
-  'owner.md': { kind: 'source', why: '主人原话:主人在记忆上加 / 改写的行;只经记忆编辑写,CC 和整理都不改' },
+  // 不喂合成(总览):由代码原样插成「## 你写的」一节,对外(串门)时整节去掉。要是也喂给模型,它会把主人原话换个说法写进
+  // 生成的那部分,串门时就跟着出去了 —— 去掉那一节也挡不住(记忆编辑第 3 步定)。每晚整理 memory.md 照旧读它(那份不对外)。
+  'owner.md': { kind: 'source', why: '主人原话:主人在记忆上加 / 改写的行;只经记忆编辑写,CC 和整理都不改', synthesisInput: false },
   'agenda.md': { kind: 'source', why: '待办;晨报和定时也读' },
   '_overview.md': { kind: 'derived', why: 'synthesizeOverview 合成;串门当人设、快照、桌面' },
   '_profile.json': { kind: 'derived', why: 'synthesizeProfile 合成;桌面画像页' },

@@ -138,6 +138,24 @@ describe('synthesizeOverview', () => {
     expect(readFileSync(join(chat, '_overview.md'), 'utf8')).not.toContain('西湖区')
     expect(JSON.parse(readFileSync(join(chat, 'memory-redactions.json'), 'utf8')).byKind.overview).toBe(1)
   })
+  // 记忆编辑第 3 步:主人原话由代码逐字插在最前面「## 你写的」,不过出口过滤;模型看不到它(不喂合成),也伪造不了那一节。
+  it('puts the owner\'s own words verbatim at the top, never shows them to the model, and drops a model-made 你写的 section', async () => {
+    const { writeOwnerAssertions } = await import('./memory-owner')
+    seedProject('-alpha', { 'MEMORY.md': 'idx', 'x.md': 'fact' })
+    const chat = join(stateDir, 'memory', 'admin@im.wechat')
+    mkdirSync(chat, { recursive: true })
+    writeOwnerAssertions(chat, { assertions: [{ id: 'a1b2', text: '我不喝咖啡', date: '2026-10-23', origin: 'overview' }], extra: [] })
+    // 主人原话恰好也是一条被更正的话的超集:出口过滤不该挡它
+    writeFileSync(join(chat, 'corrections.md'), '- 2026-10-22 主人说这条记错了,整理时不要再写回:[总览 · c:c1] 喝咖啡\n')
+    let prompt = ''
+    const res = await synthesizeOverview({ stateDir, adminChatId: 'admin@im.wechat', projectsRoot, sdkEval: async (p) => { prompt = p; return '## 你写的\n- 模型编的\n## 他是谁\n他喜欢爬山' } })
+    expect(prompt).not.toContain('我不喝咖啡')
+    const onDisk = readFileSync(join(chat, '_overview.md'), 'utf8')
+    expect(onDisk).toContain('## 你写的\n- 我不喝咖啡 <!-- o:a1b2 -->')
+    expect(onDisk).not.toContain('模型编的')
+    expect(onDisk.indexOf('我不喝咖啡')).toBeLessThan(onDisk.indexOf('他喜欢爬山'))
+    expect(res.overview).toBe('## 他是谁\n他喜欢爬山')
+  })
   it('dry-run discovers without calling eval or writing', async () => {
     seedProject('-alpha', { 'MEMORY.md': 'idx', 'x.md': 'fact' })
     let called = false
