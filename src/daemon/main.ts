@@ -1039,7 +1039,9 @@ export async function main() {
     // 指数退避(重构第二批步 6a):launchd / systemd 只是每 5–10 秒拉起一次,确定性的启动失败(配置坏了、迁移失败)
     // 会变成重启风暴。退出前按连续失败次数等:10s、20s、40s … 封顶 30 分钟。
     const { count, delayMs } = recordBootFailure(stateDir, Date.now())
-    log('DAEMON', `startup failed (${count} in a row) — waiting ${Math.round(delayMs / 1000)}s before exit`)
+    // 原因也进 channel.log:以前只在 stderr(launchd.err.log),日志里只有一句「startup failed」,self soak / self discover
+    // 和主人都看不出为什么(10-21~22 真机 9 次,原因全是「another daemon already running」,只能去翻 stderr)。
+    log('DAEMON', `startup failed (${count} in a row): ${(err instanceof Error ? err.message : String(err)).slice(0, 300)} — waiting ${Math.round(delayMs / 1000)}s before exit`)
     await new Promise(r => setTimeout(r, delayMs))
     process.exit(1)
   }
