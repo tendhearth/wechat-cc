@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest'
 import { homedir } from 'node:os'
-import { parseRulesFile, matchRule, serializeRulesFile, EMPTY_RULES } from './rules-file'
+import { parseRulesFile, matchRule, serializeRulesFile, EMPTY_RULES, STARTER_RULES, STARTER_VERSION, withStarterRules } from './rules-file'
 import type { PermissionAsk, Rule } from './types'
 
 const ask = (over: Partial<PermissionAsk> = {}): PermissionAsk => ({
@@ -135,5 +135,27 @@ describe('rules-file × 终审', () => {
     const rules = [rule({ when: { tool: 'mcp__github__*' } })]
     expect(matchRule(rules, ask({ tool: 'mcp__github__create_issue' }))).not.toBeNull()
     expect(matchRule(rules, ask({ tool: 'mcp__gitlab__x' }))).toBeNull()
+  })
+})
+
+describe('withStarterRules(放行 v2 G1)', () => {
+  it('文件不在 / 从没装过的全空默认值 ⇒ 开起来、初审 low_risk、起步规则、记下版本', () => {
+    for (const cur of [null, { ...EMPTY_RULES, rules: [] }]) {
+      expect(withStarterRules(cur)).toEqual({ version: 1, enabled: true, review: 'low_risk', rules: [...STARTER_RULES], starter: STARTER_VERSION })
+    }
+  })
+  it('装过一次(哪怕主人后来关了、删光了)/ 主人改过任何一处 ⇒ 不动', () => {
+    expect(withStarterRules({ ...EMPTY_RULES, rules: [], starter: 1 })).toBeNull()
+    expect(withStarterRules({ ...EMPTY_RULES, rules: [], enabled: true })).toBeNull()
+    expect(withStarterRules({ ...EMPTY_RULES, rules: [], review: 'low_risk' })).toBeNull()
+    expect(withStarterRules({ ...EMPTY_RULES, rules: [{ id: 'r1', when: { tool: 'Edit' }, then: 'ask' }] })).toBeNull()
+  })
+  it('starter 读得回来、写得出去;乱填的丢掉', () => {
+    const f = withStarterRules(null)!
+    expect(parseRulesFile(serializeRulesFile(f))).toEqual({ file: f, errors: [] })
+    expect(parseRulesFile(JSON.stringify({ version: 1, enabled: false, rules: [], starter: 'x' })).file.starter).toBeUndefined()
+  })
+  it('起步规则自己过得了解析器(正则安全子集)', () => {
+    expect(parseRulesFile(JSON.stringify({ version: 1, rules: STARTER_RULES })).errors).toEqual([])
   })
 })

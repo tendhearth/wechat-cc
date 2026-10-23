@@ -52,7 +52,8 @@ export interface RuleWhen {
 
 export interface Rule { id: string; when: RuleWhen; then: Verdict; note?: string }
 
-export interface RulesFile { version: 1; enabled: boolean; review: 'off' | 'low_risk'; rules: Rule[] }
+/** starter:起步规则装过的版本(放行 v2 G1)。有它 ⇒ 再也不自动改这份文件(主人后来关掉也就一直关着)。 */
+export interface RulesFile { version: 1; enabled: boolean; review: 'off' | 'low_risk'; rules: Rule[]; starter?: number }
 
 /** 请求本身,或造它的函数 —— 规则关着时不造(终端要跑 git、一起做要 realpath 和翻时间线,关着就一样都不做)。 */
 export type AskSource = PermissionAsk | (() => PermissionAsk | Promise<PermissionAsk>)
