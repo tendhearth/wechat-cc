@@ -78,6 +78,12 @@ const memoryWriteCmd = defineCommand({
       // unsafely if we tried to inline the content). Decoder + UTF-8
       // assumption matches the GUI's btoa(unescape(encodeURIComponent(body))).
       const body = Buffer.from(args['body-base64'], 'base64').toString('utf8')
+      // 记忆编辑第 4 步:生成物、主人那一份的 memory.md / owner.md 不许整份覆盖(走 `memory edit`)
+      const { wholeFileWriteRefusal } = await import('../../lib/memory-edit')
+      const { memoryArtifactKind } = await import('../../lib/memory-artifacts')
+      const { loadCompanionConfig } = await import('../../daemon/companion/config')
+      const refusal = wholeFileWriteRefusal(args.path, memoryArtifactKind(args.path), args.userId, loadCompanionConfig(STATE_DIR).default_chat_id ?? null)
+      if (refusal) throw new Error(refusal)
       const result = writeMemoryFile(STATE_DIR, args.userId, args.path, body)
       if (args.json) console.log(JSON.stringify(MemoryWriteOutput.parse({ ok: true, userId: args.userId, path: args.path, ...result }), null, 2))
       else console.log(`${result.created ? 'created' : 'updated'}: ${args.userId}/${args.path} (${result.bytesWritten}B)`)

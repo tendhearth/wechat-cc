@@ -116,3 +116,15 @@ describe('ownerLines', () => {
     ])
   })
 })
+
+describe('wholeFileWriteRefusal(记忆编辑第 4 步)', () => {
+  it('生成物谁的都不许整份写;主人的 memory.md / owner.md 不许;别人的 memory.md、主人的笔记照旧', async () => {
+    const { wholeFileWriteRefusal } = await import('./memory-edit')
+    expect(wholeFileWriteRefusal('_overview.md', 'derived', 'guest@x', 'owner@x')).toMatch(/守护进程/)
+    expect(wholeFileWriteRefusal('memory.md', 'source', 'owner@x', 'owner@x')).toMatch(/逐行改/)
+    expect(wholeFileWriteRefusal('./Memory.md', 'source', 'owner@x', 'owner@x')).not.toBeNull()
+    expect(wholeFileWriteRefusal('memory.md', 'source', 'guest@x', 'owner@x')).toBeNull()
+    expect(wholeFileWriteRefusal('profile.md', 'source', 'owner@x', 'owner@x')).toBeNull()
+    expect(wholeFileWriteRefusal('memory.md', 'source', 'owner@x', null)).toBeNull()
+  })
+})
