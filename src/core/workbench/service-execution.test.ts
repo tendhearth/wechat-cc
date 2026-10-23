@@ -16,11 +16,12 @@ import {removeTempDir} from '../../lib/test-temp'
 let root:string,project:string,db:Db,service:WorkbenchService,store:ReturnType<typeof makeWorkbenchStore>
 const selected:AgentExecutionChoice={defaults:'provider',model:'fixture-model',reasoningEffort:'high'}
 let turnErrors:Array<[string,string|undefined,string]>=[]
+let turnsCompleted:string[]=[]
 function setup(provider:AgentProvider,resume=true){
   const registry=createProviderRegistry()
   for(const id of ['claude','codex'])registry.register(id,provider,{displayName:id,canResume:()=>resume,workbench:MANAGED_NATIVE_CAPABILITIES})
-  turnErrors=[]
-  store=makeWorkbenchStore(db);service=makeWorkbenchService({store,registry,stateDir:root,ownerChatId:()=>null,onTurnError:(p,c,m)=>{turnErrors.push([p,c,m])}})
+  turnErrors=[];turnsCompleted=[]
+  store=makeWorkbenchStore(db);service=makeWorkbenchService({store,registry,stateDir:root,ownerChatId:()=>null,onTurnError:(p,c,m)=>{turnErrors.push([p,c,m])},onTurnCompleted:p=>{turnsCompleted.push(p)}})
 }
 function gate(){let resolve!:()=>void;const promise=new Promise<void>(r=>resolve=r);return{promise,resolve}}
 async function settled(id:string){await expect.poll(()=>service.detail(id).task.status).not.toMatch(/^(queued|running|cancelling)$/)}
@@ -173,5 +174,14 @@ it.each(['native-error-event','rpc-rejection'])('preserves one model diagnostic 
   expect(store.events(task.id).filter(e=>e.kind==='error').map(e=>e.text)).toEqual([raw])
   // CLI 自动升级的报错触发:错误通道(码 + 原文)交出去,两条路一样
   expect(turnErrors).toEqual([['codex','execution_model_unsupported',raw]])
+  expect(turnsCompleted).toEqual([])   // 失败的一轮不算恢复(provider-refusals 只认真完成)
   expect(detail.execution).toEqual(automatic)
+})
+
+it('a really completed round reports onTurnCompleted once (the only thing that clears a refusal mark)',async()=>{
+  setup(executor())
+  const task=service.create({path:project,providerId:'codex',text:'work'});await settled(task.id)
+  expect(service.detail(task.id).task.status).toBe('completed')
+  expect(turnsCompleted).toEqual(['codex'])
+  expect(turnErrors).toEqual([])
 })

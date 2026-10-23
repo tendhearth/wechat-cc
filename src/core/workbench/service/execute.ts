@@ -327,7 +327,7 @@ export function makeExecuteDomain(ctx:ServiceCtx, domains:ExecuteDomains) {
         const coded=error!==raw&&!!summary.error
         if(!modelRejected&&!networkRefused)store.addEvent(task.id,'error',error==='background_runtime_ended'?'后台执行会话意外结束；对话已保留，请检查后再继续。':coded?`${executionFailureMessage(error)}\n原文：${summary.error!.trim().slice(0,200)}`:executionFailureMessage(error))
         ctx.hub.touched(task.id)
-      } else { finalStatus='completed'; quota.clear(task.providerId) }
+      } else { finalStatus='completed'; quota.clear(task.providerId); try{ctx.deps.onTurnCompleted?.(task.providerId)}catch{/* 只是个提示 */} }
     } catch (error) {
       const thrown=isNetworkUnprotectedError(error)?'network_unprotected':error instanceof CodexExecutionError?error.code:error instanceof Error?error.message:'task_failed'
       const message=thrown==='network_unprotected'||error instanceof CodexExecutionError?thrown:taskErrorForProviderCode(providerErrorCodeOf(error),thrown)??thrown
