@@ -21,7 +21,8 @@ import { ccPageArt } from "../cc-page-art.js"
 // Owns: #memory-sidebar, #memory-rendered, #memory-meta, #memory-count,
 //       #memory-content-head, #memory-content-path, #memory-content-mtime,
 //       #memory-edit-btn, #memory-cancel-btn, #memory-save-btn,
-//       #memory-editor (textarea), #memory-status (save feedback)
+//       #memory-editor (textarea), #memory-line-editor (主人那一份的逐行编辑,
+//       见 memory-line-edit.js), #memory-status (save feedback)
 
 import { escapeHtml, formatRelativeTime } from "../view.js"
 import { renderMarkdown } from "../vendor/markdown.js"
@@ -29,6 +30,7 @@ import { observationRow, milestoneCard } from "./observations.js"
 import { decisionRow } from "./decisions.js"
 import { icon } from "./icons.js"
 import { mountMemoryEvidenceDialog, normalizeMemorySourceRefs } from "./memory-evidence.js"
+import { bulkGate, collectLines, editOutcome, isDerivedMemoryPath, isLineEditablePath, lineViewFor, linesUnchanged, memoryEditArgs, renderLineEditor, renderOwnerBlock } from "./memory-line-edit.js"
 
 // `selected` doubles as the edit-target identity (userId + path) AND the
 // "we have a file open" flag for the edit button visibility. `editing`
@@ -43,7 +45,7 @@ const reviewedProfiles=new Map()
 /** @typedef {'observation'|'milestone'|'file'|'overview'} EmbryoSourceKind */
 /** @typedef {{ kind: EmbryoSourceKind, text: string, ts: string, label: string, obsId?: string, userId?: string, path?: string }} EmbryoSourceItem */
 const MEMORY_EMBRYO_STORAGE_KEY = "wechat-cc:memory-embryo-enabled"
-/** @type {{ users: MemoryList, observations: ObservationsList["observations"], milestones: MilestonesList["milestones"], selected: { userId: string, path: string } | null, marked: { parse: (s: string) => string } | null, editing: boolean, pristine: string, dirtySwitchPending: string | null, overview: OverviewModel | null, profile: MemoryProfileDocument | null, profileStatus: Extract<MemoryProfileStatusOutput, { ok: true }> | null, portrait: { svg: string | null, generated_at?: string | null } | null }} */
+/** @type {{ users: MemoryList, observations: ObservationsList["observations"], milestones: MilestonesList["milestones"], selected: { userId: string, path: string } | null, marked: { parse: (s: string) => string } | null, editing: boolean, pristine: string, dirtySwitchPending: string | null, overview: OverviewModel | null, profile: MemoryProfileDocument | null, profileStatus: Extract<MemoryProfileStatusOutput, { ok: true }> | null, portrait: { svg: string | null, generated_at?: string | null } | null, lineView: import('./memory-line-edit.js').MemoryView | null, bulkConfirmFor: string | null }} */
 const memoryState = {
   users: [],
   observations: [],
@@ -64,6 +66,12 @@ const memoryState = {
   // tried to switch to while editing. Second click on the same file
   // within 3s commits the switch (§1.3 #8 绝不弹窗).
   dirtySwitchPending: null,
+  // 主人自己的 _overview.md / memory.md / owner.md:`memory view` 给的带键底稿(记忆改了就算数)。
+  // 有它 ⇒ 编辑是一行一个输入框、保存走 `memory edit`;别人对话的记忆照旧 null,整份 `memory write`。
+  lineView: null,
+  // 一次删 / 改超过 5 条:第一次保存只提示,并记下当时交的那组行;再点「保存」时行完全一样才带 --confirm-bulk
+  // (同 dirtySwitch 一样不弹窗)。中间又改了 ⇒ 当成新的第一次,按新的条数重新提示 —— 不替主人确认他没看过的那组。
+  bulkConfirmFor: null,
 }
 
 /** @returns {boolean} */
@@ -210,12 +218,31 @@ async function openMemoryFile(deps, userId, relPath, mtime) {
     return
   }
   const marked = await loadMarked()
-  if (rendered) rendered.innerHTML = marked.parse(result.content)
+  memoryState.lineView = isLineEditablePath(relPath) ? await loadLineView(deps, userId, relPath) : null
+  memoryState.bulkConfirmFor = null
+  if (rendered) rendered.innerHTML = (memoryState.lineView ? renderOwnerBlock(memoryState.lineView) : "") + marked.parse(result.content)
   memoryState.selected = { userId, path: relPath }
   memoryState.pristine = result.content
   // Show the edit button now that there's content to edit.
   const editBtn = document.getElementById("memory-edit-btn")
-  if (editBtn) editBtn.hidden = false
+  if (editBtn) editBtn.hidden = !canEditOpenFile()
+}
+
+// 生成物(总览、画像)只由机器写:主人自己的经逐行编辑改,别人对话里的不给编辑按钮(整份写会被拒)。
+function canEditOpenFile() {
+  if (!memoryState.selected) return false
+  return memoryState.lineView !== null || !isDerivedMemoryPath(memoryState.selected.path)
+}
+
+/**
+ * 主人那一份才有底稿;view 失败(daemon 没起 / 旧 daemon 不认)就退回整份编辑,不挡主人看。
+ * @param {Deps} deps
+ * @param {string} userId
+ * @param {string} relPath
+ */
+async function loadLineView(deps, userId, relPath) {
+  try { return lineViewFor(await deps.invoke("wechat_cli_json", { args: ["memory", "view", relPath, "--json"] }), userId) }
+  catch { return null }
 }
 
 // Toggle textarea ↔ rendered. `editing=true` swaps in the textarea
@@ -229,8 +256,15 @@ function setEditMode(editing) {
   const editBtn = document.getElementById("memory-edit-btn")
   const saveBtn = document.getElementById("memory-save-btn")
   const cancelBtn = document.getElementById("memory-cancel-btn")
+  const lineEditor = document.getElementById("memory-line-editor")
+  if (!editing) memoryState.bulkConfirmFor = null
+  if (editing && memoryState.lineView && lineEditor) {
+    renderLineEditor(lineEditor, memoryState.lineView)
+    lineEditor.hidden = false
+    if (editor) editor.hidden = true
+  } else if (lineEditor) lineEditor.hidden = true
   if (editing) {
-    if (editor) { editor.value = memoryState.pristine; editor.hidden = false; editor.focus() }
+    if (editor && !(memoryState.lineView && lineEditor)) { editor.value = memoryState.pristine; editor.hidden = false; editor.focus() }
     if (rendered) rendered.hidden = true
     if (editBtn) editBtn.hidden = true
     if (saveBtn) saveBtn.hidden = false
@@ -238,7 +272,7 @@ function setEditMode(editing) {
   } else {
     if (editor) editor.hidden = true
     if (rendered) rendered.hidden = false
-    if (editBtn) editBtn.hidden = !memoryState.selected  // keep hidden if nothing open
+    if (editBtn) editBtn.hidden = !canEditOpenFile()  // keep hidden if nothing open / derived file of another chat
     if (saveBtn) saveBtn.hidden = true
     if (cancelBtn) cancelBtn.hidden = true
   }
@@ -260,6 +294,7 @@ function setStatus(message, tone) {
 /** @param {Deps} deps */
 async function saveCurrent(deps) {
   if (!memoryState.selected || !memoryState.editing) return
+  if (memoryState.lineView) return saveLines(deps, memoryState.lineView)
   const editor = /** @type {HTMLTextAreaElement | null} */ (document.getElementById("memory-editor"))
   const content = editor ? editor.value : ""
   if (content === memoryState.pristine) {
@@ -307,6 +342,52 @@ async function saveCurrent(deps) {
   setEditMode(false)
   setStatus(`已保存 (${result.bytesWritten}B)`, "ok")
   setTimeout(() => setStatus(null), 2500)
+  await loadMemoryPane(deps).catch(() => {})
+}
+
+/**
+ * 主人那一份:带键的行交回 `memory edit`。view 之后被改过 ⇒ 重新打开(主人再改一次);删太多 ⇒ 先说清楚,再点一次才发。
+ * @param {Deps} deps
+ * @param {import('./memory-line-edit.js').MemoryView} view
+ */
+async function saveLines(deps, view) {
+  const root = document.getElementById("memory-line-editor")
+  if (!root || !memoryState.selected) return
+  const lines = collectLines(root)
+  if (linesUnchanged(lines, view)) {
+    setStatus("内容未改动", "info")
+    setEditMode(false)
+    return
+  }
+  const { snapshot, confirmBulk } = bulkGate(memoryState.bulkConfirmFor, lines)
+  const saveBtn = /** @type {HTMLButtonElement | null} */ (document.getElementById("memory-save-btn"))
+  const cancelBtn = /** @type {HTMLButtonElement | null} */ (document.getElementById("memory-cancel-btn"))
+  setStatus("保存中…", "info")
+  if (saveBtn) saveBtn.disabled = true
+  if (cancelBtn) cancelBtn.disabled = true
+  let result
+  try {
+    result = await deps.invoke("wechat_cli_json", { args: memoryEditArgs(view.path, view.baseHash, lines, confirmBulk) })
+  } catch (err) {
+    setStatus(`保存失败：${deps.formatInvokeError(err)}`, "bad")
+    return
+  } finally {
+    if (saveBtn) saveBtn.disabled = false
+    if (cancelBtn) cancelBtn.disabled = false
+  }
+  const outcome = editOutcome(result)
+  if (outcome.status === "confirm") {
+    memoryState.bulkConfirmFor = snapshot
+    setStatus(outcome.message, "info")
+    return
+  }
+  memoryState.bulkConfirmFor = null
+  if (outcome.status === "bad") { setStatus(outcome.message, "bad"); return }
+  const { userId, path } = memoryState.selected
+  setEditMode(false)
+  await openMemoryFile(deps, userId, path, new Date().toISOString())
+  setStatus(outcome.message, outcome.status === "saved" ? "ok" : "info")
+  if (outcome.status === "saved") setTimeout(() => setStatus(null), 4000)
   await loadMemoryPane(deps).catch(() => {})
 }
 
