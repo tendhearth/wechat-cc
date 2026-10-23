@@ -12,6 +12,8 @@ describe('signatureOf', () => {
     expect(a).toBe(b)
     expect(signatureOf('chat=o9cq7sObd@im.wechat error=ilink/sendmessage errcode=-2: prepare failed')).toBe('chat=<chat> error=ilink/sendmessage errcode=-<n>: prepare failed')
     expect(signatureOf('c5aee7f6: recollect_ask_failed')).toBe('<id>: recollect_ask_failed')
+    // 签名先过 redact:带下划线的混排编号、消息正文都不会出现在签名里。
+    expect(signatureOf('send failed for YWW_abc123 text=今晚吃饭')).toBe('send failed for <id> text=<略>')
   })
 })
 
