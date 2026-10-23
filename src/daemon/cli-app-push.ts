@@ -79,14 +79,16 @@ function clip(s: string): string {
 }
 
 /** hub 的 pushApp:一批 → 一条推送,只投不等;没设备 / 没接推送 ⇒ 静默。 */
-export function makeCliHubAppPush(deps: { push: () => AppPushOutlet | null; log: (tag: string, line: string) => void }): (items: CliPushItem[]) => void {
+/** 回 true = 至少交给了一台手机(在线跳过的那几台算送到:它们正开着 App,看得见)。 */
+export function makeCliHubAppPush(deps: { push: () => AppPushOutlet | null; log: (tag: string, line: string) => void }): (items: CliPushItem[]) => boolean {
   return (items) => {
     const outlet = deps.push()
-    if (!outlet) return
+    if (!outlet) return false
     const p = buildCliPushPayload(items)
-    if (!p) return
+    if (!p) return false
     const r = outlet(p)
     if (r) deps.log('CLI_PUSH', `app push ${p.kind} (${items.length} item(s)): sent to ${r.sent} device(s)${r.online ? `, ${r.online} online skipped` : ''}`)
+    return !!r && r.sent + r.online > 0
   }
 }
 
