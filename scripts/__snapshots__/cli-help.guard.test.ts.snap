@@ -2276,9 +2276,10 @@ USAGE self ship [OPTIONS]
 
 OPTIONS
 
-  --wait-min=<wait_min>    机器忙时最多等几分钟(缺省 0:忙就不动) 
-  --max-load=<max_load>    1 分钟负载 / 核数的上限(缺省 1.0)
-           --skip-build    不构建,直接部署已经构建好的 sidecar
+  --wait-min=<wait_min>    机器忙时最多等几分钟(缺省 0:忙就不动)              
+  --max-load=<max_load>    1 分钟负载 / 核数的上限(缺省 1.0)             
+           --skip-build    不构建,直接部署已经构建好的 sidecar             
+        --allow-off-dev    HEAD 不是 origin/dev 也装(试一条分支);脏树永远不装
 
 
 "
