@@ -497,23 +497,24 @@ const selfShipCmd = defineCommand({
 
 // ── self discover — 找活:真机日志里反复出现的失败 + roadmap 上没标完成的欠账 / 对标(src/cli/self-discover*.ts 开头写了判法) ──
 const selfDiscoverCmd = defineCommand({
-  meta: { name: 'discover', description: '发掘任务:日志里反复出现的失败(按次数)+ roadmap 欠账 / 对标里没标完成的;只读' },
+  meta: { name: 'discover', description: '发掘任务:日志里反复出现的失败(按次数)+ roadmap 欠账 / 对标里没标完成的 + 守卫里只许降的基线;只读' },
   args: {
     hours: { type: 'string', description: '日志看最近几小时(缺省 48)' },
     'min-count': { type: 'string', description: '日志里至少出现几次才算(缺省 3)' },
-    source: { type: 'string', description: 'log / roadmap / all(缺省 all)' },
-    json: { type: 'boolean', description: 'JSON 输出({ log, roadmap })' },
+    source: { type: 'string', description: 'log / roadmap / ratchets / all(缺省 all)' },
+    json: { type: 'boolean', description: 'JSON 输出({ log, roadmap, ratchets })' },
   },
   async run({ args }) {
     const { readFileSync, existsSync } = await import('node:fs')
     const { LOG_FILE } = await import('../../lib/log')
     const { discover, formatDiscover } = await import('../self-discover')
     const { roadmapOpenItems, formatRoadmapItems } = await import('../self-discover-roadmap')
+    const { ratchetDebts, formatRatchetDebts } = await import('../self-discover-ratchets')
     const hours = args.hours === undefined || args.hours === '' ? 48 : Number(args.hours)
     const minCount = args['min-count'] === undefined || args['min-count'] === '' ? 3 : Number(args['min-count'])
     const source = String(args.source ?? 'all')
-    if (!Number.isFinite(hours) || hours <= 0 || !Number.isInteger(minCount) || minCount < 1 || !['log', 'roadmap', 'all'].includes(source)) {
-      console.error('self discover: 用法 wechat-cc self discover [--hours N] [--min-count N] [--source log|roadmap|all] [--json]')
+    if (!Number.isFinite(hours) || hours <= 0 || !Number.isInteger(minCount) || minCount < 1 || !['log', 'roadmap', 'ratchets', 'all'].includes(source)) {
+      console.error('self discover: 用法 wechat-cc self discover [--hours N] [--min-count N] [--source log|roadmap|ratchets|all] [--json]')
       process.exit(1)
       return
     }
@@ -521,17 +522,23 @@ const selfDiscoverCmd = defineCommand({
     const { lastDeployAt } = await import('../self-soak')
     const logText = read(`${LOG_FILE}.1`) + read(LOG_FILE)
     // 「部署后还有几次」:48 小时的总数会把已经修好的那类排在前面(10-23 agy 被拒,#627 部署后从每小时 1.7 次降到退避节奏)。
-    const log = source === 'roadmap' ? null : discover({ log: logText, now: Date.now(), hours, minCount, deployedAt: lastDeployAt(logText) })
+    const want = (k: string) => source === 'all' || source === k
+    const log = !want('log') ? null : discover({ log: logText, now: Date.now(), hours, minCount, deployedAt: lastDeployAt(logText) })
     // 打包版旁边没有仓库:roadmap 这一源照实说读不到,不当成「没有欠账」。
     const roadmapPath = isCompiledBundle() ? null : join(SOURCE_REPO_ROOT, 'docs', 'roadmap.md')
-    const roadmap = source === 'log' ? null : roadmapPath && existsSync(roadmapPath) ? roadmapOpenItems(readFileSync(roadmapPath, 'utf8')) : null
+    const roadmap = !want('roadmap') ? null : roadmapPath && existsSync(roadmapPath) ? roadmapOpenItems(readFileSync(roadmapPath, 'utf8')) : null
+    const scriptsDir = isCompiledBundle() ? null : join(SOURCE_REPO_ROOT, 'scripts')
+    const { readdirSync } = await import('node:fs')
+    const ratchets = !want('ratchets') || !scriptsDir || !existsSync(scriptsDir) ? null
+      : ratchetDebts(readdirSync(scriptsDir).filter(f => f.endsWith('.guard.test.ts')).map(f => ({ path: `scripts/${f}`, text: readFileSync(join(scriptsDir, f), 'utf8') })))
     if (args.json) {
-      console.log(JSON.stringify({ log, roadmap }, null, 2))
+      console.log(JSON.stringify({ log, roadmap, ratchets }, null, 2))
       return
     }
     const parts: string[] = []
     if (log) parts.push(formatDiscover(log, hours))
-    if (source !== 'log') parts.push(roadmap ? formatRoadmapItems(roadmap) : '读不到 docs/roadmap.md(打包版旁边没有仓库),欠账 / 对标这一源没看。')
+    if (want('roadmap')) parts.push(roadmap ? formatRoadmapItems(roadmap) : '读不到 docs/roadmap.md(打包版旁边没有仓库),欠账 / 对标这一源没看。')
+    if (want('ratchets')) parts.push(ratchets ? formatRatchetDebts(ratchets) : '读不到 scripts/(打包版旁边没有仓库),守卫基线这一源没看。')
     console.log(parts.join('\n\n'))
   },
 })

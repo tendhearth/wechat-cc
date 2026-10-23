@@ -2255,16 +2255,16 @@ OPTIONS
 `;
 
 exports[`cli.ts --help 快照(逐字节) > self --help > self discover --help 1`] = `
-"发掘任务:日志里反复出现的失败(按次数)+ roadmap 欠账 / 对标里没标完成的;只读 (self discover)
+"发掘任务:日志里反复出现的失败(按次数)+ roadmap 欠账 / 对标里没标完成的 + 守卫里只许降的基线;只读 (self discover)
 
 USAGE self discover [OPTIONS] 
 
 OPTIONS
 
-          --hours=<hours>    日志看最近几小时(缺省 48)            
-  --min-count=<min_count>    日志里至少出现几次才算(缺省 3)          
-        --source=<source>    log / roadmap / all(缺省 all)
-                   --json    JSON 输出({ log, roadmap })  
+          --hours=<hours>    日志看最近几小时(缺省 48)                       
+  --min-count=<min_count>    日志里至少出现几次才算(缺省 3)                     
+        --source=<source>    log / roadmap / ratchets / all(缺省 all)
+                   --json    JSON 输出({ log, roadmap, ratchets })   
 
 
 "
@@ -2313,7 +2313,7 @@ COMMANDS
     deploy    原子换 sidecar 进 .app、重启 daemon(launchd)、健康门,失败自动回滚(仅 macOS)                      
       ship    部署门:负载 → 网络守护 → 构建 sidecar → self deploy → 自检(红了回滚);之后看 self soak(仅 macOS 源码模式)
       soak    这次部署在真机上稳不稳:从最后一次 self deploy 算起看日志里的意外重启 / 模块失败 / 崩溃,和健康接口;只读                 
-  discover    发掘任务:日志里反复出现的失败(按次数)+ roadmap 欠账 / 对标里没标完成的;只读                                 
+  discover    发掘任务:日志里反复出现的失败(按次数)+ roadmap 欠账 / 对标里没标完成的 + 守卫里只许降的基线;只读                     
 
 Use wechat-cc self <command> --help for more information about a command.
 
