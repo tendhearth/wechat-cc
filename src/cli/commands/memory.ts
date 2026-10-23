@@ -81,7 +81,7 @@ const memoryWriteCmd = defineCommand({
       // 记忆编辑第 4 步:生成物、主人那一份的 memory.md / owner.md 不许整份覆盖(走 `memory edit`)
       const { wholeFileWriteRefusal } = await import('../../lib/memory-edit')
       const { memoryArtifactKind } = await import('../../lib/memory-artifacts')
-      const { loadCompanionConfig } = await import('../../daemon/companion/config')
+      const { loadCompanionConfig } = await import('../../lib/companion-config')
       const refusal = wholeFileWriteRefusal(args.path, memoryArtifactKind(args.path), args.userId, loadCompanionConfig(STATE_DIR).default_chat_id ?? null)
       if (refusal) throw new Error(refusal)
       const result = writeMemoryFile(STATE_DIR, args.userId, args.path, body)
