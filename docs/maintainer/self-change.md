@@ -31,6 +31,8 @@ wechat-cc self change --abandon 3f2a91bc                            # 这条不�
 | `--no-deploy` | 合完 `dev` 就收工:不构 sidecar、不换 inode、不自检 |
 | `--json` | 打整份 state(不是人读摘要) |
 
+**调模型前先看网络守护**(2026-10-23):实现、修复轮、评审每一次起执行者之前,先读 daemon 的 `/v1/health.guard`。守护开着且不安全(bx 没开 / 暂停中)或者读不到 ⇒ 这一轮不起进程,步骤以 `network_unprotected` 失败,话里带守护的原话;等网络受保护了 `--resume`。主人自己关了守护 ⇒ 照常。以前自改从不看它 —— 守护在 daemon 里,自改的 `claude -p` 是 CLI 直接起的,绕了过去。
+
 ## 五道闸门
 
 ```

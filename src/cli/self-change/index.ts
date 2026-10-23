@@ -27,7 +27,7 @@ import { defaultSelftestDeps, runChatSelftest, runWorkbenchSelftest, type Selfte
 import type { SelfChangeConfig } from './config'
 import { makeDaemonClient } from './daemon-client'
 import { makeGit, nodeGitSpawnSync } from './git'
-import { makeClaudeRunner, spawnCollect } from './runner'
+import { guardedRunner, makeClaudeRunner, spawnCollect } from './runner'
 import type { SelfChangeState } from './state'
 import { makeStateStore } from './state'
 import { runPath, type PipelineDeps } from './steps'
@@ -157,6 +157,7 @@ export function defaultPipelineDeps(stateDir: string, config: SelfChangeConfig, 
   }
 
   const runTree = runPath(config, opts.runId)
+  const daemon = makeDaemonClient({ readApiInfo: () => readApiInfo(stateDir), fetch })
 
   return {
     config,
@@ -166,8 +167,9 @@ export function defaultPipelineDeps(stateDir: string, config: SelfChangeConfig, 
     // env 显式过一遍 workbenchSubprocessEnv:和 exec / runner 同一条规矩,
     // 而且写在这儿看得见(gitEnv 里还会再过一次,这是有意的双保险)。
     git: makeGit(nodeGitSpawnSync, runTree, workbenchSubprocessEnv(process.env)),
-    runner: makeClaudeRunner({ launch: spawnCollect, env: process.env }),
-    daemon: makeDaemonClient({ readApiInfo: () => readApiInfo(stateDir), fetch }),
+    // 调模型前先看网络守护(runner.ts guardedRunner)。
+    runner: guardedRunner(makeClaudeRunner({ launch: spawnCollect, env: process.env }), () => daemon.guard()),
+    daemon,
 
     // bun / npm。env 去掉 daemon 的凭据(和执行者同一条规矩:跑在克隆里的
     // 任何东西都不该看见 daemon 的 token),超时与 windowsHide 由 spawnCollect 兜。

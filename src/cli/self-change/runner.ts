@@ -188,6 +188,25 @@ export function makeClaudeRunner(deps: ClaudeRunnerDeps): ImplementRunner {
   }
 }
 
+/**
+ * 调模型之前先看网络守护(红线:直连官方端点会封号;Claude / Codex 都是需要保护的官方端点)。
+ * 2026-10-23 之前自改从来不看:守护在 daemon 里,而自改的执行者是 CLI 直接起的 `claude -p`,绕过了它。
+ * 守护开着且不安全 ⇒ 这一轮不起进程,回 `network_unprotected`;读不到守护状态 ⇒ 同样不起(缺省往拒绝兜底);
+ * 主人自己关了守护 ⇒ 照常。
+ */
+export function guardedRunner(inner: ImplementRunner, guard: () => Promise<{ enabled: boolean; safe: boolean; detail: string } | null>): ImplementRunner {
+  return {
+    async run(input) {
+      const g = await guard().catch(() => null)
+      if (!g || (g.enabled && !g.safe)) {
+        const why = !g ? '读不到网络守护的状态(daemon 不通?)' : `网络守护说现在不安全:${g.detail}`
+        return { ok: false, sessionId: null, text: `${why} —— 先不调模型,等网络受保护了再 --resume`, costUsd: 0, turns: 0, stderrTail: [], timedOut: false, error: 'network_unprotected' }
+      }
+      return await inner.run(input)
+    },
+  }
+}
+
 /** SIGTERM 之后留给执行者把 JSON 打完的时间,过了就硬杀。 */
 export const KILL_GRACE_MS = 5_000
 

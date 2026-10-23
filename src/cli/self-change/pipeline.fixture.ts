@@ -136,6 +136,7 @@ export function makeFakeDeps(opts: FakeOpts = {}): { deps: PipelineDeps; rec: Re
       return d
     },
     health: async () => opts.health ?? true,
+    guard: async () => ({ enabled: true, safe: true, detail: 'bx 保护中' }),
     resolve: async (hash, decision) => { rec.resolves.push([hash, decision]); return opts.resolve ?? true },
   }
 
