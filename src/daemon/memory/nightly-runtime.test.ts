@@ -429,7 +429,7 @@ describe('记忆编辑 view / edit(设计稿 2026-10-23 记忆改了就算数 §
     writeFileSync(join(root, 'memory.md'), many)
     const rt = makeMemoryNightlyRuntime(deps())
     const v = rt.view('memory.md')
-    expect(await rt.edit({ path: 'memory.md', baseHash: v.baseHash, lines: [] })).toEqual({ ok: false, code: 'memory_edit_bulk', count: 6 })
+    expect(await rt.edit({ path: 'memory.md', baseHash: v.baseHash, lines: [] })).toEqual({ ok: false, code: 'memory_edit_bulk', count: 6, deleted: 6, rewritten: 0 })
     expect(read('memory.md')).toBe(many)
     const r = await rt.edit({ path: 'memory.md', baseHash: v.baseHash, lines: [], confirmBulk: true })
     expect(r.ok && r.corrections).toHaveLength(6)

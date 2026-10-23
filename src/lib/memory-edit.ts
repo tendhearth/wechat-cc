@@ -95,7 +95,8 @@ export type PlanResult =
   | { ok: true; plan: EditPlan }
   | { ok: false; code: 'memory_edit_stale_key' }
   | { ok: false; code: 'memory_edit_too_large'; limit: typeof EDIT_LIMIT }
-  | { ok: false; code: 'memory_edit_bulk'; count: number }
+  /** count = deleted + rewritten:改一行也会把旧话当成说错了(一条更正),桌面要分开说「删掉 X 条、改写 Y 条」。 */
+  | { ok: false; code: 'memory_edit_bulk'; count: number; deleted: number; rewritten: number }
 
 export function planEdit(view: readonly ViewLine[], lines: readonly EditLine[], opts: { confirmBulk?: boolean } = {}): PlanResult {
   if (lines.length > EDIT_LIMIT.lines || Buffer.byteLength(JSON.stringify(lines), 'utf8') > EDIT_LIMIT.bytes
@@ -130,19 +131,10 @@ export function planEdit(view: readonly ViewLine[], lines: readonly EditLine[], 
       plan.removedAssertionIds.push(v.assertionId)
     }
   }
-  if (plan.corrections.length > BULK_CORRECTIONS && !opts.confirmBulk) return { ok: false, code: 'memory_edit_bulk', count: plan.corrections.length }
+  if (plan.corrections.length > BULK_CORRECTIONS && !opts.confirmBulk) {
+    const rewritten = new Set(plan.assertions.flatMap(a => a.replacesIndex === undefined ? [] : [a.replacesIndex])).size
+    return { ok: false, code: 'memory_edit_bulk', count: plan.corrections.length, deleted: plan.corrections.length - rewritten, rewritten }
+  }
   return { ok: true, plan }
 }
 
-/**
- * 记忆编辑回的全部码(仓库里没有记忆这一族的公共错误码表,这里就是那一张;桌面照它处理)。
- * 业务上的拒绝都是 HTTP 200 + `{ ok: false, code }`,磁盘一个字节没动。
- */
-export const MEMORY_EDIT_CODES = {
-  memory_changed: 'view 之后文件(或 owner.md)被改过:重新 view,让主人再改一次',
-  memory_edit_stale_key: '回来的键不是这次 view 给的:同上,重新 view',
-  memory_edit_bulk: '更正超过 BULK_CORRECTIONS 条:问主人「要删掉 N 条?」,确认后带 confirmBulk: true 重发',
-  memory_edit_too_large: '超过 EDIT_LIMIT(回执带 limit)',
-  memory_no_owner: '还没有主人(没绑微信)⇒ HTTP 409',
-  memory_edit_failed: 'daemon 内部出错 ⇒ HTTP 500,不带原文',
-} as const

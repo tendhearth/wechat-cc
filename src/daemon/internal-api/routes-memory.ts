@@ -13,12 +13,14 @@ import { existsSync, readFileSync } from 'node:fs'
 import { join } from 'node:path'
 import type { InternalApiDeps, RouteTable } from './types'
 import type { MemoryEditRequestT, MemoryViewRequestT } from './schema'
+import { workbenchErrorHttp } from '@wechat-cc/protocol'
 import { safeSvg } from '../../lib/svg-sanitize'
 import { readJsonFile } from '../../lib/read-json-file'
 
-function noOwner(err: unknown): { status: 409 | 500; body: { ok: false; code: string } } {
-  const m = err instanceof Error ? err.message : ''
-  return m === 'no_owner' ? { status: 409, body: { ok: false, code: 'memory_no_owner' } } : { status: 500, body: { ok: false, code: 'memory_edit_failed' } }
+/** 码与 HTTP 状态都在 packages/protocol/src/workbench-errors.ts 那一张表里。 */
+function noOwner(err: unknown): { status: number; body: { ok: false; code: string } } {
+  const code = err instanceof Error && err.message === 'no_owner' ? 'memory_no_owner' : 'memory_edit_failed'
+  return { status: workbenchErrorHttp(code, 'desktop').status, body: { ok: false, code } }
 }
 
 export function memoryRoutes(deps: InternalApiDeps): RouteTable {

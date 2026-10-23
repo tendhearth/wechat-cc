@@ -89,7 +89,10 @@ describe('planEdit', () => {
 
   it(`超过 ${BULK_CORRECTIONS} 条更正要确认;确认了就照做`, () => {
     const v = gen(['1', '2', '3', '4', '5', '6'].map(n => `第 ${n} 条记忆`))
-    expect(planEdit(v, [])).toEqual({ ok: false, code: 'memory_edit_bulk', count: 6 })
+    expect(planEdit(v, [])).toEqual({ ok: false, code: 'memory_edit_bulk', count: 6, deleted: 6, rewritten: 0 })
+    // 改写也算更正:删 2 条、改写 4 条 ⇒ 分开报
+    const mixed = back(v).slice(2).map(l => ({ ...l, text: l.text + '(改过)' }))
+    expect(planEdit(v, mixed)).toEqual({ ok: false, code: 'memory_edit_bulk', count: 6, deleted: 2, rewritten: 4 })
     const r = planEdit(v, [], { confirmBulk: true })
     expect(r.ok && r.plan.corrections).toHaveLength(6)
     expect(planEdit(v, back(v).slice(1)).ok).toBe(true)  // 5 条以内不问

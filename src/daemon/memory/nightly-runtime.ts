@@ -299,6 +299,9 @@ export function makeMemoryNightlyRuntime(deps: NightlyRunDeps & NoticeDeps): Mem
         const doc = existsSync(memPath) ? parseMemoryDoc(readFileSync(memPath, 'utf8')) : null
         let docChanged = false
         const done: Done[] = []
+        // 顺序是有意的:先过期、再逐条记更正(清源头 / 关待办 / 写 corrections.md),最后才写 memory.md / owner.md。
+        // 中途失败 ⇒ 「已经更正、文件还没改」:被更正的话已经进了清单,出口过滤和整理都会挡住它,不会被说出去 —— 宁可这样,
+        // 不要反过来(文件改了、更正没记,下次整理又从别处学回来)。
         invalidateDerivedMemory(r, 'retracted')
         const corrections: Array<{ id: string; text: string }> = []
         for (const c of plan.corrections) {
