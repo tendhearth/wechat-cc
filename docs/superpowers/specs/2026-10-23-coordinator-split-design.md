@@ -22,7 +22,7 @@
 ## 怎么拆
 
 ```
-src/core/conversation/
+src/core/coordinator/
   ctx.ts          共用的那一份:deps、noteDelivery、deliveryModeFor / textStrategyFor、stopMark、一轮的锁(oneTurnPerSession)
   modes.ts        模式怎么定 + 准入(admit*)
   failures.ts     出错怎么说(顶层四个纯函数原样搬;handleAuthFailed / handleTurnTimeout)
@@ -32,6 +32,8 @@ src/core/conversation/
   index.ts        createConversationCoordinator:只剩组装 + dispatchInner 的路由 + submitTurn / dispatch
 src/core/conversation-coordinator.ts   只转出(外部 import 一个不改),跟工作台拆分时 service.ts 一样
 ```
+
+目录叫 `coordinator/` 不叫 `conversation/`:`src/core/conversation.ts` 已经是一个文件,同名目录会让 `import './conversation'` 有歧义。
 
 **一张路由表代替 switch**(理念 1):`dispatchInner` 今天是 `if (parallel||chatroom) {…降级…}` 再 `switch (mode.kind)`。改成
 
@@ -50,11 +52,11 @@ const STRATEGIES: Record<Mode['kind'], Strategy> = { solo, primary_tool: solo, p
 - 拆分期间**不改任何一行逻辑**,只搬家 + 改成读 ctx;每个 PR 的 diff 里「删掉的块」和「新文件的块」逐行能对上(跟工作台拆分时一样,
   9d 当时就是这么审的:非空行比对,对不上的只能是 ctx 接线)。
 - 协调器现有测试一个不改(`conversation-coordinator*.test.ts` 一共十来份);e2e 路由快照、关机快照不变。
-- 加一条守卫:`src/core/conversation/` 下每个文件 ≤ 400 行;`conversation-coordinator.ts` 只许转出(行数棘轮,只许少)。
+- 加一条守卫:`src/core/coordinator/` 下每个文件 ≤ 400 行;`conversation-coordinator.ts` 只许转出(行数棘轮,只许少)。
 
 ## 切法(每步一个 PR,各自可回滚)
 
-1. 建 `conversation/ctx.ts` + 把顶层四个纯函数挪进 `failures.ts`(最安全,纯函数)。
+1. 建 `coordinator/ctx.ts` + 把顶层四个纯函数挪进 `failures.ts`(最安全,纯函数)。
 2. `modes.ts`。
 3. `parallel.ts`(最少被碰的派法)。
 4. `chatroom.ts`(+ runBeat、preempt)。
