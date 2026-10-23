@@ -3,7 +3,7 @@ import { defineCommand } from 'citty'
 import { STATE_DIR } from '../../lib/config'
 import { DemoSeedOutput, DemoUnseedOutput } from '../schema'
 async function runDemo(verb: 'seed' | 'unseed', chatIdArg: string | undefined, json: boolean): Promise<void> {
-  const { loadCompanionConfig } = await import('../../daemon/companion/config')
+  const { loadCompanionConfig } = await import('../../lib/companion-config')
   const cfg = loadCompanionConfig(STATE_DIR)
   const chatId = chatIdArg ?? cfg.default_chat_id
   if (!chatId) {

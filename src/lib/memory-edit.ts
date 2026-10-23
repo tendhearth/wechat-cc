@@ -15,6 +15,20 @@ import type { OwnerDoc } from './memory-owner'
 
 export const EDITABLE_MEMORY_PATHS = ['_overview.md', 'memory.md', 'owner.md'] as const
 export type EditableMemoryPath = (typeof EDITABLE_MEMORY_PATHS)[number]
+/**
+ * 整份覆盖(`wechat-cc memory write`,桌面整份编辑器)能不能写这一份(记忆编辑第 4 步):
+ *  - 生成物(_overview.md 等)谁的都不行:下一次合成就盖掉,手改等于白改;
+ *  - 主人那一份的 memory.md / owner.md 不行:手改必须经 `memory edit` 比对,删 = 更正、加 = 主人原话,不然又是「改了不算数」;
+ *  - 别人对话里的 memory.md 照旧能整份写(那份没有逐行编辑)。
+ * 回 null = 可以写;否则回给人看的一句话。ownerChatId 由调用方给(lib 不读 daemon 的配置)。
+ */
+export function wholeFileWriteRefusal(relPath: string, kind: string, userId: string, ownerChatId: string | null): string | null {
+  const p = relPath.split('\\').join('/').replace(/^(\.\/)+/, '').toLowerCase()
+  if (kind === 'derived') return `${relPath} 是 CC 整理生成的,手改下次整理就没了;要改请在记忆页上逐行改(需要守护进程运行后才能改这份记忆)`
+  if (ownerChatId && userId === ownerChatId && isEditableMemoryPath(p)) return `这份是主人的 ${p},要在记忆页上逐行改(删掉的当成说错了、加的记成你说的);需要守护进程运行后才能改这份记忆`
+  return null
+}
+
 export const isEditableMemoryPath = (p: unknown): p is EditableMemoryPath => (EDITABLE_MEMORY_PATHS as readonly unknown[]).includes(p)
 
 /** 一次编辑最多这么多行 / 字节;单行最多这么多字。超了 ⇒ memory_edit_too_large(带 limit)。 */
