@@ -12,6 +12,7 @@ exports[`daemon shutdown order (snapshot) > stops every subsystem in the recorde
   "lc letters",
   "module memory-nightly/stop",
   "lc memory-nightly",
+  "module polling/stop",
   "lc polling",
   "lc workbench-artifacts",
   "lc workbench-notifications",
