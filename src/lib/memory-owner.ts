@@ -22,8 +22,8 @@ export interface OwnerDoc { assertions: OwnerAssertion[]; extra: string[] }
 
 const LINE_RE = /^-\s+(.*?)\s*<!--\s*o:([0-9a-z]{4,})\s*·\s*(\d{4}-\d{2}-\d{2})\s*·\s*(overview|memory|owner)(?:\s*·\s*替换:([0-9a-z-]+))?\s*-->\s*$/
 
-/** 尾注的分隔符和注释收尾不能出现在原话里,不然解析会错位。 */
-const clean = (text: string) => text.replace(/\s+/g, ' ').replace(/-->/g, '—>').trim()
+/** 注释的开头和收尾都不能出现在原话里(主人可能粘进来半截尾注),不然解析会错位。 */
+const clean = (text: string) => text.replace(/\s+/g, ' ').replace(/<!--/g, '<!—').replace(/-->/g, '—>').trim()
 
 export function parseOwnerDoc(md: string): OwnerDoc {
   if (md.charCodeAt(0) === 0xfeff) md = md.slice(1)

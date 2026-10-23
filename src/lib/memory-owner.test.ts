@@ -31,6 +31,14 @@ describe('owner.md', () => {
     expect(back.assertions[0]!.text).toBe('箭头 —> 和 换行')
   })
 
+  it('粘进来的半截尾注不会冒充编号', () => {
+    const pasted: OwnerDoc = { assertions: [{ id: 'f7a8', text: '我说 <!-- o:abcd · 2026-01-01 · memory 这句', date: '2026-10-23', origin: 'owner' }], extra: [] }
+    const back = parseOwnerDoc(serializeOwnerDoc(pasted))
+    expect(back.assertions).toHaveLength(1)
+    expect(back.assertions[0]!.id).toBe('f7a8')
+    expect(back.assertions[0]!.text).toBe('我说 <!— o:abcd · 2026-01-01 · memory 这句')
+  })
+
   it('注入只给原话,不带尾注;没有原话 ⇒ 空', () => {
     expect(renderOwnerForPrompt(doc)).toBe('- 我不喝咖啡\n- 周末不谈工作')
     expect(renderOwnerForPrompt({ assertions: [], extra: [] })).toBe('')
