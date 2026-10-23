@@ -28,6 +28,7 @@ export const MEMORY_ARTIFACTS: Readonly<Record<string, { kind: MemoryArtifactKin
   'memory-log.jsonl': { kind: 'ledger', why: 'nightly 的审计日志,只追加' },
   'memory-sources.json': { kind: 'ledger', why: '整理时的出处映射(当时的消息 id)' },
   '.derived-state.json': { kind: 'ledger', why: '生成物过期标记本身' },
+  'memory-redactions.json': { kind: 'ledger', why: '合成出口挡掉被更正之话的次数(3b 的数据)' },
 }
 
 /**

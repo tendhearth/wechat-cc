@@ -2,6 +2,7 @@
  * 每晚记忆整理的运行时:15 分钟一次 tick(该跑就跑一次整理、再看看待发通知),
  * 「整理记忆」的立即运行,以及给微信(文本)与手机(结构)的只读视图。
  */
+import { dropCorrectedAgenda, purgeCorrectedFromSources } from '../../lib/memory-corrections'
 import { invalidateDerivedMemory } from '../../lib/memory-derived-state'
 import { readSources, writeSources } from './sources'
 import { appendFileSync, existsSync, mkdirSync, readFileSync } from 'node:fs'
@@ -150,11 +151,23 @@ export function makeMemoryNightlyRuntime(deps: NightlyRunDeps & NoticeDeps): Mem
       // 主人纠正 / 标过期 ⇒ 'retracted':旧总览里可能正好有这句,藏起来等重新生成(3e 记忆第 2 步)。
       invalidateDerivedMemory(got.root, 'retracted')
       writeFileAtomic(memPath, serializeMemoryDoc(got.doc, nowIso))
+      // 清源头(3b (a)):CC 的笔记 / 偏好 / notes/ 里含这句的行也删掉,不然下次合成又学回来(主人以为 CC 忘了,其实只是暂时没说)。
+      // 每个改动的文件先快照进 memory-archive,能找回;删了哪几个文件几行记在这一条底下,主人看得到。
+      const owner = deps.ownerChatId()
+      const purgeArchive = join(deps.stateDir, 'memory-archive', owner ?? 'unknown', 'corrections')
+      let purged: Array<{ file: string; lines: number }> = []
+      try { purged = purgeCorrectedFromSources(got.root, hit.text, purgeArchive, `${day}-${nowMs}`) }
+      catch (err) { deps.log('MEMORY_NIGHTLY', `correction purge failed (memory.md already updated): ${err instanceof Error ? err.message : String(err)}`) }
+      // 跟进计划里照抄了这句的待办也关掉(不删,标 dropped),免得到点 CC 又问起主人撤掉的事。
+      let agendaDropped = 0
+      try { agendaDropped = dropCorrectedAgenda(got.root, hit.text, day, purgeArchive, `${day}-${nowMs}`) }
+      catch (err) { deps.log('MEMORY_NIGHTLY', `agenda drop failed: ${err instanceof Error ? err.message : String(err)}`) }
+      const parts = [...purged.map(p => `${p.file} 删了 ${p.lines} 行`), ...(agendaDropped ? [`agenda.md 里 ${agendaDropped} 条待办改成 dropped`] : [])]
+      const purgeNote = parts.length ? `  (随之从 ${parts.join('、')};原文件在 memory-archive/${owner ?? 'unknown'}/corrections/)\n` : ''
       // 改名成功后才记:失败了 memory.md 没动,也不留一行假的纠正
-      appendFileSync(join(got.root, CORRECTIONS_FILENAME), `- ${day} ${VERDICT_LINE[verdict]}:[${hit.section}] ${hit.text}\n`)
+      appendFileSync(join(got.root, CORRECTIONS_FILENAME), `- ${day} ${VERDICT_LINE[verdict]}:[${hit.section}] ${hit.text}\n${purgeNote}`)
       if (src[id]) { delete src[id]; try { writeSources(got.root, src) } catch { /* 出处是附带的 */ } }
       if (verdict === 'outdated') {
-        const owner = deps.ownerChatId()
         if (owner) {
           const archiveDir = join(deps.stateDir, 'memory-archive', owner)
           mkdirSync(archiveDir, { recursive: true })

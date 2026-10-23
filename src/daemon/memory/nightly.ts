@@ -3,6 +3,7 @@
  * 素材 → 指纹(没新东西不调模型)→ 便宜模型出改动清单 → 程序校验执行 → 修订检查(主人正在改就作废)
  * → 备份旧版、原子写、追加日志、更新状态。任何失败都不写文件;同一天不再自动重试。
  */
+import { correctedTexts } from '../../lib/memory-corrections'
 import { invalidateDerivedMemory } from '../../lib/memory-derived-state'
 import { writeFileAtomic } from '../../lib/json-file'
 import { nextSources, readSources, writeSources, SOURCE_EXCERPT_MAX, type SourceRef } from './sources'
@@ -108,12 +109,8 @@ const normalizeEntry = (text: string): string => text.replace(/\s+/g, ' ').trim(
 /** 纠正记录:给模型看的尾部(最新的在后,封顶)+ 全部纠正过的正文(代码里拦逐字写回)。 */
 export function readCorrections(root: string): { block: string; texts: Set<string> } {
   const raw = readIf(join(root, CORRECTIONS_FILENAME))
-  const texts = new Set<string>()
-  for (const line of raw.split('\n')) {
-    const m = /\] (.+)$/.exec(line)
-    if (m) texts.add(normalizeEntry(m[1]!))
-  }
-  return { block: raw.trim().slice(-CORRECTIONS_CAP), texts }
+  // 解析和清源头 / 卡出口共用一份(lib/memory-corrections,3b)
+  return { block: raw.trim().slice(-CORRECTIONS_CAP), texts: correctedTexts(root) }
 }
 /** 去掉模型写回的、主人纠正过的条目(逐字比较,空白归一)。 */
 export function dropCorrected(ops: NightlyOps, texts: ReadonlySet<string>): NightlyOps {

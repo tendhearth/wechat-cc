@@ -207,6 +207,20 @@ describe('owner corrections, step A (2026-10-06)', () => {
     await expect(rt.correct(id, 'wrong')).rejects.toThrow('memory_entry_not_found')
   })
   // 3e 记忆第 2 步(9d 定):每晚整理只是多了 / 整理了东西 ⇒ 总览 added(贴标签照常用);主人纠正 ⇒ retracted(藏,不带去串门)。
+  // 3b (a) 清源头:更正一条,CC 笔记里含那句的行也删掉;删了什么记在 corrections.md 那一条底下;原文件快照能找回。
+  it('a correction also purges the same sentence from profile.md, notes it under the correction, and archives the original', async () => {
+    const { readFileSync, readdirSync } = await import('node:fs')
+    const rt = makeMemoryNightlyRuntime(deps())
+    await rt.runNow()
+    const item = rt.curatedView().sections.flatMap(s => s.items)[0]!
+    writeFileSync(join(root, 'profile.md'), `- ${item.text}\n- 喜欢爬山\n`)
+    await rt.correct(item.id!, 'wrong')
+    expect(readFileSync(join(root, 'profile.md'), 'utf8')).toBe('- 喜欢爬山\n')
+    const corr = readFileSync(join(root, 'corrections.md'), 'utf8')
+    expect(corr).toContain('随之从 profile.md 删了 1 行')
+    const archived = readdirSync(join(stateDir, 'memory-archive', OWNER, 'corrections'))
+    expect(archived.some(f => f.startsWith('profile.md.'))).toBe(true)
+  })
   it('the nightly tidy marks derived memory "added"; an owner correction marks it "retracted"', async () => {
     const { derivedMemoryStatus } = await import('../../lib/memory-derived-state')
     const rt = makeMemoryNightlyRuntime(deps())

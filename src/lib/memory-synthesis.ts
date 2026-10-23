@@ -21,6 +21,7 @@
  * (same pattern as summarizer-runtime), so the CLI wires the admin's provider
  * (claude/codex) and tests pass a mock.
  */
+import { correctedTexts, dropCorrectedLines, dropCorrectedValues, recordRedactions } from './memory-corrections'
 import { feedsSynthesis } from './memory-artifacts'
 import { createHash } from 'node:crypto'
 import { existsSync, readFileSync, readdirSync, statSync } from 'node:fs'
@@ -473,12 +474,15 @@ export async function synthesizeOverview(deps: SynthesizeDeps): Promise<Synthesi
   if (overview.length === 0) return base
   if (sourceFingerprint((await buildOverviewSource(deps)).prompt) !== sourceFingerprint(prompt)) return base
 
-  const stamped = `<!-- 由 wechat-cc 从本机 Claude 记忆整理生成 · ${new Date().toISOString()} -->\n\n${overview}\n`
+  // 卡出口(3b):含主人更正过的话的行一律丢掉、记数 —— 串门拿到的总览一定过这一层。逐字比对,换说法会漏(见 lib/memory-corrections)。
+  const redacted = dropCorrectedLines(overview, correctedTexts(memoryRoot))
+  recordRedactions(memoryRoot, 'overview', redacted.dropped, new Date().toISOString())
+  const stamped = `<!-- 由 wechat-cc 从本机 Claude 记忆整理生成 · ${new Date().toISOString()} -->\n\n${redacted.text}\n`
   let bytesWritten = 0
   const committed = commitDerivedMemory(memoryRoot, 'overview', revision, () => {
     bytesWritten = writeMemoryFile(deps.stateDir, deps.adminChatId, OVERVIEW_FILENAME, stamped).bytesWritten
   })
-  return committed ? { ...base, overview, written: { path: OVERVIEW_FILENAME, bytesWritten } } : base
+  return committed ? { ...base, overview: redacted.text, written: { path: OVERVIEW_FILENAME, bytesWritten } } : base
 }
 
 export interface MemoryProfileCard {
@@ -812,12 +816,15 @@ export async function synthesizeProfile(deps: SynthesizeProfileDeps): Promise<Sy
   profile.sourceStats = source.stats
   profile.sourceFingerprint = source.fingerprint
   profile.minRefreshAfter = addDays(profile.generatedAt, AUTO_REFRESH_DAYS) ?? undefined
-  const body = `${JSON.stringify(profile, null, 2)}\n`
+  // 卡出口(3b):画像里命中被更正之话的字符串去掉 / 置空、记数。
+  const redactedProfile = dropCorrectedValues(profile, correctedTexts(memoryRoot))
+  recordRedactions(memoryRoot, 'profile', redactedProfile.dropped, new Date().toISOString())
+  const body = `${JSON.stringify(redactedProfile.value, null, 2)}\n`
   let bytesWritten = 0
   const committed = commitDerivedMemory(memoryRoot, 'profile', revision, () => {
     bytesWritten = writeMemoryProfileFile(deps.stateDir, deps.adminChatId, body).bytesWritten
   })
-  return committed ? { ...base, profile, written: { path: PROFILE_FILENAME, bytesWritten } } : base
+  return committed ? { ...base, profile: redactedProfile.value, written: { path: PROFILE_FILENAME, bytesWritten } } : base
 }
 
 export async function getMemoryProfileStatus(opts: {
