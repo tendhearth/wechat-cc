@@ -3,8 +3,9 @@
  * lib/memory-owner 的 writeOwnerAssertions。CC 的 MCP、桌面整份覆盖、nightly、gardener、合成都不能写它 —— 不然「主人亲口说的」
  * 就可能被机器改掉,这正是这份稿要在结构上排除的。
  *
- * 守法:文件名只许出现在下面这张表里的文件(按「谁提到它」数,不猜写法)。新加一处要提到 owner.md,先想清楚它是不是写者:
- * 是写者 ⇒ 改成调 writeOwnerAssertions;只读 ⇒ 用 readOwnerDoc,不用直接拼文件名。
+ * 守法:**拼出 owner.md 的路径**(`join(…, OWNER_FILENAME)` / `join(…, 'owner.md')` / `…/owner.md'`)只许在下面这张表里的文件。
+ * 要写它就得先有路径,所以拼路径的地方就是可能的写者;只提到名字的(编辑接口的 path 枚举、CLI 帮助、拒写时的比较)不算。
+ * 新代码要碰它:写 ⇒ 调 writeOwnerAssertions;读 ⇒ 调 readOwnerDoc。
  * 只扫生产代码(排除 *.test.ts);注释行按行跳(块注释正则会吞代码)。
  */
 import { describe, it, expect } from 'vitest'
@@ -13,18 +14,15 @@ import { join, relative, dirname } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..')
-/** 允许提到 owner.md / OWNER_FILENAME 的文件,和为什么。 */
+/** 允许拼出 owner.md 路径的文件,和为什么。 */
 const ALLOWED: Record<string, string> = {
-  'src/lib/memory-owner.ts': '唯一的写者 + 读者',
-  'src/lib/memory-artifacts.ts': '清单里登记它是源',
-  'src/daemon/memory/fs-api.ts': '拒写:CC 的 MCP memory_write / delete 走这里',
-  'src/lib/memory.ts': '拒写:CLI / 桌面 memory write 整份覆盖走这里',
+  'src/lib/memory-owner.ts': '唯一的写者(writeOwnerAssertions)+ 读者(readOwnerDoc)',
 }
 
-const MENTION = /owner\.md|OWNER_FILENAME/i
+const OWNER_PATH = /join\([^)\n]*(?:OWNER_FILENAME|['"`]owner\.md)|[\\/]owner\.md['"`]/i
 
 export function mentionsOwnerFile(src: string): boolean {
-  return src.split('\n').some(line => !/^\s*(\/\/|\/\*|\*)/.test(line) && MENTION.test(line))
+  return src.split('\n').some(line => !/^\s*(\/\/|\/\*|\*)/.test(line) && OWNER_PATH.test(line))
 }
 
 function walk(dir: string, out: string[] = []): string[] {
@@ -37,11 +35,11 @@ function walk(dir: string, out: string[] = []): string[] {
 }
 
 describe('owner.md 只有一个写者', () => {
-  it('只有登记过的文件提到 owner.md', () => {
+  it('只有登记过的文件拼得出 owner.md 的路径', () => {
     const offenders = [...walk(join(ROOT, 'src')), join(ROOT, 'cli.ts')]
       .map(f => relative(ROOT, f).split('\\').join('/'))
       .filter(rel => !(rel in ALLOWED) && mentionsOwnerFile(readFileSync(join(ROOT, rel), 'utf8')))
-    expect(offenders, '提到 owner.md 的新文件:写就调 writeOwnerAssertions、读就调 readOwnerDoc,别直接拼文件名').toEqual([])
+    expect(offenders, '拼 owner.md 路径的新文件:写就调 writeOwnerAssertions、读就调 readOwnerDoc,别直接拼路径').toEqual([])
   })
 
   it('登记过的文件真的还提到它(删掉了就把这一行也删掉)', () => {
@@ -51,7 +49,10 @@ describe('owner.md 只有一个写者', () => {
 
   it('识别得出', () => {
     expect(mentionsOwnerFile(`writeFileSync(join(root, 'owner.md'), x)`)).toBe(true)
-    expect(mentionsOwnerFile(`// owner.md 只读`)).toBe(false)
-    expect(mentionsOwnerFile(`import { OWNER_FILENAME } from './memory-owner'`)).toBe(true)
+    expect(mentionsOwnerFile(`const p = join(root, OWNER_FILENAME)`)).toBe(true)
+    expect(mentionsOwnerFile("appendFileSync(`${root}/owner.md`, x)")).toBe(true)
+    expect(mentionsOwnerFile(`// join(root, 'owner.md')`)).toBe(false)
+    expect(mentionsOwnerFile(`z.enum(['_overview.md', 'memory.md', 'owner.md'])`)).toBe(false)
+    expect(mentionsOwnerFile(`if (rel.toLowerCase() === OWNER_FILENAME) throw`)).toBe(false)
   })
 })

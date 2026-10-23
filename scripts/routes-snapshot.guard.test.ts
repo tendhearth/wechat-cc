@@ -50,7 +50,8 @@ describe('从路由表推出来的名单与改造前快照逐条一致', () => {
   // 或 link:'read'|'write' 而不改这里 ⇒ 红(#471 评审)。链接令牌那一份另有 link-routes-from-source.guard.test.ts 对着
   // 链接页面源码核对(理念 2,10-21):收回的 22 条已从快照的 link / LINK_* 里删掉,所以这里 link 的新增照旧是空。
   it('令牌能碰到的范围:新增必须在这里显式点头', () => {
-    const APPROVED_ADDITIONS: Record<'operator' | 'federation' | 'selftest' | 'link', string[]> = { operator: [], federation: [], selftest: [], link: [] }
+    // operator:记忆编辑(2026-10-23,设计稿 memory-edits-stick):改的是主人自己的记忆,trusted 那把 file token 别人对话的会话也有,只能给 operator。
+    const APPROVED_ADDITIONS: Record<'operator' | 'federation' | 'selftest' | 'link', string[]> = { operator: ['POST /v1/memory/edit', 'POST /v1/memory/view'], federation: [], selftest: [], link: [] }
     const reg = makeTokenRegistry(() => 'deadbeef'.repeat(8))
     reg.registerOperatorToken('op')
     const all = (a: Iterable<string>) => [...a].sort()

@@ -61,3 +61,25 @@ describe('POST /v1/memory/nightly/run', () => {
     expect(await memoryRoutes(deps())['POST /v1/memory/nightly/run']!(q(), {})).toEqual({ status: 503, body: { error: 'memory_nightly_not_wired' } })
   })
 })
+
+describe('POST /v1/memory/view · /v1/memory/edit(记忆编辑)', () => {
+  const view = { path: '_overview.md', baseHash: 'a'.repeat(64), generatedAt: null, stale: false, lines: [] }
+  const nightly = (over: Record<string, unknown> = {}) => ({ runNow: vi.fn(), view: vi.fn(() => view), edit: vi.fn(async () => ({ ok: false, code: 'memory_changed' })), ...over })
+  it('未接线 → 503', async () => {
+    expect((await memoryRoutes(deps())['POST /v1/memory/view']!(q(), { path: 'memory.md' })).status).toBe(503)
+    expect((await memoryRoutes(deps())['POST /v1/memory/edit']!(q(), {})).status).toBe(503)
+  })
+  it('view 透传 path;业务上的拒绝是 200 + ok:false,照原样给桌面', async () => {
+    const n = nightly()
+    const v = await memoryRoutes(deps({ memoryNightly: n }))['POST /v1/memory/view']!(q(), { path: '_overview.md' })
+    expect(v).toEqual({ status: 200, body: { ok: true, ...view } })
+    const e = await memoryRoutes(deps({ memoryNightly: n }))['POST /v1/memory/edit']!(q(), { path: 'memory.md', baseHash: 'b'.repeat(64), lines: [] })
+    expect(e).toEqual({ status: 200, body: { ok: false, code: 'memory_changed' } })
+  })
+  it('没有主人 → 409 memory_no_owner;别的异常 → 500,不漏错误原文', async () => {
+    const noOwner = nightly({ view: vi.fn(() => { throw new Error('no_owner') }) })
+    expect(await memoryRoutes(deps({ memoryNightly: noOwner }))['POST /v1/memory/view']!(q(), { path: 'memory.md' })).toEqual({ status: 409, body: { ok: false, code: 'memory_no_owner' } })
+    const boom = nightly({ edit: vi.fn(async () => { throw new Error('/secret/path EACCES') }) })
+    expect(await memoryRoutes(deps({ memoryNightly: boom }))['POST /v1/memory/edit']!(q(), {})).toEqual({ status: 500, body: { ok: false, code: 'memory_edit_failed' } })
+  })
+})

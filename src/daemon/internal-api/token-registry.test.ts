@@ -103,6 +103,8 @@ describe('token-registry', () => {
       'GET /v1/letters',
       'POST /v1/letters/write',
       'POST /v1/letters/settings',
+      'POST /v1/memory/view',
+      'POST /v1/memory/edit',
     ]))
     expect(opInfo?.routeAllow).not.toContain('POST /v1/daemon/restart')
     expect(r.resolve('cc'.repeat(32))).toEqual({ tier: 'trusted', origin: 'file' })

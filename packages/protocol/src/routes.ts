@@ -171,6 +171,11 @@ export interface RouteSpec {
  *
  * CC 的信(2026-10-16):`wechat-cc` 与维护者自检用同一份 operator 凭据看状态、当面写一封、开关。admin 档。
  *   → GET /v1/letters, POST /v1/letters/write, POST /v1/letters/settings
+ *
+ * 记忆编辑(2026-10-23,设计稿 2026-10-23-memory-edits-stick-design):主人在记忆页上改生成的记忆 = 更正 + 主人原话,
+ * 改的是主人自己的记忆,只给主人。trusted 档的那把 file token 也在别人对话的会话手里,所以不能走 trusted;
+ * `wechat-cc memory view|edit` 与桌面(经宿主)用 operator 凭据。
+ *   → POST /v1/memory/view, POST /v1/memory/edit
  */
 export const ROUTES: Readonly<Record<RouteKey, RouteSpec>> = {
   // ── 内部 API(/v1/*)。注释原样搬自 route-tiers.ts 的 ROUTE_MIN_TIER ─────────────────────
@@ -438,6 +443,8 @@ export const ROUTES: Readonly<Record<RouteKey, RouteSpec>> = {
   'GET /v1/memory/source': { desktop: { tier: 'trusted' } },
   'POST /v1/memory/source/review': { desktop: { tier: 'trusted' } },
   'POST /v1/memory/profile/generate': { desktop: { tier: 'trusted' } },
+  'POST /v1/memory/view': { desktop: { tier: 'admin', tokens: ['operator'] } },
+  'POST /v1/memory/edit': { desktop: { tier: 'admin', tokens: ['operator'] } },
   'GET /v1/llm/health': { desktop: { tier: 'trusted' } },
   'POST /v1/net/probe': { desktop: { tier: 'trusted' } },
   'POST /v1/llm/keys': { desktop: { tier: 'admin', tokens: ['operator'], ownerWorkspace: true } },

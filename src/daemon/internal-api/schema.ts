@@ -162,6 +162,17 @@ export const MemoryWriteResponse = z.union([
   z.object({ ok: z.literal(false), error: z.string() }),
 ])
 
+// ── POST /v1/memory/view · POST /v1/memory/edit(记忆编辑,设计稿 2026-10-23)──────
+
+const EditableMemoryPath = z.enum(['_overview.md', 'memory.md', 'owner.md'])
+export const MemoryViewRequest = z.object({ path: EditableMemoryPath })
+export const MemoryEditRequest = z.object({
+  path: EditableMemoryPath,
+  baseHash: z.string().regex(/^[0-9a-f]{64}$/),
+  lines: z.array(z.object({ text: z.string(), lineKey: z.string().optional(), assertionId: z.string().optional() })),
+  confirmBulk: z.literal(true).optional(),
+})
+
 // ── GET /v1/memory/list ──────────────────────────────────────────────────────
 
 export const MemoryListQuery = z.object({
@@ -627,6 +638,8 @@ export type HealthResponseT = z.infer<typeof HealthResponse>
 export type MemoryReadRequestT = z.infer<typeof MemoryReadRequest>
 export type MemoryReadResponseT = z.infer<typeof MemoryReadResponse>
 export type MemoryWriteRequestT = z.infer<typeof MemoryWriteRequest>
+export type MemoryViewRequestT = z.infer<typeof MemoryViewRequest>
+export type MemoryEditRequestT = z.infer<typeof MemoryEditRequest>
 export type MemoryWriteResponseT = z.infer<typeof MemoryWriteResponse>
 export type MemoryListQueryT = z.infer<typeof MemoryListQuery>
 export type MemoryListResponseT = z.infer<typeof MemoryListResponse>
@@ -752,6 +765,8 @@ export const REQUEST_SCHEMAS: Record<string, z.ZodTypeAny | undefined> = {
   'POST /v1/memory/write': MemoryWriteRequest,
   'GET /v1/memory/list': MemoryListQuery,
   'POST /v1/memory/delete': MemoryDeleteRequest,
+  'POST /v1/memory/view': MemoryViewRequest,
+  'POST /v1/memory/edit': MemoryEditRequest,
 
   // projects
   'POST /v1/projects/switch': ProjectsSwitchRequest,

@@ -97,6 +97,9 @@ describe('route-tiers', () => {
 
   it('memory LLM 路由 trusted', () => {
     expect(minTierFor('POST /v1/memory/synthesize')).toBe('trusted')
+    // 记忆编辑改的是主人自己的记忆:trusted 那把 file token 别人对话的会话也有 ⇒ admin(经 operator)
+    expect(minTierFor('POST /v1/memory/edit')).toBe('admin')
+    expect(minTierFor('POST /v1/memory/view')).toBe('admin')
     expect(minTierFor('POST /v1/memory/profile/generate')).toBe('trusted')
   })
 

@@ -513,7 +513,7 @@ export interface InternalApiDeps {
   /** Graphical-settings-panel link minter (settings-panel.ts, late-bound). */
   settingsLink?: () => Promise<string | null>
   /** 每晚记忆整理运行时(pipeline-deps 造,main.ts 通过 setMemoryNightly 接进来)。 */
-  memoryNightly?: { runNow(): Promise<unknown> }
+  memoryNightly?: Pick<import('../memory/nightly-runtime').MemoryNightlyRuntime, 'runNow' | 'view' | 'edit'>
   /** 外部 agent CLI 自动升级引擎(main.ts 通过 setCliUpgrade 接进来;没接 ⇒ /v1/cli/* 回 503)。 */
   cliUpgrade?: import('../../core/cli-upgrade/engine').CliUpgrader
   /**

@@ -12,8 +12,14 @@
 import { existsSync, readFileSync } from 'node:fs'
 import { join } from 'node:path'
 import type { InternalApiDeps, RouteTable } from './types'
+import type { MemoryEditRequestT, MemoryViewRequestT } from './schema'
 import { safeSvg } from '../../lib/svg-sanitize'
 import { readJsonFile } from '../../lib/read-json-file'
+
+function noOwner(err: unknown): { status: 409 | 500; body: { ok: false; code: string } } {
+  const m = err instanceof Error ? err.message : ''
+  return m === 'no_owner' ? { status: 409, body: { ok: false, code: 'memory_no_owner' } } : { status: 500, body: { ok: false, code: 'memory_edit_failed' } }
+}
 
 export function memoryRoutes(deps: InternalApiDeps): RouteTable {
   const resolveChat = (body: unknown): string | null => {
@@ -38,6 +44,18 @@ export function memoryRoutes(deps: InternalApiDeps): RouteTable {
     'POST /v1/memory/nightly/run': async () => {
       if (!deps.memoryNightly) return { status: 503, body: { error: 'memory_nightly_not_wired' } }
       return { status: 200, body: { ok: true, result: await deps.memoryNightly.runNow() } }
+    },
+    // 记忆编辑(设计稿 2026-10-23 记忆改了就算数):只认主人的记忆(nightly 那一份),body 由 schema 预校验。
+    // 业务上的拒绝(memory_changed / bulk / stale_key / too_large)是 200 + ok:false,桌面照码处理;没有主人 ⇒ 409。
+    'POST /v1/memory/view': async (_q, body) => {
+      if (!deps.memoryNightly) return { status: 503, body: { error: 'memory_nightly_not_wired' } }
+      try { return { status: 200, body: { ok: true, ...deps.memoryNightly.view((body as MemoryViewRequestT).path) } } }
+      catch (err) { return noOwner(err) }
+    },
+    'POST /v1/memory/edit': async (_q, body) => {
+      if (!deps.memoryNightly) return { status: 503, body: { error: 'memory_nightly_not_wired' } }
+      try { return { status: 200, body: await deps.memoryNightly.edit(body as MemoryEditRequestT) } }
+      catch (err) { return noOwner(err) }
     },
     // CC 手绘小像 (2026-08-25) — draw the owner from profile material.
     'POST /v1/memory/portrait/generate': async (_q, body) => {
