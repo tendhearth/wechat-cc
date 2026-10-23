@@ -207,6 +207,101 @@ export function guardedRunner(inner: ImplementRunner, guard: () => Promise<{ ena
   }
 }
 
+// ── 评审换人:Codex 只读评审(CC 自己跑开发设计稿 §4.2 / §6 第 2 步) ─────────────────
+//
+// 评审跟实现不是同一家,才有两路会话那种互相纠正(设计稿 §3 第 3 条)。主人 10-23:谁写谁审「应该让 CC 来决定」
+// ⇒ chooseReviewer 按谁此刻能用来挑,挑的理由记进 state、上拍板卡。
+//
+// `codex exec -s read-only`:沙箱只读,能读代码、跑只读命令,写不了工作树(流水线照旧在评审后查 HEAD / 工作区有没有被动过)。
+// `--json` 是一行一个事件(2026-10-23 在 codex-cli 0.164.0 上实测):`thread.started.thread_id`、
+// `item.completed` 里 `item.type === 'agent_message'` 的 `text`(取最后一条)、`turn.completed.usage`;
+// `item.type === 'error'` 是 hooks / MCP 的噪声,不算失败。Codex 走订阅,不报美元 ⇒ costUsd 记 0。
+
+/**
+ * 只读沙箱只管文件写,管不住 MCP 工具:主人的 ~/.codex 里装着插件带的 MCP(2026-10-23 本机:cua_repl / node_repl 是 enabled,
+ * 能驱动电脑和浏览器)。`-c mcp_servers={}` 在 0.164.0 上**没用**(插件的那几个照样在)。实测管用的是:不读主人的
+ * config.toml(`--ignore-user-config`,登录照旧用 CODEX_HOME)+ 关掉插件 / 浏览器 / 电脑操作 / apps / hooks 这几个功能。
+ * 关完以后实跑一次问它能调什么:cua_repl、node_repl、computer-use 都没了,hooks 的噪声也没了;剩下的是 codex 自带的
+ * (exec_command 在只读沙箱里、web__run、image_gen、spawn_agent)—— 已知,写进 self-change.md。
+ */
+export const CODEX_REVIEW_LOCKDOWN = ['--ignore-user-config', '--disable', 'plugins', '--disable', 'browser_use', '--disable', 'computer_use', '--disable', 'apps', '--disable', 'hooks']
+
+export function codexReviewArgs(input: RunnerInput): string[] {
+  return ['exec', ...CODEX_REVIEW_LOCKDOWN, '-s', 'read-only', '-C', input.cwd, '--json', '--', input.prompt]
+}
+
+export interface CodexJson { threadId: string | null; text: string; failed: string | null; turns: number }
+
+export function parseCodexJson(stdout: string): CodexJson {
+  let threadId: string | null = null
+  let text = ''
+  let failed: string | null = null
+  let turns = 0
+  for (const line of stdout.split('\n')) {
+    const o = asObject(line)
+    if (!o) continue
+    if (o.type === 'thread.started' && typeof o.thread_id === 'string') threadId = o.thread_id
+    else if (o.type === 'turn.completed') turns++
+    else if (o.type === 'turn.failed') failed = typeof (o.error as { message?: unknown } | undefined)?.message === 'string' ? (o.error as { message: string }).message : 'turn_failed'
+    else if (o.type === 'item.completed') {
+      const item = o.item as { type?: unknown; text?: unknown } | undefined
+      if (item?.type === 'agent_message' && typeof item.text === 'string') text = item.text
+    }
+  }
+  return { threadId, text, failed, turns }
+}
+
+export interface CodexRunnerDeps {
+  launch: ClaudeRunnerDeps['launch']
+  env: NodeJS.ProcessEnv
+  /** 缺省 `codex`(走 PATH)。 */
+  codexBin?: string
+}
+
+/** 只做评审:不是 readOnly 的调用一律拒(实现仍然只给 Claude,Codex 写工作树那条路没验过)。 */
+export function makeCodexReviewRunner(deps: CodexRunnerDeps): ImplementRunner {
+  return {
+    async run(input: RunnerInput): Promise<RunnerResult> {
+      const fail = (error: string, stderrTail: string[] = []): RunnerResult => ({ ok: false, sessionId: null, text: '', costUsd: 0, turns: 0, stderrTail, timedOut: false, error })
+      if (!input.readOnly) return fail('codex_runner_review_only')
+      let out: { code: number | null; stdout: string; stderr: string; timedOut?: boolean }
+      try {
+        out = await deps.launch(deps.codexBin ?? 'codex', codexReviewArgs(input), {
+          cwd: input.cwd,
+          env: runnerEnv(deps.env),
+          timeoutMs: input.timeoutMs ?? DEFAULT_RUN_TIMEOUT_MS,
+        })
+      } catch (err) {
+        return fail('codex_spawn_failed', [String(err instanceof Error ? err.message : err)])
+      }
+      const parsed = parseCodexJson(out.stdout)
+      const ok = out.code === 0 && !parsed.failed && parsed.text.trim() !== ''
+      const result: RunnerResult = {
+        ok,
+        sessionId: parsed.threadId,
+        text: parsed.text || out.stdout.slice(-RAW_TEXT_CAP),
+        costUsd: 0,
+        turns: parsed.turns,
+        stderrTail: tail(out.stderr, STDERR_TAIL_LINES),
+        timedOut: out.timedOut === true,
+      }
+      if (!ok) result.error = parsed.failed ?? (parsed.text ? `codex_exit_${out.code}` : 'codex_no_answer')
+      return result
+    },
+  }
+}
+
+export interface ReviewerChoice { id: 'codex' | 'claude'; why: string }
+
+/**
+ * 谁来审:实现是 Claude ⇒ 优先 Codex(不同家);Codex 不能用(没装 / 没登录)⇒ 退回 Claude 的另一个只读会话,
+ * 并照实写理由。`codexLoggedIn` 由调用方给(生产 = `codex login status` 退 0)。
+ */
+export function chooseReviewer(o: { codexLoggedIn: boolean }): ReviewerChoice {
+  if (o.codexLoggedIn) return { id: 'codex', why: '实现是 Claude,评审换 Codex(不同家才互相挑得出错)' }
+  return { id: 'claude', why: 'Codex 没装或没登录,退回 Claude 的另一个只读会话(同一家,互相纠正弱一些)' }
+}
+
 /** SIGTERM 之后留给执行者把 JSON 打完的时间,过了就硬杀。 */
 export const KILL_GRACE_MS = 5_000
 

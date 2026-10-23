@@ -27,7 +27,8 @@ import { defaultSelftestDeps, runChatSelftest, runWorkbenchSelftest, type Selfte
 import type { SelfChangeConfig } from './config'
 import { makeDaemonClient } from './daemon-client'
 import { makeGit, nodeGitSpawnSync } from './git'
-import { guardedRunner, makeClaudeRunner, spawnCollect } from './runner'
+import { chooseReviewer, guardedRunner, makeClaudeRunner, makeCodexReviewRunner, spawnCollect } from './runner'
+import { spawnSync } from 'node:child_process'
 import type { SelfChangeState } from './state'
 import { makeStateStore } from './state'
 import { runPath, type PipelineDeps } from './steps'
@@ -167,8 +168,18 @@ export function defaultPipelineDeps(stateDir: string, config: SelfChangeConfig, 
     // env 显式过一遍 workbenchSubprocessEnv:和 exec / runner 同一条规矩,
     // 而且写在这儿看得见(gitEnv 里还会再过一次,这是有意的双保险)。
     git: makeGit(nodeGitSpawnSync, runTree, workbenchSubprocessEnv(process.env)),
-    // 调模型前先看网络守护(runner.ts guardedRunner)。
+    // 调模型前先看网络守护(runner.ts guardedRunner):实现、修复轮、评审都过它。
     runner: guardedRunner(makeClaudeRunner({ launch: spawnCollect, env: process.env }), () => daemon.guard()),
+    // 评审换人:谁审由 CC 现挑(设计稿 2026-10-23-cc-runs-development §4.2)。`codex login status` 退 0 ⇒ 登录着。
+    // Codex 打的是 api.openai.com,同样是要保护的官方端点 ⇒ 也包 guardedRunner。
+    reviewer: (() => {
+      const st = spawnSync('codex', ['login', 'status'], { encoding: 'utf8', timeout: 10_000, windowsHide: true, env: workbenchSubprocessEnv(process.env) })
+      const choice = chooseReviewer({ codexLoggedIn: st.status === 0 })
+      const inner = choice.id === 'codex'
+        ? makeCodexReviewRunner({ launch: spawnCollect, env: process.env })
+        : makeClaudeRunner({ launch: spawnCollect, env: process.env })
+      return { choice, runner: guardedRunner(inner, () => daemon.guard()) }
+    })(),
     daemon,
 
     // bun / npm。env 去掉 daemon 的凭据(和执行者同一条规矩:跑在克隆里的

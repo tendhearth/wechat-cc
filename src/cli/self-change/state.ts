@@ -38,7 +38,8 @@ export interface SelfChangeState {
     /** 三处修复轮各自独立计数,各最多 SELF_CHANGE_DEFAULTS.max_fix_rounds 轮。 */
     rounds: { tests: number; review: number; ci: number }
   }
-  review: { sessionId: string | null; costUsd: number; verdict: 'approve' | 'changes' | null; findings: ReviewFinding[] }
+  /** `by` / `why`:谁审的、为什么挑它(CC 自己挑,设计稿 2026-10-23-cc-runs-development §4.2);老存盘没有这两格。 */
+  review: { sessionId: string | null; costUsd: number; verdict: 'approve' | 'changes' | null; findings: ReviewFinding[]; by?: 'codex' | 'claude'; why?: string }
   /**
    * 测试闸门的抖动账:`flakes` 里每一条是「第一次红、失败文件与本次改动无关、
    * 重跑就绿了」的那条命令。记下来是为了两件事 —— 事后能看出这条自改到底

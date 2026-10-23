@@ -260,3 +260,55 @@ describe('guardedRunner —— 网络不受保护就不调模型', () => {
     expect(c.calls()).toBe(1)
   })
 })
+
+// ── 评审换人:Codex 只读评审 ──────────────────────────────────────────────
+import { chooseReviewer, codexReviewArgs, makeCodexReviewRunner, parseCodexJson } from './runner'
+
+// 2026-10-23 在 codex-cli 0.164.0 上实跑 `codex exec -s read-only --json` 录下的形状(thread id 换成假的)。
+const CODEX_OUT = [
+  '{"type":"thread.started","thread_id":"thread-1"}',
+  '{"type":"item.completed","item":{"id":"item_0","type":"error","message":"clamping SessionEnd hook timeout to 3s in ~/.codex/hooks.json"}}',
+  '{"type":"turn.started"}',
+  '{"type":"item.completed","item":{"id":"item_2","type":"agent_message","text":"{\\"verdict\\":\\"approve\\",\\"findings\\":[]}"}}',
+  '{"type":"turn.completed","usage":{"input_tokens":18330,"output_tokens":61}}',
+].join('\n')
+
+describe('Codex 只读评审', () => {
+  it('参数:锁住 MCP / 插件、只读沙箱、指定目录、JSON 事件流,prompt 在 -- 之后', () => {
+    const args = codexReviewArgs({ cwd: '/w', prompt: '--看看', budgetUsd: 1, maxTurns: 1, readOnly: true })
+    expect(args.slice(-7)).toEqual(['-s', 'read-only', '-C', '/w', '--json', '--', '--看看'])
+    // 主人的 MCP / 插件 / hooks 一样都不带进来(只读沙箱管不住 MCP 工具)
+    expect(args).toContain('--ignore-user-config')
+    for (const f of ['plugins', 'browser_use', 'computer_use', 'apps', 'hooks']) expect(args.join(' ')).toContain(`--disable ${f}`)
+  })
+  it('解析:thread id、最后一条 agent_message;hooks 的 error 条目不算失败', () => {
+    expect(parseCodexJson(CODEX_OUT)).toEqual({ threadId: 'thread-1', text: '{"verdict":"approve","findings":[]}', failed: null, turns: 1 })
+  })
+  it('turn.failed ⇒ 失败带原因', () => {
+    expect(parseCodexJson('{"type":"turn.failed","error":{"message":"usage limit"}}').failed).toBe('usage limit')
+  })
+  it('跑通 ⇒ ok、costUsd 0(订阅不报美元)、sessionId = thread id', async () => {
+    const r = makeCodexReviewRunner({ launch: async () => ({ code: 0, stdout: CODEX_OUT, stderr: '' }), env: {} })
+    const out = await r.run({ cwd: '/w', prompt: 'p', budgetUsd: 1, maxTurns: 1, readOnly: true })
+    expect(out).toMatchObject({ ok: true, sessionId: 'thread-1', costUsd: 0 })
+    expect(out.text).toContain('approve')
+  })
+  it('没有回答 ⇒ 不 ok(codex_no_answer);起不来 ⇒ codex_spawn_failed', async () => {
+    const empty = makeCodexReviewRunner({ launch: async () => ({ code: 0, stdout: '{"type":"thread.started","thread_id":"t"}', stderr: '' }), env: {} })
+    expect((await empty.run({ cwd: '/w', prompt: 'p', budgetUsd: 1, maxTurns: 1, readOnly: true })).error).toBe('codex_no_answer')
+    const broken = makeCodexReviewRunner({ launch: async () => { throw new Error('ENOENT') }, env: {} })
+    expect((await broken.run({ cwd: '/w', prompt: 'p', budgetUsd: 1, maxTurns: 1, readOnly: true })).error).toBe('codex_spawn_failed')
+  })
+  it('只做评审:不是 readOnly 的调用直接拒,一个进程都不起', async () => {
+    let launched = 0
+    const r = makeCodexReviewRunner({ launch: async () => { launched++; return { code: 0, stdout: CODEX_OUT, stderr: '' } }, env: {} })
+    expect((await r.run({ cwd: '/w', prompt: 'p', budgetUsd: 1, maxTurns: 1 })).error).toBe('codex_runner_review_only')
+    expect(launched).toBe(0)
+  })
+  it('谁审:Codex 登录着 ⇒ Codex;不能用 ⇒ 退回 Claude,照实写理由', () => {
+    expect(chooseReviewer({ codexLoggedIn: true }).id).toBe('codex')
+    const fb = chooseReviewer({ codexLoggedIn: false })
+    expect(fb.id).toBe('claude')
+    expect(fb.why).toMatch(/同一家/)
+  })
+})

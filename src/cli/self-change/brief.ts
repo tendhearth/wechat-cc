@@ -207,7 +207,9 @@ const JSON_BLOCK = /```json\s*\n([\s\S]*?)```/g
  */
 export function parseReviewVerdict(text: string): { verdict: 'approve' | 'changes'; findings: ReviewFinding[]; parsed: boolean } {
   const blocks = [...text.matchAll(JSON_BLOCK)].map(m => m[1] ?? '')
-  const last = blocks.at(-1)
+  // 没有 ```json 围栏、整段就是一个对象 ⇒ 也认:评审换成 Codex 以后,它常把 JSON 原样回出来(2026-10-23 实测)。
+  const bare = text.trim()
+  const last = blocks.at(-1) ?? (bare.startsWith('{') && bare.endsWith('}') ? bare : undefined)
   if (last !== undefined) {
     try {
       const obj: unknown = JSON.parse(last)

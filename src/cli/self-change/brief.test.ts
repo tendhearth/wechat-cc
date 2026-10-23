@@ -206,3 +206,14 @@ describe('parseReviewVerdict', () => {
     expect(r.verdict).toBe('changes')
   })
 })
+
+describe('parseReviewVerdict —— 不带围栏的整段 JSON(Codex 评审常这么回)', () => {
+  it('整段就是一个对象 ⇒ 认', async () => {
+    const { parseReviewVerdict } = await import('./brief')
+    expect(parseReviewVerdict('{"verdict":"approve","findings":[]}')).toEqual({ verdict: 'approve', findings: [], parsed: true })
+  })
+  it('散文里夹着花括号 ⇒ 不认,照旧走兜底(判 changes)', async () => {
+    const { parseReviewVerdict } = await import('./brief')
+    expect(parseReviewVerdict('我觉得 {还行} 吧').parsed).toBe(false)
+  })
+})
