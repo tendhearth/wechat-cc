@@ -52,9 +52,13 @@ export function redact(message: string): string {
     .replace(/\b(text|body|content|msg)=.*$/i, '$1=<略>')
 }
 
-/** 把一句话里会变的部分抹掉:时间、十六进制 id、wxid、聊天 id、路径里的数字、所有数字。 */
+/**
+ * 把一句话里会变的部分抹掉:时间、十六进制 id、wxid、聊天 id、路径里的数字、所有数字。
+ * **先过 redact**:签名也会打印出来、也会进模型,别让两套正则各漏各的(整合者评审 #640:`YWW_abc123` 这种带下划线的
+ * 编号,下面那条数字正则跨不过 `_`)。
+ */
 export function signatureOf(message: string): string {
-  return message
+  return redact(message)
     .replace(/\d{4}-\d{2}-\d{2}T[\d:.]+Z/g, '<time>')
     .replace(/\b[\w.+-]+@im\.wechat\b/g, '<chat>')
     .replace(/\bwxid_\w+/g, '<wxid>')
