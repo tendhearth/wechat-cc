@@ -17,7 +17,7 @@ import type { ProviderId } from './conversation'
 import { executorNames, type ExecutorNames } from './provider-display-names'
 import { isKnownProviderId } from '../lib/provider-ids'
 import { hasAuthCode } from '../lib/auth-failure'
-import { isAuthErrorCode, providerErrorCodeOf } from '../lib/provider-error-code'
+import { errorWithProviderCode, isAuthErrorCode, providerErrorCodeOf } from '../lib/provider-error-code'
 import { isConnectFailure } from '../lib/net-errors'
 import { assertCallAllowed, decideCall, isNetworkUnprotectedError, NetworkUnprotectedError, sessionCallTarget, unprotectedMessage, unresolvedTarget, type CallTarget, type NetworkGate } from '../lib/network-gate'
 
@@ -241,6 +241,15 @@ const CHEAP_EVAL_COOLDOWN_MS = 10 * 60_000
 // owner 确认 agy 能登录,这条其实是网络/超时,和同期 getUpdates cert /
 // 隧道 churn 同源),那是瞬时错误,该走短冷却自愈,不能误判成登录过期。
 const CHEAP_EVAL_AUTH_COOLDOWN_MS = 60 * 60_000
+/**
+ * 被服务方**拒绝**(不是坏了、也不是网络抖):agy 的 `region_unavailable`(出口地区不在服务范围)。重试不会好,
+ * 只有出口换了才会好 —— 所以既不走 10 分钟冷却,也不进「大家都在冷却就先试第一个」那条兜底。
+ * 指数退避:1h → 2h → 4h … 封顶 24h,成功一次清零(出口换了,下一次到点的尝试就能发现)。
+ * 2026-10-23 真机:回忆每次收工都去问 agy,两天 28 次全是这句(单候选路径根本不看冷却)。
+ */
+const CHEAP_EVAL_REFUSED_CODES = new Set(['region_unavailable'])
+const CHEAP_EVAL_REFUSED_BASE_MS = 60 * 60_000
+const CHEAP_EVAL_REFUSED_CAP_MS = 24 * 60 * 60_000
 /** 冷却时长这类内部决策用**窄档** —— 只认结构化码,不让厂商散文带偏。
  *  先看边界挂在抛出物上的 provider 码(arch backlog #4 第 2 步:`auth_failed` /
  *  `auth_rejected` 都是要主人动手的认证失败,不会自愈);有码但不是认证 ⇒ 不是。
@@ -295,7 +304,8 @@ export function createProviderRegistry(opts?: {
     const pinnedId = readPinnedId()
     if (pinnedId) {
       const pinned = entries.get(pinnedId as ProviderId)?.provider.cheapEval
-      if (pinned) return pinned
+      // 钉死的那家也要看被拒:钉了 agy、agy 在这个出口被拒,就不能每次照问(2026-10-23 回忆 28 次)。
+      if (pinned) return guardRefused(pinnedId as ProviderId, pinned)
       opts?.log?.(`cheap_eval_provider=${pinnedId} 未注册或无 cheapEval — 回落偏好序`)
       // 钉的 provider 此刻没注册(2026-10-04:开机 `--version` 探测一时失败、正在后台
       // 退避重探)。很多调用方在开机时就把这里返回的函数缓存住了(coordinator 的
@@ -309,7 +319,7 @@ export function createProviderRegistry(opts?: {
         const live = id ? entries.get(id as ProviderId)?.provider.cheapEval : undefined
         if (live) {
           if (!returned) { returned = true; opts?.log?.(`cheap_eval_provider=${id} 已注册 — 后台评估回到它`) }
-          return live(prompt)
+          return guardRefused(id as ProviderId, live)(prompt)
         }
         return (resolveUnpinned() ?? fallback)(prompt)
       }
@@ -336,6 +346,30 @@ export function createProviderRegistry(opts?: {
   }
   // cheapEval failover state — per-registry (= per-daemon-lifetime), never persisted.
   const cheapEvalCooldownUntil = new Map<ProviderId, number>()
+  const cheapEvalRefused = new Map<ProviderId, { until: number; streak: number; code: string }>()
+  const refusedNow = (id: ProviderId) => { const r = cheapEvalRefused.get(id); return r && r.until > now() ? r : null }
+  /** 记一次被拒;回 true 表示这是被拒(调用方别再记普通冷却)。 */
+  const noteRefusal = (id: ProviderId, err: unknown): boolean => {
+    const code = providerErrorCodeOf(err)
+    if (!code || !CHEAP_EVAL_REFUSED_CODES.has(code)) return false
+    const streak = (cheapEvalRefused.get(id)?.streak ?? 0) + 1
+    const wait = Math.min(CHEAP_EVAL_REFUSED_CAP_MS, CHEAP_EVAL_REFUSED_BASE_MS * 2 ** (streak - 1))
+    cheapEvalRefused.set(id, { until: now() + wait, streak, code })
+    opts?.log?.(`cheapEval: ${id} 被拒(${code}),${Math.round(wait / 60_000)} 分钟内不再问它`)
+    return true
+  }
+  const refusedError = (id: ProviderId, r: { until: number; code: string }) =>
+    errorWithProviderCode(`${r.code}: ${id} 被服务方拒绝,${new Date(r.until).toISOString()} 之前不再问它`, r.code)
+  /** 包一层:被拒期间不调;成功清零;被拒就记。 */
+  const guardRefused = (id: ProviderId, fn: CheapEval): CheapEval => async (prompt) => {
+    const r = refusedNow(id)
+    if (r) throw refusedError(id, r)
+    try {
+      const out = await fn(prompt)
+      cheapEvalRefused.delete(id)
+      return out
+    } catch (err) { noteRefusal(id, err); throw err }
+  }
   const networkGate = opts?.networkGate
   const readPinnedId = (): string | undefined =>
     typeof opts?.cheapEvalProvider === 'function' ? opts.cheapEvalProvider() : opts?.cheapEvalProvider
@@ -354,7 +388,7 @@ export function createProviderRegistry(opts?: {
       if (entry.provider.cheapEval) candidates.push({ id, fn: entry.provider.cheapEval })
     }
     if (candidates.length === 0) return null
-    if (candidates.length === 1) return candidates[0]!.fn
+    if (candidates.length === 1) return guardRefused(candidates[0]!.id, candidates[0]!.fn)
 
     // Runtime failover (2026-08-24): the static preference order once froze
     // the entire ingest pipeline — agy sat at slot 2 with a dead credential
@@ -370,6 +404,7 @@ export function createProviderRegistry(opts?: {
       // 守护 v2:需要保护且网络不安全的候选跳过(不入冷却);不需要保护的照常试。
       let guardRefusal: NetworkUnprotectedError | null = null
       const coolingEligible: typeof candidates = []
+      let refusedErr: Error | null = null
       for (const c of candidates) {
         if (networkGate) {
           const d = await decideCall(networkGate, providerCallTarget(entries.get(c.id)?.provider, c.id, 'cheapEval'))
@@ -379,6 +414,8 @@ export function createProviderRegistry(opts?: {
             continue
           }
         }
+        const refused = refusedNow(c.id)
+        if (refused) { refusedErr ??= refusedError(c.id, refused); continue }
         const until = cheapEvalCooldownUntil.get(c.id) ?? 0
         if (until > now()) { coolingEligible.push(c); continue }
         if (opts?.cheapEvalPreflight) {
@@ -396,10 +433,13 @@ export function createProviderRegistry(opts?: {
         }
         attempted++
         try {
-          return await c.fn(prompt)
+          const out = await c.fn(prompt)
+          cheapEvalRefused.delete(c.id)
+          return out
         } catch (err) {
           // 评估途中网络掉了(闸门在这个候选里拦下):不记冷却,换下一个候选。
           if (isNetworkUnprotectedError(err)) { attempted--; guardRefusal ??= err as NetworkUnprotectedError; continue }
+          if (noteRefusal(c.id, err)) { lastErr = err; continue }
           const cd = isAuthError(err) ? CHEAP_EVAL_AUTH_COOLDOWN_MS : CHEAP_EVAL_COOLDOWN_MS
           cheapEvalCooldownUntil.set(c.id, now() + cd)
           lastErr = err
@@ -427,6 +467,8 @@ export function createProviderRegistry(opts?: {
         }
         // 能试的候选全被守护挡下:一个都不出门,抛统一的「网络未受保护」。
         if (guardRefusal) throw guardRefusal
+        // 剩下的全在被拒期:照实说被拒,不硬闯。
+        if (refusedErr) throw refusedErr
       }
       throw lastErr
     }

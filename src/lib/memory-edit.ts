@@ -21,11 +21,12 @@ export type EditableMemoryPath = (typeof EDITABLE_MEMORY_PATHS)[number]
  *  - 主人那一份的 memory.md / owner.md 不行:手改必须经 `memory edit` 比对,删 = 更正、加 = 主人原话,不然又是「改了不算数」;
  *  - 别人对话里的 memory.md 照旧能整份写(那份没有逐行编辑)。
  * 回 null = 可以写;否则回给人看的一句话。ownerChatId 由调用方给(lib 不读 daemon 的配置)。
+ * 「守护进程没在跑」那半句不在这里:要不要说由调用方看 daemon 通不通再加(整合者真机核对 10-23:开着也说,是假话)。
  */
 export function wholeFileWriteRefusal(relPath: string, kind: string, userId: string, ownerChatId: string | null): string | null {
   const p = relPath.split('\\').join('/').replace(/^(\.\/)+/, '').toLowerCase()
-  if (kind === 'derived') return `${relPath} 是 CC 整理生成的,手改下次整理就没了;要改请在记忆页上逐行改(需要守护进程运行后才能改这份记忆)`
-  if (ownerChatId && userId === ownerChatId && isEditableMemoryPath(p)) return `这份是主人的 ${p},要在记忆页上逐行改(删掉的当成说错了、加的记成你说的);需要守护进程运行后才能改这份记忆`
+  if (kind === 'derived') return `${relPath} 是 CC 整理生成的,手改下次整理就没了;要改请在记忆页上逐行改`
+  if (ownerChatId && userId === ownerChatId && isEditableMemoryPath(p)) return `这份是主人的 ${p},要在记忆页上逐行改(删掉的当成说错了、加的记成你说的)`
   return null
 }
 

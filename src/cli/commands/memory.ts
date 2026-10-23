@@ -83,7 +83,16 @@ const memoryWriteCmd = defineCommand({
       const { memoryArtifactKind } = await import('../../lib/memory-artifacts')
       const { loadCompanionConfig } = await import('../../lib/companion-config')
       const refusal = wholeFileWriteRefusal(args.path, memoryArtifactKind(args.path), args.userId, loadCompanionConfig(STATE_DIR).default_chat_id ?? null)
-      if (refusal) throw new Error(refusal)
+      if (refusal) {
+        // 逐行改走 daemon 的 /v1/memory/edit:daemon 不通时多说一句「先开起来」,通的时候不说(说了就是假话)。
+        const { readApiInfo } = await import('../../lib/api-info')
+        const info = readApiInfo(STATE_DIR)
+        let up = false
+        if (info) {
+          try { up = (await fetch(`${info.baseUrl}/v1/health`, { headers: { authorization: `Bearer ${info.token}` }, signal: AbortSignal.timeout(1500) })).ok } catch { /* 不通 */ }
+        }
+        throw new Error(up ? refusal : `${refusal}。守护进程现在没在跑,先开起来才能逐行改`)
+      }
       const result = writeMemoryFile(STATE_DIR, args.userId, args.path, body)
       if (args.json) console.log(JSON.stringify(MemoryWriteOutput.parse({ ok: true, userId: args.userId, path: args.path, ...result }), null, 2))
       else console.log(`${result.created ? 'created' : 'updated'}: ${args.userId}/${args.path} (${result.bytesWritten}B)`)
