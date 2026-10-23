@@ -37,6 +37,7 @@ import type { ActiveVisit } from '../../core/companion-presence'
 import { loadCompanionConfig } from '../companion/config'
 import { makeMemoryFS } from '../memory/fs-api'
 import { NEIGHBORS, pickNeighbor, neighborById, neighborPersona, type Neighbor } from '../../core/neighbors'
+import { overviewForOthers } from '../../lib/memory-owner'
 
 const OVERVIEW_MAX = 1500
 
@@ -128,7 +129,8 @@ export function makeVisit(deps: VisitDeps): Visit {
       if (owner && !owner.includes('..') && !owner.includes('/') && !owner.includes('\\')) {
         const fs = makeMemoryFS({ rootDir: join(deps.stateDir, 'memory', owner) })
         personaMd = fs.read('persona.md') ?? null
-        overview = (fs.read('_overview.md') ?? '').slice(0, OVERVIEW_MAX) || null
+        // 对外:经 overviewForOthers 去掉主人原话那一节(记忆编辑第 3 步)
+        overview = overviewForOthers(fs.read('_overview.md') ?? '').slice(0, OVERVIEW_MAX) || null
       }
     } catch { /* 读不到就当白纸 —— 串门不该因为记忆目录出问题而失败 */ }
     return { myName: deps.myName, persona: personaMd, ownerOverview: overview, disclosurePolicy: deps.disclosurePolicy }

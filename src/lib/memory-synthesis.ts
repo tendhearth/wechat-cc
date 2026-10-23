@@ -23,6 +23,7 @@
  */
 import { correctedTexts, dropCorrectedLines, dropCorrectedValues, recordRedactions } from './memory-corrections'
 import { feedsSynthesis } from './memory-artifacts'
+import { readOwnerDoc, renderOwnerOverviewSection, stripOwnerOverviewSection } from './memory-owner'
 import { createHash } from 'node:crypto'
 import { existsSync, readFileSync, readdirSync, statSync } from 'node:fs'
 import { homedir } from 'node:os'
@@ -477,12 +478,15 @@ export async function synthesizeOverview(deps: SynthesizeDeps): Promise<Synthesi
   // 卡出口(3b):含主人更正过的话的行一律丢掉、记数 —— 串门拿到的总览一定过这一层。逐字比对,换说法会漏(见 lib/memory-corrections)。
   const redacted = dropCorrectedLines(overview, correctedTexts(memoryRoot))
   recordRedactions(memoryRoot, 'overview', redacted.dropped, new Date().toISOString())
-  const stamped = `<!-- 由 wechat-cc 从本机 Claude 记忆整理生成 · ${new Date().toISOString()} -->\n\n${redacted.text}\n`
+  // 主人原话(记忆编辑第 3 步):由代码逐字插在最前面一节,不过出口过滤 —— 那是主人说的;模型自己写出的同名一节先去掉。
+  const ownerSection = renderOwnerOverviewSection(readOwnerDoc(memoryRoot))
+  const body = stripOwnerOverviewSection(redacted.text).trim()
+  const stamped = `<!-- 由 wechat-cc 从本机 Claude 记忆整理生成 · ${new Date().toISOString()} -->\n\n${ownerSection ? `${ownerSection}\n\n` : ''}${body}\n`
   let bytesWritten = 0
   const committed = commitDerivedMemory(memoryRoot, 'overview', revision, () => {
     bytesWritten = writeMemoryFile(deps.stateDir, deps.adminChatId, OVERVIEW_FILENAME, stamped).bytesWritten
   })
-  return committed ? { ...base, overview: redacted.text, written: { path: OVERVIEW_FILENAME, bytesWritten } } : base
+  return committed ? { ...base, overview: body, written: { path: OVERVIEW_FILENAME, bytesWritten } } : base
 }
 
 export interface MemoryProfileCard {

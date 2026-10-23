@@ -276,6 +276,19 @@ describe('owner.md 主人原话(记忆编辑设计稿 2026-10-23 §1)', () => {
     expect(calls[0]).toContain('不要再写进记忆')
     expect(readFileSync(join(root, 'owner.md'), 'utf8')).toBe(before)
   })
+  it('模型照抄主人原话进 memory.md ⇒ 代码丢掉那一条(等于,或包含够长的原话);别的照写', async () => {
+    writeOwnerAssertions(root, { assertions: [assert1, { id: 'b2c3', text: '周末不谈工作的事', date: '2026-10-23', origin: 'memory' }], extra: [] })
+    reply = JSON.stringify({ add: [
+      { section: '偏好', text: '我不喝咖啡' },
+      { section: '偏好', text: '主人说周末不谈工作的事,要记住' },
+      { section: '承诺', text: '周五前给 X 回话(期限 2026-09-26)' },
+    ], update: [], confirm: [], remove: [] })
+    expect((await runMemoryNightly(deps(), { force: true })).status).toBe('written')
+    const md = readFileSync(join(root, 'memory.md'), 'utf8')
+    expect(md).not.toContain('我不喝咖啡')
+    expect(md).not.toContain('周末不谈工作')
+    expect(md).toContain('周五前给 X 回话')
+  })
   it('主人新写了原话 ⇒ 算新素材(记忆里可能有冲突要改);没写过 ⇒ 照旧跳过', async () => {
     await runMemoryNightly(deps(), { force: true })
     expect(await runMemoryNightly(deps(), { force: true })).toEqual({ status: 'skipped', reason: 'no_new_material' })

@@ -38,6 +38,6 @@ describe('feedsSynthesis', () => {
   it('only sources feed synthesis, and corrections.md is held back (it quotes what the owner retracted)', async () => {
     const { feedsSynthesis } = await import('../../lib/memory-artifacts')
     for (const f of ['memory.md', 'profile.md', 'notes/a.md', 'persona.md']) expect(feedsSynthesis(f), f).toBe(true)
-    for (const f of ['_overview.md', '_profile.json', 'knowledge.md', 'today-draft.md', 'corrections.md', 'memory-log.jsonl']) expect(feedsSynthesis(f), f).toBe(false)
+    for (const f of ['_overview.md', '_profile.json', 'knowledge.md', 'today-draft.md', 'corrections.md', 'owner.md', 'memory-log.jsonl']) expect(feedsSynthesis(f), f).toBe(false)
   })
 })
