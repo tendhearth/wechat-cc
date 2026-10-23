@@ -4,11 +4,21 @@
 
 `.github/workflows/ci.yml` 在 push 到 `master` / `dev` / `self/**`,以及 PR 到 `master` / `dev` 时跑。(`self/**` 是自改流水线推的分支 —— 那条流水线的「CI 绿才进 dev」闸门就架在这上面。)
 
-- **build · ${{ matrix.os }}** —— `ubuntu-latest` / `macos-latest` / `windows-latest` 三平台,`fail-fast: false`(一条红不该让另外两条看不见)。每平台:`bun run typecheck` → `bun run depcheck` → 编译 `cli.ts` / `docs.ts` / `setup.ts` → 编译版 sidecar smoke → `bun run test`。
+- **build · ${{ matrix.os }}** —— `ubuntu-latest` / `macos-latest` / `windows-latest` 三平台(**进 dev 的 PR 只跑前两个**,见下面「提速的边界」),`fail-fast: false`(一条红不该让另外两条看不见)。每平台:`bun run typecheck` → `bun run depcheck` → 编译 `cli.ts` / `docs.ts` / `setup.ts` → 编译版 sidecar smoke → `bun run test`。
 - **node · core suite** —— `npm run test:node`,同一套源码在 node 下再跑一遍。这条不是冗余:`bun:sqlite` 的 URI 打开方式、`bun:test` 的 import,在 Mac 上看着好好的,换个运行时就炸。本地复现就是 `npm run test:node`。
 - **changes · paths** —— 一个只算一件事的小作业(`dorny/paths-filter`):这一推里 `apps/desktop/**` 动没动过。
 - **e2e**(vitest e2e 配置)按 base_ref 限定在 master / PR,dev 的日常推送不跑。
 - **desktop-e2e**(Playwright)master / PR 照旧跑;**dev 推送里只要动过 `apps/desktop/**` 也跑**(靠上面那个 `changes` 输出)。没动桌面的推送仍然跳过。本地要先跑一遍就是 `cd apps/desktop && bun x playwright test`,注意 4176 端口别被占。
+
+## 提速的边界(2026-10-23)
+
+一次 CI 原来约 20 分钟,长杆是 Windows(18 分钟,其余都在 9 分钟内)。三处提速,每处都有守卫(`scripts/ci-workflow.guard.test.ts`「提速的边界」):
+
+- **只改 Markdown ⇒ 构建和测试整块跳过。**`changes` 作业的 `code` 输出:除 `*.md` 以外任何文件动过才是 true。没有测试读仓库里的 `.md`;以后有了,把那份文件从排除里拿出来。
+- **进 dev 的 PR 不跑 Windows。**推 `dev` / `self/**`、进 `master` 的 PR 照旧三平台,发版前必须绿。代价:Windows 才有的问题合进 dev 后才看见 —— 推 dev 那次 CI 红了就补修复,不回退别人的提交。
+- **同一个 PR 推了新版本,旧的那次作废**(`concurrency`,只对 PR)。推送一条都不取消:`ci triage --wait` 和自改闸门按提交看结果。
+
+**叠起来的一串 PR**:整合者不用每层等一遍 PR CI。上层包含下层的全部改动,只看最上面那个 PR 的 CI;绿了按顺序合进 dev,合完推 dev 那一次(三平台)才是正式闸门。中间层 rebase 后被取消的运行不用重跑。
 
 bun 版本在 workflow 里**钉死**(`bun-version: 1.3.14`),不用 `latest` —— 上游发新版能让 CI 在没有任何提交的情况下自己变红。升 bun 该是一件有人盯着的事。
 

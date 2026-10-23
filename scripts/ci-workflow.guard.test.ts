@@ -70,11 +70,11 @@ describe('ci.yml —— desktop-e2e 按路径在 dev 上跑', () => {
     expect(e2e.if).toContain("github.ref == 'refs/heads/master'")
   })
 
-  it('e2e(vitest 那条重型作业):进 master 和进 dev 的 PR 都跑、master 推送也跑,直接推 dev 跳过;没有 needs', () => {
+  it('e2e(vitest 那条重型作业):进 master 和进 dev 的 PR 都跑、master 推送也跑,直接推 dev 跳过;只改 Markdown 时跳过', () => {
     // 2026-10-04:#197 把两条 e2e 弄红,只在 base=master 时跑 ⇒ 红了两天没人知道。
     const e2e = jobs.e2e!
-    expect(e2e.needs).toBeUndefined()
-    expect(e2e.if).toBe("github.base_ref == 'master' || github.base_ref == 'dev' || github.ref == 'refs/heads/master'")
+    expect(e2e.needs).toBe('changes')
+    expect(e2e.if).toBe("needs.changes.outputs.code == 'true' && (github.base_ref == 'master' || github.base_ref == 'dev' || github.ref == 'refs/heads/master')")
   })
 })
 
@@ -162,5 +162,40 @@ describe('中继工作流 —— 未配置 Cloudflare 时整体跳过', () => {
     expect(wf.jobs.watch!.if).toContain("vars.RELAY_WATCH == 'on'")
     const on = (wf.on ?? (wf as Record<string, unknown>)[true as unknown as string]) as { schedule: Array<{ cron: string }> }
     expect(on.schedule[0]!.cron).toBe('0 * * * *')
+  })
+})
+
+// 2026-10-23:一次 CI 约 20 分钟,开发一直在等。三处提速,各自的边界钉在这里 —— 放宽一步就是安静地少一道闸。
+describe('ci.yml —— 提速的边界', () => {
+  const codeStep = jobs.changes!.steps?.find(s => s.id === 'code')
+  it('code 过滤器只排除 Markdown(别的文件都算代码),且单独一步用 every', () => {
+    expect(codeStep?.uses).toMatch(/^dorny\/paths-filter@/)
+    expect(codeStep?.with?.['predicate-quantifier']).toBe('every')
+    const f = parse(codeStep?.with?.filters as string) as Record<string, string[]>
+    expect(f.code).toEqual(['**', '!**/*.md'])
+    expect(jobs.changes!.outputs?.code).toBe('${{ steps.code.outputs.code }}')
+    // 放进 id=filter 那一步,relay / app 这种多路径过滤器就变成「同时匹配」。
+    expect(jobs.changes!.steps?.find(s => s.id === 'filter')?.with?.['predicate-quantifier']).toBeUndefined()
+  })
+  it('build / node / e2e / desktop-e2e 都认 code 输出', () => {
+    for (const name of ['build', 'node', 'e2e', 'desktop-e2e']) {
+      const j = jobs[name]!
+      const needs = Array.isArray(j.needs) ? j.needs : [j.needs]
+      expect(needs, name).toContain('changes')
+      expect(j.if, name).toContain("needs.changes.outputs.code == 'true'")
+    }
+  })
+  it('只有进 dev 的 PR 跳过 Windows;推 dev / self/**、进 master 的 PR 照旧三平台', () => {
+    const os = String((jobs.build as { strategy?: { matrix?: { os?: unknown } } }).strategy?.matrix?.os)
+    expect(os).toContain("github.event_name == 'pull_request' && github.base_ref == 'dev'")
+    expect(os).toContain('["ubuntu-latest","macos-latest"]')
+    expect(os).toContain('["ubuntu-latest","macos-latest","windows-latest"]')
+  })
+  it('只取消同一个 PR 的旧运行,推送一条都不取消', () => {
+    const c = doc.concurrency as { group: string; 'cancel-in-progress': string }
+    expect(c['cancel-in-progress']).toBe("${{ github.event_name == 'pull_request' }}")
+    // 推送按 sha 分组:两次推 dev 不会互相顶掉(ci triage --wait 等的是具体提交)。
+    expect(c.group).toContain('github.sha')
+    expect(c.group).toContain('github.event.pull_request.number')
   })
 })
