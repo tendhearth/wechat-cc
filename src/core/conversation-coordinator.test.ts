@@ -2936,6 +2936,8 @@ describe('turnErrorNotice / providerFailureReason — 按码说原因', () => {
     expect(turnErrorNotice('openai', 'x', 'server_error')).toMatch(/服务那边出错/)
     expect(turnErrorNotice('openai', 'x', 'rate_limited')).toMatch(/限流/)
     expect(turnErrorNotice('codex', 'x', 'quota')).toMatch(/额度用完/)
+    // 2026-10-23 真机:agy 在当前出口地区被拒 —— 照实说是地区问题、重发没用,不说成网络或登录
+    expect(turnErrorNotice('agy', 'x', 'region_unavailable')).toMatch(/出口所在地区用不了.*重发也没用/)
     expect(turnErrorNotice('codex', 'boom', undefined)).toContain('脑子卡了一下')
     expect(turnErrorNotice('codex', 'boom', 'provider_error')).toContain('脑子卡了一下')
   })

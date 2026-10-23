@@ -294,6 +294,7 @@ export function providerFailureReason(providerId: ProviderId, code: string | und
     case 'server_error': return `这条没接住:${providerId} 的服务那边出错了(服务端 5xx),通常过一会儿自己会好,稍后再发我一次。`
     case 'rate_limited': return `这条没接住:${providerId} 暂时限流了,等几分钟再发我一次。`
     case 'quota': return `这条没接住:${providerId} 的额度用完了。等额度恢复,或者先换一个脑子(比如 /cc)。`
+    case 'region_unavailable': return `这条没接住:${providerId} 说你现在的网络出口所在地区用不了它(不是登录问题,重发也没用)。换一个出口地区,或者先换一个脑子(比如 /cc)。`
     default: return undefined
   }
 }
