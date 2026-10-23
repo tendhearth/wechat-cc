@@ -256,7 +256,7 @@ describe('runCiLand', () => {
 
   it('接着上一次:最下面那个已合,上一层的 base 还指着它的分支 ⇒ 用那个 PR 最后的 head 当 rebase 起点', async () => {
     const rest = [pr(2, 'a', 'b', 'sb'), pr(3, 'b', 'c', 'sc')]
-    const { deps, calls } = fakeDeps({ open: rest, merged: [{ number: 1, headRefName: 'a', headRefOid: 'sa-final' }], views: [green('sc')], ancestors: ['sa-final'] })
+    const { deps, calls } = fakeDeps({ open: rest, merged: [{ number: 1, headRefName: 'a', headRefOid: 'sa-final' }], views: [green('sc-rebased')], ancestors: ['sa-final'] })
     const res = await runCiLand(deps, { top: 3, skipTypecheck: true })
     expect(res.exitCode).toBe(CI_LAND_EXIT.landed)
     expect(res.merged).toEqual([2, 3])
@@ -280,7 +280,7 @@ describe('runCiLand —— 接着来时找下层的旧 head', () => {
   const merged = [{ number: 1, headRefName: 'a', headRefOid: 'sa-final' }]
 
   it('下层合前被 rebase 过、还解过冲突(补丁变了,#617)⇒ 用 force push 之前、是这一层祖先的那个 head', async () => {
-    const { deps, calls } = fakeDeps({ open: rest, merged, views: [green('sc')], forcePushBefores: ['sa-v1', 'sa-v2'], ancestors: ['sa-v1'] })
+    const { deps, calls } = fakeDeps({ open: rest, merged, views: [green('sc-rebased')], forcePushBefores: ['sa-v1', 'sa-v2'], ancestors: ['sa-v1'] })
     const res = await runCiLand(deps, { top: 3, skipTypecheck: true })
     expect(res.exitCode).toBe(CI_LAND_EXIT.landed)
     expect(calls).toContain('git rebase --onto origin/dev sa-v1')
@@ -288,7 +288,7 @@ describe('runCiLand —— 接着来时找下层的旧 head', () => {
   })
 
   it('几次 force push 之前的都是祖先 ⇒ 取最新的那个', async () => {
-    const { deps, calls } = fakeDeps({ open: rest, merged, views: [green('sc')], forcePushBefores: ['sa-v1', 'sa-v2'], ancestors: ['sa-v1', 'sa-v2'] })
+    const { deps, calls } = fakeDeps({ open: rest, merged, views: [green('sc-rebased')], forcePushBefores: ['sa-v1', 'sa-v2'], ancestors: ['sa-v1', 'sa-v2'] })
     await runCiLand(deps, { top: 3, skipTypecheck: true })
     expect(calls).toContain('git rebase --onto origin/dev sa-v2')
   })
@@ -302,7 +302,7 @@ describe('runCiLand —— 接着来时找下层的旧 head', () => {
   })
 
   it('--parent-old 手给且是祖先 ⇒ 用它', async () => {
-    const { deps, calls } = fakeDeps({ open: rest, merged, views: [green('sc')], ancestors: ['manual'] })
+    const { deps, calls } = fakeDeps({ open: rest, merged, views: [green('sc-rebased')], ancestors: ['manual'] })
     const res = await runCiLand(deps, { top: 3, skipTypecheck: true, parentOld: 'manual' })
     expect(res.exitCode).toBe(CI_LAND_EXIT.landed)
     expect(calls).toContain('git rebase --onto origin/dev manual')
@@ -328,13 +328,24 @@ describe('runCiLand —— 接着来时先把最下层放到 dev 上再等 CI', 
     expect(res.exitCode).toBe(CI_LAND_EXIT.moved)
     expect(calls.some(c => c.startsWith('gh pr merge'))).toBe(false)
   })
-  it('多层:最下层只放一次,上层照常用它的旧 head 当起点', async () => {
-    const { deps, calls } = fakeDeps({ open: [pr(2, 'a', 'b', 'sb'), pr(3, 'b', 'c', 'sc')], merged, ancestors: ['sa'], views: [green('sc')] })
+  it('多层:先整串从下往上放好(上层叠到下层的新 head 上、base 不改),再等最上面那个的新 CI', async () => {
+    const { deps, calls } = fakeDeps({ open: [pr(2, 'a', 'b', 'sb'), pr(3, 'b', 'c', 'sc')], merged, ancestors: ['sa'], views: [green('sc-rebased')] })
     const res = await runCiLand(deps, { top: 3, skipTypecheck: true })
     expect(res.exitCode).toBe(CI_LAND_EXIT.landed)
-    expect(calls.filter(c => c === 'git rebase --onto origin/dev sa').length).toBe(1)
-    expect(calls).toContain('git rebase --onto origin/dev sb')
+    const firstWait = calls.findIndex(c => c.startsWith('gh pr view 3 --json headRefOid'))
+    expect(calls.indexOf('git rebase --onto origin/dev sa')).toBeLessThan(firstWait)
+    expect(calls.indexOf('git rebase --onto sb-rebased sb')).toBeLessThan(firstWait)
+    expect(calls.filter(c => c === 'gh pr edit 3 --base dev').length).toBe(1) // 只在合的时候改,放的时候 base 还是下层分支
+    expect(calls.indexOf('gh pr edit 3 --base dev')).toBeGreaterThan(firstWait)
     expect(calls).toContain('gh pr merge 2 --squash --match-head-commit sb-rebased')
+    // 下层合掉以后,上层照常从下层(新)head rebase 到 dev
+    expect(calls).toContain('git rebase --onto origin/dev sb-rebased')
+  })
+  it('多层:最上面那个的 CI 还挂在旧 head 上 ⇒ 停', async () => {
+    const { deps, calls } = fakeDeps({ open: [pr(2, 'a', 'b', 'sb'), pr(3, 'b', 'c', 'sc')], merged, ancestors: ['sa'], views: [green('sc')] })
+    const res = await runCiLand(deps, { top: 3, skipTypecheck: true })
+    expect(res.exitCode).toBe(CI_LAND_EXIT.moved)
+    expect(calls.some(c => c.startsWith('gh pr merge'))).toBe(false)
   })
   it('预演说出接着来的那一步', async () => {
     const { deps } = fakeDeps({ open: [pr(2, 'a', 'b', 'sb')], merged, views: [green('sb')] })

@@ -238,15 +238,15 @@ export async function runCiLand(deps: CiLandDeps, opts: CiLandOpts): Promise<CiL
   }
 
   /**
-   * 把第 i 层放到 dev 上:rebase --onto(起点 = 下层旧 head;最下层叠在已合 PR 上时自己找)→ install + tsc → 带租约推 → 改 base。
-   * 回新 head;停下来就回结果。
+   * 把第 i 层放到 `onto` 上(缺省 dev):rebase --onto(起点 = 下层旧 head;最下层叠在已合 PR 上时自己找)→ install + tsc
+   * → 带租约推 → 放到 dev 上时改 base。回新 head;停下来就回结果。
    */
-  const seat = async (i: number): Promise<{ head: string } | { result: CiLandResult }> => {
+  const seat = async (i: number, onto = `origin/${target}`): Promise<{ head: string } | { result: CiLandResult }> => {
     const layer = stack[i]!
     const fail = (code: number, message: string) => ({ result: done(code, message) })
     if (git('checkout', '-q', '--detach', layer.oldHead).code !== 0) return fail(CI_LAND_EXIT.precondition, `checkout ${layer.oldHead.slice(0, 8)} 失败`)
     // 上一次已经 rebase 并推上去了(停在改 base / 合那一步)⇒ 已经在 dev 上,不再 rebase。
-    const alreadyOnTarget = git('merge-base', '--is-ancestor', `origin/${target}`, 'HEAD').code === 0
+    const alreadyOnTarget = git('merge-base', '--is-ancestor', onto, 'HEAD').code === 0
     let parentOld = i > 0 ? stack[i - 1]!.oldHead : undefined
     if (!alreadyOnTarget && !parentOld) {
       parentOld = findLandedParentOld(layer)
@@ -254,7 +254,7 @@ export async function runCiLand(deps: CiLandDeps, opts: CiLandOpts): Promise<CiL
         return fail(CI_LAND_EXIT.precondition, `#${layer.number} 叠在已合的 #${layer.landedParent!.number} 上,但找不到它当初叠在哪个提交上(下层合之前被 rebase 过、事件里也没有):用 --parent-old <sha> 给出来`)
       }
     }
-    const rb = alreadyOnTarget ? { code: 0 } : git('rebase', '--onto', `origin/${target}`, parentOld!)
+    const rb = alreadyOnTarget ? { code: 0 } : git('rebase', '--onto', onto, parentOld!)
     if (rb.code !== 0) {
       git('rebase', '--abort')
       return fail(CI_LAND_EXIT.conflict, `#${layer.number} rebase 到 ${target} 冲突,已 abort;前面 ${merged.length} 层已合(${merged.map(n => `#${n}`).join('、') || '无'}),这一层交还负责人`)
@@ -270,23 +270,27 @@ export async function runCiLand(deps: CiLandDeps, opts: CiLandOpts): Promise<CiL
       const push = await net(() => git('push', `--force-with-lease=${layer.headRefName}:${layer.oldHead}`, 'origin', `HEAD:refs/heads/${layer.headRefName}`))
       if (push.code !== 0) return fail(CI_LAND_EXIT.moved, `#${layer.number} 推不上去(分支被人动过?):${lastLine(push)}`)
     }
-    const edit = await net(() => gh('pr', 'edit', String(layer.number), '--base', target))
+    const edit = onto === `origin/${target}` ? await net(() => gh('pr', 'edit', String(layer.number), '--base', target)) : { code: 0, stdout: '', stderr: '' }
     if (edit.code !== 0) return fail(CI_LAND_EXIT.precondition, `#${layer.number} 改 base 失败:${lastLine(edit)}(重跑 ci land ${opts.top} 接着来)`)
     return { head }
   }
 
-  // ── 接着上一次:最下层叠在已合 PR 上 ⇒ 先把它放到 dev 上、推上去,再等 CI ──────────
+  // ── 接着上一次:最下层叠在已合 PR 上 ⇒ 先把整串从下往上重新放好、推上去,再等最上面那个的**新** CI ──────────
   // 不先放:最上面那个的 CI 是对着旧下层分支跑的(或者根本没跑:base 不是 dev 时推的),合进去的却是 rebase 后
-  // 没人验过的那一份(9d 评审 #624)。只有一层时,它推上去的新 head 就是要等 CI 的那个。
-  let seatedBottom: string | undefined
+  // 没人验过的那一份(整合者评审 #624)。只放最下层不够:推下层分支不会让上层 PR 重跑 CI。
+  // 放好以后这一串就是一条普通的串(最下层 base 是 dev、各层旧 head = 刚推上去的),后面照常走。
   if (stack[0]!.landedParent) {
     if (git('fetch', 'origin', target).code !== 0) return done(CI_LAND_EXIT.precondition, `git fetch origin ${target} 失败`)
-    const r = await seat(0)
-    if ('result' in r) return r.result
-    seatedBottom = r.head
-    deps.log(`#${stack[0]!.number} 已放到 ${target} 上(${r.head.slice(0, 8)})`)
+    const heads: string[] = []
+    for (let i = 0; i < stack.length; i++) {
+      const r = await seat(i, i === 0 ? `origin/${target}` : heads[i - 1]!)
+      if ('result' in r) return r.result
+      heads.push(r.head)
+    }
+    stack = stack.map((l, i) => ({ ...l, oldHead: heads[i]!, ...(i === 0 ? { baseRefName: target, landedParent: undefined } : {}) }))
+    deps.log(`接着来:整串已重新放到 ${target} 上(${stack.map(l => `#${l.number}@${l.oldHead.slice(0, 8)}`).join(' → ')}),等 #${stack[stack.length - 1]!.number} 的新 CI`)
   }
-  const pinnedTop = stack.length === 1 && seatedBottom ? seatedBottom : topLayer.oldHead
+  const pinnedTop = stack[stack.length - 1]!.oldHead
 
   // ── 等最上面那个的 CI ───────────────────────────────────────────
   const deadline = deps.now() + (opts.timeoutMin ?? DEFAULT_TIMEOUT_MIN) * 60_000
@@ -309,7 +313,7 @@ export async function runCiLand(deps: CiLandDeps, opts: CiLandOpts): Promise<CiL
     blips = 0
     if (v.headRefOid !== pinnedTop) return done(CI_LAND_EXIT.moved, `#${topLayer.number} 的 head 变了(${pinnedTop.slice(0, 8)} → ${v.headRefOid.slice(0, 8)}):没看过的版本不合,重新跑一次`)
     const verdict = judgeRollup(v.statusCheckRollup ?? [], minChecks)
-    if (verdict.kind === 'red') return done(CI_LAND_EXIT.red, `#${topLayer.number} 的 CI 红了:${verdict.failed.join('、')}(看是不是 flake:wechat-cc ci triage --sha ${topLayer.oldHead})`)
+    if (verdict.kind === 'red') return done(CI_LAND_EXIT.red, `#${topLayer.number} 的 CI 红了:${verdict.failed.join('、')}(看是不是 flake:wechat-cc ci triage --sha ${pinnedTop})`)
     if (verdict.kind === 'green') { deps.log(`#${topLayer.number} 的 CI 绿了(${verdict.counted} 条)`); break }
     const sig = JSON.stringify(v.statusCheckRollup ?? [])
     if (sig !== lastSig) { lastSig = sig; sigSince = deps.now() }
@@ -334,8 +338,7 @@ export async function runCiLand(deps: CiLandDeps, opts: CiLandOpts): Promise<CiL
   for (let i = 0; i < stack.length; i++) {
     const layer = stack[i]!
     let head = layer.oldHead
-    if (i === 0 && seatedBottom) head = seatedBottom
-    else if (i > 0 || layer.landedParent) {
+    if (i > 0) {
       const r = await seat(i)
       if ('result' in r) return r.result
       head = r.head
