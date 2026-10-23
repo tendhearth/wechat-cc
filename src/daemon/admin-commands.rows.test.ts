@@ -2,7 +2,7 @@
  * 管理员命令一条一行(第三批 3d):行两两互斥、推导出来的识别面和以前手写的一字不差、后台那几行立刻回、注册表里的行各管各的。
  */
 import { describe, it, expect, vi } from 'vitest'
-import { ADMIN_ROW_IDS, adminRowsMatching, isAdminCommandText, isExplicitAdminCommand, makeAdminCommands, matchDelegate, matchHandJoin, type AdminCommandsDeps } from './admin-commands'
+import { ADMIN_ROW_IDS, adminRowsMatching, makeAdminCommands, type AdminCommandsDeps } from './admin-commands'
 import type { InboundMsg } from '../core/prompt-format'
 
 const HANDS = ['家里', 'win', 'mac-mini']
@@ -40,27 +40,6 @@ describe('admin rows', () => {
     expect(adminRowsMatching('自改 状态栏太挤了', HANDS)).toEqual(['selfchange.start'])
   })
 
-  // 推导出来的识别面必须和以前手写的那份完全一样(以前那份照抄在这里当参照,下一个 PR 删)。
-  it('derived isAdminCommandText / isExplicitAdminCommand equal the old hand-written versions on the corpus', () => {
-    const HANDS_LIST_RE = /^\s*(?:\/hands|有哪些手|手列表|看看有哪些手)\s*[?？]?\s*$/
-    const BAG_RE = /^\s*(?:\/(?:bag|背包)|背包|打猎背包|猎物|战利品|打到了什么|打到什么了)\s*[?？]?\s*$/
-    const HEALTH_AI_RE = /^\s*\/health\s+ai\s*$/
-    const SYNTHESIZE_RE = /^\s*(?:\/(?:synthesize|整理记忆)|重新整理记忆|整理一下记忆|整理记忆|重新整理你对我的理解|更新你对我的理解|更新记忆)\s*$/
-    const SHOW_OVERVIEW_RE = /^\s*(?:\/overview|你对我的理解|看看你对我的理解|你眼中的我|你怎么(?:理解|看)我|你记得我(?:什么|啥)|查看记忆|看一下记忆|看下记忆|看记忆)\s*[?？]?\s*$/
-    const RESET_RE = /^\s*\/(?:reset|重置)\s*$/
-    const UPDATE_RE = /^\s*\/(?:update|updata)\s*$/
-    const CLEANUP_RE = /^\s*清理\s*(all-expired|所有过期|[a-zA-Z0-9-]+-im-bot)\s*$/
-    const HEARTH = [/^\s*\/hearth\s+ingest(?:\s+([\s\S]+))?$/, /^\s*\/hearth\s+list\s*$/, /^\s*\/hearth\s+show\s+([A-Za-z0-9_-]+)\s*$/, /^\s*\/hearth\s+apply\s+([A-Za-z0-9_-]+)\s*$/, /^\s*\/hearth(\s+help)?\s*$/]
-    const BOTNAME_RE = /^\s*\/botname(?:\s+(.+?))?\s*$/
-    const SELF_CHANGE_RE = /^\s*自改\s+([\s\S]+)$/
-    const SELF_CHANGE_STATUS_RE = /^\s*自改\s*(?:状态|列表)\s*$/
-    const oldIsAdmin = (text: string, hands: readonly string[]) => !!matchHandJoin(text) || HANDS_LIST_RE.test(text) || BAG_RE.test(text) || text === '/health' || HEALTH_AI_RE.test(text) || SYNTHESIZE_RE.test(text) || SHOW_OVERVIEW_RE.test(text) || !!matchDelegate(text, hands) || RESET_RE.test(text) || UPDATE_RE.test(text) || CLEANUP_RE.test(text) || HEARTH.some(r => r.test(text)) || BOTNAME_RE.test(text) || SELF_CHANGE_STATUS_RE.test(text) || SELF_CHANGE_RE.test(text)
-    const oldIsExplicit = (text: string) => text.startsWith('/') || !!matchHandJoin(text) || SELF_CHANGE_RE.test(text) || SELF_CHANGE_STATUS_RE.test(text)
-    for (const t of CORPUS) {
-      expect(isAdminCommandText(t, HANDS), t).toBe(oldIsAdmin(t, HANDS))
-      expect(isExplicitAdminCommand(t), t).toBe(oldIsExplicit(t))
-    }
-  })
 })
 
 describe('admin commands() in the registry', () => {

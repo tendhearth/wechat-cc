@@ -23,6 +23,7 @@
 ## 怎么加
 
 - [加一个执行者](add-an-executor.md):一份事实(`executor-facts`)+ 一份能力(`provider-capabilities`)+ 两处构造,其余推导,漏了由测试点名。
+- [加一个微信命令](add-a-command.md):一张表、顺序就是优先级;放哪一族(admin / mode / control / 文本命令)、族内两两互斥、路由快照怎么看。
 
 ## 最短路径
 
