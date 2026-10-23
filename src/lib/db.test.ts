@@ -7,6 +7,19 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { removeTempDir } from './test-temp'
 
+/**
+ * 一个真正走到第 n 版的库(第三批 3e 迁移第 3 步):用前 n 个真迁移建出来,再把 user_version 记成 n。
+ * 以前这几条测试手写一个「声称自己在 v9 / v26」的假库,表和真 v9 / v26 不一样 —— 迁移体里那批「表在不在」的守卫就是为
+ * 这些假库加的。改从真迁移起步以后,测的就是用户真正走的那条升级路。
+ */
+function migratedTo(n: number): Db {
+  const db = openSqlite(':memory:') as unknown as Db
+  db.exec('PRAGMA foreign_keys = ON;')
+  for (const m of migrations.slice(0, n)) m(db)
+  db.exec(`PRAGMA user_version = ${n};`)
+  return db
+}
+
 describe('withLockRetry', () => {
   const noop = () => {}
 
@@ -124,18 +137,8 @@ describe('renameMigrated', () => {
 
 describe('migration v10 — sessions.chat_id', () => {
   it('adds chat_id column with _legacy default for pre-existing rows', () => {
-    const db = openSqlite(':memory:')
+    const db = migratedTo(9)
     db.exec(`
-      PRAGMA user_version = 9;
-      CREATE TABLE sessions (
-        alias TEXT NOT NULL,
-        provider TEXT NOT NULL,
-        session_id TEXT NOT NULL,
-        last_used_at TEXT NOT NULL,
-        summary TEXT,
-        summary_updated_at TEXT,
-        PRIMARY KEY (alias, provider)
-      ) STRICT;
       INSERT INTO sessions(alias, provider, session_id, last_used_at)
         VALUES ('_default', 'claude', 'sess1', '${new Date().toISOString()}');
     `)
@@ -153,15 +156,9 @@ describe('migration v10 — sessions.chat_id', () => {
   })
 
   it('legacy rows older than 1 day are cleaned up', () => {
-    const db = openSqlite(':memory:')
+    const db = migratedTo(9)
     const oldTs = new Date(Date.now() - 2 * 86_400_000).toISOString()
     db.exec(`
-      PRAGMA user_version = 9;
-      CREATE TABLE sessions (
-        alias TEXT NOT NULL, provider TEXT NOT NULL, session_id TEXT NOT NULL,
-        last_used_at TEXT NOT NULL, summary TEXT, summary_updated_at TEXT,
-        PRIMARY KEY (alias, provider)
-      ) STRICT;
       INSERT INTO sessions(alias, provider, session_id, last_used_at) VALUES
         ('_default', 'claude', 'old_sess', '${oldTs}'),
         ('_default', 'codex',  'fresh',    '${new Date().toISOString()}');
@@ -200,35 +197,10 @@ describe('migration v12 — a2a_events table', () => {
 
 describe('migration v27/v28 — customer review completed elsewhere and analysis coverage', () => {
   it('upgrades v26 review feedback without losing items or evidence', () => {
-    const db = openSqlite(':memory:')
+    const db = migratedTo(26)
     db.exec(`
-      PRAGMA foreign_keys = ON;
-      PRAGMA user_version = 26;
-      CREATE TABLE customer_reviews (id TEXT PRIMARY KEY NOT NULL) STRICT;
-      CREATE TABLE customer_review_items (
-        review_id TEXT NOT NULL REFERENCES customer_reviews(id) ON DELETE CASCADE,
-        source_key TEXT NOT NULL, commitment TEXT NOT NULL,
-        ai_status TEXT NOT NULL CHECK (ai_status IN ('open','completed')),
-        due_date TEXT, confidence TEXT NOT NULL CHECK (confidence IN ('medium','high')),
-        review_status TEXT NOT NULL DEFAULT 'unreviewed'
-          CHECK (review_status IN ('unreviewed','confirmed','corrected','rejected','ignored')),
-        corrected_text TEXT, created_at TEXT NOT NULL, updated_at TEXT NOT NULL,
-        PRIMARY KEY (review_id, source_key)
-      ) STRICT;
-      CREATE TABLE customer_review_evidence (
-        review_id TEXT NOT NULL, source_key TEXT NOT NULL, evidence_key TEXT NOT NULL,
-        role TEXT NOT NULL CHECK (role IN ('commitment','completion','due_date')),
-        message_time TEXT NOT NULL, sender_side TEXT NOT NULL CHECK (sender_side IN ('me','contact')),
-        PRIMARY KEY (review_id, source_key, evidence_key, role),
-        FOREIGN KEY (review_id, source_key)
-          REFERENCES customer_review_items(review_id, source_key) ON DELETE CASCADE
-      ) STRICT;
-      CREATE TABLE customer_review_feedback (
-        contact_id TEXT NOT NULL, source_key TEXT NOT NULL,
-        review_status TEXT NOT NULL CHECK (review_status IN ('confirmed','corrected','rejected','ignored')),
-        corrected_text TEXT, updated_at TEXT NOT NULL, PRIMARY KEY (contact_id, source_key)
-      ) STRICT;
-      INSERT INTO customer_reviews VALUES ('r1');
+      INSERT INTO customer_reviews(id, contact_id, contact_display_name, range_from, range_to, status, provider, created_at, updated_at)
+        VALUES ('r1', 'c1', '客户一', '2026-01-01', '2026-01-31', 'ready', 'claude', '2026-01-01', '2026-01-01');
       INSERT INTO customer_review_items VALUES ('r1','k1','发送报价','open',NULL,'high','confirmed',NULL,'2026-01-01','2026-01-01');
       INSERT INTO customer_review_evidence VALUES ('r1','k1','e1','commitment','2026-01-01','me');
       INSERT INTO customer_review_feedback VALUES ('c1','k1','confirmed',NULL,'2026-01-01');
@@ -292,36 +264,9 @@ describe('migration v13 — events.kind adds memory_deleted + memory_path column
 
 describe('migration v13→v14 upgrade — events data preserved', () => {
   it('preserves pre-v14 rows through the table recreate, memory_path intact', () => {
-    // Build a db that has run migrations 0..12 (user_version=13) so it
-    // has the v13 events schema (with memory_deleted kind + memory_path col)
-    // but has NOT yet run v14. We do this by running all migrations then
-    // rolling back user_version — but since SQLite doesn't support undoing
-    // DDL, the cleanest approach is to construct the v13 schema directly,
-    // matching the shape the v13 migration leaves behind, then run v14.
-    const db = openSqlite(':memory:')
-    // Replicate the exact v13 schema so runMigrations sees user_version=13
-    // and only applies v14.
-    db.exec(`
-      PRAGMA user_version = 13;
-      CREATE TABLE events (
-        id TEXT PRIMARY KEY NOT NULL,
-        chat_id TEXT NOT NULL,
-        ts TEXT NOT NULL,
-        kind TEXT NOT NULL CHECK (kind IN (
-          'cron_eval_pushed', 'cron_eval_skipped', 'cron_eval_failed',
-          'observation_written', 'milestone',
-          'memory_deleted'
-        )),
-        trigger TEXT NOT NULL,
-        reasoning TEXT NOT NULL,
-        push_text TEXT,
-        observation_id TEXT,
-        milestone_id TEXT,
-        jsonl_session_id TEXT,
-        memory_path TEXT
-      ) STRICT;
-      CREATE INDEX events_chat_ts ON events(chat_id, ts DESC);
-    `)
+    // 用前 13 个真迁移走到 v13(3e 迁移第 3 步:以前这里手写了一个只有 events 表的假 v13 库,说「SQLite 撤不回 DDL」——
+    // 但撤不回不用撤,只跑前 13 个就是真的 v13)。之后只有 v14 起的那些会跑。
+    const db = migratedTo(13)
     // Insert a row using the memory_deleted kind and a non-null memory_path
     db.exec(
       "INSERT INTO events(id, chat_id, ts, kind, trigger, reasoning, memory_path) " +
@@ -539,8 +484,8 @@ describe('migration v41 — reminders back-fills columns the old June schema lac
     // that ran June's feat/reminders (a reminders table without the backoff
     // columns) already has the table, so v29's CREATE TABLE IF NOT EXISTS
     // skips it and the columns never arrive. user_version=29 marks v29 done.
-    const db = openSqlite(':memory:')
-    db.exec('PRAGMA foreign_keys = ON;')
+    // 真的 v1–v28,再加六月 feat/reminders 那张缺退避列的旧表 —— 这才是那批真机上的样子(3e 迁移第 3 步:以前整个库只有这一张表)。
+    const db = migratedTo(28)
     db.exec(`
       CREATE TABLE reminders (
         id         TEXT PRIMARY KEY NOT NULL,

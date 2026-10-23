@@ -37,6 +37,18 @@ describe('迁移一版一个文件:文件名 = 位置', () => {
     expect(imports.map(([as]) => as)).toEqual(entries)
   })
 
+  // 3e 迁移第 3 步:v001–v084 里有一批「为测试让路」的守卫(表在不在 / 列在不在),是给手写的假 v9 / v26 库加的。假库已经改成
+  // 从真迁移起步(db.test.ts 的 migratedTo),老守卫留着不改(进了 dev 的迁移一字不改)。从 v085 起不许再写这种守卫:
+  // 测试要哪个版本的库,用 migratedTo(n) 造真的,别让迁移迁就测试。
+  it('migrations from v085 on do not carry test-accommodation guards', () => {
+    const FROM = 85
+    const SMELLS = /起跑的夹具|从 user_version ?= ?\d+ 起|user_version ?= ?\d+ (test )?harness|test harness|unit-test harnesses|单测库/
+    for (const f of files) {
+      if (Number(f.slice(1, 4)) < FROM) continue
+      expect(readFileSync(join(DIR, f), 'utf8'), `${f}: 测试要旧版本的库,用 migratedTo(n) 从真迁移造,别在迁移里为测试加守卫`).not.toMatch(SMELLS)
+    }
+  })
+
   it('each migration file exports exactly one `migration`', () => {
     for (const f of files) {
       const src = readFileSync(join(DIR, f), 'utf8')
