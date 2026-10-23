@@ -65,6 +65,8 @@ function fakeDeps(script: {
   ancestors?: string[]
   /** 已合下层被 force push 之前的 head(GraphQL beforeCommit,从旧到新)。 */
   forcePushBefores?: string[]
+  /** gh pr merge 报网络错、但其实已经合了的 PR。 */
+  mergedDespiteError?: number[]
 }) {
   const calls: string[] = []
   let viewIdx = 0
@@ -72,6 +74,7 @@ function fakeDeps(script: {
   let devParent = 'dX'
   let t = 0
   let head = ''
+  const mergedNow = new Set<number>()
   const exec = (cmd: string, args: string[]): ExecResult => {
     const line = `${cmd} ${args.join(' ')}`
     calls.push(line)
@@ -86,6 +89,10 @@ function fakeDeps(script: {
     }
     if (line.startsWith('gh api graphql')) return r(JSON.stringify(script.forcePushBefores ?? []))
     if (line.startsWith('git push') && script.netFailures?.push?.length) return r('', 128, script.netFailures.push.shift()!)
+    if (line.startsWith('gh pr view') && args.includes('state')) {
+      const n = Number(args[2])
+      return r(JSON.stringify({ state: mergedNow.has(n) ? 'MERGED' : 'OPEN' }))
+    }
     if (line.startsWith('gh pr view')) {
       const v = script.views[Math.min(viewIdx++, script.views.length - 1)]
       return v ? r(JSON.stringify(v)) : r('', 1)
@@ -100,13 +107,22 @@ function fakeDeps(script: {
     if (line === 'git rev-parse HEAD') return r(`${head}\n`)
     if (line === 'git rev-parse origin/dev') return r(`${dev}\n`)
     if (line === 'git rev-parse origin/dev^') return r(`${devParent}\n`)
-    if (line.startsWith('gh pr merge') && script.netFailures?.merge?.length) return r('', 1, script.netFailures.merge.shift()!)
+    if (line.startsWith('gh pr merge') && script.netFailures?.merge?.length) {
+      const n = Number(args[2])
+      if (script.mergedDespiteError?.includes(n)) land(n)
+      return r('', 1, script.netFailures.merge.shift()!)
+    }
     if (line.startsWith('gh pr merge')) {
-      devParent = script.devMovedBySomeoneElse ? 'stranger' : dev
-      dev = `${dev}+${args[2]}`
+      land(Number(args[2]))
       return r()
     }
     return r()
+  }
+  function land(n: number) {
+    if (mergedNow.has(n)) return
+    mergedNow.add(n)
+    devParent = script.devMovedBySomeoneElse ? 'stranger' : dev
+    dev = `${dev}+${n}`
   }
   const deps: CiLandDeps = {
     exec, sleep: async (ms) => { t += ms }, now: () => t, log: () => {}, cwd: '/repo',
@@ -290,6 +306,23 @@ describe('runCiLand —— 接着来时找下层的旧 head', () => {
     const res = await runCiLand(deps, { top: 3, skipTypecheck: true, parentOld: 'manual' })
     expect(res.exitCode).toBe(CI_LAND_EXIT.landed)
     expect(calls).toContain('git rebase --onto origin/dev manual')
+  })
+})
+
+describe('runCiLand —— 合并的回应丢了', () => {
+  const open = [pr(1, 'dev', 'a', 'sa'), pr(2, 'a', 'b', 'sb')]
+  it('merge 报 SSL 错、但其实合了 ⇒ 问一句状态,算合成,接着下一层', async () => {
+    const { deps, calls } = fakeDeps({ open, views: [green('sb')], netFailures: { merge: ['LibreSSL SSL_connect: SSL_ERROR_SYSCALL'] }, mergedDespiteError: [1] })
+    const res = await runCiLand(deps, { top: 2, skipTypecheck: true })
+    expect(res.exitCode).toBe(CI_LAND_EXIT.landed)
+    expect(res.merged).toEqual([1, 2])
+    expect(calls.filter(c => c.startsWith('gh pr merge 1')).length).toBe(1)
+  })
+  it('merge 报网络错、也没合 ⇒ 重试', async () => {
+    const { deps, calls } = fakeDeps({ open, views: [green('sb')], netFailures: { merge: ['HTTP 502'] } })
+    const res = await runCiLand(deps, { top: 2, skipTypecheck: true })
+    expect(res.exitCode).toBe(CI_LAND_EXIT.landed)
+    expect(calls.filter(c => c.startsWith('gh pr merge 1')).length).toBe(2)
   })
 })
 

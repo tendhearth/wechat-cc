@@ -189,6 +189,23 @@ export async function runCiLand(deps: CiLandDeps, opts: CiLandOpts): Promise<CiL
     const candidates = [opts.parentOld, lp.head, ...[...befores].reverse()].filter((c): c is string => !!c)
     return candidates.find(c => isAncestor(c, layer.oldHead))
   }
+  /**
+   * 合并**不能**盲重试:网络错常常是请求到了、合了,只是回应丢了;再合一次回「already merged / not mergeable」,
+   * 不像网络错 ⇒ 会被报成「动过」,其实已经合了。所以每次失败先问一句状态:MERGED 就算合成(合进去的是不是我们
+   * 要的那一个,后面 `origin/dev^ == devBefore` 那道照样查)。
+   */
+  const mergeLayer = async (n: number, head: string): Promise<ExecResult> => {
+    const isMerged = () => ghJson<{ state: string }>('pr', 'view', String(n), '--json', 'state')?.state === 'MERGED'
+    let r = gh('pr', 'merge', String(n), '--squash', '--match-head-commit', head)
+    for (let i = 0; r.code !== 0; i++) {
+      if (isMerged()) { deps.log(`#${n} 回应丢了,但其实已经合了`); return { code: 0, stdout: '', stderr: '' } }
+      if (i >= NET_RETRIES || !isNetworkError(r.stderr)) break
+      deps.log(`网络抖了(${lastLine(r)}),${NET_BACKOFF_MS[i]! / 1000}s 后重试`)
+      await deps.sleep(NET_BACKOFF_MS[i]!)
+      r = gh('pr', 'merge', String(n), '--squash', '--match-head-commit', head)
+    }
+    return r
+  }
   const ghJson = <T>(...args: string[]): T | null => {
     const r = gh(...args)
     if (r.code !== 0 || !r.stdout.trim()) return null
@@ -206,7 +223,10 @@ export async function runCiLand(deps: CiLandDeps, opts: CiLandOpts): Promise<CiL
   // ── 认出这一串,记下每层旧 head ───────────────────────────────────
   const open = ghJson<PrInfo[]>('pr', 'list', '--state', 'open', '--limit', '300', '--json', 'number,state,baseRefName,headRefName,headRefOid,isDraft')
   if (!open) return done(CI_LAND_EXIT.precondition, 'gh pr list 失败(登录态?网络?)')
-  const mergedPrs = ghJson<MergedPr[]>('pr', 'list', '--state', 'merged', '--limit', '100', '--json', 'number,headRefName,headRefOid') ?? []
+  const mergedList = await net(() => gh('pr', 'list', '--state', 'merged', '--limit', '100', '--json', 'number,headRefName,headRefOid'))
+  if (mergedList.code !== 0) return done(CI_LAND_EXIT.precondition, `gh pr list --state merged 失败:${lastLine(mergedList)}`)
+  let mergedPrs: MergedPr[]
+  try { mergedPrs = JSON.parse(mergedList.stdout || '[]') as MergedPr[] } catch { return done(CI_LAND_EXIT.precondition, 'gh pr list --state merged 回的不是 JSON') }
   let stack: Layer[]
   try { stack = resolveStack(opts.top, open, target, mergedPrs) } catch (e) { return done(CI_LAND_EXIT.precondition, (e as Error).message) }
   const topLayer = stack[stack.length - 1]!
@@ -293,7 +313,7 @@ export async function runCiLand(deps: CiLandDeps, opts: CiLandOpts): Promise<CiL
       const ready = await net(() => gh('pr', 'ready', String(layer.number)))
       if (ready.code !== 0) return done(CI_LAND_EXIT.precondition, `#${layer.number} 标 ready 失败:${lastLine(ready)}(重跑 ci land ${opts.top} 接着来)`)
     }
-    const m = await net(() => gh('pr', 'merge', String(layer.number), '--squash', '--match-head-commit', head))
+    const m = await mergeLayer(layer.number, head)
     if (m.code !== 0) return done(CI_LAND_EXIT.moved, `#${layer.number} 合不进去:${lastLine(m)}(重跑 ci land ${opts.top} 接着来)`)
     merged.push(layer.number)
     deps.log(`#${layer.number} 已合`)
