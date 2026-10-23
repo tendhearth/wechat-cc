@@ -30,6 +30,8 @@ export const HealthResponse = z.object({
   turns_store_wired: z.boolean().optional(),
   sessions_live: z.number().optional(),
   heartbeat_fresh: z.boolean().nullable().optional(),
+  // 开机时拉消息循环(2026-10-23,self deploy 健康门):老 daemon 没有;null = 还没接上。
+  polling: z.object({ eligible: z.number(), started: z.number() }).nullable().optional(),
   // 后台在跑的版本(2026-09-16):桌面更新后 app 用它判断 daemon 是否还是旧的。
   version: z.object({ cli: z.string(), head: z.string().nullable(), boot_at: z.string() }).optional(),
   // Subsystem degraded-boot (spec 2026-08-17) — 启动降级状态表。

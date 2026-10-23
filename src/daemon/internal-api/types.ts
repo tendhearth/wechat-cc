@@ -411,6 +411,8 @@ export interface InternalApiDeps {
   /** Optional daemon-health probe — backs heartbeat_fresh in GET /v1/health.
    *  main.ts wires it to isHeartbeatFresh(server.heartbeat). */
   heartbeatFresh?: () => boolean
+  /** 开机时拉消息循环起了几个 / 该起几个(`self deploy` 健康门);null = 拉消息还没接上。 */
+  polling?: () => { eligible: number; started: number } | null
   /**
    * 本进程在跑的到底是哪一版 —— backs `version` in GET /v1/health。桌面更新器换入
    * 新 .app 后旧 daemon 不会被杀(2026-09-16 实测),app 若看不到后台版本就无从发现

@@ -1093,3 +1093,53 @@ describe('executeSelfDeploy — signing guard and deploy lock', () => {
     expect(existsSync(h.plan.lockPath)).toBe(false)
   })
 })
+
+// 健康门看 /v1/health.polling(2026-10-23,核心链进模块容器的 PR 0b):这一版起了的拉消息循环少于该起的 ⇒ 收不到微信 ⇒ 红 + 回滚。
+describe('executeSelfDeploy — polling', () => {
+  function healthSequence(h: Harness, sequence: Array<{ status: number; polling?: unknown }>): void {
+    let i = 0
+    h.deps.fetch = (async () => {
+      const r = sequence[Math.min(i++, sequence.length - 1)]!
+      const old = h.kickstartCalls >= 2
+      const body = old ? { ok: true, version: { cli: '9.9.8-old' } } : { ok: true, version: { cli: '9.9.9-test', head: null }, ...('polling' in r ? { polling: r.polling } : {}) }
+      return { ok: r.status === 200, status: r.status, json: async () => body }
+    }) as unknown as typeof fetch
+  }
+  it('every eligible loop started ⇒ green polling step', async () => {
+    const h = harness()
+    healthSequence(h, [{ status: 200, polling: { eligible: 2, started: 2 } }])
+    const result = await executeSelfDeploy(h.plan, h.deps)
+    expect(result.ok).toBe(true)
+    expect(result.steps.find((s) => s.name === 'polling')).toMatchObject({ ok: true, detail: '2/2 account poll loop(s) started' })
+  })
+  it('fewer loops than eligible ⇒ polling step red, rolled back to the old sidecar', async () => {
+    const h = harness()
+    healthSequence(h, [{ status: 200, polling: { eligible: 1, started: 0 } }])
+    const result = await executeSelfDeploy(h.plan, h.deps)
+    expect(result.ok).toBe(false)
+    expect(result.rolledBack).toBe(true)
+    expect(result.steps.find((s) => s.name === 'polling')).toMatchObject({ ok: false, detail: expect.stringContaining('would not receive WeChat messages') })
+    expect(readFileSync(h.plan.sidecarPath, 'utf8')).toBe('OLD_BINARY_CONTENT')
+  })
+  it('polling: null (boot not there yet) and 503 daemon_starting ⇒ keep waiting, not a verdict', async () => {
+    const h = harness()
+    healthSequence(h, [{ status: 503 }, { status: 200, polling: null }, { status: 200, polling: { eligible: 1, started: 1 } }])
+    const result = await executeSelfDeploy(h.plan, h.deps)
+    expect(result.ok).toBe(true)
+    expect(h.kickstartCalls).toBe(1)
+    expect(result.steps.find((s) => s.name === 'polling')?.ok).toBe(true)
+  })
+  it('no account to poll (all standby / none bound) passes and says so', async () => {
+    const h = harness()
+    healthSequence(h, [{ status: 200, polling: { eligible: 0, started: 0 } }])
+    const result = await executeSelfDeploy(h.plan, h.deps)
+    expect(result.ok).toBe(true)
+    expect(result.steps.find((s) => s.name === 'polling')?.detail).toContain('no account to poll')
+  })
+  it('old daemons without the field: no polling step (rollback targets stay green)', async () => {
+    const h = harness()
+    const result = await executeSelfDeploy(h.plan, h.deps)
+    expect(result.ok).toBe(true)
+    expect(result.steps.find((s) => s.name === 'polling')).toBeUndefined()
+  })
+})

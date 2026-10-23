@@ -162,6 +162,8 @@ const onlineStickerCursor = new Map<string, number>()
         turns_store_wired: !!deps.turns,
         sessions_live: deps.listSessions?.()?.length ?? 0,
         heartbeat_fresh: deps.heartbeatFresh?.() ?? null,
+        // 只有两个计数,没有账号 id(这条路由是 guest 档)。null = 开机还没走到拉消息那一步。
+        ...(deps.polling ? { polling: deps.polling() } : {}),
         ...(deps.version ? { version: deps.version() } : {}),
         subsystems: deps.subsystems?.() ?? [],
         // 网络守护(2026-10-02):safe=false 时所有模型调用都暂停。桌面「网络守护」那一行读它。

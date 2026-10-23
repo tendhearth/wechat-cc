@@ -40,6 +40,8 @@ describe('registerPolling', () => {
     })
     try {
       expect(lc.running()).toEqual(['bot-single'])  // md held back until takeover
+      // self deploy 的健康门:待命的不算「该起的」
+      expect(lc.bootSummary()).toEqual({ eligible: 1, started: 1 })
     } finally {
       await lc.stop()
       rmSync(stateDir, { recursive: true, force: true })
