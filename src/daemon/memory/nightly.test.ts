@@ -5,6 +5,7 @@ import { join } from 'node:path'
 import { runMemoryNightly, readNightlyState, writeNightlyState, gatherMaterial, buildNightlyPrompt, MATERIAL_BUDGET, MEMORY_LOG_FILE, type NightlyRunDeps } from './nightly'
 import { parseMemoryDoc } from './curated-doc'
 import { NetworkUnprotectedError } from '../../lib/network-gate'
+import { writeOwnerAssertions } from '../../lib/memory-owner'
 
 const OWNER = 'owner@im.wechat'
 let stateDir: string, root: string, calls: string[], reply: string, now: number
@@ -261,6 +262,26 @@ describe('today-draft (同日失忆, 2026-10-01)', () => {
     writeFileSync(draftPath(), '- 早上说的\n')
     expect(await runMemoryNightly(deps(), { force: true })).toEqual({ status: 'skipped', reason: 'no_new_material' })
     expect(existsSync(draftPath())).toBe(false)
+  })
+})
+
+describe('owner.md 主人原话(记忆编辑设计稿 2026-10-23 §1)', () => {
+  const assert1 = { id: 'a1b2', text: '我不喝咖啡', date: '2026-10-23', origin: 'overview' as const }
+  it('作为只读素材给模型,整理之后 owner.md 一个字节不变', async () => {
+    writeOwnerAssertions(root, { assertions: [assert1], extra: [] })
+    const before = readFileSync(join(root, 'owner.md'), 'utf8')
+    expect((await runMemoryNightly(deps(), { force: true })).status).toBe('written')
+    expect(calls[0]).toContain('主人亲手写的原话')
+    expect(calls[0]).toContain('我不喝咖啡')
+    expect(calls[0]).toContain('不要再写进记忆')
+    expect(readFileSync(join(root, 'owner.md'), 'utf8')).toBe(before)
+  })
+  it('主人新写了原话 ⇒ 算新素材(记忆里可能有冲突要改);没写过 ⇒ 照旧跳过', async () => {
+    await runMemoryNightly(deps(), { force: true })
+    expect(await runMemoryNightly(deps(), { force: true })).toEqual({ status: 'skipped', reason: 'no_new_material' })
+    writeOwnerAssertions(root, { assertions: [assert1], extra: [] })
+    expect((await runMemoryNightly(deps(), { force: true })).status).toBe('written')
+    expect(calls).toHaveLength(2)
   })
 })
 

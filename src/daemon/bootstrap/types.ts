@@ -159,6 +159,8 @@ export interface BootstrapDeps {
    * feature existed.
    */
   curatedMemoryFor?: (chatId: string) => string
+  /** 主人原话 owner.md(记忆编辑设计稿 2026-10-23 §1):只对主人自己的对话返回内容,其余 ''。Absent ⇒ 不注入。 */
+  ownerMemoryFor?: (chatId: string) => string
   /**
    * 今天的草稿 today-draft.md(同日失忆修复,2026-10-01):CC 白天写进 profile.md 的新行,
    * 由 internal-api 的 memory/write 路由派生。只随 curatedMemoryFor 注入。Absent ⇒ 不注入。

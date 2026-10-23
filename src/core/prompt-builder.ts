@@ -186,6 +186,8 @@ export interface BuildSystemPromptArgs {
   coreMemory?: string
   /** 每晚整理的长期记忆 memory.md 正文(去尾注);有它就不再注入 coreMemory(2026-09-25)。 */
   curatedMemory?: string
+  /** 主人原话 owner.md(只在主人自己的对话里给;记忆编辑设计稿 2026-10-23 §1)。排在长期记忆前面,冲突时以它为准。 */
+  ownerMemory?: string
   /**
    * 今天的草稿 today-draft.md(同日失忆修复,2026-10-01):CC 白天写进 profile.md 的新行,daemon 抄一份,
    * 今晚整理前就跟着 curatedMemory 一起注入。只随 curatedMemory 出现 —— 没有 memory.md 时 profile.md
@@ -333,6 +335,7 @@ export function buildSystemPrompt(args: BuildSystemPromptArgs): string {
   const sections: string[] = [
     baseChannelSection(providerId, model, finalText, args.replyText === 'all_segments'),
     args.persona && args.persona.trim().length > 0 ? personaSection(args.persona) : '',
+    args.ownerMemory && args.ownerMemory.trim().length > 0 ? ownerMemorySection(args.ownerMemory) : '',
     args.curatedMemory && args.curatedMemory.trim().length > 0
       ? curatedMemorySection(args.curatedMemory, args.todayDraft)
       : args.coreMemory && args.coreMemory.trim().length > 0 ? coreMemorySection(args.coreMemory) : '',
@@ -593,6 +596,15 @@ export function curatedMemorySection(content: string, todayDraft?: string): stri
         ]
       : []),
     '这份每晚整理,你白天别改它;聊天里得知的新情况、主人说哪条不对,记到 profile.md 或 notes/,今晚会整理进来。写进 profile.md 的新行会马上出现在「今天的草稿」里,别的对话也看得到。',
+  ].join('\n')
+}
+
+/** 主人原话段:主人在记忆页上亲手加 / 改写的话。CC 不能改它(daemon 拒写),只能照着它说。 */
+export function ownerMemorySection(content: string): string {
+  return [
+    '## 主人亲手写的(和下面的记忆冲突时,以这里为准)',
+    content.trim(),
+    '这是主人在记忆页上亲手写下的原话。你改不了它;下面的长期记忆、你的笔记里和它对不上的,以这里为准。',
   ].join('\n')
 }
 

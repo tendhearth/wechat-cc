@@ -19,6 +19,7 @@ import { existsSync, mkdirSync, readdirSync, readFileSync, realpathSync, renameS
 import { basename, dirname, join, relative, resolve, sep } from 'node:path'
 import { derivedMemoryStatus, invalidateDerivedMemory, type InvalidationReason } from '../../lib/memory-derived-state'
 import { memoryArtifactKind } from '../../lib/memory-artifacts'
+import { OWNER_FILENAME } from '../../lib/memory-owner'
 import { writeFileAtomic } from '../../lib/json-file'
 
 export interface MemoryFS {
@@ -168,6 +169,16 @@ export function makeMemoryFS(opts: MemoryFSOptions): MemoryFS {
   }
 
   /**
+   * 主人原话 owner.md 只经记忆编辑写(lib/memory-owner 的 writeOwnerAssertions):CC 不能替主人「说」话,也不能删主人说的。
+   * 只认对话那一层的 owner.md(notes/owner.md 是普通笔记);不分大小写 —— macOS 默认卷上 Owner.md 是同一个文件。
+   */
+  function refuseOwnerFile(full: string): void {
+    if (relative(chatRootOf(full), full).split(sep).join('/').toLowerCase() === OWNER_FILENAME) {
+      throw new MemoryPathError('owner.md 是主人亲手写的原话,只能由主人在记忆页上改')
+    }
+  }
+
+  /**
    * _overview.md 现在能不能给(3e 记忆第 2 步,9d 定):主人删了 / 改了东西以后的过期 ⇒ 藏(总览会进串门人设,带到别人的 CC
    * 那里,不能把主人撤掉的话说出去);只是源里多了东西 ⇒ 照常给,开头贴一句「这份是哪天整理的、之后又有变化」。
    */
@@ -205,6 +216,7 @@ export function makeMemoryFS(opts: MemoryFSOptions): MemoryFS {
       const full = resolveSafe(relPath)
       checkExt(full)
       if (typeof content !== 'string') throw new MemoryPathError('content must be a string')
+      refuseOwnerFile(full)
       if (basename(full) === '_overview.md') content = stripStaleLabels(content)
       const bytes = Buffer.byteLength(content, 'utf8')
       if (bytes > maxBytes) {
@@ -259,6 +271,7 @@ export function makeMemoryFS(opts: MemoryFSOptions): MemoryFS {
     delete(relPath) {
       const full = resolveSafe(relPath)
       checkExt(full)
+      refuseOwnerFile(full)
       if (!existsSync(full)) return
       assertWithinRealRoot(full, true)
       unlinkSync(full)
@@ -267,6 +280,7 @@ export function makeMemoryFS(opts: MemoryFSOptions): MemoryFS {
     softDelete(relPath) {
       const full = resolveSafe(relPath)
       checkExt(full)
+      refuseOwnerFile(full)
       if (!existsSync(full)) return null
       assertWithinRealRoot(full, true)
       const stamp = new Date().toISOString().replace(/[:.]/g, '-')

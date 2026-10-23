@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { buildSystemPrompt, bubbleRepliesSection, careSection, companionOfferSection, CORE_MEMORY_MAX_CHARS, coreMemorySection, curatedMemorySection, KNOWLEDGE_MEMORY_MAX_CHARS, knowledgeMemorySection, daemonSelfHealSection, knowledgeOrchestrationSection, newRelationshipSection, personaCultivationSection, personaSection, socialToolsSection, stickerEmptyLibrarySection, stickerSection } from './prompt-builder'
+import { buildSystemPrompt, bubbleRepliesSection, careSection, companionOfferSection, CORE_MEMORY_MAX_CHARS, coreMemorySection, curatedMemorySection, ownerMemorySection, KNOWLEDGE_MEMORY_MAX_CHARS, knowledgeMemorySection, daemonSelfHealSection, knowledgeOrchestrationSection, newRelationshipSection, personaCultivationSection, personaSection, socialToolsSection, stickerEmptyLibrarySection, stickerSection } from './prompt-builder'
 
 describe('buildSystemPrompt', () => {
   function defaults() {
@@ -509,6 +509,14 @@ describe('core-memory prompt section', () => {
     const p = buildSystemPrompt({ ...base, coreMemory: '这个人叫小明,喜欢徒步' })
     expect(p).toContain('核心记忆')
     expect(p).toContain('这个人叫小明,喜欢徒步')
+  })
+
+  it('主人原话排在长期记忆前面;没有就不出现', () => {
+    const p = buildSystemPrompt({ ...base, ownerMemory: '- 我不喝咖啡', curatedMemory: '### 偏好\n- 喜欢美式' })
+    expect(p).toContain(ownerMemorySection('- 我不喝咖啡'))
+    expect(p.indexOf('我不喝咖啡')).toBeLessThan(p.indexOf('喜欢美式'))
+    expect(p).toContain('以这里为准')
+    expect(buildSystemPrompt({ ...base, ownerMemory: '  ' })).not.toContain('主人亲手写的')
   })
 
   it('curated memory replaces the profile section when present', () => {
