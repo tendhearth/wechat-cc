@@ -375,6 +375,22 @@ describe('review', () => {
     expect(s.review.findings).toEqual([{ severity: 'minor', summary: '命名可以再好点' }])
   })
 
+  it('给了 reviewer ⇒ 评审走它(不走实现那个 runner),谁审、为什么记进 state', async () => {
+    const s = fakeState()
+    const { deps, rec } = makeFakeDeps({ git: gitReply({ 'rev-parse HEAD': HEAD_SHA }) })
+    const seen: boolean[] = []
+    deps.reviewer = {
+      choice: { id: 'codex', why: '实现是 Claude,评审换 Codex' },
+      runner: { run: async (input) => { seen.push(input.readOnly === true); return { ok: true, sessionId: 't1', text: '{"verdict":"approve","findings":[]}', costUsd: 0, turns: 1, stderrTail: [], timedOut: false } } },
+    }
+    expect(await steps.review(s, deps)).toEqual({ ok: true, next: 'ci' })
+    expect(seen).toEqual([true])
+    expect(rec.runner).toEqual([]) // 实现那个 runner 一次都没被叫
+    expect(s.review.by).toBe('codex')
+    expect(s.review.why).toContain('Codex')
+    expect(s.review.sessionId).toBe('t1')
+  })
+
   it('有 important ⇒ 修复轮', async () => {
     const { deps } = makeFakeDeps({
       runner: () => ({ text: '```json\n{"verdict":"changes","findings":[{"severity":"important","file":"src/a.ts","line":3,"summary":"错误吞了"}]}\n```' }),

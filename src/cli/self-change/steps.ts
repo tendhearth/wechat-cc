@@ -24,7 +24,8 @@ import type { SelfChangeConfig } from './config'
 import { writeSelfChangeConfigPatch } from './config'
 import type { Git } from './git'
 import { FORBIDDEN_EXCEPTIONS, FORBIDDEN_GLOBS, SELF_CHANGE_DEFAULTS, forbiddenPaths } from './policy'
-import type { ImplementRunner } from './runner'
+import type { ImplementRunner, ReviewerChoice } from './runner'
+import { providerDisplayName } from '../../core/provider-display-names'
 import type { DaemonClient } from './daemon-client'
 import type { ReviewFinding, SelfChangeState, SelfChangeStep, StateStore } from './state'
 
@@ -46,6 +47,8 @@ export interface PipelineDeps {
   state: StateStore
   git: Git
   runner: ImplementRunner
+  /** 评审用谁(runner.ts chooseReviewer);不给 ⇒ 跟实现同一个 runner(只读)。 */
+  reviewer?: { choice: ReviewerChoice; runner: ImplementRunner }
   daemon: DaemonClient
   /**
    * bun / npm。git 不走这里(有 git.ts)。
@@ -540,7 +543,9 @@ async function review(s: SelfChangeState, d: PipelineDeps): Promise<StepOutcome>
     throw err
   }
 
-  const res = await d.runner.run({
+  const reviewRunner = d.reviewer?.runner ?? d.runner
+  if (d.reviewer) { s.review.by = d.reviewer.choice.id; s.review.why = d.reviewer.choice.why }
+  const res = await reviewRunner.run({
     cwd: dir,
     prompt: reviewPrompt({ request: s.request, branch: s.branch, baseRef }),
     budgetUsd: d.config.reviewBudgetUsd,
@@ -655,7 +660,7 @@ function approvalCard(s: SelfChangeState, d: PipelineDeps, diffstat: string): st
     '测试:typecheck / depcheck / bun test / node test 四条全绿',
     // 「全绿」是最后的口径,但中间抖过一次的话,主人有权在拍板前知道。
     ...flakeLine(s),
-    `评审:${s.review.verdict ?? 'unknown'}${minors.length ? `,残余 minor:\n${formatFindings(minors)}` : '(没有残余意见)'}`,
+    `评审${s.review.by ? `(${providerDisplayName(s.review.by)})` : ''}:${s.review.verdict ?? 'unknown'}${minors.length ? `,残余 minor:\n${formatFindings(minors)}` : '(没有残余意见)'}`,
     `CI:${s.ci.url ?? '(没有链接)'}`,
     `费用:$${cost.toFixed(2)}(实现 $${s.implement.costUsd.toFixed(2)} + 评审 $${s.review.costUsd.toFixed(2)})`,
   ].join('\n')
