@@ -84,6 +84,7 @@ function providerLabel(p) {
   // 免审记号跟在最后:额度 / 限流是一时的,免审是这位执行者的性子。
   const unattended = unattendedLabelSuffix(p)
   // 被拒着比额度更要紧:重发没用,换出口地区或换一位(daemon/provider-refusals,最近一次真跑成功才清)。
+  // 只认得 region_unavailable;以后 provider-refusals 加别的常驻码,这里不认就照常显示名字 —— 加码时在这里补一句。
   if (p.refusal?.code === 'region_unavailable') return `${p.displayName}（你现在的出口地区用不了）${unattended}`
   if (p.quota?.kind === 'quota') return `${p.displayName}（额度已用完）${unattended}`
   if (p.quota?.kind === 'rate_limit') return `${p.displayName}（限流中）${unattended}`
