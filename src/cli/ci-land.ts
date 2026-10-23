@@ -13,7 +13,10 @@
  *     合并用 `--match-head-commit`,看完到合之间被人推了,GitHub 自己拒。
  *   - 空 rollup 不算绿:没跑的 CI 看上去和「都过了」一样(jq 的 all 对空列表是 true,差点合进一个零检查的 PR)。
  *     要求不是 skipped 的检查至少 N 条、全部 SUCCESS;任何一条红 ⇒ 停。
- *   - gh 偶尔什么都不回(网络抖)⇒ 隔一会儿再问,不当成 head 变了。
+ *   - gh 偶尔什么都不回(网络抖)⇒ 隔一会儿再问,不当成 head 变了;连续十次 ⇒ 停(登录态没了不能死等)。
+ *   - 检查不够数不当场判红:changes 先完、别的作业还没进 rollup 的那一分钟里就是这个样子。
+ *   - 等 CI 期间 dev 被别人合了东西 ⇒ 只打一行提示、照合(有意的):rollup 拿不到 CI 测的 base,正式闸门是合完推 dev 那一次。
+ *   - rebase 后先 bun install --frozen-lockfile 再 tsc:新 worktree 没 node_modules 是假红。
  *   - rebase 冲突 ⇒ abort,不留半截;已经合进去的几层照旧在 dev 上,报告停在哪一层。
  *   - 开始后 dev 被别人动过(不是我们刚合的那一个)⇒ 停:剩下几层的内容不再是 CI 验过的那一份。
  *   - 兄弟(两个 PR 叠在同一个下层上)⇒ 第一版不处理,停下来说清楚:先排成一条线,或者各自等 CI。
@@ -124,6 +127,7 @@ const BLIP_MS = 60_000
 const DEFAULT_MIN_CHECKS = 5
 const DEFAULT_TIMEOUT_MIN = 120
 const NO_CHECKS_GIVE_UP_MS = 10 * 60_000
+const MAX_BLIPS = 10
 
 export interface CiLandResult { exitCode: number; merged: number[]; message: string }
 
@@ -159,23 +163,36 @@ export async function runCiLand(deps: CiLandDeps, opts: CiLandOpts): Promise<CiL
   if (opts.dryRun) return done(CI_LAND_EXIT.landed, `预演:会等 #${topLayer.number} 的 CI(至少 ${minChecks} 条非 skipped 全绿),然后从下往上合 ${stack.length} 层`)
 
   // ── 等最上面那个的 CI ───────────────────────────────────────────
-  const started = deps.now()
-  const deadline = started + (opts.timeoutMin ?? DEFAULT_TIMEOUT_MIN) * 60_000
+  const deadline = deps.now() + (opts.timeoutMin ?? DEFAULT_TIMEOUT_MIN) * 60_000
+  git('fetch', 'origin', target)
+  const devAtStart = git('rev-parse', `origin/${target}`).stdout.trim()
+  let blips = 0
+  // too_few 不当场判红:changes 十秒就完,依赖它的作业要再过几秒到一分钟才进 rollup,
+  // 那个空档里看到的是「一条 SUCCESS、没有在跑的」。rollup 十分钟没变化、还是不够数,才判。
+  let lastSig = ''
+  let sigSince = deps.now()
   for (;;) {
+    if (deps.now() > deadline) return done(CI_LAND_EXIT.timeout, `等 #${topLayer.number} 的 CI 超时`)
     const v = ghJson<{ headRefOid: string; statusCheckRollup: RollupItem[] | null }>('pr', 'view', String(topLayer.number), '--json', 'headRefOid,statusCheckRollup')
-    if (!v) { deps.log('gh 没回东西,一分钟后再问'); await deps.sleep(BLIP_MS); continue }
+    if (!v) {
+      if (++blips >= MAX_BLIPS) return done(CI_LAND_EXIT.precondition, `gh 连续 ${blips} 次没回东西(登录态?限流?)`)
+      deps.log('gh 没回东西,一分钟后再问')
+      await deps.sleep(BLIP_MS)
+      continue
+    }
+    blips = 0
     if (v.headRefOid !== topLayer.oldHead) return done(CI_LAND_EXIT.moved, `#${topLayer.number} 的 head 变了(${topLayer.oldHead.slice(0, 8)} → ${v.headRefOid.slice(0, 8)}):没看过的版本不合,重新跑一次`)
     const verdict = judgeRollup(v.statusCheckRollup ?? [], minChecks)
     if (verdict.kind === 'red') return done(CI_LAND_EXIT.red, `#${topLayer.number} 的 CI 红了:${verdict.failed.join('、')}(看是不是 flake:wechat-cc ci triage --sha ${topLayer.oldHead})`)
     if (verdict.kind === 'green') { deps.log(`#${topLayer.number} 的 CI 绿了(${verdict.counted} 条)`); break }
-    // 刚推完的几分钟里 rollup 本来就是空的;十分钟还空 ⇒ CI 根本没触发(比如 pull_request 的 base 过滤)。
-    if (verdict.kind === 'too_few' && verdict.counted === 0 && deps.now() - started > NO_CHECKS_GIVE_UP_MS) {
-      return done(CI_LAND_EXIT.red, `#${topLayer.number} 十分钟了一条检查都没有:CI 没触发,不能当绿`)
+    const sig = JSON.stringify(v.statusCheckRollup ?? [])
+    if (sig !== lastSig) { lastSig = sig; sigSince = deps.now() }
+    if (verdict.kind === 'too_few' && deps.now() - sigSince > NO_CHECKS_GIVE_UP_MS) {
+      // 十分钟还是空 ⇒ CI 根本没触发(比如 pull_request 的 base 过滤);不空但不够数 ⇒ 多半是只改文档的串。
+      return done(CI_LAND_EXIT.red, verdict.counted === 0
+        ? `#${topLayer.number} 十分钟了一条检查都没有:CI 没触发,不能当绿`
+        : `#${topLayer.number} 只跑了 ${verdict.counted} 条非 skipped 检查(要 ${minChecks}):只改文档的串用 --min-checks 1`)
     }
-    if (verdict.kind === 'too_few' && verdict.counted > 0) {
-      return done(CI_LAND_EXIT.red, `#${topLayer.number} 只跑了 ${verdict.counted} 条非 skipped 检查(要 ${minChecks}):只改文档的串用 --min-checks 1`)
-    }
-    if (deps.now() > deadline) return done(CI_LAND_EXIT.timeout, `等 #${topLayer.number} 的 CI 超时`)
     deps.log(`#${topLayer.number} 的 CI 还在跑(${verdict.kind === 'pending' ? verdict.counted : 0} 条),${POLL_MS / 60_000} 分钟后再看`)
     await deps.sleep(POLL_MS)
   }
@@ -183,6 +200,11 @@ export async function runCiLand(deps: CiLandDeps, opts: CiLandOpts): Promise<CiL
   // ── 从下往上合 ─────────────────────────────────────────────────
   if (git('fetch', 'origin', target).code !== 0) return done(CI_LAND_EXIT.precondition, `git fetch origin ${target} 失败`)
   let devBefore = git('rev-parse', `origin/${target}`).stdout.trim()
+  if (devBefore !== devAtStart) {
+    // 有意接受:rollup 里拿不到 CI 测的是哪个 base,底层会落在 CI 没验过的 dev 上。正式闸门是合完推 dev 那一次。
+    const n = git('rev-list', '--count', `${devAtStart}..${devBefore}`).stdout.trim()
+    deps.log(`注意:等 CI 期间 ${target} 多了 ${n || '?'} 个提交,这一串落在 CI 没验过的 ${target} 上;合完看 ${target} 推送那一次`)
+  }
   for (let i = 0; i < stack.length; i++) {
     const layer = stack[i]!
     let head = layer.oldHead
@@ -195,6 +217,8 @@ export async function runCiLand(deps: CiLandDeps, opts: CiLandOpts): Promise<CiL
         return done(CI_LAND_EXIT.conflict, `#${layer.number} rebase 到 ${target} 冲突,已 abort;前面 ${merged.length} 层已合(${merged.map(n => `#${n}`).join('、') || '无'}),这一层交还负责人`)
       }
       if (!opts.skipTypecheck) {
+        // 新建的 worktree 没有 node_modules、下层改过 bun.lock ⇒ 不装就是跟代码无关的假红。装好了的话这一步几秒。
+        if (run('bun', ['install', '--frozen-lockfile'], 10 * 60_000).code !== 0) return done(CI_LAND_EXIT.precondition, `#${layer.number} rebase 后 bun install 失败(没推)`)
         const tc = run('bun', ['x', 'tsc', '--noEmit'], 20 * 60_000)
         if (tc.code !== 0) return done(CI_LAND_EXIT.red, `#${layer.number} rebase 后 typecheck 红(没推);前面已合 ${merged.map(n => `#${n}`).join('、') || '无'}`)
       }

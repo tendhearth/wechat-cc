@@ -140,7 +140,28 @@ describe('runCiLand', () => {
     expect(calls.some(c => c.startsWith('gh pr merge'))).toBe(false)
   })
 
-  it('跑完但非 skipped 不够数 ⇒ 红,提示 --min-checks', async () => {
+  it('changes 先完、别的还没进 rollup 的空档不判红,下一次看到全绿就合', async () => {
+    const { deps } = fakeDeps({ open, views: [{ headRefOid: 'sc', statusCheckRollup: [ok('changes')] }, green('sc')] })
+    const res = await runCiLand(deps, { top: 3, skipTypecheck: true })
+    expect(res.exitCode).toBe(CI_LAND_EXIT.landed)
+  })
+
+  it('gh 一直不回 ⇒ 十次后停(exit 2),不死等', async () => {
+    const { deps } = fakeDeps({ open, views: [null] })
+    const res = await runCiLand(deps, { top: 3 })
+    expect(res.exitCode).toBe(CI_LAND_EXIT.precondition)
+    expect(res.message).toMatch(/连续 10 次/)
+  })
+
+  it('rebase 后先 bun install 再 tsc', async () => {
+    const { deps, calls } = fakeDeps({ open, views: [green('sc')] })
+    await runCiLand(deps, { top: 3 })
+    const i = calls.indexOf('bun install --frozen-lockfile')
+    expect(i).toBeGreaterThan(-1)
+    expect(calls.indexOf('bun x tsc --noEmit')).toBeGreaterThan(i)
+  })
+
+  it('跑完但非 skipped 一直不够数 ⇒ 十分钟后红,提示 --min-checks', async () => {
     const { deps } = fakeDeps({ open, views: [{ headRefOid: 'sc', statusCheckRollup: [ok('changes'), skip('b')] }] })
     const res = await runCiLand(deps, { top: 3 })
     expect(res.exitCode).toBe(CI_LAND_EXIT.red)
