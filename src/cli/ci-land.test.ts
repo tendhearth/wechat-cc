@@ -180,10 +180,17 @@ describe('runCiLand', () => {
 
   it('CI 一直零条检查 ⇒ 十分钟后判红,不当绿', async () => {
     const { deps, calls } = fakeDeps({ open, views: [{ headRefOid: 'sc', statusCheckRollup: [] }] })
+    const lines: string[] = []
+    deps.log = l => { lines.push(l) }
     const res = await runCiLand(deps, { top: 3 })
     expect(res.exitCode).toBe(CI_LAND_EXIT.red)
     expect(res.message).toMatch(/一条检查都没有/)
+    expect(res.message).toContain('gh pr close 3 && gh pr reopen 3')
     expect(calls.some(c => c.startsWith('gh pr merge'))).toBe(false)
+    // 不等到十分钟才吭声:三分钟就说多半没触发、怎么重触发,只说一次。
+    const hints = lines.filter(l => l.includes('多半没触发 CI'))
+    expect(hints).toHaveLength(1)
+    expect(hints[0]).toContain('gh pr reopen 3')
   })
 
   it('changes 先完、别的还没进 rollup 的空档不判红,下一次看到全绿就合', async () => {
