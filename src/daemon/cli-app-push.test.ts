@@ -48,19 +48,21 @@ describe('hub 的两个出口:微信 + 手机 app,同一套在场 / 快问快答
   beforeEach(() => { vi.useFakeTimers() })
   afterEach(() => { vi.useRealTimers() })
 
-  function harness(o: { sendResult?: 'sent' | 'rejected'; sendThrows?: boolean; idle?: number | null; push?: AppPushOutlet | null } = {}) {
+  function harness(o: { sendResult?: 'sent' | 'rejected'; sendThrows?: boolean; idle?: number | null; push?: AppPushOutlet | null; windowClosed?: boolean } = {}) {
     const sent: string[] = []
+    const ctxs: Array<{ appDelivered: boolean } | undefined> = []
     const logs: string[] = []
     const fp = fakePush()
     const outlet = o.push === undefined ? fp.outlet : o.push
     const hub = makeCliEventHub({
-      send: async (t) => { if (o.sendThrows) throw new Error('ilink down'); sent.push(t); return o.sendResult ?? 'sent' },
+      // 模仿 wire-cli-sessions 的 send:窗口关着、手机收到了 ⇒ 'skipped',不发。
+      send: async (t, ctx) => { ctxs.push(ctx); if (o.windowClosed && ctx?.appDelivered) return 'skipped'; if (o.sendThrows) throw new Error('ilink down'); sent.push(t); return o.sendResult ?? 'sent' },
       pushApp: makeCliHubAppPush({ push: () => outlet, log: (a, b) => logs.push(`${a} ${b}`) }),
       projectName: (c) => c.split('/').pop()!,
       log: (a, b) => logs.push(`${a} ${b}`),
       ...(o.idle !== undefined ? { machineIdle: async () => o.idle ?? null } : {}),
     })
-    return { hub, sent, pushed: fp.pushed, logs }
+    return { hub, sent, pushed: fp.pushed, logs, ctxs }
   }
   const settle = async () => { await vi.advanceTimersByTimeAsync(STOP_HOLD_MS); await vi.advanceTimersByTimeAsync(DIGEST_WINDOW_MS) }
 
@@ -81,6 +83,24 @@ describe('hub 的两个出口:微信 + 手机 app,同一套在场 / 快问快答
       expect(logs.some(l => l.includes('wechat refused') || l.includes('send failed'))).toBe(true)
       hub.dispose()
     }
+  })
+
+  it('微信窗口已知关着、交给了手机推送 ⇒ 不再去撞微信(skip wechat 一行),手机照样收到', async () => {
+    const { hub, sent, pushed, logs, ctxs } = harness({ idle: 600, windowClosed: true })
+    hub.ingest(ev())
+    await settle()
+    expect(pushed).toHaveLength(1)
+    expect(sent).toEqual([])
+    expect(ctxs[0]).toEqual({ appDelivered: true })
+    expect(logs.some(l => l.includes('skip wechat'))).toBe(true)
+  })
+
+  it('没交给手机推送(没接推送)⇒ appDelivered=false,微信照常试', async () => {
+    const { hub, sent, ctxs } = harness({ idle: 600, windowClosed: true, push: null })
+    hub.ingest(ev())
+    await settle()
+    expect(ctxs[0]).toEqual({ appDelivered: false })
+    expect(sent).toHaveLength(1)
   })
 
   it('人在电脑前 ⇒ 都不推(只桌面);快问快答 ⇒ 都不推', async () => {
