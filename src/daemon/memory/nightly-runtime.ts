@@ -2,7 +2,8 @@
  * 每晚记忆整理的运行时:15 分钟一次 tick(该跑就跑一次整理、再看看待发通知),
  * 「整理记忆」的立即运行,以及给微信(文本)与手机(结构)的只读视图。
  */
-import { dropCorrectedAgenda, purgeCorrectedFromSources } from '../../lib/memory-corrections'
+import { agendaDropPrompt, dropAgendaItems, dropCorrectedAgenda, openAgendaItems, parseAgendaDropAnswer, purgeCorrectedFromSources } from '../../lib/memory-corrections'
+import { isNetworkUnprotectedError } from '../../lib/network-gate'
 import { invalidateDerivedMemory } from '../../lib/memory-derived-state'
 import { readSources, writeSources } from './sources'
 import { appendFileSync, existsSync, mkdirSync, readFileSync } from 'node:fs'
@@ -100,7 +101,35 @@ function lastLog(root: string): { at: string; ops: AppliedOp[] } | null {
   try { return JSON.parse(lines[lines.length - 1]!) as { at: string; ops: AppliedOp[] } } catch { return null }
 }
 
+const AGENDA_EVAL_TIMEOUT_MS = 60_000
+
 export function makeMemoryNightlyRuntime(deps: NightlyRunDeps & NoticeDeps): MemoryNightlyRuntime {
+  async function dropAgendaByModel(c: { text: string; root: string; day: string; archive: string; stamp: string }): Promise<void> {
+    const items = openAgendaItems(c.root)
+    if (items.length === 0) return
+    const evalFn = deps.cheapEval()
+    if (!evalFn) return
+    let raw: string
+    let timer: ReturnType<typeof setTimeout> | undefined
+    try {
+      raw = await Promise.race([
+        evalFn(agendaDropPrompt(c.text, items)),
+        new Promise<never>((_, rej) => { timer = setTimeout(() => rej(new Error('timeout')), AGENDA_EVAL_TIMEOUT_MS) }),
+      ])
+    } catch (err) {
+      deps.log('MEMORY_NIGHTLY', isNetworkUnprotectedError(err) ? 'agenda model drop skipped — network unprotected' : `agenda model drop skipped: ${err instanceof Error ? err.message : String(err)}`)
+      return
+    } finally { if (timer) clearTimeout(timer) }
+    const picks = parseAgendaDropAnswer(raw, items.length).map(n => items[n - 1]!)
+    const n = dropAgendaItems(c.root, picks, c.day, c.archive, `${c.stamp}-model`)
+    if (!n) return
+    // 主人看得到:在更正记录里补一行,说清是 CC 判断的。这一行不能带「] 」—— 更正记录按它认「被更正的原话」,
+    // 待办原文里有的话会被当成又一条更正(换成全角)。
+    const named = picks.map(p => p.text.replace(/\]/g, '］')).join(';')
+    appendFileSync(join(c.root, CORRECTIONS_FILENAME), `  (CC 又判断 agenda.md 里 ${n} 条待办在跟进这件事,也改成 dropped:${named})\n`)
+    deps.log('MEMORY_NIGHTLY', `agenda model drop: ${n}`)
+  }
+
   const root = (): string | null => {
     const owner = deps.ownerChatId()
     return owner ? ownerMemoryRoot(deps.stateDir, owner) : null
@@ -136,7 +165,8 @@ export function makeMemoryNightlyRuntime(deps: NightlyRunDeps & NoticeDeps): Mem
     }),
     runNow: () => serial(() => runMemoryNightly(deps, { force: true })),
     // 与每晚整理同一条串行链:不会和它同时改 memory.md
-    correct: (id, verdict) => serial(async () => {
+    correct: async (id, verdict) => {
+      const done = await serial(async () => {
       const got = readDoc()
       if (!got) throw new Error('memory_not_found')
       let hit: { section: Section; text: string } | null = null
@@ -175,8 +205,14 @@ export function makeMemoryNightlyRuntime(deps: NightlyRunDeps & NoticeDeps): Mem
         }
       }
       deps.log('MEMORY_NIGHTLY', `owner ${verdict} ${id}`)
-      return { text: hit.text }
-    }),
+      return { text: hit.text, root: got.root, day, archive: purgeArchive, stamp: `${day}-${nowMs}` }
+      })
+      // 逐字匹配是底线;CC 自己换了说法的待办(「关心杭州之行」对「下周去杭州出差」)再问一次便宜模型。
+      // 放在后台、排在同一条串行链上:主人点「不对」不用等模型;模型只能从开着的待办里挑,只会多关、不会少关;
+      // 没模型 / 网络不安全 / 超时 / 出错 ⇒ 就停在逐字那一步,不重试。
+      void serial(() => dropAgendaByModel(done)).catch(err => deps.log('MEMORY_NIGHTLY', `agenda model drop failed: ${err instanceof Error ? err.message : String(err)}`))
+      return { text: done.text }
+    },
     importEntries: (items, label) => serial(async (): Promise<ImportResult> => {
       const r = root()
       if (!r) throw new Error('no_owner')

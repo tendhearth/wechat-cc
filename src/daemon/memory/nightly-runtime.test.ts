@@ -303,3 +303,60 @@ describe('导入记忆(第二轮对标 #7)', () => {
     expect(r.added + r.skipped.cap).toBe(30)
   })
 })
+
+// 9d 记的欠账:CC 自己换了说法的待办(「问问杭州之行」对「下周去杭州出差」)逐字接不住 —— 更正后在后台问一次便宜模型。
+describe('correction → agenda drop by cheap model', () => {
+  const NIGHTLY_ANSWER = JSON.stringify({ add: [{ section: '承诺', text: '下周去杭州出差谈合同' }], update: [], confirm: [], remove: [] })
+  const agenda = '- [ ] due:2026-10-30 问问杭州之行顺不顺利\n- [ ] due:2026-11-02 提醒周报\n'
+  async function setup(agendaAnswer: (p: string) => Promise<string>) {
+    const { readFileSync } = await import('node:fs')
+    const asked: string[] = []
+    const rt = makeMemoryNightlyRuntime(deps({ cheapEval: () => async (p: string) => {
+      if (p.includes('跟进计划')) { asked.push(p); return agendaAnswer(p) }
+      return NIGHTLY_ANSWER
+    } }))
+    await rt.runNow()
+    writeFileSync(join(root, 'agenda.md'), agenda)
+    const id = rt.curatedView().sections.flatMap(s => s.items)[0]!.id!
+    const read = (f: string) => readFileSync(join(root, f), 'utf8')
+    return { rt, id, asked, read }
+  }
+  it('the model picks a reworded follow-up; it is dropped, the correction record says CC judged it, and the other item stays', async () => {
+    const { rt, id, asked, read } = await setup(async () => '1')
+    await rt.correct(id, 'wrong')
+    await vi.waitFor(() => expect(read('agenda.md')).toContain('- [x] dropped:'))
+    expect(read('agenda.md')).toContain('问问杭州之行顺不顺利')
+    expect(read('agenda.md')).toContain('- [ ] due:2026-11-02 提醒周报')
+    expect(asked[0]).toContain('「下周去杭州出差谈合同」')
+    await vi.waitFor(() => expect(read('corrections.md')).toContain('CC 又判断 agenda.md 里 1 条待办在跟进这件事'))
+  })
+  it('the owner\'s correction returns before the model answers', async () => {
+    let answer!: (s: string) => void
+    const { rt, id, asked, read } = await setup(() => new Promise<string>(r => { answer = r }))
+    const t = await Promise.race([rt.correct(id, 'wrong').then(() => 'returned'), new Promise(r => setTimeout(() => r('blocked'), 500))])
+    expect(t).toBe('returned')
+    await vi.waitFor(() => expect(asked).toHaveLength(1))
+    expect(read('agenda.md')).toBe(agenda)
+    answer('1')
+    await vi.waitFor(() => expect(read('agenda.md')).toContain('- [x] dropped:'))
+  })
+  it('the note line never reads as another correction, even when the to-do text has "] " in it', async () => {
+    const { correctedTexts } = await import('../../lib/memory-corrections')
+    const { rt, id, read } = await setup(async () => '1')
+    writeFileSync(join(root, 'agenda.md'), '- [ ] due:2026-10-30 [杭州] 问问出差顺不顺利\n')
+    const before = correctedTexts(root).size
+    await rt.correct(id, 'wrong')
+    await vi.waitFor(() => expect(read('corrections.md')).toContain('CC 又判断'))
+    expect(correctedTexts(root).size).toBe(before + 1)   // 只多了主人那一条
+  })
+  it.each([
+    ['model error', async () => { throw new Error('boom') }],
+    ['a chatty answer', async () => '我觉得第 1 条有关'],
+  ])('%s ⇒ nothing extra dropped, no throw', async (_name, ans) => {
+    const { rt, id, asked, read } = await setup(ans)
+    await rt.correct(id, 'wrong')
+    await vi.waitFor(() => expect(asked).toHaveLength(1))
+    await rt.runNow()   // 同一条串行链:它跑完,后台那一步一定落定了
+    expect(read('agenda.md')).toBe(agenda)
+  })
+})
