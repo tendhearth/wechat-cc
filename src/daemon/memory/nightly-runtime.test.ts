@@ -377,6 +377,7 @@ describe('记忆编辑 view / edit(设计稿 2026-10-23 记忆改了就算数 §
   it('view:生成的行带键、没有尾注;总览带生成时间', () => {
     const rt = makeMemoryNightlyRuntime(deps())
     const m = rt.view('memory.md')
+    expect(m.chatId).toBe(OWNER)
     expect(m.lines.map(l => [l.text, l.lineKey])).toEqual([['住杭州', 'm:aa01'], ['喜欢美式', 'm:aa02']])
     const o = rt.view('_overview.md')
     expect(o.lines.map(l => l.text)).toEqual(['主人在做 wechat-cc。', '喜欢美式咖啡'])

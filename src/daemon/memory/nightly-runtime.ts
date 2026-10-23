@@ -60,7 +60,8 @@ export interface MemoryNightlyRuntime {
   /** 记忆编辑(§4):按键比对,删 / 改 ⇒ 更正,加 / 改写 ⇒ 主人原话。与每晚整理同一条串行链。 */
   edit(req: { path: EditableMemoryPath; baseHash: string; lines: readonly EditLine[]; confirmBulk?: boolean }): Promise<MemoryEditResult>
 }
-export interface MemoryView { path: EditableMemoryPath; baseHash: string; generatedAt: string | null; stale: boolean; lines: ViewLine[] }
+/** chatId = 这份记忆属于哪个对话(主人的,default_chat_id);桌面只在打开的正是它时才用逐行编辑。 */
+export interface MemoryView { chatId: string; path: EditableMemoryPath; baseHash: string; generatedAt: string | null; stale: boolean; lines: ViewLine[] }
 export type MemoryEditResult =
   | { ok: true; corrections: Array<{ id: string; text: string }>; assertions: Array<{ id: string; text: string; replaces?: Replaces }>; regenerate: 'queued' | 'not_needed' }
   | Exclude<ReturnType<typeof planEdit>, { ok: true }>
@@ -209,8 +210,8 @@ export function makeMemoryNightlyRuntime(deps: NightlyRunDeps & NoticeDeps): Mem
     return id => map.get(id) ?? null
   }
   function buildView(path: EditableMemoryPath): MemoryView {
-    const r = root()
-    if (!r) throw new Error('no_owner')
+    const r = root(), chatId = deps.ownerChatId()
+    if (!r || !chatId) throw new Error('no_owner')
     const readText = (name: string) => { try { return readFileSync(join(r, name), 'utf8') } catch { return '' } }
     const file = readText(path), ownerRaw = path === OWNER_FILENAME ? file : readText(OWNER_FILENAME)
     const owner = ownerLines(readOwnerDoc(r), correctionTextById(r))
@@ -225,7 +226,7 @@ export function makeMemoryNightlyRuntime(deps: NightlyRunDeps & NoticeDeps): Mem
       const extra = doc.extra.map(l => l.trim()).filter(l => l && !/^#{1,6}\s/.test(l) && !l.startsWith('<!--')).map(l => l.replace(/^(?:[-*+]|\d+[.)])\s+/, ''))
       generated = keyGeneratedLines([...entries.map(e => e.text), ...extra], [...entries.map(e => e.id), ...extra.map(() => null)])
     }
-    return { path, baseHash: baseHashOf(file, ownerRaw), generatedAt, stale: path === '_overview.md' && isDerivedMemoryStale(r, 'overview'), lines: [...owner, ...generated] }
+    return { chatId, path, baseHash: baseHashOf(file, ownerRaw), generatedAt, stale: path === '_overview.md' && isDerivedMemoryStale(r, 'overview'), lines: [...owner, ...generated] }
   }
 
   const root = (): string | null => {

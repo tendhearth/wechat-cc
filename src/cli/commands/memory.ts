@@ -591,9 +591,13 @@ async function memoryEditCall(route: 'view' | 'edit', body: unknown): Promise<{ 
     return { status: 0, body: { ok: false, code: 'daemon_unreachable', error: err instanceof Error ? err.message : String(err) } }
   }
 }
-function printEditResult(r: { body: unknown }, json: boolean): void {
+/**
+ * --json(桌面经 lib.rs 的 wechat_cli_json 调)⇒ 只要输出的是 JSON 就退出码 0,桌面按 ok / code 分支 —— 宿主把非 0 当 Err、
+ * 吞掉 stdout,桌面就读不到 memory_edit_bulk 的 count 这类载荷(同 memory read / write --json)。没有 --json(人在终端)⇒ 失败退 1。
+ */
+export function printEditResult(r: { body: unknown }, json: boolean): void {
   console.log(json ? JSON.stringify(r.body) : JSON.stringify(r.body, null, 2))
-  if ((r.body as { ok?: unknown })?.ok !== true) process.exitCode = 1
+  if (!json && (r.body as { ok?: unknown })?.ok !== true) process.exitCode = 1
 }
 
 const memoryViewCmd = defineCommand({

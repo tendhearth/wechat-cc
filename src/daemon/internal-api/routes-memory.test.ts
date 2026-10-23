@@ -63,7 +63,7 @@ describe('POST /v1/memory/nightly/run', () => {
 })
 
 describe('POST /v1/memory/view · /v1/memory/edit(记忆编辑)', () => {
-  const view = { path: '_overview.md', baseHash: 'a'.repeat(64), generatedAt: null, stale: false, lines: [] }
+  const view = { chatId: 'admin1', path: '_overview.md', baseHash: 'a'.repeat(64), generatedAt: null, stale: false, lines: [] }
   const nightly = (over: Record<string, unknown> = {}) => ({ runNow: vi.fn(), view: vi.fn(() => view), edit: vi.fn(async () => ({ ok: false, code: 'memory_changed' })), ...over })
   it('未接线 → 503', async () => {
     expect((await memoryRoutes(deps())['POST /v1/memory/view']!(q(), { path: 'memory.md' })).status).toBe(503)
