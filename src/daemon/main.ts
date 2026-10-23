@@ -769,7 +769,12 @@ async function bootDaemonInner(opts: BootDaemonOpts, undo: Array<() => void>): P
     // 回报投递队列(v65,task-3,2026-09-23):每轮答复入队一次,sweeper 按到期时间取件送达。
     const reportOutbox = makeReportOutboxStore(db)
     const workbench = wireWorkbench({ db, stateDir, boot, internalApi, matters, reportOutbox, networkGate: guardRt.gate, permissionGate, requestReview: (r) => jobs.requestReview(r),
-      onTurnError: (providerId, code, message) => { cliUpgradeRef.current?.onTurnError(providerId, code, message) },
+      onTurnError: (providerId, code, message) => {
+        cliUpgradeRef.current?.onTurnError(providerId, code, message)
+        // 一起做里被拒也算(只有 agy 用一起做时,大脑那一行不该落后)
+        providerRefusals.onTurn({ provider: providerId, outcome: 'error', ...(code ? { errorCode: code } : {}), endedAt: Date.now() })
+      },
+      onTurnCompleted: (providerId) => providerRefusals.onTurn({ provider: providerId, outcome: 'completed', endedAt: Date.now() }),
       executionConflict:(path,providerId,nativeId)=>boot.sessionManager.hasProjectConflict(path)||
         (!!nativeId&&Object.values(boot.sessionStore.all()).some(s=>s.provider===providerId&&s.session_id===nativeId))||
         legacyClaims.conflicts({owner:'workbench',path,providerId,nativeId})||
