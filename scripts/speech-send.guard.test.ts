@@ -60,7 +60,7 @@ const BASELINE: Record<string, [Tag, number]> = {
   // pipeline-deps 剩下的全是接线:回话出口、proactive 的微信出口(发字 / 发文件)、给访客的回话、llm-health 的回话;访客申请已走门(10-21)
   'src/daemon/wiring/pipeline-deps.ts': ['primitive', 6],
   // —— 回答对方刚发来的那一句 ——
-  'src/daemon/admin-commands.ts': ['reply', 69],
+  'src/daemon/admin-commands.ts': ['reply', 70], // +1 2026-10-23「放行规则关掉 / 打开」:回主人当面那一句
   'src/daemon/onboarding.ts': ['reply', 16],
   'src/daemon/inbound/mw-task-reference.ts': ['reply', 11],
   'src/daemon/mode-commands.ts': ['reply', 2],

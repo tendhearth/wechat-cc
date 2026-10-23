@@ -407,7 +407,7 @@ async function sendHandsList(deps: AdminCommandsDeps, chatId: string): Promise<v
     : '还没配对任何手。在那台机器上跑 `wechat-cc hand invite`,把它给出的码粘到这里。').catch(() => {})
 }
 
-/** /botname [名字 | 跳过]:看 / 清 / 改 CC 的名字(以前写在 handle 的 if 链里,原样搬出来)。 */
+/** 「放行规则关掉 / 打开」:主人当面点的操作,回的是这一句(speech-send 守卫里算 reply)。 */
 async function runRulesToggle(deps: AdminCommandsDeps, chatId: string, on: boolean): Promise<void> {
   const r = setRulesEnabled(deps.stateDir, on)
   const text = !r.ok ? `没改成:${r.error}`
@@ -416,6 +416,7 @@ async function runRulesToggle(deps: AdminCommandsDeps, chatId: string, on: boole
   await deps.sendMessage(chatId, text).catch(() => {})
 }
 
+/** /botname [名字 | 跳过]:看 / 清 / 改 CC 的名字(以前写在 handle 的 if 链里,原样搬出来)。 */
 async function runBotname(deps: AdminCommandsDeps, chatId: string, arg: string): Promise<void> {
   // /botname (no arg) — show current
   if (!arg) {
