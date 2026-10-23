@@ -25,6 +25,7 @@ import type { SynthesizeResult } from '../lib/memory-synthesis'
 import { isConnectFailure } from '../lib/net-errors'
 import type { SelfChangeSpawner } from './self-change-spawn'
 import { formatNightlyReply } from './memory/nightly-notify'
+import { setRulesEnabled } from './permission-gate'
 
 export interface AdminCommandsDeps {
   stateDir: string
@@ -269,6 +270,8 @@ export function isDelegateName(name: string): boolean {
 //   /name <X>     → per-chat user nickname (any sender, via mode-commands)
 //   /botname <X>  → global bot self-name   (admin only, via this handler)
 const BOTNAME_RE = /^\s*\/botname(?:\s+(.+?))?\s*$/
+/** 放行规则的开关(放行 v2 G1 之后;起步规则那句通知里提到的关法)。整句就是这几个字,前后只许空白和句号。 */
+const RULES_TOGGLE_RE = /^\s*放行规则(关掉|关了|关闭|打开|开启)\s*[。.!！]?\s*$/
 const BOTNAME_SKIP_WORDS = new Set(['跳过', '不用', '没有', 'skip', 'clear', '清除'])
 // Same nickname constraint as onboarding + /name — sourced from ./nickname so
 // the allowed set can't drift between them (was a hand-maintained duplicate).
@@ -334,6 +337,7 @@ const ADMIN_ROWS: readonly AdminRow[] = [
   { id: 'hearth.show', match: t => HEARTH_SHOW_RE.exec(t)?.[1] ?? null, run: (d, msg, id: string) => runHearthShow(d, msg.chatId, id) },
   { id: 'hearth.apply', match: t => HEARTH_APPLY_RE.exec(t)?.[1] ?? null, run: (d, msg, id: string) => runHearthApply(d, msg, id) },
   { id: 'hearth.help', match: t => HEARTH_HELP_RE.test(t) || null, run: (d, msg) => sendHearthHelp(d, msg.chatId) },
+  { id: 'rules.toggle', match: t => { const m = RULES_TOGGLE_RE.exec(t); return m ? { on: /打开|开启/.test(m[1]!) } : null }, run: (d, msg, m: { on: boolean }) => runRulesToggle(d, msg.chatId, m.on) },
   { id: 'botname', match: t => { const m = t.match(BOTNAME_RE); return m ? { arg: m[1]?.trim() ?? '' } : null }, run: (d, msg, m: { arg: string }) => runBotname(d, msg.chatId, m.arg) },
 ]
 /** 给测试:行 id 与先后。 */
@@ -401,6 +405,15 @@ async function sendHandsList(deps: AdminCommandsDeps, chatId: string): Promise<v
   await deps.sendMessage(chatId, hands.length
     ? `已配对的手:\n${hands.map(h => `· ${h.name}${h.name === h.id ? '' : `(${h.id})`} → ${h.url ?? '没有地址'}`).join('\n')}\n\n说「让${hands[0]!.name} 看看…」就派给它。`
     : '还没配对任何手。在那台机器上跑 `wechat-cc hand invite`,把它给出的码粘到这里。').catch(() => {})
+}
+
+/** 「放行规则关掉 / 打开」:主人当面点的操作,回的是这一句(speech-send 守卫里算 reply)。 */
+async function runRulesToggle(deps: AdminCommandsDeps, chatId: string, on: boolean): Promise<void> {
+  const r = setRulesEnabled(deps.stateDir, on)
+  const text = !r.ok ? `没改成:${r.error}`
+    : !r.changed ? (on ? '放行规则本来就开着。' : '放行规则本来就关着,每一步都会问你。')
+    : on ? '放行规则打开了:按规则表替你批,别的照旧问你。' : '放行规则关掉了:以后每一步都问你。想再打开就说「放行规则打开」。'
+  await deps.sendMessage(chatId, text).catch(() => {})
 }
 
 /** /botname [名字 | 跳过]:看 / 清 / 改 CC 的名字(以前写在 handle 的 if 链里,原样搬出来)。 */

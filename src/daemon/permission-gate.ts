@@ -10,7 +10,7 @@ import { existsSync, readFileSync, realpathSync, statSync } from 'node:fs'
 import { execFile } from 'node:child_process'
 import { basename, dirname, isAbsolute, join, resolve } from 'node:path'
 import { decide as decideCore, parseReviewAnswer, reviewPrompt, type Review } from '../core/permission-rules/decide'
-import { EMPTY_RULES, parseRulesFile, RULES_FILE, serializeRulesFile, withStarterRules } from '../core/permission-rules/rules-file'
+import { EMPTY_RULES, parseRulesFile, RULES_FILE, serializeRulesFile, STARTER_VERSION, withStarterRules } from '../core/permission-rules/rules-file'
 import { writeFileAtomic } from '../lib/json-file'
 import type { AskSource, Decision, PermissionAsk, RulesFile } from '../core/permission-rules/types'
 import type { PermissionDecisionsStore } from './permission-decisions-store'
@@ -63,8 +63,29 @@ const errMsg = (e: unknown) => (e instanceof Error ? e.message : String(e))
  * 开机时装一次起步规则(放行 v2 G1):文件不在、或是一份从没装过的全空默认值 ⇒ 开起来 + 几条精确的 git 只读规则。
  * 文件坏了 / 主人改过 / 装过 ⇒ 一个字节不动。失败只记日志 —— 装不上就照旧关着,跟以前一样问主人。
  */
-/** 只说真有的关法:微信里还没有「放行规则关掉」这条命令(设计稿 v1 §5 的入口没做),所以给 CLI。 */
-export const STARTER_NOTICE = '放行规则开了:Claude / Codex 跑只读的 git 命令(看状态 / 改动 / 历史)我替你批,别的照旧问你。不想要的话在电脑上跑 `wechat-cc rules disable`。'
+/** 只说真有的关法:「放行规则关掉」是 admin 行 rules.toggle。 */
+export const STARTER_NOTICE = '放行规则开了:Claude / Codex 跑只读的 git 命令(看状态 / 改动 / 历史)我替你批,别的照旧问你。不想要就跟我说「放行规则关掉」。'
+
+/**
+ * 微信里「放行规则关掉 / 打开」(admin 行 rules.toggle):只改开关,别的一个字节不动。坏文件不覆盖(主人手改了一半的东西不能被冲掉)。
+ * 和 CLI `wechat-cc rules enable|disable`(src/cli/rules.ts)同一个动作;daemon 不能引 cli,所以这里自己写这几行。
+ */
+export function setRulesEnabled(stateDir: string, enabled: boolean): { ok: true; changed: boolean } | { ok: false; error: string } {
+  const file = join(stateDir, RULES_FILE)
+  let current: RulesFile = { ...EMPTY_RULES, rules: [] }
+  if (existsSync(file)) {
+    let raw: string
+    try { raw = readFileSync(file, 'utf8') } catch (e) { return { ok: false, error: `读不了规则文件:${errMsg(e)}` } }
+    const parsed = parseRulesFile(raw)
+    if (parsed.errors.length) return { ok: false, error: `规则文件有错,先在电脑上修好(${parsed.errors[0]})` }
+    current = parsed.file
+  }
+  if (current.enabled === enabled) return { ok: true, changed: false }
+  // 主人亲手开 / 关过 ⇒ 记上 starter,以后开机不会再替主人装起步规则、改开关
+  try { writeFileAtomic(file, serializeRulesFile({ ...current, enabled, starter: current.starter ?? STARTER_VERSION }), { mode: 0o600 }) }
+  catch (e) { return { ok: false, error: `写不进规则文件:${errMsg(e)}` } }
+  return { ok: true, changed: true }
+}
 
 export function ensureStarterRules(stateDir: string, log: (tag: string, line: string) => void): boolean {
   const file = join(stateDir, RULES_FILE)
