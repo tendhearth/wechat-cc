@@ -21,14 +21,15 @@ const CORPUS = [
   '清理 all-expired', '清理 所有过期', '清理 bot1-im-bot',
   '/hearth', '/hearth help', '/hearth list', '/hearth show abc_1', '/hearth apply abc_1', '/hearth ingest 一段内容',
   '/botname', '/botname 小助手', '/botname 跳过',
+  '放行规则关掉', '放行规则打开。', '放行规则关闭', '放行规则开启',
   // 日常话 / 别的命令
-  '今天天气怎么样', '你好', '/cc', '/codex', '/help', '/set visit', '任务 3 停', '同意 07', '记忆', '整理一下房间', '我的背包丢了',
+  '今天天气怎么样', '你好', '放行规则是什么', '把放行规则关掉吧', '放行规则关掉了吗', '/cc', '/codex', '/help', '/set visit', '任务 3 停', '同意 07', '记忆', '整理一下房间', '我的背包丢了',
 ]
 
 describe('admin rows', () => {
   it('every row id is distinct and the table keeps today\'s order', () => {
     expect(new Set(ADMIN_ROW_IDS).size).toBe(ADMIN_ROW_IDS.length)
-    expect(ADMIN_ROW_IDS).toEqual(['hand.join', 'hands.list', 'bag', 'health', 'health.ai', 'reset', 'update', 'selfchange.status', 'selfchange.start', 'memory.show', 'memory.synthesize', 'delegate', 'cleanup', 'hearth.ingest', 'hearth.list', 'hearth.show', 'hearth.apply', 'hearth.help', 'botname'])
+    expect(ADMIN_ROW_IDS).toEqual(['hand.join', 'hands.list', 'bag', 'health', 'health.ai', 'reset', 'update', 'selfchange.status', 'selfchange.start', 'memory.show', 'memory.synthesize', 'delegate', 'cleanup', 'hearth.ingest', 'hearth.list', 'hearth.show', 'hearth.apply', 'hearth.help', 'rules.toggle', 'botname'])
   })
 
   // 9d 审稿:「最多一行认领」和「顺序就是优先级」不能同时成立 —— 选互斥。以前「自改 状态」要排在「自改 <需求>」前面才不被当成需求,
@@ -38,6 +39,11 @@ describe('admin rows', () => {
     expect(overlaps).toEqual([])
     expect(adminRowsMatching('自改 状态', HANDS)).toEqual(['selfchange.status'])
     expect(adminRowsMatching('自改 状态栏太挤了', HANDS)).toEqual(['selfchange.start'])
+  })
+
+  it('放行规则开关只认整句;问句 / 闲聊不认(交给模型)', () => {
+    for (const t of ['放行规则关掉', '放行规则打开。', ' 放行规则关闭 ', '放行规则开启!']) expect(adminRowsMatching(t, HANDS), t).toEqual(['rules.toggle'])
+    for (const t of ['放行规则是什么', '把放行规则关掉吧', '放行规则关掉了吗', '放行规则']) expect(adminRowsMatching(t, HANDS), t).toEqual([])
   })
 
 })

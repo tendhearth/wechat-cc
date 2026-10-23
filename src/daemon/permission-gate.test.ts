@@ -5,7 +5,7 @@ import { join } from 'node:path'
 import { openTestDb } from '../lib/db'
 import { NetworkUnprotectedError } from '../lib/network-gate'
 import { makePermissionDecisionsStore } from './permission-decisions-store'
-import { ensureStarterRules, makePermissionGate, RUNAWAY_MAX } from './permission-gate'
+import { ensureStarterRules, makePermissionGate, RUNAWAY_MAX, setRulesEnabled } from './permission-gate'
 import { RULES_FILE } from '../core/permission-rules/rules-file'
 import type { PermissionAsk } from '../core/permission-rules/types'
 
@@ -187,5 +187,32 @@ describe('ensureStarterRules(放行 v2 G1,开机装一次)', () => {
     writeFileSync(join(d3, RULES_FILE), mine)
     expect(ensureStarterRules(d3, () => {})).toBe(false)
     expect(readFileSync(join(d3, RULES_FILE), 'utf8')).toBe(mine)
+  })
+})
+
+describe('setRulesEnabled(微信「放行规则关掉 / 打开」)', () => {
+  const dir = () => mkdtempSync(join(tmpdir(), 'toggle-'))
+  it('只改开关并记上 starter;已经是那样 ⇒ changed:false 不写', () => {
+    const d = dir()
+    ensureStarterRules(d, () => {})
+    const before = JSON.parse(readFileSync(join(d, RULES_FILE), 'utf8'))
+    expect(setRulesEnabled(d, false)).toEqual({ ok: true, changed: true })
+    const after = JSON.parse(readFileSync(join(d, RULES_FILE), 'utf8'))
+    expect(after).toEqual({ ...before, enabled: false })
+    expect(setRulesEnabled(d, false)).toEqual({ ok: true, changed: false })
+    // 关掉以后开机不会再开起来
+    expect(ensureStarterRules(d, () => {})).toBe(false)
+  })
+  it('没装过起步规则、主人在微信里亲手打开 ⇒ 也记 starter(以后开机不再替主人装)', () => {
+    const d = dir()
+    expect(setRulesEnabled(d, true)).toEqual({ ok: true, changed: true })
+    expect(JSON.parse(readFileSync(join(d, RULES_FILE), 'utf8'))).toMatchObject({ enabled: true, starter: 1, rules: [] })
+    expect(ensureStarterRules(d, () => {})).toBe(false)
+  })
+  it('坏文件不覆盖', () => {
+    const d = dir(), broken = '{ nope'
+    writeFileSync(join(d, RULES_FILE), broken)
+    expect(setRulesEnabled(d, false).ok).toBe(false)
+    expect(readFileSync(join(d, RULES_FILE), 'utf8')).toBe(broken)
   })
 })

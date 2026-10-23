@@ -20,7 +20,7 @@ const CORPUS = [
   // 任务(工作台没接线:看「任务」这一族怎么落)
   '任务', '任务 列表', '/task',
   // admin
-  '/health', '看记忆', '背包', '有哪些手', '/botname',
+  '/health', '看记忆', '背包', '有哪些手', '/botname', '放行规则关掉',
   // mode
   '/set', '/whoami', '/help', '/foo', '/cli', '/today', '/visit',
   // 权限回复(没有待批准的)
