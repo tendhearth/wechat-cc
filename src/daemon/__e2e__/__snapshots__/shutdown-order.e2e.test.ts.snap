@@ -16,6 +16,7 @@ exports[`daemon shutdown order (snapshot) > stops every subsystem in the recorde
   "lc workbench-artifacts",
   "lc workbench-notifications",
   "lc ilink",
+  "module sessions/stop",
   "lc sessions",
   "lc provider-probes",
   "lc guard",
