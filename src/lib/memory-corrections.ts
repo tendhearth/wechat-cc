@@ -116,3 +116,30 @@ export function purgeCorrectedFromSources(memoryRoot: string, correctedText: str
   }
   return removed
 }
+
+/**
+ * agenda.md 不是关于主人的事实,但它是 CC 的跟进计划:主人撤掉「下周去杭州」以后,到点 CC 照样会问「杭州玩得怎么样」,
+ * 等于当面把撤掉的事又说一遍(9d 评审 #586)。不删行,用 agenda 现成的格式把命中的待办关掉:
+ * `- [ ] due:<日期> <内容>` ⇒ `- [x] dropped:<今天> <内容>`(agenda 解析本来就认 dropped:)。
+ * **已知限制,比清源头更明显**:待办是 CC 自己的说法(「关心杭州之行」),和被更正的原话(「下周去杭州」)往往不是逐字包含,
+ * 这里只接得住几乎照抄的那种。
+ */
+export function dropCorrectedAgenda(memoryRoot: string, correctedText: string, today: string, archiveDir: string, stamp: string): number {
+  const needle = normalizeMemoryText(correctedText)
+  if ([...needle].length < MIN_CORRECTED_CHARS) return 0
+  const full = join(memoryRoot, 'agenda.md')
+  let before: string
+  try { before = readFileSync(full, 'utf8') } catch { return 0 }
+  let n = 0
+  const after = before.split('\n').map(line => {
+    const m = /^- \[ \] due:\S+ (.*)$/.exec(line)
+    if (!m || !normalizeMemoryText(m[1]!).includes(needle)) return line
+    n++
+    return `- [x] dropped:${today} ${m[1]}`
+  }).join('\n')
+  if (!n) return 0
+  mkdirSync(archiveDir, { recursive: true, mode: 0o700 })
+  writeFileAtomic(join(archiveDir, `agenda.md.${stamp}.md`), before, { mode: 0o600 })
+  writeFileAtomic(full, after, { mode: 0o600 })
+  return n
+}

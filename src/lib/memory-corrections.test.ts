@@ -2,7 +2,7 @@ import { describe, it, expect, afterEach } from 'vitest'
 import { mkdtempSync, mkdirSync, readFileSync, readdirSync, rmSync, writeFileSync, existsSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { correctedTexts, dropCorrectedLines, dropCorrectedValues, purgeCorrectedFromSources, recordRedactions, MIN_CORRECTED_CHARS } from './memory-corrections'
+import { correctedTexts, dropCorrectedAgenda, dropCorrectedLines, dropCorrectedValues, purgeCorrectedFromSources, recordRedactions, MIN_CORRECTED_CHARS } from './memory-corrections'
 
 const dirs: string[] = []
 const fresh = () => { const d = mkdtempSync(join(tmpdir(), 'mem-corr-')); dirs.push(d); return d }
@@ -60,5 +60,20 @@ describe('purgeCorrectedFromSources (清源头)', () => {
     writeFileSync(join(d, 'profile.md'), '- 猫\n')
     expect(purgeCorrectedFromSources(d, '猫', join(d, 'a'), 's')).toEqual([])
     expect(existsSync(join(d, 'a'))).toBe(false)
+  })
+})
+
+describe('dropCorrectedAgenda', () => {
+  it('closes (does not delete) pending follow-ups that quote the corrected sentence, using the agenda format; resolved lines and others untouched', () => {
+    const d = fresh(), archive = join(d, 'a')
+    writeFileSync(join(d, 'agenda.md'), '- [ ] due:2026-11-01 问问下周去杭州出差顺不顺\n- [ ] due:2026-11-02 关心面试\n- [x] done:2026-10-01 下周去杭州出差的票\n')
+    expect(dropCorrectedAgenda(d, '下周去杭州出差', '2026-10-23', archive, 's1')).toBe(1)
+    expect(readFileSync(join(d, 'agenda.md'), 'utf8')).toBe('- [x] dropped:2026-10-23 问问下周去杭州出差顺不顺\n- [ ] due:2026-11-02 关心面试\n- [x] done:2026-10-01 下周去杭州出差的票\n')
+    expect(readdirSync(archive)).toEqual(['agenda.md.s1.md'])
+  })
+  it('KNOWN LIMIT: a follow-up in CC\'s own words (no verbatim quote) is not caught', () => {
+    const d = fresh()
+    writeFileSync(join(d, 'agenda.md'), '- [ ] due:2026-11-01 关心杭州之行\n')
+    expect(dropCorrectedAgenda(d, '下周去杭州出差', '2026-10-23', join(d, 'a'), 's')).toBe(0)
   })
 })
