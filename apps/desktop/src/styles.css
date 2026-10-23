@@ -3482,6 +3482,19 @@ body:has(.dev-banner:not([hidden])) .wizard-window { min-height: calc(100vh - 32
   border-radius: 4px;
 }
 .memory-status[hidden] { display: none !important; }
+/* 主人自己的记忆逐行编辑(记忆改了就算数):一行一个输入框,键跟着行走 */
+.memory-line-editor { margin: 18px; }
+.memory-line-editor[hidden] { display: none !important; }
+.memory-line-hint { margin: 0 0 12px; font-size: 24px; color: var(--ink-3); }
+.memory-lines { list-style: none; margin: 0 0 12px; padding: 0; display: grid; gap: 8px; }
+.memory-line { display: grid; grid-template-columns: minmax(0, 1fr) auto auto; align-items: center; gap: 8px; }
+.memory-line-input { width: 100%; box-sizing: border-box; padding: 8px 12px; font-size: 26px; color: var(--ink); background: var(--paper); border: 1px solid var(--hair); border-radius: 6px; outline: none; }
+.memory-line-input:focus { border-color: var(--green-ink); }
+.memory-line-was { grid-column: 1 / -1; font-size: 22px; color: var(--ink-3); }
+.memory-owned-tag { font-size: 22px; padding: 2px 8px; border-radius: 4px; color: var(--green-ink); background: var(--green-soft); white-space: nowrap; }
+.memory-owner-block { margin: 0 0 16px; padding: 12px 16px; border: 1px solid var(--hair); border-radius: 6px; }
+.memory-owner-block h3 { margin: 0 0 8px; font-size: 26px; }
+.memory-owner-block ul { margin: 0; padding-left: 1.2em; }
 .memory-status[data-tone="ok"]   { background: var(--green-soft); color: var(--green-ink); }
 .memory-status[data-tone="bad"]  { background: var(--rouge-soft); color: var(--rouge); }
 .memory-status[data-tone="info"] { background: var(--paper-2); color: var(--ink-3); }
