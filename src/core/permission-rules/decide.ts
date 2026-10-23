@@ -61,10 +61,12 @@ export async function decide(
   }
 }
 
-/** 首个非空行恰为 allow(不分大小写)才放行;其余一律 ask。 */
+/**
+ * 整段去掉首尾空白后**恰好**是 allow(不分大小写)才放行;多一个字、带引号、包在 JSON 里、被截断、第二行再补一句「不过…」⇒ ask
+ * (放行 v2 G1 随开起来一起收紧:以前只看首个非空行,`allow\n不过…` 也算放行)。
+ */
 export function parseReviewAnswer(text: string): 'allow' | 'ask' {
-  const first = text.split('\n').map(l => l.trim()).find(Boolean)
-  return first?.toLowerCase() === 'allow' ? 'allow' : 'ask'
+  return text.trim().toLowerCase() === 'allow' ? 'allow' : 'ask'
 }
 
 const defuse = (s: string) => s.replace(/<\/?request\b/gi, m => m.replace('<', '‹'))

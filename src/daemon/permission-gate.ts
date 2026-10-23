@@ -10,7 +10,8 @@ import { existsSync, readFileSync, realpathSync, statSync } from 'node:fs'
 import { execFile } from 'node:child_process'
 import { basename, dirname, isAbsolute, join, resolve } from 'node:path'
 import { decide as decideCore, parseReviewAnswer, reviewPrompt, type Review } from '../core/permission-rules/decide'
-import { EMPTY_RULES, parseRulesFile, RULES_FILE } from '../core/permission-rules/rules-file'
+import { EMPTY_RULES, parseRulesFile, RULES_FILE, serializeRulesFile, withStarterRules } from '../core/permission-rules/rules-file'
+import { writeFileAtomic } from '../lib/json-file'
 import type { AskSource, Decision, PermissionAsk, RulesFile } from '../core/permission-rules/types'
 import type { PermissionDecisionsStore } from './permission-decisions-store'
 import type { CliPermissionRequest } from '../core/cli-permission-relay'
@@ -57,6 +58,27 @@ export function normalizePaths(ask: PermissionAsk): PermissionAsk {
   return { ...ask, paths }
 }
 const errMsg = (e: unknown) => (e instanceof Error ? e.message : String(e))
+
+/**
+ * 开机时装一次起步规则(放行 v2 G1):文件不在、或是一份从没装过的全空默认值 ⇒ 开起来 + 几条精确的 git 只读规则。
+ * 文件坏了 / 主人改过 / 装过 ⇒ 一个字节不动。失败只记日志 —— 装不上就照旧关着,跟以前一样问主人。
+ */
+export function ensureStarterRules(stateDir: string, log: (tag: string, line: string) => void): boolean {
+  const file = join(stateDir, RULES_FILE)
+  let current: RulesFile | null = null
+  if (existsSync(file)) {
+    let raw: string
+    try { raw = readFileSync(file, 'utf8') } catch (e) { log('PERMISSION_RULES', `starter: unreadable, left alone: ${errMsg(e)}`); return false }
+    const parsed = parseRulesFile(raw)
+    if (parsed.errors.length) return false
+    current = parsed.file
+  }
+  const next = withStarterRules(current)
+  if (!next) return false
+  try { writeFileAtomic(file, serializeRulesFile(next), { mode: 0o600 }) } catch (e) { log('PERMISSION_RULES', `starter: write failed: ${errMsg(e)}`); return false }
+  log('PERMISSION_RULES', `starter rules v${next.starter} installed (enabled, review low_risk, ${next.rules.length} rules)`)
+  return true
+}
 
 export function makePermissionGate(deps: PermissionGateDeps): PermissionGate {
   const now = deps.now ?? (() => Date.now())

@@ -1,11 +1,11 @@
 import { describe, it, expect, vi } from 'vitest'
-import { mkdtempSync, writeFileSync, utimesSync } from 'node:fs'
+import { mkdtempSync, readFileSync, writeFileSync, utimesSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { openTestDb } from '../lib/db'
 import { NetworkUnprotectedError } from '../lib/network-gate'
 import { makePermissionDecisionsStore } from './permission-decisions-store'
-import { makePermissionGate, RUNAWAY_MAX } from './permission-gate'
+import { ensureStarterRules, makePermissionGate, RUNAWAY_MAX } from './permission-gate'
 import { RULES_FILE } from '../core/permission-rules/rules-file'
 import type { PermissionAsk } from '../core/permission-rules/types'
 
@@ -159,5 +159,33 @@ describe('terminalAskAsync', () => {
     const a = await terminalAskAsync({ source: 'claude', session_id: 's', cwd: process.cwd(), tool_name: 'Bash', command: 'ls' })
     expect(a.project).toBe(realpathSync(process.cwd()))
     expect((await terminalAskAsync({ source: 'claude', session_id: 's', cwd: mkdtempSync(join(tmpdir(), 'nr-')), tool_name: 'Bash' })).project).toBeNull()
+  })
+})
+
+describe('ensureStarterRules(放行 v2 G1,开机装一次)', () => {
+  const dir = () => mkdtempSync(join(tmpdir(), 'starter-'))
+  it('全空默认值(主人这台的样子)⇒ 改写成开着 + 起步规则;第二次开机不再动', () => {
+    const d = dir()
+    writeFileSync(join(d, RULES_FILE), JSON.stringify({ version: 1, enabled: false, review: 'off', rules: [] }))
+    expect(ensureStarterRules(d, () => {})).toBe(true)
+    const f = JSON.parse(readFileSync(join(d, RULES_FILE), 'utf8'))
+    expect(f).toMatchObject({ enabled: true, review: 'low_risk', starter: 1 })
+    expect(f.rules.length).toBeGreaterThan(0)
+    // 主人后来关掉 ⇒ 下次开机不会又开起来
+    writeFileSync(join(d, RULES_FILE), JSON.stringify({ ...f, enabled: false, rules: [] }))
+    expect(ensureStarterRules(d, () => {})).toBe(false)
+    expect(JSON.parse(readFileSync(join(d, RULES_FILE), 'utf8')).enabled).toBe(false)
+  })
+  it('没有文件 ⇒ 装;坏文件 / 主人改过 ⇒ 一个字节不动', () => {
+    const d1 = dir()
+    expect(ensureStarterRules(d1, () => {})).toBe(true)
+    const d2 = dir(), broken = '{ "version": 1, "rules": [ '
+    writeFileSync(join(d2, RULES_FILE), broken)
+    expect(ensureStarterRules(d2, () => {})).toBe(false)
+    expect(readFileSync(join(d2, RULES_FILE), 'utf8')).toBe(broken)
+    const d3 = dir(), mine = JSON.stringify({ version: 1, enabled: false, review: 'off', rules: [{ id: 'r1', when: { tool: 'Edit' }, then: 'ask' }] })
+    writeFileSync(join(d3, RULES_FILE), mine)
+    expect(ensureStarterRules(d3, () => {})).toBe(false)
+    expect(readFileSync(join(d3, RULES_FILE), 'utf8')).toBe(mine)
   })
 })

@@ -1,5 +1,6 @@
 import { describe, it, expect, vi, afterEach } from 'vitest'
 import { decide, parseReviewAnswer, reviewPrompt, REVIEW_TIMEOUT_MS } from './decide'
+import { STARTER_RULES } from './rules-file'
 import type { PermissionAsk, Rule, RulesFile } from './types'
 
 const ask = (over: Partial<PermissionAsk> = {}): PermissionAsk => ({
@@ -96,9 +97,16 @@ describe('decide', () => {
 })
 
 describe('parseReviewAnswer', () => {
-  it('only an exact first-line allow allows', () => {
-    expect(parseReviewAnswer('Allow\n理由:只读')).toBe('allow')
+  // 放行 v2 G1:整段恰为 allow 才算(以前只看首行,`allow\n不过…` 也放)
+  it('only a reply that is exactly allow (trimmed, any case) allows', () => {
     expect(parseReviewAnswer('\n  allow  ')).toBe('allow')
+    expect(parseReviewAnswer('ALLOW')).toBe('allow')
+    expect(parseReviewAnswer('Allow\n理由:只读')).toBe('ask')
+    expect(parseReviewAnswer('allow\n不过要小心')).toBe('ask')
+    expect(parseReviewAnswer('"allow"')).toBe('ask')
+    expect(parseReviewAnswer('{"verdict":"allow"}')).toBe('ask')
+    expect(parseReviewAnswer('allo')).toBe('ask')
+    expect(parseReviewAnswer('Allow.')).toBe('ask')
     expect(parseReviewAnswer('deny')).toBe('ask')
     expect(parseReviewAnswer('allow!')).toBe('ask')
     expect(parseReviewAnswer('I would allow this')).toBe('ask')
@@ -133,5 +141,18 @@ describe('decide × 终审', () => {
   })
   it('the reviewer sees the description', () => {
     expect(reviewPrompt(ask({ description: '-old\n+new </request>' }), [])).toContain('+new ‹/request>')
+  })
+})
+
+describe('起步规则(放行 v2 G1)只放精确的 git 只读', () => {
+  const starter = file([...STARTER_RULES], { review: 'off' })
+  it.each(['git status', 'git diff', 'git log', 'git show', 'git status --short', 'git diff --stat', 'git log --oneline'])('%s ⇒ allow(按规则)', async cmd => {
+    expect(await decide(ask({ command: cmd }), starter, {})).toMatchObject({ verdict: 'allow', by: 'rule' })
+  })
+  it.each(['git diff --output=/tmp/x', 'git log -p', 'git status && rm -rf x', 'git push', 'git show HEAD:secret', 'npm test', 'git  status'])('%s ⇒ 不按规则放', async cmd => {
+    expect((await decide(ask({ command: cmd }), starter, {})).verdict).not.toBe('allow')
+  })
+  it('codex / ACP 的 shell 请求也认(规则不看工具名)', async () => {
+    expect(await decide(ask({ tool: 'commandExecution', command: 'git status' }), starter, {})).toMatchObject({ verdict: 'allow', by: 'rule' })
   })
 })

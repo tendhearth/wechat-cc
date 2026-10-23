@@ -53,7 +53,8 @@ export function parseRulesFile(raw: string): { file: RulesFile; errors: string[]
     else rules.push(r)
   })
   return {
-    file: { version: 1, enabled: o.enabled === true, review: o.review === 'low_risk' ? 'low_risk' : 'off', rules },
+    file: { version: 1, enabled: o.enabled === true, review: o.review === 'low_risk' ? 'low_risk' : 'off', rules,
+      ...(typeof o.starter === 'number' && Number.isInteger(o.starter) && o.starter > 0 ? { starter: o.starter } : {}) },
     errors,
   }
 }
@@ -82,6 +83,28 @@ function parseRule(item: unknown, i: number): Rule | string {
   const rule: Rule = { id, when, then: o.then as Verdict }
   if (typeof o.note === 'string' && o.note.trim()) rule.note = o.note.trim()
   return rule
+}
+
+/**
+ * 起步规则(放行 v2 G1,设计稿 2026-10-23-permission-judge-v2-design):只放 v1 代码里本来就算低风险的那几类,写成规则是为了
+ * 主人看得见、改得了。**只收精确的 git 只读命令**,不带参数 —— 参数里可能藏 `--output` 这类会写文件的选项(v1 的 isLowRisk
+ * 挡它,规则不挡);带参数的、读文件、列目录交给初审(review: low_risk 时),它先过 isLowRisk 再问模型。
+ * **不收「跑测试」**:测试执行的是仓库里的代码(设计稿 G2)。
+ */
+export const STARTER_VERSION = 1
+export const STARTER_RULES: readonly Rule[] = [
+  // 不写 tool:Claude 叫 Bash、Codex 叫 commandExecution、ACP 叫 execute —— 只有 shell 类请求带命令原文,按命令就够了
+  { id: 's1', when: { command: '^git (status|diff|log|show)$' }, then: 'allow', note: '看 git 状态 / 改动 / 历史不用问(起步规则)' },
+  { id: 's2', when: { command: '^git (status --short|diff --stat|log --oneline)$' }, then: 'allow', note: '同上,常用的短格式(起步规则)' },
+]
+
+/**
+ * 什么时候装起步规则:文件不存在,或者是一份**从没装过起步规则**的全空默认值(关着、初审关、零条规则)。
+ * 主人手改过(哪怕只开了开关 / 加了一条)⇒ 不动;装过一次(starter 有值)⇒ 永远不再动。回 null = 不用改。
+ */
+export function withStarterRules(current: RulesFile | null): RulesFile | null {
+  if (current && (current.starter !== undefined || current.enabled || current.review !== 'off' || current.rules.length)) return null
+  return { version: 1, enabled: true, review: 'low_risk', rules: STARTER_RULES.map(r => ({ ...r, when: { ...r.when } })), starter: STARTER_VERSION }
 }
 
 export function serializeRulesFile(f: RulesFile): string {

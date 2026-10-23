@@ -23,7 +23,7 @@ import { defaultTerminalHooksDeps } from '../../cli/terminal-hooks'
 import { resolveAdminChatId } from './index'
 import { resolveClaudeBinary } from './claude-env'
 import { loadCompanionConfig } from '../companion/config'
-import { makePermissionGate, terminalAskAsync } from '../permission-gate'
+import { ensureStarterRules, makePermissionGate, terminalAskAsync } from '../permission-gate'
 import { makePermissionDecisionsStore } from '../permission-decisions-store'
 import { defaultRunner, makeCliReplyCore, makeHandReplyExecutor, readHead } from '../cli-reply-handler'
 import { makeOverseerTodaySource, TODAY_TERMINAL_LIMIT, type TodayWorkbench } from '../overseer-today-source'
@@ -98,6 +98,8 @@ export function wireCliSessions(d: WireCliSessionsDeps) {
   // 放行规则(spec 2026-10-19-permission-rules-design):终端会话与一起做在问主人之前先问它。
   // 规则文件默认没有 / 关着 ⇒ 每条都是 ask,两处入口照旧。初审走 registry 的 cheapEval(自带网络守护)。
   const permissionDecisions = makePermissionDecisionsStore(db)
+  // 放行 v2 G1:主人 10-23 拍板三层生效 ⇒ 全空默认值的规则文件开机时装一次起步规则(装过 / 改过就不动)
+  ensureStarterRules(stateDir, log)
   const permissionGate = makePermissionGate({
     stateDir,
     store: permissionDecisions,
