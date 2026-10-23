@@ -72,6 +72,24 @@ describe('runSettlementBackfill', () => {
     expect(r).toEqual({ contacts: 2, settled: 1 })
   })
 
+  it('cheap model paused (refused backoff / network unprotected) → one "skipped" line, stop the cycle, no "failed"', async () => {
+    const refused = Object.assign(new Error('region_unavailable: agy 被服务方拒绝'), { providerErrorCode: 'region_unavailable' })
+    const unprotected = Object.assign(new Error('网络未受保护'), { code: 'network_unprotected' })
+    for (const err of [refused, unprotected]) {
+      const facts = api({
+        obligationHeavyContacts: vi.fn(() => [{ contact: 'u1', n: 1 }, { contact: 'u2', n: 1 }, { contact: 'u3', n: 1 }]),
+      } as never)
+      const cheapEval = vi.fn(async () => { throw err })
+      const lines: string[] = []
+      await runSettlementBackfill({ facts, cheapEval, contactCap: 5, now: () => NOW, log: (_t, m) => { lines.push(m) } })
+      expect(cheapEval).toHaveBeenCalledTimes(1)
+      expect(lines).toHaveLength(1)
+      expect(lines[0]).toMatch(/skipped this cycle/)
+      expect(lines[0]).not.toMatch(/fail|被拒|error/i)
+      expect(facts.setJudgeFingerprint).not.toHaveBeenCalled()
+    }
+  })
+
   it('no heavy contacts → zero work', async () => {
     const facts = api({ obligationHeavyContacts: vi.fn(() => []) } as never)
     const cheapEval = vi.fn()

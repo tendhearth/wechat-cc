@@ -24,6 +24,7 @@
 import type { FactsApi } from '../../../core/knowledge/facts'
 import type { FactRow } from '../../../core/knowledge/store'
 import { buildSettlementPrompt, parseResolvedIds } from './extract'
+import { pausedReason } from './paused'
 import { SWEEP_FEED_OVERSCAN } from './sweep-conflicts'
 
 /** Only judge contacts with chat activity in the last 30 days. */
@@ -82,6 +83,12 @@ export async function runSettlementBackfill(d: SettlementBackfillDeps): Promise<
     } catch (e) {
       // Non-fatal like every other judge: no fingerprint recorded, retry
       // next cycle.
+      const paused = pausedReason(e)
+      if (paused) {
+        // 剩下的联系人问也是同一个答案:记一条、这一轮停。
+        d.log?.('INGEST', `settlement backfill skipped this cycle: ${paused}`)
+        break
+      }
       d.log?.('INGEST', `settlement backfill failed for ${h.contact} (retry next cycle): ${String(e)}`)
     }
   }
