@@ -222,9 +222,12 @@ export function guardedRunner(inner: ImplementRunner, guard: () => Promise<{ ena
  * 能驱动电脑和浏览器)。`-c mcp_servers={}` 在 0.164.0 上**没用**(插件的那几个照样在)。实测管用的是:不读主人的
  * config.toml(`--ignore-user-config`,登录照旧用 CODEX_HOME)+ 关掉插件 / 浏览器 / 电脑操作 / apps / hooks 这几个功能。
  * 关完以后实跑一次问它能调什么:cua_repl、node_repl、computer-use 都没了,hooks 的噪声也没了;剩下的是 codex 自带的
- * (exec_command 在只读沙箱里、web__run、image_gen、spawn_agent)—— 已知,写进 self-change.md。
+ * (exec_command 在只读沙箱里、spawn_agent 之类;web__run / image_gen 下面也关了)—— 已知,写进 self-change.md。
  */
-export const CODEX_REVIEW_LOCKDOWN = ['--ignore-user-config', '--disable', 'plugins', '--disable', 'browser_use', '--disable', 'computer_use', '--disable', 'apps', '--disable', 'hooks']
+// 联网搜索和画图也关掉(整合者评审 #630):评审的提示词里有 diff,`web__run` 是唯一会把仓库内容带出这台机器的内置工具。
+// web_search 没有 feature 开关,是配置项:`-c web_search="disabled"`;画图是 feature `image_generation`。10-23 实跑核过:关完以后
+// 工具表里没有 web__run / image_gen 了。
+export const CODEX_REVIEW_LOCKDOWN = ['--ignore-user-config', '--disable', 'plugins', '--disable', 'browser_use', '--disable', 'computer_use', '--disable', 'apps', '--disable', 'hooks', '--disable', 'image_generation', '-c', 'web_search="disabled"']
 
 export function codexReviewArgs(input: RunnerInput): string[] {
   return ['exec', ...CODEX_REVIEW_LOCKDOWN, '-s', 'read-only', '-C', input.cwd, '--json', '--', input.prompt]
