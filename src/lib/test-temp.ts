@@ -55,11 +55,13 @@ export function removeLink(path: string): void {
 
 export function removeTempDir(path: string): void {
   const win32 = process.platform === 'win32'
+  const started = Date.now()
   for (let attempt = 0; ; attempt++) {
     try { rmSync(path, { recursive: true, force: true }); return }
     catch (error) {
       if (!win32) throw error
-      if (attempt >= 20) { console.warn(`[test-temp] leaving ${path}: ${String(error)}`); return }
+      // 带上花了多久:Windows CI 的 Hook timed out 怀疑是这里一次次重试吃掉的(10-23 一次红跑留下 202 个目录),先量再改。
+      if (attempt >= 20) { console.warn(`[test-temp] leaving ${path} after ${Date.now() - started}ms: ${String(error)}`); return }
       Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 100)
     }
   }
