@@ -21,8 +21,8 @@
  *   - 开始后 dev 被别人动过(不是我们刚合的那一个)⇒ 停:剩下几层的内容不再是 CI 验过的那一份。
  *   - 兄弟(两个 PR 叠在同一个下层上)⇒ 第一版不处理,停下来说清楚:先排成一条线,或者各自等 CI。
  *   - 网络抖(SSL_ERROR_SYSCALL 之类)⇒ push / 改 base / 合 退避重试三次;租约和 match-head 被拒不重试。
- *   - 跑到一半停了 ⇒ 重跑同一条命令接着来:下层 PR 已合、上层 base 还指着它的分支 ⇒ 用那个 PR 最后的 head 当
- *     rebase 的起点;已经 rebase 推上去的那层不再 rebase。
+ *   - 跑到一半停了 ⇒ 重跑同一条命令接着来:下层 PR 已合、上层 base 还指着它的分支 ⇒ 找这一层当初叠在下层的
+ *     哪个提交上(findLandedParentOld)当 rebase 起点;找不到就停,要 --parent-old;已经 rebase 推上去的那层不再 rebase。
  *   - 只在整合者自己的 detached worktree 里跑:这条命令会 checkout / rebase,不能在别人在用的工作区里。
  */
 import type { ExecResult } from './ci-triage-run'
@@ -43,6 +43,8 @@ export interface CiLandOpts {
   dryRun?: boolean
   skipTypecheck?: boolean
   target?: string
+  /** 接着上一次、自动找不到下层的旧 head 时手给(这一层当初叠在下层的哪个提交上)。 */
+  parentOld?: string
 }
 
 /** 0 全部合完 / 1 CI 红 / 2 前提不满足或 gh 出错 / 3 head 或 dev 被人动过 / 4 rebase 冲突 / 5 等超时。 */
@@ -60,8 +62,8 @@ export interface PrInfo {
 export interface Layer extends PrInfo {
   /** 开始时记下的 head(下层合掉以后它就从分支名上消失了)。 */
   oldHead: string
-  /** 只有最下面一层可能有:它的 base 是一个**已经合掉**的 PR 的分支(上一次跑到一半停了)⇒ 那个 PR 最后的 head。 */
-  landedParentHead?: string
+  /** 只有最下面一层可能有:它的 base 是一个**已经合掉**的 PR 的分支(上一次跑到一半停了)⇒ 那个 PR 和它最后的 head。 */
+  landedParent?: { number: number; head: string }
 }
 
 export interface MergedPr { number: number; headRefName: string; headRefOid: string }
@@ -133,7 +135,7 @@ export function resolveStack(top: number, open: PrInfo[], target: string, merged
       throw new Error(`#${layer.number} 上还叠着不在这一串里的 ${siblings.map(s => `#${s.number}`).join('、')}(兄弟):先排成一条线,或者让它们各自等 CI`)
     }
   }
-  return chain.map((p, i) => ({ ...p, oldHead: p.headRefOid, ...(i === 0 && landedParent ? { landedParentHead: landedParent.headRefOid } : {}) }))
+  return chain.map((p, i) => ({ ...p, oldHead: p.headRefOid, ...(i === 0 && landedParent ? { landedParent: { number: landedParent.number, head: landedParent.headRefOid } } : {}) }))
 }
 
 const POLL_MS = 3 * 60_000
@@ -171,6 +173,21 @@ export async function runCiLand(deps: CiLandDeps, opts: CiLandOpts): Promise<CiL
       r = fn()
     }
     return r
+  }
+  const isAncestor = (a: string, b: string) => git('merge-base', '--is-ancestor', a, b).code === 0
+  /**
+   * 接着上一次时,最下面那层的 rebase 起点 = 它**当初叠在**下层的哪个提交上。下层合之前常被 rebase 过(整合者、
+   * 或者上一次 ci land 自己),它最后的 head 就不是这一层的祖先了;靠补丁相同让 git 丢旧提交也不稳 —— 下层 rebase 时
+   * 解过冲突补丁就变了(#617)。所以按顺序找第一个**是这一层祖先**的:手给的 → 下层最后的 head → 下层每次被
+   * force push 之前的 head(GraphQL 的 HeadRefForcePushedEvent.beforeCommit,REST 的事件不带 before)。
+   */
+  const findLandedParentOld = (layer: Layer): string | undefined => {
+    const lp = layer.landedParent!
+    const befores = ghJson<string[]>('api', 'graphql', '-F', 'owner={owner}', '-F', 'name={repo}', '-F', `n=${lp.number}`,
+      '-f', 'query=query($owner:String!,$name:String!,$n:Int!){repository(owner:$owner,name:$name){pullRequest(number:$n){timelineItems(itemTypes:[HEAD_REF_FORCE_PUSHED_EVENT],last:50){nodes{... on HeadRefForcePushedEvent{beforeCommit{oid}}}}}}}',
+      '-q', '[.data.repository.pullRequest.timelineItems.nodes[].beforeCommit.oid]') ?? []
+    const candidates = [opts.parentOld, lp.head, ...[...befores].reverse()].filter((c): c is string => !!c)
+    return candidates.find(c => isAncestor(c, layer.oldHead))
   }
   const ghJson = <T>(...args: string[]): T | null => {
     const r = gh(...args)
@@ -242,15 +259,18 @@ export async function runCiLand(deps: CiLandDeps, opts: CiLandOpts): Promise<CiL
   for (let i = 0; i < stack.length; i++) {
     const layer = stack[i]!
     let head = layer.oldHead
-    const parentOld = i > 0 ? stack[i - 1]!.oldHead : layer.landedParentHead
-    if (parentOld) {
+    if (i > 0 || layer.landedParent) {
       if (git('checkout', '-q', '--detach', layer.oldHead).code !== 0) return done(CI_LAND_EXIT.precondition, `checkout ${layer.oldHead.slice(0, 8)} 失败`)
       // 上一次已经 rebase 并推上去了(停在改 base / 合那一步)⇒ 已经在 dev 上,不再 rebase。
       const alreadyOnTarget = git('merge-base', '--is-ancestor', `origin/${target}`, 'HEAD').code === 0
-      // 下层在合之前被 rebase 过(整合者常这么做)⇒ parentOld 不是这一层的祖先。照样 `--onto origin/dev parentOld`:
-      // git 会把这一层里跟 parentOld 那几个补丁相同的旧提交当成「已经 cherry-pick 过」丢掉,只重放这一层自己的
-      // (2026-10-23 用 #616 叠在已合的 #615 上真机试过:三个提交只重放了一个,6 个文件)。
-      const rb = alreadyOnTarget ? { code: 0 } : git('rebase', '--onto', `origin/${target}`, parentOld)
+      let parentOld = i > 0 ? stack[i - 1]!.oldHead : undefined
+      if (!alreadyOnTarget && !parentOld) {
+        parentOld = findLandedParentOld(layer)
+        if (!parentOld) {
+          return done(CI_LAND_EXIT.precondition, `#${layer.number} 叠在已合的 #${layer.landedParent!.number} 上,但找不到它当初叠在哪个提交上(下层合之前被 rebase 过、事件里也没有):用 --parent-old <sha> 给出来`)
+        }
+      }
+      const rb = alreadyOnTarget ? { code: 0 } : git('rebase', '--onto', `origin/${target}`, parentOld!)
       if (rb.code !== 0) {
         git('rebase', '--abort')
         return done(CI_LAND_EXIT.conflict, `#${layer.number} rebase 到 ${target} 冲突,已 abort;前面 ${merged.length} 层已合(${merged.map(n => `#${n}`).join('、') || '无'}),这一层交还负责人`)

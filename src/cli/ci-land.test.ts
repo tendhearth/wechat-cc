@@ -61,6 +61,10 @@ function fakeDeps(script: {
   /** 前几次 push / gh pr merge 回什么 stderr(网络抖)。 */
   netFailures?: { push?: string[]; merge?: string[] }
   onTarget?: string[]
+  /** 哪些提交是最下面那层的祖先(接着来时找旧 head 用)。 */
+  ancestors?: string[]
+  /** 已合下层被 force push 之前的 head(GraphQL beforeCommit,从旧到新)。 */
+  forcePushBefores?: string[]
 }) {
   const calls: string[] = []
   let viewIdx = 0
@@ -76,7 +80,11 @@ function fakeDeps(script: {
     if (line === 'git status --porcelain') return r('')
     if (line.startsWith('gh pr list') && args.includes('merged')) return r(JSON.stringify(script.merged ?? []))
     if (line.startsWith('gh pr list')) return r(JSON.stringify(script.open))
-    if (line.startsWith('git merge-base --is-ancestor')) return r('', (script.onTarget ?? []).includes(head) ? 0 : 1)
+    if (line.startsWith('git merge-base --is-ancestor')) {
+      if (args[2] === 'origin/dev') return r('', (script.onTarget ?? []).includes(head) ? 0 : 1)
+      return r('', (script.ancestors ?? []).includes(args[2]!) ? 0 : 1)
+    }
+    if (line.startsWith('gh api graphql')) return r(JSON.stringify(script.forcePushBefores ?? []))
     if (line.startsWith('git push') && script.netFailures?.push?.length) return r('', 128, script.netFailures.push.shift()!)
     if (line.startsWith('gh pr view')) {
       const v = script.views[Math.min(viewIdx++, script.views.length - 1)]
@@ -232,7 +240,7 @@ describe('runCiLand', () => {
 
   it('接着上一次:最下面那个已合,上一层的 base 还指着它的分支 ⇒ 用那个 PR 最后的 head 当 rebase 起点', async () => {
     const rest = [pr(2, 'a', 'b', 'sb'), pr(3, 'b', 'c', 'sc')]
-    const { deps, calls } = fakeDeps({ open: rest, merged: [{ number: 1, headRefName: 'a', headRefOid: 'sa-final' }], views: [green('sc')] })
+    const { deps, calls } = fakeDeps({ open: rest, merged: [{ number: 1, headRefName: 'a', headRefOid: 'sa-final' }], views: [green('sc')], ancestors: ['sa-final'] })
     const res = await runCiLand(deps, { top: 3, skipTypecheck: true })
     expect(res.exitCode).toBe(CI_LAND_EXIT.landed)
     expect(res.merged).toEqual([2, 3])
@@ -248,6 +256,40 @@ describe('runCiLand', () => {
     expect(calls.some(c => c.startsWith('git rebase --onto'))).toBe(false)
     expect(calls.some(c => c.startsWith('git push'))).toBe(false)
     expect(calls).toContain('gh pr merge 2 --squash --match-head-commit sb2')
+  })
+})
+
+describe('runCiLand —— 接着来时找下层的旧 head', () => {
+  const rest = [pr(2, 'a', 'b', 'sb'), pr(3, 'b', 'c', 'sc')]
+  const merged = [{ number: 1, headRefName: 'a', headRefOid: 'sa-final' }]
+
+  it('下层合前被 rebase 过、还解过冲突(补丁变了,#617)⇒ 用 force push 之前、是这一层祖先的那个 head', async () => {
+    const { deps, calls } = fakeDeps({ open: rest, merged, views: [green('sc')], forcePushBefores: ['sa-v1', 'sa-v2'], ancestors: ['sa-v1'] })
+    const res = await runCiLand(deps, { top: 3, skipTypecheck: true })
+    expect(res.exitCode).toBe(CI_LAND_EXIT.landed)
+    expect(calls).toContain('git rebase --onto origin/dev sa-v1')
+    expect(calls.some(c => c.includes('sa-final') && c.startsWith('git rebase'))).toBe(false)
+  })
+
+  it('几次 force push 之前的都是祖先 ⇒ 取最新的那个', async () => {
+    const { deps, calls } = fakeDeps({ open: rest, merged, views: [green('sc')], forcePushBefores: ['sa-v1', 'sa-v2'], ancestors: ['sa-v1', 'sa-v2'] })
+    await runCiLand(deps, { top: 3, skipTypecheck: true })
+    expect(calls).toContain('git rebase --onto origin/dev sa-v2')
+  })
+
+  it('一个都对不上 ⇒ 停,要 --parent-old,一层都不动', async () => {
+    const { deps, calls } = fakeDeps({ open: rest, merged, views: [green('sc')], forcePushBefores: ['sa-v1'], ancestors: [] })
+    const res = await runCiLand(deps, { top: 3, skipTypecheck: true })
+    expect(res.exitCode).toBe(CI_LAND_EXIT.precondition)
+    expect(res.message).toMatch(/--parent-old/)
+    expect(calls.some(c => c.startsWith('git rebase --onto') || c.startsWith('git push') || c.startsWith('gh pr merge'))).toBe(false)
+  })
+
+  it('--parent-old 手给且是祖先 ⇒ 用它', async () => {
+    const { deps, calls } = fakeDeps({ open: rest, merged, views: [green('sc')], ancestors: ['manual'] })
+    const res = await runCiLand(deps, { top: 3, skipTypecheck: true, parentOld: 'manual' })
+    expect(res.exitCode).toBe(CI_LAND_EXIT.landed)
+    expect(calls).toContain('git rebase --onto origin/dev manual')
   })
 })
 
