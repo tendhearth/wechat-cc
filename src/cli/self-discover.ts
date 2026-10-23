@@ -32,7 +32,9 @@ export interface Candidate {
 
 const TS = /^(\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?Z) \[([^\]]+)\] (.*)$/
 // 「失败」的说法。宁可多收几类(排序会把偶发的压下去),别漏掉一类一直在发生的。
-const FAILURE = /\b(fail(?:ed|ure)?|error|refused|time[d ]?out|denied|gave up|not delivered|unavailable|unreachable|rejected|crash(?:ed)?)\b|失败|被拒|超时/i
+// 只认「发生了超时」(timed out / 等超时 / 超时了),不认裸的 timeout / 超时:开机时打印配置的那行
+// 「披露闸门超时 30000ms」会被当成失败(10-23 真机第一次跑就误报了 20 次)。
+const FAILURE = /\b(fail(?:ed|ure)?|error|refused|timed out|denied|gave up|not delivered|unavailable|unreachable|rejected|crash(?:ed)?)\b|失败|被拒|超时了|等超时|已超时/i
 
 /** 把一句话里会变的部分抹掉:时间、十六进制 id、wxid、聊天 id、路径里的数字、所有数字。 */
 export function signatureOf(message: string): string {

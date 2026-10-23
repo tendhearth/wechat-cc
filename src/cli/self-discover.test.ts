@@ -38,6 +38,13 @@ describe('discover', () => {
     ].join('\n')
     expect(discover({ ...base, log })).toEqual([])
   })
+  it('打印配置的那行(「超时 30000ms」「timeout=5s」)不算失败;真的超时了算', () => {
+    const cfg = [1, 2, 3].map(h => at(h, '[BOOT] social: 披露闸门超时 30000ms(按实际 cheapEval provider 的延迟预算)')).join('\n')
+    expect(discover({ ...base, log: cfg })).toEqual([])
+    const real = [1, 2, 3].map(h => at(h, '[TURN] provider timed out after 60s')).join('\n')
+    expect(discover({ ...base, log: real })[0]?.count).toBe(3)
+  })
+
   it('中文的失败说法也认', () => {
     const log = [1, 2, 3].map(h => at(h, '[GUARD] 网络守护:被拒')).join('\n')
     expect(discover({ ...base, log })[0]?.count).toBe(3)
