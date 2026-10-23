@@ -18,6 +18,10 @@ describe('agyErrorCode —— 每条真机样本的码与 fixture 一致', () =>
   it.each(samples.map(s => [s.id, s] as const))('%s', (_id, s) => {
     expect(agyErrorCode(s.message) ?? null).toBe(s.errorCode)
   })
+  it('只有「location」那句才是地区;别的不合格原因(同一个开头)不判成地区', () => {
+    expect(agyErrorCode('error: Eligibility check failed: Your current account is not eligible for Antigravity, because it is not currently available in your location.')).toBe('region_unavailable')
+    expect(agyErrorCode('error: Eligibility check failed: Your current account is not eligible for Antigravity, because it does not have an active subscription.')).not.toBe('region_unavailable')
+  })
   it('红线 B:歧义句固定是 network,永远不是认证码', () => {
     expect(agyErrorCode(AMBIGUOUS.message)).toBe('network')
   })
