@@ -48,8 +48,8 @@
 |---|---|---|
 | 0 | **只加测试**:关机顺序快照(起真 daemon、正常关掉,从日志读出先后;#595)。开机顺序快照挪到 PR 6:今天五样开机没有统一的日志行,硬加就改了行为;进了容器以后容器本来就按模块记 | 随时(不改行为) |
 | 0b | **健康门补两条**(`self deploy`):今天只认 `/v1/health` 200、版本 / head 对得上、插件报了上来,**不看拉消息**。补:每个账号的拉消息循环在跑;`daemon_starting` 的 503 当「接着等」(在原有超时内),不当失败回滚 | 随时;PR 2 之前必须在 |
-| 1 | `workbench`(+ wb-*):离微信最远,optional | 0d075422 跑满一整天、日志里没有 MODULES / 关机异常(整合者定) |
-| 2 | `internal-api`:只搬家(#599)。门 + info 文件挪到 onStart + 开机顺序快照挪到 PR 6(那时 `bootRef?.` 才换成 lazy) | 上一步部署、真机核对过 |
+| 1 | `workbench`(+ wb-*):离微信最远,optional | 上一次部署 `wechat-cc self soak --min-restarts 1` 绿:日志里没有意外重启 / MODULES 失败 / 崩溃、健康接口干净、跑够 4 小时且优雅重启过一次(原来是「跑满一整天」,2026-10-23 改成看信号) |
+| 2 | `internal-api`:只搬家(#599)。门 + info 文件挪到 onStart + 开机顺序快照挪到 PR 6(那时 `bootRef?.` 才换成 lazy) | 上一步部署后 `self soak --min-restarts 1` 绿 |
 | 3 | `sessions`(+ 闲置清扫) | 同上 |
 | 4 | `ilink`(lazy speech;`speechRef` 删掉) | 同上 |
 | 5 | `polling` + `pipeline`(lazy polling;`refs.polling` / `refs.pipeline` 删掉) | 同上;离主人最近,最后做 |

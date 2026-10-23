@@ -383,7 +383,46 @@ const selfChangeCmd = defineCommand({
   },
 })
 
+// ── self soak — 这一次部署稳不稳、能不能放下一步(src/cli/self-soak.ts 开头写了判法) ──
+const selfSoakCmd = defineCommand({
+  meta: { name: 'soak', description: '这次部署在真机上稳不稳:从最后一次 self deploy 算起看日志里的意外重启 / 模块失败 / 崩溃,和健康接口;只读' },
+  args: {
+    since: { type: 'string', description: '从哪个时间算起(ISO;缺省 = 日志里最后一次 self deploy 的重启)' },
+    'min-hours': { type: 'string', description: '至少跑几小时才放行(缺省 4)' },
+    'min-restarts': { type: 'string', description: '部署后至少优雅重启过几次(缺省 0;改到关机顺序的给 1)' },
+    json: { type: 'boolean', description: 'JSON 输出' },
+  },
+  async run({ args }) {
+    const { readFileSync, existsSync } = await import('node:fs')
+    const { readApiInfo } = await import('../../lib/api-info')
+    const { LOG_FILE } = await import('../../lib/log')
+    const { judgeSoak, formatSoak, SOAK_EXIT } = await import('../self-soak')
+    const num = (raw: unknown, dflt: number) => (raw === undefined || raw === '' ? dflt : Number(raw))
+    const minHours = num(args['min-hours'], 4)
+    const minRestarts = num(args['min-restarts'], 0)
+    const since = args.since ? Date.parse(String(args.since)) : undefined
+    if (!Number.isFinite(minHours) || minHours < 0 || !Number.isInteger(minRestarts) || minRestarts < 0 || (since !== undefined && !Number.isFinite(since))) {
+      console.error('self soak: 用法 wechat-cc self soak [--since <ISO>] [--min-hours N] [--min-restarts N] [--json]')
+      process.exit(SOAK_EXIT.red)
+      return
+    }
+    const read = (p: string) => (existsSync(p) ? readFileSync(p, 'utf8') : '')
+    const log = read(`${LOG_FILE}.1`) + read(LOG_FILE)
+    let health = null
+    const info = readApiInfo(STATE_DIR)
+    if (info) {
+      try {
+        const res = await fetch(`${info.baseUrl}/v1/health`, { headers: { authorization: `Bearer ${info.token}` }, signal: AbortSignal.timeout(5000) })
+        if (res.ok) health = await res.json()
+      } catch { /* 不通 ⇒ health 为 null,判红 */ }
+    }
+    const report = judgeSoak({ log, health, now: Date.now(), ...(since !== undefined ? { since } : {}), minHours, minRestarts })
+    console.log(args.json ? JSON.stringify(report, null, 2) : formatSoak(report))
+    process.exit(SOAK_EXIT[report.verdict])
+  },
+})
+
 export const selfCmd = defineCommand({
   meta: { name: 'self', description: '自维护:部署自身、让 CC 自己改自己（仅 macOS launchd；见 docs/maintainer/deploy.md 与 self-change.md）' },
-  subCommands: { change: selfChangeCmd, deploy: selfDeployCmd },
+  subCommands: { change: selfChangeCmd, deploy: selfDeployCmd, soak: selfSoakCmd },
 })

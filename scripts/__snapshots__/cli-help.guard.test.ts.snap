@@ -2254,15 +2254,32 @@ OPTIONS
 "
 `;
 
+exports[`cli.ts --help 快照(逐字节) > self --help > self soak --help 1`] = `
+"这次部署在真机上稳不稳:从最后一次 self deploy 算起看日志里的意外重启 / 模块失败 / 崩溃,和健康接口;只读 (self soak)
+
+USAGE self soak [OPTIONS] 
+
+OPTIONS
+
+                --since=<since>    从哪个时间算起(ISO;缺省 = 日志里最后一次 self deploy 的重启)
+        --min-hours=<min_hours>    至少跑几小时才放行(缺省 4)                          
+  --min-restarts=<min_restarts>    部署后至少优雅重启过几次(缺省 0;改到关机顺序的给 1)            
+                         --json    JSON 输出                                  
+
+
+"
+`;
+
 exports[`cli.ts --help 快照(逐字节) > self --help 1`] = `
 "自维护:部署自身、让 CC 自己改自己（仅 macOS launchd；见 docs/maintainer/deploy.md 与 self-change.md） (wechat-cc self v1.7.7 (dev))
 
-USAGE wechat-cc self change|deploy
+USAGE wechat-cc self change|deploy|soak
 
 COMMANDS
 
   change    自改流水线:执行者在专用克隆里实现 → 测试/评审/CI/主人拍板/合 dev → 部署 + 自检,不过就回滚(仅 macOS)
   deploy    原子换 sidecar 进 .app、重启 daemon(launchd)、健康门,失败自动回滚(仅 macOS)       
+    soak    这次部署在真机上稳不稳:从最后一次 self deploy 算起看日志里的意外重启 / 模块失败 / 崩溃,和健康接口;只读  
 
 Use wechat-cc self <command> --help for more information about a command.
 
