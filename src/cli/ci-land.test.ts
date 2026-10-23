@@ -309,6 +309,40 @@ describe('runCiLand —— 接着来时找下层的旧 head', () => {
   })
 })
 
+describe('runCiLand —— 接着来时先把最下层放到 dev 上再等 CI', () => {
+  const merged = [{ number: 1, headRefName: 'a', headRefOid: 'sa' }]
+  it('只有一层:先 rebase 推上去、改 base,再等**新 head** 的 CI', async () => {
+    const { deps, calls } = fakeDeps({ open: [pr(2, 'a', 'b', 'sb')], merged, ancestors: ['sa'], views: [green('sb-rebased')] })
+    const res = await runCiLand(deps, { top: 2, skipTypecheck: true })
+    expect(res.exitCode).toBe(CI_LAND_EXIT.landed)
+    const rebase = calls.indexOf('git rebase --onto origin/dev sa')
+    const firstWait = calls.findIndex(c => c.startsWith('gh pr view 2 --json headRefOid'))
+    expect(rebase).toBeGreaterThan(-1)
+    expect(rebase).toBeLessThan(firstWait)
+    expect(calls.indexOf('gh pr edit 2 --base dev')).toBeLessThan(firstWait)
+    expect(calls).toContain('gh pr merge 2 --squash --match-head-commit sb-rebased')
+  })
+  it('只有一层:CI 还挂在旧 head 上 ⇒ 当「head 变了」停,不合没验过的那份', async () => {
+    const { deps, calls } = fakeDeps({ open: [pr(2, 'a', 'b', 'sb')], merged, ancestors: ['sa'], views: [green('sb')] })
+    const res = await runCiLand(deps, { top: 2, skipTypecheck: true })
+    expect(res.exitCode).toBe(CI_LAND_EXIT.moved)
+    expect(calls.some(c => c.startsWith('gh pr merge'))).toBe(false)
+  })
+  it('多层:最下层只放一次,上层照常用它的旧 head 当起点', async () => {
+    const { deps, calls } = fakeDeps({ open: [pr(2, 'a', 'b', 'sb'), pr(3, 'b', 'c', 'sc')], merged, ancestors: ['sa'], views: [green('sc')] })
+    const res = await runCiLand(deps, { top: 3, skipTypecheck: true })
+    expect(res.exitCode).toBe(CI_LAND_EXIT.landed)
+    expect(calls.filter(c => c === 'git rebase --onto origin/dev sa').length).toBe(1)
+    expect(calls).toContain('git rebase --onto origin/dev sb')
+    expect(calls).toContain('gh pr merge 2 --squash --match-head-commit sb-rebased')
+  })
+  it('预演说出接着来的那一步', async () => {
+    const { deps } = fakeDeps({ open: [pr(2, 'a', 'b', 'sb')], merged, views: [green('sb')] })
+    const res = await runCiLand(deps, { top: 2, dryRun: true })
+    expect(res.message).toMatch(/叠在已合的 #1 上/)
+  })
+})
+
 describe('runCiLand —— 合并的回应丢了', () => {
   const open = [pr(1, 'dev', 'a', 'sa'), pr(2, 'a', 'b', 'sb')]
   it('merge 报 SSL 错、但其实合了 ⇒ 问一句状态,算合成,接着下一层', async () => {
