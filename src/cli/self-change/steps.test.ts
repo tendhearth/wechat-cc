@@ -532,6 +532,26 @@ describe('ci', () => {
     expect(s.ci).toEqual({ runId: 42, url: 'https://github.com/x/y/actions/runs/42', verdict: 'green', sha: HEAD_SHA })
   })
 
+  it('推完开进 dev 的 PR(CI 只认 PR 那一份);存盘里有就不再开', async () => {
+    const s = fakeState({ request: '修一下 [migration-edit] 的事' })
+    const { deps, rec } = makeFakeDeps({ git: gitReply({ 'rev-parse HEAD': HEAD_SHA }) })
+    await steps.ci(s, deps)
+    expect(rec.forge).toEqual([['ensurePr', 'self/ab12cd34', 'dev', '自改 #ab12cd34:修一下 的事']])
+    expect(s.pr).toEqual({ number: 77, url: 'https://github.com/x/y/pull/77' })
+    await steps.ci(s, deps)
+    expect(rec.forge).toHaveLength(1)
+  })
+
+  it('开不了 PR ⇒ ci_unavailable(没有 PR 就没有 CI),不去等 triage', async () => {
+    let triaged = false
+    const { deps } = makeFakeDeps({ forge: { ensurePr: async () => { throw new Error('gh: not logged in') } } })
+    deps.ciTriage = async o => { triaged = true; return { report: greenTriage(o.sha), exitCode: 0 } }
+    const out = await steps.ci(fakeState(), deps)
+    expect(out).toMatchObject({ ok: false, fail: 'ci_unavailable' })
+    expect(out.detail).toContain('not logged in')
+    expect(triaged).toBe(false)
+  })
+
   it('不绿 ⇒ 修复轮,prompt 是 triage 的人读输出', async () => {
     const { deps } = makeFakeDeps({ git: gitReply({ 'rev-parse HEAD': HEAD_SHA }), ciTriage: o => greenTriage(o.sha, 'real') })
     const out = await steps.ci(fakeState(), deps)
@@ -595,6 +615,14 @@ describe('approval', () => {
   it('deny ⇒ declined', async () => {
     const { deps } = makeFakeDeps({ decisions: ['deny'] })
     expect(await steps.approval(fakeState(), deps)).toMatchObject({ ok: false, fail: 'declined' })
+    // 没开过 PR 就没什么可关的。
+  })
+
+  it('deny 且开过 PR ⇒ 关掉 PR,分支留着', async () => {
+    const { deps, rec } = makeFakeDeps({ decisions: ['deny'] })
+    expect(await steps.approval(fakeState({ pr: { number: 77, url: 'u' } }), deps)).toMatchObject({ ok: false, fail: 'declined' })
+    expect(rec.forge).toEqual([['close', '77']])
+    expect(rec.git.some(a => a.includes('--delete'))).toBe(false)
   })
 
   it('daemon 侧 timeout / undelivered ⇒ approval_timeout', async () => {
@@ -687,45 +715,62 @@ describe('approval', () => {
 })
 
 describe('merge', () => {
-  it('rebase 冲突 ⇒ abort + merge_conflict,不碰 dev', async () => {
-    const { deps, rec } = makeFakeDeps({ git: gitReply({ 'rebase origin/dev': { code: 1, stderr: 'CONFLICT (content)' } }) })
-    const out = await steps.merge(fakeState(), deps)
-    expect(out).toMatchObject({ ok: false, fail: 'merge_conflict' })
-    expect(rec.git.some(a => a.join(' ') === 'rebase --abort')).toBe(true)
-    expect(rec.git.some(a => a.includes('--ff-only'))).toBe(false)
-  })
-
-  it('顺序:fetch → rebase → rev-parse → 快进 push → 删远端分支(不再 checkout dev)', async () => {
-    const s = fakeState({ ci: { runId: 1, url: null, verdict: 'green', sha: HEAD_SHA } })
+  it('顺序:detach → ci land 合 PR → fetch → 树放到 dev 上 → 装依赖 → 删远端分支', async () => {
+    const s = fakeState({ ci: { runId: 1, url: null, verdict: 'green', sha: HEAD_SHA }, pr: { number: 77, url: 'u' } })
     const { deps, rec } = makeFakeDeps({ git: gitReply({ 'rev-parse HEAD': HEAD_SHA }) })
     expect(await steps.merge(s, deps)).toEqual({ ok: true, next: 'deploy' })
-    // 工作树里 checkout 一个别处已检出的分支会被 git 拒绝,而且也不需要 ——
-    // 一条不带 --force 的 push 天然只许快进,语义和 merge --ff-only 一样。
+    // ci land 要 detached 的树;它合完,树才放到 dev 上(deploy 断言 HEAD == merge.sha)。
     expect(rec.git.map(a => a.join(' '))).toEqual([
-      'fetch origin', 'rebase origin/dev', 'rev-parse HEAD',
-      'push origin HEAD:refs/heads/dev', 'push origin --delete self/ab12cd34',
+      'checkout -q --detach', 'fetch origin dev', 'checkout -q --detach origin/dev', 'rev-parse HEAD',
+      `diff --quiet ${HEAD_SHA} ${HEAD_SHA}`, 'push origin --delete self/ab12cd34',
     ])
-    // 全在这条运行自己的工作树里跑:打到中枢上的 rebase 会去改中枢的 dev。
-    expect(rec.gitCwd.map(r => r.cwd)).toEqual([RUN_DIR, RUN_DIR, RUN_DIR, RUN_DIR, RUN_DIR])
+    expect(rec.forge).toEqual([['land', '77', 'dev']])
+    // 全在这条运行自己的工作树里跑。
+    expect(new Set(rec.gitCwd.map(r => r.cwd))).toEqual(new Set([RUN_DIR]))
+    expect(rec.exec).toContainEqual(['bun', 'install', '--frozen-lockfile'])
     expect(s.merge).toEqual({ sha: HEAD_SHA, rebased: false })
-    expect(rec.notices[0]).toContain('已合入 dev')
+    expect(rec.notices[0]).toContain('已合入 dev(PR #77')
+    // 不再自己往 dev 推。
+    expect(rec.git.some(a => a.join(' ').includes('HEAD:refs/heads/dev'))).toBe(false)
   })
 
-  it('远端在这中间前进了(push 被拒)⇒ merge_conflict,不强推、不删分支', async () => {
-    const { deps, rec } = makeFakeDeps({
-      git: gitReply({ 'push origin HEAD:': { code: 1, stderr: '! [rejected] HEAD -> dev (non-fast-forward)' } }),
-    })
+  it('老存盘没有 PR ⇒ 先补开一个再合', async () => {
+    const s = fakeState()
+    const { deps, rec } = makeFakeDeps()
+    expect(await steps.merge(s, deps)).toMatchObject({ ok: true })
+    expect(rec.forge.map(f => f[0])).toEqual(['ensurePr', 'land'])
+    expect(s.pr).toEqual({ number: 77, url: 'https://github.com/x/y/pull/77' })
+  })
+
+  it('合不进去(冲突 / dev 被人动过)⇒ merge_conflict,不删分支', async () => {
+    for (const exitCode of [3, 4]) {
+      const { deps, rec } = makeFakeDeps({ forge: { land: async () => ({ exitCode, message: '#77 合不进去:not mergeable' }) } })
+      const out = await steps.merge(fakeState({ pr: { number: 77, url: 'u' } }), deps)
+      expect(out).toMatchObject({ ok: false, fail: 'merge_conflict' })
+      expect(out.detail).toContain('not mergeable')
+      // 合不进去的时候 self 分支是这条改动**唯一**还留着的地方,不能删。
+      expect(rec.git.some(a => a.includes('--delete'))).toBe(false)
+    }
+  })
+
+  it('CI 红 / 超时 / gh 出错 ⇒ merge_failed', async () => {
+    for (const exitCode of [1, 2, 5]) {
+      const { deps } = makeFakeDeps({ forge: { land: async () => ({ exitCode, message: 'x' }) } })
+      expect(await steps.merge(fakeState({ pr: { number: 77, url: 'u' } }), deps)).toMatchObject({ ok: false, fail: 'merge_failed' })
+    }
+  })
+
+  it('开不了 PR ⇒ merge_failed,不去合', async () => {
+    const { deps, rec } = makeFakeDeps({ forge: { ensurePr: async () => { throw new Error('gh 没登录') } } })
     const out = await steps.merge(fakeState(), deps)
-    expect(out).toMatchObject({ ok: false, fail: 'merge_conflict' })
-    expect(out.detail).toContain('non-fast-forward')
-    expect(rec.git.some(a => a.includes('--force') || a.includes('-f'))).toBe(false)
-    // 推不上去的时候 self 分支是这条改动**唯一**还留着的地方,不能删。
-    expect(rec.git.some(a => a.includes('--delete'))).toBe(false)
+    expect(out).toMatchObject({ ok: false, fail: 'merge_failed' })
+    expect(out.detail).toContain('gh 没登录')
+    expect(rec.forge.some(f => f[0] === 'land')).toBe(false)
   })
 
-  it('rebase 动了 HEAD ⇒ 记 rebased(报告里要说 CI 跑的不是这个 sha)', async () => {
-    const s = fakeState({ ci: { runId: 1, url: null, verdict: 'green', sha: 'd'.repeat(40) } })
-    const { deps } = makeFakeDeps({ git: gitReply({ 'rev-parse HEAD': HEAD_SHA }) })
+  it('合入的树跟 CI 跑的不一样(等拍板期间 dev 动了)⇒ 记 rebased', async () => {
+    const s = fakeState({ ci: { runId: 1, url: null, verdict: 'green', sha: 'd'.repeat(40) }, pr: { number: 77, url: 'u' } })
+    const { deps } = makeFakeDeps({ git: gitReply({ 'rev-parse HEAD': HEAD_SHA, 'diff --quiet': { code: 1 } }) })
     await steps.merge(s, deps)
     expect(s.merge.rebased).toBe(true)
   })
@@ -992,10 +1037,10 @@ describe('report', () => {
     expect(rec.notices[0]).toContain('测试抖动重跑:bun run test')
   })
 
-  it('CI 跑的 sha 和合入的不一样时要说出来', async () => {
+  it('合入的树 CI 没跑过时要说出来', async () => {
     const s = fakeState({ ci: { runId: 1, url: null, verdict: 'green', sha: 'd'.repeat(40) }, merge: { sha: HEAD_SHA, rebased: true } })
     const { deps, rec } = makeFakeDeps()
     await steps.report(s, deps)
-    expect(rec.notices[0]).toContain('rebase 过,没有重跑 CI')
+    expect(rec.notices[0]).toContain('合入的树 CI 没跑过')
   })
 })

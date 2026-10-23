@@ -38,6 +38,8 @@ export interface AbandonDeps {
   lock: () => { ok: true; release: () => void } | { ok: false; holder: number }
   /** 现在活着的持锁者(生产是 readLockHolder)。 */
   liveHolder: () => LiveHolder
+  /** 关掉这条开过的 PR(生产是 gh pr close);失败只记一笔,不影响作废。不给 ⇒ 不关。 */
+  closePr?: (pr: number, comment: string) => void
 }
 
 export type AbandonCode =
@@ -109,6 +111,7 @@ export function runAbandon(d: AbandonDeps, id: string): AbandonOutcome {
       s.result = ABANDONED
       s.updatedAt = d.now()
       d.store.save(s)
+      if (s.pr) d.closePr?.(s.pr.number, `主人作废了自改 #${id}(原来停在 ${s.step}),不合。`)
       code = 'abandoned'
       head = `#${id} 已作废(原来停在 ${s.step},结局 ${before}),不能再 --resume`
     }

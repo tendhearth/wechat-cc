@@ -197,6 +197,8 @@ const selfChangeCmd = defineCommand({
       }
       const id = String(args.abandon)
       const { runAbandon } = await import('../self-change/abandon.ts')
+      const { hubPath } = await import('../self-change/steps.ts')
+      const { spawnSync } = await import('node:child_process')
       const { makeGit, nodeGitSpawnSync } = await import('../self-change/git.ts')
       const { existsSync } = await import('node:fs')
       const outcome = runAbandon({
@@ -207,6 +209,11 @@ const selfChangeCmd = defineCommand({
         now: () => Date.now(),
         lock: () => acquireLock(STATE_DIR, process.pid, undefined, undefined, id),
         liveHolder: () => readLockHolder(STATE_DIR),
+        // gh 要在仓库里跑才认得出是哪个 repo:中枢克隆就是。
+        closePr: (pr, comment) => {
+          const r = spawnSync('gh', ['pr', 'close', String(pr), '--comment', comment], { cwd: hubPath({ workdir }), encoding: 'utf8', timeout: 60_000, windowsHide: true })
+          if (r.status !== 0) console.error(`关 PR #${pr} 失败(不影响作废):${(r.stderr ?? '').trim().slice(0, 200)}`)
+        },
       }, id)
       if (!outcome.ok) {
         bail(1, outcome.code, outcome.message)

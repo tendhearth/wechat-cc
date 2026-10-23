@@ -7,11 +7,10 @@ on:
     # piled up, which is how type errors accumulated unnoticed. The heavy e2e
     # jobs below stay master/PR-only to keep routine dev pushes fast.
     #
-    # `self/**` 是自改流水线(spec 2026-09-18-self-change-pipeline)推的分支:
-    # CC 自己给自己改一版,先推 self/<题目>,CI 绿才是它进 dev 的闸门。漏了这一
-    # 行,那道闸门就根本不存在 —— 而且是**安静地**不存在(推上去一条运行都没有,
-    # 看上去和「跑完了还没红」一模一样)。
-    branches: [master, dev, 'self/**']
+    # 没有 `self/**`(2026-10-23):自改流水线推 self/<id> 时开一个进 dev 的 PR,CI 认的是 PR 那一份
+    # (下面 pull_request)。两处都列着,同一个提交会跑两遍,ci land 还得等推送那一遍也进 rollup。
+    # 推送单跑是以前那道闸门的位置 —— 现在没有 PR 就没有 CI,所以自改开不了 PR 就停(ci_unavailable)。
+    branches: [master, dev]
   pull_request:
     # dev 也在内:CI 只在 push 后跑等于永远事后 —— 2026-09-11~14 有 69 条提交
     # 在本地攒了三天才到 dev,期间一次没验。
@@ -19,7 +18,7 @@ on:
     # 它就一条 CI 都没有 —— 而「一串只看最上面那个的 CI」正靠它(docs/maintainer/ci-and-flakes.md)。
 
 # 同一个 PR 推了新版本(rebase、改评审意见)⇒ 旧的那次作废,不再白跑 20 分钟。
-# 只对 PR:dev / master / self/** 的推送一条都不取消 —— `ci triage --wait` 和自改闸门都按提交看结果。
+# 只对 PR:dev / master 的推送一条都不取消 —— `ci triage --wait` 和自改闸门都按提交看结果。
 concurrency:
   group: ci-${{ github.event_name == 'pull_request' && format('pr-{0}', github.event.pull_request.number) || github.sha }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
@@ -87,10 +86,11 @@ jobs:
       # glance instead of the first failure cancelling the rest.
       fail-fast: false
       # 不进 master 的 PR 不跑 Windows(进 dev 的、叠在别的分支上的):它一次 18 分钟,是整次 CI 的长杆(其余都在 9 分钟内)。
-      # Windows 不是不跑 —— 推 dev、推 self/**、进 master 的 PR 都照旧三平台,发版前必须绿。
+      # Windows 不是不跑 —— 推 dev、进 master 的 PR、自改的 PR(head 是 self/…)都照旧三平台,发版前必须绿。
+      # 自改例外:它没人盯着、合完就部署,Windows 才有的问题等推 dev 那次才看见就晚了。
       # 代价:Windows 才有的问题合进 dev 后才看见(推 dev 那次 CI 会红),补一个修复。
       matrix:
-        os: ${{ fromJSON(github.event_name == 'pull_request' && github.base_ref != 'master' && '["ubuntu-latest","macos-latest"]' || '["ubuntu-latest","macos-latest","windows-latest"]') }}
+        os: ${{ fromJSON(github.event_name == 'pull_request' && github.base_ref != 'master' && !startsWith(github.head_ref, 'self/') && '["ubuntu-latest","macos-latest"]' || '["ubuntu-latest","macos-latest","windows-latest"]') }}
     runs-on: ${{ matrix.os }}
 
     steps:
@@ -193,12 +193,12 @@ jobs:
   # 只在中继、协议包或壳页源码动过时跑(跟 desktop-e2e 同一个 changes 输出机制)。
   # 进了 dev 的迁移一字不许改(第三批 3e,scripts/migration-frozen.ts)。主人真机跑的就是 dev,迁移一合进去就在他的库里跑过了。
   # 单独一个轻作业、只在改到迁移目录时跑:只有它要全量历史(fetch-depth: 0),别让三平台的 build 都慢一截。
-  # PR 用 PR 标题放行 [migration-edit];自改流水线推的 self/** 不走 PR,也要过这道检查。
+  # PR 用 PR 标题放行 [migration-edit];自改流水线也走 PR(标题里的 [migration-edit] 被它去掉了,放行不了)。
   # 标题经 env 传进去,不在 run 里直接插值:标题里带反引号或 $() 会被 shell 执行。
   migrations:
     name: migrations · frozen
     needs: changes
-    if: needs.changes.outputs.migrations == 'true' && (github.event_name == 'pull_request' || startsWith(github.ref, 'refs/heads/self/'))
+    if: needs.changes.outputs.migrations == 'true' && github.event_name == 'pull_request'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
