@@ -15,10 +15,16 @@ import type { Lifecycle } from '../../lib/lifecycle'
 import type { SubsystemSupervisor } from '../subsystems'
 import { createModules, type DaemonModule } from './container'
 
-export function lifecycleModule<L extends Lifecycle>(name: string, start: () => L | Promise<L>): DaemonModule<{ current(): L | null }> {
+/**
+ * `required`:起不来就整个开机失败(跟今天一样往上抛;已登记的先停掉)。核心链(会话、ilink、拉消息、工作台…)
+ * 就地搬进来时用它 —— 搬家这一步不改「起不来怎么办」,那是另一个决定(设计稿 2026-10-23-core-chain-modules)。
+ */
+export interface LifecycleModuleOpts { required?: true }
+
+export function lifecycleModule<L extends Lifecycle>(name: string, start: () => L | Promise<L>, opts: LifecycleModuleOpts = {}): DaemonModule<{ current(): L | null }> {
   return {
     name,
-    optional: true,
+    optional: !opts.required,
     init(m) {
       let lc: L | null = null
       m.onStart('start', async () => { lc = await start() })
@@ -35,9 +41,9 @@ export interface LifecycleModuleHost {
   register(name: string, stop: () => Promise<void>): void
 }
 
-/** 就地起一个,回它的 Lifecycle;起失败 ⇒ undefined(状态 degraded,已经停掉它登记的)。 */
-export async function startLifecycleModule<L extends Lifecycle>(host: LifecycleModuleHost, name: string, start: () => L | Promise<L>): Promise<L | undefined> {
-  const group = createModules([lifecycleModule(name, start)], { log: host.log })
+/** 就地起一个,回它的 Lifecycle;起失败 ⇒ undefined(状态 degraded,已经停掉它登记的)。`required` ⇒ 起失败往上抛。 */
+export async function startLifecycleModule<L extends Lifecycle>(host: LifecycleModuleHost, name: string, start: () => L | Promise<L>, opts: LifecycleModuleOpts = {}): Promise<L | undefined> {
+  const group = createModules([lifecycleModule(name, start, opts)], { log: host.log })
   host.register(name, () => group.stopAll())
   host.sup.adopt(group)
   await group.start()

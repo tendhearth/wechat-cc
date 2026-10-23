@@ -33,4 +33,10 @@ describe('startLifecycleModule:一行顶以前的 sup.start + lc.register(第三
     expect(registered.map(r => r[0])).toEqual(['letters'])
     release(); await p
   })
+  // 核心链就地搬家(设计稿 2026-10-23):搬家不改「起不来怎么办」—— 今天工作台起不来就整个开机失败,搬进来以后也一样。
+  it('required: 起失败 ⇒ 往上抛(不是 undefined、不降级);停法已登记', async () => {
+    const { registered, h } = host()
+    await expect(startLifecycleModule(h, 'workbench', () => { throw new Error('store locked') }, { required: true })).rejects.toThrow('store locked')
+    expect(registered.map(r => r[0])).toEqual(['workbench'])
+  })
 })
