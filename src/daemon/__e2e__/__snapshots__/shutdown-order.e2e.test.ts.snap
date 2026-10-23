@@ -32,6 +32,7 @@ exports[`daemon shutdown order (snapshot) > stops every subsystem in the recorde
   "lc workbench",
   "lc cli-permissions",
   "lc cli-events",
+  "module internal-api/stop",
   "lc internal-api",
 ]
 `;
