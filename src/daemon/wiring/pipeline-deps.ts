@@ -563,7 +563,8 @@ export function buildPipelineDeps(opts: PipelineDepsOpts, refs: PipelineDepsRefs
   const commandRegistry = makeCommandRegistry([
     // 「任务 …」(工作台控制,步 4):排第一 —— 以前是单独一种 intent,排在整张命令表之前。
     ...(opts.workbench ? [makeTaskCommand({ handleWechat: opts.workbench.handleWechat, sendMessage: (chatId: string, text: string) => send(chatId, text, { source: 'workbench' }) })] : []),
-    { id: 'admin', group: 'admin', probe: (m) => adminCommandsHandler.probe(m), handle: (m) => adminCommandsHandler.handle(m) },
+    // 管理员命令一条一行(第三批 3d,admin-commands.ts 的 commands()):admin.owner-only(非主人发显式命令)+ admin.<id>,两两互斥
+    ...adminCommandsHandler.commands(),
     // 斜杠命令一条一行(第三批 3d,mode-commands.ts 的 commands()):mode.provider / set / … / help,最后 mode.unknown 是 /词兜底
     ...modeHandler.commands(),
     { id: 'onboarding', group: 'onboarding', probe: (m) => onboardingHandler.probe(m), handle: (m) => onboardingHandler.handle(m) },
