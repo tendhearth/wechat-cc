@@ -172,14 +172,14 @@ export function defaultPipelineDeps(stateDir: string, config: SelfChangeConfig, 
     runner: guardedRunner(makeClaudeRunner({ launch: spawnCollect, env: process.env }), () => daemon.guard()),
     // 评审换人:谁审由 CC 现挑(设计稿 2026-10-23-cc-runs-development §4.2)。`codex login status` 退 0 ⇒ 登录着。
     // Codex 打的是 api.openai.com,同样是要保护的官方端点 ⇒ 也包 guardedRunner。
-    reviewer: (() => {
+    reviewer: () => {
       const st = spawnSync('codex', ['login', 'status'], { encoding: 'utf8', timeout: 10_000, windowsHide: true, env: workbenchSubprocessEnv(process.env) })
       const choice = chooseReviewer({ codexLoggedIn: st.status === 0 })
       const inner = choice.id === 'codex'
         ? makeCodexReviewRunner({ launch: spawnCollect, env: process.env })
         : makeClaudeRunner({ launch: spawnCollect, env: process.env })
       return { choice, runner: guardedRunner(inner, () => daemon.guard()) }
-    })(),
+    },
     daemon,
 
     // bun / npm。env 去掉 daemon 的凭据(和执行者同一条规矩:跑在克隆里的

@@ -48,7 +48,8 @@ export interface PipelineDeps {
   git: Git
   runner: ImplementRunner
   /** 评审用谁(runner.ts chooseReviewer);不给 ⇒ 跟实现同一个 runner(只读)。 */
-  reviewer?: { choice: ReviewerChoice; runner: ImplementRunner }
+  // 懒取:挑人要跑一次 `codex login status`,建 deps 时就跑会让测试和不走评审的路径也起外部进程。
+  reviewer?: () => { choice: ReviewerChoice; runner: ImplementRunner }
   daemon: DaemonClient
   /**
    * bun / npm。git 不走这里(有 git.ts)。
@@ -543,8 +544,9 @@ async function review(s: SelfChangeState, d: PipelineDeps): Promise<StepOutcome>
     throw err
   }
 
-  const reviewRunner = d.reviewer?.runner ?? d.runner
-  if (d.reviewer) { s.review.by = d.reviewer.choice.id; s.review.why = d.reviewer.choice.why }
+  const reviewer = d.reviewer?.()
+  const reviewRunner = reviewer?.runner ?? d.runner
+  if (reviewer) { s.review.by = reviewer.choice.id; s.review.why = reviewer.choice.why }
   const res = await reviewRunner.run({
     cwd: dir,
     prompt: reviewPrompt({ request: s.request, branch: s.branch, baseRef }),
