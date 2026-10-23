@@ -89,7 +89,8 @@ type ViewLine = {
 | { ok: false, code: 'memory_changed' }                       // baseHash 对不上:磁盘一个字节没动
 | { ok: false, code: 'memory_edit_bulk', count: number }      // 更正超过 5 条且没带 confirmBulk:磁盘一个字节没动
 | { ok: false, code: 'memory_edit_too_large', limit: { lines: 200, bytes: 65536 } }
-| { ok: false, code: 'memory_edit_path' }
+| { ok: false, code: 'memory_edit_stale_key' }                // 键不是 view 给的:磁盘一个字节没动
+| { ok: false, code: 'memory_edit_path' }                     // 这个文件不能编辑
 ```
 
 按键比对,不做模糊 diff:
@@ -103,7 +104,7 @@ type ViewLine = {
 | 带 `assertionId`,文字变了 | 主人改了自己的原话 | 一条更正(旧原话)+ 一条新原话(新编号),`replaces` 指向那条更正 |
 | view 里有的 `assertionId`,回来没了 | 主人收回自己的话 | 从 `owner.md` 去掉 + 一条更正(源里抄到的也该清) |
 | 两个键都没有 | 新加的 | 一条主人原话 |
-| 键是 view 里没有的(伪造 / 过期) | — | 整个请求 `memory_edit_path`,不写 |
+| 键是 view 里没有的(伪造 / 过期) | — | 整个请求 `memory_edit_stale_key`,不写;桌面同 `memory_changed` 处理(重新读、再改一次) |
 
 - 更正:`memory.md` 的条目走现有 `correct(id, 'wrong')`;总览的行走新加的 `correctText(text, 'wrong', origin)` —— 同一条串行链、
   同样清源头 / 关待办 / 写 `corrections.md`,段名记 `[总览]`。被更正的话短于 `MIN_CORRECTED_CHARS`:照记,不做跨文件清理(现有规矩)。
@@ -111,7 +112,7 @@ type ViewLine = {
   撤回只能去 `memory-archive/` 翻。桌面问「要删掉 N 条?CC 会把它们当成说错了的,源头也会清掉」,主人点了再带 `confirmBulk: true` 重发。
 - `baseHash` = view 时那份文件内容的 sha256;和磁盘不一样(nightly / 合成在这期间写过)⇒ `memory_changed`,桌面重新读、让主人再改一次。不合并。
 - 有更正或原话 ⇒ 总览过期(现有 `invalidateDerivedMemory`),`regenerate: 'queued'`;沿用现有冷却和花费闸门,不额外调模型。
-- 三个新码(`memory_edit_bulk` / `memory_edit_too_large` / `memory_edit_path`)和 `memory_changed`、`memory_derived_readonly` 一起进错误码表。
+- 四个新码(`memory_edit_bulk` / `memory_edit_too_large` / `memory_edit_stale_key` / `memory_edit_path`)和 `memory_changed`、`memory_derived_readonly` 一起进错误码表。
 - 不再允许整份覆盖:`memory write` 对 `kind === 'derived'` 拒写(`memory_derived_readonly`),对 `memory.md` / `owner.md` 也提示走 `memory edit`
   (这两份手改必须经比对,不然又绕回「改了不算数」)。
 
@@ -133,7 +134,7 @@ type ViewLine = {
 
 - 按键比对表里每一行一条;只改空白 ⇒ 什么都没有;同文出现两次删掉其中一次 ⇒ 恰好一条更正。
 - 主人在开头插一行 ⇒ 下面的 `lineKey` 不变,只多一条原话。
-- 伪造 / 过期的键 ⇒ `memory_edit_path`,磁盘不变。
+- 伪造 / 过期的键 ⇒ `memory_edit_stale_key`,磁盘不变;不在三份之内的 path ⇒ `memory_edit_path`。
 - 6 条更正不带 `confirmBulk` ⇒ `memory_edit_bulk` + `count: 6`,磁盘不变;带上 ⇒ 6 条都落。
 - `baseHash` 不对 ⇒ `memory_changed`,磁盘不变。超限 ⇒ `memory_edit_too_large` 带 `limit`。
 - MCP `memory_write` 写 `owner.md` ⇒ 拒;守卫扫到别的写者 ⇒ 红。
