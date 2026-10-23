@@ -120,7 +120,7 @@ describe('citty migrated commands', () => {
   // 写死的「看 CI」那一步,改名/漏挂会让那几行一起失效。
   it('exposes the ci subcommand surface', () => {
     const subs = cittyRoot.subCommands as Record<string, { subCommands?: Record<string, unknown> }>
-    expect(Object.keys(subs.ci?.subCommands ?? {}).sort()).toEqual(['triage'])
+    expect(Object.keys(subs.ci?.subCommands ?? {}).sort()).toEqual(['land', 'triage'])
   })
 
   it('ci triage parses its documented flags', async () => {

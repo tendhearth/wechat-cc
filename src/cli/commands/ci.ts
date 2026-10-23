@@ -57,7 +57,41 @@ const ciTriageCmd = defineCommand({
   },
 })
 
+// ── ci land — 叠起来的一串 PR 一条命令合进 dev(src/cli/ci-land.ts 开头写了每条「停下来」的来历) ──
+const ciLandCmd = defineCommand({
+  meta: { name: 'land', description: '把叠起来的一串 PR 合进 dev:只等最上面那个的 CI,绿了从下往上 rebase / 改 base / squash 合(在整合者自己的 detached worktree 里跑)' },
+  args: {
+    pr: { type: 'positional', required: true, description: '最上面那个 PR 的编号' },
+    'min-checks': { type: 'string', description: '非 skipped 的检查至少几条才算 CI 真跑了(缺省 5;只改文档的串给 1)' },
+    'timeout-min': { type: 'string', description: '等 CI 的总上限,分钟(缺省 120)' },
+    'dry-run': { type: 'boolean', description: '只认出这一串、打印计划,不动任何东西' },
+    'skip-typecheck': { type: 'boolean', description: '每层 rebase 后不跑 tsc(缺省会跑)' },
+  },
+  async run({ args }) {
+    const { runCiLand, CI_LAND_EXIT } = await import('../ci-land.ts')
+    const { defaultCiTriageDeps } = await import('../ci-triage-run.ts')
+    const top = Number(args.pr)
+    const minChecks = parseCountFlag(args['min-checks'], 0)
+    const timeoutMin = parseCountFlag(args['timeout-min'], 1)
+    if (!Number.isInteger(top) || top <= 0 || !minChecks.ok || !timeoutMin.ok) {
+      console.error('ci land: 用法 wechat-cc ci land <PR 编号> [--min-checks N] [--timeout-min N] [--dry-run] [--skip-typecheck]')
+      process.exit(CI_LAND_EXIT.precondition)
+      return
+    }
+    const { registry: _registry, ...deps } = defaultCiTriageDeps(process.cwd())
+    const res = await runCiLand(deps, {
+      top,
+      ...(minChecks.value !== undefined ? { minChecks: minChecks.value } : {}),
+      ...(timeoutMin.value !== undefined ? { timeoutMin: timeoutMin.value } : {}),
+      dryRun: Boolean(args['dry-run']),
+      skipTypecheck: Boolean(args['skip-typecheck']),
+    })
+    ;(res.exitCode === CI_LAND_EXIT.landed ? console.log : console.error)(res.message)
+    process.exit(res.exitCode)
+  },
+})
+
 export const ciCmd = defineCommand({
   meta: { name: 'ci', description: '看 CI 的信号面(见 docs/maintainer/ci-and-flakes.md)' },
-  subCommands: { triage: ciTriageCmd },
+  subCommands: { triage: ciTriageCmd, land: ciLandCmd },
 })
