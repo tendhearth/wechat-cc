@@ -126,6 +126,18 @@ describe('formatSynthesisPrompt', () => {
 })
 
 describe('synthesizeOverview', () => {
+  // 3b (b) 卡出口:模型合成出来的总览里,含主人更正过的话的行在写盘前丢掉、记数;返回给调用方的也是过滤后的。
+  it('drops overview lines that repeat a corrected sentence before writing, and counts the hit', async () => {
+    const { mkdirSync, writeFileSync, readFileSync } = await import('node:fs')
+    seedProject('-alpha', { 'MEMORY.md': 'idx', 'x.md': 'fact' })
+    const chat = join(stateDir, 'memory', 'admin@im.wechat')
+    mkdirSync(chat, { recursive: true })
+    writeFileSync(join(chat, 'corrections.md'), '- 2026-10-22 主人说这条记错了,整理时不要再写回:[事实] 住在 杭州西湖区\n')
+    const res = await synthesizeOverview({ stateDir, adminChatId: 'admin@im.wechat', projectsRoot, sdkEval: async () => '他喜欢爬山\n他住在 杭州西湖区\n养了一只猫' })
+    expect(res.overview).toBe('他喜欢爬山\n养了一只猫')
+    expect(readFileSync(join(chat, '_overview.md'), 'utf8')).not.toContain('西湖区')
+    expect(JSON.parse(readFileSync(join(chat, 'memory-redactions.json'), 'utf8')).byKind.overview).toBe(1)
+  })
   it('dry-run discovers without calling eval or writing', async () => {
     seedProject('-alpha', { 'MEMORY.md': 'idx', 'x.md': 'fact' })
     let called = false
