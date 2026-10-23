@@ -79,7 +79,7 @@ function clip(s: string): string {
 }
 
 /** hub 的 pushApp:一批 → 一条推送,只投不等;没设备 / 没接推送 ⇒ 静默。 */
-/** 回 true = 至少交给了一台手机(在线跳过的那几台算送到:它们正开着 App,看得见)。 */
+/** 回 true = 至少有一台手机**交给了推送中继**(或正开着 App、在线跳过)。是「交出去了」,不是「手机确认收到」—— 中继 / APNs 之后丢没丢这里看不见。 */
 export function makeCliHubAppPush(deps: { push: () => AppPushOutlet | null; log: (tag: string, line: string) => void }): (items: CliPushItem[]) => boolean {
   return (items) => {
     const outlet = deps.push()

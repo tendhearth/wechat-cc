@@ -72,7 +72,7 @@ export function wireCliSessions(d: WireCliSessionsDeps) {
       const owner = resolveAdminChatId(loadAccess(), loadCompanionConfig(stateDir), null)
       const sat = boot.sendAssistantText
       if (!owner || !sat) return 'no_target'
-      // 微信的主动推送窗口已知关着(上一次被 errcode=-2 拒了,主人还没说话)、手机已经收到 ⇒ 不再去撞一定被拒的那一次。
+      // 微信的主动推送窗口已知关着(上一次被 errcode=-2 拒了,主人还没说话)、已经交给手机推送 ⇒ 不再去撞一定被拒的那一次。
       // 跟伙伴的主动通道同一个判断(proactive-channel.ts wechatUsable)。主人一说话,CC 回他那一句成功,窗口就标回开着。
       // 10-23 self discover:两天里同一件事被拒 ~80 次,每次在日志里记三行(RETRY_FAIL / FALLBACK_REPLY_FAIL / CLI_PUSH)。
       if (ctx?.appDelivered && ilink.proactiveClosedSince(owner)) return 'skipped'

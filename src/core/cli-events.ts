@@ -82,14 +82,14 @@ export interface CliSessionInfo {
 
 export interface CliEventHubDeps {
   /** 推到主人微信。sent = 送出去了;rejected = 微信那边拒了(如 errcode=-2);no_target = 没有主人 chat / 没接外发。 */
-  /** `appDelivered`:同一批已经推到手机上了。微信的主动推送窗口已知关着时,调用方据此不再去撞一定被拒的那一次(回 'skipped')。 */
+  /** `appDelivered`:同一批已经交给手机推送了(交给中继,不是手机确认)。微信的主动推送窗口已知关着时,调用方据此不再去撞一定被拒的那一次(回 'skipped')。 */
   send: (text: string, ctx?: { appDelivered: boolean }) => Promise<'sent' | 'rejected' | 'no_target' | 'skipped'>
   /**
    * 第二个出口:主人手机 app 的原生推送(中继 v2)。与微信并列、互不牵连 —— 同一批、同一套在场 /
    * 快问快答 / 合并窗判断,合并窗到点时两边各发一次;微信拒了(errcode=-2)app 照样收到。
    * 同步、只投不等:失败由调用方记日志丢弃,不重试。缺席 ⇒ 只有微信,同改造前。
    */
-  /** 回 true = 至少推到了一台手机(没接 / 没设备 / 没推出去 ⇒ false)。 */
+  /** 回 true = 至少有一台手机交给了推送中继(不是手机确认收到);没接 / 没设备 / 没交出去 ⇒ false。 */
   pushApp?: (items: CliPushItem[]) => boolean | void
   projectName: (cwd: string) => string
   log: (tag: string, line: string) => void
@@ -262,7 +262,7 @@ export function makeCliEventHub(deps: CliEventHubDeps): CliEventHub {
       // 服务端拒了(如 ilink errcode=-2)不能记成「已发」:那正是「出了错但没人知道」。
       deps.log('CLI_PUSH', outcome === 'sent' ? `sent ${batch.length} item(s) to wechat`
         : outcome === 'rejected' ? `not delivered (${batch.length} item(s)): wechat refused the send`
-        : outcome === 'skipped' ? `skip wechat (${batch.length} item(s)): proactive window closed, app got it`
+        : outcome === 'skipped' ? `skip wechat (${batch.length} item(s)): proactive window closed, handed to phone push`
         : `dropped ${batch.length} item(s): no operator chat or no sender`)
     } catch (err) {
       // 不重试:外发那一层自己有退避;这里排队只会在断线时堆成风暴。

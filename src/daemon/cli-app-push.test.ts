@@ -85,7 +85,7 @@ describe('hub 的两个出口:微信 + 手机 app,同一套在场 / 快问快答
     }
   })
 
-  it('微信窗口已知关着、手机收到了 ⇒ 不再去撞微信(skip wechat 一行),手机照样收到', async () => {
+  it('微信窗口已知关着、交给了手机推送 ⇒ 不再去撞微信(skip wechat 一行),手机照样收到', async () => {
     const { hub, sent, pushed, logs, ctxs } = harness({ idle: 600, windowClosed: true })
     hub.ingest(ev())
     await settle()
@@ -95,7 +95,7 @@ describe('hub 的两个出口:微信 + 手机 app,同一套在场 / 快问快答
     expect(logs.some(l => l.includes('skip wechat'))).toBe(true)
   })
 
-  it('手机没收到(没接推送)⇒ appDelivered=false,微信照常试', async () => {
+  it('没交给手机推送(没接推送)⇒ appDelivered=false,微信照常试', async () => {
     const { hub, sent, ctxs } = harness({ idle: 600, windowClosed: true, push: null })
     hub.ingest(ev())
     await settle()
