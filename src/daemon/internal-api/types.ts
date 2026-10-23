@@ -553,6 +553,8 @@ export interface InternalApiDeps {
    */
   /** 开机探测失败、正在退避重探的外部 CLI provider(2026-10-04)。GET /v1/health.provider_probes。 */
   providerProbes?: () => import('../bootstrap/provider-probe').ProbeRetryStatus[]
+  /** 真回合里被拒着的执行者(地区不可用;provider-refusals.ts)。GET /v1/health.provider_refusals。 */
+  providerRefusals?: () => Record<string, import('../provider-refusals').ProviderRefusal>
   plugins?: () => import('../plugins/health').PluginsHealth | null
   /** Passive outbound link health from ilink-glue (spec 2026-08-22-outbound-health). */
   outbound?: () => import('../ilink/outbound-health').OutboundHealth

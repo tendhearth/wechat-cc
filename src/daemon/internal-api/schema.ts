@@ -90,6 +90,9 @@ export const HealthResponse = z.object({
     next_attempt_at: z.string().nullable(),
     registered_at: z.string().nullable(),
   })).optional(),
+  // 真回合里被拒着的执行者(2026-10-23):{ [provider]: { code, since } }。只有码和时间(guest 档也给)。
+  // 开机探测只跑 --version 判不出这个;一家之后有一轮真完成了就消失。老 daemon 没有。
+  provider_refusals: z.record(z.string(), z.object({ code: z.string(), since: z.string() })).optional(),
   // Passive outbound link health (spec 2026-08-22-outbound-health) — sibling
   // of subsystems by design: subsystems is the supervisor's BOOT-time list,
   // outbound is a RUNTIME link signal. Optional for older daemons.

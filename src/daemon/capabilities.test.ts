@@ -57,6 +57,14 @@ describe('buildCapabilities (2026-10-06)', () => {
     expect(row).toMatchObject({ state: 'fallback', code: 'background.failing', params: { n: 5 }, detail: 'invalid model selection' })
     expect(row!.reason).not.toContain('invalid model')
   })
+  // 2026-10-23:注册上了、--version 也过了,真回合里却被拒着(agy 地区不可用)⇒ 照实说,不说「在用」
+  it('a registered brain that real turns say is region-refused needs the owner, with an honest reason', () => {
+    const row = buildCapabilities(base({ brain: { provider: 'agy', name: 'Antigravity', registered: true, retrying: false, refused: { code: 'region_unavailable', since: '2026-10-23T05:00:00.000Z' } } })).find(r => r.id === 'brain')
+    expect(row).toMatchObject({ state: 'needs_you', code: 'brain.region_unavailable', params: { name: 'Antigravity' }, action: { where: 'settings' } })
+    expect(row!.reason).toMatch(/地区/)
+    expect(row!.reason).not.toMatch(/登录(失效|过期)/)
+    expect(buildCapabilities(base({ brain: { provider: 'agy', name: 'Antigravity', registered: true, retrying: false, refused: null } })).find(r => r.id === 'brain')).toMatchObject({ state: 'ok' })
+  })
   it('an unregistered brain with no retry needs the owner', () => {
     expect(buildCapabilities(base({ brain: { provider: 'cursor', name: 'Cursor', registered: false, retrying: false } })).find(r => r.id === 'brain')).toMatchObject({ state: 'needs_you', action: { where: 'settings' } })
   })

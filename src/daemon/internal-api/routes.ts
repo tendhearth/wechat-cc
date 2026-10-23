@@ -173,6 +173,8 @@ const onlineStickerCursor = new Map<string, number>()
         // guest 只给 provider 名、状态、次数和时间;失败原因(可能带路径 / stderr)给 trusted 以上
         // —— CLI 拿的 file token 就是 trusted,`wechat-cc status` 要能说出「为什么」。
         ...(deps.providerProbes ? { provider_probes: deps.providerProbes().map(p => caller?.tier === 'admin' || caller?.tier === 'trusted' ? p : { ...p, last_error: '' }) } : {}),
+        // 真回合里被拒着的执行者(2026-10-23,provider-refusals.ts):只有码和起始时间,guest 也给
+        ...(deps.providerRefusals ? { provider_refusals: deps.providerRefusals() } : {}),
         // 外部 agent CLI 自动升级(2026-10-04):各家装的 / 最新的版本、上次检查与升级、坏版本名单、自检状态。
         // 只有版本号与时间,没有路径(这条路由是 guest 档)。
         ...(deps.cliUpgrade ? { cli_upgrade: (() => { try { return deps.cliUpgrade!.status() } catch { return undefined } })() } : {}),

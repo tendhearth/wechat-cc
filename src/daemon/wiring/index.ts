@@ -52,6 +52,8 @@ export interface WireMainOpts {
   guardRuntime?: import('../guard/runtime').GuardRuntime
   /** 可选子系统开机状态(SubsystemSupervisor.statuses)→「CC 现在怎么样」。 */
   subsystems?: () => Array<{ name: string; state: 'ok' | 'degraded' | 'off'; error?: string }>
+  /** 真回合里被拒着的执行者(provider-refusals.ts)。 */
+  providerRefusals?: () => Record<string, import('../provider-refusals').ProviderRefusal>
   /** 内部 API 的 token-registry 窄接口 → 手机设置面板(梳理第 6 步)。 */
   panelTokens?: import('../internal-api/token-registry').PanelTokens
   /** 「一件事」登记处(matters store);微信入站登记 chat、app 对话绑桌面表面、管家候选集都从这里来。 */

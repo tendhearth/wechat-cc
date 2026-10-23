@@ -32,7 +32,8 @@ export interface Capability {
 export interface CapabilityInputs {
   /** ownerWindowClosedSince:主人那一路的主动推送窗口关着(errcode=-2)的起始时间。 */
   wechat: { outbound: 'unknown' | 'ok' | 'degraded'; expired: number; lastError?: string | null; ownerWindowClosedSince?: string | null }
-  brain: { provider: string; name: string; registered: boolean; retrying: boolean; lastError?: string | null }
+  /** refused:真回合里被这一家拒着(provider-refusals.ts;目前只有地区不可用)。注册上了也可能被拒 —— 开机探测只跑 --version。 */
+  brain: { provider: string; name: string; registered: boolean; retrying: boolean; lastError?: string | null; refused?: { code: string; since: string } | null }
   /** null = 没开网络守护(不出现)。 */
   guard: { safe: boolean; paused: boolean; detail?: string | null } | null
   /** null = 不是 macOS / 判断不了(不出现)。 */
@@ -71,7 +72,8 @@ export function buildCapabilities(i: CapabilityInputs): Capability[] {
   else out.push({ id: 'wechat', name: '微信', state: 'ok', code: i.wechat.outbound === 'ok' ? 'wechat.ok' : 'wechat.idle', reason: i.wechat.outbound === 'ok' ? '收发正常。' : '已连上，还没发过消息。' })
 
   // 大脑:当前选的后端注册上没有。
-  if (i.brain.registered) out.push({ id: 'brain', name: '大脑', state: 'ok', code: 'brain.ok', params: { name: i.brain.name }, reason: `在用 ${i.brain.name}。` })
+  if (i.brain.registered && i.brain.refused?.code === 'region_unavailable') out.push({ id: 'brain', name: '大脑', state: 'needs_you', code: 'brain.region_unavailable', params: { name: i.brain.name }, reason: `${i.brain.name} 说你现在的网络出口所在地区用不了它(不是登录问题)。`, action: { label: '换一个出口地区,或在设置里换一个大脑', where: 'settings' }, detail: `从 ${i.brain.refused.since} 起;之后有一轮真的答上来了就恢复` })
+  else if (i.brain.registered) out.push({ id: 'brain', name: '大脑', state: 'ok', code: 'brain.ok', params: { name: i.brain.name }, reason: `在用 ${i.brain.name}。` })
   else if (i.brain.retrying) out.push({ id: 'brain', name: '大脑', state: 'fallback', code: 'brain.retrying', params: { name: i.brain.name }, reason: `${i.brain.name} 开机时没连上，正在重试。`, ...(i.brain.lastError ? { detail: i.brain.lastError } : {}) })
   else out.push({ id: 'brain', name: '大脑', state: 'needs_you', code: 'brain.unavailable', params: { name: i.brain.name }, reason: `选的大脑 ${i.brain.name} 用不了。`, action: { label: '在设置里换一个大脑', where: 'settings' } })
 
