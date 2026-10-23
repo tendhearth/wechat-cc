@@ -66,6 +66,7 @@ const ciLandCmd = defineCommand({
     'timeout-min': { type: 'string', description: '等 CI 的总上限,分钟(缺省 120)' },
     'dry-run': { type: 'boolean', description: '只认出这一串、打印计划,不动任何东西' },
     'skip-typecheck': { type: 'boolean', description: '每层 rebase 后不跑 tsc(缺省会跑)' },
+    'parent-old': { type: 'string', description: '接着上一次、最下面那层叠在已合 PR 上且自动找不到时:它当初叠在下层的哪个提交上' },
   },
   async run({ args }) {
     const { runCiLand, CI_LAND_EXIT } = await import('../ci-land.ts')
@@ -85,6 +86,7 @@ const ciLandCmd = defineCommand({
       ...(timeoutMin.value !== undefined ? { timeoutMin: timeoutMin.value } : {}),
       dryRun: Boolean(args['dry-run']),
       skipTypecheck: Boolean(args['skip-typecheck']),
+      ...(args['parent-old'] ? { parentOld: String(args['parent-old']) } : {}),
     })
     ;(res.exitCode === CI_LAND_EXIT.landed ? console.log : console.error)(res.message)
     process.exit(res.exitCode)

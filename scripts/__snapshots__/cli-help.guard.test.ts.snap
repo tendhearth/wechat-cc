@@ -427,6 +427,7 @@ OPTIONS
   --timeout-min=<timeout_min>    等 CI 的总上限,分钟(缺省 120)                      
                     --dry-run    只认出这一串、打印计划,不动任何东西                        
              --skip-typecheck    每层 rebase 后不跑 tsc(缺省会跑)                   
+    --parent-old=<parent_old>    接着上一次、最下面那层叠在已合 PR 上且自动找不到时:它当初叠在下层的哪个提交上 
 
 
 "
