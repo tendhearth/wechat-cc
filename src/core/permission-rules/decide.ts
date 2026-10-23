@@ -28,6 +28,15 @@ function missingFacts(ask: PermissionAsk): string | null {
   return null
 }
 
+/**
+ * 改文件之前会先发权限请求的执行者(Claude 的 canUseTool / hook、Codex app-server 的审批)。只有它们能享受 allow 规则和初审:
+ * 不报编辑的执行者(Cursor ACP 工作区内的编辑、agy、自定义 ACP)可以不吭声地改 `.git/config`(`core.fsmonitor`、`diff.external`
+ * …),再跑一句「只读」的 `git status` 就是任意执行 —— 红线挡的是**请求里**碰 .git,它的编辑根本没有请求(整合者审 #615)。
+ * 它们照旧逐条问,直到系统沙箱那份稿落地。白名单而不是黑名单:新接进来的执行者默认不放。
+ * TODO(放行 v2 G4):换成执行者能力里的 `reportsEdits`,不按 id 判。
+ */
+export const EDIT_REPORTING_PROVIDERS: ReadonlySet<string> = new Set(['claude', 'codex'])
+
 export async function decide(
   ask: PermissionAsk,
   file: RulesFile,
@@ -42,10 +51,11 @@ export async function decide(
   const missing = missingFacts(ask)
   if (rule?.then === 'allow') {
     if (missing) return { verdict: 'ask', by: 'default', reason: missing }
+    if (!EDIT_REPORTING_PROVIDERS.has(ask.provider)) return { verdict: 'ask', by: 'default', reason: '这个执行者改文件不先问,规则不替它放' }
     return { verdict: 'allow', by: 'rule', ruleId: rule.id, reason: rule.note ?? '规则放行' }
   }
   // 交代的话来自外部(issue)⇒ 初审的模型读 intent,正好能被注入左右,不审(评审 #446)
-  if (file.review !== 'low_risk' || !opts.review || missing || ask.untrustedIntent || !isLowRisk(ask) || opts.reviewBlocked?.(ask.scope)) return ASK_DEFAULT
+  if (file.review !== 'low_risk' || !opts.review || missing || ask.untrustedIntent || !EDIT_REPORTING_PROVIDERS.has(ask.provider) || !isLowRisk(ask) || opts.reviewBlocked?.(ask.scope)) return ASK_DEFAULT
   const notes = file.rules.map(r => r.note).filter((n): n is string => !!n)
   let timer: ReturnType<typeof setTimeout> | undefined
   try {

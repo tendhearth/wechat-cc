@@ -23,7 +23,8 @@ import { defaultTerminalHooksDeps } from '../../cli/terminal-hooks'
 import { resolveAdminChatId } from './index'
 import { resolveClaudeBinary } from './claude-env'
 import { loadCompanionConfig } from '../companion/config'
-import { ensureStarterRules, makePermissionGate, terminalAskAsync } from '../permission-gate'
+import { ensureStarterRules, makePermissionGate, STARTER_NOTICE, terminalAskAsync } from '../permission-gate'
+import { makePendingNotices } from '../speech/pending-notices'
 import { makePermissionDecisionsStore } from '../permission-decisions-store'
 import { defaultRunner, makeCliReplyCore, makeHandReplyExecutor, readHead } from '../cli-reply-handler'
 import { makeOverseerTodaySource, TODAY_TERMINAL_LIMIT, type TodayWorkbench } from '../overseer-today-source'
@@ -99,7 +100,14 @@ export function wireCliSessions(d: WireCliSessionsDeps) {
   // 规则文件默认没有 / 关着 ⇒ 每条都是 ask,两处入口照旧。初审走 registry 的 cheapEval(自带网络守护)。
   const permissionDecisions = makePermissionDecisionsStore(db)
   // 放行 v2 G1:主人 10-23 拍板三层生效 ⇒ 全空默认值的规则文件开机时装一次起步规则(装过 / 改过就不动)
-  ensureStarterRules(stateDir, log)
+  if (ensureStarterRules(stateDir, log)) {
+    // 主人第一次碰到的变化是「问得少了」—— 说一次为什么(整合者审 #615)。进待说队列,由 SpeechPolicy 挑时候说(免打扰 / 断线照规矩推后)
+    const owner = resolveAdminChatId(loadAccess(), loadCompanionConfig(stateDir), null)
+    if (owner) {
+      try { makePendingNotices({ stateDir, log }).add({ kind: 'rules_notice', chatId: owner, text: STARTER_NOTICE, at: new Date().toISOString() }) }
+      catch (err) { log('PERMISSION_RULES', `starter notice not queued: ${err instanceof Error ? err.message : String(err)}`) }
+    }
+  }
   const permissionGate = makePermissionGate({
     stateDir,
     store: permissionDecisions,

@@ -156,3 +156,20 @@ describe('起步规则(放行 v2 G1)只放精确的 git 只读', () => {
     expect(await decide(ask({ tool: 'commandExecution', command: 'git status' }), starter, {})).toMatchObject({ verdict: 'allow', by: 'rule' })
   })
 })
+
+describe('不报编辑的执行者不享受 allow 规则和初审(整合者审 #615:Cursor 能不吭声地改 .git/config)', () => {
+  const starter = file([...STARTER_RULES])
+  it('同一句 git status:Claude / Codex ⇒ allow;Cursor / agy / 自定义 ACP ⇒ ask', async () => {
+    expect(await decide(ask({ provider: 'claude', command: 'git status' }), starter, {})).toMatchObject({ verdict: 'allow', by: 'rule' })
+    expect(await decide(ask({ provider: 'codex', tool: 'commandExecution', command: 'git status' }), starter, {})).toMatchObject({ verdict: 'allow', by: 'rule' })
+    for (const provider of ['cursor', 'agy', 'my-acp']) {
+      expect(await decide(ask({ provider, tool: 'execute', command: 'git status' }), starter, {}), provider).toMatchObject({ verdict: 'ask' })
+    }
+  })
+  it('初审也不跑;deny 规则照样管', async () => {
+    const review = vi.fn(async () => 'allow' as const)
+    expect(await decide(ask({ provider: 'cursor', command: 'ls' }), file([]), { review })).toMatchObject({ verdict: 'ask' })
+    expect(review).not.toHaveBeenCalled()
+    expect(await decide(ask({ provider: 'cursor', command: 'ls' }), file([{ id: 'd', when: { command: '^ls$' }, then: 'deny' }]), { review })).toMatchObject({ verdict: 'deny' })
+  })
+})

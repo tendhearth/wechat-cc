@@ -63,6 +63,9 @@ const errMsg = (e: unknown) => (e instanceof Error ? e.message : String(e))
  * 开机时装一次起步规则(放行 v2 G1):文件不在、或是一份从没装过的全空默认值 ⇒ 开起来 + 几条精确的 git 只读规则。
  * 文件坏了 / 主人改过 / 装过 ⇒ 一个字节不动。失败只记日志 —— 装不上就照旧关着,跟以前一样问主人。
  */
+/** 只说真有的关法:微信里还没有「放行规则关掉」这条命令(设计稿 v1 §5 的入口没做),所以给 CLI。 */
+export const STARTER_NOTICE = '放行规则开了:Claude / Codex 跑只读的 git 命令(看状态 / 改动 / 历史)我替你批,别的照旧问你。不想要的话在电脑上跑 `wechat-cc rules disable`。'
+
 export function ensureStarterRules(stateDir: string, log: (tag: string, line: string) => void): boolean {
   const file = join(stateDir, RULES_FILE)
   let current: RulesFile | null = null
