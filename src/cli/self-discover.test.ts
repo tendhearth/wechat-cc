@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { discover, signatureOf, formatDiscover } from './self-discover'
+import { discover, signatureOf, formatDiscover, redact } from './self-discover'
 
 const NOW = Date.parse('2026-10-23T20:00:00.000Z')
 const at = (hAgo: number, rest: string) => `${new Date(NOW - hAgo * 3_600_000).toISOString()} ${rest}`
@@ -53,5 +53,18 @@ describe('discover', () => {
     expect(formatDiscover([], 48)).toMatch(/没有/)
     const log = [1, 2, 3].map(h => at(h, '[A] x failed')).join('\n')
     expect(formatDiscover(discover({ ...base, log }), 48)).toMatch(/3 次 {2}\[A\]/)
+  })
+})
+
+describe('redact —— 例子交给模型之前抹掉人', () => {
+  it('聊天 id、wxid、十六进制 id、text= 后面的正文抹掉;数字留着', () => {
+    expect(redact('chat=o9cq800sObd3lbrHBgiItB1pooDQ@im.wechat error=errcode=-2 attempts=3')).toBe('chat=<chat> error=errcode=-2 attempts=3')
+    expect(redact('backfill failed for wxid_kgzqqkcfrwzm21 batch 8209')).toBe('backfill failed for <wxid> batch 8209')
+    expect(redact('send failed to=x text=今晚一起吃饭吗')).toBe('send failed to=x text=<略>')
+  })
+  it('discover 的 example 是抹过的', () => {
+    const NOW2 = Date.parse('2026-10-23T20:00:00.000Z')
+    const log = [1, 2, 3].map(h => `${new Date(NOW2 - h * 3_600_000).toISOString()} [R] send failed chat=abc@im.wechat`).join('\n')
+    expect(discover({ log, now: NOW2, hours: 48, minCount: 3 })[0]!.example).toBe('send failed chat=<chat>')
   })
 })

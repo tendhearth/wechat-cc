@@ -26,7 +26,8 @@ export interface Candidate {
   count: number
   firstSeen: string
   lastSeen: string
-  /** 一条原样的例子(截断),给规划者和人看。 */
+  /** 一条例子(截断),给规划者和人看。**抹掉了人**(聊天 id、wxid、十六进制 id、`text=` 后面的正文),数字留着 ——
+   *  第 5 步会把候选交给模型(Claude / Codex)当提示词,原样的日志行里有主人和联系人的 id,偶尔还有消息原文。 */
   example: string
 }
 
@@ -35,6 +36,15 @@ const TS = /^(\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?Z) \[([^\]]+)\] (.*)$
 // 只认「发生了超时」(timed out / 等超时 / 超时了),不认裸的 timeout / 超时:开机时打印配置的那行
 // 「披露闸门超时 30000ms」会被当成失败(10-23 真机第一次跑就误报了 20 次)。
 const FAILURE = /\b(fail(?:ed|ure)?|error|refused|timed out|denied|gave up|not delivered|unavailable|unreachable|rejected|crash(?:ed)?)\b|失败|被拒|超时了|等超时|已超时/i
+
+/** 抹掉一行里指向人的部分(给模型看之前必须过这一道);数字和措辞留着,不然例子就没用了。 */
+export function redact(message: string): string {
+  return message
+    .replace(/\b[\w.+-]+@im\.wechat\b/g, '<chat>')
+    .replace(/\bwxid_\w+/g, '<wxid>')
+    .replace(/\b[0-9a-f]{8,}\b/gi, '<id>')
+    .replace(/\b(text|body|content|msg)=.*$/i, '$1=<略>')
+}
 
 /** 把一句话里会变的部分抹掉:时间、十六进制 id、wxid、聊天 id、路径里的数字、所有数字。 */
 export function signatureOf(message: string): string {
@@ -64,7 +74,7 @@ export function discover(input: DiscoverInput): Candidate[] {
     const key = `${tag}\u0000${signature}`
     const g = groups.get(key)
     if (g) { g.count++; g.lastSeen = ts }
-    else groups.set(key, { tag, signature, count: 1, firstSeen: ts, lastSeen: ts, example: msg.slice(0, 240) })
+    else groups.set(key, { tag, signature, count: 1, firstSeen: ts, lastSeen: ts, example: redact(msg).slice(0, 240) })
   }
   return [...groups.values()].filter(c => c.count >= input.minCount).sort((a, b) => b.count - a.count || b.lastSeen.localeCompare(a.lastSeen))
 }
