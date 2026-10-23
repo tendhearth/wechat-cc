@@ -50,6 +50,12 @@ export interface SelfChangeState {
   /** `delivered=false`:拍板卡没进微信(外发不通),但条目还在 daemon 的登记处 ——
    *  桌面权限卡和 `self change --approve <id>` 照样能拍。null = 还没问过。 */
   approval: { hash: string | null; code: string | null; decision: string | null; askedAt: number | null; delivered: boolean | null }
+  /** 进 dev 的那个 PR(ci 步开)。老存盘没有这一格:merge 步会补开一个。 */
+  pr?: { number: number; url: string } | null
+  /**
+   * `sha`:squash 合进去以后 dev 上的那条提交。`rebased`:合入的树跟 CI 跑的树不一样
+   * (等拍板期间 dev 上多了别人的提交)—— 报告里要说清楚,正式闸门是推 dev 那一次。
+   */
   merge: { sha: string | null; rebased: boolean }
   /**
    * `sha`:**真换上去的那条提交**。部署前会断言这条运行的工作树站在 `merge.sha`

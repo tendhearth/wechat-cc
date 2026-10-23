@@ -26,6 +26,7 @@ import { defaultSelfDeployDeps, executeSelfDeploy, planSelfDeploy, resolveSignin
 import { defaultSelftestDeps, runChatSelftest, runWorkbenchSelftest, type SelftestReport } from '../selftest'
 import type { SelfChangeConfig } from './config'
 import { makeDaemonClient } from './daemon-client'
+import { ghForge } from './forge'
 import { makeGit, nodeGitSpawnSync } from './git'
 import { chooseReviewer, guardedRunner, makeClaudeRunner, makeCodexReviewRunner, spawnCollect } from './runner'
 import { spawnSync } from 'node:child_process'
@@ -206,6 +207,9 @@ export function defaultPipelineDeps(stateDir: string, config: SelfChangeConfig, 
         timeoutMin: CI_TRIAGE_TIMEOUT_MIN,
       })
     },
+
+    // ci land 那一套 deps,去掉它用不着的 flake 登记表。
+    forge: ghForge((cwd) => { const { registry: _registry, ...deps } = defaultCiTriageDeps(cwd); return deps }),
 
     deploy: (repoRoot) => runDeploy(repoRoot, 'deploy'),
     rollback: (repoRoot) => runDeploy(repoRoot, 'rollback'),

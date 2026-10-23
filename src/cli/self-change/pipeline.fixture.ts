@@ -13,6 +13,7 @@ import type { SelfChangeDecision, DaemonClient } from './daemon-client'
 import type { Git, GitResult } from './git'
 import type { RunnerInput, RunnerResult } from './runner'
 import type { PipelineDeps } from './steps'
+import type { Forge } from './forge'
 import { newState, type SelfChangeState, type StateStore } from './state'
 import type { SelfChangeSettings } from '../../lib/agent-config'
 
@@ -36,6 +37,8 @@ export interface Recorded {
   sleeps: number[]
   deployed: string[]
   rolledBack: string[]
+  /** forge 调用:['ensurePr', branch, base, title] / ['land', pr, base] / ['close', pr]。 */
+  forge: string[][]
 }
 
 export function greenTriage(sha: string, verdict: TriageReport['verdict'] = 'green'): TriageReport {
@@ -98,6 +101,8 @@ export interface FakeOpts {
   health?: boolean
   resolve?: boolean
   ciTriage?: (opts: { sha: string; branch: string }) => TriageReport
+  /** 缺省:开出 #77、合成功。 */
+  forge?: Partial<Forge>
   deploy?: SelfDeployResult
   rollback?: SelfDeployResult
   selftest?: { workbench: boolean; chat: boolean }
@@ -107,7 +112,7 @@ export interface FakeOpts {
 }
 
 export function makeFakeDeps(opts: FakeOpts = {}): { deps: PipelineDeps; rec: Recorded; files: Map<string, string> } {
-  const rec: Recorded = { git: [], gitCwd: [], exec: [], execOpts: [], runner: [], notices: [], asks: [], resolves: [], patches: [], sleeps: [], deployed: [], rolledBack: [] }
+  const rec: Recorded = { git: [], gitCwd: [], exec: [], execOpts: [], runner: [], notices: [], asks: [], resolves: [], patches: [], sleeps: [], deployed: [], rolledBack: [], forge: [] }
   const files = new Map<string, string>()
   let gitCalls = 0
   let execCalls = 0
@@ -158,6 +163,11 @@ export function makeFakeDeps(opts: FakeOpts = {}): { deps: PipelineDeps; rec: Re
       return { code: r?.code ?? 0, stdout: r?.stdout ?? '', stderr: r?.stderr ?? '' }
     },
     ciTriage: async o => ({ report: opts.ciTriage ? opts.ciTriage(o) : greenTriage(o.sha), exitCode: 0 }),
+    forge: {
+      ensurePr: async o => { rec.forge.push(['ensurePr', o.branch, o.base, o.title]); return opts.forge?.ensurePr ? opts.forge.ensurePr(o) : { number: 77, url: 'https://github.com/x/y/pull/77' } },
+      land: async o => { rec.forge.push(['land', String(o.pr), o.base]); return opts.forge?.land ? opts.forge.land(o) : { exitCode: 0, message: '合完 1 层' } },
+      close: async o => { rec.forge.push(['close', String(o.pr)]); if (opts.forge?.close) await opts.forge.close(o) },
+    },
     deploy: async root => { rec.deployed.push(root); return opts.deploy ?? okDeploy() },
     rollback: async root => { rec.rolledBack.push(root); return opts.rollback ?? okDeploy() },
     selftest: async () => ({

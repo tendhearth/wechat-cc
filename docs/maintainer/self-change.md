@@ -48,10 +48,10 @@ intake ─► repo ─► implement ─► guard ─► tests ─► review ─�
 1. **guard(禁改清单)** —— 改动碰了下面那张表里的文件,整条**立刻失败**,不给修复轮。这是护栏,不是意见。
 2. **tests** —— 在工作树里依次 `bun run typecheck` → `bun run depcheck` → `bun run test` → `npm run test:node -- --reporter=dot`,第一条红就停(后面几条在同一个坏状态上跑没有信息量)。
 3. **review** —— **跟实现不同家**的只读评审,谁审由 CC 现挑(2026-10-23):`codex login status` 通 ⇒ `codex exec -s read-only --json`;Codex 不能用 ⇒ 退回**新会话**的只读 `claude -p`(`--disallowedTools Edit,Write,MultiEdit,NotebookEdit`)。谁审、为什么记在 state 的 `review.by` / `review.why`,拍板卡上写「评审(Codex)」。要一份 `{ verdict, findings }` 的 JSON(带不带 \`\`\`json 围栏都认)。 Codex 评审**不带主人的 MCP / 插件**:只读沙箱只管文件写、管不住 MCP 工具(主人 ~/.codex 里有能驱动电脑和浏览器的插件 MCP),所以加 `--ignore-user-config` 并关掉 plugins / browser_use / computer_use / apps / hooks(`-c mcp_servers={}` 在 0.164.0 上没用,实测过)。联网搜索(`-c web_search="disabled"`)和画图(`--disable image_generation`)也关了 —— 评审提示词里有 diff,`web__run` 是唯一会把仓库内容带出这台机器的内置工具。已知还剩 codex 自带的:只读沙箱里的 `exec_command`、`apply_patch`(沙箱写不了)、`spawn_agent`(继承同一个只读沙箱)。挂住不动由同一个 2 小时墙钟兜(`DEFAULT_RUN_TIMEOUT_MS`,到点 SIGTERM、5 秒后杀进程组)。评审和实现一样先过网络守护。`critical` / `important` ⇒ 修复轮;`approve` 且只剩 `minor` ⇒ 过,minor 带进拍板卡。判了 `changes` 却一条 `critical` / `important` 都列不出来的,**照样算一轮修复轮**(说要改又说不出哪里要改,不该当成放行)。评审会话要是动了工作树,流水线会还原,并**直接按 `changes` 算**。
-4. **ci** —— 推 `self/<id>`,进程内调 `ci triage --wait --rerun`。绿才过;已知 flake 由 triage 重跑,第二次仍红一律真红。triage 退 2(压根没有运行 / 等超时 / `gh` 没登录)⇒ `ci_unavailable`,**不进修复轮** —— 交给执行者修一个它看不见的 CI 是白烧预算,这条要人去看。
+4. **ci** —— 推 `self/<id>`、开(或认回)进 `dev` 的 PR,进程内调 `ci triage --wait --rerun`。绿才过;已知 flake 由 triage 重跑,第二次仍红一律真红。triage 退 2(压根没有运行 / 等超时 / `gh` 没登录)⇒ `ci_unavailable`,**不进修复轮** —— 交给执行者修一个它看不见的 CI 是白烧预算,这条要人去看。
 5. **approval** —— 拍板卡发到主人微信(需求、分支、**执行者最后那段交代**、diffstat、测试摘要、评审 verdict、CI 链接、费用),回「y <码>」才合。`n` ⇒ 退 3;超时(缺省 24 小时)⇒ 退 4,`--resume` 会重发卡。daemon 回的 `delivered` 说的是**卡片有没有进微信**:`false` 时条目照样在登记处等着(存盘里记成 `approval.delivered: false`),流水线照常轮询,只是会在终端和微信各说一句「换个面拍」—— 见下一节。
 
-过了五道才 `git rebase origin/dev` + **快进 push**(`git push origin HEAD:refs/heads/dev`,不带 `--force` —— 普通 push 天然只许快进,语义和 `merge --ff-only` 一样;被拒就是远端在这中间前进了 ⇒ `merge_conflict`)合进 `dev`,然后构 sidecar、`self deploy`、`selftest workbench` + `selftest chat`。工作树里**不 `checkout dev`**:git 不许同一条分支在两棵树里检出,而且也不需要 —— rebase 完 HEAD 本身就是 `origin/dev` 的直系后代。自检红 ⇒ 二进制回滚到 `.prev`,**但代码已经在 `dev` 上了** —— 报告里会明说这件事,需要人去改好或 revert。
+过了五道才合:**走 PR,跟人同一条路**(2026-10-23,设计稿 `2026-10-23-cc-runs-development-design.md` §6 第 3 步)。ci 步推 `self/<id>` 时开一个进 `dev` 的 PR(标题「自改 #<id>:<需求>」,需求里的 `[migration-edit]` 去掉,迁移闸门不能借道),CI 只认 PR 那一份 —— `self/**` 的推送不再单跑,自改的 PR 照旧三平台(它没人盯、合完就部署);开不了 PR 就没有 CI ⇒ `ci_unavailable`。拍板放行以后 merge 步把树 detach、交给 `wechat-cc ci land <PR>` squash 合(钉死 head、空 rollup 不算绿、网络抖退避、回应丢了先问状态、dev 被人动过就停,见 `src/cli/ci-land.ts` 开头)。合不进去(冲突、head / dev 被人动过)⇒ `merge_conflict`;CI 红、超时、gh 出错 ⇒ `merge_failed`;分支和 PR 都留着。合完把树放到 `origin/dev` 上(`merge.sha` = 树的 HEAD,deploy 断言的就是它)、`bun install --frozen-lockfile`,然后构 sidecar、`self deploy`、`selftest workbench` + `selftest chat`。主人回 n、`--abandon` 作废 ⇒ PR 关掉、分支留着。老存盘停在 approval、没有 PR 的那条,`--resume` 到 merge 时补开一个,ci land 等它的 CI。自检红 ⇒ 二进制回滚到 `.prev`,**但代码已经在 `dev` 上了** —— 报告里会明说这件事,需要人去改好或 revert。
 
 **一次运行,一个工作树。** `<workdir>/repo` 只是**中枢克隆**:只用来 `fetch` 和管工作树,不在里面构建、不在里面 checkout 业务分支。每条运行 `git -C <hub> worktree add -B self/<id> <workdir>/runs/<id> origin/<branch>`(`-B` 而不是 `-b`:同名分支照样丢掉重开,省掉一条每轮都注定失败一次的 `branch -D`),之后 implement / guard / tests / review / ci / merge / deploy 全在这棵树里跑。以前所有运行共用一个克隆(每次 `checkout -B` + `reset --hard`),B 的 `repo` 步会在 A 的树底下把文件换掉 —— 2026-09-21 审查 #4 就是这个类。
 
@@ -127,7 +127,7 @@ wechat-cc self change --list
 | 码 | 含义 | 典型 result |
 | --- | --- | --- |
 | 0 | 完成 | `done` |
-| 1 | 这次改动没做成 | `implement_failed` `no_changes` `forbidden_paths` `tests_exhausted` `review_exhausted` `ci_exhausted` `ci_unavailable` `merge_conflict` `deploy_failed` `deploy_tree_mismatch` `selftest_failed_rolled_back` `crashed` |
+| 1 | 这次改动没做成 | `implement_failed` `no_changes` `forbidden_paths` `tests_exhausted` `review_exhausted` `ci_exhausted` `ci_unavailable` `merge_conflict` `merge_failed` `deploy_failed` `deploy_tree_mismatch` `selftest_failed_rolled_back` `crashed` |
 | 2 | **不是这次改动的错**,重试同样的需求没意义 | 非 macOS、`self_change_halted`、`self_change_quota`、`daemon_not_running`、`owner_chat_unknown`、`self_change_busy`、`repo_url_unknown` |
 | 3 | 主人回了 `n` | `declined`(分支保留) |
 | 4 | 没等到拍板 | `approval_timeout`(`--resume <id>` 重发卡) |
@@ -236,7 +236,7 @@ daemon 收到之后 spawn 一个 detached 的 `wechat-cc self change --from wech
 
 - **可恢复的和被杀的运行不会自动回收。** 顺手清理只扫 `done` / `declined` / `abandoned`;别的终局和被杀掉的运行要人用 `--abandon <id>` 明说不接了(见「工作树回收与 `--abandon`」)。没人去作废的话,它们的 `runs/<id>` 照样一直留着 —— 宁可占着盘,也不自动把一轮付过钱的实现扫掉。
 - **微信里没有作废口。** 「自改」只有下单和「状态」两个动作。加一个「自改 作废 <id>」要 daemon 再起一个子进程跑 `--abandon` 并把结果回给主人 —— 不算难,但作废会删掉一轮付过钱的实现,而微信那头看不到 `--list` 的类别和树路径,这次先只在终端做。要做的话:`self-change-spawn.ts` 起 `self change --abandon <id> --json`、按 `code` 回话即可。
-- **rebase 之后不重跑 CI。** 合入前会 `git rebase origin/dev`,动了 HEAD 也不重跑 —— `dev` 上并发提交少,重跑要主人再等一轮。代价是 `ci_sha ≠ merge_sha`,报告里会单独说一句。
+- **dev 动过也不重跑 CI。** 等拍板期间 `dev` 上多了别人的提交、又不冲突,GitHub 直接 squash 在最新的 `dev` 上 —— 合入的树 CI 没跑过,重跑要主人再等一轮。代价是 `merge.rebased`(合入的树 ≠ CI 跑的树),报告里会单独说一句;正式闸门是推 `dev` 那一次。
 - **一次只跑一条。** 第二条进来直接 `self_change_busy` 退 2。
 - **只支持 macOS。** 最后两步踩的是 launchd(`self deploy`)和真机自检,其他平台在第一行就退 2。
 - **打包版必须配 `self_change.repo_url`。** 打包版身边没有 checkout 可问 `git remote get-url origin`,配不上就 `repo_url_unknown` 退 2。

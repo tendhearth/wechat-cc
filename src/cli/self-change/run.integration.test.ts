@@ -3,8 +3,9 @@
  * 把一条自改从 intake 跑到 report。
  *
  * 只有执行者 / 测试命令 / CI / 拍板 / 部署 / 自检是假的 —— **git 是真的**,
- * 因为这条流水线最容易错的地方全在 git 上(worktree add、rebase、快进 push、
- * 删远端分支的顺序)。假 git 的单测只能证明「调用顺序没变」,证明不了
+ * 因为这条流水线最容易错的地方全在 git 上(worktree add、squash 合、
+ * 删远端分支的顺序)。GitHub 那一面(开 PR、ci land)换成 localForge:在运行的树里
+ * 本地 squash 再推 dev,跟 GitHub 的 squash 合同一个形状。假 git 的单测只能证明「调用顺序没变」,证明不了
  * 「dev 上真的有这两个文件」、更证明不了「两条运行的树互不影响」。
  *
  * darwin / linux 跑;win32 跳过(流水线本身就是 darwin-only,spec §非目标)。
@@ -22,6 +23,7 @@ import { fakeState, makeFakeDeps, runnerOk, type FakeOpts } from './pipeline.fix
 import { runSelfChange } from './run'
 import type { RunnerInput, RunnerResult } from './runner'
 import { steps } from './steps'
+import type { Forge } from './forge'
 
 const skipOnWindows = process.platform === 'win32'
 
@@ -36,6 +38,34 @@ function git(cwd: string, args: string[]): string {
 
 const IMPORTANT = '```json\n{"verdict":"changes","findings":[{"severity":"important","file":"docs/x.md","summary":"少了一句为什么"}]}\n```'
 const APPROVE = '```json\n{"verdict":"approve","findings":[{"severity":"minor","summary":"措辞可以再紧一点"}]}\n```'
+
+/**
+ * 没有 GitHub 的 forge:land = 在这条运行的树里把分支 squash 到最新的 dev 上、推上去。
+ * 冲突 ⇒ 4(CI_LAND_EXIT.conflict),跟 GitHub 拒合时 ci land 回的「合不进去」同一类。
+ */
+function localForge(): Forge {
+  const branches = new Map<number, string>()
+  let next = 100
+  return {
+    ensurePr: async o => {
+      for (const [n, b] of branches) if (b === o.branch) return { number: n, url: `local/pull/${n}` }
+      const n = next++
+      branches.set(n, o.branch)
+      return { number: n, url: `local/pull/${n}` }
+    },
+    land: async o => {
+      const branch = branches.get(o.pr)!
+      git(o.cwd, ['fetch', 'origin'])
+      git(o.cwd, ['checkout', '-q', '--detach', `origin/${o.base}`])
+      const sq = spawnSync('git', [...IDENTITY, 'merge', '--squash', `origin/${branch}`], { cwd: o.cwd, encoding: 'utf8' })
+      if (sq.status !== 0) { git(o.cwd, ['reset', '-q', '--hard']); return { exitCode: 4, message: 'conflict' } }
+      git(o.cwd, ['commit', '-q', '-m', `squash #${o.pr}`])
+      git(o.cwd, ['push', '-q', 'origin', `HEAD:refs/heads/${o.base}`])
+      return { exitCode: 0, message: '合完 1 层' }
+    },
+    close: async () => {},
+  }
+}
 
 describe.skipIf(skipOnWindows)('self change 整条(真 git)', () => {
   let root: string
@@ -126,6 +156,7 @@ describe.skipIf(skipOnWindows)('self change 整条(真 git)', () => {
       writeFile: (p, s) => { writeFileSync(p, s) },
       mkdirp: p => { mkdirSync(p, { recursive: true }) },
     }
+    made.deps.forge = localForge()
     made.deps.runner = fakeRunner({ ...(over.forbidden ? { forbidden: true } : {}) })
     return made
   }
@@ -145,8 +176,8 @@ describe.skipIf(skipOnWindows)('self change 整条(真 git)', () => {
     const tree = git(remote, ['ls-tree', '-r', '--name-only', 'dev'])
     expect(tree).toContain('docs/x.md')
     expect(tree).toContain('docs/y.md')
-    // ff-only:种子那条提交还在,dev 上多了三条(实现 + 两轮修复)。
-    expect(git(remote, ['rev-list', '--count', 'dev']).trim()).toBe('4')
+    // squash:种子那条提交还在,dev 上只多一条(实现 + 两轮修复压成一条)。
+    expect(git(remote, ['rev-list', '--count', 'dev']).trim()).toBe('2')
     expect(git(remote, ['rev-parse', 'dev']).trim()).toBe(state.merge.sha)
 
     expect(remoteBranches()).not.toContain('self/')

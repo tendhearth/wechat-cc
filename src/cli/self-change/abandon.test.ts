@@ -76,6 +76,18 @@ describe('runAbandon', () => {
     expect(h.released).toBe(1)
   })
 
+  it('开过 PR 的那条 ⇒ 作废时关掉 PR;早就收场的不再关', () => {
+    const h = harness({ rows: [
+      fakeState({ id: 'prpr1111', step: 'approval', result: 'approval_timeout', pr: { number: 77, url: 'u' } }),
+      fakeState({ id: 'done1111', step: 'done', result: 'done', pr: { number: 78, url: 'u' } }),
+    ] })
+    const closed: number[] = []
+    h.deps.closePr = n => { closed.push(n) }
+    expect(runAbandon(h.deps, 'prpr1111')).toMatchObject({ ok: true, code: 'abandoned' })
+    expect(runAbandon(h.deps, 'done1111')).toMatchObject({ ok: true, code: 'reclaimed' })
+    expect(closed).toEqual([77])
+  })
+
   it('可 --resume 的失败(approval_timeout)⇒ 一样作废,原来的结局写进 error', () => {
     const h = harness({ rows: [fakeState({ id: 'timeo111', step: 'approval', result: 'approval_timeout' })] })
     expect(runAbandon(h.deps, 'timeo111')).toMatchObject({ ok: true, code: 'abandoned' })

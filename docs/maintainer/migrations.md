@@ -40,7 +40,7 @@ issue #79 就是这么炸的:一条分支从 v18 的树上切出去,自己编了
 
 主人真机跑的就是 `dev`:一个迁移合进 `dev`、部署一次,就已经在他的库里跑过了。之后再改它,对已经过了那一位的库毫无作用,还会让新库和老库的 schema 悄悄分叉。
 
-CI 作业 `migrations · frozen`(`scripts/migration-frozen.ts`)守这一条:只在 PR 改到 `src/lib/db/migrations/**`、或自改流水线推 `self/**` 时跑;`origin/dev` 上已有的每个 `v*.ts`,这一版里必须还在、一字不差。改了、删了、改名了都红。
+CI 作业 `migrations · frozen`(`scripts/migration-frozen.ts`)守这一条:只在 PR 改到 `src/lib/db/migrations/**` 时跑(自改流水线也走 PR);`origin/dev` 上已有的每个 `v*.ts`,这一版里必须还在、一字不差。改了、删了、改名了都红。
 
 **真要改老迁移**(比如一个会让新装崩掉的错):PR 标题带 `[migration-edit]`,描述里写清楚为什么、以及**已经跑过旧版的库怎么办**(通常答案是:老的照旧放着,再追加一个迁移去修存量库)。CI 会放行并列出改了哪几个文件。
 

@@ -2,8 +2,9 @@
  * CI 工作流的**接缝守卫**。
  *
  * ci.yml 里有三条约定,改错了不会当场红,只会让某个闸门安静地消失:
- *   ① `push.branches` 要含 `self/**` —— 自改流水线推的分支没有 CI,它的
- *      「CI 绿才进 dev」那道闸门就根本不存在,而日志里一切正常。
+ *   ① 自改流水线的 CI 认 PR(2026-10-23 起它推 self/<id> 时开进 dev 的 PR):`pull_request`
+ *      不能限 base、`push.branches` 不能再含 `self/**`(同一提交跑两遍,ci land 等两份 rollup),
+ *      自改的 PR 照旧三平台。哪一条漏了,「CI 绿才进 dev」那道闸门要么安静地没了、要么安静地变窄。
  *   ② `changes` 作业算出 `apps/desktop/**` 动没动过,`desktop-e2e` 靠它的
  *      输出决定在 dev 推送上跑不跑。少了 `needs` 或 `if` 里少了那半句,
  *      桌面改动又退回「合并前才知道红」。
@@ -38,8 +39,9 @@ const jobs = doc.jobs as Record<string, {
 }>
 
 describe('ci.yml —— 触发面', () => {
-  it('push 分支含 self/**(自改流水线推的分支要有 CI 才有闸门)', () => {
-    expect(on.push?.branches).toContain('self/**')
+  it('自改走 PR 拿 CI:pull_request 不限 base,push 不再列 self/**(不然同一提交跑两遍)', () => {
+    expect(on.pull_request?.branches).toBeUndefined()
+    expect(on.push?.branches).not.toContain('self/**')
   })
 
   it('master / dev 仍在 push 分支里', () => {
@@ -185,9 +187,9 @@ describe('ci.yml —— 提速的边界', () => {
       expect(j.if, name).toContain("needs.changes.outputs.code == 'true'")
     }
   })
-  it('不进 master 的 PR 跳过 Windows;推 dev / self/**、进 master 的 PR 照旧三平台', () => {
+  it('不进 master 的 PR 跳过 Windows;推 dev、进 master 的 PR、自改的 PR 照旧三平台', () => {
     const os = String((jobs.build as { strategy?: { matrix?: { os?: unknown } } }).strategy?.matrix?.os)
-    expect(os).toContain("github.event_name == 'pull_request' && github.base_ref != 'master'")
+    expect(os).toContain("github.event_name == 'pull_request' && github.base_ref != 'master' && !startsWith(github.head_ref, 'self/')")
     expect(os).toContain('["ubuntu-latest","macos-latest"]')
     expect(os).toContain('["ubuntu-latest","macos-latest","windows-latest"]')
   })
