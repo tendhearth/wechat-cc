@@ -14,7 +14,7 @@
 |---|---|
 | 这个项目定了什么、为什么这样定、什么被否决过 | [全景导图](全景导图.md)(唯一事实源,HTML 是生成物) |
 | 现在往哪走、卡在哪、欠什么账 | [roadmap](roadmap.md) |
-| 代码是怎么分层的 | [architecture.md](architecture.md) |
+| 代码是怎么分层的、每类东西的「唯一来源」在哪 | [architecture.md](architecture.md)(一页现状图) |
 
 ## 按主题:每个领域看哪一份
 
@@ -48,7 +48,7 @@
 | 终端会话 ↔ 微信(`wechat-cc hook`) | [reference/features.md §10](reference/features.md) | `superpowers/specs/2026-09-09-cli-hook-push-design.md` |
 | 多agent分工、消息与交接（调研，未实现协调层） | [现有协作约定](maintainer/README.md#多-agent-协作) | [业内模式与CC建议](superpowers/reports/2026-09-27-agent-coordination-research.md)；[后续交付计划](superpowers/plans/2026-09-27-cc-coordination-delivery.md)；[本次双方分工](superpowers/plans/2026-09-26-cc-agent-coordination.md) |
 | 模型与后端管理 | [reference/model-management.md](reference/model-management.md) | `superpowers/specs/2026-09-08-model-management-design.md` |
-| 每晚整理记忆 / 记忆视图 | [architecture.md §2.4](architecture.md) | `superpowers/specs/2026-09-25-memory-nightly-design.md` + `2026-09-26-memory-view-design.md` |
+| 每晚整理记忆 / 记忆视图 | [reference/architecture-companion-2026-07.md §2.4](reference/architecture-companion-2026-07.md) | `superpowers/specs/2026-09-25-memory-nightly-design.md` + `2026-09-26-memory-view-design.md` |
 | 网页设计统一(手机 `tokens.css` 唯一色板) | [../apps/mobile/README.md](../apps/mobile/README.md) | `superpowers/specs/2026-09-26-web-design-unify.md` |
 | 桌宠 CC / 美术资产 | — | `superpowers/specs/2026-09-05-cc-desktop-pet-design.md` + `2026-09-08-cc-asset-production-brief.md` + `2026-09-01-cc-atelier-design.md` |
 | 社交层(信封 / 关系 / 觅食台 / 串门 / 明信片 / 介绍) | — | `superpowers/specs/2026-09-04-social-architecture-rethink.md`(重构定案)+ `2026-09-04-{wish-postcard,introduction}-design.md` |
@@ -69,7 +69,7 @@
 | 功能全表 / 权限模式 / 微信命令 / 运行时目录 / 访问控制 / A2A / 常见问题 | [reference/](reference/) 下同名文件 | — |
 | 插件(含内置插件来源:不随包、`plugin source` 登记、按内置默认开) | [plugins.md](plugins.md);部署侧 [maintainer/deploy.md「内置插件」](maintainer/deploy.md) | `src/lib/plugins-source.ts` + `src/daemon/plugins/health.ts` |
 | 桌面安装器 | [installer/desktop-installer.md](installer/desktop-installer.md) | — |
-| 入站语音 STT(已通:网关形态,`stt-config.json` 门控) | [architecture.md §2.5 Voice](architecture.md) | `superpowers/specs/2026-07-23-inbound-voice-stt-design.md` |
+| 入站语音 STT(已通:网关形态,`stt-config.json` 门控) | [reference/architecture-companion-2026-07.md §2.5 Voice](reference/architecture-companion-2026-07.md) | `superpowers/specs/2026-07-23-inbound-voice-stt-design.md` |
 
 ## 目录都装什么
 
