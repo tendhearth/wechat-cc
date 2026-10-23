@@ -279,7 +279,9 @@ describe('Codex 只读评审', () => {
     expect(args.slice(-7)).toEqual(['-s', 'read-only', '-C', '/w', '--json', '--', '--看看'])
     // 主人的 MCP / 插件 / hooks 一样都不带进来(只读沙箱管不住 MCP 工具)
     expect(args).toContain('--ignore-user-config')
-    for (const f of ['plugins', 'browser_use', 'computer_use', 'apps', 'hooks']) expect(args.join(' ')).toContain(`--disable ${f}`)
+    for (const f of ['plugins', 'browser_use', 'computer_use', 'apps', 'hooks', 'image_generation']) expect(args.join(' ')).toContain(`--disable ${f}`)
+    // 联网搜索:唯一会把 diff 带出这台机器的内置工具
+    expect(args.join(' ')).toContain('-c web_search="disabled"')
   })
   it('解析:thread id、最后一条 agent_message;hooks 的 error 条目不算失败', () => {
     expect(parseCodexJson(CODEX_OUT)).toEqual({ threadId: 'thread-1', text: '{"verdict":"approve","findings":[]}', failed: null, turns: 1 })
