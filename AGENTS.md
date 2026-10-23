@@ -25,11 +25,10 @@ Tendhearth CC 是住在用户自己电脑上的个人 AI,日常称呼为 CC。da
 开发者在自己的分支完成修改、验证和提交,交给整合者。整合者在指定的集成工作区逐项合入 `dev`,对合并后的版本重新验证,再部署、推送。分工、冲突处理和运行环境隔离见[维护者手册](docs/maintainer/README.md#多-agent-协作)。
 
 ```bash
-# 开发分支本地验证;整合者合入 dev 后也要验证
-bun run test          # bun --bun vitest run
-npm run test:node     # 同一套源码在 node 下再跑一遍
-bun run typecheck     # tsc --noEmit
-bun run depcheck      # 模块边界
+# 开发分支本地验证:只跑改动牵连到的(typecheck + depcheck + 牵连的测试 + 全部守卫)
+bun run verify
+# 整合者合入 dev 后、部署前:跟 CI 一样四条全跑(test / test:node / typecheck / depcheck)
+bun run verify --full
 
 # 以下由整合者在已验证的 dev 版本上串行执行
 cd apps/desktop && bun run build-sidecar && cd -
