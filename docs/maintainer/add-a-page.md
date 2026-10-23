@@ -6,7 +6,7 @@
 
 ## 0. 先想清楚放在哪
 
-- **每样东西只有一个家**(10-05 定的此刻 / 一起做 / 回忆三层,见 `now-together-hierarchy`):新东西归进三个家之一,不另开一个顶层导航。
+- **每样东西只有一个家**(10-05 定的此刻 / 一起做 / 回忆三层,见 [`superpowers/specs/2026-10-05-now-together-hierarchy.md`](../superpowers/specs/2026-10-05-now-together-hierarchy.md)):新东西归进三个家之一,不另开一个顶层导航。
 - **桌面保持简单**:能放进微信或 CLI 的,先别加桌面页面;一定要加,优先在已有的页面里加一块,而不是加一个新的导航项。
 - **设计原则**:只留 CC 和功能本身、全衬线、只有一个强调色、页面不变色(没有深色模式)。颜色只能取色板(唯一来源 `packages/design-tokens`,桌面 / 手机的 `tokens.css` 都由它生成,别手改),`--faint` 只作装饰,不能用来承载文字。
 - **用词**:手机端一律照 `reference/phone-wording.md`;执行者的名字从名字表来(`src/lib/executor-facts.ts`),不手写「Claude Code」之类。
@@ -35,7 +35,7 @@
 
 - **`gen:routes` 生成的 `apps/desktop/src-tauri/generated/workbench-routes.json` 是编进 `.app` 的**(`lib.rs` 用 `include_str!`)。动了 `tauri` / `ownerWorkspace` 那几格,`self deploy` 换 sidecar **换不到**宿主的白名单,要发版。PR 描述里写明「需要随 1.7.x 发版」,并记进 `docs/releases/desktop-v<下一版>.md`。
 - **链接令牌的范围 = 链接页面源码里实际调用的那些**(`scripts/link-routes-from-source.guard.test.ts` 扫五处链接页面源码)。页面不调的不开,页面调的不能是 `none`。只给设备用的调用要在源码里写 `/* link-scan: device-only */`。
-- **把消息送给执行者的路由只给设备**,不给链接令牌(`phone-link-token-rule`)。
+- **把消息送给执行者的路由只给设备**,不给链接令牌(规矩写在 `src/daemon/phone-routes.ts` 的注释和 [`reference/internal-api-auth.md`](../reference/internal-api-auth.md))。
 - 改了**已有**路由的档位 / 令牌 / link,`scripts/routes-snapshot.guard.test.ts` 会红:是有意的就把快照里那一条一起改,在 PR 里写明。
 
 ## 2. 处理器、请求格式、错误码
@@ -58,7 +58,7 @@
 
 - 后端调用加在 `src/backend/live.ts`,同时在 `demo.ts` / `demo-data.ts` 加演示数据(没配对时 App 照样能看),`types.ts` 里补类型。
 - 错误码在 `src/net/errors.ts` 映射成 `BackendCode`,再走 i18n(`src/i18n/zh-Hans.ts` + `en.ts` 两份都要加)。
-- 页面在 `src/app/`(expo-router),纯展示逻辑放进 `src/view/*.ts` 并配测试。真机 / 模拟器验收见 `simulator-maestro-recipe`(`.maestro/*.yaml`)。
+- 页面在 `src/app/`(expo-router),纯展示逻辑放进 `src/view/*.ts` 并配测试。真机 / 模拟器验收见 [`apps/app/README.md`](../../apps/app/README.md) 的 Maestro 一节(`.maestro/*.yaml`)。
 
 ### 手机网页(`apps/mobile/src/`)
 
@@ -86,6 +86,7 @@ bun run typecheck && bun run depcheck
 |---|---|
 | 路由表加了行、没跑 `gen:routes` | `route-registry.guard`(生成物和表不一致) |
 | 改了已有路由的档位 / 令牌 / link | `routes-snapshot.guard` |
+| 表内约束没守住:`devProxy` 却没有 `tauri`、`tauri` 却没有 `operator`、`ownerWorkspace` 和 `tauri` 同时开 | `route-registry.guard` |
 | 链接页面调了一条 `link: 'none'` 的路由,或开了页面不调的 | `link-routes-from-source.guard` |
 | 处理器里 `Error('新码')`,没进错误码表 | `workbench-errors.guard` |
 | 网页 / App 认了一个表里没有的码 | `mobile-web-errors.guard`、App 的 errors 测试 |
