@@ -31,8 +31,8 @@
 勘察里最不合容器形状的一处:会话在**构造时**就要 `baseUrl`,所以 internal API 必须在 init 里 listen,而 listen 之后到开机完成之间,请求可能已经进来,这时 `ctx.lazy` 会抛。
 
 做法:
-1. init 里 `listen`,但门是关的:任何请求回 503 `daemon_starting`(进 `workbench-errors.ts` 那张表,三端各有说法:「CC 正在启动」)。
-2. start 阶段的最后一步:写 `internal-api-info.json`、开门。桌面 / 手机 / MCP 是读这个文件找端口的,文件没写之前它们根本找不到新端口;门只是兜底(老 info 文件指着上一个进程的端口,连不上)。
+1. init 里 `listen`,但门是关的:任何请求回 503 `daemon_starting`,`/v1/health` 也一样。进 `workbench-errors.ts` 那张表,写成 `{ desktop: 503, phone: [503, 'unavailable'] }`;桌面把它当「正在启动」、退避着等,不弹错(9d 接)。
+2. 门在 internal-api **自己的 `onStart`** 里开,同时写 `internal-api-info.json`。容器的 start 阶段按依赖顺序跑:到这一步时所有模块的 init 都已经做完(lazy 可以调了);internal-api 不依赖 polling,所以它的 `onStart` 排在 polling 开始拉消息**之前** —— 第一条微信那一轮的 MCP 工具不会碰到 503(9d 审稿)。这个先后用 PR 0 的开机快照钉住。桌面 / 手机 / MCP 是读这个文件找端口的,文件没写之前它们根本找不到新端口;门只是兜底(老 info 文件指着上一个进程的端口,连不上)。
 3. 这样 lazy 在门开之前不会被调到,`bootRef?.` 那一批「还没好就返回 null」的分支全删 —— 它们今天返回的空结果,对调用方来说跟「真的没有」分不出来,这是在说假话。
 
 ### 关机顺序
@@ -47,6 +47,7 @@
 | PR | 内容 | 什么时候能合 |
 |---|---|---|
 | 0 | **只加测试**:开机顺序快照 + 关机顺序快照(用假的五样跑一遍 `bootDaemon` 的组装,记下各步名字和先后)。同第二批步 1 的命令基线 | 随时(不改行为) |
+| 0b | **健康门补两条**(`self deploy`):今天只认 `/v1/health` 200、版本 / head 对得上、插件报了上来,**不看拉消息**。补:每个账号的拉消息循环在跑;`daemon_starting` 的 503 当「接着等」(在原有超时内),不当失败回滚 | 随时;PR 2 之前必须在 |
 | 1 | `workbench`(+ wb-*):离微信最远,optional | 0d075422 跑满一整天、日志里没有 MODULES / 关机异常(9d 定) |
 | 2 | `internal-api`:门 + info 文件挪到 start | 上一步部署、真机核对过 |
 | 3 | `sessions`(+ 闲置清扫) | 同上 |
@@ -69,7 +70,7 @@
 
 后两行是**只在出错时才看得到**的行为变化(今天这两种情况是整个 daemon 起不来)。它让主人在工作台坏掉的时候还能在微信上跟 CC 说话,我认为是该做的,但它改的是主人会碰到的东西,合之前请 9d 转给主人一句话确认(规矩:主人看得见的行为变化要主人点头)。主人不同意,这两样就也标必需,其余设计不变。
 
-**部署中途失败**:每一步都是 `self deploy`(换 inode、健康门、失败自动回滚到上一个 sidecar)。健康门现在核什么要在 PR 1 之前查一遍;至少要有「每个账号的拉消息循环在跑」和「internal API 能连」,没有就先补(单独一个小 PR)。因为这几步都不带迁移,回滚后的旧 sidecar 读得懂新 sidecar 留下的一切。
+**部署中途失败**:每一步都是 `self deploy`(换 inode、健康门、失败自动回滚到上一个 sidecar)。健康门今天不看拉消息(9d 查过),由 PR 0b 补上,并把 `daemon_starting` 当成「接着等」。因为这几步都不带迁移,回滚后的旧 sidecar 读得懂新 sidecar 留下的一切。
 
 **部署成功但真机上不对**:核对清单(9d 每步跑)—— 主人微信发一句、收到回复;桌面打开、手机打开;`wechat-cc selftest chat` / `selftest workbench`;再触发一次重启(`self deploy` 自己就会),看关机日志里五样的先后和快照一致、没有 5 秒超时的 `stop timed out`。有一项不对就 `self deploy` 回上一版,下一步不开。
 
