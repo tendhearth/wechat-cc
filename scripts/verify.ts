@@ -9,10 +9,13 @@
  *   - 只改了 Markdown ⇒ 什么都不跑(CI 也跳过,见 ci.yml 的 code 输出)。
  *   - typecheck:根项目总是跑;apps/mobile / apps/relay / apps/app 只在它们自己或协议包动过时跑。
  *   - depcheck:总是跑(便宜)。
- *   - 测试:`vitest --changed <base>` —— 按 import 图找到牵连的测试;外加**所有守卫**。守卫读的是文件
+ *   - 测试:`vitest --changed <base>` —— 按 import 图找到牵连的测试(改了 package.json / vitest 配置 ⇒ vitest 自己
+ *     改成全量,forceRerunTriggers,不是这里的 bug);外加**所有守卫**。守卫读的是文件
  *     (readFileSync / 扫目录),不 import 被守的代码,import 图看不见它们,漏了就是安静地少一道闸。
  *     守卫 = scripts/ 下的测试 + 文件名带 guard.test 的 + no-bun-globals。新守卫照这个起名就会被带上。
  *   - 改了 apps/relay 或协议包 ⇒ 再跑中继自己的单测。
+ *   - import 图看不见的输入(.html / .css / .json 这类被测试 readFileSync 的文件)⇒ 点名列出来,
+ *     并把源码里提到这个文件名的测试一起跑;Playwright(desktop-e2e)本地不跑,改了桌面看 CI。
  *   - 不跑 node 那一遍(test:node):它测的是「换运行时」,改动牵连判不准,交给 CI;要跑就 --full。
  */
 import { spawnSync } from 'node:child_process'
@@ -80,6 +83,17 @@ for (const app of ['apps/mobile', 'apps/relay', 'apps/app']) {
 }
 step('depcheck', 'bun', ['run', 'depcheck'])
 step('测试 · 改动牵连到的', 'bun', ['--bun', 'vitest', 'run', '--changed', base, '--passWithNoTests'])
+
+const CODE = /\.(ts|tsx|js|mjs|cjs|jsx)$/
+const nonImport = changed.filter(f => !CODE.test(f) && !f.endsWith('.md') && !['package.json', 'bun.lock'].includes(f))
+if (nonImport.length) {
+  console.log(`\nimport 图看不见这些文件:${nonImport.join('、')}`)
+  const names = [...new Set(nonImport.map(f => f.split('/').pop()!))]
+  const grep = git(['grep', '-lF', ...names.flatMap(n => ['-e', n]), '--', '*.test.ts', '*.test.tsx'])
+  const tests = lines(grep.stdout).filter(f => !f.startsWith('apps/app/') && !f.startsWith('apps/relay/'))
+  if (tests.length) step(`测试 · 提到这些文件名的(${tests.length})`, 'bun', ['--bun', 'vitest', 'run', ...tests])
+  if (touched('apps/desktop/')) console.log('  改了桌面:Playwright 本地不跑,看 CI 的 desktop-e2e(本地要跑:cd apps/desktop && bun x playwright test)。')
+}
 step('测试 · 守卫', 'bun', ['--bun', 'vitest', 'run', 'scripts/', 'guard.test', 'no-bun-globals'])
 if (touched('apps/relay/', 'packages/protocol/')) step('中继单测', 'bun', ['run', 'test'], 'apps/relay')
 finish()
