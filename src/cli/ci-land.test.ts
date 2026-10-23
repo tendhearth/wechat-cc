@@ -45,9 +45,12 @@ describe('resolveStack', () => {
   it('下层不是开着的 PR ⇒ 抛出', () => {
     expect(() => resolveStack(2, [pr(2, 'gone', 'b', 'sb')], 'dev')).toThrow(/gone/)
   })
-  it('只给上层、下层的上面还叠着更上层(不是兄弟)不算兄弟', () => {
-    // 合 #2 这一串时,#3 叠在 #2 上 ⇒ 它是兄弟(不在这一串里),停下。
-    expect(() => resolveStack(2, open, 'dev')).toThrow(/#3/)
+  it('给的那层上面还叠着更上层 ⇒ 不算兄弟,只合到给的那层(核心链一步一部署)', () => {
+    expect(resolveStack(2, open, 'dev').map(l => l.number)).toEqual([1, 2])
+    expect(resolveStack(1, open, 'dev').map(l => l.number)).toEqual([1])
+  })
+  it('中间层上叠着不在这一串里的,照旧是兄弟', () => {
+    expect(() => resolveStack(2, [...open, pr(4, 'a', 'd', 'sd')], 'dev')).toThrow(/#4/)
   })
 })
 
@@ -155,6 +158,17 @@ describe('runCiLand', () => {
       'gh pr ready 3',
       'gh pr merge 3 --squash --match-head-commit sc-rebased',
     ])
+  })
+
+  it('只给最下面那层(上面还叠着两层)⇒ 只合它,不碰上面的分支,说一声它们以后接着来', async () => {
+    const { deps, calls } = fakeDeps({ open, views: [green('sa')] })
+    const lines: string[] = []
+    deps.log = l => { lines.push(l) }
+    const res = await runCiLand(deps, { top: 1, skipTypecheck: true })
+    expect(res.exitCode).toBe(CI_LAND_EXIT.landed)
+    expect(res.merged).toEqual([1])
+    expect(calls.filter(c => /push|pr edit|pr merge/.test(c))).toEqual(['gh pr merge 1 --squash --match-head-commit sa'])
+    expect(lines.some(l => l.includes('上面还叠着 #2'))).toBe(true)
   })
 
   it('head 变了 ⇒ 停,一层都不合', async () => {
