@@ -60,15 +60,18 @@ v1 初审只管低风险类(只读 + 独立工作区里的写)。写文件**不�
 | 进初审(不执行仓库代码) | 前提:相对基线一个字节没变的路径 |
 |---|---|
 | `tsc` / `tsc --noEmit` | `tsconfig*.json` |
-| `go build` / `go vet`(不含 `go generate` / `go run` / `go test`) | `go.mod` / `go.sum` |
-| `cargo check` | `Cargo.toml` / `Cargo.lock` / `build.rs`,**且**工作区里没有本地 proc-macro crate(判不出来 ⇒ ask) |
-| lint:`eslint` / `ruff check` | `eslint.config.*` / `.eslintrc*` / `package.json` 与锁文件 / `pyproject.toml` / `ruff.toml`(eslint 会加载配置文件和插件) |
+| `go build` / `go vet`(不含 `go generate` / `go run` / `go test`) | `go.mod` / `go.sum` / `go.work` |
+| `cargo check` | `Cargo.toml` / `Cargo.lock` / `build.rs` / `.cargo/config*`(能设 rustc wrapper),**且**工作区里没有本地 proc-macro crate(判不出来 ⇒ ask) |
+| `ruff check` | `pyproject.toml` / `ruff.toml` / `.ruff.toml` |
 
 - 单条命令(v1 已经拒复合命令),cwd 在这件事的独立工作区内;表在代码里,只许加。
+- **程序本身不能在工作区里**:按 cwd 的 PATH 解析出程序、再 realpath,落在独立工作区之内(比如 `node_modules/.bin/tsc`)⇒ ask;
+  解析不出来 ⇒ ask。`node_modules` 被 git 忽略,diff 看不见,执行者可以把 `.bin` 里的东西换成自己的脚本(整合者第三轮审稿)。
+  只认工作区外、系统 PATH 上的可执行文件。
 - 前提用 `git diff --quiet <基线> -- <路径>` 判,基线 = 独立工作区开出来时的那个 commit;未跟踪的新文件落在这些路径下也算变了。
   变了 ⇒ ask,卡上写「它改过 tsconfig 之后要跑 tsc」。
 
-**永远问人、不进这一类**:所有测试运行器(`npm|pnpm|bun|cargo|go|swift test`、`pytest`)、`npm run <脚本>`、`make`、`cargo build|run`、
+**永远问人、不进这一类**:`eslint`(`eslint.config.js` 本身是 JS,还会 import 仓库里的本地规则文件和 node_modules 里的插件 —— 配置没变,它拉进来的代码也可能被改过;JS lint 归沙箱稿)、所有测试运行器(`npm|pnpm|bun|cargo|go|swift test`、`pytest`)、`npm run <脚本>`、`make`、`cargo build|run`、
 `swift build`、`bun x.ts` / `go run` / `python x.py` / `node -e` / 任意二进制。
 
 **不问人就跑测试,只有系统沙箱才配**(另一份稿):macOS `sandbox-exec`,写只许独立工作区和临时目录、不许联网、碰不到钥匙串 ——
@@ -135,6 +138,7 @@ Claude / Codex 的对话侧不动(v1 已说明:admin 那三类本就该问)。
 - 红线:每类一条,初审回 allow 也是 ask;模型根本没被调用(断言调用次数 0)。
 - 初审抛错 / 超时 / 回「deny」/ 回空 ⇒ ask。
 - 直接在项目目录里(没开独立工作区)的写 ⇒ 永不进初审。
+- 工作区里的 `node_modules/.bin/tsc` ⇒ ask(PATH 解析 + realpath 落在工作区内);解析不出程序 ⇒ ask;`eslint` ⇒ ask。
 - 检查命令表外的单条命令 ⇒ ask;每个测试运行器、`npm run x`、`make`、`cargo build`、`swift build` ⇒ ask,模型调用次数 0;表内但复合 / cwd 不在独立工作区 ⇒ ask。
 - 表内命令,但它那一行的前提路径相对基线改过(含新加的未跟踪文件)⇒ ask,模型调用次数 0;`cargo check` 遇到本地 proc-macro crate ⇒ ask。
 - 模型回「allow」以外的任何东西 ⇒ ask:`allow\n不过…`、`"allow"`、`{"verdict":"allow"}`、`allo`、`Allow.`。
