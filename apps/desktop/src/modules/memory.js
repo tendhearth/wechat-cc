@@ -30,7 +30,7 @@ import { observationRow, milestoneCard } from "./observations.js"
 import { decisionRow } from "./decisions.js"
 import { icon } from "./icons.js"
 import { mountMemoryEvidenceDialog, normalizeMemorySourceRefs } from "./memory-evidence.js"
-import { bulkGate, collectLines, editOutcome, isLineEditablePath, lineViewFor, linesUnchanged, memoryEditArgs, renderLineEditor, renderOwnerBlock } from "./memory-line-edit.js"
+import { bulkGate, collectLines, editOutcome, isDerivedMemoryPath, isLineEditablePath, lineViewFor, linesUnchanged, memoryEditArgs, renderLineEditor, renderOwnerBlock } from "./memory-line-edit.js"
 
 // `selected` doubles as the edit-target identity (userId + path) AND the
 // "we have a file open" flag for the edit button visibility. `editing`
@@ -225,7 +225,13 @@ async function openMemoryFile(deps, userId, relPath, mtime) {
   memoryState.pristine = result.content
   // Show the edit button now that there's content to edit.
   const editBtn = document.getElementById("memory-edit-btn")
-  if (editBtn) editBtn.hidden = false
+  if (editBtn) editBtn.hidden = !canEditOpenFile()
+}
+
+// 生成物(总览、画像)只由机器写:主人自己的经逐行编辑改,别人对话里的不给编辑按钮(整份写会被拒)。
+function canEditOpenFile() {
+  if (!memoryState.selected) return false
+  return memoryState.lineView !== null || !isDerivedMemoryPath(memoryState.selected.path)
 }
 
 /**
@@ -266,7 +272,7 @@ function setEditMode(editing) {
   } else {
     if (editor) editor.hidden = true
     if (rendered) rendered.hidden = false
-    if (editBtn) editBtn.hidden = !memoryState.selected  // keep hidden if nothing open
+    if (editBtn) editBtn.hidden = !canEditOpenFile()  // keep hidden if nothing open / derived file of another chat
     if (saveBtn) saveBtn.hidden = true
     if (cancelBtn) cancelBtn.hidden = true
   }

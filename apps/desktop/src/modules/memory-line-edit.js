@@ -19,6 +19,15 @@ import { escapeHtml } from "../view.js"
 
 export const LINE_EDITABLE_PATHS = ["_overview.md", "memory.md", "owner.md"]
 
+/**
+ * 生成物:只由合成写,整份 `memory write` 一律被拒(记忆编辑第 4 步)。和 src/lib/memory-artifacts.ts 里 kind: 'derived' 那几份对齐。
+ * @param {string} path
+ */
+export function isDerivedMemoryPath(path) {
+  return DERIVED_MEMORY_PATHS.includes(path)
+}
+export const DERIVED_MEMORY_PATHS = ["_overview.md", "_profile.json", "portrait.svg", "portrait.json", "knowledge.md"]
+
 /** @param {string} path */
 export function isLineEditablePath(path) {
   return LINE_EDITABLE_PATHS.includes(path)

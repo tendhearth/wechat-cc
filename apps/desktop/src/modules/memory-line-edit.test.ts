@@ -1,6 +1,6 @@
 // @vitest-environment happy-dom
 import { describe, it, expect } from 'vitest'
-import { bulkConfirmText, bulkGate, collectLines, editOutcome, isLineEditablePath, lineViewFor, linesUnchanged, memoryEditArgs, renderLineEditor, renderOwnerBlock } from './memory-line-edit.js'
+import { DERIVED_MEMORY_PATHS, bulkConfirmText, bulkGate, isDerivedMemoryPath, collectLines, editOutcome, isLineEditablePath, lineViewFor, linesUnchanged, memoryEditArgs, renderLineEditor, renderOwnerBlock } from './memory-line-edit.js'
 
 const view = (lines: any[], extra: Record<string, unknown> = {}): any => ({ ok: true, chatId: 'owner@im.wechat', path: 'memory.md', baseHash: 'a'.repeat(64), generatedAt: null, stale: false, lines, ...extra })
 const owned = { text: '我不喝咖啡', origin: 'owner', assertionId: 'o1', editedAt: '2026-10-23', replaces: { correctionId: 'c1', text: '喜欢美式' } }
@@ -127,5 +127,14 @@ describe('bulk confirmation only covers what the owner was shown', () => {
     const first = bulkGate(null, shown)
     expect(bulkGate(first.snapshot, []).confirmBulk).toBe(false)
     expect(bulkGate(first.snapshot, [{ text: '住在苏州', lineKey: 'm:7' }]).confirmBulk).toBe(false)
+  })
+})
+
+describe('derived files', () => {
+  it('match the daemon manifest exactly (kind: derived)', async () => {
+    const { MEMORY_ARTIFACTS } = await import('../../../../src/lib/memory-artifacts')
+    const derived = Object.entries(MEMORY_ARTIFACTS).filter(([, v]) => (v as any).kind === 'derived').map(([k]) => k).sort()
+    expect([...DERIVED_MEMORY_PATHS].sort()).toEqual(derived)
+    expect(isDerivedMemoryPath('memory.md')).toBe(false)
   })
 })
