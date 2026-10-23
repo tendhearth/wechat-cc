@@ -39,6 +39,7 @@
     "build:mobile": "bun apps/mobile/build.ts",
     "build:markdown": "bun packages/markdown/build.ts",
     "e2e:device": "bun scripts/device-e2e.ts",
+    "verify": "bun scripts/verify.ts",
     "typecheck": "tsc --noEmit && tsc --noEmit -p apps/mobile && tsc --noEmit -p apps/relay && tsc --noEmit -p apps/app",
     "build:map": "bun scripts/build-map.ts",
     "gen:routes": "bun scripts/gen-routes.ts",

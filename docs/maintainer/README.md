@@ -29,11 +29,9 @@
 ## 最短路径
 
 ```bash
-# 1. 开发者在独立分支改代码并验证;整合者合入 dev 后复验(四条都要绿)
-bun run test                         # bun --bun vitest run
-npm run test:node                    # 同一套源码在 node 下再跑一遍(见 ci-and-flakes.md)
-bun run typecheck                    # tsc --noEmit
-bun run depcheck                     # 模块边界
+# 1. 开发者在独立分支改代码并验证;整合者合入 dev 后复验
+bun run verify                       # 只跑改动牵连到的 + 全部守卫(scripts/verify.ts 开头写了判法)
+bun run verify --full                # 整合者:test / test:node / typecheck / depcheck 四条全跑,跟 CI 一样
 cd apps/relay && bun run test        # 改了中继 / 协议包时(另有 test:e2e,见 relay.md)
 
 # 2. 以下由整合者串行执行:构建已验证 dev 的 sidecar 并原子换进 .app(macOS)
