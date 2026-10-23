@@ -228,3 +228,35 @@ describe.skipIf(process.platform === 'win32')('spawnCollect 的超时', () => {
     }
   }, 15_000)
 })
+
+// ── 调模型前先看网络守护 ──────────────────────────────────────────────────
+import { guardedRunner } from './runner'
+
+describe('guardedRunner —— 网络不受保护就不调模型', () => {
+  const ok = { ok: true, sessionId: 's', text: 'done', costUsd: 1, turns: 1, stderrTail: [], timedOut: false }
+  const input = { cwd: '/w', prompt: 'p', budgetUsd: 1, maxTurns: 1 }
+  const counted = () => { let n = 0; return { runner: { run: async () => { n++; return ok } }, calls: () => n } }
+  it('守护开着、安全 ⇒ 照常调', async () => {
+    const c = counted()
+    expect((await guardedRunner(c.runner, async () => ({ enabled: true, safe: true, detail: '' })).run(input)).ok).toBe(true)
+    expect(c.calls()).toBe(1)
+  })
+  it('守护开着、不安全 ⇒ 不起进程,network_unprotected,带守护的原话', async () => {
+    const c = counted()
+    const r = await guardedRunner(c.runner, async () => ({ enabled: true, safe: false, detail: 'bx 没开' })).run(input)
+    expect(r).toMatchObject({ ok: false, error: 'network_unprotected' })
+    expect(r.text).toContain('bx 没开')
+    expect(c.calls()).toBe(0)
+  })
+  it('读不到守护(daemon 不通 / 抛错)⇒ 也不调(缺省往拒绝兜底)', async () => {
+    const c = counted()
+    expect((await guardedRunner(c.runner, async () => null).run(input)).error).toBe('network_unprotected')
+    expect((await guardedRunner(c.runner, async () => { throw new Error('x') }).run(input)).error).toBe('network_unprotected')
+    expect(c.calls()).toBe(0)
+  })
+  it('主人自己关了守护 ⇒ 照常调', async () => {
+    const c = counted()
+    expect((await guardedRunner(c.runner, async () => ({ enabled: false, safe: false, detail: '' })).run(input)).ok).toBe(true)
+    expect(c.calls()).toBe(1)
+  })
+})

@@ -155,6 +155,17 @@ describe('health', () => {
   })
 })
 
+describe('guard', () => {
+  it('读 /v1/health.guard;paused 也算不安全', async () => {
+    expect(await harness([{ ok: true, status: 200, body: { ok: true, guard: { enabled: true, safe: true, detail: 'bx 保护中' } } }]).client.guard()).toEqual({ enabled: true, safe: true, detail: 'bx 保护中' })
+    expect((await harness([{ ok: true, status: 200, body: { ok: true, guard: { enabled: true, safe: true, paused: true, detail: 'x' } } }]).client.guard())?.safe).toBe(false)
+  })
+  it('daemon 不通 / 老 daemon 没这一格 ⇒ null', async () => {
+    expect(await harness([], () => null).client.guard()).toBeNull()
+    expect(await harness([{ ok: true, status: 200, body: { ok: true } }]).client.guard()).toBeNull()
+  })
+})
+
 describe('api-info 的重读', () => {
   it('每次调用都重读一次(daemon 会在流水线中途被换掉、端口和钥匙都会变)', async () => {
     const h = harness([
