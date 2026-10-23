@@ -150,7 +150,7 @@ describe('pipeline-deps delegateToHand selfId (T2/T6 identity-split fix)', () =>
     try {
       const { pipelineDeps } = setup('cc-boot-resolved-1234')
       const handled = await pipelineDeps.commands!.registry.handle(delegateMsg)
-      expect(handled).toEqual({ id: 'admin', group: 'admin' }) // fire-and-forget ack — runDelegate continues in the background
+      expect(handled).toEqual({ id: 'admin.delegate', group: 'admin' }) // fire-and-forget ack — runDelegate continues in the background
 
       const call = await pollFor(() => doDelegateSpy.mock.calls[0] ?? null)
       expect(call).not.toBeNull()
