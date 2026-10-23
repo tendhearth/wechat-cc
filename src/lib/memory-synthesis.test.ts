@@ -538,3 +538,21 @@ describe('derived memory generation fences', () => {
     expect(result.written).toBeUndefined()
   })
 })
+
+// 3e 记忆第 3 步:合成只吃源 —— 生成物(_overview / knowledge.md)、队列(today-draft)、和复述被纠正原话的 corrections.md 都不当素材。
+describe('gatherLifeContext reads only source memory', () => {
+  it('feeds memory.md / profile.md / notes, and skips derived, queue and corrections files', async () => {
+    const { mkdtempSync, mkdirSync, writeFileSync, rmSync } = await import('node:fs')
+    const { tmpdir } = await import('node:os')
+    const { join } = await import('node:path')
+    const stateDir = mkdtempSync(join(tmpdir(), 'synth-sources-'))
+    try {
+      const dir = join(stateDir, 'memory', 'owner1')
+      mkdirSync(join(dir, 'notes'), { recursive: true })
+      for (const [f, body] of [['memory.md', 'm'], ['profile.md', 'p'], ['notes/trip.md', 'n'], ['_overview.md', 'o'], ['knowledge.md', 'k'], ['today-draft.md', 'd'], ['corrections.md', '主人说这条已经过时:旧地址']] as const) writeFileSync(join(dir, f), body)
+      const life = await gatherLifeContext({ stores: null, stateDir, adminChatId: 'owner1' })
+      expect(life.memoryNotes.map(n => n.name).sort()).toEqual(['memory.md', 'notes/trip.md', 'profile.md'])
+      expect(JSON.stringify(life.memoryNotes)).not.toContain('旧地址')
+    } finally { rmSync(stateDir, { recursive: true, force: true }) }
+  })
+})

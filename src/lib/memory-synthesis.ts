@@ -21,6 +21,7 @@
  * (same pattern as summarizer-runtime), so the CLI wires the admin's provider
  * (claude/codex) and tests pass a mock.
  */
+import { feedsSynthesis } from './memory-artifacts'
 import { createHash } from 'node:crypto'
 import { existsSync, readFileSync, readdirSync, statSync } from 'node:fs'
 import { homedir } from 'node:os'
@@ -373,7 +374,9 @@ export async function gatherLifeContext(opts: { stores?: LifeStoresReader | null
   try {
     const dir = join(memoryRoot, adminChatId)
     for (const rel of listMd(dir)) {
-      if (rel === OVERVIEW_FILENAME) continue  // don't feed our own output back
+      // 只吃源(lib/memory-artifacts,3e 记忆第 3 步):生成物不喂生成物 —— 以前只排除了 _overview.md 自己,knowledge.md
+      // 被读两遍(下面 readOwnerKnowledge 单独读了一份)、today-draft 和 profile.md 重复;corrections.md 复述被纠正的原话,也不喂。
+      if (!feedsSynthesis(rel)) continue
       try { out.memoryNotes.push({ name: rel, content: readFileSync(join(dir, rel), 'utf8') }) } catch { /* skip */ }
     }
   } catch { /* best-effort */ }
