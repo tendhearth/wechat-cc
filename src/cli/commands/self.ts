@@ -422,7 +422,32 @@ const selfSoakCmd = defineCommand({
   },
 })
 
+// ── self discover — 真机日志里反复出现的失败,排成候选任务(src/cli/self-discover.ts 开头写了判法) ──
+const selfDiscoverCmd = defineCommand({
+  meta: { name: 'discover', description: '发掘任务:最近日志里反复出现的失败按次数排成候选(CC 自己迭代的第一个来源);只读' },
+  args: {
+    hours: { type: 'string', description: '看最近几小时(缺省 48)' },
+    'min-count': { type: 'string', description: '至少出现几次才算(缺省 3)' },
+    json: { type: 'boolean', description: 'JSON 输出' },
+  },
+  async run({ args }) {
+    const { readFileSync, existsSync } = await import('node:fs')
+    const { LOG_FILE } = await import('../../lib/log')
+    const { discover, formatDiscover } = await import('../self-discover')
+    const hours = args.hours === undefined || args.hours === '' ? 48 : Number(args.hours)
+    const minCount = args['min-count'] === undefined || args['min-count'] === '' ? 3 : Number(args['min-count'])
+    if (!Number.isFinite(hours) || hours <= 0 || !Number.isInteger(minCount) || minCount < 1) {
+      console.error('self discover: 用法 wechat-cc self discover [--hours N] [--min-count N] [--json]')
+      process.exit(1)
+      return
+    }
+    const read = (p: string) => (existsSync(p) ? readFileSync(p, 'utf8') : '')
+    const cands = discover({ log: read(`${LOG_FILE}.1`) + read(LOG_FILE), now: Date.now(), hours, minCount })
+    console.log(args.json ? JSON.stringify(cands, null, 2) : formatDiscover(cands, hours))
+  },
+})
+
 export const selfCmd = defineCommand({
   meta: { name: 'self', description: '自维护:部署自身、让 CC 自己改自己（仅 macOS launchd；见 docs/maintainer/deploy.md 与 self-change.md）' },
-  subCommands: { change: selfChangeCmd, deploy: selfDeployCmd, soak: selfSoakCmd },
+  subCommands: { change: selfChangeCmd, deploy: selfDeployCmd, soak: selfSoakCmd, discover: selfDiscoverCmd },
 })
