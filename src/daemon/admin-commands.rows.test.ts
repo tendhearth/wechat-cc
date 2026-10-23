@@ -32,7 +32,7 @@ describe('admin rows', () => {
     expect(ADMIN_ROW_IDS).toEqual(['hand.join', 'hands.list', 'bag', 'health', 'health.ai', 'reset', 'update', 'selfchange.status', 'selfchange.start', 'memory.show', 'memory.synthesize', 'delegate', 'cleanup', 'hearth.ingest', 'hearth.list', 'hearth.show', 'hearth.apply', 'hearth.help', 'rules.toggle', 'botname'])
   })
 
-  // 9d 审稿:「最多一行认领」和「顺序就是优先级」不能同时成立 —— 选互斥。以前「自改 状态」要排在「自改 <需求>」前面才不被当成需求,
+  // 整合者审稿:「最多一行认领」和「顺序就是优先级」不能同时成立 —— 选互斥。以前「自改 状态」要排在「自改 <需求>」前面才不被当成需求,
   // 现在 selfchange.start 自己把它排除掉;以后谁调了表的先后也不会悄悄改行为。
   it('rows are mutually exclusive: no sentence is claimed by two rows', () => {
     const overlaps = CORPUS.map(t => [t, adminRowsMatching(t, HANDS)] as const).filter(([, ids]) => ids.length > 1)
@@ -79,7 +79,7 @@ describe('admin commands() in the registry', () => {
     await cmds.find(c => c.id === 'admin.owner-only')!.handle(msg('/reset', 'guest'))
     expect(sent).toEqual([['guest', '这条只有主人能用。']])
   })
-  // 9d 审稿:后台那两行 handle 要立刻回,活在后台跑(合成、派活都是慢的模型 / agent 调用)
+  // 整合者审稿:后台那两行 handle 要立刻回,活在后台跑(合成、派活都是慢的模型 / agent 调用)
   it('background rows return before the slow work finishes', async () => {
     let finish!: () => void
     const synthesizeMemory = vi.fn(() => new Promise<never>(resolve => { finish = resolve as () => void }))

@@ -19,7 +19,7 @@ const CORE = join(ROOT, 'src', 'core')
 /** 一个文件里值导入 `node:*` 的处数:静态 import / export … from(跨行也算,`import type` / `export type` 不算)+ 动态 import() / require()。 */
 export function nodeValueImports(src: string): number {
   // 注释按行判(行首是 // 、/* 或 * 的整行不算),不用跨行的块注释正则:字符串里的 `/*`(比如 glob 'src/**/*.ts')
-  // 会被当成注释开头,一路吞到下一个 `*/`,把中间的真导入吃掉 —— daemon-module 守卫第一版踩过(9d 评审 #568)。
+  // 会被当成注释开头,一路吞到下一个 `*/`,把中间的真导入吃掉 —— daemon-module 守卫第一版踩过(整合者评审 #568)。
   const code = src.split('\n').map(l => /^\s*(\/\/|\/\*|\*)/.test(l) ? '' : l).join('\n')
   const statics = code.match(/(?:^|\n)\s*(?:import|export)\s+(?!type[\s{])[^;'"`]*?\bfrom\s+['"]node:[^'"]+['"]/g) ?? []
   const sideEffect = code.match(/(?:^|\n)\s*import\s+['"]node:[^'"]+['"]/g) ?? []

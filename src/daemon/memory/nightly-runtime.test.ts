@@ -206,7 +206,7 @@ describe('owner corrections, step A (2026-10-06)', () => {
     expect(readFileSync(join(stateDir, 'memory-archive', OWNER, 'memory-expired.md'), 'utf8')).toContain('(owner_outdated)')
     await expect(rt.correct(id, 'wrong')).rejects.toThrow('memory_entry_not_found')
   })
-  // 3e 记忆第 2 步(9d 定):每晚整理只是多了 / 整理了东西 ⇒ 总览 added(贴标签照常用);主人纠正 ⇒ retracted(藏,不带去串门)。
+  // 3e 记忆第 2 步(整合者定):每晚整理只是多了 / 整理了东西 ⇒ 总览 added(贴标签照常用);主人纠正 ⇒ retracted(藏,不带去串门)。
   // 3b (a) 清源头:更正一条,CC 笔记里含那句的行也删掉;删了什么记在 corrections.md 那一条底下;原文件快照能找回。
   it('a correction also purges the same sentence from profile.md, notes it under the correction, and archives the original', async () => {
     const { readFileSync, readdirSync } = await import('node:fs')
@@ -304,7 +304,7 @@ describe('导入记忆(第二轮对标 #7)', () => {
   })
 })
 
-// 9d 记的欠账:CC 自己换了说法的待办(「问问杭州之行」对「下周去杭州出差」)逐字接不住 —— 更正后在后台问一次便宜模型。
+// 整合者记的欠账:CC 自己换了说法的待办(「问问杭州之行」对「下周去杭州出差」)逐字接不住 —— 更正后在后台问一次便宜模型。
 describe('correction → agenda drop by cheap model', () => {
   const NIGHTLY_ANSWER = JSON.stringify({ add: [{ section: '承诺', text: '下周去杭州出差谈合同' }], update: [], confirm: [], remove: [] })
   const agenda = '- [ ] due:2026-10-30 问问杭州之行顺不顺利\n- [ ] due:2026-11-02 提醒周报\n'

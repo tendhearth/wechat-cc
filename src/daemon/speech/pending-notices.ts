@@ -1,5 +1,5 @@
 /**
- * 「待说」队列:report / blocking 被推后了不能丢(第三批 3a「defer 不是不送」,9d 评审 #528 / #530)。
+ * 「待说」队列:report / blocking 被推后了不能丢(第三批 3a「defer 不是不送」,整合者评审 #528 / #530)。
  *
  * 只发一次的那几句(社交的来信 / 结果、定时被暂停、升级完、开机有几样没起来 …)被门推后 ⇒ 落盘在这里;
  * 门这一层定时 flush:每条对话合成一句(「刚才没顾上跟你说的几件事」),放行就说完、清掉。
@@ -13,7 +13,7 @@ import { readJsonFile } from '../../lib/read-json-file'
 import type { SpeechKind } from '../../core/speech/kinds'
 import { writeFileAtomic } from '../../lib/json-file'
 
-/** id:入队时给,说完只删这次真说了的那几条(flush 发送途中又进来的不会被一并删掉;9d 评审 #531)。 */
+/** id:入队时给,说完只删这次真说了的那几条(flush 发送途中又进来的不会被一并删掉;整合者评审 #531)。 */
 export interface PendingNotice { id: string; kind: SpeechKind; chatId: string; text: string; at: string }
 
 export const MAX_PENDING_PER_CHAT = 20
@@ -81,7 +81,7 @@ export const PENDING_FLUSH_MS = 5 * 60_000
 
 /**
  * 「待说」的那一拍:门这一层自己起,main.ts 用 lc.register 登记,关机停。只有这一个触发点
- * (不挂在伙伴那一拍上 —— 主动关心关了那一拍就不跑;9d 评审 #528)。
+ * (不挂在伙伴那一拍上 —— 主动关心关了那一拍就不跑;整合者评审 #528)。
  */
 export function startPendingFlush(speech: { flushPending(): Promise<void> }, log: (tag: string, line: string) => void, intervalMs = PENDING_FLUSH_MS): import('../../lib/lifecycle').Lifecycle {
   const timer = setInterval(() => {

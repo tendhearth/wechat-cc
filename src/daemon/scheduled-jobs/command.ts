@@ -30,7 +30,7 @@ export function makeJobsCommand(deps: {
   jobExecutor?: () => string | null
   /** 早报的口味(memory/<owner>/brief-prefs.md);缺省 ⇒ 「早报 …」不当命令。 */
   briefPrefs?: { read(): string[]; add(line: string): void; clear(): void }
-  /** 主人设的免打扰(chat-prefs 主人那条)。早报 / 周报的时间落在里面 ⇒ 建的时候当场说「会天天跳过」(9d 评审 #509)。 */
+  /** 主人设的免打扰(chat-prefs 主人那条)。早报 / 周报的时间落在里面 ⇒ 建的时候当场说「会天天跳过」(整合者评审 #509)。 */
   quietWindow?: () => QuietWindow | undefined
 }): ReplyHandler {
   const quietNote = (j: ScheduledJob): string => {

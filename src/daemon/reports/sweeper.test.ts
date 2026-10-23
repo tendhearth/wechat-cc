@@ -50,7 +50,7 @@ describe('runReportSweep', () => {
   })
   afterEach(() => db.close())
 
-  it('**门说推后(免打扰 / 两条路都送不到)⇒ 留在 outbox,不算一次尝试、不退避、不写 first_fail_at;恢复后只送达一次**(SpeechPolicy 第 2 步,9d 的条件)', async () => {
+  it('**门说推后(免打扰 / 两条路都送不到)⇒ 留在 outbox,不算一次尝试、不退避、不写 first_fail_at;恢复后只送达一次**(SpeechPolicy 第 2 步,整合者的条件)', async () => {
     matters.bind(CHAT, 'wechat', 'user-1')
     await outbox.insert({matterId: TASK, originMatterId: CHAT, originMessageId: 'msg-7', text: '首页调整 · 已答复。'}, 1_000)
     const sent: string[] = []

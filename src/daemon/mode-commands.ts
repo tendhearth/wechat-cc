@@ -41,7 +41,7 @@ import type { WechatCommand } from './commands/registry'
 type ModeChatPrefs = { split?: boolean; care?: 'off' | 'low' | 'high'; stickers?: boolean; hunt?: boolean; visit?: boolean; avoid?: AvoidTopic[]; quiet?: import('../core/quiet-hours').QuietWindow }
 
 export interface ModeCommandsDeps {
-  /** 主人建的早报 / 周报几点到(设免打扰时撞上了就当场说「会天天跳过」,9d 评审 #509)。没接 ⇒ 不提。 */
+  /** 主人建的早报 / 周报几点到(设免打扰时撞上了就当场说「会天天跳过」,整合者评审 #509)。没接 ⇒ 不提。 */
   initiativeJobTimes?: () => Array<{ label: string; at: string }>
   coordinator: Pick<ConversationCoordinator, 'getMode' | 'setMode' | 'cancel'>
   registry: Pick<ProviderRegistry, 'has' | 'get' | 'list'>

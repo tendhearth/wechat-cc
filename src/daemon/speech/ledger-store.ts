@@ -3,7 +3,7 @@
  * **不记正文**:说过的话在 messages 里,这里只有种类、类别、结果、原因、通道。
  * 90 天前的行在写入时顺手删(一小时最多删一次),不另起定时器。
  * **账回答「为什么」,不回答「有几条」**:连着被推后的同一句话一小时只记一次(policy.ts),同一条对话里压着三条回报
- * 也只记一行。要数「有几条在等」,从各自的持久层读(回报读 matter_report_outbox、提醒读 reminders),别从这里数(9d 评审 #522)。
+ * 也只记一行。要数「有几条在等」,从各自的持久层读(回报读 matter_report_outbox、提醒读 reminders),别从这里数(整合者评审 #522)。
  */
 import type { Db } from '../../lib/db'
 import type { SpeechKind, SpeechOrigin } from '../../core/speech/kinds'

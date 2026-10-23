@@ -119,7 +119,7 @@ export function purgeCorrectedFromSources(memoryRoot: string, correctedText: str
 
 /**
  * agenda.md 不是关于主人的事实,但它是 CC 的跟进计划:主人撤掉「下周去杭州」以后,到点 CC 照样会问「杭州玩得怎么样」,
- * 等于当面把撤掉的事又说一遍(9d 评审 #586)。不删行,用 agenda 现成的格式把命中的待办关掉:
+ * 等于当面把撤掉的事又说一遍(整合者评审 #586)。不删行,用 agenda 现成的格式把命中的待办关掉:
  * `- [ ] due:<日期> <内容>` ⇒ `- [x] dropped:<今天> <内容>`(agenda 解析本来就认 dropped:)。
  * **已知限制,比清源头更明显**:待办是 CC 自己的说法(「关心杭州之行」),和被更正的原话(「下周去杭州」)往往不是逐字包含,
  * 这里只接得住几乎照抄的那种。
@@ -157,7 +157,7 @@ export function openAgendaItems(memoryRoot: string): Array<{ n: number; due: str
 }
 
 /**
- * 问便宜模型「哪几条待办是在跟进这句被撤掉的话」的提示词(逐字匹配接不住 CC 自己换了说法的待办,9d 记的欠账)。
+ * 问便宜模型「哪几条待办是在跟进这句被撤掉的话」的提示词(逐字匹配接不住 CC 自己换了说法的待办,整合者记的欠账)。
  * 模型只能从编号里挑,回答只认数字;待办和主人的原话都当材料,不当指令。
  */
 export function agendaDropPrompt(correctedText: string, items: ReadonlyArray<{ n: number; text: string }>): string {

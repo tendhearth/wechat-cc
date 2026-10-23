@@ -6,7 +6,7 @@
  * 「能不能说」在这里,「往哪儿送」(微信 / 降级走 App)仍是 proactive-channel 的事。
  *
  * 每次判定记一行账(种类、类别、结果、原因、通道、时间;**不记正文**),回答「CC 为什么说了 / 没说」。
- * 例外:同一种话、同一条对话、同一个理由**连着被推后**,账和日志一小时只记一次(9d 评审 #521:一夜免打扰 ×
+ * 例外:同一种话、同一条对话、同一个理由**连着被推后**,账和日志一小时只记一次(整合者评审 #521:一夜免打扰 ×
  * 每拍再问一次,会把账淹掉)。放行 / 被拒 / 失败以后重新算。
  * 第 1 步只加不接:还没有调用方,行为不变。
  */
@@ -145,7 +145,7 @@ export function makeSpeechPolicy(deps: {
           deps.log('SPEECH', `${kind} chat=${chatId} send threw: ${err instanceof Error ? err.message : String(err)}`)
         }
       })
-      // report / blocking 没说出去 —— 被推后,**或者放行了但发失败**(ilink 回 error / 网络抖)—— 都入队,之后补说(9d 评审 #531 ①)
+      // report / blocking 没说出去 —— 被推后,**或者放行了但发失败**(ilink 回 error / 网络抖)—— 都入队,之后补说(整合者评审 #531 ①)
       const notSaid = 'defer' in o || ('allow' in o && !sent)
       // 带会过期码的卡不排队(isExpiring):晚补出去只会给一个失效的码
       if (notSaid && originOf(kind) !== 'initiative' && !isExpiring(kind) && deps.pending) {
@@ -167,7 +167,7 @@ export function makeSpeechPolicy(deps: {
           try { sent = !(await turn.sendText(g.chatId, mergePending(g.items, g.dropped))).error } catch { sent = false }
         })
         if ('allow' in o && sent) {
-          // 只删这次真说了的那几条(发送途中又进来的留着,下一拍说;9d 评审 #531 ②)
+          // 只删这次真说了的那几条(发送途中又进来的留着,下一拍说;整合者评审 #531 ②)
           deps.pending.remove(g.chatId, g.items.map(i => i.id), g.dropped)
           flushBackoff.delete(g.chatId)
           deps.log('SPEECH', `told ${g.items.length} pending notice(s) chat=${g.chatId}`)

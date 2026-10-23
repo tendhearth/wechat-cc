@@ -2,7 +2,7 @@
  * CC 会主动说的每一种话,只在这里声明一次(第三批 3a,设计稿 docs/superpowers/specs/2026-10-21-speech-policy-design.md)。
  *
  * **origin 跟着种类走,调用方不能自己传** —— 没有哪条路能把自己说成 requested 来绕过闸。
- * 归类的准绳(9d 评审 #507):看这一句的**内容**是不是主人点名要的,不看开关是谁开的。
+ * 归类的准绳(整合者评审 #507):看这一句的**内容**是不是主人点名要的,不看开关是谁开的。
  *  - blocking   有事卡着等主人拍板(权限 y/n、有人想跟 CC 说话、配对)。iOS 的 time-sensitive / critical。
  *  - requested  内容、时间都是主人点名的(提醒、「每天 9 点看邮箱」)。
  *  - report     主人交办的事有了结果,CC 来回话(内容 CC 定、起因是主人)。
@@ -24,7 +24,7 @@ export const SPEECH_KINDS = {
   reminder: { origin: 'requested', label: '提醒' },
   job: { origin: 'requested', label: '定时任务' },
   // 主人点名「换一家来审」:内容(审哪件、谁来审)是主人点的,而且只触发一次、后面没有队列 —— 归 report 的话免打扰里
-  // 一推后就丢了(9d 评审 #524 讨论)。所以归 requested。
+  // 一推后就丢了(整合者评审 #524 讨论)。所以归 requested。
   review: { origin: 'requested', label: '换一家来审' },
   matter_report: { origin: 'report', label: '一件事的回报' },
   review_missed: { origin: 'report', label: '定时审阅错过了' },
@@ -46,10 +46,10 @@ export const SPEECH_KINDS = {
   companion: { origin: 'initiative', label: '伙伴' },
   guest_visit: { origin: 'initiative', label: '来访' },
   // 一次性:只在画好的那一刻触发一次,没有「下一拍」—— 被推后就等于这一句丢了(贴纸已经进库,照样会用到)。
-  // 以后加别的一次性 initiative 照这条判:要么接受 defer 即丢,要么自己留个待发标记(9d 评审 #520)。
+  // 以后加别的一次性 initiative 照这条判:要么接受 defer 即丢,要么自己留个待发标记(整合者评审 #520)。
   sticker: { origin: 'initiative', label: '新贴纸' },
   // 社交(笔友 / 心愿 / 介绍 / 串门)。report / blocking 那几条被推后 ⇒ 门的「待说」队列接住、之后补说(speech/pending-notices.ts);
-  // social_story(CC 自己的见闻)推后就是这一句不说,东西在背包 / 觅食台里(第三批 3a,9d 评审 #528)。
+  // social_story(CC 自己的见闻)推后就是这一句不说,东西在背包 / 觅食台里(第三批 3a,整合者评审 #528)。
   social_ask: { origin: 'blocking', label: '有人想认识你' },        // 介绍:等主人回「同意 / 不了」
   social_result: { origin: 'report', label: '社交的结果' },          // 心愿的答复、介绍成没成、替主人回了谁
   social_mail: { origin: 'report', label: '笔友来信' },               // 信在信箱里留着
@@ -63,7 +63,7 @@ export type SpeechKind = keyof typeof SPEECH_KINDS
 
 /**
  * 带会过期码的卡(y/n 码、权限卡):**不进待说队列**。真相在登记处,补说只会给出一个已经失效的码;
- * 没送到 ⇒ 条目照样在登记处,桌面 / 终端仍可拍板(9d 评审 #533)。
+ * 没送到 ⇒ 条目照样在登记处,桌面 / 终端仍可拍板(整合者评审 #533)。
  */
 export function isExpiring(kind: SpeechKind): boolean {
   return 'expiring' in SPEECH_KINDS[kind]

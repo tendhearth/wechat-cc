@@ -496,7 +496,7 @@ export function makeIlinkAdapter(opts: {
       // reply can EVER come. Don't dead-wait the full 10-min timeout (which
       // races the turn's own no-activity kill → user gets nothing). Resolve
       // 'undelivered' at once so the turn ends now with an honest reason.
-      // 只记账,不拦:permission_ask 是 blocking,判定表里不会推后 / 丢(9d 定的口径,#536)。
+      // 只记账,不拦:permission_ask 是 blocking,判定表里不会推后 / 丢(整合者定的口径,#536)。
       try { speechOf?.()?.ask({ kind: 'permission_ask', chatId }, { channel: 'wechat', deliverable: true }) } catch (err) { log('PERMISSION', `speech ledger failed: ${err instanceof Error ? err.message : String(err)}`) }
       adapter.sendMessage(chatId, card).then(
         (res) => {

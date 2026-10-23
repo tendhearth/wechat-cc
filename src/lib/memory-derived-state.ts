@@ -7,7 +7,7 @@ import { writeFileAtomic } from './json-file'
 
 type DerivedKind = 'overview' | 'profile'
 /**
- * 为什么过期(3e 记忆第 2 步,9d 定):
+ * 为什么过期(3e 记忆第 2 步,整合者定):
  * - added:源里多了东西(nightly 整理、CC 写笔记、gardener 压缩、导入)—— 旧生成物只是不全,不是错,贴一句标签照常用;
  * - retracted:主人删了 / 改了东西(纠正、过期、桌面编辑)—— 旧生成物里可能正好有主人要 CC 忘掉的那句,而总览会进串门人设、
  *   带到别人的 CC 那里去,所以藏起来,重新生成以后再给。

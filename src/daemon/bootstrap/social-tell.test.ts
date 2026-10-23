@@ -39,7 +39,7 @@ describe('社交通知走 CC 开口那道门(第三批 3a)', () => {
   })
 })
 
-describe('**report / blocking 推后不是不送**:门的「待说」队列接住(9d 评审 #528)', () => {
+describe('**report / blocking 推后不是不送**:门的「待说」队列接住(整合者评审 #528)', () => {
   it('免打扰里来信 ⇒ 当时不说;时段一过的下一拍 ⇒ 说一次;再下一拍不重复', async () => {
     let q = true
     const s = setup({ quiet: () => q })

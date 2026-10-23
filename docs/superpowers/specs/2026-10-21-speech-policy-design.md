@@ -1,6 +1,6 @@
 # SpeechPolicy:CC 开口只有一道门(第三批 3a,设计稿)
 
-> 来源:[架构复查 10-21](../../architecture-review-2026-10-21.md) 理念 3。主人 10-21 让我自己定;这份写完给整合那一路(9d)审,再动代码。
+> 来源:[架构复查 10-21](../../architecture-review-2026-10-21.md) 理念 3。主人 10-21 让我自己定;这份写完给整合者审,再动代码。
 
 ## 为什么
 
@@ -20,7 +20,7 @@ CC 有九条路会在没人问它的时候开口,每条路自己判能不能说�
 
 另外还有两处直接调 ilink:「定时审阅错过了」的通知、CLI 升级完的通知。
 
-**表里漏的一类**(9d 评审 #509):**等着主人拍板的**。包括执行者等主人回 y/n、终端会话的批准卡、访客申请「有人想跟 CC 说话」、配对通知。它们不是主人点名要的,但工作卡在那里等他,必须穿过 care off 和免打扰。
+**表里漏的一类**(整合者评审 #509):**等着主人拍板的**。包括执行者等主人回 y/n、终端会话的批准卡、访客申请「有人想跟 CC 说话」、配对通知。它们不是主人点名要的,但工作卡在那里等他,必须穿过 care off 和免打扰。
 
 **问题不在某一条判错了,在于没有一个地方能回答「此刻 CC 能不能开口」。** 每加一条新路,都要自己想起来抄哪几道闸。B 就是没想起来的那一条:主人说了「别烦我」,朋友来过以后 CC 照样开口。
 
@@ -56,14 +56,14 @@ export const SPEECH_KINDS = {
   letter:          { origin: 'initiative', label: '信' },
   companion:       { origin: 'initiative', label: '伙伴' },      // 到点的事 / 打猎 / 问候 / 串门
   guest_visit:     { origin: 'initiative', label: '来访' },
-  sticker:         { origin: 'initiative', label: '新贴纸' },   // 一次性:defer 即丢(9d 评审 #520)
+  sticker:         { origin: 'initiative', label: '新贴纸' },   // 一次性:defer 即丢(整合者评审 #520)
   memory_notice:   { origin: 'initiative', label: '整理记忆' },
 } as const satisfies Record<string, { origin: SpeechOrigin; label: string }>
 ```
 
 **origin 跟着种类走,调用方不能自己传**,所以没有哪条路能把自己说成 requested 来绕过闸。
 
-**归类的准绳**(9d 评审 #507):看这一句的**内容**是不是主人点名要的,不看开关是谁开的。
+**归类的准绳**(整合者评审 #507):看这一句的**内容**是不是主人点名要的,不看开关是谁开的。
 - `blocking`:有事卡着、等主人拍板。不看 care 档、不看免打扰、不限频,只受「微信降级就走 App」管。对应 iOS 的 time-sensitive / critical。
 - `requested`:内容是主人点名的,时间也是他定的,比如提醒、「每天 9 点看邮箱」。对应 iOS 的 time-sensitive。
 - `report`:主人交办的事有了结果,CC 来回话。内容 CC 定,起因是主人。
@@ -88,11 +88,11 @@ decide(req: { kind; chatId; nowIso }, ctx: { care: CareLevel; inQuiet: boolean; 
 
 - **定时触发的 initiative**(晨报、周报)赶上免打扰:当天记 `skipped:quiet`,不往后推。定时运行器只在到点后有 10 分钟窗口,推到时段结束会悄悄变成 `missed`;记成 `skipped:quiet`,主人在定时列表里看得见为什么没发。这比「晚了几小时再发晨报」诚实。
   **这一条推翻了一个旧决定,明写在这里**:`core/quiet-hours.ts` 的文件头(10-20 第二轮对标 #5)写的是「主人自己定的(提醒、定时、早报)……照常」,也就是晨报当时被归成主人要的、免打扰不拦。现在按上面那条准绳改成 initiative:晨报的内容是 CC 挑的。主人这台没设免打扰,所以没有实际变化;会受影响的只是以后「既设了晨报又设了免打扰、两者还重叠」的人,这种情况由下面的当场提醒告诉他。第 3 步落地时,把 quiet-hours.ts 的文件头一起改掉。
-  **当场提醒**(9d):主人设晨报 / 周报的时间,或者设免打扰时段时,要是两者重叠,当场回一句「晨报时间落在免打扰里,会天天跳过」。别让他过几天才从列表里发现。
-- **defer 只是不风暴,不是不送**(9d):report 和 blocking 被 defer 时不能丢。一件事的回报现在有落了盘的 report outbox,带指数退避,它继续当持久层:两条通道都送不到 ⇒ 留在 outbox 里,通道恢复后按指数退避补发。只有 initiative 被 defer 才是「下一拍再问」,因为它的内容本来就该按当时的情况重新挑。
+  **当场提醒**(整合者):主人设晨报 / 周报的时间,或者设免打扰时段时,要是两者重叠,当场回一句「晨报时间落在免打扰里,会天天跳过」。别让他过几天才从列表里发现。
+- **defer 只是不风暴,不是不送**(整合者):report 和 blocking 被 defer 时不能丢。一件事的回报现在有落了盘的 report outbox,带指数退避,它继续当持久层:两条通道都送不到 ⇒ 留在 outbox 里,通道恢复后按指数退避补发。只有 initiative 被 defer 才是「下一拍再问」,因为它的内容本来就该按当时的情况重新挑。
 - **待说队列**(#531):report 和 blocking 没说出去(被推后,或者放行了但发失败)⇒ 落盘入队,门这一层每 5 分钟补说一次,每条对话合成一句;补说发失败按对话指数退避,5 分钟起、封顶 1 小时。只有 initiative 不入队。
-- **带会过期码的卡不入队**(9d 评审 #533):y/n 码、权限卡这类 blocking 在种类表里标了 \`expiring\`,队列不收。真相在登记处,补说只会给出一个已经失效的码;没送到的时候条目照样在登记处,桌面 / 终端仍可拍板。会一直有效的拍板(比如介绍的「同意 / 不了」)照常入队。
-- **一次性的 initiative**(新贴纸那一句:只在画好的那一刻触发一次)没有「下一拍」,被推后就等于丢了。可以接受的前提是它只是个小报告(贴纸已经进库,照样会用到)。以后加别的一次性 initiative 照这条判:要么接受 defer 即丢,要么自己留个待发标记(9d 评审 #520)。
+- **带会过期码的卡不入队**(整合者评审 #533):y/n 码、权限卡这类 blocking 在种类表里标了 \`expiring\`,队列不收。真相在登记处,补说只会给出一个已经失效的码;没送到的时候条目照样在登记处,桌面 / 终端仍可拍板。会一直有效的拍板(比如介绍的「同意 / 不了」)照常入队。
+- **一次性的 initiative**(新贴纸那一句:只在画好的那一刻触发一次)没有「下一拍」,被推后就等于丢了。可以接受的前提是它只是个小报告(贴纸已经进库,照样会用到)。以后加别的一次性 initiative 照这条判:要么接受 defer 即丢,要么自己留个待发标记(整合者评审 #520)。
 - **care off 时,initiative 的内容算看过**:来访推进水位,到点的事不打勾也不补发。打开之后不翻旧账,跟 #506 一致。
 - 频率仍由每种自己的规则判(`perKind`),表里不重写那些冷却。这一步只把「哪几道闸适用」收成一处,不改每种的节奏。
 
@@ -108,12 +108,12 @@ policy.say(req, async (turn: ProactiveTurn) => { /* 产出并发送 */ }) → Pr
 - 生产者拿不到别的发送原语,直接调 ilink 的那几处(B、C、G、I 和两处通知)全部改走这里。微信降级时一律由 `proactive-channel` 选 App,不再有五种分支。
 - **贵的事放在判定之后**:要调模型的生产者(伙伴、来访、晨报)在 allow 之后才调。被拒、被推后都不花模型。
 - **外发账**:每次判定写一行 `speech_log`(SQLite,一张新表),字段是 kind、origin、chatId、结果(allowed / deferred / dropped + reason)、channel、ts。用来回答「CC 昨天为什么说了这句、为什么没说那句」。只记种类和原因,不记正文。
-  - **现状(10-21 迁移完时)**:只写不读,`ledger-store.recent()` 还没有调用方。原稿写的「『你不在的这 N 小时』和日报直接读它」**不成立,也不该这么做**:账是「为什么」,不是「有几条」(9d 评审 #522)。连着推后的同一句一小时只记一次,拿它去数一定少数;要数,从各自的持久层读。
+  - **现状(10-21 迁移完时)**:只写不读,`ledger-store.recent()` 还没有调用方。原稿写的「『你不在的这 N 小时』和日报直接读它」**不成立,也不该这么做**:账是「为什么」,不是「有几条」(整合者评审 #522)。连着推后的同一句一小时只记一次,拿它去数一定少数;要数,从各自的持久层读。
   - **该有的读者(解冻后第一件)**:主人当面问「昨晚为什么没跟我说早报」⇒ CC 查自己的账照实答。做法是一个只读、只认 admin 的工具,只返回主人这条对话的账。这跟 iOS 专注模式的做法一样:专注模式结束后,系统会说哪几条被静音了、为什么,而不是给一个数字。功能冻结期间不加新的工具和路由。
 
 ### 4. 守卫(交给机器)
 
-- 扫 `src/daemon`、`src/core` 里**所有发送原语**的调用点:ilink 上的 `send*`(`sendMessage`、`sendFile`,工作台的 `sendWorkbenchNotice`、`sendWorkbenchArtifact`;`sendTyping` 除外)、`sendWechat`、`sendReplyOnce`,外加 App 推送 `appPush` / `AppChannel.push`。只许出现在三处:`speech/policy.ts`、`proactive-channel.ts`、回复交付(`reply-delivery` / `turn-reply`,回复是被问的那一句,不属于主动开口)。再多一处就红。blocking 也走 `policy.say`,所以白名单不用为权限卡开口子(9d 评审 #509:原稿只扫两个原语,有漏)。
+- 扫 `src/daemon`、`src/core` 里**所有发送原语**的调用点:ilink 上的 `send*`(`sendMessage`、`sendFile`,工作台的 `sendWorkbenchNotice`、`sendWorkbenchArtifact`;`sendTyping` 除外)、`sendWechat`、`sendReplyOnce`,外加 App 推送 `appPush` / `AppChannel.push`。只许出现在三处:`speech/policy.ts`、`proactive-channel.ts`、回复交付(`reply-delivery` / `turn-reply`,回复是被问的那一句,不属于主动开口)。再多一处就红。blocking 也走 `policy.say`,所以白名单不用为权限卡开口子(整合者评审 #509:原稿只扫两个原语,有漏)。
 - 守卫的原语清单从 `IlinkAdapter` 的类型里取(凡是 `send` 开头的方法),不手写。ilink 加一个新的发送方法,守卫自动管到它。
 - `SPEECH_KINDS` 的每一种都至少有一个 `policy.say({ kind: '…' })` 调用;每一个 `say` 的 kind 都在表里(类型保证)。
 - 一张一致性测试:每个 origin × {care off, 免打扰, 降级} 的结果钉死在上面那张表上。
@@ -133,7 +133,7 @@ policy.say(req, async (turn: ProactiveTurn) => { /* 产出并发送 */ }) → Pr
 - **不做排队补发。** 被 defer 的话不进队列,生产者下一拍自己再问。现在每条路都有自己的「下一拍」,加一个队列就多一份状态、多一个会出错的地方。
 - **不改回复那条路。** 回复是被问到的,不经过这道门。
 
-## 9d 评审(#509)
+## 整合者评审(#509)
 
 ①②③ 三处都已回复,上面已经改进去了:
 - 加第四种 origin `blocking`。
@@ -143,7 +143,7 @@ policy.say(req, async (turn: ProactiveTurn) => { /* 产出并发送 */ }) → Pr
 
 第 1 步可以开。
 
-## 原来要 9d 看的
+## 原来要整合者看的
 
 - 三类的归法,和「定时的 initiative 赶上免打扰记 skipped:quiet」这一条。
 - 守卫允许直接发送的那三处,够不够、有没有漏。

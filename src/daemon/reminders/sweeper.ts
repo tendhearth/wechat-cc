@@ -91,7 +91,7 @@ export const LATE_REMINDER_THRESHOLD_MS = 30 * 60_000
  * 迷惑(2026-08-27:票据过期/网络抖动会让提醒迟到送达,原文照发读起来
  * 像凭空冒出来)。未超阈值 → 原文。无 emoji,符合 CC 身份。
  */
-/** 晚了多久(提醒不再 24 小时就放弃,可能晚好几天 —— 主人一眼要看出还用不用管;9d 评审 #523)。 */
+/** 晚了多久(提醒不再 24 小时就放弃,可能晚好几天 —— 主人一眼要看出还用不用管;整合者评审 #523)。 */
 function lateBy(ms: number): string {
   const min = Math.floor(ms / 60_000)
   if (min < 60) return `${min} 分钟`

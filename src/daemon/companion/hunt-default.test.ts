@@ -48,7 +48,7 @@ describe('打猎改默认关:老装机主人「没设过 = 开」开机时写成
     writeConfig(c, JSON.stringify({ enabled: true, default_chat_id: null }))
     expect(pin(c, pc)).toBe('nothing')
   })
-  it('**配置在但读坏了 ⇒ 不判、不写标记**;下次配置好了再开机照样写成开(9d 评审 #504)', () => {
+  it('**配置在但读坏了 ⇒ 不判、不写标记**;下次配置好了再开机照样写成开(整合者评审 #504)', () => {
     const dir = fresh(), prefs = makeChatPrefs(dir)
     writeConfig(dir, '{"enabled": tr') // 半写的文件
     expect(pin(dir, prefs)).toBe('unreadable')

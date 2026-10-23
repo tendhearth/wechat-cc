@@ -1388,7 +1388,7 @@ describe('人类做客 —— 朋友来聊过、走了,伙伴跟主人提一句'
     expect(sent).toEqual([])
   })
 
-  it('**判的是主人那条对话**:访客那条设了「别烦我」也不影响;主人那条设了才不说(9d 评审 #512)', async () => {
+  it('**判的是主人那条对话**:访客那条设了「别烦我」也不影响;主人那条设了才不说(整合者评审 #512)', async () => {
     const s = setupDeps({ defaultChatId: 'owner', inFlight: false, ...quiet('owner'), chatPrefsEntries: { 'guest@im.wechat': { care: 'off' } } })
     cleanup.push(s.stateDir)
     await seedGuest(s, 'guest@im.wechat', '2026-05-13T09:15:00.000Z')
@@ -2301,7 +2301,7 @@ describe('runJobTurn × SpeechPolicy(第三批 3a 第 3 步):晨报 / 周报是 
     expect(await buildTickBodies(s.deps).runJobTurn({ scheduled: true, chatId: 'owner', jobId: 'j', text: 'x', nowIso: '2026-05-13T10:00:00.000Z', kind: 'brief' })).toBe('skipped:quiet')
     expect(s.dispatch).not.toHaveBeenCalled()
   })
-  it('换一家来审(review,requested,不是定时触发)⇒ 免打扰、别烦我都照跑 —— 只触发一次、后面没有队列,推后就丢了(9d 评审 #524)', async () => {
+  it('换一家来审(review,requested,不是定时触发)⇒ 免打扰、别烦我都照跑 —— 只触发一次、后面没有队列,推后就丢了(整合者评审 #524)', async () => {
     const s = arm({ prefs: { ...QUIET, care: 'off' }, tz: 'Asia/Shanghai' })
     expect(await buildTickBodies(s.deps).runJobTurn({ kind: 'review', scheduled: false, chatId: 'owner', jobId: 'review-t1', text: '', nowIso: '2026-05-13T10:00:00.000Z', profile: 'review' })).toBe('sent')
   })

@@ -15,7 +15,7 @@
  *
  * admin(3c Policy 第 2 步,2026-10-22):以前只核 guest / trusted。admin 在 strict 下也有「要问」的几类
  * (shell_destructive / memory_delete / daemon_remediate),没有逐工具回调的执行者同样做不到,一样登记。
- * 准绳(设计稿 2026-10-22-policy-compile-design.md §6,9d 同意):**档位说「问」的,执行者能问就必须问;问不了的登记成
+ * 准绳(设计稿 2026-10-22-policy-compile-design.md §6,整合者同意):**档位说「问」的,执行者能问就必须问;问不了的登记成
  * 缺口,主人切过去时照实说一句**(`noAskNotice`)。
  */
 import { capabilitiesFor, KNOWN_PROVIDER_IDS } from './capability-matrix'
