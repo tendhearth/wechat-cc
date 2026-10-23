@@ -16,7 +16,7 @@
  * 设计:docs/superpowers/specs/2026-09-18-self-change-pipeline-design.md。
  */
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
-import { homedir } from 'node:os'
+import { cpus, homedir, loadavg } from 'node:os'
 import { join } from 'node:path'
 
 import { workbenchSubprocessEnv } from '../../core/workbench/subprocess-env'
@@ -86,6 +86,30 @@ export function selfDeployPlanFor(input: SelfDeployPlanInput): SelfDeployPlan {
   return planSelfDeploy({ ...base, binary: plan.prevPath, rollback: false })
 }
 
+/**
+ * 用 repoRoot 里构建好的 sidecar 部署(或回滚到 .prev)。自改的 deploy 步和 `self ship` 共用这一份。
+ * entitlements.plist 从 repoRoot 拿(自改时就是这条运行自己的工作树);签名身份从本机钥匙串探。
+ */
+export async function deployFromRepo(stateDir: string, repoRoot: string, mode: 'deploy' | 'rollback'): Promise<SelfDeployResult> {
+  const homeDir = homedir()
+  const p = launchAgentPlistPath(homeDir)
+  const deps = defaultSelfDeployDeps()
+  const signing = resolveSigningInputs({ repoRoot, disabled: false, spawnSync: deps.spawnSync, exists: existsSync })
+  const plan = selfDeployPlanFor({
+    platform: process.platform,
+    arch: process.arch,
+    homeDir,
+    uid: typeof process.getuid === 'function' ? process.getuid() : 501,
+    repoRoot,
+    stateDir,
+    plistXml: existsSync(p) ? readFileSync(p, 'utf8') : null,
+    mode,
+    ...signing,
+    exists: existsSync,
+  })
+  return await executeSelfDeploy(plan, deps)
+}
+
 /** 自检那两条的注入口(生产是 selftest.ts 的两个真跑,测试塞假件)。 */
 export interface SelftestRunners {
   workbench: (opts: { executor: string; image: boolean; resume: boolean }) => Promise<SelftestReport>
@@ -100,7 +124,7 @@ export interface SelftestRunners {
  * 报告里要说清楚是一条红还是两条都红,人才知道该怀疑哪一层。
  */
 export function makeSelftest(
-  config: SelfChangeConfig,
+  config: Pick<SelfChangeConfig, 'selftestExecutor' | 'selftestProvider'>,
   runners: SelftestRunners,
 ): () => Promise<{ workbench: SelftestReport; chat: SelftestReport }> {
   return async () => {
@@ -132,31 +156,8 @@ export interface PipelineDepsOpts {
  */
 export function defaultPipelineDeps(stateDir: string, config: SelfChangeConfig, opts: PipelineDepsOpts): PipelineDeps {
   const homeDir = homedir()
-  const uid = typeof process.getuid === 'function' ? process.getuid() : 501
 
-  const readPlist = (): string | null => {
-    const p = launchAgentPlistPath(homeDir)
-    return existsSync(p) ? readFileSync(p, 'utf8') : null
-  }
-
-  const runDeploy = async (repoRoot: string, mode: 'deploy' | 'rollback'): Promise<SelfDeployResult> => {
-    const deps = defaultSelfDeployDeps()
-    // entitlements.plist 从这条运行自己的工作树拿(它就是 repoRoot);身份从本机钥匙串探。
-    const signing = resolveSigningInputs({ repoRoot, disabled: false, spawnSync: deps.spawnSync, exists: existsSync })
-    const plan = selfDeployPlanFor({
-      platform: process.platform,
-      arch: process.arch,
-      homeDir,
-      uid,
-      repoRoot,
-      stateDir,
-      plistXml: readPlist(),
-      mode,
-      ...signing,
-      exists: existsSync,
-    })
-    return await executeSelfDeploy(plan, deps)
-  }
+  const runDeploy = (repoRoot: string, mode: 'deploy' | 'rollback') => deployFromRepo(stateDir, repoRoot, mode)
 
   const runTree = runPath(config, opts.runId)
   const daemon = makeDaemonClient({ readApiInfo: () => readApiInfo(stateDir), fetch })
@@ -212,6 +213,7 @@ export function defaultPipelineDeps(stateDir: string, config: SelfChangeConfig, 
     forge: ghForge((cwd) => { const { registry: _registry, ...deps } = defaultCiTriageDeps(cwd); return deps }),
 
     deploy: (repoRoot) => runDeploy(repoRoot, 'deploy'),
+    machineLoad: () => ({ load1: loadavg()[0] ?? 0, cpus: cpus().length }),
     rollback: (repoRoot) => runDeploy(repoRoot, 'rollback'),
 
     selftest: makeSelftest(config, {

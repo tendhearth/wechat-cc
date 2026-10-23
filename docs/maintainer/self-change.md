@@ -127,7 +127,7 @@ wechat-cc self change --list
 | 码 | 含义 | 典型 result |
 | --- | --- | --- |
 | 0 | 完成 | `done` |
-| 1 | 这次改动没做成 | `implement_failed` `no_changes` `forbidden_paths` `tests_exhausted` `review_exhausted` `ci_exhausted` `ci_unavailable` `merge_conflict` `merge_failed` `deploy_failed` `deploy_tree_mismatch` `selftest_failed_rolled_back` `crashed` |
+| 1 | 这次改动没做成 | `implement_failed` `no_changes` `forbidden_paths` `tests_exhausted` `review_exhausted` `ci_exhausted` `ci_unavailable` `merge_conflict` `merge_failed` `machine_busy` `network_unprotected` `deploy_failed` `deploy_tree_mismatch` `selftest_failed_rolled_back` `crashed` |
 | 2 | **不是这次改动的错**,重试同样的需求没意义 | 非 macOS、`self_change_halted`、`self_change_quota`、`daemon_not_running`、`owner_chat_unknown`、`self_change_busy`、`repo_url_unknown` |
 | 3 | 主人回了 `n` | `declined`(分支保留) |
 | 4 | 没等到拍板 | `approval_timeout`(`--resume <id>` 重发卡) |

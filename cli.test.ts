@@ -112,7 +112,7 @@ describe('citty migrated commands', () => {
   // 会让 docs/maintainer/*.md 里的每条命令一起失效。
   it('exposes the self / selftest subcommand surface', () => {
     const subs = cittyRoot.subCommands as Record<string, { subCommands?: Record<string, unknown> }>
-    expect(Object.keys(subs.self?.subCommands ?? {}).sort()).toEqual(['change', 'deploy', 'discover', 'soak'])
+    expect(Object.keys(subs.self?.subCommands ?? {}).sort()).toEqual(['change', 'deploy', 'discover', 'ship', 'soak'])
     expect(Object.keys(subs.selftest?.subCommands ?? {}).sort()).toEqual(['chat', 'embed', 'phone', 'workbench'])
   })
 

@@ -29,6 +29,19 @@ wechat-cc self deploy --json     # 机器可读
 
 健康门不过 ⇒ 自动回滚(同样 copy+rename 换 inode)+ 再 kickstart + 再等健康;无论回滚成不成,都会打印 `launchctl print` 里的 `last exit reason` / `runs` 和 `launchd.err.log` 尾 40 行。退出码:成功 0,失败(已回滚)1,回滚也失败 3,平台不对 2。
 
+## 一条命令走完:`wechat-cc self ship`(2026-10-23)
+
+整合者合完一批以后用它,不再手敲「构建 → 部署 → 两条自检」四步。顺序就是该检查的顺序,**什么都还没动的时候**先问能不能动:
+
+1. **负载**:1 分钟负载 / 核数 > 1.0(`--max-load` 改)⇒ 不动,退 3。`--wait-min N` 每分钟再看一次,最多等 N 分钟。满载下自检超时会被当成真红、白白回滚(2026-10-22 主人玩游戏 + Xcode,load 328)。它看的是「机器给不给得出公正的判决」,不是「主人在不在」。
+2. **网络守护**:读不到、或开着但不安全 ⇒ 不动,退 5。自检要调模型,直连会封号;部署完才发现跑不了自检,只能回滚。
+3. **构建 sidecar**(`--skip-build` 跳过)⇒ 红退 4。
+4. **`self deploy`**(上面六步,它自己红了自己回滚)⇒ 红退 1。
+5. **自检**:工作台 + 对话,跟自改同一套,执行者 / 供应商取 agent-config 的 `self_change.selftest_executor` / `selftest_provider`(缺省 claude)。红 ⇒ 回滚到 `.prev`,退 2。
+6. 绿 ⇒ 退 0,提示过几个小时看 `self soak`。
+
+自改流水线的 deploy 步过的是同一道门:机器忙最多等一个小时,还忙就 `machine_busy`;守护不安全就 `network_unprotected`。两种都停在 deploy、不推 `fail_streak`,`--resume` 接着来。
+
 ## 部署完稳不稳:`wechat-cc self soak`(2026-10-23)
 
 以前「部署后跑满一整天才合下一步」,大半是空等。现在看信号:从日志里最后一次 self deploy 的重启算起,有没有意外重启、`[MODULES]` 失败 / 降级、`uncaughtException`、开机失败、关机被迫退出;健康接口上子系统、心跳、拉消息是不是都好。够时长(缺省 4 小时)且干净 ⇒ 退 0;有异常 ⇒ 退 1;还不够时长 ⇒ 退 2。只读。
