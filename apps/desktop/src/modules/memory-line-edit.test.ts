@@ -1,6 +1,6 @@
 // @vitest-environment happy-dom
 import { describe, it, expect } from 'vitest'
-import { bulkConfirmText, collectLines, editOutcome, isLineEditablePath, lineViewFor, linesUnchanged, memoryEditArgs, renderLineEditor, renderOwnerBlock } from './memory-line-edit.js'
+import { bulkConfirmText, bulkGate, collectLines, editOutcome, isLineEditablePath, lineViewFor, linesUnchanged, memoryEditArgs, renderLineEditor, renderOwnerBlock } from './memory-line-edit.js'
 
 const view = (lines: any[], extra: Record<string, unknown> = {}): any => ({ ok: true, chatId: 'owner@im.wechat', path: 'memory.md', baseHash: 'a'.repeat(64), generatedAt: null, stale: false, lines, ...extra })
 const owned = { text: '我不喝咖啡', origin: 'owner', assertionId: 'o1', editedAt: '2026-10-23', replaces: { correctionId: 'c1', text: '喜欢美式' } }
@@ -74,6 +74,7 @@ describe('read-only owner block', () => {
   it('memory.md shows the owner lines on top; the overview already has its own section', () => {
     expect(renderOwnerBlock(view([owned]) as any)).toContain('你写的')
     expect(renderOwnerBlock(view([owned], { path: '_overview.md' }) as any)).toBe('')
+    expect(renderOwnerBlock(view([owned], { path: 'owner.md' }) as any)).toBe('')
     expect(renderOwnerBlock(view([gen('住在上海', 'm:7')]) as any)).toBe('')
   })
 })
@@ -110,5 +111,21 @@ describe('what the desktop does with each answer', () => {
     expect(editOutcome({ ok: false, code: 'memory_no_owner' }).message).toContain('还没绑定微信主人')
     expect(editOutcome({ ok: false, code: 'daemon_unreachable' }).message).toContain('守护进程')
     expect(editOutcome({ ok: false, code: 'memory_edit_failed' })).toEqual({ status: 'bad', message: '保存失败:memory_edit_failed' })
+  })
+})
+
+describe('bulk confirmation only covers what the owner was shown', () => {
+  const shown = [{ text: '住在杭州', lineKey: 'm:7' }]
+  it('first save never confirms', () => {
+    expect(bulkGate(null, shown).confirmBulk).toBe(false)
+  })
+  it('the same lines on the second click ⇒ confirm', () => {
+    const first = bulkGate(null, shown)
+    expect(bulkGate(first.snapshot, [{ text: '住在杭州', lineKey: 'm:7' }]).confirmBulk).toBe(true)
+  })
+  it('edited again after the prompt (more deletions, a changed word) ⇒ not confirmed, re-prompt with new counts', () => {
+    const first = bulkGate(null, shown)
+    expect(bulkGate(first.snapshot, []).confirmBulk).toBe(false)
+    expect(bulkGate(first.snapshot, [{ text: '住在苏州', lineKey: 'm:7' }]).confirmBulk).toBe(false)
   })
 })

@@ -50,11 +50,11 @@ export function memoryEditArgs(path, baseHash, lines, confirmBulk) {
 }
 
 /**
- * 只读时 memory.md 顶上那一块「你写的」:总览里那一节由 daemon 写进文件,不用再画。
+ * 只读时 memory.md 顶上那一块「你写的」。总览里那一节由 daemon 写进文件、owner.md 本身就是这些行,都不用再画。
  * @param {MemoryView} view
  */
 export function renderOwnerBlock(view) {
-  if (view.path === "_overview.md") return ""
+  if (view.path !== "memory.md") return ""
   const own = view.lines.filter(l => l.origin === "owner")
   if (!own.length) return ""
   return `<section class="memory-owner-block"><h3>你写的</h3><ul>${own.map(l => `<li>${escapeHtml(l.text)} <span class="memory-owned-tag">你改过</span></li>`).join("")}</ul></section>`
@@ -129,6 +129,16 @@ export function linesUnchanged(lines, view) {
     const v = view.lines[i]
     return !!v && l.text === v.text && l.lineKey === v.lineKey && l.assertionId === v.assertionId
   })
+}
+
+/**
+ * 大批确认只对提示时那组行有效:这次交的行和当时记下的一字不差,才带 --confirm-bulk;否则当成新的第一次。
+ * @param {string|null} confirmedFor 上次提示时记下的那组行(JSON)
+ * @param {EditLine[]} lines 这次要交的行
+ */
+export function bulkGate(confirmedFor, lines) {
+  const snapshot = JSON.stringify(lines)
+  return { snapshot, confirmBulk: confirmedFor !== null && confirmedFor === snapshot }
 }
 
 /** @param {{ deleted?: number, rewritten?: number, count?: number }} r */

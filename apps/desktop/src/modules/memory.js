@@ -30,7 +30,7 @@ import { observationRow, milestoneCard } from "./observations.js"
 import { decisionRow } from "./decisions.js"
 import { icon } from "./icons.js"
 import { mountMemoryEvidenceDialog, normalizeMemorySourceRefs } from "./memory-evidence.js"
-import { collectLines, editOutcome, isLineEditablePath, lineViewFor, linesUnchanged, memoryEditArgs, renderLineEditor, renderOwnerBlock } from "./memory-line-edit.js"
+import { bulkGate, collectLines, editOutcome, isLineEditablePath, lineViewFor, linesUnchanged, memoryEditArgs, renderLineEditor, renderOwnerBlock } from "./memory-line-edit.js"
 
 // `selected` doubles as the edit-target identity (userId + path) AND the
 // "we have a file open" flag for the edit button visibility. `editing`
@@ -45,7 +45,7 @@ const reviewedProfiles=new Map()
 /** @typedef {'observation'|'milestone'|'file'|'overview'} EmbryoSourceKind */
 /** @typedef {{ kind: EmbryoSourceKind, text: string, ts: string, label: string, obsId?: string, userId?: string, path?: string }} EmbryoSourceItem */
 const MEMORY_EMBRYO_STORAGE_KEY = "wechat-cc:memory-embryo-enabled"
-/** @type {{ users: MemoryList, observations: ObservationsList["observations"], milestones: MilestonesList["milestones"], selected: { userId: string, path: string } | null, marked: { parse: (s: string) => string } | null, editing: boolean, pristine: string, dirtySwitchPending: string | null, overview: OverviewModel | null, profile: MemoryProfileDocument | null, profileStatus: Extract<MemoryProfileStatusOutput, { ok: true }> | null, portrait: { svg: string | null, generated_at?: string | null } | null, lineView: import('./memory-line-edit.js').MemoryView | null, bulkConfirmPending: boolean }} */
+/** @type {{ users: MemoryList, observations: ObservationsList["observations"], milestones: MilestonesList["milestones"], selected: { userId: string, path: string } | null, marked: { parse: (s: string) => string } | null, editing: boolean, pristine: string, dirtySwitchPending: string | null, overview: OverviewModel | null, profile: MemoryProfileDocument | null, profileStatus: Extract<MemoryProfileStatusOutput, { ok: true }> | null, portrait: { svg: string | null, generated_at?: string | null } | null, lineView: import('./memory-line-edit.js').MemoryView | null, bulkConfirmFor: string | null }} */
 const memoryState = {
   users: [],
   observations: [],
@@ -69,8 +69,9 @@ const memoryState = {
   // 主人自己的 _overview.md / memory.md / owner.md:`memory view` 给的带键底稿(记忆改了就算数)。
   // 有它 ⇒ 编辑是一行一个输入框、保存走 `memory edit`;别人对话的记忆照旧 null,整份 `memory write`。
   lineView: null,
-  // 一次删 / 改超过 5 条:第一次保存只提示,再点一次「保存」才带 --confirm-bulk(同 dirtySwitch 一样不弹窗)。
-  bulkConfirmPending: false,
+  // 一次删 / 改超过 5 条:第一次保存只提示,并记下当时交的那组行;再点「保存」时行完全一样才带 --confirm-bulk
+  // (同 dirtySwitch 一样不弹窗)。中间又改了 ⇒ 当成新的第一次,按新的条数重新提示 —— 不替主人确认他没看过的那组。
+  bulkConfirmFor: null,
 }
 
 /** @returns {boolean} */
@@ -218,7 +219,7 @@ async function openMemoryFile(deps, userId, relPath, mtime) {
   }
   const marked = await loadMarked()
   memoryState.lineView = isLineEditablePath(relPath) ? await loadLineView(deps, userId, relPath) : null
-  memoryState.bulkConfirmPending = false
+  memoryState.bulkConfirmFor = null
   if (rendered) rendered.innerHTML = (memoryState.lineView ? renderOwnerBlock(memoryState.lineView) : "") + marked.parse(result.content)
   memoryState.selected = { userId, path: relPath }
   memoryState.pristine = result.content
@@ -250,7 +251,7 @@ function setEditMode(editing) {
   const saveBtn = document.getElementById("memory-save-btn")
   const cancelBtn = document.getElementById("memory-cancel-btn")
   const lineEditor = document.getElementById("memory-line-editor")
-  if (!editing) memoryState.bulkConfirmPending = false
+  if (!editing) memoryState.bulkConfirmFor = null
   if (editing && memoryState.lineView && lineEditor) {
     renderLineEditor(lineEditor, memoryState.lineView)
     lineEditor.hidden = false
@@ -352,6 +353,7 @@ async function saveLines(deps, view) {
     setEditMode(false)
     return
   }
+  const { snapshot, confirmBulk } = bulkGate(memoryState.bulkConfirmFor, lines)
   const saveBtn = /** @type {HTMLButtonElement | null} */ (document.getElementById("memory-save-btn"))
   const cancelBtn = /** @type {HTMLButtonElement | null} */ (document.getElementById("memory-cancel-btn"))
   setStatus("保存中…", "info")
@@ -359,7 +361,7 @@ async function saveLines(deps, view) {
   if (cancelBtn) cancelBtn.disabled = true
   let result
   try {
-    result = await deps.invoke("wechat_cli_json", { args: memoryEditArgs(view.path, view.baseHash, lines, memoryState.bulkConfirmPending) })
+    result = await deps.invoke("wechat_cli_json", { args: memoryEditArgs(view.path, view.baseHash, lines, confirmBulk) })
   } catch (err) {
     setStatus(`保存失败：${deps.formatInvokeError(err)}`, "bad")
     return
@@ -369,11 +371,11 @@ async function saveLines(deps, view) {
   }
   const outcome = editOutcome(result)
   if (outcome.status === "confirm") {
-    memoryState.bulkConfirmPending = true
+    memoryState.bulkConfirmFor = snapshot
     setStatus(outcome.message, "info")
     return
   }
-  memoryState.bulkConfirmPending = false
+  memoryState.bulkConfirmFor = null
   if (outcome.status === "bad") { setStatus(outcome.message, "bad"); return }
   const { userId, path } = memoryState.selected
   setEditMode(false)
