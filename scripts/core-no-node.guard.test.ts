@@ -45,6 +45,7 @@ function current(): Record<string, number> {
 }
 
 // 2026-10-22 基线(按文件)。搬走一处减一;降到 0 删掉那一行。
+// @debt src/core 里还在直接用 node 的地方(core 要能换运行时,node 的东西搬进 src/lib 的适配层)
 const BASELINE: Record<string, number> = {
   'src/core/a2a-registry.ts': 2,
   'src/core/acp-agent-provider.ts': 1,

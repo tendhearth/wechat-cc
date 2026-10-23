@@ -36,6 +36,7 @@ const NOT_LIFECYCLE: Record<string, string> = {
 const CONTAINER = 'src/daemon/modules/container.ts'
 
 // 2026-10-22 基线(按文件)。迁一处减一;迁完的行删掉。
+// @debt daemon 里还没进模块容器的启停(Ref / lc.register / setInterval …;核心链在迁)
 const BASELINE: Record<string, Partial<Record<Kind, number>>> = {
   'src/daemon/main.ts': { Ref: 2, 'lc.register': 14, 'sup.start': 2 },
   'src/daemon/bootstrap/index.ts': { Ref: 1 },
