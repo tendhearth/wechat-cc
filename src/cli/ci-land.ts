@@ -20,6 +20,9 @@
  *   - rebase 冲突 ⇒ abort,不留半截;已经合进去的几层照旧在 dev 上,报告停在哪一层。
  *   - 开始后 dev 被别人动过(不是我们刚合的那一个)⇒ 停:剩下几层的内容不再是 CI 验过的那一份。
  *   - 兄弟(两个 PR 叠在同一个下层上)⇒ 第一版不处理,停下来说清楚:先排成一条线,或者各自等 CI。
+ *   - 给的那个 PR 上面还叠着别的(比如合 #598、#599 叠在它上面)⇒ **不算兄弟**,只合到给的那一层:核心链一步一部署,
+ *     就是要一层层合(2026-10-23 真机:按兄弟拒了,整合者只好手合)。上面那些的 base 还指着合掉的分支,
+ *     以后 `ci land <上面那个>` 按「接着上一次」那条路接上(findLandedParentOld 从 force push 事件里找起点)。
  *   - 网络抖(SSL_ERROR_SYSCALL 之类)⇒ push / 改 base / 合 退避重试三次;租约和 match-head 被拒不重试。
  *   - 跑到一半停了 ⇒ 重跑同一条命令接着来:下层 PR 已合、上层 base 还指着它的分支 ⇒ 找这一层当初叠在下层的
  *     哪个提交上(findLandedParentOld)当 rebase 起点;找不到就停,要 --parent-old;已经 rebase 推上去的那层不再 rebase。
@@ -129,7 +132,8 @@ export function resolveStack(top: number, open: PrInfo[], target: string, merged
     cur = parent
   }
   const inChain = new Set(chain.map(p => p.number))
-  for (const layer of chain) {
+  // 最上面那层上面叠着的不是兄弟(见文件头):这一次只合到它。
+  for (const layer of chain.slice(0, -1)) {
     const siblings = open.filter(p => p.baseRefName === layer.headRefName && !inChain.has(p.number))
     if (siblings.length) {
       throw new Error(`#${layer.number} 上还叠着不在这一串里的 ${siblings.map(s => `#${s.number}`).join('、')}(兄弟):先排成一条线,或者让它们各自等 CI`)
@@ -231,6 +235,8 @@ export async function runCiLand(deps: CiLandDeps, opts: CiLandOpts): Promise<CiL
   try { stack = resolveStack(opts.top, open, target, mergedPrs) } catch (e) { return done(CI_LAND_EXIT.precondition, (e as Error).message) }
   const topLayer = stack[stack.length - 1]!
   deps.log(`这一串(从下到上):${stack.map(l => `#${l.number} ${l.headRefName}@${l.oldHead.slice(0, 8)}`).join(' → ')}`)
+  const above = open.filter(p => p.baseRefName === topLayer.headRefName)
+  if (above.length) deps.log(`#${topLayer.number} 上面还叠着 ${above.map(p => `#${p.number}`).join('、')}:这次只合到 #${topLayer.number};它们以后 ci land 接着来`)
   if (opts.dryRun) {
     const lp = stack[0]!.landedParent
     const resume = lp ? `最下层 #${stack[0]!.number} 叠在已合的 #${lp.number} 上:先 rebase 到 ${target} 推上去,` : ''
