@@ -458,6 +458,7 @@ export function buildPipelineDeps(opts: PipelineDepsOpts, refs: PipelineDepsRefs
     ...(opts.guardRuntime ? { guardRuntime: opts.guardRuntime } : {}),
     ...(opts.terminalHooks ? { terminalHooks: opts.terminalHooks } : {}),
     ...(opts.subsystems ? { subsystems: opts.subsystems } : {}),
+    ...(opts.providerRefusals ? { providerRefusals: opts.providerRefusals } : {}),
   })
   // 手机那一簇(重构第二批步 6c,wire-phone.ts):推送 / 主人对话 / 手机对话 / App 主动通道 / 媒体镜像 / 设置面板 / 隧道 / notifier / 订阅。
   // 簇里的环在 wirePhone 里面解(显式的 late 对象);这里只拿结果。关机停它的那一项 main.ts 登记在 polling 之前。

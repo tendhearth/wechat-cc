@@ -69,6 +69,7 @@ import { makeCareLedger } from './companion/care-ledger'
 import { careLevel } from './companion/calibration'
 import { loadCompanionConfig } from './companion/config'
 import { readOwnerDoc, renderOwnerForPrompt } from '../lib/memory-owner'
+import { makeProviderRefusals } from './provider-refusals'
 import { makeSelfChangeGlue } from './self-change-glue'
 import { defaultRunner, makeCliReplyHandler } from './cli-reply-handler'
 import { makeCliPhoneActions } from './cli-phone-actions'
@@ -216,6 +217,8 @@ async function bootDaemonInner(opts: BootDaemonOpts, undo: Array<() => void>): P
   // Created here so both the internal-api registration and bootstrap below
   // share the one instance.
   const turnRecordStore = makeTurnRecordStore(db)
+  // 执行者「真被拒着」(地区不可用):只看真回合,一轮真完成才清(provider-refusals.ts)
+  const providerRefusals = makeProviderRefusals({ stateDir, log })
   // CLI 自动升级引擎:bootstrap 之后才造,回合记录与工作台的报错触发先拿着这个引用。
   const cliUpgradeRef = new Ref<CliUpgrader>('cli-upgrade')
   // ConversationStore must be constructed BEFORE the ilink adapter —
@@ -412,6 +415,7 @@ async function bootDaemonInner(opts: BootDaemonOpts, undo: Array<() => void>): P
       plugins: () => bootRef?.pluginsHealth ?? null,
       // 开机探测失败、正在退避重探的外部 CLI provider(2026-10-04):bootstrap 之前是空表。
       providerProbes: () => bootRef?.providerProbes?.() ?? [],
+      providerRefusals: () => providerRefusals.all(),
       outbound: () => ilink.outboundHealth(),
       // Admin remediation hooks (POST /v1/sessions/release, /v1/daemon/restart).
       releaseSession: (k) => bootRef?.sessionManager?.release(k) ?? Promise.resolve(),
@@ -487,6 +491,7 @@ async function bootDaemonInner(opts: BootDaemonOpts, undo: Array<() => void>): P
       petSignals,
       onTurnRecord: (r) => {
         turnRecordStore.append(r)
+        providerRefusals.onTurn(r)
         // CLI 自动升级的报错触发(2026-10-04):错误通道像「CLI 太旧」⇒ 排一次版本检查。
         if (r.outcome !== 'completed') cliUpgradeRef.current?.onTurnError(r.provider, r.errorCode, r.error)
       },
@@ -786,7 +791,7 @@ async function bootDaemonInner(opts: BootDaemonOpts, undo: Array<() => void>): P
         hub: cliEvents, relay: cliPermissions, core: replyCore, localMachine: osHostname(), log: (t, l) => log(t, l), liveIds: () => liveSessionIds(),
         resolve: (h, d) => { const ok = ilink.resolvePermission(h, d); if (ok) petSignals.noteContact(); return ok },
       }),
-      matters, guardRuntime: guardRt, subsystems: () => sup.statuses(),
+      matters, guardRuntime: guardRt, subsystems: () => sup.statuses(), providerRefusals: () => providerRefusals.all(),
       panelTokens: internalApi.panelTokens,
       // 命令表的顺序就是优先级(重构第二批步 2;与原来文本命令链的顺序一致)
       commands: [fromReplyHandler('jobs', jobsCommand), fromReplyHandler('calendar', calendarCommand), fromReplyHandler('activity', activityCommand), fromReplyHandler('lessons', lessonsCommand), fromReplyHandler('memory-import', memoryImportCommand), fromReplyHandler('cli', cliReplyHandler, { ownsSlash: (m) => /^\s*\/(?:cli|today)\s*[?？]?\s*$/i.test(m.text ?? '') })],

@@ -55,6 +55,16 @@ describe('GET /v1/health', () => {
     expect('provider_probes' in (without.body as any)).toBe(false)
   })
 
+  it('GET /v1/health renders provider_refusals (2026-10-23: 真回合里被拒着) — codes and times only; omitted when unwired', async () => {
+    const { HealthResponse } = await import('./schema')
+    const refusals = { agy: { code: 'region_unavailable', since: '2026-10-23T05:00:00.000Z' } }
+    const r = await makeRoutesUnderTest({ providerRefusals: () => refusals })['GET /v1/health']!({} as any, undefined, { tier: 'guest', origin: 'session' } as any)
+    expect((r.body as any).provider_refusals).toEqual(refusals)
+    expect(HealthResponse.safeParse(r.body).success).toBe(true)
+    const without = await makeRoutesUnderTest({})['GET /v1/health']!({} as any, undefined)
+    expect('provider_refusals' in (without.body as any)).toBe(false)
+  })
+
   it('GET /v1/health renders outbound from the dep and omits it when unwired', async () => {
     const withDep = makeRoutesUnderTest({ outbound: () => ({
       state: 'degraded', consecutiveFailures: 2, lastOkAt: null,

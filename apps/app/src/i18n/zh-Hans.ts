@@ -410,6 +410,7 @@ const zh: Record<keyof typeof en, string> = {
   'cap.brain.ok': '在用 {name}。',
   'cap.brain.retrying': '{name} 开机时没连上，正在重试。',
   'cap.brain.unavailable': '选的大脑 {name} 用不了。',
+  'cap.brain.region_unavailable': '{name} 说你现在的网络出口所在地区用不了它(不是登录问题)。',
   'cap.guard.unsafe': '网络没受保护，需要保护的模型调用先停着。',
   'cap.guard.paused': '有任务因为网络暂停过，正在恢复。',
   'cap.guard.ok': '网络受保护。',

@@ -21,6 +21,8 @@ export interface PipelineDepsOpts {
   guardRuntime?: import('../guard/runtime').GuardRuntime
   /** 可选子系统的开机状态(SubsystemSupervisor.statuses;「CC 现在怎么样」用)。 */
   subsystems?: () => Array<{ name: string; state: 'ok' | 'degraded' | 'off'; error?: string }>
+  /** 真回合里被拒着的执行者(provider-refusals.ts)。 */
+  providerRefusals?: () => Record<string, import('../provider-refusals').ProviderRefusal>
   /** 内部 API 的 token-registry 窄接口,给手机设置面板登记链接 / 设备令牌(梳理第 6 步)。 */
   panelTokens?: import('../internal-api/token-registry').PanelTokens
   matters?: import('../../core/matters/store').MatterStore

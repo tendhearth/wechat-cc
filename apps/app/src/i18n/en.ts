@@ -408,6 +408,7 @@ const en = {
   'cap.brain.ok': 'Using {name}.',
   'cap.brain.retrying': '{name} did not connect at startup. Retrying.',
   'cap.brain.unavailable': 'The selected brain, {name}, is unavailable.',
+  'cap.brain.region_unavailable': '{name} says it is not available in your network exit region (not a sign-in problem).',
   'cap.guard.unsafe': 'Network is not protected. Protected model calls are on hold.',
   'cap.guard.paused': 'Some tasks were paused by the network guard and are resuming.',
   'cap.guard.ok': 'Network protected.',
