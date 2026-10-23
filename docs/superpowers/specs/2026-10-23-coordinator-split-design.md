@@ -16,7 +16,7 @@
 | 三种派法 | `dispatchSolo`(solo 与 primary_tool 共用)/ `dispatchParallel` / `dispatchChatroom` + `runBeat` | 730 行 |
 | 一轮的进出 | `dispatchInner` / `submitTurn` / `oneTurnPerSession` / `registerHandleCancel` / `preemptInFlightChatroom` / `dispatch` | 200 行 |
 
-`/chat`、`/both` 微信入口已经去掉(收敛清单 ③),但桌面的对话模式照旧能选(`apps/desktop/src/modules/conversations.js`)、CLI `mode set both|chat`
+`/chat`、`/both` 微信入口已经去掉([收敛清单](../../convergence-list-2026-10-21.md) ③),但桌面的对话模式照旧能选(`apps/desktop/src/modules/conversations.js`)、CLI `mode set both|chat`
 也还在 —— 所以讨论 / 并行是**拆出去**,不是删。
 
 ## 怎么拆
@@ -35,35 +35,52 @@ src/core/conversation-coordinator.ts   只转出(外部 import 一个不改),跟
 
 目录叫 `coordinator/` 不叫 `conversation/`:`src/core/conversation.ts` 已经是一个文件,同名目录会让 `import './conversation'` 有歧义。
 
-**一张路由表代替 switch**(理念 1):`dispatchInner` 今天是 `if (parallel||chatroom) {…降级…}` 再 `switch (mode.kind)`。改成
+**一张路由表代替 switch**([架构复查 2026-10-21](../../architecture-review-2026-10-21.md) 理念 1;**这是唯一一步不是纯搬家**,见下面第 6 步):
+`dispatchInner` 今天是 `if (parallel||chatroom) {…降级…}` 再 `switch (mode.kind)`。改成
 
 ```ts
-const STRATEGIES: Record<Mode['kind'], Strategy> = { solo, primary_tool: solo, parallel, chatroom }
+// participants:parallel / chatroom 用准入后的那一组;solo / primary_tool 不看
+type Strategy = (msg: InboundMsg, proj: ProjectRef, mode: Mode, participants: ProviderId[] | null) => Promise<void>
+const STRATEGIES: { [K in Mode['kind']]: Strategy } = {
+  // solo 与 primary_tool 各一条薄的:读的字段不同(mode.provider / mode.primary)、标签不同(无 / 'primary_tool')、
+  // 「没注册 ⇒ 回落默认」各有自己那句日志 —— 不能写成 primary_tool: solo
+  solo:         (m, p, mode) => soloOrDefault(m, p, (mode as SoloMode).provider, undefined, 'persisted provider'),
+  primary_tool: (m, p, mode) => soloOrDefault(m, p, (mode as PrimaryToolMode).primary, 'primary_tool', 'primary_tool primary'),
+  parallel:     (m, p, _mode, ps) => dispatchParallel(m, p, ps!),
+  chatroom:     (m, p, _mode, ps) => dispatchChatroom(m, p, ps!),
+}
 ```
 
 键是 `Mode['kind']` 的全集,漏一个 TS 就报错 —— 以后加一种模式,写一个文件、表里加一行。「参与者为空 / 只剩一家就退成 solo」那段
-是**进路由之前**的一步,单独一个函数,不散在 case 里。
+是**进路由之前**的一步,单独一个函数,不散在 case 里。上面是示意,形状以第 6 步落地时为准;**行为以下面钉住的测试为准**。
 
 **环经 ctx.actions**(工作台拆分时的做法):chatroom 的 `runBeat` 要回头调「派一家」,solo 出错要调 failures —— 不互相 import,
 都经 ctx 上登记好的动作,避免模块环;`depcheck` 守。
 
 ## 每一步行为不变,怎么证明
 
-- 拆分期间**不改任何一行逻辑**,只搬家 + 改成读 ctx;每个 PR 的 diff 里「删掉的块」和「新文件的块」逐行能对上(跟工作台拆分时一样,
-  9d 当时就是这么审的:非空行比对,对不上的只能是 ctx 接线)。
+- 第 1–5 步**不改任何一行逻辑**,只搬家 + 改成读 ctx;每个 PR 的 diff 里「删掉的块」和「新文件的块」逐行能对上(跟工作台拆分时一样,
+  整合者当时就是这么审的:非空行比对,对不上的只能是 ctx 接线)。
+- 第 6 步(路由表)改了逻辑的**形状**,所以**第 1 步就先加一份钉住今天路由行为的测试**,第 6 步必须让它原样绿:
+  - parallel / chatroom 参与者 0 家 ⇒ 默认执行者,`dispatchSolo` 第 4 参是 `mode.kind`;
+  - 只剩 1 家 ⇒ 就那一家,同样带 `mode.kind`;
+  - solo 持久化的执行者已经没注册 ⇒ 默认,**不带**第 4 参;
+  - primary_tool 的 primary 没注册 ⇒ 默认 + `'primary_tool'`;
+  - `resolveAndAdmit` 回 null ⇒ 直接回,不派。
 - 协调器现有测试一个不改(`conversation-coordinator*.test.ts` 一共十来份);e2e 路由快照、关机快照不变。
-- 加一条守卫:`src/core/coordinator/` 下每个文件 ≤ 400 行;`conversation-coordinator.ts` 只许转出(行数棘轮,只许少)。
+- 加一条守卫:`src/core/coordinator/` 下每个文件 ≤ 400 行(先量过:按今天的函数边界,chatroom.ts ≈ 313、solo.ts ≈ 267、modes.ts ≈ 203、
+  parallel.ts ≈ 161,都在线内;搬完要是哪个超了,守卫起步按现状行数、只许降,再收紧到 400);`conversation-coordinator.ts` 只许转出(行数棘轮,只许少)。
 
 ## 切法(每步一个 PR,各自可回滚)
 
-1. 建 `coordinator/ctx.ts` + 把顶层四个纯函数挪进 `failures.ts`(最安全,纯函数)。
+1. 建 `coordinator/ctx.ts` + 把顶层四个纯函数挪进 `failures.ts`(最安全,纯函数)+ **钉住今天路由行为的测试**(上面五条)。
 2. `modes.ts`。
 3. `parallel.ts`(最少被碰的派法)。
 4. `chatroom.ts`(+ runBeat、preempt)。
 5. `solo.ts`(最常跑、最后动)。
-6. `index.ts` + 路由表;`conversation-coordinator.ts` 只剩转出;守卫。
+6. `index.ts` + 路由表(**唯一不是纯搬家的一步**,第 1 步那份测试原样绿);`conversation-coordinator.ts` 只剩转出;守卫。
 
-协调器是**每一条微信都走**的路,所以跟核心链一样:一次合一个,9d 合了部署、真机发一句收到回复,再下一个。
+协调器是**每一条微信都走**的路,所以跟核心链一样:一次合一个,整合者合了部署、真机发一句收到回复,再下一个。
 不碰主人看得见的任何行为,不需要主人拍板。
 
 ## 不做的
