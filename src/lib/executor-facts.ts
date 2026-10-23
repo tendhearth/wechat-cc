@@ -41,16 +41,22 @@ export interface ExecutorFacts {
     binary?: { name: string; configKey: 'cursorAgentBin' | 'agyBin' }
     requiresConfig?: readonly ExecutorConfigField[]
   }
+  /**
+   * 没给 base URL 时它真正连的 API host(3c 第 4 步,2026-10-23)。网络探测(daemon/net-probe)、调用分类
+   * (lib/call-classifier → 网络守护)都从这里取,不再各写一份 —— 以前三份里 agy / cursor 的 host 就对不上。
+   * `source`:这个 host 是怎么知道的。「抓包」= 真机跑一次、看它实际连了哪;没抓过的照实写「未抓包」。
+   */
+  endpoint: { host: string; source: string }
 }
 
 export type ExecutorConfigField = 'openaiBaseUrl' | 'openaiModel' | 'geminiModel' | 'cursorModel'
 
 export const EXECUTOR_FACTS: Readonly<Record<KnownProviderId, ExecutorFacts>> = {
-  claude: { id: 'claude', names: { name: 'Claude', short: 'Claude', settings: 'Claude' }, slash: 'cc', modelField: 'model', setupHint: '安装 Claude Code 并在终端登录一次(claude)' },
-  codex: { id: 'codex', names: { name: 'Codex', short: 'Codex', settings: 'Codex' }, slash: 'codex', modelField: 'model', setupHint: '安装 codex CLI 并登录一次' },
-  cursor: { id: 'cursor', names: { name: 'Cursor', short: 'Cursor', settings: 'Cursor' }, slash: 'cursor', modelField: 'cursorModel', setupHint: '终端跑:curl https://cursor.com/install -fsS | bash,然后 cursor-agent login(用 Cursor 订阅账号)', detect: { binary: { name: 'cursor-agent', configKey: 'cursorAgentBin' } } },
+  claude: { id: 'claude', names: { name: 'Claude', short: 'Claude', settings: 'Claude' }, slash: 'cc', modelField: 'model', setupHint: '安装 Claude Code 并在终端登录一次(claude)', endpoint: { host: 'api.anthropic.com', source: '官方 API 文档;未抓包' } },
+  codex: { id: 'codex', names: { name: 'Codex', short: 'Codex', settings: 'Codex' }, slash: 'codex', modelField: 'model', setupHint: '安装 codex CLI 并登录一次', endpoint: { host: 'api.openai.com', source: '官方 API 文档;未抓包(ChatGPT 账号登录时可能走 chatgpt.com,待核)' } },
+  cursor: { id: 'cursor', names: { name: 'Cursor', short: 'Cursor', settings: 'Cursor' }, slash: 'cursor', modelField: 'cursorModel', setupHint: '终端跑:curl https://cursor.com/install -fsS | bash,然后 cursor-agent login(用 Cursor 订阅账号)', detect: { binary: { name: 'cursor-agent', configKey: 'cursorAgentBin' } }, endpoint: { host: 'api2.cursor.sh', source: '抓包 2026-10-23:cursor-agent 2026.10.22 -p 一轮,连 api2.cursor.sh 与 api3.cursor.sh(另有几个遥测地址)' } },
   // 「/api」不是 /openai:这是主人自己的 API 端点(DeepSeek / Kimi / Qwen …),不绑哪家厂商。
-  openai: { id: 'openai', names: { name: '自定义 AI 服务', short: 'API', settings: '自定义 AI 服务' }, slash: 'api', modelField: 'openaiModel', setupHint: '把 WECHAT_OPENAI_API_KEY 写进 ~/.claude/channels/wechat/daemon.env,并配置 openaiBaseUrl/openaiModel', credentialEnv: ['WECHAT_OPENAI_API_KEY'], detect: { requiresConfig: ['openaiBaseUrl', 'openaiModel'] } },
-  gemini: { id: 'gemini', names: { name: 'Gemini', short: 'Gemini', settings: 'Gemini · 密钥连接' }, slash: 'gemini', modelField: 'geminiModel', setupHint: '把 GEMINI_API_KEY 写进 ~/.claude/channels/wechat/daemon.env', credentialEnv: ['GEMINI_API_KEY', 'GOOGLE_API_KEY'], detect: { requiresConfig: ['geminiModel'] } },
-  agy: { id: 'agy', names: { name: 'Gemini', short: 'Gemini', settings: 'Gemini · 账号连接' }, slash: 'agy', modelField: 'agyModel', setupHint: '安装 Antigravity CLI(agy)并登录一次(Google AI Pro 订阅)', detect: { binary: { name: 'agy', configKey: 'agyBin' } } },
+  openai: { id: 'openai', names: { name: '自定义 AI 服务', short: 'API', settings: '自定义 AI 服务' }, slash: 'api', modelField: 'openaiModel', setupHint: '把 WECHAT_OPENAI_API_KEY 写进 ~/.claude/channels/wechat/daemon.env,并配置 openaiBaseUrl/openaiModel', credentialEnv: ['WECHAT_OPENAI_API_KEY'], detect: { requiresConfig: ['openaiBaseUrl', 'openaiModel'] }, endpoint: { host: 'api.openai.com', source: '没配 openaiBaseUrl 时的缺省;实际几乎总是主人自配的网关' } },
+  gemini: { id: 'gemini', names: { name: 'Gemini', short: 'Gemini', settings: 'Gemini · 密钥连接' }, slash: 'gemini', modelField: 'geminiModel', setupHint: '把 GEMINI_API_KEY 写进 ~/.claude/channels/wechat/daemon.env', credentialEnv: ['GEMINI_API_KEY', 'GOOGLE_API_KEY'], detect: { requiresConfig: ['geminiModel'] }, endpoint: { host: 'generativelanguage.googleapis.com', source: 'Gemini API(密钥)官方端点;未抓包' } },
+  agy: { id: 'agy', names: { name: 'Gemini', short: 'Gemini', settings: 'Gemini · 账号连接' }, slash: 'agy', modelField: 'agyModel', setupHint: '安装 Antigravity CLI(agy)并登录一次(Google AI Pro 订阅)', detect: { binary: { name: 'agy', configKey: 'agyBin' } }, endpoint: { host: 'daily-cloudcode-pa.googleapis.com', source: '抓包 2026-10-23:agy -p 一轮,连 daily-cloudcode-pa.googleapis.com(另有 www.googleapis.com、antigravity-unleash.goog、play.googleapis.com);不是以前写的 cloudcode-pa / generativelanguage' } },
 }

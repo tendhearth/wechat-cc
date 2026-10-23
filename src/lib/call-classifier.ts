@@ -17,6 +17,8 @@
  * 覆盖写在 guard.json 的 `protect` / `trust` 两张表里(见 docs/reference/network-guard.md)。
  * 纯函数、零依赖:core(协调器 / registry / 工作台)和 daemon、CLI 都用同一份判定。
  */
+import { EXECUTOR_FACTS } from './executor-facts'
+import type { KnownProviderId } from './provider-ids'
 
 export interface CallTarget {
   /** provider id(claude / codex / cursor / openai / gemini / agy),或 voice 这类非 provider 的出口。 */
@@ -74,13 +76,15 @@ export interface CallClass {
 }
 
 /** 各 provider 不给 base URL 时连的官方端点。 */
+// host 只认 executor-facts 那一份(3c 第 4 步,真机抓包核过的写在那边的 source 里);这里只管显示名。
+const host = (pid: KnownProviderId) => EXECUTOR_FACTS[pid].endpoint.host
 const PROVIDER_DEFAULT_HOST: Record<string, { host: string; label: string }> = {
-  claude: { host: 'api.anthropic.com', label: 'Claude' },
-  codex: { host: 'api.openai.com', label: 'Codex(OpenAI)' },
-  openai: { host: 'api.openai.com', label: 'OpenAI' },
-  gemini: { host: 'generativelanguage.googleapis.com', label: 'Gemini' },
-  agy: { host: 'cloudcode-pa.googleapis.com', label: 'Gemini(agy)' },
-  cursor: { host: 'api2.cursor.sh', label: 'Cursor' },
+  claude: { host: host('claude'), label: 'Claude' },
+  codex: { host: host('codex'), label: 'Codex(OpenAI)' },
+  openai: { host: host('openai'), label: 'OpenAI' },
+  gemini: { host: host('gemini'), label: 'Gemini' },
+  agy: { host: host('agy'), label: 'Gemini(agy)' },
+  cursor: { host: host('cursor'), label: 'Cursor' },
 }
 
 /** 海外官方端点(后缀匹配)→ 名字。 */

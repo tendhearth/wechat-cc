@@ -51,11 +51,12 @@ describe('makeCheapEvalPreflight', () => {
     expect(fetcher.mock.calls[0]![0]).toBe('http://127.0.0.1:8000')
   })
 
-  it('agy and gemini share the google endpoint — one probe serves both (cache by endpoint)', async () => {
+  // 2026-10-23 抓包:agy 连的是 daily-cloudcode-pa.googleapis.com,不是带密钥那家的 generativelanguage —— 以前共用一次探测,
+  // agy 的预检其实探的是别人的 host。现在各探各的;同一家第二次照样走缓存(按端点缓存)。
+  it('agy and keyed Gemini use different Google hosts — each probed once, repeats are cached', async () => {
     const fetcher = okFetcher()
     const pf = makeCheapEvalPreflight({ fetcher, now: () => 1000 })
-    await pf('agy')
-    await pf('gemini')
-    expect(fetcher).toHaveBeenCalledTimes(1)
+    await pf('agy'); await pf('gemini'); await pf('agy')
+    expect(fetcher).toHaveBeenCalledTimes(2)
   })
 })
