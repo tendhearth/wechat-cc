@@ -238,7 +238,7 @@ async function bootDaemonInner(opts: BootDaemonOpts, undo: Array<() => void>): P
   const sup = new SubsystemSupervisor((t, l) => log(t, l))
   // 定时器那几样一行起一个模块(第三批 3b 第 5 步,modules/lifecycle-module.ts):停法登记在 lc 里它原来那一行的位置,停的顺序不变
   const moduleHost: LifecycleModuleHost = { sup, log: (t, l) => log(t, l), register: (name, stop) => lc.register({ name, stop }) }
-  let pollingLcRef: { reconcile(): Promise<void> } | null = null
+  let pollingLcRef: { reconcile(): Promise<void>; bootSummary(): { eligible: number; started: number } } | null = null
   let ticksRef: TickBodies | null = null
   const BOOT_AT_ISO = new Date().toISOString()
   let bootRef: import('./bootstrap').Bootstrap | null = null
@@ -394,6 +394,7 @@ async function bootDaemonInner(opts: BootDaemonOpts, undo: Array<() => void>): P
       // (after this registration) — returns null until then, so the route 503s.
       listSessions: () => bootRef?.sessionManager?.list() ?? null,
       heartbeatFresh: () => isHeartbeatFresh(HEARTBEAT_PATH),
+      polling: () => pollingLcRef?.bootSummary() ?? null,
       // 后台在跑的版本(2026-09-16):桌面更新器换入新 .app 后旧 daemon 不会被杀,
       // app 只有看到这个才知道后台还是旧的。head 是 thunk-over-bootRef(self-restart
       // 在 bootstrap 里才接线)。

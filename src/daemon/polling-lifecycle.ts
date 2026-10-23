@@ -53,6 +53,11 @@ export interface PollingLifecycle extends Lifecycle {
   running(): string[]
   /** Add a freshly-bound account to the polling loop without restart. */
   addAccount(account: IlinkAccount): void
+  /**
+   * 开机时该拉消息的账号数(多设备账号待命不算)和实际起了循环的数。`self deploy` 的健康门比这两个数:
+   * 起的少于该起的 ⇒ 这一版没把拉消息接上。之后账号过期自己停的循环不影响 started(那不是部署的错)。
+   */
+  bootSummary(): { eligible: number; started: number }
 }
 
 export function registerPolling(deps: PollingDeps): PollingLifecycle {
@@ -113,6 +118,7 @@ export function registerPolling(deps: PollingDeps): PollingLifecycle {
     },
   })
 
+  const boot = { eligible: startupAccounts.length, started: handle.running().length }
   return {
     name: 'polling',
     stop: async () => {
@@ -140,5 +146,6 @@ export function registerPolling(deps: PollingDeps): PollingLifecycle {
     stopAccountAndWait: (id) => handle.stopAccountAndWait(id),
     running: () => handle.running(),
     addAccount: (a) => handle.addAccount(a),
+    bootSummary: () => ({ ...boot }),
   }
 }
