@@ -849,8 +849,9 @@ async function bootDaemonInner(opts: BootDaemonOpts, undo: Array<() => void>): P
     // Register before polling so shutdown stops inbound, drains task sends, then flushes ilink.
     lc.register({name:'workbench-notifications',stop:async()=>{await workbenchNotifications?.close()}})
     lc.register({name:'workbench-artifacts',stop:async()=>{await workbenchArtifacts?.close()}})
-    const pollingLc = registerPolling({ ...wired.pollingDeps, runPipeline: pipeline })
-    wireRef(wired.refs.polling, pollingLc); lc.register(pollingLc); pollingLcRef = pollingLc
+    // 核心链就地搬家第 5 步:同上。pipeline ↔ polling 的环(refs.polling)留给 PR 6 换成 lazy。
+    const pollingLc = (await startLifecycleModule(moduleHost, 'polling', () => registerPolling({ ...wired.pollingDeps, runPipeline: pipeline }), { required: true }))!
+    wireRef(wired.refs.polling, pollingLc); pollingLcRef = pollingLc
     // 笔友信箱的轮询器从第三批 3b 第 3 步起是社交那一组里的一个模块(bootstrap/social-module.ts),不在这里起。
     // 每晚整理长期记忆 memory.md(2026-09-25)。15 分钟一次「该不该跑」,运行时在 pipeline-deps 造好。
     await startLifecycleModule(moduleHost, 'memory-nightly', () => registerMemoryNightly({
