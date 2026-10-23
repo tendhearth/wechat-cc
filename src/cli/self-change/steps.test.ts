@@ -379,10 +379,10 @@ describe('review', () => {
     const s = fakeState()
     const { deps, rec } = makeFakeDeps({ git: gitReply({ 'rev-parse HEAD': HEAD_SHA }) })
     const seen: boolean[] = []
-    deps.reviewer = {
+    deps.reviewer = () => ({
       choice: { id: 'codex', why: '实现是 Claude,评审换 Codex' },
       runner: { run: async (input) => { seen.push(input.readOnly === true); return { ok: true, sessionId: 't1', text: '{"verdict":"approve","findings":[]}', costUsd: 0, turns: 1, stderrTail: [], timedOut: false } } },
-    }
+    })
     expect(await steps.review(s, deps)).toEqual({ ok: true, next: 'ci' })
     expect(seen).toEqual([true])
     expect(rec.runner).toEqual([]) // 实现那个 runner 一次都没被叫
