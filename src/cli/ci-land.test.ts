@@ -1,0 +1,187 @@
+import { describe, it, expect } from 'vitest'
+import { judgeRollup, resolveStack, runCiLand, CI_LAND_EXIT, type PrInfo, type CiLandDeps } from './ci-land'
+import type { ExecResult } from './ci-triage-run'
+
+const pr = (number: number, base: string, head: string, sha: string, isDraft = true): PrInfo =>
+  ({ number, state: 'OPEN', baseRefName: base, headRefName: head, headRefOid: sha, isDraft })
+
+const ok = (name: string) => ({ name, status: 'COMPLETED', conclusion: 'SUCCESS' })
+const skip = (name: string) => ({ name, status: 'COMPLETED', conclusion: 'SKIPPED' })
+
+describe('judgeRollup', () => {
+  it('空 rollup 永远不是绿', () => {
+    expect(judgeRollup([], 5)).toEqual({ kind: 'too_few', counted: 0 })
+    expect(judgeRollup([], 0).kind).toBe('green')
+  })
+  it('skipped 不计数;够数且全 SUCCESS 才绿', () => {
+    const items = [ok('a'), ok('b'), skip('c'), skip('d')]
+    expect(judgeRollup(items, 2)).toEqual({ kind: 'green', counted: 2 })
+    expect(judgeRollup(items, 3)).toEqual({ kind: 'too_few', counted: 2 })
+  })
+  it('任何一条红 ⇒ red(即使别的还在跑)', () => {
+    expect(judgeRollup([ok('a'), { name: 'w', status: 'IN_PROGRESS' }, { name: 'x', status: 'COMPLETED', conclusion: 'FAILURE' }], 1))
+      .toEqual({ kind: 'red', failed: ['x'] })
+  })
+  it('还在跑 ⇒ pending', () => {
+    expect(judgeRollup([ok('a'), { name: 'b', status: 'QUEUED' }], 1).kind).toBe('pending')
+  })
+  it('StatusContext 看 state', () => {
+    expect(judgeRollup([{ context: 'ext', state: 'SUCCESS' }], 1).kind).toBe('green')
+    expect(judgeRollup([{ context: 'ext', state: 'ERROR' }], 1)).toEqual({ kind: 'red', failed: ['ext'] })
+  })
+})
+
+describe('resolveStack', () => {
+  const open = [pr(1, 'dev', 'a', 'sa'), pr(2, 'a', 'b', 'sb'), pr(3, 'b', 'c', 'sc'), pr(9, 'dev', 'z', 'sz')]
+  it('从上往下走到 dev,返回从下到上,带旧 head', () => {
+    expect(resolveStack(3, open, 'dev').map(l => [l.number, l.oldHead])).toEqual([[1, 'sa'], [2, 'sb'], [3, 'sc']])
+  })
+  it('单层也行', () => {
+    expect(resolveStack(9, open, 'dev').map(l => l.number)).toEqual([9])
+  })
+  it('有兄弟 ⇒ 抛出', () => {
+    expect(() => resolveStack(3, [...open, pr(4, 'a', 'd', 'sd')], 'dev')).toThrow(/#4/)
+  })
+  it('下层不是开着的 PR ⇒ 抛出', () => {
+    expect(() => resolveStack(2, [pr(2, 'gone', 'b', 'sb')], 'dev')).toThrow(/gone/)
+  })
+  it('只给上层、下层的上面还叠着更上层(不是兄弟)不算兄弟', () => {
+    // 合 #2 这一串时,#3 叠在 #2 上 ⇒ 它是兄弟(不在这一串里),停下。
+    expect(() => resolveStack(2, open, 'dev')).toThrow(/#3/)
+  })
+})
+
+/** 假的 git / gh:按命令前缀回结果,记录调用顺序。 */
+function fakeDeps(script: {
+  open: PrInfo[]
+  views: Array<{ headRefOid: string; statusCheckRollup: unknown[] } | null>
+  rebaseFailsFor?: string
+  devMovedBySomeoneElse?: boolean
+}) {
+  const calls: string[] = []
+  let viewIdx = 0
+  let dev = 'd0'
+  let devParent = 'dX'
+  let t = 0
+  let head = ''
+  const exec = (cmd: string, args: string[]): ExecResult => {
+    const line = `${cmd} ${args.join(' ')}`
+    calls.push(line)
+    const r = (stdout = '', code = 0, stderr = ''): ExecResult => ({ code, stdout, stderr })
+    if (line === 'git symbolic-ref -q HEAD') return r('', 1)
+    if (line === 'git status --porcelain') return r('')
+    if (line.startsWith('gh pr list')) return r(JSON.stringify(script.open))
+    if (line.startsWith('gh pr view')) {
+      const v = script.views[Math.min(viewIdx++, script.views.length - 1)]
+      return v ? r(JSON.stringify(v)) : r('', 1)
+    }
+    if (line.startsWith('git checkout')) { head = args[3]!; return r() }
+    if (line.startsWith('git rebase --onto')) {
+      if (head === script.rebaseFailsFor) return r('', 1)
+      head = `${head}-rebased`
+      return r()
+    }
+    if (line.startsWith('git rebase --abort')) return r()
+    if (line === 'git rev-parse HEAD') return r(`${head}\n`)
+    if (line === 'git rev-parse origin/dev') return r(`${dev}\n`)
+    if (line === 'git rev-parse origin/dev^') return r(`${devParent}\n`)
+    if (line.startsWith('gh pr merge')) {
+      devParent = script.devMovedBySomeoneElse ? 'stranger' : dev
+      dev = `${dev}+${args[2]}`
+      return r()
+    }
+    return r()
+  }
+  const deps: CiLandDeps = {
+    exec, sleep: async (ms) => { t += ms }, now: () => t, log: () => {}, cwd: '/repo',
+  }
+  return { deps, calls }
+}
+
+const green = (sha: string) => ({ headRefOid: sha, statusCheckRollup: [ok('a'), ok('b'), ok('c'), ok('d'), ok('e'), skip('f')] })
+
+describe('runCiLand', () => {
+  const open = [pr(1, 'dev', 'a', 'sa'), pr(2, 'a', 'b', 'sb'), pr(3, 'b', 'c', 'sc')]
+
+  it('等最上面那个绿 ⇒ 从下往上:第一层直接合,上层 rebase --onto 下层旧 head、带租约推、改 base、合', async () => {
+    const { deps, calls } = fakeDeps({ open, views: [{ headRefOid: 'sc', statusCheckRollup: [] }, green('sc')] })
+    const res = await runCiLand(deps, { top: 3, skipTypecheck: true })
+    expect(res.exitCode).toBe(CI_LAND_EXIT.landed)
+    expect(res.merged).toEqual([1, 2, 3])
+    const keep = calls.filter(c => /rebase --onto|push|pr edit|pr merge|pr ready/.test(c))
+    expect(keep).toEqual([
+      'gh pr ready 1',
+      'gh pr merge 1 --squash --match-head-commit sa',
+      'git rebase --onto origin/dev sa',
+      "git push --force-with-lease=b:sb origin HEAD:refs/heads/b",
+      'gh pr edit 2 --base dev',
+      'gh pr ready 2',
+      'gh pr merge 2 --squash --match-head-commit sb-rebased',
+      'git rebase --onto origin/dev sb',
+      "git push --force-with-lease=c:sc origin HEAD:refs/heads/c",
+      'gh pr edit 3 --base dev',
+      'gh pr ready 3',
+      'gh pr merge 3 --squash --match-head-commit sc-rebased',
+    ])
+  })
+
+  it('head 变了 ⇒ 停,一层都不合', async () => {
+    const { deps, calls } = fakeDeps({ open, views: [green('other')] })
+    const res = await runCiLand(deps, { top: 3 })
+    expect(res.exitCode).toBe(CI_LAND_EXIT.moved)
+    expect(calls.some(c => c.startsWith('gh pr merge'))).toBe(false)
+  })
+
+  it('CI 一直零条检查 ⇒ 十分钟后判红,不当绿', async () => {
+    const { deps, calls } = fakeDeps({ open, views: [{ headRefOid: 'sc', statusCheckRollup: [] }] })
+    const res = await runCiLand(deps, { top: 3 })
+    expect(res.exitCode).toBe(CI_LAND_EXIT.red)
+    expect(res.message).toMatch(/一条检查都没有/)
+    expect(calls.some(c => c.startsWith('gh pr merge'))).toBe(false)
+  })
+
+  it('跑完但非 skipped 不够数 ⇒ 红,提示 --min-checks', async () => {
+    const { deps } = fakeDeps({ open, views: [{ headRefOid: 'sc', statusCheckRollup: [ok('changes'), skip('b')] }] })
+    const res = await runCiLand(deps, { top: 3 })
+    expect(res.exitCode).toBe(CI_LAND_EXIT.red)
+    expect(res.message).toMatch(/--min-checks 1/)
+  })
+
+  it('gh 没回东西 ⇒ 等一会儿再问,不当 head 变了', async () => {
+    const { deps } = fakeDeps({ open, views: [null, green('sc')] })
+    const res = await runCiLand(deps, { top: 3, skipTypecheck: true })
+    expect(res.exitCode).toBe(CI_LAND_EXIT.landed)
+  })
+
+  it('rebase 冲突 ⇒ abort、报告停在哪层,已合的保留', async () => {
+    const { deps, calls } = fakeDeps({ open, views: [green('sc')], rebaseFailsFor: 'sc' })
+    const res = await runCiLand(deps, { top: 3, skipTypecheck: true })
+    expect(res.exitCode).toBe(CI_LAND_EXIT.conflict)
+    expect(res.merged).toEqual([1, 2])
+    expect(calls).toContain('git rebase --abort')
+    expect(res.message).toMatch(/#3/)
+  })
+
+  it('dev 被别人动过 ⇒ 合完那一层就停', async () => {
+    const { deps } = fakeDeps({ open, views: [green('sc')], devMovedBySomeoneElse: true })
+    const res = await runCiLand(deps, { top: 3, skipTypecheck: true })
+    expect(res.exitCode).toBe(CI_LAND_EXIT.moved)
+    expect(res.merged).toEqual([1])
+  })
+
+  it('不在 detached HEAD ⇒ 拒绝', async () => {
+    const { deps } = fakeDeps({ open, views: [green('sc')] })
+    const exec = deps.exec
+    deps.exec = (cmd, args, o) => (args.join(' ') === 'symbolic-ref -q HEAD' ? { code: 0, stdout: 'refs/heads/x', stderr: '' } : exec(cmd, args, o))
+    const res = await runCiLand(deps, { top: 3 })
+    expect(res.exitCode).toBe(CI_LAND_EXIT.precondition)
+    expect(res.message).toMatch(/detached/)
+  })
+
+  it('预演:只认出这一串,不动任何东西', async () => {
+    const { deps, calls } = fakeDeps({ open, views: [green('sc')] })
+    const res = await runCiLand(deps, { top: 3, dryRun: true })
+    expect(res.exitCode).toBe(CI_LAND_EXIT.landed)
+    expect(calls.filter(c => !c.startsWith('gh pr list'))).toEqual([])
+  })
+})
