@@ -6,6 +6,9 @@
  * 调模型之前先看网络守护 —— 自检要打官方端点,直连会封号。设计稿 2026-10-23-cc-runs-development §6 第 4 步把它们
  * 收成一道门,顺序就是它们该被检查的顺序:**什么都还没动的时候**先问能不能动。
  *
+ *   0. 装的是哪棵树:工作区有未提交的改动 ⇒ 退 6;HEAD 不是 origin/dev ⇒ 退 6(`--allow-off-dev` 放行,照实打出来)。
+ *      不查的话,脏树或一条功能分支也能装上去,soak 会把它的版本当成 dev 报(整合者评审 #638)。
+ *      自改不走这里:它的工作树合完就钉在 origin/dev 上,deploy 步自己断言。
  *   1. 负载:1 分钟负载 / 核数 > 上限(缺省 1.0)⇒ 每分钟再看,`--wait-min` 到了还高 ⇒ 退 3,什么都没动。
  *   2. 网络守护:读不到、或开着但不安全 ⇒ 退 5。放在构建之前:部署完才发现自检跑不了,只能回滚。
  *   3. 构建 sidecar(源码模式,apps/desktop 的 build-sidecar)⇒ 红退 4。
@@ -20,7 +23,11 @@ import type { SelftestReport } from './selftest'
 
 export interface MachineLoad { load1: number; cpus: number }
 
+/** 要装的那棵树。`devHead` = 刚 fetch 过的 origin/dev;null = 取不到。 */
+export interface ShipTree { dirty: string; head: string; devHead: string | null }
+
 export interface ShipDeps {
+  tree: () => ShipTree
   load: () => MachineLoad
   /** /v1/health.guard;null = 读不到。 */
   guard: () => Promise<{ enabled: boolean; safe: boolean; detail: string } | null>
@@ -38,9 +45,11 @@ export interface ShipOpts {
   /** 1 分钟负载 / 核数的上限。 */
   maxLoadPerCpu?: number
   skipBuild?: boolean
+  /** HEAD 不是 origin/dev 也装(试一条分支)。脏树永远不装。 */
+  allowOffDev?: boolean
 }
 
-export const SHIP_EXIT = { shipped: 0, deploy_failed: 1, selftest_red: 2, busy: 3, build_failed: 4, unguarded: 5 } as const
+export const SHIP_EXIT = { shipped: 0, deploy_failed: 1, selftest_red: 2, busy: 3, build_failed: 4, unguarded: 5, tree_unfit: 6 } as const
 
 export interface ShipResult { exitCode: number; message: string; version?: string }
 
@@ -70,6 +79,18 @@ function failedChecks(r: SelftestReport): string {
 }
 
 export async function runShip(deps: ShipDeps, opts: ShipOpts = {}): Promise<ShipResult> {
+  const tree = deps.tree()
+  if (tree.dirty.trim()) {
+    const files = tree.dirty.trim().split('\n').slice(0, 10).join('\n')
+    return { exitCode: SHIP_EXIT.tree_unfit, message: `工作区有未提交的改动,不装(装上去的就不是任何一个提交了):\n${files}\n什么都没动。` }
+  }
+  const short = (sha: string | null) => (sha ? sha.slice(0, 8) : '(取不到)')
+  if (tree.head !== tree.devHead) {
+    const where = `HEAD ${short(tree.head)},origin/dev ${short(tree.devHead)}`
+    if (!opts.allowOffDev) return { exitCode: SHIP_EXIT.tree_unfit, message: `要装的不是 origin/dev(${where}):soak 会把它当 dev 报。真要试一条分支加 --allow-off-dev。什么都没动。` }
+    deps.log(`注意:装的不是 origin/dev(${where}),按 --allow-off-dev 照装`)
+  }
+
   const busy = await waitForQuietMachine(deps, { waitMin: opts.waitMin ?? 0, maxLoadPerCpu: opts.maxLoadPerCpu ?? DEFAULT_MAX_LOAD_PER_CPU })
   if (busy) return { exitCode: SHIP_EXIT.busy, message: `${busy}。什么都没动。` }
 

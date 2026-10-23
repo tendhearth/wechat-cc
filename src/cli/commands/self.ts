@@ -436,6 +436,7 @@ const selfShipCmd = defineCommand({
     'wait-min': { type: 'string', description: '机器忙时最多等几分钟(缺省 0:忙就不动)' },
     'max-load': { type: 'string', description: '1 分钟负载 / 核数的上限(缺省 1.0)' },
     'skip-build': { type: 'boolean', description: '不构建,直接部署已经构建好的 sidecar' },
+    'allow-off-dev': { type: 'boolean', description: 'HEAD 不是 origin/dev 也装(试一条分支);脏树永远不装' },
   },
   async run({ args }) {
     const { runShip, SHIP_EXIT, DEFAULT_MAX_LOAD_PER_CPU } = await import('../self-ship')
@@ -448,7 +449,7 @@ const selfShipCmd = defineCommand({
     const waitMin = num(args['wait-min'], 0)
     const maxLoadPerCpu = num(args['max-load'], DEFAULT_MAX_LOAD_PER_CPU)
     if (!Number.isFinite(waitMin) || waitMin < 0 || !Number.isFinite(maxLoadPerCpu) || maxLoadPerCpu <= 0) {
-      console.error('self ship: 用法 wechat-cc self ship [--wait-min N] [--max-load X] [--skip-build]')
+      console.error('self ship: 用法 wechat-cc self ship [--wait-min N] [--max-load X] [--skip-build] [--allow-off-dev]')
       process.exit(SHIP_EXIT.deploy_failed)
       return
     }
@@ -461,7 +462,15 @@ const selfShipCmd = defineCommand({
     const { defaultSelftestDeps, runChatSelftest, runWorkbenchSelftest } = await import('../selftest')
     const daemon = makeDaemonClient({ readApiInfo: () => readApiInfo(STATE_DIR), fetch })
     const agent = loadAgentConfig(STATE_DIR).self_change
+    const { spawnSync } = await import('node:child_process')
+    const git = (...a: string[]) => spawnSync('git', a, { cwd: SOURCE_REPO_ROOT, encoding: 'utf8', timeout: 60_000, windowsHide: true })
     const res = await runShip({
+      tree: () => {
+        // fetch 不成就用本地的 origin/dev(多半旧一点 ⇒ 对不上就拒,宁严勿松)。
+        git('fetch', '-q', 'origin', 'dev')
+        const dev = git('rev-parse', '--verify', '-q', 'origin/dev')
+        return { dirty: git('status', '--porcelain').stdout ?? '', head: (git('rev-parse', 'HEAD').stdout ?? '').trim(), devHead: dev.status === 0 ? dev.stdout.trim() : null }
+      },
       load: () => ({ load1: loadavg()[0] ?? 0, cpus: cpus().length }),
       guard: () => daemon.guard(),
       build: async () => {
@@ -480,7 +489,7 @@ const selfShipCmd = defineCommand({
       sleep: ms => new Promise(r => setTimeout(r, ms)),
       now: () => Date.now(),
       log: line => console.error(line),
-    }, { waitMin, maxLoadPerCpu, skipBuild: Boolean(args['skip-build']) })
+    }, { waitMin, maxLoadPerCpu, skipBuild: Boolean(args['skip-build']), allowOffDev: Boolean(args['allow-off-dev']) })
     ;(res.exitCode === SHIP_EXIT.shipped ? console.log : console.error)(res.message)
     process.exit(res.exitCode)
   },

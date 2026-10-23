@@ -16,6 +16,7 @@ function harness(over: Partial<ShipDeps> & { loads?: number[]; selftestOk?: [boo
   let li = 0
   const loads = over.loads ?? [2]
   const deps: ShipDeps = {
+    tree: () => ({ dirty: '', head: 'a'.repeat(40), devHead: 'a'.repeat(40) }),
     load: () => ({ load1: loads[Math.min(li++, loads.length - 1)]!, cpus: 18 }),
     guard: async () => ({ enabled: true, safe: true, detail: 'bx 保护中' }),
     build: async () => { calls.push('build'); return { ok: true, detail: '' } },
@@ -41,6 +42,26 @@ describe('runShip', () => {
     expect(calls).toEqual(['build', 'deploy', 'selftest'])
     expect(r.message).toContain('self soak')
     expect(r.version).toBe('v-new')
+  })
+
+  it('工作区脏 ⇒ 退 6,什么都没动(--allow-off-dev 也不放)', async () => {
+    const { deps, calls } = harness({ tree: () => ({ dirty: ' M src/a.ts\n', head: 'a'.repeat(40), devHead: 'a'.repeat(40) }) })
+    const r = await runShip(deps, { allowOffDev: true })
+    expect(r.exitCode).toBe(SHIP_EXIT.tree_unfit)
+    expect(r.message).toContain('src/a.ts')
+    expect(calls).toEqual([])
+  })
+
+  it('HEAD 不是 origin/dev(或取不到)⇒ 退 6;--allow-off-dev 照装', async () => {
+    for (const devHead of ['b'.repeat(40), null]) {
+      const { deps, calls } = harness({ tree: () => ({ dirty: '', head: 'a'.repeat(40), devHead }) })
+      const r = await runShip(deps)
+      expect(r.exitCode).toBe(SHIP_EXIT.tree_unfit)
+      expect(r.message).toContain('HEAD aaaaaaaa')
+      expect(calls).toEqual([])
+    }
+    const off = harness({ tree: () => ({ dirty: '', head: 'a'.repeat(40), devHead: 'b'.repeat(40) }) })
+    expect((await runShip(off.deps, { allowOffDev: true })).exitCode).toBe(SHIP_EXIT.shipped)
   })
 
   it('机器忙 ⇒ 退 3,什么都没动', async () => {
