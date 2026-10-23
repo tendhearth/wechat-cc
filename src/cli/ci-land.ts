@@ -20,6 +20,9 @@
  *   - rebase 冲突 ⇒ abort,不留半截;已经合进去的几层照旧在 dev 上,报告停在哪一层。
  *   - 开始后 dev 被别人动过(不是我们刚合的那一个)⇒ 停:剩下几层的内容不再是 CI 验过的那一份。
  *   - 兄弟(两个 PR 叠在同一个下层上)⇒ 第一版不处理,停下来说清楚:先排成一条线,或者各自等 CI。
+ *   - 网络抖(SSL_ERROR_SYSCALL 之类)⇒ push / 改 base / 合 退避重试三次;租约和 match-head 被拒不重试。
+ *   - 跑到一半停了 ⇒ 重跑同一条命令接着来:下层 PR 已合、上层 base 还指着它的分支 ⇒ 用那个 PR 最后的 head 当
+ *     rebase 的起点;已经 rebase 推上去的那层不再 rebase。
  *   - 只在整合者自己的 detached worktree 里跑:这条命令会 checkout / rebase,不能在别人在用的工作区里。
  */
 import type { ExecResult } from './ci-triage-run'
@@ -54,7 +57,14 @@ export interface PrInfo {
   isDraft: boolean
 }
 
-export interface Layer extends PrInfo { /** 开始时记下的 head(下层合掉以后它就从分支名上消失了)。 */ oldHead: string }
+export interface Layer extends PrInfo {
+  /** 开始时记下的 head(下层合掉以后它就从分支名上消失了)。 */
+  oldHead: string
+  /** 只有最下面一层可能有:它的 base 是一个**已经合掉**的 PR 的分支(上一次跑到一半停了)⇒ 那个 PR 最后的 head。 */
+  landedParentHead?: string
+}
+
+export interface MergedPr { number: number; headRefName: string; headRefOid: string }
 
 export interface RollupItem { name?: string; context?: string; status?: string; conclusion?: string; state?: string }
 
@@ -97,8 +107,10 @@ export function judgeRollup(items: RollupItem[], minChecks: number): RollupVerdi
  * 从最上面那个 PR 往下走到 target(dev),返回从下到上的一串。
  * 走不到(下层不是开着的 PR)、有环、有兄弟 ⇒ 抛出说明。
  */
-export function resolveStack(top: number, open: PrInfo[], target: string): Layer[] {
+export function resolveStack(top: number, open: PrInfo[], target: string, merged: MergedPr[] = []): Layer[] {
   const byHead = new Map(open.map(p => [p.headRefName, p]))
+  const mergedByHead = new Map(merged.map(p => [p.headRefName, p]))
+  let landedParent: MergedPr | undefined
   const chain: PrInfo[] = []
   let cur = open.find(p => p.number === top)
   if (!cur) throw new Error(`#${top} 不是开着的 PR`)
@@ -109,6 +121,8 @@ export function resolveStack(top: number, open: PrInfo[], target: string): Layer
     chain.unshift(cur)
     if (cur.baseRefName === target) break
     const parent = byHead.get(cur.baseRefName)
+    // 接着上一次:下层已经合掉了(PR 关了,分支名还在 base 上)⇒ 这一串从这里开始,rebase 用那个 PR 最后的 head。
+    if (!parent && mergedByHead.has(cur.baseRefName)) { landedParent = mergedByHead.get(cur.baseRefName); break }
     if (!parent) throw new Error(`#${cur.number} 的 base 是 ${cur.baseRefName},既不是 ${target} 也不是开着的 PR 的分支`)
     cur = parent
   }
@@ -119,7 +133,7 @@ export function resolveStack(top: number, open: PrInfo[], target: string): Layer
       throw new Error(`#${layer.number} 上还叠着不在这一串里的 ${siblings.map(s => `#${s.number}`).join('、')}(兄弟):先排成一条线,或者让它们各自等 CI`)
     }
   }
-  return chain.map(p => ({ ...p, oldHead: p.headRefOid }))
+  return chain.map((p, i) => ({ ...p, oldHead: p.headRefOid, ...(i === 0 && landedParent ? { landedParentHead: landedParent.headRefOid } : {}) }))
 }
 
 const POLL_MS = 3 * 60_000
@@ -128,6 +142,14 @@ const DEFAULT_MIN_CHECKS = 5
 const DEFAULT_TIMEOUT_MIN = 120
 const NO_CHECKS_GIVE_UP_MS = 10 * 60_000
 const MAX_BLIPS = 10
+const NET_RETRIES = 3
+const NET_BACKOFF_MS = [5_000, 15_000, 45_000]
+
+/** 是不是网络层的失败(可以重试)。租约 / match-head / 冲突的拒绝都不在这里。 */
+export function isNetworkError(stderr: string): boolean {
+  if (/stale info|rejected|fetch first|non-fast-forward|head commit|not mergeable|conflict/i.test(stderr)) return false
+  return /SSL_ERROR|SSL_connect|Could not resolve|timed? ?out|Connection (reset|refused|closed)|unexpected disconnect|early EOF|HTTP (5\d\d)|\b50[234]\b|Bad Gateway|Service Unavailable|TLS handshake/i.test(stderr)
+}
 
 export interface CiLandResult { exitCode: number; merged: number[]; message: string }
 
@@ -139,6 +161,17 @@ export async function runCiLand(deps: CiLandDeps, opts: CiLandOpts): Promise<CiL
   const run = (cmd: string, args: string[], timeoutMs?: number) => deps.exec(cmd, args, { cwd: deps.cwd, ...(timeoutMs ? { timeoutMs } : {}) })
   const git = (...args: string[]) => run('git', args)
   const gh = (...args: string[]) => run('gh', args)
+  const lastLine = (r: ExecResult) => r.stderr.trim().split('\n').pop() ?? ''
+  // 网络抖(这台机器上 git push / gh 一小时能撞两次 SSL_ERROR_SYSCALL)⇒ 退避重试三次;租约 / match-head 被拒是真「动过」,不重试。
+  const net = async (fn: () => ExecResult): Promise<ExecResult> => {
+    let r = fn()
+    for (let i = 0; i < NET_RETRIES && r.code !== 0 && isNetworkError(r.stderr); i++) {
+      deps.log(`网络抖了(${lastLine(r)}),${NET_BACKOFF_MS[i]! / 1000}s 后重试`)
+      await deps.sleep(NET_BACKOFF_MS[i]!)
+      r = fn()
+    }
+    return r
+  }
   const ghJson = <T>(...args: string[]): T | null => {
     const r = gh(...args)
     if (r.code !== 0 || !r.stdout.trim()) return null
@@ -156,8 +189,9 @@ export async function runCiLand(deps: CiLandDeps, opts: CiLandOpts): Promise<CiL
   // ── 认出这一串,记下每层旧 head ───────────────────────────────────
   const open = ghJson<PrInfo[]>('pr', 'list', '--state', 'open', '--limit', '300', '--json', 'number,state,baseRefName,headRefName,headRefOid,isDraft')
   if (!open) return done(CI_LAND_EXIT.precondition, 'gh pr list 失败(登录态?网络?)')
+  const mergedPrs = ghJson<MergedPr[]>('pr', 'list', '--state', 'merged', '--limit', '100', '--json', 'number,headRefName,headRefOid') ?? []
   let stack: Layer[]
-  try { stack = resolveStack(opts.top, open, target) } catch (e) { return done(CI_LAND_EXIT.precondition, (e as Error).message) }
+  try { stack = resolveStack(opts.top, open, target, mergedPrs) } catch (e) { return done(CI_LAND_EXIT.precondition, (e as Error).message) }
   const topLayer = stack[stack.length - 1]!
   deps.log(`这一串(从下到上):${stack.map(l => `#${l.number} ${l.headRefName}@${l.oldHead.slice(0, 8)}`).join(' → ')}`)
   if (opts.dryRun) return done(CI_LAND_EXIT.landed, `预演:会等 #${topLayer.number} 的 CI(至少 ${minChecks} 条非 skipped 全绿),然后从下往上合 ${stack.length} 层`)
@@ -208,10 +242,15 @@ export async function runCiLand(deps: CiLandDeps, opts: CiLandOpts): Promise<CiL
   for (let i = 0; i < stack.length; i++) {
     const layer = stack[i]!
     let head = layer.oldHead
-    if (i > 0) {
-      const parentOld = stack[i - 1]!.oldHead
+    const parentOld = i > 0 ? stack[i - 1]!.oldHead : layer.landedParentHead
+    if (parentOld) {
       if (git('checkout', '-q', '--detach', layer.oldHead).code !== 0) return done(CI_LAND_EXIT.precondition, `checkout ${layer.oldHead.slice(0, 8)} 失败`)
-      const rb = git('rebase', '--onto', `origin/${target}`, parentOld)
+      // 上一次已经 rebase 并推上去了(停在改 base / 合那一步)⇒ 已经在 dev 上,不再 rebase。
+      const alreadyOnTarget = git('merge-base', '--is-ancestor', `origin/${target}`, 'HEAD').code === 0
+      // 下层在合之前被 rebase 过(整合者常这么做)⇒ parentOld 不是这一层的祖先。照样 `--onto origin/dev parentOld`:
+      // git 会把这一层里跟 parentOld 那几个补丁相同的旧提交当成「已经 cherry-pick 过」丢掉,只重放这一层自己的
+      // (2026-10-23 用 #616 叠在已合的 #615 上真机试过:三个提交只重放了一个,6 个文件)。
+      const rb = alreadyOnTarget ? { code: 0 } : git('rebase', '--onto', `origin/${target}`, parentOld)
       if (rb.code !== 0) {
         git('rebase', '--abort')
         return done(CI_LAND_EXIT.conflict, `#${layer.number} rebase 到 ${target} 冲突,已 abort;前面 ${merged.length} 层已合(${merged.map(n => `#${n}`).join('、') || '无'}),这一层交还负责人`)
@@ -223,13 +262,19 @@ export async function runCiLand(deps: CiLandDeps, opts: CiLandOpts): Promise<CiL
         if (tc.code !== 0) return done(CI_LAND_EXIT.red, `#${layer.number} rebase 后 typecheck 红(没推);前面已合 ${merged.map(n => `#${n}`).join('、') || '无'}`)
       }
       head = git('rev-parse', 'HEAD').stdout.trim()
-      const push = git('push', `--force-with-lease=${layer.headRefName}:${layer.oldHead}`, 'origin', `HEAD:refs/heads/${layer.headRefName}`)
-      if (push.code !== 0) return done(CI_LAND_EXIT.moved, `#${layer.number} 推不上去(分支被人动过?):${push.stderr.trim().split('\n').pop() ?? ''}`)
-      if (gh('pr', 'edit', String(layer.number), '--base', target).code !== 0) return done(CI_LAND_EXIT.precondition, `#${layer.number} 改 base 失败`)
+      if (head !== layer.oldHead) {
+        const push = await net(() => git('push', `--force-with-lease=${layer.headRefName}:${layer.oldHead}`, 'origin', `HEAD:refs/heads/${layer.headRefName}`))
+        if (push.code !== 0) return done(CI_LAND_EXIT.moved, `#${layer.number} 推不上去(分支被人动过?):${lastLine(push)}`)
+      }
+      const edit = await net(() => gh('pr', 'edit', String(layer.number), '--base', target))
+      if (edit.code !== 0) return done(CI_LAND_EXIT.precondition, `#${layer.number} 改 base 失败:${lastLine(edit)}(重跑 ci land ${opts.top} 接着来)`)
     }
-    if (layer.isDraft && gh('pr', 'ready', String(layer.number)).code !== 0) return done(CI_LAND_EXIT.precondition, `#${layer.number} 标 ready 失败`)
-    const m = gh('pr', 'merge', String(layer.number), '--squash', '--match-head-commit', head)
-    if (m.code !== 0) return done(CI_LAND_EXIT.moved, `#${layer.number} 合不进去:${m.stderr.trim().split('\n').pop() ?? ''}`)
+    if (layer.isDraft) {
+      const ready = await net(() => gh('pr', 'ready', String(layer.number)))
+      if (ready.code !== 0) return done(CI_LAND_EXIT.precondition, `#${layer.number} 标 ready 失败:${lastLine(ready)}(重跑 ci land ${opts.top} 接着来)`)
+    }
+    const m = await net(() => gh('pr', 'merge', String(layer.number), '--squash', '--match-head-commit', head))
+    if (m.code !== 0) return done(CI_LAND_EXIT.moved, `#${layer.number} 合不进去:${lastLine(m)}(重跑 ci land ${opts.top} 接着来)`)
     merged.push(layer.number)
     deps.log(`#${layer.number} 已合`)
     if (git('fetch', 'origin', target).code !== 0) return done(CI_LAND_EXIT.precondition, `git fetch origin ${target} 失败(已合 ${merged.map(n => `#${n}`).join('、')})`)

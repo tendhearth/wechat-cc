@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { judgeRollup, resolveStack, runCiLand, CI_LAND_EXIT, type PrInfo, type CiLandDeps } from './ci-land'
+import { judgeRollup, resolveStack, runCiLand, isNetworkError, CI_LAND_EXIT, type PrInfo, type CiLandDeps } from './ci-land'
 import type { ExecResult } from './ci-triage-run'
 
 const pr = (number: number, base: string, head: string, sha: string, isDraft = true): PrInfo =>
@@ -57,6 +57,10 @@ function fakeDeps(script: {
   views: Array<{ headRefOid: string; statusCheckRollup: unknown[] } | null>
   rebaseFailsFor?: string
   devMovedBySomeoneElse?: boolean
+  merged?: Array<{ number: number; headRefName: string; headRefOid: string }>
+  /** 前几次 push / gh pr merge 回什么 stderr(网络抖)。 */
+  netFailures?: { push?: string[]; merge?: string[] }
+  onTarget?: string[]
 }) {
   const calls: string[] = []
   let viewIdx = 0
@@ -70,7 +74,10 @@ function fakeDeps(script: {
     const r = (stdout = '', code = 0, stderr = ''): ExecResult => ({ code, stdout, stderr })
     if (line === 'git symbolic-ref -q HEAD') return r('', 1)
     if (line === 'git status --porcelain') return r('')
+    if (line.startsWith('gh pr list') && args.includes('merged')) return r(JSON.stringify(script.merged ?? []))
     if (line.startsWith('gh pr list')) return r(JSON.stringify(script.open))
+    if (line.startsWith('git merge-base --is-ancestor')) return r('', (script.onTarget ?? []).includes(head) ? 0 : 1)
+    if (line.startsWith('git push') && script.netFailures?.push?.length) return r('', 128, script.netFailures.push.shift()!)
     if (line.startsWith('gh pr view')) {
       const v = script.views[Math.min(viewIdx++, script.views.length - 1)]
       return v ? r(JSON.stringify(v)) : r('', 1)
@@ -85,6 +92,7 @@ function fakeDeps(script: {
     if (line === 'git rev-parse HEAD') return r(`${head}\n`)
     if (line === 'git rev-parse origin/dev') return r(`${dev}\n`)
     if (line === 'git rev-parse origin/dev^') return r(`${devParent}\n`)
+    if (line.startsWith('gh pr merge') && script.netFailures?.merge?.length) return r('', 1, script.netFailures.merge.shift()!)
     if (line.startsWith('gh pr merge')) {
       devParent = script.devMovedBySomeoneElse ? 'stranger' : dev
       dev = `${dev}+${args[2]}`
@@ -205,4 +213,56 @@ describe('runCiLand', () => {
     expect(res.exitCode).toBe(CI_LAND_EXIT.landed)
     expect(calls.filter(c => !c.startsWith('gh pr list'))).toEqual([])
   })
+
+  it('网络抖 ⇒ 退避重试,第二次成了就照常合', async () => {
+    const { deps, calls } = fakeDeps({ open, views: [green('sc')], netFailures: { push: ['fatal: unable to access: LibreSSL SSL_connect: SSL_ERROR_SYSCALL'], merge: ['HTTP 502: Bad Gateway'] } })
+    const res = await runCiLand(deps, { top: 3, skipTypecheck: true })
+    expect(res.exitCode).toBe(CI_LAND_EXIT.landed)
+    expect(res.merged).toEqual([1, 2, 3])
+    expect(calls.filter(c => c.startsWith('gh pr merge 1')).length).toBe(2)
+  })
+
+  it('租约被拒不重试,当「动过」停', async () => {
+    const { deps, calls } = fakeDeps({ open, views: [green('sc')], netFailures: { push: ['! [rejected] HEAD -> b (stale info)'] } })
+    const res = await runCiLand(deps, { top: 3, skipTypecheck: true })
+    expect(res.exitCode).toBe(CI_LAND_EXIT.moved)
+    expect(calls.filter(c => c.startsWith('git push')).length).toBe(1)
+    expect(res.merged).toEqual([1])
+  })
+
+  it('接着上一次:最下面那个已合,上一层的 base 还指着它的分支 ⇒ 用那个 PR 最后的 head 当 rebase 起点', async () => {
+    const rest = [pr(2, 'a', 'b', 'sb'), pr(3, 'b', 'c', 'sc')]
+    const { deps, calls } = fakeDeps({ open: rest, merged: [{ number: 1, headRefName: 'a', headRefOid: 'sa-final' }], views: [green('sc')] })
+    const res = await runCiLand(deps, { top: 3, skipTypecheck: true })
+    expect(res.exitCode).toBe(CI_LAND_EXIT.landed)
+    expect(res.merged).toEqual([2, 3])
+    expect(calls).toContain('git rebase --onto origin/dev sa-final')
+    expect(calls).toContain('gh pr edit 2 --base dev')
+  })
+
+  it('接着上一次:那一层已经 rebase 推上去了(停在改 base)⇒ 不再 rebase、不再推', async () => {
+    const rest = [pr(2, 'a', 'b', 'sb2', false)]
+    const { deps, calls } = fakeDeps({ open: rest, merged: [{ number: 1, headRefName: 'a', headRefOid: 'sa' }], views: [green('sb2')], onTarget: ['sb2'] })
+    const res = await runCiLand(deps, { top: 2, skipTypecheck: true })
+    expect(res.exitCode).toBe(CI_LAND_EXIT.landed)
+    expect(calls.some(c => c.startsWith('git rebase --onto'))).toBe(false)
+    expect(calls.some(c => c.startsWith('git push'))).toBe(false)
+    expect(calls).toContain('gh pr merge 2 --squash --match-head-commit sb2')
+  })
+})
+
+describe('isNetworkError', () => {
+  it.each([
+    'fatal: unable to access \'https://github.com/x/\': LibreSSL SSL_connect: SSL_ERROR_SYSCALL in connection to github.com:443',
+    'Could not resolve host: github.com',
+    'Operation timed out',
+    'HTTP 502: Bad Gateway',
+    'error: RPC failed; curl 56 Connection reset by peer',
+  ])('可重试:%s', (e) => expect(isNetworkError(e)).toBe(true))
+  it.each([
+    ' ! [rejected]        HEAD -> b (stale info)',
+    'Head branch was modified. Review and try the merge again. (head commit mismatch)',
+    'Pull request is not mergeable',
+    '',
+  ])('不重试:%s', (e) => expect(isNetworkError(e)).toBe(false))
 })
