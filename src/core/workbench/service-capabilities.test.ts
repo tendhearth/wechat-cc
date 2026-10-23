@@ -28,6 +28,17 @@ beforeEach(()=>{root=realpathSync(mkdtempSync(join(tmpdir(),'cc-service-cap-')))
 afterEach(async()=>{await service?.shutdown();db.close();removeTempDir(root)})
 
 describe('workbench executor admission',()=>{
+  it('carries a provider refusal (region) on the executor list, and null when there is none or no source',()=>{
+    const registry=createProviderRegistry()
+    registry.register('fixture',provider(),registration());registry.register('other',provider(),registration({displayName:'Other'}))
+    store=makeWorkbenchStore(db)
+    service=makeWorkbenchService({store,registry,stateDir:root,ownerChatId:()=>null,refusal:id=>id==='fixture'?{code:'region_unavailable',since:'2026-10-23T09:00:00Z'}:null})
+    const byId=Object.fromEntries(service.list().providers.map(p=>[p.id,p]))
+    expect(byId.fixture?.refusal).toEqual({code:'region_unavailable',since:'2026-10-23T09:00:00Z'})
+    expect(byId.other?.refusal).toBeNull()
+    setup([{id:'fixture',provider:provider(),opts:registration()}])
+    expect(service.list().providers[0]?.refusal).toBeNull()
+  })
   it('does not admit a provider by brand and returns copied capabilities for an admitted arbitrary provider',async()=>{
     const ordinary=provider(),managed=provider()
     setup([{id:'claude',provider:ordinary,opts:{displayName:'Claude chat',canResume:()=>true}},{id:'fixture',provider:managed,opts:registration()}])

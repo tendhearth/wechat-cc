@@ -154,6 +154,8 @@ export function wireWorkbench(opts: {
   /** 执行者一轮失败时的错误通道 —— CLI 自动升级的报错触发(2026-10-04)。 */
   onTurnError?: (providerId: string, code: string | undefined, message: string) => void
   onTurnCompleted?: (providerId: string) => void
+  /** 执行者被拒着(出口地区用不了):执行者列表上照实标出来,桌面选人时看得见。 */
+  providerRefusal?: (providerId: string) => { code: string; since: string } | null
   /** 放行规则(2026-10-19):与终端会话共用同一个闸门。不传 ⇒ 每条权限都问主人。 */
   permissionGate?: import('../permission-gate').PermissionGate
 }) {
@@ -289,6 +291,7 @@ export function wireWorkbench(opts: {
     defaultProvider:opts.boot.defaultProviderId,holdBusy:opts.boot.holdBusy,
     ...(opts.onTurnError?{onTurnError:opts.onTurnError}:{}),
     ...(opts.onTurnCompleted?{onTurnCompleted:opts.onTurnCompleted}:{}),
+    ...(opts.providerRefusal?{refusal:opts.providerRefusal}:{}),
     // Empty allowlist is deliberate: office tasks never send messages or read
     // personal memory through the daemon, even if a CLI discovers old config.
     mintSessionToken:key => opts.internalApi.mintSessionToken('trusted',key,{routeAllow:new Set()}),
