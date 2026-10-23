@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach, vi } from 'vitest'
-import { mkdtempSync, mkdirSync, writeFileSync } from 'node:fs'
+import { mkdtempSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { makeMemoryNightlyRuntime, deliverPendingNotice, type NoticeDeps } from './nightly-runtime'
@@ -358,5 +358,101 @@ describe('correction → agenda drop by cheap model', () => {
     await vi.waitFor(() => expect(asked).toHaveLength(1))
     await rt.runNow()   // 同一条串行链:它跑完,后台那一步一定落定了
     expect(read('agenda.md')).toBe(agenda)
+  })
+})
+
+describe('记忆编辑 view / edit(设计稿 2026-10-23 记忆改了就算数 §3 §4)', () => {
+  const memoryMd = [
+    '<!-- wechat-cc 记忆 · 2026-10-22T00:00:00Z -->', '## 关于你', '- 住杭州 <!-- m:aa01 · 2026-10-22 -->', '## 偏好', '- 喜欢美式 <!-- m:aa02 · 2026-10-22 -->',
+  ].join('\n') + '\n'
+  const overview = '<!-- 由 wechat-cc 从本机 Claude 记忆整理生成 · 2026-10-23T01:00:00.000Z -->\n\n主人在做 wechat-cc。\n- 喜欢美式咖啡\n'
+  const read = (f: string) => { try { return readFileSync(join(root, f), 'utf8') } catch { return '' } }
+  const lines = (v: { lines: Array<{ text: string; lineKey?: string; assertionId?: string }> }) => v.lines.map(l => ({ text: l.text, ...(l.lineKey ? { lineKey: l.lineKey } : {}), ...(l.assertionId ? { assertionId: l.assertionId } : {}) }))
+  beforeEach(() => {
+    writeFileSync(join(root, 'memory.md'), memoryMd)
+    writeFileSync(join(root, '_overview.md'), overview)
+    writeFileSync(join(root, 'profile.md'), '主人喜欢美式咖啡,常去楼下那家\n别的笔记\n')
+  })
+
+  it('view:生成的行带键、没有尾注;总览带生成时间', () => {
+    const rt = makeMemoryNightlyRuntime(deps())
+    const m = rt.view('memory.md')
+    expect(m.chatId).toBe(OWNER)
+    expect(m.lines.map(l => [l.text, l.lineKey])).toEqual([['住杭州', 'm:aa01'], ['喜欢美式', 'm:aa02']])
+    const o = rt.view('_overview.md')
+    expect(o.lines.map(l => l.text)).toEqual(['主人在做 wechat-cc。', '喜欢美式咖啡'])
+    expect(o.generatedAt).toBe('2026-10-23T01:00:00.000Z')
+    expect(o.lines.every(l => l.origin === 'generated')).toBe(true)
+  })
+
+  it('总览上改一行 ⇒ 更正(段名 [总览 · c:<id>],清源头)+ 主人原话(带 replaces);view 里它是 owner 行', async () => {
+    const rt = makeMemoryNightlyRuntime(deps())
+    const v = rt.view('_overview.md')
+    const r = await rt.edit({ path: '_overview.md', baseHash: v.baseHash, lines: lines(v).map(l => l.text === '喜欢美式咖啡' ? { ...l, text: '只喝茶' } : l) })
+    expect(r.ok).toBe(true)
+    if (!r.ok) return
+    expect(r.corrections).toHaveLength(1)
+    const cid = r.corrections[0]!.id
+    expect(r.assertions).toEqual([{ id: expect.any(String), text: '只喝茶', replaces: { correctionId: cid, text: '喜欢美式咖啡' } }])
+    expect(r.regenerate).toBe('queued')
+    expect(read('corrections.md')).toContain(`[总览 · c:${cid}] 喜欢美式咖啡`)
+    expect(read('profile.md')).not.toContain('喜欢美式咖啡')        // 清源头
+    expect(read('profile.md')).toContain('别的笔记')
+    expect(read('owner.md')).toContain('只喝茶')
+    expect(read('_overview.md')).toBe(overview)                     // 生成物不手改,等重新生成
+    const after = rt.view('_overview.md')
+    expect(after.lines[0]).toEqual({ text: '只喝茶', origin: 'owner', assertionId: r.assertions[0]!.id, editedAt: '2026-09-25', replaces: { correctionId: cid, text: '喜欢美式咖啡' } })
+    expect(after.stale).toBe(true)
+  })
+
+  it('记忆上删一条有编号的 ⇒ 走逐条纠错同一条路:从 memory.md 拿掉、段名用它原来的栏', async () => {
+    const rt = makeMemoryNightlyRuntime(deps())
+    const v = rt.view('memory.md')
+    const r = await rt.edit({ path: 'memory.md', baseHash: v.baseHash, lines: lines(v).filter(l => l.lineKey !== 'm:aa02') })
+    expect(r.ok && r.corrections.map(c => c.text)).toEqual(['喜欢美式'])
+    expect(read('memory.md')).not.toContain('喜欢美式')
+    expect(read('memory.md')).toContain('住杭州')
+    expect(read('corrections.md')).toMatch(/\[偏好 · c:[0-9a-f]+\] 喜欢美式/)
+  })
+
+  it('baseHash 对不上 ⇒ memory_changed,磁盘一个字节不变;owner.md 变了也算', async () => {
+    const rt = makeMemoryNightlyRuntime(deps())
+    const v = rt.view('memory.md')
+    writeFileSync(join(root, 'owner.md'), '- 别处写的 <!-- o:ff01 · 2026-10-23 · owner -->\n')
+    const r = await rt.edit({ path: 'memory.md', baseHash: v.baseHash, lines: [] })
+    expect(r).toEqual({ ok: false, code: 'memory_changed' })
+    expect(read('memory.md')).toBe(memoryMd)
+    expect(read('corrections.md')).toBe('')
+  })
+
+  it('大批删除不确认 ⇒ 什么都不写;确认了才落', async () => {
+    const many = '## 关于你\n' + Array.from({ length: 6 }, (_, i) => `- 第${i}条事实很长一点 <!-- m:bb0${i} · 2026-10-22 -->`).join('\n') + '\n'
+    writeFileSync(join(root, 'memory.md'), many)
+    const rt = makeMemoryNightlyRuntime(deps())
+    const v = rt.view('memory.md')
+    expect(await rt.edit({ path: 'memory.md', baseHash: v.baseHash, lines: [] })).toEqual({ ok: false, code: 'memory_edit_bulk', count: 6, deleted: 6, rewritten: 0 })
+    expect(read('memory.md')).toBe(many)
+    const r = await rt.edit({ path: 'memory.md', baseHash: v.baseHash, lines: [], confirmBulk: true })
+    expect(r.ok && r.corrections).toHaveLength(6)
+  })
+
+  it('什么都没改 ⇒ not_needed,不碰任何文件', async () => {
+    const rt = makeMemoryNightlyRuntime(deps())
+    const v = rt.view('_overview.md')
+    expect(await rt.edit({ path: '_overview.md', baseHash: v.baseHash, lines: lines(v) })).toEqual({ ok: true, corrections: [], assertions: [], regenerate: 'not_needed' })
+    expect(read('corrections.md')).toBe('')
+    expect(read('owner.md')).toBe('')
+  })
+
+  it('在 owner.md 上收回自己的话 ⇒ 去掉 + 一条 [你写的] 更正', async () => {
+    const rt = makeMemoryNightlyRuntime(deps())
+    const v0 = rt.view('owner.md')
+    const add = await rt.edit({ path: 'owner.md', baseHash: v0.baseHash, lines: [{ text: '周末不谈工作' }] })
+    expect(add.ok && add.assertions.map(a => a.text)).toEqual(['周末不谈工作'])
+    const v1 = rt.view('owner.md')
+    const r = await rt.edit({ path: 'owner.md', baseHash: v1.baseHash, lines: [] })
+    expect(r.ok && r.corrections.map(c => c.text)).toEqual(['周末不谈工作'])
+    expect(read('owner.md')).not.toContain('周末不谈工作')
+    expect(read('corrections.md')).toMatch(/\[你写的 · c:[0-9a-f]+\] 周末不谈工作/)
   })
 })

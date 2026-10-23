@@ -574,12 +574,69 @@ const memoryStatusCmd = defineCommand({
   },
 })
 
+// 记忆编辑(设计稿 2026-10-23 记忆改了就算数):薄壳,真正的比对和更正在 daemon(与每晚整理同一条串行链)。
+// 用 operator 凭据 —— 改的是主人自己的记忆,trusted 那把 file token 别人对话的会话也拿得到。
+async function memoryEditCall(route: 'view' | 'edit', body: unknown): Promise<{ status: number; body: unknown }> {
+  const { readApiInfo } = await import('../../lib/api-info')
+  const info = readApiInfo(STATE_DIR)
+  if (!info) return { status: 0, body: { ok: false, code: 'daemon_required' } }
+  try {
+    const r = await fetch(`${info.baseUrl}/v1/memory/${route}`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json', authorization: `Bearer ${info.operatorToken}` },
+      body: JSON.stringify(body),
+    })
+    return { status: r.status, body: await r.json().catch(() => ({ ok: false, code: `http_${r.status}` })) }
+  } catch (err) {
+    return { status: 0, body: { ok: false, code: 'daemon_unreachable', error: err instanceof Error ? err.message : String(err) } }
+  }
+}
+/**
+ * --json(桌面经 lib.rs 的 wechat_cli_json 调)⇒ 只要输出的是 JSON 就退出码 0,桌面按 ok / code 分支 —— 宿主把非 0 当 Err、
+ * 吞掉 stdout,桌面就读不到 memory_edit_bulk 的 count 这类载荷(同 memory read / write --json)。没有 --json(人在终端)⇒ 失败退 1。
+ */
+export function printEditResult(r: { body: unknown }, json: boolean): void {
+  console.log(json ? JSON.stringify(r.body) : JSON.stringify(r.body, null, 2))
+  if (!json && (r.body as { ok?: unknown })?.ok !== true) process.exitCode = 1
+}
+
+const memoryViewCmd = defineCommand({
+  meta: { name: 'view', description: '记忆编辑的底稿:_overview.md | memory.md | owner.md 的行(带键,主人原话标 owner)' },
+  args: {
+    path: { type: 'positional', required: true, description: '_overview.md | memory.md | owner.md', valueHint: 'path' },
+    json: { type: 'boolean', description: '机器可读输出', default: false },
+  },
+  async run({ args }) {
+    printEditResult(await memoryEditCall('view', { path: args.path }), args.json)
+  },
+})
+
+const memoryEditCmd = defineCommand({
+  meta: { name: 'edit', description: '按 view 的键回传改过的行:删 / 改 ⇒ 更正,加 / 改写 ⇒ 主人原话' },
+  args: {
+    path: { type: 'positional', required: true, description: '_overview.md | memory.md | owner.md', valueHint: 'path' },
+    base: { type: 'string', required: true, description: 'view 给的 baseHash' },
+    'lines-base64': { type: 'string', required: true, description: 'Base64 编码的 JSON 数组:[{ text, lineKey?, assertionId? }]' },
+    'confirm-bulk': { type: 'boolean', description: '主人确认过大批删除(超过 5 条更正)', default: false },
+    json: { type: 'boolean', description: '机器可读输出', default: false },
+  },
+  async run({ args }) {
+    let lines: unknown
+    try { lines = JSON.parse(Buffer.from(args['lines-base64'], 'base64').toString('utf8')) }
+    catch { printEditResult({ body: { ok: false, code: 'bad_lines' } }, args.json); return }
+    const body = { path: args.path, baseHash: args.base, lines, ...(args['confirm-bulk'] ? { confirmBulk: true } : {}) }
+    printEditResult(await memoryEditCall('edit', body), args.json)
+  },
+})
+
 export const memoryCmd = defineCommand({
   meta: { name: 'memory', description: 'Companion v2 memory files (per user)' },
   subCommands: {
     list: memoryListCmd,
     read: memoryReadCmd,
     write: memoryWriteCmd,
+    view: memoryViewCmd,
+    edit: memoryEditCmd,
     'profile-read': memoryProfileReadCmd,
     synthesize: memorySynthesizeCmd,
     nightly: memoryNightlyCmd,

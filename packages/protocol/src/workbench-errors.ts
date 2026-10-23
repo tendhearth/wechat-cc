@@ -164,6 +164,17 @@ export const WORKBENCH_ERRORS: Readonly<Record<string, WorkbenchErrorSpec>> = Ob
   // daemon internal-api 统一回 409(index.ts 的路由 catch),带 detail(哪个文件、为什么)。
   config_unreadable: {desktop: 409},
   config_busy: {desktop: 409},
+  // 记忆编辑(2026-10-23,设计稿 memory-edits-stick;daemon routes-memory 的 POST /v1/memory/view|edit,桌面经 CLI `memory view|edit --json`)。
+  // 前四个是业务上的拒绝:HTTP 200 + { ok: false, code },磁盘一个字节没动,所以表里写 200(不是失败的 HTTP 状态)。
+  //   memory_changed:view 之后文件或 owner.md 被改过 ⇒ 重新 view、让主人再改一次;memory_edit_stale_key:回来的键不是这次 view 给的 ⇒ 同上;
+  //   memory_edit_bulk:更正超过 5 条 ⇒ 带 { count, deleted, rewritten },问主人后带 confirmBulk 重发;memory_edit_too_large:带 limit。
+  memory_changed: {desktop: 200},
+  memory_edit_stale_key: {desktop: 200},
+  memory_edit_bulk: {desktop: 200},
+  memory_edit_too_large: {desktop: 200},
+  // 还没有主人(没绑微信)⇒ 409;daemon 内部出错 ⇒ 500,不带原文。
+  memory_no_owner: {desktop: 409},
+  memory_edit_failed: {desktop: 500},
   // ── 补充 / 提问 / 权限 / 轮次
   artifact_changed: {desktop: 409, phone: 409, wechat: '成果文件已变化或未通过校验，没有发送。请在桌面查看保存的版本。'},
   execution_conflict: {desktop: 409},

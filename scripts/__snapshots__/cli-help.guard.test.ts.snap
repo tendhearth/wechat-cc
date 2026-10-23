@@ -1316,6 +1316,26 @@ ARGUMENTS
 "
 `;
 
+exports[`cli.ts --help 快照(逐字节) > memory --help > memory edit --help 1`] = `
+"按 view 的键回传改过的行:删 / 改 ⇒ 更正,加 / 改写 ⇒ 主人原话 (memory edit)
+
+USAGE memory edit [OPTIONS] <PATH> --base=<base> --lines-base64=<lines_base64>
+
+ARGUMENTS
+
+  PATH=<path>    _overview.md | memory.md | owner.md (Required)
+
+OPTIONS
+
+                  --base=<base>    view 给的 baseHash (Required)                                     
+  --lines-base64=<lines_base64>    Base64 编码的 JSON 数组:[{ text, lineKey?, assertionId? }] (Required)
+                 --confirm-bulk    主人确认过大批删除(超过 5 条更正) (Default: false)                            
+                         --json    机器可读输出 (Default: false)                                         
+
+
+"
+`;
+
 exports[`cli.ts --help 快照(逐字节) > memory --help > memory list --help 1`] = `
 "List Companion v2 memory files (per user) (memory list)
 
@@ -1443,6 +1463,23 @@ OPTIONS
 "
 `;
 
+exports[`cli.ts --help 快照(逐字节) > memory --help > memory view --help 1`] = `
+"记忆编辑的底稿:_overview.md | memory.md | owner.md 的行(带键,主人原话标 owner) (memory view)
+
+USAGE memory view [OPTIONS] <PATH>
+
+ARGUMENTS
+
+  PATH=<path>    _overview.md | memory.md | owner.md (Required)
+
+OPTIONS
+
+  --json    机器可读输出 (Default: false)
+
+
+"
+`;
+
 exports[`cli.ts --help 快照(逐字节) > memory --help > memory write --help 1`] = `
 "Write/overwrite one .md memory file (sandboxed: .md only, ≤100KB, no traversal) (memory write)
 
@@ -1465,13 +1502,15 @@ OPTIONS
 exports[`cli.ts --help 快照(逐字节) > memory --help 1`] = `
 "Companion v2 memory files (per user) (wechat-cc memory v1.7.7 (dev))
 
-USAGE wechat-cc memory list|read|write|profile-read|synthesize|nightly|profile|projects|status
+USAGE wechat-cc memory list|read|write|view|edit|profile-read|synthesize|nightly|profile|projects|status
 
 COMMANDS
 
           list    List Companion v2 memory files (per user)                                                      
           read    Read one .md memory file (path is relative to the user dir, traversal-safe)                    
          write    Write/overwrite one .md memory file (sandboxed: .md only, ≤100KB, no traversal)                
+          view    记忆编辑的底稿:_overview.md | memory.md | owner.md 的行(带键,主人原话标 owner)                                 
+          edit    按 view 的键回传改过的行:删 / 改 ⇒ 更正,加 / 改写 ⇒ 主人原话                                                       
   profile-read    Read memory/<user-id>/_profile.json (desktop profile data)                                     
     synthesize    Synthesize the admin's local Claude memory (across projects) into an _overview.md the bot reads
        nightly    立刻跑一次每晚记忆整理(需要 daemon 在跑)                                                                      
