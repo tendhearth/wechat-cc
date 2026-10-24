@@ -37,6 +37,11 @@ export interface TaskReferenceMwDeps {
   watchTask?(taskId: string, accountId: string): Promise<void>
   /** 额度恢复后接着做(2026-10-20):主人回「等恢复」⇒ 排一次(只试一次)。缺省 ⇒ 不提这个选项。 */
   quotaResume?(taskId: string): { ok: true; at: number } | { ok: false; error: string }
+  /**
+   * 「你说的是哪一件?回数字」开着 / 关了(expiresAt = null)。命令表排在管家前面,早报里「回 2」那条拍板也认裸数字 ——
+   * 管家刚问过的时候,数字归管家(整合者评审 #659:不然主人回「2」被记成批准,任务那一问丢了)。缺省 ⇒ 不报。
+   */
+  noteChoice?(chatId: string, expiresAt: number | null): void
 }
 
 const PHASE_NAME: Record<string, string> = { queued: '排队中', working: '进行中', replied: '已答复', failed: '需要处理', cancelled: '已停止', interrupted: '已中断' }
@@ -217,10 +222,11 @@ export function makeMwTaskReference(deps: TaskReferenceMwDeps): TaskReferenceMw 
     if (d.kind === 'takeover-yes') { takeover.delete(msg.chatId); waitOffer.delete(msg.chatId); await doTakeover(msg.chatId, d.offer); return }
     if (d.kind === 'takeover-no') { takeover.delete(msg.chatId); waitOffer.delete(msg.chatId); await deps.sendMessage(msg.chatId, '好，先放着。等额度恢复再说一声就行。'); return }
     if (d.kind === 'takeover-bare') { await doTakeover(msg.chatId, d.offer); return }
-    if (d.kind === 'choice-invalid') { pending.delete(msg.chatId); ctx.consumedBy = undefined; await next(); return }
-    if (d.kind === 'choice-expired') { pending.delete(msg.chatId); await deps.sendMessage(msg.chatId, '刚才那个选择已经过期了。你指的是哪件事？说项目名或标题就行。'); return }
+    if (d.kind === 'choice-invalid') { pending.delete(msg.chatId); deps.noteChoice?.(msg.chatId, null); ctx.consumedBy = undefined; await next(); return }
+    if (d.kind === 'choice-expired') { pending.delete(msg.chatId); deps.noteChoice?.(msg.chatId, null); await deps.sendMessage(msg.chatId, '刚才那个选择已经过期了。你指的是哪件事？说项目名或标题就行。'); return }
     if (d.kind === 'ambiguous') {
       pending.set(msg.chatId, { options: d.options, text: d.text, expiresAt: now() + CHOICE_TTL_MS })
+      deps.noteChoice?.(msg.chatId, now() + CHOICE_TTL_MS)
       await deps.sendMessage(msg.chatId, '你说的是哪一件？\n' + d.options.map((c, i) => `${i + 1}. ${option(c)}`).join('\n') + '\n回数字选择。')
       return
     }
@@ -232,7 +238,7 @@ export function makeMwTaskReference(deps: TaskReferenceMwDeps): TaskReferenceMw 
     }
     if (d.kind !== 'command') return
     const picked = d.picked, effectiveText = d.effectiveText
-    if (d.clearChoice) pending.delete(msg.chatId)
+    if (d.clearChoice) { pending.delete(msg.chatId); deps.noteChoice?.(msg.chatId, null) }
     // 过期的 takeover 邀请顺手清掉(原逻辑在判定时清,现在判定是只读的,挪到这里)。
     const stale = takeover.get(msg.chatId); if (stale && stale.expiresAt <= now()) takeover.delete(msg.chatId)
 

@@ -4,9 +4,10 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import {
   EMPTY_ASKS, ASK_MAX_DAYS, ASK_ONLY_IN_BRIEF, ASK_PLACEHOLDER, answerAsk, approvalFor, commitAsked, enqueue, expireStale,
-  formatAsks, parseAskReply, pickForBrief, renderAsksBlock, spliceAsks, type EnqueueInput, type OwnerAsksState,
+  formatAsks, lookupAsk, parseAskReply, pickForBrief, renderAsksBlock, spliceAsks, type EnqueueInput, type OwnerAsksState,
 } from './owner-asks'
-import { makeOwnerAsksStore, OWNER_ASKS_FILE } from './owner-asks-store'
+import { coerceAsks, makeOwnerAsksStore, OWNER_ASKS_FILE } from './owner-asks-store'
+import { writeFileSync } from 'node:fs'
 
 const T0 = '2026-10-24T00:00:00.000Z'
 const day = (n: number) => new Date(Date.parse(T0) + n * 86_400_000).toISOString()
@@ -36,6 +37,30 @@ describe('入队(同一个 key 只排一条)', () => {
     const again = add(s, 'b', 'h-new')
     expect(again.result).toBe('added')
     expect(again.state.items.filter(i => i.key === 'b')).toHaveLength(2)
+  })
+})
+
+describe('入队 × 历史里已经答过的版本(整合者评审 #659)', () => {
+  it('approved@H1 → queued@H2 → H1 again ⇒ same (the approved one), the open H2 is withdrawn, never re-asks H1', () => {
+    let s = add(EMPTY_ASKS, 'a', 'H1').state
+    s = commitAsked(s, pickForBrief(s, 0), T0)
+    s = answerAsk(s, { no: 1, verdict: 'approved', by: 'owner', nowIso: day(0.1) }).state
+    s = add(s, 'a', 'H2', {}, day(1)).state
+    s = commitAsked(s, pickForBrief(s, 0), day(1))
+    expect(s.batch?.nos['1']).toBe('id-a-H2')
+    const r = add(s, 'a', 'H1', {}, day(1.1))
+    expect(r.result).toBe('same')
+    expect(r.item.status).toBe('approved')
+    expect(r.state.items.map(i => [i.hash, i.status])).toEqual([['H1', 'approved']])
+    expect(r.state.batch?.nos['1']).toBeUndefined()
+    expect(pickForBrief(r.state, 0)).toEqual([])
+  })
+  it('declined anywhere in the history closes the key, whatever version comes next', () => {
+    let s = add(EMPTY_ASKS, 'a', 'H1').state
+    s = commitAsked(s, pickForBrief(s, 0), T0)
+    s = answerAsk(s, { no: 1, verdict: 'declined', by: 'owner', nowIso: day(0.1) }).state
+    expect(add(s, 'a', 'H1').result).toBe('closed')
+    expect(add(s, 'a', 'H9').result).toBe('closed')
   })
 })
 
@@ -88,18 +113,19 @@ describe('回「2」/「2 不要」', () => {
     expect(parseAskReply('我选 2')).toBeNull()
     expect(parseAskReply('2026')).toBeNull()
   })
-  it('records who / when / which version; only within the latest brief’s window; a second answer is “already”', () => {
+  it('records who / when / which version; only within the latest brief’s window; a second answer is not claimed (plain chat again)', () => {
     let s = add(EMPTY_ASKS, 'a').state
     s = commitAsked(s, pickForBrief(s, 1), T0)
     expect(answerAsk(s, { no: 1, verdict: 'approved', by: 'owner', nowIso: day(0.1) }).r.result).toBe('none') // 1 是早报自己的那条
-    expect(answerAsk(s, { no: 2, verdict: 'approved', by: 'owner', nowIso: day(1.5) }).r.result).toBe('none') // 过了窗口
+    expect(answerAsk(s, { no: 2, verdict: 'approved', by: 'owner', nowIso: day(0.55) }).r.result).toBe('none') // 过了 12 小时窗口
     const r = answerAsk(s, { no: 2, verdict: 'approved', by: 'owner', nowIso: day(0.1) })
     expect(r.r.result).toBe('recorded')
     s = r.state
     expect(s.items[0]!.answer).toEqual({ verdict: 'approved', by: 'owner', at: day(0.1), hash: 'h-a', via: 'wechat_brief' })
     expect(approvalFor(s, 'a', 'h-a')?.by).toBe('owner')
     expect(approvalFor(s, 'a', 'other')).toBeNull()
-    expect(answerAsk(s, { no: 2, verdict: 'declined', by: 'owner', nowIso: day(0.2) }).r.result).toBe('already')
+    expect(answerAsk(s, { no: 2, verdict: 'declined', by: 'owner', nowIso: day(0.2) }).r.result).toBe('none')
+    expect(lookupAsk(s, 2, Date.parse(day(0.2)))).toBeNull()
   })
 })
 
@@ -130,6 +156,30 @@ describe('接进早报', () => {
 
 describe('没开早报不单发(默认,待主人点头)', () => {
   it('is one obvious constant', () => { expect(ASK_ONLY_IN_BRIEF).toBe(true) })
+})
+
+describe('owner-asks.json 读进来核形状(整合者评审 #659)', () => {
+  it('asked with no asks ⇒ repaired to queued (so picking never throws); unrepairable items are dropped; logged once', () => {
+    const r = coerceAsks({ items: [
+      { id: 'x', key: 'k', question: 'q?', recommend: 'r', hash: 'h', status: 'asked', createdAt: T0 },
+      { id: 'y', key: 'k2', question: 'q?', recommend: 'r', hash: 'h', status: 'asked', asks: [T0], createdAt: T0, priority: 0, source: 'manual' },
+      { id: 'z', key: 'k3', status: 'queued' },
+      { id: 'w', key: 'k4', question: 'q?', recommend: 'r', hash: 'h', status: 'weird', asks: [] },
+      null,
+    ], batch: { at: 5 } })
+    expect(r.state.items.map(i => [i.id, i.status, i.asks.length])).toEqual([['x', 'queued', 0], ['y', 'asked', 1]])
+    expect(r.state.batch).toBeNull()
+    expect(r.repaired).toBe(4)
+    expect(() => pickForBrief(r.state, 0)).not.toThrow()
+    const dir = mkdtempSync(join(tmpdir(), 'owner-asks-bad-'))
+    const path = join(dir, OWNER_ASKS_FILE)
+    writeFileSync(path, JSON.stringify({ items: [{ id: 'x', key: 'k', question: 'q?', recommend: 'r', hash: 'h', status: 'asked', createdAt: T0 }] }))
+    const logs: string[] = []
+    const st = makeOwnerAsksStore(path, { log: (_t, l) => logs.push(l) })
+    expect(st.pickForBrief(0, T0).map(p => p.id)).toEqual(['x'])
+    st.read()
+    expect(logs).toHaveLength(1)
+  })
 })
 
 describe('owner-asks.json', () => {

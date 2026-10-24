@@ -18,6 +18,22 @@ function setup() {
   return { store, said, h, setNow: (t: number) => { now = t } }
 }
 
+describe('早报里拍板项的回话 × 记录文件正忙(整合者评审 #659)', () => {
+  it('retries once; still failing ⇒ says it was not recorded and to reply again — never silently dropped', async () => {
+    const { store, h, said } = setup()
+    let fails = 1
+    const real = store.answer.bind(store)
+    store.answer = (a) => { if (fails-- > 0) throw new Error('ConcurrentJsonUpdateError'); return real(a) }
+    expect(await h.handle('2', 'owner')).toBe(true)
+    expect(said[0]).toBe('记下了,2 要:微信里改成先问再做?')
+    const s2 = setup()
+    s2.store.answer = () => { throw new Error('ConcurrentJsonUpdateError') }
+    expect(await s2.h.handle('2 不要', 'owner')).toBe(true)
+    expect(s2.said[0]).toBe('2 没记上(记录文件正忙),再回一次「2 不要」就行。')
+    expect(s2.store.read().items[0]!.status).toBe('asked')
+  })
+})
+
 describe('早报里拍板项的回话', () => {
   it('claims only the numbers the latest brief asked, only from the owner', () => {
     const { h } = setup()
@@ -34,13 +50,15 @@ describe('早报里拍板项的回话', () => {
     const a = store.read().items[0]!
     expect(a.status).toBe('approved')
     expect(a.answer).toMatchObject({ verdict: 'approved', by: 'owner', via: 'wechat_brief', hash: a.hash })
-    expect(await h.handle('2 不要', 'owner')).toBe(true)
-    expect(said[1]).toContain('已经回过了(要)')
+    // 答过以后再回「2」:不归这里(普通聊天照旧),也不改答案
+    expect(h.probe('2 不要', 'owner')).toBe(false)
+    expect(await h.handle('2 不要', 'owner')).toBe(false)
+    expect(said).toHaveLength(1)
     expect(store.read().items[0]!.status).toBe('approved')
   })
   it('after the reply window the number is plain chat again', () => {
     const { h, setNow } = setup()
-    setNow(T0 + 25 * 3600_000)
+    setNow(T0 + 13 * 3600_000)
     expect(h.probe('2', 'owner')).toBe(false)
   })
   it('combined with the jobs command: first claimer that handles wins', async () => {

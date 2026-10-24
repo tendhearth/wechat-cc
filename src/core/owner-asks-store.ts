@@ -15,10 +15,33 @@ import {
 
 export const OWNER_ASKS_FILE = 'owner-asks.json'
 
-function coerce(raw: Record<string, unknown>): OwnerAsksState {
-  const items = Array.isArray(raw.items) ? (raw.items as OwnerAsk[]).filter(a => a && typeof a.id === 'string' && typeof a.key === 'string') : []
+const STATUSES = new Set(['queued', 'asked', 'approved', 'declined', 'unanswered'])
+const str = (v: unknown): v is string => typeof v === 'string' && v.length > 0
+
+/**
+ * 读进来的每一条都核一遍形状(整合者评审 #659):手改坏 / 老版本留下的一条要是缺了 `asks`,早报挑的时候会抛,
+ * 而早报把抛当「没有候选」吞掉 —— 从此一条都不再问,也没人知道。能补的补(`asks` 缺 ⇒ []、问过却一天都没记 ⇒ 当排着),
+ * 补不了的(缺 id / key / 问题 / 推荐 / hash / 状态不认识)丢掉。修过 ⇒ `repaired` 非 0,由调用方记一行日志。
+ */
+export function coerceAsks(raw: Record<string, unknown>): { state: OwnerAsksState; repaired: number } {
+  let repaired = 0
+  const items: OwnerAsk[] = []
+  for (const v of Array.isArray(raw.items) ? raw.items : []) {
+    const a = v as Partial<OwnerAsk> | null
+    if (!a || typeof a !== 'object' || !str(a.id) || !str(a.key) || !str(a.question) || !str(a.recommend) || !str(a.hash) || !STATUSES.has(a.status as string)) { repaired++; continue }
+    const asks = Array.isArray(a.asks) ? a.asks.filter(str) : []
+    let status = a.status as OwnerAsk['status']
+    if (status === 'asked' && asks.length === 0) status = 'queued'
+    const createdAt = str(a.createdAt) ? a.createdAt : (asks[0] ?? new Date(0).toISOString())
+    const priority = typeof a.priority === 'number' && Number.isFinite(a.priority) ? a.priority : 0
+    const source = a.source === 'plan' || a.source === 'discover' ? a.source : 'manual'
+    const fixed: OwnerAsk = { ...(a as OwnerAsk), status, asks, createdAt, priority, source }
+    if (status !== a.status || asks.length !== (Array.isArray(a.asks) ? a.asks.length : -1) || createdAt !== a.createdAt || priority !== a.priority || source !== a.source) repaired++
+    items.push(fixed)
+  }
   const b = raw.batch as OwnerAsksState['batch']
-  return { items, batch: b && typeof b.at === 'string' && b.nos && typeof b.nos === 'object' ? b : null }
+  const batch = b && typeof b === 'object' && str(b.at) && b.nos && typeof b.nos === 'object' ? b : null
+  return { state: { items, batch }, repaired }
 }
 
 export interface OwnerAsksStore {
@@ -31,8 +54,15 @@ export interface OwnerAsksStore {
   answer(a: { no: number; verdict: 'approved' | 'declined'; by: string; nowIso: string }): AnswerResult
 }
 
-export function makeOwnerAsksStore(path: string, o: { newId?: () => string } = {}): OwnerAsksStore {
+export function makeOwnerAsksStore(path: string, o: { newId?: () => string; log?: (tag: string, line: string) => void } = {}): OwnerAsksStore {
   const newId = o.newId ?? (() => sha256Hex(`${Date.now()}:${Math.random()}`).slice(0, 6))
+  let warned = false
+  const coerce = (raw: Record<string, unknown>): OwnerAsksState => {
+    const r = coerceAsks(raw)
+    // 只记一次:这个文件每条入站「2」都会读,坏条目不该刷屏。下一次写入时会按修好的样子存回去。
+    if (r.repaired && !warned) { warned = true; o.log?.('OWNER_ASK', `${OWNER_ASKS_FILE}: ${r.repaired} 条形状不对,已修 / 丢掉`) }
+    return r.state
+  }
   const read = (): OwnerAsksState => { try { return coerce(readJsonObject(path)) } catch { return EMPTY_ASKS } }
   const update = <T>(fn: (s: OwnerAsksState) => { state: OwnerAsksState; out: T }): T => {
     let out!: T

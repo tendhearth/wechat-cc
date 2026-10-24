@@ -81,7 +81,7 @@ export function wireJobs(d: WireJobsDeps) {
   })
   // 要主人拍板的候选(设计稿 2026-10-23-cc-runs-development §4.8,主人 10-24):攒在 owner-asks.json,只在早报里问,
   // 主人回「2」/「2 不要」⇒ 记进那一条(谁、什么时候、哪一版)。排进来的是 CLI(`self ask` / `self plan --ask`)。
-  const ownerAsks = makeOwnerAsksStore(join(stateDir, OWNER_ASKS_FILE))
+  const ownerAsks = makeOwnerAsksStore(join(stateDir, OWNER_ASKS_FILE), { log: (t, l) => log(t, l) })
   const asksReply = makeAsksReply({
     store: ownerAsks,
     isOwner: (chatId) => briefOwner() === chatId,

@@ -75,3 +75,14 @@ export function makeCommandRegistry(input: readonly WechatCommand[]): CommandReg
 export function fromReplyHandler(id: string, h: { probe(text: string, chatId: string): boolean; handle(text: string, chatId: string): Promise<boolean> }, extra: Pick<WechatCommand, 'ownsSlash' | 'group'> = {}): WechatCommand {
   return { id, ...extra, probe: (m) => h.probe(m.text ?? '', m.chatId), handle: (m) => h.handle(m.text ?? '', m.chatId) }
 }
+
+/** 以数字开头的一句(「2」「2 不要」「3、算了」)。 */
+const LEADING_NUMBER = /^\s*\d{1,2}(?!\d)/
+
+/**
+ * 管家刚问了「你说的是哪一件?回数字」(30 分钟)⇒ 这几条命令不认以数字开头的话,让它落到管家(整合者评审 #659)。
+ * 命令表排在管家前面(INTENT_ORDER),早报里「回 2」的拍板要是先认,任务那一问就丢了。只包给定的这几条,别的命令照旧。
+ */
+export function yieldNumbersToOpenChoice(commands: readonly WechatCommand[], choiceOpen: (chatId: string) => boolean): WechatCommand[] {
+  return commands.map(c => ({ ...c, probe: (m: InboundMsg) => !(LEADING_NUMBER.test(m.text ?? '') && choiceOpen(m.chatId)) && c.probe(m) }))
+}

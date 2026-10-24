@@ -18,8 +18,12 @@
 export const ASKS_PER_BRIEF = 3
 /** 问过几天(几份早报)没回就不再问,记成「主人没要」(主人 10-24 确认)。 */
 export const ASK_MAX_DAYS = 3
-/** 早报发出后多久内回「2」还算数(下一份早报会重新编号)。 */
-export const ASK_REPLY_WINDOW_MS = 24 * 3600_000
+/**
+ * 早报发出后多久内回「2」还算数:12 小时(8 点的早报到晚上 8 点)。原来是 24 小时,整合者评审 #659:
+ * 窗口越长,「2」撞上别处刚问的数字(管家的「1 还是 2」、CC 聊天里的「选 2 还是 3」)的机会越多;
+ * 当天没回,第二天的早报会重新问(最多三天),所以短一点不丢答案。
+ */
+export const ASK_REPLY_WINDOW_MS = 12 * 3600_000
 /**
  * 没开早报时要不要单发一条问主人:**不**(默认,待主人点头 —— 10-24 问过一次,主人回的是别的事)。
  * 改成 false 之前要先有单发的那条路(现在没有):候选只攒着,`wechat-cc self ask --list` 看得见。
@@ -91,30 +95,43 @@ export function askHashInput(i: EnqueueInput): string {
   return [i.key, oneLine(i.question, 200), oneLine(i.recommend, 200), i.version ?? ''].join('\n')
 }
 
+const isOpen = (a: OwnerAsk) => a.status === 'queued' || a.status === 'asked'
+
+/** 从上一份早报的编号里摘掉这些 id(换了版 / 撤下的那条,旧编号作废)。 */
+function dropFromBatch(b: OwnerAskBatch | null, ids: ReadonlySet<string>): OwnerAskBatch | null {
+  return b ? { ...b, nos: Object.fromEntries(Object.entries(b.nos).filter(([, id]) => !ids.has(id))) } : null
+}
+
 /**
  * 入队。同一个 key:
- *  - 还开着(排着 / 问过没回)⇒ 同一版不动;内容变了 ⇒ 换成新的一版、从头排(旧编号作废);
- *  - 主人不要 / 三天没回 ⇒ 不再提('closed');
- *  - 主人批过 ⇒ 同一版不动;内容变了 ⇒ 另起一条等重批。
+ *  - 主人不要过 / 三天没回过(哪一版都算)⇒ 不再提('closed');
+ *  - 这一版(key + hash)主人批过 ⇒ 'same',并撤下这个 key 还开着的别的版本 —— 不然 批过 H1 → 排着 H2 → 又来 H1
+ *    会把 H2 改写回 H1、再问一遍批过的(整合者评审 #659);
+ *  - 还开着 ⇒ 同一版不动;内容变了 ⇒ 换成新的一版、从头排(旧编号作废);
+ *  - 只有批过的别的版本 ⇒ 另起一条等重批。
  */
 export function enqueue(s: OwnerAsksState, i: EnqueueInput, o: { nowIso: string; hash: string; id: string }): { state: OwnerAsksState; result: EnqueueResult; item: OwnerAsk } {
-  const prev = [...s.items].reverse().find(x => x.key === i.key)
+  const same = s.items.filter(x => x.key === i.key)
+  const closed = [...same].reverse().find(x => x.status === 'declined' || x.status === 'unanswered')
+  if (closed) return { state: s, result: 'closed', item: closed }
+  const approved = same.find(x => x.status === 'approved' && x.hash === o.hash)
+  if (approved) {
+    const stale = new Set(same.filter(isOpen).map(x => x.id))
+    if (!stale.size) return { state: s, result: 'same', item: approved }
+    return { state: { items: s.items.filter(x => !stale.has(x.id)), batch: dropFromBatch(s.batch, stale) }, result: 'same', item: approved }
+  }
   const fresh = (): OwnerAsk => ({
     id: o.id, key: i.key, question: oneLine(i.question, 200), recommend: oneLine(i.recommend, 200),
     ...(i.evidence ? { evidence: i.evidence.slice(0, 2000) } : {}),
     source: i.source, priority: i.priority ?? 0, hash: o.hash, createdAt: o.nowIso, status: 'queued', asks: [],
   })
-  if (!prev) { const item = fresh(); return { state: { ...s, items: [...s.items, item] }, result: 'added', item } }
-  if (prev.status === 'declined' || prev.status === 'unanswered') return { state: s, result: 'closed', item: prev }
-  if (prev.hash === o.hash) return { state: s, result: 'same', item: prev }
-  if (prev.status === 'approved') { const item = fresh(); return { state: { ...s, items: [...s.items, item] }, result: 'added', item } }
+  const open = [...same].reverse().find(isOpen)
+  if (!open) { const item = fresh(); return { state: { ...s, items: [...s.items, item] }, result: 'added', item } }
+  if (open.hash === o.hash) return { state: s, result: 'same', item: open }
   // 开着的换新版:id 留着(同一件事),内容、hash 换掉,问过的天数清零,从上一份早报的编号里摘掉。
-  const item: OwnerAsk = { ...fresh(), id: prev.id, createdAt: prev.createdAt }
-  const batch = s.batch ? { ...s.batch, nos: Object.fromEntries(Object.entries(s.batch.nos).filter(([, id]) => id !== prev.id)) } : null
-  return { state: { items: s.items.map(x => (x === prev ? item : x)), batch }, result: 'updated', item }
+  const item: OwnerAsk = { ...fresh(), id: open.id, createdAt: open.createdAt }
+  return { state: { items: s.items.map(x => (x === open ? item : x)), batch: dropFromBatch(s.batch, new Set([open.id])) }, result: 'updated', item }
 }
-
-const isOpen = (a: OwnerAsk) => a.status === 'queued' || a.status === 'asked'
 
 /** 问满三天还没回的 ⇒ 记成「主人没要」。早报挑之前先过这一道。 */
 export function expireStale(s: OwnerAsksState, nowIso: string): OwnerAsksState {
@@ -135,7 +152,7 @@ export interface PickedAsk { no: number; id: string; hash: string; question: str
  */
 export function pickForBrief(s: OwnerAsksState, base: number, max = ASKS_PER_BRIEF): PickedAsk[] {
   const open = s.items.filter(isOpen)
-  const asked = open.filter(a => a.status === 'asked').sort((a, b) => a.asks[0]!.localeCompare(b.asks[0]!))
+  const asked = open.filter(a => a.status === 'asked').sort((a, b) => (a.asks[0] ?? a.createdAt).localeCompare(b.asks[0] ?? b.createdAt))
   const queued = open.filter(a => a.status === 'queued').sort((a, b) => b.priority - a.priority || a.createdAt.localeCompare(b.createdAt))
   return [...asked, ...queued].slice(0, Math.max(0, max)).map((a, i) => ({ no: Math.max(0, base) + i + 1, id: a.id, hash: a.hash, question: a.question, recommend: a.recommend }))
 }
@@ -196,21 +213,24 @@ export function parseAskReply(text: string): { no: number; verdict: 'approved' |
   return null
 }
 
-/** 最近一份早报里这个编号指的那条(窗口内、还在等回)。 */
+/**
+ * 最近一份早报里这个编号指的那条:窗口内、**还在等回**。答过的 ⇒ null —— 再回一次「2」就是普通聊天,
+ * 不拿「已经回过了」把它吞掉(整合者评审 #659)。
+ */
 export function lookupAsk(s: OwnerAsksState, no: number, nowMs: number): OwnerAsk | null {
   const b = s.batch
   if (!b || !(nowMs - Date.parse(b.at) <= ASK_REPLY_WINDOW_MS)) return null
   const id = b.nos[String(no)]
-  return id ? s.items.find(a => a.id === id) ?? null : null
+  const a = id ? s.items.find(x => x.id === id) : undefined
+  return a && a.status === 'asked' ? a : null
 }
 
-export type AnswerResult = { result: 'recorded'; item: OwnerAsk } | { result: 'already'; item: OwnerAsk } | { result: 'none' }
+export type AnswerResult = { result: 'recorded'; item: OwnerAsk } | { result: 'none' }
 
 /** 记下主人的回答(谁、什么时候、批的是哪一版)。 */
 export function answerAsk(s: OwnerAsksState, a: { no: number; verdict: 'approved' | 'declined'; by: string; nowIso: string }): { state: OwnerAsksState; r: AnswerResult } {
   const item = lookupAsk(s, a.no, Date.parse(a.nowIso))
   if (!item) return { state: s, r: { result: 'none' } }
-  if (!isOpen(item)) return { state: s, r: { result: 'already', item } }
   const next: OwnerAsk = { ...item, status: a.verdict, answer: { verdict: a.verdict, by: a.by, at: a.nowIso, hash: item.hash, via: 'wechat_brief' } }
   return { state: { ...s, items: s.items.map(x => (x.id === item.id ? next : x)) }, r: { result: 'recorded', item: next } }
 }
