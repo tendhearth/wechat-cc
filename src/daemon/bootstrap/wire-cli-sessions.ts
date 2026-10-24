@@ -67,6 +67,8 @@ export function wireCliSessions(d: WireCliSessionsDeps) {
   // chat;怎么发:经 CC 开口那道门,投递走 boot.sendAssistantText —— 同一条外发,断线时它自己退避、这里不重试。
   // 手机 app 推送出口:pipeline-deps(wireMain)里才造,这里先占位、建完再接上(cli-app-push.ts)。
   let cliAppPush: AppPushOutlet | null = null
+  // CC 代主人对终端会话说一句、等它回话(terminal_say,2026-10-24):replyCore 在下面才建,这里先占位
+  let terminalSay: ReturnType<typeof makeTerminalSay> | null = null
   const cliEvents = makeCliEventHub({
     // 经 CC 开口那道门(cli_session,report;汇总里可能带 y/n 码 ⇒ expiring,不进待说队列),
     // 投递仍走 sendAssistantText;没说出去 ⇒ 'rejected',hub 照旧落到 App 推送 / 桌面通知。
@@ -99,7 +101,8 @@ export function wireCliSessions(d: WireCliSessionsDeps) {
     // 终端会话登记处(v76):状态落库,重启后「看 码」「@码」照样认得;GET /v1/cli/sessions、手机都读它。
     store: makeCliSessionStore(db),
   })
-  lc.register({ name: 'cli-events', stop: async () => cliEvents.dispose() })
+  // terminal_say 的票(下面才建)随登记处一起收:放掉还持着的 busy、叫醒还在等的(启停只许一种写法,不另登记一行)
+  lc.register({ name: 'cli-events', stop: async () => { terminalSay?.dispose(); cliEvents.dispose() } })
   // 终端会话的权限 → 微信 y/n(同 spec §6.3)。复用 ilink.askUser,所以微信「y 码」、
   // 桌宠权限卡都能拍板 —— 一个权限,几个呈现面。主人在场(3 分钟内敲过字)就不问。
   // 放行规则(spec 2026-10-19-permission-rules-design):终端会话与一起做在问主人之前先问它。
@@ -164,7 +167,6 @@ export function wireCliSessions(d: WireCliSessionsDeps) {
     withReplyRefs(cliEvents.list(opts), (id) => cliPermissions.pendingHash(id), (h) => ilink.pendingPermissionCodeOf(h))
   // CC 代主人对终端会话说一句、等它回话(terminal_say,2026-10-24):送话用下面「@码」同一个 replyCore,
   // 回话是这条会话 hooks 报来的下一个 Stop(ingest 那一口转给它)。晚绑定:replyCore 在下面才建。
-  let terminalSay: ReturnType<typeof makeTerminalSay> | null = null
   internalApi.provide({ cliEvents: {
     // 转给脑的事件本机登记处也记一笔(observe 只记不推):这台机自己的列表也看得到。
     ingest: (ev) => {
@@ -224,7 +226,6 @@ export function wireCliSessions(d: WireCliSessionsDeps) {
   const startCwd = (s: CliSessionInfo) => s.transcript_path ? transcriptStartCwd(readHead(s.transcript_path, 64 * 1024)) : null
   const replyCore = makeCliReplyCore({ executionConflict,reserveExecution,hub: cliEvents, holdBusy: (l) => boot.holdBusy(l), log: (t, l) => log(t, l), dangerously, ...(claudeCli ? { claudeBin: claudeCli } : {}), networkGate: d.networkGate, liveWindow, startCwd })
   terminalSay = makeTerminalSay({ hub: cliEvents, core: replyCore, holdBusy: (l) => boot.holdBusy(l), localMachine: osHostname(), log: (t, l) => log(t, l) })
-  lc.register({ name: 'terminal-say', stop: async () => terminalSay?.dispose() })
   internalApi.provide({ terminalSay: {
     say: (code, text) => terminalSay!.say(code, text),
     wait: (ticket, ms) => terminalSay!.wait(ticket, ms),
