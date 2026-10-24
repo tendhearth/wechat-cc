@@ -331,7 +331,16 @@ export async function runCiLand(deps: CiLandDeps, opts: CiLandOpts): Promise<CiL
     if (sig !== lastSig) { lastSig = sig; sigSince = deps.now() }
     if (verdict.kind === 'too_few' && verdict.counted === 0 && !hinted && deps.now() - waitStart >= NO_CHECKS_HINT_MS) {
       hinted = true
-      deps.log(`#${topLayer.number} 的 head ${pinnedTop.slice(0, 8)} ${Math.round(NO_CHECKS_HINT_MS / 60_000)} 分钟了一条检查都没有:多半没触发 CI。${reopenHint}`)
+      // 自己关了再开一次(只一次):10-24 #600 又碰上,整合者照着提示手敲的就是这两条,head 不变、租约照旧。
+      // 关不掉 / 开不回来 ⇒ 退回只说怎么做(开不回来尤其要说:PR 停在关着)。
+      const closed = gh('pr', 'close', String(topLayer.number)).code === 0
+      const reopened = closed && gh('pr', 'reopen', String(topLayer.number)).code === 0
+      if (reopened) {
+        deps.log(`#${topLayer.number} 的 head ${pinnedTop.slice(0, 8)} ${Math.round(NO_CHECKS_HINT_MS / 60_000)} 分钟了一条检查都没有:多半没触发 CI,已关了再开一次重触发,接着等`)
+        sigSince = deps.now()
+      } else {
+        deps.log(`#${topLayer.number} 的 head ${pinnedTop.slice(0, 8)} ${Math.round(NO_CHECKS_HINT_MS / 60_000)} 分钟了一条检查都没有:多半没触发 CI。自动重触发没成${closed ? '(关了没开回来,PR 现在是关着的)' : ''}:${reopenHint}`)
+      }
     }
     if (verdict.kind === 'too_few' && deps.now() - sigSince > NO_CHECKS_GIVE_UP_MS) {
       // 十分钟还是空 ⇒ CI 根本没触发(比如 pull_request 的 base 过滤);不空但不够数 ⇒ 多半是只改文档的串。
