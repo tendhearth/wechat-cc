@@ -22,3 +22,10 @@ export function childEnvFor(spec: McpStdioSpec, mcpEnv?: Record<string, string>)
   }
   return { ...base, ...(spec.env ?? {}), ...(mcpEnv ?? {}) }
 }
+
+/**
+ * delegate 工具一次调用最多等多久(各家 MCP 客户端的缺省都是 60s:MCP SDK 的 DEFAULT_REQUEST_TIMEOUT_MSEC、
+ * codex 的 tool_timeout_sec)。一次咨询 = 另起一个 AI 冷启动 + 回答,真机 10-24 两次是 147s / 275s;
+ * 60s 就放弃的话,后台那份回答照样跑完、白白丢掉。只放宽 delegate,别的工具照旧。
+ */
+export const DELEGATE_TOOL_TIMEOUT_MS = 600_000
