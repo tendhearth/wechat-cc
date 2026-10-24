@@ -5,6 +5,7 @@
  * Refs are passed in for late-bound polling/guard access from closures.
  */
 import { makeCommandRegistry, yieldNumbersToOpenChoice } from '../commands/registry'
+import { choiceTakes, type OpenChoice } from '../inbound/mw-task-reference'
 import { makeTaskCommand } from '../commands/task-command'
 import { join } from 'node:path'
 import { recallFromMemory } from '../memory/recall'
@@ -562,7 +563,7 @@ export function buildPipelineDeps(opts: PipelineDepsOpts, refs: PipelineDepsRefs
   // → 权限 y/n → 文本命令(定时 / 日历 / 做过的事 / 经验 / 导入记忆 / 终端)→ 控制命令(串门 / 回信 / 配对 / 派 / 认识 / 访客)。
   // group 沿用老的 consumedBy 标签,trace、welcome、milestone、activity 不用改。
   // 管家「你说的是哪一件?回数字」开到什么时候(按对话):命令表据此把数字让给它。
-  const butlerChoice = new Map<string, number>()
+  const butlerChoice = new Map<string, OpenChoice>()
   const commandRegistry = makeCommandRegistry([
     // 「任务 …」(工作台控制,步 4):排第一 —— 以前是单独一种 intent,排在整张命令表之前。
     ...(opts.workbench ? [makeTaskCommand({ handleWechat: opts.workbench.handleWechat, sendMessage: (chatId: string, text: string) => send(chatId, text, { source: 'workbench' }) })] : []),
@@ -575,7 +576,7 @@ export function buildPipelineDeps(opts: PipelineDepsOpts, refs: PipelineDepsRefs
       probe: (m) => ilink.probePermissionReply(m.text ?? '', m.chatId, m.quote?.text),
       handle: async (m) => { if (!ilink.handlePermissionReply(m.text ?? '', m.chatId, m.quote?.text)) return false; log('PERMISSION', `consumed reply from chat=${m.chatId}`); return true } },
     // 文本命令里有早报拍板的「回 2」:管家的「哪一件?回数字」开着时,数字让给管家(整合者评审 #659)。
-    ...yieldNumbersToOpenChoice(opts.commands ?? [], (c) => (butlerChoice.get(c) ?? 0) > Date.now()),
+    ...yieldNumbersToOpenChoice(opts.commands ?? [], (c, text) => choiceTakes(text, butlerChoice.get(c), Date.now())),
     // 控制命令一条一行(第三批 3d,command-router.ts 的 makeControlCommands):control.social-off → visit(认 /visit)→ letter → pair → wish → intro → guest
     ...controlCommands,
   ])
@@ -610,7 +611,7 @@ export function buildPipelineDeps(opts: PipelineDepsOpts, refs: PipelineDepsRefs
     ...(opts.matters?{matter:{ensureChat:ensureChatAndNote((c:string)=>opts.matters!.ensureChat(c,undefined,'wechat'),matterActivity),log:(t:string,l:string)=>log(t,l)}}:{}),
     ...(opts.workbench?{taskReference:{
       ownerChatId,
-      noteChoice:(c:string,e:number|null)=>{ if(e===null) butlerChoice.delete(c); else butlerChoice.set(c,e) },
+      noteChoice:(c:string,e:OpenChoice|null)=>{ if(e===null) butlerChoice.delete(c); else butlerChoice.set(c,e) },
       // 可指称的候选:七天内动过、未归档的任务,包括失败 / 中断的 —— 主人问"那件怎么了"
       // 时它得还在;焦点指向的任务失败了也不能凭空消失(真机 2026-09-16:Codex 额度耗尽
       // 把任务打成 failed,焦点随之静默失效,后面两句掉进了普通聊天)。项目显示名用目录名。

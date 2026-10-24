@@ -42,7 +42,7 @@ export function makeAsksReply(deps: {
       const q = r.item.question
       await deps.say(chatId, p.verdict === 'approved'
         ? `记下了,${p.no} 要:${q}`
-        : `记下了,${p.no} 不要:${q}。以后不再提。`)
+        : `记下了,${p.no} 不要:${q}\n以后不再提。`)
       return true
     },
   }

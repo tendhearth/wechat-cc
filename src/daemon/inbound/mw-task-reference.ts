@@ -41,8 +41,11 @@ export interface TaskReferenceMwDeps {
    * 「你说的是哪一件?回数字」开着 / 关了(expiresAt = null)。命令表排在管家前面,早报里「回 2」那条拍板也认裸数字 ——
    * 管家刚问过的时候,数字归管家(整合者评审 #659:不然主人回「2」被记成批准,任务那一问丢了)。缺省 ⇒ 不报。
    */
-  noteChoice?(chatId: string, expiresAt: number | null): void
+  noteChoice?(chatId: string, open: OpenChoice | null): void
 }
+
+/** 管家开着的「哪一件?回数字」:到什么时候、有几个选项(noteChoice 报给命令表)。 */
+export interface OpenChoice { expiresAt: number; count: number }
 
 const PHASE_NAME: Record<string, string> = { queued: '排队中', working: '进行中', replied: '已答复', failed: '需要处理', cancelled: '已停止', interrupted: '已中断' }
 const STOP_VERB = /(停止|结束|取消|别做了|不用做了)\s*[。.!！]?$/
@@ -51,6 +54,17 @@ const RESULT_VERB = /(结果|成果|文件|下载)(了|吗|呢|啊)?\s*[?？。.
 const STATUS_VERB = /(怎么样|怎样|进展|状态|做完|好了|完成|查看|看看|到哪)(了|吗|呢|啊)*\s*[?？。.!！]?$/
 const SHORT_QUERY = 10
 const BARE_CHOICE = /^\s*(\d{1,2})\s*[.。)]?\s*$/
+/**
+ * 这句管家真会当成选择吃掉吗:开着、没过期、是**裸数字**(同 BARE_CHOICE)、而且在 1..选项数 之内。
+ * 命令表只在这时把数字让给管家(整合者评审 #659 第二轮):越界的「3」管家会判 choice-invalid 放给聊天,
+ * 「2 不要」管家不认 —— 这两种让出去就丢了,得留给早报拍板那条。
+ */
+export function choiceTakes(text: string, open: OpenChoice | undefined, nowMs: number): boolean {
+  if (!open || !(open.expiresAt > nowMs)) return false
+  const m = BARE_CHOICE.exec(text)
+  const n = m ? Number(m[1]) : 0
+  return n >= 1 && n <= open.count
+}
 // 整句匹配(评审 #3):"好像还没开始做"不是"好";"交给 Claude"要带名字。
 const YES = /^\s*(是|是的|好|好的|可以|行|嗯|交给\s*\S{1,12}|换\s*\S{1,12})\s*[。.!！]?\s*$/
 const NO = /^\s*(不用|不要|算了|不了|先不|先放着)\s*[。.!！]?\s*$/
@@ -163,7 +177,11 @@ export function makeMwTaskReference(deps: TaskReferenceMwDeps): TaskReferenceMw 
     // 刚接管出来的新任务在服务列表刷新前也得能被指到。
     const listed = deps.candidates(msg.chatId)
     const candidates = [...listed, ...[...takenOver.values()].filter(c => !listed.some(x => x.id === c.id))]
-    if (!candidates.length) return null
+    if (!candidates.length) {
+      // 候选没了,开着的那一问也就答不成了:别让命令表还替它让 30 分钟的数字(评审 #659 第二轮)。
+      if (pending.has(msg.chatId)) deps.noteChoice?.(msg.chatId, null)
+      return null
+    }
     // 上一句问了"交给 X 继续?",这句回了一个字。
     const offer = takeover.get(msg.chatId)
     const offerLive = !!offer && offer.expiresAt > now()
@@ -226,7 +244,7 @@ export function makeMwTaskReference(deps: TaskReferenceMwDeps): TaskReferenceMw 
     if (d.kind === 'choice-expired') { pending.delete(msg.chatId); deps.noteChoice?.(msg.chatId, null); await deps.sendMessage(msg.chatId, '刚才那个选择已经过期了。你指的是哪件事？说项目名或标题就行。'); return }
     if (d.kind === 'ambiguous') {
       pending.set(msg.chatId, { options: d.options, text: d.text, expiresAt: now() + CHOICE_TTL_MS })
-      deps.noteChoice?.(msg.chatId, now() + CHOICE_TTL_MS)
+      deps.noteChoice?.(msg.chatId, { expiresAt: now() + CHOICE_TTL_MS, count: d.options.length })
       await deps.sendMessage(msg.chatId, '你说的是哪一件？\n' + d.options.map((c, i) => `${i + 1}. ${option(c)}`).join('\n') + '\n回数字选择。')
       return
     }
