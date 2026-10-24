@@ -8,9 +8,11 @@
  * 分级 trusted:`wechat-cc hook` 子命令读的是 internal-api-info.json 指向的 FILE
  * token(= trusted),与 `wechat-cc agent` 同源;admin 会让每一条 hook 都 403。
  */
-import type { InternalApiDeps, RouteTable } from './types'
+import type { InternalApiDeps, RouteHandler, RouteTable } from './types'
 import type { CliEvent } from '../../core/cli-events'
 import type { CliPermissionRequest } from '../../core/cli-permission-relay'
+import { workbenchErrorHttp } from '@wechat-cc/protocol'
+import { TERMINAL_SAY_POLL_CAP_MS } from '../cli-terminal-say'
 
 /** GET /v1/cli/sessions 默认给多少条。 */
 export const CLI_SESSIONS_DEFAULT_LIMIT = 100
@@ -19,6 +21,9 @@ export const CLI_SESSIONS_DEFAULT_LIMIT = 100
 export const CLI_PERMISSION_POLL_CAP_MS = 25_000
 
 export function cliEventRoutes(deps: InternalApiDeps): RouteTable {
+  const ownerSession = (caller: Parameters<RouteHandler>[2]): boolean =>
+    caller?.origin === 'session' && caller.tier === 'admin' && !!caller.chatId && !!deps.terminalSay?.isOwnerChat(caller.chatId)
+  const sayError = (code: string) => { const h = workbenchErrorHttp(code, 'desktop'); return { status: h.status, body: { ok: false, error: h.error } } }
   return {
     'POST /v1/cli/event': async (_q, body) => {
       if (!deps.cliEvents) return { status: 503, body: { error: 'cli_events_not_wired' } }
@@ -46,7 +51,30 @@ export function cliEventRoutes(deps: InternalApiDeps): RouteTable {
       const limitRaw = Number(q.get('limit') ?? CLI_SESSIONS_DEFAULT_LIMIT)
       const limit = Number.isFinite(limitRaw) ? Math.max(1, Math.min(Math.trunc(limitRaw), 500)) : CLI_SESSIONS_DEFAULT_LIMIT
       const sessions = deps.cliEvents.list({ includeEnded: q.get('ended') === '1', limit })
-      return { status: 200, body: { ok: true, sessions } }
+      if (q.get('detail') !== '1' || !deps.cliEvents.detail) return { status: 200, body: { ok: true, sessions } }
+      // detail=1(CC 的 terminal_sessions):补开没开着窗口、此刻在做哪一步。读不出来就不补,列表照回。
+      let extra: Record<string, { live_window: boolean; now_step: string | null }> = {}
+      try { extra = deps.cliEvents.detail(sessions.map(s => s.session_id)) } catch { extra = {} }
+      return { status: 200, body: { ok: true, sessions: sessions.map(s => extra[s.session_id] ? { ...s, ...extra[s.session_id] } : s) } }
+    },
+    // CC 代主人对终端会话说一句(terminal_say,2026-10-24):送话走「@码」同一个 core,回一张票;GET 带票等回话。
+    // 档位 admin(路由表),再加一道:只认主人自己那条聊天的会话令牌 —— admin 档的别的聊天、file / operator 令牌都不行。
+    'POST /v1/cli/say': async (_q, body, caller) => {
+      if (!deps.terminalSay) return sayError('terminal_say_not_wired')
+      if (!ownerSession(caller)) return sayError('terminal_say_not_owner')
+      const { code, text } = body as { code: string; text: string }
+      const r = deps.terminalSay.say(code.toLowerCase(), text)
+      if (!r.ok) return { status: sayError(r.error).status, body: r }
+      return { status: 200, body: r }
+    },
+    'GET /v1/cli/say': async (q, _body, caller) => {
+      if (!deps.terminalSay) return sayError('terminal_say_not_wired')
+      if (!ownerSession(caller)) return sayError('terminal_say_not_owner')
+      const waitRaw = Number(q.get('wait_ms') ?? '0')
+      const waitMs = Math.max(0, Math.min(Number.isFinite(waitRaw) ? waitRaw : 0, TERMINAL_SAY_POLL_CAP_MS))
+      const v = await deps.terminalSay.wait(q.get('ticket') ?? '', waitMs)
+      if (!v) return sayError('terminal_say_ticket_unknown')
+      return { status: 200, body: { ok: true, ...v } }
     },
     // 接上 / 撤掉终端里的 Claude Code / Codex(2026-10-14)。主人在桌面上点了确认才会来;body 已按
     // CliHooksRequest 校验过。回每一家的结果 + 新的状态(桌面据此刷新「CC 现在怎么样」)。

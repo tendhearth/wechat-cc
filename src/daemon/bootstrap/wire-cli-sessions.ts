@@ -29,7 +29,9 @@ import { makePermissionDecisionsStore } from '../permission-decisions-store'
 import { defaultRunner, makeCliReplyCore, makeHandReplyExecutor, readHead } from '../cli-reply-handler'
 import { makeOverseerTodaySource, TODAY_TERMINAL_LIMIT, type TodayWorkbench } from '../overseer-today-source'
 import { makeTerminalHooksService } from '../terminal-hooks'
-import { findLiveWindow, relayToWindow, transcriptStartCwd, type LiveWindow } from '../claude-live-window'
+import { findLiveWindow, liveSessionIds, relayToWindow, transcriptStartCwd, type LiveWindow } from '../claude-live-window'
+import { makeTerminalSay } from '../cli-terminal-say'
+import { currentStepOf } from '../cli-phone-actions'
 import { makeCliHubAppPush, makeCliPermissionAsk, type AppPushOutlet } from '../cli-app-push'
 import { makeBrainForwarder } from '../cli-brain-forward'
 import { CliEventRequest, CliPermissionRequest } from '../internal-api/schema'
@@ -160,17 +162,37 @@ export function wireCliSessions(d: WireCliSessionsDeps) {
   // GET /v1/cli/sessions(桌面「此刻」、CC 的只读工具 terminal_sessions)都读这一份。
   const cliSessionViews = (opts?: { includeEnded?: boolean; limit?: number }) =>
     withReplyRefs(cliEvents.list(opts), (id) => cliPermissions.pendingHash(id), (h) => ilink.pendingPermissionCodeOf(h))
+  // CC 代主人对终端会话说一句、等它回话(terminal_say,2026-10-24):送话用下面「@码」同一个 replyCore,
+  // 回话是这条会话 hooks 报来的下一个 Stop(ingest 那一口转给它)。晚绑定:replyCore 在下面才建。
+  let terminalSay: ReturnType<typeof makeTerminalSay> | null = null
   internalApi.provide({ cliEvents: {
     // 转给脑的事件本机登记处也记一笔(observe 只记不推):这台机自己的列表也看得到。
     ingest: (ev) => {
+      let handed = false
+      try { handed = terminalSay?.noteEvent(ev) ?? false } catch (err) { log('TERMINAL_SAY', `noteEvent failed: ${err instanceof Error ? err.message : String(err)}`) }
       // 会话又有了动静(Stop / 新 prompt / 结束)⇒ 终端已自己答过,挂着的码作废(评审 10-15 #5)。
       if (ev.kind === 'stop' || ev.kind === 'prompt' || ev.kind === 'session_end') cliPermissions.expireSession(ev.session_id)
+      // 这个 Stop 正是 CC 在等的回话,CC 这就转给主人 ⇒ 只登记、不再照常推一遍「做完了」(否则主人同一句收两次)。
+      // CC 已经不等了(工具超时)⇒ handed=false,照常推。
+      if (handed) { cliEvents.observe(ev); return 'noop' }
       if (!forwarder?.brain()) return cliEvents.ingest(ev)
       cliEvents.observe(ev)
       return forwarder.event(ev)
     },
     // displayName(收敛清单 ⑥):桌面「此刻」画终端会话时读它,不存名字表。
     list: (opts) => cliSessionViews(opts).map(v => ({ ...v, displayName: boot.registry.namesOf(v.source).name })),
+    // CC 的 terminal_sessions 要的两样:开没开着窗口(读一遍 Claude 的会话登记)、此刻在做哪一步(同手机列表的判法)。
+    detail: (ids) => {
+      let live = new Set<string>()
+      try { live = liveSessionIds() } catch { /* 读不到登记 ⇒ 都当没开着 */ }
+      const out: Record<string, { live_window: boolean; now_step: string | null }> = {}
+      for (const id of ids) {
+        const s = cliEvents.lookup(id)
+        const step = s && s.session_id === id ? currentStepOf(s, { localMachine: osHostname() }) : null
+        out[id] = { live_window: live.has(id), now_step: step?.text ?? null }
+      }
+      return out
+    },
   } })
   internalApi.provide({ cliPermissions: {
     open: async (req) => {
@@ -197,10 +219,18 @@ export function wireCliSessions(d: WireCliSessionsDeps) {
   const claudeCli = resolveClaudeBinary()
   const liveWindow = {
     find: (s: CliSessionInfo) => findLiveWindow(s.session_id),
-    relay: (w: LiveWindow, text: string) => relayToWindow(w, text, { run: defaultRunner, cwd: stateDir, dangerously, ...(claudeCli ? { bin: claudeCli } : {}) }),
+    relay: (w: LiveWindow, text: string, header?: string) => relayToWindow(w, text, { run: defaultRunner, cwd: stateDir, dangerously, ...(claudeCli ? { bin: claudeCli } : {}), ...(header !== undefined ? { header } : {}) }),
   }
   const startCwd = (s: CliSessionInfo) => s.transcript_path ? transcriptStartCwd(readHead(s.transcript_path, 64 * 1024)) : null
   const replyCore = makeCliReplyCore({ executionConflict,reserveExecution,hub: cliEvents, holdBusy: (l) => boot.holdBusy(l), log: (t, l) => log(t, l), dangerously, ...(claudeCli ? { claudeBin: claudeCli } : {}), networkGate: d.networkGate, liveWindow, startCwd })
+  terminalSay = makeTerminalSay({ hub: cliEvents, core: replyCore, holdBusy: (l) => boot.holdBusy(l), localMachine: osHostname(), log: (t, l) => log(t, l) })
+  lc.register({ name: 'terminal-say', stop: async () => terminalSay?.dispose() })
+  internalApi.provide({ terminalSay: {
+    say: (code, text) => terminalSay!.say(code, text),
+    wait: (ticket, ms) => terminalSay!.wait(ticket, ms),
+    // 只认主人那条聊天(同微信「@码」的 isOwner)
+    isOwnerChat: (chatId) => resolveAdminChatId(loadAccess(), loadCompanionConfig(stateDir), null) === chatId,
+  } })
   const handExecutor = makeHandReplyExecutor(replyCore, {
     hub: cliEvents,
     notifyBrain: async (text) => {
@@ -243,7 +273,7 @@ export function wireCliSessions(d: WireCliSessionsDeps) {
   const terminalHooks = makeTerminalHooksService({ deps: defaultTerminalHooksDeps, sessions: () => cliEvents.list({ includeEnded: true, limit: 500 }) })
   internalApi.provide({ cliHooks: terminalHooks })
   return {
-    cliEvents, cliPermissions, replyCore, permissionDecisions, permissionGate, cliSessionViews,
+    cliEvents, cliPermissions, replyCore, permissionDecisions, permissionGate, cliSessionViews, terminalSay,
     legacyClaims, executionConflict, reserveExecution, liveWindow, startCwd, overseerToday, terminalHooks,
     /** 手机 App 推送出口:pipeline-deps(wireMain)里才造,建好后交进来。 */
     setAppPush(p: AppPushOutlet | null) { cliAppPush = p },

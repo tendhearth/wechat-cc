@@ -100,15 +100,21 @@ export function findLiveWindow(sessionId: string, opts: { dir?: string; alive?: 
   return pickLiveWindow(readEntries(opts.dir), sessionId, once(opts.alive ?? pidAlive))
 }
 
-/** 转进窗口的那段话:第一行说清楚是谁、从哪来(对方窗口折叠时只露第一行)。 */
-export function relayMessage(text: string): string {
-  return `主人从手机发来一句话(Tendhearth CC 转达,原话如下):\n${text}`
+/** 主人自己「@码」/ 手机说一句时,转进窗口那段话的第一行。 */
+export const RELAY_OWNER_HEADER = '主人从手机发来一句话(Tendhearth CC 转达,原话如下):'
+
+/**
+ * 转进窗口的那段话:第一行说清楚是谁、从哪来(对方窗口折叠时只露第一行)。
+ * header:CC 自己代主人说(terminal_say,2026-10-24)时换一句 —— 那不是主人原话,对方要知道回复会被转回去。
+ */
+export function relayMessage(text: string, header: string = RELAY_OWNER_HEADER): string {
+  return `${header}\n${text}`
 }
 
 /** 给发信小进程的指令:只许调一次 SendMessage、原样转、成功回 RELAY_SENT。 */
-export function relayPrompt(windowName: string, text: string): string {
+export function relayPrompt(windowName: string, text: string, header?: string): string {
   // 原话里的 </relay> 会提前合上包裹、让后面的字被小进程当指令读(评审 10-19 #5):拆开那个标签,其余一字不动。
-  const body = relayMessage(text).replace(/<\/?relay\b/gi, m => m.replace('<', '‹'))
+  const body = relayMessage(text, header).replace(/<\/?relay\b/gi, m => m.replace('<', '‹'))
   return [
     `Call the SendMessage tool exactly once with to = ${JSON.stringify(windowName)} and message = the text inside <relay> below, copied exactly (same characters, same line breaks).`,
     `Do not call any other tool. If the send succeeds, reply with exactly ${SENT}. Otherwise reply with RELAY_FAILED followed by the error.`,
@@ -123,19 +129,19 @@ export function relayPrompt(windowName: string, text: string): string {
  * 权限模式跟 daemon 的 --dangerously 姿态走:主人的终端窗口多半是免审的,两边模式不同时
  * 对方会先把这句话扣下等主人在终端点头 —— 那样也送到了,只是慢一步。
  */
-export function relayCommand(windowName: string, text: string, dangerously: boolean, bin = 'claude'): { cmd: string; args: string[] } {
+export function relayCommand(windowName: string, text: string, dangerously: boolean, bin = 'claude', header?: string): { cmd: string; args: string[] } {
   return {
     // bin = daemon 启动时解析出的 claude(device-e2e 10-20 真机:launchd 的 PATH 里没有 ~/.local/bin,裸 `claude` 起不来)
     cmd: bin,
     args: ['-p', '--model', 'haiku', '--name', RELAY_SENDER_NAME, '--no-session-persistence', '--tools', 'SendMessage',
-      ...(dangerously ? ['--permission-mode', 'bypassPermissions'] : ['--allowedTools', 'SendMessage']), '--', relayPrompt(windowName, text)],
+      ...(dangerously ? ['--permission-mode', 'bypassPermissions'] : ['--allowedTools', 'SendMessage']), '--', relayPrompt(windowName, text, header)],
   }
 }
 
 export type RelayResult = { ok: true } | { ok: false; error: string }
 
-export async function relayToWindow(w: LiveWindow, text: string, deps: { run: Runner; cwd: string; dangerously: boolean; bin?: string }): Promise<RelayResult> {
-  const { cmd, args } = relayCommand(w.name, text, deps.dangerously, deps.bin)
+export async function relayToWindow(w: LiveWindow, text: string, deps: { run: Runner; cwd: string; dangerously: boolean; bin?: string; header?: string }): Promise<RelayResult> {
+  const { cmd, args } = relayCommand(w.name, text, deps.dangerously, deps.bin, deps.header)
   const r = await deps.run(cmd, args, deps.cwd, RELAY_TIMEOUT_MS)
   if (r.timedOut) return { ok: false, error: '送进窗口超时' }
   // 只认最后一行就是 RELAY_SENT:「RELAY_FAILED … not RELAY_SENT」之类的回显不能算送到。

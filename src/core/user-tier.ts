@@ -322,6 +322,9 @@ export function classifyToolUse(toolName: string, input: Record<string, unknown>
     if (sub === 'voice' || sub === 'sticker') return 'reply'
     if (sub === 'attach_file') return 'fs_read'
     if (sub === 'message') return 'message_other'
+    // terminal_say(2026-10-24):代主人往主人终端里那条会话送一句话(不是这一轮的聊天)—— 同 message 一样是
+    // 「替主人跟别处说话」,admin-only;terminal_say_result 只读那张票,与它同级(读的是那条会话的回话)。
+    if (sub === 'terminal_say' || sub === 'terminal_say_result') return 'message_other'
     if (sub === 'send_sticker') return 'reply'
     if (sub === 'search_online_sticker') return 'reply'
     if (sub === 'send_online_sticker_candidate') return 'reply'

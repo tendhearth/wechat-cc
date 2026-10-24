@@ -29,3 +29,17 @@ export function childEnvFor(spec: McpStdioSpec, mcpEnv?: Record<string, string>)
  * 60s 就放弃的话,后台那份回答照样跑完、白白丢掉。只放宽 delegate,别的工具照旧。
  */
 export const DELEGATE_TOOL_TIMEOUT_MS = 600_000
+
+/**
+ * wechat 服务器上要等终端会话回话的工具(terminal_say / terminal_say_result,2026-10-24):最多等 600s,
+ * 加上往窗口发信的 ~15–90s 与轮询余量。和 delegate 同一个毛病 —— 客户端 60s 先放弃,回话来了没人接。
+ */
+export const TERMINAL_SAY_TOOL_TIMEOUT_MS = 720_000
+const LONG_WECHAT_TOOLS: ReadonlySet<string> = new Set(['terminal_say', 'terminal_say_result'])
+
+/** 一次工具调用该给多长超时:delegate 服务器的工具与上面两个 wechat 工具放宽,其余 undefined(用客户端缺省)。 */
+export function toolCallTimeoutMs(server: string | undefined, tool: string): number | undefined {
+  if (server === 'delegate') return DELEGATE_TOOL_TIMEOUT_MS
+  if (server === 'wechat' && LONG_WECHAT_TOOLS.has(tool)) return TERMINAL_SAY_TOOL_TIMEOUT_MS
+  return undefined
+}

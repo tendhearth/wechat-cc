@@ -18,6 +18,23 @@ import { formatOverseerToday, type OverseerToday } from '../../core/overseer-tod
  *  /api /agy 对话里说「换模型」,改的是自己的,不是全局默认那家的。 */
 const OWN_PROVIDER = process.env.WECHAT_PARTICIPANT_TAG
 
+/** GET /v1/cli/sessions?detail=1 每条多出来的两样(daemon 读不到时不带)。 */
+type TerminalSessionRow = CliDigestView & { live_window?: boolean; now_step?: string | null }
+
+/**
+ * 列表末尾的两行(2026-10-24,terminal_say 要用):哪些开在电脑窗口里(话会直接送进窗口)、在跑的此刻在做哪一步。
+ * 只看列表里实际列出的那几条;都没有 ⇒ 空串(老 daemon 不带 detail 也是空串)。
+ */
+export function terminalAnnex(rows: readonly TerminalSessionRow[], max: number): string {
+  const shown = rows.filter(v => v.status !== 'ended').slice(0, Math.max(1, max))
+  const live = shown.filter(v => v.live_window).map(v => v.code)
+  const steps = shown.filter(v => v.status === 'running' && v.now_step).map(v => `码 ${v.code}:${v.now_step!.replace(/\s+/g, ' ').slice(0, 80)}`)
+  const out: string[] = []
+  if (live.length) out.push(`开在电脑窗口里(terminal_say 会直接送进窗口):${live.map(c => `码 ${c}`).join('、')}`)
+  if (steps.length) out.push(`在跑的此刻在做:${steps.join(';')}`)
+  return out.length ? `\n${out.join('\n')}` : ''
+}
+
 export function registerDaemonTools(server: McpServer, client: InternalApiClient): void {
   // These let the operator ask the bot "检查下为什么 X 不回消息了". Read-only.
 
@@ -83,16 +100,17 @@ export function registerDaemonTools(server: McpServer, client: InternalApiClient
     'terminal_sessions',
     {
       title: 'Terminal agent sessions',
-      description: '【管理员】列出主人自己在终端里开的 Claude Code / Codex 会话：等你批准的在前（附怎么在微信里回 y/n），其余按最近动静排，带项目、状态（在跑 / 做完了 / 没动静了）、最后一句、会话码。主人问「我终端里那几个在干嘛」「哪个在等我」时用。只读：你不能替主人批权限，告诉主人回「y 码 / n 码」，或「看 码」「@码 话」。',
+      description: '【管理员】列出主人自己在终端里开的 Claude Code / Codex / Cursor 会话：等你批准的在前（附怎么在微信里回 y/n），其余按最近动静排，带项目、状态（在跑 / 做完了 / 没动静了）、最后一句、会话码，末尾标出哪些开在电脑窗口里、在跑的此刻在做哪一步。主人问「我终端里那几个在干嘛」「哪个在等我」时用；要跟其中一条说话 / 讨论 → 拿码用 terminal_say。你不能替主人批权限，告诉主人回「y 码 / n 码」。',
       inputSchema: {
         limit: z.number().int().min(1).max(50).optional().describe('最多几条，默认 8'),
       },
     },
     async ({ limit }) => {
       try {
-        const r = await client.request<{ ok?: boolean; sessions?: CliDigestView[] }>('GET', '/v1/cli/sessions?limit=50')
+        const r = await client.request<{ ok?: boolean; sessions?: TerminalSessionRow[] }>('GET', '/v1/cli/sessions?limit=50&detail=1')
         const sessions = Array.isArray(r?.sessions) ? r.sessions : []
-        const text = formatCliSessionDigest(sessions, { now: Date.now(), localMachine: hostname(), max: limit ?? 8 })
+        const max = limit ?? 8
+        const text = formatCliSessionDigest(sessions, { now: Date.now(), localMachine: hostname(), max }) + terminalAnnex(sessions, max)
         return { content: [{ type: 'text', text }] }
       } catch (err) {
         return passthroughErrorResult(err, 'terminal_sessions')

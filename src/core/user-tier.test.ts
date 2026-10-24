@@ -502,4 +502,10 @@ describe('回复交付的新工具(spec 2026-10-03 §4.5 / §4.6)', () => {
     expect(TIER_PROFILES.trusted.deny.has('message_other')).toBe(true)
     expect(TIER_PROFILES.guest.deny.has('message_other')).toBe(true)
   })
+
+  it('terminal_say / terminal_say_result(2026-10-24,代主人往终端会话送话)同 message:只给 admin,访客 / trusted 拿不到', () => {
+    for (const t of ['terminal_say', 'terminal_say_result']) {
+      expect(classifyToolUse(`mcp__wechat__${t}`, { code: 'abc123', text: 'x' })).toBe('message_other')
+    }
+  })
 })

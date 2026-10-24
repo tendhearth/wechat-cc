@@ -83,7 +83,8 @@ export interface CliReplyCoreDeps {
    */
   liveWindow?: {
     find(s: CliSessionInfo): LiveWindow | null
-    relay(w: LiveWindow, text: string): Promise<RelayResult>
+    /** header:转进去那段话的第一行;缺省 = 主人原话那一句(claude-live-window RELAY_OWNER_HEADER)。 */
+    relay(w: LiveWindow, text: string, header?: string): Promise<RelayResult>
   }
   /** Claude 的 resume 要在会话开始时的文件夹里起(从记录开头读);缺席 / 读不到 ⇒ 用登记处的 cwd。 */
   startCwd?: (s: CliSessionInfo) => string | null
@@ -118,7 +119,11 @@ export type ResumeOutcome = { kind: 'ok' | 'timeout' | 'failed' | 'relayed'; tex
 /** 「看」「说」的本机执行,不知道微信;WeChat 面与手侧 A2A 面都用它。 */
 export interface CliReplyCore {
   viewMarkdown(s: CliSessionInfo, title: string): { ok: true; markdown: string } | { ok: false; error: string }
-  resume(s: CliSessionInfo, text: string): Promise<ResumeOutcome>
+  /**
+   * header(2026-10-24 terminal_say):话不是主人原话、是 CC 代主人说的 ⇒ 第一行换成这一句。窗口那条路交给
+   * relayMessage 当第一行;resume 那条路放在话前面一行 —— 两条路对方读到的是同一个样子。缺省 ⇒ 同以前。
+   */
+  resume(s: CliSessionInfo, text: string, opts?: { header?: string }): Promise<ResumeOutcome>
   /** 这条会话开在电脑的窗口里(话会送进窗口,所以它在跑也能说)。 */
   live(s: CliSessionInfo): LiveWindow | null
 }
@@ -144,9 +149,10 @@ export function makeCliReplyCore(deps: CliReplyCoreDeps): CliReplyCore {
       }
       catch (err) { return { ok: false, error: `读不到记录:${err instanceof Error ? err.message : String(err)}` } }
     },
-    async resume(s, text) {
+    async resume(s, text, opts) {
       const w = live(s)
-      if (w) return relayInner(s, w, text)
+      if (w) return relayInner(s, w, text, opts?.header)
+      if (opts?.header) text = `${opts.header}\n${text}`
       const ident = { source: s.source, session_id: s.session_id, cwd: s.cwd, ...(s.machine ? { machine: s.machine } : {}), ...(s.transcript_path ? { transcript_path: s.transcript_path } : {}), ...(s.origin_agent ? { origin_agent: s.origin_agent } : {}) }
       const note = (ev: { kind: 'prompt' } | { kind: 'stop'; text: string }) => { try { deps.hub.observe?.({ ...ident, ...ev }) } catch { /* 登记处出错不影响接着跑 */ } }
       note({ kind: 'prompt' })
@@ -159,7 +165,7 @@ export function makeCliReplyCore(deps: CliReplyCoreDeps): CliReplyCore {
    * 送进开着的窗口:发信小进程也是一次 Claude 调用,同样过网络闸门;不登记执行占用(跑的是那个窗口)。
    * 但发信小进程本身要跑到 90 秒,要登记 busy —— 否则空闲自动重启会把它杀在半路,话就丢了(评审 10-19 #2)。
    */
-  async function relayInner(s: CliSessionInfo, w: LiveWindow, text: string): Promise<ResumeOutcome> {
+  async function relayInner(s: CliSessionInfo, w: LiveWindow, text: string, header?: string): Promise<ResumeOutcome> {
     if (deps.networkGate) {
       const d = await decideCall(deps.networkGate, { provider: 'claude', purpose: 'turn' as const })
       if (!d.allowed) { deps.log('CLI_REPLY', `relay ${s.session_id.slice(0, 6)} refused — network unprotected [${d.verdict!.source}]`); return { kind: 'failed', text: unprotectedMessage(d.verdict!, d.cls.label) } }
@@ -168,7 +174,7 @@ export function makeCliReplyCore(deps: CliReplyCoreDeps): CliReplyCore {
     const release = deps.holdBusy?.(`cli-relay:${s.session_id.slice(0, 6)}`) ?? (() => {})
     // 同一条会话连着说两句:发信小进程排队,一句送完再送下一句 —— 并行跑时谁先到不一定(评审 10-19 #8)。
     const prev = relayChains.get(s.session_id) ?? Promise.resolve()
-    const mine = prev.then(() => deps.liveWindow!.relay(w, text))
+    const mine = prev.then(() => header === undefined ? deps.liveWindow!.relay(w, text) : deps.liveWindow!.relay(w, text, header))
       .catch(err => ({ ok: false as const, error: err instanceof Error ? err.message : String(err) }))
       .finally(release)
     relayChains.set(s.session_id, mine)
