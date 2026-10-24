@@ -72,14 +72,34 @@ const RAW_TEXT_CAP = 4000
  * `claude mcp list -- --bogus` 不报 —— 解析器认 `--`。
  * 同一次探测还确认了 `--max-turns` 与 `--append-system-prompt-file` 虽然没印在 --help 里,但都接受。
  */
+/**
+ * 只读会话(评审、规划)的锁:2026-10-23 在 claude 2.1.309 上实测过。
+ *
+ * 以前只是 `--dangerously-skip-permissions` + 关掉四把写工具:Bash 照样全开(能写树外、能 git push、能 curl),
+ * porcelain 只查得到树里;主人的用户 MCP 也照样加载 —— 跟 #634 给 Codex 堵上的是同一个洞(整合者评审 #646)。
+ * 现在:
+ *   - `--restricted`:去掉跑命令的工具(除非 --tools 点名)、不读用户 / 项目 / 本地设置、文件工具关在工作目录里、拒绝 bypassPermissions;
+ *   - `--strict-mcp-config`(不给 --mcp-config)⇒ 一个 MCP 都不加载;
+ *   - `--tools Read,Grep,Glob,Bash` + `--permission-mode dontAsk` + 只放行 `git diff / log / show`:评审提示词要它
+ *     `git diff <base>...HEAD`、`git log`,别的命令一律被拒(实测 `touch` 被拒、`git log` 能跑、工具只剩这四个)。
+ * 不再带 `--dangerously-skip-permissions`(restricted 本来就拒它)。
+ */
+export const CLAUDE_READONLY_LOCKDOWN = [
+  '--restricted', '--strict-mcp-config',
+  '--tools', 'Read,Grep,Glob,Bash',
+  '--permission-mode', 'dontAsk',
+  '--allowedTools', 'Bash(git diff:*)', 'Bash(git log:*)', 'Bash(git show:*)',
+] as const
+
 export function claudeArgs(input: RunnerInput): string[] {
   return [
-    '-p', '--output-format', 'json', '--dangerously-skip-permissions',
+    '-p', '--output-format', 'json',
+    ...(input.readOnly ? CLAUDE_READONLY_LOCKDOWN : ['--dangerously-skip-permissions']),
     '--max-budget-usd', String(input.budgetUsd),
     '--max-turns', String(input.maxTurns),
     ...(input.resume ? ['--resume', input.resume] : []),
     ...(input.systemPromptFile ? ['--append-system-prompt-file', input.systemPromptFile] : []),
-    ...(input.readOnly ? ['--disallowedTools', 'Edit,Write,MultiEdit,NotebookEdit'] : []),
+    // `--allowedTools` 吃变长参数:靠下面这个 `--` 收住,不然需求正文会被当成又一个工具名。
     '--', input.prompt,
   ]
 }

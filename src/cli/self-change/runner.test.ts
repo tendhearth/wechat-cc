@@ -30,12 +30,16 @@ describe('claudeArgs', () => {
     expect(args).not.toContain('--disallowedTools')
   })
 
-  it('评审轮:readOnly 关掉四把写工具', () => {
+  it('只读轮(评审 / 规划):restricted + 不加载 MCP + 只留读工具,Bash 只放行 git diff / log / show;不再 skip permissions', () => {
     const args = claudeArgs({ ...base, readOnly: true })
-    expect(args[args.indexOf('--disallowedTools') + 1]).toBe('Edit,Write,MultiEdit,NotebookEdit')
+    expect(args).toEqual(expect.arrayContaining(['--restricted', '--strict-mcp-config', '--permission-mode', 'dontAsk']))
+    expect(args[args.indexOf('--tools') + 1]).toBe('Read,Grep,Glob,Bash')
+    expect(args.slice(args.indexOf('--allowedTools') + 1, args.indexOf('--max-budget-usd'))).toEqual(['Bash(git diff:*)', 'Bash(git log:*)', 'Bash(git show:*)'])
+    expect(args).not.toContain('--dangerously-skip-permissions')
+    expect(args).not.toContain('--mcp-config')
   })
 
-  it('需求正文前面必须有 --(--disallowedTools 是变长选项,不然会把正文当成又一个工具名吃掉)', () => {
+  it('需求正文前面必须有 --(--allowedTools 是变长选项,不然会把正文当成又一个工具名吃掉)', () => {
     const args = claudeArgs({ ...base, readOnly: true })
     expect(args.at(-2)).toBe('--')
     expect(args.at(-1)).toBe('做点事')
@@ -43,11 +47,12 @@ describe('claudeArgs', () => {
 
   it('四样都给时顺序稳定', () => {
     expect(claudeArgs({ ...base, resume: 's', systemPromptFile: '/b.md', readOnly: true })).toEqual([
-      '-p', '--output-format', 'json', '--dangerously-skip-permissions',
+      '-p', '--output-format', 'json',
+      '--restricted', '--strict-mcp-config', '--tools', 'Read,Grep,Glob,Bash', '--permission-mode', 'dontAsk',
+      '--allowedTools', 'Bash(git diff:*)', 'Bash(git log:*)', 'Bash(git show:*)',
       '--max-budget-usd', '20', '--max-turns', '300',
       '--resume', 's',
       '--append-system-prompt-file', '/b.md',
-      '--disallowedTools', 'Edit,Write,MultiEdit,NotebookEdit',
       '--', '做点事',
     ])
   })
