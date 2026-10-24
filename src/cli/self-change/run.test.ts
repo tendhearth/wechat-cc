@@ -82,6 +82,32 @@ describe('runSelfChange 一条跑通', () => {
 })
 
 describe('修复轮', () => {
+  it('收场时记教训:测试红过一轮 ⇒ 一条 tests;再 --resume 收场一次不重记', async () => {
+    let testRuns = 0
+    let dirty = false
+    const { deps } = happy({
+      exec: (cmd, args) => {
+        if (cmd === 'bun' && args[1] === 'test' && testRuns++ === 0) { dirty = true; return { code: 1, stdout: 'FAIL src/a.test.ts > 一条用例' } }
+        return undefined
+      },
+      git: args => {
+        if (args[0] === 'status') return { stdout: dirty ? ' M docs/x.md\n' : '' }
+        if (args.includes('commit')) { dirty = false; return undefined }
+        return HAPPY_GIT(args)
+      },
+    })
+    const recorded: Array<{ kind: string; detail: string }> = []
+    deps.recordLessons = rows => { recorded.push(...rows) }
+    const { state } = await runSelfChange(fakeState(), deps)
+    expect(state.result).toBe('done')
+    expect(recorded.map(r => r.kind)).toEqual(['tests'])
+    expect(recorded[0]!.detail).toContain('src/a.test.ts')
+    expect(state.lessonsWritten).toBe(1)
+    // 同一条再收场(比如 --resume 从 report 接着来):已经记过的修复轮不再记。
+    await runSelfChange({ ...state, step: 'report', result: null }, deps)
+    expect(recorded).toHaveLength(1)
+  })
+
   it('测试红一次:计一轮、接回同一个会话、脏了替它提交、回 guard 重走', async () => {
     let testRuns = 0
     // 执行者修完没提交:status 脏,直到流水线替它 commit。

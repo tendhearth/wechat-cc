@@ -501,7 +501,7 @@ const selfPlanCmd = defineCommand({
   args: {
     goal: { type: 'positional', required: false, description: '开发目标(一句话)' },
     planner: { type: 'string', description: '谁来规划:claude(缺省)/ codex' },
-    'with-discover': { type: 'boolean', description: '把 self discover 的 roadmap / 守卫基线候选一起交给规划者(日志那一源不交:里面可能有联系人昵称)' },
+    'with-discover': { type: 'boolean', description: '把 self discover 的 roadmap / 守卫基线 / 自改教训候选一起交给规划者(日志那一源不交:里面可能有联系人昵称)' },
     show: { type: 'string', description: '看一份存下的计划', valueHint: 'id' },
     json: { type: 'boolean', description: 'JSON 输出' },
   },
@@ -541,6 +541,12 @@ const selfPlanCmd = defineCommand({
       candidates = [
         existsSync(roadmap) ? formatRoadmapItems(roadmapOpenItems(readFileSync(roadmap, 'utf8'))) : '',
         existsSync(scripts) ? formatRatchetDebts(ratchetDebts(readdirSync(scripts).filter(f => f.endsWith('.guard.test.ts')).map(f => ({ path: `scripts/${f}`, text: readFileSync(join(scripts, f), 'utf8') })))) : '',
+        // 自改的教训账也交:只有流水线自己的输出(测试 / 评审 / CI 的几行、结局码),没有人的数据。
+        await (async () => {
+          const { lessonCandidates, formatLessonCandidates, SELF_LESSONS_FILE } = await import('../self-change/lessons')
+          const p = join(STATE_DIR, SELF_LESSONS_FILE)
+          return existsSync(p) ? formatLessonCandidates(lessonCandidates(readFileSync(p, 'utf8'))) : ''
+        })(),
       ].filter(Boolean).join('\n\n')
     }
 
@@ -577,8 +583,8 @@ const selfDiscoverCmd = defineCommand({
   args: {
     hours: { type: 'string', description: '日志看最近几小时(缺省 48)' },
     'min-count': { type: 'string', description: '日志里至少出现几次才算(缺省 3)' },
-    source: { type: 'string', description: 'log / roadmap / ratchets / all(缺省 all)' },
-    json: { type: 'boolean', description: 'JSON 输出({ log, roadmap, ratchets })' },
+    source: { type: 'string', description: 'log / roadmap / ratchets / lessons / all(缺省 all)' },
+    json: { type: 'boolean', description: 'JSON 输出({ log, roadmap, ratchets, lessons })' },
   },
   async run({ args }) {
     const { readFileSync, existsSync } = await import('node:fs')
@@ -589,8 +595,8 @@ const selfDiscoverCmd = defineCommand({
     const hours = args.hours === undefined || args.hours === '' ? 48 : Number(args.hours)
     const minCount = args['min-count'] === undefined || args['min-count'] === '' ? 3 : Number(args['min-count'])
     const source = String(args.source ?? 'all')
-    if (!Number.isFinite(hours) || hours <= 0 || !Number.isInteger(minCount) || minCount < 1 || !['log', 'roadmap', 'ratchets', 'all'].includes(source)) {
-      console.error('self discover: 用法 wechat-cc self discover [--hours N] [--min-count N] [--source log|roadmap|ratchets|all] [--json]')
+    if (!Number.isFinite(hours) || hours <= 0 || !Number.isInteger(minCount) || minCount < 1 || !['log', 'roadmap', 'ratchets', 'lessons', 'all'].includes(source)) {
+      console.error('self discover: 用法 wechat-cc self discover [--hours N] [--min-count N] [--source log|roadmap|ratchets|lessons|all] [--json]')
       process.exit(1)
       return
     }
@@ -607,13 +613,17 @@ const selfDiscoverCmd = defineCommand({
     const { readdirSync } = await import('node:fs')
     const ratchets = !want('ratchets') || !scriptsDir || !existsSync(scriptsDir) ? null
       : ratchetDebts(readdirSync(scriptsDir).filter(f => f.endsWith('.guard.test.ts')).map(f => ({ path: `scripts/${f}`, text: readFileSync(join(scriptsDir, f), 'utf8') })))
+    const { lessonCandidates, formatLessonCandidates, SELF_LESSONS_FILE } = await import('../self-change/lessons')
+    const lessonsPath = join(STATE_DIR, SELF_LESSONS_FILE)
+    const lessons = !want('lessons') ? null : lessonCandidates(existsSync(lessonsPath) ? readFileSync(lessonsPath, 'utf8') : '')
     if (args.json) {
-      console.log(JSON.stringify({ log, roadmap, ratchets }, null, 2))
+      console.log(JSON.stringify({ log, roadmap, ratchets, lessons }, null, 2))
       return
     }
     const parts: string[] = []
     if (log) parts.push(formatDiscover(log, hours))
     if (want('roadmap')) parts.push(roadmap ? formatRoadmapItems(roadmap) : '读不到 docs/roadmap.md(打包版旁边没有仓库),欠账 / 对标这一源没看。')
+    if (lessons) parts.push(formatLessonCandidates(lessons))
     if (want('ratchets')) parts.push(ratchets ? formatRatchetDebts(ratchets) : '读不到 scripts/(打包版旁边没有仓库),守卫基线这一源没看。')
     console.log(parts.join('\n\n'))
   },

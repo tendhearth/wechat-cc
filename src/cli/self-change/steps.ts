@@ -29,6 +29,7 @@ import type { ImplementRunner, ReviewerChoice } from './runner'
 import { providerDisplayName } from '../../core/provider-display-names'
 import type { DaemonClient } from './daemon-client'
 import { prTitle, type Forge, type PrRef } from './forge'
+import type { LessonRow } from './lessons'
 import { DEFAULT_MAX_LOAD_PER_CPU, waitForQuietMachine, type MachineLoad } from '../self-ship'
 import type { ReviewFinding, SelfChangeState, SelfChangeStep, StateStore } from './state'
 
@@ -65,6 +66,8 @@ export interface PipelineDeps {
   /** 开 PR / 等 CI 合 / 关 PR(forge.ts)。 */
   forge: Forge
   deploy: (repoRoot: string) => Promise<SelfDeployResult>
+  /** 收场时把这条运行的教训记下来(lessons.ts);不给 ⇒ 不记(测试缺省)。 */
+  recordLessons?: (rows: LessonRow[]) => void
   /** 部署门的负载(self-ship.ts):1 分钟负载与核数。不给 ⇒ 不看负载(测试缺省)。 */
   machineLoad?: () => MachineLoad
   rollback: (repoRoot: string) => Promise<SelfDeployResult>

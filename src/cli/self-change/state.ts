@@ -50,6 +50,12 @@ export interface SelfChangeState {
   /** `delivered=false`:拍板卡没进微信(外发不通),但条目还在 daemon 的登记处 ——
    *  桌面权限卡和 `self change --approve <id>` 照样能拍。null = 还没问过。 */
   approval: { hash: string | null; code: string | null; decision: string | null; askedAt: number | null; delivered: boolean | null }
+  /**
+   * 每一轮修复为什么(tests / review / ci 的原因,截断)。收场时写进教训账(lessons.ts),`self discover --source lessons`
+   * 把反复出现的摆出来,当「该写进做法清单」的候选。`lessonsWritten`:前几条已经记过了(`--resume` 再收场不重记)。老存盘没有。
+   */
+  fixLog?: Array<{ kind: 'tests' | 'review' | 'ci'; at: number; detail: string }>
+  lessonsWritten?: number
   /** 进 dev 的那个 PR(ci 步开)。老存盘没有这一格:merge 步会补开一个。 */
   pr?: { number: number; url: string } | null
   /**

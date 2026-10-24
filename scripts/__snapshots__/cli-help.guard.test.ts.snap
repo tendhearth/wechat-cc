@@ -2261,10 +2261,10 @@ USAGE self discover [OPTIONS]
 
 OPTIONS
 
-          --hours=<hours>    日志看最近几小时(缺省 48)                       
-  --min-count=<min_count>    日志里至少出现几次才算(缺省 3)                     
-        --source=<source>    log / roadmap / ratchets / all(缺省 all)
-                   --json    JSON 输出({ log, roadmap, ratchets })   
+          --hours=<hours>    日志看最近几小时(缺省 48)                                 
+  --min-count=<min_count>    日志里至少出现几次才算(缺省 3)                               
+        --source=<source>    log / roadmap / ratchets / lessons / all(缺省 all)
+                   --json    JSON 输出({ log, roadmap, ratchets, lessons })    
 
 
 "
@@ -2281,10 +2281,10 @@ ARGUMENTS
 
 OPTIONS
 
-  --planner=<planner>    谁来规划:claude(缺省)/ codex                                       
-      --with-discover    把 self discover 的 roadmap / 守卫基线候选一起交给规划者(日志那一源不交:里面可能有联系人昵称)
-          --show=<id>    看一份存下的计划                                                     
-               --json    JSON 输出                                                      
+  --planner=<planner>    谁来规划:claude(缺省)/ codex                                              
+      --with-discover    把 self discover 的 roadmap / 守卫基线 / 自改教训候选一起交给规划者(日志那一源不交:里面可能有联系人昵称)
+          --show=<id>    看一份存下的计划                                                            
+               --json    JSON 输出                                                             
 
 
 "
