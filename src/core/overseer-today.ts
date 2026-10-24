@@ -226,7 +226,9 @@ export function buildOverseerToday(input: OverseerTodayInput): OverseerToday {
 /** 整条最多这么多行(微信一屏)。 */
 export const TODAY_TEXT_MAX_LINES = 15
 /** 每组最多列几条:1 行标题 + 4 + 2 + 4 + 2 + 1 行「没列出的」+ 1 行提示 = 15。 */
-const MAX_NEEDS = 4, MAX_STUCK = 2, MAX_DONE = 4, MAX_RUNNING = 2
+/** 日报里「等你」最多列几件(早报给候选编号时从它之后接着排)。 */
+export const OVERSEER_NEEDS_SHOWN = 4
+const MAX_NEEDS = OVERSEER_NEEDS_SHOWN, MAX_STUCK = 2, MAX_DONE = 4, MAX_RUNNING = 2
 
 /** withCode=false:那一行后面已经写了「回「任务 编号」」,一起做这里就不再重复编号。 */
 function where(i: TodayItem, withCode = true): string {

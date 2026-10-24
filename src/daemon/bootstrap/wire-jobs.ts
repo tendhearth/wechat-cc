@@ -19,7 +19,7 @@ import type { CareLedger } from '../companion/care-ledger'
 import type { makeJobsStore } from '../../core/scheduled-jobs-store'
 import type { makeActivityLog } from '../activity-log'
 import type { makeCalendar } from '../calendar/calendar'
-import { formatOverseerToday, type OverseerToday } from '../../core/overseer-today'
+import { formatOverseerToday, OVERSEER_NEEDS_SHOWN, type OverseerToday } from '../../core/overseer-today'
 import { buildActivity, type ActivityItem, type ActivitySources } from '../../core/cc-activity'
 import { buildReviewText, reviewMissNote } from '../../core/workbench/review-request'
 import { makeWorkbenchStore } from '../../core/workbench/store'
@@ -27,6 +27,8 @@ import { makeBriefPrefs, makeBriefTurn } from '../scheduled-jobs/brief'
 import { makeRecapTurn } from '../scheduled-jobs/recap'
 import { registerScheduledJobs } from '../scheduled-jobs/runner'
 import { makeJobsCommand } from '../scheduled-jobs/command'
+import { combineReplyHandlers, makeAsksReply } from '../scheduled-jobs/asks-reply'
+import { makeOwnerAsksStore, OWNER_ASKS_FILE } from '../../core/owner-asks-store'
 import { parseAgenda, selectDue } from '../companion/agenda'
 import { localParts } from '../memory/nightly-schedule'
 import { makeRemindersStore } from '../reminders/store'
@@ -64,16 +66,28 @@ export function wireJobs(d: WireJobsDeps) {
   // 早报的口味(对标 #7):memory/<主人>/brief-prefs.md,「早报 少点 / 多点 …」写它。
   const briefOwner = () => resolveAdminChatId(loadAccess(), loadCompanionConfig(stateDir), null)
   const briefPrefs = makeBriefPrefs(() => { const o = briefOwner(); return o ? join(stateDir, 'memory', o) : null })
+  // 主人发的命令的回话(「定时 …」、早报里回「2」):两个处理器共用这一处发送(speech-send 守卫按处数)。
+  const replyToOwner = (c: string, t: string) => ilink.sendMessage(c, t)
   const jobsCommand = makeJobsCommand({
     store: jobsStore,
     isOwner: (chatId) => resolveAdminChatId(loadAccess(), loadCompanionConfig(stateDir), null) === chatId,
-    say: (c, t) => ilink.sendMessage(c, t),
+    say: replyToOwner,
     timezone: () => loadCompanionConfig(stateDir).timezone ?? 'Asia/Shanghai',
     now: () => Date.now(),
     log: (t, l) => log(t, l),
     jobExecutor: () => pickJobExecutor(id => boot.registry.has(id as never)),
     briefPrefs,
     ...(d.quietWindow ? { quietWindow: d.quietWindow } : {}),
+  })
+  // 要主人拍板的候选(设计稿 2026-10-23-cc-runs-development §4.8,主人 10-24):攒在 owner-asks.json,只在早报里问,
+  // 主人回「2」/「2 不要」⇒ 记进那一条(谁、什么时候、哪一版)。排进来的是 CLI(`self ask` / `self plan --ask`)。
+  const ownerAsks = makeOwnerAsksStore(join(stateDir, OWNER_ASKS_FILE))
+  const asksReply = makeAsksReply({
+    store: ownerAsks,
+    isOwner: (chatId) => briefOwner() === chatId,
+    say: replyToOwner,
+    now: () => Date.now(),
+    log: (t, l) => log(t, l),
   })
   // 主人亲手写的定时任务(spec 2026-10-20-scheduled-jobs-design):每分钟一拍,到点在只读的独立会话里跑一轮,
   // 走伙伴主动消息的出口;只给主人那条对话。坏了只降级,不挡启动。
@@ -124,6 +138,9 @@ export function wireJobs(d: WireJobsDeps) {
     },
     prefs: () => briefPrefs.read(),
     claim: (c, iso) => { careLedger.claim(c, iso) },
+    asks: { pick: (base, iso) => ownerAsks.pickForBrief(base, iso), commit: (p, iso) => ownerAsks.commitAsked(p, iso) },
+    // 早报里已有的拍板项 = 素材里列出来的「等你」那几件(formatOverseerToday 最多列 4 件)。
+    decisionsBefore: () => Math.min(overseerToday().needsYou.length, OVERSEER_NEEDS_SHOWN),
   })
   // 周报(B9 之上):这一周「CC 做过的事」—— 与手机时间线同一组来源,翻几页收齐(最多 300 条)。
   const recapTurn = makeRecapTurn({
@@ -145,8 +162,8 @@ export function wireJobs(d: WireJobsDeps) {
   })
 
   return {
-    /** 微信「定时 …」。 */
-    command: jobsCommand,
+    /** 微信「定时 …」+ 早报里拍板项的回话「2」/「2 不要」(并在 jobs 这一格,命令表顺序不变)。 */
+    command: combineReplyHandlers(jobsCommand, asksReply),
     /** 「换一家来审」:交给另一家在只读轮里看改动;请不到 ⇒ false。 */
     requestReview,
     /** 每分钟一拍的 runner;坏了只降级,不挡启动。 */

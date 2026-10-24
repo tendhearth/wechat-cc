@@ -26,7 +26,7 @@ export const JOB_TURN_MAX_MS = 4 * 60_000
 export function makeRunJobTurn(deps: TickDeps, dispatch: TickDispatch) {
   const { resolveDispatch, deliveryModeOf } = dispatch
 
-  async function runJobTurn(args: { chatId: string; jobId: string; text: string; nowIso: string; buildText?: (style: TickTextStyle) => string; /** 主人点名哪家(换一家来审,10-20);只认 JOB_PROVIDERS,没装 ⇒ skipped:executor,不换人。 */ provider?: (typeof JOB_PROVIDERS)[number]; /** 'review' ⇒ REVIEW_PROFILE(不给网,评审 #460);缺省 JOB_PROFILE */ profile?: 'job' | 'review'; /** 这是哪一种话(SpeechPolicy)—— **必填,没有缺省**:缺省往放行的方向兜底,忘了传就悄悄成了「主人要的」(整合者评审 #524)。主人建的定时 = job、换一家来审 = review(都是 requested);晨报 = brief、周报 = recap(initiative)。 */ kind: 'job' | 'review' | 'brief' | 'recap'; /** 定时触发的(赶上免打扰的 initiative 当天记 skipped:quiet,不往后推);换一家来审不是。 */ scheduled: boolean }): Promise<JobTurnResult> {
+  async function runJobTurn(args: { chatId: string; jobId: string; text: string; nowIso: string; buildText?: (style: TickTextStyle) => string; /** 交付之前改一下模型写好的最后那段(早报接上要主人拍板的候选,§4.8);NO_REPLY 由调用方自己判。 */ transformFinal?: (finalText: string) => string; /** 主人点名哪家(换一家来审,10-20);只认 JOB_PROVIDERS,没装 ⇒ skipped:executor,不换人。 */ provider?: (typeof JOB_PROVIDERS)[number]; /** 'review' ⇒ REVIEW_PROFILE(不给网,评审 #460);缺省 JOB_PROFILE */ profile?: 'job' | 'review'; /** 这是哪一种话(SpeechPolicy)—— **必填,没有缺省**:缺省往放行的方向兜底,忘了传就悄悄成了「主人要的」(整合者评审 #524)。主人建的定时 = job、换一家来审 = review(都是 requested);晨报 = brief、周报 = recap(initiative)。 */ kind: 'job' | 'review' | 'brief' | 'recap'; /** 定时触发的(赶上免打扰的 initiative 当天记 skipped:quiet,不往后推);换一家来审不是。 */ scheduled: boolean }): Promise<JobTurnResult> {
     const { chatId, jobId } = args
     const gate = resolveDispatch(chatId)
     if (gate.blocked === 'wechat_degraded') return 'skipped:degraded'
@@ -67,7 +67,10 @@ export function makeRunJobTurn(deps: TickDeps, dispatch: TickDispatch) {
             result = `failed:${summary.errorCode ?? 'error'}`
             return
           }
-          const report = await turn.deliver({ finalText: summary.finalText ?? '', narration: summary.narration ?? [] })
+          const raw = summary.finalText ?? ''
+          let finalText = raw
+          if (args.transformFinal) { try { finalText = args.transformFinal(raw) } catch (e) { deps.log('JOBS', `job ${jobId} transformFinal threw: ${errMsg(e)}`) } }
+          const report = await turn.deliver({ finalText, narration: summary.narration ?? [] })
           outbound.finish()
           if (report.delivery === 'silent' || report.delivery === 'empty') result = report.failures.length ? `failed:${report.failures[0]}` : 'silent'
           else result = report.failures.length && report.bubbles === 0 && report.attachmentsSent === 0 ? `failed:${report.failures[0]}` : 'sent'

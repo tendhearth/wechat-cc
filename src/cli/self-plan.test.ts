@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest'
 
 import type { GitResult } from './self-change/git'
 import type { RunnerInput, RunnerResult } from './self-change/runner'
-import { formatPlan, markStepDone, nextSteps, parsePlan, planPrompt, runPlan, stepGate, topoOrder, type PlanDeps, type SavedPlan } from './self-plan'
+import { formatPlan, markStepDone, nextSteps, parsePlan, planPrompt, planVisibleAsks, runPlan, stepGate, topoOrder, type PlanDeps, type SavedPlan } from './self-plan'
 
 const block = (o: unknown) => `想了想。\n\`\`\`json\n${JSON.stringify(o)}\n\`\`\``
 const PLAN = {
@@ -195,5 +195,16 @@ describe('执行计划的一步', () => {
     const t = formatPlan(plan, plan.order)
     expect(t).toContain('✓ p1')
     expect(t).toContain('做完 1 / 3;现在能做:p2')
+  })
+})
+
+describe('planVisibleAsks(self plan --ask)', () => {
+  const plan = { id: 'pl1', goal: '手机看自改进度', prs: PLAN.prs.map(p => ({ ...p })) }
+  it('主人看得见的步一步一条,key = 计划 + 步,版本 = 整份 PR 列表(计划改了就要重批)', () => {
+    const a = planVisibleAsks(plan)
+    expect(a).toHaveLength(1)
+    expect(a[0]).toMatchObject({ key: 'plan:pl1:p3', question: '要不要做:手机页?', recommend: '做。主人看', source: 'plan' })
+    const changed = planVisibleAsks({ ...plan, prs: plan.prs.map(p => (p.id === 'p1' ? { ...p, title: '设计稿 v2' } : p)) })
+    expect(changed[0]!.version).not.toBe(a[0]!.version)
   })
 })
