@@ -2270,6 +2270,26 @@ OPTIONS
 "
 `;
 
+exports[`cli.ts --help 快照(逐字节) > self --help > self plan --help 1`] = `
+"规划者:把一个开发目标拆成 PR 列表(先后依赖、哪些主人看得见要先点头);只读,不执行 (self plan)
+
+USAGE self plan [OPTIONS] [GOAL]
+
+ARGUMENTS
+
+  GOAL    开发目标(一句话)
+
+OPTIONS
+
+  --planner=<planner>    谁来规划:claude(缺省)/ codex                                       
+      --with-discover    把 self discover 的 roadmap / 守卫基线候选一起交给规划者(日志那一源不交:里面可能有联系人昵称)
+          --show=<id>    看一份存下的计划                                                     
+               --json    JSON 输出                                                      
+
+
+"
+`;
+
 exports[`cli.ts --help 快照(逐字节) > self --help > self ship --help 1`] = `
 "部署门:负载 → 网络守护 → 构建 sidecar → self deploy → 自检(红了回滚);之后看 self soak(仅 macOS 源码模式) (self ship)
 
@@ -2305,7 +2325,7 @@ OPTIONS
 exports[`cli.ts --help 快照(逐字节) > self --help 1`] = `
 "自维护:部署自身、让 CC 自己改自己（仅 macOS launchd；见 docs/maintainer/deploy.md 与 self-change.md） (wechat-cc self v1.7.7 (dev))
 
-USAGE wechat-cc self change|deploy|ship|soak|discover
+USAGE wechat-cc self change|deploy|ship|soak|discover|plan
 
 COMMANDS
 
@@ -2314,6 +2334,7 @@ COMMANDS
       ship    部署门:负载 → 网络守护 → 构建 sidecar → self deploy → 自检(红了回滚);之后看 self soak(仅 macOS 源码模式)
       soak    这次部署在真机上稳不稳:从最后一次 self deploy 算起看日志里的意外重启 / 模块失败 / 崩溃,和健康接口;只读                 
   discover    发掘任务:日志里反复出现的失败(按次数)+ roadmap 欠账 / 对标里没标完成的 + 守卫里只许降的基线;只读                     
+      plan    规划者:把一个开发目标拆成 PR 列表(先后依赖、哪些主人看得见要先点头);只读,不执行                                   
 
 Use wechat-cc self <command> --help for more information about a command.
 

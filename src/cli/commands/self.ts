@@ -495,6 +495,82 @@ const selfShipCmd = defineCommand({
   },
 })
 
+// ── self plan — 开发目标 → 计划(拆几个 PR、先后、哪些主人看得见;src/cli/self-plan.ts 开头写了为什么) ──
+const selfPlanCmd = defineCommand({
+  meta: { name: 'plan', description: '规划者:把一个开发目标拆成 PR 列表(先后依赖、哪些主人看得见要先点头);只读,不执行' },
+  args: {
+    goal: { type: 'positional', required: false, description: '开发目标(一句话)' },
+    planner: { type: 'string', description: '谁来规划:claude(缺省)/ codex' },
+    'with-discover': { type: 'boolean', description: '把 self discover 的 roadmap / 守卫基线候选一起交给规划者(日志那一源不交:里面可能有联系人昵称)' },
+    show: { type: 'string', description: '看一份存下的计划', valueHint: 'id' },
+    json: { type: 'boolean', description: 'JSON 输出' },
+  },
+  async run({ args }) {
+    const { existsSync, mkdirSync, readFileSync, writeFileSync, readdirSync } = await import('node:fs')
+    const { homedir } = await import('node:os')
+    const plansDir = join(STATE_DIR, 'self-plans')
+    if (args.show) {
+      const p = join(plansDir, `${String(args.show)}.json`)
+      if (!existsSync(p)) { console.error(`没有这份计划:${String(args.show)}`); process.exit(1); return }
+      const { formatPlan } = await import('../self-plan')
+      const { readJsonFile } = await import('../../lib/read-json-file')
+      const saved = readJsonFile<{ order: string[] } & import('../self-plan').DevPlan>(p)
+      console.log(args.json ? JSON.stringify(saved, null, 2) : formatPlan(saved, saved.order))
+      return
+    }
+    const goal = String(args.goal ?? '').trim()
+    if (!goal) { console.error('self plan: 用法 wechat-cc self plan "<开发目标>" [--planner claude|codex] [--with-discover] [--json];看存下的:--show <id>'); process.exit(1); return }
+    const planner = String(args.planner ?? 'claude')
+    if (!['claude', 'codex'].includes(planner)) { console.error('self plan: --planner 只认 claude / codex'); process.exit(1); return }
+
+    const { resolveSelfChangeConfig } = await import('../self-change/config')
+    const { makeGit, nodeGitSpawnSync } = await import('../self-change/git')
+    const repoRoot = isCompiledBundle() ? null : SOURCE_REPO_ROOT
+    const origin = repoRoot ? makeGit(nodeGitSpawnSync, repoRoot).run(['remote', 'get-url', 'origin']) : null
+    const resolved = resolveSelfChangeConfig({ agent: loadAgentConfig(STATE_DIR).self_change, homeDir: homedir(), platform: process.platform, originUrl: origin?.code === 0 ? origin.stdout.trim() || null : null })
+    if (!resolved.ok) { console.error('不知道该克隆哪个仓库:打包版请在 agent-config.json 里写 self_change.repo_url'); process.exit(2); return }
+    const config = resolved.config
+
+    // 候选:只交 roadmap 和守卫基线(没有人的数据);日志里可能有联系人昵称,redact 抹不掉(self-change.md 已知限制)。
+    let candidates: string | undefined
+    if (args['with-discover'] && repoRoot) {
+      const { roadmapOpenItems, formatRoadmapItems } = await import('../self-discover-roadmap')
+      const { ratchetDebts, formatRatchetDebts } = await import('../self-discover-ratchets')
+      const scripts = join(repoRoot, 'scripts')
+      const roadmap = join(repoRoot, 'docs', 'roadmap.md')
+      candidates = [
+        existsSync(roadmap) ? formatRoadmapItems(roadmapOpenItems(readFileSync(roadmap, 'utf8'))) : '',
+        existsSync(scripts) ? formatRatchetDebts(ratchetDebts(readdirSync(scripts).filter(f => f.endsWith('.guard.test.ts')).map(f => ({ path: `scripts/${f}`, text: readFileSync(join(scripts, f), 'utf8') })))) : '',
+      ].filter(Boolean).join('\n\n')
+    }
+
+    const { readApiInfo } = await import('../../lib/api-info')
+    const { makeDaemonClient } = await import('../self-change/daemon-client')
+    const { guardedRunner, makeClaudeRunner, makeCodexReviewRunner, spawnCollect } = await import('../self-change/runner')
+    const { newSelfChangeId } = await import('../self-change/state')
+    const { runPlan } = await import('../self-plan')
+    const daemon = makeDaemonClient({ readApiInfo: () => readApiInfo(STATE_DIR), fetch })
+    // 规划者打的是官方端点:先过网络守护(跟实现 / 评审同一道)。
+    const inner = planner === 'codex' ? makeCodexReviewRunner({ launch: spawnCollect, env: process.env }) : makeClaudeRunner({ launch: spawnCollect, env: process.env })
+    const id = newSelfChangeId()
+    console.error(`规划中(${planner},只读)…计划号 ${id}`)
+    const res = await runPlan({
+      git: makeGit(nodeGitSpawnSync, config.workdir),
+      runner: guardedRunner(inner, () => daemon.guard()),
+      exists: p => existsSync(p),
+      mkdirp: p => { mkdirSync(p, { recursive: true }) },
+      writeFile: (p, t) => { writeFileSync(p, t) },
+      now: () => Date.now(),
+      log: l => console.error(l),
+      workdir: config.workdir, repoUrl: config.repoUrl, branch: config.branch, plansDir,
+      budgetUsd: config.reviewBudgetUsd, maxTurns: config.maxTurns,
+    }, { id, goal, ...(candidates ? { candidates } : {}) })
+    if (args.json) console.log(JSON.stringify(res, null, 2))
+    else console.log(res.ok ? `${res.message}\n\n存在 ${res.path}(wechat-cc self plan --show ${id});花了 $${res.costUsd.toFixed(2)}。每个 PR 用 wechat-cc self change "<那一条>" 去做。` : res.message)
+    process.exit(res.ok ? 0 : 1)
+  },
+})
+
 // ── self discover — 找活:真机日志里反复出现的失败 + roadmap 上没标完成的欠账 / 对标(src/cli/self-discover*.ts 开头写了判法) ──
 const selfDiscoverCmd = defineCommand({
   meta: { name: 'discover', description: '发掘任务:日志里反复出现的失败(按次数)+ roadmap 欠账 / 对标里没标完成的 + 守卫里只许降的基线;只读' },
@@ -545,5 +621,5 @@ const selfDiscoverCmd = defineCommand({
 
 export const selfCmd = defineCommand({
   meta: { name: 'self', description: '自维护:部署自身、让 CC 自己改自己（仅 macOS launchd；见 docs/maintainer/deploy.md 与 self-change.md）' },
-  subCommands: { change: selfChangeCmd, deploy: selfDeployCmd, ship: selfShipCmd, soak: selfSoakCmd, discover: selfDiscoverCmd },
+  subCommands: { change: selfChangeCmd, deploy: selfDeployCmd, ship: selfShipCmd, soak: selfSoakCmd, discover: selfDiscoverCmd, plan: selfPlanCmd },
 })

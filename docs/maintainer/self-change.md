@@ -42,6 +42,16 @@ CC 自己迭代时找活用的(设计稿 2026-10-23-cc-runs-development §4.8 �
 - **欠账之二:守卫基线**(`ratchets`):守卫里只许降的数。不是每个 BASELINE 都是欠账(speech-send 的是「允许在这里开口」的登记),所以不猜 —— 守卫自己在那条常量上一行写 `// @debt <降到 0 意味着什么>`,只认带标记的。认 `const X = 38` 和按文件的表(数字求和)。新加一个要降到 0 的棘轮,记得标 `@debt`;`self-discover-ratchets.test.ts` 钉着现有三个标记还认得出。
 - 还没接的:主人的话(要读聊天,等 daemon 里每晚跑的那一版)。
 
+## 规划:`wechat-cc self plan "<目标>"`(2026-10-23)
+
+设计稿 2026-10-23-cc-runs-development §4.2 的「规划者」、§6 第 6 步的 CLI 那一半:把一个开发目标拆成 PR 列表。在中枢克隆里开一棵站在 `origin/dev` 上的 detached 树,规划者用只读会话读代码和 docs(AGENTS.md、维护者 README、做法清单、roadmap、相关设计稿),最后回一个 JSON 计划;代码校验 id 唯一、依赖都在、没有环,按依赖排好序。主人看得见的改动标 `visible`,那几步先停在设计稿等点头;改动大的 `designFirst`,第一个 PR 是设计稿;拿不准的写进 `questions`。存 `<stateDir>/self-plans/<id>.json`,`--show <id>` 再看。
+
+- `--planner claude|codex`(缺省 claude;codex 走只读沙箱 + 锁死 MCP 那一套)。调模型前先过网络守护。
+- `--with-discover`:把 `self discover` 的 roadmap 和守卫基线候选一起交给规划者。**日志那一源不交**:里面可能有联系人昵称,redact 抹不掉。
+- 这一版不执行:每个 PR 照旧 `self change "<那一条>"`。并行、`dev_goal` 那件事、三端看进度是第 7、8 步,在核心链之后。
+- 只读会话动了树 ⇒ 照实打一行(树反正会删)。计划不成形 ⇒ 不存,带上规划者最后说的话。
+- 第一次真跑(10-23,「重启后恢复微信主动窗口状态」):$0.62,两个 PR。它先核对了代码,指出外发健康本来就只存内存、没有可读回的东西,改成把窗口标记落盘、开机时跟最新入站比对。
+
 ## 五道闸门
 
 ```
