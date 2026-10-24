@@ -17,8 +17,9 @@ const OWNER = 'owner@im.wechat'
 let stateDir: string
 let api: InternalApi | null
 let said: Array<[string, string]>
+let claimed: string[]
 
-beforeEach(() => { stateDir = mkdtempSync(join(tmpdir(), 'cli-say-')); api = null; said = [] })
+beforeEach(() => { stateDir = mkdtempSync(join(tmpdir(), 'cli-say-')); api = null; said = []; claimed = [] })
 afterEach(async () => { if (api) await api.stop({ unlinkToken: true }).catch(() => {}); rmSync(stateDir, { recursive: true, force: true }) })
 
 async function boot() {
@@ -27,8 +28,9 @@ async function boot() {
   api.provide({ terminalSay: {
     say: (code, text) => { said.push([code, text]); return { ok: true, ticket: 'a1b2c3d4e5f6', via: 'window', code, source: 'claude', project: 'cc', was_running: false, read_only: false, max_wait_ms: 570_000 } },
     wait: async (ticket) => ticket === 'a1b2c3d4e5f6'
-      ? { ticket, code: 'abc123', source: 'claude', project: 'cc', via: 'window', state: 'replied', final: true, delivered: true, reply: '好', reply_truncated: false, error: null, elapsed_ms: 5, was_running: false, reply_verified: true, read_only: false, owner_notified: false, max_wait_ms: 570_000 }
+      ? { ticket, code: 'abc123', source: 'claude', project: 'cc', via: 'window', state: 'replied', final: true, delivered: true, reply: '好', reply_truncated: false, error: null, elapsed_ms: 5, was_running: false, reply_verified: true, read_only: false, owner_notified: false, owner_has_reply: false, max_wait_ms: 570_000 }
       : null,
+    claim: (t) => { claimed.push(t) },
     isOwnerChat: (chatId) => chatId === OWNER,
   } })
   const post = (token: string) => fetch(`http://127.0.0.1:${port}/v1/cli/say`, {
@@ -69,6 +71,9 @@ describe('/v1/cli/say 的门', () => {
     expect(said).toEqual([['abc123', '先停下']])
     const g = await h.get(owner)
     expect(await g.json()).toMatchObject({ ok: true, state: 'replied', reply: '好' })
+    // 终局的回包写出去了('finish')才算领走
+    for (let i = 0; i < 50 && claimed.length === 0; i++) await new Promise(r => setTimeout(r, 10))
+    expect(claimed).toEqual(['a1b2c3d4e5f6'])
     expect((await h.get(owner, 'ffffffffffff')).status).toBe(404)
   })
 
@@ -82,6 +87,7 @@ describe('/v1/cli/say 的门', () => {
           seen = signal
           signal?.addEventListener('abort', () => { resolve(); res(null) }, { once: true })
         }),
+        claim: (t) => { claimed.push(t) },
         isOwnerChat: (c) => c === OWNER,
       } })
     })
@@ -96,6 +102,43 @@ describe('/v1/cli/say 的门', () => {
     await Promise.race([aborted, new Promise((_, rej) => setTimeout(() => rej(new Error('signal never aborted')), 3_000))])
     expect(seen!.aborted).toBe(true)
     await req
+    await new Promise(r => setTimeout(r, 50))
+    expect(claimed).toEqual([])   // 断开的那次没写出去,不算领走
+  })
+
+  it('keep-alive:同一条连接上连着 20 个请求,socket 上的 close 监听不越挂越多', async () => {
+    // 拿到服务端那一侧的 socket:Bun 与 node 的 node:http 都经 emit('request', req, res) 派发
+    const http = await import('node:http')
+    const serverSockets = new Set<{ listenerCount(e: string): number }>()
+    const origEmit = http.Server.prototype.emit
+    http.Server.prototype.emit = function (this: unknown, ev: string, ...args: unknown[]) {
+      if (ev === 'request') { const sk = (args[0] as { socket?: { listenerCount(e: string): number } }).socket; if (sk) serverSockets.add(sk) }
+      return (origEmit as (...a: unknown[]) => boolean).call(this, ev, ...args)
+    } as typeof origEmit
+    const serverSocketCloseListeners = () => Math.max(0, ...[...serverSockets].map(sk => sk.listenerCount('close')))
+    try {
+    const h = await boot()
+    const owner = h.api.mintSessionToken('admin', `claude/a/${OWNER}`)
+    const { request, Agent } = http
+    const agent = new Agent({ keepAlive: true, maxSockets: 1 })
+    const counts: number[] = []
+    for (let i = 0; i < 20; i++) {
+      await new Promise<void>((resolve, reject) => {
+        const r = request({ host: '127.0.0.1', port: h.api.port(), path: '/v1/cli/say?ticket=a1b2c3d4e5f6&wait_ms=0', agent, headers: { Authorization: `Bearer ${owner}` } }, (res) => {
+          res.resume()
+          res.on('end', () => resolve())
+        })
+        r.on('error', reject)
+        r.end()
+      })
+      await new Promise(r => setTimeout(r, 5))
+      counts.push(serverSocketCloseListeners())
+    }
+    agent.destroy()
+    expect(serverSockets.size).toBeGreaterThan(0)
+    // 回完就摘:第 20 个请求之后和第 1 个之后一样多(漏摘的话 Bun 下每个请求 +1,10-24 实测)
+    expect(Math.max(...counts)).toBeLessThanOrEqual(counts[0]!)
+    } finally { http.Server.prototype.emit = origEmit }
   })
 
   it('档位表 admin、不给 operator;schema;错误码都在一张表里', () => {

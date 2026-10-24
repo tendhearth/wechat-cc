@@ -73,8 +73,11 @@ export function cliEventRoutes(deps: InternalApiDeps): RouteTable {
       const waitRaw = Number(q.get('wait_ms') ?? '0')
       const waitMs = Math.max(0, Math.min(Number.isFinite(waitRaw) ? waitRaw : 0, TERMINAL_SAY_POLL_CAP_MS))
       // 请求断开(MCP 子进程死了)⇒ 立刻不算在等:这次轮询带不回去,Stop 要照常推、终局要告诉主人(评审 #662-2a)
-      const v = await deps.terminalSay.wait(q.get('ticket') ?? '', waitMs, ctx?.signal)
+      const ticket = q.get('ticket') ?? ''
+      const v = await deps.terminalSay.wait(ticket, waitMs, ctx?.signal)
       if (!v) return sayError('terminal_say_ticket_unknown')
+      // 终局只在回包真写出去之后才算被领走(写不出去 ⇒ terminal_say 自己兜底告诉主人,评审 #662 二轮 #1)
+      if (v.final) ctx?.onSent(() => deps.terminalSay?.claim(ticket))
       return { status: 200, body: { ok: true, ...v } }
     },
     // 接上 / 撤掉终端里的 Claude Code / Codex(2026-10-14)。主人在桌面上点了确认才会来;body 已按

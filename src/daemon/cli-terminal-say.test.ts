@@ -13,7 +13,7 @@ import { relayCommand, relayMessage } from './claude-live-window'
 let db: Db
 let hub: CliEventHub
 let windows: Map<string, string>
-let relayed: { name: string; text: string; header?: string }[]
+let relayed: { name: string; text: string; header?: string; noBypass?: boolean }[]
 let relayResult: { ok: true } | { ok: false; error: string }
 let releaseRelay: (() => void) | null
 let runs: { args: string[]; done: (r: RunResult) => void }[]
@@ -30,8 +30,8 @@ function make(over: Partial<TerminalSayDeps> = {}, coreOver: { dangerously?: boo
     run: (_cmd, args) => new Promise(done => { runs.push({ args, done }) }),
     liveWindow: {
       find: (s) => windows.has(s.session_id) ? { pid: 1, name: windows.get(s.session_id)!, kind: 'interactive' } : null,
-      relay: (w, text, header) => new Promise(res => {
-        relayed.push({ name: w.name, text, ...(header !== undefined ? { header } : {}) })
+      relay: (w, text, o) => new Promise(res => {
+        relayed.push({ name: w.name, text, ...(o?.header !== undefined ? { header: o.header } : {}), ...(o?.noBypass ? { noBypass: true } : {}) })
         if (releaseRelay === null) res(relayResult)
         else releaseRelay = () => res(relayResult)
       }),
@@ -66,7 +66,7 @@ describe('送进开着的窗口', () => {
     expect(r).toMatchObject({ ok: true, via: 'window', code: 'abc123', project: 'cc', was_running: false, read_only: false })
     if (!r.ok) throw new Error('unreachable')
     await tick()
-    expect(relayed).toEqual([{ name: 'cc-dev', text: '先停下,把 X 改成 Y', header: TERMINAL_SAY_HEADER }])
+    expect(relayed).toEqual([{ name: 'cc-dev', text: '先停下,把 X 改成 Y', header: TERMINAL_SAY_HEADER, noBypass: true }])
     expect((await say.wait(r.ticket, 0))!.state).toBe('delivered')
     expect(busy).toEqual(['+terminal-say:abc123', '+cli-relay:abc123', '-cli-relay:abc123'])
     const waiting = say.wait(r.ticket, 5_000)
@@ -77,8 +77,77 @@ describe('送进开着的窗口', () => {
     const v = (await waiting)!
     expect(v).toMatchObject({ state: 'replied', final: true, delivered: true, via: 'window', reply: '好的,已经停下,改成 Y 了。', reply_verified: true })
     expect(busy.at(-1)).toBe('-terminal-say:abc123')
+    say.claim(r.ticket)   // = GET 回包写出去了('finish')
     await tick(30)
     expect(told).toEqual([])   // 领走了,不另告诉主人
+  })
+
+  it('连着的轮询被叫醒了,回包却没写出去(断了 / 子进程死了)⇒ 推送已经吞了,兜底照样告诉主人', async () => {
+    hub.ingest(ev({ kind: 'stop', text: 'x' }))
+    windows.set('abc123def', 'cc-dev')
+    const r = say.say('abc123', 'hi')
+    if (!r.ok) throw new Error('unreachable')
+    await tick()
+    const waiting = say.wait(r.ticket, 5_000)
+    expect(say.noteEvent(ev({ kind: 'stop', text: '改好了' }))).toBe(true)
+    await waiting   // 叫醒了,但没有 claim
+    await tick(30)
+    expect(told).toEqual(['Claude · 码 abc123(CC 替你问的那句)回来了\n改好了'])
+  })
+
+  it('断开的请求看到终局也不算领走', async () => {
+    hub.ingest(ev({ kind: 'stop', text: 'x' }))
+    const r = say.say('abc123', 'hi')
+    if (!r.ok) throw new Error('unreachable')
+    await tick(); await tick()
+    runs[0]!.done({ code: 0, stdout: '好', stderr: '', timedOut: false })
+    await tick()
+    const ac = new AbortController(); ac.abort()
+    expect((await say.wait(r.ticket, 5_000, ac.signal))!.state).toBe('replied')
+    await tick(30)
+    expect(told).toHaveLength(1)
+  })
+
+  it('送的时候来的 Stop 照常推了(markPushed)⇒ 后来当成回话带回去时标 owner_has_reply,也不另告诉主人', async () => {
+    hub.ingest(ev({ kind: 'stop', text: 'idle' }))
+    windows.set('abc123def', 'cc-dev')
+    releaseRelay = () => {}
+    const r = say.say('abc123', 'ping')
+    if (!r.ok) throw new Error('unreachable')
+    await tick()
+    expect(say.noteEvent(ev({ kind: 'stop', text: 'pong' }))).toBe(false)
+    say.markPushed('abc123def')
+    releaseRelay!()
+    await tick(30)
+    expect(say.view(r.ticket)).toMatchObject({ state: 'replied', reply: 'pong', owner_has_reply: true })
+    expect(told).toEqual([])
+  })
+
+  it('两次轮询之间来的 Stop 照常推了 ⇒ 下一次轮询拿到时标 owner_has_reply', async () => {
+    hub.ingest(ev({ kind: 'stop', text: 'x' }))
+    windows.set('abc123def', 'cc-dev')
+    const r = say.say('abc123', 'hi')
+    if (!r.ok) throw new Error('unreachable')
+    await tick()
+    expect(say.noteEvent(ev({ kind: 'stop', text: '回了' }))).toBe(false)
+    say.markPushed('abc123def')
+    expect((await say.wait(r.ticket, 0))!).toMatchObject({ reply: '回了', owner_has_reply: true })
+  })
+
+  it('同一条会话一次一张票:上一张等太久 ⇒ 先明确收成 expired 再开新的', async () => {
+    let t = 1_000_000
+    const s2 = make({ now: () => t })
+    hub.ingest(ev({ kind: 'stop', text: 'x' }))
+    windows.set('abc123def', 'cc-dev')
+    const a = s2.say('abc123', 'one')
+    if (!a.ok) throw new Error('unreachable')
+    await tick()
+    expect(s2.say('abc123', 'two')).toMatchObject({ ok: false, error: 'terminal_say_pending' })
+    t += 13 * 60_000
+    const b = s2.say('abc123', 'two')
+    expect(b).toMatchObject({ ok: true })
+    expect(s2.view(a.ticket)).toMatchObject({ state: 'expired', final: true })
+    s2.dispose()
   })
 
   it('回话里的密钥打码;和记录对不上 ⇒ reply_verified=false(照样带回)', async () => {
@@ -171,12 +240,21 @@ describe('什么时候吞「做完了」推送(评审 #662-2:只在连着的轮�
     await say.wait(t, 0)
     expect(say.noteEvent(ev({ kind: 'stop', text: '回了' }))).toBe(false)
   })
-  it('上一次轮询到点回了 delivered、下一次还没来(空隙)⇒ 照常推;窗口那条路回话不另告诉主人(推送就是)', async () => {
+  it('上一次轮询到点回了 delivered、下一次还没来(空隙)⇒ 照常推;推了就不另告诉主人,hub 没排推送才由这里补', async () => {
+    const t = await delivered()
+    await say.wait(t, 10)
+    expect(say.noteEvent(ev({ kind: 'stop', text: '回了' }))).toBe(false)
+    say.markPushed('abc123def')
+    await tick(30)
+    expect(told).toEqual([])
+    expect(say.view(t)!.owner_has_reply).toBe(true)
+  })
+  it('空隙里的 Stop hub 没排推送(比如主人在电脑前)⇒ 没人领就由这里告诉主人', async () => {
     const t = await delivered()
     await say.wait(t, 10)
     expect(say.noteEvent(ev({ kind: 'stop', text: '回了' }))).toBe(false)
     await tick(30)
-    expect(told).toEqual([])
+    expect(told).toEqual(['Claude · 码 abc123(CC 替你问的那句)回来了\n回了'])
   })
   it('请求断开(MCP 子进程死了)⇒ 那次等待立刻不算 ⇒ 照常推', async () => {
     const t = await delivered()
@@ -219,6 +297,7 @@ describe('窗口没开着 ⇒ 同「@码」:resume 接着原会话跑', () => {
     const waiting = say.wait(r.ticket, 5_000)
     runs[0]!.done({ code: 0, stdout: '做到第 3 步', stderr: '', timedOut: false })
     expect((await waiting)!).toMatchObject({ state: 'replied', reply: '做到第 3 步', read_only: true })
+    say.claim(r.ticket)
     await tick(30)
     expect(told).toEqual([])
   })
@@ -252,6 +331,7 @@ describe('窗口没开着 ⇒ 同「@码」:resume 接着原会话跑', () => {
     runs[0]!.done({ code: 0, stdout: '好', stderr: '', timedOut: false })
     await tick()
     expect((await say.wait(r.ticket, 0))!.state).toBe('replied')
+    say.claim(r.ticket)
     await tick(40)
     expect(told).toEqual([])
   })

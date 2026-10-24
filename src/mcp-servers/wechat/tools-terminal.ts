@@ -40,7 +40,7 @@ interface SayView {
   ticket: string; code: string; source: string; project: string; via: 'window' | 'resume'
   state: string; final: boolean; delivered: boolean | null
   reply: string | null; reply_truncated: boolean; reply_verified?: boolean | null; error: string | null; elapsed_ms: number; was_running: boolean
-  read_only?: boolean; owner_notified?: boolean; max_wait_ms?: number
+  read_only?: boolean; owner_notified?: boolean; owner_has_reply?: boolean; max_wait_ms?: number
 }
 
 /**
@@ -61,8 +61,8 @@ export function formatSayResult(v: SayView, opts: { waitedS: number }): string {
     delivered: v.delivered, state: v.state, waited_seconds: opts.waitedS,
   }
   if (v.read_only) facts.read_only = '会话没开着窗口,这一轮是只读续接:要权限的操作会被拒;要它真动手改东西,请主人自己发「@码 话」。'
-  if (v.owner_notified) {
-    facts.owner_notified = '这份结果 daemon 已经直接发给主人了,别再重复转述,最多一句「它回过你了」。'
+  if (v.owner_has_reply || v.owner_notified) {
+    facts.owner_has_reply = '主人已经收到这条回复了,别再转述;最多一句「它回过你了」。'
   }
   switch (v.state) {
     case 'replied':

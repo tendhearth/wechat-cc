@@ -140,8 +140,12 @@ export function relayCommand(windowName: string, text: string, dangerously: bool
 
 export type RelayResult = { ok: true } | { ok: false; error: string }
 
-export async function relayToWindow(w: LiveWindow, text: string, deps: { run: Runner; cwd: string; dangerously: boolean; bin?: string; header?: string }): Promise<RelayResult> {
-  const { cmd, args } = relayCommand(w.name, text, deps.dangerously, deps.bin, deps.header)
+/**
+ * noBypass(terminal_say,评审 #662 二轮 #4):话是模型写的 ⇒ 发信小进程不跟 daemon 的免审走,只 `--allowedTools SendMessage`
+ * (它本来也只有 SendMessage 一个工具)。主人自己「@码」不带它,照旧。
+ */
+export async function relayToWindow(w: LiveWindow, text: string, deps: { run: Runner; cwd: string; dangerously: boolean; noBypass?: boolean; bin?: string; header?: string }): Promise<RelayResult> {
+  const { cmd, args } = relayCommand(w.name, text, deps.dangerously && !deps.noBypass, deps.bin, deps.header)
   const r = await deps.run(cmd, args, deps.cwd, RELAY_TIMEOUT_MS)
   if (r.timedOut) return { ok: false, error: '送进窗口超时' }
   // 只认最后一行就是 RELAY_SENT:「RELAY_FAILED … not RELAY_SENT」之类的回显不能算送到。

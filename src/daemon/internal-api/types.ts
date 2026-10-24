@@ -268,7 +268,7 @@ export interface InternalApiDeps {
    * CC 代主人对终端会话说一句、等它回话(terminal_say,2026-10-24,daemon/cli-terminal-say.ts)。
    * POST /v1/cli/say、GET /v1/cli/say;只给主人自己那条聊天的 admin 会话(isOwnerChat)。缺席 ⇒ 503。
    */
-  terminalSay?: Pick<import('../cli-terminal-say').TerminalSay, 'say' | 'wait'> & { isOwnerChat(chatId: string): boolean }
+  terminalSay?: Pick<import('../cli-terminal-say').TerminalSay, 'say' | 'wait' | 'claim'> & { isOwnerChat(chatId: string): boolean }
   /**
    * 「今天」一眼看完(core/overseer-today.ts,2026-10-14):终端 + 一起做,过去 24 小时。
    * main.ts setOverseerToday;没设之前 GET /v1/overseer/today 503。只读,只在被问时算。
@@ -708,8 +708,11 @@ export type RouteHandler = (
     turnChatId?: string
     sharedTurn?: 'bound' | 'none' | 'ambiguous'
   },
-  /** signal:调用方断开时中止(长轮询的路由用;其余忽略)。 */
-  ctx?: { signal: AbortSignal },
+  /**
+   * signal:调用方断开时中止(长轮询的路由用;其余忽略)。
+   * onSent:回包真写出去之后再调(没写出去 / 调用方已断 ⇒ 不调)。
+   */
+  ctx?: { signal: AbortSignal; onSent(cb: () => void): void },
 ) => Promise<{ status: number; body: unknown }> | { status: number; body: unknown }
 
 export type RouteTable = Record<string, RouteHandler | undefined>

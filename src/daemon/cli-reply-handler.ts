@@ -83,8 +83,11 @@ export interface CliReplyCoreDeps {
    */
   liveWindow?: {
     find(s: CliSessionInfo): LiveWindow | null
-    /** header:转进去那段话的第一行;缺省 = 主人原话那一句(claude-live-window RELAY_OWNER_HEADER)。 */
-    relay(w: LiveWindow, text: string, header?: string): Promise<RelayResult>
+    /**
+     * header:转进去那段话的第一行;缺省 = 主人原话那一句(claude-live-window RELAY_OWNER_HEADER)。
+     * noBypass:发信小进程不带 daemon 的免审(terminal_say:话是模型写的)。
+     */
+    relay(w: LiveWindow, text: string, opts?: { header?: string; noBypass?: boolean }): Promise<RelayResult>
   }
   /** Claude 的 resume 要在会话开始时的文件夹里起(从记录开头读);缺席 / 读不到 ⇒ 用登记处的 cwd。 */
   startCwd?: (s: CliSessionInfo) => string | null
@@ -123,7 +126,8 @@ export interface CliReplyCore {
    * header(2026-10-24 terminal_say):话不是主人原话、是 CC 代主人说的 ⇒ 第一行换成这一句。窗口那条路交给
    * relayMessage 当第一行;resume 那条路放在话前面一行 —— 两条路对方读到的是同一个样子。缺省 ⇒ 同以前。
    * noBypass(评审 #662-3):resume 那条路不带 daemon 的 --dangerously 姿态 —— 话是模型写的,不能拿
-   * --dangerously-skip-permissions / --force / bypass-approvals 去跑。窗口那条路不受影响(窗口有它自己的权限)。
+   * --dangerously-skip-permissions / --force / bypass-approvals 去跑。窗口那条路:窗口本身有主人给它的权限,不变;
+   * 往窗口里送话的发信小进程也不带免审(交给 liveWindow.relay 的 noBypass)。
    */
   resume(s: CliSessionInfo, text: string, opts?: { header?: string; noBypass?: boolean }): Promise<ResumeOutcome>
   /** 这条会话开在电脑的窗口里(话会送进窗口,所以它在跑也能说)。 */
@@ -153,7 +157,7 @@ export function makeCliReplyCore(deps: CliReplyCoreDeps): CliReplyCore {
     },
     async resume(s, text, opts) {
       const w = live(s)
-      if (w) return relayInner(s, w, text, opts?.header)
+      if (w) return relayInner(s, w, text, opts?.header === undefined && !opts?.noBypass ? undefined : { ...(opts?.header !== undefined ? { header: opts.header } : {}), ...(opts?.noBypass ? { noBypass: true } : {}) })
       if (opts?.header) text = `${opts.header}\n${text}`
       const ident = { source: s.source, session_id: s.session_id, cwd: s.cwd, ...(s.machine ? { machine: s.machine } : {}), ...(s.transcript_path ? { transcript_path: s.transcript_path } : {}), ...(s.origin_agent ? { origin_agent: s.origin_agent } : {}) }
       const note = (ev: { kind: 'prompt' } | { kind: 'stop'; text: string }) => { try { deps.hub.observe?.({ ...ident, ...ev }) } catch { /* 登记处出错不影响接着跑 */ } }
@@ -167,7 +171,7 @@ export function makeCliReplyCore(deps: CliReplyCoreDeps): CliReplyCore {
    * 送进开着的窗口:发信小进程也是一次 Claude 调用,同样过网络闸门;不登记执行占用(跑的是那个窗口)。
    * 但发信小进程本身要跑到 90 秒,要登记 busy —— 否则空闲自动重启会把它杀在半路,话就丢了(评审 10-19 #2)。
    */
-  async function relayInner(s: CliSessionInfo, w: LiveWindow, text: string, header?: string): Promise<ResumeOutcome> {
+  async function relayInner(s: CliSessionInfo, w: LiveWindow, text: string, relayOpts?: { header?: string; noBypass?: boolean }): Promise<ResumeOutcome> {
     if (deps.networkGate) {
       const d = await decideCall(deps.networkGate, { provider: 'claude', purpose: 'turn' as const })
       if (!d.allowed) { deps.log('CLI_REPLY', `relay ${s.session_id.slice(0, 6)} refused — network unprotected [${d.verdict!.source}]`); return { kind: 'failed', text: unprotectedMessage(d.verdict!, d.cls.label) } }
@@ -176,7 +180,7 @@ export function makeCliReplyCore(deps: CliReplyCoreDeps): CliReplyCore {
     const release = deps.holdBusy?.(`cli-relay:${s.session_id.slice(0, 6)}`) ?? (() => {})
     // 同一条会话连着说两句:发信小进程排队,一句送完再送下一句 —— 并行跑时谁先到不一定(评审 10-19 #8)。
     const prev = relayChains.get(s.session_id) ?? Promise.resolve()
-    const mine = prev.then(() => header === undefined ? deps.liveWindow!.relay(w, text) : deps.liveWindow!.relay(w, text, header))
+    const mine = prev.then(() => relayOpts === undefined ? deps.liveWindow!.relay(w, text) : deps.liveWindow!.relay(w, text, relayOpts))
       .catch(err => ({ ok: false as const, error: err instanceof Error ? err.message : String(err) }))
       .finally(release)
     relayChains.set(s.session_id, mine)

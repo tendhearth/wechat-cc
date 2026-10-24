@@ -178,7 +178,12 @@ export function wireCliSessions(d: WireCliSessionsDeps) {
       // 这个 Stop 正是 CC 在等的回话,CC 这就转给主人 ⇒ 只登记、不再照常推一遍「做完了」(否则主人同一句收两次)。
       // CC 已经不等了(工具超时)⇒ handed=false,照常推。
       if (handed) { cliEvents.observe(ev); return 'noop' }
-      if (!forwarder?.brain()) return cliEvents.ingest(ev)
+      if (!forwarder?.brain()) {
+        const action = cliEvents.ingest(ev)
+        // 这个 Stop 照常排了终端完成推送 ⇒ 记下主人会收到它,CC 之后再看到这份回话就别重复转述(评审 #662 二轮 #3)
+        if (ev.kind === 'stop' && action === 'scheduled') { try { terminalSay?.markPushed(ev.session_id) } catch { /* 只少一句提示 */ } }
+        return action
+      }
       cliEvents.observe(ev)
       return forwarder.event(ev)
     },
@@ -222,7 +227,8 @@ export function wireCliSessions(d: WireCliSessionsDeps) {
   const claudeCli = resolveClaudeBinary()
   const liveWindow = {
     find: (s: CliSessionInfo) => findLiveWindow(s.session_id),
-    relay: (w: LiveWindow, text: string, header?: string) => relayToWindow(w, text, { run: defaultRunner, cwd: stateDir, dangerously, ...(claudeCli ? { bin: claudeCli } : {}), ...(header !== undefined ? { header } : {}) }),
+    // noBypass(terminal_say,评审 #662 二轮 #4):发信小进程也不带免审 —— 话是模型写的;只 --allowedTools SendMessage。
+    relay: (w: LiveWindow, text: string, o?: { header?: string; noBypass?: boolean }) => relayToWindow(w, text, { run: defaultRunner, cwd: stateDir, dangerously, ...(o?.noBypass ? { noBypass: true } : {}), ...(claudeCli ? { bin: claudeCli } : {}), ...(o?.header !== undefined ? { header: o.header } : {}) }),
   }
   const startCwd = (s: CliSessionInfo) => s.transcript_path ? transcriptStartCwd(readHead(s.transcript_path, 64 * 1024)) : null
   const replyCore = makeCliReplyCore({ executionConflict,reserveExecution,hub: cliEvents, holdBusy: (l) => boot.holdBusy(l), log: (t, l) => log(t, l), dangerously, ...(claudeCli ? { claudeBin: claudeCli } : {}), networkGate: d.networkGate, liveWindow, startCwd })
@@ -246,6 +252,7 @@ export function wireCliSessions(d: WireCliSessionsDeps) {
   internalApi.provide({ terminalSay: {
     say: (code, text) => terminalSay!.say(code, text),
     wait: (ticket, ms, signal) => terminalSay!.wait(ticket, ms, signal),
+    claim: (ticket) => terminalSay!.claim(ticket),
     // 只认主人那条聊天(同微信「@码」的 isOwner)
     isOwnerChat: (chatId) => resolveAdminChatId(loadAccess(), loadCompanionConfig(stateDir), null) === chatId,
   } })

@@ -77,10 +77,11 @@ export const TERMINAL_SAY_HEADER = '(Tendhearth CC 代主人转来,不是主人�
 export type TerminalSayVia = 'window' | 'resume'
 /**
  * sending:正往开着的窗口送;delivered:送进窗口了,等它这一轮的 Stop;running:resume 在跑;
- * replied:有回话;failed:没送到 / 没跑起来;ended:送到之后会话结束了、没回话;timeout:resume 跑满 10 分钟被停。
+ * replied:有回话;failed:没送到 / 没跑起来;ended:送到之后会话结束了、没回话;timeout:resume 跑满 10 分钟被停;
+ * expired:窗口那一轮一直没 Stop,超过 TERMINAL_SAY_BUSY_MAX_MS 后主人 / CC 又说了下一句,这张票先收掉。
  */
-export type TerminalSayState = 'sending' | 'delivered' | 'running' | 'replied' | 'failed' | 'ended' | 'timeout'
-const FINAL: ReadonlySet<TerminalSayState> = new Set(['replied', 'failed', 'ended', 'timeout'])
+export type TerminalSayState = 'sending' | 'delivered' | 'running' | 'replied' | 'failed' | 'ended' | 'timeout' | 'expired'
+const FINAL: ReadonlySet<TerminalSayState> = new Set(['replied', 'failed', 'ended', 'timeout', 'expired'])
 
 export type TerminalSayError =
   | 'terminal_say_unknown_session'
@@ -115,6 +116,8 @@ export interface TerminalSayView {
   read_only: boolean
   /** 没人领、已经由 daemon 自己告诉主人了(之后不用 CC 再转)。 */
   owner_notified: boolean
+  /** 主人已经收到这条回复了(daemon 告诉过,或这条 Stop 照常排了终端完成推送)⇒ CC 别再转述(评审 #662 二轮 #3)。 */
+  owner_has_reply: boolean
   /** 工具一次最多等多久(terminalSayMaxWaitMs)。 */
   max_wait_ms: number
 }
@@ -127,6 +130,10 @@ export interface TerminalSay {
    */
   wait(ticket: string, waitMs: number, signal?: AbortSignal): Promise<TerminalSayView | null>
   view(ticket: string): TerminalSayView | null
+  /** 这张票的终局已经写给调用方了(GET 回包 'finish' 之后才调)⇒ 不用 daemon 再告诉主人。 */
+  claim(ticket: string): void
+  /** 这条会话刚报来的 Stop 照常排了终端完成推送(hub ingest 回 scheduled)⇒ 主人会收到那一句。 */
+  markPushed(sessionId: string): void
   /**
    * 终端 hooks 报来的事件(POST /v1/cli/event 那一口)—— 窗口那条路靠它拿到回话。
    * 回 true = 此刻有一次连着的轮询会把这份回话带回去 ⇒ 调用方不再照常推「做完了」;其余一律 false,照常推。
@@ -179,6 +186,9 @@ interface Ticket {
   /** 终局之后有人看到过(哪怕只看一眼)⇒ 不用 daemon 再告诉主人。 */
   claimed: boolean
   ownerNotified: boolean
+  /** 上一个没被吞的 Stop 的话(调用方随后照常推);markPushed 之后进 pushedText。 */
+  unhandedText: string | null
+  pushedText: string | null
   release: () => void
   busyTimer: ReturnType<typeof setTimeout> | null
   claimTimer: ReturnType<typeof setTimeout> | null
@@ -195,9 +205,11 @@ export function makeTerminalSay(deps: TerminalSayDeps): TerminalSay {
     ticket: t.id, code: t.code, source: t.source, project: t.project, via: t.via, state: t.state, final: FINAL.has(t.state),
     delivered: t.delivered, reply: t.reply, reply_truncated: t.truncated, reply_verified: t.verified, error: t.error,
     elapsed_ms: (t.settledAt ?? now()) - t.startedAt, was_running: t.wasRunning, read_only: t.via === 'resume', owner_notified: t.ownerNotified,
+    owner_has_reply: ownerHasReply(t),
     max_wait_ms: maxWaitMs,
   })
-  /** 有人看到了这张票的终局(会进工具结果)。 */
+  const ownerHasReply = (t: Ticket) => t.ownerNotified || (t.reply !== null && t.pushedText !== null && t.pushedText === t.reply)
+  /** 这张票的终局已经写给调用方了(回包 'finish' 之后)。断开 / 没写出去的不调这里。 */
   const claim = (t: Ticket) => { if (FINAL.has(t.state)) { t.claimed = true; if (t.claimTimer) { clearTimeout(t.claimTimer); t.claimTimer = null } } }
 
   const wake = (t: Ticket) => { for (const w of [...t.waiters]) w() }
@@ -210,8 +222,9 @@ export function makeTerminalSay(deps: TerminalSayDeps): TerminalSay {
   /** 没人领的终局 ⇒ 告诉主人,措辞同「@码」那条路(cli-reply-handler sayTo)。窗口那条路的回话 / 结束不发:hub 已照常推。 */
   async function notifyUnclaimed(t: Ticket): Promise<void> {
     t.claimTimer = null
-    if (t.claimed || t.ownerNotified) return
-    if (t.via === 'window' && t.state !== 'failed') return
+    if (t.claimed || ownerHasReply(t)) return
+    // 没有回话可说的终局不打扰主人;窗口那条路的回话照常推过了就不重复(ownerHasReply),被吞了推送才由这里补
+    if (t.state === 'ended' || t.state === 'expired') return
     const head = `${label(t)}(CC 替你问的那句)`
     let text: string
     if (t.state === 'failed') text = `${head}没送到:${t.error ?? '原因不明'}`
@@ -240,8 +253,9 @@ export function makeTerminalSay(deps: TerminalSayDeps): TerminalSay {
     // 中间状态不叫醒连着的轮询:叫醒了就是一段空隙,那时来的 Stop 就没人带回去了
     if (!FINAL.has(t.state)) return
     t.settledAt = now(); releaseBusy(t)
-    if (t.waiters.size > 0) { t.claimed = true; wake(t); return }   // 连着的轮询这就带回去
-    // 此刻没人在等:给工具的下一次轮询几秒钟来领;没人领 ⇒ 告诉主人
+    // 连着的轮询这就带回去 —— 但要等它的回包真写出去(claim)才算领走;写不出去(断了 / 子进程死了)⇒ 下面的兜底照样告诉主人。
+    // 此刻没人在等:给工具的下一次轮询几秒钟来领;没人领 ⇒ 告诉主人。
+    wake(t)
     t.claimTimer = setTimeout(() => { void notifyUnclaimed(t) }, deps.unclaimedGraceMs ?? TERMINAL_SAY_UNCLAIMED_GRACE_MS)
     unref(t.claimTimer)
   }
@@ -257,8 +271,16 @@ export function makeTerminalSay(deps: TerminalSayDeps): TerminalSay {
   }
 
   const isRemote = (s: CliSessionInfo) => !!s.origin_agent || (!!s.machine && !!deps.localMachine && s.machine !== deps.localMachine)
-  // 还在等的上一句只挡 TERMINAL_SAY_BUSY_MAX_MS:窗口那一轮一直不 Stop 也不能把这条会话永远堵死。迟到的 Stop 照样记进那张票。
-  const openFor = (sessionId: string) => [...tickets.values()].find(t => t.sessionId === sessionId && !FINAL.has(t.state) && now() - t.startedAt < TERMINAL_SAY_BUSY_MAX_MS) ?? null
+  // 同一条会话同时只有一张没终局的票:Stop 归谁才说得清。等了超过 TERMINAL_SAY_BUSY_MAX_MS 的那张先明确收成 expired
+  // (窗口那一轮一直不 Stop 也不能把这条会话永远堵死),再开新的(评审 #662 二轮 #5a)。
+  const openFor = (sessionId: string) => {
+    for (const t of tickets.values()) {
+      if (t.sessionId !== sessionId || FINAL.has(t.state)) continue
+      if (now() - t.startedAt >= TERMINAL_SAY_BUSY_MAX_MS) { settle(t, { state: 'expired' }); continue }
+      return t
+    }
+    return null
+  }
 
   /** 这个 Stop 是不是送话时那条会话自己报的(能核的都核)。 */
   const sameSession = (t: Ticket, ev: CliEvent): boolean =>
@@ -310,7 +332,7 @@ export function makeTerminalSay(deps: TerminalSayDeps): TerminalSay {
         id, sessionId: s.session_id, code: short, source: s.source, machine: s.machine, transcriptPath: s.transcript_path, project, via,
         state: w ? 'sending' : 'running', delivered: w ? null : true, reply: null, truncated: false, verified: null, error: null,
         startedAt: now(), settledAt: null, wasRunning: !!w && (v?.status === 'running' || v?.status === 'waiting'), earlyStop: null,
-        waiters: new Set(), claimed: false, ownerNotified: false,
+        waiters: new Set(), claimed: false, ownerNotified: false, unhandedText: null, pushedText: null,
         release: deps.holdBusy?.(`terminal-say:${short}`) ?? (() => {}), busyTimer: null, claimTimer: null,
       }
       t.busyTimer = setTimeout(() => releaseBusy(t), TERMINAL_SAY_BUSY_MAX_MS)
@@ -339,19 +361,29 @@ export function makeTerminalSay(deps: TerminalSayDeps): TerminalSay {
     async wait(ticket, waitMs, signal) {
       const t = tickets.get(ticket)
       if (!t) return null
-      if (FINAL.has(t.state) || waitMs <= 0 || signal?.aborted) { claim(t); return toView(t) }
+      if (FINAL.has(t.state) || waitMs <= 0 || signal?.aborted) return toView(t)
       await new Promise<void>((resolve) => {
         const done = () => { clearTimeout(timer); t.waiters.delete(done); signal?.removeEventListener('abort', done); resolve() }
         const timer = setTimeout(done, waitMs)
         t.waiters.add(done)
         signal?.addEventListener('abort', done, { once: true })
       })
-      // 请求断开:这次的结果谁也收不到,不算领走(没人领 ⇒ 到点告诉主人)
-      if (!signal?.aborted) claim(t)
+      // 领没领走由调用方回包写出去之后 claim() 说了算(断开 / 没写出去 ⇒ 不算)
       return toView(t)
     },
 
     view(ticket) { const t = tickets.get(ticket); return t ? toView(t) : null },
+
+    claim(ticket) { const t = tickets.get(ticket); if (t) claim(t) },
+
+    markPushed(sessionId) {
+      for (const t of tickets.values()) {
+        if (t.sessionId !== sessionId || t.unhandedText === null) continue
+        t.pushedText = redactSecrets(t.unhandedText)
+        t.unhandedText = null
+        if (ownerHasReply(t) && t.claimTimer) { clearTimeout(t.claimTimer); t.claimTimer = null }
+      }
+    },
 
     noteEvent(ev) {
       if (ev.kind !== 'stop' && ev.kind !== 'session_end') return false
@@ -364,8 +396,10 @@ export function makeTerminalSay(deps: TerminalSayDeps): TerminalSay {
         // 空的 Stop(没带最后一句)不算回话:接着等,照常推
         if (!text.trim()) continue
         // 还在送:先记下,送完再判归属(见 say);这时没人能把它带回去,照常推
-        if (t.state === 'sending') { t.earlyStop = ev; continue }
-        if (t.waiters.size > 0) handed = true
+        if (t.state === 'sending') { t.earlyStop = ev; t.unhandedText = text; continue }
+        const mine = t.waiters.size > 0
+        if (mine) handed = true
+        else t.unhandedText = text   // 没被吞 ⇒ 调用方照常推;推了(markPushed)就记下主人已经收到
         settle(t, { state: 'replied', reply: text, verified: verify(t, text) })
       }
       return handed

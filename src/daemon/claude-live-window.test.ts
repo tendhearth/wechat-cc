@@ -87,6 +87,16 @@ describe('送进窗口', () => {
     expect(await relayToWindow(w, 'x', { run: run('', { timedOut: true }), cwd: '/', dangerously: false })).toEqual({ ok: false, error: '送进窗口超时' })
     expect(await relayToWindow(w, 'x', { run: run('', { code: 1 }), cwd: '/', dangerously: false })).toEqual({ ok: false, error: 'exit 1' })
   })
+  it('noBypass(terminal_say,评审 #662 二轮 #4):daemon 免审也不给发信小进程 bypassPermissions,只 --allowedTools SendMessage;主人「@码」照旧', async () => {
+    const w = { pid: 1, name: 'w', kind: 'interactive' }
+    const seen: string[][] = []
+    const run = async (_c: string, args: string[]) => { seen.push(args); return { code: 0, stdout: 'RELAY_SENT', stderr: '', timedOut: false } }
+    await relayToWindow(w, 'x', { run, cwd: '/', dangerously: true, noBypass: true })
+    await relayToWindow(w, 'x', { run, cwd: '/', dangerously: true })
+    expect(seen[0]).not.toContain('bypassPermissions')
+    expect(seen[0]!.join(' ')).toContain('--allowedTools SendMessage')
+    expect(seen[1]!.join(' ')).toContain('--permission-mode bypassPermissions')
+  })
 })
 
 describe('不开着时 resume 的文件夹', () => {
