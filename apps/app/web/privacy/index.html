@@ -1,0 +1,67 @@
+<!doctype html>
+<html lang="zh-Hans">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Tendhearth CC · 隐私说明</title>
+<style>
+body{margin:0;font-family:-apple-system,"PingFang SC",sans-serif;background:#F6F4EE;color:#26241F;line-height:1.75}
+main{max-width:680px;margin:0 auto;padding:40px 22px 60px}h1{font-size:26px}h2{font-size:18px;margin-top:28px}li{margin:4px 0}
+.muted{color:#6F6A60;font-size:14px}a{color:inherit;text-underline-offset:3px}
+</style>
+</head>
+<body>
+<main>
+<h1>Tendhearth CC · 隐私说明</h1>
+<p class="muted">Nate Gu &amp; Co LLC · 更新于 2026-10-24<br>联系：<a href="mailto:developer@nateguco.com">developer@nateguco.com</a></p>
+
+<p>Tendhearth CC 是住在你自己电脑上的个人 AI。iPhone 上的 App 只是它的一个入口：你在手机上说的话、发的图和批准，都送到你自己的电脑，由那台电脑处理。App 没有账号，不需要手机号或邮箱。</p>
+
+<h2>配对与中继</h2>
+<ul>
+<li>手机和电脑之间的内容都是端到端加密的：每次连接都会重新协商密钥，密钥由配对时只在手机和电脑之间交换的凭据派生。中继服务器 <code>relay.tendhearth.com</code>（运行在 Cloudflare 上）只负责转发，看不到也存不下对话、图片、文件或语音的内容。</li>
+<li>中继不排队、不留存消息：电脑不在线时，手机这边的连接直接断开，不会先存起来等着送。</li>
+<li>中继能看到的是转发需要的元信息：你电脑的中继编号、手机生成的随机设备编号、推送令牌、连接时间、数据量大小，以及网络连接带来的 IP 地址。我们的代码不记录 IP，也不在日志里写这些编号；为防滥用，Cloudflare 会按 IP 做短时计数。</li>
+<li>中继长期保存的只有两样：每台已配对手机的推送登记（平台和推送令牌），取消配对时删除；以及每台电脑每天的用量计数（转发了多少字节、发了几条推送），不含内容，用来看容量和防滥用，目前不会自动删除。另有不带任何编号的总计数（例如今天有多少次连接）。</li>
+<li>如果你扫的配对码指向你自己搭的中继，手机会连到那台服务器，并在配对前显示它的地址让你确认。</li>
+</ul>
+
+<h2>推送通知</h2>
+<ul>
+<li>通知经 Apple 推送服务（APNs）送达。Apple 和中继看到的通知文字只是「CC 有新动态」；真正的标题和内容是加密的，只在你的手机上解开。</li>
+<li>为了把同一件事的通知合并，Apple 会收到一个随机的事项编号，它不含内容。</li>
+</ul>
+
+<h2>你的电脑会做什么</h2>
+<p>手机把内容交给你的电脑之后，电脑会按你在电脑上的设置，把对话和任务交给你选择的 AI 服务（例如 Claude、Codex、Cursor 或 Gemini）；按住说话的录音交给你在电脑上设置的语音转文字服务；等你批准的命令和任务进度，可能交给你设置的轻量模型改写成好懂的话。这些服务如何处理数据，遵循它们各自的政策和你与它们的协议。我们不经手这些内容。</p>
+
+<h2>权限</h2>
+<ul>
+<li>相机：只用来扫电脑上显示的配对码。</li>
+<li>照片：只在你选一张图发给 CC 时读取你选的那张。</li>
+<li>麦克风：只在你按住说话时录音，录音加密送到你的电脑。</li>
+<li>通知：用来提醒你 CC 有新动态或在等你批准。</li>
+</ul>
+
+<h2>分享到 CC</h2>
+<p>从别的 App 分享文字、链接或图片（最多 4 张）给 Tendhearth CC 时，内容先放在手机上本 App 自己的共享区，再加密送到你的电脑。</p>
+
+<h2>手机上存了什么</h2>
+<ul>
+<li>配对凭据和推送解密用的密钥，保存在系统钥匙串里。</li>
+<li>最近发出或还没送达的回复文字，用来在断线后重发。</li>
+<li>界面语言、上次离开 App 的时间，以及打开过的文件、语音的临时缓存。</li>
+<li>演示模式（「先看看」）的内容是 App 自带的示例，不连接任何服务器。</li>
+</ul>
+
+<h2>统计与广告</h2>
+<p>没有广告，没有第三方统计、崩溃上报或追踪，不跨 App 或网站追踪你。</p>
+
+<h2>删除</h2>
+<p>在 App 的设置里取消配对，会清掉手机上的配对凭据和推送密钥，并让电脑通知中继删除这台手机的推送登记；如果当时电脑离线，它下次上线时会补删。删除 App 会移除它在手机上的数据，钥匙串里的条目可能由系统保留。你电脑上的数据由你电脑上的 Tendhearth CC 管理。其他删除请求或隐私问题，请联系 <a href="mailto:developer@nateguco.com">developer@nateguco.com</a>。</p>
+
+<h2 lang="en">English summary</h2>
+<p lang="en">The Tendhearth CC iPhone app is a front end for the Tendhearth CC that runs on your own computer. There is no account. Everything between your phone and your computer — chat, pictures, files, voice and approvals — is end-to-end encrypted; our relay at relay.tendhearth.com (on Cloudflare) only forwards it, cannot read it and does not queue messages. The relay sees forwarding metadata: your computer's relay ID, a random device ID, push tokens, connection times, data sizes and IP addresses. Our code does not log IPs or IDs; Cloudflare keeps short-lived per-IP counters for abuse protection. The relay stores push registrations until you unpair, plus per-computer daily counts of bytes and pushes (no content), which are currently kept indefinitely, and anonymous totals. Notifications go through Apple Push Notification service: Apple and the relay only see the generic text “CC 有新动态” and a random item ID; the real content is encrypted and decrypted on your phone. Your computer then sends your requests to the AI, speech-to-text and summarisation services you chose there, under their own policies. Camera is used only to scan the pairing code, Photos only for pictures you pick, the microphone only while you hold to talk. Shared items go to your computer. The phone keeps pairing credentials and the push key in the Keychain, recent replies for resending, and temporary caches; demo mode uses no network. No ads, no third-party analytics, crash reporting or tracking. Unpairing in Settings removes the phone's credentials and its relay push registration. For other requests, contact developer@nateguco.com.</p>
+</main>
+</body>
+</html>
