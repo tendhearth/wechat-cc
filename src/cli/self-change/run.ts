@@ -16,6 +16,7 @@ import { join } from 'node:path'
 import { SELF_CHANGE_DEFAULTS } from './policy'
 import { commitAll, isDirty, notify, runPath, steps, summaryOf, writePatch, type FixKind, type PipelineDeps } from './steps'
 import type { SelfChangeState } from './state'
+import { LESSON_DETAIL_MAX, lessonsFor } from './lessons'
 
 /** 退出码的唯一出处(CLI 和微信侧都读这张表)。 */
 export const SELF_CHANGE_EXIT = { done: 0, failed: 1, blocked: 2, declined: 3, approvalTimeout: 4 } as const
@@ -80,10 +81,21 @@ export async function runSelfChange(
 
   const save = (): void => { s.updatedAt = deps.now(); deps.state.save(s) }
 
+  /** 收场时记教训(修复轮的原因 + 没做成时的结局);只记还没记过的修复轮。 */
+  const writeLessons = (result: string, detail: string): void => {
+    if (!deps.recordLessons) return
+    const rows = lessonsFor(s, result, detail, deps.now())
+    s.lessonsWritten = s.fixLog?.length ?? 0
+    if (rows.length) {
+      try { deps.recordLessons(rows) } catch (err) { deps.log(`[self-change] 记教训失败(不影响结果):${err instanceof Error ? err.message : String(err)}`) }
+    }
+  }
+
   /** 走到结局:记 result、存盘、告诉主人、必要时停机。 */
   const finish = async (result: string, detail: string): Promise<{ state: SelfChangeState; exitCode: SelfChangeExitCode }> => {
     s.result = result
     if (detail) s.error = detail
+    writeLessons(result, detail)
     save()
     await notify(s, deps, noticeFor(s, result, detail))
     // 连着两次部署 / 自检失败 ⇒ 停机。再自动跑下去只会把机器越推越坏。
@@ -160,6 +172,7 @@ export async function runSelfChange(
    */
   const fixRound = async (kind: FixKind, prompt: string, detail: string): Promise<{ state: SelfChangeState; exitCode: SelfChangeExitCode } | null> => {
     s.implement.rounds[kind] += 1
+    ;(s.fixLog ??= []).push({ kind, at: deps.now(), detail: detail.slice(0, LESSON_DETAIL_MAX) })
     if (s.implement.rounds[kind] > SELF_CHANGE_DEFAULTS.max_fix_rounds) {
       return await finish(`${kind}_exhausted`, detail)
     }
@@ -219,6 +232,7 @@ export async function runSelfChange(
   }
 
   s.result = 'done'
+  writeLessons('done', '')
   save()
   return { state: s, exitCode: SELF_CHANGE_EXIT.done }
 }

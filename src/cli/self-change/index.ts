@@ -15,7 +15,7 @@
  *
  * 设计:docs/superpowers/specs/2026-09-18-self-change-pipeline-design.md。
  */
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
+import { appendFileSync, existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
 import { cpus, homedir, loadavg } from 'node:os'
 import { join } from 'node:path'
 
@@ -26,6 +26,7 @@ import { defaultSelfDeployDeps, executeSelfDeploy, planSelfDeploy, resolveSignin
 import { defaultSelftestDeps, runChatSelftest, runWorkbenchSelftest, type SelftestReport } from '../selftest'
 import type { SelfChangeConfig } from './config'
 import { makeDaemonClient } from './daemon-client'
+import { SELF_LESSONS_FILE } from './lessons'
 import { ghForge } from './forge'
 import { makeGit, nodeGitSpawnSync } from './git'
 import { chooseReviewer, guardedRunner, makeClaudeRunner, makeCodexReviewRunner, spawnCollect } from './runner'
@@ -214,6 +215,8 @@ export function defaultPipelineDeps(stateDir: string, config: SelfChangeConfig, 
 
     deploy: (repoRoot) => runDeploy(repoRoot, 'deploy'),
     machineLoad: () => ({ load1: loadavg()[0] ?? 0, cpus: cpus().length }),
+    // 教训账:一行一条 JSON,追加写(lessons.ts)。`self discover --source lessons` 读它。
+    recordLessons: (rows) => { appendFileSync(join(stateDir, SELF_LESSONS_FILE), rows.map(r => JSON.stringify(r)).join('\n') + '\n') },
     rollback: (repoRoot) => runDeploy(repoRoot, 'rollback'),
 
     selftest: makeSelftest(config, {
