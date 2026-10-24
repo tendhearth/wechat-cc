@@ -32,7 +32,7 @@ import { makeConversationStore } from '../core/conversation-store'
 import { makeTurnRecordStore } from '../core/turn-record-store'
 import { providerDisplayName } from './provider-display-names'
 import { loadAllAccounts, makeIlinkAdapter } from './ilink-glue'
-import { registerInternalApi } from './internal-api/lifecycle'
+import { registerInternalApi, type InternalApiLifecycle } from './internal-api/lifecycle'
 import { runSelftestConverse } from './selftest'
 import { startCliUpgrade } from './cli-upgrade/start'
 import type { CliUpgrader } from '../core/cli-upgrade/engine'
@@ -343,7 +343,9 @@ async function bootDaemonInner(opts: BootDaemonOpts, undo: Array<() => void>): P
     // 一个消息库实例喂两个 dep(messages / latestInboundTs),下面 registerInternalApi 用。
     const messagesStore = makeMessagesStore(db)
     // 1. internal-api FIRST — bootstrap needs its baseUrl/token for MCP wiring
-    const internalApi = await registerInternalApi({
+    // 核心链就地搬家第 2 步(设计稿 2026-10-23-core-chain-modules):停法**先**登记(以前起到一半抛了,端口没人关),
+    // 位置还是原来 lc.register(internalApi) 那一行(中间没有别的登记);起不来照旧整个开机失败。
+    const internalApi: InternalApiLifecycle = (await startLifecycleModule(moduleHost, 'internal-api', () => registerInternalApi({
       stateDir, daemonPid: process.pid, memory: memoryFS, db, projects: ilink.projects,
       atelier: makeAtelierStore(stateDir),
       getChatPrefs: (c) => chatPrefs.get(c),
@@ -474,8 +476,7 @@ async function bootDaemonInner(opts: BootDaemonOpts, undo: Array<() => void>): P
       // this isn't scoped to any one session — mirrors the CLI's own
       // admin-resolution posture.
       resolveAdminChatId: () => resolveAdminChatId(loadAccess(), loadCompanionConfig(stateDir), null),
-    })
-    lc.register(internalApi)
+    }), { required: true }))!
     // 2. bootstrap composes provider registry / session manager / coordinator
     const boot = await buildBootstrap({
       stateDir, db, ilink, loadProjects: ilink.loadProjects, networkGate: guardRt.gate, teardown: bootTeardown, speech: () => speechRef.current,
