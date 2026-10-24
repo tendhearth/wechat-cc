@@ -26,7 +26,8 @@ import { loadCompanionConfig } from '../companion/config'
 import { ensureStarterRules, makePermissionGate, STARTER_NOTICE, terminalAskAsync } from '../permission-gate'
 import { makePendingNotices } from '../speech/pending-notices'
 import { makePermissionDecisionsStore } from '../permission-decisions-store'
-import { defaultRunner, makeCliReplyCore, makeHandReplyExecutor, readHead } from '../cli-reply-handler'
+import { defaultRunner, makeCliReplyCore, makeHandReplyExecutor, readHead, readTail } from '../cli-reply-handler'
+import { turnTimeoutMsFromEnv } from '../../lib/turn-timeout'
 import { makeOverseerTodaySource, TODAY_TERMINAL_LIMIT, type TodayWorkbench } from '../overseer-today-source'
 import { makeTerminalHooksService } from '../terminal-hooks'
 import { findLiveWindow, liveSessionIds, relayToWindow, transcriptStartCwd, type LiveWindow } from '../claude-live-window'
@@ -225,10 +226,26 @@ export function wireCliSessions(d: WireCliSessionsDeps) {
   }
   const startCwd = (s: CliSessionInfo) => s.transcript_path ? transcriptStartCwd(readHead(s.transcript_path, 64 * 1024)) : null
   const replyCore = makeCliReplyCore({ executionConflict,reserveExecution,hub: cliEvents, holdBusy: (l) => boot.holdBusy(l), log: (t, l) => log(t, l), dangerously, ...(claudeCli ? { claudeBin: claudeCli } : {}), networkGate: d.networkGate, liveWindow, startCwd })
-  terminalSay = makeTerminalSay({ hub: cliEvents, core: replyCore, holdBusy: (l) => boot.holdBusy(l), localMachine: osHostname(), log: (t, l) => log(t, l) })
+  terminalSay = makeTerminalSay({
+    hub: cliEvents, core: replyCore, holdBusy: (l) => boot.holdBusy(l), localMachine: osHostname(), log: (t, l) => log(t, l),
+    // 没人领的终局(CC 那一轮早结束了,比如 resume 跑了好几分钟):经 CC 开口那道门告诉主人,同终端完成推送(cli_session,report)。
+    notifyOwner: async (text) => {
+      const owner = resolveAdminChatId(loadAccess(), loadCompanionConfig(stateDir), null)
+      const sat = boot.sendAssistantText
+      const speech = d.speech()
+      if (!owner || !sat || !speech) { log('TERMINAL_SAY', 'unclaimed reply not sent: no owner / speech not wired'); return }
+      await speech.tell('cli_session', owner, text, (c, t) => sat(c, t))
+    },
+    sharePage: async (title, markdown) => {
+      const owner = resolveAdminChatId(loadAccess(), loadCompanionConfig(stateDir), null)
+      return (await ilink.sharePage(title, markdown, owner ? { chat_id: owner } : undefined)).url
+    },
+    readTranscript: (path) => readTail(path, 256 * 1024),
+    turnTimeoutMs: turnTimeoutMsFromEnv(process.env),
+  })
   internalApi.provide({ terminalSay: {
     say: (code, text) => terminalSay!.say(code, text),
-    wait: (ticket, ms) => terminalSay!.wait(ticket, ms),
+    wait: (ticket, ms, signal) => terminalSay!.wait(ticket, ms, signal),
     // 只认主人那条聊天(同微信「@码」的 isOwner)
     isOwnerChat: (chatId) => resolveAdminChatId(loadAccess(), loadCompanionConfig(stateDir), null) === chatId,
   } })

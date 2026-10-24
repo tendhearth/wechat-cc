@@ -708,6 +708,8 @@ export type RouteHandler = (
     turnChatId?: string
     sharedTurn?: 'bound' | 'none' | 'ambiguous'
   },
+  /** signal:调用方断开时中止(长轮询的路由用;其余忽略)。 */
+  ctx?: { signal: AbortSignal },
 ) => Promise<{ status: number; body: unknown }> | { status: number; body: unknown }
 
 export type RouteTable = Record<string, RouteHandler | undefined>

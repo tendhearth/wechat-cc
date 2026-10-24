@@ -25,9 +25,9 @@ async function boot() {
   api = createInternalApi({ stateDir, daemonPid: 1, memory: makeMemoryFS({ rootDir: join(stateDir, 'memory') }) })
   const { port, tokenFilePath } = await api.start()
   api.provide({ terminalSay: {
-    say: (code, text) => { said.push([code, text]); return { ok: true, ticket: 'a1b2c3d4e5f6', via: 'window', code, source: 'claude', project: 'cc', was_running: false } },
+    say: (code, text) => { said.push([code, text]); return { ok: true, ticket: 'a1b2c3d4e5f6', via: 'window', code, source: 'claude', project: 'cc', was_running: false, read_only: false, max_wait_ms: 570_000 } },
     wait: async (ticket) => ticket === 'a1b2c3d4e5f6'
-      ? { ticket, code: 'abc123', source: 'claude', project: 'cc', via: 'window', state: 'replied', final: true, delivered: true, reply: '好', reply_truncated: false, error: null, elapsed_ms: 5, was_running: false }
+      ? { ticket, code: 'abc123', source: 'claude', project: 'cc', via: 'window', state: 'replied', final: true, delivered: true, reply: '好', reply_truncated: false, error: null, elapsed_ms: 5, was_running: false, reply_verified: true, read_only: false, owner_notified: false, max_wait_ms: 570_000 }
       : null,
     isOwnerChat: (chatId) => chatId === OWNER,
   } })
@@ -70,6 +70,32 @@ describe('/v1/cli/say 的门', () => {
     const g = await h.get(owner)
     expect(await g.json()).toMatchObject({ ok: true, state: 'replied', reply: '好' })
     expect((await h.get(owner, 'ffffffffffff')).status).toBe(404)
+  })
+
+  it('长轮询的调用方断开 ⇒ 交给 wait 的 signal 中止(挂着的等待不能当成「还有人在等」)', async () => {
+    const h = await boot()
+    let seen: AbortSignal | undefined
+    const aborted = new Promise<void>((resolve) => {
+      h.api.provide({ terminalSay: {
+        say: () => { throw new Error('unused') },
+        wait: (_t, _ms, signal) => new Promise((res) => {
+          seen = signal
+          signal?.addEventListener('abort', () => { resolve(); res(null) }, { once: true })
+        }),
+        isOwnerChat: (c) => c === OWNER,
+      } })
+    })
+    const owner = h.api.mintSessionToken('admin', `claude/a/${OWNER}`)
+    const ac = new AbortController()
+    const port = h.api.port()
+    const req = fetch(`http://127.0.0.1:${port}/v1/cli/say?ticket=a1b2c3d4e5f6&wait_ms=20000`, { headers: { Authorization: `Bearer ${owner}` }, signal: ac.signal }).catch(() => null)
+    for (let i = 0; i < 100 && !seen; i++) await new Promise(r => setTimeout(r, 10))
+    expect(seen).toBeDefined()
+    expect(seen!.aborted).toBe(false)
+    ac.abort()
+    await Promise.race([aborted, new Promise((_, rej) => setTimeout(() => rej(new Error('signal never aborted')), 3_000))])
+    expect(seen!.aborted).toBe(true)
+    await req
   })
 
   it('档位表 admin、不给 operator;schema;错误码都在一张表里', () => {

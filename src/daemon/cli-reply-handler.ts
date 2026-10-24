@@ -122,8 +122,10 @@ export interface CliReplyCore {
   /**
    * header(2026-10-24 terminal_say):话不是主人原话、是 CC 代主人说的 ⇒ 第一行换成这一句。窗口那条路交给
    * relayMessage 当第一行;resume 那条路放在话前面一行 —— 两条路对方读到的是同一个样子。缺省 ⇒ 同以前。
+   * noBypass(评审 #662-3):resume 那条路不带 daemon 的 --dangerously 姿态 —— 话是模型写的,不能拿
+   * --dangerously-skip-permissions / --force / bypass-approvals 去跑。窗口那条路不受影响(窗口有它自己的权限)。
    */
-  resume(s: CliSessionInfo, text: string, opts?: { header?: string }): Promise<ResumeOutcome>
+  resume(s: CliSessionInfo, text: string, opts?: { header?: string; noBypass?: boolean }): Promise<ResumeOutcome>
   /** 这条会话开在电脑的窗口里(话会送进窗口,所以它在跑也能说)。 */
   live(s: CliSessionInfo): LiveWindow | null
 }
@@ -156,7 +158,7 @@ export function makeCliReplyCore(deps: CliReplyCoreDeps): CliReplyCore {
       const ident = { source: s.source, session_id: s.session_id, cwd: s.cwd, ...(s.machine ? { machine: s.machine } : {}), ...(s.transcript_path ? { transcript_path: s.transcript_path } : {}), ...(s.origin_agent ? { origin_agent: s.origin_agent } : {}) }
       const note = (ev: { kind: 'prompt' } | { kind: 'stop'; text: string }) => { try { deps.hub.observe?.({ ...ident, ...ev }) } catch { /* 登记处出错不影响接着跑 */ } }
       note({ kind: 'prompt' })
-      const r = await resumeInner(s, text)
+      const r = await resumeInner(s, text, opts?.noBypass === true)
       note({ kind: 'stop', text: r.kind === 'ok' ? r.text : r.kind === 'timeout' ? `跑了 ${Math.round(RESUME_TIMEOUT_MS / 60_000)} 分钟还没完,先停了。${r.text ? ` ${r.text}` : ''}` : `没跑起来：${r.text}` })
       return r
     },
@@ -183,7 +185,7 @@ export function makeCliReplyCore(deps: CliReplyCoreDeps): CliReplyCore {
     if (!r.ok) { deps.log('CLI_REPLY', `relay ${s.session_id.slice(0, 6)} failed: ${r.error}`); return { kind: 'failed', text: `没送进电脑上开着的窗口(${r.error})` } }
     return { kind: 'relayed', text: w.name }
   }
-  async function resumeInner(s: CliSessionInfo, text: string): Promise<ResumeOutcome> {
+  async function resumeInner(s: CliSessionInfo, text: string, noBypass = false): Promise<ResumeOutcome> {
     // 守护 v2:按这条终端会话的来源分类(claude 看 ANTHROPIC_BASE_URL;codex 看它自己的配置层 ——
     // CODEX_HOME/config.toml + 这个目录的项目层,codex 不认 OPENAI_BASE_URL);需要保护且网络不安全才不起 CLI。
     if (deps.networkGate) {
@@ -200,7 +202,7 @@ export function makeCliReplyCore(deps: CliReplyCoreDeps): CliReplyCore {
     if(deps.executionConflict?.(s))return{kind:'failed',text:'这条会话或文件夹正在「一起做」里，请在那里继续。'}
     let settle:((closed:boolean)=>void)|undefined,closed=false
     try{settle=deps.reserveExecution?.(s)}catch{return{kind:'failed',text:'这个文件夹有另一项任务正在执行，请稍后再试。'}}
-    const { cmd, args } = resumeCommand(s.source, s.session_id, text, deps.dangerously, deps.claudeBin ? { claude: deps.claudeBin } : {})
+    const { cmd, args } = resumeCommand(s.source, s.session_id, text, deps.dangerously && !noBypass, deps.claudeBin ? { claude: deps.claudeBin } : {})
     const release = deps.holdBusy?.(`cli-resume:${s.session_id.slice(0, 6)}`) ?? (() => {})
     let cwd = s.cwd
     if (s.source === 'claude' && deps.startCwd) { try { cwd = deps.startCwd(s) ?? s.cwd } catch { cwd = s.cwd } }

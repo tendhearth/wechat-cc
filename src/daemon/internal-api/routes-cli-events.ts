@@ -67,12 +67,13 @@ export function cliEventRoutes(deps: InternalApiDeps): RouteTable {
       if (!r.ok) return { status: sayError(r.error).status, body: r }
       return { status: 200, body: r }
     },
-    'GET /v1/cli/say': async (q, _body, caller) => {
+    'GET /v1/cli/say': async (q, _body, caller, ctx) => {
       if (!deps.terminalSay) return sayError('terminal_say_not_wired')
       if (!ownerSession(caller)) return sayError('terminal_say_not_owner')
       const waitRaw = Number(q.get('wait_ms') ?? '0')
       const waitMs = Math.max(0, Math.min(Number.isFinite(waitRaw) ? waitRaw : 0, TERMINAL_SAY_POLL_CAP_MS))
-      const v = await deps.terminalSay.wait(q.get('ticket') ?? '', waitMs)
+      // 请求断开(MCP 子进程死了)⇒ 立刻不算在等:这次轮询带不回去,Stop 要照常推、终局要告诉主人(评审 #662-2a)
+      const v = await deps.terminalSay.wait(q.get('ticket') ?? '', waitMs, ctx?.signal)
       if (!v) return sayError('terminal_say_ticket_unknown')
       return { status: 200, body: { ok: true, ...v } }
     },

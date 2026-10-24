@@ -26,6 +26,7 @@
  *   - src/daemon/main.ts (production entry)
  *   - src/daemon/bootstrap.test.ts / bootstrap.a2a.test.ts / bootstrap/boot-order.test.ts
  */
+import { turnTimeoutMsFromEnv } from '../../lib/turn-timeout'
 import { makeTeardown } from './teardown'
 import { wireIdleSweep } from './wire-idle-sweep'
 import { SessionManager } from '../../core/session-manager'
@@ -165,12 +166,7 @@ export async function buildBootstrap(deps: BootstrapDeps): Promise<Bootstrap> {
   // Resolved here (moved ahead of registerProviders in the agy-provider
   // task) so the agy provider's `--print-timeout` can share this exact
   // value at registration time, same as the coordinator does below.
-  const turnTimeoutMs = (() => {
-    const raw = process.env['WECHAT_TURN_TIMEOUT_MS']
-    if (raw == null || raw === '') return 10 * 60_000
-    const n = Number(raw)
-    return Number.isFinite(n) && n >= 0 ? n : 10 * 60_000
-  })()
+  const turnTimeoutMs = turnTimeoutMsFromEnv(process.env)
 
   const { registry, defaultProviderId, codexBinary, codexVersionCheck, providerNotes: baseProviderNotes, providerProbes, stopProviderProbes, reprobeProvider } = await registerProviders({
     log: deps.log, networkGate: deps.networkGate,

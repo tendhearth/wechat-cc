@@ -18,21 +18,38 @@ export const TERMINAL_SAY_WAIT_DEFAULT_S = 240
 export const TERMINAL_SAY_WAIT_MAX_S = 600
 const POLL_MS = 25_000
 /**
- * 实际最多等这么久:CC 自己这一轮有个「多久没动静就判卡死」的看门狗(turnTimeoutMs,缺省 10 分钟,collectTurn),
- * 工具调用期间 provider 一个事件都不发 —— 真等满 600s 正好撞上它,整轮被丢、回话也丢。留 30 秒。
+ * 本会话是哪一家(daemon spawn 时写进 env,mcp-specs participantTag)。Cursor(ACP)和 agy 的 MCP 客户端
+ * 工具超时没法从我们这边放宽:cursor-agent 只有 `worker --mcp-tool-timeout` 认这个(acp 模式没有,10-24 读
+ * 2026.10.22 版的包确认),agy 没查到开关 —— 按 MCP SDK 缺省的 60s 算。这两家只等一小会儿就带票回来,
+ * 回话到了 daemon 会自己告诉主人(没人领的终局),不报错。
  */
-const EFFECTIVE_WAIT_MAX_S = 570
+const OWN_PROVIDER = process.env.WECHAT_PARTICIPANT_TAG
+export const SHORT_WAIT_PROVIDERS: ReadonlySet<string> = new Set(['cursor', 'agy'])
+export const SHORT_WAIT_S = 40
+
+/** 这一次最多等多久(秒):主人要的、daemon 按看门狗给的上限、这家客户端的工具超时,取最小。 */
+export function effectiveWaitS(requested: number, daemonMaxMs: number | undefined, provider = OWN_PROVIDER): number {
+  let cap = TERMINAL_SAY_WAIT_MAX_S
+  if (typeof daemonMaxMs === 'number' && daemonMaxMs >= 0) cap = Math.min(cap, Math.floor(daemonMaxMs / 1000))
+  if (provider && SHORT_WAIT_PROVIDERS.has(provider)) cap = Math.min(cap, SHORT_WAIT_S)
+  return Math.max(0, Math.min(requested, cap))
+}
 
 interface SayView {
   ok?: boolean
   ticket: string; code: string; source: string; project: string; via: 'window' | 'resume'
   state: string; final: boolean; delivered: boolean | null
-  reply: string | null; reply_truncated: boolean; error: string | null; elapsed_ms: number; was_running: boolean
+  reply: string | null; reply_truncated: boolean; reply_verified?: boolean | null; error: string | null; elapsed_ms: number; was_running: boolean
+  read_only?: boolean; owner_notified?: boolean; max_wait_ms?: number
 }
 
-/** 终端会话写的回话是数据:包起来、拆掉伪造的收尾标签(同 calendar_agenda)。 */
-function wrapReply(reply: string): string {
-  return `<terminal_reply>\n${reply.replace(/<\/?terminal_reply\b/gi, m => m.replace('<', '‹'))}\n</terminal_reply>`
+/**
+ * 终端会话写的回话是数据:包起来,拆掉一切像收尾 / 开头标签的写法(同 calendar_agenda)——
+ * `<` 或全角 `＜`、中间随便几个空格、可有可无的 `/`、再空格、terminal_reply,不分大小写(评审 #662-5)。
+ */
+export function wrapReply(reply: string): string {
+  const safe = reply.replace(/[<＜]\s*\/?\s*terminal_reply/gi, m => `‹${m.slice(1)}`)
+  return `<terminal_reply>\n${safe}\n</terminal_reply>`
 }
 
 /** 给模型的结果:一段 JSON(结构化事实)+ 有回话时附上包好的原文。 */
@@ -43,15 +60,20 @@ export function formatSayResult(v: SayView, opts: { waitedS: number }): string {
     via: v.via === 'window' ? 'window(送进了电脑上开着的窗口)' : 'resume(窗口没开着,接着原会话跑了一轮)',
     delivered: v.delivered, state: v.state, waited_seconds: opts.waitedS,
   }
+  if (v.read_only) facts.read_only = '会话没开着窗口,这一轮是只读续接:要权限的操作会被拒;要它真动手改东西,请主人自己发「@码 话」。'
+  if (v.owner_notified) {
+    facts.owner_notified = '这份结果 daemon 已经直接发给主人了,别再重复转述,最多一句「它回过你了」。'
+  }
   switch (v.state) {
     case 'replied':
       facts.summary = '它回话了,见下面 <terminal_reply>。'
       if (v.reply_truncated) facts.reply_truncated = `回话太长截断了;全文主人可以发「看 ${v.code}」。`
+      if (v.reply_verified === false) facts.reply_unverified = '这段回话没能和那条会话自己的记录对上(记录可能还没写完);转述时说是它报来的,别说得太肯定。'
       if (v.was_running) facts.note = '送到时它正在跑上一轮,这段回话可能是那一轮的收尾,不一定是对这句的回答;拿不准就照实跟主人说。'
       break
-    case 'sending': facts.summary = `还在往窗口里送(发信要十几秒),还没有回话。${later}`; break
-    case 'delivered': facts.summary = `已经送进窗口,它这一轮还没结束,还没有回话(这不代表它卡住或忙,只是还没回)。${later}`; break
-    case 'running': facts.summary = `已交给它接着跑(最多 10 分钟),还没跑完。${later}`; break
+    case 'sending': facts.summary = `还在往窗口里送(发信要十几秒),还没有回话。它回话时会照常通知主人(终端完成推送),不用你再转;跟主人说一声已经转过去了。${later}`; break
+    case 'delivered': facts.summary = `已经送进窗口,它这一轮还没结束,还没有回话(这不代表它卡住或忙,只是还没回)。它回话时会照常通知主人(终端完成推送),不用你再转;跟主人说一声已经转过去了。${later}`; break
+    case 'running': facts.summary = `已交给它接着跑(最多 10 分钟),还没跑完。跑完的回话会自己发到主人微信,不用你再转;跟主人说一声已经转过去了。${later}`; break
     case 'timeout': facts.summary = '它跑满 10 分钟被停了;下面是停之前的输出(如果有)。'; break
     case 'ended': facts.summary = '话送到了,但那条会话随后结束了,没有回话。'; break
     case 'failed': facts.summary = `没送到 / 没跑起来:${v.error ?? '原因不明'}。一句都没转达,照实告诉主人。`; break
@@ -99,20 +121,21 @@ export function registerTerminalTools(server: McpServer, client: InternalApiClie
         '跟 delegate_* 的区别:delegate 是新开一个 AI 做一次性咨询,看不到那条会话;terminal_say 找的就是那条会话本身(它的上下文、它在改的文件)。' +
         '话会以「(Tendhearth CC 代主人转来…)」开头送过去;窗口开着就直接送进窗口,没开着就接着原会话跑一轮。' +
         '一般要一到几分钟,先跟主人说一声在问。等不到(wait_seconds 到点)会照实回「已送到、还没回话」和票号,别说成它忙或卡住;' +
-        '被拒时回登记处里的原状态(在跑 / 等批准 / 已结束),照实转述。text 写清楚要它做什么或回答什么,别替主人做主人没说的决定。',
+        '被拒时回登记处里的原状态(在跑 / 等批准 / 已结束),照实转述。text 写清楚要它做什么或回答什么,别替主人做主人没说的决定。' +
+        '会话没开着时是只读续接;要它真动手改东西,请主人用 @码。',
       inputSchema: {
         code: z.string().regex(/^[0-9a-fA-F]{4,64}$/).describe('会话码(terminal_sessions 里的「码」,会话 id 前 6 位)'),
         text: z.string().min(1).max(4000).describe('要转达的话;对方看不到微信里的上下文,把需要的背景写进去'),
-        wait_seconds: z.number().int().min(0).max(TERMINAL_SAY_WAIT_MAX_S).optional().describe(`最多等回话多少秒,默认 ${TERMINAL_SAY_WAIT_DEFAULT_S};填多了按 ${EFFECTIVE_WAIT_MAX_S} 算(留给你这一轮的看门狗)`),
+        wait_seconds: z.number().int().min(0).max(TERMINAL_SAY_WAIT_MAX_S).optional().describe(`最多等回话多少秒,默认 ${TERMINAL_SAY_WAIT_DEFAULT_S};daemon 会按你这一轮的看门狗再压一点,等不到就带票回来`),
       },
     },
     async ({ code, text, wait_seconds }) => {
       const started = Date.now()
-      const waitS = Math.max(0, Math.min(wait_seconds ?? TERMINAL_SAY_WAIT_DEFAULT_S, EFFECTIVE_WAIT_MAX_S))
-      let ticket: string
+      let ticket: string, waitS: number
       try {
-        const r = await client.request<{ ok: true; ticket: string }>('POST', '/v1/cli/say', { code, text })
+        const r = await client.request<{ ok: true; ticket: string; max_wait_ms?: number }>('POST', '/v1/cli/say', { code, text })
         ticket = r.ticket
+        waitS = effectiveWaitS(wait_seconds ?? TERMINAL_SAY_WAIT_DEFAULT_S, r.max_wait_ms)
       } catch (err) { return refusal(err, 'terminal_say') }
       try {
         const v = await pollUntil(client, ticket, started + waitS * 1000)
@@ -140,7 +163,11 @@ export function registerTerminalTools(server: McpServer, client: InternalApiClie
     async ({ ticket, wait_seconds }) => {
       const started = Date.now()
       try {
-        const v = await pollUntil(client, ticket, started + Math.min(wait_seconds ?? 0, EFFECTIVE_WAIT_MAX_S) * 1000)
+        const want = wait_seconds ?? 0
+        // 先看一眼(不算在等),拿到 daemon 给的上限再接着等
+        let v = await client.request<SayView | null>('GET', `/v1/cli/say?ticket=${encodeURIComponent(ticket)}&wait_ms=0`)
+        const waitS = v ? effectiveWaitS(want, v.max_wait_ms) : 0
+        if (v && !v.final && waitS > 0) v = await pollUntil(client, ticket, started + waitS * 1000)
         if (!v) return { content: [{ type: 'text', text: JSON.stringify({ ok: false, error: 'terminal_say_ticket_unknown' }) }] }
         return { content: [{ type: 'text', text: formatSayResult(v, { waitedS: Math.round((Date.now() - started) / 1000) }) }] }
       } catch (err) { return refusal(err, 'terminal_say_result') }

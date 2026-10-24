@@ -336,7 +336,17 @@ export function createInternalApi(deps: InternalApiDeps): InternalApi {
       ? (() => { try { return deps.holdBusy?.(`api:${routeKey}`) } catch { return undefined } })()
       : undefined
     try {
-      const out = await route(url.searchParams, body, callerInfo)
+      // 调用方断开(MCP 子进程死了 / 工具调用被客户端放弃)⇒ signal 中止。只有长轮询的路由(GET /v1/cli/say)读它:
+      // 挂着的等待不能当成「还有人在等」(terminal_say 评审 #2a,2026-10-24)。
+      // Bun 的 node:http 客户端断开时不发 res 'close'(10-24 实测),只发 req 'aborted' 与 socket 'close';node 三个都发。
+      const ac = new AbortController()
+      const gone = () => { if (!res.writableFinished) ac.abort() }
+      req.on('aborted', gone)
+      res.on('close', gone)
+      // keep-alive 的同一条连接上会来很多请求:回完就摘掉,不在 socket 上越挂越多
+      req.socket?.once('close', gone)
+      res.once('finish', () => { req.socket?.off('close', gone) })
+      const out = await route(url.searchParams, body, callerInfo, { signal: ac.signal })
       send(res, out.status, out.body, origin)
     } catch (err) {
       // 配置文件读不出来 / 刚被别处改过 ⇒ lib/json-file 拒写(3e,2026-10-22)。任何路由碰上都回一个看得懂的码,
