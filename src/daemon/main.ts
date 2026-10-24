@@ -343,8 +343,8 @@ async function bootDaemonInner(opts: BootDaemonOpts, undo: Array<() => void>): P
     // 一个消息库实例喂两个 dep(messages / latestInboundTs),下面 registerInternalApi 用。
     const messagesStore = makeMessagesStore(db)
     // 1. internal-api FIRST — bootstrap needs its baseUrl/token for MCP wiring
-    // 核心链就地搬家第 2 步(设计稿 2026-10-23-core-chain-modules):停法**先**登记(以前起到一半抛了,端口没人关),
-    // 位置还是原来 lc.register(internalApi) 那一行(中间没有别的登记);起不来照旧整个开机失败。
+    // 核心链就地搬家第 2 步(设计稿 2026-10-23-core-chain-modules):停法登记在原来 lc.register(internalApi) 那一行的位置
+    // (中间没有别的登记),关机顺序不变;起不来照旧整个开机失败。
     const internalApi: InternalApiLifecycle = (await startLifecycleModule(moduleHost, 'internal-api', () => registerInternalApi({
       stateDir, daemonPid: process.pid, memory: memoryFS, db, projects: ilink.projects,
       atelier: makeAtelierStore(stateDir),
@@ -857,7 +857,8 @@ async function bootDaemonInner(opts: BootDaemonOpts, undo: Array<() => void>): P
     if (guardLc) { wireRef(wired.refs.guard, guardLc); lc.register(guardLc) }
     // 外部 CLI provider 的退避重探计时器(2026-10-04)—— 关停时别再起探测、别再晚注册。
     lc.register({ name: 'provider-probes', stop: async () => { boot.stopProviderProbes?.() } })
-    lc.register(registerSessions(wired.sessionsDeps))
+    // 核心链就地搬家第 3 步(设计稿 2026-10-23-core-chain-modules):位置不变、关机顺序不变;起不来照旧整个开机失败。
+    await startLifecycleModule(moduleHost, 'sessions', () => registerSessions(wired.sessionsDeps), { required: true })
     lc.register(registerIlink(wired.ilinkDeps))
     let workbenchNotifications:ReturnType<typeof wireWorkbenchNotifications>|undefined
     let workbenchArtifacts:ReturnType<typeof wireWorkbenchArtifacts>|undefined
