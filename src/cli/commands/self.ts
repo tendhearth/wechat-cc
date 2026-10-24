@@ -513,7 +513,8 @@ const selfPlanCmd = defineCommand({
       const p = join(plansDir, `${String(args.show)}.json`)
       if (!existsSync(p)) { console.error(`没有这份计划:${String(args.show)}`); process.exit(1); return }
       const { formatPlan } = await import('../self-plan')
-      const saved = JSON.parse(readFileSync(p, 'utf8'))
+      const { readJsonFile } = await import('../../lib/read-json-file')
+      const saved = readJsonFile<{ order: string[] } & import('../self-plan').DevPlan>(p)
       console.log(args.json ? JSON.stringify(saved, null, 2) : formatPlan(saved, saved.order))
       return
     }
