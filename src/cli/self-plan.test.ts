@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest'
 
 import type { GitResult } from './self-change/git'
 import type { RunnerInput, RunnerResult } from './self-change/runner'
-import { formatPlan, parsePlan, planPrompt, runPlan, topoOrder, type PlanDeps } from './self-plan'
+import { formatPlan, markStepDone, nextSteps, parsePlan, planPrompt, runPlan, stepGate, topoOrder, type PlanDeps, type SavedPlan } from './self-plan'
 
 const block = (o: unknown) => `想了想。\n\`\`\`json\n${JSON.stringify(o)}\n\`\`\``
 const PLAN = {
@@ -148,5 +148,52 @@ describe('runPlan', () => {
     const h = harness({ dirty: ' M src/a.ts' })
     expect((await runPlan(h.deps, { id: 'pl1', goal: 'g' })).ok).toBe(true)
     expect(h.logs.some(l => l.includes('动了只读的树') && l.includes('src/a.ts'))).toBe(true)
+  })
+})
+
+describe('执行计划的一步', () => {
+  const saved = (): SavedPlan => {
+    const r = parsePlan(block(PLAN), '手机看自改进度')
+    if (!r.ok) throw new Error(r.error)
+    return { ...r.plan, id: 'pl1', createdAt: '2026-10-24T01:00:00Z', costUsd: 0.4, order: r.order }
+  }
+  const NOW = Date.parse('2026-10-24T03:00:00Z')
+
+  it('依赖没做完不让做,并说现在能做哪步;做完一步,下一步解锁', () => {
+    let plan = saved()
+    expect(nextSteps(plan)).toEqual(['p1'])
+    const blocked = stepGate(plan, 'p2', { ownerOk: false })
+    expect(blocked.ok).toBe(false)
+    if (!blocked.ok) expect(blocked.error).toContain('要等 p1')
+    plan = markStepDone(plan, 'p1', 'run1', 'abc', NOW)
+    expect(nextSteps(plan)).toEqual(['p2'])
+    const ok = stepGate(plan, 'p2', { ownerOk: false })
+    expect(ok.ok).toBe(true)
+    if (ok.ok) {
+      expect(ok.request).toContain('接口')
+      expect(ok.request).toContain('为什么:给页用')
+      expect(ok.request).toContain('计划 pl1 的 p2')
+    }
+  })
+
+  it('主人看得见的那步:没有 --owner-ok 不让做;做过的、不存在的也不让', () => {
+    let plan = markStepDone(markStepDone(saved(), 'p1', 'r1', null, NOW), 'p2', 'r2', null, NOW)
+    const vis = stepGate(plan, 'p3', { ownerOk: false })
+    expect(vis.ok).toBe(false)
+    if (!vis.ok) expect(vis.error).toContain('--owner-ok')
+    expect(stepGate(plan, 'p3', { ownerOk: true }).ok).toBe(true)
+    const again = stepGate(plan, 'p1', { ownerOk: false })
+    expect(!again.ok && again.error).toContain('已经做过了')
+    const none = stepGate(plan, 'p9', { ownerOk: false })
+    expect(!none.ok && none.error).toContain('没有 p9')
+    plan = markStepDone(plan, 'p3', 'r3', null, NOW)
+    expect(nextSteps(plan)).toEqual([])
+  })
+
+  it('人读版:做完的打勾,带「做完几步 / 现在能做」', () => {
+    const plan = markStepDone(saved(), 'p1', 'r1', null, NOW)
+    const t = formatPlan(plan, plan.order)
+    expect(t).toContain('✓ p1')
+    expect(t).toContain('做完 1 / 3;现在能做:p2')
   })
 })

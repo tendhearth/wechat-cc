@@ -154,6 +154,9 @@ const selfChangeCmd = defineCommand({
     abandon: { type: 'string', description: '「这条我不接了」:把某条记成作废(不能再 --resume),当场删掉它的工作树;正在跑的那条拒绝', valueHint: 'id' },
     from: { type: 'string', default: 'cli', description: '进件口:cli | wechat(daemon 从微信接单时传 wechat)' },
     'budget-usd': { type: 'string', description: '这一条的实现预算上限,美元(覆盖 self_change.implement_budget_usd)' },
+    plan: { type: 'string', description: '做某份计划(self plan)里的一步,配 --step;需求从计划里来', valueHint: 'id' },
+    step: { type: 'string', description: '计划里的哪一步(p1…);依赖没做完不让做', valueHint: 'p1' },
+    'owner-ok': { type: 'boolean', description: '这一步主人看得见,主人已经对设计稿点过头' },
     deploy: { type: 'boolean', default: true, description: '合完 dev 之后部署 + 自检;`--no-deploy` 只合不部署' },
     json: { type: 'boolean', description: 'JSON 输出(整份 state),不输出人读版' },
   },
@@ -314,7 +317,24 @@ const selfChangeCmd = defineCommand({
       bail(1, 'self_change_abandoned', `#${resumed.id} 已经作废了(--abandon),不能再接着跑;要做同样的事请重新下一条`)
       return
     }
-    const request = typeof args.request === 'string' ? args.request.trim() : ''
+    let request = typeof args.request === 'string' ? args.request.trim() : ''
+    // 做计划里的一步:需求从计划来,依赖 / 主人点头由 stepGate 把关(src/cli/self-plan.ts)。
+    let planStep: { id: string; step: string } | undefined
+    if (args.plan !== undefined || args.step !== undefined) {
+      if (resumed || request || !args.plan || !args.step) {
+        bail(1, 'invalid_flags', '--plan 和 --step 要一起给,而且不能再带需求正文或 --resume(需求从计划里来)')
+        return
+      }
+      const { stepGate } = await import('../self-plan.ts')
+      const { readJsonFile } = await import('../../lib/read-json-file.ts')
+      const planPath = join(STATE_DIR, 'self-plans', `${String(args.plan)}.json`)
+      const { existsSync } = await import('node:fs')
+      if (!existsSync(planPath)) { bail(1, 'plan_not_found', `没有这份计划:${String(args.plan)}(wechat-cc self plan "<目标>" 先出一份)`); return }
+      const gate = stepGate(readJsonFile(planPath), String(args.step), { ownerOk: Boolean(args['owner-ok']) })
+      if (!gate.ok) { bail(1, 'plan_step_blocked', gate.error); return }
+      request = gate.request
+      planStep = { id: String(args.plan), step: String(args.step) }
+    }
     // `--resume` 又带了需求正文:照存盘里的跑,但得说一声 —— 人多半以为自己
     // 是在「接着跑并且顺手改一下要求」,闷着不响他会等一个永远不会发生的行为。
     if (resumed && request) {
@@ -368,6 +388,7 @@ const selfChangeCmd = defineCommand({
       noDeploy: args.deploy === false,
       now: Date.now(),
     })
+    if (planStep && !state.plan) state.plan = planStep
 
     let outcome: Awaited<ReturnType<typeof runSelfChange>> | null = null
     let crashed: unknown = null
@@ -384,6 +405,18 @@ const selfChangeCmd = defineCommand({
       return
     }
 
+    // 计划里的一步做完了 ⇒ 记回计划文件(`self plan --show` 打勾、列出下一步)。
+    if (outcome.state.result === 'done' && outcome.state.plan) {
+      const { markStepDone } = await import('../self-plan.ts')
+      const { readJsonFile } = await import('../../lib/read-json-file.ts')
+      const { writeJsonAtomic } = await import('../../lib/json-file.ts')
+      const planPath = join(STATE_DIR, 'self-plans', `${outcome.state.plan.id}.json`)
+      try {
+        writeJsonAtomic(planPath, markStepDone(readJsonFile(planPath), outcome.state.plan.step, outcome.state.id, outcome.state.merge.sha, Date.now()))
+      } catch (err) {
+        console.error(`计划 ${outcome.state.plan.id} 没记上 ${outcome.state.plan.step} 做完了(不影响这条自改):${err instanceof Error ? err.message : String(err)}`)
+      }
+    }
     if (json) console.log(JSON.stringify(outcome.state, null, 2))
     else console.log(formatSelfChangeSummary(outcome.state))
     process.exit(outcome.exitCode)
@@ -514,7 +547,7 @@ const selfPlanCmd = defineCommand({
       if (!existsSync(p)) { console.error(`没有这份计划:${String(args.show)}`); process.exit(1); return }
       const { formatPlan } = await import('../self-plan')
       const { readJsonFile } = await import('../../lib/read-json-file')
-      const saved = readJsonFile<{ order: string[] } & import('../self-plan').DevPlan>(p)
+      const saved = readJsonFile<import('../self-plan').SavedPlan>(p)
       console.log(args.json ? JSON.stringify(saved, null, 2) : formatPlan(saved, saved.order))
       return
     }

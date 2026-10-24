@@ -2226,6 +2226,9 @@ OPTIONS
              --abandon=<id>    「这条我不接了」:把某条记成作废(不能再 --resume),当场删掉它的工作树;正在跑的那条拒绝     
               --from=<from>    进件口:cli | wechat(daemon 从微信接单时传 wechat) (Default: cli)
   --budget-usd=<budget_usd>    这一条的实现预算上限,美元(覆盖 self_change.implement_budget_usd)    
+                --plan=<id>    做某份计划(self plan)里的一步,配 --step;需求从计划里来                 
+                --step=<p1>    计划里的哪一步(p1…);依赖没做完不让做                                 
+                 --owner-ok    这一步主人看得见,主人已经对设计稿点过头                                  
                    --deploy    合完 dev 之后部署 + 自检;\`--no-deploy\` 只合不部署 (Default: true)  
                 --no-deploy                                                          
                      --json    JSON 输出(整份 state),不输出人读版                              
