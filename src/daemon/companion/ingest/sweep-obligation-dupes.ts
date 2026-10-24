@@ -20,6 +20,7 @@ import type { FactsApi } from '../../../core/knowledge/facts'
 import type { FactRow } from '../../../core/knowledge/store'
 import { parseSupersedePairs } from './extract'
 import { SWEEP_FEED_OVERSCAN } from './sweep-conflicts'
+import { pausedReason } from './paused'
 
 /** Content fingerprint of one contact's active obligations — judged again
  *  only when the set (id, predicate, value, time_ref) changes. */
@@ -87,6 +88,11 @@ export async function runObligationDedup(d: ObligationDedupDeps): Promise<Obliga
     } catch (e) {
       // Same non-fatal posture as every other judge: no fingerprint recorded,
       // the contact stays in the feed, the next cycle retries.
+      const paused = pausedReason(e)
+      if (paused) {
+        d.log?.('INGEST', `obligation dedup skipped this cycle: ${paused}`)
+        break
+      }
       d.log?.('INGEST', `obligation dedup judge failed for ${h.contact} (retry next cycle): ${String(e)}`)
     }
   }

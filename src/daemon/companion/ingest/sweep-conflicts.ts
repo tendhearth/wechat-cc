@@ -24,6 +24,7 @@
 import type { FactsApi } from '../../../core/knowledge/facts'
 import type { FactRow } from '../../../core/knowledge/store'
 import { buildConflictPrompt, parseSupersedePairs, type ConflictGroup } from './extract'
+import { pausedReason } from './paused'
 
 /** Feed rows fetched per cycle relative to cap — fingerprint-skipped stock
  *  must not starve the backlog sitting behind it in the stable feed order. */
@@ -95,7 +96,8 @@ export async function runConflictSweep(d: SweepDeps): Promise<SweepReport> {
     // Judge/model failure is non-fatal: no fingerprints recorded, the groups
     // stay in the feed and the next cycle retries — same posture as
     // record-time resolution.
-    d.log?.('INGEST', `conflict sweep judge failed (retry next cycle): ${String(e)}`)
+    const paused = pausedReason(e)
+    d.log?.('INGEST', paused ? `conflict sweep skipped this cycle: ${paused}` : `conflict sweep judge failed (retry next cycle): ${String(e)}`)
   }
   return { groups: conflictGroups.length, superseded }
 }

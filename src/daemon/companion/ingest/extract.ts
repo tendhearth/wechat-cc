@@ -7,6 +7,7 @@
  * validation is deliberately strict + non-throwing — an LLM refusal or garbage
  * response must NEVER corrupt the fact store (the memory-gardener lesson).
  */
+import { pausedReason } from './paused'
 
 export type FactKind = 'entity' | 'relation' | 'obligation' | 'attribute' | 'event'
 
@@ -256,7 +257,8 @@ export async function runExtraction(d: ExtractDeps): Promise<{ batches: number; 
       facts = parseFacts(await d.cheapEval(buildExtractionPrompt(batch)))
     } catch (e) {
       // model/network error → do NOT advance the watermark; retry next cycle.
-      d.log?.('INGEST', `extract eval error, deferring batch ${batch.batch_id}: ${String(e)}`)
+      const paused = pausedReason(e)
+      d.log?.('INGEST', paused ? `extract skipped this cycle, batch ${batch.batch_id} waits: ${paused}` : `extract eval error, deferring batch ${batch.batch_id}: ${String(e)}`)
       break
     }
     let recordResult: string
