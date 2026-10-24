@@ -13,6 +13,7 @@
     },
     "ios": {
       "bundleIdentifier": "com.tendhearth.app",
+      "buildNumber": "2",
       "config": { "usesNonExemptEncryption": false }
     },
     "android": {
