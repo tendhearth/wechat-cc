@@ -1,3 +1,4 @@
+// @repo-guard 这份测试里有扫整个仓库的守卫:bun run verify 不管改了什么都跑它(import 图看不见它守的文件)。
 import { readdirSync, readFileSync } from 'node:fs'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
