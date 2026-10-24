@@ -83,12 +83,17 @@ const RAW_TEXT_CAP = 4000
  *   - `--tools Read,Grep,Glob,Bash` + `--permission-mode dontAsk` + 只放行 `git diff / log / show`:评审提示词要它
  *     `git diff <base>...HEAD`、`git log`,别的命令一律被拒(实测 `touch` 被拒、`git log` 能跑、工具只剩这四个)。
  * 不再带 `--dangerously-skip-permissions`(restricted 本来就拒它)。
+ * 那三条 git 自带的写口(`--output` / `--ext-diff` / `--textconv`)单独拒掉,见常量里的注释。
  */
 export const CLAUDE_READONLY_LOCKDOWN = [
   '--restricted', '--strict-mcp-config',
   '--tools', 'Read,Grep,Glob,Bash',
   '--permission-mode', 'dontAsk',
   '--allowedTools', 'Bash(git diff:*)', 'Bash(git log:*)', 'Bash(git show:*)',
+  // 放行的那三条自己也能写 / 能跑东西:`--output=<任意路径>` 写文件,`--ext-diff` / `--textconv` 跑仓库配置里的外部程序
+  // (整合者评审 #647)。实测:通配的拒绝规则拦得住选项出现在中间的写法(`git diff HEAD~1 --stat --output=…`);
+  // 重定向(`> file`)、`;` / `&&` 串命令本来就被拒。
+  '--disallowedTools', 'Bash(*--output*)', 'Bash(*--ext-diff*)', 'Bash(*--textconv*)',
 ] as const
 
 export function claudeArgs(input: RunnerInput): string[] {
