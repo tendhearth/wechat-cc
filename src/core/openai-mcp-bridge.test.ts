@@ -1,5 +1,6 @@
 import { describe, it, expect } from 'vitest'
 import { createMcpToolBridge, type McpClientLike } from './openai-mcp-bridge'
+import { DELEGATE_TOOL_TIMEOUT_MS, TERMINAL_SAY_TOOL_TIMEOUT_MS } from './mcp-stdio-spec'
 
 function fakeClient(tools: { name: string; description?: string; inputSchema: unknown }[]): McpClientLike {
   return {
@@ -17,6 +18,37 @@ describe('MCP tool bridge', () => {
     )
     expect(bridge.tools.map(t => t.name)).toEqual(['reply'])
     expect(await bridge.call('reply', { text: 'hi' })).toBe('ran:reply')
+    await bridge.close()
+  })
+
+  it('delegate 的工具调用放宽到 DELEGATE_TOOL_TIMEOUT_MS,别的工具不传(用 SDK 缺省)', async () => {
+    const seen: Array<[string, number | undefined]> = []
+    const recording = (tool: string): McpClientLike => ({
+      async listTools() { return { tools: [{ name: tool, inputSchema: { type: 'object' } }] } },
+      async callTool({ name }, o) { seen.push([name, o?.timeoutMs]); return { content: [{ type: 'text', text: 'ok' }] } },
+      async close() {},
+    })
+    const bridge = await createMcpToolBridge(
+      { wechat: { command: 'w', args: [] }, delegate: { command: 'd', args: [] } },
+      { makeClient: async (spec) => recording(spec.command === 'd' ? 'delegate_claude' : 'reply') },
+    )
+    await bridge.call('delegate_claude', { prompt: 'q' })
+    await bridge.call('reply', { text: 'hi' })
+    expect(seen).toEqual([['delegate_claude', DELEGATE_TOOL_TIMEOUT_MS], ['reply', undefined]])
+    await bridge.close()
+  })
+
+  it('terminal_say / terminal_say_result(要等终端会话回话)放宽到 TERMINAL_SAY_TOOL_TIMEOUT_MS,wechat 别的工具照旧', async () => {
+    const seen: Array<[string, number | undefined]> = []
+    const client: McpClientLike = {
+      async listTools() { return { tools: ['terminal_say', 'terminal_say_result', 'terminal_sessions'].map(name => ({ name, inputSchema: { type: 'object' } })) } },
+      async callTool({ name }, o) { seen.push([name, o?.timeoutMs]); return { content: [{ type: 'text', text: 'ok' }] } },
+      async close() {},
+    }
+    const bridge = await createMcpToolBridge({ wechat: { command: 'w', args: [] } }, { makeClient: async () => client })
+    for (const n of ['terminal_say', 'terminal_say_result', 'terminal_sessions']) await bridge.call(n, {})
+    expect(seen).toEqual([['terminal_say', TERMINAL_SAY_TOOL_TIMEOUT_MS], ['terminal_say_result', TERMINAL_SAY_TOOL_TIMEOUT_MS], ['terminal_sessions', undefined]])
+    expect(TERMINAL_SAY_TOOL_TIMEOUT_MS).toBeGreaterThan(600_000)
     await bridge.close()
   })
 

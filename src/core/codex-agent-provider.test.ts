@@ -8,6 +8,7 @@ import { createCodexAgentProvider, tierProfileToCodexSdkOpts, codexItemToolCall,
 import { extractTurnReply } from './turn-reply'
 import type { AgentEvent } from './agent-provider'
 import { TIER_PROFILES } from './user-tier'
+import { TERMINAL_SAY_TOOL_TIMEOUT_MS } from './mcp-stdio-spec'
 
 /**
  * Tests for codex-agent-provider (yield-event shape). Uses an injected
@@ -142,6 +143,31 @@ it('merges WECHAT_SESSION_TOKEN/TIER into its stdio MCP servers env on spawn', a
     mcpEnv: { WECHAT_SESSION_TOKEN: 'tok-1', WECHAT_SESSION_TIER: 'admin' },
   })
   expect(captured?.config?.mcp_servers?.wechat?.env).toMatchObject({ A: '1', WECHAT_SESSION_TOKEN: 'tok-1', WECHAT_SESSION_TIER: 'admin' })
+})
+
+it('delegate 的 MCP 工具调用超时放宽(codex 缺省 tool_timeout_sec 60),wechat 不动', async () => {
+  const f = makeFakeCodex()
+  let captured: { config?: { mcp_servers?: Record<string, Record<string, unknown>> } } | undefined
+  const factory: CodexFactory = (cfg) => { captured = cfg as typeof captured; return f.codex }
+  const servers = { wechat: { command: 'bun', args: ['w'] }, delegate: { command: 'bun', args: ['d'] } }
+  const p = createCodexAgentProvider({ codexFactory: factory, mcpServers: servers })
+  await p.spawn({ alias: 'a', path: '/p' }, { tierProfile: TIER_PROFILES.admin, permissionMode: 'strict', chatId: 'c', mcpEnv: {} })
+  expect(captured?.config?.mcp_servers?.delegate?.tool_timeout_sec).toBe(600)
+  expect(captured?.config?.mcp_servers?.wechat?.tool_timeout_sec).toBeUndefined()
+  expect((servers.delegate as Record<string, unknown>).tool_timeout_sec).toBeUndefined() // 不改调用方传进来的那份
+})
+
+it('admin 会话的 wechat 服务器放宽到 terminal_say 要等的时长(codex 只能按服务器给);trusted 照旧', async () => {
+  const f = makeFakeCodex()
+  let captured: { config?: { mcp_servers?: Record<string, Record<string, unknown>> } } | undefined
+  const factory: CodexFactory = (cfg) => { captured = cfg as typeof captured; return f.codex }
+  const servers = { wechat: { command: 'bun', args: ['w'] } }
+  const p = createCodexAgentProvider({ codexFactory: factory, mcpServers: servers })
+  await p.spawn({ alias: 'a', path: '/p' }, { tierProfile: TIER_PROFILES.admin, permissionMode: 'strict', chatId: 'c', mcpEnv: { WECHAT_SESSION_TIER: 'admin' } })
+  expect(captured?.config?.mcp_servers?.wechat?.tool_timeout_sec).toBe(TERMINAL_SAY_TOOL_TIMEOUT_MS / 1000)
+  await p.spawn({ alias: 'b', path: '/p' }, { tierProfile: TIER_PROFILES.trusted, permissionMode: 'strict', chatId: 'c', mcpEnv: { WECHAT_SESSION_TIER: 'trusted' } })
+  expect(captured?.config?.mcp_servers?.wechat?.tool_timeout_sec).toBeUndefined()
+  expect((servers.wechat as Record<string, unknown>).tool_timeout_sec).toBeUndefined()
 })
 
 function provider(opts: Parameters<typeof createCodexAgentProvider>[0] = {}, fakeCodex?: { codex: Codex; fake: FakeCodex }) {

@@ -39,11 +39,23 @@ describe('terminal_sessions', () => {
     ] }))
     expect((await h.mcp.listTools()).tools.map(t => t.name)).toContain('terminal_sessions')
     const text = await h.call()
-    expect(h.calls).toEqual(['GET /v1/cli/sessions?limit=50'])
+    expect(h.calls).toEqual(['GET /v1/cli/sessions?limit=50&detail=1'])
     expect(text).toContain('· 等你批准 · p0 · Claude · 码 s0')
     expect(text).toContain('回「y 07」放行')
     expect(text).toContain('· 做完了 · p1 · Codex · 码 s1')
     expect(text).toContain('第 1 个做完了')
+  })
+
+  it('detail(2026-10-24):末尾标出开在窗口里的、在跑的此刻在做哪一步;老 daemon 不带 ⇒ 不加', async () => {
+    const h = await harness(() => ({ ok: true, sessions: [
+      row(0, { source: 'claude', status: 'running', live_window: true, now_step: '运行 bun run test' }),
+      row(1, { live_window: false, now_step: null }),
+    ] }))
+    const text = await h.call()
+    expect(text).toContain('开在电脑窗口里(terminal_say 会直接送进窗口):码 s0')
+    expect(text).toContain('在跑的此刻在做:码 s0:运行 bun run test')
+    const old = await harness(() => ({ ok: true, sessions: [row(0)] }))
+    expect(await old.call()).not.toContain('窗口')
   })
 
   it('limit 控制条数;默认 8', async () => {

@@ -27,6 +27,7 @@ import { registerMessagingTools } from './tools-messaging'
 import { registerCompanionTools } from './tools-companion'
 import { registerA2ASendTool } from './tools-a2a'
 import { registerDaemonTools } from './tools-daemon'
+import { registerTerminalTools } from './tools-terminal'
 import { registerFileTools } from './tools-files'
 import { registerSocialTools, socialIsUp } from './tools-social'
 import { registerKnowledgeSearchTool } from './tools-knowledge'
@@ -196,6 +197,9 @@ if (process.env.WECHAT_SESSION_TIER !== 'guest') {
 // provider-agnostic gate; non-admin sessions never see these tools).
 if (SESSION_IS_ADMIN) {
   registerDaemonTools(server, client)
+  // terminal_say / terminal_say_result(2026-10-24):代主人对终端里正在干活的会话说一句、带回它的回话。
+  // 只给 admin 会话;路由层再只认主人那条聊天的会话令牌(routes-cli-events)。
+  registerTerminalTools(server, client)
   registerFileTools(server, client)
   // 社交工具面(spec 2026-09-05-social-tools):social_seek + 九个读 / 动
   // 主人社交层的工具。admin-only(user-tier.ts 的 social_seek / social_act

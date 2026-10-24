@@ -96,6 +96,8 @@ describe('wechat-mcp stdio integration', () => {
   const DAEMON_TOOLS = [
     'diagnostic_turns', 'diagnostic_sessions', 'diagnostic_health', 'terminal_sessions', 'today_digest', 'calendar_agenda',
     'session_release', 'model_get', 'model_set', 'daemon_restart',
+    // terminal_say(2026-10-24):代主人往终端会话里送话 —— 只给 admin
+    'terminal_say', 'terminal_say_result',
   ]
 
   const SOCIAL_TOOLS = [
@@ -440,6 +442,12 @@ describe('wechat-mcp stdio integration', () => {
     const c = new Client({ name: 'integration-scope', version: '0.0.1' }, { capabilities: {} })
     await c.connect(transport)
     client = c
+
+    // 访客会话看不见 terminal_say(2026-10-24):往主人终端会话里送话只给 admin;路由那道门见 routes-cli-say.test.ts
+    const guestNames = (await c.listTools()).tools.map(t => t.name)
+    expect(guestNames).not.toContain('terminal_say')
+    expect(guestNames).not.toContain('terminal_say_result')
+    expect(guestNames).not.toContain('terminal_sessions')
 
     const foreign = await c.callTool({ name: 'reply', arguments: { chat_id: 'owner@im.wechat', text: 'injected' } })
     const foreignText = ((foreign.content as Array<{ text?: string }>)[0]?.text)!
