@@ -12,7 +12,9 @@
  *   - 测试:`vitest --changed <base>` —— 按 import 图找到牵连的测试(改了 package.json / vitest 配置 ⇒ vitest 自己
  *     改成全量,forceRerunTriggers,不是这里的 bug);外加**所有守卫**。守卫读的是文件
  *     (readFileSync / 扫目录),不 import 被守的代码,import 图看不见它们,漏了就是安静地少一道闸。
- *     守卫 = scripts/ 下的测试 + 文件名带 guard.test 的 + no-bun-globals。新守卫照这个起名就会被带上。
+ *     守卫 = scripts/ 下的测试 + 文件名带 guard.test 的 + no-bun-globals + 首行标了 `@repo-guard` 的测试。新守卫照这个起名
+ *     或者标上就会被带上。`@repo-guard` 是给住在 src/ 里、跟单测放在一起的仓库级守卫的(#646:read-json-file.test.ts 里
+ *     「生产代码不许裸 JSON.parse(readFileSync)」那条没被带上,本地绿、CI 红);scripts/repo-guard-marker.guard.test.ts 查漏标。
  *   - 改了 apps/relay 或协议包 ⇒ 再跑中继自己的单测。
  *   - import 图看不见的输入(.html / .css / .json 这类被测试 readFileSync 的文件)⇒ 点名列出来,
  *     并把源码里提到这个文件名的测试一起跑;Playwright(desktop-e2e)本地不跑,改了桌面看 CI。
@@ -94,6 +96,7 @@ if (nonImport.length) {
   if (tests.length) step(`测试 · 提到这些文件名的(${tests.length})`, 'bun', ['--bun', 'vitest', 'run', ...tests])
   if (touched('apps/desktop/')) console.log('  改了桌面:Playwright 本地不跑,看 CI 的 desktop-e2e(本地要跑:cd apps/desktop && bun x playwright test)。')
 }
-step('测试 · 守卫', 'bun', ['--bun', 'vitest', 'run', 'scripts/', 'guard.test', 'no-bun-globals'])
+const marked = lines(git(['grep', '-l', '@repo-guard', '--', 'src/**/*.test.ts']).stdout)
+step('测试 · 守卫', 'bun', ['--bun', 'vitest', 'run', 'scripts/', 'guard.test', 'no-bun-globals', ...marked])
 if (touched('apps/relay/', 'packages/protocol/')) step('中继单测', 'bun', ['run', 'test'], 'apps/relay')
 finish()
