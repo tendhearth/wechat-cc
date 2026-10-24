@@ -56,6 +56,8 @@ export interface SelfChangeState {
    */
   fixLog?: Array<{ kind: 'tests' | 'review' | 'ci'; at: number; detail: string }>
   lessonsWritten?: number
+  /** 这条是某份计划的一步(`self change --plan <id> --step <p>`);做完记回计划文件。 */
+  plan?: { id: string; step: string }
   /** 进 dev 的那个 PR(ci 步开)。老存盘没有这一格:merge 步会补开一个。 */
   pr?: { number: number; url: string } | null
   /**

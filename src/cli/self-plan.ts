@@ -9,7 +9,8 @@
  *
  * 只读:在中枢克隆里开一棵 detached 的树(站在 origin/dev 上),规划者用只读会话跑(关掉写工具),跑完查一遍树没被动过,
  * 树删掉。网络守护照旧在调模型之前看(guardedRunner)。产出存 `<stateDir>/self-plans/<id>.json`,人读版打到终端。
- * 这一版**不执行**计划:每个 PR 照旧由 `self change` 去做(并行、`dev_goal` 那件事、三端看进度是第 7、8 步,在核心链之后)。
+ * 执行一步:`self change --plan <id> --step <p1>`(stepGate:依赖没做完不让做、主人看得见的要 `--owner-ok`);做完记回计划文件
+ * 的 `done`,`--show` 打勾、列出现在能做的。自动一步步跑下去、并行、`dev_goal` 那件事、三端看进度是第 7、8 步,在核心链之后。
  */
 import type { Git } from './self-change/git'
 import type { ImplementRunner } from './self-change/runner'
@@ -37,6 +38,16 @@ export interface DevPlan {
   prs: PlanPr[]
   /** 规划者拿不准、要主人回答的问题(带选项和推荐)。 */
   questions: string[]
+}
+
+/** 存盘的计划:DevPlan + 号、时间、花费、排好的顺序、做完了哪几步。 */
+export interface SavedPlan extends DevPlan {
+  id: string
+  createdAt: string
+  costUsd: number
+  order: string[]
+  /** 做完的步:哪条自改做的、合进去的提交。 */
+  done?: Record<string, { run: string; merge: string | null; at: string }>
 }
 
 export type PlanParse = { ok: true; plan: DevPlan; order: string[] } | { ok: false; error: string }
@@ -137,16 +148,59 @@ export function planPrompt(o: { goal: string; branch: string; candidates?: strin
   ].join('\n')
 }
 
-export function formatPlan(plan: DevPlan, order: string[]): string {
+/** 依赖都做完、自己还没做的那几步(按计划顺序)。 */
+export function nextSteps(plan: SavedPlan): string[] {
+  const done = plan.done ?? {}
   const byId = new Map(plan.prs.map(p => [p.id, p]))
+  return plan.order.filter(id => !done[id] && byId.get(id)!.dependsOn.every(d => done[d]))
+}
+
+/** 交给 `self change` 的需求原文:标题 + 为什么 + 范围 + 怎么证明 + 出处。 */
+export function stepRequest(plan: SavedPlan, pr: PlanPr): string {
+  return [
+    pr.title,
+    '',
+    ...(pr.why ? [`为什么:${pr.why}`] : []),
+    ...(pr.scope.length ? [`大概动:${pr.scope.join('、')}`] : []),
+    ...(pr.verify ? [`怎么证明:${pr.verify}`] : []),
+    `(计划 ${plan.id} 的 ${pr.id};整件的目标:${plan.goal})`,
+  ].join('\n')
+}
+
+/**
+ * 能不能做这一步:没这一步、做过了、依赖没做完 ⇒ 不让;主人看得见的(visible)⇒ 要 `ownerOk`
+ * (做法清单「看得见的变化逐条问」:先写设计稿,主人点过头才动手)。
+ */
+export function stepGate(plan: SavedPlan, step: string, o: { ownerOk: boolean }): { ok: true; pr: PlanPr; request: string } | { ok: false; error: string } {
+  const pr = plan.prs.find(p => p.id === step)
+  if (!pr) return { ok: false, error: `计划 ${plan.id} 里没有 ${step}(有:${plan.order.join('、')})` }
+  const done = plan.done ?? {}
+  if (done[step]) return { ok: false, error: `${step} 已经做过了(自改 #${done[step]!.run})` }
+  const waiting = pr.dependsOn.filter(d => !done[d])
+  if (waiting.length) return { ok: false, error: `${step} 要等 ${waiting.join('、')} 先做完;现在能做的:${nextSteps(plan).join('、') || '(没有)'}` }
+  if (pr.visible && !o.ownerOk) return { ok: false, error: `${step} 会改主人看得见的东西:先写设计稿等主人点头,点过头再加 --owner-ok` }
+  return { ok: true, pr, request: stepRequest(plan, pr) }
+}
+
+export function markStepDone(plan: SavedPlan, step: string, run: string, merge: string | null, now: number): SavedPlan {
+  return { ...plan, done: { ...(plan.done ?? {}), [step]: { run, merge, at: new Date(now).toISOString() } } }
+}
+
+export function formatPlan(plan: DevPlan & { done?: SavedPlan['done']; id?: string }, order: string[]): string {
+  const byId = new Map(plan.prs.map(p => [p.id, p]))
+  const done = plan.done ?? {}
   const out = [`计划:${plan.goal}`, plan.summary ? `  ${plan.summary}` : '', plan.designFirst ? '  先写设计稿(第一个 PR)' : ''].filter(Boolean)
   out.push('', `  ${plan.prs.length} 个 PR(按依赖排好的顺序):`)
   for (const id of order) {
     const p = byId.get(id)!
-    out.push(`  ${p.id}  ${p.title}${p.visible ? '  [主人看得见 ⇒ 先停在设计稿等点头]' : ''}${p.dependsOn.length ? `  (在 ${p.dependsOn.join('、')} 之后)` : ''}`)
+    out.push(`  ${done[id] ? '✓' : ' '} ${p.id}  ${p.title}${p.visible ? '  [主人看得见 ⇒ 先停在设计稿等点头]' : ''}${p.dependsOn.length ? `  (在 ${p.dependsOn.join('、')} 之后)` : ''}`)
     if (p.why) out.push(`        为什么:${p.why}`)
     if (p.scope.length) out.push(`        大概动:${p.scope.join('、')}`)
     if (p.verify) out.push(`        怎么证明:${p.verify}`)
+  }
+  if (plan.id && Object.keys(done).length) {
+    const next = nextSteps({ ...plan, id: plan.id, createdAt: '', costUsd: 0, order } as SavedPlan)
+    out.push('', `  做完 ${Object.keys(done).length} / ${plan.prs.length};现在能做:${next.join('、') || '(都做完了)'}`)
   }
   const visible = plan.prs.filter(p => p.visible)
   if (visible.length) out.push('', `  要主人点头的:${visible.map(p => p.id).join('、')}`)
