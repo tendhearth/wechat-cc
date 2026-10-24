@@ -187,10 +187,19 @@ describe('runCiLand', () => {
     expect(res.message).toMatch(/一条检查都没有/)
     expect(res.message).toContain('gh pr close 3 && gh pr reopen 3')
     expect(calls.some(c => c.startsWith('gh pr merge'))).toBe(false)
-    // 不等到十分钟才吭声:三分钟就说多半没触发、怎么重触发,只说一次。
+    // 不等到十分钟才吭声:三分钟就自己关了再开一次,只一次。
     const hints = lines.filter(l => l.includes('多半没触发 CI'))
     expect(hints).toHaveLength(1)
-    expect(hints[0]).toContain('gh pr reopen 3')
+    expect(hints[0]).toContain('已关了再开一次')
+    expect(calls.filter(c => /^gh pr (close|reopen) 3$/.test(c))).toEqual(['gh pr close 3', 'gh pr reopen 3'])
+  })
+
+  it('重触发之后 CI 起来了 ⇒ 照常等绿、合', async () => {
+    const empty = { headRefOid: 'sc', statusCheckRollup: [] }
+    const { deps, calls } = fakeDeps({ open, views: [empty, empty, empty, green('sc')] })
+    const res = await runCiLand(deps, { top: 3, skipTypecheck: true })
+    expect(res.exitCode).toBe(CI_LAND_EXIT.landed)
+    expect(calls.indexOf('gh pr reopen 3')).toBeLessThan(calls.indexOf('gh pr merge 1 --squash --match-head-commit sa'))
   })
 
   it('changes 先完、别的还没进 rollup 的空档不判红,下一次看到全绿就合', async () => {
