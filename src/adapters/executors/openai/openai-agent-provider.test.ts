@@ -1,5 +1,6 @@
 import { describe, it, expect, afterEach } from 'vitest'
-import { mkdtempSync, writeFileSync, existsSync, rmSync } from 'node:fs'
+import { mkdtempSync, writeFileSync, existsSync } from 'node:fs'
+import { removeTempDir } from '../../../lib/test-temp'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { OPENAI_CAPABILITIES, createOpenAiAgentProvider } from './openai-agent-provider'
@@ -21,7 +22,8 @@ const drain = async (it: AsyncIterable<AgentEvent>) => { const out: AgentEvent[]
 
 const dirs: string[] = []
 const tmp = (p: string) => { const d = mkdtempSync(join(tmpdir(), p)); dirs.push(d); return d }
-afterEach(() => { for (const d of dirs.splice(0)) rmSync(d, { recursive: true, force: true }) })
+// Windows:库文件还开着就删目录会 EBUSY —— 先关(下面那组的 afterEach),再用 removeTempDir(win32 上会重试)
+afterEach(() => { for (const d of dirs.splice(0)) removeTempDir(d) })
 
 describe('openai provider loop(对话这一份用途)', () => {
   it('view_image:工具结果是文字,图另起一条用户消息紧跟其后再进下一轮', async () => {
@@ -297,11 +299,14 @@ describe('openai provider — makeBuiltins 注入口(实验 / 测试专用)', ()
 
 // B2(2026-10-25):对话的历史存进 api-sessions,daemon 重启 / 会话释放后接得上(以前只在内存里)。
 describe('openai 对话 —— 会话历史存进 api-sessions、能续接', () => {
+  // 一个测试里可能 setup 不止一次:每个打开过的库都要关,不然 Windows 删不掉目录(10-25 CI EBUSY)
+  const opened: Db[] = []
   let db: Db
-  afterEach(() => { db?.close() })
+  afterEach(() => { for (const d of opened.splice(0)) d.close() })
   const setup = () => {
     const root = tmp('oai-chat-db-')
     db = openDb({ path: join(root, 'state.db') })
+    opened.push(db)
     const sessions = makeChatSessionStore(db)
     const connectionHash = openAiConnectionHash({ baseURL: 'https://gateway.example/v1', apiKey: 'k' })
     return { sessions, connectionHash }
