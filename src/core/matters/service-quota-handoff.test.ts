@@ -1,6 +1,6 @@
 import {afterEach,beforeEach,describe,expect,it,vi} from 'vitest'
 import {openDb,type Db} from '../../lib/db'
-import {makeMatterStore,type MatterStore} from './store'
+import {makeMatterStore,type MatterStore} from '../../adapters/store/matters-store'
 import {makeMattersService} from './service'
 
 // spec 2026-10-01-tendhearth-continue-sessions §7-3:额度用完 ⇒ 手机问「交给 X 继续?」。

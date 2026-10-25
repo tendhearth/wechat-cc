@@ -1,7 +1,7 @@
 import {afterEach,beforeEach,describe,expect,it} from 'vitest'
 import {migrations,openDb,runMigrations,type Db} from '../../lib/db'
 import {openSqlite} from '../../lib/runtime/sqlite'
-import {makeMatterStore,type MatterStore} from './store'
+import {makeMatterStore,type MatterStore} from './matters-store'
 
 /**
  * matter(事)= 主人心里的"一件事":跨表面(微信 / 桌面 / 手机 / 终端)、跨供应商会话都是它。

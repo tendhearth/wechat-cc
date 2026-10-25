@@ -4,7 +4,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { analyzeDoctor, setupStatus, serviceStatus, readDaemon, readAccess, readExpiredBots, defaultProbeCursor, defaultProbeGemini, defaultProbeLogin, probeOutboundWarning } from './doctor'
 import { openWechatDb } from '../lib/db'
-import { makeSessionStateStore } from '../core/session-state'
+import { makeSessionStateStore } from '../adapters/store/session-state'
 
 const installedSystemd = () => ({ installed: true, kind: 'systemd-user' as const })
 const missingSystemd = () => ({ installed: false, kind: 'systemd-user' as const })

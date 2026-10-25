@@ -8,7 +8,7 @@ import type { ReplySinks } from '../reply-sinks'
 export interface PipelineDepsOpts {
   workbench?: import('../../core/workbench/service').WorkbenchService
   /** 终端会话登记处(v76):手机 GET /m/api/cli/sessions 读它。缺省 ⇒ 503。 */
-  cliSessions?: () => import('../../core/cli-session-store').CliSessionView[]
+  cliSessions?: () => import('../../adapters/store/cli-session-store').CliSessionView[]
   /** 「CC 做过的事」(B9):main 拼好来源,这里只透传给手机面板。 */
   activity?: import('../mobile-activity').MobileActivityDeps
   /** 终端会话的手机动作(拍板 / 说一句):POST /m/api/cli/permission、/m/api/cli/say。缺省 ⇒ 503。 */
@@ -25,7 +25,7 @@ export interface PipelineDepsOpts {
   providerRefusals?: () => Record<string, import('../provider-refusals').ProviderRefusal>
   /** 内部 API 的 token-registry 窄接口,给手机设置面板登记链接 / 设备令牌(梳理第 6 步)。 */
   panelTokens?: import('../internal-api/token-registry').PanelTokens
-  matters?: import('../../core/matters/store').MatterStore
+  matters?: import('../../adapters/store/matters-store').MatterStore
   stateDir: string
   db: import('../../lib/db').Db
   ilink: IlinkAdapter

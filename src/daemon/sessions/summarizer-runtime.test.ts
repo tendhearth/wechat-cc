@@ -3,7 +3,7 @@ import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from 'node:fs'
 import { homedir, tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { triggerStaleSummaryRefresh } from './summarizer-runtime'
-import { makeSessionStore } from '../../core/session-store'
+import { makeSessionStore } from '../../adapters/store/session-store'
 import { openTestDb, type Db } from '../../lib/db'
 
 describe('triggerStaleSummaryRefresh', () => {

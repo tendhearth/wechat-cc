@@ -1,4 +1,4 @@
-import type {ListMatters,MatterKind,MatterStatus,MatterSurface} from '../../core/matters/store'
+import type {ListMatters,MatterKind,MatterStatus,MatterSurface} from '../../adapters/store/matters-store'
 import type {InternalApiDeps,RouteTable} from './types'
 
 /**

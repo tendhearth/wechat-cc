@@ -3,8 +3,8 @@ import { existsSync, mkdtempSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { tmpdir } from 'node:os'
 import { makeSessionStore } from './session-store'
-import { openTestDb, openDb, type Db } from '../lib/db'
-import { removeTempDir } from '../lib/test-temp'
+import { openTestDb, openDb, type Db } from '../../lib/db'
+import { removeTempDir } from '../../lib/test-temp'
 
 // Pre-tier (v0.5) rows migrated from the legacy sessions.json land
 // under chat_id='_legacy'. Most tests in this file pre-date the

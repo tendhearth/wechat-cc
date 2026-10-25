@@ -5,7 +5,7 @@ import { routePhone } from './phone-route-table'
 import { deriveSharedKey, generateTunnelKeypair, sealFrame } from '../lib/tunnel-crypto'
 import type { MessageRecord } from '../lib/messages-store'
 import { openTestDb } from '../lib/db'
-import { makeMatterStore } from '../core/matters/store'
+import { makeMatterStore } from '../adapters/store/matters-store'
 
 const RID = '00000000-0000-4000-8000-000000000001'
 const rec = (i: number, over: Partial<MessageRecord> = {}): MessageRecord => ({ id: `m${i}`, chatId: 'wx', ts: new Date(Date.UTC(2026, 8, 30, 0, 0, i)).toISOString(), direction: i % 2 ? 'out' : 'in', kind: 'text', text: `t${i}`, source: 'live', ...over })

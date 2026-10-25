@@ -1,7 +1,7 @@
 import {makeWechatWorkbenchControl,type WechatMessageIdentity,type WechatWorkbenchReply} from './wechat-control'
 import type { ProviderRegistry } from '../../app/provider-registry'
 import { type NativeHistoryReader, type NativeHistoryProvider } from './native-history'
-import type { MatterStore } from '../matters/store'
+import type { MatterStore } from '../../adapters/store/matters-store'
 import type { ReportSink } from '../matters/report'
 import type { RecollectSink } from '../matters/recollection'
 import type { UsageSnapshot } from '../../domain/subscription-usage'

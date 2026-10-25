@@ -192,6 +192,7 @@ DeliveryPort                      吃 TurnOutcome;旧的 / shadow 交付路删�
 |---|---|---|
 | E1 | 建 `src/domain`、`src/ports`、`src/adapters`、`src/app`;先把已经是纯函数的文件(`policy`、`user-tier`、`chatroom-conductor`、`provider-policy`、`permission-rules/decide`、`quiet-hours`、`envelope`…)挪进 `domain`,开 depcruise 规则 | `domain` 规则零例外 |
 | E2 | 执行者适配器(B 搬完的)进 `adapters/executors/`;store 进 `adapters/store/` | — |
+| E3 第 1 步 | 通用的 store(对话、会话、会话状态、回合记录、终端会话、「一件事」)进 `src/adapters/store/`;`TurnRecord` 形状进 `domain/turn-record.ts`(store 不再引协调器的类型 —— 新规则当场抓到的)。功能自己的 store(社交、知识库、定时 …)等那个功能搬进 features 时跟着走 |
 | E3 | `src/core` 清空 | 删掉 `core-no-node` 守卫和 `src/core` 目录 |
 | E4 | 工作台服务:`Options` 原样传成 `deps`(删掉那行 2245 字符的复制);十个域按依赖顺序构造,彼此依赖接口,`Ref<ServiceActions>` 删掉 | 删掉 `workbench-service-ratchet` 守卫;service 里没有 `Ref` |
 

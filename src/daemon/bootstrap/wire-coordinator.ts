@@ -7,7 +7,7 @@
  * turnTimeoutMs / health 走 parts.*。anomalyNotes 随块搬进来,index 用它拼 providerNotes。
  */
 import { createConversationCoordinator, type ConversationCoordinator, type TurnRecord } from '../../app/conversation-coordinator'
-import type { ConversationStore } from '../../core/conversation-store'
+import type { ConversationStore } from '../../adapters/store/conversation-store'
 import type { ProviderRegistry } from '../../app/provider-registry'
 import type { ProviderId } from '../../domain/conversation'
 import type { PermissionMode } from '../../domain/capability-matrix'

@@ -1,6 +1,6 @@
 import {afterEach, beforeEach, describe, expect, it, vi} from 'vitest'
 import {openDb, type Db} from '../../lib/db'
-import {makeMatterStore, type MatterStore} from '../../core/matters/store'
+import {makeMatterStore, type MatterStore} from '../../adapters/store/matters-store'
 import {makeJournal, type Journal} from '../../core/journal-store'
 import {makeRecollectSink} from './recollect-sink'
 

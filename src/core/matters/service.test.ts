@@ -1,6 +1,6 @@
 import {afterEach,beforeEach,describe,expect,it,vi} from 'vitest'
 import {openDb,type Db} from '../../lib/db'
-import {makeMatterStore,type MatterStore} from './store'
+import {makeMatterStore,type MatterStore} from '../../adapters/store/matters-store'
 import {makeMattersService} from './service'
 import {PHONE_API_SCHEMAS} from '@wechat-cc/protocol'
 

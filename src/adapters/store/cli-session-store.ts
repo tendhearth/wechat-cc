@@ -14,7 +14,7 @@
  * 没有任何事件,在**读的时候**当 idle(stale=true)—— 终端被直接关掉、或主人在终端里
  * 自己答了权限,hook 都不会再报一声。
  */
-import type { Db } from '../lib/db'
+import type { Db } from '../../lib/db'
 
 export type CliSessionStatus = 'running' | 'waiting' | 'idle' | 'ended'
 /** 同 cli-events.ts 的 CliSource;这里单写一份是为了不和 hub 互相 import(depcruise no-circular 连 type 也算)。 */

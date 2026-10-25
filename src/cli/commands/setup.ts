@@ -37,7 +37,7 @@ export const setupPollCmd = defineCommand({
     let isExpired: ((botDirName: string) => boolean) | undefined
     try {
       const { openWechatDb } = await import('../../lib/db')
-      const { makeSessionStateStore } = await import('../../core/session-state')
+      const { makeSessionStateStore } = await import('../../adapters/store/session-state')
       const db = openWechatDb(STATE_DIR)
       const store = makeSessionStateStore(db)
       isExpired = (botDirName: string) => store.isExpired(botDirName)

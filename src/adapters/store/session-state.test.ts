@@ -3,8 +3,8 @@ import { existsSync, mkdtempSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { tmpdir } from 'node:os'
 import { makeSessionStateStore } from './session-state'
-import { openTestDb, openDb, type Db } from '../lib/db'
-import { removeTempDir } from '../lib/test-temp'
+import { openTestDb, openDb, type Db } from '../../lib/db'
+import { removeTempDir } from '../../lib/test-temp'
 
 describe('SessionStateStore', () => {
   let dir: string

@@ -21,7 +21,7 @@ import { makeNoticesDomain } from './notices'
 import { makeArtifactsDomain } from './artifacts'
 import { makeExecuteDomain } from './execute'
 import { makeQuotaHandoffDomain } from './quota-handoff'
-import { makeMatterStore } from '../../matters/store'
+import { makeMatterStore } from '../../../adapters/store/matters-store'
 import type { ServiceActions, ServiceCtx } from './ctx'
 
 const dbs: Db[] = []; const dirs: string[] = []; const shutdowns: Array<() => Promise<void>> = []

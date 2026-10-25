@@ -16,7 +16,7 @@ import type { AgentExecutionChoice, AgentRuntimeSnapshot } from '../../../ports/
 import type { LiveInput } from '../live-inputs'
 import type { AcceptedContinuation, Active, WorkbenchRuntimeState } from './state'
 import type { AdmittedProvider, InputMaterials, WorkbenchTaskView } from './types'
-import type { MatterStore } from '../../matters/store'
+import type { MatterStore } from '../../../adapters/store/matters-store'
 import type { ReportSink } from '../../matters/report'
 import type { RecollectSink } from '../../matters/recollection'
 import type { AcceptedNativeResume } from '../native-adoption'

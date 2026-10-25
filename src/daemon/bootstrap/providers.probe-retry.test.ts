@@ -11,7 +11,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { registerProviders, type ProviderDeps } from './providers'
 import { openTestDb } from '../../lib/db'
-import { makeConversationStore } from '../../core/conversation-store'
+import { makeConversationStore } from '../../adapters/store/conversation-store'
 import type { AgentConfig } from '../../lib/agent-config'
 import type { VersionProbeResult } from './provider-probe'
 

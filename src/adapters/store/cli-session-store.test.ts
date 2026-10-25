@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
-import { openDb, type Db } from '../lib/db'
-import { makeCliEventHub, type CliEvent } from './cli-events'
+import { openDb, type Db } from '../../lib/db'
+import { makeCliEventHub, type CliEvent } from '../../core/cli-events'
 import {
   makeCliSessionStore, effectiveStatus, sortCliSessionViews, toCliSessionView,
   CLI_SESSION_STALE_MS, CLI_SESSION_ENDED_RETAIN_MS, CLI_SESSION_ABANDONED_RETAIN_MS, CLI_SESSION_MAX_ROWS,

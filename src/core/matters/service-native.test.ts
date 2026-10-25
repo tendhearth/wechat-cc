@@ -1,6 +1,6 @@
 import {afterEach,beforeEach,describe,expect,it,vi} from 'vitest'
 import {openDb,type Db} from '../../lib/db'
-import {makeMatterStore,type MatterStore} from './store'
+import {makeMatterStore,type MatterStore} from '../../adapters/store/matters-store'
 import {makeMattersService} from './service'
 
 // spec 2026-10-01-tendhearth-continue-sessions D5 / D12:手机接过来的电脑会话,第一句与详情。

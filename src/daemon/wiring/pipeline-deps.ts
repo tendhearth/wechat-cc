@@ -642,7 +642,7 @@ export function buildPipelineDeps(opts: PipelineDepsOpts, late: PipelineDepsLate
       watchTask:async(taskId:string,accountId:string)=>{opts.workbench!.setWechatWatch(taskId,accountId,true)},
       // 换人接着做:新那件的出生地跟着被接手的那件走(同 service/quota-handoff);那件不知道 ⇒ 也不写。
       createTask:async({fromTaskId,...input}:{path:string;providerId:string;text:string;fromTaskId?:string})=>{
-        let origin:import('../../core/matters/store').MatterOrigin|null=null
+        let origin:import('../../adapters/store/matters-store').MatterOrigin|null=null
         try{origin=fromTaskId?opts.matters?.get(fromTaskId)?.origin??null:null}catch{/* 查不到就不写 */}
         const task=await opts.workbench!.create({...input,origin});return {id:task.id}
       },

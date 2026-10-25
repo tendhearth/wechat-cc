@@ -9,7 +9,7 @@ import { ensureWorktree, planWorktree, repoRootOrFail } from '../worktree-worksp
 import { pinnedScriptSha } from '../worktree-scripts'
 import { createHash, randomUUID } from 'node:crypto'
 import type { AgentEvent, AgentSession, AgentExecutionChoice } from '../../../ports/agent-provider'
-import type { MatterOrigin, MatterStore } from '../../matters/store'
+import type { MatterOrigin, MatterStore } from '../../../adapters/store/matters-store'
 import { classifyProviderError } from '../../../domain/provider-quota'
 import { decideCall, isNetworkUnprotectedError } from '../../../lib/network-gate'
 import { providerCallTarget } from '../../../app/provider-registry'

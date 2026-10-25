@@ -1,7 +1,7 @@
 import {randomUUID} from 'node:crypto'
 import {afterEach,beforeEach,describe,expect,it,vi} from 'vitest'
 import {openDb,type Db} from '../../lib/db'
-import {makeMatterStore,type MatterStore} from './store'
+import {makeMatterStore,type MatterStore} from '../../adapters/store/matters-store'
 import {makeMattersService} from './service'
 import {makeSayReceipts,SAY_RECEIPT_TTL_MS,sayTextHash} from './say-receipts'
 

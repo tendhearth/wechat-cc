@@ -12,8 +12,8 @@
  * Pure persistence; no control-flow side effects. internal-api's
  * `GET /v1/turns` reads via recentForChat / recent.
  */
-import type { Db } from '../lib/db'
-import type { TurnRecord } from '../app/conversation-coordinator'
+import type { Db } from '../../lib/db'
+import type { TurnRecord } from '../../domain/turn-record'
 
 /** Error strings are truncated to this many chars before persisting — a
  *  runaway error (stack dump, huge tool output) shouldn't bloat the row. */

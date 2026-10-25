@@ -21,7 +21,7 @@ import { buildRelationships, type RelationshipInputs } from '../../core/relation
 import { NEIGHBORS } from '../../domain/neighbors'
 import { readNeighborMemory } from '../companion/neighbor-memory'
 import { makeMessagesStore } from '../../lib/messages-store'
-import { makeConversationStore } from '../../core/conversation-store'
+import { makeConversationStore } from '../../adapters/store/conversation-store'
 import { loadAccess } from '../../lib/access'
 import { loadCompanionConfig } from '../companion/config'
 import { resolveEffectiveTier } from '../../domain/user-tier'

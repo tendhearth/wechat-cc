@@ -151,7 +151,7 @@ CC 在微信里是管家：你说某件事，它找到是哪个任务、让原�
 - **表**（v60）：`matters(id 8 位十六进制, kind chat|task|companion, title, project_path, status open|replied|done|archived, owner_chat_id)`；`matter_bindings(matter_id, surface wechat|desktop|phone|cli, surface_key, last_seen_at)`：一件事在哪些表面露过面；`matter_sessions(matter_id, provider_id, session_id, role main|review|handoff)`：挂着哪些执行者会话。事件不复制：仍在 `workbench_events` / `messages` 里，按 matter 归属。
 - **怎么落**（全部加法，旧表语义不动）：工作台任务 ↔ `kind='task'` 一对一、同 id；一个微信 chat ↔ 一条 `kind='chat'`（先不按话题拆；知识层的 `threads` 表是另一回事——那是从聊天里抽出来的话题）；App「跟 CC 说」= 同一条 chat matter 多一个 `desktop` 绑定；陪伴事件 `kind='companion'` 先只登记。
 - **API**：`GET /v1/matters?kind=&status=a,b&since=&limit=`；`GET /v1/matter?id=` = matter + bindings + sessions + 任务视图 + 最近事件；`POST /v1/matter/say {id,text}` 按 kind 路由——task 走工作台续接，chat 走 app 对话通道（只对主人那条）。
-- **代码**：`src/core/matters/store.ts`（存储）、`service.ts`（列表 / 详情 / say）、`src/daemon/internal-api/routes-matters.ts`、`src/daemon/inbound/mw-matter.ts`（入站登记）；工作台同步在 `service.ts` 的 `matterSync`（登记失败绝不打断任务）。
+- **代码**：`src/adapters/store/matters-store.ts`（存储）、`service.ts`（列表 / 详情 / say）、`src/daemon/internal-api/routes-matters.ts`、`src/daemon/inbound/mw-matter.ts`（入站登记）；工作台同步在 `service.ts` 的 `matterSync`（登记失败绝不打断任务）。
 - **下一步**：桌面把对话视图 + 工作台视图收成"一个 matter 列表 + 一个会话面"；手机端走隧道调同一份 API；微信降级成渠道适配器。
 
 ## 修订记录

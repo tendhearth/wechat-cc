@@ -8,7 +8,7 @@
  */
 import { randomBytes } from 'node:crypto'
 import type { CliEventHub, CliSessionInfo } from '../core/cli-events'
-import type { CliSessionView } from '../core/cli-session-store'
+import type { CliSessionView } from '../adapters/store/cli-session-store'
 import { readTail, type CliReplyCore } from './cli-reply-handler'
 import { parseActivity, type CliActivityItem } from '../core/cli-activity'
 

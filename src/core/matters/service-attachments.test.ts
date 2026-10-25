@@ -10,7 +10,7 @@ import type {AgentAttachment,AgentEvent,AgentProvider} from '../../ports/agent-p
 import {MANAGED_NATIVE_CAPABILITIES} from '../workbench/executor-capabilities'
 import {makeWorkbenchStore} from '../workbench/store'
 import {makeWorkbenchService,type WorkbenchService} from '../workbench/service'
-import {makeMatterStore,type MatterStore} from './store'
+import {makeMatterStore,type MatterStore} from '../../adapters/store/matters-store'
 import {makeMattersService,type MattersService,type MattersServiceDeps} from './service'
 
 let root:string,project:string,db:Db,store:ReturnType<typeof makeWorkbenchStore>,matterStore:MatterStore,workbench:WorkbenchService,service:MattersService

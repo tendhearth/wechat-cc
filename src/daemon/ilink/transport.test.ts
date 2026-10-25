@@ -19,7 +19,7 @@ import { join } from 'node:path'
 import { makeTransport } from './transport'
 import { ilinkGetUpdates } from '../../lib/ilink'
 import type { IlinkContext } from './context'
-import { makeConversationStore } from '../../core/conversation-store'
+import { makeConversationStore } from '../../adapters/store/conversation-store'
 import { openTestDb } from '../../lib/db'
 
 function makeStubCtx(stateDir = '/tmp'): IlinkContext {
