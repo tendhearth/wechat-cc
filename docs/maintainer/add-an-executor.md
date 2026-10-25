@@ -4,7 +4,7 @@
 
 先判断你要的是不是「新加一家」:
 
-- **只是一个说 ACP 的 CLI**(像 `cursor-agent acp`、`gemini --acp`):不用写代码。主人在 `agent-config.json` 的 `acp_agents` 里加一条,只进「一起做」,逐工具权限卡、逐字流都现成。见 `bootstrap/wire-workbench.ts` 的 `registerCustomAcpExecutors`。
+- **只是一个说 ACP 的 CLI**(像 `cursor-agent acp`、`gemini --acp`):不用写代码。主人在 `agent-config.json` 的 `acp_agents` 里加一条,只进「一起做」,逐工具权限卡、逐字流都现成。见 `src/features/workbench/wire.ts` 的 `registerCustomAcpExecutors`。
 - **要进微信对话、有自己的 SDK / 协议**:往下看。
 
 ## 1. 名字:`src/lib/provider-ids.ts`
@@ -44,7 +44,7 @@
 
 门槛用 detect 判 → 探测(`--version` 之类,异步、带超时)→ `registry.register(id, provider, { canResume, bin? })`。探测失败交给 `createProbeRetrier`(`provider-probe.ts`)退避重探,**不要自己写重试**。有自己的可执行文件就给 `bin: () => …`(每次现判),工作台和额度查询都读它。
 
-## 6. 工作台(可选):`src/daemon/bootstrap/wire-workbench.ts`
+## 6. 工作台(可选):`src/features/workbench/wire.ts`
 
 要进「一起做」,在 `BUILD` 表里加一行:从 boot registry 那一项构造工作台用的适配器,带 `workbench` 能力。开机时已登记的先建,之后登记的(重探成功)由 `onRegister` 补上 —— **不要在接线时抄 registry 的快照**。路径读登记项的 `bin()`,不要自己再找一遍。
 
@@ -69,6 +69,6 @@ bun run test:e2e          # 路由快照:/<slash> 在三档下回什么
 | 没有逐工具回调、没说问不了时怎么落 | `enforcement-matrix.test`(`unattendedAnswer` 抛) |
 | 有缺口没写理由 / 快照变了没接受 | `enforcement-matrix.test`(`WHY_GAPS`、快照) |
 | 斜杠词和 `/help`、`PROVIDER_SLASH` 对不上 | `mode-commands.test`、`scripts/provider-registry.guard.test.ts` |
-| 工作台接线时抄快照 | `wire-workbench.test`(晚到的执行者要出现) |
+| 工作台接线时抄快照 | `features/workbench/wire.test`(晚到的执行者要出现) |
 
 为什么是这个形状:VS Code 的扩展只**声明**命令和能力,宿主从声明生成一切;Codex 把权限编成两根正交的轴、执行时只认编译结果。我们照的是同一件事 —— 一处声明、处处推导、推导关系由测试证明(架构复查 2026-10-21 理念 1)。

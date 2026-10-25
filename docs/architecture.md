@@ -19,7 +19,7 @@ CC 是住在主人自己电脑上的一个 daemon。微信、桌面、手机 App
         · control.*                            ▼
                                      执行者登记(core/provider-registry.ts)
                                        Claude · Codex · Cursor · 自定义 AI 服务 · Gemini · agy
-                                       └─ 工作台(core/workbench/,「一起做」)按登记跟上
+                                       └─ 工作台(features/workbench/,「一起做」)按登记跟上
                                      
  CC 主动开口 ─► SpeechPolicy(src/daemon/speech/)─► 微信 / App;免打扰、断线排队、记账
  一切状态 ──► 本机:SQLite(src/lib/db.ts)+ 状态文件(src/lib/json-file.ts)+ 记忆目录(memory/<chat>/)
@@ -34,7 +34,7 @@ CC 是住在主人自己电脑上的一个 daemon。微信、桌面、手机 App
 apps/*  ──HTTP──►  packages/protocol(路由表、错误码,纯数据)
 src/cli ──spawn / HTTP──►  src/daemon ──► src/features ──► src/app ──► src/ports / src/domain ──► src/lib
                           src/app ──► src/adapters(executors / store,实现 ports)
-                                                   └──► src/core(还没搬完的工作台、社交、知识库)
+                                                   └──► src/core(还没搬完的:工作台的 store 与执行者也用的零件、知识库 …)
 src/mcp-servers ──HTTP──►  src/daemon(internal API)
 ```
 

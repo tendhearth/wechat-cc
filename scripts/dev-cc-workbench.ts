@@ -14,15 +14,16 @@ import {codexSessionJsonlPaths,claudeSessionJsonlPath} from '../src/daemon/boots
 import {createProviderRegistry} from '../src/app/provider-registry'
 import {createWorkbenchCodexProvider} from '../src/adapters/executors/codex/codex-app-server'
 import {createClaudeAgentProvider,makeWorkbenchClaudeCanUseTool} from '../src/adapters/executors/claude/claude-agent-provider'
-import {workbenchClaudeOptions} from '../src/daemon/bootstrap/wire-workbench'
+import {workbenchClaudeOptions} from '../src/features/workbench/wire'
 import {readNativeClaudeTools} from '../src/adapters/executors/claude/claude-native-config'
 import {claudeNativeCapabilityNotice} from '../src/core/workbench/native-capability-notice'
 import {makeWorkbenchStore} from '../src/core/workbench/store'
-import {makeWorkbenchService} from '../src/core/workbench/service'
+import {makeWorkbenchService} from '../src/features/workbench/service'
 import {createInternalApi,type InternalApiDeps} from '../src/daemon/internal-api'
+import {workbenchRoutes} from '../src/features/workbench/routes'
 import {workbenchClaudeAuthEnv} from './workbench-claude-config'
 import {loadAgentConfig} from '../src/lib/agent-config'
-import {registerWorkbenchApi} from '../src/daemon/bootstrap/workbench-api'
+import {registerWorkbenchApi} from '../src/features/workbench/workbench-api'
 
 const root=resolve(import.meta.dir,'..')
 const stateDir=join(homedir(),'.claude','channels','wechat-workbench-dev')
@@ -71,7 +72,7 @@ const workbench=makeWorkbenchService({
   mintSessionToken:key=>api.mintSessionToken('trusted',key,{routeAllow:new Set()}),
   revokeSessionToken:key=>api.invalidateSession(key),
 })
-api.provide({ workbench })
+api.mount('workbench', workbenchRoutes({ workbench }))
 const started=await api.start()
 writeFileSync(infoPath,JSON.stringify({baseUrl:`http://127.0.0.1:${started.port}`,daemonPid:process.pid,...started}),{mode:0o600})
 const port=process.env.WECHAT_CC_SHIM_PORT??'4187'

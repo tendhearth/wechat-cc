@@ -1,5 +1,5 @@
 // @ts-check
-/** @typedef {import('../../../../src/core/workbench/service/quota-handoff').QuotaHandoffView} Offer */
+/** @typedef {import('../../../../src/features/workbench/service/quota-handoff').QuotaHandoffView} Offer */
 /** @typedef {{id:string,title:string,path:string}} Source */
 /** @typedef {{id:string,displayName:string}} Provider */
 /** @typedef {{requestId:string,providerId:string}} Attempt */

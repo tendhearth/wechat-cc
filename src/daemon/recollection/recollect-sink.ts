@@ -1,6 +1,6 @@
 /**
  * recollect-sink.ts — the daemon-side RecollectSink (src/core/matters/
- * recollection.ts) that src/core/workbench/service.ts's terminal-completion
+ * recollection.ts) that src/features/workbench/service.ts's terminal-completion
  * branch calls into (via recollectOnce; fix round 1/5, 2026-09-23,
  * controller ruling: this must be wired up this round, not left for a later
  * task). Fix round 3 removed the settleQuiet call point that rounds 1-2 also

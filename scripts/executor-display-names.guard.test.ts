@@ -66,7 +66,7 @@ const NOT_DISPLAY_NAMES: ReadonlyArray<{ file: string; match: string; why: strin
   { file: 'src/daemon/capabilities.ts', match: "claude: 'Claude Code'", why: '接 hooks 的终端程序名(「接上 Claude Code」),不是执行者显示名' },
   { file: 'src/daemon/capabilities.ts', match: "'Claude Code'", why: '同上' },
   { file: 'src/core/cli-upgrade/specs.ts', match: "'Claude Code'", why: '要升级的 CLI 程序的名字(CLI_SPECS.label),不是执行者显示名' },
-  { file: 'src/core/workbench/task-reference.ts', match: "['claude', '克劳德'", why: '解析主人原话用的别名(PROVIDER_WORDS),不是给人看的名字' },
+  { file: 'src/features/workbench/task-reference.ts', match: "['claude', '克劳德'", why: '解析主人原话用的别名(PROVIDER_WORDS),不是给人看的名字' },
   { file: 'src/features/phone/settings-panel-html.ts', match: '=== "codex" ? "同 Claude 那格"', why: '一句说明(codex 的模型跟 Claude 那格),不是名字' },
 ]
 

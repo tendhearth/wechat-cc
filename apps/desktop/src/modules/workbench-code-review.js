@@ -1,7 +1,7 @@
 // @ts-check
 
-/** @typedef {import('../../../../src/core/workbench/git-review').GitReview} GitReview */
-/** @typedef {import('../../../../src/core/workbench/git-review').ReviewFile} ReviewFile */
+/** @typedef {import('../../../../src/features/workbench/git-review').GitReview} GitReview */
+/** @typedef {import('../../../../src/features/workbench/git-review').ReviewFile} ReviewFile */
 
 export const WORKBENCH_CODE_REVIEW_MIME = 'application/vnd.cc.workbench-review+json'
 const MAX_SOURCE_CHARS = 128 * 1024
@@ -53,7 +53,7 @@ function fallback(message, source) {
 export function createReviewDiffBudget() { return { charsLeft: MAX_DIFF_CHARS, linesLeft: MAX_LINES, limited: false } }
 
 /** 按块渲染时调用方(改动面板)递进来的东西。没有它 ⇒ 照旧整段 `<pre>`。
- * @typedef {import('../../../../src/core/workbench/review-annotations').ReviewHunkView} ReviewHunkView
+ * @typedef {import('../../../../src/features/workbench/review-annotations').ReviewHunkView} ReviewHunkView
  * @typedef {{hunks:ReviewHunkView[],attrs:string,actions:boolean,head:(hunk:ReviewHunkView,complete:boolean)=>string,selected?:(hunk:number,row:number)=>boolean,after?:(hunk:number,row:number|null)=>string}} LineView */
 
 /** @param {string} line */

@@ -23,7 +23,7 @@
  */
 import type { Middleware } from './types'
 import { inboundMessageId, inboundFallbackMessageId } from '../../lib/messages-store'
-import {wechatTaskMessageKey} from '../../core/workbench/wechat-control'
+import {wechatTaskMessageKey} from '../../features/workbench'
 
 /** Default give-up threshold for a persistently-throwing ("poison") message. */
 export const DEFAULT_MAX_ATTEMPTS = 5

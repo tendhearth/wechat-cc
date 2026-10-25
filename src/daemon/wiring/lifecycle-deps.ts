@@ -33,7 +33,7 @@ export interface LifecycleDepsOpts {
   log: (tag: string, line: string, fields?: Record<string, unknown>) => void
   /** 网络守护运行时(2026-10-02):后台 tick 不安全就跳过;probe 来源连续两次不安全时暂停需要保护的工作台执行者。 */
   guardRuntime?: import('../guard/runtime').GuardRuntime
-  workbench?: Pick<import('../../core/workbench/service').WorkbenchService, 'suspendForNetwork' | 'resumeFromNetwork' | 'stopSuspendedForNetwork'>
+  workbench?: Pick<import('../../features/workbench').WorkbenchService, 'suspendForNetwork' | 'resumeFromNetwork' | 'stopSuspendedForNetwork'>
   /**
    * Optional override for both push + introspect scheduler intervals.
    * When set, both schedulers use this value instead of their defaults.

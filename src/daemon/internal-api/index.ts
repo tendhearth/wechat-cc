@@ -28,6 +28,7 @@ import { join, dirname } from 'node:path'
 import { randomBytes } from 'node:crypto'
 import { makeTokenRegistry, type TokenInfo } from './token-registry'
 import { minTierFor, moduleFor, tierMeets } from './route-tiers'
+import { MODULE_UNAVAILABLE_CODE } from '@wechat-cc/protocol/routes'
 import type { UserTier } from '../../domain/user-tier'
 import type { AddressInfo } from 'node:net'
 import {
@@ -245,17 +246,21 @@ export function createInternalApi(deps: InternalApiDeps): InternalApi {
     // 不让「模块关着」变成探测装了什么功能的口子。主人关的 ⇒ module_off;开着却没起来 ⇒ module_degraded
     // 带原因 —— 别把坏了说成关了。subsystems 里找不到这个模块(测试 / 还没登记)⇒ 放给处理器,它自己的兜底照旧。
     const mod = moduleFor(routeKey)
+    // 搬家前客户端就认得的「没准备好」码(MODULE_UNAVAILABLE_CODE,现在只有工作台的 workbench_not_wired):
+    // 这个模块不是 ok 或还没挂上 ⇒ 原样回 503 { error: 那个码 },跟搬家前处理器里写的一字不差。
+    const legacy = mod ? MODULE_UNAVAILABLE_CODE[mod] : undefined
     if (mod) {
       const st = deps.subsystems?.().find(s => s.name === mod)
       if (st && st.state !== 'ok') {
         const code = st.state === 'off' ? 'module_off' : 'module_degraded'
         deps.log?.('INTERNAL_API', `503 ${routeKey} ${code} module=${mod}`, { event: code, path: routeKey, module: mod })
+        if (legacy) return send(res, 503, { error: legacy }, origin)
         return send(res, 503, { error: code, module: mod, ...(st.state !== 'off' && st.error ? { detail: st.error } : {}) }, origin)
       }
     }
 
     // 表里有、模块也没说关着 / 坏了,只是处理器还没挂上来:开机途中(模块还没 init 到)。
-    if (!route) return send(res, 503, { error: 'module_starting', module: mod }, origin)
+    if (!route) return send(res, 503, legacy ? { error: legacy } : { error: 'module_starting', module: mod }, origin)
 
     let body: unknown = null
     if (method === 'POST') {

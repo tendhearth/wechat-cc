@@ -83,7 +83,7 @@ export interface ToolDescriptor {
   /** 名字本身不合规(gemini:裸名里带 `__`)。 */
   malformed?: boolean
   /**
-   * 一起做的 Claude:这个 MCP 工具在这件事的登记表里是什么地位(登记表是 wire-workbench 读出来的原生 MCP)。
+   * 一起做的 Claude:这个 MCP 工具在这件事的登记表里是什么地位(登记表是 features/workbench/wire.ts 读出来的原生 MCP)。
    *   unregistered  任何登记过的 server 前缀都对不上
    *   not_admitted  前缀对上了,但那是伙伴自己的 server(wechat / delegate …)或后面没有工具名
    *   admitted      登记且放进来 ⇒ 逐条问

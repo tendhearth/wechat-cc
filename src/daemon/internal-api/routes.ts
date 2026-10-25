@@ -37,7 +37,6 @@ import { licenseRoutes } from './routes-license'
 import { daemonControlRoutes } from './routes-daemon-control'
 import { fileRoutes } from './routes-files'
 import { federationRoutes } from './routes-federation'
-import { workbenchRoutes } from './routes-workbench'
 import type {
   ProjectsSwitchRequestT, ProjectsAddRequestT, ProjectsRemoveRequestT,
   UserSetNameRequestT,
@@ -74,7 +73,7 @@ export function makeRoutes({ deps, getDelegate, maybePrefix, mounted }: MakeRout
     // 回复交付(spec 2026-10-03 §4.5 / §4.6):附件登记 + admin 往别处发。表情 / 语音附件交付时复用老路由
     // (表情由 stickers 模块、语音由 voice 模块挂上来)。
     ...turnRoutes(deps, (key) => table[key] ?? mounted?.[key]),
-    ...workbenchRoutes(deps),
+    // 工作台的 44 条 /v1/workbench/* 由 workbench 模块自己挂(src/features/workbench,路由表标 module: 'workbench')
     ...mattersRoutes(deps),
     ...connectionsRoutes(deps),
     'GET /v1/health': (_q, _body, caller) => ({

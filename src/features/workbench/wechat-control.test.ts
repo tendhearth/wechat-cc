@@ -1,0 +1,572 @@
+import {afterEach,beforeEach,describe,expect,it,vi} from 'vitest'
+import {mkdtempSync,mkdirSync,realpathSync} from 'node:fs'
+import {createHash} from 'node:crypto'
+import {makeWechatWorkbenchControl,wechatTaskMessageKey} from './wechat-control'
+import {tmpdir} from 'node:os'
+import {join} from 'node:path'
+import {openDb,type Db} from '../../lib/db'
+import {createProviderRegistry} from '../../app/provider-registry'
+import type {AgentEvent,AgentProvider} from '../../ports/agent-provider'
+import {makeWorkbenchStore} from '../../core/workbench/store'
+import {makeWorkbenchService,type WorkbenchService} from './service'
+import {MANAGED_NATIVE_CAPABILITIES} from '../../core/workbench/executor-capabilities'
+import {removeTempDir} from '../../lib/test-temp'
+
+let root:string,project:string,db:Db,store:ReturnType<typeof makeWorkbenchStore>,service:WorkbenchService,owner:string|null
+const result:AgentEvent={kind:'result',sessionId:'native-one',numTurns:1,durationMs:1}
+const identity={accountId:'account',userId:'owner',msgId:'message-one',createTimeMs:1}
+const gate=()=>{let resolve!:()=>void;const promise=new Promise<void>(r=>{resolve=r});return{promise,resolve}}
+function setup(provider:AgentProvider){
+  const registry=createProviderRegistry();registry.register('claude',provider,{displayName:'Claude',canResume:()=>true,workbench:MANAGED_NATIVE_CAPABILITIES})
+  service=makeWorkbenchService({store,registry,stateDir:root,ownerChatId:()=>owner})
+}
+const create=(text='整理周报')=>service.create({path:project,providerId:'claude',text})
+const settled=async(id:string)=>{await expect.poll(()=>service.detail(id).task.status).not.toMatch(/^(queued|running|cancelling)$/)}
+beforeEach(()=>{root=realpathSync(mkdtempSync(join(tmpdir(),'cc-wechat-control-')));project=join(root,'project');mkdirSync(project);db=openDb({path:join(root,'state.db')});store=makeWorkbenchStore(db);owner='owner'})
+afterEach(async()=>{await service?.shutdown();db.close();removeTempDir(root)})
+
+describe('WeChat task control through the shared service',()=>{
+  it.each([
+    ['workbench_attachments_unsupported','移除附件'],
+    ['workbench_execution_unsupported','自动设置'],
+    ['workbench_resume_unsupported','桌面'],
+    ['unattended_ack_required','免审'],
+    ['issue_unattended_unsupported','换一位执行者'],
+    ['unavailable_provider','连接或管理'],
+  ])('translates executor admission failure %s into an actionable reply',async(code,hint)=>{
+    setup({async spawn(){return{async *dispatch(){yield result},async close(){}}}})
+    const projectId='p-'+'a'.repeat(20)
+    const control=makeWechatWorkbenchControl({store,ownerChatId:()=>owner,actions:{...service,projects:()=>[{id:projectId,name:'project',path:project,providerId:'claude'}],createWechat(){throw Error(code)}}})
+    const reply=await control('owner',`任务 新建 ${projectId} 整理周报`,identity)
+    expect(reply).toContain(hint)
+    expect(reply).not.toContain(code)
+    if(code==='unattended_ack_required'){
+      expect(reply).toContain('桌面')
+      expect(reply).toContain('只能停止')
+    }
+    if(code==='unavailable_provider'){
+      expect(reply).not.toContain('Claude Code')
+      expect(reply).not.toContain('安装')
+    }
+  })
+  it('shows retained runtime observations in list/detail while keeping child output out of the main reply',async()=>{
+    setup({async spawn(){return{async *dispatch(){yield result},async close(){}}}})
+    const task=store.create({title:'后台校对',path:project,providerId:'claude',ownerChatId:'owner'})
+    store.update(task.id,'running')
+    store.addEvent(task.id,'text','主回复已经到达。')
+    store.recordAgentEvent(task.id,'epoch',{kind:'tool_call',tool:'Agent',activity:{id:'child',type:'agent',status:'completed',label:'子助手',output:'不作为主回复的子结果'}})
+    const runtime={retained:true,foreground:'idle' as const,backgroundCount:0,input:'send' as const}
+    const control=makeWechatWorkbenchControl({store,ownerChatId:()=>owner,actions:{...service,detail:id=>({...service.detail(id),runtime})}})
+    expect(await control('owner','任务')).toContain('会话保留中')
+    const reply=await control('owner',`任务 ${task.id}`)
+    expect(reply).toContain('会话保留中')
+    expect(reply).toContain('主回复已经到达。')
+    expect(reply).not.toContain('不作为主回复的子结果')
+    expect(reply).toContain(`结束：任务 ${task.id} 停止`)
+    runtime.backgroundCount=2
+    expect(await control('owner',`任务 ${task.id}`)).toContain('后台执行中 · 2')
+    store.update(task.id,'cancelling')
+    expect(await control('owner',`任务 ${task.id}`)).toContain('正在停止')
+    expect(await control('owner',`任务 ${task.id}`)).not.toContain('会话保留中')
+  })
+  it('a run frozen by the network guard reads 已暂停(网络未受保护) in list and detail (2026-10-03)',async()=>{
+    setup({async spawn(){return{async *dispatch(){yield result},async close(){}}}})
+    const task=store.create({title:'冻住的任务',path:project,providerId:'claude',ownerChatId:'owner'})
+    store.update(task.id,'running')
+    const control=makeWechatWorkbenchControl({store,ownerChatId:()=>owner,actions:{...service,detail:id=>{const d=service.detail(id);return{...d,task:{...d.task,networkSuspended:{since:1}}}}}})
+    expect(await control('owner','任务')).toContain('已暂停(网络未受保护)')
+    expect(await control('owner',`任务 ${task.id}`)).toContain('已暂停(网络未受保护)，恢复后自动继续')
+  })
+  it('does not promise a new round for a retained queue-only runtime',async()=>{
+    setup({async spawn(){return{async *dispatch(){yield result},async close(){}}}})
+    const task=store.create({title:'后台会话',path:project,providerId:'claude',ownerChatId:'owner'})
+    store.update(task.id,'running')
+    const control=makeWechatWorkbenchControl({store,ownerChatId:()=>owner,actions:{...service,
+      detail:id=>({...service.detail(id),runId:'epoch',inputMode:'queue',runtime:{retained:true,foreground:'idle',backgroundCount:0,input:'queue'}}),
+      submitInput:async(id,input)=>store.liveInputs.add({id:input.requestId,taskId:id,runId:input.runId,text:input.text}),
+    }})
+    const reply=await control('owner',`任务 ${task.id} 补充 保留接口`,identity)
+    expect(reply).toContain('不会自动发送')
+    expect(reply).not.toContain('下一轮')
+    expect(await control('owner',`任务 ${task.id} 补充 保留接口`,identity)).toBe(reply)
+  })
+  it('等待行说人话:持有者已答复即将自动让位时加一句同义的话,持有者仍在写时不加',async()=>{
+    setup({async spawn(){return{async *dispatch(){yield result},async close(){}}}})
+    const task=store.create({title:'排队中',path:project,providerId:'claude',ownerChatId:'owner'})
+    const idle=async()=>{
+      // 7500ms 是挑出来暴露差异的值:向下取是「7 秒」,四舍五入会说成「8 秒」——比实际剩的更多。
+      const waitingFor={taskId:'HOLDER',title:'Holder task',reason:'same_path' as const,holderWriting:false,closeInMs:7500}
+      const control=makeWechatWorkbenchControl({store,ownerChatId:()=>owner,actions:{...service,detail:id=>{const detail=service.detail(id);return{...detail,task:{...detail.task,waitingFor}}}}})
+      return control('owner',`任务 ${task.id}`)
+    }
+    const reply=await idle()
+    expect(reply).toContain('「Holder task」已答复，会话还开着')
+    expect(reply).toContain('等 7 秒它会自己让开')
+    expect(reply).toContain('或者说『任务 HOLDER 停止』')
+    const writing=async()=>{
+      const waitingFor={taskId:'HOLDER',title:'Holder task',reason:'same_path' as const,holderWriting:true,closeInMs:null}
+      const control=makeWechatWorkbenchControl({store,ownerChatId:()=>owner,actions:{...service,detail:id=>{const detail=service.detail(id);return{...detail,task:{...detail.task,waitingFor}}}}})
+      return control('owner',`任务 ${task.id}`)
+    }
+    expect(await writing()).not.toContain('已答复，会话还开着')
+  })
+  it('等待行的双保险:writer_not_closed 挡路即使碰巧带着 holderWriting:false/closeInMs 也不说「已答复」（终审 M7）',async()=>{
+    // 今天 findPathBlocker 只在 state==='uncertain' 时给 writer_not_closed，而 isReplied 在
+    // uncertain 时必为 false，所以这个组合本不可达——但呈现给主人的那句话不该只在一半的面上
+    // 成立(桌面 workbench.js 已经为同一个教训选了双保险:reason!=='writer_not_closed')。
+    setup({async spawn(){return{async *dispatch(){yield result},async close(){}}}})
+    const task=store.create({title:'排队中',path:project,providerId:'claude',ownerChatId:'owner'})
+    const waitingFor={taskId:'HOLDER',title:'Holder task',reason:'writer_not_closed' as const,holderWriting:false,closeInMs:7500}
+    const control=makeWechatWorkbenchControl({store,ownerChatId:()=>owner,actions:{...service,detail:id=>{const detail=service.detail(id);return{...detail,task:{...detail.task,waitingFor}}}}})
+    const reply=await control('owner',`任务 ${task.id}`)
+    expect(reply).not.toContain('已答复，会话还开着')
+    expect(reply).not.toContain('自己让开')
+  })
+  it('任务 <编号> 改动 lists the latest round of changed files with line counts (2026-10-06)',async()=>{
+    setup({async spawn(){return{async *dispatch(){yield result},async close(){}}}})
+    const task=create();await settled(task.id)
+    const turn=(files:Array<{path:string;kind:'added'|'deleted'|'modified'|'not_reviewed';diff?:string}>,status:'complete'|'partial'|'unavailable'='complete')=>({artifactId:'a',sha256:'s',name:'n',createdAt:1,status,headBefore:null,headAfter:null,preexistingPaths:[],notes:[],files:files.map(f=>({preexisting:false,...f}))})
+    let turns:ReturnType<typeof turn>[]=[]
+    const control=makeWechatWorkbenchControl({store,ownerChatId:()=>owner,actions:{...service,reviewList:()=>turns}})
+    expect(await control('owner',`任务 ${task.id} 改动`,identity)).toContain('还没有改动记录')
+    turns=[turn([{path:'src/a.ts',kind:'modified',diff:'@@ -1,2 +1,3 @@\n a\n-b\n+B\n+c\n'},{path:'new.md',kind:'added',diff:'@@ -0,0 +1 @@\n+hi\n'},{path:'big.bin',kind:'not_reviewed'}],'partial'),turn([],'complete')]
+    const reply=await control('owner',`任务 ${task.id} 改动`,identity) as string
+    expect(reply).toContain('最近一轮已检查的部分里改了 3 个文件（共 2 轮）')
+    expect(reply).toContain('• 修改 src/a.ts（+2 −1）')
+    expect(reply).toContain('• 新建 new.md（+1 −0）')
+    expect(reply).toContain('• 未展开 big.bin')
+    expect(reply).toContain('这一轮只检查了一部分，有文件没能完整检查。以桌面为准。')
+    turns=[turn(Array.from({length:15},(_,i)=>({path:`f${i}.ts`,kind:'modified' as const,diff:'@@ -1 +1 @@\n-x\n+y\n'})))]
+    expect(await control('owner',`任务 ${task.id} 改动`,identity)).toContain('还有 3 个。')
+    const noReview=makeWechatWorkbenchControl({store,ownerChatId:()=>owner,actions:{...service,reviewList:undefined}})
+    expect(await noReview('owner',`任务 ${task.id} 改动`,identity)).toContain('桌面工作台的「改动」面板')
+    expect(await control('owner',`任务 ${task.id} 改动 a.ts`,identity)).toContain('用法')
+  })
+  it('任务 <编号> 改动 never lets a partial round read as complete (2026-10-20)',async()=>{
+    setup({async spawn(){return{async *dispatch(){yield result},async close(){}}}})
+    const task=create();await settled(task.id)
+    const note='读取超时，只检查了 90 / 100 个文件，其余尚未检查。'
+    const turn=(files:Array<{path:string;kind:'modified'}>,status:'complete'|'partial'|'unavailable',notes:string[]=[])=>({artifactId:'a',sha256:'s',name:'n',createdAt:1,status,headBefore:null,headAfter:null,preexistingPaths:[],notes,files:files.map(f=>({preexisting:false,diff:'@@ -1 +1 @@\n-x\n+y\n',...f}))})
+    let turns:ReturnType<typeof turn>[]=[]
+    const control=makeWechatWorkbenchControl({store,ownerChatId:()=>owner,actions:{...service,reviewList:()=>turns}})
+    turns=[turn([{path:'a.ts',kind:'modified'}],'partial',[note])]
+    const reply=await control('owner',`任务 ${task.id} 改动`,identity) as string
+    expect(reply).toContain('最近一轮已检查的部分里改了 1 个文件')
+    expect(reply).toContain(`这一轮只检查了一部分：${note}以桌面为准。`)
+    // 一个改动都没查到 ≠ 没有改动
+    turns=[turn([],'partial',[note])]
+    const empty=await control('owner',`任务 ${task.id} 改动`,identity) as string
+    expect(empty).not.toContain('没有改动文件')
+    expect(empty).toContain('已检查的文件里没有改动，但这一轮没查完。')
+    expect(empty).toContain('90 / 100')
+    // 最近一轮读不出来、拿更早的一轮顶上时要说
+    turns=[turn([],'unavailable',['快照无法读取或已损坏']),turn([{path:'b.ts',kind:'modified'}],'complete')]
+    const older=await control('owner',`任务 ${task.id} 改动`,identity) as string
+    expect(older.split('\n')[0]).toBe('最近一轮的改动记录读不出来，下面是更早的一轮。')
+    expect(older).not.toContain('只检查了一部分')
+  })
+  it('任务 <编号> 改动 skips rounds a rewind discarded (v81)',async()=>{
+    setup({async spawn(){return{async *dispatch(){yield result},async close(){}}}})
+    const task=create();await settled(task.id)
+    const turn=(path:string,createdAt:number,discarded?:true)=>({artifactId:path,sha256:'s',name:'n',createdAt,status:'complete' as const,headBefore:null,headAfter:null,preexistingPaths:[],notes:[],files:[{path,kind:'added' as const,preexisting:false,diff:'@@ -0,0 +1 @@\n+x\n'}],...(discarded?{discarded}:{})})
+    let turns=[turn('gone.ts',2,true),turn('kept.ts',1)]
+    const control=makeWechatWorkbenchControl({store,ownerChatId:()=>owner,actions:{...service,reviewList:()=>turns}})
+    const reply=await control('owner',`任务 ${task.id} 改动`,identity) as string
+    expect(reply).toContain('kept.ts');expect(reply).not.toContain('gone.ts');expect(reply).not.toContain('共 2 轮')
+    turns=[turn('gone.ts',2,true)]
+    expect(await control('owner',`任务 ${task.id} 改动`,identity)).toContain('还没有改动记录')
+  })
+
+  it('任务 新建 <项目> 独立@<分支> passes the start branch; a bad name is usage, not git (2026-10-08)',async()=>{
+    setup({async spawn(){return{async *dispatch(){yield result},async close(){}}}})
+    const createWechat=vi.fn((_input:{base?:string}):never=>({reply:'ok'}) as never)
+    const control=makeWechatWorkbenchControl({store,ownerChatId:()=>owner,actions:{...service,createWechat}})
+    expect(await control('owner','任务 新建 p-0123456789abcdef0123 独立@feature/login 修登录',identity)).toBe('ok')
+    expect(createWechat).toHaveBeenLastCalledWith(expect.objectContaining({isolation:true,base:'feature/login',text:'修登录'}))
+    expect(await control('owner','任务 新建 p-0123456789abcdef0123 独立 修登录',identity)).toBe('ok')
+    expect(createWechat.mock.lastCall![0]).not.toHaveProperty('base')
+    expect(await control('owner','任务 新建 p-0123456789abcdef0123 独立@../x 修登录',identity)).toContain('用法')
+    expect(createWechat).toHaveBeenCalledTimes(2)
+  })
+
+  it('任务 <编号> 提交 / 合回 / 删除工作区 (2026-10-08) go to worktreeAction instead of being sent to the executor as a supplement',async()=>{
+    setup({async spawn(){return{async *dispatch(){yield result},async close(){}}}})
+    const task=create();await settled(task.id)
+    const act=vi.fn((_id:string,action:string)=>{
+      if(action==='merge')throw new Error('worktree_not_ff')
+      return action==='commit'?{branch:'cc/abcd1234',committed:true,sha:'0123456789'}:{branch:'cc/abcd1234',removed:true}
+    })
+    const control=makeWechatWorkbenchControl({store,ownerChatId:()=>owner,actions:{...service,worktreeAction:act}})
+    const before=service.detail(task.id).events.length
+    expect(await control('owner',`任务 ${task.id} 提交`,identity)).toContain('已提交到分支 cc/abcd1234（0123456）')
+    expect(await control('owner',`任务 ${task.id} 合回`,identity)).toContain('不能直接快进')
+    expect(await control('owner',`任务 ${task.id} 删除工作区`,identity)).toContain('分支 cc/abcd1234 保留')
+    expect(await control('owner',`任务 ${task.id} 重开工作区`,identity)).toContain('重新打开独立工作区')
+    expect(act.mock.calls.map(c=>c[1])).toEqual(['commit','merge','remove','reopen'])
+    // 一条都没当成补充发给执行者
+    expect(service.detail(task.id).events.length).toBe(before)
+    expect(await control('owner',`任务 ${task.id} 提交 一下`,identity)).toContain('用法')
+    const plain=makeWechatWorkbenchControl({store,ownerChatId:()=>owner,actions:{...service,worktreeAction:()=>{throw new Error('not_worktree')}}})
+    expect(await plain('owner',`任务 ${task.id} 合回`,identity)).toContain('不在独立工作区里')
+    // 有工作区脚本(2026-10-20):先收尾再删 ⇒ 回「正在收尾」,不说「已删除」
+    const removing=makeWechatWorkbenchControl({store,ownerChatId:()=>owner,actions:{...service,worktreeAction:()=>({branch:'cc/abcd1234',removing:true})}})
+    const reply=await removing('owner',`任务 ${task.id} 删除工作区`,identity)
+    expect(reply).toContain('正在收尾');expect(reply).not.toContain('已删除')
+  })
+
+  it('lists only the current owner original tasks and keeps ordinary conversation out of the workbench',async()=>{
+    setup({async spawn(){return{async *dispatch(){yield result},async close(){}}}})
+    const mine=store.create({title:'我的报告',path:project,providerId:'claude',ownerChatId:'owner'})
+    store.create({title:'别人的秘密',path:project,providerId:'claude',ownerChatId:'previous-owner'})
+    const list=await service.handleWechat('owner','任务')
+    expect(list).toContain(mine.id);expect(list).toContain('我的报告');expect(list).not.toContain('别人的秘密')
+    expect(await service.handleWechat('owner','刚才的任务怎么样了')).toBeNull()
+    expect(await service.handleWechat('other','任务')).toBeNull()
+    owner='new-owner';expect(await service.handleWechat('new-owner',`任务 ${mine.id}`)).not.toContain('我的报告')
+  })
+
+  it('shows latest assistant output separately from errors, plus named artifact versions and held input',async()=>{
+    setup({async spawn(){return{async *dispatch(){yield result},async close(){}}}})
+    const task=store.create({title:'报告',path:project,providerId:'claude',ownerChatId:'owner'})
+    store.addEvent(task.id,'text','已完成表格核对。');store.addEvent(task.id,'error','导出失败，需要重试。');store.update(task.id,'failed','export_failed')
+    store.addArtifact({taskId:task.id,name:'核对结果.csv',mime:'text/csv',size:12,sha256:'a'.repeat(64),storagePath:'/unused/snapshot'})
+    const input=store.liveInputs.add({id:crypto.randomUUID(),taskId:task.id,runId:crypto.randomUUID(),text:'请保留附录'})
+    store.liveInputs.set(input.id,'held','未发送')
+    const reply=await service.handleWechat('owner',`任务 ${task.id} 结果`)
+    expect(reply).toContain('已完成表格核对。');expect(reply).toContain('导出失败');expect(reply).toContain('核对结果.csv')
+    expect(reply).toContain('请保留附录');expect(reply).not.toContain('/unused/snapshot')
+    expect(store.events(task.id).filter(e=>e.kind==='user')).toEqual([])
+  })
+
+  it('shows the newest eight artifact versions, including the current result',async()=>{
+    setup({async spawn(){return{async *dispatch(){yield result},async close(){}}}})
+    const task=create();await settled(task.id)
+    for(let i=1;i<=9;i++)store.addArtifact({taskId:task.id,name:`result-${i}.txt`,mime:'text/plain',size:i,sha256:String(i).repeat(64),storagePath:'/unused'})
+    const reply=await service.handleWechat('owner',`任务 ${task.id} 结果`)
+    expect(reply).toContain('result-9.txt');expect(reply).not.toContain('result-1.txt')
+  })
+
+  it.each([false,true])('never replays a stop against a newer desktop run (daemon restart: %s)',async restart=>{
+    let cancels=0
+    const provider:AgentProvider={async spawn(){const turn=gate();return{async *dispatch(){yield {kind:'init',sessionId:'native-one'};await turn.promise;yield result},async cancel(){cancels++;turn.resolve()},async close(){turn.resolve()}}}}
+    setup(provider);const task=create();await expect.poll(()=>service.detail(task.id).task.status).toBe('running')
+    const original=await service.handleWechat('owner',`任务 ${task.id} 停止`,identity);await settled(task.id)
+    if(restart){await service.shutdown();db.close();db=openDb({path:join(root,'state.db')});store=makeWorkbenchStore(db);setup(provider)}
+    service.continueTask(task.id,'desktop next');await expect.poll(()=>service.detail(task.id).task.status).toBe('running')
+    const currentRun=service.detail(task.id).runId
+    expect(await service.handleWechat('owner',`任务 ${task.id} 停止`,identity)).toBe(original)
+    expect(await service.handleWechat('owner',`任务 ${task.id} 补充 changed stop message`,identity)).toContain('不一致')
+    expect(service.detail(task.id).runId).toBe(currentRun);expect(service.detail(task.id).task.status).toBe('running');expect(cancels).toBe(1)
+  })
+
+  it('does not apply an unfinished durable stop receipt to a later run after restart',async()=>{
+    let cancels=0
+    const provider:AgentProvider={async spawn(){const turn=gate();return{async *dispatch(){yield {kind:'init',sessionId:'native-one'};await turn.promise;yield result},async cancel(){cancels++;turn.resolve()},async close(){turn.resolve()}}}}
+    setup(provider);const task=create();await expect.poll(()=>service.detail(task.id).task.status).toBe('running')
+    const text=`任务 ${task.id} 停止`,requestId=wechatTaskMessageKey({...identity,chatId:'owner',text})!.slice('workbench:'.length)
+    store.controlReceipts.reserve({id:requestId,taskId:task.id,runId:service.detail(task.id).runId!,action:'stop',textHash:createHash('sha256').update(text).digest('hex')})
+    await service.shutdown();db.close();db=openDb({path:join(root,'state.db')});store=makeWorkbenchStore(db);setup(provider)
+    service.continueTask(task.id,'desktop next');await expect.poll(()=>service.detail(task.id).task.status).toBe('running')
+    const before=cancels,currentRun=service.detail(task.id).runId
+    expect(await service.handleWechat('owner',text,identity)).toContain('尚未确认')
+    expect(service.detail(task.id).runId).toBe(currentRun);expect(service.detail(task.id).task.status).toBe('running');expect(cancels).toBe(before)
+  })
+
+  it('binds a no-op stop receipt to the ended run instead of stopping a later desktop run',async()=>{
+    let spawned=0,cancels=0
+    setup({async spawn(){const n=++spawned,turn=gate();return{async *dispatch(){yield {kind:'init',sessionId:'native-one'};if(n>1)await turn.promise;yield result},async cancel(){cancels++;turn.resolve()},async close(){turn.resolve()}}}})
+    const task=create();await settled(task.id)
+    const original=await service.handleWechat('owner',`任务 ${task.id} 停止`,identity)
+    expect(original).toContain('已经结束')
+    service.continueTask(task.id,'desktop next');await expect.poll(()=>spawned).toBe(2)
+    expect(await service.handleWechat('owner',`任务 ${task.id} 停止`,identity)).toBe(original)
+    await expect(service.cancel(task.id,'stale-run')).rejects.toThrow('control_stale')
+    expect(service.detail(task.id).task.status).toBe('running');expect(cancels).toBe(0)
+  })
+
+  it('acknowledges a running native supplement only after steering succeeds, and retries the inbound once across run completion',async()=>{
+    const turn=gate(),ack=gate(),seen:string[]=[]
+    setup({async spawn(){return{async *dispatch(){yield {kind:'init',sessionId:'native-one'};await turn.promise;yield result},async steer(text){seen.push(text);await ack.promise},async close(){turn.resolve()}}}})
+    const task=create();await expect.poll(()=>service.detail(task.id).inputMode).toBe('steer')
+    let replied=false
+    const send=service.handleWechat('owner',`任务 ${task.id} 补充 保留附录`,identity).then(reply=>{replied=true;return reply})
+    await expect.poll(()=>seen.length).toBe(1);expect(replied).toBe(false)
+    expect(await service.handleWechat('owner',`任务 ${task.id} 补充 保留附录`,identity)).toContain('尚未确认')
+    expect(seen).toHaveLength(1)
+    ack.resolve();expect(await send).toContain('已传达')
+    turn.resolve();await settled(task.id)
+    expect(await service.handleWechat('owner',`任务 ${task.id} 补充 保留附录`,identity)).toContain('已传达')
+    expect(seen).toEqual(['保留附录']);expect(store.events(task.id).filter(e=>e.kind==='user').map(e=>e.text)).toEqual(['整理周报','保留附录'])
+  })
+
+  it('queues a running supplement for the next native turn',async()=>{
+    const turn=gate(),seen:string[]=[],resumes:Array<string|undefined>=[]
+    setup({async spawn(_p,ctx){resumes.push(ctx.resumeSessionId);return{async *dispatch(text){seen.push(text);if(seen.length===1)await turn.promise;yield result},async close(){turn.resolve()}}}})
+    const task=create();await expect.poll(()=>seen.length).toBe(1)
+    const reply=await service.handleWechat('owner',`任务 ${task.id} 补充 缩短摘要`,identity)
+    expect(reply).toContain('下一轮');expect(reply).not.toContain('已传达');expect(seen).toHaveLength(1)
+    turn.resolve();await expect.poll(()=>seen.length).toBe(2);await settled(task.id)
+    expect(seen).toEqual(['整理周报','缩短摘要']);expect(resumes).toEqual([undefined,'native-one'])
+  })
+
+  it('does not re-execute an idle phone continuation after reply failure and daemon restart',async()=>{
+    const seen:string[]=[]
+    const provider:AgentProvider={async spawn(){return{async *dispatch(text){seen.push(text);yield result},async close(){}}}}
+    setup(provider);const task=create();await settled(task.id)
+    await service.handleWechat('owner',`任务 ${task.id} 继续 保留附录`,identity);await settled(task.id)
+    await service.shutdown();setup(provider)
+    await service.handleWechat('owner',`任务 ${task.id} 继续 保留附录`,identity)
+    await new Promise(r=>setImmediate(r))
+    expect(seen).toEqual(['整理周报','保留附录'])
+    expect(store.events(task.id).filter(e=>e.kind==='user').map(e=>e.text)).toEqual(['整理周报','保留附录'])
+  })
+
+  it('binds message identity to its task and rejects changed text on replay',async()=>{
+    const turn=gate(),seen:string[]=[]
+    setup({async spawn(){return{async *dispatch(){await turn.promise;yield result},async steer(text){seen.push(text)},async close(){turn.resolve()}}}})
+    const one=create();await expect.poll(()=>service.detail(one.id).inputMode).toBe('steer')
+    const otherProject=join(root,'other');mkdirSync(otherProject)
+    const two=service.create({path:otherProject,providerId:'claude',text:'另一件事'})
+    await expect.poll(()=>service.detail(two.id).inputMode).toBe('steer')
+    await service.handleWechat('owner',`任务 ${one.id} 补充 第一条`,identity)
+    expect(await service.handleWechat('owner',`任务 ${one.id} 补充 被修改的内容`,identity)).toContain('不一致')
+    await service.handleWechat('owner',`任务 ${two.id} 补充 第二条`,identity)
+    expect(seen).toEqual(['第一条','第二条'])
+    expect(service.detail(one.id).inputs[0]?.id).not.toBe(service.detail(two.id).inputs[0]?.id)
+  })
+
+  it('accepts different timestamp-only messages in the same millisecond while deduplicating exact redelivery',async()=>{
+    const turn=gate(),seen:string[]=[]
+    setup({async spawn(){return{async *dispatch(){await turn.promise;yield result},async steer(text){seen.push(text)},async close(){turn.resolve()}}}})
+    const task=create();await expect.poll(()=>service.detail(task.id).inputMode).toBe('steer')
+    const withoutId={accountId:'account',userId:'owner',createTimeMs:123}
+    for(const text of ['保留附录','缩短摘要','保留附录'])await service.handleWechat('owner',`任务 ${task.id} 补充 ${text}`,withoutId)
+    expect(seen).toEqual(['保留附录','缩短摘要'])
+  })
+
+  it('rejects malformed continuation receipt UUIDs before writing task history',async()=>{
+    setup({async spawn(){return{async *dispatch(){yield result},async close(){}}}})
+    const task=create();await settled(task.id);const before=store.events(task.id)
+    for(const inputRequestId of ['-'.repeat(36),'a'.repeat(36),'aaaaaaaa-aaaa-0aaa-aaaa-aaaaaaaaaaaa','aaaaaaaa-aaaa-4aaa-0aaa-aaaaaaaaaaaa']){
+      expect(()=>service.continueTask(task.id,'bad',{inputRequestId})).toThrow('invalid_request')
+    }
+    expect(store.events(task.id)).toEqual(before)
+  })
+
+  it('requires the actual inbound sender to be the bound owner, even when chatId matches',async()=>{
+    setup({async spawn(_p,ctx){return{async *dispatch(){await ctx.requestPermission!({tool:'Bash',description:'read report'});yield result},async close(){}}}})
+    const task=create();await expect.poll(()=>service.detail(task.id).permissions.length).toBe(1)
+    const request=service.detail(task.id).permissions[0]!,spoof={...identity,userId:'other-member'}
+    expect(await service.handleWechat('owner',`任务 ${task.id}`,spoof)).toBeNull()
+    expect(await service.handleWechat('owner',`任务 ${task.id} 允许 ${request.id}`,spoof)).toBeNull()
+    expect(service.detail(task.id).permissions).toHaveLength(1)
+  })
+
+  it('retains an unconfirmed native supplement without claiming it was delivered',async()=>{
+    const turn=gate()
+    setup({async spawn(){return{async *dispatch(){await turn.promise;yield result},async steer(){throw Error('ack lost')},async close(){turn.resolve()}}}})
+    const task=create();await expect.poll(()=>service.detail(task.id).inputMode).toBe('steer')
+    const reply=await service.handleWechat('owner',`任务 ${task.id} 补充 缩短摘要`,identity)
+    expect(reply).toContain('未确认');expect(reply).not.toContain('已传达');expect(service.detail(task.id).inputs[0]?.status).toBe('held')
+  })
+
+  it('shows and resolves only the exact permission, rejecting wrong task, owner and duplicate grants',async()=>{
+    const allowed:boolean[]=[]
+    setup({async spawn(_p,ctx){return{async *dispatch(){allowed.push(await ctx.requestPermission!({tool:'Bash',description:'读取项目中的报告文件'}));yield result},async close(){}}}})
+    const task=create();await expect.poll(()=>service.detail(task.id).permissions.length).toBe(1)
+    const request=service.detail(task.id).permissions[0]!
+    const other=store.create({title:'其他任务',path:project,providerId:'claude',ownerChatId:'owner'})
+    expect(await service.handleWechat('owner',`任务 ${task.id}`)).toContain(request.id)
+    expect(await service.handleWechat('owner',`任务 ${task.id} 权限 ${request.id}`)).toContain('读取项目中的报告文件')
+    await service.handleWechat('other',`任务 ${task.id} 允许 ${request.id}`)
+    expect(await service.handleWechat('owner',`任务 ${other.id} 允许 ${request.id}`)).toContain('已失效')
+    expect(allowed).toEqual([])
+    expect(await service.handleWechat('owner',`任务 ${task.id} 允许 ${request.id}`)).toContain('已允许')
+    await settled(task.id);expect(allowed).toEqual([true])
+    expect(await service.handleWechat('owner',`任务 ${task.id} 允许 ${request.id}`)).toContain('已失效')
+    service.continueTask(task.id,'再检查');await expect.poll(()=>service.detail(task.id).permissions.length).toBe(1)
+    expect(await service.handleWechat('owner',`任务 ${task.id} 允许 ${request.id}`)).toContain('已失效')
+    expect(service.detail(task.id).permissions.length).toBe(1)
+    const fresh=service.detail(task.id).permissions[0]!.id
+    expect(await service.handleWechat('owner',`任务 ${task.id} 拒绝 ${fresh}`)).toContain('已拒绝');await settled(task.id)
+    expect(allowed).toEqual([true,false])
+  })
+
+  it('does not allow an oversized permission whose full action cannot be displayed on the phone',async()=>{
+    setup({async spawn(_p,ctx){return{async *dispatch(){await ctx.requestPermission!({tool:'Bash',description:'x'.repeat(7000)});yield result},async close(){}}}})
+    const task=create();await expect.poll(()=>service.detail(task.id).permissions.length).toBe(1)
+    const request=service.detail(task.id).permissions[0]!
+    expect(await service.handleWechat('owner',`任务 ${task.id} 允许 ${request.id}`)).toContain('桌面')
+    expect(service.detail(task.id).permissions).toHaveLength(1)
+    await service.handleWechat('owner',`任务 ${task.id} 拒绝 ${request.id}`);await settled(task.id)
+  })
+
+  it('never applies a stale desktop permission reply to the next phone request or vice versa',async()=>{
+    const allowed:boolean[]=[]
+    setup({async spawn(_p,ctx){return{async *dispatch(){for(const description of ['first','second'])allowed.push(await ctx.requestPermission!({tool:'Bash',description}));yield result},async close(){}}}})
+    const task=create();await expect.poll(()=>service.detail(task.id).permissions.length).toBe(1)
+    const first=service.detail(task.id).permissions[0]!.id
+    service.resolvePermission(task.id,first,'allow')
+    await expect.poll(()=>service.detail(task.id).permissions[0]?.description).toBe('second')
+    const second=service.detail(task.id).permissions[0]!.id
+    expect(await service.handleWechat('owner',`任务 ${task.id} 允许 ${first}`)).toContain('已失效')
+    expect(allowed).toEqual([true]);expect(service.detail(task.id).permissions[0]!.id).toBe(second)
+    expect(await service.handleWechat('owner',`任务 ${task.id} 拒绝 ${second}`)).toContain('已拒绝')
+    expect(()=>service.resolvePermission(task.id,second,'allow')).toThrow('permission_stale')
+    await settled(task.id);expect(allowed).toEqual([true,false])
+  })
+
+  it('never applies a stale desktop answer to the next phone question or vice versa',async()=>{
+    const answers:unknown[]=[]
+    setup({async spawn(_p,ctx){return{async *dispatch(){for(const question of ['first','second'])answers.push(await ctx.requestUserInput!({questions:[{id:'note',header:'备注',question,options:[],allowOther:true}]}));yield result},async close(){}}}})
+    const task=create();await expect.poll(()=>service.detail(task.id).questions.length).toBe(1)
+    const first=service.detail(task.id).questions[0]!.id
+    service.resolveAnswer(task.id,first,{note:['desktop answer']})
+    await expect.poll(()=>service.detail(task.id).questions[0]?.questions[0]?.question).toBe('second')
+    const second=service.detail(task.id).questions[0]!.id
+    expect(await service.handleWechat('owner',`任务 ${task.id} 回答 ${first} 其他 old`)).toContain('已失效')
+    expect(answers).toEqual([{note:['desktop answer']}])
+    expect(await service.handleWechat('owner',`任务 ${task.id} 回答 ${second} 其他 phone answer`)).toContain('已提交回答')
+    expect(()=>service.resolveAnswer(task.id,second,{note:['late desktop']})).toThrow('question_stale')
+    await settled(task.id);expect(answers).toEqual([{note:['desktop answer']},{note:['phone answer']}])
+  })
+
+  it('shows question options and maps an explicit answer to the owning request only',async()=>{
+    let answer:unknown
+    setup({async spawn(_p,ctx){return{async *dispatch(){answer=await ctx.requestUserInput!({questions:[{id:'format',header:'格式',question:'需要哪种文件？',options:[{label:'PDF',description:'固定版式'},{label:'Word',description:'方便编辑'}],allowOther:true}]});yield result},async close(){}}}})
+    const task=create();await expect.poll(()=>service.detail(task.id).questions.length).toBe(1)
+    const request=service.detail(task.id).questions[0]!,other=store.create({title:'其他',path:project,providerId:'claude',ownerChatId:'owner'})
+    const show=await service.handleWechat('owner',`任务 ${task.id} 问题 ${request.id}`)
+    expect(show).toContain('需要哪种文件？');expect(show).toContain('Word');expect(show).toContain(request.id)
+    expect(await service.handleWechat('owner',`任务 ${other.id} 回答 ${request.id} 2`)).toContain('已失效')
+    await service.handleWechat('other',`任务 ${task.id} 回答 ${request.id} 2`)
+    expect(await service.handleWechat('owner',`任务 ${task.id} 回答 ${request.id} 9`)).toContain('答案')
+    expect(service.detail(task.id).questions).toHaveLength(1)
+    expect(await service.handleWechat('owner',`任务 ${task.id} 回答 ${request.id} 2`)).toContain('已提交回答')
+    await settled(task.id);expect(answer).toEqual({format:['Word']})
+    expect(await service.handleWechat('owner',`任务 ${task.id} 回答 ${request.id} 1`)).toContain('已失效')
+  })
+
+  it('answers a complete multi-question request with exact option labels and allowed free text',async()=>{
+    let answer:unknown
+    setup({async spawn(_p,ctx){return{async *dispatch(){answer=await ctx.requestUserInput!({questions:[{id:'parts',header:'章节',question:'保留哪些？',options:[{label:'正文',description:''},{label:'附录',description:''}],multiSelect:true},{id:'note',header:'备注',question:'其他要求？',options:[],allowOther:true}]});yield result},async close(){}}}})
+    const task=create();await expect.poll(()=>service.detail(task.id).questions.length).toBe(1)
+    const request=service.detail(task.id).questions[0]!
+    expect(await service.handleWechat('owner',`任务 ${task.id} 回答 ${request.id} 1=1,2\n2=其他 保留原表格`)).toContain('已提交回答')
+    await settled(task.id);expect(answer).toEqual({parts:['正文','附录'],note:['保留原表格']})
+  })
+
+  it('consumes malformed explicit control verbs instead of sending them as new task text',async()=>{
+    setup({async spawn(){return{async *dispatch(){yield result},async close(){}}}})
+    const task=create();await settled(task.id)
+    const before=store.events(task.id)
+    for(const suffix of ['允许','回答 wrong-id 1','权限','补充'])expect(await service.handleWechat('owner',`任务 ${task.id} ${suffix}`)).toContain('用法')
+    expect(store.events(task.id)).toEqual(before)
+  })
+})
+
+describe('任务 新建 <项目> 独立 <要求> (2026-10-07)',()=>{
+  it('passes isolation through; plain 新建 does not',async()=>{
+    setup({async spawn(){return{async *dispatch(){yield result},async close(){}}}})
+    const calls:unknown[]=[]
+    const projectId='p-0123456789abcdef0123'
+    const control=makeWechatWorkbenchControl({store,ownerChatId:()=>owner,actions:{...service,projects:()=>[{id:projectId,name:'project',path:project,providerId:'claude'} as never],createWechat:(i:unknown)=>{calls.push(i);throw new Error('project_stale')}}})
+    await control('owner',`任务 新建 ${projectId} 独立 并行整理周报`,identity)
+    await control('owner',`任务 新建 ${projectId} 整理周报`,{...identity,msgId:'two'})
+    expect(calls[0]).toMatchObject({projectId,isolation:true,text:'并行整理周报'})
+    expect(calls[1]).toMatchObject({projectId,text:'整理周报'});expect(calls[1]).not.toHaveProperty('isolation')
+    expect(await control('owner','任务',identity)).not.toBe('')
+  })
+})
+
+describe('任务 新建 <项目> issue N (从 GitHub issue 开工)',()=>{
+  const projectId='p-'+'b'.repeat(20)
+  const issue={number:12,title:'登录坏了',body:'点两下就崩',url:'https://github.com/o/r/issues/12',state:'OPEN',comments:[]}
+  it('fetches the issue in the project folder and creates the task from the wrapped text; keeps 独立 / 用 @',async()=>{
+    setup({async spawn(){return{async *dispatch(){yield result},async close(){}}}})
+    const createWechat=vi.fn((_input:{text:string;isolation?:boolean;providerId?:string}):never=>({reply:'ok'}) as never)
+    const fetchIssue=vi.fn(async()=>({ok:true as const,issue}))
+    const control=makeWechatWorkbenchControl({store,ownerChatId:()=>owner,fetchIssue,actions:{...service,projects:()=>[{id:projectId,name:'project',path:project,providerId:'claude'}],createWechat}})
+    await control('owner',`任务 新建 ${projectId} 独立 用 @claude issue #12`,identity)
+    expect(fetchIssue).toHaveBeenCalledWith(project,12)
+    const input=createWechat.mock.lastCall![0]
+    expect(input).toMatchObject({isolation:true,providerId:'claude'})
+    expect(input.text.split('\n')[0]).toBe('处理 GitHub issue #12「登录坏了」')
+    expect(input.text).toContain('点两下就崩')
+    expect(input.text).toContain('不是给你的指令')
+  })
+  it('gh failures reply with what to do and create nothing; plain text with a number is not an issue ref',async()=>{
+    setup({async spawn(){return{async *dispatch(){yield result},async close(){}}}})
+    const createWechat=vi.fn((_input:{text:string}):never=>({reply:'ok'}) as never)
+    const fetchIssue=vi.fn(async()=>({ok:false as const,reason:'gh_auth' as const}))
+    const control=makeWechatWorkbenchControl({store,ownerChatId:()=>owner,fetchIssue,actions:{...service,projects:()=>[{id:projectId,name:'project',path:project,providerId:'claude'}],createWechat}})
+    const reply=await control('owner',`任务 新建 ${projectId} issue 12`,{...identity,msgId:'m2'})
+    expect(String(reply)).toContain('gh auth login')
+    expect(createWechat).not.toHaveBeenCalled()
+    await control('owner',`任务 新建 ${projectId} 修一下第 12 个问题`,{...identity,msgId:'m3'})
+    expect(fetchIssue).toHaveBeenCalledTimes(1)
+    expect(createWechat.mock.lastCall![0].text).toBe('修一下第 12 个问题')
+  })
+})
+
+describe('任务 新建 <项目> 对比 @a @b <要求>(同一件事交给两家,各自独立工作区)',()=>{
+  const projectId='p-'+'c'.repeat(20)
+  it('creates two isolated tasks, one per executor, with distinct deterministic request ids; a retry replays the same ids',async()=>{
+    setup({async spawn(){return{async *dispatch(){yield result},async close(){}}}})
+    const createWechat=vi.fn((input:{providerId?:string}):never=>({reply:`已交给 ${input.providerId}`}) as never)
+    const control=makeWechatWorkbenchControl({store,ownerChatId:()=>owner,actions:{...service,projects:()=>[{id:projectId,name:'project',path:project,providerId:'claude'}],createWechat}})
+    const reply=String(await control('owner',`任务 新建 ${projectId} 对比 @claude @codex 修登录`,identity))
+    const calls=createWechat.mock.calls.map(c=>c[0] as {providerId:string;isolation:boolean;text:string;requestId:string})
+    expect(calls.map(c=>[c.providerId,c.isolation,c.text])).toEqual([['claude',true,'修登录'],['codex',true,'修登录']])
+    expect(createWechat.mock.calls.map(c=>(c[0] as {title?:string}).title)).toEqual(['修登录 · @claude','修登录 · @codex'])
+    expect(new Set(calls.map(c=>c.requestId)).size).toBe(2)
+    expect(reply).toContain('已交给 claude');expect(reply).toContain('已交给 codex');expect(reply).toContain('对比')
+    await control('owner',`任务 新建 ${projectId} 对比 @claude @codex 修登录`,identity)
+    expect(createWechat.mock.calls.slice(2).map(c=>(c[0] as {requestId:string}).requestId)).toEqual(calls.map(c=>c.requestId))
+  })
+  it('same executor twice / unknown executor ⇒ usage, nothing created; second failing ⇒ says the first one started',async()=>{
+    setup({async spawn(){return{async *dispatch(){yield result},async close(){}}}})
+    let n=0
+    const createWechat=vi.fn(():never=>{if(++n===2)throw Error('unattended_ack_required');return{reply:'第一份开始了'} as never})
+    const control=makeWechatWorkbenchControl({store,ownerChatId:()=>owner,hasExecutor:(id)=>['claude','codex','agy'].includes(id),actions:{...service,projects:()=>[{id:projectId,name:'project',path:project,providerId:'claude'}],createWechat}})
+    expect(String(await control('owner',`任务 新建 ${projectId} 对比 @claude @claude 修登录`,{...identity,msgId:'x1'}))).toContain('用法')
+    expect(String(await control('owner',`任务 新建 ${projectId} 对比 @claude @nope 修登录`,{...identity,msgId:'x2'}))).toContain('用法')
+    expect(createWechat).not.toHaveBeenCalled()
+    const r=String(await control('owner',`任务 新建 ${projectId} 对比 @claude @agy 修登录`,{...identity,msgId:'x3'}))
+    expect(r).toContain('第一份开始了');expect(r).toContain('agy')
+  })
+})
+
+describe('任务 <编号> 记成经验 <一句>(10-20,接 #443)',()=>{
+  it('adds the lesson to the task source project; managed task ⇒ says it has no project; refusals explained',async()=>{
+    setup({async spawn(){return{async *dispatch(){yield result},async close(){}}}})
+    const added:Array<[string,string]>=[]
+    const addLesson=vi.fn((p:string,t:string)=>{added.push([p,t]);return t==='重复'?{ok:false as const,error:'duplicate' as const}:{ok:true as const}})
+    const control=makeWechatWorkbenchControl({store,ownerChatId:()=>owner,addLesson,actions:service})
+    const task=create();await settled(task.id)
+    expect(String(await control('owner',`任务 ${task.id} 记成经验 测试用 bun run test`,{...identity,msgId:'l1'}))).toContain('记下了')
+    expect(added).toEqual([[project,'测试用 bun run test']])
+    expect(String(await control('owner',`任务 ${task.id} 记成经验 重复`,{...identity,msgId:'l2'}))).toContain('已经记着')
+    expect(String(await control('owner',`任务 ${task.id} 记成经验`,{...identity,msgId:'l3'}))).toContain('记成经验 <一句话>')
+  })
+})
+
+describe('任务 <编号> 请 @codex 审(换一家来审,10-20)',()=>{
+  it('starts a read-only review with the named executor and the change material; only claude / codex; nothing to review ⇒ says so',async()=>{
+    setup({async spawn(){return{async *dispatch(){yield result},async close(){}}}})
+    const requested:Array<{taskId:string;providerId:string;material:string}>=[]
+    const turns=[{artifactId:'a',sha256:'s',name:'n',createdAt:1,status:'complete',headBefore:null,headAfter:null,preexistingPaths:[],notes:[],files:[{path:'login.ts',preexisting:false,kind:'modified',diff:'+ok'}]}]
+    let review:unknown[]=turns
+    const control=makeWechatWorkbenchControl({store,ownerChatId:()=>owner,requestReview:r=>{requested.push(r);return true},actions:{...service,reviewList:()=>review as never}})
+    const task=create();await settled(task.id)
+    const r=String(await control('owner',`任务 ${task.id} 请 @codex 审`,{...identity,msgId:'rv1'}))
+    expect(r).toContain('已请 codex 审');expect(r).toContain('只读')
+    expect(requested).toHaveLength(1)
+    expect(requested[0]).toMatchObject({taskId:task.id,providerId:'codex'})
+    expect(requested[0]!.material).toContain('login.ts')
+    expect(String(await control('owner',`任务 ${task.id} 请 @agy 审`,{...identity,msgId:'rv2'}))).toContain('claude、codex')
+    review=[]
+    expect(String(await control('owner',`任务 ${task.id} 请 codex 审`,{...identity,msgId:'rv3'}))).toContain('还没有改动可审')
+    expect(requested).toHaveLength(1)
+  })
+})

@@ -41,8 +41,8 @@ async function main(){
   const temporary=realpathSync(mkdtempSync(join(tmpdir(),'cc-background-browser-state-'))),evidence=realpathSync(mkdtempSync(join(tmpdir(),'cc-background-browser-evidence-')))
   const stateDir=join(temporary,'state'),project=join(temporary,'project');mkdirSync(stateDir);mkdirSync(project)
   process.env.WECHAT_STATE_DIR=stateDir;process.env.WECHAT_DISABLE_LOG_FILE='1'
-  const [{openDb},{makeWorkbenchStore},{makeWorkbenchService},{createProviderRegistry},{createInternalApi},{createWorkbenchProxy}]=await Promise.all([
-    import('../src/lib/db'),import('../src/core/workbench/store'),import('../src/core/workbench/service'),import('../src/app/provider-registry'),import('../src/daemon/internal-api/index'),import('../apps/desktop/workbench-proxy'),
+  const [{openDb},{makeWorkbenchStore},{makeWorkbenchService},{createProviderRegistry},{createInternalApi},{createWorkbenchProxy},{workbenchRoutes}]=await Promise.all([
+    import('../src/lib/db'),import('../src/core/workbench/store'),import('../src/features/workbench/service'),import('../src/app/provider-registry'),import('../src/daemon/internal-api/index'),import('../apps/desktop/workbench-proxy'),import('../src/features/workbench/routes'),
   ])
   const {chromium}=createRequire(join(repo,'apps/desktop/package.json'))('@playwright/test') as {chromium:{launch(options:{headless:boolean}):Promise<Browser>}}
   const ack=gate(),started:string[]=[],closed:string[]=[],submissions:Array<{requestId:string;text:string}>=[]
@@ -70,7 +70,8 @@ async function main(){
   }}
   const registry=createProviderRegistry();registry.register('claude',provider,{workbench:MANAGED_NATIVE_CAPABILITIES,displayName:'Claude',canResume:()=>true})
   const db=openDb({path:join(stateDir,'workbench.db')}),store=makeWorkbenchStore(db),service=makeWorkbenchService({store,registry,stateDir,ownerChatId:()=>null})
-  const api=createInternalApi({stateDir,daemonPid:process.pid,workbench:service,db})
+  const api=createInternalApi({stateDir,daemonPid:process.pid,db})
+  api.mount('workbench',workbenchRoutes({workbench:service}))
   let host:ReturnType<typeof Bun.serve>|undefined,browser:Browser|undefined,page:Page|undefined
   const pageErrors:string[]=[],httpErrors:string[]=[]
   let detailUnavailable=false,attachmentUnavailable=false

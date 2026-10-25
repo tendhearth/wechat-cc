@@ -14,7 +14,6 @@ import type { ConversationStore } from '../../adapters/store/conversation-store'
 import type { ProviderId } from '../../domain/conversation'
 import type { PermissionMode } from '../../domain/capability-matrix'
 import type { UserTier } from '../../domain/user-tier'
-import type { WorkbenchService } from '../../core/workbench/service'
 
 /**
  * RFC 03 P3: when conversation mode is parallel (or chatroom), the
@@ -97,9 +96,12 @@ export interface InternalApiDeps {
   stateDir: string
   /** Daemon process pid — exposed by /v1/health for smoke tests. */
   daemonPid: number
-  /** Owner-only Workbench service; late-bound after provider bootstrap. */
-  workbench?: WorkbenchService
-  /** 「一件事」读写面(routes-matters);与 workbench 一样晚绑定。 */
+  /**
+   * 网络守护冻住的那几件任务(routes-matters 给 GET /v1/matters 打「已暂停」标记用;matter 与工作台任务同 id)。
+   * 架构终态 A5:工作台整个搬进 src/features/workbench、桌面路由自己挂,这里只剩这一个窄口,由 workbench 模块 `provide`。
+   */
+  workbenchSuspended?: () => readonly { taskId: string }[]
+  /** 「一件事」读写面(routes-matters);与工作台一样晚绑定。 */
   matters?: import('../../core/matters/service').MattersService
   /** 「CC 的连接」(spec 2026-10-01);main.ts 在 pipeline 接好后 setConnections。 */
   connections?: () => import('../connections').ConnectionsSnapshot
@@ -533,7 +535,7 @@ export interface InternalApiDeps {
 export const LATE_KEYS = [
   'delegate', 'conversation', 'a2a', 'socialView', 'knowledge', 'pairing', 'incidents',
   'llmHealth', 'llmRegistered', 'llmNames', 'llmEndpoints',
-  'workbench', 'matters', 'companionConverse', 'petTurn', 'settingsLink', 'connections',
+  'workbenchSuspended', 'matters', 'companionConverse', 'petTurn', 'settingsLink', 'connections',
   'cliUpgrade',
 ] as const satisfies readonly (keyof InternalApiDeps)[]
 export type LateKey = typeof LATE_KEYS[number]

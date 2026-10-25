@@ -50,10 +50,10 @@ WeChat task commands ─┤
         desktop subscriptions + owner-scoped WeChat delivery
 ```
 
-The implementation starts at `src/daemon/bootstrap/wire-workbench.ts` and
-`src/core/workbench/service.ts`. Executors are admitted through the explicit contract in
+The implementation starts at `src/features/workbench/wire.ts` and
+`src/features/workbench/service.ts`. Executors are admitted through the explicit contract in
 `executor-capabilities.ts`; ordinary companion providers do not become workbench executors
-merely by being installed. API registration (`src/daemon/bootstrap/workbench-api.ts` + `src/adapters/executors/openai/api-task-provider.ts`) uses a separate file-tool
+merely by being installed. API registration (`src/features/workbench/workbench-api.ts` + `src/adapters/executors/openai/api-task-provider.ts`) uses a separate file-tool
 and persistent-transcript implementation, without companion shell or private-memory tools.
 
 Different projects may run concurrently. Conflicting directories remain reserved until

@@ -2,7 +2,7 @@
  * 微信「经验 <项目> [一句话 | 删 N]」(第二轮对标 ★2,对标 Devin Knowledge):主人给某个项目写几句经验,
  * 不管哪家执行者来做这个项目都会在指令里看到。只认主人;项目按名字认(不分大小写,重名就问清楚)。
  */
-import { LESSONS_MAX, LESSON_MAX_CHARS, type ProjectLessons } from '../core/workbench/project-lessons'
+import { LESSONS_MAX, LESSON_MAX_CHARS, type ProjectLessons } from '../features/workbench'
 import type { ReplyHandler } from './commands/registry'
 
 const RE = /^\s*经验(?:\s+(\S+)(?:\s+([\s\S]+))?)?\s*$/

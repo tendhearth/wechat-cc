@@ -9,7 +9,7 @@ import {createProviderRegistry} from '../../app/provider-registry'
 import type {AgentAttachment,AgentEvent,AgentProvider} from '../../ports/agent-provider'
 import {MANAGED_NATIVE_CAPABILITIES} from '../workbench/executor-capabilities'
 import {makeWorkbenchStore} from '../workbench/store'
-import {makeWorkbenchService,type WorkbenchService} from '../workbench/service'
+import {makeWorkbenchService,type WorkbenchService} from '../../features/workbench/service'
 import {makeMatterStore,type MatterStore} from '../../adapters/store/matters-store'
 import {makeMattersService,type MattersService,type MattersServiceDeps} from './service'
 

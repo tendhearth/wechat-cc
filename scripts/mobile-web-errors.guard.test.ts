@@ -73,7 +73,7 @@ const ROUTE_CODES: Record<string, RouteCodes> = {
       { file: 'src/features/phone/mobile-workbench.ts', from: 'const stop=route(', to: 'const runRoute=' },
       { file: 'src/core/matters/service.ts', from: 'const require=', to: 'const current=' },
       { file: 'src/core/matters/service.ts', from: 'async stop(id,runId){', to: 'answer(' },
-      { file: 'src/core/workbench/service/lifecycle.ts', from: 'async function cancel(', to: 'function shutdown' },
+      { file: 'src/features/workbench/service/lifecycle.ts', from: 'async function cancel(', to: 'function shutdown' },
     ],
   },
   // home() 一律 ok:true(读不到的那一块写成 presence_error 字段,网页不当错误码用)

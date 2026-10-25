@@ -31,7 +31,7 @@ import { validateUserInputAnswers, validateUserInputRequest } from '../core/work
 import { floorReason } from '../core/permission-rules/floor'
 import { pathsUnder } from '../core/permission-rules/paths'
 import { wireModelOptions } from '../daemon/bootstrap/wire-model-options'
-import { workbenchClaudeOptions } from '../daemon/bootstrap/wire-workbench'
+import { workbenchClaudeOptions } from '../features/workbench/wire'
 import { makeTerminalDecide } from '../daemon/permission-gate'
 import type { Decision, Verdict } from './permission-rules/types'
 

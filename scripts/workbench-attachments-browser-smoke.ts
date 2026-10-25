@@ -100,10 +100,10 @@ async function main(){
   // captured at module load. Nothing reads or writes the user's real bot state.
   process.env.WECHAT_STATE_DIR=stateDir
   process.env.WECHAT_DISABLE_LOG_FILE='1'
-  const [{openDb},{makeWorkbenchStore},{makeWorkbenchService},{createProviderRegistry},{createInternalApi},{createWorkbenchProxy}]=await Promise.all([
-    import('../src/lib/db'),import('../src/core/workbench/store'),import('../src/core/workbench/service'),
+  const [{openDb},{makeWorkbenchStore},{makeWorkbenchService},{createProviderRegistry},{createInternalApi},{createWorkbenchProxy},{workbenchRoutes}]=await Promise.all([
+    import('../src/lib/db'),import('../src/core/workbench/store'),import('../src/features/workbench/service'),
     import('../src/app/provider-registry'),import('../src/daemon/internal-api/index'),
-    import('../apps/desktop/workbench-proxy'),
+    import('../apps/desktop/workbench-proxy'),import('../src/features/workbench/routes'),
   ])
   const {chromium}=createRequire(join(repo,'apps/desktop/package.json'))('@playwright/test') as {chromium:{launch(options:{headless:boolean}):Promise<Browser>}}
   type Captured={taskId:string,text:string,execution?:AgentExecutionChoice,attachments:Array<AgentAttachment&{fileBytes:Buffer,dataBytes?:Buffer}>}
@@ -130,7 +130,8 @@ async function main(){
   const dbPath=join(stateDir,'workbench.db');let db=openDb({path:dbPath})
   const store=makeWorkbenchStore(db)
   const service=makeWorkbenchService({store,registry,stateDir,ownerChatId:()=>null})
-  const api=createInternalApi({stateDir,daemonPid:process.pid,workbench:service,db})
+  const api=createInternalApi({stateDir,daemonPid:process.pid,db})
+  api.mount('workbench',workbenchRoutes({workbench:service}))
   let host:ReturnType<typeof Bun.serve>|undefined
   let browser:Awaited<ReturnType<typeof chromium.launch>>|undefined
   let page:Page|undefined

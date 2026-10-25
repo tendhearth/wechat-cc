@@ -74,8 +74,18 @@ export interface PanelSurface {
  * 表里标了 `module: X` 的路由:daemon 的路由层按 X 此刻的状态判能不能走(关着 ⇒ module_off、坏了 ⇒ module_degraded、
  * 还没挂上 ⇒ module_starting);处理器由模块 X 自己挂(`internalApi.mount`),不在 internal-api 的总表里。
  */
-export const MODULE_NAMES = ['social', 'calendar', 'reminders', 'letters', 'atelier', 'stickers', 'journal', 'voice', 'terminal', 'memory', 'phone'] as const
+export const MODULE_NAMES = ['social', 'calendar', 'reminders', 'letters', 'atelier', 'stickers', 'journal', 'voice', 'terminal', 'memory', 'phone', 'workbench'] as const
 export type ModuleName = (typeof MODULE_NAMES)[number]
+
+/**
+ * 搬家前就有、客户端已经认得的「没准备好」码(架构终态 A5 · 工作台):这几个模块不是 ok(还没挂上 / 关着 / 坏了)时,
+ * 模块门回 503 `{ error: 这个码 }`(原样,不带 module / detail),不回 module_starting / module_off / module_degraded。
+ *
+ * 工作台:搬家前 44 条 /v1/workbench/* 的处理器各自回 503 workbench_not_wired(workbench 是必需模块,
+ * 只有开机途中、或上游没起来时才不在);桌面与 workbench-errors 表认的就是这个码(10-21 那次就是字面量 503
+ * 和表里 500 对不上)。换成 module_* 是看得见的变化,不在搬家里做。
+ */
+export const MODULE_UNAVAILABLE_CODE: Partial<Record<ModuleName, string>> = { workbench: 'workbench_not_wired' }
 
 export interface RouteSpec {
   /**
@@ -180,10 +190,10 @@ export interface RouteSpec {
 export const ROUTES: Readonly<Record<RouteKey, RouteSpec>> = {
   // ── 内部 API(/v1/*)。注释原样搬自 route-tiers.ts 的 ROUTE_MIN_TIER ─────────────────────
   // Owner Workbench: task instructions and generated artifacts are private.
-  'GET /v1/workbench/entry-options': { desktop: { tier: 'admin', tokens: ['operator'], tauri: true, devProxy: true } },
-  'POST /v1/workbench/create-entry': { desktop: { tier: 'admin', tokens: ['operator'], tauri: true, devProxy: true } },
-  'GET /v1/workbench/entry-receipt': { desktop: { tier: 'admin', tokens: ['operator'], tauri: true, devProxy: true } },
-  'GET /v1/workbench': { desktop: { tier: 'admin', tokens: ['operator'], tauri: true, devProxy: true } },
+  'GET /v1/workbench/entry-options': { module: 'workbench', desktop: { tier: 'admin', tokens: ['operator'], tauri: true, devProxy: true } },
+  'POST /v1/workbench/create-entry': { module: 'workbench', desktop: { tier: 'admin', tokens: ['operator'], tauri: true, devProxy: true } },
+  'GET /v1/workbench/entry-receipt': { module: 'workbench', desktop: { tier: 'admin', tokens: ['operator'], tauri: true, devProxy: true } },
+  'GET /v1/workbench': { module: 'workbench', desktop: { tier: 'admin', tokens: ['operator'], tauri: true, devProxy: true } },
   // 「一件事」(2026-09-16):任务指令、聊天都是主人的私事。
   // 桌面(原 lib.rs 注释):「一件事」的 matter 列表与会话面、此刻里搜主人那条对话。只走 tauri:dev 代理经 test-shim 另一条路。
   'GET /v1/matters': { desktop: { tier: 'admin', tokens: ['operator'], tauri: true } },
@@ -197,48 +207,48 @@ export const ROUTES: Readonly<Record<RouteKey, RouteSpec>> = {
   // 桌面(原 lib.rs 注释):出码(必要时打开远程隧道)与轮询已配对设备。
   'POST /v1/phone/link': { module: 'phone', desktop: { tier: 'admin', tokens: ['operator'], tauri: true, devProxy: true } },
   'GET /v1/phone/devices': { module: 'phone', desktop: { tier: 'admin', tokens: ['operator'], tauri: true, devProxy: true } },
-  'GET /v1/workbench/models': { desktop: { tier: 'admin', tokens: ['operator'], tauri: true, devProxy: true } },
-  'POST /v1/workbench/attachment': { desktop: { tier: 'admin', tokens: ['operator'], tauri: true, devProxy: true } },
-  'GET /v1/workbench/attachment': { desktop: { tier: 'admin', tokens: ['operator'], tauri: true, devProxy: true } },
-  'POST /v1/workbench/discard-attachment': { desktop: { tier: 'admin', tokens: ['operator'], tauri: true, devProxy: true } },
-  'GET /v1/workbench/attention': { desktop: { tier: 'admin', tokens: ['operator'], tauri: true, devProxy: true } },
-  'POST /v1/workbench/input': { desktop: { tier: 'admin', tokens: ['operator'], tauri: true, devProxy: true } },
-  'POST /v1/workbench/answer': { desktop: { tier: 'admin', tokens: ['operator'], tauri: true, devProxy: true } },
-  'POST /v1/workbench/withdraw-input': { desktop: { tier: 'admin', tokens: ['operator'], tauri: true, devProxy: true } },
-  'GET /v1/workbench/sessions': { desktop: { tier: 'admin', tokens: ['operator'], tauri: true, devProxy: true } },
-  'GET /v1/workbench/session': { desktop: { tier: 'admin', tokens: ['operator'], tauri: true, devProxy: true } },
-  'GET /v1/workbench/task': { desktop: { tier: 'admin', tokens: ['operator'], tauri: true, devProxy: true } },
-  'POST /v1/workbench/project': { desktop: { tier: 'admin', tokens: ['operator'], tauri: true, devProxy: true } },
-  'POST /v1/workbench/create': { desktop: { tier: 'admin', tokens: ['operator'], tauri: true, devProxy: true } },
-  'POST /v1/workbench/continue': { desktop: { tier: 'admin', tokens: ['operator'], tauri: true, devProxy: true } },
-  'POST /v1/workbench/cancel': { desktop: { tier: 'admin', tokens: ['operator'], tauri: true, devProxy: true } },
-  'GET /v1/workbench/artifact': { desktop: { tier: 'admin', tokens: ['operator'], tauri: true, devProxy: true } },
-  'POST /v1/workbench/approve': { desktop: { tier: 'admin', tokens: ['operator'], tauri: true, devProxy: true } },
-  'POST /v1/workbench/permission': { desktop: { tier: 'admin', tokens: ['operator'], tauri: true, devProxy: true } },
-  'POST /v1/workbench/archive': { desktop: { tier: 'admin', tokens: ['operator'], tauri: true, devProxy: true } },
-  'POST /v1/workbench/writer-exited': { desktop: { tier: 'admin', tokens: ['operator'], tauri: true, devProxy: true } },
-  'POST /v1/workbench/unattended-ack': { desktop: { tier: 'admin', tokens: ['operator'], tauri: true, devProxy: true } },
-  'GET /v1/workbench/review': { desktop: { tier: 'admin', tokens: ['operator'], tauri: true, devProxy: true } },
-  'POST /v1/workbench/review-mark': { desktop: { tier: 'admin', tokens: ['operator'], tauri: true, devProxy: true } },
-  'POST /v1/workbench/review-return': { desktop: { tier: 'admin', tokens: ['operator'], tauri: true, devProxy: true } },
-  'POST /v1/workbench/review-revert': { desktop: { tier: 'admin', tokens: ['operator'], tauri: true, devProxy: true } },
+  'GET /v1/workbench/models': { module: 'workbench', desktop: { tier: 'admin', tokens: ['operator'], tauri: true, devProxy: true } },
+  'POST /v1/workbench/attachment': { module: 'workbench', desktop: { tier: 'admin', tokens: ['operator'], tauri: true, devProxy: true } },
+  'GET /v1/workbench/attachment': { module: 'workbench', desktop: { tier: 'admin', tokens: ['operator'], tauri: true, devProxy: true } },
+  'POST /v1/workbench/discard-attachment': { module: 'workbench', desktop: { tier: 'admin', tokens: ['operator'], tauri: true, devProxy: true } },
+  'GET /v1/workbench/attention': { module: 'workbench', desktop: { tier: 'admin', tokens: ['operator'], tauri: true, devProxy: true } },
+  'POST /v1/workbench/input': { module: 'workbench', desktop: { tier: 'admin', tokens: ['operator'], tauri: true, devProxy: true } },
+  'POST /v1/workbench/answer': { module: 'workbench', desktop: { tier: 'admin', tokens: ['operator'], tauri: true, devProxy: true } },
+  'POST /v1/workbench/withdraw-input': { module: 'workbench', desktop: { tier: 'admin', tokens: ['operator'], tauri: true, devProxy: true } },
+  'GET /v1/workbench/sessions': { module: 'workbench', desktop: { tier: 'admin', tokens: ['operator'], tauri: true, devProxy: true } },
+  'GET /v1/workbench/session': { module: 'workbench', desktop: { tier: 'admin', tokens: ['operator'], tauri: true, devProxy: true } },
+  'GET /v1/workbench/task': { module: 'workbench', desktop: { tier: 'admin', tokens: ['operator'], tauri: true, devProxy: true } },
+  'POST /v1/workbench/project': { module: 'workbench', desktop: { tier: 'admin', tokens: ['operator'], tauri: true, devProxy: true } },
+  'POST /v1/workbench/create': { module: 'workbench', desktop: { tier: 'admin', tokens: ['operator'], tauri: true, devProxy: true } },
+  'POST /v1/workbench/continue': { module: 'workbench', desktop: { tier: 'admin', tokens: ['operator'], tauri: true, devProxy: true } },
+  'POST /v1/workbench/cancel': { module: 'workbench', desktop: { tier: 'admin', tokens: ['operator'], tauri: true, devProxy: true } },
+  'GET /v1/workbench/artifact': { module: 'workbench', desktop: { tier: 'admin', tokens: ['operator'], tauri: true, devProxy: true } },
+  'POST /v1/workbench/approve': { module: 'workbench', desktop: { tier: 'admin', tokens: ['operator'], tauri: true, devProxy: true } },
+  'POST /v1/workbench/permission': { module: 'workbench', desktop: { tier: 'admin', tokens: ['operator'], tauri: true, devProxy: true } },
+  'POST /v1/workbench/archive': { module: 'workbench', desktop: { tier: 'admin', tokens: ['operator'], tauri: true, devProxy: true } },
+  'POST /v1/workbench/writer-exited': { module: 'workbench', desktop: { tier: 'admin', tokens: ['operator'], tauri: true, devProxy: true } },
+  'POST /v1/workbench/unattended-ack': { module: 'workbench', desktop: { tier: 'admin', tokens: ['operator'], tauri: true, devProxy: true } },
+  'GET /v1/workbench/review': { module: 'workbench', desktop: { tier: 'admin', tokens: ['operator'], tauri: true, devProxy: true } },
+  'POST /v1/workbench/review-mark': { module: 'workbench', desktop: { tier: 'admin', tokens: ['operator'], tauri: true, devProxy: true } },
+  'POST /v1/workbench/review-return': { module: 'workbench', desktop: { tier: 'admin', tokens: ['operator'], tauri: true, devProxy: true } },
+  'POST /v1/workbench/review-revert': { module: 'workbench', desktop: { tier: 'admin', tokens: ['operator'], tauri: true, devProxy: true } },
   // 行评论 / 按块撤回(2026-10-21)
-  'POST /v1/workbench/review-comment': { desktop: { tier: 'admin', tokens: ['operator'], tauri: true, devProxy: true } },
-  'POST /v1/workbench/review-comments-send': { desktop: { tier: 'admin', tokens: ['operator'], tauri: true, devProxy: true } },
-  'POST /v1/workbench/review-hunk': { desktop: { tier: 'admin', tokens: ['operator'], tauri: true, devProxy: true } },
-  'POST /v1/workbench/worktree': { desktop: { tier: 'admin', tokens: ['operator'], tauri: true, devProxy: true } },
-  'POST /v1/workbench/script-approve': { desktop: { tier: 'admin', tokens: ['operator'], tauri: true, devProxy: true } },
+  'POST /v1/workbench/review-comment': { module: 'workbench', desktop: { tier: 'admin', tokens: ['operator'], tauri: true, devProxy: true } },
+  'POST /v1/workbench/review-comments-send': { module: 'workbench', desktop: { tier: 'admin', tokens: ['operator'], tauri: true, devProxy: true } },
+  'POST /v1/workbench/review-hunk': { module: 'workbench', desktop: { tier: 'admin', tokens: ['operator'], tauri: true, devProxy: true } },
+  'POST /v1/workbench/worktree': { module: 'workbench', desktop: { tier: 'admin', tokens: ['operator'], tauri: true, devProxy: true } },
+  'POST /v1/workbench/script-approve': { module: 'workbench', desktop: { tier: 'admin', tokens: ['operator'], tauri: true, devProxy: true } },
   // 回到某一轮(2026-10-21):预览 / 执行 + 撤销 / 停住后主人拍板
-  'GET /v1/workbench/rewind-preview': { desktop: { tier: 'admin', tokens: ['operator'], tauri: true, devProxy: true } },
-  'POST /v1/workbench/rewind': { desktop: { tier: 'admin', tokens: ['operator'], tauri: true, devProxy: true } },
-  'POST /v1/workbench/rewind-resolve': { desktop: { tier: 'admin', tokens: ['operator'], tauri: true, devProxy: true } },
-  'POST /v1/workbench/import': { desktop: { tier: 'admin', tokens: ['operator'], tauri: true, devProxy: true } },
-  'POST /v1/workbench/prepare-resume': { desktop: { tier: 'admin', tokens: ['operator'], tauri: true, devProxy: true } },
-  'POST /v1/workbench/prepare-continuation': { desktop: { tier: 'admin', tokens: ['operator'], tauri: true, devProxy: true } },
-  'POST /v1/workbench/quota-handoff': { desktop: { tier: 'admin', tokens: ['operator'], tauri: true, devProxy: true } },
-  'POST /v1/workbench/handoff-preview': { desktop: { tier: 'admin', tokens: ['operator'], tauri: true, devProxy: true } },
-  'POST /v1/workbench/handoff': { desktop: { tier: 'admin', tokens: ['operator'], tauri: true, devProxy: true } },
-  'GET /v1/workbench/handoff': { desktop: { tier: 'admin', tokens: ['operator'], tauri: true, devProxy: true } },
+  'GET /v1/workbench/rewind-preview': { module: 'workbench', desktop: { tier: 'admin', tokens: ['operator'], tauri: true, devProxy: true } },
+  'POST /v1/workbench/rewind': { module: 'workbench', desktop: { tier: 'admin', tokens: ['operator'], tauri: true, devProxy: true } },
+  'POST /v1/workbench/rewind-resolve': { module: 'workbench', desktop: { tier: 'admin', tokens: ['operator'], tauri: true, devProxy: true } },
+  'POST /v1/workbench/import': { module: 'workbench', desktop: { tier: 'admin', tokens: ['operator'], tauri: true, devProxy: true } },
+  'POST /v1/workbench/prepare-resume': { module: 'workbench', desktop: { tier: 'admin', tokens: ['operator'], tauri: true, devProxy: true } },
+  'POST /v1/workbench/prepare-continuation': { module: 'workbench', desktop: { tier: 'admin', tokens: ['operator'], tauri: true, devProxy: true } },
+  'POST /v1/workbench/quota-handoff': { module: 'workbench', desktop: { tier: 'admin', tokens: ['operator'], tauri: true, devProxy: true } },
+  'POST /v1/workbench/handoff-preview': { module: 'workbench', desktop: { tier: 'admin', tokens: ['operator'], tauri: true, devProxy: true } },
+  'POST /v1/workbench/handoff': { module: 'workbench', desktop: { tier: 'admin', tokens: ['operator'], tauri: true, devProxy: true } },
+  'GET /v1/workbench/handoff': { module: 'workbench', desktop: { tier: 'admin', tokens: ['operator'], tauri: true, devProxy: true } },
   // guest — liveness + read/reply
   'GET /v1/health': { desktop: { tier: 'guest', tokens: ['selftest'] } },
   'POST /v1/wechat/reply': { desktop: { tier: 'guest' } },
