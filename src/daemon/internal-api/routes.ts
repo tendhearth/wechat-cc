@@ -51,7 +51,6 @@ import { licenseRoutes } from './routes-license'
 import { daemonControlRoutes } from './routes-daemon-control'
 import { fileRoutes } from './routes-files'
 import { federationRoutes } from './routes-federation'
-import { remindersRoutes } from './routes-reminders'
 import { lettersRoutes } from './routes-letters'
 import { workbenchRoutes } from './routes-workbench'
 import { countForTag, ONLINE_STICKER_K } from '../stickers'
@@ -1088,7 +1087,6 @@ const onlineStickerCursor = new Map<string, number>()
     ...memoryReviewRoutes(deps),
     ...penpalRoutes(deps),
     ...healthRoutes(deps),
-    ...remindersRoutes(deps),
     ...pluginRoutes(deps),
     ...licenseRoutes(deps),
     ...daemonControlRoutes(deps),

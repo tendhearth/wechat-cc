@@ -74,7 +74,7 @@ export interface PanelSurface {
  * 表里标了 `module: X` 的路由:daemon 的路由层按 X 此刻的状态判能不能走(关着 ⇒ module_off、坏了 ⇒ module_degraded、
  * 还没挂上 ⇒ module_starting);处理器由模块 X 自己挂(`internalApi.mount`),不在 internal-api 的总表里。
  */
-export const MODULE_NAMES = ['social', 'calendar'] as const
+export const MODULE_NAMES = ['social', 'calendar', 'reminders'] as const
 export type ModuleName = (typeof MODULE_NAMES)[number]
 
 export interface RouteSpec {
@@ -264,9 +264,9 @@ export const ROUTES: Readonly<Record<RouteKey, RouteSpec>> = {
   'GET /v1/stickers': { desktop: { tier: 'guest' } },
   // reminders — scope (own chat only for session callers) is enforced in
   // routes-reminders.ts; the tier floor is guest ("提醒我" is harmless).
-  'POST /v1/reminders/schedule': { desktop: { tier: 'guest', tokens: ['operator'], ownerWorkspace: true } },
-  'POST /v1/reminders/cancel': { desktop: { tier: 'guest' } },
-  'GET /v1/reminders/list': { desktop: { tier: 'guest' } },
+  'POST /v1/reminders/schedule': { module: 'reminders', desktop: { tier: 'guest', tokens: ['operator'], ownerWorkspace: true } },
+  'POST /v1/reminders/cancel': { module: 'reminders', desktop: { tier: 'guest' } },
+  'GET /v1/reminders/list': { module: 'reminders', desktop: { tier: 'guest' } },
   // trusted — operator/agent ops (also reachable by the CLI, capped at trusted)
   'POST /v1/wechat/broadcast': { desktop: { tier: 'trusted' } },
   'POST /v1/wechat/send_file': { desktop: { tier: 'trusted' } },

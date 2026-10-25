@@ -60,7 +60,7 @@
  * replies, from ever producing more than one pending row per matter; this
  * sweeper doesn't need (and doesn't have) a separate per-chat cap.
  *
- * Backoff is reused verbatim from reminders/sweeper.ts's exported backoffMs
+ * Backoff is reused verbatim from lib/delivery-backoff.ts's backoffMs (shared with reminders)
  * (1min, 2min, 4min, … capped at 60min) — brief: "不要另发明退避".
  *
  * Give-up visibility (evaluation round 3 issue ③): when a report is finally
@@ -113,7 +113,7 @@ import type {Lifecycle} from '../../lib/lifecycle'
 import type {MatterStore} from '../../core/matters/store'
 import type {ReportOutboxStore} from './outbox'
 import {isProactiveWindowClosed} from '../ilink/outbound-health'
-import {backoffMs, RETRY_WINDOW_MS} from '../reminders/sweeper'
+import {backoffMs, RETRY_WINDOW_MS} from '../../lib/delivery-backoff'
 import {shouldDisturb} from '../../core/matters/report'
 
 export interface ReportSweepDeps {

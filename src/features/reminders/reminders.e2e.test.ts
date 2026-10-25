@@ -78,7 +78,7 @@ describe('e2e: reminders — schedule → sweep → deliver, then no double deli
     process.env.WECHAT_STATE_DIR = stateDir
     process.env.WECHAT_CC_STATE_DIR = stateDir
     vi.resetModules()
-    const { startTestDaemon } = await import('../__e2e__/harness')
+    const { startTestDaemon } = await import('../../daemon/__e2e__/harness')
     const daemon = await startTestDaemon({
       stateDirOverride: stateDir,
       claudeScript: { async onDispatch() { return { toolCalls: [], finalText: 'ok' } } },
@@ -117,7 +117,7 @@ describe('e2e: reminders — schedule → sweep → deliver, then no double deli
       // nowIso is pushed past due_at instead of a real wall-clock wait.
       db2 = openWechatDb(daemon.stateDir)
       const store = makeRemindersStore(db2)
-      const { loadAllAccounts } = await import('../ilink-glue')
+      const { loadAllAccounts } = await import('../../daemon/ilink-glue')
       const { ilinkSendMessage, botTextMessage } = await import('../../lib/ilink')
       const [account] = await loadAllAccounts(daemon.stateDir)
       expect(account, 'harness must have written a bot account').toBeTruthy()

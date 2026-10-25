@@ -228,6 +228,7 @@ DeliveryPort                      吃 TurnOutcome;旧的 / shadow 交付路删�
 | A1 | 整个 daemon 一个容器(`foundation.ts` + `daemon-modules.ts`,main.ts 1062 → 约 190 行);main.ts 的 Ref / lc.register / sup.start 归零,关机顺序一位不变(#665)。`daemon_starting` 门与降级留给 A1b |
 | A2 | bootstrap 拆成一组模块进同一个容器(boot-base / knowledge / boot-core / self-restart / idle-sweep / social / mailbox-poller / a2a-server / pairing / yi / bootstrap);收尾清单、module-group 桥删掉;`enabled()` 能读上游 |
 | A3 + A4 | 功能目录 `src/features/<名>/`:模块自己 `internalApi.mount` 路由(路由表 `module` 字段,关 / 坏 / 还没挂上 ⇒ module_off / module_degraded / module_starting);depcheck 三条边界;日历整块搬进去做样板,`InternalApiDeps` 少一个字段;[加一个功能](maintainer/add-a-feature.md) |
+| A5 · 提醒 | `src/features/reminders/`(store / sweeper / routes / 模块清单),路由自己挂;重试退避挪到 `lib/delivery-backoff.ts`(任务回报共用,不再伸进提醒内部) |
 
 ## 修订记录
 

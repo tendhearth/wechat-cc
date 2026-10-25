@@ -1,8 +1,8 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { openTestDb, type Db } from '../../lib/db'
 import { makeRemindersStore } from './store'
-import { makeSpeechPolicy } from '../speech/policy'
-import type { ProactiveOutbound } from '../companion/proactive-channel'
+import { makeSpeechPolicy } from '../../daemon/speech/policy'
+import type { ProactiveOutbound } from '../../daemon/companion/proactive-channel'
 import { sendReminderVia, runReminderSweep, lateReminderText, LATE_REMINDER_THRESHOLD_MS, RETRY_WINDOW_MS, backoffMs, MAX_SENDS_PER_SWEEP, MIN_ATTEMPTS_BEFORE_GIVE_UP } from './sweeper'
 
 const noop = () => {}
