@@ -1,5 +1,6 @@
 /**
- * 伙伴主动找主人那一拍(20 分钟一拍,从 tick-bodies.ts 原样搬出):到点的跟进 → 日程判断(打猎 / 串门 / 问候)→ 来访叙述。
+ * 伙伴主动找主人那一拍(20 分钟一拍,从 tick-bodies.ts 原样搬出):到点的跟进 → 日程判断 → 来访叙述。
+ * 日程判断在哪些事里挑,由登记进来的候选决定(daemon/companion/contributions.ts,登记表在 tick-bodies.ts);这里不认识任何一个。
  */
 import { inQuietHours } from '../../core/quiet-hours'
 import { join } from 'node:path'
@@ -15,28 +16,29 @@ import { parseAgenda, selectDue, markResolved, unmarkResolved } from '../compani
 import { makeMessagesStore, type MessagesStore } from '../../lib/messages-store'
 import { careLevel, shouldSpeak } from '../companion/calibration'
 import { readJsonFile } from '../../lib/read-json-file'
-import { computeCandidates, buildPlanPrompt, parsePlan, pickFallback, constrainPlan, shouldReask, formatLocal, PLAN_EVAL_TIMEOUT_MS, PLAN_MAX_OBSERVATIONS, PLAN_JOURNAL_ITEMS, type PlanAction, type PlanContext, type PlanLogEntry } from '../../core/companion-plan'
+import { judgeCandidates, buildPlanPrompt, parsePlan, pickFallback, constrainPlan, shouldReask, formatLocal, PLAN_EVAL_TIMEOUT_MS, PLAN_MAX_OBSERVATIONS, type Consideration, type PlanAction, type PlanContext, type PlanLogEntry } from '../../core/companion-plan'
 import { readPlanLog, appendPlanLog } from '../companion/plan-memory'
-import { readJournalSeen } from '../../core/journal-seen'
-import { isNetworkUnprotectedError, NETWORK_UNPROTECTED_REASON } from '../../lib/network-gate'
+import { isNetworkUnprotectedError } from '../../lib/network-gate'
 import type { TickDeps } from './tick-deps'
 import type { TickDispatch } from './tick-dispatch'
-import { buildPushTickText, buildGapCheckinText, buildHuntText } from './tick-texts'
+import { buildPushTickText } from './tick-texts'
+import type { CompanionAction, CompanionTickCtx } from '../companion/contributions'
 import { writeJsonAtomic } from '../../lib/json-file'
 function errMsg(err: unknown): string { return err instanceof Error ? err.message : String(err) }
 
 /** 来访叙述发不出去(sendText 回了 {error}):在 say 的生产者里抛,外面撤水位。 */
 class GuestNarrationSendFailed extends Error {}
 
-export function makePushTick(deps: TickDeps, dispatch: TickDispatch): (opts?: { nowIso?: string }) => Promise<void> {
-  const { resolveDispatch, dispatchBlockedReason, dispatchToChat } = dispatch
+export function makePushTick(deps: TickDeps, dispatch: TickDispatch, actions: readonly CompanionAction[]): (opts?: { nowIso?: string }) => Promise<void> {
+  const { dispatchBlockedReason, dispatchToChat } = dispatch
+  const byId = new Map(actions.map(a => [a.id, a] as const))
 
   /**
    * Per-chat body: agenda branch (due self-authored intention) takes
    * priority and returns on its own. Nothing due ⇒ 日程判断
-   * (spec 2026-09-05-companion-plan):候选由 computeCandidates 算(三次
-   * shouldSpeak —— 冷却 / care 档 / 无回复暂停一律不变),便宜模型只能在候选
-   * 里选一个或选 none;没有模型 / 超时 / 解析失败就按老顺序 hunt → visit → gap。
+   * (spec 2026-09-05-companion-plan):候选由登记进来的各功能交,每个各问一次
+   * shouldSpeak(冷却 / care 档 / 无回复暂停一律不变),便宜模型只能在候选
+   * 里选一个或选 none;没有模型 / 超时 / 解析失败就按老顺序(pickFallback:hunt → visit → gap)。
    * calibration 的 shouldSpeak() 仍是每一次主动外发唯一经过的关口。
    */
   async function pushTickForChat(
@@ -93,89 +95,22 @@ export function makePushTick(deps: TickDeps, dispatch: TickDispatch): (opts?: { 
       return
     }
 
-    // ── 三段收成的执行(spec 2026-09-05-companion-plan)─────────────────
-    // 判定(shouldSpeak / 冷却 / care 档 / 无回复暂停)已经在下面的
-    // computeCandidates 里做完了 —— 这三个函数只管「做」,内容与升级前逐字
-    // 一致(旁听入库、busy token、先登记再出门、daysSinceContact 的算法)。
-
-    // 打猎:只有主人那个聊天会成为候选(computeCandidates 里的 isOwnerChat)。
-    async function runHunt(): Promise<boolean> {
-      // 旁听这一拍发出去的东西 —— 打猎的产出此前只存在于微信聊天记录里,
-      // 主人想回头找上周那条链接只能翻聊天。记的是**真发出去的文本**,
-      // 不是要求模型额外调一个登记工具(漏调一次就少一条,且无人知晓)。
-      const tap = deps.outboundTaps?.tap(chatId)
-      // busy token(spec 2026-09-03-companion-presence §2.2):调度器持的是
-      // companion-push(每拍都有,桌宠推导会忽略);打猎要有自己的名字,
-      // 桌宠才知道这一拍是「出门觅食」而不是例行公事。silent-safe:
-      // 测试夹具的 boot 没有 holdBusy。
-      let releaseHunt: (() => void) | undefined
-      try { releaseHunt = (deps.boot as { holdBusy?: (l: string) => () => void }).holdBusy?.('hunt') } catch { releaseHunt = undefined }
-      try {
-        return await dispatchToChat(chatId, {
-          claim: () => { const ticket = deps.careLedger.claimHunt(chatId, nowIso); return () => deps.careLedger.unclaim(chatId, ticket) },
-          buildText: (style) => buildHuntText({ nowIso, avoid: prefs.avoid }, style),
-        })
-      } finally {
-        try { releaseHunt?.() } catch { /* release 永不抛 */ }
-        const shared = tap?.close() ?? []
-        if (shared.length > 0 && deps.huntStore) {
-          // 记录失败绝不能让这一拍看起来失败 —— 消息已经发出去了。
-          try {
-            const n = deps.huntStore.recordHunt({ chatId, text: shared.join('\n\n'), nowIso })
-            deps.log('HUNT', `chat=${chatId} 入库 ${n} 条`)
-          } catch (err) { deps.log('HUNT', `入库失败(消息已发出): ${errMsg(err)}`) }
-        }
-      }
-    }
-
-    // 串门(2026-09-03,core/visit.ts):伙伴自己的社交,一天一次。
-    //
-    // 不走 dispatchToChat:串门不是一次 agent turn(不带工具、不进会话),它
-    // 有自己的 eval 链;这里只做登记 + 出门。`target` 是模型从
-    // provenChannels 里挑的信道 id;没挑就还是 startVisit() 自己挑。
-    async function runVisit(target?: string): Promise<boolean | 'refused'> {
-      const visit = deps.boot.social?.penpal
-      if (!visit) return false
-      // 先登记再出门(at-most-once,同打猎):出门一半 daemon 重启,不该
-      // 下一拍再出一次门 —— 两趟串门比一趟没出门的观感差得多。
-      // 总有地方可去:没有真信道就去邻居家(core/neighbors.ts)。
-      const ticket = deps.careLedger.claimVisit(chatId, nowIso)
-      const r = target === undefined ? await visit.startVisit() : await visit.startVisit(target)
-      // 评审 #193 P2-3:开场那句的模型调用被网络守护拒了 —— 没出门,这趟不算。只撤这一次登记
-      // (第二轮 #194):期间主人来信清零、别的登记都留着。
-      if (!r.ok && r.reason === NETWORK_UNPROTECTED_REASON) {
-        deps.careLedger.unclaim(chatId, ticket)
-        return 'refused'
-      }
-      deps.log('VISIT', r.ok ? `tick: 出门了 visit=${r.id} → ${r.channel}` : `tick: 没出得了门 reason=${r.reason}`)
-      return r.ok
-    }
-
-    // 问候:安静够久了(按 care 档)、没有具体由头的一句。
-    async function runGap(): Promise<boolean> {
-      const daysSinceContact = lastInboundAtIso !== undefined
-        ? Math.floor((Date.parse(nowIso) - Date.parse(lastInboundAtIso)) / 86_400_000)
-        : 0
-      return await dispatchToChat(chatId, {
-        claim: () => { const ticket = deps.careLedger.claim(chatId, nowIso); return () => deps.careLedger.unclaim(chatId, ticket) },
-        buildText: (style) => buildGapCheckinText({ nowIso, chatId, daysSinceContact, avoid: prefs.avoid }, style),
-      })
-    }
-
     // ── 日程判断(spec 2026-09-05-companion-plan)──────────────────────────
-    // 候选由代码算(三次 shouldSpeak,冷却 / care 门 / 无回复暂停一律不变);
-    // 模型只能在候选里选一个或选 none。没有模型 / 超时 / 解析失败 → 固定顺序。
-    const socialWired = !!deps.boot.social?.penpal
-    const { candidates: allCandidates, rejected } = computeCandidates({
-      isOwnerChat: chatId === defaultChatId, level,
-      prefs, socialWired, nowIso, ledger, lastInboundAtIso,
-    }, shouldSpeak)
+    // 候选由各功能交(daemon/companion/contributions.ts,登记在 tick-bodies.ts),按登记顺序各问一次 shouldSpeak
+    // (冷却 / care 门 / 无回复暂停一律不变);模型只能在候选里选一个或选 none。没有模型 / 超时 / 解析失败 → 固定顺序。
+    const actx: CompanionTickCtx = { chatId, isOwnerChat: chatId === defaultChatId, nowIso, level, prefs, ledger, lastInboundAtIso }
+    const considered: Consideration[] = []
+    for (const a of actions) {
+      const lv = a.speakLevel(actx)
+      if (lv !== null) considered.push({ action: a.id, level: lv })
+    }
+    const { candidates: allCandidates, rejected } = judgeCandidates(considered, { nowIso, ledger, lastInboundAtIso }, shouldSpeak)
     for (const r of rejected) deps.log('CARE', `skip chat=${chatId} kind=${r.action} reason=${r.reason}`)
     if (allCandidates.length === 0) return
 
-    // 发不出去就别先烧模型:断线 / 会话在忙的时候,微信那三件事(打猎、问候)
-    // 反正到不了主人手里(memory: no-retry-storm-when-disconnected)。串门是
-    // 例外 —— 它走笔友信道,不是一条微信,链路断了照样能出门。
+    // 发不出去就别先烧模型:断线 / 会话在忙的时候,要经微信送的候选(打猎、问候)
+    // 反正到不了主人手里(memory: no-retry-storm-when-disconnected)。needsWechat:false 的
+    // 是例外 —— 串门走笔友信道,不是一条微信,链路断了照样能出门。
     // 这道预判闸本身也可能抛(resolveDispatch 里 loadAccess / loadProjects /
     // getMode / isInFlight 都是真调用):抛了不该把一拍能出的门(visit)也
     // 一起掀翻 —— 当作没堵,真发那一步(dispatchToChat)还会再判一次。
@@ -184,17 +119,15 @@ export function makePushTick(deps: TickDeps, dispatch: TickDispatch): (opts?: { 
     catch (err) { deps.log('PLAN', `预判闸探测失败,当作没堵(真发前还会再判一次): ${errMsg(err)}`); blocked = null }
     let candidates = allCandidates
     if (blocked) {
-      candidates = allCandidates.filter(c => c.action === 'visit')
+      candidates = allCandidates.filter(c => byId.get(c.action)?.needsWechat === false)
       if (candidates.length === 0) { deps.log('PLAN', `skip chat=${chatId} reason=${blocked}`); return }
     }
 
     const today10 = formatLocal(nowIso).slice(0, 10)
     const nowMs = Date.parse(nowIso)
     const run = async (action: PlanAction, target?: string): Promise<boolean | 'refused'> => {
-      if (action === 'hunt') return await runHunt()
-      else if (action === 'visit') return await runVisit(target)
-      else if (action === 'gap') return await runGap()
-      return false
+      const a = action === 'none' ? undefined : byId.get(action)
+      return a ? await a.run(actx, target) : false
     }
     const record = (decision: PlanAction, why: string, source: PlanLogEntry['source']) => {
       try { appendPlanLog(deps.stateDir, today10, { at: nowIso, chatId, candidates: candidates.map(c => c.action), decision, why, source }) }
@@ -230,10 +163,16 @@ export function makePushTick(deps: TickDeps, dispatch: TickDispatch): (opts?: { 
     const earlier = readPlanLog(deps.stateDir, today10)
     if (!shouldReask(earlier, chatId, nowMs)) { deps.log('PLAN', `skip chat=${chatId} reason=backoff`); return }
 
-    // `provenChannels?.()` 的可选调用是有用的:老的 penpal 接线和测试夹具
-    // 没有这个方法。整段再包一层 try —— 挑串门目标失败绝不能掀翻这一拍。
-    let proven: Array<{ id: string; label: string }> = []
-    try { proven = socialWired ? (deps.boot.social!.penpal.provenChannels?.() ?? []) : [] } catch { proven = [] }
+    // 每个登记的候选交它那一格处境与可点名的去处(只读、自己 catch)—— 不管这一拍它是不是候选,同以前。
+    const targetsOf = new Map<PlanAction, string[]>()
+    let planParts: Partial<Pick<PlanContext, 'journal' | 'social'>> = {}
+    for (const a of actions) {
+      let info: ReturnType<NonNullable<CompanionAction['planInfo']>> | undefined
+      try { info = a.planInfo?.(actx) } catch { info = undefined }   // 某一格读不出来 = 那一格没接线,不掀翻这一拍
+      if (!info) continue
+      if (info.targets) targetsOf.set(a.id, info.targets.map(t => t.id))
+      if (info.context) planParts = { ...planParts, ...info.context }
+    }
     const planCtx = await buildContext()
     deps.log('PLAN', `ask chat=${chatId} candidates=[${candidates.map(c => c.action).join(',')}]`)
 
@@ -260,7 +199,7 @@ export function makePushTick(deps: TickDeps, dispatch: TickDispatch): (opts?: { 
     }
     const parsed = parsePlan(raw)
     if (!parsed.ok) { await fallback(`parse:${parsed.reason}`); return }
-    const { plan, downgraded } = constrainPlan(parsed.plan, candidates, proven.map(p => p.id))
+    const { plan, downgraded } = constrainPlan(parsed.plan, candidates, targetsOf.get(parsed.plan.action) ?? [])
     if (downgraded) deps.log('PLAN', `downgraded chat=${chatId} action=${parsed.plan.action} → none`)
     deps.log('PLAN', `→ ${plan.action}${plan.target ? ` target=${plan.target}` : ''} (${plan.why})`)
     // none / 降级:什么都不会跑,当场记。
@@ -273,23 +212,6 @@ export function makePushTick(deps: TickDeps, dispatch: TickDispatch): (opts?: { 
      */
     async function buildContext(): Promise<PlanContext> {
       const hoursAgo = (iso?: string) => iso && !Number.isNaN(Date.parse(iso)) ? Math.round((nowMs - Date.parse(iso)) / 3_600_000) : null
-      let journal: PlanContext['journal'] = null
-      try {
-        if (deps.huntStore?.summary && deps.huntStore.list) {
-          const sum = deps.huntStore.summary(readJournalSeen(deps.stateDir))
-          journal = { unread: sum.unread, latest: deps.huntStore.list(PLAN_JOURNAL_ITEMS).map(x => ({ kind: x.kind, title: x.title, ts: x.ts })) }
-        }
-      } catch { journal = null }
-      // 一格一个 try:某个子服务抛了,不该把另外两格也抹成「没接线」。
-      let social: PlanContext['social'] = null
-      const so = deps.boot.social
-      if (so) {
-        let openWishes = 0
-        try { openWishes = so.wish.list().filter(w => w.effective === 'open').length } catch { openWishes = 0 }
-        let pendingOffers = 0
-        try { pendingOffers = so.intro.offers().length } catch { pendingOffers = 0 }
-        social = { openWishes, pendingOffers, provenChannels: proven }
-      }
       let observations: PlanContext['observations'] = []
       try {
         const rows = await makeObservationsStore(deps.db, chatId, { migrateFromFile: join(deps.stateDir, 'memory', chatId, 'observations.jsonl') }).listActive()
@@ -301,7 +223,7 @@ export function makePushTick(deps: TickDeps, dispatch: TickDispatch): (opts?: { 
         nowLocal: formatLocal(nowIso),
         ownerLastInboundMinutesAgo: lastInboundAtIso ? Math.round((nowMs - Date.parse(lastInboundAtIso)) / 60_000) : null,
         today: { lastHuntHoursAgo: hoursAgo(ledger.lastHuntAtIso), lastVisitHoursAgo: hoursAgo(ledger.lastVisitAtIso), lastProactiveHoursAgo: hoursAgo(ledger.lastProactiveAtIso) },
-        candidates, rejected, journal, social, observations, personaExcerpt,
+        candidates, rejected, journal: planParts.journal ?? null, social: planParts.social ?? null, observations, personaExcerpt,
         earlierToday: earlier.filter(e => e.chatId === chatId).map(e => ({ at: e.at, decision: e.decision, why: e.why })),
       }
     }

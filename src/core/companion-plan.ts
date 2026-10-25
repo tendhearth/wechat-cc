@@ -1,7 +1,7 @@
 /**
  * 伙伴日程判断(spec 2026-09-05-companion-plan):冷却到了不再「马上做」,
  * 先问伙伴一句「现在要不要」。这里是纯的部分 —— 候选集、prompt、fail-closed
- * 解析、回退顺序、退避;I/O 与执行在 tick-bodies.ts。
+ * 解析、回退顺序、退避;I/O 与执行在 daemon/wiring/tick-push.ts(候选由各功能交,companion-actions.ts)。
  *
  * 红线:模型只能在通过了 shouldSpeak 的候选里选,或选 none;候选外一律降级。
  * 冷却 / care 档 / 无回复暂停只在 calibration.ts,这里不复制一行。
@@ -53,22 +53,39 @@ export interface CandidateInput {
   lastInboundAtIso?: string
 }
 
-export function computeCandidates(i: CandidateInput, decide: SpeakGate): { candidates: Candidate[]; rejected: Rejected[] } {
+/** 一个候选要问的那一次 shouldSpeak:动作 + 按哪一档问。列表的顺序就是候选(和 prompt 里)的顺序。 */
+export interface Consideration { action: Exclude<PlanAction, 'none'>; level: CareLevel }
+
+/** 逐个问 shouldSpeak,分成候选 / 被拒的。陪伴引擎把各功能交来的候选(daemon/companion/contributions.ts)按登记顺序传进来。 */
+export function judgeCandidates(
+  list: readonly Consideration[],
+  i: { nowIso: string; ledger: CareLedgerEntry; lastInboundAtIso?: string },
+  decide: SpeakGate,
+): { candidates: Candidate[]; rejected: Rejected[] } {
   const candidates: Candidate[] = []
   const rejected: Rejected[] = []
-  const consider = (action: Exclude<PlanAction, 'none'>, level: CareLevel) => {
+  for (const { action, level } of list) {
     const d = decide({ kind: action, level, nowIso: i.nowIso, ledger: i.ledger, lastInboundAtIso: i.lastInboundAtIso })
     if (d.ok) candidates.push({ action })
     else rejected.push({ action, reason: d.reason })
   }
+  return { candidates, rejected }
+}
+
+/**
+ * 三个内置候选(打猎 → 串门 → 问候)的档位规则,一处写全。陪伴引擎不再直接调它 —— 各候选自己交 speakLevel
+ * (wiring/companion-actions.ts),这里留作那份规则的对照:两边对不上,companion-actions.test 会红。
+ */
+export function computeCandidates(i: CandidateInput, decide: SpeakGate): { candidates: Candidate[]; rejected: Rejected[] } {
+  const list: Consideration[] = []
   if (i.isOwnerChat) {
     // 打猎默认关(主人 10-21 定,收敛清单 ②):只有明确开了(hunt:true)才是候选。老装机的主人在开机时已经被写成显式的开
     // (daemon/companion/hunt-default.ts),所以对他没有变化。care off 由 level 传入时 shouldSpeak 自己拒。
-    consider('hunt', i.level === 'off' ? 'off' : (i.prefs.hunt === true ? 'low' : 'off'))
-    if (i.socialWired) consider('visit', i.level === 'off' ? 'off' : (i.prefs.visit !== false ? 'low' : 'off'))
+    list.push({ action: 'hunt', level: i.level === 'off' ? 'off' : (i.prefs.hunt === true ? 'low' : 'off') })
+    if (i.socialWired) list.push({ action: 'visit', level: i.level === 'off' ? 'off' : (i.prefs.visit !== false ? 'low' : 'off') })
   }
-  consider('gap', i.level)
-  return { candidates, rejected }
+  list.push({ action: 'gap', level: i.level })
+  return judgeCandidates(list, i, decide)
 }
 
 export interface PlanContext {

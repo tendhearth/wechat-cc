@@ -24,7 +24,7 @@ const READERS: Record<string, { kind: 'owner' | 'outward'; why: string }> = {
   'src/daemon/memory/fs-api.ts': { kind: 'owner', why: '过期就藏、写回时剥过期标签;MCP 读只限各自对话的目录' },
   'src/daemon/memory/snapshot.ts': { kind: 'owner', why: '主人对话的 introspect / 会话总结素材' },
   'src/daemon/memory-llm-ops.ts': { kind: 'owner', why: '画像 / 小像的素材,给主人看' },
-  'src/daemon/wiring/tick-introspect.ts': { kind: 'owner', why: '主人对话的 introspect 素材' },
+  'src/daemon/wiring/introspect-steps.ts': { kind: 'owner', why: '小像自动刷新看主人档案新不新(introspect 那一拍的一步)' },
   'src/daemon/wiring/pipeline-deps.ts': { kind: 'owner', why: '主人自己在微信里「看记忆」' },
   'src/daemon/internal-api/routes-memory-review.ts': { kind: 'owner', why: '桌面证据审阅(trusted 档,桌面 / CLI)' },
   'src/cli/commands/memory.ts': { kind: 'owner', why: 'CLI 本机读写(主人自己)' },
