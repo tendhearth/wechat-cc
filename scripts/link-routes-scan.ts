@@ -14,7 +14,9 @@
  *     方法看 opts 里的 `method: '…'`,没有 opts 或 opts 里没 method ⇒ GET;opts 里 method 不是字面量 ⇒ 报错。
  *   - `sapi(lit)` ⇒ GET,`sapi(lit, body)` ⇒ POST(设置页的封装)。
  *   - `ccNav(lit)` / `q(lit)` ⇒ GET(带令牌跳页)。
- *   - `linkClient.request({ method: '…', path: '…' })`(App / selftest 配对)。
+ *   - `linkClient.request({ method: '…', path: '…' })`(selftest 配对)。
+ *   - `linkClient.request(toProtocolRequest(phoneCallRequest(PHONE_CALLS.<ns>.<m>, …)))`(App 配对,F3 起走类型化客户端的表):
+ *     键按 `PHONE_CALLS` 查出来;别的转手写法一律报错。
  *   - 第一个参数不是字面量(`api(path, opts)` 这种转手的封装)⇒ 算「转手」,不出路由;兜底见下一条。
  * 兜底:文本里每一个长得像面板路由的字符串字面量(`/m…`、`/set…`)都必须被上面某个调用的第一个参数吃掉,
  * 或者落在 NON_CALL_SITES 认得的上下文里;否则报「认不出的调用形状」。所以 `var p = "/m/api/x"; api(p)` 会红。
@@ -26,6 +28,8 @@
  * 不计入链接集合。现在一处都没有(收敛 5b 之后网页只剩配对、此刻、一起做的看和停),
  * 页面区分两种令牌靠 boot.js 的 `isDevice = T.charAt(0) === "d"`;要在 `if (isDevice)` 分支里加调用,就加这条注释。
  */
+
+import { PHONE_CALLS } from '@wechat-cc/protocol'
 
 export type ScannedCall = { key: string; source: string; snippet: string; deviceOnly: boolean }
 export type ScanResult = { calls: ScannedCall[]; forwarders: string[] }
@@ -132,7 +136,14 @@ export function scanSource(source: string, rawText: string, table: ReadonlySet<s
     const where = `${source}: ${snippet}`
     const deviceOnly = before.trimEnd().endsWith(DEVICE_SENTINEL)
     let method: string, lit: ReturnType<typeof literalPath>, litOffset: number
-    if (name === 'linkClient.request') {
+    if (name === 'linkClient.request' && (args[0] ?? '').startsWith('toProtocolRequest(')) {
+      const typed = /^toProtocolRequest\(\s*phoneCallRequest\(\s*PHONE_CALLS\.(\w+)\.(\w+)\s*[,)]/.exec(args[0]!)
+      const spec = typed ? (PHONE_CALLS as unknown as Record<string, Record<string, { key: string } | undefined> | undefined>)[typed[1]!]?.[typed[2]!] : undefined
+      if (!spec) throw new ScanError(`认不出 linkClient.request 的形状(类型化客户端只认 toProtocolRequest(phoneCallRequest(PHONE_CALLS.ns.m, …))):${where}`)
+      if (!table.has(spec.key)) throw new ScanError(`调用对不上路由表里的任何一行:${spec.key} @ ${where}`)
+      calls.push({ key: spec.key, source, snippet, deviceOnly })
+      continue
+    } else if (name === 'linkClient.request') {
       const obj = args[0] ?? ''
       const pathM = /\bpath\s*:\s*(["'`])/.exec(obj)
       if (!obj.startsWith('{') || !pathM) throw new ScanError(`认不出 linkClient.request 的形状:${where}`)

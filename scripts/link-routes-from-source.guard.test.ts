@@ -119,6 +119,8 @@ describe('扫描器的失败方式(人造源码)', () => {
       .toEqual(['POST /m/api/matter/stop', 'GET /m/api/sticker/', 'GET /set'])
     expect(keys(`function api(path, opts) { return fetch(q(path), opts) }`)).toEqual([])
     expect(keys(`linkClient.request({ method: 'POST', path: '/set/api/pair', body: '{}' })`)).toEqual(['POST /set/api/pair'])
+    // App 配对(F3):走类型化客户端的表,键按 PHONE_CALLS 查
+    expect(keys(`linkClient.request(toProtocolRequest(phoneCallRequest(PHONE_CALLS.set.pair, { body: {} })))`)).toEqual(['POST /set/api/pair'])
   })
   it('注释里的路径不算调用', () => {
     expect(keys(`// api("/m/api/chat")\n/* api("/m/api/memory") */ <!-- api("/m/api/today") -->api("/m/api/home")`)).toEqual(['GET /m/api/home'])
@@ -133,6 +135,8 @@ describe('扫描器的失败方式(人造源码)', () => {
     expect(() => keys(`api("/m/api/seen", { method: m })`)).toThrow(/认不出请求方法/)
     expect(() => keys(`fetch("https://example.com/x")`)).toThrow(/不是面板路由/)
     expect(() => keys(`linkClient.request(opts)`)).toThrow(/linkClient/)
+    expect(() => keys(`linkClient.request(toProtocolRequest(req))`)).toThrow(/linkClient/)
+    expect(() => keys(`linkClient.request(toProtocolRequest(phoneCallRequest(PHONE_CALLS.set.nope)))`)).toThrow(/linkClient/)
     // 链接令牌段里 linkClient 只许 .request( / .close( / 声明(#519 评审)
     expect(() => assertLinkClientUsesOnly(`const linkClient = deps.connect(a, b)\nawait linkClient.request({ method: 'POST', path: '/set/api/pair' })\nlinkClient.close()`, 't')).not.toThrow()
     expect(() => assertLinkClientUsesOnly(`const linkClient = deps.connect(a, b)\nawait pairOnce(linkClient)`, 't')).toThrow(/认不出/)

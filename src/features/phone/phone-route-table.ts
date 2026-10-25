@@ -6,11 +6,20 @@
  * 方法不对怎么办:门(phoneRouteAllowed)只挡不在册的路径,在册但方法不对的照样放进来(计划裁决 2)。
  * 以前按路径匹配、自己回 405 的处理器用 `ownsMethod` 标出来 —— 方法没命中时仍交给它,由它照旧回 405;
  * 没标的(以前写成 `pathname === … && req.method === …` 的)方法不对就是查不到,落到面板的 404。
+ *
+ * 键的类型是协议包的 `PanelRouteKey`(架构终态 F3):路由表里没登记的键编译就不过,App 的类型化客户端
+ * (`packages/protocol/src/phone-calls.ts`)认的也是同一组键 —— 路径只在 `routes.ts` 写一次。
  */
+import type { PanelRouteKey } from '@wechat-cc/protocol/routes'
 
 /** `ctx`:面板自己那几条要的调用者信息;各 mobile-*.ts 的处理器不看它。 */
 export type PhoneHandler<C = unknown> = (url: URL, req: Request, ctx: C) => Promise<Response> | Response
-export type PhoneRouteTable<C = unknown> = Readonly<Record<string, PhoneHandler<C>>>
+export type PhoneRouteTable<C = unknown> = Readonly<Partial<Record<PanelRouteKey, PhoneHandler<C>>>>
+type PathOf<K> = K extends `${string} ${infer P}` ? P : never
+/** 路由表里手机面板那一端的路径(不带方法)。 */
+export type PanelRoutePath = PathOf<PanelRouteKey>
+/** 查表时按任意字符串索引(请求进来的方法 + 路径不是字面量)。 */
+const loose = <C>(t: PhoneRouteTable<C>) => t as Readonly<Record<string, PhoneHandler<C> | undefined>>
 
 const OWNS_METHOD = new WeakSet<object>()
 /** 这条处理器自己判方法(方法不对回它自己的 405 / 503):路径对上、方法没登记时也交给它。 */
@@ -23,25 +32,27 @@ export function ownsMethod<H extends PhoneHandler<never>>(h: H): H {
 export function combinePhoneRoutes<C>(...tables: ReadonlyArray<PhoneRouteTable<C>>): PhoneRouteTable<C> {
   const out: Record<string, PhoneHandler<C>> = {}
   for (const t of tables) {
-    for (const [k, h] of Object.entries(t)) {
+    for (const [k, h] of Object.entries(loose(t))) {
+      if (!h) continue
       if (k in out) throw new Error(`phone route registered twice: ${k}`)
       out[k] = h
     }
   }
-  return out
+  return out as PhoneRouteTable<C>
 }
 
 const pathOf = (key: string) => key.slice(key.indexOf(' ') + 1)
 
 /** 精确键 → 同方法的前缀键 → 路径对上且 ownsMethod 的处理器;都没有 ⇒ null。 */
 export function lookupPhoneRoute<C>(table: PhoneRouteTable<C>, method: string, path: string): PhoneHandler<C> | null {
-  const exact = table[`${method} ${path}`]
+  const t = loose(table)
+  const exact = t[`${method} ${path}`]
   if (exact) return exact
-  for (const [k, h] of Object.entries(table)) {
+  for (const [k, h] of Object.entries(t)) {
     const p = pathOf(k)
-    if (p.endsWith('/') && k.startsWith(`${method} `) && path.startsWith(p) && path.length > p.length) return h
+    if (h && p.endsWith('/') && k.startsWith(`${method} `) && path.startsWith(p) && path.length > p.length) return h
   }
-  for (const [k, h] of Object.entries(table)) if (pathOf(k) === path && OWNS_METHOD.has(h)) return h
+  for (const [k, h] of Object.entries(t)) if (h && pathOf(k) === path && OWNS_METHOD.has(h)) return h
   return null
 }
 
@@ -52,6 +63,6 @@ export async function routePhone<C>(table: PhoneRouteTable<C>, url: URL, req: Re
 }
 
 /** 一条路径登记在几个方法下、同一个处理器(它自己按 req.method 分支)。 */
-export function sharedRoute<C>(methods: readonly string[], path: string, h: PhoneHandler<C>): PhoneRouteTable<C> {
-  return Object.fromEntries(methods.map(m => [`${m} ${path}`, h]))
+export function sharedRoute<C>(methods: readonly string[], path: PanelRoutePath, h: PhoneHandler<C>): PhoneRouteTable<C> {
+  return Object.fromEntries(methods.map(m => [`${m} ${path}`, h])) as PhoneRouteTable<C>
 }

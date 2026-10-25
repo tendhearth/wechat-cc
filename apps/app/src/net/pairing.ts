@@ -1,4 +1,4 @@
-import { PHONE_API_SCHEMAS, type ProtocolClient } from '@wechat-cc/protocol'
+import { PHONE_API_SCHEMAS, PHONE_CALLS, phoneCallRequest, toProtocolRequest, type ProtocolClient } from '@wechat-cc/protocol'
 import type { ParsedLink } from './link'
 import { transportErrorCode } from './errors'
 
@@ -18,7 +18,13 @@ function asPairError(e: unknown, phase: 'link' | 'device'): PairError {
   if (c === 'offline' || c === 'timeout') return new PairError('offline')
   return new PairError('unknown')
 }
-const JSON_HEADERS = { 'content-type': 'application/json' }
+/**
+ * 路径由协议包的 PHONE_CALLS 拼(F3);这里要原始的状态码与版本号,所以直接交协议客户端,不走 live.ts 的传输。
+ * 链接令牌那一步就地写全(`linkClient.request(toProtocolRequest(phoneCallRequest(PHONE_CALLS.…)))`):
+ * `scripts/link-routes-from-source.guard.test.ts` 认的就是这个形状。
+ */
+const setState = () => toProtocolRequest(phoneCallRequest(PHONE_CALLS.set.state))
+const apply = (body: { op: string } & Record<string, unknown>) => toProtocolRequest(phoneCallRequest(PHONE_CALLS.set.apply, { body }))
 
 /**
  * spec §6:链接令牌(10 分钟内有效;电脑发了新码,旧码即作废)建连 ⇒ POST /set/api/pair 拿长期设备令牌 ⇒ 换设备令牌重连,
@@ -33,9 +39,9 @@ export async function pairWithLink(
   let deviceToken: string
   const linkClient = deps.connect(link.relayUrl, link.linkToken)
   try {
-    const res = await linkClient.request({ method: 'POST', path: '/set/api/pair', body: '{}', headers: JSON_HEADERS })
+    const res = await linkClient.request(toProtocolRequest(phoneCallRequest(PHONE_CALLS.set.pair, { body: {} })))
     if (res.status === 401) throw new PairError('expired')
-    const p = PHONE_API_SCHEMAS['POST /set/api/pair']!.safeParse(res.json())
+    const p = PHONE_API_SCHEMAS[PHONE_CALLS.set.pair.key]!.safeParse(res.json())
     if (!p.success) throw new PairError('unknown')
     const data = p.data as { ok: true; device_token: string } | { ok: false; error: 'device_limit' | 'link_only' }
     // link_only(plan 7a D1)只在拿设备令牌来配时出现 —— 这里用的是链接令牌,真碰到就是没想到的情况。
@@ -49,21 +55,21 @@ export async function pairWithLink(
 
   const dev = deps.connect(link.relayUrl, deviceToken)
   try {
-    const res = await dev.request({ method: 'GET', path: '/set/api/state' })
+    const res = await dev.request(setState())
     if (dev.version() !== 2) throw new PairError('too_old')
-    const s = PHONE_API_SCHEMAS['GET /set/api/state']!.safeParse(res.json())
+    const s = PHONE_API_SCHEMAS[PHONE_CALLS.set.state.key]!.safeParse(res.json())
     if (!s.success) throw new PairError('unknown')
     const state = s.data as { ok: boolean; remote?: { devices: Array<{ id: string; current: boolean }> } }
     const me = state.ok ? state.remote?.devices.find(x => x.current) : undefined
     if (!me) throw new PairError('unknown')
     try {
-      await dev.request({ method: 'POST', path: '/set/api/apply', body: JSON.stringify({ op: 'label_device', id: me.id, label: deps.label }), headers: JSON_HEADERS })
+      await dev.request(apply({ op: 'label_device', id: me.id, label: deps.label }))
     } catch { /* 名字只是锦上添花 */ }
     return { v: 1, daemonId: link.daemonId, relayHost: link.relayHost, relayUrl: link.relayUrl, deviceToken, deviceId: me.id, pairedAt: now() }
   } catch (e) {
     // 设备令牌已发出却没配成 —— 尽力把这个设备位还给电脑(否则白占一个设备位);失败吞掉,不记令牌
     try {
-      await dev.request({ method: 'POST', path: '/set/api/apply', body: JSON.stringify({ op: 'unpair_self' }), headers: JSON_HEADERS })
+      await dev.request(apply({ op: 'unpair_self' }))
     } catch { /* best-effort */ }
     throw asPairError(e, 'device')
   } finally {
@@ -87,7 +93,7 @@ export async function retirePrevious(
   let old: ProtocolClient | null = null
   try {
     old = deps.connect(prev.relayUrl, prev.deviceToken)
-    const res = await old.request({ method: 'POST', path: '/set/api/apply', body: JSON.stringify({ op: 'unpair_self' }), headers: JSON_HEADERS })
+    const res = await old.request(apply({ op: 'unpair_self' }))
     const body = res.status === 200 ? (res.json() as { ok?: unknown } | null) : null
     return body !== null && typeof body === 'object' && body.ok === true ? 'retired' : 'failed'
   } catch {
