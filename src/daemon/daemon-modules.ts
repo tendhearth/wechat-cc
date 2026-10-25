@@ -13,6 +13,8 @@
 import { randomBytes } from 'node:crypto'
 import { log } from '../lib/log'
 import { loadAccess } from '../lib/access'
+import { resolveTier } from '../domain/user-tier'
+import { makeChatOwnerRules } from './permission-gate'
 import { makeMtimeCachedConfigReader } from '../lib/agent-config'
 import { countInboundMessagesSync, NEW_RELATIONSHIP_MSG_COUNT } from '../lib/messages-store'
 import { notifyDesktop } from '../lib/desktop-notify'
@@ -307,9 +309,11 @@ export function daemonModules(f: Foundation): DaemonModule[] {
     // —— bootstrap:provider registry / 会话管理 / 协调器 + 可选的知识库 / 社交 / A2A / 配对 / 乙(一组模块,bootstrap/index.ts)——
     ...bootstrapModules({
       needs: ['ilink-adapter', 'reply-delivery', 'internal-api', 'network-gate', 'stickers', 'memory'],
-      lazy: ['cli-upgrade', 'workbench', 'wired'],
+      lazy: ['cli-upgrade', 'workbench', 'wired', 'terminal'],
       deps: (ctx) => {
         const ilink = ctx.get<IlinkAdapter>('ilink-adapter')
+        const terminal = ctx.late<TerminalFeature>('terminal')
+        const replyDelivery = ctx.get<ReturnType<typeof makeReplyDeliveryRuntime>>('reply-delivery')
         const internalApi = ctx.get<InternalApiLifecycle>('internal-api')
         const guardRt = ctx.get<GuardRuntime>('network-gate')
         const cliUpgrade = ctx.late<CliUpgradeModule>('cli-upgrade')
@@ -326,7 +330,13 @@ export function daemonModules(f: Foundation): DaemonModule[] {
           dangerouslySkipPermissions: dangerously, conversationStore: f.conversationStore,
           replySinks: f.replySinks,
           outboundTaps: f.outboundTaps,
-          replyDelivery: ctx.get('reply-delivery'),
+          replyDelivery,
+          // 主人自己的对话走放行规则(2026-10-25 主人点头):规则那一层在终端会话功能里(比 bootstrap 晚起)⇒ 现取;
+          // 主人与否按 access.json 的 admins 现算(原始档位,不看 --dangerously)。
+          chatOwnerRules: () => {
+            const gate = terminal()?.permissionGate
+            return gate ? makeChatOwnerRules({ gate, replyDelivery, isOwnerChat: (c) => resolveTier(c, loadAccess()) === 'admin' }) : null
+          },
           petSignals: f.petSignals,
           onTurnRecord: (r) => {
             f.turnRecordStore.append(r)

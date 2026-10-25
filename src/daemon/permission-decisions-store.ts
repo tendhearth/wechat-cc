@@ -8,7 +8,7 @@ import { redactSecrets } from '../core/cli-transcript'
 export interface PermissionDecisionRow {
   id: number
   at: number
-  surface: 'terminal' | 'workbench'
+  surface: 'terminal' | 'workbench' | 'chat'
   provider: string
   project: string | null
   tool: string

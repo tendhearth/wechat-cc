@@ -1,8 +1,11 @@
 /**
- * 放行规则(spec 2026-10-19-permission-rules-design):两处权限入口(终端会话 hook、一起做)在问主人之前
+ * 放行规则(spec 2026-10-19-permission-rules-design):三处权限入口(终端会话 hook、一起做、主人自己的对话)在问主人之前
  * 先问这里。纯类型,不带逻辑。
+ *
+ * chat(2026-10-25 主人点头):只在主人自己(access.json 的 admins)的对话里、只对逐工具过闸门的执行者(Claude / Gemini /
+ * OpenAI 兼容);访客 / 信任的对话永远不看规则。对话里没有项目根:project 恒为 null,按项目限定的规则只看工具真正的目标路径。
  */
-export type Surface = 'terminal' | 'workbench'
+export type Surface = 'terminal' | 'workbench' | 'chat'
 export type Tier = 'admin' | 'trusted' | 'guest'
 export type Verdict = 'allow' | 'ask' | 'deny'
 
@@ -35,6 +38,8 @@ export interface Decision {
   by: 'rule' | 'review' | 'floor' | 'default'
   ruleId?: string
   reason: string
+  /** 命中的那条规则的备注(有才有)—— 对话里「按规则「…」放行了」那一行用它说是哪条规则。 */
+  note?: string
 }
 
 export interface RuleWhen {

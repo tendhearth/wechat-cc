@@ -14,6 +14,7 @@ import type { ChatModelClient, ChatMessage, ToolSpec, TurnDelta } from './openai
 import type { McpToolBridge } from './openai-mcp-bridge'
 import { builtinTools, type BuiltinTool } from './openai-tools'
 import { gateTool } from './openai-gate'
+import type { ChatOwnerRules } from '../../../core/permission-rules/chat'
 import { makeTurnEmitter } from '../../../core/turn-emitter'
 
 export { OPENAI_CAPABILITIES } from '../../../domain/provider-capabilities'
@@ -55,6 +56,8 @@ export interface OpenAiAgentProviderOptions {
    * scripts/experiments/reply-once/*.jsonl);测试也用它。生产路径从不传(缺省 = 真的 builtinTools)。
    */
   makeBuiltins?: (cwd: string) => BuiltinTool[]
+  /** 主人自己的对话走放行规则(2026-10-25,core/permission-rules/chat.ts)。现取;不给 / 回 null ⇒ 不看规则。 */
+  ownerRules?: () => ChatOwnerRules | null
 }
 
 const DEFAULT_MAX_STEPS = 25
@@ -79,8 +82,9 @@ function makeOpenAiSession(args: {
   maxSteps: number
   messages: ChatMessage[]
   firstRef: { first: boolean }
+  ownerRules?: () => ChatOwnerRules | null
 }): AgentSession {
-  const { sessionId, chatModel, bridge, builtinByName, toolSpecs, ctx, maxSteps, messages, firstRef } = args
+  const { sessionId, chatModel, bridge, builtinByName, toolSpecs, ctx, maxSteps, messages, firstRef, ownerRules } = args
 
   // Per-dispatch AbortController holder. We own the loop, so cancel() is
   // boundary-checked rather than a true mid-stream abort: `streamTurn`'s
@@ -162,20 +166,23 @@ function makeOpenAiSession(args: {
             const followUps: ChatMessage[] = []
             for (const tc of toolCalls) {
               const mcpServer = bridge.serverOf(tc.name)
-              const decision = gateTool({
+              const gate = abort.signal.aborted ? null : await gateTool({
                 toolName: tc.name,
                 mcpServer,
                 input: (tc.input ?? {}) as Record<string, unknown>,
                 tierProfile: ctx.tierProfile,
                 permissionMode: ctx.permissionMode,
+                chatId: ctx.chatId,
+                ownerRules: ownerRules?.() ?? null,
               })
+              const decision = gate?.decision ?? 'deny'
               let result: string
               // 一步里多个工具调用:主人 /stop 之后剩下的(可能是有副作用的 Bash)一个都不再跑,
               // 但每个 call id 仍要回一条结果,否则这个会话下一次请求在 API 那边是坏的。
               if (abort.signal.aborted) {
                 result = 'Cancelled: the user stopped this turn before this tool ran.'
               } else if (decision === 'deny') {
-                result = `Permission denied: tool "${tc.name}" is not allowed for this chat.`
+                result = gate?.message ?? `Permission denied: tool "${tc.name}" is not allowed for this chat.`
               } else {
                 try {
                   if (mcpServer !== undefined) {
@@ -304,6 +311,7 @@ export function createOpenAiAgentProvider(opts: OpenAiAgentProviderOptions): Age
         maxSteps,
         messages,
         firstRef: { first: true },
+        ...(opts.ownerRules ? { ownerRules: opts.ownerRules } : {}),
       })
       log('SESSION_SPAWN', `alias=${project.alias} provider=openai session=${sessionId}`)
       session.callTarget = () => target

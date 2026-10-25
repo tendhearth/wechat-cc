@@ -98,7 +98,7 @@ authorize(subject, descriptor, action) → allow | ask | deny
 - 执行者只做两件事:把要做的动作**报上来**(`onPermission`),**照着** `compile()` 给的静态子集设置自己(沙箱、工具白名单)。
 - 派发时:描述里做不到的维度 ⇒ 这一档拒掉(已有的 `provider-policy` 收进来)。
 - `tier-enforcement.ts` 从「描述缺口的表」变成 `compile()` 的测试快照。
-- **不改行为**:放行规则今天只在终端会话和一起做上生效,收进 `authorize` 以后照旧只在这两处生效(按 `subject.surface` 判)。对话要不要也走放行规则,是看得见的变化,单列等主人。
+- **不改行为**:C2 收进 `authorize` 时放行规则照旧只在终端会话和一起做上生效(按 `subject.surface` 判)。对话要不要也走,是看得见的变化,单列等主人 —— 2026-10-25 主人点头,改成「主人自己的对话也走」,见进度表「C2 补 · 对话走放行规则」。
 
 ### 5. 协调器是一条流水线
 
@@ -222,6 +222,8 @@ DeliveryPort                      吃 TurnOutcome;旧的 / shadow 交付路删�
 
 - 对话要不要也走主人的放行规则(今天不走;收进 `authorize` 后照旧不走)。
 - ~~Codex 对话从 SDK 换到 app-server~~:主人 2026-10-25 定了(统一到 app-server、直接改),差异表见「进度」下的 B1 节。Claude 对话和工作台合一:目标是行为不变,但两条协议细节可能有差异;做的时候逐项列出差异,有看得见的再问。
+- ~~对话要不要也走主人的放行规则~~ ⟨10-25 主人点头:只在主人自己的对话里、红线照旧问、放了就在回复里说一行;见进度表「C2 补 · 对话走放行规则」⟩
+- Codex 对话从 SDK 换到 app-server、Claude 对话和工作台合一:目标是行为不变,但两条协议细节(比如中途插话、思考过程)可能有差异;做的时候逐项列出差异,有看得见的再问。
 - 网页 v1 传输退休:旧的已配对网页要不要提示重新配对。
 
 ## 和别的文档的关系
@@ -265,7 +267,7 @@ DeliveryPort                      吃 TurnOutcome;旧的 / shadow 交付路删�
 | E4 第 1 步 | 工作台服务:`Options` 原样当 `ServiceDeps` 传(删掉那行 2245 字符的逐字段复制),被行数上限挤成一行的字段表 / import / 域构造 / service 对象 / `actions.set` 全部按一项一行摊开(service.ts 没有超过 180 字符的行了);删掉数内函数的 `workbench-service-ratchet` 守卫 —— 它管的两条环 depcruise 早有(`workbench-service-no-circular` / `wechat-control-must-not-link-service`),剩下的只是量症状。`Ref<ServiceActions>` 晚绑定还在,下一步 |
 | E2 补 | 工作台错误码的反向守卫扫整个 `src/adapters/executors`(原来只扫 core/workbench 那几份)。「归了类」多一种:任务失败记录认得的码(`executionFailureMessage` 有人话)—— 于是 INTERNAL_ONLY 少了 12 个本来就有人话的;新扫进来的 Claude 工作台运行时不变式、ACP 收尾码列进去。`docs/architecture.md` 的分层图补上 adapters |
 | E4 第 2 步 | 工作台服务:`Ref<ServiceActions>` 与 `ctx.actions` 删掉,各域按依赖顺序构造、只拿自己要的那几个域(依赖图写在 `service.ts` 顶部)。反指的边逐条正过来:pump → execute 改成 run 自带 `launch`;`drainInputs` 的 start 由 execute 调下来时带着;lifecycle ↔ inputs 共用的记账搬进 `pending-inputs.ts`;native ↔ execute 共用的核对搬进 `native-check.ts`;`matterSync` 进只认 ctx 的 `matter-sync.ts`;view 只要额度交接的只读一半。剩一条真环(一轮做完 → 检查没过 → 接着改)用一个具名回调 `UntilResume` 在构造时注入 |
-| C2 | 逐工具判定只有一处:纯函数 `domain/authorize.ts` 的 `authorize(subject, descriptor, action) → allow / ask / deny`,按序组合旁路(权限模式,经 `compilePolicy`)、扇出拒 reply、坏名字、一起做的登记表、定时任务只读档(污点 / 读的范围 / 红线;要碰路径的事实由调用方算好)、档位 × 类别(`decideTool`)、问不了(`relayAs`)、主人的放行规则。调它的:对话的 `permission-relay`、Gemini gate、openai gate、`wire-model-options` 的定时任务闸门、一起做 Claude 的 `makeWorkbenchClaudeCanUseTool`(`wire-workbench` 外面手包的「没登记就拒」收进来,登记表当 descriptor)、一起做放行规则的落点(`makeRunPermissions`)、终端会话(`permission-gate.makeTerminalDecide`)。放行规则只在 `subject.surface` 是 terminal / workbench 时看(`OWNER_RULE_SURFACES`);对话要不要也走,等主人。`effectivePolicy` 删掉。逐格对照 `authorize.parity.test.ts`:改之前的七份实现原样抄进测试,约 16 万格一位不差(结果、问主人的话 / 码 / 时限、日志、通道调用)。没做:放行规则的 floor / rules-file / decide 还在 `core/permission-rules`(靠 node:path 的 posix / win32 归一,搬进 domain 要先把路径归一做成纯的),`authorize` 经 `permission-gate.decide` 拿它的裁决;ACP 对话侧按模式选放行 / 拒绝项(`compilePolicy('cursor-acp')`)是编译好的常量答案,没过 `authorize`;网络守护按调用目标判、不是逐工具,不在里面 |
+| C2 | 逐工具判定只有一处:纯函数 `domain/authorize.ts` 的 `authorize(subject, descriptor, action) → allow / ask / deny`,按序组合旁路(权限模式,经 `compilePolicy`)、扇出拒 reply、坏名字、一起做的登记表、定时任务只读档(污点 / 读的范围 / 红线;要碰路径的事实由调用方算好)、档位 × 类别(`decideTool`)、问不了(`relayAs`)、主人的放行规则。调它的:对话的 `permission-relay`、Gemini gate、openai gate、`wire-model-options` 的定时任务闸门、一起做 Claude 的 `makeWorkbenchClaudeCanUseTool`(`wire-workbench` 外面手包的「没登记就拒」收进来,登记表当 descriptor)、一起做放行规则的落点(`makeRunPermissions`)、终端会话(`permission-gate.makeTerminalDecide`)。放行规则只在 `subject.surface` 是 terminal / workbench 时看(`OWNER_RULE_SURFACES`);对话要不要也走,等主人(10-25 主人点头,见下面「C2 补」)。`effectivePolicy` 删掉。逐格对照 `authorize.parity.test.ts`:改之前的七份实现原样抄进测试,约 16 万格一位不差(结果、问主人的话 / 码 / 时限、日志、通道调用)。没做:放行规则的 floor / rules-file / decide 还在 `core/permission-rules`(靠 node:path 的 posix / win32 归一,搬进 domain 要先把路径归一做成纯的),`authorize` 经 `permission-gate.decide` 拿它的裁决;ACP 对话侧按模式选放行 / 拒绝项(`compilePolicy('cursor-acp')`)是编译好的常量答案,没过 `authorize`;网络守护按调用目标判、不是逐工具,不在里面 |
 | C3 | 每家 × 每档 × 每类工具实际会怎样,从真判定推出来:纯函数 `domain/enforcement-matrix.ts`(派发拒走 `providerDenialFor`;有逐工具回调的取 `authorize` 在对话面上的结论;没有的看档位那一格 + wechat MCP 按会话档位注册(`adminMcpTools` 为假 ⇒ 钉成 trusted)+ `compilePolicy` strict 设置里问不了时怎么落:codex `approvalPolicy` never ⇒ 放,ACP Cursor 应答 reject ⇒ 拒,agy 没有应答项 ⇒ 放)。`noAskNotice` 改成看「哪一档哪一类出现『档位说问、它放了』」算出来,不再读手设的 `doesNotAsk`;算出的提醒对象和原来一位不差(codex、agy)。`tier-enforcement.ts` 与它的两份测试删掉:整张表在 `enforcement-matrix.test.ts` 钉快照(能力表 / 档位 / `authorize` / `compilePolicy` 一改就有 diff),每家缺口的理由搬到快照旁的 `WHY_GAPS`(有缺口没理由、有理由没缺口都红);真调三家闸门的证明测试留着,改名 `enforcement-matrix.proof.test.ts`,并和推出来的格子对照。推导比原来的手写表细一格:agy 在主人聊天里 admin 专用工具(含 `daemon_remediate`)根本不注册,是「调不到」不是「不问」 |
 | B1 | Codex 对话改走 `codex app-server`(主人 2026-10-25 拍板:统一到更强的那条协议,直接改)。协议客户端只有一份:`codex-app-server.ts` 的 `spawnCodexAppServerSession`,工作台不传 `chat` ⇒ 行为一字不变;对话侧 `codex-chat-provider.ts` 传 `CodexChatProfile`(compilePolicy 的沙箱 / 审批、daemon 的 MCP 作线程配置、老形状的事件、审批请求一律拒)。起子进程的那一下单独成接缝 `codex-app-server-process.ts`,daemon e2e 把它换成剧本 app-server(`test-support/executors/codex-scripted.ts`,同一个替身也给对话侧单测和交付测试用)。删掉:`codex-agent-provider.ts` 与测试、`watchCodexEvents`(超时归 app-server 的回合看门狗)、`@openai/codex-sdk` 依赖(CLI `memory` 命令的一次性评估改用同一个 provider;codex-autofix 只对齐 `@openai/codex`)。C3 快照不动(对话仍是审批 never)。差异见下表 |
 
@@ -289,7 +291,9 @@ DeliveryPort                      吃 TurnOutcome;旧的 / shadow 交付路删�
 **机会(这一步没做)**:app-server 能逐条问(`on-request` + `item/commandExecution/requestApproval`,工作台已在用)。对话侧可以像 Claude 那样把 admin 的危险命令转给主人拍板,C3 快照里 codex 的「问 ⇒ 放」就能补上;按主人的话这一步不改档位行为,快照不动。
 
 **后续**:协调器在一轮跑着时把新消息走 `steer`(要先定产品行为);真机核 dangerously 下 `default_tools_approval_mode` / bypass 键在 app-server 上确实放过 MCP;对话侧没开网络守护的「暂停在跑的任务」(`suspension`,工作台沙盒验过,对话没验);Windows 上对话侧经 cc-jobspawn 起 app-server,没在真机跑过。
+| C2 补 · 对话走放行规则 | 2026-10-25 主人点头的看得见的变化:`OWNER_RULE_SURFACES` 加上 `chat`,但对话只在 `subject.ownerChat` 为真时看规则 —— 由 `core/permission-rules/chat.ts` 的 `authorizeChatCall` 在判的那一刻调 daemon 接的 `isOwnerChat`(`daemon-modules` 里 `resolveTier(chatId, loadAccess()) === 'admin'`,原始档位,不看 --dangerously,模型的输入碰不到),访客 / 信任的对话连规则文件都不读(逐格对照里接上「什么都放」的规则,访客 / 信任 / 定时 / 审查各行仍一位不差、规则一次都没被问)。只接逐工具过闸门的三家(Claude `permission-relay`、Gemini gate、openai gate;openai 的规则在「问落成拒」之前看,规则没拿主意照旧拒);Codex / Cursor / agy 在对话里问不了单个工具,不动。红线照旧问(`decide` 里红线之上没有 allow);对话里只认规则表(by rule),不初审。规则替主人放了 ⇒ `reply-delivery.noteRuleAllow` 登记到这个对话开着的那一轮,交付时最后单独一条「按规则「<备注或 id>」放行了 <命令 / 工具>」,同一条规则一轮一行(多次记「这一轮共 N 次」),app 接收器那一轮接在文字末尾,轮出错没交付也单独送;没有开着的轮 ⇒ 不放、照旧问。规则拒绝 ⇒ 拒,理由交给执行者。路径:对话没有项目根(`project` 恒为 null),按项目 / 路径限定的规则只看输入里明写的**绝对**目标路径,每一条都在范围里才命中,空的 / 相对的 / 不明的一律不命中。留痕表 `permission_decisions.surface` 的 CHECK 加 `chat`(v85 重建表)。C3 快照不变:它算的是没有规则时的那张表 |
 
 ## 修订记录
 
 - 2026-10-25:初稿。
+- 2026-10-25:主人点头「对话也走放行规则」(只在主人自己的对话、红线照旧问、放了在回复里说一行),进度表加「C2 补」一行,等主人点头的那一条划掉。

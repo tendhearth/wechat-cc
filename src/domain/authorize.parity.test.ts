@@ -33,6 +33,7 @@ import { pathsUnder } from '../core/permission-rules/paths'
 import { wireModelOptions } from '../daemon/bootstrap/wire-model-options'
 import { workbenchClaudeOptions } from '../features/workbench/wire'
 import { makeTerminalDecide } from '../daemon/permission-gate'
+import type { ChatOwnerRules } from '../core/permission-rules/chat'
 import type { Decision, Verdict } from './permission-rules/types'
 
 // ───────────────────────── 改之前的实现(原样) ─────────────────────────
@@ -493,13 +494,33 @@ const CLAUDE_TOOLS: [string, Record<string, unknown>][] = [...BUILTINS, ...WECHA
 
 let cells = 0
 
+/**
+ * 2026-10-25 起对话也走放行规则,但只在主人自己的对话里。逐格对照照样跑,并且**接上**规则:
+ *   - 访客 / 信任(以及定时 / 审查档):接一份「什么都放」的规则,isOwnerChat 说不是主人 —— 结果必须和改之前一位不差,
+ *     规则一次都不许被问(decide 计数为 0);
+ *   - 主人:接一份「什么都没命中」(ask · default)的规则 —— 规则没拿主意,结果也必须和改之前一位不差。
+ * 主人对话里规则真拿主意(放 / 拒)的那几格,见文末「放行规则生效的面」和 core/permission-rules/chat.test.ts。
+ */
+const ALLOW_ALL: Decision = { verdict: 'allow', by: 'rule', ruleId: 'everything', reason: 'x' }
+const NO_RULE: Decision = { verdict: 'ask', by: 'default', reason: '没有规则覆盖' }
+function wiredRules(owner: boolean, counter: { decide: number }): ChatOwnerRules {
+  return {
+    isOwnerChat: () => owner,
+    decide: async () => { counter.decide++; return owner ? NO_RULE : ALLOW_ALL },
+    noteAllowed: () => true,
+  }
+}
+
 describe('authorize 逐格对照:对话 · Claude(permission-relay)', () => {
   it('档位 × 对话模式 × 能力表那一家 × 权限模式 × 有没有 admin × 主人怎么答 × 工具', async () => {
     for (const tier of TIER_NAMES) for (const mode of CHAT_MODES) for (const provider of KNOWN_PROVIDER_IDS) for (const permissionMode of PERMISSION_MODES)
       for (const admin of ['owner', null] as const) for (const answer of ANSWERS) {
+        const counter = { decide: 0 }
+        const ownerRules = wiredRules(tier === 'admin', counter)
         const run = async (build: (d: PermissionRelayDeps) => CanUseTool) => {
           const trace: unknown[] = []
           const gate = build({
+            ownerRules: () => ownerRules,
             askUser: async (...a) => { trace.push(['ask', ...a]); return answer },
             initiatingChatId: () => 'chat', adminChatId: () => { trace.push('admin?'); return admin },
             resolveTier: () => { trace.push('tier?'); return tier },
@@ -510,6 +531,7 @@ describe('authorize 逐格对照:对话 · Claude(permission-relay)', () => {
           return { out, trace }
         }
         expect(await run(makeCanUseTool), `${tier}/${mode}/${provider}/${permissionMode}/${admin}/${answer}`).toEqual(await run(legacyClaudeChatGate))
+        if (tier !== 'admin') expect(counter.decide, `${tier} 对话不许问规则`).toBe(0)
         cells += CLAUDE_TOOLS.length
       }
   })
@@ -520,9 +542,12 @@ describe('authorize 逐格对照:对话 · Gemini 闸门', () => {
   it('档位(含定时 / 审查档)× 权限模式 × 对话模式 × 能力表 askUser × 有没有 admin × 主人怎么答 × 裸名', async () => {
     for (const [tn, tierProfile] of ALL_PROFILES) for (const permissionMode of PERMISSION_MODES) for (const mode of CHAT_MODES)
       for (const askUser of ['per-tool', 'never'] as const) for (const admin of ['owner', null] as const) for (const answer of ANSWERS) {
+        const counter = { decide: 0 }
+        const ownerRules = wiredRules(tn === 'admin', counter)
         const run = async (build: (d: GeminiGateDeps) => (ctx: SpawnContext) => ToolGate) => {
           const trace: unknown[] = []
           const gate = build({
+            ownerRules: () => ownerRules,
             askUser: async (...a) => { trace.push(['ask', ...a]); return answer },
             adminFor: (c) => { trace.push(['admin?', c]); return admin },
             modeFor: (c) => { trace.push(['mode?', c]); return mode },
@@ -533,6 +558,7 @@ describe('authorize 逐格对照:对话 · Gemini 闸门', () => {
           return { out, trace }
         }
         expect(await run(makeGeminiToolGate), `${tn}/${permissionMode}/${mode}/${askUser}/${admin}/${answer}`).toEqual(await run(legacyGeminiGate))
+        if (tn !== 'admin') expect(counter.decide, `${tn} 对话不许问规则`).toBe(0)
         cells += BARE.length
       }
   })
@@ -544,9 +570,12 @@ describe('authorize 逐格对照:对话 · OpenAI 兼容闸门', () => {
     ...WECHAT_SUBS.map(toolName => ({ toolName, mcpServer: 'wechat', input: {} })),
     ...['get_messages', 'search_messages', 'reply', 'run'].flatMap(toolName => ['wxvault', 'delegate', 'catalog'].map(mcpServer => ({ toolName, mcpServer, input: {} }))),
   ]
-  it('档位(含定时 / 审查档)× 权限模式 × 工具(带真实的 MCP server)', () => {
+  it('档位(含定时 / 审查档)× 权限模式 × 工具(带真实的 MCP server)', async () => {
     for (const [tn, tierProfile] of ALL_PROFILES) for (const permissionMode of PERMISSION_MODES) for (const c of CALLS) {
-      expect(gateTool({ ...c, tierProfile, permissionMode }), `${tn}/${permissionMode}/${c.mcpServer ?? ''}/${c.toolName}`).toBe(legacyOpenaiGate({ ...c, tierProfile, permissionMode }))
+      const counter = { decide: 0 }
+      const ownerRules = wiredRules(tn === 'admin', counter)
+      expect((await gateTool({ ...c, tierProfile, permissionMode, chatId: 'chat', ownerRules })).decision, `${tn}/${permissionMode}/${c.mcpServer ?? ''}/${c.toolName}`).toBe(legacyOpenaiGate({ ...c, tierProfile, permissionMode }))
+      if (tn !== 'admin') expect(counter.decide, `${tn} 对话不许问规则`).toBe(0)
       cells++
     }
   })
@@ -672,16 +701,39 @@ describe('authorize 逐格对照:终端会话(cli-permission-relay 的 decide)',
   })
 })
 
-describe('放行规则只在终端会话和一起做两个面上生效', () => {
-  it('对话 / 定时任务:落到「问」也不看放行规则(对话要不要也走,是看得见的变化,等主人)', () => {
-    expect([...OWNER_RULE_SURFACES].sort()).toEqual(['terminal', 'workbench'])
-    for (const surface of ['chat', 'job'] as const) {
-      const a = authorize({ surface, tier: TIER_PROFILES.admin, permissionMode: 'strict', executor: 'claude' }, { name: 'Bash', kind: 'shell_destructive' }, { ownerRuling: { verdict: 'allow', by: 'rule' } })
-      expect(a.consultOwnerRules).toBe(false)
-      expect(a.reason).not.toBe('owner_rules')
+describe('放行规则生效的面(2026-10-25 起:终端会话、一起做、主人自己的对话)', () => {
+  const admin = { tier: TIER_PROFILES.admin, permissionMode: 'strict' as const, executor: 'claude' as const }
+  const destructive = { name: 'Bash', kind: 'shell_destructive' as const }
+  it('OWNER_RULE_SURFACES 是三个面;定时任务永远不看', () => {
+    expect([...OWNER_RULE_SURFACES].sort()).toEqual(['chat', 'terminal', 'workbench'])
+    const job = authorize({ ...admin, surface: 'job', tier: JOB_PROFILE }, destructive, { ownerRuling: { verdict: 'allow', by: 'rule' } })
+    expect(job.consultOwnerRules).toBe(false)
+    expect(job.reason).not.toBe('owner_rules')
+  })
+  it('对话:不是主人自己的对话(ownerChat 没给 / 为假)⇒ 落到「问」也不看规则,裁决递进来也不认', () => {
+    for (const ownerChat of [undefined, false]) {
+      const s = { ...admin, surface: 'chat' as const, ...(ownerChat === undefined ? {} : { ownerChat }) }
+      expect(authorize(s, destructive)).toMatchObject({ verdict: 'ask', consultOwnerRules: false })
+      expect(authorize(s, destructive, { ownerRuling: { verdict: 'allow', by: 'rule' } })).toMatchObject({ verdict: 'ask', reason: 'tier', consultOwnerRules: false })
     }
-    const chat = authorize({ surface: 'chat', tier: TIER_PROFILES.admin, permissionMode: 'strict', executor: 'claude' }, { name: 'Bash', kind: 'shell_destructive' }, { ownerRuling: { verdict: 'allow', by: 'rule' } })
-    expect(chat.verdict).toBe('ask')
+  })
+  it('对话 · 主人自己的:落到「问」⇒ 先问规则;规则放 / 拒照办,只认 by rule(初审、红线、没命中 ⇒ 还是问)', () => {
+    const s = { ...admin, surface: 'chat' as const, ownerChat: true }
+    expect(authorize(s, destructive)).toMatchObject({ verdict: 'ask', reason: 'tier', consultOwnerRules: true })
+    expect(authorize(s, destructive, { ownerRuling: { verdict: 'allow', by: 'rule' } })).toMatchObject({ verdict: 'allow', reason: 'owner_rules', by: 'rule' })
+    expect(authorize(s, destructive, { ownerRuling: { verdict: 'deny', by: 'rule' } })).toMatchObject({ verdict: 'deny', reason: 'owner_rules', by: 'rule' })
+    for (const r of [{ verdict: 'allow', by: 'review' }, { verdict: 'ask', by: 'floor' }, { verdict: 'ask', by: 'rule' }, { verdict: 'ask', by: 'default' }, { verdict: 'allow', by: 'default' }] as const) {
+      expect(authorize(s, destructive, { ownerRuling: r }), JSON.stringify(r)).toMatchObject({ verdict: 'ask', reason: 'tier', consultOwnerRules: false })
+    }
+    // 档位直接放 / 拒的格子根本不问规则(主人对话里普通 shell 本来就放)
+    expect(authorize(s, { name: 'Bash', kind: 'shell' })).toMatchObject({ verdict: 'allow', consultOwnerRules: false })
+  })
+  it('对话 · openai(问不了):规则在「问落成拒」之前看,规则没拿主意照旧拒', () => {
+    const s = { ...admin, executor: 'openai' as const, surface: 'chat' as const, ownerChat: true }
+    expect(authorize(s, destructive)).toMatchObject({ verdict: 'deny', reason: 'relay_unavailable', consultOwnerRules: true })
+    expect(authorize(s, destructive, { ownerRuling: { verdict: 'allow', by: 'rule' } })).toMatchObject({ verdict: 'allow', reason: 'owner_rules' })
+    expect(authorize(s, destructive, { ownerRuling: { verdict: 'ask', by: 'floor' } })).toMatchObject({ verdict: 'deny', reason: 'relay_unavailable' })
+    expect(authorize({ ...s, ownerChat: false }, destructive)).toMatchObject({ verdict: 'deny', reason: 'relay_unavailable', consultOwnerRules: false })
   })
   it('格子总数(防有人把循环删空了)', () => {
     expect(cells).toBeGreaterThan(150_000)

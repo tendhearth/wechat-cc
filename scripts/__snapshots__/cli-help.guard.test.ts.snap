@@ -2106,7 +2106,7 @@ OPTIONS
     --command=<command>    Regex on the raw command (≤200 chars)   
     --project=<project>    Project path prefix (~ ok)              
         --paths=<paths>    Glob every touched path must match      
-    --surface=<surface>    terminal | workbench                    
+    --surface=<surface>    terminal | workbench | chat             
   --provider=<provider>    claude | codex | cursor | …             
           --note=<note>    Why (the cheap-model review reads these)
 

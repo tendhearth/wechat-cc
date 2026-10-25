@@ -89,6 +89,8 @@ export interface ProviderDeps {
    *  by bootstrap/index.ts — same value the coordinator uses, threaded here
    *  so the agy provider's `--print-timeout` stays consistent with it. */
   turnTimeoutMs: number
+  /** 主人自己的对话走放行规则(2026-10-25):Gemini gate 与 openai gate 现取。不给 ⇒ 不看规则。 */
+  chatOwnerRules?: BootstrapDeps['chatOwnerRules']
   /** Mint/invalidate per-session internal-api tokens (main.ts-wired; absent
    *  in tests / minimal embeddings) — same seam SessionManager uses
    *  (BootstrapDeps['mintSessionToken']). The agy provider's tier-C MCP
@@ -588,6 +590,7 @@ export async function registerProviders(deps: ProviderDeps): Promise<ProviderWir
         createOpenAiAgentProvider({
           // 守护(评审 #193 P1-1):和 makeChatModel 用的是同一份 base URL / 默认模型 —— 注册这一刻读的。
           endpoint: { baseUrl: openaiBaseUrl, model: defaultOpenaiModel },
+          ...(deps.chatOwnerRules ? { ownerRules: deps.chatOwnerRules } : {}),
           // Built per-spawn (not once at construction) so an operator's
           // `/api <model>` pin — re-read via the mtime-cached config reader
           // through currentModelFor → SpawnContext.model — takes effect on
@@ -665,6 +668,7 @@ export async function registerProviders(deps: ProviderDeps): Promise<ProviderWir
         adminFor: (chatId) => resolveAdminChatId(loadAccess(), loadCompanionConfig(deps.stateDir), chatId),
         modeFor: (chatId) => conversationStore.get(chatId)?.mode.kind ?? 'solo',
         lookupBase: (mode, perm) => lookup(mode as never, 'gemini', perm),
+        ...(deps.chatOwnerRules ? { ownerRules: deps.chatOwnerRules } : {}),
       })
       registry.register(
         'gemini',

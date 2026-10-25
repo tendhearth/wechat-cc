@@ -15,7 +15,7 @@
  * Decoupled from bootstrap via injected genai / mcpConnect / buildGate so the
  * loop is unit-testable. See docs/superpowers/specs/2026-06-04-gemini-provider-design.md.
  */
-import { authorize } from '../../../domain/authorize'
+import { authorizeChatCall, type ChatOwnerRules } from '../../../core/permission-rules/chat'
 import type { AgentEvent, AgentProject, AgentProvider, AgentSession, PermissionMode, SpawnContext } from '../../../ports/agent-provider'
 import type { TierProfile } from '../../../domain/user-tier'
 import { classifyToolUse } from '../../../domain/user-tier'
@@ -240,6 +240,8 @@ export interface GeminiGateDeps {
   adminFor: (chatId: string) => string | null
   modeFor: (chatId: string) => string
   lookupBase: (mode: string, permissionMode: PermissionMode) => GateBaseCapability
+  /** 主人自己的对话走放行规则(2026-10-25,core/permission-rules/chat.ts)。不给 / 回 null ⇒ 不看规则。 */
+  ownerRules?: () => ChatOwnerRules | null
 }
 
 const GEMINI_RELAY_TIMEOUT_MS = 120_000
@@ -266,19 +268,23 @@ export function makeGeminiToolGate(deps: GeminiGateDeps): (ctx: SpawnContext) =>
     // across chats. Combined with chatId in the hash input → unique per relay.
     let relaySeq = 0
     return async (toolName, input) => {
-      // 判定只在 domain/authorize.ts(架构终态 C2):旁路(dangerously ⇒ 闸门不判)→ 名字 → 档位 × 类别 × 能力表。
-      // 面是 chat ⇒ 放行规则不看(今天只有终端会话和一起做走放行规则;对话要不要也走,等主人)。
+      // 判定只在 domain/authorize.ts(架构终态 C2):旁路(dangerously ⇒ 闸门不判)→ 名字 → 档位 × 类别 × 能力表 →
+      // 主人自己的对话里落到「问」的先过放行规则(2026-10-25,core/permission-rules/chat.ts)。
+      // 规则看到的工具名是 SDK 形状的 `mcp__wechat__<名>`(和 Claude 一样,一条规则三家通用)。
       // 名字不合规:裸名里已经带 '__'(拼上 `mcp__wechat__` 会变成 `mcp__wechat__mcp__wechat__shell` 这种),
       // classifyToolUse 可能把它误判成别的类别、让被管的工具溜过去 ⇒ 直接拒。旁路之下照旧不判(和改之前同序)。
       const malformed = toolName.includes('__')
       const kind = malformed ? 'subagent' : classifyToolUse(`mcp__wechat__${toolName}`, input)
       // 能力表这一行只在档位没明说时才读(旁路 / 名字不合规那两条路上不读对话模式,和改之前一样)。
-      const auth = authorize(
-        { surface: 'chat', tier: ctx.tierProfile, permissionMode: ctx.permissionMode, executor: 'gemini' },
+      const auth = await authorizeChatCall(
+        { tier: ctx.tierProfile, permissionMode: ctx.permissionMode, executor: 'gemini' },
         { name: toolName, kind, askUser: () => deps.lookupBase(deps.modeFor(ctx.chatId), ctx.permissionMode).askUser, malformed },
+        { chatId: ctx.chatId, provider: 'gemini', tool: `mcp__wechat__${toolName}`, input: (input ?? {}) as Record<string, unknown> },
+        malformed ? null : deps.ownerRules?.() ?? null,
       )
       if (auth.verdict === 'allow') return { allow: true }
       if (auth.reason === 'malformed_name') return { allow: false, message: `invalid tool name '${toolName}'` }
+      if (auth.denyMessage) return { allow: false, message: auth.denyMessage }
       if (auth.verdict === 'deny') return { allow: false, message: `tool '${toolName}' (${kind}) not allowed for this tier` }
       const admin = deps.adminFor(ctx.chatId)
       if (!admin) return { allow: false, message: 'no admin configured to approve permission requests' }

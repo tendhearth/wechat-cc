@@ -33,3 +33,8 @@ export function pathsUnder(paths: readonly string[], root: string, platform: Pla
 export function canonText(s: string, platform: Platform = process.platform): string {
   return platform === 'win32' ? s.replace(/\\/g, '/').toLowerCase() : s
 }
+
+/** 绝对路径(按平台):对话里的路径只认绝对的 —— 没有项目根可以拿来解析相对路径,不猜。 */
+export function isAbsolutePath(p: string, platform: Platform = process.platform): boolean {
+  return platform === 'win32' ? win32.isAbsolute(p) : posix.isAbsolute(p)
+}

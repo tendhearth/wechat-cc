@@ -71,6 +71,12 @@ export interface BootstrapDeps {
    */
   fallbackProject?: () => { alias: string; path: string } | null
   dangerouslySkipPermissions?: boolean
+  /**
+   * 主人自己的对话走放行规则(2026-10-25,core/permission-rules/chat.ts):Claude 的 canUseTool、Gemini gate、openai gate
+   * 每次调用现取。规则那一层(终端会话功能里的 permission-gate)和回复交付都比 bootstrap 晚 / 在外面接线,所以是个函数。
+   * 不给 / 回 null ⇒ 对话不看规则(测试 / 最小嵌入和以前一样)。
+   */
+  chatOwnerRules?: () => import('../../core/permission-rules/chat').ChatOwnerRules | null
   agentProviderKind?: AgentProviderKind
   /**
    * When provided, the standalone wechat-mcp stdio MCP server (RFC 03 §5)

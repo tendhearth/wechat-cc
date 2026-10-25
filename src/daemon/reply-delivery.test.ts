@@ -408,3 +408,41 @@ describe('makeReplyDeliveryRuntime — textOnly 出口收附件(sendAttachment)'
     expect(outbound.sendAttachment).not.toHaveBeenCalled()
   })
 })
+
+describe('放行规则的提醒(2026-10-25:主人自己的对话里规则替主人放了一次)', () => {
+  const notice = (key: string, rule = key, target = 'memory_delete') => ({ key, rule, target })
+  it('最后单独一条、不加发言人前缀、不算进 bubbles;同一条规则一轮一行,不同规则各一行', async () => {
+    const sent: string[] = []
+    const rt = makeReplyDeliveryRuntime({ sendText: async (_c, t) => { sent.push(t); return { msgId: String(sent.length) } }, sleep: async () => {}, log: () => {} })
+    const h = rt.begin('c', { context: 'parallel', providerId: 'claude', participantLabel: 'Claude' })
+    expect(rt.noteRuleAllow('c', notice('a', '甲'))).toBe(true)
+    expect(rt.noteRuleAllow('c', notice('a', '甲'))).toBe(true)
+    expect(rt.noteRuleAllow('c', notice('b', '乙', 'daemon_restart'))).toBe(true)
+    const r = await h.deliver({ finalText: '好', narration: [] })
+    expect(sent).toEqual(['[Claude] 好', '按规则「甲」放行了 memory_delete(这一轮共 2 次)\n按规则「乙」放行了 daemon_restart'])
+    expect(r.bubbles).toBe(1)
+  })
+  it('没有开着的轮 ⇒ 登记不上(调用方就不放)', () => {
+    const rt = makeReplyDeliveryRuntime({ sendText: async () => ({ msgId: '1' }), log: () => {} })
+    expect(rt.noteRuleAllow('c', notice('a'))).toBe(false)
+  })
+  it('模型写了 NO_REPLY / 什么都没说:提醒照样发', async () => {
+    const sent: string[] = []
+    const rt = makeReplyDeliveryRuntime({ sendText: async (_c, t) => { sent.push(t); return { msgId: '1' } }, sleep: async () => {}, log: () => {} })
+    const h = rt.begin('c', { context: 'tick', providerId: 'claude' })
+    rt.noteRuleAllow('c', notice('a', '甲'))
+    const r = await h.deliver({ finalText: 'NO_REPLY', narration: [] })
+    expect(sent).toEqual(['按规则「甲」放行了 memory_delete'])
+    expect(r.delivery).toBe('silent')
+  })
+  it('app 接收器这一轮:提醒接在文字末尾一起交过去,不进微信', async () => {
+    const captured: TurnReply[] = []
+    const sendText = vi.fn(async () => ({ msgId: '1' }))
+    const rt = makeReplyDeliveryRuntime({ sendText, sink: { captureReply: (_c, r) => { captured.push(r); return true } }, log: () => {} })
+    const h = rt.begin('c', { context: 'dm', providerId: 'claude' })
+    rt.noteRuleAllow('c', notice('a', '甲'))
+    await h.deliver({ finalText: '好了', narration: [] })
+    expect(captured[0]!.text).toBe('好了\n\n按规则「甲」放行了 memory_delete')
+    expect(sendText).not.toHaveBeenCalled()
+  })
+})

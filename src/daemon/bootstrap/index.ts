@@ -134,6 +134,7 @@ async function bootCore(b: BootBase, parts: { knowledge: Bootstrap['knowledge'];
     wechatStdioForGemini: b.wechatStdioForGemini,
     wechatStdioForAgy: b.wechatStdioForAgy,
     turnTimeoutMs,
+    ...(deps.chatOwnerRules ? { chatOwnerRules: deps.chatOwnerRules } : {}),
     mintSessionToken: deps.mintSessionToken,
     agyGeminiConfigDir: deps.agyGeminiConfigDir,
   })

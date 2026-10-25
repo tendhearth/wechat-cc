@@ -20,7 +20,8 @@
  *   5. 定时任务只读档:不在档里 ⇒ 拒;读过本机之后不再上网;读文件只限项目目录、不碰红线;
  *   6. 档位 × 工具类别(tool-decision.ts 的 decideTool,三家共用)⇒ 放 / 问 / 拒;
  *   7. 问不了:编译好的策略说这家执行者「问」落成拒(openai v1)⇒ 拒;
- *   8. 主人的放行规则:**只在终端会话(terminal)和一起做(workbench)两个面**上、而且只在前面落到「问」时才看。
+ *   8. 主人的放行规则:终端会话(terminal)、一起做(workbench),以及**主人自己的对话**(chat 且 ownerChat,2026-10-25
+ *      主人点头);只在前面落到「问」时才看(问不了的 openai:在「问落成拒」之前看,规则没拿主意照旧拒)。
  *
  * 网络守护不在这里:它判的是「这一次 spawn / 这一次模型调用连哪个端点」(lib/network-gate 的 decideCall,按调用
  * 目标、不按工具),没有逐工具的那一层。
@@ -50,10 +51,14 @@ export interface OwnerRuling { verdict: Verdict; by: string }
 export type AuthSurface = 'chat' | 'workbench' | 'terminal' | 'job'
 
 /**
- * 放行规则今天只在这两个面上生效,收进 authorize 以后照旧(按 surface 判,决定 4 的「不改行为」)。
- * 对话(chat)要不要也走放行规则,是主人天天看得见的变化,单列等主人点头 —— 别在这里顺手加上 'chat'。
+ * 放行规则在哪几个面上生效。C2 收进 authorize 时只有终端会话和一起做;2026-10-25 主人点头加上对话,三条约束:
+ *   1. 只在主人自己的对话里(subject.ownerChat —— daemon 在判的那一刻按 access.json 的 admins 算,不看 --dangerously,
+ *      模型说什么都改不了它);访客 / 信任的对话永远不看规则;
+ *   2. 红线照旧问主人(permission-rules/decide:红线之上没有 allow);对话里只认规则拿的主意(by rule),不认初审;
+ *   3. 规则替主人放了一次,这一轮的回复里就有一行「按规则「…」放行了 …」(core/permission-rules/chat.ts)。
+ * 定时任务(job)不在里面:只读档,没有「问」。
  */
-export const OWNER_RULE_SURFACES: ReadonlySet<AuthSurface> = new Set<AuthSurface>(['terminal', 'workbench'])
+export const OWNER_RULE_SURFACES: ReadonlySet<AuthSurface> = new Set<AuthSurface>(['terminal', 'workbench', 'chat'])
 
 /** 自己跑逐工具闸门、并且闸门的旁路 / 「问」怎么落由编译策略说了算的执行者。其余执行者在这里不看权限模式。 */
 export type GateExecutor = 'claude' | 'gemini' | 'openai'
@@ -66,6 +71,12 @@ export interface AuthSubject {
   executor: GateExecutor
   /** 对话处在 chatroom / parallel(扇出)模式。只有 Claude 的对话闸门报这一项(今天只有它管扇出里的 reply)。 */
   fanOut?: boolean
+  /**
+   * 对话面:这是主人自己的对话(access.json 的 admins 里有这个 chatId,按原始档位算)。只有它为真,对话才看放行规则。
+   * 调用方在判的那一刻现算(core/permission-rules/chat.ts 的 authorizeChatCall),不缓存、不从模型的输入里取。
+   * 别的面不看它。
+   */
+  ownerChat?: boolean
 }
 
 /** 调的是什么工具。 */
@@ -130,29 +141,41 @@ export type AuthReason =
 export interface Authorization {
   verdict: AuthVerdict
   reason: AuthReason
-  /** job_red_line 的中文理由(调用方拼进给执行者的话里)。 */
+  /** job_red_line 的中文理由 / 对话里规则拒绝的理由(调用方拼进给执行者的话里)。 */
   detail?: string
   /** owner_rules:规则表 / 初审 / 红线谁拿的主意(一起做的时间线照写)。 */
   by?: 'rule' | 'review' | 'floor'
   /**
    * 落到「问」、这个面上放行规则生效、还没拿到裁决 ⇒ 真。调用方去问 permission-gate,拿 ownerRuling 再调一次。
-   * 对话面永远假(见 OWNER_RULE_SURFACES)。
+   * 对话面只在 ownerChat 时才可能为真(见 OWNER_RULE_SURFACES)。为真时 verdict 是没有规则时的落点(问,或 openai 的拒)。
    */
   consultOwnerRules: boolean
 }
 
 const done = (verdict: AuthVerdict, reason: AuthReason, extra: Partial<Authorization> = {}): Authorization => ({ verdict, reason, consultOwnerRules: false, ...extra })
 
-/** 「问」:放行规则生效的面上,先交给规则(有裁决就按裁决落)。 */
-function ask(subject: AuthSubject, reason: AuthReason, action: AuthAction): Authorization {
-  if (!OWNER_RULE_SURFACES.has(subject.surface)) return done('ask', reason)
+/** 这个调用方这一次看不看放行规则:面在 OWNER_RULE_SURFACES 里;对话还要是主人自己的对话。 */
+function ownerRulesApply(subject: AuthSubject): boolean {
+  if (!OWNER_RULE_SURFACES.has(subject.surface)) return false
+  return subject.surface !== 'chat' || subject.ownerChat === true
+}
+
+/**
+ * 「问」:放行规则生效的面上,先交给规则(有裁决就按裁决落)。
+ * cannotAsk:这家执行者问不了(openai v1 的 relayAs deny)—— 规则没拿主意时落成拒(relay_unavailable),而不是问。
+ */
+function ask(subject: AuthSubject, reason: AuthReason, action: AuthAction, cannotAsk = false): Authorization {
+  const fallback = (extra: Partial<Authorization> = {}) => (cannotAsk ? done('deny', 'relay_unavailable', extra) : done('ask', reason, extra))
+  if (!ownerRulesApply(subject)) return fallback()
   const r = action.ownerRuling
-  if (!r) return done('ask', reason, { consultOwnerRules: true })
+  if (!r) return fallback({ consultOwnerRules: true })
+  // 对话里只认规则表(by rule):初审在对话里不跑(permission-rules/decide),这里再守一道 —— 「按规则放行了」得真是规则。
+  if (subject.surface === 'chat') return (r.verdict === 'allow' || r.verdict === 'deny') && r.by === 'rule' ? done(r.verdict, 'owner_rules', { by: 'rule' }) : fallback()
   // 规则表 / 初审 / 红线明确放或拒 ⇒ 照办;什么都没命中(by default)、规则说问、或认不出是谁拿的主意 ⇒ 还是问主人。
   // 一起做原来只认 by ∈ rule/review/floor 的放 / 拒;终端原来直接取 verdict —— permission-gate 只会给出
   // ask/default、allow/rule、allow/review、deny/rule、ask/floor、ask/rule,这六种上两边一位不差(parity 测试逐格钉)。
   if ((r.verdict === 'allow' || r.verdict === 'deny') && (r.by === 'rule' || r.by === 'review' || r.by === 'floor')) return done(r.verdict, 'owner_rules', { by: r.by })
-  return done('ask', reason)
+  return fallback()
 }
 
 export function authorize(subject: AuthSubject, descriptor: ToolDescriptor, action: AuthAction = {}): Authorization {
@@ -191,9 +214,8 @@ export function authorize(subject: AuthSubject, descriptor: ToolDescriptor, acti
   const v = decideTool(subject.tier, descriptor.kind, matrixAskUser(descriptor))
   if (v === 'allow') return done('allow', 'tier')
   if (v === 'deny') return done('deny', 'tier')
-  // 7. 问不了。
-  if (relayAs === 'deny') return done('deny', 'relay_unavailable')
-  return ask(subject, 'tier', action)
+  // 7. 问不了 ⇒ 拒;8. 放行规则在它之前看(主人自己的对话里,规则明说放 / 拒才改它的落点)。
+  return ask(subject, 'tier', action, relayAs === 'deny')
 }
 
 function matrixAskUser(d: ToolDescriptor): 'per-tool' | 'never' {

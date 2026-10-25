@@ -3,6 +3,7 @@
  *
  * 不变式:
  *   - 没开 / 不是 admin ⇒ ask(= 今天的老路),什么都不碰。
+ *   - 对话面(chat)只认规则:不初审;按项目 / 路径限定的规则只看工具真正的目标路径(rules-file.matches)。
  *   - deny 规则能拒任何东西;红线之上没有 allow(规则和模型都放不了)。
  *   - 只凭 tool 名放不了 shell 或写:缺 command / paths 的请求,allow 规则与初审都不生效。
  *   - 模型只能回 allow / ask,而且只在低风险类里被问;超时 / 抛错 / 别的回答 ⇒ ask。
@@ -37,6 +38,14 @@ function missingFacts(ask: PermissionAsk): string | null {
  */
 export const EDIT_REPORTING_PROVIDERS: ReadonlySet<string> = new Set(['claude', 'codex'])
 
+/**
+ * 对话面(2026-10-25):每一次工具调用都过 authorize 的执行者(C3 快照里 perToolCallback 的那三家)。Codex / Cursor / agy
+ * 在对话里问不了单个工具,根本走不到规则这一层;这里再按 id 守一道,新接的执行者默认不放。
+ * 对话里不靠「改文件先报」那条理由:主人的对话里普通 shell 和写文件按档位本来就直接放(不问),规则能多放的只有档位要问的
+ * 那几类(破坏性命令 / 删记忆 / 动 daemon)—— 破坏性命令每一条都撞红线,还是问主人。
+ */
+export const CHAT_GATED_PROVIDERS: ReadonlySet<string> = new Set(['claude', 'gemini', 'openai'])
+
 export async function decide(
   ask: PermissionAsk,
   file: RulesFile,
@@ -44,18 +53,21 @@ export async function decide(
 ): Promise<Decision> {
   if (!file.enabled || ask.tier !== 'admin') return ASK_DEFAULT
   const rule = matchRule(file.rules, ask)
-  if (rule?.then === 'deny') return { verdict: 'deny', by: 'rule', ruleId: rule.id, reason: rule.note ?? '规则拒绝' }
+  const note = rule?.note ? { note: rule.note } : {}
+  if (rule?.then === 'deny') return { verdict: 'deny', by: 'rule', ruleId: rule.id, reason: rule.note ?? '规则拒绝', ...note }
   const floor = floorReason(ask, undefined, opts.stateDir ? { stateDir: opts.stateDir } : {})
   if (floor) return { verdict: 'ask', by: 'floor', reason: floor }
-  if (rule?.then === 'ask') return { verdict: 'ask', by: 'rule', ruleId: rule.id, reason: rule.note ?? '规则要求问你' }
+  if (rule?.then === 'ask') return { verdict: 'ask', by: 'rule', ruleId: rule.id, reason: rule.note ?? '规则要求问你', ...note }
   const missing = missingFacts(ask)
+  const chat = ask.surface === 'chat'
   if (rule?.then === 'allow') {
     if (missing) return { verdict: 'ask', by: 'default', reason: missing }
-    if (!EDIT_REPORTING_PROVIDERS.has(ask.provider)) return { verdict: 'ask', by: 'default', reason: '这个执行者改文件不先问,规则不替它放' }
-    return { verdict: 'allow', by: 'rule', ruleId: rule.id, reason: rule.note ?? '规则放行' }
+    if (chat ? !CHAT_GATED_PROVIDERS.has(ask.provider) : !EDIT_REPORTING_PROVIDERS.has(ask.provider)) return { verdict: 'ask', by: 'default', reason: '这个执行者改文件不先问,规则不替它放' }
+    return { verdict: 'allow', by: 'rule', ruleId: rule.id, reason: rule.note ?? '规则放行', ...note }
   }
+  // 对话里只认主人手写的规则,不交给便宜模型初审(主人点头的是「规则」;对话里的话谁都能说,初审读得到)。
   // 交代的话来自外部(issue)⇒ 初审的模型读 intent,正好能被注入左右,不审(评审 #446)
-  if (file.review !== 'low_risk' || !opts.review || missing || ask.untrustedIntent || !EDIT_REPORTING_PROVIDERS.has(ask.provider) || !isLowRisk(ask) || opts.reviewBlocked?.(ask.scope)) return ASK_DEFAULT
+  if (chat || file.review !== 'low_risk' || !opts.review || missing || ask.untrustedIntent || !EDIT_REPORTING_PROVIDERS.has(ask.provider) || !isLowRisk(ask) || opts.reviewBlocked?.(ask.scope)) return ASK_DEFAULT
   const notes = file.rules.map(r => r.note).filter((n): n is string => !!n)
   let timer: ReturnType<typeof setTimeout> | undefined
   try {
@@ -83,7 +95,7 @@ const defuse = (s: string) => s.replace(/<\/?request\b/gi, m => m.replace('<', '
 
 export function reviewPrompt(ask: PermissionAsk, notes: string[]): string {
   const body = [
-    `执行者:${ask.provider}(${ask.surface === 'terminal' ? '终端会话' : '一起做'})`,
+    `执行者:${ask.provider}(${ask.surface === 'terminal' ? '终端会话' : ask.surface === 'chat' ? '对话' : '一起做'})`,
     `工具:${ask.tool}`,
     ask.command ? `命令:${ask.command.slice(0, COMMAND_MATCH_MAX)}` : null,
     ask.paths?.length ? `文件:${ask.paths.slice(0, 50).join(', ')}` : null,

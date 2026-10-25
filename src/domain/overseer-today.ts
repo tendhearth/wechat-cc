@@ -81,7 +81,7 @@ export interface OverseerToday {
 export interface TodayJobs { ran: number; spoke: number; paused: Array<{ id: string; text: string }> }
 
 /** 一条 CC 替主人拿的权限决定(daemon 侧留痕表的那几列)。 */
-export interface TodayCcDecision { at: number; surface: 'terminal' | 'workbench'; provider: string; tool: string; summary: string; verdict: 'allow' | 'deny'; by: 'rule' | 'review' | 'floor'; ruleId: string | null }
+export interface TodayCcDecision { at: number; surface: 'terminal' | 'workbench' | 'chat'; provider: string; tool: string; summary: string; verdict: 'allow' | 'deny'; by: 'rule' | 'review' | 'floor'; ruleId: string | null }
 export interface TodayCcDecided { rule: number; review: number; recent: TodayCcDecision[] }
 
 /** 工作台任务视图里用得到的那几个字段(WorkbenchTaskView 结构上满足)。 */
