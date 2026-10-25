@@ -2,9 +2,9 @@ import { describe, it, expect, beforeEach } from 'vitest'
 import { mkdtempSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { openDb, type Db } from '../lib/db'
+import { openDb, type Db } from '../../lib/db'
 import { makeJournal, type Journal } from './journal-store'
-import { readJournalSeen, writeJournalSeen } from './journal-seen'
+import { readJournalSeen, writeJournalSeen } from '../../core/journal-seen'
 
 let db: Db
 let store: Journal
@@ -194,8 +194,8 @@ describe('postcard album', () => {
 })
 
 it('upgrades an existing v44 journal without losing its picture and narration', async () => {
-  const { openSqlite } = await import('../lib/runtime/sqlite')
-  const { runMigrations } = await import('../lib/db')
+  const { openSqlite } = await import('../../lib/runtime/sqlite')
+  const { runMigrations } = await import('../../lib/db')
   const old = openSqlite(':memory:')
   old.exec("CREATE TABLE journal(id TEXT PRIMARY KEY, image_svg TEXT, note TEXT); INSERT INTO journal VALUES ('old','<svg></svg>','the story'); PRAGMA user_version=44;")
   runMigrations(old)

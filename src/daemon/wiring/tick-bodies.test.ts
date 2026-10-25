@@ -828,7 +828,7 @@ describe('buildTickBodies / pushTick — daily hunt branch (Task 3)', () => {
     const { pushTick } = buildTickBodies({
       ...s.deps,
       outboundTaps: taps,
-      huntStore: { recordHunt: (a) => { recorded.push({ chatId: a.chatId, text: a.text }); return 1 } },
+      journal: { recordHunt: (a) => { recorded.push({ chatId: a.chatId, text: a.text }); return 1 } },
     })
     await pushTick({ nowIso: '2026-05-13T10:00:00.000Z' })
     expect(recorded).toEqual([{ chatId: 'chat-1', text: '看这个 https://a.com' }])
@@ -838,7 +838,7 @@ describe('buildTickBodies / pushTick — daily hunt branch (Task 3)', () => {
     const s = setupDeps({ defaultChatId: 'chat-1', inFlight: false })
     cleanup.push(s.stateDir)
     const recordHunt = vi.fn(() => 0)
-    await buildTickBodies({ ...s.deps, outboundTaps: makeOutboundTaps(), huntStore: { recordHunt } })
+    await buildTickBodies({ ...s.deps, outboundTaps: makeOutboundTaps(), journal: { recordHunt } })
       .pushTick({ nowIso: '2026-05-13T10:00:00.000Z' })
     expect(recordHunt).not.toHaveBeenCalled()
   })
@@ -851,7 +851,7 @@ describe('buildTickBodies / pushTick — daily hunt branch (Task 3)', () => {
     const { pushTick } = buildTickBodies({
       ...s.deps,
       outboundTaps: taps,
-      huntStore: { recordHunt: () => { throw new Error('db locked') } },
+      journal: { recordHunt: () => { throw new Error('db locked') } },
     })
     await expect(pushTick({ nowIso: '2026-05-13T10:00:00.000Z' })).resolves.toBeUndefined()
     expect(s.logs.some(l => l.includes('入库失败'))).toBe(true)
@@ -1372,7 +1372,7 @@ describe('人类做客 —— 朋友来聊过、走了,伙伴跟主人提一句'
     await seedGuest(s, 'guest@im.wechat', '2026-05-13T09:15:00.000Z')
     const { evalFn, sent } = armEval(s)
     const recorded: Array<{ peerLabel: string }> = []
-    const ticks = buildTickBodies({ ...s.deps, huntStore: { recordHunt: () => 0, recordVisit: (a) => { recorded.push(a); return 'r' } } })
+    const ticks = buildTickBodies({ ...s.deps, journal: { recordHunt: () => 0, recordVisit: (a) => { recorded.push(a); return 'r' } } })
     await ticks.pushTick({ nowIso: '2026-05-13T10:00:00.000Z' })
     expect(evalFn).toHaveBeenCalledOnce()
     expect(evalFn.mock.calls[0]![0]).toContain('小王')

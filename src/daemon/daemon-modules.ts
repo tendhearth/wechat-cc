@@ -63,6 +63,8 @@ import { wireWorkbenchNotifications } from './bootstrap/wire-workbench-notificat
 import { wireWorkbenchArtifacts } from './bootstrap/wire-workbench-artifacts'
 import { lettersFeature } from '../features/letters'
 import { atelierFeature } from '../features/atelier'
+import { journalFeature } from '../features/journal'
+import { huntFeature } from '../features/hunt'
 import { makeProjectLessonsCommand } from './project-lessons-command'
 import { calendarFeature, type CalendarFeature } from '../features/calendar'
 import { fromReplyHandler } from './commands/registry'
@@ -158,6 +160,13 @@ export function daemonModules(f: Foundation): DaemonModule[] {
       },
     } satisfies DaemonModule<ReturnType<typeof makeReplyDeliveryRuntime>>,
 
+    // 打猎:一个功能一个目录(src/features/hunt)。init 只跑「默认关」那次的一次性开机步骤 —— 以前在地基里,排在
+    // internal-api 开门、任何伙伴那一拍之前;放在这里还是那个位置。打猎那个陪伴候选在 wiring/tick-bodies.ts 的候选表里登记。
+    huntFeature({
+      needs: [],
+      deps: () => ({ stateDir, chatPrefs: f.chatPrefs, log: (t, l) => log(t, l) }),
+    }),
+
     // —— internal API:bootstrap 要它的 baseUrl / token 去配 MCP,所以在 init 段就监听(桌面这时来问 ⇒ 「还没有」)——
     {
       name: 'internal-api',
@@ -176,7 +185,7 @@ export function daemonModules(f: Foundation): DaemonModule[] {
           replySinks: f.replySinks,
           outboundTaps: f.outboundTaps,
           replyDelivery: ctx.get('reply-delivery'),
-          hunt: f.huntStore,
+          journal: f.journal,
           // 待决权限的桌面面(spec §6)。和微信「y/n <hash>」共用 ilink 里那一份 PendingPermissions ——
           // 从哪边拍板都算数。拍板本身也是「主人刚跟我说过话」的证据,所以成功时记一笔 contact。
           permissions: {
@@ -253,6 +262,11 @@ export function daemonModules(f: Foundation): DaemonModule[] {
     atelierFeature({
       needs: ['ilink-adapter'],
       deps: (ctx) => ({ stateDir, ilink: ctx.get<IlinkAdapter>('ilink-adapter') }),
+    }),
+    // 伙伴日志(背包):`/v1/journal*` 自己挂(src/features/journal),紧跟 internal-api(以前随 internal-api 一起就在)。表是地基里那一份。
+    journalFeature({
+      needs: [],
+      deps: () => ({ stateDir, journal: f.journal }),
     }),
 
     // —— 贴纸:一个功能一个目录(src/features/stickers);路由自己挂。表情库全 daemon 一份,bootstrap(提示词)和 wired 都要它 ——
@@ -522,7 +536,7 @@ export function daemonModules(f: Foundation): DaemonModule[] {
           requestRestart: (reason) => f.requestRestart(reason),
           llmHealth,
           stateDir, db, ilink, projects: f.projects, accounts: f.accounts, boot, dangerously, chatPrefs: f.chatPrefs, careLedger: f.careLedger, replySinks: f.replySinks,
-          outboundTaps: f.outboundTaps, huntStore: f.huntStore, petSignals: f.petSignals, replyDelivery: ctx.get('reply-delivery'),
+          outboundTaps: f.outboundTaps, journal: f.journal, petSignals: f.petSignals, replyDelivery: ctx.get('reply-delivery'),
           // 随身 CC 首屏:聊天日摘要读 turn_records;presence 走 internal-api 的共用入口。
           turns: f.turnRecordStore,
           presence: () => internalApi.getPresence(),

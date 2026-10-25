@@ -344,8 +344,8 @@ export function buildPipelineDeps(opts: PipelineDepsOpts, late: PipelineDepsLate
     // 可编辑版。读失败返回空数组而不是抛:一次查询挂掉不该让整条 admin
     // 命令链断在这里。
     huntBag: () => {
-      if (!opts.huntStore?.list) return []
-      try { return opts.huntStore.list(50) } catch { return [] }
+      if (!opts.journal?.list) return []
+      try { return opts.journal.list(50) } catch { return [] }
     },
     // 触发器按**已注册的手名**认派活(不按动词)—— 见 admin-commands 的
     // matchDelegate。id 和 name 都给,两种叫法都能触发。

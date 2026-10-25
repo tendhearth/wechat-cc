@@ -2275,7 +2275,7 @@ export type SocialRelationshipsResponseT = z.infer<typeof SocialRelationshipsRes
 // ── POST /v1/social/visit ── 起跑就回
 export const SocialVisitResponse = z.object({ ok: z.literal(true), started: z.literal(true) })
 
-// ── GET /v1/journal ── journal 行(core/journal-store.ts CatchRow,SELECT *)
+// ── GET /v1/journal ── journal 行(adapters/store/journal-store.ts CatchRow,SELECT *)
 const JournalCatchRowShape = z.object({
   id: z.string(),
   ts: z.string(),

@@ -16,7 +16,7 @@ import { AsyncQueue } from '../../lib/async-queue'
 import type { AgentEvent, AgentRuntimeSnapshot, AgentSession, AgentWorkbenchRuntime, AgentProvider } from '../../ports/agent-provider'
 import { makeMatterStore } from '../../adapters/store/matters-store'
 import { makeReportOutboxStore } from '../reports/outbox'
-import { makeJournal } from '../../core/journal-store'
+import { makeJournal } from '../../adapters/store/journal-store'
 import type { Bootstrap } from './types'
 
 // The paired owner belongs to access.admins, just as the HTTP/mobile resolver requires.

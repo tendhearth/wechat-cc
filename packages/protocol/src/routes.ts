@@ -74,7 +74,7 @@ export interface PanelSurface {
  * 表里标了 `module: X` 的路由:daemon 的路由层按 X 此刻的状态判能不能走(关着 ⇒ module_off、坏了 ⇒ module_degraded、
  * 还没挂上 ⇒ module_starting);处理器由模块 X 自己挂(`internalApi.mount`),不在 internal-api 的总表里。
  */
-export const MODULE_NAMES = ['social', 'calendar', 'reminders', 'letters', 'atelier', 'stickers'] as const
+export const MODULE_NAMES = ['social', 'calendar', 'reminders', 'letters', 'atelier', 'stickers', 'journal'] as const
 export type ModuleName = (typeof MODULE_NAMES)[number]
 
 export interface RouteSpec {
@@ -413,13 +413,14 @@ export const ROUTES: Readonly<Record<RouteKey, RouteSpec>> = {
   // FILE token(=trusted),admin 会让每一次真实的桌面读 403 —— 觅食台的读
   // 路由 2026-07-22 正是这么静默坏了一个多月。写的两个也是 trusted:它们
   // 只改主人自己那份清单的状态,不外发、不触网。
+  // 背包后来也装串门见闻 / 明信片 / 回忆,不只是打猎的:这几条归日志模块(src/features/journal)。
   'GET /v1/companion/thoughts': { desktop: { tier: 'admin', tokens: ['operator'], ownerWorkspace: true } },
-  'GET /v1/journal': { desktop: { tier: 'trusted' } },
-  'GET /v1/journal/postcards': { desktop: { tier: 'trusted' } },
-  'POST /v1/journal/favorite': { desktop: { tier: 'trusted' } },
-  'POST /v1/journal/status': { desktop: { tier: 'trusted' } },
-  'POST /v1/journal/seen': { desktop: { tier: 'trusted' } },
-  'POST /v1/journal/remove': { desktop: { tier: 'trusted' } },
+  'GET /v1/journal': { module: 'journal', desktop: { tier: 'trusted' } },
+  'GET /v1/journal/postcards': { module: 'journal', desktop: { tier: 'trusted' } },
+  'POST /v1/journal/favorite': { module: 'journal', desktop: { tier: 'trusted' } },
+  'POST /v1/journal/status': { module: 'journal', desktop: { tier: 'trusted' } },
+  'POST /v1/journal/seen': { module: 'journal', desktop: { tier: 'trusted' } },
+  'POST /v1/journal/remove': { module: 'journal', desktop: { tier: 'trusted' } },
   // trusted — 配对码 (spec §7). Same trust class as a2a/send + social wish:
   // internal-api is 127.0.0.1 + 0600 file token; the CLI holds the FILE token
   // (trusted). Acts on an operator-driven pairing, not a world-open broadcast.

@@ -52,12 +52,12 @@ export interface TickDeps {
   chatPrefs: { get(chatId: string): { care?: 'off' | 'low' | 'high'; hunt?: boolean; visit?: boolean; avoid?: AvoidTopic[]; quiet?: import('../../domain/quiet-hours').QuietWindow }; list(): string[] }
   /**
    * 打猎战利品(2026-09-03)。`outboundTaps` 旁听打猎那一拍发出去的文本,
-   * `huntStore` 把它拆成条目落库。两者都可选:没接就是旧行为(发了不记)。
+   * `journal`(伙伴日志,以前叫 huntStore)把它拆成条目落库;串门来客的见闻也记进它。两者都可选:没接就是旧行为(发了不记)。
    */
   outboundTaps?: { tap(chatId: string): { close(): string[] } }
   /** 「CC 做过的事」补记(B9):只记发生了什么 + 状态,不记正文;只记主人那条对话。缺省 ⇒ 不记。 */
   activityLog?: { append(e: { kind: 'proactive' | 'job'; status: string; ref?: string }): void }
-  huntStore?: {
+  journal?: {
     recordHunt(a: { chatId: string; text: string; nowIso?: string }): number
     recordVisit?(a: { chatId: string; text: string; peerLabel: string; nowIso?: string }): string | null
     /** 日程判断用(spec 2026-09-05-companion-plan):包袱里最近几条 + 没看的数量。main.ts 传的是完整 Journal。 */

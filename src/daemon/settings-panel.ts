@@ -50,7 +50,7 @@ import {mobileHomeFocus} from './mobile-home-focus'
 import type {MatterSayInput} from '../core/matters/service'
 import { pairCheckCode, PushPlatform, PHONE_SAY_MAX_CHARS, pushTokenValid, type PushPlatformT } from '@wechat-cc/protocol'
 import type { Presence } from '../domain/companion-presence'
-import type { CatchRow } from '../core/journal-store'
+import type { CatchRow } from '../adapters/store/journal-store'
 import type { PlanLogEntry } from '../domain/companion-plan'
 
 export const SETTINGS_LINK_TTL_MS = 10 * 60_000

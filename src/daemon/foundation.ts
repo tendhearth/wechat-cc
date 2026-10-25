@@ -25,11 +25,10 @@ import { makeReportOutboxStore } from './reports/outbox'
 import { makeChatPrefs } from './chat-prefs'
 import { makeOutboundTaps } from './outbound-taps'
 import { makePetSignals } from './pet-signals'
-import { makeJournal } from '../core/journal-store'
+import { makeJournal } from '../adapters/store/journal-store'
 import { makeReplySinks } from './reply-sinks'
 import { makeCareLedger } from './companion/care-ledger'
 import { makeProviderRefusals } from './provider-refusals'
-import { pinHuntForExistingOwner } from './companion/hunt-default'
 import { SubsystemSupervisor } from './subsystems'
 import { makeProjects } from './projects'
 
@@ -116,9 +115,6 @@ export async function openFoundation(opts: { stateDir: string }, undo: Array<() 
   // A second instance would have a stale in-memory cache: the store's
   // write-through only protects its own writes, not cross-instance reads.
   const chatPrefs = makeChatPrefs(stateDir)
-  // 打猎改成默认关(收敛清单 ②,主人 10-21 定):第一次带着新默认开机时,把正在每天打猎的主人(主动关心开着、没单独设过)
-  // 写成显式的开,不让他跟着被关掉。只做一次(companion/hunt-default.ts);在任何伙伴 tick 之前。
-  pinHuntForExistingOwner({ stateDir, chatPrefs, log: (t, l) => log(t, l) })
 
   return {
     stateDir,
@@ -154,7 +150,9 @@ export async function openFoundation(opts: { stateDir: string }, undo: Array<() 
     outboundTaps: makeOutboundTaps(),
     // 桌宠信号(spec 2026-09-05-cc-desktop-pet §5.1):纯内存,重启就忘 —— 描述的本来就只是当下。
     petSignals: makePetSignals(),
-    huntStore: makeJournal(db),
+    // 伙伴日志(背包,v36 起):打猎、串门见闻、明信片、回忆都进这一张表;桌宠 / 手机首屏 / 设置面板 / 微信「背包」读它。
+    // 读写路由归日志模块(src/features/journal)。
+    journal: makeJournal(db),
     // 子系统状态的汇总处:模块容器整组交给它收养,/v1/health.subsystems 读它。
     sup: new SubsystemSupervisor((t, l) => log(t, l)),
   }

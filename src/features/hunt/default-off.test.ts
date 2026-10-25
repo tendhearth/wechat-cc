@@ -2,9 +2,9 @@ import { describe, expect, it } from 'vitest'
 import { existsSync, mkdirSync, mkdtempSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { makeChatPrefs } from '../chat-prefs'
-import { HUNT_DEFAULT_MARKER, pinHuntForExistingOwner } from './hunt-default'
-import { configPath } from './paths'
+import { makeChatPrefs } from '../../daemon/chat-prefs'
+import { HUNT_DEFAULT_MARKER, pinHuntForExistingOwner } from './default-off'
+import { configPath } from '../../daemon/companion/paths'
 
 const OWNER = 'owner@im.wechat'
 const fresh = () => mkdtempSync(join(tmpdir(), 'hunt-default-'))

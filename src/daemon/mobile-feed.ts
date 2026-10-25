@@ -9,7 +9,7 @@
  * 分页范围是「合并后的有界窗口」(journal 200 条 + plan-log 14 天 + 聊天 14
  * 天),不是无限历史;v1 在内存里合并排序,不做 SQL 级多源游标。
  */
-import type { CatchRow } from '../core/journal-store'
+import type { CatchRow } from '../adapters/store/journal-store'
 import type { PlanLogEntry } from '../domain/companion-plan'
 import { safeSvg } from '../lib/svg-sanitize'
 

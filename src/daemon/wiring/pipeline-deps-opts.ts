@@ -59,7 +59,7 @@ export interface PipelineDepsOpts {
    */
   petSignals?: import('../pet-signals').PetSignals
   /** 打猎战利品(v36)。缺失 ⇒ 微信「背包」命令说功能没接。 */
-  huntStore?: { list(limit?: number): readonly import('../../core/journal-store').CatchRow[] }
+  journal?: { list(limit?: number): readonly import('../../adapters/store/journal-store').CatchRow[] }
   /** Sticker library — 随身 CC 手机页展示 + 图片服务(main.ts 传入)。 */
   stickers?: import('../../features/stickers').StickerLib
   /** 触发 daemon 重启(远程访问开关切换后套用新隧道接线)。main.ts 传入。 */

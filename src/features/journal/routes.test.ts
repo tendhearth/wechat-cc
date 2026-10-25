@@ -3,22 +3,20 @@ import { mkdtempSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { openDb } from '../../lib/db'
-import { makeJournal } from '../../core/journal-store'
+import { makeJournal } from '../../adapters/store/journal-store'
 import { readJournalSeen } from '../../core/journal-seen'
-import { journalRoutes } from './routes-journal'
-import { minTierFor } from './route-tiers'
-import { makeRoutes } from './routes'
-import type { InternalApiDeps } from './types'
+import { journalRoutes, type JournalRoutesDeps } from './routes'
+import { minTierFor, moduleFor } from '../../daemon/internal-api/route-tiers'
 
 const qs = (s = '') => new URLSearchParams(s)
 
-let deps: InternalApiDeps
+let deps: JournalRoutesDeps
 let routes: ReturnType<typeof journalRoutes>
 beforeEach(() => {
   const db = openDb({ path: ':memory:' })
-  const hunt = makeJournal(db)
-  hunt.recordHunt({ chatId: 'owner', text: '看这个 https://a.com/x' })
-  deps = { hunt } as unknown as InternalApiDeps
+  const journal = makeJournal(db)
+  journal.recordHunt({ chatId: 'owner', text: '看这个 https://a.com/x' })
+  deps = { journal, stateDir: '/nonexistent' }
   routes = journalRoutes(deps)
 })
 
@@ -34,11 +32,6 @@ describe('GET /v1/journal', () => {
       const r = await routes['GET /v1/journal']!(qs(q), undefined)
       expect(r.status).toBe(200)
     }
-  })
-
-  it('**没接 store → 503,不是空清单** —— 空清单会被读成「CC 什么都没打到」', async () => {
-    const r = await journalRoutes({} as InternalApiDeps)['GET /v1/journal']!(qs(), undefined)
-    expect(r.status).toBe(503)
   })
 })
 
@@ -80,16 +73,10 @@ describe('POST /v1/journal/remove', () => {
 })
 
 describe('接线', () => {
-  it('**三个路由真的进了总路由表** —— 写了一个路由文件却忘了 spread 进去,是不会有任何报错的', () => {
-    // 今天早上 .sig 就是这么丢的:上游产出了、下游认得它,中间一层没接。
-    const table = makeRoutes({
-      deps: { stateDir: '/tmp', daemonPid: 1 } as unknown as InternalApiDeps,
-      getDelegate: () => null,
-      maybePrefix: (_c: string, t: string) => t,
-    })
-    for (const r of ['GET /v1/journal', 'POST /v1/journal/status', 'POST /v1/journal/remove']) {
-      expect(Object.keys(table)).toContain(r)
-    }
+  it('**六个路由都标给日志模块** —— 没接上 / 还没挂上时由路由层回 module_off / module_starting(不是空清单:空清单会被读成「CC 什么都没打到」)', () => {
+    // 以前写在 internal-api 的总表里、没接 store 自己回 503;现在日志模块自己挂(src/features/journal)。
+    for (const r of Object.keys(journalRoutes(deps))) expect(moduleFor(r)).toBe('journal')
+    expect(Object.keys(journalRoutes(deps))).toHaveLength(6)
   })
 })
 
@@ -105,14 +92,14 @@ describe('POST /v1/journal/seen —— 主人打开觅食台,水位推到现在'
   it('写水位文件并返回 seen_until;之后 summary 归零', async () => {
     const stateDir = mkdtempSync(join(tmpdir(), 'jroute-'))
     const db = openDb({ path: ':memory:' })
-    const hunt = makeJournal(db)
-    hunt.recordHunt({ chatId: 'owner', text: '看这个 https://a.com/x' })
-    const r = await journalRoutes({ hunt, stateDir } as unknown as InternalApiDeps)['POST /v1/journal/seen']!(qs(), undefined)
+    const journal = makeJournal(db)
+    journal.recordHunt({ chatId: 'owner', text: '看这个 https://a.com/x' })
+    const r = await journalRoutes({ journal, stateDir })['POST /v1/journal/seen']!(qs(), undefined)
     expect(r.status).toBe(200)
     const body = r.body as { ok: boolean; seen_until: string }
     expect(body.ok).toBe(true)
     expect(readJournalSeen(stateDir)).toBe(body.seen_until)
-    expect(hunt.summary(body.seen_until).unread).toBe(0)
+    expect(journal.summary(body.seen_until).unread).toBe(0)
   })
   it('tier 是 trusted(桌面 FILE token 能打;admin 会让桌面 403)', () => {
     expect(minTierFor('POST /v1/journal/seen')).toBe('trusted')
@@ -122,7 +109,7 @@ describe('POST /v1/journal/seen —— 主人打开觅食台,水位推到现在'
 describe('postcard album API', () => {
   it('lists image and narration together; favorites persist and are filterable', async () => {
     const svg='<svg xmlns="http://www.w3.org/2000/svg"><circle r="4"/></svg>'
-    const id=deps.hunt!.recordVisit({chatId:'owner',text:'猫睡得很香',peerLabel:'去朋友家',imageSvg:svg})!
+    const id=deps.journal.recordVisit({chatId:'owner',text:'猫睡得很香',peerLabel:'去朋友家',imageSvg:svg})!
     expect((await routes['POST /v1/journal/favorite']!(qs(),{id,favorite:true})).body).toEqual({ok:true})
     const r=await routes['GET /v1/journal/postcards']!(qs('favorites=true&limit=1'),undefined)
     expect(r.body).toMatchObject({total:1,items:[{id,note:'猫睡得很香',image_svg:svg,favorite:1}]})
@@ -132,7 +119,7 @@ describe('postcard album API', () => {
   it('rejects invalid favorite values, missing rows and sanitizes stored markup', async () => {
     expect((await routes['POST /v1/journal/favorite']!(qs(),{id:'x',favorite:'true'})).status).toBe(400)
     expect((await routes['POST /v1/journal/favorite']!(qs(),{id:'x',favorite:true})).body).toEqual({ok:false})
-    deps.hunt!.recordVisit({chatId:'owner',text:'retained',peerLabel:'friend',imageSvg:'<svg onload="alert(1)"></svg>'})
+    deps.journal.recordVisit({chatId:'owner',text:'retained',peerLabel:'friend',imageSvg:'<svg onload="alert(1)"></svg>'})
     const r=await routes['GET /v1/journal/postcards']!(qs('offset=-1&limit=bad'),undefined)
     expect(r.body).toMatchObject({items:[{note:'retained',image_svg:null}]})
   })

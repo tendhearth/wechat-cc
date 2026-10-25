@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest'
 import { buildFeed, chatDayEvents, dayKey, decodeCursor, encodeCursor, hhmmOf, thoughtEvent, FEED_MAX_LIMIT, type TurnLite } from './mobile-feed'
-import type { CatchRow } from '../core/journal-store'
+import type { CatchRow } from '../adapters/store/journal-store'
 import type { PlanLogEntry } from '../domain/companion-plan'
 
 const TZ = 'Asia/Shanghai'

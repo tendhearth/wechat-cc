@@ -9,7 +9,7 @@
 import type { MemoryFS } from '../memory/fs-api'
 import type { Db } from '../../lib/db'
 import type { WechatProjectsDep, WechatVoiceDep, WechatCompanionDep } from '../wechat-tool-deps'
-import type { Journal } from '../../core/journal-store'
+import type { Journal } from '../../adapters/store/journal-store'
 import type { ReplySinks } from '../reply-sinks'
 import type { ConversationStore } from '../../adapters/store/conversation-store'
 import type { ProviderId } from '../../domain/conversation'
@@ -173,11 +173,10 @@ export interface InternalApiDeps {
    */
   replyDelivery?: import('../reply-delivery').ReplyDeliveryRuntime
   /**
-   * 伙伴日志读写(GET/POST /v1/journal*)。缺失 ⇒ 路由 503,桌面端显示
-   * 「这个 daemon 还没有战利品记录」而不是空清单 —— 空清单会被读成
-   * 「CC 什么都没打到」。
+   * 伙伴日志的包袱水位(桌宠「带了什么回来」那一轴,routes-presence 用)。只读这一口:读写路由 `/v1/journal*`
+   * 归日志模块自己挂(src/features/journal)。缺失 ⇒ presence 503,不是空包袱。
    */
-  hunt?: Journal
+  journal?: Pick<Journal, 'summary'>
   /**
    * Optional mode-aware reply prefixing (RFC 03 P3). When wired, the
    * `reply` route consults `conversationStore` for the chat's mode and

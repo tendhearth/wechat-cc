@@ -20,7 +20,7 @@ import type { InternalApiDeps, RouteTable } from './types'
  * 返回 null = journal 没接(路由据此 503,手机页据此显示「不知道」)。
  */
 export async function computePresence(deps: InternalApiDeps): Promise<Presence | null> {
-  if (!deps.hunt) return null
+  if (!deps.journal) return null
   let ownerChatId: string | null = null
   try { ownerChatId = loadCompanionConfig(deps.stateDir).default_chat_id } catch { ownerChatId = null }
   // 「在聊」看的是**入站**时间,不是会话的 lastUsedAt —— 打猎 / 关心推送 /
@@ -41,7 +41,7 @@ export async function computePresence(deps: InternalApiDeps): Promise<Presence |
     visit: deps.social?.penpal?.activeVisit?.() ?? null,
     outbound: deps.outbound?.().state ?? null,
     subsystemsDegraded: (deps.subsystems?.() ?? []).filter(s => s.state === 'degraded').length,
-    journal: deps.hunt.summary(readJournalSeen(deps.stateDir)),
+    journal: deps.journal.summary(readJournalSeen(deps.stateDir)),
   })
 }
 
