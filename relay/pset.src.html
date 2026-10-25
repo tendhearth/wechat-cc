@@ -47,6 +47,7 @@ if (!ID || !T) { msg.textContent = "链接不完整,回微信跟 CC 再要一个
 
 var REPAIR = "连接方式升级了，请在电脑上重新扫码配对"
 var EXPIRED = "这个链接已经用过或过期了，回微信跟 CC 再要一个"
+var TAMPERED = "家里的电脑暂时连不上（连接在半路被改过），过一会儿再试"
 
 /** 浏览器 WebSocket → 协议客户端要的 ProtocolSocket。 */
 function socket(url) {
@@ -73,11 +74,12 @@ function viaTunnel() {
   var cli = CCP.makeProtocolClient({
     open: function() { return socket(relay + "?id=" + encodeURIComponent(ID)) },
     token: T, client: "web", retries: 0,
-    onProtocolError: function(reason) { if (reason === "downgrade_refused") { done(); needsRepair() } },
+    // 中继把握手里的 v 抹掉:客户端拒绝降级、按退避自己再试;配对原样留着,只说一声。
+    onProtocolError: function(reason) { if (reason === "downgrade_refused" && !settled) { tampered = true; msg.textContent = TAMPERED } },
   })
-  var settled = false
+  var settled = false, tampered = false
   function done() { if (settled) return false; settled = true; clearTimeout(timer); try { cli.close() } catch (e) {} ; return true }
-  var timer = setTimeout(function(){ if (done()) msg.textContent = "连不上家里的电脑 — 看看它开着没、CC 在跑没" }, 20000)
+  var timer = setTimeout(function(){ if (done()) msg.textContent = tampered ? TAMPERED : "连不上家里的电脑 — 看看它开着没、CC 在跑没" }, 20000)
   cli.request({ method: "GET", path: PATH + "?t=" + T }).then(function(r) {
     if (!done()) return
     if (r.status === 401) { msg.textContent = EXPIRED; return }
@@ -94,6 +96,7 @@ function viaTunnel() {
       msg.textContent = EXPIRED; return
     }
     if (code === "upgrade_required") { needsRepair(); return }
+    if (tampered) { msg.textContent = TAMPERED; return }
     msg.textContent = code === "daemon_offline" ? "家里的 CC 不在线 — 电脑开着吗?" : code === "unreachable" || code === "timeout" ? "网络不给力,稍后再试" : ("连接出错:" + code)
   })
 }

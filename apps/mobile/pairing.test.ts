@@ -132,27 +132,57 @@ describe('v1 退休之后的老配对(F4):提示重新扫码配对', () => {
     expect(doc.querySelectorAll('#cc-repair')).toHaveLength(1)
   })
 
-  it('daemon 明文回 upgrade_required(这个页面还在说 v1)⇒ 同一句话,不再重连', async () => {
+  it('daemon 明文回 upgrade_required ⇒ 同一句话,不再重连;手里是 v2 配对(r… id)⇒ 配对不删(明文谁都能伪造)', async () => {
     const relay = makeFakeV2Relay({ tokens: () => ['dX'], auto: false })
     const doc = page()
-    const t = runTunnel(relay, { T: 'dX', document: doc })
+    const store = new Map([['ccRemote', '{"relay":"wss://r/v2/phone","id":"rX"}'], ['deviceToken', 'dX'], ['deviceTokenId', 'rX']])
+    const t = runTunnel(relay, { T: 'dX', document: doc, store })
     const p = t.api('/m/api/home')
     await vi.waitFor(() => expect(relay.sockets[0]?.hellos).toHaveLength(1))
     relay.sockets[0]!.deliver({ error: 'upgrade_required' })
     await expect(p).rejects.toThrow('upgrade_required')
     expect(repairText(doc)).toContain(REPAIR)
+    expect(store.get('ccRemote')).toContain('rX')
+    expect(store.get('deviceToken')).toBe('dX')
     await new Promise(r => setTimeout(r, 50))
     expect(relay.sockets).toHaveLength(1)
   })
 
-  it('回来的握手不是 v2(老后台 / 中继剥掉了 v)⇒ 拒绝降级,同一句话', async () => {
-    const relay = makeFakeV2Relay({ tokens: () => ['dX'], stripV: true })
-    const doc = page()
-    const t = runTunnel(relay, { T: 'dX', document: doc })
-    void t.api('/m/api/home').catch(() => {})
-    await vi.waitFor(() => expect(repairText(doc)).toContain(REPAIR))
-    expect(relay.sockets[0]!.reqs).toHaveLength(0)
+  it('v2 配对的握手回来不是 v2(中继抹掉了 v)⇒ 拒绝降级、不发请求、配对原样留着;说「连接在半路被改过」而不是重新配对;按退避重连,不刷屏', async () => {
+    vi.useFakeTimers()
+    try {
+      const relay = makeFakeV2Relay({ tokens: () => ['dX'], stripV: true })
+      const doc = page()
+      const store = new Map([['ccRemote', '{"relay":"wss://r/v2/phone","id":"rX"}'], ['deviceToken', 'dX'], ['deviceTokenId', 'rX']])
+      const t = runTunnel(relay, { T: 'dX', document: doc, store })
+      void t.api('/m/api/home').catch(() => {})
+      await vi.advanceTimersByTimeAsync(10)
+      expect(doc.getElementById('cc-tamper')?.textContent).toContain('连接在半路被改过')
+      expect(repairText(doc)).toBeNull()
+      expect([...store.keys()].sort()).toEqual(['ccRemote', 'deviceToken', 'deviceTokenId'])
+      // 10 秒里只按退避重连几次(500ms、1s、2s、4s…),不是一直狂连
+      await vi.advanceTimersByTimeAsync(10_000)
+      expect(relay.sockets.length).toBeGreaterThan(1)
+      expect(relay.sockets.length).toBeLessThanOrEqual(6)
+      expect(relay.sockets.every(s => s.reqs.length === 0)).toBe(true)
+      expect(doc.querySelectorAll('#cc-tamper')).toHaveLength(1)
+    } finally { vi.useRealTimers() }
   })
+
+  it('那块「半路被改过」在下一次连上之后自己消失', async () => {
+    let strip = true
+    const relayStrip = makeFakeV2Relay({ tokens: () => ['dX'], stripV: true })
+    const relayOk = makeFakeV2Relay({ tokens: () => ['dX'] })
+    const Both = function (this: unknown, url: string) { return strip ? new relayStrip.WebSocket(url) : new relayOk.WebSocket(url) } as unknown as typeof relayOk.WebSocket
+    const doc = page()
+    const t = runTunnel({ WebSocket: Both, sockets: [] }, { T: 'dX', document: doc })
+    const p = t.api('/m/api/home')
+    await vi.waitFor(() => expect(doc.getElementById('cc-tamper')).not.toBeNull())
+    strip = false
+    expect((await p).status).toBe(200)
+    expect(doc.getElementById('cc-tamper')).toBeNull()
+  })
+
 })
 
 describe('配对换令牌之后的 401(plan 7a 单次配对)', () => {

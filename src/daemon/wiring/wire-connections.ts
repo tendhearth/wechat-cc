@@ -61,7 +61,13 @@ return cacheConnections(() => buildConnections({
       knowledge: cfg.knowledge_enabled === true ? { built: !!boot.knowledge, embed: boot.knowledge?.embedStatus?.() ?? (boot.knowledge?.embedder ? 'python' : 'none') } : null,
       memory: loadCompanionConfig(stateDir).memory_nightly_enabled ? { failures: nightly.failures, firstRunDone: nightly.firstRunDone } : null,
       background: (() => { const h = boot.registry.cheapEvalHealth?.(); return h ? { failures: h.consecutiveFailures, lastError: h.lastError } : null })(),
-      phone: { relay: relayV2Configured(stateDir), devices },
+      phone: (() => {
+        const relay = relayV2Configured(stateDir)
+        // 老中继那一套还在配置里(远程开着,或指着自建的老中继),却没有 relay_v2_url:随 v1 退休,远程这次没开。
+        const old = loadAgentConfig(stateDir) as { remote_tunnel?: boolean; remote_relay_url?: unknown }
+        const legacyRelay = !relay && (old.remote_tunnel === true || (typeof old.remote_relay_url === 'string' && old.remote_relay_url.trim() !== ''))
+        return { relay, devices, legacyRelay }
+      })(),
       terminal: (() => { try { return d.terminalHooks?.capabilityInput() ?? null } catch { return null } })(),
       subsystems: d.subsystems?.() ?? [],
     })

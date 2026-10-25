@@ -7,7 +7,7 @@
  * `undefined is not a constructor`)。这里的消息都是扁平的小对象,十几行组合子就够。
  *
  * 语义跟 zod 对齐到这些消息用得上的程度:类型不对就失败;`object` 只留声明过的键(多余的键丢掉,
- * 同 zod 缺省的 strip);`optional` 的键缺省或 undefined 都行;`int` 要求有限整数;`discriminatedUnion`
+ * 同 zod 缺省的 strip);`optional` 的键缺省或 undefined 都行;`int` 要求安全整数(同 zod v4 `.int()`:1e21 这种超过 2^53 的不算);`discriminatedUnion`
  * 按判别键挑分支。线上来的一切都不可信:`safeParse` 永不抛,`parse` 失败抛 `ShapeError`。
  */
 
@@ -53,7 +53,7 @@ export function string(opts: { min?: number } = {}): Shape<string> {
 
 export function int(opts: { min?: number } = {}): Shape<number> {
   return shape((x, p) => {
-    if (typeof x !== 'number' || !Number.isInteger(x)) return fail(p, 'expected integer')
+    if (typeof x !== 'number' || !Number.isSafeInteger(x)) return fail(p, 'expected safe integer')   // 同 zod v4 的 .int()
     if (opts.min !== undefined && x < opts.min) return fail(p, `less than ${opts.min}`)
     return x
   })

@@ -94,8 +94,12 @@ describe('pset shell:v1 退休之后的老链接 / 老配对(F4)', () => {
     await new Promise(r => setTimeout(r, 50))
     expect(sockets).toHaveLength(1)
   })
-  it('回来的握手不是 v2(老后台 / 中继剥掉了 v)⇒ 拒绝降级,同一句', async () => {
-    const { msg } = runShell('#id=rD1&t=tLINK', null, undefined, { stripV: true })
-    await vi.waitFor(() => expect(msg.textContent).toBe(REPAIR))
+  it('回来的握手不是 v2(中继剥掉了 v)⇒ 拒绝降级、不取页;说「连接在半路被改过」,存着的配对不删', async () => {
+    const { msg, store, sockets, written } = runShell('#id=rD1&t=tLINK', 'dMINE', 'rD1', { stripV: true })
+    await vi.waitFor(() => expect(msg.textContent).toContain('连接在半路被改过'))
+    expect(store.get('deviceToken')).toBe('dMINE')
+    expect(store.get('deviceTokenId')).toBe('rD1')
+    expect(sockets[0]!.reqs).toHaveLength(0)
+    expect(written).toHaveLength(0)
   })
 })

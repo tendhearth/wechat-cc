@@ -16,24 +16,43 @@ var CC_REPAIR_TEXT = "连接方式升级了，请在电脑上重新扫码配对"
 var CC_REPAIR_HINT = "在电脑上点「连接手机」，用这台手机扫出现的码。"
 /** 老 VPS 中继的 id(t…):随 v1 退休,连不上了。 */
 function ccLegacyRemote(/** @type {any} */ r) { return !!r && typeof r.id === "string" && r.id.charAt(0) === "t" }
-var ccRepairShown = false
-// 连接方式升级了:丢掉指着老中继的那份远程信息(和绑在老中继 id 上的设备令牌),在页面顶上说清楚怎么重新配对。
+/** 页面顶上的一块说明(同一个 id 只放一块,再来就换字)。 */
+function ccNotice(/** @type {string} */ id, /** @type {string} */ text, /** @type {string} */ hint) {
+  if (typeof document === "undefined" || !document.body) return
+  var box = document.getElementById(id)
+  if (!box) {
+    box = document.createElement("div")
+    box.id = id
+    box.setAttribute("role", "alert")
+    box.style.cssText = "margin:8px 14px;padding:12px 14px;background:var(--wash);border-radius:var(--r-s);color:var(--ink);font-size:14px;line-height:1.6"
+    document.body.insertBefore(box, document.body.firstChild)
+  }
+  box.textContent = ""
+  var t = document.createElement("div"); t.textContent = text; box.appendChild(t)
+  if (hint) { var h = document.createElement("div"); h.textContent = hint; h.style.cssText = "color:var(--soft);font-size:12.5px;margin-top:2px"; box.appendChild(h) }
+}
+function ccClearNotice(/** @type {string} */ id) {
+  if (typeof document === "undefined") return
+  var box = document.getElementById(id)
+  if (box && box.parentNode) box.parentNode.removeChild(box)
+}
+// 连接方式升级了:在页面顶上说清楚怎么重新配对。只有手里真是老中继的配对(t… id)才丢掉它 ——
+// 一句明文 upgrade_required 谁都能伪造(中继也能),不能凭它删掉一份好好的 v2 配对。
 function ccNeedsRepair() {
-  try {
-    localStorage.removeItem("ccRemote")
-    var dtId = localStorage.getItem("deviceTokenId")
-    if (dtId && dtId.charAt(0) === "t") { localStorage.removeItem("deviceToken"); localStorage.removeItem("deviceTokenId") }
-  } catch (e) {}
-  if (ccRepairShown || typeof document === "undefined" || !document.body) return
-  ccRepairShown = true
-  var box = document.createElement("div")
-  box.id = "cc-repair"
-  box.setAttribute("role", "alert")
-  box.style.cssText = "margin:8px 14px;padding:12px 14px;background:var(--wash);border-radius:var(--r-s);color:var(--ink);font-size:14px;line-height:1.6"
-  var t = document.createElement("div"); t.textContent = CC_REPAIR_TEXT
-  var h = document.createElement("div"); h.textContent = CC_REPAIR_HINT; h.style.cssText = "color:var(--soft);font-size:12.5px;margin-top:2px"
-  box.appendChild(t); box.appendChild(h)
-  document.body.insertBefore(box, document.body.firstChild)
+  if (ccLegacyRemote(REMOTE)) {
+    try {
+      localStorage.removeItem("ccRemote")
+      var dtId = localStorage.getItem("deviceTokenId")
+      if (dtId && dtId.charAt(0) === "t") { localStorage.removeItem("deviceToken"); localStorage.removeItem("deviceTokenId") }
+    } catch (e) {}
+  }
+  ccNotice("cc-repair", CC_REPAIR_TEXT, CC_REPAIR_HINT)
+}
+// v2 配对的握手回来不是 v2(中继把 v 抹掉了):拒绝连接,配对原样留着,协议客户端按退避自己再试。
+var CC_TAMPER_TEXT = "家里的电脑暂时连不上（连接在半路被改过），过一会儿会自己再试"
+function ccTampered() {
+  if (ccLegacyRemote(REMOTE)) { ccNeedsRepair(); return }
+  ccNotice("cc-tamper", CC_TAMPER_TEXT, "")
 }
 /** 浏览器 WebSocket → 协议客户端要的 ProtocolSocket。 */
 function ccSocket(/** @type {string} */ url) {
@@ -65,8 +84,8 @@ function tunnel() {
       // 页面会发慢请求(说一句、转写一段话):单次等 30 秒;握手 15 秒没回就重连。
       requestTimeoutMs: 30000,
       handshakeTimeoutMs: 15000,
-      // 中继把握手里的 v 抹掉 / 后台只会退休了的 v1:客户端拒绝降级,这里提示重新配对。
-      onProtocolError: function(/** @type {string} */ reason) { if (reason === "downgrade_refused") ccNeedsRepair() },
+      // 中继把握手里的 v 抹掉:客户端拒绝降级、按退避重连(不会刷屏);这里只说一声,不动配对。
+      onProtocolError: function(/** @type {string} */ reason) { if (reason === "downgrade_refused") ccTampered() },
     })
   }
   return tun
@@ -80,6 +99,7 @@ function viaTunnel(/** @type {string} */ path, /** @type {any} */ opts) {
   if (o.headers) { /** @type {Record<string, string>} */ var hs = {}; for (var k in o.headers) if (typeof o.headers[k] === "string") hs[k] = o.headers[k]; req.headers = hs }
   if (typeof o.body === "string") req.body = o.body
   return tunnel().request(req).then(function(/** @type {any} */ r) {
+    ccClearNotice("cc-tamper")
     return { status: r.status, text: function() { return Promise.resolve(r.text()) }, json: function() { return Promise.resolve(r.json()) } }
   }, function(/** @type {Error} */ err) {
     if (err && err.message === "upgrade_required") ccNeedsRepair()
