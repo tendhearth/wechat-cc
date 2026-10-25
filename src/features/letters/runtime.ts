@@ -16,7 +16,7 @@ import { writeFileAtomic } from '../../lib/json-file'
 import { existsSync, mkdirSync, readdirSync } from 'node:fs'
 import { join } from 'node:path'
 import { readJsonFile } from '../../lib/read-json-file'
-import { localParts } from '../memory/nightly-schedule'
+import { localParts } from '../../daemon/memory/nightly-schedule'
 import { TELLTALE, buildLetterPrompt, letterText, parseLetter, type LetterDraft, type LetterMaterial } from './compose'
 import { letterSvgs } from './render'
 import { DAY_MS, FIRST_GAP_DAYS, GAP_DAYS, THIN_RETRY_DAYS, isLetterDue, nextDueAt } from './schedule'
@@ -85,7 +85,7 @@ export interface LetterDeps {
    * 写好没寄的不寄了,存档里留着;免打扰 / 两条路都送不到 ⇒ 等着);当面要的(letter_asked)是 requested,照写照寄。
    * 「往哪儿寄、怎么一页一页寄、断了怎么续」仍是这里自己的事(信有自己的多页投递和 App 那条路)。
    */
-  speech: import('../speech/policy').SpeechPolicy
+  speech: import('../../daemon/speech/policy').SpeechPolicy
   sendText(chatId: string, text: string): Promise<{ error?: string }>
   sendFile(chatId: string, path: string): Promise<void>
   /**

@@ -274,8 +274,6 @@ export interface InternalApiDeps {
    * main.ts setOverseerToday;没设之前 GET /v1/overseer/today 503。只读,只在被问时算。
    */
   overseerToday?: () => import('../../core/overseer-today').OverseerToday
-  /** CC 的信(2026-10-16,letters/runtime.ts)。main.ts setLetters;没设之前 /v1/letters* 503。 */
-  letters?: import('../letters/runtime').LetterRuntime
   /**
    * 接上 / 撤掉终端里的 Claude Code / Codex(2026-10-14):POST /v1/cli/hooks/install|uninstall。
    * main.ts setCliHooks;没设之前 503。只在主人点了确认时调,绝不自动装。
@@ -634,7 +632,7 @@ export const LATE_KEYS = [
   'llmHealth', 'llmRegistered', 'llmNames', 'llmEndpoints',
   'cliEvents', 'cliPermissions', 'overseerToday', 'cliHooks', 'terminalSay',
   'workbench', 'matters', 'companionConverse', 'petTurn', 'settingsLink', 'connections', 'phoneConnect',
-  'memoryNightly', 'letters', 'cliUpgrade',
+  'memoryNightly', 'cliUpgrade',
 ] as const satisfies readonly (keyof InternalApiDeps)[]
 export type LateKey = typeof LATE_KEYS[number]
 export type LateDeps = { [K in LateKey]?: NonNullable<InternalApiDeps[K]> }

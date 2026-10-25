@@ -39,7 +39,7 @@ import { buildFeed, FEED_DEFAULT_LIMIT, dayKey, type FeedSources, type TurnLite 
 import presenceArt from './mobile-presence-art.json'
 import { MOBILE_BRAND_ICON_PNG, MOBILE_BRAND_ICON_SIZES } from './mobile-brand-icon'
 import { mobileChatRoute, type MobileChatDeps } from './mobile-chat'
-import { mobileLettersRoute } from './mobile-letters'
+import { mobileLettersRoute } from '../features/letters'
 import { mobileJobsRoute } from './mobile-jobs'
 import { mobileActivityRoute } from './mobile-activity'
 import { mobileReadsRoute } from './mobile-reads'
@@ -132,7 +132,7 @@ export interface SettingsPanelDeps {
   /** 跟 CC 说(spec 2026-10-01):主人对话一页 + 说一句。缺省 ⇒ /m/api/chat* 503。 */
   chat?: MobileChatDeps
   /** 「CC 的信」(2026-10-18,只读存档)。缺省 ⇒ /m/api/letters* 503。 */
-  letters?: import('./mobile-letters').MobileLettersDeps
+  letters?: import('../features/letters').MobileLettersDeps
   /** 定时(对标 B7):列表与停 / 开 / 删。缺省 ⇒ 503。 */
   jobs?: import('./mobile-jobs').MobileJobsDeps
   /** 「CC 做过的事」(B9):只给设备令牌。 */

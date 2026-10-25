@@ -51,7 +51,6 @@ import { licenseRoutes } from './routes-license'
 import { daemonControlRoutes } from './routes-daemon-control'
 import { fileRoutes } from './routes-files'
 import { federationRoutes } from './routes-federation'
-import { lettersRoutes } from './routes-letters'
 import { workbenchRoutes } from './routes-workbench'
 import { countForTag, ONLINE_STICKER_K } from '../stickers'
 import { makeCooldown } from '../sticker-source'
@@ -147,7 +146,6 @@ const onlineStickerCursor = new Map<string, number>()
     ...mattersRoutes(deps),
     ...connectionsRoutes(deps),
     ...phoneRoutes(deps),
-    ...lettersRoutes(deps),
     'GET /v1/health': (_q, _body, caller) => ({
       status: 200,
       body: {

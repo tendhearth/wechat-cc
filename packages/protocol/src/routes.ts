@@ -74,7 +74,7 @@ export interface PanelSurface {
  * 表里标了 `module: X` 的路由:daemon 的路由层按 X 此刻的状态判能不能走(关着 ⇒ module_off、坏了 ⇒ module_degraded、
  * 还没挂上 ⇒ module_starting);处理器由模块 X 自己挂(`internalApi.mount`),不在 internal-api 的总表里。
  */
-export const MODULE_NAMES = ['social', 'calendar', 'reminders'] as const
+export const MODULE_NAMES = ['social', 'calendar', 'reminders', 'letters'] as const
 export type ModuleName = (typeof MODULE_NAMES)[number]
 
 export interface RouteSpec {
@@ -332,9 +332,9 @@ export const ROUTES: Readonly<Record<RouteKey, RouteSpec>> = {
   'POST /v1/cli/hooks/install': { desktop: { tier: 'admin', tokens: ['operator'], tauri: true, devProxy: true } },
   'POST /v1/cli/hooks/uninstall': { desktop: { tier: 'admin', tokens: ['operator'], tauri: true, devProxy: true } },
   // CC 的信(2026-10-16):信是写给主人的私事;开关改主人的 companion 配置。admin。
-  'GET /v1/letters': { desktop: { tier: 'admin', tokens: ['operator'] } },
-  'POST /v1/letters/write': { desktop: { tier: 'admin', tokens: ['operator'] } },
-  'POST /v1/letters/settings': { desktop: { tier: 'admin', tokens: ['operator'] } },
+  'GET /v1/letters': { module: 'letters', desktop: { tier: 'admin', tokens: ['operator'] } },
+  'POST /v1/letters/write': { module: 'letters', desktop: { tier: 'admin', tokens: ['operator'] } },
+  'POST /v1/letters/settings': { module: 'letters', desktop: { tier: 'admin', tokens: ['operator'] } },
   'POST /v1/chat-prefs': { desktop: { tier: 'trusted' } },
   // POST /v1/stickers writes an arbitrary sourcePath into the lib — same
   // trust class as send_file, so it's trusted not guest.
