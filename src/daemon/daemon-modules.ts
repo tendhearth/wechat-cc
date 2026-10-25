@@ -537,28 +537,29 @@ export function daemonModules(f: Foundation): DaemonModule[] {
     },
     lifecycleModule('sessions', (ctx) => registerSessions(ctx.get<WiredDeps>('wired').sessionsDeps), { required: true, needs: ['wired'] }),
     lifecycleModule('ilink', (ctx) => registerIlink(ctx.get<WiredDeps>('wired').ilinkDeps), { required: true, needs: ['wired'] }),
-    // 工作台的微信通知 / 成果:停在 polling 之后 ⇒ 关机时先停入站,再把任务那几句送完,再冲 ilink。
+    // 工作台的微信通知 / 成果:**停**在 polling 之后(关机时先停入站,再把任务那几句送完,再冲 ilink);
+    // **开动**却放在开机最后(startup-sweeps 那一步):补发停机期间做完的任务那几句,要排在「CC 回来了」之后。
     {
       name: 'workbench-notifications',
       needs: ['workbench', 'wired', 'ilink-adapter'],
-      init(ctx) {
+      init(ctx): Deferred {
         let n: ReturnType<typeof wireWorkbenchNotifications> | null = null
-        ctx.onStart('start', () => {
+        ctx.own('stop', async () => { await n?.close() })
+        return { start: () => {
           n = wireWorkbenchNotifications({ workbench: ctx.get('workbench'), ilink: ctx.get('ilink-adapter'), speech: ctx.get<WiredDeps>('wired').speech })
           void n.wake().catch(() => log('WORKBENCH', 'Task notifications are waiting for storage recovery.'))
-        })
-        ctx.own('stop', async () => { await n?.close() })
+        } }
       },
-    },
+    } satisfies DaemonModule<Deferred>,
     {
       name: 'workbench-artifacts',
       needs: ['workbench', 'ilink-adapter'],
-      init(ctx) {
+      init(ctx): Deferred {
         let a: ReturnType<typeof wireWorkbenchArtifacts> | null = null
-        ctx.onStart('start', () => { a = wireWorkbenchArtifacts({ workbench: ctx.get('workbench'), ilink: ctx.get('ilink-adapter') }) })
         ctx.own('stop', async () => { await a?.close() })
+        return { start: () => { a = wireWorkbenchArtifacts({ workbench: ctx.get('workbench'), ilink: ctx.get('ilink-adapter') }) } }
       },
-    },
+    } satisfies DaemonModule<Deferred>,
     lifecycleModule('polling', (ctx) => registerPolling({ ...ctx.get<WiredDeps>('wired').pollingDeps, runPipeline: ctx.get<PipelineModule>('pipeline').run }), { required: true, needs: ['wired', 'pipeline'] }),
     // 每晚整理长期记忆 memory.md(2026-09-25)。15 分钟一次「该不该跑」。
     lifecycleModule('memory-nightly', (ctx) => registerMemoryNightly({
@@ -652,16 +653,24 @@ export function daemonModules(f: Foundation): DaemonModule[] {
         },
       })
     }, { needs: ['wired'] }),
-    // 开机一次的清扫(fire-and-forget),全部模块起来以后。
+    // 开机的最后一步:一次性清扫(fire-and-forget,含「CC 回来了」),然后才开动工作台的通知 / 成果(见上)。
     {
       name: 'startup-sweeps',
-      needs: ['wired'],
-      init(ctx) { ctx.onStart('run', () => { runStartupSweeps({ ...ctx.get<WiredDeps>('wired').startupDeps, previousRun: f.previousRun }) }) },
+      needs: ['wired', 'workbench-notifications', 'workbench-artifacts'],
+      init(ctx) {
+        ctx.onStart('run', () => {
+          runStartupSweeps({ ...ctx.get<WiredDeps>('wired').startupDeps, previousRun: f.previousRun })
+          ctx.get<Deferred>('workbench-notifications').start()
+          ctx.get<Deferred>('workbench-artifacts').start()
+        })
+      },
     },
   ]
 }
 
 interface PipelineModule { run: PipelineRun; appTurn: AppTurn }
+/** 造好了、但开动的时刻由别的模块定(工作台通知要排在开机清扫之后)。 */
+interface Deferred { start(): void }
 
 /** 每次起会话时现读的提示词素材(人格、记忆、贴纸、关心档 ……):手改了文件,不用重启就生效。 */
 function promptReads(f: Foundation) {
