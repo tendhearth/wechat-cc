@@ -77,8 +77,14 @@ describe('authorizeChatCall', () => {
     const r = {
       asks: 0, notes: [] as unknown[],
       isOwnerChat: () => { if (o.owner instanceof Error) throw o.owner; return o.owner ?? true },
-      decide: async () => { r.asks++; if (d instanceof Error) throw d; return d },
-      noteAllowed: (_c: string, n: unknown) => { r.notes.push(n); return o.noted ?? true },
+      // 和真的 permission-gate 一样:规则说放 ⇒ 先调 beforeAllow,它回 null ⇒ 回 ask
+      decide: async (_a: unknown, beforeAllow?: (d: Decision) => (() => void) | null) => {
+        r.asks++
+        if (d instanceof Error) throw d
+        if (d.verdict === 'allow' && beforeAllow && !beforeAllow(d)) return { verdict: 'ask', by: 'default', reason: 'x' } as Decision
+        return d
+      },
+      noteAllowed: (_c: string, n: unknown) => { r.notes.push(n); return o.noted === false ? null : () => {} },
     }
     return r
   }
@@ -93,6 +99,10 @@ describe('authorizeChatCall', () => {
   })
   it('登记不上提醒 ⇒ 不放', async () => {
     expect(await authorizeChatCall(subject, destructive, call({}), rules(allow, { noted: false }))).toMatchObject({ verdict: 'ask', reason: 'tier' })
+  })
+  it('规则层说放、却没走 beforeAllow(提醒没登记)⇒ 不放', async () => {
+    const r = { isOwnerChat: () => true, decide: async () => allow, noteAllowed: () => () => {} }
+    expect(await authorizeChatCall(subject, destructive, call({}), r)).toMatchObject({ verdict: 'ask', reason: 'tier' })
   })
   it('没备注 ⇒ 提醒里用规则 id', async () => {
     const r = rules(allow)

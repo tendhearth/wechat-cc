@@ -208,9 +208,10 @@ export interface ReplyDeliveryRuntime extends ReplyDeliveryPort {
   noteMessage(chatId: string, m: { toOwner: boolean; text: string }): void
   /**
    * 放行规则替主人放了一次(主人自己的对话,core/permission-rules/chat.ts):登记到这个 chat 正在进行的那一轮,交付时最后
-   * 单独一条;同一条规则(key)一轮一行,多次只记次数。没有开着的轮 ⇒ false(调用方就不放,落回问)。
+   * 单独一条;同一条规则(key)一轮一行,多次只记次数。成功 ⇒ 撤销函数(留痕写不进时调用方撤回这一笔);
+   * 没有开着的轮 ⇒ null(调用方就不放,落回问)。
    */
-  noteRuleAllow(chatId: string, notice: RuleAllowNotice): boolean
+  noteRuleAllow(chatId: string, notice: RuleAllowNotice): (() => void) | null
   /**
    * 这家 provider 此刻正在跑的那一轮是哪个聊天。给**没有自己的 chat 的共享令牌**用
    * (agy 的 `agy-static`:一份全局 MCP 配置,所有 agy 对话共用一枚 trusted 令牌 —— 令牌里读不出 chat)。
@@ -331,11 +332,18 @@ export function makeReplyDeliveryRuntime(deps: ReplyDeliveryRuntimeDeps): ReplyD
     },
     noteRuleAllow(chatId, notice) {
       const t = open.get(chatId)
-      if (!t) return false
+      if (!t) return null
       const cur = t.ruleNotices.get(notice.key)
       if (cur) cur.count++
       else t.ruleNotices.set(notice.key, { notice, count: 1 })
-      return true
+      let undone = false
+      return () => {
+        if (undone) return
+        undone = true
+        const n = t.ruleNotices.get(notice.key)
+        if (!n) return
+        if (--n.count <= 0) t.ruleNotices.delete(notice.key)
+      }
     },
     turnChatFor(providerId) {
       const byChat = daemonTurns.get(providerId)

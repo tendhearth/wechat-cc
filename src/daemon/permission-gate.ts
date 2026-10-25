@@ -17,7 +17,7 @@ import { authorize, type AuthSubject } from '../domain/authorize'
 import { TIER_PROFILES } from '../domain/user-tier'
 import type { PermissionDecisionsStore } from './permission-decisions-store'
 import type { CliPermissionRequest } from '../core/cli-permission-relay'
-import type { ChatOwnerRules, RuleAllowNotice } from '../core/permission-rules/chat'
+import type { AllowHook, ChatOwnerRules, RuleAllowNotice } from '../core/permission-rules/chat'
 import { repoRootOf } from '../core/workbench/worktree-workspaces'
 
 export const RUNAWAY_WINDOW_MS = 10 * 60_000
@@ -25,7 +25,8 @@ export const RUNAWAY_MAX = 20
 const DAY_MS = 24 * 3600_000
 
 export interface PermissionGate {
-  decide(ask: AskSource): Promise<Decision>
+  /** beforeAllow:见 ChatOwnerRules.decide —— 规则说放、写留痕之前调;null ⇒ 回 ask、不留痕。 */
+  decide(ask: AskSource, beforeAllow?: AllowHook): Promise<Decision>
   status(): { enabled: boolean; review: 'off' | 'low_risk'; rules: number; errors: string[] }
 }
 
@@ -40,6 +41,7 @@ export interface PermissionGateDeps {
 
 const ASK: Decision = { verdict: 'ask', by: 'default', reason: '放行规则出错,交给你' }
 const OFF: Decision = { verdict: 'ask', by: 'default', reason: '放行规则关着' }
+const NOT_SHOWN: Decision = { verdict: 'ask', by: 'default', reason: '放行提醒送不到这一轮,交给你' }
 
 /** 最深的、存在的祖先 realpath 后接上剩下那截 —— 软链指到工作区外的路径照实算外面(终审 10-19)。 */
 function realish(p: string): string {
@@ -176,14 +178,22 @@ export function makePermissionGate(deps: PermissionGateDeps): PermissionGate {
   }
 
   return {
-    async decide(source) {
+    async decide(source, beforeAllow) {
       let reserved: string | null = null
       try {
         const { rules } = load()
         if (!rules.enabled) return OFF
+        // 已知隐患(留着,和终端共用):normalizePaths 先 resolve 掉 `..` 再展开软链,`link/..` 会按字面消掉而不是按软链目标。
+        // 对话里今天走不到(主人对话里带路径的工具按档位直接放,不到规则);以后对话规则要管带路径的工具,先改这里。
         const ask = normalizePaths(typeof source === 'function' ? await source() : source)
         const d = await decideCore(ask, rules, { review: review(), reviewBlocked: (scope) => { const b = reviewBlocked(scope); if (!b) reserved = scope; return b }, stateDir: stateDirReal })
-        if (!record(ask, d)) return ASK
+        // 规则说放 ⇒ 先让调用方确认这次真放得了(对话:提醒登记上了),再写留痕 —— 留痕只记最后真发生的事。
+        let undo: (() => void) | null = null
+        if (d.verdict === 'allow' && beforeAllow) {
+          try { undo = beforeAllow(d) } catch { undo = null }
+          if (!undo) return NOT_SHOWN
+        }
+        if (!record(ask, d)) { try { undo?.() } catch { /* 撤销提醒失败只少一行提醒,不改结论 */ } return ASK }
         if (d.by === 'review' && d.verdict === 'allow') reviewAllows.set(ask.scope, [...recent(ask.scope), now()])
         // 日志不写命令原文。
         if (d.by !== 'default') deps.log('PERMISSION_RULES', `${ask.surface}/${ask.provider} ${ask.tool} → ${d.verdict} by ${d.by}${d.ruleId ? ` (${d.ruleId})` : ''}`)
@@ -264,11 +274,11 @@ export function makeTerminalDecide(
 export function makeChatOwnerRules(deps: {
   gate: Pick<PermissionGate, 'decide'>
   isOwnerChat: (chatId: string) => boolean
-  replyDelivery: { noteRuleAllow(chatId: string, notice: RuleAllowNotice): boolean }
+  replyDelivery: { noteRuleAllow(chatId: string, notice: RuleAllowNotice): (() => void) | null }
 }): ChatOwnerRules {
   return {
     isOwnerChat: (chatId) => !!chatId && deps.isOwnerChat(chatId),
-    decide: (ask) => deps.gate.decide(ask),
+    decide: (ask, beforeAllow) => deps.gate.decide(ask, beforeAllow),
     noteAllowed: (chatId, notice) => deps.replyDelivery.noteRuleAllow(chatId, notice),
   }
 }

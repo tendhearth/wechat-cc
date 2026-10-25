@@ -86,6 +86,17 @@ describe('对话走放行规则:只在主人自己的对话里', () => {
     const t = setup([memoryDelete])
     expect(await t.call(ADMIN, 'mcp__wechat__memory_delete', {})).toMatchObject({ behavior: 'deny', message: 'User denied the request' })
     expect(t.askUser).toHaveBeenCalledTimes(1)
+    // 留痕照实:没放,就没有「规则放行」那一行
+    expect(t.store.since(0)).toEqual([])
+  })
+
+  it('留痕写不进 ⇒ 不放、提醒撤回(回复里不会说「放行了」)', async () => {
+    const t = setup([memoryDelete])
+    t.store.record = () => { throw new Error('disk full') }
+    const turn = t.reply.begin(ADMIN, { context: 'dm', providerId: 'claude' })
+    expect(await t.call(ADMIN, 'mcp__wechat__memory_delete', {})).toMatchObject({ behavior: 'deny', message: 'User denied the request' })
+    await turn.deliver({ finalText: '好', narration: [] })
+    expect(t.sent.map(s => s.text)).toEqual(['好'])
   })
 
   it('对话里不初审:规则没命中、初审开着也不问便宜模型', async () => {

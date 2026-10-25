@@ -33,11 +33,17 @@ export interface RuleAllowNotice { key: string; rule: string; target: string }
 export interface ChatOwnerRules {
   /** 这个对话此刻是不是主人自己的(access.json 的 admins,原始档位)。 */
   isOwnerChat(chatId: string): boolean
-  /** permission-gate.decide(读规则文件、红线、留痕;永不抛,出事 ⇒ ask)。 */
-  decide(ask: () => PermissionAsk): Promise<Decision>
-  /** 登记到这个对话正在进行的那一轮;没有开着的轮 / 登记不上 ⇒ false(那就不放)。 */
-  noteAllowed(chatId: string, notice: RuleAllowNotice): boolean
+  /**
+   * permission-gate.decide(读规则文件、红线、留痕;永不抛,出事 ⇒ ask)。beforeAllow:规则说放、**写留痕之前**调 ——
+   * 回 null ⇒ 不放、不留「放了」的痕(回 ask);回一个撤销函数 ⇒ 接着写留痕,写不进就撤销、回 ask。留痕只记真发生的事。
+   */
+  decide(ask: () => PermissionAsk, beforeAllow?: AllowHook): Promise<Decision>
+  /** 登记到这个对话正在进行的那一轮;成功 ⇒ 撤销函数,没有开着的轮 / 登记不上 ⇒ null(那就不放)。 */
+  noteAllowed(chatId: string, notice: RuleAllowNotice): (() => void) | null
 }
+
+/** permission-gate 在「规则说放」之后、写留痕之前调;null ⇒ 不放。 */
+export type AllowHook = (d: Decision) => (() => void) | null
 
 export type ChatAuthorization = Authorization & {
   /** 规则拒绝时交给执行者的话(和终端 / 一起做一样,拒绝的理由让执行者看得见)。 */
@@ -97,13 +103,21 @@ export async function authorizeChatCall(
   const first = authorize(s, descriptor)
   if (!first.consultOwnerRules || !rules) return first
   const noRule = () => authorize(s, descriptor, { ownerRuling: { verdict: 'ask', by: 'default' } })
+  // 提醒先登记、留痕后写(permission-gate 里按这个顺序调 beforeAllow):提醒登记不上 ⇒ 不放,留痕里也就没有一条「放了」。
+  let noted = false
+  const beforeAllow: AllowHook = (d) => {
+    if (d.by !== 'rule') return null   // 对话里只认规则表(初审在对话里不跑,这里再守一道)
+    const notice: RuleAllowNotice = { key: d.ruleId ?? d.reason, rule: d.note ?? d.ruleId ?? '放行规则', target: noticeTarget(call) }
+    let undo: (() => void) | null = null
+    try { undo = rules.noteAllowed(call.chatId, notice) } catch { undo = null }
+    if (undo) noted = true
+    return undo
+  }
   let d: Decision
-  try { d = await rules.decide(() => chatAsk(call)) } catch { return noRule() }
+  try { d = await rules.decide(() => chatAsk(call), beforeAllow) } catch { return noRule() }
   const ruled = authorize(s, descriptor, { ownerRuling: d })
   if (ruled.reason !== 'owner_rules') return ruled
   if (ruled.verdict === 'deny') return { ...ruled, detail: d.reason, denyMessage: `The owner's permission rule denied this (${d.reason}). Do not retry it; tell the user it was blocked by their rule.` }
-  const notice: RuleAllowNotice = { key: d.ruleId ?? d.reason, rule: d.note ?? d.ruleId ?? '放行规则', target: noticeTarget(call) }
-  let noted = false
-  try { noted = rules.noteAllowed(call.chatId, notice) } catch { noted = false }
+  // 规则层说放、提醒却没登记上(没走 beforeAllow 的实现)⇒ 不放。
   return noted ? ruled : noRule()
 }

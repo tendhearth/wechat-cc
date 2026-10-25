@@ -415,16 +415,17 @@ describe('放行规则的提醒(2026-10-25:主人自己的对话里规则替主�
     const sent: string[] = []
     const rt = makeReplyDeliveryRuntime({ sendText: async (_c, t) => { sent.push(t); return { msgId: String(sent.length) } }, sleep: async () => {}, log: () => {} })
     const h = rt.begin('c', { context: 'parallel', providerId: 'claude', participantLabel: 'Claude' })
-    expect(rt.noteRuleAllow('c', notice('a', '甲'))).toBe(true)
-    expect(rt.noteRuleAllow('c', notice('a', '甲'))).toBe(true)
-    expect(rt.noteRuleAllow('c', notice('b', '乙', 'daemon_restart'))).toBe(true)
+    expect(rt.noteRuleAllow('c', notice('a', '甲'))).toBeTypeOf('function')
+    expect(rt.noteRuleAllow('c', notice('a', '甲'))).toBeTypeOf('function')
+    expect(rt.noteRuleAllow('c', notice('b', '乙', 'daemon_restart'))).toBeTypeOf('function')
+    rt.noteRuleAllow('c', notice('x', '撤了'))!()
     const r = await h.deliver({ finalText: '好', narration: [] })
     expect(sent).toEqual(['[Claude] 好', '按规则「甲」放行了 memory_delete(这一轮共 2 次)\n按规则「乙」放行了 daemon_restart'])
     expect(r.bubbles).toBe(1)
   })
   it('没有开着的轮 ⇒ 登记不上(调用方就不放)', () => {
     const rt = makeReplyDeliveryRuntime({ sendText: async () => ({ msgId: '1' }), log: () => {} })
-    expect(rt.noteRuleAllow('c', notice('a'))).toBe(false)
+    expect(rt.noteRuleAllow('c', notice('a'))).toBeNull()
   })
   it('模型写了 NO_REPLY / 什么都没说:提醒照样发', async () => {
     const sent: string[] = []

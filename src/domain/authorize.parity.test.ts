@@ -507,7 +507,7 @@ function wiredRules(owner: boolean, counter: { decide: number }): ChatOwnerRules
   return {
     isOwnerChat: () => owner,
     decide: async () => { counter.decide++; return owner ? NO_RULE : ALLOW_ALL },
-    noteAllowed: () => true,
+    noteAllowed: () => () => {},
   }
 }
 
