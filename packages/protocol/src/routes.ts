@@ -74,7 +74,7 @@ export interface PanelSurface {
  * 表里标了 `module: X` 的路由:daemon 的路由层按 X 此刻的状态判能不能走(关着 ⇒ module_off、坏了 ⇒ module_degraded、
  * 还没挂上 ⇒ module_starting);处理器由模块 X 自己挂(`internalApi.mount`),不在 internal-api 的总表里。
  */
-export const MODULE_NAMES = ['social', 'calendar', 'reminders', 'letters', 'atelier'] as const
+export const MODULE_NAMES = ['social', 'calendar', 'reminders', 'letters', 'atelier', 'stickers'] as const
 export type ModuleName = (typeof MODULE_NAMES)[number]
 
 export interface RouteSpec {
@@ -256,12 +256,12 @@ export const ROUTES: Readonly<Record<RouteKey, RouteSpec>> = {
   // send_sticker draws only from the curated sticker lib (pre-approved
   // images, no arbitrary-path read) and has no exfiltration surface —
   // same trust class as reply/reply_voice, so it's guest not trusted.
-  'POST /v1/wechat/send_sticker': { desktop: { tier: 'guest' } },
-  'POST /v1/wechat/search_online_sticker': { desktop: { tier: 'guest' } },
-  'POST /v1/wechat/search_online_sticker_candidates': { desktop: { tier: 'guest' } },
-  'POST /v1/wechat/send_online_sticker_candidate': { desktop: { tier: 'guest' } },
-  'POST /v1/wechat/sticker_feedback': { desktop: { tier: 'guest' } },
-  'GET /v1/stickers': { desktop: { tier: 'guest' } },
+  'POST /v1/wechat/send_sticker': { module: 'stickers', desktop: { tier: 'guest' } },
+  'POST /v1/wechat/search_online_sticker': { module: 'stickers', desktop: { tier: 'guest' } },
+  'POST /v1/wechat/search_online_sticker_candidates': { module: 'stickers', desktop: { tier: 'guest' } },
+  'POST /v1/wechat/send_online_sticker_candidate': { module: 'stickers', desktop: { tier: 'guest' } },
+  'POST /v1/wechat/sticker_feedback': { module: 'stickers', desktop: { tier: 'guest' } },
+  'GET /v1/stickers': { module: 'stickers', desktop: { tier: 'guest' } },
   // reminders — scope (own chat only for session callers) is enforced in
   // routes-reminders.ts; the tier floor is guest ("提醒我" is harmless).
   'POST /v1/reminders/schedule': { module: 'reminders', desktop: { tier: 'guest', tokens: ['operator'], ownerWorkspace: true } },
@@ -338,7 +338,7 @@ export const ROUTES: Readonly<Record<RouteKey, RouteSpec>> = {
   'POST /v1/chat-prefs': { desktop: { tier: 'trusted' } },
   // POST /v1/stickers writes an arbitrary sourcePath into the lib — same
   // trust class as send_file, so it's trusted not guest.
-  'POST /v1/stickers': { desktop: { tier: 'trusted' } },
+  'POST /v1/stickers': { module: 'stickers', desktop: { tier: 'trusted' } },
   // 社交总开关。trusted 而非 admin:桌面端的凭证是 daemon 全局 FILE token
   // (=trusted,见 api-info),admin 会让每一次真机点击 403 —— 2026-07-22 那个
   // P0 就是这么来的。**发版评审时请连同同族 trusted 路由一起过一遍。**

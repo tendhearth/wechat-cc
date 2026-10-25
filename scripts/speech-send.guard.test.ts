@@ -55,8 +55,8 @@ const BASELINE: Record<string, [Tag, number]> = {
   // 收尾时推)、工作台通知推送(phone-notifier)、终端会话推送(appPush)—— 后两处先过 speech/push-gate.ts 问门(policy.ask)。
   'src/daemon/phone-notifier.ts': ['primitive', 1],
   'src/daemon/wiring/wire-phone.ts': ['primitive', 1],
-  // daemon-modules.ts(以前在 main.ts)剩下的全是接线:回复交付、命令回话、信自己的投递、internal-api 的回话出口(主动开口都已经走门,10-21)
-  'src/daemon/daemon-modules.ts': ['primitive', 7],
+  // daemon-modules.ts(以前在 main.ts)剩下的全是接线:回复交付、命令回话、信自己的投递、internal-api 的回话出口、贴纸路由的发文件口(主动开口都已经走门,10-21)
+  'src/daemon/daemon-modules.ts': ['primitive', 8],
   // pipeline-deps 剩下的全是接线:回话出口、proactive 的微信出口(发字 / 发文件)、给访客的回话、llm-health 的回话;访客申请已走门(10-21)
   'src/daemon/wiring/pipeline-deps.ts': ['primitive', 6],
   // —— 回答对方刚发来的那一句 ——
@@ -71,10 +71,12 @@ const BASELINE: Record<string, [Tag, number]> = {
   'src/daemon/inbound/mw-access.ts': ['reply', 2],     // 回访客刚发来的那一句(欢迎语 / 中性回话);告诉主人的那句已走门
   // 主人当面点的操作(广播),发给谁也是主人定的;以及回复那一轮里模型调的发文件 / 发表情。
   // 都不是 CC 主动开口 —— 别照这个口子把真正主动的东西塞进来(整合者评审)。
-  'src/daemon/internal-api/routes.ts': ['reply', 5],
+  'src/daemon/internal-api/routes.ts': ['reply', 1],
   // 桌面「分享这幅画」:主人当面点的,只发给 companion.default_chat_id(画室搬进 src/features/atelier 时从上面那一行挪过来;
   // 发图那一处原来就数,背景说明以前经 internal-api 的 ilink.sendReply 包装发、不数,现在直接 sendMessage,所以是 2)
   'src/features/atelier/routes.ts': ['reply', 2],
+  // 同上:回复那一轮里模型调的发表情(本地 / 联网 / 候选),功能目录 src/features/stickers(架构终态 A5,从 routes.ts 搬来)
+  'src/features/stickers/routes.ts': ['reply', 5],   // 四处发 + deps 接口里那一行 sendFile(
   // 主人发的命令的回话:「定时 …」「做过的事 …」
   'src/features/jobs/wire.ts': ['reply', 1],
   'src/daemon/bootstrap/wire-activity.ts': ['reply', 1],

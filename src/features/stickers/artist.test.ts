@@ -1,10 +1,10 @@
 import { describe, expect, it, vi } from 'vitest'
 import { existsSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
-import { NetworkUnprotectedError } from '../lib/network-gate'
+import { NetworkUnprotectedError } from '../../lib/network-gate'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { makeStickerLib } from './stickers'
-import { pickMissingMood, pickDrawTarget, buildStickerPrompt, runStickerArtist, STICKER_MOOD_POOL, STICKER_MOOD_POOL_EXTENDED, CC_DRAWN_CAP } from './sticker-artist'
+import { pickMissingMood, pickDrawTarget, buildStickerPrompt, runStickerArtist, STICKER_MOOD_POOL, STICKER_MOOD_POOL_EXTENDED, CC_DRAWN_CAP } from './artist'
 
 const GOOD_SVG = '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 320 320"><circle cx="160" cy="150" r="90" fill="#f5ead8" stroke="#5a3f2d" stroke-width="4"/></svg>'
 

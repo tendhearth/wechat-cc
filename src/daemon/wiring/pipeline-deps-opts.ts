@@ -61,7 +61,7 @@ export interface PipelineDepsOpts {
   /** 打猎战利品(v36)。缺失 ⇒ 微信「背包」命令说功能没接。 */
   huntStore?: { list(limit?: number): readonly import('../../core/journal-store').CatchRow[] }
   /** Sticker library — 随身 CC 手机页展示 + 图片服务(main.ts 传入)。 */
-  stickers?: import('../stickers').StickerLib
+  stickers?: import('../../features/stickers').StickerLib
   /** 触发 daemon 重启(远程访问开关切换后套用新隧道接线)。main.ts 传入。 */
   requestRestart?: (reason: string) => void
   /** LLM 体检只读缓存 —— 设置面板「模型与后端」的通/不通一列。main.ts 传入。 */

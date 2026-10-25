@@ -80,6 +80,7 @@ import { registerIlink } from './ilink-lifecycle'
 import { registerPolling, type PollingLifecycle } from './polling-lifecycle'
 import { startCliUpgrade } from './cli-upgrade/start'
 import { remindersFeature } from '../features/reminders'
+import { stickersFeature, type StickersFeature } from '../features/stickers'
 import { registerReportSweeper, sendReportVia } from './reports/sweeper'
 import { runStartupSweeps } from './startup-sweeps'
 import { isHeartbeatFresh } from './single-instance'
@@ -172,9 +173,6 @@ export function daemonModules(f: Foundation): DaemonModule[] {
           stateDir, daemonPid: process.pid, memory: f.memoryFS, db, projects: f.projects,
           getChatPrefs: (c) => f.chatPrefs.get(c),
           setChatPref: (c, p) => f.chatPrefs.set(c, p),
-          stickers: f.stickerLib,
-          stickerFeedback: f.stickerFeedback,
-          stickerSource: f.stickerSource,
           replySinks: f.replySinks,
           outboundTaps: f.outboundTaps,
           replyDelivery: ctx.get('reply-delivery'),
@@ -257,9 +255,21 @@ export function daemonModules(f: Foundation): DaemonModule[] {
       deps: (ctx) => ({ stateDir, ilink: ctx.get<IlinkAdapter>('ilink-adapter') }),
     }),
 
+    // —— 贴纸:一个功能一个目录(src/features/stickers);路由自己挂。表情库全 daemon 一份,bootstrap(提示词)和 wired 都要它 ——
+    stickersFeature({
+      needs: ['ilink-adapter'],
+      deps: (ctx) => {
+        const ilink = ctx.get<IlinkAdapter>('ilink-adapter')
+        return {
+          stateDir, log: (t, l) => log(t, l),
+          ilink: { sendFile: (c, p) => ilink.sendFile(c, p), noteSentMedia: (c, m) => ilink.noteSentMedia?.(c, m) },
+        }
+      },
+    }),
+
     // —— bootstrap:provider registry / 会话管理 / 协调器 + 可选的知识库 / 社交 / A2A / 配对 / 乙(一组模块,bootstrap/index.ts)——
     ...bootstrapModules({
-      needs: ['ilink-adapter', 'reply-delivery', 'internal-api', 'network-gate'],
+      needs: ['ilink-adapter', 'reply-delivery', 'internal-api', 'network-gate', 'stickers'],
       lazy: ['cli-upgrade', 'workbench', 'wired'],
       deps: (ctx) => {
         const ilink = ctx.get<IlinkAdapter>('ilink-adapter')
@@ -290,7 +300,7 @@ export function daemonModules(f: Foundation): DaemonModule[] {
           mintSessionToken: internalApi.mintSessionToken,
           invalidateSession: internalApi.invalidateSession,
           internalApi: { baseUrl: internalApi.baseUrl, tokenFilePath: internalApi.tokenFilePath },
-          ...promptReads(f),
+          ...promptReads(f, ctx.get<StickersFeature>('stickers').lib),
           // self-restart(spec 2026-08-03):只在有 supervisor 拉起我们的地方开(`service install` 写进 launchd / systemd 的
           // WECHAT_CC_SUPERVISED)—— 前台 `bun cli.ts run`、Windows 的登录任务里 exit(0) 就是死了,而这个功能是静默的。
           ...(process.env[SUPERVISED_ENV] === '1'
@@ -473,7 +483,7 @@ export function daemonModules(f: Foundation): DaemonModule[] {
     // —— wireMain:入站管道的依赖、伙伴 tick、手机那一簇、CC 开口那道门 ——
     {
       name: 'wired',
-      needs: ['bootstrap', 'boot-api', 'cli-sessions', 'owner-commands', 'activity', 'workbench', 'ilink-adapter', 'reply-delivery', 'internal-api', 'network-gate'],
+      needs: ['bootstrap', 'boot-api', 'cli-sessions', 'owner-commands', 'activity', 'workbench', 'ilink-adapter', 'reply-delivery', 'internal-api', 'network-gate', 'stickers'],
       lazy: ['pipeline', 'polling', 'companion.ingest'],
       init(ctx): WiredDeps {
         const boot = ctx.get<Bootstrap>('bootstrap')
@@ -508,7 +518,7 @@ export function daemonModules(f: Foundation): DaemonModule[] {
           matters: f.matters, guardRuntime: guardRt, subsystems: () => f.sup.statuses(), providerRefusals: () => f.providerRefusals.all(),
           panelTokens: internalApi.panelTokens,
           commands: owner.commands,
-          stickers: f.stickerLib,
+          stickers: ctx.get<StickersFeature>('stickers').lib,
           requestRestart: (reason) => f.requestRestart(reason),
           llmHealth,
           stateDir, db, ilink, projects: f.projects, accounts: f.accounts, boot, dangerously, chatPrefs: f.chatPrefs, careLedger: f.careLedger, replySinks: f.replySinks,
@@ -689,7 +699,7 @@ interface PipelineModule { run: PipelineRun; appTurn: AppTurn }
 interface Deferred { start(): void }
 
 /** 每次起会话时现读的提示词素材(人格、记忆、贴纸、关心档 ……):手改了文件,不用重启就生效。 */
-function promptReads(f: Foundation) {
+function promptReads(f: Foundation, stickers: StickersFeature['lib']) {
   const { stateDir, db } = f
   const memoryOf = (c: string) => makeMemoryFS({ rootDir: join(stateDir, 'memory', c) })
   return {
@@ -707,7 +717,7 @@ function promptReads(f: Foundation) {
     // bubble-replies design — `/set split off` silences both route splitting and the bubble guidance.
     bubbleRepliesFor: (c: string) => f.chatPrefs.get(c).split !== false,
     // image-stickers plan §5 — per-chat opt-out hides both sticker sections (null); pref on ⇒ allTags() (may be []).
-    stickerTagsFor: (c: string) => (f.chatPrefs.get(c).stickers !== false ? f.stickerLib.allTags() : null),
+    stickerTagsFor: (c: string) => (f.chatPrefs.get(c).stickers !== false ? stickers.allTags() : null),
     // persona design §2 — owner chat's persona.md, read fresh per spawn; cultivate only in the owner's own chat.
     personaFor: (c: string) => {
       const ownerChat = loadCompanionConfig(stateDir).default_chat_id

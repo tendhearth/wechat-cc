@@ -1,5 +1,5 @@
 import { join } from 'node:path'
-import { makeStateStore } from './state-store'
+import { makeStateStore } from '../../daemon/state-store'
 
 export type StickerFeedbackSignal = 'positive' | 'negative'
 

@@ -122,16 +122,17 @@ export function createInternalApi(deps: InternalApiDeps): InternalApi {
   }
 
   const maybePrefix = makeMaybePrefix(deps)
-  const ROUTES = makeRoutes({
-    deps,
-    getDelegate: () => deps.delegate ?? null,
-    maybePrefix,
-  })
   /**
    * 功能模块自己挂上来的路由(架构终态 A3):路由表里标了 `module: X` 的那几条,由模块 X 在它的 init 里 `mount`。
    * 模块关着 / 坏了 ⇒ 下面的模块门回 module_off / module_degraded;开着但还没挂上(开机途中)⇒ module_starting。
    */
   const MOUNTED: RouteTable = {}
+  const ROUTES = makeRoutes({
+    deps,
+    getDelegate: () => deps.delegate ?? null,
+    maybePrefix,
+    mounted: MOUNTED,
+  })
 
   async function readJsonBody(req: IncomingMessage,maxBytes?:number): Promise<unknown> {
     if(maxBytes!==undefined){

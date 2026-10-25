@@ -1,7 +1,7 @@
 import { describe, expect, it, vi } from 'vitest'
-import { makeSpeechPolicy } from '../speech/policy'
-import type { ProactiveOutbound, ProactiveTurn } from '../companion/proactive-channel'
-import { announceNewSticker } from './tick-bodies'
+import { makeSpeechPolicy } from '../../daemon/speech/policy'
+import type { ProactiveOutbound, ProactiveTurn } from '../../daemon/companion/proactive-channel'
+import { announceNewSticker } from './artist-step'
 
 const OWNER = 'owner@im.wechat'
 function setup(o: { care?: 'off' | 'low'; quiet?: boolean; stickerOk?: boolean } = {}) {

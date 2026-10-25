@@ -16,7 +16,8 @@ import { existsSync, statSync } from 'node:fs'
 import { isAbsolute } from 'node:path'
 import type { PendingAttachment } from '../reply-delivery'
 import type { StickerRef, TurnAttachment } from '../../domain/turn-reply'
-import { errMsg, type InternalApiDeps, type RouteTable } from './types'
+import { errMsg, type InternalApiDeps, type RouteHandler, type RouteTable } from './types'
+import { countForTag } from '../../domain/sticker-tag'
 import { tierMeets } from './route-tiers'
 
 const VOICE_LIMIT = 500
@@ -34,9 +35,13 @@ function okOf(r: { status: number; body: unknown }): { ok: boolean; error?: stri
   return { ok: false, error: String(b.error ?? b.reason ?? `status_${r.status}`) }
 }
 
-export function turnRoutes(deps: InternalApiDeps, table: () => RouteTable): RouteTable {
+/**
+ * `route(key)`:按路由键找处理器 —— internal-api 自己那张表,加上功能模块挂上来的(表情那几条归 stickers 模块,
+ * src/features/stickers)。交付时才找,所以模块晚于 internal-api 挂上也接得住。
+ */
+export function turnRoutes(deps: InternalApiDeps, route: (key: string) => RouteHandler | undefined): RouteTable {
   const viaRoute = (key: string, body: Record<string, unknown>) => async (): Promise<{ ok: boolean; error?: string }> => {
-    const h = table()[key]
+    const h = route(key)
     if (!h) return { ok: false, error: `${key} not wired` }
     try { return okOf(await h(new URLSearchParams(), body, undefined)) } catch (err) { return { ok: false, error: errMsg(err) } }
   }
@@ -69,9 +74,13 @@ export function turnRoutes(deps: InternalApiDeps, table: () => RouteTable): Rout
         const tag = str(b.tag), mood = str(b.mood), url = str(b.url), query = str(b.query), id = str(b.id)
         let ref: StickerRef
         if (tag) {
-          if (!deps.stickers) return { status: 503, body: { error: 'stickers_not_wired' } }
-          if (deps.stickers.resolve(tag, chatId) === null) {
-            return { status: 200, body: { ok: false, reason: 'no_sticker_for_tag', tags: deps.stickers.allTags() } }
+          // 表情库归 stickers 模块:先经它挂上的 GET /v1/stickers 看库里有没有这个 tag(countForTag 与 resolve 同一种比法:
+          // trim + 不分大小写)。模块没挂上 ⇒ 跟以前没接表情库一样回 503 stickers_not_wired。
+          const lib = route('GET /v1/stickers')
+          if (!lib) return { status: 503, body: { error: 'stickers_not_wired' } }
+          const listed = ((await lib(new URLSearchParams(), undefined, undefined)).body ?? {}) as { stickers?: Array<{ tags: string[] }>; tags?: string[] }
+          if (countForTag(listed.stickers ?? [], tag) === 0) {
+            return { status: 200, body: { ok: false, reason: 'no_sticker_for_tag', tags: listed.tags ?? [] } }
           }
           ref = { tag }
           send = viaRoute('POST /v1/wechat/send_sticker', { chat_id: chatId, tag })

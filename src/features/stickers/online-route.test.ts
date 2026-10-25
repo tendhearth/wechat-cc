@@ -1,20 +1,14 @@
 import { describe, expect, it, vi } from 'vitest'
 import { existsSync } from 'node:fs'
-import { makeRoutes } from './internal-api/routes'
+import { stickersRoutes, type StickersRoutesDeps } from './routes'
 
-function route(deps: Record<string, unknown>) {
-  const routes = makeRoutes({
-    deps: { stateDir: '/tmp', daemonPid: 1, ...deps },
-    getDelegate: () => null,
-    maybePrefix: (_chat, text) => text,
-  })
+const noLib = { list: () => [], resolve: () => null, save: vi.fn(), allTags: () => [] } as unknown as StickersRoutesDeps['stickers']
+function route(deps: Partial<StickersRoutesDeps>) {
+  const routes = stickersRoutes({ stickers: noLib, ilink: { sendFile: vi.fn(async () => {}) }, ...deps })
   return routes['POST /v1/wechat/search_online_sticker']!
 }
 
-const ilink = (sendFile: (chatId: string, path: string) => Promise<void> = vi.fn(async () => {})) => ({
-  sendReply: vi.fn(async () => ({ msgId: '1' })), sendFile,
-  editMessage: vi.fn(async () => {}), broadcast: vi.fn(async () => ({ ok: 0, failed: 0 })),
-})
+const ilink = (sendFile: (chatId: string, path: string) => Promise<void> = vi.fn(async () => {})) => ({ sendFile })
 
 describe('search_online_sticker route', () => {
   it('is safely disabled without a provider', async () => {
@@ -29,7 +23,7 @@ describe('search_online_sticker route', () => {
       list: () => Array.from({ length: 5 }, (_, i) => ({ file: `${i}.gif`, tags: ['安慰'] })),
       resolve: () => '/tmp/local.gif', save: vi.fn(), allTags: () => ['安慰'],
     }
-    const result = await route({ source, stickerSource: source, stickers, ilink: ilink(sendFile) })(new URLSearchParams(), { chat_id: 'c', mood: '安慰', query: 'hug' })
+    const result = await route({ stickerSource: source as unknown as StickersRoutesDeps['stickerSource'], stickers: stickers as unknown as StickersRoutesDeps['stickers'], ilink: ilink(sendFile) })(new URLSearchParams(), { chat_id: 'c', mood: '安慰', query: 'hug' })
     expect(result.body).toEqual({ ok: true, source: 'local', file: 'local.gif' })
     expect(source.search).not.toHaveBeenCalled()
   })
@@ -40,7 +34,7 @@ describe('search_online_sticker route', () => {
     const save = vi.fn(() => ({ file: 'saved.gif', tags: ['安慰'] }))
     const result = await route({
       stickerSource: { search: async () => [{ id: '1', url: 'https://x/1.gif' }], download: async () => ({ bytes: new Uint8Array([1]), ext: 'gif' }) },
-      stickers: { list: () => [], resolve: () => null, save, allTags: () => [] }, ilink: ilink(sendFile),
+      stickers: { list: () => [], resolve: () => null, save, allTags: () => [] } as unknown as StickersRoutesDeps['stickers'], ilink: ilink(sendFile),
     })(new URLSearchParams(), { chat_id: 'c', mood: '安慰', query: 'hug' })
     expect(result.body).toEqual({ ok: true, source: 'online', file: 'saved.gif' })
     expect(save).toHaveBeenCalledAfter(sendFile)

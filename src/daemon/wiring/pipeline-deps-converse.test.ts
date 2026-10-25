@@ -19,7 +19,7 @@ import {makeMwCommand} from '../inbound/mw-command'
 import type { AppTurn } from '../inbound/build'
 import { scopedReply } from '../inbound/reply-scope'
 import { makeMessagesStore } from '../../lib/messages-store'
-import type { StickerLib } from '../stickers'
+import type { StickerLib } from '../../features/stickers'
 import { withPhoneClient } from '../phone-client'
 
 // Task 2 HIGH-severity fix (app-conversation-channel spec §3): companionConverse

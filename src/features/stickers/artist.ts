@@ -1,6 +1,6 @@
-import { CC_INK_IDENTITY } from '../lib/cc-ink'
+import { CC_INK_IDENTITY } from '../../lib/cc-ink'
 /**
- * sticker-artist.ts — 觅食式表情生长 (2026-08-25, phase 2 of the starter
+ * artist.ts(原 daemon/sticker-artist.ts)— 觅食式表情生长 (2026-08-25, phase 2 of the starter
  * pack): the starter pack covers 开心/庆祝/送你/摸鱼/陪着; the moods it
  * CAN'T cover (安慰/晚安/加油/…) CC draws for itself — one per day at most,
  * announced to the owner like a small gift ("我画了张新表情~"), so the
@@ -14,11 +14,11 @@ import { CC_INK_IDENTITY } from '../lib/cc-ink'
  * one attempt per day, never a hot loop.
  */
 import { existsSync, mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } from 'node:fs'
-import { isNetworkUnprotectedError } from '../lib/network-gate'
+import { isNetworkUnprotectedError } from '../../lib/network-gate'
 import { join } from 'node:path'
-import { composeCcInk, ccInkOutputInstructions } from '../lib/cc-ink-compose'
+import { composeCcInk, ccInkOutputInstructions } from '../../lib/cc-ink-compose'
 import type { StickerLib } from './stickers'
-import { spawnSync } from '../lib/runtime/process'
+import { spawnSync } from '../../lib/runtime/process'
 
 /** Phase-1 moods (基础情绪) — drawn one per DAY until covered. */
 export const STICKER_MOOD_POOL: readonly string[] = [

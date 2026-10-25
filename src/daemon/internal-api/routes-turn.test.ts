@@ -28,11 +28,12 @@ function setup(over: Partial<InternalApiDeps> = {}, table: RouteTable = {}) {
       broadcast: vi.fn(async () => ({ ok: true, sent: 3 })),
     },
     voice: { replyVoice: vi.fn(async () => ({ ok: true as const, msgId: 'v1' })) },
-    stickers: { resolve: (tag: string) => tag === '庆祝' ? '/lib/庆祝.gif' : null, allTags: () => ['庆祝'] },
     resolveAdminChatId: () => 'owner',
     ...over,
   } as unknown as InternalApiDeps
-  const routes = turnRoutes(deps, () => table)
+  // 表情库归 stickers 模块:它挂上的 GET /v1/stickers(测试里给一个只有「庆祝」的库)。
+  const lib: RouteTable = { 'GET /v1/stickers': () => ({ status: 200, body: { ok: true, stickers: [{ file: '庆祝.gif', tags: ['庆祝'] }], tags: ['庆祝'] } }) }
+  const routes = turnRoutes(deps, (key) => table[key] ?? lib[key])
   return { routes, rt, sent, deps }
 }
 
@@ -75,6 +76,21 @@ describe('POST /v1/turn/attach — 附件登记到本轮(spec §4.5)', () => {
     t.rt.begin('owner', { context: 'dm', providerId: 'openai' })
     const r = await t.routes['POST /v1/turn/attach']!(q, { kind: 'sticker', tag: '不存在' }, admin())
     expect(r.body).toMatchObject({ ok: false, reason: 'no_sticker_for_tag', tags: ['庆祝'] })
+  })
+
+  it('表情库(stickers 模块)没挂上 ⇒ 503 stickers_not_wired,跟以前没接表情库一样', async () => {
+    const t = setup()
+    t.rt.begin('owner', { context: 'dm', providerId: 'openai' })
+    const r = turnRoutes(t.deps, () => undefined)
+    expect(await r['POST /v1/turn/attach']!(q, { kind: 'sticker', tag: '庆祝' }, admin())).toEqual({ status: 503, body: { error: 'stickers_not_wired' } })
+  })
+
+  it('tag 的比法跟表情库 resolve 一样:trim + 不分大小写', async () => {
+    const t = setup()
+    t.rt.begin('owner', { context: 'dm', providerId: 'openai' })
+    const lib: RouteTable = { 'GET /v1/stickers': () => ({ status: 200, body: { ok: true, stickers: [{ file: 'h.png', tags: ['Happy'] }], tags: ['Happy'] } }) }
+    const r = turnRoutes(t.deps, (key) => lib[key])
+    expect((await r['POST /v1/turn/attach']!(q, { kind: 'sticker', tag: ' happy ' }, admin())).body).toEqual({ ok: true, attached: true })
   })
 
   it('表情在交付时走原来的 send_sticker 路由(冷却 / 记偏好原样复用)', async () => {

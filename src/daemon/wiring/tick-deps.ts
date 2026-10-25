@@ -22,7 +22,7 @@ export interface TickDeps {
   projects: Pick<import('../projects').Projects, 'load'>
   /** Curated sticker library — enables the daily sticker-artist step in
    *  introspectTick. Absent ⇒ the step never runs (tests, minimal embeds). */
-  stickers?: import('../stickers').StickerLib
+  stickers?: import('../../features/stickers').StickerLib
   /** CC 画的你 —— 自动刷新小像(portrait-artist)。缺省 ⇒ 不自动刷新。 */
   generatePortrait?: (adminChatId: string) => Promise<{ ok: boolean; error?: string }>
   boot: Bootstrap

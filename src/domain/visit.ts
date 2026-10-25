@@ -152,7 +152,7 @@ export function buildVisitNarrationPrompt(a: VisitPersonaArgs & {
 }
 
 /**
- * 明信片:串门回来画一张。和表情包同一套手绘约束(sticker-artist.ts),
+ * 明信片:串门回来画一张。和表情包同一套手绘约束(features/stickers/artist.ts),
  * 画面是**对方家**的一个瞬间 —— 不是自画像,是「我去过那儿」的证据。
  * 返回 SVG 文本;调用方负责 safeSvg 与栅格化。
  */
