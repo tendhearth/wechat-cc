@@ -11,8 +11,8 @@ import type { IlinkAdapter } from '../ilink-glue'
 import type { Bootstrap } from '../bootstrap/index'
 import type { ChatPrefsStore } from '../chat-prefs'
 import type { CareLedger } from '../companion/care-ledger'
-import type { InboundMsg } from '../../core/prompt-format'
-import type { Mode } from '../../core/conversation'
+import type { InboundMsg } from '../../domain/prompt-format'
+import type { Mode } from '../../domain/conversation'
 import type { PendingPermissionView } from '../pending-permissions'
 
 // 命令路由的「待批准」分支要求 access.admins 非空 + isAdmin(chatId)。这是

@@ -10,8 +10,8 @@ import { hostname } from 'node:os'
 import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js'
 import type { InternalApiClient } from './client'
 import { passthroughErrorResult } from './tool-helpers'
-import { formatCliSessionDigest, type CliDigestView } from '../../core/cli-session-digest'
-import { formatOverseerToday, type OverseerToday } from '../../core/overseer-today'
+import { formatCliSessionDigest, type CliDigestView } from '../../domain/cli-session-digest'
+import { formatOverseerToday, type OverseerToday } from '../../domain/overseer-today'
 
 /** 本会话的 provider id —— daemon 在 spawn wechat-mcp 子进程时写进 env
  *  (mcp-specs.ts participantTag)。model_get/model_set 默认作用于它,这样

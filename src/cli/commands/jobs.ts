@@ -3,7 +3,7 @@ import { defineCommand } from 'citty'
 import { STATE_DIR } from '../../lib/config'
 import { makeJobsStore } from '../../core/scheduled-jobs-store'
 import { cliAddJob, cliFormatJobs, ownerTimezone } from '../jobs'
-import { describeSchedule } from '../../core/scheduled-jobs'
+import { describeSchedule } from '../../domain/scheduled-jobs'
 
 const fail = (error: string): never => { console.error(error); process.exit(1) }
 const idArg = { id: { type: 'positional' as const, required: true, description: 'Job id (see jobs list), e.g. j1' } }

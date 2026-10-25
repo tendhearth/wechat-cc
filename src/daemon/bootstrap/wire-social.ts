@@ -18,7 +18,7 @@ import { makeMailboxClient } from '../../core/mailbox-client'
 import { loadMailboxIdentity } from '../../core/mailbox-crypto'
 import { generateKeypair } from '../../core/penpal-crypto'
 import { buildOwnCard, adoptPeerCard } from '../../core/pairing'
-import { makeForwardBudget } from '../../core/forward-budget'
+import { makeForwardBudget } from '../../domain/forward-budget'
 import { FORWARD_PER_SENDER, FORWARD_WINDOW_MS } from '../../core/intro'
 import { makeMailboxLetterHandler } from './mailbox-letter-handler'
 import { makeRoutePostLetter } from './postletter-route'
@@ -26,7 +26,7 @@ import type { A2AServerOpts } from '../../core/a2a-server'
 import type { A2ARegistry } from '../../core/a2a-registry'
 import type { A2AClient } from '../../core/a2a-client'
 import type { ProviderRegistry } from '../../core/provider-registry'
-import type { ProviderId } from '../../core/conversation'
+import type { ProviderId } from '../../domain/conversation'
 import type { AgentConfig } from '../../lib/agent-config'
 import type { Db } from '../../lib/db'
 import type { SendAssistantText } from './fallback-reply'
@@ -215,7 +215,7 @@ export async function wireSocial(deps: SocialDeps): Promise<SocialWiring> {
       }
       // 告诉主人一句社交上的事:先问 CC 开口那道门再经 sendAssistantText 发(./social-tell.ts,第三批 3a)
       const teller = makeTellOwner({ resolveOperatorChatId, sendAssistantText, ...(deps.speech ? { speech: deps.speech } : {}), log: deps.log })
-      const tellOwner = (kind: import('../../core/speech/kinds').SocialNotice, text: string): void => { void teller(kind, text) }
+      const tellOwner = (kind: import('../../domain/speech/kinds').SocialNotice, text: string): void => { void teller(kind, text) }
       const onInbound: import('../../core/penpal-correspondent').CorrespondentDeps['onInbound'] = ({ channelRowId, letterId, plaintext, env }) => {
         switch (env.kind) {
           case 'letter': {

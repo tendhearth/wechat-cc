@@ -14,7 +14,7 @@ export interface PipelineDepsOpts {
   /** 终端会话的手机动作(拍板 / 说一句):POST /m/api/cli/permission、/m/api/cli/say。缺省 ⇒ 503。 */
   cliActions?: import('../cli-phone-actions').CliPhoneActions
   /** 「今天」一眼看完(core/overseer-today.ts):手机 GET /m/api/today 读它。缺省 ⇒ 503。 */
-  overseerToday?: () => import('../../core/overseer-today').OverseerToday
+  overseerToday?: () => import('../../domain/overseer-today').OverseerToday
   /** 「CC 现在怎么样」里「终端里的 Claude Code / Codex」那一行(2026-10-14)。缺省 ⇒ 那一行不出现。 */
   terminalHooks?: Pick<import('../terminal-hooks').TerminalHooksService, 'capabilityInput'>
   /** 网络守护运行时(2026-10-02):微信入站闸门 + 每晚整理记忆的跳过判据。 */
@@ -69,7 +69,7 @@ export interface PipelineDepsOpts {
   /** 对话回合(turn_records)—— 随身 CC 首屏的「聊天日摘要」来源。main.ts 传 turnRecordStore。 */
   turns?: { recent(limit: number): readonly { chatId: string; endedAt: number; outcome: string; mode: string; startedAt: number }[] }
   /** 三轴 presence 共用入口(internal-api lifecycle.getPresence)。main.ts 传入。 */
-  presence?: () => Promise<import('../../core/companion-presence').Presence | null>
+  presence?: () => Promise<import('../../domain/companion-presence').Presence | null>
   /** 微信文本命令(定时 / 日历 / 做过的事 / 经验 / 导入记忆 / 终端会话 …),main.ts 传入;和本文件的 command-router 一起组成 CommandRegistry(重构第二批步 2)。 */
   commands?: readonly import('../commands/registry').WechatCommand[]
 }

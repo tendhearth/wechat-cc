@@ -4,7 +4,7 @@ import { type NativeHistoryReader, type NativeHistoryProvider } from './native-h
 import type { MatterStore } from '../matters/store'
 import type { ReportSink } from '../matters/report'
 import type { RecollectSink } from '../matters/recollection'
-import type { UsageSnapshot } from '../subscription-usage'
+import type { UsageSnapshot } from '../../domain/subscription-usage'
 import { type WorkbenchStore } from './store'
 import { makeTaskChangeHub, type TaskChangeHub } from './task-changes'
 

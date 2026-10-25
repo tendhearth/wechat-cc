@@ -2,9 +2,9 @@ import { describe, expect, it } from 'vitest'
 import { tierEnforcement } from './tier-enforcement'
 import { KNOWN_PROVIDER_IDS } from './capability-matrix'
 import { TIER_PROFILES, type UserTier } from './user-tier'
-import { makeCanUseTool } from './permission-relay'
-import { gateTool } from './openai-gate'
-import { makeGeminiToolGate } from './gemini-agent-provider'
+import { makeCanUseTool } from '../core/permission-relay'
+import { gateTool } from '../core/openai-gate'
+import { makeGeminiToolGate } from '../core/gemini-agent-provider'
 
 // 评审 #464:「per-tool」原来只看自报的 perToolCallback,证明不了那家的 gate 真在查档位。
 // 这里每家真调一次 gate:访客碰 shell、trusted 碰 admin 专用工具,都必须被拒。

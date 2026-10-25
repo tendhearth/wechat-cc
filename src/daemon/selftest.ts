@@ -15,7 +15,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { collectTurn } from '../core/agent-provider'
 import type { ProviderRegistry } from '../core/provider-registry'
-import { TIER_PROFILES, sessionAuthEnv, type UserTier } from '../core/user-tier'
+import { TIER_PROFILES, sessionAuthEnv, type UserTier } from '../domain/user-tier'
 import { routesForToken } from './internal-api/route-tiers'
 
 export interface SelftestConverseResult {

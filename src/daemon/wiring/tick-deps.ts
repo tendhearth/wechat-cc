@@ -5,14 +5,14 @@ import type { Db } from '../../lib/db'
 import type { IlinkAdapter } from '../ilink-glue'
 import type { Bootstrap } from '../bootstrap'
 import type { Access } from '../../lib/access'
-import type { PermissionMode } from '../../core/capability-matrix'
-import type { ReplyDeliveryPort } from '../../core/turn-reply'
+import type { PermissionMode } from '../../domain/capability-matrix'
+import type { ReplyDeliveryPort } from '../../domain/turn-reply'
 import { shouldSpeak } from '../companion/calibration'
 import type { CareLedger } from '../companion/care-ledger'
 import { connectHearth } from '../companion/hearth-client'
 import { buildHearthPlan } from '../companion/hearth-plan'
 import type { CheapEval } from '../../core/agent-provider'
-import { type AvoidTopic } from '../../core/companion-topics'
+import { type AvoidTopic } from '../../domain/companion-topics'
 
 export interface TickDeps {
   stateDir: string
@@ -49,7 +49,7 @@ export interface TickDeps {
    * chat. Typed as a structural subset of ChatPrefsStore so tests can fake
    * it without a full store.
    */
-  chatPrefs: { get(chatId: string): { care?: 'off' | 'low' | 'high'; hunt?: boolean; visit?: boolean; avoid?: AvoidTopic[]; quiet?: import('../../core/quiet-hours').QuietWindow }; list(): string[] }
+  chatPrefs: { get(chatId: string): { care?: 'off' | 'low' | 'high'; hunt?: boolean; visit?: boolean; avoid?: AvoidTopic[]; quiet?: import('../../domain/quiet-hours').QuietWindow }; list(): string[] }
   /**
    * 打猎战利品(2026-09-03)。`outboundTaps` 旁听打猎那一拍发出去的文本,
    * `huntStore` 把它拆成条目落库。两者都可选:没接就是旧行为(发了不记)。

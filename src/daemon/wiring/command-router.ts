@@ -16,7 +16,7 @@
  * the pre-extraction closure — only the dependency edges are now explicit.
  */
 import { randomBytes } from 'node:crypto'
-import type { InboundMsg } from '../../core/prompt-format'
+import type { InboundMsg } from '../../domain/prompt-format'
 import { parseLetterCommand } from '../../core/penpal-letter-command'
 import { parseVisitCommand } from '../../core/visit-command'
 import { parsePairCommand } from '../../core/pair-command'

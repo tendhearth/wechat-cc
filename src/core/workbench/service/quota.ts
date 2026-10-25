@@ -4,7 +4,7 @@
  * 登记处本体交回 service.ts(execute / requireInput / attention 直接 note / clear / exhausted),
  * 所以这里返回的是**同一个实例**,不是快照。
  */
-import { makeQuotaRegistry, type QuotaState } from '../../provider-quota'
+import { makeQuotaRegistry, type QuotaState } from '../../../domain/provider-quota'
 import { isWorkbenchExecutorCapabilities, isWorkbenchProviderId } from '../executor-capabilities'
 import type { ServiceCtx } from './ctx'
 

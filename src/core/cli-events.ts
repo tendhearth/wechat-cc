@@ -12,7 +12,7 @@
  * 权限同理但压得短。发送失败只记日志、丢弃 —— 断线不重试。
  */
 
-import { cliSourceLabel } from './cli-session-digest'
+import { cliSourceLabel } from '../domain/cli-session-digest'
 import { sortCliSessionViews, toCliSessionView, type CliSessionRow, type CliSessionStore, type CliSessionView } from './cli-session-store'
 
 export type CliSource = 'claude' | 'codex' | 'cursor'

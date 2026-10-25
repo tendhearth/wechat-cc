@@ -3,7 +3,7 @@ import { mkdtempSync, rmSync, writeFileSync, mkdirSync, readFileSync } from 'nod
 import { join } from 'node:path'
 import { tmpdir } from 'node:os'
 import { readPlanLog, appendPlanLog, readPlanLogDays, PLAN_LOG_KEEP_DAYS } from './plan-memory'
-import type { PlanLogEntry } from '../../core/companion-plan'
+import type { PlanLogEntry } from '../../domain/companion-plan'
 
 const e = (over: Partial<PlanLogEntry> = {}): PlanLogEntry => ({ at: '2026-05-13T02:00:00.000Z', chatId: 'c1', candidates: ['hunt'], decision: 'none', why: 'w', source: 'model', ...over })
 

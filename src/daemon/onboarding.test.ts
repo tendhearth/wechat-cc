@@ -4,7 +4,7 @@ import { join } from 'node:path'
 import { tmpdir } from 'node:os'
 import { makeOnboardingHandler, type OnboardingDeps } from './onboarding'
 import { makeStateStore, type StateStore } from './state-store'
-import type { InboundMsg } from '../core/prompt-format'
+import type { InboundMsg } from '../domain/prompt-format'
 
 function mkMsg(opts: { chatId?: string; userId?: string; text: string }): InboundMsg {
   return {

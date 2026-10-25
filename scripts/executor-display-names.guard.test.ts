@@ -10,7 +10,7 @@
  * 守的范围(故意收得窄,免得误报):
  *  - 扫三端的界面源码(apps/desktop/src、apps/app/src、apps/mobile/src)和 daemon 一侧的 src/daemon、src/core、
  *    src/cli、src/lib 下的 .js / .ts / .tsx(10-21 扩到 src/:定时那边的 command.ts 手写了一张 EXEC_NAME,
- *    只扫三端时漏了)。名字的唯一出处 src/lib/executor-facts.ts 与 src/core/provider-display-names.ts 不扫。
+ *    只扫三端时漏了)。名字的唯一出处 src/lib/executor-facts.ts 与 src/domain/provider-display-names.ts 不扫。
  *    协议文档与 docs(那里「OpenAI-compatible」是协议名,「Claude Code」是要装的程序名)、index.html 与 CSS
  *    (装机引导里写的是产品 / 程序名,不是执行者显示名)不扫。
  *  - 规则认得出、但确实不是执行者显示名的(终端程序名、解析用的别名、句子),逐条写进 NOT_DISPLAY_NAMES 并说明为什么;
@@ -34,7 +34,7 @@ import { PROVIDER_IDS } from '../src/lib/provider-ids'
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..')
 const SURFACES = ['apps/desktop/src', 'apps/app/src', 'apps/mobile/src', 'src/daemon', 'src/core', 'src/cli', 'src/lib']
 /** 名字的唯一出处,不扫。 */
-const SINGLE_SOURCES = new Set(['src/lib/executor-facts.ts', 'src/core/provider-display-names.ts'])
+const SINGLE_SOURCES = new Set(['src/lib/executor-facts.ts', 'src/domain/provider-display-names.ts'])
 const SKIP_DIR = new Set(['node_modules', 'vendor', 'assets'])
 
 function files(dir: string): string[] {

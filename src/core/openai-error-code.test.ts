@@ -10,7 +10,7 @@ import { createOpenAiAgentProvider } from './openai-agent-provider'
 import { openaiErrorCode, openaiErrorMessage } from './openai-error-code'
 import type { AgentEvent } from './agent-provider'
 import type { McpToolBridge } from './openai-mcp-bridge'
-import { TIER_PROFILES } from './user-tier'
+import { TIER_PROFILES } from '../domain/user-tier'
 import { providerErrorCodeOf } from '../lib/provider-error-code'
 import type { FetchLike } from '../lib/timeout-fetch'
 

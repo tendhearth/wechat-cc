@@ -5,10 +5,10 @@ import { errorWithProviderCode } from '../lib/provider-error-code'
 import { createProviderRegistry } from './provider-registry'
 import { makeFakeSession } from './test-helpers'
 import type { AgentEvent, AgentProvider, AgentSession } from './agent-provider'
-import type { Mode, ProviderId } from './conversation'
-import { formatInbound, type InboundMsg } from './prompt-format'
+import type { Mode, ProviderId } from '../domain/conversation'
+import { formatInbound, type InboundMsg } from '../domain/prompt-format'
 import type { AcquireRequest } from './session-manager'
-import { TIER_PROFILES, type TierProfile } from './user-tier'
+import { TIER_PROFILES, type TierProfile } from '../domain/user-tier'
 import type { Access } from '../lib/access'
 
 describe('authFailNotice', () => {

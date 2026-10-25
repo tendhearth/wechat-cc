@@ -1,6 +1,6 @@
 import type { AgentActivity, AgentEvent } from '../agent-provider'
 import { normalizeWechatMcpServer } from '../agent-provider'
-import { isQuotaRefusalText } from '../provider-quota'
+import { isQuotaRefusalText } from '../../domain/provider-quota'
 
 /**
  * ACP `session/update` → `AgentEvent` 的纯翻译。不碰进程、不碰 RPC。

@@ -3,7 +3,7 @@ import { PHONE_API_SCHEMAS } from '@wechat-cc/protocol'
 import { mobileReadsRoutes, cacheSessions, SESSIONS_DONE_MAX, type MobileSessionsDeps } from './mobile-reads'
 import { routePhone } from './phone-route-table'
 import type { ConnectionsSnapshot } from './connections'
-import { buildOverseerToday } from '../core/overseer-today'
+import { buildOverseerToday } from '../domain/overseer-today'
 import { deriveSharedKey, generateTunnelKeypair, sealFrame } from '../lib/tunnel-crypto'
 
 const SNAP: ConnectionsSnapshot = {

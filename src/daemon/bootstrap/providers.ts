@@ -8,10 +8,10 @@ import { DEFAULT_CLAUDE_MODEL } from '../../core/claude-agent-provider'
 import { DEFAULT_AGY_MODEL } from '../../core/agy-agent-provider'
 import { createClaudeAgentProvider } from '../../core/claude-agent-provider'
 import { createCodexAgentProvider } from '../../core/codex-agent-provider'
-import { buildSystemPrompt } from '../../core/prompt-builder'
-import { assertMatrixComplete, capabilitiesFor, capabilityProviderIds } from '../../core/capability-matrix'
-import type { ProviderId } from '../../core/conversation'
-import type { PermissionMode } from '../../core/capability-matrix'
+import { buildSystemPrompt } from '../../domain/prompt-builder'
+import { assertMatrixComplete, capabilitiesFor, capabilityProviderIds } from '../../domain/capability-matrix'
+import type { ProviderId } from '../../domain/conversation'
+import type { PermissionMode } from '../../domain/capability-matrix'
 import type { Options } from '@anthropic-ai/claude-agent-sdk'
 import type { ConversationStore } from '../../core/conversation-store'
 import { makeMtimeCachedConfigReader, type AgentConfig, type AgentProviderKind } from '../../lib/agent-config'
@@ -72,7 +72,7 @@ export interface ProviderDeps {
   configuredAgent: AgentConfig
   permissionMode: PermissionMode
   conversationStore: ConversationStore
-  sdkOptionsForProject: (alias: string, path: string, tierProfile: import('../../core/user-tier').TierProfile, chatId: string, mcpEnv?: Record<string, string>, appendInstructions?: string, spawnContext?: { permissionMode: import('../../core/capability-matrix').PermissionMode }) => Options
+  sdkOptionsForProject: (alias: string, path: string, tierProfile: import('../../domain/user-tier').TierProfile, chatId: string, mcpEnv?: Record<string, string>, appendInstructions?: string, spawnContext?: { permissionMode: import('../../domain/capability-matrix').PermissionMode }) => Options
   claudeBin: string | undefined
   currentClaudeModel: () => string
   resolveAdminChatId: (access: Access, companion: CompanionConfig, initiatingChatId?: string | null) => string | null
@@ -94,7 +94,7 @@ export interface ProviderDeps {
    *  (BootstrapDeps['mintSessionToken']). The agy provider's tier-C MCP
    *  setup (agy-mcp-config.ts) uses this to mint ONE long-lived 'trusted'
    *  token for its global config upsert; never a per-session token. */
-  mintSessionToken?: (tier: import('../../core/user-tier').UserTier, sessionKey: string) => string
+  mintSessionToken?: (tier: import('../../domain/user-tier').UserTier, sessionKey: string) => string
   /**
    * Test/harness seam for agy's tier-C global MCP config target dir (fix
    * round 1, 2026-08-17) — threaded straight through to
@@ -659,7 +659,7 @@ export async function registerProviders(deps: ProviderDeps): Promise<ProviderWir
     try {
       const { GoogleGenAI } = await import('@google/genai')
       const { createGeminiAgentProvider, makeGeminiToolGate, connectWechatMcp } = await import('../../core/gemini-agent-provider')
-      const { lookup } = await import('../../core/capability-matrix')
+      const { lookup } = await import('../../domain/capability-matrix')
       const genaiClient = new GoogleGenAI({ apiKey: geminiKey }) as unknown as import('../../core/gemini-agent-provider').GenaiClient
       const buildGate = makeGeminiToolGate({
         askUser: deps.ilink.askUser,

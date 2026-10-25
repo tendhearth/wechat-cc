@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import { buildRecapMaterial, buildRecapText, makeRecapTurn, RECAP_MATERIAL_MAX } from './recap'
-import type { ActivityItem } from '../../core/cc-activity'
+import type { ActivityItem } from '../../domain/cc-activity'
 
 const NOW = Date.parse('2026-10-25T12:00:00Z')
 const it_ = (id: string, kind: ActivityItem['kind'], daysAgo: number, title: string): ActivityItem => ({ id, kind, at: NOW - daysAgo * 86_400_000, title })

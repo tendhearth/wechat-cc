@@ -22,8 +22,8 @@
 import { turnTimeoutMsFromEnv } from '../../lib/turn-timeout'
 import { idleSweepModule } from './wire-idle-sweep'
 import { SessionManager } from '../../core/session-manager'
-import type { ProviderId } from '../../core/conversation'
-import { formatInbound } from '../../core/prompt-format'
+import type { ProviderId } from '../../domain/conversation'
+import { formatInbound } from '../../domain/prompt-format'
 import { join } from 'node:path'
 import { makeSessionStore } from '../../core/session-store'
 import { loadAgentConfig } from '../../lib/agent-config'
@@ -56,7 +56,7 @@ import type { SubsystemSupervisor } from '../subsystems'
 import type { BootstrapDeps, Bootstrap } from './types'
 export type { BootstrapDeps, Bootstrap } from './types'
 
-// buildChannelSystemPrompt() moved to src/core/prompt-builder.ts in
+// buildChannelSystemPrompt() moved to src/domain/prompt-builder.ts in
 // the RFC 03 review follow-up: the inline string here was v0.x and
 // missed delegate_*, share_*, broadcast, set_user_name, send_file,
 // edit_message — none of which were in the prompt despite being

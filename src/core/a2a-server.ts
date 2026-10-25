@@ -22,7 +22,7 @@
  */
 import type { A2ARegistry } from './a2a-registry'
 import type { A2AAgentRecord } from '../lib/agent-config'
-import type { ProviderId } from './conversation'
+import type { ProviderId } from '../domain/conversation'
 import { A2A_PROTO_VERSION } from './a2a-intent'
 import { serve, type Server } from '../lib/runtime/http'
 

@@ -690,7 +690,7 @@ const selfAskCmd = defineCommand({
   },
   async run({ args }) {
     const { makeOwnerAsksStore, OWNER_ASKS_FILE } = await import('../../core/owner-asks-store')
-    const { formatAsks, ASK_ONLY_IN_BRIEF } = await import('../../core/owner-asks')
+    const { formatAsks, ASK_ONLY_IN_BRIEF } = await import('../../domain/owner-asks')
     const store = makeOwnerAsksStore(join(STATE_DIR, OWNER_ASKS_FILE))
     if (args.list) {
       const s = store.read()

@@ -2,7 +2,7 @@ import { EventEmitter } from 'node:events'
 import { PassThrough } from 'node:stream'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { AgentEvent, AgentSession, SpawnContext } from './agent-provider'
-import { TIER_PROFILES } from './user-tier'
+import { TIER_PROFILES } from '../domain/user-tier'
 import { acpNotice, createAcpWorkbenchProvider, type AcpWorkbenchProviderOptions } from './acp-workbench-provider'
 import { APP_VERSION } from '../lib/app-version'
 

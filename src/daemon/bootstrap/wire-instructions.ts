@@ -5,10 +5,10 @@
  * wire-plugins 的 delegateStdioByProvider / knowledgePluginNames、defaultProviderId、
  * knowledge 走 parts.*;社交在不在是 parts.socialWired() 现问(social 模块在后面,模块容器的 ctx.late)。
  */
-import type { ProviderId } from '../../core/conversation'
-import type { TierProfile } from '../../core/user-tier'
-import { buildSystemPrompt } from '../../core/prompt-builder'
-import { capabilitiesFor, replyTextStrategyFor } from '../../core/capability-matrix'
+import type { ProviderId } from '../../domain/conversation'
+import type { TierProfile } from '../../domain/user-tier'
+import { buildSystemPrompt } from '../../domain/prompt-builder'
+import { capabilitiesFor, replyTextStrategyFor } from '../../domain/capability-matrix'
 import type { Bootstrap, BootstrapDeps } from './types'
 import type { PluginsSlice } from './wire-plugins'
 

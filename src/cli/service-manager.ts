@@ -3,7 +3,7 @@ import { homedir, platform, userInfo } from 'node:os'
 import { dirname, join, posix } from 'node:path'
 import { spawnSync } from 'node:child_process'
 import { findOnPath } from '../lib/util'
-import { SUPERVISED_ENV } from '../core/supervised-env'
+import { SUPERVISED_ENV } from '../domain/supervised-env'
 
 export type ServicePlatform = 'darwin' | 'win32' | 'linux'
 export type ServiceKind = 'launchagent' | 'scheduled-task' | 'systemd-user'

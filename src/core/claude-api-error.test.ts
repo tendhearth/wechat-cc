@@ -18,9 +18,9 @@ import { claudeApiErrorCode, createClaudeAgentProvider } from './claude-agent-pr
 import { createConversationCoordinator, type TurnRecord } from './conversation-coordinator'
 import { createProviderRegistry } from './provider-registry'
 import type { AgentEvent, AgentProvider, AgentSession } from './agent-provider'
-import type { Mode } from './conversation'
-import type { InboundMsg } from './prompt-format'
-import { TIER_PROFILES } from './user-tier'
+import type { Mode } from '../domain/conversation'
+import type { InboundMsg } from '../domain/prompt-format'
+import { TIER_PROFILES } from '../domain/user-tier'
 import { makeReplyDeliveryRuntime } from '../daemon/reply-delivery'
 
 const h = vi.hoisted(() => ({ script: [] as unknown[] }))

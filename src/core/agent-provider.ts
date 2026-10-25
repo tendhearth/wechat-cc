@@ -1,9 +1,9 @@
-import type { TierProfile } from './user-tier'
-import type { PermissionMode } from './permission-mode'
-import type { ProviderId } from './conversation'
+import type { TierProfile } from '../domain/user-tier'
+import type { PermissionMode } from '../domain/permission-mode'
+import type { ProviderId } from '../domain/conversation'
 import { isAuthFail } from './auth-fail'
 import type { CallTarget } from '../lib/call-classifier'
-import { makeTurnTextCollector } from './turn-reply'
+import { makeTurnTextCollector } from '../domain/turn-reply'
 
 // Re-export so existing imports `import type { PermissionMode } from
 // './agent-provider'` keep working.
@@ -89,7 +89,7 @@ export type AgentEvent =
    */
   | { kind: 'result'; sessionId: string; numTurns: number; durationMs: number; finalText?: string
       /** 这一轮执行者自己报的用量(core/turn-usage.ts);不报 ⇒ 不带。不估。 */
-      usage?: import('./turn-usage').TurnUsage }
+      usage?: import('../domain/turn-usage').TurnUsage }
   /** `code`:provider 边界产的结构化码 —— lib/provider-error-code 的闭集(另有
    *  collectTurn 自己的 `turn_timeout`)。下游有码就只看码;`message` 只给人/日志看,
    *  **永远不当回复发出去**。 */
@@ -341,22 +341,9 @@ export type SandboxLevel = 'none' | 'read-only' | 'workspace-write' | 'full'
  * not authoring 8 new matrix rows or editing per-provider branches in
  * bootstrap (peer pairing / delegate availability derive from here).
  */
-export type Confinement = 'per_tool' | 'sandbox' | 'none'
-export interface ToolSurfaceConfinement {
-  /** 读工作区以外的文件(主人的私钥、记忆、access.json 都在外面)。 */
-  read_outside_workspace: Confinement
-  /** 改文件。 */
-  fs_write: Confinement
-  /** 跑命令。 */
-  shell: Confinement
-  /** 上网。 */
-  network: Confinement
-}
-
-/** 访客能不能用:四件事都收得住才行(provider-policy 的第 2 条规则读它)。 */
-export function guestSafe(cap: Pick<ProviderCapabilities, 'confines'>): boolean {
-  return Object.values(cap.confines).every(c => c !== 'none')
-}
+// 四件事各靠什么收住、访客能不能用:纯规则,在 domain(架构终态 E1);这里转出给老的 import。
+export { guestSafe, type Confinement, type ToolSurfaceConfinement } from '../domain/confinement'
+import type { ToolSurfaceConfinement } from '../domain/confinement'
 
 export interface ProviderCapabilities {
   /**
@@ -418,7 +405,7 @@ export interface ProviderCapabilities {
    * 之前的段是长任务旁白)或 'all_segments'(聊天型模型 —— openai 兼容、agy:本轮所有文字段按顺序都交付)。
    * 读它用 capability-matrix 的 `replyTextStrategyFor`。
    */
-  replyText?: import('./turn-reply').ReplyTextStrategy
+  replyText?: import('../domain/turn-reply').ReplyTextStrategy
 }
 
 export interface AgentProvider {

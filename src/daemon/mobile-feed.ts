@@ -10,7 +10,7 @@
  * 天),不是无限历史;v1 在内存里合并排序,不做 SQL 级多源游标。
  */
 import type { CatchRow } from '../core/journal-store'
-import type { PlanLogEntry } from '../core/companion-plan'
+import type { PlanLogEntry } from '../domain/companion-plan'
 import { safeSvg } from '../lib/svg-sanitize'
 
 export type FeedKind = 'hunt' | 'visit' | 'postcard' | 'recollection' | 'thought' | 'chat_day'

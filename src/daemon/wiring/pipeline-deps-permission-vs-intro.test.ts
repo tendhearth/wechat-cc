@@ -31,8 +31,8 @@ import type { Bootstrap } from '../bootstrap/index'
 import type { IlinkAdapter } from '../ilink-glue'
 import type { ChatPrefsStore } from '../chat-prefs'
 import type { CareLedger } from '../companion/care-ledger'
-import type { InboundMsg } from '../../core/prompt-format'
-import type { Mode } from '../../core/conversation'
+import type { InboundMsg } from '../../domain/prompt-format'
+import type { Mode } from '../../domain/conversation'
 
 // Connection-health (Task 9) — buildPipelineDeps dereferences boot.health.health
 // unconditionally (llmHealth mw dep), so every `boot` fixture needs a minimal

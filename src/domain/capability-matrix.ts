@@ -17,11 +17,11 @@
  * to MATRIX (4 modes × 2 permission modes). The bootstrap assertion will
  * catch any missing row at the next start.
  */
-// src/core/capability-matrix.ts
+// src/domain/capability-matrix.ts
 
 import type { ReplyTextStrategy } from './turn-reply'
 import type { Mode, ProviderId } from './conversation'
-import type { ProviderCapabilities, PermissionMode } from './agent-provider'
+import type { ProviderCapabilities, PermissionMode } from '../core/agent-provider'
 import { ACP_CURSOR_CAPABILITIES, AGY_CAPABILITIES, CLAUDE_CAPABILITIES, CODEX_CAPABILITIES, GEMINI_CAPABILITIES, OPENAI_CAPABILITIES } from './provider-capabilities'
 
 // Backwards-compat re-export: PermissionMode used to live here. Moved

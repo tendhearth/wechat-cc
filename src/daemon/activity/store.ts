@@ -16,7 +16,7 @@
  */
 import { existsSync, readFileSync } from 'node:fs'
 import { renameMigrated, type Db } from '../../lib/db'
-import { localDayKey } from '../../core/prompt-format'
+import { localDayKey } from '../../domain/prompt-format'
 
 export interface ActivityRecord {
   date: string                // YYYY-MM-DD LOCAL (system tz or configured offset)

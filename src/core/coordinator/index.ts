@@ -12,9 +12,9 @@
  * the other is exposed as a tool), and `chatroom` (`/chat` — moderated
  * round-table).
  */
-import type { Mode, ProviderId } from '../conversation'
-import type { InboundMsg } from '../prompt-format'
-import { capabilitiesFor } from '../capability-matrix'
+import type { Mode, ProviderId } from '../../domain/conversation'
+import type { InboundMsg } from '../../domain/prompt-format'
+import { capabilitiesFor } from '../../domain/capability-matrix'
 import { makeChatMutex } from '../async-mutex'
 import { createCoordinatorCtx } from './ctx'
 import { createPlanner } from './plan'

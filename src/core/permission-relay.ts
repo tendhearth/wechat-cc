@@ -1,9 +1,9 @@
 import type { CanUseTool, PermissionResult } from '@anthropic-ai/claude-agent-sdk'
-import type { Mode, ProviderId } from './conversation'
-import { lookup, type Capability, type PermissionMode } from './capability-matrix'
+import type { Mode, ProviderId } from '../domain/conversation'
+import { lookup, type Capability, type PermissionMode } from '../domain/capability-matrix'
 import { isReplyToolName } from './agent-provider'
-import { classifyToolUse, TIER_PROFILES, type TierProfile, type ToolKind, type UserTier } from './user-tier'
-import { decideTool } from './tool-decision'
+import { classifyToolUse, TIER_PROFILES, type TierProfile, type ToolKind, type UserTier } from '../domain/user-tier'
+import { decideTool } from '../domain/tool-decision'
 
 /**
  * 能力表的那一行 + 档位 ⇒ 放 / 问 / 拒。判定本身在 ./tool-decision.ts(三家共用的唯一一份);这里只是把能力表的

@@ -6,7 +6,7 @@
  * 主动开口的各条路逐个迁过来,迁一处就把 scripts/speech-send.guard.test.ts 的数字调下来。
  */
 import type { Db } from '../../lib/db'
-import { quietEndsAt } from '../../core/quiet-hours'
+import { quietEndsAt } from '../../domain/quiet-hours'
 import type { ChatPrefsStore } from '../chat-prefs'
 import { careLevel } from '../companion/calibration'
 import { loadCompanionConfig } from '../companion/config'

@@ -3,10 +3,10 @@
  * 推送那一拍(tick-push)和定时那一轮(tick-job)共用这一份,所以单独成文件。
  */
 import { loadCompanionConfig } from '../companion/config'
-import { resolveEffectiveTier, resolveTier, TIER_PROFILES, effectivePermissionMode } from '../../core/user-tier'
-import { providerDenialFor } from '../../core/provider-policy'
+import { resolveEffectiveTier, resolveTier, TIER_PROFILES, effectivePermissionMode } from '../../domain/user-tier'
+import { providerDenialFor } from '../../domain/provider-policy'
 import { loadAgentConfig } from '../../lib/agent-config'
-import { replyTextStrategyFor } from '../../core/capability-matrix'
+import { replyTextStrategyFor } from '../../domain/capability-matrix'
 import { collectTurn } from '../../core/agent-provider'
 import { isNetworkUnprotectedError } from '../../lib/network-gate'
 import type { TickDeps } from './tick-deps'

@@ -2,7 +2,7 @@
 import { defineCommand } from 'citty'
 import { STATE_DIR } from '../../lib/config'
 import { addRule, formatRules, readRulesForEdit, removeRule, setEnabled, setReview } from '../rules'
-import type { Verdict } from '../../core/permission-rules/types'
+import type { Verdict } from '../../domain/permission-rules/types'
 
 const fail = (error: string): never => { console.error(error); process.exit(1) }
 

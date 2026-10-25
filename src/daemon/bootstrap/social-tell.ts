@@ -5,7 +5,7 @@
  * (speech/pending-notices.ts);CC 自己的见闻(initiative)推后就是这一句不说,东西在背包里。
  * 门取不到 ⇒ 不发、记一行,不退回直接发。
  */
-import type { SocialNotice, SpeechKind } from '../../core/speech/kinds'
+import type { SocialNotice, SpeechKind } from '../../domain/speech/kinds'
 import type { SpeechPolicy } from '../speech/policy'
 
 export interface TellOwnerDeps {

@@ -3,10 +3,10 @@
  * 每周一次,把这一周 CC 替主人做过的事合成一段 —— 素材由 daemon 在本机拼(时间线那几个来源,只算主人),
  * 模型只负责挑和写;没东西就 NO_REPLY。跑法完全沿用定时(只读独立会话 job:<id>、闸门、每日上限)。
  */
-import { executorNames } from '../../core/provider-display-names'
+import { executorNames } from '../../domain/provider-display-names'
 import type { JobTurnResult, TickTextStyle } from '../../daemon/wiring/tick-bodies'
-import type { ScheduledJob } from '../../core/scheduled-jobs'
-import type { ActivityItem, ActivityKind } from '../../core/cc-activity'
+import type { ScheduledJob } from '../../domain/scheduled-jobs'
+import type { ActivityItem, ActivityKind } from '../../domain/cc-activity'
 
 export const RECAP_MATERIAL_MAX = 4000
 const WEEK_MS = 7 * 86_400_000

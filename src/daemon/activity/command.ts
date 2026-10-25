@@ -2,7 +2,7 @@
  * 微信「做过的事 [今天|本周]」(B9 在微信上,2026-10-20):与手机时间线同一组来源,只认主人。
  * 只读、确定性,不调模型;一条一行带时间,最多 15 行。
  */
-import type { ActivityItem } from '../../core/cc-activity'
+import type { ActivityItem } from '../../domain/cc-activity'
 import type { ReplyHandler } from '../commands/registry'
 
 export const ACTIVITY_WECHAT_LINES = 15

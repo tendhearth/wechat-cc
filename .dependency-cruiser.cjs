@@ -61,6 +61,23 @@ module.exports = {
       to: { path: '^src/(cli|daemon|core|mcp-servers)/' },
     },
     {
+      name: 'domain-is-pure',
+      severity: 'error',
+      comment: '架构终态 E1:src/domain 是纯规则(档位、开口、伙伴判定、提示词 ……)。运行时只许依赖 domain 自己和 src/lib 里不碰 I/O 的那些;只引类型可以(core 还没拆完)。零例外。',
+      from: { path: '^src/domain/', pathNot: '\\.test\\.ts$' },
+      to: {
+        path: ['^src/(core|daemon|cli|features|mcp-servers|test-support|adapters|app)/', '^src/lib/(runtime|db|json-file|read-json-file|log|access|agent-config|messages-store|project-registry|ilink|send-reply|config)'],
+        dependencyTypesNot: ['type-only'],
+      },
+    },
+    {
+      name: 'domain-no-node',
+      severity: 'error',
+      comment: '架构终态 E1:domain 不碰 node / bun 内置模块。',
+      from: { path: '^src/domain/', pathNot: '\\.test\\.ts$' },
+      to: { dependencyTypes: ['core'] },
+    },
+    {
       name: 'test-support-only-from-tests',
       severity: 'error',
       comment: '架构终态 B3:src/test-support 是测试替身(照剧本说话的假执行者 …),生产代码不许 import;测试与 scripts/experiments 才用。',

@@ -26,7 +26,7 @@
 
 「这台机器上有没有」**只在** `lib/executor-detect.ts` 判(`executorBinary` / `executorCredential` / `executorMissingConfig`)。规则:配置里的值 trim 后为空 = 没配。`scripts/executor-detect.guard.test.ts` 会拦住任何手写的 `findOnPath('xxx')`、`xxxBin ??`、`env.XXX_API_KEY`。
 
-## 3. 「能做到什么」:`src/core/provider-capabilities.ts`
+## 3. 「能做到什么」:`src/domain/provider-capabilities.ts`
 
 一份 `ProviderCapabilities`,在 `capability-matrix.ts` 的 `CAPABILITIES_BY_PROVIDER` 里登记。要紧的三格:
 
@@ -34,11 +34,11 @@
 - **`confines`**:自带工具面在 读工作区以外 / 改文件 / 跑命令 / 上网 四件事上各靠什么收住(`per_tool` / `sandbox` / `none`)。**没核实过的写 `none`**,不替它说好话。有一件 `none` ⇒ `guestSafe` 推出 false ⇒ 访客用不了(`provider-policy.ts`)。
 - `perToolCallback`、`sandboxLevels`、`supportsDelegation`、`replyDelivery`、`replyText`:见各字段注释。
 
-## 4. 权限怎么翻:`src/core/policy.ts`
+## 4. 权限怎么翻:`src/domain/policy.ts`
 
 在 `PolicyTarget` 加一种「怎么连的」,在 `compilePolicy` 里写这一家把 档位 × 模式 翻成什么设置(沙箱、审批、应答、开关)。provider 只读 `compilePolicy(...)` 的结果,**不在调用处判 `permissionMode`**。`policy.test.ts` 的全表快照会多出几格 —— 更新快照,PR 里让评审看见这几格。
 
-然后看 `src/core/tier-enforcement.ts`:没有逐工具回调的执行者,trusted / admin 两档「要问」的那几类(删东西、删记忆、动 daemon)它做不到。**档位说「问」的,能问就必须问;问不了的**在 `KNOWN_TIER_GAPS` 登记一行理由,放行的标 `doesNotAsk`(主人切过去时 CC 会照实说「它不会逐条问你」)。漏登记 ⇒ 规则测试红。
+然后看 `src/domain/tier-enforcement.ts`:没有逐工具回调的执行者,trusted / admin 两档「要问」的那几类(删东西、删记忆、动 daemon)它做不到。**档位说「问」的,能问就必须问;问不了的**在 `KNOWN_TIER_GAPS` 登记一行理由,放行的标 `doesNotAsk`(主人切过去时 CC 会照实说「它不会逐条问你」)。漏登记 ⇒ 规则测试红。
 
 ## 5. 对话侧构造:`src/daemon/bootstrap/providers.ts`
 

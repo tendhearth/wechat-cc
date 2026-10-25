@@ -23,7 +23,7 @@ import {
   buildTurnReply,
   type DeliveryKind, type DeliveryReport, type ReplyContext, type ReplyDeliveryPort,
   type TurnAttachment, type TurnDeliveryHandle, type TurnReply, type TurnTextParts,
-} from '../core/turn-reply'
+} from '../domain/turn-reply'
 
 /** 登记在这一轮上的附件:描述 + 真正发出去的动作(由 attach 路由在登记时绑好)。 */
 export interface PendingAttachment {

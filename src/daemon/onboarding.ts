@@ -33,7 +33,7 @@
  */
 
 import { join } from 'node:path'
-import type { InboundMsg } from '../core/prompt-format'
+import type { InboundMsg } from '../domain/prompt-format'
 // Nickname constraint lives in one place (./nickname) — shared with /name and
 // /botname so the allowed set can't silently drift between them.
 import { NICKNAME_MAX_LEN, NICKNAME_MIN_LEN, NICKNAME_RE } from './nickname'

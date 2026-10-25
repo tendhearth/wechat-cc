@@ -4,7 +4,7 @@
  * 3) 主人回「全部 / 1,3 / 不要」⇒ 只写他点过头的。写之前什么都不存。只认主人;30 分钟不回就作废。
  * 等粘贴时收到的不像清单(拆不出两条)⇒ 当普通聊天放过去,不吞主人的话。
  */
-import { IMPORT_PROMPT, screenImportedMemory, splitImportedMemory, type ImportCandidate } from '../../core/memory-import'
+import { IMPORT_PROMPT, screenImportedMemory, splitImportedMemory, type ImportCandidate } from '../../domain/memory-import'
 import type { ReplyHandler } from '../commands/registry'
 import type { ImportResult } from './nightly-runtime'
 

@@ -4,7 +4,7 @@
  * 连续 3 次失败 ⇒ 暂停 + 告诉主人一次。
  */
 import type { Lifecycle } from '../../lib/lifecycle'
-import { isJobDue, windowPassed, JOB_DUE_WINDOW_MIN, type ScheduledJob } from '../../core/scheduled-jobs'
+import { isJobDue, windowPassed, JOB_DUE_WINDOW_MIN, type ScheduledJob } from '../../domain/scheduled-jobs'
 import { localParts } from '../../daemon/memory/nightly-schedule'
 import { JOBS_DAILY_CAP, type JobsStore } from '../../core/scheduled-jobs-store'
 

@@ -2,7 +2,7 @@ import { describe, it, expect } from 'vitest'
 import { canonPath, pathsUnder } from './paths'
 import { matchRule } from './rules-file'
 import { floorReason, isLowRisk } from './floor'
-import type { PermissionAsk } from './types'
+import type { PermissionAsk } from '../../domain/permission-rules/types'
 
 // Windows CI 10-20:大小写、\ 与 /、盘符 —— 用 path.win32 在任何平台上模拟。
 describe('paths on win32', () => {

@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { TIER_PROFILES } from '../../core/user-tier'
+import { TIER_PROFILES } from '../../domain/user-tier'
 import { wireInstructions } from './wire-instructions'
 
 const deps = () => ({ ilink: { companion: { status: () => ({ enabled: false }) } } as any })

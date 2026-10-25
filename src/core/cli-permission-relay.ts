@@ -10,7 +10,7 @@
  */
 import { randomBytes } from 'node:crypto'
 import type { CliPresence, CliSource } from './cli-events'
-import { cliSourceLabel } from './cli-session-digest'
+import { cliSourceLabel } from '../domain/cli-session-digest'
 
 export interface CliPermissionRequest {
   source: CliSource

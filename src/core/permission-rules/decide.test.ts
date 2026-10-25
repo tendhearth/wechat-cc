@@ -1,7 +1,7 @@
 import { describe, it, expect, vi, afterEach } from 'vitest'
 import { decide, parseReviewAnswer, reviewPrompt, REVIEW_TIMEOUT_MS } from './decide'
 import { STARTER_RULES } from './rules-file'
-import type { PermissionAsk, Rule, RulesFile } from './types'
+import type { PermissionAsk, Rule, RulesFile } from '../../domain/permission-rules/types'
 
 const ask = (over: Partial<PermissionAsk> = {}): PermissionAsk => ({
   surface: 'workbench', provider: 'claude', tool: 'Bash', command: 'ls', cwd: '/w', project: '/w',

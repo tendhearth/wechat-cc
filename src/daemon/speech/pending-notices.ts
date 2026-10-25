@@ -10,7 +10,7 @@
 import { existsSync, mkdirSync } from 'node:fs'
 import { join } from 'node:path'
 import { readJsonFile } from '../../lib/read-json-file'
-import type { SpeechKind } from '../../core/speech/kinds'
+import type { SpeechKind } from '../../domain/speech/kinds'
 import { writeFileAtomic } from '../../lib/json-file'
 
 /** id:入队时给,说完只删这次真说了的那几条(flush 发送途中又进来的不会被一并删掉;整合者评审 #531)。 */

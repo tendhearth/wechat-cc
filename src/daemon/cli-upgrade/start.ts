@@ -5,7 +5,7 @@
 import type { NetworkGate } from '../../lib/network-gate'
 import { decideCall } from '../../lib/network-gate'
 import { providerCallTarget, type ProviderRegistry } from '../../core/provider-registry'
-import type { UserTier } from '../../core/user-tier'
+import type { UserTier } from '../../domain/user-tier'
 import { runSelftestConverse } from '../selftest'
 import { defaultSelftestDeps, runWorkbenchSelftest } from '../../cli/selftest'
 import { verifyCliProvider } from './verify'

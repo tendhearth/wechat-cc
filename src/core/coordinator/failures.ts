@@ -2,8 +2,8 @@
  * 出错怎么说、出错之后怎么自愈。上半是给主人的话(纯函数),下半是 solo / /both / /chat 共用的两种收尾:
  * 认证失败、回合超时 —— 都先放掉坏掉的会话(下一条起新子进程),再告诉主人。
  */
-import type { ProviderId } from '../conversation'
-import { capabilitiesFor } from '../capability-matrix'
+import type { ProviderId } from '../../domain/conversation'
+import { capabilitiesFor } from '../../domain/capability-matrix'
 import type { TurnSummary } from '../agent-provider'
 import type { CoordinatorCtx } from './ctx'
 

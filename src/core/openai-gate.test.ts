@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest'
 import { gateTool } from './openai-gate'
-import { TIER_PROFILES } from './user-tier'
+import { TIER_PROFILES } from '../domain/user-tier'
 
 // TIER_PROFILES is the real user-tier.ts export (Record<UserTier, TierProfile>).
 // There is no `tierProfileFor` factory in the module — use the ready-made

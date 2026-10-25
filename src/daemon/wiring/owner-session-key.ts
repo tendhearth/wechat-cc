@@ -1,5 +1,5 @@
 /** 主人那条会话在 SessionManager 里的键(从 pipeline-deps.ts 搬出来,重构第二批步 6c:converse 与桌宠两处共用)。 */
-import type { Mode, ProviderId } from '../../core/conversation'
+import type { Mode, ProviderId } from '../../domain/conversation'
 
 export interface OwnerSessionKeyDeps {
   resolveProject: (chatId: string) => { alias: string; path: string } | null

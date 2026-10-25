@@ -12,7 +12,7 @@ import { makeAsksReply } from './asks-reply'
 import { fromReplyHandler, makeCommandRegistry, yieldNumbersToOpenChoice } from '../../daemon/commands/registry'
 import { choiceTakes, makeMwTaskReference, type OpenChoice } from '../../daemon/inbound/mw-task-reference'
 import type { TaskCandidate } from '../../core/workbench/task-reference'
-import type { InboundMsg } from '../../core/prompt-format'
+import type { InboundMsg } from '../../domain/prompt-format'
 
 const OWNER = 'owner@im.wechat'
 const H = 3600_000

@@ -15,7 +15,7 @@
 import { existsSync, readFileSync, statSync } from 'node:fs'
 import { basename, join } from 'node:path'
 import { CHAT_NARRATION_MAX, CHAT_TEXT_MAX, type ChatAttachmentT } from '@wechat-cc/protocol'
-import type { TurnAttachment } from '../core/turn-reply'
+import type { TurnAttachment } from '../domain/turn-reply'
 
 export type AppAttachment =
   | { kind: 'voice'; text: string }

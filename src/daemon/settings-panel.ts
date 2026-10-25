@@ -20,7 +20,7 @@
  *    pairing, restore, restart) are deliberately NOT here — they stay
  *    conversational where CC can confirm context.
  */
-import { executorNames } from '../core/provider-display-names'
+import { executorNames } from '../domain/provider-display-names'
 import { randomBytes } from 'node:crypto'
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
 import { basename, join } from 'node:path'
@@ -32,8 +32,8 @@ import { safeSvgFile, EXPIRED_HTML, SW_JS, M_BOOTSTRAP_HTML, pageHtml, phoneHtml
 import { loadAgentConfig, saveAgentConfig, modelForProvider } from '../lib/agent-config'
 import { saveLlmKey } from './llm-keys'
 import { PROVIDER_SETUP_HINTS, type LlmHealthReport } from './llm-health'
-import { capabilitiesFor } from '../core/capability-matrix'
-import { providerDenialFor } from '../core/provider-policy'
+import { capabilitiesFor } from '../domain/capability-matrix'
+import { providerDenialFor } from '../domain/provider-policy'
 import { PROVIDER_IDS } from '../lib/provider-ids'
 import { buildFeed, FEED_DEFAULT_LIMIT, dayKey, type FeedSources, type TurnLite } from './mobile-feed'
 import presenceArt from './mobile-presence-art.json'
@@ -49,9 +49,9 @@ import {mobileMatterDetailResponse} from './mobile-matter-response'
 import {mobileHomeFocus} from './mobile-home-focus'
 import type {MatterSayInput} from '../core/matters/service'
 import { pairCheckCode, PushPlatform, PHONE_SAY_MAX_CHARS, pushTokenValid, type PushPlatformT } from '@wechat-cc/protocol'
-import type { Presence } from '../core/companion-presence'
+import type { Presence } from '../domain/companion-presence'
 import type { CatchRow } from '../core/journal-store'
-import type { PlanLogEntry } from '../core/companion-plan'
+import type { PlanLogEntry } from '../domain/companion-plan'
 
 export const SETTINGS_LINK_TTL_MS = 10 * 60_000
 
@@ -147,7 +147,7 @@ export interface SettingsPanelDeps {
   /** 终端会话:拍板等批准的那一项、接着说一句(cli-phone-actions.ts)。缺省 ⇒ /m/api/cli/permission、/m/api/cli/say 503,列表不带码。 */
   cliActions?: import('./cli-phone-actions').CliPhoneActions
   /** 「今天」一眼看完(core/overseer-today.ts,只读)。缺省 ⇒ /m/api/today 503。 */
-  overseerToday?: () => import('../core/overseer-today').OverseerToday
+  overseerToday?: () => import('../domain/overseer-today').OverseerToday
   /** 在手机上接着做电脑上的会话(spec 2026-10-01-tendhearth-continue-sessions)。缺省 ⇒ /m/api/session/continue 503。 */
   sessionContinue?: MobileSessionContinueActions
   /** 执行者 id → 正式名字(收敛清单 ⑥,接 registry.namesOf(id).name)。缺省 ⇒ 会话 / 终端行不带 displayName,App 退回 id。 */

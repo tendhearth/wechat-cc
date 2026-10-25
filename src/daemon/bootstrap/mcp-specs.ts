@@ -18,7 +18,7 @@
  */
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
-import type { ProviderId } from '../../core/conversation'
+import type { ProviderId } from '../../domain/conversation'
 import { isCompiledBundle } from '../../lib/runtime-info'
 import { mergeEnvIntoMcpServers, CORE_MCP_SERVER_NAMES } from '../../core/agent-provider'
 import type { McpStdioSpec } from '../../core/mcp-stdio-spec'

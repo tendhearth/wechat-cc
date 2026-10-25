@@ -3,15 +3,15 @@
  * 显式、只读、不含 service 对象本身:域需要「别的域 / service 的动作」一律 ctx.actions.deref() 在**调用时**取
  * —— Ref 由 service.ts 在 public 对象建好后 set 一次;工厂体里不许 deref(那时还没 set)。
  */
-import type { AskSource } from '../../permission-rules/types'
+import type { AskSource } from '../../../domain/permission-rules/types'
 import type { NetworkGate } from '../../../lib/network-gate'
 import type { Ref } from '../../../lib/lifecycle'
 import type { ProviderRegistry } from '../../provider-registry'
-import type { UsageSnapshot } from '../../subscription-usage'
+import type { UsageSnapshot } from '../../../domain/subscription-usage'
 import type { StoredTask, Task, TaskStatus, WorkbenchStore } from '../store'
 import type { NativeHistoryProvider, NativeHistoryReader } from '../native-history'
 import type { Continuation } from '../continuation'
-import type { QuotaState } from '../../provider-quota'
+import type { QuotaState } from '../../../domain/provider-quota'
 import type { AgentExecutionChoice, AgentRuntimeSnapshot } from '../../agent-provider'
 import type { LiveInput } from '../live-inputs'
 import type { AcceptedContinuation, Active, WorkbenchRuntimeState } from './state'

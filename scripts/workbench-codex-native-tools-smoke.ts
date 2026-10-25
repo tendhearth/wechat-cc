@@ -12,7 +12,7 @@ import { createProviderRegistry } from '../src/core/provider-registry'
 import { createWorkbenchCodexProvider } from '../src/core/workbench/codex-app-server'
 import { makeWorkbenchService } from '../src/core/workbench/service'
 import { makeWorkbenchStore } from '../src/core/workbench/store'
-import { TIER_PROFILES } from '../src/core/user-tier'
+import { TIER_PROFILES } from '../src/domain/user-tier'
 import { openDb } from '../src/lib/db'
 import { findCodexBinary } from '../src/lib/find-codex-binary'
 

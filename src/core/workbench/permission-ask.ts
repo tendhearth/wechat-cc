@@ -7,7 +7,7 @@
  */
 import { isIssueIntent } from './issue-intake'
 import { realpathSync } from 'node:fs'
-import type { PermissionAsk } from '../permission-rules/types'
+import type { PermissionAsk } from '../../domain/permission-rules/types'
 import type { PermissionFacts } from './permissions'
 
 const INTENT_MAX = 2000

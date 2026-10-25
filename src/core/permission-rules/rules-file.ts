@@ -7,7 +7,7 @@
  */
 import { homedir } from 'node:os'
 import { canonPath, canonText, isUnder, type Platform } from './paths'
-import type { PermissionAsk, Rule, RuleWhen, RulesFile, Verdict } from './types'
+import type { PermissionAsk, Rule, RuleWhen, RulesFile, Verdict } from '../../domain/permission-rules/types'
 
 export const RULES_FILE = 'permission-rules.json'
 export const EMPTY_RULES: RulesFile = { version: 1, enabled: false, review: 'off', rules: [] }

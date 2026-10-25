@@ -4,7 +4,7 @@ import { createClaudeAgentProvider } from './claude-agent-provider'
 import { createProviderRegistry, type ProviderRegistry } from './provider-registry'
 import { makeFakeSession } from './test-helpers'
 import type { AgentProvider } from './agent-provider'
-import { TIER_PROFILES } from './user-tier'
+import { TIER_PROFILES } from '../domain/user-tier'
 import type { Options, Query, SDKMessage, SDKUserMessage } from '@anthropic-ai/claude-agent-sdk'
 
 // Module-level spy injected via vi.mock so SessionManager uses our fake query()

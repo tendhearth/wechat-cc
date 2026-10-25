@@ -6,7 +6,7 @@ import {
   type LanguageModel,
 } from 'ai'
 import { createOpenAICompatible } from '@ai-sdk/openai-compatible'
-import { makeThinkFilter } from './think-tags'
+import { makeThinkFilter } from '../domain/think-tags'
 import { makeTimeoutFetch, openaiFetchTimeoutsFromEnv, type FetchLike, type FetchTimeouts } from '../lib/timeout-fetch'
 
 // Opaque re-export: the rest of the provider treats ChatMessage as a black box

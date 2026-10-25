@@ -8,7 +8,7 @@
 import { join } from 'node:path'
 import type { Db } from '../../lib/db'
 import type { AgentConfig } from '../../lib/agent-config'
-import type { Mode } from '../../core/conversation'
+import type { Mode } from '../../domain/conversation'
 import { buildDetectorContext } from '../milestones/build-context'
 import { detectMilestones } from '../milestones/detector'
 import { makeMilestonesStore } from '../milestones/store'

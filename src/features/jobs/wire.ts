@@ -18,8 +18,8 @@ import type { CareLedger } from '../../daemon/companion/care-ledger'
 import type { makeJobsStore } from '../../core/scheduled-jobs-store'
 import type { makeActivityLog } from '../../daemon/activity-log'
 import type { Calendar } from '../../features/calendar'
-import { formatOverseerToday, OVERSEER_NEEDS_SHOWN, type OverseerToday } from '../../core/overseer-today'
-import { buildActivity, type ActivityItem, type ActivitySources } from '../../core/cc-activity'
+import { formatOverseerToday, OVERSEER_NEEDS_SHOWN, type OverseerToday } from '../../domain/overseer-today'
+import { buildActivity, type ActivityItem, type ActivitySources } from '../../domain/cc-activity'
 import { buildReviewText, reviewMissNote } from '../../core/workbench/review-request'
 import { makeWorkbenchStore } from '../../core/workbench/store'
 import { makeBriefPrefs, makeBriefTurn } from './brief'
@@ -39,7 +39,7 @@ export interface ReviewRequest { taskId: string; providerId: string; material: s
 
 export interface WireJobsDeps {
   /** 主人设的免打扰(建早报 / 周报时撞上了当场说);没接 ⇒ 不提。 */
-  quietWindow?: () => import('../../core/quiet-hours').QuietWindow | undefined
+  quietWindow?: () => import('../../domain/quiet-hours').QuietWindow | undefined
   stateDir: string
   db: Db
   ilink: IlinkAdapter

@@ -1,7 +1,7 @@
 import { query, type CanUseTool, type Options, type PermissionResult, type SDKMessage, type SDKUserMessage } from '@anthropic-ai/claude-agent-sdk'
-import { toolInputFacts } from './permission-rules/facts'
+import { toolInputFacts } from '../domain/permission-rules/facts'
 import type { AgentActivity, AgentAttachment, AgentEvent, AgentProject, AgentProvider, AgentSession, PermissionMode, SpawnContext } from './agent-provider'
-import { classifyToolUse, TIER_PROFILES, type TierProfile, type ToolKind } from './user-tier'
+import { classifyToolUse, TIER_PROFILES, type TierProfile, type ToolKind } from '../domain/user-tier'
 import { WORKBENCH_PERMISSION_DESCRIPTION_MAX, WORKBENCH_PERMISSION_TOOL_MAX } from './workbench/permissions'
 import { validateUserInputAnswers, validateUserInputRequest } from './workbench/user-input'
 import { isCompanionMcp, nativeMcpInputPreview } from './workbench/claude-native-config'
@@ -14,7 +14,7 @@ import { discoverClaudeModels } from './workbench/claude-model-catalog'
 import { executionModel, nativeModelId } from './workbench/native-model-catalog'
 import { createClaudeWorkbenchSession } from './claude-workbench-runtime'
 import { effectivePolicy } from './permission-relay'
-import { lookup } from './capability-matrix'
+import { lookup } from '../domain/capability-matrix'
 
 function userContent(text: string, attachments: readonly AgentAttachment[] = []): Exclude<SDKUserMessage['message']['content'], string> {
   const content: Exclude<SDKUserMessage['message']['content'], string> = text || !attachments.length ? [{ type: 'text', text }] : []
@@ -34,10 +34,10 @@ function userContent(text: string, attachments: readonly AgentAttachment[] = [])
   return content
 }
 
-export { CLAUDE_CAPABILITIES } from './provider-capabilities'
+export { CLAUDE_CAPABILITIES } from '../domain/provider-capabilities'
 
 // 档位 × 模式 → SDK 选项的翻译挪到 core/policy.ts(3c Policy 编译器第 1 步);旧名字从那里转出,调用方不变。
-export { tierProfileToClaudeSdkOpts, type ClaudeTierSdkOpts } from './policy'
+export { tierProfileToClaudeSdkOpts, type ClaudeTierSdkOpts } from '../domain/policy'
 
 export interface ClaudeAgentProviderOptions {
   /**

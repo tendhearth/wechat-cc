@@ -3,7 +3,7 @@ import { redactConnections, type ConnectionsSnapshot } from './connections'
 import { framedTooLarge } from './mobile-matter-response'
 import { ownsMethod, type PhoneRouteTable } from './phone-route-table'
 import type { CliSessionView } from '../core/cli-session-store'
-import type { OverseerToday } from '../core/overseer-today'
+import type { OverseerToday } from '../domain/overseer-today'
 import { PHONE_CLI_SAY_MAX, type CliPhoneActions } from './cli-phone-actions'
 import type { NativeHistoryItem, NativeHistoryListInput, NativeHistoryPage, NativeHistoryPreview, NativeHistoryReadInput } from '../core/workbench/native-history'
 

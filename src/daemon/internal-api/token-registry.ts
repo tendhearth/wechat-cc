@@ -1,5 +1,5 @@
 import { randomBytes } from 'node:crypto'
-import type { UserTier } from '../../core/user-tier'
+import type { UserTier } from '../../domain/user-tier'
 import { routesForToken } from './route-tiers'
 
 /** operator 令牌的 routeAllow(重构第二批 5a 起从路由表推出来)。 */

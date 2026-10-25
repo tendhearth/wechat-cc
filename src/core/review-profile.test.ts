@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { REVIEW_PROFILE, JOB_PROFILE, classifyToolUse, tierNameFromProfile } from './user-tier'
+import { REVIEW_PROFILE, JOB_PROFILE, classifyToolUse, tierNameFromProfile } from '../domain/user-tier'
 import { effectivePolicy } from './permission-relay'
 import { codexNetworkOpts, tierProfileToCodexSdkOpts } from './codex-agent-provider'
 

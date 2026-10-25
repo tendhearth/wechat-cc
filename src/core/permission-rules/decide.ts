@@ -12,7 +12,7 @@ import { floorReason, isLowRisk, toolClass } from './floor'
 /** 复合 / 重定向 / 子命令替换:allow 规则一律不放(`^git status` 放不了 `git status && python3 -c …`)。 */
 const COMPOUND = /[;&|><\x60\n\r]|\$\(/
 import { COMMAND_MATCH_MAX, matchRule } from './rules-file'
-import type { Decision, PermissionAsk, RulesFile } from './types'
+import type { Decision, PermissionAsk, RulesFile } from '../../domain/permission-rules/types'
 
 export const REVIEW_TIMEOUT_MS = 8_000
 

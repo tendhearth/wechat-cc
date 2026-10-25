@@ -1,6 +1,6 @@
 import { describe, it, expect, vi } from 'vitest'
 import { deliverTurnReply, makeReplyDeliveryRuntime, type DeliverDeps, type PendingAttachment } from './reply-delivery'
-import type { TurnReply, TurnAttachment } from '../core/turn-reply'
+import type { TurnReply, TurnAttachment } from '../domain/turn-reply'
 
 function harness(over: Partial<DeliverDeps> = {}) {
   const sent: string[] = []

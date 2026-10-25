@@ -6,7 +6,7 @@ import { makeWish, WISHES_PER_DAY, type WishDeps } from './wire-wish'
 import { NetworkUnprotectedError } from '../../lib/network-gate'
 import { readWishes } from '../companion/wish-memory'
 import { readIntroIndex, writeIntroIndex } from '../companion/intro-memory'
-import type { Envelope } from '../../core/envelope'
+import type { Envelope } from '../../domain/envelope'
 import { makeTrio, flush as flush3 } from './social-trio.fixture'
 
 /**

@@ -21,7 +21,7 @@ import { createOpenAiAgentProvider } from '../../core/openai-agent-provider'
 import { createAcpCursorChatProvider } from '../../core/acp-cursor-chat'
 import type { AgentProvider } from '../../core/agent-provider'
 import { makeFakeSession } from '../../core/test-helpers'
-import { TIER_PROFILES } from '../../core/user-tier'
+import { TIER_PROFILES } from '../../domain/user-tier'
 import { runSelftestConverse } from '../selftest'
 
 function daemonGate(cfg: Partial<AgentConfig>, net: { safe: boolean }, env: NodeJS.ProcessEnv = {}) {

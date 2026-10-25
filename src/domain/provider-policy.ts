@@ -24,7 +24,7 @@ import { PROVIDER_IDS, type KnownProviderId } from '../lib/provider-ids'
 import { EXECUTOR_FACTS } from '../lib/executor-facts'
 import type { UserTier } from './user-tier'
 import { capabilitiesFor } from './capability-matrix'
-import { guestSafe } from './agent-provider'
+import { guestSafe } from './confinement'
 
 export type ProviderDenial =
   | { kind: 'shared_token_guest' }

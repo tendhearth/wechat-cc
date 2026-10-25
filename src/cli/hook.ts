@@ -20,7 +20,7 @@
  * 回合都会被推回微信。
  */
 import { writeFileAtomic } from '../lib/json-file'
-import { toolInputFacts } from '../core/permission-rules/facts'
+import { toolInputFacts } from '../domain/permission-rules/facts'
 import { existsSync, readFileSync, mkdirSync, statSync, openSync, readSync, closeSync } from 'node:fs'
 import { dirname, join } from 'node:path'
 import { hostname } from 'node:os'

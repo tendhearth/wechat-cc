@@ -3,7 +3,7 @@
  * 搬家前引擎调的就是 computeCandidates,两边对不上就是主人每天收到的东西变了。
  */
 import { describe, it, expect } from 'vitest'
-import { computeCandidates, type CareLevel, type SpeakGate } from '../../core/companion-plan'
+import { computeCandidates, type CareLevel, type SpeakGate } from '../../domain/companion-plan'
 import { companionActions, introspectSteps, type TickDeps } from './tick-bodies'
 import type { TickDispatch } from './tick-dispatch'
 import type { CompanionTickCtx } from '../companion/contributions'

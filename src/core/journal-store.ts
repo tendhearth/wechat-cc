@@ -6,7 +6,7 @@
  * visit(串门/来客的见闻,可带明信片)。背包是它的一个视图。
  */
 import type { Db } from '../lib/db'
-import { parseCatch } from './hunt-catch'
+import { parseCatch } from '../domain/hunt-catch'
 
 export type CatchStatus = 'new' | 'tried' | 'using' | 'dropped'
 /**

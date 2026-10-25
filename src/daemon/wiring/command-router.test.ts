@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from 'vitest'
 import { makeCommandRouter, type CommandRouterDeps } from './command-router'
-import type { InboundMsg } from '../../core/prompt-format'
+import type { InboundMsg } from '../../domain/prompt-format'
 import { COMMAND_EXAMPLES, CHAT } from '../inbound/command-corpus'
 
 function msg(text: string, chatId = 'owner@im.wechat'): InboundMsg {

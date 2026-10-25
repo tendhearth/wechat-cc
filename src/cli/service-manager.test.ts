@@ -4,7 +4,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { buildServicePlan, installService, uninstallService, DESKTOP_APP_BUNDLE_ID, type ServicePlan } from './service-manager'
 import { validatePowerShellScript } from './powershell-validator'
-import { SUPERVISED_ENV } from '../core/supervised-env'
+import { SUPERVISED_ENV } from '../domain/supervised-env'
 
 describe('service-manager', () => {
   it('builds a macOS LaunchAgent plan', () => {

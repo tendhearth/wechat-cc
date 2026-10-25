@@ -7,7 +7,7 @@
 import { existsSync } from 'node:fs'
 import { readJsonFile } from '../lib/read-json-file'
 import { join } from 'node:path'
-import type { JobSchedule, ScheduledJob } from './scheduled-jobs'
+import type { JobSchedule, ScheduledJob } from '../domain/scheduled-jobs'
 import { writeJsonAtomic } from '../lib/json-file'
 
 export const JOBS_FILE = 'scheduled-jobs.json'

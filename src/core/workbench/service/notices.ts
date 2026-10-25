@@ -7,7 +7,7 @@
 import { executionFailureMessage } from '../execution-settings'
 import { normalizeInputRequestId } from '../live-inputs'
 import { WORKBENCH_PERMISSION_TIMEOUT_MS } from '../permissions'
-import { providerDisplayName } from '../../provider-display-names'
+import { providerDisplayName } from '../../../domain/provider-display-names'
 import { TERMINAL_TASK_STATUSES, type StoredTask, type TaskStatus } from '../store'
 import type { WechatNoticeKind, WechatNotificationNotice, WechatNotificationSubscription } from '../wechat-notifications'
 import type { ArtifactDeliveryReceipt } from '../artifact-deliveries'

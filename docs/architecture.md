@@ -32,12 +32,15 @@ CC 是住在主人自己电脑上的一个 daemon。微信、桌面、手机 App
 
 ```text
 apps/*  ──HTTP──►  packages/protocol(路由表、错误码,纯数据)
-src/cli ──spawn / HTTP──►  src/daemon  ──►  src/core  ──►  src/lib
+src/cli ──spawn / HTTP──►  src/daemon ──► src/features ──► src/core ──► src/domain ──► src/lib
 src/mcp-servers ──HTTP──►  src/daemon(internal API)
 ```
 
 - `src/lib`:最底层,零业务依赖(可以用 `node:*`);事实表、文件写法、db、运行时适配。
-- `src/core`:「做什么」—— 协调器、执行者适配、工作台、策略。**不碰 `node:*`**(棘轮在数,只许少)。
+- `src/domain`:纯规则 —— 档位与放行(`policy` / `user-tier` / `tool-decision` / `provider-policy`)、开口(`speech/decide`、`quiet-hours`)、伙伴判定、提示词(`prompt-builder`)、能力表。**零例外**:运行时只依赖 domain 自己和 lib 里不碰 I/O 的,不碰 node 内置(depcheck `domain-is-pure` / `domain-no-node`)。
+- `src/core`:还没拆完的那一层 —— 协调器、执行者适配、工作台、各种 store。正在按终态分进 app(用例)和 adapters(执行者、store);`core-no-node` 棘轮在数。
+- `src/features/<名>`:一个功能一个目录(见[加一个功能](maintainer/add-a-feature.md))。
+- `src/test-support`:测试替身(照剧本说话的假执行者),生产代码不许 import。
 - `src/daemon`:「怎么接起来」—— 入站、命令、internal API、模块、定时。
 - 规则在 `.dependency-cruiser.cjs`(`bun run depcheck`),不是靠人记。
 
@@ -47,8 +50,8 @@ src/mcp-servers ──HTTP──►  src/daemon(internal API)
 |---|---|---|
 | 执行者有哪几家 | `src/lib/provider-ids.ts` | 下面每张表的键都要和它相等(各自测试) |
 | 执行者「是什么」:名字、斜杠词、模型字段、安装提示、密钥、怎么判在不在 | `src/lib/executor-facts.ts`(判在不在只在 `executor-detect.ts`) | 三端显示名、`/help`、doctor、guard;`executor-detect` 守卫拦手写判断 |
-| 执行者「能做到什么」:四件事各靠什么收住(confines)、MCP 档位 | `src/core/provider-capabilities.ts` | `guestSafe` 从 confines 推;访客能用谁由 `provider-policy.ts` 一处判 |
-| 档位 × 模式 → 执行者实际设置 | `src/core/policy.ts` 的 `compilePolicy` | 全表快照;做不到「问」的缺口登记在 `tier-enforcement.ts`(主人切过去时照实说) |
+| 执行者「能做到什么」:四件事各靠什么收住(confines)、MCP 档位 | `src/domain/provider-capabilities.ts` | `guestSafe` 从 confines 推;访客能用谁由 `provider-policy.ts` 一处判 |
+| 档位 × 模式 → 执行者实际设置 | `src/domain/policy.ts` 的 `compilePolicy` | 全表快照;做不到「问」的缺口登记在 `tier-enforcement.ts`(主人切过去时照实说) |
 | 执行者登记 | 对话侧 `bootstrap/providers.ts` 登记一次 | 工作台按 `onRegister` 跟上,不抄快照;可执行文件路径经登记项的 `bin()` 现取 |
 | 路由:路径、谁能调、属于哪个模块 | `packages/protocol/src/routes.ts` | 鉴权表、模块门、`gen:routes` 生成物、桌面白名单;`route-registry` 守卫 |
 | 错误码 → 各表面的状态与说法 | `packages/protocol/src/workbench-errors.ts` | 桌面 / 手机 / 微信的映射都核它 |

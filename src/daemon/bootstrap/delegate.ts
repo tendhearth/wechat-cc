@@ -19,9 +19,9 @@ import { createMcpToolBridge } from '../../core/openai-mcp-bridge'
 import { collectTurn, type AgentProvider } from '../../core/agent-provider'
 import type { Options } from '@anthropic-ai/claude-agent-sdk'
 import { executorCredential, executorMissingConfig } from '../../lib/executor-detect'
-import type { ProviderId } from '../../core/conversation'
+import type { ProviderId } from '../../domain/conversation'
 import { loadAgentConfig } from '../../lib/agent-config'
-import { TIER_PROFILES, type TierProfile } from '../../core/user-tier'
+import { TIER_PROFILES, type TierProfile } from '../../domain/user-tier'
 
 export interface DelegateBuildDeps {
   /** State dir — used as the default cwd when caller doesn't pass one. */

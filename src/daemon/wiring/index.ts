@@ -44,7 +44,7 @@ export interface WireMainOpts {
   /** 终端会话的手机动作(拍板 / 说一句):POST /m/api/cli/permission、/m/api/cli/say。缺省 ⇒ 503。 */
   cliActions?: import('../cli-phone-actions').CliPhoneActions
   /** 「今天」一眼看完(core/overseer-today.ts):手机 GET /m/api/today 读它。缺省 ⇒ 503。 */
-  overseerToday?: () => import('../../core/overseer-today').OverseerToday
+  overseerToday?: () => import('../../domain/overseer-today').OverseerToday
   /** 「CC 现在怎么样」里「终端里的 Claude Code / Codex」那一行(2026-10-14)。缺省 ⇒ 那一行不出现。 */
   terminalHooks?: Pick<import('../terminal-hooks').TerminalHooksService, 'capabilityInput'>
   /** 网络守护运行时(2026-10-02,network-gate 模块建):闸门 + 健康快照 + 后台任务跳过包装。缺省 = 老行为。 */
@@ -115,7 +115,7 @@ export interface WireMainOpts {
    * 回复交付(spec 2026-10-03):main.ts 里那**同一个** runtime。经 `...opts` 透传进 buildTickBodies ——
    * 伙伴推送的最后的话经它送达。只有这一条路(D3),所以必填。
    */
-  replyDelivery: import('../../core/turn-reply').ReplyDeliveryPort
+  replyDelivery: import('../../domain/turn-reply').ReplyDeliveryPort
   // 三条用途:tick-bodies 用 recordHunt(打猎入库)与 list/summary(日程判断
   // 要看包袱里堆了什么),pipeline-deps 用 list(微信「背包」命令)。这里给
   // 全,下游各取所需 —— main.ts 传的是完整 Journal。
@@ -135,7 +135,7 @@ export interface WireMainOpts {
   /** 对话回合(turn_records)—— 随身 CC 首屏的「聊天日摘要」来源。main.ts 传 turnRecordStore。 */
   turns?: { recent(limit: number): readonly { chatId: string; endedAt: number; outcome: string; mode: string; startedAt: number }[] }
   /** 三轴 presence 共用入口(internal-api lifecycle.getPresence)。main.ts 传入。 */
-  presence?: () => Promise<import('../../core/companion-presence').Presence | null>
+  presence?: () => Promise<import('../../domain/companion-presence').Presence | null>
 }
 
 export interface WiredDeps {

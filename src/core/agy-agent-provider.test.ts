@@ -1,7 +1,7 @@
 // src/core/agy-agent-provider.test.ts — 全部经注入 spawnFn 的假 agy
 import { describe, it, expect } from 'vitest'
 import { AGY_CAPABILITIES, createAgyAgentProvider, drainCappedStderr, isUnknownAgyModel, pickReplacementModel } from './agy-agent-provider'
-import { TIER_PROFILES } from './user-tier'
+import { TIER_PROFILES } from '../domain/user-tier'
 import { isReplyToolCall } from './agent-provider'
 
 function fakeAgy(lines: string[], opts?: { exitCode?: number; stderr?: string; hang?: boolean }) {

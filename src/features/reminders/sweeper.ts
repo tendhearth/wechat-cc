@@ -20,7 +20,7 @@ import { backoffMs, RETRY_WINDOW_MS } from '../../lib/delivery-backoff'
 export { backoffMs, RETRY_WINDOW_MS }
 import type { RemindersStore } from './store'
 import { isProactiveWindowClosed } from '../../daemon/ilink/outbound-health'
-import { toLocalISO } from '../../core/prompt-format'
+import { toLocalISO } from '../../domain/prompt-format'
 
 /**
  * 过了重试窗口也要至少真试过这么多次才放弃。窗口从 due_at 算,电脑睡/断网
