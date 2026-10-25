@@ -66,6 +66,7 @@ describe('quiet native voice feedback with real recording controller', () => {
     await mount(); await gesture('onResponderGrant'); await advance(2250)
     expect(byId('talk-recording').textContent).toBe('0:02')
     expect(byId('talk-recording').getAttribute('aria-label')).toContain('上滑')
+    expect(host.props.get('talk-recording').accessibilityLiveRegion).toBe('polite')
     await gesture('onResponderMove', 20); await gesture('onResponderRelease')
     expect(host.stop).toHaveBeenCalledWith(false); expect(transcribe).not.toHaveBeenCalled(); expect(onSend).not.toHaveBeenCalled()
   })

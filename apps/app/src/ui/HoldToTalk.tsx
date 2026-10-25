@@ -119,7 +119,7 @@ export function TalkStatus({ view, elapsedMs, lang, testID }: { view: TalkView; 
     const line = view.cancel ? t(lang, 'talk.cancelZone')
       : left !== null ? `${t(lang, 'talk.listening', { t: elapsedLabel(elapsedMs) })} · ${t(lang, 'talk.left', { n: left })}` : t(lang, 'talk.listening', { t: elapsedLabel(elapsedMs) })
     return (
-      <View testID={`${testID}-recording`} accessible accessibilityLabel={line} style={{ flexDirection: 'row', alignItems: 'center', gap: space.s }}>
+      <View testID={`${testID}-recording`} accessible accessibilityLabel={line} accessibilityLiveRegion="polite" style={{ flexDirection: 'row', alignItems: 'center', gap: space.s }}>
         {/* 在听:一个静止的强调色小点(不闪,不加新颜色) */}
         <View importantForAccessibility="no" accessibilityElementsHidden style={{ width: 8, height: 8, borderRadius: 4, backgroundColor: view.cancel ? c.hair : c.accent }} />
         <Txt role="meta" tone="inkSoft">{elapsedLabel(elapsedMs)}</Txt>

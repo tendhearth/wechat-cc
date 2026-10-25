@@ -150,7 +150,7 @@ export default function Chat() {
               {outcome === 'uncertain' ? <ChatCheck lang={lang} online={online} loading={chat.loading} error={chat.error} onCheck={chat.refresh} /> : null}
             </StatusHint></View>
           ) : null}
-          <View style={{ flexDirection: 'row', gap: space.s }}>
+          <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: space.s }}>
             <Pressable
               testID="chat-handoff"
               accessibilityRole="button"
@@ -163,7 +163,7 @@ export default function Chat() {
             </Pressable>
             <AddImageButton testID="chat-add-image" lang={lang} disabled={sending || images.length >= CHAT_MAX_IMAGES} onPress={() => { void addImages() }} />
             <Pressable testID="chat-model-open" accessibilityRole="button" accessibilityLabel={t(lang, 'chatModel.title')} onPress={() => router.push('/chat-model')} hitSlop={6}
-              style={({ pressed }) => ({ alignSelf: 'flex-start', minHeight: 36, justifyContent: 'center', paddingHorizontal: space.m, borderRadius: radius.control, borderWidth: 1, borderColor: c.hair, opacity: pressed ? 0.7 : 1 })}>
+              style={({ pressed }) => ({ alignSelf: 'flex-start', maxWidth: '100%', minHeight: 36, justifyContent: 'center', paddingHorizontal: space.m, borderRadius: radius.control, borderWidth: 1, borderColor: c.hair, opacity: pressed ? 0.7 : 1 })}>
               <Txt role="meta" numberOfLines={1}>{chatModelLabel(chatModel.data) ?? t(lang, 'chatModel.open')}</Txt>
             </Pressable>
             <Pressable testID="chat-search-open" accessibilityRole="button" accessibilityLabel={t(lang, 'chatSearch.title')} onPress={() => router.push('/chat-search')} hitSlop={6}

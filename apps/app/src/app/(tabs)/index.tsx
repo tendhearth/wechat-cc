@@ -7,6 +7,7 @@ import { useLang } from '../../i18n/useLang'
 import { useBackendCtx } from '../../state/BackendProvider'
 import { useConnection, useQuery } from '../../state/hooks'
 import { useWork } from '../../state/useWork'
+import { useChatUpdates } from '../../state/useChatUpdates'
 import { useTerminalSessions } from '../../state/useTerminal'
 import { useToday } from '../../state/useToday'
 import { useAwaySince } from '../../state/useAway'
@@ -48,6 +49,7 @@ export default function Now() {
   const { approvals, approvalsKnown, agents, matters, demo } = useWork()
   const v = nowView({ approvals, matters, hour: new Date().getHours(), known: demo || conn.state === 'online' })
   const chat = useQuery('chat:latest', () => backend.chat({})) // 与 /chat 同一个键、同一份缓存
+  useChatUpdates(chat.data?.matterId, chat.refresh)
   const line = latestCCLine(chat.data)
   const presence = ccPresence(conn, { demo }) // 演示:暗(不是真信号)
   const openChat = () => router.push('/chat')
@@ -69,7 +71,7 @@ export default function Now() {
   const [motion, setMotion] = useState<CCMotionEvent>()
   const snapshot = JSON.stringify({
     active: presence === 'here' && motionEnabled,
-    received: chat.data ? (line ? [{ id: [...chat.data.messages].reverse().find(m => m.role === 'cc' && m.at === line.at)?.id ?? String(line.at), at: line.at }] : []) : undefined,
+    received: chat.data ? (line ? [{ id: line.id, at: line.at }] : []) : undefined,
     done: todayData?.done.map(item => ({ id: `${item.source}:${item.id}`, at: item.at })),
     waiting: approvalsKnown && terminal.loaded ? [...approvals.map(item => item.id), ...terminal.sessions.filter(s => terminalNeedsYou([s], true).length > 0).map(s => `terminal:${s.session_id}:${s.pending?.hash ?? ''}`)] : undefined,
   })

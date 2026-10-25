@@ -5,7 +5,8 @@ import { composeTooLong } from '../view/compose'
 import { useBackendCtx } from './BackendProvider'
 import { deleteDraft, dropReceipt, getDraft, isReplied, listReceipts, markReplied, materialDraftId, pairingGen, putReceipt, requestIdFor, subscribeReceipts } from './drafts'
 import { bytesToBase64, uploadImages, withImageMarker, type PickedImage } from './image-upload'
-import { useQuery, useSubmit, useTopic } from './hooks'
+import { useQuery, useSubmit } from './hooks'
+import { useChatUpdates } from './useChatUpdates'
 
 export type ChatSendOutcome = 'ok' | 'busy' | 'ccBusy' | 'uncertain' | 'revoked' | 'failed' | 'refused' | 'tooLong' | 'imagesGone' | 'imagesUnsupported'
 const NO_JOB = { pending: null, failed: null } as const
@@ -55,17 +56,8 @@ export function useChat(): {
     })
   }, [latest.data])
 
-  const topicName = latest.data ? (`matter/${latest.data.matterId}` as const) : ('home' as const)
-  const topic = useTopic<{ version?: unknown; phase?: unknown }>(topicName)
-  const topicKey = topic === undefined ? undefined : JSON.stringify(topic)
-  const seen = useRef<{ name: string; key: string } | null>(null)
   const { refresh } = latest
-  useEffect(() => {
-    if (topicKey === undefined) return
-    const prev = seen.current
-    seen.current = { name: topicName, key: topicKey }
-    if (prev && prev.name === topicName && prev.key !== topicKey) void refresh()
-  }, [topicName, topicKey, refresh])
+  useChatUpdates(latest.data?.matterId, refresh)
 
   const page = latest.data ?? NO_JOB
   const msgs = useMemo(() => (latest.data ? mergeChatPages(latest.data, older) : []), [latest.data, older])
