@@ -3,7 +3,7 @@
  * 只读、确定性,不调模型;一条一行带时间,最多 15 行。
  */
 import type { ActivityItem } from '../../core/cc-activity'
-import type { ReplyHandler } from '../scheduled-jobs/command'
+import type { ReplyHandler } from '../commands/registry'
 
 export const ACTIVITY_WECHAT_LINES = 15
 

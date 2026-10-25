@@ -1,5 +1,5 @@
 import { describe, it, expect, vi } from 'vitest'
-import { mobileJobsRoute, type MobileJobsDeps } from './mobile-jobs'
+import { mobileJobsRoute, type MobileJobsDeps } from './mobile'
 
 const call = async (deps: MobileJobsDeps | undefined, path: string, method = 'GET', body?: unknown) => {
   const url = new URL(`http://x${path}`)

@@ -32,6 +32,8 @@ describe('排序:needs ∪ wants 的拓扑序', () => {
     expect(() => orderModules([{ name: 'a', needs: ['nope'], init: () => {} }])).toThrow(/unknown module 'nope'/)
     expect(() => orderModules([{ name: 'a', init: () => {} }, { name: 'a', init: () => {} }])).toThrow(/duplicate/)
     expect(() => orderModules([{ name: 'a', needs: ['a'], init: () => {} }])).toThrow(/itself/)
+    expect(() => orderModules([{ name: 'opt', optional: true, init: () => {} }, { name: 'core', needs: ['opt'], init: () => {} }])).toThrow(/required 'core' needs optional 'opt'/)
+    expect(() => orderModules([{ name: 'opt', optional: true, init: () => {} }, { name: 'core', wants: ['opt'], init: () => {} }])).not.toThrow()
   })
 })
 
@@ -80,7 +82,7 @@ describe('init / start 两段(整合者评审 #541:两个真环)', () => {
       { name: 'base', init: () => ({ on: true }) },
       { name: 'feat', needs: ['base'], enabled: (c) => c.get<{ on: boolean }>('base').on, init: () => { inited++ } },
       { name: 'base2', optional: true, init: () => { throw new Error('x') } },
-      { name: 'feat2', needs: ['base2'], enabled: (c) => c.get<{ on: boolean }>('base2').on, init: () => { inited++ } },
+      { name: 'feat2', optional: true, needs: ['base2'], enabled: (c) => c.get<{ on: boolean }>('base2').on, init: () => { inited++ } },
       { name: 'feat3', needs: ['base'], enabled: (c) => !c.get<{ on: boolean }>('base').on, init: () => { inited++ } },
     ])
     const mods = await started
@@ -171,7 +173,7 @@ describe('状态:开关、降级、上游', () => {
     let inited = false
     const { started } = run([
       { name: 'knowledge', optional: true, init: () => { throw new Error('db locked') } },
-      { name: 'ingest', needs: ['knowledge'], init: () => { inited = true } },
+      { name: 'ingest', optional: true, needs: ['knowledge'], init: () => { inited = true } },
     ])
     const app = await started
     expect(inited).toBe(false)

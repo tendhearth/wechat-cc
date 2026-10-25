@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest'
-import { wireJobs, type WireJobsDeps } from './wire-jobs'
+import { wireJobs, type WireJobsDeps } from './wire'
 
 /** 重构第二批步 6c 第二块:建的时候只给命令和 requestReview,runner 要 startRunner() 才起(规矩:wireX 里不 await 还没就绪的东西)。 */
 function deps(over: Partial<WireJobsDeps> = {}) {

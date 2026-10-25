@@ -5,7 +5,7 @@
  * 等粘贴时收到的不像清单(拆不出两条)⇒ 当普通聊天放过去,不吞主人的话。
  */
 import { IMPORT_PROMPT, screenImportedMemory, splitImportedMemory, type ImportCandidate } from '../../core/memory-import'
-import type { ReplyHandler } from '../scheduled-jobs/command'
+import type { ReplyHandler } from '../commands/registry'
 import type { ImportResult } from './nightly-runtime'
 
 const TTL_MS = 30 * 60_000

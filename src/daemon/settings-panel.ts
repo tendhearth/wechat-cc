@@ -40,7 +40,7 @@ import presenceArt from './mobile-presence-art.json'
 import { MOBILE_BRAND_ICON_PNG, MOBILE_BRAND_ICON_SIZES } from './mobile-brand-icon'
 import { mobileChatRoute, type MobileChatDeps } from './mobile-chat'
 import { mobileLettersRoute } from '../features/letters'
-import { mobileJobsRoute } from './mobile-jobs'
+import { mobileJobsRoute } from '../features/jobs'
 import { mobileActivityRoute } from './mobile-activity'
 import { mobileReadsRoute } from './mobile-reads'
 import {mobileSessionContinueRoute,mobileWorkbenchRoute,mobileMatterError,mobileSayInput,type MobileMatterActions,type MobileEntryActions,type MobileUploadActions,type MobileSessionContinueActions} from './mobile-workbench'
@@ -134,7 +134,7 @@ export interface SettingsPanelDeps {
   /** 「CC 的信」(2026-10-18,只读存档)。缺省 ⇒ /m/api/letters* 503。 */
   letters?: import('../features/letters').MobileLettersDeps
   /** 定时(对标 B7):列表与停 / 开 / 删。缺省 ⇒ 503。 */
-  jobs?: import('./mobile-jobs').MobileJobsDeps
+  jobs?: import('../features/jobs').MobileJobsDeps
   /** 「CC 做过的事」(B9):只给设备令牌。 */
   activity?: import('./mobile-activity').MobileActivityDeps
   /** 「CC 的连接」快照(spec 2026-10-01)。缺省 ⇒ /m/api/connections 503。 */

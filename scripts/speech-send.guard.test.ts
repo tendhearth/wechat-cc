@@ -73,7 +73,7 @@ const BASELINE: Record<string, [Tag, number]> = {
   // 都不是 CC 主动开口 —— 别照这个口子把真正主动的东西塞进来(整合者评审)。
   'src/daemon/internal-api/routes.ts': ['reply', 6],
   // 主人发的命令的回话:「定时 …」「做过的事 …」
-  'src/daemon/bootstrap/wire-jobs.ts': ['reply', 1],
+  'src/features/jobs/wire.ts': ['reply', 1],
   'src/daemon/bootstrap/wire-activity.ts': ['reply', 1],
   // 主人发的「日历 …」的回话(功能目录 src/features/calendar,架构终态 A4)
   'src/features/calendar/index.ts': ['reply', 1],

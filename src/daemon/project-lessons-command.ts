@@ -3,7 +3,7 @@
  * 不管哪家执行者来做这个项目都会在指令里看到。只认主人;项目按名字认(不分大小写,重名就问清楚)。
  */
 import { LESSONS_MAX, LESSON_MAX_CHARS, type ProjectLessons } from '../core/workbench/project-lessons'
-import type { ReplyHandler } from './scheduled-jobs/command'
+import type { ReplyHandler } from './commands/registry'
 
 const RE = /^\s*经验(?:\s+(\S+)(?:\s+([\s\S]+))?)?\s*$/
 const USAGE = `项目经验的写法:\n· 经验 <项目> <一句话>(比如「经验 wechat-cc 这个仓库用 bun,不要 npm」)\n· 经验 <项目>(看)· 经验 <项目> 删 <编号>\n每个项目最多 ${LESSONS_MAX} 条,每条一行、${LESSON_MAX_CHARS} 字以内。不管哪家执行者来做这个项目,都会照着做。`

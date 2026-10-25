@@ -71,8 +71,14 @@ export function makeCommandRegistry(input: readonly WechatCommand[]): CommandReg
   }
 }
 
+/**
+ * 文本命令的老形状:`probe` 认不认这句,`handle` 处理并自己回话(返回 true = 这句它吃了)。
+ * 功能交给命令表的就是它(日历、定时、经验、导入记忆 ……),经 fromReplyHandler 接进来。
+ */
+export interface ReplyHandler { probe(text: string, chatId: string): boolean; handle(text: string, chatId: string): Promise<boolean> }
+
 /** 老的 (text, chatId) 形状的处理器(ReplyHandler)接进来。 */
-export function fromReplyHandler(id: string, h: { probe(text: string, chatId: string): boolean; handle(text: string, chatId: string): Promise<boolean> }, extra: Pick<WechatCommand, 'ownsSlash' | 'group'> = {}): WechatCommand {
+export function fromReplyHandler(id: string, h: ReplyHandler, extra: Pick<WechatCommand, 'ownsSlash' | 'group'> = {}): WechatCommand {
   return { id, ...extra, probe: (m) => h.probe(m.text ?? '', m.chatId), handle: (m) => h.handle(m.text ?? '', m.chatId) }
 }
 
