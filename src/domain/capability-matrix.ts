@@ -99,7 +99,7 @@ const CAPABILITIES_BY_PROVIDER: Record<ProviderId, ProviderCapabilities> = {
   agy:    AGY_CAPABILITIES,
 }
 
-/** 登记了能力表的执行者(tier-enforcement 的守卫测试按它逐家查)。 */
+/** 登记了能力表的执行者(enforcement-matrix 按它逐家推、测试按它逐家查)。 */
 export const KNOWN_PROVIDER_IDS: readonly ProviderId[] = Object.freeze(Object.keys(CAPABILITIES_BY_PROVIDER))
 
 /**
@@ -198,7 +198,7 @@ export function lookup(
 
 // assertSupported / UnsupportedCombinationError / forbidden / notes 已删(3c Policy 第 3 步,2026-10-22):每一行的
 // forbidden 都是 false,分派时那道检查从来没拦过任何东西,传进去的还是全 daemon 的模式而不是这个对话的。真正的
-// 「这家这一档做不到」由 core/tier-enforcement.ts 的缺口登记 + 规则测试守(新缺口不写理由 CI 红),访客由
+// 「这家这一档做不到」由 domain/enforcement-matrix.ts 从真判定推出来、测试钉快照(新缺口不写理由 CI 红),访客由
 // provider-policy.providerDenialFor 在两个入口拒(协调器、主动 / 定时那一拍)。
 
 /**

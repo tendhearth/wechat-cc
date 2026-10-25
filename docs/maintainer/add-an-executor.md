@@ -38,7 +38,7 @@
 
 在 `PolicyTarget` 加一种「怎么连的」,在 `compilePolicy` 里写这一家把 档位 × 模式 翻成什么设置(沙箱、审批、应答、开关)。provider 只读 `compilePolicy(...)` 的结果,**不在调用处判 `permissionMode`**。`policy.test.ts` 的全表快照会多出几格 —— 更新快照,PR 里让评审看见这几格。
 
-然后看 `src/domain/tier-enforcement.ts`:没有逐工具回调的执行者,trusted / admin 两档「要问」的那几类(删东西、删记忆、动 daemon)它做不到。**档位说「问」的,能问就必须问;问不了的**在 `KNOWN_TIER_GAPS` 登记一行理由,放行的标 `doesNotAsk`(主人切过去时 CC 会照实说「它不会逐条问你」)。漏登记 ⇒ 规则测试红。
+然后看 `src/domain/enforcement-matrix.ts`:它从派发拒(`providerDenialFor`)、逐工具判定(`authorize`)和 `compilePolicy` 的 strict 设置推出每家 × 每档 × 每类工具实际会怎样。没有逐工具回调的执行者,trusted / admin 两档「要问」的那几类(删东西、删记忆、动 daemon)它做不到:**档位说「问」的,能问就必须问;问不了的**照实落成放或拒 —— 在 `unattendedAnswer` 里写清楚这一家问不了时怎么落(没写就抛)。落成放的,主人切过去时 CC 会照实说「它不会逐条问你」(`noAskNotice`,也是推出来的)。`enforcement-matrix.test.ts` 的快照会多出这一家 —— 更新快照,并在同一文件的 `WHY_GAPS` 写一条为什么;有缺口没写理由 ⇒ 规则测试红。
 
 ## 5. 对话侧构造:`src/daemon/bootstrap/providers.ts`
 
@@ -52,7 +52,7 @@
 
 ```bash
 bun run typecheck && bun run depcheck
-bun --bun vitest run src/core/policy src/core/tier-enforcement src/core/provider-policy src/core/capability-matrix src/lib/executor-facts src/lib/executor-detect scripts
+bun --bun vitest run src/domain/policy src/domain/enforcement-matrix src/domain/provider-policy src/domain/capability-matrix src/lib/executor-facts src/lib/executor-detect scripts
 bun run test:e2e          # 路由快照:/<slash> 在三档下回什么
 ```
 
@@ -66,7 +66,8 @@ bun run test:e2e          # 路由快照:/<slash> 在三档下回什么
 | `confines` 没写 | typecheck(必填) |
 | 手写二进制查找 / 密钥判断 | `scripts/executor-detect.guard.test.ts` |
 | `compilePolicy` 没这一家 | typecheck + `policy.test` 快照 |
-| 做不到「问」却没登记 | `tier-enforcement.test` |
+| 没有逐工具回调、没说问不了时怎么落 | `enforcement-matrix.test`(`unattendedAnswer` 抛) |
+| 有缺口没写理由 / 快照变了没接受 | `enforcement-matrix.test`(`WHY_GAPS`、快照) |
 | 斜杠词和 `/help`、`PROVIDER_SLASH` 对不上 | `mode-commands.test`、`scripts/provider-registry.guard.test.ts` |
 | 工作台接线时抄快照 | `wire-workbench.test`(晚到的执行者要出现) |
 
