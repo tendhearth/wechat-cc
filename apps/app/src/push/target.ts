@@ -6,7 +6,7 @@ import { openPush, PushKind, PushPlaintext, type PushKindT, type PushPlaintextT,
 export type PushTarget = { kind: PushKindT; taskId?: string; requestId?: string }
 
 const TASK = /^[a-f0-9]{8}$/
-/** 终端会话的推送(daemon cli-app-push.ts):`cli:<session_id>`;只有前缀 ⇒ 终端列表。 */
+/** 终端会话的推送(daemon features/terminal/app-push.ts):`cli:<session_id>`;只有前缀 ⇒ 终端列表。 */
 export const CLI_TASK = /^cli:[A-Za-z0-9_.:-]{0,56}$/
 const REQ = /^[A-Za-z0-9_.:-]{1,128}$/
 const obj = (x: unknown): Record<string, unknown> | null => (typeof x === 'object' && x !== null && !Array.isArray(x) ? (x as Record<string, unknown>) : null)

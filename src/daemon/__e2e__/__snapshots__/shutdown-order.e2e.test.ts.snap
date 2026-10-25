@@ -22,8 +22,8 @@ exports[`daemon shutdown order (snapshot) > stops every subsystem in the recorde
   "module wired/phone",
   "module wired/matter-activity",
   "module workbench/stop",
-  "module cli-sessions/cli-permissions",
-  "module cli-sessions/cli-events",
+  "module terminal/cli-permissions",
+  "module terminal/cli-events",
   "module idle-sweep/tick",
   "module internal-api/stop",
 ]

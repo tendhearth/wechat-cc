@@ -60,7 +60,7 @@ describe('resolvePushRoute —— 旧通知先定位事项、拉最新详情再�
   })
 })
 
-describe('终端会话的推送(taskId = cli:<会话>,daemon cli-app-push.ts)', () => {
+describe('终端会话的推送(taskId = cli:<会话>,daemon features/terminal/app-push.ts)', () => {
   it('cli:<会话> ⇒ 终端会话页,不拉「一件事」详情;只有前缀 ⇒ 终端列表(一起做)', async () => {
     const f = vi.fn(async () => ({}))
     const one = await resolvePushRoute(targetFromParams({ kind: 'permission', taskId: 'cli:019a2b-ff_x', requestId: 'ab12c' }), f)

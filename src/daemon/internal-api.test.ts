@@ -17,6 +17,7 @@ import type { A2AEventsStore, EventRow, AppendInput } from '../core/a2a-events-s
 import { openKnowledge } from '../core/knowledge/store'
 import { semanticSearch } from '../core/knowledge/search'
 import { serve } from '../lib/runtime/http'
+import { terminalRoutes, type TerminalRoutesDeps } from '../features/terminal/routes'
 
 describe('internal-api', () => {
   let stateDir: string
@@ -166,7 +167,7 @@ describe('internal-api', () => {
 
   describe('cli hook events route (spec 2026-09-09-cli-hook-push)', () => {
     const body = { source: 'claude', kind: 'stop', session_id: 'abc-123', cwd: '/w/p', text: 'done' }
-    it('FILE token(trusted)POST /v1/cli/event → 转给 hub;没接线 503;坏 body 400', async () => {
+    it('FILE token(trusted)POST /v1/cli/event → 转给 hub;terminal 模块没挂上 503 module_starting;坏 body 400', async () => {
       const ingest = vi.fn(() => 'scheduled' as const)
       api = createInternalApi({ stateDir, daemonPid: 1 })
       const { port, tokenFilePath } = await api.start()
@@ -176,9 +177,10 @@ describe('internal-api', () => {
       })
       const off = await post(body)
       expect(off.status).toBe(503)
-      expect(await off.json()).toEqual({ error: 'cli_events_not_wired' })
+      expect(await off.json()).toEqual({ error: 'module_starting', module: 'terminal' })
 
-      api.provide({ cliEvents: { ingest } })
+      // 路由由 terminal 模块自己挂(架构终态 A5,src/features/terminal)
+      api.mount('terminal', terminalRoutes({ cliEvents: { ingest } } as unknown as TerminalRoutesDeps))
       const on = await post(body)
       expect(on.status).toBe(200)
       expect(await on.json()).toEqual({ ok: true, action: 'scheduled' })

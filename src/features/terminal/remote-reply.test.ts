@@ -1,6 +1,6 @@
 import { describe, it, expect, vi } from 'vitest'
-import { makeRemoteReply } from './cli-remote-reply'
-import type { A2AAgentRecord } from '../lib/agent-config'
+import { makeRemoteReply } from './remote-reply'
+import type { A2AAgentRecord } from '../../lib/agent-config'
 
 const hand: A2AAgentRecord = { id: 'win-test', name: 'win', url: 'http://10.0.0.5:8717/a2a', inbound_api_key: 'i'.repeat(16), outbound_api_key: 'exec-key-000000000', capabilities: ['exec'], paused: false, transport: 'push', may_exec: false } as A2AAgentRecord
 const s = { session_id: 'sid-full', source: 'codex' as const, cwd: '/w', origin_agent: 'win-test', lastSeenAt: 1 }

@@ -1,5 +1,5 @@
 /**
- * cli-phone-actions.ts — 手机上对终端会话做的两件事(2026-10-14):拍板等批准的那一项、接着说一句。
+ * phone-actions.ts — 手机上对终端会话做的两件事(2026-10-14):拍板等批准的那一项、接着说一句。
  *
  * 不另起一套:拍板走微信「y/n 码」同一条路(ilink 的 PendingPermissions,consume 之后中继
  * 自己 settle、登记处自己回 running);说一句走微信「@码」同一个 makeCliReplyCore(同样的
@@ -7,10 +7,10 @@
  * last_summary(core 自己记 running → idle)。
  */
 import { randomBytes } from 'node:crypto'
-import type { CliEventHub, CliSessionInfo } from '../core/cli-events'
-import type { CliSessionView } from '../adapters/store/cli-session-store'
-import { readTail, type CliReplyCore } from './cli-reply-handler'
-import { parseActivity, type CliActivityItem } from '../core/cli-activity'
+import type { CliEventHub, CliSessionInfo } from '../../core/cli-events'
+import type { CliSessionView } from '../../adapters/store/cli-session-store'
+import { readTail, type CliReplyCore } from './reply-handler'
+import { parseActivity, type CliActivityItem } from '../../core/cli-activity'
 
 /** 手机上说一句最多这么长(终端那头是一句 prompt,不是贴文件)。 */
 export const PHONE_CLI_SAY_MAX = 4000
@@ -51,7 +51,7 @@ export interface CliPhoneActionsDeps {
   log: (tag: string, line: string) => void
   /** 测试替身;默认读真文件尾巴。 */
   readTail?: (path: string, max: number) => string
-  /** 开着窗口的会话 id(claude-live-window.ts liveSessionIds);缺席 ⇒ 空。 */
+  /** 开着窗口的会话 id(live-window.ts liveSessionIds);缺席 ⇒ 空。 */
   liveIds?: () => Set<string>
 }
 

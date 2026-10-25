@@ -4,7 +4,7 @@ import { framedTooLarge } from './mobile-matter-response'
 import { ownsMethod, type PhoneRouteTable } from './phone-route-table'
 import type { CliSessionView } from '../adapters/store/cli-session-store'
 import type { OverseerToday } from '../domain/overseer-today'
-import { PHONE_CLI_SAY_MAX, type CliPhoneActions } from './cli-phone-actions'
+import { PHONE_CLI_SAY_MAX, type CliPhoneActions } from '../features/terminal'
 import type { NativeHistoryItem, NativeHistoryListInput, NativeHistoryPage, NativeHistoryPreview, NativeHistoryReadInput } from '../core/workbench/native-history'
 
 /**
@@ -179,7 +179,7 @@ export function mobileReadsRoutes(deps: MobileReadsDeps, opts: { budgetMs?: numb
       try { return json({ ok: true, today: deps.today() }) }
       catch { return json({ ok: false, error: 'unavailable' }, 503) }
     }),
-    // 拍板终端会话等批准的那一项 —— 与微信「y/n 码」同一条路(cli-phone-actions.ts)。
+    // 拍板终端会话等批准的那一项 —— 与微信「y/n 码」同一条路(features/terminal/phone-actions.ts)。
     'POST /m/api/cli/permission': ownsMethod(async (url: URL, req: Request) => {
       if (req.method !== 'POST') return json({ ok: false, error: 'method_not_allowed' }, 405)
       if (!deps.cliActions) return json({ ok: false, error: 'cli_actions_not_wired' }, 503)

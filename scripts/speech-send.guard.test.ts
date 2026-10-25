@@ -56,7 +56,9 @@ const BASELINE: Record<string, [Tag, number]> = {
   'src/daemon/phone-notifier.ts': ['primitive', 1],
   'src/daemon/wiring/wire-phone.ts': ['primitive', 1],
   // daemon-modules.ts(以前在 main.ts)剩下的全是接线:回复交付、命令回话、信自己的投递、internal-api 的回话出口、贴纸路由的发文件口(主动开口都已经走门,10-21)
-  'src/daemon/daemon-modules.ts': ['primitive', 8],
+  // 7:微信「终端 / @码」那条命令的回话出口(scopedSend 包着的 sendMessage)跟着终端会话搬进 src/features/terminal/wire.ts(架构终态 A5),
+  // 从这里减一、在下面 'reply' 那一组加一行,总数不变
+  'src/daemon/daemon-modules.ts': ['primitive', 7],
   // pipeline-deps 剩下的全是接线:回话出口、proactive 的微信出口(发字 / 发文件)、给访客的回话、llm-health 的回话;访客申请已走门(10-21)
   'src/daemon/wiring/pipeline-deps.ts': ['primitive', 6],
   // —— 回答对方刚发来的那一句 ——
@@ -66,7 +68,9 @@ const BASELINE: Record<string, [Tag, number]> = {
   'src/daemon/mode-commands.ts': ['reply', 2],
   'src/daemon/inbound/mw-llm-health.ts': ['reply', 2],
   'src/daemon/commands/task-command.ts': ['reply', 2],
-  'src/daemon/cli-reply-handler.ts': ['reply', 1],
+  'src/features/terminal/reply-handler.ts': ['reply', 1],
+  // 主人发的「终端」「看 码」「@码 …」的回话(命令在 src/features/terminal/wire.ts 里造,搬家前在 daemon-modules.ts 的 owner-commands)
+  'src/features/terminal/wire.ts': ['reply', 1],
   'src/daemon/internal-api/routes-turn.ts': ['reply', 1],
   'src/daemon/inbound/mw-access.ts': ['reply', 2],     // 回访客刚发来的那一句(欢迎语 / 中性回话);告诉主人的那句已走门
   // 主人当面点的操作(广播),发给谁也是主人定的;以及回复那一轮里模型调的发文件 / 发表情。

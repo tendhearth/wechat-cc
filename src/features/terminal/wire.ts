@@ -1,8 +1,10 @@
 /**
- * 终端会话(重构第二批步 6c 第一块,从 main.ts 搬出来):终端 Claude Code / Codex 的 hook 事件登记处、权限中继(微信 y/n、
- * 手机、放行规则)、「这边 / 那边」的脑手转发、对终端会话说话(送进开着的窗口 / resume)、「今天」一眼看完、接上 hooks。
+ * 终端会话的接线(重构第二批步 6c 从 main.ts 搬出来,架构终态 A5 搬进 src/features/terminal):终端 Claude Code / Codex 的
+ * hook 事件登记处、权限中继(微信 y/n、手机、放行规则)、「这边 / 那边」的脑手转发、对终端会话说话(送进开着的窗口 / resume)、
+ * 「今天」一眼看完、接上 hooks,以及微信「终端 / 看 码 / @码 / y 码」那条命令和手机上的拍板 / 说一句。
  *
- * 它要的(deps)与给出去的(返回值)就是这一块在 main.ts 里的边界;main.ts 只负责按顺序调用。
+ * 它要的(`WireTerminalDeps`)由组装的地方(daemon-modules.ts)从上游模块里填;给出去的(返回值)就是模块的值。
+ * 路由不在这里挂:返回值里的 `routes` 交给 index.ts 去 `internalApi.mount('terminal', …)`。
  * 两样晚到的东西:工作台与手机 App 推送出口(wireMain 里才造),都是调用时现取的读口(模块容器的 `ctx.late`)。
  * 要停的东西经 `own` 登记(模块容器的 `ctx.own`,关机逆序)。
  */
@@ -20,43 +22,48 @@ import { withReplyRefs } from '../../domain/cli-session-digest'
 import { makeExecutionClaims } from '../../core/workbench/execution-claims'
 import type { TodayJobs } from '../../domain/overseer-today'
 import { defaultTerminalHooksDeps } from '../../cli/terminal-hooks'
-import { resolveAdminChatId } from './index'
-import { resolveClaudeBinary } from './claude-env'
-import { loadCompanionConfig } from '../companion/config'
-import { ensureStarterRules, makePermissionGate, makeTerminalDecide, STARTER_NOTICE } from '../permission-gate'
-import { makePendingNotices } from '../speech/pending-notices'
-import { makePermissionDecisionsStore } from '../permission-decisions-store'
-import { defaultRunner, makeCliReplyCore, makeHandReplyExecutor, readHead, readTail } from '../cli-reply-handler'
+import { resolveAdminChatId } from '../../daemon/bootstrap/index'
+import { resolveClaudeBinary } from '../../daemon/bootstrap/claude-env'
+import { loadCompanionConfig } from '../../daemon/companion/config'
+import { ensureStarterRules, makePermissionGate, makeTerminalDecide, STARTER_NOTICE } from '../../daemon/permission-gate'
+import { makePendingNotices } from '../../daemon/speech/pending-notices'
+import { makePermissionDecisionsStore } from '../../daemon/permission-decisions-store'
+import { defaultRunner, makeCliReplyCore, makeCliReplyHandler, makeHandReplyExecutor, readHead, readTail } from './reply-handler'
 import { turnTimeoutMsFromEnv } from '../../lib/turn-timeout'
-import { makeOverseerTodaySource, TODAY_TERMINAL_LIMIT, type TodayWorkbench } from '../overseer-today-source'
-import { makeTerminalHooksService } from '../terminal-hooks'
-import { findLiveWindow, liveSessionIds, relayToWindow, transcriptStartCwd, type LiveWindow } from '../claude-live-window'
-import { makeTerminalSay } from '../cli-terminal-say'
-import { currentStepOf } from '../cli-phone-actions'
-import { makeCliHubAppPush, makeCliPermissionAsk, type AppPushOutlet } from '../cli-app-push'
-import { makeBrainForwarder } from '../cli-brain-forward'
-import { CliEventRequest, CliPermissionRequest } from '../internal-api/schema'
-import type { InternalApiLifecycle } from '../internal-api/lifecycle'
-import type { IlinkAdapter } from '../ilink-glue'
-import type { Bootstrap } from './index'
+import { makeOverseerTodaySource, TODAY_TERMINAL_LIMIT, type TodayWorkbench } from './today'
+import { makeTerminalHooksService } from './hooks'
+import { findLiveWindow, liveSessionIds, relayToWindow, transcriptStartCwd, type LiveWindow } from './live-window'
+import { makeTerminalSay } from './terminal-say'
+import { currentStepOf, makeCliPhoneActions } from './phone-actions'
+import { makeRemoteReply } from './remote-reply'
+import type { TerminalRoutesDeps } from './routes'
+import { scopedSend } from '../../daemon/inbound/reply-scope'
+import { makeCliHubAppPush, makeCliPermissionAsk, type AppPushOutlet } from './app-push'
+import { makeBrainForwarder } from './brain-forward'
+import { CliEventRequest, CliPermissionRequest } from '../../daemon/internal-api/schema'
+import type { IlinkAdapter } from '../../daemon/ilink-glue'
+import type { Bootstrap } from '../../daemon/bootstrap/index'
 import type { NetworkGate } from '../../lib/network-gate'
 
 /** 工作台里这一块用到的两样:有没有跟外部会话撞文件夹、「今天」里那一节。 */
 export type CliSessionsWorkbench = TodayWorkbench & { conflictsExternal(cwd: string, source: string, sessionId: string): boolean }
 
-export interface WireCliSessionsDeps {
+export interface WireTerminalDeps {
   stateDir: string
   dangerously: boolean
   db: Db
   ilink: IlinkAdapter
   /** 项目登记(别名 → 文件夹),给终端会话起项目名用。 */
-  projects: Pick<import('../projects').Projects, 'list'>
+  projects: Pick<import('../../daemon/projects').Projects, 'list'>
   /** 登记一个要停的资源(模块容器的 ctx.own)。 */
   own(name: string, stop: () => unknown): void
-  internalApi: InternalApiLifecycle
+  /** 只认主人(微信「终端 / 看 码 / @码」)。 */
+  isOwner(chatId: string): boolean
+  /** 手机拍板等批准的那一项:与微信「y/n 码」、桌宠权限卡同一份待批(ilink.resolvePermission,拍板了记一次接触)。 */
+  resolvePermission(hash: string, decision: 'allow' | 'deny'): boolean
   boot: Bootstrap
   /** CC 开口那道门(第三批 3a),懒取(这里比门早接线)。取不到 ⇒ 终端汇总不发微信(桌面 / App 照旧),规则通知不发。 */
-  speech: () => Pick<import('../speech/policy').SpeechPolicy, 'tell'> | null
+  speech: () => Pick<import('../../daemon/speech/policy').SpeechPolicy, 'tell'> | null
   networkGate: NetworkGate
   /** 工作台在后面才建:调用时取,没就绪 ⇒ null。 */
   workbench(): CliSessionsWorkbench | null
@@ -66,12 +73,12 @@ export interface WireCliSessionsDeps {
   jobsSince(since: number): TodayJobs
 }
 
-export function wireCliSessions(d: WireCliSessionsDeps) {
-  const { stateDir, dangerously, db, ilink, own, internalApi, boot } = d
+export function wireTerminal(d: WireTerminalDeps) {
+  const { stateDir, dangerously, db, ilink, own, boot } = d
   // 终端 claude / codex 会话的 hook 事件(spec 2026-09-09-cli-hook-push):压一段
   // 再推给主人,同会话再敲一句就撤。发到哪:与权限卡、A2A notify 同一个主人
   // chat;怎么发:经 CC 开口那道门,投递走 boot.sendAssistantText —— 同一条外发,断线时它自己退避、这里不重试。
-  // 手机 app 推送出口:pipeline-deps(wireMain)里才造,调用时现取(cli-app-push.ts)。
+  // 手机 app 推送出口:pipeline-deps(wireMain)里才造,调用时现取(features/terminal/app-push.ts)。
   const cliAppPush = (): AppPushOutlet | null => d.appPush()
   // CC 代主人对终端会话说一句、等它回话(terminal_say,2026-10-24):replyCore 在下面才建,这里先占位
   let terminalSay: ReturnType<typeof makeTerminalSay> | null = null
@@ -174,7 +181,7 @@ export function wireCliSessions(d: WireCliSessionsDeps) {
     withReplyRefs(cliEvents.list(opts), (id) => cliPermissions.pendingHash(id), (h) => ilink.pendingPermissionCodeOf(h))
   // CC 代主人对终端会话说一句、等它回话(terminal_say,2026-10-24):送话用下面「@码」同一个 replyCore,
   // 回话是这条会话 hooks 报来的下一个 Stop(ingest 那一口转给它)。晚绑定:replyCore 在下面才建。
-  internalApi.provide({ cliEvents: {
+  const cliEventsRoute: TerminalRoutesDeps['cliEvents'] = {
     // 转给脑的事件本机登记处也记一笔(observe 只记不推):这台机自己的列表也看得到。
     ingest: (ev) => {
       let handed = false
@@ -207,8 +214,8 @@ export function wireCliSessions(d: WireCliSessionsDeps) {
       }
       return out
     },
-  } })
-  internalApi.provide({ cliPermissions: {
+  }
+  const cliPermissionsRoute: TerminalRoutesDeps['cliPermissions'] = {
     open: async (req) => {
       if (!forwarder?.brain()) return cliPermissions.open(req)
       const fwd = await forwarder.permissionOpen(req)
@@ -219,7 +226,7 @@ export function wireCliSessions(d: WireCliSessionsDeps) {
     },
     status: (h) => cliPermissions.status(h),
     wait: (h, ms) => forwarder?.ownsHash(h) ? forwarder.permissionWait(h, ms) : cliPermissions.wait(h, ms),
-  } })
+  }
   const legacyClaims=makeExecutionClaims()
   // 工作台在后面才接上(wireWorkbench):调用时经 getter 取,没就绪 ⇒ 不算冲突
   const executionConflict=(s:CliSessionInfo)=>d.workbench()?.conflictsExternal(s.cwd,s.source,s.session_id)??false
@@ -255,13 +262,13 @@ export function wireCliSessions(d: WireCliSessionsDeps) {
     readTranscript: (path) => readTail(path, 256 * 1024),
     turnTimeoutMs: turnTimeoutMsFromEnv(process.env),
   })
-  internalApi.provide({ terminalSay: {
+  const terminalSayRoute: TerminalRoutesDeps['terminalSay'] = {
     say: (code, text) => terminalSay!.say(code, text),
     wait: (ticket, ms, signal) => terminalSay!.wait(ticket, ms, signal),
     claim: (ticket) => terminalSay!.claim(ticket),
     // 只认主人那条聊天(同微信「@码」的 isOwner)
     isOwnerChat: (chatId) => resolveAdminChatId(loadAccess(), loadCompanionConfig(stateDir), null) === chatId,
-  } })
+  }
   const handExecutor = makeHandReplyExecutor(replyCore, {
     hub: cliEvents,
     notifyBrain: async (text) => {
@@ -298,13 +305,35 @@ export function wireCliSessions(d: WireCliSessionsDeps) {
     localMachine: osHostname(),
     log: (t, l) => log(t, l),
   })
-  internalApi.provide({ overseerToday: overseerToday })
   // 接上终端里的 Claude Code / Codex(2026-10-14):「CC 现在怎么样」那一行 + 桌面「接上」/「修复」的路由。
   // 只在主人点了确认时写 hook 配置,绝不自动装。
   const terminalHooks = makeTerminalHooksService({ deps: defaultTerminalHooksDeps, sessions: () => cliEvents.list({ includeEnded: true, limit: 500 }) })
-  internalApi.provide({ cliHooks: terminalHooks })
+  // 微信「终端」「看 码」「@码 …」「y 码」(命令表里 'cli' 那一项,owner-commands 按优先级排进去)。
+  const command = makeCliReplyHandler({
+    executionConflict, reserveExecution,
+    hub: cliEvents,
+    isOwner: d.isOwner,
+    sendMessage: scopedSend((c: string, t: string) => ilink.sendMessage(c, t)),
+    sharePage: async (title, md, chatId) => (await ilink.sharePage(title, md, { chat_id: chatId })).url,
+    holdBusy: (l) => boot.holdBusy(l),
+    log: (t, l) => log(t, l),
+    dangerously,
+    networkGate: d.networkGate,
+    liveWindow, startCwd,
+    localMachine: osHostname(),
+    listSessions: () => cliSessionViews({ limit: 50 }),
+    today: overseerToday,
+    ...(a2a ? { remote: makeRemoteReply({ registry: a2a.registry, client: a2a.client, selfId: boot.selfId }) } : {}),
+  })
+  // 手机拍板 / 说一句:拍板与微信「y/n 码」、桌宠权限卡同一份待批;说一句与微信「@码」同一个 core。
+  const phoneActions = makeCliPhoneActions({
+    hub: cliEvents, relay: cliPermissions, core: replyCore, localMachine: osHostname(), log: (t, l) => log(t, l), liveIds: () => liveSessionIds(),
+    resolve: (h, dec) => d.resolvePermission(h, dec),
+  })
+  const routes: TerminalRoutesDeps = { cliEvents: cliEventsRoute, cliPermissions: cliPermissionsRoute, terminalSay: terminalSayRoute, cliHooks: terminalHooks, overseerToday }
   return {
     cliEvents, cliPermissions, replyCore, permissionDecisions, permissionGate, cliSessionViews, terminalSay,
     legacyClaims, executionConflict, reserveExecution, liveWindow, startCwd, overseerToday, terminalHooks,
+    command, phoneActions, routes,
   }
 }

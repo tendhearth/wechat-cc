@@ -12,11 +12,11 @@ export interface PipelineDepsOpts {
   /** 「CC 做过的事」(B9):main 拼好来源,这里只透传给手机面板。 */
   activity?: import('../mobile-activity').MobileActivityDeps
   /** 终端会话的手机动作(拍板 / 说一句):POST /m/api/cli/permission、/m/api/cli/say。缺省 ⇒ 503。 */
-  cliActions?: import('../cli-phone-actions').CliPhoneActions
+  cliActions?: import('../../features/terminal').CliPhoneActions
   /** 「今天」一眼看完(core/overseer-today.ts):手机 GET /m/api/today 读它。缺省 ⇒ 503。 */
   overseerToday?: () => import('../../domain/overseer-today').OverseerToday
   /** 「CC 现在怎么样」里「终端里的 Claude Code / Codex」那一行(2026-10-14)。缺省 ⇒ 那一行不出现。 */
-  terminalHooks?: Pick<import('../terminal-hooks').TerminalHooksService, 'capabilityInput'>
+  terminalHooks?: Pick<import('../../features/terminal').TerminalHooksService, 'capabilityInput'>
   /** 网络守护运行时(2026-10-02):微信入站闸门 + 每晚整理记忆的跳过判据。 */
   guardRuntime?: import('../guard/runtime').GuardRuntime
   /** 可选子系统的开机状态(SubsystemSupervisor.statuses;「CC 现在怎么样」用)。 */

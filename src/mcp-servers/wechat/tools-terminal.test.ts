@@ -1,6 +1,6 @@
 /**
  * terminal_say / terminal_say_result(2026-10-24):POST 拿票 → GET 轮询;被拒照实带 detail;等不到不说「忙」。
- * 注册门(只给 admin 会话)在 integration.test.ts;分级在 user-tier.test.ts;路由的主人门在 routes-cli-say.test.ts。
+ * 注册门(只给 admin 会话)在 integration.test.ts;分级在 user-tier.test.ts;路由的主人门在 features/terminal/say-route.test.ts。
  */
 import { describe, expect, it } from 'vitest'
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js'
@@ -8,7 +8,7 @@ import { Client } from '@modelcontextprotocol/sdk/client/index.js'
 import { InMemoryTransport } from '@modelcontextprotocol/sdk/inMemory.js'
 import { registerTerminalTools, effectiveWaitS, formatSayResult, wrapReply, SHORT_WAIT_S, TERMINAL_SAY_WAIT_DEFAULT_S, TERMINAL_SAY_WAIT_MAX_S } from './tools-terminal'
 import { InternalApiError, type InternalApiClient } from './client'
-import * as daemonSide from '../../daemon/cli-terminal-say'
+import * as daemonSide from '../../features/terminal/terminal-say'
 
 const view = (over: Record<string, unknown> = {}) => ({
   ok: true, ticket: 'a1b2c3d4e5f6', code: 'abc123', source: 'claude', project: 'cc', via: 'window', state: 'delivered', final: false,

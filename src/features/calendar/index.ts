@@ -15,7 +15,7 @@ import type { InternalApiLifecycle } from '../../daemon/internal-api/lifecycle'
 import type { ReplyHandler } from '../../daemon/commands/registry'
 import type { IlinkAdapter } from '../../daemon/ilink-glue'
 import { loadCompanionConfig } from '../../daemon/companion/config'
-import { defaultRunner } from '../../daemon/cli-reply-handler'
+import { defaultRunner } from '../terminal'
 import { appBundleHasCalendarUsage, makeCalendar, makeCalendarCommand, type Calendar } from './calendar'
 import { calendarRoutes } from './routes'
 

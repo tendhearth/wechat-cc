@@ -1,7 +1,7 @@
 /**
  * cli-session-digest.ts — 终端会话登记处的「一眼看完」纯文本(2026-10-14)。
  *
- * 两个出口用同一份措辞:微信里主人发「终端」(daemon/cli-reply-handler.ts),和 CC 自己的
+ * 两个出口用同一份措辞:微信里主人发「终端」(features/terminal/reply-handler.ts),和 CC 自己的
  * 只读工具 `terminal_sessions`(主人用大白话问「我终端里那几个在干嘛」)。微信不认 markdown,
  * 所以这里只出纯文本:等你批准的在最前、能在微信里拍的带上怎么回,其余按最近事件倒序,
  * 最多 CLI_DIGEST_MAX_ROWS 条。

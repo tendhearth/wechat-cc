@@ -1,5 +1,5 @@
 /**
- * cli-terminal-say.ts — CC 自己代主人对一条终端会话说一句、等它回话(terminal_say,2026-10-24)。
+ * terminal-say.ts — CC 自己代主人对一条终端会话说一句、等它回话(terminal_say,2026-10-24)。
  *
  * 为什么:主人在外面跟 CC 说「跟终端里正在开发 cc 的 Claude 讨论一下这个」「让 6ccb0f 先停下改 X」——
  * 「不然怎么远程指挥呢?」(主人 10-24)。那天 CC 只有 delegate_claude,起的是一个**新的** Claude,
@@ -33,11 +33,11 @@
  * 拿得到 file 令牌的本来就是主人这台机上的进程,剩下的口子在这一层。
  */
 import { randomBytes } from 'node:crypto'
-import { stripMarkdown, INLINE_MAX, type CliEvent, type CliSessionInfo, type CliSource } from '../core/cli-events'
-import type { CliSessionView } from '../adapters/store/cli-session-store'
-import { cliSourceLabel } from '../domain/cli-session-digest'
-import { lastAssistantText, redactSecrets } from '../core/cli-transcript'
-import { RESUME_TIMEOUT_MS, type CliReplyCore } from './cli-reply-handler'
+import { stripMarkdown, INLINE_MAX, type CliEvent, type CliSessionInfo, type CliSource } from '../../core/cli-events'
+import type { CliSessionView } from '../../adapters/store/cli-session-store'
+import { cliSourceLabel } from '../../domain/cli-session-digest'
+import { lastAssistantText, redactSecrets } from '../../core/cli-transcript'
+import { RESUME_TIMEOUT_MS, type CliReplyCore } from './reply-handler'
 
 /** 一句最多这么长(同手机说一句 PHONE_CLI_SAY_MAX)。 */
 export const TERMINAL_SAY_MAX_TEXT = 4000
@@ -219,7 +219,7 @@ export function makeTerminalSay(deps: TerminalSayDeps): TerminalSay {
   }
   const label = (t: Ticket) => `${cliSourceLabel(t.source)} · 码 ${t.code}`
 
-  /** 没人领的终局 ⇒ 告诉主人,措辞同「@码」那条路(cli-reply-handler sayTo)。窗口那条路的回话 / 结束不发:hub 已照常推。 */
+  /** 没人领的终局 ⇒ 告诉主人,措辞同「@码」那条路(reply-handler.ts sayTo)。窗口那条路的回话 / 结束不发:hub 已照常推。 */
   async function notifyUnclaimed(t: Ticket): Promise<void> {
     t.claimTimer = null
     if (t.claimed || ownerHasReply(t)) return

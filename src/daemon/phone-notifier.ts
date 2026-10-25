@@ -13,7 +13,7 @@ import type { PhonePush, PushPayload } from './phone-push'
 /**
  * 一条推送发给每台登记过的手机;正连着实时订阅的跳过(它自己看得见)。单台失败只记日志、不重试。
  * 回 sent = 交给中继的台数、online = 因在线跳过的台数(调用方据此判断「手机够得着」)。
- * phone-notifier 与终端会话推送(cli-app-push.ts)共用这一个。
+ * phone-notifier 与终端会话推送(features/terminal/app-push.ts)共用这一个。
  */
 export function fanoutPush(deps: {
   push: Pick<PhonePush, 'registered' | 'notify'>

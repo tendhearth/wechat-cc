@@ -1,10 +1,10 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import { DIGEST_WINDOW_MS, MIN_TURN_MS, STOP_HOLD_MS, makeCliEventHub, type CliEvent, type CliPushItem } from '../core/cli-events'
-import { makeCliPermissionRelay, type CliPermissionRelay } from '../core/cli-permission-relay'
-import { buildCliPushPayload, cliPushTaskId, makeCliHubAppPush, makeCliPermissionAsk, type AppPushOutlet } from './cli-app-push'
-import { makeCliPhoneActions } from './cli-phone-actions'
-import { PendingPermissions } from './pending-permissions'
-import type { PushPayload } from './phone-push'
+import { DIGEST_WINDOW_MS, MIN_TURN_MS, STOP_HOLD_MS, makeCliEventHub, type CliEvent, type CliPushItem } from '../../core/cli-events'
+import { makeCliPermissionRelay, type CliPermissionRelay } from '../../core/cli-permission-relay'
+import { buildCliPushPayload, cliPushTaskId, makeCliHubAppPush, makeCliPermissionAsk, type AppPushOutlet } from './app-push'
+import { makeCliPhoneActions } from './phone-actions'
+import { PendingPermissions } from '../../daemon/pending-permissions'
+import type { PushPayload } from '../../daemon/phone-push'
 
 /**
  * 终端会话推到手机 app(2026-10-14):与微信并列的第二个出口。推送与微信都是假的;
@@ -55,7 +55,7 @@ describe('hub 的两个出口:微信 + 手机 app,同一套在场 / 快问快答
     const fp = fakePush()
     const outlet = o.push === undefined ? fp.outlet : o.push
     const hub = makeCliEventHub({
-      // 模仿 wire-cli-sessions 的 send:窗口关着、手机收到了 ⇒ 'skipped',不发。
+      // 模仿 wire.ts 的 send:窗口关着、手机收到了 ⇒ 'skipped',不发。
       send: async (t, ctx) => { ctxs.push(ctx); if (o.windowClosed && ctx?.appDelivered) return 'skipped'; if (o.sendThrows) throw new Error('ilink down'); sent.push(t); return o.sendResult ?? 'sent' },
       pushApp: makeCliHubAppPush({ push: () => outlet, log: (a, b) => logs.push(`${a} ${b}`) }),
       projectName: (c) => c.split('/').pop()!,

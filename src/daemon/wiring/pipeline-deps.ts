@@ -154,7 +154,7 @@ export interface BuildPipelineDepsResult {
   /** 每晚记忆整理运行时;main.ts 挂定时器并接到 internal-api。 */
   memoryNightly: import('../memory/nightly-runtime').MemoryNightlyRuntime
   /** 手机 app 原生推送出口(中继 v2);没开 v2 ⇒ 调用回 null。终端会话推送用(main.ts 懒绑定)。 */
-  appPush: import('../cli-app-push').AppPushOutlet
+  appPush: import('../../features/terminal').AppPushOutlet
   /**
    * CC 主动找你的 App 那条路(2026-10-18,companion/app-channel.ts):记进主人对话 + companion 推送。
    * 没开中继 v2 / 没有「一件事」库(手机对话不存在)⇒ null,伙伴与提醒只走微信。

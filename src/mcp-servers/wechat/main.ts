@@ -196,7 +196,7 @@ if (process.env.WECHAT_SESSION_TIER !== 'guest') {
 if (SESSION_IS_ADMIN) {
   registerDaemonTools(server, client)
   // terminal_say / terminal_say_result(2026-10-24):代主人对终端里正在干活的会话说一句、带回它的回话。
-  // 只给 admin 会话;路由层再只认主人那条聊天的会话令牌(routes-cli-events)。
+  // 只给 admin 会话;路由层再只认主人那条聊天的会话令牌(features/terminal/routes.ts)。
   registerTerminalTools(server, client)
   registerFileTools(server, client)
   // 社交工具面(spec 2026-09-05-social-tools):social_seek + 九个读 / 动

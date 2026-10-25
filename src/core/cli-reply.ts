@@ -4,7 +4,7 @@
  *   看 a1b2c3          → 把那条会话的尾巴渲染成页面发链接
  *   @a1b2c3 改成 X     → `claude -p --resume` / `codex exec resume` / `cursor-agent --resume -p` 接着原来的对话跑,结果回微信
  *
- * 纯逻辑:解析 + 组命令行。跑与回都在 daemon/cli-reply-handler.ts。
+ * 纯逻辑:解析 + 组命令行。跑与回都在 features/terminal/reply-handler.ts。
  */
 import type { CliSource } from './cli-events'
 

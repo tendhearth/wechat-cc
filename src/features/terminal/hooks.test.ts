@@ -2,13 +2,12 @@ import { describe, it, expect, beforeEach, afterAll, vi } from 'vitest'
 import { mkdtempSync, mkdirSync, rmSync, writeFileSync, existsSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { installHooks } from '../cli/hook'
-import { makeTerminalHooksService, LOCATE_TTL_MS, SESSIONS_WINDOW_MS } from './terminal-hooks'
-import { cliEventRoutes } from './internal-api/routes-cli-events'
-import { minTierFor } from './internal-api/route-tiers'
-import { REQUEST_SCHEMAS } from './internal-api/schema'
-import type { InternalApiDeps } from './internal-api/types'
-import type { TerminalHooksDeps } from '../cli/terminal-hooks'
+import { installHooks } from '../../cli/hook'
+import { makeTerminalHooksService, LOCATE_TTL_MS, SESSIONS_WINDOW_MS } from './hooks'
+import { terminalRoutes, type TerminalRoutesDeps } from './routes'
+import { minTierFor } from '../../daemon/internal-api/route-tiers'
+import { REQUEST_SCHEMAS } from '../../daemon/internal-api/schema'
+import type { TerminalHooksDeps } from '../../cli/terminal-hooks'
 
 // 临时 HOME / CODEX_HOME:绝不碰主人真的配置。
 const tmpDirs: string[] = []
@@ -62,12 +61,8 @@ describe('makeTerminalHooksService', () => {
 })
 
 describe('POST /v1/cli/hooks/install|uninstall', () => {
-  const routes = (svc?: InternalApiDeps['cliHooks']) => cliEventRoutes({ cliHooks: svc } as unknown as InternalApiDeps)
+  const routes = (svc?: TerminalRoutesDeps['cliHooks']) => terminalRoutes({ cliHooks: svc } as unknown as TerminalRoutesDeps)
   type Res = { status: number; body: { ok: boolean; results: Array<{ source: string; changed?: boolean }>; status: Array<{ health: string }> } }
-  it('没接线 ⇒ 503', async () => {
-    expect(await routes()['POST /v1/cli/hooks/install']!(new URLSearchParams(), {})).toEqual({ status: 503, body: { error: 'cli_hooks_not_wired' } })
-    expect(await routes()['POST /v1/cli/hooks/uninstall']!(new URLSearchParams(), {})).toEqual({ status: 503, body: { error: 'cli_hooks_not_wired' } })
-  })
   it('接上 → 再接一次什么都不改 → 撤掉 → 再撤一次什么都不改(临时文件上)', async () => {
     const r = routes(make(() => '/bin/found'))
     const q = new URLSearchParams()

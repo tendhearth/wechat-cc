@@ -1,7 +1,7 @@
 import { describe, it, expect, vi } from 'vitest'
-import { makeCliReplyHandler, makeCliReplyCore, makeHandReplyExecutor, readTail, defaultRunner, RESUME_TIMEOUT_MS, type Runner } from './cli-reply-handler'
-import type { CliSessionInfo } from '../core/cli-events'
-import { buildOverseerToday } from '../domain/overseer-today'
+import { makeCliReplyHandler, makeCliReplyCore, makeHandReplyExecutor, readTail, defaultRunner, RESUME_TIMEOUT_MS, type Runner } from './reply-handler'
+import type { CliSessionInfo } from '../../core/cli-events'
+import { buildOverseerToday } from '../../domain/overseer-today'
 import { mkdtempSync, writeFileSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -31,7 +31,7 @@ function harness(opts: { sessions?: CliSessionInfo[]; run?: Runner; owner?: bool
 
 const tick = () => new Promise(r => setTimeout(r, 0))
 
-describe('cli-reply-handler', () => {
+describe('reply-handler', () => {
   it('不是这两种句式 / 不是主人 → false,不回话', async () => {
     const a = harness()
     expect(await a.h.handle('随便聊聊', 'c')).toBe(false)
@@ -251,14 +251,14 @@ it('network unprotected (2026-10-02) → resume never spawns the CLI; says why',
 
 it('守护 v2: a terminal Claude session behind a custom gateway (ANTHROPIC_BASE_URL) is not protected → resumes while unsafe',async()=>{
  const run=vi.fn(async()=>({code:0,stdout:'done',stderr:'',timedOut:false,closed:true})),check=vi.fn(async()=>({safe:false,source:'bx' as const,detail:'bx 未保护'}))
- const {classifyCall}=await import('../lib/call-classifier')
+ const {classifyCall}=await import('../../lib/call-classifier')
  const core=makeCliReplyCore({hub:{lookup:()=>sess(),sessions:()=>[sess()]},run,reserveExecution:()=>()=>{},log:()=>{},dangerously:false,networkGate:{check,classify:t=>classifyCall({...t,baseUrl:'https://gw.example.com'})}})
  const r=await core.resume(sess(),'go')
  expect(r.kind).not.toBe('failed');expect(run).toHaveBeenCalled();expect(check).not.toHaveBeenCalled()
 })
 
 it('守护(2026-10-15):终端 Cursor 会话的模型登记处里没有 ⇒ 按需要保护;网络不安全不起 cursor-agent,安全就照常起',async()=>{
- const {classifyCall}=await import('../lib/call-classifier')
+ const {classifyCall}=await import('../../lib/call-classifier')
  const run=vi.fn(async()=>({code:0,stdout:'done',stderr:'',timedOut:false,closed:true}))
  const unsafe=vi.fn(async()=>({safe:false,source:'bx' as const,detail:'bx 未保护'}))
  const cur=sess({source:'cursor'})
@@ -270,7 +270,7 @@ it('守护(2026-10-15):终端 Cursor 会话的模型登记处里没有 ⇒ 按�
 })
 
 it('守护(2026-10-03):终端 Codex 会话按 codex 自己的配置判,不看 OPENAI_BASE_URL',async()=>{
- const {classifyCall}=await import('../lib/call-classifier')
+ const {classifyCall}=await import('../../lib/call-classifier')
  const {mkdirSync}=await import('node:fs')
  const root=mkdtempSync(join(tmpdir(),'cli-reply-codex-')),home=join(root,'codex-home'),prior={home:process.env.CODEX_HOME,base:process.env.OPENAI_BASE_URL}
  mkdirSync(home,{recursive:true})

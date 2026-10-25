@@ -1586,7 +1586,7 @@ Bun.serve({
       return Response.json({ ok: true, results: [{ source: 'claude', ok: true, file: '/home/demo/.claude/settings.json', changed: true }], status: [] })
     }
     if (dryRun && url.pathname === '/v1/cli/sessions' && req.method === 'GET') {
-      // 跟真 daemon 一样带上 displayName(wire-cli-sessions:registry.namesOf(source).name;收敛清单 ⑥)
+      // 跟真 daemon 一样带上 displayName(features/terminal/wire.ts:registry.namesOf(source).name;收敛清单 ⑥)
       return Response.json({ ok: true, sessions: (__mockState.cliSessions ?? []).map(x => ({ ...x, displayName: executorNames(String(x.source ?? 'claude')).name })) })
     }
     if (dryRun && url.pathname === '/v1/connections' && req.method === 'GET') {

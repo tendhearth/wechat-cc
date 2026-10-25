@@ -245,38 +245,6 @@ export interface InternalApiDeps {
    */
   selfChange?: import('../self-change-glue').SelfChangeDep
   /**
-   * 终端 claude / codex 会话的 hook 事件入口(spec 2026-09-09-cli-hook-push)。
-   * main.ts 在 bootstrap 之后 setCliEvents —— hub 要 boot.sendAssistantText。
-   * 没设之前 POST /v1/cli/event 503。
-   */
-  cliEvents?: {
-    ingest(ev: import('../../core/cli-events').CliEvent): import('../../core/cli-events').CliEventAction | Promise<import('../../core/cli-events').CliEventAction>
-    /** 终端会话登记处(v76):GET /v1/cli/sessions。缺席 ⇒ 那条路由 503。 */
-    list?(opts?: { includeEnded?: boolean; limit?: number }): import('../../adapters/store/cli-session-store').CliSessionView[]
-    /**
-     * GET /v1/cli/sessions?detail=1(CC 的 terminal_sessions,2026-10-24):每条补上开没开着窗口、此刻在做哪一步。
-     * 要读记录尾巴,所以只在带 detail 时算;桌面「此刻」不带。缺席 ⇒ 不补。
-     */
-    detail?(sessionIds: string[]): Record<string, { live_window: boolean; now_step: string | null }>
-  }
-  /**
-   * CC 代主人对终端会话说一句、等它回话(terminal_say,2026-10-24,daemon/cli-terminal-say.ts)。
-   * POST /v1/cli/say、GET /v1/cli/say;只给主人自己那条聊天的 admin 会话(isOwnerChat)。缺席 ⇒ 503。
-   */
-  terminalSay?: Pick<import('../cli-terminal-say').TerminalSay, 'say' | 'wait' | 'claim'> & { isOwnerChat(chatId: string): boolean }
-  /**
-   * 「今天」一眼看完(core/overseer-today.ts,2026-10-14):终端 + 一起做,过去 24 小时。
-   * main.ts setOverseerToday;没设之前 GET /v1/overseer/today 503。只读,只在被问时算。
-   */
-  overseerToday?: () => import('../../domain/overseer-today').OverseerToday
-  /**
-   * 接上 / 撤掉终端里的 Claude Code / Codex(2026-10-14):POST /v1/cli/hooks/install|uninstall。
-   * main.ts setCliHooks;没设之前 503。只在主人点了确认时调,绝不自动装。
-   */
-  cliHooks?: Pick<import('../terminal-hooks').TerminalHooksService, 'install' | 'uninstall'>
-  /** 终端会话权限 → 微信 y/n(spec 2026-09-09-cli-hook-push §6.3)。main.ts setCliPermissions。 */
-  cliPermissions?: Pick<import('../../core/cli-permission-relay').CliPermissionRelay, 'open' | 'status' | 'wait'>
-  /**
    * Optional A2A deps — undefined when a2a_listen is not configured.
    * When absent, POST /v1/a2a/send returns 503.
    */
@@ -608,7 +576,6 @@ export interface InternalApiDeps {
 export const LATE_KEYS = [
   'delegate', 'conversation', 'a2a', 'social', 'knowledge', 'pairing', 'memoryLlm', 'incidents',
   'llmHealth', 'llmRegistered', 'llmNames', 'llmEndpoints',
-  'cliEvents', 'cliPermissions', 'overseerToday', 'cliHooks', 'terminalSay',
   'workbench', 'matters', 'companionConverse', 'petTurn', 'settingsLink', 'connections', 'phoneConnect',
   'memoryNightly', 'cliUpgrade',
 ] as const satisfies readonly (keyof InternalApiDeps)[]

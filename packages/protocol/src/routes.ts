@@ -74,7 +74,7 @@ export interface PanelSurface {
  * 表里标了 `module: X` 的路由:daemon 的路由层按 X 此刻的状态判能不能走(关着 ⇒ module_off、坏了 ⇒ module_degraded、
  * 还没挂上 ⇒ module_starting);处理器由模块 X 自己挂(`internalApi.mount`),不在 internal-api 的总表里。
  */
-export const MODULE_NAMES = ['social', 'calendar', 'reminders', 'letters', 'atelier', 'stickers', 'journal', 'voice'] as const
+export const MODULE_NAMES = ['social', 'calendar', 'reminders', 'letters', 'atelier', 'stickers', 'journal', 'voice', 'terminal'] as const
 export type ModuleName = (typeof MODULE_NAMES)[number]
 
 export interface RouteSpec {
@@ -312,25 +312,25 @@ export const ROUTES: Readonly<Record<RouteKey, RouteSpec>> = {
   'POST /v1/delegate': { desktop: { tier: 'trusted' } },
   // 终端 claude / codex 的 hook 事件(spec 2026-09-09-cli-hook-push):hook 子命令
   // 拿的是 FILE token(= trusted)。
-  'POST /v1/cli/event': { desktop: { tier: 'trusted' } },
-  'POST /v1/cli/permission': { desktop: { tier: 'trusted' } },
-  'GET /v1/cli/permission': { desktop: { tier: 'trusted' } },
+  'POST /v1/cli/event': { module: 'terminal', desktop: { tier: 'trusted' } },
+  'POST /v1/cli/permission': { module: 'terminal', desktop: { tier: 'trusted' } },
+  'GET /v1/cli/permission': { module: 'terminal', desktop: { tier: 'trusted' } },
   // 终端会话登记处(v76):列出主人所有终端会话的路径、最后一句、等批准的命令 —— 主人的私事,admin。
   // 桌面(原 lib.rs / workbench-proxy.ts 注释):此刻「N 件事等你」里列出终端里等批准的 Claude Code / Codex,只读。
   // 拍板不走这里,走 pet_permission_resolve(POST /v1/permissions/resolve)。
-  'GET /v1/cli/sessions': { desktop: { tier: 'admin', tokens: ['operator'], tauri: true, devProxy: true } },
+  'GET /v1/cli/sessions': { module: 'terminal', desktop: { tier: 'admin', tokens: ['operator'], tauri: true, devProxy: true } },
   // CC 代主人对终端会话说一句、等它回话(terminal_say,2026-10-24):往主人终端里正在干活的会话里送话 —— admin,
   // 不给 operator(桌面 / CLI 没有这个入口;主人自己说走微信「@码」/ 手机)。路由里另外只认主人那条聊天的会话令牌。
-  'POST /v1/cli/say': { desktop: { tier: 'admin' } },
-  'GET /v1/cli/say': { desktop: { tier: 'admin' } },
+  'POST /v1/cli/say': { module: 'terminal', desktop: { tier: 'admin' } },
+  'GET /v1/cli/say': { module: 'terminal', desktop: { tier: 'admin' } },
   // 「今天」一眼看完(2026-10-14):同上一份登记处 + 一起做的标题与待批 —— 主人的私事,admin。
-  'GET /v1/overseer/today': { desktop: { tier: 'admin', tokens: ['operator'] } },
+  'GET /v1/overseer/today': { module: 'terminal', desktop: { tier: 'admin', tokens: ['operator'] } },
   // 读日历(对标 #8):日程是主人的私事。
   'GET /v1/calendar/agenda': { module: 'calendar', desktop: { tier: 'admin' } },
   // 接上 / 撤掉终端里的 Claude Code / Codex(2026-10-14):改主人 ~/.claude/settings.json 与 $CODEX_HOME/hooks.json,admin。
   // 桌面(原 lib.rs 注释):「CC 现在怎么样」与引导页的「接上」/「修复」,主人点了确认才调。
-  'POST /v1/cli/hooks/install': { desktop: { tier: 'admin', tokens: ['operator'], tauri: true, devProxy: true } },
-  'POST /v1/cli/hooks/uninstall': { desktop: { tier: 'admin', tokens: ['operator'], tauri: true, devProxy: true } },
+  'POST /v1/cli/hooks/install': { module: 'terminal', desktop: { tier: 'admin', tokens: ['operator'], tauri: true, devProxy: true } },
+  'POST /v1/cli/hooks/uninstall': { module: 'terminal', desktop: { tier: 'admin', tokens: ['operator'], tauri: true, devProxy: true } },
   // CC 的信(2026-10-16):信是写给主人的私事;开关改主人的 companion 配置。admin。
   'GET /v1/letters': { module: 'letters', desktop: { tier: 'admin', tokens: ['operator'] } },
   'POST /v1/letters/write': { module: 'letters', desktop: { tier: 'admin', tokens: ['operator'] } },

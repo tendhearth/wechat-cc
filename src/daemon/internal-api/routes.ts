@@ -30,7 +30,6 @@ import { probeFsAccess, describeFsAccess, hasFullDiskAccess, FDA_MISSING_HINT } 
 import { thoughtRoutes } from './routes-thoughts'
 import { presenceRoutes } from './routes-presence'
 import { petRoutes } from './routes-pet'
-import { cliEventRoutes } from './routes-cli-events'
 import { permissionRoutes } from './routes-permissions'
 import { selfChangeRoutes } from './routes-self-change'
 import { socialRoutes } from './routes-social'
@@ -733,7 +732,6 @@ export function makeRoutes({ deps, getDelegate, maybePrefix, mounted }: MakeRout
     ...petRoutes(deps),
     ...permissionRoutes(deps),
     ...selfChangeRoutes(deps),
-    ...cliEventRoutes(deps),
     ...knowledgeRoutes(deps),
     ...configRoutes(deps),
     ...pairRoutes(deps),

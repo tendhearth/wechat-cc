@@ -197,7 +197,7 @@ export const WORKBENCH_ERRORS: Readonly<Record<string, WorkbenchErrorSpec>> = Ob
   workbench_archived: {desktop: 409, phone: 409, wechat: '这项任务已归档。请在桌面工作台恢复任务后再继续。', wechatWorktree: '这项任务已归档，请先在桌面恢复任务。'},
   workbench_busy: {desktop: 409, phone: 409, wechat: '任务轮次已变化或正在停止，这条补充没有发送。请重新查询任务后再提交。', wechatWorktree: '这个工作区还有会话开着，先「停止」或等它收工再操作。'},
   writer_alive: {desktop: 409},
-  // ── CC 代主人对终端会话说一句(terminal_say,2026-10-24;daemon routes-cli-events 的 /v1/cli/say,调用方只有 CC 的 MCP 工具)。
+  // ── CC 代主人对终端会话说一句(terminal_say,2026-10-24;features/terminal/routes.ts 的 /v1/cli/say,调用方只有 CC 的 MCP 工具)。
   // 业务上的拒绝回 409 + detail(登记处里的原状态,工具照实转给模型,不说成「它忙」);一句都没送出去。
   terminal_say_not_owner: {desktop: 403},
   terminal_say_not_wired: {desktop: 503},

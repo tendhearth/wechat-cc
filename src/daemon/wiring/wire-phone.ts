@@ -86,13 +86,13 @@ const phonePush = relays?.v2 ? makePhonePush({
 const onlineDevices = () => mergeOnlineDevices([legacyTunnel?.subscribedDeviceTokens() ?? [], v2Tunnel?.subscribedDeviceTokens() ?? []], deviceIdOf)
 // 推送本身(在线的跳过、失败只记日志)。这个文件里只有这一处调 fanoutPush;用它的三处:
 //  - App 主动通道(companionApp.push):只在 proactive-channel 那一轮收尾时推,那一轮已经过了门(say);
-//  - 工作台通知(phone-notifier)、终端会话(cli-app-push 的 appPush):由状态变化直接触发 ⇒ 先过 pushGate 问门。
+//  - 工作台通知(phone-notifier)、终端会话(features/terminal/app-push 的 appPush):由状态变化直接触发 ⇒ 先过 pushGate 问门。
 const fanout = (p: import('../phone-push').PushPayload) =>
   phonePush ? fanoutPush({ push: phonePush, subscribedDevices: onlineDevices, log: (tag, line) => log(tag, line) }, p) : null
 const pushGate = makePushGate({ speech, ownerChatId, push: fanout, log: (tag, line) => log(tag, line) })
 phoneLc.add('push-gate', () => pushGate.stop())
-// 终端会话的手机推送出口(cli-app-push.ts):问过门再推(批准 = blocking 照推;完成了 = report,免打扰里先压着)。
-const appPush: import('../cli-app-push').AppPushOutlet = (p) => (phonePush ? pushGate.push(p) : null)
+// 终端会话的手机推送出口(features/terminal/app-push.ts):问过门再推(批准 = blocking 照推;完成了 = report,免打扰里先压着)。
+const appPush: import('../../features/terminal').AppPushOutlet = (p) => (phonePush ? pushGate.push(p) : null)
 
 // 手机「跟 CC 说」(spec 2026-10-01):主人对话一页(只读)+ 收下即回的说一句。
 // 对话 chat 必须就是 companionConverse 写进去的那条(它认 companion 的 default_chat_id):
