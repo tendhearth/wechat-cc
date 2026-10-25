@@ -360,7 +360,7 @@ export interface Bootstrap {
       sendLetter(channel: string, text: string): Promise<{ ok: boolean; error?: string; letter_id?: string }>
       resendLetter(letterId: string): Promise<{ ok: boolean; error?: string; letter_id?: string }>
       channelStore: import('../../core/penpal-channel-store').ChannelStore
-      letterStore: import('../../core/penpal-letter-store').LetterStore
+      letterStore: import('../../features/social').LetterStore
       startVisit(channelRowId?: string): Promise<{ ok: true; id: string; channel: string } | { ok: false; reason: string }>
       /** 进行中的串门(spec 2026-09-03-companion-presence)。 */
       activeVisit(): import('../../domain/companion-presence').ActiveVisit | null
@@ -369,10 +369,10 @@ export interface Bootstrap {
     }
     /** 派心愿 / 收明信片(spec 2026-09-04-wish-postcard)。onInbound 留在
      *  wire-social 内部 —— 信封只从 correspondent 一个口进来。 */
-    wish: Omit<import('./wire-wish').WishService, 'onInbound'>
+    wish: Omit<import('../../features/social').WishService, 'onInbound'>
     /** 介绍(spec 2026-09-04-introduction)。onInbound 留在 wire-social 内部 ——
      *  信封只从 correspondent 一个口进来。 */
-    intro: Omit<import('./wire-intro').IntroService, 'onInbound'>
+    intro: Omit<import('../../features/social').IntroService, 'onInbound'>
   }
   /**
    * Anonymous pen-pal channel (Task 8/10/11) — present only once a channel

@@ -38,7 +38,6 @@ import { configRoutes } from './routes-config'
 import { pairRoutes } from './routes-pair'
 import { memoryRoutes } from './routes-memory'
 import { memoryReviewRoutes } from './routes-memory-review'
-import { penpalRoutes } from './routes-penpal'
 import { healthRoutes } from './routes-health'
 import { pluginRoutes } from './routes-plugins'
 import { licenseRoutes } from './routes-license'
@@ -737,7 +736,7 @@ export function makeRoutes({ deps, getDelegate, maybePrefix, mounted }: MakeRout
     ...pairRoutes(deps),
     ...memoryRoutes(deps),
     ...memoryReviewRoutes(deps),
-    ...penpalRoutes(deps),
+    // 笔友信箱 /v1/penpal/* 归社交模块自己挂(src/features/social)。
     ...healthRoutes(deps),
     ...pluginRoutes(deps),
     ...licenseRoutes(deps),

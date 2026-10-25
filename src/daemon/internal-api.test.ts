@@ -1,4 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import { socialRoutes as socialFeatureRoutes } from '../features/social/routes'
 import { mkdtempSync, mkdirSync, readFileSync, rmSync, statSync, existsSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { tmpdir } from 'node:os'
@@ -2740,20 +2741,22 @@ describe('internal-api', () => {
         cancel?: (id: string) => any
       } | null = null,
     ): Promise<{ port: number; token: string }> {
+      // 心愿路由由社交模块自己挂(src/features/social);没给 opts = 社交没起 ⇒ subsystems 里 social 是 off,模块门回 module_off。
       api = createInternalApi({
         stateDir, daemonPid: 1,
-        ...(opts ? {
-          social: {
-            wish: {
-              propose: opts.propose ?? (async (t: string) => ({ ok: true as const, id: 'new-id', preview: t })),
-              send: opts.send ?? (async () => ({ ok: true as const, sentTo: 0 })),
-              cancel: opts.cancel ?? (() => ({ ok: true as const, status: 'cancelled' as const })),
-              list: () => opts.wishes ?? [],
-              resolveRef: () => ({ ok: false as const, reason: 'not_found' as const }),
-            },
-          },
-        } : {}),
+        ...(opts ? {} : { subsystems: () => [{ name: 'social', state: 'off' as const, sinceIso: 't' }] }),
       })
+      if (opts) {
+        api.mount('social', socialFeatureRoutes({ peerName: () => undefined, social: {
+          wish: {
+            propose: opts.propose ?? (async (t: string) => ({ ok: true as const, id: 'new-id', preview: t })),
+            send: opts.send ?? (async () => ({ ok: true as const, sentTo: 0 })),
+            cancel: opts.cancel ?? (() => ({ ok: true as const, status: 'cancelled' as const })),
+            list: () => opts.wishes ?? [],
+            resolveRef: () => ({ ok: false as const, reason: 'not_found' as const }),
+          },
+        } as never }))
+      }
       const { port } = await api.start()
       const token = api.mintSessionToken('admin', 'test')
       return { port, token }

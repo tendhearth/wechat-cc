@@ -17,20 +17,15 @@
  */
 import { randomBytes } from 'node:crypto'
 import type { InboundMsg } from '../../domain/prompt-format'
-import { parseLetterCommand } from '../../core/penpal-letter-command'
-import { parseVisitCommand } from '../../core/visit-command'
+import { parseLetterCommand, parseVisitCommand, parseSeekCommand, parseIntroCommand, type WishService, type IntroService } from '../../features/social'
 import { parsePairCommand } from '../../core/pair-command'
-import { parseSeekCommand } from '../../core/seek-command'
 import { parseGuestCommand } from '../../core/guest-command'
-import { parseIntroCommand } from '../../core/intro-command'
 import { socialUnavailableLine, type SocialState } from '../social-state'
 import { previewText } from '../inbound/mw-access'
 import type { WechatCommand } from '../commands/registry'
 import { GUEST_REQUEST_TTL_MS } from '../guest-requests'
 import type { GuestRequestStore } from '../guest-requests'
 import type { PairingEngine } from '../../core/pairing'
-import type { WishService } from '../bootstrap/wire-wish'
-import type { IntroService } from '../bootstrap/wire-intro'
 
 export interface CommandRouterDeps {
   isAdmin: (chatId: string) => boolean

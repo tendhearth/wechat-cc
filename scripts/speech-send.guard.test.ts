@@ -47,7 +47,7 @@ const BASELINE: Record<string, [Tag, number]> = {
   'src/features/letters/wire.ts': ['primitive', 1],
   // 社交那几条通知:判定走 policy.say(social-tell.ts,经 sendAssistantText 发 —— 它管 App 回话截获与旁听,不换);
   // 剩下这一处是明信片的 sendFile,也只在 say 的生产者里。
-  'src/daemon/bootstrap/wire-social.ts': ['primitive', 1],
+  'src/features/social/wire-social.ts': ['primitive', 1],   // 社交搬进 src/features/social(架构终态 A5),数没变
   // 工作台的微信通知:判定走 policy.say(批准 / 提问 = permission_ask,做完 / 失败 = matter_report);剩下这一处是工作台
   // 自己的严格发送口(幂等 client_id + 绑定核对 + 回执),只在 say 的生产者里、经 turn.sendTextWith 当微信那条腿。
   'src/daemon/bootstrap/wire-workbench-notifications.ts': ['primitive', 1],

@@ -22,7 +22,7 @@ import { generateKeypair } from '../../core/penpal-crypto'
 import type { A2ARegistry } from '../../core/a2a-registry'
 import type { AgentConfig } from '../../lib/agent-config'
 import type { Db } from '../../lib/db'
-import { makeTellOwnerAs, type TellOwnerDeps } from './social-tell'
+import { makeTellOwnerAs, type TellOwnerDeps } from '../../features/social'
 
 export interface PairingWireDeps {
   stateDir: string

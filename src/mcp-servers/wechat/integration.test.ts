@@ -14,6 +14,7 @@ import { readFileSync } from 'node:fs'
 import { wechatStdioMcpSpec } from '../../daemon/bootstrap/mcp-specs'
 import { setupAgyGlobalMcp, AGY_WECHAT_MCP_NAMESPACE_ID } from '../../daemon/bootstrap/agy-mcp-config'
 import { acpMcpServersFor } from '../../adapters/executors/acp/acp-cursor-chat'
+import { socialRoutes } from '../../features/social/routes'
 
 /**
  * P1.A end-to-end: this test wires up the complete provider→stdio MCP→
@@ -565,16 +566,16 @@ describe('wechat-mcp stdio integration', () => {
 
   it('social_seek hits POST /v1/social/wish and returns {ok, id, preview, hint} (心愿 repoint)', async () => {
     // Proves the tool repoint through the REAL internal-api router
-    // (routes-social.ts), not just code review: only POST /v1/social/wish
-    // is wired to deps.social.wish.propose — any other path either 404s (no
+    // (features/social/routes.ts, mounted the way the social module mounts it), not just code review: only POST /v1/social/wish
+    // is wired to social.wish.propose — any other path either 404s (no
     // route registered) before ever reaching this stub, so the propose spy
     // firing with the right args + the tool returning this stub's exact
     // response is direct proof the stdio→HTTP chain hit exactly that
     // endpoint.
     const proposeCalls: string[] = []
-    api = createInternalApi({
-      stateDir, daemonPid: 7777,
-      social: {
+    api = createInternalApi({ stateDir, daemonPid: 7777 })
+    // 心愿路由由社交模块自己挂(src/features/social);这里用它的路由表 + 一份替身服务挂上去。
+    api.mount('social', socialRoutes({ peerName: () => undefined, social: {
         wish: {
           propose: async (text: string) => {
             proposeCalls.push(text)
@@ -585,8 +586,7 @@ describe('wechat-mcp stdio integration', () => {
           list: () => [],
           resolveRef: () => ({ ok: false as const, reason: 'not_found' as const }),
         },
-      },
-    })
+      } as never }))
     const { port, tokenFilePath } = await api.start()
     const transport = new StdioClientTransport({
       command: RUNTIME, args: [WECHAT_MCP_MAIN],

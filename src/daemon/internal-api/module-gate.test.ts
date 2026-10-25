@@ -31,8 +31,9 @@ describe('模块门', () => {
     api = createInternalApi({
       stateDir, daemonPid: 1,
       subsystems: () => subsystems,
-      social: { wish: { list: () => { wishCalls++; return [] } } } as never,
     })
+    // 社交的路由由社交模块自己挂(src/features/social);这里挂一条替身,看处理器有没有跑。
+    api.mount('social', { 'GET /v1/social/wishes': async () => { wishCalls++; return { status: 200, body: { wishes: [] } } } })
     const { port, tokenFilePath } = await api.start()
     const token = readFileSync(tokenFilePath, 'utf8').trim()
     return (path: string, auth = true) => fetch(`http://127.0.0.1:${port}${path}`, auth ? { headers: { Authorization: `Bearer ${token}` } } : {})

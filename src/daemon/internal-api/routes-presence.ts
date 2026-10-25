@@ -38,7 +38,7 @@ export async function computePresence(deps: InternalApiDeps): Promise<Presence |
     ownerChatId,
     sessions,
     busyLabels: deps.busyLabels?.() ?? [],
-    visit: deps.social?.penpal?.activeVisit?.() ?? null,
+    visit: deps.socialView?.activeVisit() ?? null,
     outbound: deps.outbound?.().state ?? null,
     subsystemsDegraded: (deps.subsystems?.() ?? []).filter(s => s.state === 'degraded').length,
     journal: deps.journal.summary(readJournalSeen(deps.stateDir)),

@@ -1580,7 +1580,8 @@ describe('bootstrap 社交接线', () => {
 
   it('POST /v1/social/wish returns 503 when the social wish service is not wired (deps.social absent)', async () => {
     const stateDir = mkdtempSync(join(tmpdir(), 'internal-api-social-503-'))
-    const api = createInternalApi({ stateDir, daemonPid: 1 } as any)
+    // 社交没起 ⇒ 心愿路由根本没挂(社交模块自己挂,src/features/social),subsystems 里 social 是 off ⇒ 模块门回 module_off。
+    const api = createInternalApi({ stateDir, daemonPid: 1, subsystems: () => [{ name: 'social', state: 'off', sinceIso: 't' }] } as any)
     try {
       const { port } = await api.start()
       // POST /v1/social/wish is trusted-tier (route-tiers.ts, 心愿) —
