@@ -1,6 +1,6 @@
 import { useRouter } from 'expo-router'
 import { useEffect, useRef, useState } from 'react'
-import { AccessibilityInfo, ActivityIndicator, Animated, Easing, FlatList, KeyboardAvoidingView, Platform, Pressable, View } from 'react-native'
+import { FlatList, KeyboardAvoidingView, Platform, Pressable, View } from 'react-native'
 import { SafeAreaView } from 'react-native-safe-area-context'
 import { t, type Lang } from '../i18n'
 import { useLang } from '../i18n/useLang'
@@ -9,7 +9,10 @@ import { useBackendCtx } from '../state/BackendProvider'
 import { useConnection, useQuery } from '../state/hooks'
 import { useChat, type ChatSendOutcome } from '../state/useChat'
 import { ConnectionNotice } from '../ui/ConnectionNotice'
-import { Dot } from '../ui/Dot'
+import { Button } from '../ui/Button'
+import { Icon } from '../ui/Icon'
+import { BusyIndicator } from '../ui/motion'
+import { StatusHint } from '../ui/StatusHint'
 import { MessageText } from '../ui/Markdown'
 import { ReplyAttachments, ReplyProcess } from '../ui/ReplyExtras'
 import { TextField } from '../ui/TextField'
@@ -31,7 +34,7 @@ const hhmm = (ms: number) => { const d = new Date(ms); return `${pad(d.getHours(
 const FAILED_KEY = { busy: 'chat.failedBusy', unavailable: 'chat.failedUnavailable', notConfigured: 'chat.failedNotConfigured', maybeLost: 'chat.maybeLost', notConfirmed: 'chat.notConfirmed' } as const
 const OUTCOME_KEY = { busy: 'compose.busy', ccBusy: 'chat.ccBusy', uncertain: 'compose.uncertain', tooLong: 'compose.tooLong', revoked: 'conn.revokedTitle', failed: 'compose.failed', refused: 'compose.notTaken' , imagesGone: 'chat.imagesGone', imagesUnsupported: 'chat.imagesUnsupported'} as const
 
-// 跟 CC 说:主人那条对话(微信 / 电脑 / 手机说的都在),往上滑看更早的;回复异步到,等回复时显示「在想…」。
+// 跟 CC 说:微信 / 电脑 / 手机共用一条对话;状态只在对应内容旁出现,点开再看原因。
 export default function Chat() {
   const { c } = useTheme()
   const lang = useLang()
@@ -116,9 +119,10 @@ export default function Chat() {
           onEndReachedThreshold={0.2}
           ListFooterComponent={
             chat.canLoadOlder ? (
-              <Txt testID="chat-load-older" role="caption" tone="inkSoft" style={{ textAlign: 'center', paddingVertical: space.s }}>
-                {t(lang, chat.loadingOlder ? 'chat.loadingOlder' : 'chat.olderHint')}
-              </Txt>
+              <Pressable testID="chat-load-older" accessibilityRole="button" accessibilityLabel={t(lang, chat.loadingOlder ? 'chat.loadingOlder' : 'chat.olderHint')}
+                disabled={chat.loadingOlder} onPress={() => void chat.loadOlder()} style={{ minHeight: 44, alignItems: 'center', justifyContent: 'center' }}>
+                {chat.loadingOlder ? <BusyIndicator label={t(lang, 'chat.loadingOlder')} /> : <Icon name="chevronDown" color={c.inkSoft} />}
+              </Pressable>
             ) : null
           }
           ListEmptyComponent={
@@ -127,24 +131,26 @@ export default function Chat() {
               {chat.noOwner ? (
                 <Txt testID="chat-no-owner" role="bubble" tone="inkSoft" style={{ textAlign: 'center' }}>{t(lang, 'chat.noOwner')}</Txt>
               ) : loadFailed ? (
-                <Txt testID="chat-load-failed" role="bubble" tone="inkSoft" style={{ textAlign: 'center' }}>{t(lang, 'chat.loadFailed')}</Txt>
+                <StatusHint testID="chat-load-failed" label={t(lang, 'feedback.loadingFailed')} shortLabel={t(lang, 'feedback.loadingFailed')} description={t(lang, 'chat.loadFailed')}>
+                  <ChatCheck lang={lang} online={online} loading={chat.loading} error={chat.error} onCheck={chat.refresh} />
+                </StatusHint>
               ) : !chat.page ? (
-                <ActivityIndicator accessibilityLabel={t(lang, 'progress.loading')} color={c.inkSoft} />
+                <BusyIndicator label={t(lang, 'progress.loading')} color={c.inkSoft} />
               ) : null}
             </View>
           }
           renderItem={({ item }) => (
-            <ChatBubble b={item} lang={lang} canRetry={online && !sending} onRetry={() => retry(item)} onDismiss={() => chat.dismiss(item.requestId ?? '')} />
+            <ChatBubble b={item} lang={lang} canRetry={online && !sending} onRetry={() => retry(item)} onDismiss={() => chat.dismiss(item.requestId ?? '')} checking={chat.loading} checkError={chat.error} onCheck={chat.refresh} />
           )}
         />
         <View style={{ paddingHorizontal: space.xl, paddingBottom: space.m, gap: space.s }}>
           {outcome ? (
-            <View style={{ flexDirection: 'row', alignItems: 'center', gap: space.s }}>
-              <Dot kind="warn" size={8} />
-              <Txt testID={`chat-outcome-${outcome}`} role="meta" tone="inkSoft" accessibilityLiveRegion="polite" style={{ flex: 1 }}>{t(lang, OUTCOME_KEY[outcome])}</Txt>
-            </View>
+            <View style={{ alignItems: 'flex-end' }}><StatusHint testID={`chat-outcome-${outcome}`} label={t(lang, outcome === 'uncertain' ? 'feedback.unconfirmed' : 'feedback.notSent')}
+              icon={outcome === 'uncertain' ? 'help' : 'alert'} description={t(lang, OUTCOME_KEY[outcome])}>
+              {outcome === 'uncertain' ? <ChatCheck lang={lang} online={online} loading={chat.loading} error={chat.error} onCheck={chat.refresh} /> : null}
+            </StatusHint></View>
           ) : null}
-          <View style={{ flexDirection: 'row', gap: space.s }}>
+          <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: space.s }}>
             <Pressable
               testID="chat-handoff"
               accessibilityRole="button"
@@ -157,7 +163,7 @@ export default function Chat() {
             </Pressable>
             <AddImageButton testID="chat-add-image" lang={lang} disabled={sending || images.length >= CHAT_MAX_IMAGES} onPress={() => { void addImages() }} />
             <Pressable testID="chat-model-open" accessibilityRole="button" accessibilityLabel={t(lang, 'chatModel.title')} onPress={() => router.push('/chat-model')} hitSlop={6}
-              style={({ pressed }) => ({ alignSelf: 'flex-start', minHeight: 36, justifyContent: 'center', paddingHorizontal: space.m, borderRadius: radius.control, borderWidth: 1, borderColor: c.hair, opacity: pressed ? 0.7 : 1 })}>
+              style={({ pressed }) => ({ alignSelf: 'flex-start', maxWidth: '100%', minHeight: 36, justifyContent: 'center', paddingHorizontal: space.m, borderRadius: radius.control, borderWidth: 1, borderColor: c.hair, opacity: pressed ? 0.7 : 1 })}>
               <Txt role="meta" numberOfLines={1}>{chatModelLabel(chatModel.data) ?? t(lang, 'chatModel.open')}</Txt>
             </Pressable>
             <Pressable testID="chat-search-open" accessibilityRole="button" accessibilityLabel={t(lang, 'chatSearch.title')} onPress={() => router.push('/chat-search')} hitSlop={6}
@@ -192,7 +198,7 @@ const bubbleShape = (me: boolean) => ({
   borderBottomLeftRadius: me ? radius.bubble : 4, borderBottomRightRadius: me ? 4 : radius.bubble,
 })
 
-function ChatBubble({ b, lang, canRetry, onRetry, onDismiss }: { b: Bubble; lang: Lang; canRetry: boolean; onRetry(): void; onDismiss(): void }) {
+function ChatBubble({ b, lang, canRetry, onRetry, onDismiss, checking, checkError, onCheck }: { b: Bubble; lang: Lang; canRetry: boolean; onRetry(): void; onDismiss(): void; checking: boolean; checkError: unknown; onCheck(): Promise<void> }) {
   const { c } = useTheme()
   const me = b.side === 'me'
   if (b.state === 'thinking') return <Thinking lang={lang} />
@@ -216,60 +222,30 @@ function ChatBubble({ b, lang, canRetry, onRetry, onDismiss }: { b: Bubble; lang
       {!me && b.attachments?.length ? <ReplyAttachments messageId={b.key} items={b.attachments} lang={lang} /> : null}
       <Txt role="caption" tone="inkSoft">{from} · {hhmm(b.at)}</Txt>
       {b.state === 'failed' && b.failedKind ? (
-        <View style={{ flexDirection: 'row', alignItems: 'center', gap: space.m }}>
-          <View style={{ flexDirection: 'row', alignItems: 'center', gap: space.s, flexShrink: 1 }}>
-            <Dot kind="warn" size={8} />
-            <Txt testID={`chat-failed-${b.failedKind}`} role="small" tone="inkSoft" accessibilityLiveRegion="polite" style={{ flexShrink: 1 }}>{t(lang, FAILED_KEY[b.failedKind])}</Txt>
-          </View>
-          {b.requestId ? (
-            <Pressable testID="chat-retry" accessibilityRole="button" accessibilityLabel={t(lang, 'chat.retry')} accessibilityState={{ disabled: !canRetry }} disabled={!canRetry} onPress={onRetry} hitSlop={10} style={{ opacity: canRetry ? 1 : 0.5 }}>
-              <Txt role="small" style={{ textDecorationLine: 'underline' }}>{t(lang, 'chat.retry')}</Txt>
-            </Pressable>
-          ) : null}
-          {b.failedKind === 'notConfirmed' ? (
-            <Pressable testID="chat-dismiss" accessibilityRole="button" accessibilityLabel={t(lang, 'chat.dismiss')} onPress={onDismiss} hitSlop={10}>
-              <Txt role="small" tone="inkSoft" style={{ textDecorationLine: 'underline' }}>{t(lang, 'chat.dismiss')}</Txt>
-            </Pressable>
-          ) : null}
-        </View>
+        <StatusHint testID={`chat-failed-${b.failedKind}`}
+          label={t(lang, b.failedKind === 'maybeLost' || b.failedKind === 'notConfirmed' ? 'feedback.unconfirmed' : 'feedback.notSent')}
+          icon={b.failedKind === 'maybeLost' || b.failedKind === 'notConfirmed' ? 'help' : 'alert'} description={t(lang, FAILED_KEY[b.failedKind])}>
+          {b.failedKind === 'maybeLost' || b.failedKind === 'notConfirmed'
+            ? <ChatCheck lang={lang} online={canRetry} loading={checking} error={checkError} onCheck={onCheck} /> : null}
+          {b.requestId ? <Button kind="secondary" testID="chat-retry" label={t(lang, 'chat.retry')} disabled={!canRetry} onPress={onRetry} /> : null}
+          {b.failedKind === 'notConfirmed' ? <Button kind="secondary" testID="chat-dismiss" label={t(lang, 'chat.dismiss')} onPress={onDismiss} /> : null}
+        </StatusHint>
       ) : null}
     </View>
   )
 }
 
-// 「在想…」:系统开了「减少动态效果」就不动;否则轻轻明暗。
+function ChatCheck({ lang, online, loading, error, onCheck }: { lang: Lang; online: boolean; loading: boolean; error: unknown; onCheck(): Promise<void> }) {
+  return <View style={{ gap: space.s }}>
+    {error && error !== 'not_found' ? <Txt testID="chat-check-failed" role="meta" tone="inkSoft">{t(lang, 'feedback.loadingFailed')}</Txt> : null}
+    <Button kind="secondary" testID="chat-check" label={t(lang, 'feedback.check')} disabled={!online} busy={loading} onPress={() => void onCheck()} />
+  </View>
+}
+
 function Thinking({ lang }: { lang: Lang }) {
-  const { c } = useTheme()
-  const [reduceMotion, setReduceMotion] = useState(true)
-  const opacity = useRef(new Animated.Value(1)).current
-  useEffect(() => {
-    let alive = true
-    AccessibilityInfo.isReduceMotionEnabled().then((v) => alive && setReduceMotion(v)).catch(() => {})
-    const sub = AccessibilityInfo.addEventListener('reduceMotionChanged', setReduceMotion)
-    return () => { alive = false; sub.remove() }
-  }, [])
-  useEffect(() => {
-    if (reduceMotion) { opacity.setValue(1); return }
-    const loop = Animated.loop(Animated.sequence([
-      Animated.timing(opacity, { toValue: 0.4, duration: 700, easing: Easing.inOut(Easing.ease), useNativeDriver: true }),
-      Animated.timing(opacity, { toValue: 1, duration: 700, easing: Easing.inOut(Easing.ease), useNativeDriver: true }),
-    ]))
-    loop.start()
-    return () => loop.stop()
-  }, [reduceMotion, opacity])
-  return (
-    <View style={{ alignItems: 'flex-start' }}>
-      <Animated.View
-        testID="chat-thinking"
-        accessible
-        accessibilityLabel={t(lang, 'chat.thinking')}
-        accessibilityLiveRegion="polite"
-        style={{ opacity, paddingHorizontal: space.l, paddingVertical: space.m, ...bubbleShape(false), backgroundColor: c.paper, borderWidth: 1, borderColor: c.hair }}
-      >
-        <Txt role="bubble" tone="inkSoft">{t(lang, 'chat.thinking')}</Txt>
-      </Animated.View>
-    </View>
-  )
+  return <View style={{ alignItems: 'flex-start', paddingHorizontal: space.l, paddingVertical: space.m }}>
+    <BusyIndicator testID="chat-thinking" label={t(lang, 'chat.thinking')} />
+  </View>
 }
 
 /** 「Claude · claude-opus-5-5」:钉了的模型优先,没钉看全局;读不到 ⇒ null(按钮显示「模型」)。 */

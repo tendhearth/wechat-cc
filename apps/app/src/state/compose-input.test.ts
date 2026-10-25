@@ -3,6 +3,7 @@ import { createHash } from 'node:crypto'
 import { act, createElement, type ReactNode } from 'react'
 import { createRequire } from 'node:module'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import '../ui/native-motion.test-support'
 import { PHONE_API_SCHEMAS, type ClientOpts, type ProtocolClient, type ProtocolRequest } from '@wechat-cc/protocol'
 import { makeLiveBackend } from '../backend/live'
 import { DETAIL, ID, OPTIONS, RUN, WB_TASK, RECEIPT } from '../backend/fixtures'
@@ -24,6 +25,7 @@ Object.assign(globalThis, { IS_REACT_ACT_ENVIRONMENT: true })
 
 // 只替换原生宿主、路由与 provider 取值;真实请求、缓存、订阅、文本与回执组件一起执行。
 vi.mock('react-native', async () => {
+  const native = (await import('../ui/native-motion.test-support')).nativeBoundary()
   const { createElement, forwardRef } = await import('react')
   const View = ({ children, testID, accessibilityLabel }: any) => createElement('div', { 'data-testid': testID, 'aria-label': accessibilityLabel }, children)
   const Text = ({ children, onPress, testID, accessibilityRole, selectable }: any) => {
@@ -39,13 +41,13 @@ vi.mock('react-native', async () => {
     'aria-expanded': accessibilityState?.expanded, 'aria-disabled': accessibilityState?.disabled,
   }, children)
   const Modal = ({ children, visible }: any) => visible ? createElement('div', null, children) : null
-  return { View, Image: () => null, Text, TextInput, Pressable, Modal, ScrollView: View, KeyboardAvoidingView: View, ActivityIndicator: View, Linking: { openURL: vi.fn() }, Platform: { OS: 'ios', select: (options: any) => options.ios ?? options.default } }
+  return { ...native, View, Image: () => null, Text, TextInput, Pressable, Modal, ScrollView: View, KeyboardAvoidingView: View, ActivityIndicator: View, Linking: { openURL: vi.fn() }, Platform: { OS: 'ios', select: (options: any) => options.ios ?? options.default } }
 })
 vi.mock('react-native-safe-area-context', async () => {
   const { createElement } = await import('react')
   return { SafeAreaView: ({ children }: any) => createElement('main', null, children) }
 })
-vi.mock('expo-router', () => ({ useLocalSearchParams: () => host.params, useRouter: () => ({ canGoBack: () => true, back: host.back, push: host.push, replace: host.replace }), Redirect: () => null }))
+vi.mock('expo-router', async () => ({ ...(await (await import('../ui/native-motion.test-support')).routerBoundary()), useLocalSearchParams: () => host.params, useRouter: () => ({ canGoBack: () => true, back: host.back, push: host.push, replace: host.replace }), Redirect: () => null }))
 vi.mock('../i18n/useLang', () => ({ useLang: () => 'zh-Hans' }))
 vi.mock('../state/BackendProvider', () => ({ useBackendCtx: () => host.ctx }))
 vi.mock('../state/session', () => ({ useSession: () => ({ pairing: null, inputScope: matterInputState.recovery().scope }) }))
@@ -139,7 +141,13 @@ async function mount(component = Compose) {
     textarea.value = text; textarea.dispatchEvent(new Event('input', { bubbles: true }))
   }) }
   const click = async (id: string) => { await act(() => byId<HTMLButtonElement>(id).click()); await flush() }
-  return { container, root, byId, type, click }
+  const statusText = async (id: string) => {
+    await click(id)
+    const text = byId(`${id}-description`).textContent
+    await click(`${id}-close`)
+    return text
+  }
+  return { container, root, byId, type, click, statusText }
 }
 function gate<T>() { let resolve!: (value: T) => void; const promise = new Promise<T>(r => { resolve = r }); return { promise, resolve } }
 
@@ -153,7 +161,7 @@ describe('real LiveBackend + native compose inputs', () => {
     expect(post.body).toEqual({ id: ID, runId: RUN, requestId: expect.any(String), text: '**把按钮放左边**' })
     expect(post.retry).toBe(false)
     expect(post.body).not.toHaveProperty('inputMode')
-    expect(ui.byId(`input-status-${post.body.requestId}`).textContent).toBe('正在交给执行者。')
+    expect(await ui.statusText(`input-status-${post.body.requestId}`)).toBe('正在交给执行者。')
     expect(ui.container.textContent).toContain('补充这一轮的要求')
     expect(getDraft(ID)).toBe('')
     expect(host.back).not.toHaveBeenCalled()
@@ -173,7 +181,7 @@ describe('real LiveBackend + native compose inputs', () => {
     await ui.type('这一条补充'); await ui.click('compose-send')
     expect(ui.container.textContent).toContain('补充会排队接着做')
     const wording = { pending: '已排队，执行者会稍后接着处理。', delivered: '执行者已收到这条补充。', held: '保留了这条补充，查看进展再决定。', withdrawn: '这条补充已撤回，原文仍可取回。' }
-    expect(ui.byId(`input-status-${h.posts()[0]!.body.requestId}`).textContent).toBe(wording[status])
+    expect(await ui.statusText(`input-status-${h.posts()[0]!.body.requestId}`)).toBe(wording[status])
     expect(getDraft(ID)).toBe(['held', 'withdrawn'].includes(status) ? '这一条补充' : '')
   })
   it('uses the existing run in idle/send mode; an imported first turn without a run keeps the continuation route', async () => {
@@ -191,7 +199,7 @@ describe('real LiveBackend + native compose inputs', () => {
     const h = harness(); h.setSay(() => ok({ ok: false, error }, 409))
     const ui = await mount(); await ui.type('保留我的要求'); await ui.click('compose-send')
     expect(getDraft(ID)).toBe('保留我的要求')
-    expect(ui.byId(`input-status-${h.posts()[0]!.body.requestId}`).textContent).toContain(error === 'input_stale' ? '进展已变' : '记录需要核对')
+    expect(await ui.statusText(`input-status-${h.posts()[0]!.body.requestId}`)).toContain(error === 'input_stale' ? '进展已变' : '记录需要核对')
     expect(ui.container.textContent).not.toContain('已排队')
     expect(ui.container.querySelector('[data-testid^="input-retry-"]')).toBeNull()
   })
@@ -204,7 +212,7 @@ describe('real LiveBackend + native compose inputs', () => {
     const original = h.posts()[0]!.body
     await ui.type('后来写的另一条要求')
     await act(() => sent.resolve(new Error('timeout'))); await flush()
-    expect(ui.byId(`input-status-${original.requestId}`).textContent).toContain('还没确认')
+    expect(await ui.statusText(`input-status-${original.requestId}`)).toContain('还没确认')
     expect(getDraft(ID)).toBe('后来写的另一条要求')
     h.setDetail({ ...h.detail(), runId: '7f1c2a3b-4d5e-4f60-8a7b-9c0d1e2f3a4b', inputs: [] })
     h.setSay(request => {
@@ -231,7 +239,7 @@ describe('real LiveBackend + native compose inputs', () => {
     await act(() => ui.root.unmount()); roots.splice(roots.indexOf(ui.root), 1)
     h.detail().inputs = [{ id: request.requestId, taskId: ID, runId: RUN, text: request.text, status: 'delivered' }]
     ui = await mount()
-    expect(ui.byId(`input-status-${request.requestId}`).textContent).toContain('已收到')
+    expect(await ui.statusText(`input-status-${request.requestId}`)).toContain('已收到')
     expect(getDraft(ID)).toBe('')
     expect(h.posts()).toHaveLength(1)
     await ui.type('新稿')
@@ -259,7 +267,7 @@ describe('real LiveBackend + native compose inputs', () => {
     const h = harness(); h.setSay(request => ok({ ok: true, result: { kind: 'task', task: WB_TASK, input: { id: request.body.requestId, taskId: ID, runId: '7f1c2a3b-4d5e-4f60-8a7b-9c0d1e2f3a4b', text: request.body.text, status: 'delivered' } } }))
     const ui = await mount(); await ui.type('别误认'); await ui.click('compose-send')
     expect(getDraft(ID)).toBe('别误认')
-    expect(ui.byId(`input-status-${h.posts()[0]!.body.requestId}`).textContent).toContain('需要核对')
+    expect(await ui.statusText(`input-status-${h.posts()[0]!.body.requestId}`)).toContain('需要核对')
   })
   it('holds the first send until a fresh detail arrives and preserves drafts if that read fails', async () => {
     const h = harness(); const read = gate<Reply>()
@@ -282,7 +290,7 @@ describe('real LiveBackend + native compose inputs', () => {
     const request = h.posts()[0]!.body
     h.detail().inputs[0].status = 'delivered'
     await act(() => h.version(2)); await flush()
-    expect(ui.byId(`input-status-${request.requestId}`).textContent).toBe('执行者已收到这条补充。')
+    expect(await ui.statusText(`input-status-${request.requestId}`)).toBe('执行者已收到这条补充。')
     expect(h.posts()).toHaveLength(1)
   })
   it.each(['held', 'withdrawn'] as const)('a late pending POST response cannot overwrite a newer %s subscription receipt or clear the original', async status => {
@@ -322,7 +330,7 @@ describe('real LiveBackend + native compose inputs', () => {
     const request = h.posts()[0]!.body
     await act(() => ui.root.unmount()); roots.splice(roots.indexOf(ui.root), 1)
     const progress = await mount(Matter)
-    expect(progress.byId(`input-status-${request.requestId}`).textContent).toBe('正在交给执行者。')
+    expect(await progress.statusText(`input-status-${request.requestId}`)).toBe('正在交给执行者。')
     setDraft(ID, '新稿')
     await progress.click(`input-restore-${request.requestId}`)
     expect(getDraft(ID)).toBe('新稿')

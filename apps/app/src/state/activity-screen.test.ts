@@ -2,6 +2,7 @@
 import { act, createElement, type ReactNode } from 'react'
 import { createRequire } from 'node:module'
 import { afterEach, describe, expect, it, vi } from 'vitest'
+import '../ui/native-motion.test-support'
 import { makeDemoBackend } from '../backend/demo'
 import type { ActivityItemT, ActivityPageT, Backend } from '../backend/types'
 import { makeStore, type Store } from './store'
@@ -15,17 +16,18 @@ const host = vi.hoisted(() => ({ ctx: null as unknown as { backend: Backend; sto
 Object.assign(globalThis, { IS_REACT_ACT_ENVIRONMENT: true })
 
 vi.mock('react-native', async () => {
+  const native = (await import('../ui/native-motion.test-support')).nativeBoundary()
   const { createElement } = await import('react')
   const View = ({ children, testID }: any) => createElement('div', { 'data-testid': testID }, children)
   const Text = ({ children, testID }: any) => createElement('span', { 'data-testid': testID }, children)
   const Pressable = ({ children, onPress, disabled, testID }: any) => createElement('button', { onClick: onPress, disabled, 'data-testid': testID }, typeof children === 'function' ? children({ pressed: false }) : children)
-  return { View, Text, Pressable, ScrollView: View, ActivityIndicator: View, Image: () => null, Platform: { OS: 'ios', select: (o: any) => o.ios ?? o.default } }
+  return { ...native, View, Text, Pressable, ScrollView: View, ActivityIndicator: View, Image: () => null, Platform: { OS: 'ios', select: (o: any) => o.ios ?? o.default } }
 })
 vi.mock('react-native-safe-area-context', async () => {
   const { createElement } = await import('react')
   return { SafeAreaView: ({ children }: any) => createElement('main', null, children) }
 })
-vi.mock('expo-router', () => ({ useRouter: () => ({ canGoBack: () => true, back: vi.fn(), push: host.push, replace: vi.fn() }) }))
+vi.mock('expo-router', async () => ({ ...(await (await import('../ui/native-motion.test-support')).routerBoundary()), useRouter: () => ({ canGoBack: () => true, back: vi.fn(), push: host.push, replace: vi.fn() }) }))
 vi.mock('../i18n/useLang', () => ({ useLang: () => 'zh-Hans' }))
 vi.mock('../state/BackendProvider', () => ({ useBackendCtx: () => host.ctx }))
 vi.mock('../ui/TopBar', () => ({ TopBar: () => null }))

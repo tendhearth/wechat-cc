@@ -9,6 +9,8 @@ import { useBackendCtx } from '../state/BackendProvider'
 import { useConnection, useQuery, useSubmit } from '../state/hooks'
 import { Button } from '../ui/Button'
 import { ConnectionNotice } from '../ui/ConnectionNotice'
+import { BusyIndicator } from '../ui/motion'
+import { StatusHint } from '../ui/StatusHint'
 import { radius, space } from '../ui/tokens'
 import { TopBar } from '../ui/TopBar'
 import { Txt } from '../ui/Txt'
@@ -63,11 +65,11 @@ export default function Jobs() {
       <ScrollView contentContainerStyle={{ paddingHorizontal: space.xl, paddingBottom: space.xl, gap: space.l }}>
         {!page && q.error ? (
           <View style={{ gap: space.m, paddingVertical: space.l }}>
-            <Txt testID="jobs-unavailable" role="bubble" tone="inkSoft">{t(lang, 'jobs.unavailable')}</Txt>
+            <StatusHint testID="jobs-unavailable" icon="alert" label={t(lang, 'jobs.unavailable')} shortLabel={t(lang, 'feedback.loadingFailed')} description={t(lang, 'jobs.unavailable')} />
             <Button kind="secondary" testID="jobs-retry" label={t(lang, 'common.retry')} onPress={() => void q.refresh()} />
           </View>
         ) : !page ? (
-          <Txt role="bubble" tone="inkSoft" style={{ paddingVertical: space.l }}>{t(lang, 'progress.loading')}</Txt>
+          <View style={{ paddingVertical: space.l }}><BusyIndicator testID="jobs-loading" label={t(lang, 'progress.loading')} /></View>
         ) : (
           <>
             {page.notice ? <Txt testID="jobs-no-executor" role="bubble" tone="inkSoft" style={{ paddingTop: space.l }}>{page.notice}</Txt> : null}

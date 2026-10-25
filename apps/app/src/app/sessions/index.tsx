@@ -10,6 +10,8 @@ import { useConnection, useQuery } from '../../state/hooks'
 import { Button } from '../../ui/Button'
 import { ConnectionNotice } from '../../ui/ConnectionNotice'
 import { Dot } from '../../ui/Dot'
+import { BusyIndicator } from '../../ui/motion'
+import { StatusHint } from '../../ui/StatusHint'
 import { TextField } from '../../ui/TextField'
 import { space } from '../../ui/tokens'
 import { TopBar } from '../../ui/TopBar'
@@ -116,11 +118,11 @@ export default function Sessions() {
           <Txt testID="sessions-unsupported" role="bubble" tone="inkSoft" style={{ paddingVertical: space.l }}>{t(lang, 'sessions.unsupported')}</Txt>
         ) : !q.data && q.error ? (
           <View style={{ gap: space.m, paddingVertical: space.l }}>
-            <Txt testID="sessions-slow" role="bubble" tone="inkSoft">{t(lang, 'sessions.slow')}</Txt>
+            <StatusHint testID="sessions-slow" icon="alert" label={t(lang, 'sessions.slow')} shortLabel={t(lang, 'feedback.loadingFailed')} description={t(lang, 'sessions.slow')} />
             <Button kind="secondary" testID="sessions-retry" label={t(lang, 'common.retry')} onPress={() => void q.refresh()} />
           </View>
         ) : !q.data ? (
-          <Txt role="bubble" tone="inkSoft" style={{ paddingVertical: space.l }}>{t(lang, 'sessions.loading')}</Txt>
+          <View style={{ paddingVertical: space.l }}><BusyIndicator testID="sessions-loading" label={t(lang, 'sessions.loading')} /></View>
         ) : rows.length === 0 ? (
           <Txt testID="sessions-empty" role="bubble" tone="inkSoft" style={{ paddingVertical: space.l }}>{t(lang, query ? 'sessions.searchEmpty' : 'sessions.empty')}</Txt>
         ) : (

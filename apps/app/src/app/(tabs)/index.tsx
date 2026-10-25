@@ -1,4 +1,5 @@
 import { useRouter } from 'expo-router'
+import { useEffect, useMemo, useState } from 'react'
 import { Pressable, ScrollView, View } from 'react-native'
 import { SafeAreaView } from 'react-native-safe-area-context'
 import { t, tCount } from '../../i18n'
@@ -6,11 +7,14 @@ import { useLang } from '../../i18n/useLang'
 import { useBackendCtx } from '../../state/BackendProvider'
 import { useConnection, useQuery } from '../../state/hooks'
 import { useWork } from '../../state/useWork'
+import { useChatUpdates } from '../../state/useChatUpdates'
 import { useTerminalSessions } from '../../state/useTerminal'
 import { useToday } from '../../state/useToday'
 import { useAwaySince } from '../../state/useAway'
 import { useCompanion } from '../../state/useCompanion'
 import { CCFigure } from '../../ui/CCFigure'
+import { useMotionEnabled } from '../../ui/motion'
+import { makeCCMotionTracker, type CCMotionEvent } from '../../view/cc-motion'
 import { CompanionCard } from '../../ui/CompanionCard'
 import { ConnectionNotice } from '../../ui/ConnectionNotice'
 import { DemoBanner } from '../../ui/DemoBanner'
@@ -42,9 +46,10 @@ export default function Now() {
   const router = useRouter()
   const conn = useConnection()
   const { backend } = useBackendCtx()
-  const { approvals, agents, matters, demo } = useWork()
+  const { approvals, approvalsKnown, agents, matters, demo } = useWork()
   const v = nowView({ approvals, matters, hour: new Date().getHours(), known: demo || conn.state === 'online' })
   const chat = useQuery('chat:latest', () => backend.chat({})) // 与 /chat 同一个键、同一份缓存
+  useChatUpdates(chat.data?.matterId, chat.refresh)
   const line = latestCCLine(chat.data)
   const presence = ccPresence(conn, { demo }) // 演示:暗(不是真信号)
   const openChat = () => router.push('/chat')
@@ -59,7 +64,23 @@ export default function Now() {
   const waitingTotal = v.waiting.length + termWaiting.length
   // 「今天」:CC 统管的所有执行者过去 24 小时的几个数 + 最近做完的三件(与微信「日报」同一份)。
   // 离开 App 一小时以上 ⇒ 这一段先说「你不在的这 N 小时」做完了什么(只在本机记离开的时间)。
-  const today = todayView(useToday().today, Date.now(), lang, useAwaySince())
+  const todayData = useToday().today
+  const today = todayView(todayData, Date.now(), lang, useAwaySince())
+  const motionEnabled = useMotionEnabled()
+  const tracker = useMemo(makeCCMotionTracker, [backend])
+  const [motion, setMotion] = useState<CCMotionEvent>()
+  const snapshot = JSON.stringify({
+    active: presence === 'here' && motionEnabled,
+    received: chat.data ? (line ? [{ id: line.id, at: line.at }] : []) : undefined,
+    done: todayData?.done.map(item => ({ id: `${item.source}:${item.id}`, at: item.at })),
+    waiting: approvalsKnown && terminal.loaded ? [...approvals.map(item => item.id), ...terminal.sessions.filter(s => terminalNeedsYou([s], true).length > 0).map(s => `terminal:${s.session_id}:${s.pending?.hash ?? ''}`)] : undefined,
+  })
+  useEffect(() => {
+    const current = JSON.parse(snapshot)
+    const event = tracker.read(current)
+    if (event) setMotion(event)
+    else if (!current.active || current.waiting?.length === 0) setMotion(previous => previous?.behavior === 'wait' || !current.active ? undefined : previous)
+  }, [tracker, snapshot])
 
   return (
     <SafeAreaView edges={['top']} style={{ flex: 1, backgroundColor: c.paper }}>
@@ -83,7 +104,7 @@ export default function Now() {
             {/* 问候一行放下:英文「Good evening」在 iPhone 17 Pro 上挨着 CC 会折行 ⇒ 允许缩到 0.7 倍,不换行 */}
             <Txt role="display" accessibilityRole="header" numberOfLines={1} adjustsFontSizeToFit minimumFontScale={0.7} style={{ flex: 1, paddingBottom: space.s }}>{t(lang, v.greetingKey)}</Txt>
             <Pressable testID="now-cc" accessibilityRole="button" accessibilityLabel={t(lang, 'now.openChat')} onPress={openChat} style={{ marginRight: space.s }}>
-              <CCFigure size={120} presence={presence} mood={status ?? undefined} />
+              <CCFigure size={120} presence={presence} mood={status ?? undefined} behavior={motion?.behavior} eventKey={motion?.eventKey} />
             </Pressable>
           </View>
           {status ? <Txt testID="now-cc-status" role="meta" tone="inkSoft" numberOfLines={1} style={{ alignSelf: 'flex-end', marginTop: -space.s }}>{status}</Txt> : null}

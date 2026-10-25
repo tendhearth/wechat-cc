@@ -19,6 +19,12 @@
 - 设计:`docs/superpowers/specs/2026-09-30-tendhearth-app-v1-design.md`,设计稿 `docs/design/tendhearth-app-v1/`
 - 计划:`docs/superpowers/plans/2026-09-30-tendhearth-app-skeleton.md`(骨架 + 演示)、`docs/superpowers/plans/2026-09-30-tendhearth-app-live.md`(真连接与配对)、`docs/superpowers/plans/2026-09-30-tendhearth-app-push.md`(原生通知)、`docs/superpowers/plans/2026-10-01-tendhearth-app-chat.md`(跟 CC 说话 + 真历史 + CC 的连接 + 原生会话;spec `docs/superpowers/specs/2026-10-01-tendhearth-app-chat-design.md`)
 
+## 手机轻动效与状态反馈（2026-10-24）
+
+CC 沿用两张原图：真实在线时轻呼吸，新的回复、完成和待确认事件各触发一次短动作；首次历史、重复刷新与恢复焦点不重播。离线保持暗色静止，系统减少动态效果、页面失焦或 App 后台时停止。界面共用随包 Lucide 图标、加载指示和可点开的状态说明；连接过期、部分结果与撤销修复仍明确可见。展开内容用短过渡，减少动态效果时即时切换。
+
+聊天「核对状态」只刷新已有 GET 历史，读失败或有限历史里没找到都继续保留未确认；显式重试仍沿用原 requestId。录音只显示静止点与时间，输入按钮按状态切换图标；上滑取消、时限与转写留草稿的行为不变。权限页保留原始命令、执行位置及提交锁，成功后仍回到事项。详见[设计与边界](../../docs/superpowers/specs/2026-10-24-phone-motion-feedback-design.md)。
+
 ## 怎么跑
 
 ```bash
@@ -47,7 +53,7 @@ maestro test .maestro/           # 模拟器上跑演示流程(要先有 develop
 | 流程 | 走什么 |
 |---|---|
 | `.maestro/approve.yaml` | 先看看 → 此刻第一张「等你决定」卡 → 批准页**原始命令直接可见** → 允许 → 进展页 → 2 秒后「这一轮做完了」 |
-| `.maestro/chat.yaml` | 此刻 → 跟 CC 说一句 → 对话页 → 发一句 → 「在想…」→ 演示回复出现 → 一起做的置顶「和 CC 的对话」回到对话页 |
+| `.maestro/chat.yaml` | 此刻 → 跟 CC 说一句 → 对话页 → 发一句 → 回复位置加载指示 → 演示回复出现 → 一起做的置顶「和 CC 的对话」回到对话页 |
 | `.maestro/chat-extras.yaml` | 跟 CC 说 → 发一句 → 演示回复带「过程 · 2 段」(默认收起)、语音、本地表情(图)、联网表情(只写情绪)→ 展开过程看到「没有发到微信」→ 点语音不报错(2026-10-04) |
 | `.maestro/connections.yaml` | 设置 → CC 的连接卡(演示数据)→ 各项状态词 → 电脑上的会话列表(只读) |
 | `.maestro/compose.yaml` | 此刻 → 跟 CC 说 → 显式选「交给 CC 去做一件事」→ 输入 → 交给 CC → 新事项的进展页 → 「一起做」里出现它(交办不再是默认动作) |
