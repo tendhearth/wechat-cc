@@ -4,7 +4,7 @@ import { collectTurn } from './agent-provider'
 import type { AgentEvent } from './agent-provider'
 import type { ChatModelClient, ToolSpec } from './openai-chat-model'
 import type { McpToolBridge } from './openai-mcp-bridge'
-import { TIER_PROFILES } from './user-tier'
+import { TIER_PROFILES } from '../domain/user-tier'
 
 // A scripted ChatModelClient: turn 1 asks to call `reply`, turn 2 answers.
 function scriptedModel(): ChatModelClient {

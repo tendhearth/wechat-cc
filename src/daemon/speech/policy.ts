@@ -10,8 +10,8 @@
  * 每拍再问一次,会把账淹掉)。放行 / 被拒 / 失败以后重新算。
  * 第 1 步只加不接:还没有调用方,行为不变。
  */
-import { decideSpeech, type CareSetting, type SpeechDecision } from '../../core/speech/decide'
-import { isExpiring, originOf, type SpeechKind, type SpeechOrigin } from '../../core/speech/kinds'
+import { decideSpeech, type CareSetting, type SpeechDecision } from '../../domain/speech/decide'
+import { isExpiring, originOf, type SpeechKind, type SpeechOrigin } from '../../domain/speech/kinds'
 import type { ProactiveChannel, ProactiveOutbound, ProactiveTurn } from '../companion/proactive-channel'
 import { mergePending } from './pending-notices'
 

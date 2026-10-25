@@ -12,7 +12,7 @@
  * 「第一份快照只做基线、重启不补发」一致,那件事本身在 App 的列表里照样看得见。推送送不送得到是推送自己的事
  * (在线的跳过、没设备就是 0 台),所以问门时 deliverable 恒为 true,微信断没断跟它无关。
  */
-import type { SpeechKind } from '../../core/speech/kinds'
+import type { SpeechKind } from '../../domain/speech/kinds'
 import type { PushPayload } from '../phone-push'
 import type { SpeechPolicy } from './policy'
 

@@ -1,8 +1,8 @@
 import { describe, expect, it, vi } from 'vitest'
 import { MULTI_MODEL_ON_DESKTOP, makeModeCommands } from './mode-commands'
-import type { Mode, ProviderId } from '../core/conversation'
-import type { InboundMsg } from '../core/prompt-format'
-import type { UserTier } from '../core/user-tier'
+import type { Mode, ProviderId } from '../domain/conversation'
+import type { InboundMsg } from '../domain/prompt-format'
+import type { UserTier } from '../domain/user-tier'
 
 function inbound(text: string, chatId = 'chat-1'): InboundMsg {
   return { chatId, userId: chatId, text, msgType: 'text', createTimeMs: 0, accountId: 'a' }

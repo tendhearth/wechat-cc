@@ -28,7 +28,7 @@ import { join, dirname } from 'node:path'
 import { randomBytes } from 'node:crypto'
 import { makeTokenRegistry, type TokenInfo } from './token-registry'
 import { minTierFor, moduleFor, tierMeets } from './route-tiers'
-import type { UserTier } from '../../core/user-tier'
+import type { UserTier } from '../../domain/user-tier'
 import type { AddressInfo } from 'node:net'
 import {
   errMsg,

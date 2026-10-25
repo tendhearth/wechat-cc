@@ -5,8 +5,8 @@
  * 放在 daemon/companion:陪伴引擎(wiring/tick-push、tick-introspect)和以后的 src/features/<名> 都能 import;
  * core 不许依赖 daemon,所以这里只引 core 的类型。只有类型,没有逻辑。
  */
-import type { CareLevel, CareLedgerEntry, PlanAction, PlanContext } from '../../core/companion-plan'
-import type { AvoidTopic } from '../../core/companion-topics'
+import type { CareLevel, CareLedgerEntry, PlanAction, PlanContext } from '../../domain/companion-plan'
+import type { AvoidTopic } from '../../domain/companion-topics'
 import type { CheapEval } from '../../core/agent-provider'
 
 /** 主动找主人那一拍里,某一个对话此刻的处境(已经过了 care off / 免打扰 / 到期 agenda 那几道)。 */

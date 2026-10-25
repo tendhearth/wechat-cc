@@ -20,7 +20,7 @@
  * exactly the shape that trips provider risk-control (封号 risk). `cached()`
  * returns the last user-initiated result and NEVER dials.
  */
-import type { ProviderId } from '../core/conversation'
+import type { ProviderId } from '../domain/conversation'
 import { looksLikeAuthFailure } from '../lib/auth-failure'
 import { EXECUTOR_FACTS } from '../lib/executor-facts'
 import type { KnownProviderId } from '../lib/provider-ids'

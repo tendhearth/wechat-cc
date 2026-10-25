@@ -2,7 +2,7 @@ import { describe, it, expect } from 'vitest'
 import { describeProviderDenial, providerDenialFor, providerForSlash, slashFor } from './provider-policy'
 import { PROVIDER_IDS } from '../lib/provider-ids'
 import { capabilitiesFor } from './capability-matrix'
-import { guestSafe } from './agent-provider'
+import { guestSafe } from '../core/agent-provider'
 
 describe('providerDenialFor', () => {
   it('admin is never denied', () => {

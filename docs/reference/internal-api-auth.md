@@ -1,6 +1,6 @@
 # 内部 API 鉴权模型(现状)
 
-> 2026-09-27 首版。此前散在 architecture.md §2.2、maintainer/verify.md、rules-from-real-machines.md 和三份 spec 里,没有一处写「现在是什么样」。代码是唯一事实源:`src/daemon/internal-api/{token-registry,route-tiers,index}.ts`、`src/core/user-tier.ts`。设计依据:`superpowers/specs/2026-06-21-internal-api-tier-authz-design.md`。
+> 2026-09-27 首版。此前散在 architecture.md §2.2、maintainer/verify.md、rules-from-real-machines.md 和三份 spec 里,没有一处写「现在是什么样」。代码是唯一事实源:`src/daemon/internal-api/{token-registry,route-tiers,index}.ts`、`src/domain/user-tier.ts`。设计依据:`superpowers/specs/2026-06-21-internal-api-tier-authz-design.md`。
 
 ## 谁在调
 
@@ -13,7 +13,7 @@ daemon 的内部 HTTP API 只监听 127.0.0.1,地址与 token 文件路径写在
 
 ## 两道门
 
-1. **tier**:`guest < trusted < admin`(`src/core/user-tier.ts`)。每条路由在路由表 `packages/protocol/src/routes.ts` 的 `desktop.tier` 里声明最低档(`route-tiers.ts` 的 `ROUTE_MIN_TIER` 从表推出来);**没登记的路由 ⇒ admin**(`minTierFor`,fail-closed)。`route-tiers.test.ts` 有一条「`makeRoutes` 的每条路由都必须登记」。
+1. **tier**:`guest < trusted < admin`(`src/domain/user-tier.ts`)。每条路由在路由表 `packages/protocol/src/routes.ts` 的 `desktop.tier` 里声明最低档(`route-tiers.ts` 的 `ROUTE_MIN_TIER` 从表推出来);**没登记的路由 ⇒ admin**(`minTierFor`,fail-closed)。`route-tiers.test.ts` 有一条「`makeRoutes` 的每条路由都必须登记」。
 2. **routeAllow**:token 上可选的路由白名单;有就只许调白名单里的 `"METHOD /path"`,不看 tier。dispatcher 在 tier 之后再查(`index.ts`)。
 
 ## token 来源(`TokenInfo.origin`)

@@ -11,10 +11,10 @@ import { loadAgentConfig, saveAgentConfig, modelForProvider } from '../../lib/ag
 import { acpSupportedOn } from '../../core/acp/platform'
 import { createProviderRegistry, type ProviderRegistry } from '../../core/provider-registry'
 import { createClaudeAgentProvider, makeWorkbenchClaudeCanUseTool } from '../../core/claude-agent-provider'
-import { compilePolicy } from '../../core/policy'
+import { compilePolicy } from '../../domain/policy'
 import { createWorkbenchCodexProvider } from '../../core/workbench/codex-app-server'
 import type { PermissionRelayDeps } from '../../core/permission-relay'
-import { TIER_PROFILES } from '../../core/user-tier'
+import { TIER_PROFILES } from '../../domain/user-tier'
 import { makeWorkbenchStore } from '../../core/workbench/store'
 import { makeWorkbenchService } from '../../core/workbench/service'
 import { makeReportSink } from '../reports/report-sink'
@@ -30,7 +30,7 @@ import {resolveAdminChatId} from '../companion/resolve-admin'
 import type { Bootstrap } from './types'
 import type { InternalApi } from '../internal-api/types'
 import {registerWorkbenchApi} from './workbench-api'
-import { makeUsageMonitor, parseClaudeUsage, parseCodexRateLimits, readClaudeOAuthToken } from '../../core/subscription-usage'
+import { makeUsageMonitor, parseClaudeUsage, parseCodexRateLimits, readClaudeOAuthToken } from '../../domain/subscription-usage'
 import { readCodexRateLimits } from '../../core/workbench/codex-history-rpc'
 import { spawnSync } from '../../lib/runtime/process'
 import { readFileSync } from 'node:fs'
@@ -281,7 +281,7 @@ export function wireWorkbench(opts: {
     // 「任务 <编号> 记成经验 <一句>」与打回时「同时记成这个项目的经验」:跟微信「经验」命令、手机同一个文件
     addLesson:(p,t)=>{const r=makeProjectLessons(opts.stateDir).add(p,t);return r.ok?{ok:true}:r},
     ...(opts.requestReview?{requestReview:opts.requestReview}:{}),
-    ...(opts.permissionGate?{permissionDecide:(ask:import('../../core/permission-rules/types').AskSource)=>opts.permissionGate!.decide(ask)}:{}),
+    ...(opts.permissionGate?{permissionDecide:(ask:import('../../domain/permission-rules/types').AskSource)=>opts.permissionGate!.decide(ask)}:{}),
     executionConflict:opts.executionConflict,
     // 同一个对象:codex 晚到时 BUILD.codex 往里补,服务侧读的是这份引用。
     nativeHistory,

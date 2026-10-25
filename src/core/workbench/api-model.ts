@@ -1,6 +1,6 @@
 import {createOpenAICompatible} from '@ai-sdk/openai-compatible'
-import {aiSdkUsage,type TurnUsage} from '../turn-usage'
-import {makeThinkFilter} from '../think-tags'
+import {aiSdkUsage,type TurnUsage} from '../../domain/turn-usage'
+import {makeThinkFilter} from '../../domain/think-tags'
 import {makeTimeoutFetch,openaiFetchTimeoutsFromEnv,type FetchTimeouts} from '../../lib/timeout-fetch'
 import {jsonSchema,streamText,tool,type LanguageModel,type ModelMessage} from 'ai'
 

@@ -16,7 +16,7 @@
  */
 import { existsSync } from 'node:fs'
 import { renameMigrated, type Db } from '../lib/db'
-import type { Mode, PersistedConversation, ProviderId } from './conversation'
+import type { Mode, PersistedConversation, ProviderId } from '../domain/conversation'
 import { log } from '../lib/log'
 import { readJsonFile } from '../lib/read-json-file'
 

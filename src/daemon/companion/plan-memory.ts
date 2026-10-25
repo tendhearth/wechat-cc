@@ -6,7 +6,7 @@
 import { existsSync, mkdirSync } from 'node:fs'
 import { join } from 'node:path'
 import { readJsonFile } from '../../lib/read-json-file'
-import type { PlanLogEntry } from '../../core/companion-plan'
+import type { PlanLogEntry } from '../../domain/companion-plan'
 import { writeJsonAtomic } from '../../lib/json-file'
 
 const dirOf = (stateDir: string) => join(stateDir, 'companion')

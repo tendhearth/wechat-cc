@@ -2,10 +2,10 @@
  * 协调器各块共用的那一份:依赖、时钟、系统通知、交付策略、当前模式、换 provider 的交接账。
  * 只读地传给 plan / runner / 三种派法;每一块自己的状态(锁、取消登记、连击)留在自己那块里。
  */
-import type { Mode, ProviderId } from '../conversation'
-import { replyTextStrategyFor } from '../capability-matrix'
-import type { DeliveryKind, ReplyTextStrategy } from '../turn-reply'
-import { makeHandoffLedger } from '../provider-handoff'
+import type { Mode, ProviderId } from '../../domain/conversation'
+import { replyTextStrategyFor } from '../../domain/capability-matrix'
+import type { DeliveryKind, ReplyTextStrategy } from '../../domain/turn-reply'
+import { makeHandoffLedger } from '../../domain/provider-handoff'
 import type { ConversationCoordinatorDeps } from './types'
 
 /** 一轮落在哪个项目上(resolveProject 的结果)。 */

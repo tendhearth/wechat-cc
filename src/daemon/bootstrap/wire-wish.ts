@@ -39,7 +39,7 @@ import { isCheckerFailure } from '../../core/a2a-disclosure'
 import { readWishes, writeWishes, markWishSeen } from '../companion/wish-memory'
 import { readIntroIndex, writeIntroIndex } from '../companion/intro-memory'
 import { newReplyId as coreNewReplyId, pruneIntroIndex, FORWARD_ONLY_WHEN_UNABLE, HINT_MAX, type IntroIndex } from '../../core/intro'
-import type { Envelope } from '../../core/envelope'
+import type { Envelope } from '../../domain/envelope'
 import { primaryChannels, type ChannelStore } from '../../core/penpal-channel-store'
 
 export interface WishDeps {
@@ -54,7 +54,7 @@ export interface WishDeps {
   /** 见闻进日志(seeker 侧)。 */
   recordPostcard(a: { text: string; peerLabel: string }): string | null
   /** 告诉主人一句(经 CC 开口那道门:kind 决定别烦我 / 免打扰拦不拦,见 core/speech/kinds 的 social_*)。 */
-  notifyOwner(text: string, kind: import('../../core/speech/kinds').SocialNotice): void
+  notifyOwner(text: string, kind: import('../../domain/speech/kinds').SocialNotice): void
   /**
    * busy 登记处(Bootstrap['holdBusy'])。答一条心愿要跑判官 + 披露门,是
    * **脱离用户会话**的后台模型活 —— 不登记的话空闲自动重启会在判官跑到一半

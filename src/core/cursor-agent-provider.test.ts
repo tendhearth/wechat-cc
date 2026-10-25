@@ -5,7 +5,7 @@ import {
   mapCursorToolName,
   tierProfileToCursorSdkOpts,
 } from './cursor-agent-provider'
-import { TIER_PROFILES } from './user-tier'
+import { TIER_PROFILES } from '../domain/user-tier'
 
 describe('tierProfileToCursorSdkOpts', () => {
   it('dangerously mode → sandbox disabled regardless of tier', () => {

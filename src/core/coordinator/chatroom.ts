@@ -8,16 +8,16 @@
  *
  * 这里只编排拍子和 latest-wins 抢占;每一拍里每一位的回合交给 TurnRunner。
  */
-import type { ProviderId } from '../conversation'
+import type { ProviderId } from '../../domain/conversation'
 import { namesIn } from '../provider-registry'
-import type { InboundMsg } from '../prompt-format'
+import type { InboundMsg } from '../../domain/prompt-format'
 import {
   buildOpeningPrompt, buildRebuttalPrompt, buildVerdictPrompt, buildConvergencePrompt, parseConvergence,
   labelOpenings, buildContentionPrompt, parseContention, lensFor,
   parsePeerRank, aggregateRanking, formatRankingFooter,
   type Opening, type Contention, type RankedSpeaker,
-} from '../chatroom-conductor'
-import { buildTurnReply, type DeliveryReport, type TurnDeliveryHandle } from '../turn-reply'
+} from '../../domain/chatroom-conductor'
+import { buildTurnReply, type DeliveryReport, type TurnDeliveryHandle } from '../../domain/turn-reply'
 import type { TurnSummary } from '../agent-provider'
 import type { CoordinatorCtx, ProjectRef } from './ctx'
 import type { TurnAuth, TurnPlan } from './plan'

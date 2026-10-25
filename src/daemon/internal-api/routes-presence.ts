@@ -8,8 +8,8 @@
  * 分级 trusted:桌面拿的是 FILE token(= trusted)。admin 会让桌面 403 ——
  * 觅食台 2026-07-22 就是这么静默坏了一个月。
  */
-import { derivePresence } from '../../core/companion-presence'
-import type { Presence } from '../../core/companion-presence'
+import { derivePresence } from '../../domain/companion-presence'
+import type { Presence } from '../../domain/companion-presence'
 import { readJournalSeen } from '../../core/journal-seen'
 import { loadCompanionConfig } from '../companion/config'
 import type { InternalApiDeps, RouteTable } from './types'

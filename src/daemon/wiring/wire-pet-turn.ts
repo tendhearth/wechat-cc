@@ -2,7 +2,7 @@
  * 桌宠的「在做什么」(重构第二批步 6c,从 pipeline-deps.ts 搬出来)。推导本身是 core/pet-turn.ts 的纯函数;
  * 这里只把 daemon 里已经存在的信号收齐。
  */
-import { derivePetTurn } from '../../core/pet-turn'
+import { derivePetTurn } from '../../domain/pet-turn'
 import type { PetTurnDep } from '../internal-api/types'
 import type { IlinkAdapter } from '../ilink-glue'
 import type { Bootstrap } from '../bootstrap'

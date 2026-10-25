@@ -2,8 +2,8 @@
  * 定时任务的一轮(从 tick-bodies.ts 原样搬出;spec 2026-10-20-scheduled-jobs-design):独立会话 `job:<id>`、只读档、strict,
  * 经 CC 开口那道门(say)开一轮;跑完 forget。
  */
-import { JOB_PROFILE, REVIEW_PROFILE } from '../../core/user-tier'
-import { replyTextStrategyFor } from '../../core/capability-matrix'
+import { JOB_PROFILE, REVIEW_PROFILE } from '../../domain/user-tier'
+import { replyTextStrategyFor } from '../../domain/capability-matrix'
 import { collectTurn, TURN_TIMEOUT_CODE } from '../../core/agent-provider'
 import { isNetworkUnprotectedError } from '../../lib/network-gate'
 import type { TickDeps } from './tick-deps'

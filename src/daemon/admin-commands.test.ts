@@ -5,7 +5,7 @@ import { tmpdir } from 'node:os'
 import { makeAdminCommands, isAdminCommandText, matchDelegate, matchHandJoin, friendlyDelegateReason, formatOverviewForDisplay, isDelegateName, type AdminCommandsDeps } from './admin-commands'
 import { makeSessionStateStore } from '../core/session-state'
 import { openTestDb, type Db } from '../lib/db'
-import type { InboundMsg } from '../core/prompt-format'
+import type { InboundMsg } from '../domain/prompt-format'
 import packageJson from '../../package.json'
 
 describe('admin-commands', () => {

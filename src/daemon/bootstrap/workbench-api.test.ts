@@ -7,7 +7,7 @@ import {createProviderRegistry} from '../../core/provider-registry'
 import {MANAGED_API_CAPABILITIES} from '../../core/workbench/executor-capabilities'
 import {registerWorkbenchApi} from './workbench-api'
 import {makeWorkbenchStore} from '../../core/workbench/store'
-import {TIER_PROFILES} from '../../core/user-tier'
+import {TIER_PROFILES} from '../../domain/user-tier'
 import {removeTempDir} from '../../lib/test-temp'
 
 const roots:string[]=[]

@@ -1,6 +1,6 @@
 import { makeWechatNotificationWorker, type WechatNoticeKind, type WechatNoticeSendResult, type WechatNotificationNotice } from '../../core/workbench/wechat-notifications'
 import type { WorkbenchService } from '../../core/workbench/service'
-import type { SpeechKind } from '../../core/speech/kinds'
+import type { SpeechKind } from '../../domain/speech/kinds'
 import type { IlinkAdapter } from '../ilink-glue'
 import type { SpeechPolicy } from '../speech/policy'
 

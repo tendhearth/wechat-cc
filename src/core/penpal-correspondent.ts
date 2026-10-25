@@ -6,7 +6,7 @@
  * See docs/superpowers/specs/2026-07-18-anonymous-penpal-social-layer-design.md.
  */
 import { randomUUID } from 'node:crypto'
-import { openEnvelope, sealEnvelope, type Envelope } from './envelope'
+import { openEnvelope, sealEnvelope, type Envelope } from '../domain/envelope'
 import { peerMailboxOfRow, type ChannelStore } from './penpal-channel-store'
 import type { LetterStore } from './penpal-letter-store'
 import { deriveSharedKey, sealLetter, openLetter } from './penpal-crypto'

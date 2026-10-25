@@ -12,7 +12,7 @@ import type { InboundCtx, Middleware } from './types'
 import type { Intent } from './intent'
 import { isWechatTaskCommand, type WechatMessageIdentity, type WechatWorkbenchReply } from '../../core/workbench/wechat-control'
 import { resolveTaskReference, FOCUS_TTL_MS, type TaskCandidate, type TaskJudge, type FocusState } from '../../core/workbench/task-reference'
-import type { QuotaState } from '../../core/provider-quota'
+import type { QuotaState } from '../../domain/provider-quota'
 import { providerDisplayName } from '../provider-display-names'
 import { QUOTA_TAKEOVER_DEFAULT_REQUEST, quotaTakeoverText } from '../../core/workbench/quota-takeover'
 

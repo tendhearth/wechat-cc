@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from 'vitest'
 import { guestSafe, type SpawnContext } from './agent-provider'
-import { TIER_PROFILES } from './user-tier'
+import { TIER_PROFILES } from '../domain/user-tier'
 import { createAcpProvider } from './acp-agent-provider'
 import { ACP_CURSOR_CAPABILITIES, acpMcpServersFor, createAcpCursorChatProvider, DEFAULT_CURSOR_MODEL } from './acp-cursor-chat'
 

@@ -16,7 +16,7 @@ import { builtinTools, type BuiltinTool } from './openai-tools'
 import { gateTool } from './openai-gate'
 import { makeTurnEmitter } from './turn-emitter'
 
-export { OPENAI_CAPABILITIES } from './provider-capabilities'
+export { OPENAI_CAPABILITIES } from '../domain/provider-capabilities'
 
 /**
  * Text-delta → event mapping only. `tool_call` deltas are NOT handled here:

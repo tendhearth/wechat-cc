@@ -4,9 +4,9 @@
  * 跑回合本身交给 TurnRunner。
  */
 import { namesIn } from '../provider-registry'
-import type { InboundMsg } from '../prompt-format'
-import { labelOpenings, buildParallelSynthesisPrompt, type Opening } from '../chatroom-conductor'
-import { buildTurnReply, type DeliveryReport } from '../turn-reply'
+import type { InboundMsg } from '../../domain/prompt-format'
+import { labelOpenings, buildParallelSynthesisPrompt, type Opening } from '../../domain/chatroom-conductor'
+import { buildTurnReply, type DeliveryReport } from '../../domain/turn-reply'
 import { TURN_TIMEOUT_CODE, type TurnSummary } from '../agent-provider'
 import { isAuthErrorCode } from '../../lib/provider-error-code'
 import type { CoordinatorCtx, ProjectRef } from './ctx'

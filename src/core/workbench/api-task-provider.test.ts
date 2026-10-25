@@ -10,7 +10,7 @@ import {createProviderRegistry} from '../provider-registry'
 import {registerWorkbenchApi} from '../../daemon/bootstrap/workbench-api'
 import type {APIModel,ChatMessage} from './api-model'
 import type {AgentEvent,SpawnContext} from '../agent-provider'
-import {TIER_PROFILES} from '../user-tier'
+import {TIER_PROFILES} from '../../domain/user-tier'
 import {removeTempDir} from '../../lib/test-temp'
 
 let root:string,project:string,db:Db,taskId:string

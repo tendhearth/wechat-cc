@@ -1,7 +1,7 @@
 import { describe, it, expect, vi } from 'vitest'
 import { makeCanUseTool, effectivePolicy } from './permission-relay'
-import { CAPABILITY_MATRIX, type Capability } from './capability-matrix'
-import { TIER_PROFILES } from './user-tier'
+import { CAPABILITY_MATRIX, type Capability } from '../domain/capability-matrix'
+import { TIER_PROFILES } from '../domain/user-tier'
 
 const baseMode = {
   mode: () => 'solo' as const,

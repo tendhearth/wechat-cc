@@ -11,8 +11,8 @@ export interface InternalApiLifecycle extends Lifecycle {
   /** 功能模块挂上自己的路由(表里标了 module 的那几条,架构终态 A3)。key 没标这个模块 / 重复 ⇒ 抛。 */
   mount(module: import('@wechat-cc/protocol/routes').ModuleName, routes: import('./types').RouteTable): void
   provide(patch: LateDeps): void
-  getPresence(): Promise<import('../../core/companion-presence').Presence | null>
-  mintSessionToken(tier: import('../../core/user-tier').UserTier, sessionKey: string, opts?: import('./token-registry').MintTokenOpts): string
+  getPresence(): Promise<import('../../domain/companion-presence').Presence | null>
+  mintSessionToken(tier: import('../../domain/user-tier').UserTier, sessionKey: string, opts?: import('./token-registry').MintTokenOpts): string
   invalidateSession(sessionKey: string): void
   panelTokens: import('./token-registry').PanelTokens
 }

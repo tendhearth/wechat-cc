@@ -10,7 +10,7 @@
  * 「expired」不是存的状态,是 open + 过了 expiresAt 的派生视图。
  */
 import { randomBytes } from 'node:crypto'
-import type { Envelope } from './envelope'
+import type { Envelope } from '../domain/envelope'
 
 export type WishStatus = 'draft' | 'open' | 'closed' | 'cancelled'
 

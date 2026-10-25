@@ -9,9 +9,9 @@ import { createConversationCoordinator, type TurnRecord, type ConversationCoordi
 import { createProviderRegistry } from './provider-registry'
 import { makeFakeSession } from './test-helpers'
 import type { AgentEvent, AgentProvider, AgentSession } from './agent-provider'
-import type { Mode } from './conversation'
-import type { InboundMsg } from './prompt-format'
-import type { DeliveryReport, ReplyDeliveryPort, TurnDeliveryHandle, TurnTextParts } from './turn-reply'
+import type { Mode } from '../domain/conversation'
+import type { InboundMsg } from '../domain/prompt-format'
+import type { DeliveryReport, ReplyDeliveryPort, TurnDeliveryHandle, TurnTextParts } from '../domain/turn-reply'
 
 const RESULT: AgentEvent = { kind: 'result', sessionId: 's', numTurns: 1, durationMs: 1 }
 

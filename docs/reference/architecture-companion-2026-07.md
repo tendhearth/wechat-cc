@@ -213,7 +213,7 @@ Three physically separate tiers:
 
 **Designed boundary (crisp):** `.md` = the bot's *subjective take*; plugins = *objective derived
 data*; the agent fuses them at prompt time (`brief.py` "DATA ONLY, does NOT read .md";
-`src/core/prompt-builder.ts`).
+`src/domain/prompt-builder.ts`).
 
 ### 2.5 Deployment / Runtime topology
 

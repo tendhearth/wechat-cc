@@ -4,8 +4,8 @@
  * (旁听入库、busy token、先登记再出门、daysSinceContact 的算法)。登记在 tick-bodies.ts,顺序就是候选与回退的顺序。
  */
 import type { CompanionAction } from '../companion/contributions'
-import type { PlanContext } from '../../core/companion-plan'
-import { PLAN_JOURNAL_ITEMS } from '../../core/companion-plan'
+import type { PlanContext } from '../../domain/companion-plan'
+import { PLAN_JOURNAL_ITEMS } from '../../domain/companion-plan'
 import { readJournalSeen } from '../../core/journal-seen'
 import { NETWORK_UNPROTECTED_REASON } from '../../lib/network-gate'
 import type { TickDeps } from './tick-deps'

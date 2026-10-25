@@ -10,7 +10,7 @@
  *    这条命令的非斜杠写法(「终端」「串门」)留在原位。
  * 冲突由基线快照与冲突测试抓(command-baseline.test.ts、__e2e__/command-routing.e2e.test.ts)。
  */
-import type { InboundMsg } from '../../core/prompt-format'
+import type { InboundMsg } from '../../domain/prompt-format'
 import type { MatterOrigin } from '../../core/matters/store'
 
 /**

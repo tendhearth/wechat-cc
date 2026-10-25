@@ -9,12 +9,12 @@
  *
  * 一轮一个快照(以前一轮里会读三四次 access):主人在一轮中途改 access.json,从下一条消息起生效,不在半截里变档。
  */
-import type { Mode, ProviderId } from '../conversation'
-import type { InboundMsg } from '../prompt-format'
-import type { PermissionMode } from '../capability-matrix'
+import type { Mode, ProviderId } from '../../domain/conversation'
+import type { InboundMsg } from '../../domain/prompt-format'
+import type { PermissionMode } from '../../domain/capability-matrix'
 import { providerCallTarget } from '../provider-registry'
-import { providerDenialFor, type ProviderDenial } from '../provider-policy'
-import { resolveEffectiveTier, resolveTier, TIER_PROFILES, effectivePermissionMode, type TierProfile, type UserTier } from '../user-tier'
+import { providerDenialFor, type ProviderDenial } from '../../domain/provider-policy'
+import { resolveEffectiveTier, resolveTier, TIER_PROFILES, effectivePermissionMode, type TierProfile, type UserTier } from '../../domain/user-tier'
 import type { Access } from '../../lib/access'
 import { decideCall, unprotectedMessage } from '../../lib/network-gate'
 import type { CoordinatorCtx } from './ctx'

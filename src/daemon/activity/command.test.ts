@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import { makeActivityCommand, parseActivityCommand, formatActivityForWechat, ACTIVITY_WECHAT_LINES } from './command'
-import type { ActivityItem } from '../../core/cc-activity'
+import type { ActivityItem } from '../../domain/cc-activity'
 
 const NOW = Date.parse('2026-10-20T12:00:00Z')
 const item = (id: string, hoursAgo: number, title = id): ActivityItem => ({ id, kind: 'job', at: NOW - hoursAgo * 3_600_000, title })

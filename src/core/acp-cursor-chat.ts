@@ -13,7 +13,7 @@ import { cursorOneShotEval, defaultCursorSpawnFn, type CursorSpawnFn } from './c
 /** cursorModel 没设时的兜底('auto' = 让 Cursor 自己挑)。 */
 export const DEFAULT_CURSOR_MODEL = 'auto'
 
-export { ACP_CURSOR_CAPABILITIES } from './provider-capabilities'
+export { ACP_CURSOR_CAPABILITIES } from '../domain/provider-capabilities'
 
 export interface AcpCursorChatOptions {
   bin: string

@@ -9,7 +9,7 @@ import { createMcpToolBridge } from '../../core/openai-mcp-bridge'
 import { createOpenAiAgentProvider } from '../../core/openai-agent-provider'
 import { collectTurn } from '../../core/agent-provider'
 import type { ChatModelClient } from '../../core/openai-chat-model'
-import { TIER_PROFILES } from '../../core/user-tier'
+import { TIER_PROFILES } from '../../domain/user-tier'
 import { buildOpenaiMcpSpecs, openaiMcpBridgeOptions } from './mcp-specs'
 
 /**

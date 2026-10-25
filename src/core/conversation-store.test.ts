@@ -3,7 +3,7 @@ import { existsSync, mkdtempSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { tmpdir } from 'node:os'
 import { makeConversationStore } from './conversation-store'
-import { modeRequiresParticipantPrefix } from './conversation'
+import { modeRequiresParticipantPrefix } from '../domain/conversation'
 import { openTestDb, openDb, type Db } from '../lib/db'
 import { removeTempDir } from '../lib/test-temp'
 

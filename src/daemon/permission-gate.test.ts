@@ -7,7 +7,7 @@ import { NetworkUnprotectedError } from '../lib/network-gate'
 import { makePermissionDecisionsStore } from './permission-decisions-store'
 import { ensureStarterRules, makePermissionGate, RUNAWAY_MAX, setRulesEnabled } from './permission-gate'
 import { RULES_FILE } from '../core/permission-rules/rules-file'
-import type { PermissionAsk } from '../core/permission-rules/types'
+import type { PermissionAsk } from '../domain/permission-rules/types'
 
 const ask = (over: Partial<PermissionAsk> = {}): PermissionAsk => ({
   surface: 'terminal', provider: 'claude', tool: 'Bash', command: 'ls', cwd: '/w', project: '/w',

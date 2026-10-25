@@ -1,5 +1,5 @@
 import { randomUUID } from 'node:crypto'
-import { claudeResultUsage } from './turn-usage'
+import { claudeResultUsage } from '../domain/turn-usage'
 import { query, type Options, type SDKUserMessage } from '@anthropic-ai/claude-agent-sdk'
 import type { AgentActivity, AgentAttachment, AgentEvent, AgentRuntimeSnapshot, AgentSession, SpawnContext } from './agent-provider'
 import { AsyncQueue } from './async-queue'

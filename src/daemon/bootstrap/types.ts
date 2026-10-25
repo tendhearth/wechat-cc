@@ -1,10 +1,10 @@
 import type { SessionManager } from '../../core/session-manager'
-import type { TierProfile } from '../../core/user-tier'
+import type { TierProfile } from '../../domain/user-tier'
 import type { ProviderRegistry } from '../../core/provider-registry'
 import type { ConversationCoordinator, TurnRecord } from '../../core/conversation-coordinator'
 import type { ConversationStore } from '../../core/conversation-store'
-import { formatInbound } from '../../core/prompt-format'
-import type { ProviderId } from '../../core/conversation'
+import { formatInbound } from '../../domain/prompt-format'
+import type { ProviderId } from '../../domain/conversation'
 import type { Options } from '@anthropic-ai/claude-agent-sdk'
 import type { WechatVoiceDep, WechatCompanionDep } from '../wechat-tool-deps'
 import type { Db } from '../../lib/db'
@@ -52,7 +52,7 @@ export interface BootstrapDeps {
   /** Mint/invalidate per-session internal-api tokens — main.ts wires these to
    *  the internal-api token registry so each session's MCP children carry the
    *  caller's tier. Omitted in tests / minimal embeddings. */
-  mintSessionToken?: (tier: import('../../core/user-tier').UserTier, sessionKey: string) => string
+  mintSessionToken?: (tier: import('../../domain/user-tier').UserTier, sessionKey: string) => string
   invalidateSession?: (sessionKey: string) => void
   /**
    * Test/harness override for agy's tier-C global MCP config target dir
@@ -274,7 +274,7 @@ export interface Bootstrap {
   coordinator: ConversationCoordinator
   resolve: (chatId: string) => { alias: string; path: string } | null
   formatInbound: typeof formatInbound
-  sdkOptionsForProject: (alias: string, path: string, tierProfile: TierProfile, chatId: string, mcpEnv?: Record<string, string>, appendInstructions?: string, spawnContext?: { permissionMode: import('../../core/capability-matrix').PermissionMode }) => Options
+  sdkOptionsForProject: (alias: string, path: string, tierProfile: TierProfile, chatId: string, mcpEnv?: Record<string, string>, appendInstructions?: string, spawnContext?: { permissionMode: import('../../domain/capability-matrix').PermissionMode }) => Options
   /**
    * The single provider-agnostic system-prompt assembler. SessionManager calls
    * it once per spawn and forwards the result via SpawnContext.appendInstructions;
@@ -363,7 +363,7 @@ export interface Bootstrap {
       letterStore: import('../../core/penpal-letter-store').LetterStore
       startVisit(channelRowId?: string): Promise<{ ok: true; id: string; channel: string } | { ok: false; reason: string }>
       /** 进行中的串门(spec 2026-09-03-companion-presence)。 */
-      activeVisit(): import('../../core/companion-presence').ActiveVisit | null
+      activeVisit(): import('../../domain/companion-presence').ActiveVisit | null
       /** 可自动串门的真信道(spec 2026-09-05-companion-plan)。 */
       provenChannels(): Array<{ id: string; label: string }>
     }

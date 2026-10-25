@@ -1,7 +1,7 @@
 import { describe, it, expect } from 'vitest'
 import { makeMwIdentity } from './mw-identity'
 import type { InboundCtx } from './types'
-import type { InboundMsg } from '../../core/prompt-format'
+import type { InboundMsg } from '../../domain/prompt-format'
 
 function makeCtx(msg: Partial<InboundMsg>): InboundCtx {
   return {

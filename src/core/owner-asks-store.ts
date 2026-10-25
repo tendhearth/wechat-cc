@@ -11,7 +11,7 @@ import { sha256Hex } from '../lib/content-hash'
 import {
   EMPTY_ASKS, answerAsk, askHashInput, commitAsked, enqueue, expireStale, pickForBrief,
   type AnswerResult, type EnqueueInput, type EnqueueResult, type OwnerAsk, type OwnerAsksState, type PickedAsk,
-} from './owner-asks'
+} from '../domain/owner-asks'
 
 export const OWNER_ASKS_FILE = 'owner-asks.json'
 

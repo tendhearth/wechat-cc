@@ -6,10 +6,10 @@
 import { existsSync, mkdirSync, readFileSync } from 'node:fs'
 import { join } from 'node:path'
 import type { JobTurnResult, TickTextStyle } from '../../daemon/wiring/tick-bodies'
-import type { ScheduledJob } from '../../core/scheduled-jobs'
+import type { ScheduledJob } from '../../domain/scheduled-jobs'
 import { writeFileAtomic } from '../../lib/json-file'
-import { parseSilence } from '../../core/turn-reply'
-import { ASK_PLACEHOLDER, renderAsksBlock, spliceAsks, type PickedAsk } from '../../core/owner-asks'
+import { parseSilence } from '../../domain/turn-reply'
+import { ASK_PLACEHOLDER, renderAsksBlock, spliceAsks, type PickedAsk } from '../../domain/owner-asks'
 
 export const BRIEF_MATERIAL_MAX = 4000
 export const BRIEF_PREFS_FILE = 'brief-prefs.md'

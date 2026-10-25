@@ -17,7 +17,7 @@
  * shouldSpeak 管,这里只管「往哪儿送」。投递不是模型调用,网络守护不管这一段。
  */
 
-import type { TurnAttachment } from '../../core/turn-reply'
+import type { TurnAttachment } from '../../domain/turn-reply'
 import type { AppAttachment } from '../app-reply'
 
 export type ProactiveChannel = 'wechat' | 'app'

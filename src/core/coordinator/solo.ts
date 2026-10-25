@@ -2,12 +2,12 @@
  * 单模型:solo、primary_tool,以及 /both、/chat 退成一家的那一轮。只编排 —— acquire、拼 prompt(交接块)、
  * 开交付轮、出错怎么说;跑回合本身交给 TurnRunner。
  */
-import type { ProviderId } from '../conversation'
-import type { InboundMsg } from '../prompt-format'
-import { buildHandoffBlock, buildColdStartBlock, type HandoffTurn } from '../provider-handoff'
-import { describeProviderDenial, slashFor } from '../provider-policy'
-import { capabilitiesFor } from '../capability-matrix'
-import { makeTurnTextCollector, type DeliveryReport, type TurnDeliveryHandle } from '../turn-reply'
+import type { ProviderId } from '../../domain/conversation'
+import type { InboundMsg } from '../../domain/prompt-format'
+import { buildHandoffBlock, buildColdStartBlock, type HandoffTurn } from '../../domain/provider-handoff'
+import { describeProviderDenial, slashFor } from '../../domain/provider-policy'
+import { capabilitiesFor } from '../../domain/capability-matrix'
+import { makeTurnTextCollector, type DeliveryReport, type TurnDeliveryHandle } from '../../domain/turn-reply'
 import { TURN_TIMEOUT_CODE, type TurnSummary } from '../agent-provider'
 import { isAuthErrorCode, providerErrorCodeOf } from '../../lib/provider-error-code'
 import type { CoordinatorCtx, ProjectRef } from './ctx'

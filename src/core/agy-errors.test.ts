@@ -9,7 +9,7 @@ import { agyErrorCode } from './agy-errors'
 import { createAgyAgentProvider } from './agy-agent-provider'
 import { makeLlmHealth } from '../daemon/llm-health'
 import { providerErrorCodeOf } from '../lib/provider-error-code'
-import { TIER_PROFILES } from './user-tier'
+import { TIER_PROFILES } from '../domain/user-tier'
 
 const samples = JSON.parse(readFileSync(join(__dirname, '../daemon/diagnostics/__fixtures__/provider-errors/agy.json'), 'utf8')) as Array<{ id: string; message: string; errorCode: string | null }>
 const AMBIGUOUS = samples.find(s => s.id === 'agy.ambiguous.cheap_eval')!

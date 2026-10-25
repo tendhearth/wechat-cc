@@ -7,8 +7,8 @@
  * wechat/delegate spec + pluginMcpForClaude)、instructions(delegateStdioByProvider
  * + knowledgePluginNames),以及 registerProviders 的各家 spec。
  */
-import type { ProviderId } from '../../core/conversation'
-import { capabilitiesFor, capabilityProviderIds } from '../../core/capability-matrix'
+import type { ProviderId } from '../../domain/conversation'
+import { capabilitiesFor, capabilityProviderIds } from '../../domain/capability-matrix'
 import { wechatStdioMcpSpec, delegateStdioMcpSpec, type McpStdioSpec } from './mcp-specs'
 import { loadPlugins, pluginMcpSpecs } from '../plugins/registry'
 import { resolveBundledPlugins, type BundledPluginsResolution } from '../plugins/paths'

@@ -1,5 +1,5 @@
 // src/daemon/inbound/types.ts
-import type { InboundMsg } from '../../core/prompt-format'
+import type { InboundMsg } from '../../domain/prompt-format'
 import type { Intent } from './intent'
 import type { MatterOrigin } from '../../core/matters/store'
 

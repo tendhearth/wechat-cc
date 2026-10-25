@@ -1,9 +1,9 @@
-import { compilePolicy } from './policy'
+import { compilePolicy } from '../domain/policy'
 import { Codex, type Thread, type ThreadEvent, type ThreadItem } from '@openai/codex-sdk'
 import { tmpdir } from 'node:os'
 import { mergeEnvIntoMcpServers, CORE_MCP_SERVER_NAMES, type AgentEvent, type AgentProject, type AgentProvider, type AgentSession, type PermissionMode, type SpawnContext } from './agent-provider'
 import { resolveCodexCheapModel } from './codex-cheap-model'
-import type { TierProfile } from './user-tier'
+import type { TierProfile } from '../domain/user-tier'
 import type { McpStdioSpec } from './mcp-stdio-spec'
 import { DELEGATE_TOOL_TIMEOUT_MS, TERMINAL_SAY_TOOL_TIMEOUT_MS } from './mcp-stdio-spec'
 import { makeTurnEmitter } from './turn-emitter'
@@ -12,7 +12,7 @@ import { providerErrorCodeOf, withProviderCode } from '../lib/provider-error-cod
 import { log } from '../lib/log'
 import { codexCallTarget, type ResolveCodexTargetOptions } from '../lib/codex-target'
 
-export { CODEX_CAPABILITIES } from './provider-capabilities'
+export { CODEX_CAPABILITIES } from '../domain/provider-capabilities'
 
 /**
  * Codex 的 item 里哪些算「调了一次工具」—— 也就是「最后的话」分段的边界(core/turn-reply.ts 以 tool_call 为界)。
@@ -40,7 +40,7 @@ export function codexItemToolCall(item: { type: string; server?: unknown; tool?:
 }
 
 // 档位 × 模式 → SDK 选项的翻译挪到 core/policy.ts(3c Policy 编译器第 1 步);旧名字从那里转出,调用方不变。
-export { codexNetworkOpts, tierProfileToCodexSdkOpts, type CodexTierSdkOpts } from './policy'
+export { codexNetworkOpts, tierProfileToCodexSdkOpts, type CodexTierSdkOpts } from '../domain/policy'
 
 /**
  * codex-agent-provider — Codex SDK companion to claude-agent-provider, using

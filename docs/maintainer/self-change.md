@@ -56,7 +56,7 @@ CC 自己迭代时找活用的(设计稿 2026-10-23-cc-runs-development §4.8 �
 
 ## 问主人:`wechat-cc self ask`(2026-10-24)
 
-设计稿 §4.8「改变主人看得见的行为 ⇒ 攒起来问」、§6 第 5 步问主人的那一半。候选存 `<stateDir>/owner-asks.json`(`src/core/owner-asks.ts` 是判法,`owner-asks-store.ts` 落盘;CLI 排、daemon 改状态,写走 `updateJsonFile`)。
+设计稿 §4.8「改变主人看得见的行为 ⇒ 攒起来问」、§6 第 5 步问主人的那一半。候选存 `<stateDir>/owner-asks.json`(`src/domain/owner-asks.ts` 是判法,`owner-asks-store.ts` 落盘;CLI 排、daemon 改状态,写走 `updateJsonFile`)。
 
 - 排:`wechat-cc self ask "<一行问题>" --recommend "<一行推荐>" [--key k] [--evidence …] [--priority N]`;`self plan --ask` 按步排(key `plan:<计划>:<步>`,版本 = 整份 PR 列表)。看:`self ask --list [--all]`。
 - 问:**只在早报里**(主人 10-24)。早报那一轮挑最多 3 条,问过的先、再按 priority / 先来后到;编号从早报里已有的「等你」之后接着排;模型在「要你拍板的」末尾写一行 `<<CC_ASKS>>`,daemon 在那里接上(没写 ⇒ 接在「就这些。」前面)。早报 NO_REPLY / 没发出去 ⇒ 不算问过。当天没有候选 ⇒ 早报不加这一段。

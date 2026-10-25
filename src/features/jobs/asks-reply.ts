@@ -6,7 +6,7 @@
  * 交给后面的命令和模型。只认主人。
  * 这一版只记答案,不替主人去做:批了的那条怎么进开发流程是第 7 步(要在核心链之后),所以回话里不承诺「马上去做」。
  */
-import { lookupAsk, parseAskReply } from '../../core/owner-asks'
+import { lookupAsk, parseAskReply } from '../../domain/owner-asks'
 import type { OwnerAsksStore } from '../../core/owner-asks-store'
 import type { ReplyHandler } from '../../daemon/commands/registry'
 

@@ -339,7 +339,7 @@ describe('startLongPollLoops', () => {
       .mockImplementation(async () => { await new Promise(r => setTimeout(r, 50)); return { updates: [], sync_buf: 'buf2' } })
 
     const seen: string[] = []
-    const onInbound = async (m: import('../core/prompt-format').InboundMsg) => {
+    const onInbound = async (m: import('../domain/prompt-format').InboundMsg) => {
       seen.push(m.text)
     }
 

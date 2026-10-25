@@ -29,8 +29,8 @@ import type { Bootstrap } from '../bootstrap/index'
 import type { IlinkAdapter } from '../ilink-glue'
 import type { ChatPrefsStore } from '../chat-prefs'
 import type { CareLedger } from '../companion/care-ledger'
-import type { InboundMsg } from '../../core/prompt-format'
-import type { Mode } from '../../core/conversation'
+import type { InboundMsg } from '../../domain/prompt-format'
+import type { Mode } from '../../domain/conversation'
 import type { PipelineRun } from '../inbound/types'
 
 // 模型挂了:llm 子系统判定该暂停(其余照常)

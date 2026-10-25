@@ -12,9 +12,9 @@ import type { WechatProjectsDep, WechatVoiceDep, WechatCompanionDep } from '../w
 import type { Journal } from '../../core/journal-store'
 import type { ReplySinks } from '../reply-sinks'
 import type { ConversationStore } from '../../core/conversation-store'
-import type { ProviderId } from '../../core/conversation'
-import type { PermissionMode } from '../../core/capability-matrix'
-import type { UserTier } from '../../core/user-tier'
+import type { ProviderId } from '../../domain/conversation'
+import type { PermissionMode } from '../../domain/capability-matrix'
+import type { UserTier } from '../../domain/user-tier'
 import type { WorkbenchService } from '../../core/workbench/service'
 
 /**
@@ -91,7 +91,7 @@ export interface InternalApiIlinkDep {
  * 输入的采集在 wiring/pipeline-deps.ts(那里才有 ownerChatId / sessionManager /
  * petSignals / 消息库)。命名成型是为了 routes-pet.test.ts 能不 cast 就构造 deps。
  */
-export type PetTurnDep = () => Promise<import('../../core/pet-turn').PetTurnPayload>
+export type PetTurnDep = () => Promise<import('../../domain/pet-turn').PetTurnPayload>
 
 export interface PhoneConnectDep {
   link(opts: { enableRemote: boolean }): Promise<import('../phone-link').PhoneLinkResult>
@@ -201,7 +201,7 @@ export interface InternalApiDeps {
    * route table doesn't import coordinator internals.
    */
   conversation?: {
-    setMode(chatId: string, mode: import('../../core/conversation').Mode): void
+    setMode(chatId: string, mode: import('../../domain/conversation').Mode): void
   }
   /**
    * Optional app-conversation-channel converse dep (voice arc, Stage 0,
@@ -273,7 +273,7 @@ export interface InternalApiDeps {
    * 「今天」一眼看完(core/overseer-today.ts,2026-10-14):终端 + 一起做,过去 24 小时。
    * main.ts setOverseerToday;没设之前 GET /v1/overseer/today 503。只读,只在被问时算。
    */
-  overseerToday?: () => import('../../core/overseer-today').OverseerToday
+  overseerToday?: () => import('../../domain/overseer-today').OverseerToday
   /**
    * 接上 / 撤掉终端里的 Claude Code / Codex(2026-10-14):POST /v1/cli/hooks/install|uninstall。
    * main.ts setCliHooks;没设之前 503。只在主人点了确认时调,绝不自动装。
@@ -323,7 +323,7 @@ export interface InternalApiDeps {
       /** 串门(架构重构 §2.3)。可选:老 fixture 没有。 */
       startVisit?(target?: string): Promise<{ ok: true; id: string; channel: string } | { ok: false; reason: string }>
       /** 进行中的串门(spec 2026-09-03-companion-presence §2.2)。可选:老 fixture 没有。 */
-      activeVisit?(): import('../../core/companion-presence').ActiveVisit | null
+      activeVisit?(): import('../../domain/companion-presence').ActiveVisit | null
     }
     /** 派心愿(spec 2026-09-04-wish-postcard)。可选:老 fixture / 未接线时 undefined。 */
     wish?: Omit<import('../bootstrap/wire-wish').WishService, 'onInbound'>
@@ -512,7 +512,7 @@ export interface InternalApiDeps {
   /** Registered provider ids (registry.list) — set alongside llmHealth. */
   llmRegistered?: () => string[]
   /** 执行者叫什么(收敛清单 ⑥,registry.namesOf)— set alongside llmHealth。桌面「AI 服务」各处读 GET /v1/llm/health 的 names。 */
-  llmNames?: (id: string) => import('../../core/provider-display-names').ExecutorNames
+  llmNames?: (id: string) => import('../../domain/provider-display-names').ExecutorNames
   /** provider id → 自配 base_url(如 openai-compatible 的国内/本地端点),
    *  给网络体检探真实端点用。set alongside llmHealth. */
   llmEndpoints?: () => Record<string, string>
@@ -655,7 +655,7 @@ export interface InternalApi {
   mount(module: import('@wechat-cc/protocol/routes').ModuleName, routes: RouteTable): void
   provide(patch: LateDeps): void
   /** 三轴 presence 的共用入口(随身 CC 手机页经此读,不自己拼输入)。null = journal 没接。 */
-  getPresence(): Promise<import('../../core/companion-presence').Presence | null>
+  getPresence(): Promise<import('../../domain/companion-presence').Presence | null>
   /**
    * Mint an env-only per-session token granting `tier`, keyed by `sessionKey`
    * (`provider/alias/chatId`). The daemon injects it into that session's MCP
@@ -670,7 +670,7 @@ export interface InternalApi {
    * keeps its current behavior unchanged.
    */
   mintSessionToken(
-    tier: import('../../core/user-tier').UserTier,
+    tier: import('../../domain/user-tier').UserTier,
     sessionKey: string,
     opts?: import('./token-registry').MintTokenOpts,
   ): string

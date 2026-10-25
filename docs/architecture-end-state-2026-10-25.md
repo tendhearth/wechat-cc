@@ -248,6 +248,7 @@ DeliveryPort                      吃 TurnOutcome;旧的 / shadow 交付路删�
 | D1 + D2 | 协调器拆进 `src/core/coordinator/`(`conversation-coordinator.ts` 只转出):`planTurn` 一轮读一次 access、过一次守护,纯函数 `admit()` 定档位 / 被拒 / 参与者 / 回落,产出 `TurnPlan`;`TurnRunner` 管会话锁、超时、进度、取消登记、TurnRecord,solo / /both / /chat 一拍都用它。`resolveTier` / `providerDenialFor` 只在 `admit()` 里调,而且在锁里、开跑那一刻(排队之前的计划只用来选排队方式,评审抓到的越权已修)。D3(删 legacy / shadow 交付)未做 |
 | D1 + D2 | 协调器拆进 `src/core/coordinator/`(`conversation-coordinator.ts` 只转出):`planTurn` 一轮读一次 access、过一次守护,纯函数 `admit()` 定档位 / 被拒 / 参与者 / 回落,产出 `TurnPlan`;`TurnRunner` 管会话锁、超时、进度、取消登记、TurnRecord,solo / /both / /chat 一拍都用它。`resolveTier` / `providerDenialFor` 只在 `admit()` 里调,而且在锁里、开跑那一刻(排队之前的计划只用来选排队方式,评审抓到的越权已修) |
 | D3 | 交付只剩一条路:删 legacy / shadow 两档、`replyDeliveryFor` / `setReplyDeliveryOverrides`、agent-config `reply_delivery`(旧盘上写着照样开机、被忽略)、`WECHAT_REPLY_DELIVERY` 与 wechat MCP 的 reply 族工具注册、FALLBACK 连击、shadow 旁听、prompt 的「用 reply 说话」版、reply-once 实验代码(数据留着);`replyDelivery` 端口在协调器 / 推送里改成必填。`/v1/wechat/*` 路由留着(附件经它们真发,`reply` 等几条现在没有调用方,另做) |
+| E1 第 1 步 | `src/domain/` 开张:档位 / 放行、开口、伙伴判定、提示词、能力表这 43 个纯规则文件从 core 搬进去(codemod 改了 256 个文件的 import);`guestSafe` 与 Confinement 类型抽成 `domain/confinement.ts`。depcheck 两条零例外:domain 运行时只依赖 domain 自己和 lib 里不碰 I/O 的;不碰 node 内置。只引类型暂时放行(core 还没拆完)。下一步:app(协调器)、adapters(执行者、store) |
 
 ## 修订记录
 

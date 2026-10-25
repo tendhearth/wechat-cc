@@ -9,7 +9,7 @@
  * transient errors. stop() flips a shared flag and awaits all in-flight loops.
  */
 
-import type { InboundMsg } from '../core/prompt-format'
+import type { InboundMsg } from '../domain/prompt-format'
 import type { Account } from './ilink-glue'
 import { nextBackoffMs } from './health/backoff'
 

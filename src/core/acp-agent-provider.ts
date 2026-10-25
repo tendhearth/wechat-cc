@@ -12,7 +12,7 @@
  *  - 关 stdin 不会让 cursor-agent 退出 ⇒ close() 必须 SIGTERM/SIGKILL 进程组并确认退出;
  *  - 不声明 fs/terminal,agent 自己落盘。
  */
-import { compilePolicy } from './policy'
+import { compilePolicy } from '../domain/policy'
 import { acpSupportedOn } from './acp/platform'
 import { spawn as nodeSpawn } from 'node:child_process'
 import type { AgentAttachment, AgentEvent, AgentProvider, AgentSession, SpawnContext } from './agent-provider'

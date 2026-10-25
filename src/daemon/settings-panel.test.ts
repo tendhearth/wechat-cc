@@ -402,14 +402,14 @@ describe('随身 CC 首屏:伙伴的一天', () => {
   const NOW = Date.parse('2026-09-06T08:00:00.000Z')
   let dir: string
   let seenUntil: string | null
-  let presenceImpl: () => Promise<import('../core/companion-presence').Presence | null>
+  let presenceImpl: () => Promise<import('../domain/companion-presence').Presence | null>
   let planThrows: boolean
   const rows = () => [
     { id: 'j1', ts: '2026-09-06T02:43:36.412Z', chat_id: OWNER2, title: '好玩的东西', url: 'https://x', note: '', status: 'new', kind: 'hunt', image_svg: null },
   ] as import('../core/journal-store').CatchRow[]
   const plans = () => [
     { at: '2026-09-06T03:03:55.347Z', chatId: OWNER2, candidates: ['visit'], decision: 'none', why: '没朋友,在家歇着。', source: 'model' },
-  ] as import('../core/companion-plan').PlanLogEntry[]
+  ] as import('../domain/companion-plan').PlanLogEntry[]
   const mk = (over: Partial<Parameters<typeof makeSettingsPanel>[0]> = {}) => makeSettingsPanel({
     stateDir: dir,
     ownerChatId: () => OWNER2,

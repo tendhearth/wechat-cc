@@ -1,11 +1,11 @@
 /**
  * 微信「定时」(spec 2026-10-20-scheduled-jobs-design):只认主人那条对话;不是主人 ⇒ 不当命令,落回普通聊天。
  */
-import { BRIEF_PREF_USAGE, describeSchedule, JOB_USAGE, nextRunLabel, parseBriefPref, parseJobCommand, type ScheduledJob } from '../../core/scheduled-jobs'
+import { BRIEF_PREF_USAGE, describeSchedule, JOB_USAGE, nextRunLabel, parseBriefPref, parseJobCommand, type ScheduledJob } from '../../domain/scheduled-jobs'
 import { localParts } from '../../daemon/memory/nightly-schedule'
 import type { JobsStore } from '../../core/scheduled-jobs-store'
-import { hhmmInQuiet, quietLabel, type QuietWindow } from '../../core/quiet-hours'
-import { providerDisplayName } from '../../core/provider-display-names'
+import { hhmmInQuiet, quietLabel, type QuietWindow } from '../../domain/quiet-hours'
+import { providerDisplayName } from '../../domain/provider-display-names'
 
 import type { ReplyHandler } from '../../daemon/commands/registry'
 export type { ReplyHandler }

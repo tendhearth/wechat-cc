@@ -15,7 +15,7 @@
  *   · core/provider-quota 的额度/限流判定与 Cursor 的「整条回复就是催升级」
  */
 import { isAuthFail, isAuthFailError } from '../../core/auth-fail'
-import { classifyProviderError, isQuotaRefusalText } from '../../core/provider-quota'
+import { classifyProviderError, isQuotaRefusalText } from '../../domain/provider-quota'
 import { isAuthError } from '../../core/provider-registry'
 import { classifyProviderFailure, type ProviderFailureKind } from '../../lib/auth-failure'
 import { isConnectFailure } from '../../lib/net-errors'

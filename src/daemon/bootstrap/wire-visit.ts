@@ -29,14 +29,14 @@ import {
   VISIT_MAX_ROUNDS, visitEnvelope, parseVisitPayload, nextRound, transcriptFromLetters,
   buildVisitReplyPrompt, buildVisitNarrationPrompt, buildPostcardPrompt, sceneFromTranscript,
   type VisitPersonaArgs, type VisitTurn, type VisitHeader, type VisitPayload,
-} from '../../core/visit'
-import type { Envelope } from '../../core/envelope'
+} from '../../domain/visit'
+import type { Envelope } from '../../domain/envelope'
 import type { ChannelStore } from '../../core/penpal-channel-store'
 import type { LetterStore } from '../../core/penpal-letter-store'
-import type { ActiveVisit } from '../../core/companion-presence'
+import type { ActiveVisit } from '../../domain/companion-presence'
 import { loadCompanionConfig } from '../companion/config'
 import { makeMemoryFS } from '../memory/fs-api'
-import { NEIGHBORS, pickNeighbor, neighborById, neighborPersona, type Neighbor } from '../../core/neighbors'
+import { NEIGHBORS, pickNeighbor, neighborById, neighborPersona, type Neighbor } from '../../domain/neighbors'
 import { overviewForOthers } from '../../lib/memory-owner'
 
 const OVERVIEW_MAX = 1500
@@ -56,7 +56,7 @@ export interface VisitDeps {
   disclosurePolicy: string
   /** 给主人发一句话;没有主人 chat 时是 no-op。 */
   /** 告诉主人一句(经 CC 开口那道门:kind 决定别烦我 / 免打扰拦不拦,见 core/speech/kinds 的 social_*)。 */
-  notifyOwner(text: string, kind: import('../../core/speech/kinds').SocialNotice): void
+  notifyOwner(text: string, kind: import('../../domain/speech/kinds').SocialNotice): void
   /**
    * busy 登记处(Bootstrap['holdBusy'])。串门的两条腿都**脱离用户会话**跑
    * 模型:出门(startVisit)和每一轮回程(onInbound → onPeerTurn)。不登记

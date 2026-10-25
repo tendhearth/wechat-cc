@@ -2,7 +2,7 @@ import { EventEmitter } from 'node:events'
 import { PassThrough } from 'node:stream'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { AgentAttachment, AgentEvent, AgentSession, SpawnContext } from '../agent-provider'
-import { TIER_PROFILES } from '../user-tier'
+import { TIER_PROFILES } from '../../domain/user-tier'
 import { createWorkbenchCodexProvider } from './codex-app-server'
 
 const mocks = vi.hoisted(() => ({ spawn: vi.fn() }))

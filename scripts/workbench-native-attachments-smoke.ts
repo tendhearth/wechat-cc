@@ -13,7 +13,7 @@ import type { AgentAttachment, AgentEvent, AgentProvider, AgentSession } from '.
 import { createClaudeAgentProvider } from '../src/core/claude-agent-provider'
 import { createWorkbenchCodexProvider } from '../src/core/workbench/codex-app-server'
 import { workbenchClaudeOptions } from '../src/daemon/bootstrap/wire-workbench'
-import { TIER_PROFILES } from '../src/core/user-tier'
+import { TIER_PROFILES } from '../src/domain/user-tier'
 import { findCodexBinary } from '../src/lib/find-codex-binary'
 
 if (!process.argv.includes('--run')) { console.log('Run with --run for owned, loopback-only native attachment fixtures.'); process.exit(0) }

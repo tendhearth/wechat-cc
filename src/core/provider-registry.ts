@@ -13,8 +13,8 @@
  */
 import type { AgentAttachment, AgentEvent, AgentProvider, AgentSession, AgentWorkbenchRuntime, CallTargetKind, CheapEval, SpawnContext } from './agent-provider'
 import type { WorkbenchExecutorCapabilities } from './workbench/executor-capabilities'
-import type { ProviderId } from './conversation'
-import { executorNames, type ExecutorNames } from './provider-display-names'
+import type { ProviderId } from '../domain/conversation'
+import { executorNames, type ExecutorNames } from '../domain/provider-display-names'
 import { isKnownProviderId } from '../lib/provider-ids'
 import { hasAuthCode } from '../lib/auth-failure'
 import { errorWithProviderCode, isAuthErrorCode, providerErrorCodeOf } from '../lib/provider-error-code'

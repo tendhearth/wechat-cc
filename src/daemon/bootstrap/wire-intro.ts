@@ -40,7 +40,7 @@ import {
 import { readIntroIndex, writeIntroIndex } from '../companion/intro-memory'
 import { findPostcardRef, attachMyIntro, clearMyIntro, type PostcardRef } from '../../core/wish'
 import { readWishes, writeWishes } from '../companion/wish-memory'
-import type { Envelope } from '../../core/envelope'
+import type { Envelope } from '../../domain/envelope'
 import type { PairCard } from '../../core/pairing'
 import type { ChannelStore } from '../../core/penpal-channel-store'
 
@@ -58,7 +58,7 @@ export interface IntroDeps {
   mintKey(): string
   genChannel(): { channelId: string; pubkey: string; privkey: string }
   /** 告诉主人一句(经 CC 开口那道门:kind 决定别烦我 / 免打扰拦不拦,见 core/speech/kinds 的 social_*)。 */
-  notifyOwner(text: string, kind: import('../../core/speech/kinds').SocialNotice): void
+  notifyOwner(text: string, kind: import('../../domain/speech/kinds').SocialNotice): void
   peerLabel(channelRowId: string): string
   holdBusy?: (label: string) => () => void
   now?: () => number

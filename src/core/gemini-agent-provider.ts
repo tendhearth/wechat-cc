@@ -15,20 +15,20 @@
  * Decoupled from bootstrap via injected genai / mcpConnect / buildGate so the
  * loop is unit-testable. See docs/superpowers/specs/2026-06-04-gemini-provider-design.md.
  */
-import { decideTool } from './tool-decision'
-import { compilePolicy } from './policy'
+import { decideTool } from '../domain/tool-decision'
+import { compilePolicy } from '../domain/policy'
 import type { AgentEvent, AgentProject, AgentProvider, AgentSession, PermissionMode, SpawnContext } from './agent-provider'
-import type { TierProfile } from './user-tier'
-import { classifyToolUse } from './user-tier'
+import type { TierProfile } from '../domain/user-tier'
+import { classifyToolUse } from '../domain/user-tier'
 import type { McpStdioSpec } from './mcp-stdio-spec'
 import { childEnvFor } from './mcp-stdio-spec'
 import { makeTurnEmitter } from './turn-emitter'
 import { openaiErrorCode } from './openai-error-code'
 import { withProviderCode } from '../lib/provider-error-code'
 
-export { GEMINI_CAPABILITIES } from './provider-capabilities'
+export { GEMINI_CAPABILITIES } from '../domain/provider-capabilities'
 
-export { tierProfileToGeminiSdkOpts, type GeminiTierSdkOpts } from './policy'
+export { tierProfileToGeminiSdkOpts, type GeminiTierSdkOpts } from '../domain/policy'
 
 /** A per-spawn tool gate. allow → execute; deny → synthesize an error
  *  functionResponse so the model sees the refusal. Phase B builds the real one

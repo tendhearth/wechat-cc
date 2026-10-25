@@ -9,7 +9,7 @@
 import { mkdtempSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import type { Envelope } from '../../core/envelope'
+import type { Envelope } from '../../domain/envelope'
 import { makeWish, type WishDeps, type WishService } from './wire-wish'
 import { makeIntro, type IntroService } from './wire-intro'
 

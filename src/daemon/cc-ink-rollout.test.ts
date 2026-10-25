@@ -4,7 +4,7 @@ import { tmpdir } from 'node:os'
 import { join, basename } from 'node:path'
 import { makeStickerLib, seedStarterStickers } from './stickers'
 import { buildStickerPrompt } from './sticker-artist'
-import { buildPostcardPrompt } from '../core/visit'
+import { buildPostcardPrompt } from '../domain/visit'
 import { buildPortraitPrompt } from './memory-llm-ops'
 
 describe('CC ink rollout', () => {

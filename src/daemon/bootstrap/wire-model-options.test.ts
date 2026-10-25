@@ -2,7 +2,7 @@ import { describe, it, expect } from 'vitest'
 import { mkdtempSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { TIER_PROFILES } from '../../core/user-tier'
+import { TIER_PROFILES } from '../../domain/user-tier'
 import { wireModelOptions } from './wire-model-options'
 
 const dir = () => mkdtempSync(join(tmpdir(), 'wmo-'))
@@ -52,7 +52,7 @@ describe('wireModelOptions', () => {
   // 定时任务(10-20 终审):只读档的会话 —— 全局 dangerously 下也要 strict 的 SDK 选项;canUseTool 按这一档判
   // (不是按 chatId 取主人的 admin 档);不挂第三方插件 MCP。
   it('a JOB_PROFILE session: strict options, a profile-based gate, no plugin MCP', async () => {
-    const { JOB_PROFILE } = await import('../../core/user-tier')
+    const { JOB_PROFILE } = await import('../../domain/user-tier')
     const owner = (async () => ({ behavior: 'allow' })) as any
     const s = wireModelOptions({ stateDir: dir() }, {
       plugins: { wechatStdioForClaude: spec, delegateStdioForClaude: spec, pluginMcpForClaude: { wxvault: { type: 'stdio', command: 'wx', args: [] } } as any },
@@ -76,7 +76,7 @@ describe('wireModelOptions', () => {
 
   // 2a 审 #408:无人看着 + 私密数据 + 外传通道 ⇒ 读只限项目目录、碰红线拒;读过本地文件后这一轮不再上网。
   it('JOB_PROFILE gate: reads stay in the project, red lines deny, and no network after a local read', async () => {
-    const { JOB_PROFILE } = await import('../../core/user-tier')
+    const { JOB_PROFILE } = await import('../../domain/user-tier')
     const { homedir } = await import('node:os')
     const state = dir()
     const s = wireModelOptions({ stateDir: state }, { plugins: noPlugins, permissionMode: 'dangerously', buildCanUseTool: () => (async () => ({ behavior: 'allow' })) as any, claudeBin: undefined })

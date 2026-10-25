@@ -8,7 +8,7 @@ import { Client } from '@modelcontextprotocol/sdk/client/index.js'
 import { InMemoryTransport } from '@modelcontextprotocol/sdk/inMemory.js'
 import { registerDaemonTools } from './tools-daemon'
 import { InternalApiError, type InternalApiClient } from './client'
-import { buildOverseerToday } from '../../core/overseer-today'
+import { buildOverseerToday } from '../../domain/overseer-today'
 
 async function harness(respond: (method: string, path: string) => unknown) {
   const calls: string[] = []

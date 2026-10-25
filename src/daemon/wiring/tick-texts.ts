@@ -4,7 +4,7 @@
  */
 import { join } from 'node:path'
 import { shouldSpeak } from '../companion/calibration'
-import { avoidTopicsLine, type AvoidTopic } from '../../core/companion-topics'
+import { avoidTopicsLine, type AvoidTopic } from '../../domain/companion-topics'
 
 /** 定时任务的信封。主人的原话放进 <request>,伪造的收尾标签先拆掉。 */
 // style 留着:调用方(tick-job)按同一个签名给每种信封传,定时任务这一份暂时不分执行者类型。

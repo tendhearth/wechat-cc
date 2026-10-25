@@ -8,13 +8,13 @@
  * 这些断言不测逻辑,测的是「这几份名单还对得上同一组 id」。
  */
 import { EXECUTOR_FACTS } from '../src/lib/executor-facts'
-import { executorNames } from '../src/core/provider-display-names'
+import { executorNames } from '../src/domain/provider-display-names'
 import { describe, it, expect } from 'vitest'
 import { readFileSync } from 'node:fs'
 import { join, dirname } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { PROVIDER_IDS } from '../src/lib/provider-ids'
-import { capabilitiesFor } from '../src/core/capability-matrix'
+import { capabilitiesFor } from '../src/domain/capability-matrix'
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..')
 const read = (...p: string[]) => readFileSync(join(ROOT, ...p), 'utf8')
@@ -40,7 +40,7 @@ describe('provider 名单都以 provider-ids.ts 为准', () => {
   it('mode-commands.ts 的 provider 那行取自 PROVIDER_SLASH(不手写),而 PROVIDER_SLASH = provider-ids 的斜杠形式', async () => {
     const src = read('src', 'daemon', 'mode-commands.ts')
     expect(src, 'mode-commands 的 provider 行不再取 PROVIDER_SLASH —— 别回到手写的斜杠词表').toMatch(/\{ id: 'provider', words: Object\.values\(PROVIDER_SLASH\)/)
-    const { PROVIDER_SLASH } = await import('../src/core/provider-policy')
+    const { PROVIDER_SLASH } = await import('../src/domain/provider-policy')
     // 两个历史命名:claude 的斜杠是 /cc,openai 的是 /api;其余同名
     const SLASH_OF: Record<string, string> = { claude: 'cc', openai: 'api' }
     const expected = IDS.map(id => SLASH_OF[id] ?? id).sort()

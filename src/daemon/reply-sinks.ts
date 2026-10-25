@@ -13,7 +13,7 @@
  * **整个** TurnReply 经 `captureReply` 交过来 —— 文字照常拼进 close(),附件与旁白从 `extras()` 取,
  * 桌面 / 手机显示(旁白是灰色过程行)。语音 / 表情从此不会在 app 这一轮里漏到微信。
  */
-import type { TurnAttachment, TurnReply } from '../core/turn-reply'
+import type { TurnAttachment, TurnReply } from '../domain/turn-reply'
 
 export interface SinkExtras { attachments: TurnAttachment[]; narration: string[] }
 

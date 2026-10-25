@@ -1,5 +1,5 @@
 import { ROUTES, type ModuleName } from '@wechat-cc/protocol/routes'
-import type { UserTier } from '../../core/user-tier'
+import type { UserTier } from '../../domain/user-tier'
 
 /**
  * route-tiers — the minimum tier each internal-api route requires. The

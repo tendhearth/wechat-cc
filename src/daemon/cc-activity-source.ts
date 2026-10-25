@@ -4,7 +4,7 @@
  * 每个来源各自 try / catch:抛了 ⇒ null(进 degraded),没接 ⇒ 不出现。
  */
 import { CLI_SPECS } from '../core/cli-upgrade/specs'
-import { activityTitle, type ActivityItem, type ActivitySources } from '../core/cc-activity'
+import { activityTitle, type ActivityItem, type ActivitySources } from '../domain/cc-activity'
 import type { PermissionDecisionRow } from './permission-decisions-store'
 import type { ActivityLogEntry } from './activity-log'
 import { statusWord } from '../features/jobs'

@@ -4,7 +4,7 @@ import { mkdtempSync, readFileSync, existsSync, writeFileSync, mkdirSync, trunca
 import { tmpdir } from 'node:os'
 import { join, sep } from 'node:path'
 import { Buffer } from 'node:buffer'
-import type { InboundMsg } from '../core/prompt-format'
+import type { InboundMsg } from '../domain/prompt-format'
 
 describe('parseWavHeader', () => {
   it('parses channels/sampleRate/bitsPerSample from a canonical 44-byte header', () => {

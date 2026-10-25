@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest'
 import { floorReason, isLowRisk, pathsUnder, toolClass } from './floor'
-import type { PermissionAsk } from './types'
+import type { PermissionAsk } from '../../domain/permission-rules/types'
 
 const HOME = '/Users/me'
 const ask = (over: Partial<PermissionAsk> = {}): PermissionAsk => ({

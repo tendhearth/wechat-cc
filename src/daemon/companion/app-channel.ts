@@ -15,7 +15,7 @@
  * 没开中继 v2 / 没配对 ⇒ 这里根本不接线(proactive-channel 只剩微信)。
  */
 import type { MessageRecord } from '../../lib/messages-store'
-import type { TurnAttachment } from '../../core/turn-reply'
+import type { TurnAttachment } from '../../domain/turn-reply'
 import { projectReplyExtras, type AppAttachment } from '../app-reply'
 import type { PushPayload } from '../phone-push'
 import type { AppChannel } from './proactive-channel'

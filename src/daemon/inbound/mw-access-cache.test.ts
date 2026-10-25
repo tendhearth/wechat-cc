@@ -32,7 +32,7 @@ const { loadAccess, appendAllowFrom } = await import('../../lib/access')
 const { makeMwAccess } = await import('./mw-access')
 
 import type { InboundCtx } from './types'
-import type { InboundMsg } from '../../core/prompt-format'
+import type { InboundMsg } from '../../domain/prompt-format'
 
 const ACCESS_FILE = join(ACCESS_STATE_DIR, 'access.json')
 

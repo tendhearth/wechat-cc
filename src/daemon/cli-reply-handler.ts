@@ -17,8 +17,8 @@ import { parseCliReply, resumeCommand } from '../core/cli-reply'
 import { renderTranscriptTail } from '../core/cli-transcript'
 import { renderTurnSteps } from '../core/cli-activity'
 import { stripMarkdown, INLINE_MAX, type CliEventHub, type CliSessionInfo } from '../core/cli-events'
-import { cliSourceLabel, formatCliSessionDigest, type CliDigestView } from '../core/cli-session-digest'
-import { formatOverseerToday, type OverseerToday } from '../core/overseer-today'
+import { cliSourceLabel, formatCliSessionDigest, type CliDigestView } from '../domain/cli-session-digest'
+import { formatOverseerToday, type OverseerToday } from '../domain/overseer-today'
 import type { LiveWindow, RelayResult } from './claude-live-window'
 
 export const RESUME_TIMEOUT_MS = 10 * 60_000

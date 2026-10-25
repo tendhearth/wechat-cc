@@ -13,7 +13,7 @@
  * Keep this pure (no I/O, no registry) so it's trivially testable and
  * safe to call from anywhere in the request hot path.
  */
-import type { Mode } from '../core/conversation'
+import type { Mode } from '../domain/conversation'
 
 /** Mode-derived fallback. Public for tests + the rare caller that
  *  genuinely wants the mode-only name (e.g. the "回到默认" reply in

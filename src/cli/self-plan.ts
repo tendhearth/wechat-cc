@@ -14,7 +14,7 @@
  */
 import type { Git } from './self-change/git'
 import type { ImplementRunner } from './self-change/runner'
-import type { EnqueueInput } from '../core/owner-asks'
+import type { EnqueueInput } from '../domain/owner-asks'
 
 export interface PlanPr {
   /** 计划里的编号(p1、p2…),依赖靠它。 */

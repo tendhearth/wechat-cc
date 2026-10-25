@@ -720,7 +720,7 @@ describe('wechat-mcp stdio integration', () => {
     async function toolsForCodexSession(port: number, tokenFilePath: string): Promise<{ tools: string[]; env: Record<string, string> }> {
       const { createCodexAgentProvider } = await import('../../core/codex-agent-provider')
       const { createScriptedCodex } = await import('../../test-support/executors/codex-scripted')
-      const { TIER_PROFILES } = await import('../../core/user-tier')
+      const { TIER_PROFILES } = await import('../../domain/user-tier')
       const scripted = createScriptedCodex({ turns: [] })
       const spec = wechatStdioMcpSpec({ baseUrl: `http://127.0.0.1:${port}`, tokenFilePath }, 'codex')
       const provider = createCodexAgentProvider({ codexFactory: scripted.factory, mcpServers: { wechat: spec } })
@@ -761,7 +761,7 @@ describe('wechat-mcp stdio integration', () => {
 
     async function toolsForClaudeSession(port: number, tokenFilePath: string): Promise<{ tools: string[]; env: Record<string, string> }> {
       const { wireModelOptions } = await import('../../daemon/bootstrap/wire-model-options')
-      const { TIER_PROFILES } = await import('../../core/user-tier')
+      const { TIER_PROFILES } = await import('../../domain/user-tier')
       const spec = wechatStdioMcpSpec({ baseUrl: `http://127.0.0.1:${port}`, tokenFilePath }, 'claude')
       const { sdkOptionsForProject } = wireModelOptions({ stateDir }, {
         plugins: { wechatStdioForClaude: spec, delegateStdioForClaude: null, pluginMcpForClaude: {} },

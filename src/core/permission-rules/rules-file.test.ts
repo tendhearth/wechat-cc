@@ -1,7 +1,7 @@
 import { describe, it, expect } from 'vitest'
 import { homedir } from 'node:os'
 import { parseRulesFile, matchRule, serializeRulesFile, EMPTY_RULES, STARTER_RULES, STARTER_VERSION, withStarterRules } from './rules-file'
-import type { PermissionAsk, Rule } from './types'
+import type { PermissionAsk, Rule } from '../../domain/permission-rules/types'
 
 const ask = (over: Partial<PermissionAsk> = {}): PermissionAsk => ({
   surface: 'terminal', provider: 'claude', tool: 'Bash', command: 'npm test', cwd: '/p', project: '/p',

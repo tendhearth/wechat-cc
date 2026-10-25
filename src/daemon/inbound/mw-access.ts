@@ -66,10 +66,10 @@
  * (src/daemon/wiring/pipeline-deps.ts) supplies all six together.
  */
 import type { Middleware } from './types'
-import type { InboundMsg } from '../../core/prompt-format'
+import type { InboundMsg } from '../../domain/prompt-format'
 import type { Access } from '../../lib/access'
 import type { GuestRequestStore } from '../guest-requests'
-import type { ForwardBudget } from '../../core/forward-budget'
+import type { ForwardBudget } from '../../domain/forward-budget'
 import { inboundMessageId, inboundFallbackMessageId } from '../../lib/messages-store'
 
 const INVITE_CODE_RE = /^\d{6}$/

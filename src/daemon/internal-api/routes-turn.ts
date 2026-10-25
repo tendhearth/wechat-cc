@@ -15,7 +15,7 @@
 import { existsSync, statSync } from 'node:fs'
 import { isAbsolute } from 'node:path'
 import type { PendingAttachment } from '../reply-delivery'
-import type { StickerRef, TurnAttachment } from '../../core/turn-reply'
+import type { StickerRef, TurnAttachment } from '../../domain/turn-reply'
 import { errMsg, type InternalApiDeps, type RouteTable } from './types'
 import { tierMeets } from './route-tiers'
 

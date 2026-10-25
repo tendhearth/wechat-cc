@@ -3,8 +3,8 @@ import { makeMwAccess, previewText } from './mw-access'
 import type { InboundCtx } from './types'
 import type { Access } from '../../lib/access'
 import type { GuestRequestStore, GuestRequest } from '../guest-requests'
-import type { ForwardBudget } from '../../core/forward-budget'
-import type { InboundMsg } from '../../core/prompt-format'
+import type { ForwardBudget } from '../../domain/forward-budget'
+import type { InboundMsg } from '../../domain/prompt-format'
 
 function makeMsg(overrides: Partial<InboundMsg> = {}): InboundMsg {
   return {

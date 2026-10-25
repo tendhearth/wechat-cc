@@ -6,7 +6,7 @@
  * 也只记一行。要数「有几条在等」,从各自的持久层读(回报读 matter_report_outbox、提醒读 reminders),别从这里数(整合者评审 #522)。
  */
 import type { Db } from '../../lib/db'
-import type { SpeechKind, SpeechOrigin } from '../../core/speech/kinds'
+import type { SpeechKind, SpeechOrigin } from '../../domain/speech/kinds'
 import type { ProactiveChannel } from '../companion/proactive-channel'
 import type { SpeechLedgerEntry } from './policy'
 

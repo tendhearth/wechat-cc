@@ -5,8 +5,8 @@ import { mkdtempSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { makeVisit, cleanSpeech, readNeighborMemory, VISIT_STALE_MS, type VisitDeps } from './wire-visit'
-import { parseVisitPayload } from '../../core/visit'
-import type { Envelope } from '../../core/envelope'
+import { parseVisitPayload } from '../../domain/visit'
+import type { Envelope } from '../../domain/envelope'
 
 /**
  * 两个 daemon 在同一个进程里对着聊。信道/信件 store 用内存假货:这里测的是

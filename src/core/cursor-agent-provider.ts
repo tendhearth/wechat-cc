@@ -1,4 +1,4 @@
-import { compilePolicy } from './policy'
+import { compilePolicy } from '../domain/policy'
 /**
  * Cursor SDK agent provider.
  *
@@ -16,7 +16,7 @@ import { compilePolicy } from './policy'
  * See docs/superpowers/specs/2026-05-23-cursor-sdk-provider-design.md.
  */
 import { mergeEnvIntoMcpServers, CORE_MCP_SERVER_NAMES, type AgentEvent, type AgentProject, type AgentProvider, type AgentSession, type PermissionMode, type ProviderCapabilities } from './agent-provider'
-import type { TierProfile } from './user-tier'
+import type { TierProfile } from '../domain/user-tier'
 import type { McpStdioSpec } from './mcp-stdio-spec'
 import { makeTurnEmitter } from './turn-emitter'
 import { log } from '../lib/log'
@@ -58,7 +58,7 @@ export const CURSOR_CAPABILITIES: ProviderCapabilities = {
   authFailHint: 'Cursor 凭证无效，请检查电脑上的 CURSOR_API_KEY 后再发消息。',
 }
 
-export { tierProfileToCursorSdkOpts, type CursorTierSdkOpts } from './policy'
+export { tierProfileToCursorSdkOpts, type CursorTierSdkOpts } from '../domain/policy'
 
 /**
  * Parse Cursor's tool name into { server?, tool } for AgentEvent.

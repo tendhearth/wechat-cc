@@ -11,7 +11,7 @@
  *   → card(A → 我 / A → B,交叉转发对方名片)
  */
 import { randomBytes } from 'node:crypto'
-import type { Envelope } from './envelope'
+import type { Envelope } from '../domain/envelope'
 import { isValidPairCard, type PairCard } from './pairing'
 
 export type IntroStage = 'request' | 'forward' | 'accept' | 'decline' | 'card'

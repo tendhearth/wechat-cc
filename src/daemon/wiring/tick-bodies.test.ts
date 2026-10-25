@@ -4,7 +4,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { makeOutboundTaps } from '../outbound-taps'
 import { buildTickBodies, buildPushTickText, buildGapCheckinText, buildHuntText, distillAndPushOwnerKnowledge, type TickDeps } from './tick-bodies'
-import { TIER_PROFILES } from '../../core/user-tier'
+import { TIER_PROFILES } from '../../domain/user-tier'
 import type { Access } from '../../lib/access'
 import { openTestDb, type Db } from '../../lib/db'
 import { makeMessagesStore } from '../../lib/messages-store'
@@ -12,7 +12,7 @@ import type { CareLedgerEntry } from '../companion/calibration'
 import { makeCareLedger, type CareClaim, type CareLedger } from '../companion/care-ledger'
 import { makeChatMutex, type ChatMutex } from '../../core/async-mutex'
 import { readPlanLog } from '../companion/plan-memory'
-import { formatLocal, PLAN_EVAL_TIMEOUT_MS } from '../../core/companion-plan'
+import { formatLocal, PLAN_EVAL_TIMEOUT_MS } from '../../domain/companion-plan'
 import { NetworkUnprotectedError } from '../../lib/network-gate'
 import { loadCompanionConfig, saveCompanionConfig } from '../companion/config'
 import { makeProactiveOutbound } from '../companion/proactive-channel'
@@ -2144,7 +2144,7 @@ describe('runJobTurn', () => {
   const ok = [{ kind: 'text', text: '有两个新 issue:#12 #13' }, { kind: 'result', sessionId: 's', numTurns: 1, durationMs: 1 }]
 
   it('JOB_PROFILE is read-only and mints a guest-tier token', async () => {
-    const { JOB_PROFILE, tierNameFromProfile } = await import('../../core/user-tier')
+    const { JOB_PROFILE, tierNameFromProfile } = await import('../../domain/user-tier')
     expect(tierNameFromProfile(JOB_PROFILE)).toBe('guest')
     for (const k of ['fs_write', 'shell', 'memory_write', 'memory_delete', 'message_other', 'a2a_send', 'config_admin', 'daemon_remediate', 'social_act'] as const) expect(JOB_PROFILE.deny.has(k), k).toBe(true)
     for (const k of ['reply', 'memory_read', 'fs_read', 'network'] as const) expect(JOB_PROFILE.allow.has(k), k).toBe(true)
@@ -2153,7 +2153,7 @@ describe('runJobTurn', () => {
   it('runs in its own job:<id> session, strict, read-only — and forgets it', async () => {
     const s = setupDeps({ defaultChatId: 'owner', inFlight: false })
     const { forget, delivered } = job(s, ok)
-    const { JOB_PROFILE } = await import('../../core/user-tier')
+    const { JOB_PROFILE } = await import('../../domain/user-tier')
     const r = await buildTickBodies(s.deps).runJobTurn({ kind: 'job', scheduled: true, chatId: 'owner', jobId: 'j3', text: '看 issue', nowIso: '2026-10-20T01:00:00Z' })
     expect(r).toBe('sent')
     expect(s.acquire).toHaveBeenCalledWith(expect.objectContaining({ alias: 'job:j3', chatId: 'owner', tierProfile: JOB_PROFILE, permissionMode: 'strict' }))
@@ -2207,7 +2207,7 @@ describe('runJobTurn', () => {
     const s = setupDeps({ defaultChatId: 'owner', inFlight: false })
     ;(s.deps.boot as unknown as { registry: Record<string, unknown> }).registry = { getCheapEval: () => null, has: (id: string) => id === 'claude' }
     job(s, ok)
-    const { REVIEW_PROFILE } = await import('../../core/user-tier')
+    const { REVIEW_PROFILE } = await import('../../domain/user-tier')
     await buildTickBodies(s.deps).runJobTurn({ kind: 'job', scheduled: true, chatId: 'owner', jobId: 'r2', text: 'x', nowIso: 't', provider: 'claude', profile: 'review' })
     expect(s.acquire).toHaveBeenCalledWith(expect.objectContaining({ tierProfile: REVIEW_PROFILE, permissionMode: 'strict' }))
   })

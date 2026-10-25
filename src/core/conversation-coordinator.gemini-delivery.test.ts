@@ -10,9 +10,9 @@ import { describe, expect, it, vi } from 'vitest'
 import { createConversationCoordinator, type ConversationCoordinatorDeps, type TurnRecord } from './conversation-coordinator'
 import { createProviderRegistry } from './provider-registry'
 import { createGeminiAgentProvider } from './gemini-agent-provider'
-import { TIER_PROFILES } from './user-tier'
-import type { Mode } from './conversation'
-import type { InboundMsg } from './prompt-format'
+import { TIER_PROFILES } from '../domain/user-tier'
+import type { Mode } from '../domain/conversation'
+import type { InboundMsg } from '../domain/prompt-format'
 import { makeReplyDeliveryRuntime } from '../daemon/reply-delivery'
 
 type GenaiStep = { text?: string; functionCalls?: Array<{ name: string; args?: Record<string, unknown> }> } | Error

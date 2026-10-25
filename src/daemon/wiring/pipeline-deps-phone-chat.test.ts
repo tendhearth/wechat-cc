@@ -12,8 +12,8 @@ import type { IlinkAdapter } from '../ilink-glue'
 import type { Bootstrap } from '../bootstrap/index'
 import type { ChatPrefsStore } from '../chat-prefs'
 import type { CareLedger } from '../companion/care-ledger'
-import type { InboundMsg } from '../../core/prompt-format'
-import type { Mode } from '../../core/conversation'
+import type { InboundMsg } from '../../domain/prompt-format'
+import type { Mode } from '../../domain/conversation'
 
 /**
  * 手机「跟 CC 说」的接线(plan 2026-10-01 Task 4):phoneChat 的 converse 必须是回合串行入口

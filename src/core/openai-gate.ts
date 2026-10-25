@@ -17,10 +17,10 @@
  *
  * See docs/superpowers/specs/2026-05-22-user-tier-permissions-design.md.
  */
-import { classifyToolUse, type TierProfile } from './user-tier'
+import { classifyToolUse, type TierProfile } from '../domain/user-tier'
 import type { PermissionMode } from './agent-provider'
-import { compilePolicy } from './policy'
-import { decideTool } from './tool-decision'
+import { compilePolicy } from '../domain/policy'
+import { decideTool } from '../domain/tool-decision'
 
 export type GateDecision = 'allow' | 'deny'
 

@@ -765,7 +765,7 @@ export type UpdateApplyOutputT = z.infer<typeof UpdateApplyOutput>
 // Emits { ok: true, conversations: ConversationEntry[] }.
 // Per-entry: chat_id, plus nullable identity fields user_id/account_id/user_name
 // sourced from conversationStore.getIdentity (v0.6 PR5 Task 22).
-// `mode` is the Mode discriminated union from src/core/conversation.ts —
+// `mode` is the Mode discriminated union from src/domain/conversation.ts —
 // typed as z.unknown() so that adding new Mode.kind values (P3+) doesn't
 // require a schema update; the mode.kind string is validated at runtime
 // by the coordinator, not by this consumer-side schema.

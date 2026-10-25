@@ -33,7 +33,7 @@
  * 门放在 dispatcher(index.ts),在 schema 校验之后、handler 之前 —— 在 sink
  * 截流、旁听、分片、ilink 之前,所以被拒的请求一个字都碰不到微信或 App。
  */
-import type { UserTier } from '../../core/user-tier'
+import type { UserTier } from '../../domain/user-tier'
 import type { TokenOrigin } from './token-registry'
 import { AGY_STATIC_SESSION_KEY } from './token-registry'
 

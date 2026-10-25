@@ -10,7 +10,7 @@
  * docs/superpowers/plans/2026-08-17-agy-provider.md (Task 1 spike — the
  * source of the CONTROLLER RULINGS baked into arg assembly below).
  */
-import { compilePolicy } from './policy'
+import { compilePolicy } from '../domain/policy'
 import { tmpdir } from 'node:os'
 import { assertNotAuthFailed, normalizeWechatMcpServer, type AgentEvent, type AgentProject, type AgentProvider, type AgentSession, type CheapEval, type SpawnContext } from './agent-provider'
 import { makeAgyStreamParser } from './agy-stream'
@@ -23,7 +23,7 @@ import { wrapForProcessTree } from '../lib/jobspawn'
 /** agyModel 没设时的兜底 —— 只此一处(见 claude-agent-provider 的 DEFAULT_CLAUDE_MODEL 注释)。 */
 export const DEFAULT_AGY_MODEL = 'gemini-3.8-flash-medium'
 
-export { AGY_CAPABILITIES } from './provider-capabilities'
+export { AGY_CAPABILITIES } from '../domain/provider-capabilities'
 
 /** Test-time (and default Bun.spawn) seam for the agy child process. */
 export interface AgySpawnHandle {

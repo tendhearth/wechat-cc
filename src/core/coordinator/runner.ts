@@ -8,11 +8,11 @@
  *  - 一轮的结构化记录(TurnRecord)。
  * 派法只管编排:什么时候 acquire、prompt 怎么拼、出错怎么说、交付走哪条路。
  */
-import type { ProviderId } from '../conversation'
+import type { ProviderId } from '../../domain/conversation'
 import type { SessionHandle } from '../session-manager'
 import { collectTurn, TURN_TIMEOUT_CODE, type AgentEvent, type TurnSummary } from '../agent-provider'
 import { isAuthErrorCode } from '../../lib/provider-error-code'
-import type { DeliveryReport } from '../turn-reply'
+import type { DeliveryReport } from '../../domain/turn-reply'
 import type { CoordinatorCtx } from './ctx'
 import type { TurnRecord } from './types'
 

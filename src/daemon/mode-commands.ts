@@ -21,24 +21,24 @@
  * gate) — this is per-chat user preference, not a system-wide change.
  */
 import { SOCIAL_OFF_LINE, socialUnavailableLine } from './social-state'
-import { hhmmInQuiet, parseQuietHours, quietLabel } from '../core/quiet-hours'
-import { parseAvoidTopics, topicLabels, type AvoidTopic } from '../core/companion-topics'
+import { hhmmInQuiet, parseQuietHours, quietLabel } from '../domain/quiet-hours'
+import { parseAvoidTopics, topicLabels, type AvoidTopic } from '../domain/companion-topics'
 import type { ConversationCoordinator } from '../core/conversation-coordinator'
 import { namesIn, type ProviderRegistry } from '../core/provider-registry'
-import type { Mode, ProviderId } from '../core/conversation'
-import type { InboundMsg } from '../core/prompt-format'
+import type { Mode, ProviderId } from '../domain/conversation'
+import type { InboundMsg } from '../domain/prompt-format'
 import { botName } from './bot-name'
 import { validateNickname, NICKNAME_MAX_LEN } from './nickname'
-import { capabilitiesFor } from '../core/capability-matrix'
+import { capabilitiesFor } from '../domain/capability-matrix'
 import type { AgentConfig } from '../lib/agent-config'
-import type { UserTier } from '../core/user-tier'
-import { noAskNotice } from '../core/tier-enforcement'
-import { providerDenialFor, describeProviderDenial, providerForSlash, PROVIDER_SLASH } from '../core/provider-policy'
+import type { UserTier } from '../domain/user-tier'
+import { noAskNotice } from '../domain/tier-enforcement'
+import { providerDenialFor, describeProviderDenial, providerForSlash, PROVIDER_SLASH } from '../domain/provider-policy'
 import { PROVIDER_IDS } from '../lib/provider-ids'
 import type { WechatCommand } from './commands/registry'
 
 /** /set 读写的这一对话的偏好(chat-prefs 的子集)。 */
-type ModeChatPrefs = { split?: boolean; care?: 'off' | 'low' | 'high'; stickers?: boolean; hunt?: boolean; visit?: boolean; avoid?: AvoidTopic[]; quiet?: import('../core/quiet-hours').QuietWindow }
+type ModeChatPrefs = { split?: boolean; care?: 'off' | 'low' | 'high'; stickers?: boolean; hunt?: boolean; visit?: boolean; avoid?: AvoidTopic[]; quiet?: import('../domain/quiet-hours').QuietWindow }
 
 export interface ModeCommandsDeps {
   /** 主人建的早报 / 周报几点到(设免打扰时撞上了就当场说「会天天跳过」,整合者评审 #509)。没接 ⇒ 不提。 */

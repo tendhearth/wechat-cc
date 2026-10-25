@@ -35,7 +35,7 @@ import { join, resolve, relative, isAbsolute } from 'node:path'
 import { guardCliInvoke } from './dev-guard'
 import { makeLiveReload, injectReloadScript } from './dev-reload'
 import { makeAtelierStore } from '../../src/daemon/atelier-store'
-import { executorNames } from '../../src/core/provider-display-names'
+import { executorNames } from '../../src/domain/provider-display-names'
 import { PROVIDER_IDS } from '../../src/lib/provider-ids'
 
 const ROOT = process.env.WECHAT_CC_ROOT ?? join(import.meta.dir, '..', '..')

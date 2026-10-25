@@ -3,7 +3,7 @@
  */
 import { describe, it, expect, vi } from 'vitest'
 import { ADMIN_ROW_IDS, adminRowsMatching, makeAdminCommands, type AdminCommandsDeps } from './admin-commands'
-import type { InboundMsg } from '../core/prompt-format'
+import type { InboundMsg } from '../domain/prompt-format'
 
 const HANDS = ['家里', 'win', 'mac-mini']
 

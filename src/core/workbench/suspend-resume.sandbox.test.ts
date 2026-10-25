@@ -21,7 +21,7 @@ import { mkdtempSync, mkdirSync, realpathSync, rmSync, writeFileSync } from 'nod
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import type { AgentEvent, AgentSession } from '../agent-provider'
-import { TIER_PROFILES } from '../user-tier'
+import { TIER_PROFILES } from '../../domain/user-tier'
 
 const ENABLED = process.env.WECHAT_CC_SUSPEND_SANDBOX === '1' && process.platform !== 'win32'
 const which = (bin: string) => { try { return execFileSync('/usr/bin/which', [bin], { encoding: 'utf8' }).trim() || null } catch { return null } }

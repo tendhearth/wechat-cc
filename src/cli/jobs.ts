@@ -2,7 +2,7 @@
  * `wechat-cc jobs`:直接改状态目录里的 scheduled-jobs.json(同微信「定时」写的那一份),不经 daemon;
  * 每分钟一拍的 runner 下一拍就读到。写法与微信一致,只是用参数表达。
  */
-import { describeSchedule, JOB_TEXT_MAX, type JobSchedule, type ScheduledJob, type Weekday } from '../core/scheduled-jobs'
+import { describeSchedule, JOB_TEXT_MAX, type JobSchedule, type ScheduledJob, type Weekday } from '../domain/scheduled-jobs'
 import { makeJobsStore } from '../core/scheduled-jobs-store'
 import { join } from 'node:path'
 import { readJsonFile } from '../lib/read-json-file'

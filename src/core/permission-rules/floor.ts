@@ -10,8 +10,8 @@
  */
 import { homedir } from 'node:os'
 import { canonPath, canonText, pathsUnder, type Platform } from './paths'
-import { isDestructiveBash } from '../user-tier'
-import type { PermissionAsk } from './types'
+import { isDestructiveBash } from '../../domain/user-tier'
+import type { PermissionAsk } from '../../domain/permission-rules/types'
 
 export type ToolClass = 'read' | 'write' | 'shell' | 'other'
 

@@ -20,7 +20,7 @@ import { makeActivityStore } from '../activity/store'
 import { makeSessionStore } from '../../core/session-store'
 import type { Db } from '../../lib/db'
 import { resolveProjectJsonlPath } from '../sessions/path-resolver'
-import { localDayKey } from '../../core/prompt-format'
+import { localDayKey } from '../../domain/prompt-format'
 
 export interface BuildContextDeps {
   stateDir: string
