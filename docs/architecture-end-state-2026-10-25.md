@@ -162,12 +162,12 @@ DeliveryPort                      吃 TurnOutcome;旧的 / shadow 交付路删�
 | Claude | `createClaudeAgentProvider` | 同一个,换工作台的 SDK 选项(`features/workbench/wire.ts` 的 `workbenchClaudeOptions`)+ `claude-workbench-runtime` 管长寿命 | 一份;选项的拼法要收进 C(权限一个判定) |
 | agy / Gemini | 各自的 provider | 同一个(免审执行者) | 一份 |
 | **Codex** | SDK(`codex-agent-provider.ts`,408 行) | app-server(`workbench/codex-app-server.ts`,902 行) | **两份** |
-| **OpenAI 兼容** | 自己的循环 + MCP 桥(`openai-agent-provider.ts`) | 文件工具 + 持久会话(`workbench/api-task-provider.ts`) | **两份** |
+| **OpenAI 兼容** | 自己的循环 + MCP 桥(`openai-agent-provider.ts`) | 文件工具 + 持久会话(`workbench/api-task-provider.ts`) | **两份** ⟨10-25 B2 合成一种会话 `openai-session.ts`,见进度⟩ |
 
 | # | 内容 | 做完怎么算 |
 |---|---|---|
 | B1 | Codex 对话改走 app-server(工作台那条已经更全:中途插话、后台任务、原生历史);SDK 那条退休。**先出逐项差异表**(中途插话、思考过程、工具调用显示、恢复会话、额度报错),有主人看得见的差异 ⇒ 攒进「等主人点头」 | `codex-agent-provider.ts` 删掉 |
-| B2 | OpenAI 兼容:一个会话类型,工具面按用途配(对话 = 微信工具,工作台 = 文件工具 + 微信工具);会话持久化统一用 `api-sessions` | 两份实现合成一份 |
+| B2 | OpenAI 兼容:一个会话类型,工具面按用途配(对话 = 微信工具 + 内置工具,工作台 = 只有文件工具 —— 和 Claude / Codex 的工作台一样不给 `mcp__wechat__*`;10-25 更正,初稿写成「文件工具 + 微信工具」是错的);会话持久化统一用 `api-sessions` | 两份实现合成一份 |
 | B3 | `oneShot` 收 CheapEval / StrongEval 的散实现(`cursor-eval.ts`、`codex-cheap-model.ts`);脚本替身(`*-scripted.ts`)搬出生产代码 | `src/` 里没有 `*-scripted.ts` |
 
 ### 阶段 C:权限一个判定(B 之后,适配器只报不判)
@@ -296,7 +296,27 @@ DeliveryPort                      吃 TurnOutcome;旧的 / shadow 交付路删�
 
 **后续**:协调器在一轮跑着时把新消息走 `steer`(要先定产品行为);真机核 dangerously 下 `default_tools_approval_mode` / bypass 键在 app-server 上确实放过 MCP;对话侧没开网络守护的「暂停在跑的任务」(`suspension`,工作台沙盒验过,对话没验);Windows 上对话侧经 cc-jobspawn 起 app-server,没在真机跑过。
 | C2 补 · 对话走放行规则 | 2026-10-25 主人点头的看得见的变化:`OWNER_RULE_SURFACES` 加上 `chat`,但对话只在 `subject.ownerChat` 为真时看规则 —— 由 `core/permission-rules/chat.ts` 的 `authorizeChatCall` 在判的那一刻调 daemon 接的 `isOwnerChat`(`daemon-modules` 里 `resolveTier(chatId, loadAccess()) === 'admin'`,原始档位,不看 --dangerously,模型的输入碰不到),访客 / 信任的对话连规则文件都不读(逐格对照里接上「什么都放」的规则,访客 / 信任 / 定时 / 审查各行仍一位不差、规则一次都没被问)。只接逐工具过闸门的三家(Claude `permission-relay`、Gemini gate、openai gate;openai 的规则在「问落成拒」之前看,规则没拿主意照旧拒);Codex / Cursor / agy 在对话里问不了单个工具,不动。红线照旧问(`decide` 里红线之上没有 allow);对话里只认规则表(by rule),不初审。规则替主人放了 ⇒ `reply-delivery.noteRuleAllow` 登记到这个对话开着的那一轮,交付时最后单独一条「按规则「<备注或 id>」放行了 <命令 / 工具>」,同一条规则一轮一行(多次记「这一轮共 N 次」),app 接收器那一轮接在文字末尾,轮出错没交付也单独送;没有开着的轮 ⇒ 不放、照旧问。规则拒绝 ⇒ 拒,理由交给执行者。路径:对话没有项目根(`project` 恒为 null),按项目 / 路径限定的规则只看输入里明写的**绝对**目标路径,每一条都在范围里才命中,空的 / 相对的 / 不明的一律不命中。留痕表 `permission_decisions.surface` 的 CHECK 加 `chat`(v85 重建表)。C3 快照不变:它算的是没有规则时的那张表 |
+| B2 | OpenAI 兼容只剩一种会话(主人 2026-10-25 拍板:每家一份、留更强的那条、直接改):循环在 `openai-session.ts` 的 `openOpenAiSession`,底下同一个 AI SDK 接缝 `api-model.ts`(`stream` 带 AbortSignal / 用量 / finishReason,`generate` 给 cheapEval / strongEval);两边只差「用途」`OpenAiPurpose`:对话 `openai-agent-provider.ts`(MCP:wechat / delegate / 插件 + 内置 Read / Write / Edit / Bash / view_image,逐个过 openai gate → `authorize`,主人对话先看放行规则 —— #703 原样),工作台 `openai-workbench-provider.ts`(只有文件工具,每次都过 `ctx.requestPermission` 那张权限卡;不给 wechat / delegate / 插件 MCP,和 Claude / Codex 的工作台一致,有测试钉着)。历史都经 `api-sessions`:工作台照旧 `workbench_api_sessions`,对话新表 `openai_chat_sessions`(v86,绑对话 / 别名 / 文件夹 / 端点 + 密钥摘要,不绑钉的模型),`canResume` 接上 session-manager 的 7 天续接;会话报 `resumedHistory`,协调器据它决定补不补冷启动近况块(能力表 `supportsResume` 留 false 当兜底)。删掉:`api-task-provider.ts`(改名成工作台用途,循环删掉)、`openai-chat-model.ts` 与测试(`ChatModelClient` / `streamTurn` / `createAiSdkChatModel`,并进 `api-model.ts`)、对话那份自己的循环、`mapDeltaToEvent`。替身:`test-support/executors/openai-scripted.ts`(`scriptedOpenAiModel` / `scriptedMcpTools`),对话、工作台、集成、插件卡住、守护目标几处测试共用。错误码一个没改(workbench-errors 守卫、openai-error-code 测试原样过)。差异见下表 |
 | E3 | `src/core` 清空、目录删掉(剩下的 108 个源文件、110 份测试和 3 份报文,codemod 改 import;零行为变化)。按层分:**domain** —— 微信「配对 / 允许」两条命令的解析、A2A 协议版本、乙的协议、会话记录渲染 `cli-transcript`、CLI 升级的规格 / 版本 / 配置 / 过期信号(`domain/cli-upgrade/`)、知识库的图与画像 / 事实 / 人 / 检索(`domain/knowledge/`,只引 store 的类型)、工作台的能力表 / 模型目录 / 原生工具 / 工具输入预览 / 附件预算(`domain/workbench/`)、「一件事」的回报 / 回忆 / 手机剧本(`domain/matters/`);**app** —— 终端会话的事件判定 `cli-events` 与权限中继 `cli-permission-relay`(`wechat-cc hook` 子命令和工作台也用,不进功能目录)、「一件事」服务 `matters/service.ts`、配对、关系视图、乙的 hub / hand、A2A 委派与披露闸、首次真跑探测、知识库的一轮与入索引(`app/knowledge/`);app 不碰 node,随机 id 经新的 `lib/random.ts`(同 `content-hash.ts` 的理由);**adapters** —— 工作台的 store 与十几张子表进 `adapters/store/workbench/`,工作台的文件层 / 附件 / 成果 / 原生历史 / 权限与提问登记 / 文件夹占用 / 任务入口进 `adapters/workbench/`(适配器也在用,不能进功能目录;功能和执行者都直接依赖它们,抽 ports 留到以后),独立工作区进 `adapters/git/`,A2A 传输 `adapters/a2a/`,信箱客户端与加密 / 自己的 agent id `adapters/mailbox/`,知识库的 store / 来源 / 嵌入子进程 `adapters/knowledge/`,CLI 升级探版本 / 布局 / 找程序 / 状态 `adapters/cli-upgrade/`,A2A 事件 / 信道 / 心跳 / 背包已读 / 主人问答 / 定时任务 / 头像 / 说一句回执几个 store 进 `adapters/store/`,`turn-emitter` / `mcp-stdio-spec` / `subprocess-env` 进 `adapters/executors/`,Claude 对话的 `permission-relay` 进 `adapters/executors/claude/`;**放行规则**(`chat` / `decide` / `floor` / `paths` / `rules-file`)进 `adapters/permission-rules/` 而不是 domain:路径归一靠 `node:path` 的 posix / win32 `resolve`(相对路径按 `process.cwd()` 解析)和 `node:os` 的 homedir,手写一个逐位相同的纯归一器不便宜,也不该在搬家里冒险;**features** —— 日历的 EventKit 进 `features/calendar/`,`cli-activity` / `cli-reply` 进 `features/terminal/`(只有它用);**daemon** —— `busy-registry`、CLI 升级引擎 `daemon/cli-upgrade/engine.ts`(只有 daemon 用;CLI 要的那几样在 domain / adapters,所以命令不必链 daemon);**test-support** —— `test-helpers.ts` 与三份真机报文(`test-support/fixtures/`)。守卫与规则:`core-no-node` 守卫删掉(`self-discover-ratchets` 认的棘轮少一个);depcruise 删 `core-must-not-depend-on-runtime`,别的规则里的 `core` 去掉,`lib` 的底改成不许依赖任何上层(app / adapters / domain / ports / features / test-support 也算,零违规);`executor-display-names` 扫 app / domain / adapters 代替 core,`speech-send` 少扫 core,`workbench-errors` 改扫 `adapters/store/workbench`、`adapters/workbench`、`domain/workbench`;vitest 的 win32 排除、`test:live-cli`、CI 的 js-embedder 冒烟路径跟着改 |
+
+
+### B2:OpenAI 兼容 对话 / 工作台 → 一种会话 差异表
+
+「以前」是对话那一份(工作台那份的行为原样留在工作台用途里)。
+
+| 项 | 以前(对话:自己的循环 + 内存历史) | 现在(一种会话,按用途配) | 主人看得见? |
+|---|---|---|---|
+| 工具调用 | 对话:MCP + 内置工具,逐个过 openai gate;工作台:只有文件工具 | 两边都不变(工作台照旧只有文件工具,和 Claude / Codex 的工作台一致);只多一处:对话里模型编出来的工具名回「there is no tool named …」(以前撞 TypeError 回一句「Tool error: Cannot read …」),历史里每个 call id 只有我们自己的一条结果 | 否 |
+| 持久化 / 续接 | 只在内存:daemon 重启、会话被释放就从头来,靠协调器补的「冷启动近况块」接话;`canResume` 永远 false | 存进 `api-sessions`(对话表 v86):每一轮做完记 ready,session-manager 7 天内带 `resumeSessionId` 续上,系统提示换成这一次的;续不上(别的对话、换了端点 / 密钥、存的历史超过 192 KiB、一轮当中被杀掉留下 active)⇒ 记一行、开新会话、照旧补近况块;续上了就不再贴近况块(会话报 `resumedHistory`);存档写不进去 ⇒ 这条会话退回只在内存,不挡这一轮 | 是(重启 / 释放之后接得上刚才的上下文;改善) |
+| 流式显示 | 一步的 delta 攒成一条 text 事件,工具调用前先把攒的吐出来 | 对话不变;工作台照旧逐字 append(itemId `会话:revision:步`,续接后不会和上一次撞上) | 否 |
+| 错误 | `cancelled` / `step_budget`(都补一个 result)、边界产的 provider 码(`openaiErrorCode`)、分不出 ⇒ 按文字认 `auth_failed`;请求没有自己的重试之外的处理 | 码一个没改(对话同上,工作台 `api_task_*` + provider 码);多一条:对话失败后历史若停在半截工具调用,退回这一步之前(下一轮请求不会是坏的);对话的 result 现在带端点报的用量(以前不带) | 否 |
+| 图片 | `[image:路径]` 挖出来缩好,作 `Uint8Array` 图块随消息送;view_image 的图另起一条用户消息 | 同样的整理,图块改成 data URL 字符串(和工作台一样,能原样存进 SQLite);存档里图换成一句「[图片:当时看过,存档里不留]」(一张就是几 MB),在跑的会话照样带着图 | 很少:续接来的会话看不到之前那张图本身,只知道有过 |
+| 取消 | 只在步与步之间生效:请求不掐,`/stop` 要等这一步说完;剩下的工具回「Cancelled」 | 请求经 AbortSignal 真掐;剩下的工具照旧每个 call id 回「Cancelled」;对话的 `cancel()` 照旧不等,`close()` 最多等 4 秒再关 MCP(工作台照旧等不到就报 `api_task_close_unconfirmed`) | 是(/stop 更快;改善) |
+| 网络 | 每次 spawn 建 `createAiSdkChatModel`;守护按构造时的端点 + 这次钉的模型判;边界超时 `makeTimeoutFetch`;AI SDK 缺省重试 2 次、不设输出上限 | 同一个 `createApiModel`,对话传 `maxRetries: 2`、`maxOutputTokens: null`(和以前一样),工作台照旧 0 次 / 4096;守护、超时、只剥开头 `<think>` 都是同一份 | 否 |
+
+另:能力表 `OPENAI_CAPABILITIES.supportsResume` 仍是 false —— 它现在只是「会话没报 `resumedHistory` 时」的兜底;委派的光杆 peer 没有 DB,照旧每次从头来。
+
+**后续**:真机核一次 DeepSeek / Kimi 对话「重启后接着聊」(含带思考的模型:存档里留着它的 reasoning 分块,回送时端点接不接);对话历史没有自动压缩,超过 192 KiB 就从头来,要接得更久得做摘要;v86 是这条分支取的号,和别的分支撞号按迁移规矩后合的改号重抄指纹。
 
 ## 修订记录
 
@@ -304,3 +324,4 @@ DeliveryPort                      吃 TurnOutcome;旧的 / shadow 交付路删�
 - 2026-10-25:主人点头「对话也走放行规则」(只在主人自己的对话、红线照旧问、放了在回复里说一行),进度表加「C2 补」一行,等主人点头的那一条划掉。
 - 2026-10-25:F4 做完(进度表);「等主人点头」里网页 v1 那条主人已定。
 - 2026-10-25:F3 做完(进度表):App 里没有手写的 `/m/api`、`/set/api` 字符串了;网页换同一张表是下一步。
+- 2026-10-25:B2 做完(进度表 + 差异表):OpenAI 兼容对话 / 工作台合成一种会话,对话历史进 api-sessions(v86);工作台照旧只有文件工具(计划里「工作台 = 文件工具 + 微信工具」更正)。

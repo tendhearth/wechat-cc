@@ -1167,3 +1167,18 @@ describe('SessionManager network gate (2026-10-02)', () => {
     await mgr.shutdown()
   })
 })
+
+// B2(2026-10-25):会话报「续上了上一次的历史」⇒ handle 带着,协调器据它决定补不补冷启动近况块。
+describe('SessionManager — resumedHistory', () => {
+  it('passes the session\'s own resumedHistory through to the handle; absent stays absent', async () => {
+    const make = (resumedHistory?: boolean): AgentProvider => ({ spawn: async () => ({ ...makeFakeSession({ events: [] }), ...(resumedHistory !== undefined ? { resumedHistory } : {}) }) })
+    const req = { alias: 'a', path: '/p', providerId: 'claude' as const, chatId: 'c', tierProfile: TIER_PROFILES.admin, permissionMode: 'strict' as const }
+    const yes = new SessionManager({ maxConcurrent: 2, idleEvictMs: 60_000, registry: registryWithProvider(make(true)) })
+    expect((await yes.acquire(req)).resumedHistory).toBe(true)
+    const no = new SessionManager({ maxConcurrent: 2, idleEvictMs: 60_000, registry: registryWithProvider(make(false)) })
+    expect((await no.acquire(req)).resumedHistory).toBe(false)
+    const unknown = new SessionManager({ maxConcurrent: 2, idleEvictMs: 60_000, registry: registryWithProvider(make()) })
+    expect('resumedHistory' in (await unknown.acquire(req))).toBe(false)
+    await Promise.all([yes.shutdown(), no.shutdown(), unknown.shutdown()])
+  })
+})

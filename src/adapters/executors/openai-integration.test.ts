@@ -4,38 +4,20 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { createOpenAiAgentProvider } from './openai/openai-agent-provider'
 import { collectTurn } from '../../ports/agent-provider'
-import type { ChatModelClient } from './openai/openai-chat-model'
 import type { McpToolBridge } from './openai/openai-mcp-bridge'
+import { scriptedOpenAiModel } from '../../test-support/executors/openai-scripted'
 
 /**
  * End-to-end integration test: the REAL `createOpenAiAgentProvider` wired to
  * the REAL `builtinTools` (no mocking of the gate or the tool executors),
- * driven by a scripted `ChatModelClient` and a no-op MCP bridge. Proves the
+ * driven by the scripted `APIModel` (test-support) and a no-op MCP bridge. Proves the
  * owned tool loop (openai-agent-provider) + tier gate (openai-gate) +
  * built-in `Write` tool (openai-tools) genuinely cooperate: a trusted tier
  * actually writes bytes to disk, and a guest/deny tier actually blocks it.
  */
 
 // Model: turn 1 → call Write; turn 2 → text 'saved'.
-function writeThenDone(): ChatModelClient {
-  let t = 0
-  return {
-    streamTurn() {
-      t++
-      const isFirst = t === 1
-      const tcs = isFirst ? [{ id: 'w1', name: 'Write', input: { path: 'note.txt', content: 'hi there' } }] : []
-      async function* deltas() {
-        if (isFirst) yield { kind: 'tool_call' as const, id: 'w1', name: 'Write', input: { path: 'note.txt', content: 'hi there' } }
-        else yield { kind: 'text' as const, text: 'saved' }
-      }
-      return { deltas: deltas(), finished: Promise.resolve({ messages: [{ role: 'assistant', content: '' }] as any, toolCalls: tcs }) }
-    },
-    async generate() { return '' },
-    userMessage: (x) => ({ role: 'user', content: x } as any),
-    systemMessage: (x) => ({ role: 'system', content: x } as any),
-    toolResultMessage: (id, n, r) => ({ role: 'tool', content: `${n}` } as any),
-  }
-}
+const writeThenDone = () => scriptedOpenAiModel([{ calls: [{ id: 'w1', name: 'Write', input: { path: 'note.txt', content: 'hi there' } }] }, { text: 'saved' }]).model
 
 const noMcp: McpToolBridge = { tools: [], async call() { return '' }, async close() {}, serverOf() { return undefined } }
 

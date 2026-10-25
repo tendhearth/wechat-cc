@@ -1,6 +1,7 @@
 import { Client } from '@modelcontextprotocol/sdk/client/index.js'
 import { StdioClientTransport } from '@modelcontextprotocol/sdk/client/stdio.js'
-import type { ToolSpec } from './openai-chat-model'
+import type { ToolSpec } from './api-model'
+import type { AgentMcpTools } from '../../../ports/agent-provider'
 import { childEnvFor, toolCallTimeoutMs } from '../mcp-stdio-spec'
 
 export type { McpStdioSpec } from '../mcp-stdio-spec'
@@ -13,7 +14,8 @@ export interface McpClientLike {
   close(): Promise<void>
 }
 
-export interface McpToolBridge {
+/** 端口 `AgentMcpTools` 的实现(B2 起对话和工作台都用它)。 */
+export interface McpToolBridge extends AgentMcpTools {
   tools: ToolSpec[]
   call(name: string, input: unknown): Promise<string>
   close(): Promise<void>

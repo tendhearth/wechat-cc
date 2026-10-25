@@ -122,10 +122,11 @@ export function createSolo(ctx: CoordinatorCtx, runner: TurnRunner, failures: Fa
         try { recent = await deps.recentTurns?.(msg.chatId, 12) ?? [] } catch { /* 交接是增强,拿不到就只给提示语 */ }
         text = `${buildHandoffBlock(handoff.from, handoff.to, recent)}\n\n${text}`
         deps.log?.('HANDOFF', `chat=${msg.chatId} ${handoff.from}→${handoff.to} recent=${recent.length}`)
-      } else if (coldSpawn && !capabilitiesFor(providerId).supportsResume) {
-        // 不能续线程的 provider(openai/gemini)刚被冷 spawn:daemon 重启 /
+      } else if (coldSpawn && !(handle.resumedHistory ?? capabilitiesFor(providerId).supportsResume)) {
+        // 不能续线程的 provider(gemini;openai 续不上的那几次)刚被冷 spawn:daemon 重启 /
         // 空闲驱逐后它对「刚才聊到哪」一无所知,而 claude/agy 都接得上。
         // 用交接块同样的原文源补一段近况;新对话(没记录)就什么都不加。
+        // 会话自己报了续没续上(resumedHistory)就按它,不按能力表猜(B2:openai 对话能续接了,但超长 / 换了 key 时续不上)。
         let recent: HandoffTurn[] = []
         try { recent = await deps.recentTurns?.(msg.chatId, 12) ?? [] } catch { /* 增强,拿不到就算了 */ }
         if (recent.length > 0) {

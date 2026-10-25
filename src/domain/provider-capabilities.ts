@@ -83,6 +83,8 @@ export const OPENAI_CAPABILITIES: ProviderCapabilities = {
   // No SDK/OS sandbox in v1 — the tier gate is the only barrier.
   sandboxLevels: new Set(),
   supportsDelegation: true,
+  // B2(2026-10-25)起对话历史存进 api-sessions、能续接,但续不续得上看情况(超长、换了 key、没有 DB 的委派 peer 都不续):
+  // 会话自己报 `resumedHistory`,协调器按它决定要不要补冷启动近况块。这里留 false = 会话没报时照旧补。
   supportsResume: false,
   defaultPeer: 'claude',
   // 循环是自己的,工具闸按会话 tier 判(上面 sandboxLevels 那条:tier 闸是唯一的门)。

@@ -7,7 +7,7 @@ import {tmpdir} from 'node:os'
 import {openDb,type Db} from '../../lib/db'
 import {createProviderRegistry} from '../../app/provider-registry'
 import {createApiModel} from '../../adapters/executors/openai/api-model'
-import {createApiTaskProvider,apiTaskConnectionHash} from '../../adapters/executors/openai/api-task-provider'
+import {createOpenAiWorkbenchProvider,apiTaskConnectionHash} from '../../adapters/executors/openai/openai-workbench-provider'
 import {makeApiSessionStore} from '../../adapters/executors/openai/api-sessions'
 import {MANAGED_API_CAPABILITIES} from '../../domain/workbench/executor-capabilities'
 import {makeWorkbenchStore} from '../../adapters/store/workbench/store'
@@ -27,7 +27,7 @@ async function endpoint(reply:(request:Request,count:number)=>{text?:string;tool
     res.writeHead(200,{'content-type':'text/event-stream'});res.end(frame(delta,null)+frame({},result.finish??(result.tool?'tool_calls':'stop'))+'data: [DONE]\n\n')
   });server.listen(0,'127.0.0.1');await once(server,'listening');const address=server.address();if(!address||typeof address==='string')throw Error('port')
   const config={baseURL:`http://127.0.0.1:${address.port}/v1`,apiKey:'owned-fixture-key',model:'fixture-requested'}
-  const sessions=makeApiSessionStore(db),provider=createApiTaskProvider({sessions,model:createApiModel(config),configHash:apiTaskConnectionHash(config),configuredModel:config.model,privateStateDir:state})
+  const sessions=makeApiSessionStore(db),provider=createOpenAiWorkbenchProvider({sessions,model:createApiModel(config),configHash:apiTaskConnectionHash(config),configuredModel:config.model,privateStateDir:state})
   const registry=createProviderRegistry();registry.register('openai',provider,{displayName:'API fixture',canResume:provider.canResume,workbench:MANAGED_API_CAPABILITIES})
   const store=makeWorkbenchStore(db);service=makeWorkbenchService({store,registry,stateDir:state,ownerChatId:()=> 'owner'})
   return{requests,store,sessions,registry}

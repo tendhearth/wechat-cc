@@ -2681,13 +2681,13 @@ describe('onTurnEvent (CC 桌宠 Phase B)', () => {
 
 // ── provider policy at dispatch + cold-start context for non-resume providers ──
 describe('dispatch-time provider policy + cold-start block', () => {
-  function setupWith(access: () => Access, extra: { trustedProviders?: () => string[] | undefined; has?: () => boolean; recent?: Array<{ dir: 'in' | 'out'; text: string; ts: string }>; permissionMode?: 'strict' | 'dangerously' } = {}) {
+  function setupWith(access: () => Access, extra: { trustedProviders?: () => string[] | undefined; has?: () => boolean; recent?: Array<{ dir: 'in' | 'out'; text: string; ts: string }>; permissionMode?: 'strict' | 'dangerously'; resumedHistory?: boolean } = {}) {
     const store = makeMockStore()
     const registry = createProviderRegistry()
     for (const id of ['claude', 'cursor', 'agy', 'openai']) registry.register(id, dummyProvider, { displayName: id, canResume: () => true })
     const dispatched: string[] = []
     const acquire = vi.fn(async (req: AcquireRequest) =>
-      makeHandle(req.providerId, makeFakeSession({ events: [{ kind: 'result', sessionId: '_', numTurns: 1, durationMs: 0 }], onDispatch: t => dispatched.push(t) })))
+      ({ ...makeHandle(req.providerId, makeFakeSession({ events: [{ kind: 'result', sessionId: '_', numTurns: 1, durationMs: 0 }], onDispatch: t => dispatched.push(t) })), ...(extra.resumedHistory !== undefined ? { resumedHistory: extra.resumedHistory } : {}) }))
     const sendAssistantText = vi.fn(async () => {})
     const c = createConversationCoordinator({
       resolveProject: () => ({ alias: 'a', path: '/p' }),
@@ -2774,6 +2774,18 @@ describe('dispatch-time provider policy + cold-start block', () => {
     expect(dispatched[0]).toContain('用户: 明天去看房')
     expect(dispatched[0]).toContain('你: 记得带身份证')
     expect(dispatched[0]?.endsWith('几点合适?')).toBe(true)
+  })
+  // B2(2026-10-25):openai 对话的历史存进 api-sessions、能续接 —— 会话自己报续没续上,协调器按它,不按能力表猜。
+  it('the session says whether it resumed: openai that resumed its history gets no block; claude that could not resume gets one', async () => {
+    const recent = [{ dir: 'in' as const, text: '明天去看房', ts: 't1' }]
+    const resumed = setupWith(adminAccess, { has: () => false, recent, resumedHistory: true })
+    resumed.store.set('chat-1', { kind: 'solo', provider: 'openai' })
+    await resumed.c.dispatch(inbound('chat-1', 'hi'))
+    expect(resumed.dispatched[0]).toBe('hi')
+    const fresh = setupWith(adminAccess, { has: () => false, recent, resumedHistory: false })
+    fresh.store.set('chat-1', { kind: 'solo', provider: 'claude' })
+    await fresh.c.dispatch(inbound('chat-1', 'hi'))
+    expect(fresh.dispatched[0]).toContain('刚刚重新开了会话线程')
   })
   it('claude (resumes) and warm sessions and empty history get no cold-start block', async () => {
     const a = setupWith(adminAccess, { has: () => false, recent: [{ dir: 'in', text: 'x', ts: 't' }] })

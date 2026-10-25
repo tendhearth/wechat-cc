@@ -45,7 +45,8 @@ describe('guard classifies the target the executor actually uses (review #193 P1
     const net = { safe: true }
     const { gate } = daemonGate(cfg, net)
     const generate = vi.fn(async () => 'should never run')
-    const chatModel = { streamTurn: vi.fn(), generate, userMessage: (t: string) => ({ role: 'user', content: t }), systemMessage: (t: string) => ({ role: 'system', content: t }), toolResultMessage: vi.fn() }
+    const stream = vi.fn()
+    const chatModel = { stream, generate }
     // 端点在 boot 时定下(和 bootstrap/providers.ts 一样:openaiBaseUrl 是注册那一刻读的)。
     const provider = createOpenAiAgentProvider({
       endpoint: { baseUrl: cfg.openaiBaseUrl!, model: cfg.openaiModel! },

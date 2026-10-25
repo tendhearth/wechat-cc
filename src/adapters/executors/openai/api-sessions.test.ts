@@ -4,7 +4,7 @@ import {join} from 'node:path'
 import {tmpdir} from 'node:os'
 import {openDb,type Db} from '../../../lib/db'
 import {makeWorkbenchStore} from '../../store/workbench/store'
-import {makeApiSessionStore,type ApiSessionBinding} from './api-sessions'
+import {makeApiSessionStore,makeChatSessionStore,makeMemoryChatSessionStore,openAiConnectionHash,CHAT_RESUME_MAX_BYTES,type ApiSessionBinding,type ChatSessionBinding} from './api-sessions'
 import type {ChatMessage} from './api-model'
 import {removeTempDir} from '../../../lib/test-temp'
 
@@ -87,3 +87,50 @@ describe('API session transcript store',()=>{
 })
 
 function user(text:string):ChatMessage{return{role:'user',content:text}}
+
+// B2(2026-10-25):对话的会话历史(v86 openai_chat_sessions)。
+describe('chat session store',()=>{
+  const chat=(changes:Partial<ChatSessionBinding>={}):ChatSessionBinding=>({chatId:'owner',alias:'proj',path:'/tmp/project',configHash:'h',...changes})
+  it('create → save(ready) → canResume → acquire(active) → stale revision conflicts; survives reopen',()=>{
+    const store=makeChatSessionStore(db)
+    const s0=store.create(chat(),messages())
+    expect(s0).toMatchObject({revision:0,state:'active'})
+    expect(store.canResume(s0.id,'/tmp/project','h')).toBe(false)
+    const s1=store.save(s0.id,0,messages('two'),'ready')
+    expect(store.canResume(s1.id,'/tmp/project','h')).toBe(true)
+    expect(store.canResume(s1.id,'/tmp/project','other')).toBe(false)
+    expect(store.canResume(s1.id,'/elsewhere','h')).toBe(false)
+    expect(()=>store.acquire(s1.id,chat({chatId:'someone'}))).toThrow('api_session_conflict')
+    const s2=store.acquire(s1.id,chat())
+    expect(s2.state).toBe('active')
+    expect(()=>store.save(s2.id,s1.revision,messages(),'ready')).toThrow('api_session_conflict')
+    db.close();db=openDb({path})
+    expect(makeChatSessionStore(db).get(s0.id)?.messages).toEqual(messages('two'))
+  })
+  it('a new session for the same chat + project drops the older non-active ones; too long ⇒ not resumable',()=>{
+    const store=makeChatSessionStore(db)
+    const old=store.create(chat(),messages());store.save(old.id,0,messages(),'ready')
+    const other=store.create(chat({chatId:'b'}),messages());store.save(other.id,0,messages(),'ready')
+    const next=store.create(chat(),messages())
+    expect(store.get(old.id)).toBeNull()
+    expect(store.get(other.id)).not.toBeNull()
+    const big=store.save(next.id,0,messages('x'.repeat(CHAT_RESUME_MAX_BYTES)),'ready')
+    expect(store.canResume(big.id,'/tmp/project','h')).toBe(false)
+  })
+  it('memory store keeps nothing and never resumes',()=>{
+    const store=makeMemoryChatSessionStore()
+    const s=store.create(chat(),messages())
+    expect(store.ephemeral).toBe(true)
+    expect(store.get(s.id)).toBeNull()
+    expect(store.canResume(s.id,'/tmp/project','h')).toBe(false)
+    expect(()=>store.acquire(s.id,chat())).toThrow('api_session_conflict')
+  })
+  it('connection hash: same inputs ⇒ same hash; key / URL change it; model only when given; never contains the key',()=>{
+    const a=openAiConnectionHash({baseURL:'https://g.example/v1/',apiKey:'secret'})
+    expect(a).toBe(openAiConnectionHash({baseURL:'https://g.example/v1',apiKey:'secret'}))
+    expect(a).not.toBe(openAiConnectionHash({baseURL:'https://g.example/v1',apiKey:'other'}))
+    expect(a).not.toBe(openAiConnectionHash({baseURL:'https://g.example/v1',apiKey:'secret',model:'m'}))
+    expect(a).not.toContain('secret')
+    expect(()=>openAiConnectionHash({baseURL:'https://u:p@g.example',apiKey:'k'})).toThrow('invalid_api_model')
+  })
+})
