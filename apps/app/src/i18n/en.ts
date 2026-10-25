@@ -5,6 +5,7 @@ const en = {
   'feedback.offline': 'Offline',
   'feedback.connecting': 'Connecting',
   'feedback.check': 'Check status',
+  'feedback.checkedNotSeen': 'Checked — this one hasn’t shown up yet.',
   'feedback.retry': 'Try again',
   'feedback.loadingFailed': 'Couldn’t refresh',
   'feedback.stale': 'This list may be out of date.',

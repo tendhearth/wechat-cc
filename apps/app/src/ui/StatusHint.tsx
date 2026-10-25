@@ -7,8 +7,9 @@ import { Txt } from './Txt'
 import { radius, space } from './tokens'
 import { useTheme } from './useTheme'
 
-/** An explanation entry. Recovery controls are explicit children; opening never performs writes. */
-export function StatusHint({ label, description, icon = 'info', shortLabel, testID, children }: { label: string; description: string; icon?: IconName; shortLabel?: string; testID?: string; children?: ReactNode }) {
+/** An explanation entry. Recovery controls are explicit children; opening never performs writes.
+ *  Pass children as `close => …` when an action should also close the dialog (its result shows behind it). */
+export function StatusHint({ label, description, icon = 'info', shortLabel, testID, children }: { label: string; description: string; icon?: IconName; shortLabel?: string; testID?: string; children?: ReactNode | ((close: () => void) => ReactNode) }) {
   const { c } = useTheme()
   const lang = useLang()
   const [open, setOpen] = useState(false)
@@ -36,7 +37,7 @@ export function StatusHint({ label, description, icon = 'info', shortLabel, test
             </View>
             <ScrollView contentContainerStyle={{ paddingVertical: space.l, gap: space.l }}>
               <Txt testID={testID ? `${testID}-description` : undefined}>{description}</Txt>
-              {children}
+              {typeof children === 'function' ? children(() => setOpen(false)) : children}
             </ScrollView>
           </View>
         </View>

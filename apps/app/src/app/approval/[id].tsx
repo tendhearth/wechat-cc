@@ -245,9 +245,15 @@ export default function Approval() {
   )
 }
 
-// 原因保留在对应状态入口里,不在按钮上方重复铺一段说明。
+// 这几条(不确定 / 失败 / 撤销 / 太长 / CC 正忙 / 选满)是按钮旁唯一的提示,不是重复说明:
+// 保持看得见 + 读屏自动念,不收进状态入口(收进去就只剩一个和「信息」一样的小 i)。
 function Notice({ text, testID }: { text: string; testID?: string }) {
-  return <StatusHint testID={testID} label={text} description={text} />
+  return (
+    <View style={{ flexDirection: 'row', alignItems: 'center', gap: space.s }}>
+      <Dot kind="warn" size={8} />
+      <Txt testID={testID} role="meta" tone="inkSoft" accessibilityLiveRegion="polite" style={{ flexShrink: 1 }}>{text}</Txt>
+    </View>
+  )
 }
 
 function Eyebrow({ eyebrow, title, eventKey }: { eyebrow: string; title: string; eventKey?: string }) {

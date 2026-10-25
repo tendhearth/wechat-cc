@@ -7,6 +7,7 @@ const zh: Record<keyof typeof en, string> = {
   'feedback.offline': '离线',
   'feedback.connecting': '连接中',
   'feedback.check': '核对状态',
+  'feedback.checkedNotSeen': '刚核对过,还没看到这条。',
   'feedback.retry': '再试一次',
   'feedback.loadingFailed': '暂未刷新',
   'feedback.stale': '这份列表可能不是最新的。',

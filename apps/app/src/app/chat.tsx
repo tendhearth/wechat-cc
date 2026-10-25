@@ -225,10 +225,13 @@ function ChatBubble({ b, lang, canRetry, onRetry, onDismiss, checking, checkErro
         <StatusHint testID={`chat-failed-${b.failedKind}`}
           label={t(lang, b.failedKind === 'maybeLost' || b.failedKind === 'notConfirmed' ? 'feedback.unconfirmed' : 'feedback.notSent')}
           icon={b.failedKind === 'maybeLost' || b.failedKind === 'notConfirmed' ? 'help' : 'alert'} description={t(lang, FAILED_KEY[b.failedKind])}>
-          {b.failedKind === 'maybeLost' || b.failedKind === 'notConfirmed'
-            ? <ChatCheck lang={lang} online={canRetry} loading={checking} error={checkError} onCheck={onCheck} /> : null}
-          {b.requestId ? <Button kind="secondary" testID="chat-retry" label={t(lang, 'chat.retry')} disabled={!canRetry} onPress={onRetry} /> : null}
-          {b.failedKind === 'notConfirmed' ? <Button kind="secondary" testID="chat-dismiss" label={t(lang, 'chat.dismiss')} onPress={onDismiss} /> : null}
+          {close => <>
+            {b.failedKind === 'maybeLost' || b.failedKind === 'notConfirmed'
+              ? <ChatCheck lang={lang} online={canRetry} loading={checking} error={checkError} onCheck={onCheck} /> : null}
+            {/* 重试 / 不管它的结果显示在聊天里(弹层后面):点了先关弹层 */}
+            {b.requestId ? <Button kind="secondary" testID="chat-retry" label={t(lang, 'chat.retry')} disabled={!canRetry} onPress={() => { close(); onRetry() }} /> : null}
+            {b.failedKind === 'notConfirmed' ? <Button kind="secondary" testID="chat-dismiss" label={t(lang, 'chat.dismiss')} onPress={() => { close(); onDismiss() }} /> : null}
+          </>}
         </StatusHint>
       ) : null}
     </View>
@@ -236,9 +239,13 @@ function ChatBubble({ b, lang, canRetry, onRetry, onDismiss, checking, checkErro
 }
 
 function ChatCheck({ lang, online, loading, error, onCheck }: { lang: Lang; online: boolean; loading: boolean; error: unknown; onCheck(): Promise<void> }) {
+  // 核对读成功但这条还没出现 ⇒ 说一声(找到了的话这条状态入口整个消失,不用说);读失败照旧「暂未刷新」。
+  const [checked, setChecked] = useState(false)
+  const readFailed = !!error && error !== 'not_found'
   return <View style={{ gap: space.s }}>
-    {error && error !== 'not_found' ? <Txt testID="chat-check-failed" role="meta" tone="inkSoft">{t(lang, 'feedback.loadingFailed')}</Txt> : null}
-    <Button kind="secondary" testID="chat-check" label={t(lang, 'feedback.check')} disabled={!online} busy={loading} onPress={() => void onCheck()} />
+    {readFailed ? <Txt testID="chat-check-failed" role="meta" tone="inkSoft" accessibilityLiveRegion="polite">{t(lang, 'feedback.loadingFailed')}</Txt> : null}
+    {checked && !loading && !readFailed ? <Txt testID="chat-check-none" role="meta" tone="inkSoft" accessibilityLiveRegion="polite">{t(lang, 'feedback.checkedNotSeen')}</Txt> : null}
+    <Button kind="secondary" testID="chat-check" label={t(lang, 'feedback.check')} disabled={!online} busy={loading} onPress={() => { setChecked(false); void onCheck().finally(() => setChecked(true)) }} />
   </View>
 }
 
