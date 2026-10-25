@@ -192,7 +192,6 @@ DeliveryPort                      吃 TurnOutcome;旧的 / shadow 交付路删�
 |---|---|---|
 | E1 | 建 `src/domain`、`src/ports`、`src/adapters`、`src/app`;先把已经是纯函数的文件(`policy`、`user-tier`、`chatroom-conductor`、`provider-policy`、`permission-rules/decide`、`quiet-hours`、`envelope`…)挪进 `domain`,开 depcruise 规则 | `domain` 规则零例外 |
 | E2 | 执行者适配器(B 搬完的)进 `adapters/executors/`;store 进 `adapters/store/` | — |
-| E3 第 1 步 | 通用的 store(对话、会话、会话状态、回合记录、终端会话、「一件事」)进 `src/adapters/store/`;`TurnRecord` 形状进 `domain/turn-record.ts`(store 不再引协调器的类型 —— 新规则当场抓到的)。功能自己的 store(社交、知识库、定时 …)等那个功能搬进 features 时跟着走 |
 | E3 | `src/core` 清空 | 删掉 `core-no-node` 守卫和 `src/core` 目录 |
 | E4 | 工作台服务:`Options` 原样传成 `deps`(删掉那行 2245 字符的复制);十个域按依赖顺序构造,彼此依赖接口,`Ref<ServiceActions>` 删掉 | 删掉 `workbench-service-ratchet` 守卫;service 里没有 `Ref` |
 
@@ -252,6 +251,8 @@ DeliveryPort                      吃 TurnOutcome;旧的 / shadow 交付路删�
 | E1 第 1 步 | `src/domain/` 开张:档位 / 放行、开口、伙伴判定、提示词、能力表这 43 个纯规则文件从 core 搬进去(codemod 改了 256 个文件的 import);`guestSafe` 与 Confinement 类型抽成 `domain/confinement.ts`。depcheck 两条零例外:domain 运行时只依赖 domain 自己和 lib 里不碰 I/O 的;不碰 node 内置。只引类型暂时放行(core 还没拆完)。下一步:app(协调器)、adapters(执行者、store) |
 | E1 第 2 步 | `src/app/`(协调器 `coordinator/*`、会话管理、执行者登记)与 `src/ports/`(执行者的口 `agent-provider`)开张;`auth-fail` 进 domain、`async-mutex` / `async-queue` 进 lib。depcheck 四条:ports 零例外只依赖 ports / domain / 纯 lib;app 不往上依赖、不碰 node(过渡期还能用 core 里没搬完的 store / 工作台)。speech-send 守卫扫到 app / domain / ports |
 | E2 | 六家执行者的适配器搬进 `src/adapters/executors/<家>/`(claude / codex / acp(含 Cursor)/ agy / gemini / openai,85 个文件连同测试;原来散在 core 根目录和 core/workbench 里)。depcheck `adapters-implement-ports` 零例外:适配器不往上依赖 app / daemon / cli / features。core-no-node 基线少 19 行(用 node 的是适配器,本来就不该算 core 的账)。待办:claude-workbench-* 与对话侧适配器抛的码没进工作台错误码的归类扫描(搬家前就不在,另作一步) |
+| E3 第 1 步 | 通用的 store(对话、会话、会话状态、回合记录、终端会话、「一件事」)进 `src/adapters/store/`;`TurnRecord` 形状进 `domain/turn-record.ts`(store 不再引协调器的类型 —— 新规则当场抓到的)。功能自己的 store(社交、知识库、定时 …)等那个功能搬进 features 时跟着走 |
+| E4 第 1 步 | 工作台服务:`Options` 原样当 `ServiceDeps` 传(删掉那行 2245 字符的逐字段复制),被行数上限挤成一行的字段表 / import / 域构造 / service 对象 / `actions.set` 全部按一项一行摊开(service.ts 没有超过 180 字符的行了);删掉数内函数的 `workbench-service-ratchet` 守卫 —— 它管的两条环 depcruise 早有(`workbench-service-no-circular` / `wechat-control-must-not-link-service`),剩下的只是量症状。`Ref<ServiceActions>` 晚绑定还在,下一步 |
 
 ## 修订记录
 

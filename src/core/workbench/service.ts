@@ -12,7 +12,15 @@ interface Options {
   store: WorkbenchStore
   registry: ProviderRegistry
   stateDir: string
-  managedWorkspaceRoot?: string; networkGate?: import('../../lib/network-gate').NetworkGate; projectLessons?: ServiceCtx['deps']['projectLessons']; addLesson?: ServiceCtx['deps']['addLesson']; checkpointDeadlineMs?: number; reviewDeadlineMs?: number; fetchIssue?: Parameters<typeof makeWechatWorkbenchControl>[0]['fetchIssue']; requestReview?: Parameters<typeof makeWechatWorkbenchControl>[0]['requestReview']  // 网络闸门(2026-10-02)/ 项目经验 / issue 开工(2026-10-20),见 ServiceDeps
+  // 网络闸门(2026-10-02)/ 项目经验 / issue 开工(2026-10-20),见 ServiceDeps
+  managedWorkspaceRoot?: string
+  networkGate?: import('../../lib/network-gate').NetworkGate
+  projectLessons?: ServiceCtx['deps']['projectLessons']
+  addLesson?: ServiceCtx['deps']['addLesson']
+  checkpointDeadlineMs?: number
+  reviewDeadlineMs?: number
+  fetchIssue?: Parameters<typeof makeWechatWorkbenchControl>[0]['fetchIssue']
+  requestReview?: Parameters<typeof makeWechatWorkbenchControl>[0]['requestReview']
   ownerChatId: () => string | null
   /** 「一件事」登记处:任务与 matter 一对一同 id,生命周期同步(docs/cc-workbench.md「一件事」)。可选,老接线不传。 */
   matters?: MatterStore
@@ -32,7 +40,13 @@ interface Options {
   nativeHistory?:Partial<Record<NativeHistoryProvider,NativeHistoryReader>>
   mintSessionToken?: (sessionKey: string) => string
   revokeSessionToken?: (sessionKey: string) => void
-  holdBusy?: (label: string) => () => void; onTurnError?: ServiceCtx['deps']['onTurnError']; onTurnCompleted?: ServiceCtx['deps']['onTurnCompleted']; writerGroupAlive?: ServiceCtx['deps']['writerGroupAlive']; bootTimeMs?: ServiceCtx['deps']['bootTimeMs']; writerWatchMs?: number   // onTurnError:错误通道 → CLI 自动升级的报错触发(见 ctx.ts)
+  // onTurnError:错误通道 → CLI 自动升级的报错触发(见 ctx.ts)
+  holdBusy?: (label: string) => () => void
+  onTurnError?: ServiceCtx['deps']['onTurnError']
+  onTurnCompleted?: ServiceCtx['deps']['onTurnCompleted']
+  writerGroupAlive?: ServiceCtx['deps']['writerGroupAlive']
+  bootTimeMs?: ServiceCtx['deps']['bootTimeMs']
+  writerWatchMs?: number
   timeoutMs?: number
   closeTimeoutMs?: number
   permissionTimeoutMs?: number; permissionDecide?: ServiceCtx['deps']['permissionDecide']   // 放行规则(2026-10-19);不传 ⇒ 每条权限都问主人
@@ -46,11 +60,21 @@ interface Options {
   /** 变更信号中心(长轮询);不传就自建。 */
   changes?: TaskChangeHub
   /** 免审执行者的一次性确认(daemon 侧持久化);不传 ⇒ 免审执行者永远要求确认。 */
-  unattendedAck?: { get(): number | null; set(at: number): void }; scripts?: ScriptsOptions; until?: UntilOptions; rewind?: RewindOptions; quotaResume?: QuotaResumeOptions   // scripts / until / rewind:工作区脚本、检查命令(2026-10-20)与回退(2026-10-21)的测试旋钮,生产不传;quotaResume.notify:到点没接上时告诉主人一句
+  // scripts / until / rewind:工作区脚本、检查命令(2026-10-20)与回退(2026-10-21)的测试旋钮,生产不传;quotaResume.notify:到点没接上时告诉主人一句
+  unattendedAck?: { get(): number | null; set(at: number): void }
+  scripts?: ScriptsOptions
+  until?: UntilOptions
+  rewind?: RewindOptions
+  quotaResume?: QuotaResumeOptions
 }
 import { makeRuntimeState } from './service/state'
 import { Ref } from '../../lib/lifecycle'
-import { makeReviewDomain } from './service/review'; import { makeWorktreeDomain } from './service/worktree'; import { makeScriptsDomain, type ScriptsOptions } from './service/scripts'; import { makeUntilDomain, type UntilOptions } from './service/until'; import { makeRewindDomain, type RewindOptions } from './service/rewind'; import { makeQuotaResumeDomain, type QuotaResumeOptions } from './service/quota-resume'
+import { makeReviewDomain } from './service/review'
+import{ makeWorktreeDomain } from './service/worktree'
+import{ makeScriptsDomain, type ScriptsOptions } from './service/scripts'
+import{ makeUntilDomain, type UntilOptions } from './service/until'
+import{ makeRewindDomain, type RewindOptions } from './service/rewind'
+import{ makeQuotaResumeDomain, type QuotaResumeOptions } from './service/quota-resume'
 import { makeAttachmentsDomain } from './service/attachments'
 import { makeQuotaDomain } from './service/quota'
 import { makeNoticesDomain } from './service/notices'
@@ -76,8 +100,22 @@ export function makeWorkbenchService(opts: Options) {
   const bumped = (id: string) => { try { touched(id, store.bump(id)) } catch { /* 信号丢了只是多等一轮 */ } }
   const state=makeRuntimeState()
   const actions=new Ref<ServiceActions>('workbench-actions')
-  const ctx:ServiceCtx={store,stateDir:opts.stateDir,state,hub:{touched,bumped,dispose:()=>changes.dispose()},deps:{ownerChatId:opts.ownerChatId,registry:opts.registry,...(opts.usage?{usage:opts.usage}:{}),...(opts.refusal?{refusal:opts.refusal}:{}),...(opts.permissionTimeoutMs!==undefined?{permissionTimeoutMs:opts.permissionTimeoutMs}:{}),...(opts.permissionDecide?{permissionDecide:opts.permissionDecide}:{}),...(opts.unattendedAck?{unattendedAck:opts.unattendedAck}:{}),...(opts.nativeHistory?{nativeHistory:opts.nativeHistory}:{}),...(opts.registeredProjects?{registeredProjects:opts.registeredProjects}:{}),...(opts.defaultProvider!==undefined?{defaultProvider:opts.defaultProvider}:{}),...(opts.executionConflict?{executionConflict:opts.executionConflict}:{}),...(opts.reports?{reports:opts.reports}:{}),...(opts.recollect?{recollect:opts.recollect}:{}),...(opts.revokeSessionToken?{revokeSessionToken:opts.revokeSessionToken}:{}),...(opts.retainedIdleCloseMs!==undefined?{retainedIdleCloseMs:opts.retainedIdleCloseMs}:{}),...(opts.handoffGraceMs!==undefined?{handoffGraceMs:opts.handoffGraceMs}:{}),...(opts.matters?{matters:opts.matters}:{}),...(opts.mintSessionToken?{mintSessionToken:opts.mintSessionToken}:{}),...(opts.timeoutMs!==undefined?{timeoutMs:opts.timeoutMs}:{}),...(opts.closeTimeoutMs!==undefined?{closeTimeoutMs:opts.closeTimeoutMs}:{}),...(opts.holdBusy?{holdBusy:opts.holdBusy}:{}),...(opts.onTurnError?{onTurnError:opts.onTurnError}:{}),...(opts.onTurnCompleted?{onTurnCompleted:opts.onTurnCompleted}:{}),...(opts.writerGroupAlive?{writerGroupAlive:opts.writerGroupAlive}:{}),...(opts.bootTimeMs?{bootTimeMs:opts.bootTimeMs}:{}),...(opts.writerWatchMs!==undefined?{writerWatchMs:opts.writerWatchMs}:{}),...(opts.managedWorkspaceRoot!==undefined?{managedWorkspaceRoot:opts.managedWorkspaceRoot}:{}),...(opts.networkGate?{networkGate:opts.networkGate}:{}),...(opts.projectLessons?{projectLessons:opts.projectLessons}:{}),...(opts.addLesson?{addLesson:opts.addLesson}:{}),...(opts.checkpointDeadlineMs!==undefined?{checkpointDeadlineMs:opts.checkpointDeadlineMs}:{}),...(opts.reviewDeadlineMs!==undefined?{reviewDeadlineMs:opts.reviewDeadlineMs}:{})},ensureAccepting,...(opts.log?{log:opts.log}:{}),now:Date.now,actions}
-  const scriptsDomain=makeScriptsDomain(ctx,opts.scripts),untilDomain=makeUntilDomain(ctx,opts.until),quotaResumeDomain=makeQuotaResumeDomain(ctx,opts.quotaResume),review=makeReviewDomain(ctx,{scripts:scriptsDomain,until:untilDomain}),worktreeDomain=makeWorktreeDomain(ctx,{scripts:scriptsDomain})
+  // Options 里除了这几样(store / 目录 / 变更中心 / 四个子功能的选项),其余原样就是 ServiceDeps —— 不再逐字段抄一遍。
+  const { store: _store, stateDir, changes: _changes, scripts: _scripts, until: _until, rewind: _rewind, quotaResume: _quotaResume, ...deps } = opts
+  const ctx: ServiceCtx = {
+    store, stateDir, state,
+    hub: { touched, bumped, dispose: () => changes.dispose() },
+    deps,
+    ensureAccepting,
+    ...(opts.log ? { log: opts.log } : {}),
+    now: Date.now,
+    actions,
+  }
+  const scriptsDomain=makeScriptsDomain(ctx,opts.scripts)
+  const untilDomain=makeUntilDomain(ctx,opts.until)
+  const quotaResumeDomain=makeQuotaResumeDomain(ctx,opts.quotaResume)
+  const review=makeReviewDomain(ctx,{scripts:scriptsDomain,until:untilDomain})
+  const worktreeDomain=makeWorktreeDomain(ctx,{scripts:scriptsDomain})
   const attachmentsDomain=makeAttachmentsDomain(ctx)
   const {continuationAttachmentScope,selectAttachments,combinedAttachments,handoffAttachments}=attachmentsDomain
   const quotaDomain=makeQuotaDomain(ctx)
@@ -95,8 +133,21 @@ export function makeWorkbenchService(opts: Options) {
   const {stageFinishedNotice,publishFinishedNotices,enqueueNotice}=noticesDomain
   const artifactsDomain=makeArtifactsDomain(ctx)
   const {collect,collectTurnArtifacts,captureCodeChanges}=artifactsDomain
-  const executeDomain=makeExecuteDomain(ctx,{admission:admissionDomain,attachments:attachmentsDomain,quota:quotaDomain,view:viewDomain,native:nativeDomain,inputs:inputsDomain,lifecycle:lifecycleDomain,notices:noticesDomain,artifacts:artifactsDomain,scripts:scriptsDomain,rewind:rewindDomain})
-  const entryDomain=makeEntryDomain(ctx,{execute:executeDomain,view:viewDomain,admission:admissionDomain,quota:quotaDomain,scripts:scriptsDomain}),quotaHandoffDomain=makeQuotaHandoffDomain(ctx,{execute:executeDomain,quota:quotaDomain})
+  const executeDomain=makeExecuteDomain(ctx,{
+    admission:admissionDomain,
+    attachments:attachmentsDomain,
+    quota:quotaDomain,
+    view:viewDomain,
+    native:nativeDomain,
+    inputs:inputsDomain,
+    lifecycle:lifecycleDomain,
+    notices:noticesDomain,
+    artifacts:artifactsDomain,
+    scripts:scriptsDomain,
+    rewind:rewindDomain,
+  })
+  const entryDomain=makeEntryDomain(ctx,{execute:executeDomain,view:viewDomain,admission:admissionDomain,quota:quotaDomain,scripts:scriptsDomain})
+  const quotaHandoffDomain=makeQuotaHandoffDomain(ctx,{execute:executeDomain,quota:quotaDomain})
   store.recover()
   store.liveInputs.recover();lifecycleDomain.adoptWriters();scriptsDomain.recover();void rewindDomain.recover();quotaResumeDomain.recover()
 
@@ -115,7 +166,10 @@ export function makeWorkbenchService(opts: Options) {
     providerQuota:quotaDomain.providerQuota,
     quotaExhausted:quotaDomain.quotaExhausted,
     /** 额度耗尽时"交给谁继续"的默认人选;null = 没有可接的。quotaHandoff / handOff:手机确认卡把一件事交出去(service/quota-handoff.ts)。 */
-    fallbackExecutor(exhaustedId:string):string|null{return fallbackExecutor(exhaustedId)},...quotaHandoffDomain.api,...quotaResumeDomain.api,   // api:额度恢复后接着做(service/quota-resume.ts)
+    // api:额度恢复后接着做(service/quota-resume.ts)
+    fallbackExecutor(exhaustedId:string):string|null{return fallbackExecutor(exhaustedId)},
+    ...quotaHandoffDomain.api,
+    ...quotaResumeDomain.api,
     contextAvailable:noticesDomain.contextAvailable,
     notificationEligible:noticesDomain.notificationEligible,
     setWechatWatch:noticesDomain.setWechatWatch,
@@ -143,17 +197,42 @@ export function makeWorkbenchService(opts: Options) {
     discardAttachmentUpload:attachmentsDomain.discardAttachmentUpload,takeChatImages:attachmentsDomain.takeChatImages,
     readAttachment:attachmentsDomain.readAttachment,
     discardAttachment:attachmentsDomain.discardAttachment,
-    setArchived:(id:string,archived:boolean)=>{const view=lifecycleDomain.setArchived(id,archived);if(archived)worktreeDomain.tidyOnArchive(id);return view},confirmWriterExited:lifecycleDomain.confirmWriterExited,
-    cancel:lifecycleDomain.cancel,suspendForNetwork:lifecycleDomain.suspendForNetwork,resumeFromNetwork:lifecycleDomain.resumeFromNetwork,stopSuspendedForNetwork:lifecycleDomain.stopSuspendedForNetwork,networkSuspended:lifecycleDomain.networkSuspended,
+    setArchived:(id:string,archived:boolean)=>{const view=lifecycleDomain.setArchived(id,archived);if(archived)worktreeDomain.tidyOnArchive(id);return view},
+    confirmWriterExited:lifecycleDomain.confirmWriterExited,
+    cancel:lifecycleDomain.cancel,
+    suspendForNetwork:lifecycleDomain.suspendForNetwork,
+    resumeFromNetwork:lifecycleDomain.resumeFromNetwork,
+    stopSuspendedForNetwork:lifecycleDomain.stopSuspendedForNetwork,
+    networkSuspended:lifecycleDomain.networkSuspended,
     artifact:artifactsDomain.artifact,
     approve:artifactsDomain.approve,
     /** 这个任务的所有变更快照,新→旧,每个文件附上当前标记。坏的那一轮单独 unavailable,不牵连别轮。 */
     reviewList:review.reviewList,
     markReviewFile:review.markReviewFile,
-    returnReviewFiles:review.returnReviewFiles,revertReviewFile:review.revertReviewFile,reviewComment:review.reviewComment,sendReviewComments:review.sendReviewComments,revertReviewHunk:review.revertReviewHunk,worktreeAction:worktreeDomain.worktreeAction,rewindPreview:rewindDomain.rewindPreview,rewind:rewindDomain.rewind,undoRewind:rewindDomain.undoRewind,rewindResolve:rewindDomain.rewindResolve,pruneRewindRefs:rewindDomain.pruneRefs,scriptAction:scriptsDomain.scriptAction,approveScripts:scriptsDomain.approveScripts,   // 工作区脚本(2026-10-20):运行 / 停下 / 批准
+    // 工作区脚本(2026-10-20):运行 / 停下 / 批准
+    returnReviewFiles:review.returnReviewFiles,
+    revertReviewFile:review.revertReviewFile,
+    reviewComment:review.reviewComment,
+    sendReviewComments:review.sendReviewComments,
+    revertReviewHunk:review.revertReviewHunk,
+    worktreeAction:worktreeDomain.worktreeAction,
+    rewindPreview:rewindDomain.rewindPreview,
+    rewind:rewindDomain.rewind,
+    undoRewind:rewindDomain.undoRewind,
+    rewindResolve:rewindDomain.rewindResolve,
+    pruneRewindRefs:rewindDomain.pruneRefs,
+    scriptAction:scriptsDomain.scriptAction,
+    approveScripts:scriptsDomain.approveScripts,
     resolvePermission:inputsDomain.resolvePermission,
     async handleWechat(chatId:string,text:string,identity?:WechatMessageIdentity):Promise<WechatWorkbenchReply|null>{return wechatControl(chatId,text,identity)},
-    shutdown:()=>Promise.all([rewindDomain.shutdown(),scriptsDomain.shutdown(),untilDomain.shutdown(),Promise.resolve(quotaResumeDomain.shutdown()),lifecycleDomain.shutdown()]).then(()=>{}),   // 工作区脚本和会话一起停(TERM → 宽限 → KILL)
+    // 工作区脚本和会话一起停(TERM → 宽限 → KILL)
+    shutdown: () => Promise.all([
+      rewindDomain.shutdown(),
+      scriptsDomain.shutdown(),
+      untilDomain.shutdown(),
+      Promise.resolve(quotaResumeDomain.shutdown()),
+      lifecycleDomain.shutdown(),
+    ]).then(() => {}),
     changes: { onChange: (cb: (taskId: string, seq: number) => void) => changes.onChange(cb),
       /** store.version 才是权威:hub 缓存可能因为一笔回滚的事务而"幻影提前",落库的 seq 从不会。
        * 提前发现(persisted>since)时也顺手 publish 一下,把挂在旧值上的 waiter 一并叫醒,
@@ -166,8 +245,52 @@ export function makeWorkbenchService(opts: Options) {
       },
     },
   }
-  actions.set({submitInput:(id,input,policy)=>service.submitInput(id,input,policy),continueTask:(id,text,options,policy)=>service.continueTask(id,text,options,policy),isReplied,fallbackExecutor,artifact:(id,artifactId)=>service.artifact(id,artifactId),quotaExhausted:quotaDomain.quotaExhausted,continuation,provider,requireInput,canResume,taskVersion,selectAttachments,combinedAttachments,handoffAttachments,taskView,matterSync:executeDomain.matterSync,start:executeDomain.start,continuationAttachmentScope,inputMode,armIdleClose:lifecycleDomain.armIdleClose,cancelIdleClose,settleAfterDecision,execute:executeDomain.execute,hasUndeliveredInput,holdInputs,collect,collectTurnArtifacts,captureCodeChanges,runtimeSnapshot,held,stageFinishedNotice,publishFinishedNotices,enqueueNotice,untilAfterTurn:untilDomain.afterTurn,untilStop:untilDomain.stop})
-  const wechatControl=makeWechatWorkbenchControl({store,ownerChatId:opts.ownerChatId,actions:service,hasExecutor:(id)=>{try{provider(id);return true}catch{return false}},...(opts.fetchIssue?{fetchIssue:opts.fetchIssue}:{}),...(opts.addLesson?{addLesson:opts.addLesson}:{}),...(opts.requestReview?{requestReview:opts.requestReview}:{})})
+  actions.set({
+    submitInput:(id,input,policy)=>service.submitInput(id,input,policy),
+    continueTask:(id,text,options,policy)=>service.continueTask(id,text,options,policy),
+    isReplied,
+    fallbackExecutor,
+    artifact:(id,artifactId)=>service.artifact(id,artifactId),
+    quotaExhausted:quotaDomain.quotaExhausted,
+    continuation,
+    provider,
+    requireInput,
+    canResume,
+    taskVersion,
+    selectAttachments,
+    combinedAttachments,
+    handoffAttachments,
+    taskView,
+    matterSync:executeDomain.matterSync,
+    start:executeDomain.start,
+    continuationAttachmentScope,
+    inputMode,
+    armIdleClose:lifecycleDomain.armIdleClose,
+    cancelIdleClose,
+    settleAfterDecision,
+    execute:executeDomain.execute,
+    hasUndeliveredInput,
+    holdInputs,
+    collect,
+    collectTurnArtifacts,
+    captureCodeChanges,
+    runtimeSnapshot,
+    held,
+    stageFinishedNotice,
+    publishFinishedNotices,
+    enqueueNotice,
+    untilAfterTurn:untilDomain.afterTurn,
+    untilStop:untilDomain.stop,
+  })
+  const wechatControl=makeWechatWorkbenchControl({
+    store,
+    ownerChatId:opts.ownerChatId,
+    actions:service,
+    hasExecutor:(id)=>{try{provider(id);return true}catch{return false}},
+    ...(opts.fetchIssue?{fetchIssue:opts.fetchIssue}:{}),
+    ...(opts.addLesson?{addLesson:opts.addLesson}:{}),
+    ...(opts.requestReview?{requestReview:opts.requestReview}:{}),
+  })
   return service
 }
 export type WorkbenchService=ReturnType<typeof makeWorkbenchService>
