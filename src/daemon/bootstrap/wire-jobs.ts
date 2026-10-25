@@ -17,7 +17,7 @@ import type { IlinkAdapter } from '../ilink-glue'
 import type { CareLedger } from '../companion/care-ledger'
 import type { makeJobsStore } from '../../core/scheduled-jobs-store'
 import type { makeActivityLog } from '../activity-log'
-import type { makeCalendar } from '../calendar/calendar'
+import type { Calendar } from '../../features/calendar'
 import { formatOverseerToday, OVERSEER_NEEDS_SHOWN, type OverseerToday } from '../../core/overseer-today'
 import { buildActivity, type ActivityItem, type ActivitySources } from '../../core/cc-activity'
 import { buildReviewText, reviewMissNote } from '../../core/workbench/review-request'
@@ -48,7 +48,7 @@ export interface WireJobsDeps {
   activityLog: ReturnType<typeof makeActivityLog>
   /** 「做过的事」的来源(与手机时间线同一组)。 */
   activity: { sources(): ActivitySources }
-  calendar: ReturnType<typeof makeCalendar>
+  calendar: Calendar
   overseerToday(): OverseerToday
   careLedger: CareLedger
   /** 定时那条只读轮(wireMain 之后才有;没就绪 ⇒ 抛)。 */

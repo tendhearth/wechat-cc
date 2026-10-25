@@ -16,6 +16,8 @@ import { fileURLToPath } from 'node:url'
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..')
 const DAEMON = join(ROOT, 'src', 'daemon')
+/** 功能目录(架构终态 A3 起):一个功能一个模块,同一套规矩。 */
+const FEATURES = join(ROOT, 'src', 'features')
 
 const KINDS = {
   setInterval: /\bsetInterval\(/g,                // 裸定时器 ⇒ ctx.interval
@@ -63,7 +65,7 @@ function codeOf(path: string): string {
 }
 function counts(): Record<string, Partial<Record<Kind, number>>> {
   const out: Record<string, Partial<Record<Kind, number>>> = {}
-  for (const abs of walk(DAEMON)) {
+  for (const abs of [...walk(DAEMON), ...walk(FEATURES)]) {
     const rel = relative(ROOT, abs).split('\\').join('/')
     if (rel === CONTAINER) continue
     const code = codeOf(abs)

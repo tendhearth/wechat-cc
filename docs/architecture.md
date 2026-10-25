@@ -59,7 +59,9 @@ src/mcp-servers ──HTTP──►  src/daemon(internal API)
 | 状态文件怎么写 | `src/lib/json-file.ts`(独立 tmp + fsync + rename;读不出来拒写) | `json-write` 守卫:新代码手写 tmp / 直写 JSON 就红 |
 | 记忆目录里哪些是源、哪些是生成物 | `src/lib/memory-artifacts.ts` | 源一变生成物过期(主人删改 ⇒ 藏,只是多了 ⇒ 贴标签);合成只吃源;主人的更正清单 `corrections.md` 一路传到底 |
 
-新加一样东西,先找它属于哪一行;找不到,说明要新开一张表,而不是在用的地方手写一份。「怎么加」:[执行者](maintainer/add-an-executor.md)、[微信命令](maintainer/add-a-command.md)、[数据库迁移](maintainer/migrations.md)、[页面](maintainer/add-a-page.md)。
+| 一个功能有什么(要什么、给什么、哪些路由 / 命令) | `src/features/<名>/index.ts` 的模块清单(样板:日历) | 路由表的 `module` 字段 + `internalApi.mount` 只认标给自己的;depcheck 管功能目录的边界 |
+
+新加一样东西,先找它属于哪一行;找不到,说明要新开一张表,而不是在用的地方手写一份。「怎么加」:[功能](maintainer/add-a-feature.md)、[执行者](maintainer/add-an-executor.md)、[微信命令](maintainer/add-a-command.md)、[数据库迁移](maintainer/migrations.md)、[页面](maintainer/add-a-page.md)。
 
 ## 规矩交给机器
 

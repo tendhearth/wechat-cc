@@ -274,8 +274,6 @@ export interface InternalApiDeps {
    * main.ts setOverseerToday;没设之前 GET /v1/overseer/today 503。只读,只在被问时算。
    */
   overseerToday?: () => import('../../core/overseer-today').OverseerToday
-  /** 读日历(对标 #8):今天 / 明天的安排说成一段话(与「日历」命令同一段);main.ts setCalendarAgenda。没设 ⇒ 503。 */
-  calendarAgenda?: (offset: 0 | 1) => Promise<string>
   /** CC 的信(2026-10-16,letters/runtime.ts)。main.ts setLetters;没设之前 /v1/letters* 503。 */
   letters?: import('../letters/runtime').LetterRuntime
   /**
@@ -634,7 +632,7 @@ export interface InternalApiDeps {
 export const LATE_KEYS = [
   'delegate', 'conversation', 'a2a', 'social', 'knowledge', 'pairing', 'memoryLlm', 'incidents',
   'llmHealth', 'llmRegistered', 'llmNames', 'llmEndpoints',
-  'cliEvents', 'cliPermissions', 'overseerToday', 'cliHooks', 'calendarAgenda', 'terminalSay',
+  'cliEvents', 'cliPermissions', 'overseerToday', 'cliHooks', 'terminalSay',
   'workbench', 'matters', 'companionConverse', 'petTurn', 'settingsLink', 'connections', 'phoneConnect',
   'memoryNightly', 'letters', 'cliUpgrade',
 ] as const satisfies readonly (keyof InternalApiDeps)[]
@@ -655,6 +653,8 @@ export interface InternalApi {
    * 以前是 24 个 setX 方法,加一样服务要改四处(这里、index.ts、lifecycle.ts、main.ts);现在只在 `LATE_KEYS` 加一个名字。
    * 没交进来之前,对应的路由照旧 503(xxx_not_wired)或空,行为不变。传 undefined 的键忽略,不会清掉已有的。
    */
+  /** 功能模块挂上自己的路由(表里标了 module 的那几条,架构终态 A3)。key 没标这个模块 / 重复 ⇒ 抛。 */
+  mount(module: import('@wechat-cc/protocol/routes').ModuleName, routes: RouteTable): void
   provide(patch: LateDeps): void
   /** 三轴 presence 的共用入口(随身 CC 手机页经此读,不自己拼输入)。null = journal 没接。 */
   getPresence(): Promise<import('../../core/companion-presence').Presence | null>

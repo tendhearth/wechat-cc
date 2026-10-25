@@ -61,6 +61,27 @@ module.exports = {
       to: { path: '^src/(cli|daemon|core|mcp-servers)/' },
     },
     {
+      name: 'features-only-from-above',
+      severity: 'error',
+      comment: '架构终态 A3:src/features/<名> 是一个功能一个目录。core / lib / mcp-servers 是它下面的层,不许反过来依赖功能。',
+      from: { path: '^src/(core|lib|mcp-servers)/', pathNot: '\\.test\\.ts$' },
+      to: { path: '^src/features/' },
+    },
+    {
+      name: 'features-through-their-index',
+      severity: 'error',
+      comment: '架构终态 A3:功能目录外面(daemon、别的功能)只经 src/features/<名>/index.ts 用它;目录里的文件是它自己的事。测试不受限。',
+      from: { pathNot: ['^src/features/([^/]+)/', '\\.test\\.ts$'] },
+      to: { path: '^src/features/[^/]+/(?!index\\.ts$)' },
+    },
+    {
+      name: 'features-not-into-each-other',
+      severity: 'error',
+      comment: '架构终态 A3:一个功能不许伸进另一个功能的内部文件;要用就经对方的 index.ts(并在模块清单里 needs 它)。',
+      from: { path: '^src/features/([^/]+)/', pathNot: '\\.test\\.ts$' },
+      to: { path: '^src/features/(?!$1/)[^/]+/(?!index\\.ts$)' },
+    },
+    {
       name: 'core-must-not-depend-on-runtime',
       severity: 'error',
       comment: 'src/core/ is platform-agnostic; runtime modules (cli/daemon/mcp) belong above it.',

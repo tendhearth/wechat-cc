@@ -70,11 +70,11 @@ export interface PanelSurface {
 }
 
 /**
- * 可整块关掉的功能模块(第三批 3b,设计稿 2026-10-22-daemon-module-design)。名字就是 daemon 子系统的名字
- * (`/v1/health.subsystems[].name`),daemon 的路由层按它判这条路由此刻能不能走。只放**有整块开关**的模块;
- * 已经有主人开关的东西(打猎、来访)不在这里(设计稿「一件事只有一个开关」)。
+ * 功能模块(第三批 3b;架构终态 A3 起也是「谁挂这条路由」)。名字就是 daemon 子系统的名字(`/v1/health.subsystems[].name`)。
+ * 表里标了 `module: X` 的路由:daemon 的路由层按 X 此刻的状态判能不能走(关着 ⇒ module_off、坏了 ⇒ module_degraded、
+ * 还没挂上 ⇒ module_starting);处理器由模块 X 自己挂(`internalApi.mount`),不在 internal-api 的总表里。
  */
-export const MODULE_NAMES = ['social'] as const
+export const MODULE_NAMES = ['social', 'calendar'] as const
 export type ModuleName = (typeof MODULE_NAMES)[number]
 
 export interface RouteSpec {
@@ -326,7 +326,7 @@ export const ROUTES: Readonly<Record<RouteKey, RouteSpec>> = {
   // 「今天」一眼看完(2026-10-14):同上一份登记处 + 一起做的标题与待批 —— 主人的私事,admin。
   'GET /v1/overseer/today': { desktop: { tier: 'admin', tokens: ['operator'] } },
   // 读日历(对标 #8):日程是主人的私事。
-  'GET /v1/calendar/agenda': { desktop: { tier: 'admin' } },
+  'GET /v1/calendar/agenda': { module: 'calendar', desktop: { tier: 'admin' } },
   // 接上 / 撤掉终端里的 Claude Code / Codex(2026-10-14):改主人 ~/.claude/settings.json 与 $CODEX_HOME/hooks.json,admin。
   // 桌面(原 lib.rs 注释):「CC 现在怎么样」与引导页的「接上」/「修复」,主人点了确认才调。
   'POST /v1/cli/hooks/install': { desktop: { tier: 'admin', tokens: ['operator'], tauri: true, devProxy: true } },

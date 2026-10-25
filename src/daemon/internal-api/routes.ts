@@ -53,7 +53,6 @@ import { fileRoutes } from './routes-files'
 import { federationRoutes } from './routes-federation'
 import { remindersRoutes } from './routes-reminders'
 import { lettersRoutes } from './routes-letters'
-import { calendarRoutes } from './routes-calendar'
 import { workbenchRoutes } from './routes-workbench'
 import { countForTag, ONLINE_STICKER_K } from '../stickers'
 import { makeCooldown } from '../sticker-source'
@@ -150,7 +149,6 @@ const onlineStickerCursor = new Map<string, number>()
     ...connectionsRoutes(deps),
     ...phoneRoutes(deps),
     ...lettersRoutes(deps),
-    ...calendarRoutes(deps),
     'GET /v1/health': (_q, _body, caller) => ({
       status: 200,
       body: {

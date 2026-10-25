@@ -35,6 +35,7 @@ import {
   LATE_KEYS,
   type InternalApi,
   type InternalApiDeps,
+  type RouteTable,
 } from './types'
 import { makeMaybePrefix, makeRoutes } from './routes'
 import { computePresence } from './routes-presence'
@@ -117,6 +118,11 @@ export function createInternalApi(deps: InternalApiDeps): InternalApi {
     getDelegate: () => deps.delegate ?? null,
     maybePrefix,
   })
+  /**
+   * 功能模块自己挂上来的路由(架构终态 A3):路由表里标了 `module: X` 的那几条,由模块 X 在它的 init 里 `mount`。
+   * 模块关着 / 坏了 ⇒ 下面的模块门回 module_off / module_degraded;开着但还没挂上(开机途中)⇒ module_starting。
+   */
+  const MOUNTED: RouteTable = {}
 
   async function readJsonBody(req: IncomingMessage,maxBytes?:number): Promise<unknown> {
     if(maxBytes!==undefined){
@@ -196,9 +202,9 @@ export function createInternalApi(deps: InternalApiDeps): InternalApi {
     const rawUrl = req.url ?? '/'
     const url = new URL(rawUrl, 'http://internal')
     const routeKey = `${method} ${url.pathname}`
-    const route = ROUTES[routeKey]
+    const route = ROUTES[routeKey] ?? MOUNTED[routeKey]
 
-    if (!route) {
+    if (!route && !moduleFor(routeKey)) {
       return send(res, 404, { error: 'not_found', method, url: rawUrl }, origin)
     }
 
@@ -237,6 +243,9 @@ export function createInternalApi(deps: InternalApiDeps): InternalApi {
         return send(res, 503, { error: code, module: mod, ...(st.state !== 'off' && st.error ? { detail: st.error } : {}) }, origin)
       }
     }
+
+    // 表里有、模块也没说关着 / 坏了,只是处理器还没挂上来:开机途中(模块还没 init 到)。
+    if (!route) return send(res, 503, { error: 'module_starting', module: mod }, origin)
 
     let body: unknown = null
     if (method === 'POST') {
@@ -447,6 +456,14 @@ export function createInternalApi(deps: InternalApiDeps): InternalApi {
 
     tokenFilePath() {
       return tokenPath
+    },
+
+    mount(module, table) {
+      for (const [key, handler] of Object.entries(table)) {
+        if (moduleFor(key) !== module) throw new Error(`internal-api: ${module} mounted '${key}' but the route table does not mark it module: '${module}'`)
+        if (ROUTES[key] || MOUNTED[key]) throw new Error(`internal-api: '${key}' is already registered`)
+        MOUNTED[key] = handler
+      }
     },
 
     provide(patch) {

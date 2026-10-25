@@ -8,6 +8,8 @@ import { writeJsonAtomic } from '../../lib/json-file'
 export interface InternalApiLifecycle extends Lifecycle {
   readonly baseUrl: string
   readonly tokenFilePath: string
+  /** 功能模块挂上自己的路由(表里标了 module 的那几条,架构终态 A3)。key 没标这个模块 / 重复 ⇒ 抛。 */
+  mount(module: import('@wechat-cc/protocol/routes').ModuleName, routes: import('./types').RouteTable): void
   provide(patch: LateDeps): void
   getPresence(): Promise<import('../../core/companion-presence').Presence | null>
   mintSessionToken(tier: import('../../core/user-tier').UserTier, sessionKey: string, opts?: import('./token-registry').MintTokenOpts): string
@@ -38,6 +40,7 @@ export async function registerInternalApi(deps: InternalApiDeps): Promise<Intern
     name: 'internal-api',
     baseUrl: `http://127.0.0.1:${port}`,
     tokenFilePath,
+    mount: (module, routes) => api.mount(module, routes),
     provide: (patch) => api.provide(patch),
     getPresence: () => api.getPresence(),
     mintSessionToken: (tier, sessionKey, opts) => api.mintSessionToken(tier, sessionKey, opts),
