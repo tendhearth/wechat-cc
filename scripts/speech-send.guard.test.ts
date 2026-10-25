@@ -40,7 +40,7 @@ const BASELINE: Record<string, [Tag, number]> = {
   'src/lib/send-reply.ts': ['primitive', 1],
   'src/daemon/bootstrap/wire-coordinator.ts': ['primitive', 1],
   'src/daemon/bootstrap/fallback-reply.ts': ['primitive', 1],
-  'src/core/conversation-coordinator.ts': ['primitive', 1],
+  'src/core/coordinator/types.ts': ['primitive', 1],   // 只是 deps 注释里提到 sendAssistantText( —— 搬家前在 conversation-coordinator.ts
   'src/daemon/inbound/reply-scope.ts': ['primitive', 1],
   // 信自己的一套投递(多页、断了续发、App 那条路)。能不能写 / 寄已经走 policy.say(第三批 3a),发送只在 say 的生产者里。
   'src/features/letters/runtime.ts': ['primitive', 2],
