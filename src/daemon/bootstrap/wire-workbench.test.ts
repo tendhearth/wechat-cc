@@ -16,7 +16,7 @@ import { openDb } from '../../lib/db'
 import { AsyncQueue } from '../../lib/async-queue'
 import type { AgentEvent, AgentRuntimeSnapshot, AgentSession, AgentWorkbenchRuntime, AgentProvider } from '../../ports/agent-provider'
 import { makeMatterStore } from '../../adapters/store/matters-store'
-import { makeReportOutboxStore } from '../reports/outbox'
+import { makeReportOutboxStore, makeReports } from '../../features/reports'
 import { makeJournal } from '../../adapters/store/journal-store'
 import type { Bootstrap } from './types'
 
@@ -249,7 +249,7 @@ it('the workbench codex comes from the boot registration bin(), not its own look
 })
 
 /**
- * 端到端接线(task-3,2026-09-23):matters + reportOutbox 一起传给
+ * 端到端接线(task-3,2026-09-23):matters + 回报功能造的 ReportSink 一起传给
  * wireWorkbench 时,「一件事」结算那一拍应该真的把回报写进
  * matter_report_outbox(v65),等 sweeper 取件——不只是单元测试里假的
  * ReportSink 被调用。claude/codex 在 wireWorkbench 里会被包成真正走
@@ -291,7 +291,7 @@ it('从微信交办的事,答复静下来那一拍真的把回报写进 matter_r
   } as unknown as Bootstrap
   try {
     const service = wireWorkbench({
-      db, stateDir, boot, matters, reportOutbox,
+      db, stateDir, boot, matters, reports: makeReports({ db, matters, log: () => {} }).sink,
       internalApi: { mintSessionToken: () => 'token', invalidateSession: () => {} },
       askUser: async () => 'allow',
       log: () => {},
@@ -316,7 +316,7 @@ it('从微信交办的事,答复静下来那一拍真的把回报写进 matter_r
 })
 
 /**
- * 终审后修复第二轮 Minor:`wire-workbench.ts` 里
+ * 终审后修复第二轮 Minor:回报功能(src/features/reports/index.ts 的 makeReports;以前在 `wire-workbench.ts`)里
  * `notificationsEnabled:id=>store.wechatNotifications.subscription(id)?.enabled??true`
  * 的 `?? true` 是一条载重默认值——它决定"没有订阅记录的任务算不算静
  * 音"。复审实测:改成 `?? false` 全套单测照样 28 条全绿(正常 createWechat
@@ -345,7 +345,7 @@ it('notificationsEnabled 默认值:没有订阅记录时按"没静音过"处理,
   } as unknown as Bootstrap
   try {
     const service = wireWorkbench({
-      db, stateDir, boot, matters, reportOutbox,
+      db, stateDir, boot, matters, reports: makeReports({ db, matters, log: () => {} }).sink,
       internalApi: { mintSessionToken: () => 'token', invalidateSession: () => {} },
       askUser: async () => 'allow',
       log: () => {},

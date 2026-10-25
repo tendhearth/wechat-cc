@@ -21,7 +21,6 @@ import { loadAllAccounts, type IlinkAccount } from './ilink-glue'
 import { makeMessagesStore } from '../lib/messages-store'
 import { makeJobsStore } from '../core/scheduled-jobs-store'
 import { makeMatterStore } from '../adapters/store/matters-store'
-import { makeReportOutboxStore } from './reports/outbox'
 import { makeChatPrefs } from './chat-prefs'
 import { makeOutboundTaps } from './outbound-taps'
 import { makePetSignals } from './pet-signals'
@@ -138,8 +137,6 @@ export async function openFoundation(opts: { stateDir: string }, undo: Array<() 
     jobsStore: makeJobsStore(stateDir),
     // 「一件事」登记处:一份 store,工作台、微信入站、app 对话、内部 API 都用它(2026-09-16)。
     matters: makeMatterStore(db),
-    // 回报投递队列(v65):每轮答复入队一次,sweeper 按到期时间取件送达。
-    reportOutbox: makeReportOutboxStore(db),
     chatPrefs,
     // pushTick claims/reads it; the inbound path resets the no-reply streak on every message.
     careLedger: makeCareLedger(stateDir),

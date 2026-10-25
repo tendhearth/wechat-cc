@@ -3,9 +3,9 @@ import {openDb, type Db} from '../../lib/db'
 import {makeMatterStore, type MatterStore} from '../../adapters/store/matters-store'
 import {makeReportOutboxStore, type ReportOutboxStore} from './outbox'
 import {runReportSweep, sendReportVia, HELD_OVERRIDE_MS} from './sweeper'
-import {makeSpeechPolicy} from '../speech/policy'
-import type {ProactiveOutbound} from '../companion/proactive-channel'
-import {RETRY_WINDOW_MS} from '../../features/reminders/sweeper'
+import {makeSpeechPolicy} from '../../daemon/speech/policy'
+import type {ProactiveOutbound} from '../../daemon/companion/proactive-channel'
+import {RETRY_WINDOW_MS} from '../../lib/delivery-backoff'
 
 /**
  * 投递器(brief Step 6,分路按评审修复轮 1/2/3 收紧):读 status='pending' AND

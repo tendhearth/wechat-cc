@@ -7,8 +7,8 @@ import type {Matter} from '../../adapters/store/matters-store'
  * 出生地本身——`matter.originMatterId`(那次交办它的聊天,本身是一行
  * kind='chat' 的 matter)是不是 null。桌面上亲手派的事两者皆 null,「没有
  * 出生地 ⇒ 不回报」不是另设的开关,就是这一条判据(设计见 v64 迁移注释)。
- * 投递(找 chat、发消息、退避重试)在 daemon 侧的 outbox/sweeper,见
- * src/daemon/reports/。
+ * 投递(找 chat、发消息、退避重试)在回报功能的 outbox/sweeper,见
+ * src/features/reports/。
  * 设计:.superpowers/sdd/2026-09-23-delegation-report/task-3-brief.md。
  */
 
@@ -93,8 +93,8 @@ export function shouldDisturb(input: {lastSeenAt: number | null; now: number}): 
 
 /**
  * service 侧的可选依赖,注入便于测试;不注入就整条功能不存在(降级路径,
- * 与 opts.matters/opts.log 同一套「可选依赖」约定)。真正的实现(daemon 侧
- * 的 makeReportSink,src/daemon/reports/report-sink.ts)在入队时调用
+ * 与 opts.matters/opts.log 同一套「可选依赖」约定)。真正的实现(回报功能
+ * 的 makeReportSink,src/features/reports/report-sink.ts)在入队时调用
  * renderReport,把结果写进 matter_report_outbox(v65)等投递器去发。
  */
 export interface ReportSink {
