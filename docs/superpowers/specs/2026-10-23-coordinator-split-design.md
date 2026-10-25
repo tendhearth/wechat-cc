@@ -1,5 +1,7 @@
 # 对话协调器按域拆开(设计稿)
 
+> **2026-10-25 被取代**:按函数拆文件会把纠缠原样搬进几个文件。改按[架构终态](../../architecture-end-state-2026-10-25.md)第 5 条和阶段 D 做(`admit` → `TurnRunner` → 派法 → `DeliveryPort`)。下面保留作历史。
+
 > 2026-10-23。架构复查之后最大的三个文件之一:`src/core/conversation-coordinator.ts` 1604 行,其中 `createConversationCoordinator`
 > 一个闭包约 1200 行。照 2026-09 工作台 service 拆分的做法(`src/core/workbench/service/` + `ctx.ts`,1965 → 179 行,十个 PR,
 > 每步行为不变)。排在核心链(#598–#601 + PR 6)之后动手,稿子先写。

@@ -15,6 +15,7 @@
 | 这个项目定了什么、为什么这样定、什么被否决过 | [全景导图](全景导图.md)(唯一事实源,HTML 是生成物) |
 | 现在往哪走、卡在哪、欠什么账 | [roadmap](roadmap.md) |
 | 代码是怎么分层的、每类东西的「唯一来源」在哪 | [architecture.md](architecture.md)(一页现状图) |
+| 架构往哪收、终态长什么样、按什么顺序做 | [architecture-end-state-2026-10-25.md](architecture-end-state-2026-10-25.md)(终态 + 升级计划) |
 
 ## 按主题:每个领域看哪一份
 
