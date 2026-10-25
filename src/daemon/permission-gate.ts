@@ -1,7 +1,7 @@
 /**
  * permission-gate.ts — 放行规则在 daemon 里的那一层(spec 2026-10-19-permission-rules-design):
  * 读规则文件(按 mtime 缓存,主人 / CLI 改了下一条请求就生效)、接便宜模型初审、写留痕、防一路放行。
- * 两处入口(终端会话中继、一起做)只认 `decide()`,它永不抛:任何意外 ⇒ ask(= 今天的老路)。
+ * 三处入口(终端会话中继、一起做、主人自己的对话 —— 后者经 makeChatOwnerRules)只认 `decide()`,它永不抛:任何意外 ⇒ ask(= 今天的老路)。
  *
  * 记不下来就不放:CC 替主人批了却找不到记录,是反目标里的第一条 —— 留痕失败的 allow / deny 一律改回 ask。
  * 初审调的是 registry.getCheapEval(),它自己按网络守护跳过不安全的候选;被拒 / 抛错 ⇒ ask,不重试。
@@ -17,6 +17,7 @@ import { authorize, type AuthSubject } from '../domain/authorize'
 import { TIER_PROFILES } from '../domain/user-tier'
 import type { PermissionDecisionsStore } from './permission-decisions-store'
 import type { CliPermissionRequest } from '../core/cli-permission-relay'
+import type { AllowHook, ChatOwnerRules, RuleAllowNotice } from '../core/permission-rules/chat'
 import { repoRootOf } from '../core/workbench/worktree-workspaces'
 
 export const RUNAWAY_WINDOW_MS = 10 * 60_000
@@ -24,7 +25,8 @@ export const RUNAWAY_MAX = 20
 const DAY_MS = 24 * 3600_000
 
 export interface PermissionGate {
-  decide(ask: AskSource): Promise<Decision>
+  /** beforeAllow:见 ChatOwnerRules.decide —— 规则说放、写留痕之前调;null ⇒ 回 ask、不留痕。 */
+  decide(ask: AskSource, beforeAllow?: AllowHook): Promise<Decision>
   status(): { enabled: boolean; review: 'off' | 'low_risk'; rules: number; errors: string[] }
 }
 
@@ -39,6 +41,7 @@ export interface PermissionGateDeps {
 
 const ASK: Decision = { verdict: 'ask', by: 'default', reason: '放行规则出错,交给你' }
 const OFF: Decision = { verdict: 'ask', by: 'default', reason: '放行规则关着' }
+const NOT_SHOWN: Decision = { verdict: 'ask', by: 'default', reason: '放行提醒送不到这一轮,交给你' }
 
 /** 最深的、存在的祖先 realpath 后接上剩下那截 —— 软链指到工作区外的路径照实算外面(终审 10-19)。 */
 function realish(p: string): string {
@@ -175,14 +178,22 @@ export function makePermissionGate(deps: PermissionGateDeps): PermissionGate {
   }
 
   return {
-    async decide(source) {
+    async decide(source, beforeAllow) {
       let reserved: string | null = null
       try {
         const { rules } = load()
         if (!rules.enabled) return OFF
+        // 已知隐患(留着,和终端共用):normalizePaths 先 resolve 掉 `..` 再展开软链,`link/..` 会按字面消掉而不是按软链目标。
+        // 对话里今天走不到(主人对话里带路径的工具按档位直接放,不到规则);以后对话规则要管带路径的工具,先改这里。
         const ask = normalizePaths(typeof source === 'function' ? await source() : source)
         const d = await decideCore(ask, rules, { review: review(), reviewBlocked: (scope) => { const b = reviewBlocked(scope); if (!b) reserved = scope; return b }, stateDir: stateDirReal })
-        if (!record(ask, d)) return ASK
+        // 规则说放 ⇒ 先让调用方确认这次真放得了(对话:提醒登记上了),再写留痕 —— 留痕只记最后真发生的事。
+        let undo: (() => void) | null = null
+        if (d.verdict === 'allow' && beforeAllow) {
+          try { undo = beforeAllow(d) } catch { undo = null }
+          if (!undo) return NOT_SHOWN
+        }
+        if (!record(ask, d)) { try { undo?.() } catch { /* 撤销提醒失败只少一行提醒,不改结论 */ } return ASK }
         if (d.by === 'review' && d.verdict === 'allow') reviewAllows.set(ask.scope, [...recent(ask.scope), now()])
         // 日志不写命令原文。
         if (d.by !== 'default') deps.log('PERMISSION_RULES', `${ask.surface}/${ask.provider} ${ask.tool} → ${d.verdict} by ${d.by}${d.ruleId ? ` (${d.ruleId})` : ''}`)
@@ -249,5 +260,25 @@ export function makeTerminalDecide(
     const reported = { name: req.tool_name, kind: 'subagent', reported: true } as const
     if (!authorize(TERMINAL_SUBJECT, reported).consultOwnerRules) return 'ask'
     return authorize(TERMINAL_SUBJECT, reported, { ownerRuling: await gate.decide(() => askOf(req)) }).verdict
+  }
+}
+
+/**
+ * 主人自己的对话走放行规则(2026-10-25 主人点头):三家逐工具过闸门的执行者(Claude / Gemini / OpenAI 兼容)经
+ * core/permission-rules/chat.ts 的 authorizeChatCall 用它。
+ *   isOwnerChat  判的那一刻读 access.json(带 5 秒缓存),只认 admins —— 原始档位,不看 --dangerously(那个开关会把每个对话
+ *                都当 admin 给 SDK 用,这里不能跟着它走);
+ *   decide       同一个 permission-gate(同一份规则文件、红线、留痕、出事就 ask);
+ *   noteAllowed  回复交付的那一轮(reply-delivery.noteRuleAllow):登记不上 ⇒ 不放。
+ */
+export function makeChatOwnerRules(deps: {
+  gate: Pick<PermissionGate, 'decide'>
+  isOwnerChat: (chatId: string) => boolean
+  replyDelivery: { noteRuleAllow(chatId: string, notice: RuleAllowNotice): (() => void) | null }
+}): ChatOwnerRules {
+  return {
+    isOwnerChat: (chatId) => !!chatId && deps.isOwnerChat(chatId),
+    decide: (ask, beforeAllow) => deps.gate.decide(ask, beforeAllow),
+    noteAllowed: (chatId, notice) => deps.replyDelivery.noteRuleAllow(chatId, notice),
   }
 }

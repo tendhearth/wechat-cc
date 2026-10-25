@@ -45,6 +45,8 @@ CC 要当「大总管」(主人 10-14):底下的 Claude Code / Codex / Cursor / 
 | 一起做(Claude SDK / Codex app-server / Cursor ACP / API 执行者) | `src/core/workbench/permissions.ts:44` `request()`,5 分钟到期按拒 | `request()` 里、登记之前 |
 | ~~对话侧 Claude / Gemini~~ | `src/core/permission-relay.ts:29`(Gemini 另有一份内联副本 `gemini-agent-provider.ts:251`) | **v1 不挂** |
 
+> 2026-10-25 更新:主人点头,对话侧挂上了 —— 只在主人自己(admins)的对话里、只认规则不初审、红线照旧问、规则放了一次就在那一轮的回复里说一行「按规则「…」放行了 …」;按项目 / 路径限定的规则在对话里只看工具真正的目标路径。见 [架构终态进度表「C2 补」](../../architecture-end-state-2026-10-25.md)。下面是 v1 当时的判断。
+
 **[我的判断] 对话侧 v1 不挂**:admin 在对话里只有三类会问主人(`user-tier.ts:85`:破坏性 shell、删记忆、自修复),破坏性 shell 本来就在固定红线里,剩下两类本就该问 —— 挂上去几乎没有收益;trusted / guest 按反目标又不能进表。借规则表放宽 admin 的 relay 集合是另一件事,另议。
 
 新增一个纯函数模块 `src/core/permission-rules/`:

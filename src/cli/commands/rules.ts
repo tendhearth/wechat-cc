@@ -24,7 +24,7 @@ const addCmd = defineCommand({
     command: { type: 'string', description: 'Regex on the raw command (≤200 chars)' },
     project: { type: 'string', description: 'Project path prefix (~ ok)' },
     paths: { type: 'string', description: 'Glob every touched path must match' },
-    surface: { type: 'string', description: 'terminal | workbench' },
+    surface: { type: 'string', description: 'terminal | workbench | chat' },
     provider: { type: 'string', description: 'claude | codex | cursor | …' },
     note: { type: 'string', description: 'Why (the cheap-model review reads these)' },
   },
@@ -35,7 +35,7 @@ const addCmd = defineCommand({
       then,
       ...(args.tool ? { tool: args.tool } : {}), ...(args.command ? { command: args.command } : {}),
       ...(args.project ? { project: args.project } : {}), ...(args.paths ? { paths: args.paths } : {}),
-      ...(args.surface ? { surface: args.surface as 'terminal' | 'workbench' } : {}), ...(args.provider ? { provider: args.provider } : {}),
+      ...(args.surface ? { surface: args.surface as 'terminal' | 'workbench' | 'chat' } : {}), ...(args.provider ? { provider: args.provider } : {}),
       ...(args.note ? { note: args.note } : {}),
     })
     if (!r.ok) return fail(r.error)

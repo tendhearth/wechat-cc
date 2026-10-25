@@ -6,7 +6,7 @@
  * 正则限 200 字、匹配只看命令前 2000 字 —— 主人手写的 `(a+)+$` 也拖不垮一次拍板。
  */
 import { homedir } from 'node:os'
-import { canonPath, canonText, isUnder, type Platform } from './paths'
+import { canonPath, canonText, isAbsolutePath, isUnder, type Platform } from './paths'
 import type { PermissionAsk, Rule, RuleWhen, RulesFile, Verdict } from '../../domain/permission-rules/types'
 
 export const RULES_FILE = 'permission-rules.json'
@@ -72,7 +72,7 @@ function parseRule(item: unknown, i: number): Rule | string {
     if (val === undefined) continue
     if (typeof val !== 'string' || !val) return `规则 ${id}:when.${k} 必须是非空字符串,已丢弃`
     if (val.length > PATTERN_MAX) return `规则 ${id}:when.${k} 超过 ${PATTERN_MAX} 字,已丢弃`
-    if (k === 'surface' && val !== 'terminal' && val !== 'workbench') return `规则 ${id}:when.surface 只能是 terminal / workbench,已丢弃`
+    if (k === 'surface' && val !== 'terminal' && val !== 'workbench' && val !== 'chat') return `规则 ${id}:when.surface 只能是 terminal / workbench / chat,已丢弃`
     if (k === 'command') {
       try { new RegExp(val) } catch (e) { return `规则 ${id}:command 正则编不过(${errMsg(e)}),已丢弃` }
       const unsafe = unsafePattern(val)
@@ -128,10 +128,24 @@ function globRe(glob: string): RegExp {
   return re
 }
 
+/**
+ * 对话里的路径事实:每一条都是绝对路径才算知道目标在哪(chatAsk 只放绝对路径进来,这里再守一道)。
+ * 空 / 有相对路径 ⇒ 不知道 ⇒ 按路径、按项目限定的规则都不命中(2026-10-25:绝不能因为路径空着 / 不明就命中)。
+ */
+function chatPathsKnown(ask: PermissionAsk, platform: Platform): ask is PermissionAsk & { paths: string[] } {
+  return !!ask.paths?.length && ask.paths.every(p => isAbsolutePath(p, platform))
+}
+
 function matches(when: RuleWhen, ask: PermissionAsk, platform: Platform): boolean {
   if (when.surface && when.surface !== ask.surface) return false
   if (when.provider && when.provider !== ask.provider) return false
-  if (when.project && (!ask.project || !isUnder(ask.project, expandHome(when.project), platform))) return false
+  if (when.project) {
+    const root = expandHome(when.project)
+    if (ask.surface === 'chat') {
+      // 对话没有项目根(cwd 是会话的目录,不是工具要碰的地方):按项目限定 = 工具真正的目标路径每一条都在这个目录里。
+      if (!chatPathsKnown(ask, platform) || !ask.paths.every(p => isUnder(p, root, platform))) return false
+    } else if (!ask.project || !isUnder(ask.project, root, platform)) return false
+  }
   if (when.tool) {
     if (when.tool.endsWith('*')) { if (!ask.tool.startsWith(when.tool.slice(0, -1))) return false }
     else if (when.tool !== ask.tool) return false
@@ -142,6 +156,7 @@ function matches(when: RuleWhen, ask: PermissionAsk, platform: Platform): boolea
   }
   if (when.paths) {
     if (!ask.paths?.length) return false
+    if (ask.surface === 'chat' && !chatPathsKnown(ask, platform)) return false
     const glob = canonText(expandHome(when.paths), platform)
     const re = globRe(glob)
     // win32 上没写盘符的 glob(`/Work/…`)对任何盘都算:比对前把路径的盘符去掉。

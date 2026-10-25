@@ -810,3 +810,25 @@ it('v84 creates speech_log (CC 主动开口的外发账) with origin / outcome c
     expect((db.query("PRAGMA index_list('speech_log')").all() as {name:string}[]).map(i=>i.name)).toContain('speech_log_chat_at')
   }finally{db.close()}
 })
+
+describe('v85 — permission_decisions 的 surface 放开 chat(重建表)', () => {
+  it('从真 v84 升上来:每一行原样留着、chat 能写进去、索引还在', () => {
+    const db = migratedTo(84)
+    const ins = db.query('INSERT INTO permission_decisions(id,at,surface,provider,project,tool,summary,verdict,by_,rule_id,reason,scope) VALUES(?,?,?,?,?,?,?,?,?,?,?,?)')
+    const rows = [
+      [7, 1_700_000_000_000, 'terminal', 'claude', '/w/proj', 'Bash', 'git status', 'allow', 'rule', 's1', '看状态不用问', 'sess-1'],
+      [8, 1_700_000_000_500, 'workbench', 'codex', null, 'fileChange', 'src/a.ts', 'allow', 'review', null, '初审:低风险', 'task-9'],
+      [42, 1_700_000_001_000, 'terminal', 'claude', '/w/other', 'Bash', 'rm -rf x', 'deny', 'rule', 'no-rm', '规则拒绝', 'sess-2'],
+    ] as const
+    for (const r of rows) ins.run(...r)
+    expect(() => ins.run(43, 1, 'chat', 'claude', null, 't', 's', 'allow', 'rule', 'r', 'x', 'chat:a')).toThrow()
+    runMigrations(db)
+    const after = db.query('SELECT id,at,surface,provider,project,tool,summary,verdict,by_,rule_id,reason,scope FROM permission_decisions ORDER BY id').all() as Record<string, unknown>[]
+    expect(after.map(r => Object.values(r))).toEqual(rows.map(r => [...r]))
+    ins.run(43, 1_700_000_002_000, 'chat', 'gemini', null, 'mcp__wechat__memory_delete', 'memory_delete', 'allow', 'rule', 'mem', '删记忆不用问', 'chat:owner')
+    expect(db.query("SELECT COUNT(*) AS n FROM permission_decisions WHERE surface='chat'").get()).toEqual({ n: 1 })
+    expect(() => ins.run(44, 1, 'phone', 'claude', null, 't', 's', 'allow', 'rule', 'r', 'x', 'p')).toThrow()
+    expect(db.query("SELECT name FROM sqlite_master WHERE type='index' AND name='permission_decisions_at' AND tbl_name='permission_decisions'").get()).toEqual({ name: 'permission_decisions_at' })
+    expect(db.query("SELECT name FROM sqlite_master WHERE name LIKE 'permission_decisions_v85%'").all()).toEqual([])
+  })
+})

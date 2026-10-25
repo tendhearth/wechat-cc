@@ -4,6 +4,7 @@ import { lookup, type PermissionMode } from '../domain/capability-matrix'
 import { isReplyToolName } from '../ports/agent-provider'
 import { classifyToolUse, TIER_PROFILES, type UserTier } from '../domain/user-tier'
 import { authorize } from '../domain/authorize'
+import { authorizeChatCall, type ChatOwnerRules } from './permission-rules/chat'
 
 export interface PermissionRelayDeps {
   askUser: (chatId: string, prompt: string, hash: string, timeoutMs: number) => Promise<'allow' | 'deny' | 'timeout' | 'undelivered'>
@@ -30,6 +31,11 @@ export interface PermissionRelayDeps {
   mode: () => Mode['kind']
   provider: ProviderId
   permissionMode: PermissionMode
+  /**
+   * 主人自己的对话走放行规则(2026-10-25,core/permission-rules/chat.ts)。现取:规则那一层(终端会话功能里的
+   * permission-gate)比这里晚接线。不给 / 回 null ⇒ 对话不看规则,和以前一样。
+   */
+  ownerRules?: () => ChatOwnerRules | null
 }
 
 const DEFAULT_TIMEOUT_MS = 10 * 60_000
@@ -49,8 +55,8 @@ export function makeCanUseTool(deps: PermissionRelayDeps): CanUseTool {
     // 转发);/chat 早就接受了同一个代价。
     // 回复交付 daemon 模式(spec 2026-10-03 §4.9):reply 族不注册了,扇出里要拒的只剩显式的 `message`
     // (往别处发)—— 同一个理由:协调器看不到那句话,前缀 / 收口都管不到它。
-    // 判定只在 domain/authorize.ts(架构终态 C2):扇出拒 reply → 档位 × 类别 × 能力表。面是 chat ⇒ 放行规则不看
-    // (今天只有终端会话和一起做走放行规则;对话要不要也走,是看得见的变化,等主人)。
+    // 判定只在 domain/authorize.ts(架构终态 C2):扇出拒 reply → 档位 × 类别 × 能力表 → 主人自己的对话里落到「问」的,
+    // 先过放行规则(2026-10-25 主人点头,core/permission-rules/chat.ts;访客 / 信任的对话不看)。
     const mode = deps.mode()
     const fanOut = mode === 'chatroom' || mode === 'parallel'
     const replyFamily = isReplyToolName(toolName) || toolName === 'mcp__wechat__message'
@@ -70,12 +76,22 @@ export function makeCanUseTool(deps: PermissionRelayDeps): CanUseTool {
     const tp = TIER_PROFILES[tier]
     const kind = classifyToolUse(toolName, input as Record<string, unknown>)
     const base = lookup(deps.mode(), deps.provider, deps.permissionMode)
-    const decision = authorize(
-      { surface: 'chat', tier: tp, permissionMode: deps.permissionMode, executor: 'claude', fanOut },
+    const auth = await authorizeChatCall(
+      { tier: tp, permissionMode: deps.permissionMode, executor: 'claude', fanOut },
       { name: toolName, kind, askUser: base.askUser, replyFamily },
-    ).verdict
+      { chatId: deps.initiatingChatId() ?? '', provider: 'claude', tool: toolName, input: input as Record<string, unknown> },
+      deps.ownerRules?.() ?? null,
+    )
+    const decision = auth.verdict
 
-    if (decision === 'allow') return { behavior: 'allow' } satisfies PermissionResult
+    if (decision === 'allow') {
+      if (auth.reason === 'owner_rules') deps.log('PERMISSION', `allow-by-owner-rule: tool=${toolName} kind=${kind}`)
+      return { behavior: 'allow' } satisfies PermissionResult
+    }
+    if (decision === 'deny' && auth.denyMessage) {
+      deps.log('PERMISSION', `deny-by-owner-rule: tool=${toolName} kind=${kind}`)
+      return { behavior: 'deny', message: auth.denyMessage } satisfies PermissionResult
+    }
     if (decision === 'deny') {
       deps.log('PERMISSION', `deny: tool=${toolName} kind=${kind} tier=${tier}`)
       return {

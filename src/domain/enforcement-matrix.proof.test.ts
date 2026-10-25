@@ -18,7 +18,7 @@ const INVOKERS: Record<string, Invoke> = {
     const r = await gate(t.wechat ? `mcp__wechat__${t.name}` : t.name, t.input, { signal: new AbortController().signal } as never)
     return r.behavior === 'allow'
   },
-  openai: async (tier, t) => gateTool({ toolName: t.name, ...(t.wechat ? { mcpServer: 'wechat' } : {}), input: t.input, tierProfile: TIER_PROFILES[tier], permissionMode: 'strict' }) === 'allow',
+  openai: async (tier, t) => (await gateTool({ toolName: t.name, ...(t.wechat ? { mcpServer: 'wechat' } : {}), input: t.input, tierProfile: TIER_PROFILES[tier], permissionMode: 'strict', chatId: 'c' })).decision === 'allow',
   gemini: async (tier, t) => {
     if (!t.wechat) return false   // Gemini 只有 wechat MCP 工具,没有内置 shell(gate 把裸名当 wechat 工具)
     const gate = makeGeminiToolGate({ askUser: deniedAsk, adminFor: () => 'owner', modeFor: () => 'solo', lookupBase: () => ({ askUser: 'per-tool' }) as never })({ chatId: 'c', tierProfile: TIER_PROFILES[tier], permissionMode: 'strict' } as never)

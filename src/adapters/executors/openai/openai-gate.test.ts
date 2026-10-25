@@ -10,45 +10,47 @@ const admin = TIER_PROFILES.admin
 const trusted = TIER_PROFILES.trusted
 
 describe('gateTool', () => {
-  it('denies a deny-classified tool in strict mode', () => {
+  it('denies a deny-classified tool in strict mode', async () => {
     // guest.deny includes fs_write; Write classifies to fs_write.
-    expect(
-      gateTool({ toolName: 'Write', input: {}, tierProfile: guest, permissionMode: 'strict' }),
-    ).toBe('deny')
+    await expect(
+      gateTool({ toolName: 'Write', input: {}, tierProfile: guest, permissionMode: 'strict', chatId: 'c' }),
+    ).resolves.toEqual({ decision: 'deny' })
   })
 
-  it('allows an allow-classified MCP tool (reply) for guest', () => {
+  it('allows an allow-classified MCP tool (reply) for guest', async () => {
     // guest.allow includes reply; mcp__wechat__reply classifies to reply.
-    expect(
-      gateTool({ toolName: 'reply', mcpServer: 'wechat', input: {}, tierProfile: guest, permissionMode: 'strict' }),
-    ).toBe('allow')
+    await expect(
+      gateTool({ toolName: 'reply', mcpServer: 'wechat', input: {}, tierProfile: guest, permissionMode: 'strict', chatId: 'c' }),
+    ).resolves.toEqual({ decision: 'allow' })
   })
 
-  it('collapses a relay-classified tool to deny in strict mode (v1)', () => {
+  it('collapses a relay-classified tool to deny in strict mode (v1)', async () => {
     // admin.relay includes shell_destructive; a destructive Bash command
     // classifies to shell_destructive (classifyToolUse's isDestructiveBash).
-    expect(
+    await expect(
       gateTool({
         toolName: 'Bash',
         input: { command: 'rm -rf ./__openai_gate_test_sentinel__' }, // 只做分类;字面量也不写真破坏性命令
         tierProfile: admin,
         permissionMode: 'strict',
+        chatId: 'c',
       }),
-    ).toBe('deny')
+    ).resolves.toEqual({ decision: 'deny' })
   })
 
-  it('allows everything under dangerously', () => {
-    expect(
+  it('allows everything under dangerously', async () => {
+    await expect(
       gateTool({
         toolName: 'Bash',
         input: { command: 'rm -rf ./__openai_gate_test_sentinel__' }, // 只做分类;字面量也不写真破坏性命令
         tierProfile: admin,
         permissionMode: 'dangerously',
+        chatId: 'c',
       }),
-    ).toBe('allow')
+    ).resolves.toEqual({ decision: 'allow' })
   })
 
-  it('does NOT treat a same-named tool from a different MCP server as the wechat reply (tier-escalation regression)', () => {
+  it('does NOT treat a same-named tool from a different MCP server as the wechat reply (tier-escalation regression)', async () => {
     // A plugin (or any non-wechat server) could register a tool literally
     // named `reply`. Before this fix, gateTool always synthesized
     // `mcp__wechat__reply` for ANY mcp tool, so `evilplugin`'s `reply` would
@@ -62,29 +64,30 @@ describe('gateTool', () => {
     // must be 'deny', not the 'allow' a wechat `reply` would get.
     expect(guest.allow.has('plugin_tool')).toBe(false)
     expect(guest.deny.has('plugin_tool')).toBe(true)
-    expect(
+    await expect(
       gateTool({
         toolName: 'reply',
         mcpServer: 'evilplugin',
         input: {},
         tierProfile: guest,
         permissionMode: 'strict',
+        chatId: 'c',
       }),
-    ).toBe('deny')
+    ).resolves.toEqual({ decision: 'deny' })
   })
 
-  it('DENIES a plugin tool (wxvault) for a TRUSTED user, ALLOWS it for admin (fail-closed plugin gating)', () => {
+  it('DENIES a plugin tool (wxvault) for a TRUSTED user, ALLOWS it for admin (fail-closed plugin gating)', async () => {
     // wxvault reads the owner's private WeChat history. A trusted non-admin
     // must NOT reach it: mcp__wxvault__get_messages → plugin_tool → trusted.deny.
     // Only the owner (admin) can call it.
-    expect(
-      gateTool({ toolName: 'get_messages', mcpServer: 'wxvault', input: {}, tierProfile: trusted, permissionMode: 'strict' }),
-    ).toBe('deny')
-    expect(
-      gateTool({ toolName: 'search_messages', mcpServer: 'wxvault', input: {}, tierProfile: trusted, permissionMode: 'strict' }),
-    ).toBe('deny')
-    expect(
-      gateTool({ toolName: 'get_messages', mcpServer: 'wxvault', input: {}, tierProfile: admin, permissionMode: 'strict' }),
-    ).toBe('allow')
+    await expect(
+      gateTool({ toolName: 'get_messages', mcpServer: 'wxvault', input: {}, tierProfile: trusted, permissionMode: 'strict', chatId: 'c' }),
+    ).resolves.toEqual({ decision: 'deny' })
+    await expect(
+      gateTool({ toolName: 'search_messages', mcpServer: 'wxvault', input: {}, tierProfile: trusted, permissionMode: 'strict', chatId: 'c' }),
+    ).resolves.toEqual({ decision: 'deny' })
+    await expect(
+      gateTool({ toolName: 'get_messages', mcpServer: 'wxvault', input: {}, tierProfile: admin, permissionMode: 'strict', chatId: 'c' }),
+    ).resolves.toEqual({ decision: 'allow' })
   })
 })

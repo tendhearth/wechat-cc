@@ -119,7 +119,8 @@ export function wireTerminal(d: WireTerminalDeps) {
   // 终端会话的权限 → 微信 y/n(同 spec §6.3)。复用 ilink.askUser,所以微信「y 码」、
   // 桌宠权限卡都能拍板 —— 一个权限,几个呈现面。主人在场(3 分钟内敲过字)就不问。
   // 放行规则(spec 2026-10-19-permission-rules-design):终端会话与一起做在问主人之前先问它。
-  // 规则文件默认没有 / 关着 ⇒ 每条都是 ask,两处入口照旧。初审走 registry 的 cheapEval(自带网络守护)。
+  // 规则文件默认没有 / 关着 ⇒ 每条都是 ask,各入口照旧。初审走 registry 的 cheapEval(自带网络守护)。
+  // 主人自己的对话(2026-10-25)也用这同一个 permissionGate:bootstrap 经 daemon-modules 的 chatOwnerRules 现取它。
   const permissionDecisions = makePermissionDecisionsStore(db)
   // 放行 v2 G1:主人 10-23 拍板三层生效 ⇒ 全空默认值的规则文件开机时装一次起步规则(装过 / 改过就不动)
   if (ensureStarterRules(stateDir, log)) {

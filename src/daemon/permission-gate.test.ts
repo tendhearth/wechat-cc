@@ -216,3 +216,28 @@ describe('setRulesEnabled(微信「放行规则关掉 / 打开」)', () => {
     expect(readFileSync(join(d, RULES_FILE), 'utf8')).toBe(broken)
   })
 })
+
+describe('beforeAllow:留痕只记最后真发生的事(对话的放行提醒)', () => {
+  const rules = { version: 1, enabled: true, rules: [{ id: 'ls', when: { command: '^ls$' }, then: 'allow' }] }
+  it('beforeAllow 回 null(提醒登记不上)⇒ 回 ask,不留「放了」的痕', async () => {
+    const { gate, store } = setup(rules)
+    expect(await gate.decide(ask({ surface: 'chat' }), () => null)).toMatchObject({ verdict: 'ask', by: 'default' })
+    expect(store.since(0)).toEqual([])
+  })
+  it('beforeAllow 成功 ⇒ 照写留痕;留痕写不进 ⇒ 撤回提醒、回 ask', async () => {
+    const { gate, store } = setup(rules)
+    const undo = vi.fn()
+    expect(await gate.decide(ask({ surface: 'chat' }), () => undo)).toMatchObject({ verdict: 'allow', by: 'rule' })
+    expect(store.since(0)).toEqual([expect.objectContaining({ surface: 'chat', verdict: 'allow' })])
+    expect(undo).not.toHaveBeenCalled()
+    store.record = () => { throw new Error('disk full') }
+    expect(await gate.decide(ask({ surface: 'chat' }), () => undo)).toMatchObject({ verdict: 'ask' })
+    expect(undo).toHaveBeenCalledTimes(1)
+  })
+  it('只在规则说放时才调(拒 / 问不调)', async () => {
+    const { gate } = setup({ version: 1, enabled: true, rules: [{ id: 'no', when: { command: '^ls$' }, then: 'deny' }] })
+    const hook = vi.fn(() => () => {})
+    expect((await gate.decide(ask({ surface: 'chat' }), hook)).verdict).toBe('deny')
+    expect(hook).not.toHaveBeenCalled()
+  })
+})
