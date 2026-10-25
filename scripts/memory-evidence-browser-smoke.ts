@@ -32,8 +32,8 @@ async function main(){
  const stateDir=join(temporary,'state'),root=join(stateDir,'memory','owner'),projectsRoot=join(temporary,'projects')
  mkdirSync(root,{recursive:true});mkdirSync(projectsRoot)
  process.env.WECHAT_STATE_DIR=stateDir;process.env.WECHAT_DISABLE_LOG_FILE='1'
- const [{openDb},{makeObservationsStore},{makeMilestonesStore},{makeLifeStoresReader},{createInternalApi},memory,synthesis,derived,{makeMemoryFS}]=await Promise.all([
- import('../src/lib/db'),import('../src/daemon/observations/store'),import('../src/daemon/milestones/store'),import('../src/daemon/life-stores'),import('../src/daemon/internal-api'),import('../src/lib/memory'),import('../src/lib/memory-synthesis'),import('../src/lib/memory-derived-state'),import('../src/daemon/memory/fs-api')])
+ const [{openDb},{makeObservationsStore},{makeMilestonesStore},{makeLifeStoresReader},{createInternalApi},memory,synthesis,derived,{makeMemoryFS},{memoryRoutes},{memoryReviewRoutes}]=await Promise.all([
+ import('../src/lib/db'),import('../src/daemon/observations/store'),import('../src/daemon/milestones/store'),import('../src/daemon/life-stores'),import('../src/daemon/internal-api'),import('../src/lib/memory'),import('../src/lib/memory-synthesis'),import('../src/lib/memory-derived-state'),import('../src/adapters/store/memory-fs'),import('../src/features/memory/routes'),import('../src/features/memory/review-routes')])
  const db=openDb({path:join(stateDir,'memory.db')}),observations=makeObservationsStore(db,'owner'),milestones=makeMilestonesStore(db,'owner'),lifeStores=makeLifeStoresReader(db,stateDir)
  const initial='你平时喜欢晚上集中工作。',correction='你现在喜欢早晨集中工作，晚上留给休息。'
  writeFileSync(join(root,'rhythm.md'),initial);writeFileSync(join(root,'projects.md'),'你正在整理 CC 工作台。');writeFileSync(join(root,'reading.md'),'你喜欢简洁的说明和可核对的来源。');writeFileSync(join(root,'_overview.md'),'过时的总结：晚上才工作。')
@@ -45,9 +45,12 @@ async function main(){
    return JSON.stringify({insight:'你希望做事时能专心，也给生活留一些空白。',summary:'这里的理解来自你的记忆与观察，可以随时核对并改正。',tags:['重视专注'],traits:[{title:'作息节奏',body:readFileSync(join(root,'rhythm.md'),'utf8'),sourceRefs:note?[note.id]:[]}],preferences:obs?[{title:'最近的观察',body:'最近记录过你的工作时间。',sourceRefs:[obs.id]}]:[],rememberedEvents:[]})
  }}
  await synthesis.synthesizeProfile(generation)
- const api=createInternalApi({stateDir,daemonPid:process.pid,db,resolveAdminChatId:()=> 'owner',memoryProjectsRoot:projectsRoot,memoryLlm:{
+ const memoryLlm={
   synthesize:async()=>synthesis.synthesizeOverview({...generation,sdkEval:async()=>readFileSync(join(root,'rhythm.md'),'utf8')}),generateProfile:async()=>synthesis.synthesizeProfile(generation),generatePortrait:async()=>({ok:false,error:'fixture_no_portrait'}),
- }})
+ }
+ const api=createInternalApi({stateDir,daemonPid:process.pid,db,resolveAdminChatId:()=> 'owner'})
+ // 记忆的路由归记忆功能(src/features/memory,路由表标 module: 'memory'),daemon 里由 memory 模块挂;这里照样挂上去。
+ api.mount('memory',{...memoryRoutes({stateDir,memoryLlm:()=>memoryLlm,memoryNightly:()=>null,resolveAdminChatId:()=> 'owner'}),...memoryReviewRoutes({stateDir,db,projectsRoot,resolveAdminChatId:()=> 'owner'})})
  const {chromium}=createRequire(join(repo,'apps/desktop/package.json'))('@playwright/test')
  let host:ReturnType<typeof Bun.serve>|undefined,browser:any,page:any,stage='start'
  const pageErrors:string[]=[],requests:Array<{method:string,path:string,status:number}>=[],layouts:Array<Record<string,unknown>>=[]

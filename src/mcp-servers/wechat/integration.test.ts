@@ -7,7 +7,7 @@ import { Client } from '@modelcontextprotocol/sdk/client/index.js'
 import { StdioClientTransport } from '@modelcontextprotocol/sdk/client/stdio.js'
 import { createInternalApi, type InternalApi } from '../../daemon/internal-api'
 import { voiceRoutes } from '../../features/voice/routes'
-import { makeMemoryFS } from '../../daemon/memory/fs-api'
+import { makeMemoryFS, type MemoryFS } from '../../adapters/store/memory-fs'
 import { makeEventsStore } from '../../daemon/events/store'
 import { openTestDb, type Db } from '../../lib/db'
 import { readFileSync } from 'node:fs'
@@ -15,6 +15,13 @@ import { wechatStdioMcpSpec } from '../../daemon/bootstrap/mcp-specs'
 import { setupAgyGlobalMcp, AGY_WECHAT_MCP_NAMESPACE_ID } from '../../daemon/bootstrap/agy-mcp-config'
 import { acpMcpServersFor } from '../../adapters/executors/acp/acp-cursor-chat'
 import { socialRoutes } from '../../features/social/routes'
+import { memoryFsRoutes } from '../../features/memory/fs-routes'
+
+// 记忆文件的四条路由归记忆功能(src/features/memory,路由表标 module: 'memory'),daemon 里由 memory 模块挂;测试照样挂上去。
+function withMemoryRoutes(api: InternalApi, memory: MemoryFS, db?: Db): InternalApi {
+  api.mount('memory', memoryFsRoutes({ memory, ...(db ? { db } : {}) }))
+  return api
+}
 
 /**
  * P1.A end-to-end: this test wires up the complete provider→stdio MCP→
@@ -66,7 +73,7 @@ describe('wechat-mcp stdio integration', () => {
 
   async function bootChain(opts: { admin?: boolean } = {}): Promise<{ client: Client }> {
     const memory = makeMemoryFS({ rootDir: join(stateDir, 'memory') })
-    api = createInternalApi({ stateDir, daemonPid: 7777, memory })
+    api = withMemoryRoutes(createInternalApi({ stateDir, daemonPid: 7777 }), memory)
     const { port, tokenFilePath } = await api.start()
 
     const baseEnv = { ...process.env as Record<string, string> }
@@ -215,7 +222,7 @@ describe('wechat-mcp stdio integration', () => {
   async function bootChainWithDb(): Promise<{ client: Client; db: Db }> {
     const memory = makeMemoryFS({ rootDir: join(stateDir, 'memory') })
     const db = openTestDb()
-    api = createInternalApi({ stateDir, daemonPid: 7777, memory, db })
+    api = withMemoryRoutes(createInternalApi({ stateDir, daemonPid: 7777, db }), memory, db)
     const { port, tokenFilePath } = await api.start()
     const transport = new StdioClientTransport({
       command: RUNTIME,
@@ -284,7 +291,7 @@ describe('wechat-mcp stdio integration', () => {
       remove: async () => {},
     }
     const setUserName = async (chatId: string, name: string) => { setUserNameCalls.push([chatId, name]) }
-    api = createInternalApi({ stateDir, daemonPid: 7777, memory, projects, setUserName })
+    api = withMemoryRoutes(createInternalApi({ stateDir, daemonPid: 7777, projects, setUserName }), memory)
     const { port, tokenFilePath } = await api.start()
     const transport = new StdioClientTransport({
       command: RUNTIME,
@@ -364,7 +371,7 @@ describe('wechat-mcp stdio integration', () => {
       }
       return null
     }
-    api = createInternalApi({ stateDir, daemonPid: 7777, memory, sharePage, resurfacePage })
+    api = withMemoryRoutes(createInternalApi({ stateDir, daemonPid: 7777, sharePage, resurfacePage }), memory)
     const { port, tokenFilePath } = await api.start()
     const transport = new StdioClientTransport({
       command: RUNTIME, args: [WECHAT_MCP_MAIN],
@@ -434,7 +441,7 @@ describe('wechat-mcp stdio integration', () => {
       },
       setImportLocal: async (enabled: boolean) => ({ ok: true as const, import_local_history: enabled }),
     }
-    api = createInternalApi({ stateDir, daemonPid: 7777, memory, companion })
+    api = withMemoryRoutes(createInternalApi({ stateDir, daemonPid: 7777, companion }), memory)
     const { port, tokenFilePath } = await api.start()
     const transport = new StdioClientTransport({
       command: RUNTIME, args: [WECHAT_MCP_MAIN],
@@ -499,7 +506,7 @@ describe('wechat-mcp stdio integration', () => {
         : { configured: false as const },
       synthesizeSpeech: async (): Promise<{ audio: Buffer; mime: string }> => { throw new Error('unused_in_voice_config_test') },
     }
-    api = createInternalApi({ stateDir, daemonPid: 7777, memory })
+    api = withMemoryRoutes(createInternalApi({ stateDir, daemonPid: 7777 }), memory)
     api.mount('voice', voiceRoutes({ voice }))
     const { port, tokenFilePath } = await api.start()
     const transport = new StdioClientTransport({

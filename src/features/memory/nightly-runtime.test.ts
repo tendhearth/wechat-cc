@@ -4,8 +4,8 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { makeMemoryNightlyRuntime, deliverPendingNotice, type NoticeDeps } from './nightly-runtime'
 import { readNightlyState, writeNightlyState, type NightlyRunDeps } from './nightly'
-import { makeSpeechPolicy, type SpeechPolicy } from '../speech/policy'
-import type { ProactiveOutbound } from '../companion/proactive-channel'
+import { makeSpeechPolicy, type SpeechPolicy } from '../../daemon/speech/policy'
+import type { ProactiveOutbound } from '../../daemon/companion/proactive-channel'
 
 const OWNER = 'owner@im.wechat'
 let stateDir: string, root: string, now: number, sent: string[]

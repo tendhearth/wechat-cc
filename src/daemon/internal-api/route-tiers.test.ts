@@ -1,5 +1,6 @@
 import { describe, it, expect } from 'vitest'
-import { tierMeets, minTierFor, ROUTE_MIN_TIER } from './route-tiers'
+import { tierMeets, minTierFor, moduleFor, ROUTE_MIN_TIER } from './route-tiers'
+import { memoryReviewRoutes } from '../../features/memory/review-routes'
 import { makeRoutes } from './routes'
 import type { InternalApiDeps } from './types'
 
@@ -103,10 +104,11 @@ describe('route-tiers', () => {
     expect(minTierFor('POST /v1/memory/profile/generate')).toBe('trusted')
   })
 
-  it('reviewed memory sources require trusted and are registered in the actual dispatcher', () => {
-    const routes = makeRoutes({ deps: { stateDir: '/tmp', daemonPid: 1 }, getDelegate: () => null, maybePrefix: (_c, t) => t })
+  it('reviewed memory sources require trusted and are mounted by the memory module (src/features/memory)', () => {
+    const routes = memoryReviewRoutes({ stateDir: '/tmp' })
     for (const route of ['GET /v1/memory/source', 'POST /v1/memory/source/review']) {
       expect(minTierFor(route)).toBe('trusted')
+      expect(moduleFor(route)).toBe('memory')
       expect(routes[route]).toBeTypeOf('function')
     }
   })

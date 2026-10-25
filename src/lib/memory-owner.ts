@@ -3,7 +3,7 @@
  *
  * 主人在生成的记忆上**加的 / 改写成的**那一行存在这里:优先级最高、合成永远不改写它。
  *  - 唯一的写者是 writeOwnerAssertions(编辑接口调)。CC 的 MCP、桌面整份覆盖、nightly、gardener、合成都不写它
- *    (fs-api 与 lib/memory 的 writeMemoryFile 拒写;scripts/memory-owner-writers.guard.test.ts 守)。
+ *    (adapters/store/memory-fs 与 lib/memory 的 writeMemoryFile 拒写;scripts/memory-owner-writers.guard.test.ts 守)。
  *  - 只在主人自己的对话里注入(main.ts 的 ownerMemoryFor)。
  *
  * 一行一条:`- <原话> <!-- o:<id> · <日期> · <overview|memory|owner> [· 替换:<更正 id>] -->`。认不出的行原样保留在 extra,不丢。

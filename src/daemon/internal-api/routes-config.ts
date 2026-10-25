@@ -2,7 +2,7 @@
  * internal-api config-surface routes — the whitelist-only read/write face
  * behind the admin-only config_get/config_set MCP tools (see
  * src/daemon/config-surface.ts for the whitelist and its security rationale).
- * Mirrors routes-memory.ts's shape: `configRoutes(deps): RouteTable`,
+ * Mirrors src/features/memory/routes.ts's shape: `configRoutes(deps): RouteTable`,
  * `{ status, body }` returns, inline validation.
  *
  * Both routes are 'admin' in route-tiers.ts. Every successful write lands

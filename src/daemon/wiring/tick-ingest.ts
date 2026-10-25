@@ -3,7 +3,7 @@
  */
 import { join } from 'node:path'
 import { loadCompanionConfig } from '../companion/config'
-import { makeMemoryFS } from '../memory/fs-api'
+import { makeMemoryFS } from '../../adapters/store/memory-fs'
 import { makeMessagesStore } from '../../lib/messages-store'
 import { loadPlugins, pluginMcpSpecs } from '../plugins/registry'
 import { bundledPluginsDir } from '../plugins/paths'

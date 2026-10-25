@@ -61,7 +61,7 @@
 | provider(agy / cursor / openai 兼容 / 去重) | [reference/model-management.md](reference/model-management.md) | `superpowers/specs/2026-08-17-{agy-provider,provider-runtime-dedup}-design.md` |
 | provider 失败的真实形状 / 各家边界产什么码、下游怎么读(错误通道结构化 #4) | [reference/provider-error-shapes.md](reference/provider-error-shapes.md);样本 `src/daemon/diagnostics/__fixtures__/provider-errors/`;码闭集 `src/lib/provider-error-code.ts` | 第 2 步 2026-10-02 做完:§6(Claude 会话)、§7(其余各家 + 边界超时 + 下游);§5 是当初的提议 |
 | 可靠性(降级启动 / 自动重启 / 忙登记处) | — | `superpowers/specs/2026-08-17-subsystem-degraded-boot-design.md` + `2026-08-11-daemon-busy-registry-design.md` + `2026-08-03-daemon-self-restart-on-stale-code-design.md` |
-| 画像依据、来源改正与过时处理 | [`cc-memory-evidence.md`](cc-memory-evidence.md) | `src/lib/memory-synthesis.ts` + `src/daemon/internal-api/routes-memory-review.ts` |
+| 画像依据、来源改正与过时处理 | [`cc-memory-evidence.md`](cc-memory-evidence.md) | `src/lib/memory-synthesis.ts` + `src/features/memory/review-routes.ts` |
 | 知识与记忆(图 / 人物事实 / hearth 联邦) | — | `superpowers/specs/2026-08-12-knowledge-{graph,facts-person}-inproc-design.md` + `2026-08-13-hearth-*` |
 | 引导与访客 | [reference/access-control.md](reference/access-control.md) | `superpowers/specs/2026-08-18-{owner-onboarding,guest-path}-design.md` |
 | 提醒 | — | `superpowers/specs/2026-08-20-reminders-port-design.md` |

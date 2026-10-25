@@ -44,7 +44,7 @@ describe('owner.md', () => {
     expect(renderOwnerForPrompt({ assertions: [], extra: [] })).toBe('')
   })
 
-  it('写下去能读回来(过期见 fs-api.test)', () => {
+  it('写下去能读回来(过期见 adapters/store/memory-fs.test)', () => {
     const root = mkdtempSync(join(tmpdir(), 'owner-md-'))
     try {
       writeOwnerAssertions(root, doc)

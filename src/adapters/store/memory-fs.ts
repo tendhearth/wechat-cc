@@ -1,5 +1,5 @@
 /**
- * memory/fs-api.ts — sandboxed filesystem for Claude's long-term memory.
+ * memory-fs.ts(原 daemon/memory/fs-api.ts;架构终态 A5 记忆搬家时归到通用 store:社交、伙伴、信、提示词素材都在读写)— sandboxed filesystem for Claude's long-term memory.
  *
  * Design philosophy: Claude is given a scratch directory it owns. We don't
  * prescribe file layout, names, or schema. We only enforce safety:

@@ -2,7 +2,7 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import { mkdtempSync, rmSync, writeFileSync, mkdirSync, existsSync, symlinkSync, readFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { tmpdir } from 'node:os'
-import { makeMemoryFS, MemoryPathError } from './fs-api'
+import { makeMemoryFS, MemoryPathError } from './memory-fs'
 import { invalidateDerivedMemory } from '../../lib/memory-derived-state'
 
 describe('MemoryFS', () => {

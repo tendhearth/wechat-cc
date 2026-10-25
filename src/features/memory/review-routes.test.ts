@@ -4,12 +4,12 @@ import { join } from 'node:path'
 import { tmpdir } from 'node:os'
 import { openTestDb, type Db } from '../../lib/db'
 import { isDerivedMemoryStale, readDerivedRevision } from '../../lib/memory-derived-state'
-import { makeObservationsStore } from '../observations/store'
-import { makeMilestonesStore } from '../milestones/store'
-import { makeEventsStore } from '../events/store'
-import { memoryReviewRoutes } from './routes-memory-review'
-import type { InternalApiDeps, RouteTable } from './types'
-import { createInternalApi } from './index'
+import { makeObservationsStore } from '../../daemon/observations/store'
+import { makeMilestonesStore } from '../../daemon/milestones/store'
+import { makeEventsStore } from '../../daemon/events/store'
+import { memoryReviewRoutes } from './review-routes'
+import type { RouteTable } from '../../daemon/internal-api/types'
+import { createInternalApi } from '../../daemon/internal-api/index'
 
 describe('reviewed memory sources', () => {
   let stateDir: string, root: string, projectsRoot: string, db: Db, routes: RouteTable
@@ -19,7 +19,7 @@ describe('reviewed memory sources', () => {
     projectsRoot = join(stateDir, 'projects')
     mkdirSync(root, { recursive: true })
     db = openTestDb()
-    routes = memoryReviewRoutes({ stateDir, daemonPid: 1, db, resolveAdminChatId: () => 'owner', memoryProjectsRoot: projectsRoot } as InternalApiDeps)
+    routes = memoryReviewRoutes({ stateDir, db, resolveAdminChatId: () => 'owner', projectsRoot })
   })
   afterEach(() => { db.close(); rmSync(stateDir, { recursive: true, force: true }) })
   const get = (params: Record<string, string>) => routes['GET /v1/memory/source']!(new URLSearchParams({ chat_id: 'owner', ...params }), null)
@@ -109,6 +109,8 @@ describe('reviewed memory sources', () => {
   it('serves the registered endpoints through the actual local authenticated HTTP dispatcher', async () => {
     writeFileSync(join(root, 'note.md'), 'original')
     const api = createInternalApi({ stateDir, daemonPid: 1, db, resolveAdminChatId: () => 'owner' })
+    // 这两条归记忆功能(路由表标 module: 'memory'),daemon 里由 memory 模块挂;这里照样挂上去。
+    api.mount('memory', memoryReviewRoutes({ stateDir, db, resolveAdminChatId: () => 'owner' }))
     const { port, tokenFilePath, operatorTokenFilePath } = await api.start()
     try {
       const url = `http://127.0.0.1:${port}/v1/memory/source?chat_id=owner&kind=memory&path=note.md`

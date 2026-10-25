@@ -2,9 +2,9 @@
 import type { Db } from '../../lib/db'
 import { makeMessagesStore } from '../../lib/messages-store'
 import { summarizeProjectMemories } from '../../lib/memory-synthesis'
-import { loadCompanionConfig } from '../companion/config'
-import { makeMilestonesStore } from '../milestones/store'
-import { makeObservationsStore } from '../observations/store'
+import { loadCompanionConfig } from '../../daemon/companion/config'
+import { makeMilestonesStore } from '../../daemon/milestones/store'
+import { makeObservationsStore } from '../../daemon/observations/store'
 import type { NightlySources } from './nightly'
 
 const FIRST_RUN_LOOKBACK_MS = 3 * 86_400_000

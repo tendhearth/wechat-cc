@@ -2,7 +2,7 @@ import { describe, it, expect, beforeEach } from 'vitest'
 import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, existsSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { makeMemoryFS } from './fs-api'
+import { makeMemoryFS } from '../../adapters/store/memory-fs'
 import {
   TODAY_DRAFT_FILENAME, TODAY_DRAFT_MAX_CHARS, TODAY_DRAFT_LINE_MAX,
   profileAdditions, appendToDraft, consumeDraft, recordProfileWrite, readDraftForPrompt, chatOfProfilePath,

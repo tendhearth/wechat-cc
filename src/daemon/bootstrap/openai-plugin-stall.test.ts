@@ -4,7 +4,6 @@ import { dirname, join } from 'node:path'
 import { tmpdir } from 'node:os'
 import { fileURLToPath } from 'node:url'
 import { createInternalApi, type InternalApi } from '../internal-api'
-import { makeMemoryFS } from '../memory/fs-api'
 import { createMcpToolBridge } from '../../adapters/executors/openai/openai-mcp-bridge'
 import { createOpenAiAgentProvider } from '../../adapters/executors/openai/openai-agent-provider'
 import { collectTurn } from '../../ports/agent-provider'
@@ -66,7 +65,7 @@ describe('openai session with a stalled plugin MCP server (real wechat MCP + int
 
   it('skips (and kills) the stalled plugin; the turn still runs through the wechat MCP', async () => {
     stateDir = mkdtempSync(join(tmpdir(), 'openai-plugin-stall-'))
-    api = createInternalApi({ stateDir, daemonPid: 4242, memory: makeMemoryFS({ rootDir: join(stateDir, 'memory') }) })
+    api = createInternalApi({ stateDir, daemonPid: 4242 })
     const { port, tokenFilePath } = await api.start()
 
     const pidFile = join(stateDir, 'stall.pid')

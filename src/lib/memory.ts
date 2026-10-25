@@ -2,10 +2,10 @@
  * Memory inspector — read-only view of Companion v2's per-user .md store at
  *   ~/.claude/channels/wechat/memory/<userId>/...
  *
- * Why a separate top-level module (vs reusing src/daemon/memory/fs-api.ts):
- * fs-api is per-user — it gets a single `rootDir` and serves Claude through
+ * Why a separate top-level module (vs reusing src/adapters/store/memory-fs.ts):
+ * memory-fs is per-user — it gets a single `rootDir` and serves Claude through
  * MCP. The desktop GUI / CLI need to enumerate ACROSS users, so this layer
- * sits one level up. Path-traversal protection mirrors fs-api's logic.
+ * sits one level up. Path-traversal protection mirrors memory-fs's logic.
  */
 import { invalidateDerivedMemory, type InvalidationReason } from './memory-derived-state'
 import { memoryArtifactKind } from './memory-artifacts'
@@ -60,16 +60,16 @@ export function readMemoryFile(stateDir: string, userId: string, relPath: string
   return readFileSync(target, 'utf8')
 }
 
-const MAX_BYTES = 100 * 1024  // matches src/daemon/memory/fs-api.ts MemoryFS
+const MAX_BYTES = 100 * 1024  // matches src/adapters/store/memory-fs.ts MemoryFS
 const PROFILE_FILENAME = '_profile.json'
 
 // Atomic write of a memory file. Body must be UTF-8 string (callers
-// decode base64 etc upstream). Mirrors the sandboxing of fs-api.ts:
+// decode base64 etc upstream). Mirrors the sandboxing of memory-fs.ts:
 // .md only, ≤100KB, path-traversal blocked, parent dirs auto-created
 // inside the user root, atomic via lib/json-file(tmp 名以 . 开头,下面的列目录会跳过)。
 //
-// Why this lives at top level (vs fs-api): the per-user MemoryFS in
-// src/daemon/memory/fs-api.ts is bound to a single rootDir at construction
+// Why this lives at top level (vs memory-fs): the per-user MemoryFS in
+// src/adapters/store/memory-fs.ts is bound to a single rootDir at construction
 // and is what Claude's MCP tools call. The CLI / GUI need to write any
 // user's file by id, so this top-level helper composes resolveSafe +
 // MemoryFS-equivalent atomic write logic without instantiating one

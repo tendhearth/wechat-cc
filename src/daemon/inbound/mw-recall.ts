@@ -7,7 +7,7 @@
  * owner's whole WeChat archive — same private-data trust class as the
  * admin-only knowledge_search MCP tool); every other chat gets the
  * `recallFallback` lane, which searches only that chat's OWN
- * memory/<chatId>/*.md files (src/daemon/memory/recall.ts). A non-admin
+ * memory/<chatId>/*.md files (src/features/memory/recall.ts). A non-admin
  * chat must never receive kernel recall.
  *
  * Soft-fail by design: timeout, embedder error, or an empty result all mean

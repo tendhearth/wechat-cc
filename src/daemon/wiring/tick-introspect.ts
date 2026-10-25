@@ -4,7 +4,7 @@
  */
 import { join } from 'node:path'
 import { loadCompanionConfig, saveCompanionConfig } from '../companion/config'
-import { buildMemorySnapshot } from '../memory/snapshot'
+import { buildMemorySnapshot } from '../../features/memory'
 import { makeEventsStore } from '../events/store'
 import { makeObservationsStore } from '../observations/store'
 import { runIntrospectTick } from '../companion/introspect'

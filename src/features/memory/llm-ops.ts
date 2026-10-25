@@ -1,15 +1,15 @@
 /**
- * memory-llm-ops.ts — the daemon's LLM-backed memory operations (overview
+ * llm-ops.ts(原 daemon/memory-llm-ops.ts)— the daemon's LLM-backed memory operations (overview
  * synthesis + profile generation), wired with the daemon's OWN provider
  * cheapEval (claude path resolved correctly). Shared by BOTH the WeChat
  * admin-command path (pipeline-deps synthesizeMemory) and the internal-api
- * routes the desktop calls (routes-memory). This is the single place LLM
+ * routes the desktop calls (./routes.ts). This is the single place LLM
  * memory ops run — NEVER the compiled CLI sidecar (spec §1).
  */
-import { writeFileAtomic } from '../lib/json-file'
-import type { Db } from '../lib/db'
-import { readJsonFile } from '../lib/read-json-file'
-import { beginDerivedGeneration, isDerivedMemoryStale, readDerivedRevision } from '../lib/memory-derived-state'
+import { writeFileAtomic } from '../../lib/json-file'
+import type { Db } from '../../lib/db'
+import { readJsonFile } from '../../lib/read-json-file'
+import { beginDerivedGeneration, isDerivedMemoryStale, readDerivedRevision } from '../../lib/memory-derived-state'
 
 export interface MemoryLlmOpsDeps {
   stateDir: string
@@ -22,8 +22,8 @@ export interface MemoryLlmOpsDeps {
 }
 
 export interface MemoryLlmOps {
-  synthesize(adminChatId: string): Promise<import('../lib/memory-synthesis').SynthesizeResult>
-  generateProfile(adminChatId: string): Promise<import('../lib/memory-synthesis').SynthesizeProfileResult>
+  synthesize(adminChatId: string): Promise<import('../../lib/memory-synthesis').SynthesizeResult>
+  generateProfile(adminChatId: string): Promise<import('../../lib/memory-synthesis').SynthesizeProfileResult>
   /** CC 手绘小像 — draw the OWNER as a hand-sketch SVG from the profile
    *  material (never CC's own avatar; the page is 「CC 眼中的你」). Output
    *  passes lib/svg-sanitize's reject-only allowlist before touching disk. */
@@ -47,14 +47,14 @@ export function makeMemoryLlmOps(deps: MemoryLlmOpsDeps): MemoryLlmOps {
   }
   return {
     async synthesize(adminChatId) {
-      const { synthesizeOverview } = await import('../lib/memory-synthesis')
-      const { makeLifeStoresReader } = await import('./life-stores')
+      const { synthesizeOverview } = await import('../../lib/memory-synthesis')
+      const { makeLifeStoresReader } = await import('../../daemon/life-stores')
       const cheapEval = requireCheapEval(adminChatId)
       return synthesizeOverview({ stateDir: deps.stateDir, adminChatId, sdkEval: (p) => cheapEval(p), lifeStores: makeLifeStoresReader(deps.db, deps.stateDir), includeFileSurvey: true })
     },
     async generateProfile(adminChatId) {
-      const { synthesizeProfile } = await import('../lib/memory-synthesis')
-      const { makeLifeStoresReader } = await import('./life-stores')
+      const { synthesizeProfile } = await import('../../lib/memory-synthesis')
+      const { makeLifeStoresReader } = await import('../../daemon/life-stores')
       const mode = deps.getMode(adminChatId)
       const modelProvider = mode && mode.kind === 'solo' ? (mode.provider ?? 'claude') : 'claude'
       const cheapEval = requireCheapEval(adminChatId)
@@ -63,7 +63,7 @@ export function makeMemoryLlmOps(deps: MemoryLlmOpsDeps): MemoryLlmOps {
     async generatePortrait(adminChatId) {
       const { existsSync, readFileSync, writeFileSync } = await import('node:fs')
       const { join } = await import('node:path')
-      const { safeSvg } = await import('../lib/svg-sanitize')
+      const { safeSvg } = await import('../../lib/svg-sanitize')
       // chatId feeds a path join — same shape guard as main.ts's personaFor.
       if (adminChatId.includes('..') || adminChatId.includes('/') || adminChatId.includes('\\')) {
         return { ok: false, error: 'bad_chat_id' }

@@ -6,7 +6,6 @@
  * See ./index.ts for createInternalApi (lifecycle, auth, dispatch loop) and
  * ./routes.ts for the route handler implementations.
  */
-import type { MemoryFS } from '../memory/fs-api'
 import type { Db } from '../../lib/db'
 import type { WechatProjectsDep, WechatCompanionDep } from '../wechat-tool-deps'
 import type { Journal } from '../../adapters/store/journal-store'
@@ -101,8 +100,6 @@ export interface PhoneConnectDep {
 export interface InternalApiDeps {
   /** State directory; the token file is written under here. */
   stateDir: string
-  /** Optional server-owned Claude projects location; never accepted from a request. */
-  memoryProjectsRoot?: string
   /** Daemon process pid — exposed by /v1/health for smoke tests. */
   daemonPid: number
   /** Owner-only Workbench service; late-bound after provider bootstrap. */
@@ -113,15 +110,9 @@ export interface InternalApiDeps {
   connections?: () => import('../connections').ConnectionsSnapshot
   /** 桌面「连接手机」(plan 7a);main.ts 在 pipeline 接好后 setPhoneConnect。 */
   phoneConnect?: PhoneConnectDep
+  // 记忆(memory / memoryProjectsRoot / memoryLlm / memoryNightly)归记忆功能(src/features/memory),路由由 memory 模块自己挂。
   /**
-   * Sandbox FS for memory_read / memory_write / memory_list (RFC 03 P1.B
-   * B2). The same MemoryFS instance is shared with the legacy in-process
-   * MCP server until B7 deletes it; both paths see the same files.
-   */
-  memory?: MemoryFS
-  /**
-   * SQLite handle — used by /v1/memory/delete to write per-chat audit
-   * events (see docs/specs/2026-05-21-memory-delete-safety-design.md).
+   * SQLite handle — 配置改动 / 社交路由的审计(记忆删除的审计随记忆功能走了,它自己拿 db)。
    * Optional so tests / partial wirings that don't need the audit path
    * still construct the api.
    */
@@ -426,19 +417,7 @@ export interface InternalApiDeps {
    * Absent ⇒ the route 503s chat_prefs_not_wired.
    */
   setChatPref?: (chatId: string, patch: { care?: 'off' | 'low' | 'high'; split?: boolean }) => { care?: 'off' | 'low' | 'high'; split?: boolean }
-  /**
-   * LLM 记忆操作(daemon-only, spec 2026-07-23-daemon-owns-llm-memory-ops) —
-   * synthesize/generateProfile, late-bound by main.ts's `setMemory()` after
-   * bootstrap builds the coordinator + provider registry (mirrors `social`/
-   * `pairing` above). undefined ⇒ POST /v1/memory/{synthesize,profile/generate}
-   * 503.
-   *
-   * Named `memoryLlm` (NOT `memory`) — `memory` above is already the sandbox
-   * MemoryFS backing memory_read/write/list; a distinct field avoids
-   * colliding with that unrelated, pre-existing dep.
-   */
-  memoryLlm?: import('../memory-llm-ops').MemoryLlmOps
-  /** LLM 通道体检 (llm-health.ts) — late-bound like memoryLlm (needs the
+  /** LLM 通道体检 (llm-health.ts) — late-bound (needs the
    *  provider registry). GET /v1/llm/health 503s until set. */
   llmHealth?: import('../llm-health').LlmHealth
   /** Registered provider ids (registry.list) — set alongside llmHealth. */
@@ -450,13 +429,11 @@ export interface InternalApiDeps {
   llmEndpoints?: () => Record<string, string>
   /** Graphical-settings-panel link minter (settings-panel.ts, late-bound). */
   settingsLink?: () => Promise<string | null>
-  /** 每晚记忆整理运行时(pipeline-deps 造,main.ts 通过 setMemoryNightly 接进来)。 */
-  memoryNightly?: Pick<import('../memory/nightly-runtime').MemoryNightlyRuntime, 'runNow' | 'view' | 'edit'>
   /** 外部 agent CLI 自动升级引擎(main.ts 通过 setCliUpgrade 接进来;没接 ⇒ /v1/cli/* 回 503)。 */
   cliUpgrade?: import('../../core/cli-upgrade/engine').CliUpgrader
   /**
-   * Resolves the default admin chat_id (access.json's single admin) when a
-   * memory route's request body omits `chat_id`. Wired eagerly in main.ts
+   * Resolves the default admin chat_id (access.json's single admin) — the
+   * owner for /v1/turn and the workbench entry context. Wired eagerly in main.ts
    * (not late-bound — it only needs loadAccess + loadCompanionConfig, both
    * available before bootstrap runs).
    */
@@ -560,10 +537,10 @@ export interface InternalApiDeps {
 
 /** 可以晚绑定的那些依赖 —— 只有这里列的键能经 `provide` 交进来。 */
 export const LATE_KEYS = [
-  'delegate', 'conversation', 'a2a', 'socialView', 'knowledge', 'pairing', 'memoryLlm', 'incidents',
+  'delegate', 'conversation', 'a2a', 'socialView', 'knowledge', 'pairing', 'incidents',
   'llmHealth', 'llmRegistered', 'llmNames', 'llmEndpoints',
   'workbench', 'matters', 'companionConverse', 'petTurn', 'settingsLink', 'connections', 'phoneConnect',
-  'memoryNightly', 'cliUpgrade',
+  'cliUpgrade',
 ] as const satisfies readonly (keyof InternalApiDeps)[]
 export type LateKey = typeof LATE_KEYS[number]
 export type LateDeps = { [K in LateKey]?: NonNullable<InternalApiDeps[K]> }

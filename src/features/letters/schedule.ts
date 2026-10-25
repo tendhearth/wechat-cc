@@ -6,7 +6,7 @@
  *   - 只在主人时区的傍晚窗口里落笔(19:30–22:30),错过了(电脑睡着)就等下一个傍晚;
  *   - 素材不够(没什么可写)不硬写,过几天再看。
  */
-import { localParts } from '../../daemon/memory/nightly-schedule'
+import { localParts } from '../../lib/local-time'
 
 export const DAY_MS = 86_400_000
 export const FIRST_GAP_DAYS: readonly [number, number] = [2, 5]

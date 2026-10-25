@@ -5,7 +5,7 @@
  */
 import { join } from 'node:path'
 import { loadCompanionConfig } from '../companion/config'
-import { runGarden } from '../memory/gardener'
+import { runGarden } from '../../features/memory'
 import { readJsonFile } from '../../lib/read-json-file'
 import type { IntrospectStep } from '../companion/contributions'
 import type { TickDeps } from './tick-deps'

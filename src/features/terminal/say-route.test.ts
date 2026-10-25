@@ -8,7 +8,6 @@ import { mkdtempSync, readFileSync, rmSync } from 'node:fs'
 import { join } from 'node:path'
 import { tmpdir } from 'node:os'
 import { createInternalApi, type InternalApi } from '../../daemon/internal-api/index'
-import { makeMemoryFS } from '../../daemon/memory/fs-api'
 import { minTierFor } from '../../daemon/internal-api/route-tiers'
 import { REQUEST_SCHEMAS } from '../../daemon/internal-api/schema'
 import { WORKBENCH_ERRORS } from '@wechat-cc/protocol'
@@ -27,7 +26,7 @@ const mountSay = (a: InternalApi, terminalSay: TerminalRoutesDeps['terminalSay']
   a.mount('terminal', terminalRoutes({ terminalSay } as unknown as TerminalRoutesDeps))
 
 async function boot(o: { mount?: boolean } = {}) {
-  api = createInternalApi({ stateDir, daemonPid: 1, memory: makeMemoryFS({ rootDir: join(stateDir, 'memory') }) })
+  api = createInternalApi({ stateDir, daemonPid: 1 })
   const { port, tokenFilePath } = await api.start()
   if (o.mount !== false) mountSay(api, {
     say: (code, text) => { said.push([code, text]); return { ok: true, ticket: 'a1b2c3d4e5f6', via: 'window', code, source: 'claude', project: 'cc', was_running: false, read_only: false, max_wait_ms: 570_000 } },

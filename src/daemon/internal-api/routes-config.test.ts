@@ -1,4 +1,4 @@
-// Mirrors routes-memory.test.ts's injection idiom, but against a REAL temp
+// Mirrors src/features/memory/routes.test.ts's injection idiom, but against a REAL temp
 // stateDir + in-memory db — config-surface writes real json files and the
 // audit path writes a real events row, so stubbing them would test nothing.
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'

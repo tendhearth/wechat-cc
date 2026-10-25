@@ -4,10 +4,20 @@ import { existsSync, lstatSync, readFileSync, readdirSync, realpathSync, statSyn
 import { basename, isAbsolute, join, relative, sep } from 'node:path'
 import { defaultClaudeProjectsRoot } from '../../lib/memory-synthesis'
 import { invalidateDerivedMemory, isDerivedMemoryStale } from '../../lib/memory-derived-state'
-import { makeMemoryFS } from '../memory/fs-api'
-import { makeObservationsStore } from '../observations/store'
-import { makeMilestonesStore } from '../milestones/store'
-import type { InternalApiDeps, RouteHandler, RouteTable } from './types'
+import { makeMemoryFS } from '../../adapters/store/memory-fs'
+import { makeObservationsStore } from '../../daemon/observations/store'
+import { makeMilestonesStore } from '../../daemon/milestones/store'
+import type { Db } from '../../lib/db'
+import type { RouteHandler, RouteTable } from '../../daemon/internal-api/types'
+
+/** 证据审阅要的东西(记忆功能自己挂,路由表标 module: 'memory';原来是 internal-api/routes-memory-review.ts)。 */
+export interface MemoryReviewDeps {
+  stateDir: string
+  db?: Db
+  /** 只由服务端定的 Claude 项目目录(测试用);从不收请求里的。缺省 ⇒ defaultClaudeProjectsRoot()。 */
+  projectsRoot?: string
+  resolveAdminChatId?: () => string | null
+}
 
 type Kind = 'memory' | 'observation' | 'milestone' | 'project'
 interface SourceKey { chat_id: string; kind: Kind; path?: string; id?: string; project?: string }
@@ -38,7 +48,7 @@ function sourceKey(value: Record<string, unknown>): SourceKey {
   return { chat_id, kind, path, id, project } as SourceKey
 }
 
-function chatRoot(deps: InternalApiDeps, chatId: string): string {
+function chatRoot(deps: MemoryReviewDeps, chatId: string): string {
   const root = join(deps.stateDir, 'memory', chatId)
   // Never accept a chat directory that aliases another chat or an external tree.
   try { if (!lstatSync(root).isDirectory()) fail(400, 'invalid_source') }
@@ -60,14 +70,14 @@ function legacyFile(root: string, name: string): string | undefined {
   try { return lstatSync(path).isFile() ? path : undefined } catch { return undefined }
 }
 
-function readSource(deps: InternalApiDeps, key: SourceKey): Source {
+function readSource(deps: MemoryReviewDeps, key: SourceKey): Source {
   const root = chatRoot(deps, key.chat_id)
   const needsRefresh = isDerivedMemoryStale(root, 'overview') || isDerivedMemoryStale(root, 'profile')
   if (key.kind === 'memory' || key.kind === 'project') {
     let sourceRoot = root
     if (key.kind === 'project') {
       if (deps.resolveAdminChatId?.() !== key.chat_id) fail(404, 'source_not_found')
-      const projectsRoot = deps.memoryProjectsRoot ?? defaultClaudeProjectsRoot()
+      const projectsRoot = deps.projectsRoot ?? defaultClaudeProjectsRoot()
       // Discover an actual directory under the daemon-owned projects root. The
       // client supplies only its encoded directory name, never an absolute path.
       if (!existsSync(projectsRoot) || !readdirSync(projectsRoot, { withFileTypes: true }).some(e => e.isDirectory() && e.name === key.project)) fail(404, 'source_not_found')
@@ -114,7 +124,7 @@ function handle(action: () => unknown): { status: number; body: unknown } {
   }
 }
 
-export function memoryReviewRoutes(deps: InternalApiDeps): RouteTable {
+export function memoryReviewRoutes(deps: MemoryReviewDeps): RouteTable {
   return {
     'GET /v1/memory/source': (q, _body, caller) => handle(() => {
       const key = sourceKey(Object.fromEntries(q))
