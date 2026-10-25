@@ -859,14 +859,16 @@ async function bootDaemonInner(opts: BootDaemonOpts, undo: Array<() => void>): P
     lc.register({ name: 'provider-probes', stop: async () => { boot.stopProviderProbes?.() } })
     // 核心链就地搬家第 3 步(设计稿 2026-10-23-core-chain-modules):位置不变、关机顺序不变;起不来照旧整个开机失败。
     await startLifecycleModule(moduleHost, 'sessions', () => registerSessions(wired.sessionsDeps), { required: true })
-    lc.register(registerIlink(wired.ilinkDeps))
+    // 核心链就地搬家第 4 步:同上。ilink 的 30 秒清扫计时器(ilink/context.ts)和 speechRef 环留给 PR 6。
+    await startLifecycleModule(moduleHost, 'ilink', () => registerIlink(wired.ilinkDeps), { required: true })
     let workbenchNotifications:ReturnType<typeof wireWorkbenchNotifications>|undefined
     let workbenchArtifacts:ReturnType<typeof wireWorkbenchArtifacts>|undefined
     // Register before polling so shutdown stops inbound, drains task sends, then flushes ilink.
     lc.register({name:'workbench-notifications',stop:async()=>{await workbenchNotifications?.close()}})
     lc.register({name:'workbench-artifacts',stop:async()=>{await workbenchArtifacts?.close()}})
-    const pollingLc = registerPolling({ ...wired.pollingDeps, runPipeline: pipeline })
-    wireRef(wired.refs.polling, pollingLc); lc.register(pollingLc); pollingLcRef = pollingLc
+    // 核心链就地搬家第 5 步:同上。pipeline ↔ polling 的环(refs.polling)留给 PR 6 换成 lazy。
+    const pollingLc = (await startLifecycleModule(moduleHost, 'polling', () => registerPolling({ ...wired.pollingDeps, runPipeline: pipeline }), { required: true }))!
+    wireRef(wired.refs.polling, pollingLc); pollingLcRef = pollingLc
     // 笔友信箱的轮询器从第三批 3b 第 3 步起是社交那一组里的一个模块(bootstrap/social-module.ts),不在这里起。
     // 每晚整理长期记忆 memory.md(2026-09-25)。15 分钟一次「该不该跑」,运行时在 pipeline-deps 造好。
     await startLifecycleModule(moduleHost, 'memory-nightly', () => registerMemoryNightly({
