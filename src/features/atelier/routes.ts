@@ -6,7 +6,7 @@
  * 由 atelier 模块自己挂(internalApi.mount;路由表标了 module: 'atelier')。模块没起来 ⇒ 路由层回 module_*。
  */
 import { readFileSync } from 'node:fs'
-import { loadCompanionConfig } from '../../daemon/companion/config'
+import { loadCompanionConfig } from '../../lib/companion-config'
 import { errMsg, type RouteTable } from '../../daemon/internal-api/types'
 import type { AtelierShareRequestT } from '../../daemon/internal-api/schema'
 import type { IlinkAdapter } from '../../daemon/ilink-glue'

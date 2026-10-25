@@ -22,7 +22,6 @@ import type { Mode } from '../../domain/conversation'
 import { pluginsHealthForTier } from '../plugins/health'
 import { a2aRoutes } from './routes-a2a'
 import { probeFsAccess, describeFsAccess, hasFullDiskAccess, FDA_MISSING_HINT } from '../../lib/fs-access'
-import { thoughtRoutes } from './routes-thoughts'
 import { presenceRoutes } from './routes-presence'
 import { petRoutes } from './routes-pet'
 import { permissionRoutes } from './routes-permissions'
@@ -41,8 +40,6 @@ import type {
   ProjectsSwitchRequestT, ProjectsAddRequestT, ProjectsRemoveRequestT,
   UserSetNameRequestT,
   SharePageRequestT, ShareResurfaceRequestT,
-  CompanionSnoozeRequestT,
-  CompanionImportLocalRequestT,
   WechatReplyRequestT, WechatSendFileRequestT,
   WechatEditMessageRequestT, WechatBroadcastRequestT,
   DelegateRequestT,
@@ -268,52 +265,6 @@ export function makeRoutes({ deps, getDelegate, maybePrefix, mounted }: MakeRout
         })
         // Legacy wire shape: returns the page record OR `{ok:false, reason:'not found'}`.
         return { status: 200, body: r ?? { ok: false, reason: 'not found' } }
-      } catch (err) {
-        return { status: 200, body: { ok: false, error: errMsg(err) } }
-      }
-    },
-
-    // ── companion proactive tick (RFC 03 P1.B B6) ───────────────────────
-    'GET /v1/companion/status': () => {
-      if (!deps.companion) return { status: 503, body: { error: 'companion_not_wired' } }
-      return { status: 200, body: deps.companion.status() }
-    },
-    'POST /v1/companion/enable': async () => {
-      if (!deps.companion) return { status: 503, body: { error: 'companion_not_wired' } }
-      try {
-        const r = await deps.companion.enable()
-        return { status: 200, body: r }
-      } catch (err) {
-        return { status: 200, body: { ok: false, error: errMsg(err) } }
-      }
-    },
-    'POST /v1/companion/disable': async () => {
-      if (!deps.companion) return { status: 503, body: { error: 'companion_not_wired' } }
-      try {
-        const r = await deps.companion.disable()
-        return { status: 200, body: r }
-      } catch (err) {
-        return { status: 200, body: { ok: false, error: errMsg(err) } }
-      }
-    },
-    'POST /v1/companion/snooze': async (_q, body) => {
-      if (!deps.companion) return { status: 503, body: { error: 'companion_not_wired' } }
-      // Body is pre-validated by index.ts via CompanionSnoozeRequest schema.
-      const { minutes } = body as CompanionSnoozeRequestT
-      try {
-        const r = await deps.companion.snooze(minutes)
-        return { status: 200, body: r }
-      } catch (err) {
-        return { status: 200, body: { ok: false, error: errMsg(err) } }
-      }
-    },
-    'POST /v1/companion/import-local': async (_q, body) => {
-      if (!deps.companion) return { status: 503, body: { error: 'companion_not_wired' } }
-      // Body is pre-validated by index.ts via CompanionImportLocalRequest schema.
-      const { enabled } = body as CompanionImportLocalRequestT
-      try {
-        const r = await deps.companion.setImportLocal(enabled)
-        return { status: 200, body: r }
       } catch (err) {
         return { status: 200, body: { ok: false, error: errMsg(err) } }
       }
@@ -586,7 +537,6 @@ export function makeRoutes({ deps, getDelegate, maybePrefix, mounted }: MakeRout
     //    / restart / turns) live in sibling files — spread in here. ──────────
     ...a2aRoutes(deps),
     ...socialRoutes(deps),
-    ...thoughtRoutes(deps),
     ...presenceRoutes(deps),
     ...petRoutes(deps),
     ...permissionRoutes(deps),

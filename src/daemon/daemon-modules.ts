@@ -41,10 +41,8 @@ import { runSelftestConverse } from './selftest'
 import { providerDisplayName } from './provider-display-names'
 import { bootstrapModules, resolveAdminChatId, type Bootstrap } from './bootstrap'
 import { memoryFeature, memoryNightlyModule, makeMemoryLlmOps, resolveCheapEval, makeMemoryImportCommand, type MemoryFeature, type MemoryLlmOps, type MemoryPromptReads } from '../features/memory'
-import { loadCompanionConfig } from './companion/config'
-import { careLevel } from './companion/calibration'
-import { companionOfferEligible } from './companion/offer-eligibility'
-import { registerCompanionPush, registerCompanionIntrospect, registerIngest } from './companion/lifecycle'
+import { loadCompanionConfig } from '../lib/companion-config'
+import { companionFeature, careLevel, companionOfferEligible, registerCompanionPush, registerCompanionIntrospect, registerIngest } from '../features/companion'
 import { makeLlmHealth, type LlmHealth } from './llm-health'
 import { terminalFeature, type TerminalFeature } from '../features/terminal'
 import { wireActivity } from './bootstrap/wire-activity'
@@ -145,7 +143,7 @@ export function daemonModules(f: Foundation): DaemonModule[] {
     } satisfies DaemonModule<ReturnType<typeof makeReplyDeliveryRuntime>>,
 
     // 打猎:一个功能一个目录(src/features/hunt)。init 只跑「默认关」那次的一次性开机步骤 —— 以前在地基里,排在
-    // internal-api 开门、任何伙伴那一拍之前;放在这里还是那个位置。打猎那个陪伴候选在 wiring/tick-bodies.ts 的候选表里登记。
+    // internal-api 开门、任何伙伴那一拍之前;放在这里还是那个位置。打猎那个陪伴候选在 wiring/tick-bodies.ts 的候选表里登记(陪伴功能不 import 打猎)。
     huntFeature({
       needs: [],
       deps: () => ({ stateDir, chatPrefs: f.chatPrefs, log: (t, l) => log(t, l) }),
@@ -195,7 +193,6 @@ export function daemonModules(f: Foundation): DaemonModule[] {
           latestInboundTs: (c: string) => f.messagesStore.latestInboundTs(c),
           setUserName: (chatId, name) => ilink.setUserName(chatId, name),
           sharePage: (t, c, o) => ilink.sharePage(t, c, o), resurfacePage: (q) => ilink.resurfacePage(q),
-          companion: { enable: () => ilink.companion.enable(), disable: () => ilink.companion.disable(), status: () => ilink.companion.status(), snooze: (m) => ilink.companion.snooze(m), setImportLocal: (e) => ilink.companion.setImportLocal(e) },
           ilink: { sendReply: (c, t) => ilink.sendMessage(c, t).then(r => r as { msgId: string; error?: string }), sendFile: (c, p) => ilink.sendFile(c, p), noteSentMedia: (c, m) => ilink.noteSentMedia?.(c, m), editMessage: (c, m, t) => ilink.editMessage(c, m, t), broadcast: (t, a) => ilink.broadcast(t, a) },
           // 微信回复前缀用短名;两种 Gemini 都开着时要分得开,所以按现在注册了谁来解析(收敛清单 ⑥)
           prefix: { conversationStore: f.conversationStore, providerDisplayName: (id) => providerDisplayName(id, boot()?.registry.list() ?? []), permissionMode: dangerously ? 'dangerously' as const : 'strict' as const },
@@ -274,6 +271,20 @@ export function daemonModules(f: Foundation): DaemonModule[] {
     journalFeature({
       needs: [],
       deps: () => ({ stateDir, journal: f.journal }),
+    }),
+
+    // 陪伴:一个功能一个目录(src/features/companion)。这里只挂 `/v1/companion/status|enable|disable|snooze|import-local|thoughts`,
+    // 紧跟 internal-api(以前随 internal-api 一起就在,MCP 的 companion_* 工具开机就来)。开关那一口还是 ilink 适配器造的(改配置 +
+    // 起停),原样交过去。四拍的定时器是下面 companion.push / introspect / ingest 三个模块,位置没动;候选登记表在 wiring/tick-bodies.ts。
+    companionFeature({
+      needs: ['ilink-adapter'],
+      deps: (ctx) => {
+        const ilink = ctx.get<IlinkAdapter>('ilink-adapter')
+        return {
+          stateDir,
+          companion: { enable: () => ilink.companion.enable(), disable: () => ilink.companion.disable(), status: () => ilink.companion.status(), snooze: (m) => ilink.companion.snooze(m), setImportLocal: (e) => ilink.companion.setImportLocal(e) },
+        }
+      },
     }),
 
     // 语音(出站 TTS):一个功能一个目录(src/features/voice);路由自己挂,紧跟 internal-api(以前随 internal-api 一起就在)。

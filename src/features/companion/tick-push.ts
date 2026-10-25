@@ -1,28 +1,28 @@
 /**
  * 伙伴主动找主人那一拍(20 分钟一拍,从 tick-bodies.ts 原样搬出):到点的跟进 → 日程判断 → 来访叙述。
- * 日程判断在哪些事里挑,由登记进来的候选决定(daemon/companion/contributions.ts,登记表在 tick-bodies.ts);这里不认识任何一个。
+ * 日程判断在哪些事里挑,由登记进来的候选决定(ports/companion-contributions.ts,登记表在 daemon/wiring/tick-bodies.ts);这里不认识任何一个。
  */
 import { inQuietHours } from '../../domain/quiet-hours'
 import { join } from 'node:path'
 import { readFileSync } from 'node:fs'
 import { loadAgentConfig } from '../../lib/agent-config'
-import { loadCompanionConfig } from '../companion/config'
-import { makeObservationsStore } from '../observations/store'
+import { loadCompanionConfig } from '../../lib/companion-config'
+import { makeObservationsStore } from '../../daemon/observations/store'
 import { resolveEffectiveTier } from '../../domain/user-tier'
-import { dueGuestVisit, guestLabel, type GuestVisitState } from '../companion/guest-visits'
+import { dueGuestVisit, guestLabel, type GuestVisitState } from './guest-visits'
 import { buildGuestVisitNarrationPrompt } from '../../domain/visit'
 import { makeMemoryFS } from '../../adapters/store/memory-fs'
-import { parseAgenda, selectDue, markResolved, unmarkResolved } from '../companion/agenda'
+import { parseAgenda, selectDue, markResolved, unmarkResolved } from './agenda'
 import { makeMessagesStore, type MessagesStore } from '../../lib/messages-store'
-import { careLevel, shouldSpeak } from '../companion/calibration'
+import { careLevel, shouldSpeak } from './calibration'
 import { readJsonFile } from '../../lib/read-json-file'
 import { judgeCandidates, buildPlanPrompt, parsePlan, pickFallback, constrainPlan, shouldReask, formatLocal, PLAN_EVAL_TIMEOUT_MS, PLAN_MAX_OBSERVATIONS, type Consideration, type PlanAction, type PlanContext, type PlanLogEntry } from '../../domain/companion-plan'
-import { readPlanLog, appendPlanLog } from '../companion/plan-memory'
+import { readPlanLog, appendPlanLog } from './plan-memory'
 import { isNetworkUnprotectedError } from '../../lib/network-gate'
 import type { TickDeps } from './tick-deps'
 import type { TickDispatch } from './tick-dispatch'
 import { buildPushTickText } from './tick-texts'
-import type { CompanionAction, CompanionTickCtx } from '../companion/contributions'
+import type { CompanionAction, CompanionTickCtx } from '../../ports/companion-contributions'
 import { writeJsonAtomic } from '../../lib/json-file'
 function errMsg(err: unknown): string { return err instanceof Error ? err.message : String(err) }
 
@@ -96,7 +96,7 @@ export function makePushTick(deps: TickDeps, dispatch: TickDispatch, actions: re
     }
 
     // ── 日程判断(spec 2026-09-05-companion-plan)──────────────────────────
-    // 候选由各功能交(daemon/companion/contributions.ts,登记在 tick-bodies.ts),按登记顺序各问一次 shouldSpeak
+    // 候选由各功能交(ports/companion-contributions.ts,登记在 daemon/wiring/tick-bodies.ts),按登记顺序各问一次 shouldSpeak
     // (冷却 / care 门 / 无回复暂停一律不变);模型只能在候选里选一个或选 none。没有模型 / 超时 / 解析失败 → 固定顺序。
     const actx: CompanionTickCtx = { chatId, isOwnerChat: chatId === defaultChatId, nowIso, level, prefs, ledger, lastInboundAtIso }
     const considered: Consideration[] = []

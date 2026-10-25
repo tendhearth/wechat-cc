@@ -9,8 +9,8 @@
  * an isolated SDK session with a tightly scoped prompt; in tests it's a
  * deterministic stub.
  */
-import type { EventsStore } from '../events/store'
-import type { ObservationsStore, ObservationTone } from '../observations/store'
+import type { EventsStore } from '../../daemon/events/store'
+import type { ObservationsStore, ObservationTone } from '../../daemon/observations/store'
 import { isNetworkUnprotectedError } from '../../lib/network-gate'
 
 export interface IntrospectAgent {

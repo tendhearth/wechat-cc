@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest'
 import { openTestDb } from '../../lib/db'
 import { makeMessagesStore, type MessageRecord } from '../../lib/messages-store'
 import { recentInboundTexts } from './recent-inbound'
-import {makeMwMessages} from '../inbound/mw-messages'
+import {makeMwMessages} from '../../daemon/inbound/mw-messages'
 
 function rec(id: string, dir: 'in' | 'out', text: string, ts: string, kind = 'text'): MessageRecord {
   return { id, chatId: 'chat1', ts, direction: dir, kind, text, source: 'live' }

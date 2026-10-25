@@ -5,6 +5,7 @@ import { join } from 'node:path'
 import { tmpdir } from 'node:os'
 import { createInternalApi, type InternalApi } from './internal-api'
 import { voiceRoutes } from '../features/voice/routes'
+import { companionRoutes } from '../features/companion/routes'
 import { makeReplySinks } from './reply-sinks'
 import { makeMemoryFS, type MemoryFS } from '../adapters/store/memory-fs'
 import { makeEventsStore } from './events/store'
@@ -1246,7 +1247,9 @@ describe('internal-api', () => {
     }
 
     function startWithCompanion(companion: MockCompanion): Promise<{ port: number; token: string }> {
-      api = createInternalApi({ stateDir, daemonPid: 1, companion })
+      api = createInternalApi({ stateDir, daemonPid: 1 })
+      // 陪伴的路由由 companion 模块自己挂(src/features/companion,A5);这里照它的样子挂上。
+      api.mount('companion', companionRoutes({ stateDir, companion }))
       return api.start().then(({ port, tokenFilePath }) => ({
         port, token: readFileSync(tokenFilePath, 'utf8').trim(),
       }))
@@ -1434,7 +1437,8 @@ describe('internal-api', () => {
       expect(body.error).toContain('config write failed')
     })
 
-    it('returns 503 when companion dep not wired', async () => {
+    it('returns 503 module_starting until the companion module mounts its routes', async () => {
+      // 搬家前是处理器自己的 companion_not_wired;A5 起路由层统一回 module_starting(同语音 / 记忆)。
       api = createInternalApi({ stateDir, daemonPid: 1 })
       const { port, tokenFilePath } = await api.start()
       const token = readFileSync(tokenFilePath, 'utf8').trim()
@@ -1442,7 +1446,7 @@ describe('internal-api', () => {
         headers: { Authorization: `Bearer ${token}` },
       })
       expect(resp.status).toBe(503)
-      expect(await resp.json()).toEqual({ error: 'companion_not_wired' })
+      expect(await resp.json()).toEqual({ error: 'module_starting', module: 'companion' })
     })
   })
 
@@ -3035,6 +3039,9 @@ describe('internal-api request validation', () => {
 
   it('POST to route with no registered schema skips body validation', async () => {
     api = createInternalApi({ stateDir, daemonPid: 1 })
+    // 陪伴的路由由 companion 模块自己挂(A5);挂一个只认 enable 的替身,看校验有没有拦它。
+    const enable = vi.fn(async () => ({ ok: true as const, already_configured: true as const }))
+    api.mount('companion', companionRoutes({ stateDir, companion: { enable } as unknown as Parameters<typeof companionRoutes>[0]['companion'] }))
     const { port, tokenFilePath } = await api.start()
     const token = readFileSync(tokenFilePath, 'utf8').trim()
     // POST /v1/companion/enable has no body schema — any body should pass through
@@ -3043,9 +3050,9 @@ describe('internal-api request validation', () => {
       headers: { Authorization: `Bearer ${token}`, 'content-type': 'application/json' },
       body: '{}',
     })
-    // No companion wired — returns 503, not 400; validation did not block it
-    expect(resp.status).toBe(503)
-    expect(await resp.json()).toMatchObject({ error: 'companion_not_wired' })
+    // 处理器跑到了(200),不是 400:校验没有拦它
+    expect(resp.status).toBe(200)
+    expect(enable).toHaveBeenCalledTimes(1)
   })
 
   it('GET with valid query string proceeds normally', async () => {

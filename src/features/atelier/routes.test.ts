@@ -4,7 +4,7 @@ import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
 import { atelierRoutes } from './routes'
 import { modelStatusPath } from './provision'
-import { defaultCompanionConfig, saveCompanionConfig } from '../../daemon/companion/config'
+import { defaultCompanionConfig, saveCompanionConfig } from '../../lib/companion-config'
 
 function routesWith(store: unknown) {
   return atelierRoutes({ stateDir: '/nonexistent', store: store as never, ilink: {} as never })

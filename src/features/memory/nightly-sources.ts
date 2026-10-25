@@ -2,7 +2,7 @@
 import type { Db } from '../../lib/db'
 import { makeMessagesStore } from '../../lib/messages-store'
 import { summarizeProjectMemories } from '../../lib/memory-synthesis'
-import { loadCompanionConfig } from '../../daemon/companion/config'
+import { loadCompanionConfig } from '../../lib/companion-config'
 import { makeMilestonesStore } from '../../daemon/milestones/store'
 import { makeObservationsStore } from '../../daemon/observations/store'
 import type { NightlySources } from './nightly'

@@ -23,7 +23,7 @@ import { wrapCheapEvalWithAuthFailCheck } from '../../daemon/bootstrap/wire-coor
 import { ACP_CAPABILITIES, MANAGED_NATIVE_CAPABILITIES, UNATTENDED_CAPABILITIES } from '../../core/workbench/executor-capabilities'
 import { readNativeClaudeTools, workbenchClaudeEnvironment, type NativeClaudeTools } from '../../adapters/executors/claude/claude-native-config'
 import { claudeNativeCapabilityNotice } from '../../core/workbench/native-capability-notice'
-import { loadCompanionConfig } from '../../daemon/companion/config'
+import { loadCompanionConfig } from '../../lib/companion-config'
 import {loadAccess} from '../../lib/access'
 import {resolveAdminChatId} from '../../daemon/companion/resolve-admin'
 import type { Bootstrap } from '../../daemon/bootstrap/types'

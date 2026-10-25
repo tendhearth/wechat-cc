@@ -3,7 +3,7 @@
  * 回复交付只剩一条路(D3):这一轮最后写下的话就是推送,不发写 NO_REPLY —— 以前「调 reply 发」那一版随旧路删掉。
  */
 import { join } from 'node:path'
-import { shouldSpeak } from '../companion/calibration'
+import { shouldSpeak } from './calibration'
 import { avoidTopicsLine, type AvoidTopic } from '../../domain/companion-topics'
 
 /** 定时任务的信封。主人的原话放进 <request>,伪造的收尾标签先拆掉。 */

@@ -6,7 +6,7 @@
  *   POST /v1/letters/settings   —— 开 / 关不定期的信
  * 由 letters 模块自己挂(internalApi.mount;路由表标了 module: 'letters')。模块没起来 ⇒ 路由层回 module_*。
  */
-import { loadCompanionConfig, saveCompanionConfig } from '../../daemon/companion/config'
+import { loadCompanionConfig, saveCompanionConfig } from '../../lib/companion-config'
 import type { RouteTable } from '../../daemon/internal-api/types'
 import type { LetterRuntime } from './runtime'
 import type { LettersSettingsRequestT, LettersWriteRequestT } from '../../daemon/internal-api/schema'

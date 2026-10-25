@@ -1,27 +1,27 @@
 /**
  * 每天一次的自省那一拍(从 tick-bodies.ts 原样搬出):本地导入 → 观察 → 线索 → 总览 → 备份,然后是登记进来的几步
- * (daemon/companion/contributions.ts 的 IntrospectStep,登记表在 tick-bodies.ts)。
+ * (ports/companion-contributions.ts 的 IntrospectStep,登记表在 daemon/wiring/tick-bodies.ts)。
+ * 反思要的记忆快照由记忆功能做(`memorySnapshot`,组装的地方交进来):陪伴不 import 别的功能。
  */
 import { join } from 'node:path'
-import { loadCompanionConfig, saveCompanionConfig } from '../companion/config'
-import { buildMemorySnapshot } from '../../features/memory'
-import { makeEventsStore } from '../events/store'
-import { makeObservationsStore } from '../observations/store'
-import { runIntrospectTick } from '../companion/introspect'
-import { resolveIntrospectChatId, makeIntrospectAgent } from '../companion/introspect-runtime'
+import { loadCompanionConfig, saveCompanionConfig } from '../../lib/companion-config'
+import { makeEventsStore } from '../../daemon/events/store'
+import { makeObservationsStore } from '../../daemon/observations/store'
+import { runIntrospectTick } from './introspect'
+import { resolveIntrospectChatId, makeIntrospectAgent } from './introspect-runtime'
 import { makeMessagesStore } from '../../lib/messages-store'
 import { recentInboundTexts } from './recent-inbound'
 import { makeThreadsStore } from '../../lib/threads-store'
-import { runThreadsExtraction } from '../threads/extractor'
-import { runLocalImportIfEnabled } from '../local-import'
+import { runThreadsExtraction } from '../../daemon/threads/extractor'
+import { runLocalImportIfEnabled } from '../../daemon/local-import'
 import { synthesizeOverview } from '../../lib/memory-synthesis'
-import { makeLifeStoresReader } from '../life-stores'
+import { makeLifeStoresReader } from '../../daemon/life-stores'
 import { isNetworkUnprotectedError } from '../../lib/network-gate'
 import type { TickDeps } from './tick-deps'
-import type { IntrospectStep } from '../companion/contributions'
+import type { IntrospectStep, MemorySnapshot } from '../../ports/companion-contributions'
 function errMsg(err: unknown): string { return err instanceof Error ? err.message : String(err) }
 
-export function makeIntrospectTick(deps: TickDeps, steps: readonly IntrospectStep[]): (opts?: { nowIso?: string }) => Promise<void> {
+export function makeIntrospectTick(deps: TickDeps, steps: readonly IntrospectStep[], memorySnapshot: MemorySnapshot): (opts?: { nowIso?: string }) => Promise<void> {
   async function introspectTick(opts?: { nowIso?: string }): Promise<void> {
     // opts.nowIso is otherwise ignored for MVP — observations/memory internal
     // timestamps stay wall-clock. Keeping the symmetric signature avoids
@@ -62,7 +62,7 @@ export function makeIntrospectTick(deps: TickDeps, steps: readonly IntrospectSte
     const messagesStore = makeMessagesStore(deps.db)
     const agent = makeIntrospectAgent({
       chatId, events, observations,
-      memorySnapshot: () => buildMemorySnapshot(deps.stateDir, chatId),
+      memorySnapshot: () => memorySnapshot(deps.stateDir, chatId),
       recentInboundMessages: () => recentInboundTexts(messagesStore, chatId),
       sdkEval,
     })
@@ -135,7 +135,7 @@ export function makeIntrospectTick(deps: TickDeps, steps: readonly IntrospectSte
       deps.log('BACKUP', `daily snapshot failed: ${err instanceof Error ? err.message : err}`)
     }
 
-    // 之后是登记进来的几步(贴纸 / 小像 / 记忆园丁 / 画室,登记表在 tick-bodies.ts),按登记顺序一步一步跑;
+    // 之后是登记进来的几步(贴纸 / 小像 / 记忆园丁 / 画室,登记表在 daemon/wiring/tick-bodies.ts),按登记顺序一步一步跑;
     // 每步自己门控,一步抛了只记一行,不拖累后面的步 —— 同搬家前每段各包一层 try。
     for (const step of steps) {
       try {

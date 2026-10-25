@@ -1,9 +1,12 @@
 import { readJsonFile } from '../../lib/read-json-file'
 import { join } from 'node:path'
-import type { InternalApiDeps, RouteTable } from './types'
+import type { RouteTable } from '../../daemon/internal-api/types'
 
-/** Owner-only retained planning notes. Deliberately excludes chat IDs and prompt context. */
-export function thoughtRoutes(deps: InternalApiDeps): RouteTable {
+/**
+ * Owner-only retained planning notes. Deliberately excludes chat IDs and prompt context.
+ * 读的是日程判断留下的 plan-log(plan-memory.ts 写的);A5 · 陪伴起由 companion 模块自己挂(路由表标 module: 'companion')。
+ */
+export function thoughtRoutes(deps: { stateDir: string }): RouteTable {
   return {'GET /v1/companion/thoughts': () => {
     try {
       let raw: unknown

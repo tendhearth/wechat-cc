@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { loadCompanionConfig, saveCompanionConfig, defaultCompanionConfig } from './config'
+import { loadCompanionConfig, saveCompanionConfig, defaultCompanionConfig } from './companion-config'
 import { mkdtempSync, mkdirSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'

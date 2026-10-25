@@ -51,7 +51,7 @@ const { makeReplySinks } = await import('../reply-sinks')
 import type { Bootstrap } from '../bootstrap/index'
 import type { IlinkAdapter } from '../ilink-glue'
 import type { ChatPrefsStore } from '../chat-prefs'
-import type { CareLedger } from '../companion/care-ledger'
+import type { CareLedger } from '../../features/companion/care-ledger'
 import type { InboundMsg } from '../../domain/prompt-format'
 import type { A2AAgentRecord } from '../../lib/agent-config'
 

@@ -1,5 +1,5 @@
 #!/usr/bin/env bun
-import { thoughtRoutes } from '../../src/daemon/internal-api/routes-thoughts'
+import { thoughtRoutes } from '../../src/features/companion/routes-thoughts'
 // Test/dev shim for the desktop installer's frontend (apps/desktop/src/*).
 //
 // Why this exists:
@@ -454,7 +454,7 @@ Bun.serve({
     if (url.pathname === '/v1/companion/thoughts' && req.method === 'GET') {
       if (isCrossSiteRequest(req)) return new Response('forbidden', { status: 403 })
       if (dryRun) return Response.json({ items: [] })
-      const handler = thoughtRoutes({ stateDir: STATE_DIR } as import('../../src/daemon/internal-api/types').InternalApiDeps)['GET /v1/companion/thoughts']!
+      const handler = thoughtRoutes({ stateDir: STATE_DIR })['GET /v1/companion/thoughts']!
       const result = await handler(url.searchParams, undefined)
       return Response.json(result.body, { status: result.status })
     }

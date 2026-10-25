@@ -2,7 +2,7 @@
 import type { IlinkAdapter } from '../ilink-glue'
 import type { Bootstrap } from '../bootstrap'
 import type { ChatPrefsStore } from '../chat-prefs'
-import type { CareLedger } from '../companion/care-ledger'
+import type { CareLedger } from '../../features/companion'
 import type { ReplySinks } from '../reply-sinks'
 
 export interface PipelineDepsOpts {

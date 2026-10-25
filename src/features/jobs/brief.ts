@@ -5,7 +5,7 @@
  */
 import { existsSync, mkdirSync, readFileSync } from 'node:fs'
 import { join } from 'node:path'
-import type { JobTurnResult, TickTextStyle } from '../../daemon/wiring/tick-bodies'
+import type { JobTurnResult, TickTextStyle } from '../companion'
 import type { ScheduledJob } from '../../domain/scheduled-jobs'
 import { writeFileAtomic } from '../../lib/json-file'
 import { parseSilence } from '../../domain/turn-reply'

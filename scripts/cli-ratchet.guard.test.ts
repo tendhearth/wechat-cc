@@ -16,8 +16,9 @@ const src = readFileSync(join(ROOT, 'cli.ts'), 'utf8')
 
 // 行数上限已删(3f,2026-10-22,理念 5「数违规条数,不数行数」):它把代码挤成一行两千字符(service.ts 的 ctx 那行 2133 字符),
 // 量的是症状。留下的是结构上的数:链接 daemon 的次数。新命令照旧去 src/cli/<group>.ts,cli.ts 只登记。
+// 38 → 37(A5 · 陪伴,2026-10-25):`sessions` 认默认对话改读 lib/companion-config,不再链 daemon/companion/introspect-runtime。
 // @debt CLI 链接 daemon 的次数(CLI 应 spawn / 调接口,不链接它;共享的读法进 src/lib)
-const MAX_DAEMON_IMPORTS = 38
+const MAX_DAEMON_IMPORTS = 37
 
 describe('cli.ts 只许变小', () => {
   it(`整个 CLI(cli.ts + src/cli/commands/**)链接 src/daemon 的次数 ≤ ${MAX_DAEMON_IMPORTS}(cli 应 spawn daemon,不链接它)`, () => {

@@ -5,8 +5,8 @@
 import { describe, it, expect } from 'vitest'
 import { computeCandidates, type CareLevel, type SpeakGate } from '../../domain/companion-plan'
 import { companionActions, introspectSteps, type TickDeps } from './tick-bodies'
-import type { TickDispatch } from './tick-dispatch'
-import type { CompanionTickCtx } from '../companion/contributions'
+import type { TickDispatch } from '../../features/companion/tick-dispatch'
+import type { CompanionTickCtx } from '../../ports/companion-contributions'
 
 const fakeDeps = (socialWired: boolean) => ({ boot: socialWired ? { social: { penpal: {} } } : {} }) as unknown as TickDeps
 const fakeDispatch = {} as TickDispatch

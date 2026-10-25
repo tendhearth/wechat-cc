@@ -8,7 +8,7 @@ import type { IlinkAdapter } from '../ilink-glue'
 import type { Bootstrap } from '../bootstrap'
 import type { PetSignals } from '../pet-signals'
 import type { makeMessagesStore } from '../../lib/messages-store'
-import { loadCompanionConfig } from '../companion/config'
+import { loadCompanionConfig } from '../../lib/companion-config'
 import { resolveOwnerSessionKey } from './owner-session-key'
 
 export interface WirePetTurnDeps {

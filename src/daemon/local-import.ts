@@ -20,7 +20,7 @@ import { homedir } from 'node:os'
 import { join } from 'node:path'
 import type { Db } from '../lib/db'
 import { backfillFromClaudeJsonl, backfillFromCodexJsonl } from '../lib/dialogue'
-import { loadCompanionConfig } from './companion/config'
+import { loadCompanionConfig } from '../lib/companion-config'
 import { readJsonFile } from '../lib/read-json-file'
 
 export const LOCAL_CLAUDE_CHAT = 'local:claude'

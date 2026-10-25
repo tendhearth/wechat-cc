@@ -1,5 +1,5 @@
 import type { Lifecycle } from '../../lib/lifecycle'
-import { startCompanionScheduler } from './scheduler'
+import { startCompanionScheduler } from '../../daemon/companion/scheduler'
 
 export interface CompanionPushDeps {
   /**

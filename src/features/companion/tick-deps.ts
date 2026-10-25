@@ -1,16 +1,18 @@
 /**
  * 伙伴 / 定时这几拍共用的依赖(从 tick-bodies.ts 原样搬出,第三批 3a 顺带项:按生产者拆文件)。
+ * 架构终态 A5 · 陪伴:只留陪伴引擎自己要的。贴纸库、小像、画室那几样归交步子的功能,由组装的地方
+ * (daemon/wiring/tick-bodies.ts)在登记表里自己带,不再经这里 —— 陪伴不认识任何一个功能。
  */
 import type { Db } from '../../lib/db'
-import type { IlinkAdapter } from '../ilink-glue'
-import type { Bootstrap } from '../bootstrap'
+import type { IlinkAdapter } from '../../daemon/ilink-glue'
+import type { Bootstrap } from '../../daemon/bootstrap'
 import type { Access } from '../../lib/access'
 import type { PermissionMode } from '../../domain/capability-matrix'
 import type { ReplyDeliveryPort } from '../../domain/turn-reply'
-import { shouldSpeak } from '../companion/calibration'
-import type { CareLedger } from '../companion/care-ledger'
-import { connectHearth } from '../companion/hearth-client'
-import { buildHearthPlan } from '../companion/hearth-plan'
+import { shouldSpeak } from './calibration'
+import type { CareLedger } from './care-ledger'
+import { connectHearth } from './hearth-client'
+import { buildHearthPlan } from './hearth-plan'
 import type { CheapEval } from '../../ports/agent-provider'
 import { type AvoidTopic } from '../../domain/companion-topics'
 
@@ -19,12 +21,7 @@ export interface TickDeps {
   db: Db
   ilink: IlinkAdapter
   /** 项目登记:伙伴那一拍在哪个文件夹起会话(现在选中的那个,没有就 _default)。 */
-  projects: Pick<import('../projects').Projects, 'load'>
-  /** Curated sticker library — enables the daily sticker-artist step in
-   *  introspectTick. Absent ⇒ the step never runs (tests, minimal embeds). */
-  stickers?: import('../../features/stickers').StickerLib
-  /** CC 画的你 —— 自动刷新小像(portrait-artist)。缺省 ⇒ 不自动刷新。 */
-  generatePortrait?: (adminChatId: string) => Promise<{ ok: boolean; error?: string }>
+  projects: Pick<import('../../daemon/projects').Projects, 'load'>
   boot: Bootstrap
   /**
    * Task 11 — companion ticks aren't user-initiated, but the session
@@ -86,9 +83,9 @@ export interface TickDeps {
    * 落到 App。缺省 ⇒ 只有微信(即改造前)。微信 degraded 时,这一拍只在 App 收得到、且当轮走 daemon
    * 交付(文字由 daemon 送,才改得了道)时才照跑;否则同以前,在模型之前就停手。
    */
-  proactive?: import('../companion/proactive-channel').ProactiveOutbound
+  proactive?: import('../../daemon/companion/proactive-channel').ProactiveOutbound
   /** CC 主动开口唯一的门(第三批 3a,wiring/wire-speech.ts)。没接 ⇒ 已迁过来的那几条路不开口(不退回直接发)。 */
-  speech?: import('../speech/policy').SpeechPolicy
+  speech?: import('../../daemon/speech/policy').SpeechPolicy
   /**
    * Testing seams for the optional hearth push (memory-infra Phase 1, HI W3).
    * Production omits these — distillAndPushOwnerKnowledge falls back to the
@@ -98,12 +95,6 @@ export interface TickDeps {
    */
   hearthConnect?: typeof connectHearth
   hearthBuildPlan?: typeof buildHearthPlan
-  /**
-   * Optional CC Atelier mount. Kept absent by default until a hosted brush is
-   * provisioned; when present it runs after the normal introspection work and
-   * must remain throw-safe so art can never starve memory maintenance.
-   */
-  runAtelierTick?: (opts?: { nowIso?: string }) => Promise<void>
   /**
    * 回复交付(spec 2026-10-03 §4.10「伙伴主动推送」):推送也是一轮 —— 最后的话就是推送,不想发写
    * `NO_REPLY`(静默 ⇒ 撤回登记)。只有这一条路(D3),所以必填。

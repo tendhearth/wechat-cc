@@ -6,7 +6,7 @@ import { existsSync, readFileSync } from 'node:fs'
 import { join } from 'node:path'
 import type { Db } from '../../lib/db'
 import { makeObservationsStore } from '../../daemon/observations/store'
-import { resolveIntrospectChatId } from '../../daemon/companion/introspect-runtime'
+import { loadCompanionConfig } from '../../lib/companion-config'
 import { makeAtelierStore } from './store'
 import { makeJsonAtelierPlanner, type JsonAtelierPlannerDeps } from './planner'
 import { locateAtelierSdCli, resolveAtelierRenderer } from './renderer-resolve'
@@ -25,7 +25,7 @@ export function makeAtelierTick(opts: AtelierTickDeps): (o?: { nowIso?: string }
   // only when the persisted mode is enabled and both local sidecar/model
   // paths are explicitly available; missing assets remain a safe no-op.
   return async ({ nowIso }: { nowIso?: string } = {}): Promise<void> => {
-    const cfg = (await import('../../daemon/companion/config')).loadCompanionConfig(opts.stateDir)
+    const cfg = (await import('../../lib/companion-config')).loadCompanionConfig(opts.stateDir)
     if (cfg.atelier_mode === 'off') return
     const sdCliPath = locateAtelierSdCli({
       explicitPath: process.env.WECHAT_CC_ATELIER_SD_CLI,
@@ -43,7 +43,8 @@ export function makeAtelierTick(opts: AtelierTickDeps): (o?: { nowIso?: string }
     // Feed CC its own derived signals (recent observations + persona) so a real
     // creative impulse can form. Falls back to empty context when CC has no
     // anchor chat yet — that just means no impulse, never a crash.
-    const chatId = resolveIntrospectChatId(opts.stateDir)
+    // 主人那条对话(同反省那一拍的 resolveIntrospectChatId:companion 配置的 default_chat_id);画室不为这一行去引陪伴功能。
+    const chatId = loadCompanionConfig(opts.stateDir).default_chat_id ?? null
     const memoryRoot = join(opts.stateDir, 'memory')
     let observations: Awaited<ReturnType<ReturnType<typeof makeObservationsStore>['listActive']>> = []
     let persona: string | null = null

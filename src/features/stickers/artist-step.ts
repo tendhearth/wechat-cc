@@ -1,9 +1,9 @@
 /**
- * 贴纸交给陪伴自省那一拍的一步(「陪伴候选」贡献点 IntrospectStep,daemon/companion/contributions.ts)——
- * 从 daemon/wiring/introspect-steps.ts 原样搬来(架构终态 A5);登记表仍在 wiring/tick-bodies.ts,排第一。
+ * 贴纸交给陪伴自省那一拍的一步(「陪伴候选」贡献点 IntrospectStep,ports/companion-contributions.ts)——
+ * 从 daemon/wiring/introspect-steps.ts 原样搬来(架构终态 A5);登记表仍在 daemon/wiring/tick-bodies.ts,排第一。
  */
-import { loadCompanionConfig } from '../../daemon/companion/config'
-import type { IntrospectStep } from '../../daemon/companion/contributions'
+import { loadCompanionConfig } from '../../lib/companion-config'
+import type { IntrospectStep } from '../../ports/companion-contributions'
 import type { SpeechPolicy } from '../../daemon/speech/policy'
 import type { StickerLib } from './stickers'
 

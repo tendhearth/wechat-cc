@@ -17,7 +17,7 @@ import type { WiredDeps } from './wiring'
 import type { PollingLifecycle } from './polling-lifecycle'
 import { resolveAdminChatId, type Bootstrap } from './bootstrap'
 import { removeAgyGlobalMcp } from './bootstrap/agy-mcp-config'
-import { loadCompanionConfig } from './companion/config'
+import { loadCompanionConfig } from '../lib/companion-config'
 import { SUBSYSTEM_NAMES } from './capabilities'
 
 function errorDetails(err: unknown): string {

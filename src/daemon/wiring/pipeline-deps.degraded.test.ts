@@ -20,7 +20,7 @@ import { makeReplySinks } from '../reply-sinks'
 import type { Bootstrap } from '../bootstrap/index'
 import type { IlinkAdapter } from '../ilink-glue'
 import type { ChatPrefsStore } from '../chat-prefs'
-import type { CareLedger } from '../companion/care-ledger'
+import type { CareLedger } from '../../features/companion/care-ledger'
 
 // buildPipelineDeps dereferences boot.health.health unconditionally (llmHealth
 // mw dep) even though this test never touches the health machine — same

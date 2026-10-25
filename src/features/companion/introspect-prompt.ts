@@ -4,7 +4,7 @@
  * fences, prose preamble, malformed output). No SDK dependency — Task 3
  * wires this together with @anthropic-ai/claude-agent-sdk.
  */
-import type { ObservationTone } from '../observations/store'
+import type { ObservationTone } from '../../daemon/observations/store'
 
 export interface IntrospectPromptInput {
   chatId: string

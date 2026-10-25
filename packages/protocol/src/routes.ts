@@ -74,7 +74,7 @@ export interface PanelSurface {
  * 表里标了 `module: X` 的路由:daemon 的路由层按 X 此刻的状态判能不能走(关着 ⇒ module_off、坏了 ⇒ module_degraded、
  * 还没挂上 ⇒ module_starting);处理器由模块 X 自己挂(`internalApi.mount`),不在 internal-api 的总表里。
  */
-export const MODULE_NAMES = ['social', 'calendar', 'reminders', 'letters', 'atelier', 'stickers', 'journal', 'voice', 'terminal', 'memory', 'phone', 'workbench'] as const
+export const MODULE_NAMES = ['social', 'calendar', 'reminders', 'letters', 'atelier', 'stickers', 'journal', 'voice', 'terminal', 'memory', 'phone', 'workbench', 'companion'] as const
 export type ModuleName = (typeof MODULE_NAMES)[number]
 
 /**
@@ -262,7 +262,7 @@ export const ROUTES: Readonly<Record<RouteKey, RouteSpec>> = {
   'GET /v1/memory/list': { module: 'memory', desktop: { tier: 'guest' } },
   'POST /v1/share/page': { desktop: { tier: 'guest' } },
   'POST /v1/share/resurface': { desktop: { tier: 'guest' } },
-  'GET /v1/companion/status': { desktop: { tier: 'guest' } },
+  'GET /v1/companion/status': { module: 'companion', desktop: { tier: 'guest' } },
   // send_sticker draws only from the curated sticker lib (pre-approved
   // images, no arbitrary-path read) and has no exfiltration surface —
   // same trust class as reply/reply_voice, so it's guest not trusted.
@@ -288,10 +288,10 @@ export const ROUTES: Readonly<Record<RouteKey, RouteSpec>> = {
   'GET /v1/voice/status': { module: 'voice', desktop: { tier: 'trusted' } },
   'POST /v1/stt/save_config': { module: 'voice', desktop: { tier: 'trusted' } },
   'GET /v1/stt/status': { module: 'voice', desktop: { tier: 'trusted' } },
-  'POST /v1/companion/enable': { desktop: { tier: 'trusted' } },
-  'POST /v1/companion/disable': { desktop: { tier: 'trusted' } },
-  'POST /v1/companion/snooze': { desktop: { tier: 'trusted' } },
-  'POST /v1/companion/import-local': { desktop: { tier: 'trusted' } },
+  'POST /v1/companion/enable': { module: 'companion', desktop: { tier: 'trusted' } },
+  'POST /v1/companion/disable': { module: 'companion', desktop: { tier: 'trusted' } },
+  'POST /v1/companion/snooze': { module: 'companion', desktop: { tier: 'trusted' } },
+  'POST /v1/companion/import-local': { module: 'companion', desktop: { tier: 'trusted' } },
   'GET /v1/companion/presence': { desktop: { tier: 'trusted' } },
   // CC 桌宠的「在做什么」(spec 2026-09-05-cc-desktop-pet §5.1)。trusted,和
   // presence 同一类:桌面的唯一凭据是 daemon 级 0600 FILE token(=trusted),
@@ -424,7 +424,7 @@ export const ROUTES: Readonly<Record<RouteKey, RouteSpec>> = {
   // 路由 2026-07-22 正是这么静默坏了一个多月。写的两个也是 trusted:它们
   // 只改主人自己那份清单的状态,不外发、不触网。
   // 背包后来也装串门见闻 / 明信片 / 回忆,不只是打猎的:这几条归日志模块(src/features/journal)。
-  'GET /v1/companion/thoughts': { desktop: { tier: 'admin', tokens: ['operator'], ownerWorkspace: true } },
+  'GET /v1/companion/thoughts': { module: 'companion', desktop: { tier: 'admin', tokens: ['operator'], ownerWorkspace: true } },
   'GET /v1/journal': { module: 'journal', desktop: { tier: 'trusted' } },
   'GET /v1/journal/postcards': { module: 'journal', desktop: { tier: 'trusted' } },
   'POST /v1/journal/favorite': { module: 'journal', desktop: { tier: 'trusted' } },

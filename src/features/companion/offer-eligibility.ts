@@ -31,8 +31,8 @@
  */
 import type { Access } from '../../lib/access'
 import { NEW_RELATIONSHIP_MSG_COUNT } from '../../lib/messages-store'
-import type { CompanionConfig } from './config'
-import { resolveAdminChatId } from './resolve-admin'
+import type { CompanionConfig } from '../../lib/companion-config'
+import { resolveAdminChatId } from '../../daemon/companion/resolve-admin'
 
 export interface CompanionOfferEligibleArgs {
   chatId: string

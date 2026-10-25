@@ -4,7 +4,7 @@ import {
   PLAN_REASK_MS, PLAN_OBSERVATION_CHARS, PLAN_PERSONA_CHARS, PLAN_TITLE_CHARS,
   type PlanContext, type PlanLogEntry,
 } from './companion-plan'
-import { shouldSpeak } from '../daemon/companion/calibration'
+import { shouldSpeak } from '../features/companion/calibration'
 
 const NOW = '2026-05-13T02:00:00.000Z'   // 北京 10:00 周三
 const base = { isOwnerChat: true, level: 'low' as const, prefs: { hunt: true }, socialWired: true, nowIso: NOW, ledger: { noReplyCount: 0 }, lastInboundAtIso: '2026-05-01T00:00:00.000Z' }

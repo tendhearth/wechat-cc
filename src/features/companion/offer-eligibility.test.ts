@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import { companionOfferEligible } from './offer-eligibility'
-import { defaultCompanionConfig } from './config'
+import { defaultCompanionConfig } from '../../lib/companion-config'
 import { NEW_RELATIONSHIP_MSG_COUNT } from '../../lib/messages-store'
 import type { Access } from '../../lib/access'
 

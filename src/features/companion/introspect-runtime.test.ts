@@ -3,8 +3,8 @@ import { mkdtempSync, rmSync, writeFileSync, mkdirSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { makeIntrospectAgent, resolveIntrospectChatId } from './introspect-runtime'
-import { makeEventsStore } from '../events/store'
-import { makeObservationsStore } from '../observations/store'
+import { makeEventsStore } from '../../daemon/events/store'
+import { makeObservationsStore } from '../../daemon/observations/store'
 import { openTestDb, type Db } from '../../lib/db'
 
 function makeStores(stateDir: string, chatId: string, db: Db) {
