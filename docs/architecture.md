@@ -33,7 +33,8 @@ CC 是住在主人自己电脑上的一个 daemon。微信、桌面、手机 App
 ```text
 apps/*  ──HTTP──►  packages/protocol(路由表、错误码,纯数据)
 src/cli ──spawn / HTTP──►  src/daemon ──► src/features ──► src/app ──► src/ports / src/domain ──► src/lib
-                                                   └──► src/core(还没搬完的适配器、工作台)
+                          src/app ──► src/adapters(executors / store,实现 ports)
+                                                   └──► src/core(还没搬完的工作台、社交、知识库)
 src/mcp-servers ──HTTP──►  src/daemon(internal API)
 ```
 
@@ -42,7 +43,8 @@ src/mcp-servers ──HTTP──►  src/daemon(internal API)
 - `src/ports`:接口 —— 执行者的口(`agent-provider`:AgentProvider / AgentSession)。只依赖 domain 与纯 lib。
 - `src/app`:用例 —— 对话协调器(`coordinator/`:`planTurn` / `admit` 一轮定一次档位,`TurnRunner` 三种派法共用)、会话管理、执行者登记。不往上依赖、不碰 node。
 - `src/adapters/executors/<家>`:各家执行者的适配器(对话侧 + 工作台侧),实现 ports;不往上依赖 app / daemon。
-- `src/core`:还没拆完的那一层 —— 协调器、执行者适配、工作台、各种 store。正在按终态分进 app(用例)和 adapters(执行者、store);`core-no-node` 棘轮在数。
+- `src/adapters/store`:通用的 store(对话、会话、会话状态、回合记录、终端会话、「一件事」)。同一条 `adapters-implement-ports` 规则。
+- `src/core`:还没拆完的那一层 —— 工作台、社交、知识库、配对、乙,以及它们自己的 store。功能搬进 `src/features` 时它们的 store 跟着走;`core-no-node` 棘轮在数。
 - `src/features/<名>`:一个功能一个目录(见[加一个功能](maintainer/add-a-feature.md))。
 - `src/test-support`:测试替身(照剧本说话的假执行者),生产代码不许 import。
 - `src/daemon`:「怎么接起来」—— 入站、命令、internal API、模块、定时。

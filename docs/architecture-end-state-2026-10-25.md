@@ -250,9 +250,10 @@ DeliveryPort                      吃 TurnOutcome;旧的 / shadow 交付路删�
 | D3 | 交付只剩一条路:删 legacy / shadow 两档、`replyDeliveryFor` / `setReplyDeliveryOverrides`、agent-config `reply_delivery`(旧盘上写着照样开机、被忽略)、`WECHAT_REPLY_DELIVERY` 与 wechat MCP 的 reply 族工具注册、FALLBACK 连击、shadow 旁听、prompt 的「用 reply 说话」版、reply-once 实验代码(数据留着);`replyDelivery` 端口在协调器 / 推送里改成必填。`/v1/wechat/*` 路由留着(附件经它们真发,`reply` 等几条现在没有调用方,另做) |
 | E1 第 1 步 | `src/domain/` 开张:档位 / 放行、开口、伙伴判定、提示词、能力表这 43 个纯规则文件从 core 搬进去(codemod 改了 256 个文件的 import);`guestSafe` 与 Confinement 类型抽成 `domain/confinement.ts`。depcheck 两条零例外:domain 运行时只依赖 domain 自己和 lib 里不碰 I/O 的;不碰 node 内置。只引类型暂时放行(core 还没拆完)。下一步:app(协调器)、adapters(执行者、store) |
 | E1 第 2 步 | `src/app/`(协调器 `coordinator/*`、会话管理、执行者登记)与 `src/ports/`(执行者的口 `agent-provider`)开张;`auth-fail` 进 domain、`async-mutex` / `async-queue` 进 lib。depcheck 四条:ports 零例外只依赖 ports / domain / 纯 lib;app 不往上依赖、不碰 node(过渡期还能用 core 里没搬完的 store / 工作台)。speech-send 守卫扫到 app / domain / ports |
-| E2 | 六家执行者的适配器搬进 `src/adapters/executors/<家>/`(claude / codex / acp(含 Cursor)/ agy / gemini / openai,85 个文件连同测试;原来散在 core 根目录和 core/workbench 里)。depcheck `adapters-implement-ports` 零例外:适配器不往上依赖 app / daemon / cli / features。core-no-node 基线少 19 行(用 node 的是适配器,本来就不该算 core 的账)。待办:claude-workbench-* 与对话侧适配器抛的码没进工作台错误码的归类扫描(搬家前就不在,另作一步) |
+| E2 | 六家执行者的适配器搬进 `src/adapters/executors/<家>/`(claude / codex / acp(含 Cursor)/ agy / gemini / openai,85 个文件连同测试;原来散在 core 根目录和 core/workbench 里)。depcheck `adapters-implement-ports` 零例外:适配器不往上依赖 app / daemon / cli / features。core-no-node 基线少 19 行(用 node 的是适配器,本来就不该算 core 的账) |
 | E3 第 1 步 | 通用的 store(对话、会话、会话状态、回合记录、终端会话、「一件事」)进 `src/adapters/store/`;`TurnRecord` 形状进 `domain/turn-record.ts`(store 不再引协调器的类型 —— 新规则当场抓到的)。功能自己的 store(社交、知识库、定时 …)等那个功能搬进 features 时跟着走 |
 | E4 第 1 步 | 工作台服务:`Options` 原样当 `ServiceDeps` 传(删掉那行 2245 字符的逐字段复制),被行数上限挤成一行的字段表 / import / 域构造 / service 对象 / `actions.set` 全部按一项一行摊开(service.ts 没有超过 180 字符的行了);删掉数内函数的 `workbench-service-ratchet` 守卫 —— 它管的两条环 depcruise 早有(`workbench-service-no-circular` / `wechat-control-must-not-link-service`),剩下的只是量症状。`Ref<ServiceActions>` 晚绑定还在,下一步 |
+| E2 补 | 工作台错误码的反向守卫扫整个 `src/adapters/executors`(原来只扫 core/workbench 那几份)。「归了类」多一种:任务失败记录认得的码(`executionFailureMessage` 有人话)—— 于是 INTERNAL_ONLY 少了 12 个本来就有人话的;新扫进来的 Claude 工作台运行时不变式、ACP 收尾码列进去。`docs/architecture.md` 的分层图补上 adapters |
 
 ## 修订记录
 

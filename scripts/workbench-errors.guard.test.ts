@@ -114,12 +114,10 @@ describe('桌面路由能回的、桌面 UI 在等的码(#465 盘点发现)', ()
  */
 const INTERNAL_ONLY = new Set([
     // api-task 执行者运行时:落进任务失败记录,不走桌面 HTTP
-    'api_task_private_scope', 'api_task_scope_invalid', 'api_task_scope_changed', 'api_task_output_limit', 'api_task_incomplete',
-    'api_task_response_invalid', 'permission_denied', 'api_task_step_limit', 'api_task_closed', 'api_task_busy',
+    'api_task_output_limit', 'permission_denied',
     'api_artifact_exists_or_invalid_path', 'api_file_not_text', 'api_file_operation_failed', 'api_messages_too_large', 'api_model_aborted',
-    'api_model_stream_already_consumed', 'api_model_stream_incomplete', 'api_project_changed', 'api_session_binding', 'api_session_conflict',
-    'api_task_cancelled', 'api_task_close_unconfirmed', 'artifact_delivery_conflict', 'artifact_delivery_not_found', 'artifact_delivery_scope',
-    'artifact_delivery_stale', 'artifact_transport_unavailable', 'attachment_data_missing', 'attachment_image_unsupported', 'close_timeout',
+    'api_model_stream_already_consumed', 'api_model_stream_incomplete', 'api_project_changed', 'api_session_binding', 'api_session_conflict', 'artifact_delivery_conflict', 'artifact_delivery_not_found', 'artifact_delivery_scope',
+    'artifact_delivery_stale', 'artifact_transport_unavailable', 'close_timeout',
     'codex_child_message_limit', 'codex_empty_input', 'codex_events_already_consumed', 'codex_input_id_conflict', 'codex_input_limit',
     'codex_invalid_rpc_response', 'codex_missing_thread_id', 'codex_missing_turn_id', 'codex_no_active_turn', 'codex_process_not_exited',
     'codex_resume_thread_mismatch', 'codex_runtime_already_started', 'codex_runtime_record_limit', 'codex_runtime_requires_lifetime_stream',
@@ -131,25 +129,35 @@ const INTERNAL_ONLY = new Set([
     'rewind_git_failed', 'rewind_verify_tree', 'runtime_closed_before_input_acknowledgement', 'session_start_timeout', 'subscription_conflict',
     'subscription_inactive', 'subscription_mismatch', 'turn_timeout', 'unsupported_api_tool', 'upload_conflict', 'upload_invalid_content',
     'upload_not_found', 'upload_unfinished_limit',
+    // Claude 工作台运行时(claude-workbench-*)的不变式与上限:只在运行时内部抛,落进任务失败记录
+    'claude_workbench_process_groups_unsupported', 'claude_workbench_custom_spawn_unsupported', 'claude_runtime_task_limit',
+    'claude_runtime_task_owner_limit', 'claude_runtime_closed', 'claude_runtime_reader_not_closed', 'claude_runtime_child_output_parts_limit',
+    'claude_runtime_operation_limit', 'claude_runtime_stream_ended', 'claude_runtime_already_started_or_closed',
+    'claude_runtime_closed_or_not_started', 'claude_runtime_request_duplicate_or_invalid', 'claude_runtime_pending_input_limit',
+    'claude_runtime_request_limit', 'claude_runtime_requires_lifetime_entry', 'claude_runtime_event_budget_invalid',
+    'claude_runtime_event_buffer_limit', 'claude_runtime_single_consumer_required', 'claude_runtime_concurrent_next_unsupported',
+    'claude_runtime_close_deadline', 'claude_runtime_process_table_invalid', 'claude_runtime_closed_or_duplicate_spawn',
+    'claude_runtime_process_ownership_lost', 'claude_runtime_descendant_limit', 'claude_runtime_descendant_group_unowned',
+    'claude_runtime_descendants_not_frozen', 'claude_runtime_process_not_exited',
+    // ACP 运行时:进程收不干净 / 对端没给会话 id(同上,落进失败记录)
+    'acp_process_not_exited', 'acp_missing_session_id',
+    // OpenAI 兼容的 MCP 桥:工具调用被放弃(对话侧,不走工作台路由)
+    'abandoned',
 ])
 describe('工作台抛出的码都归了类(反向守卫)', () => {
-  it('every Error(\'code\') literal under src/core/workbench and the executor adapters is desktop-mapped or listed INTERNAL_ONLY; the list has no stale entries', async () => {
+  it('every Error(\'code\') literal under src/core/workbench and src/adapters/executors is desktop-mapped, a task-failure code, or listed INTERNAL_ONLY; the list has no stale entries', async () => {
     const { workbenchErrorHttp } = await import('../packages/protocol/src/workbench-errors')
     const { join } = await import('node:path')
     const { statSync } = await import('node:fs')
     const files: string[] = []
     const walk = (d: string) => { for (const f of readdirSync(d)) { const p = join(d, f); if (statSync(p).isDirectory()) walk(p); else if (p.endsWith('.ts') && !p.includes('.test.')) files.push(p) } }
     walk('src/core/workbench')
-    // 原来在 core/workbench 下、架构终态 E2 搬进 src/adapters/executors 的那些(codex app-server、api-task、原生历史 ……):
-    // 它们抛出的码同样经工作台的路由出去,照旧扫。别的适配器(对话侧、claude-workbench-*)原来就不在这一扫里 ——
-    // 那是另一件事(没归类的码),记在稿子的 E 阶段,不在搬家这一步改。
-    for (const f of ['openai/api-files', 'openai/api-model', 'openai/api-sessions', 'openai/api-task-provider', 'claude/claude-model-catalog',
-      'claude/claude-native-config', 'claude/native-claude-history', 'codex/codex-activity', 'codex/codex-app-server', 'codex/codex-config',
-      'codex/codex-execution-error', 'codex/codex-history-rpc', 'codex/codex-mcp-approval', 'codex/codex-model-catalog', 'codex/codex-runtime',
-      'codex/native-codex-history']) files.push(join('src/adapters/executors', `${f}.ts`))
+    // 执行者适配器(架构终态 E2 搬进 src/adapters/executors)整个扫:它们抛的码经工作台落进任务失败记录或路由。
+    walk('src/adapters/executors')
     const thrown = new Set<string>()
     for (const f of files) for (const m of readFileSync(f, 'utf8').matchAll(/(?:Error|\bfail)\(\s*['"`]([a-z][a-z0-9_]+)['"`]\s*[,)]/g)) thrown.add(m[1]!)
-    const unmapped = [...thrown].filter(c => workbenchErrorHttp(c, 'desktop').error === 'internal')
+    // 归了类 = 桌面路由认得(表里 / 前缀规则),或者是任务失败记录认得的码(executionFailureMessage 有人话,桌面照着显示)
+    const unmapped = [...thrown].filter(c => workbenchErrorHttp(c, 'desktop').error === 'internal' && executionFailureMessage(c) === c)
     expect(unmapped.filter(c => !INTERNAL_ONLY.has(c)), '新抛的码:在 workbench-errors 里给桌面状态,或者确实不走桌面 HTTP 就列进 INTERNAL_ONLY').toEqual([])
     expect([...INTERNAL_ONLY].filter(c => !unmapped.includes(c)), '已经归了类或不再抛,从 INTERNAL_ONLY 删掉').toEqual([])
   })
