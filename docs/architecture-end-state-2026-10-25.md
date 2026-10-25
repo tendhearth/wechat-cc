@@ -193,6 +193,7 @@ DeliveryPort                      吃 TurnOutcome;旧的 / shadow 交付路删�
 | E1 | 建 `src/domain`、`src/ports`、`src/adapters`、`src/app`;先把已经是纯函数的文件(`policy`、`user-tier`、`chatroom-conductor`、`provider-policy`、`permission-rules/decide`、`quiet-hours`、`envelope`…)挪进 `domain`,开 depcruise 规则 | `domain` 规则零例外 |
 | E2 | 执行者适配器(B 搬完的)进 `adapters/executors/`;store 进 `adapters/store/` | — |
 | E3 | `src/core` 清空 | 删掉 `core-no-node` 守卫和 `src/core` 目录 |
+| B1b | Claude 对话和一起做核过一遍(主人 2026-10-25 定:一家一条实现,直接改):**本来就是同一条路** —— 两边都是 Agent SDK 的 `query()`(流式输入),同一个 `provider.spawn`、同一份 `sdkOptionsForProject`(权限回调、MCP、档位)、同一套执行选择 / 续接 / abort / 端点捕获;`claude-workbench-runtime` 是在它上面加了进程组所有权、常驻、后台任务、逐字流、中途插话、事件预算,会话生命周期不同(一整段一个事件流 vs 一轮一个)。所以不硬合成一个会话类:对话搬到常驻那一边会丢 Windows(它拒 win32)、改掉回复分段和 `finalText`(看得见)。做了的:SDK 消息 → 事件的共用部分收进 `claude-sdk-messages.ts` 一份(用户消息内容 / 工具调用 / 活动标签与 detail 清洗 / 「API 失败 or 没登录」的判法 / API 失败的码和话),运行时不再靠 provider 注入 `helpers`;删掉对话循环里按 `workbenchTimeline` 开的时间线抄本(生产里只和 `workbenchLifecycle` 一起传过,走不到)和它的 6 条测试(时间线顺序 / 不抄输入 / detail 清洗 / 失败结果 / 错父结果这几条搬进运行时测试)。权限 / 档位一行没动(C3 快照不变)。逐项差异见下表 |
 | E4 | 工作台服务:`Options` 原样传成 `deps`(删掉那行 2245 字符的复制);十个域按依赖顺序构造,彼此依赖接口,`Ref<ServiceActions>` 删掉 | 删掉 `workbench-service-ratchet` 守卫;service 里没有 `Ref` |
 
 ### 阶段 F:契约与客户端(和 A–E 并行,碰的文件不重叠)
@@ -318,6 +319,25 @@ DeliveryPort                      吃 TurnOutcome;旧的 / shadow 交付路删�
 另:能力表 `OPENAI_CAPABILITIES.supportsResume` 仍是 false —— 它现在只是「会话没报 `resumedHistory` 时」的兜底;委派的光杆 peer 没有 DB,照旧每次从头来。
 
 **后续**:真机核一次 DeepSeek / Kimi 对话「重启后接着聊」(含带思考的模型:存档里留着它的 reasoning 分块,回送时端点接不接);对话历史没有自动压缩,超过 192 KiB 就从头来,要接得更久得做摘要;v86 是这条分支取的号,和别的分支撞号按迁移规矩后合的改号重抄指纹。
+### B1b:Claude 对话 vs 一起做 逐项
+
+| 项 | 对话(`claude-agent-provider.ts` 的 spawn) | 一起做(`claude-workbench-runtime.ts`) | 合了没有 / 为什么不合 |
+|---|---|---|---|
+| 协议 | Agent SDK `query()`,流式输入;SDK 自己起 `claude` 子进程 | 同一个 `query()`;`spawnClaudeCodeProcess` 换成自己起(detached 进程组),加 `includePartialMessages`、`--replay-user-messages` | 同一条路。选项构造本来就一份(`sdkOptionsForProject` + spawn 里的执行选择) |
+| 中途插话 | 没有:一轮在跑再 `dispatch` 抛错,协调器排队 | `submit()` 以 `priority: 'next'` 插进去,等原生 replay 确认 | 不合:对话侧要先定产品行为(同 B1 的「后续」) |
+| 常驻会话 | 一轮一个事件流,`result` 收这一轮,会话留着等下一轮(会话管理器空闲回收) | 一整段一个事件流;后台任务 / 子助手在登记就 retained,只有验证过的原生版本才在 result 收尾 | 不合:生命周期就是两种用途的区别 |
+| 进程组清理 | close = SDK close + interrupt + abort;子进程自己 setsid 出去的组不管 | 扫 ps 冻住全部子孙组 → SIGKILL → 核到全退;`processGroups()` 给「没确认退出」的证据;网络守护能冻 / 放 / 杀 | 不合:这是一起做「放开文件夹」要的证据;对话侧没这个需求,而且它是 POSIX 专用 |
+| 权限回调 | `canUseTool` 由 `sdkOptionsForProject` 给(对话 = `permission-relay`,面 chat) | 同一个入口给(`makeWorkbenchClaudeCanUseTool`,面 workbench),运行时不碰 | 本来一份(`authorize`),按用途配 |
+| MCP | `options.mcpServers`,对话 = 微信 MCP 等 | 同一个字段,一起做 = 这件事登记的原生 MCP | 按用途配 |
+| 续接 | `options.resume = resumeSessionId` | 同 | 本来一份 |
+| 图片 / PDF | `userContent`:图片、PDF 原样给,其他文件给元数据 | 同一个 `userContent` | 合了(`claude-sdk-messages.ts`;以前靠 `helpers` 注入) |
+| 思考 | thinking 块丢掉;effort / thinking 选项同一套 | 同 | 本来一样 |
+| 额度 / 认证报错 | SDK `error` 标注 → 码(`billing_error` ⇒ quota、`authentication_failed` ⇒ auth_rejected …),等 result 的 HTTP 状态;两句哨兵 ⇒ auth_failed | 同一个判法 | 合了(`claudeAssistantFailure` / `claudeApiFailure`)。还剩两处不同,都没动:对话侧 result `is_error: true` 而没有标注消息时补一个 `provider_error`,一起做没有这一条(加上会让一起做里某些回合从「完成」变「失败」,看得见,攒进后续);auth_failed 的 message 对话带原文前 160 字、一起做不带(两边都按码说话,message 不给人看) |
+| 取消 | `interrupt()`(吞掉 transport 已死的错),这一轮等 result 收尾 | `interrupt()`;关的时候整组收掉 | 不合:跟着生命周期走 |
+| 文字 / 时间线 | 相邻文字块攒一段、遇工具冲出;子 agent 文字不发;成功轮带 `finalText` | 逐字流 append + 整块 replace(itemId)、工具活动开始 / 完成、子助手文字进它那条活动的 output | 工具活动的构造合了(`toolActivityStart`);对话侧那份时间线抄本删了 |
+| Windows | 能跑 | 拒(`claude_workbench_process_groups_unsupported`,没有进程组) | **这是不合并成一个会话类的硬理由**:对话搬过去 Windows 上的 Claude 对话就没了 |
+
+**后续**:一起做要不要也认「`is_error` 而无标注」那种失败(看得见,先问);对话侧的中途插话等协调器定行为后可以直接用运行时的 `submit` 那套确认法。
 
 ## 修订记录
 
@@ -327,3 +347,4 @@ DeliveryPort                      吃 TurnOutcome;旧的 / shadow 交付路删�
 - 2026-10-25:F3 做完(进度表):App 里没有手写的 `/m/api`、`/set/api` 字符串了;网页换同一张表是下一步。
 - 2026-10-25:B2 做完(进度表 + 差异表):OpenAI 兼容对话 / 工作台合成一种会话,对话历史进 api-sessions(v86);工作台照旧只有文件工具(计划里「工作台 = 文件工具 + 微信工具」更正)。
 - 2026-10-25:G 设计稿出了(进度表「G 设计稿」),五条等主人点头的在稿 §4。
+- 2026-10-25:B1b 做完(进度表 + 逐项差异):Claude 两条本来同一个 SDK,收共用的消息映射,删对话侧走不到的时间线抄本。

@@ -1,24 +1,16 @@
 import { randomUUID } from 'node:crypto'
 import { claudeResultUsage } from '../../../domain/turn-usage'
 import { query, type Options, type SDKUserMessage } from '@anthropic-ai/claude-agent-sdk'
-import type { AgentActivity, AgentAttachment, AgentEvent, AgentRuntimeSnapshot, AgentSession, SpawnContext } from '../../../ports/agent-provider'
+import type { AgentActivity, AgentRuntimeSnapshot, AgentSession, SpawnContext } from '../../../ports/agent-provider'
 import { AsyncQueue } from '../../../lib/async-queue'
 import { ClaudeWorkbenchEvents } from './claude-workbench-events'
 import { ownClaudeWorkbenchProcess } from './claude-workbench-process'
 import { isAuthFail } from '../../../domain/auth-fail'
-import { claudeApiErrorCode } from './claude-api-error-code'
 import { errorWithProviderCode } from '../../../lib/provider-error-code'
+import { claudeApiFailure, claudeAssistantFailure, nativeTimelineId as id, parseToolUseToEvent, toolActivityStart, userContent, type ActivityEvent } from './claude-sdk-messages'
 
-type ToolEvent = Extract<AgentEvent, { kind: 'tool_call' }>
-type ActivityEvent = ToolEvent & { activity: AgentActivity }
 type Value = Record<string, any>
-interface Helpers {
-  content(text: string, attachments?: readonly AgentAttachment[]): SDKUserMessage['message']['content']
-  tool(block: { name?: string }): ToolEvent
-  label(name: string): Pick<AgentActivity, 'type' | 'label'>
-}
 const object = (value: unknown): value is Value => !!value && typeof value === 'object' && !Array.isArray(value)
-const id = (value: unknown): string | undefined => typeof value === 'string' && value.length > 0 && value.length <= 200 && !/[\u0000-\u001f\u007f]/.test(value) ? value : undefined
 const MAX_CHILD_OUTPUT = 40_000
 const CLOSE_TIMEOUT = 2_500
 
@@ -34,8 +26,12 @@ interface Task {
 }
 
 /** One reader owns one immutable workbench epoch. No native result or empty
- * background snapshot proves that the automatic notification queue is drained. */
-export function createClaudeWorkbenchSession(baseOptions: Options, context: SpawnContext, helpers: Helpers): AgentSession {
+ * background snapshot proves that the automatic notification queue is drained.
+ *
+ * 和对话会话是同一个 SDK、同一份 options(claude-agent-provider.ts 的 spawn 定好再交过来),SDK 消息 → 事件的
+ * 共用部分在 claude-sdk-messages.ts。这里多出来的是一起做才要的:自己起子进程并拥有整组进程(关得干净、能冻住)、
+ * 后台任务 / 子助手的生命周期、逐字流、中途插话(submit + replay 确认)、事件预算。win32 没有进程组 ⇒ 不开。 */
+export function createClaudeWorkbenchSession(baseOptions: Options, context: SpawnContext): AgentSession {
   if (process.platform === 'win32') throw new Error('claude_workbench_process_groups_unsupported')
   if (baseOptions.spawnClaudeCodeProcess) throw new Error('claude_workbench_custom_spawn_unsupported')
   const processOwner = ownClaudeWorkbenchProcess(baseOptions.stderr)
@@ -58,7 +54,8 @@ export function createClaudeWorkbenchSession(baseOptions: Options, context: Spaw
   const apiFailure = (status?: number | null): Error => {
     const { sdkError, text } = pendingApiError!
     pendingApiError = null
-    return errorWithProviderCode(text.trim().slice(0, 400) || `claude api error: ${sdkError}`, claudeApiErrorCode(sdkError, status) ?? 'provider_error')
+    const { code, message } = claudeApiFailure(sdkError, text, status)
+    return errorWithProviderCode(message, code)
   }
   let closePromise: Promise<void> | undefined, resolveDrain!: () => void
   const drained = new Promise<void>(resolve => { resolveDrain = resolve })
@@ -216,8 +213,10 @@ export function createClaudeWorkbenchSession(baseOptions: Options, context: Spaw
       const blocks = typeof rawContent === 'string' ? [{ type: 'text', text: rawContent }] : Array.isArray(rawContent) ? rawContent : []
       const messageKey = id(message.uuid) ?? id(message.message?.id) ?? `message-${++sequence}`
       const combined = blocks.map(block => object(block) && block.type === 'text' && typeof block.text === 'string' ? block.text : '').join('')
-      if (!parent && isAuthFail('claude-sentinel', combined)) { finish(errorWithProviderCode('claude reports not logged in', 'auth_failed')); return }
-      if (!parent && claudeApiErrorCode(message.error) !== null) { pendingApiError = { sdkError: String(message.error), text: combined }; return }
+      // 失败的两种和对话侧同一个判法;子助手的消息不判(它的文字只进它自己那条活动的 output)。
+      const failure = parent ? null : claudeAssistantFailure(message.error, combined, false)
+      if (failure?.kind === 'auth_failed') { finish(errorWithProviderCode('claude reports not logged in', 'auth_failed')); return }
+      if (failure?.kind === 'api_error') { pendingApiError = { sdkError: failure.sdkError, text: combined }; return }
       const owner = parent ? taskByTool.get(parent) ?? task(`tool:${parent}`, parent) : undefined
       if (owner && owner.background !== false) { retained = true; if (!owner.terminal) live.add(owner.key) }
       for (const [index, block] of blocks.entries()) {
@@ -242,13 +241,11 @@ export function createClaudeWorkbenchSession(baseOptions: Options, context: Spaw
         } else if (block.type === 'tool_use') {
           const name = typeof block.name === 'string' ? block.name : '', key = id(block.id)
           if (name === 'Monitor' || object(block.input) && block.input.run_in_background === true) retained = true
-          const event = helpers.tool({ name })
+          const event = parseToolUseToEvent({ name })
           if (!key) { output.push(event); continue }
           if (operations.has(key)) continue
           if (operations.size >= 4096) throw new Error('claude_runtime_operation_limit')
-          const activity: AgentActivity = { id: key, ...helpers.label(name), status: 'running', ...(owner ? { parentId: owner.activity.id } : {}) }
-          if (activity.type === 'tool') { const detail = [event.server, event.tool].filter(Boolean).join('/').replace(/[^A-Za-z0-9_.:/-]+/g, '_').slice(0, 160); if (detail) activity.detail = detail }
-          const start = { ...event, activity }; operations.set(key, start); output.push(start)
+          const start = toolActivityStart(event, key, name, owner?.activity.id); operations.set(key, start); output.push(start)
         }
       }
       return
@@ -278,7 +275,7 @@ export function createClaudeWorkbenchSession(baseOptions: Options, context: Spaw
       events: output,
       start(text, attachments) {
         if (started || ended || closing) throw new Error('claude_runtime_already_started_or_closed')
-        const content = helpers.content(text, attachments)
+        const content = userContent(text, attachments)
         started = true; foreground = 'running'
         input.push({ type: 'user', parent_tool_use_id: null, message: { role: 'user', content }, uuid: randomUUID() })
       },
@@ -287,7 +284,7 @@ export function createClaudeWorkbenchSession(baseOptions: Options, context: Spaw
         if (!id(requestId) || requestIds.has(requestId)) throw new Error('claude_runtime_request_duplicate_or_invalid')
         if (pending.size >= 10) throw new Error('claude_runtime_pending_input_limit')
         if (requestIds.size >= 1024) { const error = new Error('claude_runtime_request_limit'); finish(error); throw error }
-        const content = helpers.content(text, attachments), uuid = randomUUID()
+        const content = userContent(text, attachments), uuid = randomUUID()
         requestIds.add(requestId); retained = true
         const acknowledged = new Promise<void>((resolve, reject) => pending.set(uuid, { resolve, reject }))
         input.push({ type: 'user', parent_tool_use_id: null, message: { role: 'user', content }, uuid, priority: 'next' })

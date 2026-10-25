@@ -391,4 +391,45 @@ describe('Claude workbench retained runtime', () => {
     await run.drained
     expect(run.events.filter(event => event.kind === 'error')).toEqual([{ kind: 'error', message: 'claude reports not logged in', code: 'auth_failed' }])
   })
+
+  // 从对话侧那份已删的时间线抄本搬过来的几条(B1b):同样的保证现在只由这一边给。
+  it('keeps text-tool-text order, completes a tool from its result, and never copies tool input, output or reasoning', async () => {
+    const run = await open(); run.runtime.start('start'); init()
+    native.emit({ type: 'assistant', uuid: 'message-1', parent_tool_use_id: null, message: { id: 'api-1', model: 'parent-model', content: [
+      { type: 'text', text: 'Before' },
+      { type: 'tool_use', id: 'read-1', name: 'Read', input: { file_path: '/private/SECRET_INPUT', token: 'SECRET_TOKEN' } },
+      { type: 'thinking', thinking: 'PRIVATE_REASONING' },
+      { type: 'text', text: 'After' },
+    ] } })
+    native.emit({ type: 'user', parent_tool_use_id: null, message: { content: [{ type: 'tool_result', tool_use_id: 'read-1', content: 'SECRET_RESULT' }] } })
+    native.emit({ type: 'user', parent_tool_use_id: null, message: { content: [{ type: 'tool_result', tool_use_id: 'read-1', is_error: true }] } })
+    result()
+    await run.drained
+    const timeline = run.events.filter(event => event.kind === 'text' || event.kind === 'tool_call')
+    expect(timeline.map(event => event.kind)).toEqual(['text', 'tool_call', 'text', 'tool_call'])
+    expect(timeline[0]).toMatchObject({ text: 'Before', textMode: 'replace' })
+    expect((timeline[0] as { itemId: string }).itemId).not.toEqual((timeline[2] as { itemId: string }).itemId)
+    expect(activityEvents(run.events)).toMatchObject([{ id: 'read-1', type: 'read', status: 'running' }, { id: 'read-1', type: 'read', status: 'completed' }])
+    expect(JSON.stringify(run.events)).not.toMatch(/SECRET_|PRIVATE_REASONING/)
+  })
+
+  it('identifies generic tools with bounded sanitized names and ignores a result from a different parent', async () => {
+    const run = await open(); run.runtime.start('start'); init()
+    native.emit({ type: 'assistant', uuid: 'tools', parent_tool_use_id: null, message: { model: 'parent-model', content: [
+      { type: 'tool_use', id: 'local-tool', name: 'InspectWidget', input: { key: 'SECRET_INPUT' } },
+      { type: 'tool_use', id: 'mcp-tool', name: 'mcp__inventory__find_widget', input: { token: 'SECRET_TOKEN' } },
+      { type: 'tool_use', id: 'messy-tool', name: 'odd\n<tool>' + 'x'.repeat(300), input: {} },
+    ] } })
+    native.emit({ type: 'user', parent_tool_use_id: 'someone-else', message: { content: [{ type: 'tool_result', tool_use_id: 'local-tool', is_error: true }] } })
+    native.emit({ type: 'user', parent_tool_use_id: null, message: { content: [{ type: 'tool_result', tool_use_id: 'mcp-tool', is_error: true, content: 'SECRET_OUTPUT' }] } })
+    result()
+    await run.drained
+    const activities = activityEvents(run.events)
+    expect(activities[0]).toMatchObject({ id: 'local-tool', type: 'tool', detail: 'InspectWidget' })
+    expect(activities[1]).toMatchObject({ id: 'mcp-tool', type: 'tool', detail: 'inventory/find_widget' })
+    expect(activities[2]?.detail).toMatch(/^odd_tool_x+$/)
+    expect(activities[2]?.detail?.length).toBeLessThanOrEqual(160)
+    expect(activities.slice(3)).toMatchObject([{ id: 'mcp-tool', status: 'failed', detail: 'inventory/find_widget' }])
+    expect(JSON.stringify(run.events)).not.toContain('SECRET_')
+  })
 })
