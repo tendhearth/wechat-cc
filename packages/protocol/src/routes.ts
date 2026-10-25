@@ -74,7 +74,7 @@ export interface PanelSurface {
  * 表里标了 `module: X` 的路由:daemon 的路由层按 X 此刻的状态判能不能走(关着 ⇒ module_off、坏了 ⇒ module_degraded、
  * 还没挂上 ⇒ module_starting);处理器由模块 X 自己挂(`internalApi.mount`),不在 internal-api 的总表里。
  */
-export const MODULE_NAMES = ['social', 'calendar', 'reminders', 'letters', 'atelier', 'stickers', 'journal'] as const
+export const MODULE_NAMES = ['social', 'calendar', 'reminders', 'letters', 'atelier', 'stickers', 'journal', 'voice'] as const
 export type ModuleName = (typeof MODULE_NAMES)[number]
 
 export interface RouteSpec {
@@ -247,7 +247,7 @@ export const ROUTES: Readonly<Record<RouteKey, RouteSpec>> = {
   'POST /v1/turn/attach': { desktop: { tier: 'guest' } },
   // §4.6:往别处发(别的聊天 / 主人微信 / 群发)只给 admin;trusted / guest 根本不注册这个工具。
   'POST /v1/wechat/message': { desktop: { tier: 'admin' } },
-  'POST /v1/wechat/reply_voice': { desktop: { tier: 'guest' } },
+  'POST /v1/wechat/reply_voice': { module: 'voice', desktop: { tier: 'guest' } },
   'POST /v1/memory/read': { desktop: { tier: 'guest' } },
   'GET /v1/memory/list': { desktop: { tier: 'guest' } },
   'POST /v1/share/page': { desktop: { tier: 'guest' } },
@@ -274,10 +274,10 @@ export const ROUTES: Readonly<Record<RouteKey, RouteSpec>> = {
   'POST /v1/memory/write': { desktop: { tier: 'trusted' } },
   'POST /v1/memory/delete': { desktop: { tier: 'trusted' } },
   'POST /v1/user/set_name': { desktop: { tier: 'trusted' } },
-  'POST /v1/voice/save_config': { desktop: { tier: 'trusted' } },
-  'GET /v1/voice/status': { desktop: { tier: 'trusted' } },
-  'POST /v1/stt/save_config': { desktop: { tier: 'trusted' } },
-  'GET /v1/stt/status': { desktop: { tier: 'trusted' } },
+  'POST /v1/voice/save_config': { module: 'voice', desktop: { tier: 'trusted' } },
+  'GET /v1/voice/status': { module: 'voice', desktop: { tier: 'trusted' } },
+  'POST /v1/stt/save_config': { module: 'voice', desktop: { tier: 'trusted' } },
+  'GET /v1/stt/status': { module: 'voice', desktop: { tier: 'trusted' } },
   'POST /v1/companion/enable': { desktop: { tier: 'trusted' } },
   'POST /v1/companion/disable': { desktop: { tier: 'trusted' } },
   'POST /v1/companion/snooze': { desktop: { tier: 'trusted' } },
@@ -377,9 +377,9 @@ export const ROUTES: Readonly<Record<RouteKey, RouteSpec>> = {
   'POST /v1/companion/converse': { desktop: { tier: 'admin', tokens: ['operator'] } },
   // admin — same trust class as converse above (voice arc Stage 1): synths
   // reply audio for the owner's app-conversation-channel session.
-  'POST /v1/companion/speak': { desktop: { tier: 'admin', tokens: ['operator'] } },
+  'POST /v1/companion/speak': { module: 'voice', desktop: { tier: 'admin', tokens: ['operator'] } },
   // admin — voice arc Stage 2: transcribes inbound app-channel audio to text.
-  'POST /v1/companion/transcribe': { desktop: { tier: 'admin', tokens: ['operator'] } },
+  'POST /v1/companion/transcribe': { module: 'voice', desktop: { tier: 'admin', tokens: ['operator'] } },
   // admin — daemon-control (daemon_introspect / daemon_remediate)
   'GET /v1/turns': { desktop: { tier: 'admin' } },
   'GET /v1/sessions': { desktop: { tier: 'admin' } },

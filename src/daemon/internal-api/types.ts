@@ -8,7 +8,7 @@
  */
 import type { MemoryFS } from '../memory/fs-api'
 import type { Db } from '../../lib/db'
-import type { WechatProjectsDep, WechatVoiceDep, WechatCompanionDep } from '../wechat-tool-deps'
+import type { WechatProjectsDep, WechatCompanionDep } from '../wechat-tool-deps'
 import type { Journal } from '../../adapters/store/journal-store'
 import type { ReplySinks } from '../reply-sinks'
 import type { ConversationStore } from '../../adapters/store/conversation-store'
@@ -130,8 +130,6 @@ export interface InternalApiDeps {
   projects?: WechatProjectsDep
   /** Persist a wechat user's display name (RFC 03 P1.B B3). */
   setUserName?: (chatId: string, name: string) => Promise<void>
-  /** TTS config + status + replyVoice (RFC 03 P1.B B4 + B1). */
-  voice?: WechatVoiceDep
   /**
    * Publish a Markdown page to a one-time URL (RFC 03 P1.B B5).
    */
@@ -151,7 +149,7 @@ export interface InternalApiDeps {
   /**
    * Ilink message-sending family (RFC 03 P1.B B1). When wired, the
    * /v1/wechat/{reply,send_file,edit_message,broadcast} routes are
-   * served. `voice.replyVoice` covers `reply_voice` separately.
+   * served. `reply_voice` 归语音功能(src/features/voice,自己挂路由)。
    */
   ilink?: InternalApiIlinkDep
   /**

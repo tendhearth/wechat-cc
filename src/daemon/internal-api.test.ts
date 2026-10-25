@@ -3,6 +3,7 @@ import { mkdtempSync, mkdirSync, readFileSync, rmSync, statSync, existsSync, wri
 import { join } from 'node:path'
 import { tmpdir } from 'node:os'
 import { createInternalApi, type InternalApi } from './internal-api'
+import { voiceRoutes } from '../features/voice/routes'
 import { makeReplySinks } from './reply-sinks'
 import { makeMemoryFS } from './memory/fs-api'
 import { makeEventsStore } from './events/store'
@@ -892,7 +893,9 @@ describe('internal-api', () => {
         configStatus: voiceParts.configStatus,
         synthesizeSpeech: voiceParts.synthesizeSpeech ?? stubSynthesizeSpeech,
       }
-      api = createInternalApi({ stateDir, daemonPid: 1, voice })
+      api = createInternalApi({ stateDir, daemonPid: 1 })
+      // 语音路由归 voice 模块(src/features/voice),模块 init 时自己挂上来。
+      api.mount('voice', voiceRoutes({ voice }))
       return api.start().then(({ port, tokenFilePath }) => ({
         port,
         token: readFileSync(tokenFilePath, 'utf8').trim(),
@@ -1023,7 +1026,8 @@ describe('internal-api', () => {
       expect(body.detail).toContain('disk full')
     })
 
-    it('returns 503 when voice dep not wired', async () => {
+    // 语音模块还没挂上路由(开机途中)⇒ 路由层统一回 module_starting(以前是处理器自己的 voice_not_wired)。
+    it('returns 503 when the voice module has not mounted its routes', async () => {
       api = createInternalApi({ stateDir, daemonPid: 1 })
       const { port, tokenFilePath } = await api.start()
       const token = readFileSync(tokenFilePath, 'utf8').trim()
@@ -1031,7 +1035,7 @@ describe('internal-api', () => {
         headers: { Authorization: `Bearer ${token}` },
       })
       expect(resp.status).toBe(503)
-      expect(await resp.json()).toEqual({ error: 'voice_not_wired' })
+      expect(await resp.json()).toEqual({ error: 'module_starting', module: 'voice' })
     })
   })
 
@@ -1651,28 +1655,28 @@ describe('internal-api', () => {
     })
   })
 
-  // Route-contract tests against a MOCKED deps.voice.synthesizeSpeech —
+  // Route-contract tests against a MOCKED voice.synthesizeSpeech (voice 模块挂的路由) —
   // reuses the same synth-extraction as replyVoice (see ilink/voice.ts),
   // but hands audio bytes back instead of ilink-sending (voice arc Stage 1).
   describe('POST /v1/companion/speak', () => {
     async function startWithSynth(
       synthesizeSpeech: (text: string) => Promise<{ audio: Buffer; mime: string }>,
     ): Promise<{ port: number; token: string }> {
-      api = createInternalApi({
-        stateDir, daemonPid: 1,
+      api = createInternalApi({ stateDir, daemonPid: 1 })
+      api.mount('voice', voiceRoutes({
         voice: {
           replyVoice: async () => ({ ok: false, reason: 'unused_in_speak_tests' }),
           saveConfig: async () => ({ ok: false, reason: 'unused_in_speak_tests' }),
           configStatus: () => ({ configured: false }),
           synthesizeSpeech,
         },
-      })
+      }))
       const { port } = await api.start()
       const token = api.mintSessionToken('admin', 'claude/a/owner-chat')
       return { port, token }
     }
 
-    it('503 when deps.voice is not wired', async () => {
+    it('503 when the voice module has not mounted its routes', async () => {
       api = createInternalApi({ stateDir, daemonPid: 1 })
       await api.start()
       const token = api.mintSessionToken('admin', 'claude/a/owner-chat')
@@ -1683,7 +1687,7 @@ describe('internal-api', () => {
         body: JSON.stringify({ text: 'hi' }),
       })
       expect(resp.status).toBe(503)
-      expect(await resp.json()).toEqual({ error: 'voice_not_wired' })
+      expect(await resp.json()).toEqual({ error: 'module_starting', module: 'voice' })
     })
 
     it('400 when text is empty/whitespace', async () => {
@@ -1757,15 +1761,15 @@ describe('internal-api', () => {
     // alongside converse (see token-registry.ts), so it reaches this route.
     it('the operator token reaches the route (not 403)', async () => {
       const synthesizeSpeech = async () => ({ audio: Buffer.from([1, 2, 3]), mime: 'audio/wav' })
-      api = createInternalApi({
-        stateDir, daemonPid: 1,
+      api = createInternalApi({ stateDir, daemonPid: 1 })
+      api.mount('voice', voiceRoutes({
         voice: {
           replyVoice: async () => ({ ok: false, reason: 'unused' }),
           saveConfig: async () => ({ ok: false, reason: 'unused' }),
           configStatus: () => ({ configured: false }),
           synthesizeSpeech,
         },
-      })
+      }))
       const { port, operatorTokenFilePath } = await api.start()
       const opToken = readFileSync(operatorTokenFilePath, 'utf8').trim()
       const resp = await fetch(`http://127.0.0.1:${port}/v1/companion/speak`, {
@@ -1892,8 +1896,9 @@ describe('internal-api', () => {
       api = createInternalApi({
         stateDir, daemonPid: 1,
         ...(opts.ilink ? { ilink: opts.ilink } : {}),
-        ...(voice ? { voice } : {}),
       })
+      // reply_voice 归 voice 模块(src/features/voice),模块自己挂上来。
+      if (voice) api.mount('voice', voiceRoutes({ voice }))
       return api.start().then(({ port, tokenFilePath }) => ({
         port, token: readFileSync(tokenFilePath, 'utf8').trim(),
       }))

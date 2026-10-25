@@ -6,6 +6,7 @@ import { turnRoutes } from './routes-turn'
 import { minTierFor } from './route-tiers'
 import { SEND_SCOPED_ROUTES, ALL_CHATS } from './send-scope'
 import { makeReplyDeliveryRuntime } from '../reply-delivery'
+import { voiceRoutes } from '../../features/voice/routes'
 import type { InternalApiDeps, RouteTable } from './types'
 
 const q = new URLSearchParams()
@@ -27,14 +28,18 @@ function setup(over: Partial<InternalApiDeps> = {}, table: RouteTable = {}) {
       editMessage: vi.fn(async () => {}),
       broadcast: vi.fn(async () => ({ ok: true, sent: 3 })),
     },
-    voice: { replyVoice: vi.fn(async () => ({ ok: true as const, msgId: 'v1' })) },
     resolveAdminChatId: () => 'owner',
     ...over,
   } as unknown as InternalApiDeps
   // 表情库归 stickers 模块:它挂上的 GET /v1/stickers(测试里给一个只有「庆祝」的库)。
-  const lib: RouteTable = { 'GET /v1/stickers': () => ({ status: 200, body: { ok: true, stickers: [{ file: '庆祝.gif', tags: ['庆祝'] }], tags: ['庆祝'] } }) }
-  const routes = turnRoutes(deps, (key) => table[key] ?? lib[key])
-  return { routes, rt, sent, deps }
+  // 语音归 voice 模块(src/features/voice):它挂的 reply_voice 也由 internal-api 按键查到,一起放进挂上来的那张表。
+  const voice = { replyVoice: vi.fn(async (_c: string, _t: string) => ({ ok: true as const, msgId: 'v1' })) }
+  const mounted: RouteTable = {
+    'GET /v1/stickers': () => ({ status: 200, body: { ok: true, stickers: [{ file: '庆祝.gif', tags: ['庆祝'] }], tags: ['庆祝'] } }),
+    'POST /v1/wechat/reply_voice': voiceRoutes({ voice: voice as never })['POST /v1/wechat/reply_voice'],
+  }
+  const routes = turnRoutes(deps, (key) => table[key] ?? mounted[key])
+  return { routes, rt, sent, deps, voice }
 }
 
 describe('POST /v1/turn/attach — 附件登记到本轮(spec §4.5)', () => {
@@ -55,7 +60,7 @@ describe('POST /v1/turn/attach — 附件登记到本轮(spec §4.5)', () => {
     const r = await t.routes['POST /v1/turn/attach']!(q, { kind: 'voice', text: '晚安' }, admin('owner'))
     expect(r.body).toEqual({ ok: true, attached: true })
     await h.deliver({ finalText: '', narration: [] })
-    expect((t.deps.voice as any).replyVoice).toHaveBeenCalledWith('owner', '晚安')
+    expect(t.voice.replyVoice).toHaveBeenCalledWith('owner', '晚安')
   })
 
   it('不是会话令牌(读不出 chat)⇒ 400', async () => {
