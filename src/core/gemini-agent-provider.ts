@@ -15,6 +15,7 @@
  * Decoupled from bootstrap via injected genai / mcpConnect / buildGate so the
  * loop is unit-testable. See docs/superpowers/specs/2026-06-04-gemini-provider-design.md.
  */
+import { decideTool } from './tool-decision'
 import { compilePolicy } from './policy'
 import type { AgentEvent, AgentProject, AgentProvider, AgentSession, PermissionMode, SpawnContext } from './agent-provider'
 import type { TierProfile } from './user-tier'
@@ -242,19 +243,6 @@ export interface GeminiGateDeps {
   lookupBase: (mode: string, permissionMode: PermissionMode) => GateBaseCapability
 }
 
-/** Inline of effectivePolicy (permission-relay.ts) to avoid the
- *  gemini-agent-provider → permission-relay → capability-matrix → gemini-agent-provider cycle. */
-function gateEffectivePolicy(
-  base: GateBaseCapability,
-  tp: TierProfile,
-  kind: ReturnType<typeof classifyToolUse>,
-): 'allow' | 'relay' | 'deny' {
-  if (tp.deny.has(kind)) return 'deny'
-  if (tp.relay.has(kind)) return 'relay'
-  if (tp.allow.has(kind)) return 'allow'
-  return base.askUser === 'per-tool' ? 'relay' : 'allow'
-}
-
 const GEMINI_RELAY_TIMEOUT_MS = 120_000
 
 /** Inlined (NOT imported from permission-relay.ts, which would recreate the
@@ -287,7 +275,7 @@ export function makeGeminiToolGate(deps: GeminiGateDeps): (ctx: SpawnContext) =>
       if (toolName.includes('__')) return { allow: false, message: `invalid tool name '${toolName}'` }
       const kind = classifyToolUse(`mcp__wechat__${toolName}`, input)
       const base = deps.lookupBase(deps.modeFor(ctx.chatId), ctx.permissionMode)
-      const decision = gateEffectivePolicy(base, ctx.tierProfile, kind)
+      const decision = decideTool(ctx.tierProfile, kind, base.askUser)
       if (decision === 'allow') return { allow: true }
       if (decision === 'deny') return { allow: false, message: `tool '${toolName}' (${kind}) not allowed for this tier` }
       const admin = deps.adminFor(ctx.chatId)
