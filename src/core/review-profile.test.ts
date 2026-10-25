@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import { REVIEW_PROFILE, JOB_PROFILE, classifyToolUse, tierNameFromProfile } from '../domain/user-tier'
 import { effectivePolicy } from './permission-relay'
-import { codexNetworkOpts, tierProfileToCodexSdkOpts } from './codex-agent-provider'
+import { codexNetworkOpts, tierProfileToCodexSdkOpts } from '../adapters/executors/codex/codex-agent-provider'
 
 // 评审 #460:审查轮的 diff 直接在提示词里(不是读出来的)⇒「读过才断网」的污点规则一开始就没有;
 // 被注入的 diff 能在读任何文件之前先 WebFetch,把仓库内容拼进 URL 发出去。审查轮全程不给网。

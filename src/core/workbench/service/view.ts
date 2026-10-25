@@ -6,7 +6,7 @@
  */
 import { existsSync } from 'node:fs'
 import { canonicalProject } from '../artifacts'
-import { readableExecutionEvent } from '../codex-execution-error'
+import { readableExecutionEvent } from '../../../adapters/executors/codex/codex-execution-error'
 import { isWorkbenchExecutorCapabilities, isWorkbenchProviderId } from '../executor-capabilities'
 import { makeProjectCatalog } from '../project-catalog'
 import { writerAlive } from './writer-exit'

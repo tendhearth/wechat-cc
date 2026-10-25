@@ -8,7 +8,7 @@
  * fail (logged), and exposes a combined bridge over whatever came up. So a dead
  * wxsearch/wxmedia still lets wxvault + wxgraph + wxfacts do their work.
  */
-import { createMcpToolBridge, type McpStdioSpec, type McpClientLike, type McpToolBridge } from '../../../core/openai-mcp-bridge'
+import { createMcpToolBridge, type McpStdioSpec, type McpClientLike, type McpToolBridge } from '../../../adapters/executors/openai/openai-mcp-bridge'
 
 export interface ResilientBridge {
   tools: Array<{ name: string }>

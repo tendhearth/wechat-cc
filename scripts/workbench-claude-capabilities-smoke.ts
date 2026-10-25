@@ -9,8 +9,8 @@ import { createServer } from 'node:http'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { query, type Options } from '@anthropic-ai/claude-agent-sdk'
-import { makeWorkbenchClaudeCanUseTool } from '../src/core/claude-agent-provider'
-import { readNativeClaudeTools } from '../src/core/workbench/claude-native-config'
+import { makeWorkbenchClaudeCanUseTool } from '../src/adapters/executors/claude/claude-agent-provider'
+import { readNativeClaudeTools } from '../src/adapters/executors/claude/claude-native-config'
 import { workbenchClaudeOptions } from '../src/daemon/bootstrap/wire-workbench'
 
 if (!process.argv.includes('--run')) {

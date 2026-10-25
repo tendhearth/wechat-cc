@@ -9,7 +9,7 @@
 import { describe, expect, it, vi } from 'vitest'
 import { readFileSync } from 'node:fs'
 import { join } from 'node:path'
-import { createClaudeAgentProvider } from './claude-agent-provider'
+import { createClaudeAgentProvider } from '../adapters/executors/claude/claude-agent-provider'
 import { providerErrorCodeOf } from '../lib/provider-error-code'
 
 const h = vi.hoisted(() => ({ script: [] as unknown[], throwAfter: undefined as string | undefined }))

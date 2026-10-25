@@ -99,7 +99,7 @@ describe('发送原语只在登记过的地方出现,次数只许降', () => {
     expect(ilinkSendMethods()).not.toContain('sendTyping')
   })
   const counts = new Map<string, number>()
-  for (const d of ['src/daemon', 'src/features', 'src/app', 'src/domain', 'src/ports', 'src/core', 'src/lib']) {
+  for (const d of ['src/daemon', 'src/features', 'src/app', 'src/domain', 'src/ports', 'src/adapters', 'src/core', 'src/lib']) {
     for (const f of walk(join(ROOT, d))) {
       const n = (readFileSync(f, 'utf8').match(SEND) ?? []).length
       if (n > 0) counts.set(relative(ROOT, f).split('\\').join('/'), n)

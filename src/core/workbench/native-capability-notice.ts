@@ -1,4 +1,4 @@
-import type { NativeClaudeTools } from './claude-native-config'
+import type { NativeClaudeTools } from '../../adapters/executors/claude/claude-native-config'
 
 const display = (value: string) => value.replace(/[^A-Za-z0-9_.@/-]/g, '_').slice(0, 120)
 const list = (names: string[], reason: (name: string) => string) => {

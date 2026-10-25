@@ -223,7 +223,7 @@ const memorySynthesizeCmd = defineCommand({
     const sdkEval = async (prompt: string): Promise<string> => {
       if (provider === 'codex') {
         const { Codex } = await import('@openai/codex-sdk')
-        const { resolveCodexCheapModel } = await import('../../core/codex-cheap-model')
+        const { resolveCodexCheapModel } = await import('../../adapters/executors/codex/codex-cheap-model')
         const { tmpdir } = await import('node:os')
         const thread = new Codex().startThread({
           model: resolveCodexCheapModel(),
@@ -320,7 +320,7 @@ function makeProfileSdkEval(provider: string): (prompt: string) => Promise<strin
   return async (prompt: string): Promise<string> => {
     if (provider === 'codex') {
       const { Codex } = await import('@openai/codex-sdk')
-      const { resolveCodexCheapModel } = await import('../../core/codex-cheap-model')
+      const { resolveCodexCheapModel } = await import('../../adapters/executors/codex/codex-cheap-model')
       const { tmpdir } = await import('node:os')
       const thread = new Codex().startThread({
         model: resolveCodexCheapModel(),

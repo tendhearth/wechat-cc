@@ -16,7 +16,7 @@ import { join } from 'node:path'
 import { gunzipSync } from 'node:zlib'
 import { query, type Options, type SDKUserMessage } from '@anthropic-ai/claude-agent-sdk'
 import { AsyncQueue } from '../src/lib/async-queue'
-import { createClaudeAgentProvider } from '../src/core/claude-agent-provider'
+import { createClaudeAgentProvider } from '../src/adapters/executors/claude/claude-agent-provider'
 import { TIER_PROFILES } from '../src/domain/user-tier'
 
 if (!process.argv.includes('--run')) { console.log('Use --run for owned, loopback-only Claude background task fixtures.'); process.exit(0) }

@@ -1,7 +1,7 @@
 /**
  * `wechat-cc cli acp list|add|remove` 的纯逻辑(2026-10-07):改 agent-config 的 acp_agents。生效要重启 daemon。
  */
-import { ACP_PRESETS, acpAgentProblem, type AcpCustomAgent } from '../core/acp/agents'
+import { ACP_PRESETS, acpAgentProblem, type AcpCustomAgent } from '../adapters/executors/acp/agents'
 
 type Agent = { id: string; name: string; command: string; args?: string[]; auth_method?: string }
 

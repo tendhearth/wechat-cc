@@ -12,7 +12,7 @@ import { openTestDb, type Db } from '../../lib/db'
 import { readFileSync } from 'node:fs'
 import { wechatStdioMcpSpec } from '../../daemon/bootstrap/mcp-specs'
 import { setupAgyGlobalMcp, AGY_WECHAT_MCP_NAMESPACE_ID } from '../../daemon/bootstrap/agy-mcp-config'
-import { acpMcpServersFor } from '../../core/acp-cursor-chat'
+import { acpMcpServersFor } from '../../adapters/executors/acp/acp-cursor-chat'
 
 /**
  * P1.A end-to-end: this test wires up the complete provider→stdio MCP→
@@ -718,7 +718,7 @@ describe('wechat-mcp stdio integration', () => {
     const REPLY_FAMILY = ['reply', 'reply_voice', 'send_file', 'edit_message', 'broadcast', 'send_sticker', 'search_online_sticker', 'send_online_sticker_candidate']
 
     async function toolsForCodexSession(port: number, tokenFilePath: string): Promise<{ tools: string[]; env: Record<string, string> }> {
-      const { createCodexAgentProvider } = await import('../../core/codex-agent-provider')
+      const { createCodexAgentProvider } = await import('../../adapters/executors/codex/codex-agent-provider')
       const { createScriptedCodex } = await import('../../test-support/executors/codex-scripted')
       const { TIER_PROFILES } = await import('../../domain/user-tier')
       const scripted = createScriptedCodex({ turns: [] })
@@ -814,7 +814,7 @@ describe('wechat-mcp stdio integration', () => {
     }
 
     async function toolsForGemini(port: number, tokenFilePath: string, tier: 'admin' | 'trusted'): Promise<string[]> {
-      const { connectWechatMcp } = await import('../../core/gemini-agent-provider')
+      const { connectWechatMcp } = await import('../../adapters/executors/gemini/gemini-agent-provider')
       const spec = wechatStdioMcpSpec({ baseUrl: `http://127.0.0.1:${port}`, tokenFilePath }, 'gemini')
       expect(spec.env).toMatchObject({ WECHAT_PARTICIPANT_TAG: 'gemini' })
       // command 用 RUNTIME(源码模式下 spec.command 是 process.execPath,node 跑测试时不是 bun)。

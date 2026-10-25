@@ -41,6 +41,7 @@ src/mcp-servers ──HTTP──►  src/daemon(internal API)
 - `src/domain`:纯规则 —— 档位与放行(`policy` / `user-tier` / `tool-decision` / `provider-policy`)、开口(`speech/decide`、`quiet-hours`)、伙伴判定、提示词(`prompt-builder`)、能力表。**零例外**:运行时只依赖 domain 自己和 lib 里不碰 I/O 的,不碰 node 内置(depcheck `domain-is-pure` / `domain-no-node`)。
 - `src/ports`:接口 —— 执行者的口(`agent-provider`:AgentProvider / AgentSession)。只依赖 domain 与纯 lib。
 - `src/app`:用例 —— 对话协调器(`coordinator/`:`planTurn` / `admit` 一轮定一次档位,`TurnRunner` 三种派法共用)、会话管理、执行者登记。不往上依赖、不碰 node。
+- `src/adapters/executors/<家>`:各家执行者的适配器(对话侧 + 工作台侧),实现 ports;不往上依赖 app / daemon。
 - `src/core`:还没拆完的那一层 —— 协调器、执行者适配、工作台、各种 store。正在按终态分进 app(用例)和 adapters(执行者、store);`core-no-node` 棘轮在数。
 - `src/features/<名>`:一个功能一个目录(见[加一个功能](maintainer/add-a-feature.md))。
 - `src/test-support`:测试替身(照剧本说话的假执行者),生产代码不许 import。

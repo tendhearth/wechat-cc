@@ -20,11 +20,11 @@ import { join } from 'node:path'
 import { findOnPath } from '../lib/util'
 import { readJsonFile } from '../lib/read-json-file'
 import { AGY_WECHAT_MCP_NAMESPACE_ID, normalizeWechatMcpServer } from '../ports/agent-provider'
-import { makeAgyStreamParser } from './agy-stream'
-import { makeCursorStreamParser } from './cursor-cli-stream'
-import { agyBaseArgs, DEFAULT_AGY_MODEL } from './agy-agent-provider'
-import { cursorBaseArgs } from './cursor-eval'
-import { DEFAULT_CURSOR_MODEL } from './acp-cursor-chat'
+import { makeAgyStreamParser } from '../adapters/executors/agy/agy-stream'
+import { makeCursorStreamParser } from '../adapters/executors/acp/cursor-cli-stream'
+import { agyBaseArgs, DEFAULT_AGY_MODEL } from '../adapters/executors/agy/agy-agent-provider'
+import { cursorBaseArgs } from '../adapters/executors/acp/cursor-eval'
+import { DEFAULT_CURSOR_MODEL } from '../adapters/executors/acp/acp-cursor-chat'
 
 // cursor 全局 mcp_config 里我们的键 —— 只有一次性评估(cursor-eval.ts,print
 // 模式,读 cursor-agent 自己的全局配置)还会撞见它;对话侧已经走 ACP 逐会话

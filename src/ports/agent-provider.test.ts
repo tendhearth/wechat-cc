@@ -198,7 +198,7 @@ describe('collectTurn', () => {
 
 describe('ProviderCapabilities — per-provider self-declarations (RFC 05 Phase 2)', () => {
   it('CLAUDE_CAPABILITIES has the four expected fields', async () => {
-    const { CLAUDE_CAPABILITIES } = await import('../core/claude-agent-provider')
+    const { CLAUDE_CAPABILITIES } = await import('../adapters/executors/claude/claude-agent-provider')
     expect(CLAUDE_CAPABILITIES.perToolCallback).toBe(true)
     expect(CLAUDE_CAPABILITIES.supportsDelegation).toBe(true)
     expect(CLAUDE_CAPABILITIES.supportsResume).toBe(true)
@@ -206,7 +206,7 @@ describe('ProviderCapabilities — per-provider self-declarations (RFC 05 Phase 
   })
 
   it('CODEX_CAPABILITIES has the four expected fields', async () => {
-    const { CODEX_CAPABILITIES } = await import('../core/codex-agent-provider')
+    const { CODEX_CAPABILITIES } = await import('../adapters/executors/codex/codex-agent-provider')
     // codex SDK has no per-tool callback — that's the whole reason
     // tier→sandbox translation is coarse-grained for codex.
     expect(CODEX_CAPABILITIES.perToolCallback).toBe(false)
@@ -215,7 +215,7 @@ describe('ProviderCapabilities — per-provider self-declarations (RFC 05 Phase 
   })
 
   it('CURSOR_CAPABILITIES has the four expected fields', async () => {
-    const { CURSOR_CAPABILITIES } = await import('../core/cursor-agent-provider')
+    const { CURSOR_CAPABILITIES } = await import('../adapters/executors/acp/cursor-agent-provider')
     expect(CURSOR_CAPABILITIES.perToolCallback).toBe(false)
     // cursor SDK doesn't expose sub-agents yet — see RFC 05 §7 decision 3
     expect(CURSOR_CAPABILITIES.supportsDelegation).toBe(false)

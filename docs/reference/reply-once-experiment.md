@@ -1,6 +1,6 @@
 # reply-once 实验:发完话之后怎么让一轮结束(openai provider)
 
-2026-10-02。对象:`src/core/openai-agent-provider.ts` 自己的工具循环(DeepSeek / Kimi / Qwen 等 openai 兼容后端)。结论当时落在 `src/core/reply-tail.ts` + 循环里的「尾巴守卫」(PR #196)。
+2026-10-02。对象:`src/adapters/executors/openai/openai-agent-provider.ts` 自己的工具循环(DeepSeek / Kimi / Qwen 等 openai 兼容后端)。结论当时落在 `src/core/reply-tail.ts` + 循环里的「尾巴守卫」(PR #196)。
 
 > **2026-10-03 更新:PR #196 已关闭、没有合入。** 主人 2026-10-02 定的方向是从根上改「话怎么说出去」—— 一轮最后的助理文字就是回复,由 daemon 负责送达(见 [`superpowers/specs/2026-10-03-reply-delivery-design.md`](../superpowers/specs/2026-10-03-reply-delivery-design.md))。所以下文「落地的实现」一节描述的 `reply-tail.ts` 与 provider 的 `makeBuiltins` / `replyTailGuard` 选项**都不在 dev 上**;只有 harness 与原始数据搬进了 dev(`scripts/experiments/reply-once/`),作为新设计每一步迁移的验收工具。dev 上的 harness 发现 provider 没有 `makeBuiltins` 注入口时会**拒跑**(否则模型调的 Bash 会被真的执行);新设计 §9 第 0 步把这个注入口加回来。
 >
