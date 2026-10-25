@@ -7,7 +7,7 @@
  *   同一个模型行为(同样的旁白、同样的工具、同样的话),分别用两套词汇演 ——
  *     cursor_legacy:照今天的提示词用 reply / reply_voice 工具说话;
  *     cursor_daemon:没有 reply 族,话写在最后,语音走附件工具 voice。
- *   对面是照 2026-09-17 真机报文形状演的假 `cursor-agent acp`(src/core/acp/scripted-agent.ts),
+ *   对面是照 2026-09-17 真机报文形状演的假 `cursor-agent acp`(src/test-support/executors/acp-scripted-agent.ts),
  *   这边是**生产的**全链:Cursor ACP 客户端(JSON-RPC + acp/events 翻译器)→ 协调器(solo)→
  *   legacy 的 FALLBACK_REPLY / daemon 的 reply-delivery 运行时(sendText 换成记账)。
  *
@@ -28,7 +28,7 @@ import { STATE_DIR } from './isolate'
 import { createConversationCoordinator, type ConversationCoordinatorDeps, type TurnRecord } from '../../../src/core/conversation-coordinator'
 import { createProviderRegistry } from '../../../src/core/provider-registry'
 import { createAcpCursorChatProvider } from '../../../src/core/acp-cursor-chat'
-import { createScriptedAcpAgent, type ScriptedToolCall, type ScriptedTurn, type ScriptStep } from '../../../src/core/acp/scripted-agent'
+import { createScriptedAcpAgent, type ScriptedToolCall, type ScriptedTurn, type ScriptStep } from '../../../src/test-support/executors/acp-scripted-agent'
 import { TIER_PROFILES } from '../../../src/core/user-tier'
 import type { AgentEvent, PermissionMode } from '../../../src/core/agent-provider'
 import type { Mode } from '../../../src/core/conversation'

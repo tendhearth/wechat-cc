@@ -61,6 +61,13 @@ module.exports = {
       to: { path: '^src/(cli|daemon|core|mcp-servers)/' },
     },
     {
+      name: 'test-support-only-from-tests',
+      severity: 'error',
+      comment: '架构终态 B3:src/test-support 是测试替身(照剧本说话的假执行者 …),生产代码不许 import;测试与 scripts/experiments 才用。',
+      from: { path: '^src/', pathNot: ['\\.test\\.ts$', '^src/test-support/'] },
+      to: { path: '^src/test-support/' },
+    },
+    {
       name: 'features-only-from-above',
       severity: 'error',
       comment: '架构终态 A3:src/features/<名> 是一个功能一个目录。core / lib / mcp-servers 是它下面的层,不许反过来依赖功能。',

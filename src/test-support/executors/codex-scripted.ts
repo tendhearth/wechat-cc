@@ -21,7 +21,7 @@
  * 不起任何进程、不连网。
  */
 import type { Codex, Thread, ThreadEvent, ThreadOptions } from '@openai/codex-sdk'
-import type { CodexFactory } from './codex-agent-provider'
+import type { CodexFactory } from '../../core/codex-agent-provider'
 
 type ThreadItemLike = Extract<ThreadEvent, { type: 'item.completed' }>['item']
 

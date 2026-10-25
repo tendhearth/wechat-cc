@@ -7,7 +7,7 @@
  *   同一个模型行为(同样的旁白、同样的工具、同样的话),分别用两套词汇演 ——
  *     claude_legacy:照今天的提示词用 reply / reply_voice 工具说话,reply 之后不再写字;
  *     claude_daemon:没有 reply 族,话写在最后一段,语音走附件工具 voice。
- *   对面是照 Agent SDK 消息形状演的假 `query()`(src/core/claude-scripted.ts),这边是**生产的**全链:
+ *   对面是照 Agent SDK 消息形状演的假 `query()`(src/test-support/executors/claude-scripted.ts),这边是**生产的**全链:
  *   Claude provider(createClaudeAgentProvider 的消息翻译)→ 协调器(solo)→ legacy 的 FALLBACK_REPLY /
  *   daemon 的 reply-delivery 运行时(sendText 换成记账)。
  *
@@ -27,7 +27,7 @@ import { STATE_DIR } from './isolate'
 import { createConversationCoordinator, type ConversationCoordinatorDeps, type TurnRecord } from '../../../src/core/conversation-coordinator'
 import { createProviderRegistry } from '../../../src/core/provider-registry'
 import { createClaudeAgentProvider } from '../../../src/core/claude-agent-provider'
-import { createScriptedClaude, type ClaudeScriptedCall, type ClaudeScriptedTurn, type ClaudeScriptStep, type ClaudeShape } from '../../../src/core/claude-scripted'
+import { createScriptedClaude, type ClaudeScriptedCall, type ClaudeScriptedTurn, type ClaudeScriptStep, type ClaudeShape } from '../../../src/test-support/executors/claude-scripted'
 import { TIER_PROFILES } from '../../../src/core/user-tier'
 import type { AgentEvent } from '../../../src/core/agent-provider'
 import type { Mode } from '../../../src/core/conversation'

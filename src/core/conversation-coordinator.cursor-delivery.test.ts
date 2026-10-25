@@ -13,7 +13,7 @@
  * 协调器不再看 tool_call 认不认得出来 —— 所以身份带不带、server 名是什么都无所谓。
  *
  * 事件走**生产的** Cursor ACP 客户端(createAcpCursorChatProvider + acp-agent-provider 的 JSON-RPC + acp/events 翻译器),
- * 对面是照 2026-09-17 真机报文形状演的假 `cursor-agent acp`(acp/scripted-agent.ts),外加原样回放录到的报文;
+ * 对面是照 2026-09-17 真机报文形状演的假 `cursor-agent acp`(test-support/executors/acp-scripted-agent.ts),外加原样回放录到的报文;
  * 交付走真的 daemon 交付运行时(reply-delivery.ts,只把 sendText 换成记账)。
  */
 import { readFileSync } from 'node:fs'
@@ -22,7 +22,7 @@ import { describe, expect, it, vi } from 'vitest'
 import { createConversationCoordinator, type ConversationCoordinatorDeps, type TurnRecord } from './conversation-coordinator'
 import { createProviderRegistry } from './provider-registry'
 import { createAcpCursorChatProvider } from './acp-cursor-chat'
-import { createScriptedAcpAgent, type ScriptedTurn, type ScriptedToolCall, type ScriptStep } from './acp/scripted-agent'
+import { createScriptedAcpAgent, type ScriptedTurn, type ScriptedToolCall, type ScriptStep } from '../test-support/executors/acp-scripted-agent'
 import { TIER_PROFILES } from './user-tier'
 import type { Mode } from './conversation'
 import type { InboundMsg } from './prompt-format'
