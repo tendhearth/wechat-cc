@@ -3,7 +3,6 @@ import { mkdtempSync, mkdirSync, realpathSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { openTestDb, type Db } from '../../../lib/db'
-import { Ref } from '../../../lib/lifecycle'
 import { createProviderRegistry } from '../../../app/provider-registry'
 import { makeWorkbenchStore, type WorkbenchStore, type Task, publicTask } from '../store'
 import { MANAGED_NATIVE_CAPABILITIES } from '../executor-capabilities'
@@ -11,7 +10,7 @@ import { removeTempDir } from '../../../lib/test-temp'
 import type { AgentProvider, AgentRuntimeSnapshot } from '../../../ports/agent-provider'
 import { makeRuntimeState, type Active } from './state'
 import { makeViewDomain, ATTENTION_TEXT_MAX } from './view'
-import type { ServiceActions, ServiceCtx } from './ctx'
+import type { ServiceCtx } from './ctx'
 
 const dbs: Db[] = []; const dirs: string[] = []
 afterEach(() => { for (const db of dbs.splice(0)) db.close(); for (const d of dirs.splice(0)) removeTempDir(d) })
@@ -27,10 +26,8 @@ function setup(over: { defaultProvider?: string; owner?: string | null } = {}) {
   registry.register('claude', provider, { displayName: 'Claude', canResume: () => true, workbench: MANAGED_NATIVE_CAPABILITIES })
   registry.register('codex', provider, { displayName: 'Codex', canResume: () => true, workbench: MANAGED_NATIVE_CAPABILITIES })
   const state = makeRuntimeState()
-  const actions = new Ref<ServiceActions>('t')
-  const ctx: ServiceCtx = { store, stateDir, state, hub: { touched: vi.fn(), bumped: vi.fn(), dispose: vi.fn() }, deps: { ownerChatId: () => over.owner === undefined ? 'owner' : over.owner, registry, nativeHistory: { claude: {} as never }, ...(over.defaultProvider ? { defaultProvider: over.defaultProvider } : {}) }, ensureAccepting: () => {}, now: Date.now, actions }
-  const domain = makeViewDomain(ctx)
-  actions.set({ submitInput: vi.fn(), continueTask: vi.fn(), isReplied: domain.isReplied, fallbackExecutor: () => null, artifact: () => { throw new Error('unused') }, quotaExhausted: () => null, continuation: () => ({ mode: 'new' }), provider: id => { const p = registry.get(id); if (!p) throw new Error('unavailable_provider'); return p as never }, requireInput: () => { throw new Error('unused') }, canResume: () => false, taskVersion: () => 'v', selectAttachments: () => [], combinedAttachments: () => [], handoffAttachments: () => [], taskView: () => { throw new Error('unused') }, matterSync: () => {}, start: () => { throw new Error('unused') }, continuationAttachmentScope: () => undefined, inputMode: () => 'queue' as const, armIdleClose: () => {}, cancelIdleClose: () => {}, settleAfterDecision: () => {}, execute: () => { throw new Error('unused') }, hasUndeliveredInput: () => false, holdInputs: () => {}, collect: async () => {}, collectTurnArtifacts: () => {}, captureCodeChanges: async () => {}, runtimeSnapshot: () => undefined, held: () => [], stageFinishedNotice: () => {}, publishFinishedNotices: () => {}, untilAfterTurn: () => {}, untilStop: () => {} })
+  const ctx: ServiceCtx = { store, stateDir, state, hub: { touched: vi.fn(), bumped: vi.fn(), dispose: vi.fn() }, deps: { ownerChatId: () => over.owner === undefined ? 'owner' : over.owner, registry, nativeHistory: { claude: {} as never }, ...(over.defaultProvider ? { defaultProvider: over.defaultProvider } : {}) }, ensureAccepting: () => {}, now: Date.now }
+  const domain = makeViewDomain(ctx, { admission: { provider: id => { const p = registry.get(id); if (!p) throw new Error('unavailable_provider'); return p as never }, continuation: () => ({ mode: 'new' }) }, quota: { quotaExhausted: () => null } })
   const task = store.create({ title: '事', path: project, providerId: 'claude', ownerChatId: 'owner' })
   const snapshot = (over: Partial<AgentRuntimeSnapshot> = {}): AgentRuntimeSnapshot => ({ retained: true, foreground: 'idle', backgroundCount: 0, input: 'send', ...over })
   /** 假 Active:带 runtime 快照与空的待决队列。 */
@@ -115,7 +112,7 @@ describe('makeViewDomain · 列表与详情', () => {
     expect(() => domain.addProject({ path: project, providerId: 'claude', name: '' })).toThrow('invalid_request')
     expect(domain.addProject({ path: project, providerId: 'claude' })).toMatchObject({ path: project })
   })
-  it('detail:没在跑 ⇒ 带 continuation(经 ctx.actions)、没有 inputMode;在跑 ⇒ runId + inputMode', () => {
+  it('detail:没在跑 ⇒ 带 continuation(经注入的 admission.continuation)、没有 inputMode;在跑 ⇒ runId + inputMode', () => {
     const { domain, running, snapshot, task, state } = setup()
     const d1 = domain.detail(task.id)
     expect(d1).toMatchObject({ continuation: { mode: 'new' }, wechatNotifications: { enabled: false } }); expect(d1).not.toHaveProperty('inputMode')

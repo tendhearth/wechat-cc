@@ -1,11 +1,10 @@
 import { describe, it, expect, vi } from 'vitest'
-import { Ref } from '../../../lib/lifecycle'
 import { createProviderRegistry } from '../../../app/provider-registry'
 import { MANAGED_NATIVE_CAPABILITIES, MANAGED_API_CAPABILITIES } from '../executor-capabilities'
 import type { AgentProvider } from '../../../ports/agent-provider'
 import { makeRuntimeState } from './state'
 import { makeQuotaDomain } from './quota'
-import type { ServiceActions, ServiceCtx, ServiceDeps } from './ctx'
+import type { ServiceCtx, ServiceDeps } from './ctx'
 
 const CODEX_QUOTA = "You've hit your usage limit. Visit https://chatgpt.com/codex/settings/usage to purchase more credits or try again at 10:00"
 const provider: AgentProvider = { async spawn() { throw new Error('not spawned in this test') } }
@@ -18,7 +17,7 @@ function setup(usage?: ServiceDeps['usage']) {
   registry.register('openai', provider, { displayName: 'OpenAI', canResume: () => true, workbench: MANAGED_API_CAPABILITIES })   // background:'disabled'
   registry.register('kimi', provider, { displayName: 'Kimi', canResume: () => true })                                             // 没有 workbench 能力
   const state = makeRuntimeState()
-  const ctx: ServiceCtx = { store: {} as never, stateDir: '/nowhere', state, hub: { touched: vi.fn(), bumped: vi.fn(), dispose: vi.fn() }, deps: { ownerChatId: () => 'owner', registry, ...(usage ? { usage } : {}) }, ensureAccepting: () => {}, now: Date.now, actions: new Ref<ServiceActions>('t') }
+  const ctx: ServiceCtx = { store: {} as never, stateDir: '/nowhere', state, hub: { touched: vi.fn(), bumped: vi.fn(), dispose: vi.fn() }, deps: { ownerChatId: () => 'owner', registry, ...(usage ? { usage } : {}) }, ensureAccepting: () => {}, now: Date.now }
   return { domain: makeQuotaDomain(ctx), registry }
 }
 

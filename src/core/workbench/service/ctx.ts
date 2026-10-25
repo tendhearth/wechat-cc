@@ -1,27 +1,18 @@
 /**
  * 域模块看到的 service 上下文(spec 2026-09-27-workbench-service-split §2)。
- * 显式、只读、不含 service 对象本身:域需要「别的域 / service 的动作」一律 ctx.actions.deref() 在**调用时**取
- * —— Ref 由 service.ts 在 public 对象建好后 set 一次;工厂体里不许 deref(那时还没 set)。
+ * 显式、只读、不含 service 对象本身,也不含别的域:域要别的域的东西,由 service.ts 按依赖顺序
+ * 构造时显式传进它的工厂(makeXDomain(ctx, {admission, quota, ...}))。依赖图与环怎么断的见 service.ts 顶部。
  */
 import type { AskSource } from '../../../domain/permission-rules/types'
 import type { NetworkGate } from '../../../lib/network-gate'
-import type { Ref } from '../../../lib/lifecycle'
 import type { ProviderRegistry } from '../../../app/provider-registry'
 import type { UsageSnapshot } from '../../../domain/subscription-usage'
-import type { StoredTask, Task, TaskStatus, WorkbenchStore } from '../store'
+import type { WorkbenchStore } from '../store'
 import type { NativeHistoryProvider, NativeHistoryReader } from '../native-history'
-import type { Continuation } from '../continuation'
-import type { QuotaState } from '../../../domain/provider-quota'
-import type { AgentExecutionChoice, AgentRuntimeSnapshot } from '../../../ports/agent-provider'
-import type { LiveInput } from '../live-inputs'
-import type { AcceptedContinuation, Active, WorkbenchRuntimeState } from './state'
-import type { AdmittedProvider, InputMaterials, WorkbenchTaskView } from './types'
+import type { WorkbenchRuntimeState } from './state'
 import type { MatterStore } from '../../../adapters/store/matters-store'
 import type { ReportSink } from '../../matters/report'
 import type { RecollectSink } from '../../matters/recollection'
-import type { AcceptedNativeResume } from '../native-adoption'
-import type { ArtifactSelection, AttachmentSelection } from '../handoff'
-import type { Attachment } from '../attachments'
 
 export interface ServiceHub {
   /** store 的写方法把 seq 落库,但不知道 hub —— 这里把持久化 seq 送进去唤醒长轮询。 */
@@ -30,60 +21,6 @@ export interface ServiceHub {
   bumped(id:string):void
   /** 长轮询中心收尾:叫醒所有 waiter、清缓存(shutdown 最后一步)。 */
   dispose():void
-}
-/**
- * service.ts 在 public 对象建好后 set 一次;域在**调用时** deref。平铺不分组(重排是纯 churn),
- * 每段注释标明谁提供、谁消费。pump / cancelRun 留在 lifecycle 域内不进这里;execute 是唯一真正
- * 需要晚绑定的(lifecycle.pump → execute)。最后两个模块(execute / entry)改用「已建好的域对象显式注入」
- * (makeExecuteDomain(ctx, domains)),不再往这里加字段 —— 见 plans/2026-09-28-workbench-service-split-pr10.md。
- */
-export interface ServiceActions {
-  submitInput(id:string,input:{runId:string;requestId:string;text:string}&InputMaterials,attachmentPolicy?:'owner'):Promise<LiveInput>
-  continueTask(id:string,text:string,options?:{restartToken?:string;inputRequestId?:string}&InputMaterials,attachmentPolicy?:'owner'):WorkbenchTaskView
-  isReplied(running:Active):boolean
-  /** quota 域:额度耗尽时「交给谁继续」的候选(notices 的终态文案用)。 */
-  fallbackExecutor(exhaustedId:string):string|null
-  /** 一件成果的字节与元数据(notices 的成果投递用)。 */
-  artifact(id:string,artifactId:string):{name:string;mime:string;size:number;sha256:string;contentBase64:string}
-  /** quota 域:这家现在还能用吗;null = 能(admission 的 requireEntryInput 与 view 的 list 用)。 */
-  quotaExhausted(providerId:string):QuotaState|null
-  /** admission 域:任务的续接判定(view 的 detail 用)。 */
-  continuation(task:StoredTask,execution?:AgentExecutionChoice):Continuation
-  /** admission 域:已准入的执行者登记项(view 的 addProject 用);没登记 / 没能力 ⇒ 抛 unavailable_provider。 */
-  provider(id:string):AdmittedProvider
-  // ---- 以下九个是 native/handoff 域的跨域依赖(PR 7);查询类也走这里只为保持「只此一种晚绑定」。
-  requireInput(providerId:string,attachments:readonly unknown[],execution:AgentExecutionChoice,resume?:boolean,untrustedIntent?:boolean):AdmittedProvider
-  canResume(task:StoredTask):boolean
-  taskVersion(task:StoredTask):string
-  selectAttachments(input?:InputMaterials,taskId?:string,policy?:'owner'):Attachment[]
-  combinedAttachments(current:readonly Attachment[],previous?:readonly Attachment[]):Attachment[]
-  handoffAttachments(refs:AttachmentSelection[],expectedTaskId:string):Attachment[]
-  taskView(task:Task,includePermissions?:boolean):WorkbenchTaskView
-  matterSync(fn:(m:MatterStore)=>void):void
-  /** execute 域:派发一条 run(handoff / continueNativeTask 的最后一步)。签名逐字抄自 service.ts 的 start。 */
-  start(task:StoredTask,text:string,acceptedDirectoryIdentity:string,acceptedContinuation?:AcceptedContinuation,nativeResume?:AcceptedNativeResume,handoffArtifacts?:ArtifactSelection[],handoffId?:string,queuedInputId?:string,attachments?:Attachment[],draftId?:string,executionChoice?:AgentExecutionChoice,acceptance?:{persist:(runId:string)=>void;activate:(fn:()=>void)=>void;scope?:{ownerKey:string}},attachmentPolicy?:'owner'):WorkbenchTaskView
-  // ---- inputs 域(PR 8):前两个是查询,后三个是 lifecycle 的动作 —— 环第一次真正经这里走。
-  continuationAttachmentScope(taskId:string,ids:unknown):{ownerKey:string}|undefined
-  inputMode(running:Active):'steer'|'send'|'queue'
-  armIdleClose(running:Active):void
-  cancelIdleClose(running:Active):void
-  settleAfterDecision(running:Active):void
-  // ---- lifecycle 域(PR 9):环完整经这里走。execute 是真晚绑定,其余是别的域的查询/动作。
-  execute(task:StoredTask,text:string,running:Active):Promise<void>
-  hasUndeliveredInput(running:Active):boolean
-  holdInputs(id:string,error:string):void
-  collect(running:Active):Promise<void>
-  collectTurnArtifacts(running:Active):void
-  captureCodeChanges(running:Active):Promise<void>
-  runtimeSnapshot(running:Active|undefined):AgentRuntimeSnapshot|undefined
-  held():Active[]
-  stageFinishedNotice(running:Active,status:TaskStatus,error?:string|null,suppressCompleted?:boolean):void
-  // ---- until 域(做到条件成立为止,v80):一轮成功做完排一次检查;停下 / 失败 ⇒ 结束并写原因。
-  untilAfterTurn(running:Active):void
-  untilStop(id:string,reason:string):void
-  publishFinishedNotices():void
-  /** 网络守护暂停时给订了微信提醒的任务发一条「已暂停(网络未受保护)」(lifecycle 域用)。 */
-  enqueueNotice?(task:StoredTask,runId:string,kind:import('../wechat-notifications').WechatNoticeKind,text:string,requestId?:string|null):void
 }
 /** service 的外部依赖里域会用到的那几样(opts 的子集,只读);按需加,不整个 opts 透传。 */
 export interface ServiceDeps {
@@ -158,5 +95,4 @@ export interface ServiceCtx {
   ensureAccepting: () => void
   log?: (tag:string,line:string)=>void
   now: () => number
-  actions: Ref<ServiceActions>
 }

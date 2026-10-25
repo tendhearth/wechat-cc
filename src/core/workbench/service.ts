@@ -68,29 +68,68 @@ interface Options {
   quotaResume?: QuotaResumeOptions
 }
 import { makeRuntimeState } from './service/state'
-import { Ref } from '../../lib/lifecycle'
 import { makeReviewDomain } from './service/review'
-import{ makeWorktreeDomain } from './service/worktree'
-import{ makeScriptsDomain, type ScriptsOptions } from './service/scripts'
-import{ makeUntilDomain, type UntilOptions } from './service/until'
-import{ makeRewindDomain, type RewindOptions } from './service/rewind'
-import{ makeQuotaResumeDomain, type QuotaResumeOptions } from './service/quota-resume'
+import { makeWorktreeDomain } from './service/worktree'
+import { makeScriptsDomain, type ScriptsOptions } from './service/scripts'
+import { makeUntilDomain, type UntilOptions, type UntilResume } from './service/until'
+import { makeRewindDomain, type RewindOptions } from './service/rewind'
+import { makeQuotaResumeDomain, type QuotaResumeOptions } from './service/quota-resume'
 import { makeAttachmentsDomain } from './service/attachments'
 import { makeQuotaDomain } from './service/quota'
 import { makeNoticesDomain } from './service/notices'
 import { makeArtifactsDomain } from './service/artifacts'
 import { makeAdmissionDomain } from './service/admission'
 import { makeViewDomain } from './service/view'
+import { makeNativeCheck } from './service/native-check'
 import { makeNativeDomain } from './service/native'
+import { makePendingInputs } from './service/pending-inputs'
 import { makeInputsDomain } from './service/inputs'
 import { makeLifecycleDomain } from './service/lifecycle'
 import { makeExecuteDomain } from './service/execute'
 import { makeEntryDomain } from './service/entry'
-import { makeQuotaHandoffDomain } from './service/quota-handoff'
-import type { ServiceActions, ServiceCtx } from './service/ctx'
+import { makeQuotaHandoffDomain, makeQuotaHandoffView } from './service/quota-handoff'
+import type { ServiceCtx } from './service/ctx'
 export type { CreateWechatTask, SendWechatArtifact, TaskWaitingFor } from './wechat-types'
 export type { InputMaterials, CreateTask, WorkbenchPhase, WorkbenchTaskView, EntryResult } from './service/types'
 
+/**
+ * 工作台服务的组装:各域按依赖顺序构造,每个域只拿到它要的那几个别的域(工厂的第二个参数)。
+ *
+ * 依赖图(A → B = A 调 B;每一层只往前面的层指):
+ *   0  scripts · quota · attachments · artifacts · pendingInputs(补充落库记账)        只认 ctx
+ *   1  admission → quota
+ *      notices → quota, artifacts
+ *      quotaHandoffView → quota                                                     (额度交接的只读那一半)
+ *      nativeCheck → admission                                                      (原生会话核对)
+ *   2  view → admission, quota, quotaHandoffView, scripts
+ *   3  until → view, [resumeAfterCheck]                                              (见下面唯一那条回调)
+ *   4  lifecycle → view, artifacts, notices, pendingInputs, until
+ *   5  inputs → admission, attachments, view, lifecycle, pendingInputs
+ *      rewind → lifecycle, scripts, until, view
+ *   6  execute → admission, attachments, quota, view, nativeCheck, inputs, lifecycle, notices, artifacts, scripts, rewind, until
+ *   7  native → admission, attachments, quota, view, nativeCheck, execute
+ *      entry → execute, view, admission, quota, scripts
+ *      quotaHandoff → execute, quota
+ *      review → scripts, until, view, inputs, execute
+ *      worktree → scripts, view
+ *      quotaResume → execute, notices, quota
+ *
+ * 以前这些边有一部分反着指(下层在调用时经一个晚绑定的动作表回头拿上层的函数),环藏在那张表后面。现在每条都正过来了:
+ * - lifecycle.pump → execute.execute:排队的 run 自己带着做法(running.launch,execute.start 建 run 时放进去),
+ *   调度器不认识 execute(state.ts 的 Active.launch)。
+ * - inputs.drainInputs → execute.start:只有 execute 收尾时调它,调下来时把 start 当参数带着。
+ * - lifecycle ↔ inputs:lifecycle 要的 holdInputs / hasUndeliveredInput 只认 ctx,搬进 pending-inputs.ts,两头都依赖它。
+ * - native ↔ execute:execute 要的 validateNativeDecision 搬进 native-check.ts;native 建在 execute 之后、直接拿 start。
+ * - lifecycle / native → execute.matterSync:它只看 ctx.deps.matters,搬进 matter-sync.ts。
+ * - view → quotaHandoff:详情只要只读那一半(makeQuotaHandoffView),不碰 execute。
+ * - review / quotaResume / worktree / rewind:本来就在被依赖方之后,改成构造时显式传。
+ *
+ * 剩一条真环,用一个具名回调在构造时注入(UntilResume,until.ts 有说明):
+ *   一轮做完 → lifecycle / execute 调 until.afterTurn → 检查没过 → 让执行者接着改(inputs.submitInput / execute.continueTask)。
+ * until 必须先于 lifecycle / execute 建好,而「接着改」的两个动作在它们之上;afterTurn 又是从很多低层路径
+ * (收尾、拍板后的落定、网络恢复)调到的,没法每次当参数带下来。这条回调只在检查脚本跑完之后才会被调,
+ * 那时所有域都已建好。
+ */
 export function makeWorkbenchService(opts: Options) {
   const { store } = opts
   const changes = opts.changes ?? makeTaskChangeHub()
@@ -98,8 +137,7 @@ export function makeWorkbenchService(opts: Options) {
   const touched = (id: string, seq?: number) => { try { changes.publish(id, seq ?? store.version(id)) } catch { /* 信号丢了只是多等一轮 */ } }
   /** 非 store 状态变化:先落库拿新 seq 再唤醒。bump 本身可能抛(任务不存在),别让它冒进调用方的 finally/catch。 */
   const bumped = (id: string) => { try { touched(id, store.bump(id)) } catch { /* 信号丢了只是多等一轮 */ } }
-  const state=makeRuntimeState()
-  const actions=new Ref<ServiceActions>('workbench-actions')
+  const state = makeRuntimeState()
   // Options 里除了这几样(store / 目录 / 变更中心 / 四个子功能的选项),其余原样就是 ServiceDeps —— 不再逐字段抄一遍。
   const { store: _store, stateDir, changes: _changes, scripts: _scripts, until: _until, rewind: _rewind, quotaResume: _quotaResume, ...deps } = opts
   const ctx: ServiceCtx = {
@@ -109,47 +147,114 @@ export function makeWorkbenchService(opts: Options) {
     ensureAccepting,
     ...(opts.log ? { log: opts.log } : {}),
     now: Date.now,
-    actions,
   }
-  const scriptsDomain=makeScriptsDomain(ctx,opts.scripts)
-  const untilDomain=makeUntilDomain(ctx,opts.until)
-  const quotaResumeDomain=makeQuotaResumeDomain(ctx,opts.quotaResume)
-  const review=makeReviewDomain(ctx,{scripts:scriptsDomain,until:untilDomain})
-  const worktreeDomain=makeWorktreeDomain(ctx,{scripts:scriptsDomain})
-  const attachmentsDomain=makeAttachmentsDomain(ctx)
-  const {continuationAttachmentScope,selectAttachments,combinedAttachments,handoffAttachments}=attachmentsDomain
-  const quotaDomain=makeQuotaDomain(ctx)
-  const {fallbackExecutor}=quotaDomain
-  const admissionDomain=makeAdmissionDomain(ctx)
-  const {provider,requireInput,canResume,continuation,taskVersion}=admissionDomain
-  const viewDomain=makeViewDomain(ctx,{quotaHandoff:id=>quotaHandoffDomain.quotaHandoff(id),scripts:scriptsDomain.status})
-  const {held,runtimeSnapshot,inputMode,isReplied,taskView}=viewDomain
-  const nativeDomain=makeNativeDomain(ctx)
-  const inputsDomain=makeInputsDomain(ctx)
-  const {holdInputs,hasUndeliveredInput}=inputsDomain
-  const lifecycleDomain=makeLifecycleDomain(ctx)
-  const {cancelIdleClose,settleAfterDecision}=lifecycleDomain
-  const noticesDomain=makeNoticesDomain(ctx),rewindDomain=makeRewindDomain(ctx,{lifecycle:lifecycleDomain,scripts:scriptsDomain,until:untilDomain},opts.rewind)
-  const {stageFinishedNotice,publishFinishedNotices,enqueueNotice}=noticesDomain
-  const artifactsDomain=makeArtifactsDomain(ctx)
-  const {collect,collectTurnArtifacts,captureCodeChanges}=artifactsDomain
-  const executeDomain=makeExecuteDomain(ctx,{
-    admission:admissionDomain,
-    attachments:attachmentsDomain,
-    quota:quotaDomain,
-    view:viewDomain,
-    native:nativeDomain,
-    inputs:inputsDomain,
-    lifecycle:lifecycleDomain,
-    notices:noticesDomain,
-    artifacts:artifactsDomain,
-    scripts:scriptsDomain,
-    rewind:rewindDomain,
+
+  // ---- 0 层:只认 ctx
+  const scriptsDomain = makeScriptsDomain(ctx, opts.scripts)
+  const quotaDomain = makeQuotaDomain(ctx)
+  const attachmentsDomain = makeAttachmentsDomain(ctx)
+  const artifactsDomain = makeArtifactsDomain(ctx)
+  const pendingInputs = makePendingInputs(ctx)
+
+  // ---- 1 层
+  const admissionDomain = makeAdmissionDomain(ctx, { quota: quotaDomain })
+  const noticesDomain = makeNoticesDomain(ctx, { quota: quotaDomain, artifacts: artifactsDomain })
+  const quotaHandoffView = makeQuotaHandoffView(ctx, { quota: quotaDomain })
+  const nativeCheck = makeNativeCheck(ctx, { admission: admissionDomain })
+
+  // ---- 2 层
+  const viewDomain = makeViewDomain(ctx, {
+    admission: admissionDomain,
+    quota: quotaDomain,
+    quotaHandoff: quotaHandoffView.quotaHandoff,
+    scripts: scriptsDomain.status,
   })
-  const entryDomain=makeEntryDomain(ctx,{execute:executeDomain,view:viewDomain,admission:admissionDomain,quota:quotaDomain,scripts:scriptsDomain})
-  const quotaHandoffDomain=makeQuotaHandoffDomain(ctx,{execute:executeDomain,quota:quotaDomain})
+
+  // ---- 3 层:until。检查没过之后怎么接着改,由下面这一个具名回调给出(见文件顶部「剩一条真环」)。
+  // 它引用的 inputsDomain / executeDomain 在后面才建 —— 这是整个组装里唯一一处;它只在检查脚本跑完后才被调,那时都已建好。
+  const resumeAfterCheck: UntilResume = (id, text, requestId, current) => {
+    if (current) return inputsDomain.submitInput(id, { runId: current.identity, requestId, text })
+    executeDomain.continueTask(id, text, { inputRequestId: requestId })
+    return undefined
+  }
+  const untilDomain = makeUntilDomain(ctx, { view: viewDomain, resume: resumeAfterCheck }, opts.until)
+
+  // ---- 4–5 层
+  const lifecycleDomain = makeLifecycleDomain(ctx, {
+    view: viewDomain,
+    artifacts: artifactsDomain,
+    notices: noticesDomain,
+    pending: pendingInputs,
+    until: untilDomain,
+  })
+  const inputsDomain = makeInputsDomain(ctx, {
+    admission: admissionDomain,
+    attachments: attachmentsDomain,
+    view: viewDomain,
+    lifecycle: lifecycleDomain,
+    pending: pendingInputs,
+  })
+  const rewindDomain = makeRewindDomain(ctx, {
+    lifecycle: lifecycleDomain,
+    scripts: scriptsDomain,
+    until: untilDomain,
+    view: viewDomain,
+  }, opts.rewind)
+
+  // ---- 6 层:execute 在顶上,它要的都已建好
+  const executeDomain = makeExecuteDomain(ctx, {
+    admission: admissionDomain,
+    attachments: attachmentsDomain,
+    quota: quotaDomain,
+    view: viewDomain,
+    native: nativeCheck,
+    inputs: inputsDomain,
+    lifecycle: lifecycleDomain,
+    notices: noticesDomain,
+    artifacts: artifactsDomain,
+    scripts: scriptsDomain,
+    rewind: rewindDomain,
+    until: untilDomain,
+  })
+
+  // ---- 7 层:建在 execute 之上的入口
+  const nativeDomain = makeNativeDomain(ctx, {
+    admission: admissionDomain,
+    attachments: attachmentsDomain,
+    quota: quotaDomain,
+    view: viewDomain,
+    check: nativeCheck,
+    execute: executeDomain,
+  })
+  const entryDomain = makeEntryDomain(ctx, {
+    execute: executeDomain,
+    view: viewDomain,
+    admission: admissionDomain,
+    quota: quotaDomain,
+    scripts: scriptsDomain,
+  })
+  const quotaHandoffDomain = makeQuotaHandoffDomain(ctx, { execute: executeDomain, quota: quotaDomain })
+  const review = makeReviewDomain(ctx, {
+    scripts: scriptsDomain,
+    until: untilDomain,
+    view: viewDomain,
+    inputs: inputsDomain,
+    execute: executeDomain,
+  })
+  const worktreeDomain = makeWorktreeDomain(ctx, { scripts: scriptsDomain, view: viewDomain })
+  const quotaResumeDomain = makeQuotaResumeDomain(ctx, {
+    execute: executeDomain,
+    notices: noticesDomain,
+    quota: quotaDomain,
+  }, opts.quotaResume)
+
+  // 开机对账:全部建好之后再做(顺序同改造前)
   store.recover()
-  store.liveInputs.recover();lifecycleDomain.adoptWriters();scriptsDomain.recover();void rewindDomain.recover();quotaResumeDomain.recover()
+  store.liveInputs.recover()
+  lifecycleDomain.adoptWriters()
+  scriptsDomain.recover()
+  void rewindDomain.recover()
+  quotaResumeDomain.recover()
 
   function ensureAccepting() {
     if (state.stopping) throw new Error('workbench_stopping')
@@ -167,7 +272,7 @@ export function makeWorkbenchService(opts: Options) {
     quotaExhausted:quotaDomain.quotaExhausted,
     /** 额度耗尽时"交给谁继续"的默认人选;null = 没有可接的。quotaHandoff / handOff:手机确认卡把一件事交出去(service/quota-handoff.ts)。 */
     // api:额度恢复后接着做(service/quota-resume.ts)
-    fallbackExecutor(exhaustedId:string):string|null{return fallbackExecutor(exhaustedId)},
+    fallbackExecutor(exhaustedId:string):string|null{return quotaDomain.fallbackExecutor(exhaustedId)},
     ...quotaHandoffDomain.api,
     ...quotaResumeDomain.api,
     contextAvailable:noticesDomain.contextAvailable,
@@ -245,48 +350,11 @@ export function makeWorkbenchService(opts: Options) {
       },
     },
   }
-  actions.set({
-    submitInput:(id,input,policy)=>service.submitInput(id,input,policy),
-    continueTask:(id,text,options,policy)=>service.continueTask(id,text,options,policy),
-    isReplied,
-    fallbackExecutor,
-    artifact:(id,artifactId)=>service.artifact(id,artifactId),
-    quotaExhausted:quotaDomain.quotaExhausted,
-    continuation,
-    provider,
-    requireInput,
-    canResume,
-    taskVersion,
-    selectAttachments,
-    combinedAttachments,
-    handoffAttachments,
-    taskView,
-    matterSync:executeDomain.matterSync,
-    start:executeDomain.start,
-    continuationAttachmentScope,
-    inputMode,
-    armIdleClose:lifecycleDomain.armIdleClose,
-    cancelIdleClose,
-    settleAfterDecision,
-    execute:executeDomain.execute,
-    hasUndeliveredInput,
-    holdInputs,
-    collect,
-    collectTurnArtifacts,
-    captureCodeChanges,
-    runtimeSnapshot,
-    held,
-    stageFinishedNotice,
-    publishFinishedNotices,
-    enqueueNotice,
-    untilAfterTurn:untilDomain.afterTurn,
-    untilStop:untilDomain.stop,
-  })
   const wechatControl=makeWechatWorkbenchControl({
     store,
     ownerChatId:opts.ownerChatId,
     actions:service,
-    hasExecutor:(id)=>{try{provider(id);return true}catch{return false}},
+    hasExecutor:(id)=>{try{admissionDomain.provider(id);return true}catch{return false}},
     ...(opts.fetchIssue?{fetchIssue:opts.fetchIssue}:{}),
     ...(opts.addLesson?{addLesson:opts.addLesson}:{}),
     ...(opts.requestReview?{requestReview:opts.requestReview}:{}),

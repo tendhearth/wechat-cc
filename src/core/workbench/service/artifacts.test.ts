@@ -3,7 +3,6 @@ import { mkdtempSync, mkdirSync, writeFileSync, realpathSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { openTestDb, type Db } from '../../../lib/db'
-import { Ref } from '../../../lib/lifecycle'
 import { createProviderRegistry } from '../../../app/provider-registry'
 import { makeWorkbenchStore, type WorkbenchStore } from '../store'
 import { outputDirectory, saveArtifactSnapshot } from '../artifacts'
@@ -11,7 +10,7 @@ import { removeTempDir } from '../../../lib/test-temp'
 import { makeRuntimeState, type Active } from './state'
 import { makeArtifactsDomain } from './artifacts'
 import { directoryIdentity } from './directory-identity'
-import type { ServiceActions, ServiceCtx } from './ctx'
+import type { ServiceCtx } from './ctx'
 
 const dbs: Db[] = []; const dirs: string[] = []
 afterEach(() => { for (const db of dbs.splice(0)) db.close(); for (const d of dirs.splice(0)) removeTempDir(d) })
@@ -24,7 +23,7 @@ function setup() {
   const store: WorkbenchStore = makeWorkbenchStore(db)
   const state = makeRuntimeState()
   const touched = vi.fn()
-  const ctx: ServiceCtx = { store, stateDir, state, hub: { touched, bumped: vi.fn(), dispose: vi.fn() }, deps: { ownerChatId: () => 'owner', registry: createProviderRegistry() }, ensureAccepting: () => {}, now: Date.now, actions: new Ref<ServiceActions>('t') }
+  const ctx: ServiceCtx = { store, stateDir, state, hub: { touched, bumped: vi.fn(), dispose: vi.fn() }, deps: { ownerChatId: () => 'owner', registry: createProviderRegistry() }, ensureAccepting: () => {}, now: Date.now }
   const domain = makeArtifactsDomain(ctx)
   const task = store.create({ title: '事', path: project, providerId: 'claude', ownerChatId: 'owner' })
   const running = (over: Partial<Active> = {}): Active => ({ identity: 'run-1abcdef', taskId: task.id, title: task.title, task, path: project, directoryIdentity: directoryIdentity(project), cancelled: false, finishing: false, uncertain: false, artifactsCollected: false, ...over } as unknown as Active)

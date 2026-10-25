@@ -2,7 +2,7 @@
  * admission 域:执行者准入(登记项 / 免审门 / 输入校验)、续接判定、任务版本,以及
  * modelCatalog / prepareContinuation / acknowledgeUnattended 三个入口。
  * 从 service.ts 逐字搬来(spec 2026-09-27-workbench-service-split §3 第 7 项,提前到第 6 项前);只认 ctx。
- * 额度查询走 ctx.actions(quota 域);停机闸走 ctx.ensureAccepting。
+ * 额度查询要 quota 域:构造时显式传进来(quota 不依赖任何域,先建好);停机闸走 ctx.ensureAccepting。
  */
 import { canonicalProject } from '../artifacts'
 import { restartPreview, type Continuation } from '../continuation'
@@ -14,6 +14,12 @@ import type { Attachment } from '../attachments'
 import type { AgentExecutionChoice, AgentModelCatalog } from '../../../ports/agent-provider'
 import type { ServiceCtx } from './ctx'
 import type { AdmittedProvider } from './types'
+import type { QuotaDomain } from './quota'
+
+/** admission 只要 quota 的一个查询。 */
+export interface AdmissionDomains {
+  quota: Pick<QuotaDomain,'quotaExhausted'>
+}
 
 export interface AdmissionDomain {
   provider(id:string): AdmittedProvider
@@ -27,8 +33,9 @@ export interface AdmissionDomain {
   acknowledgeUnattended(): number
 }
 
-export function makeAdmissionDomain(ctx:ServiceCtx):AdmissionDomain {
+export function makeAdmissionDomain(ctx:ServiceCtx, domains:AdmissionDomains):AdmissionDomain {
   const { store } = ctx
+  const { quotaExhausted } = domains.quota
   function provider(id: string) {
     const entry=isWorkbenchProviderId(id)?ctx.deps.registry.get(id):null
     if(!entry||!isWorkbenchExecutorCapabilities(entry.opts.workbench))throw new Error('unavailable_provider')
@@ -45,7 +52,7 @@ export function makeAdmissionDomain(ctx:ServiceCtx):AdmissionDomain {
   function requireEntryInput(providerId:string,attachments:readonly Attachment[],execution:AgentExecutionChoice,text:string){
     const entry=requireInput(providerId,attachments,execution)
     entry.opts.validateWorkbenchInput?.({text,attachments})
-    if(ctx.actions.deref('admission').quotaExhausted(providerId))throw Error('provider_quota_exhausted')
+    if(quotaExhausted(providerId))throw Error('provider_quota_exhausted')
   }
   function canResume(task:StoredTask):boolean {
     try {

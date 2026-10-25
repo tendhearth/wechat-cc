@@ -8,6 +8,9 @@ import { existsSync } from 'node:fs'
 import { join } from 'node:path'
 import { readJsonFile } from '../../../lib/read-json-file'
 import type { ServiceCtx } from './ctx'
+import type { ExecuteDomain } from './execute'
+import type { NoticesDomain } from './notices'
+import type { QuotaDomain } from './quota'
 import { writeFileAtomic } from '../../../lib/json-file'
 
 export const QUOTA_RESUME_FILE = 'quota-resume.json'
@@ -32,8 +35,18 @@ const derivedId = (taskId: string, requestedAt: number) => {
   return `${s.slice(0, 8)}-${s.slice(8, 12)}-${s.slice(12, 16)}-${s.slice(16, 20)}-${s.slice(20, 32)}`
 }
 
-export function makeQuotaResumeDomain(ctx: ServiceCtx, opts: QuotaResumeOptions = {}) {
+/** 到点续一轮(execute)、没接上告诉主人一句(notices)、排之前看恢复时刻(quota);都建在这之前,显式传进来。 */
+export interface QuotaResumeDomains {
+  execute: Pick<ExecuteDomain, 'continueTask'>
+  notices: Pick<NoticesDomain, 'enqueueNotice'>
+  quota: Pick<QuotaDomain, 'quotaExhausted'>
+}
+
+export function makeQuotaResumeDomain(ctx: ServiceCtx, domains: QuotaResumeDomains, opts: QuotaResumeOptions = {}) {
   const { store } = ctx
+  const { continueTask } = domains.execute
+  const { enqueueNotice } = domains.notices
+  const { quotaExhausted } = domains.quota
   const file = join(ctx.stateDir, QUOTA_RESUME_FILE)
   const setTimer = opts.setTimer ?? ((fn: () => void, ms: number): Timer => { const t = setTimeout(fn, Math.max(0, ms)); t.unref?.(); return { cancel: () => clearTimeout(t) } })
   const timers = new Map<string, Timer>()
@@ -69,7 +82,7 @@ export function makeQuotaResumeDomain(ctx: ServiceCtx, opts: QuotaResumeOptions 
       return
     }
     try {
-      ctx.actions.deref('quota-resume').continueTask(id, QUOTA_RESUME_TEXT, { inputRequestId: derivedId(id, e.requestedAt) })
+      continueTask(id, QUOTA_RESUME_TEXT, { inputRequestId: derivedId(id, e.requestedAt) })
       note(id, '额度恢复了,按你说的接着做了(只试这一次)。')
     } catch (err) {
       const code = err instanceof Error ? err.message : String(err)
@@ -78,7 +91,7 @@ export function makeQuotaResumeDomain(ctx: ServiceCtx, opts: QuotaResumeOptions 
         const task = store.get(id)
         const text = `「${task.title.replace(/[\r\n]+/g, ' ')}」到点了,但没接上(${code})。不会再自己试,要接着做就回「任务 ${id}」再说一声。`
         if (opts.notify) opts.notify(text)
-        else ctx.actions.deref('quota-resume').enqueueNotice?.(task, `quota-resume-${e.requestedAt}`, 'failed', text)
+        else enqueueNotice(task, `quota-resume-${e.requestedAt}`, 'failed', text)
       } catch { /* 说不上只少一句 */ }
     }
   }
@@ -94,7 +107,7 @@ export function makeQuotaResumeDomain(ctx: ServiceCtx, opts: QuotaResumeOptions 
       const existing = read()[id]
       if (existing) return { ok: true, at: existing.at }
       if (task.status !== 'failed' || !QUOTA_CODES.has(task.error ?? '') || task.archivedAt !== null) return { ok: false, error: 'not_quota_failure' }
-      const q = ctx.actions.deref('quota-resume').quotaExhausted(task.providerId)
+      const q = quotaExhausted(task.providerId)
       if (!q) return { ok: false, error: 'quota_reset_unknown' }
       if (q.resetAt - ctx.now() > QUOTA_RESUME_MAX_AHEAD_MS) return { ok: false, error: 'quota_reset_too_far' }
       const at = q.resetAt + QUOTA_RESUME_MARGIN_MS

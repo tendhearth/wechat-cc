@@ -1,7 +1,8 @@
 /**
  * notices 域:微信提醒的入队 / 终态通知 / 唤醒,成果投递,订阅开关。
  * 从 service.ts 逐字搬来(spec 2026-09-27-workbench-service-split §3 第 4 项);只认 ctx。
- * 跨域两处走 ctx.actions 晚绑定:终态文案要 quota 域的 fallbackExecutor,成果投递要 service.artifact。
+ * 跨域两处:终态文案要 quota 域的 fallbackExecutor,成果投递要 artifacts 域的 artifact。
+ * 两个域都不依赖 notices,所以构造时显式传进来就行,不需要晚绑定。
  * stageFinishedNotice 由 execute / cancelRun 在 store.atomic 里同步调用 —— 这里不许变成 async。
  */
 import { executionFailureMessage } from '../execution-settings'
@@ -14,6 +15,8 @@ import type { ArtifactDeliveryReceipt } from '../artifact-deliveries'
 import type { SendWechatArtifact } from '../wechat-types'
 import type { Active } from './state'
 import type { ServiceCtx } from './ctx'
+import type { QuotaDomain } from './quota'
+import type { ArtifactsDomain } from './artifacts'
 
 /** 由 provider 结构化码而来的失败(execution-settings.taskErrorForProviderCode):通知里说原因。 */
 const PROVIDER_FAILURE_NOTICE=new Set(['provider_auth_expired','provider_auth_rejected','provider_network','provider_server_error','provider_invalid_request'])
@@ -34,8 +37,15 @@ export interface NoticesDomain {
   setWechatWatch(id:string,accountId:string,enabled:boolean): WechatNotificationSubscription
 }
 
-export function makeNoticesDomain(ctx:ServiceCtx):NoticesDomain {
+export interface NoticesDomains {
+  quota: Pick<QuotaDomain,'fallbackExecutor'>
+  artifacts: Pick<ArtifactsDomain,'artifact'>
+}
+
+export function makeNoticesDomain(ctx:ServiceCtx, domains:NoticesDomains):NoticesDomain {
   const { store, state } = ctx
+  const { fallbackExecutor } = domains.quota
+  const { artifact: readArtifact } = domains.artifacts
   const wakeNotices=(context?:{ownerChatId:string;accountId:string})=>queueMicrotask(()=>{if(!state.stopping)void state.noticeWake(context).catch(()=>{})})
   function enqueueNotice(task:StoredTask,runId:string,kind:WechatNoticeKind,text:string,requestId:string|null=null){
     try{
@@ -103,7 +113,7 @@ export function makeNoticesDomain(ctx:ServiceCtx):NoticesDomain {
     // 网络守护暂停到顶停下的:说那句老实话(「网络一直没恢复，任务已停止，可以接着做」),不贴半截回复。
     if(running.stopNotice)reply=running.stopNotice
     else if(status==='failed'&&(error==='provider_quota_exhausted'||error==='provider_rate_limited')){
-      const code=error,other=ctx.actions.deref('notices').fallbackExecutor(running.task.providerId)
+      const code=error,other=fallbackExecutor(running.task.providerId)
       // 额度恢复后接着做(2026-10-20):多一个选项「等恢复」—— 主人回这三个字,微信管家就排一次(只试一次)。
       reply=`${executionFailureMessage(code)}${other?`\n交给 ${providerDisplayName(other)} 继续？回「是」我就把这件事交给它。`:''}\n或者回「等恢复」，额度恢复后我自己接着做（只试一次）。`
     }else if(status==='failed'&&error&&PROVIDER_FAILURE_NOTICE.has(error)){
@@ -139,7 +149,7 @@ export function makeNoticesDomain(ctx:ServiceCtx):NoticesDomain {
       }
       if(!state.artifactDelivery)throw Error('artifact_transport_unavailable')
       if(!prior){
-        const artifact=ctx.actions.deref('notices').artifact(input.taskId,input.artifactId)
+        const artifact=readArtifact(input.taskId,input.artifactId)
         store.artifactDeliveries.reserve({id,commandHash:input.commandHash,taskId:input.taskId,artifactId:input.artifactId,ownerChatId:input.ownerChatId,accountId:input.accountId,artifactSha256:artifact.sha256,name:artifact.name,mime:artifact.mime,size:artifact.size})
       }
       return state.artifactDelivery(id)

@@ -19,6 +19,7 @@ import type { Active } from './state'
 import type { LifecycleDomain } from './lifecycle'
 import type { ScriptsDomain } from './scripts'
 import type { UntilDomain } from './until'
+import type { ViewDomain } from './view'
 
 export interface RewindOptions {
   /** 测试注入:执行段某一步之后抛,看回滚。 */
@@ -71,8 +72,17 @@ function rangeText(ns: number[]): string {
 }
 const pointText = (n: number, to: Point) => to === 'end' ? `第 ${n} 轮结束时` : `第 ${n} 轮开始前`
 
-export function makeRewindDomain(ctx: ServiceCtx, domains: { lifecycle: Pick<LifecycleDomain, 'cancelRun'>; scripts: Pick<ScriptsDomain, 'busy' | 'serving'>; until: Pick<UntilDomain, 'checking' | 'stop'> }, opts: RewindOptions = {}) {
+export interface RewindDomains {
+  lifecycle: Pick<LifecycleDomain, 'cancelRun'>
+  scripts: Pick<ScriptsDomain, 'busy' | 'serving'>
+  until: Pick<UntilDomain, 'checking' | 'stop'>
+  /** 「自己那条会话安静着」才允许不收工就回退。 */
+  view: Pick<ViewDomain, 'isReplied'>
+}
+
+export function makeRewindDomain(ctx: ServiceCtx, domains: RewindDomains, opts: RewindOptions = {}) {
   const { store, state } = ctx
+  const { isReplied } = domains.view
   const inflight = new Set<string>()
   let ready: Promise<void> = Promise.resolve()
   let timers: Array<ReturnType<typeof setTimeout>> = []
@@ -112,7 +122,7 @@ export function makeRewindDomain(ctx: ServiceCtx, domains: { lifecycle: Pick<Lif
     let quietOwn: Active | undefined
     for (const holder of [...state.reservations.values(), ...state.writerOrphans.values()]) {
       if (!pathsConflict(holder.path, root) && !pathsConflict(holder.path, task.path)) continue
-      const quiet = allowQuietOwn && own !== undefined && holder === own && !own.finishing && !own.uncertain && !own.cancelled && ctx.actions.deref('rewind').isReplied(own)
+      const quiet = allowQuietOwn && own !== undefined && holder === own && !own.finishing && !own.uncertain && !own.cancelled && isReplied(own)
       if (!quiet) throw fail('workbench_busy')
       quietOwn = own
     }

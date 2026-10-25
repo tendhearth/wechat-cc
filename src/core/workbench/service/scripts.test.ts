@@ -4,7 +4,6 @@ import { existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, writeFi
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { openTestDb, type Db } from '../../../lib/db'
-import { Ref } from '../../../lib/lifecycle'
 import { removeTempDir } from '../../../lib/test-temp'
 import { createProviderRegistry } from '../../../app/provider-registry'
 import { makeWorkbenchStore } from '../store'
@@ -13,7 +12,7 @@ import { pinnedScriptSha, readPinnedScripts, repoKeyOf } from '../worktree-scrip
 import { makeRuntimeState } from './state'
 import { makeScriptsDomain, psStartMs, type ScriptsOptions } from './scripts'
 import { makeWorktreeDomain } from './worktree'
-import type { ServiceActions, ServiceCtx, ServiceDeps } from './ctx'
+import type { ServiceCtx, ServiceDeps } from './ctx'
 
 const dbs: Db[] = []; const dirs: string[] = []; const stops: Array<() => Promise<void>> = []
 afterEach(async () => {
@@ -38,12 +37,10 @@ function setup(scripts: Record<string, string> | null, deps: Partial<ServiceDeps
   const store = makeWorkbenchStore(db)
   const state = makeRuntimeState()
   const hub = { touched: vi.fn(), bumped: vi.fn(), dispose: vi.fn() }
-  const actions = new Ref<ServiceActions>('t')
-  actions.set({ isReplied: () => true } as unknown as ServiceActions)
-  const ctx: ServiceCtx = { store, stateDir, state, hub, deps: { ownerChatId: () => 'owner', registry: createProviderRegistry(), ...deps }, ensureAccepting: () => { if (state.stopping) throw new Error('workbench_stopping') }, now: Date.now, actions }
+  const ctx: ServiceCtx = { store, stateDir, state, hub, deps: { ownerChatId: () => 'owner', registry: createProviderRegistry(), ...deps }, ensureAccepting: () => { if (state.stopping) throw new Error('workbench_stopping') }, now: Date.now }
   const scriptsDomain = makeScriptsDomain(ctx, { shell: '/bin/sh', baseEnv: BASE, outputIntervalMs: 10, probe: async () => true, ...opts })
   stops.push(() => scriptsDomain.shutdown())
-  const worktree = makeWorktreeDomain(ctx, { scripts: scriptsDomain })
+  const worktree = makeWorktreeDomain(ctx, { scripts: scriptsDomain, view: { isReplied: () => true } })
   const plan = planWorktree({ stateDir, projectId: PID, projectPath: project, repoRoot: project, id: 'abcd1234' })
   const path = ensureWorktree(plan)
   const task = store.create({ title: '事', path, providerId: 'claude', ownerChatId: 'owner', registerProject: false })
@@ -207,7 +204,7 @@ describe('workbench scripts recover (after a crash)', () => {
     const task = store.create({ title: '事', path: '/w', providerId: 'claude', ownerChatId: 'owner' })
     store.worktrees.record({ taskId: task.id, projectPath: '/p', repoRoot: '/p', root: '/w', branch: 'cc/x' })
     store.worktrees.setScriptGroups(task.id, row.groups, row.boot, row.starts)
-    const ctx: ServiceCtx = { store, stateDir: '/s', state: makeRuntimeState(), hub: { touched: vi.fn(), bumped: vi.fn(), dispose: vi.fn() }, deps: { ownerChatId: () => 'owner', registry: createProviderRegistry(), bootTimeMs: () => 1_000_000, ...deps }, ensureAccepting: () => {}, now: Date.now, actions: new Ref<ServiceActions>('t') }
+    const ctx: ServiceCtx = { store, stateDir: '/s', state: makeRuntimeState(), hub: { touched: vi.fn(), bumped: vi.fn(), dispose: vi.fn() }, deps: { ownerChatId: () => 'owner', registry: createProviderRegistry(), bootTimeMs: () => 1_000_000, ...deps }, ensureAccepting: () => {}, now: Date.now }
     makeScriptsDomain(ctx, opts).recover()
     return { store, task, notes: store.detail(task.id).events.filter(e => e.kind === 'system').map(e => e.text) }
   }

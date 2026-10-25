@@ -26,10 +26,15 @@ function setup(o: { error?: string; resetIn?: number | null; running?: boolean }
     state: { runsByTask, stopping: false } as never,
     hub: { touched: () => {}, bumped: () => {}, dispose: () => {} },
     deps: {} as never,
-    actions: { deref: () => ({ continueTask, quotaExhausted: () => reset === null ? null : (now < reset ? { kind: 'quota', since: NOW, resetAt: reset, message: 'x' } : null) }) } as never,
   } as unknown as ServiceCtx
   const timers: Array<{ fn: () => void; ms: number }> = []
-  const qr = makeQuotaResumeDomain(ctx, { setTimer: (fn, ms) => { timers.push({ fn, ms }); return { cancel: () => {} } }, notify: (text) => { notices.push(text) } })
+  const domains = {
+    execute: { continueTask },
+    // 没传 notify 的路径才用到;这里的测试都传 notify
+    notices: { enqueueNotice: () => {} },
+    quota: { quotaExhausted: () => reset === null ? null : (now < reset ? { kind: 'quota' as const, since: NOW, resetAt: reset, message: 'x' } : null) },
+  }
+  const qr = makeQuotaResumeDomain(ctx, domains, { setTimer: (fn, ms) => { timers.push({ fn, ms }); return { cancel: () => {} } }, notify: (text) => { notices.push(text) } })
   const events = () => store.events(t.id).map(e => e.text)
   return { store, t, qr, continueTask, timers, notices, events, stateDir, setNow: (n: number) => { now = n }, reset }
 }

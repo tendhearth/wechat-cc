@@ -3,7 +3,6 @@ import { mkdtempSync, mkdirSync, realpathSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { openTestDb, type Db } from '../../../lib/db'
-import { Ref } from '../../../lib/lifecycle'
 import { createProviderRegistry } from '../../../app/provider-registry'
 import { makeWorkbenchStore, type WorkbenchStore } from '../store'
 import { MANAGED_NATIVE_CAPABILITIES } from '../executor-capabilities'
@@ -14,7 +13,8 @@ import { makeAttachmentsDomain } from './attachments'
 import { makeQuotaDomain } from './quota'
 import { makeAdmissionDomain } from './admission'
 import { makeViewDomain } from './view'
-import { makeNativeDomain } from './native'
+import { makeNativeCheck } from './native-check'
+import { makePendingInputs } from './pending-inputs'
 import { makeInputsDomain } from './inputs'
 import { makeLifecycleDomain } from './lifecycle'
 import { makeNoticesDomain } from './notices'
@@ -22,7 +22,7 @@ import { makeArtifactsDomain } from './artifacts'
 import { makeExecuteDomain } from './execute'
 import { makeQuotaHandoffDomain } from './quota-handoff'
 import { makeMatterStore } from '../../../adapters/store/matters-store'
-import type { ServiceActions, ServiceCtx } from './ctx'
+import type { ServiceCtx } from './ctx'
 
 const dbs: Db[] = []; const dirs: string[] = []; const shutdowns: Array<() => Promise<void>> = []
 afterEach(async () => { for (const s of shutdowns.splice(0)) await s(); for (const db of dbs.splice(0)) db.close(); for (const d of dirs.splice(0)) removeTempDir(d) })
@@ -44,12 +44,15 @@ function setup(withMatters = false) {
   registry.register('claude', hanging, { displayName: 'Claude', canResume: () => true, workbench: MANAGED_NATIVE_CAPABILITIES })
   registry.register('codex', hanging, { displayName: 'Codex', canResume: () => true, workbench: MANAGED_NATIVE_CAPABILITIES })
   const state = makeRuntimeState()
-  const actions = new Ref<ServiceActions>('t')
-  const ctx: ServiceCtx = { store, stateDir, state, hub: { touched: vi.fn(), bumped: vi.fn(), dispose: vi.fn() }, deps: { ownerChatId: () => 'owner', registry, ...(withMatters ? { matters } : {}) }, ensureAccepting: () => { if (state.stopping) throw new Error('workbench_stopping') }, now: Date.now, actions }
-  const attachments = makeAttachmentsDomain(ctx), quota = makeQuotaDomain(ctx), admission = makeAdmissionDomain(ctx), view = makeViewDomain(ctx), native = makeNativeDomain(ctx), inputs = makeInputsDomain(ctx), lifecycle = makeLifecycleDomain(ctx), notices = makeNoticesDomain(ctx), artifacts = makeArtifactsDomain(ctx)
-  const execute = makeExecuteDomain(ctx, { admission, attachments, quota, view, native, inputs, lifecycle, notices, artifacts })
+  const ctx: ServiceCtx = { store, stateDir, state, hub: { touched: vi.fn(), bumped: vi.fn(), dispose: vi.fn() }, deps: { ownerChatId: () => 'owner', registry, ...(withMatters ? { matters } : {}) }, ensureAccepting: () => { if (state.stopping) throw new Error('workbench_stopping') }, now: Date.now }
+  const attachments = makeAttachmentsDomain(ctx), quota = makeQuotaDomain(ctx), artifacts = makeArtifactsDomain(ctx), pending = makePendingInputs(ctx)
+  const admission = makeAdmissionDomain(ctx, { quota }), notices = makeNoticesDomain(ctx, { quota, artifacts })
+  const view = makeViewDomain(ctx, { admission, quota }), native = makeNativeCheck(ctx, { admission })
+  const until = { afterTurn: () => {}, stop: () => {} }   // 这里不测「直到检查通过」
+  const lifecycle = makeLifecycleDomain(ctx, { view, artifacts, notices, pending, until })
+  const inputs = makeInputsDomain(ctx, { admission, attachments, view, lifecycle, pending })
+  const execute = makeExecuteDomain(ctx, { admission, attachments, quota, view, native, inputs, lifecycle, notices, artifacts, until })
   const handoff = makeQuotaHandoffDomain(ctx, { execute, quota })
-  actions.set({ submitInput: inputs.submitInput, continueTask: execute.continueTask, isReplied: view.isReplied, fallbackExecutor: quota.fallbackExecutor, artifact: artifacts.artifact, quotaExhausted: quota.quotaExhausted, continuation: admission.continuation, provider: admission.provider, requireInput: admission.requireInput, canResume: admission.canResume, taskVersion: admission.taskVersion, selectAttachments: attachments.selectAttachments, combinedAttachments: attachments.combinedAttachments, handoffAttachments: attachments.handoffAttachments, taskView: view.taskView, matterSync: execute.matterSync, start: execute.start, continuationAttachmentScope: attachments.continuationAttachmentScope, inputMode: view.inputMode, armIdleClose: lifecycle.armIdleClose, cancelIdleClose: lifecycle.cancelIdleClose, settleAfterDecision: lifecycle.settleAfterDecision, execute: execute.execute, hasUndeliveredInput: inputs.hasUndeliveredInput, holdInputs: inputs.holdInputs, collect: artifacts.collect, collectTurnArtifacts: artifacts.collectTurnArtifacts, captureCodeChanges: artifacts.captureCodeChanges, runtimeSnapshot: view.runtimeSnapshot, held: view.held, stageFinishedNotice: notices.stageFinishedNotice, publishFinishedNotices: notices.publishFinishedNotices, untilAfterTurn: () => {}, untilStop: () => {} })
   shutdowns.push(lifecycle.shutdown)
   /** 一件不在跑、因额度失败的 claude 任务(主人的)。 */
   const failed = (owner: string | null = 'owner') => {

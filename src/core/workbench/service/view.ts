@@ -2,7 +2,9 @@
  * view 域:主人眼里的进度(阶段 / 等待行 / 任务视图)以及 attention / projects / addProject / list / detail 五个只读入口。
  * 从 service.ts 逐字搬来(spec 2026-09-27-workbench-service-split §3 第 7 项);只认 ctx。
  * 唯一的文字改动:waitingFor 里的 quiet(holder) 写成 isReplied(holder)——quiet 本来就是 isReplied 的别名(service.ts 仍保留给 lifecycle 用)。
- * 跨域三处走 ctx.actions:addProject 的 provider(admission)、list 的 quotaExhausted(quota)、detail 的 continuation(admission)。
+ * 跨域三处:addProject 的 provider(admission)、list 的 quotaExhausted(quota)、detail 的 continuation(admission);
+ * 详情里还带额度交接(quota-handoff 的只读那一半)与工作区脚本状态(scripts)。
+ * 这几样都不依赖 view,构造时显式传进来。
  */
 import { existsSync } from 'node:fs'
 import { canonicalProject } from '../artifacts'
@@ -24,6 +26,17 @@ import type { MatterOrigin } from '../../../adapters/store/matters-store'
 import type { PendingWorkbenchPermission } from '../permissions'
 import type { PendingUserInput } from '../user-input'
 import type { QuotaHandoffView } from './types'
+import type { AdmissionDomain } from './admission'
+import type { QuotaDomain } from './quota'
+
+export interface ViewDomains {
+  admission: Pick<AdmissionDomain,'provider'|'continuation'>
+  quota: Pick<QuotaDomain,'quotaExhausted'>
+  /** 详情里的额度交接(只读那一半,不碰 execute);老测试不传。 */
+  quotaHandoff?: (id:string) => QuotaHandoffView | null
+  /** 详情里的工作区脚本状态;老测试不传。 */
+  scripts?: (id:string) => ScriptsView | null
+}
 
 /** attention 里「第一件待决」原文的上限(字符)。桌面「N 件事等你」一行放得下的量;不在这里截就会把整段命令塞进轮询。 */
 export const ATTENTION_TEXT_MAX = 120
@@ -38,8 +51,10 @@ function firstPending(permissions:readonly PendingWorkbenchPermission[],question
   return text?{kind:'question',text}:null
 }
 
-export function makeViewDomain(ctx:ServiceCtx, queries?:{quotaHandoff(id:string):QuotaHandoffView|null;scripts?(id:string):ScriptsView|null}) {
+export function makeViewDomain(ctx:ServiceCtx, domains:ViewDomains) {
   const { store, state } = ctx
+  const { provider, continuation } = domains.admission
+  const { quotaExhausted } = domains.quota
   /** 当前占着文件夹的 run。 */
   const held=()=>[...state.reservations.values()]
   function waitingFor(running:Active):TaskWaitingFor|null {
@@ -118,7 +133,7 @@ export function makeViewDomain(ctx:ServiceCtx, queries?:{quotaHandoff(id:string)
   }
   function addProject(input:{path:string;name?:string;providerId:string}) {
     if(typeof input.path!=='string'||input.path.length>4096||typeof input.providerId!=='string'||(input.name!==undefined&&(typeof input.name!=='string'||!input.name.trim()||input.name.length>100)))throw Error('invalid_request')
-    ctx.actions.deref('view').provider(input.providerId)
+    provider(input.providerId)
     return store.addProject({...input,path:canonicalProject(input.path)})
   }
   /** 每件事有哪些执行者参与过(matter.agents 同一个出处;一次查一页)。没接 matters / 查不出来 ⇒ 不带,桌面退回任务自己那一家。 */
@@ -135,7 +150,7 @@ export function makeViewDomain(ctx:ServiceCtx, queries?:{quotaHandoff(id:string)
   const agentNamesOf=(ids:Iterable<string|null|undefined>):Record<string,string>=>{const out:Record<string,string>={};for(const id of ids)if(id&&!(id in out))out[id]=ctx.deps.registry.namesOf(id).name;return out}
   const withAgents=(view:WorkbenchTaskView,marks:Marks):WorkbenchTaskView=>{const a=marks.agents.get(view.id),origin=marks.origins.get(view.id);return a?.length||origin?{...view,...(a?.length?{agents:a}:{}),...(origin?{origin}:{})}:view}
   function list(query:WorkbenchListQuery={}) {
-    const providers=ctx.deps.registry.list().flatMap(id=>{const p=ctx.deps.registry.get(id);return isWorkbenchProviderId(id)&&p&&isWorkbenchExecutorCapabilities(p.opts.workbench)?[{id,displayName:ctx.deps.registry.namesOf(id).name,settingsLabel:ctx.deps.registry.namesOf(id).settings,capabilities:structuredClone(p.opts.workbench),quota:ctx.actions.deref('view').quotaExhausted(id),usage:ctx.deps.usage?.(id)??null,refusal:ctx.deps.refusal?.(id)??null}]:[]})
+    const providers=ctx.deps.registry.list().flatMap(id=>{const p=ctx.deps.registry.get(id);return isWorkbenchProviderId(id)&&p&&isWorkbenchExecutorCapabilities(p.opts.workbench)?[{id,displayName:ctx.deps.registry.namesOf(id).name,settingsLabel:ctx.deps.registry.namesOf(id).settings,capabilities:structuredClone(p.opts.workbench),quota:quotaExhausted(id),usage:ctx.deps.usage?.(id)??null,refusal:ctx.deps.refusal?.(id)??null}]:[]})
     const result=store.listPage(query)
     // 文件夹已经不在、名下也没有没归档的任务 ⇒ 不再列出(2026-10-05):这种项目点进去什么也做不了,
     // 自检 / 临时目录留下的空壳会把「其他项目」撑到几十个。行不删,文件夹回来了就又出现。
@@ -156,8 +171,8 @@ export function makeViewDomain(ctx:ServiceCtx, queries?:{quotaHandoff(id:string)
     const subscription=store.wechatNotifications.subscription(id)
     const wechatNotifications={enabled:!!subscription?.enabled,notices:store.wechatNotifications.list(id).slice(-10).map(({id,runId,kind,status,reason,createdAt})=>({id,runId,kind,status,reason,createdAt}))}
     // 工作区脚本(2026-10-20)只进详情:读 tendhearth.json 要跑 git,列表不背这个;原文给桌面的确认框。
-    const view=taskView(detail.task,true),scripts=view.worktree?queries?.scripts?.(id)??null:null
-    const detailMarks=agentsOf([id]),quotaHandoff=queries?.quotaHandoff(id)??null
+    const view=taskView(detail.task,true),scripts=view.worktree?domains.scripts?.(id)??null:null
+    const detailMarks=agentsOf([id]),quotaHandoff=domains.quotaHandoff?.(id)??null
     const result={...detail,events:detail.events.map(readableExecutionEvent),wechatNotifications,quotaHandoff,...(runtime?{runtime}:{}),execution:store.execution.choice(id),lastExecution:store.execution.last(id),attachments:store.attachments.list(id),task:withAgents(scripts&&view.worktree?{...view,worktree:{...view.worktree,scripts}}:view,detailMarks),agentNames:agentNamesOf([view.providerId,...(detailMarks.agents.get(id)??[]),...handoffIds(quotaHandoff)]),inputs:store.liveInputs.list(id),questions:running?.questions.pending()??[],
       // The timeline stays live through cancellation and process cleanup;
       // accepting supplemental input is a separate, narrower capability.
@@ -165,7 +180,7 @@ export function makeViewDomain(ctx:ServiceCtx, queries?:{quotaHandoff(id:string)
       ...(running&&!running.cancelled&&!running.finishing&&!running.uncertain?{inputMode:inputMode(running)}:{}),
       // 回到某一轮(切片 3):只给独立工作区;能撤销的那一次 / 停住等拍板的那一行,都没有就不带。
       ...(()=>{if(!view.worktree)return{};const r=rewindOf(id);return r?{rewind:r}:{}})(),
-      permissions:running?.permissions.pending() ?? [],...(!running ? {continuation:ctx.actions.deref('view').continuation(store.get(id)),...(store.source(id)?.firstDispatchedAt===null?{requiresExternalClose:true}:{})} : {})}
+      permissions:running?.permissions.pending() ?? [],...(!running ? {continuation:continuation(store.get(id)),...(store.source(id)?.firstDispatchedAt===null?{requiresExternalClose:true}:{})} : {})}
     ctx.hub.touched(id,detail.version)
     return result
   }

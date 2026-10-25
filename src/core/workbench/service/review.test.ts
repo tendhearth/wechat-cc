@@ -3,7 +3,6 @@ import { mkdtempSync, mkdirSync, realpathSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { openTestDb, type Db } from '../../../lib/db'
-import { Ref } from '../../../lib/lifecycle'
 import { createProviderRegistry } from '../../../app/provider-registry'
 import { makeWorkbenchStore, type WorkbenchStore } from '../store'
 import { saveArtifactSnapshot } from '../artifacts'
@@ -12,8 +11,11 @@ import { derivedCommentsRequestId, derivedReturnRequestId } from '../review'
 import { createHash } from 'node:crypto'
 import { removeTempDir } from '../../../lib/test-temp'
 import { makeRuntimeState, type Active } from './state'
-import { makeReviewDomain } from './review'
-import type { ServiceActions, ServiceCtx } from './ctx'
+import { makeReviewDomain, type ReviewDomains } from './review'
+import type { ServiceCtx } from './ctx'
+
+/** review 从别的域拿的三个动作;每个测试用 stub() 换成自己的假货。 */
+type Fakes = ReviewDomains['view'] & ReviewDomains['inputs'] & ReviewDomains['execute']
 
 const dbs: Db[] = []; const dirs: string[] = []
 afterEach(() => { for (const db of dbs.splice(0)) db.close(); for (const d of dirs.splice(0)) removeTempDir(d) })
@@ -21,7 +23,7 @@ afterEach(() => { for (const db of dbs.splice(0)) db.close(); for (const d of di
 const file = (path: string, over: Partial<ReviewFile> = {}): ReviewFile => ({ path, preexisting: false, kind: 'modified', beforeSha256: 'a'.repeat(64), afterSha256: 'b'.repeat(64), diff: `@@ -1 +1 @@\n-老 ${path}\n+新 ${path}`, ...over })
 const review = (files: ReviewFile[], over: Partial<GitReview> = {}): GitReview => ({ version: 1, scope: 'working-tree-before-after', startedAt: 1, finishedAt: 2, headBefore: 'h1', headAfter: 'h2', status: 'complete', preexistingPaths: [], notes: [], files, ...over })
 
-/** 最小 ctx:真 store(标记与成果要落库)、空运行时状态、假 hub、假 actions。不建 service。 */
+/** 最小 ctx:真 store(标记与成果要落库)、空运行时状态、假 hub、假的三个跨域动作。不建 service。 */
 function setup() {
   const root = realpathSync(mkdtempSync(join(tmpdir(), 'wb-review-domain-'))); dirs.push(root)
   const stateDir = join(root, 'state'), project = join(root, 'project')
@@ -31,20 +33,29 @@ function setup() {
   const task = store.create({ title: '做点事', path: project, providerId: 'claude', ownerChatId: 'owner' })
   const state = makeRuntimeState()
   const hub = { touched: vi.fn(), bumped: vi.fn(), dispose: vi.fn() }
-  const actions = new Ref<ServiceActions>('test-actions')
-  const ctx: ServiceCtx = { store, stateDir, state, hub, deps: { ownerChatId: () => 'owner', registry: createProviderRegistry() }, ensureAccepting: () => { if (state.stopping) throw new Error('workbench_stopping') }, now: Date.now, actions }
+  const ctx: ServiceCtx = { store, stateDir, state, hub, deps: { ownerChatId: () => 'owner', registry: createProviderRegistry() }, ensureAccepting: () => { if (state.stopping) throw new Error('workbench_stopping') }, now: Date.now }
   const gates = { busy: false, checking: false }
-  const domain = makeReviewDomain(ctx, { scripts: { busy: () => gates.busy }, until: { checking: () => gates.checking } })
+  // 注入给 review 的是转发到 fakes 的薄包装:测试在建好域之后才 stub(),没 stub 就调到 ⇒ 当场报错
+  let fakes: Fakes | null = null
+  const use = (): Fakes => { if (!fakes) throw new Error('not_stubbed'); return fakes }
+  const actions = { get current() { return fakes }, deref: use }
+  const domain = makeReviewDomain(ctx, {
+    scripts: { busy: () => gates.busy },
+    until: { checking: () => gates.checking },
+    view: { isReplied: running => use().isReplied(running) },
+    inputs: { submitInput: (...args) => use().submitInput(...args) },
+    execute: { continueTask: (...args) => use().continueTask(...args) },
+  })
   const plant = (name: string, bytes: Buffer) => { saveArtifactSnapshot(store, task.id, { name, mime: GIT_REVIEW_MIME, bytes }, stateDir); return store.artifacts(task.id).find(a => a.name === name)!.id }
   const good = plant('代码变更-run1.json', serializeGitReview(review([file('src/a.ts'), file('src/big.bin', { kind: 'not_reviewed', reason: '二进制文件未展开', beforeSha256: undefined, afterSha256: undefined, diff: undefined })])))
   const broken = plant('代码变更-坏.json', Buffer.from('{这不是 JSON'))
   const view = { id: task.id } as never
-  const stub = (over: Partial<ServiceActions> = {}) => actions.set({ submitInput: vi.fn(async () => ({ id: 'li' } as never)), continueTask: vi.fn(() => view), isReplied: () => false, fallbackExecutor: () => null, artifact: () => { throw new Error('unused') }, quotaExhausted: () => null, continuation: () => ({ mode: 'new' }), provider: () => { throw new Error('unused') }, requireInput: () => { throw new Error('unused') }, canResume: () => false, taskVersion: () => 'v', selectAttachments: () => [], combinedAttachments: () => [], handoffAttachments: () => [], taskView: () => { throw new Error('unused') }, matterSync: () => {}, start: () => { throw new Error('unused') }, continuationAttachmentScope: () => undefined, inputMode: () => 'queue' as const, armIdleClose: () => {}, cancelIdleClose: () => {}, settleAfterDecision: () => {}, execute: () => { throw new Error('unused') }, hasUndeliveredInput: () => false, holdInputs: () => {}, collect: async () => {}, collectTurnArtifacts: () => {}, captureCodeChanges: async () => {}, runtimeSnapshot: () => undefined, held: () => [], stageFinishedNotice: () => {}, publishFinishedNotices: () => {}, untilAfterTurn: () => {}, untilStop: () => {}, ...over })
+  const stub = (over: Partial<Fakes> = {}) => { fakes = { submitInput: vi.fn(async () => ({ id: 'li' } as never)), continueTask: vi.fn(() => view), isReplied: () => false, ...over } }
   return { store, task, state, hub, actions, domain, good, broken, stub, gates, project }
 }
 
 describe('makeReviewDomain', () => {
-  it('构造时不 deref actions(那时 service 还没建好)', () => {
+  it('构造时不调注入的跨域动作(那时别的域可能还没建好)', () => {
     const { actions } = setup()
     expect(actions.current).toBeNull()
   })
@@ -111,7 +122,7 @@ describe('makeReviewDomain', () => {
     expect(store.reviewMarks.list(task.id)).toMatchObject([{ path: 'src/a.ts', mark: 'returned' }])
   })
 
-  it('路径列表畸形 / 意见为空 ⇒ invalid_review_reference,且不碰 actions', () => {
+  it('路径列表畸形 / 意见为空 ⇒ invalid_review_reference,且不碰跨域动作', () => {
     const { domain, task, good, store } = setup()
     expect(() => domain.returnReviewFiles(task.id, { artifactId: good, paths: [], comment: '再改改' })).toThrow('invalid_review_reference')
     expect(() => domain.returnReviewFiles(task.id, { artifactId: good, paths: ['src/a.ts'], comment: '   ' })).toThrow('invalid_review_reference')

@@ -1,29 +1,70 @@
 /**
- * inputs 域:主人的补充 —— 持有(hold)/ 排空(drain)/ 结算(settle)三个内部动作,以及
+ * inputs 域:主人的补充 —— 排空(drain)一个内部动作,以及
  * submitInput / withdrawInput / resolveAnswer / resolvePermission 四个入口。
- * 从 service.ts 逐字搬来(spec 2026-09-27-workbench-service-split §3 第 8 项);只认 ctx。
- * 与 lifecycle 互调:这里要 cancelIdleClose / armIdleClose / settleAfterDecision,经 act()=ctx.actions.deref('inputs') 在调用时取;
- * 反过来 lifecycle / execute 要的 holdInputs / drainInputs / settleRuntimeInput / hasUndeliveredInput 由 service.ts 解构。
+ * 从 service.ts 逐字搬来(spec 2026-09-27-workbench-service-split §3 第 8 项)。
+ *
+ * 依赖都在构造时显式传进来:lifecycle 的三个计时动作、admission / attachments / view 的查询,
+ * 以及落库记账那三个(pending-inputs.ts)。以前 lifecycle 也要 holdInputs / hasUndeliveredInput,
+ * 两头互相要只能晚绑定;那三个只认 ctx,搬出去之后这里只依赖 lifecycle,lifecycle 不依赖这里。
+ * holdInputs / hasUndeliveredInput / settleRuntimeInput 仍从这里带出去(调用方看到的形状不变)。
+ *
+ * drainInputs 要 execute.start(把排队的补充当一轮新的派出去),而 execute 在这里之上 ——
+ * 它只被 execute 收尾时调,所以由 execute 调下来时把 start 当参数带下来,不存成域的依赖。
  * autoContinueBlocked 在 state 上,与 execute 共享同一个 Set。
  */
 import { canonicalProject } from '../artifacts'
 import { takeBaselineFor } from './artifacts'
 import { assertNotRewindBlocked } from '../rewind-store'
 import { normalizeInputRequestId, sameAttachments, type LiveInput } from '../live-inputs'
+import type { AgentExecutionChoice } from '../../../ports/agent-provider'
+import type { StoredTask } from '../store'
+import type { Attachment } from '../attachments'
+import type { AcceptedNativeResume } from '../native-adoption'
+import type { ArtifactSelection } from '../handoff'
 import type { PermissionDecision } from '../permissions'
 import { checkedText } from './checked-text'
 import { directoryIdentity } from './directory-identity'
 import type { ServiceCtx } from './ctx'
-import type { Active } from './state'
-import type { InputMaterials } from './types'
+import type { AcceptedContinuation } from './state'
+import type { InputMaterials, WorkbenchTaskView } from './types'
+import type { AdmissionDomain } from './admission'
+import type { AttachmentsDomain } from './attachments'
+import type { ViewDomain } from './view'
+import type { LifecycleDomain } from './lifecycle'
+import type { PendingInputs } from './pending-inputs'
 import { decideCall } from '../../../lib/network-gate'
 import { liveRunTarget } from './call-target'
 
-const INPUT_UNCONFIRMED='未确认执行者收到，请检查当前对话后再决定是否重发。'
+/** drainInputs 派发用的 start:签名是 execute.start 的前缀(这里用不到后两个参数)。 */
+export type StartRun = (
+  task:StoredTask,
+  text:string,
+  acceptedDirectoryIdentity:string,
+  acceptedContinuation?:AcceptedContinuation,
+  nativeResume?:AcceptedNativeResume,
+  handoffArtifacts?:ArtifactSelection[],
+  handoffId?:string,
+  queuedInputId?:string,
+  attachments?:Attachment[],
+  draftId?:string,
+  executionChoice?:AgentExecutionChoice,
+) => WorkbenchTaskView
 
-export function makeInputsDomain(ctx:ServiceCtx) {
+export interface InputsDomains {
+  admission: Pick<AdmissionDomain,'continuation'|'requireInput'>
+  attachments: Pick<AttachmentsDomain,'selectAttachments'|'continuationAttachmentScope'>
+  view: Pick<ViewDomain,'inputMode'>
+  lifecycle: Pick<LifecycleDomain,'armIdleClose'|'cancelIdleClose'|'settleAfterDecision'>
+  pending: PendingInputs
+}
+
+export function makeInputsDomain(ctx:ServiceCtx, domains:InputsDomains) {
   const { store, state } = ctx
-  const act=()=>ctx.actions.deref('inputs')
+  const { continuation, requireInput } = domains.admission
+  const { selectAttachments, continuationAttachmentScope } = domains.attachments
+  const { inputMode } = domains.view
+  const { armIdleClose, cancelIdleClose, settleAfterDecision } = domains.lifecycle
+  const { holdInputs, hasUndeliveredInput, settleRuntimeInput } = domains.pending
   /** Read one durable receipt without loading a timeline or touching its task. */
   function inputReceipt(id:string,requestId:string):LiveInput|null {
     if(!/^[a-f0-9]{8}$/.test(id))throw Error('invalid_matter_id')
@@ -37,78 +78,26 @@ export function makeInputsDomain(ctx:ServiceCtx) {
     const input=store.liveInputs.get(key)
     return input?.id===key&&input.taskId===id?input:null
   }
-  function holdInputs(id:string,error:string){
-    state.autoContinueBlocked.add(id)
-    try{
-      store.atomic(()=>{
-        // A native send awaiting acknowledgement is ambiguous, even after stop.
-        for(const saved of state.runsByTask.get(id)?.runtimeInputs?.values()??[]){
-          const current=store.liveInputs.get(saved.id)
-          if(current?.status==='sending'&&current.taskId===saved.taskId&&current.runId===saved.runId&&current.text===saved.text&&sameAttachments(current.attachments,saved.attachments))store.liveInputs.set(saved.id,'held',INPUT_UNCONFIRMED)
-        }
-        store.liveInputs.hold(id,error)
-      })
-      ctx.hub.bumped(id)
-      state.autoContinueBlocked.delete(id)
-    }catch{/* Stop must not depend on a successful disk write. */}
-  }
-  /**
-   * 主人已经交上来、还没投给执行者的补充(`pending` / `sending` —— 和 `holdInputs` / `recover`
-   * 盯的是同一批)。有这种补充就不能自动收工:收工走的是 `cancelRun`,结算时 `running.cancelled`
-   * 让这批补充走 `holdInputs` 而不是 `drainInputs`,主人刚打的那句话被文件夹移交盖成
-   * 「补充尚未发送」(评审修复轮 #6 —— 和修复轮 #1 是同一个失败形状,只是触发者换成了
-   * 「之后才来的等待者把短让位重新武装起来」)。
-   * 读不出来就当有:宁可文件夹多占一会儿,也不能把主人的话弄丢。
-   */
-  function hasUndeliveredInput(running:Active):boolean {
-    try { return store.liveInputs.count(running.taskId)>0 } catch { return true }
-  }
-  function drainInputs(id:string,expectedDirectoryIdentity:string){
+  function drainInputs(id:string,expectedDirectoryIdentity:string,start:StartRun){
     if(state.autoContinueBlocked.has(id))return
     const next=store.liveInputs.next(id);if(!next)return
     try{
-      const task=store.get(id),decision=act().continuation(task)
+      const task=store.get(id),decision=continuation(task)
       if(decision.mode!=='resume')throw Error('原会话需要你确认恢复方式，补充尚未发送。')
       const path=canonicalProject(task.path);if(path!==task.path||directoryIdentity(path)!==expectedDirectoryIdentity)throw Error('invalid_path')
       store.liveInputs.set(next.id,'sending');ctx.hub.bumped(id)
       const execution=next.execution??store.execution.run(id,next.runId)?.choice??store.execution.choice(id)
-      act().requireInput(task.providerId,next.attachments??[],execution,true)
-      act().start(task,next.text,expectedDirectoryIdentity,{mode:'resume',sessionId:task.sessionId!},undefined,undefined,undefined,next.id,next.attachments,undefined,execution)
+      requireInput(task.providerId,next.attachments??[],execution,true)
+      start(task,next.text,expectedDirectoryIdentity,{mode:'resume',sessionId:task.sessionId!},undefined,undefined,undefined,next.id,next.attachments,undefined,execution)
     }catch(error){holdInputs(id,error instanceof Error?error.message:'input_not_delivered')}
   }
 
-  function settleRuntimeInput(running:Active,saved:LiveInput,error?:unknown) {
-    if(state.shutdownComplete){running.runtimeInputs?.delete(saved.id);return}
-    try {
-      // held-only 落库不会自己 bump(store.addEvent 才会);两条分支分别记账,没写就不吵。
-      let changed:'held'|'delivered'|null=null
-      store.atomic(()=>{
-        const current=store.liveInputs.get(saved.id)
-        if(!current||current.taskId!==saved.taskId||current.runId!==saved.runId||current.text!==saved.text||!sameAttachments(current.attachments,saved.attachments))return
-        if(error!==undefined){
-          // Stop/recovery may already have held it. Never revive an old send.
-          if(current.status==='sending'){store.liveInputs.set(saved.id,'held',`${INPUT_UNCONFIRMED}${error instanceof Error?' '+error.message:''}`);changed='held'}
-          return
-        }
-        if(current.status!=='sending'&&current.status!=='held')return
-        // A late positive native acknowledgement is truthful only for this receipt.
-        store.liveInputs.set(saved.id,'delivered')
-        store.addEvent(saved.taskId,'user',saved.text,null,saved.runId,saved.attachments)
-        changed='delivered'
-      })
-      if(changed==='held')ctx.hub.bumped(saved.taskId)
-      else if(changed==='delivered')ctx.hub.touched(saved.taskId)
-      // Keep delivery uncertainty tracked if the durable transition failed.
-      running.runtimeInputs?.delete(saved.id)
-      if(state.runsByTask.get(saved.taskId)===running&&!running.cancelled&&!running.finishing)running.interactionAt=Date.now()
-    }catch{state.autoContinueBlocked.add(saved.taskId)}
-  }
   function resolveAnswer(id:string,requestId:string,answers:unknown){
     const running=state.runsByTask.get(id)
     if(!running||running.cancelled||running.finishing||!running.questions.resolve(requestId,answers))throw Error('question_stale')
     ctx.hub.bumped(id)
     // 回合早就静下来、只差这一个待决请求时,不会再有事件把落定叫起来 —— 拍完板自己补一次。
-    act().settleAfterDecision(running)
+    settleAfterDecision(running)
   }
   function withdrawInput(id:string,requestId:string){
     const input=store.liveInputs.get(requestId)
@@ -120,7 +109,7 @@ export function makeInputsDomain(ctx:ServiceCtx) {
     assertNotRewindBlocked(store.rewinds,id)   // 回退停住的事不收补充(评审 #433-4)
     ctx.ensureAccepting()
     if(Object.hasOwn(input,'execution'))throw Error('invalid_execution')
-    const attachments=act().selectAttachments(input,id,attachmentPolicy),text=checkedText(input.text,attachments)
+    const attachments=selectAttachments(input,id,attachmentPolicy),text=checkedText(input.text,attachments)
     if(state.autoContinueBlocked.has(id))throw Error('input_storage_unavailable')
     const requestId=normalizeInputRequestId(input.requestId)
     const prior=store.liveInputs.get(requestId)
@@ -132,13 +121,13 @@ export function makeInputsDomain(ctx:ServiceCtx) {
     // (评审 #193:不是任务记录的模型、也不是此刻的配置);需要保护且不安全才不投。
     if(ctx.deps.networkGate&&!(await decideCall(ctx.deps.networkGate,liveRunTarget(running,ctx.deps.registry.get(running.task.providerId)?.provider))).allowed)throw Error('network_unprotected')
     if(store.liveInputs.count(id)>=10)throw Error('input_limit')
-    act().requireInput(running.task.providerId,attachments,running.execution)
+    requireInput(running.task.providerId,attachments,running.execution)
     // 一句补充就是一下互动:先把自动收工的计时取消掉,免得话在路上会话被关了。这一下要在
     // **入口**做,不能放进下面那个分支 —— `isReplied` 不看 `inputMode`,一条安静的运行若 runtime
     // 报 `input:'queue'`,补充会存下来等着,而计时还武装着:让位到点就把会话关了,主人收到的
     // 是「补充尚未发送」(评审 2026-09-21 修复轮 #1)。
-    act().cancelIdleClose(running)
-    if(running.session?.workbenchRuntime&&act().inputMode(running)!=='queue'){
+    cancelIdleClose(running)
+    if(running.session?.workbenchRuntime&&inputMode(running)!=='queue'){
       // 上一轮的快照还在截就等它截完,别把这一轮的改动算进上一轮。
       if(running.reviewCapture)await running.reviewCapture.catch(()=>{})
       // 续接 = 新一轮差异的起点:重新取基线。回合中间补一句话时上一轮还没截过快照
@@ -154,18 +143,18 @@ export function makeInputsDomain(ctx:ServiceCtx) {
     let saved:LiveInput
     try{
       saved=store.atomic(()=>{
-        store.attachments.bind(attachments.map(a=>a.id),id,input.draftId,attachmentPolicy?act().continuationAttachmentScope(id,attachments):undefined)
+        store.attachments.bind(attachments.map(a=>a.id),id,input.draftId,attachmentPolicy?continuationAttachmentScope(id,attachments):undefined)
         return store.liveInputs.add({id:requestId,taskId:id,runId:input.runId,text,attachments,execution:running.execution})
       })
     }catch(error){
       // 这一句没存下来就没有人会去写文件夹:会话还安静着,把自动收工的计时重新起上,
       // 别让一句存不下来的补充把文件夹永久锁住。
-      act().armIdleClose(running)
+      armIdleClose(running)
       throw error
     }
     const runtime=running.session?.workbenchRuntime
     if(runtime){
-      if(act().inputMode(running)==='queue')return saved
+      if(inputMode(running)==='queue')return saved
       store.liveInputs.set(saved.id,'sending');ctx.hub.bumped(id)
       ;(running.runtimeInputs??=new Map()).set(saved.id,saved)
       try{
@@ -180,9 +169,9 @@ export function makeInputsDomain(ctx:ServiceCtx) {
         // The HTTP receipt is already durable; never wait here or auto-resend.
         void runtime.submit(saved.id,text,material).then(
           ()=>settleRuntimeInput(running,saved),
-          error=>{settleRuntimeInput(running,saved,error??new Error('input_not_delivered'));act().armIdleClose(running)},
+          error=>{settleRuntimeInput(running,saved,error??new Error('input_not_delivered'));armIdleClose(running)},
         )
-      }catch(error){settleRuntimeInput(running,saved,error??new Error('input_not_delivered'));act().armIdleClose(running)}
+      }catch(error){settleRuntimeInput(running,saved,error??new Error('input_not_delivered'));armIdleClose(running)}
       return store.liveInputs.get(saved.id)!
     }
     if(!running.session?.steer)return saved
@@ -205,7 +194,7 @@ export function makeInputsDomain(ctx:ServiceCtx) {
     if (!running || !running.permissions.resolve(requestId,decision)) throw new Error('permission_stale')
     ctx.hub.bumped(id)
     // 同 resolveAnswer:静默期里拍的板,得由拍板这一下把落定补上。
-    act().settleAfterDecision(running)
+    settleAfterDecision(running)
   }
 
   return { inputReceipt,holdInputs,hasUndeliveredInput,drainInputs,settleRuntimeInput, submitInput,withdrawInput,resolveAnswer,resolvePermission }

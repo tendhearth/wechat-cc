@@ -1,10 +1,15 @@
 /**
  * lifecycle + settle 域:文件夹租约、空闲自动收工、回报 / 回忆去重、安静落定、占用释放、不确定退出、派发泵、取消,
  * 以及 setArchived / cancel / shutdown 三个入口。
- * 从 service.ts 逐字搬来(spec 2026-09-27-workbench-service-split §3 第 9 项);只认 ctx。
- * 这是 spec §1 说的那个环(pump → execute → settleQuiet → armIdleClose → closeForIdle → cancelRun → pump)
- * 完整经 ctx.actions 走的地方:execute 是真晚绑定,其余是别的域的查询/动作,都经 act() 在调用时取。
- * quiet 是 isReplied 的别名(原文 `const quiet=isReplied`),这里写成经 act() 取的同义包装。
+ * 从 service.ts 逐字搬来(spec 2026-09-27-workbench-service-split §3 第 9 项)。
+ *
+ * spec §1 说的那个环(pump → execute → settleQuiet → armIdleClose → closeForIdle → cancelRun → pump)
+ * 以前完整经一张晚绑定的动作表走。现在:
+ * - 别的域的查询 / 动作(view / artifacts / notices / until / 补充记账)都不依赖这里,构造时显式传进来;
+ * - 唯一往上的一条 pump → execute 不再是域之间的引用:execute.start 建这条 run 时把「轮到它时怎么跑」
+ *   (running.launch)一起放进队列,pump 只管挑出能跑的、调它自己带来的那个。调度器不认识干活的人,
+ *   排队的那件活自己带着做法 —— 环就断在数据上,而不是藏在一个晚绑定的引用后面。
+ * quiet 是 isReplied 的别名(原文 `const quiet=isReplied`)。
  */
 import { findPathBlocker } from '../scheduler'
 import { publicTask, TERMINAL_TASK_STATUSES } from '../store'
@@ -14,13 +19,32 @@ import type { ServiceCtx } from './ctx'
 import { liveRunTarget } from './call-target'
 import { BOOT_TOLERANCE_MS, bootTimeMs, groupAlive as isGroupAlive, writerGroupsOf } from './writer-exit'
 import type { CallTarget } from '../../../lib/network-gate'
+import { syncMatter } from './matter-sync'
+import type { ViewDomain } from './view'
+import type { ArtifactsDomain } from './artifacts'
+import type { NoticesDomain } from './notices'
+import type { UntilDomain } from './until'
+import type { PendingInputs } from './pending-inputs'
 
 /** 桌面 / 手机 / 微信同一句状态(主人 2026-10-03)。 */
 export const NETWORK_SUSPENDED_LABEL='已暂停(网络未受保护)'
 
-export function makeLifecycleDomain(ctx:ServiceCtx) {
+export interface LifecycleDomains {
+  view: Pick<ViewDomain,'isReplied'|'runtimeSnapshot'|'taskView'|'held'>
+  artifacts: Pick<ArtifactsDomain,'collect'|'collectTurnArtifacts'|'captureCodeChanges'>
+  notices: Pick<NoticesDomain,'stageFinishedNotice'|'publishFinishedNotices'|'enqueueNotice'>
+  pending: Pick<PendingInputs,'holdInputs'|'hasUndeliveredInput'>
+  until: Pick<UntilDomain,'afterTurn'|'stop'>
+}
+
+export function makeLifecycleDomain(ctx:ServiceCtx, domains:LifecycleDomains) {
   const { store, state } = ctx
-  const act=()=>ctx.actions.deref('lifecycle')
+  const { isReplied, runtimeSnapshot, taskView, held } = domains.view
+  const { collect, collectTurnArtifacts, captureCodeChanges } = domains.artifacts
+  const { stageFinishedNotice, publishFinishedNotices, enqueueNotice } = domains.notices
+  const { holdInputs, hasUndeliveredInput } = domains.pending
+  const { afterTurn: untilAfterTurn, stop: untilStop } = domains.until
+  const matterSync = (fn:Parameters<typeof syncMatter>[1]) => syncMatter(ctx, fn)
   function revokeCredentials(running:Active) {
     if (!running.credentialsMinted || running.credentialsRevoked) return
     running.credentialsRevoked=true
@@ -40,7 +64,7 @@ export function makeLifecycleDomain(ctx:ServiceCtx) {
    */
   /** 会话安静:本轮做完、没有后台子任务在写、也没有待决权限/提问 —— 只差主人下一句话。
    *  空闲自动收工的判据就是它。 */
-  const quiet=(running:Active)=>act().isReplied(running)
+  const quiet=(running:Active)=>isReplied(running)
   // setTimeout 的合法上限是 2³¹−1 毫秒(约 24.8 天);超界的值 Node/浏览器会静默钳成 1ms 立刻触发
   // (TimeoutOverflowWarning),把「几乎不自动关」反转成「立刻收工」。这里在旋钮里就封顶,
   // 「很大的数」的实际效果因此是「最多约 24.8 天不收工」,不是真的永不武装。
@@ -58,7 +82,7 @@ export function makeLifecycleDomain(ctx:ServiceCtx) {
    */
   function armIdleClose(running:Active):void {
     // 网络守护冻住期间不武装:到点去关一棵冻住的树,只会把「在等网络」判成收工(放开时 settleAfterDecision 再评估)。
-    if (!quiet(running)||running.finishing||running.cancelled||running.networkSuspended||act().hasUndeliveredInput(running)) return
+    if (!quiet(running)||running.finishing||running.cancelled||running.networkSuspended||hasUndeliveredInput(running)) return
     const wanted=state.queue.some(item=>item.state==='queued'&&!!findPathBlocker(item,[running]))
     const ms=wanted?handoffGraceMs():retainedIdleMs()
     const at=Date.now()+ms
@@ -80,7 +104,7 @@ export function makeLifecycleDomain(ctx:ServiceCtx) {
     running.idleClose=undefined
     if (!armed) return
     // 武装点已经拦过未投递的补充,这里再看一眼只是把「落笔前复查一遍」补全。
-    if (!quiet(running)||state.reservations.get(running.identity)!==running||running.finishing||running.cancelled||act().hasUndeliveredInput(running)) return
+    if (!quiet(running)||state.reservations.get(running.identity)!==running||running.finishing||running.cancelled||hasUndeliveredInput(running)) return
     const next=state.queue.find(item=>item.state==='queued'&&!!findPathBlocker(item,[running]))
     const seconds=Math.round((armed.reason==='handoff'?handoffGraceMs():retainedIdleMs())/1000)
     const text=next
@@ -140,12 +164,12 @@ export function makeLifecycleDomain(ctx:ServiceCtx) {
    * 还在等主人拍板就只收成果、不计时 —— 那不叫安静。重复调用无害:收集自己去重,计时不会被推迟。
    */
   function settleQuiet(running:Active):void {
-    const snapshot=act().runtimeSnapshot(running)
+    const snapshot=runtimeSnapshot(running)
     // 与「该暂停了」的判据同义:回合真的停下来了才登记,否则会把半成品当成固定版本的成果发布出去。
     if (!snapshot?.retained||snapshot.foreground!=='idle'||snapshot.backgroundCount!==0) return
-    act().collectTurnArtifacts(running)
+    collectTurnArtifacts(running)
     if (!quiet(running)) return
-    act().matterSync(m=>m.setStatus(running.taskId,'replied'))
+    matterSync(m=>m.setStatus(running.taskId,'replied'))
     reportOnce(running)
     // 回忆(task-5,fix round 3,评审必判①):不在这里调 recollectOnce 了——
     // settleQuiet 每次安静都触发一次,而持久去重(journal.hasRecollection)
@@ -158,10 +182,10 @@ export function makeLifecycleDomain(ctx:ServiceCtx) {
     // 钟级),接受。
     // 差异边界 = 回合边界:这一轮的代码变更现在就截(以前这一步挂在「答复即释放」后面,
     // 那条路没了)。续接会先 await 这份在途的快照再取新基线,所以不会把下一轮的改动算进来。
-    void act().captureCodeChanges(running).catch(()=>{})
+    void captureCodeChanges(running).catch(()=>{})
     armIdleClose(running)
     // 做到条件成立为止(v80):这一轮安静了 ⇒ 排一次检查(按 run+turnSeq 去重,不阻塞)。
-    try { act().untilAfterTurn(running) } catch (err) { ctx.log?.('WORKBENCH_UNTIL',`afterTurn failed for ${running.taskId}: ${err instanceof Error?err.message:err}`) }
+    try { untilAfterTurn(running) } catch (err) { ctx.log?.('WORKBENCH_UNTIL',`afterTurn failed for ${running.taskId}: ${err instanceof Error?err.message:err}`) }
   }
   /**
    * 拍完板重新评估一次安静:请求**自己超时**(权限 5 分钟)那一下既没有事件也不走 resolvePermission,
@@ -182,7 +206,7 @@ export function makeLifecycleDomain(ctx:ServiceCtx) {
   }
   async function confirmLateClose(running:Active,capture:boolean) {
     if (!running.uncertain) return
-    if (capture) await act().collect(running)
+    if (capture) await collect(running)
     try { store.clearWriterError(running.taskId) } catch { /* keep the persistent guard if storage is unavailable */ }
     running.uncertain=false
     running.state='active'
@@ -264,7 +288,7 @@ export function makeLifecycleDomain(ctx:ServiceCtx) {
     if (live) await confirmLateClose(live,false)
     releaseWriter(id,'主人确认执行程序已经结束，这条占用解除。')
     pump()
-    return act().taskView(publicTask(store.get(id)))
+    return taskView(publicTask(store.get(id)))
   }
 
   function pump() {
@@ -273,7 +297,7 @@ export function makeLifecycleDomain(ctx:ServiceCtx) {
     for (const running of state.queue) {
       if (running.state !== 'queued') continue
       const earlier=state.queue.filter(item => item.order < running.order && item.state === 'queued')
-      const blocker=findPathBlocker(running,[...act().held(),...state.writerOrphans.values(),...earlier])
+      const blocker=findPathBlocker(running,[...held(),...state.writerOrphans.values(),...earlier])
       if (blocker) {
         // 「有人来等这个文件夹了」的唯一入口:挡路的那条会话若已经安静,就按短让位重排它的
         // 自动收工(armIdleClose 自己判安静,不安静就什么都不做)。
@@ -285,7 +309,7 @@ export function makeLifecycleDomain(ctx:ServiceCtx) {
     }
     for (const running of launch) state.queue.splice(state.queue.indexOf(running),1)
     for (const running of launch) {
-      void Promise.resolve().then(() => act().execute(running.task,state.runningText.get(running.identity)!,running)).catch(() => {
+      void Promise.resolve().then(() => running.launch(state.runningText.get(running.identity)!)).catch(() => {
         if (running.publicFinished) return
         try { running.questions.close(); running.permissions.rejectAll(running.cancelled ? 'cancelled' : 'ended'); ctx.hub.bumped(running.taskId) } catch { /* fail closed */ }
         revokeCredentials(running)
@@ -297,16 +321,16 @@ export function makeLifecycleDomain(ctx:ServiceCtx) {
   }
   function cancelRun(running:Active):void {
     cancelIdleClose(running)
-    running.questions.close();ctx.hub.bumped(running.taskId);act().holdInputs(running.taskId,'任务已停止，补充尚未发送。')
+    running.questions.close();ctx.hub.bumped(running.taskId);holdInputs(running.taskId,'任务已停止，补充尚未发送。')
     if (running.state==='queued') {
       running.cancelled=true; running.permissions.rejectAll('cancelled'); ctx.hub.bumped(running.taskId); running.signalStop()
       const index=state.queue.indexOf(running); if (index>=0) state.queue.splice(index,1)
       state.runningText.delete(running.identity)
       try {
-        store.atomic(()=>{store.update(running.taskId,'cancelled');act().stageFinishedNotice(running,'cancelled')})
+        store.atomic(()=>{store.update(running.taskId,'cancelled');stageFinishedNotice(running,'cancelled')})
         ctx.hub.touched(running.taskId)
-        act().matterSync(m=>m.setStatus(running.taskId,'done'))
-        act().publishFinishedNotices()
+        matterSync(m=>m.setStatus(running.taskId,'done'))
+        publishFinishedNotices()
       } catch { /* in-memory cancellation still must settle */ }
       running.publicFinished=true; running.resolveDone()
       if (state.runsByTask.get(running.taskId)===running) state.runsByTask.delete(running.taskId)
@@ -315,7 +339,7 @@ export function makeLifecycleDomain(ctx:ServiceCtx) {
     }
     if (running.state==='uncertain') return
     if (!running.cancelled) {
-      if (act().isReplied(running)) running.closedWhileReplied=true
+      if (isReplied(running)) running.closedWhileReplied=true
       running.cancelled=true
       // 冻住的树要停(主人取消 / 暂停到顶 / daemon 关):不放开、直接整棵杀掉 —— 放开那一下它就会
       // 接着用不受保护的网络。之后的 cancel() / close() 不再指望进程配合。
@@ -355,7 +379,7 @@ export function makeLifecycleDomain(ctx:ServiceCtx) {
         try { running.permissions.pause() } catch { /* 期限照走也只是拒掉那一张卡 */ }
         const text=`${NETWORK_SUSPENDED_LABEL}：${message}恢复后自动继续。`
         try { store.addEvent(running.taskId,'system',text,null,running.identity); ctx.hub.touched(running.taskId) } catch { /* 冻住照样生效 */ }
-        try { act().enqueueNotice?.(running.task,running.identity,'interrupted',`${running.title.replace(/[\r\n]+/g,' ')} · ${running.taskId}\n${running.task.providerId} · ${NETWORK_SUSPENDED_LABEL}\n\n${message}恢复后自动继续。\n\n查看：任务 ${running.taskId}`,`network-suspend-${running.networkSuspended.since}`) } catch { /* 提醒失败不影响暂停 */ }
+        try { enqueueNotice(running.task,running.identity,'interrupted',`${running.title.replace(/[\r\n]+/g,' ')} · ${running.taskId}\n${running.task.providerId} · ${NETWORK_SUSPENDED_LABEL}\n\n${message}恢复后自动继续。\n\n查看：任务 ${running.taskId}`,`network-suspend-${running.networkSuspended.since}`) } catch { /* 提醒失败不影响暂停 */ }
         ctx.hub.bumped(running.taskId)
         suspended++
         continue
@@ -388,7 +412,7 @@ export function makeLifecycleDomain(ctx:ServiceCtx) {
     for (const running of [...state.runsByTask.values()]) {
       if (!running.networkSuspended) continue
       running.stopNotice=message
-      try { act().untilStop(running.taskId,'网络一直没恢复,任务停了') } catch { /* 停照停 */ }
+      try { untilStop(running.taskId,'网络一直没恢复,任务停了') } catch { /* 停照停 */ }
       try { store.addEvent(running.taskId,'system',message,null,running.identity); ctx.hub.touched(running.taskId) } catch { /* 停仍然要停 */ }
       try { cancelRun(running); n++ } catch { /* 下一个照停 */ }
     }
@@ -401,11 +425,11 @@ export function makeLifecycleDomain(ctx:ServiceCtx) {
   function setArchived(id:string,archived:boolean):WorkbenchTaskView {
     if(typeof archived!=='boolean')throw new Error('invalid_request')
     const task=store.get(id)
-    if(archived && !act().taskView(publicTask(task)).canArchive)throw new Error('workbench_busy')
-    const view=act().taskView(publicTask(store.setArchived(id,archived)))
+    if(archived && !taskView(publicTask(task)).canArchive)throw new Error('workbench_busy')
+    const view=taskView(publicTask(store.setArchived(id,archived)))
     // store.setArchived 是裸 UPDATE,不像别的写点那样自带 bump —— archivedAt 在 detail 里能看见,补一下。
     ctx.hub.bumped(id)
-    act().matterSync(m=>m.setStatus(id,archived?'archived':view.status==='interrupted'?'open':TERMINAL_TASK_STATUSES.includes(view.status)?'done':view.phase==='replied'?'replied':'open'))
+    matterSync(m=>m.setStatus(id,archived?'archived':view.status==='interrupted'?'open':TERMINAL_TASK_STATUSES.includes(view.status)?'done':view.phase==='replied'?'replied':'open'))
     return view
   }
   async function cancel(id:string,expectedRunId?:string):Promise<WorkbenchTaskView> {
@@ -414,10 +438,10 @@ export function makeLifecycleDomain(ctx:ServiceCtx) {
     // cancelRun 落库时自己 touched;没有 running(任务不在跑)时这里兜底一下,
     // 停止请求本身也算一次「详情可能变了」。
     // 主人亲手停 ⇒「直到检查通过」也停,不再自己接着改(写清原因)。
-    try { act().untilStop(id,'你停下了这件事') } catch { /* 停照停 */ }
+    try { untilStop(id,'你停下了这件事') } catch { /* 停照停 */ }
     if (running) cancelRun(running)
     else ctx.hub.bumped(id)
-    return act().taskView(publicTask(store.get(id)))
+    return taskView(publicTask(store.get(id)))
   }
   function shutdown():Promise<void> {
     if (state.shutdownPromise) return state.shutdownPromise
