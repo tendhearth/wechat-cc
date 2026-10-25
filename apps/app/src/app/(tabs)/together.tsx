@@ -8,6 +8,9 @@ import { useAllMatterInputs, useInputRecovery } from '../../state/useMatterInput
 import { useTerminalSessions } from '../../state/useTerminal'
 import { inputNeedsChecking } from '../../state/matter-inputs'
 import { ConnectionNotice } from '../../ui/ConnectionNotice'
+import { Button } from '../../ui/Button'
+import { BusyIndicator } from '../../ui/motion'
+import { StatusHint } from '../../ui/StatusHint'
 import { LinkRow } from '../../ui/Rows'
 import { SayBar } from '../../ui/SayBar'
 import { StatusPill } from '../../ui/StatusPill'
@@ -33,7 +36,7 @@ export default function Together() {
   const { c } = useTheme()
   const lang = useLang()
   const router = useRouter()
-  const { approvals, agents, matters } = useWork()
+  const { approvals, agents, matters, mattersKnown, mattersLoading, mattersError, refreshMatters } = useWork()
   const sections = togetherGroups(togetherView(matters, approvals, agents)).map(g => ({ key: g.key, data: g.rows }))
   const saved = useAllMatterInputs().filter(inputNeedsChecking).length
   const recovery = useInputRecovery()
@@ -70,14 +73,24 @@ export default function Together() {
           </View>
         )}
         contentContainerStyle={{ paddingHorizontal: space.xl, paddingBottom: space.xl, flexGrow: 1 }}
-        ListHeaderComponent={saved || recovery.phase !== 'ready' ? <LinkRow testID="together-saved-inputs" label={`${t(lang, 'input.savedTitle')}${saved ? ` · ${saved}` : ''}`} onPress={() => router.push('/inputs')} /> : null}
+        ListHeaderComponent={<>
+          {!mattersKnown && mattersError ? <View style={{ paddingVertical: space.m, gap: space.s }}>
+            <StatusHint testID="together-unavailable" icon="alert" label={t(lang, 'feedback.loadingFailed')} shortLabel={t(lang, 'feedback.loadingFailed')} description={t(lang, 'feedback.loadingFailed')} />
+            <Button kind="secondary" testID="together-retry" label={t(lang, 'common.retry')} busy={mattersLoading} onPress={() => void refreshMatters()} />
+          </View> : !mattersKnown ? <View style={{ paddingVertical: space.l }}><BusyIndicator testID="together-loading" label={t(lang, 'progress.loading')} /></View> : mattersError ? (
+            <StatusHint testID="together-stale" icon="clock" label={t(lang, 'feedback.stale')} shortLabel={t(lang, 'feedback.stale')} description={t(lang, 'feedback.stale')}>
+              <Button kind="secondary" testID="together-retry" label={t(lang, 'common.retry')} busy={mattersLoading} onPress={() => void refreshMatters()} />
+            </StatusHint>
+          ) : null}
+          {saved || recovery.phase !== 'ready' ? <LinkRow testID="together-saved-inputs" label={`${t(lang, 'input.savedTitle')}${saved ? ` · ${saved}` : ''}`} onPress={() => router.push('/inputs')} /> : null}
+        </>}
         ListFooterComponent={<>{terminalSection}<LinkRow testID="together-sessions" label={t(lang, 'sessions.title')} onPress={() => router.push('/sessions')} /></>}
         ListEmptyComponent={
-          <View style={{ flex: 1, justifyContent: 'center', paddingVertical: space.xxl }}>
+          mattersKnown ? <View style={{ flex: 1, justifyContent: 'center', paddingVertical: space.xxl }}>
             <Txt testID="together-empty" role="bubble" tone="inkSoft" style={{ textAlign: 'center' }}>
               {t(lang, 'together.empty')}
             </Txt>
-          </View>
+          </View> : null
         }
         renderItem={({ item }) => (
           <Pressable

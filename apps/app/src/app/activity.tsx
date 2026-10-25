@@ -9,6 +9,8 @@ import { useBackendCtx } from '../state/BackendProvider'
 import { useQuery } from '../state/hooks'
 import { Button } from '../ui/Button'
 import { ConnectionNotice } from '../ui/ConnectionNotice'
+import { BusyIndicator } from '../ui/motion'
+import { StatusHint } from '../ui/StatusHint'
 import { space } from '../ui/tokens'
 import { TopBar } from '../ui/TopBar'
 import { Txt } from '../ui/Txt'
@@ -83,11 +85,11 @@ export default function Activity() {
       <ScrollView contentContainerStyle={{ paddingHorizontal: space.xl, paddingBottom: space.xl, gap: space.l }}>
         {!view && q.error ? (
           <View style={{ gap: space.m, paddingVertical: space.l }}>
-            <Txt testID="activity-unavailable" role="bubble" tone="inkSoft">{t(lang, 'activity.unavailable')}</Txt>
+            <StatusHint testID="activity-unavailable" icon="alert" label={t(lang, 'activity.unavailable')} shortLabel={t(lang, 'feedback.loadingFailed')} description={t(lang, 'activity.unavailable')} />
             <Button kind="secondary" testID="activity-retry" label={t(lang, 'common.retry')} onPress={() => void q.refresh()} />
           </View>
         ) : !view ? (
-          <Txt role="bubble" tone="inkSoft" style={{ paddingVertical: space.l }}>{t(lang, 'progress.loading')}</Txt>
+          <View style={{ paddingVertical: space.l }}><BusyIndicator testID="activity-loading" label={t(lang, 'progress.loading')} /></View>
         ) : (
           <>
             {view.partial ? <Txt testID="activity-partial" role="meta" tone="inkSoft" style={{ paddingTop: space.l }}>{view.partial}</Txt> : null}

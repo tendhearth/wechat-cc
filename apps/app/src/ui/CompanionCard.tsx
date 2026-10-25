@@ -5,6 +5,8 @@ import { useLang } from '../i18n/useLang'
 import type { CompanionCard as CardData } from '../view/companion'
 import { relAgo } from '../view/terminal'
 import { Card } from './Card'
+import { Icon } from './Icon'
+import { Expansion } from './Sheet'
 import { space } from './tokens'
 import { Txt } from './Txt'
 
@@ -16,30 +18,35 @@ import { Txt } from './Txt'
 export function CompanionCard({ card, onSeen }: { card: CardData | null; onSeen: (ts: string) => void }) {
   const lang = useLang()
   const [open, setOpen] = useState<CardData | null>(null)
-  const shown = open ?? card
+  const [closing, setClosing] = useState<CardData | null>(null)
+  const shown = open ?? closing ?? card
   if (!shown) return null
   const kind = t(lang, shown.kind === 'hunt' ? 'companion.hunt' : 'companion.postcard')
   const onPress = () => {
+    if (closing) return
     if (shown.url) {
       onSeen(shown.ts)
       void Linking.openURL(shown.url).catch(() => {})
       return
     }
-    if (open) { setOpen(null); return }
+    if (open) { setClosing(open); setOpen(null); return }
     onSeen(shown.ts)
     if (shown.note) setOpen(shown) // 没有附言就没什么可展开的:记过看过,卡片直接收走
   }
   return (
-    <Pressable testID="now-companion-card" accessibilityRole={shown.url ? 'link' : 'button'} accessibilityState={shown.url ? undefined : { expanded: open !== null }}
+    <Pressable testID="now-companion-card" disabled={closing !== null} accessibilityRole={shown.url ? 'link' : 'button'} accessibilityState={shown.url ? undefined : { expanded: open !== null, disabled: closing !== null }}
       accessibilityLabel={t(lang, 'companion.cardLabel', { kind, title: shown.title })} onPress={onPress}
       style={({ pressed }) => ({ opacity: pressed ? 0.7 : 1 })}>
       <Card style={{ gap: space.xs }}>
         <Txt role="caption" tone="inkSoft">{`${kind} · ${relAgo(shown.at, Date.now(), lang)}`}</Txt>
         <View style={{ flexDirection: 'row', alignItems: 'flex-end', gap: space.l }}>
-          <Txt role="item" content="user" numberOfLines={open ? undefined : 2} style={{ flex: 1 }}>{shown.title}</Txt>
-          {shown.url ? <Txt role="bubble" tone="inkSoft">{t(lang, 'companion.openLink')} ›</Txt> : null}
+          <Txt role="item" content="user" numberOfLines={open || closing ? undefined : 2} style={{ flex: 1 }}>{shown.title}</Txt>
+          {shown.url ? <View style={{ flexDirection: 'row', alignItems: 'center', gap: space.xs }}><Txt role="bubble" tone="inkSoft">{t(lang, 'companion.openLink')}</Txt><Icon name="chevronRight" /></View> : null}
         </View>
-        {shown.note ? <Txt testID="now-companion-note" role="meta" tone="inkSoft" content="user" numberOfLines={open ? undefined : 1}>{shown.note}</Txt> : null}
+        {shown.note ? <>
+          {!open && !closing ? <Txt testID="now-companion-note" role="meta" tone="inkSoft" content="user" numberOfLines={1}>{shown.note}</Txt> : null}
+          <Expansion open={!!open} onClosed={() => setClosing(null)}><Txt testID="now-companion-expanded-note" role="meta" tone="inkSoft" content="user">{shown.note}</Txt></Expansion>
+        </> : null}
       </Card>
     </Pressable>
   )

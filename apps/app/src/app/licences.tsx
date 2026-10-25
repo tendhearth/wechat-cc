@@ -5,6 +5,7 @@ import { t } from '../i18n'
 import { useLang } from '../i18n/useLang'
 import { ICON_LICENCE_TEXT } from '../ui/icon-licence'
 import { OFL_TEXT } from '../ui/ofl-text'
+import { LUCIDE_LICENCE_TEXT } from '../ui/lucide-licence'
 import { space } from '../ui/tokens'
 import { TopBar } from '../ui/TopBar'
 import { Txt } from '../ui/Txt'
@@ -25,6 +26,8 @@ export default function Licences() {
         <Txt testID="licences-text" role="small" selectable>{reflowLicence(OFL_TEXT)}</Txt>
         <Txt testID="licences-icons" role="meta" tone="inkSoft" style={{ paddingTop: space.l }}>{t(lang, 'licences.icons')}</Txt>
         <Txt testID="licences-icons-text" role="small" selectable>{reflowLicence(ICON_LICENCE_TEXT)}</Txt>
+        <Txt testID="licences-feedback-icons" role="meta" tone="inkSoft" style={{ paddingTop: space.l }}>{t(lang, 'licences.feedbackIcons')}</Txt>
+        <Txt testID="licences-feedback-icons-text" role="small" selectable>{reflowLicence(LUCIDE_LICENCE_TEXT)}</Txt>
       </ScrollView>
     </SafeAreaView>
   )

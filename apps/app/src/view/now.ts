@@ -33,13 +33,13 @@ export function nowView(input: { approvals: ApprovalItemT[]; matters: MatterT[];
 const SYSTEM_NOTICE = /^(🔄|🔔|✅|❌)/u
 
 /** CC 气泡:主人那条对话里最近一条 CC 说的话(跳过系统通知)。没有就是 null —— 不画空气泡、不编客套话。 */
-export function latestCCLine(page: ChatPageT | undefined): { text: string; at: number } | null {
+export function latestCCLine(page: ChatPageT | undefined): { id: string; text: string; at: number } | null {
   if (!page) return null
   for (let i = page.messages.length - 1; i >= 0; i--) {
     const m = page.messages[i]!
     if (m.role === 'cc' && !SYSTEM_NOTICE.test(m.text.trimStart())) {
       const text = markdownPlainText(m.text).trim()
-      if (text !== '') return { text, at: m.at }
+      if (text !== '') return { id: m.id, text, at: m.at }
     }
   }
   return null

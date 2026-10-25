@@ -5,7 +5,8 @@ import { composeTooLong } from '../view/compose'
 import { useBackendCtx } from './BackendProvider'
 import { deleteDraft, dropReceipt, getDraft, isReplied, listReceipts, markReplied, materialDraftId, pairingGen, putReceipt, requestIdFor, subscribeReceipts } from './drafts'
 import { bytesToBase64, uploadImages, withImageMarker, type PickedImage } from './image-upload'
-import { useQuery, useSubmit, useTopic } from './hooks'
+import { useQuery, useSubmit } from './hooks'
+import { useChatUpdates } from './useChatUpdates'
 
 export type ChatSendOutcome = 'ok' | 'busy' | 'ccBusy' | 'uncertain' | 'revoked' | 'failed' | 'refused' | 'tooLong' | 'imagesGone' | 'imagesUnsupported'
 const NO_JOB = { pending: null, failed: null } as const
@@ -17,7 +18,9 @@ const NO_JOB = { pending: null, failed: null } as const
  * GET chat 回 not_found(还没设主人对话 / 还没说过话)⇒ 当空对话,照样能说(第一句会建好它)。
  */
 export function useChat(): {
-  page: ChatPageT | undefined; error: unknown; noOwner: boolean
+  page: ChatPageT | undefined; error: unknown; noOwner: boolean; loading: boolean
+  /** 只读核对:刷新有限历史与 pending/failed。未找到或读失败不代表没送达,不会重发或清草稿。 */
+  refresh(): Promise<void>
   bubbles: Bubble[]; canLoadOlder: boolean; loadingOlder: boolean; loadOlder(): Promise<void>
   /** images:选好的图(2026-10-06),先传到电脑再说这一句;有图时文字可空。 */
   send(text: string, images?: readonly PickedImage[]): Promise<ChatSendOutcome>
@@ -53,17 +56,8 @@ export function useChat(): {
     })
   }, [latest.data])
 
-  const topicName = latest.data ? (`matter/${latest.data.matterId}` as const) : ('home' as const)
-  const topic = useTopic<{ version?: unknown; phase?: unknown }>(topicName)
-  const topicKey = topic === undefined ? undefined : JSON.stringify(topic)
-  const seen = useRef<{ name: string; key: string } | null>(null)
   const { refresh } = latest
-  useEffect(() => {
-    if (topicKey === undefined) return
-    const prev = seen.current
-    seen.current = { name: topicName, key: topicKey }
-    if (prev && prev.name === topicName && prev.key !== topicKey) void refresh()
-  }, [topicName, topicKey, refresh])
+  useChatUpdates(latest.data?.matterId, refresh)
 
   const page = latest.data ?? NO_JOB
   const msgs = useMemo(() => (latest.data ? mergeChatPages(latest.data, older) : []), [latest.data, older])
@@ -144,5 +138,5 @@ export function useChat(): {
 
   const dismiss = drop
 
-  return { page: latest.data, error: latest.error, noOwner, bubbles, canLoadOlder: !!cursor, loadingOlder, loadOlder, send, retry, dismiss }
+  return { page: latest.data, error: latest.error, loading: latest.loading, refresh, noOwner, bubbles, canLoadOlder: !!cursor, loadingOlder, loadOlder, send, retry, dismiss }
 }

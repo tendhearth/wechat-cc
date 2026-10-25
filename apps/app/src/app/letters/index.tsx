@@ -6,6 +6,9 @@ import { useLang } from '../../i18n/useLang'
 import { useBackendCtx } from '../../state/BackendProvider'
 import { useQuery } from '../../state/hooks'
 import { Button } from '../../ui/Button'
+import { ConnectionNotice } from '../../ui/ConnectionNotice'
+import { BusyIndicator } from '../../ui/motion'
+import { StatusHint } from '../../ui/StatusHint'
 import { space } from '../../ui/tokens'
 import { TopBar } from '../../ui/TopBar'
 import { Txt } from '../../ui/Txt'
@@ -23,14 +26,18 @@ export default function Letters() {
   return (
     <SafeAreaView edges={['top', 'bottom']} style={{ flex: 1, backgroundColor: c.paper }}>
       <TopBar title={t(lang, 'letters.title')} onBack={() => (router.canGoBack() ? router.back() : router.replace('/'))} />
+      <View style={{ paddingHorizontal: space.xl }}><ConnectionNotice /></View>
       <ScrollView contentContainerStyle={{ paddingHorizontal: space.xl, paddingBottom: space.xl }}>
+        {q.data && q.error ? <StatusHint testID="letters-stale" icon="clock" label={t(lang, 'feedback.stale')} shortLabel={t(lang, 'feedback.stale')} description={t(lang, 'feedback.stale')}>
+          <Button kind="secondary" testID="letters-refresh" label={t(lang, 'common.retry')} busy={q.loading} onPress={() => void q.refresh()} />
+        </StatusHint> : null}
         {!q.data && q.error ? (
           <View style={{ gap: space.m, paddingVertical: space.l }}>
-            <Txt testID="letters-unavailable" role="bubble" tone="inkSoft">{t(lang, 'letters.unavailable')}</Txt>
+            <StatusHint testID="letters-unavailable" icon="alert" label={t(lang, 'letters.unavailable')} shortLabel={t(lang, 'feedback.loadingFailed')} description={t(lang, 'letters.unavailable')} />
             <Button kind="secondary" testID="letters-retry" label={t(lang, 'common.retry')} onPress={() => void q.refresh()} />
           </View>
         ) : !q.data ? (
-          <Txt role="bubble" tone="inkSoft" style={{ paddingVertical: space.l }}>{t(lang, 'progress.loading')}</Txt>
+          <View style={{ paddingVertical: space.l }}><BusyIndicator testID="letters-loading" label={t(lang, 'progress.loading')} /></View>
         ) : rows.length === 0 ? (
           <Txt testID="letters-empty" role="bubble" tone="inkSoft" style={{ paddingVertical: space.l }}>{t(lang, 'letters.empty')}</Txt>
         ) : (
