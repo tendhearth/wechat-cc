@@ -52,11 +52,11 @@ import { wireMemory } from '../../features/memory'
 import { wirePetTurn } from './wire-pet-turn'
 import { wireCompanionConverse } from './wire-converse'
 import { makeDedupStore } from '../../lib/dedup-store'
-import { DEFAULT_DELEGATE_TIMEOUT_MS } from '../../core/a2a-delegate'
-import type { YiHub, YiDispatch } from '../../core/yi-hub'
-import type { ExecResult } from '../../core/a2a-server'
-import { makeMattersService } from '../../core/matters/service'
-import { makeSayReceipts } from '../../core/matters/say-receipts'
+import { DEFAULT_DELEGATE_TIMEOUT_MS } from '../../app/a2a-delegate'
+import type { YiHub, YiDispatch } from '../../app/yi-hub'
+import type { ExecResult } from '../../adapters/a2a/a2a-server'
+import { makeMattersService } from '../../app/matters/service'
+import { makeSayReceipts } from '../../adapters/store/say-receipts'
 import { surfaceOrigin } from '../../features/phone'
 
 export interface DelegateDeps {
@@ -86,7 +86,7 @@ export function makeDelegateToHand(deps: DelegateDeps) {
 
 export type { PipelineDepsOpts } from './pipeline-deps-opts'
 import type { PipelineDepsOpts } from './pipeline-deps-opts'
-import { makeJobsStore } from '../../core/scheduled-jobs-store'
+import { makeJobsStore } from '../../adapters/store/scheduled-jobs-store'
 import { makeGuestOwnerNotify } from '../inbound/guest-notify'
 import { Ref } from '../../lib/lifecycle'
 import { makeProactiveOutbound, type AppChannel, type ProactiveOutbound } from '../companion/proactive-channel'
@@ -132,7 +132,7 @@ export interface BuildPipelineDepsResult {
   /** 桌面「连接手机」(plan 7a)。 */
   phoneConnect: import('../../features/phone').PhoneConnectDep
   /** 「一件事」读写面(有 matters store 才有)。 */
-  mattersService: import('../../core/matters/service').MattersService | null
+  mattersService: import('../../app/matters/service').MattersService | null
   /** 退订工作台事件 + 清「一件事」活动时间的节流定时器;main.ts 登记进 shutdown。可重复调用。 */
   stopMatterActivity: () => void
   /**
@@ -190,7 +190,7 @@ export function buildPipelineDeps(opts: PipelineDepsOpts, late: PipelineDepsLate
   // A2A exec (delegate a task to a hand) runs a FULL agent on the hand —
   // often tens of seconds to minutes. The shared a2aDeps.client's 10s timeout
   // is tuned for notify/send; exec needs a long one. Lazily built + reused.
-  let execA2AClient: import('../../core/a2a-client').A2AClient | undefined
+  let execA2AClient: import('../../adapters/a2a/a2a-client').A2AClient | undefined
 
   const fireMilestonesFor = makeFireMilestonesFor({ stateDir, db, dayTzOffsetMinutes: boot.agentConfig.day_tz_offset_minutes })
 
@@ -389,8 +389,8 @@ export function buildPipelineDeps(opts: PipelineDepsOpts, late: PipelineDepsLate
         listHands: () => a2a.registry.list(),
         hub,
         pushDelegate: async (hand, dispatch, sid, tms) => {
-          const { delegateToHand: doDelegate } = await import('../../core/a2a-delegate')
-          const { createA2AClient } = await import('../../core/a2a-client')
+          const { delegateToHand: doDelegate } = await import('../../app/a2a-delegate')
+          const { createA2AClient } = await import('../../adapters/a2a/a2a-client')
           execA2AClient ??= createA2AClient({ timeoutMs: tms })
           return doDelegate(execA2AClient, { hand, selfId: sid, prompt: dispatch.prompt })
         },

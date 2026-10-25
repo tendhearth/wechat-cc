@@ -1,5 +1,5 @@
 /**
- * recollect-sink.ts — the daemon-side RecollectSink (src/core/matters/
+ * recollect-sink.ts — the daemon-side RecollectSink (src/domain/matters/
  * recollection.ts) that src/features/workbench/service.ts's terminal-completion
  * branch calls into (via recollectOnce; fix round 1/5, 2026-09-23,
  * controller ruling: this must be wired up this round, not left for a later
@@ -83,10 +83,10 @@
  * assumed away.
  */
 import type {MatterStore} from '../../adapters/store/matters-store'
-import {maybeRecollect, buildRecollectionPrompt, crossedOvernight, RETURNED_SIGNAL_UNAVAILABLE, type RecollectSink} from '../../core/matters/recollection'
+import {maybeRecollect, buildRecollectionPrompt, crossedOvernight, RETURNED_SIGNAL_UNAVAILABLE, type RecollectSink} from '../../domain/matters/recollection'
 import type {Journal} from '../../adapters/store/journal-store'
 import type {CheapEval} from '../../ports/agent-provider'
-import {GATE_TIMEOUT_MS} from '../../core/a2a-disclosure'
+import {GATE_TIMEOUT_MS} from '../../app/a2a-disclosure'
 
 export interface RecollectSinkDeps {
   matters: MatterStore

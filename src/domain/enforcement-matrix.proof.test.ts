@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest'
 import { enforcementFor } from './enforcement-matrix'
 import { capabilitiesFor, KNOWN_PROVIDER_IDS } from './capability-matrix'
 import { TIER_PROFILES, type UserTier } from './user-tier'
-import { makeCanUseTool } from '../core/permission-relay'
+import { makeCanUseTool } from '../adapters/executors/claude/permission-relay'
 import { gateTool } from '../adapters/executors/openai/openai-gate'
 import { makeGeminiToolGate } from '../adapters/executors/gemini/gemini-agent-provider'
 

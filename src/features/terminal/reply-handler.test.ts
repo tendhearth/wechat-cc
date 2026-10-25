@@ -1,6 +1,6 @@
 import { describe, it, expect, vi } from 'vitest'
 import { makeCliReplyHandler, makeCliReplyCore, makeHandReplyExecutor, readTail, defaultRunner, RESUME_TIMEOUT_MS, type Runner } from './reply-handler'
-import type { CliSessionInfo } from '../../core/cli-events'
+import type { CliSessionInfo } from '../../app/cli-events'
 import { buildOverseerToday } from '../../domain/overseer-today'
 import { mkdtempSync, writeFileSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'

@@ -7,12 +7,12 @@ import type { AskSource } from '../../../domain/permission-rules/types'
 import type { NetworkGate } from '../../../lib/network-gate'
 import type { ProviderRegistry } from '../../../app/provider-registry'
 import type { UsageSnapshot } from '../../../domain/subscription-usage'
-import type { WorkbenchStore } from '../../../core/workbench/store'
-import type { NativeHistoryProvider, NativeHistoryReader } from '../../../core/workbench/native-history'
+import type { WorkbenchStore } from '../../../adapters/store/workbench/store'
+import type { NativeHistoryProvider, NativeHistoryReader } from '../../../adapters/workbench/native-history'
 import type { WorkbenchRuntimeState } from './state'
 import type { MatterStore } from '../../../adapters/store/matters-store'
-import type { ReportSink } from '../../../core/matters/report'
-import type { RecollectSink } from '../../../core/matters/recollection'
+import type { ReportSink } from '../../../domain/matters/report'
+import type { RecollectSink } from '../../../domain/matters/recollection'
 
 export interface ServiceHub {
   /** store 的写方法把 seq 落库,但不知道 hub —— 这里把持久化 seq 送进去唤醒长轮询。 */

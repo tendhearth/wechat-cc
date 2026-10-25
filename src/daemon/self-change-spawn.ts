@@ -15,7 +15,7 @@
 import { readdirSync, readFileSync } from 'node:fs'
 import { basename, dirname, join } from 'node:path'
 import type { spawn as SpawnFn } from 'node:child_process'
-import { workbenchSubprocessEnv } from '../core/workbench/subprocess-env'
+import { workbenchSubprocessEnv } from '../adapters/executors/subprocess-env'
 
 /** 「自改 状态」要显示的四个字段。和 `src/cli/self-change/state.ts` 的 SelfChangeState 同名同义。 */
 export interface SelfChangeRow {

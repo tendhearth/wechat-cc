@@ -4,7 +4,7 @@
  * (brain → hand 的 outbound_api_key),手那边验的也是同一道 may_exec 门。
  */
 import type { A2AAgentRecord } from '../../lib/agent-config'
-import type { CliSessionInfo } from '../../core/cli-events'
+import type { CliSessionInfo } from '../../app/cli-events'
 
 export interface RemoteReplyDeps {
   registry: { get(id: string): A2AAgentRecord | null }

@@ -43,7 +43,7 @@ Light / Dark 对应 canonical 与按 state / view / expression 对应的 PNG spr
 ## 基线与契约审查
 
 - 仓库：`tendhearth/wechat-cc`，远端 `dev` commit **`7a0633368f1569b22f2b5637051c1154dfd73be0`**。本轮在全新 clone 的 `feat/cc-asset-kit-v1-alpha` 分支修改，未覆盖已有工作。
-- 已读取 `docs/superpowers/specs/2026-09-05-cc-desktop-pet-design.md`、`2026-09-03-companion-presence-design.md`、`src/core/pet-turn.ts`，并核对 loader / resolver / renderer / state machine / bridge / 测试。
+- 已读取 `docs/superpowers/specs/2026-09-05-cc-desktop-pet-design.md`、`2026-09-03-companion-presence-design.md`、`src/domain/pet-turn.ts`，并核对 loader / resolver / renderer / state machine / bridge / 测试。
 - 母版来源：对话 `6a9d19cc-8a14-83ea-8af8-330402ca67db`，附件 `CC Master v1 Character Design Sheet.png`。`manifest.reference.sha256` 记录原始文件摘要。设计板个别表情小图出现疑似嘴线、C 形变等，不作为运行帧；本轮用户的最新无嘴、同构硬约束优先。
 - 旧 spec 与 `../README.md` 中耳朵、嘴、双叶芽、猫化参考已失效。旧猫化位图包已从正式包删掉（2026-09-10），其扁平 manifest 只作为 loader 历史兼容的测试夹具保留在 `src/pet/assets/fixtures/legacy-v1-manifest.json`。
 - 业务 form 继续使用 **`lit` = Light、`unlit` = Dark**；state machine 使用 `behavior`，对外仍是 `setState()`。不新增第二套 Light/Dark 业务枚举。
@@ -92,7 +92,7 @@ Light 使用暖象牙渐变、黑眼睛和极轻 self-light；Dark 使用炭黑�
 
 ```sh
 node apps/desktop/scripts/validate-cc-asset-kit.mjs
-bun --bun vitest run apps/desktop/src/pet src/core/pet-turn.test.ts src/core/companion-presence.test.ts
+bun --bun vitest run apps/desktop/src/pet src/domain/pet-turn.test.ts src/domain/companion-presence.test.ts
 ```
 
 有 Node 与已安装的 Vitest 时，也可用 `node node_modules/vitest/vitest.mjs run ...` 执行同一套定向测试。实际本轮命令、结果、受阻检查见 `VALIDATION.md`。

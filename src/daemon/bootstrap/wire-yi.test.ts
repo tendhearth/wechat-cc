@@ -2,7 +2,7 @@ import { describe, it, expect } from 'vitest'
 import { createServer } from 'node:net'
 import { startModules } from '../modules/container'
 import { yiModule } from './wire-yi'
-import type { YiHub } from '../../core/yi-hub'
+import type { YiHub } from '../../app/yi-hub'
 
 const parts = { a2aRegistry: { verifyBearer: () => null } as any, dispatchDelegate: (async () => '') as any }
 /** 起一个只有 yi 的容器:回它提供的 hub、它的状态、容器本身(停它 = 关机)。 */

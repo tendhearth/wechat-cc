@@ -31,7 +31,7 @@ import {
   type VisitPersonaArgs, type VisitTurn, type VisitHeader, type VisitPayload,
 } from '../../domain/visit'
 import type { Envelope } from '../../domain/envelope'
-import type { ChannelStore } from '../../core/penpal-channel-store'
+import type { ChannelStore } from '../../adapters/store/penpal-channel-store'
 import type { LetterStore } from './penpal-letter-store'
 import type { ActiveVisit } from '../../domain/companion-presence'
 import { loadCompanionConfig } from '../../lib/companion-config'

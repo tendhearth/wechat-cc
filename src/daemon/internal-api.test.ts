@@ -13,11 +13,11 @@ import { openTestDb, type Db } from '../lib/db'
 import { makeTurnRecordStore } from '../adapters/store/turn-record-store'
 import type { TurnRecord } from '../app/conversation-coordinator'
 import { loadAgentConfig, saveAgentConfig } from '../lib/agent-config'
-import type { A2ARegistry } from '../core/a2a-registry'
-import type { A2AClient, SendResult, AgentCard } from '../core/a2a-client'
-import type { A2AEventsStore, EventRow, AppendInput } from '../core/a2a-events-store'
-import { openKnowledge } from '../core/knowledge/store'
-import { semanticSearch } from '../core/knowledge/search'
+import type { A2ARegistry } from '../adapters/a2a/a2a-registry'
+import type { A2AClient, SendResult, AgentCard } from '../adapters/a2a/a2a-client'
+import type { A2AEventsStore, EventRow, AppendInput } from '../adapters/store/a2a-events-store'
+import { openKnowledge } from '../adapters/knowledge/store'
+import { semanticSearch } from '../domain/knowledge/search'
 import { serve } from '../lib/runtime/http'
 import { terminalRoutes, type TerminalRoutesDeps } from '../features/terminal/routes'
 import { memoryFsRoutes } from '../features/memory/fs-routes'
@@ -3485,7 +3485,7 @@ describe('internal-api request validation', () => {
         const baseUrl = `http://127.0.0.1:${fake.port}`
         const a2aDeps = buildA2ADeps({ cardResult: card })
         // Use a custom client that actually hits the fake server
-        const { createA2AClient } = await import('../core/a2a-client')
+        const { createA2AClient } = await import('../adapters/a2a/a2a-client')
         const realClient = createA2AClient({ timeoutMs: 2000 })
         a2aDeps.client.fetchAgentCard = (url: string) => realClient.fetchAgentCard(url)
 

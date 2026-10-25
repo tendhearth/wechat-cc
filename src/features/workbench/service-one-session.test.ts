@@ -7,10 +7,10 @@ import {openDb,type Db} from '../../lib/db'
 import {AsyncQueue} from '../../lib/async-queue'
 import {createProviderRegistry} from '../../app/provider-registry'
 import type {AgentEvent,AgentRuntimeSnapshot,AgentSession,AgentWorkbenchRuntime,SpawnContext} from '../../ports/agent-provider'
-import {makeWorkbenchStore} from '../../core/workbench/store'
+import {makeWorkbenchStore} from '../../adapters/store/workbench/store'
 import {makeWorkbenchService,type WorkbenchService} from './service'
-import {MANAGED_NATIVE_CAPABILITIES} from '../../core/workbench/executor-capabilities'
-import {readArtifactSnapshot} from '../../core/workbench/artifacts'
+import {MANAGED_NATIVE_CAPABILITIES} from '../../domain/workbench/executor-capabilities'
+import {readArtifactSnapshot} from '../../adapters/workbench/artifacts'
 import {removeTempDir} from '../../lib/test-temp'
 
 /**

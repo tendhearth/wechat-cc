@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import { DIGEST_WINDOW_MS, MIN_TURN_MS, STOP_HOLD_MS, makeCliEventHub, type CliEvent, type CliPushItem } from '../../core/cli-events'
-import { makeCliPermissionRelay, type CliPermissionRelay } from '../../core/cli-permission-relay'
+import { DIGEST_WINDOW_MS, MIN_TURN_MS, STOP_HOLD_MS, makeCliEventHub, type CliEvent, type CliPushItem } from '../../app/cli-events'
+import { makeCliPermissionRelay, type CliPermissionRelay } from '../../app/cli-permission-relay'
 import { buildCliPushPayload, cliPushTaskId, makeCliHubAppPush, makeCliPermissionAsk, type AppPushOutlet } from './app-push'
 import { makeCliPhoneActions } from './phone-actions'
 import { PendingPermissions } from '../../daemon/pending-permissions'

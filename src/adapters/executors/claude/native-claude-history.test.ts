@@ -3,7 +3,7 @@ import {tmpdir} from 'node:os'
 import {join} from 'node:path'
 import { describe, expect, it, vi } from 'vitest'
 import { createClaudeHistoryReader, type ClaudeHistorySdk } from './native-claude-history'
-import { encodeNativeHistoryKey } from '../../../core/workbench/native-history'
+import { encodeNativeHistoryKey } from '../../workbench/native-history'
 import {removeTempDir} from '../../../lib/test-temp'
 
 const key=Buffer.from(JSON.stringify({v:1,providerId:'claude',nativeId:'claude-1'})).toString('base64url')

@@ -7,7 +7,7 @@ import { registerProviders, type ProviderDeps } from './providers'
 import { openTestDb } from '../../lib/db'
 import { makeConversationStore } from '../../adapters/store/conversation-store'
 import type { AgentConfig } from '../../lib/agent-config'
-import type { McpStdioSpec } from '../../core/mcp-stdio-spec'
+import type { McpStdioSpec } from '../../adapters/executors/mcp-stdio-spec'
 import { AGY_WECHAT_MCP_NAMESPACE_ID } from './agy-mcp-config'
 
 /**

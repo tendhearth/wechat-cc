@@ -2,7 +2,7 @@
  * 微信侧和等待行共用的三个类型,从 service.ts 挪出来断环(spec 2026-09-27-workbench-service-split §2):
  * wechat-control.ts 只需要这三个类型,不该反向 import 整个 service。
  */
-import type { WaitingFor } from '../../core/workbench/scheduler'
+import type { WaitingFor } from '../../adapters/workbench/scheduler'
 import type { MatterOrigin } from '../../adapters/store/matters-store'
 
 export interface CreateWechatTask {ownerChatId:string;accountId:string;requestId:string;commandHash:string;projectId:string;providerId?:string;text:string;/** 独立工作区(2026-10-07):「任务 新建 <项目> 独立 <要求>」 */isolation?:boolean;/** 「独立@<分支>」:从这个本地分支开始(10-08) */base?:string;originMessageId?:string;/** 标题(10-20 两家对比:「… · @claude」好在列表里分清);省略 ⇒ 取要求开头 */title?:string;/** 出生地(2026-10-19):省略 ⇒ wechat(微信入站);App 一轮里的「任务」命令由 daemon 填 desktop / app / web,不知道 ⇒ null。 */origin?:MatterOrigin|null}

@@ -18,7 +18,7 @@ import { icon } from './icons.js'
 
 // Packages whose MCP tools were retired when their logic moved into the
 // daemon's in-process Knowledge Kernel — kept on disk as library modules
-// only. Keep in sync with src/core/knowledge/* inlining.
+// only. Keep in sync with src/domain/knowledge/* + src/adapters/knowledge/* inlining.
 const RETIRED_INPROC = new Set(['wxperson', 'wxfacts', 'wxgraph'])
 
 /** CLI bridge (invoke("wechat_cli_text"/"wechat_cli_json", {args})) — set in init.
@@ -66,7 +66,7 @@ async function refreshInstalled() {
     li.className = 'a2a-agent-card' + (live ? '' : ' paused')
     li.dataset.name = p.name
     // These packages were inlined into the daemon's in-process Knowledge
-    // Kernel (src/core/knowledge/*) — the MCP tools are retired and the
+    // Kernel (src/domain/knowledge/* + src/adapters/knowledge/*) — the MCP tools are retired and the
     // enable/disable toggle is meaningless (it neither turns the kernel on
     // nor off). Show them as built-in facts, not switchable plugins.
     const retiredInproc = RETIRED_INPROC.has(p.name)

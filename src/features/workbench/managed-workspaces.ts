@@ -1,7 +1,7 @@
 import {closeSync,constants,fchmodSync,fstatSync,lstatSync,mkdirSync,realpathSync,rmdirSync,type BigIntStats} from 'node:fs'
 import {isAbsolute,join,parse,relative,resolve,sep} from 'node:path'
-import type {EntryReservation} from '../../core/workbench/entry-store'
-import {mkdirAnchored,openAnchored,readdirAnchored,verifyFromFilesystemRoot} from '../../core/workbench/anchored-fs'
+import type {EntryReservation} from '../../adapters/store/workbench/entry-store'
+import {mkdirAnchored,openAnchored,readdirAnchored,verifyFromFilesystemRoot} from '../../adapters/workbench/anchored-fs'
 
 export interface ManagedWorkspace {id:string;path:string;directoryIdentity:string;created:boolean}
 type Reservation=Pick<EntryReservation,'workspaceId'|'resolvedPath'|'directoryIdentity'>

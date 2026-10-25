@@ -14,12 +14,12 @@
  * risk a slug-minting daemon broadcasting two different identities.
  */
 import { randomBytes, randomInt, randomUUID } from 'node:crypto'
-import { makePairing, type PairingEngine } from '../../core/pairing'
-import { makeMailboxClient } from '../../core/mailbox-client'
-import { loadMailboxIdentity } from '../../core/mailbox-crypto'
-import { makeChannelStore } from '../../core/penpal-channel-store'
-import { generateKeypair } from '../../core/penpal-crypto'
-import type { A2ARegistry } from '../../core/a2a-registry'
+import { makePairing, type PairingEngine } from '../../app/pairing'
+import { makeMailboxClient } from '../../adapters/mailbox/mailbox-client'
+import { loadMailboxIdentity } from '../../adapters/mailbox/mailbox-crypto'
+import { makeChannelStore } from '../../adapters/store/penpal-channel-store'
+import { generateKeypair } from '../../adapters/mailbox/penpal-crypto'
+import type { A2ARegistry } from '../../adapters/a2a/a2a-registry'
 import type { AgentConfig } from '../../lib/agent-config'
 import type { Db } from '../../lib/db'
 import { makeTellOwnerAs, type TellOwnerDeps } from '../../features/social'

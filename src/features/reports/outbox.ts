@@ -9,7 +9,7 @@
  * src/features/reminders/store.ts, which this mirrors structurally.
  */
 import type {Db} from '../../lib/db'
-import type {PendingReport} from '../../core/matters/report'
+import type {PendingReport} from '../../domain/matters/report'
 
 export type OutboxStatus = 'pending' | 'sent' | 'dropped'
 

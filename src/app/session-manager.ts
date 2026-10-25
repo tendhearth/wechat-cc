@@ -4,8 +4,8 @@ import { assertCallAllowed, classifyWith, sessionCallTarget, type CallTarget, ty
 import { providerCallTarget, type ProviderRegistry } from './provider-registry'
 import { tierNameFromProfile, sessionAuthEnv, type TierProfile, type UserTier } from '../domain/user-tier'
 import type { PermissionMode } from '../domain/capability-matrix'
-import {pathsConflict} from '../core/workbench/scheduler'
-import {canonicalClaimPath} from '../core/workbench/execution-claims'
+import {pathsConflict} from '../adapters/workbench/scheduler'
+import {canonicalClaimPath} from '../adapters/workbench/execution-claims'
 import { log } from '../lib/log'
 
 export interface SessionManagerOptions {

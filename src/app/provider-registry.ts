@@ -12,7 +12,7 @@
  * passed via deps. Tests can build their own with mock providers.
  */
 import type { AgentAttachment, AgentEvent, AgentProvider, AgentSession, AgentWorkbenchRuntime, CallTargetKind, CheapEval, SpawnContext } from '../ports/agent-provider'
-import type { WorkbenchExecutorCapabilities } from '../core/workbench/executor-capabilities'
+import type { WorkbenchExecutorCapabilities } from '../domain/workbench/executor-capabilities'
 import type { ProviderId } from '../domain/conversation'
 import { executorNames, type ExecutorNames } from '../domain/provider-display-names'
 import { isKnownProviderId } from '../lib/provider-ids'

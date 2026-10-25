@@ -6,7 +6,7 @@ import {makeRecollectSink} from './recollect-sink'
 
 /**
  * RecollectSink 的 daemon 侧实现:maybeTrigger(taskId, turns) 查 matter
- * (标题 + 算 overnight)、拿便宜模型、交给纯逻辑(src/core/matters/
+ * (标题 + 算 overnight)、拿便宜模型、交给纯逻辑(src/domain/matters/
  * recollection.ts 的 maybeRecollect)判该不该问、该不该写,写就落
  * journal.recordRecollection。
  *

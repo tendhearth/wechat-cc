@@ -21,8 +21,8 @@
  * unchanged contacts are skipped for free; the feed is overscanned so
  * skipped contacts make room for the backlog behind the cap.
  */
-import type { FactsApi } from '../../../core/knowledge/facts'
-import type { FactRow } from '../../../core/knowledge/store'
+import type { FactsApi } from '../../../domain/knowledge/facts'
+import type { FactRow } from '../../../adapters/knowledge/store'
 import { buildSettlementPrompt, parseResolvedIds } from './extract'
 import { pausedReason } from './paused'
 import { SWEEP_FEED_OVERSCAN } from './sweep-conflicts'

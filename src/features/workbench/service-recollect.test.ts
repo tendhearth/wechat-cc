@@ -8,11 +8,11 @@ import {removeTempDir} from '../../lib/test-temp'
 import {AsyncQueue} from '../../lib/async-queue'
 import {createProviderRegistry} from '../../app/provider-registry'
 import type {AgentEvent,AgentRuntimeSnapshot,AgentSession,AgentWorkbenchRuntime} from '../../ports/agent-provider'
-import {makeWorkbenchStore} from '../../core/workbench/store'
+import {makeWorkbenchStore} from '../../adapters/store/workbench/store'
 import {makeWorkbenchService,type WorkbenchService} from './service'
-import {MANAGED_NATIVE_CAPABILITIES} from '../../core/workbench/executor-capabilities'
+import {MANAGED_NATIVE_CAPABILITIES} from '../../domain/workbench/executor-capabilities'
 import {makeMatterStore,type MatterStore} from '../../adapters/store/matters-store'
-import type {RecollectSink} from '../../core/matters/recollection'
+import type {RecollectSink} from '../../domain/matters/recollection'
 
 /**
  * 「回忆」只在终态触发,不在 settleQuiet(fix round 3/5,2026-09-23,复审

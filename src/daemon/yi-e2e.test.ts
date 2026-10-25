@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { createYiHub } from '../core/yi-hub'
+import { createYiHub } from '../app/yi-hub'
 import { createYiWsServer } from './yi-ws-server'
 import { createYiWsClient } from './yi-ws-client'
 import { makeDelegateToHand } from './wiring/pipeline-deps'

@@ -1,4 +1,4 @@
-import {makeArtifactDeliveryWorker,type ArtifactDeliveryReceipt} from '../../core/workbench/artifact-deliveries'
+import {makeArtifactDeliveryWorker,type ArtifactDeliveryReceipt} from '../../adapters/store/workbench/artifact-deliveries'
 import type {WorkbenchService} from './service'
 import type {WechatWorkbenchTransport} from '../../ports/wechat'
 

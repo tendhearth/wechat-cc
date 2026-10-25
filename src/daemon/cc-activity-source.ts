@@ -3,7 +3,7 @@
  * 只算 CC 替主人做的事、只算主人的;正文不搬(信只取开头,提醒的原文按 id 回原表读、只认主人)。
  * 每个来源各自 try / catch:抛了 ⇒ null(进 degraded),没接 ⇒ 不出现。
  */
-import { CLI_SPECS } from '../core/cli-upgrade/specs'
+import { CLI_SPECS } from '../domain/cli-upgrade/specs'
 import { activityTitle, type ActivityItem, type ActivitySources } from '../domain/cc-activity'
 import type { PermissionDecisionRow } from './permission-decisions-store'
 import type { ActivityLogEntry } from './activity-log'

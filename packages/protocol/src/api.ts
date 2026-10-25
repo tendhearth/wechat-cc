@@ -374,7 +374,7 @@ const SetStateSuccess = z.object({
 
 const TodoRow = z.object({
   id: z.number(), contact: z.string(), predicate: z.string(), value: z.string(),
-  // FactRow.time_ref(src/core/knowledge/store.ts):string|null —— 手机 App 的待办页直接显示它,真读,不是透传。
+  // FactRow.time_ref(src/adapters/knowledge/store.ts):string|null —— 手机 App 的待办页直接显示它,真读,不是透传。
   time_ref: z.string().nullable(), updated_at: z.number(), display: z.string(),
 })
 

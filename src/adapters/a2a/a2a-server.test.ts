@@ -1,0 +1,637 @@
+import { describe, expect, it, vi } from 'vitest'
+import { createA2AServer } from './a2a-server'
+import type { A2ARegistry } from './a2a-registry'
+import type { A2AAgentRecord } from '../../lib/agent-config'
+import { A2A_PROTO_VERSION } from '../../domain/a2a-intent'
+
+function rec(id: string, overrides: Partial<A2AAgentRecord> = {}): A2AAgentRecord {
+  return {
+    id, name: id, url: `https://${id}/a2a`,
+    inbound_api_key: `wc_${id}1234567890123456`.slice(0, 24),  // min 16
+    outbound_api_key: `out_${id}`,
+    capabilities: ['notify'], paused: false, may_exec: false, ...overrides, transport: overrides.transport ?? 'push',
+  }
+}
+
+function fakeRegistry(agents: A2AAgentRecord[]): A2ARegistry {
+  return {
+    list: () => agents,
+    get: (id) => agents.find(a => a.id === id) ?? null,
+    verifyBearer: (id, bearer) => {
+      const a = agents.find(x => x.id === id)
+      return a && a.inbound_api_key === bearer ? a : null
+    },
+    add: vi.fn(), remove: vi.fn(), setPaused: vi.fn(), update: vi.fn(),
+  }
+}
+
+async function startServer(opts: {
+  agents?: A2AAgentRecord[]
+  onNotify?: (event: import('./a2a-server').NotifyEvent) => Promise<void>
+  onExec?: (event: import('./a2a-server').ExecEvent) => Promise<import('./a2a-server').ExecResult>
+  onLetter?: (event: import('./a2a-server').LetterEvent) => Promise<{ ok: boolean; error?: string }>
+} = {}) {
+  const onNotify: (event: import('./a2a-server').NotifyEvent) => Promise<void> = opts.onNotify ?? vi.fn(async () => {})
+  const server = createA2AServer({
+    host: '127.0.0.1', port: 0,
+    registry: fakeRegistry(opts.agents ?? [rec('alpha')]),
+    onNotify,
+    ...(opts.onExec ? { onExec: opts.onExec } : {}),
+    ...(opts.onLetter ? { onLetter: opts.onLetter } : {}),
+    daemonInfo: { name: 'wechat-cc', version: '0.6.x' },
+  })
+  await server.start()
+  return { server, onNotify, baseUrl: server.baseUrl() }
+}
+
+describe('a2a-server', () => {
+  it('GET /.well-known/agent.json returns the daemon Agent Card', async () => {
+    const { server, baseUrl } = await startServer()
+    try {
+      const res = await fetch(`${baseUrl}/.well-known/agent.json`)
+      expect(res.status).toBe(200)
+      const card = await res.json() as { name: string; capabilities: Array<{ name: string }> }
+      expect(card.name).toBe('wechat-cc')
+      expect(card.capabilities.some(c => c.name === 'notify')).toBe(true)
+    } finally {
+      await server.stop()
+    }
+  })
+
+  it('advertises the A2A protocol version in the agent card', async () => {
+    const { server, baseUrl } = await startServer({})
+    try {
+      const card = await (await fetch(`${baseUrl}/.well-known/agent.json`)).json() as { proto_version?: number }
+      expect(card.proto_version).toBe(A2A_PROTO_VERSION)
+      // 钉住版本号本身:v3 = 心愿走信封,intent/echo/reveal 退役(a2a-intent.ts)。
+      expect(A2A_PROTO_VERSION).toBe(3)
+    } finally { await server.stop() }
+  })
+
+  it('POST /a2a/notify with valid Bearer + matching agent_id calls onNotify and returns 200', async () => {
+    const onNotify = vi.fn(async () => {})
+    const alphaRec = rec('alpha')
+    const { server, baseUrl } = await startServer({ agents: [alphaRec], onNotify })
+    try {
+      const res = await fetch(`${baseUrl}/a2a/notify`, {
+        method: 'POST',
+        headers: {
+          'content-type': 'application/json',
+          'authorization': `Bearer ${alphaRec.inbound_api_key}`,
+        },
+        body: JSON.stringify({ agent_id: 'alpha', text: 'hello', urgency: 'normal' }),
+      })
+      expect(res.status).toBe(200)
+      expect(onNotify).toHaveBeenCalledWith(expect.objectContaining({
+        agent: expect.objectContaining({ id: 'alpha' }),
+        text: 'hello',
+        urgency: 'normal',
+      }))
+    } finally {
+      await server.stop()
+    }
+  })
+
+  it('POST /a2a/notify without Authorization → 401', async () => {
+    const { server, baseUrl } = await startServer()
+    try {
+      const res = await fetch(`${baseUrl}/a2a/notify`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ agent_id: 'alpha', text: 'x' }),
+      })
+      expect(res.status).toBe(401)
+    } finally {
+      await server.stop()
+    }
+  })
+
+  it('POST /a2a/notify with wrong Bearer → 401', async () => {
+    const { server, baseUrl } = await startServer()
+    try {
+      const res = await fetch(`${baseUrl}/a2a/notify`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json', 'authorization': 'Bearer wrong-key-completely' },
+        body: JSON.stringify({ agent_id: 'alpha', text: 'x' }),
+      })
+      expect(res.status).toBe(401)
+    } finally {
+      await server.stop()
+    }
+  })
+
+  it('POST /a2a/notify with body.agent_id != bearer-owning agent → 403', async () => {
+    const alphaRec = rec('alpha')
+    const { server, baseUrl } = await startServer({ agents: [alphaRec, rec('beta')] })
+    try {
+      const res = await fetch(`${baseUrl}/a2a/notify`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json', 'authorization': `Bearer ${alphaRec.inbound_api_key}` },
+        body: JSON.stringify({ agent_id: 'beta', text: 'spoof' }),
+      })
+      // alpha's key, beta's id → 401 from verifyBearer (since verifyBearer(beta, alpha's key) returns null)
+      // The test wants explicit detection. Acceptable to be 401 here (verifyBearer treats it as a mismatch).
+      // Either 401 or 403 is acceptable as long as the request is rejected and onNotify NOT called.
+      expect([401, 403]).toContain(res.status)
+    } finally {
+      await server.stop()
+    }
+  })
+
+  it('POST /a2a/notify with paused agent → 202 (silently drop)', async () => {
+    const onNotify = vi.fn(async () => {})
+    const alphaRec = rec('alpha', { paused: true })
+    const { server, baseUrl } = await startServer({
+      agents: [alphaRec],
+      onNotify,
+    })
+    try {
+      const res = await fetch(`${baseUrl}/a2a/notify`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json', 'authorization': `Bearer ${alphaRec.inbound_api_key}` },
+        body: JSON.stringify({ agent_id: 'alpha', text: 'x' }),
+      })
+      expect(res.status).toBe(202)
+      expect(onNotify).not.toHaveBeenCalled()
+    } finally {
+      await server.stop()
+    }
+  })
+
+  it('POST /a2a/notify with missing text → 400', async () => {
+    const alphaRec = rec('alpha')
+    const { server, baseUrl } = await startServer({ agents: [alphaRec] })
+    try {
+      const res = await fetch(`${baseUrl}/a2a/notify`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json', 'authorization': `Bearer ${alphaRec.inbound_api_key}` },
+        body: JSON.stringify({ agent_id: 'alpha' }),
+      })
+      expect(res.status).toBe(400)
+    } finally {
+      await server.stop()
+    }
+  })
+
+  it('unknown path returns 404', async () => {
+    const { server, baseUrl } = await startServer()
+    try {
+      const res = await fetch(`${baseUrl}/anything-else`)
+      expect(res.status).toBe(404)
+    } finally {
+      await server.stop()
+    }
+  })
+
+  it('GET on /a2a/notify (wrong method) returns 405', async () => {
+    const { server, baseUrl } = await startServer()
+    try {
+      const res = await fetch(`${baseUrl}/a2a/notify`)
+      expect(res.status).toBe(405)
+    } finally {
+      await server.stop()
+    }
+  })
+
+  describe('POST /a2a/exec (hand mode)', () => {
+    it('runs the local agent and returns the result when authed', async () => {
+      const onExec = vi.fn(async () => ({ ok: true as const, response: 'did the thing' }))
+      // 2026-09-02:exec 现在要显式授权(may_exec),bearer 不再等于「能执行」。
+      const alphaRec = { ...rec('alpha'), may_exec: true }
+      const { server, baseUrl } = await startServer({ agents: [alphaRec], onExec })
+      try {
+        const res = await fetch(`${baseUrl}/a2a/exec`, {
+          method: 'POST',
+          headers: { 'content-type': 'application/json', 'authorization': `Bearer ${alphaRec.inbound_api_key}` },
+          body: JSON.stringify({ agent_id: 'alpha', prompt: '看下家里的 README', peer: 'codex', cwd: '/home/me/proj' }),
+        })
+        expect(res.status).toBe(200)
+        expect(await res.json()).toEqual({ ok: true, response: 'did the thing' })
+        expect(onExec).toHaveBeenCalledWith(expect.objectContaining({
+          agent: expect.objectContaining({ id: 'alpha' }),
+          peer: 'codex', prompt: '看下家里的 README', cwd: '/home/me/proj',
+        }))
+      } finally { await server.stop() }
+    })
+
+    // 2026-09-02:缺省不再补 'claude'。哪个 agent 跑在**这台**机器上,只有
+    // 这台机器知道 —— 路由把 undefined 原样传下去,由 dispatchDelegate 用
+    // 本机自己的默认 provider 解析。写死 claude 会让任何不装 claude 的机器
+    // 当不了手(真机上就是这样:委派只拿回「进程退出码 1」)。
+    it('peer 省略时原样传 undefined,不替本机假设成 claude', async () => {
+      const onExec = vi.fn(async () => ({ ok: true as const, response: 'r' }))
+      const alphaRec = { ...rec('alpha'), may_exec: true }
+      const { server, baseUrl } = await startServer({ agents: [alphaRec], onExec })
+      try {
+        await fetch(`${baseUrl}/a2a/exec`, {
+          method: 'POST',
+          headers: { 'content-type': 'application/json', 'authorization': `Bearer ${alphaRec.inbound_api_key}` },
+          body: JSON.stringify({ agent_id: 'alpha', prompt: 'x' }),
+        })
+        expect(onExec).toHaveBeenCalledWith(expect.objectContaining({ peer: undefined }))
+      } finally { await server.stop() }
+    })
+
+    it('returns 501 when this machine is not wired as a hand (no onExec)', async () => {
+      const alphaRec = rec('alpha')
+      const { server, baseUrl } = await startServer({ agents: [alphaRec] })  // no onExec
+      try {
+        const res = await fetch(`${baseUrl}/a2a/exec`, {
+          method: 'POST',
+          headers: { 'content-type': 'application/json', 'authorization': `Bearer ${alphaRec.inbound_api_key}` },
+          body: JSON.stringify({ agent_id: 'alpha', prompt: 'x' }),
+        })
+        expect(res.status).toBe(501)
+      } finally { await server.stop() }
+    })
+
+    it('rejects exec without a valid Bearer → 401, onExec not called', async () => {
+      const onExec = vi.fn(async () => ({ ok: true as const, response: 'r' }))
+      const { server, baseUrl } = await startServer({ onExec })
+      try {
+        const res = await fetch(`${baseUrl}/a2a/exec`, {
+          method: 'POST',
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify({ agent_id: 'alpha', prompt: 'x' }),
+        })
+        expect(res.status).toBe(401)
+        expect(onExec).not.toHaveBeenCalled()
+      } finally { await server.stop() }
+    })
+
+    it('advertises the exec capability in the Agent Card only when wired', async () => {
+      const withExec = await startServer({ onExec: async () => ({ ok: true, response: 'r' }) })
+      const without = await startServer()
+      try {
+        const a = await (await fetch(`${withExec.baseUrl}/.well-known/agent.json`)).json() as { capabilities: Array<{ name: string }> }
+        const b = await (await fetch(`${without.baseUrl}/.well-known/agent.json`)).json() as { capabilities: Array<{ name: string }> }
+        expect(a.capabilities.some(c => c.name === 'exec')).toBe(true)
+        expect(b.capabilities.some(c => c.name === 'exec')).toBe(false)
+      } finally { await withExec.server.stop(); await without.server.stop() }
+    })
+  })
+
+  describe('退役的三条路由(proto v3:seek/echo/reveal 掮客管道下线)', () => {
+    it('/a2a/intent /a2a/echo /a2a/reveal 一律 404,agent card 也不再宣传它们', async () => {
+      const alphaRec = rec('alpha')
+      const { server, baseUrl } = await startServer({ agents: [alphaRec], onLetter: async () => ({ ok: true }) })
+      try {
+        for (const path of ['/a2a/intent', '/a2a/echo', '/a2a/reveal']) {
+          const res = await fetch(`${baseUrl}${path}`, {
+            method: 'POST',
+            headers: { 'content-type': 'application/json', authorization: `Bearer ${alphaRec.inbound_api_key}` },
+            body: JSON.stringify({ agent_id: 'alpha', intent_id: 'i1' }),
+          })
+          expect(res.status).toBe(404)
+        }
+        const card = await (await fetch(`${baseUrl}/.well-known/agent.json`)).json() as { capabilities: Array<{ name: string }> }
+        expect(card.capabilities.map(c => c.name)).toEqual(expect.arrayContaining(['notify', 'letter']))
+        expect(card.capabilities.some(c => ['intent', 'echo', 'reveal'].includes(c.name))).toBe(false)
+      } finally { await server.stop() }
+    })
+  })
+
+  describe('POST /a2a/letter (E2E pen-pal inbound)', () => {
+    it('runs onLetter with the verified agent_id + sealed fields, returns { ok: true }', async () => {
+      const onLetter = vi.fn(async (_e: import('./a2a-server').LetterEvent) => ({ ok: true }))
+      const alphaRec = rec('alpha')
+      const { server, baseUrl } = await startServer({ agents: [alphaRec], onLetter })
+      try {
+        const res = await fetch(`${baseUrl}/a2a/letter`, {
+          method: 'POST',
+          headers: { 'content-type': 'application/json', authorization: `Bearer ${alphaRec.inbound_api_key}` },
+          body: JSON.stringify({ agent_id: 'alpha', channel_id: 'ch-1', nonce: 'n-1', ct: 'ct-1', tag: 't-1' }),
+        })
+        expect(res.status).toBe(200)
+        expect(await res.json()).toEqual({ ok: true })
+        expect(onLetter).toHaveBeenCalledWith({ agent_id: 'alpha', channel_id: 'ch-1', nonce: 'n-1', ct: 'ct-1', tag: 't-1' })
+      } finally { await server.stop() }
+    })
+
+    it('returns 501 when this machine is not wired for letter (no onLetter)', async () => {
+      const alphaRec = rec('alpha')
+      const { server, baseUrl } = await startServer({ agents: [alphaRec] })
+      try {
+        const res = await fetch(`${baseUrl}/a2a/letter`, {
+          method: 'POST',
+          headers: { 'content-type': 'application/json', authorization: `Bearer ${alphaRec.inbound_api_key}` },
+          body: JSON.stringify({ agent_id: 'alpha', channel_id: 'ch-1', nonce: 'n-1', ct: 'ct-1', tag: 't-1' }),
+        })
+        expect(res.status).toBe(501)
+        const body = await res.json() as { error: string }
+        expect(body.error).toBe('letter_not_supported')
+      } finally { await server.stop() }
+    })
+
+    it.each(['channel_id', 'nonce', 'ct', 'tag'])('missing/blank %s → 400 invalid_body, onLetter not called', async (field) => {
+      const onLetter = vi.fn(async () => ({ ok: true }))
+      const alphaRec = rec('alpha')
+      const { server, baseUrl } = await startServer({ agents: [alphaRec], onLetter })
+      try {
+        const full: Record<string, unknown> = { agent_id: 'alpha', channel_id: 'ch-1', nonce: 'n-1', ct: 'ct-1', tag: 't-1' }
+        full[field] = ''
+        const res = await fetch(`${baseUrl}/a2a/letter`, {
+          method: 'POST',
+          headers: { 'content-type': 'application/json', authorization: `Bearer ${alphaRec.inbound_api_key}` },
+          body: JSON.stringify(full),
+        })
+        expect(res.status).toBe(400)
+        const body = await res.json() as { error: string }
+        expect(body.error).toBe('invalid_body')
+        expect(onLetter).not.toHaveBeenCalled()
+      } finally { await server.stop() }
+    })
+
+    it('rejects letter without a valid Bearer → 401, onLetter not called', async () => {
+      const onLetter = vi.fn(async () => ({ ok: true }))
+      const { server, baseUrl } = await startServer({ onLetter })
+      try {
+        const res = await fetch(`${baseUrl}/a2a/letter`, {
+          method: 'POST',
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify({ agent_id: 'alpha', channel_id: 'ch-1', nonce: 'n-1', ct: 'ct-1', tag: 't-1' }),
+        })
+        expect(res.status).toBe(401)
+        expect(onLetter).not.toHaveBeenCalled()
+      } finally { await server.stop() }
+    })
+
+    it('rejects letter with wrong Bearer → 401, onLetter not called', async () => {
+      const onLetter = vi.fn(async () => ({ ok: true }))
+      const alphaRec = rec('alpha')
+      const { server, baseUrl } = await startServer({ agents: [alphaRec], onLetter })
+      try {
+        const res = await fetch(`${baseUrl}/a2a/letter`, {
+          method: 'POST',
+          headers: { 'content-type': 'application/json', authorization: 'Bearer wrong-key-completely' },
+          body: JSON.stringify({ agent_id: 'alpha', channel_id: 'ch-1', nonce: 'n-1', ct: 'ct-1', tag: 't-1' }),
+        })
+        expect(res.status).toBe(401)
+        expect(onLetter).not.toHaveBeenCalled()
+      } finally { await server.stop() }
+    })
+
+    it('malformed JSON body → 400 invalid_json, no crash', async () => {
+      const onLetter = vi.fn(async () => ({ ok: true }))
+      const alphaRec = rec('alpha')
+      const { server, baseUrl } = await startServer({ agents: [alphaRec], onLetter })
+      try {
+        const res = await fetch(`${baseUrl}/a2a/letter`, {
+          method: 'POST',
+          headers: { 'content-type': 'application/json', authorization: `Bearer ${alphaRec.inbound_api_key}` },
+          body: '{not json',
+        })
+        expect(res.status).toBe(400)
+        expect(onLetter).not.toHaveBeenCalled()
+      } finally { await server.stop() }
+    })
+
+    it('advertises the letter capability in the agent card only when wired', async () => {
+      const wired = await startServer({ onLetter: async () => ({ ok: true }) })
+      try {
+        const card = await (await fetch(`${wired.baseUrl}/.well-known/agent.json`)).json() as { capabilities: Array<{ name: string }> }
+        expect(card.capabilities.some(c => c.name === 'letter')).toBe(true)
+      } finally { await wired.server.stop() }
+      const bare = await startServer({})
+      try {
+        const card = await (await fetch(`${bare.baseUrl}/.well-known/agent.json`)).json() as { capabilities: Array<{ name: string }> }
+        expect(card.capabilities.some(c => c.name === 'letter')).toBe(false)
+      } finally { await bare.server.stop() }
+    })
+  })
+
+  describe('onAuthFailed observability', () => {
+    it('emits onAuthFailed with reason=missing_bearer when no Authorization header', async () => {
+      const onAuthFailed = vi.fn()
+      const server = createA2AServer({
+        host: '127.0.0.1', port: 0,
+        registry: fakeRegistry([rec('alpha')]),
+        onNotify: async () => {},
+        onAuthFailed,
+        daemonInfo: { name: 'wechat-cc', version: '0.6' },
+      })
+      await server.start()
+      try {
+        await fetch(`${server.baseUrl()}/a2a/notify`, {
+          method: 'POST',
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify({ agent_id: 'alpha', text: 'hi' }),
+        })
+        expect(onAuthFailed).toHaveBeenCalledWith({ agent_id_claimed: 'alpha', reason: 'missing_bearer' })
+      } finally { await server.stop() }
+    })
+
+    it('emits onAuthFailed with reason=wrong_bearer when bearer mismatches', async () => {
+      const onAuthFailed = vi.fn()
+      const alphaRec = rec('alpha')
+      const server = createA2AServer({
+        host: '127.0.0.1', port: 0,
+        registry: fakeRegistry([alphaRec]),
+        onNotify: async () => {},
+        onAuthFailed,
+        daemonInfo: { name: 'wechat-cc', version: '0.6' },
+      })
+      await server.start()
+      try {
+        await fetch(`${server.baseUrl()}/a2a/notify`, {
+          method: 'POST',
+          headers: { 'content-type': 'application/json', 'authorization': 'Bearer totally-wrong-key' },
+          body: JSON.stringify({ agent_id: 'alpha', text: 'hi' }),
+        })
+        expect(onAuthFailed).toHaveBeenCalledWith({ agent_id_claimed: 'alpha', reason: 'wrong_bearer' })
+      } finally { await server.stop() }
+    })
+
+    it('emits onAuthFailed with reason=wrong_bearer when claimed agent_id is unknown (verifyBearer returns null)', async () => {
+      const onAuthFailed = vi.fn()
+      const server = createA2AServer({
+        host: '127.0.0.1', port: 0,
+        registry: fakeRegistry([rec('alpha')]),
+        onNotify: async () => {},
+        onAuthFailed,
+        daemonInfo: { name: 'wechat-cc', version: '0.6' },
+      })
+      await server.start()
+      try {
+        await fetch(`${server.baseUrl()}/a2a/notify`, {
+          method: 'POST',
+          headers: { 'content-type': 'application/json', 'authorization': 'Bearer x' },
+          body: JSON.stringify({ agent_id: 'nonexistent', text: 'hi' }),
+        })
+        expect(onAuthFailed).toHaveBeenCalledWith({ agent_id_claimed: 'nonexistent', reason: 'wrong_bearer' })
+      } finally { await server.stop() }
+    })
+
+    it('does NOT emit onAuthFailed for malformed bodies (no agent_id to attribute)', async () => {
+      const onAuthFailed = vi.fn()
+      const server = createA2AServer({
+        host: '127.0.0.1', port: 0,
+        registry: fakeRegistry([rec('alpha')]),
+        onNotify: async () => {},
+        onAuthFailed,
+        daemonInfo: { name: 'wechat-cc', version: '0.6' },
+      })
+      await server.start()
+      try {
+        // Invalid JSON
+        await fetch(`${server.baseUrl()}/a2a/notify`, {
+          method: 'POST',
+          headers: { 'content-type': 'application/json' },
+          body: 'not-json',
+        })
+        // Missing agent_id
+        await fetch(`${server.baseUrl()}/a2a/notify`, {
+          method: 'POST',
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify({ text: 'hi' }),
+        })
+        expect(onAuthFailed).not.toHaveBeenCalled()
+      } finally { await server.stop() }
+    })
+
+    it('does NOT emit onAuthFailed on successful notify', async () => {
+      const onAuthFailed = vi.fn()
+      const alphaRec = rec('alpha')
+      const server = createA2AServer({
+        host: '127.0.0.1', port: 0,
+        registry: fakeRegistry([alphaRec]),
+        onNotify: async () => {},
+        onAuthFailed,
+        daemonInfo: { name: 'wechat-cc', version: '0.6' },
+      })
+      await server.start()
+      try {
+        const res = await fetch(`${server.baseUrl()}/a2a/notify`, {
+          method: 'POST',
+          headers: { 'content-type': 'application/json', 'authorization': `Bearer ${alphaRec.inbound_api_key}` },
+          body: JSON.stringify({ agent_id: 'alpha', text: 'hi' }),
+        })
+        expect(res.status).toBe(200)
+        expect(onAuthFailed).not.toHaveBeenCalled()
+      } finally { await server.stop() }
+    })
+
+    it('swallows exceptions from onAuthFailed (response still 401)', async () => {
+      const server = createA2AServer({
+        host: '127.0.0.1', port: 0,
+        registry: fakeRegistry([rec('alpha')]),
+        onNotify: async () => {},
+        onAuthFailed: () => { throw new Error('observability blew up') },
+        daemonInfo: { name: 'wechat-cc', version: '0.6' },
+      })
+      await server.start()
+      try {
+        const res = await fetch(`${server.baseUrl()}/a2a/notify`, {
+          method: 'POST',
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify({ agent_id: 'alpha', text: 'hi' }),
+        })
+        expect(res.status).toBe(401)
+      } finally { await server.stop() }
+    })
+  })
+})
+
+// 2026-09-02。owner 的原话:「hand 的目的是连接自己的另一台 wechat-cc 设备
+// 不是么」—— 对。但在此之前,路由**分不出**谁是自己的机器:
+//
+//   `/a2a/exec` 只验 bearer,而 registry 是一张**平的**信任表,里面同时装着
+//   我自己的机器(hand accept/invite,两端都要 CLI 访问权)和朋友的 bot
+//   (六位配对码 / a2a install)。hand 侧给 brain 写的记录是 capabilities: [],
+//   跟社交对端长得一模一样。
+//
+// 于是「非 claude 的 delegate 一律 guest」那道闸其实是在**用能力钳制补一个
+// 缺失的授权检查**,而且补错了地方:卡死了合法用途(自己的手连自己机器上的
+// 文件都读不了),却没挡住真正的口子(claude 那条是 trusted,对任何已配对的
+// 对端开放)。
+//
+// 授权检查放回它该在的地方:`may_exec`。
+describe('POST /a2a/exec —— 只有我授权过的大脑能派活', () => {
+  it('may_exec=false 的对端(社交朋友、a2a install 手工加的)→ 403,不进 onExec', async () => {
+    const onExec = vi.fn(async () => ({ ok: true as const, response: 'r' }))
+    const social = { ...rec('friend'), may_exec: false }
+    const { server, baseUrl } = await startServer({ agents: [social], onExec })
+    try {
+      const r = await fetch(`${baseUrl}/a2a/exec`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json', 'authorization': `Bearer ${social.inbound_api_key}` },
+        body: JSON.stringify({ agent_id: 'friend', prompt: 'rm -rf /' }),
+      })
+      expect(r.status).toBe(403)
+      expect(await r.json()).toMatchObject({ error: 'exec_not_authorized' })
+      expect(onExec).not.toHaveBeenCalled()   // 连本地 agent 都不该起
+    } finally { server.stop() }
+  })
+
+  it('may_exec=true 的对端(hand accept / hand invite 建立的)→ 正常派活', async () => {
+    const onExec = vi.fn(async () => ({ ok: true as const, response: 'done' }))
+    const brain = { ...rec('mybrain'), may_exec: true }
+    const { server, baseUrl } = await startServer({ agents: [brain], onExec })
+    try {
+      const r = await fetch(`${baseUrl}/a2a/exec`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json', 'authorization': `Bearer ${brain.inbound_api_key}` },
+        body: JSON.stringify({ agent_id: 'mybrain', prompt: 'x' }),
+      })
+      expect(r.status).toBe(200)
+      expect(await r.json()).toMatchObject({ ok: true, response: 'done' })
+      expect(onExec).toHaveBeenCalled()
+    } finally { server.stop() }
+  })
+})
+
+describe('终端会话桥 /a2a/cli/* (spec 2026-09-09-cli-hook-push §6.5)', () => {
+  const post = (baseUrl: string, path: string, bearer: string, body: unknown) => fetch(`${baseUrl}${path}`, {
+    method: 'POST', headers: { authorization: `Bearer ${bearer}`, 'content-type': 'application/json' }, body: JSON.stringify(body),
+  })
+  it('没挂处理器 → 501;认证同 notify(缺 / 错 Bearer → 401);挂上后按路径分发', async () => {
+    const { server, baseUrl } = await startServer({ agents: [rec('alpha', { capabilities: ['exec'] })] })
+    try {
+      const key = rec('alpha').inbound_api_key
+      expect((await post(baseUrl, '/a2a/cli/event', key, { agent_id: 'alpha', kind: 'stop' })).status).toBe(501)
+      expect((await post(baseUrl, '/a2a/cli/event', 'wrong', { agent_id: 'alpha' })).status).toBe(401)
+      expect((await fetch(`${baseUrl}/a2a/cli/event`, { method: 'POST', body: '{"agent_id":"alpha"}' })).status).toBe(401)
+      const seen: unknown[] = []
+      server.setCliHandlers({
+        onEvent: async (agent, ev) => { seen.push({ agent: agent.id, ev }); return { ok: true, action: 'scheduled' } },
+        onPermissionOpen: async (_a, req) => ({ status: 'pending', hash: 'k3x9z', got: req['tool_name'] }),
+        onPermissionWait: async (_a, hash, waitMs) => ({ hash, status: 'allow', waitMs }),
+        onReply: async (_a, req) => ({ ok: true, echo: req }),
+      })
+      const e = await post(baseUrl, '/a2a/cli/event', key, { agent_id: 'alpha', source: 'claude', kind: 'stop', session_id: 's', cwd: '/w' })
+      expect(await e.json()).toEqual({ ok: true, action: 'scheduled' })
+      expect(seen[0]).toMatchObject({ agent: 'alpha', ev: { kind: 'stop', session_id: 's' } })
+      const o = await post(baseUrl, '/a2a/cli/permission', key, { agent_id: 'alpha', tool_name: 'Bash' })
+      expect(await o.json()).toEqual({ status: 'pending', hash: 'k3x9z', got: 'Bash' })
+      const w = await post(baseUrl, '/a2a/cli/permission', key, { agent_id: 'alpha', hash: 'k3x9z', wait_ms: 99999 })
+      expect(await w.json()).toEqual({ hash: 'k3x9z', status: 'allow', waitMs: 25_000 })
+    } finally { await server.stop() }
+  })
+  // 2026-10-10 评审:终端会话事件 / 权限请求只该来自我自己加的手(capabilities 含 exec、有 url)。
+  // 社交配对的朋友也有 bearer,原先能往主人微信里塞假的「终端会话完成」和 y/n 权限卡。
+  it('/a2a/cli/event、/a2a/cli/permission 只认手;社交对端 → 403,处理器不被调用', async () => {
+    const friend = rec('friend', { capabilities: [] })
+    const { server, baseUrl } = await startServer({ agents: [friend] })
+    try {
+      const onEvent = vi.fn(async () => ({ ok: true })), onPermissionOpen = vi.fn(async () => ({})), onPermissionWait = vi.fn(async () => ({}))
+      server.setCliHandlers({ onEvent, onPermissionOpen, onPermissionWait })
+      const e = await post(baseUrl, '/a2a/cli/event', friend.inbound_api_key, { agent_id: 'friend', source: 'claude', kind: 'stop', session_id: 's', cwd: '/w', machine: 'MacBook' })
+      expect(e.status).toBe(403)
+      expect(await e.json()).toMatchObject({ error: 'not_a_hand' })
+      expect((await post(baseUrl, '/a2a/cli/permission', friend.inbound_api_key, { agent_id: 'friend', tool_name: 'Bash' })).status).toBe(403)
+      expect((await post(baseUrl, '/a2a/cli/permission', friend.inbound_api_key, { agent_id: 'friend', hash: 'k3x9z' })).status).toBe(403)
+      expect(onEvent).not.toHaveBeenCalled(); expect(onPermissionOpen).not.toHaveBeenCalled(); expect(onPermissionWait).not.toHaveBeenCalled()
+    } finally { await server.stop() }
+  })
+  it('/a2a/cli/reply 只让 may_exec 的脑调;坏 kind → 400', async () => {
+    const brain = { ...rec('brain'), may_exec: true }
+    const { server, baseUrl } = await startServer({ agents: [rec('alpha'), brain] })
+    try {
+      server.setCliHandlers({ onReply: async (_a, req) => ({ ok: true, echo: req }) })
+      expect((await post(baseUrl, '/a2a/cli/reply', rec('alpha').inbound_api_key, { agent_id: 'alpha', kind: 'view', session_id: 's' })).status).toBe(403)
+      const ok = await post(baseUrl, '/a2a/cli/reply', brain.inbound_api_key, { agent_id: 'brain', kind: 'say', session_id: 's', text: '继续' })
+      expect(await ok.json()).toEqual({ ok: true, echo: { kind: 'say', session_id: 's', text: '继续' } })
+      expect((await post(baseUrl, '/a2a/cli/reply', brain.inbound_api_key, { agent_id: 'brain', kind: 'nope', session_id: 's' })).status).toBe(400)
+    } finally { await server.stop() }
+  })
+})

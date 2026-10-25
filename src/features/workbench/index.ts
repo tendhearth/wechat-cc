@@ -9,10 +9,10 @@
  *  - `routes.ts`:桌面的 44 条 `/v1/workbench/*`(路由表标了 module: 'workbench');
  *  - 这个文件:模块清单。它要的东西(`WireWorkbenchDeps`)由组装的地方(daemon-modules.ts)从上游模块里填。
  *
- * 有意留在 src/core/workbench 的:store(`store.ts` 与它的十几张子表)和执行者、协调器、「一件事」、自改也在用的零件
- * (权限 / 提问 / 原生历史 / 模型目录 / 能力表 / 子进程环境 / 文件夹占用 / 附件 / 补充 / 成果读取 …)。
- * 适配器(src/adapters/executors)和 core 不许依赖功能目录,它们要的这些就不能搬进来;等 E3 拆 core 时
- * 分进 ports / domain / adapters/store。
+ * 不在这里的:store(`src/adapters/store/workbench/`:`store.ts` 与它的十几张子表)和执行者、协调器、「一件事」、
+ * 自改也在用的零件 —— 文件层 / 附件 / 成果 / 原生历史 / 权限 / 提问 / 文件夹占用在 `src/adapters/workbench/`,
+ * 独立工作区在 `src/adapters/git/`,能力表 / 模型目录 / 工具预览这些纯规则在 `src/domain/workbench/`。
+ * 适配器不许依赖功能目录,它们要的这些就不能搬进来(架构终态 E3)。
  *
  * 必需模块(搬家前就是):「做过的事」、wired、通知 / 成果两个模块都 needs 它。没起来时 44 条路由由模块门回
  * 503 workbench_not_wired(和搬家前处理器里写的一样,见 protocol routes.ts 的 MODULE_UNAVAILABLE_CODE)。

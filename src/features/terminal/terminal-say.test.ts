@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import { openDb, type Db } from '../../lib/db'
-import { makeCliEventHub, type CliEvent, type CliEventHub } from '../../core/cli-events'
+import { makeCliEventHub, type CliEvent, type CliEventHub } from '../../app/cli-events'
 import { makeCliSessionStore } from '../../adapters/store/cli-session-store'
 import { makeCliReplyCore, type RunResult } from './reply-handler'
 import { makeTerminalSay, terminalSayMaxWaitMs, TERMINAL_SAY_HEADER, type TerminalSay, type TerminalSayDeps } from './terminal-say'

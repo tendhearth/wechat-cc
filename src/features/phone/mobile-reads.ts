@@ -5,7 +5,7 @@ import { ownsMethod, type PhoneRouteTable } from './phone-route-table'
 import type { CliSessionView } from '../../adapters/store/cli-session-store'
 import type { OverseerToday } from '../../domain/overseer-today'
 import { PHONE_CLI_SAY_MAX, type CliPhoneActions } from '../terminal'
-import type { NativeHistoryItem, NativeHistoryListInput, NativeHistoryPage, NativeHistoryPreview, NativeHistoryReadInput } from '../../core/workbench/native-history'
+import type { NativeHistoryItem, NativeHistoryListInput, NativeHistoryPage, NativeHistoryPreview, NativeHistoryReadInput } from '../../adapters/workbench/native-history'
 
 /**
  * mobile-reads.ts — 手机只读路由(spec 2026-10-01 §3):CC 的连接、电脑上的原生会话。

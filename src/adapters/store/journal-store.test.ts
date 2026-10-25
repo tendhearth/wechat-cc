@@ -4,7 +4,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { openDb, type Db } from '../../lib/db'
 import { makeJournal, type Journal } from './journal-store'
-import { readJournalSeen, writeJournalSeen } from '../../core/journal-seen'
+import { readJournalSeen, writeJournalSeen } from './journal-seen'
 
 let db: Db
 let store: Journal

@@ -3,7 +3,7 @@
  * 命令摘要先打码(同「看 码」那套形状)再截 200 字;日志与这张表都不留密钥原文。
  */
 import type { Db } from '../lib/db'
-import { redactSecrets } from '../core/cli-transcript'
+import { redactSecrets } from '../domain/cli-transcript'
 
 export interface PermissionDecisionRow {
   id: number

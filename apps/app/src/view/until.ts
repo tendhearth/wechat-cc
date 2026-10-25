@@ -3,7 +3,7 @@ import { t, type Lang } from '../i18n'
 
 /**
  * 做到条件成立为止(spec 2026-10-20-workbench-until-design)。
- * 上限与 daemon 的 src/core/workbench/until.ts 同一份:命令一行、1–300 字(按字符数,不按 UTF-16),轮数 1–10、默认 3。
+ * 上限与 daemon 的 src/adapters/workbench/until.ts 同一份:命令一行、1–300 字(按字符数,不按 UTF-16),轮数 1–10、默认 3。
  * 只在开了独立工作区的交办上带(daemon 没开就回 until_requires_worktree)。
  */
 export const UNTIL_COMMAND_MAX = 300

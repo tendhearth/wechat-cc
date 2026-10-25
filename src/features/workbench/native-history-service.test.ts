@@ -4,10 +4,10 @@ import {join} from 'node:path'
 import {tmpdir} from 'node:os'
 import {openDb,type Db} from '../../lib/db'
 import {createProviderRegistry} from '../../app/provider-registry'
-import {makeWorkbenchStore} from '../../core/workbench/store'
+import {makeWorkbenchStore} from '../../adapters/store/workbench/store'
 import {makeWorkbenchService,type WorkbenchService} from './service'
-import {encodeNativeHistoryKey,type NativeHistoryReader} from '../../core/workbench/native-history'
-import {MANAGED_NATIVE_CAPABILITIES} from '../../core/workbench/executor-capabilities'
+import {encodeNativeHistoryKey,type NativeHistoryReader} from '../../adapters/workbench/native-history'
+import {MANAGED_NATIVE_CAPABILITIES} from '../../domain/workbench/executor-capabilities'
 import {removeTempDir} from '../../lib/test-temp'
 let root:string,db:Db,service:WorkbenchService
 beforeEach(()=>{root=mkdtempSync(join(tmpdir(),'cc-native-service-'));db=openDb({path:join(root,'test.db')})})

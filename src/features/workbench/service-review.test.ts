@@ -4,14 +4,14 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { randomUUID } from 'node:crypto'
 import { openTestDb, type Db } from '../../lib/db'
-import { makeWorkbenchStore, type WorkbenchStore } from '../../core/workbench/store'
+import { makeWorkbenchStore, type WorkbenchStore } from '../../adapters/store/workbench/store'
 import { makeWorkbenchService, type WorkbenchService } from './service'
 import { createProviderRegistry } from '../../app/provider-registry'
-import { MANAGED_NATIVE_CAPABILITIES } from '../../core/workbench/executor-capabilities'
+import { MANAGED_NATIVE_CAPABILITIES } from '../../domain/workbench/executor-capabilities'
 import type { AgentEvent, AgentProvider, AgentRuntimeSnapshot, AgentSession, AgentWorkbenchRuntime } from '../../ports/agent-provider'
 import { AsyncQueue } from '../../lib/async-queue'
-import type { LiveInput } from '../../core/workbench/live-inputs'
-import { saveArtifactSnapshot } from '../../core/workbench/artifacts'
+import type { LiveInput } from '../../adapters/store/workbench/live-inputs'
+import { saveArtifactSnapshot } from '../../adapters/workbench/artifacts'
 import { GIT_REVIEW_MIME, serializeGitReview, type GitReview, type ReviewFile } from './git-review'
 import { removeTempDir } from '../../lib/test-temp'
 
@@ -432,7 +432,7 @@ describe('独立工作区:自己保留的会话安静着时可以提交(2026-10-
   it('回合中 ⇒ busy;答复后安静 ⇒ 提交成功;删工作区仍要先收工', async () => {
     const { execFileSync } = await import('node:child_process')
     const { writeFileSync } = await import('node:fs')
-    const { ensureWorktree, planWorktree, repoRootOf } = await import('../../core/workbench/worktree-workspaces')
+    const { ensureWorktree, planWorktree, repoRootOf } = await import('../../adapters/git/worktree-workspaces')
     const { stateDir, project } = tempRoot('wb-wt-commit-')
     const g = (...a: string[]) => execFileSync('git', a, { cwd: project, stdio: 'pipe' }).toString().trim()
     g('init', '-q', '-b', 'main'); g('config', 'user.email', 't@t'); g('config', 'user.name', 't'); writeFileSync(join(project, 'a.txt'), 'x\n'); g('add', '-A'); g('commit', '-q', '-m', 'i')

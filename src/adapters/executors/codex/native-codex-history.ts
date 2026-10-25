@@ -1,5 +1,5 @@
 import { openCodexHistoryRpc, type CodexHistoryRpc, type CodexHistoryRpcOptions } from './codex-history-rpc'
-import { assertHistoryResponse, decodeNativeHistoryKey, encodeNativeHistoryKey, historyCursor, historyCwd, historyMessage, historyObject, historyPreview, historyText, nativeHistoryFailure, normalizeHistoryList, normalizeHistoryRead, readHistoryCursor, type NativeHistoryItem, type NativeHistoryMessage, type NativeHistoryReader } from '../../../core/workbench/native-history'
+import { assertHistoryResponse, decodeNativeHistoryKey, encodeNativeHistoryKey, historyCursor, historyCwd, historyMessage, historyObject, historyPreview, historyText, nativeHistoryFailure, normalizeHistoryList, normalizeHistoryRead, readHistoryCursor, type NativeHistoryItem, type NativeHistoryMessage, type NativeHistoryReader } from '../../workbench/native-history'
 
 export interface CodexHistoryOptions {
   codexPathOverride?:string|(()=>string);cwd?:string;timeoutMs?:number;closeTimeoutMs?:number

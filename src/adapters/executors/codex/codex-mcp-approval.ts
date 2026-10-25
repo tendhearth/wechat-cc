@@ -1,5 +1,5 @@
 import { isDeepStrictEqual } from 'node:util'
-import { toolInputPreview } from '../../../core/workbench/tool-input-preview'
+import { toolInputPreview } from '../../../domain/workbench/tool-input-preview'
 
 type Value = Record<string, unknown>
 const object = (value: unknown): value is Value => !!value && typeof value === 'object' && !Array.isArray(value)

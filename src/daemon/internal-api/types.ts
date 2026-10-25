@@ -102,7 +102,7 @@ export interface InternalApiDeps {
    */
   workbenchSuspended?: () => readonly { taskId: string }[]
   /** 「一件事」读写面(routes-matters);与工作台一样晚绑定。 */
-  matters?: import('../../core/matters/service').MattersService
+  matters?: import('../../app/matters/service').MattersService
   /** 「CC 的连接」(spec 2026-10-01);main.ts 在 pipeline 接好后 setConnections。 */
   connections?: () => import('../connections').ConnectionsSnapshot
   // 桌面「连接手机」(phoneConnect)归手机功能(src/features/phone),`/v1/phone/*` 由 phone 模块自己挂。
@@ -234,10 +234,10 @@ export interface InternalApiDeps {
    * When absent, POST /v1/a2a/send returns 503.
    */
   a2a?: {
-    registry: import('../../core/a2a-registry').A2ARegistry
-    client: import('../../core/a2a-client').A2AClient
+    registry: import('../../adapters/a2a/a2a-registry').A2ARegistry
+    client: import('../../adapters/a2a/a2a-client').A2AClient
     /** Read/write events store — used by dashboard activity + counts routes. */
-    eventsStore: import('../../core/a2a-events-store').A2AEventsStore
+    eventsStore: import('../../adapters/store/a2a-events-store').A2AEventsStore
     recordEvent: (event: {
       direction: 'in' | 'out'
       agent_id: string
@@ -260,7 +260,7 @@ export interface InternalApiDeps {
    * 只写结构:internal-api 不能 import 功能目录(功能的模块清单要引这里的类型,会成环)。
    */
   socialView?: {
-    channelStore: Pick<import('../../core/penpal-channel-store').ChannelStore, 'list'>
+    channelStore: Pick<import('../../adapters/store/penpal-channel-store').ChannelStore, 'list'>
     letterStore: { listForChannel(channelId: string): ReadonlyArray<{ kind: string; payload: string | null; created_at: string; direction: 'in' | 'out' }> }
     activeVisit(): import('../../domain/companion-presence').ActiveVisit | null
   }
@@ -276,7 +276,7 @@ export interface InternalApiDeps {
    * Agent-facing Search (Task 2) — `embedder` is the ONE shared,
    * long-lived embed-subprocess service used by both the indexer and the
    * query path, so both embed in the same model space (see
-   * ../../core/knowledge/embedder-service.ts). `embedQuery` is a thin
+   * ../../adapters/knowledge/embedder-service.ts). `embedQuery` is a thin
    * convenience wrapper (`embedder.embed([t]).then(v => v[0])`) for routes
    * that just need one query vector. Both are undefined when the indexer
    * isn't configured (no resolvable embed script) even though `store`/
@@ -299,9 +299,9 @@ export interface InternalApiDeps {
    */
   latestInboundTs?: (chatId: string) => Promise<string | null>
   knowledge?: {
-    store: import('../../core/knowledge/store').KnowledgeStore
-    search: typeof import('../../core/knowledge/search').semanticSearch
-    embedder?: import('../../core/knowledge/embedder-service').EmbedderService
+    store: import('../../adapters/knowledge/store').KnowledgeStore
+    search: typeof import('../../domain/knowledge/search').semanticSearch
+    embedder?: import('../../adapters/knowledge/embedder-service').EmbedderService
     embedQuery?: (t: string) => Promise<number[]>
     /**
      * Graph Query (Knowledge Graph inproc, Task 5) — the store-backed
@@ -313,7 +313,7 @@ export interface InternalApiDeps {
      * `/v1/knowledge/graph/*` route 503s knowledge_not_wired, same posture
      * as `knowledge` itself being undefined.
      */
-    graph?: import('../../core/knowledge/graph-query').GraphQueryApi
+    graph?: import('../../domain/knowledge/graph-query').GraphQueryApi
     /**
      * Facts + Person (Knowledge Facts/Person inproc, Task 4) — the
      * candidate-feed/record/query API over facts.db (Task 1) built by
@@ -324,14 +324,14 @@ export interface InternalApiDeps {
      * `/v1/knowledge/facts/*` or `/v1/knowledge/person/*` route 503s
      * knowledge_not_wired.
      */
-    facts?: import('../../core/knowledge/facts').FactsApi
-    person?: import('../../core/knowledge/person').PersonApi
+    facts?: import('../../domain/knowledge/facts').FactsApi
+    person?: import('../../domain/knowledge/person').PersonApi
   }
   /** 配对码 (spec §7) — late-bound by main.ts from bootstrap.pairing. Undefined
    *  (⇒ /v1/pair/* 503) until mailbox_relays is configured AND late-bind runs. */
   pairing?: {
-    start(): Promise<import('../../core/pairing').PairStartResult>
-    accept(code: string): Promise<import('../../core/pairing').PairResult>
+    start(): Promise<import('../../app/pairing').PairStartResult>
+    accept(code: string): Promise<import('../../app/pairing').PairResult>
   }
   /**
    * Optional per-turn outcome store — backs GET /v1/turns. Undefined in
@@ -424,7 +424,7 @@ export interface InternalApiDeps {
   /** Graphical-settings-panel link minter (settings-panel.ts, late-bound). */
   settingsLink?: () => Promise<string | null>
   /** 外部 agent CLI 自动升级引擎(main.ts 通过 setCliUpgrade 接进来;没接 ⇒ /v1/cli/* 回 503)。 */
-  cliUpgrade?: import('../../core/cli-upgrade/engine').CliUpgrader
+  cliUpgrade?: import('../cli-upgrade/engine').CliUpgrader
   /**
    * Resolves the default admin chat_id (access.json's single admin) — the
    * owner for /v1/turn and the workbench entry context. Wired eagerly in main.ts

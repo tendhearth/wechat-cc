@@ -1,6 +1,6 @@
 import { describe, it, expect, vi } from 'vitest'
 import { verifyCliProvider, type VerifyDeps } from './verify'
-import { CLI_SPECS } from '../../core/cli-upgrade/specs'
+import { CLI_SPECS } from '../../domain/cli-upgrade/specs'
 import type { SelftestConverseResult } from '../selftest'
 import type { SelftestReport } from '../../cli/selftest'
 
@@ -69,7 +69,7 @@ describe('verifyCliProvider — the same checks as `selftest chat --resume` (+ w
     const tooOld = await verifyCliProvider({ ...CLI_SPECS.codex, workbench: false }, deps({ converse: async () => good({ ok: false, texts: [], error: 'requires a newer version of Codex', errorCode: 'invalid_request' }) }))
     expect(tooOld.status).toBe('fail')
     // 工作台里同一类失败(固定人话)也一样
-    const { executionFailureMessage } = await import('../../core/workbench/execution-settings')
+    const { executionFailureMessage } = await import('../../adapters/store/workbench/execution-settings')
     const wb = await verifyCliProvider(CLI_SPECS.claude, deps({ workbench: async () => wbReport([{ name: 'no_error_event', ok: false, detail: executionFailureMessage('provider_quota_exhausted') }]) }))
     expect(wb.status).toBe('deferred')
   })

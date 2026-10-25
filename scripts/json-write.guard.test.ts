@@ -3,7 +3,7 @@
  *
  * 2026-10-22 盘点:约 40 处手写 tmp + rename(二十几处固定 `.tmp` 名,两个写者会撞同一个 tmp)、约 20 处
  * `writeFileSync(path, JSON.stringify(…))` 直接覆盖(写到一半崩了就是半个文件),都不 fsync。第 1、2 步迁了最要命的
- * (agent-config、access、令牌、account.json…),其余按目录一批批迁。棘轮(跟 core-no-node / daemon-module 守卫一个做法):
+ * (agent-config、access、令牌、account.json…),其余按目录一批批迁。棘轮(跟 daemon-module 守卫一个做法):
  *  - **没登记的文件出现手写 tmp 名或直写 JSON ⇒ 红**:改用 lib/json-file;
  *  - **登记过的只许降**,降了也红(提示调基线),降到 0 删掉那一行。
  * 数两种:① 正在拼的 tmp 文件名(`${x}.tmp…` 或 `+ '.tmp'`;列目录时跳过 `.tmp-` 的过滤不算);② 同一行里 `writeFileSync(` + `JSON.stringify(`。

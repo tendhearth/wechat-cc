@@ -5,13 +5,13 @@
  * 状态与对外的码都查 packages/protocol 的 WORKBENCH_ERRORS(mappedError)。
  */
 import {validateHandoffInput,type HandoffInput} from './handoff'
-import {nativeImportInput,type NativeImportInput} from '../../core/workbench/native-adoption'
-import { decodeNativeHistoryKey, normalizeHistoryList, normalizeHistoryRead, type NativeHistoryProvider } from '../../core/workbench/native-history'
+import {nativeImportInput,type NativeImportInput} from '../../adapters/workbench/native-adoption'
+import { decodeNativeHistoryKey, normalizeHistoryList, normalizeHistoryRead, type NativeHistoryProvider } from '../../adapters/workbench/native-history'
 import { isAbsolute } from 'node:path'
-import type { WorkbenchListQuery } from '../../core/workbench/store'
+import type { WorkbenchListQuery } from '../../adapters/store/workbench/store'
 import type {InputMaterials,WorkbenchService} from './service'
-import {isWorkbenchProviderId} from '../../core/workbench/executor-capabilities'
-import {parseEntryInput} from '../../core/workbench/task-entry'
+import {isWorkbenchProviderId} from '../../domain/workbench/executor-capabilities'
+import {parseEntryInput} from '../../adapters/workbench/task-entry'
 import {workbenchErrorHttp,workbenchErrorSpec} from '@wechat-cc/protocol'
 import type { RouteHandler, RouteTable } from '../../daemon/internal-api/types'
 

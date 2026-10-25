@@ -8,7 +8,7 @@ import { createCodexChatProvider, codexChatToolCall, codexChatThreadConfig, CODE
 import { extractTurnReply } from '../../../domain/turn-reply'
 import { collectTurn, type AgentEvent, type AgentSession, type SpawnContext } from '../../../ports/agent-provider'
 import { TIER_PROFILES } from '../../../domain/user-tier'
-import { TERMINAL_SAY_TOOL_TIMEOUT_MS } from '../../../core/mcp-stdio-spec'
+import { TERMINAL_SAY_TOOL_TIMEOUT_MS } from '../mcp-stdio-spec'
 import { createScriptedCodex, MCP_REJECTED, type ScriptedCodexOptions } from '../../../test-support/executors/codex-scripted'
 
 /**

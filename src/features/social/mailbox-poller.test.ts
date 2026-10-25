@@ -1,9 +1,9 @@
 import { describe, it, expect } from 'vitest'
 import { mkdtempSync } from 'node:fs'; import { tmpdir } from 'node:os'; import { join } from 'node:path'
 import { makeMailboxPoller } from './mailbox-poller'
-import { loadMailboxIdentity, sealEnvelope } from '../../core/mailbox-crypto'   // real identity + real seal — no testkit
+import { loadMailboxIdentity, sealEnvelope } from '../../adapters/mailbox/mailbox-crypto'   // real identity + real seal — no testkit
 import { makeCursorStore } from './mailbox-cursor-store'
-import type { MailboxClient } from '../../core/mailbox-client'
+import type { MailboxClient } from '../../adapters/mailbox/mailbox-client'
 
 describe('makeMailboxPoller', () => {
   it('fetch → open → dispatch → ack, advancing the per-relay cursor; malformed envelopes are skipped', async () => {

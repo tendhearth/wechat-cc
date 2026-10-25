@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from 'vitest'
 import { createCodexHistoryReader, mapCodexHistoryThread } from './native-codex-history'
-import { encodeNativeHistoryKey } from '../../../core/workbench/native-history'
+import { encodeNativeHistoryKey } from '../../workbench/native-history'
 import type { CodexHistoryRpc } from './codex-history-rpc'
 
 const thread=(extra:Record<string,unknown>={})=>({id:'thread-uuid',sessionId:'shared-tree-uuid',parentThreadId:null,name:'Review parser',preview:'old first prompt',cwd:'/fixture',updatedAt:100,createdAt:90,status:{type:'notLoaded'},turns:[],path:'/private/rollout',...extra})

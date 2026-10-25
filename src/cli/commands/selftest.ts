@@ -149,7 +149,7 @@ const selftestEmbedCmd = defineCommand({
     json: { type: 'boolean', description: 'JSON 输出' },
   },
   async run({ args }) {
-    const { makeJsEmbedder } = await import('../../core/knowledge/js-embedder')
+    const { makeJsEmbedder } = await import('../../adapters/knowledge/js-embedder')
     const model = typeof args.model === 'string' && args.model ? args.model : 'bge-small-zh-v1.5'
     const started = Date.now()
     try {

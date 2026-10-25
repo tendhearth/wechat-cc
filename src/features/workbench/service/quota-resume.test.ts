@@ -3,7 +3,7 @@ import { mkdtempSync, readFileSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { openTestDb } from '../../../lib/db'
-import { makeWorkbenchStore } from '../../../core/workbench/store'
+import { makeWorkbenchStore } from '../../../adapters/store/workbench/store'
 import { makeQuotaResumeDomain, QUOTA_RESUME_FILE, QUOTA_RESUME_MARGIN_MS, QUOTA_RESUME_MISSED_MS } from './quota-resume'
 import type { ServiceCtx } from './ctx'
 

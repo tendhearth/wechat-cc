@@ -5,7 +5,7 @@
  * must not be able to make W forward junk into its relay legs. Relay-direct
  * legitimate letters are always own-channel. See the plan's I1 resolution.
  */
-import type { A2AServerOpts } from '../../core/a2a-server'
+import type { A2AServerOpts } from '../../adapters/a2a/a2a-server'
 
 export function makeMailboxLetterHandler(deps: {
   getByMyChannelId: (channelId: string) => { id: string } | null | undefined

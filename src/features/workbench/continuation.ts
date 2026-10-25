@@ -1,7 +1,7 @@
 import { createHash } from 'node:crypto'
-import type { StoredTask, TaskEvent } from '../../core/workbench/store'
+import type { StoredTask, TaskEvent } from '../../adapters/store/workbench/store'
 import type {AgentExecutionChoice} from '../../ports/agent-provider'
-import {PROVIDER_EXECUTION_CHOICE} from '../../core/workbench/execution-settings'
+import {PROVIDER_EXECUTION_CHOICE} from '../../adapters/store/workbench/execution-settings'
 
 export interface RestartPreview {
   token: string
@@ -9,7 +9,7 @@ export interface RestartPreview {
   eventCount: number
   includedEventCount: number
   truncated: boolean
-  attachments?:import('../../core/workbench/attachments').Attachment[]
+  attachments?:import('../../adapters/workbench/attachments').Attachment[]
   omittedAttachmentCount?:number
 }
 export type Continuation = { mode: 'new' | 'resume'; restart?: never } | { mode: 'restart_required'; restart: RestartPreview }

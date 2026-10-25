@@ -3,7 +3,7 @@ import { mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync, readdirSyn
 import { join } from 'node:path'
 import { tmpdir } from 'node:os'
 import { determineScenario, pollSetupQrStatus, requestSetupQrCode, defaultFetchBinary, persistConfirmedAccount } from './setup-flow'
-import { avatarInfo } from '../core/avatar/store'
+import { avatarInfo } from '../adapters/store/avatar-store'
 import { serve } from '../lib/runtime/http'
 
 describe('setup-flow', () => {

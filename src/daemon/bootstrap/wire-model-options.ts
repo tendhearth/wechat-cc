@@ -7,8 +7,8 @@
  */
 import { homedir } from 'node:os'
 import { isAbsolute, join } from 'node:path'
-import { floorReason } from '../../core/permission-rules/floor'
-import { pathsUnder } from '../../core/permission-rules/paths'
+import { floorReason } from '../../adapters/permission-rules/floor'
+import { pathsUnder } from '../../adapters/permission-rules/paths'
 import { toolInputFacts } from '../../domain/permission-rules/facts'
 import type { Options } from '@anthropic-ai/claude-agent-sdk'
 import type { ProviderId } from '../../domain/conversation'

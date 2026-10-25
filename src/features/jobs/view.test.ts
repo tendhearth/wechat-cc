@@ -2,7 +2,7 @@ import { describe, it, expect } from 'vitest'
 import { mkdtempSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { makeJobsStore, JOBS_FILE } from '../../core/scheduled-jobs-store'
+import { makeJobsStore, JOBS_FILE } from '../../adapters/store/scheduled-jobs-store'
 import { jobsView, jobsAction } from './view'
 
 const dir = () => mkdtempSync(join(tmpdir(), 'jobs-view-'))

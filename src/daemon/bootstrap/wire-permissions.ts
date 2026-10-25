@@ -5,9 +5,9 @@
  * 块内逻辑与注释不变,只参数化:deps.db/stateDir/log → ctx.*。
  */
 import { join } from 'node:path'
-import { makeBusyRegistry } from '../../core/busy-registry'
+import { makeBusyRegistry } from '../busy-registry'
 import { makeResolver } from '../../domain/project-resolver'
-import { makeCanUseTool } from '../../core/permission-relay'
+import { makeCanUseTool } from '../../adapters/executors/claude/permission-relay'
 import type { PermissionMode } from '../../domain/capability-matrix'
 import { makeConversationStore, type ConversationStore } from '../../adapters/store/conversation-store'
 import { resolveTier } from '../../domain/user-tier'

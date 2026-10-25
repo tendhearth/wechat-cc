@@ -1,10 +1,10 @@
 import { describe, it, expect, afterEach } from 'vitest'
 import { openTestDb } from '../../lib/db'
-import { makeWorkbenchStore } from '../../core/workbench/store'
+import { makeWorkbenchStore } from '../../adapters/store/workbench/store'
 import { makeWorkbenchService } from './service'
 import { createProviderRegistry } from '../../app/provider-registry'
 import { makeTaskChangeHub, type TaskChangeHub } from './task-changes'
-import { MANAGED_NATIVE_CAPABILITIES } from '../../core/workbench/executor-capabilities'
+import { MANAGED_NATIVE_CAPABILITIES } from '../../domain/workbench/executor-capabilities'
 import { removeTempDir } from '../../lib/test-temp'
 import { mkdtempSync, realpathSync } from 'node:fs'; import { tmpdir } from 'node:os'; import { join } from 'node:path'
 

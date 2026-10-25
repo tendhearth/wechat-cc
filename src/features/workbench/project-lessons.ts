@@ -7,7 +7,7 @@ import { existsSync } from 'node:fs'
 import { readJsonFile } from '../../lib/read-json-file'
 import { join } from 'node:path'
 import { randomBytes } from 'node:crypto'
-import type { WorkbenchStore } from '../../core/workbench/store'
+import type { WorkbenchStore } from '../../adapters/store/workbench/store'
 import { writeFileAtomic } from '../../lib/json-file'
 
 export const LESSONS_FILE = 'project-lessons.json'

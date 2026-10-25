@@ -7,12 +7,16 @@
  *   src/cli/           ← CLI subcommand handlers (only `cli.ts` invokes these)
  *   src/daemon/        ← Long-running runtime (ilink, internal-api, schedulers)
  *   src/mcp-servers/   ← Standalone stdio MCP children (talk to daemon via HTTP)
- *   src/core/          ← Provider abstraction, conversation coordinator (no I/O)
+ *   src/features/<名>/ ← 一个功能一个目录(架构终态 A3)
+ *   src/app/           ← 用例(协调器、会话管理、执行者登记 …)
+ *   src/adapters/      ← 对外的实现(执行者、store、git、a2a / 信箱 …)
+ *   src/ports/ + src/domain/ ← 接口与纯规则
  *   src/lib/           ← Shared utilities + send-reply (used by both cli + daemon)
+ *   (src/core 已于架构终态 E3 清空删除。)
  *
  * Cross-layer rules:
- *   - lib MUST NOT import from cli, daemon, core, mcp-servers (it's the floor)
- *   - core MUST NOT import from cli, daemon, mcp-servers (platform-agnostic)
+ *   - lib MUST NOT import from any layer above it (it's the floor)
+ *   - domain / ports / adapters / app:见下面 E1 / E2 的几条
  *   - mcp-servers MUST NOT import from cli, daemon (talks via internal-api HTTP)
  *   - cli MUST NOT import from daemon (daemon is a runtime, cli is a launcher
  *     of subcommands; if they need the daemon they should spawn it, not link)
@@ -58,15 +62,15 @@ module.exports = {
       severity: 'error',
       comment: 'src/lib/ is the bottom of the dependency tree — utilities only.',
       from: { path: '^src/lib/', pathNot: '\\.test\\.ts$' },
-      to: { path: '^src/(cli|daemon|core|mcp-servers)/' },
+      to: { path: '^src/(cli|daemon|mcp-servers|features|app|adapters|domain|ports|test-support)/' },
     },
     {
       name: 'domain-is-pure',
       severity: 'error',
-      comment: '架构终态 E1:src/domain 是纯规则(档位、开口、伙伴判定、提示词 ……)。运行时只许依赖 domain 自己和 src/lib 里不碰 I/O 的那些;只引类型可以(core 还没拆完)。零例外。',
+      comment: '架构终态 E1:src/domain 是纯规则(档位、开口、伙伴判定、提示词 ……)。运行时只许依赖 domain 自己和 src/lib 里不碰 I/O 的那些;只引类型可以(比如知识库的纯算法引 adapters 里 store 的类型)。零例外。',
       from: { path: '^src/domain/', pathNot: '\\.test\\.ts$' },
       to: {
-        path: ['^src/(core|daemon|cli|features|mcp-servers|test-support|adapters|app)/', '^src/lib/(runtime|db|json-file|read-json-file|log|access|agent-config|messages-store|project-registry|ilink|send-reply|config)'],
+        path: ['^src/(daemon|cli|features|mcp-servers|test-support|adapters|app)/', '^src/lib/(runtime|db|json-file|read-json-file|log|access|agent-config|messages-store|project-registry|ilink|send-reply|config)'],
         dependencyTypesNot: ['type-only'],
       },
     },
@@ -76,7 +80,7 @@ module.exports = {
       comment: '架构终态 E1:src/ports 是接口(执行者的口 AgentProvider / AgentSession 等)。运行时只许依赖 ports、domain 与 lib 里不碰 I/O 的;零例外。',
       from: { path: '^src/ports/', pathNot: '\\.test\\.ts$' },
       to: {
-        path: ['^src/(core|app|daemon|cli|features|mcp-servers|test-support|adapters)/', '^src/lib/(runtime|db|json-file|read-json-file|log|access|agent-config|messages-store|project-registry|ilink|send-reply|config)'],
+        path: ['^src/(app|daemon|cli|features|mcp-servers|test-support|adapters)/', '^src/lib/(runtime|db|json-file|read-json-file|log|access|agent-config|messages-store|project-registry|ilink|send-reply|config)'],
         dependencyTypesNot: ['type-only'],
       },
     },
@@ -90,7 +94,7 @@ module.exports = {
     {
       name: 'app-does-not-reach-up',
       severity: 'error',
-      comment: '架构终态 E1:src/app 是用例(协调器、会话管理、执行者登记)。不许往上依赖 daemon / cli / features / mcp-servers / test-support,也不碰 node 内置。过渡期还能用 core 里没搬完的(store、工作台);adapters 搬出来以后收紧成「只经 ports」。',
+      comment: '架构终态 E1:src/app 是用例(协调器、会话管理、执行者登记)。不许往上依赖 daemon / cli / features / mcp-servers / test-support,也不碰 node 内置(要随机 id 经 lib/random)。眼下还能直接用 adapters(store、工作台零件);以后收紧成「只经 ports」。',
       from: { path: '^src/app/', pathNot: '\\.test\\.ts$' },
       to: { path: '^src/(daemon|cli|features|mcp-servers|test-support)/' },
     },
@@ -118,8 +122,8 @@ module.exports = {
     {
       name: 'features-only-from-above',
       severity: 'error',
-      comment: '架构终态 A3:src/features/<名> 是一个功能一个目录。core / lib / mcp-servers 是它下面的层,不许反过来依赖功能。',
-      from: { path: '^src/(core|lib|mcp-servers)/', pathNot: '\\.test\\.ts$' },
+      comment: '架构终态 A3:src/features/<名> 是一个功能一个目录。lib / mcp-servers 是它下面的层,不许反过来依赖功能(domain / ports / adapters / app 各有自己那条)。',
+      from: { path: '^src/(lib|mcp-servers)/', pathNot: '\\.test\\.ts$' },
       to: { path: '^src/features/' },
     },
     {
@@ -135,13 +139,6 @@ module.exports = {
       comment: '架构终态 A3:一个功能不许伸进另一个功能的内部文件;要用就经对方的 index.ts(并在模块清单里 needs 它)。',
       from: { path: '^src/features/([^/]+)/', pathNot: '\\.test\\.ts$' },
       to: { path: '^src/features/(?!$1/)[^/]+/(?!index\\.ts$)' },
-    },
-    {
-      name: 'core-must-not-depend-on-runtime',
-      severity: 'error',
-      comment: 'src/core/ is platform-agnostic; runtime modules (cli/daemon/mcp) belong above it.',
-      from: { path: '^src/core/', pathNot: '\\.test\\.ts$' },
-      to: { path: '^src/(cli|daemon|mcp-servers)/' },
     },
     {
       name: 'mcp-servers-must-not-link-daemon',

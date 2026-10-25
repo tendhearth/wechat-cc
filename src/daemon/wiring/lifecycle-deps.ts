@@ -20,7 +20,7 @@ import { classifyWith } from '../../lib/network-gate'
 import { parseUpdates } from '../poll-loop'
 import { writeHeartbeat, HEARTBEAT_FILE } from '../single-instance'
 import { join } from 'node:path'
-import { makeHeartbeatStore } from '../../core/connection-heartbeat'
+import { makeHeartbeatStore } from '../../adapters/store/connection-heartbeat'
 import { makeSessionStateStore } from '../../adapters/store/session-state'
 import type { TickBodies } from './tick-bodies'
 

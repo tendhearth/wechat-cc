@@ -19,7 +19,7 @@
  */
 import { classifyToolUse, type TierProfile } from '../../../domain/user-tier'
 import type { PermissionMode } from '../../../ports/agent-provider'
-import { authorizeChatCall, type ChatOwnerRules } from '../../../core/permission-rules/chat'
+import { authorizeChatCall, type ChatOwnerRules } from '../../permission-rules/chat'
 
 export type GateDecision = 'allow' | 'deny'
 

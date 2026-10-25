@@ -5,9 +5,9 @@ import {join} from 'node:path'
 import {openDb,type Db} from '../../lib/db'
 import {removeTempDir} from '../../lib/test-temp'
 import {createProviderRegistry} from '../../app/provider-registry'
-import {makeWorkbenchStore} from '../../core/workbench/store'
+import {makeWorkbenchStore} from '../../adapters/store/workbench/store'
 import {makeWorkbenchService,type WorkbenchService} from './service'
-import {UNATTENDED_CAPABILITIES} from '../../core/workbench/executor-capabilities'
+import {UNATTENDED_CAPABILITIES} from '../../domain/workbench/executor-capabilities'
 import {issueTaskText} from './issue-intake'
 
 // 评审 #446:免审执行者不收从 issue 建的任务 —— 没人看着 + 外来文字,两道闸都没了(同 until 拒免审)。

@@ -1,6 +1,6 @@
 import { parseHunks, type Hunk } from './review-hunks'
-import type { ReviewComment } from '../../core/workbench/review-comments'
-import type { ReviewHunkEntry } from '../../core/workbench/review-hunk-log'
+import type { ReviewComment } from '../../adapters/store/workbench/review-comments'
+import type { ReviewHunkEntry } from '../../adapters/store/workbench/review-hunk-log'
 
 /**
  * reviewList 给每个文件加的两样(行评论设计稿,切片 1,只读):块清单与这一轮上的行评论。

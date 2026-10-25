@@ -3,7 +3,7 @@
  * 从 service.ts 逐字搬来(spec 2026-09-27-workbench-service-split §3 第 5 项);只认 ctx,无跨域动作。
  * collect 的 promise 登记在 state.collections —— shutdown 靠它等收尾,必须是同一个 Set。
  */
-import { ArtifactSnapshotError, canonicalProject, collectArtifacts, readArtifactSnapshot, saveArtifactSnapshot } from '../../../core/workbench/artifacts'
+import { ArtifactSnapshotError, canonicalProject, collectArtifacts, readArtifactSnapshot, saveArtifactSnapshot } from '../../../adapters/workbench/artifacts'
 import { captureGitBaseline, finishGitReview, serializeGitReview, GIT_REVIEW_MIME, type GitBaseline } from '../git-review'
 import { pruneCheckpoints, takeCheckpoint } from '../checkpoints'
 import { directoryIdentity } from './directory-identity'

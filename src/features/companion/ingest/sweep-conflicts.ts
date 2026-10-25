@@ -21,8 +21,8 @@
  * groups make room for the backlog. New evidence changes the fingerprint
  * and re-opens the group naturally.
  */
-import type { FactsApi } from '../../../core/knowledge/facts'
-import type { FactRow } from '../../../core/knowledge/store'
+import type { FactsApi } from '../../../domain/knowledge/facts'
+import type { FactRow } from '../../../adapters/knowledge/store'
 import { buildConflictPrompt, parseSupersedePairs, type ConflictGroup } from './extract'
 import { pausedReason } from './paused'
 

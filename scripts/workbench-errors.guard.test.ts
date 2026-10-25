@@ -16,7 +16,7 @@ import ts from 'typescript'
 import { WORKBENCH_ERRORS, workbenchErrorHttp } from '../packages/protocol/src/workbench-errors'
 import { MODULE_UNAVAILABLE_CODE } from '../packages/protocol/src/routes'
 import { entryErrorStatus } from '../apps/desktop/src/shared/task-entry-contract.js'
-import { executionFailureMessage } from '../src/core/workbench/execution-settings'
+import { executionFailureMessage } from '../src/adapters/store/workbench/execution-settings'
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..')
 const MODULES = join(ROOT, 'apps', 'desktop', 'src', 'modules')
@@ -157,13 +157,16 @@ const INTERNAL_ONLY = new Set([
     'artifact_binding_changed',
 ])
 describe('工作台抛出的码都归了类(反向守卫)', () => {
-  it('every Error(\'code\') literal under src/core/workbench, src/features/workbench and src/adapters/executors is desktop-mapped, a task-failure code, or listed INTERNAL_ONLY; the list has no stale entries', async () => {
+  it('every Error(\'code\') literal under the workbench store / parts (src/adapters/store/workbench, src/adapters/workbench, src/domain/workbench), src/features/workbench and src/adapters/executors is desktop-mapped, a task-failure code, or listed INTERNAL_ONLY; the list has no stale entries', async () => {
     const { workbenchErrorHttp } = await import('../packages/protocol/src/workbench-errors')
     const { join } = await import('node:path')
     const { statSync } = await import('node:fs')
     const files: string[] = []
     const walk = (d: string) => { for (const f of readdirSync(d)) { const p = join(d, f); if (statSync(p).isDirectory()) walk(p); else if (p.endsWith('.ts') && !p.includes('.test.')) files.push(p) } }
-    walk('src/core/workbench')
+    // 工作台的 store 与执行者 / 协调器 / 「一件事」共用的零件(以前在 src/core/workbench,架构终态 E3 分进 adapters / domain)
+    walk('src/adapters/store/workbench')
+    walk('src/adapters/workbench')
+    walk('src/domain/workbench')
     // 工作台的服务与它的域(架构终态 A5 搬进 src/features/workbench)
     walk('src/features/workbench')
     // 执行者适配器(架构终态 E2 搬进 src/adapters/executors)整个扫:它们抛的码经工作台落进任务失败记录或路由。

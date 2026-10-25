@@ -21,7 +21,7 @@
  */
 import { splitBubbles } from './reply-bubbles'
 import { paceMs } from './reply-split'
-import { ruleAllowLine, type RuleAllowNotice } from '../core/permission-rules/chat'
+import { ruleAllowLine, type RuleAllowNotice } from '../adapters/permission-rules/chat'
 import {
   buildTurnReply,
   type DeliveryKind, type DeliveryReport, type ReplyContext, type ReplyDeliveryPort,

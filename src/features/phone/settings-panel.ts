@@ -45,7 +45,7 @@ import { combinePhoneRoutes, ownsMethod, routePhone, type PhoneHandler, type Pho
 import {mobileSessionContinueRoutes,mobileWorkbenchRoutes,mobileMatterError,mobileSayInput,type MobileMatterActions,type MobileEntryActions,type MobileUploadActions,type MobileSessionContinueActions} from './mobile-workbench'
 import {mobileMatterDetailResponse} from './mobile-matter-response'
 import {mobileHomeFocus} from './mobile-home-focus'
-import type {MatterSayInput} from '../../core/matters/service'
+import type {MatterSayInput} from '../../app/matters/service'
 import { pairCheckCode, PushPlatform, PHONE_SAY_MAX_CHARS, pushTokenValid, type PushPlatformT } from '@wechat-cc/protocol'
 import type { Presence } from '../../domain/companion-presence'
 import type { CatchRow } from '../../adapters/store/journal-store'

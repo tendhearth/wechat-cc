@@ -1,6 +1,6 @@
 import { describe, it, expect, vi } from 'vitest'
 import { makeInProcFactsCall } from './facts-inproc'
-import type { FactsApi } from '../../../core/knowledge/facts'
+import type { FactsApi } from '../../../domain/knowledge/facts'
 
 function fakeFacts(over: Partial<FactsApi> = {}): FactsApi {
   return {

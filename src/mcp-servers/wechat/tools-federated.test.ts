@@ -10,7 +10,7 @@
  */
 import { describe, expect, it } from 'vitest'
 import { reshapeToFederatedHits } from './tools-federated'
-import type { SemanticSearchResultItem } from '../../core/knowledge/search'
+import type { SemanticSearchResultItem } from '../../domain/knowledge/search'
 
 function item(overrides: Partial<SemanticSearchResultItem> = {}): SemanticSearchResultItem {
   return {

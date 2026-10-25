@@ -11,8 +11,8 @@
  * token(= trusted),与 `wechat-cc agent` 同源;admin 会让每一条 hook 都 403。
  */
 import type { RouteHandler, RouteTable } from '../../daemon/internal-api/types'
-import type { CliEvent, CliEventAction } from '../../core/cli-events'
-import type { CliPermissionRelay, CliPermissionRequest } from '../../core/cli-permission-relay'
+import type { CliEvent, CliEventAction } from '../../app/cli-events'
+import type { CliPermissionRelay, CliPermissionRequest } from '../../app/cli-permission-relay'
 import type { CliSessionView } from '../../adapters/store/cli-session-store'
 import type { OverseerToday } from '../../domain/overseer-today'
 import { workbenchErrorHttp } from '@wechat-cc/protocol'

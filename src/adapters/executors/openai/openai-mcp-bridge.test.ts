@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest'
 import { createMcpToolBridge, type McpClientLike } from './openai-mcp-bridge'
-import { DELEGATE_TOOL_TIMEOUT_MS, TERMINAL_SAY_TOOL_TIMEOUT_MS } from '../../../core/mcp-stdio-spec'
+import { DELEGATE_TOOL_TIMEOUT_MS, TERMINAL_SAY_TOOL_TIMEOUT_MS } from '../mcp-stdio-spec'
 
 function fakeClient(tools: { name: string; description?: string; inputSchema: unknown }[]): McpClientLike {
   return {

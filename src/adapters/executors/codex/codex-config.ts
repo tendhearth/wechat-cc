@@ -1,7 +1,7 @@
 import { spawn } from 'node:child_process'
 import { wrapForProcessTree } from '../../../lib/jobspawn'
-import { isCompanionMcp } from '../../../core/workbench/native-tools'
-import { workbenchSubprocessEnv } from '../../../core/workbench/subprocess-env'
+import { isCompanionMcp } from '../../../domain/workbench/native-tools'
+import { workbenchSubprocessEnv } from '../subprocess-env'
 
 export const workbenchFeatureConfig = { features: { plugins: false, apps: false, hooks: false } }
 const shellEnvironmentKeys = ['PATH', 'SHELL', 'TMPDIR', 'TEMP', 'TMP', 'HOME', 'LANG', 'LC_ALL', 'LC_CTYPE', 'LOGNAME', 'USER']

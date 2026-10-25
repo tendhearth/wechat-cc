@@ -9,14 +9,14 @@
  * holdBusy 只给 setup / archive(有时限);run 是开发服务,可能一直开着,不能挡空闲自重启 —— 停机时一并停掉,重启后核对。
  * 输出:时间线里一条 command 活动(run_id = script-<uuid>),尾巴先过 redactSecrets 再落库。
  */
-import { assertNotRewindBlocked } from '../../../core/workbench/rewind-store'
+import { assertNotRewindBlocked } from '../../../adapters/store/workbench/rewind-store'
 import { randomUUID } from 'node:crypto'
 import { execFileSync } from 'node:child_process'
-import { redactSecrets } from '../../../core/cli-transcript'
+import { redactSecrets } from '../../../domain/cli-transcript'
 import { startScript, KILL_GRACE_MS, type RunningScript, type ScriptExit } from '../script-runner'
 import { allocatePort } from '../worktree-ports'
 import { readPinnedScripts, repoKeyOf, type PinnedScripts, type ScriptKind } from '../worktree-scripts'
-import type { WorktreeRecord } from '../../../core/workbench/store'
+import type { WorktreeRecord } from '../../../adapters/store/workbench/store'
 import { BOOT_TOLERANCE_MS, bootTimeMs, groupAlive } from './writer-exit'
 import type { ServiceCtx } from './ctx'
 import type { ScriptsView } from './types'

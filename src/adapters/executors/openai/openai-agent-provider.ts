@@ -14,8 +14,8 @@ import type { ChatModelClient, ChatMessage, ToolSpec, TurnDelta } from './openai
 import type { McpToolBridge } from './openai-mcp-bridge'
 import { builtinTools, type BuiltinTool } from './openai-tools'
 import { gateTool } from './openai-gate'
-import type { ChatOwnerRules } from '../../../core/permission-rules/chat'
-import { makeTurnEmitter } from '../../../core/turn-emitter'
+import type { ChatOwnerRules } from '../../permission-rules/chat'
+import { makeTurnEmitter } from '../turn-emitter'
 
 export { OPENAI_CAPABILITIES } from '../../../domain/provider-capabilities'
 

@@ -1,7 +1,7 @@
 import {query, type Options, type SDKUserMessage} from '@anthropic-ai/claude-agent-sdk'
 import {AsyncQueue} from '../../../lib/async-queue'
 import {readNativeClaudeTools,workbenchClaudeEnvironment} from './claude-native-config'
-import {claudeModelCatalog} from '../../../core/workbench/native-model-catalog'
+import {claudeModelCatalog} from '../../../domain/workbench/native-model-catalog'
 
 /** Initialize only: never feed a prompt, launch a tool, or persist an empty session. */
 export async function discoverClaudeModels(base: Options, timeoutMs = 15_000) {

@@ -6,9 +6,9 @@ import {openDb,type Db} from '../../lib/db'
 import {createProviderRegistry} from '../../app/provider-registry'
 import type {AgentProvider,AgentSessionSuspension} from '../../ports/agent-provider'
 import type {NetworkGate} from '../../lib/network-gate'
-import {makeWorkbenchStore} from '../../core/workbench/store'
+import {makeWorkbenchStore} from '../../adapters/store/workbench/store'
 import {makeWorkbenchService,type WorkbenchService} from './service'
-import {MANAGED_NATIVE_CAPABILITIES} from '../../core/workbench/executor-capabilities'
+import {MANAGED_NATIVE_CAPABILITIES} from '../../domain/workbench/executor-capabilities'
 import {removeTempDir} from '../../lib/test-temp'
 
 // 网络守护「暂停在跑的任务」(主人 2026-10-03):冻住(SIGSTOP)而不是停;冻住期间 daemon 侧为这条

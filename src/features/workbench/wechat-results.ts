@@ -1,5 +1,5 @@
 import {createHash} from 'node:crypto'
-import type {TaskEvent} from '../../core/workbench/store'
+import type {TaskEvent} from '../../adapters/store/workbench/store'
 
 const PAGE_UTF16_UNITS=3000
 const TOKEN=/^r([1-9]\d*)-([a-f0-9]{12})$/

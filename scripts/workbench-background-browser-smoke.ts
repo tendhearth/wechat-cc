@@ -1,4 +1,4 @@
-import {MANAGED_NATIVE_CAPABILITIES} from '../src/core/workbench/executor-capabilities'
+import {MANAGED_NATIVE_CAPABILITIES} from '../src/domain/workbench/executor-capabilities'
 /// <reference lib="dom" />
 /** Production desktop modules → host proxy → internal HTTP → service → SQLite.
  * Native execution alone is a deterministic fixture; this is not native proof.
@@ -42,7 +42,7 @@ async function main(){
   const stateDir=join(temporary,'state'),project=join(temporary,'project');mkdirSync(stateDir);mkdirSync(project)
   process.env.WECHAT_STATE_DIR=stateDir;process.env.WECHAT_DISABLE_LOG_FILE='1'
   const [{openDb},{makeWorkbenchStore},{makeWorkbenchService},{createProviderRegistry},{createInternalApi},{createWorkbenchProxy},{workbenchRoutes}]=await Promise.all([
-    import('../src/lib/db'),import('../src/core/workbench/store'),import('../src/features/workbench/service'),import('../src/app/provider-registry'),import('../src/daemon/internal-api/index'),import('../apps/desktop/workbench-proxy'),import('../src/features/workbench/routes'),
+    import('../src/lib/db'),import('../src/adapters/store/workbench/store'),import('../src/features/workbench/service'),import('../src/app/provider-registry'),import('../src/daemon/internal-api/index'),import('../apps/desktop/workbench-proxy'),import('../src/features/workbench/routes'),
   ])
   const {chromium}=createRequire(join(repo,'apps/desktop/package.json'))('@playwright/test') as {chromium:{launch(options:{headless:boolean}):Promise<Browser>}}
   const ack=gate(),started:string[]=[],closed:string[]=[],submissions:Array<{requestId:string;text:string}>=[]
@@ -150,7 +150,7 @@ async function main(){
     assert.equal(store.events(next.id).filter(event=>event.kind==='user').length,1)
     await page.locator(`[data-task-id="${task.id}"]`).click()
     assert.equal(next.status,'queued');assert.equal(started.length,1)
-    const {outputDirectory}=await import('../src/core/workbench/artifacts')
+    const {outputDirectory}=await import('../src/adapters/workbench/artifacts')
     writeFileSync(join(outputDirectory(project,task.id),'background-result.md'),'# 已核对的成果\n')
     writeFileSync(join(outputDirectory(project,task.id),'generated.png'),thumbnailPng)
     await page.getByRole('button',{name:'结束后台会话',exact:true}).click()

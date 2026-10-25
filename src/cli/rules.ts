@@ -6,7 +6,7 @@
 import { writeFileAtomic } from '../lib/json-file'
 import { existsSync, readFileSync } from 'node:fs'
 import { join } from 'node:path'
-import { EMPTY_RULES, parseRulesFile, RULES_FILE, serializeRulesFile } from '../core/permission-rules/rules-file'
+import { EMPTY_RULES, parseRulesFile, RULES_FILE, serializeRulesFile } from '../adapters/permission-rules/rules-file'
 import type { Rule, RuleWhen, RulesFile, Verdict } from '../domain/permission-rules/types'
 
 type Result = { ok: true } | { ok: false; error: string }

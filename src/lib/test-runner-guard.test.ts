@@ -17,8 +17,8 @@ import { fileURLToPath } from 'node:url'
 //
 // which is worse than useless as a diagnostic: it reads like harness noise,
 // and its advice ("run bun test") is wrong for this repo. During the
-// Knowledge Kernel work six suites — src/core/knowledge/{graph,facts,person}
-// .test.ts, src/core/peer-closeness.test.ts, src/daemon/social/
+// Knowledge Kernel work six suites — src/domain/knowledge/{graph,facts,person}
+// .test.ts, a peer-closeness test (since removed), src/daemon/social/
 // owner-grounding.test.ts, src/features/companion/knowledge-distill.test.ts —
 // sat in exactly that state for a whole feature's lifetime, 52 assertions
 // that had never run once, while required CI stayed red and the message was

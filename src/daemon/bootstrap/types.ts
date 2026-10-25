@@ -9,8 +9,8 @@ import type { Options } from '@anthropic-ai/claude-agent-sdk'
 import type { WechatSend, WechatPermissions, WechatCompanionControls } from '../../ports/wechat'
 import type { Db } from '../../lib/db'
 import type { AgentConfig, AgentProviderKind } from '../../lib/agent-config'
-import type { AppendInput } from '../../core/a2a-events-store'
-import type { YiHub } from '../../core/yi-hub'
+import type { AppendInput } from '../../adapters/store/a2a-events-store'
+import type { YiHub } from '../../app/yi-hub'
 import type { DelegateDispatch } from './delegate'
 import type { SendAssistantText } from './fallback-reply'
 import type { HealthRuntime } from '../health'
@@ -66,7 +66,7 @@ export interface BootstrapDeps {
    * 每次调用现取。规则那一层(终端会话功能里的 permission-gate)和回复交付都比 bootstrap 晚 / 在外面接线,所以是个函数。
    * 不给 / 回 null ⇒ 对话不看规则(测试 / 最小嵌入和以前一样)。
    */
-  chatOwnerRules?: () => import('../../core/permission-rules/chat').ChatOwnerRules | null
+  chatOwnerRules?: () => import('../../adapters/permission-rules/chat').ChatOwnerRules | null
   agentProviderKind?: AgentProviderKind
   /**
    * When provided, the standalone wechat-mcp stdio MCP server (RFC 03 §5)
@@ -309,9 +309,9 @@ export interface Bootstrap {
    * a2a-server 子系统降级(wireA2aServer 抛错,spec 2026-08-17).
    */
   a2aDeps?: {
-    registry: import('../../core/a2a-registry').A2ARegistry
-    client: import('../../core/a2a-client').A2AClient
-    eventsStore: import('../../core/a2a-events-store').A2AEventsStore
+    registry: import('../../adapters/a2a/a2a-registry').A2ARegistry
+    client: import('../../adapters/a2a/a2a-client').A2AClient
+    eventsStore: import('../../adapters/store/a2a-events-store').A2AEventsStore
     recordEvent: (event: AppendInput) => void
     serverEnabled: boolean
     baseUrl: string | null
@@ -321,7 +321,7 @@ export interface Bootstrap {
    * Stopped by its module's own (bootstrap/wire-a2a-server.ts a2aServerModule) — the container stops it,
    * also when boot didn't finish. Tests that build a bootstrap and never stop the container stop it themselves.
    */
-  a2aServer: import('../../core/a2a-server').A2AServer | null
+  a2aServer: import('../../adapters/a2a/a2a-server').A2AServer | null
   /**
    * 乙 v2 BRAIN hub — present only when yi_hub_listen is configured.
    * pipeline-deps reads this to route ws-transport hands via the hub.
@@ -355,7 +355,7 @@ export interface Bootstrap {
     penpal: {
       sendLetter(channel: string, text: string): Promise<{ ok: boolean; error?: string; letter_id?: string }>
       resendLetter(letterId: string): Promise<{ ok: boolean; error?: string; letter_id?: string }>
-      channelStore: import('../../core/penpal-channel-store').ChannelStore
+      channelStore: import('../../adapters/store/penpal-channel-store').ChannelStore
       letterStore: import('../../features/social').LetterStore
       startVisit(channelRowId?: string): Promise<{ ok: true; id: string; channel: string } | { ok: false; reason: string }>
       /** 进行中的串门(spec 2026-09-03-companion-presence)。 */
@@ -397,7 +397,7 @@ export interface Bootstrap {
    * and internal-api /v1/pair/* routes read this; undefined ⇒ inert (no-op /
    * 503), same posture as `boot.social`/`boot.penpal`.
    */
-  pairing?: import('../../core/pairing').PairingEngine
+  pairing?: import('../../app/pairing').PairingEngine
   /**
    * Knowledge Kernel (Phase 01, T5) — the daemon-owned KnowledgeStore + the
    * Query-face `semanticSearch` function, present only when
@@ -413,7 +413,7 @@ export interface Bootstrap {
    * server — tests that never stop the container close it themselves.
    *
    * Agent-facing Search (Task 2) — `embedder` is the ONE shared, long-lived
-   * embed-subprocess service (../../core/knowledge/embedder-service.ts)
+   * embed-subprocess service (../../adapters/knowledge/embedder-service.ts)
    * used by both the indexer (this file's knowledge cycle) and the query
    * path (internal-api's `embedQuery`); it is NOT closed between cycles,
    * only on daemon shutdown (main.ts). Exposed here (mirrors `store` above)
@@ -423,9 +423,9 @@ export interface Bootstrap {
    * resolved (store/search are still present in that case).
    */
   knowledge?: {
-    store: import('../../core/knowledge/store').KnowledgeStore
-    search: typeof import('../../core/knowledge/search').semanticSearch
-    embedder?: import('../../core/knowledge/embedder-service').EmbedderService
+    store: import('../../adapters/knowledge/store').KnowledgeStore
+    search: typeof import('../../domain/knowledge/search').semanticSearch
+    embedder?: import('../../adapters/knowledge/embedder-service').EmbedderService
     embedQuery?: (t: string) => Promise<number[]>
     /** 实际在用的向量化路径(2026-10-06,状态总览):js 起不来退回 Python 时是 js_fell_back;没有向量化是 none。 */
     embedStatus?: () => 'js' | 'python' | 'js_fell_back' | 'none'
@@ -438,7 +438,7 @@ export interface Bootstrap {
      * `InternalApiDeps['knowledge']` for the full rationale, which this
      * mirrors.
      */
-    graph?: import('../../core/knowledge/graph-query').GraphQueryApi
+    graph?: import('../../domain/knowledge/graph-query').GraphQueryApi
     /**
      * Facts + Person (Knowledge Facts/Person inproc, Task 5) — mirrors
      * `InternalApiDeps['knowledge'].facts`/`.person` (internal-api/types.ts):
@@ -448,8 +448,8 @@ export interface Bootstrap {
      * `makePersonApi`. Same posture as `graph` above: present whenever
      * `knowledge_enabled` is configured.
      */
-    facts?: import('../../core/knowledge/facts').FactsApi
-    person?: import('../../core/knowledge/person').PersonApi
+    facts?: import('../../domain/knowledge/facts').FactsApi
+    person?: import('../../domain/knowledge/person').PersonApi
   }
   /**
    * Connection-health runtime (connection-health design, Task 7) — wraps the
@@ -469,7 +469,7 @@ export interface Bootstrap {
    * `const release = boot.holdBusy(label); try { ... } finally { release() }`
    * (or the fire-and-forget `.finally(release)` shape used by the
    * background coroutines). Always present — the underlying registry
-   * (src/core/busy-registry.ts) is constructed unconditionally in
+   * (src/daemon/busy-registry.ts) is constructed unconditionally in
    * buildBootstrap, independent of whether self-restart itself is enabled
    * via `deps.requestRestart`. The self-restart idle check reads
    * `busyRegistry.busy()` directly (see ./wire-self-restart.ts), so a held

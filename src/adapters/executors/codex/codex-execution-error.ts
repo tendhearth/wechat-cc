@@ -1,6 +1,6 @@
 import type {AgentEvent} from '../../../ports/agent-provider'
-import type {TaskEvent} from '../../../core/workbench/store'
-import {executionFailureMessage} from '../../../core/workbench/execution-settings'
+import type {TaskEvent} from '../../store/workbench/store'
+import {executionFailureMessage} from '../../store/workbench/execution-settings'
 
 /** One observed native error shape, on the error channel only. Never scan assistant prose. */
 export function codexExecutionErrorCode(message:string):'execution_model_unsupported'|undefined {

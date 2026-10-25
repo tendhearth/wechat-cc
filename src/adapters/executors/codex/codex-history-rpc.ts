@@ -1,7 +1,7 @@
 import { spawn, type ChildProcessWithoutNullStreams, type SpawnOptionsWithoutStdio } from 'node:child_process'
 import { StringDecoder } from 'node:string_decoder'
 import { workbenchCodexArgs, workbenchCodexEnv, workbenchFeatureConfig } from './codex-config'
-import { historyObject, nativeHistoryFailure, NATIVE_HISTORY_MAX_BYTES, NATIVE_HISTORY_TIMEOUT_MS } from '../../../core/workbench/native-history'
+import { historyObject, nativeHistoryFailure, NATIVE_HISTORY_MAX_BYTES, NATIVE_HISTORY_TIMEOUT_MS } from '../../workbench/native-history'
 import { APP_VERSION } from '../../../lib/app-version'
 
 export type CodexHistoryMethod='thread/list'|'thread/read'|'thread/items/list'|'account/rateLimits/read'

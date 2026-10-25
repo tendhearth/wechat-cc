@@ -31,16 +31,16 @@ vi.mock('../../lib/config.ts', async (importOriginal) => {
   return { ...actual, STATE_DIR: ACCESS_STATE_DIR }
 })
 
-// The dynamic imports inside delegateToHand (`../../core/a2a-delegate` for
-// the actual HTTP POST, `../../core/a2a-client` for the client factory) are
+// The dynamic imports inside delegateToHand (`../../app/a2a-delegate` for
+// the actual HTTP POST, `../../adapters/a2a/a2a-client` for the client factory) are
 // mocked so the test never touches the network — and so the mocked
 // `delegateToHand` can capture exactly what `selfId` it was called with.
 const doDelegateSpy = vi.fn(async () => ({ ok: true as const, response: 'done' }))
-vi.mock('../../core/a2a-delegate', async (importOriginal) => {
-  const actual = await importOriginal<typeof import('../../core/a2a-delegate')>()
+vi.mock('../../app/a2a-delegate', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('../../app/a2a-delegate')>()
   return { ...actual, delegateToHand: doDelegateSpy }
 })
-vi.mock('../../core/a2a-client', () => ({
+vi.mock('../../adapters/a2a/a2a-client', () => ({
   createA2AClient: () => ({ send: vi.fn() }),
 }))
 

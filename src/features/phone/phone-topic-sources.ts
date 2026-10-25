@@ -13,7 +13,7 @@
  *
  * 集线器只按「稳定序列化后变没变」判新事件,所以摘要里别放每次都变的东西(synced_at 之类)。
  */
-import { TERMINAL_TASK_STATUSES } from '../../core/workbench/store'
+import { TERMINAL_TASK_STATUSES } from '../../adapters/store/workbench/store'
 import type { WorkbenchService } from '../workbench'
 import type { MatterStore } from '../../adapters/store/matters-store'
 import type { HomePayload } from './settings-panel'

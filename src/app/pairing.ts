@@ -1,0 +1,465 @@
+/**
+ * pairing.ts — the 配对码 engine (spec §4–§6). Deps-injected: no direct network,
+ * clock, or scheduler, so it unit-tests against a fake relay + registry.
+ *
+ * start()  — initiator: mint a code + keyI, derive the rendezvous identity, seal
+ *            its own card and drop it into the shared rendezvous box, then arm a
+ *            bounded ~10s poller (≤10 min) waiting for the acceptor's card.
+ * accept() — acceptor: derive the same identity, fetch the box, find the
+ *            initiator card, reject self-pair, write the peer record, drop its
+ *            own card back.
+ * adoptPeerCard — shared with 介绍 (wire-intro.ts): overwrite-by-self_id, bearer
+ *            crossing (spec §5) — outbound_api_key = card.bearer,
+ *            inbound_api_key = the key WE minted — then opens the pen-pal
+ *            channel row (`pair:` here, `intro:` there). buildOwnCard mints the
+ *            v2 card both paths hand to the peer.
+ *
+ * NO ack (shared box; ack is a global delete — §4). Cards carry role + nonce so
+ * each side ignores its own. Only one active initiator code at a time (a new
+ * start() supersedes). Not restart-persistent (§8).
+ */
+import { deriveRendezvous } from '../adapters/mailbox/pairing-crypto'
+import { sealEnvelope, openEnvelope, signFetch, type Envelope } from '../adapters/mailbox/mailbox-crypto'
+import type { MailboxClient } from '../adapters/mailbox/mailbox-client'
+import type { A2ARegistry } from '../adapters/a2a/a2a-registry'
+import type { A2AAgentRecord } from '../lib/agent-config'
+
+export interface PairCard {
+  v: 2
+  role: 'initiator' | 'acceptor'
+  nonce: string
+  self_id: string
+  name: string
+  url?: string
+  mailbox_addr: string
+  mailbox_enc_pub: string
+  relays: string[]
+  bearer: string
+  /** 我的收信地址 —— 配对完直接开 E2E 信道,不再靠揭晓。 */
+  channel_id: string
+  /** X25519 公钥 —— 配对完直接开 E2E 信道,不再靠揭晓。 */
+  channel_pub: string
+}
+
+export type PairResult =
+  | { ok: true; peer: { self_id: string; name: string } }
+  | { ok: false; reason: 'expired_or_wrong' | 'self_pair' | 'id_conflict' | 'relay_drop_failed' }
+
+// start() can now fail too (the initiator card drop is awaited + checked —
+// see makePairing's start()). Uses the same {ok, reason} shape as PairResult
+// for consistency rather than a bespoke {ok:false, error} pair.
+export type PairStartResult =
+  | { ok: true; code: string; expiresAt: number }
+  | { ok: false; reason: 'relay_drop_failed' }
+
+export interface PairScheduleHandle { cancel(): void }
+
+export interface PairingDeps {
+  client: MailboxClient
+  registry: A2ARegistry
+  self: { mailbox_addr: string; mailbox_enc_pub: string; relays: string[] }
+  selfId: () => string
+  name: () => string
+  url?: () => string | undefined
+  now: () => number
+  mintKey: () => string
+  genCode: () => string
+  genNonce: () => string
+  /** notify is for ASYNC outcomes only (the initiator's background poller —
+   *  TTL expiry, a peer card showing up mid-poll): there is no caller waiting
+   *  on those. Every SYNCHRONOUS start()/accept() result is rendered by the
+   *  caller instead (WeChat dispatch / internal-api / CLI) — calling notify
+   *  there too double-messages the owner, since notify targets
+   *  resolveOperatorChatId(), which in a solo-owner install is the SAME chat
+   *  the caller is about to reply to directly. */
+  notify: (msg: string) => void
+  schedule: (fn: () => void, ms: number) => PairScheduleHandle
+  pollIntervalMs?: number
+  ttlMs?: number
+  log?: (msg: string) => void
+  /** 配对即开信道(spec 2026-09-04-wish-postcard §2)。 */
+  channelStore: Pick<import('../adapters/store/penpal-channel-store').ChannelStore, 'create' | 'setPeerHandle' | 'setStatus' | 'list' | 'get'>
+  /** 生成我方信道句柄:X25519 密钥对 + 收信地址。 */
+  genChannel: () => { channelId: string; pubkey: string; privkey: string }
+}
+
+export interface PairingEngine {
+  start(): Promise<PairStartResult>
+  accept(code: string): Promise<PairResult>
+  stop(): void
+}
+
+interface ActiveInitiator {
+  code: string
+  nonce: string
+  myKey: string
+  expiresAt: number
+  rvAddr: string
+  rvEncPriv: string
+  rvSign: (m: string) => string
+  handle: PairScheduleHandle | null
+}
+
+/** 结构校验(v2 名片)。makePairing 内部的 cardProblem 和 intro.ts 的
+ *  parseIntroPayload 共用这一份 —— 配对来的名片和介绍来的名片同一把尺子。 */
+export function isValidPairCard(card: unknown): card is PairCard {
+  if (!card || typeof card !== 'object') return false
+  const c = card as Record<string, unknown>
+  const s = (k: string) => typeof c[k] === 'string' && (c[k] as string).length > 0
+  return c.v === 2 && (c.role === 'initiator' || c.role === 'acceptor')
+    && s('nonce') && s('self_id') && /^[a-z0-9][a-z0-9-]{0,63}$/.test(c.self_id as string) && s('name') && s('bearer')
+    && s('mailbox_addr') && s('mailbox_enc_pub') && Array.isArray(c.relays) && (c.relays as unknown[]).length > 0
+    && s('channel_id') && s('channel_pub')
+}
+
+/**
+ * 这个 url 值不值得写进配对卡片交给**对方**?
+ *
+ * WHY(2026-09-01,Mac↔Windows 真机):卡片里的 url 来自
+ * `a2aServer.baseUrl()` = `http://${host}:${port}`,而 `a2a_listen.host`
+ * **默认就是 127.0.0.1**。于是我们把一个回环地址广播给了远端 —— 在对方
+ * 机器上它指向对方自己。仪表盘「测试连通」走 /v1/a2a/send 用的正是
+ * `agent.url`,于是对端会 POST 到自己的 8790;目前靠 bearer 不匹配才挡住,
+ * 是运气不是设计。
+ *
+ * 判定按「能不能路由到别人的机器」,不是按「是不是我自己」。私网地址
+ * (10./192.168./172.16-31)刻意**保留** —— 同一局域网内两台机器直连是
+ * 合法且有用的,恰恰是 wechat-cc 常见的部署形态。
+ */
+export function isAdvertisableUrl(url: string): boolean {
+  let host: string
+  try { host = new URL(url).hostname } catch { return false }
+  // URL 会把 IPv6 主机名带上方括号
+  const h = host.replace(/^\[|\]$/g, '').toLowerCase()
+  if (h === 'localhost' || h.endsWith('.localhost')) return false
+  if (h === '::1' || h === '::' || h === '0.0.0.0') return false
+  if (/^127\./.test(h)) return false
+  if (/^169\.254\./.test(h)) return false        // IPv4 link-local
+  if (/^fe80:/.test(h)) return false               // IPv6 link-local
+  return true
+}
+
+export interface CardDeps {
+  selfId: () => string
+  name: () => string
+  url?: () => string | undefined
+  self: { mailbox_addr: string; mailbox_enc_pub: string; relays: string[] }
+}
+
+/** 造一张自己的名片(配对码和介绍共用)。 */
+export function buildOwnCard(deps: CardDeps, role: PairCard['role'], nonce: string, bearer: string, chan: { channelId: string; pubkey: string }): PairCard {
+  // 只广播对方**真的能拨到**的地址 —— 见 isAdvertisableUrl。
+  const raw = deps.url?.()
+  const u = raw && isAdvertisableUrl(raw) ? raw : undefined
+  return {
+    v: 2, role, nonce,
+    self_id: deps.selfId(), name: deps.name(),
+    ...(u ? { url: u } : {}),
+    mailbox_addr: deps.self.mailbox_addr,
+    mailbox_enc_pub: deps.self.mailbox_enc_pub,
+    relays: deps.self.relays,
+    bearer,
+    channel_id: chan.channelId,
+    channel_pub: chan.pubkey,
+  }
+}
+
+export interface AdoptDeps {
+  registry: A2ARegistry
+  channelStore: Pick<import('../adapters/store/penpal-channel-store').ChannelStore, 'create' | 'setPeerHandle' | 'setStatus' | 'list' | 'get'>
+  log?: (msg: string) => void
+}
+
+/**
+ * 采纳一张对方的名片 = 写注册表(transport mailbox,bearer 交叉)+ 开/补
+ * `<rowPrefix>:<nonce>` 的 open 信道。配对码和介绍共用。
+ *
+ * spec §5/§6: outbound_api_key = card.bearer(对方给我们的钥匙),inbound_api_key
+ * = 我们自己铸的那把(对方存成它的 outbound)。按 self_id 覆盖重写,但**仅当**
+ * 真是重新配对(同 self_id 且同 mailbox_addr)。同 id + 不同/缺 mailbox_addr
+ * 是撞在旧版共享 'wechat-cc' id 上的无关对端(祖父规则,spec §2)——覆盖会
+ * 误伤它,所以拒绝写入(id_conflict)。
+ *
+ * `nonce` 必须是 INITIATOR 的 nonce(不是「card 那一方自己的」nonce)—— 两边
+ * 各自的调用要落到*同一个* row id 上才有意义。initiator 一侧本地就知道;
+ * acceptor 一侧读的是它验过的 initiator 名片的 nonce,两者恰好是同一个字符串。
+ * 用 acceptor 自己那张名片的 nonce 会让两边各建一个不同 id 的行 —— 这条信道
+ * 的意义就没了。
+ *
+ * **同一对端已经有 open 行也照建**(不因为「已有」就跳过)—— 两边是各自判断
+ * 的,一侧留着旧行、另一侧没有(数据库重建过、行被删过),按「已有就跳过」
+ * 会开出一条只有一头存在的信道。按 nonce 建行则两侧永远对称;「往哪投」的
+ * 收敛交给 `primaryChannels`(penpal-channel-store.ts):按 peer_agent_id 取
+ * 最新的一条 open。
+ *
+ * 开信道的三步(`create → setPeerHandle → setStatus`)不是原子的:内部
+ * try/catch 包一层,失败只记日志——注册表已经写好了,信道开不开不该拖累
+ * 「配对/介绍成功」这个事实。幂等:`rowId` 已存在(比如上次 `create` 成功
+ * 但后面的调用抛了,行还停在 `pending`)就直接补 setPeerHandle + setStatus,
+ * 不重新 create(会撞主键)。
+ */
+export function adoptPeerCard(
+  deps: AdoptDeps,
+  card: PairCard,
+  mine: { channelId: string; pubkey: string; privkey: string },
+  myMintedKey: string,
+  nonce: string,
+  rowPrefix: 'pair' | 'intro',
+): { ok: true; rowId: string; channelOpened: boolean } | { ok: false; reason: 'id_conflict' } {
+  const existing = deps.registry.get(card.self_id)
+  if (existing && existing.mailbox_addr !== card.mailbox_addr) return { ok: false, reason: 'id_conflict' }
+  // 介绍来的名片是第三方转手的(介绍人递过来),不能用来覆盖已有朋友(2026-10-10 评审):mailbox_addr 是公开的、
+  // 每张名片都带,介绍人知道我朋友 C 的 addr,就能递一张 self_id=C、addr=C、enc_pub / bearer 却是自己的名片,
+  // 把 C 的记录换掉、之后发给 C 的信全改道给他。真重配只走配对码(那条路验过名片确实来自对端)。
+  if (existing && rowPrefix === 'intro') return { ok: false, reason: 'id_conflict' }
+  const rec: A2AAgentRecord = {
+    id: card.self_id,
+    name: card.name,
+    ...(card.url ? { url: card.url } : {}),
+    inbound_api_key: myMintedKey,
+    outbound_api_key: card.bearer,
+    capabilities: [],
+    paused: false,
+    transport: 'mailbox',
+    // 社交层的朋友 bot —— **绝不**授权在我这台机器上跑东西。
+    may_exec: false,
+    mailbox_addr: card.mailbox_addr,
+    mailbox_enc_pub: card.mailbox_enc_pub,
+    relays: card.relays,
+  }
+  if (existing) deps.registry.remove(rec.id) // full overwrite of the true re-pair (§6)
+  deps.registry.add(rec)
+
+  const rowId = `${rowPrefix}:${nonce}`
+  let channelOpened = false
+  try {
+    const older = deps.channelStore.list().find(r => r.status === 'open' && r.peer_agent_id === card.self_id && r.id !== rowId)
+    if (older) deps.log?.(`${rowPrefix}: peer ${card.self_id} already had an open channel ${older.id}; new ${rowPrefix} channel ${rowId} created alongside`)
+    if (!deps.channelStore.get(rowId)) {
+      deps.channelStore.create({ id: rowId, seekId: rowId, myPrivkey: mine.privkey, myPubkey: mine.pubkey, myChannelId: mine.channelId, degree: 1, peerAgentId: card.self_id })
+    }
+    deps.channelStore.setPeerHandle(rowId, { pubkey: card.channel_pub, channel_id: card.channel_id, mailbox: { addr: card.mailbox_addr, enc_pub: card.mailbox_enc_pub, relays: card.relays } })
+    deps.channelStore.setStatus(rowId, 'open')
+    channelOpened = true
+  } catch (e) {
+    deps.log?.(`${rowPrefix}: registry written but channel open failed for ${card.self_id}: ${String(e)}`)
+  }
+  return { ok: true, rowId, channelOpened }
+}
+
+export function makePairing(deps: PairingDeps): PairingEngine {
+  // Fail fast at construction, not with a silent `relays[0]!` non-null
+  // assertion that would only blow up (as `undefined` in a URL string) the
+  // first time start()/accept() actually tries to reach the relay.
+  if (deps.self.relays.length === 0) {
+    throw new Error('makePairing: deps.self.relays must be non-empty (relays[0] is the rendezvous relay)')
+  }
+  const pollIntervalMs = deps.pollIntervalMs ?? 10_000
+  const ttlMs = deps.ttlMs ?? 600_000
+  const rendezvousRelay = deps.self.relays[0]!
+  let active: ActiveInitiator | null = null
+
+  // spec §5/§6: outbound_api_key = card.bearer (peer's key for us), inbound_api_key
+  // = the key WE minted (peer stores it as THEIR outbound). Overwrite-by-self_id,
+  // but ONLY on a true re-pair (same self_id AND same mailbox_addr). A same-id +
+  // different/absent mailbox_addr is an UNRELATED peer colliding on a legacy
+  // shared 'wechat-cc' id (grandfather rule, spec §2) — overwriting would clobber
+  // it, so reject the pairing instead (id_conflict).
+  // Peek-only version of the id_conflict check writePeerFromCard applies, so
+  // callers that need to decide something ELSE (e.g. accept()'s drop-first
+  // ordering below) before committing a write can bail out with zero side
+  // effects — no registry write, no card drop.
+  function conflicts(card: PairCard): boolean {
+    const existing = deps.registry.get(card.self_id)
+    return !!existing && existing.mailbox_addr !== card.mailbox_addr
+  }
+
+  const ID_CONFLICT_MSG = '对方 bot 使用旧版共享身份且与你已有的朋友撞名——请让对方升级出唯一身份后重试'
+
+  // Cards come back in cursor-ASCENDING order (relay returns items ascending; no
+  // ack/deletion during pairing), so callers' `.find(...)` = FIRST-dropper-wins
+  // (spec §4). Note: a single /fetch returns ≤64 items (no client pagination) —
+  // a code-holder could bury the card past item 64; accepted for v0 (same threat
+  // class as §3's "third party who has the code").
+  //
+  // This is the SINGLE admission point for anything claiming to be a
+  // PairCard — every field the rest of the engine trusts without further
+  // checking (mailbox_addr for the id_conflict guard in conflicts()/
+  // adoptPeerCard, self_id as the registry key, relays/mailbox_enc_pub
+  // as what gets written into the peer record) must be validated here, not
+  // trusted from a bare `as PairCard` cast. A hostile or malformed card can
+  // omit mailbox_addr at runtime despite the compile-time type saying it's
+  // required; against a legacy push/ws peer (mailbox_addr === undefined in
+  // the registry), `undefined !== undefined` would read as "no conflict"
+  // and silently clobber an unrelated pre-existing edge — exactly what the
+  // id_conflict guard exists to prevent. Requiring non-empty strings here
+  // closes that off: a card missing mailbox_addr never reaches conflicts()
+  // at all. self_id is additionally checked against the registry's own slug
+  // regex (agent-config.ts's A2AAgentRecord.id) so a non-slug id can never
+  // pass registry.add() only to be safeParse-dropped by loadAgentConfig on
+  // the next read (registry/config divergence) — this is the SAME regex
+  // isValidPairCard() checks module-level, so patching v/channel below and
+  // delegating to it keeps that guarantee.
+  /**
+   * `null` = 合规;`'pre_v2'` = 别的都对,只差 `v === 2` 或那两个信道字段 ——
+   * 一台还没升级的对端(v1 名片);`'invalid'` = 别的任何毛病(垃圾/敌意)。
+   * 分开是为了能对 pre-v2 说一句人话:静默丢弃时,两边的主人都以为是「配对码
+   * 过期了」,谁也不会想到去升级对面那台。
+   *
+   * 判断「别的都对」时把 v/信道字段 patch 成合规占位值再丢给 isValidPairCard —
+   * 这样两处校验对「别的」字段的要求永远是同一份代码,不会跑偏。
+   */
+  function cardProblem(card: unknown): 'pre_v2' | 'invalid' | null {
+    if (!card || typeof card !== 'object') return 'invalid'
+    const c = card as Record<string, unknown>
+    const hasChannel = typeof c.channel_id === 'string' && c.channel_id.length > 0
+      && typeof c.channel_pub === 'string' && c.channel_pub.length > 0
+    const patched = { ...c, v: 2, channel_id: hasChannel ? c.channel_id : 'x', channel_pub: hasChannel ? c.channel_pub : 'x' }
+    if (!isValidPairCard(patched)) return 'invalid'
+    if (c.v !== 2 || !hasChannel) return 'pre_v2'
+    return null
+  }
+  function readCards(rvAddr: string, rvEncPriv: string, rvSign: (m: string) => string): Promise<PairCard[]> {
+    const ts = deps.now()
+    return deps.client.fetch(rendezvousRelay, rvAddr, 0, ts, signFetch(rvSign, rvAddr, ts)).then(res => {
+      if (!res) return []
+      const cards: PairCard[] = []
+      for (const item of res.items) {
+        let env: Envelope
+        try { env = JSON.parse(item.envelope) as Envelope } catch { continue }
+        const inner = openEnvelope(rvEncPriv, env)
+        if (!inner) continue
+        const problem = cardProblem(inner.body)
+        if (problem === null) cards.push(inner.body as PairCard)
+        else if (problem === 'pre_v2') {
+          const who = (inner.body as { self_id?: unknown }).self_id
+          deps.log?.(`PAIR: ignoring pre-v2 card from ${String(who)} — peer needs to upgrade`)
+        }
+      }
+      return cards
+    })
+  }
+
+  function stop(): void {
+    if (active?.handle) active.handle.cancel()
+    active = null
+  }
+
+  async function start(): Promise<PairStartResult> {
+    stop() // supersede any prior active code (§8: one at a time)
+    const code = deps.genCode()
+    const rv = deriveRendezvous(code)
+    const myKey = deps.mintKey()
+    const nonce = deps.genNonce()
+    const mine = deps.genChannel()
+    const expiresAt = deps.now() + ttlMs
+
+    // Await + check the initiator card drop BEFORE arming the poller or
+    // handing back a code. `MailboxClient.drop` resolves `false` (not a
+    // throw) on any non-2xx — the original fire-and-forget `.catch()` only
+    // handled rejections, so a `false` resolution was silently swallowed: the
+    // code would be handed to the friend, the poller would arm and dutifully
+    // poll for 10 minutes, and the acceptor's `accept()` would find nothing
+    // and report `expired_or_wrong` with zero diagnostics on either side. A
+    // code whose card never reached the relay can never be redeemed — fail
+    // loudly here instead.
+    const env = sealEnvelope({ path: '/pair', bearer: '', body: buildOwnCard(deps, 'initiator', nonce, myKey, mine) }, rv.enc_pub)
+    let dropped: boolean
+    try {
+      dropped = await deps.client.drop(rendezvousRelay, rv.addr, JSON.stringify(env))
+    } catch (e) {
+      deps.log?.(`pair drop failed: ${String(e)}`)
+      dropped = false
+    }
+    if (!dropped) {
+      // Sync failure — the caller (WeChat dispatch / internal-api / CLI)
+      // renders its own reply; see the notify dep's doc comment.
+      return { ok: false, reason: 'relay_drop_failed' }
+    }
+
+    const cur: ActiveInitiator = { code, nonce, myKey, expiresAt, rvAddr: rv.addr, rvEncPriv: rv.enc_priv, rvSign: rv.sign, handle: null }
+    active = cur
+
+    const tick = (): void => {
+      if (active !== cur) return // superseded
+      if (deps.now() >= cur.expiresAt) {
+        stop()
+        deps.notify('配对码过期了,没等到朋友——要再来一次说“配对”')
+        return
+      }
+      void readCards(cur.rvAddr, cur.rvEncPriv, cur.rvSign).then(cards => {
+        if (active !== cur) return
+        // Minor a: exclude our own card by self_id too (symmetry with accept's
+        // self-pair reject), not just by nonce.
+        const peer = cards.find(c => c.role === 'acceptor' && c.nonce !== cur.nonce && c.self_id !== deps.selfId())
+        if (peer) {
+          // 注册表已经写好了 —— 信道开不开不该拖累"配对成功"这个事实,
+          // adoptPeerCard 内部已经把失败降级成 channelOpened:false + log(不要
+          // 在同一个失败上重试到 TTL,那样注册表明明写好了却告诉用户"过期了")。
+          const write = adoptPeerCard(deps, peer, mine, cur.myKey, cur.nonce, 'pair')
+          stop()
+          deps.notify(write.ok ? `和 ${peer.name} 的 bot 连上了 ✓ 现在可以互相觅食/写信了` : ID_CONFLICT_MSG)
+          return
+        }
+        cur.handle = deps.schedule(tick, pollIntervalMs)
+      }).catch(e => {
+        deps.log?.(`pair poll failed: ${String(e)}`)
+        if (active === cur) cur.handle = deps.schedule(tick, pollIntervalMs)
+      })
+    }
+    cur.handle = deps.schedule(tick, pollIntervalMs)
+    return { ok: true, code, expiresAt }
+  }
+
+  async function accept(code: string): Promise<PairResult> {
+    const rv = deriveRendezvous(code)
+    const cards = await readCards(rv.addr, rv.enc_priv, rv.sign)
+    const initiator = cards.find(c => c.role === 'initiator')
+    if (!initiator) return { ok: false, reason: 'expired_or_wrong' }
+    if (initiator.self_id === deps.selfId()) return { ok: false, reason: 'self_pair' }
+
+    // id_conflict is checked (peek-only, zero side effects) BEFORE attempting
+    // anything else, so a same-id/different-mailbox collision still means
+    // NO card drop and NO write — preserved from before this fix. Sync
+    // failure — the caller renders its own reply (notify dep's doc comment).
+    if (conflicts(initiator)) return { ok: false, reason: 'id_conflict' }
+
+    const myKey = deps.mintKey()
+    const mine = deps.genChannel()
+
+    // Drop-first, THEN write locally. `MailboxClient.drop` resolves `false`
+    // (not a throw) on any non-2xx — previously this awaited call's result
+    // was discarded entirely, so a failed drop still wrote the peer locally
+    // and told the acceptor's own operator "connected ✓" while the initiator
+    // silently timed out with "过期了" (one-sided broken pairing, zero
+    // diagnostics on either side). Dropping first means a failed drop leaves
+    // NO local state to unwind — the acceptor can just retry cleanly, no
+    // rollback path needed. (Writing first and rolling back on drop failure
+    // would need an explicit registry.remove() undo and risks a
+    // half-committed peer if THAT itself fails.)
+    const env = sealEnvelope({ path: '/pair', bearer: '', body: buildOwnCard(deps, 'acceptor', deps.genNonce(), myKey, mine) }, rv.enc_pub)
+    let dropped: boolean
+    try {
+      dropped = await deps.client.drop(rendezvousRelay, rv.addr, JSON.stringify(env))
+    } catch (e) {
+      deps.log?.(`pair drop failed: ${String(e)}`)
+      dropped = false
+    }
+    if (!dropped) {
+      // Sync failure — the caller renders its own reply (notify dep's doc comment).
+      return { ok: false, reason: 'relay_drop_failed' }
+    }
+
+    // defensive: re-checked at write time too (adoptPeerCard does its own
+    // id_conflict check on the registry). 注册表已经写好了就算配对本身成功,
+    // 信道开不开是另一回事(可以靠重新配对补救)—— adoptPeerCard 内部把那
+    // 失败降级成 channelOpened:false + log,绝不让它变成把已经成立的配对
+    // 结果吞掉的未捕获 rejection。
+    const write = adoptPeerCard(deps, initiator, mine, myKey, initiator.nonce, 'pair')
+    if (!write.ok) return { ok: false, reason: 'id_conflict' }
+
+    return { ok: true, peer: { self_id: initiator.self_id, name: initiator.name } }
+  }
+
+  return { start, accept, stop }
+}

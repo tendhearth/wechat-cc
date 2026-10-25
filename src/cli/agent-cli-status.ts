@@ -3,12 +3,12 @@
  * 加上 daemon 记下的自动升级状态(`cli-upgrade.json`,只读)。`--check` 再去查一次最新版本 ——
  * 只读探测,不装、不写状态、不碰 daemon。
  */
-import { CLI_IDS, CLI_SPECS, type CliId } from '../core/cli-upgrade/specs'
-import { installedVersion, latestVersion, type CommandRunner, type LatestResult } from '../core/cli-upgrade/detect'
-import { detectLayout, type Layout } from '../core/cli-upgrade/layout'
-import { isNewer } from '../core/cli-upgrade/version'
-import { resolveCliUpgradeConfig, type ResolvedCliUpgradeConfig } from '../core/cli-upgrade/config'
-import type { CliUpgradeState } from '../core/cli-upgrade/state'
+import { CLI_IDS, CLI_SPECS, type CliId } from '../domain/cli-upgrade/specs'
+import { installedVersion, latestVersion, type CommandRunner, type LatestResult } from '../adapters/cli-upgrade/detect'
+import { detectLayout, type Layout } from '../adapters/cli-upgrade/layout'
+import { isNewer } from '../domain/cli-upgrade/version'
+import { resolveCliUpgradeConfig, type ResolvedCliUpgradeConfig } from '../domain/cli-upgrade/config'
+import type { CliUpgradeState } from '../adapters/cli-upgrade/state'
 
 export interface AgentCliRow {
   id: CliId
@@ -101,9 +101,9 @@ export function formatAgentCliStatus(s: AgentCliStatus): string {
 
 export function defaultAgentCliStatusDeps(stateDir: string): Promise<AgentCliStatusDeps> {
   return (async () => {
-    const { defaultLocate } = await import('../core/cli-upgrade/locate')
-    const { defaultRunner } = await import('../core/cli-upgrade/detect')
-    const { makeFileStateStore } = await import('../core/cli-upgrade/state')
+    const { defaultLocate } = await import('../adapters/cli-upgrade/locate')
+    const { defaultRunner } = await import('../adapters/cli-upgrade/detect')
+    const { makeFileStateStore } = await import('../adapters/cli-upgrade/state')
     const { loadAgentConfig } = await import('../lib/agent-config')
     const { homedir } = await import('node:os')
     const cfg = loadAgentConfig(stateDir)

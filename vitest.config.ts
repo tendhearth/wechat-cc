@@ -22,13 +22,13 @@ export default defineConfig({
         // 「一个文件夹一个活会话」的不变式测试:用 Claude 保留会话那套夹具(同上),
         // 而且用真 git 临时仓库截差异快照(同 git-review.test.ts 的路径 / CRLF 理由),win32 上不跑。
         'src/features/workbench/service-one-session.test.ts',
-        'src/core/workbench/artifacts.test.ts',
+        'src/adapters/workbench/artifacts.test.ts',
         'src/adapters/executors/openai/api-files.test.ts',
         'src/features/workbench/git-review.test.ts',
         // 原生历史读取器的夹具是 POSIX 路径('/fixture'),win32 上 path.join 写成反斜杠,测的不再是同一件事。
         'src/adapters/executors/claude/native-claude-history.test.ts',
         'src/adapters/executors/codex/native-codex-history.test.ts',
-        'src/core/workbench/native-history.test.ts',
+        'src/adapters/workbench/native-history.test.ts',
       ] : []),
     ],
     // Tests should never touch the operator's real ~/.claude/channels/wechat

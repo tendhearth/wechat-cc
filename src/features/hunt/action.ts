@@ -9,7 +9,7 @@ import type { CompanionAction } from '../../ports/companion-contributions'
 import { buildHuntText, type TickDeps, type TickDispatch } from '../companion'
 import type { PlanContext } from '../../domain/companion-plan'
 import { PLAN_JOURNAL_ITEMS } from '../../domain/companion-plan'
-import { readJournalSeen } from '../../core/journal-seen'
+import { readJournalSeen } from '../../adapters/store/journal-seen'
 function errMsg(err: unknown): string { return err instanceof Error ? err.message : String(err) }
 
 /** 打猎这一拍要的:那一拍的公共依赖里挑出来的几样。 */

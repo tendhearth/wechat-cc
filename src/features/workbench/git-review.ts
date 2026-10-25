@@ -4,7 +4,7 @@ import {createHash} from 'node:crypto'
 import {lstatSync,mkdtempSync,rmSync,writeFileSync} from 'node:fs'
 import {tmpdir} from 'node:os'
 import {isAbsolute,join} from 'node:path'
-import {readAnchoredRegular,MAX_ARTIFACT_BYTES} from '../../core/workbench/artifacts'
+import {readAnchoredRegular,MAX_ARTIFACT_BYTES} from '../../adapters/workbench/artifacts'
 
 export const GIT_REVIEW_MIME='application/vnd.cc.workbench-review+json'
 const execute=promisify(execFile)

@@ -1,12 +1,12 @@
 /** service.ts 对外的公共类型。放在 service/ 里是为了让域模块能引用而不 import ../service(那会成环)。 */
 import type { QuotaKind } from '../../../domain/provider-quota'
 import type { AgentRuntimeSnapshot } from '../../../ports/agent-provider'
-import type { Task } from '../../../core/workbench/store'
+import type { Task } from '../../../adapters/store/workbench/store'
 import type { MatterOrigin } from '../../../adapters/store/matters-store'
-import type { EntryReceipt } from '../../../core/workbench/task-entry'
+import type { EntryReceipt } from '../../../adapters/workbench/task-entry'
 import type { TaskWaitingFor } from '../wechat-types'
 import type { ProviderRegistry } from '../../../app/provider-registry'
-import type { WorkbenchExecutorCapabilities } from '../../../core/workbench/executor-capabilities'
+import type { WorkbenchExecutorCapabilities } from '../../../domain/workbench/executor-capabilities'
 
 export interface InputMaterials {attachmentIds?:string[];draftId?:string;execution?:unknown}
 export interface CreateTask extends InputMaterials { title?: string; path: string; providerId: string; text: string; /** false ⇒ 不登记成项目(独立工作区的目录)。 */ registerProject?: boolean; /** 这件事的出生地(matters.origin_surface,只写一次);调用方从鉴权来源填,不知道 ⇒ 省略。 */ origin?: MatterOrigin | null }

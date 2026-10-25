@@ -8,7 +8,7 @@
 import { type InternalApiDeps, type RouteTable } from './types'
 import { loadAgentConfig, saveAgentConfig, activeModel, withActiveModel, modelForProvider, withModelForProvider } from '../../lib/agent-config'
 import { PROVIDER_IDS } from '../../lib/provider-ids'
-import { isCliId } from '../../core/cli-upgrade/specs'
+import { isCliId } from '../../domain/cli-upgrade/specs'
 
 /** provider ids /v1/model accepts in its optional `provider` field. Mirrors
  *  the switch inside modelForProvider/withModelForProvider — anything else

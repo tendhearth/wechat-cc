@@ -18,16 +18,16 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { PHONE_API_SCHEMAS, PHONE_HTML_ROUTES } from '@wechat-cc/protocol'
 import { removeTempDir } from '../../lib/test-temp'
-import { encodeNativeHistoryKey, historyPreview, type NativeHistoryItem, type NativeHistoryReader } from '../../core/workbench/native-history'
+import { encodeNativeHistoryKey, historyPreview, type NativeHistoryItem, type NativeHistoryReader } from '../../adapters/workbench/native-history'
 import { openDb, type Db } from '../../lib/db'
 import { createProviderRegistry } from '../../app/provider-registry'
 import { makeMatterStore } from '../../adapters/store/matters-store'
-import { makeMattersService } from '../../core/matters/service'
+import { makeMattersService } from '../../app/matters/service'
 import { buildConnections } from '../../daemon/connections'
-import { makeWorkbenchStore } from '../../core/workbench/store'
+import { makeWorkbenchStore } from '../../adapters/store/workbench/store'
 import { makeWorkbenchService, type WorkbenchService } from '../workbench/service'
-import { MANAGED_NATIVE_CAPABILITIES } from '../../core/workbench/executor-capabilities'
-import { saveArtifactSnapshot } from '../../core/workbench/artifacts'
+import { MANAGED_NATIVE_CAPABILITIES } from '../../domain/workbench/executor-capabilities'
+import { saveArtifactSnapshot } from '../../adapters/workbench/artifacts'
 import { GIT_REVIEW_MIME, serializeGitReview, type GitReview } from '../workbench/git-review'
 import { makeSettingsPanel, type SettingsPanel } from './settings-panel'
 import { PHONE_ROUTES } from './phone-routes'
@@ -464,7 +464,7 @@ describe('真实返回校验 — 首页 / 设置页 / 记忆 / 贴纸', () => {
   })
 
   // 手机 App(apps/app 的待办页)直接显示 r.time_ref —— schema 必须收得住
-  // 这个字段的类型漂移(真实类型是 string|null,src/core/knowledge/store.ts 的 FactRow),
+  // 这个字段的类型漂移(真实类型是 string|null,src/adapters/knowledge/store.ts 的 FactRow),
   // 不能是 z.unknown()。
   it('m/api/state 的 todos.active[].time_ref 类型漂移会被 schema 挡住', async () => {
     const body = await (await get('/m/api/state', await dev())).json() as { todos: { active: Array<{ time_ref: unknown }> } }

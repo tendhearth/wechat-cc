@@ -7,8 +7,8 @@
  * (回执的 projectId 记成 `quota-handoff:<源任务>`,第二台设备再点回的是已交出的那件)。
  */
 import { createHash } from 'node:crypto'
-import { isWorkbenchProviderId } from '../../../core/workbench/executor-capabilities'
-import { normalizeInputRequestId } from '../../../core/workbench/live-inputs'
+import { isWorkbenchProviderId } from '../../../domain/workbench/executor-capabilities'
+import { normalizeInputRequestId } from '../../../adapters/store/workbench/live-inputs'
 import { quotaTakeoverText, QUOTA_TAKEOVER_DEFAULT_REQUEST } from '../quota-takeover'
 import type { MatterOrigin } from '../../../adapters/store/matters-store'
 import type { ServiceCtx } from './ctx'

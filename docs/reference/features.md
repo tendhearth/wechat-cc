@@ -128,7 +128,7 @@ round. The loop ends when one of them just `@user`s a final answer, or when
 The architecture is **open** — providers are an open string brand registered
 through `ProviderRegistry`, not a Claude+Codex enum. **Cursor** ships as the
 third provider out of the box (env-var-only, see [Cursor setup](#cursor-optional-third-provider)
-below); adding a fourth SDK (Gemini / your own) is a new file in `src/core/`
+below); adding a fourth SDK (Gemini / your own) is a new adapter in `src/adapters/executors/<name>/`
 plus a registry entry. See [`docs/rfc/03-multi-agent-architecture.md`](docs/rfc/03-multi-agent-architecture.md)
 Appendix D.
 

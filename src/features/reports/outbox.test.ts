@@ -2,7 +2,7 @@ import {afterEach, beforeEach, describe, expect, it} from 'vitest'
 import {openDb, type Db} from '../../lib/db'
 import {makeMatterStore} from '../../adapters/store/matters-store'
 import {makeReportOutboxStore, type ReportOutboxStore} from './outbox'
-import type {PendingReport} from '../../core/matters/report'
+import type {PendingReport} from '../../domain/matters/report'
 
 /**
  * matter_report_outbox(v65)的原始 CRUD 面,风格照 reminders/store.ts:pending →

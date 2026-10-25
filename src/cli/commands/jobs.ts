@@ -1,7 +1,7 @@
 // 定时任务(spec 2026-10-20-scheduled-jobs-design):直接改状态目录的 scheduled-jobs.json,不经 daemon。
 import { defineCommand } from 'citty'
 import { STATE_DIR } from '../../lib/config'
-import { makeJobsStore } from '../../core/scheduled-jobs-store'
+import { makeJobsStore } from '../../adapters/store/scheduled-jobs-store'
 import { cliAddJob, cliFormatJobs, ownerTimezone } from '../jobs'
 import { describeSchedule } from '../../domain/scheduled-jobs'
 

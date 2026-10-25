@@ -71,8 +71,8 @@ const ROUTE_CODES: Record<string, RouteCodes> = {
     thrown: ['invalid_request', 'workbench_not_wired', 'invalid_matter_id', 'matter_not_found', 'matter_task_required', 'input_stale', 'control_stale'],
     slices: [
       { file: 'src/features/phone/mobile-workbench.ts', from: 'const stop=route(', to: 'const runRoute=' },
-      { file: 'src/core/matters/service.ts', from: 'const require=', to: 'const current=' },
-      { file: 'src/core/matters/service.ts', from: 'async stop(id,runId){', to: 'answer(' },
+      { file: 'src/app/matters/service.ts', from: 'const require=', to: 'const current=' },
+      { file: 'src/app/matters/service.ts', from: 'async stop(id,runId){', to: 'answer(' },
       { file: 'src/features/workbench/service/lifecycle.ts', from: 'async function cancel(', to: 'function shutdown' },
     ],
   },

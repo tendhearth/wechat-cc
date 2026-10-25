@@ -209,7 +209,7 @@ describe.skipIf(process.platform === 'win32')('Cursor:双发旁白在 daemon 模
 
 // ─── 原样回放 2026-09-17 真机录到的 cursor-agent 报文 ──────────────────────────────
 type Obj = Record<string, any>
-const FIXTURE = fileURLToPath(new URL('../core/acp/fixtures/cursor-acp-2026-09-17.jsonl', import.meta.url))
+const FIXTURE = fileURLToPath(new URL('../test-support/fixtures/cursor-acp-2026-09-17.jsonl', import.meta.url))
 const rows = readFileSync(FIXTURE, 'utf8').split('\n').filter(l => l.trim()).map(l => JSON.parse(l) as Obj)
 /** 一个录到的场景(第一次 session/prompt 之后、它的应答之前)的 update,原样当剧本。 */
 function recordedTurn(scenario: string): ScriptedTurn {

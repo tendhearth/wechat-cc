@@ -10,13 +10,13 @@
  */
 import type { Lifecycle } from '../../lib/lifecycle'
 import { loadAgentConfig } from '../../lib/agent-config'
-import { CLI_SPECS } from '../../core/cli-upgrade/specs'
-import { resolveCliUpgradeConfig } from '../../core/cli-upgrade/config'
-import { defaultRunner, latestVersion, type CommandRunner } from '../../core/cli-upgrade/detect'
-import { defaultLocate } from '../../core/cli-upgrade/locate'
-import { makeCliUpgrader, type CliUpgrader, type IdleVerdict, type VerifyResult } from '../../core/cli-upgrade/engine'
-import { makeFileStateStore } from '../../core/cli-upgrade/state'
-import type { CliSpec } from '../../core/cli-upgrade/specs'
+import { CLI_SPECS } from '../../domain/cli-upgrade/specs'
+import { resolveCliUpgradeConfig } from '../../domain/cli-upgrade/config'
+import { defaultRunner, latestVersion, type CommandRunner } from '../../adapters/cli-upgrade/detect'
+import { defaultLocate } from '../../adapters/cli-upgrade/locate'
+import { makeCliUpgrader, type CliUpgrader, type IdleVerdict, type VerifyResult } from './engine'
+import { makeFileStateStore } from '../../adapters/cli-upgrade/state'
+import type { CliSpec } from '../../domain/cli-upgrade/specs'
 import { homedir } from 'node:os'
 
 /** 不算「有工作在跑」的 busy label:我们自己,和正在请求我们升级 / 退回的那条内部 API。 */

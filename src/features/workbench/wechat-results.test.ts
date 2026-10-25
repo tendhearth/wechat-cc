@@ -1,7 +1,7 @@
 import {afterEach,beforeEach,describe,expect,it,vi} from 'vitest'
 import {createHash} from 'node:crypto'
 import {openTestDb,type Db} from '../../lib/db'
-import {makeWorkbenchStore,type WorkbenchStore} from '../../core/workbench/store'
+import {makeWorkbenchStore,type WorkbenchStore} from '../../adapters/store/workbench/store'
 import {makeWechatWorkbenchControl} from './wechat-control'
 import {resultToken,wechatResultPage} from './wechat-results'
 

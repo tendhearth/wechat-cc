@@ -11,8 +11,8 @@
  * 逼作者显式地重新做这个权衡。
  */
 import { describe, it, expect, vi, afterEach } from 'vitest'
-import { generateMailboxIdentity, sealEnvelope, type PeerMailbox } from '../../core/mailbox-crypto'
-import { makeMailboxClient } from '../../core/mailbox-client'
+import { generateMailboxIdentity, sealEnvelope, type PeerMailbox } from '../../adapters/mailbox/mailbox-crypto'
+import { makeMailboxClient } from '../../adapters/mailbox/mailbox-client'
 import { makeMailboxSender } from './mailbox-sender'
 
 const realFetch = globalThis.fetch

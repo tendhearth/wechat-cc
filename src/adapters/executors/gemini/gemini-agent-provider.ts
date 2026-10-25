@@ -15,13 +15,13 @@
  * Decoupled from bootstrap via injected genai / mcpConnect / buildGate so the
  * loop is unit-testable. See docs/superpowers/specs/2026-06-04-gemini-provider-design.md.
  */
-import { authorizeChatCall, type ChatOwnerRules } from '../../../core/permission-rules/chat'
+import { authorizeChatCall, type ChatOwnerRules } from '../../permission-rules/chat'
 import type { AgentEvent, AgentProject, AgentProvider, AgentSession, PermissionMode, SpawnContext } from '../../../ports/agent-provider'
 import type { TierProfile } from '../../../domain/user-tier'
 import { classifyToolUse } from '../../../domain/user-tier'
-import type { McpStdioSpec } from '../../../core/mcp-stdio-spec'
-import { childEnvFor } from '../../../core/mcp-stdio-spec'
-import { makeTurnEmitter } from '../../../core/turn-emitter'
+import type { McpStdioSpec } from '../mcp-stdio-spec'
+import { childEnvFor } from '../mcp-stdio-spec'
+import { makeTurnEmitter } from '../turn-emitter'
 import { openaiErrorCode } from '../openai/openai-error-code'
 import { withProviderCode } from '../../../lib/provider-error-code'
 

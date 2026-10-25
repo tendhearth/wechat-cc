@@ -224,7 +224,7 @@ export async function persistConfirmedAvatar(opts: {
 
   try {
     const stateDir = opts.stateDir ?? join(homedir(), '.claude', 'channels', 'wechat')
-    const { setAvatar } = await import('../core/avatar/store')
+    const { setAvatar } = await import('../adapters/store/avatar-store')
     if (/^https?:\/\//i.test(candidate)) {
       const fetchBinary = opts.fetchBinary ?? defaultFetchBinary
       const buf = await fetchBinary(candidate)

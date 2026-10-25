@@ -4,8 +4,8 @@
  * hub, and bridges inbound frames → hub.onMessage. Bind 127.0.0.1 / tailnet
  * only — this is the brain's rendezvous (later: behind a cloudflared tunnel).
  */
-import type { YiHub } from '../core/yi-hub'
-import { buildError, buildResponse, parseMessage } from '../core/yi-protocol'
+import type { YiHub } from '../app/yi-hub'
+import { buildError, buildResponse, parseMessage } from '../domain/yi-protocol'
 
 export interface YiWsServerOpts {
   host: string

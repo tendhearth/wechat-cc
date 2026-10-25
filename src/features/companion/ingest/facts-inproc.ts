@@ -9,7 +9,7 @@
  * companion-ingest's auto-extraction loop keep working after the wxfacts
  * plugin is retired (no MCP subprocess, no `..`).
  */
-import type { FactsApi } from '../../../core/knowledge/facts'
+import type { FactsApi } from '../../../domain/knowledge/facts'
 
 export function makeInProcFactsCall(
   facts: FactsApi,

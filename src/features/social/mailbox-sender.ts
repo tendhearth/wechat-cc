@@ -4,8 +4,8 @@
  * relays. The third dispatch arm alongside push (a2a-client) and ws (YiHub).
  * See spec §3.3 / §6.
  */
-import { sealEnvelope, type EnvelopeInner, type PeerMailbox } from '../../core/mailbox-crypto'
-import type { MailboxClient } from '../../core/mailbox-client'
+import { sealEnvelope, type EnvelopeInner, type PeerMailbox } from '../../adapters/mailbox/mailbox-crypto'
+import type { MailboxClient } from '../../adapters/mailbox/mailbox-client'
 
 export interface MailboxSender { send(inner: EnvelopeInner, peer: PeerMailbox): Promise<boolean> }
 

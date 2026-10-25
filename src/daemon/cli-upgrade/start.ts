@@ -10,7 +10,7 @@ import { runSelftestConverse } from '../selftest'
 import { defaultSelftestDeps, runWorkbenchSelftest } from '../../cli/selftest'
 import { verifyCliProvider } from './verify'
 import { wireCliUpgrade } from './wire'
-import type { CliUpgrader } from '../../core/cli-upgrade/engine'
+import type { CliUpgrader } from './engine'
 import type { Lifecycle } from '../../lib/lifecycle'
 
 export interface StartCliUpgradeDeps {

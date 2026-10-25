@@ -1,9 +1,9 @@
 import {PHONE_ANSWER_MAX_JSON,workbenchErrorHttp} from '@wechat-cc/protocol'
 import type {EntryResult} from '../workbench'
-import type {NativeContinuePreview} from '../../core/workbench/native-adoption'
-import type {UploadChunk,UploadState} from '../../core/workbench/attachment-uploads'
-import type {MattersService,MatterSayInput} from '../../core/matters/service'
-import {parseEntryInput,type EntryInput,type EntryOptions} from '../../core/workbench/task-entry'
+import type {NativeContinuePreview} from '../../adapters/workbench/native-adoption'
+import type {UploadChunk,UploadState} from '../../adapters/workbench/attachment-uploads'
+import type {MattersService,MatterSayInput} from '../../app/matters/service'
+import {parseEntryInput,type EntryInput,type EntryOptions} from '../../adapters/workbench/task-entry'
 import {ownsMethod,sharedRoute,type PhoneRouteTable} from './phone-route-table'
 
 export type MobileMatterActions=Partial<Pick<MattersService,'permission'|'answer'|'artifactChunk'|'handoff'|'inputReceipt'|'stop'|'worktree'|'worktreeScript'|'rewindPreview'|'rewind'>>

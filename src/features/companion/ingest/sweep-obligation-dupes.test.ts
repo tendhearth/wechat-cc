@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from 'vitest'
 import { runObligationDedup, buildObligationDedupPrompt } from './sweep-obligation-dupes'
-import type { FactsApi } from '../../../core/knowledge/facts'
+import type { FactsApi } from '../../../domain/knowledge/facts'
 
 function fact(id: number, predicate: string, value: string, time_ref: string | null = null) {
   return { id, contact: 'u1', kind: 'obligation', predicate, value, related_contact: null, time_ref,

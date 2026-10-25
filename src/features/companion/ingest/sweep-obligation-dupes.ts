@@ -16,8 +16,8 @@
  * feed starved behind the cap. The feed is overscanned so skipped contacts
  * make room for that backlog.
  */
-import type { FactsApi } from '../../../core/knowledge/facts'
-import type { FactRow } from '../../../core/knowledge/store'
+import type { FactsApi } from '../../../domain/knowledge/facts'
+import type { FactRow } from '../../../adapters/knowledge/store'
 import { parseSupersedePairs } from './extract'
 import { SWEEP_FEED_OVERSCAN } from './sweep-conflicts'
 import { pausedReason } from './paused'

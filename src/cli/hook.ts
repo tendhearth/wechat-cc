@@ -26,9 +26,9 @@ import { dirname, join } from 'node:path'
 import { hostname } from 'node:os'
 import { readJsonFile } from '../lib/read-json-file'
 import { machineIdleSeconds } from '../lib/machine-idle'
-import type { CliEvent, CliSource } from '../core/cli-events'
-import { lastAssistantText } from '../core/cli-transcript'
-import type { CliPermissionRequest, CliPermissionStatus } from '../core/cli-permission-relay'
+import type { CliEvent, CliSource } from '../app/cli-events'
+import { lastAssistantText } from '../domain/cli-transcript'
+import type { CliPermissionRequest, CliPermissionStatus } from '../app/cli-permission-relay'
 
 export type HookSource = CliSource
 

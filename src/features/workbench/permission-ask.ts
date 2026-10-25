@@ -8,7 +8,7 @@
 import { isIssueIntent } from './issue-intake'
 import { realpathSync } from 'node:fs'
 import type { PermissionAsk } from '../../domain/permission-rules/types'
-import type { PermissionFacts } from '../../core/workbench/permissions'
+import type { PermissionFacts } from '../../adapters/workbench/permissions'
 
 const INTENT_MAX = 2000
 

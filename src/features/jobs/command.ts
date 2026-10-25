@@ -3,7 +3,7 @@
  */
 import { BRIEF_PREF_USAGE, describeSchedule, JOB_USAGE, nextRunLabel, parseBriefPref, parseJobCommand, type ScheduledJob } from '../../domain/scheduled-jobs'
 import { localParts } from '../../lib/local-time'
-import type { JobsStore } from '../../core/scheduled-jobs-store'
+import type { JobsStore } from '../../adapters/store/scheduled-jobs-store'
 import { hhmmInQuiet, quietLabel, type QuietWindow } from '../../domain/quiet-hours'
 import { providerDisplayName } from '../../domain/provider-display-names'
 

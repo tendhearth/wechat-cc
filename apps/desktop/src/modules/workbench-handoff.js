@@ -3,7 +3,7 @@
 /** @typedef {import('./workbench-attachments.js').Attachment & {taskId:string}} Attachment */
 /** @typedef {import('../../../../src/features/workbench/handoff').HandoffInput & {attachments?:AttachmentRef[]}} Input */
 /** @typedef {import('../../../../src/features/workbench/handoff').HandoffPreview & {attachments?:AttachmentRef[]}} Preview */
-/** @typedef {Pick<import('../../../../src/core/workbench/store').Artifact,'id'|'taskId'|'name'|'mime'|'sha256'|'createdAt'>} Artifact */
+/** @typedef {Pick<import('../../../../src/adapters/store/workbench/store').Artifact,'id'|'taskId'|'name'|'mime'|'sha256'|'createdAt'>} Artifact */
 /** @typedef {{input:Input,preview:Preview|null,busy:boolean,error:string}} State */
 /** @typedef {(method:'GET'|'POST',path:string,body?:Record<string,unknown>)=>Promise<unknown>} Invoke */
 const esc=(/** @type {unknown} */v)=>String(v??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'})[c]??c)

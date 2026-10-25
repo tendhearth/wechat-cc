@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest'
 import { checkedText } from './checked-text'
-import type { Attachment } from '../../../core/workbench/attachments'
+import type { Attachment } from '../../../adapters/workbench/attachments'
 
 const att = { id: 'a', size: 1 } as unknown as Attachment
 

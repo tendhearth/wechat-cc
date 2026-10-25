@@ -3,7 +3,7 @@ import {mkdtempSync,mkdirSync,realpathSync,readFileSync,writeFileSync,existsSync
 import {join} from 'node:path'
 import {tmpdir} from 'node:os'
 import {openDb,type Db} from '../../../lib/db'
-import {makeWorkbenchStore} from '../../../core/workbench/store'
+import {makeWorkbenchStore} from '../../store/workbench/store'
 import {makeApiSessionStore} from './api-sessions'
 import * as apiTaskProvider from './api-task-provider'
 import {createProviderRegistry} from '../../../app/provider-registry'
