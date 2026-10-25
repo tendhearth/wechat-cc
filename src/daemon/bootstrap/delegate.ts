@@ -12,7 +12,7 @@
  */
 import { withNetworkGate } from '../../app/provider-registry'
 import { DEFAULT_CLAUDE_MODEL, createClaudeAgentProvider } from '../../adapters/executors/claude/claude-agent-provider'
-import { createCodexAgentProvider } from '../../adapters/executors/codex/codex-agent-provider'
+import { createCodexChatProvider } from '../../adapters/executors/codex/codex-chat-provider'
 import { createOpenAiAgentProvider } from '../../adapters/executors/openai/openai-agent-provider'
 import { createAiSdkChatModel } from '../../adapters/executors/openai/openai-chat-model'
 import { createMcpToolBridge } from '../../adapters/executors/openai/openai-mcp-bridge'
@@ -121,19 +121,16 @@ export function buildDelegateDispatch(deps: DelegateBuildDeps): DelegateDispatch
 
   // Bug #86 — mirror the openai branch below: only build the codex delegate
   // when bootstrap has already verified a real CLI (deps.codexPathOverride).
-  // createCodexAgentProvider eagerly constructs the SDK (`new Codex()` inside
-  // its factory), which calls the bundled SDK's findCodexPath(); on a
-  // Bun-compiled desktop sidecar (/$bunfs/...) that throws because it can't
-  // resolve @openai/codex from real node_modules. Building this
-  // unconditionally meant a refused-or-absent codex CLI took the whole
-  // daemon down at boot for claude-only users. Without an override, we skip
-  // construction entirely — dispatchDelegate('codex', …) then falls through
-  // to the unknown_peer branch below, same as any other unconfigured peer.
+  // (Historically the SDK factory resolved the bundled binary eagerly and took
+  // a compiled sidecar down at boot; the app-server provider spawns lazily, but
+  // without a verified CLI every delegate turn would just fail.) Without an
+  // override, we skip construction entirely — dispatchDelegate('codex', …) then
+  // falls through to the unknown_peer branch below, same as any other
+  // unconfigured peer.
   const delegateCodex: AgentProvider | null = deps.codexPathOverride
-    ? createCodexAgentProvider({
-        // A Bun-compiled desktop sidecar cannot resolve the SDK's optional
-        // platform package from /$bunfs. Reuse the verified user CLI path passed
-        // by bootstrap, just as the main Codex provider does.
+    ? createCodexChatProvider({
+        // Reuse the verified user CLI path passed by bootstrap, just as the
+        // main Codex provider does.
         codexPathOverride: deps.codexPathOverride,
         ...(process.env.CODEX_MODEL || configuredAgent.model
           ? { model: process.env.CODEX_MODEL ?? configuredAgent.model }

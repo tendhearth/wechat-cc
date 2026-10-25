@@ -111,8 +111,8 @@ module.exports = {
     {
       name: 'test-support-only-from-tests',
       severity: 'error',
-      comment: '架构终态 B3:src/test-support 是测试替身(照剧本说话的假执行者 …),生产代码不许 import;测试与 scripts/experiments 才用。',
-      from: { path: '^src/', pathNot: ['\\.test\\.ts$', '^src/test-support/'] },
+      comment: '架构终态 B3:src/test-support 是测试替身(照剧本说话的假执行者 …),生产代码不许 import;测试、daemon e2e 的假 SDK 层(src/daemon/__e2e__,B1 起假 codex app-server 从这里接)与 scripts/experiments 才用。',
+      from: { path: '^src/', pathNot: ['\\.test\\.ts$', '^src/test-support/', '^src/daemon/__e2e__/'] },
       to: { path: '^src/test-support/' },
     },
     {

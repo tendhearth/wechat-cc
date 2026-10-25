@@ -1,8 +1,8 @@
 /**
  * Fake SDK installer for daemon e2e tests.
  *
- * Replaces @anthropic-ai/claude-agent-sdk and @openai/codex-sdk with
- * script-driven fakes. Each test passes a FakeSdkScript whose onDispatch
+ * Replaces @anthropic-ai/claude-agent-sdk, the codex app-server process seam
+ * and @cursor/sdk with script-driven fakes. Each test passes a FakeSdkScript whose onDispatch
  * is invoked when the daemon's AgentSession.dispatch(text) is called.
  *
  * Uses vi.mock — this file MUST be imported in the test file (or via
@@ -23,15 +23,10 @@
  *     prompt). When prompt is an AsyncIterable we drive dispatches from
  *     claudeScript; when it's a plain string we do a single onDispatch call.
  *
- * ### @openai/codex-sdk
- *   - Exports: `Codex` class (constructor + startThread/resumeThread),
- *     `Thread` (id, runStreamed), `ThreadEvent`, `ThreadItem` types.
- *   - codex-agent-provider.ts uses `codexFactory` injection for unit tests;
- *     for e2e we mock the SDK module itself so the factory falls through to
- *     `new Codex(args)` and hits our fake class instead.
- *   - Thread.runStreamed(input, opts) → { events: AsyncGenerator<ThreadEvent> }
- *   - Events consumed: thread.started, item.completed{agent_message / mcp_tool_call},
- *     turn.completed, turn.failed, error.
+ * ### codex app-server (B1 2026-10-25)
+ *   - Chat and workbench spawn `codex app-server` via codex-app-server-process.ts;
+ *     the mock below swaps that one module for the scripted app-server
+ *     (test-support/executors/codex-scripted.ts). No real codex runs.
  */
 import { vi } from 'vitest'
 
@@ -72,12 +67,11 @@ let moderatorScript: ModeratorScript | null = null
 let claudeSpawnRecorder: ((options: Record<string, unknown>) => void) | null = null
 
 /**
- * Optional recorder fired on every fake `Codex.startThread(opts)` and
- * `Codex.resumeThread(id, opts)` call — i.e. the codex provider's spawn
- * path (NOT cheapEval, which uses a hoisted Codex instance whose
- * cheap-thread options are read-only/never and not interesting for tier
- * tests). Tests use this to assert the spawn-time codex SDK options
- * (`sandboxMode`, `approvalPolicy`, `model`) match the user's tier.
+ * Optional recorder fired on every scripted app-server `thread/start` /
+ * `thread/resume` for a session thread — i.e. the codex provider's spawn
+ * path (NOT cheapEval's one-shot threads). Tests use this to assert the
+ * spawn-time codex options (`sandboxMode`, `approvalPolicy`, `model`)
+ * match the user's tier.
  *
  * Stays null unless a test calls installCodexSpawnRecorder().
  */
@@ -119,16 +113,14 @@ export function installFakeCodex(script: FakeSdkScript): { uninstall(): void } {
 }
 
 /**
- * Install a recorder that's called with the thread options passed to
- * `Codex.startThread(opts)` / `Codex.resumeThread(id, opts)` for every
- * spawned codex session. Returns an uninstaller. Tests that want to
- * verify tier → codex SDK options translation (parallel to
+ * Install a recorder that's called with the app-server thread/start
+ * params for every spawned codex session. Returns an uninstaller. Tests
+ * that want to verify tier → codex options translation (parallel to
  * installClaudeSpawnRecorder) use this.
  *
- * Only the per-session spawn path fires this — the cheapEval Codex
- * instance is constructed once at provider boot with hardcoded
- * read-only / never options, and its startThread calls are NOT
- * recorded (they don't reflect a user's tier).
+ * Only the per-session spawn path fires this — cheapEval's one-shot
+ * threads (read-only / never / network_access=false) are NOT recorded
+ * (they don't reflect a user's tier).
  */
 export function installCodexSpawnRecorder(
   fn: (options: Record<string, unknown>) => void,
@@ -344,192 +336,40 @@ vi.mock('@anthropic-ai/claude-agent-sdk', () => {
 })
 
 // ---------------------------------------------------------------------------
-// Codex SDK mock
+// Codex app-server mock (B1 2026-10-25: chat moved off @openai/codex-sdk)
 //
-// @openai/codex-sdk exports:
-//   class Codex { startThread(opts): Thread; resumeThread(id, opts): Thread }
-//   Thread: { id: string|null; runStreamed(input, opts): Promise<{events: AsyncGenerator<ThreadEvent>}> }
-//
-// ThreadEvent shapes consumed by codex-agent-provider.ts:
-//   { type: 'thread.started', thread_id: string }
-//   { type: 'item.completed', item: ThreadItem }
-//     ThreadItem = { type: 'agent_message', text: string }
-//                | { type: 'mcp_tool_call', server: string, tool: string, input?: unknown }
-//   { type: 'turn.completed', usage?: unknown }
-//   { type: 'turn.failed', error: { message: string } }
-//   { type: 'error', message: string }
+// Codex chat and workbench both spawn `codex app-server` through ONE seam,
+// `adapters/executors/codex/codex-app-server-process.ts`. We replace that module
+// with the scripted app-server (test-support/executors/codex-scripted.ts):
+//   - session threads: each turn/start asks codexScript.onDispatch(text) and plays
+//     its tool calls as completed `mcpToolCall` items (server 'wechat') plus the
+//     final text as one `agentMessage`;
+//   - one-shot threads (cheapEval: read-only + thread config network_access=false
+//     — sessions never set it, codex-chat-provider.test.ts pins both halves) are
+//     NOT wired to codexScript and never fire the spawn recorder; they answer via
+//     the moderator script (or 'ok', which the first-use probe needs).
 // ---------------------------------------------------------------------------
-vi.mock('@openai/codex-sdk', () => {
-  function makeId(): string {
-    return Math.random().toString(36).slice(2, 10)
-  }
-
-  /**
-   * Build a complete turn's ThreadEvent sequence for one dispatch() call.
-   * Mirrors the real SDK's event ordering: started → items → turn.completed.
-   */
-  async function* buildTurnEvents(
-    threadId: string,
-    text: string,
-    emitStarted: boolean,
-  ): AsyncGenerator<Record<string, unknown>> {
-    const script = codexScript
-    if (!script) {
-      if (emitStarted) yield { type: 'thread.started', thread_id: threadId }
-      yield { type: 'turn.completed', usage: null }
-      return
-    }
-
-    if (emitStarted) yield { type: 'thread.started', thread_id: threadId }
-
-    const result = await script.onDispatch(text)
-
-    // Emit mcp_tool_call items for the wechat reply tool family.
-    for (const tc of result.toolCalls) {
-      // The provider checks item.server === 'wechat' and item.tool ∈ REPLY_TOOL_NAMES.
-      // We emit each tool call as a completed mcp_tool_call item so
-      // replyToolCalled is set correctly.
-      yield {
-        type: 'item.completed',
-        item: {
-          type: 'mcp_tool_call',
-          server: 'wechat',
-          tool: tc.name,
-          input: tc.input,
-        },
-      }
-    }
-
-    // Emit the final text as an agent_message item.
-    if (result.finalText) {
-      yield {
-        type: 'item.completed',
-        item: { type: 'agent_message', text: result.finalText },
-      }
-    }
-
-    yield { type: 'turn.completed', usage: null }
-  }
-
-  /**
-   * Is this thread one of `cheapEval`'s ephemeral one-shot threads?
-   *
-   * `codex-agent-provider.ts` builds those with `networkAccessEnabled: false`
-   * (plus low reasoning, read-only, web search off); session spawns never set
-   * `networkAccessEnabled` at all — `codex-agent-provider.test.ts` pins both
-   * halves of that contract, so this check can't silently drift.
-   *
-   * One-shot threads:
-   *   - are NOT wired to `codexScript` — routing the probe prompt into the
-   *     test's onDispatch would make the script observe a message the user
-   *     never sent;
-   *   - do NOT fire the spawn recorder — it must only see real session spawns
-   *     (see installCodexSpawnRecorder);
-   *   - DO answer: since 2026-09-09 the codex provider is wrapped in
-   *     `withFirstUseProbe`, whose probe IS a cheapEval call, so every codex
-   *     e2e goes through here before the first spawn. An empty answer makes
-   *     the probe fail and the provider refuses every dispatch.
-   * The moderator script gets first refusal, mirroring the Claude
-   * single-shot path, so codex-as-cheap-model tests can still steer it.
-   */
-  function isCodexOneShotThread(opts: Record<string, unknown> | null): boolean {
-    return opts?.networkAccessEnabled === false
-  }
-
-  async function oneShotAnswer(prompt: string): Promise<string> {
-    return moderatorScript ? await moderatorScript.onEval(prompt) : 'ok'
-  }
-
-  async function* buildOneShotEvents(
-    threadId: string,
-    prompt: string,
-    emitStarted: boolean,
-  ): AsyncGenerator<Record<string, unknown>> {
-    if (emitStarted) yield { type: 'thread.started', thread_id: threadId }
-    yield { type: 'turn.started' }
-    yield { type: 'item.completed', item: { type: 'agent_message', text: await oneShotAnswer(prompt) } }
-    yield { type: 'turn.completed', usage: null }
-  }
-
-  class FakeCodexThread {
-    readonly id: string | null
-    private _firstRun = true
-    /**
-     * Thread options captured at startThread/resumeThread time. Surfaced
-     * to the spawn recorder on the FIRST runStreamed() call (mirrors the
-     * Claude fake, which fires its recorder inside `query()` — i.e. when
-     * the spawn is actually exercised, not just constructed).
-     *
-     * Held as `unknown` so the field works for the cheapEval path too
-     * (whose one-shot threads never fire the recorder — see isCodexOneShotThread).
-     */
-    private readonly _threadOptions: Record<string, unknown> | null
-
-    constructor(id: string | null, threadOptions?: Record<string, unknown> | null) {
-      this.id = id
-      this._threadOptions = threadOptions ?? null
-    }
-
-    async runStreamed(
-      input: unknown,
-      _opts?: { signal?: AbortSignal },
-    ): Promise<{ events: AsyncGenerator<Record<string, unknown>> }> {
-      const text = typeof input === 'string' ? input : JSON.stringify(input)
-      const threadId = this.id ?? `thread_${makeId()}`
-      const emitStarted = this._firstRun
-      // cheapEval 的一次性线程(首用探测「只回复两个字母:ok」、主持人、内省……)。
-      // 2026-10-02 #197 起 cheapEval 走 runStreamed(不再是 run():run 会把
-      // Reconnecting 吞掉、断网时一直挂),所以这里必须按线程认出它,而不是按
-      // 方法 —— 否则探测提示会漏进测试的 onDispatch、还会被当成一次会话 spawn 记下。
-      if (isCodexOneShotThread(this._threadOptions)) {
-        this._firstRun = false
-        return { events: buildOneShotEvents(threadId, text, emitStarted) }
-      }
-      // Fire the spawn recorder ONCE per thread on the first runStreamed
-      // — matches the Claude side, which records inside `query()` so
-      // cheapEval (single-shot string path) is naturally excluded.
-      // cheapEval threads are diverted above, so this branch is only
-      // reachable from the provider's session spawn.
-      if (this._firstRun && codexSpawnRecorder && this._threadOptions) {
-        try { codexSpawnRecorder(this._threadOptions) } catch {}
-      }
-      this._firstRun = false
-
-      return { events: buildTurnEvents(threadId, text, emitStarted) }
-    }
-
-    /**
-     * Legacy one-shot path. Production cheapEval stopped calling `run()` in
-     * #197 (it uses runStreamed + boundary timeouts now — see above); kept so
-     * a regression back to run() still gets a sane answer rather than a hang.
-     * Same rules as the one-shot runStreamed branch: never wired to
-     * `codexScript`, never records a spawn.
-     */
-    async run(prompt: unknown): Promise<{ items: Array<Record<string, unknown>> }> {
-      const text = typeof prompt === 'string' ? prompt : JSON.stringify(prompt)
-      return { items: [{ type: 'agent_message', text: await oneShotAnswer(text) }] }
-    }
-  }
-
-  class FakeCodex {
-    constructor(_opts?: unknown) {}
-
-    startThread(opts?: unknown): FakeCodexThread {
-      return new FakeCodexThread(
-        `thread_${makeId()}`,
-        (opts && typeof opts === 'object') ? opts as Record<string, unknown> : null,
-      )
-    }
-
-    resumeThread(id: string, opts?: unknown): FakeCodexThread {
-      return new FakeCodexThread(
-        id,
-        (opts && typeof opts === 'object') ? opts as Record<string, unknown> : null,
-      )
-    }
-  }
-
-  return { Codex: FakeCodex, default: FakeCodex }
+vi.mock('../../adapters/executors/codex/codex-app-server-process', async () => {
+  const { createScriptedCodex } = await import('../../test-support/executors/codex-scripted')
+  const scripted = createScriptedCodex({
+    // Same as the old SDK fake: tool calls always "go through" (no approval gate).
+    rejectMcp: false,
+    turns: async (text) => {
+      const script = codexScript
+      if (!script) return { steps: [] }
+      const result = await script.onDispatch(text)
+      return { steps: [
+        ...result.toolCalls.map(tc => ({ mcp: { server: 'wechat', tool: tc.name, args: (tc.input ?? {}) as Record<string, unknown> } })),
+        ...(result.finalText ? [{ say: result.finalText }] : []),
+      ] }
+    },
+    cheapAnswer: async (prompt) => moderatorScript ? await moderatorScript.onEval(prompt) : 'ok',
+    onThreadStart: (_method, params, cheap) => {
+      if (cheap || !codexSpawnRecorder) return
+      try { codexSpawnRecorder({ ...params, sandboxMode: params.sandbox, workingDirectory: params.cwd }) } catch {}
+    },
+  })
+  return { spawnCodexAppServerProcess: scripted.spawn }
 })
 
 // ---------------------------------------------------------------------------

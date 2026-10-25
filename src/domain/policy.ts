@@ -96,7 +96,7 @@ export function tierProfileToClaudeSdkOpts(tp: TierProfile, permissionMode: Perm
   }
 }
 
-// ── codex(从 codex-agent-provider.ts 逐字搬来)
+// ── codex(从已删的 codex-agent-provider.ts 逐字搬来;B1 起对话侧走 app-server,thread/start 的 sandbox / approvalPolicy 就是这两项)
 /**
  * 档里不给网(审查轮 REVIEW_PROFILE、访客)⇒ 线程上把联网搜索关掉,不沿用主人 codex 配置里的默认(评审 #460)。
  * 沙箱网络不在这里设:不给网的档都是 read-only 沙箱,shell 本来就上不了网;而且会话不带 networkAccessEnabled

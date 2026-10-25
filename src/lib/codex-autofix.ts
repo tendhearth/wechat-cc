@@ -1,6 +1,11 @@
 /**
- * codex-autofix — align wechat-cc's bundled codex SDK with the user's
- * locally-installed codex CLI version on boot.
+ * codex-autofix — align wechat-cc's bundled codex CLI package
+ * (`@openai/codex`, the version the daemon treats as "aligned") with the
+ * user's locally-installed codex CLI version on boot.
+ *
+ * B1 (2026-10-25): chat and workbench both speak `codex app-server` now; the
+ * `@openai/codex-sdk` package is gone, so only `@openai/codex` is realigned.
+ * The history below is kept for why the alignment exists at all.
  *
  * Why this exists: the codex SDK ↔ CLI protocol is version-locked
  * (see find-codex-binary.ts). When the user upgrades their global
@@ -113,14 +118,14 @@ export async function attemptCodexAutofix(
   const timeoutMs = deps.timeoutMs ?? DEFAULT_TIMEOUT_MS
   deps.log(
     `local codex v${user.version} ≠ bundled SDK v${deps.bundledSdkVersion} — ` +
-    `running \`bun add @openai/codex-sdk@${user.version} @openai/codex@${user.version}\` in ${deps.installDir} ` +
+    `running \`bun add @openai/codex@${user.version}\` in ${deps.installDir} ` +
     `(timeout ${Math.floor(timeoutMs / 1000)}s; non-blocking — daemon boot continues)`,
   )
 
   const spawnBun = deps.spawnBun ?? defaultSpawnBun
   const timeoutSentinel = Symbol('timeout')
   const installPromise = spawnBun(
-    ['add', `@openai/codex-sdk@${user.version}`, `@openai/codex@${user.version}`],
+    ['add', `@openai/codex@${user.version}`],
     deps.installDir,
   )
   const winner = await Promise.race([

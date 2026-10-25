@@ -7,7 +7,7 @@ import { readJsonFile } from '../../lib/read-json-file'
 import { DEFAULT_CLAUDE_MODEL } from '../../adapters/executors/claude/claude-agent-provider'
 import { DEFAULT_AGY_MODEL } from '../../adapters/executors/agy/agy-agent-provider'
 import { createClaudeAgentProvider } from '../../adapters/executors/claude/claude-agent-provider'
-import { createCodexAgentProvider } from '../../adapters/executors/codex/codex-agent-provider'
+import { createCodexChatProvider } from '../../adapters/executors/codex/codex-chat-provider'
 import { buildSystemPrompt } from '../../domain/prompt-builder'
 import { assertMatrixComplete, capabilitiesFor, capabilityProviderIds } from '../../domain/capability-matrix'
 import type { ProviderId } from '../../domain/conversation'
@@ -354,10 +354,10 @@ export async function registerProviders(deps: ProviderDeps): Promise<ProviderWir
   let codexNote: string | null = null
   const registerCodex = (codexBinary: string, codexVersionCheck: ReturnType<typeof checkCodexVersion>) => {
     const actual = codexVersionCheck.actualSemver ?? codexVersionCheck.rawVersion ?? '?'
-    const gap = codexVersionCheck.ok ? '' : `(与 SDK ${codexVersionCheck.expectedVersion} 不同版,首次使用时真跑一句探测)`
+    const gap = codexVersionCheck.ok ? '' : `(与对齐的 codex ${codexVersionCheck.expectedVersion} 不同版,首次使用时真跑一句探测)`
     codexNote = `你的 CLI ${actual}${gap} · 未探测`
-    deps.log('BOOT', `codex binary: ${codexBinary} (v${actual}, SDK ${codexVersionCheck.expectedVersion}${codexVersionCheck.ok ? '' : ' — 版本不同,首次使用时探测'})`)
-    const codexInner = createCodexAgentProvider({
+    deps.log('BOOT', `codex binary: ${codexBinary} (v${actual}, aligned ${codexVersionCheck.expectedVersion}${codexVersionCheck.ok ? '' : ' — 版本不同,首次使用时探测'})`)
+    const codexInner = createCodexChatProvider({
         codexPathOverride: codexBinary,
         // Construction-time model default ONLY from CODEX_MODEL. Do NOT fall back
         // to configuredAgent.model — that is the CONFIGURED provider's model, so
@@ -371,15 +371,14 @@ export async function registerProviders(deps: ProviderDeps): Promise<ProviderWir
         // they're now derived per-spawn from spawnOpts.tierProfile inside the provider.
         // admin tier maps to danger-full-access + never (matches the old --dangerously
         // posture); trusted → workspace-write + never; guest → read-only + untrusted.
-        // The dangerouslyBypassApprovalsAndSandbox flag stays here because it's a
-        // provider-construction-time codex CLI config knob (not a per-thread option).
-        // v0.5.7 — when daemon runs --dangerously, bypass MCP approval (else codex 0.128
-        // cancels every mcp__wechat__reply with "user cancelled MCP tool call").
+        // The dangerouslyBypassApprovalsAndSandbox flag stays here: when the daemon
+        // runs --dangerously, MCP tool calls skip codex's approval gate (else codex
+        // refuses every MCP call under approval "never"). Applied per spawn only when
+        // THAT spawn is dangerously (codex-chat-provider.codexChatThreadConfig).
         dangerouslyBypassApprovalsAndSandbox: permissionMode === 'dangerously',
-        // Codex SDK has no system-prompt slot; the per-spawn instructions are
-        // injected into the first user message by the provider from
-        // SpawnContext.appendInstructions (assembled by buildInstructions
-        // below), so nothing is baked at construction here.
+        // The per-spawn instructions (SpawnContext.appendInstructions, assembled
+        // by buildInstructions below) ride codex app-server's developerInstructions
+        // slot on thread/start / thread/resume, so nothing is baked here.
         mcpServers: {
           ...(wechatStdioForCodex ? { wechat: wechatStdioForCodex } : {}),
           ...(delegateStdioForCodex ? { delegate: delegateStdioForCodex } : {}),
@@ -390,7 +389,7 @@ export async function registerProviders(deps: ProviderDeps): Promise<ProviderWir
       probe: () => codexInner.cheapEval!('只回复两个字母:ok'),
       failureMessage: (detail) =>
         `codex 探测没通过:${detail.slice(0, 200)}\n` +
-        `你的 codex CLI(${actual})和 wechat-cc 的 SDK(${codexVersionCheck.expectedVersion})可能不合。` +
+        `你的 codex CLI(${actual})和 wechat-cc 对齐的版本(${codexVersionCheck.expectedVersion})可能不合。` +
         `试试 \`npm i -g @openai/codex@${codexVersionCheck.expectedVersion}\`,或者等 wechat-cc 更新。`,
       onResult: (r) => {
         codexNote = r.ok
@@ -404,7 +403,7 @@ export async function registerProviders(deps: ProviderDeps): Promise<ProviderWir
       codexProvider,
       {
         canResume: (_cwd, sid) => codexSessionJsonlPaths(HOME, sid).some(p => existsSync(p)),
-        // 工作台 / 额度查询每次现取(CLI 升级换了路径也跟得上);对话侧这个 SDK provider 仍用开机时验过的那个。
+        // 工作台 / 额度查询每次现取(CLI 升级换了路径也跟得上);对话侧仍用开机时验过的那个(两边都是 app-server)。
         bin: () => findCodexBinary(),
       },
     )

@@ -206,7 +206,7 @@ describe('ProviderCapabilities — per-provider self-declarations (RFC 05 Phase 
   })
 
   it('CODEX_CAPABILITIES has the four expected fields', async () => {
-    const { CODEX_CAPABILITIES } = await import('../adapters/executors/codex/codex-agent-provider')
+    const { CODEX_CAPABILITIES } = await import('../adapters/executors/codex/codex-chat-provider')
     // codex SDK has no per-tool callback — that's the whole reason
     // tier→sandbox translation is coarse-grained for codex.
     expect(CODEX_CAPABILITIES.perToolCallback).toBe(false)

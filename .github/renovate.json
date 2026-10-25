@@ -13,10 +13,9 @@
 
   "packageRules": [
     {
-      "description": "LLM SDK ecosystem — patch + minor auto-merge. Codex moves multiple times per week; staying close to upstream matters. Codex's SDK<->CLI protocol lock means we MUST keep these two in sync, so they share a group.",
+      "description": "Codex CLI package (the aligned version; chat + workbench speak codex app-server) — patch + minor auto-merge. Codex moves multiple times per week; staying close to upstream matters.",
       "matchPackageNames": [
-        "@openai/codex",
-        "@openai/codex-sdk"
+        "@openai/codex"
       ],
       "groupName": "openai-codex",
       "matchUpdateTypes": ["patch", "minor"],
@@ -27,8 +26,7 @@
     {
       "description": "Codex major bumps — needs human review (API breaks more likely).",
       "matchPackageNames": [
-        "@openai/codex",
-        "@openai/codex-sdk"
+        "@openai/codex"
       ],
       "matchUpdateTypes": ["major"],
       "automerge": false

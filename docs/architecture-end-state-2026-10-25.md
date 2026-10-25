@@ -221,7 +221,7 @@ DeliveryPort                      吃 TurnOutcome;旧的 / shadow 交付路删�
 ## 等主人点头的(攒在这里,不中途问)
 
 - 对话要不要也走主人的放行规则(今天不走;收进 `authorize` 后照旧不走)。
-- Codex 对话从 SDK 换到 app-server、Claude 对话和工作台合一:目标是行为不变,但两条协议细节(比如中途插话、思考过程)可能有差异;做的时候逐项列出差异,有看得见的再问。
+- ~~Codex 对话从 SDK 换到 app-server~~:主人 2026-10-25 定了(统一到 app-server、直接改),差异表见「进度」下的 B1 节。Claude 对话和工作台合一:目标是行为不变,但两条协议细节可能有差异;做的时候逐项列出差异,有看得见的再问。
 - 网页 v1 传输退休:旧的已配对网页要不要提示重新配对。
 
 ## 和别的文档的关系
@@ -267,6 +267,28 @@ DeliveryPort                      吃 TurnOutcome;旧的 / shadow 交付路删�
 | E4 第 2 步 | 工作台服务:`Ref<ServiceActions>` 与 `ctx.actions` 删掉,各域按依赖顺序构造、只拿自己要的那几个域(依赖图写在 `service.ts` 顶部)。反指的边逐条正过来:pump → execute 改成 run 自带 `launch`;`drainInputs` 的 start 由 execute 调下来时带着;lifecycle ↔ inputs 共用的记账搬进 `pending-inputs.ts`;native ↔ execute 共用的核对搬进 `native-check.ts`;`matterSync` 进只认 ctx 的 `matter-sync.ts`;view 只要额度交接的只读一半。剩一条真环(一轮做完 → 检查没过 → 接着改)用一个具名回调 `UntilResume` 在构造时注入 |
 | C2 | 逐工具判定只有一处:纯函数 `domain/authorize.ts` 的 `authorize(subject, descriptor, action) → allow / ask / deny`,按序组合旁路(权限模式,经 `compilePolicy`)、扇出拒 reply、坏名字、一起做的登记表、定时任务只读档(污点 / 读的范围 / 红线;要碰路径的事实由调用方算好)、档位 × 类别(`decideTool`)、问不了(`relayAs`)、主人的放行规则。调它的:对话的 `permission-relay`、Gemini gate、openai gate、`wire-model-options` 的定时任务闸门、一起做 Claude 的 `makeWorkbenchClaudeCanUseTool`(`wire-workbench` 外面手包的「没登记就拒」收进来,登记表当 descriptor)、一起做放行规则的落点(`makeRunPermissions`)、终端会话(`permission-gate.makeTerminalDecide`)。放行规则只在 `subject.surface` 是 terminal / workbench 时看(`OWNER_RULE_SURFACES`);对话要不要也走,等主人。`effectivePolicy` 删掉。逐格对照 `authorize.parity.test.ts`:改之前的七份实现原样抄进测试,约 16 万格一位不差(结果、问主人的话 / 码 / 时限、日志、通道调用)。没做:放行规则的 floor / rules-file / decide 还在 `core/permission-rules`(靠 node:path 的 posix / win32 归一,搬进 domain 要先把路径归一做成纯的),`authorize` 经 `permission-gate.decide` 拿它的裁决;ACP 对话侧按模式选放行 / 拒绝项(`compilePolicy('cursor-acp')`)是编译好的常量答案,没过 `authorize`;网络守护按调用目标判、不是逐工具,不在里面 |
 | C3 | 每家 × 每档 × 每类工具实际会怎样,从真判定推出来:纯函数 `domain/enforcement-matrix.ts`(派发拒走 `providerDenialFor`;有逐工具回调的取 `authorize` 在对话面上的结论;没有的看档位那一格 + wechat MCP 按会话档位注册(`adminMcpTools` 为假 ⇒ 钉成 trusted)+ `compilePolicy` strict 设置里问不了时怎么落:codex `approvalPolicy` never ⇒ 放,ACP Cursor 应答 reject ⇒ 拒,agy 没有应答项 ⇒ 放)。`noAskNotice` 改成看「哪一档哪一类出现『档位说问、它放了』」算出来,不再读手设的 `doesNotAsk`;算出的提醒对象和原来一位不差(codex、agy)。`tier-enforcement.ts` 与它的两份测试删掉:整张表在 `enforcement-matrix.test.ts` 钉快照(能力表 / 档位 / `authorize` / `compilePolicy` 一改就有 diff),每家缺口的理由搬到快照旁的 `WHY_GAPS`(有缺口没理由、有理由没缺口都红);真调三家闸门的证明测试留着,改名 `enforcement-matrix.proof.test.ts`,并和推出来的格子对照。推导比原来的手写表细一格:agy 在主人聊天里 admin 专用工具(含 `daemon_remediate`)根本不注册,是「调不到」不是「不问」 |
+| B1 | Codex 对话改走 `codex app-server`(主人 2026-10-25 拍板:统一到更强的那条协议,直接改)。协议客户端只有一份:`codex-app-server.ts` 的 `spawnCodexAppServerSession`,工作台不传 `chat` ⇒ 行为一字不变;对话侧 `codex-chat-provider.ts` 传 `CodexChatProfile`(compilePolicy 的沙箱 / 审批、daemon 的 MCP 作线程配置、老形状的事件、审批请求一律拒)。起子进程的那一下单独成接缝 `codex-app-server-process.ts`,daemon e2e 把它换成剧本 app-server(`test-support/executors/codex-scripted.ts`,同一个替身也给对话侧单测和交付测试用)。删掉:`codex-agent-provider.ts` 与测试、`watchCodexEvents`(超时归 app-server 的回合看门狗)、`@openai/codex-sdk` 依赖(CLI `memory` 命令的一次性评估改用同一个 provider;codex-autofix 只对齐 `@openai/codex`)。C3 快照不动(对话仍是审批 never)。差异见下表 |
+
+### B1:Codex 对话 SDK → app-server 差异表
+
+| 项 | 以前(SDK,每轮一个 `codex exec`) | 现在(app-server,每条会话一个常驻进程) | 主人看得见? |
+|---|---|---|---|
+| 中途插话 | 没有:一轮跑着时新消息只能排队或抢占 | `session.steer()` → `turn/steer` 接好、有测试;对话协调器还不调它(没有新界面),消息照旧排队 | 否(留作后续) |
+| 思考过程 | reasoning 条目丢掉 | 照旧丢掉(不映射 reasoning 增量) | 否 |
+| 工具调用显示 | 每个工具类条目一次 `tool_call`;MCP 带 server / tool,shell / 改文件 / 搜索有固定名 | 同一张映射(驼峰类型名),每个条目 id 一次;`userMessage` / 上下文压缩不算工具;不认识的新类型照样是分段边界 | 否(TurnRecord 的工具名不变) |
+| 恢复会话 | `resumeThread(id)`,每一轮 `codex exec resume`;坏 id 每轮都失败 | 起会话时 `thread/resume`;续接不上 ⇒ 记 `SESSION_RESUME_FAILED`、起新线程;进程中途没了 ⇒ 下一轮换新进程续接同一个 thread | 很少:坏掉的续接现在变成新对话,而不是每轮报错 |
+| 额度报错 | 只靠文本(`usage limit` …)⇒ `quota` | 先看 `codexErrorInfo`(`usageLimitExceeded` ⇒ `quota`),文本兜底 | 否(同一个码、同一句通知) |
+| 认证报错 | 文本:没凭证 ⇒ `auth_failed`,401 ⇒ `auth_rejected`;exec 退出时 stderr 里认 | `codexErrorInfo: unauthorized` + 同一套文本;app-server 自己退出时带上 stderr 末尾再认;`auth-fail` 的宽集合兜底照旧 | 否 |
+| 图片输入 | provider 只传文字(SDK 的 `--image` 没用上) | `dispatch(text, attachments)` 支持图片(和工作台同一个 `turnInput`);对话协调器照旧只传文字 | 否 |
+| 取消 | AbortController 杀掉这一轮的 exec,迭代器抛 AbortError | `turn/interrupt`,确认后这一轮以「Codex 本轮已停止。」收尾,进程留着;协调器按 /stop 代数不发出错通知 | 否 |
+| MCP 工具 | `--config mcp_servers.*` 进 argv(会话令牌出现在 ps 里),每轮重起 MCP 子进程 | 线程配置 `config.mcp_servers`(令牌不进 argv),MCP 子进程活一整条会话;dangerously ⇒ 同一个 bypass 键 + 每个服务器 `default_tools_approval_mode = "approve"`;strict ⇒ codex 拒(发来的审批请求我们拒) | 否(预期);免审那一项要真机核一次 |
+| 沙箱 / 网络 | `--sandbox` + `approval_policy`;不给网的档关联网搜索 | `thread/start` 的 `sandbox` + `approvalPolicy`,起来后核对 codex 报回来的策略,对不上就不开;联网搜索照旧;沙箱网络照旧不设 | 否 |
+
+另两处行为差别(不在上面十项里):系统指令从「前置到第一条消息」改成 app-server 的 `developerInstructions` 槽(每次起线程 / 续接都带);守护判端点从「每轮按此刻的配置」改成「会话起来时 codex 自己 `config/read` 报的有效配置」(常驻进程本来就是这样)。
+
+**机会(这一步没做)**:app-server 能逐条问(`on-request` + `item/commandExecution/requestApproval`,工作台已在用)。对话侧可以像 Claude 那样把 admin 的危险命令转给主人拍板,C3 快照里 codex 的「问 ⇒ 放」就能补上;按主人的话这一步不改档位行为,快照不动。
+
+**后续**:协调器在一轮跑着时把新消息走 `steer`(要先定产品行为);真机核 dangerously 下 `default_tools_approval_mode` / bypass 键在 app-server 上确实放过 MCP;对话侧没开网络守护的「暂停在跑的任务」(`suspension`,工作台沙盒验过,对话没验);Windows 上对话侧经 cc-jobspawn 起 app-server,没在真机跑过。
 
 ## 修订记录
 

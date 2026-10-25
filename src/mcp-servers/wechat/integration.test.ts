@@ -720,25 +720,25 @@ describe('wechat-mcp stdio integration', () => {
   })
 
   // 回复交付第 4 步(2026-10-03):Codex 的 wechat MCP 是 provider 构造时给的 spec,**每次 spawn** 把会话 env
-  // (令牌 + tier)合进去,再经 SDK 的 config(mcp_servers.wechat.*)交给 codex exec。
-  // 完整链:wechatStdioMcpSpec('codex') → createCodexAgentProvider.spawn(会话 env)→ 交给 Codex 构造的 config
+  // (令牌 + tier)合进去,再作为 app-server 的线程配置(thread/start 的 config.mcp_servers.wechat)交给 codex(B1 起)。
+  // 完整链:wechatStdioMcpSpec('codex') → createCodexChatProvider.spawn(会话 env)→ thread/start 的 config
   // → 用那份 command / args / env 起子进程 → tools/list。owner 会话是 admin ⇒ daemon 下另有往别处发的 message。
   describe('codex per-spawn MCP config → the daemon tool table', () => {
     const REPLY_FAMILY = ['reply', 'reply_voice', 'send_file', 'edit_message', 'broadcast', 'send_sticker', 'search_online_sticker', 'send_online_sticker_candidate']
 
     async function toolsForCodexSession(port: number, tokenFilePath: string): Promise<{ tools: string[]; env: Record<string, string> }> {
-      const { createCodexAgentProvider } = await import('../../adapters/executors/codex/codex-agent-provider')
+      const { createCodexChatProvider } = await import('../../adapters/executors/codex/codex-chat-provider')
       const { createScriptedCodex } = await import('../../test-support/executors/codex-scripted')
       const { TIER_PROFILES } = await import('../../domain/user-tier')
       const scripted = createScriptedCodex({ turns: [] })
       const spec = wechatStdioMcpSpec({ baseUrl: `http://127.0.0.1:${port}`, tokenFilePath }, 'codex')
-      const provider = createCodexAgentProvider({ codexFactory: scripted.factory, mcpServers: { wechat: spec } })
-      await provider.spawn({ alias: 'a', path: stateDir }, {
+      const provider = createCodexChatProvider({ codexPathOverride: '/bin/codex', spawnProcess: scripted.spawn, mcpServers: { wechat: spec } })
+      const session = await provider.spawn({ alias: 'a', path: stateDir }, {
         tierProfile: TIER_PROFILES.admin, permissionMode: 'dangerously', chatId: 'o9owner@im.wechat',
         mcpEnv: { WECHAT_SESSION_TOKEN: 'codex-session-tok', WECHAT_SESSION_TIER: 'admin' },
       })
-      // 最后一次构造是 spawn 的那个 Codex(第一次是 cheapEval 的,没有 config)。
-      const config = scripted.constructed[scripted.constructed.length - 1]!.config as { mcp_servers: Record<string, { command: string; args: string[]; env: Record<string, string> }> }
+      await session.close()
+      const config = scripted.threadStarts[scripted.threadStarts.length - 1]!.params.config as { mcp_servers: Record<string, { command: string; args: string[]; env: Record<string, string> }> }
       const entry = config.mcp_servers.wechat!
       const baseEnv = { ...process.env as Record<string, string> }
       delete baseEnv.WECHAT_SESSION_TIER

@@ -1,10 +1,10 @@
 // Tier 2 / T2.1 — solo codex text inbound. Mirror of inbound-reply.e2e
-// but routed to the codex provider, exercising the codex SDK fake's
-// item.completed event path and codex-agent-provider's session lifecycle.
+// but routed to the codex provider, exercising the scripted codex app-server
+// (fake-sdk.ts) and codex-chat-provider's session lifecycle.
 //
 // What this catches:
 //   - codex provider not registered when binary detection passes
-//   - codex SDK iterable shape changes break the provider
+//   - codex app-server event shape changes break the provider
 //   - mode persistence ignores codex selection
 import { describe, it, expect } from 'vitest'
 import { startTestDaemon } from './harness'

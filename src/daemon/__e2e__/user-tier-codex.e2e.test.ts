@@ -2,10 +2,10 @@
 //
 // Symmetric to user-tier.e2e.test.ts (which covers the Claude side):
 //   inbound  → coordinator → resolveTier → manager.acquire →
-//   codex.spawn → tierProfileToCodexSdkOpts → codex SDK options
+//   codex.spawn → compilePolicy('codex') → app-server thread/start sandbox + approvalPolicy
 //
-// The unit test in core/codex-agent-provider.test.ts already verifies the
-// pure tierProfileToCodexSdkOpts function — what this catches is the
+// The unit test in codex-chat-provider.test.ts already verifies the
+// tier → thread/start translation — what this catches is the
 // wiring around it. If session-manager stops threading tierProfile into
 // codex.spawn, if the coordinator routes to claude instead of codex when
 // mode says codex, or if codex provider's spawnOpts contract drifts,
@@ -14,7 +14,7 @@
 // Scenario — tier maps to codex SDK options:
 //   Two chats on the same daemon — one in `admins`, one not, both with
 //   mode=solo+codex — produce different `sandboxMode` + `approvalPolicy`
-//   on `Codex.startThread()` at spawn time. Under strict mode
+//   on app-server `thread/start` at spawn time. Under strict mode
 //   (dangerously=false) admin gets `workspace-write` + `never`; guest
 //   gets `read-only` + `untrusted`. (Post-RFC-05, admin no longer gets
 //   `danger-full-access` in strict mode — its destructive ops relay, and
@@ -27,11 +27,10 @@
 // duplicate the access.json plumbing without exercising any new path.
 //
 // The harness `recordCodexSpawnOptions` hook (added alongside this test)
-// captures the thread options passed to every `Codex.startThread()` /
-// `resumeThread()` whose thread is later run via `runStreamed` — i.e.
-// every AgentSession spawn, not the cheapEval path (which uses
-// `thread.run()` — the fake DOES implement `run()`, but it deliberately
-// does not record a spawn there; see fake-sdk.ts's FakeCodexThread.run).
+// captures the params of every app-server `thread/start` / `thread/resume`
+// for a session thread (sandbox → sandboxMode, cwd → workingDirectory) — i.e.
+// every AgentSession spawn, not the cheapEval one-shot threads (read-only +
+// network_access=false; the scripted app-server never records those).
 import { describe, it, expect } from 'vitest'
 import { startTestDaemon } from './harness'
 
@@ -70,7 +69,7 @@ describe('e2e: user-tier permissions (codex)', () => {
       codexScript: {
         async onDispatch(_text) {
           // Empty body — we only need the spawn to happen. The recorder
-          // fires on runStreamed before any onDispatch logic runs.
+          // fires on thread/start before any onDispatch logic runs.
           return { toolCalls: [], finalText: 'ok' }
         },
       },
@@ -91,8 +90,7 @@ describe('e2e: user-tier permissions (codex)', () => {
       const guestReplies = await daemon.waitForReplyTo('guest_chat', 8000)
       expect(guestReplies.map(r => r.text).join('\n')).toContain('/codex 对访客不开放')
 
-      // `run()` IS implemented in the fake (the first-use probe's cheapEval depends on it), but the
-      // recorder is wired only inside `runStreamed`, so `run()` never fires it — cheapEval can't add records here.
+      // The first-use probe's cheapEval also starts a thread, but one-shot threads never fire the recorder.
       expect(spawns.length).toBe(1)
 
       const adminSpawn = spawns.find(s => s.sandboxMode === 'workspace-write')

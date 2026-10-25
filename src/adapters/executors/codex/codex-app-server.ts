@@ -1,8 +1,10 @@
 import { makePausableTimers, type PausableTimer } from '../../../lib/pausable-timers'
 import { codexBreakdown, sumTurnUsage, type TurnUsage } from '../../../domain/turn-usage'
 import { makeProcessTreeFreezer } from '../../../lib/process-tree-freeze'
-import { spawn } from 'node:child_process'
-import type { AgentAttachment, AgentEvent, AgentExecutionModel, AgentProvider, AgentWorkbenchRuntime } from '../../../ports/agent-provider'
+import { realpathSync } from 'node:fs'
+import type { AgentAttachment, AgentEvent, AgentExecutionModel, AgentProject, AgentProvider, AgentSession, AgentWorkbenchRuntime, SpawnContext } from '../../../ports/agent-provider'
+import { spawnCodexAppServerProcess, type CodexAppServerSpawn } from './codex-app-server-process'
+import { wrapForProcessTree } from '../../../lib/jobspawn'
 import { discoverWorkbenchCodexConfig, workbenchCodexArgs, workbenchCodexEnv, workbenchCodexNativeConfig } from './codex-config'
 import { validateUserInputAnswers, validateUserInputRequest } from '../../../core/workbench/user-input'
 import { codexActivityEvent, codexItemId } from './codex-activity'
@@ -13,7 +15,8 @@ import { executionModel, nativeModelId, readCodexModelCatalog } from '../../../c
 
 import { codexErrorEvent, codexRpcError } from './codex-execution-error'
 import { CodexChildOccurrence } from './codex-runtime'
-import { codexAppServerErrorCode, codexTimeoutsFromEnv, type CodexTimeouts } from './codex-errors'
+import { codexAppServerErrorCode, codexErrorCode, codexTimeoutsFromEnv, type CodexTimeouts } from './codex-errors'
+import { isAuthFail } from '../../../domain/auth-fail'
 import { APP_VERSION } from '../../../lib/app-version'
 import { codexCallTarget, codexTargetFromConfig, codexTargetToCall, type ResolveCodexTargetOptions } from '../../../lib/codex-target'
 import type { CallTarget } from '../../../lib/call-classifier'
@@ -32,10 +35,66 @@ interface Options {
   codexTargetOptions?: () => Omit<ResolveCodexTargetOptions, 'cwd' | 'overrides'>
   /** 边界超时(arch backlog #4 第 2 步);缺省读环境变量,见 core/codex-errors。 */
   timeouts?: CodexTimeouts
+  /** 测试接缝:起子进程的那一下(缺省 codex-app-server-process.ts)。对话侧的剧本替身从这里接进来。 */
+  spawnProcess?: CodexAppServerSpawn
 }
+export type CodexAppServerOptions = Options
+/**
+ * 对话侧(微信 / App 的聊天,B1 2026-10-25)起 app-server 的差别。工作台不传 ⇒ 行为一字不变。
+ *
+ *   - 沙箱 / 审批来自 compilePolicy('codex')(审批永远不问人:never,访客 untrusted 也一律拒),不是工作台钉死的
+ *     workspace-write + on-request;起线程后照样核对 codex 报回来的策略,对不上就不开(fail closed)。
+ *   - 工具配置是 daemon 给的 wechat / delegate / 插件 MCP(按会话令牌与档位),作为**线程**配置传(不进 argv:
+ *     令牌不出现在 ps 里);不读、不关主人自己的 MCP(和以前 SDK 一样继承主人的 codex 配置)。
+ *   - 事件按对话的老形状:每条完整的助理消息一个 text(ownSegment),每个工具类条目一个 tool_call
+ *     (MCP 带 server / tool),不发逐字增量、不发工作台的活动时间线。
+ *   - codex 发来的任何审批 / 提问请求一律拒(对话没有界面接它们),不当成协议错误停掉会话。
+ *   - 取消:中断确认后这一轮就以「已停止」收尾,不等 turn/completed。
+ */
+export interface CodexChatProfile {
+  sandbox: 'read-only' | 'workspace-write' | 'danger-full-access'
+  approvalPolicy: 'untrusted' | 'on-request' | 'never'
+  /** thread/start 与 thread/resume 的 `config` 覆盖(mcp_servers / web_search / model_reasoning_effort …)。 */
+  config: Record<string, unknown>
+  /** 子进程环境。对话侧和以前的 SDK 一样继承 daemon 的环境(codex 的登录 / 代理从这里来)。 */
+  env: NodeJS.ProcessEnv
+  /** 非致命的事件(被拒的请求、错误条目)记一行。 */
+  log?: (tag: string, line: string) => void
+}
+
+/** 对话侧多要一样东西:这条 app-server 还活着吗(死了 ⇒ 下一轮换一个新进程续接同一个 thread)。 */
+export type CodexAppServerSession = AgentSession & { alive(): boolean; threadId(): string }
+
+/** Codex 线程回报的沙箱类型(app-server v2 的 SandboxPolicy.type)。 */
+const SANDBOX_TYPE: Record<CodexChatProfile['sandbox'], string> = { 'read-only': 'readOnly', 'workspace-write': 'workspaceWrite', 'danger-full-access': 'dangerFullAccess' }
+
+/**
+ * 对话侧:哪些条目算「调了一次工具」—— 回复交付「最后的话」的分段边界(core/turn-reply.ts 以 tool_call 为界)。
+ * **不是助理消息、不是思考、不是用户消息 / 上下文压缩、不是非致命错误的条目都算**,包括还不认识的新类型
+ * (主人的 codex CLI 常比我们新,2026-09-09 定案)—— 分段就不依赖「认出每一种工具的形状」。名字只给日志 / 桌宠看。
+ */
+const CHAT_BUILTIN_TOOL_NAMES: Readonly<Record<string, string>> = {
+  commandExecution: 'shell', fileChange: 'apply_patch', webSearch: 'web_search', todoList: 'update_plan', plan: 'update_plan',
+}
+const CHAT_NOT_A_TOOL: ReadonlySet<string> = new Set(['agentMessage', 'reasoning', 'userMessage', 'error', 'contextCompaction', 'enteredReviewMode', 'exitedReviewMode'])
+/** 条目 → 对话的 tool_call;不是工具的条目 ⇒ null。纯函数(单测直接打)。 */
+export function codexChatToolCall(item: { type?: unknown; server?: unknown; tool?: unknown }): Extract<AgentEvent, { kind: 'tool_call' }> | null {
+  if (typeof item.type !== 'string' || CHAT_NOT_A_TOOL.has(item.type)) return null
+  if ((item.type === 'mcpToolCall' || item.type === 'dynamicToolCall') && typeof item.tool === 'string') {
+    return typeof item.server === 'string' ? { kind: 'tool_call', server: item.server, tool: item.tool } : { kind: 'tool_call', tool: item.tool }
+  }
+  return { kind: 'tool_call', tool: CHAT_BUILTIN_TOOL_NAMES[item.type] ?? item.type }
+}
+
+const samePath = (a: unknown, b: string): boolean => {
+  if (a === b) return true
+  if (typeof a !== 'string') return false
+  try { return realpathSync(a) === realpathSync(b) } catch { return false }
+}
+
 interface Approval { controller: AbortController; turn: Turn; rejection: 'decline' | 'cancel'; mcp?: boolean }
 interface UserQuestion { controller: AbortController; turn: Turn }
-interface Turn { terminal?: boolean; watchdog?: PausableTimer; watchdogKind?: 'first_event' | 'connect'; lastRetry?: ObjectValue; threadId: string; occurrence?: CodexChildOccurrence; id: string | null; cancelled: boolean; rejectedOperation: boolean; events: EventQueue; early: Message[]; items: Map<string, ObjectValue>; completedItems: Set<string>; questionIds: Set<RpcId>; startedAt: number; usage?: TurnUsage }
+interface Turn { toolItems?: Set<string>; terminal?: boolean; watchdog?: PausableTimer; watchdogKind?: 'first_event' | 'connect'; lastRetry?: ObjectValue; threadId: string; occurrence?: CodexChildOccurrence; id: string | null; cancelled: boolean; rejectedOperation: boolean; events: EventQueue; early: Message[]; items: Map<string, ObjectValue>; completedItems: Set<string>; questionIds: Set<RpcId>; startedAt: number; usage?: TurnUsage }
 
 function turnInput(text: string, attachments: readonly AgentAttachment[] = []) {
   const input: Array<{ type: 'text'; text: string; text_elements: [] } | { type: 'image'; url: string; detail: 'high' }> = text || !attachments.length ? [{ type: 'text', text, text_elements: [] }] : []
@@ -132,7 +191,7 @@ function approvalScope(params: ObjectValue): string | null {
   ].filter(Boolean).join('\n')
 }
 
-/** Workbench-only native protocol adapter. Normal chats continue using the SDK. */
+/** Native app-server protocol adapter: the workbench provider below, and Codex chat (codex-chat-provider.ts) via spawnCodexAppServerSession. */
 /** 发完 SIGKILL 之后至少再等多久看它退(关闭期限已经过了也给这一段)。 */
 const KILL_GRACE_MS = 250
 
@@ -144,29 +203,36 @@ export function createWorkbenchCodexProvider(options: Options): AgentProvider {
     // 自己的配置层(codex 0.153 不认 OPENAI_BASE_URL)。会话起来以后改用 codex 自己 config/read 的结果。
     callTarget: (kind, context) => kind === 'cheapEval' || kind === 'strongEval' ? null
       : codexCallTarget({ model: context?.execution?.model ?? context?.model ?? options.model ?? null }, { env: workbenchCodexEnv(), ...(options.codexTargetOptions?.() ?? {}) }),
-    async spawn(project, context) {
+    spawn: (project, context) => spawnCodexAppServerSession(options, project, context),
+  }
+}
+
+/** 一条 app-server 会话(一个子进程、一个 thread)。工作台和对话侧共用这一份协议客户端;`chat` 见 CodexChatProfile。 */
+export async function spawnCodexAppServerSession(options: Options, project: AgentProject, context: SpawnContext, chat?: CodexChatProfile): Promise<CodexAppServerSession> {
+      const codexPath = (): string => typeof options.codexPathOverride === 'function' ? options.codexPathOverride() : options.codexPathOverride
       const execution = context.execution ? {...context.execution} : undefined
       const model = execution ? execution.model ?? (execution.defaults === 'provider' && !context.resumeSessionId ? context.model ?? options.model : undefined) : context.model ?? options.model
       let selectedModel: AgentExecutionModel | undefined
       const validateAttachments = (attachments?: readonly AgentAttachment[]) => {
         if (selectedModel?.inputModalities && !selectedModel.inputModalities.includes('image') && attachments?.some(item => item.mime.startsWith('image/'))) throw new Error('execution_image_unsupported')
       }
-      if (process.platform === 'win32') throw new Error('Codex 工作台暂不支持 Windows：尚未验证任务进程树清理。')
+      // 对话侧在 Windows 上照常跑(以前的 SDK 也是):子进程套 cc-jobspawn,杀它就收掉整棵树(lib/jobspawn)。
+      if (!chat && process.platform === 'win32') throw new Error('Codex 工作台暂不支持 Windows：尚未验证任务进程树清理。')
       // 这个会话从头到尾用同一个路径:发现配置和起 app-server 用的是同一份 codex。
       const binary = codexPath()
-      const discovery = await discoverWorkbenchCodexConfig(binary, project.path)
+      const discovery = chat ? undefined : await discoverWorkbenchCodexConfig(binary, project.path)
       // Startup has no turn. Keep MCPs disabled while reading the native layers,
       // without overwriting the user's web-search mode before config/read.
-      const { web_search: _startupSearch, ...startupConfig } = discovery.config
+      // 对话侧启动参数里什么都不带:工具与策略都在线程配置里(令牌不进 argv)。
+      const { web_search: _startupSearch, ...startupConfig } = discovery?.config ?? { web_search: undefined }
       const enabledMcp = new Set<string>()
-      const childEnv = workbenchCodexEnv()
+      const childEnv = chat ? chat.env : workbenchCodexEnv()
       // 守护(评审 #193 P1-1 + 2026-10-03):app-server 是常驻子进程,端点在它起来那一刻按配置定下。
       // 先按配置层预测;initialize 之后问 codex 自己(config/read),用它报的有效配置覆盖。
-      let spawnTarget: CallTarget = codexCallTarget({ model: model ?? null }, { env: childEnv, ...(options.codexTargetOptions?.() ?? {}), cwd: project.path, overrides: startupConfig })
-      const child = spawn(binary, [...workbenchCodexArgs(startupConfig), 'app-server', '--listen', 'stdio://'], {
-        cwd: project.path, env: childEnv, stdio: ['pipe', 'pipe', 'pipe'],
-        windowsHide: true, detached: true,
-      })
+      let spawnTarget: CallTarget = codexCallTarget({ model: model ?? null }, { env: childEnv, ...(options.codexTargetOptions?.() ?? {}), cwd: project.path, overrides: chat ? chat.config : startupConfig })
+      const launchArgs = [...workbenchCodexArgs(startupConfig), 'app-server', '--listen', 'stdio://']
+      const launcher = chat ? wrapForProcessTree(binary, launchArgs) : { command: binary, args: launchArgs }
+      const child = (options.spawnProcess ?? spawnCodexAppServerProcess)(launcher.command, launcher.args, { cwd: project.path, env: childEnv, detached: process.platform !== 'win32' })
       const rpcs = new Map<RpcId, { resolve: (value: ObjectValue) => void; reject: (error: Error) => void; clear: () => void }>()
       // 网络守护「暂停在跑的任务」(2026-10-03):冻住整棵树时,这个会话自己的计时器(连接 / 首个事件
       // 超时、RPC 请求超时)一起停,放开时按剩下的时间接着走 —— 不然冻住期间到点,会把只是在等网络的
@@ -262,7 +328,7 @@ export function createWorkbenchCodexProvider(options: Options): AgentProvider {
         for (const item of turn.items.values()) if (item.type === 'commandExecution' && !turn.completedItems.has(item.id)) { retained = true; retainUnknown(`command:${turn.id}:${item.id}`) }
       }
       /**
-       * 主回合的边界超时(arch backlog #4 第 2 步;与对话侧 codex-errors.watchCodexEvents 同一规矩)。
+       * 主回合的边界超时(arch backlog #4 第 2 步;对话侧与工作台同一个看门狗,B1 起)。
        * 连不上时 app-server 不停发 `error{willRetry:true}`,本轮永远不结束 —— 工作台以前只能等
        * 10 分钟空闲上限。first_event:起轮后一条有进展的消息都没有;connect:开始重试后再没有进展。
        * 到点 ⇒ 带码(`network`,或最后一条重试里 codexErrorInfo 认出的码)收掉这一轮,并请 codex 中断。
@@ -285,6 +351,16 @@ export function createWorkbenchCodexProvider(options: Options): AgentProvider {
           finish(turn, { kind: 'error', message, code })
         }, ms, { unref: true })
       }
+      // 对话侧的终态:result 带这条会话第几轮(和以前 SDK 一样逐轮加一);没带码的错误按 codex 自己的固定措辞
+      // 补码,再兜底认「凭证失效」(auth-fail 的 sdk-error 宽集合 —— 以前 makeTurnEmitter().errorText 做的事)。
+      let chatTurns = 0
+      const chatTerminalEvent = (event: AgentEvent): AgentEvent => {
+        if (event.kind === 'result') return { ...event, numTurns: ++chatTurns }
+        if (event.kind !== 'error') return event
+        const code = event.code ?? codexErrorCode(event.message) ?? (isAuthFail('sdk-error', event.message) ? 'auth_failed' : undefined)
+        chat?.log?.('SESSION_RESULT', `alias=${project.alias} provider=codex error${code ? ` code=${code}` : ''}: ${event.message.slice(0, 300)}`)
+        return { kind: 'error', message: event.message, ...(code ? { code } : {}) }
+      }
       const finish = (turn: Turn, event: AgentEvent) => {
         clearWatchdog(turn)
         if (turn.occurrence) {
@@ -295,6 +371,7 @@ export function createWorkbenchCodexProvider(options: Options): AgentProvider {
           return
         }
         if (active !== turn) return
+        if (chat) event = chatTerminalEvent(event)
         dropPendingRequests(turn)
         if (lifetime) {
           retainUnfinishedCommands(turn)
@@ -570,6 +647,16 @@ export function createWorkbenchCodexProvider(options: Options): AgentProvider {
           const params = message.params ?? {}
           const isRequest = rpcId(message.id)
           const approval = message.method === 'item/commandExecution/requestApproval' || message.method === 'item/fileChange/requestApproval'
+          if (chat && isRequest) {
+            // 对话没有界面接审批 / 提问 / MCP 表单:一律拒(= 审批 never;访客的 untrusted 也是拒),会话照常往下跑。
+            // codex 收到拒绝会把这次调用记成失败,模型看得到、可以改用别的说法 —— 和以前 SDK 下 codex exec 自己拒掉一样。
+            chat.log?.('CODEX_REQUEST_DECLINED', `alias=${project.alias} method=${message.method}`)
+            if (message.method === 'item/permissions/requestApproval') send({ id: message.id, result: { permissions: {}, scope: 'turn' } })
+            else if (approval || trackedRequest(message)) send({ id: message.id, result: rejectedRequest(message) })
+            else send({ id: message.id, error: { code: -32601, message: 'This request is not supported in Tendhearth CC chat.' } })
+            if (active?.id && params.turnId === active.id) clearWatchdog(active)
+            return
+          }
           if (isRequest && !approval && !trackedRequest(message)) {
             if (message.method === 'item/permissions/requestApproval') send({ id: message.id, result: { permissions: {}, scope: 'turn' } })
             else { send({ id: message.id, error: { code: -32601, message: 'This request is not supported in CC Workbench.' } }); fatal('codex_unsupported_server_request') }
@@ -662,6 +749,32 @@ export function createWorkbenchCodexProvider(options: Options): AgentProvider {
           if (!turn.occurrence && message.method === 'model/rerouted' && nativeModelId(params.toModel)) {
             context.reportExecution?.({model:params.toModel,sessionId:threadId,source:'native_reroute'})
           }
+          if (chat) {
+            if ((message.method === 'item/started' || message.method === 'item/completed') && object(params.item)) {
+              const item = params.item, done = message.method === 'item/completed'
+              if (done && codexItemId(item.id)) { if (turn.completedItems.has(item.id)) return; turn.completedItems.add(item.id) }
+              if (item.type === 'agentMessage') {
+                // 每条助理消息是一条完整消息、自成一段(spec §4.2:最后的话 = 回合结束前最后一条)。
+                if (done && typeof item.text === 'string') turn.events.push({ kind: 'text', text: item.text, ownSegment: true })
+                return
+              }
+              if (item.type === 'error') {
+                // 非致命的错误条目(比如某个 MCP 起不来):只记日志,**永远不当回复**(#190 / #197)。
+                if (done) chat.log?.('CODEX_ITEM_ERROR', `alias=${project.alias} ${String(item.message ?? '').slice(0, 300)}`)
+                return
+              }
+              // 工具类条目:每个只产一次 tool_call,在第一次见到它时(通常是 item/started —— 分段边界落在命令开跑之前)。
+              const key = codexItemId(item.id) ? item.id : undefined
+              const seen = (turn.toolItems ??= new Set())
+              if (key ? seen.has(key) : !done) return
+              if (key) seen.add(key)
+              const call = codexChatToolCall(item)
+              if (call) turn.events.push(call)
+              return
+            }
+            // 逐字增量 / 补丁增量:对话只要整条消息与每个工具一次,工作台的时间线不发。
+            if (message.method === 'item/agentMessage/delta' || message.method === 'item/fileChange/patchUpdated') return
+          }
           if (message.method === 'item/started' && object(params.item)) {
             const item = params.item
             if (codexItemId(item.id) && turn.completedItems.has(item.id)) return
@@ -742,16 +855,19 @@ export function createWorkbenchCodexProvider(options: Options): AgentProvider {
           } catch { fatal('codex_invalid_protocol_message') }
         }
       })
-      child.stderr.resume()
+      // 对话侧留住 stderr 的最后一段:app-server 自己退出时(登录失效、配置坏了)真因常在这里,用来给错误补码。
+      let stderrTail = ''
+      if (chat) { child.stderr.setEncoding('utf8'); child.stderr.on('data', chunk => { stderrTail = (stderrTail + String(chunk)).slice(-4000) }) }
+      else child.stderr.resume()
       child.stdin.on('error', () => fatal('codex_protocol_write_failed'))
       child.stdin.on('close', () => fatal('codex_protocol_write_failed'))
       child.on('error', () => { exited = true; resolveExit(); fatal('codex_process_start_failed') })
       child.on('exit', (code, signal) => {
         exited = true; resolveExit()
-        if (!closing) fatal(`codex_process_exited: ${signal ?? code ?? 'unknown'}`)
+        if (!closing) fatal(`codex_process_exited: ${signal ?? code ?? 'unknown'}${chat && stderrTail.trim() ? `\n${stderrTail.trim().slice(-1000)}` : ''}`)
       })
       try {
-        const initialized = await request('initialize', { clientInfo: { name: 'cc_workbench', title: 'CC Workbench', version: APP_VERSION }, capabilities: { experimentalApi: !!lifetime, requestAttestation: false } })
+        const initialized = await request('initialize', { clientInfo: chat ? { name: 'tendhearth_cc', title: 'Tendhearth CC', version: APP_VERSION } : { name: 'cc_workbench', title: 'CC Workbench', version: APP_VERSION }, capabilities: { experimentalApi: !!lifetime, requestAttestation: false } })
         // Registration-before-parent-result was verified with this exact native
         // protocol version. New/unknown versions retain instead of claiming EOF.
         registrationVerified = typeof initialized.userAgent === 'string' && /^[^/\r\n]+\/0\.153\.4(?:\s|$)/.test(initialized.userAgent)
@@ -760,31 +876,45 @@ export function createWorkbenchCodexProvider(options: Options): AgentProvider {
         const native = await request('config/read', { cwd: project.path, includeLayers: false })
         // codex 自己报的有效配置(含 MDM / 云端托管层、项目信任、-c 覆盖)才是这个会话真正的端点。
         spawnTarget = codexTargetToCall(codexTargetFromConfig(native.config, childEnv), model ?? null)
-        const config = workbenchCodexNativeConfig(discovery.servers, native.config)
-        const catalog = execution && (execution.model || execution.reasoningEffort) ? await readCodexModelCatalog(request, project.path) : undefined
-        if (catalog && execution?.model) selectedModel = executionModel(catalog, execution)
-        for (const [name, server] of Object.entries(config.mcp_servers)) if (server.enabled) enabledMcp.add(name)
-        const capabilityNotice = codexNativeCapabilityNotice(discovery.servers, enabledMcp)
-        if (capabilityNotice) context.reportNotice?.(capabilityNotice)
-        if (enabledMcp.size && !supportsCodexMcpApproval(initialized.userAgent)) throw new Error('原生工具逐次批准需要 Codex 0.153.4 或更新版本，请先更新 Codex。')
-        const response = await request(context.resumeSessionId ? 'thread/resume' : 'thread/start', {
-          ...(context.resumeSessionId ? { threadId: context.resumeSessionId, excludeTurns: true } : {}),
-          cwd: project.path, approvalPolicy: 'on-request', approvalsReviewer: 'user', sandbox: 'workspace-write',
-          developerInstructions: context.appendInstructions ?? '', config: {...config,...(execution?.reasoningEffort ? {model_reasoning_effort:execution.reasoningEffort} : {})},
-          ...(model ? {model} : {}),
-        })
+        const resumeParams = context.resumeSessionId ? { threadId: context.resumeSessionId, excludeTurns: true } : {}
+        let response: ObjectValue
+        if (chat) {
+          // 对话侧:系统指令走 codex 的开发者指令槽(以前 SDK 没有这个槽,只能前置到第一条消息里)。
+          response = await request(context.resumeSessionId ? 'thread/resume' : 'thread/start', {
+            ...resumeParams, cwd: project.path, approvalPolicy: chat.approvalPolicy, sandbox: chat.sandbox,
+            ...(context.appendInstructions ? { developerInstructions: context.appendInstructions } : {}),
+            config: chat.config, ...(model ? { model } : {}),
+          })
+        } else {
+          const config = workbenchCodexNativeConfig(discovery!.servers, native.config)
+          const catalog = execution && (execution.model || execution.reasoningEffort) ? await readCodexModelCatalog(request, project.path) : undefined
+          if (catalog && execution?.model) selectedModel = executionModel(catalog, execution)
+          for (const [name, server] of Object.entries(config.mcp_servers)) if (server.enabled) enabledMcp.add(name)
+          const capabilityNotice = codexNativeCapabilityNotice(discovery!.servers, enabledMcp)
+          if (capabilityNotice) context.reportNotice?.(capabilityNotice)
+          if (enabledMcp.size && !supportsCodexMcpApproval(initialized.userAgent)) throw new Error('原生工具逐次批准需要 Codex 0.153.4 或更新版本，请先更新 Codex。')
+          response = await request(context.resumeSessionId ? 'thread/resume' : 'thread/start', {
+            ...resumeParams,
+            cwd: project.path, approvalPolicy: 'on-request', approvalsReviewer: 'user', sandbox: 'workspace-write',
+            developerInstructions: context.appendInstructions ?? '', config: {...config,...(execution?.reasoningEffort ? {model_reasoning_effort:execution.reasoningEffort} : {})},
+            ...(model ? {model} : {}),
+          })
+          if (catalog && execution) selectedModel = executionModel(catalog, execution, response.model)
+        }
         if (typeof response.thread?.id !== 'string' || !response.thread.id) throw new Error('codex_missing_thread_id')
         if (context.resumeSessionId && response.thread.id !== context.resumeSessionId) throw new Error('codex_resume_thread_mismatch')
-        if (response.cwd !== project.path) throw new Error('codex_unverified_thread_cwd')
+        if (chat ? !samePath(response.cwd, project.path) : response.cwd !== project.path) throw new Error('codex_unverified_thread_cwd')
         const sandbox = response.sandbox
-        if (response.approvalPolicy !== 'on-request' || response.approvalsReviewer !== 'user' ||
+        if (chat) {
+          // 起出来的线程必须就是 compilePolicy 要的那一档;codex 报回来的对不上(配置层盖掉了、版本不认)⇒ 不开。
+          if (response.approvalPolicy !== chat.approvalPolicy || sandbox?.type !== SANDBOX_TYPE[chat.sandbox]) throw new Error('codex_unverified_thread_policy')
+        } else if (response.approvalPolicy !== 'on-request' || response.approvalsReviewer !== 'user' ||
             sandbox?.type !== 'workspaceWrite' || sandbox.networkAccess !== false ||
             sandbox.excludeTmpdirEnvVar !== true || sandbox.excludeSlashTmp !== true ||
             !Array.isArray(sandbox.writableRoots) || sandbox.writableRoots.some((root: unknown) => root !== project.path)) {
           throw new Error('codex_unverified_thread_policy')
         }
         threadId = response.thread.id
-        if (catalog && execution) selectedModel = executionModel(catalog, execution, response.model)
         if (nativeModelId(response.model)) context.reportExecution?.({model:response.model,...(nativeModelId(response.reasoningEffort) ? {reasoningEffort:response.reasoningEffort} : {}),sessionId:threadId,source:'native_response'})
       } catch (error) { await close(); throw error }
       const launch = (text: string, attachments?: readonly AgentAttachment[]) => {
@@ -891,12 +1021,20 @@ export function createWorkbenchCodexProvider(options: Options): AgentProvider {
           const turn = active
           if (!turn || closing) return
           turn.cancelled = true; dropPendingRequests(turn)
+          if (chat) {
+            // 对话侧:codex 确认中断了(0.153.4 只在 TurnAborted 之后才回)就以「已停止」收掉这一轮,下一轮马上能发。
+            // 还没拿到回合号的:turn/start 的应答到了会自己发中断并收尾(launch)。
+            if (!turn.id) return
+            try { await request('turn/interrupt', { threadId, turnId: turn.id }) }
+            finally { if (active === turn) finish(turn, { kind: 'error', message: 'Codex 本轮已停止。' }) }
+            return
+          }
           if (turn.id) await request('turn/interrupt', { threadId, turnId: turn.id })
           // The acknowledgement means interruption was requested. close()
           // still owns process termination and must confirm actual exit.
         },
         close,
+        alive: () => !broken && !closing && !exited && !stopped && !closePromise,
+        threadId: () => threadId,
       }
-    },
-  }
 }
