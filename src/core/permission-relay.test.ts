@@ -1,7 +1,14 @@
 import { describe, it, expect, vi } from 'vitest'
-import { makeCanUseTool, effectivePolicy } from './permission-relay'
+import { makeCanUseTool } from './permission-relay'
+import { authorize } from '../domain/authorize'
 import { CAPABILITY_MATRIX, type Capability } from '../domain/capability-matrix'
-import { TIER_PROFILES } from '../domain/user-tier'
+import { TIER_PROFILES, type TierProfile, type ToolKind } from '../domain/user-tier'
+
+/** 改之前这里测的是 permission-relay 的 effectivePolicy;判定收进 domain/authorize.ts 以后(C2)测同一格。 */
+const effectivePolicy = (base: { askUser: 'per-tool' | 'never' }, tp: TierProfile, kind: ToolKind): 'allow' | 'relay' | 'deny' => {
+  const v = authorize({ surface: 'chat', tier: tp, permissionMode: 'strict', executor: 'claude' }, { name: 'x', kind, askUser: base.askUser }).verdict
+  return v === 'ask' ? 'relay' : v
+}
 
 const baseMode = {
   mode: () => 'solo' as const,
@@ -249,7 +256,7 @@ describe('makeCanUseTool', () => {
   })
 })
 
-describe('effectivePolicy', () => {
+describe('authorize(chat, Claude):档位 × 能力表', () => {
   const adminBase = { askUser: 'never' } as Capability
   const strictBase = { askUser: 'per-tool' } as Capability
 

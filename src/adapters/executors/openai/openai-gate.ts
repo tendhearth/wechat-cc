@@ -19,8 +19,7 @@
  */
 import { classifyToolUse, type TierProfile } from '../../../domain/user-tier'
 import type { PermissionMode } from '../../../ports/agent-provider'
-import { compilePolicy } from '../../../domain/policy'
-import { decideTool } from '../../../domain/tool-decision'
+import { authorize } from '../../../domain/authorize'
 
 export type GateDecision = 'allow' | 'deny'
 
@@ -39,9 +38,9 @@ export function gateTool(args: {
   tierProfile: TierProfile
   permissionMode: PermissionMode
 }): GateDecision {
-  const policy = compilePolicy('openai', args.tierProfile, args.permissionMode)
-  if (policy.bypass) return 'allow'
-
+  // 判定只在 domain/authorize.ts(架构终态 C2):旁路(dangerously,openaiGateOpts.bypass)→ 档位 × 类别(openai 不看
+  // 能力表,它没有 per-tool 的那一档)→ 问不了(relayAs:'deny',v1 中途微信确认还没做)。面是 chat ⇒ 放行规则不看。
+  //
   // classifyToolUse recognizes wechat MCP tools by their SDK-prefixed name
   // (`mcp__wechat__<name>`); built-in tools (Read/Write/Edit/Bash/...) pass
   // through unchanged. Other MCP servers get their own `mcp__<server>__<name>`
@@ -49,9 +48,7 @@ export function gateTool(args: {
   // the fail-safe default ('subagent'), never the wechat tool's kind.
   const sdkName = args.mcpServer ? `mcp__${args.mcpServer}__${args.toolName}` : args.toolName
   const kind = classifyToolUse(sdkName, args.input)
-
-  // 判定在 ./tool-decision.ts(三家共用);openai 不看能力表(它没有 per-tool 的那一档)。
-  // v1: relay collapses to deny in strict mode — mid-turn WeChat confirmation round-trip is deferred.
-  const verdict = decideTool(args.tierProfile, kind)
-  return verdict === 'relay' ? policy.relayAs : verdict
+  const auth = authorize({ surface: 'chat', tier: args.tierProfile, permissionMode: args.permissionMode, executor: 'openai' }, { name: sdkName, kind })
+  // chat 面上不会落成「问」(relayAs 是 deny);万一以后放开了而这里没跟着改,宁可拒。
+  return auth.verdict === 'allow' ? 'allow' : 'deny'
 }

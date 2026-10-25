@@ -1,21 +1,9 @@
 import type { CanUseTool, PermissionResult } from '@anthropic-ai/claude-agent-sdk'
 import type { Mode, ProviderId } from '../domain/conversation'
-import { lookup, type Capability, type PermissionMode } from '../domain/capability-matrix'
+import { lookup, type PermissionMode } from '../domain/capability-matrix'
 import { isReplyToolName } from '../ports/agent-provider'
-import { classifyToolUse, TIER_PROFILES, type TierProfile, type ToolKind, type UserTier } from '../domain/user-tier'
-import { decideTool } from '../domain/tool-decision'
-
-/**
- * 能力表的那一行 + 档位 ⇒ 放 / 问 / 拒。判定本身在 ./tool-decision.ts(三家共用的唯一一份);这里只是把能力表的
- * askUser 交进去。顺序与理由见那个文件。
- */
-export function effectivePolicy(
-  base: Capability,
-  tp: TierProfile,
-  kind: ToolKind,
-): 'allow' | 'relay' | 'deny' {
-  return decideTool(tp, kind, base.askUser)
-}
+import { classifyToolUse, TIER_PROFILES, type UserTier } from '../domain/user-tier'
+import { authorize } from '../domain/authorize'
 
 export interface PermissionRelayDeps {
   askUser: (chatId: string, prompt: string, hash: string, timeoutMs: number) => Promise<'allow' | 'deny' | 'timeout' | 'undelivered'>
@@ -27,7 +15,7 @@ export interface PermissionRelayDeps {
   initiatingChatId: () => string | null
   /** chatId of an admin to receive prompts. May be null if no admins configured. */
   adminChatId: () => string | null
-  /** Returns the tier of the initiating chat — used by effectivePolicy. */
+  /** Returns the tier of the initiating chat — the subject's tier for authorize(). */
   resolveTier: () => UserTier
   log: (tag: string, line: string) => void
   /**
@@ -61,19 +49,31 @@ export function makeCanUseTool(deps: PermissionRelayDeps): CanUseTool {
     // 转发);/chat 早就接受了同一个代价。
     // 回复交付 daemon 模式(spec 2026-10-03 §4.9):reply 族不注册了,扇出里要拒的只剩显式的 `message`
     // (往别处发)—— 同一个理由:协调器看不到那句话,前缀 / 收口都管不到它。
-    const fanOut = deps.mode() === 'chatroom' || deps.mode() === 'parallel'
-    if (fanOut && (isReplyToolName(toolName) || toolName === 'mcp__wechat__message')) {
-      deps.log('PERMISSION', `deny-fanout-reply: mode=${deps.mode()} tool=${toolName}`)
-      return {
-        behavior: 'deny',
-        message: 'reply tool is disabled in chatroom/parallel mode — respond with plain text, the host will relay it',
-      } satisfies PermissionResult
+    // 判定只在 domain/authorize.ts(架构终态 C2):扇出拒 reply → 档位 × 类别 × 能力表。面是 chat ⇒ 放行规则不看
+    // (今天只有终端会话和一起做走放行规则;对话要不要也走,是看得见的变化,等主人)。
+    const mode = deps.mode()
+    const fanOut = mode === 'chatroom' || mode === 'parallel'
+    const replyFamily = isReplyToolName(toolName) || toolName === 'mcp__wechat__message'
+    // 扇出里的 reply 在档位之前就判掉:这条路上不取档、不分类、不查能力表(和改之前一样 —— resolveTier 要读
+    // access.json,这里不碰)。档位在这一层根本不被读,传最窄的 guest 只为满足类型。
+    if (fanOut && replyFamily) {
+      const verdict = authorize({ surface: 'chat', tier: TIER_PROFILES.guest, permissionMode: deps.permissionMode, executor: 'claude', fanOut }, { name: toolName, kind: 'reply', replyFamily })
+      if (verdict.verdict === 'deny') {
+        deps.log('PERMISSION', `deny-fanout-reply: mode=${deps.mode()} tool=${toolName}`)
+        return {
+          behavior: 'deny',
+          message: 'reply tool is disabled in chatroom/parallel mode — respond with plain text, the host will relay it',
+        } satisfies PermissionResult
+      }
     }
     const tier = deps.resolveTier()
     const tp = TIER_PROFILES[tier]
     const kind = classifyToolUse(toolName, input as Record<string, unknown>)
     const base = lookup(deps.mode(), deps.provider, deps.permissionMode)
-    const decision = effectivePolicy(base, tp, kind)
+    const decision = authorize(
+      { surface: 'chat', tier: tp, permissionMode: deps.permissionMode, executor: 'claude', fanOut },
+      { name: toolName, kind, askUser: base.askUser, replyFamily },
+    ).verdict
 
     if (decision === 'allow') return { behavior: 'allow' } satisfies PermissionResult
     if (decision === 'deny') {

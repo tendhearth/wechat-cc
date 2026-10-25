@@ -8,15 +8,14 @@
  * Unlike claude/codex/cursor (whose SDKs run the agentic loop), @google/genai
  * gives only model calls + tool-calling primitives, so THIS provider owns the
  * tool-use loop: generateContent → emit text → for each functionCall, gate it
- * (reusing classifyToolUse/effectivePolicy) and execute via an MCP client
+ * (reusing classifyToolUse + domain/authorize) and execute via an MCP client
  * connected to the daemon's wechat stdio server → append functionResponse →
  * loop until no functionCall → result.
  *
  * Decoupled from bootstrap via injected genai / mcpConnect / buildGate so the
  * loop is unit-testable. See docs/superpowers/specs/2026-06-04-gemini-provider-design.md.
  */
-import { decideTool } from '../../../domain/tool-decision'
-import { compilePolicy } from '../../../domain/policy'
+import { authorize } from '../../../domain/authorize'
 import type { AgentEvent, AgentProject, AgentProvider, AgentSession, PermissionMode, SpawnContext } from '../../../ports/agent-provider'
 import type { TierProfile } from '../../../domain/user-tier'
 import { classifyToolUse } from '../../../domain/user-tier'
@@ -32,7 +31,7 @@ export { tierProfileToGeminiSdkOpts, type GeminiTierSdkOpts } from '../../../dom
 
 /** A per-spawn tool gate. allow → execute; deny → synthesize an error
  *  functionResponse so the model sees the refusal. Phase B builds the real one
- *  from effectivePolicy + askUser; tests inject a fake. */
+ *  from domain/authorize + askUser; tests inject a fake. */
 export type ToolGateDecision = { allow: true } | { allow: false; message: string }
 export type ToolGate = (toolName: string, input: Record<string, unknown>) => Promise<ToolGateDecision>
 
@@ -267,17 +266,20 @@ export function makeGeminiToolGate(deps: GeminiGateDeps): (ctx: SpawnContext) =>
     // across chats. Combined with chatId in the hash input → unique per relay.
     let relaySeq = 0
     return async (toolName, input) => {
-      if (!compilePolicy('gemini', ctx.tierProfile, ctx.permissionMode).gateEnabled) return { allow: true }
-      // Reject any bare name already containing '__': prefixing `mcp__wechat__`
-      // onto it (e.g. `mcp__wechat__shell` → `mcp__wechat__mcp__wechat__shell`)
-      // yields a malformed name classifyToolUse may misclassify as unknown→allow,
-      // letting a gated tool slip through. Deny outright.
-      if (toolName.includes('__')) return { allow: false, message: `invalid tool name '${toolName}'` }
-      const kind = classifyToolUse(`mcp__wechat__${toolName}`, input)
-      const base = deps.lookupBase(deps.modeFor(ctx.chatId), ctx.permissionMode)
-      const decision = decideTool(ctx.tierProfile, kind, base.askUser)
-      if (decision === 'allow') return { allow: true }
-      if (decision === 'deny') return { allow: false, message: `tool '${toolName}' (${kind}) not allowed for this tier` }
+      // 判定只在 domain/authorize.ts(架构终态 C2):旁路(dangerously ⇒ 闸门不判)→ 名字 → 档位 × 类别 × 能力表。
+      // 面是 chat ⇒ 放行规则不看(今天只有终端会话和一起做走放行规则;对话要不要也走,等主人)。
+      // 名字不合规:裸名里已经带 '__'(拼上 `mcp__wechat__` 会变成 `mcp__wechat__mcp__wechat__shell` 这种),
+      // classifyToolUse 可能把它误判成别的类别、让被管的工具溜过去 ⇒ 直接拒。旁路之下照旧不判(和改之前同序)。
+      const malformed = toolName.includes('__')
+      const kind = malformed ? 'subagent' : classifyToolUse(`mcp__wechat__${toolName}`, input)
+      // 能力表这一行只在档位没明说时才读(旁路 / 名字不合规那两条路上不读对话模式,和改之前一样)。
+      const auth = authorize(
+        { surface: 'chat', tier: ctx.tierProfile, permissionMode: ctx.permissionMode, executor: 'gemini' },
+        { name: toolName, kind, askUser: () => deps.lookupBase(deps.modeFor(ctx.chatId), ctx.permissionMode).askUser, malformed },
+      )
+      if (auth.verdict === 'allow') return { allow: true }
+      if (auth.reason === 'malformed_name') return { allow: false, message: `invalid tool name '${toolName}'` }
+      if (auth.verdict === 'deny') return { allow: false, message: `tool '${toolName}' (${kind}) not allowed for this tier` }
       const admin = deps.adminFor(ctx.chatId)
       if (!admin) return { allow: false, message: 'no admin configured to approve permission requests' }
       const seq = ++relaySeq
@@ -303,7 +305,7 @@ export interface GeminiAgentProviderOptions {
   mcpConnect: (mcpEnv?: Record<string, string>) => Promise<McpConnection>
   /** Build the per-spawn tool gate from the SpawnContext. REQUIRED — a missing
    *  gate would silently allow every tool (security footgun). Bootstrap supplies
-   *  the real one (effectivePolicy + askUser); tests inject a fake. */
+   *  the real one (domain/authorize + askUser); tests inject a fake. */
   buildGate: (ctx: SpawnContext) => ToolGate
   /** cheapEval model (default = the dispatch model). */
   cheapModel?: string

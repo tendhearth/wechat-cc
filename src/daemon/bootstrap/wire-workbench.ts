@@ -69,9 +69,9 @@ export function workbenchClaudeOptions(base: Options, instructions: string, perm
     hooks:{},
     plugins:[],
     systemPrompt:{type:'preset',preset:'claude_code',append:instructions},
-    canUseTool: async (tool,input,context) => tool.startsWith('mcp__') && !Object.keys(native.servers).some(name=>tool.startsWith(`mcp__${name}__`))
-      ? {behavior:'deny',message:'This tool is not registered for the task.'}
-      : permit(tool,input,context),
+    // 逐次调用的放 / 问 / 拒全在 permit 里(makeWorkbenchClaudeCanUseTool → domain/authorize.ts,架构终态 C2);
+    // 没登记的 MCP 在那里按登记表拒。上面 settings.permissions 的 ask / deny 名单是开局给 SDK 的静态子集,不是逐次判定。
+    canUseTool: permit,
   }
 }
 
@@ -193,7 +193,7 @@ export function wireWorkbench(opts: {
           const native=readNativeClaudeTools(path)
           const notice=claudeNativeCapabilityNotice(native)
           if(notice)context?.reportNotice?.(notice)
-          const permit=makeWorkbenchClaudeCanUseTool(context?.requestPermission,context?.requestUserInput,Object.keys(native.servers))
+          const permit=makeWorkbenchClaudeCanUseTool(context?.requestPermission,context?.requestUserInput,Object.keys(native.servers),Object.keys(native.servers))
           return workbenchClaudeOptions(base,instructions ?? '',permit,native)
         },
       }),{...claude.opts,workbench:MANAGED_NATIVE_CAPABILITIES})
