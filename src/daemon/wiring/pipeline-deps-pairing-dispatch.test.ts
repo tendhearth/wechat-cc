@@ -27,7 +27,6 @@ vi.mock('../../lib/config.ts', async (importOriginal) => {
 })
 
 const { buildPipelineDeps } = await import('./pipeline-deps')
-const { Ref } = await import('../../lib/lifecycle')
 const { openTestDb } = await import('../../lib/db')
 const { makeReplySinks } = await import('../reply-sinks')
 
@@ -88,7 +87,7 @@ describe('pipeline-deps pairing dispatch seam (配对 pairing-code)', () => {
     const replySinks = makeReplySinks()
     const { pipelineDeps } = buildPipelineDeps(
       { stateDir, db, ilink, boot, log: () => {}, chatPrefs, careLedger, replySinks },
-      { polling: new Ref('polling'), guard: new Ref('guard'), pipeline: new Ref('pipeline'), ingestNudge: new Ref('ingestNudge') },
+      { polling: () => null, pipeline: () => null, ingestNudge: () => null },
     )
     return { pipelineDeps, coordinatorDispatch, sendAssistantText }
   }

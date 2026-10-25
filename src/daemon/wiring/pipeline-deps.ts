@@ -14,7 +14,6 @@ import { spawn } from 'node:child_process'
 import { dirname } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { existsSync } from 'node:fs'
-import type { GuardLifecycle } from '../guard/lifecycle'
 import type { PollingLifecycle } from '../polling-lifecycle'
 import type { InboundPipelineDeps } from '../inbound/build'
 import type { PipelineRun } from '../inbound/types'
@@ -94,14 +93,23 @@ import { makeProactiveOutbound, type AppChannel, type ProactiveOutbound } from '
 import type { SpeechPolicy } from '../speech/policy'
 import { wireSpeech } from './wire-speech'
 
-export interface PipelineDepsRefs {
-  polling: Ref<PollingLifecycle>
-  guard: Ref<GuardLifecycle>
-  pipeline: Ref<PipelineRun>
+/**
+ * 比 pipeline-deps 晚才有的几样(环的那一头,模块容器的 `ctx.late`):调用时现取,还没有 ⇒ null。
+ */
+export interface PipelineDepsLate {
+  polling(): PollingLifecycle | null
+  pipeline(): PipelineRun | null
   /** 可选:没接(测试 / 最小嵌入)时 App 一轮不过消费表,直接进对话。 */
-  appTurn?: Ref<AppTurn>
-  /** Late-bound ingest nudge — fired per new inbound so the knowledge base tracks fresh activity. */
-  ingestNudge: Ref<() => void>
+  appTurn?(): AppTurn | null
+  /** Ingest nudge — fired per new inbound so the knowledge base tracks fresh activity. */
+  ingestNudge(): (() => void) | null
+}
+
+/** 管道一定已经在了的地方(它自己的回话 / 访客批准后再派一次)用:没有就是接线错了,照实抛。 */
+function pipelineOf(late: PipelineDepsLate, why: string): PipelineRun {
+  const p = late.pipeline()
+  if (!p) throw new Error(`pipeline not wired yet (${why})`)
+  return p
 }
 
 const STARTED_AT_ISO = new Date().toISOString()
@@ -158,7 +166,7 @@ export interface BuildPipelineDepsResult {
   speech: SpeechPolicy
 }
 
-export function buildPipelineDeps(opts: PipelineDepsOpts, refs: PipelineDepsRefs): BuildPipelineDepsResult {
+export function buildPipelineDeps(opts: PipelineDepsOpts, late: PipelineDepsLate): BuildPipelineDepsResult {
   const { stateDir, db, ilink, boot, log, chatPrefs, careLedger, replySinks } = opts
   // 消费者的回话:微信来的一轮直发微信;App 来的一轮(withReplyScope 里)截住交还 App(inbound/reply-scope)。
   const send = scopedSend((cid: string, txt: string, o?: { source: 'workbench' }) => ilink.sendMessage(cid, txt, o))
@@ -250,7 +258,7 @@ export function buildPipelineDeps(opts: PipelineDepsOpts, refs: PipelineDepsRefs
     guestRequests,
     hydrateRoute,
     sendMessage: (c, t) => ilink.sendMessage(c, t).then(r => r as { error?: string }),
-    redispatch: (run) => refs.pipeline.deref('guest approve redispatch')(run),
+    redispatch: (run) => pipelineOf(late, 'guest approve redispatch')(run),
     log: (tag, line) => log(tag, line),
   })
   // Owner notification for the guest branch — resolveAdminChatId
@@ -270,9 +278,9 @@ export function buildPipelineDeps(opts: PipelineDepsOpts, refs: PipelineDepsRefs
     stateDir, isAdmin,
     sessionState: ilink.sessionState,
     pollHandle: {
-      stopAccount: (id) => refs.polling.current?.stopAccount(id) ?? Promise.resolve(),
-      stopAccountAndWait: async (id) => { await refs.polling.current?.stopAccountAndWait(id) },
-      running: () => refs.polling.current?.running() ?? [],
+      stopAccount: (id) => late.polling()?.stopAccount(id) ?? Promise.resolve(),
+      stopAccountAndWait: async (id) => { await late.polling()?.stopAccountAndWait(id) },
+      running: () => late.polling()?.running() ?? [],
     },
     resolveUserName: (cid) => ilink.resolveUserName(cid),
     sendMessage: send,
@@ -426,7 +434,7 @@ export function buildPipelineDeps(opts: PipelineDepsOpts, refs: PipelineDepsRefs
   // App 里跟 CC 说一句(重构第二批步 6c,wire-converse.ts):提到「一件事」与手机对话之前,两处直接拿它,不再靠「在下面才定义」的捕获。
   const companionConverse = wireCompanionConverse({
     stateDir, boot, careLedger, replySinks, messagesStore, ilink, log,
-    appTurn: () => refs.appTurn?.current ?? null,
+    appTurn: () => late.appTurn?.() ?? null,
     matters: opts.matters, petSignals: opts.petSignals, stickers: opts.stickers,
   })
 
@@ -544,7 +552,7 @@ export function buildPipelineDeps(opts: PipelineDepsOpts, refs: PipelineDepsRefs
       // boot, no restart involved), so without the flag this re-fire is
       // silently swallowed by mw-dedup's isHandled short-circuit and the
       // user's original question never reaches the provider.
-      await refs.pipeline.deref('onboarding echo dispatch')({
+      await pipelineOf(late, 'onboarding echo dispatch')({
         msg,
         receivedAtMs: Date.now(),
         requestId: randomBytes(4).toString('hex'),
@@ -679,7 +687,7 @@ export function buildPipelineDeps(opts: PipelineDepsOpts, refs: PipelineDepsRefs
       // Piggyback the ingest nudge on the per-new-inbound recordInbound call:
       // fresh WeChat activity means new data to fold into the knowledge base.
       // Trailing-debounced + gated inside registerIngest, so this is O(1) here.
-      recordInbound: (chatId, when) => { refs.ingestNudge.current?.(); return recordInbound(chatId, when) },
+      recordInbound: (chatId, when) => { late.ingestNudge()?.(); return recordInbound(chatId, when) },
       resetCareNoReply: (c) => careLedger.resetNoReply(c),
       log,
     },

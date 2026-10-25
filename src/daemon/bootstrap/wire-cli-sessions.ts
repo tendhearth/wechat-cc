@@ -3,14 +3,14 @@
  * 手机、放行规则)、「这边 / 那边」的脑手转发、对终端会话说话(送进开着的窗口 / resume)、「今天」一眼看完、接上 hooks。
  *
  * 它要的(deps)与给出去的(返回值)就是这一块在 main.ts 里的边界;main.ts 只负责按顺序调用。
- * 两样晚到的东西:工作台(`workbench()` getter,调用时取)与手机 App 推送出口(`setAppPush`,wireMain 建好后交进来)。
+ * 两样晚到的东西:工作台与手机 App 推送出口(wireMain 里才造),都是调用时现取的读口(模块容器的 `ctx.late`)。
+ * 要停的东西经 `own` 登记(模块容器的 `ctx.own`,关机逆序)。
  */
 import { hostname as osHostname } from 'node:os'
 import { randomUUID as claimUuid } from 'node:crypto'
 import { log } from '../../lib/log'
 import { loadAccess } from '../../lib/access'
 import type { Db } from '../../lib/db'
-import type { LifecycleSet } from '../../lib/lifecycle'
 import { machineIdleSeconds } from '../../lib/machine-idle'
 import { notifyDesktop } from '../../lib/desktop-notify'
 import { makeCliEventHub, makeProjectNamer, type CliEvent, type CliSessionInfo } from '../../core/cli-events'
@@ -49,25 +49,28 @@ export interface WireCliSessionsDeps {
   dangerously: boolean
   db: Db
   ilink: IlinkAdapter
-  lc: LifecycleSet
+  /** 登记一个要停的资源(模块容器的 ctx.own)。 */
+  own(name: string, stop: () => unknown): void
   internalApi: InternalApiLifecycle
   boot: Bootstrap
-  /** CC 开口那道门(第三批 3a),懒取(main.ts 的 Ref;这里比门早接线)。取不到 ⇒ 终端汇总不发微信(桌面 / App 照旧),规则通知不发。 */
+  /** CC 开口那道门(第三批 3a),懒取(这里比门早接线)。取不到 ⇒ 终端汇总不发微信(桌面 / App 照旧),规则通知不发。 */
   speech: () => Pick<import('../speech/policy').SpeechPolicy, 'tell'> | null
   networkGate: NetworkGate
   /** 工作台在后面才建:调用时取,没就绪 ⇒ null。 */
   workbench(): CliSessionsWorkbench | null
+  /** 手机 App 推送出口(wireMain 里才造):调用时取,没就绪 ⇒ null。 */
+  appPush(): AppPushOutlet | null
   /** 「今天」里定时那一节(定时的存储归 jobs 那块,这里只读汇总)。 */
   jobsSince(since: number): TodayJobs
 }
 
 export function wireCliSessions(d: WireCliSessionsDeps) {
-  const { stateDir, dangerously, db, ilink, lc, internalApi, boot } = d
+  const { stateDir, dangerously, db, ilink, own, internalApi, boot } = d
   // 终端 claude / codex 会话的 hook 事件(spec 2026-09-09-cli-hook-push):压一段
   // 再推给主人,同会话再敲一句就撤。发到哪:与权限卡、A2A notify 同一个主人
   // chat;怎么发:经 CC 开口那道门,投递走 boot.sendAssistantText —— 同一条外发,断线时它自己退避、这里不重试。
-  // 手机 app 推送出口:pipeline-deps(wireMain)里才造,这里先占位、建完再接上(cli-app-push.ts)。
-  let cliAppPush: AppPushOutlet | null = null
+  // 手机 app 推送出口:pipeline-deps(wireMain)里才造,调用时现取(cli-app-push.ts)。
+  const cliAppPush = (): AppPushOutlet | null => d.appPush()
   // CC 代主人对终端会话说一句、等它回话(terminal_say,2026-10-24):replyCore 在下面才建,这里先占位
   let terminalSay: ReturnType<typeof makeTerminalSay> | null = null
   const cliEvents = makeCliEventHub({
@@ -86,7 +89,7 @@ export function wireCliSessions(d: WireCliSessionsDeps) {
       return await speech.tell('cli_session', owner, text, (c, t) => sat(c, t)) ? 'sent' : 'rejected'
     },
     // 第二个出口:同一批、同一套在场判断,微信拒了手机照样收到。
-    pushApp: makeCliHubAppPush({ push: () => cliAppPush, log: (t, l) => log(t, l) }),
+    pushApp: makeCliHubAppPush({ push: cliAppPush, log: (t, l) => log(t, l) }),
     projectName: makeProjectNamer(() => ilink.projects.list()),
     log: (t, l) => log(t, l),
     // 在场的主信号:这台电脑上次键鼠输入距今多久。人在 ⇒ 系统通知;走了 ⇒ 微信。
@@ -103,7 +106,7 @@ export function wireCliSessions(d: WireCliSessionsDeps) {
     store: makeCliSessionStore(db),
   })
   // terminal_say 的票(下面才建)随登记处一起收:放掉还持着的 busy、叫醒还在等的(启停只许一种写法,不另登记一行)
-  lc.register({ name: 'cli-events', stop: async () => { terminalSay?.dispose(); cliEvents.dispose() } })
+  own('cli-events', async () => { terminalSay?.dispose(); cliEvents.dispose() })
   // 终端会话的权限 → 微信 y/n(同 spec §6.3)。复用 ilink.askUser,所以微信「y 码」、
   // 桌宠权限卡都能拍板 —— 一个权限,几个呈现面。主人在场(3 分钟内敲过字)就不问。
   // 放行规则(spec 2026-10-19-permission-rules-design):终端会话与一起做在问主人之前先问它。
@@ -138,7 +141,7 @@ export function wireCliSessions(d: WireCliSessionsDeps) {
       askUser: (c, p, h, ms, o) => ilink.askUser(c, p, h, ms, o),
       registerPending: (h, ms, meta) => ilink.registerPendingPermission(h, ms, meta),
       sweepPending: () => ilink.sweepPendingPermissions(),
-      push: () => cliAppPush,
+      push: cliAppPush,
       localMachine: osHostname(),
       log: (t, l) => log(t, l),
     }),
@@ -151,7 +154,7 @@ export function wireCliSessions(d: WireCliSessionsDeps) {
     localMachine: osHostname(),
     decide: async (req) => (await permissionGate.decide(() => terminalAskAsync(req))).verdict,
   })
-  lc.register({ name: 'cli-permissions', stop: async () => cliPermissions.dispose() })
+  own('cli-permissions', async () => cliPermissions.dispose())
   // 这边 / 那边(§6.5)。手侧:配对时脑留了回叫的 url + key ⇒ 本机终端事件与权限请求
   // 转给脑,由脑决定发不发、发到哪;人就在这只手前的除外(本机桌面说一声)。
   // 脑侧:a2a 服务多三条路 —— 收手的事件 / 权限、把「看 / 说」派给手。
@@ -300,7 +303,5 @@ export function wireCliSessions(d: WireCliSessionsDeps) {
   return {
     cliEvents, cliPermissions, replyCore, permissionDecisions, permissionGate, cliSessionViews, terminalSay,
     legacyClaims, executionConflict, reserveExecution, liveWindow, startCwd, overseerToday, terminalHooks,
-    /** 手机 App 推送出口:pipeline-deps(wireMain)里才造,建好后交进来。 */
-    setAppPush(p: AppPushOutlet | null) { cliAppPush = p },
   }
 }

@@ -35,10 +35,11 @@ describe('phone lifecycle(手机那一簇关机时停掉:隧道 / notifier / 订
     lc.add('v2-tunnel', () => { stopped = true })
     expect(stopped).toBe(true)
   })
-  it('main.ts registers the phone cluster BEFORE polling ⇒ reverse stop: inbound stops first, in-flight App replies still drain through the tunnel', () => {
-    const src = readFileSync(join(__dirname, '..', 'main.ts'), 'utf8')
-    const phone = src.indexOf("name: 'phone'")
-    const polling = src.indexOf('registerPolling(')
+  it('the module table owns the phone cluster BEFORE polling ⇒ reverse stop: inbound stops first, in-flight App replies still drain through the tunnel', () => {
+    // 关机顺序的全貌在 __e2e__/shutdown-order 的快照里;这一条只钉住「手机那一簇在拉消息之前登记」。
+    const src = readFileSync(join(__dirname, '..', 'daemon-modules.ts'), 'utf8')
+    const phone = src.indexOf("ctx.own('phone'")
+    const polling = src.indexOf("lifecycleModule('polling'")
     expect(phone).toBeGreaterThan(0)
     expect(polling).toBeGreaterThan(0)
     expect(phone).toBeLessThan(polling)

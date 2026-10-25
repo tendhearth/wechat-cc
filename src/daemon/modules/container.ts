@@ -48,6 +48,13 @@ export interface ModuleCtx {
   maybe<T>(name: string): T | null
   /** 唯一的晚绑定,只给真的环用,只能拿 lazy 里写了的。返回的函数在 start 段之前调 ⇒ 抛;那个模块不是 ok ⇒ 抛。 */
   lazy<T>(name: string): () => T
+  /**
+   * 同一条环边(也只能拿 lazy 里写了的),但「还没有」照实回 null 而不是抛:那个模块还没 init 完、或者不是 ok。
+   * 它一 init 完就拿得到(不等 start 段)—— 跟以前「bootstrap 一建好 bootRef 就有值」一样。
+   * 给「早就被外面调得到」的读口用:internal-api 在 init 段就开始监听,桌面那时来问的健康 / 会话列表
+   * 应该得到「还没有」(503 / 空),不是一个异常。
+   */
+  late<T>(name: string): () => T | null
   /** 登记一个定时器:start 段才开始计时,关机自动 clear。fn 抛错 / reject 只记一行。 */
   interval(name: string, ms: number, fn: () => unknown): void
   /** 登记「开动」:起服务、开始拉消息……start 段按登记顺序 await。要停的东西另用 own 登记。 */
@@ -76,7 +83,7 @@ type Reg =
   | { kind: 'onStart'; name: string; fn: () => unknown }
   | { kind: 'own'; name: string; stop: () => unknown }
 
-interface Slot { mod: DaemonModule; status: SubsystemStatus; value?: unknown; regs: Reg[]; started: Reg[]; /** init 时经 maybe 真拿到了的 wants(之后上游坏了,它也跟着)。 */ took: Set<string> }
+interface Slot { mod: DaemonModule; status: SubsystemStatus; value?: unknown; /** init 已经走完(late 从这一刻起拿得到)。 */ ready?: boolean; regs: Reg[]; started: Reg[]; /** init 时经 maybe 真拿到了的 wants(之后上游坏了,它也跟着)。 */ took: Set<string> }
 
 function errMsg(err: unknown): string { return err instanceof Error ? err.message : String(err) }
 
@@ -208,6 +215,13 @@ export function createModules(mods: readonly DaemonModule[], opts: ModuleOpts): 
             return s.value as T
           }
         },
+        late: <T>(n: string): (() => T | null) => {
+          if (!lazies.has(n)) throw new Error(`modules: '${mod.name}' called ctx.late('${n}') but '${n}' is not in its lazy`)
+          return () => {
+            const s = slots.get(n)
+            return s && s.ready && s.status.state === 'ok' ? (s.value as T) : null
+          }
+        },
         interval: (name, ms, fn) => { slot.regs.push({ kind: 'interval', name, ms, fn }) },
         onStart: (name, fn) => { slot.regs.push({ kind: 'onStart', name, fn }) },
         own: (name, stop) => { slot.regs.push({ kind: 'own', name, stop }) },
@@ -215,6 +229,7 @@ export function createModules(mods: readonly DaemonModule[], opts: ModuleOpts): 
       }
       try {
         slot.value = await mod.init(ctx)
+        slot.ready = true
       } catch (err) {
         if (mod.optional) { await degrade(slot, err, 'init'); continue }
         opts.log('MODULES', `${mod.name} failed at init (required): ${errMsg(err)}`)

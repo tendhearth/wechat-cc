@@ -2,7 +2,7 @@
  * 定时 / 早报 / 周报 / 换一家来审(重构第二批步 6c 第二块,从 main.ts 搬出来)。
  *
  * 两段:建的时候就给出微信「定时」命令(要进命令表,在 wireMain 之前);每分钟一拍的 runner 与只读轮
- * 要 wireMain 之后才有 ⇒ 由 main 在合适的时候 `await start()`(规矩:wireX 里不 await 还没就绪的东西)。
+ * 要 wireMain 之后才有 ⇒ `startRunner()` 由 `scheduled-jobs` 模块在 start 段调(规矩:wireX 里不 await 还没就绪的东西)。
  * 只读轮(`runJobTurn`)与主动消息出口(`sendProactive`)是 main 给的闭包,调用时才取。
  */
 import { existsSync as fsExistsSync, readFileSync as fsReadFileSync } from 'node:fs'
@@ -10,8 +10,7 @@ import { join } from 'node:path'
 import { log } from '../../lib/log'
 import { loadAccess } from '../../lib/access'
 import type { Db } from '../../lib/db'
-import type { LifecycleSet } from '../../lib/lifecycle'
-import type { SubsystemSupervisor } from '../subsystems'
+import type { Lifecycle } from '../../lib/lifecycle'
 import { resolveAdminChatId, type Bootstrap } from './index'
 import { loadCompanionConfig } from '../companion/config'
 import type { IlinkAdapter } from '../ilink-glue'
@@ -45,8 +44,6 @@ export interface WireJobsDeps {
   db: Db
   ilink: IlinkAdapter
   boot: Bootstrap
-  sup: SubsystemSupervisor
-  lc: LifecycleSet
   jobsStore: ReturnType<typeof makeJobsStore>
   activityLog: ReturnType<typeof makeActivityLog>
   /** 「做过的事」的来源(与手机时间线同一组)。 */
@@ -166,9 +163,9 @@ export function wireJobs(d: WireJobsDeps) {
     command: combineReplyHandlers(jobsCommand, asksReply),
     /** 「换一家来审」:交给另一家在只读轮里看改动;请不到 ⇒ false。 */
     requestReview,
-    /** 每分钟一拍的 runner;坏了只降级,不挡启动。 */
-    async start(): Promise<void> {
-    const jobsLc = await d.sup.start('scheduled-jobs', () => registerScheduledJobs({
+    /** 每分钟一拍的 runner(起了就跑,返回停法);调用方是可选模块:坏了只降级,不挡启动。 */
+    startRunner(): Lifecycle {
+    return registerScheduledJobs({
       store: jobsStore,
       activityLog,
       timezone: () => loadCompanionConfig(stateDir).timezone ?? 'Asia/Shanghai',
@@ -186,8 +183,7 @@ export function wireJobs(d: WireJobsDeps) {
       },
       holdBusy: (l) => boot.holdBusy(l),
       log: (t, l) => log(t, l),
-    }))
-    if (jobsLc) d.lc.register(jobsLc)
+    })
     },
   }
 }

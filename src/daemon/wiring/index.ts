@@ -6,12 +6,7 @@ import type { Db } from '../../lib/db'
 import type { IlinkAdapter, IlinkAccount } from '../ilink-glue'
 import type { Bootstrap } from '../bootstrap'
 import type { Access } from '../../lib/access'
-import { Ref } from '../../lib/lifecycle'
-import type { GuardLifecycle } from '../guard/lifecycle'
-import type { PollingLifecycle } from '../polling-lifecycle'
 import type { InboundPipelineDeps } from '../inbound/build'
-import type { PipelineRun } from '../inbound/types'
-import type { AppTurn } from '../inbound/build'
 import type { CompanionPushDeps, CompanionIntrospectDeps, CompanionIngestDeps } from '../companion/lifecycle'
 import type { SchedulerDeps } from '../guard/scheduler'
 import type { SessionsLifecycleDeps } from '../sessions-lifecycle'
@@ -21,7 +16,7 @@ import type { StartupSweepDeps } from '../startup-sweeps'
 import type { ChatPrefsStore } from '../chat-prefs'
 import type { CareLedger } from '../companion/care-ledger'
 import type { ReplySinks } from '../reply-sinks'
-import { buildPipelineDeps } from './pipeline-deps'
+import { buildPipelineDeps, type PipelineDepsLate } from './pipeline-deps'
 import { buildLifecycleDeps } from './lifecycle-deps'
 import { buildTickBodies, type TickBodies } from './tick-bodies'
 import type { ProactiveOutbound } from '../companion/proactive-channel'
@@ -37,6 +32,8 @@ import { join } from 'node:path'
 import { existsSync, readFileSync } from 'node:fs'
 
 export interface WireMainOpts {
+  /** 比 wireMain 晚才有的几样(拉消息、入站管道、App 一轮、知识库催一下):调用时现取,模块容器的 ctx.late。 */
+  late: PipelineDepsLate
   workbench?: import('../../core/workbench/service').WorkbenchService
   /** 终端会话登记处(v76):手机 GET /m/api/cli/sessions 读它。缺省 ⇒ 503。 */
   cliSessions?: () => import('../../core/cli-session-store').CliSessionView[]
@@ -48,7 +45,7 @@ export interface WireMainOpts {
   overseerToday?: () => import('../../core/overseer-today').OverseerToday
   /** 「CC 现在怎么样」里「终端里的 Claude Code / Codex」那一行(2026-10-14)。缺省 ⇒ 那一行不出现。 */
   terminalHooks?: Pick<import('../terminal-hooks').TerminalHooksService, 'capabilityInput'>
-  /** 网络守护运行时(2026-10-02,main.ts 建):闸门 + 调度器 Ref + 后台任务跳过包装。缺省 = 老行为。 */
+  /** 网络守护运行时(2026-10-02,network-gate 模块建):闸门 + 健康快照 + 后台任务跳过包装。缺省 = 老行为。 */
   guardRuntime?: import('../guard/runtime').GuardRuntime
   /** 可选子系统开机状态(SubsystemSupervisor.statuses)→「CC 现在怎么样」。 */
   subsystems?: () => Array<{ name: string; state: 'ok' | 'degraded' | 'off'; error?: string }>
@@ -192,29 +189,9 @@ export interface WiredDeps {
    * eval harness calls fireTick to drive ticks deterministically.
    */
   ticks: TickBodies
-  /**
-   * Late-bound references — main.ts populates via wireRef() after the
-   * corresponding lifecycle is registered. Closures (admin handler's
-   * pollHandle, mwGuard's guardState) read .current at call time.
-   */
-  refs: {
-    polling: Ref<PollingLifecycle>
-    guard: Ref<GuardLifecycle>
-    pipeline: Ref<PipelineRun>
-    /** App 一轮的 route + consume(build.ts 的 appTurn);main.ts 建完管道后接上。 */
-    appTurn: Ref<AppTurn>
-    ingestNudge: Ref<() => void>
-  }
 }
 
 export function wireMain(opts: WireMainOpts): WiredDeps {
-  const refs = {
-    polling: new Ref<PollingLifecycle>('polling'),
-    guard: opts.guardRuntime?.ref ?? new Ref<GuardLifecycle>('guard'),
-    pipeline: new Ref<PipelineRun>('pipeline'),
-    appTurn: new Ref<AppTurn>('appTurn'),
-    ingestNudge: new Ref<() => void>('ingestNudge'),
-  }
   // CC 画的你 —— 小像自动刷新用的 generatePortrait(portrait-artist tick)。
   // memory-llm-ops 是无状态工厂(每次读盘),tick 与 pipeline-deps 各持一个
   // 无妨。构造在 buildTickBodies 前,以便传入。
@@ -274,7 +251,7 @@ export function wireMain(opts: WireMainOpts): WiredDeps {
       : `cycle ${result.status}`)
   }
   // pipeline-deps 先造:App 那条路(companionApp)在它里面,伙伴的 tick 要用。buildTickBodies 构造时只是闭包。
-  const { appPush, companionApp, proactive, speech, pipelineDeps, companionConverse, petTurn, settingsPanelLink, mattersService, memoryNightly, stopMatterActivity, stopPhone, connections, phoneConnect } = buildPipelineDeps(opts, refs)
+  const { appPush, companionApp, proactive, speech, pipelineDeps, companionConverse, petTurn, settingsPanelLink, mattersService, memoryNightly, stopMatterActivity, stopPhone, connections, phoneConnect } = buildPipelineDeps(opts, opts.late)
   const ticks = buildTickBodies({
     ...opts,
     proactive,
@@ -306,6 +283,5 @@ export function wireMain(opts: WireMainOpts): WiredDeps {
     stopPhone,
     ...lifecycleDeps,
     ticks,
-    refs,
   }
 }

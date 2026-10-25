@@ -3,7 +3,6 @@ import { mkdtempSync, rmSync, writeFileSync, mkdirSync, readFileSync, statSync }
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { buildPipelineDeps, resolveOwnerSessionKey } from './pipeline-deps'
-import { Ref } from '../../lib/lifecycle'
 import { openTestDb, type Db } from '../../lib/db'
 import type { IlinkAdapter } from '../ilink-glue'
 import type { Bootstrap } from '../bootstrap/index'
@@ -87,7 +86,7 @@ describe('companionConverse in-flight guard (buildPipelineDeps)', () => {
     rmSync(stateDir, { recursive: true, force: true })
   })
 
-  function setup(opts: { inFlight: boolean; mode?: Mode; withMarkInboundActivity?: boolean; workbench?: WorkbenchService; appTurn?: Ref<AppTurn>; stickers?: StickerLib }) {
+  function setup(opts: { inFlight: boolean; mode?: Mode; withMarkInboundActivity?: boolean; workbench?: WorkbenchService; appTurn?: AppTurn; stickers?: StickerLib }) {
     // `dispatch` (the LOCKING entry point) must never be called by
     // companionConverse — calling it from inside runExclusive would
     // self-deadlock (see pipeline-deps.ts). Failing loudly here catches a
@@ -182,11 +181,10 @@ describe('companionConverse in-flight guard (buildPipelineDeps)', () => {
         ...(opts.stickers ? { stickers: opts.stickers } : {}),
       },
       {
-        polling: new Ref('polling'),
-        guard: new Ref('guard'),
-        pipeline: new Ref('pipeline'),
-        ingestNudge: new Ref('ingestNudge'),
-        ...(opts.appTurn ? { appTurn: opts.appTurn } : {}),
+        polling: () => null,
+        pipeline: () => null,
+        ingestNudge: () => null,
+        ...(opts.appTurn ? { appTurn: () => opts.appTurn! } : {}),
       },
     )
 
@@ -286,10 +284,9 @@ describe('companionConverse in-flight guard (buildPipelineDeps)', () => {
   })
 
   it('第四步(d):App 说的话先过消费表 —— 消费者吃了就把截住的回话交还 App,不进会话、不开 sink', async () => {
-    const appTurn = new Ref<AppTurn>('appTurn')
     const seen: string[] = []
     const origins: unknown[] = []
-    appTurn.set(async (ctx) => { seen.push(ctx.msg.text); origins.push(ctx.origin); if (ctx.msg.text === '/帮助') { scopedReply()!.push('这里是帮助'); scopedReply()!.push('第二段'); ctx.consumedBy = 'mode'; return { consumed: true } } return { consumed: false } })
+    const appTurn: AppTurn = async (ctx) => { seen.push(ctx.msg.text); origins.push(ctx.origin); if (ctx.msg.text === '/帮助') { scopedReply()!.push('这里是帮助'); scopedReply()!.push('第二段'); ctx.consumedBy = 'mode'; return { consumed: true } } return { consumed: false } }
     const { companionConverse, dispatchInner, replySinksOpen, ilink } = setup({ inFlight: false, appTurn })
     await expect(companionConverse('/帮助', 'phone')).resolves.toEqual({ reply: '这里是帮助\n第二段' })
     expect(dispatchInner).not.toHaveBeenCalled(); expect(replySinksOpen).not.toHaveBeenCalled(); expect(ilink.sendMessage).not.toHaveBeenCalled()
@@ -539,7 +536,7 @@ describe('companionConverse lock spans the sink lifetime (real mutex + real repl
 
     const { companionConverse } = buildPipelineDeps(
       { stateDir, db, ilink, boot, log: () => {}, chatPrefs, careLedger, replySinks },
-      { polling: new Ref('polling'), guard: new Ref('guard'), pipeline: new Ref('pipeline'), ingestNudge: new Ref('ingestNudge') },
+      { polling: () => null, pipeline: () => null, ingestNudge: () => null },
     )
 
     const result = await companionConverse('how are you')

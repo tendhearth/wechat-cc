@@ -12,6 +12,11 @@ export interface SessionManagerOptions {
   maxConcurrent: number
   idleEvictMs: number
   /**
+   * 别处(工作台)正占着这个目录 / 这个原生会话 ⇒ true,acquire 与派发都拒(`native_session_busy`)。
+   * 构造时给一个读口,调用时现取:工作台比会话管理晚建,还没有就当不冲突。
+   */
+  executionGuard?: (path: string, providerId: string, nativeId: string | null) => boolean
+  /**
    * Provider catalogue (RFC 03 §3.3 / P2). The manager dispatches each
    * acquire() to the right provider instance based on the providerId
    * argument. Two providers can hold concurrent sessions on the same
@@ -156,17 +161,15 @@ export class SessionManager {
   // promise instead of forking a duplicate subprocess. Without this, the
   // companion tick + an inbound message racing on the same chat would both
   // miss the cache and both spawn — first one ends up orphaned.
-  private executionGuard:((path:string,providerId:string,nativeId:string|null)=>boolean)|undefined
   private readonly pendingPaths=new Map<string,string>()
   private readonly closingPaths=new Map<string,string>()
-  setExecutionGuard(guard:(path:string,providerId:string,nativeId:string|null)=>boolean){this.executionGuard=guard}
   hasProjectConflict(path:string):boolean {
     const target=canonicalClaimPath(path)
     return [...this.pendingPaths.values(),...this.closingPaths.values(),...[...this.sessions.values()].map(s=>s.handle.path)].some(p=>pathsConflict(canonicalClaimPath(p),target))
   }
   private checkExecution(req:AcquireRequest){
     const nativeId=this.opts.sessionStore?.get({alias:req.alias,provider:req.providerId,chatId:req.chatId})?.session_id??null
-    if(this.executionGuard?.(req.path,req.providerId,nativeId))throw new Error('native_session_busy')
+    if(this.opts.executionGuard?.(req.path,req.providerId,nativeId))throw new Error('native_session_busy')
   }
   private readonly pending = new Map<string, Promise<SessionHandle>>()
   // In-flight dispatch counter keyed by (provider, alias, chatId). Each

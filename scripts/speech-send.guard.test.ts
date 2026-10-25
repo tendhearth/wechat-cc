@@ -55,8 +55,8 @@ const BASELINE: Record<string, [Tag, number]> = {
   // 收尾时推)、工作台通知推送(phone-notifier)、终端会话推送(appPush)—— 后两处先过 speech/push-gate.ts 问门(policy.ask)。
   'src/daemon/phone-notifier.ts': ['primitive', 1],
   'src/daemon/wiring/wire-phone.ts': ['primitive', 1],
-  // main.ts 剩下的全是接线:回复交付、命令回话、信自己的投递、internal-api 的回话出口(主动开口都已经走门,10-21)
-  'src/daemon/main.ts': ['primitive', 9],
+  // daemon-modules.ts(以前在 main.ts)剩下的全是接线:回复交付、命令回话、信自己的投递、internal-api 的回话出口(主动开口都已经走门,10-21)
+  'src/daemon/daemon-modules.ts': ['primitive', 7],
   // pipeline-deps 剩下的全是接线:回话出口、proactive 的微信出口(发字 / 发文件)、给访客的回话、llm-health 的回话;访客申请已走门(10-21)
   'src/daemon/wiring/pipeline-deps.ts': ['primitive', 6],
   // —— 回答对方刚发来的那一句 ——

@@ -3,7 +3,6 @@ import { mkdtempSync, rmSync, writeFileSync, mkdirSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { buildPipelineDeps } from './pipeline-deps'
-import { Ref } from '../../lib/lifecycle'
 import { openTestDb, type Db } from '../../lib/db'
 import { makeReplySinks } from '../reply-sinks'
 import { makeChatMutex } from '../../core/async-mutex'
@@ -82,7 +81,7 @@ describe('phoneChat 走 companionConverse(回合串行入口)', () => {
     const matters = makeMatterStore(db)
     const built = buildPipelineDeps(
       { stateDir, db, ilink, boot, log: () => {}, chatPrefs, careLedger, replySinks, matters },
-      { polling: new Ref('polling'), guard: new Ref('guard'), pipeline: new Ref('pipeline'), ingestNudge: new Ref('ingestNudge') },
+      { polling: () => null, pipeline: () => null, ingestNudge: () => null },
     )
     return { ...built, submitTurn, dispatchInner, matters }
   }
