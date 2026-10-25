@@ -89,19 +89,19 @@ function taskInputPreview(input: Record<string, unknown>): string | null {
  *
  * `registeredMcpServers`:这件事登记过的原生 MCP(wire-workbench 读出来的 native.servers)。给了 ⇒ 任何前缀都对不上
  * 的 MCP 工具在最前面就拒(原来是 wire-workbench 的 workbenchClaudeOptions 外面手包的一层,同一句话、同一个先后)。
- * 不给 ⇒ 不做这一层(只有直接调这个函数的测试这样用)。 */
+ * 必填:漏传会悄悄少掉这一层拒(评审 10-25)。`null` = 明说不做这一层,只有直接测内层判定的测试这样用。 */
 const WORKBENCH_SUBJECT: AuthSubject = { surface: 'workbench', tier: TIER_PROFILES.trusted, permissionMode: 'strict', executor: 'claude' }
 /** 一起做里的 MCP 工具不看档位、只看登记表(descriptor.mcp);类别填第三方插件那一类,不参与判定。 */
 const WORKBENCH_MCP_KIND: ToolKind = 'plugin_tool'
 
 export function makeWorkbenchClaudeCanUseTool(
-  requestPermission?: SpawnContext['requestPermission'],
-  requestUserInput?: SpawnContext['requestUserInput'],
-  admittedMcpServers: readonly string[] = [],
-  registeredMcpServers?: readonly string[],
+  requestPermission: SpawnContext['requestPermission'] | undefined,
+  requestUserInput: SpawnContext['requestUserInput'] | undefined,
+  admittedMcpServers: readonly string[],
+  registeredMcpServers: readonly string[] | null,
 ): CanUseTool {
   return async (toolName, input, options) => {
-    if (registeredMcpServers && toolName.startsWith('mcp__') && !registeredMcpServers.some(name => toolName.startsWith(`mcp__${name}__`))) {
+    if (registeredMcpServers !== null && toolName.startsWith('mcp__') && !registeredMcpServers.some(name => toolName.startsWith(`mcp__${name}__`))) {
       const auth = authorize(WORKBENCH_SUBJECT, { name: toolName, kind: WORKBENCH_MCP_KIND, mcp: 'unregistered' })
       if (auth.verdict === 'deny') return { behavior:'deny', message:'This tool is not registered for the task.' } satisfies PermissionResult
     }

@@ -57,7 +57,7 @@ if(claudeBinary)registry.register('claude',createClaudeAgentProvider({
     if(notice)context?.reportNotice?.(notice)
     return workbenchClaudeOptions({cwd:path,pathToClaudeCodeExecutable:claudeBinary,
       env:{...process.env,...workbenchClaudeAuthEnv(settings,process.env)}},
-      instructions ?? '',makeWorkbenchClaudeCanUseTool(context?.requestPermission,context?.requestUserInput,Object.keys(native.servers)),native)
+      instructions ?? '',makeWorkbenchClaudeCanUseTool(context?.requestPermission,context?.requestUserInput,Object.keys(native.servers),Object.keys(native.servers)),native)
   },
 }),{workbench:MANAGED_NATIVE_CAPABILITIES,displayName:'Claude Code',canResume:(cwd,id)=>existsSync(claudeSessionJsonlPath(homedir(),cwd,id))})
 registerWorkbenchApi(registry,db,stateDir,loadAgentConfig(stateDir),process.env)
