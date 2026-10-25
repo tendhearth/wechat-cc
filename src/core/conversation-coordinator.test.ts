@@ -3209,3 +3209,52 @@ describe('unsafe → safe → unsafe flips: one turn per underlying session at a
     expect(ran).toContain('cursor:third')
   })
 })
+
+// D1 评审:排队之前定的计划只用来决定排队方式;真正开跑时(锁里)重新定档位 / 被拒 / 守护。
+// 复现:/chat 被守护筛到只剩 Cursor(单模型排队);第二条排在第一条后面时,主人把这个 chat 降成访客。
+// 第二条开跑时必须按访客判:Cursor 对访客不开放、Claude 被守护挡下 ⇒ 一个会话也不起,更不能带着 admin 档起。
+describe('plan made before queueing never authorizes the run (D1 review)', () => {
+  it('chat demoted to guest while B waits behind A: B is re-admitted at dispatch time and never spawns with the stale admin profile', async () => {
+    const UNSAFE = { check: async () => ({ safe: false, source: 'bx' as const, detail: 'bx 未保护' }) }
+    const store = makeMockStore()
+    store.set('chat-1', { kind: 'chatroom', participants: ['claude', 'cursor' as ProviderId] })
+    const registry = createProviderRegistry()
+    registry.register('claude', { spawn: dummyProvider.spawn, callTarget: () => ({ provider: 'claude', model: null, baseUrl: null }) } as AgentProvider, { displayName: 'Claude', canResume: () => true })
+    registry.register('cursor' as ProviderId, { spawn: dummyProvider.spawn, callTarget: () => ({ provider: 'cursor', model: 'auto' }) } as AgentProvider, { displayName: 'Cursor', canResume: () => true })
+    let access: Access = adminAccess()
+    let releaseFirst: () => void = () => {}
+    const firstGate = new Promise<void>(r => { releaseFirst = r })
+    let n = 0
+    const acquire = vi.fn(async (req: AcquireRequest) => ({
+      alias: 'p', path: '/p', providerId: req.providerId, lastUsedAt: 0,
+      dispatch: (): AsyncIterable<AgentEvent> => {
+        const me = ++n
+        return {
+          async *[Symbol.asyncIterator]() {
+            if (me === 1) await firstGate
+            yield { kind: 'result', sessionId: 's', numTurns: 1, durationMs: 0 } as AgentEvent
+          },
+        }
+      },
+      cancel: async () => {}, close: async () => {},
+    }))
+    const c = createConversationCoordinator({
+      resolveProject: () => ({ alias: 'p', path: '/p' }),
+      manager: { acquire } as never,
+      conversationStore: store, registry, defaultProviderId: 'claude',
+      format: (m) => m.text, permissionMode: 'dangerously', loadAccess: () => access, log: () => {},
+      sendAssistantText: async () => {}, haikuEval: async () => 'x', networkGate: UNSAFE,
+    })
+    const tick = () => new Promise(r => setTimeout(r, 10))
+    const p1 = c.dispatch(inbound('chat-1', 'first'))
+    await tick()
+    expect(acquire).toHaveBeenCalledTimes(1)
+    const p2 = c.dispatch(inbound('chat-1', 'second'))
+    await tick()
+    access = { dmPolicy: 'allowlist', allowFrom: [], admins: [], trusted: [] }
+    releaseFirst()
+    await Promise.all([p1, p2])
+    expect(acquire).toHaveBeenCalledTimes(1)
+    for (const [req] of acquire.mock.calls.slice(1)) expect(req.tierProfile).toBe(TIER_PROFILES.guest)
+  })
+})
