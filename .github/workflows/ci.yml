@@ -129,6 +129,10 @@ jobs:
       - name: Typecheck
         # 独立于前面的检查:一条红不该让后面几条一次都不执行。
         if: ${{ !cancelled() }}
+        # 堆上限写明(2026-10-25):整个仓库一次 tsc 要 ~2.5 GB(本机 --extendedDiagnostics 量的),node 的缺省堆随机器内存变,
+        # macOS 跑器上不到这个数就 OOM —— 不靠机器碰运气。
+        env:
+          NODE_OPTIONS: --max-old-space-size=6144
         run: bun run typecheck
 
       - name: Module-boundary check
