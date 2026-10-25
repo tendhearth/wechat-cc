@@ -1,10 +1,12 @@
 import { useEffect, useRef, useState, useSyncExternalStore } from 'react'
-import { ActivityIndicator, Pressable, View, type GestureResponderEvent } from 'react-native'
+import { Pressable, View, type GestureResponderEvent } from 'react-native'
 import { t, type Lang } from '../i18n'
 import { openSystemSettings } from '../push/native'
 import { makeTalkController, type TalkController, type TalkView } from '../state/hold-to-talk'
 import { LONG_PRESS_MS, TALK_NOTE_KEY, buttonFace, elapsedLabel, isTalkProblem, pressPlan, secondsLeft } from '../view/hold-to-talk'
-import { Dot } from './Dot'
+import { Icon } from './Icon'
+import { BusyIndicator } from './motion'
+import { StatusHint } from './StatusHint'
 import { TALK_MIME, useTalkRecorder } from './talk-recorder'
 import { radius, space } from './tokens'
 import { Txt } from './Txt'
@@ -38,7 +40,7 @@ export function useHoldToTalk(p: { transcribe(x: { mime: string; audioBase64: st
 
 /**
  * 输入框右边唯一那颗(2026-10-18 主人:发送和说话合成一个):
- * 有字 / 有图 ⇒ 实心「发送」,点一下发,按住 0.35 秒变成说话;空着 ⇒ 描边「按住说话」,一按就录。录的时候上滑取消。
+ * 有字 / 有图 ⇒ 实心发送箭头,点一下发,按住 0.35 秒变成说话;空着 ⇒ 描边麦克风,一按就录。录的时候上滑取消。
  * 强调色只给「发送」的实心和「在录」的那一圈。
  */
 export function SendTalkButton(p: {
@@ -61,7 +63,9 @@ export function SendTalkButton(p: {
   const plan = pressPlan({ sendable: p.sendable, talkable: p.talkable })
   const face = buttonFace({ sending: p.sending, sendable: p.sendable, phase, cancel: view.cancel, configured: view.configured })
   const filled = face === 'send' || face === 'sending'
-  const label = face === 'send' ? t(lang, 'chat.send')
+  const label = face === 'sending' ? t(lang, 'feedback.sending')
+    : face === 'transcribing' ? t(lang, 'talk.transcribing')
+    : face === 'send' ? t(lang, 'chat.send')
     : face === 'recording' ? t(lang, 'talk.release', { t: elapsedLabel(elapsedMs) })
     : face === 'cancel' ? t(lang, 'talk.releaseCancel')
     : face === 'noSetup' ? t(lang, 'talk.noSetup') : t(lang, 'talk.button')
@@ -73,9 +77,9 @@ export function SendTalkButton(p: {
       testID={testID}
       accessible
       accessibilityRole="button"
-      accessibilityLabel={face === 'send' || face === 'sending' ? t(lang, 'chat.send') : t(lang, 'talk.button')}
+      accessibilityLabel={label}
       accessibilityHint={face === 'send' ? t(lang, 'talk.a11ySendHint') : t(lang, view.configured === false ? 'talk.notConfigured' : 'talk.a11yHint')}
-      accessibilityState={{ disabled, busy: face === 'sending' || face === 'transcribing' }}
+      accessibilityState={{ disabled, busy: face === 'sending' || face === 'transcribing' || phase === 'arming' }}
       accessibilityActions={[{ name: 'activate' }]}
       onAccessibilityAction={e => { if (e.nativeEvent.actionName === 'activate' && latest.current.sendable) latest.current.onTap() }}
       onStartShouldSetResponder={() => !disabled && phase === 'idle'}
@@ -94,19 +98,19 @@ export function SendTalkButton(p: {
       }}
       onResponderTerminate={() => { clearHold(); if (talking.current) void ctl.release(true) }}
       style={{
-        minHeight: 48, minWidth: 48, paddingHorizontal: filled ? space.l : space.m, borderRadius: radius.control, justifyContent: 'center', alignItems: 'center',
+        minHeight: 48, minWidth: 48, paddingHorizontal: space.m, borderRadius: radius.control, justifyContent: 'center', alignItems: 'center',
         borderWidth: 1, borderColor: filled || (face === 'recording') ? c.accent : c.hair,
         backgroundColor: filled ? c.accent : c.paper, opacity: disabled && !p.sending ? 0.55 : face === 'noSetup' ? 0.75 : 1,
       }}
     >
-      {face === 'sending' ? <ActivityIndicator color={c.onAccent} />
-        : face === 'transcribing' ? <ActivityIndicator color={c.inkSoft} />
-        : <Txt role={filled ? 'body' : 'meta'} tone={filled ? 'onAccent' : face === 'noSetup' || face === 'cancel' ? 'inkSoft' : 'ink'} numberOfLines={1}>{label}</Txt>}
+      {face === 'sending' || face === 'transcribing' || phase === 'arming'
+        ? <BusyIndicator label={phase === 'arming' ? t(lang, 'talk.button') : label} color={filled ? c.onAccent : c.inkSoft} />
+        : <Icon name={face === 'send' ? 'arrowUp' : face === 'recording' ? 'stop' : face === 'cancel' ? 'close' : 'mic'} size={22} color={filled ? c.onAccent : face === 'cancel' || face === 'noSetup' ? c.inkSoft : c.ink} />}
     </View>
   )
 }
 
-/** 输入框上面那一行:在听(秒数 · 上滑取消 / 还剩几秒)、在转、或一句提示 / 原因(没权限带「去设置」)。 */
+/** 录音保留静止点与时间;原因放在可点开的入口,转写进度只在输入按钮上。 */
 export function TalkStatus({ view, elapsedMs, lang, testID }: { view: TalkView; elapsedMs: number; lang: Lang; testID: string }) {
   const { c } = useTheme()
   const phase = view.phase.phase
@@ -115,25 +119,27 @@ export function TalkStatus({ view, elapsedMs, lang, testID }: { view: TalkView; 
     const line = view.cancel ? t(lang, 'talk.cancelZone')
       : left !== null ? `${t(lang, 'talk.listening', { t: elapsedLabel(elapsedMs) })} · ${t(lang, 'talk.left', { n: left })}` : t(lang, 'talk.listening', { t: elapsedLabel(elapsedMs) })
     return (
-      <View testID={`${testID}-recording`} style={{ flexDirection: 'row', alignItems: 'center', gap: space.s }}>
+      <View testID={`${testID}-recording`} accessible accessibilityLabel={line} style={{ flexDirection: 'row', alignItems: 'center', gap: space.s }}>
         {/* 在听:一个静止的强调色小点(不闪,不加新颜色) */}
         <View importantForAccessibility="no" accessibilityElementsHidden style={{ width: 8, height: 8, borderRadius: 4, backgroundColor: view.cancel ? c.hair : c.accent }} />
-        <Txt role="meta" tone="inkSoft" accessibilityLiveRegion="polite" style={{ flex: 1 }}>{line}</Txt>
+        <Txt role="meta" tone="inkSoft">{elapsedLabel(elapsedMs)}</Txt>
       </View>
     )
   }
-  if (phase === 'transcribing') return <Txt testID={`${testID}-transcribing`} role="meta" tone="inkSoft" accessibilityLiveRegion="polite">{t(lang, 'talk.transcribing')}</Txt>
-  if (!view.note) return null
+  // 转写进度已经在唯一的输入按钮上;不再并排重复一行说明。
+  if (phase === 'transcribing' || !view.note) return null
   const problem = isTalkProblem(view.note)
   return (
-    <View style={{ flexDirection: 'row', alignItems: 'center', gap: space.s }}>
-      {problem ? <Dot kind="warn" size={8} /> : null}
-      <Txt testID={`${testID}-note-${view.note}`} role="meta" tone="inkSoft" accessibilityLiveRegion="polite" style={{ flexShrink: 1 }}>{t(lang, TALK_NOTE_KEY[view.note])}</Txt>
+    <View style={{ alignItems: 'flex-end' }}>
+    <StatusHint testID={`${testID}-note-${view.note}`} label={t(lang, 'feedback.voice')} description={t(lang, TALK_NOTE_KEY[view.note])}
+      icon={problem ? 'help' : view.note === 'micReady' ? 'check' : 'mic'}>
       {view.note === 'micDenied' ? (
-        <Pressable testID={`${testID}-settings`} accessibilityRole="button" accessibilityLabel={t(lang, 'talk.openSettings')} onPress={openSystemSettings} hitSlop={10}>
+        <Pressable testID={`${testID}-settings`} accessibilityRole="button" accessibilityLabel={t(lang, 'talk.openSettings')} onPress={openSystemSettings}
+          style={{ minHeight: 44, justifyContent: 'center' }}>
           <Txt role="meta" style={{ textDecorationLine: 'underline' }}>{t(lang, 'talk.openSettings')}</Txt>
         </Pressable>
       ) : null}
+    </StatusHint>
     </View>
   )
 }

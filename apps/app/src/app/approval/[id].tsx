@@ -13,6 +13,9 @@ import { CCFigure } from '../../ui/CCFigure'
 import { ConnectionNotice } from '../../ui/ConnectionNotice'
 import { Dot } from '../../ui/Dot'
 import { Sheet } from '../../ui/Sheet'
+import { Icon } from '../../ui/Icon'
+import { BusyIndicator } from '../../ui/motion'
+import { StatusHint } from '../../ui/StatusHint'
 import { TextField } from '../../ui/TextField'
 import { radius, space } from '../../ui/tokens'
 import { TopBar } from '../../ui/TopBar'
@@ -121,11 +124,11 @@ export default function Approval() {
   if (!detail.data || staleNone) {
     return shell(
       detail.error && !detail.loading ? (
-        <Pressable testID="approval-load-failed" accessibilityRole="button" onPress={() => void refreshDetail()} style={{ paddingTop: space.xl }}>
-          <Txt tone="inkSoft">{t(lang, 'approval.refreshFailed')}</Txt>
-        </Pressable>
+        <StatusHint testID="approval-load-failed" label={t(lang, 'feedback.loadingFailed')} shortLabel={t(lang, 'feedback.loadingFailed')} description={t(lang, 'approval.refreshFailed')}>
+          <Button kind="secondary" label={t(lang, 'feedback.check')} onPress={() => void refreshDetail()} />
+        </StatusHint>
       ) : (
-        <Txt tone="inkSoft" style={{ paddingTop: space.xl }}>{t(lang, 'progress.loading')}</Txt>
+        <BusyIndicator label={t(lang, 'progress.loading')} />
       ),
     )
   }
@@ -142,7 +145,10 @@ export default function Approval() {
     return shell(
       <View testID="approval-handled" style={{ gap: space.l, paddingTop: space.xl, alignItems: 'flex-start' }}>
         <CCFigure size={72} presence={ccPresence(conn)} />
-        <Txt role="title" accessibilityRole="header">{t(lang, 'approval.handled')}</Txt>
+        <View style={{ flexDirection: 'row', alignItems: 'center', gap: space.s }}>
+          <Icon name="check" color={c.inkSoft} />
+          <Txt role="meta" accessibilityRole="header">{t(lang, 'approval.handled')}</Txt>
+        </View>
         <Txt role="bubble" tone="inkSoft" content="user">{matterTitle}</Txt>
       </View>,
       <Button kind="primary" testID="approval-back" label={t(lang, 'approval.backToMatter')} onPress={backToMatter} />,
@@ -184,14 +190,13 @@ export default function Approval() {
       <ConnectionNotice />
       {online && !detail.fresh && !pending && !refreshing ? (
         detail.error && !detail.loading ? (
-          <Pressable testID="approval-refresh-failed" accessibilityRole="button" onPress={() => void refreshDetail()}>
-            <Notice text={t(lang, 'approval.refreshFailed')} center />
-          </Pressable>
+          <StatusHint testID="approval-refresh-failed" label={t(lang, 'feedback.loadingFailed')} shortLabel={t(lang, 'feedback.loadingFailed')} description={t(lang, 'approval.refreshFailed')}>
+            <Button kind="secondary" label={t(lang, 'feedback.check')} onPress={() => void refreshDetail()} />
+          </StatusHint>
         ) : (
-          <Txt role="small" tone="inkSoft" accessibilityLiveRegion="polite" style={{ textAlign: 'center' }}>{t(lang, 'progress.loading')}</Txt>
+          <BusyIndicator label={t(lang, 'progress.loading')} />
         )
       ) : null}
-      {pending ? <Txt role="small" tone="inkSoft" accessibilityLiveRegion="polite" style={{ textAlign: 'center' }}>{t(lang, 'approval.submitting')}</Txt> : null}
       {shownOutcome === 'uncertain' ? <Notice testID="approval-uncertain" text={t(lang, 'approval.uncertain')} /> : null}
       {shownOutcome === 'tooLong' ? <Notice testID="approval-too-long" text={t(lang, 'approval.answerTooLong')} /> : null}
       {shownOutcome === 'ccBusy' ? <Notice testID="approval-cc-busy" text={t(lang, 'common.ccBusy')} /> : null}
@@ -240,21 +245,16 @@ export default function Approval() {
   )
 }
 
-// 提示一句:状态色只上点(琥珀点 + 灰字),字不上色。
-function Notice({ text, testID, center }: { text: string; testID?: string; center?: boolean }) {
-  return (
-    <View style={{ flexDirection: 'row', alignItems: 'center', gap: space.s, justifyContent: center ? 'center' : 'flex-start' }}>
-      <Dot kind="warn" size={8} />
-      <Txt testID={testID} role="meta" tone="inkSoft" accessibilityLiveRegion="polite" style={{ flexShrink: 1 }}>{text}</Txt>
-    </View>
-  )
+// 原因保留在对应状态入口里,不在按钮上方重复铺一段说明。
+function Notice({ text, testID }: { text: string; testID?: string }) {
+  return <StatusHint testID={testID} label={text} description={text} />
 }
 
-function Eyebrow({ eyebrow, title }: { eyebrow: string; title: string }) {
+function Eyebrow({ eyebrow, title, eventKey }: { eyebrow: string; title: string; eventKey?: string }) {
   const conn = useConnection()
   return (
     <View style={{ flexDirection: 'row', alignItems: 'center', gap: space.m, paddingTop: space.s }}>
-      <CCFigure size={44} presence={ccPresence(conn)} />
+      <CCFigure size={44} presence={ccPresence(conn)} behavior={eventKey ? 'wait' : 'idle'} eventKey={eventKey} />
       <View style={{ flex: 1, gap: 2 }}>
         <Txt role="caption" tone="inkSoft">{eyebrow}</Txt>
         <Txt role="meta" content="user" numberOfLines={2}>{title}</Txt>
@@ -275,7 +275,7 @@ function PermissionCard({ v, matterTitle }: { v: CardView; matterTitle: string }
   const shown = rows.filter(([, body]) => body.trim() !== '')
   return (
     <>
-      <Eyebrow eyebrow={t(lang, 'approval.eyebrow')} title={matterTitle} />
+      <Eyebrow eyebrow={t(lang, 'approval.eyebrow')} title={matterTitle} eventKey={v.requestId} />
       <View style={{ gap: space.s }}>
         <Txt testID="approval-title" role="title" content="user" accessibilityRole="header">{v.title}</Txt>
         {v.aiSummary ? (
@@ -360,7 +360,7 @@ function QuestionForm({ v, matterTitle, shell, locked, submitLocked, busy, statu
 
   return shell(
     <>
-      <Eyebrow eyebrow={t(lang, 'approval.questionEyebrow')} title={matterTitle} />
+      <Eyebrow eyebrow={t(lang, 'approval.questionEyebrow')} title={matterTitle} eventKey={v.requestId} />
       {v.items.map(item => {
         const cur = picked[item.id] ?? []
         const full = multiLimitReached(item.multiSelect, cur)

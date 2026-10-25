@@ -17,7 +17,9 @@ const NO_JOB = { pending: null, failed: null } as const
  * GET chat 回 not_found(还没设主人对话 / 还没说过话)⇒ 当空对话,照样能说(第一句会建好它)。
  */
 export function useChat(): {
-  page: ChatPageT | undefined; error: unknown; noOwner: boolean
+  page: ChatPageT | undefined; error: unknown; noOwner: boolean; loading: boolean
+  /** 只读核对:刷新有限历史与 pending/failed。未找到或读失败不代表没送达,不会重发或清草稿。 */
+  refresh(): Promise<void>
   bubbles: Bubble[]; canLoadOlder: boolean; loadingOlder: boolean; loadOlder(): Promise<void>
   /** images:选好的图(2026-10-06),先传到电脑再说这一句;有图时文字可空。 */
   send(text: string, images?: readonly PickedImage[]): Promise<ChatSendOutcome>
@@ -144,5 +146,5 @@ export function useChat(): {
 
   const dismiss = drop
 
-  return { page: latest.data, error: latest.error, noOwner, bubbles, canLoadOlder: !!cursor, loadingOlder, loadOlder, send, retry, dismiss }
+  return { page: latest.data, error: latest.error, loading: latest.loading, refresh, noOwner, bubbles, canLoadOlder: !!cursor, loadingOlder, loadOlder, send, retry, dismiss }
 }
