@@ -1,7 +1,7 @@
 /**
  * STT config — where the daemon reaches the gateway whisper server. Separate
  * file from voice-config.json (TTS) because it's an independent concern with an
- * independent save route. Mirror of tts/voice-config.ts.
+ * independent save route. Mirror of features/voice/voice-config.ts.
  */
 import { existsSync, mkdirSync } from 'node:fs'
 import { dirname, join } from 'node:path'

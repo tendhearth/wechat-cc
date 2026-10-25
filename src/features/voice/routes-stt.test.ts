@@ -1,16 +1,12 @@
 import { describe, it, expect, vi } from 'vitest'
 import { Buffer } from 'node:buffer'
-import { makeRoutes } from './routes'
-import type { WechatVoiceDep } from '../wechat-tool-deps'
+import { voiceRoutes } from './routes'
+import type { WechatVoiceDep } from '../../daemon/wechat-tool-deps'
 
-function routesWith(voice: Partial<WechatVoiceDep> | undefined) {
-  return makeRoutes({
-    deps: { voice } as never,
-    getDelegate: () => null,
-    maybePrefix: (_c: string, t: string) => t,
-  })
+function routesWith(voice: Partial<WechatVoiceDep>) {
+  return voiceRoutes({ voice: voice as WechatVoiceDep })
 }
-function call(table: ReturnType<typeof makeRoutes>, key: string, body: unknown) {
+function call(table: ReturnType<typeof voiceRoutes>, key: string, body: unknown) {
   return table[key]!(new URLSearchParams(), body)
 }
 const b64 = Buffer.from('fake-audio').toString('base64')

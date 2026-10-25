@@ -6,6 +6,7 @@ import { fileURLToPath } from 'node:url'
 import { Client } from '@modelcontextprotocol/sdk/client/index.js'
 import { StdioClientTransport } from '@modelcontextprotocol/sdk/client/stdio.js'
 import { createInternalApi, type InternalApi } from '../../daemon/internal-api'
+import { voiceRoutes } from '../../features/voice/routes'
 import { makeMemoryFS } from '../../daemon/memory/fs-api'
 import { makeEventsStore } from '../../daemon/events/store'
 import { openTestDb, type Db } from '../../lib/db'
@@ -497,7 +498,8 @@ describe('wechat-mcp stdio integration', () => {
         : { configured: false as const },
       synthesizeSpeech: async (): Promise<{ audio: Buffer; mime: string }> => { throw new Error('unused_in_voice_config_test') },
     }
-    api = createInternalApi({ stateDir, daemonPid: 7777, memory, voice })
+    api = createInternalApi({ stateDir, daemonPid: 7777, memory })
+    api.mount('voice', voiceRoutes({ voice }))
     const { port, tokenFilePath } = await api.start()
     const transport = new StdioClientTransport({
       command: RUNTIME, args: [WECHAT_MCP_MAIN],

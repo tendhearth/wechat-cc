@@ -1,7 +1,7 @@
 /**
  * STT provider abstraction for wechat-cc inbound voice (voice arc Stage 2).
  *
- * Mirror of tts/types.ts. v1 has one impl: makeHttpSTTProvider — the
+ * Mirror of features/voice/types.ts. v1 has one impl: makeHttpSTTProvider — the
  * OpenAI-compatible `/v1/audio/transcriptions` shape (multipart audio → {text}),
  * covering a gateway whisper server (faster-whisper-server / speaches / real
  * OpenAI) with the same config the TTS side already uses for the gateway.

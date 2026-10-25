@@ -37,7 +37,7 @@ function okOf(r: { status: number; body: unknown }): { ok: boolean; error?: stri
 
 /**
  * `route(key)`:按路由键找处理器 —— internal-api 自己那张表,加上功能模块挂上来的(表情那几条归 stickers 模块,
- * src/features/stickers)。交付时才找,所以模块晚于 internal-api 挂上也接得住。
+ * src/features/stickers;语音的 reply_voice 归 voice 模块,src/features/voice)。交付时才找,所以模块晚于 internal-api 挂上也接得住。
  */
 export function turnRoutes(deps: InternalApiDeps, route: (key: string) => RouteHandler | undefined): RouteTable {
   const viaRoute = (key: string, body: Record<string, unknown>) => async (): Promise<{ ok: boolean; error?: string }> => {
@@ -63,13 +63,11 @@ export function turnRoutes(deps: InternalApiDeps, route: (key: string) => RouteH
         const text = str(b.text)
         if (!text) return { status: 400, body: { ok: false, error: 'text required (non-empty string)' } }
         if (text.length > VOICE_LIMIT) return { status: 200, body: { ok: false, reason: 'too_long', limit: VOICE_LIMIT } }
-        if (!deps.voice) return { status: 503, body: { error: 'voice_not_wired' } }
-        const voice = deps.voice
+        // 语音归语音功能(src/features/voice,模块自己挂 reply_voice):和表情一样,交付时经路由表复用那条老路由。
+        // 模块关着 / 坏了 / 还没挂上 ⇒ 表里没有这条 ⇒ 跟以前「没接语音」一样当场 503,不登记。
+        if (!route('POST /v1/wechat/reply_voice')) return { status: 503, body: { error: 'voice_not_wired' } }
         attachment = { kind: 'voice', text }
-        send = async () => {
-          const r = await voice.replyVoice(chatId, text)
-          return r.ok ? { ok: true } : { ok: false, error: r.reason }
-        }
+        send = viaRoute('POST /v1/wechat/reply_voice', { chat_id: chatId, text })
       } else if (b.kind === 'sticker') {
         const tag = str(b.tag), mood = str(b.mood), url = str(b.url), query = str(b.query), id = str(b.id)
         let ref: StickerRef

@@ -274,7 +274,7 @@ describe('makeIlinkAdapter (composed)', () => {
 
   it('voice.configStatus reflects saved config (http_tts, no api_key leak)', async () => {
     const stateDir = newStateDir()
-    const { saveVoiceConfig } = await import('./tts/voice-config')
+    const { saveVoiceConfig } = await import('../features/voice/voice-config')
     await saveVoiceConfig(stateDir, {
       provider: 'http_tts',
       base_url: 'http://mac:8000/v1/audio/speech',
@@ -316,7 +316,7 @@ describe('makeIlinkAdapter (composed)', () => {
   it('voice.replyVoice rejects unknown chat_id with actionable error (no TTS spent)', async () => {
     // Set up voice config so the not_configured branch doesn't short-circuit.
     const stateDir = newStateDir()
-    const { saveVoiceConfig } = await import('./tts/voice-config')
+    const { saveVoiceConfig } = await import('../features/voice/voice-config')
     await saveVoiceConfig(stateDir, {
       provider: 'http_tts',
       base_url: 'http://invalid.local/v1',

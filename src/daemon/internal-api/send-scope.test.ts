@@ -7,6 +7,7 @@ import { makeReplySinks } from '../reply-sinks'
 import { makeRoutes, makeMaybePrefix } from './routes'
 import { ADMIN_CHAT_SCOPE_MESSAGE, ALL_CHATS, CHAT_SCOPE_MESSAGE, CROSS_CHAT_ROUTE, SEND_SCOPED_ROUTES, sendScopeDecision, sharedTokenTurn } from './send-scope'
 import { makeReplyDeliveryRuntime } from '../reply-delivery'
+import { voiceRoutes } from '../../features/voice/routes'
 import { minTierFor } from './route-tiers'
 import { stickersRoutes } from '../../features/stickers/routes'
 
@@ -87,10 +88,11 @@ describe('sendScopeDecision (pure rule)', () => {
 
 describe('SEND_SCOPED_ROUTES registry', () => {
   it('every scoped key is a real route', () => {
-    // 表情那几条由 stickers 模块挂(src/features/stickers),不在总表里。
+    // 表情那几条由 stickers 模块挂(src/features/stickers),reply_voice 由 voice 模块挂(src/features/voice),都不在总表里。
     const routes = {
       ...makeRoutes({ deps: { stateDir: '/tmp/x', daemonPid: 1 } as InternalApiDeps, getDelegate: () => null, maybePrefix: makeMaybePrefix({} as InternalApiDeps) }),
       ...stickersRoutes({ stickers: {} as never, ilink: { sendFile: async () => {} } }),
+      ...voiceRoutes({ voice: {} as never }),
     }
     for (const key of Object.keys(SEND_SCOPED_ROUTES)) expect(routes[key], key).toBeTypeOf('function')
   })
@@ -146,12 +148,6 @@ describe('send routes over HTTP — chat scope', () => {
     api = createInternalApi({
       stateDir, daemonPid: 1,
       ilink: { sendReply: m.sendReply, sendFile: m.sendFile, editMessage: m.editMessage, broadcast: m.broadcast },
-      voice: {
-        replyVoice: m.replyVoice,
-        saveConfig: async () => ({ ok: false, reason: 'unused' }),
-        configStatus: () => ({ configured: false }),
-        synthesizeSpeech: async () => { throw new Error('unused') },
-      },
       sharePage: m.sharePage,
       conversation: { setMode: m.setMode },
       ...extra,
@@ -161,6 +157,15 @@ describe('send routes over HTTP — chat scope', () => {
       stickers: { resolve: m.stickerResolve, save: vi.fn(), list: vi.fn(() => []), allTags: vi.fn(() => ['happy']) },
       stickerFeedback: { rate: m.feedbackRate, remember: vi.fn() },
       ilink: { sendFile: m.sendFile },
+    }))
+    // reply_voice 归 voice 模块(src/features/voice),模块自己挂上来。
+    api.mount('voice', voiceRoutes({
+      voice: {
+        replyVoice: m.replyVoice,
+        saveConfig: async () => ({ ok: false, reason: 'unused' }),
+        configStatus: () => ({ configured: false }),
+        synthesizeSpeech: async () => { throw new Error('unused') },
+      },
     }))
     const { port, tokenFilePath } = await api.start()
     return { port, fileToken: readFileSync(tokenFilePath, 'utf8').trim() }

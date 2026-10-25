@@ -52,10 +52,9 @@ import type {
   ProjectsSwitchRequestT, ProjectsAddRequestT, ProjectsRemoveRequestT,
   UserSetNameRequestT,
   SharePageRequestT, ShareResurfaceRequestT,
-  VoiceSaveConfigRequestT,
   CompanionSnoozeRequestT,
   CompanionImportLocalRequestT,
-  WechatReplyRequestT, WechatReplyVoiceRequestT, WechatSendFileRequestT,
+  WechatReplyRequestT, WechatSendFileRequestT,
   WechatEditMessageRequestT, WechatBroadcastRequestT,
   DelegateRequestT,
   ConversationSetModeRequestT,
@@ -65,7 +64,7 @@ export interface MakeRoutesContext {
   deps: InternalApiDeps
   getDelegate: () => InternalApiDelegateDep | null
   maybePrefix: (chatId: string, text: string, tag: string | undefined) => string
-  /** 功能模块挂上来的路由(index.ts 的 MOUNTED)。附件交付要经它调到表情那几条(stickers 模块挂的)。 */
+  /** 功能模块挂上来的路由(index.ts 的 MOUNTED,模块 init 时才填)。附件交付要经它调到表情那几条(stickers 模块挂的)和语音的 reply_voice(voice 模块挂的)。 */
   mounted?: RouteTable
 }
 
@@ -130,7 +129,8 @@ function toWireOutbound(h: import('../ilink/outbound-health').OutboundHealth) {
 
 export function makeRoutes({ deps, getDelegate, maybePrefix, mounted }: MakeRoutesContext): RouteTable {
   const table: RouteTable = {
-    // 回复交付(spec 2026-10-03 §4.5 / §4.6):附件登记 + admin 往别处发。表情附件交付时复用老路由(stickers 模块挂上来的)。
+    // 回复交付(spec 2026-10-03 §4.5 / §4.6):附件登记 + admin 往别处发。表情 / 语音附件交付时复用老路由
+    // (表情由 stickers 模块、语音由 voice 模块挂上来)。
     ...turnRoutes(deps, (key) => table[key] ?? mounted?.[key]),
     ...workbenchRoutes(deps),
     ...mattersRoutes(deps),
@@ -415,12 +415,6 @@ export function makeRoutes({ deps, getDelegate, maybePrefix, mounted }: MakeRout
       }
     },
 
-    // ── voice config (RFC 03 P1.B B4) ───────────────────────────────────
-    'GET /v1/voice/status': () => {
-      if (!deps.voice) return { status: 503, body: { error: 'voice_not_wired' } }
-      // configStatus is sync, never throws — direct return.
-      return { status: 200, body: deps.voice.configStatus() }
-    },
     // ── companion proactive tick (RFC 03 P1.B B6) ───────────────────────
     'GET /v1/companion/status': () => {
       if (!deps.companion) return { status: 503, body: { error: 'companion_not_wired' } }
@@ -525,22 +519,6 @@ export function makeRoutes({ deps, getDelegate, maybePrefix, mounted }: MakeRout
       } catch (err) {
         if (sentCount > 0) deps.log?.('WECHAT_REPLY', `split partial failure chat=${chat_id} sent=${sentCount}/${chunks.length} err=${errMsg(err)}`)
         return { status: 200, body: { ok: false, error: errMsg(err), ...(sentCount > 0 ? { sent: sentCount } : {}) } }
-      }
-    },
-    'POST /v1/wechat/reply_voice': async (_q, body) => {
-      if (!deps.voice) return { status: 503, body: { error: 'voice_not_wired' } }
-      // Body is pre-validated by index.ts via WechatReplyVoiceRequest schema.
-      const { chat_id, text } = body as WechatReplyVoiceRequestT
-      // Business rule: enforce 500-char cap with structured reason, not schema validation.
-      // Schema is structural (shape), not business (value range).
-      if (text.length > 500) {
-        return { status: 200, body: { ok: false, reason: 'too_long', limit: 500 } }
-      }
-      try {
-        const r = await deps.voice.replyVoice(chat_id, text)
-        return { status: 200, body: r }
-      } catch (err) {
-        return { status: 200, body: { ok: false, reason: 'unexpected_error', detail: errMsg(err) } }
       }
     },
     'POST /v1/wechat/send_file': async (_q, body) => {
@@ -716,100 +694,6 @@ export function makeRoutes({ deps, getDelegate, maybePrefix, mounted }: MakeRout
           return { status: 503, body: { ok: false, error: msg } }
         }
         return { status: 500, body: { ok: false, error: msg } }
-      }
-    },
-
-    // ── companion speak (app-conversation-channel, voice arc Stage 1) ──
-    // Synthesizes reply audio for arbitrary text via the daemon's voice
-    // config and hands the bytes back to the caller (base64) instead of
-    // ilink-sending — reuses deps.voice.synthesizeSpeech, which mirrors
-    // replyVoice's synth step exactly, minus the wechat upload/send.
-    'POST /v1/companion/speak': async (_q, body) => {
-      if (!deps.voice) return { status: 503, body: { error: 'voice_not_wired' } }
-      const { text } = body as { text?: unknown }
-      if (typeof text !== 'string' || text.trim().length === 0) {
-        return { status: 400, body: { error: 'text required' } }
-      }
-      if (text.length > 5000) {
-        return { status: 400, body: { error: 'text too long' } }
-      }
-      try {
-        const { audio, mime } = await deps.voice.synthesizeSpeech(text)
-        return { status: 200, body: { ok: true, audio_b64: audio.toString('base64'), mime } }
-      } catch (err) {
-        const m = errMsg(err)
-        if (/no.?voice.?config|not configured/i.test(m)) {
-          return { status: 422, body: { ok: false, error: 'no_voice_config' } }
-        }
-        return { status: 500, body: { ok: false, error: m } }
-      }
-    },
-
-    // ── companion transcribe (app-conversation-channel, voice arc Stage 2) ──
-    // Inbound audio (base64) → gateway STT → text. Mirror of /speak.
-    'POST /v1/companion/transcribe': async (_q, body) => {
-      if (!deps.voice?.transcribe) return { status: 503, body: { error: 'voice_not_wired' } }
-      const { audio_b64, mime } = (body ?? {}) as { audio_b64?: unknown; mime?: unknown }
-      if (typeof audio_b64 !== 'string' || audio_b64.length === 0) {
-        return { status: 400, body: { error: 'audio_b64 required' } }
-      }
-      let audio: Buffer
-      try {
-        audio = Buffer.from(audio_b64, 'base64')
-      } catch {
-        return { status: 400, body: { error: 'audio_b64 must be valid base64' } }
-      }
-      if (audio.length === 0) return { status: 400, body: { error: 'audio_b64 decoded to empty' } }
-      if (audio.length > 25 * 1024 * 1024) return { status: 413, body: { error: 'audio too large (max 25MB)' } }
-      try {
-        const { text } = await deps.voice.transcribe(audio, typeof mime === 'string' && mime ? mime : 'audio/wav')
-        return { status: 200, body: { ok: true, text } }
-      } catch (err) {
-        const m = errMsg(err)
-        if (/no.?stt.?config/i.test(m)) return { status: 422, body: { ok: false, error: 'no_stt_config' } }
-        return { status: 500, body: { ok: false, error: m } }
-      }
-    },
-
-    'POST /v1/stt/save_config': async (_q, body) => {
-      if (!deps.voice?.saveSTTConfig) return { status: 503, body: { error: 'voice_not_wired' } }
-      const { base_url, model, api_key } = (body ?? {}) as { base_url?: unknown; model?: unknown; api_key?: unknown }
-      try {
-        const r = await deps.voice.saveSTTConfig({
-          ...(typeof base_url === 'string' ? { base_url } : {}),
-          ...(typeof model === 'string' ? { model } : {}),
-          ...(typeof api_key === 'string' ? { api_key } : {}),
-        })
-        return { status: 200, body: r }
-      } catch (err) {
-        return { status: 200, body: { ok: false, reason: 'unexpected_error', detail: errMsg(err) } }
-      }
-    },
-
-    'GET /v1/stt/status': () => {
-      if (!deps.voice?.sttStatus) return { status: 503, body: { error: 'voice_not_wired' } }
-      return { status: 200, body: deps.voice.sttStatus() }
-    },
-
-    'POST /v1/voice/save_config': async (_q, body) => {
-      if (!deps.voice) return { status: 503, body: { error: 'voice_not_wired' } }
-      // Body is pre-validated by index.ts via VoiceSaveConfigRequest schema.
-      const { provider, base_url, model, api_key, default_voice } = body as VoiceSaveConfigRequestT
-      // saveConfig handles its own validation + test-synth; surface its
-      // ok-true / ok-false-reason verbatim. Catch transport-level
-      // unexpected errors and shape them into the same {ok:false,reason}
-      // contract so the agent sees a structured failure.
-      try {
-        const r = await deps.voice.saveConfig({
-          provider,
-          ...(base_url !== undefined ? { base_url } : {}),
-          ...(model !== undefined ? { model } : {}),
-          ...(api_key !== undefined ? { api_key } : {}),
-          ...(default_voice !== undefined ? { default_voice } : {}),
-        })
-        return { status: 200, body: r }
-      } catch (err) {
-        return { status: 200, body: { ok: false, reason: 'unexpected_error', detail: errMsg(err) } }
       }
     },
 

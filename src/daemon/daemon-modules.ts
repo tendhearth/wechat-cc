@@ -65,6 +65,7 @@ import { lettersFeature } from '../features/letters'
 import { atelierFeature } from '../features/atelier'
 import { journalFeature } from '../features/journal'
 import { huntFeature } from '../features/hunt'
+import { voiceFeature } from '../features/voice'
 import { makeProjectLessonsCommand } from './project-lessons-command'
 import { calendarFeature, type CalendarFeature } from '../features/calendar'
 import { fromReplyHandler } from './commands/registry'
@@ -210,7 +211,6 @@ export function daemonModules(f: Foundation): DaemonModule[] {
           // 桌宠「主人真在跟我说话吗」:只认入站(伙伴自己的外发会 bump lastUsedAt,但不该让熊说「在跟你聊」)。
           latestInboundTs: (c: string) => f.messagesStore.latestInboundTs(c),
           setUserName: (chatId, name) => ilink.setUserName(chatId, name),
-          voice: { replyVoice: (c, t) => ilink.voice.replyVoice(c, t), saveConfig: (i) => ilink.voice.saveConfig(i), configStatus: () => ilink.voice.configStatus(), synthesizeSpeech: (t) => ilink.voice.synthesizeSpeech(t), transcribe: (a, m) => ilink.voice.transcribe!(a, m), saveSTTConfig: (i) => ilink.voice.saveSTTConfig!(i), sttStatus: () => ilink.voice.sttStatus!() },
           sharePage: (t, c, o) => ilink.sharePage(t, c, o), resurfacePage: (q) => ilink.resurfacePage(q),
           companion: { enable: () => ilink.companion.enable(), disable: () => ilink.companion.disable(), status: () => ilink.companion.status(), snooze: (m) => ilink.companion.snooze(m), setImportLocal: (e) => ilink.companion.setImportLocal(e) },
           ilink: { sendReply: (c, t) => ilink.sendMessage(c, t).then(r => r as { msgId: string; error?: string }), sendFile: (c, p) => ilink.sendFile(c, p), noteSentMedia: (c, m) => ilink.noteSentMedia?.(c, m), editMessage: (c, m, t) => ilink.editMessage(c, m, t), broadcast: (t, a) => ilink.broadcast(t, a) },
@@ -267,6 +267,13 @@ export function daemonModules(f: Foundation): DaemonModule[] {
     journalFeature({
       needs: [],
       deps: () => ({ stateDir, journal: f.journal }),
+    }),
+
+    // 语音(出站 TTS):一个功能一个目录(src/features/voice);路由自己挂,紧跟 internal-api(以前随 internal-api 一起就在)。
+    // 语音口还是 ilink 适配器造的那一份(发送绑着 ilink),这里原样交过去。
+    voiceFeature({
+      needs: ['ilink-adapter'],
+      deps: (ctx) => ({ voice: ctx.get<IlinkAdapter>('ilink-adapter').voice }),
     }),
 
     // —— 贴纸:一个功能一个目录(src/features/stickers);路由自己挂。表情库全 daemon 一份,bootstrap(提示词)和 wired 都要它 ——
