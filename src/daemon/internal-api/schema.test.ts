@@ -657,13 +657,8 @@ describe('schema lookup tables', () => {
     // REQUEST_SCHEMAS entry, per the pair/inbound routes' precedent.)
     expect(Object.keys(REQUEST_SCHEMAS).length).toBe(48)
   })
-  it('RESPONSE_SCHEMAS has 36 entries (one per route)', () => {
-    // 25 original + 2 a2a dashboard response schemas (preview, install)
-    // + 1 a2a server-side test response + 1 memory/delete
-    // + 1 companion/import-local + 3 reminders (schedule, cancel, list)
-    // + 1 atelier/share
-    // + 1 companion/presence (spec 2026-09-03-companion-presence)
-    // + 1 owner-only companion/thoughts
-    expect(Object.keys(RESPONSE_SCHEMAS).length).toBe(36)
+  it('RESPONSE_SCHEMAS has one entry per route', () => {
+    // F1(架构终态):每一条 /v1 路由都有响应契约 —— 209 条,与路由表里 /v1 的条数相同。
+    expect(Object.keys(RESPONSE_SCHEMAS).length).toBe(209)
   })
 })
