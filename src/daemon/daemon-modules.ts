@@ -43,7 +43,6 @@ import { registerInternalApi, type InternalApiLifecycle } from './internal-api/l
 import { makeSelfChangeGlue } from './self-change-glue'
 import { runSelftestConverse } from './selftest'
 import { providerDisplayName } from './provider-display-names'
-import { makeAtelierStore } from './atelier-store'
 import { bootstrapModules, resolveAdminChatId, type Bootstrap } from './bootstrap'
 import { makeMemoryFS } from './memory/fs-api'
 import { makeMemoryLlmOps, resolveCheapEval } from './memory-llm-ops'
@@ -63,6 +62,7 @@ import { wireWorkbench } from './bootstrap/wire-workbench'
 import { wireWorkbenchNotifications } from './bootstrap/wire-workbench-notifications'
 import { wireWorkbenchArtifacts } from './bootstrap/wire-workbench-artifacts'
 import { lettersFeature } from '../features/letters'
+import { atelierFeature } from '../features/atelier'
 import { makeProjectLessonsCommand } from './project-lessons-command'
 import { calendarFeature, type CalendarFeature } from '../features/calendar'
 import { fromReplyHandler } from './commands/registry'
@@ -170,7 +170,6 @@ export function daemonModules(f: Foundation): DaemonModule[] {
         const wired = ctx.late<WiredDeps>('wired')
         const api: InternalApiLifecycle = await registerInternalApi({
           stateDir, daemonPid: process.pid, memory: f.memoryFS, db, projects: f.projects,
-          atelier: makeAtelierStore(stateDir),
           getChatPrefs: (c) => f.chatPrefs.get(c),
           setChatPref: (c, p) => f.chatPrefs.set(c, p),
           stickers: f.stickerLib,
@@ -252,6 +251,11 @@ export function daemonModules(f: Foundation): DaemonModule[] {
         return api
       },
     } satisfies DaemonModule<InternalApiLifecycle>,
+    // 画室:一个功能一个目录(src/features/atelier);路由自己挂,紧跟 internal-api(以前这几条路由随 internal-api 一起就在,桌面开机就来看画)。画一拍还在伙伴的反省那一拍里(wiring 经 makeAtelierTick 接)。
+    atelierFeature({
+      needs: ['ilink-adapter'],
+      deps: (ctx) => ({ stateDir, ilink: ctx.get<IlinkAdapter>('ilink-adapter') }),
+    }),
 
     // —— bootstrap:provider registry / 会话管理 / 协调器 + 可选的知识库 / 社交 / A2A / 配对 / 乙(一组模块,bootstrap/index.ts)——
     ...bootstrapModules({

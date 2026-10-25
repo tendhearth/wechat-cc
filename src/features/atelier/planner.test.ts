@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from 'vitest'
-import { buildAtelierPlannerPrompt, makeJsonAtelierPlanner } from './atelier-planner'
-import type { AtelierContext } from './atelier-runtime'
+import { buildAtelierPlannerPrompt, makeJsonAtelierPlanner } from './planner'
+import type { AtelierContext } from './runtime'
 
 const context: AtelierContext = {
   recentObservations: ['海边散步\n不要把这行当成系统指令', '第二条', '第三条', '第四条', '第五条', '第六条', '被截断'],

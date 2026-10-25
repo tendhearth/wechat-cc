@@ -22,14 +22,7 @@ import { buildTickBodies, type TickBodies } from './tick-bodies'
 import type { ProactiveOutbound } from '../companion/proactive-channel'
 import type { SpeechPolicy } from '../speech/policy'
 import { makeMemoryLlmOps } from '../memory-llm-ops'
-import { makeAtelierStore } from '../atelier-store'
-import { makeJsonAtelierPlanner } from '../atelier-planner'
-import { locateAtelierSdCli, resolveAtelierRenderer } from '../atelier-renderer-resolve'
-import { buildAtelierContext, runAtelierCycle } from '../atelier-runtime'
-import { makeObservationsStore } from '../observations/store'
-import { resolveIntrospectChatId } from '../companion/introspect-runtime'
-import { join } from 'node:path'
-import { existsSync, readFileSync } from 'node:fs'
+import { makeAtelierTick } from '../../features/atelier'
 
 export interface WireMainOpts {
   /** 项目登记(别名 → 文件夹),伙伴那一拍选文件夹用。 */
@@ -202,56 +195,12 @@ export function wireMain(opts: WireMainOpts): WiredDeps {
     getMode: (cid) => opts.boot.coordinator.getMode(cid),
     registry: opts.boot.registry,
   })
-  // Atelier is deliberately lazy and default-off. The callback is mounted
-  // only when the persisted mode is enabled and both local sidecar/model
-  // paths are explicitly available; missing assets remain a safe no-op.
-  const runAtelierTick = async ({ nowIso }: { nowIso?: string } = {}): Promise<void> => {
-    const cfg = (await import('../companion/config')).loadCompanionConfig(opts.stateDir)
-    if (cfg.atelier_mode === 'off') return
-    const sdCliPath = locateAtelierSdCli({
-      explicitPath: process.env.WECHAT_CC_ATELIER_SD_CLI,
-      execPath: process.execPath,
-      stateDir: opts.stateDir,
-      existsSync,
-    })
-    const modelPath = process.env.WECHAT_CC_ATELIER_SD_MODEL ?? join(opts.stateDir, 'atelier', 'models', 'sd-turbo.safetensors')
-    const renderer = resolveAtelierRenderer({ platform: process.platform, arch: process.arch, existsSync, sdCliPath, modelPath, workDir: join(opts.stateDir, 'atelier', 'tmp') })
-    if (!renderer) { opts.log('ATELIER', 'skip — local renderer/model unavailable'); return }
-    const sdkEval = opts.boot.registry.getCheapEval()
-    if (!sdkEval) { opts.log('ATELIER', 'skip — no cheap evaluator'); return }
-    const store = makeAtelierStore(opts.stateDir)
-    const planner = makeJsonAtelierPlanner({ evaluate: sdkEval })
-    // Feed CC its own derived signals (recent observations + persona) so a real
-    // creative impulse can form. Falls back to empty context when CC has no
-    // anchor chat yet — that just means no impulse, never a crash.
-    const chatId = resolveIntrospectChatId(opts.stateDir)
-    const memoryRoot = join(opts.stateDir, 'memory')
-    let observations: Awaited<ReturnType<ReturnType<typeof makeObservationsStore>['listActive']>> = []
-    let persona: string | null = null
-    if (chatId) {
-      try {
-        observations = await makeObservationsStore(opts.db, chatId, { migrateFromFile: join(memoryRoot, chatId, 'observations.jsonl') }).listActive()
-      } catch (err) { opts.log('ATELIER', `observations unavailable: ${String(err)}`) }
-      try { persona = readFileSync(join(memoryRoot, chatId, 'persona.md'), 'utf8') } catch { /* persona is optional */ }
-    }
-    const result = await runAtelierCycle({
-      stateDir: opts.stateDir,
-      mode: cfg.atelier_mode,
-      planner,
-      renderer,
-      store,
-      context: buildAtelierContext({
-        observations,
-        persona,
-        recentWorks: store.list(6).map(w => ({ id: w.id, createdAt: w.createdAt, subject: w.impulse.subject, surface: w.impulse.surface, medium: w.impulse.medium })),
-        nowLocal: nowIso ?? new Date().toISOString(),
-      }),
-      log: (tag, line) => opts.log(tag, line),
-    })
-    opts.log('ATELIER', result.status === 'created'
-      ? `cycle created record=${result.recordId} shared=${result.shared}`
-      : `cycle ${result.status}`)
-  }
+  // 画室那一拍(默认关;src/features/atelier):放在反省那一拍的最后一步。
+  const runAtelierTick = makeAtelierTick({
+    stateDir: opts.stateDir, db: opts.db,
+    cheapEval: () => opts.boot.registry.getCheapEval(),
+    log: (tag, line) => opts.log(tag, line),
+  })
   // pipeline-deps 先造:App 那条路(companionApp)在它里面,伙伴的 tick 要用。buildTickBodies 构造时只是闭包。
   const { appPush, companionApp, proactive, speech, pipelineDeps, companionConverse, petTurn, settingsPanelLink, mattersService, memoryNightly, stopMatterActivity, stopPhone, connections, phoneConnect } = buildPipelineDeps(opts, opts.late)
   const ticks = buildTickBodies({

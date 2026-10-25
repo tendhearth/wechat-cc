@@ -8,10 +8,10 @@
  * Turning the atelier off downloads nothing. The SHA-256 is the integrity gate:
  * a wrong URL fails closed rather than installing bad bytes.
  */
-import { writeFileAtomic } from '../lib/json-file'
+import { writeFileAtomic } from '../../lib/json-file'
 import { createHash } from 'node:crypto'
 import { createReadStream, existsSync, mkdirSync } from 'node:fs'
-import { readJsonFile } from '../lib/read-json-file'
+import { readJsonFile } from '../../lib/read-json-file'
 import { open, rename, rm } from 'node:fs/promises'
 import { dirname, join } from 'node:path'
 import {
@@ -19,7 +19,7 @@ import {
   type ModelProvisionStatus,
   type ModelSpec,
   type ProvisionDeps,
-} from './atelier-model-provision'
+} from './model-provision'
 
 /** Verified SD-Turbo weights fingerprint (see docs/spike/cc-atelier-renderer/README.md). */
 export const ATELIER_MODEL_SHA256 = '3f067a1b943cf162f2b8f8588f6cf5824bd5b4c7d1d88d87164b9ca123616549'

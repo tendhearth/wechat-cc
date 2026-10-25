@@ -2,9 +2,9 @@ import { describe, expect, it, vi } from 'vitest'
 import { mkdtempSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { buildAtelierContext, readAtelierCadence, runAtelierCycle, type AtelierContext, type AtelierRuntimeDeps } from './atelier-runtime'
-import { NetworkUnprotectedError } from '../lib/network-gate'
-import { makeAtelierStore } from './atelier-store'
+import { buildAtelierContext, readAtelierCadence, runAtelierCycle, type AtelierContext, type AtelierRuntimeDeps } from './runtime'
+import { NetworkUnprotectedError } from '../../lib/network-gate'
+import { makeAtelierStore } from './store'
 import type { ArtworkRenderer, RenderedArtwork } from './artwork-renderer'
 
 const context: AtelierContext = {

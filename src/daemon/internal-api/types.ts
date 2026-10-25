@@ -103,8 +103,6 @@ export interface InternalApiDeps {
   stateDir: string
   /** Optional server-owned Claude projects location; never accepted from a request. */
   memoryProjectsRoot?: string
-  /** Local CC Atelier store; read-only artwork metadata/images for the desktop dashboard. */
-  atelier?: import('../atelier-store').AtelierStore
   /** Daemon process pid — exposed by /v1/health for smoke tests. */
   daemonPid: number
   /** Owner-only Workbench service; late-bound after provider bootstrap. */

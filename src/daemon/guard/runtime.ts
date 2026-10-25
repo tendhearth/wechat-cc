@@ -34,7 +34,7 @@ export interface GuardRuntime {
    *   - 任务里冒出来的「网络未受保护」不当成失败:同一段不安全期同一个任务只记一行日志。
    *   - 评审 #193 P2-3:这层只兜底**逃出来的**拒绝。任务内部被拒的那一次调用必须由任务自己按「这一拍
    *     跳过」处理 —— 不打勾、不登记、不前移时间戳(isNetworkUnprotectedError / NETWORK_UNPROTECTED_REASON
-   *     是那个专门的结果类型;见 tick-bodies、introspect、sticker-artist、atelier-runtime、wire-visit、
+   *     是那个专门的结果类型;见 tick-bodies、introspect、sticker-artist、features/atelier/runtime、wire-visit、
    *     social-judge、memory/nightly)。
    * 不抛、不重试。
    */

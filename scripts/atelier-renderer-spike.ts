@@ -8,7 +8,7 @@
  */
 import { mkdirSync, writeFileSync } from 'node:fs'
 import { dirname, resolve } from 'node:path'
-import { makeOpenAiImageRenderer } from '../src/daemon/artwork-renderer'
+import { makeOpenAiImageRenderer } from '../src/features/atelier'
 
 const output = resolve(process.argv[2] ?? 'output/atelier-spike/sand-fish.png')
 const apiKey = process.env.OPENAI_API_KEY ?? ''

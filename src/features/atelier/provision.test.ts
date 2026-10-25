@@ -9,7 +9,7 @@ import {
   readModelStatus,
   runAtelierModelProvision,
   shouldProvisionOnConfigChange,
-} from './atelier-provision'
+} from './provision'
 
 function tmp(): string {
   return mkdtempSync(join(tmpdir(), 'wcc-atelier-provision-'))

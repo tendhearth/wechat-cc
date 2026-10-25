@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest'
 import { join } from 'node:path'
-import { locateAtelierSdCli, resolveAtelierRenderer } from './atelier-renderer-resolve'
+import { locateAtelierSdCli, resolveAtelierRenderer } from './renderer-resolve'
 
 const base = {
   sdCliPath: '/bin/sd-cli', modelPath: '/m/sd-turbo.safetensors', workDir: '/work',

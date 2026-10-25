@@ -74,7 +74,7 @@ export interface PanelSurface {
  * 表里标了 `module: X` 的路由:daemon 的路由层按 X 此刻的状态判能不能走(关着 ⇒ module_off、坏了 ⇒ module_degraded、
  * 还没挂上 ⇒ module_starting);处理器由模块 X 自己挂(`internalApi.mount`),不在 internal-api 的总表里。
  */
-export const MODULE_NAMES = ['social', 'calendar', 'reminders', 'letters'] as const
+export const MODULE_NAMES = ['social', 'calendar', 'reminders', 'letters', 'atelier'] as const
 export type ModuleName = (typeof MODULE_NAMES)[number]
 
 export interface RouteSpec {
@@ -460,11 +460,11 @@ export const ROUTES: Readonly<Record<RouteKey, RouteSpec>> = {
   // 桌面读故障记录以显示"上次故障"横幅。trusted:桌面/CLI 的唯一凭据是
   // 0600 文件 token;内容只有时间戳与分类,不含聊天数据。
   'GET /v1/health/incidents': { desktop: { tier: 'trusted' } },
-  'GET /v1/atelier/works': { desktop: { tier: 'trusted' } },
-  'GET /v1/atelier/model-status': { desktop: { tier: 'trusted' } },
+  'GET /v1/atelier/works': { module: 'atelier', desktop: { tier: 'trusted' } },
+  'GET /v1/atelier/model-status': { module: 'atelier', desktop: { tier: 'trusted' } },
   // Explicit desktop action; sends only to companion.default_chat_id and
   // never accepts a caller-controlled recipient.
-  'POST /v1/atelier/share': { desktop: { tier: 'trusted' } },
+  'POST /v1/atelier/share': { module: 'atelier', desktop: { tier: 'trusted' } },
   // Knowledge Kernel (Phase 01, T3, docs/superpowers/specs/
   // 2026-07-12-knowledge-kernel-phase01-design.md "Knowledge API").
   // Ingest = admin/internal only: source/put and semantic/put are written
