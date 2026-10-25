@@ -24,7 +24,7 @@
    - `/set provider cc|agy|api|…`(管理员)—— 全局默认大脑,改完自动重启;
    - `/api list`(拉网关 `GET {base}/models`,主人主动触发才拨,60s 缓存)、`/api <别名|模型>`(只对本对话)、`/api alias ds=DeepSeek` / `/api unalias ds`、裸 `/api` 回全局默认;
    - `/cc <model>` 等按对话钉模型,同时忘掉该对话在这家的会话存档,下一句按新模型冷启动。
-3. **面板「模型与后端」**(`/set` 图形面板,`src/daemon/settings-panel*.ts`):六家一行(注册 / 体检缓存 / 模型 / 未接入提示)、自配 API 表单(地址 / 默认模型 / key —— key 走 `llm-keys.ts`,不进日志)、短名增删、后台评估下拉。面板**绝不主动外呼体检**(封号红线)。
+3. **面板「模型与后端」**(`/set` 图形面板,`src/features/phone/settings-panel*.ts`):六家一行(注册 / 体检缓存 / 模型 / 未接入提示)、自配 API 表单(地址 / 默认模型 / key —— key 走 `llm-keys.ts`,不进日志)、短名增删、后台评估下拉。面板**绝不主动外呼体检**(封号红线)。
 
 ## bot 自己能换
 

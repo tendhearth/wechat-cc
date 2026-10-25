@@ -108,7 +108,7 @@ export function crossedOvernight(createdAtMs: number, nowMs: number, timezone: s
 }
 
 const localDayFmtCache = new Map<string, Intl.DateTimeFormat>()
-/** en-CA 的 short date 恰好是 YYYY-MM-DD(同 `daemon/mobile-feed.ts` 的 `dayFmt` 写法,时区非法时退回 UTC 而不是抛错)。 */
+/** en-CA 的 short date 恰好是 YYYY-MM-DD(同 `features/phone/mobile-feed.ts` 的 `dayFmt` 写法,时区非法时退回 UTC 而不是抛错)。 */
 function localDayKey(ms: number, timezone: string): string {
   let fmt = localDayFmtCache.get(timezone)
   if (!fmt) {

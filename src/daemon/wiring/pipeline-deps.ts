@@ -57,7 +57,7 @@ import type { YiHub, YiDispatch } from '../../core/yi-hub'
 import type { ExecResult } from '../../core/a2a-server'
 import { makeMattersService } from '../../core/matters/service'
 import { makeSayReceipts } from '../../core/matters/say-receipts'
-import { surfaceOrigin } from '../phone-client'
+import { surfaceOrigin } from '../../features/phone'
 
 export interface DelegateDeps {
   listHands: () => readonly A2AAgentRecord[]
@@ -126,11 +126,11 @@ export interface BuildPipelineDepsResult {
    *  桌面「连接手机」走 phoneConnect / POST /v1/phone/link。 */
   settingsPanelLink: () => Promise<string | null>
   /** 手机「跟 CC 说」的任务表(收下即回,converse = companionConverse);没接 matters ⇒ null。 */
-  phoneChat: import('../phone-chat').PhoneChat | null
+  phoneChat: import('../../features/phone').PhoneChat | null
   /** 「CC 的连接」快照(缓存 10 s);手机与 admin 路由共用。 */
   connections: () => import('../connections').ConnectionsSnapshot
   /** 桌面「连接手机」(plan 7a)。 */
-  phoneConnect: import('../internal-api/types').PhoneConnectDep
+  phoneConnect: import('../../features/phone').PhoneConnectDep
   /** 「一件事」读写面(有 matters store 才有)。 */
   mattersService: import('../../core/matters/service').MattersService | null
   /** 退订工作台事件 + 清「一件事」活动时间的节流定时器;main.ts 登记进 shutdown。可重复调用。 */

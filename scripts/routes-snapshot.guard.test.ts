@@ -19,7 +19,7 @@ import { join, dirname } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { ROUTE_MIN_TIER, routesForToken } from '../src/daemon/internal-api/route-tiers'
 import { makeTokenRegistry } from '../src/daemon/internal-api/token-registry'
-import { LAN_ONLY_OPS, LINK_READ_OK, LINK_ROUTES, LINK_WRITE_OK, PHONE_ROUTES, PHONE_TOPICS } from '../src/daemon/phone-routes'
+import { LAN_ONLY_OPS, LINK_READ_OK, LINK_ROUTES, LINK_WRITE_OK, PHONE_ROUTES, PHONE_TOPICS } from '../src/features/phone/phone-routes'
 import { WORKBENCH_ROUTES_JSON } from './gen-routes'
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..')

@@ -13,7 +13,7 @@
  * (在线的跳过、没设备就是 0 台),所以问门时 deliverable 恒为 true,微信断没断跟它无关。
  */
 import type { SpeechKind } from '../../domain/speech/kinds'
-import type { PushPayload } from '../phone-push'
+import type { PushPayload } from '../../features/phone'
 import type { SpeechPolicy } from './policy'
 
 export const MAX_HELD_PUSHES = 50

@@ -4,7 +4,7 @@
 import {afterAll,afterEach,beforeAll,beforeEach,describe,expect,it} from 'vitest'
 import {createRequire} from 'node:module'
 import {readFileSync} from 'node:fs'
-import {phoneHtml} from '../settings-panel-html'
+import {phoneHtml} from '../../features/phone/settings-panel-html'
 
 const icon=readFileSync(new URL('../../../apps/desktop/src/assets/pet/cc-v1/canonical/unlit/front.png',import.meta.url))
 

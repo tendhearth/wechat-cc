@@ -174,7 +174,7 @@ module.exports = {
     {
       name: 'daemon-reads-mobile-only-via-generated',
       severity: 'error',
-      comment: 'daemon 只吃 src/daemon/mobile-page.generated.json;import apps/mobile 在本地能跑,编译后的 sidecar 没有源码树就挂了。',
+      comment: 'daemon 只吃 src/features/phone/mobile-page.generated.json;import apps/mobile 在本地能跑,编译后的 sidecar 没有源码树就挂了。',
       from: { path: '^src/', pathNot: '\\.test\\.ts$' },
       to: { path: '^apps/mobile/' },
     },

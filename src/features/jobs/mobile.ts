@@ -8,7 +8,7 @@
  * 只给设备令牌(配过对的主人手机);/set 链接令牌不在册 —— 定时的正文是主人的私事,停删也不该被泄露的链接做掉。
  * 新建定时仍在微信「定时」里说(手机上先只看与停删)。正文不进日志。
  */
-import { ownsMethod, type PhoneRouteTable } from '../../daemon/phone-route-table'
+import { ownsMethod, type PhoneRouteTable } from '../phone'
 import type { JobsActionKind, JobsView } from './view'
 
 export interface MobileJobsDeps {

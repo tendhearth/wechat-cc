@@ -7,7 +7,7 @@ import { assembleMobilePage, serializeMobilePage } from './assemble'
 import { readMobileSource, MOBILE_PAGE_OUT, MOBILE_SRC } from './sources'
 import { buildProtocolJs, assembleRelayShell, PROTOCOL_JS_OUT, PSET_SHELL_SRC, PSET_SHELL_OUT } from './build'
 
-describe('apps/mobile → src/daemon/mobile-page.generated.json', () => {
+describe('apps/mobile → src/features/phone/mobile-page.generated.json', () => {
   const page = assembleMobilePage(readMobileSource)
 
   it('generated page is in sync with apps/mobile/src (fix: bun run build:mobile)', () => {
@@ -17,7 +17,7 @@ describe('apps/mobile → src/daemon/mobile-page.generated.json', () => {
 
   it('sources and the generated JSON check out with LF on every platform (Windows autocrlf would desync the sync test)', () => {
     const paths = [
-      'apps/mobile/src/phone.html', 'apps/mobile/src/workbench.js', 'src/daemon/mobile-page.generated.json',
+      'apps/mobile/src/phone.html', 'apps/mobile/src/workbench.js', 'src/features/phone/mobile-page.generated.json',
       'apps/desktop/src/shared/agent-avatars.js', 'apps/desktop/src/shared/agent-avatars.css',
       // 手机协议包 v2 Task 4:三份新生成物,同一个理由(整份文本比对,CRLF 必红)。
       'apps/mobile/src/protocol-generated.js', 'relay/pset.src.html', 'relay/pset.html',

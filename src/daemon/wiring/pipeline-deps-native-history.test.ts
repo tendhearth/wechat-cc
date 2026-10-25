@@ -6,13 +6,13 @@ import {buildPipelineDeps} from './pipeline-deps'
 import {openTestDb,type Db} from '../../lib/db'
 import {removeTempDir} from '../../lib/test-temp'
 import {makeReplySinks} from '../reply-sinks'
-import {mobileReadsRoutes,type MobileReadsDeps} from '../mobile-reads'
-import { routePhone } from '../phone-route-table'
+import {mobileReadsRoutes,type MobileReadsDeps} from '../../features/phone/mobile-reads'
+import { routePhone } from '../../features/phone/phone-route-table'
 import type {Bootstrap} from '../bootstrap'
 import type {PipelineDepsOpts} from './pipeline-deps'
 
 const panel=vi.hoisted(()=>({deps:null as MobileReadsDeps|null}))
-vi.mock('../settings-panel',()=>({makeSettingsPanel:(deps:MobileReadsDeps)=>{panel.deps=deps;return{}}}))
+vi.mock('../../features/phone/settings-panel',()=>({makeSettingsPanel:(deps:MobileReadsDeps)=>{panel.deps=deps;return{}}}))
 vi.mock('../../lib/access',async(importOriginal)=>({
   ...(await importOriginal<typeof import('../../lib/access')>()),
   loadAccess:()=>({dmPolicy:'allowlist',admins:['owner'],allowFrom:['owner']}),isAdmin:(id:string)=>id==='owner',

@@ -14,26 +14,18 @@ import type { makeMessagesStore } from '../../lib/messages-store'
 import type { MattersService } from '../../core/matters/service'
 import type { MemoryNightlyRuntime } from '../../features/memory'
 import type { PipelineDepsOpts } from './pipeline-deps-opts'
-import { jobsView, jobsAction } from '../../features/jobs'
+import { jobsView, jobsAction, mobileJobsRoutes } from '../../features/jobs'
 import { pickJobExecutor } from './tick-bodies'
 import { makeJobsStore } from '../../core/scheduled-jobs-store'
 import { loadCompanionConfig } from '../companion/config'
 import { readPlanLogDays } from '../companion/plan-memory'
 import { readJournalSeen, writeJournalSeen } from '../../core/journal-seen'
 import { resolveAdminChatId } from '../companion/resolve-admin'
-import { makeSettingsPanel, phoneMayOpenMatter } from '../settings-panel'
-import { makeRemoteToggle, relayV2Configured } from '../remote-toggle'
-import { cacheSessions } from '../mobile-reads'
-import type { makePhoneOwner } from '../mobile-chat'
-import type { makePhoneChat } from '../phone-chat'
-import { makePhoneInsight } from '../phone-insight'
-import { makeApprovalExplainer } from '../phone-explain'
-import { makeProgressSummarizer } from '../phone-progress'
+import { makeSettingsPanel, phoneMayOpenMatter, makeRemoteToggle, relayV2Configured, cacheSessions, type makePhoneOwner, type makePhoneChat, makePhoneInsight, makeApprovalExplainer, makeProgressSummarizer, currentPhoneClient } from '../../features/phone'
 import { wrapCheapEvalWithAuthFailCheck } from '../bootstrap/wire-coordinator'
-import { letterPagePath, listLetters } from '../../features/letters'
+import { letterPagePath, listLetters, mobileLettersRoutes } from '../../features/letters'
 import { makeEventsStore } from '../events/store'
 import { hasLlmKey } from '../llm-keys'
-import { currentPhoneClient } from '../phone-client'
 
 export interface WireSettingsPanelDeps {
   /** 面板直接读的那几项 opts(只有这些)。 */
@@ -117,15 +109,18 @@ return makeSettingsPanel({
   ...(mattersService && opts.matters ? { matters: { list: (f) => mattersService.list(f), detail: (id) => mattersService.detail(id), inputReceipt:mattersService.inputReceipt, say: (id, text, input) => mattersService.say(id, text, 'phone',input), permission:mattersService.permission,answer:mattersService.answer,stop:mattersService.stop,worktree:mattersService.worktree,rewindPreview:mattersService.rewindPreview,rewind:mattersService.rewind,artifactChunk:mattersService.artifactChunk,handoff:mattersService.handoff,seenOnPhone: (id) => opts.matters!.bind(id, 'phone', 'pwa') } } : {}),
   // 「CC 的信」(2026-10-18):只读存档,寄出去了的才列。
   ...(opts.activity ? { activity: opts.activity } : {}),
-  letters: { list: () => listLetters(stateDir), pagePath: (id: string, page: number) => letterPagePath(stateDir, id, page) },
-  // 定时在手机上看得见(对标 B7):与微信「定时」、runner 读写同一个 scheduled-jobs.json。
-  jobs: (() => {
-    const store = makeJobsStore(stateDir)
-    return {
-      view: () => jobsView({ store, timezone: loadCompanionConfig(stateDir).timezone ?? 'Asia/Shanghai', executor: pickJobExecutor(id => boot.registry.has(id as never)) }),
-      action: (id: string, action: import('../../features/jobs').JobsActionKind) => jobsAction(store, id, action),
-    }
-  })(),
+  // 信、定时的手机处理器归它们自己的功能(features/letters、features/jobs 的 index.ts 导出),这里只填 deps 交给面板。
+  featureRoutes: [
+    mobileLettersRoutes({ list: () => listLetters(stateDir), pagePath: (id: string, page: number) => letterPagePath(stateDir, id, page) }),
+    // 定时在手机上看得见(对标 B7):与微信「定时」、runner 读写同一个 scheduled-jobs.json。
+    mobileJobsRoutes((() => {
+      const store = makeJobsStore(stateDir)
+      return {
+        view: () => jobsView({ store, timezone: loadCompanionConfig(stateDir).timezone ?? 'Asia/Shanghai', executor: pickJobExecutor(id => boot.registry.has(id as never)) }),
+        action: (id: string, action: import('../../features/jobs').JobsActionKind) => jobsAction(store, id, action),
+      }
+    })()),
+  ],
   ...(phoneOwner && phoneChat ? { chat: {
     owner: () => phoneOwner.peek(),
     history: (chatId: string, o: { beforeTs?: string; limit: number }) => messagesStore.listRange(chatId, o),

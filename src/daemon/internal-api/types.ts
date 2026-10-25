@@ -92,11 +92,6 @@ export interface InternalApiIlinkDep {
  */
 export type PetTurnDep = () => Promise<import('../../domain/pet-turn').PetTurnPayload>
 
-export interface PhoneConnectDep {
-  link(opts: { enableRemote: boolean }): Promise<import('../phone-link').PhoneLinkResult>
-  devices(): import('../device-store').DeviceRow[]
-}
-
 export interface InternalApiDeps {
   /** State directory; the token file is written under here. */
   stateDir: string
@@ -108,8 +103,7 @@ export interface InternalApiDeps {
   matters?: import('../../core/matters/service').MattersService
   /** 「CC 的连接」(spec 2026-10-01);main.ts 在 pipeline 接好后 setConnections。 */
   connections?: () => import('../connections').ConnectionsSnapshot
-  /** 桌面「连接手机」(plan 7a);main.ts 在 pipeline 接好后 setPhoneConnect。 */
-  phoneConnect?: PhoneConnectDep
+  // 桌面「连接手机」(phoneConnect)归手机功能(src/features/phone),`/v1/phone/*` 由 phone 模块自己挂。
   // 记忆(memory / memoryProjectsRoot / memoryLlm / memoryNightly)归记忆功能(src/features/memory),路由由 memory 模块自己挂。
   /**
    * SQLite handle — 配置改动 / 社交路由的审计(记忆删除的审计随记忆功能走了,它自己拿 db)。
@@ -539,7 +533,7 @@ export interface InternalApiDeps {
 export const LATE_KEYS = [
   'delegate', 'conversation', 'a2a', 'socialView', 'knowledge', 'pairing', 'incidents',
   'llmHealth', 'llmRegistered', 'llmNames', 'llmEndpoints',
-  'workbench', 'matters', 'companionConverse', 'petTurn', 'settingsLink', 'connections', 'phoneConnect',
+  'workbench', 'matters', 'companionConverse', 'petTurn', 'settingsLink', 'connections',
   'cliUpgrade',
 ] as const satisfies readonly (keyof InternalApiDeps)[]
 export type LateKey = typeof LATE_KEYS[number]

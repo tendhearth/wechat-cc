@@ -239,8 +239,8 @@ data*; the agent fuses them at prompt time (`brief.py` "DATA ONLY, does NOT read
   `process.ts` does not abstract `detached`/process groups, so the spawn sites that need them still
   call `node:child_process` directly.
 - **随身 CC / `/m` phone page**: source in `apps/mobile/`, assembled into
-  `src/daemon/mobile-page.generated.json` (committed, byte-guarded) and served by
-  `src/daemon/mobile-page.ts`; the settings panel itself stays in `settings-panel.ts`. Reachable at
+  `src/features/phone/mobile-page.generated.json` (committed, byte-guarded) and served by
+  `src/features/phone/mobile-page.ts`; the settings panel itself stays in `settings-panel.ts`. Reachable at
   home over the LAN directly or away over an end-to-end-encrypted relay tunnel (`tunnel-client.ts`)
   — X25519 handshake per stream, AES-GCM frames, the relay itself content-blind, the device token
   authenticated by whether its derived key opens the first frame. 首屏「今天」是伙伴的一天:`GET

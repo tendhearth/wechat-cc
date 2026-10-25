@@ -53,7 +53,7 @@ const BASELINE: Record<string, [Tag, number]> = {
   'src/daemon/bootstrap/wire-workbench-notifications.ts': ['primitive', 1],
   // App 原生推送:fanoutPush 的定义(phone-notifier)和唯一的调用(wire-phone)。用它的三处 —— App 主动通道(只在 say 那一轮
   // 收尾时推)、工作台通知推送(phone-notifier)、终端会话推送(appPush)—— 后两处先过 speech/push-gate.ts 问门(policy.ask)。
-  'src/daemon/phone-notifier.ts': ['primitive', 1],
+  'src/features/phone/phone-notifier.ts': ['primitive', 1],   // 手机搬进 src/features/phone(架构终态 A5),数没变
   'src/daemon/wiring/wire-phone.ts': ['primitive', 1],
   // daemon-modules.ts(以前在 main.ts)剩下的全是接线:回复交付、命令回话、信自己的投递、internal-api 的回话出口、贴纸路由的发文件口(主动开口都已经走门,10-21)
   // 7:微信「终端 / @码」那条命令的回话出口(scopedSend 包着的 sendMessage)跟着终端会话搬进 src/features/terminal/wire.ts(架构终态 A5),

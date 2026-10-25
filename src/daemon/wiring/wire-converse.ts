@@ -19,7 +19,7 @@ import { encodeExtras, hasExtras, projectReplyExtras, stickerDataUri, withSticke
 import { withReplyScope } from '../inbound/reply-scope'
 import type { InboundCtx } from '../inbound/types'
 import type { AppTurn } from '../inbound/build'
-import { surfaceOrigin } from '../phone-client'
+import { surfaceOrigin } from '../../features/phone'
 import { resolveOwnerSessionKey } from './owner-session-key'
 
 export interface WireConverseDeps {

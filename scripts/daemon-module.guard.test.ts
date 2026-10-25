@@ -31,7 +31,7 @@ type Kind = keyof typeof KINDS
 
 /** 这几处的 setInterval 不是模块的生命周期,永久不算(每一条写明为什么)。 */
 const NOT_LIFECYCLE: Record<string, string> = {
-  'src/daemon/settings-panel-html.ts': '在发给浏览器的 HTML 字符串里,是页面自己的 JS,不在 daemon 里跑',
+  'src/features/phone/settings-panel-html.ts': '(A5 起在 features/phone)在发给浏览器的 HTML 字符串里,是页面自己的 JS,不在 daemon 里跑',
   'src/daemon/inbound/mw-typing.ts': '一轮回复期间的「正在输入」,在那一轮结束时清掉,跟模块启停无关',
 }
 /** 容器自己:定义 ctx.interval 的地方。 */
@@ -43,10 +43,10 @@ const BASELINE: Record<string, Partial<Record<Kind, number>>> = {
   'src/daemon/cli-upgrade/wire.ts': { setInterval: 1 },
   'src/daemon/guard/pause-policy.ts': { setInterval: 1 },
   'src/daemon/ilink/context.ts': { setInterval: 1 },
-  'src/daemon/phone-events.ts': { setInterval: 1 },
+  'src/features/phone/phone-events.ts': { setInterval: 1 },     // 手机搬进 src/features/phone(架构终态 A5),数没变
   'src/daemon/single-instance.ts': { setInterval: 1 },
   'src/daemon/speech/pending-notices.ts': { setInterval: 1 },
-  'src/daemon/tunnel-client.ts': { setInterval: 1 },
+  'src/features/phone/tunnel-client.ts': { setInterval: 1 },    // 同上
   'src/daemon/wiring/pipeline-deps.ts': { Ref: 1 },
   'src/daemon/wiring/wire-phone.ts': { 'phoneLc.add': 7 },
 }

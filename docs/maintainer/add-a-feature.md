@@ -42,7 +42,10 @@ export function calendarFeature(d: { stateDir: string; isOwner(chatId: string): 
 2. 有路由:`packages/protocol/src/routes.ts` 里每一行写 `module: '<名>'`,把名字加进 `MODULE_NAMES`;处理器在模块的 `init` 里
    `internalApi.mount('<名>', routes)`,**不进** `internal-api/routes.ts` 的总表,也不往 `InternalApiDeps` 加字段。
    模块关着 / 坏了 / 还没挂上,路由层自己回 `module_off` / `module_degraded` / `module_starting`,处理器里不用写分支。
-3. 有微信命令:模块交出 `command`,在命令表里放到它该在的优先级(现在是 `owner-commands` 那一组的列表,顺序就是优先级)。
+3. 有手机 `/m/api/*` 处理器:写在功能自己的目录里(用 `src/features/phone/index.ts` 导出的 `ownsMethod` / `PhoneRouteTable`),
+   从功能的 `index.ts` 导出那张表,由 `src/daemon/wiring/wire-settings-panel.ts` 放进面板的 `featureRoutes`(样板是信、定时);
+   路由表里那几行照旧写 `phone` 块(给不给链接令牌、为什么)。手机功能不 import 别的功能。
+4. 有微信命令:模块交出 `command`,在命令表里放到它该在的优先级(现在是 `owner-commands` 那一组的列表,顺序就是优先级)。
 
 ## 机器管着的
 

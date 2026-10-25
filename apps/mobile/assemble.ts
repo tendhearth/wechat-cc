@@ -4,7 +4,7 @@
  *
  * 两种标记:
  *   {{>file.js}}   构建期包含,原样内联(页面必须自包含:公网壳页 document.write 整份写入,没有可用的相对路径)
- *   {{UPPER_KEY}}  运行时键,留给 src/daemon/mobile-page.ts 按请求填;只认 RUNTIME_VARS 里的名字
+ *   {{UPPER_KEY}}  运行时键,留给 src/features/phone/mobile-page.ts 按请求填;只认 RUNTIME_VARS 里的名字
  */
 export const RUNTIME_VARS = ['TOKEN_JSON', 'REMOTE_JSON', 'BRAND_ICON_VERSION'] as const
 

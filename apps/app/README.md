@@ -33,7 +33,7 @@ cd apps/app
 bunx expo start                  # 开发服务器(连已装的 development build)
 bunx expo run:ios                # 首次:生成 ios/ 并在模拟器装 development build
 bun run test                     # vitest(纯逻辑与组件交互,node / happy-dom 环境)
-bun --bun vitest run src/daemon/phone-app-live-e2e.test.ts   # 仓库根目录:LiveBackend 对着进程内真 daemon 的端到端
+bun --bun vitest run src/features/phone/phone-app-live-e2e.test.ts   # 仓库根目录:LiveBackend 对着进程内真 daemon 的端到端
 bun run typecheck                # tsc --noEmit(本工程自己的 tsconfig)
 bun run export:check             # expo export 两个平台,证明能打包
 maestro test .maestro/           # 模拟器上跑演示流程(要先有 development build + 开着 expo start)
@@ -44,7 +44,7 @@ maestro test .maestro/           # 模拟器上跑演示流程(要先有 develop
 - `ios/`、`android/` **不进 git**(`.gitignore` 已列);原生部分以后走 Expo config plugin,保持「预构建可重生」。
 - `expo start` / `expo prebuild` 可能改写 `tsconfig.json` / `package.json`,别把这些改动提交。
 - 换过 bundle 相关的东西后用 `bunx expo start --clear`,免得模拟器拿到旧 bundle。
-- 本工程有自己的 tsconfig 与 vitest;根 `bun run typecheck` 末尾追加了 `tsc --noEmit -p apps/app`,所以根回路也会检查本工程。根目录端到端 `src/daemon/phone-app-live-e2e.test.ts` 会 import 本工程的一部分文件(见下「真连接的规矩」),那些文件要同时过根 tsconfig。
+- 本工程有自己的 tsconfig 与 vitest;根 `bun run typecheck` 末尾追加了 `tsc --noEmit -p apps/app`,所以根回路也会检查本工程。根目录端到端 `src/features/phone/phone-app-live-e2e.test.ts` 会 import 本工程的一部分文件(见下「真连接的规矩」),那些文件要同时过根 tsconfig。
 
 ### Maestro
 
@@ -98,7 +98,7 @@ bun scripts/device-e2e.ts --only chat,push   # 只跑部分(配对与收尾总�
 
 **要主人做的(自动化做不了)**:手机解锁、亮屏(自动锁定设「永不」,跑完改回);开发者模式开着;每次手机重启后第一次跑 UI 测试,手机会弹「Enable UI Automation · 使用触控 ID 以继续使用 XCTest」,要验证一次触控 ID(没人验证 ⇒ runner 报 `认证已取消`,脚本退出码 2 并写明)。
 
-**已知**:主人原来那台设备位也登记着同一个 APNs token 时,没带 2026-10-01 修复的 daemon 会给同一部手机发两条(collapse-id 相同,后到的顶掉前一条;原来那台的推送密钥已收起,那条只能显示占位,点开落在此刻)。步骤会等横幅落定、只点解密后的那条;落在此刻会写 `landed_on_now`。daemon 部署了「同一 token 换设备位 ⇒ 旧设备位让出登记」(`src/daemon/phone-push.ts`)之后就不会再有第二条。
+**已知**:主人原来那台设备位也登记着同一个 APNs token 时,没带 2026-10-01 修复的 daemon 会给同一部手机发两条(collapse-id 相同,后到的顶掉前一条;原来那台的推送密钥已收起,那条只能显示占位,点开落在此刻)。步骤会等横幅落定、只点解密后的那条;落在此刻会写 `landed_on_now`。daemon 部署了「同一 token 换设备位 ⇒ 旧设备位让出登记」(`src/features/phone/phone-push.ts`)之后就不会再有第二条。
 
 **抓到并修掉的**(2026-10-01 首轮真机):① iOS 上 `getDevicePushTokenAsync` 每调一次都会回调 `addPushTokenListener`,监听无条件强制重登 ⇒ 每 0.6 秒一次 `POST /m/api/push/register` 的重试风暴(主人原来装的包也在刷,daemon 日志一小时近千行)—— `push/register.ts makeTokenWatch` 只认真变了的 token;② 已配对的手机从系统链接冷启动进配对页、点返回,落到欢迎页回不到此刻 —— `view/pair.ts pairBackTarget`;③ 同一部手机两个设备位都登记推送 ⇒ 重复通知(上一条)。
 

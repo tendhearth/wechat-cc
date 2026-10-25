@@ -35,7 +35,7 @@
 
 - **`gen:routes` 生成的 `apps/desktop/src-tauri/generated/workbench-routes.json` 是编进 `.app` 的**(`lib.rs` 用 `include_str!`)。动了 `tauri` / `ownerWorkspace` 那几格,`self deploy` 换 sidecar **换不到**宿主的白名单,要发版。PR 描述里写明「需要随 1.7.x 发版」,并记进 `docs/releases/desktop-v<下一版>.md`。
 - **链接令牌的范围 = 链接页面源码里实际调用的那些**(`scripts/link-routes-from-source.guard.test.ts` 扫五处链接页面源码)。页面不调的不开,页面调的不能是 `none`。只给设备用的调用要在源码里写 `/* link-scan: device-only */`。
-- **把消息送给执行者的路由只给设备**,不给链接令牌(规矩写在 `src/daemon/phone-routes.ts` 的注释和 [`reference/internal-api-auth.md`](../reference/internal-api-auth.md))。
+- **把消息送给执行者的路由只给设备**,不给链接令牌(规矩写在 `src/features/phone/phone-routes.ts` 的注释和 [`reference/internal-api-auth.md`](../reference/internal-api-auth.md))。
 - 改了**已有**路由的档位 / 令牌 / link,`scripts/routes-snapshot.guard.test.ts` 会红:是有意的就把快照里那一条一起改,在 PR 里写明。
 
 ## 2. 处理器、请求格式、错误码

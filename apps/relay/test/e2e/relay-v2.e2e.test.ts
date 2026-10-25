@@ -11,9 +11,9 @@ import { fileURLToPath } from 'node:url'
 import { generateKeyPairSync } from 'node:crypto'
 import { unstable_startWorker } from 'wrangler'
 import { makeProtocolClient, type ProtocolSocket } from '@wechat-cc/protocol'
-import { loadOrCreateRelayIdentity } from '../../../../src/daemon/relay-identity'
-import { makeTunnelClient } from '../../../../src/daemon/tunnel-client'
-import { makePhonePush } from '../../../../src/daemon/phone-push'
+import { loadOrCreateRelayIdentity } from '../../../../src/features/phone/relay-identity'
+import { makeTunnelClient } from '../../../../src/features/phone/tunnel-client'
+import { makePhonePush } from '../../../../src/features/phone/phone-push'
 
 const DEVICE_TOKEN = 'd' + 'e'.repeat(47)
 let worker: Awaited<ReturnType<typeof unstable_startWorker>> | undefined

@@ -10,7 +10,7 @@
  * 守的范围(故意收得窄,免得误报):
  *  - 扫三端的界面源码(apps/desktop/src、apps/app/src、apps/mobile/src)和 daemon 一侧的 src/daemon、src/core、
  *    src/cli、src/lib 下的 .js / .ts / .tsx(10-21 扩到 src/:定时那边的 command.ts 手写了一张 EXEC_NAME,
- *    只扫三端时漏了)。名字的唯一出处 src/lib/executor-facts.ts 与 src/domain/provider-display-names.ts 不扫。
+ *    只扫三端时漏了;10-25 加上 src/features:手机搬进 features/phone 时设置页跟着走了,功能目录也得扫)。名字的唯一出处 src/lib/executor-facts.ts 与 src/domain/provider-display-names.ts 不扫。
  *    协议文档与 docs(那里「OpenAI-compatible」是协议名,「Claude Code」是要装的程序名)、index.html 与 CSS
  *    (装机引导里写的是产品 / 程序名,不是执行者显示名)不扫。
  *  - 规则认得出、但确实不是执行者显示名的(终端程序名、解析用的别名、句子),逐条写进 NOT_DISPLAY_NAMES 并说明为什么;
@@ -32,7 +32,7 @@ import { fileURLToPath } from 'node:url'
 import { PROVIDER_IDS } from '../src/lib/provider-ids'
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..')
-const SURFACES = ['apps/desktop/src', 'apps/app/src', 'apps/mobile/src', 'src/daemon', 'src/core', 'src/cli', 'src/lib']
+const SURFACES = ['apps/desktop/src', 'apps/app/src', 'apps/mobile/src', 'src/daemon', 'src/features', 'src/core', 'src/cli', 'src/lib']
 /** 名字的唯一出处,不扫。 */
 const SINGLE_SOURCES = new Set(['src/lib/executor-facts.ts', 'src/domain/provider-display-names.ts'])
 const SKIP_DIR = new Set(['node_modules', 'vendor', 'assets'])
@@ -67,7 +67,7 @@ const NOT_DISPLAY_NAMES: ReadonlyArray<{ file: string; match: string; why: strin
   { file: 'src/daemon/capabilities.ts', match: "'Claude Code'", why: '同上' },
   { file: 'src/core/cli-upgrade/specs.ts', match: "'Claude Code'", why: '要升级的 CLI 程序的名字(CLI_SPECS.label),不是执行者显示名' },
   { file: 'src/core/workbench/task-reference.ts', match: "['claude', '克劳德'", why: '解析主人原话用的别名(PROVIDER_WORDS),不是给人看的名字' },
-  { file: 'src/daemon/settings-panel-html.ts', match: '=== "codex" ? "同 Claude 那格"', why: '一句说明(codex 的模型跟 Claude 那格),不是名字' },
+  { file: 'src/features/phone/settings-panel-html.ts', match: '=== "codex" ? "同 Claude 那格"', why: '一句说明(codex 的模型跟 Claude 那格),不是名字' },
 ]
 
 describe('三端与 daemon 不另存执行者名字表(收敛清单 ⑥)', () => {

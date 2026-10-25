@@ -7,7 +7,7 @@
  *
  * - daemon:`src/daemon/internal-api/route-tiers.ts`(ROUTE_MIN_TIER)、`token-registry.ts`
  *   (operator 的 routeAllow)、`routes-federation.ts` / `selftest.ts`(各自那一条)、
- *   `src/daemon/phone-routes.ts`(PHONE_ROUTES、LINK_*、LAN_ONLY_OPS、PHONE_TOPICS)—— 名字和类型都没变。
+ *   `src/features/phone/phone-routes.ts`(PHONE_ROUTES、LINK_*、LAN_ONLY_OPS、PHONE_TOPICS)—— 名字和类型都没变。
  * - 桌面:`bun run gen:routes` 生成 `apps/desktop/src-tauri/generated/workbench-routes.json`(带 version),
  *   `lib.rs` 用 include_str! 编进去、`apps/desktop/workbench-proxy.ts` import 同一份。生成物进仓库,
  *   `scripts/route-registry.guard.test.ts` 盯着它和这张表一致。
@@ -74,7 +74,7 @@ export interface PanelSurface {
  * 表里标了 `module: X` 的路由:daemon 的路由层按 X 此刻的状态判能不能走(关着 ⇒ module_off、坏了 ⇒ module_degraded、
  * 还没挂上 ⇒ module_starting);处理器由模块 X 自己挂(`internalApi.mount`),不在 internal-api 的总表里。
  */
-export const MODULE_NAMES = ['social', 'calendar', 'reminders', 'letters', 'atelier', 'stickers', 'journal', 'voice', 'terminal', 'memory'] as const
+export const MODULE_NAMES = ['social', 'calendar', 'reminders', 'letters', 'atelier', 'stickers', 'journal', 'voice', 'terminal', 'memory', 'phone'] as const
 export type ModuleName = (typeof MODULE_NAMES)[number]
 
 export interface RouteSpec {
@@ -195,8 +195,8 @@ export const ROUTES: Readonly<Record<RouteKey, RouteSpec>> = {
   'GET /v1/connections': { desktop: { tier: 'admin', tokens: ['operator'], tauri: true, devProxy: true } },
   // 桌面「连接手机」(plan 7a):铸 admin 链接令牌 / 打开远程隧道,只给 operator 凭据。
   // 桌面(原 lib.rs 注释):出码(必要时打开远程隧道)与轮询已配对设备。
-  'POST /v1/phone/link': { desktop: { tier: 'admin', tokens: ['operator'], tauri: true, devProxy: true } },
-  'GET /v1/phone/devices': { desktop: { tier: 'admin', tokens: ['operator'], tauri: true, devProxy: true } },
+  'POST /v1/phone/link': { module: 'phone', desktop: { tier: 'admin', tokens: ['operator'], tauri: true, devProxy: true } },
+  'GET /v1/phone/devices': { module: 'phone', desktop: { tier: 'admin', tokens: ['operator'], tauri: true, devProxy: true } },
   'GET /v1/workbench/models': { desktop: { tier: 'admin', tokens: ['operator'], tauri: true, devProxy: true } },
   'POST /v1/workbench/attachment': { desktop: { tier: 'admin', tokens: ['operator'], tauri: true, devProxy: true } },
   'GET /v1/workbench/attachment': { desktop: { tier: 'admin', tokens: ['operator'], tauri: true, devProxy: true } },
