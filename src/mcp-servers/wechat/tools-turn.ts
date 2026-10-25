@@ -1,7 +1,6 @@
 /**
  * 回复交付(spec docs/superpowers/specs/2026-10-03-reply-delivery-design.md §4.5 / §4.6)的工具面 ——
- * 只注册给 `replyDelivery = daemon` 的 provider(daemon 在这个 MCP 子进程的环境里设
- * `WECHAT_REPLY_DELIVERY=daemon`)。这类 provider **没有** reply / reply_voice / send_file / edit_message /
+ * 每个会话都注册(D3 起只有这一套工具表)。**没有** reply / reply_voice / send_file / edit_message /
  * broadcast / send_sticker 这些「用工具说话」的工具:一轮最后写下的那段话就是回复,daemon 负责送达。
  *
  *   voice(text) / sticker(...) / attach_file(path) —— 本轮回复的附件,**不带 chat_id**(目标永远是本轮的

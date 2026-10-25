@@ -246,6 +246,8 @@ DeliveryPort                      吃 TurnOutcome;旧的 / shadow 交付路删�
 | C1 第 1 步 | 档位 × 工具类别 ⇒ 放 / 问 / 拒,收成一个纯函数 `core/tool-decision.ts`:Claude(permission-relay)、Gemini(原来为躲 import 环逐字抄的一份)、OpenAI 兼容三家共用;逐格对照测试证明每个档位 × 类别 × 能力表设置都没变 |
 | B3 第 1 步 | 照剧本说话的假执行者(Claude SDK / Codex / ACP)搬出 `src/core`,进 `src/test-support/executors/`;depcheck:生产代码不许 import test-support;core-no-node 基线少一行 |
 | D1 + D2 | 协调器拆进 `src/core/coordinator/`(`conversation-coordinator.ts` 只转出):`planTurn` 一轮读一次 access、过一次守护,纯函数 `admit()` 定档位 / 被拒 / 参与者 / 回落,产出 `TurnPlan`;`TurnRunner` 管会话锁、超时、进度、取消登记、TurnRecord,solo / /both / /chat 一拍都用它。`resolveTier` / `providerDenialFor` 只在 `admit()` 里调,而且在锁里、开跑那一刻(排队之前的计划只用来选排队方式,评审抓到的越权已修)。D3(删 legacy / shadow 交付)未做 |
+| D1 + D2 | 协调器拆进 `src/core/coordinator/`(`conversation-coordinator.ts` 只转出):`planTurn` 一轮读一次 access、过一次守护,纯函数 `admit()` 定档位 / 被拒 / 参与者 / 回落,产出 `TurnPlan`;`TurnRunner` 管会话锁、超时、进度、取消登记、TurnRecord,solo / /both / /chat 一拍都用它。`resolveTier` / `providerDenialFor` 只在 `admit()` 里调,而且在锁里、开跑那一刻(排队之前的计划只用来选排队方式,评审抓到的越权已修) |
+| D3 | 交付只剩一条路:删 legacy / shadow 两档、`replyDeliveryFor` / `setReplyDeliveryOverrides`、agent-config `reply_delivery`(旧盘上写着照样开机、被忽略)、`WECHAT_REPLY_DELIVERY` 与 wechat MCP 的 reply 族工具注册、FALLBACK 连击、shadow 旁听、prompt 的「用 reply 说话」版、reply-once 实验代码(数据留着);`replyDelivery` 端口在协调器 / 推送里改成必填。`/v1/wechat/*` 路由留着(附件经它们真发,`reply` 等几条现在没有调用方,另做) |
 
 ## 修订记录
 

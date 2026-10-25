@@ -6,7 +6,6 @@ import { removeTempDir } from '../../lib/test-temp'
 import { setPluginEnabled } from '../plugins/registry'
 import { resolveBundledPluginsDir, writePluginsSourcePointer } from '../plugins/paths'
 import { wirePlugins } from './wire-plugins'
-import { setReplyDeliveryOverrides } from '../../core/capability-matrix'
 
 const ctx = () => ({ stateDir: mkdtempSync(join(tmpdir(), 'wp-')), log: () => {} })
 
@@ -115,19 +114,15 @@ describe('wirePlugins — 内置插件来源与「丢了要出声」(2026-09-30 
   })
 })
 
-describe('wirePlugins × 回复交付回滚开关(agent-config reply_delivery)', () => {
-  afterEach(() => setReplyDeliveryOverrides(undefined))
+describe('wirePlugins × 退休的 agent-config reply_delivery(D3)', () => {
   const api = { internalApi: { baseUrl: 'http://127.0.0.1:0', tokenFilePath: join(tmpdir(), 'tok') } }
 
-  it('agent-config 写 openai=daemon ⇒ openai 的 wechat spec 带 WECHAT_REPLY_DELIVERY=daemon(工具表按开关定)', () => {
+  // 回滚开关删了:旧盘上还写着它的 agent-config 照常开机,工具表只有一套(不带 WECHAT_REPLY_DELIVERY,也不退回 reply 工具)。
+  it('旧盘上写着 reply_delivery(legacy / shadow / daemon)⇒ 照常组装,开关被忽略', () => {
     const c = ctx()
-    writeFileSync(join(c.stateDir, 'agent-config.json'), JSON.stringify({ reply_delivery: { openai: 'daemon' } }))
-    expect(wirePlugins(api, c).wechatStdioForOpenai?.env?.WECHAT_REPLY_DELIVERY).toBe('daemon')
-  })
-
-  it('agent-config 写 openai=legacy ⇒ 不带(退回 reply 工具)', () => {
-    const c = ctx()
-    writeFileSync(join(c.stateDir, 'agent-config.json'), JSON.stringify({ reply_delivery: { openai: 'legacy' } }))
-    expect(wirePlugins(api, c).wechatStdioForOpenai?.env?.WECHAT_REPLY_DELIVERY).toBeUndefined()
+    writeFileSync(join(c.stateDir, 'agent-config.json'), JSON.stringify({ reply_delivery: { openai: 'legacy', claude: 'shadow', agy: 'daemon' } }))
+    const s = wirePlugins(api, c)
+    expect(s.wechatStdioForOpenai).not.toBeNull()
+    for (const spec of [s.wechatStdioForOpenai, s.wechatStdioForClaude, s.wechatStdioForAgy]) expect(spec?.env?.WECHAT_REPLY_DELIVERY).toBeUndefined()
   })
 })

@@ -5,13 +5,9 @@
  * 从事件流里取出「最后的话」与旁白、处理 NO_REPLY 令牌、按场合判定静默算不算数;怎么分条、
  * 什么节奏、送到哪里由 daemon 的 reply-delivery.ts 管(core 不依赖 daemon,只声明端口)。
  *
- * 迁移期一家一家来(§5):每家 provider 的 `ProviderCapabilities.replyDelivery` 决定它走哪条路 ——
- *   legacy  今天的样子:reply 工具说话,FALLBACK_REPLY 兜底;
- *   shadow  照旧走 legacy,但每轮额外算一次「如果按新路会发什么」,只记 [REPLY_SHADOW] 日志,不发;
- *   daemon  新路:最后的话 → deliverTurnReply。
+ * 迁移期(§5)一家一家从「reply 工具说话」翻到这条路;2026-10 五家都翻完、观察期过了,旧路(legacy)与影子记账
+ * (shadow)连同回滚开关一起删掉(架构终态 D3):交付只剩这一条路。
  */
-
-export type ReplyDeliveryMode = 'legacy' | 'shadow' | 'daemon'
 
 /**
  * 一轮的哪些文字算回复(2026-10-03 修订,见 spec 修订记录):
@@ -75,13 +71,10 @@ export interface DeliveryReport {
   msgIds: string[]
   /** 本轮 `message` 工具已经把同样的话发给主人了,最后的话不再重复交付(§4.6)。 */
   deduped?: boolean
-  /** shadow 模式:只是算出来的,什么都没发。 */
-  shadow?: boolean
 }
 
 /** 一轮的交付句柄:daemon 实现(reply-delivery.ts),coordinator / 伙伴推送使用。 */
 export interface TurnDeliveryHandle {
-  readonly mode: 'daemon' | 'shadow'
   /** 长任务进度(已定 ①,一轮最多一次,由调用方保证)。app 这一轮 ⇒ 不进微信。 */
   progress(text: string): Promise<void>
   /** 只有 outcome === 'completed' 的轮才调这个(§4.2 末段)。 */
@@ -92,7 +85,6 @@ export interface TurnDeliveryHandle {
 
 export interface ReplyDeliveryPort {
   begin(chatId: string, opts: {
-    mode: 'daemon' | 'shadow'
     context: ReplyContext
     providerId: string
     /** /chat、/both 的发言人显示名 —— 前缀 `[名字]` 由 daemon 加(§4.3 第 4 步)。 */

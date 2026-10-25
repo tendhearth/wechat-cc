@@ -52,8 +52,8 @@ function asksNote(a: BriefAsks): string {
   return `另外,今天有 ${a.count} 条是 CC 自己找到、要主人拍板的事(编号 ${a.base + 1} 起),CC 会接在 ${ASK_PLACEHOLDER} 那一行。${before}。这几条你不用写、不要改编号;今天有它们,所以别 NO_REPLY。`
 }
 
-export function buildBriefText(o: { jobId: string; nowIso: string; material: string; asks?: BriefAsks }, style: TickTextStyle = {}): string {
-  const finalText = style.replyDelivery === 'final_text'
+// style 留着:和别的定时信封同一个签名(runJobTurn 的 buildText(style)),早报这一份暂时不分执行者类型。
+export function buildBriefText(o: { jobId: string; nowIso: string; material: string; asks?: BriefAsks }, _style: TickTextStyle = {}): string {
   return [
     `<scheduled_job id="${o.jobId}" kind="brief" ts="${o.nowIso}" />`,
     '这是主人定的每天一次的早报。',
@@ -62,7 +62,7 @@ export function buildBriefText(o: { jobId: string; nowIso: string; material: str
       : '今天没有素材(没有到期的提醒、待办,电脑上也没有新动静)。',
     '可以用 memory_read 看看主人的近况再决定。写法:3–5 条,每条一句,先说要他拍板 / 今天到期的,再说做完了的;不要编素材里没有的事;按主人的口味取舍;最后一行写「就这些。」。',
     ...(o.asks && o.asks.count > 0 ? [asksNote(o.asks)] : []),
-    `这一轮只读:能看能查,不改任何东西、不给别人发消息。实在没有值得说的,${finalText ? '只写 NO_REPLY(这个词不会发出去)' : '直接结束这一轮,不调用 reply(NO_REPLY)'}。`,
+    `这一轮只读:能看能查,不改任何东西、不给别人发消息。实在没有值得说的,只写 NO_REPLY(这个词不会发出去)。`,
   ].join('\n')
 }
 

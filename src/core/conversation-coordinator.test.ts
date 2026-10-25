@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from 'vitest'
-import { createConversationCoordinator, authFailNotice, turnPolicy, turnErrorNotice } from './conversation-coordinator'
+import { createConversationCoordinator as createCoordinatorRaw, authFailNotice, turnPolicy, turnErrorNotice, type ConversationCoordinatorDeps } from './conversation-coordinator'
+import { makeReplyDeliveryRuntime } from '../daemon/reply-delivery'
 import { errorWithProviderCode } from '../lib/provider-error-code'
 import { createProviderRegistry } from './provider-registry'
 import { makeFakeSession } from './test-helpers'
@@ -29,6 +30,20 @@ describe('authFailNotice', () => {
     expect(authFailNotice('claude', 'auth_failed')).toBe(authFailNotice('claude'))
   })
 })
+
+/**
+ * 交付端口(D3 起必填,只有这一条路)。这个文件里的用例大多只给了 sendAssistantText:没指定端口时接一个真的
+ * daemon 交付运行时,出口就是那个 sendAssistantText(不节奏、不接 app 接收器)—— 「主人收到了什么」照旧从
+ * sendAssistantText 看。以前没有端口就走旧路(reply 工具 + FALLBACK_REPLY),那些只钉旧路的用例随 D3 删了。
+ */
+function createConversationCoordinator(deps: Omit<ConversationCoordinatorDeps, 'replyDelivery'> & { replyDelivery?: ConversationCoordinatorDeps['replyDelivery'] }) {
+  const replyDelivery = deps.replyDelivery ?? makeReplyDeliveryRuntime({
+    sendText: async (chatId, text) => { await deps.sendAssistantText?.(chatId, text); return { msgId: 'm' } },
+    sleep: async () => {},
+    log: () => {},
+  })
+  return createCoordinatorRaw({ ...deps, replyDelivery })
+}
 
 /**
  * Default access fixture used by most coordinator tests: every chatId
@@ -349,67 +364,6 @@ describe('ConversationCoordinator', () => {
       permissionMode: 'strict',
     })
     expect(log).toHaveBeenCalledWith('COORDINATOR', expect.stringContaining("provider 'gemini' not registered"))
-  })
-
-  it('skips fallback sendAssistantText when reply tool was called', async () => {
-    const session = makeFakeSession({
-      events: [
-        { kind: 'tool_call', server: 'wechat', tool: 'reply' },
-        { kind: 'result', sessionId: '_', numTurns: 1, durationMs: 0 },
-      ],
-    })
-    const acquire = vi.fn(async (_req: AcquireRequest) =>
-      makeHandle('claude', session)
-    )
-    const sendAssistantText = vi.fn(async (_chatId: string, _text: string) => {})
-    const registry = createProviderRegistry()
-    registry.register('claude', dummyProvider, { displayName: 'Claude', canResume: () => true })
-    const c = createConversationCoordinator({
-      resolveProject: () => ({ alias: 'a', path: '/p' }),
-      manager: { acquire },
-      conversationStore: makeMockStore(),
-      registry,
-      defaultProviderId: 'claude',
-      format: () => 'x',
-      sendAssistantText,
-      permissionMode: 'strict',
-      loadAccess: adminAccess,
-      log: () => {},
-    })
-    await c.dispatch(inbound('chat-1', 'hi'))
-    expect(sendAssistantText).not.toHaveBeenCalled()
-  })
-
-  it('forwards assistantText via fallback when reply tool was NOT called', async () => {
-    const session = makeFakeSession({
-      events: [
-        { kind: 'text', text: 'raw text 1' },
-        { kind: 'text', text: 'raw text 2' },
-        { kind: 'result', sessionId: '_', numTurns: 1, durationMs: 0 },
-      ],
-    })
-    const acquire = vi.fn(async (_req: AcquireRequest) =>
-      makeHandle('claude', session)
-    )
-    const sendAssistantText = vi.fn(async (_chatId: string, _text: string) => {})
-    const registry = createProviderRegistry()
-    registry.register('claude', dummyProvider, { displayName: 'Claude', canResume: () => true })
-    const c = createConversationCoordinator({
-      resolveProject: () => ({ alias: 'a', path: '/p' }),
-      manager: { acquire },
-      conversationStore: makeMockStore(),
-      registry,
-      defaultProviderId: 'claude',
-      format: () => 'x',
-      sendAssistantText,
-      permissionMode: 'strict',
-      loadAccess: adminAccess,
-      log: () => {},
-    })
-    await c.dispatch(inbound('chat-1', 'hi'))
-    expect(sendAssistantText).toHaveBeenCalledTimes(2)
-    expect(sendAssistantText).toHaveBeenCalledWith('chat-1', 'raw text 1')
-    expect(sendAssistantText).toHaveBeenCalledWith('chat-1', 'raw text 2')
   })
 
   it('on auth_failed: suppresses raw assistant text AND sends a single neutral notice', async () => {
@@ -1244,24 +1198,7 @@ describe('ConversationCoordinator', () => {
       expect(byProvider['codex']).toMatchObject({ mode: 'parallel', outcome: 'completed' })
     }, 3000)
 
-    it('skips fallback sendAssistantText when both providers called reply tool', async () => {
-      const { c, sendAssistantText } = setupParallel({
-        claudeEvents: [
-          { kind: 'text', text: 'hi' },
-          { kind: 'tool_call', server: 'wechat', tool: 'reply' },
-          { kind: 'result', sessionId: '_', numTurns: 1, durationMs: 0 },
-        ],
-        codexEvents: [
-          { kind: 'text', text: 'hi' },
-          { kind: 'tool_call', server: 'wechat', tool: 'reply' },
-          { kind: 'result', sessionId: '_', numTurns: 1, durationMs: 0 },
-        ],
-      })
-      await c.dispatch(inbound('chat-1', 'hi'))
-      expect(sendAssistantText).not.toHaveBeenCalled()
-    })
-
-    it('forwards prefixed assistant text via fallback per-provider when reply tool NOT called', async () => {
+    it("delivers each provider's final text, prefixed per-provider", async () => {
       const { c, sendAssistantText } = setupParallel({
         claudeEvents: [
           { kind: 'text', text: 'claude raw 1' },
@@ -1502,25 +1439,6 @@ describe('ConversationCoordinator', () => {
       expect(sent.some(s => s === '🎯 verdict')).toBe(false)
       // haikuEval may still run for convergence, but never for the verdict.
       void haikuEval
-    })
-
-    it('/chat drops a beat turn that used the reply tool — no meta-leak, not in transcript', async () => {
-      // claude calls the reply tool every beat (content escapes via the tool);
-      // its only assistantText is meta "（本轮结束）". runBeat must drop it:
-      // no "[Claude] …" message, and the verdict transcript must not contain it.
-      let verdictPrompt = ''
-      const verdictEval = vi.fn(async (p: string) => { verdictPrompt = p; return '🎯 verdict' })
-      const { c, sent } = setupChatroom({ claudeRepliesViaTool: true, verdictEval })
-      await c.dispatch(inbound('chat-1', '选 A 还是 B?'))
-      // No claude-prefixed message leaked (it would carry the meta text).
-      expect(sent.some(s => s.startsWith('[Claude]'))).toBe(false)
-      expect(sent.some(s => s.includes('本轮结束'))).toBe(false)
-      // codex still participates normally.
-      expect(sent.some(s => s.startsWith('[Codex]'))).toBe(true)
-      // The verdict transcript must not include claude's dropped meta text.
-      expect(verdictPrompt).not.toContain('本轮结束')
-      // Verdict still emitted.
-      expect(sent.some(s => s.startsWith('🎯'))).toBe(true)
     })
 
     it('/chat verdict is still produced when one agent fails every beat (graceful degrade)', async () => {
@@ -2940,43 +2858,6 @@ describe('turnErrorNotice / providerFailureReason — 按码说原因', () => {
     expect(turnErrorNotice('agy', 'x', 'region_unavailable')).toMatch(/出口所在地区用不了.*重发也没用/)
     expect(turnErrorNotice('codex', 'boom', undefined)).toContain('脑子卡了一下')
     expect(turnErrorNotice('codex', 'boom', 'provider_error')).toContain('脑子卡了一下')
-  })
-})
-
-describe('fallback streak detector (onFallbackStreak)', () => {
-  function setupStreak() {
-    const registry = createProviderRegistry()
-    registry.register('agy', dummyProvider, { displayName: 'Agy', canResume: () => true })
-    registry.register('claude', dummyProvider, { displayName: 'Claude', canResume: () => true })
-    const store = makeMockStore(); store.set('chat-1', { kind: 'solo', provider: 'agy' })
-    let next: 'fallback' | 'reply' = 'fallback'
-    const acquire = vi.fn(async (req: AcquireRequest) => makeHandle(req.providerId, makeFakeSession({
-      events: next === 'fallback'
-        ? [{ kind: 'text', text: '已回复用户的问候。' }, { kind: 'result', sessionId: '_', numTurns: 1, durationMs: 0 }]
-        : [{ kind: 'tool_call', server: 'wechat', tool: 'reply' }, { kind: 'result', sessionId: '_', numTurns: 1, durationMs: 0 }],
-    })))
-    const streaks: Array<[string, number]> = []
-    const c = createConversationCoordinator({
-      resolveProject: () => ({ alias: 'a', path: '/p' }),
-      manager: { acquire, release: async () => {} },
-      conversationStore: store, registry, defaultProviderId: 'claude', format: m => m.text,
-      sendAssistantText: async () => {}, permissionMode: 'strict', loadAccess: adminAccess, log: () => {},
-      onFallbackStreak: (p, n) => streaks.push([p, n]),
-    })
-    return { c, streaks, setNext: (v: typeof next) => { next = v } }
-  }
-  it('counts consecutive fallback turns per provider and resets to 0 on the next reply-tool turn', async () => {
-    const { c, streaks, setNext } = setupStreak()
-    await c.dispatch(inbound('chat-1', 'a'))
-    await c.dispatch(inbound('chat-1', 'b'))
-    await c.dispatch(inbound('chat-1', 'c'))
-    expect(streaks).toEqual([['agy', 1], ['agy', 2], ['agy', 3]])
-    setNext('reply')
-    await c.dispatch(inbound('chat-1', 'd'))   // this turn calls reply → streak cleared, reported as 0
-    expect(streaks.at(-1)).toEqual(['agy', 0])
-    setNext('fallback')
-    await c.dispatch(inbound('chat-1', 'e'))   // starts a new streak from 1
-    expect(streaks.at(-1)).toEqual(['agy', 1])
   })
 })
 

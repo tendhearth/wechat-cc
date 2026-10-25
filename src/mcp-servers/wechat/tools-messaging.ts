@@ -1,11 +1,11 @@
 /**
- * wechat-mcp ilink-bound message family (RFC 03 P1.B B1) — reply / reply_voice
- * / send_file / edit_message / broadcast. The "reply-tool family" detected by
- * both providers' replyToolCalled flag. Split out of main.ts; behavior verbatim.
+ * wechat-mcp 里两件不说话的表情工具:search_online_sticker_candidates(搜候选、看图,不发)与 sticker_feedback
+ * (记主人对表情的反馈)。从 main.ts 拆出来的;行为照旧。
  *
- * RFC 03 P3: the daemon sets WECHAT_PARTICIPANT_TAG to the providerId on this
- * MCP child; `reply` forwards it so internal-api can prefix `[Claude]`/`[Codex]`
- * in parallel + chatroom modes (ignored in solo).
+ * 以前这里还有一整族「用工具说话」的工具(reply / reply_voice / send_file / edit_message / broadcast /
+ * send_sticker / search_online_sticker / send_online_sticker_candidate)。回复交付(spec 2026-10-03)之后一轮最后
+ * 写下的那段话就是回复、由 daemon 送达,daemon 起的每个 MCP 子进程都不再注册它们(当年按 WECHAT_REPLY_DELIVERY
+ * 切);D3 把旧路连同开关一起删了。附件与 admin 的 message 在 tools-turn.ts。
  */
 // 默认导入:zod v4 的具名 { z } 在 vitest 进程内加载时会解析成 undefined(见 tools-federated.ts)
 import z from 'zod'
@@ -13,126 +13,12 @@ import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js'
 import type { InternalApiClient } from './client'
 import { passthroughErrorResult } from './tool-helpers'
 
-const PARTICIPANT_TAG = process.env.WECHAT_PARTICIPANT_TAG
-
-/**
- * `replyDelivery: 'daemon'`(回复交付 spec 2026-10-03):这个 provider 的回复就是它最后写下的文字,daemon 送达 ——
- * 「用工具说话」的那些(reply / reply_voice / send_file / edit_message / send_sticker / search_online_sticker /
- * send_online_sticker_candidate / broadcast)一个都不注册,只留下不说话的 search_online_sticker_candidates 与
- * sticker_feedback;附件与 message 由 tools-turn.ts 注册。缺省 'tool' = 今天的工具表。
- */
-export function registerMessagingTools(server: McpServer, client: InternalApiClient, opts: { replyDelivery?: 'tool' | 'daemon' } = {}): void {
-  const speaking = opts.replyDelivery !== 'daemon'
-  if (speaking) server.registerTool(
-    'reply',
-    {
-      title: 'Reply text to a wechat user',
-      description: '给当前微信用户回复文本。chat_id=当前对话的 chat_id(服务端校验,只能发给本聊天,别的 chat 会被 403 chat_scope)。长文本会自动分段。',
-      inputSchema: { chat_id: z.string(), text: z.string() },
-    },
-    async ({ chat_id, text }) => {
-      try {
-        const r = await client.request<unknown>('POST', '/v1/wechat/reply', {
-          chat_id, text,
-          ...(PARTICIPANT_TAG ? { participant_tag: PARTICIPANT_TAG } : {}),
-        })
-        return { content: [{ type: 'text', text: JSON.stringify(r) }] }
-      } catch (err) {
-        return passthroughErrorResult(err, 'reply')
-      }
-    },
-  )
-
-  if (speaking) server.registerTool(
-    'reply_voice',
-    {
-      title: 'Reply via voice message',
-      description: '用语音回复用户。仅在用户明确要求语音回复时使用（"念一下"/"语音回复"/"speak it" 等）。文本 ≤ 500 字；不适合代码块、长 URL、结构化列表。',
-      inputSchema: { chat_id: z.string(), text: z.string() },
-    },
-    async ({ chat_id, text }) => {
-      try {
-        const r = await client.request<unknown>('POST', '/v1/wechat/reply_voice', { chat_id, text })
-        return { content: [{ type: 'text', text: JSON.stringify(r) }] }
-      } catch (err) {
-        return passthroughErrorResult(err, 'reply_voice')
-      }
-    },
-  )
-
-  if (speaking) server.registerTool(
-    'send_file',
-    {
-      title: 'Send a local file to a wechat user',
-      description: '给当前用户发送文件（本地绝对路径）。chat_id=当前对话的 chat_id(只能发给本聊天)。',
-      inputSchema: { chat_id: z.string(), path: z.string() },
-    },
-    async ({ chat_id, path }) => {
-      try {
-        const r = await client.request<unknown>('POST', '/v1/wechat/send_file', { chat_id, path })
-        return { content: [{ type: 'text', text: JSON.stringify(r) }] }
-      } catch (err) {
-        return passthroughErrorResult(err, 'send_file')
-      }
-    },
-  )
-
-  if (speaking) server.registerTool(
-    'edit_message',
-    {
-      title: 'Edit a previously-sent message',
-      description: '编辑已发送的消息（需要 msg_id）。',
-      inputSchema: { chat_id: z.string(), msg_id: z.string(), text: z.string() },
-    },
-    async ({ chat_id, msg_id, text }) => {
-      try {
-        const r = await client.request<unknown>('POST', '/v1/wechat/edit_message', { chat_id, msg_id, text })
-        return { content: [{ type: 'text', text: JSON.stringify(r) }] }
-      } catch (err) {
-        return passthroughErrorResult(err, 'edit_message')
-      }
-    },
-  )
-
-  if (speaking) server.registerTool(
-    'send_sticker',
-    {
-      title: 'Send a sticker from the local library',
-      description: '按 tag 从本地表情库随机选一张表情包图片发到对话(内联图片)。情绪强/庆祝/安慰的时刻用,一次最多一张;若 tag 无匹配会返回可用 tags,换个 tag 或改用文字。',
-      inputSchema: { chat_id: z.string(), tag: z.string() },
-    },
-    async ({ chat_id, tag }) => {
-      try {
-        const r = await client.request<unknown>('POST', '/v1/wechat/send_sticker', { chat_id, tag })
-        return { content: [{ type: 'text', text: JSON.stringify(r) }] }
-      } catch (err) {
-        return passthroughErrorResult(err, 'send_sticker')
-      }
-    },
-  )
-
-  if (speaking) server.registerTool(
-    'search_online_sticker',
-    {
-      title: 'Search the internet for a sticker and send it',
-      description: '按情绪联网找一张表情包发到对话并自动收进本地库。mood 用中文情绪词，query 用英文关键词效果最好；本地同类已攒够时会直接发本地表情。',
-      inputSchema: { chat_id: z.string(), mood: z.string(), query: z.string() },
-    },
-    async ({ chat_id, mood, query }) => {
-      try {
-        const r = await client.request<unknown>('POST', '/v1/wechat/search_online_sticker', { chat_id, mood, query })
-        return { content: [{ type: 'text', text: JSON.stringify(r) }] }
-      } catch (err) {
-        return passthroughErrorResult(err, 'search_online_sticker')
-      }
-    },
-  )
-
+export function registerMessagingTools(server: McpServer, client: InternalApiClient): void {
   server.registerTool(
     'search_online_sticker_candidates',
     {
       title: 'Search sticker candidates for visual selection',
-      description: '联网搜索多张候选表情并返回预览，不发送。先根据语境看图选择最匹配的一张，再调用 send_online_sticker_candidate。',
+      description: '联网搜索多张候选表情并返回预览，不发送。先根据语境看图选择最匹配的一张，再调用 sticker（mood + 那一张的 id + url）附到这一轮回复里。',
       inputSchema: { query: z.string() },
     },
     async ({ query }) => {
@@ -154,21 +40,6 @@ export function registerMessagingTools(server: McpServer, client: InternalApiCli
     },
   )
 
-  if (speaking) server.registerTool(
-    'send_online_sticker_candidate',
-    {
-      title: 'Send a selected online sticker candidate',
-      description: '发送已视觉确认的联网表情，并在发送成功后收进本地库。仅在比较候选图片后调用。',
-      inputSchema: { chat_id: z.string(), mood: z.string(), id: z.string(), url: z.string() },
-    },
-    async ({ chat_id, mood, id, url }) => {
-      try {
-        const r = await client.request<unknown>('POST', '/v1/wechat/send_online_sticker_candidate', { chat_id, mood, id, url })
-        return { content: [{ type: 'text', text: JSON.stringify(r) }] }
-      } catch (err) { return passthroughErrorResult(err, 'send_online_sticker_candidate') }
-    },
-  )
-
   server.registerTool(
     'sticker_feedback',
     {
@@ -181,23 +52,6 @@ export function registerMessagingTools(server: McpServer, client: InternalApiCli
         const r = await client.request<unknown>('POST', '/v1/wechat/sticker_feedback', { chat_id, signal, ...(file ? { file } : {}) })
         return { content: [{ type: 'text', text: JSON.stringify(r) }] }
       } catch (err) { return passthroughErrorResult(err, 'sticker_feedback') }
-    },
-  )
-
-  if (speaking) server.registerTool(
-    'broadcast',
-    {
-      title: 'Broadcast text to all online users',
-      description: '向所有在线用户群发文本。仅主人(admin)会话可用。account_id 可选（不填则默认主账号）。',
-      inputSchema: { text: z.string(), account_id: z.string().optional() },
-    },
-    async (args) => {
-      try {
-        const r = await client.request<unknown>('POST', '/v1/wechat/broadcast', args)
-        return { content: [{ type: 'text', text: JSON.stringify(r) }] }
-      } catch (err) {
-        return passthroughErrorResult(err, 'broadcast')
-      }
     },
   )
 }

@@ -5,8 +5,8 @@ import type { Db } from '../../lib/db'
 import type { IlinkAdapter } from '../ilink-glue'
 import type { Bootstrap } from '../bootstrap'
 import type { Access } from '../../lib/access'
-import { replyDeliveryFor, type PermissionMode } from '../../core/capability-matrix'
-import type { ReplyDeliveryMode, ReplyDeliveryPort } from '../../core/turn-reply'
+import type { PermissionMode } from '../../core/capability-matrix'
+import type { ReplyDeliveryPort } from '../../core/turn-reply'
 import { shouldSpeak } from '../companion/calibration'
 import type { CareLedger } from '../companion/care-ledger'
 import { connectHearth } from '../companion/hearth-client'
@@ -105,10 +105,8 @@ export interface TickDeps {
    */
   runAtelierTick?: (opts?: { nowIso?: string }) => Promise<void>
   /**
-   * 回复交付(spec 2026-10-03 §4.10「伙伴主动推送」):当轮 provider 走 daemon 交付时,推送也是一轮 ——
-   * 最后的话就是推送,不想发写 `NO_REPLY`(静默 ⇒ 撤回登记)。缺省 ⇒ 一律 legacy(只认 reply 工具)。
+   * 回复交付(spec 2026-10-03 §4.10「伙伴主动推送」):推送也是一轮 —— 最后的话就是推送,不想发写
+   * `NO_REPLY`(静默 ⇒ 撤回登记)。只有这一条路(D3),所以必填。
    */
-  replyDelivery?: ReplyDeliveryPort
-  /** 每家 provider 的交付模式;缺省读能力表(`replyDeliveryFor`)。测试注入。 */
-  replyDeliveryModeFor?: (providerId: string) => ReplyDeliveryMode
+  replyDelivery: ReplyDeliveryPort
 }

@@ -269,16 +269,15 @@ export interface BuildSystemPromptArgs {
    */
   personAvailable?: boolean
   /**
-   * 回复交付(spec 2026-10-03-reply-delivery §4.11):这家 provider 怎么说话。'tool'(缺省)= 今天的样子,用
-   * reply 工具;'final_text' = 一轮最后写下的那段话就是回复,daemon 负责送达 —— 不教 reply 族工具,改教附件
-   * 工具与(admin)`message`;NO_REPLY 只在伙伴推送那段里教。随最后一家迁完删掉 'tool' 分支。
-   * 由 provider 的 `replyDelivery` 开关推出(daemon ⇒ final_text)。缺省 ⇒ 输出与之前逐字相同。
+   * 这个会话有没有 admin 的 `message` 工具(trusted / guest 不注册)。
+   *
+   * 回复交付(spec 2026-10-03-reply-delivery §4.11):一轮最后写下的那段话就是回复,daemon 负责送达 —— 提示词
+   * 不教 reply 族工具,教附件工具与(admin)`message`;NO_REPLY 只在伙伴推送那段里教。以前还有一版「用 reply
+   * 工具说话」的提示词(`replyDelivery: 'tool'`),随旧路在 D3 删掉。
    */
-  replyDelivery?: 'tool' | 'final_text'
-  /** final_text 时:这个会话有没有 admin 的 `message` 工具(trusted / guest 不注册)。 */
   messageToolAvailable?: boolean
   /**
-   * final_text 时哪些文字算回复(2026-10-03 修订):'last_segment'(缺省,编码型执行者)只有最后一段发出去;
+   * 哪些文字算回复(2026-10-03 修订):'last_segment'(缺省,编码型执行者)只有最后一段发出去;
    * 'all_segments'(聊天型模型)本轮写下的文字按顺序都发出去。提示词必须和交付一致,否则模型以为
    * 「中间的话不发」,会把要说的话写成过程独白。
    */
@@ -328,20 +327,19 @@ export function buildSystemPrompt(args: BuildSystemPromptArgs): string {
   const stickerSectionRendered = args.stickerTags == null
     ? ''
     : args.stickerTags.length > 0
-      ? stickerSection(args.stickerTags, args.replyDelivery === 'final_text')
-      : stickerEmptyLibrarySection(args.replyDelivery === 'final_text')
+      ? stickerSection(args.stickerTags)
+      : stickerEmptyLibrarySection()
 
-  const finalText = args.replyDelivery === 'final_text'
   const sections: string[] = [
-    baseChannelSection(providerId, model, finalText, args.replyText === 'all_segments'),
+    baseChannelSection(providerId, model, args.replyText === 'all_segments'),
     args.persona && args.persona.trim().length > 0 ? personaSection(args.persona) : '',
     args.ownerMemory && args.ownerMemory.trim().length > 0 ? ownerMemorySection(args.ownerMemory) : '',
     args.curatedMemory && args.curatedMemory.trim().length > 0
       ? curatedMemorySection(args.curatedMemory, args.todayDraft)
       : args.coreMemory && args.coreMemory.trim().length > 0 ? coreMemorySection(args.coreMemory) : '',
     args.knowledgeMemory && args.knowledgeMemory.trim().length > 0 ? knowledgeMemorySection(args.knowledgeMemory) : '',
-    toolsSection(finalText, args.messageToolAvailable === true, args.replyText === 'all_segments'),
-    args.bubbleReplies === true ? bubbleRepliesSection(finalText) : '',
+    toolsSection(args.messageToolAvailable === true, args.replyText === 'all_segments'),
+    args.bubbleReplies === true ? bubbleRepliesSection() : '',
     delegateAvailable ? delegateSection(peerProviderId) : '',
     a2aSection(),
     args.daemonOpsAvailable ? daemonSelfHealSection() : '',
@@ -356,8 +354,8 @@ export function buildSystemPrompt(args: BuildSystemPromptArgs): string {
     stickerSectionRendered,
     memorySection(),
     hasKnownKnowledge ? knowledgeOrchestrationSection(args.knowledgePlugins ?? [], { knowledgeSearchAvailable, graphAvailable, factsAvailable, personAvailable }) : '',
-    multiModeAwarenessSection(finalText),
-    companionEnabled ? companionSection(finalText) : '',
+    multiModeAwarenessSection(),
+    companionEnabled ? companionSection() : '',
   ].filter(s => s.length > 0)
 
   return sections.join('\n\n')
@@ -365,7 +363,7 @@ export function buildSystemPrompt(args: BuildSystemPromptArgs): string {
 
 // ─── sections ──────────────────────────────────────────────────────────
 
-function baseChannelSection(providerId: ProviderId, model?: string, finalText = false, allSegments = false): string {
+function baseChannelSection(providerId: ProviderId, model?: string, allSegments = false): string {
   const modelTag = model !== undefined ? `当前模型 ${model}` : '当前模型:provider 默认,未单独固定'
   return `你是 ${providerId}(${modelTag})。你在 wechat-cc 的消息通道里接收来自作者个人微信的消息。基础规则：
 - 用户问你是谁 / 哪个模型 / 用的谁家 → 按上面这行**如实回答**(provider + 模型 id),不要凭感觉猜自己的版本。
@@ -375,11 +373,9 @@ function baseChannelSection(providerId: ProviderId, model?: string, finalText = 
 - 用户引用/回复某条历史消息时，被引用内容会以 \`<quote type="text|image|voice|file|...">被引用的原文</quote>\` 出现在该条消息体的开头。把它当作用户这次发言的上下文来理解。
 - 管理员询问“我和某人的聊天记录 / 最后一条 / 最近聊了什么”等微信原始聊天内容时，**默认先调用 wxvault**（先定位会话，再读消息）；长期记忆只用于辅助理解，不能代替原始聊天记录。wxvault 查询前会自动增量刷新，返回里的 \`up_to_date\` 表示快照是否已含本机 Mac 微信写入的全部内容、\`snapshot_at\` 是快照对应的微信写入时刻。不要把记忆或本地文件搜索结果冒充为微信原始记录；不要凭空归因成「手机端没同步」—— 只有 \`up_to_date\` 为 true 而消息仍缺时，才提手机端未同步到 Mac 的可能；为 false 或 null 时如实报 \`snapshot_at\` 和该会话最新一条的时间，必要时调 \`sync_wechat_data\` 兜底刷新。
 - 用户是个人开发者，偏好简短直接的中文回复。
-${finalText && allSegments
+${allSegments
   ? '- **你这一轮写下的文字会按顺序发给对方**(调工具之前、之后说的都算),daemon 负责分条和送达;说完就结束这一轮,不需要调任何工具来「发送」。所以只写要对对方说的话,不写只给自己看的过程独白。\n- **一轮只在最后说话**:工具调用前不要先说一句(「我查一下」),除非这次调用明显很慢、需要先告诉对方;查完、做完再一次说清楚。'
-  : finalText
-  ? '- **你这一轮最后写下的那段话就是发给对方的回复**,daemon 负责分条和送达;说完就结束这一轮,不需要调任何工具来「发送」。中间过程里写的话(比如「我查一下」)不会发给对方,所以结论要写在最后那段里、写全。'
-  : '- 回复时**用 \`reply\` 工具**而非直接生成 plain text。如果你不调 reply 而只输出 assistant text，daemon 的 fallback 路径会把文本发出去（channel.log 记 [FALLBACK_REPLY]），用户能收到但 daemon 视为 anomaly — 不要依赖。'}`
+  : '- **你这一轮最后写下的那段话就是发给对方的回复**,daemon 负责分条和送达;说完就结束这一轮,不需要调任何工具来「发送」。中间过程里写的话(比如「我查一下」)不会发给对方,所以结论要写在最后那段里、写全。'}`
 }
 
 /** final_text 版的「说话」小节:没有 reply 族工具,只有本轮回复的附件(+ admin 的 message)。 */
@@ -392,28 +388,13 @@ function speakingFinalTextBlock(messageTool: boolean, allSegments = false): stri
 - \`message(to, text)\` — 只用于往**别处**发:to='owner'(主人自己的微信)/ 某个 chat_id / 'broadcast'(群发所有在线用户)。本轮这个聊天要说的话直接写在最后,不要用它(会报错)。` : ''}`
 }
 
-function toolsSection(finalText = false, messageTool = false, allSegments = false): string {
+function toolsSection(messageTool = false, allSegments = false): string {
   // Lists the wechat-mcp tools (loaded on every regular session via
   // wechatStdioMcpSpec in bootstrap.ts). Grouped by intent so the agent
   // can find the right tool quickly.
-  if (finalText) {
-    return LEGACY_TOOLS_SECTION
-      .replace(LEGACY_SPEAKING_BLOCK, speakingFinalTextBlock(messageTool, allSegments))
-      .replace('未配置则 reply 引导用户发 API 配置', '未配置则直接告诉用户怎么发 API 配置')
-  }
-  return LEGACY_TOOLS_SECTION
-}
+  return `## 可用 wechat 工具
 
-const LEGACY_SPEAKING_BLOCK = `回复 / 编辑用户消息：
-- \`reply(chat_id, text)\` — 文本回复。**首选**。
-- \`reply_voice(chat_id, text)\` — 语音回复。用户明确要语音时用；此外，短的、情绪化/关心/道晚安这类适合用声音的时刻，你也可以主动用语音（一两句话的暖场，不要用语音发长内容、代码、链接或需要对方回看的信息）。默认还是文字为主，语音是点缀。≤ 500 字，不适合代码块/URL/长列表。**若返回 \`ok:false\`（合成或发送失败，reason=transient/error/not_configured），别让这条回复消失——立刻用 \`reply\` 把同样的话发成文字，用户至少能收到你的回应。**
-- \`send_file(chat_id, path)\` — 推送本地文件（绝对路径）。
-- \`edit_message(chat_id, msg_id, text)\` — 编辑已发送的消息（msg_id 来自先前 reply 的返回）。
-- \`broadcast(text, account_id?)\` — 群发文本到所有在线用户。`
-
-const LEGACY_TOOLS_SECTION = `## 可用 wechat 工具
-
-${LEGACY_SPEAKING_BLOCK}
+${speakingFinalTextBlock(messageTool, allSegments)}
 
 项目 / 路由：
 - \`list_projects()\` / \`switch_project(alias)\` / \`add_project(alias, path)\` / \`remove_project(alias)\` — 项目别名管理。
@@ -422,7 +403,7 @@ ${LEGACY_SPEAKING_BLOCK}
 语音 TTS 配置：
 - \`voice_config_status()\` — 查询当前 TTS 配置状态（不返回 api_key）。
 - \`save_voice_config({provider, base_url?, model?, api_key?, default_voice?})\` — 保存 TTS 配置（先做 1 秒测试合成）。
-- 用户首次要求语音但未配置：先调 voice_config_status，未配置则 reply 引导用户发 API 配置（VoxCPM2 base_url + model 或 qwen api_key）。
+- 用户首次要求语音但未配置：先调 voice_config_status，未配置则直接告诉用户怎么发 API 配置（VoxCPM2 base_url + model 或 qwen api_key）。
 
 发布页面：
 - \`share_page(title, content, {needs_approval?, chat_id?, account_id?})\` — 把 Markdown 发布为一次性 URL。needs_approval=true 渲染 ✓ Approve 按钮。chat_id 启用"📄 发 PDF"按钮。
@@ -431,28 +412,18 @@ ${LEGACY_SPEAKING_BLOCK}
 Companion / 主动推送（详见末尾段）：
 - \`companion_status()\` / \`companion_enable()\` / \`companion_disable()\` / \`companion_snooze({minutes})\` / \`companion_import_local({enabled})\`（仅开关本机 Claude/Codex 历史自动导入；不是微信聊天记录）
 - 用户说“同步微信记忆 / 刷新聊天记录 / 同步聊天记录 / 查询微信最新消息”时，必须调用 wxvault 的 \`sync_wechat_data\` 或 \`get_messages\`，绝不可调用 \`companion_import_local\`。wxvault 仅能读取本机 Mac 微信已落库的数据，不能读取尚未同步到 Mac 的手机消息。`
+}
 
 /**
- * Bubble-replies capability (行为流式气泡回复 design) — teaches behavioral
- * streaming: since tool-call arguments only reach us fully generated (no
- * transport-level partial-text flush), the agent has to fake the "typing
- * out loud" feel itself by sending multiple `reply` calls as each complete
- * thought forms, instead of one big reply at the end. Bubble boundaries are
- * semantic (the model decides where a thought ends), so this is guidance,
- * not a mechanical splitter — mechanical splitting still exists as the
- * route-level fallback (splitReply) for whenever the agent sends one big
- * text anyway.
+ * Bubble-replies capability (行为流式气泡回复 design) — 教模型像发微信那样分段:段与段之间空一行,
+ * daemon 按空行分条发出去(reply-bubbles)。当年这一节教的是「想好一个意思就先调一次 reply」,
+ * 回复交付之后改成写段落、由 daemon 分条。
  */
-export function bubbleRepliesSection(finalText = false): string {
+export function bubbleRepliesSection(): string {
   // 回复交付(已定 ④):模型不再「一条一个 reply」,而是像发微信那样写一段话、段间空一行;分条是 daemon 的事。
-  if (finalText) {
-    return `## 怎么说(像发微信那样)
+  return `## 怎么说(像发微信那样)
 
 像发微信那样说:短回答(几句话、一个列表连同它的说明)就写成**一段**,中间不空行;只有真的是两三件不同的事、或者用户要你分开说时,才用空行分成几段 —— daemon 会按空行分成几条发出去(最多 4 条)。代码完整放在一段里,永远不要把代码切开。不要自己加「1/3」「[第几条]」这类编号或标记。说完就停,不需要任何收尾。`
-  }
-  return `## 气泡式回复(像真人一样分条发)
-
-长回答不要攒成一大段最后一次发。像真人打字那样:想好第一个意思就先调 reply 发出去(先说结论/直接回应),然后继续想、继续查,再把下一条发出去。每条一个完整的意思;一轮最多 2-4 条,短回答就一条——别为拆而拆。代码要完整地放在一条里发,永远不要把代码切开。补充/链接可以单独一条。`
 }
 
 function delegateSection(peerProviderId: ProviderId): string {
@@ -707,19 +678,14 @@ export function companionOfferSection(): string {
  * plus the reverse path (`save_sticker` on a good incoming image, asking
  * first) so the library grows from real usage instead of being pre-seeded.
  */
-export function stickerSection(tags: string[], finalText = false): string {
+export function stickerSection(tags: string[]): string {
   // Defense in depth: stickers.ts save() already rejects/normalizes tags at
   // the source, but this renders straight into every chat's system prompt,
   // so backstop all line separators + 20-char cap for hand-edited index data.
   const safeTags = tags.filter((t) => !/[\r\n  ]/.test(t) && t.length <= 20).slice(0, 30)
-  if (finalText) {
-    return `## 表情包
-
-本地表情库可用 tags: ${safeTags.join(', ')}。情绪强/庆祝/安慰的时刻可以用 \`sticker(tag)\` 给这条回复附一张表情包,一次最多一张,配合文字而不是替代文字;本地没有合适的、或想换新鲜表情时,先结合最近几轮对话判断真实语境(祝贺、安慰、撒娇、尴尬、调侃等),把具体事件+情绪+动作写成英文 query(例如“项目上线成功”→ \`celebration victory happy dance\`),调用 \`search_online_sticker_candidates(query)\` 看多张候选图,再用 \`sticker(mood, id, url)\` 附上视觉上最匹配的一张;允许中等置信度下有趣试错,不要过度保守。用户说“这张不错/喜欢”时调用 \`sticker_feedback(signal=positive)\`,说“不是这个/不准/太夸张/不喜欢”时调用 \`sticker_feedback(signal=negative)\`,让后续排序快速纠偏;发送成功后才会收进库。用户发来好的表情图时可以用 \`save_sticker\` 收进库(先问一句)。`
-  }
   return `## 表情包
 
-本地表情库可用 tags: ${safeTags.join(', ')}。情绪强/庆祝/安慰的时刻可以用 \`send_sticker(tag)\` 发一张表情包，一次最多一张，配合文字而不是替代文字；本地没有合适的、或想换新鲜表情时，先结合最近几轮对话判断真实语境（祝贺、安慰、撒娇、尴尬、调侃等），把具体事件+情绪+动作写成英文 query（例如“项目上线成功”→ \`celebration victory happy dance\`），调用 \`search_online_sticker_candidates(query)\` 看多张候选图，再只用 \`send_online_sticker_candidate(chat_id, mood, id, url)\` 发送视觉上最匹配的一张；允许中等置信度下有趣试错，不要过度保守。用户说“这张不错/喜欢”时调用 \`sticker_feedback(signal=positive)\`，说“不是这个/不准/太夸张/不喜欢”时调用 \`sticker_feedback(signal=negative)\`，让后续排序快速纠偏；发送成功后才会收进库。用户发来好的表情图时可以用 \`save_sticker\` 收进库（先问一句）。`
+本地表情库可用 tags: ${safeTags.join(', ')}。情绪强/庆祝/安慰的时刻可以用 \`sticker(tag)\` 给这条回复附一张表情包,一次最多一张,配合文字而不是替代文字;本地没有合适的、或想换新鲜表情时,先结合最近几轮对话判断真实语境(祝贺、安慰、撒娇、尴尬、调侃等),把具体事件+情绪+动作写成英文 query(例如“项目上线成功”→ \`celebration victory happy dance\`),调用 \`search_online_sticker_candidates(query)\` 看多张候选图,再用 \`sticker(mood, id, url)\` 附上视觉上最匹配的一张;允许中等置信度下有趣试错,不要过度保守。用户说“这张不错/喜欢”时调用 \`sticker_feedback(signal=positive)\`,说“不是这个/不准/太夸张/不喜欢”时调用 \`sticker_feedback(signal=negative)\`,让后续排序快速纠偏;发送成功后才会收进库。用户发来好的表情图时可以用 \`save_sticker\` 收进库(先问一句)。`
 }
 
 /**
@@ -730,9 +696,8 @@ export function stickerSection(tags: string[], finalText = false): string {
  * an empty-library chat got NO sticker guidance at all — the agent never
  * learned `save_sticker` exists until the owner happened to ask.
  */
-export function stickerEmptyLibrarySection(finalText = false): string {
-  if (finalText) return '你还没有表情包。情绪强/庆祝/安慰的时刻,先根据最近对话判断语境,再把具体事件、情绪和动作写成英文 query(不要总用泛化词),调用 search_online_sticker_candidates 看多张候选图,视觉确认后用 sticker(mood, id, url) 附在这条回复上;看不准就不附。聊天里遇到值得存的表情/梗图,也可以用 save_sticker 存进库。'
-  return '你还没有表情包。情绪强/庆祝/安慰的时刻，先根据最近对话判断语境，再把具体事件、情绪和动作写成英文 query（不要总用泛化词），调用 search_online_sticker_candidates 看多张候选图，视觉确认后再调用 send_online_sticker_candidate 发送；看不准就不发。聊天里遇到值得存的表情/梗图，也可以用 save_sticker 存进库。'
+export function stickerEmptyLibrarySection(): string {
+  return '你还没有表情包。情绪强/庆祝/安慰的时刻,先根据最近对话判断语境,再把具体事件、情绪和动作写成英文 query(不要总用泛化词),调用 search_online_sticker_candidates 看多张候选图,视觉确认后用 sticker(mood, id, url) 附在这条回复上;看不准就不附。聊天里遇到值得存的表情/梗图,也可以用 save_sticker 存进库。'
 }
 
 function memorySection(): string {
@@ -870,9 +835,8 @@ export function knowledgeOrchestrationSection(_pluginNames: string[], opts?: { k
 ${parts.join('\n\n')}`
 }
 
-function multiModeAwarenessSection(finalText = false): string {
-  if (finalText) {
-    return `## 模式感知（每个 chat 独立）
+function multiModeAwarenessSection(): string {
+  return `## 模式感知（每个 chat 独立）
 
 每个 chat_id 有自己的对话模式（用户用 \`/cc\` \`/codex\` \`/cursor\` \`/<p> + <peer>\` \`/solo\` \`/stop\` 切换；并行 / 圆桌这两种多模型模式**只在桌面上开**,别叫用户在微信里打 /both /chat；详细命令用户可以打 /help）：
 - **solo** — 普通：你独自回答。
@@ -881,33 +845,12 @@ function multiModeAwarenessSection(finalText = false): string {
 - **chatroom** — 圆桌：入站消息会说明这一拍要你做什么，直接用纯文本作答。
 
 不需要主动判断当前 chat 是什么模式。直接按入站消息的形式响应即可。`
-  }
-  // Per-chat mode is INJECTED into the user message envelope by the
-  // coordinator (chatroom path: see dispatchChatroom). Here we just give
-  // general awareness so the agent isn't confused when it sees those
-  // envelopes.
-  return `## 模式感知（每个 chat 独立）
-
-每个 chat_id 有自己的对话模式（用户用 \`/cc\` \`/codex\` \`/cursor\` \`/<p> + <peer>\` \`/solo\` \`/stop\` 切换；并行 / 圆桌这两种多模型模式**只在桌面上开**,别叫用户在微信里打 /both /chat；详细命令用户可以打 /help）：
-- **solo** — 普通：你独自回答。
-- **parallel** — 并行：你和另一个 AI 同时收到相同消息，各自回各自的；你的回复会被自动加 \`[Display]\` 前缀，所以**不要**自己手动加。
-- **primary_tool** — 主从：你主导，需要时调 delegate_<peer>。
-- **chatroom** — 圆桌：每轮入站消息会被 \`<chatroom_round>\` envelope 包裹，里面写明 @-addressing 协议。**chatroom 模式下不要调 reply 工具**——envelope 会告诉你怎么用纯文本输出 + @-tag 路由。
-
-不需要主动判断当前 chat 是什么模式（envelope 会告诉你）。直接按入站消息的形式响应即可。`
 }
 
-function companionSection(finalText = false): string {
-  if (finalText) {
-    return `## Companion 主动推送（已开启）
-
-- 你不靠定时硬想"要不要找 ta"。你在聊天里把值得跟进的事记进 \`agenda.md\`（\`- [ ] due:YYYY-MM-DD <跟进什么>\`）。到点时系统已经替你决定了要推送(推不推在唤醒你之前就判完了),你的任务是**写出这条推送**:一句简短自然的问候。只有写不出值得发的内容(这件事明显已过期、或用户已自己说过结果)时才只写 \`NO_REPLY\`(这个词不会发出去)。
-- 推送后：写 memory 记这次 push 的意图和后续观察 — 用户是否回复、情绪如何。下次会读到。
-- 反感信号：用户说"别烦我"/"停" → 调 \`companion_snooze({minutes: 60})\`。明示要关 → 调 \`companion_disable()\`。`
-  }
+function companionSection(): string {
   return `## Companion 主动推送（已开启）
 
-- 你不靠定时硬想"要不要找 ta"。你在聊天里把值得跟进的事记进 \`agenda.md\`（\`- [ ] due:YYYY-MM-DD <跟进什么>\`）。到点时系统会专门唤醒你、把那条跟进交给你兑现——**默认就是发**：调 reply 写一句简短自然的问候；只有明显已过期、或用户已自己说过结果才不发（直接结束，不产生 assistant text）。
+- 你不靠定时硬想"要不要找 ta"。你在聊天里把值得跟进的事记进 \`agenda.md\`（\`- [ ] due:YYYY-MM-DD <跟进什么>\`）。到点时系统已经替你决定了要推送(推不推在唤醒你之前就判完了),你的任务是**写出这条推送**:一句简短自然的问候。只有写不出值得发的内容(这件事明显已过期、或用户已自己说过结果)时才只写 \`NO_REPLY\`(这个词不会发出去)。
 - 推送后：写 memory 记这次 push 的意图和后续观察 — 用户是否回复、情绪如何。下次会读到。
 - 反感信号：用户说"别烦我"/"停" → 调 \`companion_snooze({minutes: 60})\`。明示要关 → 调 \`companion_disable()\`。`
 }

@@ -1,7 +1,7 @@
 /**
  * RFC 03 §4.3 parallel mode(/both):同一条消息同时给每位参与者。各跑各的;一位抛错,其他人的回复照常
- * (Promise.allSettled)。调了 reply 工具的,前缀由 internal-api 那层按 participant_tag 加;没调、只吐了文字的,
- * 这里在每段前面加前缀转发。最后补一条综合。跑回合本身交给 TurnRunner。
+ * (Promise.allSettled)。每位的最后的话经交付端口送达(前缀 [名字] 由 daemon 加)。最后补一条综合。
+ * 跑回合本身交给 TurnRunner。
  */
 import { namesIn } from '../provider-registry'
 import type { InboundMsg } from '../prompt-format'
@@ -39,12 +39,12 @@ export function createParallel(ctx: CoordinatorCtx, runner: TurnRunner, failures
     )
     const text = deps.format(msg)
     const startedAt = nowMs()
-    // 回复交付 daemon:这家参与者的最后的话经端口送达(前缀 [名字] 由 daemon 加);开轮在 dispatch 之前,
-    // 附件才登记得上。legacy 的参与者照旧每段一条。
+    // 回复交付:这家参与者的最后的话经端口送达(前缀 [名字] 由 daemon 加);开轮在 dispatch 之前,
+    // 附件才登记得上。
     const deliveries = acquired.map((a, i) => {
-      if (a.status !== 'fulfilled' || ctx.deliveryModeFor(participants[i]!) !== 'daemon') return undefined
+      if (a.status !== 'fulfilled') return undefined
       const dn = namesIn(deps.registry, participants[i]!).short
-      return deps.replyDelivery!.begin(msg.chatId, { mode: 'daemon', context: 'parallel', providerId: participants[i]!, participantLabel: dn, textStrategy: ctx.textStrategyFor(participants[i]!) })
+      return deps.replyDelivery.begin(msg.chatId, { context: 'parallel', providerId: participants[i]!, participantLabel: dn, textStrategy: ctx.textStrategyFor(participants[i]!) })
     })
     // Register every acquired handle's cancel BEFORE dispatching — /stop must
     // reach whichever participants are in flight, not just the first. Each
@@ -74,7 +74,7 @@ export function createParallel(ctx: CoordinatorCtx, runner: TurnRunner, failures
       const providerId = participants[i]!
 
       // Exactly one TurnRecord per participant, emitted in the finally below — every branch
-      // `continue`s, the finally still records. Recorded AFTER delivery so a daemon participant's
+      // `continue`s, the finally still records. Recorded AFTER delivery so a participant's
       // record carries the delivery columns like a solo turn (spec §4.10).
       const recSummary = r.status === 'fulfilled' ? r.value : undefined
       const recOutcome = runner.outcomeOf(recSummary, r.status === 'rejected')
@@ -102,26 +102,13 @@ export function createParallel(ctx: CoordinatorCtx, runner: TurnRunner, failures
           await failures.handleAuthFailed(msg.chatId, proj.alias, providerId, r.value)
           continue
         }
-        if (turnDelivery) {
-          if (r.value.error) continue
-          const parts = { finalText: r.value.finalText ?? '', narration: r.value.narration ?? [] }
-          report = await turnDelivery.deliver(parts)
-          // 综合用的答案和交付出去的是同一份文字(同一个策略、同样剥掉令牌)。
-          const said = buildTurnReply(parts, [], 'parallel', ctx.textStrategyFor(providerId)).reply
-          if (!said.silent && said.text.trim()) answers.push({ speaker: providerId, text: said.text.trim() })
-          continue
-        }
-        const { assistantText, replyToolCalled } = r.value
-        if (replyToolCalled || assistantText.length === 0) continue
-        // Provider didn't call reply tool — fall back to forwarding raw
-        // assistant text, prefixed so the user can tell who said what.
-        const dn = namesIn(deps.registry, providerId).short
-        deps.log('FALLBACK_REPLY', `chat=${msg.chatId} provider=${providerId} chunks=${assistantText.length} (parallel)`)
-        for (const t of assistantText) {
-          await deps.sendAssistantText?.(msg.chatId, `[${dn}] ${t}`)
-        }
-        const joined = assistantText.join('\n').trim()
-        if (joined) answers.push({ speaker: providerId, text: joined })
+        // acquire 成功才走到这里(失败的 r 是 rejected,上面已经 continue),所以这一位一定开过轮。
+        if (!turnDelivery || r.value.error) continue
+        const parts = { finalText: r.value.finalText ?? '', narration: r.value.narration ?? [] }
+        report = await turnDelivery.deliver(parts)
+        // 综合用的答案和交付出去的是同一份文字(同一个策略、同样剥掉令牌)。
+        const said = buildTurnReply(parts, [], 'parallel', ctx.textStrategyFor(providerId)).reply
+        if (!said.silent && said.text.trim()) answers.push({ speaker: providerId, text: said.text.trim() })
       } finally {
         runner.record({
           chatId: msg.chatId, provider: providerId, alias: proj.alias, mode: 'parallel', startedAt, endedAt,
@@ -137,7 +124,7 @@ export function createParallel(ctx: CoordinatorCtx, runner: TurnRunner, failures
     // 直接用的答案。不做互驳:那是 /chat 的事,/both 要的就是便宜和快。
     //
     // 少于两条就没什么可合的(一条答案的"综合"只是复读);拿不到文本的
-    // 参与者(reply 工具被 permission-relay 拦掉之后已是罕见路径)不参与。
+    // 参与者(静默 / 出错 / 超时)不参与。
     const synthEval = deps.verdictEval ?? deps.haikuEval
     if (answers.length >= 2 && synthEval) {
       try {

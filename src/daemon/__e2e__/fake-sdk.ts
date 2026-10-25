@@ -34,9 +34,6 @@
  *     turn.completed, turn.failed, error.
  */
 import { vi } from 'vitest'
-import { existsSync, readFileSync } from 'node:fs'
-import { join } from 'node:path'
-import { readJsonFile } from '../../lib/read-json-file'
 
 export interface FakeSdkScript {
   /**
@@ -169,52 +166,13 @@ export function installFakeModerator(script: ModeratorScript): { uninstall(): vo
 }
 
 // ───────────────────────────────────────────────────────────────────────
-// Tool-call → internal-api bridge
+// wechat MCP 工具名
 //
-// In production the SDK spawns the wechat-mcp child which POSTs to the
-// daemon's internal-api. Our fake yields the tool_use event but doesn't
-// run the MCP child, so without a bridge `reply` etc. never produces an
-// outbound sendmessage. Workaround: when the script returns toolCalls
-// matching the wechat reply family, we POST directly to the daemon's
-// internal-api using the token + baseUrl recorded in the test stateDir.
+// 剧本里写裸名(`reply`)的工具调用按 wechat MCP 的命名空间包一层(`mcp__wechat__reply`),和真 SDK 报出来的
+// 形状一样。以前这里还有一座「reply 族 → internal-api」的桥,让旧路(执行者调 reply 说话)在假 SDK 里也能
+// 真发出一条;回复交付 D3 删了旧路,回复是最后写下的文字、由 daemon 送达,桥也跟着删了。
 // ───────────────────────────────────────────────────────────────────────
-const REPLY_TOOL_TO_ROUTE: Record<string, string | undefined> = {
-  reply: '/v1/wechat/reply',
-  reply_voice: '/v1/wechat/reply_voice',
-  send_file: '/v1/wechat/send_file',
-  edit_message: '/v1/wechat/edit_message',
-  broadcast: '/v1/wechat/broadcast',
-}
-
-async function bridgeToolCallToInternalApi(name: string, input: unknown): Promise<void> {
-  const route = REPLY_TOOL_TO_ROUTE[name]
-  if (!route) return
-  const stateDir = process.env.WECHAT_CC_STATE_DIR
-  if (!stateDir) return
-  const apiInfoPath = join(stateDir, 'internal-api-info.json')
-  const tokenPath = join(stateDir, 'internal-token')
-  if (!existsSync(apiInfoPath) || !existsSync(tokenPath)) return
-  let apiInfo: { baseUrl?: string }
-  try {
-    apiInfo = readJsonFile(apiInfoPath)
-  } catch { return }
-  const baseUrl = apiInfo.baseUrl
-  if (!baseUrl) return
-  const token = readFileSync(tokenPath, 'utf8').trim()
-  try {
-    await fetch(`${baseUrl}${route}`, {
-      method: 'POST',
-      headers: {
-        'content-type': 'application/json',
-        authorization: `Bearer ${token}`,
-        'x-wechat-mcp-depth': '0',
-      },
-      body: JSON.stringify(input),
-    })
-  } catch (err) {
-    if (process.env.E2E_DEBUG_ILINK) console.log('[fake-sdk] bridge POST failed:', err)
-  }
-}
+const WECHAT_MCP_TOOL_NAMES = new Set(['reply', 'reply_voice', 'send_file', 'edit_message', 'broadcast'])
 
 // ---------------------------------------------------------------------------
 // Claude SDK mock
@@ -243,33 +201,19 @@ vi.mock('@anthropic-ai/claude-agent-sdk', () => {
    */
   async function buildCycle(
     dispatchResult: { toolCalls: Array<{ name: string; input: unknown }>; finalText: string },
-    /**
-     * Whether a reply-family tool call should be bridged into a real
-     * outbound. True for a spawned SESSION (the real session has the
-     * wechat MCP child wired). False for the single-shot `query({ prompt:
-     * string })` path: claude-agent-provider's `oneShot` passes
-     * `tools: []`, `settingSources: []`, `maxTurns: 1` and no mcpServers
-     * (core/claude-agent-provider.ts), so a cheapEval / first-use probe
-     * has no reply tool to call — bridging there would manufacture an
-     * outbound production can't produce.
-     */
-    bridge: boolean,
   ): Promise<Array<Record<string, unknown>>> {
     const msgs: Array<Record<string, unknown>> = []
 
-    // Emit tool_use + tool_result pairs for each tool call AND fire the
-    // internal-api bridge so reply/send_file calls actually produce an
-    // outbound sendmessage in the fake-ilink outbox (mirrors the real
-    // wechat-mcp child's effect).
+    // Emit tool_use + tool_result pairs for each tool call.
     //
     // Name shape: claude-agent-provider parses `mcp__<server>__<tool>` to
     // populate AgentEvent.server. Tests pass the bare tool name (e.g.
-    // `reply`); we wrap with the wechat-mcp prefix here so isReplyToolCall
-    // detects it. Tests that genuinely want a non-MCP tool can pass a
-    // name with no `__` and bypass the prefix.
+    // `reply`); we wrap with the wechat-mcp prefix here. Tests that
+    // genuinely want a non-MCP tool can pass a name with no `__` and
+    // bypass the prefix.
     for (const tc of dispatchResult.toolCalls) {
       const toolUseId = `tu${makeId()}`
-      const sdkToolName = REPLY_TOOL_TO_ROUTE[tc.name] && !tc.name.includes('__')
+      const sdkToolName = WECHAT_MCP_TOOL_NAMES.has(tc.name) && !tc.name.includes('__')
         ? `mcp__wechat__${tc.name}`
         : tc.name
       msgs.push({
@@ -278,7 +222,6 @@ vi.mock('@anthropic-ai/claude-agent-sdk', () => {
           content: [{ type: 'tool_use', id: toolUseId, name: sdkToolName, input: tc.input }],
         },
       })
-      if (bridge) await bridgeToolCallToInternalApi(tc.name, tc.input)
       msgs.push({
         type: 'user',
         message: {
@@ -353,9 +296,8 @@ vi.mock('@anthropic-ai/claude-agent-sdk', () => {
         // in production runs via `oneShot` with `tools: []` — structurally
         // incapable of producing a tool_use block. Drop any scripted
         // toolCalls before building the cycle so the fake can't emit one
-        // either (bridge=false alone used to make a stray tool_use harmless
-        // rather than impossible; this makes it impossible).
-        for (const msg of await buildCycle({ ...result, toolCalls: [] }, false)) yield msg
+        // either.
+        for (const msg of await buildCycle({ ...result, toolCalls: [] })) yield msg
         return
       }
 
@@ -393,7 +335,7 @@ vi.mock('@anthropic-ai/claude-agent-sdk', () => {
         }
 
         const result = await script.onDispatch(text)
-        for (const msg of await buildCycle(result, true)) yield msg
+        for (const msg of await buildCycle(result)) yield msg
       }
     })()
   }
@@ -456,9 +398,6 @@ vi.mock('@openai/codex-sdk', () => {
           input: tc.input,
         },
       }
-      // Same internal-api bridge as Claude — turns reply/send_file tool
-      // calls into actual outbound sendmessage POSTs.
-      await bridgeToolCallToInternalApi(tc.name, tc.input)
     }
 
     // Emit the final text as an agent_message item.
@@ -483,7 +422,7 @@ vi.mock('@openai/codex-sdk', () => {
    * One-shot threads:
    *   - are NOT wired to `codexScript` — routing the probe prompt into the
    *     test's onDispatch would make the script observe a message the user
-   *     never sent (and could bridge stray tool calls into the outbox);
+   *     never sent;
    *   - do NOT fire the spawn recorder — it must only see real session spawns
    *     (see installCodexSpawnRecorder);
    *   - DO answer: since 2026-09-09 the codex provider is wrapped in
@@ -626,15 +565,14 @@ vi.mock('@cursor/sdk', () => {
    * with the final text, then a `status: FINISHED` terminator so the
    * provider emits a `result` event with real timings.
    *
-   * Tool names get wrapped with `mcp__wechat__<name>` for reply-family
-   * tools (matching the Claude fake) so the bridge POSTs through to
-   * the daemon's internal-api.
+   * Tool names get wrapped with `mcp__wechat__<name>` for wechat MCP
+   * tools (matching the Claude fake).
    */
   async function* buildCursorStream(
     dispatchResult: { toolCalls: Array<{ name: string; input: unknown }>; finalText: string },
   ): AsyncGenerator<Record<string, unknown>> {
     for (const tc of dispatchResult.toolCalls) {
-      const sdkToolName = REPLY_TOOL_TO_ROUTE[tc.name] && !tc.name.includes('__')
+      const sdkToolName = WECHAT_MCP_TOOL_NAMES.has(tc.name) && !tc.name.includes('__')
         ? `mcp__wechat__${tc.name}`
         : tc.name
       yield {
@@ -643,7 +581,6 @@ vi.mock('@cursor/sdk', () => {
           content: [{ type: 'tool_use', name: sdkToolName, input: tc.input }],
         },
       }
-      await bridgeToolCallToInternalApi(tc.name, tc.input)
     }
     if (dispatchResult.finalText) {
       yield {

@@ -66,7 +66,7 @@ function setup(steps: GenaiStep[], tools: string[] = ['list_projects', 'voice', 
     sendNotice,
     recordTurn: (r) => { records.push(r) },
     replyDelivery: runtime,
-    // 不注入 replyDeliveryModeFor / replyTextStrategyFor:读能力表的默认值。
+    // 不注入 replyTextStrategyFor:读能力表的默认值。
   })
   return { c, sent, logs, records, sendAssistantText, sendNotice, toolCalls }
 }

@@ -1,6 +1,6 @@
 /**
  * 单模型:solo、primary_tool,以及 /both、/chat 退成一家的那一轮。只编排 —— acquire、拼 prompt(交接块)、
- * 交付走哪条路(legacy / shadow / daemon)、出错怎么说;跑回合本身交给 TurnRunner。
+ * 开交付轮、出错怎么说;跑回合本身交给 TurnRunner。
  */
 import type { ProviderId } from '../conversation'
 import type { InboundMsg } from '../prompt-format'
@@ -37,8 +37,6 @@ export interface Solo {
 
 export function createSolo(ctx: CoordinatorCtx, runner: TurnRunner, failures: FailureHandlers): Solo {
   const { deps, notice, nowMs } = ctx
-  // 每家 provider 连续走 fallback 的轮数(见 deps.onFallbackStreak)。
-  const fallbackStreak = new Map<ProviderId, number>()
 
   async function refuse(msg: InboundMsg, plan: RefusedPlan): Promise<void> {
     const { providerId, denial } = plan
@@ -71,10 +69,7 @@ export function createSolo(ctx: CoordinatorCtx, runner: TurnRunner, failures: Fa
     let outcome: TurnRecord['outcome'] = 'error'
     let summary: TurnSummary | undefined
     let unregisterCancel: (() => void) | undefined
-    // 回复交付 shadow(spec §5.1 第 3 项):照旧走 legacy,另外把「按新路会发什么」与 legacy 实际
-    // 发出去的比一比,只记日志。从 dispatch 开始前就开着,reply 路由 / fallback 发出的每一条才旁听得到。
-    let shadow: TurnDeliveryHandle | undefined
-    // 回复交付 daemon(spec §4.3):最后的话经端口送达;report 落进 TurnRecord。
+    // 回复交付(spec §4.3):最后的话经端口送达;report 落进 TurnRecord。
     let delivery: TurnDeliveryHandle | undefined
     let report: DeliveryReport | undefined
     let deliverySettled = false
@@ -138,30 +133,22 @@ export function createSolo(ctx: CoordinatorCtx, runner: TurnRunner, failures: Fa
           deps.log?.('HANDOFF', `chat=${msg.chatId} cold-start ${providerId} recent=${recent.length}`)
         }
       }
-      const deliveryMode = ctx.deliveryModeFor(providerId)
-      if (deliveryMode === 'shadow') {
-        try { shadow = deps.replyDelivery!.begin(msg.chatId, { mode: 'shadow', context: 'dm', providerId, textStrategy: ctx.textStrategyFor(providerId) }) } catch { shadow = undefined }
-      }
-      // daemon:开轮(附件从此刻起登记到这一轮)。编码型执行者(last_segment)挂上长任务进度(已定 ①:
+      // 开轮(附件从此刻起登记到这一轮)。编码型执行者(last_segment)挂上长任务进度(已定 ①:
       // 一轮最多一次,有旁白用最近一段);聊天型模型(all_segments)每段都会交付,不发进度。
       const textStrategy = ctx.textStrategyFor(providerId)
-      const live = deliveryMode === 'daemon' ? makeTurnTextCollector() : undefined
-      if (deliveryMode === 'daemon') {
-        delivery = deps.replyDelivery!.begin(msg.chatId, { mode: 'daemon', context: 'dm', providerId, textStrategy })
-      }
-      const d = delivery
+      const live = makeTurnTextCollector()
+      const d = deps.replyDelivery.begin(msg.chatId, { context: 'dm', providerId, textStrategy })
+      delivery = d
       summary = await runner.run({
         chatId: msg.chatId, alias: proj.alias, providerId, handle, prompt: text, budget: 'turn',
-        ...(live ? { observe: (ev) => live.push(ev) } : {}),
-        ...(d && textStrategy === 'last_segment' ? { progress: () => { void d.progress(live!.latestSegment() ?? LONG_TURN_PROGRESS).catch(() => {}) } } : {}),
+        observe: (ev) => live.push(ev),
+        ...(textStrategy === 'last_segment' ? { progress: () => { void d.progress(live.latestSegment() ?? LONG_TURN_PROGRESS).catch(() => {}) } } : {}),
       })
-      const assistantTexts = summary.assistantText
-      const replyToolCalled = summary.replyToolCalled
-      const settle = (reason: string) => { if (delivery && !deliverySettled) { deliverySettled = true; delivery.abandon(reason) } }
+      const settle = (reason: string) => { if (!deliverySettled) { deliverySettled = true; d.abandon(reason) } }
 
       // Per-turn watchdog fired: the SDK stream went silent. Discard the
-      // wedged session and tell the user to retry — must come before the
-      // fallback-text path so a stalled turn never leaks a partial reply.
+      // wedged session and tell the user to retry — before delivery so a
+      // stalled turn never leaks a partial reply.
       if (summary.errorCode === TURN_TIMEOUT_CODE) {
         outcome = 'timeout'
         settle('timeout')
@@ -170,7 +157,7 @@ export function createSolo(ctx: CoordinatorCtx, runner: TurnRunner, failures: Fa
       }
 
       // Structured auth-failure path: provider intercepted the "Not logged in"
-      // assistant text and re-emitted it as a coded error. Suppress fallback
+      // assistant text and re-emitted it as a coded error. Deliver nothing
       // and send a throttled neutral notice instead — never leak provider
       // failure text to the user.
       if (isAuthErrorCode(summary.errorCode)) {
@@ -182,73 +169,30 @@ export function createSolo(ctx: CoordinatorCtx, runner: TurnRunner, failures: Fa
 
       outcome = summary.error ? 'error' : 'completed'
 
-      if (delivery && stopped()) {
+      if (stopped()) {
         settle('cancelled')
         deps.log('REPLY', `chat=${msg.chatId} provider=${providerId} 主人中止了这一轮 —— 不发通知、不交付半截话`)
         return
       }
 
-      // 回复交付 daemon(spec §4.2 末段 / §4.3):只有 completed 的轮交付最后的话;出错一律只发通知、
-      // 不发残文(与 #190「错误不许当回复发」同一条红线)。没有 FALLBACK_REPLY:有文字没调工具是正常路径。
-      if (delivery) {
-        if (outcome !== 'completed') {
-          settle('error')
-          await notice(msg.chatId, turnErrorNotice(providerId, summary.error, summary.errorCode))
-          return
-        }
-        deliverySettled = true
-        // 核对(回复交付第 5 步):provider 自己也报了「最后的话」(Claude 的 result.result)⇒ 和分段的结果比一下。
-        // 交付永远用分段的结果;对不上只记一行,留给真机看分段规则有没有漏(子 agent 文字、块顺序……)。
-        if (summary.providerFinalText !== undefined && summary.providerFinalText.trim() !== (summary.finalText ?? '').trim()) {
-          deps.log('REPLY_FINAL_CHECK', `chat=${msg.chatId} provider=${providerId} match=differs segments_len=${(summary.finalText ?? '').length} sdk_len=${summary.providerFinalText.length}`)
-        }
-        report = await delivery.deliver({ finalText: summary.finalText ?? '', narration: summary.narration ?? [] })
-        ctx.noteDelivery(providerId, report.delivery)
-        return
-      }
-
-      // Generic-error silence guard (2026-08-25): a turn that died with an
-      // error, called no reply tool and produced no assistant text used to
-      // leave the user staring at nothing — silence reads as being ignored.
-      // Tell them, in CC's voice, that the message was dropped and where the
-      // fix lives. Unthrottled on purpose (same rationale as the timeout
-      // notice: each dropped message deserves an acknowledgement).
-      if (summary.error && !replyToolCalled && assistantTexts.length === 0) {
+      // 回复交付(spec §4.2 末段 / §4.3):只有 completed 的轮交付最后的话;出错一律只发通知、
+      // 不发残文(与 #190「错误不许当回复发」同一条红线)。
+      if (outcome !== 'completed') {
+        settle('error')
         await notice(msg.chatId, turnErrorNotice(providerId, summary.error, summary.errorCode))
         return
       }
-
-      // Same fallback semantics as the legacy routeInbound: only forward
-      // raw assistant text when the agent did NOT call a reply-family
-      // tool this turn. Prevents the duplicate-message footgun while
-      // protecting users from a forgetful agent that describes an image
-      // in plain text without ever calling reply.
-      if (replyToolCalled) {
-        if ((fallbackStreak.get(providerId) ?? 0) > 0) { fallbackStreak.set(providerId, 0); deps.onFallbackStreak?.(providerId, 0) }
-        return
+      deliverySettled = true
+      // 核对(回复交付第 5 步):provider 自己也报了「最后的话」(Claude 的 result.result)⇒ 和分段的结果比一下。
+      // 交付永远用分段的结果;对不上只记一行,留给真机看分段规则有没有漏(子 agent 文字、块顺序……)。
+      if (summary.providerFinalText !== undefined && summary.providerFinalText.trim() !== (summary.finalText ?? '').trim()) {
+        deps.log('REPLY_FINAL_CHECK', `chat=${msg.chatId} provider=${providerId} match=differs segments_len=${(summary.finalText ?? '').length} sdk_len=${summary.providerFinalText.length}`)
       }
-      if (assistantTexts.length === 0) return
-      {
-        const n = (fallbackStreak.get(providerId) ?? 0) + 1
-        fallbackStreak.set(providerId, n)
-        deps.onFallbackStreak?.(providerId, n)
-      }
-      deps.log('FALLBACK_REPLY', `chat=${msg.chatId} project=${proj.alias} provider=${providerId} chunks=${assistantTexts.length} preview=${JSON.stringify(assistantTexts[0]?.slice(0, 80) ?? '')}`)
-      for (const t of assistantTexts) {
-        await deps.sendAssistantText?.(msg.chatId, t)
-      }
+      report = await d.deliver({ finalText: summary.finalText ?? '', narration: summary.narration ?? [] })
+      ctx.noteDelivery(providerId, report.delivery)
     } finally {
       unregisterCancel?.()
       if (delivery && !deliverySettled) { deliverySettled = true; try { delivery.abandon(outcome) } catch { /* 记账不影响回合 */ } }
-      // shadow 只是记账:绝不能影响这一轮(抛错就地吞掉)。只有 completed 的轮才比 —— 新路也只交付那些。
-      if (shadow) {
-        try {
-          if (outcome === 'completed' && summary) await shadow.deliver({ finalText: summary.finalText ?? '', narration: summary.narration ?? [] })
-          else shadow.abandon(outcome)
-        } catch (err) {
-          deps.log('REPLY_SHADOW', `chat=${msg.chatId} provider=${providerId} shadow threw: ${err instanceof Error ? err.message : String(err)}`)
-        }
-      }
       runner.record({ chatId: msg.chatId, provider: providerId, alias: proj.alias, mode: recordMode, startedAt, endedAt: nowMs(), outcome, summary, report })
     }
   }

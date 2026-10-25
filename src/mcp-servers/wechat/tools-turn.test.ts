@@ -28,16 +28,10 @@ async function harness(register: (s: McpServer, c: InternalApiClient) => void) {
   return { calls, names, call, mcp }
 }
 
-describe('registerMessagingTools({ replyDelivery: daemon }) —— 回复族工具全部不注册', () => {
+describe('registerMessagingTools —— 回复族工具全部不注册(D3 起只有这一套)', () => {
   it('只留下不说话的表情查询与反馈', async () => {
-    const h = await harness((s, c) => registerMessagingTools(s, c, { replyDelivery: 'daemon' }))
-    expect(await h.names()).toEqual(['search_online_sticker_candidates', 'sticker_feedback'])
-  })
-
-  it('缺省仍是今天的工具表(legacy 不变)', async () => {
     const h = await harness((s, c) => registerMessagingTools(s, c))
-    expect(await h.names()).toContain('reply')
-    expect(await h.names()).toContain('reply_voice')
+    expect(await h.names()).toEqual(['search_online_sticker_candidates', 'sticker_feedback'])
   })
 })
 

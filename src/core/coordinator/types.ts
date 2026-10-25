@@ -8,7 +8,7 @@ import type { Mode, ProviderId } from '../conversation'
 import type { InboundMsg } from '../prompt-format'
 import type { HandoffTurn } from '../provider-handoff'
 import type { PermissionMode } from '../capability-matrix'
-import type { DeliveryKind, ReplyDeliveryMode, ReplyDeliveryPort, ReplyTextStrategy } from '../turn-reply'
+import type { DeliveryKind, ReplyDeliveryPort, ReplyTextStrategy } from '../turn-reply'
 import type { AgentEvent } from '../agent-provider'
 import type { Access } from '../../lib/access'
 import type { NetworkGate } from '../../lib/network-gate'
@@ -45,8 +45,8 @@ export interface TurnRecord {
    *  health 判定有码就只看码,不再扫 `error` 文本。 */
   errorCode?: string
   /**
-   * 回复交付(spec 2026-10-03 §4.10):这一轮主人到底收到了什么。只有 daemon 模式的轮才填;legacy /
-   * shadow 的轮留空(那时「说没说话」由 reply 工具决定,记在 replyToolCalled)。
+   * 回复交付(spec 2026-10-03 §4.10):这一轮主人到底收到了什么。只有真的交付过(completed)的轮才填;
+   * 超时 / 出错 / 中止的轮留空。
    */
   delivery?: DeliveryKind
   /** 发出的文字气泡条数(交给 app 接收器的非空文字算 1)。 */
@@ -118,13 +118,6 @@ export interface ConversationCoordinatorDeps {
   /** agent-config `trusted_providers`(非管理员可用的 provider),缺省 = 全部。
    *  读法带 mtime 缓存,/set providers 改完下一条就生效。 */
   trustedProviders?: () => readonly ProviderId[] | undefined
-  /**
-   * 某 provider **连续**几轮走了 FALLBACK_REPLY(有文字、零 reply 工具)。
-   * 0 = 这轮正常调了 reply,连击清零。外部 CLI(agy/cursor)的流格式一变,
-   * tool_call 就解析不出来,双发旁白悄悄回来 —— 2026-09-08 靠主人截图才发现。
-   * 这个钩子把「静默」变「可见」:bootstrap 记进 /mode 并打 [PROVIDER_ANOMALY]。
-   */
-  onFallbackStreak?: (providerId: ProviderId, streak: number) => void
   sendAssistantText?: (chatId: string, text: string) => Promise<unknown>
   /**
    * 系统通知(认证失败 / 超时 / 守护拒绝 / spawn 失败 / 本轮出错 / provider 不可用……,spec §4.3 末段
@@ -133,16 +126,14 @@ export interface ConversationCoordinatorDeps {
    */
   sendNotice?: (chatId: string, text: string) => Promise<unknown>
   /**
-   * 回复交付端口(daemon/reply-delivery.ts)。shadow / daemon 模式的 provider 才用到;缺省 ⇒ 一律按
-   * legacy 走(没有端口就不可能交付)。
+   * 回复交付端口(daemon/reply-delivery.ts)。一轮的最后的话只有这一条路送出去(D3 删掉了 reply 工具说话的旧路),
+   * 所以必填:没有它就不可能交付。
    */
-  replyDelivery?: ReplyDeliveryPort
-  /** 每家 provider 的交付模式;缺省读 capability-matrix 的 `replyDeliveryFor`。测试 / 实验可以注入。 */
-  replyDeliveryModeFor?: (providerId: ProviderId) => ReplyDeliveryMode
+  replyDelivery: ReplyDeliveryPort
   /** 每家 provider 哪些文字算回复;缺省读能力表的 `replyTextStrategyFor`。测试注入。 */
   replyTextStrategyFor?: (providerId: ProviderId) => ReplyTextStrategy
   /**
-   * daemon 模式下「应答轮交付为空」的连击(spec §4.10,取代 FALLBACK 连击):私聊 / app 一轮 completed 但
+   * 「应答轮交付为空」的连击(spec §4.10,取代当年的 FALLBACK 连击):私聊 / app 一轮 completed 但
    * 什么都没交付(空文字、没附件)或写了 NO_REPLY ⇒ +1;正常交付 ⇒ 0。bootstrap 记进 /mode 并在 ≥3 时打
    * [PROVIDER_ANOMALY]。
    */

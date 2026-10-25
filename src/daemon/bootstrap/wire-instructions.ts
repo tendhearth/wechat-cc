@@ -8,7 +8,7 @@
 import type { ProviderId } from '../../core/conversation'
 import type { TierProfile } from '../../core/user-tier'
 import { buildSystemPrompt } from '../../core/prompt-builder'
-import { capabilitiesFor, replyDeliveryFor, replyTextStrategyFor } from '../../core/capability-matrix'
+import { capabilitiesFor, replyTextStrategyFor } from '../../core/capability-matrix'
 import type { Bootstrap, BootstrapDeps } from './types'
 import type { PluginsSlice } from './wire-plugins'
 
@@ -75,13 +75,12 @@ export function wireInstructions(
     const stickerTags = rawStickerTags !== null && rawStickerTags.length === 0 && !tierProfile.allow.has('memory_write')
       ? null
       : rawStickerTags
-    // 回复交付(spec 2026-10-03 §4.11):走 daemon 交付的 provider 拿 final_text 版提示(不教 reply 族工具,
-    // 教附件 + admin 的 message);legacy / shadow 照旧。message 只在 MCP 真的注册了它时才提(admin + 每会话
-    // tier 的 provider —— agy 那种钉死 trusted 的拿不到)。
-    const finalText = replyDeliveryFor(providerId) === 'daemon'
+    // 回复交付(spec 2026-10-03 §4.11):提示词不教 reply 族工具,教附件 + admin 的 message。message 只在 MCP
+    // 真的注册了它时才提(admin + 每会话 tier 的 provider —— agy 那种钉死 trusted 的拿不到)。
     return buildSystemPrompt({
       providerId,
-      ...(finalText ? { replyDelivery: 'final_text' as const, replyText: replyTextStrategyFor(providerId), messageToolAvailable: tierProfile.allow.has('message_other') && capabilitiesFor(providerId).adminMcpTools } : {}),
+      replyText: replyTextStrategyFor(providerId),
+      messageToolAvailable: tierProfile.allow.has('message_other') && capabilitiesFor(providerId).adminMcpTools,
       // 让 bot 知道自己此刻跑的是哪个模型(session-manager 按 spawn 解析后
       // 传进来;claude 的解析见下面 currentModelFor 的 claude 分支)。
       model,

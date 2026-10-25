@@ -1,10 +1,10 @@
 /**
- * 协调器各块共用的那一份:依赖、时钟、系统通知、交付模式、当前模式、换 provider 的交接账。
+ * 协调器各块共用的那一份:依赖、时钟、系统通知、交付策略、当前模式、换 provider 的交接账。
  * 只读地传给 plan / runner / 三种派法;每一块自己的状态(锁、取消登记、连击)留在自己那块里。
  */
 import type { Mode, ProviderId } from '../conversation'
-import { replyDeliveryFor, replyTextStrategyFor } from '../capability-matrix'
-import type { DeliveryKind, ReplyDeliveryMode, ReplyTextStrategy } from '../turn-reply'
+import { replyTextStrategyFor } from '../capability-matrix'
+import type { DeliveryKind, ReplyTextStrategy } from '../turn-reply'
 import { makeHandoffLedger } from '../provider-handoff'
 import type { ConversationCoordinatorDeps } from './types'
 
@@ -16,10 +16,8 @@ export interface CoordinatorCtx {
   nowMs: () => number
   /** 系统通知走 sendNotice(没接就退回 sendAssistantText)—— 与 agent 的话分家(spec §4.3)。 */
   notice(chatId: string, text: string): Promise<unknown> | undefined
-  /** 这一轮这家 provider 的交付模式。没有端口 ⇒ 只能 legacy。 */
-  deliveryModeFor(providerId: ProviderId): ReplyDeliveryMode
   textStrategyFor(providerId: ProviderId): ReplyTextStrategy
-  /** daemon 模式下「应答轮交付为空」的连击(见 deps.onEmptyReplyStreak)。 */
+  /** 「应答轮交付为空」的连击(见 deps.onEmptyReplyStreak)。 */
   noteDelivery(providerId: ProviderId, delivery: DeliveryKind): void
   /** 持久化的模式,没有就是 daemon 默认(solo + 默认 provider)。 */
   getMode(chatId: string): Mode
@@ -28,14 +26,12 @@ export interface CoordinatorCtx {
 }
 
 export function createCoordinatorCtx(deps: ConversationCoordinatorDeps): CoordinatorCtx {
-  // 每家 provider 连续「应答轮交付为空」的轮数(daemon 模式,见 deps.onEmptyReplyStreak)。
+  // 每家 provider 连续「应答轮交付为空」的轮数(见 deps.onEmptyReplyStreak)。
   const emptyReplyStreak = new Map<ProviderId, number>()
   return {
     deps,
     nowMs: deps.now ?? Date.now,
     notice: (chatId, text) => (deps.sendNotice ?? deps.sendAssistantText)?.(chatId, text),
-    deliveryModeFor: (providerId) =>
-      deps.replyDelivery ? (deps.replyDeliveryModeFor ?? replyDeliveryFor)(providerId) : 'legacy',
     textStrategyFor: (providerId) => (deps.replyTextStrategyFor ?? replyTextStrategyFor)(providerId),
     noteDelivery(providerId, delivery) {
       const empty = delivery === 'empty' || delivery === 'silent'

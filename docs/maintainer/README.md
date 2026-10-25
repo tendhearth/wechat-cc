@@ -77,7 +77,7 @@ wechat-cc self change "<需求>"       # --no-deploy 只合 dev;--list / --resum
 | [ci-and-flakes.md](ci-and-flakes.md) | 三平台作业、Windows 排除清单的规矩、`ci triage` 与 flake 登记表、PR 与合并纪律 |
 | [self-change.md](self-change.md) | 让 CC 自己改自己:五道闸门、修复轮上限、退出码、停机与 `--unhalt`、微信不通时怎么拍板(`--approve` / 桌面卡)、禁改清单、费用、微信「自改」 |
 | [cli-auto-upgrade.md](cli-auto-upgrade.md) | 外部 agent CLI(claude / codex / cursor-agent / agy)自动升级:官方升级器、只在空闲时、升级后自检 + 协议烟测、自动退回与坏版本、`wechat-cc cli status\|upgrade\|rollback` |
-| [reply-delivery.md](reply-delivery.md) | 回复交付的每家开关(legacy / shadow / daemon)、`agent-config.json` 的 `reply_delivery` 不重新部署就回滚、排查看哪几行日志 |
+| [reply-delivery.md](reply-delivery.md) | 回复交付只剩一条路(D3 删了 legacy / shadow 与 `reply_delivery` 回滚)、排查看哪几行日志 |
 | [migrations.md](migrations.md) | `user_version` 是计数、新迁移要改的三处测试、指纹与 `foreign_keys` 坑 |
 | [practices.md](practices.md) | **干活的**规矩:动手前看什么、怎么证明、什么时候问主人(每条带出处)—— CC 自己跑开发时读的就是它 |
 | [rules-from-real-machines.md](rules-from-real-machines.md) | 真机(而不是单测)抓到的规矩清单 —— 写代码前先扫一眼 |

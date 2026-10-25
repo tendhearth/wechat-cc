@@ -78,8 +78,8 @@ export interface TurnRunner {
 }
 
 /**
- * TurnRecord 的交付列 —— solo、/both、/chat 三处同一个写法(spec §4.10)。只有真的交付过(daemon 模式、
- * completed)才有 report;legacy / shadow / 出错的轮不填。
+ * TurnRecord 的交付列 —— solo、/both、/chat 三处同一个写法(spec §4.10)。只有真的交付过(completed)
+ * 才有 report;超时 / 出错 / 中止的轮不填。
  */
 function deliveryColumns(
   report: DeliveryReport | undefined,

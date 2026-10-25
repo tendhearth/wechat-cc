@@ -15,8 +15,7 @@
  * 失败处理不改现有规矩:每条只依赖 ilink 自带的重试;第一条失败就停、剩下的不发;**绝不因为送达失败
  * 再调一次模型**(断线时停掉外发与 LLM 轮次)。
  *
- * 迁移期还有一个 shadow 模式:legacy 照旧走 reply 工具,这里只把「如果按新路会发什么」与 legacy 实际
- * 发出去的比一比,记 [REPLY_SHADOW](§5.1 第 3 项)。
+ * 迁移期的 shadow 模式(把旧路实际发出的与新路比一比,记 [REPLY_SHADOW])随旧路一起删了(架构终态 D3)。
  */
 import { splitBubbles } from './reply-bubbles'
 import { paceMs } from './reply-split'
@@ -186,12 +185,10 @@ export interface ReplyDeliveryRuntime extends ReplyDeliveryPort {
   hasOpenTurn(chatId: string): boolean
   /** message 路由:记一笔,交付时去重(只认发给主人聊天的)。 */
   noteMessage(chatId: string, m: { toOwner: boolean; text: string }): void
-  /** legacy 出口旁听(reply 路由 / fallback):shadow 轮开着才记。 */
-  observeLegacy(chatId: string, text: string): void
   /**
-   * 这家 provider 此刻正在 daemon 模式下跑的那一轮是哪个聊天。给**没有自己的 chat 的共享令牌**用
+   * 这家 provider 此刻正在跑的那一轮是哪个聊天。给**没有自己的 chat 的共享令牌**用
    * (agy 的 `agy-static`:一份全局 MCP 配置,所有 agy 对话共用一枚 trusted 令牌 —— 令牌里读不出 chat)。
-   * 恰好一个聊天有这家的 daemon 轮开着 ⇒ 就是它;没有 ⇒ none;不止一个 ⇒ ambiguous(说不清是哪一轮,
+   * 恰好一个聊天有这家的轮开着 ⇒ 就是它;没有 ⇒ none;不止一个 ⇒ ambiguous(说不清是哪一轮,
    * 调用方必须拒绝,绝不猜)。
    */
   turnChatFor(providerId: string): TurnChatBinding
@@ -202,11 +199,11 @@ export type TurnChatBinding =
   | { kind: 'none' }
   | { kind: 'ambiguous'; count: number }
 
-interface OpenTurn { attachments: PendingAttachment[]; messagedOwner: string[]; legacy: string[]; refs: number }
+interface OpenTurn { attachments: PendingAttachment[]; messagedOwner: string[]; refs: number }
 
 export function makeReplyDeliveryRuntime(deps: ReplyDeliveryRuntimeDeps): ReplyDeliveryRuntime {
   const open = new Map<string, OpenTurn>()
-  // providerId → (chatId → 开着的 daemon 轮数)。只记 daemon 模式:附件工具只在 daemon 模式下注册。
+  // providerId → (chatId → 开着的轮数)。给没有自己 chat 的共享令牌(agy-static)认本轮用。
   const daemonTurns = new Map<string, Map<string, number>>()
   const trackDaemon = (providerId: string, chatId: string, delta: 1 | -1): void => {
     const byChat = daemonTurns.get(providerId) ?? new Map<string, number>()
@@ -217,7 +214,7 @@ export function makeReplyDeliveryRuntime(deps: ReplyDeliveryRuntimeDeps): ReplyD
 
   const acquire = (chatId: string): OpenTurn => {
     let t = open.get(chatId)
-    if (!t) { t = { attachments: [], messagedOwner: [], legacy: [], refs: 0 }; open.set(chatId, t) }
+    if (!t) { t = { attachments: [], messagedOwner: [], refs: 0 }; open.set(chatId, t) }
     t.refs++
     return t
   }
@@ -231,33 +228,6 @@ export function makeReplyDeliveryRuntime(deps: ReplyDeliveryRuntimeDeps): ReplyD
     let done = false
     const finish = () => { if (!done) { done = true; release(chatId, turn) } }
 
-    if (opts.mode === 'shadow') {
-      return {
-        mode: 'shadow',
-        async progress() { /* shadow 不发任何东西 */ },
-        async deliver(parts: TurnTextParts): Promise<DeliveryReport> {
-          const legacy = [...turn.legacy]
-          finish()
-          const { reply } = buildTurnReply(parts, [], opts.context, opts.textStrategy)
-          const split = deps.chatPrefs?.(chatId)?.split !== false
-          const wouldSend = reply.silent ? [] : (reply.segments ?? [reply.text]).flatMap(seg => splitBubbles(seg, { split }))
-          const legacyJoined = legacy.join('\n')
-          const match = legacy.length === 0 && wouldSend.length === 0 ? 'both_empty'
-            : legacy.length === 0 ? 'legacy_empty'
-            : wouldSend.length === 0 ? 'shadow_empty'
-            : norm(legacyJoined) === norm(reply.text) ? 'same'
-            : sameOrContains(legacyJoined, reply.text) ? 'contains'
-            : 'differs'
-          deps.log('REPLY_SHADOW', `chat=${chatId} provider=${opts.providerId} context=${opts.context} legacy_n=${legacy.length} legacy_len=${legacyJoined.length} shadow_bubbles=${wouldSend.length} shadow_len=${reply.text.length} narration=${reply.narration.length} silent=${reply.silent} match=${match}`, {
-            event: 'reply_shadow', chat_id: chatId, provider: opts.providerId, context: opts.context,
-            legacy_n: legacy.length, shadow_bubbles: wouldSend.length, narration: reply.narration.length, silent: reply.silent, match,
-          })
-          return { delivery: classify({ bubbles: wouldSend.length }, 0, reply.silent), target: 'wechat', bubbles: wouldSend.length, attachmentsSent: 0, failures: [], msgIds: [], shadow: true }
-        },
-        abandon() { finish() },
-      }
-    }
-
     trackDaemon(opts.providerId, chatId, 1)
     // 这一轮另有出口(伙伴主动找你)⇒ 文字、进度都走它;其余(接收器、旁听、分条)照旧。
     const out: DeliverDeps = opts.outbound
@@ -268,7 +238,6 @@ export function makeReplyDeliveryRuntime(deps: ReplyDeliveryRuntimeDeps): ReplyD
       : deps
     const finishDaemon = () => { if (!done) trackDaemon(opts.providerId, chatId, -1); finish() }
     return {
-      mode: 'daemon',
       async progress(text: string) {
         if (done || text.trim() === '') return
         if (deps.isSinkOpen?.(chatId)) return // app 这一轮:旁白在 app 里本来就看得见,不进微信
@@ -318,9 +287,6 @@ export function makeReplyDeliveryRuntime(deps: ReplyDeliveryRuntimeDeps): ReplyD
     hasOpenTurn: (chatId) => open.has(chatId),
     noteMessage(chatId, m) {
       if (m.toOwner) open.get(chatId)?.messagedOwner.push(m.text)
-    },
-    observeLegacy(chatId, text) {
-      open.get(chatId)?.legacy.push(text)
     },
     turnChatFor(providerId) {
       const byChat = daemonTurns.get(providerId)

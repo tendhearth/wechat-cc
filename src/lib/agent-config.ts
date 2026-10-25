@@ -56,13 +56,6 @@ export interface AgentConfig {
    *  全部已注册。guest 对共享钥匙的 provider(agy/cursor)无论如何都拒。 */
   trusted_providers?: string[]
   /**
-   * 回复交付的运行时回滚开关(spec 2026-10-03-reply-delivery):按 provider 覆盖能力表里的
-   * `replyDelivery` 默认值,`{ "openai": "legacy" }` 就把 openai 退回 reply 工具。daemon 开机时读一次
-   * (MCP 工具表、提示词、协调器都按它走),改完重启 daemon 生效。非法值逐项丢掉。
-   * 见 docs/maintainer/reply-delivery.md。
-   */
-  reply_delivery?: Record<string, 'legacy' | 'shadow' | 'daemon'>
-  /**
    * 外部 agent CLI 自动升级(主人 2026-10-04:默认开)。缺省 = 全开、每天本地 4 点之后查一次;
    * `per_cli.<claude|codex|cursor|agy>.enabled: false` 逐个关。只停「自动」,`wechat-cc cli upgrade` 照样能用。
    * 解析成确定值在 core/cli-upgrade/config.ts。见 docs/maintainer/cli-auto-upgrade.md。
@@ -330,7 +323,6 @@ const AgentConfigSchema = z.object({
   relay_v2_url: z.string().optional(),
   cheapEvalProvider: z.string().optional(),
   trusted_providers: z.array(z.string()).optional(),
-  reply_delivery: z.record(z.string(), z.enum(['legacy', 'shadow', 'daemon'])).optional(),
   cli_auto_upgrade: CliAutoUpgradeSettings.optional(),
   delegateOpenai: z.boolean().optional(),
   dangerouslySkipPermissions: z.boolean().default(true),
@@ -428,11 +420,8 @@ export function loadAgentConfig(stateDir: string): AgentConfig {
       if (result.success) selfChange = result.data
       else console.warn(`[agent-config] self_change 配置不合格,整块忽略:${result.error.issues.map(i => `${i.path.join('.') || '(根)'}: ${i.message}`).join('; ')}`)
     }
-    // 回复交付开关:逐项校验,坏一项丢一项(这是回滚开关,不能因为一处笔误整块作废)。
-    const replyDelivery = typeof parsed.reply_delivery === 'object' && parsed.reply_delivery !== null && !Array.isArray(parsed.reply_delivery)
-      ? Object.fromEntries(Object.entries(parsed.reply_delivery as Record<string, unknown>)
-          .filter((e): e is [string, 'legacy' | 'shadow' | 'daemon'] => e[1] === 'legacy' || e[1] === 'shadow' || e[1] === 'daemon'))
-      : undefined
+    // `reply_delivery`(回复交付的回滚开关)D3 起退休:旧盘里还写着也照常开机 —— 和别的不认识的键一样,
+    // 这里只挑认识的字段,它被安静地丢掉(下次 saveAgentConfig 也不会再写回去)。
     // CLI 自动升级:坏一项不该把整块(尤其 enabled)作废 —— 逐项挑合法的留下,其余由 core 侧补缺省。
     const cliAutoUpgrade = typeof parsed.cli_auto_upgrade === 'object' && parsed.cli_auto_upgrade !== null && !Array.isArray(parsed.cli_auto_upgrade)
       ? CliAutoUpgradeSettings.safeParse(parsed.cli_auto_upgrade).data ?? (() => {
@@ -473,7 +462,6 @@ export function loadAgentConfig(stateDir: string): AgentConfig {
       ...(typeof parsed.relay_v2_url === 'string' ? { relay_v2_url: parsed.relay_v2_url } : {}),
       ...(typeof parsed.cheapEvalProvider === 'string' ? { cheapEvalProvider: parsed.cheapEvalProvider } : {}),
       ...(Array.isArray(parsed.trusted_providers) ? { trusted_providers: parsed.trusted_providers } : {}),
-      ...(replyDelivery && Object.keys(replyDelivery).length > 0 ? { reply_delivery: replyDelivery } : {}),
       ...(cliAutoUpgrade ? { cli_auto_upgrade: cliAutoUpgrade } : {}),
       ...(typeof parsed.delegateOpenai === 'boolean' ? { delegateOpenai: parsed.delegateOpenai } : {}),
       dangerouslySkipPermissions,

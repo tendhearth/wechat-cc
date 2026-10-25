@@ -5,15 +5,16 @@
  * to the daemon's internal-api over loopback HTTP (RFC 03 §5).
  *
  * The optional `participantTag` (RFC 03 P3) is the providerId baked into
- * the wechat-mcp child's env so the stdio reply tool can identify which
- * agent generated each reply. internal-api uses this to prefix `[Claude]`
- * / `[Codex]` in parallel + chatroom modes.
+ * the wechat-mcp child's env so tools that act on "this provider" (model_get,
+ * terminal_say …) know who is calling. The reply-tool family it used to tag
+ * for `[Claude]` / `[Codex]` prefixes is gone (回复交付 D3: the daemon adds the
+ * prefix when it delivers the final text).
  *
  * History: from P1.A through P1.B B6 the wechat stdio server was named
  * `wechat_ipc` to coexist with the legacy in-process `wechat` server.
  * After B1 the legacy server is gone and the stdio one inherits the
- * canonical `wechat` name — keeping tool names like `mcp__wechat__reply`
- * stable for the agent and the providers' replyToolCalled detection.
+ * canonical `wechat` name — keeping tool names like `mcp__wechat__voice`
+ * stable for the agent.
  */
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
@@ -21,7 +22,6 @@ import type { ProviderId } from '../../core/conversation'
 import { isCompiledBundle } from '../../lib/runtime-info'
 import { mergeEnvIntoMcpServers, CORE_MCP_SERVER_NAMES } from '../../core/agent-provider'
 import type { McpStdioSpec } from '../../core/mcp-stdio-spec'
-import { replyDeliveryFor } from '../../core/capability-matrix'
 
 export type { McpStdioSpec } from '../../core/mcp-stdio-spec'
 
@@ -69,9 +69,6 @@ export function wechatStdioMcpSpec(
       WECHAT_INTERNAL_API: internalApi.baseUrl,
       WECHAT_INTERNAL_TOKEN_FILE: internalApi.tokenFilePath,
       ...(participantTag ? { WECHAT_PARTICIPANT_TAG: participantTag } : {}),
-      // 回复交付(spec 2026-10-03 §5):这家 provider 走 daemon 交付 ⇒ wechat MCP 不注册 reply 族工具,
-      // 只给附件工具(+ admin 的 message)。按 provider 的开关来,翻一家就是改一处能力表。
-      ...(participantTag && replyDeliveryFor(participantTag) === 'daemon' ? { WECHAT_REPLY_DELIVERY: 'daemon' } : {}),
     },
   }
 }

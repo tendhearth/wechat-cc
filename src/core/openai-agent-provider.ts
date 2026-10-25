@@ -51,8 +51,8 @@ export interface OpenAiAgentProviderOptions {
   log?: (tag: string, line: string) => void
   /**
    * 实验专用注入口(回复交付 spec §5.1 第 1 项;原样来自 PR #196):把 Read/Write/Edit/Bash/view_image
-   * 换成别的实现。`scripts/experiments/reply-once/harness.ts` 用它换成只记账的假工具 —— 没有这个口,
-   * 真模型调的 Bash 会被真的执行,所以 harness 发现没有它就拒跑。生产路径从不传(缺省 = 真的 builtinTools)。
+   * 换成别的实现。当年的 reply-once harness 用它换成只记账的假工具(harness 随旧路在 D3 删了,数据留在
+   * scripts/experiments/reply-once/*.jsonl);测试也用它。生产路径从不传(缺省 = 真的 builtinTools)。
    */
   makeBuiltins?: (cwd: string) => BuiltinTool[]
 }
