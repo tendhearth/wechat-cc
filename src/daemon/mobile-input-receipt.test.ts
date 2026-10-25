@@ -12,7 +12,8 @@ import {makeMattersService} from '../core/matters/service'
 import {makeWorkbenchStore} from '../core/workbench/store'
 import {makeWorkbenchService,type WorkbenchService} from '../core/workbench/service'
 import {makeSettingsPanel,type SettingsPanel} from './settings-panel'
-import {mobileWorkbenchRoute} from './mobile-workbench'
+import {mobileWorkbenchRoutes} from './mobile-workbench'
+import { routePhone } from './phone-route-table'
 
 let root:string,db:Db,workbench:WorkbenchService,panel:SettingsPanel,owner:string|null
 let store:ReturnType<typeof makeWorkbenchStore>,matters:ReturnType<typeof makeMatterStore>,service:ReturnType<typeof makeMattersService>
@@ -158,9 +159,9 @@ describe('single input receipt through real matter/workbench/phone layers',()=>{
 
   it('fails closed when older service wiring has no single-receipt action',async()=>{
     const url=new URL('http://phone.test'+path('deadbeef',randomUUID()))
-    const response=await mobileWorkbenchRoute({},url,new Request(url))
+    const response=await routePhone(mobileWorkbenchRoutes({}),url,new Request(url))
     expect(response?.status).toBe(503);expect(await response!.json()).toEqual({ok:false,error:'unavailable'})
-    const mutation=await mobileWorkbenchRoute({},url,new Request(url,{method:'POST'}))
+    const mutation=await routePhone(mobileWorkbenchRoutes({}),url,new Request(url,{method:'POST'}))
     expect(mutation?.status).toBe(405)
   })
 

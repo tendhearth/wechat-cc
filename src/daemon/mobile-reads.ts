@@ -1,6 +1,7 @@
 import { basename } from 'node:path'
 import { redactConnections, type ConnectionsSnapshot } from './connections'
 import { framedTooLarge } from './mobile-matter-response'
+import { ownsMethod, type PhoneRouteTable } from './phone-route-table'
 import type { CliSessionView } from '../core/cli-session-store'
 import type { OverseerToday } from '../core/overseer-today'
 import { PHONE_CLI_SAY_MAX, type CliPhoneActions } from './cli-phone-actions'
@@ -8,7 +9,7 @@ import type { NativeHistoryItem, NativeHistoryListInput, NativeHistoryPage, Nati
 
 /**
  * mobile-reads.ts — 手机只读路由(spec 2026-10-01 §3):CC 的连接、电脑上的原生会话。
- * 路由字面量被 scripts/phone-routes.guard.test.ts 扫描。纵深防御:连接经 redactConnections,
+ * 表里的键由 scripts/phone-routes.guard.test.ts 对着路由表核对。纵深防御:连接经 redactConnections,
  * 手机口径永远没有插件目录与未就绪原因(设备/链接令牌本身也是 admin 档)。
  */
 export const PHONE_SESSIONS_BUDGET_MS = 10_000
@@ -120,116 +121,117 @@ export function cacheSessions(inner: MobileSessionsDeps, o: { ttlMs?: number; ma
   }
 }
 
-export async function mobileReadsRoute(deps: MobileReadsDeps, url: URL, req: Request, opts: { budgetMs?: number } = {}): Promise<Response | null> {
-  if (url.pathname === '/m/api/connections') {
-    if (req.method !== 'GET') return json({ ok: false, error: 'method_not_allowed' }, 405)
-    if (!deps.connections) return json({ ok: false, error: 'connections_not_wired' }, 503)
-    // 裁定 7:内部失败一律 503(客户端当作离线/不可用),不是 500。
-    try { return json({ ok: true, ...redactConnections(deps.connections()) }) }
-    catch { return json({ ok: false, error: 'unavailable' }, 503) }
-  }
-  if (url.pathname === '/m/api/cli/sessions') {
-    if (req.method !== 'GET') return json({ ok: false, error: 'method_not_allowed' }, 405)
-    if (!deps.cliSessions) return json({ ok: false, error: 'cli_sessions_not_wired' }, 503)
-    const ph = deps.cliActions ? (id: string) => deps.cliActions!.pendingHash(id) : undefined
-    try {
-      // 在跑的会话带上此刻那一步(列表一眼看到谁在做什么);最多前 PHONE_CLI_NOW_MAX 条,读不到就不带。
-      let budget = PHONE_CLI_NOW_MAX
-      // 开在电脑窗口里的 Claude 会话(2026-10-18):手机上在跑时也能接着说(话送进那个窗口)。
-      const live = deps.cliActions?.liveWindows?.() ?? new Set<string>()
-      const sessions = deps.cliSessions().slice(0, PHONE_CLI_SESSIONS_MAX).map(v => {
-        const plain = phoneCliSession(v, ph)
-        const base = deps.executorName ? { ...plain, displayName: deps.executorName(v.source) } : plain
-        const lw = v.source === 'claude' && live.has(v.session_id) ? { ...base, live_window: true } : base
-        let said: ReturnType<NonNullable<CliPhoneActions['lastSay']>> = null
-        try { said = deps.cliActions?.lastSay?.(v.session_id) ?? null } catch { said = null }
-        const row = said ? { ...lw, last_say: said } : lw
-        if (v.status !== 'running' || v.stale || budget <= 0 || !deps.cliActions?.currentStep) return row
-        budget--
-        let now: ReturnType<CliPhoneActions['currentStep']> = null
-        try { now = deps.cliActions.currentStep(v.session_id) } catch { now = null }
-        return now ? { ...row, now } : row
-      })
-      return json({ ok: true, sessions })
-    }
-    catch { return json({ ok: false, error: 'unavailable' }, 503) }
-  }
-  // 看着它跑(2026-10-17):一条终端会话最近几步。手机展开那一行时每几秒拉一次;只读,和「看 码」同一份记录。
-  if (url.pathname === '/m/api/cli/activity') {
-    if (req.method !== 'GET') return json({ ok: false, error: 'method_not_allowed' }, 405)
-    if (!deps.cliActions) return json({ ok: false, error: 'cli_actions_not_wired' }, 503)
-    const id = url.searchParams.get('session_id')
-    if (!id || !SESSION_ID_RE.test(id) || url.searchParams.getAll('session_id').length > 1) return json({ ok: false, error: 'invalid' }, 400)
-    try {
-      const r = deps.cliActions.activity(id)
-      if (!r.ok) return json({ ok: false, error: r.error }, r.error === 'not_found' ? 404 : 409)
-      // 旧中继一帧 512 KiB:每步文字上限减半直到放得下(不删步)。
-      const cut = (t: string, max: number) => (t.length > max ? t.slice(0, max - 1) + '…' : t)
-      return fitted(max => ({ ok: true, items: r.items.map(i => ({ ...i, text: cut(i.text, max), ...(i.detail ? { detail: cut(i.detail, max * 3) } : {}) })) }), 600)
-    } catch { return json({ ok: false, error: 'unavailable' }, 503) }
-  }
-  // 「今天」(2026-10-14):终端 + 一起做,过去 24 小时 —— 与微信「日报」同一份数据。
-  if (url.pathname === '/m/api/today') {
-    if (req.method !== 'GET') return json({ ok: false, error: 'method_not_allowed' }, 405)
-    if (!deps.today) return json({ ok: false, error: 'today_not_wired' }, 503)
-    try { return json({ ok: true, today: deps.today() }) }
-    catch { return json({ ok: false, error: 'unavailable' }, 503) }
-  }
-  // 拍板终端会话等批准的那一项 —— 与微信「y/n 码」同一条路(cli-phone-actions.ts)。
-  if (url.pathname === '/m/api/cli/permission') {
-    if (req.method !== 'POST') return json({ ok: false, error: 'method_not_allowed' }, 405)
-    if (!deps.cliActions) return json({ ok: false, error: 'cli_actions_not_wired' }, 503)
-    const b = await bodyOf(req)
-    const hash = b?.['hash'], sessionId = b?.['session_id'], decision = b?.['decision']
-    if (!b || (decision !== 'allow' && decision !== 'deny')
-      || (hash !== undefined && (typeof hash !== 'string' || !HASH_RE.test(hash)))
-      || (sessionId !== undefined && (typeof sessionId !== 'string' || !SESSION_ID_RE.test(sessionId)))
-      || (hash === undefined && sessionId === undefined)) return json({ ok: false, error: 'invalid' }, 400)
-    try {
-      const r = deps.cliActions.permission({ ...(typeof hash === 'string' ? { hash } : {}), ...(typeof sessionId === 'string' ? { session_id: sessionId } : {}) }, decision)
-      if (r.ok) return json({ ok: true })
-      return json({ ok: false, error: r.error }, r.error === 'not_found' ? 404 : 409)
-    } catch { return json({ ok: false, error: 'unavailable' }, 503) }
-  }
-  // 对终端会话接着说一句 —— 与微信「@码」同一个 core;收下即回,结果成为这条会话的下一句。
-  if (url.pathname === '/m/api/cli/say') {
-    if (req.method !== 'POST') return json({ ok: false, error: 'method_not_allowed' }, 405)
-    if (!deps.cliActions) return json({ ok: false, error: 'cli_actions_not_wired' }, 503)
-    const b = await bodyOf(req)
-    const sessionId = b?.['session_id'], text = typeof b?.['text'] === 'string' ? (b['text'] as string).trim() : ''
-    if (!b || typeof sessionId !== 'string' || !SESSION_ID_RE.test(sessionId) || !text || text.length > PHONE_CLI_SAY_MAX || text.includes('\0')) return json({ ok: false, error: 'invalid' }, 400)
-    try {
-      const r = deps.cliActions.say(sessionId, text)
-      if (r.ok) return json({ ok: true, accepted: true, ...(r.say_id ? { say_id: r.say_id } : {}) })
-      return json({ ok: false, error: r.error }, r.error === 'not_found' ? 404 : 409)
-    } catch { return json({ ok: false, error: 'unavailable' }, 503) }
-  }
+export function mobileReadsRoutes(deps: MobileReadsDeps, opts: { budgetMs?: number } = {}): PhoneRouteTable {
   /** 行里带上执行者正式名字(收敛清单 ⑥);没接名字 ⇒ 原样(App 退回 id)。 */
   const named = <R extends { provider: string }>(r: R): R & { displayName?: string } => deps.executorName ? { ...r, displayName: deps.executorName(r.provider) } : r
-  if (url.pathname === '/m/api/sessions') {
-    if (req.method !== 'GET') return json({ ok: false, error: 'method_not_allowed' }, 405)
-    if (!deps.sessions) return json({ ok: false, error: 'sessions_not_wired' }, 503)
-    const provider = url.searchParams.get('provider'), cursor = cursorOf(url), queries = url.searchParams.getAll('q'), query = queries[0] ?? ''
-    if ((provider !== 'claude' && provider !== 'codex') || url.searchParams.getAll('provider').length !== 1 || cursor === null || queries.length > 1 || query.length > 200 || query.includes('\0')) return json({ ok: false, error: 'invalid' }, 400)
-    try {
-      const page = await withBudget(deps.sessions.list(provider, { q: query.trim(), limit: PHONE_SESSIONS_PAGE, ...(cursor ? { cursor } : {}) }), opts.budgetMs ?? PHONE_SESSIONS_BUDGET_MS)
-      const names = deps.executorName ? { names: { claude: deps.executorName('claude'), codex: deps.executorName('codex') } } : {}
-      return fitted(max => ({ ok: true, items: page.items.map(i => named(row(i, max))), nextCursor: page.nextCursor, ...names }), 200)
-    } catch (e) { return sessionError(e) }
+  return {
+    'GET /m/api/connections': ownsMethod(async (url: URL, req: Request) => {
+      if (req.method !== 'GET') return json({ ok: false, error: 'method_not_allowed' }, 405)
+      if (!deps.connections) return json({ ok: false, error: 'connections_not_wired' }, 503)
+      // 裁定 7:内部失败一律 503(客户端当作离线/不可用),不是 500。
+      try { return json({ ok: true, ...redactConnections(deps.connections()) }) }
+      catch { return json({ ok: false, error: 'unavailable' }, 503) }
+    }),
+    'GET /m/api/cli/sessions': ownsMethod(async (url: URL, req: Request) => {
+      if (req.method !== 'GET') return json({ ok: false, error: 'method_not_allowed' }, 405)
+      if (!deps.cliSessions) return json({ ok: false, error: 'cli_sessions_not_wired' }, 503)
+      const ph = deps.cliActions ? (id: string) => deps.cliActions!.pendingHash(id) : undefined
+      try {
+        // 在跑的会话带上此刻那一步(列表一眼看到谁在做什么);最多前 PHONE_CLI_NOW_MAX 条,读不到就不带。
+        let budget = PHONE_CLI_NOW_MAX
+        // 开在电脑窗口里的 Claude 会话(2026-10-18):手机上在跑时也能接着说(话送进那个窗口)。
+        const live = deps.cliActions?.liveWindows?.() ?? new Set<string>()
+        const sessions = deps.cliSessions().slice(0, PHONE_CLI_SESSIONS_MAX).map(v => {
+          const plain = phoneCliSession(v, ph)
+          const base = deps.executorName ? { ...plain, displayName: deps.executorName(v.source) } : plain
+          const lw = v.source === 'claude' && live.has(v.session_id) ? { ...base, live_window: true } : base
+          let said: ReturnType<NonNullable<CliPhoneActions['lastSay']>> = null
+          try { said = deps.cliActions?.lastSay?.(v.session_id) ?? null } catch { said = null }
+          const row = said ? { ...lw, last_say: said } : lw
+          if (v.status !== 'running' || v.stale || budget <= 0 || !deps.cliActions?.currentStep) return row
+          budget--
+          let now: ReturnType<CliPhoneActions['currentStep']> = null
+          try { now = deps.cliActions.currentStep(v.session_id) } catch { now = null }
+          return now ? { ...row, now } : row
+        })
+        return json({ ok: true, sessions })
+      }
+      catch { return json({ ok: false, error: 'unavailable' }, 503) }
+    }),
+    // 看着它跑(2026-10-17):一条终端会话最近几步。手机展开那一行时每几秒拉一次;只读,和「看 码」同一份记录。
+    'GET /m/api/cli/activity': ownsMethod(async (url: URL, req: Request) => {
+      if (req.method !== 'GET') return json({ ok: false, error: 'method_not_allowed' }, 405)
+      if (!deps.cliActions) return json({ ok: false, error: 'cli_actions_not_wired' }, 503)
+      const id = url.searchParams.get('session_id')
+      if (!id || !SESSION_ID_RE.test(id) || url.searchParams.getAll('session_id').length > 1) return json({ ok: false, error: 'invalid' }, 400)
+      try {
+        const r = deps.cliActions.activity(id)
+        if (!r.ok) return json({ ok: false, error: r.error }, r.error === 'not_found' ? 404 : 409)
+        // 旧中继一帧 512 KiB:每步文字上限减半直到放得下(不删步)。
+        const cut = (t: string, max: number) => (t.length > max ? t.slice(0, max - 1) + '…' : t)
+        return fitted(max => ({ ok: true, items: r.items.map(i => ({ ...i, text: cut(i.text, max), ...(i.detail ? { detail: cut(i.detail, max * 3) } : {}) })) }), 600)
+      } catch { return json({ ok: false, error: 'unavailable' }, 503) }
+    }),
+    // 「今天」(2026-10-14):终端 + 一起做,过去 24 小时 —— 与微信「日报」同一份数据。
+    'GET /m/api/today': ownsMethod(async (url: URL, req: Request) => {
+      if (req.method !== 'GET') return json({ ok: false, error: 'method_not_allowed' }, 405)
+      if (!deps.today) return json({ ok: false, error: 'today_not_wired' }, 503)
+      try { return json({ ok: true, today: deps.today() }) }
+      catch { return json({ ok: false, error: 'unavailable' }, 503) }
+    }),
+    // 拍板终端会话等批准的那一项 —— 与微信「y/n 码」同一条路(cli-phone-actions.ts)。
+    'POST /m/api/cli/permission': ownsMethod(async (url: URL, req: Request) => {
+      if (req.method !== 'POST') return json({ ok: false, error: 'method_not_allowed' }, 405)
+      if (!deps.cliActions) return json({ ok: false, error: 'cli_actions_not_wired' }, 503)
+      const b = await bodyOf(req)
+      const hash = b?.['hash'], sessionId = b?.['session_id'], decision = b?.['decision']
+      if (!b || (decision !== 'allow' && decision !== 'deny')
+        || (hash !== undefined && (typeof hash !== 'string' || !HASH_RE.test(hash)))
+        || (sessionId !== undefined && (typeof sessionId !== 'string' || !SESSION_ID_RE.test(sessionId)))
+        || (hash === undefined && sessionId === undefined)) return json({ ok: false, error: 'invalid' }, 400)
+      try {
+        const r = deps.cliActions.permission({ ...(typeof hash === 'string' ? { hash } : {}), ...(typeof sessionId === 'string' ? { session_id: sessionId } : {}) }, decision)
+        if (r.ok) return json({ ok: true })
+        return json({ ok: false, error: r.error }, r.error === 'not_found' ? 404 : 409)
+      } catch { return json({ ok: false, error: 'unavailable' }, 503) }
+    }),
+    // 对终端会话接着说一句 —— 与微信「@码」同一个 core;收下即回,结果成为这条会话的下一句。
+    'POST /m/api/cli/say': ownsMethod(async (url: URL, req: Request) => {
+      if (req.method !== 'POST') return json({ ok: false, error: 'method_not_allowed' }, 405)
+      if (!deps.cliActions) return json({ ok: false, error: 'cli_actions_not_wired' }, 503)
+      const b = await bodyOf(req)
+      const sessionId = b?.['session_id'], text = typeof b?.['text'] === 'string' ? (b['text'] as string).trim() : ''
+      if (!b || typeof sessionId !== 'string' || !SESSION_ID_RE.test(sessionId) || !text || text.length > PHONE_CLI_SAY_MAX || text.includes('\0')) return json({ ok: false, error: 'invalid' }, 400)
+      try {
+        const r = deps.cliActions.say(sessionId, text)
+        if (r.ok) return json({ ok: true, accepted: true, ...(r.say_id ? { say_id: r.say_id } : {}) })
+        return json({ ok: false, error: r.error }, r.error === 'not_found' ? 404 : 409)
+      } catch { return json({ ok: false, error: 'unavailable' }, 503) }
+    }),
+    'GET /m/api/sessions': ownsMethod(async (url: URL, req: Request) => {
+      if (req.method !== 'GET') return json({ ok: false, error: 'method_not_allowed' }, 405)
+      if (!deps.sessions) return json({ ok: false, error: 'sessions_not_wired' }, 503)
+      const provider = url.searchParams.get('provider'), cursor = cursorOf(url), queries = url.searchParams.getAll('q'), query = queries[0] ?? ''
+      if ((provider !== 'claude' && provider !== 'codex') || url.searchParams.getAll('provider').length !== 1 || cursor === null || queries.length > 1 || query.length > 200 || query.includes('\0')) return json({ ok: false, error: 'invalid' }, 400)
+      try {
+        const page = await withBudget(deps.sessions.list(provider, { q: query.trim(), limit: PHONE_SESSIONS_PAGE, ...(cursor ? { cursor } : {}) }), opts.budgetMs ?? PHONE_SESSIONS_BUDGET_MS)
+        const names = deps.executorName ? { names: { claude: deps.executorName('claude'), codex: deps.executorName('codex') } } : {}
+        return fitted(max => ({ ok: true, items: page.items.map(i => named(row(i, max))), nextCursor: page.nextCursor, ...names }), 200)
+      } catch (e) { return sessionError(e) }
+    }),
+    'GET /m/api/session': ownsMethod(async (url: URL, req: Request) => {
+      if (req.method !== 'GET') return json({ ok: false, error: 'method_not_allowed' }, 405)
+      if (!deps.sessions) return json({ ok: false, error: 'sessions_not_wired' }, 503)
+      const key = url.searchParams.get('key'), cursor = cursorOf(url), windows = url.searchParams.getAll('window'), window = windows[0] ?? 'start'
+      if (!key || key.length > 2048 || url.searchParams.getAll('key').length !== 1 || cursor === null || windows.length > 1 || !['start', 'recent'].includes(window) || (window === 'recent' && cursor !== undefined)) return json({ ok: false, error: 'invalid' }, 400)
+      if (window === 'recent' && !deps.sessions.readRecent) return json({ ok: false, error: 'unavailable' }, 503)
+      try {
+        const p = await withBudget(window === 'recent' ? deps.sessions.readRecent!(key, { limit: PHONE_SESSION_PAGE }) : deps.sessions.read(key, { limit: PHONE_SESSION_PAGE, ...(cursor ? { cursor } : {}) }), Math.min(opts.budgetMs ?? PHONE_SESSIONS_BUDGET_MS, window === 'recent' ? PHONE_SESSION_RECENT_BUDGET_MS : PHONE_SESSIONS_BUDGET_MS))
+        return fitted(max => ({
+          ok: true, session: named(row(p.session)), nextCursor: p.nextCursor, managed: !!p.managedTaskId, window,
+          messages: p.messages.map(m => ({ id: m.id, role: m.role, text: m.text.slice(0, max), truncated: m.truncated || m.text.length > max })),
+        }), PHONE_SESSION_TEXT_MAX)
+      } catch (e) { return sessionError(e) }
+    }),
   }
-  if (url.pathname === '/m/api/session') {
-    if (req.method !== 'GET') return json({ ok: false, error: 'method_not_allowed' }, 405)
-    if (!deps.sessions) return json({ ok: false, error: 'sessions_not_wired' }, 503)
-    const key = url.searchParams.get('key'), cursor = cursorOf(url), windows = url.searchParams.getAll('window'), window = windows[0] ?? 'start'
-    if (!key || key.length > 2048 || url.searchParams.getAll('key').length !== 1 || cursor === null || windows.length > 1 || !['start', 'recent'].includes(window) || (window === 'recent' && cursor !== undefined)) return json({ ok: false, error: 'invalid' }, 400)
-    if (window === 'recent' && !deps.sessions.readRecent) return json({ ok: false, error: 'unavailable' }, 503)
-    try {
-      const p = await withBudget(window === 'recent' ? deps.sessions.readRecent!(key, { limit: PHONE_SESSION_PAGE }) : deps.sessions.read(key, { limit: PHONE_SESSION_PAGE, ...(cursor ? { cursor } : {}) }), Math.min(opts.budgetMs ?? PHONE_SESSIONS_BUDGET_MS, window === 'recent' ? PHONE_SESSION_RECENT_BUDGET_MS : PHONE_SESSIONS_BUDGET_MS))
-      return fitted(max => ({
-        ok: true, session: named(row(p.session)), nextCursor: p.nextCursor, managed: !!p.managedTaskId, window,
-        messages: p.messages.map(m => ({ id: m.id, role: m.role, text: m.text.slice(0, max), truncated: m.truncated || m.text.length > max })),
-      }), PHONE_SESSION_TEXT_MAX)
-    } catch (e) { return sessionError(e) }
-  }
-  return null
 }

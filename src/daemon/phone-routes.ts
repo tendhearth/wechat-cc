@@ -7,7 +7,7 @@ import { PHONE_TOPIC_NAMES, ROUTES } from '@wechat-cc/protocol/routes'
  * 形状与内部 API 的 routeAllow 一致:`"METHOD /path"` 精确键;以 `/` 结尾的键是前缀
  * (贴纸一族)。**名单本身在路由表 `packages/protocol/src/routes.ts`**(重构第二批 5a):新加手机路由
  * 在那里加一行(`phone` / `set` 块,`link` 必填),这里的集合都是推出来的,名字和类型不变。
- * `scripts/phone-routes.guard.test.ts` 会对着 `settings-panel.ts` 的 routeRequest 与 `mobile-*.ts` 双向核对。
+ * 处理器登记在 `settings-panel.ts` 合成的 `"METHOD /path"` 表里(phone-route-table.ts),`scripts/phone-routes.guard.test.ts` 拿表的键双向核对。
  *
  * 设计稿:docs/superpowers/specs/2026-09-27-device-token-registry-design.md;与之不同的
  * 两条裁决见 docs/superpowers/plans/2026-09-29-device-token-registry.md。

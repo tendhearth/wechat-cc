@@ -1,13 +1,14 @@
 import { describe, it, expect, vi } from 'vitest'
-import { mobileJobsRoute, type MobileJobsDeps } from './mobile'
+import { mobileJobsRoutes, type MobileJobsDeps } from './mobile'
+import { routePhone } from '../../daemon/phone-route-table'
 
 const call = async (deps: MobileJobsDeps | undefined, path: string, method = 'GET', body?: unknown) => {
   const url = new URL(`http://x${path}`)
-  return mobileJobsRoute(deps, url, new Request(url, { method, ...(body !== undefined ? { body: JSON.stringify(body), headers: { 'content-type': 'application/json' } } : {}) }))
+  return routePhone(mobileJobsRoutes(deps), url, new Request(url, { method, ...(body !== undefined ? { body: JSON.stringify(body), headers: { 'content-type': 'application/json' } } : {}) }))
 }
 const view = { ok: true as const, timezone: 'Asia/Shanghai', executor: 'claude', jobs: [{ id: 'j1', label: '每天 08:00(上海)', text: '早报', brief: true, paused: false, last: null }] }
 
-describe('mobileJobsRoute(B7)', () => {
+describe('mobileJobsRoutes(B7)', () => {
   it('not ours ⇒ null; wrong method ⇒ 405; unwired ⇒ 503', async () => {
     expect(await call(undefined, '/m/api/other')).toBeNull()
     expect((await call(undefined, '/m/api/jobs', 'POST'))!.status).toBe(405)

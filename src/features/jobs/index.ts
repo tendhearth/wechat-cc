@@ -14,7 +14,7 @@ import { wireJobs, type WireJobsDeps } from './wire'
 
 export { statusWord } from './command'
 export { jobsView, jobsAction, type JobsActionKind } from './view'
-export { mobileJobsRoute, type MobileJobsDeps } from './mobile'
+export { mobileJobsRoutes, type MobileJobsDeps } from './mobile'
 export type { WireJobsDeps } from './wire'
 
 export type JobsFeature = ReturnType<typeof wireJobs>

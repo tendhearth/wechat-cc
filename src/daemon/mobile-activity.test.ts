@@ -1,10 +1,11 @@
 import { describe, expect, it } from 'vitest'
-import { mobileActivityRoute } from './mobile-activity'
+import { mobileActivityRoutes } from './mobile-activity'
+import { routePhone } from './phone-route-table'
 import { PHONE_API_SCHEMAS } from '../../packages/protocol/src/api'
 
 const NOW = Date.parse('2026-10-20T12:00:00Z')
-const run = async (deps: Parameters<typeof mobileActivityRoute>[0], path: string, method = 'GET') => {
-  const r = await mobileActivityRoute(deps, new URL('http://x' + path), new Request('http://x' + path, { method }))
+const run = async (deps: Parameters<typeof mobileActivityRoutes>[0], path: string, method = 'GET') => {
+  const r = await routePhone(mobileActivityRoutes(deps), new URL('http://x' + path), new Request('http://x' + path, { method }))
   return r && { status: r.status, body: await r.json() as any }
 }
 const items = Array.from({ length: 5 }, (_, i) => ({ id: `job:${i}`, kind: 'job' as const, at: NOW - i * 60_000, title: `定时 j${i}:说了` }))

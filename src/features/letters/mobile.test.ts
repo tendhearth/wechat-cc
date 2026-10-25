@@ -1,16 +1,17 @@
 import { describe, it, expect } from 'vitest'
-import { mobileLettersRoute, type MobileLettersDeps } from './mobile'
+import { mobileLettersRoutes, type MobileLettersDeps } from './mobile'
+import { routePhone } from '../../daemon/phone-route-table'
 import { framedTooLarge } from '../../daemon/mobile-matter-response'
 import type { LetterListItem } from './archive'
 
 const req = (path: string, method = 'GET') => { const url = new URL(`http://x${path}`); return { url, req: new Request(url, { method }) } }
 const call = async (deps: MobileLettersDeps | undefined, path: string, method?: string) => {
   const r = req(path, method)
-  return mobileLettersRoute(deps, r.url, r.req)
+  return routePhone(mobileLettersRoutes(deps), r.url, r.req)
 }
 const item = (i: number, text?: string): LetterListItem => ({ id: `2026-10-${String(i).padStart(2, '0')}-abcdef`, day: '2026-10-01', sentAt: i, requested: false, via: 'wechat', opening: '开头', pages: text ? 0 : 1, ...(text ? { text } : {}) })
 
-describe('mobileLettersRoute', () => {
+describe('mobileLettersRoutes', () => {
   it('不是自己的路径 ⇒ null;方法不对 ⇒ 405;没接 ⇒ 503', async () => {
     expect(await call(undefined, '/m/api/chat')).toBeNull()
     expect((await call(undefined, '/m/api/letters', 'POST'))!.status).toBe(405)

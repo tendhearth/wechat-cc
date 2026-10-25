@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from 'vitest'
 import { PHONE_API_SCHEMAS } from '@wechat-cc/protocol'
-import { mobileReadsRoute, cacheSessions, SESSIONS_DONE_MAX, type MobileSessionsDeps } from './mobile-reads'
+import { mobileReadsRoutes, cacheSessions, SESSIONS_DONE_MAX, type MobileSessionsDeps } from './mobile-reads'
+import { routePhone } from './phone-route-table'
 import type { ConnectionsSnapshot } from './connections'
 import { buildOverseerToday } from '../core/overseer-today'
 import { deriveSharedKey, generateTunnelKeypair, sealFrame } from '../lib/tunnel-crypto'
@@ -9,8 +10,8 @@ const SNAP: ConnectionsSnapshot = {
   generatedAt: 1, computers: [{ id: 'home', label: 'Mac', online: true, since: 0, version: '1.7.1' }], recent: [], outputs: [],
   sources: [{ id: 'wechat_history', kind: 'wechat_history', name: 'wxvault', state: 'not_loaded', latestAt: null, syncedAt: null, detail: { reason: 'missing', dir: '/Users/nate/plugins' } }],
 }
-const run = async (deps: Parameters<typeof mobileReadsRoute>[0], path: string, method = 'GET') => {
-  const r = await mobileReadsRoute(deps, new URL('http://x' + path), new Request('http://x' + path, { method }))
+const run = async (deps: Parameters<typeof mobileReadsRoutes>[0], path: string, method = 'GET') => {
+  const r = await routePhone(mobileReadsRoutes(deps), new URL('http://x' + path), new Request('http://x' + path, { method }))
   return r && { status: r.status, body: await r.json() as any }
 }
 
@@ -93,7 +94,7 @@ describe('GET /m/api/sessions、/m/api/session', () => {
     expect((await run({ sessions: sessions({ read: async () => { throw new Error('invalid_cursor') } }) }, '/m/api/session?key=k1'))!.status).toBe(400)
     const slow = sessions({ read: () => new Promise(() => {}) })
     const t0 = Date.now()
-    const r = await mobileReadsRoute({ sessions: slow }, new URL('http://x/m/api/session?key=k1'), new Request('http://x/m/api/session?key=k1'), { budgetMs: 30 })
+    const r = await routePhone(mobileReadsRoutes({ sessions: slow }, { budgetMs: 30 }), new URL('http://x/m/api/session?key=k1'), new Request('http://x/m/api/session?key=k1'))
     expect(r!.status).toBe(503); expect(Date.now() - t0).toBeLessThan(1000)
     expect((await run({}, '/m/api/sessions?provider=claude'))!.status).toBe(503)
     expect((await run({ sessions: sessions({ list: async () => { throw new Error('boom') } }) }, '/m/api/sessions?provider=claude'))!.status).toBe(503)
@@ -178,7 +179,7 @@ describe('旧中继帧大小(终审 M1):会话页 / 会话列表最坏情况也�
       const d = sessions({ read, readRecent:read })
       for(const window of ['start','recent']){
         const url=new URL('http://x/m/api/session?key=k1&window='+window)
-        const r = (await mobileReadsRoute({ sessions: d }, url, new Request(url)))!
+        const r = (await routePhone(mobileReadsRoutes({ sessions: d }), url, new Request(url)))!
         expect(r.status).toBe(200)
         const text = await r.text(),body = JSON.parse(text)
         expect(body.messages).toHaveLength(20);expect(body.window).toBe(window)
@@ -191,7 +192,7 @@ describe('旧中继帧大小(终审 M1):会话页 / 会话列表最坏情况也�
     it(`列表 30 行,标题与目录名全是${name} ⇒ 线上 < 512 KiB`, async () => {
       const items = Array.from({ length: 30 }, (_, i) => ({ ...ITEM, key: `k${i}`, title: ch.repeat(300), cwd: '/w/' + ch.repeat(4000) }))
       const d = sessions({ list: async () => ({ items, nextCursor: 'c', coverage: 'native_supported_history' }) })
-      const r = (await mobileReadsRoute({ sessions: d }, new URL('http://x/m/api/sessions?provider=claude'), new Request('http://x/m/api/sessions?provider=claude')))!
+      const r = (await routePhone(mobileReadsRoutes({ sessions: d }), new URL('http://x/m/api/sessions?provider=claude'), new Request('http://x/m/api/sessions?provider=claude')))!
       expect(r.status).toBe(200)
       const text = await r.text()
       expect(JSON.parse(text).items).toHaveLength(30)
@@ -237,7 +238,7 @@ describe('送进窗口的结果(10-20 真机)', () => {
     expect(r!.body.sessions[0].last_say).toEqual({ id: 'a1b2c3d4e5f6', state: 'failed', error: '没送进电脑上开着的窗口(x)', at: 9 })
     expect(r!.body.sessions[1].last_say).toBeUndefined()
     const u = 'http://x/m/api/cli/say'
-    const res = await mobileReadsRoute({ cliActions }, new URL(u), new Request(u, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ session_id: 'abc123-xyz', text: '一句' }) }))
+    const res = await routePhone(mobileReadsRoutes({ cliActions }), new URL(u), new Request(u, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ session_id: 'abc123-xyz', text: '一句' }) }))
     const said = { body: await res!.json() as any }
     expect(said.body).toEqual({ ok: true, accepted: true, say_id: 'a1b2c3d4e5f6' })
     PHONE_API_SCHEMAS['POST /m/api/cli/say']!.parse(said.body)
