@@ -23,7 +23,7 @@ import { defaultTerminalHooksDeps } from '../../cli/terminal-hooks'
 import { resolveAdminChatId } from './index'
 import { resolveClaudeBinary } from './claude-env'
 import { loadCompanionConfig } from '../companion/config'
-import { ensureStarterRules, makePermissionGate, STARTER_NOTICE, terminalAskAsync } from '../permission-gate'
+import { ensureStarterRules, makePermissionGate, makeTerminalDecide, STARTER_NOTICE } from '../permission-gate'
 import { makePendingNotices } from '../speech/pending-notices'
 import { makePermissionDecisionsStore } from '../permission-decisions-store'
 import { defaultRunner, makeCliReplyCore, makeHandReplyExecutor, readHead, readTail } from '../cli-reply-handler'
@@ -154,7 +154,8 @@ export function wireCliSessions(d: WireCliSessionsDeps) {
     onSettled: (s, status) => cliEvents.permissionSettled(s, status),
     log: (t, l) => log(t, l),
     localMachine: osHostname(),
-    decide: async (req) => (await permissionGate.decide(() => terminalAskAsync(req))).verdict,
+    // 判定在 domain/authorize.ts(架构终态 C2),经 makeTerminalDecide:面是 terminal ⇒ 先过放行规则,规则没拿主意就问主人。
+    decide: makeTerminalDecide(permissionGate),
   })
   own('cli-permissions', async () => cliPermissions.dispose())
   // 这边 / 那边(§6.5)。手侧:配对时脑留了回叫的 url + key ⇒ 本机终端事件与权限请求

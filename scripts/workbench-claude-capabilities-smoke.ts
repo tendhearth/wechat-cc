@@ -117,7 +117,7 @@ for (const mode of ['discovery', 'allow', 'deny', 'cancel'] as Mode[]) {
       return false
     }
     return mode === 'allow'
-  }, undefined, Object.keys(native.servers))
+  }, undefined, Object.keys(native.servers), Object.keys(native.servers))
   const options = workbenchClaudeOptions({ cwd, model: 'claude-sonnet-4-6', pathToClaudeCodeExecutable: wrapper, env }, 'Use only this owned fixture.', async (...args) => { gateCalls.push({ tool: args[0], input: args[1] }); return permit(...args) }, native)
   options.abortController = abort; options.maxTurns = 4
   let stderr = '', error = ''

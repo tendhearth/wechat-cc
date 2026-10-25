@@ -11,6 +11,8 @@
  *   3. 档位放(tier.allow)⇒ 放 —— 明说了放就不再看能力表(否则 strict 下 admin 读个文件都要弹卡);
  *   4. 都没说 ⇒ 看能力表的 askUser:'per-tool' ⇒ 问,'never' ⇒ 放。
  * 纯函数:只吃类型,不 import 能力表(Gemini → 能力表 → Gemini 那个环就是这么来的)。
+ *
+ * C2 以后各家不再直接调它:逐次调用的判定只走 ./authorize.ts,这一条是 authorize 里「档位 × 类别」那一层。
  */
 import type { TierProfile, ToolKind } from './user-tier'
 

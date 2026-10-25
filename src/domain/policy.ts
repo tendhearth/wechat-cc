@@ -65,7 +65,7 @@ export interface ClaudeTierSdkOpts {
  * opted into full SDK bypass regardless of tier. `permissionMode='strict'`
  * always uses `default` + canUseTool; tier-aware allow/relay/deny
  * decisions happen inside the canUseTool callback (see
- * `effectivePolicy` in permission-relay.ts). Pre-RFC-05 this function
+ * `authorize` in domain/authorize.ts, called from permission-relay.ts). Pre-RFC-05 this function
  * inferred "dangerously-equivalent" from `relay.size === 0 && deny.size === 0`
  * (admin tier shape), which broke when admin tier policy changed (C4)
  * and when --dangerously didn't propagate to non-admin chats (C5).

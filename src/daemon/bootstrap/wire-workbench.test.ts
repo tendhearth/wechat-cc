@@ -3,6 +3,7 @@ import { mkdirSync, mkdtempSync, realpathSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { createHash, randomUUID } from 'node:crypto'
+import { makeWorkbenchClaudeCanUseTool } from '../../adapters/executors/claude/claude-agent-provider'
 import { registerUnattendedExecutors, registerAcpExecutors, makeUnattendedAckStore, wireWorkbench, workbenchClaudeOptions } from './wire-workbench'
 import { createProviderRegistry } from '../../app/provider-registry'
 import { ACP_CAPABILITIES, UNATTENDED_CAPABILITIES } from '../../core/workbench/executor-capabilities'
@@ -25,8 +26,9 @@ vi.mock('../../lib/access',async importOriginal=>({...await importOriginal<typeo
 }))
 
 it('does not inherit companion memory, MCP servers or daemon permission bypass into office work', async () => {
-  const permit = vi.fn(async () => ({ behavior: 'allow' as const }))
-  const base = { cwd:'/project',model:'existing-model',permissionMode:'bypassPermissions' as const,mcpServers:{ private:{ command:'private-memory' } },systemPrompt:'private life memory',canUseTool:permit,settingSources:['project' as const,'local' as const] }
+  // 生产里 permit 带着这件事的登记表(没有原生 MCP ⇒ 空表);没登记的 MCP 在 permit 里按登记表拒(C2:原来是 workbenchClaudeOptions 外面手包的一层)。
+  const permit = makeWorkbenchClaudeCanUseTool(vi.fn(async () => true), undefined, [], [])
+  const base = { cwd:'/project',model:'existing-model',permissionMode:'bypassPermissions' as const,mcpServers:{ private:{ command:'private-memory' } },systemPrompt:'private life memory',canUseTool:vi.fn(async () => ({ behavior: 'allow' as const })),settingSources:['project' as const,'local' as const] }
   const options=workbenchClaudeOptions(base,'task-only instructions',permit)
   expect(options.permissionMode).toBe('default')
   expect(options.mcpServers).toEqual({})
@@ -37,7 +39,7 @@ it('does not inherit companion memory, MCP servers or daemon permission bypass i
   expect(options.systemPrompt).toEqual({ type:'preset',preset:'claude_code',append:'task-only instructions' })
   expect(options.model).toBe('existing-model')
   const decision=await options.canUseTool!('mcp__wechat__reply',{text:'publish'}, { signal:new AbortController().signal,toolUseID:'id' })
-  expect(decision.behavior).toBe('deny')
+  expect(decision).toEqual({ behavior: 'deny', message: 'This tool is not registered for the task.' })
 })
 
 it('inherits native tools through exact server asks but never inherits companion execution settings', () => {

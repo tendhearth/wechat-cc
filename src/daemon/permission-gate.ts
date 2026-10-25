@@ -12,7 +12,9 @@ import { basename, dirname, isAbsolute, join, resolve } from 'node:path'
 import { decide as decideCore, parseReviewAnswer, reviewPrompt, type Review } from '../core/permission-rules/decide'
 import { EMPTY_RULES, parseRulesFile, RULES_FILE, serializeRulesFile, STARTER_VERSION, withStarterRules } from '../core/permission-rules/rules-file'
 import { writeFileAtomic } from '../lib/json-file'
-import type { AskSource, Decision, PermissionAsk, RulesFile } from '../domain/permission-rules/types'
+import type { AskSource, Decision, PermissionAsk, RulesFile, Verdict } from '../domain/permission-rules/types'
+import { authorize, type AuthSubject } from '../domain/authorize'
+import { TIER_PROFILES } from '../domain/user-tier'
 import type { PermissionDecisionsStore } from './permission-decisions-store'
 import type { CliPermissionRequest } from '../core/cli-permission-relay'
 import { repoRootOf } from '../core/workbench/worktree-workspaces'
@@ -230,4 +232,22 @@ export function terminalAsk(req: CliPermissionRequest, rootOf: (cwd: string) => 
   if (req.paths?.length) ask.paths = req.paths
   if (req.summary) ask.description = req.summary
   return ask
+}
+
+/** 终端会话:hook 报来的是本机主人自己的会话(脑手转发的不走规则,见 cli-permission-relay),档位只是占位、不参与判定。 */
+const TERMINAL_SUBJECT: AuthSubject = { surface: 'terminal', tier: TIER_PROFILES.admin, permissionMode: 'strict', executor: 'claude' }
+
+/**
+ * 终端会话中继的 `decide`(架构终态 C2):hook 报上来的就是要批准的调用 ⇒ authorize 起点是问;面是 terminal ⇒ 先过
+ * 放行规则(gate.decide 读规则文件、初审、留痕),拿到裁决再交回 authorize 落成放 / 拒 / 问。
+ */
+export function makeTerminalDecide(
+  gate: Pick<PermissionGate, 'decide'>,
+  askOf: (req: CliPermissionRequest) => Promise<PermissionAsk> = terminalAskAsync,
+): (req: CliPermissionRequest) => Promise<Verdict> {
+  return async (req) => {
+    const reported = { name: req.tool_name, kind: 'subagent', reported: true } as const
+    if (!authorize(TERMINAL_SUBJECT, reported).consultOwnerRules) return 'ask'
+    return authorize(TERMINAL_SUBJECT, reported, { ownerRuling: await gate.decide(() => askOf(req)) }).verdict
+  }
 }

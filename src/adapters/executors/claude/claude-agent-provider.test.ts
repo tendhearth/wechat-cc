@@ -354,7 +354,7 @@ describe('claude-agent-provider', () => {
       { header: 'Formats', question: 'Which formats?', options: [{ label: 'PDF', description: 'Fixed' }, { label: 'Word', description: 'Editable' }], multiSelect: true },
       { header: 'Note', question: 'Which note?', options: [{ label: 'Brief', description: 'Short' }, { label: 'Full', description: 'Long' }], multiSelect: false },
     ], metadata: { source: 'review' } }
-    const gate = makeWorkbenchClaudeCanUseTool(requestPermission, requestUserInput)
+    const gate = makeWorkbenchClaudeCanUseTool(requestPermission, requestUserInput, [], null)
     await expect(gate('AskUserQuestion', input, { signal, toolUseID: 'question-tool' })).resolves.toEqual({ behavior: 'allow', updatedInput: { ...input, answers: { 'Which formats?': 'PDF, Word', 'Which note?': 'Custom note' } } })
     expect(requestUserInput).toHaveBeenCalledWith({ questions: [
       { id: 'question-tool:0', header: 'Formats', question: 'Which formats?', options: input.questions[0]!.options, multiSelect: true, allowOther: true },
@@ -372,14 +372,14 @@ describe('claude-agent-provider', () => {
       if (reason === 'invalid-answer') return { unknown: ['PDF'] }
       return reason === 'declined' ? null : { 'question-tool:0': ['PDF'] }
     }
-    const gate = makeWorkbenchClaudeCanUseTool(undefined, requestUserInput)
+    const gate = makeWorkbenchClaudeCanUseTool(undefined, requestUserInput, [], null)
     await expect(gate('AskUserQuestion', input, { signal: controller.signal, toolUseID: 'question-tool' })).resolves.toMatchObject({ behavior: 'deny' })
   })
 
   it('rejects duplicate Claude question text because native answers are keyed by question text', async () => {
     const requestUserInput = vi.fn(async () => ({ 'question-tool:0': ['PDF'], 'question-tool:1': ['Word'] }))
     const q = { header: 'Format', question: 'Which format?', options: [{ label: 'PDF', description: 'Fixed' }, { label: 'Word', description: 'Editable' }], multiSelect: false }
-    const gate = makeWorkbenchClaudeCanUseTool(undefined, requestUserInput)
+    const gate = makeWorkbenchClaudeCanUseTool(undefined, requestUserInput, [], null)
     await expect(gate('AskUserQuestion', { questions: [q, q] }, { signal: new AbortController().signal, toolUseID: 'question-tool' })).resolves.toMatchObject({ behavior: 'deny' })
     expect(requestUserInput).not.toHaveBeenCalled()
   })
@@ -406,7 +406,7 @@ describe('claude-agent-provider', () => {
   it('builds a task-only gate that preserves trusted solo strict policy and SDK abort', async () => {
     const signal = new AbortController().signal
     const requestPermission = vi.fn(async () => true)
-    const gate = makeWorkbenchClaudeCanUseTool(requestPermission)
+    const gate = makeWorkbenchClaudeCanUseTool(requestPermission, undefined, [], null)
 
     await expect(gate('Read', { file_path: '/tmp/report.md' }, { signal } as never)).resolves.toEqual({ behavior: 'allow' })
     await expect(gate('Bash', { command: 'rm -rf build' }, { signal, title: 'Remove build output' } as never)).resolves.toEqual({ behavior: 'allow' })
@@ -415,14 +415,14 @@ describe('claude-agent-provider', () => {
 
   it('denies task MCP tools and relay requests without an active callback', async () => {
     const signal = new AbortController().signal
-    const gate = makeWorkbenchClaudeCanUseTool()
+    const gate = makeWorkbenchClaudeCanUseTool(undefined, undefined, [], null)
     await expect(gate('mcp__wechat__reply', {}, { signal } as never)).resolves.toMatchObject({ behavior: 'deny' })
     await expect(gate('Bash', { command: 'git reset --hard HEAD' }, { signal } as never)).resolves.toMatchObject({ behavior: 'deny' })
   })
 
   it('asks the owning task before using an admitted native MCP and redacts credential fields', async () => {
     const permission = vi.fn(async (_request: {tool:string;description:string}, _signal?: AbortSignal) => true), signal = new AbortController().signal
-    const gate = makeWorkbenchClaudeCanUseTool(permission, undefined, ['my_catalog'])
+    const gate = makeWorkbenchClaudeCanUseTool(permission, undefined, ['my_catalog'], null)
     await expect(gate('mcp__my_catalog__lookup', { query:'item', api_key:'never-store', url:'https://user:url-secret@example.test/?token=query-secret', headers:[{name:'Authorization',value:'Bearer header-secret'}] }, { signal } as never)).resolves.toMatchObject({ behavior:'allow' })
     expect(permission).toHaveBeenCalledOnce()
     expect(permission.mock.calls[0]?.[0]).toMatchObject({ tool:'mcp__my_catalog__lookup', description:expect.stringContaining('item') })
@@ -442,7 +442,7 @@ describe('claude-agent-provider', () => {
         if (result === 'cancelled') controller.abort()
         return result !== 'refused'
       }
-      const gate = makeWorkbenchClaudeCanUseTool(permission, undefined, ['catalog'])
+      const gate = makeWorkbenchClaudeCanUseTool(permission, undefined, ['catalog'], null)
       await expect(gate('mcp__catalog__lookup', { query:'item' }, { signal:controller.signal } as never)).resolves.toMatchObject({ behavior:'deny' })
     }
   })
@@ -450,7 +450,7 @@ describe('claude-agent-provider', () => {
   it('fails closed when the full destructive input cannot fit in the bounded permission detail', async () => {
     const signal = new AbortController().signal
     const requestPermission = vi.fn(async () => false)
-    const gate = makeWorkbenchClaudeCanUseTool(requestPermission)
+    const gate = makeWorkbenchClaudeCanUseTool(requestPermission, undefined, [], null)
     await expect(gate('Bash', { command: `rm -rf ${'secret'.repeat(4000)}`, ignored: 'x'.repeat(1000) }, { signal } as never)).resolves.toMatchObject({ behavior: 'deny' })
     expect(requestPermission).not.toHaveBeenCalled()
   })
@@ -458,14 +458,14 @@ describe('claude-agent-provider', () => {
   it('denies an already-aborted tool call before any policy branch can allow it', async () => {
     const controller=new AbortController(); controller.abort()
     const requestPermission=vi.fn(async()=>true)
-    const gate=makeWorkbenchClaudeCanUseTool(requestPermission)
+    const gate=makeWorkbenchClaudeCanUseTool(requestPermission, undefined, [], null)
     await expect(gate('Read',{file_path:'/tmp/report.md'},{signal:controller.signal} as never)).resolves.toMatchObject({behavior:'deny'})
     expect(requestPermission).not.toHaveBeenCalled()
   })
 
   it('denies an allow-policy tool when the SDK has already aborted', async () => {
     const controller = new AbortController()
-    const gate = makeWorkbenchClaudeCanUseTool(vi.fn(async () => true))
+    const gate = makeWorkbenchClaudeCanUseTool(vi.fn(async () => true), undefined, [], null)
     controller.abort()
     const decision = gate('Read', { file_path: '/tmp/report.md' }, { signal: controller.signal } as never)
     await expect(decision).resolves.toMatchObject({ behavior: 'deny' })
@@ -480,7 +480,7 @@ describe('claude-agent-provider', () => {
       markStarted()
       return new Promise<boolean>(resolve => { approve = resolve })
     })
-    const gate = makeWorkbenchClaudeCanUseTool(requestPermission)
+    const gate = makeWorkbenchClaudeCanUseTool(requestPermission, undefined, [], null)
     const decision = gate('Bash', { command: 'rm -rf build' }, { signal: controller.signal } as never)
     await started
     approve(true)

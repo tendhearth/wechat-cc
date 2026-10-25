@@ -1,6 +1,12 @@
 import { describe, expect, it } from 'vitest'
-import { REVIEW_PROFILE, JOB_PROFILE, classifyToolUse, tierNameFromProfile } from '../domain/user-tier'
-import { effectivePolicy } from './permission-relay'
+import { REVIEW_PROFILE, JOB_PROFILE, classifyToolUse, tierNameFromProfile, type TierProfile, type ToolKind } from '../domain/user-tier'
+import { authorize } from '../domain/authorize'
+
+/** 改之前这里测的是 permission-relay 的 effectivePolicy;判定收进 domain/authorize.ts 以后(C2)测同一格。 */
+const effectivePolicy = (base: { askUser: 'per-tool' | 'never' }, tp: TierProfile, kind: ToolKind): 'allow' | 'relay' | 'deny' => {
+  const v = authorize({ surface: 'chat', tier: tp, permissionMode: 'strict', executor: 'claude' }, { name: 'x', kind, askUser: base.askUser }).verdict
+  return v === 'ask' ? 'relay' : v
+}
 import { codexNetworkOpts, tierProfileToCodexSdkOpts } from '../adapters/executors/codex/codex-agent-provider'
 
 // 评审 #460:审查轮的 diff 直接在提示词里(不是读出来的)⇒「读过才断网」的污点规则一开始就没有;

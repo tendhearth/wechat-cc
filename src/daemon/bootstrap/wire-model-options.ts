@@ -13,6 +13,7 @@ import { toolInputFacts } from '../../domain/permission-rules/facts'
 import type { Options } from '@anthropic-ai/claude-agent-sdk'
 import type { ProviderId } from '../../domain/conversation'
 import { TIER_PROFILES, classifyToolUse, type TierProfile } from '../../domain/user-tier'
+import { authorize } from '../../domain/authorize'
 import type { PermissionMode } from '../../domain/capability-matrix'
 import { DEFAULT_CLAUDE_MODEL } from '../../adapters/executors/claude/claude-agent-provider'
 import { compilePolicy } from '../../domain/policy'
@@ -155,17 +156,27 @@ function profileGate(tp: TierProfile, scope: { root: string; stateDir: string })
   return async (toolName, input) => {
     const args = (input ?? {}) as Record<string, unknown>
     const kind = classifyToolUse(toolName, args)
-    if (!tp.allow.has(kind)) return deny(toolName, '不在只读档里')
-    if (kind === 'network' && tainted) return deny(toolName, '这一轮已经读过本机的东西,不再上网')
-    if (kind === 'fs_read') {
+    // 判定只在 domain/authorize.ts(架构终态 C2,面 = job):不在档里 → 读过本机后上网 → 读文件的范围与红线。
+    // 这里只算要碰路径的事实(项目目录、红线要 node:path / homedir),怎么组合成放 / 拒在那边。
+    let readScope: { pathless: boolean; outside: boolean; redLine: string | null } | undefined
+    if (kind === 'fs_read' && tp.allow.has(kind)) {
       const facts = toolInputFacts(args)
       const glob = typeof args.pattern === 'string' && isAbsolute(args.pattern) ? [args.pattern] : []
       const paths = [...facts.paths, ...glob].map(p => (isAbsolute(p) ? p : join(scope.root, p)))
-      if (toolName.startsWith('mcp__') && paths.length === 0) return deny(toolName, '没有路径')
-      if (paths.length && !pathsUnder(paths, scope.root)) return deny(toolName, '只能读这个项目目录里的文件')
-      const red = floorReason({ surface: 'workbench', provider: 'job', tool: 'Read', paths, cwd: scope.root, project: scope.root, isolatedWorktree: false, tier: 'admin', scope: 'job' }, homedir(), { stateDir: scope.stateDir })
-      if (red) return deny(toolName, red)
+      const pathless = toolName.startsWith('mcp__') && paths.length === 0
+      const outside = !pathless && paths.length > 0 && !pathsUnder(paths, scope.root)
+      const redLine = pathless || outside ? null : floorReason({ surface: 'workbench', provider: 'job', tool: 'Read', paths, cwd: scope.root, project: scope.root, isolatedWorktree: false, tier: 'admin', scope: 'job' }, homedir(), { stateDir: scope.stateDir })
+      readScope = { pathless, outside, redLine }
     }
+    const auth = authorize({ surface: 'job', tier: tp, permissionMode: 'strict', executor: 'claude' }, { name: toolName, kind }, { tainted, ...(readScope ? { readScope } : {}) })
+    switch (auth.reason) {
+      case 'job_profile': return deny(toolName, '不在只读档里')
+      case 'job_tainted': return deny(toolName, '这一轮已经读过本机的东西,不再上网')
+      case 'job_pathless': return deny(toolName, '没有路径')
+      case 'job_outside': return deny(toolName, '只能读这个项目目录里的文件')
+      case 'job_red_line': return deny(toolName, auth.detail ?? '')
+    }
+    if (auth.verdict !== 'allow') return deny(toolName, '不在只读档里')
     if (kind === 'fs_read' || kind === 'memory_read' || kind === 'observations_read') tainted = true
     return { behavior: 'allow', updatedInput: input }
   }

@@ -1,4 +1,15 @@
 import { randomUUID } from 'node:crypto'
+import { authorize, type AuthSubject } from '../../domain/authorize'
+import { TIER_PROFILES } from '../../domain/user-tier'
+
+/**
+ * 执行者报上来要批准的调用(Claude 的 canUseTool 落到「问」、Codex app-server 的审批、ACP 的权限卡、OpenAI 兼容任务的
+ * requestPermission):判定在 domain/authorize.ts(架构终态 C2)—— 起点是问;面是 workbench ⇒ 先过主人的放行规则,
+ * 规则拿了主意(放 / 拒)就照办,否则登记、问主人。一起做只给主人用,档位那一层在执行者那头已经过了(Claude)或
+ * 本来就没有(Codex / ACP 自己只报要批准的),这里的档位只是占位,不参与判定。
+ */
+const REPORTED_SUBJECT: AuthSubject = { surface: 'workbench', tier: TIER_PROFILES.admin, permissionMode: 'strict', executor: 'claude' }
+const REPORTED = { name: 'reported', kind: 'subagent', reported: true } as const
 
 export const WORKBENCH_PERMISSION_TIMEOUT_MS = 5 * 60_000
 export const WORKBENCH_PERMISSION_TOOL_MAX = 160
@@ -58,17 +69,20 @@ export function makeRunPermissions(opts: {
     const description = raw.description.trim()
     if (!tool || !description || tool.length > WORKBENCH_PERMISSION_TOOL_MAX ||
         description.length > WORKBENCH_PERMISSION_DESCRIPTION_MAX || signal?.aborted) return Promise.resolve(false)
-    if (!opts.decide) return register(tool, description, signal)
+    const first = authorize(REPORTED_SUBJECT, { ...REPORTED, name: tool })
+    // 没接放行规则(opts.decide 不传)⇒ 照旧直接登记、问主人(同步登记,和改之前一样)。
+    if (!opts.decide || !first.consultOwnerRules) return register(tool, description, signal)
     const facts: PermissionFacts = { tool, description }
     if (typeof raw.command === 'string' && raw.command.trim()) facts.command = raw.command
     if (Array.isArray(raw.paths) && raw.paths.length && raw.paths.every(p => typeof p === 'string' && p)) facts.paths = [...raw.paths]
     if (typeof raw.cwd === 'string' && raw.cwd) facts.cwd = raw.cwd
     return opts.decide(facts).catch(() => ({ verdict: 'ask' as const, by: 'default' })).then(d => {
       if (closed || signal?.aborted) return false
-      if ((d.verdict === 'allow' || d.verdict === 'deny') && (d.by === 'rule' || d.by === 'review' || d.by === 'floor')) {
+      const ruled = authorize(REPORTED_SUBJECT, { ...REPORTED, name: tool }, { ownerRuling: d })
+      if (ruled.verdict !== 'ask' && ruled.by) {
         const permission: PendingWorkbenchPermission = { id: randomUUID(), taskId: opts.taskId, tool, description, createdAt: Date.now() }
-        const audited = audit({ type: 'outcome', permission, outcome: d.verdict, by: d.by })
-        return audited && d.verdict === 'allow'
+        const audited = audit({ type: 'outcome', permission, outcome: ruled.verdict, by: ruled.by })
+        return audited && ruled.verdict === 'allow'
       }
       return register(tool, description, signal)
     })

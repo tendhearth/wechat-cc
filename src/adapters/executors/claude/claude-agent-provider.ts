@@ -13,7 +13,7 @@ import { claudeApiErrorCode } from './claude-api-error-code'
 import { discoverClaudeModels } from './claude-model-catalog'
 import { executionModel, nativeModelId } from '../../../core/workbench/native-model-catalog'
 import { createClaudeWorkbenchSession } from './claude-workbench-runtime'
-import { effectivePolicy } from '../../../core/permission-relay'
+import { authorize, type AuthSubject } from '../../../domain/authorize'
 import { lookup } from '../../../domain/capability-matrix'
 
 function userContent(text: string, attachments: readonly AgentAttachment[] = []): Exclude<SDKUserMessage['message']['content'], string> {
@@ -81,13 +81,30 @@ function taskInputPreview(input: Record<string, unknown>): string | null {
 
 /** Claude's task-only permission gate. Workbench has no CC-private messaging
  * or personal-memory MCP surface; local built-ins retain trusted/solo/strict
- * allow/relay/deny policy, with relay decisions owned by the active task run. */
+ * allow/relay/deny policy, with relay decisions owned by the active task run.
+ *
+ * 判定只在 domain/authorize.ts(架构终态 C2,面 = workbench):MCP 工具按这件事的登记表(没登记 / 登记了但不放进来
+ * ⇒ 拒,登记且放进来 ⇒ 问),内置工具按 trusted × solo × strict 的档位 × 类别。这里剩下的只是「问」的那条通道
+ * (requestPermission、AskUserQuestion 的结构化提问)和调用被取消 / 细节太大装不下这些通道上的事。
+ *
+ * `registeredMcpServers`:这件事登记过的原生 MCP(wire-workbench 读出来的 native.servers)。给了 ⇒ 任何前缀都对不上
+ * 的 MCP 工具在最前面就拒(原来是 wire-workbench 的 workbenchClaudeOptions 外面手包的一层,同一句话、同一个先后)。
+ * 必填:漏传会悄悄少掉这一层拒(评审 10-25)。`null` = 明说不做这一层,只有直接测内层判定的测试这样用。 */
+const WORKBENCH_SUBJECT: AuthSubject = { surface: 'workbench', tier: TIER_PROFILES.trusted, permissionMode: 'strict', executor: 'claude' }
+/** 一起做里的 MCP 工具不看档位、只看登记表(descriptor.mcp);类别填第三方插件那一类,不参与判定。 */
+const WORKBENCH_MCP_KIND: ToolKind = 'plugin_tool'
+
 export function makeWorkbenchClaudeCanUseTool(
-  requestPermission?: SpawnContext['requestPermission'],
-  requestUserInput?: SpawnContext['requestUserInput'],
-  admittedMcpServers: readonly string[] = [],
+  requestPermission: SpawnContext['requestPermission'] | undefined,
+  requestUserInput: SpawnContext['requestUserInput'] | undefined,
+  admittedMcpServers: readonly string[],
+  registeredMcpServers: readonly string[] | null,
 ): CanUseTool {
   return async (toolName, input, options) => {
+    if (registeredMcpServers !== null && toolName.startsWith('mcp__') && !registeredMcpServers.some(name => toolName.startsWith(`mcp__${name}__`))) {
+      const auth = authorize(WORKBENCH_SUBJECT, { name: toolName, kind: WORKBENCH_MCP_KIND, mcp: 'unregistered' })
+      if (auth.verdict === 'deny') return { behavior:'deny', message:'This tool is not registered for the task.' } satisfies PermissionResult
+    }
     if (options.signal.aborted) {
       return { behavior:'deny', message:'This task tool call was cancelled.' } satisfies PermissionResult
     }
@@ -123,7 +140,10 @@ export function makeWorkbenchClaudeCanUseTool(
     if (toolName.startsWith('mcp__')) {
       const denied = { behavior:'deny',message:'The task tool was not admitted, or approval was denied or expired.' } satisfies PermissionResult
       const server = admittedMcpServers.find(name => !isCompanionMcp(name) && toolName.startsWith(`mcp__${name}__`) && toolName.length > name.length + 7)
-      if (!server || !requestPermission || toolName.length > WORKBENCH_PERMISSION_TOOL_MAX) return denied
+      const auth = authorize(WORKBENCH_SUBJECT, { name: toolName, kind: WORKBENCH_MCP_KIND, mcp: server ? 'admitted' : 'not_admitted' })
+      if (auth.verdict === 'deny') return denied
+      // 问:没有问的通道 / 名字太长装不下 ⇒ 拒(通道上的事,不是策略)。
+      if (!requestPermission || toolName.length > WORKBENCH_PERMISSION_TOOL_MAX) return denied
       const inputPreview = nativeMcpInputPreview(input)
       if (!inputPreview || inputPreview.length > WORKBENCH_PERMISSION_DESCRIPTION_MAX - 256) return denied
       try {
@@ -135,11 +155,7 @@ export function makeWorkbenchClaudeCanUseTool(
     if (options.signal.aborted) {
       return { behavior:'deny', message:'This task tool call was cancelled.' } satisfies PermissionResult
     }
-    const decision = effectivePolicy(
-      lookup('solo','claude','strict'),
-      TIER_PROFILES.trusted,
-      kind,
-    )
+    const decision = authorize(WORKBENCH_SUBJECT, { name: toolName, kind, askUser: lookup('solo','claude','strict').askUser }).verdict
     if (decision === 'allow') return { behavior: 'allow' } satisfies PermissionResult
     if (decision === 'deny') {
       return { behavior: 'deny', message: `Tool '${toolName}' (${kind}) is unavailable in this task.` } satisfies PermissionResult
