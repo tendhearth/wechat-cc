@@ -2207,6 +2207,29 @@ OPTIONS
 "
 `;
 
+exports[`cli.ts --help 快照(逐字节) > self --help > self ask --help 1`] = `
+"要主人拍板的候选:排进去(接在早报「要你拍板的」后面问,最多 3 条)、看清单;不单发、不替主人做 (self ask)
+
+USAGE self ask [OPTIONS] [QUESTION]
+
+ARGUMENTS
+
+  QUESTION    一行问题(主人在早报里看到的那句)
+
+OPTIONS
+
+  --recommend=<recommend>    一行推荐(必填)                          
+              --key=<key>    去重用的键(缺省按问题);同一个键主人不要过 / 三天没回过就不再提
+    --evidence=<evidence>    证据(不进早报,--list 看得见)               
+    --priority=<priority>    越大越先问(缺省 0)                       
+                   --list    看清单(缺省只列开着的)                      
+                    --all    配 --list:连答过的一起列                  
+                   --json    JSON 输出                           
+
+
+"
+`;
+
 exports[`cli.ts --help 快照(逐字节) > self --help > self change --help 1`] = `
 "自改流水线:执行者在专用克隆里实现 → 测试/评审/CI/主人拍板/合 dev → 部署 + 自检,不过就回滚(仅 macOS) (self change)
 
@@ -2288,6 +2311,7 @@ OPTIONS
       --with-discover    把 self discover 的 roadmap / 守卫基线 / 自改教训候选一起交给规划者(日志那一源不交:里面可能有联系人昵称)
           --show=<id>    看一份存下的计划                                                            
                --json    JSON 输出                                                             
+                --ask    主人看得见的那几步排进「要主人拍板的」(接在早报里问,owner-asks.json);也能配 --show 补排           
 
 
 "
@@ -2328,7 +2352,7 @@ OPTIONS
 exports[`cli.ts --help 快照(逐字节) > self --help 1`] = `
 "自维护:部署自身、让 CC 自己改自己（仅 macOS launchd；见 docs/maintainer/deploy.md 与 self-change.md） (wechat-cc self v1.7.7 (dev))
 
-USAGE wechat-cc self change|deploy|ship|soak|discover|plan
+USAGE wechat-cc self change|deploy|ship|soak|discover|plan|ask
 
 COMMANDS
 
@@ -2338,6 +2362,7 @@ COMMANDS
       soak    这次部署在真机上稳不稳:从最后一次 self deploy 算起看日志里的意外重启 / 模块失败 / 崩溃,和健康接口;只读                 
   discover    发掘任务:日志里反复出现的失败(按次数)+ roadmap 欠账 / 对标里没标完成的 + 守卫里只许降的基线;只读                     
       plan    规划者:把一个开发目标拆成 PR 列表(先后依赖、哪些主人看得见要先点头);只读,不执行                                   
+       ask    要主人拍板的候选:排进去(接在早报「要你拍板的」后面问,最多 3 条)、看清单;不单发、不替主人做                              
 
 Use wechat-cc self <command> --help for more information about a command.
 

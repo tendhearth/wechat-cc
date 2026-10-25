@@ -14,6 +14,7 @@
  */
 import type { Git } from './self-change/git'
 import type { ImplementRunner } from './self-change/runner'
+import type { EnqueueInput } from '../core/owner-asks'
 
 export interface PlanPr {
   /** 计划里的编号(p1、p2…),依赖靠它。 */
@@ -206,6 +207,22 @@ export function formatPlan(plan: DevPlan & { done?: SavedPlan['done']; id?: stri
   if (visible.length) out.push('', `  要主人点头的:${visible.map(p => p.id).join('、')}`)
   if (plan.questions.length) out.push('', '  要主人回答的:', ...plan.questions.map(q => `  - ${q}`))
   return out.join('\n')
+}
+
+/**
+ * 计划里主人看得见的那几步 ⇒ 要主人拍板的候选(`self plan --ask`;设计稿 §4.8 / §6 第 5 步)。
+ * 一步一条,key = `plan:<计划>:<步>`;版本 = 整份计划的 PR 列表 —— 计划改过,批过的那版就不算数,要重批(§6 第 7 步)。
+ */
+export function planVisibleAsks(plan: Pick<SavedPlan, 'id' | 'goal' | 'prs'>): EnqueueInput[] {
+  const version = JSON.stringify({ goal: plan.goal, prs: plan.prs })
+  return plan.prs.filter(p => p.visible).map(p => ({
+    key: `plan:${plan.id}:${p.id}`,
+    question: `要不要做:${p.title.replace(/[??。.]+$/, '')}?`,
+    recommend: `做。${p.why}`,
+    evidence: `计划 ${plan.id}「${plan.goal}」的 ${p.id};怎么验:${p.verify}`,
+    source: 'plan' as const,
+    version,
+  }))
 }
 
 export interface PlanDeps {

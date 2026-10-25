@@ -2275,6 +2275,20 @@ describe('runJobTurn × 预先拼好的信封(早报)', () => {
     await buildTickBodies(s.deps).runJobTurn({ kind: 'job', scheduled: true, chatId: 'owner', jobId: 'j1', text: '早报', nowIso: 't', buildText: () => 'BRIEF-ENVELOPE' })
     expect((s.dispatch.mock.calls[0] as unknown as [string])[0]).toBe('BRIEF-ENVELOPE')
   })
+  it('transformFinal rewrites the final text before delivery (早报接上要主人拍板的候选); a throwing one leaves it as written', async () => {
+    const delivered: string[] = []
+    const arm = () => {
+      const s = setupDeps({ defaultChatId: 'owner', inFlight: false })
+      s.dispatch.mockImplementation(() => ({ async *[Symbol.asyncIterator]() { yield { kind: 'text', text: '早上好' }; yield { kind: 'result', sessionId: 's', numTurns: 1, durationMs: 1 } } }))
+      ;(s.deps.boot as unknown as { sessionManager: Record<string, unknown> }).sessionManager.forget = vi.fn(async () => {})
+      ;(s.deps as TickDeps).replyDelivery = { begin: () => ({ mode: 'daemon', progress: async () => {}, deliver: async (r: { finalText: string }) => { delivered.push(r.finalText); return { target: 'wechat', bubbles: 1, attachmentsSent: 0, failures: [], msgIds: [], delivery: 'text' } }, abandon: () => {} }) } as never
+      ;(s.deps as TickDeps).replyDeliveryModeFor = () => 'daemon'
+      return s
+    }
+    await buildTickBodies(arm().deps).runJobTurn({ kind: 'brief', scheduled: false, chatId: 'owner', jobId: 'j1', text: '早报', nowIso: 't', transformFinal: (t) => `${t}\n2. 拍板?` })
+    await buildTickBodies(arm().deps).runJobTurn({ kind: 'brief', scheduled: false, chatId: 'owner', jobId: 'j1', text: '早报', nowIso: 't', transformFinal: () => { throw new Error('x') } })
+    expect(delivered).toEqual(['早上好\n2. 拍板?', '早上好'])
+  })
 })
 
 describe('runJobTurn × SpeechPolicy(第三批 3a 第 3 步):晨报 / 周报是 initiative,主人建的定时是 requested', () => {

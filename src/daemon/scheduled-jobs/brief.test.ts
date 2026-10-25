@@ -110,3 +110,74 @@ describe('早报 × 日历 · 标题是别人能写进来的(邀请)', () => {
     expect(m).toContain('‹/calendar>')
   })
 })
+
+describe('早报 × 要主人拍板的候选(设计稿 2026-10-23 §4.8,主人 10-24)', () => {
+  const job = { id: 'j1', schedule: { kind: 'daily' as const, at: '08:00' }, text: '早报', createdAt: 'x', paused: false, brief: true }
+  const picked = [
+    { no: 2, id: 'a1', hash: 'h1', question: '微信里「要先开守护进程」那句改成说清楚哪一步没起来?', recommend: '改。守护进程开着时还说没开,会让你去重启一台好好的机器。' },
+    { no: 3, id: 'b2', hash: 'h2', question: '早报里的「做完」只列一起做,不列终端?', recommend: '不改。终端那几件你也常问。' },
+  ]
+  const setup = (finalText: string, result: 'sent' | 'silent' = 'sent') => {
+    const commits: unknown[] = []
+    const seen: { envelope?: string; delivered?: string } = {}
+    const turn = makeBriefTurn({
+      runJobTurn: async (a) => {
+        seen.envelope = a.buildText!({ replyDelivery: 'final_text' })
+        seen.delivered = a.transformFinal ? a.transformFinal(finalText) : finalText
+        return result
+      },
+      ownerChatId: () => 'owner', today: () => '今天(过去 24 小时):1 件事等你', reminders: () => [], agenda: () => [], prefs: () => [], claim: () => {},
+      decisionsBefore: () => 1,
+      asks: { pick: (base) => { expect(base).toBe(1); return picked }, commit: (p, iso) => { commits.push([p.map(x => x.id), iso]) } },
+    })
+    return { turn, commits, seen }
+  }
+  it('tells the model where the section goes and not to NO_REPLY; splices the section; commits only when sent', async () => {
+    const { turn, commits, seen } = setup(['1. 终端里 wechat-cc 等你批一条命令(y 码 ab12)', '<<CC_ASKS>>', '昨天一起做完 2 件。', '就这些。'].join('\n'))
+    expect(await turn(job, '2026-10-25T00:00:00Z')).toBe('sent')
+    expect(seen.envelope).toContain('2 条是 CC 自己找到、要主人拍板的事(编号 2 起)')
+    expect(seen.envelope).toContain('依次编号 1–1')
+    expect(seen.envelope).toContain('别 NO_REPLY')
+    expect(seen.delivered).toBe([
+      '1. 终端里 wechat-cc 等你批一条命令(y 码 ab12)',
+      '要你拍板的(CC 自己找到的):',
+      '2. 微信里「要先开守护进程」那句改成说清楚哪一步没起来?',
+      '   推荐:改。守护进程开着时还说没开,会让你去重启一台好好的机器。',
+      '3. 早报里的「做完」只列一起做,不列终端?',
+      '   推荐:不改。终端那几件你也常问。',
+      '回「2」就是要,「2 不要」就是不要;不回就先放着,问满三天不再提。',
+      '昨天一起做完 2 件。',
+      '就这些。',
+    ].join('\n'))
+    expect(commits).toEqual([[['a1', 'b2'], '2026-10-25T00:00:00Z']])
+  })
+  it('model said NO_REPLY ⇒ untouched and not counted as asked (never sent on its own)', async () => {
+    const { turn, commits, seen } = setup('NO_REPLY', 'silent')
+    await turn(job, 't')
+    expect(seen.delivered).toBe('NO_REPLY')
+    expect(commits).toEqual([])
+  })
+  it('a trailing NO_REPLY token is stripped before splicing, so it never ends up mid-message', async () => {
+    const { seen, turn } = setup('昨天做完 1 件。\nNO_REPLY')
+    await turn(job, 't')
+    expect(seen.delivered).not.toContain('NO_REPLY')
+    expect(seen.delivered).toContain('2. 微信里')
+  })
+  it('sent but transformFinal never ran (e.g. failed before delivery) ⇒ not counted', async () => {
+    const commits: unknown[] = []
+    const turn = makeBriefTurn({
+      runJobTurn: async () => 'sent', ownerChatId: () => 'owner', today: () => null, reminders: () => [], agenda: () => [], prefs: () => [], claim: () => {},
+      asks: { pick: () => picked, commit: (p) => { commits.push(p) } },
+    })
+    await turn(job, 't')
+    expect(commits).toEqual([])
+  })
+  it('no candidates ⇒ no section, no transform, envelope unchanged; a throwing store never blocks the brief', async () => {
+    const calls: Array<{ envelope: string; transform: boolean }> = []
+    const base = { runJobTurn: async (a: { buildText?: (s: object) => string; transformFinal?: unknown }) => { calls.push({ envelope: a.buildText!({}), transform: !!a.transformFinal }); return 'sent' as const }, ownerChatId: () => 'owner', today: () => null, reminders: () => [], agenda: () => [], prefs: () => [], claim: () => {} }
+    await makeBriefTurn({ ...base, asks: { pick: () => [], commit: () => {} } } as never)(job, 't')
+    expect(await makeBriefTurn({ ...base, asks: { pick: () => { throw new Error('bad json') }, commit: () => {} } } as never)(job, 't')).toBe('sent')
+    expect(calls).toHaveLength(2)
+    for (const c of calls) { expect(c.transform).toBe(false); expect(c.envelope).not.toContain('<<CC_ASKS>>') }
+  })
+})

@@ -537,9 +537,18 @@ const selfPlanCmd = defineCommand({
     'with-discover': { type: 'boolean', description: '把 self discover 的 roadmap / 守卫基线 / 自改教训候选一起交给规划者(日志那一源不交:里面可能有联系人昵称)' },
     show: { type: 'string', description: '看一份存下的计划', valueHint: 'id' },
     json: { type: 'boolean', description: 'JSON 输出' },
+    ask: { type: 'boolean', description: '主人看得见的那几步排进「要主人拍板的」(接在早报里问,owner-asks.json);也能配 --show 补排' },
   },
   async run({ args }) {
     const { existsSync, mkdirSync, readFileSync, writeFileSync, readdirSync } = await import('node:fs')
+    const enqueueVisible = async (plan: import('../self-plan').SavedPlan): Promise<string> => {
+      const { planVisibleAsks } = await import('../self-plan')
+      const { makeOwnerAsksStore, OWNER_ASKS_FILE } = await import('../../core/owner-asks-store')
+      const store = makeOwnerAsksStore(join(STATE_DIR, OWNER_ASKS_FILE))
+      const asks = planVisibleAsks(plan)
+      if (!asks.length) return '这份计划没有主人看得见的步,不用问。'
+      return asks.map(a => { const r = store.enqueueVisibleCandidate(a); return `${a.key} → ${ASK_RESULT_WORD[r.result]}(${r.item.id})` }).join('\n')
+    }
     const { homedir } = await import('node:os')
     const plansDir = join(STATE_DIR, 'self-plans')
     if (args.show) {
@@ -549,6 +558,7 @@ const selfPlanCmd = defineCommand({
       const { readJsonFile } = await import('../../lib/read-json-file')
       const saved = readJsonFile<import('../self-plan').SavedPlan>(p)
       console.log(args.json ? JSON.stringify(saved, null, 2) : formatPlan(saved, saved.order))
+      if (args.ask) console.error(await enqueueVisible(saved))
       return
     }
     const goal = String(args.goal ?? '').trim()
@@ -604,6 +614,7 @@ const selfPlanCmd = defineCommand({
       workdir: config.workdir, repoUrl: config.repoUrl, branch: config.branch, plansDir,
       budgetUsd: config.reviewBudgetUsd, maxTurns: config.maxTurns,
     }, { id, goal, ...(candidates ? { candidates } : {}) })
+    if (args.ask && res.ok && res.plan && res.order) console.error(await enqueueVisible({ id, createdAt: new Date().toISOString(), costUsd: res.costUsd, order: res.order, ...res.plan }))
     if (args.json) console.log(JSON.stringify(res, null, 2))
     else console.log(res.ok ? `${res.message}\n\n存在 ${res.path}(wechat-cc self plan --show ${id});花了 $${res.costUsd.toFixed(2)}。每个 PR 用 wechat-cc self change "<那一条>" 去做。` : res.message)
     process.exit(res.ok ? 0 : 1)
@@ -662,7 +673,54 @@ const selfDiscoverCmd = defineCommand({
   },
 })
 
+const ASK_RESULT_WORD = { added: '排上了', updated: '换成新的一版、从头排', same: '已经排着(同一版)', closed: '主人不要 / 三天没回过,不再提' } as const
+
+// ── self ask — 要主人拍板的候选(设计稿 2026-10-23-cc-runs-development §4.8):排进去,早报里问;回「2」/「2 不要」记答案 ──
+const selfAskCmd = defineCommand({
+  meta: { name: 'ask', description: '要主人拍板的候选:排进去(接在早报「要你拍板的」后面问,最多 3 条)、看清单;不单发、不替主人做' },
+  args: {
+    question: { type: 'positional', required: false, description: '一行问题(主人在早报里看到的那句)' },
+    recommend: { type: 'string', description: '一行推荐(必填)' },
+    key: { type: 'string', description: '去重用的键(缺省按问题);同一个键主人不要过 / 三天没回过就不再提' },
+    evidence: { type: 'string', description: '证据(不进早报,--list 看得见)' },
+    priority: { type: 'string', description: '越大越先问(缺省 0)' },
+    list: { type: 'boolean', description: '看清单(缺省只列开着的)' },
+    all: { type: 'boolean', description: '配 --list:连答过的一起列' },
+    json: { type: 'boolean', description: 'JSON 输出' },
+  },
+  async run({ args }) {
+    const { makeOwnerAsksStore, OWNER_ASKS_FILE } = await import('../../core/owner-asks-store')
+    const { formatAsks, ASK_ONLY_IN_BRIEF } = await import('../../core/owner-asks')
+    const store = makeOwnerAsksStore(join(STATE_DIR, OWNER_ASKS_FILE))
+    if (args.list) {
+      const s = store.read()
+      console.log(args.json ? JSON.stringify(s, null, 2) : formatAsks(s, { all: Boolean(args.all) }))
+      return
+    }
+    const question = String(args.question ?? '').trim()
+    const recommend = String(args.recommend ?? '').trim()
+    const priority = args.priority === undefined || args.priority === '' ? 0 : Number(args.priority)
+    if (!question || !recommend || !Number.isFinite(priority)) {
+      console.error('self ask: 用法 wechat-cc self ask "<一行问题>" --recommend "<一行推荐>" [--key k] [--evidence …] [--priority N];看清单:--list [--all]')
+      process.exit(1)
+      return
+    }
+    const r = store.enqueueVisibleCandidate({
+      key: String(args.key ?? '').trim() || `manual:${question}`, question, recommend, source: 'manual', priority,
+      ...(args.evidence ? { evidence: String(args.evidence) } : {}),
+    })
+    if (args.json) { console.log(JSON.stringify(r, null, 2)); return }
+    console.log(`${r.item.id}:${ASK_RESULT_WORD[r.result]}`)
+    // 没开早报 ⇒ 不单发(默认,待主人点头):照实说这条要等到什么时候才会被看到。
+    if (ASK_ONLY_IN_BRIEF && r.result !== 'closed') {
+      const { makeJobsStore } = await import('../../core/scheduled-jobs-store')
+      const briefOn = makeJobsStore(STATE_DIR).list().jobs.some(j => j.brief && !j.paused)
+      if (!briefOn) console.error('注意:主人没开早报(或停着),这条只攒着、不会单发;主人开了早报(「定时 早报 8:00」)才会问到。')
+    }
+  },
+})
+
 export const selfCmd = defineCommand({
   meta: { name: 'self', description: '自维护:部署自身、让 CC 自己改自己（仅 macOS launchd；见 docs/maintainer/deploy.md 与 self-change.md）' },
-  subCommands: { change: selfChangeCmd, deploy: selfDeployCmd, ship: selfShipCmd, soak: selfSoakCmd, discover: selfDiscoverCmd, plan: selfPlanCmd },
+  subCommands: { change: selfChangeCmd, deploy: selfDeployCmd, ship: selfShipCmd, soak: selfSoakCmd, discover: selfDiscoverCmd, plan: selfPlanCmd, ask: selfAskCmd },
 })
