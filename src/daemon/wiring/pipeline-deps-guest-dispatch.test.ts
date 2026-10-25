@@ -21,7 +21,6 @@ vi.mock('../../lib/config.ts', async (importOriginal) => {
 })
 
 const { buildPipelineDeps } = await import('./pipeline-deps')
-const { Ref } = await import('../../lib/lifecycle')
 const { openTestDb } = await import('../../lib/db')
 const { makeReplySinks } = await import('../reply-sinks')
 const { _clearCache, _resetSnapshotForTest } = await import('../../lib/access')
@@ -93,12 +92,11 @@ function setup(admins: string[] = ['admin_chat']) {
   const careLedger: CareLedger = { get: () => ({ noReplyCount: 0 }), claim: vi.fn(), claimHunt: vi.fn(), claimVisit: vi.fn(), claimMemory: vi.fn(), resetNoReply: vi.fn(), unclaim: vi.fn() }
   const replySinks = makeReplySinks()
   const pipelineRun = vi.fn(async (_ctx: Parameters<PipelineRun>[0]) => {})
-  const pipelineRef = new Ref<PipelineRun>('pipeline')
-  pipelineRef.set(pipelineRun)
+  const pipelineRef = { current: pipelineRun as PipelineRun }
 
   const { pipelineDeps } = buildPipelineDeps(
     { stateDir, db, ilink, boot, log: () => {}, chatPrefs, careLedger, replySinks },
-    { polling: new Ref('polling'), guard: new Ref('guard'), pipeline: pipelineRef, ingestNudge: new Ref('ingestNudge') },
+    { polling: () => null, pipeline: () => pipelineRef.current, ingestNudge: () => null },
   )
   return {
     pipelineDeps, coordinatorDispatch, sendAssistantText, sendMessage, routeChatToAccount, captureContextToken,
@@ -242,11 +240,10 @@ describe('pipeline-deps guest-command dispatch seam (允许/拒绝/邀请码/待
     const chatPrefs: ChatPrefsStore = { get: () => ({}), set: () => ({}), list: () => [] }
     const careLedger: CareLedger = { get: () => ({ noReplyCount: 0 }), claim: vi.fn(), claimHunt: vi.fn(), claimVisit: vi.fn(), claimMemory: vi.fn(), resetNoReply: vi.fn(), unclaim: vi.fn() }
     const replySinks = makeReplySinks()
-    const pipelineRef = new Ref<PipelineRun>('pipeline')
-    pipelineRef.set(vi.fn(async () => {}))
+    const pipelineRef = { current: vi.fn(async () => {}) as PipelineRun }
     const { pipelineDeps } = buildPipelineDeps(
       { stateDir, db, ilink, boot, log: (tag, line) => { logLines.push(`${tag} ${line}`) }, chatPrefs, careLedger, replySinks },
-      { polling: new Ref('polling'), guard: new Ref('guard'), pipeline: pipelineRef, ingestNudge: new Ref('ingestNudge') },
+      { polling: () => null, pipeline: () => pipelineRef.current, ingestNudge: () => null },
     )
     try {
       const guestRequests = pipelineDeps.access.guestRequests!

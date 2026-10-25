@@ -38,22 +38,17 @@ const CONTAINER = 'src/daemon/modules/container.ts'
 // 2026-10-22 基线(按文件)。迁一处减一;迁完的行删掉。
 // @debt daemon 里还没进模块容器的启停(Ref / lc.register / setInterval …;核心链在迁)
 const BASELINE: Record<string, Partial<Record<Kind, number>>> = {
-  'src/daemon/main.ts': { Ref: 2, 'lc.register': 9, 'sup.start': 2 },
   'src/daemon/bootstrap/index.ts': { Ref: 1 },
-  'src/daemon/bootstrap/wire-cli-sessions.ts': { 'lc.register': 2 },
   // 过渡桥(第 2 步):一组模块的 stopAll 先登记进收尾清单再起。bootstrap 全部迁完,它跟收尾清单一起删
   'src/daemon/bootstrap/module-group.ts': { 'teardown.add': 1 },
   'src/daemon/bootstrap/wire-idle-sweep.ts': { setInterval: 1, 'teardown.add': 1 },
-  'src/daemon/bootstrap/wire-jobs.ts': { 'lc.register': 1, 'sup.start': 1 },
   'src/daemon/cli-upgrade/wire.ts': { setInterval: 1 },
   'src/daemon/guard/pause-policy.ts': { setInterval: 1 },
-  'src/daemon/guard/runtime.ts': { Ref: 1 },
   'src/daemon/ilink/context.ts': { setInterval: 1 },
   'src/daemon/phone-events.ts': { setInterval: 1 },
   'src/daemon/single-instance.ts': { setInterval: 1 },
   'src/daemon/speech/pending-notices.ts': { setInterval: 1 },
   'src/daemon/tunnel-client.ts': { setInterval: 1 },
-  'src/daemon/wiring/index.ts': { Ref: 5 },
   'src/daemon/wiring/pipeline-deps.ts': { Ref: 1 },
   'src/daemon/wiring/wire-phone.ts': { 'phoneLc.add': 7 },
 }

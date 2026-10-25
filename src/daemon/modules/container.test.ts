@@ -52,6 +52,28 @@ describe('init / start 两段(整合者评审 #541:两个真环)', () => {
     expect(String(early)).toMatch(/before start/)
     expect(viaStart).toBe('p1')
   })
+  it('late:init 期间回 null(不抛);start 段起拿得到;那个模块降级了 ⇒ 又回 null', async () => {
+    let early: unknown = 'unset'
+    let get: (() => { id: string } | null) | null = null
+    let getBroken: (() => unknown) | null = null
+    const { started } = run([
+      { name: 'api', lazy: ['boot', 'broken'], init: (ctx) => {
+        get = ctx.late<{ id: string }>('boot')
+        getBroken = ctx.late('broken')
+        early = get()
+        return {}
+      } },
+      { name: 'boot', init: () => ({ id: 'b1' }) },
+      { name: 'broken', optional: true, init: () => { throw new Error('nope') } },
+    ])
+    await started
+    expect(early).toBeNull()
+    expect(get!()).toEqual({ id: 'b1' })
+    expect(getBroken!()).toBeNull()
+  })
+  it('late 也只能拿 lazy 里声明了的', async () => {
+    await expect(startModules([{ name: 'a', init: () => {} }, { name: 'b', init: (ctx) => { ctx.late('a') } }], { log: () => {} })).rejects.toThrow(/not in its lazy/)
+  })
   it('**interval 在 start 之前不计时**:init 全部跑完才开动', async () => {
     const t = fakeTimers()
     let liveDuringLaterInit = -1

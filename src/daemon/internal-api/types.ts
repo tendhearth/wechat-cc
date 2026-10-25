@@ -433,7 +433,7 @@ export interface InternalApiDeps {
   /**
    * Optional session releaser — backs POST /v1/sessions/release (admin
    * remediation: force-release a wedged session so the next message spawns a
-   * fresh subprocess). A thunk over bootRef.sessionManager. 503 when unwired.
+   * fresh subprocess). A late read of the bootstrap module (daemon-modules.ts). 503 when unwired.
    */
   releaseSession?: (k: { alias: string; providerId: string; chatId: string }) => Promise<void>
   /**
@@ -444,7 +444,7 @@ export interface InternalApiDeps {
    * session carries no model — ACP `session/load`, Claude/Codex thread
    * resume). Deleting this provider's rows makes that next spawn a cold
    * start, which is the only place the model actually gets pinned.
-   * Returns how many rows were dropped. A thunk over bootRef.sessionStore.
+   * Returns how many rows were dropped. A late read of the bootstrap module.
    */
   forgetProviderSessions?: (providerId: string) => number
   /**
@@ -584,7 +584,7 @@ export interface InternalApiDeps {
   holdBusy?: (label: string) => () => void
   /**
    * busy-registry 的 label 快照(spec 2026-09-03-companion-presence §2.2)——
-   * 桌宠状态推导用。thunk-over-bootRef,同 holdBusy;bootstrap 之前返回 []。
+   * 桌宠状态推导用。bootstrap 模块的晚读(ctx.late),同 holdBusy;bootstrap 之前返回 []。
    */
   busyLabels?: () => string[]
   /**
@@ -607,15 +607,15 @@ export interface InternalApiDeps {
   ) => string
   /**
    * Optional test-conversation runner — backs POST /v1/selftest/converse
-   * (spec 2026-09-18-self-maintenance §1). A thunk-over-bootRef wired in
-   * main.ts (same posture as forgetProviderSessions above): it closes over
-   * bootRef?.registry plus this same internalApi's mintSessionToken /
+   * (spec 2026-09-18-self-maintenance §1). A late read of the bootstrap module wired in
+   * daemon-modules.ts (same posture as forgetProviderSessions above): it closes over
+   * the bootstrap registry plus this same internalApi's mintSessionToken /
    * invalidateSession, so it can't exist before bootstrap constructs the
    * provider registry.
    *
-   * This field itself is wired UNCONDITIONALLY in main.ts (the HTTP port
-   * opens before `bootRef` is assigned, same as every other
-   * thunk-over-bootRef field) — so "the field is present but bootRef isn't
+   * This field itself is wired UNCONDITIONALLY in daemon-modules.ts (the HTTP port
+   * opens before the bootstrap module is up, same as every other
+   * late-read field) — so "the field is present but bootstrap isn't
    * ready yet" is a real, reachable window, not just a test-only shape.
    * Returns `null` in exactly that window; the route treats BOTH "field
    * absent" and "field present but returned null" as 503

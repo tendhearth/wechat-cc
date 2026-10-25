@@ -26,7 +26,7 @@ CC 是住在主人自己电脑上的一个 daemon。微信、桌面、手机 App
  一切子系统 ─► DaemonModule 容器(src/daemon/modules/container.ts):启停成对,关机顺序 = 启动倒过来
 ```
 
-入口是 `src/daemon/main.ts`,开机组装在 `src/daemon/bootstrap/`(新的接线进 `wire-*.ts`,别往 `index.ts` 里塞)。
+入口是 `src/daemon/main.ts`:地基(`foundation.ts`:锁、db、几个必须共享的单例)+ **一个**模块容器,模块表在 `src/daemon/daemon-modules.ts` —— 表的顺序 + `needs` 就是开机顺序,关机严格倒过来(`__e2e__/shutdown-order` 快照钉住);晚到的东西只经 `lazy` / `ctx.late` 拿。bootstrap(provider registry / 会话 / 协调器)是其中一个模块,内部的接线仍在 `src/daemon/bootstrap/wire-*.ts`。
 
 ## 分层:谁能依赖谁
 
@@ -53,7 +53,7 @@ src/mcp-servers ──HTTP──►  src/daemon(internal API)
 | 路由:路径、谁能调、属于哪个模块 | `packages/protocol/src/routes.ts` | 鉴权表、模块门、`gen:routes` 生成物、桌面白名单;`route-registry` 守卫 |
 | 错误码 → 各表面的状态与说法 | `packages/protocol/src/workbench-errors.ts` | 桌面 / 手机 / 微信的映射都核它 |
 | 微信命令 | `commands/registry.ts` 一张表,顺序就是优先级 | 各族(admin / mode / control)行两两互斥;路由快照记每句落到哪 |
-| 子系统的启停 | `DaemonModule`(`modules/container.ts`) | `daemon-module` 守卫数旧写法,只许少 |
+| 子系统的启停 | `DaemonModule`(`modules/container.ts`),全部模块一张表 `daemon-modules.ts` | `daemon-module` 守卫数旧写法,只许少;main.ts 已清零 |
 | CC 什么时候能主动开口 | SpeechPolicy(`src/daemon/speech/`) | `speech-send` 守卫按文件数发送调用 |
 | 数据库迁移的顺序 | `src/lib/db/migrations/index.ts`(一版一个文件) | 文件名 = 位置;进了 `dev` 的一字不改(CI `migrations · frozen`) |
 | 状态文件怎么写 | `src/lib/json-file.ts`(独立 tmp + fsync + rename;读不出来拒写) | `json-write` 守卫:新代码手写 tmp / 直写 JSON 就红 |

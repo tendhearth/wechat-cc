@@ -3,7 +3,6 @@ import {mkdtempSync} from 'node:fs'
 import {tmpdir} from 'node:os'
 import {join} from 'node:path'
 import {buildPipelineDeps} from './pipeline-deps'
-import {Ref} from '../../lib/lifecycle'
 import {openTestDb,type Db} from '../../lib/db'
 import {removeTempDir} from '../../lib/test-temp'
 import {makeReplySinks} from '../reply-sinks'
@@ -30,7 +29,7 @@ function setup(workbench?:PipelineDepsOpts['workbench']){
   } as unknown as Bootstrap
   buildPipelineDeps({stateDir:dir,db,boot,ilink:{} as PipelineDepsOpts['ilink'],log(){},
     chatPrefs:{get:()=>({}),set:()=>({}),list:()=>[]},careLedger:{} as PipelineDepsOpts['careLedger'],replySinks:makeReplySinks(),...(workbench?{workbench}:{})},
-    {polling:new Ref('polling'),guard:new Ref('guard'),pipeline:new Ref('pipeline'),ingestNudge:new Ref('ingestNudge')})
+    {polling:()=>null,pipeline:()=>null,ingestNudge:()=>null})
   return panel.deps!
 }
 

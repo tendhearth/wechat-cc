@@ -48,6 +48,12 @@ export interface ModuleCtx {
   maybe<T>(name: string): T | null
   /** 唯一的晚绑定,只给真的环用,只能拿 lazy 里写了的。返回的函数在 start 段之前调 ⇒ 抛;那个模块不是 ok ⇒ 抛。 */
   lazy<T>(name: string): () => T
+  /**
+   * 同一条环边(也只能拿 lazy 里写了的),但「还没有」照实回 null 而不是抛:start 段之前、那个模块不是 ok。
+   * 给「早就被外面调得到」的读口用 —— internal-api 在 init 段就开始监听,桌面那时来问的健康 / 会话列表
+   * 应该得到「还没有」(503 / 空),不是一个异常。
+   */
+  late<T>(name: string): () => T | null
   /** 登记一个定时器:start 段才开始计时,关机自动 clear。fn 抛错 / reject 只记一行。 */
   interval(name: string, ms: number, fn: () => unknown): void
   /** 登记「开动」:起服务、开始拉消息……start 段按登记顺序 await。要停的东西另用 own 登记。 */
@@ -206,6 +212,14 @@ export function createModules(mods: readonly DaemonModule[], opts: ModuleOpts): 
             const s = slots.get(n)
             if (!s || s.status.state !== 'ok') throw new Error(`modules: lazy('${n}') used by '${mod.name}' but '${n}' is ${s?.status.state ?? 'missing'}`)
             return s.value as T
+          }
+        },
+        late: <T>(n: string): (() => T | null) => {
+          if (!lazies.has(n)) throw new Error(`modules: '${mod.name}' called ctx.late('${n}') but '${n}' is not in its lazy`)
+          return () => {
+            if (phase === 'init') return null
+            const s = slots.get(n)
+            return s && s.status.state === 'ok' ? (s.value as T) : null
           }
         },
         interval: (name, ms, fn) => { slot.regs.push({ kind: 'interval', name, ms, fn }) },

@@ -2,6 +2,7 @@ import { describe, it, expect, vi } from 'vitest'
 import { makeGuardRuntime } from './runtime'
 import { initialState, type GuardState } from './scheduler'
 import type { GuardLifecycle } from './lifecycle'
+import type { ProviderInUse } from './targets'
 
 const SAFE_BX = { safe: true, protection: 'protected', tunnelHealthy: true, detail: 'bx 保护中' }
 const DOWN_BX = { safe: false, protection: 'off', tunnelHealthy: false, detail: 'bx 未保护(protection_state=off)' }
@@ -9,14 +10,17 @@ const DOWN_BX = { safe: false, protection: 'off', tunnelHealthy: false, detail: 
 function rt(over: { enabled?: boolean; bx?: string | null; read?: typeof SAFE_BX | typeof DOWN_BX } = {}) {
   const log = vi.fn()
   const readBx = vi.fn(async () => over.read ?? SAFE_BX)
+  const late: { sched: GuardLifecycle | null; inUse: ProviderInUse[] } = { sched: null, inUse: [] }
   const r = makeGuardRuntime({
     stateDir: '/nonexistent',
     log,
     isEnabled: () => over.enabled ?? true,
     findBx: () => (over.bx === undefined ? '/fake/bx' : over.bx),
     readBx,
+    lifecycle: () => late.sched,
+    providersInUse: () => late.inUse,
   })
-  return { r, log, readBx }
+  return { r, log, readBx, late }
 }
 
 function lifecycleWith(state: GuardState): GuardLifecycle {
@@ -36,14 +40,15 @@ describe('makeGuardRuntime', () => {
   it('skipWhenUnsafe: safe → runs the job; recovery is logged once', async () => {
     let read = DOWN_BX as typeof SAFE_BX | typeof DOWN_BX
     const log = vi.fn()
-    const r = makeGuardRuntime({ stateDir: '/x', log, isEnabled: () => true, findBx: () => '/fake/bx', readBx: async () => read })
+    let sched: GuardLifecycle | null = null
+    const r = makeGuardRuntime({ stateDir: '/x', log, isEnabled: () => true, findBx: () => '/fake/bx', readBx: async () => read, lifecycle: () => sched })
     const job = vi.fn(async () => {})
     const wrapped = r.skipWhenUnsafe('companion.ingest', job)
     await wrapped()
     expect(job).not.toHaveBeenCalled()
     read = SAFE_BX
     // 闸门的当场读数有 5s 短缓存;用调度器的新鲜读数顶替
-    r.ref.set(lifecycleWith({ ...initialState(), source: 'bx', safe: true, reachable: true, detail: 'bx 保护中', lastChecked: new Date().toISOString() }))
+    sched = (lifecycleWith({ ...initialState(), source: 'bx', safe: true, reachable: true, detail: 'bx 保护中', lastChecked: new Date().toISOString() }))
     await wrapped()
     expect(job).toHaveBeenCalledTimes(1)
     expect(log.mock.calls.some(c => String(c[1]).includes('resuming'))).toBe(true)
@@ -59,15 +64,15 @@ describe('makeGuardRuntime', () => {
   })
 
   it('health mirrors the scheduler state once it has run', () => {
-    const { r } = rt()
-    r.ref.set(lifecycleWith({ ...initialState(), source: 'bx', safe: false, reachable: false, detail: 'bx 隧道不健康(tunnel_healthy=false)', ip: '9.9.9.9', lastChecked: '2026-10-02T10:00:00.000Z' }))
+    const { r, late } = rt()
+    late.sched = (lifecycleWith({ ...initialState(), source: 'bx', safe: false, reachable: false, detail: 'bx 隧道不健康(tunnel_healthy=false)', ip: '9.9.9.9', lastChecked: '2026-10-02T10:00:00.000Z' }))
     expect(r.health()).toMatchObject({ enabled: true, source: 'bx', safe: false, detail: 'bx 隧道不健康(tunnel_healthy=false)', ip: '9.9.9.9', checked_at: '2026-10-02T10:00:00.000Z' })
   })
 
   // 守护 v2:Claude 聊天暂停不该连累 DeepSeek / Cursor auto 的后台判断。
   it('skipWhenUnsafe: unsafe but an unprotected provider is in use → the job still runs; protected refusals inside are swallowed with ONE log line', async () => {
-    const { r, log } = rt({ read: DOWN_BX })
-    r.setProvidersInUse(() => [{ id: 'claude', model: null }, { id: 'cursor', model: 'auto' }])
+    const { r, log, late } = rt({ read: DOWN_BX })
+    late.inUse = [{ id: 'claude', model: null }, { id: 'cursor', model: 'auto' }]
     const { NetworkUnprotectedError } = await import('../../lib/network-gate')
     const job = vi.fn(async () => { throw new NetworkUnprotectedError({ safe: false, source: 'bx', detail: 'x' }, 'Claude') })
     const wrapped = r.skipWhenUnsafe('companion.introspect', job)
@@ -77,8 +82,8 @@ describe('makeGuardRuntime', () => {
   })
 
   it('skipWhenUnsafe: unsafe and everything in use is protected → skipped quietly', async () => {
-    const { r } = rt({ read: DOWN_BX })
-    r.setProvidersInUse(() => [{ id: 'claude', model: null }, { id: 'agy', model: null }])
+    const { r, late } = rt({ read: DOWN_BX })
+    late.inUse = [{ id: 'claude', model: null }, { id: 'agy', model: null }]
     const job = vi.fn(async () => {})
     await r.skipWhenUnsafe('companion.push', job)()
     expect(job).not.toHaveBeenCalled()

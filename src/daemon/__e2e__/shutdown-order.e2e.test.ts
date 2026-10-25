@@ -23,8 +23,10 @@ describe('daemon shutdown order (snapshot)', () => {
         .map(m => `${m[1] === 'MODULES' ? 'module' : 'lc'} ${m[2]}`)
       // 核心五样都在、各停一次 —— 快照之外先把这条钉死,免得有人整份 -u 把漏掉的也认了
       for (const core of ['internal-api', 'workbench', 'sessions', 'ilink', 'polling']) {
-        expect(order.filter(s => s === `lc ${core}`), core).toHaveLength(1)
+        expect(order.filter(s => s === `module ${core}/stop`), core).toHaveLength(1)
       }
+      // 架构终态 A1:全部启停都在一个容器里,不再有 LifecycleSet 那一套
+      expect(order.filter(s => s.startsWith('lc '))).toEqual([])
       expect(order).toMatchSnapshot()
     } finally {
       rmSync(stateDir, { recursive: true, force: true })

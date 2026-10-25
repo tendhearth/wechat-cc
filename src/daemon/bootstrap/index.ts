@@ -202,6 +202,7 @@ export async function buildBootstrap(deps: BootstrapDeps): Promise<Bootstrap> {
     maxConcurrent: 6,
     idleEvictMs: 30 * 60_000,
     registry, networkGate: deps.networkGate,
+    ...(deps.executionGuard ? { executionGuard: deps.executionGuard } : {}),
     sessionStore,
     resumeTTLMs: 7 * 24 * 60 * 60_000,
     // Per-session auth token lifecycle — minted once per spawn, revoked on

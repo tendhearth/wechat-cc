@@ -22,6 +22,8 @@ export interface BootstrapDeps {
    * 缺省 = 不拦(测试 / 最小嵌入)。
    */
   networkGate?: import('../../lib/network-gate').NetworkGate
+  /** 工作台正占着这个目录 / 原生会话 ⇒ 会话管理拒 acquire(SessionManagerOptions.executionGuard);缺省 = 不冲突。 */
+  executionGuard?: (path: string, providerId: string, nativeId: string | null) => boolean
   ilink: {
     sendMessage: (chatId: string, text: string) => Promise<{ msgId: string }>
     sendFile: (chatId: string, path: string) => Promise<void>

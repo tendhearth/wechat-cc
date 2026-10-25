@@ -20,7 +20,6 @@ vi.mock('../../lib/config.ts', async (importOriginal) => {
 })
 
 const { buildPipelineDeps } = await import('./pipeline-deps')
-const { Ref } = await import('../../lib/lifecycle')
 const { openTestDb } = await import('../../lib/db')
 const { makeReplySinks } = await import('../reply-sinks')
 // loadAccess() has a 5s in-process TTL cache (src/lib/access.ts) — this
@@ -92,7 +91,7 @@ function setup(admins: string[] = ['admin_chat']) {
 
   const { pipelineDeps } = buildPipelineDeps(
     { stateDir, db, ilink, boot, log: () => {}, chatPrefs, careLedger, replySinks },
-    { polling: new Ref('polling'), guard: new Ref('guard'), pipeline: new Ref('pipeline'), ingestNudge: new Ref('ingestNudge') },
+    { polling: () => null, pipeline: () => null, ingestNudge: () => null },
   )
   return { pipelineDeps, stateDir, routeChatToAccount, captureContextToken, markChatActive, sendMessage }
 }
