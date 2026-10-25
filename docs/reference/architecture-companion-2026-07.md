@@ -53,8 +53,9 @@ WeChat task commands ─┤
 The implementation starts at `src/features/workbench/wire.ts` and
 `src/features/workbench/service.ts`. Executors are admitted through the explicit contract in
 `executor-capabilities.ts`; ordinary companion providers do not become workbench executors
-merely by being installed. API registration (`src/features/workbench/workbench-api.ts` + `src/adapters/executors/openai/api-task-provider.ts`) uses a separate file-tool
-and persistent-transcript implementation, without companion shell or private-memory tools.
+merely by being installed. API registration (`src/features/workbench/workbench-api.ts` + `src/adapters/executors/openai/openai-workbench-provider.ts`) is the
+workbench purpose of the one OpenAI-compatible session type (`openai-session.ts`, end-state B2): file tools and a persistent
+transcript only, without companion shell, wechat or private-memory tools (same as the Claude / Codex workbench setups).
 
 Different projects may run concurrently. Conflicting directories remain reserved until
 managed resources are confirmed closed; asking to stop does not prove process exit. CC does

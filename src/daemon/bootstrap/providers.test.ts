@@ -196,3 +196,20 @@ describe('registerProviders — cursor ACP chat provider on Windows', () => {
     }
   })
 })
+
+// B2(2026-10-25):OpenAI 兼容一份实现 —— 对话侧登记带着会话存档(有 DB 才续接);工作台不拿微信工具。
+describe('registerProviders — openai (one session type, B2)', () => {
+  const openaiConfig = baseConfig({ openaiBaseUrl: 'https://gateway.example/v1', openaiModel: 'fixture-model' })
+  it('with a db: canResume reads the chat session store; the registration hands the workbench no wechat tools', async () => {
+    vi.stubEnv('WECHAT_OPENAI_API_KEY', 'fixture-key')
+    try {
+      const db = openTestDb()
+      const { registry } = await registerProviders(baseDeps({ configuredAgent: openaiConfig, db, wechatStdioForOpenai: fakeWechatSpec }))
+      const entry = registry.get('openai')!
+      expect(entry.opts.canResume('/p', 'no-such-session')).toBe(false)
+      expect(Object.keys(entry.opts)).not.toContain('workbenchMcpTools')
+      const bare = await registerProviders(baseDeps({ configuredAgent: openaiConfig }))
+      expect(bare.registry.get('openai')!.opts.canResume('/p', 'x')).toBe(false)
+    } finally { vi.unstubAllEnvs() }
+  })
+})

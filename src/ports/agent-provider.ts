@@ -125,6 +125,11 @@ export interface AgentWorkbenchRuntime {
 }
 
 export interface AgentSession {
+  /**
+   * 这条会话是不是接着上一次的历史起来的(续接成功)。provider 知道才填;不填 ⇒ 协调器按能力表的 supportsResume 猜。
+   * 冷启动近况块据它决定加不加:续上了就不必再贴一遍最近的对话(B2,2026-10-25:OpenAI 兼容对话开始能续接)。
+   */
+  resumedHistory?: boolean
   /** Optional owned lifetime capability; legacy dispatch remains unchanged. */
   workbenchRuntime?: AgentWorkbenchRuntime
   /** Native acknowledgement of supplemental input to the current turn only. */
@@ -233,6 +238,17 @@ export type AgentUserInputAnswers = Record<string, string[]>
  * dangerously flag changed without bumping tier (C5). The fix is to
  * thread `permissionMode` explicitly.
  */
+/**
+ * 一组按会话起来的 MCP 工具(OpenAI 兼容这条自己跑工具循环的路用)。`serverOf` 给出真正所属的 server(wechat / delegate /
+ * 插件名),判档位按 `mcp__<server>__<tool>`,不许把别家的同名工具当成 wechat 的。只给对话用(工作台和 Claude / Codex 一样不给 MCP)。
+ */
+export interface AgentMcpTools {
+  tools: { name: string; description: string; parameters: Record<string, unknown> }[]
+  call(name: string, input: unknown): Promise<string>
+  close(): Promise<void>
+  serverOf(name: string): string | undefined
+}
+
 export interface SpawnContext {
   /** Workbench-only ordered activity updates. Normal chat consumers keep legacy events. */
   workbenchTimeline?: boolean

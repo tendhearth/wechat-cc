@@ -67,6 +67,8 @@ function detectUserCodexOnPath(): { path: string | null; version: string | null 
 export interface ProviderDeps {
   log: BootstrapDeps['log']
   stateDir: string
+  /** OpenAI 兼容对话的会话历史存这里(B2,api-sessions 的 openai_chat_sessions)。不给 ⇒ 只在内存,不续接。 */
+  db?: import('../../lib/db').Db
   ilink: Pick<BootstrapDeps['ilink'], 'askUser' | 'companion'>
   agentProviderKind?: AgentProviderKind
   configuredAgent: AgentConfig
@@ -583,47 +585,43 @@ export async function registerProviders(deps: ProviderDeps): Promise<ProviderWir
     const defaultOpenaiModel = configuredAgent.openaiModel
     try {
       const { createOpenAiAgentProvider } = await import('../../adapters/executors/openai/openai-agent-provider')
-      const { createAiSdkChatModel } = await import('../../adapters/executors/openai/openai-chat-model')
+      const { createApiModel } = await import('../../adapters/executors/openai/api-model')
       const { createMcpToolBridge } = await import('../../adapters/executors/openai/openai-mcp-bridge')
-      registry.register(
-        'openai',
-        createOpenAiAgentProvider({
-          // 守护(评审 #193 P1-1):和 makeChatModel 用的是同一份 base URL / 默认模型 —— 注册这一刻读的。
-          endpoint: { baseUrl: openaiBaseUrl, model: defaultOpenaiModel },
-          ...(deps.chatOwnerRules ? { ownerRules: deps.chatOwnerRules } : {}),
-          // Built per-spawn (not once at construction) so an operator's
-          // `/api <model>` pin — re-read via the mtime-cached config reader
-          // through currentModelFor → SpawnContext.model — takes effect on
-          // the NEXT session without a daemon restart. `model` is undefined
-          // for background evals (cheapEval/strongEval) and for spawns before
-          // any pin exists; both fall back to the boot-time configured model.
-          // createAiSdkChatModel is cheap (just SDK client wiring, no
-          // network), so constructing one per spawn is fine.
-          makeChatModel: (model) => createAiSdkChatModel({
-            baseURL: openaiBaseUrl,
-            apiKey: openaiKey,
-            model: model ?? defaultOpenaiModel,
-          }),
-          // Gated via buildOpenaiMcpSpecs so only wechat/delegate ever see
-          // sessionEnv (WECHAT_SESSION_TOKEN) — third-party plugin MCP specs
-          // must never receive the daemon's loopback bearer token. See
-          // mcp-specs.ts buildOpenaiMcpSpecs doc comment.
-          // Plugins are optional per session (openaiMcpBridgeOptions): one slow
-          // plugin must not take the whole openai spawn down with it.
-          makeMcpBridge: async (sessionEnv) => createMcpToolBridge(
-            buildOpenaiMcpSpecs(
-              { wechat: wechatStdioForOpenai, delegate: delegateStdioForOpenai, pluginMcp },
-              sessionEnv,
-            ),
-            openaiMcpBridgeOptions(deps.log),
-          ),
-          log: deps.log,
+      const { makeChatSessionStore, openAiConnectionHash } = await import('../../adapters/executors/openai/api-sessions')
+      const provider = createOpenAiAgentProvider({
+        // 守护(评审 #193 P1-1):和 makeChatModel 用的是同一份 base URL / 默认模型 —— 注册这一刻读的。
+        endpoint: { baseUrl: openaiBaseUrl, model: defaultOpenaiModel },
+        ...(deps.chatOwnerRules ? { ownerRules: deps.chatOwnerRules } : {}),
+        // Built per-spawn (not once at construction) so an operator's `/api <model>` pin — re-read via the mtime-cached
+        // config reader through currentModelFor → SpawnContext.model — takes effect on the NEXT session without a daemon
+        // restart. `model` is undefined for background evals (cheapEval/strongEval) and for spawns before any pin
+        // exists; both fall back to the boot-time configured model. Building one is cheap (SDK client wiring, no network).
+        // 对话:不设每步输出上限(交给上游默认)、AI SDK 重试 2 次(和统一之前一样)。
+        makeChatModel: (model) => createApiModel({
+          baseURL: openaiBaseUrl,
+          apiKey: openaiKey,
+          model: model ?? defaultOpenaiModel,
+          maxOutputTokens: null,
+          maxRetries: 2,
+          providerName: 'wechat-openai',
         }),
-        {
-          // No resume support in v1 — same posture as cursor above.
-          canResume: () => false,
-        },
-      )
+        // Gated via buildOpenaiMcpSpecs so only wechat/delegate ever see sessionEnv (WECHAT_SESSION_TOKEN) — third-party
+        // plugin MCP specs must never receive the daemon's loopback bearer token. See mcp-specs.ts buildOpenaiMcpSpecs.
+        // Plugins are optional per session (openaiMcpBridgeOptions): one slow plugin must not take the whole spawn down.
+        makeMcpBridge: async (sessionEnv) => createMcpToolBridge(
+          buildOpenaiMcpSpecs(
+            { wechat: wechatStdioForOpenai, delegate: delegateStdioForOpenai, pluginMcp },
+            sessionEnv,
+          ),
+          openaiMcpBridgeOptions(deps.log),
+        ),
+        // 会话历史(B2):有 DB 就存进 api-sessions,daemon 重启 / 会话释放后接得上;连接身份不含钉的模型。
+        ...(deps.db ? { sessions: makeChatSessionStore(deps.db), connectionHash: openAiConnectionHash({ baseURL: openaiBaseUrl, apiKey: openaiKey }) } : {}),
+        log: deps.log,
+      })
+      registry.register('openai', provider, {
+        canResume: (path, sessionId) => provider.canResume(path, sessionId),
+      })
       deps.log('BOOT', 'openai: base_url + model + WECHAT_OPENAI_API_KEY present — provider registered')
       // 外部集成反馈 #2:openai 在 cheapEval 偏好序第一,注册即承接全部
       // 后台评估(记忆整理/moderator/introspect)。端点若是特化服务,请在

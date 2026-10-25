@@ -3,7 +3,7 @@ import { prepareImage } from '../../../lib/image-prep'
 import { resolve, isAbsolute } from 'node:path'
 import { promisify } from 'node:util'
 import { exec as execCb } from 'node:child_process'
-import type { ToolSpec } from './openai-chat-model'
+import type { ToolSpec } from './api-model'
 
 const exec = promisify(execCb)
 

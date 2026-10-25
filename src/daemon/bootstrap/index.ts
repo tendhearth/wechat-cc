@@ -115,6 +115,7 @@ async function bootCore(b: BootBase, parts: { knowledge: Bootstrap['knowledge'];
   const { registry, defaultProviderId, codexBinary, codexVersionCheck, providerNotes: baseProviderNotes, providerProbes, stopProviderProbes, reprobeProvider } = await registerProviders({
     log: deps.log, networkGate: deps.networkGate,
     stateDir: deps.stateDir,
+    db: deps.db,
     ilink: deps.ilink,
     agentProviderKind: deps.agentProviderKind,
     configuredAgent: b.configuredAgent,

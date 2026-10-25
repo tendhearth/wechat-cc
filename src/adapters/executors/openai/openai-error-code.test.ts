@@ -1,11 +1,11 @@
 /**
  * openai 兼容边界产码 + 请求超时(arch backlog #4 第 2 步;provider-error-shapes §4.4 §4.5)。
- * 走**真的** AI SDK(createAiSdkChatModel),只把 fetch 换成假的 —— 401 / 429 / 524 /
+ * 走**真的** AI SDK(createApiModel,和生产的对话侧同样的选项),只把 fetch 换成假的 —— 401 / 429 / 524 /
  * 拒连 / 黑洞 / 流停住都是对端的真实形状,不碰网络。
  */
 import { describe, expect, it } from 'vitest'
 import { APICallError, RetryError } from 'ai'
-import { createAiSdkChatModel } from './openai-chat-model'
+import { createApiModel } from './api-model'
 import { createOpenAiAgentProvider } from './openai-agent-provider'
 import { openaiErrorCode, openaiErrorMessage } from './openai-error-code'
 import type { AgentEvent } from '../../../ports/agent-provider'
@@ -20,7 +20,7 @@ const TIMEOUTS = { connectTimeoutMs: 60, idleTimeoutMs: 60 }
 
 function provider(fetch: FetchLike, timeouts = TIMEOUTS) {
   return createOpenAiAgentProvider({
-    makeChatModel: () => createAiSdkChatModel({ baseURL: 'http://gateway.test/v1', apiKey: 'SANDBOXBOGUS', model: 'm', fetch, timeouts }),
+    makeChatModel: () => createApiModel({ baseURL: 'http://gateway.test/v1', apiKey: 'SANDBOXBOGUS', model: 'm', fetch, timeouts, maxOutputTokens: null, maxRetries: 2 }),
     makeMcpBridge: async () => bridge,
   })
 }

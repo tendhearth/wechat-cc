@@ -127,6 +127,8 @@ export interface SessionHandle {
    * 守护按它判,不按此刻的配置判。可选只是为了让测试里的假 handle 少写一行。
    */
   callTarget?(): CallTarget
+  /** 会话报的「续上了上一次的历史」(AgentSession.resumedHistory);没报 ⇒ undefined。 */
+  readonly resumedHistory?: boolean
   lastUsedAt: number
   dispatch(text: string): AsyncIterable<AgentEvent>
   /**
@@ -290,6 +292,7 @@ export class SessionManager {
       providerId: req.providerId,
       ...(model !== undefined ? { model } : {}),
       callTarget: effectiveTarget,
+      ...(session.resumedHistory !== undefined ? { resumedHistory: session.resumedHistory } : {}),
       lastUsedAt: Date.now(),
       dispatch(text: string): AsyncIterable<AgentEvent> {
         checkExecution()

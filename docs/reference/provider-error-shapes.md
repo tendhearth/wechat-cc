@@ -37,7 +37,7 @@
 | claude | `createClaudeAgentProvider(...).cheapEval` | 同一 provider 的 `spawn` + `dispatch` | Agent SDK `query()` 原始消息(provider 拍平之前) |
 | codex | `createCodexAgentProvider(...).cheapEval` | `spawn` + `dispatch`(`runStreamed`) | — |
 | cursor | `createAcpCursorChatProvider(...).cheapEval`(print 模式) | 同一 provider 的 `spawn`(ACP) | `cursor-agent acp` 的 JSON-RPC 错误对象(`setupError` 映射之前) |
-| openai 兼容 | `createOpenAiAgentProvider` + `createAiSdkChatModel` 的 `cheapEval` | `spawn` + `dispatch`(自有循环) | 用假 key 打真 DeepSeek / Moonshot 端点,拿真 401 |
+| openai 兼容 | `createOpenAiAgentProvider` + `createApiModel` 的 `cheapEval`(`generate`) | `spawn` + `dispatch`(自有循环) | 用假 key 打真 DeepSeek / Moonshot 端点,拿真 401 |
 | gemini | `createGeminiAgentProvider(...).cheapEval`(真 `GoogleGenAI`,假 key) | — | — |
 
 **agy 没有诱发,只采集**:它的登录态在主人真实 HOME 下(Google OAuth),临时 HOME 下没登录会弹浏览器登录页(就是 `agy-oauth-popup` 那个坑);拿主人真实 HOME 去断网又不算隔离。按安全规则只用历史样本 —— 好在 agy 是日志里样本最多的一家(150+ 行)。

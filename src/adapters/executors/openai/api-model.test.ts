@@ -3,7 +3,7 @@ import {MockLanguageModelV2} from 'ai/test'
 import {simulateReadableStream,type LanguageModel} from 'ai'
 import {createServer} from 'node:http'
 import {once} from 'node:events'
-import {createApiModel,type ChatMessage,type ToolSpec} from './api-model'
+import {createApiModel,userMessage,toolResultMessage,DEFAULT_EVAL_MAX_OUTPUT_TOKENS,type ChatMessage,type ToolSpec} from './api-model'
 
 const user=(text:string):ChatMessage=>({role:'user',content:text})
 const streamModel=(chunks:unknown[],capture?:Record<string,unknown>)=>new MockLanguageModelV2({
@@ -127,5 +127,59 @@ describe('APIModel transport',()=>{
       expect(await turn.finished).toMatchObject({finishReason:'stop',model:'loopback-model'})
       expect(requests).toBe(1);expect(body).toMatchObject({model:'requested-model',max_tokens:77,stream:true})
     }finally{server.close();await once(server,'close')}
+  })
+})
+
+// B2(2026-10-25):对话、工作台、一次性评估都走这一层(原 openai-chat-model.ts 的 ChatModelClient 并进来了)。
+const textModel=(chunks:string[],capture?:Record<string,unknown>)=>streamModel([
+  {type:'text-start',id:'1'},...chunks.map(delta=>({type:'text-delta',id:'1',delta})),{type:'text-end',id:'1'},
+  {type:'finish',finishReason:'stop',usage:{inputTokens:1,outputTokens:1,totalTokens:2}},
+],capture)
+const api=(model:unknown,extra:Record<string,unknown>={})=>createApiModel({baseURL:'http://unused.test/v1',apiKey:'k',model:'m',...extra},()=>model as LanguageModel)
+
+describe('APIModel —— 对话用的选项与一次性评估',()=>{
+  it('maxOutputTokens:null ⇒ 不设上限(对话:交给上游默认);maxRetries 照传',async()=>{
+    const capture:Record<string,unknown>={}
+    const turn=api(textModel(['hi'],capture),{maxOutputTokens:null,maxRetries:2}).stream([user('x')],[],new AbortController().signal)
+    for await(const _ of turn.deltas){}
+    expect(capture.maxOutputTokens).toBeUndefined()
+    expect(()=>api(textModel([]),{maxRetries:9})).toThrow('invalid_api_model')
+    expect(()=>api(textModel([]),{maxOutputTokens:0})).toThrow('invalid_api_model')
+  })
+
+  it('a 401 the SDK reports as a fullStream error part surfaces with its real cause (not NoOutputGeneratedError)',async()=>{
+    const cause=Object.assign(new Error('Authentication Error, Invalid proxy server token passed'),{statusCode:401})
+    const turn=api(new MockLanguageModelV2({doStream:async()=>{throw cause}}),{maxRetries:2}).stream([user('hi')],[],new AbortController().signal)
+    await expect(async()=>{for await(const _ of turn.deltas){}}).rejects.toBe(cause)
+    await expect(turn.finished).rejects.toBe(cause)
+  })
+
+  it('generate() returns the concatenated text and hides an inline think block (cheapEval compares this string directly)',async()=>{
+    expect(await api(textModel(['4','2'])).generate([user('answer?')])).toBe('42')
+    expect(await api(textModel(['<think>\nthe answer is yes\n</think>\n\nyes'])).generate([user('yes or no?')])).toBe('yes')
+  })
+
+  it('generate() rejects with the original cause when doStream() rejects',async()=>{
+    const cause=Object.assign(new Error('Authentication Error'),{statusCode:401})
+    await expect(api(new MockLanguageModelV2({doStream:async()=>{throw cause}})).generate([user('hi')])).rejects.toBe(cause)
+  })
+
+  it('generate() passes an explicit eval output budget (thinking models burn the default budget and return empty content)',async()=>{
+    const capture:Record<string,unknown>={}
+    await api(textModel(['ok'],capture)).generate([user('hi')])
+    expect(capture.maxOutputTokens).toBe(DEFAULT_EVAL_MAX_OUTPUT_TOKENS)
+    await api(textModel(['ok'],capture),{evalMaxOutputTokens:123}).generate([user('hi')])
+    expect(capture.maxOutputTokens).toBe(123)
+  })
+})
+
+describe('message helpers',()=>{
+  it('userMessage: 没图是纯字符串;有图是 text + image 分块,图一律是 data URL(存进 SQLite 的 JSON 原样回来)',()=>{
+    expect(userMessage('hi')).toEqual({role:'user',content:'hi'})
+    expect(userMessage('看图',[{data:new Uint8Array([1,2]),mediaType:'image/png'}])).toEqual({role:'user',content:[{type:'text',text:'看图'},{type:'image',image:'data:image/png;base64,AQI=',mediaType:'image/png'}]})
+    expect(userMessage('看图',[{data:'data:image/png;base64,AQI=',mediaType:'image/png'}])).toEqual(userMessage('看图',[{data:new Uint8Array([1,2]),mediaType:'image/png'}]))
+  })
+  it('toolResultMessage: 一条 text 结果',()=>{
+    expect(toolResultMessage('c1','reply','ok')).toEqual({role:'tool',content:[{type:'tool-result',toolCallId:'c1',toolName:'reply',output:{type:'text',value:'ok'}}]})
   })
 })
