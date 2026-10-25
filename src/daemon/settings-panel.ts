@@ -144,8 +144,8 @@ export interface SettingsPanelDeps {
   sessions?: import('./mobile-reads').MobileSessionsDeps
   /** 终端会话登记处(v76,只读)。缺省 ⇒ /m/api/cli/sessions 503。 */
   cliSessions?: () => import('../adapters/store/cli-session-store').CliSessionView[]
-  /** 终端会话:拍板等批准的那一项、接着说一句(cli-phone-actions.ts)。缺省 ⇒ /m/api/cli/permission、/m/api/cli/say 503,列表不带码。 */
-  cliActions?: import('./cli-phone-actions').CliPhoneActions
+  /** 终端会话:拍板等批准的那一项、接着说一句(features/terminal/phone-actions.ts)。缺省 ⇒ /m/api/cli/permission、/m/api/cli/say 503,列表不带码。 */
+  cliActions?: import('../features/terminal').CliPhoneActions
   /** 「今天」一眼看完(core/overseer-today.ts,只读)。缺省 ⇒ /m/api/today 503。 */
   overseerToday?: () => import('../domain/overseer-today').OverseerToday
   /** 在手机上接着做电脑上的会话(spec 2026-10-01-tendhearth-continue-sessions)。缺省 ⇒ /m/api/session/continue 503。 */

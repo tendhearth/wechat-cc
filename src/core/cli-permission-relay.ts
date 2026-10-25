@@ -39,7 +39,7 @@ const HASH_ALPHABET = 'abcdefghijklmnopqrstuvwxyz0123456789'
 
 export interface CliPermissionRelayDeps {
   /**
-   * = ilink.askUser 对主人 chat 的封装(+ 手机 app 推送,见 daemon/cli-app-push.ts);谁都够不着时应
+   * = ilink.askUser 对主人 chat 的封装(+ 手机 app 推送,见 features/terminal/app-push.ts);谁都够不着时应
    * resolve 'undelivered'。第四个参数是这条请求本身与算好的项目名,给推送的深链与正文用。
    */
   ask: (prompt: string, hash: string, timeoutMs: number, ctx: { req: CliPermissionRequest; projectName: string }) => Promise<'allow' | 'deny' | 'timeout' | 'undelivered'>

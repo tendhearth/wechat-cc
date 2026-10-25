@@ -10,9 +10,9 @@
 import {
   connectTerminalHooks, disconnectTerminalHooks, isPresent, readTerminalHooks,
   type HookChange, type HookSourceState, type TerminalHooksDeps,
-} from '../cli/terminal-hooks'
-import type { HookSource } from '../cli/hook'
-import type { CapabilityInputs } from './capabilities'
+} from '../../cli/terminal-hooks'
+import type { HookSource } from '../../cli/hook'
+import type { CapabilityInputs } from '../../daemon/capabilities'
 
 export const LOCATE_TTL_MS = 5 * 60_000
 export const SESSIONS_WINDOW_MS = 7 * 24 * 3600_000

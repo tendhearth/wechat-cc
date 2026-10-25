@@ -1,19 +1,17 @@
 import { describe, it, expect, vi } from 'vitest'
-import { cliEventRoutes, CLI_PERMISSION_POLL_CAP_MS } from './routes-cli-events'
-import { minTierFor } from './route-tiers'
-import { REQUEST_SCHEMAS } from './schema'
-import type { InternalApiDeps } from './types'
+import { terminalRoutes, CLI_PERMISSION_POLL_CAP_MS, type TerminalRoutesDeps } from './routes'
+import { minTierFor } from '../../daemon/internal-api/route-tiers'
+import { REQUEST_SCHEMAS } from '../../daemon/internal-api/schema'
 
 const qs = () => new URLSearchParams()
-const deps = (cliEvents?: InternalApiDeps['cliEvents'], cliPermissions?: InternalApiDeps['cliPermissions']): InternalApiDeps => ({ cliEvents, cliPermissions } as unknown as InternalApiDeps)
+// 只给用到的那一项:没接线的分支已经没有了(模块门在 internal-api 那一层回 module_starting,见 say-route.test.ts)
+const deps = (cliEvents?: Partial<TerminalRoutesDeps['cliEvents']>, cliPermissions?: TerminalRoutesDeps['cliPermissions']): TerminalRoutesDeps => ({ cliEvents, cliPermissions } as unknown as TerminalRoutesDeps)
 const body = { source: 'claude', kind: 'stop', session_id: 'abc123', cwd: '/w/p', text: 'done' }
 
 describe('POST /v1/cli/event(spec 2026-09-09-cli-hook-push §6.1)', () => {
-  it('没接线 → 503;接了 → 转给 hub.ingest,回 action', async () => {
-    const off = cliEventRoutes(deps())['POST /v1/cli/event']!
-    expect(await off(qs(), body)).toEqual({ status: 503, body: { error: 'cli_events_not_wired' } })
+  it('转给 hub.ingest,回 action', async () => {
     const ingest = vi.fn(() => 'scheduled' as const)
-    const on = cliEventRoutes(deps({ ingest }))['POST /v1/cli/event']!
+    const on = terminalRoutes(deps({ ingest }))['POST /v1/cli/event']!
     expect(await on(qs(), body)).toEqual({ status: 200, body: { ok: true, action: 'scheduled' } })
     expect(ingest).toHaveBeenCalledWith(body)
   })
@@ -38,13 +36,11 @@ describe('POST /v1/cli/event(spec 2026-09-09-cli-hook-push §6.1)', () => {
 
 describe('/v1/cli/permission(spec §6.3)', () => {
   const preq = { source: 'codex', session_id: 'abc123', cwd: '/w/p', tool_name: 'Bash', summary: 'rm -rf ./tmp' }
-  it('没接线 → 503;POST → relay.open;GET 不带 wait → status;带 wait → wait(封顶 25s)', async () => {
-    const off = cliEventRoutes(deps())
-    expect(await off['POST /v1/cli/permission']!(qs(), preq)).toEqual({ status: 503, body: { error: 'cli_permissions_not_wired' } })
+  it('POST → relay.open;GET 不带 wait → status;带 wait → wait(封顶 25s)', async () => {
     const open = vi.fn(async () => ({ status: 'pending' as const, hash: 'k3x9z' }))
     const status = vi.fn(() => 'pending' as const)
     const wait = vi.fn(async () => 'allow' as const)
-    const on = cliEventRoutes(deps(undefined, { open, status, wait }))
+    const on = terminalRoutes(deps(undefined, { open, status, wait }))
     expect(await on['POST /v1/cli/permission']!(qs(), preq)).toEqual({ status: 200, body: { status: 'pending', hash: 'k3x9z' } })
     expect(open).toHaveBeenCalledWith(preq)
     expect(await on['GET /v1/cli/permission']!(new URLSearchParams({ hash: 'k3x9z' }), undefined)).toEqual({ status: 200, body: { hash: 'k3x9z', status: 'pending' } })
@@ -64,12 +60,10 @@ describe('/v1/cli/permission(spec §6.3)', () => {
 })
 
 describe('GET /v1/cli/sessions(终端会话登记处,v76)', () => {
-  it('没接 list → 503;接了 → 转给 hub.list(默认 100 条、不含已结束;ended=1 / limit 封顶 500)', async () => {
-    const off = cliEventRoutes(deps({ ingest: vi.fn() }))['GET /v1/cli/sessions']!
-    expect(await off(qs(), undefined)).toEqual({ status: 503, body: { error: 'cli_sessions_not_wired' } })
+  it('转给 hub.list(默认 100 条、不含已结束;ended=1 / limit 封顶 500)', async () => {
     const view = { session_id: 'abc123', code: 'abc123', status: 'waiting' }
     const list = vi.fn(() => [view] as never)
-    const on = cliEventRoutes(deps({ ingest: vi.fn(), list }))['GET /v1/cli/sessions']!
+    const on = terminalRoutes(deps({ ingest: vi.fn(), list }))['GET /v1/cli/sessions']!
     expect(await on(qs(), undefined)).toEqual({ status: 200, body: { ok: true, sessions: [view] } })
     expect(list).toHaveBeenLastCalledWith({ includeEnded: false, limit: 100 })
     await on(new URLSearchParams({ ended: '1', limit: '9999' }), undefined)
@@ -86,13 +80,11 @@ describe('GET /v1/cli/sessions(终端会话登记处,v76)', () => {
 })
 
 describe('GET /v1/overseer/today(「今天」一眼看完,2026-10-14)', () => {
-  it('没接 → 503;接了 → { ok, today };抛 → 503 unavailable;admin 档', async () => {
-    const off = cliEventRoutes(deps())['GET /v1/overseer/today']!
-    expect(await off(qs(), undefined)).toEqual({ status: 503, body: { error: 'overseer_today_not_wired' } })
+  it('{ ok, today };抛 → 503 unavailable;admin 档', async () => {
     const today = { generatedAt: 1, counts: { needsYou: 0, done: 0, running: 0, stuck: 0 } }
-    const on = cliEventRoutes({ overseerToday: () => today } as unknown as InternalApiDeps)['GET /v1/overseer/today']!
+    const on = terminalRoutes({ overseerToday: () => today } as unknown as TerminalRoutesDeps)['GET /v1/overseer/today']!
     expect(await on(qs(), undefined)).toEqual({ status: 200, body: { ok: true, today } })
-    const broken = cliEventRoutes({ overseerToday: () => { throw new Error('db gone') } } as unknown as InternalApiDeps)['GET /v1/overseer/today']!
+    const broken = terminalRoutes({ overseerToday: () => { throw new Error('db gone') } } as unknown as TerminalRoutesDeps)['GET /v1/overseer/today']!
     expect(await broken(qs(), undefined)).toEqual({ status: 503, body: { error: 'unavailable' } })
     expect(minTierFor('GET /v1/overseer/today')).toBe('admin')
   })

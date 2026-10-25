@@ -24,7 +24,7 @@ export interface WireConnectionsDeps {
   phoneDevices(): number
   workbench?: import('../../core/workbench/service').WorkbenchService
   guardRuntime?: import('../guard/runtime').GuardRuntime
-  terminalHooks?: Pick<import('../terminal-hooks').TerminalHooksService, 'capabilityInput'>
+  terminalHooks?: Pick<import('../../features/terminal').TerminalHooksService, 'capabilityInput'>
   subsystems?: () => Array<{ name: string; state: 'ok' | 'degraded' | 'off'; error?: string }>
   /** 真回合里被拒着的执行者(provider-refusals.ts)。 */
   providerRefusals?: () => Record<string, import('../provider-refusals').ProviderRefusal>

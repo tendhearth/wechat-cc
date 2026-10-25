@@ -1310,7 +1310,7 @@ export const LicenseActivateResponse = z.union([
 // ── POST /v1/license/deactivate ──
 export const LicenseDeactivateResponse = z.object({ ok: z.literal(true), note: z.string() })
 
-// ══ 终端会话(routes-cli-events.ts)═════════════════════════════════════
+// ══ 终端会话(features/terminal/routes.ts)═════════════════════════════════════
 
 const CliD2Source = z.enum(['claude', 'codex', 'cursor'])
 
@@ -1394,7 +1394,7 @@ export const CliSayWaitResponse = z.object({
 export const OverseerTodayResponse = z.object({ ok: z.literal(true), today: OverseerToday })
 
 // ── POST /v1/cli/hooks/install · POST /v1/cli/hooks/uninstall ──
-// daemon/terminal-hooks.ts 的 TerminalHooksResult:每一家的改动 + 改完的状态。
+// features/terminal/hooks.ts 的 TerminalHooksResult:每一家的改动 + 改完的状态。
 const CliHooksChangeShape = z.object({
   source: CliD2Source,
   ok: z.boolean(),

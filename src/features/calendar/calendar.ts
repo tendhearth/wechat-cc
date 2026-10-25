@@ -9,7 +9,7 @@ import { existsSync, mkdirSync, readFileSync } from 'node:fs'
 import { spawnSync } from 'node:child_process'
 import { readJsonFile } from '../../lib/read-json-file'
 import { dayWindow, formatAgenda, parseRead, parseStatus, readScript, requestScript, statusScript, type CalendarStatus } from '../../core/calendar/eventkit'
-import type { Runner } from '../../daemon/cli-reply-handler'
+import type { Runner } from '../terminal'
 import type { ReplyHandler } from '../../daemon/commands/registry'
 
 export const CALENDAR_FILE = 'calendar.json'

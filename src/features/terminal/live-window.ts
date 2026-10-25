@@ -1,5 +1,5 @@
 /**
- * claude-live-window.ts — 手机 / 微信对一条终端会话「说一句」时,那条 Claude 会话如果还开在电脑的窗口里,
+ * live-window.ts — 手机 / 微信对一条终端会话「说一句」时,那条 Claude 会话如果还开在电脑的窗口里,
  * 就把话送进那个窗口,而不是另起一个 `claude -p --resume` 副本(2026-10-18 主人)。
  *
  * 为什么:副本跑的那一轮开着的窗口看不见,两边还会同时写同一条会话、同一个文件夹。
@@ -15,9 +15,9 @@ import { execFileSync } from 'node:child_process'
 import { readdirSync } from 'node:fs'
 import { homedir } from 'node:os'
 import { join } from 'node:path'
-import { readJsonFile } from '../lib/read-json-file'
+import { readJsonFile } from '../../lib/read-json-file'
 
-/** 同 cli-reply-handler 的 Runner(这里自己写一份,免得两个文件互相 import)。 */
+/** 同 reply-handler.ts 的 Runner(这里自己写一份,免得两个文件互相 import)。 */
 type Runner = (cmd: string, args: string[], cwd: string, timeoutMs: number) => Promise<{ code: number | null; stdout: string; stderr: string; timedOut: boolean }>
 
 export interface LiveWindow { pid: number; name: string; kind: string; status?: string }

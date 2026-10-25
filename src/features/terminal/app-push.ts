@@ -1,5 +1,5 @@
 /**
- * cli-app-push.ts — 终端 claude / codex 会话的事,除了微信,也推到主人手机 app(中继 v2 原生推送)。
+ * app-push.ts — 终端 claude / codex 会话的事,除了微信,也推到主人手机 app(中继 v2 原生推送)。
  *
  * 起因(2026-10-14 真机):微信拒主动外发(ilink errcode=-2,日志「wechat refused the send」),
  * 主人什么都收不到;权限请求更糟 —— 卡片没送到,askUser 当场 fail,码作废,手机上也拍不了。
@@ -15,10 +15,10 @@
  * /terminal/[id](那页能拍板、能接着说);同一会话的通知按它折叠(collapse-id / 线程)。
  * 失败只记日志、丢弃 —— 断线不重试。
  */
-import type { CliPushItem } from '../core/cli-events'
-import type { CliPermissionRequest } from '../core/cli-permission-relay'
-import type { PendingPermissionMeta, PermissionDecision } from './pending-permissions'
-import type { PushPayload } from './phone-push'
+import type { CliPushItem } from '../../core/cli-events'
+import type { CliPermissionRequest } from '../../core/cli-permission-relay'
+import type { PendingPermissionMeta, PermissionDecision } from '../../daemon/pending-permissions'
+import type { PushPayload } from '../../daemon/phone-push'
 
 /** app 认这个前缀:后面是终端会话 id;空 ⇒ 去「一起做」的终端列表。 */
 export const CLI_PUSH_TASK_PREFIX = 'cli:'

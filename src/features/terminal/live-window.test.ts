@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest'
 import { mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { findLiveWindow, liveSessionIds, pickLiveWindow, pidAlive, relayPrompt, relayCommand, relayMessage, relayToWindow, transcriptStartCwd, RELAY_SENDER_NAME } from './claude-live-window'
+import { findLiveWindow, liveSessionIds, pickLiveWindow, pidAlive, relayPrompt, relayCommand, relayMessage, relayToWindow, transcriptStartCwd, RELAY_SENDER_NAME } from './live-window'
 
 const alive = (pids: number[]) => (pid: number) => pids.includes(pid)
 

@@ -50,7 +50,7 @@ const BOUNDARY: Record<string, string> = {
   defaultProbeGemini: 'spawns the gemini CLI to read its version (src/cli/doctor.ts)',
   defaultSpawnFn: 'spawns the agy (Antigravity) CLI child process per turn (src/adapters/executors/agy/agy-agent-provider.ts)',
   defaultConnect: 'opens an outbound WebSocket to the remote relay (src/daemon/tunnel-client.ts)',
-  defaultRunner: 'spawns claude / codex to resume a terminal session from a WeChat reply (src/daemon/cli-reply-handler.ts); also execFile for the CLI auto-upgrader (src/core/cli-upgrade/detect.ts — engine.test.ts drives the real one against fake CLIs in temp dirs)',
+  defaultRunner: 'spawns claude / codex to resume a terminal session from a WeChat reply (src/features/terminal/reply-handler.ts); also execFile for the CLI auto-upgrader (src/core/cli-upgrade/detect.ts — engine.test.ts drives the real one against fake CLIs in temp dirs)',
   defaultExec: 'spawns sips / powershell / convert to shrink an image before it goes to the model (src/lib/image-prep.ts)',
   defaultTerminalChatId: 'reads user_account_ids.json / context_tokens.json under STATE_DIR to pick the last chat (src/lib/send-reply.ts, seam in src/cli/commands/reply.ts)',
   defaultBxExec: 'spawns `bx status --json` (execFile + timeout) for the network guard (src/daemon/guard/bx.ts; driven against a stand-in script, never the real bx)',

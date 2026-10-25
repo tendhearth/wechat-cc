@@ -1,12 +1,12 @@
 /**
- * overseer-today-source.ts — 把「今天」的两路来源读出来交给纯函数(core/overseer-today.ts)。
+ * today.ts — 把「今天」的两路来源读出来交给纯函数(core/overseer-today.ts)。
  *
  * 终端:登记处(含已结束的、带中继开出去的码);一起做:工作台未归档任务 + 待决。
  * 任一路读不到(没接 / 抛)⇒ 记为 unavailable,另一路照算 —— 整张不因一路出错而挂。
  * 微信「日报」、GET /v1/overseer/today、手机 /m/api/today 都调同一个函数。只读,只在被问时算。
  */
-import { buildOverseerToday, TODAY_WINDOW_MS, type OverseerToday, type TodayAttentionInput, type TodayCcDecided, type TodayJobs, type TodayTaskInput } from '../domain/overseer-today'
-import type { CliDigestView } from '../domain/cli-session-digest'
+import { buildOverseerToday, TODAY_WINDOW_MS, type OverseerToday, type TodayAttentionInput, type TodayCcDecided, type TodayJobs, type TodayTaskInput } from '../../domain/overseer-today'
+import type { CliDigestView } from '../../domain/cli-session-digest'
 
 /** 工作台里用得到的两个只读入口(WorkbenchService 结构上满足;测试可给假的)。 */
 export interface TodayWorkbench {

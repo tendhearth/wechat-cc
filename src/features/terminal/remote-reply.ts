@@ -1,10 +1,10 @@
 /**
- * cli-remote-reply.ts — 脑侧:主人在微信里「看 / 说」的那条会话在某只手上,把请求转给
+ * remote-reply.ts — 脑侧:主人在微信里「看 / 说」的那条会话在某只手上,把请求转给
  * 那只手的 /a2a/cli/reply(spec 2026-09-09-cli-hook-push §6.5)。钥匙就是派活用的那把
  * (brain → hand 的 outbound_api_key),手那边验的也是同一道 may_exec 门。
  */
-import type { A2AAgentRecord } from '../lib/agent-config'
-import type { CliSessionInfo } from '../core/cli-events'
+import type { A2AAgentRecord } from '../../lib/agent-config'
+import type { CliSessionInfo } from '../../core/cli-events'
 
 export interface RemoteReplyDeps {
   registry: { get(id: string): A2AAgentRecord | null }

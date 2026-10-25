@@ -1,5 +1,5 @@
 /**
- * /v1/cli/say(terminal_say,2026-10-24)的门:走真的 internal-api(HTTP + 令牌登记 + 档位表),
+ * /v1/cli/say(terminal_say,2026-10-24)的门(架构终态 A5 从 internal-api/routes-cli-say.test.ts 搬来;路由由 terminal 模块挂):走真的 internal-api(HTTP + 令牌登记 + 档位表),
  * 证明访客 / 非主人 / file 令牌一句话都送不进终端会话;只有主人那条聊天的 admin 会话令牌能。
  * terminalSay 是假的 —— 不碰任何真的终端窗口。
  */
@@ -7,11 +7,12 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import { mkdtempSync, readFileSync, rmSync } from 'node:fs'
 import { join } from 'node:path'
 import { tmpdir } from 'node:os'
-import { createInternalApi, type InternalApi } from './index'
-import { makeMemoryFS } from '../memory/fs-api'
-import { minTierFor } from './route-tiers'
-import { REQUEST_SCHEMAS } from './schema'
+import { createInternalApi, type InternalApi } from '../../daemon/internal-api/index'
+import { makeMemoryFS } from '../../daemon/memory/fs-api'
+import { minTierFor } from '../../daemon/internal-api/route-tiers'
+import { REQUEST_SCHEMAS } from '../../daemon/internal-api/schema'
 import { WORKBENCH_ERRORS } from '@wechat-cc/protocol'
+import { terminalRoutes, type TerminalRoutesDeps } from './routes'
 
 const OWNER = 'owner@im.wechat'
 let stateDir: string
@@ -22,17 +23,20 @@ let claimed: string[]
 beforeEach(() => { stateDir = mkdtempSync(join(tmpdir(), 'cli-say-')); api = null; said = []; claimed = [] })
 afterEach(async () => { if (api) await api.stop({ unlinkToken: true }).catch(() => {}); rmSync(stateDir, { recursive: true, force: true }) })
 
-async function boot() {
+const mountSay = (a: InternalApi, terminalSay: TerminalRoutesDeps['terminalSay']) =>
+  a.mount('terminal', terminalRoutes({ terminalSay } as unknown as TerminalRoutesDeps))
+
+async function boot(o: { mount?: boolean } = {}) {
   api = createInternalApi({ stateDir, daemonPid: 1, memory: makeMemoryFS({ rootDir: join(stateDir, 'memory') }) })
   const { port, tokenFilePath } = await api.start()
-  api.provide({ terminalSay: {
+  if (o.mount !== false) mountSay(api, {
     say: (code, text) => { said.push([code, text]); return { ok: true, ticket: 'a1b2c3d4e5f6', via: 'window', code, source: 'claude', project: 'cc', was_running: false, read_only: false, max_wait_ms: 570_000 } },
     wait: async (ticket) => ticket === 'a1b2c3d4e5f6'
       ? { ticket, code: 'abc123', source: 'claude', project: 'cc', via: 'window', state: 'replied', final: true, delivered: true, reply: '好', reply_truncated: false, error: null, elapsed_ms: 5, was_running: false, reply_verified: true, read_only: false, owner_notified: false, owner_has_reply: false, max_wait_ms: 570_000 }
       : null,
     claim: (t) => { claimed.push(t) },
     isOwnerChat: (chatId) => chatId === OWNER,
-  } })
+  })
   const post = (token: string) => fetch(`http://127.0.0.1:${port}/v1/cli/say`, {
     method: 'POST', headers: { Authorization: `Bearer ${token}`, 'content-type': 'application/json' }, body: JSON.stringify({ code: 'abc123', text: '先停下' }),
   })
@@ -41,6 +45,17 @@ async function boot() {
 }
 
 describe('/v1/cli/say 的门', () => {
+  it('terminal 模块还没挂上 ⇒ module_starting(以前是 terminal_say_not_wired);挂上之后照常过门', async () => {
+    const h = await boot({ mount: false })
+    const owner = h.api.mintSessionToken('admin', `claude/a/${OWNER}`)
+    const before = await h.post(owner)
+    expect(before.status).toBe(503)
+    expect(await before.json()).toEqual({ error: 'module_starting', module: 'terminal' })
+    mountSay(h.api, { say: (code, text) => { said.push([code, text]); return { ok: false, error: 'terminal_say_unknown_session', detail: '' } }, wait: async () => null, claim: () => {}, isOwnerChat: (c) => c === OWNER })
+    expect((await h.post(owner)).status).toBe(404)
+    expect(said).toEqual([['abc123', '先停下']])
+  })
+
   it('访客会话令牌 ⇒ 403(档位),什么都没送', async () => {
     const h = await boot()
     const guest = h.api.mintSessionToken('guest', 'claude/a/stranger@im.wechat')
@@ -78,10 +93,10 @@ describe('/v1/cli/say 的门', () => {
   })
 
   it('长轮询的调用方断开 ⇒ 交给 wait 的 signal 中止(挂着的等待不能当成「还有人在等」)', async () => {
-    const h = await boot()
+    const h = await boot({ mount: false })
     let seen: AbortSignal | undefined
     const aborted = new Promise<void>((resolve) => {
-      h.api.provide({ terminalSay: {
+      mountSay(h.api, {
         say: () => { throw new Error('unused') },
         wait: (_t, _ms, signal) => new Promise((res) => {
           seen = signal
@@ -89,7 +104,7 @@ describe('/v1/cli/say 的门', () => {
         }),
         claim: (t) => { claimed.push(t) },
         isOwnerChat: (c) => c === OWNER,
-      } })
+      })
     })
     const owner = h.api.mintSessionToken('admin', `claude/a/${OWNER}`)
     const ac = new AbortController()

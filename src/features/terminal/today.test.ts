@@ -1,6 +1,6 @@
 import { describe, it, expect, vi } from 'vitest'
-import { makeOverseerTodaySource, TODAY_TASK_LIMIT, type TodayWorkbench } from './overseer-today-source'
-import type { CliDigestView } from '../domain/cli-session-digest'
+import { makeOverseerTodaySource, TODAY_TASK_LIMIT, type TodayWorkbench } from './today'
+import type { CliDigestView } from '../../domain/cli-session-digest'
 
 const NOW = 1_800_000_000_000
 const view: CliDigestView = {

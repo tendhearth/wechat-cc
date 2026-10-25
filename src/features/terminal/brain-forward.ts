@@ -1,14 +1,14 @@
 /**
- * cli-brain-forward.ts — 手那边:本机终端会话的事件 / 权限请求不在本机决定,转给脑
+ * brain-forward.ts — 手那边:本机终端会话的事件 / 权限请求不在本机决定,转给脑
  * (spec 2026-09-09-cli-hook-push §6.5)。脑有微信、有全局视角;手只有键盘和屏幕。
  *
  * 在场判断留在信号所在的机器上:人就在这只手前(本机空闲短),直接落本机桌面通知、
  * 权限交给终端自己问 —— 不用绕到脑。人不在,才转。
  */
-import type { A2AAgentRecord } from '../lib/agent-config'
-import type { CliEvent, CliEventAction } from '../core/cli-events'
-import { PRESENT_IDLE_S, formatCliHeader, stripMarkdown, summarizeOneLine } from '../core/cli-events'
-import type { CliPermissionRequest, CliPermissionOpen, CliPermissionStatus } from '../core/cli-permission-relay'
+import type { A2AAgentRecord } from '../../lib/agent-config'
+import type { CliEvent, CliEventAction } from '../../core/cli-events'
+import { PRESENT_IDLE_S, formatCliHeader, stripMarkdown, summarizeOneLine } from '../../core/cli-events'
+import type { CliPermissionRequest, CliPermissionOpen, CliPermissionStatus } from '../../core/cli-permission-relay'
 
 export interface BrainLink { id: string; url: string; key: string }
 

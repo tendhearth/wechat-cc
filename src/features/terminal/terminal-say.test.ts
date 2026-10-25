@@ -1,10 +1,10 @@
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
-import { openDb, type Db } from '../lib/db'
-import { makeCliEventHub, type CliEvent, type CliEventHub } from '../core/cli-events'
-import { makeCliSessionStore } from '../adapters/store/cli-session-store'
-import { makeCliReplyCore, type RunResult } from './cli-reply-handler'
-import { makeTerminalSay, terminalSayMaxWaitMs, TERMINAL_SAY_HEADER, type TerminalSay, type TerminalSayDeps } from './cli-terminal-say'
-import { relayCommand, relayMessage } from './claude-live-window'
+import { openDb, type Db } from '../../lib/db'
+import { makeCliEventHub, type CliEvent, type CliEventHub } from '../../core/cli-events'
+import { makeCliSessionStore } from '../../adapters/store/cli-session-store'
+import { makeCliReplyCore, type RunResult } from './reply-handler'
+import { makeTerminalSay, terminalSayMaxWaitMs, TERMINAL_SAY_HEADER, type TerminalSay, type TerminalSayDeps } from './terminal-say'
+import { relayCommand, relayMessage } from './live-window'
 
 /**
  * terminal_say(2026-10-24):真的 hub + 登记处 + 「@码」同一个 core,只把「起进程」和「送进窗口」换成假的。

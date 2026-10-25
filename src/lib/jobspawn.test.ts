@@ -259,7 +259,7 @@ describe('会漏的 spawn 点都套了 cc-jobspawn', () => {
   const sites: Array<[string, string]> = [
     ['src/adapters/executors/agy/agy-agent-provider.ts', 'agy 一处 win32 判断都没有,kill() 只杀 agy 本身'],
     ['src/cli/self-change/runner.ts', '自改流水线的 claude -p:win32 上 MCP 与子代理留下继续烧预算'],
-    ['src/daemon/cli-reply-handler.ts', '微信「@码」续接:win32 上 killAll 只杀 claude/codex 本身'],
+    ['src/features/terminal/reply-handler.ts', '微信「@码」续接:win32 上 killAll 只杀 claude/codex 本身'],
     ['src/adapters/executors/codex/codex-config.ts', 'codex mcp list:工作台硬闸门在 provider.spawn() 里,这条路走 modelCatalog,闸门之外'],
     ['src/adapters/executors/codex/codex-model-catalog.ts', 'codex app-server 目录进程:同上,在 win32 上真的会跑'],
   ]

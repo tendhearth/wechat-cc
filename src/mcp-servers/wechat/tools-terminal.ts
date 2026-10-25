@@ -4,8 +4,8 @@
  * 主人 10-24 在微信里:「跟终端里正在开发 cc 的 Claude 讨论一下这个」「让 6ccb0f 那个会话先停下改 X」——
  * 「不然怎么远程指挥呢?」。CC 当时只有 delegate_claude(新起一个 Claude,不是那条会话),于是没法做。
  *
- * 只给 admin 会话注册(main.ts 的 SESSION_IS_ADMIN 门);路由 admin 档 + 只认主人那条聊天的会话令牌(routes-cli-events)。
- * 送话走主人「@码」同一个 core(daemon/cli-terminal-say.ts);这里只是:POST 拿票 → GET 轮询(一次 ≤25s)到有结果或到点。
+ * 只给 admin 会话注册(main.ts 的 SESSION_IS_ADMIN 门);路由 admin 档 + 只认主人那条聊天的会话令牌(features/terminal/routes.ts)。
+ * 送话走主人「@码」同一个 core(features/terminal/terminal-say.ts);这里只是:POST 拿票 → GET 轮询(一次 ≤25s)到有结果或到点。
  * 一个 HTTP 请求不挂十分钟;整个工具调用最多 ~10 分钟,各家客户端的工具超时见 core/mcp-stdio-spec.ts。
  */
 import z from 'zod'   // 默认导入:vitest 下具名导入 z 是 undefined(同 tools-social.ts)
@@ -13,7 +13,7 @@ import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js'
 import { InternalApiError, type InternalApiClient } from './client'
 import { passthroughErrorResult } from './tool-helpers'
 
-/** 同 daemon/cli-terminal-say.ts(MCP 子进程不 import daemon 模块,两边的数字由测试对上)。 */
+/** 同 features/terminal/terminal-say.ts(MCP 子进程不 import daemon 模块,两边的数字由测试对上)。 */
 export const TERMINAL_SAY_WAIT_DEFAULT_S = 240
 export const TERMINAL_SAY_WAIT_MAX_S = 600
 const POLL_MS = 25_000
@@ -106,7 +106,8 @@ function refusal(err: unknown, tool: string): { content: Array<{ type: 'text'; t
 function refusalText(code: string): string {
   if (code === 'terminal_say_not_owner') return '只有主人自己的聊天能让 CC 对终端会话说话。'
   if (code === 'terminal_say_ticket_unknown') return '这张票不在了(超过 30 分钟或 daemon 重启过);用 terminal_sessions 看那条会话最后一句。'
-  if (code === 'terminal_say_not_wired') return '终端会话那一块还没准备好(daemon 刚启动?),稍后再试。'
+  // 路由搬进 terminal 模块以后(架构终态 A5),开机途中模块门回的是 module_starting;老 daemon 还回 terminal_say_not_wired
+  if (code === 'terminal_say_not_wired' || code === 'module_starting') return '终端会话那一块还没准备好(daemon 刚启动?),稍后再试。'
   return code
 }
 

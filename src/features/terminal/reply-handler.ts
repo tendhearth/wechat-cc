@@ -1,5 +1,5 @@
 /**
- * cli-reply-handler.ts — 「看 码」「@码 文本」的执行(spec 2026-09-09-cli-hook-push §6.4)。
+ * reply-handler.ts — 「看 码」「@码 文本」的执行(spec 2026-09-09-cli-hook-push §6.4)。
  *
  * 只认主人。看:读 transcript 尾巴 → share_page → 回链接。说:起一个新进程接着原会话跑
  * (claude -p --resume / codex exec resume),跑完把结果回微信;跑的期间登记 busy,空闲
@@ -8,18 +8,18 @@
  *
  * 那边(别的机器)的会话:v1 先说明白「暂时只能看这台机的」,转发是下一步。
  */
-import { decideCall, unprotectedMessage, type NetworkGate } from '../lib/network-gate'
-import { codexCallTarget } from '../lib/codex-target'
+import { decideCall, unprotectedMessage, type NetworkGate } from '../../lib/network-gate'
+import { codexCallTarget } from '../../lib/codex-target'
 import { spawn } from 'node:child_process'
-import { wrapForProcessTree } from '../lib/jobspawn'
+import { wrapForProcessTree } from '../../lib/jobspawn'
 import { readFileSync, statSync, openSync, readSync, closeSync } from 'node:fs'
-import { parseCliReply, resumeCommand } from '../core/cli-reply'
-import { renderTranscriptTail } from '../core/cli-transcript'
-import { renderTurnSteps } from '../core/cli-activity'
-import { stripMarkdown, INLINE_MAX, type CliEventHub, type CliSessionInfo } from '../core/cli-events'
-import { cliSourceLabel, formatCliSessionDigest, type CliDigestView } from '../domain/cli-session-digest'
-import { formatOverseerToday, type OverseerToday } from '../domain/overseer-today'
-import type { LiveWindow, RelayResult } from './claude-live-window'
+import { parseCliReply, resumeCommand } from '../../core/cli-reply'
+import { renderTranscriptTail } from '../../core/cli-transcript'
+import { renderTurnSteps } from '../../core/cli-activity'
+import { stripMarkdown, INLINE_MAX, type CliEventHub, type CliSessionInfo } from '../../core/cli-events'
+import { cliSourceLabel, formatCliSessionDigest, type CliDigestView } from '../../domain/cli-session-digest'
+import { formatOverseerToday, type OverseerToday } from '../../domain/overseer-today'
+import type { LiveWindow, RelayResult } from './live-window'
 
 export const RESUME_TIMEOUT_MS = 10 * 60_000
 const TRANSCRIPT_READ_MAX = 512 * 1024
@@ -78,13 +78,13 @@ export interface CliReplyCoreDeps {
   /** 网络闸门(2026-10-02):起 `claude -p --resume` / `codex exec resume` 之前问一次。 */
   networkGate?: NetworkGate
   /**
-   * 开着的窗口(2026-10-18):这条会话还开在电脑的终端窗口里 ⇒ 把话送进那个窗口(claude-live-window.ts),
+   * 开着的窗口(2026-10-18):这条会话还开在电脑的终端窗口里 ⇒ 把话送进那个窗口(live-window.ts),
    * 不另起 resume 副本。缺席(老测试 / 不是 Claude)⇒ 照旧 resume。
    */
   liveWindow?: {
     find(s: CliSessionInfo): LiveWindow | null
     /**
-     * header:转进去那段话的第一行;缺省 = 主人原话那一句(claude-live-window RELAY_OWNER_HEADER)。
+     * header:转进去那段话的第一行;缺省 = 主人原话那一句(live-window.ts RELAY_OWNER_HEADER)。
      * noBypass:发信小进程不带 daemon 的免审(terminal_say:话是模型写的)。
      */
     relay(w: LiveWindow, text: string, opts?: { header?: string; noBypass?: boolean }): Promise<RelayResult>
