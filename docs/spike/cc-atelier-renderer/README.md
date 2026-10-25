@@ -28,14 +28,14 @@ an `ArtworkRenderer` interface. It is not wired into the daemon tick.
 
 ## Implemented probe
 
-- `src/daemon/artwork-renderer.ts`
+- `src/features/atelier/artwork-renderer.ts`
   - provider-independent `ArtworkRenderer` contract;
   - direct OpenAI Image API implementation, default `gpt-image-2`;
   - injected fetch/model/base URL/time/limits for testing;
   - one request only, no automatic paid retry;
   - timeout, HTTP, missing-output, PNG-magic and byte-cap validation;
   - errors do not echo the API key, visual prompt or provider response body.
-- `src/daemon/artwork-renderer.test.ts`
+- `src/features/atelier/artwork-renderer.test.ts`
   - 5 passing contract/error tests.
 - `scripts/atelier-renderer-spike.ts`
   - explicit, manual, paid smoke only;
@@ -46,7 +46,7 @@ an `ArtworkRenderer` interface. It is not wired into the daemon tick.
 Validation on 2026-09-01:
 
 ```text
-bun --bun vitest run src/daemon/artwork-renderer.test.ts
+bun --bun vitest run src/features/atelier/artwork-renderer.test.ts
   1 file passed, 5 tests passed
 
 bun run typecheck
@@ -99,14 +99,14 @@ key and not a blocker for offline planner/privacy/store tests.
 
 The next foundation is implemented without a provider key:
 
-- `src/daemon/art-impulse.ts` validates planner output and builds a visual-only,
+- `src/features/atelier/art-impulse.ts` validates planner output and builds a visual-only,
   privacy-minimized brief;
-- `src/daemon/atelier-store.ts` atomically stores validated local PNG works and
+- `src/features/atelier/store.ts` atomically stores validated local PNG works and
   metadata;
-- `src/daemon/atelier-runtime.ts` enforces `off`/`private`/`share`, persisted
+- `src/features/atelier/runtime.ts` enforces `off`/`private`/`share`, persisted
   cadence (30 hours between successes, at most two in seven days), no-impulse
   zero-call behavior, and save-before-notify recovery.
-- `src/daemon/atelier-planner.ts` bounds derived context and adapts any selected
+- `src/features/atelier/planner.ts` bounds derived context and adapts any selected
   chat provider's evaluator to the strict `ArtImpulse` contract; work ids and
   raw multiline control characters do not enter the planner prompt.
 
@@ -120,15 +120,15 @@ The renderer-ownership decision resolved to **local, free, per-user** rendering
 (spec: `docs/superpowers/specs/2026-09-01-cc-atelier-local-renderer-design.md`).
 Implemented and unit-tested (Apple Silicon Phase 1):
 
-- `src/daemon/sidecar-renderer.ts` — `makeSidecarRenderer` spawns
+- `src/features/atelier/sidecar-renderer.ts` — `makeSidecarRenderer` spawns
   stable-diffusion.cpp (`sd-cli`) once per render, times out a wedged process,
   and validates the output PNG; `buildSdCliArgs` isolates the argv.
-- `src/daemon/atelier-renderer-resolve.ts` — `resolveAtelierRenderer` returns a
+- `src/features/atelier/renderer-resolve.ts` — `resolveAtelierRenderer` returns a
   renderer only on Apple Silicon with the bundled binary + provisioned model,
   else `null` (⇒ `skipped_no_renderer`, a cost-free no-op).
-- `src/daemon/atelier-model-provision.ts` — first-enable model download with
+- `src/features/atelier/model-provision.ts` — first-enable model download with
   SHA-256 verification and skip-if-present.
-- `src/daemon/artwork-renderer.ts` — extracted the shared `validatePngBytes`.
+- `src/features/atelier/artwork-renderer.ts` — extracted the shared `validatePngBytes`.
 
 All 46 Atelier tests pass (25 prior + 21 new/changed); full repo suite green;
 typecheck clean. Still **not** wired into the daemon tick.

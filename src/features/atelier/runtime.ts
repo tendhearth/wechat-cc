@@ -1,12 +1,12 @@
-import { writeFileAtomic } from '../lib/json-file'
+import { writeFileAtomic } from '../../lib/json-file'
 import { mkdirSync } from 'node:fs'
-import { readJsonFile } from '../lib/read-json-file'
-import { isNetworkUnprotectedError } from '../lib/network-gate'
+import { readJsonFile } from '../../lib/read-json-file'
+import { isNetworkUnprotectedError } from '../../lib/network-gate'
 import { dirname, join } from 'node:path'
 import { buildRenderBrief, renderBriefToPrompt, parseArtImpulse, type ArtImpulse, type RenderBrief } from './art-impulse'
 import type { ArtworkRenderer, RenderedArtwork } from './artwork-renderer'
-import type { ArtworkBackground, AtelierStore } from './atelier-store'
-import type { ObservationRecord } from './observations/store'
+import type { ArtworkBackground, AtelierStore } from './store'
+import type { ObservationRecord } from '../../daemon/observations/store'
 
 export type AtelierMode = 'off' | 'private' | 'share'
 

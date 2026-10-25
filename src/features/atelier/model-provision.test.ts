@@ -1,6 +1,6 @@
 import { describe, it, expect, vi } from 'vitest'
 import { join } from 'node:path'
-import { provisionAtelierModel, type ProvisionDeps } from './atelier-model-provision'
+import { provisionAtelierModel, type ProvisionDeps } from './model-provision'
 
 // 路径断言用 join 拼:源码用平台分隔符,Windows 上是反斜杠(CI 三平台都跑这套测试)。
 const MODEL = join('/models', 'sd-turbo.safetensors')

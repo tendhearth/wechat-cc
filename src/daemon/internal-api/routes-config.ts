@@ -14,7 +14,7 @@
 import type { InternalApiDeps, RouteTable } from './types'
 import { readConfigSurface, writeConfigKey } from '../config-surface'
 import { makeEventsStore } from '../events/store'
-import { kickAtelierModelProvision, shouldProvisionOnConfigChange } from '../atelier-provision'
+import { kickAtelierModelProvision, shouldProvisionOnConfigChange } from '../../features/atelier'
 
 export function configRoutes(deps: InternalApiDeps): RouteTable {
   return {

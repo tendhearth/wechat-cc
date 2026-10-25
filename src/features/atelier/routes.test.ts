@@ -2,20 +2,20 @@ import { describe, it, expect, vi } from 'vitest'
 import { mkdirSync, mkdtempSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
-import { makeRoutes } from './routes'
-import { modelStatusPath } from '../atelier-provision'
-import { defaultCompanionConfig, saveCompanionConfig } from '../companion/config'
+import { atelierRoutes } from './routes'
+import { modelStatusPath } from './provision'
+import { defaultCompanionConfig, saveCompanionConfig } from '../../daemon/companion/config'
 
-function routesWith(atelier: unknown) {
-  return makeRoutes({ deps: { atelier } as never, getDelegate: () => null, maybePrefix: (_c, t) => t })
+function routesWith(store: unknown) {
+  return atelierRoutes({ stateDir: '/nonexistent', store: store as never, ilink: {} as never })
 }
 
 function routesWithState(stateDir: string) {
-  return makeRoutes({ deps: { stateDir } as never, getDelegate: () => null, maybePrefix: (_c, t) => t })
+  return atelierRoutes({ stateDir, store: {} as never, ilink: {} as never })
 }
 
 function routesWithDeps(deps: unknown) {
-  return makeRoutes({ deps: deps as never, getDelegate: () => null, maybePrefix: (_c, t) => t })
+  return atelierRoutes(deps as never)
 }
 
 describe('GET /v1/atelier/works', () => {
@@ -32,11 +32,6 @@ describe('GET /v1/atelier/works', () => {
     const res = await routesWith({ list: (limit: number) => { expect(limit).toBe(24); return [work] }, imagePath: () => imagePath })['GET /v1/atelier/works']!(new URLSearchParams('limit=999'), undefined)
     expect((res.body as any).works[0].image_data).toBe(`data:image/png;base64,${png.toString('base64')}`)
     expect((res.body as any).works[0].privateCauseSummary).toBeUndefined()
-  })
-
-  it('returns 503 when the store is not wired', async () => {
-    const res = await routesWith(undefined)['GET /v1/atelier/works']!(new URLSearchParams(), undefined)
-    expect(res.status).toBe(503)
   })
 })
 
@@ -73,8 +68,8 @@ describe('POST /v1/atelier/share', () => {
     const sendReply = vi.fn(async () => ({ msgId: 'm1' }))
     const routes = routesWithDeps({
       stateDir,
-      atelier: { load: () => work, imagePath: () => '/safe/work-1.png', transitionShare },
-      ilink: { sendFile, sendReply },
+      store: { load: () => work, imagePath: () => '/safe/work-1.png', transitionShare },
+      ilink: { sendFile, sendMessage: sendReply },
     })
     return { routes, transitionShare, sendFile, sendReply }
   }

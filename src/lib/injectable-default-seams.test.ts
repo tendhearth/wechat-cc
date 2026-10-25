@@ -73,7 +73,7 @@ const PURE: Record<string, string> = {
   defaultSleep: 'setTimeout wrapper',
   defaultModelRepo: 'maps a model id to a HF repo string; no IO',
   defaultIsWritable: 'a single accessSync, already covered by codex-autofix tests',
-  defaultId: 'formats an id from a timestamp + randomUUID; no IO (src/daemon/atelier-store.ts)',
+  defaultId: 'formats an id from a timestamp + randomUUID; no IO (src/features/atelier/store.ts)',
   defaultLocalDay: 'formats a local YYYY-MM-DD from a timestamp; no IO (src/core/cli-upgrade/engine.ts)',
 }
 

@@ -1,5 +1,5 @@
 import { parseArtImpulse, type ArtImpulse } from './art-impulse'
-import type { ArtImpulsePlanner, AtelierContext } from './atelier-runtime'
+import type { ArtImpulsePlanner, AtelierContext } from './runtime'
 
 const MAX_ITEM = 240
 const MAX_ITEMS = 6

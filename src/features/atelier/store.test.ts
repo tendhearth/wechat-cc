@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest'
 import { existsSync, mkdtempSync, readdirSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { makeAtelierStore } from './atelier-store'
+import { makeAtelierStore } from './store'
 import type { ArtImpulse } from './art-impulse'
 
 const impulse: ArtImpulse = {

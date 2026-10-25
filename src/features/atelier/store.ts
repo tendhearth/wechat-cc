@@ -1,7 +1,7 @@
 import {
   existsSync, mkdirSync, readFileSync, readdirSync, renameSync, rmSync, writeFileSync,
 } from 'node:fs'
-import { readJsonFile } from '../lib/read-json-file'
+import { readJsonFile } from '../../lib/read-json-file'
 import { randomUUID } from 'node:crypto'
 import { basename, join } from 'node:path'
 import { parseArtImpulse, type ArtImpulse } from './art-impulse'

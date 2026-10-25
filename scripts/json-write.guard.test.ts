@@ -21,7 +21,7 @@ const EXEMPT: Record<string, string> = {
   'src/cli/self-change/state.ts': '走注入的 fs(测试拿假文件系统替身),第三处是 `wx` 只建不换的锁文件 —— 换成 lib/json-file 会绕开注入的 fs',
   'src/cli/update.ts': '换的是可执行文件本身:bun build 直接输出到 tmp,再 rename(Windows 先 unlink 旧的)。不是状态文件,也不是 JSON',
   'src/daemon/__e2e__/harness.ts': 'e2e 测试夹具,给假 daemon 铺状态目录,不是生产写法',
-  'src/daemon/atelier-store.ts': '图 + 元数据两个文件一起提交:各自用独一无二的 scratch 名(randomUUID)+ `wx`,两个都写好才依次 rename。单文件的 writeFileAtomic 表达不了这种两步提交',
+  'src/features/atelier/store.ts': '图 + 元数据两个文件一起提交:各自用独一无二的 scratch 名(randomUUID)+ `wx`,两个都写好才依次 rename。单文件的 writeFileAtomic 表达不了这种两步提交',
   'src/daemon/relay-identity.ts': '只建不换:`wx` 直接建目标文件,已经有了就失败、改读别人先写的那一份(并发启动时两个进程不能各留一个种子)。原子替换在这里是错的',
 }
 

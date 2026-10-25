@@ -337,7 +337,7 @@ export const DeviceRow = z.object({
 })
 export type DeviceRowT = z.infer<typeof DeviceRow>
 
-/** atelier-model-provision.ts 的 `ModelProvisionStatus`(判别联合,`state` 判别)。 */
+/** features/atelier/model-provision.ts 的 `ModelProvisionStatus`(判别联合,`state` 判别)。 */
 const ModelProvisionStatus = z.discriminatedUnion('state', [
   z.object({ state: z.literal('checking') }),
   z.object({ state: z.literal('ready'), modelPath: z.string(), downloaded: z.boolean() }),
