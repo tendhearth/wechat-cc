@@ -110,6 +110,12 @@ export function orderModules(mods: readonly DaemonModule[]): DaemonModule[] {
       if (!byName.has(d)) throw new Error(`modules: '${m.name}' depends on unknown module '${d}'`)
       if (d === m.name) throw new Error(`modules: '${m.name}' depends on itself`)
     }
+    // 必需的模块不许 needs 一个可选的:可选的坏了,必需的会跟着「不起」而不报错 —— 开机走到一半悄悄停住。
+    // 要用可选的就 wants(拿不到自己兜),或者把上游也改成必需。
+    if (!m.optional) {
+      const opt = (m.needs ?? []).find(d => byName.get(d)!.optional)
+      if (opt) throw new Error(`modules: required '${m.name}' needs optional '${opt}' — use wants, or make '${opt}' required`)
+    }
     const both = (m.lazy ?? []).find(d => (m.needs ?? []).includes(d) || (m.wants ?? []).includes(d))
     if (both) throw new Error(`modules: '${m.name}' lists '${both}' in lazy and in needs / wants — a lazy edge is a cycle edge, pick one`)
   }

@@ -14,7 +14,7 @@ import type { makeMessagesStore } from '../../lib/messages-store'
 import type { MattersService } from '../../core/matters/service'
 import type { MemoryNightlyRuntime } from '../memory/nightly-runtime'
 import type { PipelineDepsOpts } from './pipeline-deps-opts'
-import { jobsView, jobsAction } from '../scheduled-jobs/view'
+import { jobsView, jobsAction } from '../../features/jobs'
 import { pickJobExecutor } from './tick-bodies'
 import { makeJobsStore } from '../../core/scheduled-jobs-store'
 import { loadCompanionConfig } from '../companion/config'
@@ -123,7 +123,7 @@ return makeSettingsPanel({
     const store = makeJobsStore(stateDir)
     return {
       view: () => jobsView({ store, timezone: loadCompanionConfig(stateDir).timezone ?? 'Asia/Shanghai', executor: pickJobExecutor(id => boot.registry.has(id as never)) }),
-      action: (id: string, action: import('../scheduled-jobs/view').JobsActionKind) => jobsAction(store, id, action),
+      action: (id: string, action: import('../../features/jobs').JobsActionKind) => jobsAction(store, id, action),
     }
   })(),
   ...(phoneOwner && phoneChat ? { chat: {

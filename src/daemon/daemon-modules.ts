@@ -58,7 +58,7 @@ import { registerCompanionPush, registerCompanionIntrospect, registerIngest } fr
 import { makeLlmHealth, type LlmHealth } from './llm-health'
 import { wireCliSessions } from './bootstrap/wire-cli-sessions'
 import { wireActivity } from './bootstrap/wire-activity'
-import { wireJobs } from './bootstrap/wire-jobs'
+import { jobsFeature, jobsRunnerModule, type JobsFeature } from '../features/jobs'
 import { wireWorkbench } from './bootstrap/wire-workbench'
 import { wireWorkbenchNotifications } from './bootstrap/wire-workbench-notifications'
 import { wireWorkbenchArtifacts } from './bootstrap/wire-workbench-artifacts'
@@ -90,9 +90,8 @@ type CliSessions = ReturnType<typeof wireCliSessions>
 /** 「主人的命令」那一组:定时 / 日历 / 做过的事 / 经验 / 导入记忆 / 终端会话(命令表里的顺序就是优先级)。 */
 interface OwnerCommands {
   commands: ReturnType<typeof fromReplyHandler>[]
-  jobs: ReturnType<typeof wireJobs>
-  activity: ReturnType<typeof wireActivity>
 }
+type Activity = ReturnType<typeof wireActivity>
 interface CliUpgradeModule { upgrader(): CliUpgrader | null }
 
 export function daemonModules(f: Foundation): DaemonModule[] {
@@ -349,10 +348,43 @@ export function daemonModules(f: Foundation): DaemonModule[] {
     // —— 功能(一个功能一个目录,src/features/<名>)——
     calendarFeature({ stateDir, isOwner }),
 
+    // —— 「CC 做过的事」:手机时间线 / 微信「做过的事」/ 周报共用一组来源 ——
+    {
+      name: 'activity',
+      needs: ['cli-sessions', 'ilink-adapter'],
+      init(ctx): Activity {
+        const cli = ctx.get<CliSessions>('cli-sessions')
+        return wireActivity({ stateDir, db, ilink: ctx.get('ilink-adapter'), permissionDecisions: cli.permissionDecisions, cliEvents: cli.cliEvents, jobsStore: f.jobsStore })
+      },
+    } satisfies DaemonModule<Activity>,
+    // 定时 / 早报 / 周报 / 换一家来审:一个功能一个目录(src/features/jobs)。这里只填它要的东西。
+    jobsFeature({
+      needs: ['bootstrap', 'cli-sessions', 'calendar', 'activity', 'ilink-adapter'],
+      lazy: ['wired'],
+      deps: (ctx) => {
+        const wired = ctx.late<WiredDeps>('wired')
+        const activity = ctx.get<Activity>('activity')
+        return {
+          stateDir, db, ilink: ctx.get('ilink-adapter'), boot: ctx.get<Bootstrap>('bootstrap'), jobsStore: f.jobsStore,
+          activityLog: activity.activityLog, activity: activity.activity, calendar: ctx.get<CalendarFeature>('calendar').calendar,
+          overseerToday: ctx.get<CliSessions>('cli-sessions').overseerToday, careLedger: f.careLedger,
+          quietWindow: () => { const o = ownerChatId(); return o ? f.chatPrefs.get(o).quiet : undefined },
+          // async:没就绪时是一个被拒的 promise,不是同步抛 —— requestReview 的 .catch 接得住,照实告诉主人「没审成」
+          runJobTurn: async (a) => { const w = wired(); if (!w) throw new Error('jobs_not_wired'); return w.ticks.runJobTurn(a) },
+          // 定时那边的一句(连续失败被暂停 …)经 CC 开口那道门(第三批 3a,job_notice 归 report)
+          sendProactive: (chatId, text, kind = 'job_notice') => {
+            const w = wired()
+            if (!w) { log('JOBS', `proactive send dropped (not wired yet) chat=${chatId}`); return }
+            void w.speech.tell(kind, chatId, text)
+          },
+        }
+      },
+    }),
+
     // —— 主人的命令:命令现在就要(进命令表),要用的只读轮 / 工作台 / 门都在后面 ⇒ 经 late 现取 ——
     {
       name: 'owner-commands',
-      needs: ['bootstrap', 'cli-sessions', 'calendar', 'ilink-adapter', 'internal-api', 'network-gate'],
+      needs: ['bootstrap', 'cli-sessions', 'calendar', 'activity', 'jobs', 'ilink-adapter', 'internal-api', 'network-gate'],
       lazy: ['workbench', 'wired'],
       init(ctx): OwnerCommands {
         const boot = ctx.get<Bootstrap>('bootstrap')
@@ -362,8 +394,8 @@ export function daemonModules(f: Foundation): DaemonModule[] {
         const workbench = ctx.late<WorkbenchService>('workbench')
         const wired = ctx.late<WiredDeps>('wired')
         const say = (c: string, t: string) => ilink.sendMessage(c, t)
-        // 「CC 做过的事」:手机时间线 / 微信「做过的事」/ 周报共用一组来源。
-        const activity = wireActivity({ stateDir, db, ilink, permissionDecisions: cli.permissionDecisions, cliEvents: cli.cliEvents, jobsStore: f.jobsStore })
+        const activity = ctx.get<Activity>('activity')
+        const jobs = ctx.get<JobsFeature>('jobs')
         // 微信「经验 <项目> …」(第二轮对标 ★2):只认主人;项目按名字认。
         const lessonsCommand = makeProjectLessonsCommand({
           isOwner, say,
@@ -375,21 +407,8 @@ export function daemonModules(f: Foundation): DaemonModule[] {
           isOwner, say, now: () => Date.now(),
           importEntries: (items, label) => { const w = wired(); if (!w) throw new Error('memory_not_wired'); return w.memoryNightly.importEntries(items, label) },
         })
-        // 读日历和提醒:一个功能一个目录(src/features/calendar);命令和早报素材从那里来。
-        const { calendar, command: calendarCommand } = ctx.get<CalendarFeature>('calendar')
-        // 定时 / 早报 / 周报 / 换一家来审(bootstrap/wire-jobs.ts):runner 在 scheduled-jobs 模块里起。
-        const jobs = wireJobs({
-          stateDir, db, ilink, boot, jobsStore: f.jobsStore, activityLog: activity.activityLog, activity: activity.activity, calendar, overseerToday: cli.overseerToday, careLedger: f.careLedger,
-          quietWindow: () => { const o = ownerChatId(); return o ? f.chatPrefs.get(o).quiet : undefined },
-          // async:没就绪时是一个被拒的 promise,不是同步抛 —— requestReview 的 .catch 接得住,照实告诉主人「没审成」
-          runJobTurn: async (a) => { const w = wired(); if (!w) throw new Error('jobs_not_wired'); return w.ticks.runJobTurn(a) },
-          // 定时那边的一句(连续失败被暂停 …)经 CC 开口那道门(第三批 3a,job_notice 归 report)
-          sendProactive: (chatId, text, kind = 'job_notice') => {
-            const w = wired()
-            if (!w) { log('JOBS', `proactive send dropped (not wired yet) chat=${chatId}`); return }
-            void w.speech.tell(kind, chatId, text)
-          },
-        })
+        // 读日历和提醒:一个功能一个目录(src/features/calendar);命令从那里来。
+        const { command: calendarCommand } = ctx.get<CalendarFeature>('calendar')
         const a2a = boot.a2aDeps
         const cliReplyHandler = makeCliReplyHandler({
           executionConflict: cli.executionConflict, reserveExecution: cli.reserveExecution,
@@ -408,7 +427,6 @@ export function daemonModules(f: Foundation): DaemonModule[] {
           ...(a2a ? { remote: makeRemoteReply({ registry: a2a.registry, client: a2a.client, selfId: boot.selfId }) } : {}),
         })
         return {
-          jobs, activity,
           // 命令表的顺序就是优先级(重构第二批步 2;与原来文本命令链的顺序一致)
           commands: [fromReplyHandler('jobs', jobs.command), fromReplyHandler('calendar', calendarCommand), fromReplyHandler('activity', activity.command), fromReplyHandler('lessons', lessonsCommand), fromReplyHandler('memory-import', memoryImportCommand), fromReplyHandler('cli', cliReplyHandler, { ownsSlash: (m) => /^\s*\/(?:cli|today)\s*[?？]?\s*$/i.test(m.text ?? '') })],
         }
@@ -418,12 +436,12 @@ export function daemonModules(f: Foundation): DaemonModule[] {
     // —— 工作台(「一起做」)——
     {
       name: 'workbench',
-      needs: ['bootstrap', 'cli-sessions', 'owner-commands', 'ilink-adapter', 'internal-api', 'network-gate'],
+      needs: ['bootstrap', 'cli-sessions', 'jobs', 'ilink-adapter', 'internal-api', 'network-gate'],
       lazy: ['cli-upgrade'],
       init(ctx): WorkbenchService {
         const boot = ctx.get<Bootstrap>('bootstrap')
         const cli = ctx.get<CliSessions>('cli-sessions')
-        const { jobs } = ctx.get<OwnerCommands>('owner-commands')
+        const jobs = ctx.get<JobsFeature>('jobs')
         const ilink = ctx.get<IlinkAdapter>('ilink-adapter')
         const internalApi = ctx.get<InternalApiLifecycle>('internal-api')
         const cliUpgrade = ctx.late<CliUpgradeModule>('cli-upgrade')
@@ -451,7 +469,7 @@ export function daemonModules(f: Foundation): DaemonModule[] {
     // —— wireMain:入站管道的依赖、伙伴 tick、手机那一簇、CC 开口那道门 ——
     {
       name: 'wired',
-      needs: ['bootstrap', 'boot-api', 'cli-sessions', 'owner-commands', 'workbench', 'ilink-adapter', 'reply-delivery', 'internal-api', 'network-gate'],
+      needs: ['bootstrap', 'boot-api', 'cli-sessions', 'owner-commands', 'activity', 'workbench', 'ilink-adapter', 'reply-delivery', 'internal-api', 'network-gate'],
       lazy: ['pipeline', 'polling', 'companion.ingest'],
       init(ctx): WiredDeps {
         const boot = ctx.get<Bootstrap>('bootstrap')
@@ -475,7 +493,7 @@ export function daemonModules(f: Foundation): DaemonModule[] {
           },
           workbench,
           cliSessions: () => cli.cliEvents.list({ limit: 50 }),
-          activity: owner.activity.activity, activityLog: owner.activity.activityLog,
+          activity: ctx.get<Activity>('activity').activity, activityLog: ctx.get<Activity>('activity').activityLog,
           overseerToday: cli.overseerToday,
           terminalHooks: cli.terminalHooks,
           // 手机拍板 / 说一句:拍板与微信「y/n 码」、桌宠权限卡同一份待批;说一句与微信「@码」同一个 core。
@@ -627,12 +645,12 @@ export function daemonModules(f: Foundation): DaemonModule[] {
     } satisfies DaemonModule<CliUpgradeModule>,
     // 提醒:一个功能一个目录(src/features/reminders);路由自己挂。
     remindersFeature({
-      db, isOwner, needs: ['wired', 'owner-commands'],
+      db, isOwner, needs: ['wired', 'activity'],
       speech: (c) => c.get<WiredDeps>('wired').speech,
-      activityLog: (c) => c.get<OwnerCommands>('owner-commands').activity.activityLog,
+      activityLog: (c) => c.get<Activity>('activity').activityLog,
     }),
-    // 定时任务每分钟一拍(wire-jobs.ts):坏了只降级。
-    lifecycleModule('scheduled-jobs', (ctx) => ctx.get<OwnerCommands>('owner-commands').jobs.startRunner(), { needs: ['owner-commands', 'wired'] }),
+    // 定时任务每分钟一拍(src/features/jobs):坏了只降级。
+    jobsRunnerModule({ needs: ['wired'] }),
     // 回报投递(task-3,2026-09-23):每轮答复回原对话说一声,人不在就等人回来再送。
     lifecycleModule('reports', (ctx) => {
       // 独立的一份 WorkbenchStore,只用来给「放弃投递」在那件事自己的时间线上留一笔(同一个 db,写入互相可见)。

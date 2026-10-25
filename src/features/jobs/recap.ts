@@ -4,7 +4,7 @@
  * 模型只负责挑和写;没东西就 NO_REPLY。跑法完全沿用定时(只读独立会话 job:<id>、闸门、每日上限)。
  */
 import { executorNames } from '../../core/provider-display-names'
-import type { JobTurnResult, TickTextStyle } from '../wiring/tick-bodies'
+import type { JobTurnResult, TickTextStyle } from '../../daemon/wiring/tick-bodies'
 import type { ScheduledJob } from '../../core/scheduled-jobs'
 import type { ActivityItem, ActivityKind } from '../../core/cc-activity'
 

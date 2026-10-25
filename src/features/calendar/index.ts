@@ -12,7 +12,7 @@
 import { log } from '../../lib/log'
 import type { DaemonModule } from '../../daemon/modules/container'
 import type { InternalApiLifecycle } from '../../daemon/internal-api/lifecycle'
-import type { ReplyHandler } from '../../daemon/scheduled-jobs/command'
+import type { ReplyHandler } from '../../daemon/commands/registry'
 import type { IlinkAdapter } from '../../daemon/ilink-glue'
 import { loadCompanionConfig } from '../../daemon/companion/config'
 import { defaultRunner } from '../../daemon/cli-reply-handler'

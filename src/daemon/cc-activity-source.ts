@@ -7,7 +7,7 @@ import { CLI_SPECS } from '../core/cli-upgrade/specs'
 import { activityTitle, type ActivityItem, type ActivitySources } from '../core/cc-activity'
 import type { PermissionDecisionRow } from './permission-decisions-store'
 import type { ActivityLogEntry } from './activity-log'
-import { statusWord } from './scheduled-jobs/command'
+import { statusWord } from '../features/jobs'
 
 const LETTER_OPENING_MAX = 24
 

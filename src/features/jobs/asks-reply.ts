@@ -8,7 +8,7 @@
  */
 import { lookupAsk, parseAskReply } from '../../core/owner-asks'
 import type { OwnerAsksStore } from '../../core/owner-asks-store'
-import type { ReplyHandler } from './command'
+import type { ReplyHandler } from '../../daemon/commands/registry'
 
 export function makeAsksReply(deps: {
   store: OwnerAsksStore

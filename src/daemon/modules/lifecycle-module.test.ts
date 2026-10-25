@@ -11,7 +11,7 @@ describe('lifecycleModule:现成的 register*() 进容器', () => {
     let startedDuringInit = false
     const mods = createModules([
       lifecycleModule('reminders', () => ({ name: 'reminders', stop: async () => { stops++ } })),
-      { name: 'later', needs: ['reminders'], init: (ctx) => { startedDuringInit = ctx.get<LifecycleHolder<Lifecycle>>('reminders').current() !== null } },
+      { name: 'later', optional: true, needs: ['reminders'], init: (ctx) => { startedDuringInit = ctx.get<LifecycleHolder<Lifecycle>>('reminders').current() !== null } },
     ], quiet)
     await mods.start()
     expect(startedDuringInit).toBe(false)
