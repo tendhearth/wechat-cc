@@ -6,8 +6,8 @@
  */
 import { mkdirSync } from 'node:fs'
 import type { WechatCompanionDep } from '../wechat-tool-deps'
-import { companionDir } from '../companion/paths'
-import { loadCompanionConfig, saveCompanionConfig, defaultCompanionConfig } from '../companion/config'
+import { companionDir } from '../../lib/companion-config'
+import { loadCompanionConfig, saveCompanionConfig, defaultCompanionConfig } from '../../lib/companion-config'
 import { loadAccess } from '../../lib/access'
 import type { IlinkContext } from './context'
 

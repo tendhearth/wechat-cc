@@ -7,7 +7,7 @@
  * ./routes.ts for the route handler implementations.
  */
 import type { Db } from '../../lib/db'
-import type { WechatProjectsDep, WechatCompanionDep } from '../wechat-tool-deps'
+import type { WechatProjectsDep } from '../wechat-tool-deps'
 import type { Journal } from '../../adapters/store/journal-store'
 import type { ReplySinks } from '../reply-sinks'
 import type { ConversationStore } from '../../adapters/store/conversation-store'
@@ -131,8 +131,6 @@ export interface InternalApiDeps {
   resurfacePage?: (
     q: { slug?: string; title_fragment?: string },
   ) => Promise<{ url: string; slug: string } | null>
-  /** Companion proactive-tick controls (RFC 03 P1.B B6). */
-  companion?: WechatCompanionDep
   /**
    * Ilink message-sending family (RFC 03 P1.B B1). When wired, the
    * /v1/wechat/{reply,send_file,edit_message,broadcast} routes are

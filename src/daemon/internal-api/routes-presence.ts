@@ -11,7 +11,7 @@
 import { derivePresence } from '../../domain/companion-presence'
 import type { Presence } from '../../domain/companion-presence'
 import { readJournalSeen } from '../../core/journal-seen'
-import { loadCompanionConfig } from '../companion/config'
+import { loadCompanionConfig } from '../../lib/companion-config'
 import type { InternalApiDeps, RouteTable } from './types'
 
 /**

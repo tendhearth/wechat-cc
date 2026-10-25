@@ -1,17 +1,15 @@
 /**
- * 打猎这个「陪伴候选」(daemon/companion/contributions.ts 的 CompanionAction)。从 wiring/companion-actions.ts 原样搬来:
- * 档位规则、包袱水位、旁听入库、busy token、先登记再出门,逐字一致。登记在 wiring/tick-bodies.ts 的候选表里,顺序就是
- * 候选与回退的顺序(打猎 → 串门 → 问候)。
+ * 打猎这个「陪伴候选」(ports/companion-contributions.ts 的 CompanionAction)。从
+ * wiring/companion-actions.ts 原样搬来:档位规则、包袱水位、旁听入库、busy token、先登记再出门,逐字一致。登记在
+ * daemon/wiring/tick-bodies.ts 的候选表里,顺序就是候选与回退的顺序(打猎 → 串门 → 问候)。
  *
- * 提示文字 `buildHuntText` 留在 wiring/tick-texts.ts:它和推送 / 问候 / 定时那几份共用同一套口吻常量和同一组对照测试。
+ * 提示文字 `buildHuntText` 在陪伴功能的 tick-texts.ts:它和推送 / 问候 / 定时那几份共用同一套口吻常量和同一组对照测试。
  */
-import type { CompanionAction } from '../../daemon/companion/contributions'
+import type { CompanionAction } from '../../ports/companion-contributions'
+import { buildHuntText, type TickDeps, type TickDispatch } from '../companion'
 import type { PlanContext } from '../../domain/companion-plan'
 import { PLAN_JOURNAL_ITEMS } from '../../domain/companion-plan'
 import { readJournalSeen } from '../../core/journal-seen'
-import type { TickDeps } from '../../daemon/wiring/tick-deps'
-import type { TickDispatch } from '../../daemon/wiring/tick-dispatch'
-import { buildHuntText } from '../../daemon/wiring/tick-texts'
 function errMsg(err: unknown): string { return err instanceof Error ? err.message : String(err) }
 
 /** 打猎这一拍要的:那一拍的公共依赖里挑出来的几样。 */

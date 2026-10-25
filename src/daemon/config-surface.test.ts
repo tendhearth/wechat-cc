@@ -4,7 +4,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { readConfigSurface, writeConfigKey, CONFIG_SURFACE } from './config-surface'
 import { loadAgentConfig } from '../lib/agent-config'
-import { loadCompanionConfig } from '../daemon/companion/config'
+import { loadCompanionConfig } from '../lib/companion-config'
 
 describe('config surface', () => {
   let stateDir: string

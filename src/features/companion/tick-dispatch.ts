@@ -2,7 +2,7 @@
  * 主动外发的那一步(从 tick-bodies.ts 原样搬出):两道闸(微信断了 / 会话在跑)、会话解析、claim-before-dispatch。
  * 推送那一拍(tick-push)和定时那一轮(tick-job)共用这一份,所以单独成文件。
  */
-import { loadCompanionConfig } from '../companion/config'
+import { loadCompanionConfig } from '../../lib/companion-config'
 import { resolveEffectiveTier, resolveTier, TIER_PROFILES, effectivePermissionMode } from '../../domain/user-tier'
 import { providerDenialFor } from '../../domain/provider-policy'
 import { loadAgentConfig } from '../../lib/agent-config'

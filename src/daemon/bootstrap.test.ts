@@ -12,7 +12,7 @@ import { generateKeypair, deriveSharedKey, sealLetter } from '../core/penpal-cry
 import { TIER_PROFILES } from '../domain/user-tier'
 import { MANIFEST_FILE } from './plugins/paths'
 import type { Access } from '../lib/access'
-import type { CompanionConfig } from './companion/config'
+import type { CompanionConfig } from '../lib/companion-config'
 import { createInternalApi } from './internal-api'
 import { wireSelfRestart } from './bootstrap/wire-self-restart'
 import { createAcpCursorChatProvider } from '../adapters/executors/acp/acp-cursor-chat'

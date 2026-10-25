@@ -12,7 +12,7 @@ function sha256(s: string): string {
 }
 
 // Fixed 3-section digest shaped exactly like distillOwnerKnowledge's output
-// (see src/daemon/companion/knowledge-distill.ts).
+// (see src/features/companion/knowledge-distill.ts).
 const DIGEST = `## 你的社交状态（算出来的，非主观）
 
 **未了义务**

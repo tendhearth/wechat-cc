@@ -5,7 +5,7 @@
  * architecture-conventions #5: low-frequency critical state survives kill -9.
  */
 import { join } from 'node:path'
-import { makeStateStore, type StateStore } from '../state-store'
+import { makeStateStore, type StateStore } from '../../daemon/state-store'
 import type { CareLedgerEntry } from './calibration'
 
 /** 一次登记的回执,撤回时用(只撤这一次,见 unclaim)。 */

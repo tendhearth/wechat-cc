@@ -1,13 +1,14 @@
 /**
  * 「陪伴候选」贡献点(架构终态第 2 条 / A5):各功能把自己能做的事交上来,陪伴的定时只挑、只按登记的顺序走,
- * 不再叫得出打猎 / 串门 / 贴纸 / 画室的名字。一个功能拿掉 = 登记表里少一行(wiring/tick-bodies.ts)。
+ * 不再叫得出打猎 / 串门 / 贴纸 / 画室的名字。一个功能拿掉 = 登记表里少一行(daemon/wiring/tick-bodies.ts,组装的地方)。
  *
- * 放在 daemon/companion:陪伴引擎(wiring/tick-push、tick-introspect)和以后的 src/features/<名> 都能 import;
- * core 不许依赖 daemon,所以这里只引 core 的类型。只有类型,没有逻辑。
+ * A5 · 陪伴:陪伴引擎搬进了 src/features/companion,这几个类型是它对外的口,所以放在 ports —— 交候选 / 步子的功能
+ * (打猎、贴纸,以后社交)只引这一份,不必为几个类型去引陪伴功能(贴纸在 bootstrap 那条链上,引了就成环);
+ * 陪伴这边反过来一个功能都不 import。只有类型,没有逻辑。
  */
-import type { CareLevel, CareLedgerEntry, PlanAction, PlanContext } from '../../domain/companion-plan'
-import type { AvoidTopic } from '../../domain/companion-topics'
-import type { CheapEval } from '../../ports/agent-provider'
+import type { CareLevel, CareLedgerEntry, PlanAction, PlanContext } from '../domain/companion-plan'
+import type { AvoidTopic } from '../domain/companion-topics'
+import type { CheapEval } from './agent-provider'
 
 /** 主动找主人那一拍里,某一个对话此刻的处境(已经过了 care off / 免打扰 / 到期 agenda 那几道)。 */
 export interface CompanionTickCtx {
@@ -65,3 +66,9 @@ export interface IntrospectStep {
   logTag: string
   failLabel: string
 }
+
+/**
+ * 反思那一步要的记忆快照(人格、画像、长期记忆拼成的一段字)。记忆功能做(`buildMemorySnapshot`),组装的地方交进来 ——
+ * 陪伴不 import 记忆功能。
+ */
+export type MemorySnapshot = (stateDir: string, chatId: string) => Promise<string>

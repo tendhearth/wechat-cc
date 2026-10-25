@@ -5,7 +5,7 @@ import { join } from 'node:path'
 import { openTestDb } from '../lib/db'
 import { makeMessagesStore } from '../lib/messages-store'
 import { importLocalHistory, runLocalImportIfEnabled, LOCAL_CLAUDE_CHAT, LOCAL_CODEX_CHAT } from './local-import'
-import { saveCompanionConfig, defaultCompanionConfig } from './companion/config'
+import { saveCompanionConfig, defaultCompanionConfig } from '../lib/companion-config'
 
 function writeClaudeSession(root: string, project: string, sessionId: string, turns: object[]): void {
   const dir = join(root, project)

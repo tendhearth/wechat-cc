@@ -18,7 +18,7 @@ import { writeFileAtomic } from './json-file'
 
 // 2026-10-23 从 src/daemon/companion/ 挪到 lib:CLI(memory write 认主人、demo)也要读它,
 // 而 CLI 不该为读一份 JSON 去链 daemon(scripts/cli-ratchet.guard.test.ts)。
-// daemon/companion/config.ts、paths.ts 留作转发,旧引用不用跟着改;新代码从这里引。
+// 原来留在 daemon/companion 的两个转发(config.ts、paths.ts)在 A5 · 陪伴(2026-10-25)删掉了,所有引用都直接从这里引。
 export function companionDir(stateDir: string): string {
   return join(stateDir, 'companion')
 }
@@ -64,7 +64,7 @@ export interface CompanionConfig {
    * Optional MCP client to a local `hearth` server, for pushing distilled
    * knowledge into hearth's vault. Default OFF: this is a dormant capability
    * added by memory-infra Phase 1 — with hearth_enabled false (the default),
-   * wechat-cc's behavior is unchanged. See src/daemon/companion/hearth-client.ts.
+   * wechat-cc's behavior is unchanged. See src/features/companion/hearth-client.ts.
    */
   hearth_enabled: boolean
   /** Path to the hearth vault to write into. Required (non-null) for hearth_enabled to take effect. */

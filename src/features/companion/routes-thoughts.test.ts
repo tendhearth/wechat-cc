@@ -1,11 +1,11 @@
-import { createInternalApi } from './index'
+import { createInternalApi } from '../../daemon/internal-api/index'
 import { it, expect } from 'vitest'
 import { mkdtempSync, readFileSync, mkdirSync, writeFileSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { thoughtRoutes } from './routes-thoughts'
-import { minTierFor } from './route-tiers'
-import type { InternalApiDeps } from './types'
+import { minTierFor } from '../../daemon/internal-api/route-tiers'
+import type { InternalApiDeps } from '../../daemon/internal-api/types'
 
 it('reads retained thoughts without exposing chat ids, and does not claim they were executed', async () => {
   const stateDir=mkdtempSync(join(tmpdir(),'cc-thoughts-'))
@@ -27,6 +27,8 @@ it('reads retained thoughts without exposing chat ids, and does not claim they w
 it('native operator can read thoughts while a trusted chat token cannot', async () => {
   const stateDir=mkdtempSync(join(tmpdir(),'cc-thought-auth-'))
   const api=createInternalApi({stateDir,daemonPid:1} as InternalApiDeps)
+  // companion 模块自己挂(A5 · 陪伴);这里只验分级。
+  api.mount('companion',thoughtRoutes({stateDir}))
   try {
     const {port,tokenFilePath,operatorTokenFilePath}=await api.start()
     const request=(token:string)=>fetch(`http://127.0.0.1:${port}/v1/companion/thoughts`,{headers:{authorization:`Bearer ${token}`}})

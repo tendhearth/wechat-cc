@@ -6,7 +6,7 @@ import { join } from 'node:path'
 import { readOwnerDoc, renderOwnerForPrompt } from '../../lib/memory-owner'
 import { CORE_MEMORY_MAX_CHARS, KNOWLEDGE_MEMORY_MAX_CHARS } from '../../domain/prompt-builder'
 import { makeMemoryFS, type MemoryFS } from '../../adapters/store/memory-fs'
-import { loadCompanionConfig } from '../../daemon/companion/config'
+import { loadCompanionConfig } from '../../lib/companion-config'
 import { MEMORY_FILENAME, parseMemoryDoc, renderForPrompt } from './curated-doc'
 import { readDraftForPrompt } from './today-draft'
 

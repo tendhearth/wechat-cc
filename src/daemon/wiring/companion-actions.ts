@@ -1,15 +1,13 @@
 /**
- * 主动找主人那一拍的内置候选(从 tick-push.ts 原样搬出,A5「陪伴候选」贡献点):串门、问候。打猎那一个在
- * src/features/hunt(功能自己的目录)。
- * 档位规则与 core/companion-plan 的 computeCandidates 逐条一致(companion-actions.test 对照);执行的内容与搬家前逐字一致
- * (旁听入库、busy token、先登记再出门、daysSinceContact 的算法)。登记在 tick-bodies.ts,顺序就是候选与回退的顺序。
+ * 主动找主人那一拍的候选里,还在组装这一层的那一个:串门(从 tick-push.ts 原样搬出,A5「陪伴候选」贡献点)。
+ * 打猎在 src/features/hunt,问候跟着陪伴引擎进了 src/features/companion(gap-action.ts)。串门读的是 bootstrap 里的社交
+ * (`boot.social.penpal`),等社交把它交成自己的候选再挪过去。
+ * 档位规则与 domain/companion-plan 的 computeCandidates 逐条一致(companion-actions.test 对照);执行的内容与搬家前逐字一致
+ * (先登记再出门、网络守护拒了只撤这一次登记)。登记在 tick-bodies.ts,顺序就是候选与回退的顺序。
  */
-import type { CompanionAction } from '../companion/contributions'
+import type { CompanionAction, TickDeps } from '../../features/companion'
 import type { PlanContext } from '../../domain/companion-plan'
 import { NETWORK_UNPROTECTED_REASON } from '../../lib/network-gate'
-import type { TickDeps } from './tick-deps'
-import type { TickDispatch } from './tick-dispatch'
-import { buildGapCheckinText } from './tick-texts'
 
 /**
  * 串门(2026-09-03,core/visit.ts):伙伴自己的社交,一天一次。只有主人那个聊天、社交接上了才是候选。
@@ -56,24 +54,6 @@ export function visitAction(deps: TickDeps): CompanionAction {
       }
       deps.log('VISIT', r.ok ? `tick: 出门了 visit=${r.id} → ${r.channel}` : `tick: 没出得了门 reason=${r.reason}`)
       return r.ok
-    },
-  }
-}
-
-/** 问候:安静够久了(按 care 档)、没有具体由头的一句。每个 care 开着的对话都可能是候选。 */
-export function gapAction(deps: TickDeps, { dispatchToChat }: TickDispatch): CompanionAction {
-  return {
-    id: 'gap',
-    needsWechat: true,
-    speakLevel: (c) => c.level,
-    async run({ chatId, nowIso, prefs, lastInboundAtIso }) {
-      const daysSinceContact = lastInboundAtIso !== undefined
-        ? Math.floor((Date.parse(nowIso) - Date.parse(lastInboundAtIso)) / 86_400_000)
-        : 0
-      return await dispatchToChat(chatId, {
-        claim: () => { const ticket = deps.careLedger.claim(chatId, nowIso); return () => deps.careLedger.unclaim(chatId, ticket) },
-        buildText: (style) => buildGapCheckinText({ nowIso, chatId, daysSinceContact, avoid: prefs.avoid }, style),
-      })
     },
   }
 }

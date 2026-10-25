@@ -2,16 +2,16 @@
  * 知识写入那一拍(25 分钟一拍 + 新消息时推一下)+ 主人知识蒸馏 / hearth 推送(从 tick-bodies.ts 原样搬出)。
  */
 import { join } from 'node:path'
-import { loadCompanionConfig } from '../companion/config'
+import { loadCompanionConfig } from '../../lib/companion-config'
 import { makeMemoryFS } from '../../adapters/store/memory-fs'
 import { makeMessagesStore } from '../../lib/messages-store'
-import { loadPlugins, pluginMcpSpecs } from '../plugins/registry'
-import { bundledPluginsDir } from '../plugins/paths'
-import { createResilientBridge } from '../companion/ingest/bridge'
-import { runIngestCycle, maxDecryptedMtime, ingestHasTool } from '../companion/ingest/cycle'
-import { distillOwnerKnowledge } from '../companion/knowledge-distill'
-import { connectHearth } from '../companion/hearth-client'
-import { buildHearthPlan } from '../companion/hearth-plan'
+import { loadPlugins, pluginMcpSpecs } from '../../daemon/plugins/registry'
+import { bundledPluginsDir } from '../../daemon/plugins/paths'
+import { createResilientBridge } from './ingest/bridge'
+import { runIngestCycle, maxDecryptedMtime, ingestHasTool } from './ingest/cycle'
+import { distillOwnerKnowledge } from './knowledge-distill'
+import { connectHearth } from './hearth-client'
+import { buildHearthPlan } from './hearth-plan'
 import selfPkg from '../../../package.json' with { type: 'json' }
 import type { TickDeps } from './tick-deps'
 function errMsg(err: unknown): string { return err instanceof Error ? err.message : String(err) }

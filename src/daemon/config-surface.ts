@@ -17,7 +17,7 @@
  * per spawn (mtime-cached readers), knowledge/social wiring happens at boot.
  */
 import { loadAgentConfig, saveAgentConfig, type AgentConfig } from '../lib/agent-config'
-import { loadCompanionConfig, saveCompanionConfig, type CompanionConfig } from './companion/config'
+import { loadCompanionConfig, saveCompanionConfig, type CompanionConfig } from '../lib/companion-config'
 import { NICKNAME_RE } from './nickname'
 
 export type ConfigEffect = 'immediate' | 'daemon-restart' | 'next-tick' | 'reinstall'

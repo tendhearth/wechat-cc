@@ -12,7 +12,7 @@ import { makeFileStateStore as makeCliUpgradeStateStore } from '../../core/cli-u
 import type { makeJobsStore } from '../../core/scheduled-jobs-store'
 import type { makeCliEventHub } from '../../core/cli-events'
 import { resolveAdminChatId } from './index'
-import { loadCompanionConfig } from '../companion/config'
+import { loadCompanionConfig } from '../../lib/companion-config'
 import { makeActivityLog } from '../activity-log'
 import { makeActivityCommand } from '../activity/command'
 import { collectActivity } from '../cc-activity-source'

@@ -10,10 +10,10 @@ import { buildCapabilities } from '../capabilities'
 import { hasFullDiskAccess } from '../../lib/fs-access'
 import { readNightlyState } from '../../features/memory'
 import { relayV2Configured } from '../../features/phone'
-import { maxDecryptedMtime } from '../companion/ingest/cycle'
+import { maxDecryptedMtime } from '../../features/companion'
 import { APP_VERSION } from '../../lib/app-version'
 import { loadAgentConfig } from '../../lib/agent-config'
-import { loadCompanionConfig } from '../companion/config'
+import { loadCompanionConfig } from '../../lib/companion-config'
 
 export interface WireConnectionsDeps {
   stateDir: string

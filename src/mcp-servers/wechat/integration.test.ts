@@ -7,6 +7,7 @@ import { Client } from '@modelcontextprotocol/sdk/client/index.js'
 import { StdioClientTransport } from '@modelcontextprotocol/sdk/client/stdio.js'
 import { createInternalApi, type InternalApi } from '../../daemon/internal-api'
 import { voiceRoutes } from '../../features/voice/routes'
+import { companionRoutes } from '../../features/companion/routes'
 import { makeMemoryFS, type MemoryFS } from '../../adapters/store/memory-fs'
 import { makeEventsStore } from '../../daemon/events/store'
 import { openTestDb, type Db } from '../../lib/db'
@@ -441,7 +442,9 @@ describe('wechat-mcp stdio integration', () => {
       },
       setImportLocal: async (enabled: boolean) => ({ ok: true as const, import_local_history: enabled }),
     }
-    api = withMemoryRoutes(createInternalApi({ stateDir, daemonPid: 7777, companion }), memory)
+    api = withMemoryRoutes(createInternalApi({ stateDir, daemonPid: 7777 }), memory)
+    // 陪伴的路由由 companion 模块自己挂(src/features/companion,A5)。
+    api.mount('companion', companionRoutes({ stateDir, companion }))
     const { port, tokenFilePath } = await api.start()
     const transport = new StdioClientTransport({
       command: RUNTIME, args: [WECHAT_MCP_MAIN],

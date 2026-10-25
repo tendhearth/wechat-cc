@@ -93,7 +93,7 @@ export const RETURNED_SIGNAL_UNAVAILABLE = 0
  * 天"指的就是本地日,UTC 边界只是实现取巧的产物。
  *
  * `timezone` 是 IANA 时区名,来自 companion 配置的 `timezone` 字段(见
- * `daemon/companion/config.ts`,默认取进程本地时区)——跟 `mobile-feed.ts`
+ * `lib/companion-config.ts`,默认取进程本地时区)——跟 `mobile-feed.ts`
  * 的 `dayKey` 同一惯例、同一种 `Intl.DateTimeFormat('en-CA', {timeZone,
  * ...})` 写法(两边各自一份小实现是因为 `core` 不能反向依赖 `daemon`,
  * 不是重复发明;没有新造配置项,复用的是仓库已有的这一个)。

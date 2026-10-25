@@ -19,7 +19,7 @@
  * enforcement-matrix.test.ts 快照旁边;快照钉住整张表,能力表、档位、authorize、compilePolicy 哪一样改了都会在 PR 里看见。
  *
  * 访客能进的派发入口有两处,都调 providerDenialFor:conversation-coordinator 分派时(admit),和主动 / 定时那一拍
- * (daemon/wiring/tick-dispatch.ts)。工作台、主人建的定时、换一家来审都只给主人。以后新开一个访客能进的入口,要在那里同样调。
+ * (features/companion/tick-dispatch.ts)。工作台、主人建的定时、换一家来审都只给主人。以后新开一个访客能进的入口,要在那里同样调。
  *
  * 纯函数,不碰 I/O。
  */

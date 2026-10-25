@@ -19,7 +19,7 @@ import { fileURLToPath } from 'node:url'
 // and its advice ("run bun test") is wrong for this repo. During the
 // Knowledge Kernel work six suites — src/core/knowledge/{graph,facts,person}
 // .test.ts, src/core/peer-closeness.test.ts, src/daemon/social/
-// owner-grounding.test.ts, src/daemon/companion/knowledge-distill.test.ts —
+// owner-grounding.test.ts, src/features/companion/knowledge-distill.test.ts —
 // sat in exactly that state for a whole feature's lifetime, 52 assertions
 // that had never run once, while required CI stayed red and the message was
 // read as infrastructure trouble. Caught by the v1.3.8 pre-tag gate

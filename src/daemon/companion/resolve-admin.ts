@@ -10,7 +10,7 @@
  * keep working unchanged.
  */
 import type { Access } from '../../lib/access'
-import type { CompanionConfig } from './config'
+import type { CompanionConfig } from '../../lib/companion-config'
 
 /**
  * Resolve which chat receives permission-relay prompts (and, since

@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import { join } from 'node:path'
-import { companionDir, configPath } from './paths'
+import { companionDir, configPath } from './companion-config'
 
 describe('companion paths', () => {
   const base = '/tmp/fake-state'

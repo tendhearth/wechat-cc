@@ -12,7 +12,7 @@ import type { PermissionMode } from '../../domain/capability-matrix'
 import { makeConversationStore, type ConversationStore } from '../../adapters/store/conversation-store'
 import { resolveTier } from '../../domain/user-tier'
 import { loadAccess } from '../../lib/access'
-import { loadCompanionConfig } from '../companion/config'
+import { loadCompanionConfig } from '../../lib/companion-config'
 import { resolveAdminChatId } from '../companion/resolve-admin'
 import type { Bootstrap, BootstrapDeps, BootstrapCtx } from './types'
 

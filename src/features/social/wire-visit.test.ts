@@ -453,7 +453,7 @@ describe('来访的上限与隐私', () => {
     expect(calls).toEqual([])
   })
   it('跟真朋友聊天的 prompt 里不带主人概要;去邻居家(本地)照带', async () => {
-    const { saveCompanionConfig, defaultCompanionConfig } = await import('../../daemon/companion/config')
+    const { saveCompanionConfig, defaultCompanionConfig } = await import('../../lib/companion-config')
     const { mkdirSync, writeFileSync } = await import('node:fs')
     const prompts: string[] = []
     const stateDir = mkdtempSync(join(tmpdir(), 'visit-ov-'))

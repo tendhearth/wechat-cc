@@ -14,7 +14,7 @@ import { existsSync, mkdirSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { readJsonFile } from '../../lib/read-json-file'
 import type { ChatPrefsStore } from '../../daemon/chat-prefs'
-import { configPath } from '../../daemon/companion/paths'
+import { configPath } from '../../lib/companion-config'
 
 export const HUNT_DEFAULT_MARKER = 'hunt-default-off-v2'
 

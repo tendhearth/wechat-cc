@@ -4,7 +4,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { makeChatPrefs } from '../../daemon/chat-prefs'
 import { HUNT_DEFAULT_MARKER, pinHuntForExistingOwner } from './default-off'
-import { configPath } from '../../daemon/companion/paths'
+import { configPath } from '../../lib/companion-config'
 
 const OWNER = 'owner@im.wechat'
 const fresh = () => mkdtempSync(join(tmpdir(), 'hunt-default-'))

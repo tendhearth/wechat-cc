@@ -8,7 +8,7 @@ import { registerUnattendedExecutors, registerAcpExecutors, makeUnattendedAckSto
 import { createProviderRegistry } from '../../app/provider-registry'
 import { ACP_CAPABILITIES, UNATTENDED_CAPABILITIES } from '../../core/workbench/executor-capabilities'
 import { loadAgentConfig, saveAgentConfig } from '../../lib/agent-config'
-import { defaultCompanionConfig, saveCompanionConfig } from '../../daemon/companion/config'
+import { defaultCompanionConfig, saveCompanionConfig } from '../../lib/companion-config'
 import { addProject } from '../../lib/project-registry'
 import { removeTempDir } from '../../lib/test-temp'
 import { makeFakeSession } from '../../core/test-helpers'

@@ -3,9 +3,9 @@ import { mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { runIntrospectTick, type IntrospectDeps, type IntrospectAgent } from './introspect'
-import { makeEventsStore } from '../events/store'
-import { makeObservationsStore } from '../observations/store'
-import type { ObservationTone } from '../observations/store'
+import { makeEventsStore } from '../../daemon/events/store'
+import { makeObservationsStore } from '../../daemon/observations/store'
+import type { ObservationTone } from '../../daemon/observations/store'
 import { openTestDb, type Db } from '../../lib/db'
 
 function makeFakeAgent(response: { write: boolean; body?: string; tone?: ObservationTone; reasoning: string }): IntrospectAgent {

@@ -16,10 +16,10 @@
  *     companion config; null if none configured).
  */
 import type { IntrospectAgent } from './introspect'
-import { loadCompanionConfig } from './config'
+import { loadCompanionConfig } from '../../lib/companion-config'
 import { buildIntrospectPrompt, parseIntrospectResponse } from './introspect-prompt'
-import type { EventsStore } from '../events/store'
-import type { ObservationsStore } from '../observations/store'
+import type { EventsStore } from '../../daemon/events/store'
+import type { ObservationsStore } from '../../daemon/observations/store'
 import { isNetworkUnprotectedError } from '../../lib/network-gate'
 
 export interface IntrospectAgentDeps {

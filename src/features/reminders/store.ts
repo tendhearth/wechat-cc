@@ -2,7 +2,7 @@
  * Reminders store — per-chat, precise-time one-shot reminders backed by the
  * daemon's SQLite db (migration v29).
  *
- * Contrast with the companion agenda (src/daemon/companion/agenda.ts):
+ * Contrast with the companion agenda (src/features/companion/agenda.ts):
  *   - agenda  : day-granular (due:YYYY-MM-DD), operator-only (default_chat_id),
  *               fire-once-then-resolve, surfaced to the LLM to decide.
  *   - reminders: minute-precise (due_at full ISO), any chat_id, delivered

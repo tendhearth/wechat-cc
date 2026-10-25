@@ -16,7 +16,7 @@ import { originOf, type SpeechKind } from './kinds'
 export type CareSetting = 'off' | 'low' | 'high'
 
 export interface SpeechContext {
-  /** 主人那条对话的主动关心档(没设过的主人 = low,见 daemon/companion/calibration careLevel)。 */
+  /** 主人那条对话的主动关心档(没设过的主人 = low,见 features/companion/calibration careLevel)。 */
   care: CareSetting
   /** 此刻在免打扰时段里 ⇒ 时段结束的时刻;不在 ⇒ null。 */
   quiet: { endsIso: string } | null
