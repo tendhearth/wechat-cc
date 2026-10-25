@@ -34,6 +34,12 @@ export interface Active extends PathReservation {
   /** running.stop 的 AbortSignal 版(checkpoint 用,artifacts.ts 懒建)。 */
   stopSignal?: AbortSignal
   continuation: AcceptedContinuation
+  /**
+   * 轮到它时怎么跑:execute.start 建这条 run 时一起放进来(= execute(task, text, this))。
+   * lifecycle.pump 只挑出能跑的 run、调它自己带的这个 —— 调度器不认识 execute,
+   * 「派发泵 → 执行」这条往上的边就不需要晚绑定(工作台服务的依赖图见 service.ts 顶部)。
+   */
+  launch: (text: string) => Promise<void>
   task: StoredTask
   directoryIdentity: string
   cancelled: boolean

@@ -1,8 +1,12 @@
 /**
  * execute 域:一条 run 的完整生命周期(派发 → 事件流 → 结算 → 终态),以及创建入口 create / continueTask / createWechat。
  * 从 service.ts 逐字搬来(spec 2026-09-27-workbench-service-split §3 第 10 项);spec §4:execute 跨九个域是事实,不再往下切。
- * 跨域依赖用「已建好的域对象显式注入」(domains),工厂顶部解构成与 service.ts 同名的局部量,函数体只做机械替换(opts.x → ctx.deps.x、touched → ctx.hub.touched 等);
- * 真正需要晚绑定的只有 lifecycle.pump → ctx.actions.execute(那头由 lifecycle 走 Ref)。
+ * 跨域依赖用「已建好的域对象显式注入」(domains),工厂顶部解构成与 service.ts 同名的局部量,函数体只做机械替换(opts.x → ctx.deps.x、touched → ctx.hub.touched 等)。
+ * execute 在依赖图的顶上:它要的域都不依赖它。以前往回指向这里的三条边各自这样断开:
+ * - lifecycle.pump → execute:start 建 run 时把 launch(= execute(task, text, run))放进 run 里,pump 调 run 自己带的;
+ * - inputs.drainInputs → start:只有这里的收尾调它,调的时候把 start 当参数带下去;
+ * - native → start / matterSync:native 改到 execute 之后建,直接拿 start;matterSync 搬去只认 ctx 的 matter-sync.ts。
+ *   这里要的原生会话核对(validateNativeDecision)在 native-check.ts,不依赖 native 域。
  */
 import {isIssueIntent} from '../issue-intake'
 import { ensureWorktree, planWorktree, repoRootOrFail } from '../worktree-workspaces'
@@ -43,13 +47,15 @@ import type { AdmissionDomain } from './admission'
 import type { AttachmentsDomain } from './attachments'
 import type { QuotaDomain } from './quota'
 import type { ViewDomain } from './view'
-import type { NativeDomain } from './native'
+import type { NativeCheck } from './native-check'
 import type { InputsDomain } from './inputs'
 import type { LifecycleDomain } from './lifecycle'
 import type { NoticesDomain } from './notices'
 import type { ArtifactsDomain } from './artifacts'
 import type { ScriptsDomain } from './scripts'
 import type { RewindDomain } from './rewind'
+import type { UntilDomain } from './until'
+import { syncMatter } from './matter-sync'
 import { assertNotRewindBlocked } from '../rewind-store'
 
 const RECOVERY_MESSAGE='原执行会话暂时无法恢复。请打开桌面工作台，查看恢复选项并确认是否带此前记录重新开始。'
@@ -93,8 +99,18 @@ async function collectWorkbenchTurn(events: AsyncIterable<AgentEvent>, stop: Pro
 }
 
 export interface ExecuteDomains {
-  admission: AdmissionDomain; attachments: AttachmentsDomain; quota: QuotaDomain; view: ViewDomain; native: NativeDomain
-  inputs: InputsDomain; lifecycle: LifecycleDomain; notices: NoticesDomain; artifacts: ArtifactsDomain
+  admission: AdmissionDomain
+  attachments: AttachmentsDomain
+  quota: QuotaDomain
+  view: ViewDomain
+  /** 原生会话续接的核对(native-check.ts);不是整个 native 域 —— native 在 execute 之后建。 */
+  native: Pick<NativeCheck,'validateNativeDecision'>
+  inputs: InputsDomain
+  lifecycle: LifecycleDomain
+  notices: NoticesDomain
+  artifacts: ArtifactsDomain
+  /** 做到条件成立为止(v80):一轮成功做完排检查、失败 ⇒ 停。 */
+  until: Pick<UntilDomain,'afterTurn'|'stop'>
   /** 工作区脚本(2026-10-20):微信建的独立工作区也跑 setup;老测试不传。 */
   scripts?: Pick<ScriptsDomain,'afterCheckout'>
   /** 回退之后下一轮开头的告知(2026-10-21);老测试不传。 */
@@ -115,6 +131,7 @@ export function makeExecuteDomain(ctx:ServiceCtx, domains:ExecuteDomains) {
   const {revokeCredentials,cancelIdleClose,reportOnce,recollectOnce,settleQuiet,settleAfterDecision,releaseReservation,confirmLateClose,markUncertain,pump}=domains.lifecycle
   const {requestNotice,terminalReportBody,stageFinishedNotice,publishFinishedNotices}=domains.notices
   const {collect,retakeBaseline,takeBaseline}=domains.artifacts
+  const {afterTurn:untilAfterTurn,stop:untilStop}=domains.until
   async function execute(task:StoredTask,text:string,running:Active) {
     const sessionKey=`workbench/${task.id}`
     let finalStatus:TaskStatus='failed'
@@ -431,10 +448,10 @@ export function makeExecuteDomain(ctx:ServiceCtx, domains:ExecuteDomains) {
       // 做到条件成立为止(v80):不保留会话的执行者只走这里。成功做完 ⇒ 排检查(先于 drainInputs:主人有排队的,
       // until 自己让路);失败 ⇒ 停并写原因(额度 / 限流也在这里)。retained 的那一轮 settleQuiet 已经排过,按轮去重。
       try {
-        if(terminalCommitted&&finalStatus==='completed'&&!running.cancelled&&!running.uncertain&&!state.stopping)ctx.actions.deref('execute').untilAfterTurn(running)
-        else if(terminalCommitted&&finalStatus==='failed')ctx.actions.deref('execute').untilStop(task.id,finalError==='provider_quota_exhausted'?'额度用完了':finalError==='provider_rate_limited'?'被限流了':'这一轮出错了')
+        if(terminalCommitted&&finalStatus==='completed'&&!running.cancelled&&!running.uncertain&&!state.stopping)untilAfterTurn(running)
+        else if(terminalCommitted&&finalStatus==='failed')untilStop(task.id,finalError==='provider_quota_exhausted'?'额度用完了':finalError==='provider_rate_limited'?'被限流了':'这一轮出错了')
       } catch { /* 检查排不上不影响收尾 */ }
-      if(terminalCommitted&&finalStatus==='completed'&&!running.cancelled&&!running.uncertain&&!state.stopping)drainInputs(task.id,running.directoryIdentity)
+      if(terminalCommitted&&finalStatus==='completed'&&!running.cancelled&&!running.uncertain&&!state.stopping)drainInputs(task.id,running.directoryIdentity,start)
       else holdInputs(task.id,'任务已停止或未正常完成；这条补充尚未发送。')
     }
   }
@@ -497,6 +514,8 @@ export function makeExecuteDomain(ctx:ServiceCtx, domains:ExecuteDomains) {
       else addRunEvent('system',`问题已结束，未提交回答：${event.request.id}`)
     }})
     const running:Active={
+      // 轮到它时 lifecycle.pump 调这个(text 是 pump 从 runningText 取的那一份,与这里的 text 相同)
+      launch:runText=>execute(task,runText,running),
       execution,
       attachments:dispatchAttachments,
       interactionAt:Date.now(),questions,queuedInputId,handoffId,handoffArtifacts,nativeResume,continuation:acceptedContinuation,identity:runId,taskId:task.id,title:task.title,path:task.path,order:++state.order,state:'queued',task,directoryIdentity:acceptedDirectoryIdentity,
@@ -508,7 +527,9 @@ export function makeExecuteDomain(ctx:ServiceCtx, domains:ExecuteDomains) {
   }
 
   /** matter 同步永不打断任务本身:登记失败只是少一条索引,任务照跑。 */
-  function matterSync(fn:(m:MatterStore)=>void):void { if(!ctx.deps.matters)return; try{fn(ctx.deps.matters)}catch{/* 见上 */} }
+  function matterSync(fn:(m:MatterStore)=>void):void {
+    syncMatter(ctx,fn)
+  }
   /** 出生地也不能打断创建:没有 matter store、或那个 chat 的 matter 建不出来,就没有出生地,任务照建。
    *  但「算出生地时出错」不能悄悄退化成「这件事本来就没有出生地」——没接 matters 是老接线的正常状态、
    *  不留痕;`ensureChat` 真的抛错则是信号,留一条能查到的痕迹(评审 2026-09-23 修复轮 1)。 */

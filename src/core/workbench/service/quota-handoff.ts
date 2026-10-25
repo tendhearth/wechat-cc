@@ -24,9 +24,12 @@ const TASK_ID = /^[a-f0-9]{8}$/
 const RECEIPT_ACCOUNT = 'quota-handoff'
 const keyOf = (taskId: string) => `quota-handoff:${taskId}`
 
-export function makeQuotaHandoffDomain(ctx: ServiceCtx, domains: QuotaHandoffDomains) {
+/**
+ * 只读的那一半:详情里「能不能交、交给谁、交过没有」。只要 quota,不碰 execute ——
+ * 所以 view 能在 execute 之前拿到它(view → 这里;execute → view),不需要晚绑定。
+ */
+export function makeQuotaHandoffView(ctx: ServiceCtx, domains: Pick<QuotaHandoffDomains, 'quota'>) {
   const { store, state } = ctx
-  const { createTask } = domains.execute
   const { quota, fallbackExecutor } = domains.quota
   const owned = (taskId: string) => {
     const task = store.get(taskId), owner = ctx.deps.ownerChatId()
@@ -51,6 +54,16 @@ export function makeQuotaHandoffDomain(ctx: ServiceCtx, domains: QuotaHandoffDom
     const to = fallbackExecutor(task.providerId)
     return to ? { state: 'offer', from: task.providerId, to, kind: q.kind, resetAt: q.resetAt } : { state: 'none', from: task.providerId, kind: q.kind, resetAt: q.resetAt }
   }
+
+  return { owned, handed, quotaHandoff }
+}
+
+/** 交出去的那一半要 execute.createTask;只读那一半照 makeQuotaHandoffView(纯函数,建两份无妨)。 */
+export function makeQuotaHandoffDomain(ctx: ServiceCtx, domains: QuotaHandoffDomains) {
+  const { store, state } = ctx
+  const { createTask } = domains.execute
+  const { quota, fallbackExecutor } = domains.quota
+  const { owned, handed, quotaHandoff } = makeQuotaHandoffView(ctx, domains)
 
   /**
    * 交出去。providerId = 确认卡上写的那位:与此刻的接手人不一致就不交(quota_handoff_changed),手机重读再问。

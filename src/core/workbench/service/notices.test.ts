@@ -3,7 +3,6 @@ import { mkdtempSync, mkdirSync, realpathSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { openTestDb, type Db } from '../../../lib/db'
-import { Ref } from '../../../lib/lifecycle'
 import { createProviderRegistry } from '../../../app/provider-registry'
 import { makeWorkbenchStore, type WorkbenchStore } from '../store'
 import { saveArtifactSnapshot } from '../artifacts'
@@ -12,7 +11,7 @@ import { executionFailureMessage } from '../execution-settings'
 import { removeTempDir } from '../../../lib/test-temp'
 import { makeRuntimeState, type Active } from './state'
 import { makeNoticesDomain } from './notices'
-import type { ServiceActions, ServiceCtx } from './ctx'
+import type { ServiceCtx } from './ctx'
 
 const dbs: Db[] = []; const dirs: string[] = []
 afterEach(() => { for (const db of dbs.splice(0)) db.close(); for (const d of dirs.splice(0)) removeTempDir(d) })
@@ -25,10 +24,8 @@ function setup(owner: string | null = 'owner', permissionTimeoutMs?: number) {
   const store: WorkbenchStore = makeWorkbenchStore(db)
   const state = makeRuntimeState()
   const noticeWake = vi.fn(async () => {}); state.noticeWake = noticeWake
-  const actions = new Ref<ServiceActions>('t')
-  actions.set({ submitInput: vi.fn(), continueTask: vi.fn(), isReplied: () => false, fallbackExecutor: () => 'claude', artifact: () => ({ name: 'a.txt', mime: 'text/plain', size: 1, sha256: 'f'.repeat(64), contentBase64: 'YQ==' }), quotaExhausted: () => null, continuation: () => ({ mode: 'new' }), provider: () => { throw new Error('unused') }, requireInput: () => { throw new Error('unused') }, canResume: () => false, taskVersion: () => 'v', selectAttachments: () => [], combinedAttachments: () => [], handoffAttachments: () => [], taskView: () => { throw new Error('unused') }, matterSync: () => {}, start: () => { throw new Error('unused') }, continuationAttachmentScope: () => undefined, inputMode: () => 'queue' as const, armIdleClose: () => {}, cancelIdleClose: () => {}, settleAfterDecision: () => {}, execute: () => { throw new Error('unused') }, hasUndeliveredInput: () => false, holdInputs: () => {}, collect: async () => {}, collectTurnArtifacts: () => {}, captureCodeChanges: async () => {}, runtimeSnapshot: () => undefined, held: () => [], stageFinishedNotice: () => {}, publishFinishedNotices: () => {} } as never)
-  const ctx: ServiceCtx = { store, stateDir, state, hub: { touched: vi.fn(), bumped: vi.fn(), dispose: vi.fn() }, deps: { ownerChatId: () => owner, registry: createProviderRegistry(), ...(permissionTimeoutMs !== undefined ? { permissionTimeoutMs } : {}) }, ensureAccepting: () => { if (state.stopping) throw new Error('workbench_stopping') }, now: Date.now, actions }
-  const domain = makeNoticesDomain(ctx)
+  const ctx: ServiceCtx = { store, stateDir, state, hub: { touched: vi.fn(), bumped: vi.fn(), dispose: vi.fn() }, deps: { ownerChatId: () => owner, registry: createProviderRegistry(), ...(permissionTimeoutMs !== undefined ? { permissionTimeoutMs } : {}) }, ensureAccepting: () => { if (state.stopping) throw new Error('workbench_stopping') }, now: Date.now }
+  const domain = makeNoticesDomain(ctx, { quota: { fallbackExecutor: () => 'claude' }, artifacts: { artifact: () => ({ name: 'a.txt', mime: 'text/plain', size: 1, sha256: 'f'.repeat(64), contentBase64: 'YQ==' }) } })
   const task = store.create({ title: '写周报', path: project, providerId: 'codex', ownerChatId: owner })
   /** 假的 Active:只给 notices 用得到的字段。 */
   const running = (over: Partial<Active> = {}): Active => ({ identity: 'run-1', taskId: task.id, title: task.title, task, cancelled: false, finishing: false, uncertain: false, permissions: { pending: () => [] }, questions: { pending: () => [] }, ...over } as unknown as Active)
@@ -91,7 +88,7 @@ describe('makeNoticesDomain · 终态通知', () => {
     expect(n).toMatchObject({ kind: 'completed', runId: 'run-1' })
     expect(n!.text).toContain('这一轮已完成'); expect(n!.text).toContain(`结果：任务 ${task.id} 结果`)
   })
-  it('failed + 额度耗尽 ⇒ 文案是 executionFailureMessage + 「交给 <候选> 继续?」(候选来自 ctx.actions.fallbackExecutor)', () => {
+  it('failed + 额度耗尽 ⇒ 文案是 executionFailureMessage + 「交给 <候选> 继续?」(候选来自注入的 quota.fallbackExecutor)', () => {
     const { domain, task, store, running } = setup()
     store.wechatNotifications.watch(task.id, 'owner', 'acct', true)
     store.update(task.id, 'failed', 'provider_quota_exhausted')

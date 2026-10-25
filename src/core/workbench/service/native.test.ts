@@ -3,15 +3,18 @@ import { mkdtempSync, mkdirSync, realpathSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { openTestDb, type Db } from '../../../lib/db'
-import { Ref } from '../../../lib/lifecycle'
 import { createProviderRegistry } from '../../../app/provider-registry'
 import { makeWorkbenchStore, type WorkbenchStore } from '../store'
 import { MANAGED_NATIVE_CAPABILITIES } from '../executor-capabilities'
 import { removeTempDir } from '../../../lib/test-temp'
 import type { AgentProvider } from '../../../ports/agent-provider'
 import { makeRuntimeState, type Active } from './state'
-import { makeNativeDomain } from './native'
-import type { ServiceActions, ServiceCtx } from './ctx'
+import { makeNativeDomain, type NativeDomains } from './native'
+import { makeNativeCheck } from './native-check'
+import type { ServiceCtx } from './ctx'
+
+/** native 从别的域拿的动作(不含 check:那块用真的 native-check,它的 admission 也转发到这里)。 */
+type Fakes = NativeDomains['admission'] & NativeDomains['attachments'] & NativeDomains['quota'] & NativeDomains['view'] & NativeDomains['execute']
 
 const dbs: Db[] = []; const dirs: string[] = []
 afterEach(() => { for (const db of dbs.splice(0)) db.close(); for (const d of dirs.splice(0)) removeTempDir(d) })
@@ -28,16 +31,37 @@ function setup() {
   registry.register('claude', provider, { displayName: 'Claude', canResume: () => true, workbench: MANAGED_NATIVE_CAPABILITIES })
   registry.register('codex', provider, { displayName: 'Codex', canResume: () => true, workbench: MANAGED_NATIVE_CAPABILITIES })
   const state = makeRuntimeState()
-  const actions = new Ref<ServiceActions>('t')
-  const ctx: ServiceCtx = { store, stateDir, state, hub: { touched: vi.fn(), bumped: vi.fn(), dispose: vi.fn() }, deps: { ownerChatId: () => 'owner', registry }, ensureAccepting: () => { if (state.stopping) throw new Error('workbench_stopping') }, now: Date.now, actions }
-  const domain = makeNativeDomain(ctx)
-  const stub = () => actions.set({ submitInput: vi.fn(), continueTask: vi.fn(), isReplied: () => false, fallbackExecutor: () => null, artifact: unused, quotaExhausted: () => null, continuation: () => ({ mode: 'new' }), provider: id => { const p = registry.get(id); if (!p) throw new Error('unavailable_provider'); return p as never }, requireInput: id => registry.get(id) as never, canResume: () => false, taskVersion: () => 'v', selectAttachments: () => [], combinedAttachments: c => [...c], handoffAttachments: () => [], taskView: t => t as never, matterSync: () => {}, start: unused, continuationAttachmentScope: () => undefined, inputMode: () => 'queue' as const, armIdleClose: () => {}, cancelIdleClose: () => {}, settleAfterDecision: () => {}, execute: () => { throw new Error('unused') }, hasUndeliveredInput: () => false, holdInputs: () => {}, collect: async () => {}, collectTurnArtifacts: () => {}, captureCodeChanges: async () => {}, runtimeSnapshot: () => undefined, held: () => [], stageFinishedNotice: () => {}, publishFinishedNotices: () => {}, untilAfterTurn: () => {}, untilStop: () => {} })
+  const ctx: ServiceCtx = { store, stateDir, state, hub: { touched: vi.fn(), bumped: vi.fn(), dispose: vi.fn() }, deps: { ownerChatId: () => 'owner', registry }, ensureAccepting: () => { if (state.stopping) throw new Error('workbench_stopping') }, now: Date.now }
+  // 注入的是转发到 fakes 的薄包装:测试在建好域之后才 stub(),没 stub 就调到 ⇒ 当场报错
+  let fakes: Fakes | null = null
+  const use = (): Fakes => { if (!fakes) throw new Error('not_stubbed'); return fakes }
+  const actions = { get current() { return fakes } }
+  const admission: NativeDomains['admission'] = {
+    canResume: task => use().canResume(task),
+    continuation: (...args) => use().continuation(...args),
+    provider: id => use().provider(id),
+    requireInput: (...args) => use().requireInput(...args),
+    taskVersion: task => use().taskVersion(task),
+  }
+  const domain = makeNativeDomain(ctx, {
+    admission,
+    attachments: {
+      combinedAttachments: (...args) => use().combinedAttachments(...args),
+      handoffAttachments: (...args) => use().handoffAttachments(...args),
+      selectAttachments: (...args) => use().selectAttachments(...args),
+    },
+    quota: { quotaExhausted: id => use().quotaExhausted(id) },
+    view: { taskView: (...args) => use().taskView(...args) },
+    check: makeNativeCheck(ctx, { admission }),
+    execute: { start: (...args) => use().start(...args) },
+  })
+  const stub = () => { fakes = { quotaExhausted: () => null, continuation: () => ({ mode: 'new' }), provider: id => { const p = registry.get(id); if (!p) throw new Error('unavailable_provider'); return p as never }, requireInput: id => registry.get(id) as never, canResume: () => false, taskVersion: () => 'v', selectAttachments: () => [], combinedAttachments: c => [...c], handoffAttachments: () => [], taskView: t => t as never, start: unused } }
   const task = store.create({ title: '事', path: project, providerId: 'claude', ownerChatId: 'owner' })
   return { store, state, domain, task, project, actions, stub }
 }
 
 describe('makeNativeDomain · 构造与守门', () => {
-  it('构造时不 deref actions', () => { const { actions } = setup(); expect(actions.current).toBeNull() })
+  it('构造时不调注入的跨域动作', () => { const { actions } = setup(); expect(actions.current).toBeNull() })
   it('stopping 之后五个会开新工作的入口都抛 workbench_stopping', async () => {
     const { domain, state, task, stub } = setup(); stub(); state.stopping = true
     await expect(domain.previewHandoff({} as never)).rejects.toThrow('workbench_stopping')

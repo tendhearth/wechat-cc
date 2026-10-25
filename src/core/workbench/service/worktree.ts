@@ -8,13 +8,22 @@ import { pathsConflict } from '../scheduler'
 import { commitWorktree, mergeHint, mergeWorktree, removeWorktree, reopenWorktree, worktreeDirty } from '../worktree-workspaces'
 import type { ServiceCtx } from './ctx'
 import type { ScriptsDomain } from './scripts'
+import type { ViewDomain } from './view'
 import { assertNotRewindBlocked } from '../rewind-store'
 
 type Action = 'commit' | 'remove' | 'merge' | 'reopen'
 export type WorktreeActionResult = { branch: string; committed?: boolean; sha?: string; mergeHint?: string; removed?: boolean; removing?: boolean; merged?: boolean; into?: string; reopened?: boolean }
 
-export function makeWorktreeDomain(ctx: ServiceCtx, domains: { scripts?: Pick<ScriptsDomain, 'beforeRemove' | 'afterCheckout' | 'stopRun'> } = {}) {
+export interface WorktreeDomains {
+  /** 工作区脚本(2026-10-20):删之前停、重新打开后跑 setup;老测试不传。 */
+  scripts?: Pick<ScriptsDomain, 'beforeRemove' | 'afterCheckout' | 'stopRun'>
+  /** 「自己保留的会话已经答复、安静着」的判据。 */
+  view: Pick<ViewDomain, 'isReplied'>
+}
+
+export function makeWorktreeDomain(ctx: ServiceCtx, domains: WorktreeDomains) {
   const { store, state } = ctx
+  const { isReplied } = domains.view
   /**
    * 提交只是给文件拍快照(之后又写的,最坏是没进这次提交,不会弄坏东西)⇒ 这件事自己保留的会话已经答复、安静着,
    * 就不必先收工(真机核对 10-07:答复后会话保留 10 分钟,那段时间点「提交到分支」一律被拒)。删工作区要删目录,仍要先收工。
@@ -28,7 +37,7 @@ export function makeWorktreeDomain(ctx: ServiceCtx, domains: { scripts?: Pick<Sc
     for (const holder of [...state.reservations.values(), ...state.writerOrphans.values()]) {
       if (!pathsConflict(holder.path, task.path)) continue
       const own = state.runsByTask.get(id)
-      const quietOwn = action !== 'remove' && own !== undefined && holder === own && !own.finishing && !own.uncertain && ctx.actions.deref('worktree').isReplied(own)
+      const quietOwn = action !== 'remove' && own !== undefined && holder === own && !own.finishing && !own.uncertain && isReplied(own)
       if (!quietOwn) throw new Error('workbench_busy')
     }
     // 合回会改项目目录里的文件:那里有别的任务在跑(或关不掉的执行程序)⇒ 不动。

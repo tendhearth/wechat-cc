@@ -3,7 +3,6 @@ import { mkdtempSync, mkdirSync, realpathSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { openTestDb, type Db } from '../../../lib/db'
-import { Ref } from '../../../lib/lifecycle'
 import { createProviderRegistry } from '../../../app/provider-registry'
 import { makeWorkbenchStore, type WorkbenchStore } from '../store'
 import { MANAGED_NATIVE_CAPABILITIES, UNATTENDED_CAPABILITIES } from '../executor-capabilities'
@@ -12,7 +11,7 @@ import { removeTempDir } from '../../../lib/test-temp'
 import type { AgentProvider } from '../../../ports/agent-provider'
 import { makeRuntimeState } from './state'
 import { makeAdmissionDomain } from './admission'
-import type { ServiceActions, ServiceCtx, ServiceDeps } from './ctx'
+import type { ServiceCtx, ServiceDeps } from './ctx'
 
 const dbs: Db[] = []; const dirs: string[] = []
 afterEach(() => { for (const db of dbs.splice(0)) db.close(); for (const d of dirs.splice(0)) removeTempDir(d) })
@@ -30,10 +29,8 @@ function setup(over: { ack?: ServiceDeps['unattendedAck']; canResume?: boolean; 
   registry.register('agy', provider, { displayName: 'Agy', canResume: () => false, workbench: UNATTENDED_CAPABILITIES })
   registry.register('kimi', provider, { displayName: 'Kimi', canResume: () => false })   // 没有 workbench 能力
   const state = makeRuntimeState()
-  const actions = new Ref<ServiceActions>('t')
-  actions.set({ submitInput: vi.fn(), continueTask: vi.fn(), isReplied: () => false, fallbackExecutor: () => null, artifact: () => { throw new Error('unused') }, quotaExhausted: () => over.quotaExhausted ? { kind: 'quota', since: 0, resetAt: Date.now() + 1000, message: '满了' } : null, continuation: () => ({ mode: 'new' }), provider: () => { throw new Error('unused') }, requireInput: () => { throw new Error('unused') }, canResume: () => false, taskVersion: () => 'v', selectAttachments: () => [], combinedAttachments: () => [], handoffAttachments: () => [], taskView: () => { throw new Error('unused') }, matterSync: () => {}, start: () => { throw new Error('unused') }, continuationAttachmentScope: () => undefined, inputMode: () => 'queue' as const, armIdleClose: () => {}, cancelIdleClose: () => {}, settleAfterDecision: () => {}, execute: () => { throw new Error('unused') }, hasUndeliveredInput: () => false, holdInputs: () => {}, collect: async () => {}, collectTurnArtifacts: () => {}, captureCodeChanges: async () => {}, runtimeSnapshot: () => undefined, held: () => [], stageFinishedNotice: () => {}, publishFinishedNotices: () => {}, untilAfterTurn: () => {}, untilStop: () => {} })
-  const ctx: ServiceCtx = { store, stateDir, state, hub: { touched: vi.fn(), bumped: vi.fn(), dispose: vi.fn() }, deps: { ownerChatId: () => 'owner', registry, ...(over.ack ? { unattendedAck: over.ack } : {}) }, ensureAccepting: () => { if (state.stopping) throw new Error('workbench_stopping') }, now: Date.now, actions }
-  const domain = makeAdmissionDomain(ctx)
+  const ctx: ServiceCtx = { store, stateDir, state, hub: { touched: vi.fn(), bumped: vi.fn(), dispose: vi.fn() }, deps: { ownerChatId: () => 'owner', registry, ...(over.ack ? { unattendedAck: over.ack } : {}) }, ensureAccepting: () => { if (state.stopping) throw new Error('workbench_stopping') }, now: Date.now }
+  const domain = makeAdmissionDomain(ctx, { quota: { quotaExhausted: () => over.quotaExhausted ? { kind: 'quota', since: 0, resetAt: Date.now() + 1000, message: '满了' } : null } })
   const task = store.create({ title: '事', path: project, providerId: 'claude', ownerChatId: 'owner' })
   return { store, domain, task, project }
 }
@@ -56,7 +53,7 @@ describe('makeAdmissionDomain · 准入', () => {
   it('acknowledgeUnattended:没接 ack ⇒ unattended_ack_unavailable', () => {
     expect(() => setup().domain.acknowledgeUnattended()).toThrow('unattended_ack_unavailable')
   })
-  it('requireEntryInput:额度耗尽(经 ctx.actions.quotaExhausted)⇒ provider_quota_exhausted', () => {
+  it('requireEntryInput:额度耗尽(经注入的 quota.quotaExhausted)⇒ provider_quota_exhausted', () => {
     expect(() => setup({ quotaExhausted: true }).domain.requireEntryInput('claude', [], PROVIDER_EXECUTION_CHOICE, '做')).toThrow('provider_quota_exhausted')
     expect(() => setup().domain.requireEntryInput('claude', [], PROVIDER_EXECUTION_CHOICE, '做')).not.toThrow()
   })

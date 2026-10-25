@@ -10,6 +10,7 @@ import { isUnattendedExecutor, type WorkbenchExecutorCapabilities } from '../exe
 import { untilContinuation, untilRequestId } from '../until'
 import type { Active } from './state'
 import type { ServiceCtx } from './ctx'
+import type { ViewDomain } from './view'
 
 export const UNTIL_CHECK_TIMEOUT_MS = 10 * 60_000
 
@@ -22,8 +23,28 @@ export interface UntilOptions {
 
 const succeeded = (e: ScriptExit) => e.code === 0 && !e.error && !e.timedOut && !e.stopped
 
-export function makeUntilDomain(ctx: ServiceCtx, opts: UntilOptions = {}) {
+/**
+ * 检查没过之后「让执行者接着改」:会话还开着(current)⇒ 当一句补充投进去(inputs.submitInput,返回它的 Promise);
+ * 会话已经收工 ⇒ 续一轮(execute.continueTask,同步,返回 undefined)。
+ *
+ * 这是工作台服务里**唯一**一条构造时注入、指向后建的域的回调(工作台服务的依赖图见 service.ts 顶部)。环是真的:
+ * 一轮做完 → lifecycle.settleQuiet / execute 收尾调 afterTurn → 检查没过 → 又开一轮(inputs / execute)。
+ * until 必须在 lifecycle 与 execute 之前建好(它们要 afterTurn / stop),而接着改的那两个动作偏偏在它们之上。
+ * afterTurn 被很多低层路径调到(收尾、拍板后的 settleAfterDecision、网络恢复),没法让调用方每次把它当参数带下来,
+ * 所以留这一条。它只在检查脚本跑完之后(异步、远在构造完成之后)才会被调。
+ */
+export type UntilResume = (id: string, text: string, requestId: string, current: Active | undefined) => Promise<unknown> | void
+
+export interface UntilDomains {
+  /** 跑完核对「这条会话是不是还安静」。 */
+  view: Pick<ViewDomain, 'isReplied'>
+  resume: UntilResume
+}
+
+export function makeUntilDomain(ctx: ServiceCtx, domains: UntilDomains, opts: UntilOptions = {}) {
   const { store } = ctx
+  const { isReplied } = domains.view
+  const { resume } = domains
   const start = opts.start ?? startScript
   const unattended = opts.isUnattended ?? isUnattendedExecutor
   const inFlight = new Map<string, { promise: Promise<void>; stop: () => Promise<void> }>()
@@ -104,7 +125,7 @@ export function makeUntilDomain(ctx: ServiceCtx, opts: UntilOptions = {}) {
       if (recheck.has(id)) return
       // 跑完重新核对:这一轮之后开始了新的一轮 / 换了一条 run ⇒ 结果作废(那一轮做完时会排检查)。
       const current = ctx.state.runsByTask.get(id)
-      if (current && (current !== r || r.turnSeq !== Number(turnKey.split(':').pop()) || !ctx.actions.deref('until').isReplied(current))) return
+      if (current && (current !== r || r.turnSeq !== Number(turnKey.split(':').pop()) || !isReplied(current))) return
       const why = blocked(id, r)
       if (why) { stop(id, why); return }
       store.goals.recordCheck(id, { checkedTurn: turnKey, exit: exit.code, rounds: n })
@@ -121,8 +142,9 @@ export function makeUntilDomain(ctx: ServiceCtx, opts: UntilOptions = {}) {
       const text = untilContinuation({ round: n, maxRounds: g.maxRounds, exit: exit.timedOut ? null : exit.code, command: g.command, tail: exit.tail || exit.error || '' })
       const requestId = untilRequestId(id, n)
       try {
-        if (current) await ctx.actions.deref('until').submitInput(id, { runId: current.identity, requestId, text })
-        else ctx.actions.deref('until').continueTask(id, text, { inputRequestId: requestId })
+        // 投补充那条路要等它落地(原来就是 await);续一轮那条是同步的,不多等一拍。
+        const sent = resume(id, text, requestId, current)
+        if (sent) await sent
         note(id, `检查没过(第 ${n}/${g.maxRounds} 轮,退出码 ${exit.code ?? '无'}),已让执行者接着改。`)
       } catch (err) {
         const code = err instanceof Error ? err.message : String(err)

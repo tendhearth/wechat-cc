@@ -1,7 +1,8 @@
 /**
  * review 域:逐文件标记(接受 / 打回)与「打回 = 续接要求 + 标记」;行评论与按块撤回(service/review-lines.ts)。
- * 从 service.ts 逐字搬来(spec 2026-09-27-workbench-service-split §3 第 1 项);只认 ctx,
- * 续接与投递走 ctx.actions 晚绑定。
+ * 从 service.ts 逐字搬来(spec 2026-09-27-workbench-service-split §3 第 1 项)。
+ * 打回要「会话还开着 ⇒ 当补充投进去(inputs),收工了 ⇒ 续一轮(execute)」:review 建在两者之后,
+ * 它们都不依赖 review,构造时显式传进来。
  */
 import { randomUUID } from 'node:crypto'
 import { readArtifactSnapshot } from '../artifacts'
@@ -24,6 +25,9 @@ import { parseHunks, switchHunks, type Hunk } from '../review-hunks'
 import { assertNotRewindBlocked } from '../rewind-store'
 import type { ScriptsDomain } from './scripts'
 import type { UntilDomain } from './until'
+import type { ViewDomain } from './view'
+import type { InputsDomain } from './inputs'
+import type { ExecuteDomain } from './execute'
 import { makeReviewLines, MERGED_NOTE, type HunkActionInput, type HunkActionResult, type ReviewCommentInput, type ReviewCommentResult, type SendCommentsResult } from './review-lines'
 import { atomicReplace, readCurrentText } from './review-write'
 import { LESSON_MAX_CHARS, lessonSourcePath } from '../project-lessons'
@@ -47,8 +51,19 @@ export interface ReviewDomain {
   revertReviewHunk(id:string,input:HunkActionInput):HunkActionResult
 }
 
-export function makeReviewDomain(ctx:ServiceCtx,domains:{scripts:Pick<ScriptsDomain,'busy'>;until:Pick<UntilDomain,'checking'>}):ReviewDomain {
+export interface ReviewDomains {
+  scripts: Pick<ScriptsDomain,'busy'>
+  until: Pick<UntilDomain,'checking'>
+  view: Pick<ViewDomain,'isReplied'>
+  inputs: Pick<InputsDomain,'submitInput'>
+  execute: Pick<ExecuteDomain,'continueTask'>
+}
+
+export function makeReviewDomain(ctx:ServiceCtx,domains:ReviewDomains):ReviewDomain {
   const { store } = ctx
+  const { isReplied } = domains.view
+  const { submitInput } = domains.inputs
+  const { continueTask } = domains.execute
   /** 快照不可变 ⇒ (快照 sha, 路径) 的块解析结果可以一直缓存;有上限,满了丢最早的。 */
   const hunkCache=new Map<string,Hunk[]|null>()
   function hunksOf(artifactSha256:string,file:Pick<ReviewFile,'path'|'diff'>):Hunk[]|null {
@@ -83,12 +98,12 @@ export function makeReviewDomain(ctx:ServiceCtx,domains:{scripts:Pick<ScriptsDom
   function deliver(id:string,text:string,ids:{given?:string;derive:(scope:string)=>string;continueId?:string;restartToken?:string},done:(requestId:string)=>void):WorkbenchTaskView|Promise<LiveInput> {
     const running=ctx.state.runsByTask.get(id)
     if(running){
-      if(!ctx.actions.deref('review').isReplied(running))throw new Error('workbench_busy')
+      if(!isReplied(running))throw new Error('workbench_busy')
       const requestId=ids.given??ids.derive(running.identity)
-      return ctx.actions.deref('review').submitInput(id,{runId:running.identity,requestId,text}).then(receipt=>{done(requestId);return receipt})
+      return submitInput(id,{runId:running.identity,requestId,text}).then(receipt=>{done(requestId);return receipt})
     }
     const requestId=ids.given??ids.continueId??ids.derive('continue')
-    const task=ctx.actions.deref('review').continueTask(id,text,{inputRequestId:requestId,...(ids.restartToken!==undefined?{restartToken:ids.restartToken}:{})})
+    const task=continueTask(id,text,{inputRequestId:requestId,...(ids.restartToken!==undefined?{restartToken:ids.restartToken}:{})})
     done(requestId)
     return task
   }

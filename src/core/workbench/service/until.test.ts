@@ -1,7 +1,7 @@
 import { describe, expect, it, vi } from 'vitest'
 import { openTestDb } from '../../../lib/db'
 import { makeWorkbenchStore } from '../store'
-import { makeUntilDomain, UNTIL_CHECK_TIMEOUT_MS } from './until'
+import { makeUntilDomain, UNTIL_CHECK_TIMEOUT_MS, type UntilDomains } from './until'
 import { untilRequestId } from '../until'
 import type { ScriptExit } from '../script-runner'
 import type { Active } from './state'
@@ -19,23 +19,30 @@ function setup(o: { exit?: ScriptExit; maxRounds?: number; retained?: boolean; c
   const runsByTask = new Map<string, Active>()
   const running = { identity: 'run-1', taskId: t.id, turnSeq: 1, cancelled: false, task: t } as unknown as Active
   if (o.retained !== false) runsByTask.set(t.id, running)
-  const submitInput = vi.fn(async () => ({}) as never)
-  const continueTask = vi.fn(() => ({}) as never)
-  const actions = { submitInput, continueTask, isReplied: () => true }
+  const submitInput = vi.fn(async (_id: string, _input: { runId: string; requestId: string; text: string }) => ({}) as never)
+  const continueTask = vi.fn((_id: string, _text: string, _options: { inputRequestId: string }) => ({}) as never)
+  // 同 service.ts 的 resumeAfterCheck:会话还开着 ⇒ 投补充;收工了 ⇒ 续一轮
+  const domains: UntilDomains = {
+    view: { isReplied: () => true },
+    resume: (id, text, requestId, current) => {
+      if (current) return submitInput(id, { runId: current.identity, requestId, text })
+      continueTask(id, text, { inputRequestId: requestId })
+      return undefined
+    },
+  }
   const released: string[] = []
   const ctx = {
     store, stateDir: '/tmp/s', now: Date.now, ensureAccepting: () => {},
     state: { runsByTask, stopping: false } as never,
     hub: { touched: () => {}, bumped: () => {}, dispose: () => {} },
     deps: { registry: { get: () => ({ opts: { workbench: o.caps ?? { attended: true } } }) }, holdBusy: (l: string) => () => released.push(l) } as never,
-    actions: { deref: () => actions } as never,
   } as unknown as ServiceCtx
   let result = o.exit ?? exit(0, 'ok')
   const starts: Array<{ cwd: string; script: string; kind: string; timeoutMs?: number }> = []
   const start = vi.fn((input: { cwd: string; script: string; kind: string; timeoutMs?: number }) => { starts.push(input); return { pgid: 1, stop: async () => {}, done: Promise.resolve(result) } })
-  const until = makeUntilDomain(ctx, { start: start as never, isUnattended: c => (c as { attended?: boolean }).attended === false })
+  const until = makeUntilDomain(ctx, domains, { start: start as never, isUnattended: c => (c as { attended?: boolean }).attended === false })
   const events = () => store.events(t.id).map(e => e.text).filter(Boolean)
-  return { ctx, store, t, running, runsByTask, until, submitInput, continueTask, starts, released, events, setExit: (e: ScriptExit) => { result = e } }
+  return { ctx, domains, store, t, running, runsByTask, until, submitInput, continueTask, starts, released, events, setExit: (e: ScriptExit) => { result = e } }
 }
 
 describe('until domain', () => {
@@ -151,7 +158,7 @@ describe('until domain · review #419', () => {
   it('a turn that finishes while an older check runs is checked afterwards (never dropped)', async () => {
     const { s, gates, start } = deferredSetup()
     // 用同一个 ctx 重建域,换成可控的 start
-    const u = makeUntilDomain(s.ctx, { start: start as never, isUnattended: () => false })
+    const u = makeUntilDomain(s.ctx, s.domains, { start: start as never, isUnattended: () => false })
     u.afterTurn(s.running)                                   // 第 1 轮做完,检查开跑
     ;(s.running as { turnSeq: number }).turnSeq = 2          // 主人说了一句,第 2 轮也做完了
     u.afterTurn(s.running)                                   // 撞上在跑的检查:记下要补
@@ -167,7 +174,7 @@ describe('until domain · review #419', () => {
   it('settled path: a newer turn that ended during the check discards the stale result', async () => {
     const { s, gates, start } = deferredSetup()
     s.runsByTask.clear()
-    const u = makeUntilDomain(s.ctx, { start: start as never, isUnattended: () => false })
+    const u = makeUntilDomain(s.ctx, s.domains, { start: start as never, isUnattended: () => false })
     u.afterTurn(s.running)
     const r2 = { ...s.running, identity: 'run-2', turnSeq: 0 } as Active
     u.afterTurn(r2)
@@ -179,7 +186,7 @@ describe('until domain · review #419', () => {
   })
   it('stop() kills the running check and releases busy', async () => {
     const { s, gates, start } = deferredSetup()
-    const u = makeUntilDomain(s.ctx, { start: start as never, isUnattended: () => false })
+    const u = makeUntilDomain(s.ctx, s.domains, { start: start as never, isUnattended: () => false })
     u.afterTurn(s.running)
     u.stop(s.t.id, '你停下了这件事')
     expect(gates[0]!.stopped).toBe(true)

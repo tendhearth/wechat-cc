@@ -254,6 +254,7 @@ DeliveryPort                      吃 TurnOutcome;旧的 / shadow 交付路删�
 | E3 第 1 步 | 通用的 store(对话、会话、会话状态、回合记录、终端会话、「一件事」)进 `src/adapters/store/`;`TurnRecord` 形状进 `domain/turn-record.ts`(store 不再引协调器的类型 —— 新规则当场抓到的)。功能自己的 store(社交、知识库、定时 …)等那个功能搬进 features 时跟着走 |
 | E4 第 1 步 | 工作台服务:`Options` 原样当 `ServiceDeps` 传(删掉那行 2245 字符的逐字段复制),被行数上限挤成一行的字段表 / import / 域构造 / service 对象 / `actions.set` 全部按一项一行摊开(service.ts 没有超过 180 字符的行了);删掉数内函数的 `workbench-service-ratchet` 守卫 —— 它管的两条环 depcruise 早有(`workbench-service-no-circular` / `wechat-control-must-not-link-service`),剩下的只是量症状。`Ref<ServiceActions>` 晚绑定还在,下一步 |
 | E2 补 | 工作台错误码的反向守卫扫整个 `src/adapters/executors`(原来只扫 core/workbench 那几份)。「归了类」多一种:任务失败记录认得的码(`executionFailureMessage` 有人话)—— 于是 INTERNAL_ONLY 少了 12 个本来就有人话的;新扫进来的 Claude 工作台运行时不变式、ACP 收尾码列进去。`docs/architecture.md` 的分层图补上 adapters |
+| E4 第 2 步 | 工作台服务:`Ref<ServiceActions>` 与 `ctx.actions` 删掉,各域按依赖顺序构造、只拿自己要的那几个域(依赖图写在 `service.ts` 顶部)。反指的边逐条正过来:pump → execute 改成 run 自带 `launch`;`drainInputs` 的 start 由 execute 调下来时带着;lifecycle ↔ inputs 共用的记账搬进 `pending-inputs.ts`;native ↔ execute 共用的核对搬进 `native-check.ts`;`matterSync` 进只认 ctx 的 `matter-sync.ts`;view 只要额度交接的只读一半。剩一条真环(一轮做完 → 检查没过 → 接着改)用一个具名回调 `UntilResume` 在构造时注入 |
 
 ## 修订记录
 

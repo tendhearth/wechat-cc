@@ -3,22 +3,21 @@ import { mkdtempSync, mkdirSync, realpathSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { openTestDb, type Db } from '../../../lib/db'
-import { Ref } from '../../../lib/lifecycle'
 import { createProviderRegistry } from '../../../app/provider-registry'
 import { makeWorkbenchStore, type WorkbenchStore } from '../store'
 import { removeTempDir } from '../../../lib/test-temp'
 import type { AgentRuntimeSnapshot } from '../../../ports/agent-provider'
 import { makeRuntimeState, type Active } from './state'
 import { makeLifecycleDomain } from './lifecycle'
-import type { ServiceActions, ServiceCtx, ServiceDeps } from './ctx'
+import type { ServiceCtx, ServiceDeps } from './ctx'
+import type { ViewDomain } from './view'
 
 const dbs: Db[] = []; const dirs: string[] = []
 beforeEach(() => { vi.useFakeTimers() })
 afterEach(() => { vi.useRealTimers(); for (const db of dbs.splice(0)) db.close(); for (const d of dirs.splice(0)) removeTempDir(d) })
-const unused = () => { throw new Error('unused') }
 const idle = (): AgentRuntimeSnapshot => ({ retained: true, foreground: 'idle', backgroundCount: 0, input: 'send' })
 
-function setup(deps: Partial<ServiceDeps> = {}, over: Partial<ServiceActions> = {}) {
+function setup(deps: Partial<ServiceDeps> = {}, over: Partial<Pick<ViewDomain, 'taskView'>> = {}) {
   const root = realpathSync(mkdtempSync(join(tmpdir(), 'wb-lifecycle-domain-'))); dirs.push(root)
   const stateDir = join(root, 'state'), project = join(root, 'project')
   mkdirSync(stateDir, { recursive: true }); mkdirSync(project, { recursive: true })
@@ -27,19 +26,28 @@ function setup(deps: Partial<ServiceDeps> = {}, over: Partial<ServiceActions> = 
   const state = makeRuntimeState()
   const hub = { touched: vi.fn(), bumped: vi.fn(), dispose: vi.fn() }
   const log = vi.fn()
-  const actions = new Ref<ServiceActions>('t')
   const spies = {
-    execute: vi.fn(async () => {}), hasUndeliveredInput: vi.fn(() => false), holdInputs: vi.fn(), collect: vi.fn(async () => {}), collectTurnArtifacts: vi.fn(), captureCodeChanges: vi.fn(async () => {}),
+    execute: vi.fn(async (_task: Active['task'], _text: string, _running: Active) => {}), hasUndeliveredInput: vi.fn(() => false), holdInputs: vi.fn(), collect: vi.fn(async () => {}), collectTurnArtifacts: vi.fn(), captureCodeChanges: vi.fn(async () => {}),
     stageFinishedNotice: vi.fn(), publishFinishedNotices: vi.fn(), untilAfterTurn: vi.fn(), untilStop: vi.fn(), matterSync: vi.fn(), isReplied: vi.fn(() => true), runtimeSnapshot: vi.fn(() => idle() as AgentRuntimeSnapshot | undefined),
   }
-  actions.set({ submitInput: vi.fn(), continueTask: vi.fn(), fallbackExecutor: () => null, artifact: unused, quotaExhausted: () => null, continuation: () => ({ mode: 'new' }), provider: unused, requireInput: unused, canResume: () => false, taskVersion: () => 'v', selectAttachments: () => [], combinedAttachments: c => [...c], handoffAttachments: () => [], taskView: t => ({ ...t, phase: 'replied', canArchive: true, waitingFor: null }) as never, start: unused, continuationAttachmentScope: () => undefined, inputMode: () => 'queue', armIdleClose: unused, cancelIdleClose: unused, settleAfterDecision: unused, held: () => [...state.reservations.values()], ...spies, ...over })
-  const ctx: ServiceCtx = { store, stateDir, state, hub, deps: { ownerChatId: () => 'owner', registry: createProviderRegistry(), ...deps }, ensureAccepting: () => { if (state.stopping) throw new Error('workbench_stopping') }, log, now: Date.now, actions }
-  const domain = makeLifecycleDomain(ctx)
+  // matter 同步只认 ctx.deps.matters(matter-sync.ts):给一个假的,setStatus 就是 matterSync 的那次调用
+  const matters = { setStatus: spies.matterSync }
+  const ctx: ServiceCtx = { store, stateDir, state, hub, deps: { ownerChatId: () => 'owner', registry: createProviderRegistry(), matters: matters as never, ...deps }, ensureAccepting: () => { if (state.stopping) throw new Error('workbench_stopping') }, log, now: Date.now }
+  const domain = makeLifecycleDomain(ctx, {
+    view: { isReplied: spies.isReplied, runtimeSnapshot: spies.runtimeSnapshot, taskView: over.taskView ?? (t => ({ ...t, phase: 'replied', canArchive: true, waitingFor: null }) as never), held: () => [...state.reservations.values()] },
+    artifacts: { collect: spies.collect, collectTurnArtifacts: spies.collectTurnArtifacts, captureCodeChanges: spies.captureCodeChanges },
+    notices: { stageFinishedNotice: spies.stageFinishedNotice, publishFinishedNotices: spies.publishFinishedNotices, enqueueNotice: vi.fn() },
+    pending: { holdInputs: spies.holdInputs, hasUndeliveredInput: spies.hasUndeliveredInput },
+    until: { afterTurn: spies.untilAfterTurn, stop: spies.untilStop },
+  })
   const task = store.create({ title: '事', path: project, providerId: 'claude', ownerChatId: 'owner' })
   const running = (over: Partial<Active> = {}): Active => {
     let resolveDone!: () => void
     const done = new Promise<void>(r => { resolveDone = r })
-    return { identity: 'run-1', taskId: task.id, title: task.title, task, path: project, order: 1, state: 'active', cancelled: false, finishing: false, uncertain: false, publicFinished: false, credentialsMinted: false, credentialsRevoked: false, turnSeq: 0, reportedTurn: -1, recollectedTurn: -1, done, resolveDone: () => resolveDone(), signalStop: vi.fn(), permissions: { pending: () => [], rejectAll: vi.fn() }, questions: { pending: () => [], close: vi.fn() }, ...over } as unknown as Active
+    const r = { identity: 'run-1', taskId: task.id, title: task.title, task, path: project, order: 1, state: 'active', cancelled: false, finishing: false, uncertain: false, publicFinished: false, credentialsMinted: false, credentialsRevoked: false, turnSeq: 0, reportedTurn: -1, recollectedTurn: -1, done, resolveDone: () => resolveDone(), signalStop: vi.fn(), permissions: { pending: () => [], rejectAll: vi.fn() }, questions: { pending: () => [], close: vi.fn() }, ...over } as unknown as Active
+    // 同 execute.start:run 自己带着「轮到它时怎么跑」,pump 调的就是它
+    if (!over.launch) r.launch = text => spies.execute(r.task, text, r)
+    return r
   }
   return { store, state, hub, log, domain, task, project, running, spies }
 }
@@ -108,7 +116,7 @@ describe('makeLifecycleDomain · 占用、取消、收尾', () => {
     domain.markUncertain(r); expect(r.state).toBe('uncertain'); expect(state.reservations.get(r.identity)).toBe(r)
     r.publicFinished = true; await domain.confirmLateClose(r, true); expect(spies.collect).toHaveBeenCalledTimes(1); expect(r.uncertain).toBe(false); expect(state.reservations.size).toBe(0)
   })
-  it('pump:没挡路的排队 run 变 active、进占用、经 ctx.actions.execute 派发;被挡的 run 让持有者重排短让位', async () => {
+  it('pump:没挡路的排队 run 变 active、进占用、经 run 自带的 launch 派发;被挡的 run 让持有者重排短让位', async () => {
     const { domain, running, state, spies, project } = setup()
     const holder = running({ identity: 'holder', order: 1 }); state.reservations.set('holder', holder); state.runsByTask.set(holder.taskId, holder)
     const waiter = running({ identity: 'waiter', taskId: 'other', order: 2, state: 'queued', path: project }); state.queue.push(waiter); state.runningText.set('waiter', '做')
@@ -116,7 +124,7 @@ describe('makeLifecycleDomain · 占用、取消、收尾', () => {
     state.reservations.clear(); domain.pump(); await Promise.resolve()
     expect(waiter.state).toBe('active'); expect(state.reservations.get('waiter')).toBe(waiter); expect(state.queue).toEqual([]); expect(spies.execute).toHaveBeenCalledWith(waiter.task, '做', waiter)
   })
-  it('cancelRun 排队分支:任务 cancelled、stageFinishedNotice + publishFinishedNotices 经 actions 各一次、matter done、出队、pump', () => {
+  it('cancelRun 排队分支:任务 cancelled、stageFinishedNotice + publishFinishedNotices 各一次、matter done、出队、pump', () => {
     const { domain, running, state, store, spies, task } = setup()
     const r = running({ state: 'queued' }); state.queue.push(r); state.runsByTask.set(task.id, r)
     domain.cancelRun(r)

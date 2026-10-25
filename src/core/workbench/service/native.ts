@@ -1,8 +1,11 @@
 /**
  * native + handoff 域:原生会话(claude / codex 历史)的导入、续接决策、交接。
- * 从 service.ts 逐字搬来(spec 2026-09-27-workbench-service-split §3 第 6 项,排在第 7 项之后做);只认 ctx。
- * 跨域最重的一块:admission / attachments / view / execute 的动作都经 act()=ctx.actions.deref('native') 在调用时取,
- * 工厂体里不取。决策 Map(nativeDecisions / handoffDecisions)在 state 上,与 execute 共享同一实例。
+ * 从 service.ts 逐字搬来(spec 2026-09-27-workbench-service-split §3 第 6 项,排在第 7 项之后做)。
+ * 跨域最重的一块:admission / attachments / quota / view 的查询,以及 execute.start(交接与接着做的最后一步派发)。
+ * 以前全经晚绑定取;现在 native 建在 execute 之后,构造时把这些显式传进来。
+ * execute 要的那一块(派发前核对原生会话 validateNativeDecision)搬去了 native-check.ts,
+ * 所以 execute 不依赖这里,这里依赖 execute —— 只剩一个方向。
+ * 决策 Map(nativeDecisions / handoffDecisions)在 state 上,与 execute 共享同一实例。
  */
 import { randomUUID } from 'node:crypto'
 import { basename } from 'node:path'
@@ -11,7 +14,7 @@ import { restartPreview, type Continuation } from '../continuation'
 import { normalizeExecutionChoice, PROVIDER_EXECUTION_CHOICE, sameExecutionChoice } from '../execution-settings'
 import { handoffArtifactText, handoffContext, handoffToken, handoffTokenHash, validateHandoffInput, type ArtifactSelection, type AttachmentSelection, type HandoffInput, type HandoffPreview } from '../handoff'
 import { decodeNativeHistoryKey, historyDeadline, historyHash, normalizeHistoryList, normalizeHistoryRead, type NativeHistoryListInput, type NativeHistoryMessage, type NativeHistoryPreview, type NativeHistoryProvider, type NativeHistoryReadInput } from '../native-history'
-import { NATIVE_CONTINUE_REFUSAL, nativeImportInput, nativeResumeToken, pageInput, publicSource, readNativeImport, selectNativeImportMessages, snapshotHash, type AcceptedNativeResume, type ImportPage, type NativeContinuePreview, type NativeContinueState, type NativeImportInput, type NativeResumeDecision } from '../native-adoption'
+import { NATIVE_CONTINUE_REFUSAL, nativeImportInput, nativeResumeToken, publicSource, readNativeImport, selectNativeImportMessages, snapshotHash, type AcceptedNativeResume, type ImportPage, type NativeContinuePreview, type NativeContinueState, type NativeImportInput, type NativeResumeDecision } from '../native-adoption'
 import { pathsConflict } from '../scheduler'
 import type { AgentExecutionChoice } from '../../../ports/agent-provider'
 import { publicTask, TERMINAL_TASK_STATUSES, type StoredTask } from '../store'
@@ -21,6 +24,16 @@ import { directoryIdentity } from './directory-identity'
 import type { ServiceCtx } from './ctx'
 import type { AcceptedContinuation } from './state'
 import type { InputMaterials, WorkbenchTaskView } from './types'
+import { nativeProjectPath, type NativeCheck } from './native-check'
+import { syncMatter } from './matter-sync'
+import type { AdmissionDomain } from './admission'
+import type { AttachmentsDomain } from './attachments'
+import type { QuotaDomain } from './quota'
+import type { ViewDomain } from './view'
+import type { ExecuteDomain } from './execute'
+
+// 桌面导入与手机「接着做」共用的路径规则;住在 native-check.ts,这里原样带出去(老的 import 路径不变)。
+export { nativeProjectPath }
 
 /** 翻到最后一页最多读几次(每页 100 条):超了说读不了,而不是悄悄带开头。 */
 const NATIVE_TAIL_MAX_READS=400
@@ -33,47 +46,29 @@ export const NATIVE_RECENT_HISTORY_MS=8_000
 export const NATIVE_RECENT_MAX_READS=80
 /** 本进程记住的第一句 requestId 上限;只淘汰已落定的,在途的永不淘汰。 */
 const FIRST_INPUTS_MAX=500
-/**
- * 原生会话记下的 cwd ⇒ 工作台用的项目路径:桌面导入与手机「接着做」共用这一条规则。
- * 先 realpath(符号链接、Windows junction、macOS 的 /var → /private/var 都落到真目录),之后所有比较与守卫
- * (目录身份、「在用」判断、路径冲突、私有目录)都只看这个解析后的路径 —— 链接指到哪,就按哪个真目录判,
- * 链接本身不给任何额外的权限。悬空 / 不是目录 / 不是绝对路径 ⇒ invalid_path。
- */
-export function nativeProjectPath(cwd:string|null|undefined):string {
-  if(!cwd)throw new Error('invalid_path')
-  return canonicalProject(cwd)
+export interface NativeDomains {
+  admission: Pick<AdmissionDomain,'canResume'|'continuation'|'provider'|'requireInput'|'taskVersion'>
+  attachments: Pick<AttachmentsDomain,'combinedAttachments'|'handoffAttachments'|'selectAttachments'>
+  quota: Pick<QuotaDomain,'quotaExhausted'>
+  view: Pick<ViewDomain,'taskView'>
+  /** 原生会话核对;与 execute 用的是同一份。 */
+  check: NativeCheck
+  execute: Pick<ExecuteDomain,'start'>
 }
-export function makeNativeDomain(ctx:ServiceCtx) {
+
+export function makeNativeDomain(ctx:ServiceCtx, domains:NativeDomains) {
   const { store, state } = ctx
-  const act=()=>ctx.actions.deref('native')
-  function nativeReader(id:string){const reader=ctx.deps.nativeHistory?.[id as NativeHistoryProvider];if(!reader)throw new Error('native_history_unsupported');return reader}
-  async function currentNativePages(task:StoredTask,pages:ImportPage[]) {
-    const call=historyDeadline(),key=Buffer.from(JSON.stringify({v:1,providerId:task.providerId,nativeId:store.source(task.id)!.nativeId})).toString('base64url')
-    const current:ImportPage[]=[]
-    for(const page of pages){
-      const preview=await call(()=>nativeReader(task.providerId).read(key,pageInput(page)))
-      if(preview.session.key!==key||preview.session.cwd!==store.source(task.id)!.cwd)throw new Error('native_history_changed')
-      // 记下的路径没变、可它现在解析到的不再是任务的真目录(链接被改指)⇒ 不跟过去。
-      if(nativeProjectPath(preview.session.cwd)!==task.path)throw new Error('invalid_path')
-      if(preview.session.remote||preview.session.observedState==='active'||ctx.deps.executionConflict?.(task.path,task.providerId,store.source(task.id)!.nativeId))throw new Error('native_session_busy')
-      current.push({...page,sourceFingerprint:preview.sourceFingerprint})
-    }
-    return current
-  }
-  async function validateNativeDecision(task:StoredTask,decision:AcceptedNativeResume,dispatch=false) {
-    if(decision.taskId!==task.id||decision.sourceId!==store.source(task.id)?.id||decision.expiresAt<Date.now()||(!dispatch&&decision.taskVersion!==act().taskVersion(task)))throw new Error('external_close_confirmation_stale')
-    if(directoryIdentity(task.path)!==decision.directoryIdentity||canonicalProject(task.path)!==task.path)throw new Error('invalid_path')
-    if(ctx.deps.executionConflict?.(task.path,task.providerId,decision.nativeId))throw new Error('native_session_busy')
-    if(decision.mode==='native_resume'){
-      if(task.sessionId!==decision.nativeId||!act().canResume(task))throw new Error('restart_confirmation_required')
-      const current=await currentNativePages(task,decision.pages)
-      if(JSON.stringify(current)!==JSON.stringify(decision.pages))throw new Error('external_close_confirmation_stale')
-    }
-  }
+  const { canResume, continuation, provider, requireInput, taskVersion } = domains.admission
+  const { combinedAttachments, handoffAttachments, selectAttachments } = domains.attachments
+  const { quotaExhausted } = domains.quota
+  const { taskView } = domains.view
+  const { nativeReader, currentNativePages, validateNativeDecision } = domains.check
+  const { start } = domains.execute
+  const matterSync = (fn:Parameters<typeof syncMatter>[1]) => syncMatter(ctx, fn)
   async function previewHandoff(raw:HandoffInput):Promise<HandoffPreview> {
     ctx.ensureAccepting()
-    const input=validateHandoffInput(raw),source=store.get(input.sourceTaskId),version=act().taskVersion(source)
-    act().provider(input.targetProviderId)
+    const input=validateHandoffInput(raw),source=store.get(input.sourceTaskId),version=taskVersion(source)
+    provider(input.targetProviderId)
     if(source.providerId===input.targetProviderId)throw new Error('invalid_request')
     if(canonicalProject(source.path)!==source.path)throw new Error('invalid_path')
     const identity=directoryIdentity(source.path)
@@ -90,19 +85,19 @@ export function makeNativeDomain(ctx:ServiceCtx) {
       const original=store.handoffRecord(source.id,origin.id)
       if(snapshotHash(original.packetJson)!==original.packetSha256)throw Error('artifact_changed')
       attachments=(JSON.parse(original.packetJson) as {attachments?:AttachmentSelection[]}).attachments??[]
-      targetContinuation=act().continuation(target)
+      targetContinuation=continuation(target)
       if(store.source(target.id)?.firstDispatchedAt===null)nativeResume=await prepareNativeResume(target.id,targetContinuation.mode==='restart_required'?'fresh_context':'native_resume')
     }
     const files=artifacts.map(a=>handoffArtifactText(store,a,target?.id??source.id,ctx.stateDir))
-    const materials=act().handoffAttachments(attachments,target?.id??source.id)
-    act().requireInput(input.targetProviderId,act().combinedAttachments(materials,targetContinuation?.mode==='restart_required'?targetContinuation.restart.attachments:[]),target?store.execution.choice(target.id):PROVIDER_EXECUTION_CHOICE,!!target&&targetContinuation?.mode==='resume')
+    const materials=handoffAttachments(attachments,target?.id??source.id)
+    requireInput(input.targetProviderId,combinedAttachments(materials,targetContinuation?.mode==='restart_required'?targetContinuation.restart.attachments:[]),target?store.execution.choice(target.id):PROVIDER_EXECUTION_CHOICE,!!target&&targetContinuation?.mode==='resume')
     const packet=handoffContext({...input,attachments},source,store.events(source.id),files,materials)
     ctx.ensureAccepting()
-    if(act().taskVersion(store.get(source.id))!==version)throw new Error('handoff_changed')
+    if(taskVersion(store.get(source.id))!==version)throw new Error('handoff_changed')
     const preview:HandoffPreview={token:handoffToken(),sourceTaskId:source.id,targetTaskId:target?.id??null,targetProviderId:input.targetProviderId,purpose:input.purpose,request:input.request,...packet,artifacts,targetExecution:target?store.execution.choice(target.id):{...PROVIDER_EXECUTION_CHOICE},...(attachments.length?{attachments}:{}),quote:input.quote??null,...(targetContinuation?{targetContinuation}:{}),...(nativeResume?{nativeResume}:{})}
     for(const [token,d] of state.handoffDecisions)if(d.expiresAt<Date.now()||d.preview.sourceTaskId===source.id)state.handoffDecisions.delete(token)
     if(state.handoffDecisions.size>=100)state.handoffDecisions.delete(state.handoffDecisions.keys().next().value!)
-    state.handoffDecisions.set(preview.token,{preview:structuredClone(preview),sourceVersion:version,targetVersion:target?act().taskVersion(target):null,directoryIdentity:identity,expiresAt:Date.now()+5*60_000})
+    state.handoffDecisions.set(preview.token,{preview:structuredClone(preview),sourceVersion:version,targetVersion:target?taskVersion(target):null,directoryIdentity:identity,expiresAt:Date.now()+5*60_000})
     return preview
   }
   async function handoff(input:{token:string;restartToken?:string;sourceClosedToken?:string}) {
@@ -110,24 +105,24 @@ export function makeNativeDomain(ctx:ServiceCtx) {
     if(!input||typeof input.token!=='string'||! /^[a-f0-9]{64}$/.test(input.token))throw new Error('invalid_request')
     for(const optional of [input.restartToken,input.sourceClosedToken])if(optional!==undefined&&(typeof optional!=='string'||! /^[a-f0-9]{64}$/.test(optional)))throw new Error('invalid_request')
     const hash=handoffTokenHash(input.token),previous=store.handoffByToken(hash)
-    if(previous)return{task:act().taskView(publicTask(store.get(previous.targetTaskId))),handoffId:previous.id,sourceTaskId:previous.sourceTaskId}
+    if(previous)return{task:taskView(publicTask(store.get(previous.targetTaskId))),handoffId:previous.id,sourceTaskId:previous.sourceTaskId}
     const decision=state.handoffDecisions.get(input.token)
     if(!decision||decision.expiresAt<Date.now())throw new Error('handoff_changed')
     const p=decision.preview,source=store.get(p.sourceTaskId),target=p.targetTaskId?store.get(p.targetTaskId):null
     const assertCurrent=()=>{
       ctx.ensureAccepting()
-      if(state.handoffDecisions.get(input.token)!==decision||decision.expiresAt<Date.now()||act().taskVersion(store.get(source.id))!==decision.sourceVersion||(target&&act().taskVersion(store.get(target.id))!==decision.targetVersion))throw new Error('handoff_changed')
+      if(state.handoffDecisions.get(input.token)!==decision||decision.expiresAt<Date.now()||taskVersion(store.get(source.id))!==decision.sourceVersion||(target&&taskVersion(store.get(target.id))!==decision.targetVersion))throw new Error('handoff_changed')
       if(canonicalProject(source.path)!==source.path||directoryIdentity(source.path)!==decision.directoryIdentity)throw new Error('invalid_path')
       if(target?.archivedAt!=null)throw new Error('workbench_archived')
       if(target&&(state.runsByTask.has(target.id)||!TERMINAL_TASK_STATUSES.includes(target.status)||target.error==='writer_not_closed'))throw new Error('workbench_busy')
       if(ctx.deps.executionConflict?.(source.path,p.targetProviderId,target?.sessionId??null))throw new Error('native_session_busy')
     }
-    assertCurrent();act().provider(p.targetProviderId)
+    assertCurrent();provider(p.targetProviderId)
     for(const ref of p.artifacts)handoffArtifactText(store,ref,target?.id??source.id,ctx.stateDir)
-    const checkedHandoffAttachments=act().handoffAttachments(p.attachments??[],target?.id??source.id)
+    const checkedHandoffAttachments=handoffAttachments(p.attachments??[],target?.id??source.id)
     let accepted:AcceptedContinuation={mode:'new'},native:AcceptedNativeResume|undefined
     if(target){
-      const current=act().continuation(target)
+      const current=continuation(target)
       if(current.mode==='restart_required'){
         if(!input.restartToken)throw new Error('restart_confirmation_required')
         if(input.restartToken!==current.restart.token||p.targetContinuation?.mode!=='restart_required'||input.restartToken!==p.targetContinuation.restart.token)throw new Error('restart_confirmation_stale')
@@ -144,7 +139,7 @@ export function makeNativeDomain(ctx:ServiceCtx) {
         if(state.nativeDecisions.get(native.token)!==native)throw new Error('external_close_confirmation_stale')
       }
     }
-    act().requireInput(p.targetProviderId,act().combinedAttachments(checkedHandoffAttachments,accepted.mode==='restart'?accepted.preview.attachments:[]),p.targetExecution??PROVIDER_EXECUTION_CHOICE,accepted.mode==='resume')
+    requireInput(p.targetProviderId,combinedAttachments(checkedHandoffAttachments,accepted.mode==='restart'?accepted.preview.attachments:[]),p.targetExecution??PROVIDER_EXECUTION_CHOICE,accepted.mode==='resume')
     const packetJson=JSON.stringify({context:p.context,request:p.request,artifacts:p.artifacts,attachments:p.attachments??[],quote:p.quote,truncated:p.truncated,continuation:accepted,execution:p.targetExecution})
     const record=store.createHandoff({id:randomUUID(),sourceTaskId:source.id,targetTaskId:target?.id??null,targetProviderId:p.targetProviderId,path:source.path,title:`检查 · ${source.title}`.slice(0,120),ownerChatId:source.ownerChatId,purpose:p.purpose,request:p.request,packetSha256:snapshotHash(packetJson),packetJson,artifactRefsJson:JSON.stringify(p.artifacts),quoteJson:p.quote?JSON.stringify(p.quote):null,sourceNativeId:source.sessionId,tokenHash:hash})
     state.handoffDecisions.delete(input.token)
@@ -152,12 +147,12 @@ export function makeNativeDomain(ctx:ServiceCtx) {
     let task:WorkbenchTaskView
     try{
       const materials=target
-        ?act().handoffAttachments(p.attachments??[],target.id)
+        ?handoffAttachments(p.attachments??[],target.id)
         :store.attachments.copyToTask(source.id,(p.attachments??[]).map(a=>a.attachmentId),record.targetTaskId)
-      task=act().start(store.get(record.targetTaskId),p.context,decision.directoryIdentity,accepted,native,p.artifacts,record.id,undefined,materials,undefined,p.targetExecution)
+      task=start(store.get(record.targetTaskId),p.context,decision.directoryIdentity,accepted,native,p.artifacts,record.id,undefined,materials,undefined,p.targetExecution)
     }
     catch(error){
-      if(!target){store.update(record.targetTaskId,'failed',error instanceof Error?error.message:'task_failed');act().matterSync(m=>m.setStatus(record.targetTaskId,'done'))}
+      if(!target){store.update(record.targetTaskId,'failed',error instanceof Error?error.message:'task_failed');matterSync(m=>m.setStatus(record.targetTaskId,'done'))}
       store.addEvent(record.targetTaskId,'system','交接已记录，但本轮未启动。请查看任务状态，手动决定是否继续。')
       ctx.hub.touched(record.targetTaskId)
       throw error
@@ -179,7 +174,7 @@ export function makeNativeDomain(ctx:ServiceCtx) {
     ctx.ensureAccepting()
     const input=nativeImportInput(raw),{providerId,nativeId}=decodeNativeHistoryKey(input.key)
     const existing=store.sourceByIdentity(providerId,nativeId)
-    if(existing)return{task:act().taskView(publicTask(store.get(existing.taskId))),source:publicSource(existing),created:false}
+    if(existing)return{task:taskView(publicTask(store.get(existing.taskId))),source:publicSource(existing),created:false}
     const managed=store.taskByNativeIdentity(providerId,nativeId)
     if(managed)throw new Error('native_session_already_managed')
     const read=await readNativeImport(nativeReader(providerId),input)
@@ -187,7 +182,7 @@ export function makeNativeDomain(ctx:ServiceCtx) {
     // 任务走真目录;来源记下原样的 cwd(与真目录不同 ⇒ 不恢复原会话,见 admission.canResume)。
     const path=nativeProjectPath(read.session.cwd)
     const result=store.importSource({providerId,nativeId,cwd:read.session.cwd!,path,title:read.session.title.slice(0,120),ownerChatId:ctx.deps.ownerChatId(),messages:read.messages,snapshotJson:read.snapshotJson,snapshotSha256:read.snapshotSha256,pagesJson:read.pagesJson,observedFingerprint:read.observedFingerprint,truncated:read.truncated})
-    return{...result,task:act().taskView(publicTask(result.task))}
+    return{...result,task:taskView(publicTask(result.task))}
   }
   async function prepareNativeResume(id:string,mode:'native_resume'|'fresh_context'='native_resume',executionChoice?:unknown):Promise<NativeResumeDecision> {
     ctx.ensureAccepting()
@@ -196,15 +191,15 @@ export function makeNativeDomain(ctx:ServiceCtx) {
     if(mode!=='native_resume'&&mode!=='fresh_context')throw new Error('invalid_request')
     if(state.runsByTask.has(id)||task.archivedAt!==null)throw new Error('workbench_busy')
     const execution=normalizeExecutionChoice(executionChoice,store.execution.choice(id))
-    act().requireInput(task.providerId,[],execution,mode==='native_resume')
-    const identity=directoryIdentity(task.path),version=act().taskVersion(task),pages=JSON.parse(source.pagesJson) as ImportPage[]
+    requireInput(task.providerId,[],execution,mode==='native_resume')
+    const identity=directoryIdentity(task.path),version=taskVersion(task),pages=JSON.parse(source.pagesJson) as ImportPage[]
     if(ctx.deps.executionConflict?.(task.path,task.providerId,source.nativeId))throw new Error('native_session_busy')
     const current=mode==='native_resume'?await currentNativePages(task,pages):pages
-    if(mode==='native_resume'&&!act().canResume(task))throw new Error('restart_confirmation_required')
-    const recovery=act().continuation(task)
+    if(mode==='native_resume'&&!canResume(task))throw new Error('restart_confirmation_required')
+    const recovery=continuation(task)
     if(mode==='fresh_context'&&recovery.mode!=='restart_required')throw new Error('invalid_request')
     ctx.ensureAccepting()
-    if(act().taskVersion(store.get(id))!==version||state.runsByTask.has(id))throw new Error('external_close_confirmation_stale')
+    if(taskVersion(store.get(id))!==version||state.runsByTask.has(id))throw new Error('external_close_confirmation_stale')
     const preview=restartPreview(task,store.events(id),store.execution.choice(id))
     const decision:AcceptedNativeResume={token:nativeResumeToken(),taskId:id,sourceId:source.id,providerId:source.providerId,nativeId:source.nativeId,path:task.path,mode,expiresAt:Date.now()+5*60_000,context:mode==='fresh_context'?preview.context:'',truncated:source.truncated,changedSinceImport:JSON.stringify(current)!==JSON.stringify(pages),pages:current,taskVersion:version,directoryIdentity:identity,execution,...(mode==='fresh_context'?{restartToken:preview.token}:{})}
     for(const [token,value] of state.nativeDecisions)if(value.expiresAt<Date.now()||value.taskId===id)state.nativeDecisions.delete(token)
@@ -213,20 +208,20 @@ export function makeNativeDomain(ctx:ServiceCtx) {
     const {pages:_pages,taskVersion:_version,directoryIdentity:_identity,restartToken:_restart,...result}=decision;return structuredClone(result)
   }
   async function continueNativeTask(id:string,text:string,sourceClosedToken:string,restartToken?:string,materials:InputMaterials={},extra:{inputRequestId?:string;attachmentPolicy?:'owner'}={}):Promise<WorkbenchTaskView> {
-    ctx.ensureAccepting();const task=store.get(id),decision=state.nativeDecisions.get(sourceClosedToken),attachments=act().selectAttachments(materials,id,extra.attachmentPolicy),request=checkedText(text,attachments)
+    ctx.ensureAccepting();const task=store.get(id),decision=state.nativeDecisions.get(sourceClosedToken),attachments=selectAttachments(materials,id,extra.attachmentPolicy),request=checkedText(text,attachments)
     if(!decision)throw new Error('external_close_confirmation_stale')
     const execution=normalizeExecutionChoice(materials.execution,store.execution.choice(id))
     if(!sameExecutionChoice(execution,decision.execution))throw Error('external_close_confirmation_stale')
     if(state.runsByTask.has(id)||task.archivedAt!==null)throw new Error('workbench_busy')
     await validateNativeDecision(task,decision)
     ctx.ensureAccepting()
-    if(act().taskVersion(store.get(id))!==decision.taskVersion||state.runsByTask.has(id)||state.nativeDecisions.get(sourceClosedToken)!==decision)throw new Error('external_close_confirmation_stale')
+    if(taskVersion(store.get(id))!==decision.taskVersion||state.runsByTask.has(id)||state.nativeDecisions.get(sourceClosedToken)!==decision)throw new Error('external_close_confirmation_stale')
     const accepted:AcceptedContinuation=decision.mode==='native_resume'?{mode:'resume',sessionId:decision.nativeId}:{mode:'restart',preview:restartPreview(task,store.events(id),store.execution.choice(id))}
     if(accepted.mode==='restart'&&(restartToken!==accepted.preview.token||restartToken!==decision.restartToken))throw new Error('restart_confirmation_stale')
-    act().requireInput(task.providerId,act().combinedAttachments(attachments,accepted.mode==='restart'?accepted.preview.attachments:[]),execution,accepted.mode==='resume')
+    requireInput(task.providerId,combinedAttachments(attachments,accepted.mode==='restart'?accepted.preview.attachments:[]),execution,accepted.mode==='resume')
     state.nativeDecisions.delete(sourceClosedToken)
     // extra.inputRequestId 进 start 的 queuedInputId:与 continueTask 同一张回执表(spec D6);内部 API 不带尾参,行为不变。
-    return act().start(task,request,decision.directoryIdentity,accepted,decision,undefined,undefined,extra.inputRequestId,attachments,materials.draftId,execution,undefined,extra.attachmentPolicy)
+    return start(task,request,decision.directoryIdentity,accepted,decision,undefined,undefined,extra.inputRequestId,attachments,materials.draftId,execution,undefined,extra.attachmentPolicy)
   }
   type ImportedOptions={inputRequestId?:string;draftId?:string;attachmentIds?:string[]}
   /**
@@ -251,14 +246,14 @@ export function makeNativeDomain(ctx:ServiceCtx) {
       if(!same(mine.taskId,mine.text,JSON.parse(mine.attachments) as string[]))throw new Error('input_conflict')
       // 等同一次调用落定(它失败,这里也失败);成功则给此刻的任务视图,不是第一次调用时那份过期的。
       await mine.result
-      return act().taskView(publicTask(store.get(id)))
+      return taskView(publicTask(store.get(id)))
     }
     const prior=store.liveInputs.get(requestId)
     if(prior){
       if(!same(prior.taskId,prior.text,(prior.attachments??[]).map(a=>a.id)))throw new Error('input_conflict')
       // 上一进程留下的回执:那句话已经派发给执行者 ⇒ 原样返回;还没派发(重启前没起来)⇒ 往下重新派发。
       const source=store.source(id)
-      if(!source||source.firstDispatchedAt!==null)return act().taskView(publicTask(store.get(id)))
+      if(!source||source.firstDispatchedAt!==null)return taskView(publicTask(store.get(id)))
     }
     const result=firstImported(id,text,{...options,inputRequestId:requestId},prior?requestId:undefined,attachmentPolicy)
     const entry={taskId:id,text:text.trim(),attachments:JSON.stringify(options.attachmentIds??[]),result,settled:false}
@@ -270,7 +265,7 @@ export function makeNativeDomain(ctx:ServiceCtx) {
   async function firstImported(id:string,text:string,options:ImportedOptions,redispatch:string|undefined,attachmentPolicy?:'owner'):Promise<WorkbenchTaskView> {
     const task=store.get(id),source=store.source(id)
     if(!source||source.firstDispatchedAt!==null)throw new Error('invalid_request')
-    const mode=act().canResume(task)?'native_resume':'fresh_context'
+    const mode=canResume(task)?'native_resume':'fresh_context'
     // 不接管活着的会话:native_resume 的 prepare 会重读全部页;带记录新开一轮不重读,这里补读最后一页查「在跑」。
     if(mode==='fresh_context')await currentNativePages(task,(JSON.parse(source.pagesJson) as ImportPage[]).slice(-1))
     const prepared=await prepareNativeResume(id,mode)
@@ -349,16 +344,16 @@ export function makeNativeDomain(ctx:ServiceCtx) {
     let path:string
     try{path=nativeProjectPath(cwd)}catch{return out('folder_missing')}
     project=basename(path)
-    try{act().provider(providerId)}catch{return out('provider_missing')}
+    try{provider(providerId)}catch{return out('provider_missing')}
     // 看得见的「在跑」(Codex 的 active / 远程会话)与 CC 自己占着的;普通终端里的 Claude Code 看不见,靠确认卡上的声明(spec D3)。
     if(page.session.remote||page.session.observedState==='active')return out('busy_session')
     if(ctx.deps.executionConflict?.(path,providerId,null))return out('busy_folder')
     if(ctx.deps.executionConflict?.(path,providerId,nativeId))return out('busy_session')
-    if(act().quotaExhausted(providerId))return out('quota')
+    if(quotaExhausted(providerId))return out('quota')
     if(!selectNativeImportMessages(page.messages).length)return out('empty')
     // 还没有任务:用将要建的任务的三样(执行者、会话 id、目录)问能不能恢复 —— 与 prepareNativeResume 的判法一致(spec D2)。
     // 记下的路径 ≠ 真路径(经过链接)⇒ 只带记录新开,与 admission.canResume 对导入任务的判法一致。
-    const resumable=path===cwd&&act().canResume({providerId,sessionId:nativeId,path} as StoredTask)
+    const resumable=path===cwd&&canResume({providerId,sessionId:nativeId,path} as StoredTask)
     return out('ready',resumable?'native_resume':'fresh_context')
   }
   async function previewNativeContinue(key:string):Promise<NativeContinuePreview> {

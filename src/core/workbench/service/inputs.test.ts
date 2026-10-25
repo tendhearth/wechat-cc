@@ -3,7 +3,6 @@ import { mkdtempSync, mkdirSync, realpathSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { openTestDb, type Db } from '../../../lib/db'
-import { Ref } from '../../../lib/lifecycle'
 import { createProviderRegistry } from '../../../app/provider-registry'
 import { makeWorkbenchStore, type WorkbenchStore } from '../store'
 import { MANAGED_NATIVE_CAPABILITIES } from '../executor-capabilities'
@@ -13,7 +12,8 @@ import type { AgentProvider } from '../../../ports/agent-provider'
 import { makeRuntimeState, type Active } from './state'
 import { makeInputsDomain } from './inputs'
 import { directoryIdentity } from './directory-identity'
-import type { ServiceActions, ServiceCtx } from './ctx'
+import type { ServiceCtx } from './ctx'
+import { makePendingInputs } from './pending-inputs'
 
 const dbs: Db[] = []; const dirs: string[] = []
 afterEach(() => { for (const db of dbs.splice(0)) db.close(); for (const d of dirs.splice(0)) removeTempDir(d) })
@@ -31,11 +31,15 @@ function setup() {
   registry.register('claude', provider, { displayName: 'Claude', canResume: () => true, workbench: MANAGED_NATIVE_CAPABILITIES })
   const state = makeRuntimeState()
   const hub = { touched: vi.fn(), bumped: vi.fn(), dispose: vi.fn() }
-  const actions = new Ref<ServiceActions>('t')
   const spies = { armIdleClose: vi.fn(), cancelIdleClose: vi.fn(), settleAfterDecision: vi.fn(), start: vi.fn(), continuation: vi.fn(() => ({ mode: 'new' } as never)), inputMode: vi.fn(() => 'queue' as 'steer' | 'send' | 'queue') }
-  actions.set({ submitInput: vi.fn(), continueTask: vi.fn(), isReplied: () => false, fallbackExecutor: () => null, artifact: unused, quotaExhausted: () => null, continuation: spies.continuation, provider: unused, requireInput: id => registry.get(id) as never, canResume: () => false, taskVersion: () => 'v', selectAttachments: () => [], combinedAttachments: c => [...c], handoffAttachments: () => [], taskView: t => t as never, matterSync: () => {}, start: spies.start, continuationAttachmentScope: () => undefined, inputMode: spies.inputMode, armIdleClose: spies.armIdleClose, cancelIdleClose: spies.cancelIdleClose, settleAfterDecision: spies.settleAfterDecision, execute: () => { throw new Error('unused') }, hasUndeliveredInput: () => false, holdInputs: () => {}, collect: async () => {}, collectTurnArtifacts: () => {}, captureCodeChanges: async () => {}, runtimeSnapshot: () => undefined, held: () => [], stageFinishedNotice: () => {}, publishFinishedNotices: () => {}, untilAfterTurn: () => {}, untilStop: () => {} })
-  const ctx: ServiceCtx = { store, stateDir, state, hub, deps: { ownerChatId: () => 'owner', registry }, ensureAccepting: () => { if (state.stopping) throw new Error('workbench_stopping') }, now: Date.now, actions }
-  const domain = makeInputsDomain(ctx)
+  const ctx: ServiceCtx = { store, stateDir, state, hub, deps: { ownerChatId: () => 'owner', registry }, ensureAccepting: () => { if (state.stopping) throw new Error('workbench_stopping') }, now: Date.now }
+  const domain = makeInputsDomain(ctx, {
+    admission: { continuation: spies.continuation, requireInput: id => registry.get(id) as never },
+    attachments: { selectAttachments: () => [], continuationAttachmentScope: () => undefined },
+    view: { inputMode: spies.inputMode },
+    lifecycle: { armIdleClose: spies.armIdleClose, cancelIdleClose: spies.cancelIdleClose, settleAfterDecision: spies.settleAfterDecision },
+    pending: makePendingInputs(ctx),
+  })
   const task = store.create({ title: '事', path: project, providerId: 'claude', ownerChatId: 'owner' })
   const running = (over: Partial<Active> = {}): Active => ({ identity: 'run-1', taskId: task.id, title: task.title, task, path: project, directoryIdentity: directoryIdentity(project), execution: PROVIDER_EXECUTION_CHOICE, cancelled: false, finishing: false, uncertain: false, delivering: false, permissions: { pending: () => [], resolve: () => true }, questions: { pending: () => [], resolve: () => true }, ...over } as unknown as Active)
   const pending = (text = '补一句') => store.liveInputs.add({ id: REQ, taskId: task.id, runId: 'run-1', text, attachments: [], execution: PROVIDER_EXECUTION_CHOICE })
@@ -50,7 +54,7 @@ describe('makeInputsDomain · 拍板与撤回', () => {
     expect(store.liveInputs.get(REQ)!.status).toBe('withdrawn'); expect(hub.bumped).toHaveBeenCalledWith(task.id)
     expect(() => domain.withdrawInput(task.id, REQ)).toThrow('input_stale')
   })
-  it('resolveAnswer / resolvePermission:没 run ⇒ *_stale;拍板后 bumped 且经 ctx.actions.settleAfterDecision 补一次落定;非法 decision ⇒ invalid_decision', () => {
+  it('resolveAnswer / resolvePermission:没 run ⇒ *_stale;拍板后 bumped 且经注入的 lifecycle.settleAfterDecision 补一次落定;非法 decision ⇒ invalid_decision', () => {
     const { domain, task, state, running, spies, hub } = setup()
     expect(() => domain.resolveAnswer(task.id, 'q1', {})).toThrow('question_stale')
     expect(() => domain.resolvePermission(task.id, 'p1', 'allow')).toThrow('permission_stale')
@@ -108,14 +112,14 @@ describe('makeInputsDomain · 持有、排空与结算', () => {
     expect(store.liveInputs.get(REQ)!.status).toBe('held'); expect(hub.bumped).toHaveBeenCalledWith(task.id)
     expect(state.autoContinueBlocked.has(task.id)).toBe(false); expect(domain.hasUndeliveredInput(running())).toBe(false)
   })
-  it('drainInputs:被 hold 中 / 没有 pending ⇒ 不动;有 pending 但续接不是 resume ⇒ hold 并留下「原会话需要你确认恢复方式，补充尚未发送。」;是 resume ⇒ 经 ctx.actions.start 派发', () => {
+  it('drainInputs:被 hold 中 / 没有 pending ⇒ 不动;有 pending 但续接不是 resume ⇒ hold 并留下「原会话需要你确认恢复方式，补充尚未发送。」;是 resume ⇒ 经调用方带下来的 start 派发', () => {
     const { domain, task, state, store, pending, spies, project } = setup()
-    domain.drainInputs(task.id, directoryIdentity(project)); expect(spies.start).not.toHaveBeenCalled()
-    pending(); state.autoContinueBlocked.add(task.id); domain.drainInputs(task.id, directoryIdentity(project)); expect(store.liveInputs.get(REQ)!.status).toBe('pending')
-    state.autoContinueBlocked.clear(); domain.drainInputs(task.id, directoryIdentity(project))
+    domain.drainInputs(task.id, directoryIdentity(project), spies.start); expect(spies.start).not.toHaveBeenCalled()
+    pending(); state.autoContinueBlocked.add(task.id); domain.drainInputs(task.id, directoryIdentity(project), spies.start); expect(store.liveInputs.get(REQ)!.status).toBe('pending')
+    state.autoContinueBlocked.clear(); domain.drainInputs(task.id, directoryIdentity(project), spies.start)
     expect(store.liveInputs.get(REQ)).toMatchObject({ status: 'held' }); expect(store.liveInputs.get(REQ)!.error).toContain('原会话需要你确认恢复方式')
     const again = setup(); again.pending(); again.store.session(again.task.id, 'sess'); again.spies.continuation.mockReturnValue({ mode: 'resume' } as never)
-    again.domain.drainInputs(again.task.id, directoryIdentity(again.project))
+    again.domain.drainInputs(again.task.id, directoryIdentity(again.project), again.spies.start)
     expect(again.spies.start).toHaveBeenCalledTimes(1); expect(again.store.liveInputs.get(REQ)!.status).toBe('sending')
   })
   it('settleRuntimeInput:shutdownComplete ⇒ 只删本地登记;error ⇒ sending→held 带错误信息;成功 ⇒ delivered + user 事件 + touched', () => {
