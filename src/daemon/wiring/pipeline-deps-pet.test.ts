@@ -7,7 +7,7 @@ import { buildPipelineDeps } from './pipeline-deps'
 import { openTestDb, type Db } from '../../lib/db'
 import { makePetSignals, type PetSignals } from '../pet-signals'
 import { makeReplySinks } from '../reply-sinks'
-import type { IlinkAdapter } from '../ilink-glue'
+import type { PipelineWechat } from './pipeline-deps-opts'
 import type { Bootstrap } from '../bootstrap/index'
 import type { ChatPrefsStore } from '../chat-prefs'
 import type { CareLedger } from '../../features/companion/care-ledger'
@@ -68,8 +68,8 @@ describe('petTurn / 回合起止配对 (CC 桌宠 Phase B, fix round 1)', () => 
       setUserName: vi.fn(async () => {}),
       resolveUserName: vi.fn(() => undefined),
       resolveAccountId: vi.fn(() => 'acct1'),
-      voice: {} as IlinkAdapter['voice'],
-      companion: {} as IlinkAdapter['companion'],
+      voice: {} as PipelineWechat['voice'],
+      companion: {} as unknown,
       askUser: vi.fn(async () => 'timeout' as const),
       lastActiveChatId: vi.fn(() => null),
       markChatActive: vi.fn(),
@@ -79,9 +79,9 @@ describe('petTurn / 回合起止配对 (CC 桌宠 Phase B, fix round 1)', () => 
       handlePermissionReply: vi.fn(() => false),
       listPendingPermissions: vi.fn(() => opts.pending ?? []),
       resolvePermission: vi.fn(() => false),
-      sessionState: {} as IlinkAdapter['sessionState'],
+      sessionState: {} as PipelineWechat['sessionState'],
       flush: vi.fn(async () => {}),
-    } as unknown as IlinkAdapter
+    } as unknown as PipelineWechat
 
     const boot = {
       sessionManager: { isInFlight: vi.fn(() => opts.inFlight ?? false) } as unknown as Bootstrap['sessionManager'],

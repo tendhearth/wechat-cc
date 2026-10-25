@@ -4,7 +4,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { buildPipelineDeps, resolveOwnerSessionKey } from './pipeline-deps'
 import { openTestDb, type Db } from '../../lib/db'
-import type { IlinkAdapter } from '../ilink-glue'
+import type { PipelineWechat } from './pipeline-deps-opts'
 import type { Bootstrap } from '../bootstrap/index'
 import { makeReplySinks, type ReplySinks } from '../reply-sinks'
 import { makeChatMutex } from '../../lib/async-mutex'
@@ -27,7 +27,7 @@ import { withPhoneClient } from '../../features/phone/phone-client'
 // the owner's session — otherwise both dispatch concurrently on one
 // AgentSession. This file covers (a) the pure key-resolution helper the guard
 // is built on, (b) an end-to-end exercise of the companionConverse closure
-// itself against a minimally-faked Bootstrap/IlinkAdapter, and (c) the
+// itself against a minimally-faked Bootstrap/PipelineWechat, and (c) the
 // session-serialization follow-up (Task 2 of that plan): the app turn now
 // holds the per-chat lock across the ENTIRE sink open→dispatchInner→close
 // lifetime, so a same-chat WeChat/tick turn queued behind it cannot start —
@@ -122,8 +122,8 @@ describe('companionConverse in-flight guard (buildPipelineDeps)', () => {
       setUserName: vi.fn(async () => {}),
       resolveUserName: vi.fn(() => undefined),
       resolveAccountId: vi.fn(() => 'acct1'),
-      voice: {} as IlinkAdapter['voice'],
-      companion: {} as IlinkAdapter['companion'],
+      voice: {} as PipelineWechat['voice'],
+      companion: {} as unknown,
       askUser: vi.fn(async () => 'timeout' as const),
       lastActiveChatId: vi.fn(() => null),
       markChatActive: vi.fn(),
@@ -131,9 +131,9 @@ describe('companionConverse in-flight guard (buildPipelineDeps)', () => {
       sendTyping: vi.fn(async () => {}),
       getUpdatesForLoop: vi.fn(async () => ({})),
       handlePermissionReply: vi.fn(() => false),
-      sessionState: {} as IlinkAdapter['sessionState'],
+      sessionState: {} as PipelineWechat['sessionState'],
       flush: vi.fn(async () => {}),
-    } as unknown as IlinkAdapter
+    } as unknown as PipelineWechat
 
     const boot = {
       sessionManager: { isInFlight } as unknown as Bootstrap['sessionManager'],
@@ -495,8 +495,8 @@ describe('companionConverse lock spans the sink lifetime (real mutex + real repl
       setUserName: vi.fn(async () => {}),
       resolveUserName: vi.fn(() => undefined),
       resolveAccountId: vi.fn(() => 'acct1'),
-      voice: {} as IlinkAdapter['voice'],
-      companion: {} as IlinkAdapter['companion'],
+      voice: {} as PipelineWechat['voice'],
+      companion: {} as unknown,
       askUser: vi.fn(async () => 'timeout' as const),
       lastActiveChatId: vi.fn(() => null),
       markChatActive: vi.fn(),
@@ -504,9 +504,9 @@ describe('companionConverse lock spans the sink lifetime (real mutex + real repl
       sendTyping: vi.fn(async () => {}),
       getUpdatesForLoop: vi.fn(async () => ({})),
       handlePermissionReply: vi.fn(() => false),
-      sessionState: {} as IlinkAdapter['sessionState'],
+      sessionState: {} as PipelineWechat['sessionState'],
       flush: vi.fn(async () => {}),
-    } as unknown as IlinkAdapter
+    } as unknown as PipelineWechat
 
     const boot = {
       sessionManager: { isInFlight: () => false } as unknown as Bootstrap['sessionManager'],

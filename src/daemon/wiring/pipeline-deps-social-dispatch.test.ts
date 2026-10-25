@@ -28,7 +28,7 @@ const { openTestDb } = await import('../../lib/db')
 const { makeReplySinks } = await import('../reply-sinks')
 
 import type { Bootstrap } from '../bootstrap/index'
-import type { IlinkAdapter } from '../ilink-glue'
+import type { PipelineWechat } from './pipeline-deps-opts'
 import type { ChatPrefsStore } from '../chat-prefs'
 import type { CareLedger } from '../../features/companion/care-ledger'
 import type { InboundMsg } from '../../domain/prompt-format'
@@ -85,7 +85,7 @@ describe('pipeline-deps social dispatch seam (回信 letter reply)', () => {
       health: fakeHealth,
     } as unknown as Bootstrap
 
-    const ilink = {} as unknown as IlinkAdapter
+    const ilink = {} as unknown as PipelineWechat
     const chatPrefs: ChatPrefsStore = { get: () => ({}), set: () => ({}), list: () => [] }
     const careLedger: CareLedger = { get: () => ({ noReplyCount: 0 }), claim: vi.fn(), claimHunt: vi.fn(), claimVisit: vi.fn(), claimMemory: vi.fn(), resetNoReply: vi.fn(), unclaim: vi.fn() }
     const replySinks = makeReplySinks()
@@ -201,7 +201,7 @@ describe('pipeline-deps social dispatch seam (派/取消 wish)', () => {
       health: fakeHealth,
     } as unknown as Bootstrap
 
-    const ilink = {} as unknown as IlinkAdapter
+    const ilink = {} as unknown as PipelineWechat
     const chatPrefs: ChatPrefsStore = { get: () => ({}), set: () => ({}), list: () => [] }
     const careLedger: CareLedger = { get: () => ({ noReplyCount: 0 }), claim: vi.fn(), claimHunt: vi.fn(), claimVisit: vi.fn(), claimMemory: vi.fn(), resetNoReply: vi.fn(), unclaim: vi.fn() }
     const replySinks = makeReplySinks()

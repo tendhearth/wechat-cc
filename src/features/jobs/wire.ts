@@ -13,7 +13,7 @@ import type { Db } from '../../lib/db'
 import type { Lifecycle } from '../../lib/lifecycle'
 import { resolveAdminChatId, type Bootstrap } from '../../daemon/bootstrap/index'
 import { loadCompanionConfig } from '../../lib/companion-config'
-import type { IlinkAdapter } from '../../daemon/ilink-glue'
+import type { WechatSend } from '../../ports/wechat'
 import type { makeJobsStore } from '../../core/scheduled-jobs-store'
 import type { makeActivityLog } from '../../daemon/activity-log'
 import type { Calendar } from '../../features/calendar'
@@ -40,7 +40,7 @@ export interface WireJobsDeps {
   quietWindow?: () => import('../../domain/quiet-hours').QuietWindow | undefined
   stateDir: string
   db: Db
-  ilink: IlinkAdapter
+  ilink: Pick<WechatSend, 'sendMessage'>
   boot: Bootstrap
   jobsStore: ReturnType<typeof makeJobsStore>
   activityLog: ReturnType<typeof makeActivityLog>

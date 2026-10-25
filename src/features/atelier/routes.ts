@@ -9,7 +9,7 @@ import { readFileSync } from 'node:fs'
 import { loadCompanionConfig } from '../../lib/companion-config'
 import { errMsg, type RouteTable } from '../../daemon/internal-api/types'
 import type { AtelierShareRequestT } from '../../daemon/internal-api/schema'
-import type { IlinkAdapter } from '../../daemon/ilink-glue'
+import type { WechatSend } from '../../ports/wechat'
 import type { AtelierStore } from './store'
 import { readModelStatus } from './provision'
 
@@ -17,7 +17,7 @@ export interface AtelierRoutesDeps {
   stateDir: string
   store: AtelierStore
   /** 分享那一下的两样发送(图、主人改过的背景说明)。 */
-  ilink: Pick<IlinkAdapter, 'sendMessage' | 'sendFile'>
+  ilink: Pick<WechatSend, 'sendMessage' | 'sendFile'>
 }
 
 export function atelierRoutes(d: AtelierRoutesDeps): RouteTable {

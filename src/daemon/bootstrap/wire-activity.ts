@@ -19,12 +19,12 @@ import { collectActivity } from '../cc-activity-source'
 import { listLetters } from '../../features/letters'
 import { MEMORY_LOG_FILE, ownerMemoryRoot } from '../../features/memory'
 import type { makePermissionDecisionsStore } from '../permission-decisions-store'
-import type { IlinkAdapter } from '../ilink-glue'
+import type { WechatSend } from '../../ports/wechat'
 
 export interface WireActivityDeps {
   stateDir: string
   db: Db
-  ilink: IlinkAdapter
+  ilink: Pick<WechatSend, 'sendMessage'>
   permissionDecisions: ReturnType<typeof makePermissionDecisionsStore>
   cliEvents: ReturnType<typeof makeCliEventHub>
   jobsStore: ReturnType<typeof makeJobsStore>

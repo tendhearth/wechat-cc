@@ -41,7 +41,7 @@ import { scopedSend } from '../../daemon/inbound/reply-scope'
 import { makeCliHubAppPush, makeCliPermissionAsk, type AppPushOutlet } from './app-push'
 import { makeBrainForwarder } from './brain-forward'
 import { CliEventRequest, CliPermissionRequest } from '../../daemon/internal-api/schema'
-import type { IlinkAdapter } from '../../daemon/ilink-glue'
+import type { WechatLinkStatus, WechatPages, WechatPermissions, WechatSend } from '../../ports/wechat'
 import type { Bootstrap } from '../../daemon/bootstrap/index'
 import type { NetworkGate } from '../../lib/network-gate'
 
@@ -52,7 +52,9 @@ export interface WireTerminalDeps {
   stateDir: string
   dangerously: boolean
   db: Db
-  ilink: IlinkAdapter
+  /** 微信那一侧(src/ports/wechat.ts 的几口):推送 / 分享页 / 主人那一路关没关 / 拍板卡与待批登记处。 */
+  ilink: Pick<WechatSend, 'sendMessage'> & Pick<WechatPages, 'sharePage'> & Pick<WechatLinkStatus, 'proactiveClosedSince'>
+    & Pick<WechatPermissions, 'askUser' | 'registerPendingPermission' | 'sweepPendingPermissions' | 'pendingPermissionCodeOf'>
   /** 项目登记(别名 → 文件夹),给终端会话起项目名用。 */
   projects: Pick<import('../../daemon/projects').Projects, 'list'>
   /** 登记一个要停的资源(模块容器的 ctx.own)。 */

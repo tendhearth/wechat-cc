@@ -20,7 +20,8 @@
  *  - `daemon/companion/` 剩下的几样:主动开口的出口 `proactive-channel` / `app-channel`(SpeechPolicy 和信都走它)、
  *    媒体镜像 `media-mirror`(ilink 发送路径上的)、抖动定时器 `scheduler`(信、每晚整理、信箱也用)、
  *    认主人 `resolve-admin`(bootstrap、工作台也用)、邻居家 `neighbor-memory`(社交串门的);
- *  - 开关的实现 `daemon/ilink/companion.ts`(改配置 + 起停),等 A6 拆 IlinkAdapter 窄口;
+ *  - 开关的实现 `daemon/ilink/companion.ts`(改配置;开的时候要 ilink 的账号表和最近活跃的 chat 定主人那条对话),
+ *    对外只交窄口 `wechat.companion`(`WechatCompanionControls`,src/ports/wechat.ts;A6),这个功能 needs 的就是那一口;
  *  - 桌宠两条 `/v1/companion/presence`、`/v1/companion/pet` 和「跟 CC 说」`/v1/companion/converse`:前者是
  *    internal-api 的共用视图(手机页也经 getPresence 读),后两者是对话那一层的(回合串行入口),路径里带 companion 只是历史。
  */

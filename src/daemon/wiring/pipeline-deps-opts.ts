@@ -1,9 +1,22 @@
 /** buildPipelineDeps 的入参(从 pipeline-deps.ts 搬出来,重构第二批步 6c:wire-settings-panel 也要它的一部分,放一处免得成环)。 */
-import type { IlinkAdapter } from '../ilink-glue'
+import type { WechatAccounts, WechatContacts, WechatLinkStatus, WechatPages, WechatPermissions, WechatSend, WechatVoice } from '../../ports/wechat'
 import type { Bootstrap } from '../bootstrap'
 import type { ChatPrefsStore } from '../chat-prefs'
 import type { CareLedger } from '../../features/companion'
 import type { ReplySinks } from '../reply-sinks'
+
+/**
+ * 入站管道与它带起来的那一簇(对话、手机、「CC 现在怎么样」、桌宠)用到的微信那一侧(src/ports/wechat.ts 的几口,架构终态 A6)。
+ * 组装的地方(daemon-modules.ts 的 `wired`)按这张表从各口挑出来拼好,不交整个 adapter。
+ */
+export type PipelineWechat =
+  & Pick<WechatSend, 'sendMessage' | 'sendFile' | 'sendTyping' | 'onMediaSent'>
+  & Pick<WechatAccounts, 'routeChatToAccount' | 'captureContextToken' | 'markChatActive' | 'resolveAccountId'>
+  & WechatContacts
+  & Pick<WechatPages, 'sharePage'>
+  & Pick<WechatPermissions, 'probePermissionReply' | 'handlePermissionReply' | 'listPendingPermissions'>
+  & WechatLinkStatus
+  & { voice: WechatVoice }
 
 export interface PipelineDepsOpts {
   workbench?: import('../../features/workbench').WorkbenchService
@@ -28,7 +41,7 @@ export interface PipelineDepsOpts {
   matters?: import('../../adapters/store/matters-store').MatterStore
   stateDir: string
   db: import('../../lib/db').Db
-  ilink: IlinkAdapter
+  ilink: PipelineWechat
   boot: Bootstrap
   log: (tag: string, line: string, fields?: Record<string, unknown>) => void
   /**

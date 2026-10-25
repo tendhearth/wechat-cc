@@ -7,17 +7,17 @@
  *   GET  /v1/companion/thoughts      —— 日程判断留下的想法(routes-thoughts.ts)
  * 由 companion 模块自己挂(路由表标 module: 'companion')。模块没起来 ⇒ 路由层回 module_*,
  * 处理器里不再写 companion_not_wired。开关的实现还是 ilink 适配器那一份(`ilink/companion.ts`,改的是 companion
- * 配置、顺带起停定时),等 A6 拆窄口;这里只拿它的那一口。
+ * 配置、顺带起停定时);这里只拿它交出的窄口 `wechat.companion`(A6)。
  */
 import { errMsg, type RouteTable } from '../../daemon/internal-api/types'
 import type { CompanionSnoozeRequestT, CompanionImportLocalRequestT } from '../../daemon/internal-api/schema'
-import type { WechatCompanionDep } from '../../daemon/wechat-tool-deps'
+import type { WechatCompanionControls } from '../../ports/wechat'
 import { thoughtRoutes } from './routes-thoughts'
 
 export interface CompanionRoutesDeps {
   stateDir: string
-  /** 开关那一口(ilink 适配器造的)。 */
-  companion: WechatCompanionDep
+  /** 开关那一口(ilink 适配器造的,容器里叫 `wechat.companion`)。 */
+  companion: WechatCompanionControls
 }
 
 export function companionRoutes(d: CompanionRoutesDeps): RouteTable {

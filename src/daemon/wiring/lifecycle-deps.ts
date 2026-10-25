@@ -3,7 +3,8 @@
  * Pure field mapping, no business logic.
  */
 import type { Db } from '../../lib/db'
-import type { IlinkAdapter, IlinkAccount } from '../ilink-glue'
+import type { IlinkAccount } from '../ilink-glue'
+import type { WechatContacts, WechatPolling } from '../../ports/wechat'
 import type { Bootstrap } from '../bootstrap'
 import type { CompanionPushDeps, CompanionIntrospectDeps, CompanionIngestDeps } from '../../features/companion'
 import type { SchedulerDeps } from '../guard/scheduler'
@@ -26,7 +27,8 @@ import type { TickBodies } from './tick-bodies'
 export interface LifecycleDepsOpts {
   stateDir: string
   db: Db
-  ilink: IlinkAdapter
+  /** 拉消息与关机冲盘(polling / ilink 两个生命周期)、拉消息时给对方起名字。 */
+  ilink: WechatPolling & Pick<WechatContacts, 'resolveUserName'>
   accounts: IlinkAccount[]
   boot: Bootstrap
   dangerously: boolean
@@ -169,7 +171,7 @@ export function buildLifecycleDeps(opts: LifecycleDepsOpts, ticks: TickBodies, s
       },
     },
     startupDeps: {
-      stateDir, db, ilink, log,
+      stateDir, db, log,
       accountCount: accounts.length,
       dangerously,
       runIntrospectOnce: ticks.introspectTick,

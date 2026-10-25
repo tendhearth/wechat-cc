@@ -33,7 +33,8 @@ import { makeGuardRuntime, type GuardRuntime } from './guard/runtime'
 import { providersInUse } from './guard/targets'
 import { registerGuard } from './guard/lifecycle'
 import type { GuardLifecycle } from './guard/lifecycle'
-import { makeIlinkAdapter, type IlinkAdapter } from './ilink-glue'
+import { makeIlinkAdapter, ILINK_PORTS, type IlinkAdapter } from './ilink-glue'
+import { WECHAT_PORTS as W, type WechatAccounts, type WechatCompanionControls, type WechatContacts, type WechatLinkStatus, type WechatPages, type WechatPermissions, type WechatPolling, type WechatSend, type WechatVoice } from '../ports/wechat'
 import { makeReplyDeliveryRuntime } from './reply-delivery'
 import { registerInternalApi, type InternalApiLifecycle } from './internal-api/lifecycle'
 import { makeSelfChangeGlue } from './self-change-glue'
@@ -115,6 +116,7 @@ export function daemonModules(f: Foundation): DaemonModule[] {
     } satisfies DaemonModule<GuardRuntime>,
 
     // —— ilink 适配器(只造,不拉消息):权限卡、自改、终端会话要经 CC 开口那道门(wired 里才造)——
+    // 别的模块不拿整个 adapter,只 needs 它交出的窄口(`wechat.send` …,src/ports/wechat.ts;架构终态 A6)。
     {
       name: 'ilink-adapter',
       needs: ['network-gate'],
@@ -123,16 +125,17 @@ export function daemonModules(f: Foundation): DaemonModule[] {
         const wired = ctx.late<WiredDeps>('wired')
         return makeIlinkAdapter({ stateDir, accounts: f.accounts, db, conversationStore: f.conversationStore, networkGate: ctx.get<GuardRuntime>('network-gate').gate, speech: () => wired()?.speech ?? null })
       },
+      ports: ILINK_PORTS,
     } satisfies DaemonModule<IlinkAdapter>,
 
     // —— 回复交付(spec 2026-10-03-reply-delivery):daemon 负责送达的那一条路,必须是同一个实例 ——
     {
       name: 'reply-delivery',
-      needs: ['ilink-adapter'],
+      needs: [W.send],
       init(ctx) {
-        const ilink = ctx.get<IlinkAdapter>('ilink-adapter')
+        const wxSend = ctx.get<WechatSend>(W.send)
         return makeReplyDeliveryRuntime({
-          sendText: (c, t) => ilink.sendMessage(c, t),
+          sendText: (c, t) => wxSend.sendMessage(c, t),
           sink: { captureReply: (c, r) => f.replySinks.captureReply?.(c, r) ?? false },
           isSinkOpen: (c) => f.replySinks.isOpen?.(c) ?? false,
           observe: (c, t) => f.outboundTaps.observe(c, t),
@@ -152,10 +155,14 @@ export function daemonModules(f: Foundation): DaemonModule[] {
     // —— internal API:bootstrap 要它的 baseUrl / token 去配 MCP,所以在 init 段就监听(桌面这时来问 ⇒ 「还没有」)——
     {
       name: 'internal-api',
-      needs: ['ilink-adapter', 'reply-delivery', 'network-gate'],
+      needs: [W.send, W.permissions, W.contacts, W.pages, W.link, 'reply-delivery', 'network-gate'],
       lazy: ['bootstrap', 'polling', 'wired'],
       async init(ctx): Promise<InternalApiLifecycle> {
-        const ilink = ctx.get<IlinkAdapter>('ilink-adapter')
+        const wxSend = ctx.get<WechatSend>(W.send)
+        const wxPerm = ctx.get<WechatPermissions>(W.permissions)
+        const wxContacts = ctx.get<WechatContacts>(W.contacts)
+        const wxPages = ctx.get<WechatPages>(W.pages)
+        const wxLink = ctx.get<WechatLinkStatus>(W.link)
         const guardRt = ctx.get<GuardRuntime>('network-gate')
         const boot = ctx.late<Bootstrap>('bootstrap')
         const polling = ctx.late<LifecycleHolder<PollingLifecycle>>('polling')
@@ -171,8 +178,8 @@ export function daemonModules(f: Foundation): DaemonModule[] {
           // 待决权限的桌面面(spec §6)。和微信「y/n <hash>」共用 ilink 里那一份 PendingPermissions ——
           // 从哪边拍板都算数。拍板本身也是「主人刚跟我说过话」的证据,所以成功时记一笔 contact。
           permissions: {
-            list: () => ilink.listPendingPermissions(),
-            resolve: (h, d) => { const ok = ilink.resolvePermission(h, d); if (ok) f.petSignals.noteContact(); return ok },
+            list: () => wxPerm.listPendingPermissions(),
+            resolve: (h, d) => { const ok = wxPerm.resolvePermission(h, d); if (ok) f.petSignals.noteContact(); return ok },
           },
           // 自改流水线的三个抓手(spec 2026-09-18-self-change-pipeline §daemon 侧):流水线是 daemon 外面的 CLI 进程,
           // 「报进展 / 问 y-n / 查拍板」都经这里回来;卡片和微信、桌面共用同一份 PendingPermissions。
@@ -180,9 +187,9 @@ export function daemonModules(f: Foundation): DaemonModule[] {
             ownerChatId: () => loadCompanionConfig(stateDir).default_chat_id ?? null,
             speech: () => wired()?.speech ?? null,
             // 只登记、自己发卡:卡片发不出去时条目要留在登记处,好让主人从桌面权限卡或 `self change --approve <id>` 拍板。
-            registerPending: (h, t, meta) => ilink.registerPendingPermission(h, t, meta),
-            sweepPending: () => { ilink.sweepPendingPermissions() },
-            codeOf: (h) => ilink.pendingPermissionCodeOf(h),
+            registerPending: (h, t, meta) => wxPerm.registerPendingPermission(h, t, meta),
+            sweepPending: () => { wxPerm.sweepPendingPermissions() },
+            codeOf: (h) => wxPerm.pendingPermissionCodeOf(h),
             newHash: () => randomBytes(8).toString('hex'),
             now: () => Date.now(),
             log: (line) => { log('SELF-CHANGE', line) },
@@ -191,9 +198,9 @@ export function daemonModules(f: Foundation): DaemonModule[] {
           messages: { listRange: (c: string, o: { limit: number; beforeTs?: string }) => f.messagesStore.listRange(c, o), search: (c: string, q: string, l: number) => f.messagesStore.search(c, q, l) },
           // 桌宠「主人真在跟我说话吗」:只认入站(伙伴自己的外发会 bump lastUsedAt,但不该让熊说「在跟你聊」)。
           latestInboundTs: (c: string) => f.messagesStore.latestInboundTs(c),
-          setUserName: (chatId, name) => ilink.setUserName(chatId, name),
-          sharePage: (t, c, o) => ilink.sharePage(t, c, o), resurfacePage: (q) => ilink.resurfacePage(q),
-          ilink: { sendReply: (c, t) => ilink.sendMessage(c, t).then(r => r as { msgId: string; error?: string }), sendFile: (c, p) => ilink.sendFile(c, p), noteSentMedia: (c, m) => ilink.noteSentMedia?.(c, m), editMessage: (c, m, t) => ilink.editMessage(c, m, t), broadcast: (t, a) => ilink.broadcast(t, a) },
+          setUserName: (chatId, name) => wxContacts.setUserName(chatId, name),
+          sharePage: (t, c, o) => wxPages.sharePage(t, c, o), resurfacePage: (q) => wxPages.resurfacePage(q),
+          ilink: { sendReply: (c, t) => wxSend.sendMessage(c, t).then(r => r as { msgId: string; error?: string }), sendFile: (c, p) => wxSend.sendFile(c, p), noteSentMedia: (c, m) => wxSend.noteSentMedia?.(c, m), editMessage: (c, m, t) => wxSend.editMessage(c, m, t), broadcast: (t, a) => wxSend.broadcast(t, a) },
           // 微信回复前缀用短名;两种 Gemini 都开着时要分得开,所以按现在注册了谁来解析(收敛清单 ⑥)
           prefix: { conversationStore: f.conversationStore, providerDisplayName: (id) => providerDisplayName(id, boot()?.registry.list() ?? []), permissionMode: dangerously ? 'dangerously' as const : 'strict' as const },
           turns: f.turnRecordStore,
@@ -210,7 +217,7 @@ export function daemonModules(f: Foundation): DaemonModule[] {
           plugins: () => boot()?.pluginsHealth ?? null,
           providerProbes: () => boot()?.providerProbes?.() ?? [],
           providerRefusals: () => f.providerRefusals.all(),
-          outbound: () => ilink.outboundHealth(),
+          outbound: () => wxLink.outboundHealth(),
           releaseSession: (k) => boot()?.sessionManager?.release(k) ?? Promise.resolve(),
           // 换模型时把该 provider 的会话存档行删掉:不删的话下一次 spawn 会 resume 回旧会话,新模型钉不上。
           forgetProviderSessions: (providerId) => boot()?.sessionStore?.deleteProvider(providerId) ?? 0,
@@ -264,8 +271,8 @@ export function daemonModules(f: Foundation): DaemonModule[] {
     }),
     // 画室:一个功能一个目录(src/features/atelier);路由自己挂,紧跟 internal-api(以前这几条路由随 internal-api 一起就在,桌面开机就来看画)。画一拍还在伙伴的反省那一拍里(wiring 经 makeAtelierTick 接)。
     atelierFeature({
-      needs: ['ilink-adapter'],
-      deps: (ctx) => ({ stateDir, ilink: ctx.get<IlinkAdapter>('ilink-adapter') }),
+      needs: [W.send],
+      deps: (ctx) => ({ stateDir, ilink: ctx.get<WechatSend>(W.send) }),
     }),
     // 伙伴日志(背包):`/v1/journal*` 自己挂(src/features/journal),紧跟 internal-api(以前随 internal-api 一起就在)。表是地基里那一份。
     journalFeature({
@@ -277,12 +284,12 @@ export function daemonModules(f: Foundation): DaemonModule[] {
     // 紧跟 internal-api(以前随 internal-api 一起就在,MCP 的 companion_* 工具开机就来)。开关那一口还是 ilink 适配器造的(改配置 +
     // 起停),原样交过去。四拍的定时器是下面 companion.push / introspect / ingest 三个模块,位置没动;候选登记表在 wiring/tick-bodies.ts。
     companionFeature({
-      needs: ['ilink-adapter'],
+      needs: [W.companion],
       deps: (ctx) => {
-        const ilink = ctx.get<IlinkAdapter>('ilink-adapter')
+        const wxCompanion = ctx.get<WechatCompanionControls>(W.companion)
         return {
           stateDir,
-          companion: { enable: () => ilink.companion.enable(), disable: () => ilink.companion.disable(), status: () => ilink.companion.status(), snooze: (m) => ilink.companion.snooze(m), setImportLocal: (e) => ilink.companion.setImportLocal(e) },
+          companion: { enable: () => wxCompanion.enable(), disable: () => wxCompanion.disable(), status: () => wxCompanion.status(), snooze: (m) => wxCompanion.snooze(m), setImportLocal: (e) => wxCompanion.setImportLocal(e) },
         }
       },
     }),
@@ -290,8 +297,8 @@ export function daemonModules(f: Foundation): DaemonModule[] {
     // 语音(出站 TTS):一个功能一个目录(src/features/voice);路由自己挂,紧跟 internal-api(以前随 internal-api 一起就在)。
     // 语音口还是 ilink 适配器造的那一份(发送绑着 ilink),这里原样交过去。
     voiceFeature({
-      needs: ['ilink-adapter'],
-      deps: (ctx) => ({ voice: ctx.get<IlinkAdapter>('ilink-adapter').voice }),
+      needs: [W.voice],
+      deps: (ctx) => ({ voice: ctx.get<WechatVoice>(W.voice) }),
     }),
 
     // 手机:一个功能一个目录(src/features/phone)。这里只挂桌面「连接手机」那两条 `/v1/phone/*`,紧跟 internal-api(以前随 internal-api
@@ -307,22 +314,25 @@ export function daemonModules(f: Foundation): DaemonModule[] {
 
     // —— 贴纸:一个功能一个目录(src/features/stickers);路由自己挂。表情库全 daemon 一份,bootstrap(提示词)和 wired 都要它 ——
     stickersFeature({
-      needs: ['ilink-adapter'],
+      needs: [W.send],
       deps: (ctx) => {
-        const ilink = ctx.get<IlinkAdapter>('ilink-adapter')
+        const wxSend = ctx.get<WechatSend>(W.send)
         return {
           stateDir, log: (t, l) => log(t, l),
-          ilink: { sendFile: (c, p) => ilink.sendFile(c, p), noteSentMedia: (c, m) => ilink.noteSentMedia?.(c, m) },
+          ilink: { sendFile: (c, p) => wxSend.sendFile(c, p), noteSentMedia: (c, m) => wxSend.noteSentMedia?.(c, m) },
         }
       },
     }),
 
     // —— bootstrap:provider registry / 会话管理 / 协调器 + 可选的知识库 / 社交 / A2A / 配对 / 乙(一组模块,bootstrap/index.ts)——
     ...bootstrapModules({
-      needs: ['ilink-adapter', 'reply-delivery', 'internal-api', 'network-gate', 'stickers', 'memory'],
+      needs: [W.send, W.permissions, W.companion, W.accounts, 'reply-delivery', 'internal-api', 'network-gate', 'stickers', 'memory'],
       lazy: ['cli-upgrade', 'workbench', 'wired', 'terminal'],
       deps: (ctx) => {
-        const ilink = ctx.get<IlinkAdapter>('ilink-adapter')
+        const wxSend = ctx.get<WechatSend>(W.send)
+        const wxPerm = ctx.get<WechatPermissions>(W.permissions)
+        const wxCompanion = ctx.get<WechatCompanionControls>(W.companion)
+        const wxAccounts = ctx.get<WechatAccounts>(W.accounts)
         const terminal = ctx.late<TerminalFeature>('terminal')
         const replyDelivery = ctx.get<ReturnType<typeof makeReplyDeliveryRuntime>>('reply-delivery')
         const internalApi = ctx.get<InternalApiLifecycle>('internal-api')
@@ -331,12 +341,13 @@ export function daemonModules(f: Foundation): DaemonModule[] {
         const workbench = ctx.late<WorkbenchService>('workbench')
         const wired = ctx.late<WiredDeps>('wired')
         return {
-          stateDir, db, ilink, loadProjects: () => f.projects.load(), networkGate: guardRt.gate,
+          stateDir, db, loadProjects: () => f.projects.load(), networkGate: guardRt.gate,
+          ilink: { ...pick(wxSend, 'sendMessage', 'sendFile'), ...pick(wxPerm, 'askUser'), companion: wxCompanion },
           // CC 开口那道门在 wired 里才造;bootstrap 里的社交通知比它早接线、晚发 ⇒ 现取。
           speech: () => wired()?.speech ?? null,
           // 工作台正占着这个目录 / 原生会话 ⇒ 会话管理拒 acquire;工作台还没起 ⇒ 不冲突。
           executionGuard: (path, providerId, nativeId) => workbench()?.conflictsExternal(path, providerId, nativeId) ?? false,
-          lastActiveChatId: ilink.lastActiveChatId, log: (t, l, x) => log(t, l, x),
+          lastActiveChatId: wxAccounts.lastActiveChatId, log: (t, l, x) => log(t, l, x),
           fallbackProject: () => ({ alias: '_default', path: process.cwd() }),
           dangerouslySkipPermissions: dangerously, conversationStore: f.conversationStore,
           replySinks: f.replySinks,
@@ -398,21 +409,28 @@ export function daemonModules(f: Foundation): DaemonModule[] {
 
     // —— 终端会话:一个功能一个目录(src/features/terminal);路由自己挂。这里只填它要的东西 ——
     terminalFeature({
-      needs: ['bootstrap', 'ilink-adapter', 'network-gate'],
+      needs: ['bootstrap', W.send, W.pages, W.link, W.permissions, 'network-gate'],
       lazy: ['workbench', 'wired'],
       deps: (ctx) => {
         const wired = ctx.late<WiredDeps>('wired')
         const workbench = ctx.late<WorkbenchService>('workbench')
-        const ilink = ctx.get<IlinkAdapter>('ilink-adapter')
+        const wxSend = ctx.get<WechatSend>(W.send)
+        const wxPages = ctx.get<WechatPages>(W.pages)
+        const wxLink = ctx.get<WechatLinkStatus>(W.link)
+        const wxPerm = ctx.get<WechatPermissions>(W.permissions)
         return {
           speech: () => wired()?.speech ?? null,
-          stateDir, dangerously, db, ilink, projects: f.projects, own: (n, s) => ctx.own(n, s),
+          stateDir, dangerously, db, projects: f.projects, own: (n, s) => ctx.own(n, s),
+          ilink: {
+            ...pick(wxSend, 'sendMessage'), ...pick(wxPages, 'sharePage'), ...pick(wxLink, 'proactiveClosedSince'),
+            ...pick(wxPerm, 'askUser', 'registerPendingPermission', 'sweepPendingPermissions', 'pendingPermissionCodeOf'),
+          },
           boot: ctx.get<Bootstrap>('bootstrap'), networkGate: ctx.get<GuardRuntime>('network-gate').gate,
           workbench: () => workbench(),
           appPush: () => wired()?.appPush ?? null,
           jobsSince: (since) => summarizeJobs(f.jobsStore, since),
           isOwner,
-          resolvePermission: (h, d) => { const ok = ilink.resolvePermission(h, d); if (ok) f.petSignals.noteContact(); return ok },
+          resolvePermission: (h, d) => { const ok = wxPerm.resolvePermission(h, d); if (ok) f.petSignals.noteContact(); return ok },
         }
       },
     }),
@@ -423,21 +441,21 @@ export function daemonModules(f: Foundation): DaemonModule[] {
     // —— 「CC 做过的事」:手机时间线 / 微信「做过的事」/ 周报共用一组来源 ——
     {
       name: 'activity',
-      needs: ['terminal', 'ilink-adapter'],
+      needs: ['terminal', W.send],
       init(ctx): Activity {
         const cli = ctx.get<TerminalFeature>('terminal')
-        return wireActivity({ stateDir, db, ilink: ctx.get('ilink-adapter'), permissionDecisions: cli.permissionDecisions, cliEvents: cli.cliEvents, jobsStore: f.jobsStore })
+        return wireActivity({ stateDir, db, ilink: ctx.get<WechatSend>(W.send), permissionDecisions: cli.permissionDecisions, cliEvents: cli.cliEvents, jobsStore: f.jobsStore })
       },
     } satisfies DaemonModule<Activity>,
     // 定时 / 早报 / 周报 / 换一家来审:一个功能一个目录(src/features/jobs)。这里只填它要的东西。
     jobsFeature({
-      needs: ['bootstrap', 'terminal', 'calendar', 'activity', 'ilink-adapter'],
+      needs: ['bootstrap', 'terminal', 'calendar', 'activity', W.send],
       lazy: ['wired'],
       deps: (ctx) => {
         const wired = ctx.late<WiredDeps>('wired')
         const activity = ctx.get<Activity>('activity')
         return {
-          stateDir, db, ilink: ctx.get('ilink-adapter'), boot: ctx.get<Bootstrap>('bootstrap'), jobsStore: f.jobsStore,
+          stateDir, db, ilink: ctx.get<WechatSend>(W.send), boot: ctx.get<Bootstrap>('bootstrap'), jobsStore: f.jobsStore,
           activityLog: activity.activityLog, activity: activity.activity, calendar: ctx.get<CalendarFeature>('calendar').calendar,
           overseerToday: ctx.get<TerminalFeature>('terminal').overseerToday, careLedger: f.careLedger,
           quietWindow: () => { const o = ownerChatId(); return o ? f.chatPrefs.get(o).quiet : undefined },
@@ -456,16 +474,16 @@ export function daemonModules(f: Foundation): DaemonModule[] {
     // —— 主人的命令:命令现在就要(进命令表),要用的只读轮 / 工作台 / 门都在后面 ⇒ 经 late 现取 ——
     {
       name: 'owner-commands',
-      needs: ['bootstrap', 'terminal', 'calendar', 'activity', 'jobs', 'ilink-adapter', 'internal-api', 'network-gate'],
+      needs: ['bootstrap', 'terminal', 'calendar', 'activity', 'jobs', W.send, 'internal-api', 'network-gate'],
       lazy: ['workbench', 'wired'],
       init(ctx): OwnerCommands {
         const boot = ctx.get<Bootstrap>('bootstrap')
-        const ilink = ctx.get<IlinkAdapter>('ilink-adapter')
+        const wxSend = ctx.get<WechatSend>(W.send)
         const internalApi = ctx.get<InternalApiLifecycle>('internal-api')
         const cli = ctx.get<TerminalFeature>('terminal')
         const workbench = ctx.late<WorkbenchService>('workbench')
         const wired = ctx.late<WiredDeps>('wired')
-        const say = (c: string, t: string) => ilink.sendMessage(c, t)
+        const say = (c: string, t: string) => wxSend.sendMessage(c, t)
         const activity = ctx.get<Activity>('activity')
         const jobs = ctx.get<JobsFeature>('jobs')
         // 微信「经验 <项目> …」(第二轮对标 ★2):只认主人;项目按名字认。
@@ -495,14 +513,14 @@ export function daemonModules(f: Foundation): DaemonModule[] {
 
     // —— 工作台(「一起做」):一个功能一个目录(src/features/workbench);桌面路由自己挂,这里只填它要的东西 ——
     workbenchFeature({
-      needs: ['bootstrap', 'terminal', 'jobs', 'ilink-adapter', 'internal-api', 'network-gate', 'report-outbox'],
+      needs: ['bootstrap', 'terminal', 'jobs', W.permissions, 'internal-api', 'network-gate', 'report-outbox'],
       lazy: ['cli-upgrade'],
       resolveAdminChatId: () => ownerChatId(),
       deps: (ctx) => {
         const boot = ctx.get<Bootstrap>('bootstrap')
         const cli = ctx.get<TerminalFeature>('terminal')
         const jobs = ctx.get<JobsFeature>('jobs')
-        const ilink = ctx.get<IlinkAdapter>('ilink-adapter')
+        const wxPerm = ctx.get<WechatPermissions>(W.permissions)
         const cliUpgrade = ctx.late<CliUpgradeModule>('cli-upgrade')
         return {
           db, stateDir, boot, matters: f.matters, reports: ctx.get<ReportsFeature>('report-outbox').sink, networkGate: ctx.get<GuardRuntime>('network-gate').gate, permissionGate: cli.permissionGate, requestReview: (r) => jobs.requestReview(r),
@@ -517,7 +535,7 @@ export function daemonModules(f: Foundation): DaemonModule[] {
             (!!nativeId && Object.values(boot.sessionStore.all()).some(s => s.provider === providerId && s.session_id === nativeId)) ||
             cli.legacyClaims.conflicts({ owner: 'workbench', path, providerId, nativeId }) ||
             (!!nativeId && cli.cliEvents.sessions().some(s => s.source === providerId && s.session_id === nativeId && !!s.origin_agent)),
-          askUser: ilink.askUser, log: (t, l) => log(t, l),
+          askUser: wxPerm.askUser, log: (t, l) => log(t, l),
         }
       },
     }),
@@ -525,7 +543,7 @@ export function daemonModules(f: Foundation): DaemonModule[] {
     // —— wireMain:入站管道的依赖、伙伴 tick、手机那一簇、CC 开口那道门 ——
     {
       name: 'wired',
-      needs: ['bootstrap', 'boot-api', 'terminal', 'owner-commands', 'activity', 'workbench', 'ilink-adapter', 'reply-delivery', 'internal-api', 'network-gate', 'stickers'],
+      needs: ['bootstrap', 'boot-api', 'terminal', 'owner-commands', 'activity', 'workbench', W.send, W.accounts, W.contacts, W.pages, W.permissions, W.link, W.voice, W.polling, 'reply-delivery', 'internal-api', 'network-gate', 'stickers'],
       lazy: ['pipeline', 'polling', 'companion.ingest'],
       init(ctx): WiredDeps {
         const boot = ctx.get<Bootstrap>('bootstrap')
@@ -533,7 +551,14 @@ export function daemonModules(f: Foundation): DaemonModule[] {
         const cli = ctx.get<TerminalFeature>('terminal')
         const owner = ctx.get<OwnerCommands>('owner-commands')
         const workbench = ctx.get<WorkbenchService>('workbench')
-        const ilink = ctx.get<IlinkAdapter>('ilink-adapter')
+        const wxSend = ctx.get<WechatSend>(W.send)
+        const wxAccounts = ctx.get<WechatAccounts>(W.accounts)
+        const wxContacts = ctx.get<WechatContacts>(W.contacts)
+        const wxPages = ctx.get<WechatPages>(W.pages)
+        const wxPerm = ctx.get<WechatPermissions>(W.permissions)
+        const wxLink = ctx.get<WechatLinkStatus>(W.link)
+        const wxVoice = ctx.get<WechatVoice>(W.voice)
+        const wxPolling = ctx.get<WechatPolling>(W.polling)
         const internalApi = ctx.get<InternalApiLifecycle>('internal-api')
         const guardRt = ctx.get<GuardRuntime>('network-gate')
         const pipeline = ctx.late<PipelineModule>('pipeline')
@@ -560,7 +585,18 @@ export function daemonModules(f: Foundation): DaemonModule[] {
           stickers: ctx.get<StickersFeature>('stickers').lib,
           requestRestart: (reason) => f.requestRestart(reason),
           llmHealth,
-          stateDir, db, ilink, projects: f.projects, accounts: f.accounts, boot, dangerously, chatPrefs: f.chatPrefs, careLedger: f.careLedger, replySinks: f.replySinks,
+          // 微信那一侧:入站管道那一簇 + 拉消息 / 冲盘要的那几样(PipelineWechat & 生命周期那两样),从各口挑。
+          ilink: {
+            ...pick(wxSend, 'sendMessage', 'sendFile', 'sendTyping', 'onMediaSent'),
+            ...pick(wxAccounts, 'routeChatToAccount', 'captureContextToken', 'markChatActive', 'resolveAccountId'),
+            ...pick(wxContacts, 'setUserName', 'resolveUserName'),
+            ...pick(wxPages, 'sharePage'),
+            ...pick(wxPerm, 'probePermissionReply', 'handlePermissionReply', 'listPendingPermissions'),
+            ...pick(wxLink, 'outboundHealth', 'proactiveClosedSince', 'sessionState'),
+            ...pick(wxPolling, 'getUpdatesForLoop', 'flush'),
+            voice: wxVoice,
+          },
+          stateDir, db, projects: f.projects, accounts: f.accounts, boot, dangerously, chatPrefs: f.chatPrefs, careLedger: f.careLedger, replySinks: f.replySinks,
           outboundTaps: f.outboundTaps, journal: f.journal, petSignals: f.petSignals, replyDelivery: ctx.get('reply-delivery'),
           // 随身 CC 首屏:聊天日摘要读 turn_records;presence 走 internal-api 的共用入口。
           turns: f.turnRecordStore,
@@ -610,8 +646,8 @@ export function daemonModules(f: Foundation): DaemonModule[] {
     lifecycleModule('ilink', (ctx) => registerIlink(ctx.get<WiredDeps>('wired').ilinkDeps), { required: true, needs: ['wired'] }),
     // 工作台的微信通知 / 成果:**停**在 polling 之后(关机时先停入站,再把任务那几句送完,再冲 ilink);
     // **开动**却放在开机最后(startup-sweeps 那一步):补发停机期间做完的任务那几句,要排在「CC 回来了」之后。
-    workbenchNotificationsModule({ needs: ['workbench', 'wired', 'ilink-adapter'], speech: (ctx) => ctx.get<WiredDeps>('wired').speech }),
-    workbenchArtifactsModule({ needs: ['workbench', 'ilink-adapter'] }),
+    workbenchNotificationsModule({ needs: ['workbench', 'wired', W.workbench], speech: (ctx) => ctx.get<WiredDeps>('wired').speech }),
+    workbenchArtifactsModule({ needs: ['workbench', W.workbench] }),
     lifecycleModule('polling', (ctx) => registerPolling({ ...ctx.get<WiredDeps>('wired').pollingDeps, runPipeline: ctx.get<PipelineModule>('pipeline').run }), { required: true, needs: ['wired', 'pipeline'] }),
     // 每晚整理长期记忆 memory.md(2026-09-25,src/features/memory)。15 分钟一次「该不该跑」。
     memoryNightlyModule({
@@ -622,11 +658,11 @@ export function daemonModules(f: Foundation): DaemonModule[] {
     }),
     // CC 的信:一个功能一个目录(src/features/letters);路由自己挂。这里只填它要的东西。
     lettersFeature({
-      needs: ['bootstrap', 'wired', 'ilink-adapter'],
+      needs: ['bootstrap', 'wired', W.send],
       deps: (ctx) => {
         const boot = ctx.get<Bootstrap>('bootstrap')
         const wired = ctx.get<WiredDeps>('wired')
-        const ilink = ctx.get<IlinkAdapter>('ilink-adapter')
+        const wxSend = ctx.get<WechatSend>(W.send)
         return {
           stateDir, db,
           providerFor: (c) => { const m = boot.coordinator.getMode(c); return m && m.kind === 'solo' ? m.provider : undefined },
@@ -634,10 +670,10 @@ export function daemonModules(f: Foundation): DaemonModule[] {
           cheapEval: (c) => resolveCheapEval({ getMode: (x) => boot.coordinator.getMode(x), registry: boot.registry }, c),
           wechatSuspended: () => boot.health.health.shouldSuspend('wechat'),
           speech: wired.speech,
-          sendText: (c, t) => ilink.sendMessage(c, t),
+          sendText: (c, t) => wxSend.sendMessage(c, t),
           // 逐页发不逐页记;寄出之后整封记成主人对话里的一行(App 对话页看得见),微信不通时寄到 App(2026-10-18)。
-          sendFile: (c, file) => ilink.sendFile(c, file, { mirror: false }),
-          mirror: (c, pages) => ilink.noteSentMedia?.(c, pages.map(path => ({ kind: 'file' as const, path }))),
+          sendFile: (c, file) => wxSend.sendFile(c, file, { mirror: false }),
+          mirror: (c, pages) => wxSend.noteSentMedia?.(c, pages.map(path => ({ kind: 'file' as const, path }))),
           app: () => wired.companionApp,
           holdBusy: (l) => boot.holdBusy(l), log: (t, l) => log(t, l),
         }
@@ -704,6 +740,16 @@ export function daemonModules(f: Foundation): DaemonModule[] {
 }
 
 interface PipelineModule { run: PipelineRun; appTurn: AppTurn }
+
+/**
+ * 从一口里挑几样,拼进还按扁平形状收的接线函数(它们的类型只列用到的那几样,架构终态 A6)。挑出来的就是同一个函数:
+ * adapter 的方法不靠 this;可选的那几样(onMediaSent …)没有 ⇒ 挑出来是 undefined,调用方本来就按可选判。
+ */
+function pick<T, K extends keyof T>(o: T, ...keys: K[]): Pick<T, K> {
+  const out = {} as Pick<T, K>
+  for (const k of keys) out[k] = o[k]
+  return out
+}
 /** 造好了、但开动的时刻由别的模块定(工作台通知要排在开机清扫之后)。 */
 interface Deferred { start(): void }
 

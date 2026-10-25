@@ -19,7 +19,7 @@ src/features/<名>/
 export function calendarFeature(d: { stateDir: string; isOwner(chatId: string): boolean }): DaemonModule<CalendarFeature> {
   return {
     name: 'calendar',                       // = /v1/health.subsystems 里的名字 = 路由表里的 module
-    needs: ['internal-api', 'ilink-adapter'],
+    needs: ['internal-api', WECHAT_PORTS.send],   // 微信那一侧只要「发一句」那一口(src/ports/wechat.ts)
     init(ctx) {
       const calendar = makeCalendar(...)
       ctx.get<InternalApiLifecycle>('internal-api').mount('calendar', calendarRoutes(calendar))
@@ -34,6 +34,8 @@ export function calendarFeature(d: { stateDir: string; isOwner(chatId: string): 
 - **开关**:有整块开关的写 `enabled`(可以读上游的值,比如配置快照);一件事只有一个开关。
 - **可选**:起不来不该拖垮开机的写 `optional: true`(⇒ degraded,`/v1/health.subsystems` 和「CC 现在怎么样」看得见)。
 - **晚到的东西**(真环):写进 `lazy`,经 `ctx.lazy` / `ctx.late` 拿;别的一律 `needs` / `wants`。
+- **要微信那一侧**:needs 你用到的那几口(`wechat.send`、`wechat.permissions` …,`src/ports/wechat.ts` 的 `WECHAT_PORTS`),
+  类型也引那一口;不拿整个 `IlinkAdapter`。模块自己也可以经 `ports` 交出窄口(见 `modules/container.ts` 顶部)。
 
 ## 接进 daemon
 
@@ -54,6 +56,7 @@ export function calendarFeature(d: { stateDir: string; isOwner(chatId: string): 
 - `scripts/daemon-module.guard.test.ts` 也扫 `src/features`:裸 `setInterval`、`Ref`、`lc.register` 一出现就红。
 - `scripts/speech-send.guard.test.ts` 也扫 `src/features`:直接发微信的调用要登记成 `reply`(回主人刚发来的那一句),主动开口走 `policy.say`。
 - `internal-api` 的 `mount`:只能挂路由表里标给自己的那几条,重复挂直接抛。
+- `scripts/ilink-ports.guard.test.ts`:`IlinkAdapter` 只在 ilink 自己和 `daemon-modules.ts` / `foundation.ts` 出现,没有模块 needs `ilink-adapter`。
 
 ## 删掉一个功能
 

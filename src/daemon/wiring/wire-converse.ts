@@ -6,7 +6,7 @@
 import { mkdirSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 import type { Bootstrap } from '../bootstrap'
-import type { IlinkAdapter } from '../ilink-glue'
+import type { WechatAccounts } from '../../ports/wechat'
 import type { CareLedger } from '../../features/companion'
 import { loadCompanionConfig } from '../../lib/companion-config'
 import type { makeMessagesStore } from '../../lib/messages-store'
@@ -28,7 +28,7 @@ export interface WireConverseDeps {
   careLedger: CareLedger
   replySinks: ReturnType<typeof makeReplySinks>
   messagesStore: ReturnType<typeof makeMessagesStore>
-  ilink: Pick<IlinkAdapter, 'resolveAccountId'>
+  ilink: Pick<WechatAccounts, 'resolveAccountId'>
   log: (tag: string, line: string) => void
   /** App 一轮先过的 route + consume(main 建好流水线后才有;没接 ⇒ 直接进对话)。 */
   appTurn(): AppTurn | null

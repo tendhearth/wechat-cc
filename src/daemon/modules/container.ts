@@ -25,6 +25,10 @@
  *    停止超时),再停掉已经起了的。
  *
  * 状态形状沿用 SubsystemStatus(/v1/health.subsystems 读的就是它)。
+ *
+ * 窄口(架构终态 A6):一个模块可以经 `ports` 交出几样「从我的值里取一小块」的东西,各有名字。别的模块 needs / wants /
+ * lazy 写口的名字,经 get / maybe / lazy / late 拿到的就是那一块 —— 不必拿整个值。口不是模块:不进 status、
+ * 不进关机顺序,开机先后、状态、降级都跟着交出它的那个模块(needs 一个口 = needs 那个模块)。
  */
 import type { SubsystemStatus } from '../subsystems'
 
@@ -42,7 +46,15 @@ export interface DaemonModule<P = unknown> {
   enabled?: (ctx: EnabledCtx) => boolean
   /** 只造和登记,不开始干活。返回值 = 对外提供的东西(别的模块 needs 我时经 ctx.get 拿到)。 */
   init(ctx: ModuleCtx): P | Promise<P>
+  /**
+   * 窄口:名字 → 从 init 的返回值里取哪一块(init 成功后取一次)。名字不许和模块名、别的口重名。
+   * 别的模块 needs 这个名字 ⇒ 拓扑上 needs 的是我,拿到的是那一块。
+   */
+  ports?: Readonly<Record<string, PortPick<P>>>
 }
+
+/** 方法写法让 DaemonModule<具体类型> 还能放进 DaemonModule[](参数双变,React 的 bivarianceHack)。 */
+type PortPick<P> = { pick(value: P): unknown }['pick']
 
 /** enabled() 能看到的:只读上游(needs 里的经 get、wants 里的经 maybe)。上游不是 ok ⇒ get 抛。 */
 export interface EnabledCtx {
@@ -99,24 +111,41 @@ class UpstreamNotOk extends Error { constructor(name: string) { super(`upstream 
 function errMsg(err: unknown): string { return err instanceof Error ? err.message : String(err) }
 
 /** needs ∪ wants 的拓扑序。有环 / 指向不存在的模块 / 重名 ⇒ 抛。同一层按表里的顺序,结果稳定。 */
-export function orderModules(mods: readonly DaemonModule[]): DaemonModule[] {
-  const byName = new Map<string, DaemonModule>()
+/** 名字 → 交出它的模块名(模块名就是自己;口名是交出口的那个模块)。重名 ⇒ 抛。 */
+function ownersOf(mods: readonly DaemonModule[]): Map<string, string> {
+  const owner = new Map<string, string>()
   for (const m of mods) {
-    if (byName.has(m.name)) throw new Error(`modules: duplicate name '${m.name}'`)
-    byName.set(m.name, m)
+    if (owner.has(m.name)) throw new Error(`modules: duplicate name '${m.name}'`)
+    owner.set(m.name, m.name)
   }
   for (const m of mods) {
+    for (const p of Object.keys(m.ports ?? {})) {
+      if (owner.has(p)) throw new Error(`modules: port '${p}' of '${m.name}' clashes with '${owner.get(p)}'`)
+      owner.set(p, m.name)
+    }
+  }
+  return owner
+}
+
+export function orderModules(mods: readonly DaemonModule[]): DaemonModule[] {
+  const owner = ownersOf(mods)
+  const byName = new Map<string, DaemonModule>()
+  for (const m of mods) byName.set(m.name, m)
+  /** needs / wants / lazy 里写的名字(模块或口)⇒ 那个模块。 */
+  const mod = (d: string): DaemonModule => byName.get(owner.get(d)!)!
+  for (const m of mods) {
     for (const d of [...(m.needs ?? []), ...(m.wants ?? []), ...(m.lazy ?? [])]) {
-      if (!byName.has(d)) throw new Error(`modules: '${m.name}' depends on unknown module '${d}'`)
-      if (d === m.name) throw new Error(`modules: '${m.name}' depends on itself`)
+      if (!owner.has(d)) throw new Error(`modules: '${m.name}' depends on unknown module '${d}'`)
+      if (owner.get(d) === m.name) throw new Error(`modules: '${m.name}' depends on itself`)
     }
     // 必需的模块不许 needs 一个可选的:可选的坏了,必需的会跟着「不起」而不报错 —— 开机走到一半悄悄停住。
     // 要用可选的就 wants(拿不到自己兜),或者把上游也改成必需。
     if (!m.optional) {
-      const opt = (m.needs ?? []).find(d => byName.get(d)!.optional)
-      if (opt) throw new Error(`modules: required '${m.name}' needs optional '${opt}' — use wants, or make '${opt}' required`)
+      const opt = (m.needs ?? []).find(d => mod(d).optional)
+      if (opt) throw new Error(`modules: required '${m.name}' needs optional '${opt}' — use wants, or make '${owner.get(opt)}' required`)
     }
-    const both = (m.lazy ?? []).find(d => (m.needs ?? []).includes(d) || (m.wants ?? []).includes(d))
+    const hard = new Set([...(m.needs ?? []), ...(m.wants ?? [])].map(d => owner.get(d)!))
+    const both = (m.lazy ?? []).find(d => hard.has(owner.get(d)!))
     if (both) throw new Error(`modules: '${m.name}' lists '${both}' in lazy and in needs / wants — a lazy edge is a cycle edge, pick one`)
   }
   const out: DaemonModule[] = []
@@ -126,7 +155,7 @@ export function orderModules(mods: readonly DaemonModule[]): DaemonModule[] {
     if (s === 'done') return
     if (s === 'visiting') throw new Error(`modules: dependency cycle ${[...path, m.name].join(' → ')} (a real cycle goes through ctx.lazy, not needs / wants)`)
     state.set(m.name, 'visiting')
-    for (const d of [...(m.needs ?? []), ...(m.wants ?? [])]) visit(byName.get(d)!, [...path, m.name])
+    for (const d of [...(m.needs ?? []), ...(m.wants ?? [])]) visit(mod(d), [...path, m.name])
     state.set(m.name, 'done')
     out.push(m)
   }
@@ -158,7 +187,13 @@ export function createModules(mods: readonly DaemonModule[], opts: ModuleOpts): 
   const stopTimeoutMs = opts.stopTimeoutMs ?? STOP_TIMEOUT_MS
   const iso = (): string => new Date(now()).toISOString()
   const ordered = orderModules(mods)
+  const owner = ownersOf(mods)
   const slots = new Map<string, Slot>()
+  /** 名字(模块或口)⇒ 交出它的那个模块的 slot。 */
+  const slotOf = (n: string): Slot | undefined => slots.get(owner.get(n) ?? n)
+  /** 名字(模块或口)⇒ 拿到的值:模块 = 它的值;口 = init 后取出来的那一块。 */
+  const portVals = new Map<string, unknown>()
+  const valueOf = (n: string): unknown => owner.get(n) === n ? slots.get(n)!.value : portVals.get(n)
   let phase: 'init' | 'start' | 'running' | 'stopped' = 'init'
   /** 开机途中有人要停:init / start 循环在下一个模块边界退出。 */
   let stopRequested = false
@@ -210,14 +245,14 @@ export function createModules(mods: readonly DaemonModule[], opts: ModuleOpts): 
       const readCtx: EnabledCtx = {
         get: <T>(n: string): T => {
           if (!needs.has(n)) throw new Error(`modules: '${mod.name}' called get('${n}') but '${n}' is not in its needs`)
-          const s = slots.get(n)!
+          const s = slotOf(n)!
           if (s.status.state !== 'ok') throw new UpstreamNotOk(n)
-          return s.value as T
+          return valueOf(n) as T
         },
         maybe: <T>(n: string): T | null => {
           if (!wants.has(n)) throw new Error(`modules: '${mod.name}' called maybe('${n}') but '${n}' is not in its wants`)
-          const s = slots.get(n)!
-          return s.status.state === 'ok' ? (s.value as T) : null
+          const s = slotOf(n)!
+          return s.status.state === 'ok' ? (valueOf(n) as T) : null
         },
       }
       let on = true
@@ -228,7 +263,7 @@ export function createModules(mods: readonly DaemonModule[], opts: ModuleOpts): 
         }
       }
       if (!on) { slot.status = { name: mod.name, state: 'off', sinceIso: iso() }; continue }
-      const blocker = (mod.needs ?? []).map(n => slots.get(n)!).find(s => s.status.state !== 'ok')
+      const blocker = (mod.needs ?? []).map(n => slotOf(n)!).find(s => s.status.state !== 'ok')
       if (blocker) {
         slot.status = { name: mod.name, state: blocker.status.state, ...(blocker.status.state === 'degraded' ? { error: `upstream ${blocker.mod.name} not running` } : {}), sinceIso: iso() }
         opts.log('MODULES', `${mod.name} ${blocker.status.state}: upstream ${blocker.mod.name} is ${blocker.status.state}`)
@@ -237,29 +272,29 @@ export function createModules(mods: readonly DaemonModule[], opts: ModuleOpts): 
       const ctx: ModuleCtx = {
         get: <T>(n: string): T => {
           if (!needs.has(n)) throw new Error(`modules: '${mod.name}' called ctx.get('${n}') but '${n}' is not in its needs`)
-          return slots.get(n)!.value as T
+          return valueOf(n) as T
         },
         maybe: <T>(n: string): T | null => {
           if (!wants.has(n)) throw new Error(`modules: '${mod.name}' called ctx.maybe('${n}') but '${n}' is not in its wants`)
-          const s = slots.get(n)!
+          const s = slotOf(n)!
           if (s.status.state !== 'ok') return null
           slot.took.add(n)
-          return s.value as T
+          return valueOf(n) as T
         },
         lazy: <T>(n: string): (() => T) => {
           if (!lazies.has(n)) throw new Error(`modules: '${mod.name}' called ctx.lazy('${n}') but '${n}' is not in its lazy`)
           return () => {
             if (phase === 'init') throw new Error(`modules: lazy('${n}') used by '${mod.name}' before start — only start-phase code may touch a lazy dependency`)
-            const s = slots.get(n)
+            const s = slotOf(n)
             if (!s || s.status.state !== 'ok') throw new Error(`modules: lazy('${n}') used by '${mod.name}' but '${n}' is ${s?.status.state ?? 'missing'}`)
-            return s.value as T
+            return valueOf(n) as T
           }
         },
         late: <T>(n: string): (() => T | null) => {
           if (!lazies.has(n)) throw new Error(`modules: '${mod.name}' called ctx.late('${n}') but '${n}' is not in its lazy`)
           return () => {
-            const s = slots.get(n)
-            return s && s.ready && s.status.state === 'ok' ? (s.value as T) : null
+            const s = slotOf(n)
+            return s && s.ready && s.status.state === 'ok' ? (valueOf(n) as T) : null
           }
         },
         interval: (name, ms, fn) => { slot.regs.push({ kind: 'interval', name, ms, fn }) },
@@ -269,6 +304,7 @@ export function createModules(mods: readonly DaemonModule[], opts: ModuleOpts): 
       }
       try {
         slot.value = await mod.init(ctx)
+        for (const [p, pick] of Object.entries(mod.ports ?? {})) portVals.set(p, pick(slot.value))
         slot.ready = true
       } catch (err) {
         if (mod.optional) { await degrade(slot, err, 'init'); continue }
@@ -286,7 +322,7 @@ export function createModules(mods: readonly DaemonModule[], opts: ModuleOpts): 
       const slot = slots.get(mod.name)!
       if (slot.status.state !== 'ok') continue
       // 上游在 start 段才坏了 ⇒ 我手里拿着的是一个停了的上游:跟着它,停掉我 init 时登记的(整合者评审 #542)
-      const upstream = [...(mod.needs ?? []), ...slot.took].map(n => slots.get(n)!).find(s => s.status.state !== 'ok')
+      const upstream = [...(mod.needs ?? []), ...slot.took].map(n => slotOf(n)!).find(s => s.status.state !== 'ok')
       if (upstream) {
         opts.log('MODULES', `${mod.name} not started: upstream ${upstream.mod.name} became ${upstream.status.state} during start`)
         await stopSlot(slot)
@@ -330,8 +366,8 @@ export function createModules(mods: readonly DaemonModule[], opts: ModuleOpts): 
     },
     status: () => ordered.map(m => ({ ...(slots.get(m.name)?.status ?? { name: m.name, state: 'off' as const, sinceIso: iso() }) })),
     provided: <T>(name: string): T | undefined => {
-      const s = slots.get(name)
-      return s && s.status.state === 'ok' ? (s.value as T) : undefined
+      const s = slotOf(name)
+      return s && s.status.state === 'ok' ? (valueOf(name) as T) : undefined
     },
     stopAll: async () => {
       if (phase === 'stopped') return

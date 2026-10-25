@@ -6,7 +6,7 @@ import type { ConversationStore } from '../../adapters/store/conversation-store'
 import { formatInbound } from '../../domain/prompt-format'
 import type { ProviderId } from '../../domain/conversation'
 import type { Options } from '@anthropic-ai/claude-agent-sdk'
-import type { WechatVoiceDep, WechatCompanionDep } from '../wechat-tool-deps'
+import type { WechatSend, WechatPermissions, WechatCompanionControls } from '../../ports/wechat'
 import type { Db } from '../../lib/db'
 import type { AgentConfig, AgentProviderKind } from '../../lib/agent-config'
 import type { AppendInput } from '../../core/a2a-events-store'
@@ -24,18 +24,8 @@ export interface BootstrapDeps {
   networkGate?: import('../../lib/network-gate').NetworkGate
   /** 工作台正占着这个目录 / 原生会话 ⇒ 会话管理拒 acquire(SessionManagerOptions.executionGuard);缺省 = 不冲突。 */
   executionGuard?: (path: string, providerId: string, nativeId: string | null) => boolean
-  ilink: {
-    sendMessage: (chatId: string, text: string) => Promise<{ msgId: string }>
-    sendFile: (chatId: string, path: string) => Promise<void>
-    editMessage: (chatId: string, msgId: string, text: string) => Promise<void>
-    broadcast: (text: string, accountId?: string) => Promise<{ ok: number; failed: number }>
-    sharePage: (title: string, content: string, opts?: { needs_approval?: boolean; chat_id?: string; account_id?: string }) => Promise<{ url: string; slug: string }>
-    resurfacePage: (q: { slug?: string; title_fragment?: string }) => Promise<{ url: string; slug: string } | null>
-    setUserName: (chatId: string, name: string) => Promise<void>
-    voice: WechatVoiceDep
-    companion: WechatCompanionDep
-    askUser: (chatId: string, prompt: string, hash: string, timeoutMs: number) => Promise<'allow'|'deny'|'timeout'|'undelivered'>
-  }
+  /** 微信那一侧只用这几样(架构终态 A6 窄口,src/ports/wechat.ts):回复 / 通知、发文件、工具权限卡、提示词里「主动关心开没开」。 */
+  ilink: Pick<WechatSend, 'sendMessage' | 'sendFile'> & Pick<WechatPermissions, 'askUser'> & { companion: WechatCompanionControls }
   loadProjects: () => { projects: Record<string, { path: string; last_active: number }>; current: string | null }
   lastActiveChatId: () => string | null
   /** Third `fields` arg lands in the JSONL sidecar (channel.log.jsonl) for
