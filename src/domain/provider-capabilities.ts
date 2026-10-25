@@ -40,7 +40,7 @@ export const CODEX_CAPABILITIES: ProviderCapabilities = {
   supportsDelegation: true,
   supportsResume: true,
   defaultPeer: 'claude',
-  // 访客给的是 read-only 沙盒 + untrusted 审批(codex-agent-provider 的 guest 档),但 Codex 的只读沙盒照样能读
+  // 访客给的是 read-only 沙盒 + untrusted 审批(codex-chat-provider 的 guest 档),但 Codex 的只读沙盒照样能读
   // 整台电脑,cat / ls / grep 这类「安全命令」也不问就跑 ⇒ 访客能把 ~/.private_keys、记忆、access.json 读走
   // (2026-10-10 评审)。和 Cursor 一样对访客关门;trusted / admin 不受影响。
   // 网络:workspace-write 沙箱下 shell 能不能上网没真机核实过 ⇒ 按收不住写。

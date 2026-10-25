@@ -336,7 +336,7 @@ export function createAgyAgentProvider(opts: AgyAgentProviderOptions): AgentProv
       let currentAbort: AbortController | null = null
       // CONTROLLER RULING 3: appendInstructions rides the -p text of the
       // FIRST dispatch of this SESSION OBJECT — codex's `instructionsInjected`
-      // pattern (codex-agent-provider.ts), deliberately independent of
+      // pattern (the former codex SDK provider), deliberately independent of
       // `isFirst`/conversationId: a resumeSessionId-seeded spawn has no
       // "first fresh turn" (it always sends --conversation) but still needs
       // the instructions exactly once.
@@ -397,7 +397,7 @@ export function createAgyAgentProvider(opts: AgyAgentProviderOptions): AgentProv
               // return()ed/thrown WITHOUT ever being iterated must have ZERO
               // side effects on session state — codex consumes its
               // equivalent prefix inside the generator for the same reason,
-              // see codex-agent-provider.ts). Only once the generator body
+              // see the former codex SDK provider). Only once the generator body
               // actually starts running (the caller pulled at least one
               // event) do isFirst and instructionsInjected actually flip,
               // so an abandoned dispatch leaves the NEXT real dispatch's

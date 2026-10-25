@@ -9,9 +9,9 @@
 import { describe, expect, it } from 'vitest'
 import { readFileSync } from 'node:fs'
 import { join } from 'node:path'
-import type { Codex, Thread, ThreadEvent } from '@openai/codex-sdk'
-import { codexAppServerErrorCode, codexErrorCode, watchCodexEvents } from './codex-errors'
-import { createCodexAgentProvider } from './codex-agent-provider'
+import { codexAppServerErrorCode, codexErrorCode } from './codex-errors'
+import { createCodexChatProvider } from './codex-chat-provider'
+import { createScriptedCodex, type CodexScriptedTurn, type ScriptedRpc } from '../../../test-support/executors/codex-scripted'
 import type { AgentEvent } from '../../../ports/agent-provider'
 import { TIER_PROFILES } from '../../../domain/user-tier'
 import { providerErrorCodeOf } from '../../../lib/provider-error-code'
@@ -58,120 +58,74 @@ describe('codexAppServerErrorCode — 工作台 app-server 的结构化 codexErr
   })
 })
 
-// ── 边界超时 ────────────────────────────────────────────────────────────────
+// ── 边界超时 + 码:真的 codex 对话 provider(剧本 app-server,B1 起) ─────────────────────
 
-const RECONNECT = { type: 'error', message: 'Reconnecting... waiting for network (Connection failed: error sending request)' } as unknown as ThreadEvent
-
-async function* stream(events: ThreadEvent[], tail: 'hang' | 'end' | Error = 'end'): AsyncGenerator<ThreadEvent> {
-  for (const ev of events) yield ev
-  if (tail === 'hang') await new Promise<never>(() => {})
-  if (tail instanceof Error) throw tail
-}
-
-describe('watchCodexEvents', () => {
-  it('拿掉非终止的重连通知(只记日志);连不上超过 connect 上限 ⇒ abort + 带 network 码抛出', async () => {
-    let aborted = false
-    const notices: string[] = []
-    const seen: string[] = []
-    const err = await (async () => {
-      for await (const ev of watchCodexEvents(stream([{ type: 'thread.started', thread_id: 't' } as ThreadEvent, RECONNECT, RECONNECT], 'hang'), {
-        timeouts: { firstEventTimeoutMs: 10_000, connectTimeoutMs: 30 }, abort: () => { aborted = true }, onNotice: m => notices.push(m),
-      })) seen.push(ev.type)
-    })().catch(e => e)
-    expect(seen).toEqual(['thread.started'])
-    expect(notices).toHaveLength(2)
-    expect(aborted).toBe(true)
-    expect(providerErrorCodeOf(err)).toBe('network')
-    expect((err as Error).message).toMatch(/连不上/)
-  })
-
-  it('一个有进展的事件都没有 ⇒ first-event 上限收尾(network)', async () => {
-    const err = await (async () => {
-      for await (const _ of watchCodexEvents(stream([{ type: 'thread.started', thread_id: 't' } as ThreadEvent, { type: 'turn.started' } as ThreadEvent], 'hang'), {
-        timeouts: { firstEventTimeoutMs: 30, connectTimeoutMs: 10_000 }, abort: () => {},
-      })) { /* drain */ }
-    })().catch(e => e)
-    expect(providerErrorCodeOf(err)).toBe('network')
-  })
-
-  it('有进展之后不再受 first-event 上限约束;正常结束原样透传', async () => {
-    const out: string[] = []
-    for await (const ev of watchCodexEvents(stream([
-      { type: 'item.completed', item: { id: 'i', type: 'agent_message', text: 'hi' } } as ThreadEvent,
-      { type: 'turn.completed', usage: null } as unknown as ThreadEvent,
-    ]), { timeouts: { firstEventTimeoutMs: 1, connectTimeoutMs: 1 }, abort: () => {} })) out.push(ev.type)
-    expect(out).toEqual(['item.completed', 'turn.completed'])
-  })
-
-  it('重连期间的码取最后一条通知(401 重连 ⇒ 认证,不是网络)', async () => {
-    const err = await (async () => {
-      for await (const _ of watchCodexEvents(stream([{ type: 'error', message: 'Reconnecting... 2/5 (unexpected status 401 Unauthorized: Incorrect API key provided: x, auth error code: invalid_api_key)' } as unknown as ThreadEvent], 'hang'), {
-        timeouts: { firstEventTimeoutMs: 10_000, connectTimeoutMs: 20 }, abort: () => {},
-      })) { /* drain */ }
-    })().catch(e => e)
-    expect(providerErrorCodeOf(err)).toBe('auth_rejected')
-  })
-})
-
-// ── 真的 codex provider(假 SDK) ──────────────────────────────────────────
-
-function fakeCodex(turn: () => AsyncGenerator<ThreadEvent>): Codex {
-  const thread = {
-    id: 't1',
-    async runStreamed() { return { events: turn() } },
-    async run() { throw new Error('cheapEval must stream') },
-  } as unknown as Thread
-  return { startThread: () => thread, resumeThread: () => thread } as unknown as Codex
-}
+const RECONNECT = 'Reconnecting... waiting for network (Connection failed: error sending request)'
 const spawnCtx = { tierProfile: TIER_PROFILES.trusted, permissionMode: 'strict' as const, chatId: 'c' }
 async function drain(events: AsyncIterable<AgentEvent>): Promise<AgentEvent[]> { const out: AgentEvent[] = []; for await (const ev of events) out.push(ev); return out }
+function provider(turns: CodexScriptedTurn[], timeouts = { firstEventTimeoutMs: 10_000, connectTimeoutMs: 30 }, rewrite?: (m: ScriptedRpc) => ScriptedRpc | ScriptedRpc[] | null) {
+  const scripted = createScriptedCodex({ turns, ...(rewrite ? { rewrite } : {}) })
+  return createCodexChatProvider({ codexPathOverride: '/bin/codex', spawnProcess: scripted.spawn, timeouts, rpcTimeoutMs: 2_000, closeTimeoutMs: 300 })
+}
 
 describe('codex provider —— 会话路径', () => {
   it('拒连(沙箱实测形状):不再无限沉默 —— 重连通知不下发,connect 上限后以 network 码的 error 事件收尾', async () => {
-    const p = createCodexAgentProvider({ codexFactory: () => fakeCodex(() => stream([{ type: 'thread.started', thread_id: 't1' } as ThreadEvent, { type: 'turn.started' } as ThreadEvent, RECONNECT, RECONNECT], 'hang')), timeouts: { firstEventTimeoutMs: 10_000, connectTimeoutMs: 30 } })
-    const session = await p.spawn({ alias: 'a', path: '/p' }, spawnCtx)
+    const session = await provider([{ steps: [{ reconnect: RECONNECT }, { reconnect: RECONNECT }], hang: true }]).spawn({ alias: 'a', path: '/p' }, spawnCtx)
     const events = await drain(session.dispatch('hi'))
     const errors = events.filter(e => e.kind === 'error')
     expect(errors).toHaveLength(1)
     expect(errors[0]).toMatchObject({ kind: 'error', code: 'network' })
     expect(events.some(e => e.kind === 'error' && /^Reconnecting/.test(e.message))).toBe(false)
+    await session.close()
   })
 
-  it('exit 1 带 websocket 401 的 stderr(之前:原样抛出,coordinator 拿不到 summary)⇒ auth_rejected 的 error 事件', async () => {
-    const exit = new Error(byId('codex.bad_key.session_exit').message)
-    const p = createCodexAgentProvider({ codexFactory: () => fakeCodex(() => stream([{ type: 'thread.started', thread_id: 't1' } as ThreadEvent], exit)) })
-    const session = await p.spawn({ alias: 'a', path: '/p' }, spawnCtx)
+  it('重连期间的码取最后一条通知(401 重连 ⇒ 认证,不是网络)', async () => {
+    const session = await provider([{ steps: [{ reconnect: 'Reconnecting... 2/5 (unexpected status 401 Unauthorized: Incorrect API key provided: x, auth error code: invalid_api_key)' }], hang: true }], { firstEventTimeoutMs: 10_000, connectTimeoutMs: 20 }).spawn({ alias: 'a', path: '/p' }, spawnCtx)
     const events = await drain(session.dispatch('hi'))
     expect(events.filter(e => e.kind === 'error')).toEqual([expect.objectContaining({ code: 'auth_rejected' })])
+    await session.close()
   })
 
-  it('已经发过终态 turn.failed 之后的 exit 1 不再重复', async () => {
-    const failed = { type: 'turn.failed', error: { message: 'unexpected status 401 Unauthorized: Incorrect API key provided: x, auth error code: invalid_api_key' } } as unknown as ThreadEvent
-    const p = createCodexAgentProvider({ codexFactory: () => fakeCodex(() => stream([failed], new Error('Codex Exec exited with code 1: Reading prompt from stdin...\n'))) })
-    const session = await p.spawn({ alias: 'a', path: '/p' }, spawnCtx)
+  it('app-server 退出、stderr 带 websocket 401 ⇒ auth_rejected 的 error 事件(不抛,协调器拿得到 summary)', async () => {
+    const session = await provider([{ steps: [{ crash: byId('codex.bad_key.session_exit').message }] }]).spawn({ alias: 'a', path: '/p' }, spawnCtx)
     const events = await drain(session.dispatch('hi'))
     expect(events.filter(e => e.kind === 'error')).toEqual([expect.objectContaining({ code: 'auth_rejected' })])
+    await session.close()
+  })
+
+  it('终态失败只发一次 error(error 通知 + turn/completed{failed} 不重复)', async () => {
+    const session = await provider([{ steps: [], fail: 'unexpected status 401 Unauthorized: Incorrect API key provided: x, auth error code: invalid_api_key' }]).spawn({ alias: 'a', path: '/p' }, spawnCtx)
+    const events = await drain(session.dispatch('hi'))
+    expect(events.filter(e => e.kind === 'error')).toEqual([expect.objectContaining({ code: 'auth_rejected' })])
+    await session.close()
   })
 
   it('额度耗尽 ⇒ quota', async () => {
-    const p = createCodexAgentProvider({ codexFactory: () => fakeCodex(() => stream([{ type: 'turn.failed', error: { message: byId('codex.quota.session').message } } as unknown as ThreadEvent])) })
-    const session = await p.spawn({ alias: 'a', path: '/p' }, spawnCtx)
+    const session = await provider([{ steps: [], fail: byId('codex.quota.session').message }]).spawn({ alias: 'a', path: '/p' }, spawnCtx)
     const events = await drain(session.dispatch('hi'))
     expect(events.filter(e => e.kind === 'error')).toEqual([expect.objectContaining({ code: 'quota' })])
+    await session.close()
   })
 })
 
 describe('codex provider —— 一次性评估', () => {
   it('拒连:不再一直挂着 —— 带 network 码抛出', async () => {
-    const p = createCodexAgentProvider({ codexFactory: () => fakeCodex(() => stream([RECONNECT], 'hang')), timeouts: { firstEventTimeoutMs: 10_000, connectTimeoutMs: 30 } })
-    const err = await p.cheapEval!('x').catch(e => e)
+    // 一次性评估的线程不走剧本(总是回答)—— 这里让 app-server 把 turn/start 之后的通知换成一直重连。
+    const err = await provider([], { firstEventTimeoutMs: 10_000, connectTimeoutMs: 30 }, m => {
+      if (m.method === 'turn/started') return [m, { method: 'error', params: { threadId: m.params.threadId, turnId: m.params.turn.id, willRetry: true, error: { message: RECONNECT } } }]
+      if (m.method === 'item/completed' || m.method === 'turn/completed') return null
+      return m
+    }).cheapEval!('x').catch(e => e)
     expect(providerErrorCodeOf(err)).toBe('network')
   })
 
   it('401 终态 ⇒ 带码抛出(auth_rejected),原文保留', async () => {
     const message = byId('codex.bad_key.cheap_eval').message
-    const p = createCodexAgentProvider({ codexFactory: () => fakeCodex(() => stream([{ type: 'turn.failed', error: { message } } as unknown as ThreadEvent])) })
-    const err = await p.cheapEval!('x').catch(e => e)
+    const err = await provider([], undefined, m => {
+      if (m.method === 'item/completed') return null
+      if (m.method === 'turn/completed') return { method: 'turn/completed', params: { threadId: m.params.threadId, turn: { id: m.params.turn.id, status: 'failed', error: { message, codexErrorInfo: null } } } }
+      return m
+    }).cheapEval!('x').catch(e => e)
     expect(providerErrorCodeOf(err)).toBe('auth_rejected')
     expect((err as Error).message).toBe(message)
   })

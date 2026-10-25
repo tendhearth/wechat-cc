@@ -61,15 +61,13 @@ export interface TestDaemonOpts {
    */
   recordClaudeSpawnOptions?: (options: Record<string, unknown>) => void
   /**
-   * Optional callback fired with the thread options passed to
-   * `Codex.startThread()` / `resumeThread()` for each spawned codex
-   * AgentSession. Used by tier-permissions e2e tests to assert that
-   * admin / trusted / guest chats produce different `sandboxMode` +
-   * `approvalPolicy` shapes on the codex side.
+   * Optional callback fired with the app-server `thread/start` /
+   * `thread/resume` params (plus `sandboxMode` = sandbox, `workingDirectory`
+   * = cwd) for each spawned codex AgentSession. Used by tier-permissions e2e
+   * tests to assert that admin / trusted / guest chats produce different
+   * `sandboxMode` + `approvalPolicy` shapes on the codex side.
    *
-   * Not called for cheapEval — the cheap codex thread uses `thread.run()`
-   * (not runStreamed), which the fake doesn't implement, so the recorder
-   * naturally only fires on the session-spawn path.
+   * Not called for cheapEval one-shot threads (see fake-sdk.ts).
    */
   recordCodexSpawnOptions?: (options: Record<string, unknown>) => void
   /**

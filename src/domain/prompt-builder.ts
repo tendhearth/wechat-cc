@@ -455,9 +455,9 @@ function a2aSection(): string {
  * MCP tools are already registered for admin sessions; this tells the agent
  * they exist and WHEN to reach for them, so a vague runtime complaint ("不回了")
  * triggers a diagnosis rather than just an apology. Not a keyword rule — the
- * agent still decides. Exported so the codex provider can prepend it per-spawn
- * (codex has no system-prompt slot; see codex-agent-provider first-dispatch
- * injection). Kept tight — every section rides on every turn.
+ * agent still decides. Exported so the codex provider can carry it per-spawn
+ * (it rides codex app-server's developerInstructions slot; see
+ * codex-chat-provider). Kept tight — every section rides on every turn.
  */
 export function daemonSelfHealSection(): string {
   return `## 自我诊断 / 自愈（管理员）

@@ -324,7 +324,7 @@ export function makeRoutes({ deps, getDelegate, maybePrefix, mounted }: MakeRout
     // detected by both providers' replyToolCalled flag. After B1 these are
     // exposed by the stdio `wechat` server (renamed from `wechat_ipc`),
     // which is what claude-agent-provider's REPLY_TOOL_NAMES set and
-    // codex-agent-provider's WECHAT_MCP_SERVER='wechat' check match against.
+    // the codex chat provider's WECHAT_MCP_SERVER='wechat' check match against.
     'POST /v1/wechat/reply': async (_q, body) => {
       if (!deps.ilink) return { status: 503, body: { error: 'ilink_not_wired' } }
       // Body is pre-validated by index.ts via WechatReplyRequest schema.

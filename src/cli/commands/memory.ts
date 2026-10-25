@@ -221,25 +221,7 @@ const memorySynthesizeCmd = defineCommand({
     // Mirrors each provider's cheapEval (claude haiku-class / codex minimal),
     // built inline so the CLI doesn't need a live daemon ProviderRegistry.
     const sdkEval = async (prompt: string): Promise<string> => {
-      if (provider === 'codex') {
-        const { Codex } = await import('@openai/codex-sdk')
-        const { resolveCodexCheapModel } = await import('../../adapters/executors/codex/codex-cheap-model')
-        const { tmpdir } = await import('node:os')
-        const thread = new Codex().startThread({
-          model: resolveCodexCheapModel(),
-          sandboxMode: 'read-only',
-          approvalPolicy: 'never',
-          webSearchEnabled: false,
-          networkAccessEnabled: false,
-          workingDirectory: tmpdir(),
-          skipGitRepoCheck: true,
-        })
-        const turn = await thread.run(prompt)
-        return (turn.items as Array<{ type?: string; text?: string }>)
-          .filter(i => i.type === 'agent_message' && typeof i.text === 'string')
-          .map(i => i.text!)
-          .join('')
-      }
+      if (provider === 'codex') return codexCheapEval(prompt)
       // claude (default)
       const { query } = await import('@anthropic-ai/claude-agent-sdk')
       const model = process.env['WECHAT_CLAUDE_CHEAP_MODEL'] || 'claude-haiku-4-5'
@@ -316,27 +298,17 @@ async function profileProvider(chatId: string, requested: string | undefined, db
   return 'claude'
 }
 
+/** codex 的一次性评估:和 daemon 里 Codex provider 的 cheapEval 同一条路(codex app-server,只读、不给网、不给工具)。 */
+async function codexCheapEval(prompt: string): Promise<string> {
+  const { createCodexChatProvider } = await import('../../adapters/executors/codex/codex-chat-provider')
+  const { findCodexBinary } = await import('../../lib/find-codex-binary')
+  const bin = findCodexBinary()
+  return createCodexChatProvider(bin ? { codexPathOverride: bin } : {}).cheapEval!(prompt)
+}
+
 function makeProfileSdkEval(provider: string): (prompt: string) => Promise<string> {
   return async (prompt: string): Promise<string> => {
-    if (provider === 'codex') {
-      const { Codex } = await import('@openai/codex-sdk')
-      const { resolveCodexCheapModel } = await import('../../adapters/executors/codex/codex-cheap-model')
-      const { tmpdir } = await import('node:os')
-      const thread = new Codex().startThread({
-        model: resolveCodexCheapModel(),
-        sandboxMode: 'read-only',
-        approvalPolicy: 'never',
-        webSearchEnabled: false,
-        networkAccessEnabled: false,
-        workingDirectory: tmpdir(),
-        skipGitRepoCheck: true,
-      })
-      const turn = await thread.run(prompt)
-      return (turn.items as Array<{ type?: string; text?: string }>)
-        .filter(i => i.type === 'agent_message' && typeof i.text === 'string')
-        .map(i => i.text!)
-        .join('')
-    }
+    if (provider === 'codex') return codexCheapEval(prompt)
     const { query } = await import('@anthropic-ai/claude-agent-sdk')
     const model = process.env['WECHAT_CLAUDE_CHEAP_MODEL'] || 'claude-haiku-4-5'
     let text = ''
