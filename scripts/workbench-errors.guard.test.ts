@@ -164,7 +164,7 @@ describe('工作台抛出的码都归了类(反向守卫)', () => {
 })
 
 describe('记忆编辑回的 code 字面量都在表里(10-23:原来的扫描只认 Error(…) / {error:…},漏了 { ok:false, code:… })', () => {
-  const files = ['src/daemon/internal-api/routes-memory.ts', 'src/daemon/memory/nightly-runtime.ts', 'src/lib/memory-edit.ts']
+  const files = ['src/features/memory/routes.ts', 'src/features/memory/nightly-runtime.ts', 'src/lib/memory-edit.ts']
   const codes = [...new Set(files.flatMap(f => [...readFileSync(join(ROOT, f), 'utf8').matchAll(/'(memory_(?:changed|no_owner|edit_[a-z_]+))'/g)].map(m => m[1]!)))]
   // 记忆编辑这一族:memory_changed / memory_no_owner / memory_edit_*(别的 memory_* 是老路由的 error 字段,不归这张表)
   it('扫到了', () => { expect(codes.sort()).toEqual(['memory_changed', 'memory_edit_bulk', 'memory_edit_failed', 'memory_edit_stale_key', 'memory_edit_too_large', 'memory_no_owner']) })

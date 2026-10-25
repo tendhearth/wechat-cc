@@ -21,7 +21,7 @@ import { makeSessionStore } from '../../adapters/store/session-store'
 import type { Db } from '../../lib/db'
 import { needsRefresh, formatSummaryRequest } from './summarizer'
 import { resolveProjectJsonlPath } from './path-resolver'
-import { buildMemorySnapshot } from '../memory/snapshot'
+import { buildMemorySnapshot } from '../../features/memory'
 
 export interface SummaryRefreshDeps {
   stateDir: string

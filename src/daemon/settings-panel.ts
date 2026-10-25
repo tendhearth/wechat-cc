@@ -162,9 +162,9 @@ export interface SettingsPanelDeps {
     forgetAll(): void
   }
   /** 手机「CC 记得你」(2026-09-25,memory/nightly-runtime)。 */
-  curatedMemory?: () => import('./memory/nightly-runtime').CuratedView
+  curatedMemory?: () => import('../features/memory').CuratedView
   /** 主人逐条纠错(2026-10-06):不对 / 过时 / 删掉。没接 ⇒ 503。 */
-  correctMemory?: (id: string, verdict: import('./memory/nightly-runtime').MemoryVerdict) => Promise<{ text: string }>
+  correctMemory?: (id: string, verdict: import('../features/memory').MemoryVerdict) => Promise<{ text: string }>
   /** 远程隧道信息(启用时):relay wss + 本机 daemon id。手机页出门时用它
    *  经中继访问。缺省 ⇒ 手机页只能在同一 Wi-Fi 直连。 */
   remoteInfo?: () => { relay: string; id: string } | null

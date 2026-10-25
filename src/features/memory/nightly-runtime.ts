@@ -23,7 +23,7 @@ export interface NoticeDeps {
   careGate(chatId: string, nowIso: string): { ok: true } | { ok: false; reason: string }
   claim(chatId: string, nowIso: string): void
   /** CC 主动开口唯一的门(第三批 3a):别烦我、免打扰、两条路都送不到由它判;往哪儿送(微信 / App)由它背后的 proactive-channel 定。 */
-  speech: import('../speech/policy').SpeechPolicy
+  speech: import('../../daemon/speech/policy').SpeechPolicy
 }
 export interface CuratedItem {
   /** 这条是从哪几句聊天里来的(时间 + 摘一段;10-20 起每晚整理才记,老条目为空)。 */

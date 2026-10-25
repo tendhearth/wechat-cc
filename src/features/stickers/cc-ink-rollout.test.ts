@@ -5,7 +5,7 @@ import { join, basename } from 'node:path'
 import { makeStickerLib, seedStarterStickers } from './stickers'
 import { buildStickerPrompt } from './artist'
 import { buildPostcardPrompt } from '../../domain/visit'
-import { buildPortraitPrompt } from '../../daemon/memory-llm-ops'
+import { buildPortraitPrompt } from '../memory/llm-ops'
 
 describe('CC ink rollout', () => {
   it('adds the versioned pack to existing collections once, preserving old files', () => {

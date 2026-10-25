@@ -21,7 +21,7 @@ import { buildLifecycleDeps } from './lifecycle-deps'
 import { buildTickBodies, type TickBodies } from './tick-bodies'
 import type { ProactiveOutbound } from '../companion/proactive-channel'
 import type { SpeechPolicy } from '../speech/policy'
-import { makeMemoryLlmOps } from '../memory-llm-ops'
+import { makeMemoryLlmOps } from '../../features/memory'
 import { makeAtelierTick } from '../../features/atelier'
 
 export interface WireMainOpts {
@@ -163,7 +163,7 @@ export interface WiredDeps {
   /** App 那条路本身(没开中继 v2 / 没配对 ⇒ null);main.ts 接给信(微信不通时寄到 App)。 */
   companionApp: import('../companion/proactive-channel').AppChannel | null
   /** 每晚记忆整理运行时(pipeline-deps 造);main.ts 挂定时器 + setMemoryNightly。 */
-  memoryNightly: import('../memory/nightly-runtime').MemoryNightlyRuntime
+  memoryNightly: import('../../features/memory').MemoryNightlyRuntime
   mattersService: import('../../core/matters/service').MattersService | null
   /** 「一件事」活动时间:退订工作台事件 + 清节流定时器;main.ts 登记进 shutdown。 */
   stopMatterActivity: () => void
@@ -187,7 +187,7 @@ export interface WiredDeps {
 
 export function wireMain(opts: WireMainOpts): WiredDeps {
   // CC 画的你 —— 小像自动刷新用的 generatePortrait(portrait-artist tick)。
-  // memory-llm-ops 是无状态工厂(每次读盘),tick 与 pipeline-deps 各持一个
+  // 记忆的 LLM 操作(src/features/memory/llm-ops.ts)是无状态工厂(每次读盘),tick 与 pipeline-deps 各持一个
   // 无妨。构造在 buildTickBodies 前,以便传入。
   const tickMemoryLlm = makeMemoryLlmOps({
     stateDir: opts.stateDir, db: opts.db,

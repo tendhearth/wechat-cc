@@ -8,7 +8,7 @@ import { makeCommandRegistry, yieldNumbersToOpenChoice } from '../commands/regis
 import { choiceTakes, type OpenChoice } from '../inbound/mw-task-reference'
 import { makeTaskCommand } from '../commands/task-command'
 import { join } from 'node:path'
-import { recallFromMemory } from '../memory/recall'
+import { recallFromMemory } from '../../features/memory'
 import { randomBytes } from 'node:crypto'
 import { spawn } from 'node:child_process'
 import { dirname } from 'node:path'
@@ -46,9 +46,9 @@ import { findOnPath } from '../../lib/util'
 import { isCompiledBundle } from '../../lib/runtime-info'
 import type { A2AAgentRecord } from '../../lib/agent-config'
 import { materializeAttachments } from '../media'
-import { makeFireMilestonesFor, makeRecordInbound } from './side-effects'
+import { makeFireMilestonesFor, makeMaybeWriteWelcomeObservation, makeRecordInbound } from './side-effects'
 import { makeMessagesStore } from '../../lib/messages-store'
-import { wireMemory } from './wire-memory'
+import { wireMemory } from '../../features/memory'
 import { wirePetTurn } from './wire-pet-turn'
 import { wireCompanionConverse } from './wire-converse'
 import { makeDedupStore } from '../../lib/dedup-store'
@@ -152,7 +152,7 @@ export interface BuildPipelineDepsResult {
    */
   petTurn: PetTurnDep
   /** 每晚记忆整理运行时;main.ts 挂定时器并接到 internal-api。 */
-  memoryNightly: import('../memory/nightly-runtime').MemoryNightlyRuntime
+  memoryNightly: import('../../features/memory').MemoryNightlyRuntime
   /** 手机 app 原生推送出口(中继 v2);没开 v2 ⇒ 调用回 null。终端会话推送用(main.ts 懒绑定)。 */
   appPush: import('../../features/terminal').AppPushOutlet
   /**
@@ -271,8 +271,14 @@ export function buildPipelineDeps(opts: PipelineDepsOpts, late: PipelineDepsLate
   // never passes through a prompt.
   // 经 CC 开口那道门(guest_request,blocking);交给门就算办完,重试归待说队列(inbound/guest-notify.ts)
   const notifyOwnerOfGuest = makeGuestOwnerNotify({ speech: () => speech, adminChatId: () => resolveAdminChatId(loadAccess(), loadCompanionConfig(stateDir), null), log: (t, l) => log(t, l) })
-  // 记忆(重构第二批步 6c,wire-memory.ts):LLM 记忆操作、每晚整理、欢迎时的观察。
-  const { memoryLlmOps, memoryNightly, maybeWriteWelcomeObservation } = wireMemory({ stateDir, db, boot, chatPrefs, careLedger, speech, log })
+  // 记忆(src/features/memory,经 index.ts):LLM 记忆操作、每晚整理;欢迎时的观察(side-effects.ts)。
+  const { memoryLlmOps, memoryNightly } = wireMemory({ stateDir, db, boot, chatPrefs, careLedger, speech, log })
+  const maybeWriteWelcomeObservation = makeMaybeWriteWelcomeObservation({
+    stateDir,
+    db,
+    agentConfig: boot.agentConfig,
+    getMode: (cid) => boot.coordinator.getMode(cid),
+  })
 
   const adminCommandsHandler = makeAdminCommands({
     stateDir, isAdmin,
@@ -303,7 +309,7 @@ export function buildPipelineDeps(opts: PipelineDepsOpts, late: PipelineDepsLate
     botNameFallback: (cid) => botNameFromModeFallback(boot.coordinator.getMode(cid)),
     // Follows the admin conversation's provider (decided design); falls back
     // to the registry's cheapest eval when the mode isn't solo / unknown.
-    // Delegates to the shared factory (memory-llm-ops.ts) so this path and
+    // Delegates to the shared factory (src/features/memory/llm-ops.ts) so this path and
     // the internal-api routes the desktop calls resolve cheapEval identically.
     synthesizeMemory: (adminChatId) => memoryLlmOps.synthesize(adminChatId),
     readCuratedMemory: async () => memoryNightly.readCurated(),

@@ -12,7 +12,7 @@ import type { IlinkAdapter } from '../ilink-glue'
 import type { ChatPrefsStore } from '../chat-prefs'
 import type { makeMessagesStore } from '../../lib/messages-store'
 import type { MattersService } from '../../core/matters/service'
-import type { MemoryNightlyRuntime } from '../memory/nightly-runtime'
+import type { MemoryNightlyRuntime } from '../../features/memory'
 import type { PipelineDepsOpts } from './pipeline-deps-opts'
 import { jobsView, jobsAction } from '../../features/jobs'
 import { pickJobExecutor } from './tick-bodies'
@@ -113,7 +113,7 @@ return makeSettingsPanel({
     entryReceipt:(requestId:string)=>opts.workbench!.entryReceipt(requestId,{ownerKey:ownerChatId()??'',surface:'phone'}),
   }}:{}),
   curatedMemory: () => memoryNightly.curatedView(),
-  correctMemory: (id: string, verdict: import('../memory/nightly-runtime').MemoryVerdict) => memoryNightly.correct(id, verdict),
+  correctMemory: (id: string, verdict: import('../../features/memory').MemoryVerdict) => memoryNightly.correct(id, verdict),
   ...(mattersService && opts.matters ? { matters: { list: (f) => mattersService.list(f), detail: (id) => mattersService.detail(id), inputReceipt:mattersService.inputReceipt, say: (id, text, input) => mattersService.say(id, text, 'phone',input), permission:mattersService.permission,answer:mattersService.answer,stop:mattersService.stop,worktree:mattersService.worktree,rewindPreview:mattersService.rewindPreview,rewind:mattersService.rewind,artifactChunk:mattersService.artifactChunk,handoff:mattersService.handoff,seenOnPhone: (id) => opts.matters!.bind(id, 'phone', 'pwa') } } : {}),
   // 「CC 的信」(2026-10-18):只读存档,寄出去了的才列。
   ...(opts.activity ? { activity: opts.activity } : {}),

@@ -17,7 +17,7 @@ import { makeActivityLog } from '../activity-log'
 import { makeActivityCommand } from '../activity/command'
 import { collectActivity } from '../cc-activity-source'
 import { listLetters } from '../../features/letters'
-import { MEMORY_LOG_FILE, ownerMemoryRoot } from '../memory/nightly'
+import { MEMORY_LOG_FILE, ownerMemoryRoot } from '../../features/memory'
 import type { makePermissionDecisionsStore } from '../permission-decisions-store'
 import type { IlinkAdapter } from '../ilink-glue'
 

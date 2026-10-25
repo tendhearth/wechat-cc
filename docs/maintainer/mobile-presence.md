@@ -38,7 +38,7 @@
 
 ## CC 眼中的你(2026-09-26)
 
-「此刻」点 CC 进入 `p-you`:一封信的样子(手写一句、「昨晚」便签、五栏按承诺→关于你→偏好→身边的人→近况)。显示派生全部由 daemon `src/daemon/memory/memory-text.ts` 算好,经 `/m/api/memory` 下发;眨眼帧 256px 全彩经 `/m/api/art/blink` 懒加载,不进页面(守 512KB 中继帧)。源码 `apps/mobile/src/you.{js,css}`。
+「此刻」点 CC 进入 `p-you`:一封信的样子(手写一句、「昨晚」便签、五栏按承诺→关于你→偏好→身边的人→近况)。显示派生全部由 daemon `src/features/memory/memory-text.ts` 算好,经 `/m/api/memory` 下发;眨眼帧 256px 全彩经 `/m/api/art/blink` 懒加载,不进页面(守 512KB 中继帧)。源码 `apps/mobile/src/you.{js,css}`。
 
 
 ## 统一交办与材料（2026-09-27 开发分支）

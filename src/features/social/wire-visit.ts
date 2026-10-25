@@ -35,7 +35,7 @@ import type { ChannelStore } from '../../core/penpal-channel-store'
 import type { LetterStore } from './penpal-letter-store'
 import type { ActiveVisit } from '../../domain/companion-presence'
 import { loadCompanionConfig } from '../../daemon/companion/config'
-import { makeMemoryFS } from '../../daemon/memory/fs-api'
+import { makeMemoryFS } from '../../adapters/store/memory-fs'
 import { NEIGHBORS, pickNeighbor, neighborById, neighborPersona, type Neighbor } from '../../domain/neighbors'
 import { overviewForOthers } from '../../lib/memory-owner'
 

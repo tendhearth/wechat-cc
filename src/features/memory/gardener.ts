@@ -35,8 +35,8 @@ import { writeFileAtomic } from '../../lib/json-file'
 
 export const MIN_GARDEN_BYTES = 2048
 export const MAX_GARDEN_FILES_PER_TICK = 5
-/** Mirrors fs-api.ts's default `maxFileBytes` (100_000) — the gardener writes
- * via raw fs (atomicWriteFile), bypassing memory/fs-api.ts entirely, so it
+/** Mirrors adapters/store/memory-fs.ts's default `maxFileBytes` (100_000) — the gardener writes
+ * via raw fs (atomicWriteFile), bypassing adapters/store/memory-fs.ts entirely, so it
  * must enforce the same cap itself or it could write a file no memory_write
  * caller would ever have been allowed to create. */
 export const MAX_GARDEN_CURATED_BYTES = 100_000
@@ -245,8 +245,8 @@ function validateCuration(original: string, curated: string): InvalidCuration | 
   const curatedBytes = Buffer.byteLength(curated, 'utf8')
   const originalBytes = Buffer.byteLength(original, 'utf8')
 
-  // Absolute cap — mirrors fs-api.ts's maxFileBytes default. The gardener
-  // writes via raw fs (atomicWriteFile), bypassing fs-api.ts entirely, so
+  // Absolute cap — mirrors memory-fs.ts's maxFileBytes default. The gardener
+  // writes via raw fs (atomicWriteFile), bypassing memory-fs.ts entirely, so
   // nothing else would stop it writing a file no memory_write caller could
   // ever have created.
   if (curatedBytes > MAX_GARDEN_CURATED_BYTES) {

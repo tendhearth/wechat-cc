@@ -11,19 +11,16 @@
  * 地基(锁、db、几个共享单例)不是模块,见 foundation.ts。
  */
 import { randomBytes } from 'node:crypto'
-import { join } from 'node:path'
 import { log } from '../lib/log'
 import { loadAccess } from '../lib/access'
 import { makeMtimeCachedConfigReader } from '../lib/agent-config'
 import { countInboundMessagesSync, NEW_RELATIONSHIP_MSG_COUNT } from '../lib/messages-store'
 import { notifyDesktop } from '../lib/desktop-notify'
-import { readOwnerDoc, renderOwnerForPrompt } from '../lib/memory-owner'
 import { APP_VERSION, BUILD_SHA } from '../lib/app-version'
 import type { Lifecycle } from '../lib/lifecycle'
 import { SUPERVISED_ENV } from '../domain/supervised-env'
 import { providerCallTarget } from '../app/provider-registry'
 import { capabilitiesFor } from '../domain/capability-matrix'
-import { CORE_MEMORY_MAX_CHARS, KNOWLEDGE_MEMORY_MAX_CHARS } from '../domain/prompt-builder'
 import { summarizeJobs } from '../core/scheduled-jobs-store'
 import { makeProjectLessons } from '../core/workbench/project-lessons'
 import type { WorkbenchService } from '../core/workbench/service'
@@ -42,12 +39,7 @@ import { makeSelfChangeGlue } from './self-change-glue'
 import { runSelftestConverse } from './selftest'
 import { providerDisplayName } from './provider-display-names'
 import { bootstrapModules, resolveAdminChatId, type Bootstrap } from './bootstrap'
-import { makeMemoryFS } from './memory/fs-api'
-import { makeMemoryLlmOps, resolveCheapEval } from './memory-llm-ops'
-import { MEMORY_FILENAME, parseMemoryDoc, renderForPrompt } from './memory/curated-doc'
-import { readDraftForPrompt } from './memory/today-draft'
-import { makeMemoryImportCommand } from './memory/import-command'
-import { registerMemoryNightly } from './memory/nightly-lifecycle'
+import { memoryFeature, memoryNightlyModule, makeMemoryLlmOps, resolveCheapEval, makeMemoryImportCommand, type MemoryFeature, type MemoryLlmOps, type MemoryPromptReads } from '../features/memory'
 import { loadCompanionConfig } from './companion/config'
 import { careLevel } from './companion/calibration'
 import { companionOfferEligible } from './companion/offer-eligibility'
@@ -172,7 +164,7 @@ export function daemonModules(f: Foundation): DaemonModule[] {
         const polling = ctx.late<LifecycleHolder<PollingLifecycle>>('polling')
         const wired = ctx.late<WiredDeps>('wired')
         const api: InternalApiLifecycle = await registerInternalApi({
-          stateDir, daemonPid: process.pid, memory: f.memoryFS, db, projects: f.projects,
+          stateDir, daemonPid: process.pid, db, projects: f.projects,
           getChatPrefs: (c) => f.chatPrefs.get(c),
           setChatPref: (c, p) => f.chatPrefs.set(c, p),
           replySinks: f.replySinks,
@@ -250,6 +242,30 @@ export function daemonModules(f: Foundation): DaemonModule[] {
         return api
       },
     } satisfies DaemonModule<InternalApiLifecycle>,
+    // 记忆:一个功能一个目录(src/features/memory);`/v1/memory/*` 自己挂,紧跟 internal-api(以前随 internal-api 一起就在,
+    // MCP 的 memory_* 工具、桌面记忆页开机就来)。bootstrap 的提示词要它的素材(needs),它的 LLM 操作要 bootstrap 的执行者登记、
+    // 每晚整理要 wired 造的运行时 —— 环的那一头经 lazy 现取,没有 ⇒ 路由照旧 503(搬家前是 internal-api 的 provide)。
+    memoryFeature({
+      needs: [],
+      lazy: ['bootstrap', 'wired'],
+      deps: (ctx) => {
+        const boot = ctx.late<Bootstrap>('bootstrap')
+        const wired = ctx.late<WiredDeps>('wired')
+        // daemon 自己跑的 LLM 记忆操作(spec 2026-07-23):桌面 / CLI 的路由走这一份(不在编译出来的 CLI 里)。
+        let llm: MemoryLlmOps | null = null
+        return {
+          stateDir, db, memory: f.memoryFS, log: (t, l) => log(t, l),
+          memoryLlm: () => {
+            const b = boot()
+            if (!b) return null
+            return llm ??= makeMemoryLlmOps({ stateDir, db, getMode: (c) => b.coordinator.getMode(c), registry: b.registry })
+          },
+          memoryNightly: () => wired()?.memoryNightly ?? null,
+          // LLM 记忆路由的 chat_id 缺省:access.json 里唯一的 admin。
+          resolveAdminChatId: () => ownerChatId(),
+        }
+      },
+    }),
     // 画室:一个功能一个目录(src/features/atelier);路由自己挂,紧跟 internal-api(以前这几条路由随 internal-api 一起就在,桌面开机就来看画)。画一拍还在伙伴的反省那一拍里(wiring 经 makeAtelierTick 接)。
     atelierFeature({
       needs: ['ilink-adapter'],
@@ -282,7 +298,7 @@ export function daemonModules(f: Foundation): DaemonModule[] {
 
     // —— bootstrap:provider registry / 会话管理 / 协调器 + 可选的知识库 / 社交 / A2A / 配对 / 乙(一组模块,bootstrap/index.ts)——
     ...bootstrapModules({
-      needs: ['ilink-adapter', 'reply-delivery', 'internal-api', 'network-gate', 'stickers'],
+      needs: ['ilink-adapter', 'reply-delivery', 'internal-api', 'network-gate', 'stickers', 'memory'],
       lazy: ['cli-upgrade', 'workbench', 'wired'],
       deps: (ctx) => {
         const ilink = ctx.get<IlinkAdapter>('ilink-adapter')
@@ -313,7 +329,7 @@ export function daemonModules(f: Foundation): DaemonModule[] {
           mintSessionToken: internalApi.mintSessionToken,
           invalidateSession: internalApi.invalidateSession,
           internalApi: { baseUrl: internalApi.baseUrl, tokenFilePath: internalApi.tokenFilePath },
-          ...promptReads(f, ctx.get<StickersFeature>('stickers').lib),
+          ...promptReads(f, ctx.get<StickersFeature>('stickers').lib, ctx.get<MemoryFeature>('memory').promptReads),
           // self-restart(spec 2026-08-03):只在有 supervisor 拉起我们的地方开(`service install` 写进 launchd / systemd 的
           // WECHAT_CC_SUPERVISED)—— 前台 `bun cli.ts run`、Windows 的登录任务里 exit(0) 就是死了,而这个功能是静默的。
           ...(process.env[SUPERVISED_ENV] === '1'
@@ -337,8 +353,6 @@ export function daemonModules(f: Foundation): DaemonModule[] {
         // 社交的路由和窄口(socialView)由社交模块自己挂 / 交(src/features/social),不经这里。
         if (boot.knowledge) internalApi.provide({ knowledge: boot.knowledge })
         if (boot.pairing) internalApi.provide({ pairing: boot.pairing })
-        // daemon 自己跑的 LLM 记忆操作(spec 2026-07-23):这里是唯一跑它们的地方(不在编译出来的 CLI 里)。
-        internalApi.provide({ memoryLlm: makeMemoryLlmOps({ stateDir, db, getMode: (c) => boot.coordinator.getMode(c), registry: boot.registry }) })
         internalApi.provide({ incidents: boot.health.incidents })
         // LLM 通道体检:没有开机探测、没有定时器(主人 2026-08-25:断网时无人要求的外呼是风控形状),只在点「测试连接」时拨。
         const llmHealth = makeLlmHealth({ registry: boot.registry, defaultProviderId: boot.defaultProviderId, hintFor: (id) => capabilitiesFor(id).authFailHint, log })
@@ -536,7 +550,6 @@ export function daemonModules(f: Foundation): DaemonModule[] {
         internalApi.provide({ settingsLink: wired.settingsPanelLink })
         internalApi.provide({ connections: wired.connections })
         internalApi.provide({ phoneConnect: wired.phoneConnect })
-        internalApi.provide({ memoryNightly: wired.memoryNightly })
         // 「一件事」活动时间:先于工作台停,退订 changes + 清节流定时器。
         ctx.own('matter-activity', async () => wired.stopMatterActivity())
         // 手机那一簇(隧道 / notifier / 订阅 / 设置面板):比 polling 晚停 ⇒ 入站先停,App 在途的回复还能经隧道送完。
@@ -595,10 +608,13 @@ export function daemonModules(f: Foundation): DaemonModule[] {
       },
     } satisfies DaemonModule<Deferred>,
     lifecycleModule('polling', (ctx) => registerPolling({ ...ctx.get<WiredDeps>('wired').pollingDeps, runPipeline: ctx.get<PipelineModule>('pipeline').run }), { required: true, needs: ['wired', 'pipeline'] }),
-    // 每晚整理长期记忆 memory.md(2026-09-25)。15 分钟一次「该不该跑」。
-    lifecycleModule('memory-nightly', (ctx) => registerMemoryNightly({
-      runtime: ctx.get<WiredDeps>('wired').memoryNightly, holdBusy: (l) => ctx.get<Bootstrap>('bootstrap').holdBusy(l), log: (t, l) => log(t, l),
-    }), { needs: ['wired', 'bootstrap'] }),
+    // 每晚整理长期记忆 memory.md(2026-09-25,src/features/memory)。15 分钟一次「该不该跑」。
+    memoryNightlyModule({
+      needs: ['wired', 'bootstrap'],
+      runtime: (ctx) => ctx.get<WiredDeps>('wired').memoryNightly,
+      holdBusy: (ctx) => (l) => ctx.get<Bootstrap>('bootstrap').holdBusy(l),
+      log: (t, l) => log(t, l),
+    }),
     // CC 的信:一个功能一个目录(src/features/letters);路由自己挂。这里只填它要的东西。
     lettersFeature({
       needs: ['bootstrap', 'wired', 'ilink-adapter'],
@@ -686,10 +702,9 @@ interface PipelineModule { run: PipelineRun; appTurn: AppTurn }
 /** 造好了、但开动的时刻由别的模块定(工作台通知要排在开机清扫之后)。 */
 interface Deferred { start(): void }
 
-/** 每次起会话时现读的提示词素材(人格、记忆、贴纸、关心档 ……):手改了文件,不用重启就生效。 */
-function promptReads(f: Foundation, stickers: StickersFeature['lib']) {
+/** 每次起会话时现读的提示词素材(人格、记忆、贴纸、关心档 ……):手改了文件,不用重启就生效。记忆那几样归记忆功能(src/features/memory)。 */
+function promptReads(f: Foundation, stickers: StickersFeature['lib'], memory: MemoryPromptReads) {
   const { stateDir, db } = f
-  const memoryOf = (c: string) => makeMemoryFS({ rootDir: join(stateDir, 'memory', c) })
   return {
     // Proactive-care design §5/§7 — this chat's effective care level per-spawn (chat-prefs override ∪ default_chat_id).
     careLevelFor: (c: string) => careLevel(c, f.chatPrefs.get(c), loadCompanionConfig(stateDir).default_chat_id ?? undefined),
@@ -706,35 +721,7 @@ function promptReads(f: Foundation, stickers: StickersFeature['lib']) {
     bubbleRepliesFor: (c: string) => f.chatPrefs.get(c).split !== false,
     // image-stickers plan §5 — per-chat opt-out hides both sticker sections (null); pref on ⇒ allTags() (may be []).
     stickerTagsFor: (c: string) => (f.chatPrefs.get(c).stickers !== false ? stickers.allTags() : null),
-    // persona design §2 — owner chat's persona.md, read fresh per spawn; cultivate only in the owner's own chat.
-    personaFor: (c: string) => {
-      const ownerChat = loadCompanionConfig(stateDir).default_chat_id
-      if (!ownerChat) return {}
-      // ownerChat feeds a filesystem join below, so accept only chatId-shaped values.
-      if (ownerChat.includes('..') || ownerChat.includes('/') || ownerChat.includes('\\')) return {}
-      return { content: memoryOf(ownerChat).read('persona.md') ?? undefined, cultivate: c === ownerChat }
-    },
-    // core-memory-injection design §2 — THIS chat's OWN profile.md excerpt, capped.
-    coreMemoryFor: (c: string) => {
-      const profile = memoryOf(c).read('profile.md') ?? ''
-      return profile.length > CORE_MEMORY_MAX_CHARS ? profile.slice(0, CORE_MEMORY_MAX_CHARS) : profile
-    },
-    // 每晚整理的长期记忆(2026-09-25):有 memory.md 就注入它(去尾注),prompt-builder 据此不再注入 profile.md。
-    curatedMemoryFor: (c: string) => {
-      const raw = memoryOf(c).read(MEMORY_FILENAME)
-      return raw ? renderForPrompt(parseMemoryDoc(raw)) : ''
-    },
-    // 主人原话(记忆编辑设计稿 2026-10-23 §1):只在主人自己的对话里注入,访客 / trusted 的对话读不到。
-    ownerMemoryFor: (c: string) => {
-      if (c !== loadCompanionConfig(stateDir).default_chat_id) return ''
-      return renderOwnerForPrompt(readOwnerDoc(join(stateDir, 'memory', c)))
-    },
-    // 今天的草稿(同日失忆修复,2026-10-01):CC 白天写进 profile.md 的新行,随 memory.md 一起注入。
-    todayDraftFor: (c: string) => { try { return readDraftForPrompt(f.memoryFS, c) } catch { return '' } },
-    // knowledge-distillation §2 — THIS chat's daemon-distilled knowledge.md, capped.
-    knowledgeMemoryFor: (c: string) => {
-      const k = memoryOf(c).read('knowledge.md') ?? ''
-      return k.length > KNOWLEDGE_MEMORY_MAX_CHARS ? k.slice(0, KNOWLEDGE_MEMORY_MAX_CHARS) : k
-    },
+    // 人格、画像、长期记忆、主人原话、今天的草稿、知识(src/features/memory/prompt-reads.ts)
+    ...memory,
   }
 }

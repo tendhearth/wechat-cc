@@ -1791,7 +1791,7 @@ export const OwnerMemProfileGenerateResponse = z.object({
 })
 
 // ── POST /v1/memory/nightly/run ──
-// result = NightlyRunResult(daemon/memory/nightly-notify.ts);applied 的条目形状在 nightly-ops 里。
+// result = NightlyRunResult(src/features/memory/nightly-notify.ts);applied 的条目形状在 nightly-ops 里。
 const MemoryNightlyRunResultShape = z.union([
   z.object({ status: z.literal('written'), applied: z.array(z.object({ kind: z.string(), id: z.string(), text: z.string() }).passthrough()), notice: z.string().nullable() }),
   z.object({ status: z.literal('skipped'), reason: z.string() }),

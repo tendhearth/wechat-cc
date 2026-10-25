@@ -1,20 +1,21 @@
 /**
- * 记忆这一块(重构第二批步 6c,从 pipeline-deps.ts 搬出来):LLM 记忆操作(概览合成 / 画像生成,微信管理命令与
- * 桌面内部 API 共用)、每晚整理 memory.md(定时器由 main.ts 挂)、欢迎时写一条观察。
+ * 记忆这一块(重构第二批步 6c,从 pipeline-deps.ts 搬出来;架构终态 A5 随记忆进 src/features/memory):LLM 记忆操作
+ * (概览合成 / 画像生成,微信管理命令用)、每晚整理 memory.md 的运行时(定时器是 `memory-nightly` 模块)。
+ * 它要 CC 开口那道门,门在 wired 里才造,所以由 wired(pipeline-deps)经 index.ts 调;
+ * 欢迎时写一条观察不是记忆的事,留在 pipeline-deps 自己造。
  */
 import { randomBytes } from 'node:crypto'
 import type { Db } from '../../lib/db'
 import { makeMessagesStore } from '../../lib/messages-store'
-import type { Bootstrap } from '../bootstrap'
-import type { SpeechPolicy } from '../speech/policy'
-import type { ChatPrefsStore } from '../chat-prefs'
-import type { CareLedger } from '../companion/care-ledger'
-import { loadCompanionConfig } from '../companion/config'
-import { shouldSpeak, careLevel } from '../companion/calibration'
-import { makeMemoryLlmOps, resolveCheapEval } from '../memory-llm-ops'
-import { makeMemoryNightlyRuntime, type MemoryNightlyRuntime } from '../memory/nightly-runtime'
-import { makeNightlySources } from '../memory/nightly-sources'
-import { makeMaybeWriteWelcomeObservation } from './side-effects'
+import type { Bootstrap } from '../../daemon/bootstrap'
+import type { SpeechPolicy } from '../../daemon/speech/policy'
+import type { ChatPrefsStore } from '../../daemon/chat-prefs'
+import type { CareLedger } from '../../daemon/companion/care-ledger'
+import { loadCompanionConfig } from '../../daemon/companion/config'
+import { shouldSpeak, careLevel } from '../../daemon/companion/calibration'
+import { makeMemoryLlmOps, resolveCheapEval } from './llm-ops'
+import { makeMemoryNightlyRuntime, type MemoryNightlyRuntime } from './nightly-runtime'
+import { makeNightlySources } from './nightly-sources'
 
 export interface WireMemoryDeps {
   stateDir: string
@@ -80,11 +81,5 @@ export function wireMemory(d: WireMemoryDeps) {
       try { return await nightlyRuntime.runNow() } finally { release() }
     },
   }
-  const maybeWriteWelcomeObservation = makeMaybeWriteWelcomeObservation({
-    stateDir,
-    db,
-    agentConfig: boot.agentConfig,
-    getMode: (cid) => boot.coordinator.getMode(cid),
-  })
-  return { memoryLlmOps, memoryNightly, maybeWriteWelcomeObservation }
+  return { memoryLlmOps, memoryNightly }
 }

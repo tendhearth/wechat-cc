@@ -7,7 +7,7 @@
  *   - view 里有的键回来没了 ⇒ 一条更正(主人原话没了还要从 owner.md 去掉);
  *   - 两个键都没有 ⇒ 一条新的主人原话;
  *   - 键是 view 里没有的 / 同一个键出现两次 ⇒ stale_key,整个请求不算。
- * 这里只算「要做什么」;真正落盘(更正走串行链、写 owner.md)在 daemon/memory/nightly-runtime 的 edit。
+ * 这里只算「要做什么」;真正落盘(更正走串行链、写 owner.md)在 src/features/memory/nightly-runtime 的 edit。
  */
 import { createHash } from 'node:crypto'
 import { normalizeMemoryText } from './memory-corrections'

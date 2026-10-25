@@ -1,17 +1,15 @@
 import { describe, it, expect, vi } from 'vitest'
-import { makeMemoryLlmOps, resolveCheapEval } from './memory-llm-ops'
-import { invalidateDerivedMemory } from '../lib/memory-derived-state'
+import { makeMemoryLlmOps, resolveCheapEval } from './llm-ops'
+import { invalidateDerivedMemory } from '../../lib/memory-derived-state'
 
-// NOTE: brief used '../../lib/memory-synthesis' — that resolves one level
-// too high from src/daemon/. Both this test file and memory-llm-ops.ts live
-// in src/daemon/, so the correct relative path (matching the impl's own
-// dynamic import) is '../lib/memory-synthesis'.
-vi.mock('../lib/memory-synthesis', () => ({
+// 这个测试和 llm-ops.ts 都在 src/features/memory/ 下(原 src/daemon/memory-llm-ops.*),
+// mock 的相对路径要和实现里的动态 import 一致。
+vi.mock('../../lib/memory-synthesis', () => ({
   synthesizeOverview: vi.fn(async (o: any) => ({ ok: true, written: { path: '_overview.md', bytesWritten: 10 }, _eval: await o.sdkEval('x') })),
   synthesizeProfile: vi.fn(async (o: any) => ({ ok: true, written: { path: '_profile.json', bytesWritten: 5 }, _eval: await o.sdkEval('y') })),
   OVERVIEW_FILENAME: '_overview.md',
 }))
-vi.mock('./life-stores', () => ({ makeLifeStoresReader: () => ({}) }))
+vi.mock('../../daemon/life-stores', () => ({ makeLifeStoresReader: () => ({}) }))
 
 function make(over: Record<string, any> = {}) {
   const cheapEval = vi.fn(async (p: string) => `EVAL:${p}`)

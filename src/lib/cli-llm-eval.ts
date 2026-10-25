@@ -45,7 +45,7 @@ const MEMORY_OP_PATHS: Record<MemoryDelegateOp, string> = {
  * `mode set` command's internal-api-info.json → bearer-token → POST pattern
  * (cli.ts's modeSetCmd) — including its try/catch-around-fetch and explicit
  * resp.ok/status branching, since the daemon's memory routes
- * (routes-memory.ts) return error bodies like `{error:'memory_not_wired'}`
+ * (src/features/memory/routes.ts) return error bodies like `{error:'memory_not_wired'}`
  * (503) / `{error:'no_admin_chat_id'}` (400) / `{error:'unauthorized'}` (401)
  * that carry no `ok` key — a bare `resp.json()` would let those masquerade
  * as success.

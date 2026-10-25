@@ -29,7 +29,7 @@ import { makeJobsCommand } from './command'
 import { combineReplyHandlers, makeAsksReply } from './asks-reply'
 import { makeOwnerAsksStore, OWNER_ASKS_FILE } from '../../core/owner-asks-store'
 import { parseAgenda, selectDue } from '../../daemon/companion/agenda'
-import { localParts } from '../../daemon/memory/nightly-schedule'
+import { localParts } from '../../lib/local-time'
 import { makeRemindersStore } from '../../features/reminders'
 import { pickJobExecutor, type TickBodies } from '../../daemon/wiring/tick-bodies'
 

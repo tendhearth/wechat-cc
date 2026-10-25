@@ -1,5 +1,5 @@
 /** 每晚记忆整理的定时器:15 分钟看一次「该不该跑」,由 main.ts 挂载(2026-09-25)。 */
-import { startCompanionScheduler } from '../companion/scheduler'
+import { startCompanionScheduler } from '../../daemon/companion/scheduler'
 import type { Lifecycle } from '../../lib/lifecycle'
 import type { MemoryNightlyRuntime } from './nightly-runtime'
 

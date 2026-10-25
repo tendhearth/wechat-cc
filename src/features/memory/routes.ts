@@ -1,5 +1,5 @@
 /**
- * internal-api LLM memory routes (spec 2026-07-23-daemon-owns-llm-memory-ops).
+ * LLM memory routes(记忆功能自己挂,路由表标 module: 'memory';原来是 internal-api/routes-memory.ts) (spec 2026-07-23-daemon-owns-llm-memory-ops).
  * Mirrors routes-pair.ts / routes-social.ts: 503 when the daemon-owned
  * MemoryLlmOps (Task 1's makeMemoryLlmOps) isn't late-bound yet, else
  * delegate to it. Both routes are trusted (see route-tiers.ts) — the only
@@ -11,11 +11,25 @@
  */
 import { existsSync, readFileSync } from 'node:fs'
 import { join } from 'node:path'
-import type { InternalApiDeps, RouteTable } from './types'
-import type { MemoryEditRequestT, MemoryViewRequestT } from './schema'
+import type { RouteTable } from '../../daemon/internal-api/types'
+import type { MemoryEditRequestT, MemoryViewRequestT } from '../../daemon/internal-api/schema'
 import { workbenchErrorHttp } from '@wechat-cc/protocol'
 import { safeSvg } from '../../lib/svg-sanitize'
 import { readJsonFile } from '../../lib/read-json-file'
+import type { MemoryLlmOps } from './llm-ops'
+import type { MemoryNightlyRuntime } from './nightly-runtime'
+
+/**
+ * 这几条要的东西。LLM 记忆操作要 bootstrap 的执行者登记、每晚整理要 wired 里 CC 开口那道门 —— 都比路由挂上来晚,
+ * 所以是现取的:还没有 ⇒ null ⇒ 照旧 503 memory_not_wired / memory_nightly_not_wired(搬家前是 internal-api 的晚绑定)。
+ */
+export interface MemoryRoutesDeps {
+  stateDir: string
+  memoryLlm: () => MemoryLlmOps | null
+  memoryNightly: () => Pick<MemoryNightlyRuntime, 'runNow' | 'view' | 'edit'> | null
+  /** 请求里没写 chat_id ⇒ access.json 里唯一的 admin。 */
+  resolveAdminChatId?: () => string | null
+}
 
 /** 码与 HTTP 状态都在 packages/protocol/src/workbench-errors.ts 那一张表里。 */
 function noOwner(err: unknown): { status: number; body: { ok: false; code: string } } {
@@ -23,7 +37,7 @@ function noOwner(err: unknown): { status: number; body: { ok: false; code: strin
   return { status: workbenchErrorHttp(code, 'desktop').status, body: { ok: false, code } }
 }
 
-export function memoryRoutes(deps: InternalApiDeps): RouteTable {
+export function memoryRoutes(deps: MemoryRoutesDeps): RouteTable {
   const resolveChat = (body: unknown): string | null => {
     const cid = (body as { chat_id?: unknown })?.chat_id
     if (typeof cid === 'string' && cid) return cid
@@ -31,40 +45,46 @@ export function memoryRoutes(deps: InternalApiDeps): RouteTable {
   }
   return {
     'POST /v1/memory/synthesize': async (_q, body) => {
-      if (!deps.memoryLlm) return { status: 503, body: { error: 'memory_not_wired' } }
+      const llm = deps.memoryLlm()
+      if (!llm) return { status: 503, body: { error: 'memory_not_wired' } }
       const chatId = resolveChat(body)
       if (!chatId) return { status: 400, body: { error: 'no_admin_chat_id' } }
-      return { status: 200, body: { ok: true, ...(await deps.memoryLlm.synthesize(chatId)) } }
+      return { status: 200, body: { ok: true, ...(await llm.synthesize(chatId)) } }
     },
     'POST /v1/memory/profile/generate': async (_q, body) => {
-      if (!deps.memoryLlm) return { status: 503, body: { error: 'memory_not_wired' } }
+      const llm = deps.memoryLlm()
+      if (!llm) return { status: 503, body: { error: 'memory_not_wired' } }
       const chatId = resolveChat(body)
       if (!chatId) return { status: 400, body: { error: 'no_admin_chat_id' } }
-      return { status: 200, body: { ok: true, ...(await deps.memoryLlm.generateProfile(chatId)) } }
+      return { status: 200, body: { ok: true, ...(await llm.generateProfile(chatId)) } }
     },
     // 每晚记忆整理的立即运行(CLI `memory nightly --now`)。忽略时间点,仍走指纹 / 校验 / 修订检查。
     'POST /v1/memory/nightly/run': async () => {
-      if (!deps.memoryNightly) return { status: 503, body: { error: 'memory_nightly_not_wired' } }
-      return { status: 200, body: { ok: true, result: await deps.memoryNightly.runNow() } }
+      const nightly = deps.memoryNightly()
+      if (!nightly) return { status: 503, body: { error: 'memory_nightly_not_wired' } }
+      return { status: 200, body: { ok: true, result: await nightly.runNow() } }
     },
     // 记忆编辑(设计稿 2026-10-23 记忆改了就算数):只认主人的记忆(nightly 那一份),body 由 schema 预校验。
     // 业务上的拒绝(memory_changed / bulk / stale_key / too_large)是 200 + ok:false,桌面照码处理;没有主人 ⇒ 409。
     'POST /v1/memory/view': async (_q, body) => {
-      if (!deps.memoryNightly) return { status: 503, body: { error: 'memory_nightly_not_wired' } }
-      try { return { status: 200, body: { ok: true, ...deps.memoryNightly.view((body as MemoryViewRequestT).path) } } }
+      const nightly = deps.memoryNightly()
+      if (!nightly) return { status: 503, body: { error: 'memory_nightly_not_wired' } }
+      try { return { status: 200, body: { ok: true, ...nightly.view((body as MemoryViewRequestT).path) } } }
       catch (err) { return noOwner(err) }
     },
     'POST /v1/memory/edit': async (_q, body) => {
-      if (!deps.memoryNightly) return { status: 503, body: { error: 'memory_nightly_not_wired' } }
-      try { return { status: 200, body: await deps.memoryNightly.edit(body as MemoryEditRequestT) } }
+      const nightly = deps.memoryNightly()
+      if (!nightly) return { status: 503, body: { error: 'memory_nightly_not_wired' } }
+      try { return { status: 200, body: await nightly.edit(body as MemoryEditRequestT) } }
       catch (err) { return noOwner(err) }
     },
     // CC 手绘小像 (2026-08-25) — draw the owner from profile material.
     'POST /v1/memory/portrait/generate': async (_q, body) => {
-      if (!deps.memoryLlm) return { status: 503, body: { error: 'memory_not_wired' } }
+      const llm = deps.memoryLlm()
+      if (!llm) return { status: 503, body: { error: 'memory_not_wired' } }
       const chatId = resolveChat(body)
       if (!chatId) return { status: 400, body: { error: 'no_admin_chat_id' } }
-      const r = await deps.memoryLlm.generatePortrait(chatId)
+      const r = await llm.generatePortrait(chatId)
       return { status: 200, body: r }
     },
     'GET /v1/memory/portrait': async (q) => {

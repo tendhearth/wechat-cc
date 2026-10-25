@@ -11,7 +11,7 @@
  * - 只有 daemon 写:会话(任何 tier)写 / 删 today-draft.md 被路由拒掉,和 memory.md 同一道闸。
  */
 import { posix } from 'node:path'
-import type { MemoryFS } from './fs-api'
+import type { MemoryFS } from '../../adapters/store/memory-fs'
 import { MEMORY_FILENAME } from './curated-doc'
 
 export const TODAY_DRAFT_FILENAME = 'today-draft.md'

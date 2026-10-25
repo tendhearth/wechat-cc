@@ -153,7 +153,7 @@ function journalEvent(r: CatchRow, timezone: string): FeedEvent {
     day: dayKey(ms, timezone),
     hhmm: hhmmOf(ms, timezone),
     // I6:写路径已经 gate 过(wire-visit → safeSvg),这里是读侧防御性再消毒
-    // ——跟 internal-api/routes-memory.ts 对小像的做法一致(手改文件兜底)。
+    // ——跟 src/features/memory/routes.ts 对小像的做法一致(手改文件兜底)。
     ref: { url: r.url, image_svg: r.image_svg ? safeSvg(r.image_svg) : null, status: r.status },
   }
 }

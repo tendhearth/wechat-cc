@@ -24,7 +24,7 @@ import { loadHearthApi, type HearthApi, type HearthLoadResult } from './hearth-a
 import type { SynthesizeResult } from '../lib/memory-synthesis'
 import { isConnectFailure } from '../lib/net-errors'
 import type { SelfChangeSpawner } from './self-change-spawn'
-import { formatNightlyReply } from './memory/nightly-notify'
+import { formatNightlyReply } from '../features/memory'
 import { setRulesEnabled } from './permission-gate'
 
 export interface AdminCommandsDeps {
@@ -68,7 +68,7 @@ export interface AdminCommandsDeps {
   /** 每晚整理的长期记忆(渲染好的文本,带「最近整理」首行);没有 memory.md 时 null。 */
   readCuratedMemory?: (adminChatId: string) => Promise<string | null>
   /** 「整理记忆」:立刻跑一次每晚整理。 */
-  runMemoryNightlyNow?: () => Promise<import('./memory/nightly-notify').NightlyRunResult>
+  runMemoryNightlyNow?: () => Promise<import('../features/memory').NightlyRunResult>
   /**
    * Optional. Delegate a task to a registered "hand" (another machine running
    * wechat-cc with A2A exec). Returns the hand's result, or a list of known

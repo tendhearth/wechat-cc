@@ -12,7 +12,7 @@
  */
 import { existsSync } from 'node:fs'
 import { join } from 'node:path'
-import { makeMemoryFS } from './fs-api'
+import { makeMemoryFS } from '../../adapters/store/memory-fs'
 
 const EXCLUDED = new Set(['profile.md', 'knowledge.md'])
 const MAX_FILES = 30

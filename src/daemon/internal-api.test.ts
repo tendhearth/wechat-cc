@@ -6,9 +6,9 @@ import { tmpdir } from 'node:os'
 import { createInternalApi, type InternalApi } from './internal-api'
 import { voiceRoutes } from '../features/voice/routes'
 import { makeReplySinks } from './reply-sinks'
-import { makeMemoryFS } from './memory/fs-api'
+import { makeMemoryFS, type MemoryFS } from '../adapters/store/memory-fs'
 import { makeEventsStore } from './events/store'
-import { openTestDb } from '../lib/db'
+import { openTestDb, type Db } from '../lib/db'
 import { makeTurnRecordStore } from '../adapters/store/turn-record-store'
 import type { TurnRecord } from '../app/conversation-coordinator'
 import { loadAgentConfig, saveAgentConfig } from '../lib/agent-config'
@@ -19,6 +19,13 @@ import { openKnowledge } from '../core/knowledge/store'
 import { semanticSearch } from '../core/knowledge/search'
 import { serve } from '../lib/runtime/http'
 import { terminalRoutes, type TerminalRoutesDeps } from '../features/terminal/routes'
+import { memoryFsRoutes } from '../features/memory/fs-routes'
+
+// 记忆文件的四条路由归记忆功能(src/features/memory,路由表标 module: 'memory'),daemon 里由 memory 模块挂;测试照样挂上去。
+function withMemoryRoutes(api: InternalApi, memory: MemoryFS, db?: Db): InternalApi {
+  api.mount('memory', memoryFsRoutes({ memory, ...(db ? { db } : {}) }))
+  return api
+}
 
 describe('internal-api', () => {
   let stateDir: string
@@ -198,7 +205,7 @@ describe('internal-api', () => {
     async function startWithMemory(): Promise<{ port: number; token: string }> {
       memoryRoot = join(stateDir, 'memory')
       const memory = makeMemoryFS({ rootDir: memoryRoot, layout: 'all-chats' })
-      api = createInternalApi({ stateDir, daemonPid: 999, memory })
+      api = withMemoryRoutes(createInternalApi({ stateDir, daemonPid: 999 }), memory)
       const { port, tokenFilePath } = await api.start()
       const token = readFileSync(tokenFilePath, 'utf8').trim()
       return { port, token }
@@ -296,15 +303,15 @@ describe('internal-api', () => {
       expect(body.files.sort()).toEqual(['sub/x.md', 'sub/y.md'])
     })
 
-    it('memory routes return 503 when memory dep is not wired', async () => {
-      api = createInternalApi({ stateDir, daemonPid: 1 })  // no memory
+    it('memory routes answer 503 module_starting until the memory module mounts them', async () => {
+      api = createInternalApi({ stateDir, daemonPid: 1 })  // 没挂记忆的路由(daemon 里是 memory 模块开机时挂)
       const { port, tokenFilePath } = await api.start()
       const token = readFileSync(tokenFilePath, 'utf8').trim()
       const resp = await fetch(`http://127.0.0.1:${port}/v1/memory/list`, {
         headers: { Authorization: `Bearer ${token}` },
       })
       expect(resp.status).toBe(503)
-      expect(await resp.json()).toEqual({ error: 'memory_fs_not_wired' })
+      expect(await resp.json()).toEqual({ error: 'module_starting', module: 'memory' })
     })
 
     describe('POST /v1/memory/delete (soft-delete + audit)', () => {
@@ -312,7 +319,7 @@ describe('internal-api', () => {
         memoryRoot = join(stateDir, 'memory')
         const memory = makeMemoryFS({ rootDir: memoryRoot })
         const db = openTestDb()
-        api = createInternalApi({ stateDir, daemonPid: 999, memory, db })
+        api = withMemoryRoutes(createInternalApi({ stateDir, daemonPid: 999, db }), memory, db)
         const { port, tokenFilePath } = await api.start()
         const token = readFileSync(tokenFilePath, 'utf8').trim()
         return { port, token, db }
@@ -469,7 +476,7 @@ describe('internal-api', () => {
         memoryRoot = join(stateDir, 'memory')
         const memory = makeMemoryFS({ rootDir: memoryRoot })
         const db = openTestDb()
-        api = createInternalApi({ stateDir, daemonPid: 999, memory, db })
+        api = withMemoryRoutes(createInternalApi({ stateDir, daemonPid: 999, db }), memory, db)
         const { port, tokenFilePath } = await api.start()
         const token = readFileSync(tokenFilePath, 'utf8').trim()
         const admin = api.mintSessionToken('admin', 'claude/a/ownerchat')
@@ -525,7 +532,7 @@ describe('internal-api', () => {
         memoryRoot = join(stateDir, 'memory')
         const memory = makeMemoryFS({ rootDir: memoryRoot })
         const db = openTestDb()
-        api = createInternalApi({ stateDir, daemonPid: 999, memory, db })
+        api = withMemoryRoutes(createInternalApi({ stateDir, daemonPid: 999, db }), memory, db)
         const { port } = await api.start()
         const admin = api.mintSessionToken('admin', 'claude/a/ownerchat')
         for (const p of ['ownerchat/memory.md', './ownerchat/memory.md', 'ownerchat/memory.md/']) {
@@ -565,7 +572,7 @@ describe('internal-api', () => {
       it('operator token is 403 route_not_allowed on /v1/memory/write (route-scoped to converse-only)', async () => {
         memoryRoot = join(stateDir, 'memory')
         const memory = makeMemoryFS({ rootDir: memoryRoot })
-        api = createInternalApi({ stateDir, daemonPid: 999, memory })
+        api = withMemoryRoutes(createInternalApi({ stateDir, daemonPid: 999 }), memory)
         const { port, operatorTokenFilePath } = await api.start()
         const opToken = readFileSync(operatorTokenFilePath, 'utf8').trim()
         const w = await write(port, opToken, 'ownerchat/persona.md')
@@ -627,7 +634,7 @@ describe('internal-api', () => {
         memoryRoot = join(stateDir, 'memory')
         const memory = makeMemoryFS({ rootDir: memoryRoot })
         const db = openTestDb()
-        api = createInternalApi({ stateDir, daemonPid: 999, memory, db })
+        api = withMemoryRoutes(createInternalApi({ stateDir, daemonPid: 999, db }), memory, db)
         const { port, tokenFilePath } = await api.start()
         const fileToken = readFileSync(tokenFilePath, 'utf8').trim()
         for (const p of ['chat-1/a.md', 'ownerchat/persona.md']) await write(port, fileToken, p)
@@ -653,7 +660,7 @@ describe('internal-api', () => {
 
   it('returns 400 on malformed JSON body', async () => {
     const memory = makeMemoryFS({ rootDir: join(stateDir, 'memory') })
-    api = createInternalApi({ stateDir, daemonPid: 1, memory })
+    api = withMemoryRoutes(createInternalApi({ stateDir, daemonPid: 1 }), memory)
     const { port, tokenFilePath } = await api.start()
     const token = readFileSync(tokenFilePath, 'utf8').trim()
     const resp = await fetch(`http://127.0.0.1:${port}/v1/memory/read`, {
@@ -2997,7 +3004,7 @@ describe('internal-api request validation', () => {
 
   it('POST with missing required field returns 400 + invalid_request', async () => {
     const memory = makeMemoryFS({ rootDir: join(stateDir, 'memory') })
-    api = createInternalApi({ stateDir, daemonPid: 1, memory })
+    api = withMemoryRoutes(createInternalApi({ stateDir, daemonPid: 1 }), memory)
     const { port, tokenFilePath } = await api.start()
     const token = readFileSync(tokenFilePath, 'utf8').trim()
     const resp = await fetch(`http://127.0.0.1:${port}/v1/memory/read`, {
@@ -3013,7 +3020,7 @@ describe('internal-api request validation', () => {
 
   it('POST with valid body has handler receive parsed data (memory read round-trip)', async () => {
     const memory = makeMemoryFS({ rootDir: join(stateDir, 'memory') })
-    api = createInternalApi({ stateDir, daemonPid: 1, memory })
+    api = withMemoryRoutes(createInternalApi({ stateDir, daemonPid: 1 }), memory)
     const { port, tokenFilePath } = await api.start()
     const token = readFileSync(tokenFilePath, 'utf8').trim()
     const resp = await fetch(`http://127.0.0.1:${port}/v1/memory/read`, {
@@ -3043,7 +3050,7 @@ describe('internal-api request validation', () => {
 
   it('GET with valid query string proceeds normally', async () => {
     const memory = makeMemoryFS({ rootDir: join(stateDir, 'memory') })
-    api = createInternalApi({ stateDir, daemonPid: 1, memory })
+    api = withMemoryRoutes(createInternalApi({ stateDir, daemonPid: 1 }), memory)
     const { port, tokenFilePath } = await api.start()
     const token = readFileSync(tokenFilePath, 'utf8').trim()
     const resp = await fetch(`http://127.0.0.1:${port}/v1/memory/list?dir=sub`, {

@@ -1,7 +1,7 @@
 import { existsSync } from 'node:fs'
 import { readdir } from 'node:fs/promises'
 import { join } from 'node:path'
-import { makeMemoryFS } from './fs-api'
+import { makeMemoryFS } from '../../adapters/store/memory-fs'
 
 /**
  * Concatenate all .md files in a chat's memory dir into a single string.
