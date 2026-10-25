@@ -8,7 +8,7 @@
  * sweeper (./sweeper.ts) to deliver. taskTitle/artifactCount are narrow reads
  * instead of a full WorkbenchStore so this stays trivially testable.
  */
-import type {MatterStore} from '../../core/matters/store'
+import type {MatterStore} from '../../adapters/store/matters-store'
 import {renderReport, type ReportSink} from '../../core/matters/report'
 import type {ReportOutboxStore} from './outbox'
 

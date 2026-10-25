@@ -1,6 +1,6 @@
 import {afterEach, beforeEach, describe, expect, it} from 'vitest'
 import {openDb, type Db} from '../../lib/db'
-import {makeMatterStore} from '../../core/matters/store'
+import {makeMatterStore} from '../../adapters/store/matters-store'
 import {makeReportOutboxStore, type ReportOutboxStore} from './outbox'
 import type {PendingReport} from '../../core/matters/report'
 

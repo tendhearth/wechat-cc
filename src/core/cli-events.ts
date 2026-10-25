@@ -13,7 +13,7 @@
  */
 
 import { cliSourceLabel } from '../domain/cli-session-digest'
-import { sortCliSessionViews, toCliSessionView, type CliSessionRow, type CliSessionStore, type CliSessionView } from './cli-session-store'
+import { sortCliSessionViews, toCliSessionView, type CliSessionRow, type CliSessionStore, type CliSessionView } from '../adapters/store/cli-session-store'
 
 export type CliSource = 'claude' | 'codex' | 'cursor'
 export type CliEventKind = 'stop' | 'prompt' | 'permission' | 'session_end'

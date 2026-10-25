@@ -14,8 +14,8 @@
  * one release so a downgrade can recover; we delete it in the next major.
  */
 import { existsSync } from 'node:fs'
-import { renameMigrated, type Db } from '../lib/db'
-import { readJsonFile } from '../lib/read-json-file'
+import { renameMigrated, type Db } from '../../lib/db'
+import { readJsonFile } from '../../lib/read-json-file'
 
 export interface BotSessionState {
   status: 'expired'

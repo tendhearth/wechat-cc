@@ -25,7 +25,7 @@ vi.mock('./ilink/voice', async (orig) => {
 
 import { makeIlinkAdapter, type Account } from './ilink-glue'
 import { openTestDb } from '../lib/db'
-import { makeConversationStore } from '../core/conversation-store'
+import { makeConversationStore } from '../adapters/store/conversation-store'
 import { startFakeIlink, type FakeIlinkHandle } from './__e2e__/fake-ilink-server'
 
 describe('ilink-glue —— 媒体发成功才报给镜像', () => {

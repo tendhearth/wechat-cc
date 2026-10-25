@@ -2,7 +2,7 @@ import type { SessionManager } from '../../app/session-manager'
 import type { TierProfile } from '../../domain/user-tier'
 import type { ProviderRegistry } from '../../app/provider-registry'
 import type { ConversationCoordinator, TurnRecord } from '../../app/conversation-coordinator'
-import type { ConversationStore } from '../../core/conversation-store'
+import type { ConversationStore } from '../../adapters/store/conversation-store'
 import { formatInbound } from '../../domain/prompt-format'
 import type { ProviderId } from '../../domain/conversation'
 import type { Options } from '@anthropic-ai/claude-agent-sdk'
@@ -268,7 +268,7 @@ export interface BootstrapDeps {
 
 export interface Bootstrap {
   sessionManager: SessionManager
-  sessionStore: import('../../core/session-store').SessionStore
+  sessionStore: import('../../adapters/store/session-store').SessionStore
   conversationStore: ConversationStore
   registry: ProviderRegistry
   coordinator: ConversationCoordinator

@@ -17,7 +17,7 @@
  */
 import { existsSync, readFileSync } from 'node:fs'
 import { join } from 'node:path'
-import { makeSessionStore } from '../../core/session-store'
+import { makeSessionStore } from '../../adapters/store/session-store'
 import type { Db } from '../../lib/db'
 import { needsRefresh, formatSummaryRequest } from './summarizer'
 import { resolveProjectJsonlPath } from './path-resolver'

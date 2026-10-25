@@ -1,4 +1,4 @@
-import type { ProviderId, SessionStore } from '../core/session-store'
+import type { ProviderId, SessionStore } from '../adapters/store/session-store'
 import type { AgentEvent, AgentSession } from '../ports/agent-provider'
 import { assertCallAllowed, classifyWith, sessionCallTarget, type CallTarget, type NetworkGate } from '../lib/network-gate'
 import { providerCallTarget, type ProviderRegistry } from './provider-registry'

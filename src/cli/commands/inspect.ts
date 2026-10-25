@@ -125,7 +125,7 @@ const conversationsListCmd = defineCommand({
     // sources from conversationStore.getIdentity (user_names.json was
     // deprecated in Task 21); envelope grows user_id/account_id alongside
     // user_name so the dashboard table can render account/user columns.
-    const { makeConversationStore } = await import('../../core/conversation-store')
+    const { makeConversationStore } = await import('../../adapters/store/conversation-store')
     const { openWechatDb } = await import('../../lib/db')
     const db = openWechatDb(STATE_DIR)
     const store = makeConversationStore(db, { migrateFromFile: join(STATE_DIR, 'conversations.json') })

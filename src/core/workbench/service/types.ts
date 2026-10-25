@@ -2,7 +2,7 @@
 import type { QuotaKind } from '../../../domain/provider-quota'
 import type { AgentRuntimeSnapshot } from '../../../ports/agent-provider'
 import type { Task } from '../store'
-import type { MatterOrigin } from '../../matters/store'
+import type { MatterOrigin } from '../../../adapters/store/matters-store'
 import type { EntryReceipt } from '../task-entry'
 import type { TaskWaitingFor } from '../wechat-types'
 import type { ProviderRegistry } from '../../../app/provider-registry'

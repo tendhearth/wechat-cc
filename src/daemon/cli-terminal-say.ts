@@ -34,7 +34,7 @@
  */
 import { randomBytes } from 'node:crypto'
 import { stripMarkdown, INLINE_MAX, type CliEvent, type CliSessionInfo, type CliSource } from '../core/cli-events'
-import type { CliSessionView } from '../core/cli-session-store'
+import type { CliSessionView } from '../adapters/store/cli-session-store'
 import { cliSourceLabel } from '../domain/cli-session-digest'
 import { lastAssistantText, redactSecrets } from '../core/cli-transcript'
 import { RESUME_TIMEOUT_MS, type CliReplyCore } from './cli-reply-handler'

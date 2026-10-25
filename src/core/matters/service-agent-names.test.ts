@@ -1,6 +1,6 @@
 import {afterEach,beforeEach,describe,expect,it,vi} from 'vitest'
 import {openDb,type Db} from '../../lib/db'
-import {makeMatterStore,type MatterStore} from './store'
+import {makeMatterStore,type MatterStore} from '../../adapters/store/matters-store'
 import {makeMattersService} from './service'
 
 // 收敛清单 ⑥:执行者叫什么只由 daemon 定 —— 一件事带 agentNames(id → 正式名字),三端不存名字表。

@@ -22,8 +22,8 @@
  * any legacy migration path lands rows under `chat_id='_legacy'`.
  */
 import { existsSync } from 'node:fs'
-import { renameMigrated, type Db } from '../lib/db'
-import { readJsonFile } from '../lib/read-json-file'
+import { renameMigrated, type Db } from '../../lib/db'
+import { readJsonFile } from '../../lib/read-json-file'
 
 export type ProviderId = string  // open string per RFC 03 §3.3 (registry-driven)
 

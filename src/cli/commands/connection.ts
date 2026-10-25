@@ -16,7 +16,7 @@ const connectionProbeCmd = defineCommand({
     const { ilinkGetUpdates } = await import('../../lib/ilink')
     const { probeConnection } = await import('../../daemon/connection-probe')
     const { openWechatDb } = await import('../../lib/db')
-    const { makeSessionStateStore } = await import('../../core/session-state')
+    const { makeSessionStateStore } = await import('../../adapters/store/session-state')
     const { readFileSync, existsSync, readdirSync } = await import('node:fs')
     const { join } = await import('node:path')
 

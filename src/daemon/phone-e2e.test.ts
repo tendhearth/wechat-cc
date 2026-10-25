@@ -14,7 +14,7 @@ import { makeProtocolClient, MatterInputReceiptResult, type ProtocolClient, type
 import { openDb, type Db } from '../lib/db'
 import { removeTempDir } from '../lib/test-temp'
 import { createProviderRegistry } from '../app/provider-registry'
-import { makeMatterStore } from '../core/matters/store'
+import { makeMatterStore } from '../adapters/store/matters-store'
 import { makeMattersService } from '../core/matters/service'
 import { makeWorkbenchStore } from '../core/workbench/store'
 import { makeWorkbenchService, type WorkbenchService } from '../core/workbench/service'

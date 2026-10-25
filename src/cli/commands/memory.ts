@@ -206,7 +206,7 @@ const memorySynthesizeCmd = defineCommand({
     let provider = args.provider
     if (!provider) {
       try {
-        const { makeConversationStore } = await import('../../core/conversation-store')
+        const { makeConversationStore } = await import('../../adapters/store/conversation-store')
         const conv = makeConversationStore(db).get(chatId)
         if (conv?.mode?.kind === 'solo') provider = conv.mode.provider
       } catch { /* no conversation yet — default below */ }
@@ -309,7 +309,7 @@ async function resolveProfileChatId(chatIdArg: string | undefined): Promise<stri
 async function profileProvider(chatId: string, requested: string | undefined, db: ReturnType<typeof import('../../lib/db').openWechatDb>): Promise<string> {
   if (requested) return requested
   try {
-    const { makeConversationStore } = await import('../../core/conversation-store')
+    const { makeConversationStore } = await import('../../adapters/store/conversation-store')
     const conv = makeConversationStore(db).get(chatId)
     if (conv?.mode?.kind === 'solo') return conv.mode.provider
   } catch { /* no conversation yet — default below */ }

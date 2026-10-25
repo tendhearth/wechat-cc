@@ -20,7 +20,7 @@ const sessionsListProjectsCmd = defineCommand({
   },
   async run({ args }) {
     const outFile = args['out-file']
-    const { makeSessionStore } = await import('../../core/session-store')
+    const { makeSessionStore } = await import('../../adapters/store/session-store')
     const { openWechatDb } = await import('../../lib/db')
     const db = openWechatDb(STATE_DIR)
     const store = makeSessionStore(db, { migrateFromFile: join(STATE_DIR, 'sessions.json') })
@@ -106,7 +106,7 @@ const sessionsReadJsonlCmd = defineCommand({
   },
   async run({ args }) {
     const outFile = args['out-file']
-    const { makeSessionStore } = await import('../../core/session-store')
+    const { makeSessionStore } = await import('../../adapters/store/session-store')
     const { openWechatDb } = await import('../../lib/db')
     const db = openWechatDb(STATE_DIR)
     const store = makeSessionStore(db, { migrateFromFile: join(STATE_DIR, 'sessions.json') })
@@ -167,7 +167,7 @@ const sessionsDeleteCmd = defineCommand({
     json: { type: 'boolean', description: 'JSON envelope' },
   },
   async run({ args }) {
-    const { makeSessionStore } = await import('../../core/session-store')
+    const { makeSessionStore } = await import('../../adapters/store/session-store')
     const { openWechatDb } = await import('../../lib/db')
     const db = openWechatDb(STATE_DIR)
     const store = makeSessionStore(db, { migrateFromFile: join(STATE_DIR, 'sessions.json') })
@@ -208,8 +208,8 @@ const sessionsListChatsCmd = defineCommand({
   },
   async run({ args }) {
     const outFile = args['out-file']
-    const { makeSessionStore } = await import('../../core/session-store')
-    const { makeConversationStore } = await import('../../core/conversation-store')
+    const { makeSessionStore } = await import('../../adapters/store/session-store')
+    const { makeConversationStore } = await import('../../adapters/store/conversation-store')
     const { openWechatDb } = await import('../../lib/db')
     const { groupChats } = await import('../sessions-helpers')
     const db = openWechatDb(STATE_DIR)

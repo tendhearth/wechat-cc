@@ -9,7 +9,7 @@ import {createProviderRegistry} from '../../app/provider-registry'
 import {makeWorkbenchStore} from './store'
 import {makeWorkbenchService,type WorkbenchService} from './service'
 import {MANAGED_NATIVE_CAPABILITIES} from './executor-capabilities'
-import {makeMatterStore,type MatterStore} from '../matters/store'
+import {makeMatterStore,type MatterStore} from '../../adapters/store/matters-store'
 import {wechatTaskMessageKey} from './wechat-control'
 
 /**

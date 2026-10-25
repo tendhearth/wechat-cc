@@ -1,7 +1,7 @@
 // src/daemon/inbound/types.ts
 import type { InboundMsg } from '../../domain/prompt-format'
 import type { Intent } from './intent'
-import type { MatterOrigin } from '../../core/matters/store'
+import type { MatterOrigin } from '../../adapters/store/matters-store'
 
 export type ConsumedBy = 'admin' | 'mode' | 'onboarding' | 'permission-reply' | 'command' | 'guard' | 'access' | 'health' | 'workbench'
 

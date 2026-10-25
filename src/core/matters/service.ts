@@ -1,4 +1,4 @@
-import type {ListMatters,Matter,MatterBinding,MatterOrigin,MatterSession,MatterStore} from './store'
+import type {ListMatters,Matter,MatterBinding,MatterOrigin,MatterSession,MatterStore} from '../../adapters/store/matters-store'
 import {randomUUID} from 'node:crypto'
 import type {PendingWorkbenchPermission,PermissionDecision} from '../workbench/permissions'
 import type {PendingUserInput} from '../workbench/user-input'

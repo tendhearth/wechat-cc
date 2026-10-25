@@ -8,11 +8,11 @@
 import { join } from 'node:path'
 import { mkdirSync } from 'node:fs'
 import { makeStateStore, type StateStore } from '../state-store'
-import { makeSessionStateStore, type SessionStateStore } from '../../core/session-state'
+import { makeSessionStateStore, type SessionStateStore } from '../../adapters/store/session-state'
 import { PendingPermissions } from '../pending-permissions'
 import { unknownChatIdError, missingContextTokenError } from '../../lib/send-reply'
 import type { Db } from '../../lib/db'
-import type { ConversationStore } from '../../core/conversation-store'
+import type { ConversationStore } from '../../adapters/store/conversation-store'
 
 export interface Account {
   id: string

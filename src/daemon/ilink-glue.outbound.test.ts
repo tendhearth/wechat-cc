@@ -22,7 +22,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { makeIlinkAdapter, type Account } from './ilink-glue'
 import { openTestDb, type Db } from '../lib/db'
-import { makeConversationStore, type ConversationStore } from '../core/conversation-store'
+import { makeConversationStore, type ConversationStore } from '../adapters/store/conversation-store'
 import { startFakeIlink, type FakeIlinkHandle } from './__e2e__/fake-ilink-server'
 import {makeMessagesStore} from '../lib/messages-store'
 

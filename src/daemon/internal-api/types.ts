@@ -11,7 +11,7 @@ import type { Db } from '../../lib/db'
 import type { WechatProjectsDep, WechatVoiceDep, WechatCompanionDep } from '../wechat-tool-deps'
 import type { Journal } from '../../core/journal-store'
 import type { ReplySinks } from '../reply-sinks'
-import type { ConversationStore } from '../../core/conversation-store'
+import type { ConversationStore } from '../../adapters/store/conversation-store'
 import type { ProviderId } from '../../domain/conversation'
 import type { PermissionMode } from '../../domain/capability-matrix'
 import type { UserTier } from '../../domain/user-tier'
@@ -257,7 +257,7 @@ export interface InternalApiDeps {
   cliEvents?: {
     ingest(ev: import('../../core/cli-events').CliEvent): import('../../core/cli-events').CliEventAction | Promise<import('../../core/cli-events').CliEventAction>
     /** 终端会话登记处(v76):GET /v1/cli/sessions。缺席 ⇒ 那条路由 503。 */
-    list?(opts?: { includeEnded?: boolean; limit?: number }): import('../../core/cli-session-store').CliSessionView[]
+    list?(opts?: { includeEnded?: boolean; limit?: number }): import('../../adapters/store/cli-session-store').CliSessionView[]
     /**
      * GET /v1/cli/sessions?detail=1(CC 的 terminal_sessions,2026-10-24):每条补上开没开着窗口、此刻在做哪一步。
      * 要读记录尾巴,所以只在带 detail 时算;桌面「此刻」不带。缺席 ⇒ 不补。
@@ -403,7 +403,7 @@ export interface InternalApiDeps {
    * Optional per-turn outcome store — backs GET /v1/turns. Undefined in
    * minimal embeddings / tests, in which case the route returns 503.
    */
-  turns?: import('../../core/turn-record-store').TurnRecordStore
+  turns?: import('../../adapters/store/turn-record-store').TurnRecordStore
   /**
    * Optional live-session lister — backs GET /v1/sessions and the
    * sessions_live count in GET /v1/health. A thunk (not the SessionManager

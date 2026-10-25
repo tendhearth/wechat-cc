@@ -8,7 +8,7 @@ import {makeWorkbenchStore} from './store'
 import {makeWorkbenchService,type WorkbenchService} from './service'
 import {MANAGED_NATIVE_CAPABILITIES} from './executor-capabilities'
 import {removeTempDir} from '../../lib/test-temp'
-import {makeMatterStore} from '../matters/store'
+import {makeMatterStore} from '../../adapters/store/matters-store'
 import {wechatTaskMessageKey} from './wechat-control'
 
 let root:string,project:string,db:Db,store:ReturnType<typeof makeWorkbenchStore>,service:WorkbenchService

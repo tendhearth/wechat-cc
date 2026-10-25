@@ -13,7 +13,7 @@ import { assertMatrixComplete, capabilitiesFor, capabilityProviderIds } from '..
 import type { ProviderId } from '../../domain/conversation'
 import type { PermissionMode } from '../../domain/capability-matrix'
 import type { Options } from '@anthropic-ai/claude-agent-sdk'
-import type { ConversationStore } from '../../core/conversation-store'
+import type { ConversationStore } from '../../adapters/store/conversation-store'
 import { makeMtimeCachedConfigReader, type AgentConfig, type AgentProviderKind } from '../../lib/agent-config'
 import type { Access } from '../../lib/access'
 import type { CompanionConfig } from '../companion/config'

@@ -5,7 +5,7 @@ import { mkdtempSync, mkdirSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { openTestDb, type Db } from '../lib/db'
-import { makeConversationStore, type ConversationStore } from '../core/conversation-store'
+import { makeConversationStore, type ConversationStore } from '../adapters/store/conversation-store'
 
 // Test factory: every makeIlinkAdapter call now requires a conversationStore
 // (PR5 Task 21 — nameStore deprecation). We co-locate db + store creation
