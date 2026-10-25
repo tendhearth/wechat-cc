@@ -35,6 +35,11 @@ export interface Chatroom {
   preemptInFlight(chatId: string): Promise<void>
   /** coordinator.cancel 的辩论那一半:有在跑的就打断,返回 true。 */
   abort(chatId: string): boolean
+  /**
+   * 开跑之前先停掉上一场还在跑的辩论、等它收尾(latest-wins),之后才定这一轮的计划 —— 档位在等完之后读。
+   * 没有在跑的就同步返回 undefined(不多让出一拍)。
+   */
+  preemptPrior(chatId: string): Promise<void> | undefined
 }
 
 export function createChatroom(ctx: CoordinatorCtx, runner: TurnRunner, failures: FailureHandlers): Chatroom {
@@ -84,8 +89,8 @@ export function createChatroom(ctx: CoordinatorCtx, runner: TurnRunner, failures
     const dispatchPromise = new Promise<void>(resolve => { dispatchResolve = resolve })
     inFlightDispatchPromises.set(msg.chatId, dispatchPromise)
 
-    // 档位在定计划时就定了(一轮一个快照):同一个 /chat 里每一拍、每一位都用同一份 —— access.json 在
-    // 辩论中途被改,从下一条消息起生效。
+    // 档位在这一轮开跑时定(dispatchInner 在等完上一场之后才定计划):同一个 /chat 里每一拍、每一位都用
+    // 同一份 —— access.json 在辩论中途被改,从下一条消息起生效。
     const auth = plan.auth
 
     try {
@@ -318,6 +323,22 @@ export function createChatroom(ctx: CoordinatorCtx, runner: TurnRunner, failures
         priorAborter.abort()
         try { await priorPromise } catch { /* prior dispatch's own error path */ }
       }
+    },
+    preemptPrior(chatId) {
+      if (!inFlightAborters.get(chatId)) return undefined
+      return (async () => {
+        // 和 dispatch 开头的循环同一套:每醒一次重读一次,直到槽空。
+        while (true) {
+          const priorAborter = inFlightAborters.get(chatId)
+          const priorPromise = inFlightDispatchPromises.get(chatId)
+          if (!priorAborter) return
+          deps.log('COORDINATOR_CHATROOM', `chat=${chatId} → preempting prior in-flight dispatch`)
+          priorAborter.abort()
+          if (priorPromise) {
+            try { await priorPromise } catch { /* prior dispatch's own error path */ }
+          }
+        }
+      })()
     },
     abort(chatId) {
       const ac = inFlightAborters.get(chatId)

@@ -17,7 +17,7 @@ import type { InboundMsg } from '../prompt-format'
 import { capabilitiesFor } from '../capability-matrix'
 import { makeChatMutex } from '../async-mutex'
 import { createCoordinatorCtx } from './ctx'
-import { createPlanner, type TurnPlan } from './plan'
+import { createPlanner } from './plan'
 import { createTurnRunner } from './runner'
 import { createFailureHandlers } from './failures'
 import { createSolo } from './solo'
@@ -123,17 +123,24 @@ export function createConversationCoordinator(deps: ConversationCoordinatorDeps)
   }
 
   /**
-   * 照计划派发。`plan`:submitTurn 已经替 chatroom 定好的计划(为了按实际执行的集合决定排队方式,
-   * 评审 #193 P2-4)。只在排队期间模式没变时沿用;否则这里重新定。
+   * 这一轮真正开跑的那一刻(queue 在 per-chat 锁里;/chat 抢占在等完排队的单模型回合之后)定计划、照计划派发。
+   * 档位 / 被拒 / 守护**只在这里**定:排队那段时间里 access.json 可能把这个 chat 降成访客、trusted_providers
+   * 可能拿掉某家、网络可能断 —— 不信排队之前的结论(和「不信模式行的年份」同一个道理)。
    */
-  async function dispatchInner(msg: InboundMsg, plan?: TurnPlan): Promise<void> {
+  async function dispatchInner(msg: InboundMsg): Promise<void> {
     const proj = deps.resolveProject(msg.chatId)
     if (!proj) {
       deps.log('COORDINATOR', `drop: no project for chat=${msg.chatId}`)
       return
     }
     const mode = getMode(msg.chatId)
-    const planned = plan && JSON.stringify(plan.mode) === JSON.stringify(mode) ? plan : planner.planTurn(msg, mode)
+    // /chat:先按 latest-wins 停掉上一场、等它收尾,再定计划 —— 档位要在等完之后读(以前 dispatchChatroom
+    // 也是等完才读档位)。没有在跑的就不 await(不多让出一拍)。
+    if (mode.kind === 'chatroom') {
+      const prior = chatroom.preemptPrior(msg.chatId)
+      if (prior) await prior
+    }
+    const planned = planner.planTurn(msg, mode)
     // 没接守护时计划是同步的:不 await,不多让出一拍(取消 / latest-wins 抢占都靠同步登记)。
     const p = planned instanceof Promise ? await planned : planned
     // 回落 / 退成单模型的那句日志在派发这一刻记(和以前同一个位置)。
@@ -162,18 +169,18 @@ export function createConversationCoordinator(deps: ConversationCoordinatorDeps)
   ): Promise<T | void> {
     const mode = getMode(msg.chatId)
     let policy = turnPolicy(mode)
-    let plan: TurnPlan | undefined
     // 评审 #193 P2-4:排队方式跟着**实际执行的集合**走,不跟着模式名走。/chat 被守护筛到只剩
     // 一个(或一个都不剩)时执行已经退成单模型 —— 那就得像 solo 一样排队,否则第二条消息会在
     // 同一个会话上撞上还在跑的第一条(ACP 的 acp_turn_already_running,第二条就丢了)。
     if (policy === 'preempt' && mode.kind === 'chatroom' && deps.resolveProject(msg.chatId)) {
+      // 只是预估,只决定排队方式(quiet:不记日志、不回话);真正跑谁、什么档位,开跑时在 dispatchInner 里重新定。
       // 没接守护时同步定(不多让出一拍,latest-wins 的抢占时机不变)。
-      const planned = planner.planTurn(msg, mode)
-      plan = planned instanceof Promise ? await planned : planned
-      if (plan.kind !== 'chatroom') policy = 'queue'
+      const planned = planner.planTurn(msg, mode, { quiet: true })
+      const estimate = planned instanceof Promise ? await planned : planned
+      if (estimate.kind !== 'chatroom') policy = 'queue'
     }
     const run = async (): Promise<T | void> => {
-      const doDispatch = (): Promise<void> => dispatchInner(msg, plan)
+      const doDispatch = (): Promise<void> => dispatchInner(msg)
       return opts?.within ? opts.within(doDispatch) : doDispatch()
     }
     if (policy === 'preempt') {

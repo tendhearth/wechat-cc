@@ -37,18 +37,16 @@ export interface TurnAuth {
   permissionMode: PermissionMode
 }
 
-/**
- * 一轮的计划。`mode` 是定计划时的模式快照(老数据回填之后的那份):排队期间模式变了,计划作废重定。
- */
+/** 一轮的计划:在这一轮真正开跑的那一刻定(见 index.ts 的 dispatchInner)。 */
 export type TurnPlan =
   /** 单模型:solo / primary_tool,或者 /both、/chat 退成一家。`recordMode` 是 TurnRecord 上记的模式。 */
-  | { kind: 'solo'; mode: Mode; providerId: ProviderId; recordMode: TurnRecord['mode']; auth: TurnAuth; notes: string[] }
-  | { kind: 'parallel'; mode: Mode; participants: ProviderId[]; auth: TurnAuth }
-  | { kind: 'chatroom'; mode: Mode; participants: ProviderId[]; auth: TurnAuth }
+  | { kind: 'solo'; providerId: ProviderId; recordMode: TurnRecord['mode']; auth: TurnAuth; notes: string[] }
+  | { kind: 'parallel'; participants: ProviderId[]; auth: TurnAuth }
+  | { kind: 'chatroom'; participants: ProviderId[]; auth: TurnAuth }
   /** 单模型那一家按档位不许用(派发时的兜底闸,见 dispatchRefused)。 */
-  | { kind: 'refused'; mode: Mode; providerId: ProviderId; denial: ProviderDenial; auth: TurnAuth; notes: string[] }
+  | { kind: 'refused'; providerId: ProviderId; denial: ProviderDenial; auth: TurnAuth; notes: string[] }
   /** 全被网络守护挡下,话已经回过了。 */
-  | { kind: 'paused'; mode: Mode; notes: string[] }
+  | { kind: 'paused'; notes: string[] }
 
 export interface AdmitInput {
   chatId: string
@@ -139,23 +137,27 @@ export function admit(input: AdmitInput): Admission {
 }
 
 /** 过完守护之后定形:还剩几个人在跑。 */
-function settle(chatId: string, mode: Mode, a: Admission, admitted: ProviderId[]): TurnPlan {
+function settle(chatId: string, a: Admission, admitted: ProviderId[]): TurnPlan {
   // 单模型回落到默认的那句日志照记(以前在挡下之前就记了);一组全被挡下没有回落,不记。
-  if (admitted.length === 0) return { kind: 'paused', mode, notes: a.kind === 'solo' ? a.notes : [] }
-  if (a.kind === 'solo') return { kind: 'solo', mode, providerId: admitted[0]!, recordMode: a.recordMode, auth: a.auth, notes: a.notes }
+  if (admitted.length === 0) return { kind: 'paused', notes: a.kind === 'solo' ? a.notes : [] }
+  if (a.kind === 'solo') return { kind: 'solo', providerId: admitted[0]!, recordMode: a.recordMode, auth: a.auth, notes: a.notes }
   if (admitted.length === 1) {
     return {
-      kind: 'solo', mode, providerId: admitted[0]!, recordMode: a.kind, auth: a.auth,
+      kind: 'solo', providerId: admitted[0]!, recordMode: a.kind, auth: a.auth,
       notes: [`chat=${chatId} ${a.kind} resolved to single participant ${admitted[0]}; degrading to solo`],
     }
   }
   return a.kind === 'parallel'
-    ? { kind: 'parallel', mode, participants: admitted, auth: a.auth }
-    : { kind: 'chatroom', mode, participants: admitted, auth: a.auth }
+    ? { kind: 'parallel', participants: admitted, auth: a.auth }
+    : { kind: 'chatroom', participants: admitted, auth: a.auth }
 }
 
 export interface Planner {
-  planTurn(msg: InboundMsg, mode: Mode): TurnPlan | Promise<TurnPlan>
+  /**
+   * `quiet`:只是预估(submitTurn 排队之前,用来决定 /chat 排队还是抢占)—— 不记日志、守护挡下也不回话。
+   * 预估出来的计划**不许**拿去跑:档位 / 被拒 / 守护在真正开跑时(锁里)重新定。
+   */
+  planTurn(msg: InboundMsg, mode: Mode, opts?: { quiet?: boolean }): TurnPlan | Promise<TurnPlan>
 }
 
 export function createPlanner(ctx: CoordinatorCtx): Planner {
@@ -203,7 +205,7 @@ export function createPlanner(ctx: CoordinatorCtx): Planner {
    * 守护 v2:这一轮要用的 provider 里,哪些此刻能出发。被挡下的(需要保护 + 网络不安全)
    * 合并成一句统一的话回给发起的那一面(只说一次、不重试),返回剩下能用的。
    */
-  async function admitNetwork(msg: InboundMsg, providers: ProviderId[]): Promise<ProviderId[]> {
+  async function admitNetwork(msg: InboundMsg, providers: ProviderId[], quiet: boolean): Promise<ProviderId[]> {
     if (!deps.networkGate) return providers
     const cur = ctx.getMode(msg.chatId)
     const allowed: ProviderId[] = []
@@ -220,7 +222,7 @@ export function createPlanner(ctx: CoordinatorCtx): Planner {
       if (d.allowed) allowed.push(p)
       else refused.push({ label: d.cls.label, source: d.verdict!.source, detail: d.verdict!.detail })
     }
-    if (refused.length > 0) {
+    if (refused.length > 0 && !quiet) {
       const labels = [...new Set(refused.map(r => r.label))].join('、')
       deps.log('GUARD', `chat=${msg.chatId} protected call refused (${labels}) — network unprotected [${refused[0]!.source}] ${refused[0]!.detail}`, { event: 'network_unprotected', chat_id: msg.chatId })
       await ctx.notice(msg.chatId, unprotectedMessage(refused[0]!, labels))
@@ -229,10 +231,9 @@ export function createPlanner(ctx: CoordinatorCtx): Planner {
   }
 
   return {
-    planTurn(msg, mode) {
+    planTurn(msg, mode, opts) {
+      const quiet = opts?.quiet === true
       const candidates = mode.kind === 'parallel' || mode.kind === 'chatroom' ? resolveCandidates(mode, msg.chatId) : undefined
-      // 记下解析之后的模式(老数据第一次解析会回填参与者),排队之后按它判断模式变没变。
-      const snapshot = ctx.getMode(msg.chatId)
       const a = admit({
         chatId: msg.chatId,
         mode,
@@ -244,12 +245,12 @@ export function createPlanner(ctx: CoordinatorCtx): Planner {
         registered: deps.registry.list(),
         defaultProviderId: deps.defaultProviderId,
       })
-      for (const line of a.logs) deps.log('COORDINATOR', line)
+      if (!quiet) for (const line of a.logs) deps.log('COORDINATOR', line)
       // 被拒的单模型不过守护:它根本不会出发。
-      if (a.denial) return { kind: 'refused', mode: snapshot, providerId: a.participants[0]!, denial: a.denial, auth: a.auth, notes: a.notes }
+      if (a.denial) return { kind: 'refused', providerId: a.participants[0]!, denial: a.denial, auth: a.auth, notes: a.notes }
       // 没接守护就同步返回:不多让出一拍(取消 / latest-wins 抢占都靠同步登记)。
-      if (!deps.networkGate) return settle(msg.chatId, snapshot, a, a.participants)
-      return admitNetwork(msg, a.participants).then(admitted => settle(msg.chatId, snapshot, a, admitted))
+      if (!deps.networkGate) return settle(msg.chatId, a, a.participants)
+      return admitNetwork(msg, a.participants, quiet).then(admitted => settle(msg.chatId, a, admitted))
     },
   }
 }
