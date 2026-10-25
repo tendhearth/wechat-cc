@@ -4,7 +4,7 @@
  */
 import { hostname } from 'node:os'
 import type { Bootstrap } from '../bootstrap'
-import type { IlinkAdapter } from '../ilink-glue'
+import type { WechatLinkStatus } from '../../ports/wechat'
 import { buildConnections, cacheConnections } from '../connections'
 import { buildCapabilities } from '../capabilities'
 import { hasFullDiskAccess } from '../../lib/fs-access'
@@ -18,7 +18,7 @@ import { loadCompanionConfig } from '../../lib/companion-config'
 export interface WireConnectionsDeps {
   stateDir: string
   boot: Bootstrap
-  ilink: Pick<IlinkAdapter, 'outboundHealth' | 'sessionState' | 'proactiveClosedSince'>
+  ilink: Pick<WechatLinkStatus, 'outboundHealth' | 'sessionState' | 'proactiveClosedSince'>
   ownerChatId(): string | null
   /** 配对过的手机数(设置面板在后面才建,被问时才读;抛 ⇒ 当 0)。 */
   phoneDevices(): number

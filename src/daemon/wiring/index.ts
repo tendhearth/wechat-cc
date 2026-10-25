@@ -3,7 +3,9 @@
  * one wireMain() entry. Holds zero business logic — pure orchestration.
  */
 import type { Db } from '../../lib/db'
-import type { IlinkAdapter, IlinkAccount } from '../ilink-glue'
+import type { IlinkAccount } from '../ilink-glue'
+import type { PipelineWechat } from './pipeline-deps-opts'
+import type { LifecycleDepsOpts } from './lifecycle-deps'
 import type { Bootstrap } from '../bootstrap'
 import type { Access } from '../../lib/access'
 import type { InboundPipelineDeps } from '../inbound/build'
@@ -51,7 +53,8 @@ export interface WireMainOpts {
   matters?: import('../../adapters/store/matters-store').MatterStore
   stateDir: string
   db: Db
-  ilink: IlinkAdapter
+  /** 微信那一侧:入站管道那一簇 + 拉消息 / 冲盘(src/ports/wechat.ts 的几口;组装的地方挑好了交进来)。 */
+  ilink: PipelineWechat & LifecycleDepsOpts['ilink']
   /** Sticker library — threaded to tick-bodies' daily sticker-artist step. */
   stickers?: import('../../features/stickers').StickerLib
   /** 远程访问开关的重启触发(settings-panel set_remote)。 */
@@ -60,7 +63,7 @@ export interface WireMainOpts {
   commands?: readonly import('../commands/registry').WechatCommand[]
   /** LLM 体检的只读缓存(settings-panel「模型与后端」表格;面板绝不主动外呼)。 */
   llmHealth?: { cached(): import('../llm-health').LlmHealthReport | null }
-  /** Loaded before makeIlinkAdapter — passed separately because IlinkAdapter doesn't expose accounts. */
+  /** Loaded before makeIlinkAdapter — passed separately because the ilink ports don't expose accounts. */
   accounts: IlinkAccount[]
   boot: Bootstrap
   /** `--dangerously` flag — read by startup-sweeps for notification text. */

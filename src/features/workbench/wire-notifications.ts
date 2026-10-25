@@ -1,7 +1,7 @@
 import { makeWechatNotificationWorker, type WechatNoticeKind, type WechatNoticeSendResult, type WechatNotificationNotice } from '../../core/workbench/wechat-notifications'
 import type { WorkbenchService } from './service'
 import type { SpeechKind } from '../../domain/speech/kinds'
-import type { IlinkAdapter } from '../../daemon/ilink-glue'
+import type { WechatWorkbenchTransport } from '../../ports/wechat'
 import type { SpeechPolicy } from '../../daemon/speech/policy'
 
 /** 两条路都送不到时,多久再问一次门(只是本地判定,不碰网络;不算尝试)。 */
@@ -25,7 +25,7 @@ export function noticeSpeechKind(kind: WechatNoticeKind): SpeechKind {
  */
 export function wireWorkbenchNotifications(opts: {
   workbench: WorkbenchService
-  ilink: Pick<IlinkAdapter, 'sendWorkbenchNotice' | 'chatAccountId'>
+  ilink: Pick<WechatWorkbenchTransport, 'sendWorkbenchNotice' | 'chatAccountId'>
   speech: Pick<SpeechPolicy, 'say'>
   now?: () => number
 }): {

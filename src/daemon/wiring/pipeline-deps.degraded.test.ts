@@ -18,7 +18,7 @@ import { openTestDb } from '../../lib/db'
 import { makeReplySinks } from '../reply-sinks'
 
 import type { Bootstrap } from '../bootstrap/index'
-import type { IlinkAdapter } from '../ilink-glue'
+import type { PipelineWechat } from './pipeline-deps-opts'
 import type { ChatPrefsStore } from '../chat-prefs'
 import type { CareLedger } from '../../features/companion/care-ledger'
 
@@ -54,7 +54,7 @@ function setup() {
     health: fakeHealth,
   } as unknown as Bootstrap
 
-  const ilink = {} as unknown as IlinkAdapter
+  const ilink = {} as unknown as PipelineWechat
   const chatPrefs: ChatPrefsStore = { get: () => ({}), set: () => ({}), list: () => [] }
   const careLedger: CareLedger = { get: () => ({ noReplyCount: 0 }), claim: () => {}, claimHunt: () => {}, resetNoReply: () => {} } as unknown as CareLedger
   const replySinks = makeReplySinks()

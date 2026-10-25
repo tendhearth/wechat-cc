@@ -1,6 +1,5 @@
 import { join } from 'node:path'
 import type { Db } from '../lib/db'
-import type { IlinkAdapter } from './ilink-glue'
 import { cleanupOldInbox } from './media'
 import { loadCompanionConfig } from '../lib/companion-config'
 import { loadAgentConfig } from '../lib/agent-config'
@@ -16,7 +15,6 @@ import { runLocalImportIfEnabled } from './local-import'
 export interface StartupSweepDeps {
   stateDir: string
   db: Db
-  ilink: IlinkAdapter
   log: (tag: string, line: string) => void
   /** Bound account count (logged only; the WeChat notice no longer carries it). */
   accountCount: number

@@ -26,7 +26,7 @@ const { makeReplySinks } = await import('../reply-sinks')
 const { _clearCache, _resetSnapshotForTest } = await import('../../lib/access')
 
 import type { Bootstrap } from '../bootstrap/index'
-import type { IlinkAdapter } from '../ilink-glue'
+import type { PipelineWechat } from './pipeline-deps-opts'
 import type { ChatPrefsStore } from '../chat-prefs'
 import type { CareLedger } from '../../features/companion/care-ledger'
 import type { InboundMsg } from '../../domain/prompt-format'
@@ -89,7 +89,7 @@ function setup(admins: string[] = ['admin_chat']) {
     captureContextToken,
     markChatActive: vi.fn(),
     sendTyping: vi.fn(async () => {}),
-  } as unknown as IlinkAdapter
+  } as unknown as PipelineWechat
 
   const chatPrefs: ChatPrefsStore = { get: () => ({}), set: () => ({}), list: () => [] }
   const careLedger: CareLedger = { get: () => ({ noReplyCount: 0 }), claim: vi.fn(), claimHunt: vi.fn(), claimVisit: vi.fn(), claimMemory: vi.fn(), resetNoReply: vi.fn(), unclaim: vi.fn() }

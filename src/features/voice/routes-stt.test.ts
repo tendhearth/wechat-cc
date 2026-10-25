@@ -1,10 +1,10 @@
 import { describe, it, expect, vi } from 'vitest'
 import { Buffer } from 'node:buffer'
 import { voiceRoutes } from './routes'
-import type { WechatVoiceDep } from '../../daemon/wechat-tool-deps'
+import type { WechatVoice } from '../../ports/wechat'
 
-function routesWith(voice: Partial<WechatVoiceDep>) {
-  return voiceRoutes({ voice: voice as WechatVoiceDep })
+function routesWith(voice: Partial<WechatVoice>) {
+  return voiceRoutes({ voice: voice as WechatVoice })
 }
 function call(table: ReturnType<typeof voiceRoutes>, key: string, body: unknown) {
   return table[key]!(new URLSearchParams(), body)

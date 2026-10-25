@@ -10,12 +10,11 @@
  */
 import { readdirSync, readFileSync, existsSync } from 'node:fs'
 import { join } from 'node:path'
-import type { WechatVoiceDep, WechatCompanionDep } from './wechat-tool-deps'
-import { howToReplyLine, parsePermissionReply, type PendingPermissionMeta, type PendingPermissionView, type PermissionDecision } from './pending-permissions'
+import { WECHAT_PORTS, type WechatSend, type WechatVoice, type WechatCompanionControls, type WechatAccounts, type WechatContacts, type WechatPages, type WechatPermissions, type WechatLinkStatus, type WechatWorkbenchTransport, type WechatPolling } from '../ports/wechat'
+import { howToReplyLine, parsePermissionReply } from './pending-permissions'
 import { buildMediaItemFromArtifact,buildMediaItemFromFile, assertSendable } from './media'
 import { ilinkSendMessage, botTextMessage } from '../lib/ilink'
-import { sendIlinkWorkbenchItem,sendIlinkWorkbenchText, type ArtifactTransportOutcome,type WorkbenchMediaItem,type WorkbenchNoticeOutcome } from '../lib/ilink-workbench'
-import type { SessionStateStore } from '../adapters/store/session-state'
+import { sendIlinkWorkbenchItem,sendIlinkWorkbenchText } from '../lib/ilink-workbench'
 import { sendReplyOnce, chunk } from '../lib/send-reply'
 import { MAX_TEXT_CHUNK } from '../lib/config'
 import { log } from '../lib/log'
@@ -28,7 +27,7 @@ import { makeIlinkContext, type Account } from './ilink/context'
 import { gateVoice, makeVoice } from './ilink/voice'
 import { makeCompanion } from './ilink/companion'
 import { makeTransport } from './ilink/transport'
-import { makeOutboundHealthTracker, isProactiveWindowClosed, type OutboundHealth } from './ilink/outbound-health'
+import { makeOutboundHealthTracker, isProactiveWindowClosed } from './ilink/outbound-health'
 import type { Db } from '../lib/db'
 import type { ConversationStore } from '../adapters/store/conversation-store'
 import { makeMessagesStore } from '../lib/messages-store'
@@ -48,108 +47,27 @@ export type { Account } from './ilink/context'
 /** Alias for Account — used in polling-lifecycle public API. */
 export type IlinkAccount = import('./ilink/context').Account
 
-export interface IlinkAdapter {
-  sendMessage(chatId: string, text: string, metadata?: {source:'workbench'}): Promise<{ msgId: string; error?: string }>
-  /** `mirror: false` ⇒ 成功之后不报给媒体镜像(调用方自己记,如一封信的几页记成一行)。 */
-  sendFile(chatId: string, path: string, opts?: { mirror?: boolean }): Promise<void>
-  /**
-   * 发给某个 chat 的媒体(文件 / 表情 / 语音)成功之后报给谁(2026-10-18,companion/media-mirror.ts:主人那条记进
-   * App 对话页读的消息库)。pipeline-deps 接一次;没接 ⇒ 不报。
-   */
-  onMediaSent?(fn: ((chatId: string, m: SentMedia | readonly SentMedia[]) => void) | null): void
-  /** 路由自己报一样已经送出去的东西(联网表情存进表情库之后、信的几页一起)。没接 ⇒ 什么都不做。 */
-  noteSentMedia?(chatId: string, m: SentMedia | readonly SentMedia[]): void
-  /** Passive outbound link health (spec 2026-08-22-outbound-health). */
-  outboundHealth(): OutboundHealth
-  /**
-   * 这个 chat 的主动推送窗口从什么时候起是关的(ilink errcode=-2:对方太久没说话);null = 没关。
-   * 下一次发给它成功就清掉。给「CC 现在怎么样」用:主人那一路关了,完成通知和提醒都会丢,而解法只有主人随便回一句。
-   */
-  proactiveClosedSince(chatId: string): string | null
-  editMessage(chatId: string, msgId: string, text: string): Promise<void>
-  broadcast(text: string, accountId?: string): Promise<{ ok: number; failed: number }>
-  sharePage(title: string, content: string, opts?: { needs_approval?: boolean; chat_id?: string; account_id?: string }): Promise<{ url: string; slug: string }>
-  resurfacePage(q: { slug?: string; title_fragment?: string }): Promise<{ url: string; slug: string } | null>
-  setUserName(chatId: string, name: string): Promise<void>
-  resolveUserName(chatId: string): string | undefined
-  /**
-   * Resolve the ilink account bound to a chat (persisted routing, falling
-   * back to the first configured account — mirrors the internal
-   * resolveAccount() used by sendMessage/sendFile). Exposed for the
-   * app-conversation-channel converse route (app-conversation-channel
-   * plan, Stage 0 Task 2), which synthesizes an InboundMsg for the owner
-   * chat and needs a valid accountId to dispatch it through the coordinator.
-   */
-  resolveAccountId(chatId: string): string
-  /** Strict persisted-route lookup for workbench notifications; never falls back. */
-  chatAccountId?(chatId: string): string | null
-  /** Single-attempt task text delivery with explicit server acknowledgement. */
-  sendWorkbenchNotice?(notice: {
-    id: string
-    taskId: string
-    runId: string
-    ownerChatId: string
-    accountId: string
-    text: string
-  }, signal?: AbortSignal): Promise<WorkbenchNoticeOutcome>
-  uploadWorkbenchArtifact?(request:{id:string;ownerChatId:string;accountId:string;bytes:Uint8Array;name:string;mime:string},signal?:AbortSignal):Promise<{status:'uploaded';item:WorkbenchMediaItem}|{status:'retryable'|'blocked';reason:string}>
-  sendWorkbenchArtifact?(receipt:{id:string;taskId:string;artifactId:string;artifactSha256:string;ownerChatId:string;accountId:string;name:string},item:WorkbenchMediaItem,signal?:AbortSignal):Promise<ArtifactTransportOutcome>
-  voice: WechatVoiceDep
-  companion: WechatCompanionDep
-  /**
-   * 发拍板卡到 chatId 并等 y/n。卡片没送到(errcode=-2 等)默认立刻 resolve 'undelivered'(没人能回,别死等);
-   * `keepOnUndelivered` ⇒ 条目留在登记处等到点 —— 调用方另有面(手机 app 推送)能拍板时用。
-   */
-  askUser(chatId: string, prompt: string, hash: string, timeoutMs: number, opts?: { keepOnUndelivered?: boolean }): Promise<'allow' | 'deny' | 'timeout' | 'undelivered'>
-  lastActiveChatId(): string | null
-  markChatActive(chatId: string, accountId?: string): void
-  captureContextToken(chatId: string, ctxToken?: string): void
-  /** Account-routing without the lastActiveRef side effect — see
-   *  TransportMethods.routeChatToAccount's doc comment (guest-path §2). */
-  routeChatToAccount(chatId: string, accountId: string): void
-  sendTyping(chatId: string, accountId?: string): Promise<void>
-  /**
-   * Long-poll wrapper for poll-loop. Detects errcode=-14 session timeout and
-   * flips SessionStateStore + returns { expired: true } so the loop stops.
-   */
-  getUpdatesForLoop(accountId: string, baseUrl: string, token: string, syncBuf: string, signal?: AbortSignal): Promise<{
-    updates?: unknown[]
-    sync_buf?: string
-    expired?: boolean
-    standby?: boolean
-    /** Client-side long-poll timeout — see GetUpdatesResp.timed_out. */
-    timed_out?: boolean
-  }>
-  /**
-   * 微信侧的「y/n <hash>」。`fromChatId` 是发这句话的 chat —— 条目带 meta 时
-   * **只有当初被问的那个 chat** 能拍板(hash 现在经 /v1/companion/pet 对所有
-   * trusted 调用方可见,不校验来源等于谁看到 hash 谁就能替主人批准)。
-   * 老条目(无 meta)保持原行为。
-   */
-  handlePermissionReply(text: string, fromChatId?: string, quoted?: string): boolean
-  /** 只读版 handlePermissionReply:同样的判定,不 consume、不发消息。 */
-  probePermissionReply(text: string, fromChatId?: string, quoted?: string): boolean
-  /** Desktop pet permission queue (CC 桌宠 Phase B) — same registry as WeChat. */
-  listPendingPermissions(): PendingPermissionView[]
-  /** Resolve a pending permission from the desktop. = pending.consume(hash, decision). */
-  resolvePermission(hash: string, decision: 'allow' | 'deny'): boolean
-  /** 这条待批在微信里的两位数码(自改流水线要把它一起回给 CLI)。= pending.codeOf. */
-  pendingPermissionCodeOf(hash: string): string | null
-  /**
-   * 只登记一条待批,**不发卡**。= pending.register.
-   *
-   * 自改流水线要的就是这个口子:`askUser` 在外发失败时会 `pending.fail(hash)`
-   * 把条目从登记处删掉(对一轮工具调用是对的 —— 没人能回,别死等),可自改的
-   * 拍板还有桌面权限卡和 `self change --approve <id>` 两条路。外发不通时把条目
-   * 留着,主人换个面拍板就行(2026-09-18 真机:errcode=-2 让整条流水线白跑到
-   * approval_timeout)。发卡由调用方自己做。
-   */
-  registerPendingPermission(hash: string, timeoutMs: number, meta: PendingPermissionMeta): Promise<PermissionDecision>
-  /** 到点扫一遍待批(把过期的 resolve 成 timeout)。= pending.sweep. */
-  sweepPendingPermissions(): void
-  /** Session state accessor for admin commands (/health, cleanup). */
-  sessionState: SessionStateStore
-  flush(): Promise<void>
+/**
+ * 整个 ilink 适配器 = 十个窄口的并集(src/ports/wechat.ts,架构终态 A6)。只有 ilink 自己和组装的地方(daemon-modules.ts)
+ * 拿得到这一整个;别的模块经容器 needs 口名(`wechat.send` …)只拿它要的那一口(守卫:scripts/ilink-ports.guard.test.ts)。
+ */
+export interface IlinkAdapter extends WechatSend, WechatAccounts, WechatContacts, WechatPages, WechatPermissions, WechatLinkStatus, WechatWorkbenchTransport, WechatPolling {
+  voice: WechatVoice
+  companion: WechatCompanionControls
+}
+
+/** ilink 模块交给容器的窄口(daemon-modules.ts 的 `ilink-adapter` 模块的 `ports`)。语音 / 开关是子对象,其余八口就是 adapter 本身、只收窄类型。 */
+export const ILINK_PORTS = {
+  [WECHAT_PORTS.send]: (a: IlinkAdapter): WechatSend => a,
+  [WECHAT_PORTS.voice]: (a: IlinkAdapter): WechatVoice => a.voice,
+  [WECHAT_PORTS.companion]: (a: IlinkAdapter): WechatCompanionControls => a.companion,
+  [WECHAT_PORTS.accounts]: (a: IlinkAdapter): WechatAccounts => a,
+  [WECHAT_PORTS.contacts]: (a: IlinkAdapter): WechatContacts => a,
+  [WECHAT_PORTS.pages]: (a: IlinkAdapter): WechatPages => a,
+  [WECHAT_PORTS.permissions]: (a: IlinkAdapter): WechatPermissions => a,
+  [WECHAT_PORTS.link]: (a: IlinkAdapter): WechatLinkStatus => a,
+  [WECHAT_PORTS.workbench]: (a: IlinkAdapter): WechatWorkbenchTransport => a,
+  [WECHAT_PORTS.polling]: (a: IlinkAdapter): WechatPolling => a,
 }
 
 export async function loadAllAccounts(stateDir: string): Promise<Account[]> {
@@ -202,7 +120,7 @@ export function makeIlinkAdapter(opts: {
     try { mediaSent(chatId, m) } catch (err) { log('MESSAGES', `media mirror threw: ${err instanceof Error ? err.message : err}`) }
   }
   const gatedVoice = gateVoice(makeVoice(ctx), opts.networkGate)
-  const voice: WechatVoiceDep = {
+  const voice: WechatVoice = {
     ...gatedVoice,
     async replyVoice(chatId, text) {
       const r = await gatedVoice.replyVoice(chatId, text)

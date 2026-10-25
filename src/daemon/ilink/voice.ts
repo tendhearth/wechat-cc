@@ -4,12 +4,15 @@
  * Lives in its own module so when v1.2 Task 3 splits MCP servers, the
  * wechat-voice MCP can depend on this module directly instead of re-
  * importing the full ilink-glue surface.
+ *
+ * 架构终态 A6:这是窄口 `WechatVoice`(src/ports/wechat.ts,容器里叫 `wechat.voice`)的实现。留在 ilink 里,
+ * 因为 replyVoice 要 ilink 的 context_token、账号路由和媒体上传;别的模块只经那一口拿它。
  */
 import { assertCallAllowed, decideCall, unprotectedMessage, type CallTarget, type NetworkGate } from '../../lib/network-gate'
 import { join } from 'node:path'
 import { randomBytes } from 'node:crypto'
 import { mkdirSync, writeFileSync, unlinkSync } from 'node:fs'
-import type { WechatVoiceDep } from '../wechat-tool-deps'
+import type { WechatVoice } from '../../ports/wechat'
 import { buildMediaItemFromFile } from '../media'
 import { ilinkSendMessage } from '../../lib/ilink'
 import { log } from '../../lib/log'
@@ -36,7 +39,7 @@ function sttProviderFromConfig(cfg: STTConfig): STTProvider {
   return makeHttpSTTProvider({ baseUrl: cfg.base_url, model: cfg.model, apiKey: cfg.api_key })
 }
 
-export function makeVoice(ctx: IlinkContext): WechatVoiceDep {
+export function makeVoice(ctx: IlinkContext): WechatVoice {
   const { stateDir, ctxStore, resolveAccount, assertChatRoutable } = ctx
 
   return {
@@ -208,7 +211,7 @@ const QWEN_TTS_BASE_URL = 'https://dashscope.aliyuncs.com'
  * DashScope(国内)、主人自建网关、局域网都不需要保护,照常;只有连到需要保护的端点(海外官方、
  * 或 guard.json 纳入的自定义网关)且网络不安全时才不出门。只读的 configStatus / sttStatus 不拦。
  */
-export function gateVoice(inner: WechatVoiceDep, gate: NetworkGate | undefined): WechatVoiceDep {
+export function gateVoice(inner: WechatVoice, gate: NetworkGate | undefined): WechatVoice {
   if (!gate) return inner
   const ttsTarget = (provider: string | undefined, baseUrl: string | undefined): CallTarget =>
     ({ provider: 'voice', baseUrl: provider === 'http_tts' ? (baseUrl ?? null) : QWEN_TTS_BASE_URL, purpose: 'voice' })
@@ -244,7 +247,7 @@ export function gateVoice(inner: WechatVoiceDep, gate: NetworkGate | undefined):
       return inner.saveConfig(input)
     },
     ...(inner.transcribe ? { async transcribe(audio: Buffer, mime: string) { const t = currentStt(); if (t) await assertCallAllowed(gate, t); return inner.transcribe!(audio, mime) } } : {}),
-    ...(inner.saveSTTConfig ? { async saveSTTConfig(input: Parameters<NonNullable<WechatVoiceDep['saveSTTConfig']>>[0]) {
+    ...(inner.saveSTTConfig ? { async saveSTTConfig(input: Parameters<NonNullable<WechatVoice['saveSTTConfig']>>[0]) {
       const why = await refused({ provider: 'voice', baseUrl: input.base_url ?? null, purpose: 'voice' })
       if (why) return { ok: false as const, reason: 'network_unprotected', detail: why }
       return inner.saveSTTConfig!(input)

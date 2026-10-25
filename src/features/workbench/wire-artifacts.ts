@@ -1,6 +1,6 @@
 import {makeArtifactDeliveryWorker,type ArtifactDeliveryReceipt} from '../../core/workbench/artifact-deliveries'
 import type {WorkbenchService} from './service'
-import type {IlinkAdapter} from '../../daemon/ilink-glue'
+import type {WechatWorkbenchTransport} from '../../ports/wechat'
 
 /**
  * Files are delivered only from an explicit owner request, never from a notification scan.
@@ -9,7 +9,7 @@ import type {IlinkAdapter} from '../../daemon/ilink-glue'
  */
 export function wireWorkbenchArtifacts(opts:{
   workbench:WorkbenchService
-  ilink:Pick<IlinkAdapter,'chatAccountId'|'uploadWorkbenchArtifact'|'sendWorkbenchArtifact'>
+  ilink:Pick<WechatWorkbenchTransport,'chatAccountId'|'uploadWorkbenchArtifact'|'sendWorkbenchArtifact'>
 }):{close():Promise<void>}{
   const eligible=(receipt:ArtifactDeliveryReceipt)=>opts.workbench.artifactDeliveryEligible(receipt)
     &&opts.ilink.chatAccountId?.(receipt.ownerChatId)===receipt.accountId

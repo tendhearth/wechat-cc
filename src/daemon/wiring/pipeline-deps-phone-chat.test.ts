@@ -8,7 +8,7 @@ import { makeReplySinks } from '../reply-sinks'
 import { makeChatMutex } from '../../lib/async-mutex'
 import { makeMatterStore } from '../../adapters/store/matters-store'
 import { makeMessagesStore } from '../../lib/messages-store'
-import type { IlinkAdapter } from '../ilink-glue'
+import type { PipelineWechat } from './pipeline-deps-opts'
 import type { Bootstrap } from '../bootstrap/index'
 import type { ChatPrefsStore } from '../chat-prefs'
 import type { CareLedger } from '../../features/companion/care-ledger'
@@ -49,7 +49,7 @@ describe('phoneChat 走 companionConverse(回合串行入口)', () => {
     const dispatchInner = vi.fn(o.dispatchInner ?? (async (msg: InboundMsg) => { replySinks.capture(msg.chatId, 'cc reply') }))
     const submitTurn = vi.fn(o.submitTurn ?? (<T,>(msg: InboundMsg, opt?: { within?: (d: () => Promise<void>) => Promise<T> }) =>
       (opt?.within ? opt.within(() => dispatchInner(msg)) : dispatchInner(msg) as unknown as Promise<T>)))
-    const ilink = { resolveAccountId: vi.fn(() => 'acct1'), sendMessage: vi.fn(async () => ({ msgId: '1' })) } as unknown as IlinkAdapter
+    const ilink = { resolveAccountId: vi.fn(() => 'acct1'), sendMessage: vi.fn(async () => ({ msgId: '1' })) } as unknown as PipelineWechat
     const boot = {
       sessionManager: { isInFlight: vi.fn(() => o.inFlight ?? false) } as unknown as Bootstrap['sessionManager'],
       sessionStore: {} as Bootstrap['sessionStore'],

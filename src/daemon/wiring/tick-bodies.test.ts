@@ -136,6 +136,8 @@ interface Setup {
   dispatch: ReturnType<typeof vi.fn>
   logs: string[]
   deps: TickDeps
+  /** 微信那头的假发送(经门接到 sendWechat);换掉 sendMessage 就换了这一路。 */
+  ilink: { sendMessage(c: string, t: string): Promise<{ msgId: string; error?: string }> }
   db: Db
   chatPrefsEntries: Record<string, { care?: 'off' | 'low' | 'high'; hunt?: boolean; visit?: boolean }>
   careLedgerEntries: Record<string, CareLedgerEntry>
@@ -218,12 +220,12 @@ function setupDeps(opts: {
     ...(opts.defaultChatId ? { admins: [opts.defaultChatId] } : {}),
   }
   const access = opts.access ?? defaultAccess
+  // 微信那头的假发送(陪伴的 TickDeps 不再带 ilink —— 它本来就没用;测试经下面的门接它,setup 之后可以换掉 sendMessage)。
+  const ilink = {} as { sendMessage(c: string, t: string): Promise<{ msgId: string; error?: string }> }
   const deps: TickDeps = {
     stateDir,
     db,
     projects: { load: () => ({ projects: {}, current: null }) },
-    ilink: {
-    } as never,
     boot: {
       sessionManager: { acquire, isInFlight } as never,
       defaultProviderId: defaultProviderId as never,
@@ -248,18 +250,18 @@ function setupDeps(opts: {
     },
   }
   // 主动开口的门(第三批 3a):跟生产一样由 wireSpeech 造,care 档 / 免打扰读同一份 prefs + 伙伴配置;
-  // 微信那头每次都现读 deps.ilink.sendMessage(测试会在 setup 之后换掉它)。
+  // 微信那头每次都现读 ilink.sendMessage(测试会在 setup 之后换掉它)。
   deps.speech = wireSpeech({
     stateDir, db, chatPrefs: deps.chatPrefs, log: deps.log,
     proactive: makeProactiveOutbound({
       wechatDegraded: () => deps.health?.shouldSuspend('wechat') ?? false,
       wechatClosedSince: () => null,
-      sendWechat: (c, t) => (deps.ilink as unknown as { sendMessage(c: string, t: string): Promise<{ msgId: string; error?: string }> }).sendMessage(c, t),
+      sendWechat: (c, t) => ilink.sendMessage(c, t),
       app: () => null,
       log: deps.log,
     }),
   })
-  return { stateDir, acquire, isInFlight, dispatch, logs, deps, db, chatPrefsEntries, careLedgerEntries, runExclusive, coordinatorMutex }
+  return { stateDir, acquire, isInFlight, dispatch, logs, deps, ilink, db, chatPrefsEntries, careLedgerEntries, runExclusive, coordinatorMutex }
 }
 
 /** 串门用的 penpal 假件。原本长在打猎那个 describe 里,日程判断也要用,提到模块作用域。 */
@@ -1360,7 +1362,7 @@ describe('人类做客 —— 朋友来聊过、走了,伙伴跟主人提一句'
     ;(s.deps.boot as unknown as { registry: unknown }).registry = { getCheapEval: () => evalFn, getStrongEval: () => null }
     ;(s.deps.boot as unknown as { conversationStore: unknown }).conversationStore = { getIdentity: () => ({ last_user_name: '小王' }) }
     const sent: string[] = []
-    ;(s.deps.ilink as unknown as { sendMessage: unknown }).sendMessage = async (_c: string, t: string) => { sent.push(t); return { msgId: '1' } }
+    ;(s.ilink as unknown as { sendMessage: unknown }).sendMessage = async (_c: string, t: string) => { sent.push(t); return { msgId: '1' } }
     return { evalFn, sent }
   }
   // 打猎/串门那些分支要在这些测试里安静:打猎冷却中、无社交接线
@@ -1429,7 +1431,7 @@ describe('人类做客 —— 朋友来聊过、走了,伙伴跟主人提一句'
     await seedGuest(s, 'guest@im.wechat', '2026-05-13T09:15:00.000Z')
     const { evalFn, sent } = armEval(s)
     let fail = true
-    ;(s.deps.ilink as unknown as { sendMessage: unknown }).sendMessage = async (_c: string, t: string) => {
+    ;(s.ilink as unknown as { sendMessage: unknown }).sendMessage = async (_c: string, t: string) => {
       if (fail) return { msgId: '', error: 'errcode=-2' }
       sent.push(t); return { msgId: '1' }
     }
@@ -1484,7 +1486,7 @@ describe('人类做客 —— 朋友来聊过、走了,伙伴跟主人提一句'
     await seedGuest(s, 'g2@im.wechat', '2026-05-13T09:15:00.000Z')
     const { sent } = armEval(s)
     let calls = 0
-    ;(s.deps.ilink as unknown as { sendMessage: unknown }).sendMessage = async (_c: string, t: string) => {
+    ;(s.ilink as unknown as { sendMessage: unknown }).sendMessage = async (_c: string, t: string) => {
       calls++
       if (calls === 2) throw new Error('ilink down')
       sent.push(t); return { msgId: String(calls) }

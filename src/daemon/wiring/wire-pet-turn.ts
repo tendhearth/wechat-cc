@@ -4,7 +4,7 @@
  */
 import { derivePetTurn } from '../../domain/pet-turn'
 import type { PetTurnDep } from '../internal-api/types'
-import type { IlinkAdapter } from '../ilink-glue'
+import type { WechatPermissions } from '../../ports/wechat'
 import type { Bootstrap } from '../bootstrap'
 import type { PetSignals } from '../pet-signals'
 import type { makeMessagesStore } from '../../lib/messages-store'
@@ -13,7 +13,7 @@ import { resolveOwnerSessionKey } from './owner-session-key'
 
 export interface WirePetTurnDeps {
   stateDir: string
-  ilink: Pick<IlinkAdapter, 'listPendingPermissions'>
+  ilink: Pick<WechatPermissions, 'listPendingPermissions'>
   petSignals?: PetSignals
   boot: Pick<Bootstrap, 'resolve' | 'coordinator' | 'sessionManager' | 'defaultProviderId'>
   messagesStore: Pick<ReturnType<typeof makeMessagesStore>, 'latestInboundTs'>

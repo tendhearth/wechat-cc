@@ -362,3 +362,43 @@ describe('开机途中也能停(第 2 步:SIGTERM 落在开机途中)', () => {
     expect(() => group.start()).toThrow(/twice/)
   })
 })
+
+describe('窄口(架构终态 A6):模块交出几样「我的值里的一小块」', () => {
+  const ilink = (): DaemonModule<{ send: () => string; voice: { say: () => string } }> => ({
+    name: 'ilink',
+    init: () => ({ send: () => 'sent', voice: { say: () => 'said' } }),
+    ports: { 'wechat.send': (v) => ({ send: v.send }), 'wechat.voice': (v) => v.voice },
+  })
+  it('needs 口名 = needs 交出它的模块:排序、拿到的是那一块;口不进 status', async () => {
+    const seen: unknown[] = []
+    const mods: DaemonModule[] = [
+      { name: 'letters', needs: ['wechat.send'], init: (ctx) => { seen.push(ctx.get<{ send: () => string }>('wechat.send').send()) } },
+      ilink(),
+      { name: 'tts', wants: ['wechat.voice'], lazy: [], init: (ctx) => { seen.push(ctx.maybe<{ say: () => string }>('wechat.voice')?.say()) } },
+    ]
+    expect(orderModules(mods).map(m => m.name)).toEqual(['ilink', 'letters', 'tts'])
+    const { started } = run(mods)
+    const s = await started
+    expect(seen).toEqual(['sent', 'said'])
+    expect(s.status().map(x => x.name)).toEqual(['ilink', 'letters', 'tts'])
+    expect(s.provided<{ say: () => string }>('wechat.voice')?.say()).toBe('said')
+  })
+  it('只能拿写明了的口;拿整个模块要 needs 模块名', async () => {
+    const { started } = run([ilink(), { name: 'x', needs: ['wechat.send'], init: (ctx) => { ctx.get('ilink') } }])
+    await expect(started).rejects.toThrow(/'ilink' is not in its needs/)
+  })
+  it('交出口的模块没起来 ⇒ needs 口的下游跟着它的状态', async () => {
+    const { started } = run([
+      { ...ilink(), optional: true, init: () => { throw new Error('boom') } },
+      { name: 'letters', optional: true, needs: ['wechat.send'], init: () => {} },
+    ])
+    const s = await started
+    expect(s.status().find(x => x.name === 'letters')).toMatchObject({ state: 'degraded', error: 'upstream ilink not running' })
+  })
+  it('口和模块重名 / 依赖自己的口 / 同一个模块既 lazy 又 needs(经口) ⇒ 开机就抛', () => {
+    expect(() => orderModules([ilink(), { name: 'wechat.send', init: () => {} }])).toThrow(/clashes/)
+    expect(() => orderModules([{ ...ilink(), needs: ['wechat.send'] }])).toThrow(/itself/)
+    expect(() => orderModules([ilink(), { name: 'b', needs: ['wechat.send'], lazy: ['ilink'], init: () => {} }])).toThrow(/cycle edge, pick one/)
+    expect(() => orderModules([{ ...ilink(), optional: true }, { name: 'core', needs: ['wechat.voice'], init: () => {} }])).toThrow(/required 'core' needs optional 'wechat.voice'/)
+  })
+})

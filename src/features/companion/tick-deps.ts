@@ -4,7 +4,6 @@
  * (daemon/wiring/tick-bodies.ts)在登记表里自己带,不再经这里 —— 陪伴不认识任何一个功能。
  */
 import type { Db } from '../../lib/db'
-import type { IlinkAdapter } from '../../daemon/ilink-glue'
 import type { Bootstrap } from '../../daemon/bootstrap'
 import type { Access } from '../../lib/access'
 import type { PermissionMode } from '../../domain/capability-matrix'
@@ -19,7 +18,6 @@ import { type AvoidTopic } from '../../domain/companion-topics'
 export interface TickDeps {
   stateDir: string
   db: Db
-  ilink: IlinkAdapter
   /** 项目登记:伙伴那一拍在哪个文件夹起会话(现在选中的那个,没有就 _default)。 */
   projects: Pick<import('../../daemon/projects').Projects, 'load'>
   boot: Bootstrap

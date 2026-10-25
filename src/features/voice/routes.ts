@@ -1,5 +1,5 @@
 /**
- * 语音的路由(出站 TTS 为主;App 语音转文字的三条也在这里,因为它们和 TTS 用的是同一个语音口 `WechatVoiceDep`)。
+ * 语音的路由(出站 TTS 为主;App 语音转文字的三条也在这里,因为它们和 TTS 用的是同一个语音口 `WechatVoice`)。
  *   GET  /v1/voice/status          —— TTS 配置状态(不带 api_key)
  *   POST /v1/voice/save_config     —— 先试合成一句,通过才存
  *   POST /v1/wechat/reply_voice    —— 合成后当文件发到微信(模型的 reply_voice 工具)
@@ -12,10 +12,10 @@
  */
 import { errMsg, type RouteTable } from '../../daemon/internal-api/types'
 import type { VoiceSaveConfigRequestT, WechatReplyVoiceRequestT } from '../../daemon/internal-api/schema'
-import type { WechatVoiceDep } from '../../daemon/wechat-tool-deps'
+import type { WechatVoice } from '../../ports/wechat'
 
 export interface VoiceRoutesDeps {
-  voice: WechatVoiceDep
+  voice: WechatVoice
 }
 
 export function voiceRoutes(d: VoiceRoutesDeps): RouteTable {

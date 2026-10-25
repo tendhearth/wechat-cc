@@ -11,7 +11,7 @@ import { tmpdir } from 'node:os'
 import type { Db } from '../../lib/db'
 import { loadAgentConfig } from '../../lib/agent-config'
 import type { Bootstrap } from '../bootstrap'
-import type { IlinkAdapter } from '../ilink-glue'
+import type { WechatSend } from '../../ports/wechat'
 import type { ChatPrefsStore } from '../chat-prefs'
 import type { makeMessagesStore } from '../../lib/messages-store'
 import type { MattersService } from '../../core/matters/service'
@@ -32,7 +32,8 @@ export interface WirePhoneDeps {
   stateDir: string
   db: Db
   boot: Bootstrap
-  ilink: IlinkAdapter
+  /** 媒体镜像接在发送路径上(onMediaSent);其余是设置面板要的。 */
+  ilink: Pick<WechatSend, 'onMediaSent'> & WireSettingsPanelDeps['ilink']
   log: (tag: string, line: string) => void
   chatPrefs: ChatPrefsStore
   messagesStore: ReturnType<typeof makeMessagesStore>

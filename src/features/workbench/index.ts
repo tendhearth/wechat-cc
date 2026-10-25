@@ -19,7 +19,7 @@
  */
 import type { DaemonModule, ModuleCtx } from '../../daemon/modules/container'
 import type { InternalApiLifecycle } from '../../daemon/internal-api/lifecycle'
-import type { IlinkAdapter } from '../../daemon/ilink-glue'
+import { WECHAT_PORTS, type WechatWorkbenchTransport } from '../../ports/wechat'
 import type { SpeechPolicy } from '../../daemon/speech/policy'
 import { log } from '../../lib/log'
 import { wireWorkbench } from './wire'
@@ -80,7 +80,7 @@ export function workbenchNotificationsModule(o: { needs: readonly string[]; spee
       let n: ReturnType<typeof wireWorkbenchNotifications> | null = null
       ctx.own('stop', async () => { await n?.close() })
       return { start: () => {
-        n = wireWorkbenchNotifications({ workbench: ctx.get<WorkbenchService>('workbench'), ilink: ctx.get<IlinkAdapter>('ilink-adapter'), speech: o.speech(ctx) })
+        n = wireWorkbenchNotifications({ workbench: ctx.get<WorkbenchService>('workbench'), ilink: ctx.get<WechatWorkbenchTransport>(WECHAT_PORTS.workbench), speech: o.speech(ctx) })
         void n.wake().catch(() => log('WORKBENCH', 'Task notifications are waiting for storage recovery.'))
       } }
     },
@@ -95,7 +95,7 @@ export function workbenchArtifactsModule(o: { needs: readonly string[] }): Daemo
     init(ctx) {
       let a: ReturnType<typeof wireWorkbenchArtifacts> | null = null
       ctx.own('stop', async () => { await a?.close() })
-      return { start: () => { a = wireWorkbenchArtifacts({ workbench: ctx.get<WorkbenchService>('workbench'), ilink: ctx.get<IlinkAdapter>('ilink-adapter') }) } }
+      return { start: () => { a = wireWorkbenchArtifacts({ workbench: ctx.get<WorkbenchService>('workbench'), ilink: ctx.get<WechatWorkbenchTransport>(WECHAT_PORTS.workbench) }) } }
     },
   }
 }

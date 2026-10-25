@@ -13,7 +13,7 @@ import { log } from '../../lib/log'
 import type { DaemonModule } from '../../daemon/modules/container'
 import type { InternalApiLifecycle } from '../../daemon/internal-api/lifecycle'
 import type { ReplyHandler } from '../../daemon/commands/registry'
-import type { IlinkAdapter } from '../../daemon/ilink-glue'
+import { WECHAT_PORTS, type WechatSend } from '../../ports/wechat'
 import { loadCompanionConfig } from '../../lib/companion-config'
 import { defaultRunner } from '../terminal'
 import { appBundleHasCalendarUsage, makeCalendar, makeCalendarCommand, type Calendar } from './calendar'
@@ -33,9 +33,9 @@ export function calendarFeature(d: {
 }): DaemonModule<CalendarFeature> {
   return {
     name: 'calendar',
-    needs: ['internal-api', 'ilink-adapter'],
+    needs: ['internal-api', WECHAT_PORTS.send],
     init(ctx): CalendarFeature {
-      const ilink = ctx.get<Pick<IlinkAdapter, 'sendMessage'>>('ilink-adapter')
+      const ilink = ctx.get<Pick<WechatSend, 'sendMessage'>>(WECHAT_PORTS.send)
       const calendar = makeCalendar({
         stateDir: d.stateDir, run: defaultRunner, platform: process.platform,
         bundleHasUsage: () => appBundleHasCalendarUsage(process.execPath),

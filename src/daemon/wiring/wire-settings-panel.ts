@@ -8,7 +8,7 @@ import type { Db } from '../../lib/db'
 import { loadAccess } from '../../lib/access'
 import { loadAgentConfig, modelForProvider } from '../../lib/agent-config'
 import type { Bootstrap } from '../bootstrap'
-import type { IlinkAdapter } from '../ilink-glue'
+import type { WechatContacts, WechatVoice } from '../../ports/wechat'
 import type { ChatPrefsStore } from '../chat-prefs'
 import type { makeMessagesStore } from '../../lib/messages-store'
 import type { MattersService } from '../../core/matters/service'
@@ -33,7 +33,8 @@ export interface WireSettingsPanelDeps {
   stateDir: string
   db: Db
   boot: Bootstrap
-  ilink: IlinkAdapter
+  /** 面板的「试听 / 语音转文字」和称呼。 */
+  ilink: WechatContacts & { voice: WechatVoice }
   log: (tag: string, line: string) => void
   chatPrefs: ChatPrefsStore
   messagesStore: ReturnType<typeof makeMessagesStore>

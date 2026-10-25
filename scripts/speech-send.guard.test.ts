@@ -17,12 +17,12 @@ import { join, relative, dirname } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..')
-// 发送原语 = IlinkAdapter 上所有 send* 方法(sendTyping 除外,它不说话)+ 其余几层包装。ilink 那一份从类型里读,不手写:
-// ilink 以后加 sendVoice 这类方法,守卫自动管到(整合者评审 #513)。
+// 发送原语 = ilink 各口(src/ports/wechat.ts;IlinkAdapter 就是这几口的并集,架构终态 A6)上所有 send* 方法
+// (sendTyping 除外,它不说话)+ 其余几层包装。ilink 那一份从口的类型里读,不手写:ilink 以后加 sendVoice 这类方法,守卫自动管到(整合者评审 #513)。
 const NOT_SPEECH = new Set(['sendTyping'])
 function ilinkSendMethods(): string[] {
-  const src = readFileSync(join(ROOT, 'src', 'daemon', 'ilink-glue.ts'), 'utf8')
-  const body = /export interface IlinkAdapter \{([\s\S]*?)\n\}/.exec(src)?.[1] ?? ''
+  const src = readFileSync(join(ROOT, 'src', 'ports', 'wechat.ts'), 'utf8')
+  const body = [...src.matchAll(/export interface Wechat[A-Za-z]* \{([\s\S]*?)\n\}/g)].map(m => m[1]!).join('\n')
   return [...new Set([...body.matchAll(/^\s+(send[A-Za-z]*)\??\(/gm)].map(m => m[1]!))].filter(n => !NOT_SPEECH.has(n))
 }
 /** 包在 ilink 外面的几层(回复兜底、伙伴通道、App 推送)。 */
@@ -33,7 +33,9 @@ const SEND = new RegExp(`\\b(?:${PRIMITIVES.join('|')})\\(`, 'g')
 type Tag = 'primitive' | 'reply'
 const BASELINE: Record<string, [Tag, number]> = {
   // —— 发送本身 ——
-  'src/daemon/ilink-glue.ts': ['primitive', 12],
+  // A6:IlinkAdapter 的方法声明搬进了 ilink 的口(src/ports/wechat.ts 的 sendMessage( / sendFile( 两处声明),这里 12 → 10,总数不变
+  'src/daemon/ilink-glue.ts': ['primitive', 10],
+  'src/ports/wechat.ts': ['primitive', 2],
   'src/daemon/companion/proactive-channel.ts': ['primitive', 5],
   'src/daemon/companion/app-channel.ts': ['primitive', 1],
   'src/daemon/internal-api/types.ts': ['primitive', 1],
@@ -103,7 +105,7 @@ function walk(dir: string, out: string[] = []): string[] {
 }
 
 describe('发送原语只在登记过的地方出现,次数只许降', () => {
-  it('原语清单从 IlinkAdapter 读得出来(读不出来 ⇒ 守卫瞎了,先红)', () => {
+  it('原语清单从 ilink 的口读得出来(读不出来 ⇒ 守卫瞎了,先红)', () => {
     expect(ilinkSendMethods().sort()).toEqual(expect.arrayContaining(['sendFile', 'sendMessage']))
     expect(ilinkSendMethods()).not.toContain('sendTyping')
   })

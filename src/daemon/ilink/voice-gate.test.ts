@@ -1,6 +1,6 @@
 import { describe, it, expect, vi } from 'vitest'
 import { gateVoice } from './voice'
-import type { WechatVoiceDep } from '../wechat-tool-deps'
+import type { WechatVoice } from '../../ports/wechat'
 
 // 守护 v2:语音按「这一次连到哪」分类 —— 通义 DashScope / 自建网关 / 局域网照常;海外端点才看信号。
 function inner(tts: { provider: string; base_url?: string } | null, stt: { base_url: string } | null) {
@@ -19,7 +19,7 @@ const UNSAFE = { check: vi.fn(async () => ({ safe: false, source: 'bx' as const,
 describe('gateVoice (守护 v2)', () => {
   it('overseas TTS / STT endpoint + unsafe → never leaves the machine; status reads still work', async () => {
     const i = inner({ provider: 'http_tts', base_url: 'https://api.openai.com/v1' }, { base_url: 'https://api.openai.com/v1' })
-    const v = gateVoice(i as unknown as WechatVoiceDep, UNSAFE)
+    const v = gateVoice(i as unknown as WechatVoice, UNSAFE)
     expect(await v.replyVoice('c', 'hi')).toEqual({ ok: false, reason: '网络未受保护(bx 未连上),用到 语音(OpenAI) 的这一步先暂停，恢复后再试。' })
     await expect(v.synthesizeSpeech('hi')).rejects.toMatchObject({ code: 'network_unprotected' })
     await expect(v.transcribe!(Buffer.from('a'), 'audio/silk')).rejects.toMatchObject({ code: 'network_unprotected' })
@@ -36,7 +36,7 @@ describe('gateVoice (守护 v2)', () => {
   it('domestic / self-hosted voice (通义 qwen, own gateway, LAN STT) + unsafe → goes through, signal never read', async () => {
     const check = vi.fn(async () => ({ safe: false, source: 'bx' as const, detail: 'bx 未保护' }))
     const i = inner({ provider: 'qwen' }, { base_url: 'http://192.168.1.9:9000' })
-    const v = gateVoice(i as unknown as WechatVoiceDep, { check })
+    const v = gateVoice(i as unknown as WechatVoice, { check })
     expect(await v.replyVoice('c', 'hi')).toEqual({ ok: true, msgId: 'm' })
     expect(await v.transcribe!(Buffer.from('a'), 'audio/silk')).toBe('hello')
     expect(await v.saveConfig({ provider: 'http_tts', base_url: 'https://brain.youdamaster.cc/voice', model: 'voxcpm' })).toMatchObject({ ok: true })
@@ -45,15 +45,15 @@ describe('gateVoice (守护 v2)', () => {
 
   it('not configured → nothing would leave; inner reports not_configured itself (no 网络未受保护 label)', async () => {
     const i = inner(null, null)
-    const v = gateVoice(i as unknown as WechatVoiceDep, UNSAFE)
+    const v = gateVoice(i as unknown as WechatVoice, UNSAFE)
     await v.replyVoice('c', 'hi')
     expect(i.replyVoice).toHaveBeenCalled()
   })
 
   it('safe → passes through; no gate → returns the inner object untouched', async () => {
     const i = inner({ provider: 'http_tts', base_url: 'https://api.openai.com/v1' }, { base_url: 'https://api.openai.com/v1' })
-    const v = gateVoice(i as unknown as WechatVoiceDep, { check: async () => ({ safe: true, source: 'bx', detail: 'ok' }) })
+    const v = gateVoice(i as unknown as WechatVoice, { check: async () => ({ safe: true, source: 'bx', detail: 'ok' }) })
     expect(await v.transcribe!(Buffer.from('a'), 'audio/silk')).toBe('hello')
-    expect(gateVoice(i as unknown as WechatVoiceDep, undefined)).toBe(i)
+    expect(gateVoice(i as unknown as WechatVoice, undefined)).toBe(i)
   })
 })
