@@ -1,6 +1,6 @@
 # Tendhearth CC 架构:一页现状图
 
-> 2026-10-23,第三批重构之后。这一页只说**现在是什么样、每类东西的唯一来源在哪**。为什么这样定看[架构复查 2026-10-21](architecture-review-2026-10-21.md)(五条理念)和各设计稿;2026-07 起陪伴路径的长版说明在 [`reference/architecture-companion-2026-07.md`](reference/architecture-companion-2026-07.md)(历史)。数字型事实(迁移条数、命令条数、执行者家数)这里一律不写,写「去哪看」。
+> 2026-10-23,第三批重构之后。这一页只说**现在是什么样、每类东西的唯一来源在哪**。为什么这样定看[架构复查 2026-10-21](architecture-review-2026-10-21.md)(五条理念)和各设计稿;2026-07 起陪伴路径的长版说明在 [`reference/architecture-companion-2026-07.md`](reference/architecture-companion-2026-07.md)(历史)。数字型事实(迁移条数、命令条数、执行者家数)这里一律不写,写「去哪看」。**往哪收、终态长什么样**看[架构终态与升级计划 2026-10-25](architecture-end-state-2026-10-25.md)。
 
 ## 一句话
 
