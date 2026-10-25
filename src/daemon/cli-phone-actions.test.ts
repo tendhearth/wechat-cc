@@ -6,7 +6,8 @@ import { makeCliSessionStore } from '../core/cli-session-store'
 import { makeCliPermissionRelay, type CliPermissionRelay } from '../core/cli-permission-relay'
 import { makeCliReplyCore, type RunResult } from './cli-reply-handler'
 import { makeCliPhoneActions, PHONE_CLI_SAY_MAX } from './cli-phone-actions'
-import { mobileReadsRoute } from './mobile-reads'
+import { mobileReadsRoutes } from './mobile-reads'
+import { routePhone } from './phone-route-table'
 import { mkdtempSync, writeFileSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -211,7 +212,7 @@ describe('开在电脑窗口里的 Claude 会话(2026-10-18):话送进窗口,不
     hub.ingest({ source: 'claude', kind: 'stop', session_id: 'W3', cwd: '/w/proj' })
     hub.ingest({ source: 'codex', kind: 'stop', session_id: 'W4', cwd: '/w/proj' })
     windows.set('W3', 'a'); windows.set('W4', 'b')
-    const r = await mobileReadsRoute({ cliSessions: () => hub.list(), cliActions: actions() }, new URL('http://x/m/api/cli/sessions'), new Request('http://x/m/api/cli/sessions'))
+    const r = await routePhone(mobileReadsRoutes({ cliSessions: () => hub.list(), cliActions: actions() }), new URL('http://x/m/api/cli/sessions'), new Request('http://x/m/api/cli/sessions'))
     const body = await r!.json()
     PHONE_API_SCHEMAS['GET /m/api/cli/sessions']!.parse(body)
     const by = (id: string) => body.sessions.find((s: { session_id: string }) => s.session_id === id)
@@ -223,7 +224,7 @@ describe('开在电脑窗口里的 Claude 会话(2026-10-18):话送进窗口,不
 describe('POST /m/api/cli/permission、/m/api/cli/say 与列表里的码', () => {
   const post = async (cliActions: ReturnType<typeof actions> | undefined, path: string, body: unknown, method = 'POST') => {
     const url = 'http://x' + path
-    const r = await mobileReadsRoute({ ...(cliActions ? { cliActions } : {}), cliSessions: () => hub.list({ limit: 50 }) }, new URL(url), new Request(url, { method, ...(method === 'POST' ? { body: JSON.stringify(body) } : {}) }))
+    const r = await routePhone(mobileReadsRoutes({ ...(cliActions ? { cliActions } : {}), cliSessions: () => hub.list({ limit: 50 }) }), new URL(url), new Request(url, { method, ...(method === 'POST' ? { body: JSON.stringify(body) } : {}) }))
     return { status: r!.status, body: await r!.json() as any }
   }
   it('列表:开了码 ⇒ pending.hash + actionable;在场 ⇒ 不挂 pending;过 schema', async () => {
@@ -281,7 +282,7 @@ describe('看着它跑(GET /m/api/cli/activity)', () => {
         JSON.stringify({ type: 'assistant', message: { content: [{ type: 'tool_use', name: 'Bash', input: { command: 'bun test' } }] } }),
       ].join('\n'))
       hub.ingest({ source: 'claude', kind: 'prompt', session_id: 'A1', cwd: '/w/proj', machine: 'mac', transcript_path: path })
-      const r = await mobileReadsRoute({ cliActions: actions() }, new URL('http://x/m/api/cli/activity?session_id=A1'), new Request('http://x/m/api/cli/activity?session_id=A1'))
+      const r = await routePhone(mobileReadsRoutes({ cliActions: actions() }), new URL('http://x/m/api/cli/activity?session_id=A1'), new Request('http://x/m/api/cli/activity?session_id=A1'))
       const body = await r!.json()
       expect(r!.status).toBe(200)
       PHONE_API_SCHEMAS['GET /m/api/cli/activity']!.parse(body)
@@ -298,11 +299,11 @@ describe('看着它跑(GET /m/api/cli/activity)', () => {
     expect(a.activity('N1')).toEqual({ ok: false, error: 'no_transcript' })
     hub.ingest({ source: 'claude', kind: 'prompt', session_id: 'G1', cwd: '/w/proj', machine: 'mac', transcript_path: '/definitely/not/here.jsonl' })
     expect(a.activity('G1')).toEqual({ ok: false, error: 'no_transcript' })
-    const get = async (q: string) => (await mobileReadsRoute({ cliActions: a }, new URL('http://x/m/api/cli/activity' + q), new Request('http://x/m/api/cli/activity' + q)))!
+    const get = async (q: string) => (await routePhone(mobileReadsRoutes({ cliActions: a }), new URL('http://x/m/api/cli/activity' + q), new Request('http://x/m/api/cli/activity' + q)))!
     expect((await get('')).status).toBe(400)
     expect((await get('?session_id=nope')).status).toBe(404)
     expect((await get('?session_id=R1')).status).toBe(409)
-    expect((await mobileReadsRoute({}, new URL('http://x/m/api/cli/activity?session_id=A'), new Request('http://x/m/api/cli/activity?session_id=A')))!.status).toBe(503)
+    expect((await routePhone(mobileReadsRoutes({}), new URL('http://x/m/api/cli/activity?session_id=A'), new Request('http://x/m/api/cli/activity?session_id=A')))!.status).toBe(503)
   })
 })
 
@@ -317,7 +318,7 @@ describe('列表一眼:在跑的会话带此刻那一步', () => {
       const a = actions()
       expect(a.currentStep('N1')).toMatchObject({ kind: 'step', text: '运行 npm test', verb: 'run', target: 'npm test' })
       expect(a.currentStep('N1')!.detail).toBeUndefined()
-      const r = await mobileReadsRoute({ cliActions: a, cliSessions: () => hub.list() }, new URL('http://x/m/api/cli/sessions'), new Request('http://x/m/api/cli/sessions'))
+      const r = await routePhone(mobileReadsRoutes({ cliActions: a, cliSessions: () => hub.list() }), new URL('http://x/m/api/cli/sessions'), new Request('http://x/m/api/cli/sessions'))
       const body = await r!.json()
       PHONE_API_SCHEMAS['GET /m/api/cli/sessions']!.parse(body)
       expect(body.sessions.find((x: { session_id: string }) => x.session_id === 'N1').now.text).toBe('运行 npm test')
@@ -325,7 +326,7 @@ describe('列表一眼:在跑的会话带此刻那一步', () => {
       expect(a.currentStep('N1')).toBeNull()
       hub.ingest({ source: 'claude', kind: 'stop', session_id: 'N1', cwd: '/w/proj', machine: 'mac', text: '好了' })
       writeFileSync(path, tool('c', 'Bash', { command: 'ls' }))
-      const idle = await (await mobileReadsRoute({ cliActions: a, cliSessions: () => hub.list() }, new URL('http://x/m/api/cli/sessions'), new Request('http://x/m/api/cli/sessions')))!.json()
+      const idle = await (await routePhone(mobileReadsRoutes({ cliActions: a, cliSessions: () => hub.list() }), new URL('http://x/m/api/cli/sessions'), new Request('http://x/m/api/cli/sessions')))!.json()
       expect(idle.sessions.find((x: { session_id: string }) => x.session_id === 'N1').now).toBeUndefined()
     } finally { rmSync(dir, { recursive: true, force: true }) }
   })

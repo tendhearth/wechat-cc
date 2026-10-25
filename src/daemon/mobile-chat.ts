@@ -4,6 +4,7 @@ import type { MessageRecord } from '../lib/messages-store'
 import type { MatterOrigin, MatterStore } from '../core/matters/store'
 import type { ChatJob, PhoneChat } from './phone-chat'
 import { framedTooLarge } from './mobile-matter-response'
+import { ownsMethod, sharedRoute, type PhoneRouteTable } from './phone-route-table'
 import { parseExtras, phoneExtrasFields } from './app-reply'
 import { createHash } from 'node:crypto'
 import { closeSync, fstatSync, lstatSync, openSync, readSync } from 'node:fs'
@@ -58,8 +59,8 @@ export function fileChunkResponse(path: string, name: string, offset: number): R
 }
 
 /**
- * mobile-chat.ts — 手机「跟 CC 说」的两条路由(spec 2026-10-01 §3)。路由字面量被
- * scripts/phone-routes.guard.test.ts 扫描,新增 / 改名要同步 PHONE_ROUTES 与 PHONE_API_SCHEMAS。
+ * mobile-chat.ts — 手机「跟 CC 说」的两条路由(spec 2026-10-01 §3)。表里的键由
+ * scripts/phone-routes.guard.test.ts 对着路由表核对,新增 / 改名要同步 routes.ts 与 PHONE_API_SCHEMAS。
  *
  * - GET 只读(Ruling 3):`owner()` 只查主人那条 chat matter,不建、不登记露面。
  * - say 收下即回:`chat.say` 抛 'no_owner_chat' | 'chat_busy' | 'input_conflict';回复由接线方给的
@@ -166,183 +167,184 @@ const message = (r: MessageRecord) => ({
   ...(r.direction === 'out' ? phoneExtrasFields(r.extras) : {}),
 })
 
-export async function mobileChatRoute(deps: MobileChatDeps | undefined, url: URL, req: Request): Promise<Response | null> {
-  if (url.pathname === '/m/api/chat') {
-    if (req.method !== 'GET') return err('method_not_allowed', 405)
-    if (!deps) return err('chat_not_wired', 503)
-    const rawLimit = url.searchParams.get('limit'), before = url.searchParams.get('before')
-    if (rawLimit !== null && (!/^\d+$/.test(rawLimit) || Number(rawLimit) < 1 || Number(rawLimit) > CHAT_PAGE_MAX)) return err('invalid', 400)
-    if (before !== null && (before.length > 64 || !Number.isFinite(Date.parse(before)))) return err('invalid', 400)
-    let owner: ReturnType<MobileChatDeps['owner']>
-    try { owner = deps.owner() } catch { return err('unavailable', 503) }
-    if (!owner) return err('no_owner_chat', 404)
-    const limit = rawLimit === null ? CHAT_PAGE_MAX : Number(rawLimit)
-    let rows: MessageRecord[]
-    // 多取一条判 hasMore。listRange 是严格 `<` beforeTs:同一毫秒的两条恰好跨页边界时会漏一条(可接受,见 preflight B7)。
-    try { rows = await deps.history(owner.chatId, { ...(before !== null ? { beforeTs: before } : {}), limit: limit + 1 }) }
-    catch { return err('unavailable', 503) }
-    let hasMore = rows.length > limit
-    let page = hasMore ? rows.slice(rows.length - limit) : rows   // rows 升序:多出来的是最旧那条
-    const st = deps.chat.state()
-    const build = () => JSON.stringify({
-      ok: true, matterId: owner!.matterId, title: owner!.title, messages: page.map(message), hasMore,
-      // 原始 ts 字符串,不重新格式化 —— 下一页原样当 before 传回来。
-      nextBefore: hasMore && page.length ? page[0]!.ts : null,
-      pending: st.pending ? wireJob(st.pending) : null, failed: st.failed ? wireJob(st.failed) : null,
-    })
-    // 旧中继一帧 512 KiB(终审 M1):整页太大就从最旧那头少给几条(hasMore + nextBefore 接着翻,不留洞),绝不 413 整页。
-    // 单条至多 CHAT_TEXT_MAX 字,最坏转义后也远小于预算,所以总留得下最新那条。
-    let body = build()
-    while (page.length > 1 && framedTooLarge(body)) {
-      page = page.slice(Math.max(1, Math.floor(page.length / 8)))
-      hasMore = true
-      body = build()
-    }
-    return new Response(body, { status: 200, headers: { 'content-type': 'application/json; charset=utf-8', 'cache-control': 'no-store' } })
+export function mobileChatRoutes(deps: MobileChatDeps | undefined): PhoneRouteTable {
+  return {
+    'GET /m/api/chat': ownsMethod(async (url: URL, req: Request) => {
+      if (req.method !== 'GET') return err('method_not_allowed', 405)
+      if (!deps) return err('chat_not_wired', 503)
+      const rawLimit = url.searchParams.get('limit'), before = url.searchParams.get('before')
+      if (rawLimit !== null && (!/^\d+$/.test(rawLimit) || Number(rawLimit) < 1 || Number(rawLimit) > CHAT_PAGE_MAX)) return err('invalid', 400)
+      if (before !== null && (before.length > 64 || !Number.isFinite(Date.parse(before)))) return err('invalid', 400)
+      let owner: ReturnType<MobileChatDeps['owner']>
+      try { owner = deps.owner() } catch { return err('unavailable', 503) }
+      if (!owner) return err('no_owner_chat', 404)
+      const limit = rawLimit === null ? CHAT_PAGE_MAX : Number(rawLimit)
+      let rows: MessageRecord[]
+      // 多取一条判 hasMore。listRange 是严格 `<` beforeTs:同一毫秒的两条恰好跨页边界时会漏一条(可接受,见 preflight B7)。
+      try { rows = await deps.history(owner.chatId, { ...(before !== null ? { beforeTs: before } : {}), limit: limit + 1 }) }
+      catch { return err('unavailable', 503) }
+      let hasMore = rows.length > limit
+      let page = hasMore ? rows.slice(rows.length - limit) : rows   // rows 升序:多出来的是最旧那条
+      const st = deps.chat.state()
+      const build = () => JSON.stringify({
+        ok: true, matterId: owner!.matterId, title: owner!.title, messages: page.map(message), hasMore,
+        // 原始 ts 字符串,不重新格式化 —— 下一页原样当 before 传回来。
+        nextBefore: hasMore && page.length ? page[0]!.ts : null,
+        pending: st.pending ? wireJob(st.pending) : null, failed: st.failed ? wireJob(st.failed) : null,
+      })
+      // 旧中继一帧 512 KiB(终审 M1):整页太大就从最旧那头少给几条(hasMore + nextBefore 接着翻,不留洞),绝不 413 整页。
+      // 单条至多 CHAT_TEXT_MAX 字,最坏转义后也远小于预算,所以总留得下最新那条。
+      let body = build()
+      while (page.length > 1 && framedTooLarge(body)) {
+        page = page.slice(Math.max(1, Math.floor(page.length / 8)))
+        hasMore = true
+        body = build()
+      }
+      return new Response(body, { status: 200, headers: { 'content-type': 'application/json; charset=utf-8', 'cache-control': 'no-store' } })
+    }),
+    // 搜主人那条对话(2026-10-06,对标 Orca 会话历史搜索):q 1–200 字;最多 30 条、每条截到 600 字(一帧装得下)。
+    // 这条对话用哪个后端 / 模型(2026-10-06,对标 Paseo / Orca 手机上换模型):读 + 钉(只影响主人这条对话,下一句生效)。
+    ...sharedRoute(['GET', 'POST'], '/m/api/chat/model', ownsMethod(async (url: URL, req: Request) => {
+      if (!deps?.model) return err('model_not_wired', 503)
+      let owner: ReturnType<MobileChatDeps['owner']>
+      try { owner = deps.owner() } catch { return err('unavailable', 503) }
+      if (!owner) return err('no_owner_chat', 404)
+      if (req.method === 'GET') {
+        try { return json({ ok: true, ...deps.model.current(owner.chatId) }) } catch { return err('unavailable', 503) }
+      }
+      if (req.method !== 'POST') return err('method_not_allowed', 405)
+      let body: unknown
+      try { body = await req.json() } catch { return err('bad_json', 400) }
+      if (!body || typeof body !== 'object' || Array.isArray(body)) return err('invalid', 400)
+      const b = body as Record<string, unknown>
+      if (Object.keys(b).some(k => k !== 'provider' && k !== 'model')) return err('invalid', 400)
+      if (typeof b.provider !== 'string' || (b.model !== null && b.model !== undefined && (typeof b.model !== 'string' || !MODEL_ID.test(b.model)))) return err('invalid', 400)
+      let view: ChatModelView
+      try { view = deps.model.current(owner.chatId) } catch { return err('unavailable', 503) }
+      if (!view.providers.some(p => p.id === b.provider)) return err('unknown_provider', 400)
+      try { deps.model.set(owner.chatId, b.provider, typeof b.model === 'string' ? b.model : null) } catch { return err('unavailable', 503) }
+      return json({ ok: true, ...deps.model.current(owner.chatId) })
+    })),
+    'GET /m/api/chat/search': ownsMethod(async (url: URL, req: Request) => {
+      if (req.method !== 'GET') return err('method_not_allowed', 405)
+      if (!deps?.search) return err('chat_not_wired', 503)
+      const q = url.searchParams.get('q') ?? ''
+      if (url.searchParams.getAll('q').length !== 1 || !q.trim() || q.length > 200) return err('invalid', 400)
+      let owner: ReturnType<MobileChatDeps['owner']>
+      try { owner = deps.owner() } catch { return err('unavailable', 503) }
+      if (!owner) return err('no_owner_chat', 404)
+      let rows: MessageRecord[]
+      try { rows = await deps.search(owner.chatId, q.trim(), 30) } catch { return err('unavailable', 503) }
+      const hits = rows.map(r => ({ id: r.id, role: r.direction === 'in' ? 'me' : 'cc', text: r.text.length > 600 ? r.text.slice(0, 600) : r.text, truncated: r.text.length > 600, at: Date.parse(r.ts), source: r.source ?? null }))
+      return json({ ok: true, hits })
+    }),
+    // CC 回复里的文件(2026-10-06):按消息 id + 第几个附件定位(手机不给路径),必须是这条主人对话里 CC 发的那一行。
+    'GET /m/api/chat/file': ownsMethod(async (url: URL, req: Request) => {
+      if (req.method !== 'GET') return err('method_not_allowed', 405)
+      if (!deps?.message) return err('chat_not_wired', 503)
+      const id = url.searchParams.get('id'), rawIdx = url.searchParams.get('i'), rawOffset = url.searchParams.get('offset') ?? '0'
+      if (!id || id.length > 200 || rawIdx === null || !/^\d{1,2}$/.test(rawIdx) || !/^\d{1,9}$/.test(rawOffset)) return err('invalid', 400)
+      let owner: ReturnType<MobileChatDeps['owner']>
+      try { owner = deps.owner() } catch { return err('unavailable', 503) }
+      if (!owner) return err('no_owner_chat', 404)
+      let row: MessageRecord | null
+      try { row = await deps.message(owner.chatId, id) } catch { return err('unavailable', 503) }
+      const att = row && row.direction === 'out' ? parseExtras(row.extras)?.attachments[Number(rawIdx)] : undefined
+      if (!att || att.kind !== 'file') return err('not_found', 404)
+      return fileChunkResponse(att.path, att.name, Number(rawOffset))
+    }),
+    'GET /m/api/chat/voice': ownsMethod(async (url: URL, req: Request) => {
+      if (req.method !== 'GET') return err('method_not_allowed', 405)
+      if (!deps?.message || !deps.speak) return err('voice_not_wired', 503)
+      const id = url.searchParams.get('id'), rawIdx = url.searchParams.get('i')
+      if (!id || id.length > 200 || rawIdx === null || !/^\d{1,2}$/.test(rawIdx)) return err('invalid', 400)
+      let owner: ReturnType<MobileChatDeps['owner']>
+      try { owner = deps.owner() } catch { return err('unavailable', 503) }
+      if (!owner) return err('no_owner_chat', 404)
+      let row: MessageRecord | null
+      try { row = await deps.message(owner.chatId, id) } catch { return err('unavailable', 503) }
+      const att = row && row.direction === 'out' ? parseExtras(row.extras)?.attachments[Number(rawIdx)] : undefined
+      if (!att || att.kind !== 'voice') return err('not_found', 404)
+      let audio: { audio: Buffer; mime: string }
+      try { audio = await deps.speak(att.text) } catch (e) {
+        const m = e instanceof Error ? e.message : ''
+        return /no.?voice.?config|not configured/i.test(m) ? err('no_voice_config', 422) : err('unavailable', 503)
+      }
+      const body = JSON.stringify({ ok: true, mime: audio.mime, data: audio.audio.toString('base64') })
+      // 一帧装不下(很长的一段)⇒ 413,手机提示去电脑上听;不切片(语音附件本来就 ≤ 500 字)。
+      if (framedTooLarge(body)) return err('too_large', 413)
+      return new Response(body, { status: 200, headers: { 'content-type': 'application/json; charset=utf-8', 'cache-control': 'no-store' } })
+    }),
+    // 按住说话(2026-10-18):一段录音 → 电脑上配的语音转文字 → 字回手机,填进输入框、不自动发。
+    // GET 只问配没配;POST 至多 PHONE_TRANSCRIBE_MAX_BYTES(一帧装得下)。录音与转出来的字都不进日志、不落盘。
+    ...sharedRoute(['GET', 'POST'], '/m/api/chat/transcribe', ownsMethod(async (url: URL, req: Request) => {
+      if (req.method === 'GET') {
+        if (!deps?.transcribeStatus) return err('voice_not_wired', 503)
+        try { return json({ ok: true, configured: deps.transcribeStatus().configured === true }) } catch { return err('unavailable', 503) }
+      }
+      if (req.method !== 'POST') return err('method_not_allowed', 405)
+      if (!deps?.transcribe) return err('voice_not_wired', 503)
+      // 先量长度再解析:局域网直连没有中继那一帧的上限
+      let raw: string
+      try { raw = await req.text() } catch { return err('bad_json', 400) }
+      if (raw.length > TRANSCRIBE_B64_MAX + 1024) return err('audio_too_large', 413)
+      let body: unknown
+      try { body = JSON.parse(raw) } catch { return err('bad_json', 400) }
+      if (!body || typeof body !== 'object' || Array.isArray(body)) return err('invalid', 400)
+      const b = body as Record<string, unknown>
+      if (Object.keys(b).some(k => k !== 'mime' && k !== 'audioBase64')) return err('invalid', 400)
+      if (typeof b.mime !== 'string' || !(PHONE_TRANSCRIBE_MIMES as readonly string[]).includes(b.mime)) return err('invalid', 400)
+      if (typeof b.audioBase64 !== 'string' || !b.audioBase64 || b.audioBase64.length % 4 !== 0 || !B64.test(b.audioBase64)) return err('invalid', 400)
+      if (b.audioBase64.length > TRANSCRIBE_B64_MAX) return err('audio_too_large', 413)
+      const audio = Buffer.from(b.audioBase64, 'base64')
+      if (!audio.length) return err('invalid', 400)
+      if (audio.length > PHONE_TRANSCRIBE_MAX_BYTES) return err('audio_too_large', 413)
+      let text: string
+      let timer: ReturnType<typeof setTimeout> | undefined
+      try {
+        const r = await Promise.race([
+          deps.transcribe(audio, b.mime),
+          new Promise<never>((_, rej) => { timer = setTimeout(() => rej(new Error('stt_timeout')), TRANSCRIBE_TIMEOUT_MS) }),
+        ])
+        text = typeof r?.text === 'string' ? r.text.trim() : ''
+      } catch (e) {
+        const m = e instanceof Error ? e.message : ''
+        if (/no.?stt.?config/i.test(m)) return err('stt_not_configured', 422)
+        if (isNetworkUnprotectedError(e)) return err('stt_blocked', 503)
+        if (m === 'stt_timeout' || /timed out|timeout|aborted/i.test(m)) return err('stt_timeout', 504)
+        return err('stt_failed', 502)
+      } finally { if (timer) clearTimeout(timer) }
+      if (!text) return err('no_speech', 422)
+      return json({ ok: true, text: text.slice(0, PHONE_SAY_MAX_CHARS) })
+    })),
+    'POST /m/api/chat/say': ownsMethod(async (url: URL, req: Request) => {
+      if (req.method !== 'POST') return err('method_not_allowed', 405)
+      if (!deps) return err('chat_not_wired', 503)
+      let body: unknown
+      try { body = await req.json() } catch { return err('bad_json', 400) }
+      if (!body || typeof body !== 'object' || Array.isArray(body)) return err('invalid', 400)
+      const b = body as Record<string, unknown>
+      // 白名单:requestId、text,以及带图时的 draftId + attachmentIds(2026-10-06,最多 4 张;有图时文字可空)。
+      if (Object.keys(b).some(k => !['requestId', 'text', 'draftId', 'attachmentIds'].includes(k))) return err('invalid', 400)
+      const ids = b.attachmentIds
+      const hasImages = Array.isArray(ids) && ids.length > 0
+      if (ids !== undefined && (!Array.isArray(ids) || ids.length > PHONE_CHAT_MAX_IMAGES || ids.some(id => typeof id !== 'string' || !UUID.test(id)) || new Set(ids).size !== ids.length)) return err('invalid_attachment', 400)
+      if (hasImages !== (typeof b.draftId === 'string') || (b.draftId !== undefined && (typeof b.draftId !== 'string' || !UUID.test(b.draftId)))) return err('invalid_attachment', 400)
+      if (typeof b.requestId !== 'string' || !UUID.test(b.requestId) || typeof b.text !== 'string' || (!b.text.trim() && !hasImages) || b.text.length > PHONE_SAY_MAX_CHARS) return err('invalid', 400)
+      try {
+        const job = deps.chat.say(b.requestId, b.text, hasImages ? { draftId: (b.draftId as string).toLowerCase(), attachmentIds: (ids as string[]).map(id => id.toLowerCase()) } : undefined)
+        return json({ ok: true, matterId: job.matterId, job: wireJob(job) })
+      } catch (e) {
+        const m = e instanceof Error ? e.message : ''
+        if (m === 'chat_busy') return err('chat_busy', 409)
+        if (m === 'input_conflict') return err('input_conflict', 409)
+        if (m === 'no_owner_chat') return err('no_owner_chat', 404)
+        // 图:不存在 / 过期 / 不是这位主人的 / 不是图片 ⇒ 让手机重新传;还没接 ⇒ 老 daemon 一样的「不支持」。
+        if (['invalid_attachment', 'attachment_scope', 'not_found', 'attachment_changed', 'invalid_attachment_size', 'invalid_entry_owner'].includes(m)) return err('invalid_attachment', 409)
+        if (m === 'images_not_wired') return err('images_not_supported', 409)
+        // Ruling 7:内部意外按「暂时不可用」回 503(手机映射成 unavailable),不是 500。
+        return err('unavailable', 503)
+      }
+    }),
   }
-  // 搜主人那条对话(2026-10-06,对标 Orca 会话历史搜索):q 1–200 字;最多 30 条、每条截到 600 字(一帧装得下)。
-  // 这条对话用哪个后端 / 模型(2026-10-06,对标 Paseo / Orca 手机上换模型):读 + 钉(只影响主人这条对话,下一句生效)。
-  if (url.pathname === '/m/api/chat/model') {
-    if (!deps?.model) return err('model_not_wired', 503)
-    let owner: ReturnType<MobileChatDeps['owner']>
-    try { owner = deps.owner() } catch { return err('unavailable', 503) }
-    if (!owner) return err('no_owner_chat', 404)
-    if (req.method === 'GET') {
-      try { return json({ ok: true, ...deps.model.current(owner.chatId) }) } catch { return err('unavailable', 503) }
-    }
-    if (req.method !== 'POST') return err('method_not_allowed', 405)
-    let body: unknown
-    try { body = await req.json() } catch { return err('bad_json', 400) }
-    if (!body || typeof body !== 'object' || Array.isArray(body)) return err('invalid', 400)
-    const b = body as Record<string, unknown>
-    if (Object.keys(b).some(k => k !== 'provider' && k !== 'model')) return err('invalid', 400)
-    if (typeof b.provider !== 'string' || (b.model !== null && b.model !== undefined && (typeof b.model !== 'string' || !MODEL_ID.test(b.model)))) return err('invalid', 400)
-    let view: ChatModelView
-    try { view = deps.model.current(owner.chatId) } catch { return err('unavailable', 503) }
-    if (!view.providers.some(p => p.id === b.provider)) return err('unknown_provider', 400)
-    try { deps.model.set(owner.chatId, b.provider, typeof b.model === 'string' ? b.model : null) } catch { return err('unavailable', 503) }
-    return json({ ok: true, ...deps.model.current(owner.chatId) })
-  }
-  if (url.pathname === '/m/api/chat/search') {
-    if (req.method !== 'GET') return err('method_not_allowed', 405)
-    if (!deps?.search) return err('chat_not_wired', 503)
-    const q = url.searchParams.get('q') ?? ''
-    if (url.searchParams.getAll('q').length !== 1 || !q.trim() || q.length > 200) return err('invalid', 400)
-    let owner: ReturnType<MobileChatDeps['owner']>
-    try { owner = deps.owner() } catch { return err('unavailable', 503) }
-    if (!owner) return err('no_owner_chat', 404)
-    let rows: MessageRecord[]
-    try { rows = await deps.search(owner.chatId, q.trim(), 30) } catch { return err('unavailable', 503) }
-    const hits = rows.map(r => ({ id: r.id, role: r.direction === 'in' ? 'me' : 'cc', text: r.text.length > 600 ? r.text.slice(0, 600) : r.text, truncated: r.text.length > 600, at: Date.parse(r.ts), source: r.source ?? null }))
-    return json({ ok: true, hits })
-  }
-  // CC 回复里的文件(2026-10-06):按消息 id + 第几个附件定位(手机不给路径),必须是这条主人对话里 CC 发的那一行。
-  if (url.pathname === '/m/api/chat/file') {
-    if (req.method !== 'GET') return err('method_not_allowed', 405)
-    if (!deps?.message) return err('chat_not_wired', 503)
-    const id = url.searchParams.get('id'), rawIdx = url.searchParams.get('i'), rawOffset = url.searchParams.get('offset') ?? '0'
-    if (!id || id.length > 200 || rawIdx === null || !/^\d{1,2}$/.test(rawIdx) || !/^\d{1,9}$/.test(rawOffset)) return err('invalid', 400)
-    let owner: ReturnType<MobileChatDeps['owner']>
-    try { owner = deps.owner() } catch { return err('unavailable', 503) }
-    if (!owner) return err('no_owner_chat', 404)
-    let row: MessageRecord | null
-    try { row = await deps.message(owner.chatId, id) } catch { return err('unavailable', 503) }
-    const att = row && row.direction === 'out' ? parseExtras(row.extras)?.attachments[Number(rawIdx)] : undefined
-    if (!att || att.kind !== 'file') return err('not_found', 404)
-    return fileChunkResponse(att.path, att.name, Number(rawOffset))
-  }
-  if (url.pathname === '/m/api/chat/voice') {
-    if (req.method !== 'GET') return err('method_not_allowed', 405)
-    if (!deps?.message || !deps.speak) return err('voice_not_wired', 503)
-    const id = url.searchParams.get('id'), rawIdx = url.searchParams.get('i')
-    if (!id || id.length > 200 || rawIdx === null || !/^\d{1,2}$/.test(rawIdx)) return err('invalid', 400)
-    let owner: ReturnType<MobileChatDeps['owner']>
-    try { owner = deps.owner() } catch { return err('unavailable', 503) }
-    if (!owner) return err('no_owner_chat', 404)
-    let row: MessageRecord | null
-    try { row = await deps.message(owner.chatId, id) } catch { return err('unavailable', 503) }
-    const att = row && row.direction === 'out' ? parseExtras(row.extras)?.attachments[Number(rawIdx)] : undefined
-    if (!att || att.kind !== 'voice') return err('not_found', 404)
-    let audio: { audio: Buffer; mime: string }
-    try { audio = await deps.speak(att.text) } catch (e) {
-      const m = e instanceof Error ? e.message : ''
-      return /no.?voice.?config|not configured/i.test(m) ? err('no_voice_config', 422) : err('unavailable', 503)
-    }
-    const body = JSON.stringify({ ok: true, mime: audio.mime, data: audio.audio.toString('base64') })
-    // 一帧装不下(很长的一段)⇒ 413,手机提示去电脑上听;不切片(语音附件本来就 ≤ 500 字)。
-    if (framedTooLarge(body)) return err('too_large', 413)
-    return new Response(body, { status: 200, headers: { 'content-type': 'application/json; charset=utf-8', 'cache-control': 'no-store' } })
-  }
-  // 按住说话(2026-10-18):一段录音 → 电脑上配的语音转文字 → 字回手机,填进输入框、不自动发。
-  // GET 只问配没配;POST 至多 PHONE_TRANSCRIBE_MAX_BYTES(一帧装得下)。录音与转出来的字都不进日志、不落盘。
-  if (url.pathname === '/m/api/chat/transcribe') {
-    if (req.method === 'GET') {
-      if (!deps?.transcribeStatus) return err('voice_not_wired', 503)
-      try { return json({ ok: true, configured: deps.transcribeStatus().configured === true }) } catch { return err('unavailable', 503) }
-    }
-    if (req.method !== 'POST') return err('method_not_allowed', 405)
-    if (!deps?.transcribe) return err('voice_not_wired', 503)
-    // 先量长度再解析:局域网直连没有中继那一帧的上限
-    let raw: string
-    try { raw = await req.text() } catch { return err('bad_json', 400) }
-    if (raw.length > TRANSCRIBE_B64_MAX + 1024) return err('audio_too_large', 413)
-    let body: unknown
-    try { body = JSON.parse(raw) } catch { return err('bad_json', 400) }
-    if (!body || typeof body !== 'object' || Array.isArray(body)) return err('invalid', 400)
-    const b = body as Record<string, unknown>
-    if (Object.keys(b).some(k => k !== 'mime' && k !== 'audioBase64')) return err('invalid', 400)
-    if (typeof b.mime !== 'string' || !(PHONE_TRANSCRIBE_MIMES as readonly string[]).includes(b.mime)) return err('invalid', 400)
-    if (typeof b.audioBase64 !== 'string' || !b.audioBase64 || b.audioBase64.length % 4 !== 0 || !B64.test(b.audioBase64)) return err('invalid', 400)
-    if (b.audioBase64.length > TRANSCRIBE_B64_MAX) return err('audio_too_large', 413)
-    const audio = Buffer.from(b.audioBase64, 'base64')
-    if (!audio.length) return err('invalid', 400)
-    if (audio.length > PHONE_TRANSCRIBE_MAX_BYTES) return err('audio_too_large', 413)
-    let text: string
-    let timer: ReturnType<typeof setTimeout> | undefined
-    try {
-      const r = await Promise.race([
-        deps.transcribe(audio, b.mime),
-        new Promise<never>((_, rej) => { timer = setTimeout(() => rej(new Error('stt_timeout')), TRANSCRIBE_TIMEOUT_MS) }),
-      ])
-      text = typeof r?.text === 'string' ? r.text.trim() : ''
-    } catch (e) {
-      const m = e instanceof Error ? e.message : ''
-      if (/no.?stt.?config/i.test(m)) return err('stt_not_configured', 422)
-      if (isNetworkUnprotectedError(e)) return err('stt_blocked', 503)
-      if (m === 'stt_timeout' || /timed out|timeout|aborted/i.test(m)) return err('stt_timeout', 504)
-      return err('stt_failed', 502)
-    } finally { if (timer) clearTimeout(timer) }
-    if (!text) return err('no_speech', 422)
-    return json({ ok: true, text: text.slice(0, PHONE_SAY_MAX_CHARS) })
-  }
-  if (url.pathname === '/m/api/chat/say') {
-    if (req.method !== 'POST') return err('method_not_allowed', 405)
-    if (!deps) return err('chat_not_wired', 503)
-    let body: unknown
-    try { body = await req.json() } catch { return err('bad_json', 400) }
-    if (!body || typeof body !== 'object' || Array.isArray(body)) return err('invalid', 400)
-    const b = body as Record<string, unknown>
-    // 白名单:requestId、text,以及带图时的 draftId + attachmentIds(2026-10-06,最多 4 张;有图时文字可空)。
-    if (Object.keys(b).some(k => !['requestId', 'text', 'draftId', 'attachmentIds'].includes(k))) return err('invalid', 400)
-    const ids = b.attachmentIds
-    const hasImages = Array.isArray(ids) && ids.length > 0
-    if (ids !== undefined && (!Array.isArray(ids) || ids.length > PHONE_CHAT_MAX_IMAGES || ids.some(id => typeof id !== 'string' || !UUID.test(id)) || new Set(ids).size !== ids.length)) return err('invalid_attachment', 400)
-    if (hasImages !== (typeof b.draftId === 'string') || (b.draftId !== undefined && (typeof b.draftId !== 'string' || !UUID.test(b.draftId)))) return err('invalid_attachment', 400)
-    if (typeof b.requestId !== 'string' || !UUID.test(b.requestId) || typeof b.text !== 'string' || (!b.text.trim() && !hasImages) || b.text.length > PHONE_SAY_MAX_CHARS) return err('invalid', 400)
-    try {
-      const job = deps.chat.say(b.requestId, b.text, hasImages ? { draftId: (b.draftId as string).toLowerCase(), attachmentIds: (ids as string[]).map(id => id.toLowerCase()) } : undefined)
-      return json({ ok: true, matterId: job.matterId, job: wireJob(job) })
-    } catch (e) {
-      const m = e instanceof Error ? e.message : ''
-      if (m === 'chat_busy') return err('chat_busy', 409)
-      if (m === 'input_conflict') return err('input_conflict', 409)
-      if (m === 'no_owner_chat') return err('no_owner_chat', 404)
-      // 图:不存在 / 过期 / 不是这位主人的 / 不是图片 ⇒ 让手机重新传;还没接 ⇒ 老 daemon 一样的「不支持」。
-      if (['invalid_attachment', 'attachment_scope', 'not_found', 'attachment_changed', 'invalid_attachment_size', 'invalid_entry_owner'].includes(m)) return err('invalid_attachment', 409)
-      if (m === 'images_not_wired') return err('images_not_supported', 409)
-      // Ruling 7:内部意外按「暂时不可用」回 503(手机映射成 unavailable),不是 500。
-      return err('unavailable', 503)
-    }
-  }
-  return null
 }

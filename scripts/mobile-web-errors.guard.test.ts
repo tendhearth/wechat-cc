@@ -43,24 +43,26 @@ function slice({ file, from, to }: Slice): string {
 }
 
 const SP = 'src/daemon/settings-panel.ts'
-const NEXT_ROUTE = 'if (url.pathname ==='
-/** 分派之前(settings-panel routeRequest):没令牌 / 令牌够不着这条路由。 */
+/** 面板处理器表(F2)里一条的开头;下一条的开头就是这一条的结尾。 */
+const entry = (key: string) => `'${key}': `
+const NEXT_ROUTE = "\n    '"
+/** 查表之前(settings-panel routeRequest):没令牌 / 令牌够不着这条路由。 */
 const COMMON: { codes: string[]; slices: Slice[] } = {
   codes: ['unauthorized', 'route_not_allowed'],
-  slices: [{ file: SP, from: 'const caller = panelToken(t)', to: '// ── token-gated' }],
+  slices: [{ file: SP, from: 'const caller = panelToken(t)', to: '// ── token-gated:查表' }],
 }
 
 interface RouteCodes { direct: string[]; thrown?: string[]; slices: Slice[] }
 const ROUTE_CODES: Record<string, RouteCodes> = {
   'GET /m/api/matters': {
     direct: ['matters_not_wired', 'invalid'],
-    slices: [{ file: SP, from: "if (url.pathname === '/m/api/matters' && req.method === 'GET') {", to: NEXT_ROUTE }],
+    slices: [{ file: SP, from: entry('GET /m/api/matters'), to: NEXT_ROUTE }],
   },
   'GET /m/api/matter': {
     // catch 里是 `error: msg === 'matter_not_found' ? msg : 'unavailable'`(只有 matter_not_found 原样出去,其余一律 unavailable)
     direct: ['matters_not_wired', 'invalid', 'matter_not_found', 'unavailable', 'detail_too_large'],
     slices: [
-      { file: SP, from: "if (url.pathname === '/m/api/matter' && req.method === 'GET') {", to: NEXT_ROUTE },
+      { file: SP, from: entry('GET /m/api/matter'), to: NEXT_ROUTE },
       { file: 'src/daemon/mobile-matter-response.ts', from: 'export function mobileMatterDetailResponse', to: '\n}\n' },
     ],
   },
@@ -68,18 +70,18 @@ const ROUTE_CODES: Record<string, RouteCodes> = {
     direct: ['method_not_allowed'],
     thrown: ['invalid_request', 'workbench_not_wired', 'invalid_matter_id', 'matter_not_found', 'matter_task_required', 'input_stale', 'control_stale'],
     slices: [
-      { file: 'src/daemon/mobile-workbench.ts', from: "if(url.pathname==='/m/api/matter/stop'){", to: 'const operation=' },
+      { file: 'src/daemon/mobile-workbench.ts', from: 'const stop=route(', to: 'const runRoute=' },
       { file: 'src/core/matters/service.ts', from: 'const require=', to: 'const current=' },
       { file: 'src/core/matters/service.ts', from: 'async stop(id,runId){', to: 'answer(' },
       { file: 'src/core/workbench/service/lifecycle.ts', from: 'async function cancel(', to: 'function shutdown' },
     ],
   },
   // home() 一律 ok:true(读不到的那一块写成 presence_error 字段,网页不当错误码用)
-  'GET /m/api/home': { direct: [], slices: [{ file: SP, from: "if (url.pathname === '/m/api/home' && req.method === 'GET') {", to: NEXT_ROUTE }] },
-  'GET /m/api/art/presence': { direct: [], slices: [{ file: SP, from: "if (url.pathname === '/m/api/art/presence' && req.method === 'GET') {", to: NEXT_ROUTE }] },
+  'GET /m/api/home': { direct: [], slices: [{ file: SP, from: entry('GET /m/api/home'), to: NEXT_ROUTE }] },
+  'GET /m/api/art/presence': { direct: [], slices: [{ file: SP, from: entry('GET /m/api/art/presence'), to: NEXT_ROUTE }] },
   'POST /set/api/pair': {
     direct: ['link_only', 'device_limit'],
-    slices: [{ file: SP, from: "if (url.pathname === '/set/api/pair' && req.method === 'POST') {", to: NEXT_ROUTE }],
+    slices: [{ file: SP, from: entry('POST /set/api/pair'), to: NEXT_ROUTE }],
   },
 }
 

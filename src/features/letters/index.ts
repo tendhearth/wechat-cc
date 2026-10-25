@@ -17,7 +17,7 @@ import { lettersRoutes } from './routes'
 
 export { listLetters, letterPagePath } from './archive'
 export type { LetterListItem } from './archive'
-export { mobileLettersRoute, type MobileLettersDeps } from './mobile'
+export { mobileLettersRoutes, type MobileLettersDeps } from './mobile'
 export type { WireLettersDeps } from './wire'
 
 export function lettersFeature(o: { needs: readonly string[]; deps: (ctx: ModuleCtx) => WireLettersDeps }): DaemonModule<void> {

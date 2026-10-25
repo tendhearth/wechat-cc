@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from 'vitest'
 import { PHONE_API_SCHEMAS } from '@wechat-cc/protocol'
-import { makePhoneChatId, makePhoneOwner, mobileChatRoute, type MobileChatDeps } from './mobile-chat'
+import { makePhoneChatId, makePhoneOwner, mobileChatRoutes, type MobileChatDeps } from './mobile-chat'
+import { routePhone } from './phone-route-table'
 import { deriveSharedKey, generateTunnelKeypair, sealFrame } from '../lib/tunnel-crypto'
 import type { MessageRecord } from '../lib/messages-store'
 import { openTestDb } from '../lib/db'
@@ -18,11 +19,11 @@ function deps(over: Partial<MobileChatDeps> = {}): MobileChatDeps {
 }
 const get = (q = '') => new Request(`http://x/m/api/chat${q}`)
 const post = (body: unknown) => new Request('http://x/m/api/chat/say', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body) })
-const call = async (d: MobileChatDeps | undefined, r: Request) => { const res = await mobileChatRoute(d, new URL(r.url), r); return { status: res!.status, body: await res!.json() as any } }
+const call = async (d: MobileChatDeps | undefined, r: Request) => { const res = await routePhone(mobileChatRoutes(d), new URL(r.url), r); return { status: res!.status, body: await res!.json() as any } }
 
-describe('mobileChatRoute', () => {
+describe('mobileChatRoutes', () => {
   it('不是这两条路径 ⇒ null', async () => {
-    expect(await mobileChatRoute(deps(), new URL('http://x/m/api/matters'), get())).toBeNull()
+    expect(await routePhone(mobileChatRoutes(deps()), new URL('http://x/m/api/matters'), get())).toBeNull()
   })
   it('一页 30 条:多取一条判 hasMore,nextBefore 是本页最旧一条的原始 ts;过 schema', async () => {
     const d = deps()
@@ -135,7 +136,7 @@ describe('旧中继帧大小(终审 M1):一页整页不能超过 512 KiB,也不�
   for (const [name, text] of [['4000 个汉字', '汉'.repeat(4000)], ['控制字符(转义两次最胀)', '\u0001'.repeat(4000)], ['引号', '"'.repeat(4000)]] as const) {
     it(`每条 ${name} ⇒ 少给几条(hasMore、nextBefore 指向本页最旧那条),线上 < 512 KiB`, async () => {
       const d = deps({ history: worst(text) })
-      const res = (await mobileChatRoute(d, new URL('http://x/m/api/chat'), get()))!
+      const res = (await routePhone(mobileChatRoutes(d), new URL('http://x/m/api/chat'), get()))!
       expect(res.status).toBe(200)
       const body = await res.clone().json() as any
       expect(body.messages.length).toBeGreaterThan(0)
