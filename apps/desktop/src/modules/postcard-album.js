@@ -2,6 +2,7 @@ import { invokeApi } from '../api.js'
 import { showToast } from '../view.js'
 import {createRecordReader} from './record-reader.js'
 import {saveRecordDocument} from './record-export.js'
+import { V1, v1 } from '../daemon-client.js'
 
 const esc = value => String(value ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]))
 const imageUrl = svg => `data:image/svg+xml;charset=utf-8,${encodeURIComponent(svg)}`
@@ -30,7 +31,7 @@ export function postcardDocument(card) {
 
 export async function changePostcardFavorite(card, call = invokeApi) {
   const favorite = !card.favorite
-  const result = await call('POST', '/v1/journal/favorite', {id:card.id, favorite})
+  const result = await v1(call, V1.journal.favorite, { body: {id:card.id, favorite} })
   if (!result?.ok) throw new Error('favorite_not_saved')
   return favorite
 }
@@ -76,7 +77,7 @@ export function createPostcardAlbum(host, {call=invokeApi, toast=showToast, save
     if (!append) {items=[];total=0}
     render()
     try {
-      const result=await call('GET',`/v1/journal/postcards?limit=24&offset=${offset}&favorites=${favorites}`)
+      const result=await v1(call, V1.journal.postcards, { query: { limit: 24, offset, favorites: String(favorites) } })
       if(ticket!==generation)return
       if(!Array.isArray(result?.items) || !Number.isFinite(result?.total))throw new Error('invalid_album')
       const merged=append ? [...items,...result.items] : result.items

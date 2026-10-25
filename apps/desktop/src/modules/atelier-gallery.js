@@ -3,6 +3,7 @@ import { escapeHtml } from "../view.js"
 import { openSettingsDrawer } from "./settings-drawer.js"
 import {createRecordReader} from './record-reader.js'
 import {saveRecordDocument} from './record-export.js'
+import { V1, v1, v1Path } from '../daemon-client.js'
 
 export const atelierImage = work => /^data:image\/png;base64,[A-Za-z0-9+/=]+$/.test(work.image_data||'')?work.image_data:null
 const workTitle = work => work.background?.title || work.caption || work.impulse?.subject || '未命名作品'
@@ -39,11 +40,11 @@ function atelierModelLabel(st) {
   return { label: "", done: false, failed: false }
 }
 
-async function apiGet(deps, path) {
+async function apiGet(deps, call) {
   try {
-    return await deps.invokeApi("GET", path)
+    return await v1(deps.invokeApi, call)
   } catch {
-    const response = await fetch(path)
+    const response = await fetch(v1Path(call))
     if (!response.ok) throw new Error("atelier_unavailable")
     return await response.json()
   }
@@ -71,7 +72,7 @@ async function loadAtelierModelStatus(deps, generation=galleryGeneration) {
   const el = document.getElementById("atelier-model-status")
   if (!el) return
   let data = null
-  try { data = await apiGet(deps, "/v1/atelier/model-status") } catch { /* show recoverable state */ }
+  try { data = await apiGet(deps, V1.atelier.modelStatus) } catch { /* show recoverable state */ }
   if(generation!==galleryGeneration)return
   const st = data?.mode === "off" ? null : data?.status ?? null
   renderAtelierEmpty(data)
@@ -161,7 +162,7 @@ function bindAtelierSharing(box, deps) {
     send.textContent = "正在发…"
     if (status) status.textContent = ""
     try {
-      const response = await deps.invokeApi("POST", "/v1/atelier/share", buildAtelierShareRequest(work.dataset.workId, include, { title, origin, approach }), { timeoutMs: 30_000 })
+      const response = await v1(deps.invokeApi, V1.atelier.share, { body: buildAtelierShareRequest(work.dataset.workId, include, { title, origin, approach }) }, { timeoutMs: 30_000 })
       if (!response?.ok) throw new Error(response?.error || "share_failed")
       panel.classList.add("is-done")
       shareOperations.set(id,'shared')
@@ -283,11 +284,11 @@ export async function loadAtelierGallery(deps) {
   try {
     let result
     try {
-      result = await deps.invokeApi("GET", "/v1/atelier/works?limit=24")
+      result = await v1(deps.invokeApi, V1.atelier.works, { query: { limit: 24 } })
     } catch {
       // Source-based Tauri development may discover an older installed daemon;
       // ask the same-origin shim, which can read the workspace state directly.
-      const response = await fetch("/v1/atelier/works?limit=24")
+      const response = await fetch(v1Path(V1.atelier.works, { query: { limit: 24 } }))
       if (!response.ok) throw new Error("atelier_unavailable")
       result = await response.json()
     }

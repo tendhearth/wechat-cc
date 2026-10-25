@@ -32,7 +32,7 @@ function channel(){
 }
 async function eventually(test:()=>boolean){const deadline=Date.now()+10_000;while(!test()){if(Date.now()>deadline)throw Error('fixture deadline');await Bun.sleep(20)}}
 const harness=`window.__TAURI__={core:{invoke:async(command,args)=>{
-if(command!=='workbench_api')throw Error(command);const res=await fetch(args.path,{method:args.method,...(args.method==='POST'?{headers:{'content-type':'application/json'},body:args.body??'{}'}:{})});
+if(command!=='daemon_request')throw Error(command);const res=await fetch(args.path,{method:args.method,...(args.method==='POST'?{headers:{'content-type':'application/json'},body:args.body??'{}'}:{})});
 const body=await res.text();if(!res.ok)throw Error(body);return body;
 }}};const {initWorkbenchPage}=await import('/modules/workbench.js');const {invokeWorkbenchApi}=await import('/api.js');initWorkbenchPage({invokeWorkbenchApi,pollMs:100});`
 const html='<!doctype html><html><head><meta charset="utf-8"><link rel="stylesheet" href="/styles/workbench.css"><style>*{box-sizing:border-box}body{margin:0;font-family:system-ui}#workbench-root{height:100vh}</style></head><body><div id="workbench-root"></div><script type="module" src="/harness.js"></script></body></html>'

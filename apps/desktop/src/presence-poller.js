@@ -4,6 +4,7 @@
 // 契约照 doctor-poller.js:单例、去重、subscribe 回放、无 DOM 依赖。
 // 一点不同:拉不到时**发布 DOWN_PRESENCE**,不保留上一次的好状态 —— 灯该灭
 // 就灭,daemon 挂了还挥手的熊是在撒谎。
+import { V1, v1 } from './daemon-client.js'
 
 /** @typedef {{ presence: string, activity: { kind: string, label: string, since: string | null }, news: { unread: number, latest_kind: string | null, latest_title: string | null } }} Presence */
 
@@ -39,7 +40,7 @@ export function createPresencePoller({ invokeApi, intervalMs = 20_000 }) {
     inflight = (async () => {
       let next = DOWN_PRESENCE
       try {
-        const r = /** @type {Presence | null} */ (await invokeApi('GET', '/v1/companion/presence', undefined, { timeoutMs: 5_000 }))
+        const r = /** @type {Presence | null} */ (await v1(invokeApi, V1.companion.presence, undefined, { timeoutMs: 5_000 }))
         if (r && typeof r === 'object' && typeof r.presence === 'string') next = r
       } catch { /* down */ }
       current = next

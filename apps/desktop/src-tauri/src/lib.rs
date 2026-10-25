@@ -9,6 +9,7 @@
 
 pub mod bundle_migrate;
 pub mod daemon_mode;
+mod daemon_info;
 mod html_preview;
 mod nav_guard;
 
@@ -713,41 +714,9 @@ async fn agent_converse(text: String, images: Option<Vec<Value>>) -> Result<Valu
     use std::time::Duration;
     use tokio::time::timeout;
 
-    let home = std::env::var("HOME")
-        .or_else(|_| std::env::var("USERPROFILE"))
-        .map_err(|e| format!("cannot resolve home dir: {e}"))?;
-    let state_dir = std::env::var("WECHAT_STATE_DIR")
-        .unwrap_or_else(|_| {
-            PathBuf::from(home)
-                .join(".claude")
-                .join("channels")
-                .join("wechat")
-                .to_string_lossy()
-                .to_string()
-        });
-    let info_path = PathBuf::from(&state_dir).join("internal-api-info.json");
-
-    let info_raw = std::fs::read_to_string(&info_path)
-        .map_err(|e| format!("read {}: {e}", info_path.display()))?;
-    let info: Value = serde_json::from_str(&info_raw)
-        .map_err(|e| format!("invalid JSON in {}: {e}", info_path.display()))?;
-
-    let base_url = info
-        .get("baseUrl")
-        .and_then(|v| v.as_str())
-        .ok_or_else(|| format!("missing baseUrl in {}", info_path.display()))?;
-    // operatorTokenFilePath, not tokenFilePath — see the doc comment above
-    // this command. Absent means an old daemon that predates the option B
-    // fix; fail clearly rather than silently falling back to a token that
-    // will just 403.
-    let operator_token_file_path = info
-        .get("operatorTokenFilePath")
-        .and_then(|v| v.as_str())
-        .ok_or_else(|| "operator token unavailable — daemon too old".to_string())?;
-
-    let token = std::fs::read_to_string(operator_token_file_path)
-        .map(|s| s.trim().to_string())
-        .map_err(|e| format!("token read error: {e}"))?;
+    let daemon = daemon_info::DaemonInfo::discover()?;
+    let base_url = daemon.base_url.as_str();
+    let token = daemon.operator_token;
 
     let url = format!("{base_url}/v1/companion/converse");
     // Must outlast the daemon's own turn budget (turnTimeoutMs, default 10
@@ -824,39 +793,9 @@ async fn agent_speak(text: String) -> Result<SpeakOut, String> {
     use std::time::Duration;
     use tokio::time::timeout;
 
-    let home = std::env::var("HOME")
-        .or_else(|_| std::env::var("USERPROFILE"))
-        .map_err(|e| format!("cannot resolve home dir: {e}"))?;
-    let state_dir = std::env::var("WECHAT_STATE_DIR")
-        .unwrap_or_else(|_| {
-            PathBuf::from(home)
-                .join(".claude")
-                .join("channels")
-                .join("wechat")
-                .to_string_lossy()
-                .to_string()
-        });
-    let info_path = PathBuf::from(&state_dir).join("internal-api-info.json");
-
-    let info_raw = std::fs::read_to_string(&info_path)
-        .map_err(|e| format!("read {}: {e}", info_path.display()))?;
-    let info: Value = serde_json::from_str(&info_raw)
-        .map_err(|e| format!("invalid JSON in {}: {e}", info_path.display()))?;
-
-    let base_url = info
-        .get("baseUrl")
-        .and_then(|v| v.as_str())
-        .ok_or_else(|| format!("missing baseUrl in {}", info_path.display()))?;
-    // operatorTokenFilePath, not tokenFilePath — see agent_converse's doc
-    // comment above for why.
-    let operator_token_file_path = info
-        .get("operatorTokenFilePath")
-        .and_then(|v| v.as_str())
-        .ok_or_else(|| "operator token unavailable — daemon too old".to_string())?;
-
-    let token = std::fs::read_to_string(operator_token_file_path)
-        .map(|s| s.trim().to_string())
-        .map_err(|e| format!("token read error: {e}"))?;
+    let daemon = daemon_info::DaemonInfo::discover()?;
+    let base_url = daemon.base_url.as_str();
+    let token = daemon.operator_token;
 
     let url = format!("{base_url}/v1/companion/speak");
     let duration = Duration::from_secs(60);
@@ -924,36 +863,9 @@ async fn agent_transcribe(audio_b64: String, mime: String) -> Result<String, Str
     use std::time::Duration;
     use tokio::time::timeout;
 
-    let home = std::env::var("HOME")
-        .or_else(|_| std::env::var("USERPROFILE"))
-        .map_err(|e| format!("cannot resolve home dir: {e}"))?;
-    let state_dir = std::env::var("WECHAT_STATE_DIR").unwrap_or_else(|_| {
-        PathBuf::from(home)
-            .join(".claude")
-            .join("channels")
-            .join("wechat")
-            .to_string_lossy()
-            .to_string()
-    });
-    let info_path = PathBuf::from(&state_dir).join("internal-api-info.json");
-
-    let info_raw = std::fs::read_to_string(&info_path)
-        .map_err(|e| format!("read {}: {e}", info_path.display()))?;
-    let info: Value = serde_json::from_str(&info_raw)
-        .map_err(|e| format!("invalid JSON in {}: {e}", info_path.display()))?;
-
-    let base_url = info
-        .get("baseUrl")
-        .and_then(|v| v.as_str())
-        .ok_or_else(|| format!("missing baseUrl in {}", info_path.display()))?;
-    let operator_token_file_path = info
-        .get("operatorTokenFilePath")
-        .and_then(|v| v.as_str())
-        .ok_or_else(|| "operator token unavailable — daemon too old".to_string())?;
-
-    let token = std::fs::read_to_string(operator_token_file_path)
-        .map(|s| s.trim().to_string())
-        .map_err(|e| format!("token read error: {e}"))?;
+    let daemon = daemon_info::DaemonInfo::discover()?;
+    let base_url = daemon.base_url.as_str();
+    let token = daemon.operator_token;
 
     let url = format!("{base_url}/v1/companion/transcribe");
     // Transcription can be slower than TTS on a cold whisper model — allow 120s.
@@ -1022,8 +934,34 @@ async fn agent_transcribe(audio_b64: String, mime: String) -> Result<String, Str
 // `trusted` (the other obvious fix): ordinary chat sessions are minted
 // `trusted` (tierNameFromProfile), so demoting would let anyone talking to the
 // bot read the owner's private customer judgments.
+// 一个宿主代理(架构终态 F5):以前 customer_review_api(主人工作区)和 workbench_api(工作台等)两个命令各管一半,
+// 现在 webview 只调 daemon_request,这里按路由表(生成物)决定走哪一半;两半的行为(超时、正文上限、错误串、
+// dev 隔离目录)和以前各自那个命令逐字一样。两份名单都不在就拒,绝不成为通用代理。
+enum DaemonChannel {
+    /// 路由表 `desktop.tauri` 的行(工作台、一件事、连接、手机配对、终端会话……)。
+    Workbench,
+    /// 路由表 `desktop.ownerWorkspace` 的行(待办、记下的想法)。
+    OwnerWorkspace,
+}
+
+fn daemon_request_channel(method: &str, path: &str) -> Result<DaemonChannel, String> {
+    if workbench_request_allowed(method, path) {
+        return Ok(DaemonChannel::Workbench);
+    }
+    owner_workspace_request_check(method, path).map(|()| DaemonChannel::OwnerWorkspace)
+        .map_err(|_| format!("daemon_request refuses request: {method} {path}"))
+}
+
 #[tauri::command]
-async fn customer_review_api(
+async fn daemon_request(method: String, path: String, body: Option<String>) -> Result<String, String> {
+    match daemon_request_channel(&method, &path)? {
+        DaemonChannel::Workbench => workbench_call(method, path, body).await,
+        DaemonChannel::OwnerWorkspace => owner_workspace_call(method, path, body).await,
+    }
+}
+
+// 主人工作区那一半(原 customer_review_api 命令;先过 owner_workspace_request_check)。
+async fn owner_workspace_call(
     method: String,
     path: String,
     body: Option<String>,
@@ -1038,39 +976,11 @@ async fn customer_review_api(
     // status writes, contact display names, reminder scheduling — all the
     // owner's own private data, exactly customer review's trust class.
     // Still a hard allow-list, still no generic proxying.
-    // 客户回顾(/v1/customer-review*)2026-10-21 删了;这个命令名留着,它现在只代理主人工作区那几条路由。
     owner_workspace_request_check(&method, &path)?;
 
-    let home = std::env::var("HOME")
-        .or_else(|_| std::env::var("USERPROFILE"))
-        .map_err(|e| format!("cannot resolve home dir: {e}"))?;
-    let state_dir = std::env::var("WECHAT_STATE_DIR").unwrap_or_else(|_| {
-        PathBuf::from(home)
-            .join(".claude")
-            .join("channels")
-            .join("wechat")
-            .to_string_lossy()
-            .to_string()
-    });
-    let info_path = PathBuf::from(&state_dir).join("internal-api-info.json");
-
-    let info_raw = std::fs::read_to_string(&info_path)
-        .map_err(|e| format!("read {}: {e}", info_path.display()))?;
-    let info: Value = serde_json::from_str(&info_raw)
-        .map_err(|e| format!("invalid JSON in {}: {e}", info_path.display()))?;
-
-    let base_url = info
-        .get("baseUrl")
-        .and_then(|v| v.as_str())
-        .ok_or_else(|| format!("missing baseUrl in {}", info_path.display()))?;
-    // Same rule as agent_converse: never fall back to tokenFilePath.
-    let operator_token_file_path = info
-        .get("operatorTokenFilePath")
-        .and_then(|v| v.as_str())
-        .ok_or_else(|| "operator token unavailable — daemon too old".to_string())?;
-    let token = std::fs::read_to_string(operator_token_file_path)
-        .map(|s| s.trim().to_string())
-        .map_err(|e| format!("token read error: {e}"))?;
+    let daemon = daemon_info::DaemonInfo::discover()?;
+    let base_url = daemon.base_url.as_str();
+    let token = daemon.operator_token;
 
     let url = format!("{base_url}{path}");
     let result = timeout(Duration::from_secs(30), async {
@@ -1130,7 +1040,7 @@ fn workbench_routes() -> &'static std::collections::HashSet<(String, String)> {
 }
 
 // 主人工作区的放行名单也是生成物(2026-10-21):路由表里 `desktop.ownerWorkspace` 的行,gen:routes 写进同一份
-// JSON 的 `ownerWorkspace`。customer_review_api 按**路径**放行、GET / POST 都收 —— 和以前手写那六条一样
+// JSON 的 `ownerWorkspace`。主人工作区那一半(owner_workspace_call)按**路径**放行、GET / POST 都收 —— 和以前手写那六条一样
 // (表里的方法只是记录;收紧成逐条方法是另一回事)。别在这里手加路由。
 fn owner_workspace_routes() -> &'static std::collections::HashSet<String> {
     static ROUTES: std::sync::OnceLock<std::collections::HashSet<String>> = std::sync::OnceLock::new();
@@ -1147,14 +1057,14 @@ fn owner_workspace_routes() -> &'static std::collections::HashSet<String> {
     })
 }
 
-/// customer_review_api 的门:路径不在名单 / 带 `..` ⇒ refuses path;方法不是 GET / POST ⇒ refuses method。
+/// 主人工作区那一半的门:路径不在名单 / 带 `..` ⇒ refuses path;方法不是 GET / POST ⇒ refuses method。
 fn owner_workspace_request_check(method: &str, path: &str) -> Result<(), String> {
     let route = path.split('?').next().unwrap_or("");
     if !owner_workspace_routes().contains(route) || path.contains("..") {
-        return Err(format!("customer_review_api refuses path: {path}"));
+        return Err(format!("daemon_request refuses path: {path}"));
     }
     if method != "GET" && method != "POST" {
-        return Err(format!("customer_review_api refuses method: {method}"));
+        return Err(format!("daemon_request refuses method: {method}"));
     }
     Ok(())
 }
@@ -1178,21 +1088,16 @@ fn validate_workbench_body(method: &str, path: &str, body: Option<&str>) -> Resu
     Ok(())
 }
 
-#[tauri::command]
-async fn workbench_api(method: String, path: String, body: Option<String>) -> Result<String, String> {
+// 工作台那一半(原 workbench_api 命令)。
+async fn workbench_call(method: String, path: String, body: Option<String>) -> Result<String, String> {
     use std::time::Duration;
     use tokio::time::timeout;
 
     if !workbench_request_allowed(&method, &path) {
-        return Err(format!("workbench_api refuses request: {method} {path}"));
+        return Err(format!("daemon_request refuses request: {method} {path}"));
     }
     validate_workbench_body(&method, &path, body.as_deref())?;
-    let home = std::env::var("HOME")
-        .or_else(|_| std::env::var("USERPROFILE"))
-        .map_err(|e| format!("cannot resolve home dir: {e}"))?;
-    let state_dir = std::env::var("WECHAT_STATE_DIR").unwrap_or_else(|_| {
-        PathBuf::from(home).join(".claude").join("channels").join("wechat").to_string_lossy().to_string()
-    });
+    let state_dir = daemon_info::state_dir()?;
     // Match the browser development proxy's isolated workbench runtime while
     // keeping companion/CLI discovery on WECHAT_STATE_DIR. Release builds
     // always use the shared daemon and do not read this development override.
@@ -1200,17 +1105,11 @@ async fn workbench_api(method: String, path: String, body: Option<String>) -> Re
     let state_dir = std::env::var("WECHAT_CC_WORKBENCH_STATE_DIR")
         .ok()
         .filter(|path| !path.trim().is_empty())
+        .map(PathBuf::from)
         .unwrap_or(state_dir);
-    let info_path = PathBuf::from(state_dir).join("internal-api-info.json");
-    let info: Value = serde_json::from_str(&std::fs::read_to_string(&info_path)
-        .map_err(|e| format!("read {}: {e}", info_path.display()))?)
-        .map_err(|e| format!("invalid JSON in {}: {e}", info_path.display()))?;
-    let base_url = info.get("baseUrl").and_then(Value::as_str)
-        .ok_or_else(|| format!("missing baseUrl in {}", info_path.display()))?;
-    let token_path = info.get("operatorTokenFilePath").and_then(Value::as_str)
-        .ok_or_else(|| "operator token unavailable — daemon too old".to_string())?;
-    let token = std::fs::read_to_string(token_path).map(|s| s.trim().to_string())
-        .map_err(|e| format!("token read error: {e}"))?;
+    let daemon = daemon_info::DaemonInfo::read(&state_dir)?;
+    let base_url = daemon.base_url.as_str();
+    let token = daemon.operator_token;
     let url = format!("{base_url}{path}");
     let response = timeout(Duration::from_secs(35), async {
         let client = reqwest::Client::new();
@@ -1333,7 +1232,7 @@ async fn open_workbench_folder(task_id: String) -> Result<(), String> {
     }
     #[cfg(target_os = "macos")]
     {
-        let response = workbench_api("GET".into(), format!("/v1/workbench/task?id={task_id}"), None).await?;
+        let response = workbench_call("GET".into(), format!("/v1/workbench/task?id={task_id}"), None).await?;
         let path = workbench_folder_path(&task_id, &response)?;
         let folder = inspect_workbench_folder(&path)?;
         launch_workbench_folder(&folder, |path| {
@@ -1449,38 +1348,9 @@ async fn pet_permission_resolve(hash: String, decision: String) -> Result<bool, 
         return Err("missing permission hash".to_string());
     }
 
-    let home = std::env::var("HOME")
-        .or_else(|_| std::env::var("USERPROFILE"))
-        .map_err(|e| format!("cannot resolve home dir: {e}"))?;
-    let state_dir = std::env::var("WECHAT_STATE_DIR").unwrap_or_else(|_| {
-        PathBuf::from(home)
-            .join(".claude")
-            .join("channels")
-            .join("wechat")
-            .to_string_lossy()
-            .to_string()
-    });
-    let info_path = PathBuf::from(&state_dir).join("internal-api-info.json");
-
-    let info_raw = std::fs::read_to_string(&info_path)
-        .map_err(|e| format!("read {}: {e}", info_path.display()))?;
-    let info: Value = serde_json::from_str(&info_raw)
-        .map_err(|e| format!("invalid JSON in {}: {e}", info_path.display()))?;
-
-    let base_url = info
-        .get("baseUrl")
-        .and_then(|v| v.as_str())
-        .ok_or_else(|| format!("missing baseUrl in {}", info_path.display()))?;
-    // operatorTokenFilePath, not tokenFilePath — see agent_converse's doc
-    // comment (the daemon-wide token is trusted tier and would just 403).
-    let operator_token_file_path = info
-        .get("operatorTokenFilePath")
-        .and_then(|v| v.as_str())
-        .ok_or_else(|| "operator token unavailable — daemon too old".to_string())?;
-
-    let token = std::fs::read_to_string(operator_token_file_path)
-        .map(|s| s.trim().to_string())
-        .map_err(|e| format!("token read error: {e}"))?;
+    let daemon = daemon_info::DaemonInfo::discover()?;
+    let base_url = daemon.base_url.as_str();
+    let token = daemon.operator_token;
 
     let url = format!("{base_url}/v1/permissions/resolve");
     // reqwest's `json` feature is off in this crate (Cargo.toml) — serialize
@@ -1655,8 +1525,7 @@ pub fn run() {
             reveal_reply_file,
             agent_speak,
             agent_transcribe,
-            customer_review_api,
-            workbench_api,
+            daemon_request,
             choose_workbench_folder,
             open_workbench_folder,
             prepare_workbench_html_preview,
@@ -1750,12 +1619,12 @@ mod workbench_proxy_tests {
 
         std::env::set_var("WECHAT_STATE_DIR", &shared);
         std::env::set_var("WECHAT_CC_WORKBENCH_STATE_DIR", &isolated);
-        let override_result = runtime.block_on(super::workbench_api("GET".into(), "/v1/workbench".into(), None));
+        let override_result = runtime.block_on(super::workbench_call("GET".into(), "/v1/workbench".into(), None));
         let shared_after_request = std::env::var_os("WECHAT_STATE_DIR");
         std::env::set_var("WECHAT_CC_WORKBENCH_STATE_DIR", "");
-        let empty_result = runtime.block_on(super::workbench_api("GET".into(), "/v1/workbench".into(), None));
+        let empty_result = runtime.block_on(super::workbench_call("GET".into(), "/v1/workbench".into(), None));
         std::env::remove_var("WECHAT_CC_WORKBENCH_STATE_DIR");
-        let absent_result = runtime.block_on(super::workbench_api("GET".into(), "/v1/workbench".into(), None));
+        let absent_result = runtime.block_on(super::workbench_call("GET".into(), "/v1/workbench".into(), None));
 
         // Restore process state before assertions, including when one fails.
         for (key, previous) in [
@@ -1793,7 +1662,7 @@ mod workbench_proxy_tests {
         ] {
             // Character count remains below the limit; UTF-8 bytes exceed it.
             let body = "é".repeat(limit / 2 + 1);
-            let result = runtime.block_on(super::workbench_api("POST".into(), path.into(), Some(body)));
+            let result = runtime.block_on(super::workbench_call("POST".into(), path.into(), Some(body)));
             results.push((path, result));
         }
         for (key, value) in previous { match value { Some(value) => std::env::set_var(key, value), None => std::env::remove_var(key) } }
@@ -1823,87 +1692,53 @@ mod workbench_proxy_tests {
         assert!(file.get("version").and_then(serde_json::Value::as_u64).is_some_and(|v| v >= 1), "generated/workbench-routes.json needs a numeric version");
     }
 
+    // 路径表不在这里照抄(架构终态 F5):正面的名单从生成物逐条读,改造前的原样名单由
+    // scripts/route-registry.guard.test.ts 的 FORMER_OWNER_WORKSPACE 和 routes-snapshot 快照钉着。
+    fn generated_keys(field: &str) -> Vec<(String, String)> {
+        let file: serde_json::Value = serde_json::from_str(super::WORKBENCH_ROUTES_JSON).unwrap();
+        file.get(field).and_then(serde_json::Value::as_array).unwrap().iter()
+            .filter_map(serde_json::Value::as_str)
+            .filter_map(|key| key.split_once(' ').map(|(m, p)| (m.to_owned(), p.to_owned())))
+            .collect()
+    }
+
     #[test]
-    fn owner_workspace_routes_match_the_former_hand_written_list() {
-        // 2026-10-21 之前 customer_review_api 里手写的 OWNER_WORKSPACE_ROUTES,原样照抄:生成物得是同一组路径。
-        let former: std::collections::HashSet<String> = [
-            "/v1/knowledge/facts/find_facts",
-            "/v1/llm/keys",
-            "/v1/companion/thoughts",
-            "/v1/knowledge/facts/set_fact_status",
-            "/v1/knowledge/graph/top_contacts",
-            "/v1/reminders/schedule",
-        ]
-        .iter()
-        .map(|s| s.to_string())
-        .collect();
-        assert_eq!(super::owner_workspace_routes(), &former);
-        for path in &former {
+    fn owner_workspace_check_accepts_the_generated_paths_and_refuses_everything_else() {
+        let owner = generated_keys("ownerWorkspace");
+        assert!(owner.len() >= 6, "generated ownerWorkspace looks empty: {}", owner.len());
+        for (_, path) in &owner {
             for method in ["GET", "POST"] {
                 assert!(super::owner_workspace_request_check(method, path).is_ok(), "{method} {path}");
             }
             assert!(super::owner_workspace_request_check("GET", &format!("{path}?x=1")).is_ok());
-            assert_eq!(super::owner_workspace_request_check("DELETE", path).unwrap_err(), "customer_review_api refuses method: DELETE");
+            assert_eq!(super::owner_workspace_request_check("DELETE", path).unwrap_err(), "daemon_request refuses method: DELETE");
         }
         for path in ["/v1/workbench", "/v1/customer-review/list", "/v1/llm/keys/..", "/v1/llm/keys/../../v1/companion/converse", "/v1/companion/converse", ""] {
-            assert_eq!(super::owner_workspace_request_check("POST", path).unwrap_err(), format!("customer_review_api refuses path: {path}"));
+            assert_eq!(super::owner_workspace_request_check("POST", path).unwrap_err(), format!("daemon_request refuses path: {path}"));
+        }
+    }
+
+    #[test]
+    fn daemon_request_picks_one_half_by_the_generated_tables_and_refuses_the_rest() {
+        use super::{daemon_request_channel, DaemonChannel};
+        for (method, path) in generated_keys("tauri") {
+            assert!(matches!(daemon_request_channel(&method, &path), Ok(DaemonChannel::Workbench)), "{method} {path}");
+        }
+        for (method, path) in generated_keys("ownerWorkspace") {
+            assert!(matches!(daemon_request_channel(&method, &path), Ok(DaemonChannel::OwnerWorkspace)), "{method} {path}");
+        }
+        for (method, path) in [("POST", "/v1/companion/converse"), ("GET", "/v1/health"), ("POST", "/v1/permissions/resolve"), ("GET", "/v1/workbench/../companion/presence"), ("DELETE", "/v1/llm/keys"), ("GET", "")] {
+            assert_eq!(daemon_request_channel(method, path).err().unwrap(), format!("daemon_request refuses request: {method} {path}"));
         }
     }
 
     #[test]
     fn allows_only_the_exact_workbench_method_route_pairs() {
-        for (method, path) in [
-            ("GET", "/v1/workbench/entry-options"),
-            ("POST", "/v1/workbench/create-entry"),
-            ("GET", "/v1/workbench/entry-receipt?requestId=123e4567-e89b-42d3-a456-426614174000"),
-            ("GET", "/v1/workbench"),
-            ("GET", "/v1/workbench/task?id=A1B2C3D4"),
-            ("GET", "/v1/workbench/sessions?providerId=claude"),
-            ("GET", "/v1/workbench/models?providerId=codex&path=%2Fwork"),
-            ("GET", "/v1/workbench/session?key=opaque"),
-            ("GET", "/v1/workbench/artifact?id=A1B2C3D4&artifactId=file-1"),
-            ("POST", "/v1/workbench/attachment"),
-            ("GET", "/v1/workbench/attachment?taskId=deadbeef&id=file-1"),
-            ("POST", "/v1/workbench/discard-attachment"),
-            ("POST", "/v1/workbench/project"),
-            ("POST", "/v1/workbench/create"),
-            ("POST", "/v1/workbench/continue"),
-            ("POST", "/v1/workbench/cancel"),
-            ("POST", "/v1/workbench/approve"),
-            ("POST", "/v1/workbench/permission"),
-            ("POST", "/v1/workbench/archive"),
-            ("POST", "/v1/workbench/writer-exited"),
-            ("POST", "/v1/workbench/unattended-ack"),
-            ("GET", "/v1/workbench/review?id=A1B2C3D4"),
-            ("POST", "/v1/workbench/review-mark"),
-            ("POST", "/v1/workbench/review-return"),
-            ("POST", "/v1/workbench/review-revert"),
-            ("POST", "/v1/workbench/review-comment"),
-            ("POST", "/v1/workbench/review-comments-send"),
-            ("POST", "/v1/workbench/review-hunk"),
-            ("POST", "/v1/workbench/worktree"),
-            ("POST", "/v1/workbench/script-approve"),
-            ("GET", "/v1/workbench/rewind-preview?id=a1b2c3d4&artifactId=a1b2c3d4&to=end"),
-            ("POST", "/v1/workbench/rewind"),
-            ("POST", "/v1/workbench/rewind-resolve"),
-            ("POST", "/v1/workbench/import"),
-            ("POST", "/v1/workbench/prepare-resume"),
-            ("POST", "/v1/workbench/prepare-continuation"),
-            ("POST", "/v1/workbench/quota-handoff"),
-            ("POST", "/v1/workbench/handoff-preview"),
-            ("POST", "/v1/workbench/handoff"),
-            ("GET", "/v1/workbench/handoff"),
-            ("GET", "/v1/workbench/attention"),
-            ("POST", "/v1/workbench/input"),
-            ("POST", "/v1/workbench/withdraw-input"),
-            ("POST", "/v1/workbench/answer"),
-            ("GET", "/v1/workbench?q=..&archived=all"),
-            ("GET", "/v1/connections"),
-            ("POST", "/v1/phone/link"), ("GET", "/v1/phone/devices"),
-            ("GET", "/v1/cli/sessions"), ("GET", "/v1/cli/sessions?limit=20"),
-            ("POST", "/v1/cli/hooks/install"), ("POST", "/v1/cli/hooks/uninstall"),
-        ] {
+        let tauri = generated_keys("tauri");
+        assert!(tauri.len() >= 30, "generated tauri list looks empty: {}", tauri.len());
+        for (method, path) in &tauri {
             assert!(workbench_request_allowed(method, path), "expected {method} {path} to be allowed");
+            assert!(workbench_request_allowed(method, &format!("{path}?id=A1B2C3D4&q=..")), "expected {method} {path}?… to be allowed");
         }
         for (method, path) in [
             ("POST", "/v1/workbench/entry-options"),

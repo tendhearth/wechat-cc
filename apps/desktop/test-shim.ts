@@ -241,7 +241,7 @@ window.__TAURI__ = window.__TAURI__ ?? { core: {
   invoke: async (command, args) => {
     // Owner-only workspace: hit the proxied path directly so the request is a
     // real HTTP call (Playwright intercepts it) and the token stays server-side.
-    if (command === "customer_review_api" || command === "workbench_api") {
+    if (command === "daemon_request") {
       const res = await fetch(args.path, {
         method: args.method,
         ...(args.method === "POST" ? { headers: { "content-type": "application/json" }, body: args.body ?? "{}" } : {})

@@ -1,5 +1,6 @@
 // Read-only presentation of current signals and retained records. No invented activity.
 import {atelierImage,openAtelierWork} from './atelier-gallery.js'
+import { V1, v1 } from '../daemon-client.js'
 const esc = v => String(v ?? '').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]))
 const unknown = () => ({kind:'unknown',title:'暂时不知道 CC 在做什么。',detail:'连接恢复后，这里会更新。',pane:null})
 
@@ -19,7 +20,7 @@ export function currentActivity(p) {
   return {kind:p.activity.kind,title:copy[0],detail:p.presence==='offline'?'外部联系暂时不通，这是本机刚确认的活动。':copy[1],pane:copy[2]}
 }
 
-const paths={paintings:'/v1/atelier/works?limit=24',thoughts:'/v1/companion/thoughts',stories:'/v1/journal?limit=500'}
+const paths={paintings:{key:V1.atelier.works,args:{query:{limit:24}}},thoughts:{key:V1.companion.thoughts,args:undefined},stories:{key:V1.journal.list,args:{query:{limit:500}}}}
 function date(v) { const d=new Date(v);return Number.isNaN(d.getTime())?'日期未记录':d.toLocaleDateString('zh-CN') }
 function rowsFor(category,data) {
   if(category==='paintings') {
@@ -36,7 +37,7 @@ export function createLifeArchive(host,{call}) {
     category=next;const ticket=++generation
     host.innerHTML='<p role="status" class="cc-life-empty">正在翻开…</p>'
     try {
-      const data=await call('GET',paths[next]);if(ticket!==generation)return
+      const data=await v1(call,paths[next].key,paths[next].args);if(ticket!==generation)return
       const rows=rowsFor(next,data).sort((a,b)=>String(b.ts).localeCompare(String(a.ts)))
       currentRows=rows
       const hints={thoughts:'CC 当时留下的想法与选择，按天收好；这些想法不代表事情已经做完。最近 14 个有记录的日子。',paintings:'最近 24 幅作品；打开画室可以继续查看作品信息。',stories:'从最近 500 条记录中翻出的串门见闻，带图的故事收在明信片册。'}

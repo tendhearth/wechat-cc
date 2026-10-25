@@ -79,7 +79,7 @@ async function openTask(page:Page,id:string){
 // is loaded only by the production host proxy and never enters browser JS.
 const harness=`
 window.__TAURI__={core:{invoke:async(command,args)=>{
-  if(command!=='workbench_api')throw Error('Unexpected IPC command: '+command);
+  if(command!=='daemon_request')throw Error('Unexpected IPC command: '+command);
   const response=await fetch(args.path,{method:args.method,...(args.method==='POST'?{headers:{'content-type':'application/json'},body:args.body??'{}'}:{})});
   const text=await response.text();
   if(!response.ok){let message='HTTP '+response.status;try{message=JSON.parse(text).error??message}catch{}throw Error(message)}

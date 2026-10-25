@@ -15,6 +15,7 @@
 import { showToast } from '../view.js'
 import { invokeApi } from '../api.js'
 import { icon } from './icons.js'
+import { V1, v1 } from '../daemon-client.js'
 
 // Packages whose MCP tools were retired when their logic moved into the
 // daemon's in-process Knowledge Kernel — kept on disk as library modules
@@ -52,7 +53,7 @@ async function refreshInstalled() {
   if (!list) return
   list.innerHTML = '<li class="empty">加载中…</li>'
 
-  const resp = /** @type {{ plugins?: Array<any> }} */ (await invokeApi('GET', '/v1/plugins/list'))
+  const resp = /** @type {{ plugins?: Array<any> }} */ (await v1(invokeApi, V1.plugins.list))
   const plugins = resp?.plugins ?? []
   list.innerHTML = ''
   if (plugins.length === 0) {
@@ -120,7 +121,7 @@ async function onCardAction(e) {
   target.disabled = true
   try {
     const r = /** @type {Record<string, any>} */ (
-      await invokeApi('POST', '/v1/plugins/toggle', { name, enabled: enable })
+      await v1(invokeApi, V1.plugins.toggle, { body: { name, enabled: enable } })
     )
     showNote(`已${enable ? '启用' : '停用'} ${name} — ${r?.note ?? '重启 daemon 生效'}`)
     await refresh()
@@ -207,7 +208,7 @@ async function refreshMarket() {
   if (!list) return
   list.innerHTML = '<li class="empty">加载市场中…</li>'
   const resp = /** @type {{ plugins?: Array<any>, error?: string }} */ (
-    await invokeApi('GET', '/v1/plugins/registry').catch(err => ({ error: String(err?.message ?? err) }))
+    await v1(invokeApi, V1.plugins.registry).catch(err => ({ error: String(err?.message ?? err) }))
   )
   if (note) {
     if (resp?.error) {
@@ -256,7 +257,7 @@ async function onMarketAction(e) {
   target.disabled = true
   target.textContent = `${verb}中…`
   try {
-    const r = /** @type {Record<string, any>} */ (await invokeApi('POST', `/v1/plugins/${action}`, { name }))
+    const r = /** @type {Record<string, any>} */ (await v1(invokeApi, action === 'upgrade' ? V1.plugins.upgrade : V1.plugins.install, { body: { name } }))
     if (r?.ok) {
       showNote(action === 'upgrade'
         ? `已更新 ${name} ${r.from ?? ''}→${r.to ?? ''} — 重启 daemon 生效`

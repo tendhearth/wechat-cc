@@ -31,6 +31,7 @@ import { decisionRow } from "./decisions.js"
 import { icon } from "./icons.js"
 import { mountMemoryEvidenceDialog, normalizeMemorySourceRefs } from "./memory-evidence.js"
 import { bulkGate, collectLines, editOutcome, isDerivedMemoryPath, isLineEditablePath, lineViewFor, linesUnchanged, memoryEditArgs, renderLineEditor, renderOwnerBlock } from "./memory-line-edit.js"
+import { V1, v1 } from '../daemon-client.js'
 
 // `selected` doubles as the edit-target identity (userId + path) AND the
 // "we have a file open" flag for the edit button visibility. `editing`
@@ -432,7 +433,7 @@ export async function synthesizeMemory(deps) {
   let result
   try {
     result = /** @type {{ ok?: boolean, error?: string, projectsFound?: number, projectNames?: string[], written?: { bytesWritten: number } }} */ (
-      await deps.invokeApi("POST", "/v1/memory/synthesize", undefined, { timeoutMs: 60_000 })
+      await v1(deps.invokeApi, V1.memory.synthesize, undefined, { timeoutMs: 60_000 })
     )
   } catch (err) {
     const message = daemonRequiredMessage(err, "更新项目地图")
@@ -510,7 +511,7 @@ export async function generateMemoryProfile(deps) {
   let result
   try {
     result = /** @type {MemoryProfileOutput} */ (
-      await deps.invokeApi("POST", "/v1/memory/profile/generate", { chat_id: chatId })
+      await v1(deps.invokeApi, V1.memory.profileGenerate, { body: { chat_id: chatId } })
     )
   } catch (err) {
     const message = daemonRequiredMessage(err, "刷新画像")
@@ -524,7 +525,7 @@ export async function generateMemoryProfile(deps) {
   // 顺手让 CC 重画小像 — non-fatal: a refused/unsafe drawing just keeps the
   // previous portrait (or the empty state), the profile refresh still lands.
   try {
-    await deps.invokeApi("POST", "/v1/memory/portrait/generate", {}, { timeoutMs: 120_000 })
+    await v1(deps.invokeApi, V1.memory.portraitGenerate, { body: {} }, { timeoutMs: 120_000 })
   } catch { /* portrait is a bonus, never block the profile flow */ }
   await loadMemoryPane(deps).catch(() => {})
   await loadMemoryTopZone(deps).catch(() => {})
@@ -810,7 +811,7 @@ export function summaryParagraphs(summary) {
 async function loadPortrait(deps) {
   try {
     const r = /** @type {{ ok?: boolean, svg?: string | null, generated_at?: string | null }} */ (
-      await deps.invokeApi("GET", "/v1/memory/portrait")
+      await v1(deps.invokeApi, V1.memory.portrait)
     )
     memoryState.portrait = r && r.ok ? { svg: r.svg ?? null, generated_at: r.generated_at ?? null } : null
   } catch {

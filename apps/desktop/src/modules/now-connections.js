@@ -12,6 +12,7 @@
 //     (重新扫码 / 连接手机 / 设置抽屉),不再只写一句「去哪做」让人自己找。宿主认不出的 ⇒ 照旧只写提示。
 
 import { HOOKS_RUN, makeHooksAction } from './terminal-hooks.js'
+import { V1, v1 } from '../daemon-client.js'
 
 /** @typedef {'ok'|'warn'|'bad'|'unknown'} Dot */
 /** @typedef {'ready'|'behind'|'not_loaded'|'unknown'} State */
@@ -156,7 +157,7 @@ export function mountNowConnections({ host, call, now = () => Date.now(), openUr
   async function refresh() {
     const mine = ++ticket
     try {
-      const r = /** @type {Connections} */ (await call('GET', '/v1/connections'))
+      const r = /** @type {Connections} */ (await v1(call, V1.connections.get))
       if (mine !== ticket) return
       if (!r || !Array.isArray(r.sources) || !Array.isArray(r.computers)) throw new Error('invalid_connections')
       data = { ...r, recent: Array.isArray(r.recent) ? r.recent : [], outputs: Array.isArray(r.outputs) ? r.outputs : [] }

@@ -11,25 +11,16 @@
  * 运行时不 import zod(只引类型):网页那份 IIFE 以后要用也不长个子。
  *
  * 查询串的拼法与搬家前逐字一致:按给的顺序、`undefined` 的不带;字符串 `encodeURIComponent`,数字原样。
- * 前缀路由(贴纸一族,键以 `/` 结尾)多一个 `suffix`,编码后接在路径后面。
+ * 前缀路由(贴纸一族,键以 `/` 结尾)多一个 `suffix`,编码后接在路径后面。拼法和桌面(`desktop-calls.ts`)共用 `calls.ts`。
  */
 import type { PhoneApiKey, PhoneApiOk } from './api'
-
-type QueryValue = string | number | undefined
-type Query = Record<string, QueryValue>
-type Method = 'GET' | 'POST'
+import { callRequest, callSpec, makeApi, t, type CallArgs, type CallRequest, type CallSpec, type LooseCallArgs } from './calls'
 
 /** 一条调用的声明。`_q` / `_b` 只是类型标记,运行时恒为 undefined。 */
-export interface PhoneCallSpec<K extends PhoneApiKey = PhoneApiKey, Q = unknown, B = unknown> {
-  readonly key: K
-  readonly _q?: Q
-  readonly _b?: B
-}
+export type PhoneCallSpec<K extends PhoneApiKey = PhoneApiKey, Q = unknown, B = unknown> = CallSpec<K, Q, B>
 
-/** 只给类型用的标记:`query: t<{ id: string }>()`。 */
-const t = <X>(): X => undefined as X
-function call<K extends PhoneApiKey, Q = void, B = void>(key: K, _types?: { query?: Q; body?: B }): PhoneCallSpec<K, Q, B> {
-  return { key }
+function call<K extends PhoneApiKey, Q = void, B = void>(key: K, types?: { query?: Q; body?: B }): PhoneCallSpec<K, Q, B> {
+  return callSpec(key, types)
 }
 
 type JobsActionT = 'pause' | 'resume' | 'remove'
@@ -123,26 +114,12 @@ export const PHONE_CALLS = {
 } as const
 
 /** 交给传输的一次调用:键(给校验 / 日志)、方法、拼好的路径、正文(对象,未序列化)。 */
-export interface PhoneCallRequest {
-  readonly key: PhoneApiKey
-  readonly method: Method
-  readonly path: string
-  readonly body?: unknown
-  /** 超时后协议层可不可以原样重发;不给 ⇒ 协议客户端的默认。 */
-  readonly retry?: boolean
-}
+export type PhoneCallRequest = CallRequest<PhoneApiKey>
 /** 可换的传输:送出去、按状态码 / 错误码挡掉失败、校验返回形状,回成功那一半。 */
 export type PhoneTransport = (req: PhoneCallRequest) => Promise<unknown>
 
-type IsVoid<X> = [X] extends [void] ? true : false
-type IsPrefix<K extends string> = K extends `${string}/` ? true : false
 /** 调用参数:有查询就要 query,有正文就要 body,前缀路由要 suffix;retry 随时可给。 */
-export type PhoneCallArgs<S> = S extends PhoneCallSpec<infer K, infer Q, infer B>
-  ? (IsVoid<Q> extends true ? unknown : { query: Q })
-    & (IsVoid<B> extends true ? unknown : { body: B })
-    & (IsPrefix<K> extends true ? { suffix: string } : unknown)
-    & { retry?: boolean }
-  : never
+export type PhoneCallArgs<S> = CallArgs<S>
 export type PhoneCallFn<S> = S extends PhoneCallSpec<infer K, unknown, unknown>
   ? Record<string, never> extends PhoneCallArgs<S>
     ? (args?: PhoneCallArgs<S>) => Promise<PhoneApiOk<K>>
@@ -152,34 +129,13 @@ export type PhoneCallFn<S> = S extends PhoneCallSpec<infer K, unknown, unknown>
 type Calls = typeof PHONE_CALLS
 export type PhoneApi = { readonly [NS in keyof Calls]: { readonly [M in keyof Calls[NS]]: PhoneCallFn<Calls[NS][M]> } }
 
-function queryString(q: Query | undefined): string {
-  if (!q) return ''
-  const parts: string[] = []
-  for (const [k, v] of Object.entries(q)) {
-    if (v === undefined) continue
-    parts.push(`${k}=${typeof v === 'number' ? String(v) : encodeURIComponent(v)}`)
-  }
-  return parts.length ? `?${parts.join('&')}` : ''
-}
-
-type LooseArgs = { query?: Query; body?: unknown; suffix?: string; retry?: boolean } | undefined
-
-/** 一条声明 + 参数 ⇒ 交给传输的请求(不送)。 */
+/** 一条声明 + 参数 ⇒ 交给传输的请求(不送)。拼法见 `calls.ts`。 */
 export function phoneCallRequest<S extends PhoneCallSpec>(spec: S, args?: PhoneCallArgs<S>): PhoneCallRequest {
-  const a = args as LooseArgs
-  const sp = spec.key.indexOf(' ')
-  const method = spec.key.slice(0, sp) as Method
-  const base = spec.key.slice(sp + 1)
-  const path = base + (a?.suffix !== undefined ? encodeURIComponent(a.suffix) : '') + queryString(a?.query)
-  return {
-    key: spec.key, method, path,
-    ...(a?.body !== undefined ? { body: a.body } : {}),
-    ...(a?.retry !== undefined ? { retry: a.retry } : {}),
-  }
+  return callRequest(spec, args as LooseCallArgs)
 }
 
 /** 给协议客户端(`ProtocolClient.request`)的形状:有正文 ⇒ JSON 序列化 + content-type。 */
-export function toProtocolRequest(r: PhoneCallRequest): { method: Method; path: string; body?: string; headers?: Record<string, string>; retry?: boolean } {
+export function toProtocolRequest(r: PhoneCallRequest): { method: 'GET' | 'POST'; path: string; body?: string; headers?: Record<string, string>; retry?: boolean } {
   return {
     method: r.method, path: r.path,
     ...(r.body !== undefined ? { body: JSON.stringify(r.body), headers: { 'content-type': 'application/json' } } : {}),
@@ -189,13 +145,5 @@ export function toProtocolRequest(r: PhoneCallRequest): { method: Method; path: 
 
 /** 类型化客户端:`api.matters.list()`、`api.matters.get({ query: { id } })` …,底下是可换的传输。 */
 export function makePhoneApi(send: PhoneTransport): PhoneApi {
-  const out: Record<string, Record<string, (a?: LooseArgs) => Promise<unknown>>> = {}
-  for (const [ns, methods] of Object.entries(PHONE_CALLS)) {
-    const o: Record<string, (a?: LooseArgs) => Promise<unknown>> = {}
-    for (const [m, spec] of Object.entries(methods as Record<string, PhoneCallSpec>)) {
-      o[m] = (a?: LooseArgs) => send(phoneCallRequest(spec, a as never))
-    }
-    out[ns] = o
-  }
-  return out as unknown as PhoneApi
+  return makeApi(PHONE_CALLS, send as (req: CallRequest) => Promise<unknown>) as PhoneApi
 }

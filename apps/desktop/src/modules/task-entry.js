@@ -5,6 +5,7 @@ import {createExecutionCatalogs, renderExecutionControls, executionErrorMessage}
 import {createWorkbenchThumbnails} from './workbench-thumbnails.js'
 import {ENTRY_LIMITS,entryContentError,entryFailureKind} from '../shared/task-entry-contract.js'
 import {renderWorkbenchMarkdown,renderWorkbenchUserText,captureUserSources,restoreUserSources} from './workbench-markdown.js'
+import { V1, v1 } from '../daemon-client.js'
 
 /** @typedef {import('../../../../src/adapters/workbench/task-entry').EntryInput} EntryInput */
 /** @typedef {import('../../../../src/features/workbench/service').EntryResult} EntryResult */
@@ -129,7 +130,7 @@ export function createTaskEntry(deps){
       }
       /** @param {Submission} submission */
       async function lookup(submission){
-        try{return receipt(await deps.invokeWorkbenchApi('GET',`/v1/workbench/entry-receipt?requestId=${encodeURIComponent(submission.input.requestId)}`),submission.input.requestId)}catch{return null}
+        try{return receipt(await v1(deps.invokeWorkbenchApi, V1.workbench.entryReceipt, { query: { requestId: submission.input.requestId } }),submission.input.requestId)}catch{return null}
       }
       async function submit(){
         if(busy)return
@@ -153,7 +154,7 @@ export function createTaskEntry(deps){
           if(known){receive(known,submission);return}
           submission.uncertain=true;persist(state)
           creating=true
-          const response=await deps.invokeWorkbenchApi('POST','/v1/workbench/create-entry',/** @type {Record<string,unknown>} */(structuredClone(submission.input)))
+          const response=await v1(deps.invokeWorkbenchApi, V1.workbench.createEntry, { body: /** @type {Record<string,unknown>} */(structuredClone(submission.input)) })
           const confirmed=receipt(response,submission.input.requestId)
           if(!confirmed)throw Error('unconfirmed_receipt')
           receive(confirmed,submission)
@@ -211,7 +212,7 @@ export function createTaskEntry(deps){
       void(async()=>{
         if(state.pending){busy=true;render();const submission=state.pending,known=await lookup(submission);busy=false;if(!alive)return;if(known){receive(known,submission);if(!alive)return}}
         try{
-          const loaded=/** @type {EntryOptions} */(await deps.invokeWorkbenchApi('GET','/v1/workbench/entry-options'))
+          const loaded=/** @type {EntryOptions} */(await v1(deps.invokeWorkbenchApi, V1.workbench.entryOptions))
           if(!Array.isArray(loaded?.projects)||!Array.isArray(loaded?.providers))throw Error('invalid_options')
           if(!alive)return
           options=loaded

@@ -1,5 +1,6 @@
 // @ts-check
 import { escapeHtml } from '../view.js'
+import { V1, v1 } from '../daemon-client.js'
 
 /** @typedef {{path:string,providerId:string}} ProjectChoice */
 
@@ -8,7 +9,7 @@ import { escapeHtml } from '../view.js'
  * @param {import('./workbench.js').WorkbenchDeps['invokeWorkbenchApi']} invokeWorkbenchApi
  * @returns {Promise<ProjectChoice|null>} */
 export async function chooseWorkbenchProject(invokeWorkbenchApi) {
-  const list = /** @type {import('./workbench.js').ListResult} */ (await invokeWorkbenchApi('GET', '/v1/workbench'))
+  const list = /** @type {import('./workbench.js').ListResult} */ (await v1(invokeWorkbenchApi, V1.workbench.list))
   if (!Array.isArray(list.projects)) throw new Error('workbench_projects_unavailable')
   const projects = list.projects
   if (!projects.length) return { path: '', providerId: list.defaultProvider ?? '' }

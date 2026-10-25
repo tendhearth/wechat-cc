@@ -6,6 +6,7 @@
 // 的「端点没接线」分支原样透传 presence);setFast(fast) 在 fastMs(前台活跃,默认
 // 2 s)和 slowMs(后台,默认 10 s)两档轮询间切换 —— 切换即清掉旧计时器重排一个
 // 新的,不额外触发一次立即刷新。
+import { V1, v1 } from '../../daemon-client.js'
 
 /** @typedef {{ owner_last_contact_at: string|null, turn: { phase: 'idle'|'thinking'|'working'|'permission', since: string|null }, last_done_at: string|null, pending_permissions: Array<{ hash: string, prompt: string, since: string, expires_at: string }> }} PetTurn */
 
@@ -36,7 +37,7 @@ export function createPetPoller({ invokeApi, fastMs = 2_000, slowMs = 10_000 }) 
       /** @type {PetTurn | null} */
       let next = null
       try {
-        const r = await invokeApi('GET', '/v1/companion/pet', undefined, { timeoutMs: 4_000 })
+        const r = await v1(invokeApi, V1.companion.pet, undefined, { timeoutMs: 4_000 })
         if (r && typeof r === 'object' && !Array.isArray(r)) next = /** @type {PetTurn} */ (r)
       } catch { /* down / timeout → null, never a fake payload */ }
       current = next

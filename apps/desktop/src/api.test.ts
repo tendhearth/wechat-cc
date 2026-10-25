@@ -13,7 +13,7 @@ afterEach(() => {
 
 describe('invokeApi', () => {
   it('sends workbench requests through the host-only workbench proxy', async () => {
-    const invoke = vi.fn(async (command: string) => command === 'workbench_api'
+    const invoke = vi.fn(async (command: string) => command === 'daemon_request'
       ? JSON.stringify({ tasks: [], providers: [], defaultProvider: 'codex', canWechat: false })
       : Promise.reject(new Error(`unexpected IPC command: ${command}`)))
     root.window = { __TAURI__: { core: { invoke } } }
@@ -24,7 +24,7 @@ describe('invokeApi', () => {
     const { invokeWorkbenchApi } = await import('./api.js')
     await expect(invokeWorkbenchApi('GET', '/v1/workbench')).resolves.toMatchObject({ tasks: [] })
     expect(fetchMock).not.toHaveBeenCalled()
-    expect(invoke).toHaveBeenCalledWith('workbench_api', { method: 'GET', path: '/v1/workbench' })
+    expect(invoke).toHaveBeenCalledWith('daemon_request', { method: 'GET', path: '/v1/workbench' })
   })
   it('refreshes daemon discovery after a stale localhost port fails to connect', async () => {
     let credentialCalls = 0
@@ -84,7 +84,7 @@ describe('invokeApi', () => {
     // (Was the customer-review route until 2026-09-27; that module is gone,
     // the 待办 routes use the same host command.)
     const invoke = vi.fn(async (command: string) => {
-      if (command === 'customer_review_api') return JSON.stringify({ items: [] })
+      if (command === 'daemon_request') return JSON.stringify({ items: [] })
       throw new Error(`unexpected IPC command: ${command}`)
     })
     root.window = { __TAURI__: { core: { invoke } } }
@@ -96,9 +96,9 @@ describe('invokeApi', () => {
     await expect(invokeApi('GET', '/v1/companion/thoughts')).resolves.toEqual({ items: [] })
 
     expect(fetchMock).not.toHaveBeenCalled()
-    expect(invoke).toHaveBeenCalledWith('customer_review_api', { method: 'GET', path: '/v1/companion/thoughts' })
+    expect(invoke).toHaveBeenCalledWith('daemon_request', { method: 'GET', path: '/v1/companion/thoughts' })
     // and no api-info call at all — no credential was needed in this process
-    expect(invoke.mock.calls.every(c => c[0] === 'customer_review_api')).toBe(true)
+    expect(invoke.mock.calls.every(c => c[0] === 'daemon_request')).toBe(true)
   })
 
   it('does NOT replay a POST after a transport failure', async () => {

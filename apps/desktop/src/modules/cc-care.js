@@ -1,5 +1,6 @@
 import { currentActivity } from './cc-life.js'
 import { workbenchRuntimePresentation } from './workbench-runtime.js'
+import { V1, v1 } from '../daemon-client.js'
 
 const esc = value => String(value ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]))
 const count = value => Number.isSafeInteger(value) && value > 0 ? value : 0
@@ -48,7 +49,7 @@ export function createCareReader({call, onChange, intervalMs = 5000, timeoutMs =
     inflight = (async () => {
       try {
         const interrupted = new Promise((_,reject) => { cancel = () => reject(new Error('stopped')); deadline = setTimeout(() => reject(new Error('timeout')), timeoutMs) })
-        const data = await Promise.race([call('GET',`/v1/workbench?limit=${TASK_LIMIT}`), interrupted])
+        const data = await Promise.race([v1(call, V1.workbench.list, { query: { limit: TASK_LIMIT } }), interrupted])
         if (ticket !== generation) return
         if (!data || !Array.isArray(data.tasks)) throw new Error('invalid_tasks')
         state = {data, stale:false, loading:false}; onChange(state)

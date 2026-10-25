@@ -17,6 +17,7 @@ import { escapeHtml } from "../view.js"
 import { formatInvokeError } from "../ipc.js"
 import { renderWorkbenchMarkdown, renderWorkbenchUserText } from "./workbench-markdown.js"
 import { paintConversation, syncConversationLatest, showConversationLatest, conversationInteractionActive } from "./converse-reading.js"
+import { V1, v1 } from '../daemon-client.js'
 
 /**
  * @typedef {{ getUserMedia: (c: MediaStreamConstraints) => Promise<MediaStream>, makeRecorder: (s: MediaStream) => MediaRecorder }} MediaDeps
@@ -484,7 +485,7 @@ function emptyStateHtml() {
 async function loadSharedHistory(deps) {
   if (!deps.invokeWorkbenchApi || messages.length) return
   try {
-    const detail = /** @type {{events?:Array<{kind:string,text:string,createdAt:number,source?:string}>}|null} */ (await deps.invokeWorkbenchApi("GET", "/v1/matter/owner-chat"))
+    const detail = /** @type {{events?:Array<{kind:string,text:string,createdAt:number,source?:string}>}|null} */ (await v1(deps.invokeWorkbenchApi, V1.matter.ownerChat))
     const events = (detail?.events ?? []).filter(e => e.kind === "user" || e.kind === "text")
     if (!events.length || messages.length) return
     for (const e of events) messages.push({ id: nextId++, role: e.kind === "user" ? "user" : "cc", text: e.text, at: e.createdAt, source: e.source })
@@ -698,7 +699,7 @@ async function runSearch(deps, q) {
   host.hidden = false
   host.innerHTML = '<p class="converse-search-note">正在搜…</p>'
   try {
-    const r = /** @type {{hits?:Array<{kind:string,text:string,createdAt:number,source?:string}>}} */ (await deps.invokeWorkbenchApi("GET", `/v1/matter/owner-chat/search?q=${encodeURIComponent(query)}&limit=30`))
+    const r = /** @type {{hits?:Array<{kind:string,text:string,createdAt:number,source?:string}>}} */ (await v1(deps.invokeWorkbenchApi, V1.matter.ownerChatSearch, { query: { q: query, limit: 30 } }))
     if (seq !== searchSeq) return
     const hits = r?.hits ?? []
     host.innerHTML = hits.length

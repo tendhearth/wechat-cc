@@ -7,7 +7,7 @@
 daemon 的内部 HTTP API 只监听 127.0.0.1,地址与 token 文件路径写在 `<stateDir>/internal-api-info.json`。调用方:
 
 - 每个 agent 会话的 stdio MCP 子进程(wechat 工具),经环境变量拿 session token;
-- 桌面 app,经 Tauri 宿主代理(`workbench_api` / `customer_review_api` / `agent_converse` 等 Rust 命令),webview JS 永远拿不到凭据;
+- 桌面 app,经 Tauri 宿主代理(`daemon_request` / `agent_converse` 等 Rust 命令;`daemon_request` 是 10-25 F5 由 `workbench_api` 与 `customer_review_api` 合成的),webview JS 永远拿不到凭据;
 - CLI 子命令,读 file token;
 - 手机页 `/set` 与 `/m`,经 daemon 自己的 `/m/api/*` 分发器 —— **不走这套鉴权**,见末节。
 

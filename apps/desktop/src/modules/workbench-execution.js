@@ -1,5 +1,6 @@
 // @ts-check
 /** @typedef {{defaults:'provider'|'native',model:string|null,reasoningEffort:string|null}} ExecutionChoice */
+import { V1, v1 } from '../daemon-client.js'
 /** @typedef {{id:string,displayName:string,reasoningEfforts:string[],description?:string,defaultReasoningEffort?:string,inputModalities?:string[]}} ExecutionModel */
 /** @typedef {{models:ExecutionModel[],defaultModel?:string,source:'native'}} ModelCatalog */
 /** @typedef {{status:'idle'|'loading'|'ready'|'error',catalog:ModelCatalog|null,error:string}} CatalogState */
@@ -114,7 +115,7 @@ export function createExecutionCatalogs(deps){
    if(previous?.status==='loading'||(previous&&!retry))return
    values.set(id,{status:'loading',catalog:null,error:''});deps.changed?.(providerId,path)
    try{
-    const response=/** @type {{catalog:ModelCatalog}} */(await deps.invokeWorkbenchApi('GET','/v1/workbench/models?'+new URLSearchParams({providerId,path})))
+    const response=/** @type {{catalog:ModelCatalog}} */(await v1(deps.invokeWorkbenchApi, V1.workbench.models, { query: new URLSearchParams({providerId,path}) }))
     const c=response?.catalog
     if(c?.source!=='native'||!Array.isArray(c.models)||c.models.length>500||c.models.some(m=>!identifier(m.id)||!identifier(m.displayName)||!Array.isArray(m.reasoningEfforts)||m.reasoningEfforts.length>30||m.reasoningEfforts.some(e=>!identifier(e))))throw Error('invalid_catalog')
     if(!alive)return
@@ -157,7 +158,7 @@ export function createContinuationPreviews(deps){
    if(!alive||previous?.status==='loading'||(previous&&!retry))return
    values.set(key,{status:'loading',continuation:null,error:''});deps.changed?.(context)
    try{
-    const result=/** @type {{continuation:Continuation}} */(await deps.invokeWorkbenchApi('POST','/v1/workbench/prepare-continuation',{id:context.taskId,execution:structuredClone(context.execution)}))
+    const result=/** @type {{continuation:Continuation}} */(await v1(deps.invokeWorkbenchApi, V1.workbench.prepareContinuation, { body: {id:context.taskId,execution:structuredClone(context.execution)} }))
     const c=result?.continuation
     if(!c||!['new','resume','restart_required'].includes(c.mode)||(c.mode==='restart_required'&&(!/^[a-f0-9]{64}$/.test(c.restart?.token??'')||typeof c.restart?.context!=='string')))throw Error('invalid_preview')
     if(!alive)return

@@ -1,5 +1,6 @@
 // @ts-check
 /** @typedef {{taskId:string,attachmentId:string,sha256:string}} AttachmentRef */
+import { V1, v1 } from '../daemon-client.js'
 /** @typedef {import('./workbench-attachments.js').Attachment & {taskId:string}} Attachment */
 /** @typedef {import('../../../../src/features/workbench/handoff').HandoffInput & {attachments?:AttachmentRef[]}} Input */
 /** @typedef {import('../../../../src/features/workbench/handoff').HandoffPreview & {attachments?:AttachmentRef[]}} Preview */
@@ -28,7 +29,7 @@ export function createHandoffController(invoke,render,initial,opened){
   async prepare(){
    if(!alive||submitting)return
    const request=++generation;state.busy=true;state.error='';render()
-   try{const p=/** @type {Preview} */(await invoke('POST','/v1/workbench/handoff-preview',{...state.input}));if(alive&&request===generation)state.preview=p}
+   try{const p=/** @type {Preview} */(await v1(invoke, V1.workbench.handoffPreview, { body: {...state.input} }));if(alive&&request===generation)state.preview=p}
    catch(e){if(alive&&request===generation){state.preview=null;state.error=errorCopy(e)}}
    finally{if(alive&&request===generation){state.busy=false;render()}}
   },
@@ -36,7 +37,7 @@ export function createHandoffController(invoke,render,initial,opened){
    if(!alive||state.busy||!state.preview||submitting)return
    const p=state.preview;submitting=true;state.busy=true;state.error='';render()
    try{
-    const result=/** @type {{task:{id:string}}} */(await invoke('POST','/v1/workbench/handoff',{token:p.token,...(p.targetContinuation?.mode==='restart_required'?{restartToken:p.targetContinuation.restart.token}:{}),...(p.nativeResume?{sourceClosedToken:p.nativeResume.token}:{})}))
+    const result=/** @type {{task:{id:string}}} */(await v1(invoke, V1.workbench.handoff, { body: {token:p.token,...(p.targetContinuation?.mode==='restart_required'?{restartToken:p.targetContinuation.restart.token}:{}),...(p.nativeResume?{sourceClosedToken:p.nativeResume.token}:{})} }))
     if(alive)await opened(result.task.id)
    }catch(e){if(alive){state.error=errorCopy(e);if(/handoff_changed|restart_confirmation|external_close_confirmation/.test(e instanceof Error?e.message:String(e)))state.preview=null}}
    finally{submitting=false;if(alive){state.busy=false;render()}}
@@ -94,7 +95,7 @@ export function mountHandoffRecord(invoke,taskId,id){
  const close=()=>{alive=false;dialog.remove()}
  dialog.innerHTML='<header class="wb-history-head"><h2>交接记录</h2><button class="wb-new">关闭</button></header><div class="wb-handoff-body">正在读取…</div>'
  dialog.addEventListener('close',close);dialog.querySelector('button')?.addEventListener('click',()=>dialog.close());dialog.showModal()
- void invoke('GET',`/v1/workbench/handoff?taskId=${encodeURIComponent(taskId)}&handoffId=${encodeURIComponent(id)}`).then(raw=>{
+ void v1(invoke, V1.workbench.handoffStatus, { query: { taskId: taskId, handoffId: id } }).then(raw=>{
   if(!alive)return
   const value=/** @type {{packet:{context:string;continuation?:{mode:string;preview?:{context:string}}};sourceNativeId?:string|null;targetNativeId?:string|null;packetSha256:string}} */(raw)
   const body=dialog.querySelector('.wb-handoff-body')

@@ -1,4 +1,5 @@
 // @ts-check
+import { V1, v1 } from '../daemon-client.js'
 export const isThumbnailImage=(/** @type {string} */mime)=>['image/png','image/jpeg','image/webp','image/gif'].includes(mime)
 /** Per-mounted-page URLs; never persist image bytes in draft/session storage.
  * @param {{invoke:(method:'GET',path:string)=>Promise<unknown>}} deps */
@@ -19,8 +20,7 @@ export function createWorkbenchThumbnails(deps){
     if(urls.has(key))return /** @type {string} */(urls.get(key))
     if(pending.has(key))return /** @type {Promise<string>} */(pending.get(key))
     const request=(async()=>{
-      const path=artifact?`/v1/workbench/artifact?id=${encodeURIComponent(taskId)}&artifactId=${encodeURIComponent(id)}`:`/v1/workbench/attachment?taskId=${encodeURIComponent(taskId)}&id=${encodeURIComponent(id)}`
-      const response=/** @type {{attachment?:{id:string,mime:string},mime?:string,base64?:string,contentBase64?:string}} */(await deps.invoke('GET',path))
+      const response=/** @type {{attachment?:{id:string,mime:string},mime?:string,base64?:string,contentBase64?:string}} */(await (artifact?v1(deps.invoke,V1.workbench.artifact,{query:{id:taskId,artifactId:id}}):v1(deps.invoke,V1.workbench.attachment,{query:{taskId,id}})))
       const mime=artifact?response.mime:response.attachment?.mime,base64=artifact?response.contentBase64:response.base64
       if(!alive)throw Error('disposed')
       if(!mime||!isThumbnailImage(mime)||(!artifact&&response.attachment?.id!==id)||typeof base64!=='string'||base64.length>12*1024*1024)throw Error('invalid_image')
