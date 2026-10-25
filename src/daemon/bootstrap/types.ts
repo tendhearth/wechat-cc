@@ -261,17 +261,6 @@ export interface BootstrapDeps {
    */
   requestRestart?: () => void
   /**
-   * Subsystem degraded-boot (spec 2026-08-17) — 可选 wire 块(knowledge/
-   * social/a2a-server/pairing/self-restart)经它拉起;失败 ⇒ 对应产物
-   * undefined,类型上等同"未配置"。核心块不经它。
-   */
-  supervisor: import('../subsystems').SubsystemSupervisor
-  /**
-   * bootstrap 起的定时器 / 连接在这里登记,shutdown 倒序停(./teardown.ts)。main.ts 建好传进来,
-   * 启动半路失败也停得到;缺省 = 本次 buildBootstrap 自建一张(测试)。
-   */
-  teardown?: import('./teardown').Teardown
-  /**
    * CC 开口那道门(第三批 3a)。门在 wireMain 里才造(它要 App 那条路),比 bootstrap 晚;社交那几条通知都在运行时才发,
    * 所以这里给懒取(main.ts 的 Ref,只 set 一次)。取不到 ⇒ 那句通知不发、记一行,**不退回直接发**。
    */
@@ -334,8 +323,8 @@ export interface Bootstrap {
   }
   /**
    * Running A2A HTTP server — null when a2a_listen is not configured.
-   * Stopped by its module's own (bootstrap/wire-a2a-server.ts a2aServerModule) via the teardown list —
-   * also when boot didn't finish. Tests that build a bootstrap without running teardown stop it themselves.
+   * Stopped by its module's own (bootstrap/wire-a2a-server.ts a2aServerModule) — the container stops it,
+   * also when boot didn't finish. Tests that build a bootstrap and never stop the container stop it themselves.
    */
   a2aServer: import('../../core/a2a-server').A2AServer | null
   /**
@@ -425,8 +414,8 @@ export interface Bootstrap {
    * shape straight into `registerInternalApi`'s `knowledge` dep (T3).
    * Exposed here so bootstrap tests can assert the config gate and so the
    * store can be closed in test teardown. In production it is closed by the
-   * knowledge module (wire-knowledge.ts) via the teardown list, like the A2A
-   * server — tests that skip teardown close it themselves.
+   * knowledge module (wire-knowledge.ts) when the container stops, like the A2A
+   * server — tests that never stop the container close it themselves.
    *
    * Agent-facing Search (Task 2) — `embedder` is the ONE shared, long-lived
    * embed-subprocess service (../../core/knowledge/embedder-service.ts)
@@ -514,11 +503,8 @@ export interface Bootstrap {
  * 自己要的键。`configuredAgent` 在 index 里是第 5 步才有的,前面的 wire 拿不到它。
  */
 export interface BootstrapCtx {
-  sup: import('../subsystems').SubsystemSupervisor
   log: BootstrapDeps['log']
   stateDir: string
   db: Db
   configuredAgent: AgentConfig
-  /** 谁起谁登记:定时器 / 端口 / 出站连接起在哪,就在那一行旁边 `teardown.add`(./teardown.ts)。 */
-  teardown: import('./teardown').Teardown
 }

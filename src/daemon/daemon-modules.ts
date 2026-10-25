@@ -44,7 +44,7 @@ import { makeSelfChangeGlue } from './self-change-glue'
 import { runSelftestConverse } from './selftest'
 import { providerDisplayName } from './provider-display-names'
 import { makeAtelierStore } from './atelier-store'
-import { buildBootstrap, resolveAdminChatId, type Bootstrap } from './bootstrap'
+import { bootstrapModules, resolveAdminChatId, type Bootstrap } from './bootstrap'
 import { makeMemoryFS } from './memory/fs-api'
 import { makeMemoryLlmOps, resolveCheapEval } from './memory-llm-ops'
 import { MEMORY_FILENAME, parseMemoryDoc, renderForPrompt } from './memory/curated-doc'
@@ -85,8 +85,8 @@ import { registerReportSweeper, sendReportVia } from './reports/sweeper'
 import { runStartupSweeps } from './startup-sweeps'
 import { isHeartbeatFresh } from './single-instance'
 
-/** bootstrap 模块交出去的:组装好的那一大块,加上靠它才有的 LLM 体检。 */
-export interface BootModule { boot: Bootstrap; llmHealth: LlmHealth }
+/** boot-api 交出去的:靠 bootstrap 才有的 LLM 体检。 */
+interface BootApi { llmHealth: LlmHealth }
 type CliSessions = ReturnType<typeof wireCliSessions>
 /** 「主人的命令」那一组:定时 / 日历 / 做过的事 / 经验 / 导入记忆 / 终端会话(命令表里的顺序就是优先级)。 */
 interface OwnerCommands {
@@ -108,7 +108,7 @@ export function daemonModules(f: Foundation): DaemonModule[] {
       lazy: ['guard', 'bootstrap', 'workbench'],
       init(ctx): GuardRuntime {
         const guard = ctx.late<LifecycleHolder<GuardLifecycle>>('guard')
-        const boot = ctx.late<BootModule>('bootstrap')
+        const boot = ctx.late<Bootstrap>('bootstrap')
         const workbench = ctx.late<WorkbenchService>('workbench')
         const readCfg = makeMtimeCachedConfigReader(stateDir)
         return makeGuardRuntime({
@@ -116,7 +116,7 @@ export function daemonModules(f: Foundation): DaemonModule[] {
           lifecycle: () => guard()?.current() ?? null,
           // 评审 #193 P1-1:按 provider / 会话自己报的实际目标,不按此刻的配置推。bootstrap 之前是空。
           providersInUse: () => {
-            const b = boot()?.boot
+            const b = boot()
             if (!b) return []
             return providersInUse(
               (() => { try { return readCfg() } catch { return null } })(),
@@ -167,8 +167,7 @@ export function daemonModules(f: Foundation): DaemonModule[] {
       async init(ctx): Promise<InternalApiLifecycle> {
         const ilink = ctx.get<IlinkAdapter>('ilink-adapter')
         const guardRt = ctx.get<GuardRuntime>('network-gate')
-        const bootOf = ctx.late<BootModule>('bootstrap')
-        const boot = () => bootOf()?.boot ?? null
+        const boot = ctx.late<Bootstrap>('bootstrap')
         const polling = ctx.late<LifecycleHolder<PollingLifecycle>>('polling')
         const wired = ctx.late<WiredDeps>('wired')
         const api: InternalApiLifecycle = await registerInternalApi({
@@ -256,20 +255,19 @@ export function daemonModules(f: Foundation): DaemonModule[] {
       },
     } satisfies DaemonModule<InternalApiLifecycle>,
 
-    // —— bootstrap:provider registry / 会话管理 / 协调器 / 可选接线块 ——
-    {
-      name: 'bootstrap',
+    // —— bootstrap:provider registry / 会话管理 / 协调器 + 可选的知识库 / 社交 / A2A / 配对 / 乙(一组模块,bootstrap/index.ts)——
+    ...bootstrapModules({
       needs: ['ilink-adapter', 'reply-delivery', 'internal-api', 'network-gate'],
       lazy: ['cli-upgrade', 'workbench', 'wired'],
-      async init(ctx): Promise<BootModule> {
+      deps: (ctx) => {
         const ilink = ctx.get<IlinkAdapter>('ilink-adapter')
         const internalApi = ctx.get<InternalApiLifecycle>('internal-api')
         const guardRt = ctx.get<GuardRuntime>('network-gate')
         const cliUpgrade = ctx.late<CliUpgradeModule>('cli-upgrade')
         const workbench = ctx.late<WorkbenchService>('workbench')
         const wired = ctx.late<WiredDeps>('wired')
-        const boot = await buildBootstrap({
-          stateDir, db, ilink, loadProjects: ilink.loadProjects, networkGate: guardRt.gate, teardown: f.bootTeardown,
+        return {
+          stateDir, db, ilink, loadProjects: ilink.loadProjects, networkGate: guardRt.gate,
           // CC 开口那道门在 wired 里才造;bootstrap 里的社交通知比它早接线、晚发 ⇒ 现取。
           speech: () => wired()?.speech ?? null,
           // 工作台正占着这个目录 / 原生会话 ⇒ 会话管理拒 acquire;工作台还没起 ⇒ 不冲突。
@@ -296,9 +294,17 @@ export function daemonModules(f: Foundation): DaemonModule[] {
           ...(process.env[SUPERVISED_ENV] === '1'
             ? { requestRestart: () => f.requestRestart('self-restart-stale-code') }
             : {}),
-          // 可选接线块(knowledge / social / a2a-server / pairing / self-restart)的降级登记处。
-          supervisor: f.sup,
-        })
+        }
+      },
+    }),
+
+    // —— 把 bootstrap 的产物交给 internal-api 的路由;LLM 通道体检 ——
+    {
+      name: 'boot-api',
+      needs: ['bootstrap', 'internal-api'],
+      init(ctx): BootApi {
+        const boot = ctx.get<Bootstrap>('bootstrap')
+        const internalApi = ctx.get<InternalApiLifecycle>('internal-api')
         internalApi.provide({ delegate: { dispatchOneShot: boot.dispatchDelegate, knownPeers: () => boot.registry.list() } })
         internalApi.provide({ conversation: { setMode: (chatId, mode) => boot.coordinator.setMode(chatId, mode) } })
         // 可选子系统没起(配置没开 / 降级)⇒ 不 provide,对应路由照旧 503。
@@ -318,9 +324,9 @@ export function daemonModules(f: Foundation): DaemonModule[] {
           if (b) eps.openai = b
           return eps
         } })
-        return { boot, llmHealth }
+        return { llmHealth }
       },
-    } satisfies DaemonModule<BootModule>,
+    } satisfies DaemonModule<BootApi>,
 
     // —— 终端会话(重构第二批步 6c,bootstrap/wire-cli-sessions.ts)——
     {
@@ -333,7 +339,7 @@ export function daemonModules(f: Foundation): DaemonModule[] {
         return wireCliSessions({
           speech: () => wired()?.speech ?? null,
           stateDir, dangerously, db, ilink: ctx.get('ilink-adapter'), own: (n, s) => ctx.own(n, s),
-          internalApi: ctx.get('internal-api'), boot: ctx.get<BootModule>('bootstrap').boot, networkGate: ctx.get<GuardRuntime>('network-gate').gate,
+          internalApi: ctx.get('internal-api'), boot: ctx.get<Bootstrap>('bootstrap'), networkGate: ctx.get<GuardRuntime>('network-gate').gate,
           workbench: () => workbench(),
           appPush: () => wired()?.appPush ?? null,
           jobsSince: (since) => summarizeJobs(f.jobsStore, since),
@@ -347,7 +353,7 @@ export function daemonModules(f: Foundation): DaemonModule[] {
       needs: ['bootstrap', 'cli-sessions', 'ilink-adapter', 'internal-api', 'network-gate'],
       lazy: ['workbench', 'wired'],
       init(ctx): OwnerCommands {
-        const { boot } = ctx.get<BootModule>('bootstrap')
+        const boot = ctx.get<Bootstrap>('bootstrap')
         const ilink = ctx.get<IlinkAdapter>('ilink-adapter')
         const internalApi = ctx.get<InternalApiLifecycle>('internal-api')
         const cli = ctx.get<CliSessions>('cli-sessions')
@@ -420,7 +426,7 @@ export function daemonModules(f: Foundation): DaemonModule[] {
       needs: ['bootstrap', 'cli-sessions', 'owner-commands', 'ilink-adapter', 'internal-api', 'network-gate'],
       lazy: ['cli-upgrade'],
       init(ctx): WorkbenchService {
-        const { boot } = ctx.get<BootModule>('bootstrap')
+        const boot = ctx.get<Bootstrap>('bootstrap')
         const cli = ctx.get<CliSessions>('cli-sessions')
         const { jobs } = ctx.get<OwnerCommands>('owner-commands')
         const ilink = ctx.get<IlinkAdapter>('ilink-adapter')
@@ -450,10 +456,11 @@ export function daemonModules(f: Foundation): DaemonModule[] {
     // —— wireMain:入站管道的依赖、伙伴 tick、手机那一簇、CC 开口那道门 ——
     {
       name: 'wired',
-      needs: ['bootstrap', 'cli-sessions', 'owner-commands', 'workbench', 'ilink-adapter', 'reply-delivery', 'internal-api', 'network-gate'],
+      needs: ['bootstrap', 'boot-api', 'cli-sessions', 'owner-commands', 'workbench', 'ilink-adapter', 'reply-delivery', 'internal-api', 'network-gate'],
       lazy: ['pipeline', 'polling', 'companion.ingest'],
       init(ctx): WiredDeps {
-        const { boot, llmHealth } = ctx.get<BootModule>('bootstrap')
+        const boot = ctx.get<Bootstrap>('bootstrap')
+        const { llmHealth } = ctx.get<BootApi>('boot-api')
         const cli = ctx.get<CliSessions>('cli-sessions')
         const owner = ctx.get<OwnerCommands>('owner-commands')
         const workbench = ctx.get<WorkbenchService>('workbench')
@@ -533,7 +540,7 @@ export function daemonModules(f: Foundation): DaemonModule[] {
     {
       name: 'provider-probes',
       needs: ['bootstrap'],
-      init(ctx) { const { boot } = ctx.get<BootModule>('bootstrap'); ctx.own('stop', () => boot.stopProviderProbes?.()) },
+      init(ctx) { const boot = ctx.get<Bootstrap>('bootstrap'); ctx.own('stop', () => boot.stopProviderProbes?.()) },
     },
     lifecycleModule('sessions', (ctx) => registerSessions(ctx.get<WiredDeps>('wired').sessionsDeps), { required: true, needs: ['wired'] }),
     lifecycleModule('ilink', (ctx) => registerIlink(ctx.get<WiredDeps>('wired').ilinkDeps), { required: true, needs: ['wired'] }),
@@ -563,7 +570,7 @@ export function daemonModules(f: Foundation): DaemonModule[] {
     lifecycleModule('polling', (ctx) => registerPolling({ ...ctx.get<WiredDeps>('wired').pollingDeps, runPipeline: ctx.get<PipelineModule>('pipeline').run }), { required: true, needs: ['wired', 'pipeline'] }),
     // 每晚整理长期记忆 memory.md(2026-09-25)。15 分钟一次「该不该跑」。
     lifecycleModule('memory-nightly', (ctx) => registerMemoryNightly({
-      runtime: ctx.get<WiredDeps>('wired').memoryNightly, holdBusy: (l) => ctx.get<BootModule>('bootstrap').boot.holdBusy(l), log: (t, l) => log(t, l),
+      runtime: ctx.get<WiredDeps>('wired').memoryNightly, holdBusy: (l) => ctx.get<Bootstrap>('bootstrap').holdBusy(l), log: (t, l) => log(t, l),
     }), { needs: ['wired', 'bootstrap'] }),
     // CC 的信(2026-10-16):不定期写一封信、排成信纸寄到微信;开关 companion.letters_enabled 默认关。
     {
@@ -571,7 +578,7 @@ export function daemonModules(f: Foundation): DaemonModule[] {
       optional: true,
       needs: ['bootstrap', 'wired', 'ilink-adapter', 'internal-api'],
       init(ctx) {
-        const { boot } = ctx.get<BootModule>('bootstrap')
+        const boot = ctx.get<Bootstrap>('bootstrap')
         const wired = ctx.get<WiredDeps>('wired')
         const ilink = ctx.get<IlinkAdapter>('ilink-adapter')
         const letters = wireLetters({
@@ -600,7 +607,7 @@ export function daemonModules(f: Foundation): DaemonModule[] {
       optional: true,
       needs: ['bootstrap', 'wired', 'internal-api', 'network-gate'],
       init(ctx): CliUpgradeModule {
-        const { boot } = ctx.get<BootModule>('bootstrap')
+        const boot = ctx.get<Bootstrap>('bootstrap')
         const wired = ctx.get<WiredDeps>('wired')
         const internalApi = ctx.get<InternalApiLifecycle>('internal-api')
         let upgrader: CliUpgrader | null = null

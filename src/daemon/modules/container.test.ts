@@ -74,6 +74,23 @@ describe('init / start 两段(整合者评审 #541:两个真环)', () => {
     expect(get!()).toEqual({ id: 'b1' })
     expect(getBroken!()).toBeNull()
   })
+  it('enabled 能读上游的值;上游没起来 ⇒ 跟着上游(不抛、不 init)', async () => {
+    let inited = 0
+    const { started } = run([
+      { name: 'base', init: () => ({ on: true }) },
+      { name: 'feat', needs: ['base'], enabled: (c) => c.get<{ on: boolean }>('base').on, init: () => { inited++ } },
+      { name: 'base2', optional: true, init: () => { throw new Error('x') } },
+      { name: 'feat2', needs: ['base2'], enabled: (c) => c.get<{ on: boolean }>('base2').on, init: () => { inited++ } },
+      { name: 'feat3', needs: ['base'], enabled: (c) => !c.get<{ on: boolean }>('base').on, init: () => { inited++ } },
+    ])
+    const mods = await started
+    expect(inited).toBe(1)
+    expect(mods.status()).toMatchObject([
+      { name: 'base', state: 'ok' }, { name: 'feat', state: 'ok' },
+      { name: 'base2', state: 'degraded' }, { name: 'feat2', state: 'degraded', error: 'upstream base2 not running' },
+      { name: 'feat3', state: 'off' },
+    ])
+  })
   it('late 也只能拿 lazy 里声明了的', async () => {
     await expect(startModules([{ name: 'a', init: () => {} }, { name: 'b', init: (ctx) => { ctx.late('a') } }], { log: () => {} })).rejects.toThrow(/not in its lazy/)
   })

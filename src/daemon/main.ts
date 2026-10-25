@@ -12,10 +12,10 @@ import { createModules } from './modules/container'
 import type { LifecycleHolder } from './modules/lifecycle-module'
 import { makeDaemonShutdown } from './runtime/shutdown'
 import { openFoundation, type Foundation } from './foundation'
-import { daemonModules, type BootModule } from './daemon-modules'
+import { daemonModules } from './daemon-modules'
 import type { WiredDeps } from './wiring'
 import type { PollingLifecycle } from './polling-lifecycle'
-import { resolveAdminChatId } from './bootstrap'
+import { resolveAdminChatId, type Bootstrap } from './bootstrap'
 import { removeAgyGlobalMcp } from './bootstrap/agy-mcp-config'
 import { loadCompanionConfig } from './companion/config'
 import { SUBSYSTEM_NAMES } from './capabilities'
@@ -89,13 +89,12 @@ async function bootDaemonInner(opts: BootDaemonOpts, undo: Array<() => void>): P
   const modules = createModules(daemonModules(f), { log: (t, l) => log(t, l) })
   // 状态进 /v1/health.subsystems(和 bootstrap 的可选接线块一起)
   f.sup.adopt(modules)
-  // 收尾(runtime/shutdown.ts):不管启动有没有走完,都停已经起了的 —— 容器逆序、bootstrap 的收尾清单、agy 配置、db、锁。
+  // 收尾(runtime/shutdown.ts):不管启动有没有走完,都停已经起了的 —— 容器逆序、agy 配置、db、锁。
   const shutdown = makeDaemonShutdown({
     log: (t, l) => log(t, l),
     stopHeartbeat: base.stopHeartbeat,
-    lc: modules,
-    teardown: base.bootTeardown,
-    boot: () => modules.provided<BootModule>('bootstrap')?.boot ?? null,
+    modules,
+    boot: () => modules.provided<Bootstrap>('bootstrap') ?? null,
     removeAgyGlobalMcp: () => removeAgyGlobalMcp({ log }),
     closeDb: () => base.db.close(),
     releaseLock: base.releaseLock,

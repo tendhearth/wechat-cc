@@ -7,6 +7,7 @@
  * 三段:
  *  - init:按 needs ∪ wants 拓扑序逐个 init。有环、needs / wants 写了不存在的模块 ⇒ 开机就抛(编程错误)。
  *    enabled() 为 false ⇒ off;needs 的上游不是 ok ⇒ 跟着上游(off / degraded),不 init,原因写上游。
+ *    enabled 可以读 needs / wants 的值(开关常常就在上游给的配置快照里);上游不是 ok 时它读不到,按「跟着上游」算。
  *    optional 的 init 抛错 ⇒ degraded,它已经登记的 own 立刻逆序停掉,interval / onStart 作废(从没开始)。
  *    非 optional 的抛错 ⇒ 已经 init 的模块的 own 全部逆序停掉,再把错抛出去(开机失败,跟今天核心链一样)。
  *  - start:按同样的顺序,开动每个 ok 模块的 interval、依次 await 它的 onStart。onStart 抛错同上:optional ⇒ degraded
@@ -15,6 +16,8 @@
  *    **开动每个模块之前再查一遍上游**(整合者评审 #542):上游在 start 段才坏(onStart 抛错 ⇒ degraded、已经停掉)时,
  *    已经 init 过的下游手里拿着的是一个停了的上游。needs 的上游、以及 init 时经 maybe **真拿到了**的 wants 上游,
  *    只要不再是 ok ⇒ 下游跟着上游的状态,并停掉它 init 时登记的 own;没拿到的 wants 不算,它本来就没在用。
+ *    **所以会被别人 wants 的可选模块,能失败的事(占端口、连出去)放在 init 里**:在 init 里失败只是它自己降级、
+ *    下游的 maybe 拿到 null;放到 onStart 里失败,拿了它的下游(可能是必需的 bootstrap)会跟着倒(架构终态 A2 评审,yi)。
  *  - interval 叠跑:上一次还没跑完(async 没结束)⇒ 这一拍跳过,不叠(慢的时候不会越积越多)。
  *  - stop:模块逆序、模块内逆登记序;单项 5 秒超时,失败只记一行不挡后面(LifecycleSet 的语义)。可重复调。
  *    **开机途中也能停**(第 2 步,SIGTERM 落在开机途中):`createModules` 先拿到句柄、把 stopAll 交给收尾清单,
@@ -36,9 +39,15 @@ export interface DaemonModule<P = unknown> {
   /** 起失败 ⇒ degraded,不拖垮开机。缺省 false:起失败 = 开机失败。 */
   optional?: boolean
   /** 缺省开。false ⇒ 不 init,状态 off(模块开关;已经有主人开关的东西别用它,见设计稿「一件事只有一个开关」)。 */
-  enabled?: () => boolean
+  enabled?: (ctx: EnabledCtx) => boolean
   /** 只造和登记,不开始干活。返回值 = 对外提供的东西(别的模块 needs 我时经 ctx.get 拿到)。 */
   init(ctx: ModuleCtx): P | Promise<P>
+}
+
+/** enabled() 能看到的:只读上游(needs 里的经 get、wants 里的经 maybe)。上游不是 ok ⇒ get 抛。 */
+export interface EnabledCtx {
+  get<T>(name: string): T
+  maybe<T>(name: string): T | null
 }
 
 export interface ModuleCtx {
@@ -84,6 +93,8 @@ type Reg =
   | { kind: 'own'; name: string; stop: () => unknown }
 
 interface Slot { mod: DaemonModule; status: SubsystemStatus; value?: unknown; /** init 已经走完(late 从这一刻起拿得到)。 */ ready?: boolean; regs: Reg[]; started: Reg[]; /** init 时经 maybe 真拿到了的 wants(之后上游坏了,它也跟着)。 */ took: Set<string> }
+
+class UpstreamNotOk extends Error { constructor(name: string) { super(`upstream '${name}' is not running`) } }
 
 function errMsg(err: unknown): string { return err instanceof Error ? err.message : String(err) }
 
@@ -151,7 +162,10 @@ export function createModules(mods: readonly DaemonModule[], opts: ModuleOpts): 
 
   const stopOne = async (slot: Slot, r: Reg): Promise<void> => {
     if (r.kind === 'onStart') return
-    if (r.kind === 'interval') { if (r.handle !== undefined) { timers.clearInterval(r.handle); r.handle = undefined }; return }
+    if (r.kind === 'interval') {
+      if (r.handle !== undefined) { timers.clearInterval(r.handle); r.handle = undefined; opts.log('MODULES', `stopped ${slot.mod.name}/${r.name}`) }
+      return
+    }
     let timer: ReturnType<typeof setTimeout> | undefined
     try {
       await Promise.race([
@@ -186,14 +200,34 @@ export function createModules(mods: readonly DaemonModule[], opts: ModuleOpts): 
       if (stopRequested) return
       const slot: Slot = { mod, status: { name: mod.name, state: 'ok', sinceIso: iso() }, regs: [], started: [], took: new Set() }
       slots.set(mod.name, slot)
-      if (mod.enabled && !mod.enabled()) { slot.status = { name: mod.name, state: 'off', sinceIso: iso() }; continue }
+      const needs = new Set(mod.needs ?? []), wants = new Set(mod.wants ?? []), lazies = new Set(mod.lazy ?? [])
+      const readCtx: EnabledCtx = {
+        get: <T>(n: string): T => {
+          if (!needs.has(n)) throw new Error(`modules: '${mod.name}' called get('${n}') but '${n}' is not in its needs`)
+          const s = slots.get(n)!
+          if (s.status.state !== 'ok') throw new UpstreamNotOk(n)
+          return s.value as T
+        },
+        maybe: <T>(n: string): T | null => {
+          if (!wants.has(n)) throw new Error(`modules: '${mod.name}' called maybe('${n}') but '${n}' is not in its wants`)
+          const s = slots.get(n)!
+          return s.status.state === 'ok' ? (s.value as T) : null
+        },
+      }
+      let on = true
+      if (mod.enabled) {
+        try { on = mod.enabled(readCtx) } catch (err) {
+          // 开关要读的上游没起来 ⇒ 下面按「跟着上游」处理;别的错照抛(编程错误)
+          if (!(err instanceof UpstreamNotOk)) throw err
+        }
+      }
+      if (!on) { slot.status = { name: mod.name, state: 'off', sinceIso: iso() }; continue }
       const blocker = (mod.needs ?? []).map(n => slots.get(n)!).find(s => s.status.state !== 'ok')
       if (blocker) {
         slot.status = { name: mod.name, state: blocker.status.state, ...(blocker.status.state === 'degraded' ? { error: `upstream ${blocker.mod.name} not running` } : {}), sinceIso: iso() }
         opts.log('MODULES', `${mod.name} ${blocker.status.state}: upstream ${blocker.mod.name} is ${blocker.status.state}`)
         continue
       }
-      const needs = new Set(mod.needs ?? []), wants = new Set(mod.wants ?? []), lazies = new Set(mod.lazy ?? [])
       const ctx: ModuleCtx = {
         get: <T>(n: string): T => {
           if (!needs.has(n)) throw new Error(`modules: '${mod.name}' called ctx.get('${n}') but '${n}' is not in its needs`)

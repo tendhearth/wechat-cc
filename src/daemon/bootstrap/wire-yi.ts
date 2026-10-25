@@ -15,7 +15,6 @@ import { createYiWsServer } from '../yi-ws-server'
 import type { DaemonModule } from '../modules/container'
 import type { DelegateDispatch } from './delegate'
 import type { BootstrapCtx } from './types'
-import { runModuleGroup } from './module-group'
 
 type YiConfig = {
   yi_hub_listen?: { host: string; port: number }
@@ -44,10 +43,10 @@ export function yiModule(
           verify: (id, tok) => !!parts.a2aRegistry.verifyBearer(id, tok),
         })
         ctx.own('hub server', () => server.stop())   // 没 start 过也能停(server?.stop())
-        ctx.onStart('hub listen', async () => {
-          await server.start()
-          ctx.log(`hub listening on ws://${listen.host}:${server.port()}`)
-        })
+        // 端口在 init 里就占(跟 A2A 服务、internal-api 一样):占不上 ⇒ 在这里抛 ⇒ 只是 yi 降级。放到 onStart 里抛,
+        // 拿了 yi 的 bootstrap(wants)会跟着降级,整个 daemon 跟着倒(架构终态 A2 评审)。
+        await server.start()
+        ctx.log(`hub listening on ws://${listen.host}:${server.port()}`)
         yiHub = hub
       }
       // HAND side: connect outbound to a brain's rendezvous.
@@ -63,20 +62,12 @@ export function yiModule(
           log: (m) => ctx.log(m),
         })
         ctx.own('hand client', () => client.stop())
-        ctx.onStart('hand connect', () => {
-          client.start()
-          ctx.log(`hand connecting to brain at ${brain.url}`)
-        })
+        // 同上:连不上的错(地址畸形)在 init 里抛,只让 yi 降级。
+        client.start()
+        ctx.log(`hand connecting to brain at ${brain.url}`)
       }
       return yiHub
     },
   }
 }
 
-export async function wireYi(
-  ctx: Pick<BootstrapCtx, 'sup' | 'log' | 'configuredAgent' | 'teardown'>,
-  parts: { a2aRegistry: A2ARegistry; dispatchDelegate: DelegateDispatch },
-): Promise<YiHub | undefined> {
-  const group = await runModuleGroup(ctx, 'yi', [yiModule(ctx.configuredAgent, parts)])
-  return group.provided<YiHub | undefined>('yi')
-}
