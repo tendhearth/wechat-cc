@@ -19,7 +19,6 @@ import type { Lifecycle } from '../../lib/lifecycle'
 import type { A2ARegistry } from '../../core/a2a-registry'
 import type { AgentConfig } from '../../lib/agent-config'
 import type { BootstrapCtx } from './types'
-import { runModuleGroup } from './module-group'
 
 /** 社交关着 / 起失败时下游看到的形状(handler 全缺席,a2a / mailbox 的门原样生效)。 */
 export const INERT_SOCIAL: SocialWiring = { onLetter: undefined }
@@ -61,12 +60,3 @@ export function mailboxPollerModule(
   }
 }
 
-/** bootstrap/index 一行接上:起这一组,返回社交的接线(关着 / 坏了 ⇒ INERT_SOCIAL)。 */
-export async function wireSocialGroup(
-  ctx: Pick<BootstrapCtx, 'sup' | 'log' | 'teardown' | 'stateDir' | 'configuredAgent'>,
-  deps: SocialDeps,
-  parts: { a2aRegistry: A2ARegistry; readAgentConfig: () => AgentConfig },
-): Promise<SocialWiring> {
-  const group = await runModuleGroup(ctx, 'social', [socialModule(deps), mailboxPollerModule(ctx, parts)])
-  return group.provided<SocialWiring>('social') ?? INERT_SOCIAL
-}

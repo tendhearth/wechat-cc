@@ -33,7 +33,6 @@ import { makeReplySinks } from './reply-sinks'
 import { makeCareLedger } from './companion/care-ledger'
 import { makeProviderRefusals } from './provider-refusals'
 import { pinHuntForExistingOwner } from './companion/hunt-default'
-import { makeTeardown } from './bootstrap/teardown'
 import { SubsystemSupervisor } from './subsystems'
 
 export async function openFoundation(opts: { stateDir: string }, undo: Array<() => void>) {
@@ -173,9 +172,7 @@ export async function openFoundation(opts: { stateDir: string }, undo: Array<() 
     // 桌宠信号(spec 2026-09-05-cc-desktop-pet §5.1):纯内存,重启就忘 —— 描述的本来就只是当下。
     petSignals: makePetSignals(),
     huntStore: makeJournal(db),
-    // bootstrap 起的定时器 / 连接的收尾清单(bootstrap/teardown.ts):收尾直接拿它,启动半路失败也停得到。
-    bootTeardown: makeTeardown(),
-    // 可选子系统的状态汇总:模块容器整组交给它收养(/v1/health.subsystems),bootstrap 的可选接线块也登记在它上面。
+    // 子系统状态的汇总处:模块容器整组交给它收养,/v1/health.subsystems 读它。
     sup: new SubsystemSupervisor((t, l) => log(t, l)),
   }
 }

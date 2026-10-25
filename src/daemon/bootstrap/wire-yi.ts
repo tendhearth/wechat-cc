@@ -15,7 +15,6 @@ import { createYiWsServer } from '../yi-ws-server'
 import type { DaemonModule } from '../modules/container'
 import type { DelegateDispatch } from './delegate'
 import type { BootstrapCtx } from './types'
-import { runModuleGroup } from './module-group'
 
 type YiConfig = {
   yi_hub_listen?: { host: string; port: number }
@@ -73,10 +72,3 @@ export function yiModule(
   }
 }
 
-export async function wireYi(
-  ctx: Pick<BootstrapCtx, 'sup' | 'log' | 'configuredAgent' | 'teardown'>,
-  parts: { a2aRegistry: A2ARegistry; dispatchDelegate: DelegateDispatch },
-): Promise<YiHub | undefined> {
-  const group = await runModuleGroup(ctx, 'yi', [yiModule(ctx.configuredAgent, parts)])
-  return group.provided<YiHub | undefined>('yi')
-}

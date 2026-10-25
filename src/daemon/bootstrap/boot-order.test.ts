@@ -1,8 +1,6 @@
 /**
- * boot 顺序钉子(spec 2026-09-27-bootstrap-split,Review Focus #1)。
- * 九块搬进 wire-*.ts 之后,index 里的调用点必须留在原位;可失败的块经 sup.start 拉起,
- * 或者(第三批 3b 起)作为一组模块被 sup.adopt 收养 —— 两种按发生的顺序记在一起,
- * 名字序列就是 boot 顺序的可观测形状。多一块、少一块、换位都在这里红。
+ * boot 顺序钉子(spec 2026-09-27-bootstrap-split,Review Focus #1;架构终态 A2 起 bootstrap 是一组模块)。
+ * 模块表的顺序 = 开机顺序 = 关机的倒序,也就是 supervisor 收养的那一组的名字序列。多一块、少一块、换位都在这里红。
  */
 import { describe, it, expect, vi } from 'vitest'
 import { mkdtempSync } from 'node:fs'
@@ -26,13 +24,8 @@ function ilinkStub() {
 }
 
 describe('buildBootstrap boot order', () => {
-  it('sup.start / adopt 的名字序列 == knowledge → self-restart → social → mailbox-poller → a2a-server → pairing → yi', async () => {
+  it('模块序列 == boot-base → knowledge → boot-core → self-restart → idle-sweep → social → mailbox-poller → a2a-server → pairing → yi → bootstrap', async () => {
     const sup = new SubsystemSupervisor(() => {})
-    const names: string[] = []
-    const realStart = sup.start.bind(sup)
-    sup.start = ((name: string, fn: any) => { names.push(name); return realStart(name, fn) }) as typeof sup.start
-    const realAdopt = sup.adopt.bind(sup)
-    sup.adopt = ((group: { status(): Array<{ name: string }> }) => { names.push(...group.status().map(s => s.name)); return realAdopt(group as any) }) as typeof sup.adopt
     const boot = await buildBootstrap({
       supervisor: sup,
       db: openTestDb(),
@@ -44,10 +37,10 @@ describe('buildBootstrap boot order', () => {
       internalApi: { baseUrl: 'http://127.0.0.1:0', tokenFilePath: join(tmpdir(), 'token') },
     })
     try {
-      // mailbox-poller 从第三批 3b 第 3 步起是社交那一组里的模块(以前在 main.ts 里单独起,不在这个序列里)
-      expect(names).toEqual(['knowledge', 'self-restart', 'social', 'mailbox-poller', 'a2a-server', 'pairing', 'yi'])
-      // 每个名字只 start 一次(同名二次 start 直接 throw,这里顺带钉住不重复)。
-      expect(new Set(names).size).toBe(names.length)
+      const names = sup.statuses().map(s => s.name)
+      expect(names).toEqual(['boot-base', 'knowledge', 'boot-core', 'self-restart', 'idle-sweep', 'social', 'mailbox-poller', 'a2a-server', 'pairing', 'yi', 'bootstrap'])
+      // 测试环境什么都没配:可选的几样都是 off,不是 degraded(没配 ≠ 坏了)
+      expect(sup.statuses().filter(s => s.state === 'degraded')).toEqual([])
     } finally {
       await boot.sessionManager.shutdown()
       boot.knowledge?.store.close()

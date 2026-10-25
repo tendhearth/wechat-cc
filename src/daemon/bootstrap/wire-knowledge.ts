@@ -30,7 +30,6 @@ import { FDA_MISSING_HINT, hasFullDiskAccess } from '../../lib/fs-access'
 import type { Bootstrap, BootstrapCtx } from './types'
 import type { PluginsSlice } from './wire-plugins'
 import type { DaemonModule } from '../modules/container'
-import { runModuleGroup } from './module-group'
 
 // Knowledge Kernel T7' — provenance tag stamped alongside `knowledge_embed_model`
 // on every semantic.db row this daemon writes (store.putSemantic(model_id,
@@ -41,15 +40,6 @@ import { runModuleGroup } from './module-group'
 // real re-embed after a pipeline change needs either a new model_id or a
 // manual cursor reset (`indexer_cursor:<model_id>` in semantic.db's meta).
 const KNOWLEDGE_EMBED_MODEL_VERSION = '1'
-
-export async function wireKnowledge(
-  ctx: Pick<BootstrapCtx, 'sup' | 'log' | 'stateDir' | 'configuredAgent' | 'teardown'>,
-  loadedPlugins: PluginsSlice['loadedPlugins'],
-): Promise<Bootstrap['knowledge']> {
-  if (!ctx.configuredAgent.knowledge_enabled) ctx.log('BOOT', 'knowledge: disabled (knowledge_enabled not set)')
-  const group = await runModuleGroup(ctx, 'knowledge', [knowledgeModule(ctx, loadedPlugins)])
-  return group.provided<Bootstrap['knowledge']>('knowledge')
-}
 
 export function knowledgeModule(
   ctx: Pick<BootstrapCtx, 'log' | 'stateDir' | 'configuredAgent'>,

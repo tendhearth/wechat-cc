@@ -221,6 +221,13 @@ DeliveryPort                      吃 TurnOutcome;旧的 / shadow 交付路删�
 - [协调器拆分稿](superpowers/specs/2026-10-23-coordinator-split-design.md)被第 5 条和阶段 D 取代。
 - [核心链设计稿](superpowers/specs/2026-10-23-core-chain-modules-design.md)就是 A1。
 
+## 进度
+
+| 步 | 状态 |
+|---|---|
+| A1 | 整个 daemon 一个容器(`foundation.ts` + `daemon-modules.ts`,main.ts 1062 → 约 190 行);main.ts 的 Ref / lc.register / sup.start 归零,关机顺序一位不变(#665)。`daemon_starting` 门与降级留给 A1b |
+| A2 | bootstrap 拆成一组模块进同一个容器(boot-base / knowledge / boot-core / self-restart / idle-sweep / social / mailbox-poller / a2a-server / pairing / yi / bootstrap);收尾清单、module-group 桥删掉;`enabled()` 能读上游 |
+
 ## 修订记录
 
 - 2026-10-25:初稿。
