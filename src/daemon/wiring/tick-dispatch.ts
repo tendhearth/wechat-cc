@@ -6,9 +6,8 @@ import { loadCompanionConfig } from '../companion/config'
 import { resolveEffectiveTier, resolveTier, TIER_PROFILES, effectivePermissionMode } from '../../core/user-tier'
 import { providerDenialFor } from '../../core/provider-policy'
 import { loadAgentConfig } from '../../lib/agent-config'
-import { replyDeliveryFor, replyTextStrategyFor } from '../../core/capability-matrix'
+import { replyTextStrategyFor } from '../../core/capability-matrix'
 import { collectTurn } from '../../core/agent-provider'
-import type { ReplyDeliveryMode } from '../../core/turn-reply'
 import { isNetworkUnprotectedError } from '../../lib/network-gate'
 import type { TickDeps } from './tick-deps'
 import type { TickTextStyle } from './tick-texts'
@@ -29,10 +28,9 @@ export function makeTickDispatch(deps: TickDeps) {
   type DispatchGate =
     | { blocked: 'wechat_degraded' }
     | { blocked: 'session_in_flight' | 'provider_denied' | null; proj: { alias: string; path: string }; tier: ReturnType<typeof resolveEffectiveTier>; providerId: typeof deps.boot.defaultProviderId }
-  const deliveryModeOf = (providerId: string): ReplyDeliveryMode => (deps.replyDeliveryModeFor ?? replyDeliveryFor)(providerId)
-  /** 微信断了还能不能照跑:App 收得到这个 chat,且当轮走 daemon 交付(legacy 的 reply 工具直连微信,改不了道)。 */
-  const appCarries = (chatId: string, providerId: string): boolean =>
-    !!deps.proactive && !!deps.replyDelivery && deliveryModeOf(providerId) === 'daemon' && deps.proactive.appDeliverable(chatId)
+  /** 微信断了还能不能照跑:App 收得到这个 chat(交付由 daemon 管,文字能改道落到 App)。 */
+  const appCarries = (chatId: string): boolean =>
+    !!deps.proactive && deps.proactive.appDeliverable(chatId)
   function resolveDispatch(chatId: string): DispatchGate {
     const snapshot = deps.projects.load()
     const currentAlias = snapshot.current && snapshot.projects[snapshot.current] ? snapshot.current : null
@@ -62,7 +60,7 @@ export function makeTickDispatch(deps: TickDeps) {
     // 在 LLM 生成之前就拦下:degraded 时这条消息既发不出去,生成它也是白烧
     // token,而且等链路恢复后内容早已过时 —— 所以直接丢弃,不排队。
     // 例外(2026-10-18):App 收得到 ⇒ 这一拍照跑,文字落到 App(「有一条路送得到」才是闸)。
-    if (deps.health?.shouldSuspend('wechat') && !appCarries(chatId, providerId)) return { blocked: 'wechat_degraded' }
+    if (deps.health?.shouldSuspend('wechat') && !appCarries(chatId)) return { blocked: 'wechat_degraded' }
     // Proactive fast-skip (TOCTOU-prone on its own, kept ABOVE the mutex
     // deliberately): avoids waiting on the lock in the common case where a
     // user session is obviously already busy. The runExclusive below closes
@@ -133,47 +131,39 @@ export function makeTickDispatch(deps: TickDeps) {
       // re-author it, or the gap/agenda gate will surface it again later).
       // See docs/superpowers/specs/2026-06-25-companion-push-at-most-once-design.md
       const undo = args.claim()
-      // 回复交付(spec 2026-10-03,已定 ③):当轮 provider 走 daemon ⇒ 推送也是一轮,最后的话就是推送,
-      // `NO_REPLY` = 这次不发(撤回登记);legacy ⇒ 照旧只认 reply 工具。
-      const delivery = deps.replyDelivery && deliveryModeOf(providerId) === 'daemon' ? deps.replyDelivery : undefined
+      // 回复交付(spec 2026-10-03,已定 ③):推送也是一轮,最后的话就是推送,`NO_REPLY` = 这次不发(撤回登记)。
       const allSegments = replyTextStrategyFor(providerId) === 'all_segments'
-      const tickText = args.buildText({ replyDelivery: delivery ? 'final_text' : 'tool', allSegments })
+      const tickText = args.buildText({ allSegments })
       // 往哪儿送(微信能用走微信,不能用 / 发失败落到 App)由 proactive-channel 定,一轮粘住一条路。
-      const outbound = delivery ? deps.proactive?.open(chatId) : undefined
-      const turn = delivery?.begin(chatId, { mode: 'daemon', context: 'tick', providerId, textStrategy: replyTextStrategyFor(providerId), ...(outbound ? { outbound } : {}) })
+      const outbound = deps.proactive?.open(chatId)
+      const turn = deps.replyDelivery.begin(chatId, { context: 'tick', providerId, textStrategy: replyTextStrategyFor(providerId), ...(outbound ? { outbound } : {}) })
       try {
-        if (turn) {
-          const summary = await collectTurn(handle.dispatch(tickText))
-          if (summary.error) {
-            deps.log('SCHED', `companion tick dispatch error event: ${summary.errorCode ? `${summary.errorCode}: ` : ''}${summary.error}`)
-            turn.abandon(summary.errorCode ?? 'error')
-          } else {
-            const report = await turn.deliver({ finalText: summary.finalText ?? '', narration: summary.narration ?? [] })
-            // 「CC 做过的事」(B9):说出去了 / 想说没发出去 分开记;静默是一个决定,不算做了什么。只记主人。
-            const said = report.bubbles > 0 || report.attachmentsSent > 0
-            if ((said || report.failures.length > 0) && chatId === loadCompanionConfig(deps.stateDir).default_chat_id) {
-              try { deps.activityLog?.append({ kind: 'proactive', status: said ? 'sent' : 'deferred' }) } catch { /* 记不上不影响发 */ }
-            }
-            // 落在 App ⇒ 整轮一条 companion 推送;落在微信 ⇒ 什么都不做(App 对话页已经看得见那一行)。
-            outbound?.finish()
-            if (outbound?.channel() === 'app') deps.log('COMPANION', `chat=${chatId} tick delivered to the app (wechat not usable)`)
-            if (report.failures.length > 0 && report.bubbles === 0 && report.attachmentsSent === 0) {
-              // 发了但没发出去(断线 / 风控):登记保留,不在下一拍重跑模型再发一次(2026-10-10)。
-              // 「失败」也可能其实送到了(超时之后服务端已收),重发就是重复;断线时每拍一轮模型也违背「断线时停掉外发与模型轮次」。
-              deps.log('COMPANION', `chat=${chatId} tick send failed (${report.failures[0]}) — claim kept, not retried`)
-            } else if (report.delivery === 'silent' || report.delivery === 'empty') {
-              // 没发出去就不算发过:撤回登记(at-most-once 只管「发了一半」,静默是一个决定)。
-              deps.log('COMPANION', `chat=${chatId} tick delivered nothing (${report.delivery}) — claim undone`)
-              try { undo?.() } catch (e) { deps.log('SCHED', `undo claim failed: ${errMsg(e)}`) }
-            }
-          }
+        const summary = await collectTurn(handle.dispatch(tickText))
+        if (summary.error) {
+          deps.log('SCHED', `companion tick dispatch error event: ${summary.errorCode ? `${summary.errorCode}: ` : ''}${summary.error}`)
+          turn.abandon(summary.errorCode ?? 'error')
         } else {
-          for await (const ev of handle.dispatch(tickText)) {
-            if (ev.kind === 'error') deps.log('SCHED', `companion tick dispatch error event: ${ev.code ? `${ev.code}: ` : ''}${ev.message}`)
+          const report = await turn.deliver({ finalText: summary.finalText ?? '', narration: summary.narration ?? [] })
+          // 「CC 做过的事」(B9):说出去了 / 想说没发出去 分开记;静默是一个决定,不算做了什么。只记主人。
+          const said = report.bubbles > 0 || report.attachmentsSent > 0
+          if ((said || report.failures.length > 0) && chatId === loadCompanionConfig(deps.stateDir).default_chat_id) {
+            try { deps.activityLog?.append({ kind: 'proactive', status: said ? 'sent' : 'deferred' }) } catch { /* 记不上不影响发 */ }
+          }
+          // 落在 App ⇒ 整轮一条 companion 推送;落在微信 ⇒ 什么都不做(App 对话页已经看得见那一行)。
+          outbound?.finish()
+          if (outbound?.channel() === 'app') deps.log('COMPANION', `chat=${chatId} tick delivered to the app (wechat not usable)`)
+          if (report.failures.length > 0 && report.bubbles === 0 && report.attachmentsSent === 0) {
+            // 发了但没发出去(断线 / 风控):登记保留,不在下一拍重跑模型再发一次(2026-10-10)。
+            // 「失败」也可能其实送到了(超时之后服务端已收),重发就是重复;断线时每拍一轮模型也违背「断线时停掉外发与模型轮次」。
+            deps.log('COMPANION', `chat=${chatId} tick send failed (${report.failures[0]}) — claim kept, not retried`)
+          } else if (report.delivery === 'silent' || report.delivery === 'empty') {
+            // 没发出去就不算发过:撤回登记(at-most-once 只管「发了一半」,静默是一个决定)。
+            deps.log('COMPANION', `chat=${chatId} tick delivered nothing (${report.delivery}) — claim undone`)
+            try { undo?.() } catch (e) { deps.log('SCHED', `undo claim failed: ${errMsg(e)}`) }
           }
         }
       } catch (err) {
-        turn?.abandon('threw')
+        turn.abandon('threw')
         // 评审 #193 P2-3:网络守护拒了这一轮 —— SessionManager 在碰 provider **之前**就拒,一个字都
         // 没发出去。这不是「发了一半」,at-most-once 不适用:撤回登记,整拍算跳过,下一拍再来。
         if (isNetworkUnprotectedError(err)) {
@@ -186,7 +176,7 @@ export function makeTickDispatch(deps: TickDeps) {
     return true
   }
 
-  return { resolveDispatch, dispatchBlockedReason, dispatchToChat, deliveryModeOf }
+  return { resolveDispatch, dispatchBlockedReason, dispatchToChat }
 }
 
 export type TickDispatch = ReturnType<typeof makeTickDispatch>

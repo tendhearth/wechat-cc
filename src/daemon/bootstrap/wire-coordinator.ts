@@ -19,6 +19,7 @@ import type { SessionManager } from '../../core/session-manager'
 import type { HealthRuntime } from '../health'
 import { shouldNoteTurnEnd } from '../pet-signals'
 import { makeSendAssistantText, makeSendNotice } from './fallback-reply'
+import { makeReplyDeliveryRuntime } from '../reply-delivery'
 import { reportLlmTurnOutcome } from './wire-health'
 import type { Bootstrap, BootstrapDeps, BootstrapCtx } from './types'
 import type { ModelOptionsSlice } from './wire-model-options'
@@ -68,7 +69,7 @@ export function wireCoordinator(
     turnTimeoutMs: number
   },
 ): CoordinatorSlice {
-  // provider 异常备注(fallback 连击),与 providers.ts 的版本/探测备注合并进 /mode。
+  // provider 异常备注(应答轮交付为空的连击),与 providers.ts 的版本/探测备注合并进 /mode。
   const anomalyNotes = new Map<ProviderId, string>()
 
   // Per-chat conversation mode (RFC 03 P2). Default for new chats =
@@ -83,9 +84,12 @@ export function wireCoordinator(
   // Extracted as a named variable so routeA2ANotify can also call it.
   // v0.5.3 — extracted to fallback-reply.ts so the failure paths log
   // [FALLBACK_REPLY_FAIL] / success path logs [FALLBACK_REPLY_SENT].
-  const sendAssistantText = makeSendAssistantText({ sendMessage: deps.ilink.sendMessage, log: deps.log, capture: deps.replySinks?.capture, observe: deps.outboundTaps?.observe, ...(deps.replyDelivery ? { shadow: deps.replyDelivery.observeLegacy } : {}) })
-  // 系统通知分家(回复交付 spec §4.3 末段):同样认 app 接收器,但不进打猎旁听、不进 shadow 比对,日志是 NOTICE_*。
+  const sendAssistantText = makeSendAssistantText({ sendMessage: deps.ilink.sendMessage, log: deps.log, capture: deps.replySinks?.capture, observe: deps.outboundTaps?.observe })
+  // 系统通知分家(回复交付 spec §4.3 末段):同样认 app 接收器,但不进打猎旁听,日志是 NOTICE_*。
   const sendNotice = makeSendNotice({ sendMessage: deps.ilink.sendMessage, log: deps.log, capture: deps.replySinks?.capture })
+  // 回复交付只有一条路(D3):生产里是 main.ts 造的那**同一个**实例(attach / message 路由要登记到它上面)。
+  // 没注入的只有测试 / 最小嵌入 —— 就地造一个只会直发微信的,别让协调器没有路可走。
+  const replyDelivery = deps.replyDelivery ?? makeReplyDeliveryRuntime({ sendText: deps.ilink.sendMessage, log: deps.log })
 
   // (turnTimeoutMs is resolved earlier now — see the block just above
   // registerProviders() — so the agy provider's `--print-timeout` can be
@@ -105,7 +109,7 @@ export function wireCoordinator(
     const toolsPart = record.toolCalls?.length
       ? ` tools=${[...new Set(record.toolCalls)].join(',')}`
       : ''
-    // 回复交付(spec §4.10):daemon 模式的轮记「主人收到了什么」(delivery / bubbles),legacy 照旧记 reply=。
+    // 回复交付(spec §4.10):交付过的轮记「主人收到了什么」(delivery / bubbles);没交付(超时 / 出错)的记 reply=。
     const replyPart = record.delivery !== undefined
       ? `delivery=${record.delivery} bubbles=${record.bubbles ?? 0}${record.attachments ? ` attachments=${record.attachments}` : ''}${record.narrationSegments ? ` narration=${record.narrationSegments}` : ''}`
       : `reply=${record.replyToolCalled}`
@@ -145,15 +149,7 @@ export function wireCoordinator(
     // 换 provider 交接的近况原文 — 消息库最近 n 条(text 类为主,升序)。
     // 非管理员可用的 provider 允许表(core/provider-policy.ts),mtime 缓存读。
     trustedProviders: () => parts.readAgentConfig().trusted_providers,
-    // 连续走 fallback 的 provider:≥3 轮就是「流格式变了」的形状,记进 /mode
-    // 并打一条 [PROVIDER_ANOMALY](每 10 轮再提醒一次,别刷屏)。
-    onFallbackStreak: (providerId, streak) => {
-      if (streak === 0) { anomalyNotes.delete(providerId); return }
-      if (streak < 3) return
-      anomalyNotes.set(providerId, `最近 ${streak} 轮连续走 fallback(有文字、零 reply 工具)—— 像是流格式变了,看 channel.log 的 tools=`)
-      if (streak === 3 || streak % 10 === 0) deps.log('PROVIDER_ANOMALY', `provider=${providerId} fallback streak=${streak}: 有文字、零 reply 工具,像是流格式变了(tool_call 解析不出来);见 TURN 行的 tools=`, { event: 'fallback_streak', provider: providerId, streak })
-    },
-    // 回复交付 daemon(spec §4.10):取代 FALLBACK 连击 —— 私聊 / app 一轮完成了却什么都没交付(空 / NO_REPLY)
+    // 回复交付(spec §4.10):取代当年的 FALLBACK 连击 —— 私聊 / app 一轮完成了却什么都没交付(空 / NO_REPLY)
     // 连着 ≥3 轮,就是「这家执行者在这条路上不正常」的形状,同样记进 /mode 并打 [PROVIDER_ANOMALY]。
     onEmptyReplyStreak: (providerId, streak) => {
       if (streak === 0) { anomalyNotes.delete(providerId); return }
@@ -174,13 +170,11 @@ export function wireCoordinator(
     // noteTurnStart 记(见 pet-signals.ts 的头注释)。钩子抛错不影响回合:
     // collectTurn 的 onEvent 已经把它围起来了,这里也只做一次 Map.set。
     onTurnEvent: (chatId, ev) => { if (ev.kind === 'tool_call') deps.petSignals?.noteToolCall(chatId) },
-    // sendAssistantText fallback path: same fall-through the legacy
-    // routeInbound used to take when the agent didn't call a reply tool.
-    // main.ts injects a real ilink.sendMessage closure; bootstrap.ts only
-    // wires the structural piece.
+    // sendAssistantText:协调器自己说的话(/both 的综合、/chat 的裁决)走它 —— 不是执行者的回复,
+    // 执行者的回复只走 replyDelivery。main.ts injects a real ilink.sendMessage closure.
     sendAssistantText,
     ...(sendNotice ? { sendNotice } : {}),
-    ...(deps.replyDelivery ? { replyDelivery: deps.replyDelivery } : {}),
+    replyDelivery,
     // Task 10 — coordinator resolves per-chat tier on every dispatch.
     // loadAccess() reads access.json with a 5s in-process TTL cache, so
     // this is cheap to call per inbound. Admin/trusted/guest classification

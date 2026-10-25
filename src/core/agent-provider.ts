@@ -414,12 +414,6 @@ export interface ProviderCapabilities {
    */
   confines: ToolSurfaceConfinement
   /**
-   * 回复交付开关(spec 2026-10-03-reply-delivery §5.0)。缺省 = 'legacy':走 reply 工具 + FALLBACK_REPLY。
-   * 'shadow':照旧,但每轮算一次新路会发什么,记 [REPLY_SHADOW];'daemon':最后的话就是回复。
-   * 读它用 capability-matrix 的 `replyDeliveryFor`。迁移按 openai → agy → Cursor → Codex → Claude 一家一家翻。
-   */
-  replyDelivery?: import('./turn-reply').ReplyDeliveryMode
-  /**
    * 哪些文字算回复(2026-10-03 修订):'last_segment'(缺省,编码型执行者 —— Claude Code / Codex / Cursor,
    * 之前的段是长任务旁白)或 'all_segments'(聊天型模型 —— openai 兼容、agy:本轮所有文字段按顺序都交付)。
    * 读它用 capability-matrix 的 `replyTextStrategyFor`。

@@ -12,7 +12,6 @@ import { openTestDb, type Db } from '../../lib/db'
 import { readFileSync } from 'node:fs'
 import { wechatStdioMcpSpec } from '../../daemon/bootstrap/mcp-specs'
 import { setupAgyGlobalMcp, AGY_WECHAT_MCP_NAMESPACE_ID } from '../../daemon/bootstrap/agy-mcp-config'
-import { setReplyDeliveryOverrides } from '../../core/capability-matrix'
 import { acpMcpServersFor } from '../../core/acp-cursor-chat'
 
 /**
@@ -336,165 +335,6 @@ describe('wechat-mcp stdio integration', () => {
 
   // ── B1: ilink-bound message family end-to-end ─────────────────────────
 
-  it('reply / send_file / edit_message / broadcast / reply_voice round-trip through stdio + HTTP + ilink mocks', async () => {
-    const memory = makeMemoryFS({ rootDir: join(stateDir, 'memory') })
-    const calls: Array<[string, ...unknown[]]> = []
-    const ilinkDep = {
-      sendReply: async (chatId: string, text: string) => {
-        calls.push(['sendReply', chatId, text])
-        return { msgId: 'm-reply-1' }
-      },
-      sendFile: async (chatId: string, path: string) => {
-        calls.push(['sendFile', chatId, path])
-      },
-      editMessage: async (chatId: string, msgId: string, text: string) => {
-        calls.push(['editMessage', chatId, msgId, text])
-      },
-      broadcast: async (text: string, accountId?: string) => {
-        calls.push(['broadcast', text, accountId])
-        return { ok: 3, failed: 0 }
-      },
-    }
-    const voice = {
-      replyVoice: async (chatId: string, text: string) => {
-        calls.push(['replyVoice', chatId, text])
-        return { ok: true as const, msgId: 'm-voice-1' }
-      },
-      saveConfig: async (): Promise<{ ok: false; reason: string }> => ({ ok: false, reason: 'unused' }),
-      configStatus: () => ({ configured: false as const }),
-      synthesizeSpeech: async (): Promise<{ audio: Buffer; mime: string }> => { throw new Error('unused') },
-    }
-    api = createInternalApi({ stateDir, daemonPid: 7777, memory, ilink: ilinkDep, voice })
-    const { port, tokenFilePath } = await api.start()
-    const transport = new StdioClientTransport({
-      command: RUNTIME, args: [WECHAT_MCP_MAIN],
-      env: {
-        ...process.env as Record<string, string>,
-        WECHAT_INTERNAL_API: `http://127.0.0.1:${port}`,
-        WECHAT_INTERNAL_TOKEN_FILE: tokenFilePath,
-      },
-      stderr: 'pipe',
-    })
-    const c = new Client({ name: 'integration-ilink', version: '0.0.1' }, { capabilities: {} })
-    await c.connect(transport)
-    client = c
-
-    // reply
-    const reply = await c.callTool({ name: 'reply', arguments: { chat_id: 'u@bot', text: 'hi' } })
-    expect(JSON.parse(((reply.content as Array<{ text?: string }>)[0]?.text)!)).toEqual({
-      ok: true, msg_id: 'm-reply-1',
-    })
-    expect(calls[0]).toEqual(['sendReply', 'u@bot', 'hi'])
-
-    // reply_voice
-    const replyVoice = await c.callTool({ name: 'reply_voice', arguments: { chat_id: 'u@bot', text: '念这一段' } })
-    expect(JSON.parse(((replyVoice.content as Array<{ text?: string }>)[0]?.text)!)).toEqual({
-      ok: true, msgId: 'm-voice-1',
-    })
-    expect(calls[1]).toEqual(['replyVoice', 'u@bot', '念这一段'])
-
-    // send_file
-    const sendFile = await c.callTool({ name: 'send_file', arguments: { chat_id: 'u@bot', path: '/abs/x.pdf' } })
-    expect(JSON.parse(((sendFile.content as Array<{ text?: string }>)[0]?.text)!)).toEqual({ ok: true })
-    expect(calls[2]).toEqual(['sendFile', 'u@bot', '/abs/x.pdf'])
-
-    // edit_message
-    const edit = await c.callTool({
-      name: 'edit_message',
-      arguments: { chat_id: 'u@bot', msg_id: 'm-1', text: 'edited' },
-    })
-    expect(JSON.parse(((edit.content as Array<{ text?: string }>)[0]?.text)!)).toEqual({ ok: true })
-    expect(calls[3]).toEqual(['editMessage', 'u@bot', 'm-1', 'edited'])
-
-    // broadcast
-    const bc = await c.callTool({ name: 'broadcast', arguments: { text: 'hi all' } })
-    expect(JSON.parse(((bc.content as Array<{ text?: string }>)[0]?.text)!)).toEqual({ ok: 3, failed: 0 })
-    expect(calls[4]).toEqual(['broadcast', 'hi all', undefined])
-  })
-
-  it('session token: reply passes chat_id through UNCHANGED and the daemon\'s chat_scope 403 reaches the agent (no silent rewrite)', async () => {
-    // send-scope.ts (2026-10-03). The MCP side must not quietly substitute the
-    // session's own chat — that would hide a cross-chat attempt instead of
-    // refusing it. It forwards what the model asked for; the daemon decides.
-    const sent: Array<[string, string]> = []
-    const ilinkDep = {
-      sendReply: async (chatId: string, text: string) => { sent.push([chatId, text]); return { msgId: 'm-1' } },
-      sendFile: async () => {}, editMessage: async () => {},
-      broadcast: async () => ({ ok: 0, failed: 0 }),
-    }
-    const memory = makeMemoryFS({ rootDir: join(stateDir, 'memory') })
-    api = createInternalApi({ stateDir, daemonPid: 7777, memory, ilink: ilinkDep })
-    const { port, tokenFilePath } = await api.start()
-    const sessionToken = api.mintSessionToken('guest', 'claude/a/guest@im.wechat')
-    const baseEnv = { ...process.env as Record<string, string> }
-    delete baseEnv.WECHAT_SESSION_TIER
-    const transport = new StdioClientTransport({
-      command: RUNTIME, args: [WECHAT_MCP_MAIN],
-      env: {
-        ...baseEnv,
-        WECHAT_INTERNAL_API: `http://127.0.0.1:${port}`,
-        WECHAT_INTERNAL_TOKEN_FILE: tokenFilePath,
-        WECHAT_SESSION_TIER: 'guest',
-        WECHAT_SESSION_TOKEN: sessionToken,
-      },
-      stderr: 'pipe',
-    })
-    const c = new Client({ name: 'integration-scope', version: '0.0.1' }, { capabilities: {} })
-    await c.connect(transport)
-    client = c
-
-    // 访客会话看不见 terminal_say(2026-10-24):往主人终端会话里送话只给 admin;路由那道门见 routes-cli-say.test.ts
-    const guestNames = (await c.listTools()).tools.map(t => t.name)
-    expect(guestNames).not.toContain('terminal_say')
-    expect(guestNames).not.toContain('terminal_say_result')
-    expect(guestNames).not.toContain('terminal_sessions')
-
-    const foreign = await c.callTool({ name: 'reply', arguments: { chat_id: 'owner@im.wechat', text: 'injected' } })
-    const foreignText = ((foreign.content as Array<{ text?: string }>)[0]?.text)!
-    expect(foreignText).toContain('403')
-    expect(foreignText).toContain('chat_scope')
-    expect(foreignText).toContain('nothing was sent')
-    expect(sent).toEqual([])
-
-    const own = await c.callTool({ name: 'reply', arguments: { chat_id: 'guest@im.wechat', text: 'hi' } })
-    expect(JSON.parse(((own.content as Array<{ text?: string }>)[0]?.text)!)).toEqual({ ok: true, msg_id: 'm-1' })
-    expect(sent).toEqual([['guest@im.wechat', 'hi']])
-  })
-
-  it('reply_voice with text > 500 chars surfaces ok:false reason without crossing ilink (legacy cap)', async () => {
-    const memory = makeMemoryFS({ rootDir: join(stateDir, 'memory') })
-    const replyVoiceCalls: number[] = []
-    const voice = {
-      replyVoice: async () => { replyVoiceCalls.push(1); return { ok: true as const, msgId: 'should-not-be-called' } },
-      saveConfig: async (): Promise<{ ok: false; reason: string }> => ({ ok: false, reason: 'unused' }),
-      configStatus: () => ({ configured: false as const }),
-      synthesizeSpeech: async (): Promise<{ audio: Buffer; mime: string }> => { throw new Error('unused') },
-    }
-    api = createInternalApi({ stateDir, daemonPid: 7777, memory, voice })
-    const { port, tokenFilePath } = await api.start()
-    const transport = new StdioClientTransport({
-      command: RUNTIME, args: [WECHAT_MCP_MAIN],
-      env: {
-        ...process.env as Record<string, string>,
-        WECHAT_INTERNAL_API: `http://127.0.0.1:${port}`,
-        WECHAT_INTERNAL_TOKEN_FILE: tokenFilePath,
-      },
-      stderr: 'pipe',
-    })
-    const c = new Client({ name: 'integration-voice-cap', version: '0.0.1' }, { capabilities: {} })
-    await c.connect(transport)
-    client = c
-
-    const result = await c.callTool({
-      name: 'reply_voice',
-      arguments: { chat_id: 'u@bot', text: 'x'.repeat(501) },
-    })
-    expect(JSON.parse(((result.content as Array<{ text?: string }>)[0]?.text)!)).toEqual({
-      ok: false, reason: 'too_long', limit: 500,
-    })
-    expect(replyVoiceCalls).toHaveLength(0)  // dep was NOT crossed
-  })
-
   // ── B5: share_page / resurface_page end-to-end ────────────────────────
 
   it('share_page publishes then resurface_page returns the same record (legacy wire shapes preserved)', async () => {
@@ -806,18 +646,16 @@ describe('wechat-mcp stdio integration', () => {
     expect(content[0]?.text).toMatch(/ping failed/)
   })
 
-  // 回复交付第 2 步(2026-10-03):agy 只读一份**静态**全局 MCP 配置。按 agy 当前的交付模式,daemon 开机写进去的
-  // 条目里带不带 WECHAT_REPLY_DELIVERY=daemon,决定 agy 的 wechat MCP 子进程注册哪套工具 —— 这里走完整条链:
-  // 能力表开关 → wechatStdioMcpSpec('agy') → setupAgyGlobalMcp 写的文件 → 用文件里的 env 起子进程 → tools/list。
-  describe('agy static MCP config follows agy\'s reply-delivery mode', () => {
-    afterEach(() => setReplyDeliveryOverrides(undefined))
+  // 回复交付第 2 步(2026-10-03):agy 只读一份**静态**全局 MCP 配置(daemon 开机写进去)。这里走完整条链:
+  // wechatStdioMcpSpec('agy') → setupAgyGlobalMcp 写的文件 → 用文件里的 env 起子进程 → tools/list。
+  // (以前按交付模式带不带 WECHAT_REPLY_DELIVERY 切两套工具表;D3 起只有一套,legacy 那半随之删了。)
+  describe('agy static MCP config → the daemon tool table', () => {
     const REPLY_FAMILY = ['reply', 'reply_voice', 'send_file', 'edit_message', 'broadcast', 'send_sticker', 'search_online_sticker', 'send_online_sticker_candidate']
 
     async function toolsFromAgyEntry(geminiDir: string, port: number, tokenFilePath: string): Promise<string[]> {
       setupAgyGlobalMcp({ wechatSpec: wechatStdioMcpSpec({ baseUrl: `http://127.0.0.1:${port}`, tokenFilePath }, 'agy'), mintToken: () => 'agy-static-tok', geminiConfigDir: geminiDir, log: () => {} })
       const entry = JSON.parse(readFileSync(join(geminiDir, 'mcp_config.json'), 'utf8')).mcpServers[AGY_WECHAT_MCP_NAMESPACE_ID] as { args: string[]; env: Record<string, string> }
       const baseEnv = { ...process.env as Record<string, string> }
-      delete baseEnv.WECHAT_REPLY_DELIVERY
       delete baseEnv.WECHAT_SESSION_TIER
       delete baseEnv.WECHAT_SESSION_TOKEN
       const transport = new StdioClientTransport({ command: RUNTIME, args: entry.args, env: { ...baseEnv, ...entry.env }, stderr: 'pipe' })
@@ -826,33 +664,25 @@ describe('wechat-mcp stdio integration', () => {
       try { return (await c.listTools()).tools.map(t => t.name) } finally { await c.close() }
     }
 
-    it('daemon ⇒ the file carries WECHAT_REPLY_DELIVERY=daemon and the child hides the reply family; legacy again ⇒ rewritten, reply tools back', async () => {
+    it('the file carries the trusted session env and the child has no reply family (attachments only, no message)', async () => {
       api = createInternalApi({ stateDir, daemonPid: 7777 })
       const { port, tokenFilePath } = await api.start()
       const geminiDir = join(stateDir, 'gemini-config')
 
-      setReplyDeliveryOverrides({ agy: 'daemon' })
       const daemonTools = await toolsFromAgyEntry(geminiDir, port, tokenFilePath)
       const written = JSON.parse(readFileSync(join(geminiDir, 'mcp_config.json'), 'utf8')).mcpServers[AGY_WECHAT_MCP_NAMESPACE_ID]
-      expect(written.env).toMatchObject({ WECHAT_REPLY_DELIVERY: 'daemon', WECHAT_SESSION_TIER: 'trusted', WECHAT_PARTICIPANT_TAG: 'agy' })
+      expect(written.env).toMatchObject({ WECHAT_SESSION_TIER: 'trusted', WECHAT_PARTICIPANT_TAG: 'agy' })
       for (const t of REPLY_FAMILY) expect(daemonTools).not.toContain(t)
       for (const t of ['voice', 'sticker', 'attach_file']) expect(daemonTools).toContain(t)
       expect(daemonTools).not.toContain('message') // 钉死 trusted:没有往别处发的工具
       expect(daemonTools).toContain('sticker_feedback')
-
-      setReplyDeliveryOverrides({ agy: 'legacy' })
-      const legacyTools = await toolsFromAgyEntry(geminiDir, port, tokenFilePath)
-      expect(JSON.parse(readFileSync(join(geminiDir, 'mcp_config.json'), 'utf8')).mcpServers[AGY_WECHAT_MCP_NAMESPACE_ID].env.WECHAT_REPLY_DELIVERY).toBeUndefined()
-      for (const t of ['reply', 'reply_voice', 'send_sticker']) expect(legacyTools).toContain(t)
-      for (const t of ['voice', 'attach_file']) expect(legacyTools).not.toContain(t)
     })
   })
 
   // 回复交付第 3 步(2026-10-03):Cursor 的 wechat MCP 是**逐会话**注入的(session/new 的 mcpServers,带会话令牌与 tier)。
-  // 完整链:能力表开关 → wechatStdioMcpSpec('cursor') → acpMcpServersFor(会话 env)→ 用那份 env 起子进程 → tools/list。
+  // 完整链:wechatStdioMcpSpec('cursor') → acpMcpServersFor(会话 env)→ 用那份 env 起子进程 → tools/list。
   // owner 会话是 admin ⇒ daemon 下另有往别处发的 message。
-  describe('cursor per-session MCP follows cursor\'s reply-delivery mode', () => {
-    afterEach(() => setReplyDeliveryOverrides(undefined))
+  describe('cursor per-session MCP → the daemon tool table', () => {
     const REPLY_FAMILY = ['reply', 'reply_voice', 'send_file', 'edit_message', 'broadcast', 'send_sticker', 'search_online_sticker', 'send_online_sticker_candidate']
 
     async function toolsForCursorSession(port: number, tokenFilePath: string): Promise<{ tools: string[]; env: Record<string, string> }> {
@@ -860,7 +690,6 @@ describe('wechat-mcp stdio integration', () => {
       const [entry] = acpMcpServersFor({ wechat: spec, delegate: null }, { WECHAT_SESSION_TOKEN: 'cursor-session-tok', WECHAT_SESSION_TIER: 'admin' })
       const env = Object.fromEntries(entry!.env.map(e => [e.name, e.value]))
       const baseEnv = { ...process.env as Record<string, string> }
-      delete baseEnv.WECHAT_REPLY_DELIVERY
       delete baseEnv.WECHAT_SESSION_TIER
       delete baseEnv.WECHAT_SESSION_TOKEN
       // command 用 RUNTIME(源码模式下 spec.command 是 process.execPath,node 跑测试时不是 bun)。
@@ -870,30 +699,22 @@ describe('wechat-mcp stdio integration', () => {
       try { return { tools: (await c.listTools()).tools.map(t => t.name), env } } finally { await c.close() }
     }
 
-    it('daemon ⇒ session/new env carries WECHAT_REPLY_DELIVERY=daemon and the child hides the reply family (admin keeps message); legacy ⇒ reply tools back', async () => {
+    it('session/new env carries the session tier and the child has no reply family (admin keeps message)', async () => {
       api = createInternalApi({ stateDir, daemonPid: 7777 })
       const { port, tokenFilePath } = await api.start()
 
-      setReplyDeliveryOverrides({ cursor: 'daemon' })
       const daemon = await toolsForCursorSession(port, tokenFilePath)
-      expect(daemon.env).toMatchObject({ WECHAT_REPLY_DELIVERY: 'daemon', WECHAT_PARTICIPANT_TAG: 'cursor', WECHAT_SESSION_TIER: 'admin' })
+      expect(daemon.env).toMatchObject({ WECHAT_PARTICIPANT_TAG: 'cursor', WECHAT_SESSION_TIER: 'admin' })
       for (const t of REPLY_FAMILY) expect(daemon.tools).not.toContain(t)
       for (const t of ['voice', 'sticker', 'attach_file', 'message', 'sticker_feedback']) expect(daemon.tools).toContain(t)
-
-      setReplyDeliveryOverrides({ cursor: 'legacy' })
-      const legacy = await toolsForCursorSession(port, tokenFilePath)
-      expect(legacy.env.WECHAT_REPLY_DELIVERY).toBeUndefined()
-      for (const t of ['reply', 'reply_voice', 'send_sticker']) expect(legacy.tools).toContain(t)
-      for (const t of ['voice', 'attach_file', 'message']) expect(legacy.tools).not.toContain(t)
     })
   })
 
   // 回复交付第 4 步(2026-10-03):Codex 的 wechat MCP 是 provider 构造时给的 spec,**每次 spawn** 把会话 env
   // (令牌 + tier)合进去,再经 SDK 的 config(mcp_servers.wechat.*)交给 codex exec。
-  // 完整链:能力表开关 → wechatStdioMcpSpec('codex') → createCodexAgentProvider.spawn(会话 env)→ 交给 Codex 构造的 config
+  // 完整链:wechatStdioMcpSpec('codex') → createCodexAgentProvider.spawn(会话 env)→ 交给 Codex 构造的 config
   // → 用那份 command / args / env 起子进程 → tools/list。owner 会话是 admin ⇒ daemon 下另有往别处发的 message。
-  describe('codex per-spawn MCP config follows codex\'s reply-delivery mode', () => {
-    afterEach(() => setReplyDeliveryOverrides(undefined))
+  describe('codex per-spawn MCP config → the daemon tool table', () => {
     const REPLY_FAMILY = ['reply', 'reply_voice', 'send_file', 'edit_message', 'broadcast', 'send_sticker', 'search_online_sticker', 'send_online_sticker_candidate']
 
     async function toolsForCodexSession(port: number, tokenFilePath: string): Promise<{ tools: string[]; env: Record<string, string> }> {
@@ -911,7 +732,6 @@ describe('wechat-mcp stdio integration', () => {
       const config = scripted.constructed[scripted.constructed.length - 1]!.config as { mcp_servers: Record<string, { command: string; args: string[]; env: Record<string, string> }> }
       const entry = config.mcp_servers.wechat!
       const baseEnv = { ...process.env as Record<string, string> }
-      delete baseEnv.WECHAT_REPLY_DELIVERY
       delete baseEnv.WECHAT_SESSION_TIER
       delete baseEnv.WECHAT_SESSION_TOKEN
       // command 用 RUNTIME(源码模式下 spec.command 是 process.execPath,node 跑测试时不是 bun)。
@@ -921,30 +741,22 @@ describe('wechat-mcp stdio integration', () => {
       try { return { tools: (await c.listTools()).tools.map(t => t.name), env: entry.env } } finally { await c.close() }
     }
 
-    it('daemon ⇒ spawn 的 config 带 WECHAT_REPLY_DELIVERY=daemon + 会话令牌,子进程不注册 reply 族(admin 有 message);legacy ⇒ reply 工具回来', async () => {
+    it('spawn 的 config 带会话令牌,子进程不注册 reply 族(admin 有 message)', async () => {
       api = createInternalApi({ stateDir, daemonPid: 7777 })
       const { port, tokenFilePath } = await api.start()
 
-      setReplyDeliveryOverrides({ codex: 'daemon' })
       const daemon = await toolsForCodexSession(port, tokenFilePath)
-      expect(daemon.env).toMatchObject({ WECHAT_REPLY_DELIVERY: 'daemon', WECHAT_PARTICIPANT_TAG: 'codex', WECHAT_SESSION_TIER: 'admin', WECHAT_SESSION_TOKEN: 'codex-session-tok' })
+      expect(daemon.env).toMatchObject({ WECHAT_PARTICIPANT_TAG: 'codex', WECHAT_SESSION_TIER: 'admin', WECHAT_SESSION_TOKEN: 'codex-session-tok' })
       for (const t of REPLY_FAMILY) expect(daemon.tools).not.toContain(t)
       for (const t of ['voice', 'sticker', 'attach_file', 'message', 'sticker_feedback']) expect(daemon.tools).toContain(t)
-
-      setReplyDeliveryOverrides({ codex: 'legacy' })
-      const legacy = await toolsForCodexSession(port, tokenFilePath)
-      expect(legacy.env.WECHAT_REPLY_DELIVERY).toBeUndefined()
-      for (const t of ['reply', 'reply_voice', 'send_sticker']) expect(legacy.tools).toContain(t)
-      for (const t of ['voice', 'attach_file', 'message']) expect(legacy.tools).not.toContain(t)
     })
   })
 
   // 回复交付第 5 步(2026-10-03):Claude 的 wechat MCP 是 wire-plugins 开机造的 spec(wechatStdioMcpSpec('claude')),
   // 每次 spawn 由 sdkOptionsForProject 把会话 env(令牌 + tier)合进 SDK 的 mcpServers.wechat。
-  // 完整链:能力表开关 → wechatStdioMcpSpec('claude') → wireModelOptions().sdkOptionsForProject(会话 env)→
+  // 完整链:wechatStdioMcpSpec('claude') → wireModelOptions().sdkOptionsForProject(会话 env)→
   // 用那份 command / args / env 起子进程 → tools/list。
-  describe('claude per-spawn MCP options follow claude\'s reply-delivery mode', () => {
-    afterEach(() => setReplyDeliveryOverrides(undefined))
+  describe('claude per-spawn MCP options → the daemon tool table', () => {
     const REPLY_FAMILY = ['reply', 'reply_voice', 'send_file', 'edit_message', 'broadcast', 'send_sticker', 'search_online_sticker', 'send_online_sticker_candidate']
 
     async function toolsForClaudeSession(port: number, tokenFilePath: string): Promise<{ tools: string[]; env: Record<string, string> }> {
@@ -958,7 +770,6 @@ describe('wechat-mcp stdio integration', () => {
       const options = sdkOptionsForProject('a', stateDir, TIER_PROFILES.admin, 'o9owner@im.wechat', { WECHAT_SESSION_TOKEN: 'claude-session-tok', WECHAT_SESSION_TIER: 'admin' })
       const entry = (options.mcpServers as Record<string, { command: string; args: string[]; env: Record<string, string> }>).wechat!
       const baseEnv = { ...process.env as Record<string, string> }
-      delete baseEnv.WECHAT_REPLY_DELIVERY
       delete baseEnv.WECHAT_SESSION_TIER
       delete baseEnv.WECHAT_SESSION_TOKEN
       const transport = new StdioClientTransport({ command: RUNTIME, args: entry.args, env: { ...baseEnv, ...entry.env }, stderr: 'pipe' })
@@ -967,20 +778,14 @@ describe('wechat-mcp stdio integration', () => {
       try { return { tools: (await c.listTools()).tools.map(t => t.name), env: entry.env } } finally { await c.close() }
     }
 
-    it('daemon(第 5 步起的默认)⇒ 会话的 mcpServers.wechat 带 WECHAT_REPLY_DELIVERY=daemon + 会话令牌,子进程不注册 reply 族(admin 有 message);legacy ⇒ reply 工具回来', async () => {
+    it('会话的 mcpServers.wechat 带会话令牌,子进程不注册 reply 族(admin 有 message)', async () => {
       api = createInternalApi({ stateDir, daemonPid: 7777 })
       const { port, tokenFilePath } = await api.start()
 
       const daemon = await toolsForClaudeSession(port, tokenFilePath)
-      expect(daemon.env).toMatchObject({ WECHAT_REPLY_DELIVERY: 'daemon', WECHAT_PARTICIPANT_TAG: 'claude', WECHAT_SESSION_TIER: 'admin', WECHAT_SESSION_TOKEN: 'claude-session-tok' })
+      expect(daemon.env).toMatchObject({ WECHAT_PARTICIPANT_TAG: 'claude', WECHAT_SESSION_TIER: 'admin', WECHAT_SESSION_TOKEN: 'claude-session-tok' })
       for (const t of REPLY_FAMILY) expect(daemon.tools).not.toContain(t)
       for (const t of ['voice', 'sticker', 'attach_file', 'message', 'sticker_feedback']) expect(daemon.tools).toContain(t)
-
-      setReplyDeliveryOverrides({ claude: 'legacy' })
-      const legacy = await toolsForClaudeSession(port, tokenFilePath)
-      expect(legacy.env.WECHAT_REPLY_DELIVERY).toBeUndefined()
-      for (const t of ['reply', 'reply_voice', 'send_sticker']) expect(legacy.tools).toContain(t)
-      for (const t of ['voice', 'attach_file', 'message']) expect(legacy.tools).not.toContain(t)
     })
   })
 
@@ -989,11 +794,9 @@ describe('wechat-mcp stdio integration', () => {
   // buildOpenaiMcpSpecs 把会话 env 合进 wechat 条目)与 gemini(connectWechatMcp 用 childEnvFor 合)。
   // admin 会话有 message,trusted 会话没有(注册门 SESSION_IS_ADMIN)。
   describe('own-loop providers (openai / gemini): daemon tool list carries `message` for admin sessions only', () => {
-    afterEach(() => setReplyDeliveryOverrides(undefined))
     const REPLY_FAMILY = ['reply', 'reply_voice', 'send_file', 'edit_message', 'broadcast', 'send_sticker', 'search_online_sticker', 'send_online_sticker_candidate']
     const strip = (env: Record<string, string>) => {
       const e = { ...env }
-      delete e.WECHAT_REPLY_DELIVERY
       delete e.WECHAT_SESSION_TIER
       delete e.WECHAT_SESSION_TOKEN
       return e
@@ -1013,7 +816,7 @@ describe('wechat-mcp stdio integration', () => {
     async function toolsForGemini(port: number, tokenFilePath: string, tier: 'admin' | 'trusted'): Promise<string[]> {
       const { connectWechatMcp } = await import('../../core/gemini-agent-provider')
       const spec = wechatStdioMcpSpec({ baseUrl: `http://127.0.0.1:${port}`, tokenFilePath }, 'gemini')
-      expect(spec.env).toMatchObject({ WECHAT_REPLY_DELIVERY: 'daemon', WECHAT_PARTICIPANT_TAG: 'gemini' })
+      expect(spec.env).toMatchObject({ WECHAT_PARTICIPANT_TAG: 'gemini' })
       // command 用 RUNTIME(源码模式下 spec.command 是 process.execPath,node 跑测试时不是 bun)。
       const conn = await connectWechatMcp({ ...spec, command: RUNTIME }, { WECHAT_SESSION_TOKEN: 'gemini-session-tok', WECHAT_SESSION_TIER: tier })
       try { return (await conn.listTools()).map(t => t.name) } finally { await conn.close() }
@@ -1023,7 +826,7 @@ describe('wechat-mcp stdio integration', () => {
       api = createInternalApi({ stateDir, daemonPid: 7777 })
       const { port, tokenFilePath } = await api.start()
       const admin = await toolsForOpenai(port, tokenFilePath, 'admin')
-      expect(admin.env).toMatchObject({ WECHAT_REPLY_DELIVERY: 'daemon', WECHAT_SESSION_TIER: 'admin', WECHAT_SESSION_TOKEN: 'openai-session-tok' })
+      expect(admin.env).toMatchObject({ WECHAT_SESSION_TIER: 'admin', WECHAT_SESSION_TOKEN: 'openai-session-tok' })
       for (const t of REPLY_FAMILY) expect(admin.tools).not.toContain(t)
       for (const t of ['voice', 'sticker', 'attach_file', 'message']) expect(admin.tools).toContain(t)
       const trusted = await toolsForOpenai(port, tokenFilePath, 'trusted')

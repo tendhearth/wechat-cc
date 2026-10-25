@@ -177,7 +177,7 @@ describe('makeReplyDeliveryRuntime — 一轮的句柄', () => {
     const h = harness()
     const rt = makeReplyDeliveryRuntime(h.deps)
     expect(rt.attach('c1', pending({ kind: 'sticker', ref: { tag: 'x' } }))).toBe(false)
-    const handle = rt.begin('c1', { mode: 'daemon', context: 'dm', providerId: 'openai' })
+    const handle = rt.begin('c1', { context: 'dm', providerId: 'openai' })
     const s = pending({ kind: 'sticker', ref: { tag: '庆祝' } })
     expect(rt.attach('c1', s)).toBe(true)
     const r = await handle.deliver({ finalText: '恭喜恭喜上线成功', narration: [] })
@@ -190,16 +190,16 @@ describe('makeReplyDeliveryRuntime — 一轮的句柄', () => {
   it('/both、/chat 两位共用一轮时,同一个附件只发一次;一位放弃不丢另一位的附件(2026-10-10)', async () => {
     const h = harness()
     const rt = makeReplyDeliveryRuntime(h.deps)
-    const claude = rt.begin('c1', { mode: 'daemon', context: 'dm', providerId: 'claude' })
-    const codex = rt.begin('c1', { mode: 'daemon', context: 'dm', providerId: 'codex' })
+    const claude = rt.begin('c1', { context: 'dm', providerId: 'claude' })
+    const codex = rt.begin('c1', { context: 'dm', providerId: 'codex' })
     const s = pending({ kind: 'sticker', ref: { tag: '开心' } })
     rt.attach('c1', s)
     await claude.deliver({ finalText: 'Claude 的回答在这里', narration: [] })
     const r = await codex.deliver({ finalText: 'Codex 的回答在这里', narration: [] })
     expect(s.send).toHaveBeenCalledTimes(1)
     expect(r.attachmentsSent).toBe(0)
-    const a = rt.begin('c2', { mode: 'daemon', context: 'dm', providerId: 'claude' })
-    const b = rt.begin('c2', { mode: 'daemon', context: 'dm', providerId: 'codex' })
+    const a = rt.begin('c2', { context: 'dm', providerId: 'claude' })
+    const b = rt.begin('c2', { context: 'dm', providerId: 'codex' })
     const v = pending({ kind: 'sticker', ref: { tag: '好的' } })
     rt.attach('c2', v)
     a.abandon('error')
@@ -207,29 +207,27 @@ describe('makeReplyDeliveryRuntime — 一轮的句柄', () => {
     expect(v.send).toHaveBeenCalledTimes(1)
   })
 
-  it('turnChatFor:共享令牌按「这家 provider 此刻在跑的 daemon 轮」认聊天(none / bound / ambiguous;shadow 不算;交付或放弃后解绑)', async () => {
+  it('turnChatFor:共享令牌按「这家 provider 此刻在跑的轮」认聊天(none / bound / ambiguous;交付或放弃后解绑)', async () => {
     const h = harness()
     const rt = makeReplyDeliveryRuntime(h.deps)
     expect(rt.turnChatFor('agy')).toEqual({ kind: 'none' })
-    const shadow = rt.begin('c0', { mode: 'shadow', context: 'dm', providerId: 'agy' })
-    expect(rt.turnChatFor('agy')).toEqual({ kind: 'none' }) // shadow 轮没有附件工具,不绑定
-    const a = rt.begin('c1', { mode: 'daemon', context: 'dm', providerId: 'agy' })
-    const other = rt.begin('c9', { mode: 'daemon', context: 'dm', providerId: 'openai' })
+    const a = rt.begin('c1', { context: 'dm', providerId: 'agy' })
+    const other = rt.begin('c9', { context: 'dm', providerId: 'openai' })
     expect(rt.turnChatFor('agy')).toEqual({ kind: 'bound', chatId: 'c1' }) // 别家的轮不相干
-    const b = rt.begin('c2', { mode: 'daemon', context: 'tick', providerId: 'agy' })
+    const b = rt.begin('c2', { context: 'tick', providerId: 'agy' })
     expect(rt.turnChatFor('agy')).toEqual({ kind: 'ambiguous', count: 2 })
     await b.deliver({ finalText: 'NO_REPLY', narration: [] })
     expect(rt.turnChatFor('agy')).toEqual({ kind: 'bound', chatId: 'c1' })
     a.abandon('error')
     a.abandon('again') // 幂等:不会把计数减成负的
     expect(rt.turnChatFor('agy')).toEqual({ kind: 'none' })
-    shadow.abandon('x'); other.abandon('x')
+    other.abandon('x')
   })
 
   it('私聊里 NO_REPLY ⇒ 不显示、记 REPLY_SILENT_IN_DM', async () => {
     const h = harness()
     const rt = makeReplyDeliveryRuntime(h.deps)
-    const r = await rt.begin('c1', { mode: 'daemon', context: 'dm', providerId: 'openai' }).deliver({ finalText: 'NO_REPLY', narration: [] })
+    const r = await rt.begin('c1', { context: 'dm', providerId: 'openai' }).deliver({ finalText: 'NO_REPLY', narration: [] })
     expect(h.sent).toEqual([])
     expect(r.delivery).toBe('silent')
     expect(h.logs.some(l => l.startsWith('[REPLY_SILENT_IN_DM]'))).toBe(true)
@@ -238,7 +236,7 @@ describe('makeReplyDeliveryRuntime — 一轮的句柄', () => {
   it('推送里 NO_REPLY ⇒ REPLY_SILENT kind=tick,令牌一次都不外发', async () => {
     const h = harness()
     const rt = makeReplyDeliveryRuntime(h.deps)
-    await rt.begin('c1', { mode: 'daemon', context: 'tick', providerId: 'openai' }).deliver({ finalText: 'NO_REPLY', narration: ['议程过期了'] })
+    await rt.begin('c1', { context: 'tick', providerId: 'openai' }).deliver({ finalText: 'NO_REPLY', narration: ['议程过期了'] })
     expect(h.sent).toEqual([])
     expect(h.logs.some(l => l.startsWith('[REPLY_SILENT]') && l.includes('kind=tick'))).toBe(true)
   })
@@ -246,7 +244,7 @@ describe('makeReplyDeliveryRuntime — 一轮的句柄', () => {
   it('混合令牌行 ⇒ 剥掉、其余照发、记 NO_REPLY_MIXED', async () => {
     const h = harness()
     const rt = makeReplyDeliveryRuntime(h.deps)
-    await rt.begin('c1', { mode: 'daemon', context: 'dm', providerId: 'openai' }).deliver({ finalText: '好的收到啦,明天见\nNO_REPLY', narration: [] })
+    await rt.begin('c1', { context: 'dm', providerId: 'openai' }).deliver({ finalText: '好的收到啦,明天见\nNO_REPLY', narration: [] })
     expect(h.sent).toEqual(['好的收到啦,明天见'])
     expect(h.sent.join('')).not.toContain('NO_REPLY')
     expect(h.logs.some(l => l.startsWith('[NO_REPLY_MIXED]'))).toBe(true)
@@ -255,14 +253,14 @@ describe('makeReplyDeliveryRuntime — 一轮的句柄', () => {
   it('旁白不进微信', async () => {
     const h = harness()
     const rt = makeReplyDeliveryRuntime(h.deps)
-    await rt.begin('c1', { mode: 'daemon', context: 'dm', providerId: 'openai' }).deliver({ finalText: '查到了,是 42', narration: ['让我查一下'] })
+    await rt.begin('c1', { context: 'dm', providerId: 'openai' }).deliver({ finalText: '查到了,是 42', narration: ['让我查一下'] })
     expect(h.sent).toEqual(['查到了,是 42'])
   })
 
   it('abandon ⇒ 附件丢弃不发,登记口关闭', async () => {
     const h = harness()
     const rt = makeReplyDeliveryRuntime(h.deps)
-    const handle = rt.begin('c1', { mode: 'daemon', context: 'dm', providerId: 'openai' })
+    const handle = rt.begin('c1', { context: 'dm', providerId: 'openai' })
     const s = pending({ kind: 'sticker', ref: { tag: 'x' } })
     rt.attach('c1', s)
     handle.abandon('turn_timeout')
@@ -274,7 +272,7 @@ describe('makeReplyDeliveryRuntime — 一轮的句柄', () => {
     const h = harness()
     let sinkOpen = false
     const rt = makeReplyDeliveryRuntime({ ...h.deps, isSinkOpen: () => sinkOpen })
-    const handle = rt.begin('c1', { mode: 'daemon', context: 'dm', providerId: 'openai' })
+    const handle = rt.begin('c1', { context: 'dm', providerId: 'openai' })
     await handle.progress('还在查,有点久')
     expect(h.sent).toEqual(['还在查,有点久'])
     sinkOpen = true
@@ -285,43 +283,13 @@ describe('makeReplyDeliveryRuntime — 一轮的句柄', () => {
   it('message 记账 → 交付去重', async () => {
     const h = harness()
     const rt = makeReplyDeliveryRuntime(h.deps)
-    const handle = rt.begin('c1', { mode: 'daemon', context: 'dm', providerId: 'openai' })
+    const handle = rt.begin('c1', { context: 'dm', providerId: 'openai' })
     rt.noteMessage('c1', { toOwner: true, text: '会议改到明天下午三点了' })
     const r = await handle.deliver({ finalText: '会议改到明天下午三点了', narration: [] })
     expect(r.deduped).toBe(true)
     expect(h.sent).toEqual([])
   })
 
-  it('shadow:什么都不发,只把 legacy 实际发出的和新路会发的比一比,记 REPLY_SHADOW', async () => {
-    const h = harness()
-    const rt = makeReplyDeliveryRuntime(h.deps)
-    const handle = rt.begin('c1', { mode: 'shadow', context: 'dm', providerId: 'claude' })
-    rt.observeLegacy('c1', '你有两个项目')
-    const r = await handle.deliver({ finalText: '你有两个项目', narration: ['我查一下'] })
-    expect(h.sent).toEqual([])
-    expect(r.shadow).toBe(true)
-    const line = h.logs.find(l => l.startsWith('[REPLY_SHADOW]'))!
-    expect(line).toContain('match=same')
-    expect(line).toContain('legacy_n=1')
-    expect(line).toContain('narration=1')
-    expect(line).toContain('provider=claude')
-  })
-
-  it('shadow:legacy 发了旁白 + 结论,新路只发结论 ⇒ match=contains', async () => {
-    const h = harness()
-    const rt = makeReplyDeliveryRuntime(h.deps)
-    const handle = rt.begin('c1', { mode: 'shadow', context: 'dm', providerId: 'agy' })
-    rt.observeLegacy('c1', '已回复用户的问候。')
-    rt.observeLegacy('c1', '你好呀')
-    await handle.deliver({ finalText: '你好呀', narration: [] })
-    expect(h.logs.find(l => l.startsWith('[REPLY_SHADOW]'))).toContain('match=contains')
-  })
-
-  it('shadow 的旁听只在开着的轮里记;没开 ⇒ 无操作', () => {
-    const h = harness()
-    const rt = makeReplyDeliveryRuntime(h.deps)
-    expect(() => rt.observeLegacy('c1', 'x')).not.toThrow()
-  })
 })
 
 describe('deliverTurnReply — 聊天型模型的多段(每段按 ④ 各自分条)', () => {
@@ -337,7 +305,7 @@ describe('deliverTurnReply — 聊天型模型的多段(每段按 ④ 各自分�
   it('句柄:begin 时声明 textStrategy=all_segments ⇒ 工具前说的话也送达', async () => {
     const h = harness()
     const rt = makeReplyDeliveryRuntime(h.deps)
-    await rt.begin('c1', { mode: 'daemon', context: 'dm', providerId: 'openai', textStrategy: 'all_segments' }).deliver({ finalText: '第三条:早点睡觉吧', narration: ['第一条:出门走走晒太阳', '第二条:做一顿好吃的'] })
+    await rt.begin('c1', { context: 'dm', providerId: 'openai', textStrategy: 'all_segments' }).deliver({ finalText: '第三条:早点睡觉吧', narration: ['第一条:出门走走晒太阳', '第二条:做一顿好吃的'] })
     expect(h.sent).toEqual(['第一条:出门走走晒太阳', '第二条:做一顿好吃的', '第三条:早点睡觉吧'])
   })
 })
@@ -349,7 +317,7 @@ describe('makeReplyDeliveryRuntime — 这一轮另有出口(outbound)', () => {
     const rt = makeReplyDeliveryRuntime(h.deps)
     const via: string[] = []
     const outbound = { sendText: vi.fn(async (_c: string, t: string) => { via.push(t); return { msgId: 'app:1' } }) }
-    const handle = rt.begin('c1', { mode: 'daemon', context: 'tick', providerId: 'claude', outbound })
+    const handle = rt.begin('c1', { context: 'tick', providerId: 'claude', outbound })
     await handle.progress('我去搜一下')
     const r = await handle.deliver({ finalText: '前两天那个面试怎么样了', narration: [] })
     expect(h.sent).toEqual([])
@@ -362,7 +330,7 @@ describe('makeReplyDeliveryRuntime — 这一轮另有出口(outbound)', () => {
     const rt = makeReplyDeliveryRuntime(h.deps)
     const via: string[] = []
     const outbound = { sendText: async (_c: string, t: string) => { via.push(t); return { msgId: 'app' } }, textOnly: () => true }
-    const handle = rt.begin('c1', { mode: 'daemon', context: 'tick', providerId: 'claude', outbound })
+    const handle = rt.begin('c1', { context: 'tick', providerId: 'claude', outbound })
     const sticker = pending({ kind: 'sticker', ref: { tag: '开心' } })
     const voice = pending({ kind: 'voice', text: '晚安呀' })
     rt.attach('c1', sticker)
@@ -378,7 +346,7 @@ describe('makeReplyDeliveryRuntime — 这一轮另有出口(outbound)', () => {
   it('没有 outbound ⇒ 照旧走运行时自己的 sendText', async () => {
     const h = harness()
     const rt = makeReplyDeliveryRuntime(h.deps)
-    await rt.begin('c1', { mode: 'daemon', context: 'tick', providerId: 'claude' }).deliver({ finalText: '在忙吗今天', narration: [] })
+    await rt.begin('c1', { context: 'tick', providerId: 'claude' }).deliver({ finalText: '在忙吗今天', narration: [] })
     expect(h.sent).toEqual(['在忙吗今天'])
   })
 })
@@ -396,7 +364,7 @@ describe('makeReplyDeliveryRuntime — textOnly 出口收附件(sendAttachment)'
       textOnly: () => true,
       sendAttachment: vi.fn(async (_c: string, a: { kind: string }) => { took.push(a.kind); return true }),
     }
-    const handle = rt.begin('c1', { mode: 'daemon', context: 'tick', providerId: 'claude', outbound })
+    const handle = rt.begin('c1', { context: 'tick', providerId: 'claude', outbound })
     const sticker = pending({ kind: 'sticker', ref: { tag: '开心' } })
     const voice = pending({ kind: 'voice', text: '晚安呀' })
     rt.attach('c1', sticker)
@@ -419,7 +387,7 @@ describe('makeReplyDeliveryRuntime — textOnly 出口收附件(sendAttachment)'
       textOnly: () => true,
       sendAttachment: vi.fn(async (_c: string, a: { kind: string }) => { if (a.kind === 'voice') throw new Error('db'); return false }),
     }
-    const handle = rt.begin('c1', { mode: 'daemon', context: 'tick', providerId: 'claude', outbound })
+    const handle = rt.begin('c1', { context: 'tick', providerId: 'claude', outbound })
     rt.attach('c1', pending({ kind: 'sticker', ref: { tag: '开心' } }))
     rt.attach('c1', pending({ kind: 'voice', text: '晚安呀' }))
     const r = await handle.deliver({ finalText: '今天辛苦了', narration: [] })
@@ -432,7 +400,7 @@ describe('makeReplyDeliveryRuntime — textOnly 出口收附件(sendAttachment)'
     const h = harness()
     const rt = makeReplyDeliveryRuntime(h.deps)
     const outbound = { sendText: async () => ({ msgId: 'w' }), textOnly: () => false, sendAttachment: vi.fn(async () => true) }
-    const handle = rt.begin('c1', { mode: 'daemon', context: 'tick', providerId: 'claude', outbound })
+    const handle = rt.begin('c1', { context: 'tick', providerId: 'claude', outbound })
     const sticker = pending({ kind: 'sticker', ref: { tag: '开心' } })
     rt.attach('c1', sticker)
     await handle.deliver({ finalText: '嗨', narration: [] })

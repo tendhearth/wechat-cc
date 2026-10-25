@@ -1,6 +1,6 @@
 /**
  * 回复交付(spec docs/superpowers/specs/2026-10-03-reply-delivery-design.md §4.5 / §4.6)的两条路由。
- * 只有 `replyDelivery = daemon` 的 provider 用得到(它们的 wechat MCP 不再注册 reply 族工具)。
+ * 执行者的 wechat MCP 没有 reply 族工具(回复是最后写下的文字),附件和往别处发就走这两条。
  *
  * POST /v1/turn/attach —— 语音 / 表情 / 文件是**这一轮回复的附件**:工具调用时只登记,daemon 在交付时
  *   (文字之后、按调用顺序)才真的发。**不收 chat_id**:目标永远是会话令牌里的那个 chat —— 顺带关掉

@@ -11,11 +11,12 @@ describe('buildSystemPrompt', () => {
     }
   }
 
-  it('includes the channel base section + reply tool guidance', () => {
+  // D3 起只有一版提示词:最后写下的话就是回复(以前缺省是「用 reply 工具说话」那一版,连同 FALLBACK_REPLY 的说明删了)。
+  it('includes the channel base section + final-text reply guidance', () => {
     const p = buildSystemPrompt(defaults())
     expect(p).toContain('wechat-cc 的消息通道')
-    expect(p).toContain('reply')
-    expect(p).toContain('FALLBACK_REPLY')   // accurate fallback log tag (RFC 03 review #4)
+    expect(p).toContain('最后写下的那段话就是发给对方的回复')
+    expect(p).not.toContain('FALLBACK_REPLY')
     expect(p).toContain('<quote')
   })
 
@@ -53,7 +54,8 @@ describe('buildSystemPrompt', () => {
   it('lists every wechat-mcp tool surface (no v0.x staleness regression)', () => {
     const p = buildSystemPrompt(defaults())
     // The original v0.x prompt missed these. Verify they're back.
-    for (const t of ['reply', 'reply_voice', 'send_file', 'edit_message', 'broadcast',
+    // 说话的那一族(reply / reply_voice / send_file / edit_message / broadcast)D3 起不再注册,换成本轮回复的附件。
+    for (const t of ['voice(text)', 'attach_file(path)',
                      'list_projects', 'switch_project', 'add_project', 'remove_project',
                      'set_user_name',
                      'voice_config_status', 'save_voice_config',
@@ -131,8 +133,7 @@ describe('buildSystemPrompt', () => {
     // primary_tool pattern present (compact /<p> + <peer> form)
     expect(p).toContain('/<p> + <peer>')
     // Also tells the agent that chatroom envelopes will explain themselves
-    expect(p).toContain('chatroom_round')
-    expect(p).toContain('不要调 reply')   // chatroom-specific guidance recap
+    expect(p).toContain('入站消息会说明这一拍要你做什么')
   })
 
   it('mentions parallel mode prefix is auto-added (so agent does not double-prefix)', () => {
@@ -159,11 +160,11 @@ describe('buildSystemPrompt', () => {
     expect(p).toContain('due:YYYY-MM-DD')
   })
 
-  it('Companion agenda-tick guidance: default is to send, only skip if expired or user already reported', () => {
+  it('Companion agenda-tick guidance: push is already decided, write it; NO_REPLY only when nothing worth sending', () => {
     const p = buildSystemPrompt({ ...defaults(), companionEnabled: true })
-    // New model: "默认就是发" — send by default, only suppress when expired or already resolved
-    expect(p).toContain('默认就是发')
-    expect(p).toContain('不产生 assistant text')
+    // 推不推在唤醒之前就判完了:这一轮的任务是写出这条推送;写不出值得发的才 NO_REPLY。
+    expect(p).toContain('写出这条推送')
+    expect(p).toContain('NO_REPLY')
   })
 
   it('memory section is always present (memory is provider-agnostic)', () => {
@@ -214,26 +215,24 @@ describe('buildSystemPrompt', () => {
 describe('bubble-replies prompt section', () => {
   const base = { providerId: 'claude' as const, peerProviderId: 'codex' as const, companionEnabled: false, delegateAvailable: false }
 
-  it('bubbleRepliesSection() instructs sending the first thought immediately, caps at 2-4 bubbles, keeps code whole, and warns against splitting for its own sake', () => {
+  // 以前这一节教「想好一个意思就先调一次 reply」;回复交付之后是写段落、由 daemon 按空行分条。
+  it('bubbleRepliesSection() teaches paragraphs separated by blank lines (daemon splits, max 4), keeps code whole', () => {
     const s = bubbleRepliesSection()
-    expect(s).toContain('先')
-    expect(s).toContain('发出去')
-    expect(s).toContain('2-4')
-    expect(s).toContain('代码要完整')
-    expect(s).toContain('别为拆而拆')
+    expect(s).toContain('才用空行分成几段')
+    expect(s).toContain('最多 4 条')
+    expect(s).toContain('代码完整放在一段里')
   })
 
   it('buildSystemPrompt includes the bubble-replies section when bubbleReplies=true', () => {
     const p = buildSystemPrompt({ ...base, bubbleReplies: true })
-    expect(p).toContain('气泡式回复')
-    expect(p).toContain('2-4')
+    expect(p).toContain('怎么说(像发微信那样)')
   })
 
   it('buildSystemPrompt is byte-identical whether bubbleReplies is false or simply absent, and omits the section', () => {
     const withFalse = buildSystemPrompt({ ...base, bubbleReplies: false })
     const withoutKey = buildSystemPrompt({ ...base })
     expect(withFalse).toBe(withoutKey)
-    expect(withoutKey).not.toContain('气泡式回复')
+    expect(withoutKey).not.toContain('怎么说(像发微信那样)')
   })
 })
 
@@ -302,10 +301,10 @@ describe('new-relationship prompt section', () => {
 describe('sticker prompt section', () => {
   const base = { providerId: 'claude' as const, peerProviderId: 'codex' as const, companionEnabled: false, delegateAvailable: false }
 
-  it('stickerSection() mentions send_sticker + lists the given tags', () => {
+  it('stickerSection() mentions the sticker attachment tool + lists the given tags', () => {
     const s = stickerSection(['happy', 'sad', 'party'])
-    expect(s).toContain('send_sticker')
-    expect(s).toContain('search_online_sticker')
+    expect(s).toContain('sticker(tag)')
+    expect(s).toContain('search_online_sticker_candidates')
     expect(s).toContain('happy')
     expect(s).toContain('sad')
     expect(s).toContain('party')
@@ -335,7 +334,7 @@ describe('sticker prompt section', () => {
 
   it('buildSystemPrompt includes the sticker section when stickerTags is non-empty', () => {
     const p = buildSystemPrompt({ ...base, stickerTags: ['happy', 'sad'] })
-    expect(p).toContain('send_sticker')
+    expect(p).toContain('sticker(tag)')
     expect(p).toContain('happy')
     expect(p).toContain('sad')
   })
@@ -865,15 +864,11 @@ describe('daemonSelfHealSection — 换模型是正常操作,不只是修故障'
   })
 })
 
-describe('replyDelivery: final_text(回复交付 spec 2026-10-03 §4.11)', () => {
+describe('回复交付:最后的话就是回复(spec 2026-10-03 §4.11)', () => {
   const base = { providerId: 'openai' as const, peerProviderId: 'claude' as const, companionEnabled: true, delegateAvailable: false, bubbleReplies: true, stickerTags: ['庆祝'] }
 
-  it("缺省 / 'tool' ⇒ 与今天逐字相同", () => {
-    expect(buildSystemPrompt({ ...base, replyDelivery: 'tool' })).toBe(buildSystemPrompt(base))
-  })
-
   it('final_text:不再教 reply 工具,讲清「最后写下的话就是回复」', () => {
-    const p = buildSystemPrompt({ ...base, replyDelivery: 'final_text' })
+    const p = buildSystemPrompt(base)
     expect(p).toContain('最后写下的那段话就是发给对方的回复')
     expect(p).not.toMatch(/`reply\(|调 reply|用 reply|用 `reply`|reply 工具|FALLBACK_REPLY|send_sticker\(|send_online_sticker_candidate\(|reply_voice|edit_message|broadcast\(/)
     expect(p).toContain('`voice(text)`')
@@ -882,20 +877,20 @@ describe('replyDelivery: final_text(回复交付 spec 2026-10-03 §4.11)', () =>
   })
 
   it('final_text:NO_REPLY 只在伙伴推送那段里教,私聊基础段不教', () => {
-    const p = buildSystemPrompt({ ...base, replyDelivery: 'final_text' })
+    const p = buildSystemPrompt(base)
     const companion = p.slice(p.indexOf('## Companion 主动推送'))
     expect(companion).toContain('NO_REPLY')
     expect(p.slice(0, p.indexOf('## Companion 主动推送'))).not.toContain('NO_REPLY')
   })
 
   it('message 工具只在 admin(messageToolAvailable)时出现', () => {
-    expect(buildSystemPrompt({ ...base, replyDelivery: 'final_text', messageToolAvailable: true })).toContain('`message(to, text)`')
-    expect(buildSystemPrompt({ ...base, replyDelivery: 'final_text' })).not.toContain('`message(to, text)`')
+    expect(buildSystemPrompt({ ...base, messageToolAvailable: true })).toContain('`message(to, text)`')
+    expect(buildSystemPrompt(base)).not.toContain('`message(to, text)`')
   })
 })
 
 describe('final_text × 聊天型模型(replyText: all_segments,2026-10-03 修订)', () => {
-  const base = { providerId: 'openai' as const, peerProviderId: 'claude' as const, companionEnabled: false, delegateAvailable: false, replyDelivery: 'final_text' as const }
+  const base = { providerId: 'openai' as const, peerProviderId: 'claude' as const, companionEnabled: false, delegateAvailable: false }
   it('聊天型:讲「这一轮写下的文字都会按顺序发出去」,不说「中间的话不发」', () => {
     const p = buildSystemPrompt({ ...base, replyText: 'all_segments' })
     expect(p).toContain('按顺序发给对方')
@@ -907,7 +902,7 @@ describe('final_text × 聊天型模型(replyText: all_segments,2026-10-03 修�
 })
 
 describe('聊天型模型的结构性约束(2026-10-03 审稿第二轮,只进聊天型那一版)', () => {
-  const base = { providerId: 'openai' as const, peerProviderId: 'claude' as const, companionEnabled: false, delegateAvailable: false, replyDelivery: 'final_text' as const }
+  const base = { providerId: 'openai' as const, peerProviderId: 'claude' as const, companionEnabled: false, delegateAvailable: false }
   it('聊天型:一轮只在最后说话、工具前不先说一句(除非明显很慢);发了语音不再补一句收尾', () => {
     const p = buildSystemPrompt({ ...base, replyText: 'all_segments' })
     expect(p).toContain('一轮只在最后说话')

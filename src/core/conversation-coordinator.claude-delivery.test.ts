@@ -1,7 +1,8 @@
 /**
  * 回复交付第 5 步(Claude → daemon):Claude 的「双发旁白 / 吞话」在 daemon 模式下**结构性**消失的证明。
  *
- * Claude 对话侧是一个常驻的 Agent SDK `query()`;legacy 下协调器靠 tool_use 的名字(`mcp__wechat__reply`)认 reply:
+ * Claude 对话侧是一个常驻的 Agent SDK `query()`;旧路(legacy,D3 已删,对照臂随之删掉)下协调器靠 tool_use 的名字
+ * (`mcp__wechat__reply`)认 reply:
  *   - 认出来 ⇒ 这一轮文字全丢(只有 reply 工具发的那句);
  *   - 认不出(wechat MCP 挂在别的名字下,比如 Claude Code 插件 MCP 的 `mcp__plugin_<插件>_<server>__reply`)⇒
  *     FALLBACK_REPLY 把每段文字各发一条 —— 「我先看一下」这句旁白跟着进了微信(双发);
@@ -24,14 +25,13 @@ import { createScriptedClaude, type ClaudeScriptedCall, type ClaudeScriptedTurn,
 import { TIER_PROFILES } from './user-tier'
 import type { Mode } from './conversation'
 import type { InboundMsg } from './prompt-format'
-import type { ReplyDeliveryMode, TurnReply } from './turn-reply'
+import type { TurnReply } from './turn-reply'
 import { makeReplyDeliveryRuntime } from '../daemon/reply-delivery'
 
 const CHAT = 'chat-1'
 
 interface RigOpts {
   turns: ClaudeScriptedTurn[]
-  mode: ReplyDeliveryMode
   shape?: ClaudeShape
   sink?: boolean
   progressAfterMs?: number
@@ -49,12 +49,10 @@ function rig(o: RigOpts) {
     log: (tag, line) => { logs.push(`[${tag}] ${line}`) },
     ...(o.sink ? { sink: { captureReply: (_c: string, r: TurnReply) => { captured.push(r); return true } }, isSinkOpen: () => true } : {}),
   })
-  // MCP server 那一侧:legacy 的 reply / reply_voice 路由把话发进微信;daemon 的附件工具(不带 chat_id,会话令牌认聊天)挂到本轮。
+  // MCP server 那一侧:附件工具(不带 chat_id,会话令牌认聊天)挂到本轮。
   const onToolCall = async (call: ClaudeScriptedCall) => {
     if (call.server !== 'wechat') return
-    if (call.tool === 'reply') wechat.push(String(call.args.text))
-    else if (call.tool === 'reply_voice') wechat.push(`[语音] ${String(call.args.text)}`)
-    else if (call.tool === 'voice') rt.attach(CHAT, { attachment: { kind: 'voice', text: String(call.args.text) }, send: async () => { wechat.push(`[语音] ${String(call.args.text)}`); return { ok: true } } })
+    if (call.tool === 'voice') rt.attach(CHAT, { attachment: { kind: 'voice', text: String(call.args.text) }, send: async () => { wechat.push(`[语音] ${String(call.args.text)}`); return { ok: true } } })
   }
   const scripted = createScriptedClaude({ turns: o.turns, onToolCall, shape: o.shape ?? 'recorded' })
   const provider = createClaudeAgentProvider({ sdkOptionsForProject: () => ({}), queryImpl: scripted.query })
@@ -84,7 +82,6 @@ function rig(o: RigOpts) {
     sendNotice: async (_c, t) => { notices.push(t) },
     recordTurn: (r) => { records.push(r) },
     replyDelivery: rt,
-    replyDeliveryModeFor: () => o.mode,
     ...(o.progressAfterMs !== undefined ? { replyProgressAfterMs: o.progressAfterMs } : {}),
   })
   const send = (text = '你好') => c.dispatch({ chatId: CHAT, userId: CHAT, text, msgType: 'text', createTimeMs: Date.now(), accountId: 'acct' } as InboundMsg)
@@ -98,40 +95,13 @@ const wx = (tool: string, args: Record<string, unknown> = {}, ifError?: ClaudeSc
 
 const OPENING = '我先看一下项目列表。'
 const ANSWER = '你现在有两个项目:wechat-cc 和 blog。'
-/** legacy:照今天的提示词,正文经 reply 说出去(失败就改用文字说),reply 之后不再写字。 */
-const legacyTurn = (): ClaudeScriptedTurn => ({ steps: [
-  { think: '用户问项目' }, say(OPENING), wx('list_projects'),
-  wx('reply', { chat_id: CHAT, text: ANSWER }, [say(`reply 工具失败了,直接说:${ANSWER}`)]),
-] })
 const daemonTurn = (): ClaudeScriptedTurn => ({ steps: [{ think: '用户问项目' }, say(OPENING), wx('list_projects'), say(ANSWER)] })
 
 describe('Claude:双发旁白 / 吞话在 daemon 模式下结构性消失(生产的 Claude provider + Agent SDK 消息形状)', () => {
-  it('legacy(对照):名字照 mcp__wechat__reply ⇒ reply 认得出,只有 reply 的那句(两种块形状一样)', async () => {
-    for (const shape of ['recorded', 'bundled'] as const) {
-      const t = rig({ turns: [legacyTurn()], mode: 'legacy', shape })
-      await t.send(); await t.close()
-      expect(t.wechat).toEqual([ANSWER])
-      expect(t.logs.some(l => l.startsWith('[FALLBACK_REPLY]'))).toBe(false)
-    }
-  })
-
-  it('legacy(复现根因):wechat MCP 挂在插件名下 ⇒ 认不出 reply ⇒ FALLBACK_REPLY 把开场旁白也发出去(双发)', async () => {
-    const t = rig({ turns: [legacyTurn()], mode: 'legacy', shape: 'drift' })
-    await t.send(); await t.close()
-    expect(t.logs.some(l => l.startsWith('[FALLBACK_REPLY]'))).toBe(true)
-    expect(t.wechat).toEqual([ANSWER, OPENING])
-  })
-
-  it('legacy(复现根因):reply 调用失败 ⇒ 照样算「回过了」⇒ 改用文字说的正文整轮丢掉,主人什么都没收到', async () => {
-    const t = rig({ turns: [legacyTurn()], mode: 'legacy', shape: 'tool_error' })
-    await t.send(); await t.close()
-    expect(t.wechat).toEqual([])
-    expect(t.records[0]).toMatchObject({ replyToolCalled: true, outcome: 'completed' })
-  })
 
   it('daemon:只交付最后一段,一次;没有 FALLBACK_REPLY;四种外部条件交付一字不差;result.result 与分段一致', async () => {
     for (const shape of ['recorded', 'bundled', 'drift', 'tool_error'] as const) {
-      const t = rig({ turns: [daemonTurn()], mode: 'daemon', shape })
+      const t = rig({ turns: [daemonTurn()], shape })
       await t.send(); await t.close()
       expect(t.wechat, shape).toEqual([ANSWER])
       expect(t.logs.some(l => l.startsWith('[FALLBACK_REPLY]'))).toBe(false)
@@ -141,14 +111,14 @@ describe('Claude:双发旁白 / 吞话在 daemon 模式下结构性消失(生产
   })
 
   it('daemon + bundled:同一条消息里「开场 + tool_use」,下一条是结论 ⇒ 开场是旁白(以前先发 tool_call 再发文字,开场和结论粘成一段)', async () => {
-    const t = rig({ turns: [{ steps: [say(OPENING), wx('list_projects'), wx('memory_list'), say('再翻翻记忆。'), wx('memory_read', { path: 'profile.md' }), say(ANSWER)] }], mode: 'daemon', shape: 'bundled' })
+    const t = rig({ turns: [{ steps: [say(OPENING), wx('list_projects'), wx('memory_list'), say('再翻翻记忆。'), wx('memory_read', { path: 'profile.md' }), say(ANSWER)] }], shape: 'bundled' })
     await t.send(); await t.close()
     expect(t.wechat).toEqual([ANSWER])
     expect(t.records[0]).toMatchObject({ narrationSegments: 2, toolCalls: ['wechat/list_projects', 'wechat/memory_list', 'wechat/memory_read'] })
   })
 
   it('daemon:子 agent(Task)里的过程文字不进最后的话,也不算旁白;最后的话是主 agent 的总结', async () => {
-    const t = rig({ turns: [{ steps: [say('我让子 agent 去查一下。'), { subagent: [say('子 agent:开始搜索 src/。'), { tool: 'Grep', args: { pattern: 'reply' } }, say('子 agent:找到 3 处。')] }, say('查完了:reply 工具在 3 个地方注册。')] }], mode: 'daemon' })
+    const t = rig({ turns: [{ steps: [say('我让子 agent 去查一下。'), { subagent: [say('子 agent:开始搜索 src/。'), { tool: 'Grep', args: { pattern: 'reply' } }, say('子 agent:找到 3 处。')] }, say('查完了:reply 工具在 3 个地方注册。')] }] })
     await t.send(); await t.close()
     expect(t.wechat).toEqual(['查完了:reply 工具在 3 个地方注册。'])
     expect(t.records[0]).toMatchObject({ narrationSegments: 1 })
@@ -156,7 +126,7 @@ describe('Claude:双发旁白 / 吞话在 daemon 模式下结构性消失(生产
 
   it('daemon:同一个会话连跑四轮,每轮恰好一条', async () => {
     const turns = ['在的。', '收到。', '好的,只回一句。', '嗯。'].map(a => ({ steps: [{ think: 'x' }, say(a)] }))
-    const t = rig({ turns, mode: 'daemon' })
+    const t = rig({ turns })
     for (let i = 0; i < 4; i++) await t.send(`第 ${i + 1} 轮`)
     await t.close()
     expect(t.wechat).toEqual(['在的。', '收到。', '好的,只回一句。', '嗯。'])
@@ -165,24 +135,24 @@ describe('Claude:双发旁白 / 吞话在 daemon 模式下结构性消失(生产
   })
 
   it('daemon:语音是本轮的附件(工具没有 chat_id),文字之后发;与语音同文 ⇒ 只发语音', async () => {
-    const t = rig({ turns: [{ steps: [wx('voice', { text: '晚安,早点休息。' }), say('晚安~')] }], mode: 'daemon' })
+    const t = rig({ turns: [{ steps: [wx('voice', { text: '晚安,早点休息。' }), say('晚安~')] }] })
     await t.send('用语音说晚安'); await t.close()
     expect(t.wechat).toEqual(['晚安~', '[语音] 晚安,早点休息。'])
     expect(t.records[0]).toMatchObject({ delivery: 'text', attachments: 1 })
-    const same = rig({ turns: [{ steps: [wx('voice', { text: '晚安,早点休息。' }), say('晚安,早点休息。')] }], mode: 'daemon' })
+    const same = rig({ turns: [{ steps: [wx('voice', { text: '晚安,早点休息。' }), say('晚安,早点休息。')] }] })
     await same.send('用语音说晚安'); await same.close()
     expect(same.wechat).toEqual(['[语音] 晚安,早点休息。'])
   })
 
   it('daemon:长任务超过进度阈值 ⇒ 只发一次进度(最近一段旁白),之后最后的话照常一条', async () => {
-    const t = rig({ turns: [{ steps: [say(OPENING), wx('list_projects'), { delayMs: 60 }, say('再翻翻记忆。'), wx('memory_read', { path: 'profile.md' }), { delayMs: 60 }, say(ANSWER)] }], mode: 'daemon', progressAfterMs: 30 })
+    const t = rig({ turns: [{ steps: [say(OPENING), wx('list_projects'), { delayMs: 60 }, say('再翻翻记忆。'), wx('memory_read', { path: 'profile.md' }), { delayMs: 60 }, say(ANSWER)] }], progressAfterMs: 30 })
     await t.send(); await t.close()
     expect(t.wechat).toEqual([OPENING, ANSWER])
     expect(t.logs.filter(l => l.startsWith('[REPLY_PROGRESS]'))).toHaveLength(1)
   })
 
   it('daemon:app 这一轮 ⇒ 整个 TurnReply(含旁白)交给接收器,一个字都不进微信,也不发进度', async () => {
-    const t = rig({ turns: [{ steps: [say(OPENING), wx('list_projects'), { delayMs: 40 }, say(ANSWER)] }], mode: 'daemon', sink: true, progressAfterMs: 10 })
+    const t = rig({ turns: [{ steps: [say(OPENING), wx('list_projects'), { delayMs: 40 }, say(ANSWER)] }], sink: true, progressAfterMs: 10 })
     await t.send(); await t.close()
     expect(t.wechat).toEqual([])
     expect(t.captured).toHaveLength(1)
@@ -190,18 +160,15 @@ describe('Claude:双发旁白 / 吞话在 daemon 模式下结构性消失(生产
     expect(t.records[0]).toMatchObject({ delivery: 'text' })
   })
 
-  it('daemon:私聊里写 NO_REPLY ⇒ 令牌不外泄,记 REPLY_SILENT_IN_DM;legacy 同样的输出会被 FALLBACK 原样发出去', async () => {
-    const d = rig({ turns: [{ steps: [say('NO_REPLY')] }], mode: 'daemon' })
+  it('daemon:私聊里写 NO_REPLY ⇒ 令牌不外泄,记 REPLY_SILENT_IN_DM', async () => {
+    const d = rig({ turns: [{ steps: [say('NO_REPLY')] }] })
     await d.send('不用回我了'); await d.close()
     expect(d.wechat).toEqual([])
     expect(d.logs.some(l => l.startsWith('[REPLY_SILENT_IN_DM]'))).toBe(true)
-    const l = rig({ turns: [{ steps: [say('NO_REPLY')] }], mode: 'legacy' })
-    await l.send('不用回我了'); await l.close()
-    expect(l.wechat).toEqual(['NO_REPLY'])
   })
 
   it('daemon:SDK 标注的 API 错误(#190 的真实形状)⇒ 只发通知,错误原文一个字都不交付', async () => {
-    const t = rig({ turns: [{ steps: [], apiError: { sdkError: 'authentication_failed', text: 'Failed to authenticate. API Error: 403 Request not allowed', status: 403 } }], mode: 'daemon' })
+    const t = rig({ turns: [{ steps: [], apiError: { sdkError: 'authentication_failed', text: 'Failed to authenticate. API Error: 403 Request not allowed', status: 403 } }] })
     await t.send(); await t.close()
     expect(t.wechat).toEqual([])
     expect(t.notices).toHaveLength(1)
@@ -210,7 +177,7 @@ describe('Claude:双发旁白 / 吞话在 daemon 模式下结构性消失(生产
   })
 
   it('daemon:说了半句之后才出 API 错误 ⇒ 半句不交付,只发通知', async () => {
-    const t = rig({ turns: [{ steps: [say('我先看一下。'), wx('list_projects'), { raw: { type: 'assistant', parent_tool_use_id: null, error: 'server_error', message: { content: [{ type: 'text', text: 'API Error: Connection refused (ECONNREFUSED)' }] } } }, { raw: { type: 'result', subtype: 'success', session_id: 's', num_turns: 2, duration_ms: 1, is_error: true, api_error_status: null, result: 'API Error: Connection refused (ECONNREFUSED)' } }] }], mode: 'daemon' })
+    const t = rig({ turns: [{ steps: [say('我先看一下。'), wx('list_projects'), { raw: { type: 'assistant', parent_tool_use_id: null, error: 'server_error', message: { content: [{ type: 'text', text: 'API Error: Connection refused (ECONNREFUSED)' }] } } }, { raw: { type: 'result', subtype: 'success', session_id: 's', num_turns: 2, duration_ms: 1, is_error: true, api_error_status: null, result: 'API Error: Connection refused (ECONNREFUSED)' } }] }] })
     await t.send(); await t.close()
     expect(t.wechat).toEqual([])
     expect(t.records[0]).toMatchObject({ outcome: 'error', errorCode: 'network' })
@@ -228,7 +195,7 @@ describe('Claude:#190 的真实错误样本走 daemon ⇒ 一个字都不交付�
     it(s.id, async () => {
       const st = s.sdkStructure!
       const text = (st['assistant.text'] as string | undefined) ?? s.message
-      const t = rig({ turns: [{ steps: [], apiError: { sdkError: String(st['assistant.error']), text, status: (st['result.api_error_status'] as number | null | undefined) ?? null } }], mode: 'daemon' })
+      const t = rig({ turns: [{ steps: [], apiError: { sdkError: String(st['assistant.error']), text, status: (st['result.api_error_status'] as number | null | undefined) ?? null } }] })
       await t.send(); await t.close()
       expect(t.wechat).toEqual([])
       expect(t.records[0]!.outcome).not.toBe('completed')
@@ -238,7 +205,7 @@ describe('Claude:#190 的真实错误样本走 daemon ⇒ 一个字都不交付�
 
   it('SDK 只给了 is_error、没有标注的助理消息 ⇒ provider 补一个带码的 error,result.result 不当回复', async () => {
     const leak = 'API Error: 529 Overloaded'
-    const t = rig({ turns: [{ steps: [{ raw: { type: 'assistant', parent_tool_use_id: null, message: { content: [{ type: 'text', text: leak }] } } }, { raw: { type: 'result', subtype: 'success', session_id: 's', num_turns: 1, duration_ms: 1, is_error: true, api_error_status: 529, result: leak } }] }], mode: 'daemon' })
+    const t = rig({ turns: [{ steps: [{ raw: { type: 'assistant', parent_tool_use_id: null, message: { content: [{ type: 'text', text: leak }] } } }, { raw: { type: 'result', subtype: 'success', session_id: 's', num_turns: 1, duration_ms: 1, is_error: true, api_error_status: 529, result: leak } }] }] })
     await t.send(); await t.close()
     expect(t.wechat).toEqual([])
     expect(t.records[0]).toMatchObject({ outcome: 'error', errorCode: 'provider_error' })
@@ -256,11 +223,9 @@ const recorded = (id: string): Obj[] => {
 }
 /** 录到的这一轮的 SDK result.result(= 主 agent 最后一条助理消息的文字)。 */
 const resultOf = (id: string): string => String(recorded(id).find(m => m.type === 'result')?.result ?? '')
-async function replayClaude(id: string, mode: ReplyDeliveryMode, rename = false) {
-  let msgs = recorded(id)
-  // drift:同一条真流,只是 wechat MCP 挂在插件名下(legacy 认不出 reply)。
-  if (rename) msgs = JSON.parse(JSON.stringify(msgs).replaceAll('mcp__wechat__', 'mcp__plugin_wechat-cc_wechat__')) as Obj[]
-  const t = rig({ turns: [{ steps: [], replay: msgs }], mode })
+async function replayClaude(id: string) {
+  const msgs = recorded(id)
+  const t = rig({ turns: [{ steps: [], replay: msgs }] })
   await t.send(); await t.close()
   return t
 }
@@ -276,7 +241,7 @@ describe('Claude:回放沙盒真跑录到的流', () => {
 
   for (const id of ['daemon-d1', 'daemon-h1']) {
     it(`${id}:daemon 只交付最后一段,和 SDK 的 result.result 一字不差(没有 REPLY_FINAL_CHECK)`, async () => {
-      const d = await replayClaude(id, 'daemon')
+      const d = await replayClaude(id)
       expect(d.wechat.join('\n\n')).toBe(resultOf(id))
       expect(d.records[0]).toMatchObject({ outcome: 'completed', delivery: 'text', replyToolCalled: false })
       expect(d.logs.some(l => l.startsWith('[REPLY_FINAL_CHECK]'))).toBe(false)
@@ -284,19 +249,8 @@ describe('Claude:回放沙盒真跑录到的流', () => {
   }
 
   it('daemon-f1:语音(工具调用是录下来的,不经 MCP)之后的最后一句照常交付;g1 推送里写的是 NO_REPLY', async () => {
-    const f = await replayClaude('daemon-f1', 'daemon')
+    const f = await replayClaude('daemon-f1')
     expect(f.wechat).toEqual([resultOf('daemon-f1')])
     expect(resultOf('daemon-g1')).toBe('NO_REPLY')
   })
-
-  for (const id of ['legacy-f1', 'legacy-h1', 'legacy-i1']) {
-    it(`${id}:legacy 下真 Claude 在 reply 之后再写一句自述 —— 认得出 reply 时被丢掉;wechat MCP 换个名字就作为第二条发出去`, async () => {
-      const ok = await replayClaude(id, 'legacy')
-      expect(ok.wechat).toEqual([])
-      expect(ok.records[0]).toMatchObject({ replyToolCalled: true })
-      const drift = await replayClaude(id, 'legacy', true)
-      expect(drift.logs.some(l => l.startsWith('[FALLBACK_REPLY]'))).toBe(true)
-      expect(drift.wechat.join('\n\n')).toContain(resultOf(id).trim().slice(0, 6))
-    })
-  }
 })

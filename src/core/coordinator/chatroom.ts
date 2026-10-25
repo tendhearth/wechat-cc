@@ -236,8 +236,8 @@ export function createChatroom(ctx: CoordinatorCtx, runner: TurnRunner, failures
       let summary: TurnSummary | undefined
       let err: string | undefined
       const dn = namesIn(deps.registry, providerId).short
-      // 回复交付 daemon(spec §4.9):这位发言人的最后的话经端口送达(前缀 [名字] 由 daemon 加,/chat 一人一条
-      // 不分条);开轮在 dispatch 之前,附件才登记得上。legacy 的发言人照旧拼全部文字一条发。
+      // 回复交付(spec §4.9):这位发言人的最后的话经端口送达(前缀 [名字] 由 daemon 加,/chat 一人一条
+      // 不分条);开轮在 dispatch 之前,附件才登记得上。
       let delivery: TurnDeliveryHandle | undefined
       let report: DeliveryReport | undefined
       let unlink: (() => void) | undefined
@@ -247,9 +247,7 @@ export function createChatroom(ctx: CoordinatorCtx, runner: TurnRunner, failures
           chatId: msg.chatId, tierProfile: auth.tierProfile, permissionMode: auth.permissionMode,
         })
         unlink = runner.linkAbort(signal, () => { void handle.cancel?.() })
-        if (ctx.deliveryModeFor(providerId) === 'daemon') {
-          delivery = deps.replyDelivery!.begin(msg.chatId, { mode: 'daemon', context: 'chatroom', providerId, participantLabel: dn, textStrategy: ctx.textStrategyFor(providerId) })
-        }
+        delivery = deps.replyDelivery.begin(msg.chatId, { context: 'chatroom', providerId, participantLabel: dn, textStrategy: ctx.textStrategyFor(providerId) })
         summary = await runner.run({ chatId: msg.chatId, alias: proj.alias, providerId, handle, prompt: promptFor(providerId), budget: 'beat' })
       } catch (e) {
         err = e instanceof Error ? e.message : String(e)
@@ -276,35 +274,17 @@ export function createChatroom(ctx: CoordinatorCtx, runner: TurnRunner, failures
           await failures.handleAuthFailed(msg.chatId, proj.alias, providerId, summary)
           return null
         }
-        if (delivery) {
-          if (outcome !== 'completed' || !summary) return null
-          // `#RANK:` 是内部信号:先在 conductor 这一侧剥掉(§4.9),交付与互评用同一份剥过的文字。
-          const ranks: string[][] = []
-          const strip = (t: string): string => { const p = parsePeerRank(t); if (p.ranking.length) ranks.push(p.ranking); return p.text }
-          const parts = { finalText: strip(summary.finalText ?? ''), narration: (summary.narration ?? []).map(strip) }
-          report = await delivery.deliver(parts)
-          const said = buildTurnReply(parts, [], 'chatroom', ctx.textStrategyFor(providerId)).reply
-          const text = said.silent ? '' : said.text.trim()
-          if (!text) return null
-          return { speaker: providerId, text, ranking: countRank ? (ranks[ranks.length - 1] ?? []) : [] }
-        }
-        // Defense-in-depth: canUseTool already denies the reply tool in
-        // chatroom mode, but if an agent still gets one through, its plain
-        // `assistantText` is meta-chatter ("（本轮结束）"), not its real
-        // argument — forwarding it leaks garbage AND poisons the verdict
-        // transcript. Drop the turn instead. (Mirrors dispatchParallel.)
-        if (summary?.replyToolCalled) {
-          deps.log('COORDINATOR_CHATROOM', `chat=${msg.chatId} provider=${providerId} used reply tool in a beat — dropped`)
-          return null
-        }
-        const raw = (summary?.assistantText ?? []).join('\n').trim()
-        if (!raw) return null
-        const parsed = parsePeerRank(raw)
-        const text = parsed.text
-        const ranking = countRank ? parsed.ranking : []
+        // acquire 抛了(没开轮)、或这一拍没跑完:没有话可交付。
+        if (!delivery || outcome !== 'completed' || !summary) return null
+        // `#RANK:` 是内部信号:先在 conductor 这一侧剥掉(§4.9),交付与互评用同一份剥过的文字。
+        const ranks: string[][] = []
+        const strip = (t: string): string => { const p = parsePeerRank(t); if (p.ranking.length) ranks.push(p.ranking); return p.text }
+        const parts = { finalText: strip(summary.finalText ?? ''), narration: (summary.narration ?? []).map(strip) }
+        report = await delivery.deliver(parts)
+        const said = buildTurnReply(parts, [], 'chatroom', ctx.textStrategyFor(providerId)).reply
+        const text = said.silent ? '' : said.text.trim()
         if (!text) return null
-        await deps.sendAssistantText?.(msg.chatId, `[${dn}] ${text}`)
-        return { speaker: providerId, text, ranking }
+        return { speaker: providerId, text, ranking: countRank ? (ranks[ranks.length - 1] ?? []) : [] }
       } finally {
         runner.record({ chatId: msg.chatId, provider: providerId, alias: proj.alias, mode: 'chatroom', startedAt, endedAt, outcome, summary, error: err, report })
       }

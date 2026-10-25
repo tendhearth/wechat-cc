@@ -71,9 +71,11 @@ describe('buildPushTickText', () => {
     })
     expect(out).toContain('<companion_tick ts="2026-05-13T01:30:00.000Z" default_chat_id="chat_test_1" />')
     expect(out).toContain('有一条到点的跟进：「跟进健身计划进展」')
-    expect(out).toContain('不调用 reply')
+    // D3 起只有一版:最后写下的话就是推送,不发只写 NO_REPLY(以前「不调用 reply」那一版删了)。
+    expect(out).toContain('NO_REPLY')
+    expect(out).not.toMatch(/reply\b/)
     expect(out).toContain('memory_read')
-    expect(out).toContain('不算过期')
+    expect(out).toContain('已经没意义了')
     expect(out).toContain('晚了几天也照常发')
   })
 })
@@ -88,15 +90,15 @@ describe('buildGapCheckinText', () => {
     expect(out).toContain('<companion_tick ts="2026-05-16T01:30:00.000Z" chat_id="chat_test_1" kind="gap" />')
     expect(out).toContain('主动问候')
     expect(out).toContain('3 天')
-    expect(out).toContain('reply')
-    expect(out).toContain('这次不发')
+    expect(out).toContain('NO_REPLY')
+    expect(out).not.toMatch(/reply\b/)
   })
 })
 
 describe('主动消息 × 别主动聊的话题(10-20)', () => {
   it('each proactive envelope carries the avoid line when set, and nothing when not', () => {
     const avoid = ['health', 'money'] as const
-    for (const style of [{}, { replyDelivery: 'final_text' as const }]) {
+    for (const style of [{}, { allSegments: true }]) {
       expect(buildPushTickText({ nowIso: 't', defaultChatId: 'c', intention: 'x', avoid: [...avoid] }, style)).toContain('健康、钱')
       expect(buildGapCheckinText({ nowIso: 't', chatId: 'c', daysSinceContact: 2, avoid: [...avoid] }, style)).toContain('健康、钱')
       expect(buildHuntText({ nowIso: 't', avoid: [...avoid] }, style)).toContain('健康、钱')
@@ -111,8 +113,8 @@ describe('buildHuntText', () => {
     expect(out).toContain('<companion_tick ts="2026-05-16T01:30:00.000Z" kind="hunt" />')
     expect(out).toContain('打猎')
     expect(out).toContain('值得')
-    expect(out).toContain('reply')
-    expect(out).toContain('不调用 reply')
+    expect(out).toContain('NO_REPLY')
+    expect(out).not.toMatch(/reply\b/)
   })
 })
 
@@ -235,6 +237,15 @@ function setupDeps(opts: {
     log: (tag, line) => { logs.push(`${tag}|${line}`) },
     chatPrefs: makeFakeChatPrefs(chatPrefsEntries),
     careLedger: makeFakeCareLedger(careLedgerEntries),
+    // 交付端口(D3 起必填,只有这一条路)。缺省夹具:每轮都当「发出了一条」—— 这些用例钉的是闸门、登记、
+    // 互斥、台账,不是交付本身;要看交付的用例(「伙伴推送 × 回复交付」那一组)自己换掉它。
+    replyDelivery: {
+      begin: () => ({
+        progress: async () => {},
+        deliver: async () => ({ delivery: 'text', target: 'wechat', bubbles: 1, attachmentsSent: 0, failures: [], msgIds: ['m'] }),
+        abandon: () => {},
+      }),
+    },
   }
   // 主动开口的门(第三批 3a):跟生产一样由 wireSpeech 造,care 档 / 免打扰读同一份 prefs + 伙伴配置;
   // 微信那头每次都现读 deps.ilink.sendMessage(测试会在 setup 之后换掉它)。
@@ -1885,20 +1896,19 @@ describe('伙伴推送 × 回复交付(spec 2026-10-03 §4.4 / 已定 ③)', () 
       begin(chatId, o) {
         begun.push({ chatId, ...o })
         return {
-          mode: 'daemon', progress: async () => {},
+          progress: async () => {},
           deliver: async (parts) => { delivered.push(parts); return { target: 'wechat', bubbles: report.delivery === 'text' ? 1 : 0, attachmentsSent: 0, failures: [], msgIds: [], ...report } },
           abandon: (r) => { abandoned.push(r) },
         }
       },
     }
-    ;(s.deps as TickDeps).replyDeliveryModeFor = () => 'daemon'
     return { begun, delivered, abandoned }
   }
 
-  it('推送提示的 final_text 版:写一句就是推送,不发就只写 NO_REPLY(不提 reply)', () => {
-    const push = buildPushTickText({ nowIso: 't', defaultChatId: 'c', intention: 'x' }, { replyDelivery: 'final_text' })
-    const gap = buildGapCheckinText({ nowIso: 't', chatId: 'c', daysSinceContact: 3 }, { replyDelivery: 'final_text' })
-    const hunt = buildHuntText({ nowIso: 't' }, { replyDelivery: 'final_text' })
+  it('推送提示:写一句就是推送,不发就只写 NO_REPLY(不提 reply)', () => {
+    const push = buildPushTickText({ nowIso: 't', defaultChatId: 'c', intention: 'x' })
+    const gap = buildGapCheckinText({ nowIso: 't', chatId: 'c', daysSinceContact: 3 })
+    const hunt = buildHuntText({ nowIso: 't' })
     for (const t of [push, gap, hunt]) {
       expect(t).toContain('NO_REPLY')
       expect(t).not.toMatch(/reply\b/)
@@ -1906,19 +1916,19 @@ describe('伙伴推送 × 回复交付(spec 2026-10-03 §4.4 / 已定 ③)', () 
   })
 
   it('聊天型模型的推送提示:说清楚这一轮写的都会发出去;不发就只写 NO_REPLY 别解释', () => {
-    const t = buildPushTickText({ nowIso: 't', defaultChatId: 'c', intention: 'x' }, { replyDelivery: 'final_text', allSegments: true })
+    const t = buildPushTickText({ nowIso: 't', defaultChatId: 'c', intention: 'x' }, { allSegments: true })
     expect(t).toContain('都会原样发出去')
     expect(t).toContain('别解释为什么不发')
-    expect(buildPushTickText({ nowIso: 't', defaultChatId: 'c', intention: 'x' }, { replyDelivery: 'final_text' })).toContain('最后写下的话就是推送')
+    expect(buildPushTickText({ nowIso: 't', defaultChatId: 'c', intention: 'x' })).toContain('最后写下的话就是推送')
   })
 
   // 审稿第二轮第 3 条:推不推已经由 plan / shouldSpeak 在调用模型之前定了 ⇒ compose 这一轮是「写出这条推送」,
   // NO_REPLY 只是兜底,并且明说「写不出值得发的内容才用」。
-  it('final_text 的三种推送提示:已决定要推送、请写出这条推送;NO_REPLY 只在写不出值得发的内容时用', () => {
+  it('三种推送提示:已决定要推送、请写出这条推送;NO_REPLY 只在写不出值得发的内容时用', () => {
     for (const t of [
-      buildPushTickText({ nowIso: 't', defaultChatId: 'c', intention: 'x' }, { replyDelivery: 'final_text', allSegments: true }),
-      buildGapCheckinText({ nowIso: 't', chatId: 'c', daysSinceContact: 3 }, { replyDelivery: 'final_text', allSegments: true }),
-      buildHuntText({ nowIso: 't' }, { replyDelivery: 'final_text', allSegments: true }),
+      buildPushTickText({ nowIso: 't', defaultChatId: 'c', intention: 'x' }, { allSegments: true }),
+      buildGapCheckinText({ nowIso: 't', chatId: 'c', daysSinceContact: 3 }, { allSegments: true }),
+      buildHuntText({ nowIso: 't' }, { allSegments: true }),
     ]) {
       expect(t).toContain('已决定要推送')
       expect(t).toContain('写不出值得发的内容')
@@ -1931,7 +1941,7 @@ describe('伙伴推送 × 回复交付(spec 2026-10-03 §4.4 / 已定 ③)', () 
     cleanup.push(s.stateDir)
     const d = withDelivery(s, [{ kind: 'text', text: '我看看记忆' }, { kind: 'tool_call', server: 'wechat', tool: 'memory_read' }, { kind: 'text', text: '项目最近顺利吗?' }, { kind: 'result', sessionId: 's', numTurns: 2, durationMs: 1 }])
     await buildTickBodies(s.deps).pushTick({ nowIso: '2026-05-13T10:00:00.000Z' })
-    expect(d.begun).toEqual([{ chatId: 'chat-1', mode: 'daemon', context: 'tick', providerId: 'claude', textStrategy: 'last_segment' }])
+    expect(d.begun).toEqual([{ chatId: 'chat-1', context: 'tick', providerId: 'claude', textStrategy: 'last_segment' }])
     expect(d.delivered).toEqual([{ finalText: '项目最近顺利吗?', narration: ['我看看记忆'] }])
     const text = (s.dispatch.mock.calls[0] as unknown[])[0] as string
     expect(text).toContain('NO_REPLY')
@@ -1989,15 +1999,6 @@ describe('伙伴推送 × 回复交付(spec 2026-10-03 §4.4 / 已定 ③)', () 
     expect(s.dispatch).not.toHaveBeenCalled()
   })
 
-  it('legacy(缺省):不碰端口,提示里照旧是 reply', async () => {
-    const s = setupDeps({ defaultChatId: 'chat-1', inFlight: false, agendaMd: '- [ ] due:2026-05-13 check in on project' })
-    cleanup.push(s.stateDir)
-    const d = withDelivery(s, [{ kind: 'result', sessionId: 's', numTurns: 1, durationMs: 1 }])
-    ;(s.deps as TickDeps).replyDeliveryModeFor = () => 'legacy'
-    await buildTickBodies(s.deps).pushTick({ nowIso: '2026-05-13T10:00:00.000Z' })
-    expect(d.begun).toEqual([])
-    expect((s.dispatch.mock.calls[0] as unknown[])[0]).toContain('不调用 reply')
-  })
 })
 
 // CC 主动找你的第二条路(2026-10-18,companion/proactive-channel.ts):微信不能用 / 发失败 ⇒ 落到 App。
@@ -2007,7 +2008,7 @@ describe('伙伴推送 × App 第二条路(2026-10-18)', () => {
   beforeEach(() => { cleanup = [] })
   afterEach(() => { for (const d of cleanup) rmSync(d, { recursive: true, force: true }) })
 
-  function wire(s: Setup, o: { degraded: boolean; closed?: boolean; wechatError?: string; app: boolean; mode?: 'daemon' | 'legacy' }) {
+  function wire(s: Setup, o: { degraded: boolean; closed?: boolean; wechatError?: string; app: boolean }) {
     s.dispatch.mockImplementation(() => ({ async *[Symbol.asyncIterator]() {
       yield { kind: 'text', text: '前两天说的面试,后来怎么样了?' }
       yield { kind: 'result', sessionId: 's', numTurns: 1, durationMs: 1 }
@@ -2019,7 +2020,7 @@ describe('伙伴推送 × App 第二条路(2026-10-18)', () => {
       sendWechat, app: () => app, log: (t, l) => { s.logs.push(`${t}|${l}`) },
     })
     const replyDelivery = makeReplyDeliveryRuntime({ sendText: sendWechat, sleep: async () => {}, log: (t, l) => { s.logs.push(`${t}|${l}`) } })
-    const deps: TickDeps = { ...s.deps, health: { shouldSuspend: () => o.degraded }, proactive, replyDelivery, replyDeliveryModeFor: () => o.mode ?? 'daemon' }
+    const deps: TickDeps = { ...s.deps, health: { shouldSuspend: () => o.degraded }, proactive, replyDelivery }
     return { deps, sendWechat, app }
   }
   const agenda = '- [ ] due:2026-05-13 check in on project'
@@ -2047,14 +2048,6 @@ describe('伙伴推送 × App 第二条路(2026-10-18)', () => {
     expect(w.app.record).not.toHaveBeenCalled()
     expect(s.careLedgerEntries['chat-1']).toBeUndefined()
     expect(s.logs.some(l => l.includes('COMPANION') && l.includes('degraded'))).toBe(true)
-  })
-
-  it('微信 degraded + App 收得到,但当轮是 legacy(reply 工具直连微信,改不了道)⇒ 照旧停手', async () => {
-    const s = setupDeps({ defaultChatId: 'chat-1', inFlight: false, agendaMd: agenda })
-    cleanup.push(s.stateDir)
-    const w = wire(s, { degraded: true, app: true, mode: 'legacy' })
-    await buildTickBodies(w.deps).pushTick({ nowIso: '2026-05-13T10:00:00.000Z' })
-    expect(s.dispatch).not.toHaveBeenCalled()
   })
 
   it('微信能用、发成功 ⇒ 只走微信,App 不记不推(不响两次)', async () => {
@@ -2141,12 +2134,11 @@ describe('runJobTurn', () => {
     const delivered: unknown[] = []
     ;(s.deps as TickDeps).replyDelivery = {
       begin: () => ({
-        mode: 'daemon', progress: async () => {},
+        progress: async () => {},
         deliver: async (parts) => { delivered.push(parts); return { target: 'wechat', bubbles: report.delivery === 'text' ? 1 : 0, attachmentsSent: 0, failures: [], msgIds: [], ...report } },
         abandon: () => {},
       }),
     }
-    ;(s.deps as TickDeps).replyDeliveryModeFor = () => 'daemon'
     return { forget, delivered }
   }
   const ok = [{ kind: 'text', text: '有两个新 issue:#12 #13' }, { kind: 'result', sessionId: 's', numTurns: 1, durationMs: 1 }]
@@ -2270,8 +2262,7 @@ describe('runJobTurn × 预先拼好的信封(早报)', () => {
     const s = setupDeps({ defaultChatId: 'owner', inFlight: false })
     s.dispatch.mockImplementation(() => ({ async *[Symbol.asyncIterator]() { yield { kind: 'text', text: '早上好' }; yield { kind: 'result', sessionId: 's', numTurns: 1, durationMs: 1 } } }))
     ;(s.deps.boot as unknown as { sessionManager: Record<string, unknown> }).sessionManager.forget = vi.fn(async () => {})
-    ;(s.deps as TickDeps).replyDelivery = { begin: () => ({ mode: 'daemon', progress: async () => {}, deliver: async () => ({ target: 'wechat', bubbles: 1, attachmentsSent: 0, failures: [], msgIds: [], delivery: 'text' }), abandon: () => {} }) }
-    ;(s.deps as TickDeps).replyDeliveryModeFor = () => 'daemon'
+    ;(s.deps as TickDeps).replyDelivery = { begin: () => ({ progress: async () => {}, deliver: async () => ({ target: 'wechat', bubbles: 1, attachmentsSent: 0, failures: [], msgIds: [], delivery: 'text' }), abandon: () => {} }) }
     await buildTickBodies(s.deps).runJobTurn({ kind: 'job', scheduled: true, chatId: 'owner', jobId: 'j1', text: '早报', nowIso: 't', buildText: () => 'BRIEF-ENVELOPE' })
     expect((s.dispatch.mock.calls[0] as unknown as [string])[0]).toBe('BRIEF-ENVELOPE')
   })
@@ -2281,8 +2272,7 @@ describe('runJobTurn × 预先拼好的信封(早报)', () => {
       const s = setupDeps({ defaultChatId: 'owner', inFlight: false })
       s.dispatch.mockImplementation(() => ({ async *[Symbol.asyncIterator]() { yield { kind: 'text', text: '早上好' }; yield { kind: 'result', sessionId: 's', numTurns: 1, durationMs: 1 } } }))
       ;(s.deps.boot as unknown as { sessionManager: Record<string, unknown> }).sessionManager.forget = vi.fn(async () => {})
-      ;(s.deps as TickDeps).replyDelivery = { begin: () => ({ mode: 'daemon', progress: async () => {}, deliver: async (r: { finalText: string }) => { delivered.push(r.finalText); return { target: 'wechat', bubbles: 1, attachmentsSent: 0, failures: [], msgIds: [], delivery: 'text' } }, abandon: () => {} }) } as never
-      ;(s.deps as TickDeps).replyDeliveryModeFor = () => 'daemon'
+      ;(s.deps as TickDeps).replyDelivery = { begin: () => ({ progress: async () => {}, deliver: async (r: { finalText: string }) => { delivered.push(r.finalText); return { target: 'wechat', bubbles: 1, attachmentsSent: 0, failures: [], msgIds: [], delivery: 'text' } }, abandon: () => {} }) } as never
       return s
     }
     await buildTickBodies(arm().deps).runJobTurn({ kind: 'brief', scheduled: false, chatId: 'owner', jobId: 'j1', text: '早报', nowIso: 't', transformFinal: (t) => `${t}\n2. 拍板?` })
@@ -2297,8 +2287,7 @@ describe('runJobTurn × SpeechPolicy(第三批 3a 第 3 步):晨报 / 周报是 
     if (o.tz) saveCompanionConfig(s.stateDir, { ...loadCompanionConfig(s.stateDir), timezone: o.tz })
     s.dispatch.mockImplementation(() => ({ async *[Symbol.asyncIterator]() { yield { kind: 'text', text: '早上好' }; yield { kind: 'result', sessionId: 's', numTurns: 1, durationMs: 1 } } }))
     ;(s.deps.boot as unknown as { sessionManager: Record<string, unknown> }).sessionManager.forget = vi.fn(async () => {})
-    ;(s.deps as TickDeps).replyDelivery = { begin: () => ({ mode: 'daemon', progress: async () => {}, deliver: async () => ({ target: 'wechat', bubbles: 1, attachmentsSent: 0, failures: [], msgIds: [], delivery: 'text' }), abandon: () => {} }) }
-    ;(s.deps as TickDeps).replyDeliveryModeFor = () => 'daemon'
+    ;(s.deps as TickDeps).replyDelivery = { begin: () => ({ progress: async () => {}, deliver: async () => ({ target: 'wechat', bubbles: 1, attachmentsSent: 0, failures: [], msgIds: [], delivery: 'text' }), abandon: () => {} }) }
     return s
   }
   // 10:00Z = 上海 18:00,落在 17:00–19:00

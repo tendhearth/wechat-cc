@@ -237,8 +237,8 @@ export interface BootstrapDeps {
   outboundTaps?: { observe: (chatId: string, text: string) => void }
   /**
    * 回复交付(spec 2026-10-03-reply-delivery)—— main.ts 里造的**同一个**实例,也传给
-   * internal-api(attach / message 路由、reply 路由的 shadow 旁听)和 wireMain(伙伴推送、app 轮)。
-   * 不接 ⇒ 所有 provider 一律按 legacy 走(老 fixture 不变)。
+   * internal-api(attach / message 路由)和 wireMain(伙伴推送、app 轮)。
+   * 不接(测试 / 最小嵌入)⇒ wire-coordinator 就地造一个只会直发微信的(交付只有这一条路,D3)。
    */
   replyDelivery?: import('../reply-delivery').ReplyDeliveryRuntime
   /**

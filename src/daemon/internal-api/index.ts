@@ -51,7 +51,6 @@ export function assertResponseContract(routeKey: string, body: unknown): void {
 import { computePresence } from './routes-presence'
 import { REQUEST_SCHEMAS } from './schema'
 import { ALL_CHATS, SEND_SCOPED_ROUTES, sendScopeDecision, sharedTokenTurn } from './send-scope'
-import { replyDeliveryFor } from '../../core/capability-matrix'
 
 export type {
   InternalApi,
@@ -303,11 +302,10 @@ export function createInternalApi(deps: InternalApiDeps): InternalApi {
     const callerChatId = caller.origin === 'session' && caller.sessionKey
       ? caller.sessionKey.split('/').slice(2).join('/')
       : undefined
-    // 共享令牌按本轮绑定(回复交付第 2 步):agy 走 daemon 交付时,`agy-static` 的「自己的 chat」就是此刻
-    // 正在跑的那一轮 agy 的聊天 —— 附件路由与发送类的 chat 范围门用它。其它路由(记忆 / 提醒……)照旧
-    // 只看令牌里读出来的 chatId(agy-static 没有)。
+    // 共享令牌按本轮绑定(回复交付第 2 步):`agy-static` 的「自己的 chat」就是此刻正在跑的那一轮 agy 的
+    // 聊天 —— 附件路由与发送类的 chat 范围门用它。其它路由(记忆 / 提醒……)照旧只看令牌里读出来的
+    // chatId(agy-static 没有)。
     const sharedTurn = sharedTokenTurn(caller, {
-      agyDaemon: replyDeliveryFor('agy') === 'daemon',
       turnChatFor: deps.replyDelivery ? (p) => deps.replyDelivery!.turnChatFor(p) : undefined,
     })
     const turnChatId = sharedTurn?.kind === 'bound' ? sharedTurn.chatId : undefined
@@ -326,7 +324,7 @@ export function createInternalApi(deps: InternalApiDeps): InternalApi {
     if (sendTarget) {
       const target = sendTarget(body)
       const decision = sendScopeDecision(target, sharedTurn
-        ? { tier: caller.tier, origin: caller.origin, chatId: turnChatId, sessionKey: caller.sessionKey, sharedTokenBound: true }
+        ? { tier: caller.tier, origin: caller.origin, chatId: turnChatId, sessionKey: caller.sessionKey }
         : { ...callerInfo, sessionKey: caller.sessionKey }, routeKey)
       const targetLabel = target === ALL_CHATS ? '*' : target
       if (decision.kind === 'deny') {

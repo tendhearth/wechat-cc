@@ -838,8 +838,7 @@ describe('回复交付第 4 步:codex 的「最后的话」分段边界(每个�
     expect(events.some(e => e.kind === 'result')).toBe(false)
   })
 
-  it('能力表:Codex 走 daemon,编码型取最后一段', () => {
-    expect(CODEX_CAPABILITIES.replyDelivery).toBe('daemon')
+  it('能力表:Codex 是编码型,取最后一段', () => {
     expect(CODEX_CAPABILITIES.replyText).toBe('last_segment')
   })
 })

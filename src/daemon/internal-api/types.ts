@@ -170,8 +170,8 @@ export interface InternalApiDeps {
    */
   outboundTaps?: { observe(chatId: string, text: string): void }
   /**
-   * 回复交付(spec 2026-10-03-reply-delivery)。第 0 步只用 `observeLegacy`:reply 路由把每一条
-   * legacy 回复交给 shadow 轮比对;attach / message 路由(第 1 步)也挂在这上面。
+   * 回复交付(spec 2026-10-03-reply-delivery):attach / message 路由登记到它上面;dispatcher 用它给
+   * 共享令牌(agy-static)认本轮的聊天。缺失 ⇒ attach 503。
    */
   replyDelivery?: import('../reply-delivery').ReplyDeliveryRuntime
   /**

@@ -21,6 +21,7 @@ import type { AgentEvent, AgentProvider, AgentSession } from './agent-provider'
 import type { Mode } from './conversation'
 import type { InboundMsg } from './prompt-format'
 import { TIER_PROFILES } from './user-tier'
+import { makeReplyDeliveryRuntime } from '../daemon/reply-delivery'
 
 const h = vi.hoisted(() => ({ script: [] as unknown[] }))
 
@@ -197,6 +198,8 @@ async function runCoordinatorTurn(s: Sample) {
     defaultProviderId: 'claude',
     format: (m: InboundMsg) => m.text,
     sendAssistantText: async (_chat: string, text: string) => { sent.push(text) },
+    // 回复交付端口(D3 起必填):出口同样记进 sent —— 错误轮一个字都不该从这里出去。
+    replyDelivery: makeReplyDeliveryRuntime({ sendText: async (_c, t) => { sent.push(t); return { msgId: 'm' } }, sleep: async () => {}, log: () => {} }),
     recordTurn: (r: TurnRecord) => { records.push(r) },
     permissionMode: 'strict',
     loadAccess: () => ({ dmPolicy: 'allowlist', allowFrom: [], admins: ['chat-1'] }),

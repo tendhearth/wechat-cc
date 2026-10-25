@@ -24,7 +24,7 @@ export function pickJobExecutor(has: (id: string) => boolean): (typeof JOB_PROVI
 export const JOB_TURN_MAX_MS = 4 * 60_000
 
 export function makeRunJobTurn(deps: TickDeps, dispatch: TickDispatch) {
-  const { resolveDispatch, deliveryModeOf } = dispatch
+  const { resolveDispatch } = dispatch
 
   async function runJobTurn(args: { chatId: string; jobId: string; text: string; nowIso: string; buildText?: (style: TickTextStyle) => string; /** 交付之前改一下模型写好的最后那段(早报接上要主人拍板的候选,§4.8);NO_REPLY 由调用方自己判。 */ transformFinal?: (finalText: string) => string; /** 主人点名哪家(换一家来审,10-20);只认 JOB_PROVIDERS,没装 ⇒ skipped:executor,不换人。 */ provider?: (typeof JOB_PROVIDERS)[number]; /** 'review' ⇒ REVIEW_PROFILE(不给网,评审 #460);缺省 JOB_PROFILE */ profile?: 'job' | 'review'; /** 这是哪一种话(SpeechPolicy)—— **必填,没有缺省**:缺省往放行的方向兜底,忘了传就悄悄成了「主人要的」(整合者评审 #524)。主人建的定时 = job、换一家来审 = review(都是 requested);晨报 = brief、周报 = recap(initiative)。 */ kind: 'job' | 'review' | 'brief' | 'recap'; /** 定时触发的(赶上免打扰的 initiative 当天记 skipped:quiet,不往后推);换一家来审不是。 */ scheduled: boolean }): Promise<JobTurnResult> {
     const { chatId, jobId } = args
@@ -34,7 +34,7 @@ export function makeRunJobTurn(deps: TickDeps, dispatch: TickDispatch) {
     const { proj } = gate
     const registry = deps.boot.registry as { has?: (id: string) => boolean }
     const providerId = args.provider ? ((JOB_PROVIDERS as readonly string[]).includes(args.provider) && (registry.has?.(args.provider) ?? false) ? args.provider : null) : pickJobExecutor(id => registry.has?.(id) ?? false)
-    if (!providerId || !deps.replyDelivery || deliveryModeOf(providerId) !== 'daemon') return 'skipped:executor'
+    if (!providerId) return 'skipped:executor'
     if (gate.blocked === 'session_in_flight') return 'skipped:busy'
     // 能不能开口交给 SpeechPolicy(第三批 3a):主人建的定时是 requested(免打扰 / 别烦我照发);晨报、周报是
     // initiative(内容是 CC 挑的)⇒ 别烦我不发、赶上免打扰当天记 skipped:quiet(运行器只有 10 分钟窗口,不往后推)。
@@ -52,10 +52,10 @@ export function makeRunJobTurn(deps: TickDeps, dispatch: TickDispatch) {
         // 先忘一次:上次若崩在半路(没走到 finally),留下的续接记录会让这次接着上次的对话(终审 minor)。
         try { await sm.forget?.(key) } catch { /* 没有就没有 */ }
         const handle = await deps.boot.sessionManager.acquire({ alias: key.alias, path: proj.path, providerId, chatId, tierProfile: args.profile === 'review' ? REVIEW_PROFILE : JOB_PROFILE, permissionMode: 'strict' })
-        const style: TickTextStyle = { replyDelivery: 'final_text', allSegments: replyTextStrategyFor(providerId) === 'all_segments' }
+        const style: TickTextStyle = { allSegments: replyTextStrategyFor(providerId) === 'all_segments' }
         // 早报(对标 #7)自己拼好信封(素材 + 写法);其余定时用主人的原话包一层。
         const text = args.buildText ? args.buildText(style) : buildJobText({ jobId, nowIso: args.nowIso, text: args.text }, style)
-        const turn = deps.replyDelivery!.begin(chatId, { mode: 'daemon', context: 'tick', providerId, textStrategy: replyTextStrategyFor(providerId), outbound })
+        const turn = deps.replyDelivery.begin(chatId, { context: 'tick', providerId, textStrategy: replyTextStrategyFor(providerId), outbound })
         // 到点就 cancel(终审 I3):不然一轮卡住就一直占着主人那条对话的锁,晚到的回复还会照发。
         const deadline = setTimeout(() => { void handle.cancel?.().catch(() => {}) }, JOB_TURN_MAX_MS)
         ;(deadline as { unref?: () => void }).unref?.()
