@@ -17,7 +17,6 @@ import type { PermissionRelayDeps } from '../../core/permission-relay'
 import { TIER_PROFILES } from '../../domain/user-tier'
 import { makeWorkbenchStore } from '../../core/workbench/store'
 import { makeWorkbenchService } from '../../core/workbench/service'
-import { makeReportSink } from '../reports/report-sink'
 import { makeRecollectSink } from '../recollection/recollect-sink'
 import { makeJournal } from '../../adapters/store/journal-store'
 import { wrapCheapEvalWithAuthFailCheck } from './wire-coordinator'
@@ -145,8 +144,8 @@ export function wireWorkbench(opts: {
   askUser: PermissionRelayDeps['askUser']; log: PermissionRelayDeps['log']
   /** 「一件事」登记处:任务与 matter 一对一同步(可选,老接线不传)。 */
   matters?: import('../../adapters/store/matters-store').MatterStore
-  /** 回报投递队列(task-3,2026-09-23):与 matters 一起有才接得上 ReportSink,单传一个不够。 */
-  reportOutbox?: import('../reports/outbox').ReportOutboxStore
+  /** 回报(task-3,2026-09-23;功能目录 src/features/reports 造好交进来):与 matters 一起有才接得上,单传一个不够。 */
+  reports?: import('../../core/matters/report').ReportSink
   /** 换一家来审(10-20):「任务 <编号> 请 @codex 审」起一次只读轮;main 里接 tickBodies.runJobTurn。 */
   requestReview?: (r: { taskId: string; providerId: string; material: string }) => boolean
   /** 网络闸门(2026-10-02):执行者 registry、起执行者 / 投补充、额度查询都过它。 */
@@ -229,15 +228,8 @@ export function wireWorkbench(opts: {
   opts.boot.registry.onRegister(id=>{ follow(id); if(registry.has(id))opts.log('WORKBENCH',`${id}: 晚到的执行者已进工作台`) })
   const store=makeWorkbenchStore(opts.db)
   // 回报投递(task-3,2026-09-23):两样都要有才接得上——没有 matters 就没法建/追出生地,
-  // 没有 reportOutbox 就没地方写;任一个缺,整条功能不存在(降级路径,同 matters 的老接线约定)。
-  const reports=opts.matters&&opts.reportOutbox?makeReportSink({
-    matters:opts.matters,outbox:opts.reportOutbox,
-    taskTitle:id=>store.get(id).title,artifactCount:id=>store.artifacts(id).length,
-    // 终审 Critical:「任务 <id> 静音」落的是 workbench_wechat_subscriptions.enabled=0;
-    // 没有订阅记录(从没配置过)按"没静音过"处理,不是默认静音。
-    notificationsEnabled:id=>store.wechatNotifications.subscription(id)?.enabled??true,
-    log:opts.log,
-  }):undefined
+  // 没有 ReportSink 就没地方写;任一个缺,整条功能不存在(降级路径,同 matters 的老接线约定)。
+  const reports=opts.matters?opts.reports:undefined
   // 回忆(task-5,fix round 2,2026-09-23,复审新 Important ③):只要 matters 就接得
   // 上——journal 用 opts.db 现开(makeJournal 是无状态构造,跟 wire-social.ts 里
   // recordVisit/recordPostcard 同一惯例)。便宜模型**不用**上面这个 wireWorkbench 自己

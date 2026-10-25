@@ -13,8 +13,7 @@ import {makeWorkbenchService,type WorkbenchService} from './service'
 import {MANAGED_NATIVE_CAPABILITIES} from './executor-capabilities'
 import {makeMatterStore,type MatterStore} from '../../adapters/store/matters-store'
 import type {ReportSink} from '../matters/report'
-import {makeReportSink} from '../../daemon/reports/report-sink'
-import {makeReportOutboxStore} from '../../daemon/reports/outbox'
+import {makeReportSink,makeReportOutboxStore} from '../../features/reports'
 
 /**
  * settleQuiet 那一拍入队回报(docs/cc-workbench.md「一件事」;task-3,2026-09-23):

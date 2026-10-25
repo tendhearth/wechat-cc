@@ -27,7 +27,6 @@ import { capabilitiesFor } from '../domain/capability-matrix'
 import { CORE_MEMORY_MAX_CHARS, KNOWLEDGE_MEMORY_MAX_CHARS } from '../domain/prompt-builder'
 import { summarizeJobs } from '../core/scheduled-jobs-store'
 import { makeProjectLessons } from '../core/workbench/project-lessons'
-import { makeWorkbenchStore } from '../core/workbench/store'
 import type { WorkbenchService } from '../core/workbench/service'
 import type { CliUpgrader } from '../core/cli-upgrade/engine'
 import type { DaemonModule } from './modules/container'
@@ -84,7 +83,7 @@ import { registerPolling, type PollingLifecycle } from './polling-lifecycle'
 import { startCliUpgrade } from './cli-upgrade/start'
 import { remindersFeature } from '../features/reminders'
 import { stickersFeature, type StickersFeature } from '../features/stickers'
-import { registerReportSweeper, sendReportVia } from './reports/sweeper'
+import { reportsFeature, reportSweeperModule, type ReportsFeature } from '../features/reports'
 import { runStartupSweeps } from './startup-sweeps'
 import { isHeartbeatFresh } from './single-instance'
 
@@ -468,10 +467,13 @@ export function daemonModules(f: Foundation): DaemonModule[] {
       },
     } satisfies DaemonModule<OwnerCommands>,
 
+    // 回报的队列 + ReportSink(src/features/reports):工作台入队要它,所以排在工作台前面;投递那一拍在下面 `reports`。
+    reportsFeature({ needs: [], deps: () => ({ db, matters: f.matters, log: (t, l) => log(t, l) }) }),
+
     // —— 工作台(「一起做」)——
     {
       name: 'workbench',
-      needs: ['bootstrap', 'cli-sessions', 'jobs', 'ilink-adapter', 'internal-api', 'network-gate'],
+      needs: ['bootstrap', 'cli-sessions', 'jobs', 'ilink-adapter', 'internal-api', 'network-gate', 'report-outbox'],
       lazy: ['cli-upgrade'],
       init(ctx): WorkbenchService {
         const boot = ctx.get<Bootstrap>('bootstrap')
@@ -481,7 +483,7 @@ export function daemonModules(f: Foundation): DaemonModule[] {
         const internalApi = ctx.get<InternalApiLifecycle>('internal-api')
         const cliUpgrade = ctx.late<CliUpgradeModule>('cli-upgrade')
         const service = wireWorkbench({
-          db, stateDir, boot, internalApi, matters: f.matters, reportOutbox: f.reportOutbox, networkGate: ctx.get<GuardRuntime>('network-gate').gate, permissionGate: cli.permissionGate, requestReview: (r) => jobs.requestReview(r),
+          db, stateDir, boot, internalApi, matters: f.matters, reports: ctx.get<ReportsFeature>('report-outbox').sink, networkGate: ctx.get<GuardRuntime>('network-gate').gate, permissionGate: cli.permissionGate, requestReview: (r) => jobs.requestReview(r),
           onTurnError: (providerId, code, message) => {
             cliUpgrade()?.upgrader()?.onTurnError(providerId, code, message)
             // 一起做里被拒也算(只有 agy 用一起做时,大脑那一行不该落后)
@@ -686,20 +688,8 @@ export function daemonModules(f: Foundation): DaemonModule[] {
     }),
     // 定时任务每分钟一拍(src/features/jobs):坏了只降级。
     jobsRunnerModule({ needs: ['wired'] }),
-    // 回报投递(task-3,2026-09-23):每轮答复回原对话说一声,人不在就等人回来再送。
-    lifecycleModule('reports', (ctx) => {
-      // 独立的一份 WorkbenchStore,只用来给「放弃投递」在那件事自己的时间线上留一笔(同一个 db,写入互相可见)。
-      const reportEventStore = makeWorkbenchStore(db)
-      return registerReportSweeper({
-        store: f.reportOutbox,
-        matters: f.matters,
-        send: sendReportVia(ctx.get<WiredDeps>('wired').speech),
-        log: (t, l) => log(t, l),
-        noteAbandoned: (matterId, text) => {
-          try { reportEventStore.addEvent(matterId, 'system', text) } catch { /* best effort — the drop itself already succeeded */ }
-        },
-      })
-    }, { needs: ['wired'] }),
+    // 回报投递(task-3,2026-09-23):每轮答复回原对话说一声,人不在就等人回来再送(src/features/reports)。
+    reportSweeperModule({ needs: ['wired'], speech: (c) => c.get<WiredDeps>('wired').speech }),
     // 开机的最后一步:一次性清扫(fire-and-forget,含「CC 回来了」),然后才开动工作台的通知 / 成果(见上)。
     {
       name: 'startup-sweeps',

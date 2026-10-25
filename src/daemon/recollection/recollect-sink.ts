@@ -10,7 +10,7 @@
  * overnight-only story — would use up the matter's one slot before any real
  * "back-and-forth" (turns/returned) ever had a chance to accumulate).
  *
- * Thin glue, same philosophy as ../reports/report-sink.ts: look up the
+ * Thin glue, same philosophy as ../../features/reports/report-sink.ts: look up the
  * matter (title + createdAt), pick a cheap model, and let the pure
  * `maybeRecollect` decide whether this crosses the story threshold. If it
  * does, write straight to journal.recordRecollection.

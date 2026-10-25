@@ -1,6 +1,6 @@
 /**
  * Report sweeper — the delivery loop for the report outbox (matter_report_outbox,
- * v65). Structurally mirrors src/daemon/reminders/sweeper.ts (the "先读" pointer
+ * v65). Structurally mirrors src/features/reminders/sweeper.ts (the "先读" pointer
  * in task-3-brief.md): every `intervalMs` it asks the outbox store for pending
  * rows whose next_at has passed and delivers each via `send(chatId, text)`.
  *
@@ -112,7 +112,7 @@
 import type {Lifecycle} from '../../lib/lifecycle'
 import type {MatterStore} from '../../adapters/store/matters-store'
 import type {ReportOutboxStore} from './outbox'
-import {isProactiveWindowClosed} from '../ilink/outbound-health'
+import {isProactiveWindowClosed} from '../../daemon/ilink/outbound-health'
 import {backoffMs, RETRY_WINDOW_MS} from '../../lib/delivery-backoff'
 import {shouldDisturb} from '../../core/matters/report'
 
@@ -168,7 +168,7 @@ export const MAX_SENDS_PER_SWEEP = 30
  *    -2 / 别的失败照旧走它的退避与放弃窗口;
  *  - report 不会被 drop(判定表);万一 ⇒ 当成一次普通失败,照样退避、照样有放弃窗口,不悄悄丢。
  */
-export function sendReportVia(speech: import('../speech/policy').SpeechPolicy): ReportSweepDeps['send'] {
+export function sendReportVia(speech: import('../../daemon/speech/policy').SpeechPolicy): ReportSweepDeps['send'] {
   return async (chatId, text) => {
     let sent: {ok: boolean; error?: string} = {ok: false, error: 'not_sent'}
     const o = await speech.say({kind: 'matter_report', chatId}, async (turn) => {

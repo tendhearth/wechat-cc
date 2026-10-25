@@ -6,7 +6,7 @@
  * conversation's own message flow (spec's Option A, no new source of truth).
  * This table only tracks DELIVERY: pending / attempts / next_at, plus the
  * exact text to resend verbatim if a retry is needed. Contrast with
- * src/daemon/reminders/store.ts, which this mirrors structurally.
+ * src/features/reminders/store.ts, which this mirrors structurally.
  */
 import type {Db} from '../../lib/db'
 import type {PendingReport} from '../../core/matters/report'
