@@ -7,6 +7,7 @@
  * 工作台、一件事那些数据自己带名字(providers[].displayName、agentNames),优先用数据里的;
  * 这份缓存给「AI 服务」菜单、对话页署名这类手里只有 id 的地方。
  */
+import { V1, v1 } from '../daemon-client.js'
 
 /** @typedef {{displayName?:unknown,settingsLabel?:unknown}} NameEntry */
 
@@ -38,7 +39,7 @@ export function haveExecutorNames() { return known.size > 0 }
 
 /** 拿一次 /v1/llm/health 只为了名字(不外呼,daemon 只回上次结果)。失败就算了,界面退回 id。 @param {((method:'GET',path:string)=>Promise<any>)|undefined} invokeApi */
 export async function loadExecutorNames(invokeApi) {
-  const r = await invokeApi?.('GET', '/v1/llm/health').catch(() => null)
+  const r = await (invokeApi ? v1(invokeApi, V1.llm.health).catch(() => null) : undefined)
   rememberExecutorNames(r?.names)
 }
 

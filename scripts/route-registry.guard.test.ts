@@ -12,7 +12,7 @@
  *
  * 4. 主人工作区(待办、记下的想法)那份名单(2026-10-21 架构复查 1-②):以前 lib.rs、api.js、test-shim.ts
  *    各手写一份、没人核对;现在表里 `desktop.ownerWorkspace` 是唯一声明,lib.rs / test-shim.ts 读生成物,
- *    api.js(webview 引不到生成物)照抄一份路径、这里核对相等。
+ *    api.js 读 gen:routes 写进 webview 的那份 `apps/desktop/src/generated/daemon-calls.js`(架构终态 F5 起;以前照抄一份)。
  *
  * 逐条行为没变由 `routes-snapshot.guard.test.ts` 对着改造前的快照证明;ownerWorkspace 那份对着下面
  * FORMER_OWNER_WORKSPACE(改造前三处手写名单的原样)证明。
@@ -22,7 +22,7 @@ import { readFileSync } from 'node:fs'
 import { join, dirname } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { ROUTES } from '../packages/protocol/src/routes'
-import { renderWorkbenchRoutes, WORKBENCH_ROUTES_JSON } from './gen-routes'
+import { DAEMON_CALLS_JS, renderDaemonCalls, renderWorkbenchRoutes, WORKBENCH_ROUTES_JSON } from './gen-routes'
 import { makeTokenRegistry } from '../src/daemon/internal-api/token-registry'
 import { ROUTE_MIN_TIER, TIER_RANK } from '../src/daemon/internal-api/route-tiers'
 
@@ -52,6 +52,9 @@ const diff = (a: Iterable<string>, b: ReadonlySet<string>) => [...a].filter(k =>
 describe('桌面白名单生成物与路由表一致', () => {
   it('workbench-routes.json 是最新的(否则跑 bun run gen:routes)', () => {
     expect(renderWorkbenchRoutes(GENERATED), '跑 bun run gen:routes 再提交').toBe(GENERATED)
+  })
+  it('apps/desktop/src/generated/daemon-calls.js 是最新的(否则跑 bun run gen:routes)', () => {
+    expect(readFileSync(DAEMON_CALLS_JS, 'utf8').replace(/\r\n/g, '\n'), '跑 bun run gen:routes 再提交').toBe(renderDaemonCalls())
   })
   it('CRLF 检出下也算一致(Windows 的 git autocrlf 会把生成物改成 CRLF)', () => {
     const crlf = GENERATED.replace(/\r?\n/g, '\r\n')
@@ -83,12 +86,11 @@ describe('lib.rs 与 workbench-proxy.ts 读的是生成物,不再手写名单', 
     expect(body.match(/\(\s*"(GET|POST)"\s*,\s*"\/v1\//g) ?? []).toEqual([])
     expect(body).toContain('workbench_routes()')
   })
-  it('lib.rs 测试里「应放行」的每一条都在生成的 tauri 名单里(不跑 cargo 也能对上)', () => {
+  it('lib.rs 测试里「应放行」的那一半从生成物逐条读,不再照抄一份路径表(架构终态 F5)', () => {
     const tests = LIB_RS.slice(LIB_RS.indexOf('fn allows_only_the_exact_workbench_method_route_pairs'))
     const allowedBlock = tests.slice(0, tests.indexOf('to be allowed'))
-    const tuples = [...allowedBlock.matchAll(/\(\s*"(GET|POST)"\s*,\s*"(\/v1\/[^"?]+)(?:\?[^"]*)?"\s*\)/g)].map(m => `${m[1]} ${m[2]}`)
-    expect(tuples.length).toBeGreaterThanOrEqual(30)
-    expect(diff(tuples, new Set(generated.tauri))).toEqual([])
+    expect(allowedBlock).toContain('generated_keys("tauri")')
+    expect([...allowedBlock.matchAll(/\(\s*"(GET|POST)"\s*,\s*"\/v1\//g)]).toEqual([])
   })
   it('workbench-proxy.ts import 生成物、ROUTES 取 devProxy', () => {
     const src = read('apps', 'desktop', 'workbench-proxy.ts')
@@ -147,16 +149,6 @@ const FORMER_OWNER_WORKSPACE = {
 }
 const pathOf = (key: string) => key.slice(key.indexOf(' ') + 1)
 
-/** api.js 里那份照抄:`export const OWNER_WORKSPACE_PATHS = new Set([ '…', … ])`。写法变了找不到 ⇒ 红。 */
-function apiJsOwnerWorkspacePaths(src: string): string[] {
-  const m = src.match(/export const OWNER_WORKSPACE_PATHS = new Set\(\[([^\]]*)\]\)/)
-  if (!m) throw new Error('api.js 里找不到 export const OWNER_WORKSPACE_PATHS = new Set([...])')
-  const body = m[1]!.replace(/\/\/[^\n]*/g, '')
-  const items = [...body.matchAll(/'([^']*)'|"([^"]*)"/g)].map(x => x[1] ?? x[2]!)
-  if (body.replace(/'[^']*'|"[^"]*"|[\s,]/g, '') !== '') throw new Error('api.js 的 OWNER_WORKSPACE_PATHS 里除了字符串字面量还有别的东西,守卫读不懂')
-  return items
-}
-
 describe('主人工作区名单(desktop.ownerWorkspace)只在路由表里声明一次', () => {
   const owner = desktopRows.filter(r => r.d.ownerWorkspace)
   const API_JS = read('apps', 'desktop', 'src', 'api.js')
@@ -180,15 +172,19 @@ describe('主人工作区名单(desktop.ownerWorkspace)只在路由表里声明�
       expect(key, key).toMatch(/^(GET|POST) \//)
     }
   })
-  it('lib.rs 从生成物读 ownerWorkspace,customer_review_api 里没有手写的 "/v1/…"', () => {
+  it('lib.rs 从生成物读 ownerWorkspace,daemon_request 与它的两半里没有手写的 "/v1/…"', () => {
     expect(fnBody(LIB_RS, 'fn owner_workspace_routes')).toContain('"ownerWorkspace"')
-    const body = fnBody(LIB_RS, 'async fn customer_review_api')
+    for (const name of ['async fn daemon_request', 'fn daemon_request_channel', 'async fn workbench_call']) expect(fnBody(LIB_RS, name).match(/"\/v1\//g) ?? [], name).toEqual([])
+    const body = fnBody(LIB_RS, 'async fn owner_workspace_call')
     expect(body).toContain('owner_workspace_request_check(')
     expect(body.match(/"\/v1\//g) ?? []).toEqual([])
     expect(LIB_RS).not.toMatch(/const OWNER_WORKSPACE_ROUTES/)
   })
-  it('api.js 的 OWNER_WORKSPACE_PATHS(webview 引不到生成物,照抄)= 生成物的路径', () => {
-    expect(apiJsOwnerWorkspacePaths(API_JS).sort()).toEqual(generated.ownerWorkspace.map(pathOf).sort())
+  it('api.js 的 OWNER_WORKSPACE_PATHS 从生成物来(daemon-calls.js),和 lib.rs 那份同源、没有照抄', async () => {
+    expect(API_JS).toContain("from './generated/daemon-calls.js'")
+    expect(API_JS).not.toMatch(/['"]\/v1\//)
+    const { OWNER_WORKSPACE_PATHS } = await import('../apps/desktop/src/generated/daemon-calls.js')
+    expect([...OWNER_WORKSPACE_PATHS].sort()).toEqual(generated.ownerWorkspace.map(pathOf).sort())
   })
   it('test-shim.ts 读生成物:POST 那几条从 ownerWorkspace 推出来,GET 的每一条本进程都有处理器,没有手写名单', () => {
     expect(SHIM).toContain("import WORKBENCH_ROUTES from './src-tauri/generated/workbench-routes.json'")
@@ -199,10 +195,5 @@ describe('主人工作区名单(desktop.ownerWorkspace)只在路由表里声明�
     }
     // POST 的路径不再以字面量出现在 shim 里(只剩 playwright 那边的拦截,不在这个文件)
     for (const key of generated.ownerWorkspace.filter(k => k.startsWith('POST '))) expect(SHIM, key).not.toContain(`'${pathOf(key)}'`)
-  })
-  it('api.js 读法自己的失败方式:找不到 / 混进非字面量 ⇒ 报错,不静默当空', () => {
-    expect(() => apiJsOwnerWorkspacePaths('const X = 1')).toThrow(/找不到/)
-    expect(() => apiJsOwnerWorkspacePaths("export const OWNER_WORKSPACE_PATHS = new Set(['/v1/a', SOME_VAR])")).toThrow(/读不懂/)
-    expect(apiJsOwnerWorkspacePaths("export const OWNER_WORKSPACE_PATHS = new Set([\n  '/v1/a', // x\n  \"/v1/b\",\n])")).toEqual(['/v1/a', '/v1/b'])
   })
 })

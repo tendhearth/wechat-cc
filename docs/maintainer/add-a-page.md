@@ -27,7 +27,7 @@
 | `desktop.tier` | 最低档位 guest / trusted / admin | 不写这条路由 ⇒ 按 admin(fail-closed) |
 | `desktop.tokens` | 按路由逐条放行的令牌:`operator`(桌面宿主)/ `federation` / `selftest` | 桌面打包版要调 ⇒ 必须有 `operator` |
 | `desktop.tauri` / `devProxy` | 打包版宿主代理放行 / 浏览器预览 dev 代理放行 | `devProxy` 必须同时 `tauri` |
-| `desktop.ownerWorkspace` | 主人私事(待办、记下的想法):走 `customer_review_api` 宿主命令,不走 workbench 代理 | 跟 `tauri` 互斥 |
+| `desktop.ownerWorkspace` | 主人私事(待办、记下的想法):走宿主命令 `daemon_request` 的主人工作区那一半,不走工作台那一半 | 跟 `tauri` 互斥 |
 | `phone.link` / `set.link` | 10 分钟链接令牌能不能走:`none` / `read` / `write`(后两者要写 `reason`) | **缺省 `none`**:只给配过对的设备 |
 | `module` | 属于哪个可整块关掉的模块(`MODULE_NAMES`) | 模块关着 ⇒ 鉴权之后统一回 503 `module_off` |
 
@@ -49,7 +49,8 @@
 
 ### 桌面(`apps/desktop/src/`)
 
-- 调用一律走 `api.js`:`invokeApi`(普通 `/v1/*`)、`invokeWorkbenchApi`(工作台,经宿主代理,前端拿不到 operator 凭据)、主人私事经 `OWNER_WORKSPACE_PATHS` 自动交给宿主。**不要**自己 `fetch` daemon。
+- 调用一律走 `api.js` 的传输:`invokeApi`(普通 `/v1/*`)、`invokeWorkbenchApi`(经宿主命令 `daemon_request`,前端拿不到 operator 凭据)、主人私事经 `OWNER_WORKSPACE_PATHS` 自动交给宿主。**不要**自己 `fetch` daemon。
+- **路径不手写**(架构终态 F5):`v1(invokeApi, V1.ns.m, { query, body }, opts)`,`V1` 从 `src/daemon-client.js` 拿。新调用先在 `packages/protocol/src/desktop-calls.ts` 加一行再 `bun run gen:routes`(写 `src/generated/daemon-calls.js`)。`scripts/client-paths.guard.test.ts` 扫到一条引号起头的 `/v1` 就红。
 - `invokeApi` 遇到非 2xx 是**抛** `Error(码)`:按码分支要 `catch` 以后看 `err.message`,别 `.catch(() => null)` 把码吞掉(#545 修过一处)。拒写配置这类码已经在 `api.js` 统一翻成人话(`configRefusalText`)。
 - 新的一块放在已有模块里(`modules/*.js`),带同名的 `*.test.ts`(happy-dom)。显示执行者名字用 `executor-names.js`,它读 daemon 给的 `displayName` / `agentNames`,不手写。
 - 端到端用 Playwright(`apps/desktop/playwright/`,`bun x playwright test`,端口 4176 别被占)。点侧栏 / 此刻页的控件一律走 fixtures 的 `clickNav` / `reveal`,不要直接 `page.click` 折叠区里的东西。

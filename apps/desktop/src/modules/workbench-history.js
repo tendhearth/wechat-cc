@@ -1,5 +1,6 @@
 // @ts-check
 import { escapeWorkbenchHtml as escape, renderWorkbenchMarkdown, renderWorkbenchUserText, captureUserSources, restoreUserSources } from './workbench-markdown.js'
+import { V1, v1 } from '../daemon-client.js'
 /** @typedef {import('../../../../src/adapters/workbench/native-history').NativeHistoryItem} Item */
 /** @typedef {import('../../../../src/adapters/workbench/native-history').NativeHistoryPage} Page */
 /** @typedef {import('../../../../src/adapters/workbench/native-history').NativeHistoryPreview} Preview */
@@ -38,7 +39,7 @@ export function createHistoryController(invoke,paint,providers,names={}){
     const query=new URLSearchParams({providerId:state.providerId,q:state.q,limit:'50'})
     if(append&&state.nextCursor)query.set('cursor',state.nextCursor)
     try{
-      const page=/** @type {Page} */(await invoke('GET',`/v1/workbench/sessions?${query}`))
+      const page=/** @type {Page} */(await v1(invoke, V1.workbench.sessions, { query: query }))
       if(!alive||request!==generation)return
       state.items=[...new Map([...(append?state.items:[]),...page.items].map(item=>[item.key,item])).values()]
       state.nextCursor=page.nextCursor;state.coverage=page.coverage
@@ -50,7 +51,7 @@ export function createHistoryController(invoke,paint,providers,names={}){
     const query=new URLSearchParams({key:item.key,limit:'100'})
     if(append&&state.preview?.nextCursor)query.set('cursor',state.preview.nextCursor)
     try{
-      const page=/** @type {Preview} */(await invoke('GET',`/v1/workbench/session?${query}`))
+      const page=/** @type {Preview} */(await v1(invoke, V1.workbench.session, { query: query }))
       if(!alive||request!==generation)return
       if(page.session.key!==item.key)throw new Error('wrong_session')
       state.pages=append?[...state.pages,page].slice(-5):[page]
@@ -72,7 +73,7 @@ export function createHistoryController(invoke,paint,providers,names={}){
       if(!messages.length)return null
       state.busy=true;state.error='';paint()
       try{
-        const result=/** @type {{task:{id:string}}} */(await invoke('POST','/v1/workbench/import',{key:preview.session.key,pages:state.pages.map(p=>({...p.page,sourceFingerprint:p.sourceFingerprint})),messageIds:messages.map(m=>m.id)}))
+        const result=/** @type {{task:{id:string}}} */(await v1(invoke, V1.workbench.import, { body: {key:preview.session.key,pages:state.pages.map(p=>({...p.page,sourceFingerprint:p.sourceFingerprint})),messageIds:messages.map(m=>m.id)} }))
         return alive&&request===generation?result.task.id:null
       }catch(error){if(alive&&request===generation)state.error=fail(error);return null}
       finally{if(alive&&request===generation){state.busy=false;paint()}}

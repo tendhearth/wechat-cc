@@ -14,6 +14,7 @@
 import { invokeApi } from '../api.js'
 import { escapeHtml, showToast } from '../view.js'
 import { createRecordReader, isVisibleRecordTarget } from './record-reader.js'
+import { V1, v1 } from '../daemon-client.js'
 
 /** @type {Map<string, any>} */
 let records = new Map()
@@ -237,7 +238,7 @@ export function renderHuntBag(data) {
  */
 export async function markJournalSeen() {
   try {
-    const r = /** @type {{ ok?: boolean } | null} */ (await invokeApi('POST', '/v1/journal/seen'))
+    const r = /** @type {{ ok?: boolean } | null} */ (await v1(invokeApi, V1.journal.seen))
     return !!r?.ok
   } catch { return false }
 }
@@ -245,7 +246,7 @@ export async function markJournalSeen() {
 export async function refreshHuntBag() {
   const ticket = ++readGeneration
   const resp = /** @type {{items?:Array<any>}|null} */ (
-    await invokeApi('GET', '/v1/journal').catch(() => null))
+    await v1(invokeApi, V1.journal.list).catch(() => null))
   if (ticket !== readGeneration) return false
   const items = Array.isArray(resp?.items) ? resp.items : null
   renderHuntBag({ items })
@@ -286,9 +287,9 @@ export async function onHuntBagClick(ev) {
     if (Array.isArray(g) && g.length > 0 && g.every(x => typeof x === 'string')) ids = g
   } catch { /* 单条 */ }
   let transportFailed = false
-  /** @param {string} path @param {(id: string) => Record<string, unknown>} body */
-  const each = async (path, body) => {
-    const rs = await Promise.all(ids.map(x => invokeApi('POST', path, body(x)).catch(() => { transportFailed = true; return null })))
+  /** @param {import('../daemon-client.js').V1Key} call @param {(id: string) => Record<string, unknown>} body */
+  const each = async (call, body) => {
+    const rs = await Promise.all(ids.map(x => v1(invokeApi, call, { body: body(x) }).catch(() => { transportFailed = true; return null })))
     return rs.map(r => !!(/** @type {{ok?:boolean}|null} */ (r))?.ok)
   }
   // ok:false = 这条已经不在了(另一个窗口删过)。**不能装作成功** ——
@@ -306,8 +307,8 @@ export async function onHuntBagClick(ev) {
   btn.disabled = true
   try {
     const oks = action === 'status'
-      ? await each('/v1/journal/status', id => ({ id, status: btn.getAttribute('data-hb-status') }))
-      : await each('/v1/journal/remove', id => ({ id }))
+      ? await each(V1.journal.status, id => ({ id, status: btn.getAttribute('data-hb-status') }))
+      : await each(V1.journal.remove, id => ({ id }))
     if (owner === pageGeneration) report(oks)
     if (owner === pageGeneration && action === 'status' && oks.every(Boolean)) {
       const fresh = records.get(id)

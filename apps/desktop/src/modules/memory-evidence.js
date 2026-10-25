@@ -1,6 +1,7 @@
 // @ts-check
 /// <reference lib="dom" />
 import { escapeHtml } from "../view.js"
+import { V1, v1 } from '../daemon-client.js'
 
 /** @typedef {{kind:'memory',path:string,label:string}|{kind:'observation'|'milestone',id:string,label:string}|{kind:'project',project:string,path:string,label:string}} MemorySourceRef */
 /** @typedef {{content:string,revision:string,editable:boolean,canMarkOutdated:boolean,needsRefresh:boolean,archived?:boolean}} Source */
@@ -60,7 +61,7 @@ export function createMemoryEvidenceController({call,onReviewed=()=>{}}) {
     update({selectedIndex:index,source:null,loading:true,saving:false,draft:"",baseContent:"",revision:"",dirty:false,error:"",notice:"",confirmation:null})
     try {
       const query=new URLSearchParams({chat_id:chatId,...identity(ref)})
-      const result=/** @type {Source & {ok?:boolean,error?:string}} */ (await call("GET",`/v1/memory/source?${query}`))
+      const result=/** @type {Source & {ok?:boolean,error?:string}} */ (await v1(call, V1.memory.source, { query }))
       if(token!==sequence||!state.open)return
       if(!result?.ok||typeof result.content!=="string"||typeof result.revision!=="string")throw Error(result?.error||"invalid_source")
       result.editable=result.editable===true&&(ref.kind==='memory'||ref.kind==='observation')
@@ -112,7 +113,7 @@ export function createMemoryEvidenceController({call,onReviewed=()=>{}}) {
       const token=sequence,chatId=state.chatId,content=state.draft,revision=state.revision,draftKey=key(chatId,ref)
       remember();update({saving:true,error:""})
       try {
-        const result=/** @type {{ok?:boolean,error?:string}} */ (await call('POST','/v1/memory/source/review',{chat_id:chatId,...identity(ref),revision,action,...(action==='correct'?{content}:{})}))
+        const result=/** @type {{ok?:boolean,error?:string}} */ (await v1(call, V1.memory.sourceReview, { body: {chat_id:chatId,...identity(ref),revision,action,...(action==='correct'?{content}:{})} }))
         if(!result?.ok)throw Error(result?.error||'unavailable')
         const kept=drafts.get(draftKey);if(kept?.content===content&&kept.revision===revision)drafts.delete(draftKey)
         onReviewed({chatId,action})

@@ -4,10 +4,11 @@
 // 终端会话只经 hooks 才到得了 CC。「CC 现在怎么样」那一行(daemon capabilities.ts,action.run =
 // cli_hooks_install)和引导页最后一步都用这里的同一个按钮:点了先说一句会改什么、能撤掉,
 // 主人再点「确定」才 POST /v1/cli/hooks/install —— 明确点了才算同意,绝不自动装。
+import { V1, v1, v1Path } from '../daemon-client.js'
 
 export const HOOKS_RUN = 'cli_hooks_install'
 const READ_TRIES = 3
-export const HOOKS_INSTALL_PATH = '/v1/cli/hooks/install'
+export const HOOKS_INSTALL_PATH = v1Path(V1.cli.hooksInstall)
 // 确认只说一句(原因上一行已经说过);改哪几个文件、怎么撤,收在「详细」里(2026-10-16)。
 export const HOOKS_CONFIRM = '只加 CC 自己的几条 hook，随时能撤掉。'
 export const HOOKS_DETAIL = '改的是 Claude Code 的 ~/.claude/settings.json 和 Codex 的 hooks.json，别的设置不碰。想撤掉：在终端运行 wechat-cc hook uninstall。'
@@ -37,7 +38,7 @@ function btn(cls, text, onClick) {
  */
 export async function runHooksInstall(call) {
   try {
-    const r = /** @type {{ ok?: boolean, results?: Array<{ ok?: boolean, error?: string, skipped?: string }> } | null} */ (await call('POST', HOOKS_INSTALL_PATH, {}))
+    const r = /** @type {{ ok?: boolean, results?: Array<{ ok?: boolean, error?: string, skipped?: string }> } | null} */ (await v1(call, V1.cli.hooksInstall, { body: {} }))
     if (r && r.ok === false) {
       const bad = (r.results ?? []).find(x => x.ok === false)
       return { ok: false, error: bad?.error ?? (bad?.skipped === 'cli_not_found' ? '这台电脑上没找到这个 CLI' : '没接上') }
@@ -114,7 +115,7 @@ export function mountOnboardTerminal(deps) {
   async function load() {
     const mine = ++seq
     try {
-      const r = /** @type {{ capabilities?: Array<{ id: string, name: string, reason: string, state: string, action?: { label: string, run?: string } }> } | null} */ (await deps.call('GET', '/v1/connections'))
+      const r = /** @type {{ capabilities?: Array<{ id: string, name: string, reason: string, state: string, action?: { label: string, run?: string } }> } | null} */ (await v1(deps.call, V1.connections.get))
       if (mine !== seq || !started) return
       const cap = (r?.capabilities ?? []).find(c => c.id === 'terminal')
       row = cap?.action?.run === HOOKS_RUN ? { name: cap.name, reason: cap.reason, label: cap.action.label } : null

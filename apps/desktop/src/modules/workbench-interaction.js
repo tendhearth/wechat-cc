@@ -2,6 +2,7 @@
 import {executionSignature} from './workbench-execution.js'
 /** @typedef {import('./workbench-execution.js').ExecutionChoice} ExecutionChoice */
 import {attachmentSignature,renderMessageAttachments} from './workbench-attachments.js'
+import { V1, v1 } from '../daemon-client.js'
 /** @typedef {import('./workbench-attachments.js').Attachment} Attachment */
 /** @typedef {{id:string,header:string,question:string,options:Array<{label:string,description:string}>,multiSelect?:boolean,allowOther?:boolean}} Question */
 /** @typedef {{id:string,taskId:string,createdAt:number,questions:Question[]}} QuestionRequest */
@@ -119,7 +120,7 @@ export function createWorkbenchInteractions(deps) {
       attempts.set(taskId, attempt); write('input:' + taskId, attempt)
       state.busy = true; state.error = ''; changed()
       try {
-        const result = /** @type {{input?:LiveInput}} */ (await deps.invokeWorkbenchApi('POST', '/v1/workbench/input', { id: taskId, runId, requestId: attempt.id, text, ...(attachments.length?{attachmentIds:attachments.map(a=>a.id),draftId:files.draftId}:{}) }))
+        const result = /** @type {{input?:LiveInput}} */ (await v1(deps.invokeWorkbenchApi, V1.workbench.input, { body: { id: taskId, runId, requestId: attempt.id, text, ...(attachments.length?{attachmentIds:attachments.map(a=>a.id),draftId:files.draftId}:{}) } }))
         const receipt = result?.input
         if (!receipt || receipt.id !== attempt.id || receipt.taskId !== taskId || receipt.runId !== runId || receipt.text !== text || attachmentSignature(receipt.attachments)!==attachmentSignature(attachments) || (attempt.execution&&executionSignature(receipt.execution)!==executionSignature(attempt.execution)) || !['pending', 'sending', 'delivered', 'held', 'withdrawn'].includes(receipt.status)) throw new Error('unconfirmed_receipt')
         // A remounted composer can still show this text when the old request settles.
@@ -151,7 +152,7 @@ export function createWorkbenchInteractions(deps) {
       }
       state.busy = true; state.error = ''; changed()
       try {
-        const result = /** @type {{ok?:boolean}} */ (await deps.invokeWorkbenchApi('POST', '/v1/workbench/answer', { id: request.taskId, requestId: request.id, answers }))
+        const result = /** @type {{ok?:boolean}} */ (await v1(deps.invokeWorkbenchApi, V1.workbench.answer, { body: { id: request.taskId, requestId: request.id, answers } }))
         if (result?.ok !== true) throw new Error('unconfirmed_answer')
         state.resolved = true
         const key = keyFor(request.taskId, request.id)
@@ -166,7 +167,7 @@ export function createWorkbenchInteractions(deps) {
       if (state.busy) return false
       state.busy = true; state.error = ''; changed()
       try {
-        const result = /** @type {{ok?:boolean}} */ (await deps.invokeWorkbenchApi('POST', '/v1/workbench/withdraw-input', { id: taskId, requestId }))
+        const result = /** @type {{ok?:boolean}} */ (await v1(deps.invokeWorkbenchApi, V1.workbench.withdrawInput, { body: { id: taskId, requestId } }))
         if (result?.ok !== true) throw new Error('unconfirmed_withdrawal')
         return true
       } catch (error) { state.error = errorText(error); return false }

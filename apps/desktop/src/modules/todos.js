@@ -14,6 +14,7 @@
 import { escapeHtml, showToast } from "../view.js"
 import { invokeApi } from "../api.js"
 import { showPageError } from "./page-status.js"
+import { V1, v1 } from '../daemon-client.js'
 
 /** @typedef {{ id: number, contact: string, kind: string|null, predicate: string, value: string, time_ref: string|null, confidence: string, updated_at: number }} ObligationRow */
 
@@ -134,9 +135,9 @@ async function refresh() {
   closeRemindPicker()
   try {
     const [factsResp, contactsResp, settledResp] = await Promise.all([
-      /** @type {Promise<{ results?: ObligationRow[] }>} */ (api("POST", "/v1/knowledge/facts/find_facts", { kind: "obligation", status: "active", limit: 200 })),
-      /** @type {Promise<{ contacts?: Array<{ username: string, display: string }> }>} */ (api("POST", "/v1/knowledge/graph/top_contacts", { by: "closeness", limit: 500 }).catch(() => ({ contacts: [] }))),
-      /** @type {Promise<{ results?: ObligationRow[] }>} */ (api("POST", "/v1/knowledge/facts/find_facts", { kind: "obligation", status: "resolved", limit: 100 }).catch(() => ({ results: [] }))),
+      /** @type {Promise<{ results?: ObligationRow[] }>} */ (v1(api, V1.knowledge.findFacts, { body: { kind: "obligation", status: "active", limit: 200 } })),
+      /** @type {Promise<{ contacts?: Array<{ username: string, display: string }> }>} */ (v1(api, V1.knowledge.topContacts, { body: { by: "closeness", limit: 500 } }).catch(() => ({ contacts: [] }))),
+      /** @type {Promise<{ results?: ObligationRow[] }>} */ (v1(api, V1.knowledge.findFacts, { body: { kind: "obligation", status: "resolved", limit: 100 } }).catch(() => ({ results: [] }))),
     ])
     if (!active || request.generation !== generation) return
     // A form may have been opened on the old rows while this read was pending.
@@ -195,7 +196,7 @@ async function resolveOwnerChatId() {
   // memory list is a contact array, not an ownership signal. Match the
   // daemon's resolveAdminChatId contract; a preferred chat must be an admin.
   const [status, access] = await Promise.all([
-    /** @type {Promise<{ default_chat_id?: string|null }>} */ (api("GET", "/v1/companion/status")),
+    /** @type {Promise<{ default_chat_id?: string|null }>} */ (v1(api, V1.companion.status)),
     /** @type {Promise<{ admins?: string[] }>} */ (invokeCli("wechat_cli_json", { args: ["access", "list", "--json"] })),
   ])
   const admins = (access.admins ?? []).filter(id => typeof id === "string" && id.length > 0)
@@ -367,7 +368,7 @@ async function scheduleReminder(current, atIso) {
     }
     current.posted = true
     const response = /** @type {{ ok?: boolean, error?: string }} */ (
-      await api("POST", "/v1/reminders/schedule", { chat_id: chatId, text: `⏰ 待办：${current.text}`, due_at: atIso })
+      await v1(api, V1.reminders.schedule, { body: { chat_id: chatId, text: `⏰ 待办：${current.text}`, due_at: atIso } })
     )
     if (!isCurrentPicker(current)) return
     if (response.ok === false) {
@@ -418,7 +419,7 @@ async function onListClick(ev) {
   setFactBusy(factId, true, item)
   if (btn instanceof HTMLButtonElement) btn.disabled = true
   try {
-    const response = /** @type {{ ok?: boolean }} */ (await api("POST", "/v1/knowledge/facts/set_fact_status", { id: factId, status }))
+    const response = /** @type {{ ok?: boolean }} */ (await v1(api, V1.knowledge.setFactStatus, { body: { id: factId, status } }))
     if (actionGeneration !== generation) return
     if (response?.ok === false) {
       showToast("这条待办可能已经变了，请刷新后再试。")

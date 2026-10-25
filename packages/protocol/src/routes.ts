@@ -29,7 +29,7 @@
  *   - `tauri` 打包版 App 的宿主代理(lib.rs workbench_request_allowed)放行;`devProxy` 浏览器预览的 dev 代理
  *     (workbench-proxy.ts)也放行。`devProxy` 必须同时 `tauri`;matter 那几条只走 tauri(dev 代理经 test-shim
  *     另一条路)。`tauri` 必须同时有 `operator` —— 宿主代理拿的就是 operator 凭据。
- *   - `ownerWorkspace` 主人工作区(待办、记下的想法):打包版走 lib.rs 的 `customer_review_api` 宿主命令
+ *   - `ownerWorkspace` 主人工作区(待办、记下的想法):打包版走 lib.rs 的 `daemon_request` 宿主命令(主人工作区那一半)
  *     (按路径放行,GET / POST 都收),桌面 api.js 的 OWNER_WORKSPACE_PATHS 据此把请求交给宿主,dev 预览的
  *     test-shim.ts 照同一份名单代理。和 `tauri` 互斥(一条路由只走一个宿主命令),必须有 `operator`。
  * - `phone`(`/m`、`/m/api/*`)与 `set`(`/set`、`/set/api/*`):设置面板的令牌(配过对的设备令牌一律能走)。
@@ -55,7 +55,7 @@ export interface DesktopSurface {
   readonly tauri?: true
   /** dev 代理(workbench-proxy.ts)放行。 */
   readonly devProxy?: true
-  /** 主人工作区:lib.rs 的 customer_review_api / api.js 的 OWNER_WORKSPACE_PATHS / test-shim.ts 放行。 */
+  /** 主人工作区:lib.rs 的 daemon_request(主人工作区那一半)/ api.js 的 OWNER_WORKSPACE_PATHS / test-shim.ts 放行。 */
   readonly ownerWorkspace?: true
 }
 

@@ -1,5 +1,6 @@
 // @ts-check
 /// <reference lib="dom" />
+import { V1, v1 } from '../daemon-client.js'
 
 /** @typedef {{id:string,title:string,providerId:string,pendingPermissionCount:number,pendingQuestionCount:number,attentionKey:string,first?:{kind:'permission'|'question',text:string}|null}} AttentionTask */
 /** @typedef {{tasks:AttentionTask[],stale:boolean}} AttentionState */
@@ -84,7 +85,7 @@ export function createWorkbenchAttentionPoller(options) {
           cancelRequest = () => reject(new Error('Attention stopped'))
           deadline = setTimeout(() => reject(new Error('Attention timed out')), requestTimeoutMs)
         })
-        const result = await Promise.race([options.invokeWorkbenchApi('GET', '/v1/workbench/attention'), stopped])
+        const result = await Promise.race([v1(options.invokeWorkbenchApi, V1.workbench.attention), stopped])
         if (destroyed) return null
         const entries = parseAttention(result)
         const context = options.getContext?.() ?? { taskId: null, focused: false }

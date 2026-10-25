@@ -7,6 +7,7 @@
 // 没开码(主人在电脑前,终端自己在问)⇒ 只写「回终端处理」,不给按钮。
 // 桌面上只写「项目」,哪家画成行尾的圆头像(2026-10-19,同手机 app;名字进读屏标签和小窗):
 // 「终端」和微信回话用的码是微信那头的东西,桌面用不上(2026-10-16)。
+import { V1, v1 } from '../daemon-client.js'
 
 /** @typedef {{session_id:string,code:string,source:string,displayName?:string,status:string,project:string,machine?:string|null,pending:{tool:string,summary:string|null,since:number,hash?:string|null}|null}} CliSession */
 /** @typedef {{id:string,title:string,detail:string,agent:string,source:string,hash:string|null,tool:string,command:string,commandLabel?:string}} TerminalRow */
@@ -82,7 +83,7 @@ export function createTerminalWaitingPoller({ call, onChange, intervalMs = 10_00
     const mine = ++ticket
     /** @type {TerminalRow[]} */ let rows = []
     try {
-      const r = /** @type {{sessions?:unknown}} */ (await call('GET', '/v1/cli/sessions?limit=20'))
+      const r = /** @type {{sessions?:unknown}} */ (await v1(call, V1.cli.sessions, { query: { limit: 20 } }))
       rows = terminalWaitingRows(r?.sessions)
     } catch { rows = [] }
     if (mine !== ticket) return

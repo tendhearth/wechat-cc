@@ -14,6 +14,7 @@ import { invokeApi } from '../api.js'
 import { initHuntBag, refreshHuntBag } from './journal.js'
 import { initPeople, refreshPeople } from './people.js'
 import { initWishes, refreshWishes } from './wishes.js'
+import { V1, v1 } from '../daemon-client.js'
 
 // ── module-level state ────────────────────────────────────────────────────
 /** @type {Record<string, unknown> | null} */
@@ -103,7 +104,7 @@ async function onSocialEnableClick(btn) {
   btn.textContent = '启用中…'
   try {
     const r = /** @type {{enabled?:boolean, restart_required?:boolean}} */ (
-      await invokeApi('POST', '/v1/social/enable', { enabled: true }))
+      await v1(invokeApi, V1.social.enable, { body: { enabled: true } }))
     if (!isPageCurrent(operation.generation)) return
     if (!r || r.enabled !== true) throw new Error('启用未生效')
     btn.textContent = '已启用'
@@ -189,17 +190,17 @@ export async function refresh() {
   active = true
   const generation = pageGeneration
   const request = ++refreshGeneration
-  const read = async (path, key) => {
+  const read = async (call, key) => {
     try {
-      const data = await invokeApi('GET', path)
+      const data = await v1(invokeApi, call)
       if (!data || (key && !Array.isArray(data[key]))) throw new Error('返回内容不完整')
-      if (path === '/v1/social/inbound' && typeof data.enabled !== 'boolean') throw new Error('返回内容不完整')
+      if (call === V1.social.inbound && typeof data.enabled !== 'boolean') throw new Error('返回内容不完整')
       return { data, error: '' }
     } catch (err) { return { data: null, error: readErrorText(err) } }
   }
   const [list, inbound, mail, info] = await Promise.all([
-    read('/v1/a2a/list', 'agents'), read('/v1/social/inbound', ''),
-    read('/v1/penpal/channels', 'channels'), read('/v1/a2a/info', ''),
+    read(V1.a2a.list, 'agents'), read(V1.social.inbound, ''),
+    read(V1.penpal.channels, 'channels'), read(V1.a2a.info, ''),
     refreshHuntBag(), refreshPeople(),
   ])
   if (!isPageCurrent(generation) || request !== refreshGeneration) return
@@ -448,7 +449,7 @@ async function onCardAction(e) {
     agentMutations.set(id, operation)
     card?.querySelectorAll('button').forEach(button => { button.disabled = true })
     try {
-      await invokeApi('POST', `/v1/a2a/${action}`, action === 'pause' ? { id, paused: !wasPaused } : { id })
+      await v1(invokeApi, action === 'pause' ? V1.a2a.pause : V1.a2a.remove, { body: action === 'pause' ? { id, paused: !wasPaused } : { id } })
       if (isPageCurrent(operation.generation)) await refresh()
     } catch (err) {
       if (isPageCurrent(operation.generation)) showToast(`${action === 'remove' ? '断开' : wasPaused ? '恢复' : '暂停'}失败：${readErrorText(err)}`)
@@ -565,14 +566,14 @@ async function readMailThread(owner) {
   const note = owner.card.querySelector('.fd-mail-note')
   if (note) { note.hidden = false; note.textContent = '正在读信…' }
   try {
-    const r = await invokeApi('GET', `/v1/penpal/letters?channel_id=${encodeURIComponent(owner.id)}`)
+    const r = await v1(invokeApi, V1.penpal.letters, { query: { channel_id: owner.id } })
     if (!isCurrentMail(owner) || request !== owner.read) return
     if (!Array.isArray(r?.letters)) throw new Error('返回内容不完整')
     mailState(owner.id).letters = r.letters
     const bubbles = owner.card.querySelector('.fd-mail-bubbles')
     if (bubbles) bubbles.innerHTML = renderMailBubbles(r.letters) || '<div class="fd-empty">还没有信 —— 写下第一封吧。</div>'
     if (note) { note.hidden = true; note.textContent = '' }
-    invokeApi('POST', '/v1/penpal/letters/read', { channel_id: owner.id }).catch(() => {})
+    v1(invokeApi, V1.penpal.read, { body: { channel_id: owner.id } }).catch(() => {})
     owner.card.querySelector('.fd-mail-unread')?.remove()
   } catch (err) {
     if (!isCurrentMail(owner) || request !== owner.read) return
@@ -620,8 +621,8 @@ async function sendMailReply(target) {
   target.disabled = true
   try {
     const r = pending
-      ? await invokeApi('POST', '/v1/penpal/letters/resend', { letter_id: pending.letterId })
-      : await invokeApi('POST', '/v1/penpal/letters', { channel_id: id, text })
+      ? await v1(invokeApi, V1.penpal.resend, { body: { letter_id: pending.letterId } })
+      : await v1(invokeApi, V1.penpal.send, { body: { channel_id: id, text } })
     if (r?.ok) {
       delete mailRetry[id]
       // Reconcile only the draft represented by this submission. A later edit,
@@ -682,7 +683,7 @@ async function onInboundToggle() {
   toggle.disabled = true
   const next = !toggle.classList.contains('fd-on')
   try {
-    const r = await invokeApi('POST', '/v1/social/inbound', { enabled: next })
+    const r = await v1(invokeApi, V1.social.setInbound, { body: { enabled: next } })
     if (!isPageCurrent(operation.generation) || inboundOperation !== operation) return
     if (typeof r?.enabled !== 'boolean') throw new Error('返回内容不完整')
     const enabled = r.enabled
@@ -805,7 +806,7 @@ async function onPairStart() {
   if (!operation) return
   try {
     // A failed snapshot cannot safely distinguish a new friend from an old one.
-    const before = /** @type {{agents?:Array<any>}|null} */ (await invokeApi('GET', '/v1/a2a/list').catch(() => null))
+    const before = /** @type {{agents?:Array<any>}|null} */ (await v1(invokeApi, V1.a2a.list).catch(() => null))
     if (!isPairOperationCurrent(operation)) return
     if (!Array.isArray(before?.agents)) {
       showPairNote(note, '暂时读不到现有朋友列表，稍后再试')
@@ -813,7 +814,7 @@ async function onPairStart() {
     }
     const knownIds = new Set(before.agents.map(a => String(a.id)))
     const r = /** @type {{ok?:boolean, code?:string, expiresAt?:number, reason?:string}} */ (
-      await invokeApi('POST', '/v1/pair/start'))
+      await v1(invokeApi, V1.pair.start))
     if (!isPairOperationCurrent(operation)) return
     if (!r?.ok) {
       showPairNote(note, PAIR_FAIL_COPY[String(r?.reason)] ?? `配对失败：${String(r?.reason ?? '未知错误')}`)
@@ -870,7 +871,7 @@ async function checkPairLanded(knownIds, generation = pairGeneration, currentPag
   const request = { generation, pageGeneration: currentPageGeneration }
   pairPollRequest = request
   try {
-    const r = /** @type {{agents?:Array<any>}|null} */ (await invokeApi('GET', '/v1/a2a/list').catch(() => null))
+    const r = /** @type {{agents?:Array<any>}|null} */ (await v1(invokeApi, V1.a2a.list).catch(() => null))
     if (pairPollRequest !== request || !isPairCurrent(generation, currentPageGeneration)) return
     const fresh = (r?.agents ?? []).find(a => !knownIds.has(String(a.id)))
     if (!fresh) return
@@ -900,7 +901,7 @@ async function onPairAccept() {
   if (!operation) return
   try {
     const r = /** @type {{ok?:boolean, peer?:{self_id?:string, name?:string}, reason?:string}} */ (
-      await invokeApi('POST', '/v1/pair/accept', { code }))
+      await v1(invokeApi, V1.pair.accept, { body: { code } }))
     if (!isPairOperationCurrent(operation)) return
     if (r?.ok) {
       stopPairTimers()
@@ -978,7 +979,7 @@ async function runTest(outbound) {
   result.textContent = 'sending…'
   result.className = 'a2a-test-result pending'
   try {
-    const r = await invokeApi('POST', '/v1/a2a/test', { agent_id: session.id, text, outbound })
+    const r = await v1(invokeApi, V1.a2a.test, { body: { agent_id: session.id, text, outbound } })
     if (!isTestCurrent(session)) return
     if (r?.ok) {
       const dir = r.direction === 'in' ? 'inbound' : 'outbound'
@@ -1065,7 +1066,7 @@ async function onPreviewSubmit(e) {
   const submitBtn = /** @type {HTMLButtonElement | null} */ (form.querySelector('button[type="submit"]'))
   if (submitBtn) { submitBtn.disabled = true; submitBtn.textContent = '找它中…' }
   try {
-    const resp = /** @type {Record<string, any>} */ (await invokeApi('POST', '/v1/a2a/preview', { url }))
+    const resp = /** @type {Record<string, any>} */ (await v1(invokeApi, V1.a2a.preview, { body: { url } }))
     if (!isAddCurrent(session) || previewOperation !== operation) return
     if (resp && 'error' in resp) { showToast(String(resp.error)); return }
     previewedCard = resp
@@ -1123,18 +1124,18 @@ async function onInstallConfirm() {
   const confirmBtn = document.getElementById('a2a-install-confirm')
   if (confirmBtn instanceof HTMLButtonElement) { confirmBtn.disabled = true; confirmBtn.textContent = '连接中…' }
   try {
-    const r = /** @type {Record<string, any>} */ (await invokeApi('POST', '/v1/a2a/install', {
+    const r = /** @type {Record<string, any>} */ (await v1(invokeApi, V1.a2a.install, { body: {
       id,
       name: /** @type {any} */ (card).name,
       url,
       outbound_api_key: outboundKey,
-    }))
+    } }))
     if (!isAddCurrent(session)) return
     if (!r || !r.ok) {
       showToast(String(r?.error ?? 'install failed'))
       return
     }
-    const info = /** @type {Record<string, any>} */ (await invokeApi('GET', '/v1/a2a/info').catch(() => null))
+    const info = /** @type {Record<string, any>} */ (await v1(invokeApi, V1.a2a.info).catch(() => null))
     if (!isAddCurrent(session)) return
     preview.hidden = true
     const success = /** @type {HTMLElement | null} */ (document.getElementById('a2a-add-success'))
@@ -1171,7 +1172,7 @@ async function openActivityDrawer(id) {
 
   let r
   try {
-    r = await invokeApi('GET', `/v1/a2a/activity?agent_id=${encodeURIComponent(id)}&limit=50`)
+    r = await v1(invokeApi, V1.a2a.activity, { query: { agent_id: id, limit: 50 } })
     if (!Array.isArray(r?.events)) throw new Error('返回内容不完整')
   } catch (err) {
     if (isPageCurrent(generation) && activityRevision === revision && !drawer.hidden && ul) ul.innerHTML = `<li class="empty">往来记录暂时读不到：${escapeHtml(readErrorText(err))}</li>`

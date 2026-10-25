@@ -51,7 +51,7 @@ const daemonApiInfoCmd = defineCommand({
     json: { type: 'boolean', description: 'JSON envelope (always emits JSON; flag is for CLI consistency)' },
     // NO --operator FLAG, deliberately. The admin operator credential is read
     // only by processes that hold it natively — the Tauri host (lib.rs:
-    // agent_converse / agent_speak / agent_transcribe / customer_review_api)
+    // agent_converse / agent_speak / agent_transcribe / daemon_request)
     // and the dev server. Exposing it through the CLI would mean anything able
     // to run `wechat-cc` — including the webview, since the production
     // `wechat_cli_json` command applies no argument filtering — could obtain

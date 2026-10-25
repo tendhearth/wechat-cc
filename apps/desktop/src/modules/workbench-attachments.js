@@ -1,5 +1,6 @@
 // @ts-check
 import {isThumbnailImage} from './workbench-thumbnails.js'
+import { V1, v1 } from '../daemon-client.js'
 /** @typedef {{id:string,name:string,mime:string,size:number,sha256:string}} Attachment */
 /** @typedef {Attachment & {status:'uploading'|'ready'|'failed',error?:string}} DraftAttachment */
 /** @typedef {import('./workbench-window-state.js').Draft} Draft */
@@ -21,7 +22,7 @@ export function createWorkbenchAttachments(deps) {
   /** @type {Map<string,string>} */ const errors=new Map()
   /** @type {Map<string,number>} */ const reserved=new Map()
   const notify=(/** @type {string} */ scope)=>deps.changed?.(scope)
-  const discard=(/** @type {string} */ id,/** @type {string|undefined} */ draftId)=>{if(draftId)void deps.invokeWorkbenchApi('POST','/v1/workbench/discard-attachment',{id,draftId}).catch(()=>{})}
+  const discard=(/** @type {string} */ id,/** @type {string|undefined} */ draftId)=>{if(draftId)void v1(deps.invokeWorkbenchApi, V1.workbench.discardAttachment, { body: {id,draftId} }).catch(()=>{})}
   return {
     error:(/** @type {string} */ scope)=>errors.get(scope)??'',
     ready:(/** @type {string} */ scope)=>(deps.drafts.get(scope).attachments??[]).every(a=>a.status==='ready'),
@@ -47,7 +48,7 @@ export function createWorkbenchAttachments(deps) {
         /** @type {DraftAttachment} */ let next
         try {
           const base64=await(deps.encode??encodeFile)(file)
-          const result=/** @type {{attachment:Attachment}} */(await deps.invokeWorkbenchApi('POST','/v1/workbench/attachment',{id:entry.id,draftId,...(scope.startsWith('task:')?{taskId:scope.slice(5)}:{}),name:entry.name,mime:entry.mime,base64}))
+          const result=/** @type {{attachment:Attachment}} */(await v1(deps.invokeWorkbenchApi, V1.workbench.uploadAttachment, { body: {id:entry.id,draftId,...(scope.startsWith('task:')?{taskId:scope.slice(5)}:{}),name:entry.name,mime:entry.mime,base64} }))
           const valid=parseDraftAttachments([{...result?.attachment,status:'ready'}])[0]
           if(!valid||valid.id!==entry.id||valid.size!==entry.size)throw Error('unconfirmed_upload')
           next=valid

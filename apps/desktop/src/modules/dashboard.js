@@ -11,6 +11,7 @@
 import { dashboardHero, accountRows, formatRelativeTime, escapeHtml, restartButtonState, deleteAccountConfirmCopy, diagnose, guardLine } from "../view.js"
 import { rememberExecutorNames, executorSettingsLabel } from "./executor-names.js"
 import { icon } from "./icons.js"
+import { V1, v1 } from '../daemon-client.js'
 
 // provider 菜单的数据源 = 大脑区已注册列表(/v1/llm/health registered),
 // 由 renderBrainHealth 更新;拿到前用保守兜底。owner 2026-08-26:「切换
@@ -18,7 +19,7 @@ import { icon } from "./icons.js"
 let _registeredProviders = null
 const menuProviders = () => _registeredProviders || []
 async function refreshServiceChoices(deps) {
-  const r = await deps.invokeApi?.("GET", "/v1/llm/health").catch(() => null)
+  const r = await (deps.invokeApi ? v1(deps.invokeApi, V1.llm.health).catch(() => null) : undefined)
   _registeredProviders = r?.ok && Array.isArray(r.registered) ? r.registered : []
   rememberExecutorNames(r?.names)
 }
@@ -844,7 +845,7 @@ function incidentSeenKey(incident) {
  * immediately pop a notification for a week-old incident.
  */
 export async function loadLastIncident(deps) {
-  const res = await deps.invokeApi("GET", "/v1/health/incidents").catch(err => {
+  const res = await v1(deps.invokeApi, V1.health.incidents).catch(err => {
     console.warn("[health] incidents load failed:", err)
     return null
   })
@@ -980,7 +981,7 @@ export async function loadBrainHealth(deps, fresh) {
   const el = document.getElementById("brain-health")
   if (!el) return
   if (fresh) { await runTroubleshoot(deps); return }   // 旧调用路径直通排障
-  const r = await deps.invokeApi("GET", "/v1/llm/health", undefined, { timeoutMs: 30_000 }).catch(() => null)
+  const r = await v1(deps.invokeApi, V1.llm.health, undefined, { timeoutMs: 30_000 }).catch(() => null)
   if (!r || r.ok !== true) { if (!_troubleshootOpen) el.hidden = true; return }
   const registered = Array.isArray(r.registered) ? r.registered : []
   _registeredProviders = registered
@@ -1041,7 +1042,7 @@ export async function runTroubleshoot(deps) {
   if (!steps) return
 
   // ── 第一步:网络体检(daemon 侧视角,不带 key,零费用零风险)──
-  const net = await deps.invokeApi("POST", "/v1/net/probe", {}, { timeoutMs: 20_000 }).catch(() => null)
+  const net = await v1(deps.invokeApi, V1.net.probe, { body: {} }, { timeoutMs: 20_000 }).catch(() => null)
   const rawNetRows = net && net.ok
     ? net.results.map(x => `<div class="brain-net-row ${x.ok ? "ok" : "bad"}">${x.ok ? "✓" : "✗"} ${escapeHtml(x.label)}${x.ok ? ` <span class="brain-when">${x.latency_ms}ms</span>` : " 不通"}</div>`).join("")
     : `<div class="brain-net-row bad">✗ 网络检查没跑起来</div>`
@@ -1087,7 +1088,7 @@ export async function runBrainDial(deps) {
   if (!steps) return
   const netRows = _lastNetRows
   steps.innerHTML = `${netRows}<div class="brain-checking">正在等待当前 AI 服务回复…</div>`
-  const r = await deps.invokeApi("GET", "/v1/llm/health?fresh=1&scope=current", undefined, { timeoutMs: 150_000 }).catch(() => null)
+  const r = await v1(deps.invokeApi, V1.llm.health, { query: { fresh: 1, scope: "current" } }, { timeoutMs: 150_000 }).catch(() => null)
   const result = r?.results?.find(x => x.provider === r.default_provider)
   rememberExecutorNames(r?.names)
   const label = r?.default_provider ? executorSettingsLabel(r.default_provider) : "当前 AI 服务"
@@ -1186,8 +1187,8 @@ export async function saveBrainKey(deps, provider) {
   }
   if (status) status.textContent = "保存中…"
   try {
-    const r = await deps.invokeApi("POST", "/v1/llm/keys", Object.assign({ provider, key },
-      baseUrl ? { base_url: baseUrl } : {}, model ? { model } : {}))
+    const r = await v1(deps.invokeApi, V1.llm.keys, { body: Object.assign({ provider, key },
+      baseUrl ? { base_url: baseUrl } : {}, model ? { model } : {}) })
     if (r && r.ok) {
       if (status) status.innerHTML = `已保存 ✓ 重启 CC 后生效 <button class="brain-recheck" type="button" data-action="brain-restart">立即重启</button>`
     } else {
@@ -1218,7 +1219,7 @@ export async function loadFsAccess(deps) {
   const text = document.getElementById("dash-fs-access-text")
   const btn = document.getElementById("dash-fs-access-open")
   if (!card || !text) return
-  const h = await deps.invokeApi("GET", "/v1/health").catch(() => null)
+  const h = await v1(deps.invokeApi, V1.health.get).catch(() => null)
   const fs = h && h.fs_access
   if (!fs || !fs.any_denied) { card.hidden = true; return }
   text.textContent = String(fs.hint ?? "系统没给 Tendhearth CC 读文件夹的权限")
@@ -1240,7 +1241,7 @@ export async function loadFsAccess(deps) {
 export async function loadGuardLine(deps) {
   const el = document.getElementById("dash-guard-line")
   if (!el) return
-  const h = await deps.invokeApi("GET", "/v1/health").catch(() => null)
+  const h = await v1(deps.invokeApi, V1.health.get).catch(() => null)
   const line = guardLine(h && h.guard)
   if (!line) { el.hidden = true; return }
   el.textContent = line.state === "down" && line.detail ? `${line.text}(${line.detail})` : line.text
