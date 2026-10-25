@@ -133,13 +133,20 @@ const INTERNAL_ONLY = new Set([
     'upload_not_found', 'upload_unfinished_limit',
 ])
 describe('工作台抛出的码都归了类(反向守卫)', () => {
-  it('every Error(\'code\') literal under src/core/workbench is desktop-mapped or listed INTERNAL_ONLY; the list has no stale entries', async () => {
+  it('every Error(\'code\') literal under src/core/workbench and the executor adapters is desktop-mapped or listed INTERNAL_ONLY; the list has no stale entries', async () => {
     const { workbenchErrorHttp } = await import('../packages/protocol/src/workbench-errors')
     const { join } = await import('node:path')
     const { statSync } = await import('node:fs')
     const files: string[] = []
     const walk = (d: string) => { for (const f of readdirSync(d)) { const p = join(d, f); if (statSync(p).isDirectory()) walk(p); else if (p.endsWith('.ts') && !p.includes('.test.')) files.push(p) } }
     walk('src/core/workbench')
+    // 原来在 core/workbench 下、架构终态 E2 搬进 src/adapters/executors 的那些(codex app-server、api-task、原生历史 ……):
+    // 它们抛出的码同样经工作台的路由出去,照旧扫。别的适配器(对话侧、claude-workbench-*)原来就不在这一扫里 ——
+    // 那是另一件事(没归类的码),记在稿子的 E 阶段,不在搬家这一步改。
+    for (const f of ['openai/api-files', 'openai/api-model', 'openai/api-sessions', 'openai/api-task-provider', 'claude/claude-model-catalog',
+      'claude/claude-native-config', 'claude/native-claude-history', 'codex/codex-activity', 'codex/codex-app-server', 'codex/codex-config',
+      'codex/codex-execution-error', 'codex/codex-history-rpc', 'codex/codex-mcp-approval', 'codex/codex-model-catalog', 'codex/codex-runtime',
+      'codex/native-codex-history']) files.push(join('src/adapters/executors', `${f}.ts`))
     const thrown = new Set<string>()
     for (const f of files) for (const m of readFileSync(f, 'utf8').matchAll(/(?:Error|\bfail)\(\s*['"`]([a-z][a-z0-9_]+)['"`]\s*[,)]/g)) thrown.add(m[1]!)
     const unmapped = [...thrown].filter(c => workbenchErrorHttp(c, 'desktop').error === 'internal')

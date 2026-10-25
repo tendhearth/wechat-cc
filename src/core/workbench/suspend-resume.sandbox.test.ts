@@ -110,7 +110,7 @@ describe.skipIf(!ENABLED)('suspend → drop → resume, real executors against 1
   })
 
   it.skipIf(!which('claude'))('Claude Code (workbench runtime) retries the dropped stream after SIGCONT', async () => {
-    const { createClaudeWorkbenchSession } = await import('../claude-workbench-runtime')
+    const { createClaudeWorkbenchSession } = await import('../../adapters/executors/claude/claude-workbench-runtime')
     const server = fakeServer('anthropic'), port = await server.listen()
     const home = join(root, 'claude-home'), work = join(root, 'claude-work')
     mkdirSync(join(home, '.claude'), { recursive: true }); mkdirSync(work, { recursive: true })
@@ -145,7 +145,7 @@ describe.skipIf(!ENABLED)('suspend → drop → resume, real executors against 1
     ].join('\n'))
     // 工作台 codex 的子进程环境取自 daemon 的 process.env(workbenchCodexEnv):这里换成沙盒的。
     setEnv({ HOME: home, CODEX_HOME: codexHome, SANDBOX_KEY: 'sk-sandbox', ...DEAD_PROXY })
-    const { createWorkbenchCodexProvider } = await import('./codex-app-server')
+    const { createWorkbenchCodexProvider } = await import('../../adapters/executors/codex/codex-app-server')
     const session = await createWorkbenchCodexProvider({ codexPathOverride: which('codex')!, timeouts: { firstEventTimeoutMs: 60_000, connectTimeoutMs: 60_000 } })
       .spawn({ alias: 'sandbox', path: work }, { tierProfile: TIER_PROFILES.trusted, permissionMode: 'strict', chatId: 'sandbox' })
     const events: AgentEvent[] = []

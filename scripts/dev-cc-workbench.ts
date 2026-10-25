@@ -1,6 +1,6 @@
 import {MANAGED_NATIVE_CAPABILITIES} from '../src/core/workbench/executor-capabilities'
-import {createClaudeHistoryReader} from '../src/core/workbench/native-claude-history'
-import {createCodexHistoryReader} from '../src/core/workbench/native-codex-history'
+import {createClaudeHistoryReader} from '../src/adapters/executors/claude/native-claude-history'
+import {createCodexHistoryReader} from '../src/adapters/executors/codex/native-codex-history'
 /** Live development: production task engine, isolated state, existing companion untouched.
  * bun scripts/dev-cc-workbench.ts
  * Only workbench writes are enabled in the frontend; no sample tasks are seeded.
@@ -12,10 +12,10 @@ import {openDb} from '../src/lib/db'
 import {findCodexBinary} from '../src/lib/find-codex-binary'
 import {codexSessionJsonlPaths,claudeSessionJsonlPath} from '../src/daemon/bootstrap/session-paths'
 import {createProviderRegistry} from '../src/app/provider-registry'
-import {createWorkbenchCodexProvider} from '../src/core/workbench/codex-app-server'
-import {createClaudeAgentProvider,makeWorkbenchClaudeCanUseTool} from '../src/core/claude-agent-provider'
+import {createWorkbenchCodexProvider} from '../src/adapters/executors/codex/codex-app-server'
+import {createClaudeAgentProvider,makeWorkbenchClaudeCanUseTool} from '../src/adapters/executors/claude/claude-agent-provider'
 import {workbenchClaudeOptions} from '../src/daemon/bootstrap/wire-workbench'
-import {readNativeClaudeTools} from '../src/core/workbench/claude-native-config'
+import {readNativeClaudeTools} from '../src/adapters/executors/claude/claude-native-config'
 import {claudeNativeCapabilityNotice} from '../src/core/workbench/native-capability-notice'
 import {makeWorkbenchStore} from '../src/core/workbench/store'
 import {makeWorkbenchService} from '../src/core/workbench/service'

@@ -10,7 +10,7 @@
  * this cycle" and skip the push — wechat-cc's own behavior never
  * depends on hearth being present.
  */
-import { createMcpToolBridge, type McpStdioSpec, type McpToolBridge } from '../../core/openai-mcp-bridge'
+import { createMcpToolBridge, type McpStdioSpec, type McpToolBridge } from '../../adapters/executors/openai/openai-mcp-bridge'
 
 /**
  * Structural shape of a hearth change-plan. wechat-cc builds one of these
@@ -56,7 +56,7 @@ export async function connectHearth(
   if (!cfg.hearth_enabled || !cfg.hearth_vault) return null
 
   const spec = specFromCmd(cfg.hearth_cmd, cfg.hearth_vault)
-  // Note: createMcpToolBridge's real signature (src/core/openai-mcp-bridge.ts)
+  // Note: createMcpToolBridge's real signature (src/adapters/executors/openai/openai-mcp-bridge.ts)
   // only accepts { makeClient? }, not a `log` option as the brief sketched —
   // logging on connect failure happens below in this function instead.
   const makeBridge = opts?.makeBridge ?? ((specs: Record<string, McpStdioSpec>) => createMcpToolBridge(specs))

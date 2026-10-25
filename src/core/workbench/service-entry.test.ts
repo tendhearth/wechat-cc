@@ -12,7 +12,7 @@ import {makeWorkbenchService,type WorkbenchService} from './service'
 import {MANAGED_NATIVE_CAPABILITIES,UNATTENDED_CAPABILITIES} from './executor-capabilities'
 import {makeTaskChangeHub} from './task-changes'
 import {canonicalEntryHash,type EntryInput} from './task-entry'
-import {validateApiTaskInput} from './api-task-provider'
+import {validateApiTaskInput} from '../../adapters/executors/openai/api-task-provider'
 
 const entryReads=vi.hoisted(()=>({observe:null as null|((count:number)=>void)}))
 vi.mock('node:fs',async importOriginal=>{

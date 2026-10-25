@@ -14,7 +14,7 @@
 import { describe, expect, it, vi } from 'vitest'
 import { readFileSync } from 'node:fs'
 import { join } from 'node:path'
-import { claudeApiErrorCode, createClaudeAgentProvider } from './claude-agent-provider'
+import { claudeApiErrorCode, createClaudeAgentProvider } from '../adapters/executors/claude/claude-agent-provider'
 import { createConversationCoordinator, type TurnRecord } from '../app/conversation-coordinator'
 import { createProviderRegistry } from '../app/provider-registry'
 import type { AgentEvent, AgentProvider, AgentSession } from '../ports/agent-provider'

@@ -16,7 +16,7 @@ import { TIER_PROFILES } from '../../domain/user-tier'
 // here means these tests don't depend on that codepath actually throwing —
 // they assert the conditional construction directly.
 const createCodexAgentProviderMock = vi.fn((_opts?: unknown) => ({ spawn: vi.fn() }) as unknown as AgentProvider)
-vi.mock('../../core/codex-agent-provider', () => ({
+vi.mock('../../adapters/executors/codex/codex-agent-provider', () => ({
   createCodexAgentProvider: (opts?: unknown) => createCodexAgentProviderMock(opts),
 }))
 

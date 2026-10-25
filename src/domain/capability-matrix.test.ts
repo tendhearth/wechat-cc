@@ -95,7 +95,7 @@ describe('ghost-gemini — extensibility check (RFC 05 Phase 2)', () => {
   })
 
   it('has a gemini capability row; assertMatrixComplete accepts gemini', async () => {
-    const { GEMINI_CAPABILITIES } = await import('../core/gemini-agent-provider')
+    const { GEMINI_CAPABILITIES } = await import('../adapters/executors/gemini/gemini-agent-provider')
     // deriveCapability must work for all (mode × pm) without throwing
     const modes: Mode['kind'][] = ['solo', 'parallel', 'primary_tool', 'chatroom']
     const perms: PermissionMode[] = ['strict', 'dangerously']
@@ -171,7 +171,7 @@ describe('capability-matrix — agy rows', () => {
   })
 
   it('AGY_CAPABILITIES field values (Task 3 declaration, asserted here too)', async () => {
-    const { AGY_CAPABILITIES } = await import('../core/agy-agent-provider')
+    const { AGY_CAPABILITIES } = await import('../adapters/executors/agy/agy-agent-provider')
     expect(AGY_CAPABILITIES.perToolCallback).toBe(false)
     expect(AGY_CAPABILITIES.sandboxLevels.size).toBe(0)
     expect(AGY_CAPABILITIES.supportsDelegation).toBe(false)

@@ -1,13 +1,13 @@
 import {EventEmitter} from 'node:events'
 import {PassThrough} from 'node:stream'
 import {afterEach,beforeEach,expect,it,vi} from 'vitest'
-import {discoverCodexModels} from './codex-model-catalog'
-import {discoverClaudeModels} from './claude-model-catalog'
+import {discoverCodexModels} from '../../adapters/executors/codex/codex-model-catalog'
+import {discoverClaudeModels} from '../../adapters/executors/claude/claude-model-catalog'
 
 const mocks=vi.hoisted(()=>({spawn:vi.fn(),query:vi.fn(),native:vi.fn()}))
 vi.mock('node:child_process',()=>({spawn:mocks.spawn}))
 vi.mock('@anthropic-ai/claude-agent-sdk',()=>({query:mocks.query}))
-vi.mock('./claude-native-config',()=>({readNativeClaudeTools:mocks.native,workbenchClaudeEnvironment:(value:unknown)=>value}))
+vi.mock('../../adapters/executors/claude/claude-native-config',()=>({readNativeClaudeTools:mocks.native,workbenchClaudeEnvironment:(value:unknown)=>value}))
 class Child extends EventEmitter {
   stdin=new PassThrough();stdout=new PassThrough();stderr=new PassThrough()
   done=false;ignoreTerm=false

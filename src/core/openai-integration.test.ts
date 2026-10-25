@@ -2,10 +2,10 @@ import { describe, it, expect, beforeEach, afterEach } from 'vitest'
 import { mkdtempSync, rmSync, readFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { createOpenAiAgentProvider } from './openai-agent-provider'
+import { createOpenAiAgentProvider } from '../adapters/executors/openai/openai-agent-provider'
 import { collectTurn } from '../ports/agent-provider'
-import type { ChatModelClient } from './openai-chat-model'
-import type { McpToolBridge } from './openai-mcp-bridge'
+import type { ChatModelClient } from '../adapters/executors/openai/openai-chat-model'
+import type { McpToolBridge } from '../adapters/executors/openai/openai-mcp-bridge'
 
 /**
  * End-to-end integration test: the REAL `createOpenAiAgentProvider` wired to

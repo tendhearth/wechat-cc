@@ -11,8 +11,8 @@ import { readFileSync } from 'node:fs'
 import { fileURLToPath } from 'node:url'
 import { describe, expect, it } from 'vitest'
 import type { AgentEvent } from '../../ports/agent-provider'
-import { acpImageCapable } from '../acp-agent-provider'
-import { acpActivityId, createAcpTranslator } from './events'
+import { acpImageCapable } from '../../adapters/executors/acp/acp-agent-provider'
+import { acpActivityId, createAcpTranslator } from '../../adapters/executors/acp/events'
 
 type Obj = Record<string, unknown>
 const obj = (value: unknown): Obj => (!!value && typeof value === 'object' && !Array.isArray(value) ? value as Obj : {})

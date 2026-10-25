@@ -1,6 +1,6 @@
 import { describe, it, expect, vi } from 'vitest'
 import { createResilientBridge } from './bridge'
-import type { McpClientLike, McpStdioSpec } from '../../../core/openai-mcp-bridge'
+import type { McpClientLike, McpStdioSpec } from '../../../adapters/executors/openai/openai-mcp-bridge'
 
 // A fake client whose single tool name is carried in the spec's `command`.
 function fakeClient(tool: string): McpClientLike {

@@ -13,7 +13,7 @@
 import { describe, expect, it, vi } from 'vitest'
 import { createConversationCoordinator, type ConversationCoordinatorDeps, type TurnRecord } from './conversation-coordinator'
 import { createProviderRegistry } from './provider-registry'
-import { createAgyAgentProvider } from '../core/agy-agent-provider'
+import { createAgyAgentProvider } from '../adapters/executors/agy/agy-agent-provider'
 import { TIER_PROFILES } from '../domain/user-tier'
 import type { Mode } from '../domain/conversation'
 import type { InboundMsg } from '../domain/prompt-format'

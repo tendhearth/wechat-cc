@@ -10,7 +10,7 @@ import {makeWorkbenchStore} from './store'
 import {makeWorkbenchService,type WorkbenchService} from './service'
 import {PROVIDER_EXECUTION_CHOICE as automatic} from './execution-settings'
 import {MANAGED_NATIVE_CAPABILITIES} from './executor-capabilities'
-import {codexErrorEvent,codexRpcError} from './codex-execution-error'
+import {codexErrorEvent,codexRpcError} from '../../adapters/executors/codex/codex-execution-error'
 import {removeTempDir} from '../../lib/test-temp'
 
 let root:string,project:string,db:Db,service:WorkbenchService,store:ReturnType<typeof makeWorkbenchStore>

@@ -9,7 +9,7 @@
 import { describe, expect, it, vi } from 'vitest'
 import { createConversationCoordinator, type ConversationCoordinatorDeps, type TurnRecord } from './conversation-coordinator'
 import { createProviderRegistry } from './provider-registry'
-import { createGeminiAgentProvider } from '../core/gemini-agent-provider'
+import { createGeminiAgentProvider } from '../adapters/executors/gemini/gemini-agent-provider'
 import { TIER_PROFILES } from '../domain/user-tier'
 import type { Mode } from '../domain/conversation'
 import type { InboundMsg } from '../domain/prompt-format'

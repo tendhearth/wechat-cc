@@ -81,6 +81,13 @@ module.exports = {
       },
     },
     {
+      name: 'adapters-implement-ports',
+      severity: 'error',
+      comment: '架构终态 E2:src/adapters 是对外的实现(各家执行者、以后的 store / git)。不许往上依赖 app / daemon / cli / features / mcp-servers / test-support;只引类型也不行(适配器不该知道用例)。零例外。',
+      from: { path: '^src/adapters/', pathNot: '\\.test\\.ts$' },
+      to: { path: '^src/(app|daemon|cli|features|mcp-servers|test-support)/' },
+    },
+    {
       name: 'app-does-not-reach-up',
       severity: 'error',
       comment: '架构终态 E1:src/app 是用例(协调器、会话管理、执行者登记)。不许往上依赖 daemon / cli / features / mcp-servers / test-support,也不碰 node 内置。过渡期还能用 core 里没搬完的(store、工作台);adapters 搬出来以后收紧成「只经 ports」。',

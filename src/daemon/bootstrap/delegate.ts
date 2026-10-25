@@ -11,11 +11,11 @@
  * because these are throwaway one-shot consultations.
  */
 import { withNetworkGate } from '../../app/provider-registry'
-import { DEFAULT_CLAUDE_MODEL, createClaudeAgentProvider } from '../../core/claude-agent-provider'
-import { createCodexAgentProvider } from '../../core/codex-agent-provider'
-import { createOpenAiAgentProvider } from '../../core/openai-agent-provider'
-import { createAiSdkChatModel } from '../../core/openai-chat-model'
-import { createMcpToolBridge } from '../../core/openai-mcp-bridge'
+import { DEFAULT_CLAUDE_MODEL, createClaudeAgentProvider } from '../../adapters/executors/claude/claude-agent-provider'
+import { createCodexAgentProvider } from '../../adapters/executors/codex/codex-agent-provider'
+import { createOpenAiAgentProvider } from '../../adapters/executors/openai/openai-agent-provider'
+import { createAiSdkChatModel } from '../../adapters/executors/openai/openai-chat-model'
+import { createMcpToolBridge } from '../../adapters/executors/openai/openai-mcp-bridge'
 import { collectTurn, type AgentProvider } from '../../ports/agent-provider'
 import type { Options } from '@anthropic-ai/claude-agent-sdk'
 import { executorCredential, executorMissingConfig } from '../../lib/executor-detect'

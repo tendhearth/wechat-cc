@@ -1,13 +1,13 @@
-import { acpSupportedOn } from '../../core/acp/platform'
+import { acpSupportedOn } from '../../adapters/executors/acp/platform'
 import { homedir } from 'node:os'
 import { existsSync } from 'node:fs'
 import { createProviderRegistry, type ProviderRegistry } from '../../app/provider-registry'
 import { withFirstUseProbe } from '../../core/first-use-probe'
 import { readJsonFile } from '../../lib/read-json-file'
-import { DEFAULT_CLAUDE_MODEL } from '../../core/claude-agent-provider'
-import { DEFAULT_AGY_MODEL } from '../../core/agy-agent-provider'
-import { createClaudeAgentProvider } from '../../core/claude-agent-provider'
-import { createCodexAgentProvider } from '../../core/codex-agent-provider'
+import { DEFAULT_CLAUDE_MODEL } from '../../adapters/executors/claude/claude-agent-provider'
+import { DEFAULT_AGY_MODEL } from '../../adapters/executors/agy/agy-agent-provider'
+import { createClaudeAgentProvider } from '../../adapters/executors/claude/claude-agent-provider'
+import { createCodexAgentProvider } from '../../adapters/executors/codex/codex-agent-provider'
 import { buildSystemPrompt } from '../../domain/prompt-builder'
 import { assertMatrixComplete, capabilitiesFor, capabilityProviderIds } from '../../domain/capability-matrix'
 import type { ProviderId } from '../../domain/conversation'
@@ -462,7 +462,7 @@ export async function registerProviders(deps: ProviderDeps): Promise<ProviderWir
   let cursorCliProbeFailure: string | null = null
   const registerCursorCli = async (cursorAgentBin: string): Promise<boolean> => {
     try {
-      const { createAcpCursorChatProvider, DEFAULT_CURSOR_MODEL } = await import('../../core/acp-cursor-chat')
+      const { createAcpCursorChatProvider, DEFAULT_CURSOR_MODEL } = await import('../../adapters/executors/acp/acp-cursor-chat')
       // 上一版往 ~/.cursor/mcp.json 塞过一把静态 trusted 钥匙(tier C);对话侧走 ACP 后 MCP 按会话注入,
       // 那条目只剩风险 —— boot 时清掉(测试 runner 下 remove 自己会跳过)。独立 try/catch:
       // 清理失败(比如 ~/.cursor 只读或磁盘满)不该拖累注册本身 —— 那样一个坏权限的
@@ -528,8 +528,8 @@ export async function registerProviders(deps: ProviderDeps): Promise<ProviderWir
     )
   } else if (cursorKey) {
     try {
-      const cursorMod = await import('@cursor/sdk') as unknown as import('../../core/cursor-agent-provider').CursorSdkNamespace
-      const { createCursorAgentProvider } = await import('../../core/cursor-agent-provider')
+      const cursorMod = await import('@cursor/sdk') as unknown as import('../../adapters/executors/acp/cursor-agent-provider').CursorSdkNamespace
+      const { createCursorAgentProvider } = await import('../../adapters/executors/acp/cursor-agent-provider')
       registry.register(
         'cursor',
         createCursorAgentProvider({
@@ -581,9 +581,9 @@ export async function registerProviders(deps: ProviderDeps): Promise<ProviderWir
     const openaiBaseUrl = configuredAgent.openaiBaseUrl
     const defaultOpenaiModel = configuredAgent.openaiModel
     try {
-      const { createOpenAiAgentProvider } = await import('../../core/openai-agent-provider')
-      const { createAiSdkChatModel } = await import('../../core/openai-chat-model')
-      const { createMcpToolBridge } = await import('../../core/openai-mcp-bridge')
+      const { createOpenAiAgentProvider } = await import('../../adapters/executors/openai/openai-agent-provider')
+      const { createAiSdkChatModel } = await import('../../adapters/executors/openai/openai-chat-model')
+      const { createMcpToolBridge } = await import('../../adapters/executors/openai/openai-mcp-bridge')
       registry.register(
         'openai',
         createOpenAiAgentProvider({
@@ -658,9 +658,9 @@ export async function registerProviders(deps: ProviderDeps): Promise<ProviderWir
   } else if (geminiKey) {
     try {
       const { GoogleGenAI } = await import('@google/genai')
-      const { createGeminiAgentProvider, makeGeminiToolGate, connectWechatMcp } = await import('../../core/gemini-agent-provider')
+      const { createGeminiAgentProvider, makeGeminiToolGate, connectWechatMcp } = await import('../../adapters/executors/gemini/gemini-agent-provider')
       const { lookup } = await import('../../domain/capability-matrix')
-      const genaiClient = new GoogleGenAI({ apiKey: geminiKey }) as unknown as import('../../core/gemini-agent-provider').GenaiClient
+      const genaiClient = new GoogleGenAI({ apiKey: geminiKey }) as unknown as import('../../adapters/executors/gemini/gemini-agent-provider').GenaiClient
       const buildGate = makeGeminiToolGate({
         askUser: deps.ilink.askUser,
         adminFor: (chatId) => resolveAdminChatId(loadAccess(), loadCompanionConfig(deps.stateDir), chatId),
@@ -721,7 +721,7 @@ export async function registerProviders(deps: ProviderDeps): Promise<ProviderWir
   const agyBin = executorBinary('agy', configuredAgent, UNDER_TEST_RUNNER ? () => null : findOnPath)
   const registerAgy = async (agyBin: string): Promise<boolean> => {
     try {
-      const { createAgyAgentProvider } = await import('../../core/agy-agent-provider')
+      const { createAgyAgentProvider } = await import('../../adapters/executors/agy/agy-agent-provider')
       // Tier C (spec §3): agy has no per-session MCP config surface — the
       // ONLY way to hand it the wechat tool is a boot-time upsert into its
       // global ~/.gemini/config/mcp_config.json, carrying ONE long-lived

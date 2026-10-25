@@ -6,7 +6,7 @@
  *     (publish-update.ts、desktop.yml、Tauri 自动更新都读它)
  *   · 根 `package.json` = 0.6.4 —— `wechat-cc --version` 与 daemon 健康输出显示的那个
  *   · `apps/desktop/package.json` = 0.5.18 —— 没有任何人读它的 version
- *   · `src/core/acp-agent-provider.ts` = 硬编码 `'0.6.4'` —— 发给 ACP 执行者的 clientInfo
+ *   · `src/adapters/executors/acp/acp-agent-provider.ts` = 硬编码 `'0.6.4'` —— 发给 ACP 执行者的 clientInfo
  *
  * 化石版本号不只是难看:`self deploy` 的健康门打印的就是 `--version` 的输出,
  * 而它两次发版之间从不变 —— 部署完打出同一个数字,看不出新构建有没有真的起来。

@@ -15,7 +15,7 @@ import type { Access } from '../lib/access'
 import type { CompanionConfig } from './companion/config'
 import { createInternalApi } from './internal-api'
 import { wireSelfRestart } from './bootstrap/wire-self-restart'
-import { createAcpCursorChatProvider } from '../core/acp-cursor-chat'
+import { createAcpCursorChatProvider } from '../adapters/executors/acp/acp-cursor-chat'
 import { SubsystemSupervisor } from './subsystems'
 import { NEW_RELATIONSHIP_MSG_COUNT } from '../lib/messages-store'
 
@@ -42,8 +42,8 @@ vi.mock('./bootstrap/wire-self-restart', async (importOriginal) => {
 // however the daemon normally builds one whenever internalApi is wired).
 // createAcpCursorChatProvider itself is not mocked away — this only adds
 // an observation point around the real implementation.
-vi.mock('../core/acp-cursor-chat', async (importOriginal) => {
-  const actual = await importOriginal<typeof import('../core/acp-cursor-chat')>()
+vi.mock('../adapters/executors/acp/acp-cursor-chat', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('../adapters/executors/acp/acp-cursor-chat')>()
   return { ...actual, createAcpCursorChatProvider: vi.fn(actual.createAcpCursorChatProvider) }
 })
 

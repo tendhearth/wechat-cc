@@ -1,6 +1,6 @@
 import { describe, it, expect, vi } from 'vitest'
 import { connectHearth, type HearthClient } from './hearth-client'
-import type { McpToolBridge, McpStdioSpec } from '../../core/openai-mcp-bridge'
+import type { McpToolBridge, McpStdioSpec } from '../../adapters/executors/openai/openai-mcp-bridge'
 
 function fakeBridge(impl?: Partial<McpToolBridge>): McpToolBridge {
   return {
