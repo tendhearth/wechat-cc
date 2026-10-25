@@ -18,7 +18,7 @@ export function registerMessagingTools(server: McpServer, client: InternalApiCli
     'search_online_sticker_candidates',
     {
       title: 'Search sticker candidates for visual selection',
-      description: '联网搜索多张候选表情并返回预览，不发送。先根据语境看图选择最匹配的一张，再调用 send_online_sticker_candidate。',
+      description: '联网搜索多张候选表情并返回预览，不发送。先根据语境看图选择最匹配的一张，再调用 sticker（mood + 那一张的 id + url）附到这一轮回复里。',
       inputSchema: { query: z.string() },
     },
     async ({ query }) => {
