@@ -50,6 +50,15 @@ const TOOL_KIND_TO_CLAUDE_BUILTINS: Record<ToolKind, ReadonlyArray<string>> = {
   message_other: [],       // MCP-only (mcp__wechat__message, 回复交付 §4.6), admin-only, gated by canUseTool
 }
 
+/**
+ * 这一类工具是执行者**自己带的**(读写文件、命令、上网、子代理),而不是 wechat MCP / 插件 MCP 上的。
+ * 按 Claude 内置工具的归类算(编码型 CLI 自带的就是这几样);shell_destructive 是 Bash 的一种用法,也算自带的。
+ * enforcement-matrix 用它分清「靠 wechat MCP 按档注册」和「靠执行者自己」。
+ */
+export function isExecutorOwnKind(kind: ToolKind): boolean {
+  return kind === 'shell_destructive' || TOOL_KIND_TO_CLAUDE_BUILTINS[kind].length > 0
+}
+
 export interface ClaudeTierSdkOpts {
   permissionMode: 'default' | 'bypassPermissions'
   disallowedTools?: string[]
