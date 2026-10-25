@@ -2,14 +2,14 @@
  * 协调器对外的形状:依赖、对外接口、每一轮的结构化记录。只有类型,没有逻辑。
  */
 import type { SessionManager } from '../session-manager'
-import type { ConversationStore } from '../conversation-store'
+import type { ConversationStore } from '../../core/conversation-store'
 import type { ProviderRegistry } from '../provider-registry'
 import type { Mode, ProviderId } from '../../domain/conversation'
 import type { InboundMsg } from '../../domain/prompt-format'
 import type { HandoffTurn } from '../../domain/provider-handoff'
 import type { PermissionMode } from '../../domain/capability-matrix'
 import type { DeliveryKind, ReplyDeliveryPort, ReplyTextStrategy } from '../../domain/turn-reply'
-import type { AgentEvent } from '../agent-provider'
+import type { AgentEvent } from '../../ports/agent-provider'
 import type { Access } from '../../lib/access'
 import type { NetworkGate } from '../../lib/network-gate'
 

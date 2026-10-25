@@ -278,7 +278,7 @@ agy 只读全局 `~/.gemini/config/mcp_config.json`,那里是**正在跑的 daem
 
 **两臂打平,daemon 没有回归,但在 harness 能量到的故障点上也不是「明显更好」—— 按约定先 `shadow`,不翻默认。** agy 在沙盒里的 legacy 本来就没有坏:2026-09-08 的双发旁白已经被命名空间折叠修住(`agent-provider.ts` 的 `normalizeWechatMcpServer`),所以这里量不出差。daemon 的好处是**结构性**的,由测试而不是由回合数证明:
 
-1. 双发旁白不再依赖「认出这一家的 tool_call 形状」—— `src/core/conversation-coordinator.agy-delivery.test.ts` 用真 agy 解析器喂一个没登记过的命名空间:legacy 复现双发(FALLBACK_REPLY 把「已回复用户的问候。」当第二条),daemon 只交付一次、没有 FALLBACK、server 名认得出认不出交付结果一字不差。
+1. 双发旁白不再依赖「认出这一家的 tool_call 形状」—— `src/app/conversation-coordinator.agy-delivery.test.ts` 用真 agy 解析器喂一个没登记过的命名空间:legacy 复现双发(FALLBACK_REPLY 把「已回复用户的问候。」当第二条),daemon 只交付一次、没有 FALLBACK、server 名认得出认不出交付结果一字不差。
 2. 共享令牌 `agy-static` 的 #199 缺口:daemon 下附件绑本轮、发送类路由只许本轮的聊天;legacy / shadow 下仍是豁免(见 `reference/internal-api-auth.md`)。
 
 翻到 daemon 只改 `AGY_CAPABILITIES.replyDelivery` 一行,或 `agent-config` 的 `reply_delivery: { agy: 'daemon' }` + 重启(开机会把全局 MCP 条目改成 daemon 工具表)。shadow 期间看 `[REPLY_SHADOW] … provider=agy` 的分布。
@@ -336,7 +336,7 @@ bun scripts/experiments/reply-once/harness.ts --gate /tmp/x.jsonl --gate-arms ag
 
 原始数据 `scripts/experiments/reply-once/results-2026-10-03-cursor.jsonl`。闸门本身也是一条测试(`cursor-fixture.test.ts`,几秒),上面这些数字被钉住。
 
-**回放真机报文**(`src/core/conversation-coordinator.cursor-delivery.test.ts`):2026-09-17 录到的 c1「新建 hello.txt」—— legacy 走 FALLBACK 发两条(「正在创建 `hello.txt`。」旁白 + 结果),daemon 只发结果;c2(命令被拒,一段两句)两臂内容相同。
+**回放真机报文**(`src/app/conversation-coordinator.cursor-delivery.test.ts`):2026-09-17 录到的 c1「新建 hello.txt」—— legacy 走 FALLBACK 发两条(「正在创建 `hello.txt`。」旁白 + 结果),daemon 只发结果;c2(命令被拒,一段两句)两臂内容相同。
 
 ### 读法
 

@@ -3,7 +3,7 @@
  * 一句问句标题。便宜模型不可用 / 超时 / 输出不合格 / 含判断词 ⇒ 回退原文。原始命令由调用方另外原样给出。
  * 缓存按 taskId + 请求 id + 语言;回退结果不缓存;在飞的同键请求复用同一个 Promise。
  */
-import type { CheapEval } from '../core/agent-provider'
+import type { CheapEval } from '../ports/agent-provider'
 import { clipChars, extractJsonObject, hasJudgement, runCheap, type InsightLang } from './phone-insight-llm'
 
 export interface ApprovalExplanation { title: string; what: string; scope: string; effect: string; source: 'model' | 'raw' }

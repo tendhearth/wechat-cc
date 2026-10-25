@@ -1,7 +1,7 @@
 import { compilePolicy } from '../domain/policy'
 import { Codex, type Thread, type ThreadEvent, type ThreadItem } from '@openai/codex-sdk'
 import { tmpdir } from 'node:os'
-import { mergeEnvIntoMcpServers, CORE_MCP_SERVER_NAMES, type AgentEvent, type AgentProject, type AgentProvider, type AgentSession, type PermissionMode, type SpawnContext } from './agent-provider'
+import { mergeEnvIntoMcpServers, CORE_MCP_SERVER_NAMES, type AgentEvent, type AgentProject, type AgentProvider, type AgentSession, type PermissionMode, type SpawnContext } from '../ports/agent-provider'
 import { resolveCodexCheapModel } from './codex-cheap-model'
 import type { TierProfile } from '../domain/user-tier'
 import type { McpStdioSpec } from './mcp-stdio-spec'

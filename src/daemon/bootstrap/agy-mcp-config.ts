@@ -34,7 +34,7 @@ import { homedir } from 'node:os'
 import { join } from 'node:path'
 import type { McpStdioSpec } from '../../core/mcp-stdio-spec'
 import { UNDER_TEST_RUNNER } from '../../lib/config'
-import { AGY_WECHAT_MCP_NAMESPACE_ID } from '../../core/agent-provider'
+import { AGY_WECHAT_MCP_NAMESPACE_ID } from '../../ports/agent-provider'
 import { writeFileAtomic } from '../../lib/json-file'
 
 /** Our namespaced entry key inside `mcpServers` — never touch any other key.

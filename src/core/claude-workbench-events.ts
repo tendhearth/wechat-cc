@@ -1,4 +1,4 @@
-import type { AgentEvent } from './agent-provider'
+import type { AgentEvent } from '../ports/agent-provider'
 import { providerErrorCodeOf } from '../lib/provider-error-code'
 
 /** A retained epoch must not accumulate an unbounded backlog behind a slow UI. */

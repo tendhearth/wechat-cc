@@ -11,7 +11,7 @@ import { shouldSpeak } from '../companion/calibration'
 import type { CareLedger } from '../companion/care-ledger'
 import { connectHearth } from '../companion/hearth-client'
 import { buildHearthPlan } from '../companion/hearth-plan'
-import type { CheapEval } from '../../core/agent-provider'
+import type { CheapEval } from '../../ports/agent-provider'
 import { type AvoidTopic } from '../../domain/companion-topics'
 
 export interface TickDeps {

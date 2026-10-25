@@ -13,7 +13,7 @@
  * `GET /v1/turns` reads via recentForChat / recent.
  */
 import type { Db } from '../lib/db'
-import type { TurnRecord } from './conversation-coordinator'
+import type { TurnRecord } from '../app/conversation-coordinator'
 
 /** Error strings are truncated to this many chars before persisting — a
  *  runaway error (stack dump, huge tool output) shouldn't bloat the row. */

@@ -85,7 +85,7 @@
 import type {MatterStore} from '../../core/matters/store'
 import {maybeRecollect, buildRecollectionPrompt, crossedOvernight, RETURNED_SIGNAL_UNAVAILABLE, type RecollectSink} from '../../core/matters/recollection'
 import type {Journal} from '../../core/journal-store'
-import type {CheapEval} from '../../core/agent-provider'
+import type {CheapEval} from '../../ports/agent-provider'
 import {GATE_TIMEOUT_MS} from '../../core/a2a-disclosure'
 
 export interface RecollectSinkDeps {

@@ -20,7 +20,7 @@ import type { Socket } from 'node:net'
 import { mkdtempSync, mkdirSync, realpathSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import type { AgentEvent, AgentSession } from '../agent-provider'
+import type { AgentEvent, AgentSession } from '../../ports/agent-provider'
 import { TIER_PROFILES } from '../../domain/user-tier'
 
 const ENABLED = process.env.WECHAT_CC_SUSPEND_SANDBOX === '1' && process.platform !== 'win32'

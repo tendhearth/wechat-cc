@@ -1,4 +1,4 @@
-import type {AgentEvent} from '../agent-provider'
+import type {AgentEvent} from '../../ports/agent-provider'
 import type {TaskEvent} from './store'
 import {executionFailureMessage} from './execution-settings'
 

@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import { openDb } from '../lib/db'
 import { makeTurnRecordStore, TURN_RECORDS_MAX_PER_CHAT } from './turn-record-store'
-import type { TurnRecord } from './conversation-coordinator'
+import type { TurnRecord } from '../app/conversation-coordinator'
 
 function rec(over: Partial<TurnRecord> = {}): TurnRecord {
   return {

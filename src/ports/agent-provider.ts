@@ -1,7 +1,7 @@
 import type { TierProfile } from '../domain/user-tier'
 import type { PermissionMode } from '../domain/permission-mode'
 import type { ProviderId } from '../domain/conversation'
-import { isAuthFail } from './auth-fail'
+import { isAuthFail } from '../domain/auth-fail'
 import type { CallTarget } from '../lib/call-classifier'
 import { makeTurnTextCollector } from '../domain/turn-reply'
 

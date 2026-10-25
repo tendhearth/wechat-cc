@@ -18,7 +18,7 @@
  * See docs/superpowers/specs/2026-05-22-user-tier-permissions-design.md.
  */
 import { classifyToolUse, type TierProfile } from '../domain/user-tier'
-import type { PermissionMode } from './agent-provider'
+import type { PermissionMode } from '../ports/agent-provider'
 import { compilePolicy } from '../domain/policy'
 import { decideTool } from '../domain/tool-decision'
 

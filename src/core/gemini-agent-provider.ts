@@ -17,7 +17,7 @@
  */
 import { decideTool } from '../domain/tool-decision'
 import { compilePolicy } from '../domain/policy'
-import type { AgentEvent, AgentProject, AgentProvider, AgentSession, PermissionMode, SpawnContext } from './agent-provider'
+import type { AgentEvent, AgentProject, AgentProvider, AgentSession, PermissionMode, SpawnContext } from '../ports/agent-provider'
 import type { TierProfile } from '../domain/user-tier'
 import { classifyToolUse } from '../domain/user-tier'
 import type { McpStdioSpec } from './mcp-stdio-spec'

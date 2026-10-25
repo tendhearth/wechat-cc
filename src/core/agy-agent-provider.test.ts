@@ -2,7 +2,7 @@
 import { describe, it, expect } from 'vitest'
 import { AGY_CAPABILITIES, createAgyAgentProvider, drainCappedStderr, isUnknownAgyModel, pickReplacementModel } from './agy-agent-provider'
 import { TIER_PROFILES } from '../domain/user-tier'
-import { isReplyToolCall } from './agent-provider'
+import { isReplyToolCall } from '../ports/agent-provider'
 
 function fakeAgy(lines: string[], opts?: { exitCode?: number; stderr?: string; hang?: boolean }) {
   const calls: Array<{ args: string[]; cwd: string }> = []

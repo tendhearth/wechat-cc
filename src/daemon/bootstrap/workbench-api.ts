@@ -1,7 +1,7 @@
 import {mkdirSync} from 'node:fs'
 import type {Db} from '../../lib/db'
 import {executorCredential,executorMissingConfig} from '../../lib/executor-detect'
-import type {ProviderRegistry} from '../../core/provider-registry'
+import type {ProviderRegistry} from '../../app/provider-registry'
 import {createApiModel} from '../../core/workbench/api-model'
 import {makeApiSessionStore} from '../../core/workbench/api-sessions'
 import {apiTaskConnectionHash,createApiTaskProvider,validateApiTaskInput} from '../../core/workbench/api-task-provider'

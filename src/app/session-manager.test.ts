@@ -1,9 +1,9 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { SessionManager } from './session-manager'
-import { createClaudeAgentProvider } from './claude-agent-provider'
+import { createClaudeAgentProvider } from '../core/claude-agent-provider'
 import { createProviderRegistry, type ProviderRegistry } from './provider-registry'
-import { makeFakeSession } from './test-helpers'
-import type { AgentProvider } from './agent-provider'
+import { makeFakeSession } from '../core/test-helpers'
+import type { AgentProvider } from '../ports/agent-provider'
 import { TIER_PROFILES } from '../domain/user-tier'
 import type { Options, Query, SDKMessage, SDKUserMessage } from '@anthropic-ai/claude-agent-sdk'
 

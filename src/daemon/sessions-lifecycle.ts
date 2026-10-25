@@ -1,5 +1,5 @@
 import type { Lifecycle } from '../lib/lifecycle'
-import type { SessionManager } from '../core/session-manager'
+import type { SessionManager } from '../app/session-manager'
 import type { SessionStore } from '../core/session-store'
 import type { ConversationStore } from '../core/conversation-store'
 

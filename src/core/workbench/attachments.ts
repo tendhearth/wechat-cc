@@ -2,7 +2,7 @@ import {createHash,randomUUID} from 'node:crypto'
 import {closeSync,constants,fstatSync,lstatSync,readdirSync,readSync,unlinkSync,writeFileSync} from 'node:fs'
 import {basename,dirname,extname,isAbsolute,join,resolve} from 'node:path'
 import type {Db} from '../../lib/db'
-import type {AgentAttachment} from '../agent-provider'
+import type {AgentAttachment} from '../../ports/agent-provider'
 import {ATTACHMENT_METADATA_BYTES,UPLOAD_METADATA_BYTES,UPLOAD_TOMBSTONE_BYTES,type AttachmentBudgetInput} from './attachment-budget'
 import {O_NONBLOCK,readBounded,lstatNoLink,mkdirAnchored,openAnchored} from './anchored-fs'
 

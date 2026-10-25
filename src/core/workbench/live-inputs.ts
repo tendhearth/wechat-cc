@@ -1,6 +1,6 @@
 import type {Db} from '../../lib/db'
 import type {Attachment} from './attachments'
-import type {AgentExecutionChoice} from '../agent-provider'
+import type {AgentExecutionChoice} from '../../ports/agent-provider'
 import {normalizeExecutionChoice,PROVIDER_EXECUTION_CHOICE,sameExecutionChoice} from './execution-settings'
 
 export function normalizeInputRequestId(value:unknown):string{

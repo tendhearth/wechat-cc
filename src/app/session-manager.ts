@@ -1,11 +1,11 @@
-import type { ProviderId, SessionStore } from './session-store'
-import type { AgentEvent, AgentSession } from './agent-provider'
+import type { ProviderId, SessionStore } from '../core/session-store'
+import type { AgentEvent, AgentSession } from '../ports/agent-provider'
 import { assertCallAllowed, classifyWith, sessionCallTarget, type CallTarget, type NetworkGate } from '../lib/network-gate'
 import { providerCallTarget, type ProviderRegistry } from './provider-registry'
 import { tierNameFromProfile, sessionAuthEnv, type TierProfile, type UserTier } from '../domain/user-tier'
 import type { PermissionMode } from '../domain/capability-matrix'
-import {pathsConflict} from './workbench/scheduler'
-import {canonicalClaimPath} from './workbench/execution-claims'
+import {pathsConflict} from '../core/workbench/scheduler'
+import {canonicalClaimPath} from '../core/workbench/execution-claims'
 import { log } from '../lib/log'
 
 export interface SessionManagerOptions {

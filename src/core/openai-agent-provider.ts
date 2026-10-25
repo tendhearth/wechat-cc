@@ -7,7 +7,7 @@ import {
   type AgentProject,
   type SpawnContext,
   assertNotAuthFailed,
-} from './agent-provider'
+} from '../ports/agent-provider'
 import { isAuthErrorCode, withProviderCode } from '../lib/provider-error-code'
 import { openaiErrorCode, openaiErrorMessage } from './openai-error-code'
 import type { ChatModelClient, ChatMessage, ToolSpec, TurnDelta } from './openai-chat-model'

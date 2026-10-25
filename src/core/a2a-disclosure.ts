@@ -1,4 +1,4 @@
-import type { CheapEval } from './agent-provider'
+import type { CheapEval } from '../ports/agent-provider'
 
 /** 脱敏审查的 LLM 调用**兜底**上限:坏网/慢 provider 下不干等到它自己的超时
  *  (几十秒)。超时按「审查器不可用」处理(fail closed)——见 gateOutbound。

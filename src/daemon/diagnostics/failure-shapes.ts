@@ -22,8 +22,8 @@
 import { appendFileSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
 import { createHash } from 'node:crypto'
 import { dirname, join } from 'node:path'
-import { isAuthFail, isAuthFailError } from '../../core/auth-fail'
-import { isAuthError } from '../../core/provider-registry'
+import { isAuthFail, isAuthFailError } from '../../domain/auth-fail'
+import { isAuthError } from '../../app/provider-registry'
 import { LLM_HEALTH_AUTH_RE } from '../llm-health'
 import { classifyFailure } from '../health/classify'
 

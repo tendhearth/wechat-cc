@@ -11,7 +11,7 @@ import {gunzipSync} from 'node:zlib'
 import {createWorkbenchCodexProvider} from '../src/core/workbench/codex-app-server'
 import {findCodexBinary} from '../src/lib/find-codex-binary'
 import {TIER_PROFILES} from '../src/domain/user-tier'
-import type {AgentEvent,AgentSession} from '../src/core/agent-provider'
+import type {AgentEvent,AgentSession} from '../src/ports/agent-provider'
 
 assert(process.argv.includes('--run'));assert.equal(process.platform,'darwin')
 const binary=findCodexBinary();assert(binary)

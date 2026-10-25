@@ -2,7 +2,7 @@ import { makePausableTimers, type PausableTimer } from '../../lib/pausable-timer
 import { codexBreakdown, sumTurnUsage, type TurnUsage } from '../../domain/turn-usage'
 import { makeProcessTreeFreezer } from '../../lib/process-tree-freeze'
 import { spawn } from 'node:child_process'
-import type { AgentAttachment, AgentEvent, AgentExecutionModel, AgentProvider, AgentWorkbenchRuntime } from '../agent-provider'
+import type { AgentAttachment, AgentEvent, AgentExecutionModel, AgentProvider, AgentWorkbenchRuntime } from '../../ports/agent-provider'
 import { discoverWorkbenchCodexConfig, workbenchCodexArgs, workbenchCodexEnv, workbenchCodexNativeConfig } from './codex-config'
 import { validateUserInputAnswers, validateUserInputRequest } from './user-input'
 import { codexActivityEvent, codexItemId } from './codex-activity'

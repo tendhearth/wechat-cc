@@ -1,11 +1,11 @@
 /** service.ts 对外的公共类型。放在 service/ 里是为了让域模块能引用而不 import ../service(那会成环)。 */
 import type { QuotaKind } from '../../../domain/provider-quota'
-import type { AgentRuntimeSnapshot } from '../../agent-provider'
+import type { AgentRuntimeSnapshot } from '../../../ports/agent-provider'
 import type { Task } from '../store'
 import type { MatterOrigin } from '../../matters/store'
 import type { EntryReceipt } from '../task-entry'
 import type { TaskWaitingFor } from '../wechat-types'
-import type { ProviderRegistry } from '../../provider-registry'
+import type { ProviderRegistry } from '../../../app/provider-registry'
 import type { WorkbenchExecutorCapabilities } from '../executor-capabilities'
 
 export interface InputMaterials {attachmentIds?:string[];draftId?:string;execution?:unknown}

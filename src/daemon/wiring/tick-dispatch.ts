@@ -7,7 +7,7 @@ import { resolveEffectiveTier, resolveTier, TIER_PROFILES, effectivePermissionMo
 import { providerDenialFor } from '../../domain/provider-policy'
 import { loadAgentConfig } from '../../lib/agent-config'
 import { replyTextStrategyFor } from '../../domain/capability-matrix'
-import { collectTurn } from '../../core/agent-provider'
+import { collectTurn } from '../../ports/agent-provider'
 import { isNetworkUnprotectedError } from '../../lib/network-gate'
 import type { TickDeps } from './tick-deps'
 import type { TickTextStyle } from './tick-texts'

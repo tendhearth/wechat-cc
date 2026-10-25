@@ -1,5 +1,5 @@
-import type { AgentActivity, AgentEvent } from '../agent-provider'
-import { normalizeWechatMcpServer } from '../agent-provider'
+import type { AgentActivity, AgentEvent } from '../../ports/agent-provider'
+import { normalizeWechatMcpServer } from '../../ports/agent-provider'
 import { isQuotaRefusalText } from '../../domain/provider-quota'
 
 /**

@@ -1,5 +1,5 @@
 import {query, type Options, type SDKUserMessage} from '@anthropic-ai/claude-agent-sdk'
-import {AsyncQueue} from '../async-queue'
+import {AsyncQueue} from '../../lib/async-queue'
 import {readNativeClaudeTools,workbenchClaudeEnvironment} from './claude-native-config'
 import {claudeModelCatalog} from './native-model-catalog'
 

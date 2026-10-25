@@ -1,6 +1,6 @@
 import {describe,expect,it} from 'vitest'
 import {renderWorkbench} from './workbench.js'
-import type {AgentRuntimeSnapshot} from '../../../../src/core/agent-provider'
+import type {AgentRuntimeSnapshot} from '../../../../src/ports/agent-provider'
 
 const runtime:AgentRuntimeSnapshot={retained:true,foreground:'idle',backgroundCount:0,input:'send'}
 function render(observed=runtime,status='running'){

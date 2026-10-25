@@ -1,5 +1,5 @@
 import type {Db} from '../../lib/db'
-import type {AgentActivity,AgentEvent} from '../agent-provider'
+import type {AgentActivity,AgentEvent} from '../../ports/agent-provider'
 import type {Attachment} from './attachments'
 
 export interface TaskEvent { id: number; taskId: string; kind: 'user' | 'text' | 'tool_call' | 'system' | 'error'; text: string; createdAt: number; sourceId?:string|null; runId?:string; activity?:AgentActivity; attachments?:Attachment[]; errorCode?:'execution_model_unsupported'; diagnostic?:string }

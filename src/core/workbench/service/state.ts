@@ -3,7 +3,7 @@
  * 这里只是把原来散在闭包里的 7 个容器 + 6 个 let 集中成一个对象,语义一个字不改:
  * service.ts 对容器解构(引用不变),对 6 个标量走 state.x;域模块经 ctx.state 看同一份。
  */
-import type { AgentExecutionChoice, AgentSession } from '../../agent-provider'
+import type { AgentExecutionChoice, AgentSession } from '../../../ports/agent-provider'
 import type { Attachment } from '../attachments'
 import type { ArtifactSelection, HandoffPreview } from '../handoff'
 import type { AcceptedNativeResume } from '../native-adoption'

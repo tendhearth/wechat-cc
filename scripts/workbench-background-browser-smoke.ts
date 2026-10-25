@@ -11,7 +11,7 @@ import {tmpdir} from 'node:os'
 import {dirname,join,resolve} from 'node:path'
 import {fileURLToPath} from 'node:url'
 import {randomUUID} from 'node:crypto'
-import type {AgentEvent,AgentProvider,AgentRuntimeSnapshot} from '../src/core/agent-provider'
+import type {AgentEvent,AgentProvider,AgentRuntimeSnapshot} from '../src/ports/agent-provider'
 
 const repo=resolve(dirname(fileURLToPath(import.meta.url)),'..'),src=join(repo,'apps/desktop/src')
 interface Locator {scrollIntoViewIfNeeded():Promise<void>;setInputFiles(files:Array<{name:string,mimeType:string,buffer:Buffer}>):Promise<void>;fill(text:string):Promise<void>;click():Promise<void>;count():Promise<number>;textContent():Promise<string|null>}
@@ -42,7 +42,7 @@ async function main(){
   const stateDir=join(temporary,'state'),project=join(temporary,'project');mkdirSync(stateDir);mkdirSync(project)
   process.env.WECHAT_STATE_DIR=stateDir;process.env.WECHAT_DISABLE_LOG_FILE='1'
   const [{openDb},{makeWorkbenchStore},{makeWorkbenchService},{createProviderRegistry},{createInternalApi},{createWorkbenchProxy}]=await Promise.all([
-    import('../src/lib/db'),import('../src/core/workbench/store'),import('../src/core/workbench/service'),import('../src/core/provider-registry'),import('../src/daemon/internal-api/index'),import('../apps/desktop/workbench-proxy'),
+    import('../src/lib/db'),import('../src/core/workbench/store'),import('../src/core/workbench/service'),import('../src/app/provider-registry'),import('../src/daemon/internal-api/index'),import('../apps/desktop/workbench-proxy'),
   ])
   const {chromium}=createRequire(join(repo,'apps/desktop/package.json'))('@playwright/test') as {chromium:{launch(options:{headless:boolean}):Promise<Browser>}}
   const ack=gate(),started:string[]=[],closed:string[]=[],submissions:Array<{requestId:string;text:string}>=[]

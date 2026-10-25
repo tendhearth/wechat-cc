@@ -1,4 +1,4 @@
-import type { AgentEvent } from '../agent-provider'
+import type { AgentEvent } from '../../ports/agent-provider'
 /** 逐字增量 150ms 合一次再落库(spec §4):每个 token 一次 SQLite UPDATE 太贵,而人眼 150ms 看不出差别。 */
 export interface DeltaCoalescer { push(event: AgentEvent): void; flush(): void; dispose(): void }
 type Append = Extract<AgentEvent, { kind: 'text' }> & { itemId: string; textMode: 'append' }

@@ -40,7 +40,7 @@ const BASELINE: Record<string, [Tag, number]> = {
   'src/lib/send-reply.ts': ['primitive', 1],
   'src/daemon/bootstrap/wire-coordinator.ts': ['primitive', 1],
   'src/daemon/bootstrap/fallback-reply.ts': ['primitive', 1],
-  'src/core/coordinator/types.ts': ['primitive', 1],   // 只是 deps 注释里提到 sendAssistantText( —— 搬家前在 conversation-coordinator.ts
+  'src/app/coordinator/types.ts': ['primitive', 1],   // 只是 deps 注释里提到 sendAssistantText( —— 搬家前在 conversation-coordinator.ts
   'src/daemon/inbound/reply-scope.ts': ['primitive', 1],
   // 信自己的一套投递(多页、断了续发、App 那条路)。能不能写 / 寄已经走 policy.say(第三批 3a),发送只在 say 的生产者里。
   'src/features/letters/runtime.ts': ['primitive', 2],
@@ -99,7 +99,7 @@ describe('发送原语只在登记过的地方出现,次数只许降', () => {
     expect(ilinkSendMethods()).not.toContain('sendTyping')
   })
   const counts = new Map<string, number>()
-  for (const d of ['src/daemon', 'src/features', 'src/core', 'src/lib']) {
+  for (const d of ['src/daemon', 'src/features', 'src/app', 'src/domain', 'src/ports', 'src/core', 'src/lib']) {
     for (const f of walk(join(ROOT, d))) {
       const n = (readFileSync(f, 'utf8').match(SEND) ?? []).length
       if (n > 0) counts.set(relative(ROOT, f).split('\\').join('/'), n)

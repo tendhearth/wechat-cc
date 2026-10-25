@@ -1,6 +1,6 @@
 import { describe, it, expect, vi } from 'vitest'
 import { makeDeltaCoalescer } from './delta-coalescer'
-import type { AgentEvent } from '../agent-provider'
+import type { AgentEvent } from '../../ports/agent-provider'
 
 const append = (itemId: string, text: string): AgentEvent => ({ kind: 'text', text, itemId, textMode: 'append' })
 describe('DeltaCoalescer', () => {

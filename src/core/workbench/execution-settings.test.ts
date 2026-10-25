@@ -4,7 +4,7 @@ import {tmpdir} from 'node:os'
 import {join} from 'node:path'
 import {openDb,type Db} from '../../lib/db'
 import {makeWorkbenchStore} from './store'
-import type {AgentExecutionChoice} from '../agent-provider'
+import type {AgentExecutionChoice} from '../../ports/agent-provider'
 import {executionFailureMessage,normalizeExecutionChoice,sameExecutionChoice} from './execution-settings'
 import {removeTempDir} from '../../lib/test-temp'
 

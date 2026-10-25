@@ -4,8 +4,8 @@
  * (adminMcpTools:true),不再需要往 ~/.cursor/mcp.json 塞一把静态钥匙。
  * 一次性评估仍走 print(cursor-eval.ts)。
  */
-import type { AgentProvider, SpawnContext } from './agent-provider'
-import { assertNotAuthFailed, CORE_MCP_SERVER_NAMES } from './agent-provider'
+import type { AgentProvider, SpawnContext } from '../ports/agent-provider'
+import { assertNotAuthFailed, CORE_MCP_SERVER_NAMES } from '../ports/agent-provider'
 import type { McpStdioSpec } from './mcp-stdio-spec'
 import { createAcpProvider, type AcpMcpServer } from './acp-agent-provider'
 import { cursorOneShotEval, defaultCursorSpawnFn, type CursorSpawnFn } from './cursor-eval'

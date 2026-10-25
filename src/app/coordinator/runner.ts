@@ -10,7 +10,7 @@
  */
 import type { ProviderId } from '../../domain/conversation'
 import type { SessionHandle } from '../session-manager'
-import { collectTurn, TURN_TIMEOUT_CODE, type AgentEvent, type TurnSummary } from '../agent-provider'
+import { collectTurn, TURN_TIMEOUT_CODE, type AgentEvent, type TurnSummary } from '../../ports/agent-provider'
 import { isAuthErrorCode } from '../../lib/provider-error-code'
 import type { DeliveryReport } from '../../domain/turn-reply'
 import type { CoordinatorCtx } from './ctx'

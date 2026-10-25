@@ -6,7 +6,7 @@ import { classifyCall } from '../lib/call-classifier'
 import type { Codex, Thread, ThreadEvent, ThreadOptions } from '@openai/codex-sdk'
 import { createCodexAgentProvider, tierProfileToCodexSdkOpts, codexItemToolCall, CODEX_CAPABILITIES, type CodexFactory } from './codex-agent-provider'
 import { extractTurnReply } from '../domain/turn-reply'
-import type { AgentEvent } from './agent-provider'
+import type { AgentEvent } from '../ports/agent-provider'
 import { TIER_PROFILES } from '../domain/user-tier'
 import { TERMINAL_SAY_TOOL_TIMEOUT_MS } from './mcp-stdio-spec'
 

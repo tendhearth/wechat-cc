@@ -3,7 +3,7 @@ import { mkdtempSync, rmSync, readFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { createOpenAiAgentProvider } from './openai-agent-provider'
-import { collectTurn } from './agent-provider'
+import { collectTurn } from '../ports/agent-provider'
 import type { ChatModelClient } from './openai-chat-model'
 import type { McpToolBridge } from './openai-mcp-bridge'
 

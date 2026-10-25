@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import { createProviderRegistry } from './provider-registry'
 import { errorWithProviderCode } from '../lib/provider-error-code'
-import type { AgentProvider } from './agent-provider'
+import type { AgentProvider } from '../ports/agent-provider'
 
 // 2026-10-23 真机:回忆每次收工都去问 agy,两天 28 次全是「not currently available in your location」。
 // 被服务方拒绝 ≠ 坏了:指数退避(1h → 2h → … 24h),被拒期间一次都不调,成功一次清零。

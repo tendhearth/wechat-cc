@@ -30,7 +30,7 @@ import { invalidateDerivedMemory } from '../../lib/memory-derived-state'
 import { createHash } from 'node:crypto'
 import { existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from 'node:fs'
 import { dirname, join } from 'node:path'
-import { assertNotAuthFailed } from '../../core/agent-provider'
+import { assertNotAuthFailed } from '../../ports/agent-provider'
 import { writeFileAtomic } from '../../lib/json-file'
 
 export const MIN_GARDEN_BYTES = 2048

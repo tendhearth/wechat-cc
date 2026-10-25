@@ -1,7 +1,7 @@
 import { EventEmitter } from 'node:events'
 import { PassThrough } from 'node:stream'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import type { AgentAttachment, AgentEvent, AgentSession, SpawnContext } from '../agent-provider'
+import type { AgentAttachment, AgentEvent, AgentSession, SpawnContext } from '../../ports/agent-provider'
 import { TIER_PROFILES } from '../../domain/user-tier'
 import { createWorkbenchCodexProvider } from './codex-app-server'
 

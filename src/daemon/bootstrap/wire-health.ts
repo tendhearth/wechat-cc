@@ -59,7 +59,7 @@ export function reportLlmTurnOutcome(health: HealthRuntime, outcome: string, err
   }
   // NOT every non-'completed' outcome is a connectivity/auth problem.
   // `outcome: 'error'` is populated from collectTurn's aggregation of
-  // AgentEvent{kind:'error'} (src/core/agent-provider.ts), which several
+  // AgentEvent{kind:'error'} (src/ports/agent-provider.ts), which several
   // PROVIDER-INTERNAL, connectivity-unrelated conditions also push into:
   // e.g. openai-agent-provider.ts's tool-call step-budget exhaustion, or
   // claude-agent-provider.ts's non-'success' result subtype (max_turns

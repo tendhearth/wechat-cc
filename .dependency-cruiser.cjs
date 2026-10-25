@@ -71,6 +71,30 @@ module.exports = {
       },
     },
     {
+      name: 'ports-are-interfaces',
+      severity: 'error',
+      comment: '架构终态 E1:src/ports 是接口(执行者的口 AgentProvider / AgentSession 等)。运行时只许依赖 ports、domain 与 lib 里不碰 I/O 的;零例外。',
+      from: { path: '^src/ports/', pathNot: '\\.test\\.ts$' },
+      to: {
+        path: ['^src/(core|app|daemon|cli|features|mcp-servers|test-support|adapters)/', '^src/lib/(runtime|db|json-file|read-json-file|log|access|agent-config|messages-store|project-registry|ilink|send-reply|config)'],
+        dependencyTypesNot: ['type-only'],
+      },
+    },
+    {
+      name: 'app-does-not-reach-up',
+      severity: 'error',
+      comment: '架构终态 E1:src/app 是用例(协调器、会话管理、执行者登记)。不许往上依赖 daemon / cli / features / mcp-servers / test-support,也不碰 node 内置。过渡期还能用 core 里没搬完的(store、工作台);adapters 搬出来以后收紧成「只经 ports」。',
+      from: { path: '^src/app/', pathNot: '\\.test\\.ts$' },
+      to: { path: '^src/(daemon|cli|features|mcp-servers|test-support)/' },
+    },
+    {
+      name: 'app-no-node',
+      severity: 'error',
+      comment: '架构终态 E1:app 不碰 node / bun 内置。',
+      from: { path: '^src/app/', pathNot: '\\.test\\.ts$' },
+      to: { dependencyTypes: ['core'] },
+    },
+    {
       name: 'domain-no-node',
       severity: 'error',
       comment: '架构终态 E1:domain 不碰 node / bun 内置模块。',

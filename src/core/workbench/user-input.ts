@@ -1,5 +1,5 @@
 import {randomUUID} from 'node:crypto'
-import type {AgentUserInputAnswers,AgentUserInputRequest} from '../agent-provider'
+import type {AgentUserInputAnswers,AgentUserInputRequest} from '../../ports/agent-provider'
 
 const object=(value:unknown):value is Record<string,unknown> => !!value&&typeof value==='object'&&!Array.isArray(value)
 const text=(value:unknown,max:number):value is string => typeof value==='string'&&value.trim().length>0&&value.length<=max

@@ -11,7 +11,7 @@ import { canResumeWorkbenchExecutor, isUnattendedExecutor, isWorkbenchExecutorCa
 import { snapshotHash } from '../native-adoption'
 import { TERMINAL_TASK_STATUSES, type StoredTask } from '../store'
 import type { Attachment } from '../attachments'
-import type { AgentExecutionChoice, AgentModelCatalog } from '../../agent-provider'
+import type { AgentExecutionChoice, AgentModelCatalog } from '../../../ports/agent-provider'
 import type { ServiceCtx } from './ctx'
 import type { AdmittedProvider } from './types'
 

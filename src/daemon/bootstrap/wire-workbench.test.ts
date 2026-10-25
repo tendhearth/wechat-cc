@@ -4,7 +4,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { createHash, randomUUID } from 'node:crypto'
 import { registerUnattendedExecutors, registerAcpExecutors, makeUnattendedAckStore, wireWorkbench, workbenchClaudeOptions } from './wire-workbench'
-import { createProviderRegistry } from '../../core/provider-registry'
+import { createProviderRegistry } from '../../app/provider-registry'
 import { ACP_CAPABILITIES, UNATTENDED_CAPABILITIES } from '../../core/workbench/executor-capabilities'
 import { loadAgentConfig, saveAgentConfig } from '../../lib/agent-config'
 import { defaultCompanionConfig, saveCompanionConfig } from '../companion/config'
@@ -12,8 +12,8 @@ import { addProject } from '../../lib/project-registry'
 import { removeTempDir } from '../../lib/test-temp'
 import { makeFakeSession } from '../../core/test-helpers'
 import { openDb } from '../../lib/db'
-import { AsyncQueue } from '../../core/async-queue'
-import type { AgentEvent, AgentRuntimeSnapshot, AgentSession, AgentWorkbenchRuntime, AgentProvider } from '../../core/agent-provider'
+import { AsyncQueue } from '../../lib/async-queue'
+import type { AgentEvent, AgentRuntimeSnapshot, AgentSession, AgentWorkbenchRuntime, AgentProvider } from '../../ports/agent-provider'
 import { makeMatterStore } from '../../core/matters/store'
 import { makeReportOutboxStore } from '../reports/outbox'
 import { makeJournal } from '../../core/journal-store'
@@ -575,7 +575,7 @@ it('便宜模型的回复其实是认证失效(401/登出):当成真的调用失
 
 it('custom ACP executors (2026-10-07): valid ones register with ACP capabilities; bad / missing / taken ids are skipped with a log line', async () => {
   const { registerCustomAcpExecutors } = await import('./wire-workbench')
-  const { createProviderRegistry } = await import('../../core/provider-registry')
+  const { createProviderRegistry } = await import('../../app/provider-registry')
   const target = createProviderRegistry()
   target.register('cursor', { async spawn() { throw new Error('x') } }, { displayName: 'Cursor', canResume: () => true })
   const create = vi.fn(() => ({ async spawn() { throw new Error('x') } }))

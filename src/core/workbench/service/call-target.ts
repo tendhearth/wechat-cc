@@ -5,8 +5,8 @@
  * 端点、codex app-server 的环境、cursor-agent 自报的当前模型……);会话不报,就用起它的那个 provider
  * 按同一份 SpawnContext 报的目标。都报不出来 ⇒ unresolved ⇒ 网络闸门按需要保护(fail closed)。
  */
-import type { AgentExecutionChoice, AgentProvider, AgentSession } from '../../agent-provider'
-import { providerCallTarget } from '../../provider-registry'
+import type { AgentExecutionChoice, AgentProvider, AgentSession } from '../../../ports/agent-provider'
+import { providerCallTarget } from '../../../app/provider-registry'
 import { sessionCallTarget, type CallTarget } from '../../../lib/network-gate'
 
 export function liveRunTarget(

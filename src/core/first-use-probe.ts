@@ -14,7 +14,7 @@
  *
  * 并发:多个调用同时撞上首次使用,共用同一个 in-flight promise,只探一次。
  */
-import type { AgentProvider, AgentProject, AgentSession, SpawnContext } from './agent-provider'
+import type { AgentProvider, AgentProject, AgentSession, SpawnContext } from '../ports/agent-provider'
 
 export interface FirstUseProbeOpts {
   /** 跑一句探测,返回模型文本;抛错或空串都算失败。 */
