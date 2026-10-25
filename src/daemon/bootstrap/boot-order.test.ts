@@ -48,3 +48,29 @@ describe('buildBootstrap boot order', () => {
     }
   }, 20_000)
 })
+
+describe('一个可选模块坏了,不连累 bootstrap(架构终态 A2 评审)', () => {
+  it('yi 的端口被占 ⇒ 只有 yi degraded;bootstrap 照常起、没有 yiHub', async () => {
+    const { createServer } = await import('node:net')
+    const { writeFileSync } = await import('node:fs')
+    const blocker = createServer()
+    await new Promise<void>(r => blocker.listen(0, '127.0.0.1', r))
+    const port = (blocker.address() as { port: number }).port
+    const stateDir = mkdtempSync(join(tmpdir(), 'boot-yi-'))
+    writeFileSync(join(stateDir, 'agent-config.json'), JSON.stringify({ provider: 'claude', dangerouslySkipPermissions: false, autoStart: false, closeStopsDaemon: false, yi_hub_listen: { host: '127.0.0.1', port } }))
+    const sup = new SubsystemSupervisor(() => {})
+    try {
+      const boot = await buildBootstrap({
+        supervisor: sup, db: openTestDb(), stateDir, ilink: ilinkStub() as any,
+        loadProjects: () => ({ projects: {}, current: null }), lastActiveChatId: () => null, log: () => {},
+        internalApi: { baseUrl: 'http://127.0.0.1:0', tokenFilePath: join(tmpdir(), 'token') },
+      })
+      expect(boot).toBeDefined()
+      expect(boot.yiHub).toBeUndefined()
+      const states = Object.fromEntries(sup.statuses().map(s => [s.name, s.state]))
+      expect(states.yi).toBe('degraded')
+      expect(states.bootstrap).toBe('ok')
+      await boot.sessionManager.shutdown()
+    } finally { blocker.close() }
+  }, 20_000)
+})
