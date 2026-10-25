@@ -8,6 +8,7 @@ import { makeRoutes, makeMaybePrefix } from './routes'
 import { ADMIN_CHAT_SCOPE_MESSAGE, ALL_CHATS, CHAT_SCOPE_MESSAGE, CROSS_CHAT_ROUTE, SEND_SCOPED_ROUTES, sendScopeDecision, sharedTokenTurn } from './send-scope'
 import { makeReplyDeliveryRuntime } from '../reply-delivery'
 import { minTierFor } from './route-tiers'
+import { stickersRoutes } from '../../features/stickers/routes'
 
 /**
  * 发送类路由的 chat 范围门(send-scope.ts)。确认过的安全 bug:这些路由从请求体拿
@@ -86,7 +87,11 @@ describe('sendScopeDecision (pure rule)', () => {
 
 describe('SEND_SCOPED_ROUTES registry', () => {
   it('every scoped key is a real route', () => {
-    const routes = makeRoutes({ deps: { stateDir: '/tmp/x', daemonPid: 1 } as InternalApiDeps, getDelegate: () => null, maybePrefix: makeMaybePrefix({} as InternalApiDeps) })
+    // 表情那几条由 stickers 模块挂(src/features/stickers),不在总表里。
+    const routes = {
+      ...makeRoutes({ deps: { stateDir: '/tmp/x', daemonPid: 1 } as InternalApiDeps, getDelegate: () => null, maybePrefix: makeMaybePrefix({} as InternalApiDeps) }),
+      ...stickersRoutes({ stickers: {} as never, ilink: { sendFile: async () => {} } }),
+    }
     for (const key of Object.keys(SEND_SCOPED_ROUTES)) expect(routes[key], key).toBeTypeOf('function')
   })
   it('every route that takes a chat_id and is reachable below admin is scoped (or explicitly exempted)', () => {
@@ -147,12 +152,16 @@ describe('send routes over HTTP — chat scope', () => {
         configStatus: () => ({ configured: false }),
         synthesizeSpeech: async () => { throw new Error('unused') },
       },
-      stickers: { resolve: m.stickerResolve, save: vi.fn(), list: vi.fn(() => []), allTags: vi.fn(() => ['happy']) },
-      stickerFeedback: { rate: m.feedbackRate, remember: vi.fn() },
       sharePage: m.sharePage,
       conversation: { setMode: m.setMode },
       ...extra,
     } as unknown as InternalApiDeps)
+    // 表情那几条由 stickers 模块挂上来(src/features/stickers),发送仍走同一个 sendFile。
+    api.mount('stickers', stickersRoutes({
+      stickers: { resolve: m.stickerResolve, save: vi.fn(), list: vi.fn(() => []), allTags: vi.fn(() => ['happy']) },
+      stickerFeedback: { rate: m.feedbackRate, remember: vi.fn() },
+      ilink: { sendFile: m.sendFile },
+    }))
     const { port, tokenFilePath } = await api.start()
     return { port, fileToken: readFileSync(tokenFilePath, 'utf8').trim() }
   }

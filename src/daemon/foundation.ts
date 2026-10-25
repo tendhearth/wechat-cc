@@ -23,9 +23,6 @@ import { makeJobsStore } from '../core/scheduled-jobs-store'
 import { makeMatterStore } from '../adapters/store/matters-store'
 import { makeReportOutboxStore } from './reports/outbox'
 import { makeChatPrefs } from './chat-prefs'
-import { makeStickerLib, seedStarterStickers, starterStickersDir } from './stickers'
-import { makeGiphyRelaySource, makeGiphySource } from './sticker-source'
-import { makeStickerFeedback } from './sticker-feedback'
 import { makeOutboundTaps } from './outbound-taps'
 import { makePetSignals } from './pet-signals'
 import { makeJournal } from '../core/journal-store'
@@ -122,20 +119,6 @@ export async function openFoundation(opts: { stateDir: string }, undo: Array<() 
   // 打猎改成默认关(收敛清单 ②,主人 10-21 定):第一次带着新默认开机时,把正在每天打猎的主人(主动关心开着、没单独设过)
   // 写成显式的开,不让他跟着被关掉。只做一次(companion/hunt-default.ts);在任何伙伴 tick 之前。
   pinHuntForExistingOwner({ stateDir, chatPrefs, log: (t, l) => log(t, l) })
-  // Single shared sticker-library instance (image-stickers plan) — backs the
-  // /v1/stickers* routes and the stickerTagsFor prompt read. Same reason as
-  // chatPrefs: a second instance would read a stale in-memory index.
-  const stickerFeedback = makeStickerFeedback(stateDir)
-  const stickerLib = makeStickerLib(stateDir, { feedback: stickerFeedback })
-  // Versioned CC pack adds missing stickers; existing collections are preserved.
-  {
-    const packDir = starterStickersDir()
-    if (packDir) seedStarterStickers(stickerLib, packDir, (t, l) => log(t, l))
-  }
-  const giphyRelay = process.env.WECHAT_CC_GIPHY_RELAY_URL ?? 'https://wechat-cc-giphy-relay.moxiuwen-giphy.workers.dev/search'
-  const giphyKey = process.env.WECHAT_CC_GIPHY_KEY
-  const stickerSource = giphyKey ? makeGiphySource({ apiKey: giphyKey }) : makeGiphyRelaySource({ endpoint: giphyRelay })
-  log('STICKERS', giphyKey ? 'online sticker source: GIPHY (local key)' : `online sticker source: GIPHY relay (${giphyRelay})`)
 
   return {
     stateDir,
@@ -162,9 +145,6 @@ export async function openFoundation(opts: { stateDir: string }, undo: Array<() 
     // 回报投递队列(v65):每轮答复入队一次,sweeper 按到期时间取件送达。
     reportOutbox: makeReportOutboxStore(db),
     chatPrefs,
-    stickerFeedback,
-    stickerLib,
-    stickerSource,
     // pushTick claims/reads it; the inbound path resets the no-reply streak on every message.
     careLedger: makeCareLedger(stateDir),
     // reply-sink registry: the POST /v1/wechat/reply route captures into it when a sink is open;

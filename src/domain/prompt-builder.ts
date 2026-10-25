@@ -679,7 +679,7 @@ export function companionOfferSection(): string {
  * first) so the library grows from real usage instead of being pre-seeded.
  */
 export function stickerSection(tags: string[]): string {
-  // Defense in depth: stickers.ts save() already rejects/normalizes tags at
+  // Defense in depth: features/stickers/stickers.ts save() already rejects/normalizes tags at
   // the source, but this renders straight into every chat's system prompt,
   // so backstop all line separators + 20-char cap for hand-edited index data.
   const safeTags = tags.filter((t) => !/[\r\n  ]/.test(t) && t.length <= 20).slice(0, 30)

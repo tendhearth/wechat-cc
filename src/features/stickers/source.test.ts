@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest'
-import { makeCooldown, makeGiphySource, makeTenorSource } from './sticker-source'
+import { makeCooldown, makeGiphySource, makeTenorSource } from './source'
 
 describe('Tenor sticker source', () => {
   it('searches with the safe filter and extracts GIFs', async () => {

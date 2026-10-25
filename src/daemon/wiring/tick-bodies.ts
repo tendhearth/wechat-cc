@@ -11,14 +11,14 @@ import { makePushTick } from './tick-push'
 import { makeIntrospectTick } from './tick-introspect'
 import type { CompanionAction, IntrospectStep } from '../companion/contributions'
 import { huntAction, visitAction, gapAction } from './companion-actions'
-import { stickerArtistStep, portraitArtistStep, memoryGardenStep, atelierStep } from './introspect-steps'
+import { portraitArtistStep, memoryGardenStep, atelierStep } from './introspect-steps'
+import { stickerArtistStep } from '../../features/stickers'
 
 // 2026-10-22 按生产者拆成 tick-*.ts(第三批 3a 顺带项);这里只剩组装,原有的导出原样转出去,调用方不用改。
 export type { TickDeps } from './tick-deps'
 export { INGEST_BATCH_CAP, INGEST_QUIET_MS, distillAndPushOwnerKnowledge } from './tick-ingest'
 export { JOB_PROVIDERS, JOB_TURN_MAX_MS, pickJobExecutor, type JobTurnResult } from './tick-job'
 export { buildJobText, buildPushTickText, buildGapCheckinText, buildHuntText, type BuildPushTickTextOpts, type BuildGapCheckinTextOpts, type TickTextStyle } from './tick-texts'
-export { announceNewSticker } from './introspect-steps'
 
 export interface TickBodies {
   /** WRITE-side knowledge ingestion (25m interval + new-message nudge). */

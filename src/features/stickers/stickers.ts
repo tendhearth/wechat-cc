@@ -9,9 +9,9 @@ import { materializeCcStarterPack } from './cc-starter-pack'
 import { copyFileSync, existsSync, mkdirSync } from 'node:fs'
 import { dirname, basename, extname, join, resolve as resolvePath } from 'node:path'
 import { fileURLToPath } from 'node:url'
-import { isCompiledBundle } from '../lib/runtime-info'
-import { makeStateStore, type StateStore } from './state-store'
-import { readJsonFile } from '../lib/read-json-file'
+import { isCompiledBundle } from '../../lib/runtime-info'
+import { makeStateStore, type StateStore } from '../../daemon/state-store'
+import { readJsonFile } from '../../lib/read-json-file'
 
 const LEGACY_BEAR_DESCRIPTIONS: Record<string, string> = {
   'bear-complete.png': '小熊够到了小蜜蜂,开心',
@@ -31,10 +31,8 @@ export interface StickerEntry {
 /** A mood with this many local stickers no longer needs online search. */
 export const ONLINE_STICKER_K = 5
 
-export function countForTag(entries: StickerEntry[], tag: string): number {
-  const target = tag.trim().toLowerCase()
-  return entries.filter((entry) => entry.tags.some((item) => item.trim().toLowerCase() === target)).length
-}
+// 比法搬进 domain(回复附件的预检也要用,internal-api 不能反过来依赖功能目录)。
+export { countForTag } from '../../domain/sticker-tag'
 
 export interface StickerLib {
   /** Copies sourcePath into the library. Throws Error('invalid_extension') / Error('empty_tags') / Error('invalid_tag'). */
@@ -169,7 +167,7 @@ export function makeStickerLib(stateDir: string, deps?: { store?: StateStore; ra
  */
 export function starterStickersDir(): string | null {
   if (isCompiledBundle()) return materializeCcStarterPack()
-  const root = join(dirname(fileURLToPath(import.meta.url)), '..', '..')   // src/daemon → repo
+  const root = join(dirname(fileURLToPath(import.meta.url)), '..', '..', '..')   // src/features/stickers → repo
   if (!root) return null
   const dir = join(root, 'assets', 'starter-stickers')
   return existsSync(dir) ? dir : null

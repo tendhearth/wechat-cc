@@ -1,6 +1,7 @@
 /**
  * 自省那一拍(每天一次)固定维护之后的几步(从 tick-introspect.ts 原样搬出,A5「陪伴候选」贡献点):
- * 贴纸、小像、记忆园丁、画室。各自门控、各自失败不拖累后面的步;登记在 tick-bodies.ts,顺序就是执行顺序。
+ * 小像、记忆园丁、画室。各自门控、各自失败不拖累后面的步;登记在 tick-bodies.ts,顺序就是执行顺序。
+ * 贴纸那一步归贴纸功能自己(src/features/stickers 的 stickerArtistStep),在登记表里排第一。
  */
 import { join } from 'node:path'
 import { loadCompanionConfig } from '../companion/config'
@@ -8,50 +9,6 @@ import { runGarden } from '../memory/gardener'
 import { readJsonFile } from '../../lib/read-json-file'
 import type { IntrospectStep } from '../companion/contributions'
 import type { TickDeps } from './tick-deps'
-
-/**
- * 新贴纸那一句(觅食式表情生长)改走 SpeechPolicy(第三批 3a):别烦我 / 免打扰 / 都送不到由门判;
- * 图跟字走同一条路(微信发文件、App 记表情引用)。图发不出去 ⇒ 什么都不说,**不退成一句光秃秃的文字**(整合者评审)。
- * 贴纸已经在库里了,以后照样会用到;这一句只是「我画了张新的」的小报告,不补发。
- */
-export async function announceNewSticker(
-  d: { speech?: import('../speech/policy').SpeechPolicy; stickers: { resolve(tag: string): string | null }; log: (tag: string, line: string) => void },
-  ownerChat: string,
-  mood: string,
-): Promise<void> {
-  if (!d.speech) { d.log('STICKERS', 'new-sticker notice skipped: speech policy not wired'); return }
-  const path = d.stickers.resolve(mood)
-  if (!path) { d.log('STICKERS', `new-sticker notice skipped: no file for mood=${mood}`); return }
-  const outcome = await d.speech.say({ kind: 'sticker', chatId: ownerChat }, async (turn) => {
-    if (!(await turn.sendSticker(ownerChat, mood, path))) { d.log('STICKERS', `new-sticker notice not sent: sticker undeliverable (mood=${mood})`); return }
-    await turn.sendText(ownerChat, `我画了张新表情!以后想说「${mood}」的时候就用它~`)
-  })
-  if (!('allow' in outcome)) d.log('STICKERS', `new-sticker notice ${'defer' in outcome ? 'deferred' : 'dropped'}: ${outcome.reason}`)
-}
-
-/**
- * 觅食式表情生长 (2026-08-25) — once a day CC draws itself a sticker for
- * a mood the library doesn't cover yet, and announces it like a small
- * gift. Self-gating (22h marker + pool exhaustion) and every failure
- * mode non-fatal — see sticker-artist.ts.
- */
-export function stickerArtistStep(deps: TickDeps): IntrospectStep {
-  return {
-    id: 'sticker-artist', logTag: 'STICKERS', failLabel: 'artist step',
-    async run({ sdkEval }) {
-      if (!(deps.stickers && sdkEval)) return
-      const { runStickerArtist } = await import('../sticker-artist')
-      const ownerChat = loadCompanionConfig(deps.stateDir).default_chat_id
-      await runStickerArtist({
-        stateDir: deps.stateDir,
-        lib: deps.stickers,
-        cheapEval: sdkEval,
-        log: (t, l) => deps.log(t, l),
-        notify: (mood) => ownerChat ? announceNewSticker({ speech: deps.speech, stickers: deps.stickers!, log: deps.log }, ownerChat, mood) : Promise.resolve(),
-      })
-    },
-  }
-}
 
 /**
  * CC 画的你,慢慢长 (2026-08-27) — 档案比上次画像新且过了最短间隔时,

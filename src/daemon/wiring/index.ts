@@ -54,7 +54,7 @@ export interface WireMainOpts {
   db: Db
   ilink: IlinkAdapter
   /** Sticker library — threaded to tick-bodies' daily sticker-artist step. */
-  stickers?: import('../stickers').StickerLib
+  stickers?: import('../../features/stickers').StickerLib
   /** 远程访问开关的重启触发(settings-panel set_remote)。 */
   requestRestart?: (reason: string) => void
   /** 微信文本命令(重构第二批步 2,进 CommandRegistry)。 */

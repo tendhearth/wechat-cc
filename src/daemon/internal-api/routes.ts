@@ -13,9 +13,7 @@ import { phoneRoutes } from './routes-phone'
  * sections are kept in stable order to match the original file's layout
  * so blame survives the split.
  */
-import { basename, join, posix } from 'node:path'
-import { mkdtempSync, rmSync, writeFileSync } from 'node:fs'
-import { tmpdir } from 'node:os'
+import { posix } from 'node:path'
 import { errMsg, type InternalApiDeps, type InternalApiDelegateDep, type RouteTable } from './types'
 import { splitReply, paceMs } from '../reply-split'
 import { lookup } from '../../domain/capability-matrix'
@@ -50,8 +48,6 @@ import { daemonControlRoutes } from './routes-daemon-control'
 import { fileRoutes } from './routes-files'
 import { federationRoutes } from './routes-federation'
 import { workbenchRoutes } from './routes-workbench'
-import { countForTag, ONLINE_STICKER_K } from '../stickers'
-import { makeCooldown } from '../sticker-source'
 import type {
   MemoryReadRequestT, MemoryWriteRequestT, MemoryDeleteRequestT,
   ProjectsSwitchRequestT, ProjectsAddRequestT, ProjectsRemoveRequestT,
@@ -70,6 +66,8 @@ export interface MakeRoutesContext {
   deps: InternalApiDeps
   getDelegate: () => InternalApiDelegateDep | null
   maybePrefix: (chatId: string, text: string, tag: string | undefined) => string
+  /** 功能模块挂上来的路由(index.ts 的 MOUNTED)。附件交付要经它调到表情那几条(stickers 模块挂的)。 */
+  mounted?: RouteTable
 }
 
 const defaultSleep = (ms: number): Promise<void> => new Promise(r => setTimeout(r, ms))
@@ -131,14 +129,10 @@ function toWireOutbound(h: import('../ilink/outbound-health').OutboundHealth) {
   }
 }
 
-export function makeRoutes({ deps, getDelegate, maybePrefix }: MakeRoutesContext): RouteTable {
-const onlineStickerCooldown = makeCooldown(5 * 60_000)
-// Rotate through upstream candidates per chat so repeated requests do not
-// always pick the first (often identical) GIPHY result.
-const onlineStickerCursor = new Map<string, number>()
+export function makeRoutes({ deps, getDelegate, maybePrefix, mounted }: MakeRoutesContext): RouteTable {
   const table: RouteTable = {
-    // 回复交付(spec 2026-10-03 §4.5 / §4.6):附件登记 + admin 往别处发。表情附件交付时复用本表里的老路由。
-    ...turnRoutes(deps, () => table),
+    // 回复交付(spec 2026-10-03 §4.5 / §4.6):附件登记 + admin 往别处发。表情附件交付时复用老路由(stickers 模块挂上来的)。
+    ...turnRoutes(deps, (key) => table[key] ?? mounted?.[key]),
     ...workbenchRoutes(deps),
     ...mattersRoutes(deps),
     ...connectionsRoutes(deps),
@@ -845,144 +839,6 @@ const onlineStickerCursor = new Map<string, number>()
       if (b.split !== undefined) patch.split = b.split
       const prefs = deps.setChatPref(b.chat_id, patch)
       return { status: 200, body: { ok: true, prefs } }
-    },
-
-    // ── stickers (image-stickers plan) ─────────────────────────────────
-    // INLINE-validated deliberately (no REQUEST_SCHEMAS entry) — mirrors
-    // the /v1/chat-prefs pattern above. Backs the send_sticker MCP tool
-    // plus the curated-lib save/list surface used to seed it.
-    'POST /v1/wechat/send_sticker': async (_q, body) => {
-      if (!deps.stickers) return { status: 503, body: { error: 'stickers_not_wired' } }
-      const b = (body ?? {}) as { chat_id?: unknown; tag?: unknown }
-      if (typeof b.chat_id !== 'string' || b.chat_id.trim() === '') {
-        return { status: 400, body: { error: 'chat_id required (non-empty string)' } }
-      }
-      if (typeof b.tag !== 'string' || b.tag.trim() === '') {
-        return { status: 400, body: { error: 'tag required (non-empty string)' } }
-      }
-      const path = deps.stickers.resolve(b.tag, b.chat_id)
-      if (path === null) {
-        return { status: 200, body: { ok: false, reason: 'no_sticker_for_tag', tags: deps.stickers.allTags() } }
-      }
-      if (!deps.ilink) return { status: 503, body: { error: 'ilink_not_wired' } }
-      try {
-        await deps.ilink.sendFile(b.chat_id, path)
-        deps.stickerFeedback?.remember(b.chat_id, basename(path))
-        return { status: 200, body: { ok: true, file: basename(path) } }
-      } catch (err) {
-        return { status: 200, body: { ok: false, error: errMsg(err) } }
-      }
-    },
-    'POST /v1/wechat/search_online_sticker': async (_q, body) => {
-      if (!deps.stickerSource) return { status: 503, body: { error: 'sticker_source_not_wired' } }
-      if (!deps.stickers) return { status: 503, body: { error: 'stickers_not_wired' } }
-      const b = (body ?? {}) as { chat_id?: unknown; mood?: unknown; query?: unknown }
-      if (typeof b.chat_id !== 'string' || !b.chat_id.trim()) return { status: 400, body: { error: 'chat_id required (non-empty string)' } }
-      if (typeof b.mood !== 'string' || !b.mood.trim()) return { status: 400, body: { error: 'mood required (non-empty string)' } }
-      if (typeof b.query !== 'string' || !b.query.trim()) return { status: 400, body: { error: 'query required (non-empty string)' } }
-      if (!deps.ilink) return { status: 503, body: { error: 'ilink_not_wired' } }
-      const chatId = b.chat_id.trim(), mood = b.mood.trim(), query = b.query.trim()
-      if (countForTag(deps.stickers.list(), mood) >= ONLINE_STICKER_K) {
-        const local = deps.stickers.resolve(mood)
-        if (local) try {
-          await deps.ilink.sendFile(chatId, local)
-          return { status: 200, body: { ok: true, source: 'local', file: basename(local) } }
-        } catch (err) { return { status: 200, body: { ok: false, error: errMsg(err) } } }
-      }
-      if (!onlineStickerCooldown.ready(chatId, Date.now())) return { status: 200, body: { ok: false, reason: 'throttled' } }
-      let scratch: string | undefined
-      let onlineSent = false
-      try {
-        const hits = await deps.stickerSource.search(query, { limit: 8 })
-        if (hits.length === 0) return { status: 200, body: { ok: false, reason: 'no_online_result' } }
-        const cursor = onlineStickerCursor.get(chatId) ?? 0
-        const hit = hits[cursor % hits.length]!
-        onlineStickerCursor.set(chatId, cursor + 1)
-        const download = await deps.stickerSource.download(hit.url)
-        if (!download) return { status: 200, body: { ok: false, reason: 'no_online_result' } }
-        scratch = mkdtempSync(join(tmpdir(), 'online-sticker-'))
-        const path = join(scratch, `${hit.id}.${download.ext}`)
-        writeFileSync(path, download.bytes)
-        await deps.ilink.sendFile(chatId, path)
-        onlineSent = true
-        const saved = deps.stickers.save(path, [mood], `CC 联网找的「${mood}」表情`)
-        deps.stickerFeedback?.remember(chatId, saved.file)
-        deps.ilink.noteSentMedia?.(chatId, { kind: 'sticker', file: saved.file, label: mood })
-        return { status: 200, body: { ok: true, source: 'online', file: saved.file } }
-      } catch (err) {
-        return { status: 200, body: { ok: false, error: errMsg(err) } }
-      } finally {
-        if (!onlineSent) onlineStickerCooldown.reset(chatId)
-        if (scratch) rmSync(scratch, { recursive: true, force: true })
-      }
-    },
-    'POST /v1/wechat/search_online_sticker_candidates': async (_q, body) => {
-      if (!deps.stickerSource) return { status: 503, body: { error: 'sticker_source_not_wired' } }
-      const b = (body ?? {}) as { query?: unknown }
-      if (typeof b.query !== 'string' || !b.query.trim()) return { status: 400, body: { error: 'query required (non-empty string)' } }
-      const hits = await deps.stickerSource.search(b.query.trim(), { limit: 8 })
-      return { status: 200, body: { ok: true, candidates: hits.slice(0, 8) } }
-    },
-    'POST /v1/wechat/sticker_feedback': async (_q, body) => {
-      if (!deps.stickerFeedback) return { status: 503, body: { error: 'sticker_feedback_not_wired' } }
-      const b = (body ?? {}) as { chat_id?: unknown; signal?: unknown; file?: unknown }
-      if (typeof b.chat_id !== 'string' || !b.chat_id.trim()) return { status: 400, body: { error: 'chat_id required (non-empty string)' } }
-      if (b.signal !== 'positive' && b.signal !== 'negative') return { status: 400, body: { error: 'signal must be positive or negative' } }
-      const file = deps.stickerFeedback.rate(b.chat_id.trim(), b.signal, typeof b.file === 'string' ? b.file : undefined)
-      return { status: 200, body: { ok: Boolean(file), file } }
-    },
-    'POST /v1/wechat/send_online_sticker_candidate': async (_q, body) => {
-      if (!deps.stickerSource || !deps.stickers) return { status: 503, body: { error: 'sticker_source_not_wired' } }
-      const b = (body ?? {}) as { chat_id?: unknown; mood?: unknown; url?: unknown; id?: unknown }
-      if (typeof b.chat_id !== 'string' || !b.chat_id.trim()) return { status: 400, body: { error: 'chat_id required (non-empty string)' } }
-      if (typeof b.mood !== 'string' || !b.mood.trim()) return { status: 400, body: { error: 'mood required (non-empty string)' } }
-      if (typeof b.url !== 'string' || !b.url.trim()) return { status: 400, body: { error: 'url required (non-empty string)' } }
-      try {
-        const host = new URL(b.url).hostname.toLowerCase()
-        if (!host.endsWith('.giphy.com') && host !== 'giphy.com') return { status: 400, body: { error: 'candidate url must be a GIPHY URL' } }
-      } catch { return { status: 400, body: { error: 'candidate url must be valid' } } }
-      if (!deps.ilink) return { status: 503, body: { error: 'ilink_not_wired' } }
-      try {
-        const download = await deps.stickerSource.download(b.url)
-        if (!download) return { status: 200, body: { ok: false, reason: 'candidate_unavailable' } }
-        const scratch = mkdtempSync(join(tmpdir(), 'online-sticker-candidate-'))
-        try {
-          const path = join(scratch, `${typeof b.id === 'string' && b.id ? b.id : 'candidate'}.${download.ext}`)
-          writeFileSync(path, download.bytes)
-          await deps.ilink.sendFile(b.chat_id.trim(), path)
-          const saved = deps.stickers.save(path, [b.mood.trim()], `CC 联网筛选的「${b.mood.trim()}」表情`)
-          deps.stickerFeedback?.remember(b.chat_id.trim(), saved.file)
-          deps.ilink.noteSentMedia?.(b.chat_id.trim(), { kind: 'sticker', file: saved.file, label: b.mood.trim() })
-          return { status: 200, body: { ok: true, source: 'online', file: saved.file } }
-        } finally { rmSync(scratch, { recursive: true, force: true }) }
-      } catch (err) { return { status: 200, body: { ok: false, error: errMsg(err) } } }
-    },
-    'POST /v1/stickers': (_q, body) => {
-      if (!deps.stickers) return { status: 503, body: { error: 'stickers_not_wired' } }
-      const b = (body ?? {}) as { path?: unknown; tags?: unknown; desc?: unknown }
-      if (typeof b.path !== 'string' || b.path.trim() === '') {
-        return { status: 400, body: { error: 'path required (non-empty string)' } }
-      }
-      if (
-        !Array.isArray(b.tags) ||
-        b.tags.length === 0 ||
-        !b.tags.every((t) => typeof t === 'string' && t.trim() !== '')
-      ) {
-        return { status: 400, body: { error: 'tags required (non-empty array of non-empty strings)' } }
-      }
-      if (b.desc !== undefined && typeof b.desc !== 'string') {
-        return { status: 400, body: { error: 'desc must be a string' } }
-      }
-      try {
-        const saved = deps.stickers.save(b.path, b.tags as string[], b.desc as string | undefined)
-        return { status: 200, body: { ok: true, file: saved.file, tags: saved.tags } }
-      } catch (err) {
-        return { status: 400, body: { error: errMsg(err) } }
-      }
-    },
-    'GET /v1/stickers': () => {
-      if (!deps.stickers) return { status: 503, body: { error: 'stickers_not_wired' } }
-      return { status: 200, body: { ok: true, stickers: deps.stickers.list(), tags: deps.stickers.allTags() } }
     },
 
     // ── a2a (send / test / dashboard CRUD) + daemon-control (sessions / model
