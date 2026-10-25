@@ -1,6 +1,6 @@
 # Tendhearth CC 架构:一页现状图
 
-> 2026-10-23,第三批重构之后。这一页只说**现在是什么样、每类东西的唯一来源在哪**。为什么这样定看[架构复查 2026-10-21](architecture-review-2026-10-21.md)(五条理念)和各设计稿;2026-07 起陪伴路径的长版说明在 [`reference/architecture-companion-2026-07.md`](reference/architecture-companion-2026-07.md)(历史)。数字型事实(迁移条数、命令条数、执行者家数)这里一律不写,写「去哪看」。**往哪收、终态长什么样**看[架构终态与升级计划 2026-10-25](architecture-end-state-2026-10-25.md)。
+> 2026-10-25,架构终态 A–F 大部分落地之后。这一页只说**现在是什么样、每类东西的唯一来源在哪**。为什么这样定看[架构复查 2026-10-21](architecture-review-2026-10-21.md)(五条理念)和各设计稿;2026-07 起陪伴路径的长版说明在 [`reference/architecture-companion-2026-07.md`](reference/architecture-companion-2026-07.md)(历史)。数字型事实(迁移条数、命令条数、执行者家数)这里一律不写,写「去哪看」。**往哪收、终态长什么样**看[架构终态与升级计划 2026-10-25](architecture-end-state-2026-10-25.md)。
 
 ## 一句话
 
@@ -14,13 +14,13 @@ CC 是住在主人自己电脑上的一个 daemon。微信、桌面、手机 App
      │               └──── internal API(packages/protocol 的路由表)◄──────┘            │
      ▼                                   │                                              │
  入站流水线(src/daemon/inbound/build.ts) │                                              │
-   └─ 命令表(commands/registry.ts)── 没人认领 ──► 对话协调器(core/conversation-coordinator.ts)
-        task · admin.* · mode.* · …            │        └─ 会话管理(core/session-manager.ts)
+   └─ 命令表(commands/registry.ts)── 没人认领 ──► 对话协调器(app/coordinator/)
+        task · admin.* · mode.* · …            │        └─ 会话管理(app/session-manager.ts)
         · control.*                            ▼
-                                     执行者登记(core/provider-registry.ts)
+                                     执行者登记(app/provider-registry.ts)
                                        Claude · Codex · Cursor · 自定义 AI 服务 · Gemini · agy
                                        └─ 工作台(features/workbench/,「一起做」)按登记跟上
-                                     
+ 
  CC 主动开口 ─► SpeechPolicy(src/daemon/speech/)─► 微信 / App;免打扰、断线排队、记账
  一切状态 ──► 本机:SQLite(src/lib/db.ts)+ 状态文件(src/lib/json-file.ts)+ 记忆目录(memory/<chat>/)
  一切子系统 ─► DaemonModule 容器(src/daemon/modules/container.ts):启停成对,关机顺序 = 启动倒过来
@@ -34,18 +34,18 @@ CC 是住在主人自己电脑上的一个 daemon。微信、桌面、手机 App
 apps/*  ──HTTP──►  packages/protocol(路由表、错误码,纯数据)
 src/cli ──spawn / HTTP──►  src/daemon ──► src/features ──► src/app ──► src/ports / src/domain ──► src/lib
                           src/app ──► src/adapters(executors / store,实现 ports)
-                                                   └──► src/core(还没搬完的:工作台的 store 与执行者也用的零件、知识库 …)
+                                                   └──► src/core(还没拆完的余项,见下)
 src/mcp-servers ──HTTP──►  src/daemon(internal API)
 ```
 
 - `src/lib`:最底层,零业务依赖(可以用 `node:*`);事实表、文件写法、db、运行时适配。
 - `src/domain`:纯规则 —— 档位与放行(`policy` / `user-tier` / `tool-decision` / `provider-policy`)、开口(`speech/decide`、`quiet-hours`)、伙伴判定、提示词(`prompt-builder`)、能力表。**零例外**:运行时只依赖 domain 自己和 lib 里不碰 I/O 的,不碰 node 内置(depcheck `domain-is-pure` / `domain-no-node`)。
-- `src/ports`:接口 —— 执行者的口(`agent-provider`:AgentProvider / AgentSession)。只依赖 domain 与纯 lib。
+- `src/ports`:接口 —— 执行者的口(`agent-provider`)、微信的十个窄口(`wechat.ts`:send / permissions / pages / link / contacts / accounts / companion / voice / polling / workbench;模块 `needs` 口名,只拿那一片,没有谁拿整个 ilink 适配器)、陪伴的贡献点(`companion-contributions.ts`)。只依赖 domain 与纯 lib。
 - `src/app`:用例 —— 对话协调器(`coordinator/`:`planTurn` / `admit` 一轮定一次档位,`TurnRunner` 三种派法共用)、会话管理、执行者登记。不往上依赖、不碰 node。
 - `src/adapters/executors/<家>`:各家执行者的适配器(对话侧 + 工作台侧),实现 ports;不往上依赖 app / daemon。
-- `src/adapters/store`:通用的 store(对话、会话、会话状态、回合记录、终端会话、「一件事」)。同一条 `adapters-implement-ports` 规则。
-- `src/core`:还没拆完的那一层 —— 工作台、社交、知识库、配对、乙,以及它们自己的 store。功能搬进 `src/features` 时它们的 store 跟着走;`core-no-node` 棘轮在数。
-- `src/features/<名>`:一个功能一个目录(见[加一个功能](maintainer/add-a-feature.md))。
+- `src/adapters/store`:通用的 store(对话、会话、会话状态、回合记录、终端会话、「一件事」、背包、记忆目录 MemoryFS)。同一条 `adapters-implement-ports` 规则。
+- `src/core`:还没拆完的余项 —— 工作台的 store 与执行者也用的零件、A2A 传输、配对、知识库、放行规则(路径归一靠 `node:path`)、终端 hook 的纯逻辑等;正在按终态 E3 分进 ports / adapters / features,`core-no-node` 棘轮在数。
+- `src/features/<名>`:一个功能一个目录(见[加一个功能](maintainer/add-a-feature.md)):日历、提醒、信、定时、回报、画室、贴纸、打猎、背包、语音、终端会话、社交、记忆、手机、工作台、陪伴。功能自己挂路由(`internalApi.mount`)、自己是模块;别的功能经 `needs` / 窄导出用它,陪伴经贡献点接各家的候选与自省步骤。
 - `src/test-support`:测试替身(照剧本说话的假执行者),生产代码不许 import。
 - `src/daemon`:「怎么接起来」—— 入站、命令、internal API、模块、定时。
 - 规则在 `.dependency-cruiser.cjs`(`bun run depcheck`),不是靠人记。
@@ -57,9 +57,10 @@ src/mcp-servers ──HTTP──►  src/daemon(internal API)
 | 执行者有哪几家 | `src/lib/provider-ids.ts` | 下面每张表的键都要和它相等(各自测试) |
 | 执行者「是什么」:名字、斜杠词、模型字段、安装提示、密钥、怎么判在不在 | `src/lib/executor-facts.ts`(判在不在只在 `executor-detect.ts`) | 三端显示名、`/help`、doctor、guard;`executor-detect` 守卫拦手写判断 |
 | 执行者「能做到什么」:四件事各靠什么收住(confines)、MCP 档位 | `src/domain/provider-capabilities.ts` | `guestSafe` 从 confines 推;访客能用谁由 `provider-policy.ts` 一处判 |
+| 一次工具调用:放 / 问 / 拒 | `src/domain/authorize.ts` 的 `authorize()` | 各家逐工具回调、工作台、终端会话、定时任务闸门都只调它;主人的放行规则在终端、一起做、主人自己的对话里生效(红线照旧问,对话里放了会说一行) |
 | 档位 × 模式 → 执行者实际设置 | `src/domain/policy.ts` 的 `compilePolicy` | 全表快照;每家每档每类工具实际怎样由 `src/domain/enforcement-matrix.ts` 从 `authorize` / `providerDenialFor` / `compilePolicy` 推出来,也钉快照(问不了于是放行的,主人切过去时照实说) |
 | 执行者登记 | 对话侧 `bootstrap/providers.ts` 登记一次 | 工作台按 `onRegister` 跟上,不抄快照;可执行文件路径经登记项的 `bin()` 现取 |
-| 路由:路径、谁能调、属于哪个模块 | `packages/protocol/src/routes.ts` | 鉴权表、模块门、`gen:routes` 生成物、桌面白名单;`route-registry` 守卫 |
+| 路由:路径、谁能调、属于哪个模块 | `packages/protocol/src/routes.ts`(App 调手机接口经 `phone-calls.ts` 的类型化客户端,不手写路径) | 鉴权表、模块门、`gen:routes` 生成物、桌面白名单;`route-registry` 守卫 |
 | 错误码 → 各表面的状态与说法 | `packages/protocol/src/workbench-errors.ts` | 桌面 / 手机 / 微信的映射都核它 |
 | 微信命令 | `commands/registry.ts` 一张表,顺序就是优先级 | 各族(admin / mode / control)行两两互斥;路由快照记每句落到哪 |
 | 子系统的启停 | `DaemonModule`(`modules/container.ts`),全部模块一张表 `daemon-modules.ts` | `daemon-module` 守卫数旧写法,只许少;main.ts 已清零 |
@@ -67,7 +68,6 @@ src/mcp-servers ──HTTP──►  src/daemon(internal API)
 | 数据库迁移的顺序 | `src/lib/db/migrations/index.ts`(一版一个文件) | 文件名 = 位置;进了 `dev` 的一字不改(CI `migrations · frozen`) |
 | 状态文件怎么写 | `src/lib/json-file.ts`(独立 tmp + fsync + rename;读不出来拒写) | `json-write` 守卫:新代码手写 tmp / 直写 JSON 就红 |
 | 记忆目录里哪些是源、哪些是生成物 | `src/lib/memory-artifacts.ts` | 源一变生成物过期(主人删改 ⇒ 藏,只是多了 ⇒ 贴标签);合成只吃源;主人的更正清单 `corrections.md` 一路传到底 |
-
 | 一个功能有什么(要什么、给什么、哪些路由 / 命令) | `src/features/<名>/index.ts` 的模块清单(样板:日历) | 路由表的 `module` 字段 + `internalApi.mount` 只认标给自己的;depcheck 管功能目录的边界 |
 
 新加一样东西,先找它属于哪一行;找不到,说明要新开一张表,而不是在用的地方手写一份。「怎么加」:[功能](maintainer/add-a-feature.md)、[执行者](maintainer/add-an-executor.md)、[微信命令](maintainer/add-a-command.md)、[数据库迁移](maintainer/migrations.md)、[页面](maintainer/add-a-page.md)。
