@@ -149,18 +149,54 @@ describe('expandable native content', () => {
     expect(el('sheet-detail')).not.toBeNull()
   })
 
-  it('keeps an expanded card snapshot after seen removes its prop, and closing removes that snapshot', async () => {
+  it('keeps the seen card snapshot through the closing transition, then removes it without marking seen again', async () => {
     const card: CardData = { id: 'card1', kind: 'postcard', ts: '2026-10-24T12:00:00Z', at: Date.now(), title: 'A note', note: 'Full note', url: null }
     const seen = vi.fn()
     const root = await mount(createElement(CompanionCard, { card, onSeen: seen }))
     expect(seen).not.toHaveBeenCalled()
     await click('now-companion-card')
     expect(seen).toHaveBeenCalledExactlyOnceWith(card.ts)
+    await act(() => { for (const finish of host.finish.splice(0)) finish() })
     await act(async () => { root.render(createElement(CompanionCard, { card: null, onSeen: seen })) })
     expect(el('now-companion-card')?.textContent).toContain('Full note')
     await click('now-companion-card')
+    expect(el('now-companion-card')?.getAttribute('aria-expanded')).toBe('false')
+    expect(el('now-companion-card')?.textContent).toContain('Full note')
+    await click('now-companion-card')
+    expect(seen).toHaveBeenCalledTimes(1)
+    await act(() => { for (const finish of host.finish.splice(0)) finish() })
     expect(el('now-companion-card')).toBeNull()
     expect(seen).toHaveBeenCalledTimes(1)
+  })
+
+  it.each(['reduced motion', 'background', 'blur'])('removes the closing seen card immediately on %s', async reason => {
+    const card: CardData = { id: 'card1', kind: 'postcard', ts: '2026-10-24T12:00:00Z', at: Date.now(), title: 'A note', note: 'Full note', url: null }
+    const seen = vi.fn()
+    const root = await mount(createElement(CompanionCard, { card, onSeen: seen }))
+    await click('now-companion-card')
+    await act(() => { for (const finish of host.finish.splice(0)) finish() })
+    await act(() => { root.render(createElement(CompanionCard, { card: null, onSeen: seen })) })
+    await click('now-companion-card')
+    expect(el('now-companion-card')).not.toBeNull()
+    await act(() => {
+      if (reason === 'reduced motion') host.reducedListeners.forEach(listener => listener(true))
+      else if (reason === 'background') host.appListeners.forEach(listener => listener('background'))
+      else host.blurListeners.forEach(listener => listener())
+    })
+    expect(el('now-companion-card')).toBeNull()
+    expect(seen).toHaveBeenCalledExactlyOnceWith(card.ts)
+  })
+
+  it('closes a seen card immediately when motion was already disabled', async () => {
+    host.motion = false
+    const card: CardData = { id: 'card1', kind: 'postcard', ts: '2026-10-24T12:00:00Z', at: Date.now(), title: 'A note', note: 'Full note', url: null }
+    const seen = vi.fn()
+    const root = await mount(createElement(CompanionCard, { card, onSeen: seen }))
+    await click('now-companion-card')
+    await act(() => { root.render(createElement(CompanionCard, { card: null, onSeen: seen })) })
+    await click('now-companion-card')
+    expect(el('now-companion-card')).toBeNull()
+    expect(seen).toHaveBeenCalledExactlyOnceWith(card.ts)
   })
 
   it('external links open directly and mark seen without expanding the card', async () => {
