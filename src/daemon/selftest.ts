@@ -48,6 +48,8 @@ export interface SelftestConverseDeps {
   invalidateSession: (key: string) => void
   log: (tag: string, line: string) => void
   now?: () => number
+  /** 草稿项目放在哪;缺省 SELFTEST_PROJECT_PATH。测试各给各的临时目录:固定路径被并行的测试文件共用,一边在删一边在写(ENOTEMPTY)。 */
+  projectDir?: string
 }
 
 /** Mirrors the daemon-wide "no reply for a while" turn watchdog default. */
@@ -65,7 +67,7 @@ const TOKEN_TTL_MS = 10 * 60_000
  *  NOT under STATE_DIR: a real provider runs in here with
  *  `permissionMode:'dangerously'`, and STATE_DIR holds the daemon's tokens
  *  and account files. */
-const SELFTEST_PROJECT_PATH = join(tmpdir(), 'wechat-cc-selftest', 'project')
+export const SELFTEST_PROJECT_PATH = join(tmpdir(), 'wechat-cc-selftest', 'project')
 
 export async function runSelftestConverse(
   deps: SelftestConverseDeps,
@@ -90,7 +92,7 @@ export async function runSelftestConverse(
   // Created once and reused across runs (mkdir is a no-op if it already
   // exists); the README is written only the first time so re-runs don't
   // clobber anything a maintainer might have poked at inside it.
-  const projectPath = SELFTEST_PROJECT_PATH
+  const projectPath = deps.projectDir ?? SELFTEST_PROJECT_PATH
   mkdirSync(projectPath, { recursive: true })
   const readmePath = join(projectPath, 'README.md')
   if (!existsSync(readmePath)) writeFileSync(readmePath, 'selftest scratch project\n')
