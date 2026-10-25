@@ -37,3 +37,6 @@ export { HomeTopic, ApprovalItem, ApprovalsTopic, AgentsTopic, MatterTopic } fro
 export type { HomeTopicT, ApprovalItemT, AgentsTopicT, MatterTopicT } from './topics'
 export { WORKBENCH_ERRORS, workbenchErrorSpec, workbenchErrorHttp } from './workbench-errors'
 export type { WorkbenchErrorSpec, WorkbenchErrorOut, WorkbenchErrorSurface } from './workbench-errors'
+export type { PhoneApiKey, PhoneApiResponse, PhoneApiOk } from './api'
+export type { PhoneApi, PhoneCallSpec, PhoneCallArgs, PhoneCallFn, PhoneCallRequest, PhoneTransport } from './phone-calls'
+export { PHONE_CALLS, makePhoneApi, phoneCallRequest, toProtocolRequest } from './phone-calls'

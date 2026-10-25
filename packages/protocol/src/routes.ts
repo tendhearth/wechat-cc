@@ -187,7 +187,7 @@ export interface RouteSpec {
  * `wechat-cc memory view|edit` 与桌面(经宿主)用 operator 凭据。
  *   → POST /v1/memory/view, POST /v1/memory/edit
  */
-export const ROUTES: Readonly<Record<RouteKey, RouteSpec>> = {
+const ROUTE_TABLE = {
   // ── 内部 API(/v1/*)。注释原样搬自 route-tiers.ts 的 ROUTE_MIN_TIER ─────────────────────
   // Owner Workbench: task instructions and generated artifacts are private.
   'GET /v1/workbench/entry-options': { module: 'workbench', desktop: { tier: 'admin', tokens: ['operator'], tauri: true, devProxy: true } },
@@ -630,7 +630,18 @@ export const ROUTES: Readonly<Record<RouteKey, RouteSpec>> = {
   // 推送(中继 v2,spec 2026-09-30 §5):登记 APNs / FCM token、发一条测试通知。只认设备令牌。
   'POST /m/api/push/register': { phone: { link: 'none' } },
   'POST /m/api/push/test': { phone: { link: 'none' } },
-}
+} satisfies Record<RouteKey, RouteSpec>
+
+export const ROUTES: Readonly<Record<RouteKey, RouteSpec>> = ROUTE_TABLE
+
+/** 表里登记过的键(字面量类型):写错一个字编译就不过。 */
+export type DeclaredRouteKey = keyof typeof ROUTE_TABLE
+/**
+ * 手机面板那一端(`/m`、`/m/api/*`、`/set`、`/set/api/*`)的键(架构终态 F3)。daemon 的处理器表
+ * (`src/features/phone/phone-route-table.ts` 的 `PhoneRouteTable`)和类型化客户端(`phone-calls.ts`)都只认这些键 ——
+ * 路径只在这张表里写一次。
+ */
+export type PanelRouteKey = Extract<DeclaredRouteKey, `${string} /m` | `${string} /m/${string}` | `${string} /set` | `${string} /set/${string}`>
 
 /**
  * 手机能订阅的事件主题(phone-events.ts 的 `subscribe`)。`matter/` 以 `/` 结尾是前缀标记:

@@ -20,6 +20,7 @@
  * 成 undefined,见 messages.ts 同一条注释)。
  */
 import z from 'zod'
+import type { PanelRouteKey } from './routes'
 
 // ── 错误响应(共享)───────────────────────────────────────────────────────
 
@@ -586,7 +587,7 @@ export const SessionContinueResult = z.object({ matterId: z.string(), created: z
 /** 主人对话的后端 / 模型(GET/POST /m/api/chat/model,2026-10-06)。model=null ⇒ 用这个后端的全局设置。 */
 export const ChatModelView = z.object({ ok: z.literal(true), mode: z.string(), provider: z.string(), model: z.string().nullable(), globalModel: z.string().nullable(), providers: z.array(z.object({ id: z.string(), name: z.string() })) })
 
-export const PHONE_API_SCHEMAS: Readonly<Record<string, z.ZodTypeAny>> = {
+const PHONE_API = {
   'GET /set/api/state': z.union([SetStateSuccess, PhoneErrorResponse]),
   'POST /set/api/apply': z.object({ ok: z.boolean(), error: z.string().optional(), restart: z.enum(['requested', 'required']).optional() }),
   'POST /set/api/pair': z.union([
@@ -672,4 +673,13 @@ export const PHONE_API_SCHEMAS: Readonly<Record<string, z.ZodTypeAny>> = {
   'POST /m/api/matter/handoff': z.union([z.object({ ok: z.literal(true) }).extend(MatterHandoffResult.shape), PhoneErrorResponse]),
   'POST /m/api/push/register': z.union([z.object({ ok: z.literal(true) }), PhoneErrorResponse]),
   'POST /m/api/push/test': z.union([z.object({ ok: z.literal(true), result: z.object({ ok: z.boolean(), code: z.string() }) }), PhoneErrorResponse]),
-}
+} satisfies Partial<Record<PanelRouteKey, z.ZodTypeAny>>
+
+export const PHONE_API_SCHEMAS: Readonly<Record<string, z.ZodTypeAny>> = PHONE_API
+
+/** 有返回形状的那些路由键(架构终态 F3:类型化客户端只认这些)。 */
+export type PhoneApiKey = keyof typeof PHONE_API
+/** 这条路由的返回(含失败那几种形状)。 */
+export type PhoneApiResponse<K extends PhoneApiKey> = z.infer<(typeof PHONE_API)[K]>
+/** 成功那一半:去掉 `{ ok:false, error }` 与裸 `{ error }`(失败由传输层先按状态码 / 错误码挡掉)。 */
+export type PhoneApiOk<K extends PhoneApiKey> = Exclude<PhoneApiResponse<K>, { ok: false } | { error: string; ok?: never }>
