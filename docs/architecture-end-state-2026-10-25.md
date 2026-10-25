@@ -243,6 +243,7 @@ DeliveryPort                      吃 TurnOutcome;旧的 / shadow 交付路删�
 | A5 · 定时 | `src/features/jobs/`(命令、早报 / 周报、runner、手机页、模块清单:必需的 `jobs` + 可选的 `scheduled-jobs`);「做过的事」单独成 `activity` 模块;`ReplyHandler` 类型归命令平台(`commands/registry.ts`);容器新规矩:必需模块不许 needs 可选模块(开机就抛) |
 | F1 第 1 步 | `/v1` 的 zod 契约搬进协议包(`packages/protocol/src/desktop-api.ts`,daemon 的 `internal-api/schema.ts` 只转出);守卫:契约表的键都在路由表里。现在 36 / 209 条 `/v1` 路由有响应契约 |
 | A6 第 1 步 | 项目登记(别名 → 文件夹)搬出 ilink 适配器:`src/daemon/projects.ts`,地基里一份;`IlinkAdapter` 少 `projects` / `loadProjects` 两项 |
+| C1 第 1 步 | 档位 × 工具类别 ⇒ 放 / 问 / 拒,收成一个纯函数 `core/tool-decision.ts`:Claude(permission-relay)、Gemini(原来为躲 import 环逐字抄的一份)、OpenAI 兼容三家共用;逐格对照测试证明每个档位 × 类别 × 能力表设置都没变 |
 
 ## 修订记录
 

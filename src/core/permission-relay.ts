@@ -3,38 +3,18 @@ import type { Mode, ProviderId } from './conversation'
 import { lookup, type Capability, type PermissionMode } from './capability-matrix'
 import { isReplyToolName } from './agent-provider'
 import { classifyToolUse, TIER_PROFILES, type TierProfile, type ToolKind, type UserTier } from './user-tier'
+import { decideTool } from './tool-decision'
 
 /**
- * Combine the capability-matrix base policy with the tier profile into a
- * single allow/relay/deny decision for one tool call.
- *
- * Precedence:
- *   1. tier.deny  → deny (tier forbids this kind outright)
- *   2. tier.relay → relay (tier requires admin approval for this kind)
- *   3. tier.allow → allow (tier explicitly auto-allows; bypass the matrix)
- *   4. otherwise → defer to matrix base.askUser:
- *      - 'per-tool' → relay (matrix dictates per-tool prompt)
- *      - 'never'    → allow (matrix says no prompt needed)
- *
- * Step 3 is the post-RFC-05 short-circuit: tier.allow is an explicit
- * "don't bother the matrix" signal. Without it, strict mode would relay
- * every tool call (matrix.askUser='per-tool') even when tier policy
- * intends auto-allow — which would mean admin sees a y/n prompt for
- * `Read`, `Glob`, harmless Bash, etc. Pre-RFC-05 the workaround was
- * the bypassPermissions short-circuit in tierProfileToClaudeSdkOpts,
- * which made admin never call canUseTool at all (and broke C4 — admin
- * destructive Bash also skipped the relay). Now the relay set lives in
- * the tier and matrix overrides only when tier didn't classify.
+ * 能力表的那一行 + 档位 ⇒ 放 / 问 / 拒。判定本身在 ./tool-decision.ts(三家共用的唯一一份);这里只是把能力表的
+ * askUser 交进去。顺序与理由见那个文件。
  */
 export function effectivePolicy(
   base: Capability,
   tp: TierProfile,
   kind: ToolKind,
 ): 'allow' | 'relay' | 'deny' {
-  if (tp.deny.has(kind)) return 'deny'
-  if (tp.relay.has(kind)) return 'relay'
-  if (tp.allow.has(kind)) return 'allow'
-  return base.askUser === 'per-tool' ? 'relay' : 'allow'
+  return decideTool(tp, kind, base.askUser)
 }
 
 export interface PermissionRelayDeps {

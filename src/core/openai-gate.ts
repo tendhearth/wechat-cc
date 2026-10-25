@@ -20,6 +20,7 @@
 import { classifyToolUse, type TierProfile } from './user-tier'
 import type { PermissionMode } from './agent-provider'
 import { compilePolicy } from './policy'
+import { decideTool } from './tool-decision'
 
 export type GateDecision = 'allow' | 'deny'
 
@@ -49,9 +50,8 @@ export function gateTool(args: {
   const sdkName = args.mcpServer ? `mcp__${args.mcpServer}__${args.toolName}` : args.toolName
   const kind = classifyToolUse(sdkName, args.input)
 
-  if (args.tierProfile.deny.has(kind)) return 'deny'
-  // v1: relay collapses to deny in strict mode — mid-turn WeChat
-  // confirmation round-trip is deferred to a follow-up task.
-  if (args.tierProfile.relay.has(kind)) return policy.relayAs
-  return 'allow'
+  // 判定在 ./tool-decision.ts(三家共用);openai 不看能力表(它没有 per-tool 的那一档)。
+  // v1: relay collapses to deny in strict mode — mid-turn WeChat confirmation round-trip is deferred.
+  const verdict = decideTool(args.tierProfile, kind)
+  return verdict === 'relay' ? policy.relayAs : verdict
 }
