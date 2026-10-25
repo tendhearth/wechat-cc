@@ -641,7 +641,7 @@ describe('ReminderScheduleRequest', () => {
 // ── schema lookup tables ─────────────────────────────────────────────────────
 
 describe('schema lookup tables', () => {
-  it('REQUEST_SCHEMAS has 50 entries', () => {
+  it('REQUEST_SCHEMAS has 48 entries', () => {
     // 19 original + 4 a2a dashboard routes (preview, install, remove, pause)
     // + 1 a2a server-side test route (Test button) + 1 memory/delete
     // + 1 companion/import-local + 3 plugins (toggle, install, upgrade)
@@ -651,10 +651,11 @@ describe('schema lookup tables', () => {
     // + 1 cli/sessions GET query(终端会话登记处,v76)
     // + 2 cli/hooks install / uninstall(接上终端里的 Claude Code / Codex,2026-10-14)
     // + 2 memory/view、memory/edit(记忆编辑,2026-10-23)
+    // + 2 cli/say POST + GET query(terminal_say,2026-10-24)
     // (P4: social/seek's SocialSeekRequest was deleted — the propose/
     // confirm/cancel routes that replaced it are inline-validated, no
     // REQUEST_SCHEMAS entry, per the pair/inbound routes' precedent.)
-    expect(Object.keys(REQUEST_SCHEMAS).length).toBe(46)
+    expect(Object.keys(REQUEST_SCHEMAS).length).toBe(48)
   })
   it('RESPONSE_SCHEMAS has 36 entries (one per route)', () => {
     // 25 original + 2 a2a dashboard response schemas (preview, install)

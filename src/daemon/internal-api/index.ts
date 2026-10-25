@@ -336,8 +336,28 @@ export function createInternalApi(deps: InternalApiDeps): InternalApi {
       ? (() => { try { return deps.holdBusy?.(`api:${routeKey}`) } catch { return undefined } })()
       : undefined
     try {
-      const out = await route(url.searchParams, body, callerInfo)
-      send(res, out.status, out.body, origin)
+      // 调用方断开(MCP 子进程死了 / 工具调用被客户端放弃)⇒ signal 中止。只有长轮询的路由(GET /v1/cli/say)读它:
+      // 挂着的等待不能当成「还有人在等」(terminal_say 评审 #2a,2026-10-24)。
+      // Bun 的 node:http 客户端断开时不发 res 'close'(10-24 实测),只发 req 'aborted' 与 socket 'close';node 三个都发。
+      // onSent:回包真写出去了('finish';socket 已断时不发,Bun 与 node 都是,10-24 实测)才调 —— terminal_say 据此才算
+      // 「回话被领走」;没写出去就留给它自己的兜底(告诉主人),评审 #662 二轮 #1。
+      const ac = new AbortController()
+      const sock = req.socket
+      const gone = () => { if (!res.writableFinished) ac.abort() }
+      req.on('aborted', gone)
+      res.on('close', gone)
+      sock?.on('close', gone)
+      // 登记前就已经断了(比如在读 body / 校验那段时间里断的)⇒ 那些事件不会再来,直接算断开(评审 #662 二轮 #2)
+      if (sock?.destroyed || req.destroyed) gone()
+      const onSent: Array<() => void> = []
+      try {
+        const out = await route(url.searchParams, body, callerInfo, { signal: ac.signal, onSent: (cb) => { onSent.push(cb) } })
+        if (onSent.length && !ac.signal.aborted) res.once('finish', () => { for (const cb of onSent) { try { cb() } catch { /* 回调出错不影响已回的包 */ } } })
+        send(res, out.status, out.body, origin)
+      } finally {
+        // keep-alive 的同一条连接上会来很多请求:这一个请求一结束(回完 / 断开 / 抛错)就摘掉,不在 socket 上越挂越多
+        sock?.off('close', gone)
+      }
     } catch (err) {
       // 配置文件读不出来 / 刚被别处改过 ⇒ lib/json-file 拒写(3e,2026-10-22)。任何路由碰上都回一个看得懂的码,
       // 不是 500,daemon 也不退。

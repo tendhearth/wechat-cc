@@ -5,7 +5,7 @@ import { mergeEnvIntoMcpServers, CORE_MCP_SERVER_NAMES, type AgentEvent, type Ag
 import { resolveCodexCheapModel } from './codex-cheap-model'
 import type { TierProfile } from './user-tier'
 import type { McpStdioSpec } from './mcp-stdio-spec'
-import { DELEGATE_TOOL_TIMEOUT_MS } from './mcp-stdio-spec'
+import { DELEGATE_TOOL_TIMEOUT_MS, TERMINAL_SAY_TOOL_TIMEOUT_MS } from './mcp-stdio-spec'
 import { makeTurnEmitter } from './turn-emitter'
 import { codexErrorCode, codexTimeoutsFromEnv, watchCodexEvents, type CodexTimeouts } from './codex-errors'
 import { providerErrorCodeOf, withProviderCode } from '../lib/provider-error-code'
@@ -222,6 +222,11 @@ export function createCodexAgentProvider(opts: CodexAgentProviderOptions = {}): 
         // children so this is safe at runtime.
         // codex 每个 MCP 工具调用缺省 60s(tool_timeout_sec):delegate 要一到几分钟,单独放宽(见 DELEGATE_TOOL_TIMEOUT_MS)。
         if (withEnv.delegate) (withEnv.delegate as Record<string, unknown>).tool_timeout_sec = DELEGATE_TOOL_TIMEOUT_MS / 1000
+        // terminal_say(2026-10-24)要等终端会话回话到 10 分钟;codex 的 tool_timeout_sec 只能按服务器给,不能按工具 ⇒
+        // 只在 admin 会话(只有它注册了 terminal_say)放宽整个 wechat 服务器。别的档位照旧 60s。
+        // 真正的上限不是这 720s,是 collectTurn 的回合看门狗(turnTimeoutMs,缺省 10 分钟没事件就判卡死):
+        // terminal_say 自己按看门狗减余量等(daemon 回 max_wait_ms),这里只要别比它先掐就行。
+        if (withEnv.wechat && sessionEnv.WECHAT_SESSION_TIER === 'admin') (withEnv.wechat as Record<string, unknown>).tool_timeout_sec = TERMINAL_SAY_TOOL_TIMEOUT_MS / 1000
         config.mcp_servers = withEnv as unknown as Record<string, never>
       }
       // 只在**这一次** spawn 是 dangerously 时才开(安全 10-20):daemon 全局 dangerously,但访客 / 定时任务的会话

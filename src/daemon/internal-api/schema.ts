@@ -736,6 +736,18 @@ export const CliPermissionQuery = z.object({
 export const CliSessionsQuery = z.object({
   ended: z.enum(['0', '1']).optional(),
   limit: z.coerce.number().int().min(1).max(500).optional(),
+  // detail=1:每条补开没开着窗口 / 此刻在做哪一步(CC 的 terminal_sessions 用,2026-10-24)
+  detail: z.enum(['0', '1']).optional(),
+})
+// ── POST|GET /v1/cli/say(CC 代主人对终端会话说一句、等回话,terminal_say 2026-10-24)──────────
+// code = 会话码(会话 id 前缀,4–12 位十六进制,同「@码」);text 封顶同手机说一句。GET 带票轮询,一次最多挂 25s。
+export const CliSayRequest = z.object({
+  code: z.string().regex(/^[0-9a-f]{4,64}$/i),
+  text: z.string().min(1).max(4000),
+})
+export const CliSayQuery = z.object({
+  ticket: z.string().regex(/^[0-9a-f]{12}$/),
+  wait_ms: z.coerce.number().int().min(0).max(60_000).optional(),
 })
 // ── POST /v1/cli/hooks/install|uninstall(接上 / 撤掉终端里的 Claude Code / Codex)──────────
 // sources 缺省:install = 这台机上有、还没接好的那几家;uninstall = 两家都撤。
@@ -807,6 +819,8 @@ export const REQUEST_SCHEMAS: Record<string, z.ZodTypeAny | undefined> = {
   'POST /v1/cli/permission': CliPermissionRequest,
   'GET /v1/cli/permission': CliPermissionQuery,
   'GET /v1/cli/sessions': CliSessionsQuery,
+  'POST /v1/cli/say': CliSayRequest,
+  'GET /v1/cli/say': CliSayQuery,
   'POST /v1/cli/hooks/install': CliHooksRequest,
   'POST /v1/cli/hooks/uninstall': CliHooksRequest,
 

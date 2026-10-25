@@ -1,7 +1,7 @@
 import { Client } from '@modelcontextprotocol/sdk/client/index.js'
 import { StdioClientTransport } from '@modelcontextprotocol/sdk/client/stdio.js'
 import type { ToolSpec } from './openai-chat-model'
-import { childEnvFor, DELEGATE_TOOL_TIMEOUT_MS } from './mcp-stdio-spec'
+import { childEnvFor, toolCallTimeoutMs } from './mcp-stdio-spec'
 
 export type { McpStdioSpec } from './mcp-stdio-spec'
 import type { McpStdioSpec } from './mcp-stdio-spec'
@@ -170,7 +170,8 @@ export async function createMcpToolBridge(
       if (!client) throw new Error(`mcp bridge: no server owns tool ${name}`)
       // delegate 一次要一到几分钟(另起一个 AI 冷启动 + 回答):SDK 缺省每个请求 60s,不放宽就是工具这边先放弃、
       // 后台那份回答回来没人接(10-24 真机:两次都 60s 判超时,回答 147s / 275s 才到,模型跟主人说「它忙」)。
-      const timeoutMs = toolServer.get(name) === 'delegate' ? DELEGATE_TOOL_TIMEOUT_MS : undefined
+      // terminal_say 等终端会话回话同理(最多 10 分钟),只放宽那两个工具,wechat 别的工具照旧。
+      const timeoutMs = toolCallTimeoutMs(toolServer.get(name), name)
       const res = await client.callTool({ name, arguments: input ?? {} }, timeoutMs ? { timeoutMs } : undefined)
       return res.content.filter(c => c.type === 'text').map(c => c.text ?? '').join('\n')
     },

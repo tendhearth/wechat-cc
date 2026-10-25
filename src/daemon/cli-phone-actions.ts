@@ -137,17 +137,26 @@ export function makeCliPhoneActions(deps: CliPhoneActionsDeps): CliPhoneActions 
     },
     currentStep(sessionId) {
       const s = deps.hub.lookup(sessionId)
-      if (!s || s.session_id !== sessionId || !s.transcript_path) return null
-      if (s.origin_agent || (s.machine && deps.localMachine && s.machine !== deps.localMachine)) return null
-      try {
-        const items = parseActivity((deps.readTail ?? readTail)(s.transcript_path, PHONE_NOW_READ_MAX), s.source, 20)
-        for (let i = items.length - 1; i >= 0; i--) {
-          const it = items[i]!
-          if (it.kind === 'you') return null   // 主人刚说完、还没动手
-          if (it.kind === 'step') { const { detail: _d, ...rest } = it; return rest }
-        }
-        return null
-      } catch { return null }
+      if (!s || s.session_id !== sessionId) return null
+      return currentStepOf(s, { localMachine: deps.localMachine, readTail: deps.readTail })
     },
   }
+}
+
+/**
+ * 这条会话此刻在做的那一步(读记录尾巴 64KB)。手机列表与 CC 的 terminal_sessions(2026-10-24)共用这一份判法。
+ * 那边的会话 / 没报记录路径 / 读不到 / 主人刚说完还没动手 ⇒ null。
+ */
+export function currentStepOf(s: CliSessionInfo, opts: { localMachine?: string | undefined; readTail?: ((path: string, max: number) => string) | undefined } = {}): CliActivityItem | null {
+  if (!s.transcript_path) return null
+  if (s.origin_agent || (s.machine && opts.localMachine && s.machine !== opts.localMachine)) return null
+  try {
+    const items = parseActivity((opts.readTail ?? readTail)(s.transcript_path, PHONE_NOW_READ_MAX), s.source, 20)
+    for (let i = items.length - 1; i >= 0; i--) {
+      const it = items[i]!
+      if (it.kind === 'you') return null   // 主人刚说完、还没动手
+      if (it.kind === 'step') { const { detail: _d, ...rest } = it; return rest }
+    }
+    return null
+  } catch { return null }
 }

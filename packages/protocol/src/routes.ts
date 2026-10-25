@@ -319,6 +319,10 @@ export const ROUTES: Readonly<Record<RouteKey, RouteSpec>> = {
   // 桌面(原 lib.rs / workbench-proxy.ts 注释):此刻「N 件事等你」里列出终端里等批准的 Claude Code / Codex,只读。
   // 拍板不走这里,走 pet_permission_resolve(POST /v1/permissions/resolve)。
   'GET /v1/cli/sessions': { desktop: { tier: 'admin', tokens: ['operator'], tauri: true, devProxy: true } },
+  // CC 代主人对终端会话说一句、等它回话(terminal_say,2026-10-24):往主人终端里正在干活的会话里送话 —— admin,
+  // 不给 operator(桌面 / CLI 没有这个入口;主人自己说走微信「@码」/ 手机)。路由里另外只认主人那条聊天的会话令牌。
+  'POST /v1/cli/say': { desktop: { tier: 'admin' } },
+  'GET /v1/cli/say': { desktop: { tier: 'admin' } },
   // 「今天」一眼看完(2026-10-14):同上一份登记处 + 一起做的标题与待批 —— 主人的私事,admin。
   'GET /v1/overseer/today': { desktop: { tier: 'admin', tokens: ['operator'] } },
   // 读日历(对标 #8):日程是主人的私事。
