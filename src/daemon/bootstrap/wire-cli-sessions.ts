@@ -49,6 +49,8 @@ export interface WireCliSessionsDeps {
   dangerously: boolean
   db: Db
   ilink: IlinkAdapter
+  /** 项目登记(别名 → 文件夹),给终端会话起项目名用。 */
+  projects: Pick<import('../projects').Projects, 'list'>
   /** 登记一个要停的资源(模块容器的 ctx.own)。 */
   own(name: string, stop: () => unknown): void
   internalApi: InternalApiLifecycle
@@ -90,7 +92,7 @@ export function wireCliSessions(d: WireCliSessionsDeps) {
     },
     // 第二个出口:同一批、同一套在场判断,微信拒了手机照样收到。
     pushApp: makeCliHubAppPush({ push: cliAppPush, log: (t, l) => log(t, l) }),
-    projectName: makeProjectNamer(() => ilink.projects.list()),
+    projectName: makeProjectNamer(() => d.projects.list()),
     log: (t, l) => log(t, l),
     // 在场的主信号:这台电脑上次键鼠输入距今多久。人在 ⇒ 系统通知;走了 ⇒ 微信。
     machineIdle: () => machineIdleSeconds(),
@@ -146,7 +148,7 @@ export function wireCliSessions(d: WireCliSessionsDeps) {
       log: (t, l) => log(t, l),
     }),
     presence: (s, idle) => cliEvents.presence(s, idle),
-    projectName: makeProjectNamer(() => ilink.projects.list()),
+    projectName: makeProjectNamer(() => d.projects.list()),
     onRelayed: (s) => cliEvents.notePermissionRelay(s),
     onAsked: (req) => cliEvents.permissionAsked(req),
     onSettled: (s, status) => cliEvents.permissionSettled(s, status),
@@ -162,7 +164,7 @@ export function wireCliSessions(d: WireCliSessionsDeps) {
   const forwarder = a2a ? makeBrainForwarder({
     registry: a2a.registry, client: a2a.client, selfId: boot.selfId,
     notifyDesktop: (t, b) => notifyDesktop(t, b),
-    projectName: makeProjectNamer(() => ilink.projects.list()),
+    projectName: makeProjectNamer(() => d.projects.list()),
     log: (t, l) => log(t, l),
   }) : null
   // 登记处列表 + 等批准那一项在微信里怎么回(中继开的 5 位码与卡片上的两位数码)。微信「终端」、

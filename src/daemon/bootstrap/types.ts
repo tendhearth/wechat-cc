@@ -6,7 +6,7 @@ import type { ConversationStore } from '../../core/conversation-store'
 import { formatInbound } from '../../core/prompt-format'
 import type { ProviderId } from '../../core/conversation'
 import type { Options } from '@anthropic-ai/claude-agent-sdk'
-import type { WechatProjectsDep, WechatVoiceDep, WechatCompanionDep } from '../wechat-tool-deps'
+import type { WechatVoiceDep, WechatCompanionDep } from '../wechat-tool-deps'
 import type { Db } from '../../lib/db'
 import type { AgentConfig, AgentProviderKind } from '../../lib/agent-config'
 import type { AppendInput } from '../../core/a2a-events-store'
@@ -32,7 +32,6 @@ export interface BootstrapDeps {
     sharePage: (title: string, content: string, opts?: { needs_approval?: boolean; chat_id?: string; account_id?: string }) => Promise<{ url: string; slug: string }>
     resurfacePage: (q: { slug?: string; title_fragment?: string }) => Promise<{ url: string; slug: string } | null>
     setUserName: (chatId: string, name: string) => Promise<void>
-    projects: WechatProjectsDep
     voice: WechatVoiceDep
     companion: WechatCompanionDep
     askUser: (chatId: string, prompt: string, hash: string, timeoutMs: number) => Promise<'allow'|'deny'|'timeout'|'undelivered'>

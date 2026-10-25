@@ -34,7 +34,7 @@ export function makeTickDispatch(deps: TickDeps) {
   const appCarries = (chatId: string, providerId: string): boolean =>
     !!deps.proactive && !!deps.replyDelivery && deliveryModeOf(providerId) === 'daemon' && deps.proactive.appDeliverable(chatId)
   function resolveDispatch(chatId: string): DispatchGate {
-    const snapshot = deps.ilink.loadProjects()
+    const snapshot = deps.projects.load()
     const currentAlias = snapshot.current && snapshot.projects[snapshot.current] ? snapshot.current : null
     const proj = currentAlias
       ? { alias: currentAlias, path: snapshot.projects[currentAlias]!.path }

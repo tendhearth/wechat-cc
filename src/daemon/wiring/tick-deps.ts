@@ -18,6 +18,8 @@ export interface TickDeps {
   stateDir: string
   db: Db
   ilink: IlinkAdapter
+  /** 项目登记:伙伴那一拍在哪个文件夹起会话(现在选中的那个,没有就 _default)。 */
+  projects: Pick<import('../projects').Projects, 'load'>
   /** Curated sticker library — enables the daily sticker-artist step in
    *  introspectTick. Absent ⇒ the step never runs (tests, minimal embeds). */
   stickers?: import('../stickers').StickerLib
