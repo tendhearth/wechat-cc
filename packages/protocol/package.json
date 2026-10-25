@@ -5,7 +5,8 @@
   "type": "module",
   "exports": {
     ".": "./src/index.ts",
-    "./routes": "./src/routes.ts"
+    "./routes": "./src/routes.ts",
+    "./desktop-api": "./src/desktop-api.ts"
   },
   "dependencies": {
     "@noble/ciphers": "2.4.0",
