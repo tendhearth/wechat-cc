@@ -5,6 +5,7 @@ import { mergeEnvIntoMcpServers, CORE_MCP_SERVER_NAMES, type AgentEvent, type Ag
 import { resolveCodexCheapModel } from './codex-cheap-model'
 import type { TierProfile } from './user-tier'
 import type { McpStdioSpec } from './mcp-stdio-spec'
+import { DELEGATE_TOOL_TIMEOUT_MS } from './mcp-stdio-spec'
 import { makeTurnEmitter } from './turn-emitter'
 import { codexErrorCode, codexTimeoutsFromEnv, watchCodexEvents, type CodexTimeouts } from './codex-errors'
 import { providerErrorCodeOf, withProviderCode } from '../lib/provider-error-code'
@@ -219,6 +220,8 @@ export function createCodexAgentProvider(opts: CodexAgentProviderOptions = {}): 
         // the index signature even when always populated. SDK serialiser
         // (flattenConfigOverrides at dist/index.js:297) skips undefined
         // children so this is safe at runtime.
+        // codex 每个 MCP 工具调用缺省 60s(tool_timeout_sec):delegate 要一到几分钟,单独放宽(见 DELEGATE_TOOL_TIMEOUT_MS)。
+        if (withEnv.delegate) (withEnv.delegate as Record<string, unknown>).tool_timeout_sec = DELEGATE_TOOL_TIMEOUT_MS / 1000
         config.mcp_servers = withEnv as unknown as Record<string, never>
       }
       // 只在**这一次** spawn 是 dangerously 时才开(安全 10-20):daemon 全局 dangerously,但访客 / 定时任务的会话
