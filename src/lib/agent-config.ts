@@ -183,7 +183,7 @@ export interface AgentConfig {
   day_tz_offset_minutes?: number | null
   /** 免审执行者(UNATTENDED_CAPABILITIES,如 agy/cursor 的 --dangerously-skip-permissions
    *  旁路)的一次性确认时间戳(ms)。缺省 ⇒ 未确认,工作台 service 拒绝派给免审执行者的
-   *  create(见 core/workbench/service.ts requireInput 的 unattended_ack_required)。 */
+   *  create(见 features/workbench/service.ts requireInput 的 unattended_ack_required)。 */
   workbench_unattended_ack_at?: number
   /** 工作台的保留会话空闲自动收工:安静下来而**没人等这个文件夹**时等多久关掉会话、让出文件夹
    *  (ms;缺省 600000 = 10 分钟)。0 = 立刻关;很大的数会被封顶到约 24.8 天(setTimeout 的

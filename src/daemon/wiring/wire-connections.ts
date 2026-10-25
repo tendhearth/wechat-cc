@@ -22,7 +22,7 @@ export interface WireConnectionsDeps {
   ownerChatId(): string | null
   /** 配对过的手机数(设置面板在后面才建,被问时才读;抛 ⇒ 当 0)。 */
   phoneDevices(): number
-  workbench?: import('../../core/workbench/service').WorkbenchService
+  workbench?: import('../../features/workbench').WorkbenchService
   guardRuntime?: import('../guard/runtime').GuardRuntime
   terminalHooks?: Pick<import('../../features/terminal').TerminalHooksService, 'capabilityInput'>
   subsystems?: () => Array<{ name: string; state: 'ok' | 'degraded' | 'off'; error?: string }>

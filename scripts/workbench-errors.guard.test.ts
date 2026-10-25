@@ -14,6 +14,7 @@ import { join, dirname } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import ts from 'typescript'
 import { WORKBENCH_ERRORS, workbenchErrorHttp } from '../packages/protocol/src/workbench-errors'
+import { MODULE_UNAVAILABLE_CODE } from '../packages/protocol/src/routes'
 import { entryErrorStatus } from '../apps/desktop/src/shared/task-entry-contract.js'
 import { executionFailureMessage } from '../src/core/workbench/execution-settings'
 
@@ -81,13 +82,22 @@ describe('桌面 modules/workbench*.js 认的码都还在', () => {
 })
 
 describe('桌面路由里直接写死的 {status, body:{error}} 与表一致(10-21:workbench_not_wired 字面量 503、表里却落到 500 internal)', () => {
-  const src = readFileSync(join(ROOT, 'src', 'daemon', 'internal-api', 'routes-workbench.ts'), 'utf8')
+  // 架构终态 A5:桌面路由搬进 src/features/workbench/routes.ts,由 workbench 模块自己挂;那 44 处 workbench_not_wired
+  // 字面量删掉,换成模块门(internal-api 的路由层)按 MODULE_UNAVAILABLE_CODE 回同一个 503 workbench_not_wired。
+  const src = readFileSync(join(ROOT, 'src', 'features', 'workbench', 'routes.ts'), 'utf8')
   const literals = [...src.matchAll(/status\s*:\s*(\d{3})\s*,\s*body\s*:\s*\{\s*error\s*:\s*'([a-z_]+)'\s*\}/g)].map(m => ({ status: Number(m[1]), code: m[2]! }))
-  it('扫到了(workbench_not_wired 那 40 多处在里面)', () => {
-    expect(literals.filter(l => l.code === 'workbench_not_wired').length).toBeGreaterThan(30)
+  it('扫到了;「没接上」不再由处理器自己写(模块门统一回)', () => {
+    expect(literals.length).toBeGreaterThan(0)
+    expect(literals.filter(l => l.code === 'workbench_not_wired')).toEqual([])
   })
   it.each([...new Map(literals.map(l => [`${l.status} ${l.code}`, l])).values()])('$status $code', ({ status, code }) => {
     expect(workbenchErrorHttp(code, 'desktop')).toEqual({ status, error: code })
+  })
+  it('模块门替工作台回的码和表一致:503 workbench_not_wired(搬家前处理器里的那个字面量)', () => {
+    expect(MODULE_UNAVAILABLE_CODE.workbench).toBe('workbench_not_wired')
+    expect(workbenchErrorHttp(MODULE_UNAVAILABLE_CODE.workbench!, 'desktop')).toEqual({ status: 503, error: 'workbench_not_wired' })
+    const gate = readFileSync(join(ROOT, 'src', 'daemon', 'internal-api', 'index.ts'), 'utf8')
+    expect(gate).toMatch(/send\(res, 503, \{ error: legacy \}/)
   })
 })
 
@@ -143,15 +153,19 @@ const INTERNAL_ONLY = new Set([
     'acp_process_not_exited', 'acp_missing_session_id',
     // OpenAI 兼容的 MCP 桥:工具调用被放弃(对话侧,不走工作台路由)
     'abandoned',
+    // 主人点名要的成果文件,送之前绑定变了(wire-artifacts.ts,随工作台从 daemon 搬进 features 才扫到):落进投递记录,不走桌面 HTTP
+    'artifact_binding_changed',
 ])
 describe('工作台抛出的码都归了类(反向守卫)', () => {
-  it('every Error(\'code\') literal under src/core/workbench and src/adapters/executors is desktop-mapped, a task-failure code, or listed INTERNAL_ONLY; the list has no stale entries', async () => {
+  it('every Error(\'code\') literal under src/core/workbench, src/features/workbench and src/adapters/executors is desktop-mapped, a task-failure code, or listed INTERNAL_ONLY; the list has no stale entries', async () => {
     const { workbenchErrorHttp } = await import('../packages/protocol/src/workbench-errors')
     const { join } = await import('node:path')
     const { statSync } = await import('node:fs')
     const files: string[] = []
     const walk = (d: string) => { for (const f of readdirSync(d)) { const p = join(d, f); if (statSync(p).isDirectory()) walk(p); else if (p.endsWith('.ts') && !p.includes('.test.')) files.push(p) } }
     walk('src/core/workbench')
+    // 工作台的服务与它的域(架构终态 A5 搬进 src/features/workbench)
+    walk('src/features/workbench')
     // 执行者适配器(架构终态 E2 搬进 src/adapters/executors)整个扫:它们抛的码经工作台落进任务失败记录或路由。
     walk('src/adapters/executors')
     const thrown = new Set<string>()

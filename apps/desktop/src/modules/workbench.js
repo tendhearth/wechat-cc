@@ -23,7 +23,7 @@ export { escapeWorkbenchHtml, renderWorkbenchMarkdown } from './workbench-markdo
 import { WORKBENCH_CODE_REVIEW_MIME, createReviewDiffBudget, renderReviewFileDiff, renderWorkbenchCodeReview } from './workbench-code-review.js'
 import { renderReviewPanel, returnLessonText, reviewsSignature } from './workbench-review-panel.js'
 import { REWIND_STALE_NOTICE, isRewindStale, renderRewindBlocked, rewindErrorMessage } from './workbench-rewind.js'
-/** @typedef {import('../../../../src/core/workbench/review').ReviewTurn} ReviewTurn */
+/** @typedef {import('../../../../src/features/workbench/review').ReviewTurn} ReviewTurn */
 import { createWorkbenchInteractions, captureWorkbenchQuestionDrafts, syncWorkbenchQuestionChoice, renderWorkbenchQuestions, renderWorkbenchInputs } from './workbench-interaction.js'
 import { renderWorkbenchTimeline, workbenchTimelineEventId, renderWorkbenchOperation, captureWorkbenchTimelineAnchor, restoreWorkbenchTimelineAnchor } from './workbench-timeline.js'
 import { mergeEvents, structuralSignature, patchLiveTimeline, createLongPoll, clearLiveTimelinePatches, hasLiveTimelineInteraction } from './workbench-live.js'
@@ -95,7 +95,7 @@ function providerLabel(p) {
 /** @typedef {{mode:string,restart?:RestartPreview}} Continuation */
 /** @typedef {import('../../../../src/core/workbench/native-adoption').NativeSource} NativeSource */
 /** @typedef {import('../../../../src/core/workbench/native-adoption').NativeResumeDecision} NativeResume */
-/** @typedef {import('../../../../src/core/workbench/handoff').HandoffView} Handoff */
+/** @typedef {import('../../../../src/features/workbench/handoff').HandoffView} Handoff */
 /** @typedef {{agentNames?:Record<string,string>,quotaHandoff?:import('./workbench-quota-handoff.js').Offer|null,execution?:ExecutionChoice,lastExecution?:import('./workbench-execution.js').RunExecution|null,attachments?:import('./workbench-attachments.js').Attachment[],handoffs?:Handoff[],requiresExternalClose?:boolean,source?:NativeSource,task:Task,events:WorkbenchEvent[],artifacts:Artifact[],permissions?:Permission[],continuation?:Continuation,runId?:string,inputMode?:'steer'|'send'|'queue',runtime?:RuntimeSnapshot,questions?:import('./workbench-interaction.js').QuestionRequest[],inputs?:import('./workbench-interaction.js').LiveInput[],version?:number,rewind?:import('./workbench-rewind.js').RewindView}} Detail */
 /** @typedef {{q:string,archived:'exclude'|'only'|'all'}} TaskQuery */
 /** @typedef {{limit:number,total:number,hasMore:boolean,nextCursor:string|null}} TaskPage */
@@ -1139,7 +1139,7 @@ export function initWorkbenchPage(deps) {
     if (action === 'line-comment-hunk' && artifactId && path && Number.isInteger(hunk) && hunkSha256) return openCompose({ artifactId, path, hunk, hunkSha256, commentId: crypto.randomUUID(), body: '' })
     const commentId = target.dataset.commentId
     if ((action === 'line-comment-edit' || action === 'line-comment-delete') && commentId) {
-      /** @type {{turn:ReviewTurn,file:import('../../../../src/core/workbench/review').ReviewTurnFile,comment:import('./workbench-review-panel.js').ReviewCommentView}|null} */
+      /** @type {{turn:ReviewTurn,file:import('../../../../src/features/workbench/review').ReviewTurnFile,comment:import('./workbench-review-panel.js').ReviewCommentView}|null} */
       let found = null
       for (const turn of controller.state.reviews ?? []) for (const file of turn.files ?? []) for (const comment of file.comments ?? []) if (comment.id === commentId) found = { turn, file, comment }
       if (!found || found.comment.state !== 'draft') return

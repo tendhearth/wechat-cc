@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest'
 import { makeMwTaskReference, type TaskReferenceMwDeps } from './mw-task-reference'
-import type { TaskCandidate } from '../../core/workbench/task-reference'
+import type { TaskCandidate } from '../../features/workbench/task-reference'
 import type { InboundCtx } from './types'
 
 /**

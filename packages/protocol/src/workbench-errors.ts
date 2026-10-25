@@ -1,13 +1,13 @@
 /**
  * 工作台 / 审阅区的错误码:一个码一行,写清它在每个表面的 HTTP 状态与主人看到的那句话(架构审查 2026-10-20 第 1 条)。
  *
- * - desktop:桌面路由 /v1/workbench/*(daemon routes-workbench);[状态, 对外的码] ⇒ 对外换一个码。
+ * - desktop:桌面路由 /v1/workbench/*(src/features/workbench/routes.ts);[状态, 对外的码] ⇒ 对外换一个码。
  * - desktopEntry:交办入口那几条路由的状态,只在和 desktop 不同时写。
  * - phone:手机 /m/api/*(daemon mobile-workbench);同上。
  * - 不写某个表面 ⇒ 那个表面没声明这个码,按 FALLBACK 的前缀规则走(大多落到 500)。
  * - entry:交办被拒的码,桌面 task-entry-contract.js 另有一份(桌面 JS 引不到这里),守卫核对两份一致。
  * - rewind:回退那一组,桌面回包带上 service 挂在 Error 上的 reason / detail 等。
- * - wechat:微信回复(core/workbench/wechat-control failure());wechatWorktree:微信独立工作区四个动作被拒时那句。{id} = 任务编号。
+ * - wechat:微信回复(features/workbench/wechat-control failure());wechatWorktree:微信独立工作区四个动作被拒时那句。{id} = 任务编号。
  *
  * 桌面与 App 的文案不在这里:桌面按场景各有一张表(同一个码在撤回 / 回退 / 脚本里说法不同),App 先映射成自己的 BackendCode 再走 i18n;
  * 两边都由守卫核对「认的码都在这张表里」。码只当字符串传(协议前向兼容,不做 enum)。
@@ -150,7 +150,8 @@ export const WORKBENCH_ERRORS: Readonly<Record<string, WorkbenchErrorSpec>> = Ob
   unattended_ack_unavailable: {desktop: 503},
   unavailable_provider: {desktop: 422, phone: 503, wechat: '暂时没有可用的工作执行者，没有开始工作。请在桌面连接或管理一个支持工作任务的执行者。'},
   workbench_stopping: {desktop: 503, phone: 503},
-  // 工作台没接上(降级启动 / 测试里不接):桌面带原码(桌面 JS 与 daemon 同一个包,路由里 44 处字面量回 503 workbench_not_wired),
+  // 工作台没接上(开机途中 / 上游没起来 / 测试里不挂):桌面带原码(桌面 JS 与 daemon 同一个包;架构终态 A5 起由模块门统一回 503
+  // workbench_not_wired,见 routes.ts 的 MODULE_UNAVAILABLE_CODE —— 以前是桌面路由里 44 处字面量),
   // 手机**有意**收成 503 unavailable —— 和 FALLBACK「手机 *_not_wired ⇒ 503 unavailable」、input_storage_unavailable 同一个口径:
   // 子系统叫什么不给手机,App 只认 unavailable 这一个「电脑那边还没准备好」。换成带原码要 App 先认得它,
   // 而装着的旧版 App 不能强制升级:它会把 workbench_not_wired 落成 unknown(说一句 / 停下就成了「不确定送到没有」)。
@@ -207,7 +208,7 @@ export const WORKBENCH_ERRORS: Readonly<Record<string, WorkbenchErrorSpec>> = Ob
   terminal_say_ended: {desktop: 409},
   terminal_say_turn_open: {desktop: 409},
   terminal_say_pending: {desktop: 409},
-  // ── 只在微信(core/workbench/wechat-control)
+  // ── 只在微信(features/workbench/wechat-control)
   artifact_delivery_conflict: {wechat: '这条文件请求与已记录的内容不一致，没有再次发送。请重新查看任务成果。'},
   artifact_transport_unavailable: {wechat: '文件发送暂不可用，已保存的成果仍可在桌面工作台查看。'},
   control_conflict: {wechat: '这条消息的内容与已记录的操作不一致，未再次执行。请重新查询任务。'},

@@ -1,10 +1,10 @@
 /**
- * 微信「任务 …」命令(工作台控制,core/workbench/wechat-control)—— 命令表的第一条(重构第二批步 4)。
+ * 微信「任务 …」命令(工作台控制,features/workbench/wechat-control)—— 命令表的第一条(重构第二批步 4)。
  *
  * 以前是单独一种 intent(task-command)+ 一站 mw-workbench,排在「命令」之前;现在是命令表的 ids[0],
  * 先后不变。consumedBy 仍是 'workbench'(group)。
  */
-import { isWechatTaskCommand, type WechatMessageIdentity, type WechatWorkbenchReply } from '../../core/workbench/wechat-control'
+import { isWechatTaskCommand, type WechatMessageIdentity, type WechatWorkbenchReply } from '../../features/workbench'
 import type { WechatCommand } from './registry'
 
 export interface TaskCommandDeps {

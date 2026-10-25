@@ -50,7 +50,7 @@ const BASELINE: Record<string, [Tag, number]> = {
   'src/features/social/wire-social.ts': ['primitive', 1],   // 社交搬进 src/features/social(架构终态 A5),数没变
   // 工作台的微信通知:判定走 policy.say(批准 / 提问 = permission_ask,做完 / 失败 = matter_report);剩下这一处是工作台
   // 自己的严格发送口(幂等 client_id + 绑定核对 + 回执),只在 say 的生产者里、经 turn.sendTextWith 当微信那条腿。
-  'src/daemon/bootstrap/wire-workbench-notifications.ts': ['primitive', 1],
+  'src/features/workbench/wire-notifications.ts': ['primitive', 1],   // 工作台搬进 src/features/workbench(架构终态 A5),数没变
   // App 原生推送:fanoutPush 的定义(phone-notifier)和唯一的调用(wire-phone)。用它的三处 —— App 主动通道(只在 say 那一轮
   // 收尾时推)、工作台通知推送(phone-notifier)、终端会话推送(appPush)—— 后两处先过 speech/push-gate.ts 问门(policy.ask)。
   'src/features/phone/phone-notifier.ts': ['primitive', 1],   // 手机搬进 src/features/phone(架构终态 A5),数没变
@@ -90,7 +90,7 @@ const BASELINE: Record<string, [Tag, number]> = {
   'src/daemon/wiring/command-router.ts': ['reply', 1],
   // 主人刚发「任务 X 文件 <id>」点名要的那份成果:在处理这条命令时同步送、结果就是这条命令的回话;worker 没有定时 / 扫描,
   // 送不成也不自动重发(让主人重发命令)。回话不经门(设计稿「不改回复那条路」)。
-  'src/daemon/bootstrap/wire-workbench-artifacts.ts': ['reply', 1],
+  'src/features/workbench/wire-artifacts.ts': ['reply', 1],   // 工作台搬进 src/features/workbench(架构终态 A5),数没变
 }
 
 function walk(dir: string, out: string[] = []): string[] {

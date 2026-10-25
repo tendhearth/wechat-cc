@@ -29,7 +29,7 @@ export interface WireMainOpts {
   projects: import('../projects').Projects
   /** 比 wireMain 晚才有的几样(拉消息、入站管道、App 一轮、知识库催一下):调用时现取,模块容器的 ctx.late。 */
   late: PipelineDepsLate
-  workbench?: import('../../core/workbench/service').WorkbenchService
+  workbench?: import('../../features/workbench').WorkbenchService
   /** 终端会话登记处(v76):手机 GET /m/api/cli/sessions 读它。缺省 ⇒ 503。 */
   cliSessions?: () => import('../../adapters/store/cli-session-store').CliSessionView[]
   /** 「CC 做过的事」(B9):透传给手机面板。 */

@@ -11,7 +11,7 @@ import { join } from 'node:path'
 import { query, type Options } from '@anthropic-ai/claude-agent-sdk'
 import { makeWorkbenchClaudeCanUseTool } from '../src/adapters/executors/claude/claude-agent-provider'
 import { readNativeClaudeTools } from '../src/adapters/executors/claude/claude-native-config'
-import { workbenchClaudeOptions } from '../src/daemon/bootstrap/wire-workbench'
+import { workbenchClaudeOptions } from '../src/features/workbench/wire'
 
 if (!process.argv.includes('--run')) {
   console.log('Owned native Claude fixtures only. macOS required. Run with --run; no paid model calls.')

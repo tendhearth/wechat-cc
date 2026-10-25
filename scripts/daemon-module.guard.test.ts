@@ -33,6 +33,9 @@ type Kind = keyof typeof KINDS
 const NOT_LIFECYCLE: Record<string, string> = {
   'src/features/phone/settings-panel-html.ts': '(A5 起在 features/phone)在发给浏览器的 HTML 字符串里,是页面自己的 JS,不在 daemon 里跑',
   'src/daemon/inbound/mw-typing.ts': '一轮回复期间的「正在输入」,在那一轮结束时清掉,跟模块启停无关',
+  // 下面两处随工作台搬进 src/features/workbench(架构终态 A5;以前在 src/core,这个守卫没扫到):
+  'src/features/workbench/script-runner.ts': '一次脚本运行结束后盯孤儿进程组,组空了自己停,跟模块启停无关',
+  'src/features/workbench/service/lifecycle.ts': '等写手退出的证据:有要等的才起、等完自己停(shutdown 也停),跟模块启停无关',
 }
 /** 容器自己:定义 ctx.interval 的地方。 */
 const CONTAINER = 'src/daemon/modules/container.ts'
@@ -49,6 +52,9 @@ const BASELINE: Record<string, Partial<Record<Kind, number>>> = {
   'src/features/phone/tunnel-client.ts': { setInterval: 1 },    // 同上
   'src/daemon/wiring/pipeline-deps.ts': { Ref: 1 },
   'src/daemon/wiring/wire-phone.ts': { 'phoneLc.add': 7 },
+  // 回退备份 ref 每天清一次:service 自己起、shutdown 里停(模块经 ctx.own 停 service)。随工作台搬进 features 才被扫到(架构终态 A5),
+  // 该换成 ctx.interval,搬家不改逻辑,单独做
+  'src/features/workbench/service/rewind.ts': { setInterval: 1 },
 }
 
 function walk(dir: string, out: string[] = []): string[] {

@@ -1,6 +1,6 @@
 /**
  * report-sink.ts — the daemon-side ReportSink (src/core/matters/report.ts)
- * that src/core/workbench/service.ts's settleQuiet calls into.
+ * that src/features/workbench/service.ts's settleQuiet calls into.
  *
  * Thin glue: look up the matter, ask the pure renderReport whether this turn
  * should be reported at all (no birthplace ⇒ null, handled there — not

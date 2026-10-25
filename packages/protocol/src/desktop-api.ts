@@ -770,8 +770,8 @@ export type LettersSettingsRequestT = z.infer<typeof LettersSettingsRequest>
 
 // ══════ 响应契约(F1):工作台 ══════
 
-// ── 工作台共用形状(src/core/workbench/service/types.ts 等的 TS 类型逐字对照)──────────
-// 字段类型照真实形状写;但 routes-workbench.test.ts 的工作台替身只回很少几个字段(比如 {task:{id}}),
+// ── 工作台共用形状(src/features/workbench/service/types.ts 等的 TS 类型逐字对照)──────────
+// 字段类型照真实形状写;但 features/workbench/routes.test.ts 的工作台替身只回很少几个字段(比如 {task:{id}}),
 // 契约检查在测试里跑,于是服务给出的对象里除了这几个键(id / 信封)以外都标成可选:
 // 拦得住类型漂移(null 写成 string、枚举多出一个值),拦不住少键。少键靠 TS 类型本身管。
 

@@ -7,7 +7,7 @@ import {ENTRY_LIMITS,entryContentError,entryFailureKind} from '../shared/task-en
 import {renderWorkbenchMarkdown,renderWorkbenchUserText,captureUserSources,restoreUserSources} from './workbench-markdown.js'
 
 /** @typedef {import('../../../../src/core/workbench/task-entry').EntryInput} EntryInput */
-/** @typedef {import('../../../../src/core/workbench/service').EntryResult} EntryResult */
+/** @typedef {import('../../../../src/features/workbench/service').EntryResult} EntryResult */
 /** @typedef {import('../../../../src/core/workbench/task-entry').EntryOptions} EntryOptions */
 /** @typedef {{role:'user'|'cc',text:string,pending?:boolean}} Message */
 /** @typedef {{text:string,visibleMessages?:Message[],projectPath?:string}} Draft */

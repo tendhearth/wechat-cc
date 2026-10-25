@@ -87,8 +87,8 @@ function taskInputPreview(input: Record<string, unknown>): string | null {
  * ⇒ 拒,登记且放进来 ⇒ 问),内置工具按 trusted × solo × strict 的档位 × 类别。这里剩下的只是「问」的那条通道
  * (requestPermission、AskUserQuestion 的结构化提问)和调用被取消 / 细节太大装不下这些通道上的事。
  *
- * `registeredMcpServers`:这件事登记过的原生 MCP(wire-workbench 读出来的 native.servers)。给了 ⇒ 任何前缀都对不上
- * 的 MCP 工具在最前面就拒(原来是 wire-workbench 的 workbenchClaudeOptions 外面手包的一层,同一句话、同一个先后)。
+ * `registeredMcpServers`:这件事登记过的原生 MCP(features/workbench/wire.ts 读出来的 native.servers)。给了 ⇒ 任何前缀都对不上
+ * 的 MCP 工具在最前面就拒(原来是工作台接线(wire-workbench,现 features/workbench/wire.ts)的 workbenchClaudeOptions 外面手包的一层,同一句话、同一个先后)。
  * 必填:漏传会悄悄少掉这一层拒(评审 10-25)。`null` = 明说不做这一层,只有直接测内层判定的测试这样用。 */
 const WORKBENCH_SUBJECT: AuthSubject = { surface: 'workbench', tier: TIER_PROFILES.trusted, permissionMode: 'strict', executor: 'claude' }
 /** 一起做里的 MCP 工具不看档位、只看登记表(descriptor.mcp);类别填第三方插件那一类,不参与判定。 */

@@ -72,6 +72,18 @@ describe('模块门', () => {
     expect(wishCalls).toBe(2)
   })
 
+  it('工作台(架构终态 A5):还没挂上 / 没起来 / 关着 ⇒ 原样 503 { error: workbench_not_wired },和搬家前处理器里的字面量一字不差', async () => {
+    await start()
+    // 工作台的路由是 admin 档:造一个 admin 会话令牌
+    const admin = api!.mintSessionToken('admin', 'codex/default/owner')
+    for (const state of [null, 'off', 'degraded'] as const) {
+      subsystems = state ? [{ name: 'workbench', state, ...(state === 'degraded' ? { error: 'upstream x not running' } : {}), sinceIso: '2026-10-25T00:00:00.000Z' }] : []
+      const r = await fetch(`http://127.0.0.1:${api!.port()}/v1/workbench`, { headers: { Authorization: `Bearer ${admin}` } })
+      expect(r.status, String(state)).toBe(503)
+      expect(await r.json(), String(state)).toEqual({ error: 'workbench_not_wired' })
+    }
+  })
+
   it('开关路由本身不归模块管:社交关着也要能打开它', () => {
     expect(moduleFor('POST /v1/social/enable')).toBeUndefined()
   })

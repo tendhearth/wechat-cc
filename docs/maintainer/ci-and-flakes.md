@@ -41,7 +41,7 @@ bun 版本在 workflow 里**钉死**(`bun-version: 1.3.14`),不用 `latest` —�
 | `win-hook-timeout` | `Hook timed out in <N>ms`(限 `build · windows-latest`) | windows runner 磁盘 I/O 慢,没动过的工作台服务测试 `beforeEach` 超时 |
 | `win-test-timeout` | `Test timed out in <N>ms`(限 `build · windows-latest`) | 同上,单条测试超时 |
 | `probe-binary-version` | `probeBinaryVersion` | 探测外部 CLI 版本有 3s 上限,runner 负载高时探不完 |
-| `econnreset-chunked` | `ECONNRESET`(限 `routes-workbench*.test.ts`) | 分块上传那条 socket 测试偶发 |
+| `econnreset-chunked` | `ECONNRESET`(限 `src/features/workbench/routes*.test.ts`) | 分块上传那条 socket 测试偶发 |
 | `node-no-summary` | 作业红了但日志里既没有 FAIL 块也没有 `Test Files` 汇总行(限 `node · core suite`) | 进程收尾丢了汇总 |
 
 ## 处置

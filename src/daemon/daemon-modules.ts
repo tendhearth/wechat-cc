@@ -22,8 +22,7 @@ import { SUPERVISED_ENV } from '../domain/supervised-env'
 import { providerCallTarget } from '../app/provider-registry'
 import { capabilitiesFor } from '../domain/capability-matrix'
 import { summarizeJobs } from '../core/scheduled-jobs-store'
-import { makeProjectLessons } from '../core/workbench/project-lessons'
-import type { WorkbenchService } from '../core/workbench/service'
+import { workbenchFeature, workbenchNotificationsModule, workbenchArtifactsModule, makeProjectLessons, type WorkbenchService } from '../features/workbench'
 import type { CliUpgrader } from '../core/cli-upgrade/engine'
 import type { DaemonModule } from './modules/container'
 import { lifecycleModule, type LifecycleHolder } from './modules/lifecycle-module'
@@ -48,9 +47,6 @@ import { makeLlmHealth, type LlmHealth } from './llm-health'
 import { terminalFeature, type TerminalFeature } from '../features/terminal'
 import { wireActivity } from './bootstrap/wire-activity'
 import { jobsFeature, jobsRunnerModule, type JobsFeature } from '../features/jobs'
-import { wireWorkbench } from './bootstrap/wire-workbench'
-import { wireWorkbenchNotifications } from './bootstrap/wire-workbench-notifications'
-import { wireWorkbenchArtifacts } from './bootstrap/wire-workbench-artifacts'
 import { lettersFeature } from '../features/letters'
 import { atelierFeature } from '../features/atelier'
 import { journalFeature } from '../features/journal'
@@ -476,20 +472,19 @@ export function daemonModules(f: Foundation): DaemonModule[] {
     // 回报的队列 + ReportSink(src/features/reports):工作台入队要它,所以排在工作台前面;投递那一拍在下面 `reports`。
     reportsFeature({ needs: [], deps: () => ({ db, matters: f.matters, log: (t, l) => log(t, l) }) }),
 
-    // —— 工作台(「一起做」)——
-    {
-      name: 'workbench',
+    // —— 工作台(「一起做」):一个功能一个目录(src/features/workbench);桌面路由自己挂,这里只填它要的东西 ——
+    workbenchFeature({
       needs: ['bootstrap', 'terminal', 'jobs', 'ilink-adapter', 'internal-api', 'network-gate', 'report-outbox'],
       lazy: ['cli-upgrade'],
-      init(ctx): WorkbenchService {
+      resolveAdminChatId: () => ownerChatId(),
+      deps: (ctx) => {
         const boot = ctx.get<Bootstrap>('bootstrap')
         const cli = ctx.get<TerminalFeature>('terminal')
         const jobs = ctx.get<JobsFeature>('jobs')
         const ilink = ctx.get<IlinkAdapter>('ilink-adapter')
-        const internalApi = ctx.get<InternalApiLifecycle>('internal-api')
         const cliUpgrade = ctx.late<CliUpgradeModule>('cli-upgrade')
-        const service = wireWorkbench({
-          db, stateDir, boot, internalApi, matters: f.matters, reports: ctx.get<ReportsFeature>('report-outbox').sink, networkGate: ctx.get<GuardRuntime>('network-gate').gate, permissionGate: cli.permissionGate, requestReview: (r) => jobs.requestReview(r),
+        return {
+          db, stateDir, boot, matters: f.matters, reports: ctx.get<ReportsFeature>('report-outbox').sink, networkGate: ctx.get<GuardRuntime>('network-gate').gate, permissionGate: cli.permissionGate, requestReview: (r) => jobs.requestReview(r),
           onTurnError: (providerId, code, message) => {
             cliUpgrade()?.upgrader()?.onTurnError(providerId, code, message)
             // 一起做里被拒也算(只有 agy 用一起做时,大脑那一行不该落后)
@@ -502,12 +497,9 @@ export function daemonModules(f: Foundation): DaemonModule[] {
             cli.legacyClaims.conflicts({ owner: 'workbench', path, providerId, nativeId }) ||
             (!!nativeId && cli.cliEvents.sessions().some(s => s.source === providerId && s.session_id === nativeId && !!s.origin_agent)),
           askUser: ilink.askUser, log: (t, l) => log(t, l),
-        })
-        ctx.own('stop', () => service.shutdown())
-        internalApi.provide({ workbench: service })
-        return service
+        }
       },
-    } satisfies DaemonModule<WorkbenchService>,
+    }),
 
     // —— wireMain:入站管道的依赖、伙伴 tick、手机那一簇、CC 开口那道门 ——
     {
@@ -597,27 +589,8 @@ export function daemonModules(f: Foundation): DaemonModule[] {
     lifecycleModule('ilink', (ctx) => registerIlink(ctx.get<WiredDeps>('wired').ilinkDeps), { required: true, needs: ['wired'] }),
     // 工作台的微信通知 / 成果:**停**在 polling 之后(关机时先停入站,再把任务那几句送完,再冲 ilink);
     // **开动**却放在开机最后(startup-sweeps 那一步):补发停机期间做完的任务那几句,要排在「CC 回来了」之后。
-    {
-      name: 'workbench-notifications',
-      needs: ['workbench', 'wired', 'ilink-adapter'],
-      init(ctx): Deferred {
-        let n: ReturnType<typeof wireWorkbenchNotifications> | null = null
-        ctx.own('stop', async () => { await n?.close() })
-        return { start: () => {
-          n = wireWorkbenchNotifications({ workbench: ctx.get('workbench'), ilink: ctx.get('ilink-adapter'), speech: ctx.get<WiredDeps>('wired').speech })
-          void n.wake().catch(() => log('WORKBENCH', 'Task notifications are waiting for storage recovery.'))
-        } }
-      },
-    } satisfies DaemonModule<Deferred>,
-    {
-      name: 'workbench-artifacts',
-      needs: ['workbench', 'ilink-adapter'],
-      init(ctx): Deferred {
-        let a: ReturnType<typeof wireWorkbenchArtifacts> | null = null
-        ctx.own('stop', async () => { await a?.close() })
-        return { start: () => { a = wireWorkbenchArtifacts({ workbench: ctx.get('workbench'), ilink: ctx.get('ilink-adapter') }) } }
-      },
-    } satisfies DaemonModule<Deferred>,
+    workbenchNotificationsModule({ needs: ['workbench', 'wired', 'ilink-adapter'], speech: (ctx) => ctx.get<WiredDeps>('wired').speech }),
+    workbenchArtifactsModule({ needs: ['workbench', 'ilink-adapter'] }),
     lifecycleModule('polling', (ctx) => registerPolling({ ...ctx.get<WiredDeps>('wired').pollingDeps, runPipeline: ctx.get<PipelineModule>('pipeline').run }), { required: true, needs: ['wired', 'pipeline'] }),
     // 每晚整理长期记忆 memory.md(2026-09-25,src/features/memory)。15 分钟一次「该不该跑」。
     memoryNightlyModule({

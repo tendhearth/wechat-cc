@@ -6,7 +6,7 @@ import type { CareLedger } from '../companion/care-ledger'
 import type { ReplySinks } from '../reply-sinks'
 
 export interface PipelineDepsOpts {
-  workbench?: import('../../core/workbench/service').WorkbenchService
+  workbench?: import('../../features/workbench').WorkbenchService
   /** 终端会话登记处(v76):手机 GET /m/api/cli/sessions 读它。缺省 ⇒ 503。 */
   cliSessions?: () => import('../../adapters/store/cli-session-store').CliSessionView[]
   /** 「CC 做过的事」(B9):main 拼好来源,这里只透传给手机面板。 */

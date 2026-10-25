@@ -12,7 +12,7 @@ import { query, type SDKUserMessage } from '@anthropic-ai/claude-agent-sdk'
 import type { AgentAttachment, AgentEvent, AgentProvider, AgentSession } from '../src/ports/agent-provider'
 import { createClaudeAgentProvider } from '../src/adapters/executors/claude/claude-agent-provider'
 import { createWorkbenchCodexProvider } from '../src/adapters/executors/codex/codex-app-server'
-import { workbenchClaudeOptions } from '../src/daemon/bootstrap/wire-workbench'
+import { workbenchClaudeOptions } from '../src/features/workbench/wire'
 import { TIER_PROFILES } from '../src/domain/user-tier'
 import { findCodexBinary } from '../src/lib/find-codex-binary'
 

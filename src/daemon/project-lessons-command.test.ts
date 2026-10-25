@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest'
 import { mkdtempSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { makeProjectLessons } from '../core/workbench/project-lessons'
+import { makeProjectLessons } from '../features/workbench/project-lessons'
 import { makeProjectLessonsCommand } from './project-lessons-command'
 
 function setup() {

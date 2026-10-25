@@ -1,0 +1,297 @@
+import {createClaudeHistoryReader} from '../../adapters/executors/claude/native-claude-history'
+import { makeIssueFetcher } from './issue-fetch'
+import { lessonsBlock, makeProjectLessons } from './project-lessons'
+import { decideCall } from '../../lib/network-gate'
+import {createCodexHistoryReader} from '../../adapters/executors/codex/native-codex-history'
+import type { Options, CanUseTool } from '@anthropic-ai/claude-agent-sdk'
+import type { Db } from '../../lib/db'
+import {join} from 'node:path'
+import {listProjects} from '../../lib/project-registry'
+import { loadAgentConfig, saveAgentConfig, modelForProvider } from '../../lib/agent-config'
+import { acpSupportedOn } from '../../adapters/executors/acp/platform'
+import { createProviderRegistry, type ProviderRegistry } from '../../app/provider-registry'
+import { createClaudeAgentProvider, makeWorkbenchClaudeCanUseTool } from '../../adapters/executors/claude/claude-agent-provider'
+import { compilePolicy } from '../../domain/policy'
+import { createWorkbenchCodexProvider } from '../../adapters/executors/codex/codex-app-server'
+import type { PermissionRelayDeps } from '../../core/permission-relay'
+import { TIER_PROFILES } from '../../domain/user-tier'
+import { makeWorkbenchStore } from '../../core/workbench/store'
+import { makeWorkbenchService } from './service'
+import { makeRecollectSink } from '../../daemon/recollection/recollect-sink'
+import { makeJournal } from '../../adapters/store/journal-store'
+import { wrapCheapEvalWithAuthFailCheck } from '../../daemon/bootstrap/wire-coordinator'
+import { ACP_CAPABILITIES, MANAGED_NATIVE_CAPABILITIES, UNATTENDED_CAPABILITIES } from '../../core/workbench/executor-capabilities'
+import { readNativeClaudeTools, workbenchClaudeEnvironment, type NativeClaudeTools } from '../../adapters/executors/claude/claude-native-config'
+import { claudeNativeCapabilityNotice } from '../../core/workbench/native-capability-notice'
+import { loadCompanionConfig } from '../../daemon/companion/config'
+import {loadAccess} from '../../lib/access'
+import {resolveAdminChatId} from '../../daemon/companion/resolve-admin'
+import type { Bootstrap } from '../../daemon/bootstrap/types'
+import type { InternalApi } from '../../daemon/internal-api/types'
+import {registerWorkbenchApi} from './workbench-api'
+import { makeUsageMonitor, parseClaudeUsage, parseCodexRateLimits, readClaudeOAuthToken } from '../../domain/subscription-usage'
+import { readCodexRateLimits } from '../../adapters/executors/codex/codex-history-rpc'
+import { spawnSync } from '../../lib/runtime/process'
+import { readFileSync } from 'node:fs'
+import { homedir } from 'node:os'
+import { createAcpWorkbenchProvider } from '../../adapters/executors/acp/acp-workbench-provider'
+import { acpAgentProblem, resolveAcpAgent, resolveCustomAcpAgent } from '../../adapters/executors/acp/agents'
+import { findOnPath } from '../../lib/util'
+
+/** Reuse transport/model setup, never the companion's prompt or bypass. */
+export function workbenchClaudeOptions(base: Options, instructions: string, permit: CanUseTool, native: NativeClaudeTools = {servers:{},omitted:[]}): Options {
+  const tier = compilePolicy('claude',TIER_PROFILES.trusted,'strict')
+  return {
+    cwd:base.cwd, model:base.model, effort:base.effort, thinking:base.thinking, pathToClaudeCodeExecutable:base.pathToClaudeCodeExecutable,
+    executable:base.executable, executableArgs:base.executableArgs,
+    env:workbenchClaudeEnvironment(base.env),
+    ...tier,
+    allowDangerouslySkipPermissions:false,
+    allowedTools:[],
+    disallowedTools:[...(tier.disallowedTools ?? []),'mcp__wechat__*','mcp__delegate__*'],
+    tools:{type:'preset',preset:'claude_code'},
+    mcpServers:native.servers,
+    strictMcpConfig:true,
+    settingSources:['project','local'],
+    settings:{
+      ...native.nativeMcpPolicy,
+      // Flag settings override disk env values. Empty values neutralize these
+      // automatic companion pointers; this is not filesystem/process isolation.
+      env:Object.fromEntries((native.privateEnvironmentKeys??[]).map(name=>[name,''])),
+      disableAllHooks:true, disableSkillShellExecution:true,
+      enabledPlugins:native.disabledPlugins ?? {},
+      permissions:{defaultMode:'default',disableBypassPermissionsMode:'disable',
+        ask:['Bash','Write','Edit','NotebookEdit','AskUserQuestion',...Object.keys(native.servers).map(name=>`mcp__${name}__*`)],
+        deny:['mcp__wechat__*','mcp__delegate__*'],
+      },
+    },
+    hooks:{},
+    plugins:[],
+    systemPrompt:{type:'preset',preset:'claude_code',append:instructions},
+    // 逐次调用的放 / 问 / 拒全在 permit 里(makeWorkbenchClaudeCanUseTool → domain/authorize.ts,架构终态 C2);
+    // 没登记的 MCP 在那里按登记表拒。上面 settings.permissions 的 ask / deny 名单是开局给 SDK 的静态子集,不是逐次判定。
+    canUseTool: permit,
+  }
+}
+
+/** 免审执行者:只剩 agy(cursor 自 2026-09-17 起走 ACP,见 registerAcpExecutors)。 */
+export function registerUnattendedExecutors(target: ProviderRegistry, source: Pick<ProviderRegistry, 'get'>): string[] {
+  const registered: string[] = []
+  for (const id of ['agy'] as const) {
+    const entry = source.get(id)
+    if (entry) {
+      target.register(id, entry.provider, { ...entry.opts, workbench: UNATTENDED_CAPABILITIES })
+      registered.push(id)
+    }
+  }
+  return registered
+}
+
+/**
+ * 走 ACP 的执行者:boot registry 有 cursor(对话侧的 print 模式 provider,证明用户装了 cursor-agent)
+ * 且二进制能解析 ⇒ 工作台登记一个**新的** ACP provider(不是同一个实例;对话侧那个不动),
+ * displayName/canResume 沿用 boot 的登记项。解析不到 ⇒ 不登记、不退回免审,记一行日志。
+ */
+export function registerAcpExecutors(target: ProviderRegistry, source: Pick<ProviderRegistry, 'get'>, config: { cursorAgentBin?: string },
+  deps: { findOnPath?: (cmd: string) => string | null; create?: typeof createAcpWorkbenchProvider; log?: (tag: string, line: string) => void; platform?: NodeJS.Platform } = {}): string[] {
+  const entry = source.get('cursor')
+  if (!entry) return []
+  if (!acpSupportedOn(deps.platform)) { deps.log?.('WORKBENCH', 'cursor: ACP 执行者暂不支持 Windows(进程树清理没验证)— 不注册'); return [] }
+  const launch = resolveAcpAgent('cursor', config, deps.findOnPath ?? findOnPath)
+  if (!launch) { deps.log?.('WORKBENCH', 'cursor: cursor-agent binary not resolvable — ACP executor not registered'); return [] }
+  const provider = (deps.create ?? createAcpWorkbenchProvider)({ command: launch.command, args: launch.args, displayName: launch.displayName, log: deps.log, targetProvider: 'cursor' })
+  target.register('cursor', provider, { ...entry.opts, workbench: ACP_CAPABILITIES })
+  return ['cursor']
+}
+
+/**
+ * 自定义 ACP 执行者(2026-10-07):agent-config 的 acp_agents 每条 ⇒ 一个一起做执行者(逐工具权限卡、逐字流、能带附件,
+ * 和 Cursor 同一个 ACP 客户端)。不报调用目标 ⇒ 网络闸门按「需要保护」处理(fail closed)。
+ * 不合格 / 命令找不到 / id 已被占 ⇒ 跳过并记一行,不影响别的。
+ */
+export function registerCustomAcpExecutors(target: ProviderRegistry, agents: ReadonlyArray<{ id: string; name: string; command: string; args?: string[]; auth_method?: string }> | undefined,
+  deps: { findOnPath?: (cmd: string) => string | null; create?: typeof createAcpWorkbenchProvider; log?: (tag: string, line: string) => void; platform?: NodeJS.Platform } = {}): string[] {
+  const registered: string[] = []
+  if ((agents?.length ?? 0) > 0 && !acpSupportedOn(deps.platform)) { deps.log?.('WORKBENCH', `自定义 ACP 执行者(${agents!.map(a => a.id).join('、')})暂不支持 Windows(进程树清理没验证)— 都不注册`); return registered }
+  for (const agent of agents ?? []) {
+    const problem = acpAgentProblem(agent)
+    if (problem) { deps.log?.('WORKBENCH', `acp agent ${String(agent.id)} skipped: ${problem}`); continue }
+    if (target.has(agent.id)) { deps.log?.('WORKBENCH', `acp agent ${agent.id} skipped: id already registered`); continue }
+    const launch = resolveCustomAcpAgent({ id: agent.id, name: agent.name, command: agent.command, args: agent.args ?? [] }, deps.findOnPath ?? findOnPath)
+    if (!launch) { deps.log?.('WORKBENCH', `acp agent ${agent.id}: command ${agent.command} not found — not registered`); continue }
+    const provider = (deps.create ?? createAcpWorkbenchProvider)({ command: launch.command, args: launch.args, displayName: launch.name, log: deps.log, authErrorCode: 'acp_agent_auth_required', ...(agent.auth_method ? { authMethod: agent.auth_method } : {}) })
+    target.register(agent.id, provider, { displayName: launch.name, canResume: () => true, workbench: ACP_CAPABILITIES })
+    registered.push(agent.id)
+  }
+  return registered
+}
+
+/** 免审执行者一次性确认开关的落盘实现 —— 读写 agent-config.json 的
+ *  `workbench_unattended_ack_at`(其余字段原样保留)。 */
+export function makeUnattendedAckStore(stateDir: string): { get(): number | null; set(at: number): void } {
+  return {
+    get: () => loadAgentConfig(stateDir).workbench_unattended_ack_at ?? null,
+    set: at => {
+      const current = loadAgentConfig(stateDir)
+      saveAgentConfig(stateDir, { ...current, workbench_unattended_ack_at: at })
+    },
+  }
+}
+
+export function wireWorkbench(opts: {
+  db: Db; stateDir: string; boot: Bootstrap; internalApi: Pick<InternalApi, 'mintSessionToken' | 'invalidateSession'>
+  executionConflict?:(path:string,providerId:string,nativeId:string|null)=>boolean
+  askUser: PermissionRelayDeps['askUser']; log: PermissionRelayDeps['log']
+  /** 「一件事」登记处:任务与 matter 一对一同步(可选,老接线不传)。 */
+  matters?: import('../../adapters/store/matters-store').MatterStore
+  /** 回报(task-3,2026-09-23;功能目录 src/features/reports 造好交进来):与 matters 一起有才接得上,单传一个不够。 */
+  reports?: import('../../core/matters/report').ReportSink
+  /** 换一家来审(10-20):「任务 <编号> 请 @codex 审」起一次只读轮;main 里接 tickBodies.runJobTurn。 */
+  requestReview?: (r: { taskId: string; providerId: string; material: string }) => boolean
+  /** 网络闸门(2026-10-02):执行者 registry、起执行者 / 投补充、额度查询都过它。 */
+  networkGate?: import('../../lib/network-gate').NetworkGate
+  /** 执行者一轮失败时的错误通道 —— CLI 自动升级的报错触发(2026-10-04)。 */
+  onTurnError?: (providerId: string, code: string | undefined, message: string) => void
+  onTurnCompleted?: (providerId: string) => void
+  /** 执行者被拒着(出口地区用不了):执行者列表上照实标出来,桌面选人时看得见。 */
+  providerRefusal?: (providerId: string) => { code: string; since: string } | null
+  /** 放行规则(2026-10-19):与终端会话共用同一个闸门。不传 ⇒ 每条权限都问主人。 */
+  permissionGate?: import('../../daemon/permission-gate').PermissionGate
+}) {
+  // 额度查询带着账号凭据直连供应商(守护 v2:按真正连到的端点分类 —— Claude 的 usage 接口永远是
+  // api.anthropic.com,哪怕会话走的是自定义网关;Codex 的额度是 ChatGPT 账号的,永远是 OpenAI 官方,
+  // 哪怕 model_provider 指到了别处);需要保护且不安全就不出门。
+  const gatedUsage=<T>(target:import('../../lib/network-gate').CallTarget,fn:()=>Promise<T|null>)=>async():Promise<T|null>=>!(await decideCall(opts.networkGate,target)).allowed?null:fn()
+  // 订阅额度监视器:Codex 问 app-server,Claude 用 Claude Code 自己的 OAuth 凭据问 usage 接口(subscription-usage.ts)。
+  const usageMonitor=makeUsageMonitor({sources:{
+    // 每次查都现判 codex 在不在(开机没探到、后来重探成功的,不重启也有额度)。
+    codex:async()=>{const bin=opts.boot.registry.get('codex')?.opts.bin?.() ?? null;if(!bin)return null
+      return gatedUsage({provider:'codex',baseUrl:'https://chatgpt.com',purpose:'usage',exact:true},async()=>{const r=await readCodexRateLimits({codexPathOverride:bin});return r?parseCodexRateLimits(r,Date.now()):null})()},
+    ...(opts.boot.registry.has('claude')?{claude:gatedUsage({provider:'claude',baseUrl:'https://api.anthropic.com',purpose:'usage'},async()=>{
+      const cred=readClaudeOAuthToken({platform:process.platform,keychain:()=>spawnSync(['security','find-generic-password','-s','Claude Code-credentials','-w']).stdout.toString(),readFile:()=>readFileSync(join(homedir(),'.claude','.credentials.json'),'utf8'),now:Date.now})
+      if(!cred)return null
+      const r=await fetch('https://api.anthropic.com/api/oauth/usage',{headers:{authorization:`Bearer ${cred.token}`,'anthropic-beta':'oauth-2025-04-20'},signal:AbortSignal.timeout(8_000)})
+      if(!r.ok)return null
+      return parseClaudeUsage(await r.json().catch(()=>null),Date.now(),cred.plan)
+    })}:{}),
+  },ttlMs:5*60_000})
+
+  const ownerChatId=() => resolveAdminChatId(loadAccess(),loadCompanionConfig(opts.stateDir),null)
+  const registry=createProviderRegistry(opts.networkGate?{networkGate:opts.networkGate}:undefined)
+  const agentConfig=loadAgentConfig(opts.stateDir)
+  // 工作台跟着对话侧的登记走(3c 第 1 步,2026-10-22):开机时已登记的先建,之后登记的(探测失败后重探成功、
+  // CLI 升级后 reprobe)由 onRegister 补上 —— 以前只在这里抄一次,晚到的执行者要等重启才进「一起做」。
+  // 一家只建一次(registry 遇到重复 id 会抛);只增不减(稿 §4.1 ②)。
+  const nativeHistory:Partial<Record<'claude'|'codex',ReturnType<typeof createClaudeHistoryReader>>>={claude:createClaudeHistoryReader()}
+  const BUILD:Partial<Record<string,()=>void>>={
+    claude:()=>{
+      const claude=opts.boot.registry.get('claude')
+      if (claude) registry.register('claude',createClaudeAgentProvider({
+        sdkOptionsForProject(alias,path,tier,chatId,env,instructions,context) {
+          const base=opts.boot.sdkOptionsForProject(alias,path,tier,chatId,env,instructions)
+          const native=readNativeClaudeTools(path)
+          const notice=claudeNativeCapabilityNotice(native)
+          if(notice)context?.reportNotice?.(notice)
+          const permit=makeWorkbenchClaudeCanUseTool(context?.requestPermission,context?.requestUserInput,Object.keys(native.servers),Object.keys(native.servers))
+          return workbenchClaudeOptions(base,instructions ?? '',permit,native)
+        },
+      }),{...claude.opts,workbench:MANAGED_NATIVE_CAPABILITIES})
+    },
+    codex:()=>{
+      const codex=opts.boot.registry.get('codex')
+      const found=codex?.opts.bin?.() ?? null
+      if (!codex || !found) return
+      // 每次 spawn 现取(3c 第 3 步,稿 §4.1 ①):升级换了路径,下一个会话用新的,在跑的不动。
+      // 一时找不到就仍用上一次的那个 —— spawn 失败照实报(§4.1 ②),不假装成功、不静默换别家。
+      let last=found
+      const current=()=>{const b=codex.opts.bin?.() ?? null;if(b)last=b;return last}
+      registry.register('codex',createWorkbenchCodexProvider({
+        codexPathOverride:current,
+        model:modelForProvider(loadAgentConfig(opts.stateDir),'codex'),
+        // The adapter discovers native tools, excludes companion services, and
+        // routes admitted tool calls through this task's approval requests.
+      }),{...codex.opts,workbench:MANAGED_NATIVE_CAPABILITIES})
+      nativeHistory.codex=createCodexHistoryReader({codexPathOverride:current})
+    },
+    openai:()=>{ if(opts.boot.registry.has('openai'))registerWorkbenchApi(registry,opts.db,opts.stateDir,loadAgentConfig(opts.stateDir),process.env) },
+    cursor:()=>{ registerAcpExecutors(registry,opts.boot.registry,loadAgentConfig(opts.stateDir),{log:opts.log}) },
+    agy:()=>{ registerUnattendedExecutors(registry,opts.boot.registry) },
+  }
+  const follow=(id:string)=>{
+    const build=BUILD[id]
+    if(!build||registry.has(id))return
+    try{build()}catch(err){opts.log('WORKBENCH',`${id}: 接不上工作台 — ${err instanceof Error?err.message:String(err)}`)}
+  }
+  for(const id of ['claude','codex','openai','cursor'])follow(id)
+  registerCustomAcpExecutors(registry,agentConfig.acp_agents,{log:opts.log})
+  follow('agy')
+  opts.boot.registry.onRegister(id=>{ follow(id); if(registry.has(id))opts.log('WORKBENCH',`${id}: 晚到的执行者已进工作台`) })
+  const store=makeWorkbenchStore(opts.db)
+  // 回报投递(task-3,2026-09-23):两样都要有才接得上——没有 matters 就没法建/追出生地,
+  // 没有 ReportSink 就没地方写;任一个缺,整条功能不存在(降级路径,同 matters 的老接线约定)。
+  const reports=opts.matters?opts.reports:undefined
+  // 回忆(task-5,fix round 2,2026-09-23,复审新 Important ③):只要 matters 就接得
+  // 上——journal 用 opts.db 现开(makeJournal 是无状态构造,跟 wire-social.ts 里
+  // recordVisit/recordPostcard 同一惯例)。便宜模型**不用**上面这个 wireWorkbench 自己
+  // 建的 workbench-local `registry`(那是 `createProviderRegistry()` 不带任何 opts 建
+  // 的,丢了 cheapEvalProvider getter——`/set cheap` 和面板钉死的便宜模型对回忆完全无
+  // 效、丢了 cheapEvalPreflight——2026-08-29 为根治"开机 spawn agy → 刷 token 撞超时 →
+  // 弹浏览器 Google OAuth 页"而加的网络预检、也丢了 onProviderFailure/log 的失败诊
+  // 断)。而工作台的这个 registry 里有 cheapEval 的只有 agy 和 claude(claude 还没传
+  // claudeBin),意味着装了 agy 的机器上回忆恰好由 agy 来答——正是当年弹 OAuth 页那条
+  // 路,这次还没有预检。改用 `opts.boot.registry`(已经在这个函数里到处用,见
+  // :123/124/155/156/157),跟 pipeline-deps.ts:728 的管家判定同一惯例(同样调
+  // `boot.registry.getCheapEval()`),不缓存 provider 本身、每次现取。
+  const recollect=opts.matters?makeRecollectSink({
+    matters:opts.matters,journal:makeJournal(opts.db),
+    // fix round 3(评审 M6):跟 bootstrap/index.ts:1048 的 haikuEval/verdictEval
+    // 同一处理——裸 getCheapEval() 拿到的候选没做过「登出/401 之类的认证失败
+    // 别当成正常回复」这道检查,套上 wrapCheapEvalWithAuthFailCheck(导出复
+    // 用,不重新发明)。它内部 assertNotAuthFailed 抛错时,maybeRecollect 的
+    // try/catch 会当成真的调用失败留痕——跟"没有便宜模型"是两回事。
+    cheapEval:()=>wrapCheapEvalWithAuthFailCheck(opts.boot.registry.getCheapEval(),opts.log)??null,
+    // 终审必判④(b):crossedOvernight 按主人本地日历日算,不按 UTC——复用
+    // companion 配置现成的 timezone 字段,不新造配置项。
+    timezone:()=>loadCompanionConfig(opts.stateDir).timezone,
+    // 终审「小的」:cheapEval 的延迟预算,超时按真的调用失败处理(不是
+    // "没有模型")——见 recollect-sink.ts 文件头「cheapEval timeout」。
+    cheapEvalBudgetMs:()=>opts.boot.registry.getCheapEvalBudgetMs(),
+    ownerChatId,log:opts.log,
+    // fix round 3(评审 M2):终态那一拍的模型调用是 fire-and-forget,没有
+    // holdBusy 挡着的话空闲自动重启可能切在中间、这条回忆静默丢失且不留
+    // 痕——已经在手边(opts.boot.holdBusy 这个函数在这个文件里到处用,见
+    // 下面 makeWorkbenchService 传的那个),零新依赖。
+    holdBusy:opts.boot.holdBusy,
+  }):undefined
+  return makeWorkbenchService({
+    managedWorkspaceRoot:join(homedir(),'CC','Tasks'),
+    ...(opts.networkGate?{networkGate:opts.networkGate}:{}),
+    // 项目经验(第二轮对标 ★2):主人在微信「经验 <项目> …」写的,每家执行者的指令里都带上
+    projectLessons:(p)=>p?lessonsBlock(makeProjectLessons(opts.stateDir).list(p)):null,
+    // 「任务 新建 <项目> issue N」:gh 只读取 issue(10-20)
+    fetchIssue:makeIssueFetcher(),
+    // 「任务 <编号> 记成经验 <一句>」与打回时「同时记成这个项目的经验」:跟微信「经验」命令、手机同一个文件
+    addLesson:(p,t)=>{const r=makeProjectLessons(opts.stateDir).add(p,t);return r.ok?{ok:true}:r},
+    ...(opts.requestReview?{requestReview:opts.requestReview}:{}),
+    ...(opts.permissionGate?{permissionDecide:(ask:import('../../domain/permission-rules/types').AskSource)=>opts.permissionGate!.decide(ask)}:{}),
+    executionConflict:opts.executionConflict,
+    // 同一个对象:codex 晚到时 BUILD.codex 往里补,服务侧读的是这份引用。
+    nativeHistory,
+    store,registry,stateDir:opts.stateDir,ownerChatId,matters:opts.matters,reports,recollect,log:opts.log,
+    usage:(id)=>id==='claude'||id==='codex'?usageMonitor.cached(id):null,
+    registeredProjects:()=>listProjects(join(opts.stateDir,'projects.json')),
+    defaultProvider:opts.boot.defaultProviderId,holdBusy:opts.boot.holdBusy,
+    ...(opts.onTurnError?{onTurnError:opts.onTurnError}:{}),
+    ...(opts.onTurnCompleted?{onTurnCompleted:opts.onTurnCompleted}:{}),
+    ...(opts.providerRefusal?{refusal:opts.providerRefusal}:{}),
+    // Empty allowlist is deliberate: office tasks never send messages or read
+    // personal memory through the daemon, even if a CLI discovers old config.
+    mintSessionToken:key => opts.internalApi.mintSessionToken('trusted',key,{routeAllow:new Set()}),
+    revokeSessionToken:key => opts.internalApi.invalidateSession(key),
+    unattendedAck:makeUnattendedAckStore(opts.stateDir),
+    // 空闲自动收工的两档时长:用闭包读(同 ownerChatId),主人改了 agent-config.json 立刻生效;
+    // 负数或非数由 service 侧当缺省处理。
+    retainedIdleCloseMs:()=>loadAgentConfig(opts.stateDir).workbench_retained_idle_close_ms ?? 600_000,
+    handoffGraceMs:()=>loadAgentConfig(opts.stateDir).workbench_handoff_grace_ms ?? 15_000,
+  })
+}

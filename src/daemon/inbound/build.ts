@@ -21,7 +21,7 @@ import { makeMwMatter, type MatterMwDeps } from './mw-matter'
 import { makeMwRoute, type RouteMwDeps } from './mw-route'
 import { makeMwConsume, skipWhen } from './mw-consume'
 import type { IntentKind } from './intent'
-import { isWechatTaskCommand } from '../../core/workbench/wechat-control'
+import { isWechatTaskCommand } from '../../features/workbench'
 
 export interface InboundPipelineDeps {
   trace: TraceMwDeps

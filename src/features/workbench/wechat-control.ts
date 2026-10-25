@@ -1,0 +1,427 @@
+import {validBaseBranch} from '../../core/workbench/worktree-workspaces'
+import {parseReviewRequest,reviewMaterial} from './review-request'
+import {WORKBENCH_ERRORS,workbenchErrorSpec} from '@wechat-cc/protocol'
+import {compareReply} from './wechat-compare'
+import {issueTaskText,parseIssueRef,type IssueData} from './issue-intake'
+import {createHash,randomUUID} from 'node:crypto'
+import type {WorkbenchStore,Task} from '../../core/workbench/store'
+import type {LiveInput} from '../../core/workbench/live-inputs'
+import type {PendingWorkbenchPermission,PermissionDecision} from '../../core/workbench/permissions'
+import type {AgentRuntimeSnapshot} from '../../ports/agent-provider'
+import type {CreateWechatTask,SendWechatArtifact,TaskWaitingFor} from './wechat-types'
+import type {MatterOrigin} from '../../adapters/store/matters-store'
+import type {ArtifactDeliveryReceipt} from '../../core/workbench/artifact-deliveries'
+import type {CreationReceipt} from '../../core/workbench/creation-receipts'
+import type {ProjectCatalogEntry} from '../../core/workbench/project-catalog'
+import {validateUserInputAnswers,type PendingUserInput} from '../../core/workbench/user-input'
+import {resultCommandHelp,resultToken,wechatResultPage} from './wechat-results'
+import {isWorkbenchProviderId} from '../../core/workbench/executor-capabilities'
+import type {ReviewTurn} from './review'
+
+/** origin(2026-10-19):只在 App 一轮(桌面 / 手机说的话过同一张消费者表)时由 daemon 填;省略 ⇒ 真的是微信入站。不进回执身份。 */
+export interface WechatMessageIdentity {accountId:string;userId:string;msgId?:string;createTimeMs:number;origin?:MatterOrigin|null}
+export type WechatWorkbenchReply=string|{kind:'artifact_delivered';receiptId:string}
+type Detail=ReturnType<WorkbenchStore['detail']>&{runId?:string;runtime?:AgentRuntimeSnapshot;inputMode?:'steer'|'send'|'queue';inputs:LiveInput[];permissions:PendingWorkbenchPermission[];questions:PendingUserInput[];wechatNotifications?:{enabled:boolean;notices:Array<{status:string}>};task:Task&{waitingFor?:TaskWaitingFor|null;networkSuspended?:{since:number}}}
+interface Actions {
+  projects():ProjectCatalogEntry[]
+  createWechat(input:CreateWechatTask):CreationReceipt
+  setWechatWatch(id:string,accountId:string,enabled:boolean):unknown
+  deliverWechatArtifact?(input:SendWechatArtifact):Promise<ArtifactDeliveryReceipt>
+  detail(id:string):Detail
+  continueTask(id:string,text:string,options?:{inputRequestId?:string}):Task
+  cancel(id:string,expectedRunId?:string):Promise<Task>
+  submitInput(id:string,input:{runId:string;requestId:string;text:string}):Promise<LiveInput>
+  resolvePermission(id:string,requestId:string,decision:PermissionDecision):void
+  resolveAnswer(id:string,requestId:string,answers:unknown):void
+  /** 变更快照(新→旧);没接就没有「改动」这条命令。 */
+  reviewList?(id:string):ReviewTurn[]
+  /** 独立工作区三个动作(2026-10-08 微信也能做);没接就回「在桌面上做」。 */
+  worktreeAction?(id:string,action:'commit'|'remove'|'merge'|'reopen'):{branch:string;committed?:boolean;sha?:string;mergeHint?:string;removed?:boolean;removing?:boolean;merged?:boolean;into?:string;reopened?:boolean}
+}
+const UUID='[a-f0-9]{8}-[a-f0-9]{4}-[1-5][a-f0-9]{3}-[89ab][a-f0-9]{3}-[a-f0-9]{12}'
+const requestCommand=new RegExp(`^(权限|问题|允许|拒绝|回答)\\s+(${UUID})(?:\\s+([\\s\\S]+))?$`,'i')
+const STATUS:Record<string,string>={queued:'准备开始',running:'正在处理',cancelling:'正在停止',completed:'这一轮已完成',failed:'需要处理',cancelled:'已停止',interrupted:'已中断'}
+function runtimeStatus(status:string,runtime?:AgentRuntimeSnapshot,networkSuspended?:{since:number}){
+  // 网络守护冻住了这条 run(主人 2026-10-03):桌面 / 手机 / 微信同一句。
+  if(networkSuspended&&(status==='running'||status==='cancelling'))return '已暂停(网络未受保护)，恢复后自动继续'
+  if(status==='running'&&runtime?.retained){
+    if(runtime.backgroundCount>0)return `后台执行中 · ${runtime.backgroundCount}`
+    if(runtime.foreground==='idle')return '会话保留中'
+  }
+  return STATUS[status]??status
+}
+const REQUEST_MAX=6000
+const unavailable='没有找到这个任务，请在桌面工作台核对编号。'
+const stale=WORKBENCH_ERRORS.permission_stale!.wechat!
+const stopUnconfirmed='这条停止请求已记录，但尚未确认执行结果。请查询任务状态；如需停止当前轮次，请发送一条新的停止消息。'
+const usage=(id='<任务编号>')=>`用法：\n项目：任务 项目\n新建：任务 新建 <项目编号> <要求>\n并行：任务 新建 <项目编号> 独立 <要求>（从某个分支开始：独立@<分支>）\n从 GitHub issue 开工：任务 新建 <项目编号> issue <编号>\n两家对比：任务 新建 <项目编号> 对比 @claude @codex <要求>（并排看：任务 对比 <编号> <编号>）\n查看：任务 ${id}\n补充：任务 ${id} 补充 <要求>\n改动：任务 ${id} 改动\n记成经验：任务 ${id} 记成经验 <一句话>\n换一家来审：任务 ${id} 请 @codex 审\n独立工作区：任务 ${id} 提交 / 合回 / 删除工作区 / 重开工作区\n停止：任务 ${id} 停止\n处理待办时，请复制任务消息中的完整请求编号。`
+const clip=(value:string,max:number)=>value.length>max?value.slice(0,max)+'…':value
+const singleLine=(value:string,max=100)=>clip(value.replace(/[\r\n]+/g,' '),max)
+export const isWechatTaskCommand=(text:string)=>/^(?:任务|\/task)(?:\s|$)/i.test(text.trim())
+
+// Internal receipt identity only; neither the hash nor message metadata is shown in replies.
+function inputId(chatId:string,taskId:string,text:string,identity?:WechatMessageIdentity){
+  if(!identity)return randomUUID()
+  const delivery=identity.msgId?['id',identity.msgId]:['fallback',identity.createTimeMs||0,text]
+  const hash=createHash('sha256').update(JSON.stringify(['workbench-wechat-input',identity.accountId,chatId,identity.userId,taskId,delivery])).digest('hex')
+  return `${hash.slice(0,8)}-${hash.slice(8,12)}-5${hash.slice(13,16)}-a${hash.slice(17,20)}-${hash.slice(20,32)}`
+}
+/** The early dedup and message audit must use the same identity as the task receipt. */
+export function wechatTaskMessageKey(msg:WechatMessageIdentity&{chatId:string;text:string}):string|null{
+  if(!isWechatTaskCommand(msg.text))return null
+  if(/^(?:任务|\/task)\s+[a-f0-9]{8}\s+文件(?:\s|$)/i.test(msg.text.trim()))return 'workbench:'+inputId(msg.chatId,'',msg.text,msg)
+  const taskId=/^(?:任务|\/task)\s+([a-f0-9]{8})(?:\s|$)/i.exec(msg.text.trim())?.[1]?.toLowerCase()??''
+  return 'workbench:'+inputId(msg.chatId,taskId,msg.text,msg)
+}
+function inputReply(input:LiveInput,retained=false){
+  const prefix=`任务 ${input.taskId}：`
+  if(input.status==='delivered')return prefix+'补充已传达给执行者。'
+  if(input.status==='pending')return prefix+(retained?'补充已保存在 CC，当前执行者暂不接收；不会自动发送。':'补充已保存，将在当前轮次完成后进入同一任务的下一轮。')
+  if(input.status==='sending')return prefix+'补充正在发送，尚未确认收到。请稍后查询任务。'
+  if(input.status==='withdrawn')return prefix+'这条补充已撤回。'
+  return prefix+'未确认执行者收到这条补充，内容已保留。请在桌面工作台检查后决定是否重发。'
+}
+function questionBody(request:PendingUserInput){
+  return request.questions.map((q,i)=>[
+    `${i+1}. ${q.header}：${q.question}`,
+    ...q.options.map((o,j)=>`  ${j+1}) ${o.label}${o.description?' — '+o.description:''}`),
+    q.multiSelect?'可多选，用逗号分隔选项编号。':'请选择一个选项编号。',
+    q.allowOther?'也可写「其他 <你的答案>」。':'',
+  ].filter(Boolean).join('\n')).join('\n\n')
+}
+function questionReply(id:string,request:PendingUserInput){
+  const body=questionBody(request)
+  if(body.length>REQUEST_MAX)return `任务 ${id} 的问题内容较长，请在桌面工作台完整查看并回答。\n请求：${request.id}`
+  const sample=request.questions.map((q,i)=>`${request.questions.length>1?(i+1)+'=':''}${q.options.length?'1':'其他 <你的答案>'}`).join('\n')
+  return `任务 ${id} · 等待回答\n${body}\n\n回答：任务 ${id} 回答 ${request.id} ${sample}`
+}
+function phoneAnswers(request:PendingUserInput,text:string):unknown {
+  if(text.trim().startsWith('{'))return validateUserInputAnswers(request,JSON.parse(text))
+  const values=new Map<number,string>()
+  if(request.questions.length===1)values.set(1,text.trim())
+  else for(const line of text.trim().split(/\r?\n/)){
+    const match=/^([1-4])\s*=\s*(.+)$/.exec(line.trim())
+    if(!match||values.has(Number(match[1])))throw Error('invalid_answer')
+    values.set(Number(match[1]),match[2]!)
+  }
+  if(values.size!==request.questions.length)throw Error('invalid_answer')
+  const answers=Object.fromEntries(request.questions.map((q,i)=>{
+    const raw=values.get(i+1);if(!raw)throw Error('invalid_answer')
+    const other=/^其他\s+([\s\S]+)$/.exec(raw)
+    if(other){if(!q.allowOther)throw Error('invalid_answer');return[q.id,[other[1]!.trim()]]}
+    if(!/^[1-8](?:\s*[,，]\s*[1-8])*$/.test(raw))throw Error('invalid_answer')
+    return[q.id,raw.split(/[,，]/).map(n=>{const option=q.options[Number(n.trim())-1];if(!option)throw Error('invalid_answer');return option.label})]
+  }))
+  return validateUserInputAnswers(request,answers)
+}
+function statusReply(detail:Detail){
+  const {task,events,artifacts,permissions,questions,inputs}=detail,id=task.id
+  const latest=events.filter(e=>e.kind==='text').at(-1)
+  const error=events.filter(e=>e.kind==='error').at(-1)?.text
+  const lines=[`${singleLine(task.title,120)} · ${id}`,`${task.providerId} · ${runtimeStatus(task.status,detail.runtime,task.networkSuspended)}`]
+  if(detail.wechatNotifications){
+    const unknown=detail.wechatNotifications.notices.filter(n=>n.status==='unknown'||n.status==='sending').length
+    const waiting=detail.wechatNotifications.notices.filter(n=>n.status==='pending').length
+    lines.push(`微信提醒：${detail.wechatNotifications.enabled?'已开启':'已关闭'}${unknown?` · ${unknown} 条尚未确认送达，不会自动重发`:''}${waiting?` · ${waiting} 条等待发送`:''}`)
+  }
+  if(task.status==='running'&&detail.runtime?.retained)lines.push(`后续回复仍会留在这个任务里。结束会停止尚未结束的后台工作并保存当前成果。\n结束：任务 ${id} 停止`)
+  // 等待行说人话:挡路的那位已经答复、正数着秒自己让开时，说清不用干等——不必等桌面才知道。
+  // `writer_not_closed` 那种挡路方永远不安静（`holderWriting` 恒为 true），今天这个依赖成立
+  // （`findPathBlocker` 只在 `state==='uncertain'` 时给 `writer_not_closed`，而 `isReplied` 在
+  // `uncertain` 时必为 false），走不到这句。但这条约束只管着今天一处判据不变，不管着这句话
+  // 本身——桌面那处为「`writer_not_closed` 文案不许被覆盖」的教训另外选了双保险
+  // （`reason!=='writer_not_closed'`），这里补上同一道，呈现给主人的那句话不该只在一半的面上成立。
+  if(task.waitingFor?.holderWriting===false&&task.waitingFor.closeInMs!=null&&task.waitingFor.reason!=='writer_not_closed'){
+    // 向下取:宁可显示得比实际剩的更少,不能说得比实际剩的更多(同桌面那处,评审修复轮 2 #3)。
+    const seconds=Math.max(0,Math.floor(task.waitingFor.closeInMs/1000)),blockerId=task.waitingFor.taskId
+    lines.push(`「${singleLine(task.waitingFor.title,80)}」已答复，会话还开着；等 ${seconds} 秒它会自己让开，或者说『任务 ${blockerId} 停止』。`)
+  }
+  if(latest){
+    lines.push('最近回复：\n'+clip(latest.text,1500))
+    if(latest.text.length>1500)lines.push(`完整正文（第 1 页）：任务 ${id} 正文 ${resultToken(latest)} 1`)
+  }
+  if(error&&['failed','interrupted'].includes(task.status))lines.push('需要处理：'+clip(error,500))
+  else if(task.error)lines.push('需要处理：'+clip(task.error,500))
+  if(artifacts.length)lines.push(`已保存 ${artifacts.length} 份成果版本：\n`+artifacts.slice(0,8).map(a=>`• ${singleLine(a.name)} (${a.size} 字节)\n获取：任务 ${id} 文件 ${a.id}`).join('\n'))
+  const held=inputs.filter(input=>input.status==='held').slice(0,3)
+  if(held.length)lines.push('尚未交付的补充（已保留）：\n'+held.map(input=>'• '+clip(input.text,200)).join('\n'))
+  const queued=inputs.filter(input=>input.status==='pending'||input.status==='sending').length
+  if(queued)lines.push(`还有 ${queued} 条补充等待交付。`)
+  if(permissions.length)lines.push(`等待权限处理：${permissions.length} 项\n`+permissions.slice(0,4).map(p=>`${singleLine(p.tool,80)} · ${singleLine(p.description,150)}\n查看：任务 ${id} 权限 ${p.id}`).join('\n'))
+  if(questions.length)lines.push(`等待回答：${questions.length} 项\n`+questions.slice(0,4).map(q=>`${singleLine(q.questions.map(item=>item.header).join('、'),80)}\n查看：任务 ${id} 问题 ${q.id}`).join('\n'))
+  lines.push(`补充：任务 ${id} 补充 <要求>`,`查看结果：任务 ${id} 结果`)
+  return lines.join('\n\n')
+}
+/** 「任务 <编号> 提交 / 合回 / 删除工作区」:与桌面、手机同一个 worktreeAction;拒绝原因都说成人话。 */
+function worktreeReply(id:string,verb:'提交'|'合回'|'删除工作区'|'重开工作区',act:Actions['worktreeAction']){
+  if(!act)return '这里做不了独立工作区的操作，请在桌面工作台上做。'
+  try{
+    const r=act(id,verb==='提交'?'commit':verb==='合回'?'merge':verb==='重开工作区'?'reopen':'remove')
+    if(verb==='重开工作区')return `任务 ${id}：已从分支 ${r.branch} 重新打开独立工作区，可以接着做了。\n补充：任务 ${id} 补充 <要求>`
+    if(verb==='提交')return r.committed?`任务 ${id}：已提交到分支 ${r.branch}（${(r.sha??'').slice(0,7)}）。\n合回项目：任务 ${id} 合回`:`任务 ${id}：分支 ${r.branch} 上没有新的改动要提交。`
+    if(verb==='合回')return r.merged?`任务 ${id}：分支 ${r.branch} 已合进项目的 ${r.into??'当前分支'}。\n不再需要工作区：任务 ${id} 删除工作区`:`任务 ${id}：分支 ${r.branch} 上没有项目里还没有的提交，不用合。没提交的改动要先发「任务 ${id} 提交」。`
+    // 有工作区脚本(2026-10-20):先停在跑的、跑完收尾脚本再删,结果进时间线
+    if(r.removing)return `任务 ${id}：正在收尾（停掉在跑的脚本、运行收尾脚本），完了会删除独立工作区，分支 ${r.branch} 保留在项目里。`
+    return `任务 ${id}：独立工作区已删除，分支 ${r.branch} 保留在项目里。`
+  }catch(error){
+    const code=error instanceof Error?error.message:''
+    return workbenchErrorSpec(code)?.wechatWorktree?.replaceAll('{id}',id)??'暂时无法处理，请在桌面工作台查看任务状态。'
+  }
+}
+/** 每个码那句话在 packages/protocol 的 WORKBENCH_ERRORS(wechat 一栏);这里只留前缀规则与兜底。 */
+function failure(error:unknown,id:string){
+  const code=error instanceof Error?error.message:''
+  const text=workbenchErrorSpec(code)?.wechat
+  if(text)return text.replaceAll('{id}',id)
+  if(code.startsWith('invalid_artifact'))return WORKBENCH_ERRORS.artifact_changed!.wechat!
+  if(error instanceof SyntaxError)return WORKBENCH_ERRORS.invalid_answer!.wechat!
+  if(code.startsWith('invalid_'))return usage(id)
+  return '暂时无法处理，请在桌面工作台查看任务状态。'
+}
+
+const KIND_LABEL:Record<string,string>={added:'新建',deleted:'删除',modified:'修改',not_reviewed:'未展开'}
+/** diff 里的增删行数(只数 hunk 正文,不数 @@ 头)。 */
+function lineCounts(diff:string|undefined):string {
+  if(!diff)return ''
+  let plus=0,minus=0
+  for(const line of diff.split('\n')){if(line.startsWith('+'))plus++;else if(line.startsWith('-'))minus++}
+  return `（+${plus} −${minus}）`
+}
+/**
+ * 「任务 <编号> 改动」(2026-10-06,diff 审阅欠的微信那半):最近一轮改了哪些文件、各增删几行。只读 ——
+ * 接受 / 打回 / 撤销要看 diff,留在桌面「改动」面板;路径过长截断,最多列 12 个。
+ */
+function changesReply(id:string,turns:ReviewTurn[]|null):string {
+  if(!turns)return '这里看不了改动，请在桌面工作台的「改动」面板查看。'
+  // 回退撤掉的轮不算(v81)
+  turns=turns.filter(t=>!t.discarded)
+  const latest=turns.find(t=>t.status!=='unavailable')
+  if(!latest)return turns.length?`任务 ${id}：改动记录读不出来，请在桌面工作台查看。`:`任务 ${id}：还没有改动记录（不是 Git 项目，或还没跑完一轮）。`
+  // 只审了一部分的一轮不能说成完整的(2026-10-20):开头先说「只检查了一部分」并带上原因(notes 里有 N / M),
+  // 没列出文件也不能说「没有改动」—— 没检查到的文件里可能有。最近那一轮读不出来、拿更早一轮顶上时也要说。
+  const partial=latest.status==='partial'
+  const why=partial?latest.notes.slice(0,2).map(n=>singleLine(n,200)).join(' '):''
+  const older=latest!==turns[0]?['最近一轮的改动记录读不出来，下面是更早的一轮。']:[]
+  const partialLine=partial?[`这一轮只检查了一部分${why?`：${why}`:'，有文件没能完整检查。'}以桌面为准。`]:[]
+  if(!latest.files.length)return [...older,partial?`任务 ${id}：已检查的文件里没有改动，但这一轮没查完。`:`任务 ${id}：最近一轮没有改动文件。`,...partialLine].join('\n')
+  const shown=latest.files.slice(0,12).map(f=>`• ${KIND_LABEL[f.kind]??f.kind} ${singleLine(f.path,120)}${lineCounts(f.diff)}`)
+  const lines=[...older,`任务 ${id} · 最近一轮${partial?'已检查的部分里':''}改了 ${latest.files.length} 个文件${turns.length>1?`（共 ${turns.length} 轮）`:''}：`,...partialLine,...shown]
+  if(latest.files.length>12)lines.push(`还有 ${latest.files.length-12} 个。`)
+  lines.push('逐个看 diff、接受、打回或撤销：桌面工作台「改动」面板。')
+  return lines.join('\n')
+}
+
+const ISSUE_FAIL:Record<string,string>={gh_missing:'这台电脑上没找到 gh(GitHub 命令行)。装好并登录后再试:brew install gh,然后 gh auth login。',gh_auth:'gh 还没登录 GitHub。在电脑上跑一次 gh auth login 再试。',not_found:'这个项目的仓库里没有这个编号的 issue。',not_github:'这个项目的 git remote 不是 GitHub,没法按编号取 issue。',timeout:'取 issue 超时了,过一会儿再试。',failed:'没取到这个 issue,过一会儿再试。'}
+
+export function makeWechatWorkbenchControl(opts:{store:WorkbenchStore;ownerChatId:()=>string|null;actions:Actions;hasExecutor?:(id:string)=>boolean;/** 换一家来审(10-20):起一次只读轮;接不上 ⇒ false */requestReview?:(r:{taskId:string;providerId:string;material:string})=>boolean;addLesson?:(projectPath:string,text:string)=>{ok:true}|{ok:false;error:'invalid'|'duplicate'|'full'};fetchIssue?:(projectPath:string,n:number)=>Promise<{ok:true;issue:IssueData}|{ok:false;reason:string}>}){
+  return async(chatId:string,text:string,identity?:WechatMessageIdentity):Promise<WechatWorkbenchReply|null>=>{
+    if(!isWechatTaskCommand(text))return null
+    if(!opts.ownerChatId()||chatId!==opts.ownerChatId()||(identity&&identity.userId!==chatId))return null
+    const artifactRequestId=inputId(chatId,'',text,identity),commandHash=createHash('sha256').update(text).digest('hex')
+    const originalFile=opts.store.artifactDeliveries.get(artifactRequestId)
+    if(originalFile&&(originalFile.commandHash!==commandHash||originalFile.ownerChatId!==chatId||originalFile.accountId!==identity?.accountId))return failure(Error('artifact_delivery_conflict'),originalFile.taskId)
+    const command=text.trim().replace(/^(?:任务|\/task)\s*/i,'')
+    if(/^项目(?:\s|$)/.test(command)){
+      const match=/^项目(?:\s+([1-9]\d{0,3}))?$/.exec(command)
+      if(!match)return usage()
+      const page=Number(match[1]??1),projects=opts.actions.projects(),slice=projects.slice((page-1)*8,page*8)
+      if(!projects.length)return '还没有可用的项目。请先在桌面工作台选择一次文件夹，之后就能在这里交代任务。'
+      if(!slice.length)return '没有这一页项目，请发送「任务 项目」查看。'
+      const example=slice.find(p=>isWorkbenchProviderId(p.providerId))
+      return '选择要工作的项目：\n\n'+slice.map(p=>`${singleLine(p.name)} · ${p.id}\n${singleLine(p.path,240)}\n${p.providerId??'暂无可用执行者'}\n新建：任务 新建 ${p.id} <要求>`).join('\n\n')+(example?`\n\n也可明确指定：任务 新建 ${example.id} 用 @${example.providerId} <要求>`:'')+(projects.length>page*8?`\n下一页：任务 项目 ${page+1}`:'')
+    }
+    if(/^新建(?:\s|$)/.test(command)){
+      if(!identity?.accountId?.trim())return failure(Error('invalid_wechat_identity'),'')
+      // 「任务 新建 <项目> 对比 @a @b <要求>」(10-20,对标 Codex best-of-N):同一件事交给两家,各在自己的独立工作区里做,做完看两份改动
+      const compare=/^新建\s+(p-[a-f0-9]{20})\s+对比\s+@(\S+)\s+@(\S+)\s+([\s\S]+)$/i.exec(command)
+      if(compare){
+        const projectId=compare[1]!.toLowerCase(),a=compare[2]!.toLowerCase(),b=compare[3]!.toLowerCase()
+        // 两家都先认准了再建,别建了一份才发现另一家不存在
+        if(a===b||!isWorkbenchProviderId(a)||!isWorkbenchProviderId(b)||(opts.hasExecutor&&(!opts.hasExecutor(a)||!opts.hasExecutor(b))))return usage()
+        let compareText=compare[4]!.trim()
+        const compareIssue=opts.fetchIssue?parseIssueRef(compareText):null
+        if(compareIssue!==null){
+          const project=opts.actions.projects().find(p=>p.id===projectId)
+          if(!project)return usage()
+          const got=await opts.fetchIssue!(project.path,compareIssue)
+          if(!got.ok)return ISSUE_FAIL[got.reason]??ISSUE_FAIL.failed!
+          compareText=issueTaskText(got.issue)
+        }
+        const commandHash=createHash('sha256').update(text).digest('hex'),originMessageId=wechatTaskMessageKey({...identity,chatId,text})
+        const replies:string[]=[],started:string[]=[]
+        for(const providerId of [a,b]){
+          // 每家一个确定的请求编号:同一条消息重发 ⇒ 两件都按原样回放,不会多建
+          try{const receipt=opts.actions.createWechat({ownerChatId:chatId,accountId:identity.accountId,requestId:inputId(chatId,`compare:${providerId}`,text,identity),commandHash,projectId,isolation:true,providerId,title:`${singleLine(compareText.split('\n')[0]!,40).replace(/…$/,'')} · @${providerId}`.slice(0,120),...(originMessageId?{originMessageId}:{}),...(identity.origin!==undefined?{origin:identity.origin}:{}),text:compareText});started.push(receipt.taskId);replies.push(receipt.reply)}
+          catch(error){replies.push(`交给 ${providerId} 的那一份没开始:${failure(error,'')}`)}
+        }
+        return `同一件事交给了 ${a} 和 ${b},各在自己的独立工作区里做,互不影响。\n\n${replies.join('\n\n')}\n\n两份都做完以后并排看改动:${started.length===2?`「任务 对比 ${started[0]} ${started[1]}」`:'「任务 <任务编号> 改动」'};留下好的那份「合回」,另一份「删除工作区」。`
+      }
+      // 「任务 新建 <项目> 独立 <要求>」:在这个项目的独立工作区里做(2026-10-07),可以和别的任务同时进行。
+      // 「独立@<分支>」(10-08):独立工作区从这个本地分支开始
+      const isolated=/^新建\s+p-[a-f0-9]{20}\s+独立(?:@\S+)?\s+\S/i.test(command)
+      const match=(isolated?/^新建\s+(p-[a-f0-9]{20})\s+独立(?:@(\S+))?\s+([\s\S]+)$/i:/^新建\s+(p-[a-f0-9]{20})\s+()([\s\S]+)$/i).exec(command)
+      if(!match)return usage()
+      const base=isolated&&match[2]?match[2]:undefined,body=match[3]!
+      if(base!==undefined&&!validBaseBranch(base))return usage()
+      // @ makes an executor choice unambiguous; "用 Python 处理数据" remains ordinary input.
+      const explicit=/^用\s+@(\S+)(?:\s+|$)([\s\S]*)$/i.exec(body)
+      if(/^用\s+@/i.test(body)&&(!explicit||!isWorkbenchProviderId(explicit[1]!.toLowerCase())))return usage()
+      const choice=explicit??/^用\s+(claude|codex)(?:\s+|$)([\s\S]*)$/i.exec(body)
+      // 终审第 5 项:origin_message_id 声明(db.ts:1350)的是 messages.id,
+      // 不是平台原始 msgId——那条入站真正的 messages.id 是
+      // wechatTaskMessageKey(v'workbench:'+requestId),不是 identity.msgId。
+      // 今天只写不读,不坏事,但留着就是给第一个写 join 的人埋雷。
+      const originMessageId=wechatTaskMessageKey({...identity,chatId,text})
+      // 「…issue 123」(10-20,对标 Devin / Codex):整条要求只是 issue 编号 ⇒ 在项目文件夹里用 gh 只读取来,包成外部材料再开工
+      let taskText=choice?choice[2]!:body
+      const issueNo=opts.fetchIssue?parseIssueRef(taskText):null
+      if(issueNo!==null){
+        const project=opts.actions.projects().find(p=>p.id===match[1]!.toLowerCase())
+        if(!project)return usage()
+        const got=await opts.fetchIssue!(project.path,issueNo)
+        if(!got.ok)return ISSUE_FAIL[got.reason]??ISSUE_FAIL.failed!
+        taskText=issueTaskText(got.issue)
+      }
+      try{return opts.actions.createWechat({ownerChatId:chatId,accountId:identity.accountId,requestId:inputId(chatId,'',text,identity),commandHash:createHash('sha256').update(text).digest('hex'),projectId:match[1]!.toLowerCase(),...(isolated?{isolation:true}:{}),...(base!==undefined?{base}:{}),...(choice?{providerId:choice[1]!.toLowerCase()}:{}),...(originMessageId?{originMessageId}:{}),...(identity.origin!==undefined?{origin:identity.origin}:{}),text:taskText}).reply}
+      catch(error){return failure(error,'')}
+    }
+    if(!command||command==='列表'){
+      const tasks=opts.store.listOwned(chatId,8)
+      return tasks.length?'最近的任务：\n'+tasks.map(t=>`${t.id} · ${singleLine(t.title)} · ${(()=>{const d=opts.actions.detail(t.id);return runtimeStatus(t.status,d.runtime,d.task.networkSuspended)})()}`).join('\n')+'\n\n查看或选择：任务 <任务编号>\n新建任务：先发送「任务 项目」':'还没有属于你的工作任务。发送「任务 项目」选择文件夹并交代任务。'
+    }
+    // 「任务 对比 <编号> <编号>」(10-20):两件事的改动并排看,只读
+    const pair=/^对比\s+([a-f0-9]{8})\s+([a-f0-9]{8})$/i.exec(command)
+    if(pair){
+      const sides=[pair[1]!.toLowerCase(),pair[2]!.toLowerCase()].map(id=>{
+        let stored:ReturnType<typeof opts.store.get>
+        try{stored=opts.store.get(id);if(stored.ownerChatId!==chatId)return null}catch{return null}
+        // 各读各的:归档了 / 工作区删了 / 快照读不出,都照常说,不让整条命令报「没找到」(评审 #452)
+        let status=STATUS[stored.status]??stored.status
+        try{const d=opts.actions.detail(id);status=runtimeStatus(stored.status,d.runtime,d.task.networkSuspended)}catch{}
+        let turns:ReviewTurn[]|null=null
+        try{turns=opts.actions.reviewList?.(id)??null}catch{}
+        let note:string|undefined
+        try{const wt=opts.store.worktrees.get(id);if(wt&&wt.removedAt!=null)note='独立工作区已删除'}catch{}
+        return{id,title:stored.title,status,turns,...(note?{note}:{})}
+      })
+      if(!sides[0]||!sides[1])return unavailable
+      return compareReply(sides[0],sides[1])
+    }
+    const match=/^([a-f0-9]{8})(?:\s+([\s\S]+))?$/i.exec(command)
+    if(!match)return usage()
+    const id=match[1]!.toLowerCase(),suffix=match[2]?.trim()??''
+    let task:Task
+    try{const stored=opts.store.get(id);if(stored.ownerChatId!==chatId)return unavailable;task=stored}catch{return unavailable}
+    try{
+      const requestId=inputId(chatId,id,text,identity),textHash=createHash('sha256').update(text).digest('hex')
+      const receipt=opts.store.controlReceipts.get(requestId)
+      if(receipt){
+        if(receipt.taskId!==id||receipt.textHash!==textHash)throw Error('control_conflict')
+        return receipt.result??(receipt.action==='stop'?stopUnconfirmed:'这条提醒设置已记录，但尚未确认结果。请查询任务状态。')
+      }
+      if(suffix==='提醒我'||suffix==='静音'){
+        if(!identity?.accountId?.trim())return failure(Error('invalid_wechat_identity'),id)
+        if(opts.store.liveInputs.get(requestId))throw Error('control_conflict')
+        return opts.store.atomic(()=>{
+          opts.store.controlReceipts.reserve({id:requestId,taskId:id,runId:null,action:suffix==='提醒我'?'watch':'mute',textHash})
+          opts.actions.setWechatWatch(id,identity.accountId,suffix==='提醒我')
+          const reply=`任务 ${id}：${suffix==='提醒我'?'已开启这项任务的完成和待处理提醒。':'已关闭这项任务的微信提醒。'}\n查看：任务 ${id}`
+          opts.store.controlReceipts.complete(requestId,reply)
+          return reply
+        })
+      }
+      if(!suffix||['结果','状态','待办'].includes(suffix))return statusReply(opts.actions.detail(id))
+      if(/^文件(?:\s|$)/.test(suffix)){
+        if(opts.store.liveInputs.get(requestId)||opts.store.controlReceipts.get(requestId)||opts.store.creationReceipts.get(artifactRequestId))throw Error('artifact_delivery_conflict')
+        const file=new RegExp(`^文件\\s+(${UUID})$`,'i').exec(suffix)
+        if(!file)return `文件命令格式不正确。请发送「任务 ${id} 结果」，复制对应成果的完整获取命令。`
+        if(!identity?.accountId?.trim())return '无法确认文件应发往哪个微信账号，没有发送。请在原聊天重新索取。'
+        if(!opts.actions.deliverWechatArtifact)throw Error('artifact_transport_unavailable')
+        let delivery:ArtifactDeliveryReceipt
+        try{delivery=await opts.actions.deliverWechatArtifact({ownerChatId:chatId,accountId:identity.accountId,requestId:artifactRequestId,commandHash:textHash,taskId:id,artifactId:file[1]!.toLowerCase()})}
+        catch(error){if(error instanceof Error&&error.message==='not_found')return '没有找到属于这项任务的成果文件。请重新查看结果并复制获取命令。';throw error}
+        if(delivery.status==='accepted')return{kind:'artifact_delivered',receiptId:delivery.id}
+        if(delivery.status==='unknown'||delivery.status==='sending')return '文件是否送达尚未确认，不会自动重发。请先检查微信记录；确认未收到后，可发送一条新的获取命令。'
+        if(delivery.status==='blocked')return '文件未发送，账号绑定或成果校验已失效。请在桌面查看这项任务。'
+        return '文件暂未发送，保存的成果版本未变。请稍后重新发送获取命令。'
+      }
+      if(suffix==='改动')return changesReply(id,opts.actions.reviewList?.(id)??null)
+      // 「任务 <编号> 请 @codex 审」(10-20):另一家用只读轮看这件事的改动,意见直接发给主人;放在「补充」前面,不然这句会被当成要求发给执行者
+      const reviewer=opts.requestReview?parseReviewRequest(suffix):null
+      if(reviewer){
+        if(reviewer!=='claude'&&reviewer!=='codex')return '现在只有 claude、codex 能来审（它们的只读档靠得住）。比如「任务 '+id+' 请 @codex 审」。'
+        const stored=opts.store.get(id)
+        let turns:ReviewTurn[]|null=null
+        try{turns=opts.actions.reviewList?.(id)??null}catch{turns=null}
+        const material=turns?reviewMaterial({id,title:stored.title,providerId:stored.providerId},turns):null
+        if(!material)return '这件事还没有改动可审。等它改了文件再请人来看。'
+        if(!opts.requestReview!({taskId:id,providerId:reviewer,material}))return '现在请不到人来审，过一会儿再试。'
+        return `已请 ${reviewer} 审 ${id} 的改动（只读，不会改文件），看完把意见直接发给你。${reviewer===stored.providerId?'\n（这件事本来就是它做的，换一家看会更有用。）':''}`
+      }
+      // 「任务 <编号> 记成经验 <一句>」(10-20,接 #443):记到这件事的源项目(独立工作区算源项目),不用报项目名
+      if(/^记成经验(?:\s|$)/.test(suffix)&&opts.addLesson){
+        const said=suffix.replace(/^记成经验\s*/,'').trim()
+        if(!said)return `写法：任务 ${id} 记成经验 <一句话>（以后不管哪家执行者做这个项目都会照着做）`
+        const stored=opts.store.get(id)
+        let source:string|null=null
+        try{source=opts.store.worktrees.get(id)?.projectPath??(stored.workspaceKind==='managed'?null:stored.path)}catch{source=null}
+        if(!source)return '这件事是随手交办的，没有项目，经验没处记。到某个项目里做的事才能记成经验。'
+        const r=opts.addLesson(source,said)
+        if(r.ok)return `记下了：以后不管哪家执行者做这个项目，都会照这条做 —— ${singleLine(said,200)}\n看全部：经验 <项目名>`
+        return r.error==='duplicate'?'这条已经记着了。':r.error==='full'?'这个项目已经有 10 条经验了，先删一条（经验 <项目名> 删 <编号>）。':'每条一行、200 字以内，不要带尖括号。'
+      }
+      // 独立工作区(2026-10-08):以前这三句会落到下面「补充」,当成要求发给执行者
+      if(suffix==='提交'||suffix==='合回'||suffix==='删除工作区'||suffix==='重开工作区')return worktreeReply(id,suffix,opts.actions.worktreeAction)
+      if(/^正文(?:\s|$)/.test(suffix)){
+        const page=/^正文\s+(r[1-9]\d*-[a-f0-9]{12})\s+([1-9]\d*)$/i.exec(suffix)
+        if(!page)return resultCommandHelp(id)
+        return wechatResultPage({taskId:id,events:opts.actions.detail(id).events,token:page[1]!.toLowerCase(),page:Number(page[2])})
+      }
+      if(suffix==='停止'){
+        if(opts.store.liveInputs.get(requestId))throw Error('control_conflict')
+        const runId=opts.actions.detail(id).runId??null
+        const reserved=opts.store.controlReceipts.reserve({id:requestId,taskId:id,runId,action:'stop',textHash})
+        if(!reserved.created)return reserved.receipt.result??stopUnconfirmed
+        let reply=`任务 ${id}：这一轮已经结束，无需停止。`
+        if(runId){
+          try{await opts.actions.cancel(id,runId);reply=`任务 ${id}：已请求停止。`}
+          catch(error){reply=failure(error,id)}
+        }
+        opts.store.controlReceipts.complete(requestId,reply)
+        return reply
+      }
+      const control=requestCommand.exec(suffix)
+      if(control){
+        const verb=control[1]!,requestId=control[2]!.toLowerCase(),answer=control[3],detail=opts.actions.detail(id)
+        if(verb==='权限'||verb==='允许'||verb==='拒绝'){
+          if(answer)return usage(id)
+          const request=detail.permissions.find(p=>p.id===requestId)
+          if(!detail.runId||!request)return stale
+          if(verb==='权限')return request.description.length>REQUEST_MAX?`任务 ${id}：权限内容较长，请在桌面工作台完整查看。\n可拒绝：任务 ${id} 拒绝 ${requestId}`:`任务 ${id} · 等待权限\n${request.tool}\n${request.description}\n\n允许：任务 ${id} 允许 ${requestId}\n拒绝：任务 ${id} 拒绝 ${requestId}`
+          if(verb==='允许'&&request.description.length>REQUEST_MAX)return '这项权限内容较长，请在桌面工作台完整查看后处理。微信仍可拒绝。'
+          opts.actions.resolvePermission(id,requestId,verb==='允许'?'allow':'deny')
+          return `任务 ${id}：已${verb}这项请求。`
+        }
+        const request=detail.questions.find(q=>q.id===requestId)
+        if(!detail.runId||!request)return stale
+        if(verb==='问题')return answer?usage(id):questionReply(id,request)
+        if(!answer)return usage(id)
+        if(questionBody(request).length>REQUEST_MAX)return '这组问题内容较长，请在桌面工作台完整查看并回答。'
+        opts.actions.resolveAnswer(id,requestId,phoneAnswers(request,answer))
+        return `任务 ${id}：已提交回答。`
+      }
+      if(/^(权限|问题|允许|拒绝|回答|停止|结果|状态|待办|提醒我|静音|正文|文件|改动|提交|合回|删除工作区|重开工作区)(?:\s|$)/.test(suffix))return usage(id)
+      const supplement=suffix.replace(/^(?:补充|继续)(?:\s+|$)/,'').trim()
+      if(!supplement)return usage(id)
+      const prior=opts.store.liveInputs.get(requestId)
+      if(prior)return inputReply(await opts.actions.submitInput(id,{runId:prior.runId,requestId,text:supplement}),!!opts.actions.detail(id).runtime?.retained)
+      const detail=opts.actions.detail(id)
+      if(detail.runId){
+        if(!detail.inputMode)throw Error('input_stale')
+        return inputReply(await opts.actions.submitInput(id,{runId:detail.runId,requestId,text:supplement}),!!detail.runtime?.retained)
+      }
+      opts.actions.continueTask(task.id,supplement,{inputRequestId:requestId})
+      return `任务 ${id}：已收到补充要求，继续处理。稍后发送「任务 ${id}」查看进展。`
+    }catch(error){return failure(error,id)}
+  }
+}

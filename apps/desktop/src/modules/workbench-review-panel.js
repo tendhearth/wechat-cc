@@ -4,15 +4,15 @@
  * 这里是纯函数 —— 不碰 document,diff 的渲染由调用方递进来(复用 workbench-code-review.js),
  * 转义也由调用方递进来(桌面用 escapeWorkbenchHtml)。 */
 
-/** @typedef {import('../../../../src/core/workbench/review').ReviewTurn} ReviewTurn */
-/** @typedef {import('../../../../src/core/workbench/review').ReviewTurnFile} ReviewTurnFile */
+/** @typedef {import('../../../../src/features/workbench/review').ReviewTurn} ReviewTurn */
+/** @typedef {import('../../../../src/features/workbench/review').ReviewTurnFile} ReviewTurnFile */
 /** asLesson:「同时记成这个项目的经验」勾没勾(10-20)。
  * @typedef {{artifactId:string,paths:string[],comment?:string,notice?:string,restartToken?:string,asLesson?:boolean}} ReviewReturnOpen */
 /** 打回发出去之后那一句(只在顺手记经验时出现):记上了,或者为什么没记上。
  * @typedef {{artifactId:string,text:string}} ReviewReturnResult */
 /** @typedef {{open?:import('./workbench-rewind.js').RewindOpen|null,view?:import('./workbench-rewind.js').RewindView|null,busy?:boolean}} ReviewRewindOptions */
-/** @typedef {import('../../../../src/core/workbench/review-annotations').ReviewCommentView} ReviewCommentView */
-/** @typedef {import('../../../../src/core/workbench/review-annotations').ReviewHunkView} ReviewHunkView */
+/** @typedef {import('../../../../src/features/workbench/review-annotations').ReviewCommentView} ReviewCommentView */
+/** @typedef {import('../../../../src/features/workbench/review-annotations').ReviewHunkView} ReviewHunkView */
 /** 行评论(2026-10-21):选中的行 / 正在写的那条 / 面板底部的发出栏。都活在 state 里,重画不丢。
  * @typedef {{artifactId:string,path:string,hunk:number,hunkSha256:string,anchor:number,rowStart:number,rowEnd:number}} LineSelect
  * @typedef {{artifactId:string,path:string,hunk:number,hunkSha256?:string,rowStart?:number,rowEnd?:number,commentId:string,body:string,edit?:boolean,notice?:string}} LineCompose

@@ -85,7 +85,7 @@ export function resolveSelfChangeConfig(input: {
 
 /**
  * 往 agent-config 的 `self_change` 里打一个补丁(停机、清零 fail_streak、
- * `--unhalt`)。读 → 合 → 存,照 wire-workbench 的 makeUnattendedAckStore:
+ * `--unhalt`)。读 → 合 → 存,照 features/workbench/wire.ts 的 makeUnattendedAckStore:
  * **整份配置读进来再写回去**,不能只写自己这块,不然会把主人刚改的 model 抹掉。
  *
  * 补丁里给 `undefined` 等于删掉那个键(JSON.stringify 不序列化 undefined)——
