@@ -2,6 +2,7 @@
 import { act, createElement, type ReactNode } from 'react'
 import { createRequire } from 'node:module'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import '../ui/native-motion.test-support'
 import { PHONE_API_SCHEMAS, type ClientOpts, type ProtocolClient, type ProtocolRequest } from '@wechat-cc/protocol'
 import { makeLiveBackend } from '../backend/live'
 import type { Backend, NativeSessionPageT, NativeSessionRowT, SessionContinueT } from '../backend/types'
@@ -19,6 +20,7 @@ const roots: Root[] = [], disposers: Array<() => void> = []
 const host = vi.hoisted(() => ({ ctx: null as unknown as { backend: Backend; store: Store }, params: { key: 'k1' }, focused: true, focusEntries: new Set<FocusEntry>(), back: vi.fn(), push: vi.fn(), replace: vi.fn(), dotColours: [] as string[] }))
 Object.assign(globalThis, { IS_REACT_ACT_ENVIRONMENT: true })
 vi.mock('react-native', async () => {
+  const native = (await import('../ui/native-motion.test-support')).nativeBoundary()
   const { createElement, forwardRef } = await import('react')
   const View = ({ children, testID, style }: any) => {
     const flat = Object.assign({}, ...(Array.isArray(style) ? style : [style]))
@@ -31,7 +33,7 @@ vi.mock('react-native', async () => {
   const Modal = ({ visible, children }: any) => visible ? createElement('div', null, children) : null
   const FlatList = ({ data, renderItem, ListHeaderComponent, ListEmptyComponent, ListFooterComponent }: any) => createElement('div', null, ListHeaderComponent, data.length ? data.map((item: any) => createElement('div', { key: item.id }, renderItem({ item }))) : ListEmptyComponent, ListFooterComponent)
   const SectionList = ({ sections, renderItem, renderSectionHeader, ListHeaderComponent, ListEmptyComponent, ListFooterComponent }: any) => createElement('div', null, ListHeaderComponent, sections.length ? sections.map((section: any) => createElement('section', { key: section.key }, renderSectionHeader?.({ section }), section.data.map((item: any) => createElement('div', { key: item.id }, renderItem({ item, section }))))) : ListEmptyComponent, ListFooterComponent)
-  return { View, Text, TextInput, Pressable, Modal, FlatList, SectionList, ScrollView: View, ActivityIndicator: View, Linking: { openURL: vi.fn() }, Platform: { OS: 'ios', select: (options: any) => options.ios ?? options.default } }
+  return { ...native, View, Text, TextInput, Pressable, Modal, FlatList, SectionList, ScrollView: View, ActivityIndicator: View, Linking: { openURL: vi.fn() }, Platform: { OS: 'ios', select: (options: any) => options.ios ?? options.default } }
 })
 vi.mock('react-native-safe-area-context', async () => {
   const { createElement } = await import('react')

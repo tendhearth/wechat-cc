@@ -5,6 +5,8 @@ import { useLang } from '../i18n/useLang'
 import type { CompanionCard as CardData } from '../view/companion'
 import { relAgo } from '../view/terminal'
 import { Card } from './Card'
+import { Icon } from './Icon'
+import { Expansion } from './Sheet'
 import { space } from './tokens'
 import { Txt } from './Txt'
 
@@ -37,9 +39,12 @@ export function CompanionCard({ card, onSeen }: { card: CardData | null; onSeen:
         <Txt role="caption" tone="inkSoft">{`${kind} · ${relAgo(shown.at, Date.now(), lang)}`}</Txt>
         <View style={{ flexDirection: 'row', alignItems: 'flex-end', gap: space.l }}>
           <Txt role="item" content="user" numberOfLines={open ? undefined : 2} style={{ flex: 1 }}>{shown.title}</Txt>
-          {shown.url ? <Txt role="bubble" tone="inkSoft">{t(lang, 'companion.openLink')} ›</Txt> : null}
+          {shown.url ? <View style={{ flexDirection: 'row', alignItems: 'center', gap: space.xs }}><Txt role="bubble" tone="inkSoft">{t(lang, 'companion.openLink')}</Txt><Icon name="chevronRight" /></View> : null}
         </View>
-        {shown.note ? <Txt testID="now-companion-note" role="meta" tone="inkSoft" content="user" numberOfLines={open ? undefined : 1}>{shown.note}</Txt> : null}
+        {shown.note ? <>
+          {!open ? <Txt testID="now-companion-note" role="meta" tone="inkSoft" content="user" numberOfLines={1}>{shown.note}</Txt> : null}
+          <Expansion open={!!open}><Txt testID="now-companion-expanded-note" role="meta" tone="inkSoft" content="user">{shown.note}</Txt></Expansion>
+        </> : null}
       </Card>
     </Pressable>
   )

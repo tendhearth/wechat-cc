@@ -1,8 +1,44 @@
-import { useState, type ReactNode } from 'react'
-import { Pressable, View } from 'react-native'
+import { useEffect, useRef, useState, type ReactNode } from 'react'
+import { Animated, Easing, Pressable, View } from 'react-native'
+import { Icon } from './Icon'
+import { useMotionEnabled } from './motion'
 import { radius, space } from './tokens'
 import { Txt } from './Txt'
 import { useTheme } from './useTheme'
+
+/** Keep closing content mounted only for the short visual transition; hide it from assistive technology immediately. */
+export function Expansion({ open, children }: { open: boolean; children: ReactNode }) {
+  const enabled = useMotionEnabled()
+  const [rendered, setRendered] = useState(open)
+  const [measured, setMeasured] = useState(0)
+  const height = useRef(new Animated.Value(0)).current
+  const opacity = useRef(new Animated.Value(open ? 1 : 0)).current
+  const isOpen = useRef(open)
+  const initialOpen = useRef(open)
+  const interacted = useRef(false)
+  if (initialOpen.current !== open) interacted.current = true
+  isOpen.current = open
+  useEffect(() => {
+    if (open) setRendered(true)
+    height.stopAnimation(); opacity.stopAnimation()
+    if (!enabled || !interacted.current) {
+      height.setValue(open ? measured : 0); opacity.setValue(open ? 1 : 0)
+      if (!open) setRendered(false)
+      return
+    }
+    const animation = Animated.parallel([
+      Animated.timing(height, { toValue: open ? measured : 0, duration: 210, easing: Easing.out(Easing.ease), useNativeDriver: false }),
+      Animated.timing(opacity, { toValue: open ? 1 : 0, duration: 210, easing: Easing.out(Easing.ease), useNativeDriver: false }),
+    ])
+    animation.start(({ finished }) => { if (finished && !isOpen.current) setRendered(false) })
+    return () => animation.stop()
+  }, [open, enabled, measured, height, opacity])
+  if (!rendered) return null
+  return <Animated.View pointerEvents={open ? 'auto' : 'none'} accessibilityElementsHidden={!open} importantForAccessibility={open ? 'auto' : 'no-hide-descendants'}
+    style={{ overflow: 'hidden', height: enabled && interacted.current ? height : open ? undefined : 0, opacity }}>
+    <View onLayout={e => setMeasured(e.nativeEvent.layout.height)}>{children}</View>
+  </Animated.View>
+}
 
 // 可展开区块:标题一行,点开看内容。单层:纸色 + 细线,里面不再套卡。
 export function Sheet({ title, children, defaultOpen = false, testID }: { title: string; children: ReactNode; defaultOpen?: boolean; testID?: string }) {
@@ -19,9 +55,9 @@ export function Sheet({ title, children, defaultOpen = false, testID }: { title:
         style={{ minHeight: 48, flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingHorizontal: space.l }}
       >
         <Txt role="bubble" style={{ flex: 1 }}>{title}</Txt>
-        <Txt role="body" tone="inkSoft">{open ? '–' : '+'}</Txt>
+        <Icon name={open ? 'chevronDown' : 'chevronRight'} color={c.inkSoft} />
       </Pressable>
-      {open ? <View style={{ padding: space.l, paddingTop: 0 }}>{children}</View> : null}
+      <Expansion open={open}><View style={{ padding: space.l, paddingTop: 0 }}>{children}</View></Expansion>
     </View>
   )
 }
