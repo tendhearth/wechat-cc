@@ -8,7 +8,7 @@
  * 用法(打猎那一拍):
  *   const t = taps.tap(chatId)
  *   await dispatch(...)
- *   huntStore.recordHunt({ chatId, text: t.close().join('\n\n') })
+ *   journal.recordHunt({ chatId, text: t.close().join('\n\n') })
  *
  * 刻意不抛异常:同一个 chat 已经有 tap 时返回一个空壳句柄,而不是像
  * reply sink 那样 throw。这条路径上抛异常会**打断一次真实的打猎发送**,

@@ -1,65 +1,15 @@
 /**
- * 主动找主人那一拍的三个内置候选(从 tick-push.ts 原样搬出,A5「陪伴候选」贡献点):打猎、串门、问候。
+ * 主动找主人那一拍的内置候选(从 tick-push.ts 原样搬出,A5「陪伴候选」贡献点):串门、问候。打猎那一个在
+ * src/features/hunt(功能自己的目录)。
  * 档位规则与 core/companion-plan 的 computeCandidates 逐条一致(companion-actions.test 对照);执行的内容与搬家前逐字一致
  * (旁听入库、busy token、先登记再出门、daysSinceContact 的算法)。登记在 tick-bodies.ts,顺序就是候选与回退的顺序。
  */
 import type { CompanionAction } from '../companion/contributions'
 import type { PlanContext } from '../../domain/companion-plan'
-import { PLAN_JOURNAL_ITEMS } from '../../domain/companion-plan'
-import { readJournalSeen } from '../../core/journal-seen'
 import { NETWORK_UNPROTECTED_REASON } from '../../lib/network-gate'
 import type { TickDeps } from './tick-deps'
 import type { TickDispatch } from './tick-dispatch'
-import { buildGapCheckinText, buildHuntText } from './tick-texts'
-function errMsg(err: unknown): string { return err instanceof Error ? err.message : String(err) }
-
-/** 打猎:只有主人那个聊天会成为候选;默认关,明确开了(hunt:true)才算(主人 10-21 定)。 */
-export function huntAction(deps: TickDeps, { dispatchToChat }: TickDispatch): CompanionAction {
-  return {
-    id: 'hunt',
-    needsWechat: true,
-    speakLevel: (c) => !c.isOwnerChat ? null : (c.level === 'off' ? 'off' : (c.prefs.hunt === true ? 'low' : 'off')),
-    // 包袱(打猎战利品)里堆了什么:堆着没看就别再往里塞。读不出来 = 没接线,不掀翻判断。
-    planInfo: () => {
-      let journal: PlanContext['journal'] = null
-      try {
-        if (deps.huntStore?.summary && deps.huntStore.list) {
-          const sum = deps.huntStore.summary(readJournalSeen(deps.stateDir))
-          journal = { unread: sum.unread, latest: deps.huntStore.list(PLAN_JOURNAL_ITEMS).map(x => ({ kind: x.kind, title: x.title, ts: x.ts })) }
-        }
-      } catch { journal = null }
-      return { context: { journal } }
-    },
-    async run({ chatId, nowIso, prefs }) {
-      // 旁听这一拍发出去的东西 —— 打猎的产出此前只存在于微信聊天记录里,
-      // 主人想回头找上周那条链接只能翻聊天。记的是**真发出去的文本**,
-      // 不是要求模型额外调一个登记工具(漏调一次就少一条,且无人知晓)。
-      const tap = deps.outboundTaps?.tap(chatId)
-      // busy token(spec 2026-09-03-companion-presence §2.2):调度器持的是
-      // companion-push(每拍都有,桌宠推导会忽略);打猎要有自己的名字,
-      // 桌宠才知道这一拍是「出门觅食」而不是例行公事。silent-safe:
-      // 测试夹具的 boot 没有 holdBusy。
-      let releaseHunt: (() => void) | undefined
-      try { releaseHunt = (deps.boot as { holdBusy?: (l: string) => () => void }).holdBusy?.('hunt') } catch { releaseHunt = undefined }
-      try {
-        return await dispatchToChat(chatId, {
-          claim: () => { const ticket = deps.careLedger.claimHunt(chatId, nowIso); return () => deps.careLedger.unclaim(chatId, ticket) },
-          buildText: (style) => buildHuntText({ nowIso, avoid: prefs.avoid }, style),
-        })
-      } finally {
-        try { releaseHunt?.() } catch { /* release 永不抛 */ }
-        const shared = tap?.close() ?? []
-        if (shared.length > 0 && deps.huntStore) {
-          // 记录失败绝不能让这一拍看起来失败 —— 消息已经发出去了。
-          try {
-            const n = deps.huntStore.recordHunt({ chatId, text: shared.join('\n\n'), nowIso })
-            deps.log('HUNT', `chat=${chatId} 入库 ${n} 条`)
-          } catch (err) { deps.log('HUNT', `入库失败(消息已发出): ${errMsg(err)}`) }
-        }
-      }
-    },
-  }
-}
+import { buildGapCheckinText } from './tick-texts'
 
 /**
  * 串门(2026-09-03,core/visit.ts):伙伴自己的社交,一天一次。只有主人那个聊天、社交接上了才是候选。

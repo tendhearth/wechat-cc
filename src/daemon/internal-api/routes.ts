@@ -28,7 +28,6 @@ import { chatOfProfilePath, recordProfileWrite } from '../memory/today-draft'
 import { a2aRoutes } from './routes-a2a'
 import { probeFsAccess, describeFsAccess, hasFullDiskAccess, FDA_MISSING_HINT } from '../../lib/fs-access'
 import { thoughtRoutes } from './routes-thoughts'
-import { journalRoutes } from './routes-journal'
 import { presenceRoutes } from './routes-presence'
 import { petRoutes } from './routes-pet'
 import { cliEventRoutes } from './routes-cli-events'
@@ -845,7 +844,6 @@ export function makeRoutes({ deps, getDelegate, maybePrefix, mounted }: MakeRout
     //    / restart / turns) live in sibling files — spread in here. ──────────
     ...a2aRoutes(deps),
     ...socialRoutes(deps),
-    ...journalRoutes(deps),
     ...thoughtRoutes(deps),
     ...presenceRoutes(deps),
     ...petRoutes(deps),

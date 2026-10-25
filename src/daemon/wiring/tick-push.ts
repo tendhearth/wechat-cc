@@ -359,7 +359,7 @@ export function makePushTick(deps: TickDeps, dispatch: TickDispatch, actions: re
         if ('defer' in outcome) { unmark(); break }   // 免打扰 / 都送不到:这一拍什么都不动,之后照讲
         if (noModel) { unmark(); continue }
         if (!told) continue
-        try { deps.huntStore?.recordVisit?.({ chatId: ownerChat, text: told, peerLabel: `${name}来过`, nowIso }) }
+        try { deps.journal?.recordVisit?.({ chatId: ownerChat, text: told, peerLabel: `${name}来过`, nowIso }) }
         catch (err) { deps.log('VISIT', `guest 见闻入库失败: ${errMsg(err)}`) }
         deps.log('VISIT', `guest visit told: chat=${chatId} name=${name} lines=${due.length}`)
       }

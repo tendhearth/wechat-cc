@@ -4,9 +4,12 @@
  * 架构重构 §2.4:主人看到的是一条时间线 —— 今天干了什么、遇到了谁、带回了
  * 什么。kind 决定每条是什么:hunt(打猎带回的东西,见 hunt-catch.ts)|
  * visit(串门/来客的见闻,可带明信片)。背包是它的一个视图。
+ *
+ * 放在 adapters/store(架构终态 A5 从 core 搬来):四种条目各有写手(打猎、社交、串门来客、回忆),读的有桌宠 / 手机首屏 /
+ * 设置面板 / 微信「背包」,不归哪一个功能。地基里一份(foundation.ts 的 `journal`);读写路由在 src/features/journal。
  */
-import type { Db } from '../lib/db'
-import { parseCatch } from '../domain/hunt-catch'
+import type { Db } from '../../lib/db'
+import { parseCatch } from '../../domain/hunt-catch'
 
 export type CatchStatus = 'new' | 'tried' | 'using' | 'dropped'
 /**

@@ -109,9 +109,6 @@ export interface WireMainOpts {
    * 伙伴推送的最后的话经它送达。只有这一条路(D3),所以必填。
    */
   replyDelivery: import('../../domain/turn-reply').ReplyDeliveryPort
-  // 三条用途:tick-bodies 用 recordHunt(打猎入库)与 list/summary(日程判断
-  // 要看包袱里堆了什么),pipeline-deps 用 list(微信「背包」命令)。这里给
-  // 全,下游各取所需 —— main.ts 传的是完整 Journal。
   /**
    * 桌宠信号(spec 2026-09-05-cc-desktop-pet §5.1)。和 replySinks/outboundTaps
    * 一样必须是 main.ts 那个**同一个实例**:写的一头在 bootstrap(tool_call /
@@ -119,9 +116,11 @@ export interface WireMainOpts {
    * 组装出的 petTurn。两个实例 = 桌宠永远看不到动静,而且不会报任何错。
    */
   petSignals?: import('../pet-signals').PetSignals
-  huntStore?: {
+  // 伙伴日志(背包,以前叫 huntStore)。三条用途:tick-bodies 用 recordHunt(打猎入库)与 list/summary(日程判断
+  // 要看包袱里堆了什么),pipeline-deps 用 list(微信「背包」命令)。这里给全,下游各取所需 —— 传的是地基里那份完整 Journal。
+  journal?: {
     recordHunt(a: { chatId: string; text: string; nowIso?: string }): number
-    list(limit?: number): readonly import('../../core/journal-store').CatchRow[]
+    list(limit?: number): readonly import('../../adapters/store/journal-store').CatchRow[]
     /** 包袱水位(spec 2026-09-05-companion-plan):水位之后有几条、最新一条是什么。 */
     summary(seenUntil: string | null): { unread: number; latest: { kind: string; title: string; ts: string } | null }
   }

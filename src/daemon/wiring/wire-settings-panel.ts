@@ -37,7 +37,7 @@ import { currentPhoneClient } from '../phone-client'
 
 export interface WireSettingsPanelDeps {
   /** 面板直接读的那几项 opts(只有这些)。 */
-  opts: Pick<PipelineDepsOpts, 'activity' | 'cliActions' | 'cliSessions' | 'huntStore' | 'llmHealth' | 'matters' | 'overseerToday' | 'panelTokens' | 'presence' | 'requestRestart' | 'stickers' | 'turns' | 'workbench'>
+  opts: Pick<PipelineDepsOpts, 'activity' | 'cliActions' | 'cliSessions' | 'journal' | 'llmHealth' | 'matters' | 'overseerToday' | 'panelTokens' | 'presence' | 'requestRestart' | 'stickers' | 'turns' | 'workbench'>
   connections: Parameters<typeof makeSettingsPanel>[0]['connections']
   stateDir: string
   db: Db
@@ -171,9 +171,9 @@ return makeSettingsPanel({
   ...(opts.stickers ? { stickers: { list: () => opts.stickers!.list(), dir: join(stateDir, 'stickers') } } : {}),
   // 随身 CC 首屏「伙伴的一天」三源(spec 2026-09-06-mobile-home-feed §5.4)。
   // journal 缺 ⇒ 整个 feed 不接(三项 degraded),不半接。
-  ...(opts.huntStore ? {
+  ...(opts.journal ? {
     feed: {
-      journal: { list: (n?: number) => opts.huntStore!.list(n) },
+      journal: { list: (n?: number) => opts.journal!.list(n) },
       planLogDays: (d: number) => readPlanLogDays(stateDir, d),
       // M4:不接线时抛(collectSources 的 try/catch 把它记成
       // sources_degraded),而不是悄悄给 [] —— [] 会被读成「接了,今天没

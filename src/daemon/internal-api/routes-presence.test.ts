@@ -3,7 +3,7 @@ import { mkdtempSync, mkdirSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { openDb } from '../../lib/db'
-import { makeJournal } from '../../core/journal-store'
+import { makeJournal, type Journal } from '../../adapters/store/journal-store'
 import { writeJournalSeen } from '../../core/journal-seen'
 import { presenceRoutes, computePresence } from './routes-presence'
 import { minTierFor } from './route-tiers'
@@ -24,9 +24,9 @@ const session = (chatId: string) => ({ alias: 'a', path: '/p', providerId: 'clau
 
 function deps(over: Partial<InternalApiDeps> = {}): InternalApiDeps {
   const stateDir = mkdtempSync(join(tmpdir(), 'presence-'))
-  const hunt = makeJournal(openDb({ path: ':memory:' }))
+  const journal = makeJournal(openDb({ path: ':memory:' }))
   return {
-    stateDir, hunt,
+    stateDir, journal,
     listSessions: () => [],
     busyLabels: () => [],
     subsystems: () => [],
@@ -34,6 +34,9 @@ function deps(over: Partial<InternalApiDeps> = {}): InternalApiDeps {
     ...over,
   } as unknown as InternalApiDeps
 }
+
+/** deps 里只声明了 summary 这一口;测试要往表里写。 */
+const journalOf = (d: InternalApiDeps) => d.journal as Journal
 
 describe('GET /v1/companion/presence', () => {
   it('形状对 zod;一切安静 → ok / idle / 0', async () => {
@@ -45,14 +48,14 @@ describe('GET /v1/companion/presence', () => {
 
   it('把每个 deps 信号都喂进推导:busy hunt → foraging;journal 一条没看 → unread 1', async () => {
     const d = deps({ busyLabels: () => ['hunt'] })
-    d.hunt!.recordHunt({ chatId: 'o', text: '看这个 https://a.com/x' })
+    journalOf(d).recordHunt({ chatId: 'o', text: '看这个 https://a.com/x' })
     const r = await presenceRoutes(d)['GET /v1/companion/presence']!(qs(), undefined)
     expect(r.body).toMatchObject({ activity: { kind: 'foraging' }, news: { unread: 1, latest_kind: 'hunt' } })
   })
 
   it('水位之后 unread 归零', async () => {
     const d = deps()
-    d.hunt!.recordHunt({ chatId: 'o', text: '看这个 https://a.com/x', nowIso: '2026-09-01T00:00:00.000Z' })
+    journalOf(d).recordHunt({ chatId: 'o', text: '看这个 https://a.com/x', nowIso: '2026-09-01T00:00:00.000Z' })
     writeJournalSeen(d.stateDir, '2026-09-02T00:00:00.000Z')
     const r = await presenceRoutes(d)['GET /v1/companion/presence']!(qs(), undefined)
     expect((r.body as { news: { unread: number } }).news.unread).toBe(0)
@@ -97,7 +100,7 @@ describe('GET /v1/companion/presence', () => {
   })
 
   it('没接 journal → 503(和 /v1/journal 同姿势:空不是 0)', async () => {
-    const r = await presenceRoutes(deps({ hunt: undefined }))['GET /v1/companion/presence']!(qs(), undefined)
+    const r = await presenceRoutes(deps({ journal: undefined }))['GET /v1/companion/presence']!(qs(), undefined)
     expect(r.status).toBe(503)
   })
 
@@ -112,6 +115,6 @@ describe('computePresence(共用)', () => {
     const viaRoute = await presenceRoutes(d)['GET /v1/companion/presence']!(qs(), undefined)
     const direct = await computePresence(d)
     expect(direct).toEqual(viaRoute.body)
-    expect(await computePresence(deps({ hunt: undefined }))).toBeNull()
+    expect(await computePresence(deps({ journal: undefined }))).toBeNull()
   })
 })
