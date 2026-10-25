@@ -8,7 +8,7 @@
 ```
 src/features/<名>/
   index.ts      模块清单:要什么(needs)、给什么(init 的返回值)、挂哪些路由 —— 外面只许 import 这个文件
-  <名>.ts       功能本身(纯逻辑尽量放 src/core,这里是接线和状态)
+  <名>.ts       功能本身(纯规则尽量放 src/domain,对外 I/O 放 src/adapters,这里是接线和状态)
   routes.ts     它的 HTTP 路由(可选)
   *.test.ts
 ```

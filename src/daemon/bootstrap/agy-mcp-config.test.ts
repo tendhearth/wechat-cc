@@ -3,7 +3,7 @@ import { mkdtempSync, readFileSync, writeFileSync, statSync, mkdirSync } from 'n
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { setupAgyGlobalMcp, removeAgyGlobalMcp, AGY_WECHAT_MCP_NAMESPACE_ID } from './agy-mcp-config'
-import type { McpStdioSpec } from '../../core/mcp-stdio-spec'
+import type { McpStdioSpec } from '../../adapters/executors/mcp-stdio-spec'
 
 function tmpConfigDir(): string {
   return mkdtempSync(join(tmpdir(), 'agy-mcp-config-'))

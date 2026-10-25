@@ -3,11 +3,11 @@ import {mkdtempSync,mkdirSync,realpathSync} from 'node:fs'
 import {tmpdir} from 'node:os'
 import {join} from 'node:path'
 import {openTestDb,type Db} from '../../lib/db'
-import {makeWorkbenchStore} from '../../core/workbench/store'
+import {makeWorkbenchStore} from '../../adapters/store/workbench/store'
 import {makeWorkbenchService,type WorkbenchService} from './service'
 import {createProviderRegistry} from '../../app/provider-registry'
 import type {AgentEvent,AgentProvider,SpawnContext} from '../../ports/agent-provider'
-import {MANAGED_NATIVE_CAPABILITIES} from '../../core/workbench/executor-capabilities'
+import {MANAGED_NATIVE_CAPABILITIES} from '../../domain/workbench/executor-capabilities'
 import {removeTempDir} from '../../lib/test-temp'
 
 let db:Db,root:string,project:string,service:WorkbenchService

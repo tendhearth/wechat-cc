@@ -7,9 +7,9 @@ import {openDb,type Db} from '../../lib/db'
 import {createProviderRegistry} from '../../app/provider-registry'
 import type {AgentProvider} from '../../ports/agent-provider'
 import type {NetworkGate} from '../../lib/network-gate'
-import {makeWorkbenchStore} from '../../core/workbench/store'
+import {makeWorkbenchStore} from '../../adapters/store/workbench/store'
 import {makeWorkbenchService,type WorkbenchService} from './service'
-import {MANAGED_NATIVE_CAPABILITIES} from '../../core/workbench/executor-capabilities'
+import {MANAGED_NATIVE_CAPABILITIES} from '../../domain/workbench/executor-capabilities'
 import {removeTempDir} from '../../lib/test-temp'
 
 // 网络闸门(2026-10-02):工作台在起执行者 / 投补充之前问一次;不安全就不 spawn。

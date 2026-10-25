@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from 'vitest'
 import { runConflictSweep, SWEEP_FEED_OVERSCAN } from './sweep-conflicts'
-import type { FactsApi } from '../../../core/knowledge/facts'
+import type { FactsApi } from '../../../domain/knowledge/facts'
 
 function fact(id: number, contact: string, predicate: string, value: string, updated: number) {
   return { id, contact, kind: 'attribute', predicate, value, related_contact: null, time_ref: null,

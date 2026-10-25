@@ -7,7 +7,7 @@
 import { describe, expect, it, vi } from 'vitest'
 import { createConversationCoordinator, type TurnRecord, type ConversationCoordinatorDeps } from './conversation-coordinator'
 import { createProviderRegistry } from './provider-registry'
-import { makeFakeSession } from '../core/test-helpers'
+import { makeFakeSession } from '../test-support/test-helpers'
 import type { AgentEvent, AgentProvider, AgentSession } from '../ports/agent-provider'
 import type { Mode } from '../domain/conversation'
 import type { InboundMsg } from '../domain/prompt-format'

@@ -5,7 +5,7 @@
  * settings (`social_disclosure_policy`, `mailbox_relays`) with defaults
  * ONLY when absent — an existing operator-set value is never overwritten.
  *
- * Persistence copies persistSelfAgentId's (src/core/self-agent-id.ts)
+ * Persistence copies persistSelfAgentId's (src/adapters/mailbox/self-agent-id.ts)
  * read-modify-write raw-file idiom verbatim: read the raw JSON off disk,
  * set only the keys this command owns, atomic tmp+rename at 0600. This is
  * load-bearing — saveAgentConfig serializes the full MODELED AgentConfig

@@ -10,8 +10,9 @@
  *  - `routes.ts`:`/v1/cli/event|permission|sessions|say|hooks/*`、`/v1/overseer/today`(路由表标了 module: 'terminal');
  *  - 这个文件:模块清单。它要的东西(`WireTerminalDeps`)由组装的地方(daemon-modules.ts)从上游模块里填。
  *
- * 纯逻辑留在 src/core(cli-events / cli-permission-relay / cli-reply / cli-transcript / cli-activity):`wechat-cc hook`
- * 子命令和工作台也用它们,不该为了这些去拉功能目录。放行规则那道门(daemon/permission-gate.ts)和拍板记录
+ * 只有这个功能用的 `cli-activity.ts` / `cli-reply.ts` 在这里;`wechat-cc hook` 子命令和工作台也用的不在功能目录
+ * (不该为了它们去拉功能目录):事件判定 `src/app/cli-events.ts`、权限中继 `src/app/cli-permission-relay.ts`、
+ * 会话记录渲染 `src/domain/cli-transcript.ts`。放行规则那道门(daemon/permission-gate.ts)和拍板记录
  * (daemon/permission-decisions-store.ts)跟工作台、「做过的事」共用,也留在原处;这里只是造它们的地方,经模块的值交出去。
  *
  * 必需模块(搬家前的 cli-sessions 就是必需的):命令表、工作台、「做过的事」、定时都 needs 它。

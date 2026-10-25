@@ -1,7 +1,7 @@
 // src/daemon/internal-api/routes-knowledge.test.ts
 //
 // Knowledge Kernel Task 3 — the internal-api Ingest+Query surface over
-// src/core/knowledge/store.ts (T1) + search.ts (T2). Mirrors
+// src/adapters/knowledge/store.ts (T1) + search.ts (T2). Mirrors
 // routes-social.test.ts's real-deps-stub shape, but wires a REAL temp
 // KnowledgeStore (not a vi.fn mock) since the whole point of this route
 // table is thin pass-through to the store/search functions — a real store
@@ -12,12 +12,12 @@ import { mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { knowledgeRoutes } from './routes-knowledge'
-import { openKnowledge, type KnowledgeStore, type SourceMsg, type Chunk } from '../../core/knowledge/store'
-import { semanticSearch } from '../../core/knowledge/search'
-import { rebuildGraphFromSource } from '../../core/knowledge/graph-build'
-import { makeGraphQueryApi } from '../../core/knowledge/graph-query'
-import { makeFactsApi } from '../../core/knowledge/facts'
-import { makePersonApi } from '../../core/knowledge/person'
+import { openKnowledge, type KnowledgeStore, type SourceMsg, type Chunk } from '../../adapters/knowledge/store'
+import { semanticSearch } from '../../domain/knowledge/search'
+import { rebuildGraphFromSource } from '../../domain/knowledge/graph-build'
+import { makeGraphQueryApi } from '../../domain/knowledge/graph-query'
+import { makeFactsApi } from '../../domain/knowledge/facts'
+import { makePersonApi } from '../../domain/knowledge/person'
 import type { InternalApiDeps } from './types'
 
 function msg(msg_key: string, overrides: Partial<SourceMsg> = {}): SourceMsg {

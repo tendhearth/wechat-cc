@@ -214,7 +214,7 @@ describe('Claude:#190 的真实错误样本走 daemon ⇒ 一个字都不交付�
 
 // ─── 回放 2026-10-03 沙盒真跑录到的 SDK 消息流(真 Claude Code 2.1.289 + claude-opus-4-8)──────────────────
 type Obj = Record<string, any>
-const REC = fileURLToPath(new URL('../core/fixtures/claude-sdk-2026-10-03.jsonl', import.meta.url))
+const REC = fileURLToPath(new URL('../test-support/fixtures/claude-sdk-2026-10-03.jsonl', import.meta.url))
 const recRows = readFileSync(REC, 'utf8').split('\n').filter(l => l.trim()).map(l => JSON.parse(l) as Obj)
 const recorded = (id: string): Obj[] => {
   const r = recRows.find(x => x.id === id)

@@ -1,7 +1,7 @@
 import { describe, it, expect } from 'vitest'
 import { makeMailboxSender } from './mailbox-sender'
-import { generateMailboxIdentity, openEnvelope } from '../../core/mailbox-crypto'
-import type { MailboxClient } from '../../core/mailbox-client'
+import { generateMailboxIdentity, openEnvelope } from '../../adapters/mailbox/mailbox-crypto'
+import type { MailboxClient } from '../../adapters/mailbox/mailbox-client'
 
 describe('makeMailboxSender', () => {
   it('seals the inner to the peer enc_pub and drops the opaque envelope to each relay', async () => {

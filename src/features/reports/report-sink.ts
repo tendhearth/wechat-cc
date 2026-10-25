@@ -1,5 +1,5 @@
 /**
- * report-sink.ts — the daemon-side ReportSink (src/core/matters/report.ts)
+ * report-sink.ts — the daemon-side ReportSink (src/domain/matters/report.ts)
  * that src/features/workbench/service.ts's settleQuiet calls into.
  *
  * Thin glue: look up the matter, ask the pure renderReport whether this turn
@@ -9,7 +9,7 @@
  * instead of a full WorkbenchStore so this stays trivially testable.
  */
 import type {MatterStore} from '../../adapters/store/matters-store'
-import {renderReport, type ReportSink} from '../../core/matters/report'
+import {renderReport, type ReportSink} from '../../domain/matters/report'
 import type {ReportOutboxStore} from './outbox'
 
 export interface ReportSinkDeps {

@@ -35,12 +35,12 @@ import {
   effectiveStatus, wishEnvelope, forwardedWishEnvelope, parseWishPayload, postcardEnvelope, parsePostcardPayload, seenKey,
   recordPostcardRef, WISH_TTL_MS, type WishRecord, type WishStatus, type WishPayload, type PostcardRef, type Hop,
 } from './wish'
-import { isCheckerFailure } from '../../core/a2a-disclosure'
+import { isCheckerFailure } from '../../app/a2a-disclosure'
 import { readWishes, writeWishes, markWishSeen } from './wish-memory'
 import { readIntroIndex, writeIntroIndex } from './intro-memory'
 import { newReplyId as coreNewReplyId, pruneIntroIndex, FORWARD_ONLY_WHEN_UNABLE, HINT_MAX, type IntroIndex } from './intro'
 import type { Envelope } from '../../domain/envelope'
-import { primaryChannels, type ChannelStore } from '../../core/penpal-channel-store'
+import { primaryChannels, type ChannelStore } from '../../adapters/store/penpal-channel-store'
 
 export interface WishDeps {
   stateDir: string

@@ -215,7 +215,7 @@ codex 只按自己的配置连:`model_provider`(缺省 `openai`)→ 自定义 id
 | agy(Antigravity) | **没法在沙盒验**:私有二进制只连 Google;每轮一个子进程,也不在自己的进程组里 | 退回原来的停法 |
 | openai 兼容(工作台 API 执行者) | 进程内循环,没有能冻的进程 | 退回原来的停法 |
 
-验证脚本是 `src/core/workbench/suspend-resume.sandbox.test.ts`(显式打开才跑:`WECHAT_CC_SUSPEND_SANDBOX=1 bun --bun vitest run src/core/workbench/suspend-resume.sandbox.test.ts`)。流量一律不出本机:端点钉 127.0.0.1;`HTTP(S)_PROXY` 指 127.0.0.1:9(死端口);`HOME` / `CLAUDE_CONFIG_DIR` / `CODEX_HOME` 全是临时目录;codex 不认 `OPENAI_BASE_URL`,端点写进沙盒 `CODEX_HOME/config.toml` 的自定义 `model_provider`。执行者升级后要重跑这一份;接不上了就把它的 `suspension` 摘掉(退回停)并改这张表。
+验证脚本是 `src/adapters/executors/suspend-resume.sandbox.test.ts`(显式打开才跑:`WECHAT_CC_SUSPEND_SANDBOX=1 bun --bun vitest run src/adapters/executors/suspend-resume.sandbox.test.ts`)。流量一律不出本机:端点钉 127.0.0.1;`HTTP(S)_PROXY` 指 127.0.0.1:9(死端口);`HOME` / `CLAUDE_CONFIG_DIR` / `CODEX_HOME` 全是临时目录;codex 不认 `OPENAI_BASE_URL`,端点写进沙盒 `CODEX_HOME/config.toml` 的自定义 `model_provider`。执行者升级后要重跑这一份;接不上了就把它的 `suspension` 摘掉(退回停)并改这张表。
 
 **退回停的执行者 / 情形**(同 #191 的老行为:时间线记一句「网络未受保护：……这个执行者暂停不了，已停止本轮，恢复后可以继续。」,任务记已停止,之后可以「继续」):上表三家;会话还没起来的 run;`suspend()` 返回 false(进程已经没了)。**Windows:** 没有 SIGSTOP(`freeze()` 直接返回 false)⇒ 全部退回停;以后再上 NtSuspendProcess。
 

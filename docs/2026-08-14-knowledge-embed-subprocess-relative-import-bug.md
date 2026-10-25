@@ -3,7 +3,7 @@
 **Found**: 2026-08-14, while enabling `knowledge_enabled` on a real daemon (dev branch `c7271e8`) to wire wechat as a hearth federated source.
 **Status**: FIXED 2026-08-14 — see "Resolution" at the bottom.
 **Severity (as found)**: High — **wechat semantic search has never actually worked in a real run**, including in the released 1.3.8. The graph face works; the *semantic* index is never built.
-**Area**: `src/core/knowledge/embed-runner.ts` ↔ `packages/wxsearch/wxsearch/embed_subprocess.py` (wechat-cc-plugins).
+**Area**: `src/adapters/knowledge/embed-runner.ts` ↔ `packages/wxsearch/wxsearch/embed_subprocess.py` (wechat-cc-plugins).
 
 ## Symptom
 
@@ -22,7 +22,7 @@ Every indexing tick fails, so **no embeddings are ever written** → `POST /v1/k
 `embed-runner.ts` spawns the embed subprocess as a **bare script**:
 
 ```ts
-// src/core/knowledge/embed-runner.ts:106
+// src/adapters/knowledge/embed-runner.ts:106
 const child = spawnFn([opts.pythonBin, opts.scriptPath, '--model-id', opts.model_id], { env })
 //                     e.g.  <pluginDir>/.venv/bin/python  <pluginDir>/wxsearch/embed_subprocess.py --model-id bge-small-zh-v1.5
 ```

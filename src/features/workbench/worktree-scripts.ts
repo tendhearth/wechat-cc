@@ -9,7 +9,7 @@
  */
 import { createHash } from 'node:crypto'
 import { realpathSync } from 'node:fs'
-import { git, headSha } from '../../core/workbench/worktree-workspaces'
+import { git, headSha } from '../../adapters/git/worktree-workspaces'
 
 export const SCRIPTS_FILE = 'tendhearth.json'
 export const SCRIPTS_FILE_MAX_BYTES = 64 * 1024

@@ -16,9 +16,9 @@
  * 工具调用没出来、续接断了、工作台检查项不过)才算 fail。
  */
 import { isConnectFailure } from '../../lib/net-errors'
-import { executionFailureMessage } from '../../core/workbench/execution-settings'
-import type { CliSpec } from '../../core/cli-upgrade/specs'
-import type { VerifyResult } from '../../core/cli-upgrade/engine'
+import { executionFailureMessage } from '../../adapters/store/workbench/execution-settings'
+import type { CliSpec } from '../../domain/cli-upgrade/specs'
+import type { VerifyResult } from './engine'
 import type { SelftestConverseResult } from '../selftest'
 import type { SelftestReport } from '../../cli/selftest'
 

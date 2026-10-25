@@ -1,7 +1,7 @@
 import { describe, expect, it, vi } from 'vitest'
 import { runSettlementBackfill, SETTLE_ACTIVITY_WINDOW_S } from './sweep-obligation-settled'
 import { SWEEP_FEED_OVERSCAN } from './sweep-conflicts'
-import type { FactsApi } from '../../../core/knowledge/facts'
+import type { FactsApi } from '../../../domain/knowledge/facts'
 
 const NOW = 1_756_000_000
 

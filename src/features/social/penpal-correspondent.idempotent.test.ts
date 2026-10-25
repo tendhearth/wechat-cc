@@ -1,9 +1,9 @@
 import { describe, it, expect, vi } from 'vitest'
 import { openDb } from '../../lib/db'
-import { makeChannelStore } from '../../core/penpal-channel-store'
+import { makeChannelStore } from '../../adapters/store/penpal-channel-store'
 import { makeLetterStore } from './penpal-letter-store'
 import { makeCorrespondent } from './penpal-correspondent'
-import { generateKeypair, deriveSharedKey, sealLetter } from '../../core/penpal-crypto'
+import { generateKeypair, deriveSharedKey, sealLetter } from '../../adapters/mailbox/penpal-crypto'
 
 describe('receiveLetter idempotency (M3)', () => {
   it('a re-delivered letter (same channel_id+nonce) creates no duplicate row and does not re-notify', () => {

@@ -1,11 +1,11 @@
 import {makeWechatWorkbenchControl,type WechatMessageIdentity,type WechatWorkbenchReply} from './wechat-control'
 import type { ProviderRegistry } from '../../app/provider-registry'
-import { type NativeHistoryReader, type NativeHistoryProvider } from '../../core/workbench/native-history'
+import { type NativeHistoryReader, type NativeHistoryProvider } from '../../adapters/workbench/native-history'
 import type { MatterStore } from '../../adapters/store/matters-store'
-import type { ReportSink } from '../../core/matters/report'
-import type { RecollectSink } from '../../core/matters/recollection'
+import type { ReportSink } from '../../domain/matters/report'
+import type { RecollectSink } from '../../domain/matters/recollection'
 import type { UsageSnapshot } from '../../domain/subscription-usage'
-import { type WorkbenchStore } from '../../core/workbench/store'
+import { type WorkbenchStore } from '../../adapters/store/workbench/store'
 import { makeTaskChangeHub, type TaskChangeHub } from './task-changes'
 
 interface Options {

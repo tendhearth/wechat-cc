@@ -6,9 +6,9 @@
  * 权限交给终端自己问 —— 不用绕到脑。人不在,才转。
  */
 import type { A2AAgentRecord } from '../../lib/agent-config'
-import type { CliEvent, CliEventAction } from '../../core/cli-events'
-import { PRESENT_IDLE_S, formatCliHeader, stripMarkdown, summarizeOneLine } from '../../core/cli-events'
-import type { CliPermissionRequest, CliPermissionOpen, CliPermissionStatus } from '../../core/cli-permission-relay'
+import type { CliEvent, CliEventAction } from '../../app/cli-events'
+import { PRESENT_IDLE_S, formatCliHeader, stripMarkdown, summarizeOneLine } from '../../app/cli-events'
+import type { CliPermissionRequest, CliPermissionOpen, CliPermissionStatus } from '../../app/cli-permission-relay'
 
 export interface BrainLink { id: string; url: string; key: string }
 

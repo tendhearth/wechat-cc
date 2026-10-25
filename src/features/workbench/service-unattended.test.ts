@@ -3,12 +3,12 @@ import { mkdtempSync, mkdirSync, realpathSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { openTestDb, type Db } from '../../lib/db'
-import { makeWorkbenchStore } from '../../core/workbench/store'
+import { makeWorkbenchStore } from '../../adapters/store/workbench/store'
 import { makeWorkbenchService, type WorkbenchService } from './service'
 import { createProviderRegistry } from '../../app/provider-registry'
 import type { AgentProvider } from '../../ports/agent-provider'
 import { removeTempDir } from '../../lib/test-temp'
-import { UNATTENDED_CAPABILITIES, MANAGED_NATIVE_CAPABILITIES } from '../../core/workbench/executor-capabilities'
+import { UNATTENDED_CAPABILITIES, MANAGED_NATIVE_CAPABILITIES } from '../../domain/workbench/executor-capabilities'
 
 // 每个用例可能建不止一个 service/db(如「没接 unattendedAck」那条另起炉灶),case 2
 // 那条还会真跑一次 dispatch 且从不显式 shutdown —— afterEach 必须先 shutdown 全部

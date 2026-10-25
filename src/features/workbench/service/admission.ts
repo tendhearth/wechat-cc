@@ -4,13 +4,13 @@
  * 从 service.ts 逐字搬来(spec 2026-09-27-workbench-service-split §3 第 7 项,提前到第 6 项前);只认 ctx。
  * 额度查询要 quota 域:构造时显式传进来(quota 不依赖任何域,先建好);停机闸走 ctx.ensureAccepting。
  */
-import { canonicalProject } from '../../../core/workbench/artifacts'
+import { canonicalProject } from '../../../adapters/workbench/artifacts'
 import { restartPreview, type Continuation } from '../continuation'
-import { normalizeExecutionChoice } from '../../../core/workbench/execution-settings'
-import { canResumeWorkbenchExecutor, isUnattendedExecutor, isWorkbenchExecutorCapabilities, isWorkbenchProviderId, requireWorkbenchInput, type WorkbenchExecutorCapabilities } from '../../../core/workbench/executor-capabilities'
-import { snapshotHash } from '../../../core/workbench/native-adoption'
-import { TERMINAL_TASK_STATUSES, type StoredTask } from '../../../core/workbench/store'
-import type { Attachment } from '../../../core/workbench/attachments'
+import { normalizeExecutionChoice } from '../../../adapters/store/workbench/execution-settings'
+import { canResumeWorkbenchExecutor, isUnattendedExecutor, isWorkbenchExecutorCapabilities, isWorkbenchProviderId, requireWorkbenchInput, type WorkbenchExecutorCapabilities } from '../../../domain/workbench/executor-capabilities'
+import { snapshotHash } from '../../../adapters/workbench/native-adoption'
+import { TERMINAL_TASK_STATUSES, type StoredTask } from '../../../adapters/store/workbench/store'
+import type { Attachment } from '../../../adapters/workbench/attachments'
 import type { AgentExecutionChoice, AgentModelCatalog } from '../../../ports/agent-provider'
 import type { ServiceCtx } from './ctx'
 import type { AdmittedProvider } from './types'

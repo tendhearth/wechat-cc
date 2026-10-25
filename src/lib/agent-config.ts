@@ -145,7 +145,7 @@ export interface AgentConfig {
   // when absent. Mirrors `openaiBaseUrl?`'s optional-string shape.
   knowledge_source_dir?: string
   // Knowledge Kernel T7' — embedding model id passed to the in-process
-  // indexer (src/core/knowledge/indexer.ts) and, via embed-runner.ts, to the
+  // indexer (src/app/knowledge/indexer.ts) and, via embed-runner.ts, to the
   // Python embed subprocess (`--model-id`) as the provenance tag every
   // semantic.db row is stamped with. Optional — defaults to
   // 'bge-small-zh-v1.5' (wxsearch's existing default embedding model, see

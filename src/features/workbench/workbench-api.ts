@@ -5,7 +5,7 @@ import type {ProviderRegistry} from '../../app/provider-registry'
 import {createApiModel} from '../../adapters/executors/openai/api-model'
 import {makeApiSessionStore} from '../../adapters/executors/openai/api-sessions'
 import {apiTaskConnectionHash,createApiTaskProvider,validateApiTaskInput} from '../../adapters/executors/openai/api-task-provider'
-import {MANAGED_API_CAPABILITIES} from '../../core/workbench/executor-capabilities'
+import {MANAGED_API_CAPABILITIES} from '../../domain/workbench/executor-capabilities'
 
 export function registerWorkbenchApi(
   registry:ProviderRegistry,

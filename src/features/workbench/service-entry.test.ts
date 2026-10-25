@@ -7,11 +7,11 @@ import {openDb,type Db} from '../../lib/db'
 import {removeTempDir} from '../../lib/test-temp'
 import {createProviderRegistry} from '../../app/provider-registry'
 import {makeMatterStore} from '../../adapters/store/matters-store'
-import {makeWorkbenchStore} from '../../core/workbench/store'
+import {makeWorkbenchStore} from '../../adapters/store/workbench/store'
 import {makeWorkbenchService,type WorkbenchService} from './service'
-import {MANAGED_NATIVE_CAPABILITIES,UNATTENDED_CAPABILITIES} from '../../core/workbench/executor-capabilities'
+import {MANAGED_NATIVE_CAPABILITIES,UNATTENDED_CAPABILITIES} from '../../domain/workbench/executor-capabilities'
 import {makeTaskChangeHub} from './task-changes'
-import {canonicalEntryHash,type EntryInput} from '../../core/workbench/task-entry'
+import {canonicalEntryHash,type EntryInput} from '../../adapters/workbench/task-entry'
 import {validateApiTaskInput} from '../../adapters/executors/openai/api-task-provider'
 
 const entryReads=vi.hoisted(()=>({observe:null as null|((count:number)=>void)}))
@@ -341,7 +341,7 @@ it('isolated worktree tasks (2026-10-07): run in parallel on one project, stay o
   expect(service.projects().some(p=>p.path.startsWith(join(wtRoot,'worktrees')))).toBe(false)
   // 提交到分支;项目本身不动
   const commit=service.worktreeAction(one.receipt.taskId,'commit')
-  const {mergeHint}=await import('../../core/workbench/worktree-workspaces')
+  const {mergeHint}=await import('../../adapters/git/worktree-workspaces')
   expect(commit).toMatchObject({committed:true,mergeHint:mergeHint(project,a.worktree!.branch)})
   expect(g('log','-1','--format=%s',a.worktree!.branch)).toBe(a.title)
   expect(existsSync(join(project,'out.txt'))).toBe(false)

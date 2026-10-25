@@ -1,4 +1,4 @@
-import {MANAGED_NATIVE_CAPABILITIES} from '../src/core/workbench/executor-capabilities'
+import {MANAGED_NATIVE_CAPABILITIES} from '../src/domain/workbench/executor-capabilities'
 /** Manual, opt-in QA. Uses only owned temporary fixtures; never scans private sessions.
  * If an approval appears, inspect it, then enter {"taskId":"…","id":"…","decision":"allow"|"deny"}.
  * Existing native configuration and strict permissions remain in effect. */
@@ -15,13 +15,13 @@ import {createWorkbenchCodexProvider} from '../src/adapters/executors/codex/code
 import {createClaudeAgentProvider,makeWorkbenchClaudeCanUseTool} from '../src/adapters/executors/claude/claude-agent-provider'
 import {workbenchClaudeOptions} from '../src/features/workbench/wire'
 import {workbenchClaudeAuthEnv} from './workbench-claude-config'
-import {makeWorkbenchStore} from '../src/core/workbench/store'
-import {saveArtifactSnapshot} from '../src/core/workbench/artifacts'
+import {makeWorkbenchStore} from '../src/adapters/store/workbench/store'
+import {saveArtifactSnapshot} from '../src/adapters/workbench/artifacts'
 import {makeWorkbenchService} from '../src/features/workbench/service'
 import {TIER_PROFILES} from '../src/domain/user-tier'
 import {createClaudeHistoryReader} from '../src/adapters/executors/claude/native-claude-history'
 import {createCodexHistoryReader} from '../src/adapters/executors/codex/native-codex-history'
-import {encodeNativeHistoryKey} from '../src/core/workbench/native-history'
+import {encodeNativeHistoryKey} from '../src/adapters/workbench/native-history'
 import {readJsonFile} from '../src/lib/read-json-file'
 if(!process.argv.includes('--run')){console.log('Manual model test. Creates disposable native sessions and a project; uses configured model access. Run with --run.');process.exit(0)}
 const root=realpathSync(mkdtempSync(join(tmpdir(),'cc-workbench-native-smoke-'))),cwd=join(root,'project');mkdirSync(cwd)

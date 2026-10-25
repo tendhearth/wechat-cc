@@ -11,8 +11,8 @@
  *   排队的那件活自己带着做法 —— 环就断在数据上,而不是藏在一个晚绑定的引用后面。
  * quiet 是 isReplied 的别名(原文 `const quiet=isReplied`)。
  */
-import { findPathBlocker } from '../../../core/workbench/scheduler'
-import { publicTask, TERMINAL_TASK_STATUSES } from '../../../core/workbench/store'
+import { findPathBlocker } from '../../../adapters/workbench/scheduler'
+import { publicTask, TERMINAL_TASK_STATUSES } from '../../../adapters/store/workbench/store'
 import type { Active } from './state'
 import type { WorkbenchTaskView } from './types'
 import type { ServiceCtx } from './ctx'

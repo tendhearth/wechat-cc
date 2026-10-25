@@ -7,11 +7,11 @@ import { createInternalApi, type InternalApi } from '../../daemon/internal-api/i
 import { workbenchRoutes } from './routes'
 import { minTierFor } from '../../daemon/internal-api/route-tiers'
 import {openDb} from '../../lib/db'
-import {makeWorkbenchStore} from '../../core/workbench/store'
+import {makeWorkbenchStore} from '../../adapters/store/workbench/store'
 import {makeWorkbenchService} from './service'
 import {createProviderRegistry} from '../../app/provider-registry'
 import type {AgentExecutionChoice} from '../../ports/agent-provider'
-import {MANAGED_NATIVE_CAPABILITIES} from '../../core/workbench/executor-capabilities'
+import {MANAGED_NATIVE_CAPABILITIES} from '../../domain/workbench/executor-capabilities'
 import {removeTempDir} from '../../lib/test-temp'
 
 const TASK = {

@@ -37,7 +37,7 @@ import z from 'zod'
 import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js'
 import type { InternalApiClient } from './client'
 import { passthroughErrorResult } from './tool-helpers'
-import type { SemanticSearchResultItem } from '../../core/knowledge/search'
+import type { SemanticSearchResultItem } from '../../domain/knowledge/search'
 
 export interface FederatedHit {
   claim_text: string

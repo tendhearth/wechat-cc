@@ -33,18 +33,18 @@ CC 是住在主人自己电脑上的一个 daemon。微信、桌面、手机 App
 ```text
 apps/*  ──HTTP──►  packages/protocol(路由表、错误码,纯数据)
 src/cli ──spawn / HTTP──►  src/daemon ──► src/features ──► src/app ──► src/ports / src/domain ──► src/lib
-                          src/app ──► src/adapters(executors / store,实现 ports)
-                                                   └──► src/core(还没拆完的余项,见下)
+                          src/app ──► src/adapters(executors / store / workbench / git / a2a / mailbox / knowledge …,实现 ports)
 src/mcp-servers ──HTTP──►  src/daemon(internal API)
 ```
 
 - `src/lib`:最底层,零业务依赖(可以用 `node:*`);事实表、文件写法、db、运行时适配。
 - `src/domain`:纯规则 —— 档位与放行(`policy` / `user-tier` / `tool-decision` / `provider-policy`)、开口(`speech/decide`、`quiet-hours`)、伙伴判定、提示词(`prompt-builder`)、能力表。**零例外**:运行时只依赖 domain 自己和 lib 里不碰 I/O 的,不碰 node 内置(depcheck `domain-is-pure` / `domain-no-node`)。
 - `src/ports`:接口 —— 执行者的口(`agent-provider`)、微信的十个窄口(`wechat.ts`:send / permissions / pages / link / contacts / accounts / companion / voice / polling / workbench;模块 `needs` 口名,只拿那一片,没有谁拿整个 ilink 适配器)、陪伴的贡献点(`companion-contributions.ts`)。只依赖 domain 与纯 lib。
-- `src/app`:用例 —— 对话协调器(`coordinator/`:`planTurn` / `admit` 一轮定一次档位,`TurnRunner` 三种派法共用)、会话管理、执行者登记。不往上依赖、不碰 node。
+- `src/app`:用例 —— 对话协调器(`coordinator/`:`planTurn` / `admit` 一轮定一次档位,`TurnRunner` 三种派法共用)、会话管理、执行者登记、「一件事」服务(`matters/service.ts`)、终端会话的事件判定与权限中继(`cli-events` / `cli-permission-relay`)、配对、关系视图、乙(`yi-hub` / `yi-hand`)、A2A 委派、知识库的一轮(`knowledge/`)。不往上依赖、不碰 node(随机 id 经 `lib/random.ts`)。
 - `src/adapters/executors/<家>`:各家执行者的适配器(对话侧 + 工作台侧),实现 ports;不往上依赖 app / daemon。
-- `src/adapters/store`:通用的 store(对话、会话、会话状态、回合记录、终端会话、「一件事」、背包、记忆目录 MemoryFS)。同一条 `adapters-implement-ports` 规则。
-- `src/core`:还没拆完的余项 —— 工作台的 store 与执行者也用的零件、A2A 传输、配对、知识库、放行规则(路径归一靠 `node:path`)、终端 hook 的纯逻辑等;正在按终态 E3 分进 ports / adapters / features,`core-no-node` 棘轮在数。
+- `src/adapters/store`:通用的 store(对话、会话、会话状态、回合记录、终端会话、「一件事」、定时任务、信道、A2A 事件、背包、记忆目录 MemoryFS …);`store/workbench/` 是工作台的 store 与它的子表。同一条 `adapters-implement-ports` 规则。
+- `src/adapters/` 其余:`workbench/`(工作台的文件层、附件、成果、原生历史、权限 / 提问登记、文件夹占用 …,执行者和工作台功能共用)、`git/`(独立工作区)、`a2a/`(A2A 传输)、`mailbox/`(信箱客户端与加密)、`knowledge/`(知识库的 store、来源、嵌入子进程)、`cli-upgrade/`(探外部 CLI 的版本与布局)、`permission-rules/`(放行规则:路径归一靠 `node:path` 的 posix / win32 解析,所以不在 domain)。
+- `src/core` 已于架构终态 E3 清空删除(`core-no-node` 守卫一并删掉,换成上面这些目录各自的 depcruise 规则)。
 - `src/features/<名>`:一个功能一个目录(见[加一个功能](maintainer/add-a-feature.md)):日历、提醒、信、定时、回报、画室、贴纸、打猎、背包、语音、终端会话、社交、记忆、手机、工作台、陪伴。功能自己挂路由(`internalApi.mount`)、自己是模块;别的功能经 `needs` / 窄导出用它,陪伴经贡献点接各家的候选与自省步骤。
 - `src/test-support`:测试替身(照剧本说话的假执行者),生产代码不许 import。
 - `src/daemon`:「怎么接起来」—— 入站、命令、internal API、模块、定时。

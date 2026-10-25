@@ -5,8 +5,8 @@
 import { randomUUID } from 'node:crypto'
 import { closeSync, constants, fchmodSync, fsyncSync, lstatSync, renameSync, unlinkSync, writeSync } from 'node:fs'
 import { join } from 'node:path'
-import { openAnchored, verifyChain } from '../../../core/workbench/anchored-fs'
-import { readAnchoredRegular } from '../../../core/workbench/artifacts'
+import { openAnchored, verifyChain } from '../../../adapters/workbench/anchored-fs'
+import { readAnchoredRegular } from '../../../adapters/workbench/artifacts'
 
 const strict = new TextDecoder('utf-8', { fatal: true, ignoreBOM: true })
 /** 不是合法 UTF-8 ⇒ 抛(调用方当 review_file_changed:快照里有 diff 的文件本来都是合法 UTF-8)。BOM 原样留着。 */

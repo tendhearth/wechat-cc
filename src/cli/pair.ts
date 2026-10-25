@@ -7,11 +7,11 @@
  * including `ok:false` — at HTTP 200 (see routes-pair.ts). Both bodies here
  * are branched on `.ok`/`.reason`, NOT assumed to be the flattened success
  * shape: a bare `{code, expiresAt}` read would silently swallow start()'s own
- * `relay_drop_failed` failure (see src/core/pairing.ts's PairStartResult).
+ * `relay_drop_failed` failure (see src/app/pairing.ts's PairStartResult).
  */
 import { existsSync, readFileSync } from 'node:fs'
 import { join } from 'node:path'
-import type { PairStartResult, PairResult } from '../core/pairing'
+import type { PairStartResult, PairResult } from '../app/pairing'
 import { readJsonFile } from '../lib/read-json-file'
 
 interface PairDeps {

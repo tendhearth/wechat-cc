@@ -5,7 +5,7 @@
  * 用主人的登录与额度),所以「legacy vs daemon」的闸门不能靠真模型跑。这里起一个假的 `cursor-agent acp`
  * 子进程:stdin / stdout 上是真的换行分隔 JSON-RPC,**生产的** ACP 客户端(acp-agent-provider.ts)照常
  * initialize → session/new → session/prompt,收到的 `session/update` 形状照 2026-09-17 真机录到的报文
- * (src/core/acp/fixtures/cursor-acp-2026-09-17.jsonl):
+ * (src/test-support/fixtures/cursor-acp-2026-09-17.jsonl):
  *   - 助理文字是 token 级的 `agent_message_chunk`(两三个字一块,没有 messageId);
  *   - 思考是 `agent_thought_chunk`(翻译器丢掉);
  *   - MCP 调用先来一条 `tool_call`(kind other、title「MCP: tool」、**没有** rawInput),身份

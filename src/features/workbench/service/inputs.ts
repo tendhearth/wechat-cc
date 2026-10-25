@@ -12,16 +12,16 @@
  * 它只被 execute 收尾时调,所以由 execute 调下来时把 start 当参数带下来,不存成域的依赖。
  * autoContinueBlocked 在 state 上,与 execute 共享同一个 Set。
  */
-import { canonicalProject } from '../../../core/workbench/artifacts'
+import { canonicalProject } from '../../../adapters/workbench/artifacts'
 import { takeBaselineFor } from './artifacts'
-import { assertNotRewindBlocked } from '../../../core/workbench/rewind-store'
-import { normalizeInputRequestId, sameAttachments, type LiveInput } from '../../../core/workbench/live-inputs'
+import { assertNotRewindBlocked } from '../../../adapters/store/workbench/rewind-store'
+import { normalizeInputRequestId, sameAttachments, type LiveInput } from '../../../adapters/store/workbench/live-inputs'
 import type { AgentExecutionChoice } from '../../../ports/agent-provider'
-import type { StoredTask } from '../../../core/workbench/store'
-import type { Attachment } from '../../../core/workbench/attachments'
-import type { AcceptedNativeResume } from '../../../core/workbench/native-adoption'
+import type { StoredTask } from '../../../adapters/store/workbench/store'
+import type { Attachment } from '../../../adapters/workbench/attachments'
+import type { AcceptedNativeResume } from '../../../adapters/workbench/native-adoption'
 import type { ArtifactSelection } from '../handoff'
-import type { PermissionDecision } from '../../../core/workbench/permissions'
+import type { PermissionDecision } from '../../../adapters/workbench/permissions'
 import { checkedText } from './checked-text'
 import { directoryIdentity } from './directory-identity'
 import type { ServiceCtx } from './ctx'

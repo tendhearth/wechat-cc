@@ -16,7 +16,7 @@ import { homedir } from 'node:os'
 import { isAbsolute, join } from 'node:path'
 import { CLI_ENTRY } from './repo-root'
 import { isCompiledBundle } from '../lib/runtime-info'
-import { defaultLocate } from '../core/cli-upgrade/locate'
+import { defaultLocate } from '../adapters/cli-upgrade/locate'
 import { claudeSettingsPath, codexHooksPath, cursorHooksPath, hookCommandLine, hookStatus, installHooks, uninstallHooks, type HookSource } from './hook'
 
 export const HOOK_SOURCES: readonly HookSource[] = ['claude', 'codex', 'cursor']

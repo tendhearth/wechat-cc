@@ -6,7 +6,7 @@
 
 - **MCP 的 `structuredContent` 只能含 `outputSchema` 里声明过的键。** 多一个键,严格的客户端(cursor-agent)就回 `-32602`,模型看不懂错误于是原地重试,一直转圈。wechat MCP 的 `ping` 就这么栽过。
 - **ACP 的 `initialize` 结果里,`promptCapabilities` 嵌在 `agentCapabilities` 下面**(`result.agentCapabilities.promptCapabilities.image`),不是平铺在 `result` 上。2026-09-18 照文档写的那版就取空了。
-- **凡是照协议文档写的字段路径,先去录到的报文里对一遍。** 仓库里有真机报文:`src/core/acp/fixtures/cursor-acp-2026-09-17.jsonl`,回放契约测试 `src/core/acp/fixtures.test.ts`。
+- **凡是照协议文档写的字段路径,先去录到的报文里对一遍。** 仓库里有真机报文:`src/test-support/fixtures/cursor-acp-2026-09-17.jsonl`,回放契约测试 `src/adapters/executors/acp/fixtures.test.ts`。
 - ACP 的 `toolCallId` 里会嵌**字面换行**;拿它当 DOM id / event key 之前一律过 `acpActivityId()`。
 - ACP 的 `agent_message_chunk` **一条 `messageId` 都没有**;同一轮里工具调用前后是两条助理消息,itemId 只能自己合成。
 - 外部 CLI 的 MCP 命名空间各家不同(agy 的 server 名带命名空间前缀,cursor 的 envelope 形状完全是另一套);别假设「就叫 `wechat`」,用 `normalizeWechatMcpServer` 折回规范名。
@@ -49,7 +49,7 @@
 - **新接线进 `src/daemon/bootstrap/wire-*.ts`,`index.ts` 只组装**(spec `docs/superpowers/specs/2026-09-27-bootstrap-split-design.md`;守卫 `scripts/bootstrap-ratchet.guard.test.ts` 钉住行数与 `let x | null = null` 个数只降不升,`bootstrap/boot-order.test.ts` 钉住 `sup.start` 名字序列)。晚绑定用 `src/lib/lifecycle.ts` 的 `Ref`(没 wire 就读会抛);可能失败 / 可能未配置的块经 `deps.supervisor.start(name)`,名字别重复(重复直接 throw)。2026-09-27 之前 `index.ts` 1321 行、7 月以来改了 84 次,拆完 460。
 - **STATE_DIR 两个环境变量名的优先级是 `WECHAT_STATE_DIR` > `WECHAT_CC_STATE_DIR`**(`src/daemon/resolve-state-dir.ts` 头注释);`src/lib/config.ts` 只认前者。e2e harness 两个都设,所以测试发现不了漂移 —— 改 state-dir 相关代码时手动只设一个名试。
 - **入站链开了意图路由后,每个在场消费者必须交探针,漏一个 boot 即抛**(`src/daemon/inbound/build.ts` 注释);探针要看的字段(附件、语音转文字)必须在路由之前就绪。
-- **A2A `proto_version` 现在是 3**(`src/core/a2a-intent.ts`);改信封形状要升它,两台真机都得重新配对。
+- **A2A `proto_version` 现在是 3**(`src/domain/a2a-intent.ts`);改信封形状要升它,两台真机都得重新配对。
 - **`agent-config.json` 只经 `saveAgentConfig` 写**(`src/lib/agent-config.ts`);裸读改写(2026-09 还有四处)会互相覆盖字段,09-17 丢过 `workbench_unattended_ack_at`。
 
 ## 对话侧

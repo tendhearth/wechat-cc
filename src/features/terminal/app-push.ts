@@ -15,8 +15,8 @@
  * /terminal/[id](那页能拍板、能接着说);同一会话的通知按它折叠(collapse-id / 线程)。
  * 失败只记日志、丢弃 —— 断线不重试。
  */
-import type { CliPushItem } from '../../core/cli-events'
-import type { CliPermissionRequest } from '../../core/cli-permission-relay'
+import type { CliPushItem } from '../../app/cli-events'
+import type { CliPermissionRequest } from '../../app/cli-permission-relay'
 import type { PendingPermissionMeta, PermissionDecision } from '../../daemon/pending-permissions'
 import type { PushPlaintextT } from '@wechat-cc/protocol'
 

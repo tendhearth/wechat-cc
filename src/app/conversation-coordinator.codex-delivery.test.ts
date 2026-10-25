@@ -182,7 +182,7 @@ describe('Codex:双发旁白 / 吞话在 daemon 模式下结构性消失(生产�
 
 // ─── 回放 2026-10-03 沙盒真跑录到的 codex exec 事件流 ──────────────────────────────
 type Obj = Record<string, any>
-const FIXTURE = fileURLToPath(new URL('../core/fixtures/codex-exec-2026-10-03.jsonl', import.meta.url))
+const FIXTURE = fileURLToPath(new URL('../test-support/fixtures/codex-exec-2026-10-03.jsonl', import.meta.url))
 const rows = readFileSync(FIXTURE, 'utf8').split('\n').filter(l => l.trim()).map(l => JSON.parse(l) as Obj)
 /** 一个录到的回合:原样当剧本(只取 item.* 事件,逐条翻成 app-server 条目;turn/* 由假 codex 自己发)。 */
 function recordedTurn(id: string): CodexScriptedTurn {

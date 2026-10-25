@@ -1,0 +1,97 @@
+/**
+ * a2a-delegate — the BRAIN side of one-brain-many-hands (乙).
+ *
+ * The brain delegates a task to a registered "hand" (another wechat-cc whose
+ * A2A server exposes POST /a2a/exec) and awaits the result. Built on the
+ * generic A2A client `send` — the hand's /a2a/exec runs its LOCAL agent and
+ * returns an ExecResult, which we surface back to the caller.
+ */
+import type { A2AClient } from '../adapters/a2a/a2a-client'
+import type { A2AAgentRecord } from '../lib/agent-config'
+import type { ExecResult } from '../adapters/a2a/a2a-server'
+
+/**
+ * Default brain-side timeout for one delegated task (`WECHAT_A2A_EXEC_TIMEOUT_MS`
+ * overrides).
+ *
+ * MUST stay strictly below `A2A_EXEC_IDLE_TIMEOUT_S` (the hand's Bun
+ * idleTimeout, a hard 255s ceiling that cannot be raised): whoever gives up
+ * first decides what the user is told. When the hand hangs up first, the brain
+ * only sees a network error and reports 「连不上那台手」 — the exact opposite of
+ * the truth, which is that the hand is still working. Was 300_000, i.e. every
+ * task running 255–300s got that wrong message. Asserted in
+ * a2a-delegate-timeout.test.ts.
+ */
+export const DEFAULT_DELEGATE_TIMEOUT_MS = 240_000
+
+/**
+ * Derive a hand's /a2a/exec URL from its registered url, tolerating the
+ * common shapes the operator might have registered: a bare base, `/a2a`,
+ * `/a2a/notify`, or already `/a2a/exec`.
+ */
+export function handExecUrl(agentUrl: string): string {
+  const u = agentUrl.replace(/\/+$/, '')
+  if (u.endsWith('/a2a/exec')) return u
+  if (u.endsWith('/a2a/notify')) return u.replace(/\/a2a\/notify$/, '/a2a/exec')
+  if (u.endsWith('/a2a')) return `${u}/exec`
+  return `${u}/a2a/exec`
+}
+
+/**
+ * Derive a peer's /a2a/letter URL from its registered url, tolerating the same
+ * shapes as {@link handExecUrl}: a bare base, `/a2a`, `/a2a/notify`,
+ * `/a2a/exec`, or already `/a2a/letter`. `/a2a/intent` `/a2a/reveal` 是
+ * v2 遗留 —— 路由本身退役了(proto v3),但注册表里可能还躺着老 url,
+ * 所以继续容忍这两个后缀。
+ */
+export function letterUrl(agentUrl: string): string {
+  const u = agentUrl.replace(/\/+$/, '')
+  if (u.endsWith('/a2a/letter')) return u
+  if (u.endsWith('/a2a/notify')) return u.replace(/\/a2a\/notify$/, '/a2a/letter')
+  if (u.endsWith('/a2a/exec')) return u.replace(/\/a2a\/exec$/, '/a2a/letter')
+  if (u.endsWith('/a2a/intent')) return u.replace(/\/a2a\/intent$/, '/a2a/letter')
+  if (u.endsWith('/a2a/reveal')) return u.replace(/\/a2a\/reveal$/, '/a2a/letter')
+  if (u.endsWith('/a2a')) return `${u}/letter`
+  return `${u}/a2a/letter`
+}
+
+export interface DelegateToHandReq {
+  hand: A2AAgentRecord
+  /** The brain's agent id as the HAND knows it (the hand's Bearer check keys on this). */
+  selfId: string
+  prompt: string
+  /** Which provider the hand should run (claude|codex); hand defaults to claude. */
+  peer?: string
+  /** Working directory on the hand. */
+  cwd?: string
+}
+
+/**
+ * Delegate `prompt` to `hand` (POST its /a2a/exec) and return the result of
+ * running the hand's local agent. Network/HTTP failures and malformed hand
+ * responses come back as `{ ok: false, reason }` — never throws.
+ */
+export async function delegateToHand(client: A2AClient, req: DelegateToHandReq): Promise<ExecResult> {
+  // A url-less mailbox peer (pairing-code feature) can't take a push
+  // /a2a/exec — 乙 (yi) hand delegation is push-only. Fail the same way as
+  // any other unreachable hand, never throw.
+  if (!req.hand.url) return { ok: false, reason: 'hand has no url (mailbox-only peer; exec delegation is push-only)' }
+  const r = await client.send({
+    url: handExecUrl(req.hand.url),
+    bearer: req.hand.outbound_api_key,
+    body: {
+      agent_id: req.selfId,
+      prompt: req.prompt,
+      ...(req.peer ? { peer: req.peer } : {}),
+      ...(req.cwd ? { cwd: req.cwd } : {}),
+    },
+  })
+  if (!r.ok) return { ok: false, reason: r.error ?? `http_${r.http_status ?? '?'}` }
+  const resp = r.response as { ok?: unknown; response?: unknown; reason?: unknown } | undefined
+  if (resp && typeof resp === 'object' && typeof resp.ok === 'boolean') {
+    return resp.ok
+      ? { ok: true, response: String(resp.response ?? '') }
+      : { ok: false, reason: String(resp.reason ?? 'unknown') }
+  }
+  return { ok: false, reason: 'malformed hand response' }
+}

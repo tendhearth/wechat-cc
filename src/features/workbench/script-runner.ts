@@ -11,7 +11,7 @@
 import { spawn as nodeSpawn } from 'node:child_process'
 import { existsSync } from 'node:fs'
 import { wrapForProcessTree } from '../../lib/jobspawn'
-import { workbenchSubprocessEnv } from '../../core/workbench/subprocess-env'
+import { workbenchSubprocessEnv } from '../../adapters/executors/subprocess-env'
 import type { ScriptKind } from './worktree-scripts'
 
 /** SIGTERM 之后留给脚本收尾的时间,过了就硬杀(同 self-change runner)。 */

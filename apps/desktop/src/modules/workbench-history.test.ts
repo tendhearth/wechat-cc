@@ -1,7 +1,7 @@
 import {expect,it,vi} from 'vitest'
 import {Window} from 'happy-dom'
 import {createHistoryController,renderHistoryPanel,nativeImportMessages} from './workbench-history.js'
-import type {NativeHistoryItem} from '../../../../src/core/workbench/native-history'
+import type {NativeHistoryItem} from '../../../../src/adapters/workbench/native-history'
 const item:NativeHistoryItem={key:'opaque',providerId:'claude',nativeId:'original',title:'旧任务',cwd:'/project',updatedAt:1,remote:false,observedState:'unknown',titleSource:'native_custom'}
 it('reads only when opened, pages empty search batches and never dispatches a task',async()=>{
  const invoke=vi.fn(async(_method:string,path:string)=>path.includes('/sessions?')?{items:[],nextCursor:'next',coverage:'native_supported_history'}:{session:item,messages:[],nextCursor:null,page:{limit:100,cursor:null},sourceFingerprint:'hash',truncated:false})

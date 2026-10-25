@@ -6,7 +6,7 @@
  */
 import { randomBytes } from 'node:crypto'
 import { errMsg, type InternalApiDeps, type RouteTable } from './types'
-import { A2A_PROTO_VERSION } from '../../core/a2a-intent'
+import { A2A_PROTO_VERSION } from '../../domain/a2a-intent'
 import type {
   A2ASendRequestT,
   A2APreviewRequestT,

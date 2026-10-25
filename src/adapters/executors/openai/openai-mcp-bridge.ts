@@ -1,10 +1,10 @@
 import { Client } from '@modelcontextprotocol/sdk/client/index.js'
 import { StdioClientTransport } from '@modelcontextprotocol/sdk/client/stdio.js'
 import type { ToolSpec } from './openai-chat-model'
-import { childEnvFor, toolCallTimeoutMs } from '../../../core/mcp-stdio-spec'
+import { childEnvFor, toolCallTimeoutMs } from '../mcp-stdio-spec'
 
-export type { McpStdioSpec } from '../../../core/mcp-stdio-spec'
-import type { McpStdioSpec } from '../../../core/mcp-stdio-spec'
+export type { McpStdioSpec } from '../mcp-stdio-spec'
+import type { McpStdioSpec } from '../mcp-stdio-spec'
 
 /** Minimal surface of the MCP client we depend on — lets tests inject a fake. */
 export interface McpClientLike {

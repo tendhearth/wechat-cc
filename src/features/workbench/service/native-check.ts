@@ -5,10 +5,10 @@
  * 两个域互相要。这一块只用 admission 的两个查询和 ctx,不碰 execute,单独放在这里之后
  * execute 与 native 都依赖它,native 改到 execute 之后建,环就没了。
  */
-import { canonicalProject } from '../../../core/workbench/artifacts'
-import { historyDeadline, type NativeHistoryProvider } from '../../../core/workbench/native-history'
-import { pageInput, type AcceptedNativeResume, type ImportPage } from '../../../core/workbench/native-adoption'
-import type { StoredTask } from '../../../core/workbench/store'
+import { canonicalProject } from '../../../adapters/workbench/artifacts'
+import { historyDeadline, type NativeHistoryProvider } from '../../../adapters/workbench/native-history'
+import { pageInput, type AcceptedNativeResume, type ImportPage } from '../../../adapters/workbench/native-adoption'
+import type { StoredTask } from '../../../adapters/store/workbench/store'
 import { directoryIdentity } from './directory-identity'
 import type { ServiceCtx } from './ctx'
 import type { AdmissionDomain } from './admission'

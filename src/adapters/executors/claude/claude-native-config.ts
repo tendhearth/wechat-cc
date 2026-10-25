@@ -2,9 +2,9 @@ import { closeSync, fstatSync, openSync, readFileSync } from 'node:fs'
 import { homedir } from 'node:os'
 import { join } from 'node:path'
 import type { Options, Settings } from '@anthropic-ai/claude-agent-sdk'
-import { isCompanionMcp } from '../../../core/workbench/native-tools'
-import { toolInputPreview } from '../../../core/workbench/tool-input-preview'
-export { isCompanionMcp } from '../../../core/workbench/native-tools'
+import { isCompanionMcp } from '../../../domain/workbench/native-tools'
+import { toolInputPreview } from '../../../domain/workbench/tool-input-preview'
+export { isCompanionMcp } from '../../../domain/workbench/native-tools'
 
 export interface NativeClaudeTools {
   servers: NonNullable<Options['mcpServers']>

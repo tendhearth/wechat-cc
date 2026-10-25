@@ -4,7 +4,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { openDb } from '../../lib/db'
 import { makeJournal } from '../../adapters/store/journal-store'
-import { readJournalSeen } from '../../core/journal-seen'
+import { readJournalSeen } from '../../adapters/store/journal-seen'
 import { journalRoutes, type JournalRoutesDeps } from './routes'
 import { minTierFor, moduleFor } from '../../daemon/internal-api/route-tiers'
 

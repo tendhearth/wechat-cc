@@ -99,5 +99,5 @@ wechat-cc self change "<需求>"       # --no-deploy 只合 dev;--list / --resum
 
 2026-09 那几天,四个功能的闭环里单测一个真 bug 都没抓到,全靠真机 smoke;而 smoke 是临时写的脚本、部署是手工 `cp`、规矩全在控制器的私人记忆里。手册 + `selftest` + `self deploy` 就是把这三段搬进仓库。
 
-真机报文也在仓库里:`src/core/acp/fixtures/cursor-acp-2026-09-17.jsonl`(脱敏后的 cursor-agent ACP 报文),回放契约测试 `src/core/acp/fixtures.test.ts`,重新生成用
-`bun scripts/acp-fixture-from-transcript.ts <transcript.jsonl> src/core/acp/fixtures/cursor-acp-2026-09-17.jsonl`。
+真机报文也在仓库里:`src/test-support/fixtures/cursor-acp-2026-09-17.jsonl`(脱敏后的 cursor-agent ACP 报文),回放契约测试 `src/adapters/executors/acp/fixtures.test.ts`,重新生成用
+`bun scripts/acp-fixture-from-transcript.ts <transcript.jsonl> src/test-support/fixtures/cursor-acp-2026-09-17.jsonl`。

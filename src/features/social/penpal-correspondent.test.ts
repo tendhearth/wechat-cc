@@ -1,8 +1,8 @@
 import { describe, it, expect, vi } from 'vitest'
 import { openDb } from '../../lib/db'
-import { makeChannelStore } from '../../core/penpal-channel-store'
+import { makeChannelStore } from '../../adapters/store/penpal-channel-store'
 import { makeLetterStore } from './penpal-letter-store'
-import { generateKeypair } from '../../core/penpal-crypto'
+import { generateKeypair } from '../../adapters/mailbox/penpal-crypto'
 import { makeCorrespondent } from './penpal-correspondent'
 
 /** Sets up two independent in-memory dbs (A and B), each with its own

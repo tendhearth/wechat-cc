@@ -4,12 +4,12 @@
  * 10-20 工作区脚本(service/scripts.ts):删之前先停在跑的脚本、跑批过的 archive ⇒ 这时删除是异步的,回 `removing:true`;重新打开后照样跑 setup。
  */
 import { existsSync } from 'node:fs'
-import { pathsConflict } from '../../../core/workbench/scheduler'
-import { commitWorktree, mergeHint, mergeWorktree, removeWorktree, reopenWorktree, worktreeDirty } from '../../../core/workbench/worktree-workspaces'
+import { pathsConflict } from '../../../adapters/workbench/scheduler'
+import { commitWorktree, mergeHint, mergeWorktree, removeWorktree, reopenWorktree, worktreeDirty } from '../../../adapters/git/worktree-workspaces'
 import type { ServiceCtx } from './ctx'
 import type { ScriptsDomain } from './scripts'
 import type { ViewDomain } from './view'
-import { assertNotRewindBlocked } from '../../../core/workbench/rewind-store'
+import { assertNotRewindBlocked } from '../../../adapters/store/workbench/rewind-store'
 
 type Action = 'commit' | 'remove' | 'merge' | 'reopen'
 export type WorktreeActionResult = { branch: string; committed?: boolean; sha?: string; mergeHint?: string; removed?: boolean; removing?: boolean; merged?: boolean; into?: string; reopened?: boolean }

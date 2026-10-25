@@ -2,7 +2,7 @@ import { describe, it, expect, vi } from 'vitest'
 import { mkdtempSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { makeJobsStore } from '../../core/scheduled-jobs-store'
+import { makeJobsStore } from '../../adapters/store/scheduled-jobs-store'
 import { registerScheduledJobs, JOB_TURN_TIMEOUT_MS } from './runner'
 
 function setup(o: { results?: string[]; tz?: string } = {}) {

@@ -3,7 +3,7 @@ import {zipSync} from 'fflate'
 import {mkdirSync,mkdtempSync,realpathSync,rmSync,writeFileSync} from 'node:fs'
 import {tmpdir} from 'node:os'
 import {join} from 'node:path'
-import {snapshotSite} from '../../../../src/core/workbench/site-artifact'
+import {snapshotSite} from '../../../../src/adapters/workbench/site-artifact'
 import {readSiteArchive,MAX_SITE_BYTES} from './site-preview.js'
 const bytes=(s:string)=>new TextEncoder().encode(s)
 const zip=(files:Record<string,Uint8Array>,entry='网站/index.html')=>zipSync({'__cc_preview.json':bytes(JSON.stringify({version:1,entry})),...files},{level:0})

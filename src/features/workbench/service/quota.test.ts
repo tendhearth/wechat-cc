@@ -1,6 +1,6 @@
 import { describe, it, expect, vi } from 'vitest'
 import { createProviderRegistry } from '../../../app/provider-registry'
-import { MANAGED_NATIVE_CAPABILITIES, MANAGED_API_CAPABILITIES } from '../../../core/workbench/executor-capabilities'
+import { MANAGED_NATIVE_CAPABILITIES, MANAGED_API_CAPABILITIES } from '../../../domain/workbench/executor-capabilities'
 import type { AgentProvider } from '../../../ports/agent-provider'
 import { makeRuntimeState } from './state'
 import { makeQuotaDomain } from './quota'

@@ -6,7 +6,7 @@
  */
 import type { AgentProvider, SpawnContext } from '../../../ports/agent-provider'
 import { assertNotAuthFailed, CORE_MCP_SERVER_NAMES } from '../../../ports/agent-provider'
-import type { McpStdioSpec } from '../../../core/mcp-stdio-spec'
+import type { McpStdioSpec } from '../mcp-stdio-spec'
 import { createAcpProvider, type AcpMcpServer } from './acp-agent-provider'
 import { cursorOneShotEval, defaultCursorSpawnFn, type CursorSpawnFn } from './cursor-eval'
 

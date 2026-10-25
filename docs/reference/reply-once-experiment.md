@@ -302,7 +302,7 @@ bun scripts/experiments/reply-once/harness.ts --gate /tmp/x.jsonl --gate-arms ag
 
 ### 怎么搭的
 
-- **假 `cursor-agent acp`**(`src/core/acp/scripted-agent.ts`):stdin / stdout 上是真的换行分隔 JSON-RPC,形状照 2026-09-17 真机录到的报文(`src/core/acp/fixtures/cursor-acp-2026-09-17.jsonl`)—— token 级 `agent_message_chunk`、`agent_thought_chunk`、MCP 调用先来一条不带身份的 `tool_call`(kind other、「MCP: tool」),身份(`rawInput.providerIdentifier / toolName`)在紧跟的 `tool_call_update` 里,再 in_progress → `session/request_permission` → completed。也能原样回放录到的 update。`pid` 是 undefined,provider 的 close() 走 `child.kill()`,不碰真进程组。
+- **假 `cursor-agent acp`**(`src/core/acp/scripted-agent.ts`):stdin / stdout 上是真的换行分隔 JSON-RPC,形状照 2026-09-17 真机录到的报文(`src/test-support/fixtures/cursor-acp-2026-09-17.jsonl`)—— token 级 `agent_message_chunk`、`agent_thought_chunk`、MCP 调用先来一条不带身份的 `tool_call`(kind other、「MCP: tool」),身份(`rawInput.providerIdentifier / toolName`)在紧跟的 `tool_call_update` 里,再 in_progress → `session/request_permission` → completed。也能原样回放录到的 update。`pid` 是 undefined,provider 的 close() 走 `child.kill()`,不碰真进程组。
 - **这边全是生产代码**:`createAcpCursorChatProvider`(ACP 客户端 + `acp/events` 翻译器,messages 模式)→ 协调器 solo 分支(legacy 的 FALLBACK_REPLY / daemon 的交付分支)→ `makeReplyDeliveryRuntime`(只把 sendText 换成记账)。伙伴推送(g)和 tick-bodies 一样不走协调器:legacy 只认 reply 工具,daemon 走同一个运行时、场合 tick。
 - **同一个模型行为,两套词汇**(`scripts/experiments/reply-once/cursor-fixture.ts`):legacy 照今天的提示词用 `reply` / `reply_voice` 说话,说完补一句「已回复。」(记忆里 cursor 每轮双发的那句);daemon 没有 reply 族,话写在最后,语音走 `voice`。旁白、工具、正文两臂一字不差。
 - **三种外部条件**(run 序号):① recorded —— 身份照真机带在 `tool_call_update` 里,`--dangerously`;② drift —— CLI 换了 envelope、不带 MCP 身份(下一版 cursor-agent 的风险;agy 2026-09-08 出过同形状的事);③ strict —— 身份照真机,但 daemon 跑在 strict 权限下(ACP 的 `permissions:'mode'` ⇒ 每张权限卡都拒 ⇒ MCP 调用全被拒),只跑纯说话的场景(a / c / e / i),模型看得到被拒、改用文字说。
@@ -429,7 +429,7 @@ spec §4.2 原写「Codex 不用改 provider」,落地时不对:
 1. **codex 调工具之前先写一句开场**(「我查一下当前登记的项目。」「我先看项目列表和记忆里的近况…」):daemon 臂 12/12 个用了工具的轮都有(legacy 9 轮里 8 轮)—— daemon 下全部落进旁白,0 外泄(g 是「开场 + 最后写 NO_REPLY」⇒ 整轮静默,开场也不发);同一条流走 legacy 若认不出 reply(drift),开场就是第二条消息。
 2. **legacy 下 reply 之后 codex 照例再写一条空消息**,所以 legacy 的 FALLBACK 漏出去的是开场,不是「已回复」。
 3. **strict 吞话真机复现**(`results-2026-10-03-codex-real-strict.jsonl`,2 次):legacy 下 reply 被拒(「MCP tool call requires approval, but approval policy is never」),模型改用文字写「收到。reply 工具因审批策略被拒绝，本条通过备用通道回复。」,协调器只看「调过 reply」⇒ 主人一个字都收不到;daemon 下 voice 被拒,模型改用文字说晚安 ⇒ 那句话照常送达(开场旁白没发)。
-4. 录到的六轮原样放进 `src/core/fixtures/codex-exec-2026-10-03.jsonl`,由 `conversation-coordinator.codex-delivery.test.ts` 回放。
+4. 录到的六轮原样放进 `src/test-support/fixtures/codex-exec-2026-10-03.jsonl`,由 `conversation-coordinator.codex-delivery.test.ts` 回放。
 
 ### 结论
 
@@ -516,7 +516,7 @@ bun scripts/experiments/reply-once/harness.ts --gate /tmp/real.jsonl --gate-arms
 2. **legacy 下 reply 之后每轮再写一句自述**(6/6)—— legacy 靠认出 reply 才不把它当第二条发;录到的流换个 MCP 名字回放,FALLBACK 就把它发出去(`conversation-coordinator.claude-delivery.test.ts` 的回放组)。
 3. **legacy 每轮要先 ToolSearch 一次才找得到 reply**(Claude Code 把 MCP 工具放在 ToolSearch 后面):a / i 这种纯说话的轮,legacy 1 次 ToolSearch + 1 次 reply,daemon 0 次工具;耗时 a 8.3s vs 5.1s(均值)、i 11.4s vs 4.0s。非回复工具 13.0 vs 10.0 主要就是这一项。
 4. daemon 下 Claude 这批**没有**在工具前写开场(0 段旁白);h 用两条气泡(先列项目和记忆,再给结论)—— 按空行分条,是模型自己分的段。
-5. 录到的七轮(scrub 过签名 / 用量 / 限额信息)放进 `src/core/fixtures/claude-sdk-2026-10-03.jsonl`,由 `conversation-coordinator.claude-delivery.test.ts` 回放。
+5. 录到的七轮(scrub 过签名 / 用量 / 限额信息)放进 `src/test-support/fixtures/claude-sdk-2026-10-03.jsonl`,由 `conversation-coordinator.claude-delivery.test.ts` 回放。
 
 ### 结论
 

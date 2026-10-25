@@ -41,8 +41,8 @@ import { readIntroIndex, writeIntroIndex } from './intro-memory'
 import { findPostcardRef, attachMyIntro, clearMyIntro, type PostcardRef } from './wish'
 import { readWishes, writeWishes } from './wish-memory'
 import type { Envelope } from '../../domain/envelope'
-import type { PairCard } from '../../core/pairing'
-import type { ChannelStore } from '../../core/penpal-channel-store'
+import type { PairCard } from '../../app/pairing'
+import type { ChannelStore } from '../../adapters/store/penpal-channel-store'
 
 /** 我这边为这一笔介绍现开的信道句柄 + 铸的钥匙(和 PostcardRef['myIntro'] 同形)。 */
 type MyIntro = NonNullable<PostcardRef['myIntro']>

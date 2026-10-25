@@ -166,7 +166,7 @@ export interface WiredDeps {
   companionApp: import('../companion/proactive-channel').AppChannel | null
   /** 每晚记忆整理运行时(pipeline-deps 造);main.ts 挂定时器 + setMemoryNightly。 */
   memoryNightly: import('../../features/memory').MemoryNightlyRuntime
-  mattersService: import('../../core/matters/service').MattersService | null
+  mattersService: import('../../app/matters/service').MattersService | null
   /** 「一件事」活动时间:退订工作台事件 + 清节流定时器;main.ts 登记进 shutdown。 */
   stopMatterActivity: () => void
   /** 关机时停手机那一簇(重构第二批步 6d);main.ts 在 polling 之前登记。 */

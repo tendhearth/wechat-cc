@@ -34,7 +34,7 @@ const reader = createRecordReader({
   },
 })
 
-/** 推荐理由段的开头(与 src/core/hunt-catch.ts 的 REASON_RE 同一张词表)。 */
+/** 推荐理由段的开头(与 src/domain/hunt-catch.ts 的 REASON_RE 同一张词表)。 */
 const REASON_RE = /^[*#\s]*(?:为什么你会感兴趣|推荐理由|为什么推荐|对你有什么用|适合你|怎么用)[*\s]*[:：\s]/
 
 /**

@@ -8,13 +8,13 @@ import {openDb,type Db} from '../../lib/db'
 import {removeTempDir} from '../../lib/test-temp'
 import {createProviderRegistry} from '../../app/provider-registry'
 import {makeMatterStore} from '../../adapters/store/matters-store'
-import {makeWorkbenchStore} from '../../core/workbench/store'
+import {makeWorkbenchStore} from '../../adapters/store/workbench/store'
 import {makeWorkbenchService,type WorkbenchService} from './service'
-import {MANAGED_NATIVE_CAPABILITIES} from '../../core/workbench/executor-capabilities'
+import {MANAGED_NATIVE_CAPABILITIES} from '../../domain/workbench/executor-capabilities'
 import {makeTaskChangeHub} from './task-changes'
-import {readArtifactSnapshot} from '../../core/workbench/artifacts'
+import {readArtifactSnapshot} from '../../adapters/workbench/artifacts'
 import {parseGitReviewSnapshot} from './review'
-import type {EntryInput} from '../../core/workbench/task-entry'
+import type {EntryInput} from '../../adapters/workbench/task-entry'
 
 /** 评审 #428:checkpoint 超时 / 被叫停时回合照样走完;取消能叫停卡在起点的 checkpoint。真 git 的期限测在 checkpoints.test.ts。 */
 const fake=vi.hoisted(()=>({mode:'timeout' as 'timeout'|'hang',signals:[] as (AbortSignal|undefined)[]}))

@@ -14,8 +14,8 @@
  * shape/routing only; the own-channel guarantee lives in the handler wired
  * at the call site (Task 8).
  */
-import type { A2AServerOpts } from '../../core/a2a-server'
-import type { EnvelopeInner } from '../../core/mailbox-crypto'
+import type { A2AServerOpts } from '../../adapters/a2a/a2a-server'
+import type { EnvelopeInner } from '../../adapters/mailbox/mailbox-crypto'
 
 export interface EnvelopeDispatch { dispatch(inner: EnvelopeInner): Promise<void> }
 

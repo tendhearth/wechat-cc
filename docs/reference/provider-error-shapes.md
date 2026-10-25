@@ -293,7 +293,7 @@ agy(Go)`dial tcp: lookup …: no such host`、`…: EOF`、`There was a network 
 - 码的流向:`AgentEvent.error.code` → `TurnSummary.errorCode` → `TurnRecord.errorCode`(新字段)→ `reportLlmTurnOutcome` 把码挂在抛出物的 `providerErrorCode` 上 → `classifyFailure` 有码只看码,没码才走旧的文本判定(其余 provider 全走这条回退,答案不变)。
 - `network` 与 `server_error` 的区分用的是 SDK 自己的约定(`api_error_status` 为 null = 没拿到 HTTP 响应),不是正文。
 - fixture:5 条 Claude 会话样本从 `text_event` 改成 `error_event` 并写上码与 `sdkStructure`(403 与超时两条的结构是按同模板诱发样本推定的,标了 `inferred`);今天各判定处的钉住答案一条没变 —— 变的是通道与给人看的话。
-- 测试:`src/core/claude-api-error.test.ts` 把这 5 条样本按真实 SDK 形状重放进真的 Claude provider 与真的 coordinator(含 07-28 那句 403:微信只收到认证提示,不收到原文);`provider-error-shapes.test.ts` 红线组新增 4 条断言。
+- 测试:`src/adapters/executors/claude/claude-api-error.test.ts` 把这 5 条样本按真实 SDK 形状重放进真的 Claude provider 与真的 coordinator(含 07-28 那句 403:微信只收到认证提示,不收到原文);`provider-error-shapes.test.ts` 红线组新增 4 条断言。
 
 **还没做(下一片)**:~~Claude 的一次性评估与工作台运行时;§4.2–§4.8~~ —— 都在 §7 做了。
 

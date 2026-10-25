@@ -93,8 +93,8 @@ function providerLabel(p) {
 }
 /** @typedef {{token:string,context:string,eventCount:number,includedEventCount:number,truncated:boolean}} RestartPreview */
 /** @typedef {{mode:string,restart?:RestartPreview}} Continuation */
-/** @typedef {import('../../../../src/core/workbench/native-adoption').NativeSource} NativeSource */
-/** @typedef {import('../../../../src/core/workbench/native-adoption').NativeResumeDecision} NativeResume */
+/** @typedef {import('../../../../src/adapters/workbench/native-adoption').NativeSource} NativeSource */
+/** @typedef {import('../../../../src/adapters/workbench/native-adoption').NativeResumeDecision} NativeResume */
 /** @typedef {import('../../../../src/features/workbench/handoff').HandoffView} Handoff */
 /** @typedef {{agentNames?:Record<string,string>,quotaHandoff?:import('./workbench-quota-handoff.js').Offer|null,execution?:ExecutionChoice,lastExecution?:import('./workbench-execution.js').RunExecution|null,attachments?:import('./workbench-attachments.js').Attachment[],handoffs?:Handoff[],requiresExternalClose?:boolean,source?:NativeSource,task:Task,events:WorkbenchEvent[],artifacts:Artifact[],permissions?:Permission[],continuation?:Continuation,runId?:string,inputMode?:'steer'|'send'|'queue',runtime?:RuntimeSnapshot,questions?:import('./workbench-interaction.js').QuestionRequest[],inputs?:import('./workbench-interaction.js').LiveInput[],version?:number,rewind?:import('./workbench-rewind.js').RewindView}} Detail */
 /** @typedef {{q:string,archived:'exclude'|'only'|'all'}} TaskQuery */

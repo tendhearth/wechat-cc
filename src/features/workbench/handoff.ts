@@ -1,12 +1,12 @@
-import type {ArtifactSelection,ReviewQuote} from '../../core/workbench/handoff-record'
-export type {ArtifactSelection,ReviewQuote,StoredHandoff,HandoffView} from '../../core/workbench/handoff-record'
+import type {ArtifactSelection,ReviewQuote} from '../../adapters/store/workbench/handoff-record'
+export type {ArtifactSelection,ReviewQuote,StoredHandoff,HandoffView} from '../../adapters/store/workbench/handoff-record'
 import {randomBytes} from 'node:crypto'
-import {snapshotHash,type NativeResumeDecision} from '../../core/workbench/native-adoption'
+import {snapshotHash,type NativeResumeDecision} from '../../adapters/workbench/native-adoption'
 import type {Continuation} from './continuation'
-import type {StoredTask,TaskEvent,WorkbenchStore} from '../../core/workbench/store'
-import {readArtifactSnapshot} from '../../core/workbench/artifacts'
-import type {Attachment} from '../../core/workbench/attachments'
-import {isWorkbenchProviderId} from '../../core/workbench/executor-capabilities'
+import type {StoredTask,TaskEvent,WorkbenchStore} from '../../adapters/store/workbench/store'
+import {readArtifactSnapshot} from '../../adapters/workbench/artifacts'
+import type {Attachment} from '../../adapters/workbench/attachments'
+import {isWorkbenchProviderId} from '../../domain/workbench/executor-capabilities'
 export interface AttachmentSelection {taskId:string;attachmentId:string;sha256:string}
 export interface HandoffInput {sourceTaskId:string;targetProviderId:string;purpose:'review'|'revision';request:string;artifacts:ArtifactSelection[];attachments?:AttachmentSelection[];quote?:ReviewQuote;targetTaskId?:string}
 export interface HandoffPreview {

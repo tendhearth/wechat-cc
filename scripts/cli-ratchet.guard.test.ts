@@ -24,7 +24,7 @@ describe('cli.ts 只许变小', () => {
   it(`整个 CLI(cli.ts + src/cli/commands/**)链接 src/daemon 的次数 ≤ ${MAX_DAEMON_IMPORTS}(cli 应 spawn daemon,不链接它)`, () => {
     // 第二把尺(spec 2026-09-27-cli-split §2):命令体从 cli.ts 搬进 src/cli/commands/ 时把 daemon
     // 动态 import 一起带过去,depcruise 对 commands/ 降成 warn;总数由这里钉住只降不升。
-    // 真正解耦(改走内部 API / src/core)另立项;这里只让耦合可见、可量。
+    // 真正解耦(改走内部 API / src/app)另立项;这里只让耦合可见、可量。
     let n = (src.match(/import\('\.\/src\/daemon\//g) ?? []).length
     const dir = join(ROOT, 'src', 'cli', 'commands')
     if (existsSync(dir)) {

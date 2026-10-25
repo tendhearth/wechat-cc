@@ -3,7 +3,7 @@ import { mkdtempSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { cliAddJob, cliFormatJobs } from './jobs'
-import { makeJobsStore } from '../core/scheduled-jobs-store'
+import { makeJobsStore } from '../adapters/store/scheduled-jobs-store'
 
 describe('wechat-cc jobs', () => {
   it('add maps --every / --at / --text to a schedule', () => {

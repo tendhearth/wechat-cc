@@ -1,4 +1,4 @@
-import {MANAGED_NATIVE_CAPABILITIES} from '../src/core/workbench/executor-capabilities'
+import {MANAGED_NATIVE_CAPABILITIES} from '../src/domain/workbench/executor-capabilities'
 /// <reference lib="dom" />
 /**
  * Run: bun scripts/workbench-attachments-browser-smoke.ts
@@ -101,7 +101,7 @@ async function main(){
   process.env.WECHAT_STATE_DIR=stateDir
   process.env.WECHAT_DISABLE_LOG_FILE='1'
   const [{openDb},{makeWorkbenchStore},{makeWorkbenchService},{createProviderRegistry},{createInternalApi},{createWorkbenchProxy},{workbenchRoutes}]=await Promise.all([
-    import('../src/lib/db'),import('../src/core/workbench/store'),import('../src/features/workbench/service'),
+    import('../src/lib/db'),import('../src/adapters/store/workbench/store'),import('../src/features/workbench/service'),
     import('../src/app/provider-registry'),import('../src/daemon/internal-api/index'),
     import('../apps/desktop/workbench-proxy'),import('../src/features/workbench/routes'),
   ])

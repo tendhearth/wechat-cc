@@ -3,7 +3,7 @@ import { createConversationCoordinator as createCoordinatorRaw, authFailNotice, 
 import { makeReplyDeliveryRuntime } from '../daemon/reply-delivery'
 import { errorWithProviderCode } from '../lib/provider-error-code'
 import { createProviderRegistry } from './provider-registry'
-import { makeFakeSession } from '../core/test-helpers'
+import { makeFakeSession } from '../test-support/test-helpers'
 import type { AgentEvent, AgentProvider, AgentSession } from '../ports/agent-provider'
 import type { Mode, ProviderId } from '../domain/conversation'
 import { formatInbound, type InboundMsg } from '../domain/prompt-format'

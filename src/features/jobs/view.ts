@@ -3,7 +3,7 @@
  * 只给配过对的设备(链接令牌不行:定时的正文是主人的私事,停删也不该被一个泄露的 10 分钟链接做掉)。
  */
 import { describeSchedule } from '../../domain/scheduled-jobs'
-import type { JobsStore } from '../../core/scheduled-jobs-store'
+import type { JobsStore } from '../../adapters/store/scheduled-jobs-store'
 import { statusWord } from './command'
 
 export interface PhoneJob {

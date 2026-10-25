@@ -1,7 +1,7 @@
 /**
  * internal-api Knowledge Kernel route table (Phase 01 Task 3) — the
- * Ingest + Query surface over src/core/knowledge/store.ts (T1) and
- * src/core/knowledge/search.ts (T2). Mirrors routes-social.ts's shape:
+ * Ingest + Query surface over src/adapters/knowledge/store.ts (T1) and
+ * src/domain/knowledge/search.ts (T2). Mirrors routes-social.ts's shape:
  * `export function knowledgeRoutes(deps: InternalApiDeps): RouteTable`,
  * 503 when the store isn't wired, inline body validation (no
  * REQUEST_SCHEMAS entry), `{ status, body }` returns.

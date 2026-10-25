@@ -17,8 +17,8 @@ import { compilePolicy } from '../../../domain/policy'
  */
 import { mergeEnvIntoMcpServers, CORE_MCP_SERVER_NAMES, type AgentEvent, type AgentProject, type AgentProvider, type AgentSession, type PermissionMode, type ProviderCapabilities } from '../../../ports/agent-provider'
 import type { TierProfile } from '../../../domain/user-tier'
-import type { McpStdioSpec } from '../../../core/mcp-stdio-spec'
-import { makeTurnEmitter } from '../../../core/turn-emitter'
+import type { McpStdioSpec } from '../mcp-stdio-spec'
+import { makeTurnEmitter } from '../turn-emitter'
 import { log } from '../../../lib/log'
 
 /**

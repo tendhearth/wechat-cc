@@ -114,7 +114,7 @@ import type {MatterStore} from '../../adapters/store/matters-store'
 import type {ReportOutboxStore} from './outbox'
 import {isProactiveWindowClosed} from '../../daemon/ilink/outbound-health'
 import {backoffMs, RETRY_WINDOW_MS} from '../../lib/delivery-backoff'
-import {shouldDisturb} from '../../core/matters/report'
+import {shouldDisturb} from '../../domain/matters/report'
 
 export interface ReportSweepDeps {
   store: ReportOutboxStore

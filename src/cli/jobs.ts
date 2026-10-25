@@ -3,7 +3,7 @@
  * 每分钟一拍的 runner 下一拍就读到。写法与微信一致,只是用参数表达。
  */
 import { describeSchedule, JOB_TEXT_MAX, type JobSchedule, type ScheduledJob, type Weekday } from '../domain/scheduled-jobs'
-import { makeJobsStore } from '../core/scheduled-jobs-store'
+import { makeJobsStore } from '../adapters/store/scheduled-jobs-store'
 import { join } from 'node:path'
 import { readJsonFile } from '../lib/read-json-file'
 

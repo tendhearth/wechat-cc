@@ -19,7 +19,7 @@
  */
 import { spawnSync } from 'node:child_process'
 
-import { workbenchSubprocessEnv } from '../../core/workbench/subprocess-env'
+import { workbenchSubprocessEnv } from '../../adapters/executors/subprocess-env'
 
 export interface GitResult {
   code: number | null

@@ -9,16 +9,16 @@
 import { existsSync, readFileSync, realpathSync, statSync } from 'node:fs'
 import { execFile } from 'node:child_process'
 import { basename, dirname, isAbsolute, join, resolve } from 'node:path'
-import { decide as decideCore, parseReviewAnswer, reviewPrompt, type Review } from '../core/permission-rules/decide'
-import { EMPTY_RULES, parseRulesFile, RULES_FILE, serializeRulesFile, STARTER_VERSION, withStarterRules } from '../core/permission-rules/rules-file'
+import { decide as decideCore, parseReviewAnswer, reviewPrompt, type Review } from '../adapters/permission-rules/decide'
+import { EMPTY_RULES, parseRulesFile, RULES_FILE, serializeRulesFile, STARTER_VERSION, withStarterRules } from '../adapters/permission-rules/rules-file'
 import { writeFileAtomic } from '../lib/json-file'
 import type { AskSource, Decision, PermissionAsk, RulesFile, Verdict } from '../domain/permission-rules/types'
 import { authorize, type AuthSubject } from '../domain/authorize'
 import { TIER_PROFILES } from '../domain/user-tier'
 import type { PermissionDecisionsStore } from './permission-decisions-store'
-import type { CliPermissionRequest } from '../core/cli-permission-relay'
-import type { AllowHook, ChatOwnerRules, RuleAllowNotice } from '../core/permission-rules/chat'
-import { repoRootOf } from '../core/workbench/worktree-workspaces'
+import type { CliPermissionRequest } from '../app/cli-permission-relay'
+import type { AllowHook, ChatOwnerRules, RuleAllowNotice } from '../adapters/permission-rules/chat'
+import { repoRootOf } from '../adapters/git/worktree-workspaces'
 
 export const RUNAWAY_WINDOW_MS = 10 * 60_000
 export const RUNAWAY_MAX = 20

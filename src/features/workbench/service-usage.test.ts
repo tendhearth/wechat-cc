@@ -5,9 +5,9 @@ import {join} from 'node:path'
 import {openDb,type Db} from '../../lib/db'
 import {removeTempDir} from '../../lib/test-temp'
 import {createProviderRegistry} from '../../app/provider-registry'
-import {makeWorkbenchStore} from '../../core/workbench/store'
+import {makeWorkbenchStore} from '../../adapters/store/workbench/store'
 import {makeWorkbenchService,type WorkbenchService} from './service'
-import {MANAGED_NATIVE_CAPABILITIES} from '../../core/workbench/executor-capabilities'
+import {MANAGED_NATIVE_CAPABILITIES} from '../../domain/workbench/executor-capabilities'
 
 // 每件事花了多少额度(v82):执行者在 result 上带的用量落一行,详情里给合计;不报的那家就是 null(「这家不报」)。
 let area:string,project:string,db:Db,service:WorkbenchService,store:ReturnType<typeof makeWorkbenchStore>

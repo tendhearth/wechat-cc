@@ -1,7 +1,7 @@
 import { describe, it, expect, vi } from 'vitest'
 import { createProviderRegistry, providerCallTarget, withNetworkGate } from './provider-registry'
 import type { AgentProvider } from '../ports/agent-provider'
-import { makeFakeSession } from '../core/test-helpers'
+import { makeFakeSession } from '../test-support/test-helpers'
 import type { NetworkGate } from '../lib/network-gate'
 import { classifyCall } from '../lib/call-classifier'
 

@@ -14,10 +14,10 @@ import { removeTempDir } from '../../lib/test-temp'
 import { openDb, type Db } from '../../lib/db'
 import { createProviderRegistry } from '../../app/provider-registry'
 import { makeMatterStore } from '../../adapters/store/matters-store'
-import { makeMattersService } from '../../core/matters/service'
-import { makeWorkbenchStore } from '../../core/workbench/store'
+import { makeMattersService } from '../../app/matters/service'
+import { makeWorkbenchStore } from '../../adapters/store/workbench/store'
 import { makeWorkbenchService, type WorkbenchService } from '../workbench/service'
-import { MANAGED_NATIVE_CAPABILITIES } from '../../core/workbench/executor-capabilities'
+import { MANAGED_NATIVE_CAPABILITIES } from '../../domain/workbench/executor-capabilities'
 import { makeSettingsPanel, type SettingsPanel } from './settings-panel'
 
 const QUOTA = "You've hit your usage limit. Try again at 10:00"

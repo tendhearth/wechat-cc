@@ -5,13 +5,13 @@
  * 两个域都不依赖 notices,所以构造时显式传进来就行,不需要晚绑定。
  * stageFinishedNotice 由 execute / cancelRun 在 store.atomic 里同步调用 —— 这里不许变成 async。
  */
-import { executionFailureMessage } from '../../../core/workbench/execution-settings'
-import { normalizeInputRequestId } from '../../../core/workbench/live-inputs'
-import { WORKBENCH_PERMISSION_TIMEOUT_MS } from '../../../core/workbench/permissions'
+import { executionFailureMessage } from '../../../adapters/store/workbench/execution-settings'
+import { normalizeInputRequestId } from '../../../adapters/store/workbench/live-inputs'
+import { WORKBENCH_PERMISSION_TIMEOUT_MS } from '../../../adapters/workbench/permissions'
 import { providerDisplayName } from '../../../domain/provider-display-names'
-import { TERMINAL_TASK_STATUSES, type StoredTask, type TaskStatus } from '../../../core/workbench/store'
-import type { WechatNoticeKind, WechatNotificationNotice, WechatNotificationSubscription } from '../../../core/workbench/wechat-notifications'
-import type { ArtifactDeliveryReceipt } from '../../../core/workbench/artifact-deliveries'
+import { TERMINAL_TASK_STATUSES, type StoredTask, type TaskStatus } from '../../../adapters/store/workbench/store'
+import type { WechatNoticeKind, WechatNotificationNotice, WechatNotificationSubscription } from '../../../adapters/store/workbench/wechat-notifications'
+import type { ArtifactDeliveryReceipt } from '../../../adapters/store/workbench/artifact-deliveries'
 import type { SendWechatArtifact } from '../wechat-types'
 import type { Active } from './state'
 import type { ServiceCtx } from './ctx'

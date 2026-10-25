@@ -1,8 +1,8 @@
 // @ts-check
 import { escapeWorkbenchHtml as escape, renderWorkbenchMarkdown, renderWorkbenchUserText, captureUserSources, restoreUserSources } from './workbench-markdown.js'
-/** @typedef {import('../../../../src/core/workbench/native-history').NativeHistoryItem} Item */
-/** @typedef {import('../../../../src/core/workbench/native-history').NativeHistoryPage} Page */
-/** @typedef {import('../../../../src/core/workbench/native-history').NativeHistoryPreview} Preview */
+/** @typedef {import('../../../../src/adapters/workbench/native-history').NativeHistoryItem} Item */
+/** @typedef {import('../../../../src/adapters/workbench/native-history').NativeHistoryPage} Page */
+/** @typedef {import('../../../../src/adapters/workbench/native-history').NativeHistoryPreview} Preview */
 /** names:执行者 id → 正式名字(工作台列表的 agentNames,daemon 下发;收敛清单 ⑥)。没有 ⇒ 用 id。 */
 /** @typedef {{providerId:string,providers:string[],names?:Record<string,string>,q:string,items:Item[],nextCursor:string|null,coverage:string,preview:Preview|null,pages:Preview[],busy:boolean,error:string}} State */
 /** @typedef {(method:'GET'|'POST',path:string,body?:Record<string,unknown>)=>Promise<unknown>} Invoke */

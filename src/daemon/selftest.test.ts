@@ -3,7 +3,7 @@ import { existsSync, mkdtempSync, readFileSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { runSelftestConverse, SELFTEST_PROJECT_PATH, type SelftestConverseDeps } from './selftest'
-import { makeFakeSession } from '../core/test-helpers'
+import { makeFakeSession } from '../test-support/test-helpers'
 import type { AgentEvent, AgentProject, AgentProvider, AgentSession, SpawnContext } from '../ports/agent-provider'
 import type { ProviderRegistry } from '../app/provider-registry'
 

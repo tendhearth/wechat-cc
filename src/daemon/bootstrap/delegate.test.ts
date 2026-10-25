@@ -3,7 +3,7 @@ import { mkdtempSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { buildDelegateDispatch } from './delegate'
-import { makeFakeSession } from '../../core/test-helpers'
+import { makeFakeSession } from '../../test-support/test-helpers'
 import type { AgentProvider } from '../../ports/agent-provider'
 import { TIER_PROFILES } from '../../domain/user-tier'
 

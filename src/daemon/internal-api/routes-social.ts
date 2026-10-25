@@ -6,7 +6,7 @@
 import { loadAgentConfig, saveAgentConfig } from '../../lib/agent-config'
 import type { InternalApiDeps, RouteTable } from './types'
 import { applySocialSwitch } from '../../cli/social-enable'
-import { buildRelationships, type RelationshipInputs } from '../../core/relationships'
+import { buildRelationships, type RelationshipInputs } from '../../app/relationships'
 import { NEIGHBORS } from '../../domain/neighbors'
 import { readNeighborMemory } from '../companion/neighbor-memory'
 import { makeMessagesStore } from '../../lib/messages-store'

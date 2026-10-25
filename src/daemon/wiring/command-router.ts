@@ -18,14 +18,14 @@
 import { randomBytes } from 'node:crypto'
 import type { InboundMsg } from '../../domain/prompt-format'
 import { parseLetterCommand, parseVisitCommand, parseSeekCommand, parseIntroCommand, type WishService, type IntroService } from '../../features/social'
-import { parsePairCommand } from '../../core/pair-command'
-import { parseGuestCommand } from '../../core/guest-command'
+import { parsePairCommand } from '../../domain/pair-command'
+import { parseGuestCommand } from '../../domain/guest-command'
 import { socialUnavailableLine, type SocialState } from '../social-state'
 import { previewText } from '../inbound/mw-access'
 import type { WechatCommand } from '../commands/registry'
 import { GUEST_REQUEST_TTL_MS } from '../guest-requests'
 import type { GuestRequestStore } from '../guest-requests'
-import type { PairingEngine } from '../../core/pairing'
+import type { PairingEngine } from '../../app/pairing'
 
 export interface CommandRouterDeps {
   isAdmin: (chatId: string) => boolean

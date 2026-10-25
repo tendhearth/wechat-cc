@@ -27,8 +27,8 @@ import {
   readA2AInfo,
   slugify,
 } from './agent'
-import { createA2ARegistry } from '../core/a2a-registry'
-import { makeA2AEventsStore } from '../core/a2a-events-store'
+import { createA2ARegistry } from '../adapters/a2a/a2a-registry'
+import { makeA2AEventsStore } from '../adapters/store/a2a-events-store'
 import type { A2AAgentRecord } from '../lib/agent-config'
 import { removeTempDir } from '../lib/test-temp'
 import { serve, type Server } from '../lib/runtime/http'

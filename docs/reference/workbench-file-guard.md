@@ -1,6 +1,6 @@
 # 工作台文件锚定层的威胁模型(现状)
 
-> 2026-10-01 首版。owner 在评审 #3 的两条路里选了 (a):保留纯 JS 的锚定文件访问(`src/core/workbench/anchored-fs.ts`,不恢复原生 `openat`),把它防什么、不防什么写清楚,并用回归测试钉住。代码是唯一事实源:`anchored-fs.ts` 与 `anchored-fs.threat-model.test.ts`(本文每一条都对应其中一条用例)。历史:2026-09-16 从 `bun:ffi` 的 openat 换成纯 JS,原因见 [cc-workbench.md 修订记录](../cc-workbench.md#修订记录)。
+> 2026-10-01 首版。owner 在评审 #3 的两条路里选了 (a):保留纯 JS 的锚定文件访问(`src/adapters/workbench/anchored-fs.ts`,不恢复原生 `openat`),把它防什么、不防什么写清楚,并用回归测试钉住。代码是唯一事实源:`anchored-fs.ts` 与 `anchored-fs.threat-model.test.ts`(本文每一条都对应其中一条用例)。历史:2026-09-16 从 `bun:ffi` 的 openat 换成纯 JS,原因见 [cc-workbench.md 修订记录](../cc-workbench.md#修订记录)。
 
 ## 它守的是哪几扇门
 

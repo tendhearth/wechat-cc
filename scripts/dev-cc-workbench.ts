@@ -1,4 +1,4 @@
-import {MANAGED_NATIVE_CAPABILITIES} from '../src/core/workbench/executor-capabilities'
+import {MANAGED_NATIVE_CAPABILITIES} from '../src/domain/workbench/executor-capabilities'
 import {createClaudeHistoryReader} from '../src/adapters/executors/claude/native-claude-history'
 import {createCodexHistoryReader} from '../src/adapters/executors/codex/native-codex-history'
 /** Live development: production task engine, isolated state, existing companion untouched.
@@ -16,8 +16,8 @@ import {createWorkbenchCodexProvider} from '../src/adapters/executors/codex/code
 import {createClaudeAgentProvider,makeWorkbenchClaudeCanUseTool} from '../src/adapters/executors/claude/claude-agent-provider'
 import {workbenchClaudeOptions} from '../src/features/workbench/wire'
 import {readNativeClaudeTools} from '../src/adapters/executors/claude/claude-native-config'
-import {claudeNativeCapabilityNotice} from '../src/core/workbench/native-capability-notice'
-import {makeWorkbenchStore} from '../src/core/workbench/store'
+import {claudeNativeCapabilityNotice} from '../src/adapters/workbench/native-capability-notice'
+import {makeWorkbenchStore} from '../src/adapters/store/workbench/store'
 import {makeWorkbenchService} from '../src/features/workbench/service'
 import {createInternalApi,type InternalApiDeps} from '../src/daemon/internal-api'
 import {workbenchRoutes} from '../src/features/workbench/routes'

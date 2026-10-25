@@ -12,7 +12,7 @@ import { runConflictSweep } from './sweep-conflicts'
 import { runObligationDedup } from './sweep-obligation-dupes'
 import { runSettlementBackfill } from './sweep-obligation-settled'
 import { makeInProcFactsCall } from './facts-inproc'
-import type { FactsApi } from '../../../core/knowledge/facts'
+import type { FactsApi } from '../../../domain/knowledge/facts'
 
 export interface IngestBridge {
   call: (tool: string, input?: unknown) => Promise<string>

@@ -7,10 +7,10 @@
  * last_summary(core 自己记 running → idle)。
  */
 import { randomBytes } from 'node:crypto'
-import type { CliEventHub, CliSessionInfo } from '../../core/cli-events'
+import type { CliEventHub, CliSessionInfo } from '../../app/cli-events'
 import type { CliSessionView } from '../../adapters/store/cli-session-store'
 import { readTail, type CliReplyCore } from './reply-handler'
-import { parseActivity, type CliActivityItem } from '../../core/cli-activity'
+import { parseActivity, type CliActivityItem } from './cli-activity'
 
 /** 手机上说一句最多这么长(终端那头是一句 prompt,不是贴文件)。 */
 export const PHONE_CLI_SAY_MAX = 4000

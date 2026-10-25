@@ -12,7 +12,7 @@
  */
 import { randomBytes } from 'node:crypto'
 import type { Envelope } from '../../domain/envelope'
-import { isValidPairCard, type PairCard } from '../../core/pairing'
+import { isValidPairCard, type PairCard } from '../../app/pairing'
 
 export type IntroStage = 'request' | 'forward' | 'accept' | 'decline' | 'card'
 export interface IntroPayload { stage: IntroStage; replyId: string; wishId: string; card?: PairCard; hint?: string }

@@ -6,7 +6,7 @@ import {
   EMPTY_ASKS, ASK_MAX_DAYS, ASK_ONLY_IN_BRIEF, ASK_PLACEHOLDER, answerAsk, approvalFor, commitAsked, enqueue, expireStale,
   formatAsks, lookupAsk, parseAskReply, pickForBrief, renderAsksBlock, spliceAsks, type EnqueueInput, type OwnerAsksState,
 } from './owner-asks'
-import { coerceAsks, makeOwnerAsksStore, OWNER_ASKS_FILE } from '../core/owner-asks-store'
+import { coerceAsks, makeOwnerAsksStore, OWNER_ASKS_FILE } from '../adapters/store/owner-asks-store'
 import { writeFileSync } from 'node:fs'
 
 const T0 = '2026-10-24T00:00:00.000Z'

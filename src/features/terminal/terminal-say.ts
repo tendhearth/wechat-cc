@@ -33,10 +33,10 @@
  * 拿得到 file 令牌的本来就是主人这台机上的进程,剩下的口子在这一层。
  */
 import { randomBytes } from 'node:crypto'
-import { stripMarkdown, INLINE_MAX, type CliEvent, type CliSessionInfo, type CliSource } from '../../core/cli-events'
+import { stripMarkdown, INLINE_MAX, type CliEvent, type CliSessionInfo, type CliSource } from '../../app/cli-events'
 import type { CliSessionView } from '../../adapters/store/cli-session-store'
 import { cliSourceLabel } from '../../domain/cli-session-digest'
-import { lastAssistantText, redactSecrets } from '../../core/cli-transcript'
+import { lastAssistantText, redactSecrets } from '../../domain/cli-transcript'
 import { RESUME_TIMEOUT_MS, type CliReplyCore } from './reply-handler'
 
 /** 一句最多这么长(同手机说一句 PHONE_CLI_SAY_MAX)。 */

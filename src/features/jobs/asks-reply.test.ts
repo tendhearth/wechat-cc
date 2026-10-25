@@ -2,7 +2,7 @@ import { describe, it, expect } from 'vitest'
 import { mkdtempSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { makeOwnerAsksStore, OWNER_ASKS_FILE } from '../../core/owner-asks-store'
+import { makeOwnerAsksStore, OWNER_ASKS_FILE } from '../../adapters/store/owner-asks-store'
 import { combineReplyHandlers, makeAsksReply } from './asks-reply'
 
 const T0 = Date.parse('2026-10-25T00:00:00.000Z')

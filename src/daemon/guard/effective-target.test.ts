@@ -20,7 +20,7 @@ import { SessionManager } from '../../app/session-manager'
 import { createOpenAiAgentProvider } from '../../adapters/executors/openai/openai-agent-provider'
 import { createAcpCursorChatProvider } from '../../adapters/executors/acp/acp-cursor-chat'
 import type { AgentProvider } from '../../ports/agent-provider'
-import { makeFakeSession } from '../../core/test-helpers'
+import { makeFakeSession } from '../../test-support/test-helpers'
 import { TIER_PROFILES } from '../../domain/user-tier'
 import { runSelftestConverse } from '../selftest'
 

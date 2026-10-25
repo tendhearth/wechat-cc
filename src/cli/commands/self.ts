@@ -543,7 +543,7 @@ const selfPlanCmd = defineCommand({
     const { existsSync, mkdirSync, readFileSync, writeFileSync, readdirSync } = await import('node:fs')
     const enqueueVisible = async (plan: import('../self-plan').SavedPlan): Promise<string> => {
       const { planVisibleAsks } = await import('../self-plan')
-      const { makeOwnerAsksStore, OWNER_ASKS_FILE } = await import('../../core/owner-asks-store')
+      const { makeOwnerAsksStore, OWNER_ASKS_FILE } = await import('../../adapters/store/owner-asks-store')
       const store = makeOwnerAsksStore(join(STATE_DIR, OWNER_ASKS_FILE))
       const asks = planVisibleAsks(plan)
       if (!asks.length) return '这份计划没有主人看得见的步,不用问。'
@@ -689,7 +689,7 @@ const selfAskCmd = defineCommand({
     json: { type: 'boolean', description: 'JSON 输出' },
   },
   async run({ args }) {
-    const { makeOwnerAsksStore, OWNER_ASKS_FILE } = await import('../../core/owner-asks-store')
+    const { makeOwnerAsksStore, OWNER_ASKS_FILE } = await import('../../adapters/store/owner-asks-store')
     const { formatAsks, ASK_ONLY_IN_BRIEF } = await import('../../domain/owner-asks')
     const store = makeOwnerAsksStore(join(STATE_DIR, OWNER_ASKS_FILE))
     if (args.list) {
@@ -713,7 +713,7 @@ const selfAskCmd = defineCommand({
     console.log(`${r.item.id}:${ASK_RESULT_WORD[r.result]}`)
     // 没开早报 ⇒ 不单发(默认,待主人点头):照实说这条要等到什么时候才会被看到。
     if (ASK_ONLY_IN_BRIEF && r.result !== 'closed') {
-      const { makeJobsStore } = await import('../../core/scheduled-jobs-store')
+      const { makeJobsStore } = await import('../../adapters/store/scheduled-jobs-store')
       const briefOn = makeJobsStore(STATE_DIR).list().jobs.some(j => j.brief && !j.paused)
       if (!briefOn) console.error('注意:主人没开早报(或停着),这条只攒着、不会单发;主人开了早报(「定时 早报 8:00」)才会问到。')
     }

@@ -6,12 +6,12 @@ import type { AgentAttachment, AgentEvent, AgentExecutionModel, AgentProject, Ag
 import { spawnCodexAppServerProcess, type CodexAppServerSpawn } from './codex-app-server-process'
 import { wrapForProcessTree } from '../../../lib/jobspawn'
 import { discoverWorkbenchCodexConfig, workbenchCodexArgs, workbenchCodexEnv, workbenchCodexNativeConfig } from './codex-config'
-import { validateUserInputAnswers, validateUserInputRequest } from '../../../core/workbench/user-input'
+import { validateUserInputAnswers, validateUserInputRequest } from '../../workbench/user-input'
 import { codexActivityEvent, codexItemId } from './codex-activity'
 import { codexMcpApproval, supportsCodexMcpApproval } from './codex-mcp-approval'
-import { codexNativeCapabilityNotice } from '../../../core/workbench/native-capability-notice'
+import { codexNativeCapabilityNotice } from '../../workbench/native-capability-notice'
 import { discoverCodexModels } from './codex-model-catalog'
-import { executionModel, nativeModelId, readCodexModelCatalog } from '../../../core/workbench/native-model-catalog'
+import { executionModel, nativeModelId, readCodexModelCatalog } from '../../../domain/workbench/native-model-catalog'
 
 import { codexErrorEvent, codexRpcError } from './codex-execution-error'
 import { CodexChildOccurrence } from './codex-runtime'
@@ -984,7 +984,7 @@ export async function spawnCodexAppServerSession(options: Options, project: Agen
         ...(runtime ? { workbenchRuntime: runtime } : {}),
         callTarget: () => spawnTarget,
         processGroups: () => (process.platform !== 'win32' && child.pid ? [child.pid] : []),
-        // 沙盒验证过(src/core/workbench/suspend-resume.sandbox.test.ts):冻住期间被掐断的流,放开后 codex 自己
+        // 沙盒验证过(src/adapters/executors/suspend-resume.sandbox.test.ts):冻住期间被掐断的流,放开后 codex 自己
         // 「Reconnecting… 1/5」重试接上;放开后再收到的 willRetry 由 connect 看门狗照常管。
         suspension: {
           suspend() {

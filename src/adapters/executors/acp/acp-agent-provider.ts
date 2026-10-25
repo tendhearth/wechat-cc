@@ -17,13 +17,13 @@ import { acpSupportedOn } from './platform'
 import { spawn as nodeSpawn } from 'node:child_process'
 import type { AgentAttachment, AgentEvent, AgentProvider, AgentSession, SpawnContext } from '../../../ports/agent-provider'
 import { AsyncQueue } from '../../../lib/async-queue'
-import { makeTurnEmitter } from '../../../core/turn-emitter'
+import { makeTurnEmitter } from '../turn-emitter'
 import { isAuthFail } from '../../../domain/auth-fail'
 import { acpErrorCode, cursorAcpInbandError } from './cursor-errors'
 import { withProviderCode } from '../../../lib/provider-error-code'
 import { AcpRequestError, createAcpConnection, type AcpConnection } from './rpc'
 import { acpPermissionDescription, acpPermissionOption, createAcpTranslator } from './events'
-import { workbenchSubprocessEnv } from '../../../core/workbench/subprocess-env'
+import { workbenchSubprocessEnv } from '../subprocess-env'
 import { APP_VERSION } from '../../../lib/app-version'
 
 export interface AcpProviderBaseOptions {
@@ -115,7 +115,7 @@ const ACP_PROMPT_BYTES_MAX = 4 * 1024 * 1024
  * 照 ACP 文档的字面形状写就会判成「不收图」。顶层判也留着当兜底,防着哪家
  * agent 把它拍平。
  *
- * 单独抽出来是为了让 `src/core/acp/fixtures.test.ts` 的回放能直接拿录到的
+ * 单独抽出来是为了让 `src/adapters/executors/acp/fixtures.test.ts` 的回放能直接拿录到的
  * initialize 结果喂**生产代码本身**:那条断言只钉 fixture 的形状时,改坏了
  * 探测逻辑它照样绿。
  */

@@ -1,7 +1,7 @@
 import {spawn} from 'node:child_process'
 import { wrapForProcessTree } from '../../../lib/jobspawn'
 import {discoverWorkbenchCodexConfig,workbenchCodexArgs,workbenchCodexEnv} from './codex-config'
-import {readCodexModelCatalog, type CatalogRequest} from '../../../core/workbench/native-model-catalog'
+import {readCodexModelCatalog, type CatalogRequest} from '../../../domain/workbench/native-model-catalog'
 import { APP_VERSION } from '../../../lib/app-version'
 
 /** Catalog transport never creates a thread or enables an MCP server. */

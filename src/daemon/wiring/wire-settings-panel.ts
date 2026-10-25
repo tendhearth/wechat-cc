@@ -11,14 +11,14 @@ import type { Bootstrap } from '../bootstrap'
 import type { WechatContacts, WechatVoice } from '../../ports/wechat'
 import type { ChatPrefsStore } from '../chat-prefs'
 import type { makeMessagesStore } from '../../lib/messages-store'
-import type { MattersService } from '../../core/matters/service'
+import type { MattersService } from '../../app/matters/service'
 import type { MemoryNightlyRuntime } from '../../features/memory'
 import type { PipelineDepsOpts } from './pipeline-deps-opts'
 import { jobsView, jobsAction, mobileJobsRoutes } from '../../features/jobs'
-import { makeJobsStore } from '../../core/scheduled-jobs-store'
+import { makeJobsStore } from '../../adapters/store/scheduled-jobs-store'
 import { loadCompanionConfig } from '../../lib/companion-config'
 import { pickJobExecutor, readPlanLogDays } from '../../features/companion'
-import { readJournalSeen, writeJournalSeen } from '../../core/journal-seen'
+import { readJournalSeen, writeJournalSeen } from '../../adapters/store/journal-seen'
 import { resolveAdminChatId } from '../companion/resolve-admin'
 import { makeSettingsPanel, phoneMayOpenMatter, makeRemoteToggle, relayV2Configured, cacheSessions, type makePhoneOwner, type makePhoneChat, makePhoneInsight, makeApprovalExplainer, makeProgressSummarizer, currentPhoneClient } from '../../features/phone'
 import { wrapCheapEvalWithAuthFailCheck } from '../bootstrap/wire-coordinator'
@@ -101,7 +101,7 @@ return makeSettingsPanel({
     entryOptions:()=>opts.workbench!.entryOptions({ownerKey:ownerChatId()??'',surface:'phone'}),
     entryModels:(input:{providerId:string;projectId?:string})=>opts.workbench!.entryModels(input,{ownerKey:ownerChatId()??'',surface:'phone'}),
     // 出生地:原生 App(中继 v2 帧)/ 浏览器 /m,只按传输判(phone-client.ts);不在手机请求里 ⇒ null。
-    createEntry:(input:import('../../core/workbench/task-entry').EntryInput)=>opts.workbench!.createEntry(input,{ownerKey:ownerChatId()??'',surface:'phone',origin:currentPhoneClient()}),
+    createEntry:(input:import('../../adapters/workbench/task-entry').EntryInput)=>opts.workbench!.createEntry(input,{ownerKey:ownerChatId()??'',surface:'phone',origin:currentPhoneClient()}),
     entryReceipt:(requestId:string)=>opts.workbench!.entryReceipt(requestId,{ownerKey:ownerChatId()??'',surface:'phone'}),
   }}:{}),
   curatedMemory: () => memoryNightly.curatedView(),

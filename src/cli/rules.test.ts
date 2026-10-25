@@ -3,7 +3,7 @@ import { mkdtempSync, readFileSync, writeFileSync, existsSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { addRule, removeRule, setEnabled, setReview, formatRules, readRulesForEdit } from './rules'
-import { RULES_FILE } from '../core/permission-rules/rules-file'
+import { RULES_FILE } from '../adapters/permission-rules/rules-file'
 
 const dir = () => mkdtempSync(join(tmpdir(), 'rules-cli-'))
 

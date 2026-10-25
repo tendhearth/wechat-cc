@@ -5,7 +5,7 @@
  * 所以这里返回的是**同一个实例**,不是快照。
  */
 import { makeQuotaRegistry, type QuotaState } from '../../../domain/provider-quota'
-import { isWorkbenchExecutorCapabilities, isWorkbenchProviderId } from '../../../core/workbench/executor-capabilities'
+import { isWorkbenchExecutorCapabilities, isWorkbenchProviderId } from '../../../domain/workbench/executor-capabilities'
 import type { ServiceCtx } from './ctx'
 
 export interface QuotaDomain {

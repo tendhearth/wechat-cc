@@ -123,7 +123,7 @@ jobs:
       # saved — so it would skip on every subsequent run too. No-op on a hit.
       - name: Prefetch embedding model
         run: >
-          bun -e "import { makeJsEmbedder } from './src/core/knowledge/js-embedder.ts';
+          bun -e "import { makeJsEmbedder } from './src/adapters/knowledge/js-embedder.ts';
           await makeJsEmbedder({ model_id: 'bge-small-zh-v1.5' }).embed(['warm'])"
 
       - name: Typecheck

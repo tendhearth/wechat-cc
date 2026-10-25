@@ -4,7 +4,7 @@ import { mkdirSync, mkdtempSync, realpathSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { removeTempDir } from '../../lib/test-temp'
-import { commitWorktree, ensureWorktree, headSha, planWorktree } from '../../core/workbench/worktree-workspaces'
+import { commitWorktree, ensureWorktree, headSha, planWorktree } from '../../adapters/git/worktree-workspaces'
 import { parseScriptsConfig, pinnedScriptSha, readPinnedScripts, repoKeyOf, SCRIPT_MAX_BYTES, SCRIPTS_FILE_MAX_BYTES, scriptsHash } from './worktree-scripts'
 
 const dirs: string[] = []

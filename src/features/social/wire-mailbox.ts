@@ -5,15 +5,15 @@
  * inert otherwise — main.ts simply never registers this lifecycle. New daemon
  * wiring goes here, not index.ts. See spec §3.3.
  */
-import { loadMailboxIdentity } from '../../core/mailbox-crypto'
-import { makeMailboxClient } from '../../core/mailbox-client'
+import { loadMailboxIdentity } from '../../adapters/mailbox/mailbox-crypto'
+import { makeMailboxClient } from '../../adapters/mailbox/mailbox-client'
 import { makeEnvelopeDispatch } from './mailbox-dispatch'
 import { makeMailboxPoller } from './mailbox-poller'
 import { makeCursorStore } from './mailbox-cursor-store'
 import { startCompanionScheduler } from '../../daemon/companion/scheduler'
 import type { Lifecycle } from '../../lib/lifecycle'
-import type { A2ARegistry } from '../../core/a2a-registry'
-import type { A2AServerOpts } from '../../core/a2a-server'
+import type { A2ARegistry } from '../../adapters/a2a/a2a-registry'
+import type { A2AServerOpts } from '../../adapters/a2a/a2a-server'
 
 export interface MailboxPollerDeps {
   stateDir: string

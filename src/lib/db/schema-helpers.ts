@@ -3,7 +3,7 @@ import type { SqlDatabase as Database } from '../runtime/sqlite'
 // 迁移和 db.ts 共用的几样(第三批 3e 从 db.ts 原样搬出来):迁移文件不能 import db.ts(会成环)。
 /**
  * 工作台表的建表语句 —— 放在这里而不是各自模块里,是因为 `src/lib` 是依赖树的底,
- * 不能反向依赖 `src/core`(depcruise `lib-must-not-depend-on-anything-internal`)。
+ * 不能反向依赖上面的层(adapters / app / features …)(depcruise `lib-must-not-depend-on-anything-internal`)。
  * 迁移阶梯本来就在本文件,v46 起的工作台表也都写在这儿;这三个只是补齐同一处。
  * 模块侧按原名再导出,单测照旧可以只建自己那几张表,不跑整条阶梯。
  */

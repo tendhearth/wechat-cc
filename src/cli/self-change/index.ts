@@ -19,7 +19,7 @@ import { appendFileSync, existsSync, mkdirSync, readFileSync, writeFileSync } fr
 import { cpus, homedir, loadavg } from 'node:os'
 import { join } from 'node:path'
 
-import { workbenchSubprocessEnv } from '../../core/workbench/subprocess-env'
+import { workbenchSubprocessEnv } from '../../adapters/executors/subprocess-env'
 import { readApiInfo } from '../../lib/api-info'
 import { defaultCiTriageDeps, runCiTriage } from '../ci-triage-run'
 import { defaultSelfDeployDeps, executeSelfDeploy, planSelfDeploy, resolveSigningInputs, type DeveloperIdIdentity, type SelfDeployPlan, type SelfDeployResult } from '../self-deploy'

@@ -6,10 +6,10 @@ import {randomUUID,createHash} from 'node:crypto'
 import {openDb,type Db} from '../../lib/db'
 import {createProviderRegistry} from '../../app/provider-registry'
 import type {AgentAttachment,AgentEvent,AgentProvider} from '../../ports/agent-provider'
-import {makeWorkbenchStore} from '../../core/workbench/store'
+import {makeWorkbenchStore} from '../../adapters/store/workbench/store'
 import {makeWorkbenchService,type WorkbenchService} from './service'
 import {restartPreview} from './continuation'
-import {MANAGED_NATIVE_CAPABILITIES} from '../../core/workbench/executor-capabilities'
+import {MANAGED_NATIVE_CAPABILITIES} from '../../domain/workbench/executor-capabilities'
 import {removeTempDir} from '../../lib/test-temp'
 
 let root:string,project:string,db:Db,service:WorkbenchService,store:ReturnType<typeof makeWorkbenchStore>

@@ -12,7 +12,7 @@
  */
 import { safeSvg } from '../../lib/svg-sanitize'
 import { CATCH_STATUSES, type CatchStatus } from '../../adapters/store/journal-store'
-import { writeJournalSeen } from '../../core/journal-seen'
+import { writeJournalSeen } from '../../adapters/store/journal-seen'
 import type { Journal } from '../../adapters/store/journal-store'
 import type { RouteTable } from '../../daemon/internal-api/types'
 

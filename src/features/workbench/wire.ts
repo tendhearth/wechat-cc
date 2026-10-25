@@ -13,16 +13,16 @@ import { createProviderRegistry, type ProviderRegistry } from '../../app/provide
 import { createClaudeAgentProvider, makeWorkbenchClaudeCanUseTool } from '../../adapters/executors/claude/claude-agent-provider'
 import { compilePolicy } from '../../domain/policy'
 import { createWorkbenchCodexProvider } from '../../adapters/executors/codex/codex-app-server'
-import type { PermissionRelayDeps } from '../../core/permission-relay'
+import type { PermissionRelayDeps } from '../../adapters/executors/claude/permission-relay'
 import { TIER_PROFILES } from '../../domain/user-tier'
-import { makeWorkbenchStore } from '../../core/workbench/store'
+import { makeWorkbenchStore } from '../../adapters/store/workbench/store'
 import { makeWorkbenchService } from './service'
 import { makeRecollectSink } from '../../daemon/recollection/recollect-sink'
 import { makeJournal } from '../../adapters/store/journal-store'
 import { wrapCheapEvalWithAuthFailCheck } from '../../daemon/bootstrap/wire-coordinator'
-import { ACP_CAPABILITIES, MANAGED_NATIVE_CAPABILITIES, UNATTENDED_CAPABILITIES } from '../../core/workbench/executor-capabilities'
+import { ACP_CAPABILITIES, MANAGED_NATIVE_CAPABILITIES, UNATTENDED_CAPABILITIES } from '../../domain/workbench/executor-capabilities'
 import { readNativeClaudeTools, workbenchClaudeEnvironment, type NativeClaudeTools } from '../../adapters/executors/claude/claude-native-config'
-import { claudeNativeCapabilityNotice } from '../../core/workbench/native-capability-notice'
+import { claudeNativeCapabilityNotice } from '../../adapters/workbench/native-capability-notice'
 import { loadCompanionConfig } from '../../lib/companion-config'
 import {loadAccess} from '../../lib/access'
 import {resolveAdminChatId} from '../../daemon/companion/resolve-admin'
@@ -145,7 +145,7 @@ export function wireWorkbench(opts: {
   /** 「一件事」登记处:任务与 matter 一对一同步(可选,老接线不传)。 */
   matters?: import('../../adapters/store/matters-store').MatterStore
   /** 回报(task-3,2026-09-23;功能目录 src/features/reports 造好交进来):与 matters 一起有才接得上,单传一个不够。 */
-  reports?: import('../../core/matters/report').ReportSink
+  reports?: import('../../domain/matters/report').ReportSink
   /** 换一家来审(10-20):「任务 <编号> 请 @codex 审」起一次只读轮;main 里接 tickBodies.runJobTurn。 */
   requestReview?: (r: { taskId: string; providerId: string; material: string }) => boolean
   /** 网络闸门(2026-10-02):执行者 registry、起执行者 / 投补充、额度查询都过它。 */

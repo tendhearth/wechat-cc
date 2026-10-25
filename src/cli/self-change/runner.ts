@@ -17,7 +17,7 @@
 import { spawn as nodeSpawn } from 'node:child_process'
 import { wrapForProcessTree } from '../../lib/jobspawn'
 
-import { workbenchSubprocessEnv } from '../../core/workbench/subprocess-env'
+import { workbenchSubprocessEnv } from '../../adapters/executors/subprocess-env'
 
 export interface RunnerInput {
   cwd: string

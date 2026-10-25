@@ -15,7 +15,7 @@ import { probeFsAccess, describeFsAccess } from '../lib/fs-access'
 import { openWechatDb } from '../lib/db'
 import { makeConversationStore } from '../adapters/store/conversation-store'
 import { makeSessionStateStore } from '../adapters/store/session-state'
-import { makeHeartbeatStore } from '../core/connection-heartbeat'
+import { makeHeartbeatStore } from '../adapters/store/connection-heartbeat'
 import { scanSatelliteRepos, type SatelliteRepo } from './satellite-repos'
 import { readJsonFile } from '../lib/read-json-file'
 

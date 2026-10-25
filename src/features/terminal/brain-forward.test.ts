@@ -1,7 +1,7 @@
 import { describe, it, expect, vi } from 'vitest'
 import { makeBrainForwarder } from './brain-forward'
 import type { A2AAgentRecord } from '../../lib/agent-config'
-import { PRESENT_IDLE_S } from '../../core/cli-events'
+import { PRESENT_IDLE_S } from '../../app/cli-events'
 
 const rec = (over: Partial<A2AAgentRecord> = {}): A2AAgentRecord => ({
   id: 'brain', name: 'brain', url: 'http://10.0.0.2:8717/a2a', inbound_api_key: 'x'.repeat(16), outbound_api_key: 'k'.repeat(16),

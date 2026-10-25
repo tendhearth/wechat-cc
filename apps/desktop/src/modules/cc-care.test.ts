@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import * as care from './cc-care.js'
 import { openTestDb } from '../../../../src/lib/db'
-import { makeWorkbenchStore } from '../../../../src/core/workbench/store'
+import { makeWorkbenchStore } from '../../../../src/adapters/store/workbench/store'
 import { workbenchRoutes, type WorkbenchRoutesDeps } from '../../../../src/features/workbench/routes'
 
 const task = (id:string, extra:Record<string,unknown>={}) => ({id,title:`事项 ${id}`,path:'/project/a',providerId:'claude',status:'running',updatedAt:100, ...extra})

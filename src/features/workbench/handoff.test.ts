@@ -4,10 +4,10 @@ import {join} from 'node:path'
 import {tmpdir} from 'node:os'
 import {openDb,type Db} from '../../lib/db'
 import {createProviderRegistry} from '../../app/provider-registry'
-import {makeWorkbenchStore} from '../../core/workbench/store'
+import {makeWorkbenchStore} from '../../adapters/store/workbench/store'
 import {makeWorkbenchService,type WorkbenchService} from './service'
-import {saveArtifactSnapshot} from '../../core/workbench/artifacts'
-import {MANAGED_NATIVE_CAPABILITIES} from '../../core/workbench/executor-capabilities'
+import {saveArtifactSnapshot} from '../../adapters/workbench/artifacts'
+import {MANAGED_NATIVE_CAPABILITIES} from '../../domain/workbench/executor-capabilities'
 import {removeTempDir} from '../../lib/test-temp'
 let dir:string,db:Db,service:WorkbenchService
 beforeEach(()=>{dir=realpathSync(mkdtempSync(join(tmpdir(),'cc-handoff-')));db=openDb({path:join(dir,'test.db')})})

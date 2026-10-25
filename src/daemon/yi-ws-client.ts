@@ -3,7 +3,7 @@
  * initialize frame on open, runs each task via yi-hand, and reconnects with
  * capped backoff. Outbound-only: works behind NAT, no inbound port.
  */
-import { createYiHand, type YiHandDeps } from '../core/yi-hand'
+import { createYiHand, type YiHandDeps } from '../app/yi-hand'
 
 export interface YiWsClientOpts extends YiHandDeps {
   brainUrl: string

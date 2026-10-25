@@ -2,7 +2,7 @@
  * Distill the Knowledge Kernel's computed knowledge into a concise markdown
  * digest for the owner's always-on `knowledge.md` (knowledge-distillation
  * design, D1). This is the WRITE-side bridge between the in-process
- * Knowledge Kernel (src/core/knowledge) and the daemon's always-injected
+ * Knowledge Kernel (src/adapters/knowledge + src/domain/knowledge) and the daemon's always-injected
  * memory — the objective counterpart to the agent's subjective profile.md.
  * Deterministic (no LLM): the kernel outputs are already structured, so we
  * just format them. Every source is guarded — a missing/failed one drops
@@ -17,9 +17,9 @@
  * (`DistillBridge`/`parseCall`); now calls the in-proc `FactsApi`/
  * `GraphQueryApi` directly — synchronous, no JSON (de)serialization.
  */
-import type { FactsApi } from '../../core/knowledge/facts'
-import type { GraphQueryApi } from '../../core/knowledge/graph-query'
-import type { Contact } from '../../core/knowledge/graph'
+import type { FactsApi } from '../../domain/knowledge/facts'
+import type { GraphQueryApi } from '../../domain/knowledge/graph-query'
+import type { Contact } from '../../domain/knowledge/graph'
 
 export interface DistillKnowledge {
   facts?: FactsApi

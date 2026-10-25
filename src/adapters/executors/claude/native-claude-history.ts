@@ -1,5 +1,5 @@
 import type { GetSessionInfoOptions, GetSessionMessagesOptions, ListSessionsOptions } from '@anthropic-ai/claude-agent-sdk'
-import { historyDeadline, decodeNativeHistoryKey, encodeNativeHistoryKey, historyCursor, historyCwd, historyMessage, historyObject, historyPreview, historyText, normalizeHistoryList, normalizeHistoryRead, readHistoryCursor, type NativeHistoryItem, type NativeHistoryMessage, type NativeHistoryReader } from '../../../core/workbench/native-history'
+import { historyDeadline, decodeNativeHistoryKey, encodeNativeHistoryKey, historyCursor, historyCwd, historyMessage, historyObject, historyPreview, historyText, normalizeHistoryList, normalizeHistoryRead, readHistoryCursor, type NativeHistoryItem, type NativeHistoryMessage, type NativeHistoryReader } from '../../workbench/native-history'
 
 export interface ClaudeHistorySdk {
   listSessions(options?:Pick<ListSessionsOptions,'dir'|'limit'|'offset'|'includeWorktrees'>):Promise<unknown>

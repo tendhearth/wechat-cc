@@ -6,7 +6,7 @@ import {makeReportSink} from './report-sink'
 
 /**
  * ReportSink 的 daemon 侧实现:enqueue(matterId) 把 matter + 标题 + 成果数拼成
- * renderReport 的输入,该不该报交给纯逻辑(src/core/matters/report.ts)判,有
+ * renderReport 的输入,该不该报交给纯逻辑(src/domain/matters/report.ts)判,有
  * 报就写进 outbox。「没有出生地 ⇒ 不报」不在这里另设判断——matter 没有
  * originMatterId 时 renderReport 自己返回 null,这里只是不写而已。
  */

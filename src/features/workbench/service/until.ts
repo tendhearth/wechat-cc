@@ -4,10 +4,10 @@
  * 有轮数上限。每一种停都写一条事件。命令只从 workbench_goals 读 —— 执行者碰不到。
  */
 import { randomUUID } from 'node:crypto'
-import { redactSecrets } from '../../../core/cli-transcript'
+import { redactSecrets } from '../../../domain/cli-transcript'
 import { startScript, type ScriptExit } from '../script-runner'
-import { isUnattendedExecutor, type WorkbenchExecutorCapabilities } from '../../../core/workbench/executor-capabilities'
-import { untilContinuation, untilRequestId } from '../../../core/workbench/until'
+import { isUnattendedExecutor, type WorkbenchExecutorCapabilities } from '../../../domain/workbench/executor-capabilities'
+import { untilContinuation, untilRequestId } from '../../../adapters/workbench/until'
 import type { Active } from './state'
 import type { ServiceCtx } from './ctx'
 import type { ViewDomain } from './view'
