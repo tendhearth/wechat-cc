@@ -62,7 +62,7 @@ import { wireJobs } from './bootstrap/wire-jobs'
 import { wireWorkbench } from './bootstrap/wire-workbench'
 import { wireWorkbenchNotifications } from './bootstrap/wire-workbench-notifications'
 import { wireWorkbenchArtifacts } from './bootstrap/wire-workbench-artifacts'
-import { wireLetters } from './bootstrap/wire-letters'
+import { lettersFeature } from '../features/letters'
 import { makeProjectLessonsCommand } from './project-lessons-command'
 import { calendarFeature, type CalendarFeature } from '../features/calendar'
 import { fromReplyHandler } from './commands/registry'
@@ -567,16 +567,14 @@ export function daemonModules(f: Foundation): DaemonModule[] {
     lifecycleModule('memory-nightly', (ctx) => registerMemoryNightly({
       runtime: ctx.get<WiredDeps>('wired').memoryNightly, holdBusy: (l) => ctx.get<Bootstrap>('bootstrap').holdBusy(l), log: (t, l) => log(t, l),
     }), { needs: ['wired', 'bootstrap'] }),
-    // CC 的信(2026-10-16):不定期写一封信、排成信纸寄到微信;开关 companion.letters_enabled 默认关。
-    {
-      name: 'letters',
-      optional: true,
-      needs: ['bootstrap', 'wired', 'ilink-adapter', 'internal-api'],
-      init(ctx) {
+    // CC 的信:一个功能一个目录(src/features/letters);路由自己挂。这里只填它要的东西。
+    lettersFeature({
+      needs: ['bootstrap', 'wired', 'ilink-adapter'],
+      deps: (ctx) => {
         const boot = ctx.get<Bootstrap>('bootstrap')
         const wired = ctx.get<WiredDeps>('wired')
         const ilink = ctx.get<IlinkAdapter>('ilink-adapter')
-        const letters = wireLetters({
+        return {
           stateDir, db,
           providerFor: (c) => { const m = boot.coordinator.getMode(c); return m && m.kind === 'solo' ? m.provider : undefined },
           strongEval: (id) => (typeof boot.registry.getStrongEval === 'function' ? boot.registry.getStrongEval(id as never) : null),
@@ -589,13 +587,9 @@ export function daemonModules(f: Foundation): DaemonModule[] {
           mirror: (c, pages) => ilink.noteSentMedia?.(c, pages.map(path => ({ kind: 'file' as const, path }))),
           app: () => wired.companionApp,
           holdBusy: (l) => boot.holdBusy(l), log: (t, l) => log(t, l),
-        })
-        ctx.get<InternalApiLifecycle>('internal-api').provide({ letters: letters.runtime })
-        let lc: Lifecycle | null = null
-        ctx.onStart('start', () => { lc = letters.start() })
-        ctx.own('stop', () => lc?.stop())
+        }
       },
-    },
+    }),
     // 外部 agent CLI 自动升级(主人 2026-10-04,docs/maintainer/cli-auto-upgrade.md):空闲时升、升完自检、不过就退回。
     {
       name: 'cli-upgrade',

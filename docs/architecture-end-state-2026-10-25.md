@@ -229,6 +229,7 @@ DeliveryPort                      吃 TurnOutcome;旧的 / shadow 交付路删�
 | A2 | bootstrap 拆成一组模块进同一个容器(boot-base / knowledge / boot-core / self-restart / idle-sweep / social / mailbox-poller / a2a-server / pairing / yi / bootstrap);收尾清单、module-group 桥删掉;`enabled()` 能读上游 |
 | A3 + A4 | 功能目录 `src/features/<名>/`:模块自己 `internalApi.mount` 路由(路由表 `module` 字段,关 / 坏 / 还没挂上 ⇒ module_off / module_degraded / module_starting);depcheck 三条边界;日历整块搬进去做样板,`InternalApiDeps` 少一个字段;[加一个功能](maintainer/add-a-feature.md) |
 | A5 · 提醒 | `src/features/reminders/`(store / sweeper / routes / 模块清单),路由自己挂;重试退避挪到 `lib/delivery-backoff.ts`(任务回报共用,不再伸进提醒内部) |
+| A5 · 信 | `src/features/letters/`(写、排版、调度、存档、手机只读页、路由、模块清单);`InternalApiDeps.letters` 去掉。定下功能的写法:功能声明它要的 `deps` 类型,组装的地方(daemon-modules.ts)从上游模块填 |
 
 ## 修订记录
 

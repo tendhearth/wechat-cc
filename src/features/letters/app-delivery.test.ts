@@ -8,9 +8,9 @@ import { join } from 'node:path'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { makeLetterRuntime, readLetterState, type LetterApp, type LetterDeps } from './runtime'
 import { letterPagePath, listLetters } from './archive'
-import { letterToApp, LETTER_PUSH_BODY } from '../bootstrap/wire-letters'
+import { letterToApp, LETTER_PUSH_BODY } from './wire'
 import { lettersTestSpeech } from './test-speech'
-import type { AppChannel } from '../companion/proactive-channel'
+import type { AppChannel } from '../../daemon/companion/proactive-channel'
 
 const TZ = 'Asia/Shanghai'
 const EVENING = Date.parse('2026-10-16T12:00:00Z')

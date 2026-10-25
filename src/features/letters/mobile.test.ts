@@ -1,7 +1,7 @@
 import { describe, it, expect } from 'vitest'
-import { mobileLettersRoute, type MobileLettersDeps } from './mobile-letters'
-import { framedTooLarge } from './mobile-matter-response'
-import type { LetterListItem } from './letters/archive'
+import { mobileLettersRoute, type MobileLettersDeps } from './mobile'
+import { framedTooLarge } from '../../daemon/mobile-matter-response'
+import type { LetterListItem } from './archive'
 
 const req = (path: string, method = 'GET') => { const url = new URL(`http://x${path}`); return { url, req: new Request(url, { method }) } }
 const call = async (deps: MobileLettersDeps | undefined, path: string, method?: string) => {

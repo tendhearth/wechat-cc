@@ -4,13 +4,13 @@ import { basename, join } from 'node:path'
 import type { Db } from '../../lib/db'
 import type { Lifecycle } from '../../lib/lifecycle'
 import { makeMessagesStore } from '../../lib/messages-store'
-import { loadCompanionConfig } from '../companion/config'
-import { startCompanionScheduler } from '../companion/scheduler'
-import { MEMORY_FILENAME, parseMemoryDoc, renderForPrompt } from '../memory/curated-doc'
-import { makeMemoryFS } from '../memory/fs-api'
-import { makeLetterRuntime, type LetterApp, type LetterRuntime } from '../letters/runtime'
-import type { AppChannel } from '../companion/proactive-channel'
-import { rasterizeLetterPage } from '../letters/render'
+import { loadCompanionConfig } from '../../daemon/companion/config'
+import { startCompanionScheduler } from '../../daemon/companion/scheduler'
+import { MEMORY_FILENAME, parseMemoryDoc, renderForPrompt } from '../../daemon/memory/curated-doc'
+import { makeMemoryFS } from '../../daemon/memory/fs-api'
+import { makeLetterRuntime, type LetterApp, type LetterRuntime } from './runtime'
+import type { AppChannel } from '../../daemon/companion/proactive-channel'
+import { rasterizeLetterPage } from './render'
 
 type Eval = (prompt: string) => Promise<string>
 
@@ -24,7 +24,7 @@ export interface WireLettersDeps {
   cheapEval(chatId: string): Eval | null
   wechatSuspended(): boolean
   /** CC 开口那道门(main.ts 的 wired.speech)。 */
-  speech: import('../speech/policy').SpeechPolicy
+  speech: import('../../daemon/speech/policy').SpeechPolicy
   sendText(chatId: string, text: string): Promise<{ error?: string }>
   /** 逐页发;这里发的页不该再被媒体镜像逐页记(main.ts 传 mirror:false),整封由 `mirror` 记成一行。 */
   sendFile(chatId: string, path: string): Promise<void>

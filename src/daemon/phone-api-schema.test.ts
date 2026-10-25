@@ -37,7 +37,7 @@ import { makeProgressSummarizer } from './phone-progress'
 import { makePhoneOwner } from './mobile-chat'
 import { makePhoneChat } from './phone-chat'
 import { makeMessagesStore } from '../lib/messages-store'
-import { letterPagePath, listLetters } from './letters/archive'
+import { letterPagePath, listLetters } from '../features/letters/archive'
 
 // ── 1) 守卫:PHONE_ROUTES ↔ (PHONE_API_SCHEMAS ∪ PHONE_HTML_ROUTES) 双向核对 ──
 

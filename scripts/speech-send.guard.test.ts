@@ -43,8 +43,8 @@ const BASELINE: Record<string, [Tag, number]> = {
   'src/core/conversation-coordinator.ts': ['primitive', 1],
   'src/daemon/inbound/reply-scope.ts': ['primitive', 1],
   // 信自己的一套投递(多页、断了续发、App 那条路)。能不能写 / 寄已经走 policy.say(第三批 3a),发送只在 say 的生产者里。
-  'src/daemon/letters/runtime.ts': ['primitive', 2],
-  'src/daemon/bootstrap/wire-letters.ts': ['primitive', 1],
+  'src/features/letters/runtime.ts': ['primitive', 2],
+  'src/features/letters/wire.ts': ['primitive', 1],
   // 社交那几条通知:判定走 policy.say(social-tell.ts,经 sendAssistantText 发 —— 它管 App 回话截获与旁听,不换);
   // 剩下这一处是明信片的 sendFile,也只在 say 的生产者里。
   'src/daemon/bootstrap/wire-social.ts': ['primitive', 1],
